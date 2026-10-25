@@ -96,6 +96,11 @@ inductive DiagnosticClass where
   stopped. The diagnostic carries the position of the error that was over
   the bound. -/
   | tooManyErrors
+  /-- A WARNING, not an error: a language tag that the grammar reads and that
+  is not well-formed under BCP 47 section 2.2.9. The triple is kept
+  (`Syntax/LangTagWarnings.lean`; owner decision of 2026-10-24, CLAUDE.md
+  "Ill-formed BCP 47 language tags"). -/
+  | illFormedLangTag
   deriving DecidableEq, Repr, Inhabited
 
 /-- The stable name of a class, as hosts render it (JSON `class`). -/
@@ -116,6 +121,7 @@ def DiagnosticClass.tag : DiagnosticClass → String
   | .unexpectedToken    => "unexpected-token"
   | .internal           => "internal"
   | .tooManyErrors      => "too-many-errors"
+  | .illFormedLangTag   => "ill-formed-language-tag"
 
 /-- `sub` occurs in `s`. -/
 private def hasSub (s sub : String) : Bool := (s.splitOn sub).length > 1

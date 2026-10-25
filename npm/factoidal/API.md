@@ -162,6 +162,27 @@ adds one `too-many-errors` diagnostic. A document with no error gives the
 strict result and no diagnostics (a theorem in the Lean source). RDF/XML and
 JSON-LD parse strictly with `lenient`.
 
+### Language tags that are not well-formed
+
+RDF 1.2 Concepts section 3.4 requires a language tag that is well-formed per
+BCP 47 section 2.2.9. A reader that meets a tag which its grammar reads and
+which is not well-formed keeps the triple and adds one entry to
+`dataset.warnings` (class `ill-formed-language-tag`; `line`, `column` and
+`offset` of the tag's first character). The writers write the tag unchanged.
+Owner decision of 2026-10-24
+([issue 1004](https://github.com/danbri/factoidal/issues/1004),
+[issue 1005](https://github.com/danbri/factoidal/issues/1005)). The RDF 1.2
+readers still refuse a subtag of more than 8 characters, as the W3C test
+`ntriples-langdir-bad-4` requires; read such a document as RDF 1.1.
+
+```js
+import { parse } from "@factoidal/core";
+
+const ds = await parse('<http://x/s> <http://x/p> "v"@abcdefghijk .\n', { format: "ntriples" });
+console.log(ds.warnings[0].class);   // ill-formed-language-tag
+console.log(ds.toString("ntriples")); // ... "v"@abcdefghijk .
+```
+
 ## In the browser
 
 `browser.js` is an ES module with the same functions. On the first call it
@@ -417,7 +438,7 @@ Methods: `query(sparql, {sparql12?, version?, entail?, output?})`,
 useNativeTypes?, useRdfType?, rdfDirection?})`, `toString(format)`
 (synchronous), `toNQuads()`, `clone()`, `has(quad)`, `match(s, p, o, g)`
 (a new Dataset), `toArray()`, iteration, `size`, `prefixes`,
-`diagnostics`, `format`, `formatInferred`, `dispose()` and
+`diagnostics`, `warnings`, `format`, `formatInferred`, `dispose()` and
 `[Symbol.dispose]` (for `using` where the runtime has it). A Dataset that is
 garbage collected without `dispose()` is released by a
 `FinalizationRegistry`.
@@ -1074,6 +1095,45 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 `query`/`entail`/`canonicalize`/`graphs`/`validate`/`shex`/`fromMapping`/
 `fromCsvw`/`rif` wrap the functions of the main entry.
 
+## Explaining an entailment: `explain`
+
+```js
+import { explain } from "@factoidal/core";
+
+const sources = `@prefix ex: <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+ex:alice ex:worksFor ex:acme .
+ex:worksFor rdfs:domain ex:Employee .
+ex:Employee rdfs:subClassOf ex:Person .`;
+const description = `@prefix ex: <http://example.org/> .
+_:x a ex:Person . _:x ex:worksFor ex:acme .`;
+const r = await explain(sources, description, { profile: "rdfs" });
+console.log(r.entailed); // true: _:x maps to ex:alice
+// { profile, entailed, bundle, assumptions, rejection, entailedMeans }
+```
+
+`explain(sources, description, options)` asks whether the sources RDFS-entail
+the description. The description is a graph; its blank nodes are variables
+shared across its triples. Both arguments are a Dataset, text, `{text, format}`
+or an array of those. Text is Turtle unless `format` (or `sourcesFormat` /
+`descriptionFormat`) says otherwise. The description must be a default graph
+only; a named graph rejects with a `FactoidalError`. `profile` is `'rdfs'`
+(the only value). The call needs the full engine (op `explainGraph`).
+
+- `entailed: true`: `bundle` holds the sources, the description, the
+  blank-node `mapping`, the derivation `steps` (rule, conclusion, premise
+  indexes) and one `support` index per description triple. The graph checker
+  accepted the bundle.
+- `entailed: false`: `bundle` is `null` and `rejection` is `noMatch` (with the
+  `index` and `triple` that has no instance in the RDFS closure),
+  `noJointMapping` (each triple has an instance, but no single mapping serves
+  all of them) or `checkerRefused`. The verdict relies on the named
+  assumption listed in `assumptions`; read that list with the verdict.
+- `entailedMeans` is the engine's statement of what `entailed` is worth.
+
+Blank-node labels in the output carry a scope prefix (`d0_` for the sources,
+`d1_` for the description). Design: [issue 1002](https://github.com/danbri/factoidal/issues/1002).
+
 ## API
 
 | Function | Signature (informal) | Notes |
@@ -1096,6 +1156,7 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 | `shaclValidate` | `(data, shapes) => {conforms, report: Dataset}` | SHACL Core, SHACL-SPARQL, SHACL 1.2 node expressions |
 | `shexValidate` | `(data, schemaText, focus, shape?) => boolean` | ShExJ when the text starts with `{`, else ShExC; no `shape` = the schema's START; `focus`/`shape` are RDF/JS terms or N-Triples term strings (`'<http://…>'`, `'_:b'`) |
 | `owlClosure` | `(data, 'RDFS' \| 'OWL-RL') => Dataset` | input + derived triples, default graph |
+| `explain` | `(sources, description, {profile?, format?}) => {entailed, bundle, assumptions, rejection, entailedMeans}` | RDFS entailment of a graph with shared blank nodes, with evidence; see "Explaining an entailment" |
 | `coreRdfsClosure`/`rhoDfClosure`, `rdfsPlusClosure` | `(data) => Dataset` | ρdf closure, RDFS-Plus closure |
 | `coreRdfsCheck`/`rhoDfFragmentCheck` | `(data) => {ok, fragment}` | ρdf fragment check |
 | `tableauMaterialise` | `(data) => {dataset, addedCount, budgetHit}` | class-expression memberships; `budgetHit` true when the work budget ran out |

@@ -236,6 +236,31 @@ theorem readNQuadsText_eq (mode : Syntax.Mode) (text : String) :
   rw [readers_dataset]
   rfl
 
+/-- A run of a reader as a dataset that carries its set proof (the subtype
+`RDF.CertifiedDataset` abbreviates). -/
+def RdfReader.certified (r : RdfReader) (inp : ReaderInput) :
+    Except ParseError { ds : Dataset // ds.IsSet } :=
+  match h : r.run inp with
+  | .ok out => .ok ⟨out.1, r.isSet h⟩
+  | .error e => .error e
+
+/-- Without the proof it is the dataset of the run. -/
+theorem RdfReader.certified_val (r : RdfReader) (inp : ReaderInput) :
+    (r.certified inp).map Subtype.val = r.dataset inp := by
+  unfold RdfReader.certified RdfReader.dataset
+  split
+  · next out h => simp [h, Except.map]
+  · next e h => simp [h, Except.map]
+
+/-- The N-Quads text of a dataset handle, read with its set proof. -/
+def readNQuadsCertified (mode : Syntax.Mode) (text : String) :
+    Except ParseError { ds : Dataset // ds.IsSet } :=
+  (readers {} .nquads).certified { text, mode }
+
+theorem readNQuadsCertified_val (mode : Syntax.Mode) (text : String) :
+    (readNQuadsCertified mode text).map Subtype.val = readNQuadsText mode text :=
+  RdfReader.certified_val _ _
+
 /-! ### One named reader for each syntax (the registry names them) -/
 
 def ntriplesDocumentReader : RdfReader := readers {} .nt
@@ -248,6 +273,7 @@ def rdfxmlDocumentReader : RdfReader := readers {} .rdfxml
 #print axioms readerContract_of_set
 #print axioms parseDocument_error_iff
 #print axioms RdfReader.isSet
+#print axioms RdfReader.certified_val
 #print axioms parseDocumentWithPrefixes_map_fst
 #print axioms documentReader
 #print axioms readers_dataset

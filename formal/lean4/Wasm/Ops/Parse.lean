@@ -84,6 +84,7 @@ import Std.Data.HashSet
 import L4Factoidal.RDF.DatasetMerge
 import L4Factoidal.RDF.DocumentScope
 import Wasm.Ops.FromDataset
+import L4Factoidal.Syntax.LangTagWarnings
 
 namespace L4Wasm.Ops
 
@@ -438,6 +439,35 @@ in front of it. -/
 def scopeBnodes (scope : String) (ds : Dataset) : Dataset :=
   L4Factoidal.RDF.renameDatasetBnodes scope ds
 
+/-- One diagnostic (a recovered error of the lenient parse, or a warning) as an
+envelope carries it. -/
+def diagnosticJson (d : Diagnostic) : Json :=
+  .object
+    [ ("message", .string d.message)
+    , ("offset", .number (toString d.offset))
+    , ("line", .number (toString d.line))
+    , ("column", .number (toString d.column))
+    , ("class", .string d.cls.tag) ]
+
+/-- The syntax of `formatTag` is of the N-Triples family, so
+`Syntax.scanLangTags` finds the position of each language tag. -/
+def tagScanFormat (formatTag : String) : Bool :=
+  match formatOfTag (resolveModeAndTag formatTag).2 with
+  | some .nt | some .nquads | some .turtle | some .trig => true
+  | _ => false
+
+/-- The warnings of a document read under `formatTag` into `ds`: one for each
+language tag that is not well-formed under BCP 47 (owner decision of
+2026-10-24, `Syntax/LangTagWarnings.lean`). -/
+def readerWarnings (text formatTag : String) (ds : Dataset) : List Diagnostic :=
+  langTagWarnings (tagScanFormat formatTag) text ds
+
+/-- The member `"warnings"` of a successful parse envelope, present only when
+there is a warning (so every envelope of a document with no warning is as it
+was). -/
+def warningsMembers (ws : List Diagnostic) : List (String × Json) :=
+  if ws.isEmpty then [] else [("warnings", .array (ws.map diagnosticJson))]
+
 /-- `parseToDatasetJson`, the parity envelope. `scope` is the blank-node label
 prefix, or `none` to keep the labels as written. -/
 def parseToDatasetJsonWithBy (extra : ExtraReader) (scope : Option String)
@@ -448,9 +478,10 @@ def parseToDatasetJsonWithBy (extra : ExtraReader) (scope : Option String)
       let ds := match scope with
         | some pre => scopeBnodes pre o.ds
         | none => o.ds
-      okWith [("count", .number (toString (datasetQuadCount ds))),
+      okWith ([("count", .number (toString (datasetQuadCount ds))),
               ("nquads", .string (Dataset.toCanonicalNQuads ds)),
-              ("prefixes", prefixesJson o.prefixes)]
+              ("prefixes", prefixesJson o.prefixes)] ++
+              warningsMembers (readerWarnings text formatTag o.ds))
 
 /-- Parses so far in this process. The scope of the next one is `d<N>_`. -/
 initialize documentScopeCounter : IO.Ref Nat ← IO.mkRef 0

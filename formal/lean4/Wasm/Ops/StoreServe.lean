@@ -174,7 +174,7 @@ private def handleOfEnvelope (envelope : String) : Except String String :=
 dataset and its index; it does not use the retained sidecars). An empty
 generation has no block to open and denotes the empty dataset. -/
 private def baseOf (manifest : Manifest) (manifestHex artifactsJson : String)
-    (blob : ByteArray) : IO (Except String (Dataset × Option StoreDataset.DatasetBackend × Nat)) := do
+    (blob : ByteArray) : IO (Except String (Dataset × Option L4Factoidal.Dataflow.LawfulDataset × Nat)) := do
   if manifest.entries.isEmpty then return .ok (Dataset.empty, none, 0)
   let envelope ← storeOpen manifestHex artifactsJson blob
   match handleOfEnvelope envelope with

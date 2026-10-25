@@ -54,21 +54,42 @@ test('serialize: a triple term, one level and nested, with a base direction', as
 
 // A language tag that is not well-formed (BCP 47 section 2.1: a primary
 // language subtag has 2 to 8 letters, so "abcdefghijk", 11 letters, is not a
-// language subtag). The N-Triples reader reads it (LANGTAG [144s] has no length
-// limit); the writer refuses it and names the tag
-// (https://github.com/danbri/factoidal/issues/1004).
-// Expected failure (https://github.com/danbri/factoidal/issues/1004): since the
-// reader table (PR 56) reads `inputFormat: 'ntriples'` as RDF 1.1, and the
-// writer checks only the LANGTAG production [144s] there, which admits
-// "abcdefghijk". BCP 47 well-formedness (RDF 1.1 Concepts section 3.3) is not
-// checked by the reader or the writer. `todo` keeps the case visible and runs it.
-test('serialize: the writer refuses a language tag that is not well-formed',
-  { todo: 'issue 1004: BCP 47 well-formedness is not checked in RDF 1.1 mode' }, async () => {
+// language subtag). Owner decision, 2026-10-24, answer "B." on
+// https://github.com/danbri/factoidal/issues/1004 and
+// https://github.com/danbri/factoidal/issues/1005: "Jena style: the readers keep
+// the triple and warn, and the writers write the tag unchanged." The RDF 1.1
+// N-Triples reader reads the tag (LANGTAG [144s] has no length limit), keeps
+// the triple and gives one warning; every writer writes the tag.
+test('serialize: a language tag that is not well-formed is written, and the reader warns', async () => {
   assert.ok(await entryAvailable());
-  await assert.rejects(
-    () => factoidal.serialize('<http://ex/s> <http://ex/p> "v"@abcdefghijk .\n',
-      { format: 'turtle', inputFormat: 'ntriples' }),
-    /the language tag "abcdefghijk" is not a LANGTAG/);
+  const text = '<http://ex/s> <http://ex/p> "v"@abcdefghijk .\n';
+  const ds = await factoidal.parse(text, { format: 'ntriples' });
+  try {
+    assert.equal(ds.size, 1, 'the triple is kept');
+    assert.equal(ds.warnings.length, 1, 'one warning');
+    const [w] = ds.warnings;
+    assert.equal(w.class, 'ill-formed-language-tag');
+    assert.match(w.message, /"abcdefghijk"/);
+    assert.equal(w.line, 1);
+    assert.equal(w.column, 33);
+    assert.ok(text.slice(w.offset).startsWith('abcdefghijk'), 'offset is the first character of the tag');
+    // Each writer writes the tag unchanged.
+    for (const format of ['turtle', 'trig', 'ntriples', 'nquads']) {
+      assert.match(await ds.serialize({ format }), /"v"@abcdefghijk/, format);
+    }
+    // Round trip: the Turtle text read back keeps the tag and warns again.
+    const ttl = await factoidal.serialize(text, { format: 'turtle', inputFormat: 'ntriples' });
+    assert.match(ttl, /"v"@abcdefghijk/);
+    const back = await factoidal.parse(ttl, { format: 'turtle' });
+    try {
+      assert.equal(back.size, 1);
+      assert.equal(back.warnings.length, 1);
+      assert.ok(ttl.slice(back.warnings[0].offset).startsWith('abcdefghijk'));
+    } finally { back.dispose(); }
+  } finally { ds.dispose(); }
+  // A well-formed tag gives no warning.
+  const good = await factoidal.parse('<http://ex/s> <http://ex/p> "v"@de-CH-1901 .\n', { format: 'ntriples' });
+  try { assert.equal(good.warnings.length, 0); } finally { good.dispose(); }
 });
 
 test('serialize rejects an unknown output format', async () => {

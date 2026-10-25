@@ -69,6 +69,10 @@ For the HDT and COTTAS reader arms it is the reader law
 access, not proved. For the RML arm it needs `RmlPushdownInvisible` and
 `RmlVirtualIsMaterialised`, which are open.
 
+The interface type that bundles a backend with its law, and carries those
+assumptions as named fields, is `LawfulStore` (`Dataflow/Store.lean`); the
+consumers of the planner take it, not a bare backend.
+
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Dataflow.Stage

@@ -55,6 +55,7 @@ import Wasm.Ops.StoreHandles
 import Wasm.Ops.StoreServe
 import Wasm.Ops.CL
 import Wasm.Ops.Proof
+import Wasm.Ops.Explain
 import Wasm.Ops.Handles
 import Wasm.Ops.DatasetFull
 import Wasm.Ops.Pack
@@ -118,6 +119,7 @@ def opNames : List String :=
   , "clFiniteSat"
   , "proofCheck"
   , "proofInspect"
+  , "explainGraph"
   , "toanSummation"
   , "toanProduct"
   , "toanSimplify"
@@ -467,6 +469,7 @@ def callUncoded (op : String) (argsJson : String) : String :=
     | "clFiniteSat"          => arity2 op clFiniteSat args
     | "proofCheck"           => arity1 op proofCheck args
     | "proofInspect"         => arity1 op proofInspect args
+    | "explainGraph"         => arity2 op explainGraph args
     | "toanSummation"        => arity4 op toanSummation args
     | "toanProduct"          => arity4 op toanProduct args
     | "toanSimplify"         => arity1 op toanSimplify args

@@ -93,9 +93,9 @@ search laws give `GraphRel` for each graph backend. An end-to-end theorem
 (bytes → `RdfReader` → `LawfulStore` → `LawfulEvaluator` → answer, item 5)
 then needs only the named assumptions of the three types.
 
-`GraphFixed` (no upper-case letter in a language tag) was a premise of
-`GraphRel` until https://github.com/danbri/factoidal/issues/1001 (PR 57),
-which makes it true of every graph; the theorems below no longer take it.
+`GraphFixed` (no upper-case letter in a language tag) is no longer a premise
+of `GraphRel`: https://github.com/danbri/factoidal/issues/1001 (PR 57) makes it
+true of every graph.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/

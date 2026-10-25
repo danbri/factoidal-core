@@ -15,13 +15,21 @@ subset of propext, Classical.choice, Quot.sound.
 
 Status:
 
-* `proved`: `stage` is a `Stage` value, an `RdfReader` value (the reader
-  interface type, `Dataflow/Reader.lean`) or a `LawfulEvaluator` value (the
-  query evaluator interface type, `Dataflow/Evaluator.lean`), whose `sound`
-  field is a proof;
+* `proved`: `stage` is a `Stage` value, or a value of an interface type with
+  its contract as a field: `RdfReader` (`Dataflow/Reader.lean`), `SoundReasoner`
+  (`Reasoner.lean`), `LawfulValidator` (`Validator.lean`), `SoundChecker`
+  (`Checker.lean`), `LawfulEvaluator` (`Evaluator.lean`), whose `sound` field is a proof, or an `RdfWriter`
+  (`Dataflow/Writer.lean`) whose `assumed_roundTrip` is `none`. Unproved
+  contract fields of these types are named assumptions, fields with the prefix
+  `assumed_`;
   `contract` names its contract; `theorems` names the component theorems it
   uses.
-* `assumed`: `stage` is an `IOStage`; `ioAssumptions` names the assumption.
+* `assumed`: `stage` is an `IOStage`, an `RdfWriter` whose `assumed_roundTrip`
+  is `some name`, or a data-access interface value (`LawfulStore`,
+  `LawfulDataset`, `Dataflow/Store.lean`) whose law rests on a named
+  assumption; `ioAssumptions` names the assumption.
+* A `LawfulStore` or `LawfulDataset` value with no named assumption is
+  `proved` like a `Stage`: its law is a field.
 * `tested`: no Lean contract; `tests` names the test suite that checks the
   behaviour against the W3C test files (scores in `skills/test-suites`).
 * `missing`: no Lean stage contract and no suite named here. `theorems` may
@@ -36,8 +44,13 @@ import L4Factoidal.Dataflow.Instances
 import L4Factoidal.Dataflow.PhaseD
 import L4Factoidal.Dataflow.PhaseE
 import L4Factoidal.Dataflow.PhaseC
+import L4Factoidal.Dataflow.Reasoner
+import L4Factoidal.Dataflow.Validator
+import L4Factoidal.Dataflow.Checker
+import L4Factoidal.Dataflow.ExplainGraph
 import L4Factoidal.Dataflow.PhaseStorage
 import L4Factoidal.Dataflow.PackSetStage
+import L4Factoidal.Dataflow.StoreTheorems
 import L4Factoidal.Unified.OwlRlAdequacy
 import L4Factoidal.Storage.BlockDenotation
 import L4Factoidal.SPARQL.FromMergeStage
@@ -78,7 +91,7 @@ structure Entry where
 /-- What the `stage` field names, as the report reads it from the environment:
 a `Stage` value, an `IOStage` value, nothing, or another declaration. -/
 inductive StageKind where
-  | stage | ioStage | none | other
+  | stage | writer | ioStage | iface | none | other
   deriving Repr, DecidableEq, Inhabited
 
 /-- `Name.anonymous`: the field names nothing. -/
@@ -95,11 +108,13 @@ def Entry.statusError (e : Entry) (k : StageKind) : Option String :=
   | .proved =>
     if isNone e.stage || isNone e.contract || e.theorems.isEmpty then
       some "proved needs a stage, a contract and theorems"
-    else if k != .stage then some s!"proved: {e.stage} is not a Stage"
+    else if k != .stage && k != .writer && k != .iface then
+      some s!"proved: {e.stage} is not a Stage, an RdfWriter or a data-access interface value"
     else Option.none
   | .assumed =>
     if e.ioAssumptions.isEmpty then some "assumed needs a named IO assumption"
-    else if k != .ioStage then some s!"assumed: {e.stage} is not an IOStage"
+    else if k != .ioStage && k != .writer && k != .iface then
+      some s!"assumed: {e.stage} is not an IOStage, an RdfWriter or a data-access interface value"
     else Option.none
   | .tested =>
     if e.tests.isEmpty || !isNone e.stage || !isNone e.contract then
@@ -317,6 +332,46 @@ def registry : List Entry := [
     theorems := [``writerProjection_dataset]
     tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)", "W3C JSON-LD 1.1 fromRdf (l4jsonld-api)"]
     note := "domain: no triple term (refused), no directional language string (finding: direction dropped with no error, https://github.com/danbri/factoidal/issues/984)" },
+  { area := "RdfWriter: N-Triples (wasm dispatch)", dir := "Syntax"
+    stage := ``ntriplesDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .proved
+    theorems := [``writerContractW_nt, ``serializeWith_default, ``writers_run_default, ``writerProjection_triples_den, ``RdfWriter.claim_of_proved, ``RdfWriter.roundTrip_of_claim]
+    note := "RdfWriter interface type: the round trip with the matching RdfReader (domain, projection, Iso) is a field, proved for RDF 1.1 and 1.2; the table writers serves the wasm dataset-handle writers" },
+  { area := "RdfWriter: N-Quads (batch)", dir := "Syntax"
+    stage := ``nquadsDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .proved
+    theorems := [``writerContractW_nquads, ``serializeWith_default, ``writers_run_default, ``writerProjection_nquads_den, ``RdfWriter.claim_of_proved, ``RdfWriter.roundTrip_of_claim]
+    note := "RdfWriter interface type: round trip proved, RDF 1.1 and 1.2; empty named graphs are not written (projection)" },
+  { area := "RdfWriter: Turtle (wasm dispatch)", dir := "Syntax"
+    stage := ``turtleDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .assumed
+    theorems := [``serializeWith_default, ``writers_run_default, ``RdfWriter.roundTrip_of_claim, ``writerProjection_triples_den]
+    ioAssumptions := [``TurtleWriterRoundTrip]
+    note := "round trip with the Turtle reader is the named assumption TurtleWriterRoundTrip, for any Turtle options; tested on seeded datasets" },
+  { area := "RdfWriter: TriG (wasm dispatch)", dir := "Syntax"
+    stage := ``trigDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .assumed
+    theorems := [``serializeWith_default, ``writers_run_default, ``RdfWriter.roundTrip_of_claim, ``writerProjection_dataset]
+    ioAssumptions := [``TrigWriterRoundTrip]
+    note := "round trip with the TriG reader is the named assumption TrigWriterRoundTrip; tested on seeded datasets" },
+  { area := "RdfWriter: RDF/XML (wasm dispatch)", dir := "Syntax"
+    stage := ``rdfxmlDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .assumed
+    theorems := [``serializeWith_default, ``writers_run_default, ``RdfWriter.roundTrip_of_claim, ``writerProjection_triples_den]
+    ioAssumptions := [``RdfXmlWriterRoundTrip]
+    note := "round trip with the RDF/XML reader is the named assumption RdfXmlWriterRoundTrip; domain: no triple term" },
+  { area := "RdfWriter: JSON-LD (full engine)", dir := "Syntax"
+    stage := ``jsonldDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .assumed
+    theorems := [``serializeWith_default, ``writers_run_default, ``RdfWriter.roundTrip_of_claim, ``writerProjection_dataset]
+    ioAssumptions := [``JsonLdWriterRoundTrip]
+    note := "round trip with the JSON-LD reader is the named assumption JsonLdWriterRoundTrip; domain: no triple term, no directional language string (https://github.com/danbri/factoidal/issues/984)" },
+  { area := "RdfWriter: canonical N-Quads (dataset handles)", dir := "Syntax"
+    stage := ``canonicalNQuadsDocumentWriter, wireIn := "Mode × TurtleRenderOptions × Dataset", wireOut := "String"
+    contract := ``RoundTripOn, status := .assumed
+    theorems := [``serializeWith_default, ``writers_run_default, ``RdfWriter.roundTrip_of_claim, ``writerProjection_nquads_den, ``L4Factoidal.RDF.parseNQuadsFast_toCanonicalNQuads]
+    ioAssumptions := [``CanonicalNQuadsWriterRoundTrip]
+    note := "round trip is the named assumption CanonicalNQuadsWriterRoundTrip; the parse of the text is normalizeDataset (parseNQuadsFast_toCanonicalNQuads) but its denotation is not yet related to the projection" },
   { area := "Writer: RDF/JSON (round trip, triples only)", dir := "Syntax"
     wireIn := "Graph", wireOut := "String", status := .tested
     tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)", "Syntax/RdfJson.lean #guards"]
@@ -443,6 +498,87 @@ def registry : List Entry := [
       ``L4Factoidal.RDF.capsOfIndexed_default_denotes, ``L4Factoidal.RDF.unionCaps_exact,
       ``L4Factoidal.RDF.overlay_exact, ``backendExact_indexed_default, ``indexedDefaultSearch_sound]
     note := "StoreCapsExact (RDF/StoreCapsDenotation.lean); premise BackendExact: list and index from Dataset.IsSet; HDT and COTTAS readers rest on BackendReadOpsExact, CottasReadOpsExact (not proved); RML on RmlPushdownInvisible (open)" },
+  { area := "LawfulStore: list (data-access interface)", dir := "Dataflow"
+    stage := ``LawfulStore.ofList, wireIn := "PatternBound", wireOut := "List Triple"
+    contract := ``L4Factoidal.RDF.StoreCapsExact, status := .proved
+    theorems := [``LawfulStore.exact, ``LawfulStore.search_exact, ``LawfulStore.search_nodupKeys, ``L4Factoidal.SPARQL.StoreBackend.capsOfList_exact]
+    note := "LawfulStore interface type (Dataflow/Store.lean): backend, graph, named assumptions, law BackendExact as fields; premise g.KeyNodup" },
+  { area := "LawfulStore: in-memory index", dir := "Dataflow"
+    stage := ``LawfulStore.ofIndexed, wireIn := "PatternBound", wireOut := "List Triple"
+    contract := ``L4Factoidal.RDF.StoreCapsExact, status := .proved
+    theorems := [``LawfulStore.exact, ``LawfulStore.search_exact, ``LawfulStore.search_nodupKeys, ``L4Factoidal.RDF.capsOfIndexed_exact]
+    note := "premise g.KeyNodup; the index is Index.ofGraph g" },
+  { area := "LawfulStore: any StoreCaps record with its law", dir := "Dataflow"
+    stage := ``LawfulStore.ofCaps, wireIn := "PatternBound", wireOut := "List Triple"
+    contract := ``L4Factoidal.RDF.StoreCapsExact, status := .proved
+    theorems := [``LawfulStore.exact, ``LawfulStore.search_exact, ``LawfulStore.search_nodupKeys]
+    note := "the GraphBackend arm .caps c; its law is StoreCapsExact G c" },
+  { area := "LawfulStore: base plus resolved delta (overlay)", dir := "Dataflow"
+    stage := ``LawfulStore.overlay, wireIn := "PatternBound", wireOut := "List Triple"
+    contract := ``L4Factoidal.RDF.StoreCapsExact, status := .proved
+    theorems := [``LawfulStore.exact, ``LawfulStore.search_exact, ``LawfulStore.search_nodupKeys, ``L4Factoidal.RDF.overlay_exact, ``LawfulStore.overlay_caps]
+    note := "reads overlayPred of the base graph; keeps the base store's named assumptions" },
+  { area := "LawfulStore: union of stores (set union)", dir := "Dataflow"
+    stage := ``LawfulStore.union, wireIn := "PatternBound", wireOut := "List Triple"
+    contract := ``L4Factoidal.RDF.StoreCapsExact, status := .proved
+    theorems := [``LawfulStore.exact, ``LawfulStore.search_exact, ``LawfulStore.search_nodupKeys, ``L4Factoidal.RDF.unionCaps_exact, ``LawfulStore.backendsExact_map, ``LawfulStore.union_caps]
+    note := "reads unionPred of the members' graphs; the assumptions are those of the members" },
+  { area := "LawfulStore: HDT reader", dir := "Dataflow"
+    stage := ``LawfulStore.hdt, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed
+    ioAssumptions := [``L4Factoidal.SPARQL.StoreBackend.BackendReadOpsExact]
+    note := "named assumption backendReadOpsExact (file access); the law follows from it (capsOfReadOps_exact)" },
+  { area := "LawfulStore: in-memory COTTAS reader", dir := "Dataflow"
+    stage := ``LawfulStore.cottasInMemory, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed
+    ioAssumptions := [``L4Factoidal.SPARQL.StoreBackend.BackendReadOpsExact]
+    note := "named assumption backendReadOpsExact" },
+  { area := "LawfulStore: COTTAS on disk", dir := "Dataflow"
+    stage := ``LawfulStore.cottasOnDisk, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed
+    ioAssumptions := [``L4Factoidal.RDF.CottasReadOpsExact]
+    note := "named assumption cottasReadOpsExact (file access); capsOfCottas_exact" },
+  { area := "LawfulStore: COTTAS on disk plus delta", dir := "Dataflow"
+    stage := ``LawfulStore.cottasOnDiskDelta, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed
+    ioAssumptions := [``L4Factoidal.RDF.CottasReadOpsExact]
+    note := "named assumption cottasReadOpsExact; overlay_exact" },
+  { area := "LawfulStore: virtual RML source", dir := "Dataflow"
+    stage := ``LawfulStore.virtualRml, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed
+    ioAssumptions := [``L4Factoidal.SPARQL.StoreBackend.RmlPushdownInvisible, ``L4Factoidal.SPARQL.StoreBackend.RmlVirtualIsMaterialised]
+    note := "two open named assumptions (#guards only); capsOfRmlSource_exact" },
+  { area := "LawfulStore: list or index without a set proof", dir := "Dataflow"
+    stage := ``LawfulStore.ofGraph, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed
+    ioAssumptions := [``L4Factoidal.RDF.Graph.KeyNodup]
+    note := "named assumption datasetIsSet (g.KeyNodup) at a call site that carries no proof (harness block diff tools); ofIndexedGraph is the same for the index" },
+  { area := "LawfulDataset: in-memory dataset record, proved", dir := "Dataflow"
+    stage := ``LawfulDataset.indexed, wireIn := "Dataset", wireOut := "DatasetBackend"
+    contract := ``L4Factoidal.Storage.PlannerSoundness.DatasetBackendExact, status := .proved
+    theorems := [``L4Factoidal.Storage.PlannerSoundness.indexedDatasetBackend_exact]
+    note := "premises Dataset.IsSet and distinctNames; SBM11 meets it at the denotation (sbm11_record_denotes)" },
+  { area := "LawfulDataset: dataset handle (CertifiedDataset)", dir := "Dataflow"
+    stage := ``LawfulDataset.ofCertified, wireIn := "CertifiedDataset", wireOut := "DatasetBackend", status := .assumed
+    ioAssumptions := [``L4Factoidal.Storage.PlannerSoundness.distinctNames]
+    theorems := [``LawfulDataset.ofCertified_proved, ``LawfulDataset.distinctNames_of_iris, ``LawfulDataset.ofCertified_backend]
+    note := "no assumption when every graph name is an IRI (ofCertified_proved); else graphNameKeysDistinct. Used by the dataset handles and the queryDataset ops (readNQuadsCertified)" },
+  { area := "LawfulDataset: dataset without a set proof", dir := "Dataflow"
+    stage := ``LawfulDataset.ofDataset, wireIn := "Dataset", wireOut := "DatasetBackend", status := .assumed
+    ioAssumptions := [``L4Factoidal.RDF.Dataset.IsSet, ``L4Factoidal.Storage.PlannerSoundness.distinctNames]
+    theorems := [``LawfulDataset.ofDataset_backend]
+    note := "named assumption datasetIsSet, and graphNameKeysDistinct when a graph name is a blank node; used by storeQuery, storeHandleQuery, the served view (StoreEndpoint.View.of), the CLI and the harness query tools" },
+  { area := "LawfulDataset: one store as the default graph", dir := "Dataflow"
+    stage := ``LawfulDataset.ofDefault, wireIn := "LawfulStore", wireOut := "DatasetBackend"
+    contract := ``L4Factoidal.Storage.PlannerSoundness.DatasetBackendExact, status := .proved
+    theorems := [``backendExact_congr, ``LawfulDataset.ofDefault_backend]
+    note := "keeps the store's named assumptions; the harness block and shard query tools read HDT-arm stores through it" },
+  { area := "Backend BGP evaluator over a LawfulStore", dir := "Dataflow"
+    stage := ``lawfulBgpStage, wireIn := "LawfulStore", wireOut := "SolutionSeq"
+    contract := ``LawfulBgpContract, status := .proved
+    theorems := [``LawfulStore.evalBgp_kequiv, ``LawfulStore.evalBgp_kequiv_of_list, ``LawfulStore.evalBgp_kequiv_of_graph,
+      ``L4Factoidal.Storage.BackendRefinement.evalBgpBackend_kequiv]
+    note := "only premise: the store's named assumptions; reference evalBgp over the rows of the unbounded search, up to order and RDF term equality" },
+  { area := "Backend WHERE evaluator over a LawfulDataset vs Allowed", dir := "Dataflow"
+    stage := ``lawfulWhereStage, wireIn := "LawfulDataset", wireOut := "SolutionSeq"
+    contract := ``LawfulWhereContract, status := .proved
+    theorems := [``LawfulDataset.where_allowed, ``LawfulDataset.graphRel_rows, ``LawfulDataset.namedRel_rows,
+      ``L4Factoidal.Storage.BackendRefinement.evalPatternBackend_allowed]
+    note := "NativeFrag; premises: named assumptions, IRI names of the named backends (data condition, not a store law); over the dataset the record enumerates; the row-object premise was removed with PR 57 (issue 1001)" },
   { area := "COTTAS store", dir := "Cottas"
     wireIn := "Dataset", wireOut := "bytes", status := .missing
     theorems := [``L4Factoidal.Cottas.cotd_dictInjective]
@@ -671,6 +807,39 @@ def registry : List Entry := [
     theorems := [``L4Factoidal.FPP0.checkBundle_rdfsEntails, ``L4Factoidal.FPP0.mem_mergeOf_profile,
       ``L4Factoidal.FPP0.axiomaticTriples_scoped]
     note := "profileAxiomsOk compares graph values, so no hash assumption" },
+  { area := "SoundReasoner: rho-df (RDFS.closureFix; wasm rhoDfClosure, datasetClosure)", dir := "RDFS"
+    stage := ``rhoDfReasoner, wireIn := "Graph", wireOut := "Graph"
+    contract := ``Regime.Entails, status := .proved
+    theorems := [``L4Factoidal.RDF.closure_rhoDfEntails, ``rhoDfReasoner_complete,
+      ``L4Factoidal.RDF.closure_rhoDf_iff]
+    note := "SoundReasoner interface type: soundness against RhoDfEntails is a field; conditional completeness is the theorem rhoDfReasoner_complete; the unconditional statement is the named assumption assumed_completeness" },
+  { area := "SoundReasoner: RDFS (RDFS.fullClosure with the rdf:_n slice; wasm owlClosure RDFS, datasetClosure)", dir := "RDFS"
+    stage := ``rdfsReasoner, wireIn := "Graph", wireOut := "Graph"
+    contract := ``Regime.Entails, status := .proved
+    theorems := [``L4Factoidal.RDF.fullClosure_entails, ``cmpSlice_member]
+    note := "SoundReasoner interface type: soundness against RdfsEntails is a field; the rdf:_n slice is proved to be rdf:_n IRIs; completeness is the named assumption assumed_completeness (open, finding C-1)" },
+  { area := "SoundReasoner: OWL 2 RL (set of OWL.RL.closureFix; wasm owlClosure OWL-RL, datasetClosure)", dir := "OWL"
+    stage := ``owlRlReasoner, wireIn := "Graph", wireOut := "Graph"
+    contract := ``Regime.Entails, status := .proved
+    theorems := [``L4Factoidal.OWL.RL.closure_sound, ``L4Factoidal.OWL.RL.rl_derives_holds,
+      ``L4Factoidal.RDF.Graph.toSet_sublist]
+    note := "SoundReasoner interface type: soundness against OwlRlEntails (Derives, and truth in every interpretation meeting the row conditions) is a field; completeness is the named assumption assumed_completeness (closureFix_saturated, https://github.com/danbri/factoidal/issues/756)" },
+  { area := "LawfulValidator: SHACL (decodeShapesGraph, validateFull; wasm shaclValidate, datasetShaclValidate)", dir := "SHACL"
+    stage := ``shaclValidator, wireIn := "Graph × Graph", wireOut := "ValidationReport"
+    contract := ``CoreConformance, status := .proved
+    theorems := [``L4Factoidal.SHACL.validateWithSparql_sound_core,
+      ``shaclValidator_conforms_iff_passes, ``L4Factoidal.SHACL.validateWithSparql_conforms_iff]
+    note := "LawfulValidator interface type: a conforming report implies SHACL Core conformance is a field; the report is exact against Core plus the two SHACL-SPARQL passes (theorem); exactness against Spec.GraphConformsWithSparql is the named assumption assumed_spec_iff" },
+  { area := "SoundChecker: FPP0 kernel, foundational profile", dir := "Proof"
+    stage := ``foundationalChecker, wireIn := "Bundle", wireOut := "Claim"
+    contract := ``CheckProfile.Holds, status := .proved
+    theorems := [``L4Factoidal.FPP0.checkBundle_merge]
+    note := "SoundChecker interface type: accept implies the claim is derivable from the merge is a field; no named assumption" },
+  { area := "SoundChecker: FPP0 kernel, RDFS profile", dir := "Proof"
+    stage := ``rdfsChecker, wireIn := "Bundle", wireOut := "Claim"
+    contract := ``CheckProfile.Holds, status := .proved
+    theorems := [``L4Factoidal.FPP0.checkBundle_rdfsEntails, ``rdfsChecker_accept]
+    note := "SoundChecker interface type: accept implies RDFS entailment from the merge is a field; no named assumption" },
   { area := "RDFS explanation (selection and target to an FPP0 bundle)", dir := "RDFS"
     stage := ``rdfsExplainStage, wireIn := "Dataset × Triple", wireOut := "Bundle"
     contract := ``ExplainContract, status := .proved
@@ -683,7 +852,21 @@ def registry : List Entry := [
     contract := ``ExplainCheckContract, status := .proved
     theorems := [``rdfsExplainCheck_sound, ``L4Factoidal.FPP0.checkBundle_merge,
       ``L4Factoidal.FPP0.checkBundle_rdfsEntails, ``rdfsEntails_of_closure]
-    note := "one graph artifact G (the union of the selection; one blank-node scope) and body-less source references; no wasm op (https://github.com/danbri/factoidal/issues/615)" }
+    note := "one graph artifact G (the union of the selection; one blank-node scope) and body-less source references; no wasm op (https://github.com/danbri/factoidal/issues/615)" },
+  { area := "SoundChecker: graph bundle, RDFS profile (a description with shared blank nodes)", dir := "Proof"
+    stage := ``rdfsGraphChecker, wireIn := "GraphBundle", wireOut := "GraphClaim"
+    contract := ``CheckProfile.Holds, status := .proved
+    theorems := [``checkGraphRun_sound, ``rdfsEntails_of_derivable_instance,
+      ``rdfsGraphChecker_accept, ``L4Factoidal.RDFS.checkDerivation_sound]
+    tests := ["Dataflow/ExplainGraphTests.lean (tampered bundles)"]
+    note := "SoundChecker interface type: accept implies the sources RDFS-entail the description (RDF 1.1 Semantics 5.3 interpolation lemma over the RDFS derivations, 9.2); the axiom set is computed by the checker; no named assumption (https://github.com/danbri/factoidal/issues/1002)" },
+  { area := "RDFS explanation of a description (sources and a graph to a verdict and a graph bundle)", dir := "RDFS"
+    stage := ``rdfsExplainGraphStage, wireIn := "Dataset × Graph", wireOut := "ExplainGraphResult"
+    contract := ``ExplainGraphContract, status := .proved
+    theorems := [``explainGraphOf_spec, ``checkGraphRun_sound, ``findInstance_none,
+      ``unmatchedIn_no_instance, ``L4Factoidal.RDFS.fullClosureWithProof_graph]
+    tests := ["Dataflow/ExplainGraphTests.lean (entailed description with a shared blank node, noMatch, noJointMapping)"]
+    note := "entailed: the graph checker accepts the returned bundle and RdfsEntails holds (proved); not entailed: no instance of the description in the closure (proved), not RDFS-entailed only under closure completeness (named in the result's assumptions); that every emitted bundle is accepted is tested only; wasm explainGraph (https://github.com/danbri/factoidal/issues/1002)" }
 ]
 
 end L4Factoidal.Dataflow

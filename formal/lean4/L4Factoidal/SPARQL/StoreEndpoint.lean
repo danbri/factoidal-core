@@ -26,11 +26,12 @@ store:
   2. The SERIALISED response: the negotiated results format for SELECT and
      ASK, an RDF syntax for CONSTRUCT and DESCRIBE, 406 when the `Accept`
      header admits none of them.
-  3. Query evaluation through the INDEXED backend of the served view when
+  3. Query evaluation through a `LawfulEvaluator` (`Dataflow/Evaluator.lean`,
+     default `shippedEvaluator`, as `Wasm/Ops/Query.lean`'s
+     `queryParsedDatasetWith`): the INDEXED backend of the served view when
      the query names no dataset of its own, with the reference evaluator as
-     the fallback — the routing `Wasm/Ops/Query.lean`'s
-     `queryParsedDatasetWith` uses for the store handle, including
-     `env.dataset` for EXISTS (CLAUDE.md anti-pattern 34).
+     the fallback, including `env.dataset` for EXISTS (CLAUDE.md
+     anti-pattern 34); `evalPayload_backendOrReference`.
   4. PERSISTENCE. An update or a Graph Store write is executed by the
      reference semantics (`SPARQL.Update.applyUpdateIn`,
      `GraphStoreService.serve`) over the served view, and the CHANGE is
@@ -58,6 +59,8 @@ import L4Factoidal.SPARQL.ResultsJson
 import L4Factoidal.SPARQL.ResultsXml
 import L4Factoidal.SPARQL.ResultsCsvTsv
 import L4Factoidal.SPARQL.StoreDataset
+import L4Factoidal.Dataflow.Store
+import L4Factoidal.Dataflow.Evaluator
 import L4Factoidal.Storage.QuadDataset
 import L4Factoidal.Storage.DeltaLog
 import L4Factoidal.Storage.DeltaLogBytesTheorems
@@ -71,8 +74,8 @@ open L4Factoidal.RDF
 open L4Factoidal.SPARQL
 open L4Factoidal.SPARQL.Protocol
 open L4Factoidal.SPARQL.ProtocolService (Payload datasetClauses withProtocolDataset withUsing)
-open L4Factoidal.SPARQL.StoreDataset (DatasetBackend indexedDatasetBackend
-  runSelectQueryBackendDataset runAskQueryBackendDataset)
+open L4Factoidal.SPARQL.StoreDataset (DatasetBackend indexedDatasetBackend)
+open L4Factoidal.Dataflow (LawfulDataset)
 open L4Factoidal.Storage (DeltaEntry DeltaBatch DeltaGraphName)
 
 /-! ## Configuration and the served view -/
@@ -109,13 +112,16 @@ structure Config where
 /-- The dataset a generation and its replayed delta log denote, and the
 indexed backend over it. `backend` is `none` when a graph name is a blank
 node, which the backend seam cannot represent; queries then take the
-reference evaluator, as `storeHandleQuery` does. -/
+reference evaluator, as `storeHandleQuery` does. The backend is a
+`LawfulDataset` (`Dataflow/Store.lean`, https://github.com/danbri/factoidal/issues/975
+item 2): the record `indexedDatasetBackend ds` with its law, which rests on the
+named assumption `datasetIsSet`. -/
 structure View where
   ds : Dataset
-  backend : Option DatasetBackend
+  backend : Option LawfulDataset
 
 def View.of (ds : Dataset) : View :=
-  { ds, backend := if Storage.QuadDataset.namesAreIris ds then some (indexedDatasetBackend ds) else none }
+  { ds, backend := if Storage.QuadDataset.namesAreIris ds then some (LawfulDataset.ofDataset ds) else none }
 
 /-- What one request does: the response, whether only its header section
 is sent (HEAD), and the change to persist. `commit = some (entries, new)`
@@ -308,32 +314,82 @@ def appendBytes (st : LogState) (entries : List DeltaEntry) : Option (ByteArray 
 
 /-! ## Query evaluation and the results document -/
 
-/-- Evaluate a parsed query over the view: the indexed backend when the
-query names no dataset of its own, else (or when the backend declines) the
-reference evaluator. `env.dataset` is the view's dataset, which §18.6 EXISTS
-evaluates against. -/
-def evalPayload (env : EvalEnv) (view : View) (q : Query) : Payload :=
-  let ds := view.ds
-  let env := { env with dataset := some ds }
-  let backend := if q.dataset.isEmpty then view.backend else none
-  match q.form with
-  | .ask =>
-    match backend.bind (runAskQueryBackendDataset env q) with
-    | some b => .boolean b
-    | none => .boolean (evalAsk env ds q)
-  | .select sel =>
-    match backend.bind (runSelectQueryBackendDataset env q) with
-    | some rows =>
-      let vars := match sel with
-        | .vars items => selectItemVars items
-        | .all => collectVarsInOrder rows
-      .bindings vars rows
-    | none =>
-      let (vars, rows) := evalSelect env ds q
-      .bindings vars rows
-  -- CONSTRUCT and DESCRIBE read the dataset itself, as `queryParsedDatasetWith` does.
-  | .construct _ => .graph (evalConstruct env ds q)
-  | .describe _ => .graph (evalDescribe env ds q)
+/-- The input of a `LawfulEvaluator` (`Dataflow/Evaluator.lean`) for a parsed
+query over the view: the environment reads the view's dataset (§18.6), and the
+backend is the view's `LawfulDataset` record. -/
+def View.evalInput (view : View) (env : EvalEnv) (q : Query) : L4Factoidal.Dataflow.EvalInput :=
+  { env := { env with dataset := some view.ds }, ds := view.ds
+    backend := view.backend.map (·.backend), query := q }
+
+/-- The protocol payload of an evaluator answer. -/
+def payloadOfAnswer : L4Factoidal.Dataflow.Answer → Payload
+  | .ask b => .boolean b
+  | .select vars rows => .bindings vars rows
+  | .graph g => .graph g
+
+/-- Evaluate a parsed query over the view: the `run` of a `LawfulEvaluator`
+(https://github.com/danbri/factoidal/issues/975, item 3), by default
+`shippedEvaluator`, the evaluator of the wasm query ops. So the endpoint
+evaluates every query through a value of the interface type, which carries
+its contract against the foundation's SPARQL 1.1 evaluation.
+`evalPayload_backendOrReference` states what the default computes: the
+indexed backend when the query names no dataset of its own, else (or when the
+backend declines) the reference evaluator; `env.dataset` is the view's
+dataset, which §18.6 EXISTS evaluates against. -/
+def evalPayload (env : EvalEnv) (view : View) (q : Query)
+    (ev : L4Factoidal.Dataflow.LawfulEvaluator := L4Factoidal.Dataflow.shippedEvaluator) :
+    Payload :=
+  payloadOfAnswer (ev.run (view.evalInput env q))
+
+/-- **The default evaluator is the backend-or-reference evaluation** that this
+function computed before it took a `LawfulEvaluator`: the same payload for
+every environment, view and query. -/
+theorem evalPayload_backendOrReference (env : EvalEnv) (view : View) (q : Query) :
+    evalPayload env view q =
+      (let ds := view.ds
+       let env := { env with dataset := some ds }
+       let backend := if q.dataset.isEmpty then view.backend else none
+       match q.form with
+       | .ask =>
+         match backend.bind (·.runAsk env q) with
+         | some b => .boolean b
+         | none => .boolean (evalAsk env ds q)
+       | .select sel =>
+         match backend.bind (·.runSelect env q) with
+         | some rows =>
+           let vars := match sel with
+             | .vars items => selectItemVars items
+             | .all => collectVarsInOrder rows
+           .bindings vars rows
+         | none =>
+           let (vars, rows) := evalSelect env ds q
+           .bindings vars rows
+       | .construct _ => .graph (evalConstruct env ds q)
+       | .describe _ => .graph (evalDescribe env ds q)) := by
+  unfold evalPayload
+  rw [L4Factoidal.Dataflow.shippedEvaluator_run]
+  unfold L4Factoidal.Dataflow.shippedRun L4Factoidal.Dataflow.backendSelect?
+    L4Factoidal.Dataflow.backendAsk? View.evalInput
+  simp only
+  cases hf : q.form with
+  | construct _ => rfl
+  | describe _ => rfl
+  | ask =>
+    cases hd : q.dataset.isEmpty
+    · rfl
+    · cases view.backend with
+      | none => rfl
+      | some L =>
+        simp only [Option.map_some, Option.bind_some, LawfulDataset.runAsk, if_true]
+        cases StoreDataset.runAskQueryBackendDataset { env with dataset := some view.ds } q L.backend <;> rfl
+  | select sel =>
+    cases hd : q.dataset.isEmpty
+    · rfl
+    · cases view.backend with
+      | none => rfl
+      | some L =>
+        simp only [Option.map_some, Option.bind_some, LawfulDataset.runSelect, if_true]
+        cases StoreDataset.runSelectQueryBackendDataset { env with dataset := some view.ds } q L.backend <;> rfl
 
 def srjType : String := "application/sparql-results+json"
 def srxType : String := "application/sparql-results+xml"

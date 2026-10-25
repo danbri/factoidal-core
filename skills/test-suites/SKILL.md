@@ -735,6 +735,15 @@ Rules:
   `RDF.parseNQuadsFast12Or11` reads RDF 1.2 first and RDF 1.1 second: every text
   that either reader accepts is accepted, and a text that both refuse gets the RDF
   1.1 error (`L4Factoidal/RDF/DatasetNormalize.lean`).
+- Language tags that are not well-formed under BCP 47 (owner decision of
+  2026-10-24, CLAUDE.md "Ill-formed BCP 47 language tags"): the reader keeps the
+  triple and warns (class `ill-formed-language-tag`), and every writer writes the
+  tag. A test of this case asserts three things: the triple is kept, the warning
+  names the tag and its position, and the written text holds the tag
+  (`npm/factoidal/test/serialize-turtle.test.js`, the `ill-formed language tag`
+  rows of `formal/lean4/Wasm/native-smoke.sh`). The W3C RDF 1.2 negative test
+  `ntriples-langdir-bad-4` keeps the RDF 1.2 refusal of a subtag of more than 8
+  characters; do not turn that refusal into a warning.
 
 ## Defective test data (owner rule, 2026-10-21)
 

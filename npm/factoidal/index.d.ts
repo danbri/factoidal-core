@@ -184,7 +184,8 @@ export interface ParseDiagnostic {
    * 'unterminated-string', 'bad-literal', 'bad-blank-node',
    * 'bad-prefixed-name', 'bad-directive', 'bad-graph-name', 'rdf12-syntax',
    * 'unclosed-group', 'nesting-limit', 'unexpected-token', 'internal' or
-   * 'too-many-errors'.
+   * 'too-many-errors'. A warning (`Dataset.warnings`) has the class
+   * 'ill-formed-language-tag'.
    */
   class: string;
 }
@@ -250,6 +251,13 @@ export class Dataset implements Iterable<Quad> {
   readonly prefixes: Record<string, string>;
   /** Diagnostics of a `{lenient:true}` parse; else empty. */
   readonly diagnostics: ParseDiagnostic[];
+  /**
+   * Warnings of the parse of text: one per language tag that is not
+   * well-formed under BCP 47 section 2.2.9 (class 'ill-formed-language-tag',
+   * the position of the tag's first character). The reader keeps the triple
+   * and the writers write the tag unchanged. Empty otherwise.
+   */
+  readonly warnings: ParseDiagnostic[];
   /** The parse format tag, when the data was read from text. */
   readonly format: string | undefined;
   /** True when `format` was inferred because the caller gave none. */
@@ -626,6 +634,46 @@ export function coreRdfsCheck(
   data: DataInput,
   options?: { format?: DataFormat; baseIRI?: string }
 ): Promise<{ ok: boolean; fragment: boolean }>;
+
+/** The evidence bundle and verdict of explain(). */
+export interface ExplainResult {
+  profile: 'rdfs';
+  /** true: the checker accepted `bundle`; the sources RDFS-entail the description. */
+  entailed: boolean;
+  bundle: null | {
+    sources: string;
+    description: string;
+    mapping: Array<{ bnode: string; term: string }>;
+    steps: Array<{ rule: string; conclusion: string; premises: number[] }>;
+    support: number[];
+  };
+  /** Named assumptions that `entailed: false` relies on. */
+  assumptions: string[];
+  rejection:
+    | null
+    | { kind: 'noMatch'; index: number; triple: string }
+    | { kind: 'noJointMapping' }
+    | { kind: 'checkerRefused'; reason: string };
+  entailedMeans: string;
+}
+
+/**
+ * Is `description` (blank nodes shared across its triples) RDFS-entailed by
+ * `sources`? Full engine only; the description is default-graph only. Text
+ * inputs are Turtle unless `format` says otherwise.
+ * https://github.com/danbri/factoidal/issues/1002
+ */
+export function explain(
+  sources: DataInput,
+  description: DataInput,
+  options?: {
+    profile?: 'rdfs';
+    format?: DataFormat;
+    baseIRI?: string;
+    sourcesFormat?: DataFormat;
+    descriptionFormat?: DataFormat;
+  }
+): Promise<ExplainResult>;
 
 /** Literature-name alias for coreRdfsClosure (ρdf). */
 export function rhoDfClosure(
@@ -1306,6 +1354,7 @@ export function capabilities(): Promise<{
   shacl: boolean;
   shex: boolean;
   owlClosure: boolean;
+  explain: boolean;
   tableau: boolean;
   rml: boolean;
   csvw: boolean;

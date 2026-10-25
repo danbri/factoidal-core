@@ -113,6 +113,22 @@ def readInput (pathOpt : Option String) : IO (Except String String) := do
       catch e =>
         pure (.error s!"{path}: {e}")
 
+/-- Write reader warnings to standard error, one line each
+(`l4factoidal: warning: LINE:COLUMN: CLASS: MESSAGE`). The warnings are the
+language tags that are not well-formed under BCP 47: the reader keeps the
+triple (owner decision of 2026-10-24, `Syntax/LangTagWarnings.lean`). -/
+def printWarnings (ws : List Diagnostic) : IO Unit := do
+  if ws.isEmpty then return
+  let err ← IO.getStderr
+  for d in ws do err.putStrLn s!"l4factoidal: warning: {d.render}"
+  err.flush
+
+/-- `parseTextToDataset`, and the warnings of the read on standard error. -/
+def parseTextWarn (text formatTag baseIri : String) : IO (Except String Dataset) := do
+  let r := Ops.parseTextToDataset text formatTag baseIri
+  if let .ok ds := r then printWarnings (Ops.readerWarnings text formatTag ds)
+  pure r
+
 /-- Read `pathOpt` under `formatTag`/`baseIri` via the SAME
 `parseTextToDataset` the dispatch ops use — the input path every
 RDF-consuming verb below shares (`query`, `update`, `canonicalize`,
@@ -132,7 +148,7 @@ def readDataset (pathOpt : Option String) (formatTag baseIri : String) :
       | .ok text => return Ops.parseTextToDataset text "nquads" baseIri
   match ← readInput pathOpt with
   | .error e => pure (.error e)
-  | .ok text => pure (Ops.parseTextToDataset text formatTag baseIri)
+  | .ok text => parseTextWarn text formatTag baseIri
 
 /-- `readDataset`, with the proof that the dataset is a set of quads
 (`Ops.parseTextToDatasetSet`): the verbs that hand the dataset to an `Ops.*OfSet`
@@ -148,7 +164,10 @@ def readDatasetSet (pathOpt : Option String) (formatTag baseIri : String) :
       | .ok text => return Ops.parseTextToDatasetSet text "nquads" baseIri
   match ← readInput pathOpt with
   | .error e => pure (.error e)
-  | .ok text => pure (Ops.parseTextToDatasetSet text formatTag baseIri)
+  | .ok text =>
+    let r := Ops.parseTextToDatasetSet text formatTag baseIri
+    if let .ok ⟨ds, _⟩ := r then printWarnings (Ops.readerWarnings text formatTag ds)
+    pure r
 
 /-- Resolve a `--foo FILE` / `--foo-string TEXT` pair (exactly one of
 the two) into the text it names — shared by `query` and `update`.
@@ -371,9 +390,11 @@ def streamLenientFile (path : String) (mode : Mode) (tag base : String) (emit : 
     match ← mk with
     | .error e => pure (some (.error e))
     | .ok feed0 =>
+      let scan ← IO.mkRef ({} : LangScanState)
       let walked ← IO.FS.withFile path .read fun h =>
         forChunksOf chunk h (fun (fd : LenientFeed × Nat) => fd.1.stopped)
           (fun (fd : LenientFeed × Nat) bytes => do
+            scan.modify (·.feed bytes false)
             match fd.1.feed bytes with
             | .error e => pure (.error e)
             | .ok (f', out) =>
@@ -389,6 +410,9 @@ def streamLenientFile (path : String) (mode : Mode) (tag base : String) (emit : 
           | .error e => pure (some (.error e))
           | .ok (out, count, _) =>
               printDiagnostics out.diags
+              -- Warnings, as JSON lines of class `ill-formed-language-tag`; they
+              -- do not change the exit status.
+              printDiagnostics (warningsOfFound ((← scan.get).feed ByteArray.empty true).found)
               printLines out.lines
               pure (some (.ok (count, n + out.diags.length)))
 
@@ -438,6 +462,7 @@ def parseLenientCmd (s : Scanned) : IO UInt32 := do
             | .error f => pure (.error f.message)
             | .ok (o, ds) =>
                 printDiagnostics ds
+                printDiagnostics (Ops.readerWarnings text format o.ds)
                 if emit then printLines [Dataset.toCanonicalNQuads o.ds]
                 pure (.ok (Ops.datasetQuadCount o.ds, ds.length))
   match result with
@@ -456,6 +481,12 @@ def parseCountOutput (text format base : String) : Except String String :=
   match Ops.parseTextToDataset text format base with
   | .error msg => .error msg
   | .ok ds => .ok (toString (Ops.datasetQuadCount (normalizeDataset ds)))
+
+/-- `parseCountOutput` and the warnings of the read. -/
+def parseCountWithWarnings (text format base : String) : Except String (String × List Diagnostic) :=
+  match Ops.parseTextToDataset text format base with
+  | .error msg => .error msg
+  | .ok ds => .ok (toString (Ops.datasetQuadCount (normalizeDataset ds)), Ops.readerWarnings text format ds)
 
 /-- The same text read back out of the envelope: what `parse` printed before
 2026-10-10, kept so the guards below can compare the two. -/
@@ -601,6 +632,9 @@ def driveSource {α : Type} (path : String) (fmt : RdfFormat) (mode : Mode) (bas
   let rd0 ← match Source.ByteReader.init Source.withJsonLd fmt mode baseOpt bnodePrefix init with
     | .ok r => pure r
     | .error m => throw (IO.userError s!"{path}: {m}")
+  -- The positions of the language tags (`Syntax.scanLangTags`), walked over the
+  -- same chunks; their warnings are written when the read succeeds.
+  let scan ← IO.mkRef ({} : LangScanState)
   let failParse (e : ParseError) : IO StrictStop := do
     if reportParse then
       IO.eprintln (fmtParseError e)
@@ -613,6 +647,7 @@ def driveSource {α : Type} (path : String) (fmt : RdfFormat) (mode : Mode) (bas
         -- hold the only reference to the accumulator, or `addQuadFast` copies
         -- its hash map at the first quad of every chunk (measured: 400,000
         -- N-Triples counted in 8.6 s of CPU, 100,000 in 1.25 s).
+        scan.modify (·.feed bytes false)
         match st.1 with
         | none => pure (.ok (none, some .failed))
         | some rd =>
@@ -632,7 +667,9 @@ def driveSource {α : Type} (path : String) (fmt : RdfFormat) (mode : Mode) (bas
     | .ok reader =>
       match reader.finish step with
       | .error e => pure (.error (← failParse e))
-      | .ok acc => pure (.ok acc)
+      | .ok acc =>
+          printWarnings (warningsOfFound ((← scan.get).feed ByteArray.empty true).found)
+          pure (.ok acc)
 
 /-- Write the triples a chunk completed that no earlier triple repeats (newest
 first in `fresh`, `StreamSet.lean`) and empty `fresh`, keeping the seen graph;
@@ -720,11 +757,11 @@ def strictWhole (path format base : String) (emit : Bool) (printed : Nat) (turtl
   | .error e => IO.eprintln e; pure 1
   | .ok text =>
     if !emit then
-      match parseCountOutput text format base with
+      match parseCountWithWarnings text format base with
       | .error msg => IO.eprintln msg; pure 1
-      | .ok n => IO.println n; pure 0
+      | .ok (n, ws) => printWarnings ws; IO.println n; pure 0
     else
-    match Ops.parseTextToDataset text format base with
+    match ← parseTextWarn text format base with
     | .error msg => IO.eprintln msg; pure 1
     | .ok ds =>
       if printed == 0 then
@@ -820,7 +857,12 @@ def outDocument (fmt : RdfFormat) (ds : Dataset) : Except String String :=
   | .nquads => .ok (Dataset.toCanonicalNQuads ds)
   | .turtle => Ops.serializeTurtleTextOf ds
   | _ =>
-      (Sink.serializeDataset Sink.withJsonLd fmt .rdf12 ds).mapError fun e =>
+      -- RDF 1.2 mode, or RDF 1.1 mode when a language tag has a subtag that the
+      -- RDF 1.2 grammar refuses (a dataset read as RDF 1.1, which then has no
+      -- RDF 1.2 term): the writer writes the tag the reader kept (owner decision
+      -- of 2026-10-24, CLAUDE.md "Ill-formed BCP 47 language tags").
+      let v : Mode := if (Sink.Graph.badLangTag? .rdf12 (Sink.flatten ds)).isSome then .rdf11 else .rdf12
+      ((L4Factoidal.Dataflow.writers Sink.withJsonLd L4Factoidal.RDF.Source.withJsonLd fmt).run v {} ds).mapError fun e =>
         s!"l4factoidal parse: cannot write {formatName fmt}: {e}"
 
 /-- Print `ds` in syntax `fmt`: the document and a line break to standard output,
@@ -967,9 +1009,9 @@ def parseCmd (args : List String) : IO UInt32 := do
           -- of `parse` on a 20,000-triple N-Triples file (survey of 2026-10-10,
           -- docs/designissues/2026-10-10-lean-vs-fstar-performance.md). The
           -- printed number and the error text are the ones the envelope carried.
-          match parseCountOutput text format base with
+          match parseCountWithWarnings text format base with
           | .error msg => IO.eprintln msg; pure 1
-          | .ok n => IO.println n; pure 0
+          | .ok (n, ws) => printWarnings ws; IO.println n; pure 0
       | some fmt =>
         -- The text is printed as the op computes it, without the JSON
         -- envelope `parseToDatasetJson` / `serializeTurtle` wrap it in and
@@ -978,7 +1020,7 @@ def parseCmd (args : List String) : IO UInt32 := do
         -- `--out turtle` is `serializeTurtle` on that text
         -- (`Ops.serializeTurtleTextOf_eq`); the other syntaxes are written by
         -- the serialiser layer (`outDocument`).
-        match Ops.parseTextToDataset text format base with
+        match ← parseTextWarn text format base with
         | .error msg => IO.eprintln msg; pure 1
         | .ok ds => writeOut fmt ds
 
@@ -1009,7 +1051,7 @@ def queryCmd (args : List String) : IO UInt32 := do
         let answer :=
           if s.hasBool "--sparql12" then
             withOpsSetDataset .rdf12 ds hds (fun d =>
-              queryParsedDatasetWith d (some (L4Factoidal.SPARQL.StoreDataset.indexedDatasetBackend d)) sparql
+              queryParsedDatasetWith d (some (L4Factoidal.Dataflow.LawfulDataset.ofDataset d)) sparql
                 (version := .v12) (base := queryBase) (now := some now))
           else Ops.queryDatasetOfSet ds hds sparql queryBase (some now)
         match ← parseEnvelope answer with

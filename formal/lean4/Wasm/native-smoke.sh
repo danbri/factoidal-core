@@ -179,6 +179,51 @@ args "$TMP/ser-ttl.json" "$NQ"
 check "serializeTurtle" serializeTurtle "$TMP/ser-ttl.json" \
   'r["ok"] is True and "@prefix" in r["turtle"] and "<http://e/>" in r["turtle"]'
 
+# A language tag that is not well-formed under BCP 47 (owner decision of
+# 2026-10-24, CLAUDE.md "Ill-formed BCP 47 language tags"): the readers keep the
+# triple and give a "warnings" member (tag, line, column, class); the writers
+# write the tag. An envelope with no warning has no "warnings" member.
+LONGTAG='<http://e/s> <http://e/p> "v"@abcdefghijk .
+'
+args "$TMP/lt-open.json" "$LONGTAG" "ntriples" ""
+check "parseToDatasetJson ill-formed language tag: kept, one warning" parseToDatasetJson "$TMP/lt-open.json" \
+  'r["ok"] is True and r["count"] == 1 and "@abcdefghijk" in r["nquads"]
+   and [(w["class"], w["line"], w["column"], w["offset"]) for w in r["warnings"]] == [("ill-formed-language-tag", 1, 31, 30)]
+   and "\"abcdefghijk\"" in r["warnings"][0]["message"]'
+args "$TMP/lt-lenient.json" "$LONGTAG" "ntriples" "" '{"lenient":true}'
+check "parseDocument lenient ill-formed language tag: warning, no diagnostic" parseDocument "$TMP/lt-lenient.json" \
+  'r["ok"] is True and r["diagnostics"] == [] and len(r["warnings"]) == 1'
+args "$TMP/lt-good.json" '<http://e/s> <http://e/p> "v"@de-CH-1901 .' "ntriples" ""
+check "parseToDatasetJson well-formed language tag: no warnings member" parseToDatasetJson "$TMP/lt-good.json" \
+  'r["ok"] is True and "warnings" not in r'
+args "$TMP/lt-ttl.json" "@prefix e: <http://e/> . e:s e:p 'x'@en-12, \"\"\"y\"\"\"@zh-Hant-TW ." "turtle" ""
+check "parseToDatasetJson Turtle ill-formed tag en-12: one warning, the well-formed tag none" parseToDatasetJson "$TMP/lt-ttl.json" \
+  'r["ok"] is True and r["count"] == 2 and [w["message"].split("\"")[1] for w in r["warnings"]] == ["en-12"]'
+args "$TMP/lt-12.json" "$LONGTAG" "nt12" ""
+check "parseToDatasetJson RDF 1.2 subtag of 11 characters: refused (W3C ntriples-langdir-bad-4)" parseToDatasetJson "$TMP/lt-12.json" \
+  'r["ok"] is False'
+args "$TMP/lt-ser-nq.json" "$LONGTAG"
+check "serializeNQuads ill-formed language tag: written" serializeNQuads "$TMP/lt-ser-nq.json" \
+  'r["ok"] is True and "\"v\"@abcdefghijk" in r["nquads"]'
+args "$TMP/lt-ser-ttl.json" "$LONGTAG"
+check "serializeTurtle ill-formed language tag: written" serializeTurtle "$TMP/lt-ser-ttl.json" \
+  'r["ok"] is True and "\"v\"@abcdefghijk" in r["turtle"]'
+python3 - "$TMP/lt-handles.json" "$LONGTAG" <<'PYEOF'
+import json, sys
+seq = [
+  ["datasetOpen",      [sys.argv[2], "ntriples", ""]],
+  ["datasetSerialize", ["h1", "turtle"]],
+  ["datasetSerialize", ["h1", "ntriples"]],
+  ["datasetSerialize", ["h1", "nquads"]],
+  ["datasetSerialize", ["h1", "trig"]],
+  ["datasetClose",     ["h1"]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+PYEOF
+checkseq "datasetOpen ill-formed language tag: warning; datasetSerialize writes the tag in four syntaxes" "$TMP/lt-handles.json" \
+  'rs[0]["ok"] is True and len(rs[0]["warnings"]) == 1
+   and all(r["ok"] is True and "@abcdefghijk" in json.dumps(r) for r in rs[1:5])'
+
 # --- Query family -----------------------------------------------------
 DATA='<http://e/a> <http://e/p> <http://e/b> .
 '

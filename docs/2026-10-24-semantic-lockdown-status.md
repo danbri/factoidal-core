@@ -22,7 +22,8 @@ Owner steer, 2026-10-24 (verbatim): "We want all our parsers, all and any data a
 | FOUNDATION manifest | — (the declaration) | [`foundation/manifest.toml`](../foundation/manifest.toml), version 0 |
 | Foundation import gate | a foundation module that imports an implementation module; a level that imports a higher level | [`tools/foundation-gate.py`](../tools/foundation-gate.py) |
 | Entry-point gate | an npm export, wasm op or CLI command with no registered Lean stage | [`tools/entrypoint-gate.py`](../tools/entrypoint-gate.py) |
-| Ratchets | either violation list growing, or listing an entry that is gone | `foundation/allow-imports.txt`, `foundation/unbound-entrypoints.txt` |
+| Assumption gate | a named assumption (inventory `IO assumptions`, or a field named `assumed_*`) not listed in `foundation/assumptions.txt`; a pinned `proved` stage that is no longer proved | [`tools/assumption-gate.py`](../tools/assumption-gate.py) |
+| Ratchets | either violation list growing, or listing an entry that is gone | `foundation/allow-imports.txt`, `foundation/unbound-entrypoints.txt`, `foundation/assumptions.txt` (4 named assumptions), `foundation/proved-stages.txt` (60 stages) |
 | Dataflow inventory | a registry change without the regenerated table | [`docs/dataflow-inventory.md`](dataflow-inventory.md) |
 
 All of them run in `tests/dataflow/run.sh`, which the Linux Lean job of `danbri/factoidal-builds` runs after `lake build` ([factoidal-builds PR 2](https://github.com/danbri/factoidal-builds/pull/2)). A failure stops the release sets.
@@ -87,7 +88,7 @@ The rule: each kind of component has ONE interface type whose contract against t
 
 ## 6. Next steps
 
-1. Merge `LawfulStore`; add the assumption-count ratchet (item 4).
+1. Merge `LawfulStore` (the assumption-count ratchet, item 4, is `tools/assumption-gate.py`).
 2. Interface types for the evaluator, then writers, reasoners, validators, checker.
 3. State the end-to-end theorem over `RdfReader`, `LawfulStore` and the evaluator type (item 5).
 4. Shrink the two ratchet lists: move index helpers out of foundation modules; bind `fn.query`, `serialize`, CLI `query`.

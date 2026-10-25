@@ -848,6 +848,39 @@ https://github.com/danbri/factoidal/issues/914 (moving resources).
   165 against the baseline 163, and "Verify Lean 4 corpus" on main was red for
   about a day (https://github.com/danbri/factoidal/issues/965).
 
+### Ill-formed BCP 47 language tags (owner, 2026-10-24)
+
+Owner, 2026-10-24, verbatim answer "B." to the question on
+https://github.com/danbri/factoidal/issues/1004 and
+https://github.com/danbri/factoidal/issues/1005, where option (b) was: "Jena
+style: the readers keep the triple and warn, and the writers write the tag
+unchanged."
+
+Specifications: RDF 1.2 Concepts §3.4 says a language tag MUST be well-formed
+per BCP 47 §2.2.9; RDF 1.2 N-Triples §6.4 leaves "Error detection, reporting,
+and recovery" to implementors; the RDF-star WG thread of July 2025
+(https://lists.w3.org/Archives/Public/public-rdf-star-wg/2025Jul/0005.html)
+lists the options; Apache Jena keeps the triple and warns.
+
+Rule, in Lean, on every surface:
+
+- A reader that meets a language tag which its concrete-syntax grammar reads
+  (LANGTAG [144s] of RDF 1.1, LANG_DIR of RDF 1.2) and which is not
+  well-formed per BCP 47 §2.2.9 keeps the triple and gives a warning that names
+  the tag and its position (class `ill-formed-language-tag`): the `warnings`
+  member of the `datasetOpen`, `parseToDatasetJson` and `parseDocument`
+  envelopes, `Dataset.warnings` in npm, standard error in the CLI.
+- Every writer writes the tag unchanged (after its case normalisation) and
+  does not refuse it.
+- One predicate: `RDF.isWellFormedLangTag` (`RDF/LangTag.lean`). The positions
+  come from `Syntax/LangTagWarnings.lean`.
+- Exception, decided by the W3C suite: the RDF 1.2 N-Triples negative syntax
+  test `ntriples-langdir-bad-4` (`"Hello"@cantbethislong`) requires the RDF 1.2
+  readers to refuse a subtag of more than 8 characters. That case stays a
+  syntax error in RDF 1.2 mode, and an RDF 1.2 writer refuses to write it
+  (`langTagWritable`), because no RDF 1.2 reader reads the text. In RDF 1.1
+  mode it is read with a warning and written.
+
 ## Reading owner steers: prioritization is not prohibition
 
 The owner usually steers this project from a phone, between other

@@ -86,6 +86,7 @@ export const shexValidate = api.shexValidate;
 export const owlClosure = api.owlClosure;
 export const coreRdfsClosure = api.coreRdfsClosure;
 export const coreRdfsCheck = api.coreRdfsCheck;
+export const explain = api.explain;
 export const rdfsPlusClosure = api.rdfsPlusClosure;
 export const rhoDfClosure = api.rhoDfClosure;
 export const rhoDfFragmentCheck = api.rhoDfFragmentCheck;

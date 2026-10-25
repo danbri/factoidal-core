@@ -113,3 +113,44 @@ no longer exists or is now mapped, or when the count differs from
 
 The bound status of an entry is the weakest status of its stages
 (`tested` < `assumed` < `proved`).
+
+## The assumption gate
+
+`tools/assumption-gate.py` (issue 975, item 4) counts named assumptions and
+pins proved stages. No Lean build is needed; it reads
+`docs/dataflow-inventory.md` (generated from the Lean registry, drift-checked
+before the gate runs) and the `.lean` sources.
+
+- `io:<Name>`: each name in the "IO assumptions" column of the inventory.
+- `field:<Module>.<Struct>.<name>`: each structure or class field whose name
+  starts with `assumed_`. **Naming rule for interface types** (`LawfulStore`,
+  `LawfulEvaluator`, `RdfWriter`, `SoundReasoner`, `LawfulValidator`,
+  `SoundChecker`): a contract field that is not proved is named
+  `assumed_<what>`. This is the one regex-based input (the registry does not
+  export interface-type fields); it strips comments and takes the nearest
+  preceding `structure` or `class` as the owner.
+
+Each counted assumption needs a line `id  # reason` in `assumptions.txt`;
+`# max-entries: N` must equal the line count. `proved-stages.txt` pins the
+registry stages with status `proved` (`--pin` rewrites it). A pinned stage
+that is no longer proved fails the gate unless `assumptions.txt` has
+`demoted:<stage>  # reason`. A newly proved stage is only reported as
+"not pinned"; run `--pin` to add it.
+
+`name:<Ctor>  uses=N` lines: the data-access interface (`LawfulStore`,
+`LawfulDataset`, `Dataflow/Store.lean`) has the field
+`assumed_contracts : List Assumption`; each `Assumption` has a name from
+`inductive AssumptionName`. The file has one `name:` line per constructor,
+with `uses=N` (the places in `formal/lean4` that build an assumption of that
+name). The gate fails when a count in the tree differs from its line. It also
+fails when a file under `formal/lean4/Wasm` or `formal/lean4/Harness` calls the
+backend evaluator over a bare `DatasetBackend` (`runSelectQueryBackendDataset`,
+`runAskQueryBackendDataset`, `evalPatternBackend`, `evalBgpBackend`,
+`indexedDatasetBackend`): consumers go through `LawfulDataset.runSelect` /
+`runAsk` or `LawfulStore`. A new use of an assumption therefore changes
+`assumptions.txt` in the same PR, with a reason.
+
+```
+python3 -I tools/assumption-gate.py --list               # the gate on this tree
+python3 -I tests/foundation/test_assumption_gate.py      # the gate's own tests
+```
