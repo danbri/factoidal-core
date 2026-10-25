@@ -135,7 +135,7 @@ Changes: [CHANGELOG.md](CHANGELOG.md).
 ```console
 $ npx factoidal serve --file data.ttl /ds          # SPARQL endpoint at /ds/sparql
 $ npx factoidal serve --tdb2 DIR /ds               # serve a Jena TDB2 database
-$ npx factoidal pack data.ttl store/gen-1 && npx factoidal activate store gen-1
+$ npx factoidal pack data.ttl store/gen-1 && npx factoidal activate store gen-1   # IBK5 quad blocks
 $ npx factoidal query store 'SELECT * WHERE { ?s ?p ?o } LIMIT 5'
 $ npx factoidal query "$(npx factoidal sample-store)" 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }'
 $ npx factoidal lws-serve DIR --issuer IRI         # Linked Web Storage
