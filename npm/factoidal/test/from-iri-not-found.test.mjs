@@ -41,3 +41,12 @@ xfail('FROM / FROM NAMED with an IRI not in the dataset gives a dataset-iri-not-
     assert.deepEqual(r.warnings.map((w) => [w.class, w.clause, w.iri]),
       [['dataset-iri-not-found', 'FROM NAMED', 'http://e/nope']]);
   });
+
+xfail('query() gives the dataset-iri-not-found warning as rows.warnings', ISSUE, async () => {
+  const ds = await f.parse(NQ, { format: 'nquads' });
+  const rows = await f.query(ds, 'SELECT ?o FROM <http://e/g1> FROM NAMED <http://e/nope> WHERE { ?s ?p ?o }');
+  assert.deepEqual(rows.map((b) => b.get('o').value), ['x']);
+  assert.ok(Array.isArray(rows.warnings), 'rows.warnings is an array');
+  assert.deepEqual(rows.warnings.map((w) => [w.class, w.clause, w.iri]),
+    [['dataset-iri-not-found', 'FROM NAMED', 'http://e/nope']]);
+});
