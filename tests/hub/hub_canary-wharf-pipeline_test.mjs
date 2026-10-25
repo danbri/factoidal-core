@@ -32,6 +32,23 @@ test('canary-wharf: every named cell evaluates', async () => {
   assert.deepEqual(ev.rows.map((r) => r[0]), ['turtleDocumentReader', 'shippedEvaluator']);
 });
 
+// The metres per level come from the 24 kgx buildings with both a height and
+// a number of levels: a least-squares fit through the origin, per use.
+test('canary-wharf: metres per level, fitted per use and per height band', async () => {
+  assert.equal((await post.value('calibration')).size, 90);
+  assert.equal((await post.value('calibrationPoints')).length, 24);
+  assert.deepEqual(await post.value('perLevel'), { other: 4.56, residential: 3.42 });
+  const bands = await post.value('perUseAndHeight');
+  assert.deepEqual(bands.map((r) => ['use', 'band', 'buildings', 'metresPerLevel'].map((v) => r.get(v).value).join(' | ')), [
+    'other | 100 m or more | 9 | 4.58',
+    'other | under 100 m | 9 | 4.47',
+    'residential | 100 m or more | 2 | 3.44',
+    'residential | under 100 m | 4 | 3.32',
+  ]);
+  const err = (await post.value('estimateError'))[0];
+  assert.deepEqual([err.get('flat3point5').value, err.get('byUse').value], ['21.9', '8.6']);
+});
+
 test('canary-wharf: the kgx extract, heights measured or estimated, towers classified', async () => {
   assert.equal((await post.value('buildingsCheck')).wellTyped, true);
   const run = await post.value('buildingsRun');
@@ -42,11 +59,11 @@ test('canary-wharf: the kgx extract, heights measured or estimated, towers class
   assert.equal(classify.graph.size, 84);
   const towers = await post.value('towers');
   assert.deepEqual(towers.map((r) => row(r, ['name', 'height', 'estimated'])), [
-    'Landmark Pinnacle | 262.5 | true',
+    'Landmark Pinnacle | 256.5 | true',
     'One Canada Square | 235 | false',
     'One Park Drive | 205 | false',
-    'Newfoundland | 203.0 | true',
     '8 Canada Square | 199.5 | false',
+    'Newfoundland | 198.36 | true',
   ]);
 });
 
@@ -66,8 +83,8 @@ test('canary-wharf: one named graph per source, and the walking-distance join', 
   assert.deepEqual(answer.map((r) => row(r, ['tower', 'height', 'estimated', 'lines', 'entrances'])), [
     'One Canada Square | 235 | false | Elizabeth, DLR, Jubilee | 5',
     'One Park Drive | 205 | false | Jubilee, DLR | 3',
-    'Newfoundland | 203.0 | true | DLR | 1',
     '8 Canada Square | 199.5 | false | Elizabeth, DLR, Jubilee | 5',
+    'Newfoundland | 198.36 | true | DLR | 1',
   ]);
   const answerRun = await post.value('answerRun');
   assert.equal(answerRun.proved, true);
