@@ -139,7 +139,7 @@ xfail('canary-wharf: a CONSTRUCT node can be followed by another node',
 
 xfail('canary-wharf: npm packs the dataset into an SBM11 generation',
   'https://github.com/danbri/factoidal/issues/1009', async () => {
-    assert.ok((await post.value('sbm11PackInNpm')).length > 0);
+    assert.equal((await post.value('sbm11Pack')).packed, true);
   });
 
 xfail('canary-wharf: run() gives its evidence as an RDF graph',

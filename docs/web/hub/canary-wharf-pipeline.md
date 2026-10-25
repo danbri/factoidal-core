@@ -776,8 +776,10 @@ nquadsSummary = {
 An SBM11 generation (the Shardborough store) holds such a dataset on disk,
 with its named graphs; kgx itself is served from a Shardborough store. In
 @factoidal/core {{ factoidalRelease.version }} the package can open and
-query an SBM11 generation (`openSbm11`), but it cannot pack one: packing
-SBM11 from npm is
+query an SBM11 generation (`openSbm11`), but it cannot pack one. Packing in
+memory (`packSbm11(text, { syntax })`, which gives a `Map` of file name to
+bytes, and `mapReader` to query those files) is on `main` and comes with
+the next wasm build: stage 2 of
 [issue 1009](https://github.com/danbri/factoidal/issues/1009), with its
 stages in
 [docs/designissues/2026-10-24-sbm11-in-npm.md](https://github.com/danbri/factoidal-core/blob/main/docs/designissues/2026-10-24-sbm11-in-npm.md)
@@ -796,5 +798,13 @@ the same four rows, and the "data and record in one query" above with the
 same four rows, both on its id path (`path=ids`).
 
 ```observable-js
-sbm11PackInNpm = Object.keys(Factoidal).filter((k) => /pack/i.test(k) && /sbm11/i.test(k))
+sbm11Pack = {
+  if (typeof Factoidal.packSbm11 !== 'function') return ({ packed: false, reason: `@factoidal/core ${Factoidal.version} has no packSbm11` });
+  try {
+    const files = await Factoidal.packSbm11(nquadsRun.evidence[0].artefact.text, { syntax: 'nquads' });
+    return ({ packed: true, files: files.size, bytes: [...files.values()].reduce((n, b) => n + b.length, 0) });
+  } catch (e) {
+    return ({ packed: false, reason: e.code || e.message });
+  }
+}
 ```

@@ -26,7 +26,7 @@ import { buildApi } from './lib/api.mjs';
 import { entryFromEngine } from './lib/lean-entry.mjs';
 import { browserEngine } from './lib/browser-engine.mjs';
 import { indexedDbDeltaLogStore } from './lib/delta-log-hosts.mjs';
-import { sbm11Api, registerSbm11Source } from './lib/sbm11.mjs';
+import { sbm11Api, registerSbm11Source, mapReader } from './lib/sbm11.mjs';
 import { lwsSbm11Reader } from './lib/sbm11-lws.mjs';
 
 const l4Engine = browserEngine('l4factoidal', new URL('./l4-assets/', import.meta.url).href);
@@ -65,8 +65,12 @@ const api = buildApi({
 // (lib/sbm11.mjs; https://github.com/danbri/factoidal/issues/1009). In a
 // browser every source needs a registered synchronous reader, for example
 // over OPFS FileSystemSyncAccessHandle in a dedicated worker.
-export const openSbm11 = sbm11Api(loadEngine).openSbm11;
-export { registerSbm11Source };
+const sbm11 = sbm11Api(loadEngine);
+export const openSbm11 = sbm11.openSbm11;
+// Pack a document into the files of an SBM11 generation in memory, and a
+// reader over such files (issue 1009 stage 2).
+export const packSbm11 = sbm11.packSbm11;
+export { registerSbm11Source, mapReader };
 // A reader of an SBM11 generation held as LWS resources (issue 1010 KR3). In
 // a browser worker its default transport is a synchronous XMLHttpRequest.
 export { lwsSbm11Reader };

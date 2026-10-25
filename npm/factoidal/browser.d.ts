@@ -41,6 +41,8 @@ export {
   queryStore,
   listStores,
   openSbm11,
+  packSbm11,
+  mapReader,
   registerSbm11Source,
   lwsSbm11Reader,
   deltaLogOpen,
