@@ -1180,11 +1180,36 @@ Turtle, TriG and RDF/XML writers, `rdfcStage`, and `rdfsExplainGraphStage`
 (`{description}`). `pipe(...nodes)` composes nodes and pipelines left to
 right. `run(pipeline, input)` takes a wire value `{graph, evidence}` or the
 graph itself, and answers `{graph, evidence, assumptions}`: `evidence` gets
-one record `{stage, status, contract, assumptions, artefact}` per node
-(`artefact`: the explain result, the SHACL report, the written text, ...),
-and `assumptions` is the union of the named assumptions of every node the
-value passed. A run with a node whose stage is `missing` (no contract, no
-suite) or not bound rejects with a `FactoidalError` before any node runs.
+one record `{stage, status, contract, assumptions, checked, artefact}` per
+node (`artefact`: the explain result, the SHACL report, the written text,
+...), and `assumptions` is the union of the named assumptions of every node
+the value passed. `checked` is true exactly when the stage's status is
+`proved`. `proved` on the result is true exactly when every record is
+checked, and `uncheckedSteps` lists the stage names of the records that are
+not. A run with a node whose stage is `missing` (no contract, no suite) or
+not bound rejects with a `FactoidalError` before any node runs.
+
+`run(pipeline, input, { unchecked: true })` is the explicit opt-in to run
+stages that are not `proved` (`tested`, `assumed`) and `missing` stages that
+this package has a function for. The option is on `run`, not on `node`, so
+one call site decides, and a pipeline built by other code cannot opt in on
+its own. A step that ran under the opt-in and is not checked has
+`unchecked: true` and a `reason` in its record (the status and the named
+assumptions, or `no contract`). A stage with no package function still
+rejects with `op.unknown`. The result's `proved` stays false whenever such a
+step ran: the path has no guarantee for it, and the result says so.
+
+```js
+import { node, pipe, run } from "@factoidal/core";
+
+const ttl = "<http://example.org/a> <http://example.org/p> <http://example.org/b> .";
+const viaWriter = pipe(await node("turtleDocumentReader"), await node("turtleDocumentWriter"));
+const out = await run(viaWriter, ttl, { unchecked: true });
+console.log(out.proved);         // false: the writer is not proved
+console.log(out.uncheckedSteps); // ["turtleDocumentWriter"]
+console.log(out.evidence[1].reason);
+```
+
 Design: [issue 1002](https://github.com/danbri/factoidal/issues/1002).
 
 ## API
