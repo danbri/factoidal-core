@@ -68,6 +68,10 @@ The same components are nodes you can compose. A value on a wire is
 `{graph, evidence}`; each node adds one evidence record; the result lists the
 union of the named assumptions of the nodes, so a pipeline says exactly what
 its answer depends on.
+`pipe()` and `run()` get the type check and that union from the engine
+(op `pipelineCheck`); the theorem `Pipeline.guarantee_sound` gives the
+guarantee of every well-typed pipeline, and `run()` refuses one that is not
+well typed unless `{ unchecked: true }`.
 
 ```js
 import { stages, node, pipe, run } from "@factoidal/core";
