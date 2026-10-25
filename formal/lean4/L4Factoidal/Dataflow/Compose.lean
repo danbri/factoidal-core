@@ -289,12 +289,14 @@ theorem LawfulDataset.assumed_of_proved {S : LawfulDataset} (h : S.Proved) :
 /-! ## Sources -/
 
 /-- **The output of a source**: a lawful dataset record and a set dataset of
-the same denotation (the value the reference evaluator reads). -/
+the same denotation (the value the reference evaluator reads). For a record
+whose law rests on named assumptions (a disk store), the equation rests on the
+same assumptions: the reference value is what the store's search returns. -/
 structure Sourced where
   store : LawfulDataset
   ref : Dataset
   isSet : ref.IsSet
-  den_eq : ref.den = store.den
+  den_eq : Assumed store.assumed_contracts → ref.den = store.den
 
 namespace Sourced
 
@@ -313,7 +315,7 @@ and the evaluator's. -/
 theorem query_sound (s : Sourced) (ev : LawfulEvaluator) (hev : ev.AssumptionHolds)
     (hs : Assumed s.assumptions) (env : EvalEnv) (q : Query) :
     (s.input env q).ds.den = s.den ∧ EvalContract (s.input env q) (ev.run (s.input env q)) :=
-  let h := Dataflow.query_sound ev hev s.store hs s.isSet s.den_eq env q
+  let h := Dataflow.query_sound ev hev s.store hs s.isSet (s.den_eq hs) env q
   ⟨h.2.1, h.2.2.2⟩
 
 /-- The source of a certified dataset: the indexed record the wasm query ops
@@ -322,7 +324,7 @@ def ofCertified (c : CertifiedDataset) : Sourced where
   store := LawfulDataset.ofCertified c
   ref := c.val
   isSet := c.property
-  den_eq := rfl
+  den_eq := fun _ => rfl
 
 theorem ofCertified_den (c : CertifiedDataset) : (ofCertified c).den = c.val.den := rfl
 

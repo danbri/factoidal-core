@@ -18,6 +18,12 @@ the composition is the composition of the den theorems.
 | SPARQL 1.1 Update (`updateSource`) | the result of `applyUpdateIn`, whose den is `OpsDen` (each operation's section 3 effect) of the input | none |
 | reasoner (`reasonerSource`) | default graph = the closure `r.run g`, `r.regime.Entails g (r.run g)`, no named graph | none |
 | union of two records (`Sourced.union`), of shards (`Sourced.unionAll`) | `DatasetDen.union` of the dens | the members' |
+| any `LawfulStore` as the default graph (`Sourced.ofStore`: HDT, COTTAS, RML, overlays, store unions) | `defaultDen st.graph` | the store's (`backendReadOpsExact`, `cottasReadOpsExact`, ...) |
+
+`Sourced.den_eq` (the reference value has the record's den) rests on the
+record's named assumptions: for `Sourced.ofStore` the reference value is the
+store's unbounded search, which is the store's graph only under the store's
+law.
 
 The wasm handle ops (`Wasm/Ops/Handles.lean`): `datasetAddQuads` and
 `datasetDeleteQuads` apply `CertifiedDataset.insertQuads` and `deleteQuads`
@@ -105,11 +111,11 @@ theorem handleSource_spec (c : CertifiedDataset) (ops : List HandleOp) :
 def Sourced.handle (s : Sourced) (ops : List HandleOp) : Sourced :=
   handleSource ⟨s.ref, s.isSet⟩ ops
 
-theorem Sourced.handle_den (s : Sourced) (ops : List HandleOp) :
+theorem Sourced.handle_den (s : Sourced) (hs : Assumed s.assumptions) (ops : List HandleOp) :
     (s.handle ops).den = ops.foldl (fun d op => op.den d) s.den := by
   rw [Sourced.handle, (handleSource_spec _ ops).1]
   show ops.foldl _ s.ref.den = _
-  rw [s.den_eq]
+  rw [s.den_eq hs]
   rfl
 
 /-! ## (c) A SPARQL 1.1 Update -/
@@ -128,7 +134,7 @@ The quad lists of the operations with a WHERE clause are the implementation's
 (`SPARQL/UpdateDenotation.lean`, "The boundary"). -/
 theorem updateSource_spec (env : EvalEnv) (s : Sourced) (u : Update) {ds' : Dataset}
     (h : applyUpdateIn env s.ref u = .ok ds') :
-    (updateSource env s u h).den = ds'.den ∧ s.ref.den = s.den ∧
+    (updateSource env s u h).den = ds'.den ∧ (Assumed s.assumptions → s.ref.den = s.den) ∧
       OpsDen env (requestPrefix s.ref) 0 s.ref u.ops ds' ∧
       (updateSource env s u h).assumptions = [] :=
   ⟨rfl, s.den_eq, (applyUpdateIn_den env u s.isSet h).2, rfl⟩
@@ -157,11 +163,49 @@ theorem reasonerSource_spec (r : SoundReasoner) (g : Graph) :
 /-- A reasoner over the default graph of a source's output. -/
 def Sourced.reason (s : Sourced) (r : SoundReasoner) : Sourced := reasonerSource r s.ref.default
 
-theorem Sourced.reason_input (s : Sourced) (t : Triple) :
+theorem Sourced.reason_input (s : Sourced) (hs : Assumed s.assumptions) (t : Triple) :
     s.ref.default.mem t = true ↔ s.den.graph none t := by
   show s.ref.den.graph none t ↔ _
-  rw [s.den_eq]
+  rw [s.den_eq hs]
   rfl
+
+/-! ## (f) A store read as the default graph (HDT, COTTAS, RML, overlays) -/
+
+/-- Any `LawfulStore` as the default graph of a record (`LawfulDataset.ofDefault`),
+with the triples of its unbounded search as the reference value. -/
+def Sourced.ofStore (st : LawfulStore) : Sourced where
+  store := LawfulDataset.ofDefault st
+  ref := (Dataset.certify { default := st.search patternBoundAll, named := [] }).val
+  isSet := (Dataset.certify { default := st.search patternBoundAll, named := [] }).property
+  den_eq := fun h => by
+    rw [Dataset.certify_den]
+    apply DatasetDen.ext
+    · intro gn t
+      cases gn with
+      | none =>
+        show Graph.mem t (st.search patternBoundAll) = true ↔ none = none ∧ ∃ u, st.graph u ∧ u.key = t.key
+        rw [← keyMem_iff_mem]
+        constructor
+        · intro hk
+          obtain ⟨u, hu, e⟩ := hk
+          have := (st.search_exact h patternBoundAll u).mp (KeyMem.of_mem hu)
+          exact ⟨rfl, u, this.1, e⟩
+        · rintro ⟨-, u, hu, e⟩
+          exact (KeyMem.congr e).mp ((st.search_exact h patternBoundAll u).mpr
+            ⟨hu, boundMatches_all u⟩)
+      | some n =>
+        show (∃ ng ∈ ([] : List NamedGraph), _) ↔ some n = none ∧ _
+        simp
+    · intro n
+      show n ∈ ([] : List NamedGraph).map (·.name) ↔ False
+      simp
+
+/-- **Source theorem (f), a store**: the record's den is the store's graph as
+the default graph (`defaultDen`), with the store's named assumptions. -/
+theorem Sourced.ofStore_spec (st : LawfulStore) :
+    (Sourced.ofStore st).den = LawfulDataset.defaultDen st.graph ∧
+      (Sourced.ofStore st).assumptions = st.assumed_contracts :=
+  ⟨rfl, rfl⟩
 
 /-! ## (e) A union of records (shards) -/
 
@@ -273,8 +317,9 @@ def Sourced.union (s t : Sourced) : Sourced where
   store := LawfulDataset.union s.store t.store
   ref := (Dataset.combine s.ref t.ref).certify.val
   isSet := (Dataset.combine s.ref t.ref).certify.property
-  den_eq := by
-    rw [Dataset.certify_den, Dataset.den_combine, s.den_eq, t.den_eq]
+  den_eq := fun h => by
+    rw [Dataset.certify_den, Dataset.den_combine, s.den_eq (Assumed.left h),
+      t.den_eq (Assumed.right h)]
     rfl
 
 /-- **Source theorem (e), a union**: the den is the union of the dens; the
@@ -309,6 +354,9 @@ theorem Sourced.unionAll_spec (ss : List Sourced) :
 #print axioms updateSource_spec
 #print axioms reasonerSource_spec
 #print axioms unionBackend_exact
+#print axioms Sourced.ofStore
+#print axioms Sourced.ofStore_spec
+#print axioms Sourced.union
 #print axioms Sourced.union_spec
 #print axioms Sourced.unionAll_spec
 

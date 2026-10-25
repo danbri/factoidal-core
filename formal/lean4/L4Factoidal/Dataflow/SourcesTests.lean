@@ -181,4 +181,24 @@ private def shards : Option Sourced :=
   | some s => (s.store.backend.named.map (·.name)).length == 3
   | none => false)
 
+/-! ## (f) A store read as the default graph -/
+
+private def graphOf? (text : String) : Option Graph := (certified? text).map (·.val.default)
+
+private def storeSourced : Option Sourced :=
+  match graphOf? "<http://e/s> <http://e/p> <http://e/o> .\n<http://e/s> <http://e/p> \"x\" .\n",
+    graphOf? "<http://e/t> <http://e/p> <http://e/o> .\n<http://e/s> <http://e/p> <http://e/o> .\n" with
+  | some g1, some g2 =>
+    if h1 : g1.KeyNodup then
+      if h2 : g2.KeyNodup then
+        some (Sourced.ofStore (LawfulStore.union [LawfulStore.ofIndexed g1 h1, LawfulStore.ofIndexed g2 h2]))
+      else none
+    else none
+  | _, _ => none
+
+#guard storeSourced.isSome
+#guard agrees storeSourced "SELECT ?s ?o WHERE { ?s <http://e/p> ?o }"
+#guard agrees storeSourced "ASK { <http://e/t> ?p ?o }"
+#guard rows? storeSourced "SELECT ?s ?o WHERE { ?s <http://e/p> ?o }" = some 3
+
 end L4Factoidal.Dataflow.SourcesTests
