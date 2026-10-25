@@ -9,6 +9,12 @@
 #    when docs/dataflow-inventory.md differs from it.
 # 3. The FOUNDATION gate (tools/foundation-gate.py, foundation/README.md).
 # 4. The entry-point gate (tools/entrypoint-gate.py, foundation/README.md).
+# 4b. The RUNNERS gate (issue 1002): its fixture tests (a key not in the
+#     registry, a function mapped to a different stage, an empty table must
+#     fail), then the gate on npm/factoidal/lib/nodes.mjs.
+python3 -I "$here/tests/foundation/test_runners_gate.py"
+python3 -I "$here/tools/runners-gate.py" --root "$here"
+
 # 5. The assumption gate (tools/assumption-gate.py, foundation/assumptions.txt).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
