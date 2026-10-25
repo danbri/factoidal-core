@@ -623,7 +623,16 @@ Rules that keep it small:
 - A new op goes either into the core table (`Core.callArgsBy` or
   `Core.callIOArgsBy`; the full table delegates to them) or into the full
   table and `Core.fullOnlyOpNames`. `Wasm/CoreDispatchTests.lean` fails the
-  build when it is in neither list.
+  build when it is in neither list. That check is in the `l4wasm` library, so
+  a build of one executable (`lake build l4factoidal`) does not run it: after
+  adding an op, run the build of CI, `lake build L4Factoidal l4wasm
+  +Harness.Qlvr +Harness.CryptoProbe` (or plain `lake build`). Paid for
+  2026-10-25: PR https://github.com/danbri/factoidal-core/pull/83 added
+  `sbm11Open`, `sbm11Query` and `sbm11Close` to the full table only, was
+  checked with `lake build l4factoidal`, and was merged while its "Lake build
+  (full Lean corpus)" check was still running; the check failed at
+  `CoreDispatchTests.lean:47` and `main` was red until the next PR added the
+  three names to `Core.fullOnlyOpNames`.
 - After any change of imports, read `$WORK/l4factoidal-core.size.md` against
   the previous build. A namespace that appears or grows is a reference the
   core closure did not have. The size table is also how a lost `csimp`
