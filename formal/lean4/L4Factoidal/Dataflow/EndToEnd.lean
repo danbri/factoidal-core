@@ -188,8 +188,11 @@ parse with the parse's denotation; the pipeline loads a store for every graph
 name, with that denotation and a proved law, and the evaluator input carries
 its backend; and the answer satisfies the evaluator contract against the
 foundation's SPARQL 1.1 semantics (`EvalContract`: the reference answer, or
-for SELECT and ASK the modifier layer over a WHERE answer that `Allowed`
-admits).
+for SELECT and ASK with no FROM clause the modifier layer over a WHERE
+answer that `Allowed` admits and that is the reference WHERE answer up to the
+order of the solutions); when the solution modifiers do not read the order
+(`OrderFree`), the answer is the reference answer up to the order of the rows
+(`AnswerAgrees`).
 
 Since 2026-10-25 this is a corollary: the reader source theorem
 (`readerSource_spec`) and the query theorem over any lawful record
@@ -208,7 +211,7 @@ theorem pipeline_sound (r : RdfReader) (ev : LawfulEvaluator) (hev : ev.Assumpti
         SetOf out.1 raw ∧ out.1.den = raw.den) ∧
       ((loadStore c).den = out.1.den ∧ (loadStore c).Proved ∧
         x.backend = some (loadStore c).backend) ∧
-      EvalContract x (ev.run x) := by
+      EvalContract x (ev.run x) ∧ (OrderFree q → AnswerAgrees (ev.run x) (referenceAnswer x)) := by
   intro c x
   obtain ⟨⟨raw, hraw, hs, hden⟩, hpr⟩ := readerSource_spec r h
   have hq := (readerSource r h).query_sound ev hev
@@ -217,7 +220,9 @@ theorem pipeline_sound (r : RdfReader) (ev : LawfulEvaluator) (hev : ev.Assumpti
   · unfold pipeline
     rw [certified_of_run h]
     rfl
-  · show EvalContract (pipelineInput env c q) (ev.run (pipelineInput env c q))
+  · show EvalContract (pipelineInput env c q) (ev.run (pipelineInput env c q)) ∧
+      (OrderFree q → AnswerAgrees (ev.run (pipelineInput env c q))
+        (referenceAnswer (pipelineInput env c q)))
     rw [pipelineInput_eq]
     exact hq.2
 
@@ -243,7 +248,8 @@ theorem shipped_pipeline_sound (r : RdfReader) (h1 : BackendOutsideFragmentAgree
         SetOf out.1 raw ∧ out.1.den = raw.den) ∧
       ((loadStore c).den = out.1.den ∧ (loadStore c).Proved ∧
         x.backend = some (loadStore c).backend) ∧
-      EvalContract x (shippedEvaluator.run x) :=
+      EvalContract x (shippedEvaluator.run x) ∧
+      (OrderFree q → AnswerAgrees (shippedEvaluator.run x) (referenceAnswer x)) :=
   pipeline_sound r shippedEvaluator (shippedEvaluator_assumptionHolds h1 h2) inp env q h
 
 /-- The reference path needs no assumption: a CONSTRUCT query through the
