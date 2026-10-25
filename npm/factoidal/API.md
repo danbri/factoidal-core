@@ -1219,13 +1219,16 @@ const r = await run(p, sources);
 for (const e of r.evidence) console.log(e.stage, e.status, e.contract);
 console.log(r.evidence[2].artefact.entailed); // true
 console.log(r.assumptions); // the union of the nodes' named assumptions
+console.log(p.wellTyped, p.check.conversions); // the engine's type check
 ```
 
 `stages()` answers the stage registry of the Lean library
 (`L4Factoidal.Dataflow.registry`, op `stageList`, full engine), one element
 per entry: `name` (the declaration, or the area when there is none),
 `declaration`, `kind` (the interface type: `Stage`, `RdfReader`,
-`SoundReasoner`, ...), `wireIn`, `wireOut`, `status` (`proved`, `tested`,
+`SoundReasoner`, ...), `wireIn`, `wireOut` (wire types of
+`formal/lean4/L4Factoidal/Dataflow/Wire.lean`), `params` (the inputs a node
+supplies when it is made), `status` (`proved`, `tested`,
 `assumed`, `missing`), `contract` (the contract declaration), `theorems`,
 `assumptions` (the named assumptions), `tests`, `runnable` (false for
 `missing`) and `bound` (this package has a function that runs it). The
@@ -1238,16 +1241,30 @@ graph), `shaclValidator` (`{shapes}`), `shippedEvaluator` (`{query}`; a
 CONSTRUCT or DESCRIBE answer replaces the graph), the N-Triples, N-Quads,
 Turtle, TriG and RDF/XML writers, `rdfcStage`, and `rdfsExplainGraphStage`
 (`{description}`). `pipe(...nodes)` composes nodes and pipelines left to
-right. `run(pipeline, input)` takes a wire value `{graph, evidence}` or the
+right, and asks the engine to check it (op `pipelineCheck`, full engine):
+`p.check` has `wellTyped` (each stage's output wire is the next stage's
+input wire, or converts to it: a dataset with prefixes to its dataset, a
+dataset to its default graph, a graph to the dataset with that default
+graph), `mismatch` (the first stage whose output does not feed the next),
+`conversions`, `assumptions` (the union of the stages' named assumptions),
+`contract` (the theorem `L4Factoidal.Dataflow.Pipeline.guarantee_sound` and
+each stage's contract) and `stages`. `p.assumptions` and `p.wellTyped` are
+its fields. The guarantee of a well-typed pipeline is that theorem: when
+every assumption of the union holds, a successful run satisfies the
+composition of the stages' contracts. With an engine built before the op,
+`p.check` and `p.wellTyped` are null and `p.assumptions` is the union of the
+nodes' fields. `run(pipeline, input)` takes a wire value `{graph, evidence}` or the
 graph itself, and answers `{graph, evidence, assumptions}`: `evidence` gets
 one record `{stage, status, contract, assumptions, checked, artefact}` per
 node (`artefact`: the explain result, the SHACL report, the written text,
-...), and `assumptions` is the union of the named assumptions of every node
-the value passed. `checked` is true exactly when the stage's status is
+...), and `assumptions` is the assumptions of the records on the input
+wire, then the engine's union for the pipeline. `wellTyped` is the engine's
+check (null without the op). `checked` is true exactly when the stage's status is
 `proved`. `proved` on the result is true exactly when every record is
-checked, and `uncheckedSteps` lists the stage names of the records that are
-not. A run with a node whose stage is `missing` (no contract, no suite) or
-not bound rejects with a `FactoidalError` before any node runs.
+checked and the pipeline is well typed, and `uncheckedSteps` lists the stage
+names of the records that are not checked. A run with a node whose stage is
+`missing` (no contract, no suite) or not bound, or of a pipeline that is not
+well typed, rejects with a `FactoidalError` before any node runs.
 
 `run(pipeline, input, { unchecked: true })` is the explicit opt-in to run
 stages that are not `proved` (`tested`, `assumed`) and `missing` stages that
@@ -1256,8 +1273,10 @@ one call site decides, and a pipeline built by other code cannot opt in on
 its own. A step that ran under the opt-in and is not checked has
 `unchecked: true` and a `reason` in its record (the status and the named
 assumptions, or `no contract`). A stage with no package function still
-rejects with `op.unknown`. The result's `proved` stays false whenever such a
-step ran: the path has no guarantee for it, and the result says so.
+rejects with `op.unknown`. The opt-in also runs a pipeline that is not well
+typed. The result's `proved` stays false whenever such a step ran or the
+pipeline is not well typed: the path has no guarantee for it, and the result
+says so.
 
 ```js
 import { node, pipe, run } from "@factoidal/core";
@@ -1295,7 +1314,7 @@ Design: [issue 1002](https://github.com/danbri/factoidal/issues/1002).
 | `shexValidate` | `(data, schemaText, focus, shape?) => boolean` | ShExJ when the text starts with `{`, else ShExC; no `shape` = the schema's START; `focus`/`shape` are RDF/JS terms or N-Triples term strings (`'<http://…>'`, `'_:b'`) |
 | `owlClosure` | `(data, 'RDFS' \| 'OWL-RL') => Dataset` | input + derived triples, default graph |
 | `explain` | `(sources, description, {profile?, format?}) => {entailed, bundle, assumptions, rejection, entailedMeans}` | RDFS entailment of a graph with shared blank nodes, with evidence; see "Explaining an entailment" |
-| `stages`, `node`, `pipe`, `run` | `() => StageInfo[]`; `(name, params?) => Node`; `(...nodes) => Pipeline`; `(pipeline, input) => {graph, evidence, assumptions}` | registered Lean stages as nodes, evidence on the wires; see "Stages as nodes" |
+| `stages`, `node`, `pipe`, `run` | `() => StageInfo[]`; `(name, params?) => Node`; `(...nodes) => Pipeline`; `(pipeline, input, {unchecked?}) => {graph, evidence, assumptions, proved, uncheckedSteps, wellTyped}` | registered Lean stages as nodes, evidence on the wires; see "Stages as nodes" |
 | `coreRdfsClosure`/`rhoDfClosure`, `rdfsPlusClosure` | `(data) => Dataset` | ρdf closure, RDFS-Plus closure |
 | `coreRdfsCheck`/`rhoDfFragmentCheck` | `(data) => {ok, fragment}` | ρdf fragment check |
 | `tableauMaterialise` | `(data) => {dataset, addedCount, budgetHit}` | class-expression memberships; `budgetHit` true when the work budget ran out |

@@ -14,15 +14,22 @@
 // on a wire is `{ graph, evidence }`, and each node appends one evidence
 // record `{ stage, status, contract, assumptions, checked, artefact }` (plus
 // `unchecked` and `reason` for a step run under run()'s `unchecked` opt-in;
-// the record logic is in evidence.mjs). The result of
-// a run also reports the union of the named assumptions of the nodes it
-// passed: the premise list of the pipeline's soundness statement
-// (Dataflow/EndToEnd.lean) as the user sees it.
+// the record logic is in evidence.mjs).
+//
+// The type check and the assumption union are the engine's (op
+// pipelineCheck, formal/lean4/Wasm/Ops/StageList.lean, computed by
+// pipelineReport of formal/lean4/L4Factoidal/Dataflow/Pipeline.lean): a
+// pipeline is well typed when each stage's output wire is the next stage's
+// input wire or converts to it, and its `assumptions` are the premises of
+// Pipeline.guarantee_sound, the guarantee of any pipeline of components with
+// these signatures. This file does not compute the union. With an engine
+// built before the op, pipe() and run() fall back to the union of the
+// nodes' fields and report `wellTyped: null`.
 //
 // ES module, no Node built-ins: the browser loads this file as it is.
 
 import { FactoidalError } from './errors.mjs';
-import { refusalFor, makeRecord, summarize, unionAssumptions } from './evidence.mjs';
+import { refusalFor, makeRecord, summarize, unionAssumptions, unionLists } from './evidence.mjs';
 
 /**
  * @param {object} deps the package functions and the engine entry
@@ -91,6 +98,7 @@ export function buildNodes(deps) {
   };
 
   let stageCache = null;
+  let engine = null; // the entry stages() loaded; node() calls stages(), so pipe() has it
 
   /**
    * The engine's stage list (op stageList), one element per registry entry.
@@ -101,6 +109,7 @@ export function buildNodes(deps) {
       stageCache = (async () => {
         const e = await entry();
         requireEntryFn(e, 'stageList', 'stages');
+        engine = e;
         const r = entryResult(e.stageList(), 'stages');
         return Object.freeze(r.stages.map((s) => Object.freeze({
           ...s,
@@ -161,14 +170,42 @@ export function buildNodes(deps) {
   }
 
   /**
-   * A pipeline: the nodes in order (pipelines are flattened).
-   * `assumptions` is the union of the nodes' named assumptions.
-   * @returns {{nodes: object[], assumptions: string[]}}
+   * The engine's check of the stages of `nodes` in order (op pipelineCheck),
+   * or null when the loaded engine has no such op.
+   */
+  function check(nodes) {
+    if (!engine || typeof engine.pipelineCheck !== 'function') return null;
+    const r = entryResult(engine.pipelineCheck(JSON.stringify(nodes.map((n) => n.stage))), 'pipelineCheck');
+    return Object.freeze({
+      wellTyped: r.wellTyped,
+      wireIn: r.wireIn,
+      wireOut: r.wireOut,
+      mismatch: r.mismatch === null ? null : Object.freeze({ ...r.mismatch }),
+      conversions: Object.freeze(r.conversions.map((c) => Object.freeze({ ...c }))),
+      assumptions: Object.freeze([...r.assumptions]),
+      contract: Object.freeze({ theorem: r.contract.theorem, stages: Object.freeze([...r.contract.stages]) }),
+      stages: Object.freeze(r.stages.map((s) => Object.freeze({ ...s, assumptions: Object.freeze([...s.assumptions]) }))),
+    });
+  }
+
+  /**
+   * A pipeline: the nodes in order (pipelines are flattened). `check` is
+   * the engine's op pipelineCheck on the nodes' stages; `wellTyped` and
+   * `assumptions` (the union of the nodes' named assumptions) are its
+   * fields. Without the op: `check` and `wellTyped` are null and
+   * `assumptions` is the union of the nodes' fields.
+   * @returns {{nodes: object[], assumptions: string[], wellTyped: boolean|null, check: object|null}}
    */
   function pipe(...items) {
     const nodes = nodesOf(items, 'pipe');
     if (nodes.length === 0) throw new TypeError('pipe: no nodes');
-    return Object.freeze({ nodes: Object.freeze(nodes), assumptions: Object.freeze(unionAssumptions(nodes)) });
+    const c = check(nodes);
+    return Object.freeze({
+      nodes: Object.freeze(nodes),
+      assumptions: c ? c.assumptions : Object.freeze(unionAssumptions(nodes)),
+      wellTyped: c ? c.wellTyped : null,
+      check: c,
+    });
   }
 
   const isWire = (v) => v !== null && typeof v === 'object' && !(v instanceof Dataset) &&
@@ -180,9 +217,13 @@ export function buildNodes(deps) {
    * `options.unchecked: true` lets stages that are not `proved` run,
    * `missing` ones too when the package has a runner for them; each such
    * step's record says so (evidence.mjs). Without it, a `missing` stage
-   * refuses before any node runs.
+   * refuses before any node runs, and so does a pipeline that the engine's
+   * check finds not well typed (op pipelineCheck); with it such a pipeline
+   * runs and `proved` is false.
+   * `assumptions`: the assumptions of the records on the input wire, then
+   * the engine's union for this pipeline (op pipelineCheck), no duplicate.
    * @returns {Promise<{graph: any, evidence: object[], assumptions: string[],
-   *   proved: boolean, uncheckedSteps: string[]}>}
+   *   proved: boolean, uncheckedSteps: string[], wellTyped: boolean|null}>}
    */
   async function run(pipeline, input, options) {
     if (options !== undefined && (options === null || typeof options !== 'object')) {
@@ -194,6 +235,14 @@ export function buildNodes(deps) {
       const why = refusalFor(n, unchecked, Object.prototype.hasOwnProperty.call(RUNNERS, n.stage));
       if (why) throw why;
     }
+    const c = check(nodes);
+    if (c && !c.wellTyped && !unchecked) {
+      const m = c.mismatch;
+      throw new FactoidalError(`run: the pipeline is not well typed: stage ${m.at} ` +
+        `(${nodes[m.at].stage}) writes ${m.out}, stage ${m.at + 1} (${nodes[m.at + 1].stage}) ` +
+        `reads ${m.in} (pass { unchecked: true } to run it without a guarantee)`, { code: 'op.failed' });
+    }
+    const prior = isWire(input) ? input.evidence : [];
     let wire = isWire(input) ? { graph: input.graph, evidence: [...input.evidence] }
       : { graph: input, evidence: [] };
     let owned = null; // a Dataset an earlier node of this run made
@@ -208,7 +257,17 @@ export function buildNodes(deps) {
       }
       wire = { graph, evidence: [...wire.evidence, record] };
     }
-    return { graph: wire.graph, evidence: wire.evidence, ...summarize(wire.evidence) };
+    const s = summarize(wire.evidence);
+    if (!c) return { graph: wire.graph, evidence: wire.evidence, ...s, wellTyped: null };
+    return {
+      graph: wire.graph,
+      evidence: wire.evidence,
+      assumptions: prior.length === 0 ? [...c.assumptions]
+        : unionLists([unionAssumptions(prior), c.assumptions]),
+      proved: s.proved && c.wellTyped,
+      uncheckedSteps: s.uncheckedSteps,
+      wellTyped: c.wellTyped,
+    };
   }
 
   return { stages, node, pipe, run };

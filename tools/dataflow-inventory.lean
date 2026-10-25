@@ -22,7 +22,8 @@ With `DATAFLOW_REGISTRY=negative` it checks `negativeRegistry`
 (`tests/dataflow/run.sh`).
 
 Output: one line per entry between `BEGIN-INVENTORY` and `END-INVENTORY`,
-fields separated by a tab: area, dir, stage, wire in, wire out, contract,
+fields separated by a tab: area, dir, stage, wire in (`Wire.label`, then
+`; params: ...` when the entry has parameters), wire out, contract,
 status, theorems, IO assumptions, tests, note. Then one line per entry with a
 stage declaration between `BEGIN-KINDS` and `END-KINDS`: the declaration and
 the constant at the head of its type (the interface type), tab-separated.
@@ -89,7 +90,9 @@ def stageKind (env : Environment) (n : Name) : StageKind :=
     throwError "dataflow registry check failed:\n{"\n".intercalate errs.toList}"
   IO.println "BEGIN-INVENTORY"
   for e in entries do
-    let fields := [e.area, e.dir, nameField e.stage, e.wireIn, e.wireOut, nameField e.contract,
+    let wireIn := if e.params.isEmpty then e.wireIn.label
+      else s!"{e.wireIn.label}; params: {", ".intercalate e.params}"
+    let fields := [e.area, e.dir, nameField e.stage, wireIn, e.wireOut.label, nameField e.contract,
       e.status.label, listField (e.theorems.map Name.toString),
       listField (e.ioAssumptions.map Name.toString), listField e.tests, e.note]
     IO.println ("\t".intercalate (fields.map clean))
