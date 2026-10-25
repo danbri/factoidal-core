@@ -1,0 +1,10 @@
+import * as f from '/home/user/factoidal-core/npm/factoidal/index.mjs';
+const run = async (label, fn) => { try { console.log(label, JSON.stringify(await fn())); } catch (e) { console.log(label, 'ERROR', e.message.slice(0,200)); } };
+await run('langcase', async () => (await f.parse('<urn:s> <urn:p> "x"@EN-gb .', {format:'ntriples'})).toString('nquads'));
+const ds = await f.openDataset('<urn:s> <urn:p> "01"^^<http://www.w3.org/2001/XMLSchema#integer> .', {format:'ntriples'});
+await run('termHas', async () => ds.has(f.dataFactory.quad(f.dataFactory.namedNode('urn:s'), f.dataFactory.namedNode('urn:p'), f.dataFactory.literal('1', f.dataFactory.namedNode('http://www.w3.org/2001/XMLSchema#integer')))));
+await run('askValue', async () => ds.query('ASK { <urn:s> <urn:p> 1 }'));
+await run('badIRI', async () => (await f.parse('<urn:s> <urn:p> <http://ex/a b> .', {format:'ntriples'})).toString('nquads'));
+await run('badLang', async () => (await f.parse('<urn:s> <urn:p> "x"@abcdefghij .', {format:'turtle'})).toString('nquads'));
+await run('dupTriples', async () => (await f.openDataset('<urn:s> <urn:p> "x", "x" .', {format:'turtle'})).size);
+await run('bnodeRoundtrip', async () => (await f.parse('_:a <urn:p> _:a .', {format:'ntriples'})).toString('nquads'));
