@@ -19,6 +19,15 @@ Owner, 2026-08-24, verbatim:
    commitments. Lead with the result or the decision needed.
 6. **A repeated steer means the last report failed.** Record decisions
    in this file the first time, not the third.
+7. **Every issue, PR and CI run you mention gets a full URL and a short
+   gloss in parentheses**, e.g. "https://github.com/danbri/factoidal/issues/1009
+   (SBM11 in npm)". Only a passing mention may have one of the two. Status
+   lists are short paragraphs, not tables; text the owner may paste into
+   another session goes in its own code block (the iOS app copies whole
+   messages only). Owner, 2026-10-25: "Urls pls always as i am on phone";
+   "Please when you mention issues, either link them fully or give a brief
+   gloss in parens, ideally both unless the mention is very much \"in
+   passing\"."
 7. **An explanation of how a subsystem works, once given in chat, is
    written into `docs/designissues/` in the same landing** and linked
    from the worknote index and the relevant skill. Owner, 2026-09-03,
