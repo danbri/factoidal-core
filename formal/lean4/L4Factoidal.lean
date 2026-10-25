@@ -901,6 +901,8 @@ import L4Factoidal.Unified.RifEmbed
 -- importing them here makes every one of those checks a build gate.
 import L4Factoidal.LWS.Tests
 import L4Factoidal.LWS.DatasetView
+import L4Factoidal.LWS.DatasetViewRead
+import L4Factoidal.LWS.DatasetViewTests
 import L4Factoidal.LWS.PaginationLinksTests
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.AuthorizationTests
