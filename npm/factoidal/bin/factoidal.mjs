@@ -224,9 +224,9 @@ INPUT is an RDF file. OUTPUT is the generation directory to create; it is
 normally STORE/gen-N. Packing does not activate: run activate next.
 
 options:
-  --layout LAYOUT    ibk3 (triples, default), ibk4 (quads, wire version 9)
-                     or ibk5 (quads, wire version 10: RDF 1.2 terms,
-                     out-of-line literals, zone maps)
+  --layout LAYOUT    ibk5 (quads, wire version 10: RDF 1.2 terms,
+                     out-of-line literals, zone maps; default), ibk4
+                     (quads, wire version 9) or ibk3 (triples)
   --syntax SYNTAX    turtle, trig or nquads; default from the file extension
   --chunk-bytes N    Merkle chunk size; default is the engine's
   --batch-bytes N    ibk4 only: source bytes between publication batches;
@@ -319,7 +319,7 @@ activated generation's delta log as one batch before the response is sent,
 and is visible to the next request. An IBK3 (triples) generation accepts
 changes to the default graph only, because its delta log is replayed and
 compacted for that graph only; a change to a named graph answers 501. A
-quad generation (ibk4, ibk5) accepts every graph. Fold the log into a new
+quad generation (ibk4, ibk5, the default) accepts every graph. Fold the log into a new
 generation with l4block-shard-compact, activate it, and restart the server.
 
 The server makes no protocol decision: the request framing, routing,
@@ -1266,7 +1266,7 @@ function currentDirectory () {
 }
 
 function packLayout (options) {
-  if (typeof options.layout !== 'string') return 'ibk3'
+  if (typeof options.layout !== 'string') return 'ibk5'
   const layout = options.layout.toLowerCase()
   if (PACK_LAYOUTS.indexOf(layout) >= 0) return layout
   throw new UsageError(`--layout ${options.layout} is not one of ${PACK_LAYOUTS.join(', ')}`)
@@ -1528,7 +1528,7 @@ async function commandServe (positional, options) {
     const { tmpdir } = await import('node:os')
     const { join } = await import('node:path')
     const root = mkdtempSync(join(tmpdir(), 'factoidal-serve-'))
-    const packOptions = { quiet: true, layout: typeof options.layout === 'string' ? options.layout : 'ibk5' }
+    const packOptions = { quiet: true, layout: packLayout(options) }
     let rc = await commandPack([options.file, join(root, 'gen-1')], packOptions)
     if (rc !== 0) return rc
     rc = await commandActivate([root, 'gen-1'], { quiet: true })

@@ -393,6 +393,11 @@ await check('sample-store packs its inline triples and prints a root that answer
   assert(result.code === 0, `query exited ${result.code}: ${result.stderr.trim()}`)
   const n = JSON.parse(result.stdout).results.bindings[0].n.value
   assert(n === '15', `COUNT answered ${n}, expected 15`)
+  const inspected = runCli(['inspect', root, '--json'])
+  assert(inspected.code === 0, `inspect exited ${inspected.code}: ${inspected.stderr.trim()}`)
+  const layout = JSON.parse(inspected.stdout).layout
+  assert(layout === 'quad-ibk5-ptd2-lgi4-gbi1-merkle-v0',
+    `sample-store packed layout ${layout}; the default is IBK5`)
 })
 
 await check('inspect reads the bundled store and agrees with its own facts', () => {

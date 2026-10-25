@@ -2,7 +2,7 @@
 // section 3), and two literals that differ only in the case of the language
 // tag are one RDF term (RDF 1.2 Concepts section 3.4).
 // https://github.com/danbri/factoidal/issues/1006: up to npm 0.13.0
-// `factoidal pack` with the default layout (IBK3) kept a repeated triple, so
+// `factoidal pack` with the then default layout (IBK3) kept a repeated triple, so
 // the store answered COUNT(*) 2 for one triple.
 //
 // The cases run the shipped command end to end: pack, activate, query. They
@@ -48,7 +48,7 @@ function packedCount (name, text, layout) {
 
 for (const [name, [text, distinct]] of Object.entries(INPUTS)) {
   for (const layout of [null, 'ibk3', 'ibk4', 'ibk5']) {
-    test(`pack ${layout ? '--layout ' + layout : '(default layout, IBK3)'} ${name}: COUNT(*) is ${distinct} (${ISSUE})`, () => {
+    test(`pack ${layout ? '--layout ' + layout : '(default layout, IBK5)'} ${name}: COUNT(*) is ${distinct} (${ISSUE})`, () => {
       assert.equal(packedCount(name, text, layout), distinct);
     });
   }

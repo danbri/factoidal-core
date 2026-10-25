@@ -27,7 +27,7 @@ ex:c3 a skos:Concept ; skos:inScheme ex:scheme ; skos:prefLabel "SECAM"@en ; sko
 export const sampleStoreFacts = Object.freeze({
   triples: 15,
   source: 'SAMPLE_TURTLE in sample-store.mjs (written for this package)',
-  layout: 'ibk3'
+  layout: 'ibk5'
 })
 
 /**
