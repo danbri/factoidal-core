@@ -18,12 +18,13 @@ the premise is the interface value:
   denotes the graph with each triple once.
 * `LawfulDataset.where_allowed`: for every pattern of `NativeFrag`, the
   WHERE answer of `evalPatternBackend` over the record is an answer `Allowed`
-  admits over the dataset the record enumerates (`reference`). The premises
-  besides `Assumed` are about the data, not the store law: every named
-  backend has an IRI name (`NamesWf`, the condition the query op already
-  checks, `namesAreIris`). The former premise `Fixed` (every row object its
-  own join key) is gone: language tags are lower case in every term (issue
-  1001, PR 57), so `GraphRel` no longer carries it.
+  admits over the dataset the record enumerates (`reference`). The only
+  premise is `Assumed`. The former premise `NamesWf` (every named backend has
+  an IRI name) is gone: a backend's name is a `Subject`, an IRI or a blank
+  node, and `reference` keeps it (https://github.com/danbri/factoidal/issues/975).
+  The former premise `Fixed` (every row object its own join key) is gone:
+  language tags are lower case in every term (issue 1001, PR 57), so
+  `GraphRel` no longer carries it.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -86,9 +87,6 @@ search (`materialiseDatasetBackend`, the dataset the delegating arms of the
 evaluator read). -/
 def reference (L : LawfulDataset) : Dataset := materialiseDatasetBackend L.backend
 
-/-- Every named backend has an IRI name. -/
-def NamesWf (L : LawfulDataset) : Prop := ∀ ngb ∈ L.backend.named, isIri ngb.name = true
-
 /-- A backend with a law and fixed rows reads the list of its rows. -/
 theorem graphRel_rows {gb : GraphBackend} {G : Triple → Prop} (hx : BackendExact gb G) :
     GraphRel gb (backendSearch gb patternBoundAll) where
@@ -99,24 +97,18 @@ theorem graphRel_rows {gb : GraphBackend} {G : Triple → Prop} (hx : BackendExa
 
 theorem namedRel_rows {D : DatasetDen} : ∀ (L : List NamedGraphBackend),
     (∀ ngb ∈ L, ∃ n, BackendExact ngb.backend (D.graph (some n))) →
-    (∀ ngb ∈ L, isIri ngb.name = true) →
-    NamedRel L (L.filterMap (fun ngb => (wfIriOf? ngb.name).map (fun i =>
-      ({ name := .iri i, graph := backendSearch ngb.backend patternBoundAll } : NamedGraph))))
-  | [], _, _ => .nil
-  | ngb :: rest, hx, hi => by
-    have hw : wfIriOf? ngb.name = some ⟨ngb.name, hi ngb List.mem_cons_self⟩ := by
-      simp [wfIriOf?, hi ngb List.mem_cons_self]
-    rw [List.filterMap_cons, hw]
+    NamedRel L (L.map (fun ngb =>
+      ({ name := ngb.name, graph := backendSearch ngb.backend patternBoundAll } : NamedGraph)))
+  | [], _ => .nil
+  | ngb :: rest, hx => by
     obtain ⟨n, hn⟩ := hx ngb List.mem_cons_self
-    exact .cons ⟨ngb.name, hi ngb List.mem_cons_self⟩ rfl rfl
-      (graphRel_rows hn)
-      (namedRel_rows rest (fun x hx' => hx x (List.mem_cons_of_mem _ hx'))
-        (fun x hx' => hi x (List.mem_cons_of_mem _ hx')))
+    exact .cons rfl (graphRel_rows hn)
+      (namedRel_rows rest (fun x hx' => hx x (List.mem_cons_of_mem _ hx')))
 
 /-- **The WHERE answer of the backend evaluator over a lawful dataset is an
 answer SPARQL 1.1 allows**, for every pattern of `NativeFrag`, over the
 dataset the record enumerates. -/
-theorem where_allowed (L : LawfulDataset) (h : Assumed L.assumed_contracts) (hiri : L.NamesWf)
+theorem where_allowed (L : LawfulDataset) (h : Assumed L.assumed_contracts)
     (env : EvalEnv) (p : QueryPattern) (hp : NativeFrag p) :
     Allowed env L.reference p L.reference.default
       (evalPatternBackend env L.backend p L.backend.default) := by
@@ -126,7 +118,6 @@ theorem where_allowed (L : LawfulDataset) (h : Assumed L.assumed_contracts) (hir
       (fun ngb hm => by
         obtain ⟨n, -, -, hx⟩ := hl.named ngb hm
         exact ⟨n, hx⟩)
-      hiri
   exact evalPatternBackend_allowed env L.backend L.reference hn hl.namesNodup p hp
     L.backend.default L.reference.default (graphRel_rows hl.default)
 
@@ -148,14 +139,14 @@ def lawfulBgpStage (b : Bgp) : Stage String LawfulStore SolutionSeq :=
 /-- The contract of the WHERE answer over a lawful dataset. -/
 def LawfulWhereContract (env : EvalEnv) (p : QueryPattern) (L : LawfulDataset) (r : SolutionSeq) :
     Prop :=
-  NativeFrag p → Assumed L.assumed_contracts → L.NamesWf →
+  NativeFrag p → Assumed L.assumed_contracts →
     Allowed env L.reference p L.reference.default r
 
 /-- A lawful dataset → the WHERE answer of the backend evaluator. -/
 def lawfulWhereStage (env : EvalEnv) (p : QueryPattern) : Stage String LawfulDataset SolutionSeq :=
   Stage.ofFun (fun L => evalPatternBackend env L.backend p L.backend.default)
     (LawfulWhereContract env p)
-    (fun L hp h hiri => L.where_allowed h hiri env p hp)
+    (fun L hp h => L.where_allowed h env p hp)
 
 #print axioms lawfulBgpStage
 #print axioms lawfulWhereStage

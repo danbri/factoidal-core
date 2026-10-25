@@ -13,7 +13,7 @@ evaluated during `lake build` (https://github.com/danbri/factoidal/issues/975,
 * The contract is not the empty relation: for an ASK query whose reference
   answer is `true`, the answer `.ask false` is not the reference answer, so
   only the `Allowed` disjunct could admit it (`example`).
-* The indexed backend of a set dataset with IRI graph names reads it
+* The indexed backend of a set dataset reads it, blank-node graph names included
   (`backendReads_indexed`), so the inputs the wasm query ops build are
   well formed.
 
@@ -117,12 +117,11 @@ example (inp : EvalInput) (t : List TriplePattern) (h : inp.query.form = .constr
   | none => false
 
 /-- The inputs the wasm query ops build are well formed, given a set dataset
-with IRI graph names. -/
+(blank-node graph names included). -/
 example (env : EvalEnv) (d : Dataset) (q : Query) (hset : d.IsSet)
-    (hiri : Storage.QuadDataset.namesAreIris d = true)
     (he : env.dataset = some d) :
     EvalInput.Wf { env, ds := d, backend := some (indexedDatasetBackend d), query := q } :=
-  EvalInput.wf_indexed env d q hset hiri he
+  EvalInput.wf_indexed env d q hset he
 
 /-- A well-formed input not in the assumed class satisfies the contract. -/
 example (inp : EvalInput) (hw : inp.Wf) (ha : ¬ shippedEvaluator.assumed_contractOn inp) :

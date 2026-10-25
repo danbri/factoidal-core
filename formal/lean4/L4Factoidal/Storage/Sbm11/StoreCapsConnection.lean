@@ -53,10 +53,10 @@ open L4Factoidal.Storage.PlannerSoundness
 /-- **The SBM11 generation and a lawful record denote one dataset.** -/
 theorem sbm11_record_denotes (B : Nat) (qs : List Quad) (decl : List Subject) (G : MemGen)
     (F : FileGen) (h : packSpec B qs decl = some (G, F)) (D : Dataset) (hset : D.IsSet)
-    (hdist : distinctNames D.named) (hden : D.den = inputDen qs decl) :
+    (hden : D.den = inputDen qs decl) :
     DatasetBackendExact G.den (SPARQL.StoreDataset.indexedDatasetBackend D) := by
   rw [den_packSpec B qs decl G F h, ← hden]
-  exact indexedDatasetBackend_exact hset hdist
+  exact indexedDatasetBackend_exact hset
 
 #print axioms sbm11_record_denotes
 

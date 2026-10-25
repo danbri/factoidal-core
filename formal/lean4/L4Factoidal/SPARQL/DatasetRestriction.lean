@@ -469,17 +469,13 @@ def PatternKept (keep : Triple → Bool) : QueryPattern → Prop
 
 /-! ## 9. The dataset relation
 
-`indexedDatasetBackend` keys its named backends by the raw `Iri` of the
-graph name, so the relation is stated over the same key. -/
-
-def ngKey (ng : NamedGraph) : Iri :=
-  match ng.name with
-  | .iri i => i.val
-  | .bnode b => b
+`indexedDatasetBackend` names its named backends by the graph name itself
+(a `Subject`), and a lookup by IRI finds only an IRI name (`iriNamed`), so the
+relation is stated over the same test. -/
 
 def lookupGraph : List NamedGraph → Iri → Option Graph
   | [], _ => none
-  | ng :: rest, n => if ngKey ng == n then some ng.graph else lookupGraph rest n
+  | ng :: rest, n => if iriNamed ng.name n then some ng.graph else lookupGraph rest n
 
 theorem lookupGraph_mem : ∀ (l : List NamedGraph) (n : Iri) (g : Graph),
     lookupGraph l n = some g → ∃ ng ∈ l, ng.graph = g
@@ -498,11 +494,8 @@ theorem lookupNamedBackend_indexed (d : Dataset) (n : Iri) :
   induction d.named with
   | nil => rfl
   | cons ng rest ih =>
-      obtain ⟨nm, gr⟩ := ng
-      simp only [List.map_cons, lookupNamedBackend, lookupGraph, ngKey]
-      cases nm with
-      | iri i => by_cases h : (i.val == n) = true <;> simp [h, ih]
-      | bnode b => by_cases h : (b == n) = true <;> simp [h, ih]
+      simp only [List.map_cons, lookupNamedBackend, lookupGraph]
+      by_cases h : iriNamed ng.name n = true <;> simp [h, ih]
 
 /-- The named graphs a query may read: `none` when the graph-name collector
 established nothing, so every named graph is readable. -/
@@ -685,11 +678,11 @@ theorem evalPatternBackend_nil (env : EvalEnv) (dsb : DatasetBackend)
 walks. -/
 theorem indexedDatasetBackend_named (d : Dataset) :
     (indexedDatasetBackend d).named
-      = d.named.map (fun ng => (⟨ngKey ng, indexedGraphBackend ng.graph⟩ : NamedGraphBackend)) :=
+      = d.named.map (fun ng => (⟨ng.name, indexedGraphBackend ng.graph⟩ : NamedGraphBackend)) :=
   rfl
 
-theorem ngKey_graph (ng : NamedGraph) (g : Graph) :
-    ngKey { ng with graph := g } = ngKey ng := rfl
+theorem name_graph (ng : NamedGraph) (g : Graph) :
+    ({ ng with graph := g } : NamedGraph).name = ng.name := rfl
 
 theorem restrictNamed_cons (keep : Triple → Bool) (ng : NamedGraph) (rest : List NamedGraph) :
     restrictNamed keep (ng :: rest)
@@ -703,19 +696,19 @@ changes neither the rows nor their order. -/
 theorem graphVar_flatMap_restrict {keep : Triple → Bool}
     (F G : NamedGraphBackend → SolutionSeq)
     (hkeepG : ∀ ng : NamedGraph,
-        F ⟨ngKey ng, indexedGraphBackend (ng.graph.filter keep)⟩
-          = G ⟨ngKey ng, indexedGraphBackend ng.graph⟩)
+        F ⟨ng.name, indexedGraphBackend (ng.graph.filter keep)⟩
+          = G ⟨ng.name, indexedGraphBackend ng.graph⟩)
     (hdropG : ∀ ng : NamedGraph, ng.graph ≠ [] → ng.graph.filter keep = [] →
-        G ⟨ngKey ng, indexedGraphBackend ng.graph⟩ = []) :
+        G ⟨ng.name, indexedGraphBackend ng.graph⟩ = []) :
     ∀ {l l' : List NamedGraph}, NamedRestricted keep l l' →
       (l'.map
-        (fun ng => (⟨ngKey ng, indexedGraphBackend ng.graph⟩ : NamedGraphBackend))).flatMap F
+        (fun ng => (⟨ng.name, indexedGraphBackend ng.graph⟩ : NamedGraphBackend))).flatMap F
       = (l.map
-          (fun ng => (⟨ngKey ng, indexedGraphBackend ng.graph⟩ : NamedGraphBackend))).flatMap G
+          (fun ng => (⟨ng.name, indexedGraphBackend ng.graph⟩ : NamedGraphBackend))).flatMap G
   | _, _, .nil => rfl
   | ng :: _, _, .keep r => by
       rw [List.map_cons, List.map_cons, List.flatMap_cons, List.flatMap_cons,
-        ngKey_graph, hkeepG ng, graphVar_flatMap_restrict F G hkeepG hdropG r]
+        name_graph, hkeepG ng, graphVar_flatMap_restrict F G hkeepG hdropG r]
   | ng :: _, _, .drop hne hz r => by
       rw [List.map_cons, List.flatMap_cons, hdropG ng hne hz, List.nil_append,
         graphVar_flatMap_restrict F G hkeepG hdropG r]
@@ -829,34 +822,25 @@ theorem evalPatternBackend_restrict (env : EvalEnv) {keep : Triple → Bool}
         trivial
       have hv' : graphVarIn p = true → readable = none := fun _ => hnone
       have hkeepG : ∀ ng : NamedGraph,
-          (match wfIriOf? (ngKey ng) with
-           | none => []
-           | some i =>
-               (evalPatternBackend env (indexedDatasetBackend dr) p
-                 (indexedGraphBackend (ng.graph.filter keep))).filterMap
-                 (fun mu => Binding.bindIfCompatible v (Term.iri i) mu))
-          = (match wfIriOf? (ngKey ng) with
-             | none => []
-             | some i =>
-                 (evalPatternBackend env (indexedDatasetBackend d) p
-                   (indexedGraphBackend ng.graph)).filterMap
-                   (fun mu => Binding.bindIfCompatible v (Term.iri i) mu)) := by
+          (evalPatternBackend env (indexedDatasetBackend dr) p
+              (indexedGraphBackend (ng.graph.filter keep))).filterMap
+              (fun mu => Binding.bindIfCompatible v ng.name.toTerm mu)
+          = (evalPatternBackend env (indexedDatasetBackend d) p
+                (indexedGraphBackend ng.graph)).filterMap
+                (fun mu => Binding.bindIfCompatible v ng.name.toTerm mu) := by
         intro ng
         simp only [evalPatternBackend_restrict env hd p ng.graph hf.2 hk hn' hv']
       have hdropG : ∀ ng : NamedGraph, ng.graph ≠ [] → ng.graph.filter keep = [] →
-          (match wfIriOf? (ngKey ng) with
-           | none => []
-           | some i =>
-               (evalPatternBackend env (indexedDatasetBackend d) p
-                 (indexedGraphBackend ng.graph)).filterMap
-                 (fun mu => Binding.bindIfCompatible v (Term.iri i) mu)) = [] := by
+          (evalPatternBackend env (indexedDatasetBackend d) p
+              (indexedGraphBackend ng.graph)).filterMap
+              (fun mu => Binding.bindIfCompatible v ng.name.toTerm mu) = [] := by
         intro ng hgne hz
         have hres := evalPatternBackend_restrict env hd p ng.graph hf.2 hk hn' hv'
         rw [hz] at hres
         rcases evalPatternBackend_nil env (indexedDatasetBackend dr) keep p hf.2 hf.1 hk
           with hn0 | htrue
         · rw [← hres, hn0]
-          cases wfIriOf? (ngKey ng) <;> rfl
+          rfl
         · exact absurd (by rw [← filter_all htrue ng.graph, hz]) hgne
       simp only [evalPatternBackend, indexedDatasetBackend_named]
       refine graphVar_flatMap_restrict _ _ ?_ ?_ (hd.namedList hnone)
@@ -1125,9 +1109,9 @@ theorem limitGraphVarAcc_restrict {keep : Triple → Bool} {tp : TriplePattern}
     ∀ {l l' : List NamedGraph}, NamedRestricted keep l l' → ∀ (acc : SolutionSeq),
       limitGraphVarAcc v tp limit
           (l'.map
-            (fun ng => (⟨ngKey ng, indexedGraphBackend ng.graph⟩ : NamedGraphBackend))) acc
+            (fun ng => (⟨ng.name, indexedGraphBackend ng.graph⟩ : NamedGraphBackend))) acc
         = limitGraphVarAcc v tp limit
-            (l.map (fun ng => (⟨ngKey ng, indexedGraphBackend ng.graph⟩ : NamedGraphBackend)))
+            (l.map (fun ng => (⟨ng.name, indexedGraphBackend ng.graph⟩ : NamedGraphBackend)))
             acc
   | _, _, .nil, _ => rfl
   | ng :: rest, _, .keep r, acc => by
@@ -1136,13 +1120,11 @@ theorem limitGraphVarAcc_restrict {keep : Triple → Bool} {tp : TriplePattern}
       by_cases hlim : limit ≤ acc.length
       · rw [limitGraphVarAcc_done v tp limit _ acc hlim,
             limitGraphVarAcc_done v tp limit _ acc hlim]
-      · have hkey : ngKey { ng with graph := ng.graph.filter keep } = ngKey ng := rfl
+      · have hkey : ({ ng with graph := ng.graph.filter keep } : NamedGraph).name = ng.name := rfl
         rw [limitGraphVarAcc, limitGraphVarAcc, if_neg hlim, if_neg hlim, hkey,
           backendSearchLimited_indexed_filter (htp Binding.empty) ng.graph
             (limit - acc.length)]
-        cases wfIriOf? (ngKey ng) with
-        | none => exact ih acc
-        | some i => exact ih _
+        exact ih _
   | ng :: rest, _, .drop _ hz' r, acc => by
       have ih := limitGraphVarAcc_restrict htp v limit r
       rw [List.map_cons]
@@ -1154,12 +1136,9 @@ theorem limitGraphVarAcc_restrict {keep : Triple → Bool} {tp : TriplePattern}
           rw [← backendSearchLimited_indexed_filter (htp Binding.empty) ng.graph
                 (limit - acc.length), hz', backendSearchLimited_indexed_nil]
         rw [limitGraphVarAcc, if_neg hlim]
-        cases wfIriOf? (ngKey ng) with
-        | none => exact ih acc
-        | some i =>
-            simp only [hsearch, List.filterMap_nil, capsTakeN, List.take_nil,
-              List.reverseAux]
-            exact ih acc
+        simp only [hsearch, List.filterMap_nil, capsTakeN, List.take_nil,
+          List.reverseAux]
+        exact ih acc
 
 /-! ## 15. SELECT and ASK -/
 

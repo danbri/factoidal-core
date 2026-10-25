@@ -9,8 +9,8 @@ Each component kind has one interface type. Its contract against the foundation 
 | Kind | Interface type (file) | Instances | Proved fields | `assumed_*` fields |
 |---|---|---|---|---|
 | Reader | `RdfReader` (`Dataflow/Reader.lean`) | `readers` table: N-Triples, N-Quads, Turtle, TriG, RDF/XML, JSON-LD | `set`, `sound` (reader contract, every document scope), `fails` | none |
-| Data access, one graph | `LawfulStore` (`Dataflow/Store.lean`) | proved: `ofList`, `ofIndexed`, `ofCaps`, `overlay`, `union`; with names: `hdt`, `cottasInMemory`, `cottasOnDisk`, `cottasOnDiskDelta`, `virtualRml`, `ofGraph`, `ofIndexedGraph` | `law` (`BackendExact` under the assumptions) | `assumed_contracts` (list of `AssumptionName`: 6 names, 12 uses) |
-| Data access, dataset | `LawfulDataset` (`Dataflow/Store.lean`) | proved: `indexed`, `ofDefault`, `ofCertified` (IRI graph names); with names: `ofCertified` (blank-node graph name), `ofDataset` | `law` (`DatasetBackendExact`) | `assumed_contracts` |
+| Data access, one graph | `LawfulStore` (`Dataflow/Store.lean`) | proved: `ofList`, `ofIndexed`, `ofCaps`, `overlay`, `union`; with names: `hdt`, `cottasInMemory`, `cottasOnDisk`, `cottasOnDiskDelta`, `virtualRml`, `ofGraph`, `ofIndexedGraph` | `law` (`BackendExact` under the assumptions) | `assumed_contracts` (list of `AssumptionName`: 5 names, 9 uses) |
+| Data access, dataset | `LawfulDataset` (`Dataflow/Store.lean`) | proved: `indexed`, `ofDefault`, `ofCertified` (IRI and blank-node graph names); with names: `ofDataset` (`datasetIsSet`) | `law` (`DatasetBackendExact`) | `assumed_contracts` |
 | Writer | `RdfWriter` (`Dataflow/Writer.lean`) | `writers` table; proved: N-Triples, N-Quads; assumed: Turtle, TriG, RDF/XML, JSON-LD, canonical N-Quads | `roundTrip` (when nothing is assumed) | `assumed_roundTrip` (5 writers) |
 | Query evaluator | `LawfulEvaluator` (`Dataflow/Evaluator.lean`) | `shippedEvaluator` (all wasm query ops) | `sound` (`EvalContract` outside the assumed inputs) | `assumed_contractOn` (backend path outside `NativeFrag`; SELECT fast paths) |
 | Reasoner | `SoundReasoner` (`Dataflow/Reasoner.lean`) | `rhoDfReasoner`, `rdfsReasoner D`, `owlRlReasoner` | `sound` (output entailed in the regime) | `assumed_completeness` (3 instances) |
@@ -19,20 +19,20 @@ Each component kind has one interface type. Its contract against the foundation 
 
 ## 2. The end-to-end theorem
 
-Module `formal/lean4/L4Factoidal/Dataflow/EndToEnd.lean`. The pipeline is `pipeline r ev inp env q`: the reader `r` reads the document text; `loadStore` builds the lawful store `LawfulDataset.ofCertified` when every graph name is an IRI (no store when a graph name is a blank node, then the reference evaluator answers); `ev.run` evaluates the query.
+Module `formal/lean4/L4Factoidal/Dataflow/EndToEnd.lean`. The pipeline is `pipeline r ev inp env q`: the reader `r` reads the document text; `loadStore` builds the lawful store `LawfulDataset.ofCertified` for every dataset the reader accepts, IRI and blank-node graph names alike (the backend record names a graph by its `Subject`, so `GRAPH ?g` binds `?g` to a blank node; until 2026-10-25 a blank-node graph name gave no store); `ev.run` evaluates the query.
 
 `pipeline_sound r ev hev inp env q h`. If the reader accepts (`h : r.run inp = .ok out`), then:
 
 1. the pipeline answers `ev.run x`, with `x = pipelineInput env c q`;
 2. the parse of the document gives `raw`, the read dataset is the set of quads of `raw`, and its denotation is `raw.den`;
-3. every loaded store has the denotation of the read dataset and a proved law (no named assumption);
+3. the pipeline loads a store, the store has the denotation of the read dataset and a proved law (no named assumption), and the evaluator input carries its backend;
 4. `EvalContract x (ev.run x)`: the answer is the foundation's SPARQL 1.1 answer over the read dataset (`evalSelect`, `evalAsk`, `evalConstruct`, `evalDescribe`), or, for SELECT and ASK on the backend path, the foundation's modifier layer over a WHERE answer that `Allowed` (SPARQL 1.1 §18.5) admits. The second case is not proved equal to the first.
 
 Premises: `hev : ev.AssumptionHolds` (the named assumption `LawfulEvaluator.assumed_contractOn`) and `h` (the case "the reader accepts"; on a parse error, `pipeline_error` gives the error). The reader and the store add no assumption. `shipped_pipeline_sound` replaces `hev` by the two named statements `BackendOutsideFragmentAgrees` and `SelectFastPathAgrees`. `pipeline_sound_proved` has no assumption, for the inputs outside `assumed_contractOn`. `shipped_pipeline_construct`: a CONSTRUCT answer is exactly `evalConstruct` over the read dataset.
 
 The join of store and evaluator: `LawfulDataset.backendReads_ofCertified` (the store's backend reads the dataset, `BackendReads`) and `pipelineInput_wf` (`EvalInput.Wf`). Anti-pattern 29 check: no premise contains `pipeline`, `SetOf`, `den` or `LawfulDataset`; `hev` contains `EvalContract` only on the assumed inputs. `#print axioms` for all eight theorems: propext, Classical.choice, Quot.sound. No sorry, axiom, `native_decide` or `partial`.
 
-Not covered: a store with a blank-node graph name (the backend record cannot read it pair for pair); the claim that the answer depends only on the denotation; the decode from bytes to text (it is the separate proved stage `decodeStage`).
+Not covered: the claim that the answer depends only on the denotation; the decode from bytes to text (it is the separate proved stage `decodeStage`).
 
 ## 3. Gates (this branch)
 
