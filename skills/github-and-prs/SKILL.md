@@ -157,6 +157,22 @@ runs"), so dispatch one build at a time and check with `gh run list` that
 the run you are waiting for was not cancelled. Since factoidal-builds PR 3
 (2026-10-24) `web-gates` waits only for the Linux F* job.
 
+After each merge, check main's OWN CI as well ("Verify Lean 4 corpus" on
+danbri/factoidal-core), not only the factoidal-builds run of the PR head:
+
+```bash
+gh run list --repo danbri/factoidal-core --branch main --limit 6 \
+  --json name,conclusion,headSha -q '.[]|[.name,.conclusion,.headSha[0:8]]|@tsv'
+```
+
+The two systems run different steps (core CI also runs the assurance tests
+and probes; factoidal-builds runs wasm, npm and F*), and neither blocks a
+merge. Cost, 2026-10-24/25: commit 95cffbf2 left a test that pinned 54 OWL
+reader cases while the inventory held 70; "Verify Lean 4 corpus" failed on
+every main commit from 21:10 to 05:10 UTC. Six PRs merged in that time on
+green factoidal-builds runs, and the coordinator reported main as healthy.
+The red step also hid the steps after it. Fix: PR 74.
+
 `web-gates` runs the npm package suite on the wasm built from that commit.
 The local alternative is `bash formal/lean4/Wasm/build-wasm.sh` and then
 `cd npm/factoidal && npm test`.
