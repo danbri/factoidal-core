@@ -1093,6 +1093,8 @@ export interface Sbm11Store {
   generation: string;
   terms: number;
   query(sparql: string, options?: { base?: string; sparql12?: boolean; reference?: boolean }): Sbm11Answer;
+  /** the resources the reader read, when its reader records them (lwsSbm11Reader) */
+  readonly evidence: Sbm11ReadEvidence[] | undefined;
   close(): void;
 }
 
@@ -1102,6 +1104,31 @@ export function openSbm11(source: string, options?: { reader?: Sbm11Reader }): P
 
 /** Serve `source` with `reader`; `null` removes it. */
 export function registerSbm11Source(source: string, reader: Sbm11Reader | null): void;
+
+/** One LWS resource an SBM11 reader read (https://github.com/danbri/factoidal/issues/1010). */
+export interface Sbm11ReadEvidence {
+  resource: string;
+  etag: string;
+  lastModified: string | null;
+  /** HTTP requests made for this resource */
+  requests: number;
+  /** answers that were 206 Partial Content */
+  partial: number;
+  /** content bytes received */
+  bytes: number;
+}
+
+/** A synchronous HTTP GET: `(url, headers) -> answer`. */
+export type Sbm11Transport = (url: string, headers: Record<string, string>) =>
+  { status: number; header(name: string): string | null; bytes: Uint8Array };
+
+/** A reader of the SBM11 files held as LWS resources under the container
+ * `url` (one resource per file, CURRENT a resource too), by HTTP Range GETs
+ * when the server answers 206, else by whole GETs kept in memory. Node: the
+ * default transport is a fetch in a worker thread; close() stops it. */
+export function lwsSbm11Reader(url: string, opts?: {
+  auth?: string; headers?: Record<string, string>; transport?: Sbm11Transport; timeoutMs?: number
+}): Sbm11Reader & { evidence(): Sbm11ReadEvidence[]; errors(): string[]; close(): void };
 
 /** One query against a store: open with the query's plan, query, close. */
 export function queryStore(

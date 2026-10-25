@@ -98,8 +98,15 @@ export function sbm11Api (loadEngine) {
     const opened = envelope(eng.call('sbm11Open', [String(source)]))
     const handle = opened.handle
     let open = true
+    const reader = options.reader || readers.get(String(source))
     return {
       handle,
+      /** The resources the reader read (`lwsSbm11Reader`): `[{ resource,
+       *  etag, lastModified, requests, partial, bytes }]`; undefined for a
+       *  reader that records none. */
+      get evidence () {
+        return reader && typeof reader.evidence === 'function' ? reader.evidence() : undefined
+      },
       generation: opened.generation,
       terms: Number(opened.terms),
       query (sparql, qopts = {}) {

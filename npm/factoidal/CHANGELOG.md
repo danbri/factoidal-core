@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.1 (unreleased)
+
+- `lwsSbm11Reader(url, { auth, headers, transport })`: a reader for `openSbm11` of an SBM11 generation held as Linked Web Storage resources (one resource per file, `CURRENT` too), by HTTP `Range` GETs when the server answers `206` with a matching `Content-Range`, else by whole GETs kept in memory (https://github.com/danbri/factoidal/issues/1010, KR3 read part). `store.evidence` lists each resource read with its `ETag`. In Lean every reader is now a storage `Medium` (`L4Factoidal/Storage/Medium.lean`, KR1: `readAt`, `size`; `writeObject` and `switchPointer` declared and refused by every host), under the named assumption `ReadsWritten`. `browser.d.ts` now types `openSbm11` and `registerSbm11Source`.
+
 ## 0.14.0
 
 **Checked pipelines.** Each component (reader, store, query evaluator, writer, reasoner, validator, proof checker) has one interface type whose contract against the W3C specifications is part of the type. A component cannot be added without a contract; a contract that is not proved yet is a named assumption, listed and counted in CI. A theorem states that the SPARQL answer agrees with the SPARQL 1.1 semantics for data from any source (a parsed document, a Dataset after edits, an update, a reasoner's output, a union of stores), given the listed assumptions. Status and gaps: https://github.com/danbri/factoidal/issues/975.

@@ -23,6 +23,8 @@ import { buildApi } from './lib/api.mjs';
 import { entryFromEngine } from './lib/lean-entry.mjs';
 import { sbm11Api, registerSbm11Source, setDefaultSbm11Reader } from './lib/sbm11.mjs';
 import { nodeDefaultReaderFactory } from './lib/sbm11-node.mjs';
+import { lwsSbm11Reader as lwsSbm11ReaderWith } from './lib/sbm11-lws.mjs';
+import { nodeSyncTransport } from './lib/sync-http-node.mjs';
 
 /**
  * The loaded Lean engine handle: `call(op, args)`, `callBlob`,
@@ -74,6 +76,16 @@ export const clearServiceEndpoints = api.clearServiceEndpoints;
 setDefaultSbm11Reader(nodeDefaultReaderFactory());
 export const openSbm11 = sbm11Api(loadEngine).openSbm11;
 export { registerSbm11Source };
+
+// A reader of an SBM11 generation held as LWS resources (lib/sbm11-lws.mjs;
+// https://github.com/danbri/factoidal/issues/1010 KR3). In Node the default
+// synchronous transport is a fetch in a worker thread (lib/sync-http-node.mjs),
+// stopped by the reader's close().
+export function lwsSbm11Reader(url, opts = {}) {
+  if (typeof opts.transport === 'function') return lwsSbm11ReaderWith(url, opts);
+  const transport = nodeSyncTransport({ timeoutMs: opts.timeoutMs });
+  return lwsSbm11ReaderWith(url, { ...opts, transport, onClose: () => transport.close() });
+}
 
 // The persisted store
 export const openStore = api.openStore;
