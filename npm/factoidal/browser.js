@@ -27,6 +27,7 @@ import { entryFromEngine } from './lib/lean-entry.mjs';
 import { browserEngine } from './lib/browser-engine.mjs';
 import { indexedDbDeltaLogStore } from './lib/delta-log-hosts.mjs';
 import { sbm11Api, registerSbm11Source } from './lib/sbm11.mjs';
+import { lwsSbm11Reader } from './lib/sbm11-lws.mjs';
 
 const l4Engine = browserEngine('l4factoidal', new URL('./l4-assets/', import.meta.url).href);
 
@@ -66,6 +67,9 @@ const api = buildApi({
 // over OPFS FileSystemSyncAccessHandle in a dedicated worker.
 export const openSbm11 = sbm11Api(loadEngine).openSbm11;
 export { registerSbm11Source };
+// A reader of an SBM11 generation held as LWS resources (issue 1010 KR3). In
+// a browser worker its default transport is a synchronous XMLHttpRequest.
+export { lwsSbm11Reader };
 
 // RDF and SPARQL
 export const parse = api.parse;

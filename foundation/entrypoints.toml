@@ -1002,3 +1002,11 @@ reason = "host wiring: registers a byte reader for a source name (lib/sbm11.mjs)
 [[nonstage]]
 id = "npm:./browser#registerSbm11Source"
 reason = "host wiring: registers a byte reader for a source name (lib/sbm11.mjs); reads no RDF data and decides no format"
+
+[[nonstage]]
+id = "npm:.#lwsSbm11Reader"
+reason = "host byte reader (lib/sbm11-lws.mjs, issue 1010 KR3): HTTP Range GETs of LWS resources, handed to openSbm11 as a reader; the engine names every file and checks every length against the manifest (Storage/Medium.lean, assumption ReadsWritten); reads no RDF data and decides no format"
+
+[[nonstage]]
+id = "npm:./browser#lwsSbm11Reader"
+reason = "host byte reader (lib/sbm11-lws.mjs, issue 1010 KR3) in the browser entry, over a synchronous XMLHttpRequest in a worker; as npm:.#lwsSbm11Reader"

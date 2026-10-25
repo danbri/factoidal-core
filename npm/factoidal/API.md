@@ -1064,6 +1064,65 @@ Details: `lws/README.md`, `solid/server/README.md`,
 [`docs/lws-solid-conformance.md`](https://github.com/danbri/factoidal/blob/main/docs/lws-solid-conformance.md).
 
 
+## An SBM11 store held in Linked Web Storage: `lwsSbm11Reader`
+
+`openSbm11` (the Shardborough store, https://github.com/danbri/factoidal/issues/1009)
+reads each file of a generation at an offset through a reader.
+`lwsSbm11Reader(url, opts)` is a reader of a generation held as
+[LWS 1.0](https://w3c.github.io/lws-protocol/lws10-core/) resources: one
+resource per file under the container `url`, and the `CURRENT` pointer of a
+collection root as one more resource (https://github.com/danbri/factoidal/issues/1010).
+Give it to `openSbm11` as `reader` (or to `registerSbm11Source`):
+
+```js browser
+// In a dedicated worker: the engine asks for bytes synchronously, and the
+// default transport there is a synchronous XMLHttpRequest.
+import { openSbm11, lwsSbm11Reader } from '@factoidal/core/browser'
+
+const storeUrl = 'https://storage.example/stores/tiny/'   // holds CURRENT and gen/...
+const accessToken = 'an LWS access token'
+const reader = lwsSbm11Reader(storeUrl, { auth: `Bearer ${accessToken}` })
+const store = await openSbm11(storeUrl, { reader })
+const answer = store.query('SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }')
+console.log(answer.json, store.evidence)   // evidence: [{ resource, etag, lastModified, requests, partial, bytes }]
+store.close()
+reader.close()
+```
+
+How it reads. Each read is a GET with `Range: bytes=a-b` (RFC 9110 §14).
+The answer is used as the range only when it is `206` with `Content-Range:
+bytes a-b/N`; any other successful answer is taken as the whole file, kept in
+memory, and later reads of that file are cut from it with no request. A
+changed `ETag` between two reads of one file refuses the read, so the bytes of
+two versions are never mixed. `factoidal lws-serve` answers `Range` with
+`206` (the decision is Lean: `LWS/Binding.lean` `parseRange`,
+`range_selection_exact`). The engine checks every length against the manifest
+as for a directory.
+
+Evidence. `store.evidence` lists each resource read with its `ETag` and
+`Last-Modified`, the number of requests, how many were answered `206`, and
+the bytes received, so an answer can say which bytes it came from.
+`store.evidence` is `undefined` for a reader that records none (a directory).
+
+Transport. The engine is inside WebAssembly and cannot wait for a promise, so
+the reader needs a synchronous GET. In Node the default is a `fetch` in a
+worker thread that this thread waits for (`Atomics.wait`), stopped by
+`reader.close()`; the server must then run in another process or worker,
+not on the thread that queries. In a browser worker the default is a
+synchronous `XMLHttpRequest`; a window thread has neither, so pass
+`opts.transport` (`(url, headers) => ({ status, header(name), bytes })`).
+`opts.auth` is sent as the `Authorization` header; `opts.headers` adds more.
+
+The storage medium. In Lean every reader is a `Medium`
+(`L4Factoidal/Storage/Medium.lean`: `readAt`, `size`, `writeObject`,
+`switchPointer`); the SBM11 session uses the two reads. Every host refuses
+the two writes today. What a store relies on from a medium is the named
+assumption `ReadsWritten`: the bytes read are the bytes written.
+
+Not yet: writes to an LWS storage (packing a generation, switching
+`CURRENT` with a conditional PUT), the Merkle check of each read, eviction of
+in-memory copies.
+
 ## Functional API (fn)
 
 `@factoidal/core/fn` is a functional variant of the API above. `FnDataset`

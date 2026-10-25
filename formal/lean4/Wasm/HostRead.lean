@@ -28,11 +28,14 @@ opaque hostReadAt (source file : @& String) (off len : UInt64) : IO ByteArray
 @[extern "l4_host_size"]
 opaque hostSize (source file : @& String) : IO UInt64
 
-/-- The host of the generation that `source` names. -/
+/-- The host of the generation that `source` names: a read-only storage
+    medium (`Storage/Medium.lean`, issue 1010 KR1); `writeObject` and
+    `switchPointer` refuse. -/
 def hostOf (source : String) : L4Factoidal.Storage.Sbm11.HostSession.Host :=
-  { readAt := fun file off len => hostReadAt source file off.toUInt64 len.toUInt64
-    size := fun file => do
+  L4Factoidal.Storage.Medium.readOnlyIO
+    (fun file off len => hostReadAt source file off.toUInt64 len.toUInt64)
+    (fun file => do
       let n ← hostSize source file
-      return if n == UInt64.ofNat (2 ^ 64 - 1) then none else some n.toNat }
+      return if n == UInt64.ofNat (2 ^ 64 - 1) then none else some n.toNat)
 
 end L4Wasm

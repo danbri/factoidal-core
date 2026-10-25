@@ -60,6 +60,11 @@ store_files=(
   # The LWS storage directory (`lws-serve --storage files`, issue 918): the
   # engine names every file and gives every byte; the host reads and writes.
   "$root/npm/factoidal/lws/persist.mjs"
+  # The LWS reader of an SBM11 generation (issue 1010 KR3) and its Node
+  # synchronous transport: GETs and bytes only; the engine names every file
+  # and checks every length.
+  "$root/npm/factoidal/lib/sbm11-lws.mjs"
+  "$root/npm/factoidal/lib/sync-http-node.mjs"
 )
 
 protocol_pattern='\b(20[0-9]|30[0-9]|40[0-9]|41[0-9]|42[0-9]|50[1-9])\b|\b(Link|Allow|Accept-Patch|Accept-Post|Accept-Put|Last-Modified|ETag|If-Match|If-None-Match|Slug|Location|WAC-Allow|Access-Control-[A-Za-z-]+)\b|containment|describedby|\bacl\b|pim:|text/n3|\bldp:|\bsolid:|WebID|\binbox\b'
