@@ -563,6 +563,22 @@ theorem referenceAnswer_eq_modifierLayer (inp : EvalInput) (hw : inp.Wf)
     simp only [env_with_self hw.envDataset, hform]
     rfl
 
+/-- **The reference WHERE answer depends on the denotation only**
+(`Storage.BackendAgreement.refSol_den`): a WHERE answer that agrees with the
+reference over one input agrees with it over any input with the same query,
+an environment that agrees on the extension functions, `NOW()` and the base
+IRI, and a set dataset with the same denotation, for a pattern of
+`NativeFrag`. -/
+theorem WhereAgrees.of_den {inp inp' : EvalInput} (hw : inp.Wf) (hw' : inp'.Wf)
+    (hq : inp.query = inp'.query)
+    (he : Storage.Sbm11.ExprLocalTheorems.EnvAgree inp.env inp'.env)
+    (hden : inp.ds.den = inp'.ds.den) (hn : NativeFrag inp.query.pattern.rewriteBnodes)
+    {A : SolutionSeq} (h : WhereAgrees inp A) : WhereAgrees inp' A := by
+  unfold WhereAgrees at h ⊢
+  rw [← hq]
+  exact SolSEquiv.trans h
+    (Storage.BackendAgreement.refSol_den he hw.isSet hw'.isSet hden _ hn)
+
 /-- **The SELECT header is the reference header** on every answer the
 contract admits. -/
 theorem EvalContract.header {inp : EvalInput} {out : Answer} (h : EvalContract inp out)
@@ -636,5 +652,6 @@ theorem EvalContract.agrees {inp : EvalInput} {out : Answer} (hw : inp.Wf)
 #print axioms referenceAnswer_eq_modifierLayer
 #print axioms EvalContract.header
 #print axioms EvalContract.agrees
+#print axioms WhereAgrees.of_den
 
 end L4Factoidal.Dataflow

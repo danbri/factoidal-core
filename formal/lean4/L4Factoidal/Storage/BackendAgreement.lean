@@ -982,6 +982,179 @@ theorem selectPost_congr (env : EvalEnv) (a : Graph) (q : Query) (sel : SelectCl
         rw [hp]
         cases ob <;> exact finishSelectRows_congr _ (fun v => (selectItemVars items).contains v) hw
 
+
+/-! ## 10. The reference WHERE answer depends on the denotation only
+
+Two set datasets with one denotation (`Dataset.den`) list the same triples
+in each graph and the same graph names, in some order. For a pattern of
+`NativeFrag` the reference answers over the two are `SolSEquiv`
+(`refSol_den`): `AllowedS.perm` moves an `AllowedS` answer to a permuted
+dataset (the method of `AllowedPerm.allowed_perm`), and `AllowedS.ref`
+compares. -/
+
+open L4Factoidal.Storage.Sbm11.AllowedPerm (NamedPerm)
+
+theorem triple_key_self (t : Triple) : t.key = t := by
+  cases t
+  simp [Triple.key, Term.joinKey_eq_self]
+
+theorem map_key_self : ∀ (g : Graph), g.map Triple.key = g
+  | [] => rfl
+  | t :: g => by simp only [List.map_cons, triple_key_self, map_key_self g]
+
+/-- **`AllowedS` does not depend on the order of the triples of a graph or
+    of the named graphs**: an answer for `p` in the active graph `a` over
+    `ds` is one for `p` in a permutation `a'` of `a` over `ds'`, when the
+    named graphs of `ds'` are those of `ds` up to order (`NamedPerm`), for a
+    pattern of `NativeFrag`. -/
+theorem AllowedS.perm {env env' : EvalEnv} (he : Storage.Sbm11.ExprLocalTheorems.EnvAgree env env')
+    {ds ds' : Dataset} (hd : NamedPerm ds ds') {p : QueryPattern} {a : Graph} {A : SolutionSeq}
+    (h : AllowedS env ds p a A) : ∀ {a' : Graph}, a.Perm a' → NativeFrag p → AllowedS env' ds' p a' A := by
+  induction h with
+  | bgp b a =>
+    intro a' h hp
+    refine .equiv (.bgp b a') ?_
+    rw [Storage.Sbm11.IdLeaf.refSol_bgp env ds b a hp, Storage.Sbm11.IdLeaf.refSol_bgp env' ds' b a' hp]
+    exact SolSEquiv.of_perm (Storage.Sbm11.AllowedPerm.evalBgp_perm h b).symm
+  | join _ _ ihl ihr =>
+    intro a' h hp
+    exact .join (ihl h hp.1) (ihr h hp.2)
+  | @leftJoin l r c a A B hc _ _ ihl ihr =>
+    intro a' h hp
+    rw [Storage.Sbm11.AllowedPerm.filterFn_agree he c
+      (BackendRefinement.existsFree_of_backendLocal c hc) a a']
+    exact .leftJoin hc (ihl h hp.2.1) (ihr h hp.2.2)
+  | @filter c q a A hc _ ih =>
+    intro a' h hp
+    rw [Storage.Sbm11.AllowedPerm.filterFn_agree he c
+      (BackendRefinement.existsFree_of_backendLocal c hc) a a']
+    exact .filter hc (ih h hp.2)
+  | union _ _ ihl ihr =>
+    intro a' h hp
+    exact .union (ihl h hp.1) (ihr h hp.2)
+  | minus _ _ ihl ihr =>
+    intro a' h hp
+    exact .minus (ihl h hp.1) (ihr h hp.2)
+  | @graphIri i q a g A hg _ ih =>
+    intro a' _ hp
+    obtain ⟨g', hg', hpg, _⟩ := hd.lookup_some i.val g hg
+    exact .graphIri hg' (ih hpg hp)
+  | @graphIriNone i q a hg =>
+    intro a' _ _
+    exact .graphIriNone (hd.lookup_none i.val hg)
+  | @graphVar v q a F _ ih =>
+    intro a' _ hp
+    let F' : NamedGraph → SolutionSeq := fun ng' =>
+      match ds.named.find? (fun ng => ng.name == ng'.name) with
+      | some ng => F ng
+      | none => []
+    have hF' : ∀ ng ∈ ds.named, ∀ ng' ∈ ds'.named, ng.name = ng'.name → F' ng' = F ng := by
+      intro ng hm ng' _ hn
+      simp only [F']
+      cases hf : ds.named.find? (fun x => x.name == ng'.name) with
+      | none =>
+        have := List.find?_eq_none.1 hf ng hm
+        simp [hn] at this
+      | some x =>
+        have hx := List.mem_of_find?_eq_some hf
+        have hxn : x.name = ng'.name := by simpa using List.find?_some hf
+        rw [Storage.Sbm11.AllowedPerm.eq_of_name hd.names hx hm (hxn.trans hn.symm)]
+    have hall : ∀ ng' ∈ ds'.named, AllowedS env' ds' q ng'.graph (F' ng') := by
+      intro ng' hm'
+      obtain ⟨ng, hm, hn, hpg⟩ := hd.bwd ng' hm'
+      rw [hF' ng hm ng' hm' hn]
+      exact ih ng hm hpg hp
+    refine .equiv (.graphVar F' hall) (SolSEquiv.of_perm ?_)
+    let σ : NamedGraph → NamedGraph := fun ng =>
+      (ds'.named.find? (fun ng' => ng'.name == ng.name)).getD ng
+    have hσ : ∀ ng ∈ ds.named, σ ng ∈ ds'.named ∧ (σ ng).name = ng.name := by
+      intro ng hm
+      obtain ⟨ng', hm', hn, _⟩ := hd.fwd ng hm
+      simp only [σ]
+      cases hf : ds'.named.find? (fun x => x.name == ng.name) with
+      | none =>
+        have := List.find?_eq_none.1 hf ng' hm'
+        simp [hn] at this
+      | some x =>
+        exact ⟨List.mem_of_find?_eq_some hf, by simpa using List.find?_some hf⟩
+    have hnd' : ds'.named.Nodup := Storage.Sbm11.AllowedPerm.nodup_of_map _ hd.names'
+    have hndσ : (ds.named.map σ).Nodup := by
+      refine Storage.Sbm11.AllowedPerm.nodup_map_of_inj σ ?_
+        (Storage.Sbm11.AllowedPerm.nodup_of_map _ hd.names)
+      intro x hx y hy he
+      have e : x.name = y.name := by rw [← (hσ x hx).2, ← (hσ y hy).2, he]
+      exact Storage.Sbm11.AllowedPerm.eq_of_name hd.names hx hy e
+    have hpσ : (ds.named.map σ).Perm ds'.named := by
+      apply (List.perm_ext_iff_of_nodup hndσ hnd').2
+      intro y
+      constructor
+      · intro hy
+        obtain ⟨x, hx, rfl⟩ := List.mem_map.1 hy
+        exact (hσ x hx).1
+      · intro hy
+        obtain ⟨x, hx, hn, _⟩ := hd.bwd y hy
+        refine List.mem_map.2 ⟨x, hx, ?_⟩
+        exact Storage.Sbm11.AllowedPerm.eq_of_name hd.names' (hσ x hx).1 hy ((hσ x hx).2.trans hn)
+    refine List.Perm.trans (List.Perm.flatMap_right _ hpσ.symm) ?_
+    rw [List.flatMap_map]
+    apply List.Perm.of_eq
+    apply Storage.Sbm11.AllowedPerm.flatMap_congr_mem
+    intro ng hm
+    rw [(hσ ng hm).2, hF' ng hm (σ ng) (hσ ng hm).1 (hσ ng hm).2.symm]
+  | values vars rows a =>
+    intro a' _ _
+    exact .values vars rows a'
+  | empty a =>
+    intro a' _ _
+    exact .empty a'
+  | equiv _ hs ih =>
+    intro a' h hp
+    exact .equiv (ih h hp) hs
+
+/-- Two set datasets with one denotation: the named graphs of one are those of
+the other up to order. -/
+theorem namedPerm_of_den {ds ds' : Dataset} (h : ds.IsSet) (h' : ds'.IsSet) (e : ds.den = ds'.den) :
+    NamedPerm ds ds' where
+  names := h.names
+  names' := h'.names
+  same := fun n => by
+    have hn : n ∈ ds.names ↔ n ∈ ds'.names := by
+      show ds.den.names n ↔ ds'.den.names n
+      rw [e]
+    simp only [Dataset.names, List.mem_map] at hn
+    exact hn
+  graphs := fun ng hng ng' hng' hn => by
+    have h1 := (h.den_named hng).2
+    have h2 := (h'.den_named hng').2
+    have hp := (List.perm_ext_iff_of_nodup (h.graphs ng hng) (h'.graphs ng' hng')).2 (fun k => by
+      constructor
+      · intro hk
+        obtain ⟨t, -, rfl⟩ := List.mem_map.mp hk
+        have hm := (h1 t).mpr hk
+        rw [e, hn] at hm
+        exact (h2 t).mp hm
+      · intro hk
+        obtain ⟨t, -, rfl⟩ := List.mem_map.mp hk
+        have hm := (h2 t).mpr hk
+        rw [← hn, ← e] at hm
+        exact (h1 t).mp hm)
+    rwa [map_key_self, map_key_self] at hp
+  fixed := fun ng _ => Storage.Sbm11.AllowedPerm.graphFixed ng.graph
+
+/-- **The reference WHERE answer depends on the denotation only**: over two
+    set datasets with one denotation, in environments that agree on the
+    extension functions, `NOW()` and the base IRI, the reference answers of a
+    pattern of `NativeFrag` in the default graphs are `SolSEquiv`. -/
+theorem refSol_den {env env' : EvalEnv} (he : Storage.Sbm11.ExprLocalTheorems.EnvAgree env env')
+    {ds ds' : Dataset} (h : ds.IsSet) (h' : ds'.IsSet) (e : ds.den = ds'.den)
+    (p : QueryPattern) (hp : NativeFrag p) :
+    SolSEquiv (refSol env ds p ds.default) (refSol env' ds' p ds'.default) := by
+  have hdef : ds.default.Perm ds'.default := by
+    have := h.default_perm_of_den_eq h' e
+    rwa [map_key_self, map_key_self] at this
+  exact ((allowedS_ref env ds p ds.default hp).perm he (namedPerm_of_den h h' e) hdef hp).ref
+    (nativeFrag_inIdFragment p hp)
+
 #print axioms allowed_not_unique
 #print axioms join_congr
 #print axioms leftJoin_congr
@@ -995,5 +1168,7 @@ theorem selectPost_congr (env : EvalEnv) (a : Graph) (q : Query) (sel : SelectCl
 #print axioms evalPatternBackend_ref
 #print axioms formHasSolution_congr
 #print axioms selectPost_congr
+#print axioms AllowedS.perm
+#print axioms refSol_den
 
 end L4Factoidal.Storage.BackendAgreement

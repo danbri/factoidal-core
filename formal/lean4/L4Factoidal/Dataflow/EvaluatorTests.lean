@@ -229,6 +229,18 @@ private def dupQueries : List String := [
     | _ => false
   | none => false
 
+-- One denotation, another order (`refSol_den`): the reference WHERE answers
+-- over `ds0` and over `ds0` with its default graph reversed are one multiset.
+private def ds0r : Dataset := { ds0 with default := g0.reverse }
+#guard (queries ++ dupQueries).all fun t =>
+  match parseSparql t none .v11 with
+  | .ok q => match q.form with
+    | .select _ | .ask =>
+      sameRows (Storage.Sbm11.IdGroup.refSol { dataset := some ds0 } ds0 q.pattern.rewriteBnodes ds0.default)
+        (Storage.Sbm11.IdGroup.refSol { dataset := some ds0r } ds0r q.pattern.rewriteBnodes ds0r.default)
+    | _ => true
+  | .error _ => false
+
 -- `Allowed` admits answers of different lengths (`allowed_not_unique`): the
 -- two joins, evaluated
 #guard (join [[("x", Storage.BackendAgreement.tT)]] [[("x", Storage.BackendAgreement.tT)]]).length == 1
