@@ -122,6 +122,7 @@ def opNames : List String :=
   , "proofInspect"
   , "explainGraph"
   , "stageList"
+  , "pipelineCheck"
   , "toanSummation"
   , "toanProduct"
   , "toanSimplify"
@@ -475,6 +476,7 @@ def callUncoded (op : String) (argsJson : String) : String :=
     | "stageList"            => (match args with
                                   | [] => stageList
                                   | _ => errJson s!"{op} expects 0 arguments, got {args.length}")
+    | "pipelineCheck"        => arity1 op pipelineCheck args
     | "toanSummation"        => arity4 op toanSummation args
     | "toanProduct"          => arity4 op toanProduct args
     | "toanSimplify"         => arity1 op toanSimplify args

@@ -351,6 +351,10 @@ id = "wasm:stageList"
 reason = "reflection: the stage registry (L4Factoidal.Dataflow.registry, Wasm/Ops/StageList.lean), reads no data"
 
 [[nonstage]]
+id = "wasm:pipelineCheck"
+reason = "reflection: the type check and the guarantee data (pipelineReport) of a list of registry stages (Wasm/Ops/StageList.lean), reads no data"
+
+[[nonstage]]
 id = "wasm:engineTables"
 reason = "reflection: the engine's syntax and regime tables, reads no data"
 

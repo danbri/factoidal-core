@@ -7,7 +7,7 @@ https://github.com/danbri/factoidal/issues/975).
   stageList()
     -> {"ok":true,"count":N,
         "stages":[{"name":S,"declaration":S|null,"area":S,"dir":S,
-                   "kind":S|null,"wireIn":S,"wireOut":S,"status":S,
+                   "kind":S|null,"wireIn":S,"wireOut":S,"params":[S],"status":S,
                    "contract":S|null,"theorems":[S],"assumptions":[S],
                    "tests":[S],"note":S,"runnable":B}]}
 
@@ -26,6 +26,9 @@ each call: no second table of stages exists.
   checks the declarations and their axioms).
 * `contract`: the contract declaration; `assumptions`: the named assumptions
   (`ioAssumptions`); full Lean names.
+* `wireIn`, `wireOut`: `Wire.label` of the entry's wires
+  (`Dataflow/Wire.lean`); `params`: the inputs a node supplies when it is
+  made.
 * `runnable`: false exactly when the status is `missing`: a stage with no
   contract and no suite is not run as a node (issue 975, item 3).
 
@@ -44,16 +47,8 @@ namespace L4Wasm.Ops
 open L4Factoidal.JSON
 open L4Factoidal.Dataflow
 
-private def dropPrefix (pre s : String) : Option String :=
-  if s.startsWith pre then some (String.ofList (s.toList.drop pre.length)) else none
-
-/-- A declaration name relative to `L4Factoidal.Dataflow` or `L4Factoidal`. -/
-def stageShortName (s : String) : String :=
-  (dropPrefix "L4Factoidal.Dataflow." s).getD ((dropPrefix "L4Factoidal." s).getD s)
-
-/-- The node name of an entry: its declaration, else its area. -/
-def stageEntryName (e : Entry) : String :=
-  if isNone e.stage then e.area else stageShortName e.stage.toString
+/-- The node name of an entry: its declaration, else its area (`Entry.nodeName`). -/
+def stageEntryName (e : Entry) : String := e.nodeName
 
 /-- The interface type of the entry's declaration, from `stageKinds`. -/
 def stageEntryKind (e : Entry) : Option String :=
@@ -75,8 +70,9 @@ def stageEntryJson (e : Entry) : Json :=
       ("area", .string e.area),
       ("dir", .string e.dir),
       ("kind", optJson (stageEntryKind e)),
-      ("wireIn", .string e.wireIn),
-      ("wireOut", .string e.wireOut),
+      ("wireIn", .string e.wireIn.label),
+      ("wireOut", .string e.wireOut.label),
+      ("params", .array (e.params.map Json.string)),
       ("status", .string e.status.label),
       ("contract", nameJson e.contract),
       ("theorems", .array (e.theorems.map (fun n => .string n.toString))),
@@ -91,6 +87,96 @@ def stageListEntries : List Json := registry.map stageEntryJson
 /-- `stageList()`. -/
 def stageList : String :=
   okWith [("count", .number (toString registry.length)), ("stages", .array stageListEntries)]
+
+/-! ## pipelineCheck
+
+  pipelineCheck(namesJson)   namesJson: a JSON array of stage names
+    -> {"ok":true,"wellTyped":B,"wireIn":S|null,"wireOut":S|null,
+        "mismatch":{"at":N,"out":S,"in":S}|null,
+        "conversions":[{"at":N,"from":S,"to":S}],
+        "assumptions":[S],
+        "contract":{"theorem":S,"stages":[S|null]},
+        "stages":[{"name":S,"status":S,"checked":B,"contract":S|null,
+                   "assumptions":[S],"wireIn":S,"wireOut":S}]}
+    -> {"ok":false,"error":S} on a name that is not a registry `name`, or
+       an empty list.
+
+Computed by `pipelineReport Wire.conv` (`Dataflow/Pipeline.lean`) over the
+signatures `Entry.sig` of the named entries, in the given order:
+
+* `wellTyped`: `wellTyped Wire.conv`, which accepts exactly the lists that
+  `WellTyped` holds of (`wellTyped_iff`); `mismatch`: the first stage `at`
+  whose output wire does not feed stage `at + 1`.
+* `conversions`: the places where a stage's output reaches the next stage's
+  input by a `Wire.conv` conversion; the composed contract names them
+  (`arrive`).
+* `assumptions`: `assumptionUnion`, the union of the stages' named
+  assumptions, first-seen order: the premises of
+  `Pipeline.guarantee_sound` for a pipeline of components with these
+  signatures (`Pipeline.guarantee_assumptions`).
+* `contract.theorem`: `L4Factoidal.Dataflow.Pipeline.guarantee_sound`;
+  `contract.stages`: each stage's contract declaration.
+* `stages[i].checked`: the status is `proved`.
+
+The result states what a well-typed pipeline of these stages is guaranteed
+under the listed assumptions. It is not a proof that the npm runners compute
+the Lean stages (the RUNNERS table binding, `tools/runners-gate.py`).
+-/
+
+/-- The registry entry of a node name. -/
+def entryOfName (n : String) : Option Entry := registry.find? (·.nodeName == n)
+
+/-- The named entries in order, or the first name that is not registered. -/
+def entriesOfNames (names : List String) : Except String (List Entry) :=
+  names.mapM fun n =>
+    match entryOfName n with
+    | some e => .ok e
+    | none => .error s!"pipelineCheck: no registered stage named '{n}'"
+
+private def wireJson : Option Wire → Json
+  | some w => .string w.label
+  | none => .null
+
+/-- The JSON of the check of a list of registry entries. -/
+def pipelineCheckJson (es : List Entry) : String :=
+  let sigs := es.map Entry.sig
+  let r := pipelineReport Wire.conv sigs
+  let mismatch : Json := match r.mismatch with
+    | some i =>
+      let out := (sigs[i]?).map (·.outW)
+      let inn := (sigs[i + 1]?).map (·.inW)
+      .object [("at", .number (toString i)), ("out", wireJson out), ("in", wireJson inn)]
+    | none => .null
+  okWith
+    [ ("wellTyped", .bool r.wellTyped),
+      ("wireIn", wireJson r.wireIn),
+      ("wireOut", wireJson r.wireOut),
+      ("mismatch", mismatch),
+      ("conversions", .array (r.conversions.map fun (i, a, b) =>
+        .object [("at", .number (toString i)), ("from", .string a.label), ("to", .string b.label)])),
+      ("assumptions", .array (r.assumptions.map fun n => .string n.toString)),
+      ("contract", .object
+        [ ("theorem", .string (``Pipeline.guarantee_sound).toString),
+          ("stages", .array (r.contracts.map fun c => optJson (c.map toString))) ]),
+      ("stages", .array (es.map fun e =>
+        .object
+          [ ("name", .string e.nodeName),
+            ("status", .string e.status.label),
+            ("checked", .bool (e.status == .proved)),
+            ("contract", nameJson e.contract),
+            ("assumptions", .array (e.ioAssumptions.map fun n => .string n.toString)),
+            ("wireIn", .string e.wireIn.label),
+            ("wireOut", .string e.wireOut.label) ])) ]
+
+/-- `pipelineCheck(namesJson)`. -/
+def pipelineCheck (namesJson : String) : String :=
+  match decodeArgs namesJson with
+  | .error e => errJson s!"pipelineCheck: {e}"
+  | .ok [] => errJson "pipelineCheck: no stages"
+  | .ok names =>
+    match entriesOfNames names with
+    | .error e => errJson e
+    | .ok es => pipelineCheckJson es
 
 /-! ## Checks: the output is derived from the registry -/
 
@@ -118,5 +204,20 @@ private def subOf (hay needle : String) : Bool := (hay.splitOn needle).length > 
 #guard (registry.find? (stageEntryName · == "turtleDocumentReader")).bind stageEntryKind == some "RdfReader"
 #guard (registry.find? (stageEntryName · == "turtleDocumentWriter")).map (·.status.label) == some "assumed"
 #guard (registry.filter (·.status == .missing)).all fun e => !e.runnable
+
+-- pipelineCheck: a well-typed three-stage path with a conversion
+#guard subOf (pipelineCheck "[\"turtleDocumentReader\",\"rdfsReasoner\",\"shaclValidator\"]")
+  "\"wellTyped\":true"
+#guard subOf (pipelineCheck "[\"turtleDocumentReader\",\"rdfsReasoner\",\"shaclValidator\"]")
+  "\"conversions\":[{\"at\":0,\"from\":\"Dataset × PrefixList\",\"to\":\"Graph\"}]"
+-- ill-typed: a writer's text is not a reasoner's graph
+#guard subOf (pipelineCheck "[\"turtleDocumentWriter\",\"rdfsReasoner\"]") "\"wellTyped\":false"
+#guard subOf (pipelineCheck "[\"turtleDocumentWriter\",\"rdfsReasoner\"]")
+  "\"mismatch\":{\"at\":0,\"out\":\"String\",\"in\":\"Graph\"}"
+-- the assumption union of an assumed stage is reported
+#guard subOf (pipelineCheck "[\"turtleDocumentReader\",\"turtleDocumentWriter\"]")
+  "\"assumptions\":[\"L4Factoidal.Dataflow.TurtleWriterRoundTrip\"]"
+#guard subOf (pipelineCheck "[\"noSuchStage\"]") "\"ok\":false"
+#guard subOf (pipelineCheck "[]") "\"ok\":false"
 
 end L4Wasm.Ops

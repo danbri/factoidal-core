@@ -64,6 +64,9 @@ import L4Factoidal.Dataflow.PackSetStage
 import L4Factoidal.Storage.PackSet
 import L4Factoidal.Storage.PackSetTests
 import L4Factoidal.Dataflow.RegistryTests
+import L4Factoidal.Dataflow.Wire
+import L4Factoidal.Dataflow.Pipeline
+import L4Factoidal.Dataflow.PipelineTests
 import L4Factoidal.RDF.ConciseBoundedDescription
 import L4Factoidal.RDF.ConciseBoundedDescriptionTheorems
 import L4Factoidal.RDF.StoreLoader
