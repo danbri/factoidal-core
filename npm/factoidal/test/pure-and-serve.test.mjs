@@ -98,6 +98,15 @@ test('serveStore answers a SPARQL 1.1 Protocol SELECT', async () => {
     assert.equal(r.status, 200)
     const j = await r.json()
     assert.deepEqual(j.results.bindings.map((b) => b.n.value), ['Alice', 'Bob'])
+    // The default layout is IBK5, which takes a change to a named graph
+    // (IBK3, the default before 2026-10-25, answered 501).
+    const u = await fetch(s.url, { method: 'POST', headers: { 'content-type': 'application/sparql-update' },
+      body: 'INSERT DATA { GRAPH <http://ex/g> { <http://ex/c> <http://ex/name> "Carol" } }' })
+    assert.equal(u.status, 204)
+    const g = await fetch(`${s.url}?query=${encodeURIComponent('SELECT ?n WHERE { GRAPH <http://ex/g> { ?s <http://ex/name> ?n } }')}`,
+      { headers: { accept: 'application/sparql-results+json' } })
+    assert.equal(g.status, 200)
+    assert.deepEqual((await g.json()).results.bindings.map((b) => b.n.value), ['Carol'])
   } finally {
     await s.close()
   }
