@@ -757,8 +757,16 @@ The choices below are the coordinator's, under that delegation.
   query parameters) are removed, never hashed; no local address or client
   certificate; the full record stays in a local store; shared provenance gets
   a small subset unless the caller opts in.
+- TLS: keep the crypto details (version, cipher suite, key exchange group,
+  signature algorithm, ALPN, SNI, the full server certificate chain in DER,
+  the verification result and trust anchor, SCTs, a stapled OCSP response).
+  Owner, 2026-10-25, verbatim: "Re recording tls, keep more of the crypto
+  details too, certs etc". Never session keys, key logs or client
+  certificates.
 - A retrieval is an assumption of the run, named with the body checksum, never
   a theorem.
+- Pipeline wires: SELECT gives `table` ("select give table? Sure"); a source's
+  name has no default from its locator ("no default"). Owner, 2026-10-25.
 - Design: section 4 of `docs/designissues/2026-10-25-tabular-and-source-models.md`;
   tracking https://github.com/danbri/factoidal/issues/1035.
 
