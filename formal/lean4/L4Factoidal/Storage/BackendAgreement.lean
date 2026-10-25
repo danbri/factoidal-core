@@ -828,6 +828,160 @@ theorem evalPatternBackend_ref (env : EvalEnv) (dsb : DatasetBackend) (ds : Data
     SolSEquiv (evalPatternBackend env dsb p gb) (refSol env ds p a) :=
   (evalPatternBackend_allowedS env dsb ds hn hnd p hp gb a hr).ref (nativeFrag_inIdFragment p hp)
 
+
+/-! ## 9. The order-free part of the solution-modifier layer
+
+SPARQL 1.1 fixes no order of the solutions without ORDER BY and none among
+the solutions ORDER BY does not separate (section 15.1). A slice (OFFSET,
+LIMIT), DISTINCT and REDUCED (which keep the first of the duplicates), an
+order-sensitive aggregate (GROUP_CONCAT, SAMPLE) and a SELECT expression
+that reads the row index (BNODE(), UUID(), STRUUID()) therefore have more
+than one correct answer on one multiset of WHERE solutions. The theorems
+below cover the modifiers that do not read the order: for ASK, no GROUP BY
+and no HAVING; for SELECT, no GROUP BY, no aggregate, no SELECT expression,
+no DISTINCT, no REDUCED, no OFFSET, no LIMIT; ORDER BY and a trailing VALUES
+clause allowed. -/
+
+theorem isEmpty_of_length {α : Type} : ∀ {X Y : List α}, X.length = Y.length → X.isEmpty = Y.isEmpty
+  | [], [], _ => rfl
+  | _ :: _, _ :: _, _ => rfl
+  | [], _ :: _, h => by simp at h
+  | _ :: _, [], h => by simp at h
+
+theorem sliceSolutions_length (o l : Option Nat) {X Y : SolutionSeq} (h : X.length = Y.length) :
+    (sliceSolutions o l X).length = (sliceSolutions o l Y).length := by
+  cases o <;> cases l <;> simp [sliceSolutions, h]
+
+/-- ASK with no GROUP BY and no HAVING: the answer depends on the number of
+    WHERE solutions only. -/
+theorem formHasSolution_congr (env : EvalEnv) (a : Graph) (q : Query) (hg : q.groupsSolutions = false)
+    {A A' : SolutionSeq} (h : SolSEquiv A A') :
+    formHasSolution env a q A = formHasSolution env a q A' := by
+  unfold formHasSolution formRows
+  rw [hg]
+  simp only [Bool.false_eq_true, if_false]
+  congr 1
+  apply isEmpty_of_length
+  apply sliceSolutions_length
+  cases q.postValues with
+  | none => exact h.length_eq
+  | some vals => exact (join_congr h (SolSEquiv.refl vals)).length_eq
+
+theorem lookup_filterKey (k : VarName → Bool) (v : VarName) :
+    ∀ (mu : Binding), Binding.lookup v (mu.filter (fun p => k p.1)) = if k v then mu.lookup v else none
+  | [] => by simp [Binding.lookup]
+  | (w, t) :: rest => by
+    simp only [List.filter_cons]
+    by_cases e : w = v
+    · subst e
+      by_cases hk : k w <;> simp [hk, Binding.lookup, lookup_filterKey k w rest]
+    · by_cases hk : k w <;> simp [hk, Binding.lookup, e, lookup_filterKey k v rest]
+
+theorem rowS_filterKey (k : VarName → Bool) {mu nu : Binding} (h : RowS mu nu) :
+    RowS (mu.filter (fun p => k p.1)) (nu.filter (fun p => k p.1)) := by
+  refine ⟨fun v => ?_, fun p => ?_⟩
+  · rw [lookup_filterKey, lookup_filterKey, h.1 v]
+  · simp only [List.mem_filter, h.2 p]
+
+theorem projectBinding_eq_filter (vars : List VarName) :
+    ∀ (mu : Binding), projectBinding vars mu = mu.filter (fun p => vars.contains p.1)
+  | [] => rfl
+  | (v, t) :: rest => by
+    simp only [projectBinding, List.filter_cons, projectBinding_eq_filter vars rest]
+
+/-- No SELECT expression: every item is a variable. -/
+def itemsPlain : List SelectItem → Bool
+  | [] => true
+  | .var _ :: rest => itemsPlain rest
+  | .expr _ _ :: _ => false
+
+/-- No SELECT expression in the SELECT clause. -/
+def selectPlain : SelectClause → Bool
+  | .all => true
+  | .vars items => itemsPlain items
+
+theorem evalSelectItemsRowFrom_plain (env : EvalEnv) (a : Graph) (row : String) :
+    ∀ (items : List SelectItem), itemsPlain items = true → ∀ (mu : Binding) (i : Nat),
+      evalSelectItemsRowFrom env a row items mu i = mu
+  | [], _, _, _ => rfl
+  | .var _ :: rest, h, mu, i => by
+    simp only [evalSelectItemsRowFrom]
+    exact evalSelectItemsRowFrom_plain env a row rest h mu (i + 1)
+  | .expr _ _ :: _, h, _, _ => by simp [itemsPlain] at h
+
+theorem numberRows_id (f : String → Binding → Binding) (hf : ∀ row mu, f row mu = mu) :
+    ∀ (omega : SolutionSeq) (i : Nat), numberRows f omega i = omega
+  | [], _ => rfl
+  | mu :: rest, i => by simp only [numberRows, hf, numberRows_id f hf rest (i + 1)]
+
+/-- The SELECT modifiers that do not read the order of the solutions. -/
+def SelectOrderFree (q : Query) (sel : SelectClause) : Prop :=
+  q.groupBy = none ∧ selectHasAggregates sel = false ∧ selectPlain sel = true ∧
+    q.modifier.distinct = false ∧ q.modifier.reduced = false ∧ q.modifier.offset = none ∧
+    q.modifier.limit = none
+
+theorem finishSelectRows_plain (order : Option (Binding → Binding → Int)) (project : Binding → Binding)
+    (rows : SolutionSeq) :
+    finishSelectRows order project false false none none rows =
+      (match order with
+       | none => rows
+       | some cmp => sortSolutionsFast cmp rows).map project := by
+  cases order <;> rfl
+
+theorem finishSelectRows_congr (order : Option (Binding → Binding → Int)) (k : VarName → Bool)
+    {X Y : SolutionSeq} (h : SolSEquiv X Y) :
+    SolSEquiv (finishSelectRows order (fun mu => mu.filter (fun p => k p.1)) false false none none X)
+      (finishSelectRows order (fun mu => mu.filter (fun p => k p.1)) false false none none Y) := by
+  rw [finishSelectRows_plain, finishSelectRows_plain]
+  have ho : SolSEquiv (match order with | none => X | some cmp => sortSolutionsFast cmp X)
+      (match order with | none => Y | some cmp => sortSolutionsFast cmp Y) := by
+    cases order with
+    | none => exact h
+    | some cmp =>
+      exact SolSEquiv.trans (SolSEquiv.of_perm (List.mergeSort_perm X _))
+        (SolSEquiv.trans h (SolSEquiv.of_perm (List.mergeSort_perm Y _).symm))
+  exact PermPw.map _ (fun hab => rowS_filterKey k hab) ho
+
+/-- **SELECT with order-free modifiers: one multiset of WHERE solutions
+    gives one multiset of rows** (`SolSEquiv`). -/
+theorem selectPost_congr (env : EvalEnv) (a : Graph) (q : Query) (sel : SelectClause)
+    (hform : q.form = .select sel) (hof : SelectOrderFree q sel) {A A' : SolutionSeq}
+    (h : SolSEquiv A A') : SolSEquiv (selectPost env a q A) (selectPost env a q A') := by
+  obtain ⟨hgb, hagg, hpl, hdd, hrr, hoo, hll⟩ := hof
+  cases q with
+  | mk form dcs pat gb hv md pv base =>
+    cases md with
+    | mk ob dd rr oo ll =>
+      simp only [Query.form] at hform
+      subst hform
+      simp only [Query.groupBy, Query.modifier] at hgb hdd hrr hoo hll
+      subst hgb hdd hrr hoo hll
+      have hw : SolSEquiv (match pv with | none => A | some vals => join A vals)
+          (match pv with | none => A' | some vals => join A' vals) := by
+        cases pv with
+        | none => exact h
+        | some vals => exact join_congr h (SolSEquiv.refl vals)
+      cases sel with
+      | all =>
+        unfold selectPost
+        dsimp only
+        rw [if_neg (by simp [hagg])]
+        cases ob <;> exact finishSelectRows_congr _ (fun v => !isSyntheticBnodeVar v) hw
+      | vars items =>
+        unfold selectPost
+        dsimp only
+        have hc : ¬ (((none : Option (List GroupCondition)).isSome ||
+            selectHasAggregates (.vars items)) = true) := by simp [hagg]
+        rw [if_neg hc, if_neg hc]
+        have hid := numberRows_id (fun row mu => evalSelectItemsRowFrom env a row items mu 0)
+          (fun row mu => evalSelectItemsRowFrom_plain env a row items hpl mu 0)
+        rw [hid, hid]
+        have hp : projectBinding (selectItemVars items) =
+            fun mu => mu.filter (fun p => (selectItemVars items).contains p.1) :=
+          funext (projectBinding_eq_filter _)
+        rw [hp]
+        cases ob <;> exact finishSelectRows_congr _ (fun v => (selectItemVars items).contains v) hw
+
 #print axioms allowed_not_unique
 #print axioms join_congr
 #print axioms leftJoin_congr
@@ -839,5 +993,7 @@ theorem evalPatternBackend_ref (env : EvalEnv) (dsb : DatasetBackend) (ds : Data
 #print axioms allowedS_ref
 #print axioms evalPatternBackend_allowedS
 #print axioms evalPatternBackend_ref
+#print axioms formHasSolution_congr
+#print axioms selectPost_congr
 
 end L4Factoidal.Storage.BackendAgreement
