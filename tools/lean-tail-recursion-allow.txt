@@ -1523,3 +1523,6 @@ L4Factoidal_Dataflow_PhaseCTests_genDataset  # (s) (c) test module only (Dataflo
 L4Factoidal_SPARQL_QueryPattern_expandIriAlternatives  # (b) one frame per nesting level of the WHERE pattern's BGP-level operators, as QueryPattern.lowerWith (issue 1008)
 L4Factoidal_SPARQL_iriAlternativeUnion  # (b) one frame per `|` of one property path in the query text (issue 1008)
 L4Factoidal_SPARQL_isUnionOfBgps  # (s) (b) test helper of PathAlternativeTheorems' #guards only; depth of a UNION tree built in the test (issue 1008)
+L4Factoidal_Dataflow_canonArr  # (b) the element loop is a tail call; the cycle is canonJson, one frame per nesting level of a node settings document (issue 975)
+L4Factoidal_Dataflow_canonJson  # (b) one frame per nesting level of a node settings document (issue 975)
+L4Factoidal_Dataflow_canonObj  # (b) the member loop is a tail call; the cycle is canonJson, one frame per nesting level of a node settings document (issue 975)

@@ -2140,6 +2140,7 @@ function buildApi(driver) {
       explain: has('explainGraph'),
       stages: has('stageList'),
       pipelineCheck: has('pipelineCheck'),
+      pipelineCheckNodes: has('pipelineCheckNodes'),
       entailment: has('queryRaw'),
       tableau: has('tableauMaterialise') && has('tableauDlInconsistent'),
       rml: has('rmlMap'),
@@ -2176,7 +2177,7 @@ function buildApi(driver) {
   // The node-composition API (lib/nodes.mjs, issue 1002 step 2).
   const nodeApi = buildNodes({
     entry, entryResult, requireEntryFn, Dataset,
-    parse, closure, shaclValidate, query, serialize, canonicalize, explain,
+    parse, closure, shaclValidate, query, serialize, canonicalize, explain, csvwToRdf,
   });
 
   return {

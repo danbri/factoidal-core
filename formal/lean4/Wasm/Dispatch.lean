@@ -57,6 +57,7 @@ import Wasm.Ops.CL
 import Wasm.Ops.Proof
 import Wasm.Ops.Explain
 import Wasm.Ops.StageList
+import Wasm.Ops.PipelineNodes
 import Wasm.Ops.Handles
 import Wasm.Ops.DatasetFull
 import Wasm.Ops.Pack
@@ -125,6 +126,7 @@ def opNames : List String :=
   , "explainGraph"
   , "stageList"
   , "pipelineCheck"
+  , "pipelineCheckNodes"
   , "toanSummation"
   , "toanProduct"
   , "toanSimplify"
@@ -479,6 +481,7 @@ def callUncoded (op : String) (argsJson : String) : String :=
                                   | [] => stageList
                                   | _ => errJson s!"{op} expects 0 arguments, got {args.length}")
     | "pipelineCheck"        => arity1 op pipelineCheck args
+    | "pipelineCheckNodes"   => arity1 op pipelineCheckNodes args
     | "toanSummation"        => arity4 op toanSummation args
     | "toanProduct"          => arity4 op toanProduct args
     | "toanSimplify"         => arity1 op toanSimplify args

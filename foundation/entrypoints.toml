@@ -355,6 +355,10 @@ id = "wasm:pipelineCheck"
 reason = "reflection: the type check and the guarantee data (pipelineReport) of a list of registry stages (Wasm/Ops/StageList.lean), reads no data"
 
 [[nonstage]]
+id = "wasm:pipelineCheckNodes"
+reason = "reflection: the type check of a list of nodes (registry stage plus settings) with the node signatures Entry.nodeSig, each node's canonical settings, digest and effective status (Wasm/Ops/PipelineNodes.lean, Dataflow/NodeSettings.lean); parses an evaluator node's query to read its form, reads no data"
+
+[[nonstage]]
 id = "wasm:engineTables"
 reason = "reflection: the engine's syntax and regime tables, reads no data"
 
@@ -1014,3 +1018,33 @@ reason = "host byte reader (lib/sbm11-lws.mjs, issue 1010 KR3): HTTP Range GETs 
 [[nonstage]]
 id = "npm:./browser#lwsSbm11Reader"
 reason = "host byte reader (lib/sbm11-lws.mjs, issue 1010 KR3) in the browser entry, over a synchronous XMLHttpRequest in a worker; as npm:.#lwsSbm11Reader"
+
+[[entry]]
+id = "wasm:csvwToRdf"
+stages = ["CSVW (tabular data to RDF)"]
+covers = "part"
+note = "Wasm/Ops/Formats.lean csvwToRdf: csvwDatasetResult (CSVW/Conversion.lean csv2rdf). Not covered: the output text Dataset.toCanonicalNQuads and the diagnostics envelope. The stage has status tested (W3C csv2rdf suite), no Lean contract."
+
+[[entry]]
+id = "wasm:datasetFromCsvw"
+stages = ["CSVW (tabular data to RDF)"]
+covers = "part"
+note = "Wasm/Ops/DatasetFull.lean datasetFromCsvw: csvwDataset, the result stored as a dataset handle (storeMade). Not covered: the handle store."
+
+[[entry]]
+id = "npm:.#csvwToRdf"
+stages = ["CSVW (tabular data to RDF)"]
+covers = "part"
+note = "lib/api.mjs csvwToRdf: checks the options (op apiCheck), then wasm:datasetFromCsvw. The npm node runner of the stage (lib/nodes.mjs RUNNERS) calls it."
+
+[[entry]]
+id = "npm:./browser#csvwToRdf"
+stages = ["CSVW (tabular data to RDF)"]
+covers = "part"
+note = "the browser entry's csvwToRdf: the same function as npm:.#csvwToRdf."
+
+[[entry]]
+id = "npm:./fn#fromCsvw"
+stages = ["CSVW (tabular data to RDF)"]
+covers = "part"
+note = "fn.js fromCsvw: npm:.#csvwToRdf, the result wrapped as an FnDataset."

@@ -790,7 +790,9 @@ def registry : List Entry := [
   { area := "ShEx validation", dir := "ShEx"
     wireIn := .graph, wireOut := .report, params := ["schema"], status := .missing },
   { area := "CSVW (tabular data to RDF)", dir := "CSVW"
-    wireIn := .csv, wireOut := .dataset, params := ["metadata"], status := .missing },
+    wireIn := .csv, wireOut := .dataset, params := ["metadata", "mode", "base", "url"], status := .tested
+    tests := ["W3C CSVW csv2rdf (l4csvw-rdf)", "CSVW/ConversionTests.lean"]
+    note := "csv2rdf conversion (CSVW/Conversion.lean); no Lean contract; npm node runs csvwToRdf with the settings recorded (Dataflow/NodeSettings.lean, https://github.com/danbri/factoidal/issues/975)" },
   { area := "RDFC-1.0 canonicalization (canonical N-Quads and SHA-256 hex)", dir := "RDF"
     stage := ``rdfcStage, wireIn := .dataset, wireOut := .canonical
     contract := ``RdfcContract, status := .proved

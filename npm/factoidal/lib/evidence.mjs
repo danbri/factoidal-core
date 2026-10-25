@@ -16,6 +16,10 @@ export const isChecked = (status) => status === 'proved';
 /** The reason text of an unchecked step. */
 export function reasonOf(n) {
   if (n.status === 'missing') return 'no contract';
+  if (n.status === 'unproved' && n.outside && n.outside.length > 0) {
+    return `status unproved (registry status ${n.registryStatus || 'proved'}); settings outside ` +
+      `the proved domain: ${n.outside.map((o) => `${o.setting} (${o.reason})`).join('; ')}`;
+  }
   return n.assumptions.length > 0
     ? `status ${n.status}; assumptions: ${n.assumptions.join(', ')}`
     : `status ${n.status}`;
@@ -43,7 +47,10 @@ export function refusalFor(n, unchecked, hasRunner) {
 /**
  * One evidence record. `checked` is true iff the status is `proved`.
  * A step that ran under the opt-in and is not checked also carries
- * `unchecked: true` and `reason`.
+ * `unchecked: true` and `reason`. When the engine read the node's settings
+ * (op pipelineCheckNodes), the record also carries `settings` (canonical)
+ * and `settingsDigest`, and, when a setting left the proved domain,
+ * `registryStatus` and `outside`; its `status` is then `unproved`.
  */
 export function makeRecord(n, artefact, unchecked) {
   const checked = isChecked(n.status);
@@ -55,6 +62,14 @@ export function makeRecord(n, artefact, unchecked) {
     checked,
     artefact: artefact === undefined ? null : artefact,
   };
+  if (n.settingsDigest) {
+    base.settings = n.settings;
+    base.settingsDigest = n.settingsDigest;
+  }
+  if (n.outside && n.outside.length > 0) {
+    base.registryStatus = n.registryStatus;
+    base.outside = n.outside;
+  }
   if (unchecked && !checked) {
     base.unchecked = true;
     base.reason = reasonOf(n);
