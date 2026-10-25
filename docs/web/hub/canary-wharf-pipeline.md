@@ -184,9 +184,210 @@ id:cwb0806 a cwk:Building ;
 ```
 
 Not every building has a height: Newfoundland and Landmark Pinnacle have
-only a number of levels. The first pipeline reads the Turtle and runs a
-CONSTRUCT node that gives every building a height: the measured value, or
-3.5 metres per level, marked as an estimate.
+only a number of levels. To estimate their heights, the next section
+measures how many metres a level is in kgx itself.
+
+## How many metres is one level?
+
+The same kgx graph version has 24 buildings with both a measured height
+and a number of levels. This second extract has those 24 buildings, with
+the triples copied unchanged:
+
+```observable-js
+calibrationTtl = `# Extract of the kgx graph version <https://kgx.foaf.tv/id/graphbuildings41263dc7cc077db2>:
+# every building with both cwk:heightMetres and cwk:levels. Same licence as above.
+@prefix id: <https://kgx.foaf.tv/id/> .
+@prefix cwk: <https://kgx.foaf.tv/vocab#> .
+@prefix s: <https://schema.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+id:cwb0317 cwk:buildingTag "commercial" ;
+  cwk:heightMetres "111"^^xsd:integer ;
+  cwk:levels "33"^^xsd:integer ;
+  s:name "1 West India Quay" .
+id:cwb0411 cwk:buildingTag "yes" ;
+  cwk:heightMetres "23"^^xsd:integer ;
+  cwk:levels "5"^^xsd:integer ;
+  s:name "Cabot Place Shopping Centre" .
+id:cwb0412 cwk:buildingTag "office" ;
+  cwk:heightMetres "79.8"^^xsd:decimal ;
+  cwk:levels "17"^^xsd:integer ;
+  s:name "25 North Colonnade" .
+id:cwb0413 cwk:buildingTag "commercial" ;
+  cwk:heightMetres "235"^^xsd:integer ;
+  cwk:levels "50"^^xsd:integer ;
+  s:name "One Canada Square" .
+id:cwb0414 cwk:buildingTag "office" ;
+  cwk:heightMetres "87.7"^^xsd:decimal ;
+  cwk:levels "15"^^xsd:integer ;
+  s:name "5 Canada Square" .
+id:cwb0417 cwk:buildingTag "office" ;
+  cwk:heightMetres "199.5"^^xsd:decimal ;
+  cwk:levels "45"^^xsd:integer ;
+  s:name "8 Canada Square" .
+id:cwb0421 cwk:buildingTag "office" ;
+  cwk:heightMetres "68.5"^^xsd:decimal ;
+  cwk:levels "15"^^xsd:integer ;
+  s:name "KPMG" .
+id:cwb0422 cwk:buildingTag "office" ;
+  cwk:heightMetres "68.5"^^xsd:decimal ;
+  cwk:levels "17"^^xsd:integer ;
+  s:name "15 Canada Square" .
+id:cwb0424 cwk:buildingTag "office" ;
+  cwk:heightMetres "156"^^xsd:integer ;
+  cwk:levels "32"^^xsd:integer ;
+  s:name "One Churchill Place" .
+id:cwb0454 cwk:buildingTag "office" ;
+  cwk:heightMetres "65"^^xsd:integer ;
+  cwk:levels "14"^^xsd:integer .
+id:cwb0458 cwk:buildingTag "office" ;
+  cwk:heightMetres "62.2"^^xsd:decimal ;
+  cwk:levels "13"^^xsd:integer ;
+  s:name "30 South Colonnade" .
+id:cwb0465 cwk:buildingTag "office" ;
+  cwk:heightMetres "70.95"^^xsd:decimal ;
+  cwk:levels "20"^^xsd:integer ;
+  s:name "20 Canada Square" .
+id:cwb0520 cwk:buildingTag "office" ;
+  cwk:heightMetres "200"^^xsd:integer ;
+  cwk:levels "45"^^xsd:integer ;
+  s:name "Citigroup Centre" .
+id:cwb0525 cwk:buildingTag "office" ;
+  cwk:heightMetres "130"^^xsd:integer ;
+  cwk:levels "23"^^xsd:integer ;
+  s:name "25 Churchill Place" .
+id:cwb0582 cwk:buildingTag "office" ;
+  cwk:heightMetres "153"^^xsd:integer ;
+  cwk:levels "33"^^xsd:integer ;
+  s:name "25 Bank Street" .
+id:cwb0585 cwk:buildingTag "office" ;
+  cwk:heightMetres "153"^^xsd:integer ;
+  cwk:levels "32"^^xsd:integer ;
+  s:name "40 Bank Street" .
+id:cwb0589 cwk:buildingTag "office" ;
+  cwk:heightMetres "151"^^xsd:integer ;
+  cwk:levels "30"^^xsd:integer ;
+  s:name "10 Upper Bank Street" .
+id:cwb0590 cwk:buildingTag "apartments" ;
+  cwk:heightMetres "205"^^xsd:integer ;
+  cwk:levels "57"^^xsd:integer ;
+  s:name "One Park Drive" .
+id:cwb0637 cwk:buildingTag "apartments" ;
+  cwk:heightMetres "98"^^xsd:integer ;
+  cwk:levels "30"^^xsd:integer .
+id:cwb0641 cwk:buildingTag "apartments" ;
+  cwk:heightMetres "140"^^xsd:integer ;
+  cwk:levels "44"^^xsd:integer ;
+  s:name "22 Marsh Wall" .
+id:cwb0802 cwk:buildingTag "office" ;
+  cwk:heightMetres "6"^^xsd:integer ;
+  cwk:levels "1"^^xsd:integer .
+id:cwb0864 cwk:buildingTag "apartments" ;
+  cwk:heightMetres "27.52"^^xsd:decimal ;
+  cwk:levels "9"^^xsd:integer .
+id:cwb1052 cwk:buildingTag "apartments" ;
+  cwk:heightMetres "39"^^xsd:integer ;
+  cwk:levels "10"^^xsd:integer .
+id:cwb1055 cwk:buildingTag "apartments" ;
+  cwk:heightMetres "34"^^xsd:integer ;
+  cwk:levels "10"^^xsd:integer .`
+```
+
+```observable-js
+calibration = Factoidal.parse(calibrationTtl, { format: 'turtle' })
+```
+
+```observable-js
+calibrationPoints = (await calibration.query(`PREFIX cwk: <https://kgx.foaf.tv/vocab#>
+PREFIX s: <https://schema.org/>
+SELECT ?name ?height ?levels ?use
+WHERE { ?b cwk:heightMetres ?height ; cwk:levels ?levels ; cwk:buildingTag ?tag
+        OPTIONAL { ?b s:name ?n }
+        BIND(COALESCE(?n, STRAFTER(STR(?b), "https://kgx.foaf.tv/id/")) AS ?name)
+        BIND(IF(?tag = "apartments", "residential", "other") AS ?use) }
+ORDER BY ?height`)).map((r) => ({
+  name: r.get('name').value, height: Number(r.get('height').value),
+  levels: Number(r.get('levels').value), use: r.get('use').value,
+}))
+```
+
+The fit is a least-squares line through the origin, height = f × levels,
+so f = Σ(height × levels) / Σ(levels²). The query computes it per use: kgx
+tags residential buildings `apartments`; every other tag (office,
+commercial, retail) is "other".
+
+```observable-js
+perUse = calibration.query(`PREFIX cwk: <https://kgx.foaf.tv/vocab#>
+SELECT ?use (COUNT(*) AS ?buildings) (ROUND(100 * SUM(?h * ?l) / SUM(?l * ?l)) / 100 AS ?metresPerLevel)
+WHERE { ?b cwk:heightMetres ?h ; cwk:levels ?l ; cwk:buildingTag ?tag
+        BIND(IF(?tag = "apartments", "residential", "other") AS ?use) }
+GROUP BY ?use ORDER BY ?use`)
+```
+
+```observable-js
+perLevel = Object.fromEntries(perUse.map((r) => [r.get('use').value, Number(r.get('metresPerLevel').value)]))
+```
+
+Do short and tall buildings differ? The same fit, split at 100 metres:
+
+```observable-js
+perUseAndHeight = calibration.query(`PREFIX cwk: <https://kgx.foaf.tv/vocab#>
+SELECT ?use ?band (COUNT(*) AS ?buildings) (ROUND(100 * SUM(?h * ?l) / SUM(?l * ?l)) / 100 AS ?metresPerLevel)
+WHERE { ?b cwk:heightMetres ?h ; cwk:levels ?l ; cwk:buildingTag ?tag
+        BIND(IF(?tag = "apartments", "residential", "other") AS ?use)
+        BIND(IF(?h >= 100, "100 m or more", "under 100 m") AS ?band) }
+GROUP BY ?use ?band ORDER BY ?use ?band`)
+```
+
+```observable-js
+{
+  const W = 640, H = 400, M = { top: 20, right: 20, bottom: 44, left: 52 };
+  const colour = { residential: '#d9822b', other: '#3b7dd8' };
+  const x = d3.scaleLinear().domain([0, 60]).range([M.left, W - M.right]);
+  const y = d3.scaleLinear().domain([0, 250]).range([H - M.bottom, M.top]);
+  const svg = d3.create('svg').attr('viewBox', [0, 0, W, H])
+    .attr('style', 'max-width: 100%; height: auto; font: 12px sans-serif; color: currentColor');
+  svg.append('g').attr('transform', `translate(0,${H - M.bottom})`).call(d3.axisBottom(x))
+    .append('text').attr('x', W - M.right).attr('y', 36).attr('fill', 'currentColor')
+    .attr('text-anchor', 'end').text('levels (cwk:levels)');
+  svg.append('g').attr('transform', `translate(${M.left},0)`).call(d3.axisLeft(y))
+    .append('text').attr('x', -M.left + 4).attr('y', M.top - 8).attr('fill', 'currentColor')
+    .attr('text-anchor', 'start').text('height in metres (cwk:heightMetres)');
+  const lines = [['3.5 m per level (first version of this page)', 3.5, 'currentColor', '4 4'],
+    ...Object.entries(perLevel).map(([u, f]) => [`${u}: ${f} m per level`, f, colour[u], null])];
+  lines.forEach(([label, f, c, dash], i) => {
+    const end = Math.min(60, 250 / f);
+    svg.append('line').attr('x1', x(0)).attr('y1', y(0)).attr('x2', x(end)).attr('y2', y(end * f))
+      .attr('stroke', c).attr('stroke-width', 1.5).attr('stroke-dasharray', dash).attr('opacity', 0.8);
+    svg.append('text').attr('x', M.left + 8).attr('y', M.top + 14 + 16 * i).attr('fill', c).text(label);
+  });
+  svg.append('g').selectAll('circle').data(calibrationPoints).join('circle')
+    .attr('cx', (d) => x(d.levels)).attr('cy', (d) => y(d.height)).attr('r', 4.5)
+    .attr('fill', (d) => colour[d.use]).attr('fill-opacity', 0.85)
+    .append('title').text((d) => `${d.name}: ${d.height} m, ${d.levels} levels (${(d.height / d.levels).toFixed(2)} m per level, ${d.use})`);
+  return svg.node();
+}
+```
+
+Use decides the value; height does not. Residential levels are about 3.4
+metres, other levels about 4.5 metres, and within each use the two height
+bands differ by less than 0.15 metres. A single 3.5 for all buildings
+underestimates every office tower.
+
+How far is each estimate from the measured heights of the same 24
+buildings (mean absolute error, in metres)? The by-use values come from
+these buildings, so this is an in-sample check, not a test on new data:
+
+```observable-js
+estimateError = calibration.query(`PREFIX cwk: <https://kgx.foaf.tv/vocab#>
+SELECT (ROUND(10 * AVG(ABS(?h - ?l * 3.5))) / 10 AS ?flat3point5)
+       (ROUND(10 * AVG(ABS(?h - ?l * ?f))) / 10 AS ?byUse)
+WHERE { ?b cwk:heightMetres ?h ; cwk:levels ?l ; cwk:buildingTag ?tag
+        BIND(IF(?tag = "apartments", ${perLevel.residential}, ${perLevel.other}) AS ?f) }`)
+```
+
+The first pipeline reads the Turtle and runs a CONSTRUCT node that gives
+every building a height: the measured value, or levels × the metres per
+level for its use, marked as an estimate.
 
 ```observable-js
 heightsQuery = `PREFIX cwk: <https://kgx.foaf.tv/vocab#>
@@ -198,7 +399,8 @@ WHERE { ?b a cwk:Building ; s:name ?n ; s:latitude ?lat ; s:longitude ?lon
         OPTIONAL { ?b cwk:buildingTag ?tag }
         OPTIONAL { ?b cwk:heightMetres ?m }
         OPTIONAL { ?b cwk:levels ?l }
-        BIND(COALESCE(?m, ?l * 3.5) AS ?h)
+        BIND(IF(COALESCE(?tag, "") = "apartments", ${perLevel.residential}, ${perLevel.other}) AS ?f)
+        BIND(COALESCE(?m, ?l * ?f) AS ?h)
         BIND(!BOUND(?m) AS ?est) }`
 ```
 
