@@ -529,10 +529,13 @@ def withOverlay (s : σ) (st : Overlay.State) : IO σ := do
 /-- Replay the committed batches of a delta log into the overlay: each
 entry's terms mapped to ids (`idOrNew` for an addition), then `Overlay.step`.
 `logBytes` is the size of the log; `clean` is `false` when a torn final frame
-was left out. -/
-def replay (s : σ) (batches : List DeltaBatch) (logBytes : Nat) (clean : Bool) (each : Bool := false) :
-    IO σ := do
-  let t0 ← IO.monoNanosNow
+was left out; `start`: the clock at which the replay time is counted from (the
+caller's read of the log), else now. -/
+def replay (s : σ) (batches : List DeltaBatch) (logBytes : Nat) (clean : Bool) (each : Bool := false)
+    (start : Option Nat := none) : IO σ := do
+  let t0 ← match start with
+    | some t => pure t
+    | none => IO.monoNanosNow
   let c := SessionOps.core s
   let s := SessionOps.setCore s { c with deltaTorn := !clean, ovLogBytes := logBytes }
   if batches.isEmpty then return s

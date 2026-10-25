@@ -77,8 +77,12 @@ the entries are applied in log order. `SBM11_REPLAY_LOOKUP=each` looks every
 occurrence of every term up on its own, as the replay did before issue 858
 (the oracle of the differential test in tests/sbm11/update_where.sh).
 
-This is a HARNESS: it does file I/O. The query engine is
-`L4Factoidal.Storage.Sbm11.IdQuery`.
+This is a HARNESS: it does file I/O, and it runs scans on several threads. The
+query engine is `L4Factoidal.Storage.Sbm11.IdQuery`; the session, the delta
+overlay and the query driver are `L4Factoidal.Storage.Sbm11.QuerySession`
+(https://github.com/danbri/factoidal/issues/1009 KR1), the same functions the
+wasm ops `sbm11Open`, `sbm11Query` and `sbm11Close` call
+(`Wasm/Ops/Sbm11.lean`) over a storage medium.
 -/
 import Harness.Sbm11Gen
 import Harness.Sbm11Delta
@@ -106,6 +110,7 @@ import Std.Sync.Mutex
 import Std.Data.TreeMap
 import Harness.WorkerPool
 import L4Factoidal.Dataflow.Store
+import L4Factoidal.Storage.Sbm11.QuerySession
 
 namespace Harness.Sbm11Query
 
@@ -117,7 +122,18 @@ open L4Factoidal.Storage.Sbm11.Manifest
 open Harness.Sbm11Gen
 open L4Factoidal.Storage.ChunkedArtifact (Ref)
 
-/-! ## A generation opened lazily -/
+/-! ## A generation opened lazily
+
+The session state, the dictionary, the id store, the delta overlay and the
+query driver are the library's (`L4Factoidal.Storage.Sbm11.QuerySession`,
+https://github.com/danbri/factoidal/issues/1009 KR1): `Session` extends
+`QuerySession.Core` and is a `QuerySession.SessionOps` instance, and every
+method below that is not about threads, the worker pool or the Merkle-checked
+file reads calls the library function of the same name. What this file adds:
+the reads of the files (`readsOf`: POSIX `pread`, under `--verify merkle`
+through the verified chunk caches), the dictionary pages that scan tasks share
+(`taskPages`, `sharedPage`, `prefetch`), the task views, and the divided scans
+of `--threads N`. -/
 
 /-- A page of `Session.taskPages` (issue 799, stage 1b): its keys, or a
     promise of them while one task loads it (the other tasks that need the
@@ -126,14 +142,10 @@ inductive TaskPage where
   | ready (ks : ByteArray × Array Nat)
   | loading (p : IO.Promise (Except String (ByteArray × Array Nat)))
 
-/-- A permutation opened by a query session. Its PRM1 file is never read
-    whole (https://github.com/danbri/factoidal/issues/805): the open reads
-    the 22-byte header (`PrmRange.openM`), and each key range is found by
-    `PrmRange.rangeM` over positioned reads (`prmRead`): two binary searches
-    that read one 92-byte entry per probe, then one read of the entries of
-    the selected blocks. Under `Verify.merkle` every such read goes through
-    the PRM1 file's verified chunk cache (`prmLeaves`, `prmCache`). -/
-structure LoadedPerm where
+/-- The files of a permutation: the paths of its PRB1 and PRM1 files and,
+    under `Verify.merkle`, their admitted Merkle leaves and verified chunk
+    caches. Loaded at the first read of the permutation (`permFiles`). -/
+structure PermFiles where
   prbPath : String
   prbRef : Ref
   leaves : List L4Factoidal.Storage.BlockMerkle.Digest
@@ -142,10 +154,16 @@ structure LoadedPerm where
   prmRef : Ref
   prmLeaves : List L4Factoidal.Storage.BlockMerkle.Digest
   prmCache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache
+
+/-- A permutation opened by a query session: the paths of its files and the
+    library's state of it (`QuerySession.PermState`: the PRM1 block count and
+    the answers of `PrmRange.rangeM` asked so far). Its PRM1 file is never
+    read whole (https://github.com/danbri/factoidal/issues/805). -/
+structure LoadedPerm where
+  prbPath : String
+  prmPath : String
   /-- the block count of the PRM1 header -/
   count : Nat
-  /-- the answers of `rangeM` for the keys asked so far (the generation does
-      not change while it is open); at most 256 keys, emptied when full -/
   ranges : IO.Ref (Std.HashMap (Array UInt64) (Array BlockMeta))
 
 /-- The dictionary page cache of one pool worker (stage 1h of
@@ -157,45 +175,21 @@ structure LoadedPerm where
     stay with it from one query to the next. -/
 abbrev WorkerPages := IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))
 
-/-- An open generation: the manifest, the dictionary's Merkle leaves and
-    header; each permutation is opened on its first use (its PRM1 read, length
-    and, under `Verify.merkle`, SHA-256 checked against the manifest, decoded;
-    under `merkle` its PRB1 leaves admitted against the manifest root). -/
-structure Session where
+/-- An open generation: the library's session state (`QuerySession.Core`:
+    the manifest, the dictionary header, the opened permutations, the page
+    cache, the id caches, the delta overlay and the counters) over the reads
+    of `readsOf`, and the state of the native command: the open generation
+    `g` (paths, Merkle leaves, chunk caches, byte counters), the locks and the
+    shared pages of scan tasks, and the worker pool. -/
+structure Session extends QuerySession.Core where
   g : Gen
-  perms : IO.Ref (Array (Option LoadedPerm))
-  pages : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))
-  /-- bytes of PRB1 blocks read (the frames a plan reads) -/
-  frameBytes : IO.Ref Nat
-  /-- bytes of PRM1 entries and headers asked for (issue 805; under
-      `merkle` the verified chunks fetched for them are in `fetchedBytes`) -/
-  prmBytes : IO.Ref Nat
-  lookups : IO.Ref Nat
+  /-- The files of each permutation, loaded at its first read (`permFiles`). -/
+  files : IO.Ref (Array (Option PermFiles))
   /-- Under `Verify.merkle`: GDX1, read whole on the first dictionary access
       (102 KB on olympics: 12 bytes per page), its length and SHA-256 checked
       against the manifest. Unused under `none` (each GDX1 entry is one
       `pread`). -/
   gdx : IO.Ref (Option ByteArray)
-  /-- The overlay vocabulary (stage 5): terms of the delta log that have no
-      base id, in the order the replay met them; the id of entry `k` is
-      `tagDelta · 2^60 + k`. -/
-  ovVocab : IO.Ref (Array Term)
-  ovIds : IO.Ref (Std.HashMap Term Nat)
-  /-- The dictionary ids of the terms of the log being replayed
-      (`prefillBaseIds`, issue 858): a normalised term to its dictionary id, or
-      `none` when the dictionary does not hold it. Empty except during a
-      replay; `idOf` reads it before it reads the dictionary. -/
-  baseIds : IO.Ref (Std.HashMap Term (Option UInt64))
-  /-- The dictionary ids that `idOf` has looked up in this session (a
-      normalised term to its id; terms the dictionary does not hold are not
-      kept, since the delta overlay may give them an id). The base dictionary
-      does not change while the session is open, so an entry stays right, as
-      a cached dictionary page does. At most `idMemoLimit` entries, emptied
-      when full. Olympics q07 looks up 6 constants per run; each lookup is a
-      binary search over GDX1 entries and GDV1 pages, about 14 positioned
-      reads: 0.43 ms of the 5.4 ms query on one thread, the same at 4
-      threads (KR 1.2 of https://github.com/danbri/factoidal/issues/875). -/
-  idMemo : IO.Ref (Std.HashMap Term UInt64)
   /-- Serialises the verified chunk cache (`merkle` reads) between scan
       tasks (issue 799). Shared by every task view of the session. -/
   lock : Std.Mutex Unit
@@ -217,45 +211,8 @@ structure Session where
   /-- In a task view (made by the task, `Session.local`): the pages it has
       taken once from `taskPages` without a copy (`Session.sharedPage`). -/
   onceSeen : Option (IO.Ref (Std.HashSet Nat)) := none
-  /-- The dictionary's term count (`g.dictHdr.termCount`), read by every
-      `keySlice`. A field of its own: reading it through `g.dictHdr` took and
-      released a reference to the header object, which every task view
-      shares, and on an object that two threads reach that is an atomic
-      operation on one cache line from every thread. -/
-  termCount : Nat := 0
-  /-- The overlay per permutation (`Overlay.forPerm`), fixed at open. -/
-  ovl : Array L4Factoidal.Storage.Sbm11.Overlay.PermOverlay := #[{}, {}, {}, {}]
-  /-- committed batches and entries replayed at open; overlay inserts,
-      deletes, cleared graphs -/
-  deltaBatches : Nat := 0
-  deltaOps : Nat := 0
-  ovInserts : Nat := 0
-  ovDeletes : Nat := 0
-  ovCleared : Nat := 0
-  ovNewTerms : Nat := 0
-  /-- the distinct terms of the log looked up in the dictionary by the replay
-      (issue 858) -/
-  replayTerms : Nat := 0
-  replayNs : Nat := 0
-  /-- the log ended with a torn final frame (an append that did not
-      complete), left out of the replay (issue 843) -/
-  deltaTorn : Bool := false
-  /-- the replayed overlay state (`ovl` is its cut per permutation); `l4sbm11
-      update` (`Harness/Sbm11Update.lean`) applies the entries of a request to
-      it, so that each operation reads the state the one before left -/
-  ovState : L4Factoidal.Storage.Sbm11.Overlay.State := {}
-  /-- the named graphs of the base generation (`baseNamedGraphs`: the graph
-      list GNL1, or the graph ids of the base quads), read at the first use -/
-  baseNamedRef : IO.Ref (Option (Array Nat))
-  /-- the size in bytes of the log file the replay read (0: no log); a
-      positioned append of `l4sbm11 update` uses it -/
-  ovLogBytes : Nat := 0
-  /-- `SBM11_PAGES` (default `defaultPages`) and the per-view limit
-      `min SBM11_PAGES SBM11_TASK_PAGES` (default 256), read once at open
-      (issue 799, KR 1.2). They were read from the environment on every page
-      insert: `getenv` and its string compares were 1.3 percent of olympics
-      q19 at 4 threads. -/
-  pageLimit : Nat := 8192
+  /-- `min SBM11_PAGES SBM11_TASK_PAGES` (default 256), the page limit of a
+      task view's own cache, read once at open (issue 799, KR 1.2). -/
   taskPageLimit : Nat := 256
   /-- The session's worker pool (`Harness.WorkerPool`, issue 961): started by
       `l4sbm11 query --threads N` for N above 1 (N - 1 workers; the calling
@@ -308,6 +265,100 @@ def pagesLimitEnv : IO Nat := do
 def taskPagesLimitEnv : IO Nat := do
   return min (← pagesLimitEnv) (((← IO.getEnv "SBM11_TASK_PAGES").bind String.toNat?).getD 256)
 
+/-! ### The reads of the files -/
+
+/-- The files of permutation `p`, loaded at the first read: under `merkle`
+    the leaves of the Merkle trees of its PRM1 and PRB1 files, admitted
+    against the manifest's roots, and a verified chunk cache for each. -/
+def permFiles (g : Gen) (files : IO.Ref (Array (Option PermFiles))) (p : Nat) : IO PermFiles := do
+  match (← files.get)[p]? with
+  | some (some f) => return f
+  | some none =>
+    let m := g.manifest
+    let nm := (permNamesArr[p]!).toUpper
+    let prmA ← artifact m s!"PRM1-{nm}"
+    let prbA ← artifact m s!"PRB1-{nm}"
+    let prmPath := s!"{g.dir}/{prmA.file}"
+    let prbPath := s!"{g.dir}/{prbA.file}"
+    let prmLeaves ← loadLeaves g.verify g.fileBytes prmPath prmA.merkle
+    let prmCache ← newChunkCache g.verify prmA.merkle
+    let leaves ← loadLeaves g.verify g.fileBytes prbPath prbA.merkle
+    let cache ← newChunkCache g.verify prbA.merkle
+    let f : PermFiles := { prbPath, prbRef := prbA.merkle, leaves, cache, prmPath, prmRef := prmA.merkle,
+                           prmLeaves, prmCache }
+    files.modify (·.set! p (some f))
+    return f
+  | none => throw (IO.userError s!"no permutation {p}")
+
+/-- GDX1 whole, under `Verify.merkle` (`Session.gdx`). -/
+def gdxWhole (g : Gen) (gdx : IO.Ref (Option ByteArray)) : IO ByteArray := do
+  match ← gdx.get with
+  | some b => return b
+  | none =>
+    let a ← artifact g.manifest "GDX1"
+    let b ← IO.FS.readBinFile g.gdxPath
+    g.fileBytes.modify (· + b.size)
+    if b.size != a.bytes || Harness.nativeSha256 b != a.sha256 then
+      throw (IO.userError s!"{g.gdxPath}: length or SHA-256 differs from the manifest")
+    -- `modify`, not `set`: another thread may read `gdx` with `get` (issue
+    -- 981, `Harness.WorkerPool` module comment)
+    gdx.modify fun _ => some b
+    return b
+
+/-- Bytes `[off, off + len)` of GDX1. `none`: one `pread`; `merkle`: cut
+    from the whole file (`gdxWhole`). -/
+def sessionGdx (g : Gen) (gdx : IO.Ref (Option ByteArray)) (off len : Nat) : IO ByteArray := do
+  if g.verify == .none then
+    return (← verifiedRead g g.gdxPath g.gdxRef g.gdxLeaves g.gdxCache off len)
+  let b ← gdxWhole g gdx
+  if off + len > b.size then throw (IO.userError s!"GDX1: read past the end")
+  return b.extract off (off + len)
+
+/-- Bytes `[off, off + len)` of GDV1. `merkle`: through the verified chunk
+    cache: each 65,536-byte chunk is admitted once by its Merkle proof
+    (`readVerifiedChunkCached?`), then ranges are cut from it. `none`: one
+    `pread` of exactly those bytes. -/
+def sessionGdv (g : Gen) (off len : Nat) : IO ByteArray := do
+  if len == 0 then return ByteArray.empty
+  if g.verify == .none then
+    return (← verifiedRead g g.gdvPath g.gdvRef g.gdvLeaves g.gdvCache off len)
+  let cb := g.gdvRef.chunkBytes
+  let first := off / cb
+  let last := (off + len - 1) / cb
+  let mut out := ByteArray.emptyWithCapacity len
+  for c in [first:last + 1] do
+    match ← Harness.PosixRangeIO.readVerifiedChunkCached? g.gdvPath g.gdvRef g.gdvLeaves g.gdvCache c with
+    | some (chunk, fp) =>
+      g.fetchedBytes.modify (· + fp.fetchedBytes)
+      g.fileBytes.modify (· + fp.fetchedBytes)
+      let lo := max off (c * cb) - c * cb
+      let hi := min (off + len) ((c + 1) * cb) - c * cb
+      if hi > chunk.size then throw (IO.userError s!"GDV1: chunk {c} is short")
+      out := chunk.copySlice lo out out.size (hi - lo)
+    | none => throw (IO.userError s!"GDV1: chunk {c} refused")
+  return out
+
+/-- **The reads of the native session** (`QuerySession.Reads`): GDX1 and
+    GDV1 ranges (`sessionGdx`, `sessionGdv`), PRM1 and PRB1 ranges of a
+    permutation (`verifiedRead`; under `merkle` one read at a time, since the
+    chunk caches are shared by the task views, issue 799) and the graph list
+    (`Sbm11Gen.readGraphListBytes`). -/
+def readsOf (g : Gen) (files : IO.Ref (Array (Option PermFiles))) (gdx : IO.Ref (Option ByteArray))
+    (lock : Std.Mutex Unit) : QuerySession.Reads :=
+  { gdx := sessionGdx g gdx
+    gdv := sessionGdv g
+    prm := fun p off len => do
+      let f ← permFiles g files p
+      match g.verify with
+      | .merkle => lock.atomically (verifiedRead g f.prmPath f.prmRef f.prmLeaves f.prmCache off len)
+      | .none => verifiedRead g f.prmPath f.prmRef f.prmLeaves f.prmCache off len
+    prb := fun p off len => do
+      let f ← permFiles g files p
+      match g.verify with
+      | .merkle => lock.atomically (verifiedRead g f.prbPath f.prbRef f.leaves f.cache off len)
+      | .none => verifiedRead g f.prbPath f.prbRef f.leaves f.cache off len
+    graphList := readGraphListBytes g }
+
 /-- Open a generation for queries, reads checked as `v` says (no default:
     the caller chooses; the CLI's choice is `Sbm11Gen.cliDefaultVerify`). -/
 def openSession (v : Verify) (dir0 : String) : IO Session := do
@@ -332,97 +383,29 @@ def openSession (v : Verify) (dir0 : String) : IO Session := do
                     readBytes, fetchedBytes, fileBytes }
   let hdrBytes ← verifiedRead g0 gdxPath gdxA.merkle gdxLeaves gdxCache 0 Dict.gdxHeaderBytes
   let dictHdr ← ok "GDX1" (Dict.parseGdxHeader hdrBytes)
-  return { g := { g0 with dictHdr }, termCount := dictHdr.termCount,
+  let g := { g0 with dictHdr }
+  let files ← IO.mkRef #[none, none, none, none]
+  let gdx ← IO.mkRef none
+  let lock ← Std.Mutex.new ()
+  return { manifest := m, reads := readsOf g files gdx lock, dictHdr, termCount := dictHdr.termCount,
            perms := ← IO.mkRef #[none, none, none, none],
            pages := ← IO.mkRef {}, frameBytes := ← IO.mkRef 0, prmBytes := ← IO.mkRef 0,
            lookups := ← IO.mkRef 0,
-           gdx := ← IO.mkRef none, ovVocab := ← IO.mkRef #[], ovIds := ← IO.mkRef {}, baseIds := ← IO.mkRef {},
+           ovVocab := ← IO.mkRef #[], ovIds := ← IO.mkRef {}, baseIds := ← IO.mkRef {},
            idMemo := ← IO.mkRef {},
            baseNamedRef := ← IO.mkRef none,
-           lock := ← Std.Mutex.new (), dictLock := ← Std.Mutex.new (), taskPages := ← IO.mkRef {},
-           pageLimit := ← pagesLimitEnv, taskPageLimit := ← taskPagesLimitEnv }
+           pageLimit := ← pagesLimitEnv,
+           g, files, gdx, lock, dictLock := ← Std.Mutex.new (), taskPages := ← IO.mkRef {},
+           taskPageLimit := ← taskPagesLimitEnv }
 
-/-- A positioned read of a PRM1 file (`PrmRange`'s `read`): under `none` one
-    `pread` of exactly the bytes, under `merkle` through the file's verified
-    chunk cache (one read at a time: the cache is shared, issue 799). -/
-def Session.prmReadAt (ss : Session) (path : String) (ref : Ref)
-    (leaves : List L4Factoidal.Storage.BlockMerkle.Digest)
-    (cache : IO.Ref Harness.PosixRangeIO.VerifiedChunkCache) (off len : Nat) : ExceptT String IO ByteArray :=
-  ExceptT.lift do
-    ss.prmBytes.modify (· + len)
-    match ss.g.verify with
-    | .merkle => ss.lock.atomically (verifiedRead ss.g path ref leaves cache off len)
-    | .none => verifiedRead ss.g path ref leaves cache off len
-
+/-- The permutation `p`, opened on its first use (`QuerySession.Core.perm`:
+    the PRM1 header only), with the paths of its files. -/
 def Session.perm (ss : Session) (p : Nat) : IO LoadedPerm := do
-  match (← ss.perms.get)[p]? with
-  | some (some lp) => return lp
-  | some none =>
-    let m := ss.g.manifest
-    let nm := (permNamesArr[p]!).toUpper
-    let prmA ← artifact m s!"PRM1-{nm}"
-    let prbA ← artifact m s!"PRB1-{nm}"
-    let prmPath := s!"{ss.g.dir}/{prmA.file}"
-    let prbPath := s!"{ss.g.dir}/{prbA.file}"
-    -- PRM1: the header only (issue 805); the leaves of its Merkle tree under
-    -- `merkle`, so that each positioned read is checked by its chunks
-    let prmLeaves ← loadLeaves ss.g.verify ss.g.fileBytes prmPath prmA.merkle
-    let prmCache ← newChunkCache ss.g.verify prmA.merkle
-    let count ← match ← (PrmRange.openM (ss.prmReadAt prmPath prmA.merkle prmLeaves prmCache) prmA.bytes p).run with
-      | .ok n => pure n
-      | .error e => throw (IO.userError s!"{prmPath}: {e}")
-    let leaves ← loadLeaves ss.g.verify ss.g.fileBytes prbPath prbA.merkle
-    let cache ← newChunkCache ss.g.verify prbA.merkle
-    let lp : LoadedPerm := { prbPath, prbRef := prbA.merkle, leaves, cache, prmPath, prmRef := prmA.merkle,
-                             prmLeaves, prmCache, count, ranges := ← IO.mkRef {} }
-    ss.perms.modify (·.set! p (some lp))
-    return lp
-  | none => throw (IO.userError s!"no permutation {p}")
+  let ps ← ss.toCore.perm p
+  let f ← permFiles ss.g ss.files p
+  return { prbPath := f.prbPath, prmPath := f.prmPath, count := ps.count, ranges := ps.ranges }
 
-def Session.gdxBytes (ss : Session) : IO ByteArray := do
-  match ← ss.gdx.get with
-  | some b => return b
-  | none =>
-    let a ← artifact ss.g.manifest "GDX1"
-    let b ← IO.FS.readBinFile ss.g.gdxPath
-    ss.g.fileBytes.modify (· + b.size)
-    if b.size != a.bytes || Harness.nativeSha256 b != a.sha256 then
-      throw (IO.userError s!"{ss.g.gdxPath}: length or SHA-256 differs from the manifest")
-    -- `modify`, not `set`: another thread may read `gdx` with `get` (issue
-    -- 981, `Harness.WorkerPool` module comment)
-    ss.gdx.modify fun _ => some b
-    return b
-
-def Session.gdxFetch (ss : Session) (off len : Nat) : IO ByteArray := do
-  if ss.g.verify == .none then
-    return (← verifiedRead ss.g ss.g.gdxPath ss.g.gdxRef ss.g.gdxLeaves ss.g.gdxCache off len)
-  let b ← ss.gdxBytes
-  if off + len > b.size then throw (IO.userError s!"GDX1: read past the end")
-  return b.extract off (off + len)
-
-/-- Bytes `[off, off + len)` of GDV1. `merkle`: through the verified chunk
-    cache: each 65,536-byte chunk is admitted once by its Merkle proof
-    (`readVerifiedChunkCached?`), then ranges are cut from it. `none`: one
-    `pread` of exactly those bytes. -/
-def Session.gdvFetch (ss : Session) (off len : Nat) : IO ByteArray := do
-  if len == 0 then return ByteArray.empty
-  if ss.g.verify == .none then
-    return (← verifiedRead ss.g ss.g.gdvPath ss.g.gdvRef ss.g.gdvLeaves ss.g.gdvCache off len)
-  let cb := ss.g.gdvRef.chunkBytes
-  let first := off / cb
-  let last := (off + len - 1) / cb
-  let mut out := ByteArray.emptyWithCapacity len
-  for c in [first:last + 1] do
-    match ← Harness.PosixRangeIO.readVerifiedChunkCached? ss.g.gdvPath ss.g.gdvRef ss.g.gdvLeaves ss.g.gdvCache c with
-    | some (chunk, fp) =>
-      ss.g.fetchedBytes.modify (· + fp.fetchedBytes)
-      ss.g.fileBytes.modify (· + fp.fetchedBytes)
-      let lo := max off (c * cb) - c * cb
-      let hi := min (off + len) ((c + 1) * cb) - c * cb
-      if hi > chunk.size then throw (IO.userError s!"GDV1: chunk {c} is short")
-      out := chunk.copySlice lo out out.size (hi - lo)
-    | none => throw (IO.userError s!"GDV1: chunk {c} refused")
-  return out
+/-! ### Dictionary pages shared by scan tasks -/
 
 /-- The class of pages that a full cache drops (`MemoCache.evictClasses`). -/
 abbrev evictClasses : Nat := MemoCache.evictClasses
@@ -439,30 +422,15 @@ abbrev evictClasses : Nat := MemoCache.evictClasses
 abbrev insertPageBounded {α : Type} (m : Std.HashMap Nat α) (lim pg : Nat) (v : α) : Std.HashMap Nat α :=
   MemoCache.insertEvict m lim pg v
 
-/-- The keys of dictionary page `pg`, packed: one byte array holding the keys
-    one after the other and the start of each key (and the end of the last).
-    One object per page: a cache of 64 separate key arrays per page left the
-    heap fragmented (q19: peak RSS 98 MB against 31 MB with a cache of 64
-    pages, and slower, each new huge page being cleared on first touch). The
-    cache holds at most `SBM11_PAGES` pages (default 8,192) and is emptied
-    when full. -/
-def Session.loadPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := do
-  let ks ← ok s!"GDV1 page {pg}" (← (Dict.pageM ss.gdxFetch ss.gdvFetch pg).run)
-  let total := ks.foldl (fun a k => a + k.size) 0
-  let mut packed := ByteArray.emptyWithCapacity total
-  let mut offs : Array Nat := Array.mkEmpty (ks.size + 1)
-  for k in ks do
-    offs := offs.push packed.size
-    packed := packed ++ k
-  offs := offs.push packed.size
-  return (packed, offs)
+/-- The keys of dictionary page `pg`, packed (`QuerySession.loadPage`). -/
+def Session.loadPage (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) :=
+  QuerySession.loadPage ss.toCore pg
 
 /-- Put page `pg` in the page cache `c`, emptied first when it holds
     `SBM11_PAGES` pages (default 8,192; 0: no cache). -/
-def cachePage (lim : Nat) (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
-    (ks : ByteArray × Array Nat) : IO Unit := do
-  if lim > 0 then
-    c.modify fun m => insertPageBounded m lim pg ks
+abbrev cachePage (lim : Nat) (c : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))) (pg : Nat)
+    (ks : ByteArray × Array Nat) : IO Unit :=
+  QuerySession.cachePage lim c pg ks
 
 /-- Put page `pg` in a task view's own cache (issue 799, stage 1b): emptied
     first when it holds `SBM11_TASK_PAGES` pages (default 256), and never
@@ -661,113 +629,60 @@ def Session.pageKeys (ss : Session) (pg : Nat) : IO (ByteArray × Array Nat) := 
     cachePage ss.pageLimit ss.pages pg ks
     return ks
 
-def Session.keySlice (ss : Session) (x : UInt64) : IO (ByteArray × Nat × Nat) := do
-  let id := x.toNat
-  let tag := id / two60
-  unless isDictTag tag do
-    throw (IO.userError s!"id {id}: not a dictionary id")
-  let rank := id % two60
-  if rank ≥ ss.termCount then throw (IO.userError s!"id {id}: rank not below the term count")
-  let (packed, offs) ← ss.pageKeys (rank / Dict.pageTerms)
-  let j := rank % Dict.pageTerms
-  if j + 1 < offs.size then return (packed, offs[j]!, offs[j + 1]!)
-  throw (IO.userError s!"id {id}: no key")
+/-! ### The id store -/
 
-def Session.keyOf (ss : Session) (x : UInt64) : IO ByteArray := do
-  let (packed, a, e) ← ss.keySlice x
-  return packed.extract a e
+/-- The phase marks of the current run (`Session.phases`): label and
+    `IO.monoNanosNow` at the end of the phase. -/
+initialize phaseMarks : IO.Ref (Array (String × Nat)) ← IO.mkRef #[]
 
-def Session.termOf (ss : Session) (x : UInt64) : IO Term := do
-  let id := x.toNat
-  let tag := id / two60
-  if tag == tagInt || tag == tagBool then
-    match ofInlineCode? id with
-    | some t => return t
-    | none => throw (IO.userError s!"inline id {id} does not decode")
-  if tag == L4Factoidal.Storage.Sbm11.Overlay.tagDelta then
-    match (← ss.ovVocab.get)[id % two60]? with
-    | some t => return t
-    | none => throw (IO.userError s!"id {id}: not in the overlay vocabulary")
-  -- the key is read in place from the page (`keySlice`): no copy of its bytes
-  -- and no list (`decodeKeySlice?_eq`, `classTagSlice_eq`; issue 825)
-  let (packed, a, e) ← ss.keySlice x
-  if classTagSlice packed a e != tag then throw (IO.userError s!"id {id}: tag differs from the key's class")
-  match decodeKeySlice? packed a e with
-  | some t => return t
-  | none => throw (IO.userError s!"id {id}: key does not decode")
+def phaseMark (l : String) : IO Unit := do
+  let t ← IO.monoNanosNow
+  phaseMarks.modify (·.push (l, t))
+
+/-- The native session as a library session: its pages come from
+    `Session.pageKeys` (the task views' shared pages), it prefetches the pages
+    of a block in a task view (`Session.prefetch`), and it marks phases when
+    `SBM11_PHASES` is set. -/
+instance : QuerySession.SessionOps Session where
+  core s := s.toCore
+  setCore s c := { s with toCore := c }
+  pageKeys := Session.pageKeys
+  prefetch s := some (Session.prefetch s)
+  mark s := if s.phases then some phaseMark else none
+
+def Session.keySlice (ss : Session) (x : UInt64) : IO (ByteArray × Nat × Nat) := QuerySession.keySlice ss x
+def Session.keyOf (ss : Session) (x : UInt64) : IO ByteArray := QuerySession.keyOf ss x
+def Session.termOf (ss : Session) (x : UInt64) : IO Term := QuerySession.termOf ss x
 
 /-- The id of the dictionary key `k` of rank `r`. -/
-def dictIdOfRank (k : ByteArray) (r : Nat) : UInt64 := (dictCode k.data.toList r).toUInt64
+abbrev dictIdOfRank (k : ByteArray) (r : Nat) : UInt64 := QuerySession.dictIdOfRank k r
 
-/-- The id of a term that the delta log added (stage 5), when it has one. -/
-def Session.overlayIdOf (ss : Session) (t : Term) : IO (Option UInt64) := do
-  return ((← ss.ovIds.get).get? t).map fun n =>
-    (L4Factoidal.Storage.Sbm11.Overlay.tagDelta * two60 + n).toUInt64
+def Session.overlayIdOf (ss : Session) (t : Term) : IO (Option UInt64) := ss.toCore.overlayIdOf t
 
 /-- The most entries `Session.idMemo` holds. -/
-def idMemoLimit : Nat := 65536
+abbrev idMemoLimit : Nat := QuerySession.idMemoLimit
 
-/-- The id of a term: its inline code, its dictionary id (from `baseIds` when
-    a replay has put it there, else from `idMemo`, else one `Dict.lookupM`),
-    else the id the delta log gave it. -/
-def Session.idOf (ss : Session) (t : Term) : IO (Option UInt64) := do
-  ss.lookups.modify (· + 1)
-  let t := normalizeTerm t
-  match inlineCode? t with
-  | some c => return some c.toUInt64
-  | none =>
-    let memo ← ss.baseIds.get
-    match (if memo.isEmpty then none else memo.get? t) with
-    | some (some x) => return some x
-    | some none => ss.overlayIdOf t
-    | none =>
-      if let some x := MemoCache.find? (← ss.idMemo.get) t then return some x
-      match termKeyBytes? t with
-      | none => return none
-      | some k =>
-        let (r, _) ← ok "lookup" (← (Dict.lookupM ss.gdxFetch ss.gdvFetch ss.g.dictHdr k).run)
-        match r with
-        | some r =>
-          let x := dictIdOfRank k r
-          ss.idMemo.modify fun m => MemoCache.insertBounded idMemoLimit m t x
-          return some x
-        | none =>
-          -- a term the delta log added (stage 5)
-          ss.overlayIdOf t
+/-- The id of a term (`QuerySession.Core.idOf`): its inline code, its
+    dictionary id (from `baseIds` during a replay, else from `idMemo`, else one
+    `Dict.lookupM`), else the id the delta log gave it. -/
+def Session.idOf (ss : Session) (t : Term) : IO (Option UInt64) := ss.toCore.idOf t
 
-def Session.lowerBound (ss : Session) (k : ByteArray) : IO Nat := do
-  ok "lower bound" (← (DictRange.lowerBoundM ss.gdxFetch ss.gdvFetch ss.g.dictHdr k).run)
+def Session.lowerBound (ss : Session) (k : ByteArray) : IO Nat := ss.toCore.lowerBound k
 
 /-- The PRM1 entries of the blocks of permutation `p` that may hold a row
-    with the key prefix (`Store.blocksForRange`): `PrmRange.rangeM` over
-    `PrmRange.bytesReader` of the permutation's positioned reads, the code of
-    `PrmRangeTheorems.rangeM_bytes`; an answer is kept for the next query
-    with the same key. -/
-def Session.rangeFor (ss : Session) (p : Nat) (key : Array UInt64) : IO (Array BlockMeta) := do
-  let lp ← ss.perm p
-  if let some r := MemoCache.find? (← lp.ranges.get) key then return r
-  let read := ss.prmReadAt lp.prmPath lp.prmRef lp.prmLeaves lp.prmCache
-  let r ← match ← (PrmRange.rangeM (PrmRange.bytesReader read lp.count) key).run with
-    | .ok r => pure r
-    | .error e => throw (IO.userError s!"{lp.prmPath}: {e}")
-  lp.ranges.modify fun m => MemoCache.insertBounded 256 m key r
-  return r
+    with the key prefix (`QuerySession.Core.rangeFor`). -/
+def Session.rangeFor (ss : Session) (p : Nat) (key : Array UInt64) : IO (Array BlockMeta) :=
+  ss.toCore.rangeFor p key
 
-def Session.prb (ss : Session) (p off len : Nat) : IO ByteArray := do
-  let lp ← ss.perm p
-  ss.frameBytes.modify (· + len)
-  match ss.g.verify with
-  | .merkle =>
-    -- the chunk cache is one shared table: one read at a time (issue 799)
-    ss.lock.atomically (verifiedRead ss.g lp.prbPath lp.prbRef lp.leaves lp.cache off len)
-  | .none => verifiedRead ss.g lp.prbPath lp.prbRef lp.leaves lp.cache off len
+def Session.prb (ss : Session) (p off len : Nat) : IO ByteArray := ss.toCore.prb p off len
 
 /-- A view of the session for one scan task (issue 799): its own byte and
-    lookup counters, and a copy of the permutations opened so far (the parent
-    opens a permutation before it starts tasks, so a task never opens one).
-    The chunk caches, the locks, the GDX1 copy and `taskPages` (read under
-    `dictLock`) are shared; the session's own page cache is not (`pages` here
-    is a placeholder that the task replaces with a cache it creates itself,
+    lookup counters, its reads over a copy of the open generation with those
+    counters, and a copy of the permutations opened so far (the parent opens a
+    permutation before it starts tasks, so a task never opens one). The chunk
+    caches, the locks, the GDX1 copy and `taskPages` (read under `dictLock`)
+    are shared; the session's own page cache is not (`pages` here is a
+    placeholder that the task replaces with a cache it creates itself,
     `Session.local`). A task reaches the dictionary only through `pageKeys`
     (`keySlice`, `keyOf`, `termOf`): never `idOf` or `lowerBound`, which the
     parent calls before it starts tasks. The parent adds the view's counters
@@ -775,7 +690,9 @@ def Session.prb (ss : Session) (p off len : Nat) : IO ByteArray := do
 def Session.view (ss : Session) : IO Session := do
   let g' : Gen := { ss.g with readBytes := ← IO.mkRef 0, fetchedBytes := ← IO.mkRef 0,
                               fileBytes := ← IO.mkRef 0 }
-  return { ss with g := g', perms := ← IO.mkRef (← ss.perms.get), frameBytes := ← IO.mkRef 0,
+  let files' ← IO.mkRef (← ss.files.get)
+  return { ss with g := g', files := files', reads := readsOf g' files' ss.gdx ss.lock,
+                   perms := ← IO.mkRef (← ss.perms.get), frameBytes := ← IO.mkRef 0,
                    prmBytes := ← IO.mkRef 0,
                    lookups := ← IO.mkRef 0, pages := ← IO.mkRef {}, inTask := true }
 
@@ -813,14 +730,6 @@ def Session.absorb (ss v : Session) : IO Unit := do
 
 def liftIO {α : Type} (x : IO α) : ExceptT String IO α := ExceptT.lift x
 
-/-- The phase marks of the current run (`Session.phases`): label and
-    `IO.monoNanosNow` at the end of the phase. -/
-initialize phaseMarks : IO.Ref (Array (String × Nat)) ← IO.mkRef #[]
-
-def phaseMark (l : String) : IO Unit := do
-  let t ← IO.monoNanosNow
-  phaseMarks.modify (·.push (l, t))
-
 /-- Start `act` on another thread: a job of worker `i` of the session's worker
     pool when it has one and `i` is below its size (a polling worker starts it
     within microseconds), else a task of
@@ -845,18 +754,8 @@ def Session.spawnLocal {α : Type} (ss : Session) (i : Nat) (act : Option Worker
 def Session.await {α : Type} (ss : Session) (h : Harness.WorkerPool.Handle α) : IO α :=
   h.await (match ss.pool with | some p => p.spinNs | none => 0)
 
-def Session.store (ss : Session) : IdQuery.Store IO :=
-  { blockCount := fun p => liftIO do pure (← ss.perm p).count
-    blocksForRange := fun p key => liftIO (ss.rangeFor p key)
-    prb := fun p off len => liftIO (ss.prb p off len)
-    idOf := fun t => liftIO (ss.idOf t)
-    keyOf := fun x => liftIO (ss.keyOf x)
-    keySlice := fun x => liftIO (ss.keySlice x)
-    termOf := fun x => liftIO (ss.termOf x)
-    lowerBound := fun k => liftIO (ss.lowerBound k)
-    ovl := fun p => ss.ovl.getD p {}
-    prefetch := some fun t n => liftIO (ss.prefetch t n)
-    mark := if ss.phases then some phaseMark else none }
+/-- The session's id store on one thread (`QuerySession.store`). -/
+def Session.store (ss : Session) : IdQuery.Store IO := QuerySession.store ss
 
 /-! ## Parallel block scans (stage 1, issue 799) -/
 
@@ -1431,47 +1330,25 @@ def Session.storeWith (ss : Session) (threads : Nat) (sip : Option Nat := some 1
   else { base with scanTable := some fun spec => scanTableOrStarted ss spec threads minRows,
                    scanSipTable := some fun spec cands => scanSipTableParM ss spec cands threads minRows }
 
-/-! ## The delta overlay (stage 5) -/
+
+/-! ## The delta overlay (stage 5)
+
+The replay is the library's (`QuerySession.replay`, `Core.stepEntry`,
+`Core.prefillBaseIds`, `Core.idOrNew`); the methods below call it. -/
 
 /-- The id of `t`: its base id, its overlay id, or a new overlay id. -/
-def Session.idOrNew (ss : Session) (t0 : Term) : IO Nat := do
-  match ← ss.idOf t0 with
-  | some x => pure x.toNat
-  | none =>
-    let t := normalizeTerm t0
-    -- a term in `baseIds` was resolved because it has a dictionary key; any other is checked now
-    let admitted := (← ss.baseIds.get).contains t || (termKeyBytes? t).isSome
-    if !admitted then
-      throw (IO.userError s!"delta log: a term the SBM11 dictionary does not admit: {repr t}")
-    -- one step that reads the size and pushes: a `get` before the `modify` leaves a second
-    -- reference to the array, and every push then copies it (quadratic replay)
-    let n ← ss.ovVocab.modifyGet fun vocab => (vocab.size, vocab.push t)
-    ss.ovIds.modify (·.insert t n)
-    pure (L4Factoidal.Storage.Sbm11.Overlay.tagDelta * two60 + n)
+def Session.idOrNew (ss : Session) (t0 : Term) : IO Nat := ss.toCore.idOrNew t0
 
 /-- A graph name of a DLOG entry as a term: an IRI or a blank node. -/
-def graphTerm : L4Factoidal.Storage.DeltaGraphName → IO Term
-  | .iri g =>
-    if h : isIri g = true then pure (.iri ⟨g, h⟩)
-    else throw (IO.userError s!"delta log: graph name is not an IRI: {g}")
-  | .bnode b => pure (.bnode b)
+abbrev graphTerm : L4Factoidal.Storage.DeltaGraphName → IO Term := QuerySession.graphTerm
 
-def Session.graphIdOrNew (ss : Session) : Option L4Factoidal.Storage.DeltaGraphName → IO Nat
-  | none => pure 0
-  | some g => do ss.idOrNew (← graphTerm g)
+def Session.graphIdOrNew (ss : Session) (g : Option L4Factoidal.Storage.DeltaGraphName) : IO Nat :=
+  ss.toCore.graphIdOrNew g
 
 /-- The id of a quad when every term has an id (a quad with a term that has
     no id is in no generation). -/
 def Session.quadIds? (ss : Session) (t : Triple) (g : Option L4Factoidal.Storage.DeltaGraphName) :
-    IO (Option Row) := do
-  let some s ← ss.idOf t.s.toTerm | return none
-  let some p ← ss.idOf (.iri t.p) | return none
-  let some o ← ss.idOf t.o | return none
-  let gid ← match g with
-    | none => pure (some 0)
-    | some gi => do pure ((← ss.idOf (← graphTerm gi)).map (·.toNat))
-  let some gid := gid | return none
-  return some ⟨s.toNat, p.toNat, o.toNat, gid⟩
+    IO (Option Row) := ss.toCore.quadIds? t g
 
 /-- `SBM11_REPLAY_LOOKUP=each`: the replay looks every occurrence of every term
     up in the dictionary on its own, as it did before issue 858. The oracle of
@@ -1480,204 +1357,51 @@ def Session.quadIds? (ss : Session) (t : Triple) (g : Option L4Factoidal.Storage
 def replayEach : IO Bool := do
   return (← IO.getEnv "SBM11_REPLAY_LOOKUP") == some "each"
 
-/-- A graph name as a term (`graphTerm` without the error for a string that is
-    not an IRI). -/
-def graphTerm? : L4Factoidal.Storage.DeltaGraphName → Option Term
-  | .iri g => if h : isIri g = true then some (.iri ⟨g, h⟩) else none
-  | .bnode b => some (.bnode b)
-
-/-- The terms that `stepEntry` maps to ids for the entry `e`. A graph name that
-    is not an IRI or a blank node is left out: `stepEntry` refuses it. -/
-def entryTerms : L4Factoidal.Storage.DeltaEntry → List Term
-  | .add t g | .remove t g =>
-    t.s.toTerm :: .iri t.p :: t.o :: (match g with | some gi => (graphTerm? gi).toList | none => [])
-  | .clear (some g) | .drop g | .create g => (graphTerm? g).toList
-  | .clear none => []
+/-- The terms that `stepEntry` maps to ids for the entry `e`. -/
+abbrev entryTerms : L4Factoidal.Storage.DeltaEntry → List Term := QuerySession.entryTerms
 
 /-- Look the distinct terms of the entries that `forEach` gives up in the
-    dictionary, in dictionary order, and keep their ids in `baseIds` (stage 5,
-    https://github.com/danbri/factoidal/issues/858). `idOf` then answers
-    those terms from `baseIds`, so the replay of a log reads each page of the
-    dictionary that it needs once, in file order, in place of the page reads of
-    one binary search for each occurrence of each term. The terms are
-    normalised, those with an inline code are left out (they are never in the
-    dictionary), the keys are sorted by `Dict.cmpBytesAt` (the order of the
-    dictionary), and `Dict.lookupWalkM` walks them with a finger.
-    `DictFingerTheorems.walkM_encodeDict`: the answer for each term is the
-    answer of `Dict.lookupM`, in whatever order the keys come (the sort makes
-    the finger useful; it does not make the answers right). The ids the delta
-    log gave to terms that the dictionary does not hold (`ovIds`) are not in
-    `baseIds`: `idOf` reads them from `ovIds` as before, so `idOrNew` gives the
-    same ids in the same order. The caller empties `baseIds` after the replay.
-    `entries` is the number of entries the caller will apply (it sizes the hash
-    sets). Gives the number of terms looked up. -/
+    dictionary, in dictionary order, and keep their ids in `baseIds`
+    (`QuerySession.Core.prefillBaseIds`, issue 858). -/
 def Session.prefillBaseIds (ss : Session) (entries : Nat)
     (forEach : (L4Factoidal.Storage.DeltaEntry → IO Unit) → IO Unit) : IO Nat := do
-  if ← replayEach then return 0
-  -- the hash sets and maps are sized for one new term in each entry, so that they do not grow
-  -- (each growth hashes every term again)
-  let seen ← IO.mkRef (Std.HashSet.emptyWithCapacity entries : Std.HashSet Term)
-  let terms ← IO.mkRef (#[] : Array Term)
-  forEach fun e => do
-    for t0 in entryTerms e do
-      let t := normalizeTerm t0
-      if (inlineCode? t).isNone then
-        let isNew ← seen.modifyGet fun st => if st.contains t then (false, st) else (true, st.insert t)
-        if isNew then terms.modify (·.push t)
-  seen.set ∅
-  let ts ← terms.get
-  terms.set #[]
-  -- (key, position in `ts`): a term has no `Inhabited` instance for the sort
-  let mut items : Array (ByteArray × Nat) := Array.mkEmpty ts.size
-  for h : i in [0:ts.size] do
-    if let some k := termKeyBytes? ts[i] then items := items.push (k, i)
-  let sorted := L4Factoidal.Qlvr.mergeSortBy items fun a b => Dict.cmpBytesAt a.1 b.1 != .gt
-  let mut memo : Std.HashMap Term (Option UInt64) := Std.HashMap.emptyWithCapacity sorted.size
-  let mut w : Dict.Walk := none
-  for (k, i) in sorted do
-    let (r, w') ← ok "lookup" (← (Dict.lookupWalkM ss.gdxFetch ss.gdvFetch ss.g.dictHdr w k).run)
-    w := w'
-    if h : i < ts.size then
-      memo := memo.insert ts[i] (r.map (dictIdOfRank k))
-  ss.baseIds.set memo
-  -- the terms the dictionary does not hold get overlay ids (`idOrNew`): size `ovIds` for them
-  let absent := memo.fold (fun n _ r => if r.isNone then n + 1 else n) 0
-  ss.ovIds.modify fun m => if m.isEmpty then Std.HashMap.emptyWithCapacity absent else m
-  return sorted.size
+  ss.toCore.prefillBaseIds (← replayEach) entries forEach
 
-/-- One log entry applied to an overlay state: the terms of the entry mapped to
-    ids (a term that has no id gets an overlay id, `idOrNew`), then
-    `Overlay.step`. A removed quad with a term that has no id is in no
-    generation and changes nothing; so does CLEAR or DROP of a graph whose name
-    has no id (it holds no quad and has no slot). CREATE gives its graph name an
-    id, a new overlay id when the dictionary does not hold it, and a slot. -/
+/-- One log entry applied to an overlay state (`QuerySession.Core.stepEntry`). -/
 def Session.stepEntry (ss : Session) (st : L4Factoidal.Storage.Sbm11.Overlay.State)
-    (e : L4Factoidal.Storage.DeltaEntry) : IO L4Factoidal.Storage.Sbm11.Overlay.State := do
-  match e with
-  | .add t g =>
-    let s ← ss.idOrNew t.s.toTerm
-    let p ← ss.idOrNew (.iri t.p)
-    let o ← ss.idOrNew t.o
-    let gid ← ss.graphIdOrNew g
-    return L4Factoidal.Storage.Sbm11.Overlay.step st (.add ⟨s, p, o, gid⟩)
-  | .remove t g =>
-    if let some r ← ss.quadIds? t g then
-      return L4Factoidal.Storage.Sbm11.Overlay.step st (.remove r)
-    return st
-  | .clear none => return L4Factoidal.Storage.Sbm11.Overlay.step st (.clear 0)
-  | .clear (some g) =>
-    if let some x ← ss.idOf (← graphTerm g) then
-      return L4Factoidal.Storage.Sbm11.Overlay.step st (.clear x.toNat)
-    return st
-  | .drop g =>
-    if let some x ← ss.idOf (← graphTerm g) then
-      return L4Factoidal.Storage.Sbm11.Overlay.step st (.drop x.toNat)
-    return st
-  | .create g =>
-    let x ← ss.idOrNew (← graphTerm g)
-    return L4Factoidal.Storage.Sbm11.Overlay.step st (.create x)
+    (e : L4Factoidal.Storage.DeltaEntry) : IO L4Factoidal.Storage.Sbm11.Overlay.State :=
+  ss.toCore.stepEntry st e
 
 /-- The distinct graph ids other than the default graph (0) of the BASE quads,
-    sorted: one scan of the graph column of the PSO permutation with the overlay
-    left out. The named graphs of a generation that has no graph list. A session
-    opens its permutations when it first reads them (`Session.perm`), so it does
-    not use `Sbm11Gen.graphIdsOfQuads`, which reads the permutations of `openGen`.
-    Until 2026-10-15 this read the overlaid generation; the log decides only
-    `created` and `dropped`. -/
-def Session.baseGraphIdsOfQuads (ss : Session) : IO (Array Nat) := do
-  let base : Session := { ss with ovl := #[{}, {}, {}, {}] }
-  let pat : IdQuery.Pat := { s := .var "s", p := .var "p", o := .var "o", g := .var "g", named := true }
-  let spec := IdQuery.mkSpec pat 0 (fun v => v == "g")
-  let seen ← IO.mkRef ({} : Std.HashSet Nat)
-  match ← (IdQuery.scanFoldM base.store spec true () fun _ ch => do
-      let mut s ← liftIO seen.get
-      liftIO (seen.set {})
-      for i in [0:ch.table.rows] do
-        let x := (ch.table.at 0 i).toNat
-        if x != 0 then s := s.insert x
-      liftIO (seen.set s)
-      pure ((), true)).run with
-  | .error e => throw (IO.userError s!"graph scan failed: {e}")
-  | .ok _ => pure ()
-  return L4Factoidal.Qlvr.mergeSortBy (← seen.get).toArray (· ≤ ·)
+    sorted (`QuerySession.baseGraphIdsOfQuads`). -/
+def Session.baseGraphIdsOfQuads (ss : Session) : IO (Array Nat) := QuerySession.baseGraphIdsOfQuads ss
 
-/-- The named graphs of the base generation: the graph list GNL1, or the graph
-    ids of the base quads for a generation that has no list
-    (`baseGraphIdsOfQuads`), sorted; read once. -/
-def Session.baseNamed (ss : Session) : IO (Array Nat) := do
-  match ← ss.baseNamedRef.get with
-  | some xs => return xs
-  | none =>
-    let xs ← match ← readGraphList ss.g with
-      | some ids => pure ids
-      | none => ss.baseGraphIdsOfQuads
-    ss.baseNamedRef.set (some xs)
-    return xs
+/-- The named graphs of the base generation (`QuerySession.baseNamed`). -/
+def Session.baseNamed (ss : Session) : IO (Array Nat) := QuerySession.baseNamed ss
 
-/-- Does the named graph with id `x` exist in the overlaid generation?
-    `Overlay.denoteNamed` over the base named graphs: created by the log, or a
-    base named graph the log did not drop. -/
-def Session.hasNamedGraph (ss : Session) (x : Nat) : IO Bool := do
-  if x == 0 then return false
-  let st := ss.ovState
-  if st.created.contains x then return true
-  if st.dropped.contains x then return false
-  return L4Factoidal.Storage.Sbm11.GraphList.contains (← ss.baseNamed) x
+/-- Does the named graph with id `x` exist in the overlaid generation? -/
+def Session.hasNamedGraph (ss : Session) (x : Nat) : IO Bool := QuerySession.hasNamedGraph ss x
 
-/-- The ids of the named graphs of the overlaid generation, sorted: the base
-    named graphs the log did not drop, and the graphs the log created
-    (`Overlay.denoteNamed`; `created` and `dropped` are disjoint, so a base
-    graph that is not dropped is in). A graph with no triple is in. -/
-def Session.namedGraphIds (ss : Session) : IO (Array Nat) := do
-  let base ← ss.baseNamed
-  let st := ss.ovState
-  let mut out : Array Nat := Array.mkEmpty (base.size + st.created.size)
-  for x in base do
-    if !st.dropped.contains x then out := out.push x
-  for x in st.created do
-    if !L4Factoidal.Storage.Sbm11.GraphList.contains base x then out := out.push x
-  return L4Factoidal.Qlvr.mergeSortBy out (· ≤ ·)
+/-- The ids of the named graphs of the overlaid generation, sorted. -/
+def Session.namedGraphIds (ss : Session) : IO (Array Nat) := QuerySession.namedGraphIds ss
 
 /-- `storeWith` with the named graphs of the overlaid generation
     (`namedGraphIds`), which the nested evaluator reads for GRAPH
     (https://github.com/danbri/factoidal/issues/959). -/
 def Session.storeNested (ss : Session) (threads : Nat) (sip : Option Nat := some 16) (minRows : Nat := 8192)
     (aggOnIds : Bool := true) : IdQuery.Store IO :=
-  { ss.storeWith threads sip minRows aggOnIds with
-    namedGraphs := some (liftIO do return (← ss.namedGraphIds).map (·.toUInt64)) }
+  QuerySession.withNamedGraphs ss (ss.storeWith threads sip minRows aggOnIds)
 
-/-- The session with the overlay state `st`: `ovl` cut from it per
-    permutation, and the counters of `deltaText` read from it. -/
-def Session.withOverlay (ss : Session) (st : L4Factoidal.Storage.Sbm11.Overlay.State) : IO Session := do
-  let ovl := #[0, 1, 2, 3].map (L4Factoidal.Storage.Sbm11.Overlay.forPerm st)
-  return { ss with ovl, ovState := st, ovInserts := st.ins.size, ovDeletes := st.del.size,
-                    ovCleared := st.cleared.length, ovNewTerms := (← ss.ovVocab.get).size }
+/-- The session with the overlay state `st` (`QuerySession.withOverlay`). -/
+def Session.withOverlay (ss : Session) (st : L4Factoidal.Storage.Sbm11.Overlay.State) : IO Session :=
+  QuerySession.withOverlay ss st
 
 /-- Replay the committed batches of the generation's delta log
-    (`Sbm11Delta.readBatches`) into the overlay: each entry's terms mapped to
-    ids (`idOrNew` for an addition), then `Overlay.step`. -/
+    (`Sbm11Delta.readBatches`) into the overlay (`QuerySession.replay`). -/
 def Session.loadOverlay (ss : Session) : IO Session := do
   let t0 ← IO.monoNanosNow
   let (batches, logBytes, clean) ← Harness.Sbm11Delta.readBatches ss.g.dir
-  let ss := { ss with deltaTorn := !clean, ovLogBytes := logBytes.size }
-  if batches.isEmpty then return ss
-  -- the dictionary ids of every term of the log, in dictionary order (issue 858)
-  let entries := batches.foldl (fun n b => n + b.ops.length) 0
-  let resolved ← ss.prefillBaseIds entries fun f => do
-    for b in batches do
-      for e in b.ops do f e
-  -- the sets of the state are sized for the entries, so that they do not grow
-  let mut st : L4Factoidal.Storage.Sbm11.Overlay.State :=
-    { ins := Std.HashSet.emptyWithCapacity entries, del := Std.HashSet.emptyWithCapacity entries }
-  let mut ops := 0
-  for b in batches do
-    for e in b.ops do
-      ops := ops + 1
-      st ← ss.stepEntry st e
-  ss.baseIds.set {}
-  let ss ← ss.withOverlay st
-  let t1 ← IO.monoNanosNow
-  return { ss with deltaBatches := batches.length, deltaOps := ops, replayTerms := resolved, replayNs := t1 - t0 }
+  QuerySession.replay ss batches logBytes.size clean (← replayEach) (some t0)
 
 /-- Open a generation with its delta log replayed (the session every query,
     serve and compaction uses). -/
@@ -1726,128 +1450,24 @@ def Session.deltaText (ss : Session) : String :=
   s!"delta batches {ss.deltaBatches}, entries {ss.deltaOps}, overlay inserts {ss.ovInserts}, deletes {ss.ovDeletes}, cleared graphs {ss.ovCleared}, new terms {ss.ovNewTerms}, log bytes {ss.ovLogBytes}, dictionary terms looked up {ss.replayTerms}, replay ms {ms 0 ss.replayNs}" ++
     (if ss.deltaTorn then ", torn final frame left out (an append that did not complete)" else "")
 
-/-! ## The reference fallback -/
+/-! ## The reference fallback (`QuerySession.selectedDataset`, `runReference`) -/
 
-/-- Every row of permutation `perm` with key prefix `key`, all graphs: `f`
-    gets the four columns of each block's rows. -/
+/-- Every row of permutation `perm` with key prefix `key`, all graphs. -/
 def scanAll (ss : Session) (perm : Nat) (key : Array UInt64)
-    (f : Array ByteArray → Nat → IO Unit) : IO Unit := do
-  let spec : IdQuery.ScanSpec := { perm, key, checks := #[], named := false,
-                                   outVars := #["c0", "c1", "c2", "g"], outCols := #[0, 1, 2, 3], eqs := #[] }
-  match ← (IdQuery.scanFoldM ss.store spec true () fun _ ch => do
-      liftIO (f ch.table.cols ch.table.rows)
-      pure ((), true)).run with
-  | .ok _ => pure ()
-  | .error e => throw (IO.userError e)
+    (f : Array ByteArray → Nat → IO Unit) : IO Unit :=
+  QuerySession.scanAll ss perm key f
 
-def subjectOf (t : Term) : IO Subject :=
-  match t with
-  | .iri i => pure (.iri i)
-  | .bnode b => pure (.bnode b)
-  | _ => throw (IO.userError "a subject or graph name that is not an IRI or a blank node")
+abbrev subjectOf (t : Term) : IO Subject := QuerySession.subjectOf t
 
-/-- The quads the planner guard selects, as the dataset they denote, with every
-    named graph of the overlaid generation that the guard keeps: a named graph
-    with no selected quad (a graph with no triple, or a graph whose triples have
-    none of the selected predicates) is in the dataset with no triple. SPARQL 1.1
-    Query section 13: the named graphs of the dataset are its graph names, so
-    `GRAPH ?g { }` gives one solution for each, and FROM NAMED selects one with no
-    triple (2026-10-15, https://github.com/danbri/factoidal/issues/855). A graph
-    that the predicate selection empties contributes no solution to a pattern of
-    the planner fragment with or without it (`evalPatternBackend_restrict`).
-    The pure model of this read is `Storage.SelectedDataset.selectedModel`, up to
-    the order of the triples and of the named graphs; that this IO read returns
-    it is not proved. -/
-def selectedDataset (ss : Session) (q : Query) (extraGraphs : List WfIri := []) : IO (Dataset × String) := do
-  let preds := L4Factoidal.Storage.ShardManifest.queryQuadConstantPredicates? q
-  let graphs := L4Factoidal.Storage.ShardManifest.queryGraphNames? q
-  let mut allowed : Option (Array UInt64) := none
-  match graphs with
-  | none => pure ()
-  | some gs =>
-    let mut a : Array UInt64 := #[]
-    for gn in gs do
-      match gn with
-      | .defaultGraph => a := a.push 0
-      | .iri v => if let some x ← ss.idOf (.iri v) then a := a.push x
-      | .bnode l => if let some x ← ss.idOf (.bnode l) then a := a.push x
-    -- graphs the caller reads that the query text does not name (`WITH <g>` of
-    -- an update makes `g` the graph the default-graph patterns read)
-    for v in extraGraphs do
-      if let some x ← ss.idOf (.iri v) then a := a.push x
-    allowed := some a
-  let rowsRef ← IO.mkRef (#[] : Array (UInt64 × UInt64 × UInt64 × UInt64))
-  -- (s, p, o, g) of each kept row
-  let collect (perm : Nat) (cols : Array ByteArray) (n : Nat) : IO Unit := do
-    let mut acc ← rowsRef.get
-    rowsRef.set #[]
-    for i in [0:n] do
-      let a := IdQuery.at64 cols[0]! i
-      let b := IdQuery.at64 cols[1]! i
-      let c := IdQuery.at64 cols[2]! i
-      let g := IdQuery.at64 cols[3]! i
-      let ok := match allowed with
-        | some xs => xs.contains g
-        | none => true
-      if ok then
-        acc := acc.push (if perm == 0 then (b, a, c, g) else (a, b, c, g))
-    rowsRef.set acc
-  let what ← match preds with
-    | some ps => do
-      let mut found := 0
-      for p in ps.eraseDups do
-        match ← ss.idOf (.iri p) with
-        | some pid =>
-          found := found + 1
-          scanAll ss 0 #[pid] (collect 0)
-        | none => pure ()
-      pure s!"predicates={ps.eraseDups.length} (in the dictionary: {found})"
-    | none => do
-      scanAll ss 2 #[] (collect 2)
-      pure "predicates=all"
-  let rows ← rowsRef.get
-  let mut quads : Array L4Factoidal.Storage.IndexedBlockWireV4.QuadRow := Array.mkEmpty rows.size
-  let mut withQuad : Std.HashSet UInt64 := {}
-  for (s, p, o, g) in rows do
-    if g != 0 then withQuad := withQuad.insert g
-    let st ← subjectOf (← ss.termOf s)
-    let pt ← match ← ss.termOf p with
-      | .iri i => pure i
-      | _ => throw (IO.userError "a predicate that is not an IRI")
-    let ot ← ss.termOf o
-    let gr : Option Subject ← if g == 0 then pure none else pure (some (← subjectOf (← ss.termOf g)))
-    quads := quads.push (gr, { s := st, p := pt, o := ot })
-  -- the named graphs that hold no selected quad
-  let mut noQuad : Array NamedGraph := #[]
-  for x in ← ss.namedGraphIds do
-    let gid := x.toUInt64
-    if withQuad.contains gid then continue
-    let kept := match allowed with
-      | some xs => xs.contains gid
-      | none => true
-    if kept then noQuad := noQuad.push { name := ← subjectOf (← ss.termOf gid), graph := [] }
-  let graphsText := match graphs with
-    | some gs => s!"graphs={gs.length}"
-    | none => "graphs=all"
-  let ds0 := L4Factoidal.Storage.QuadDataset.datasetOfQuads quads.toList
-  return ({ ds0 with named := ds0.named ++ noQuad.toList },
-          s!"{what} {graphsText} quads={quads.size} named-graphs-without-a-selected-quad={noQuad.size}")
-
-private def stripDatasetClauses (query : Query) : Query :=
-  .mk query.form [] query.pattern query.groupBy query.having query.modifier
-      query.postValues query.base
+/-- The quads the planner guard selects, as the dataset they denote
+    (`QuerySession.selectedDataset`; its pure model is
+    `Storage.SelectedDataset.selectedModel`, named assumption `SelectedAgrees`). -/
+def selectedDataset (ss : Session) (q : Query) (extraGraphs : List WfIri := []) : IO (Dataset × String) :=
+  QuerySession.selectedDataset ss q extraGraphs
 
 /-- Write a graph (CONSTRUCT, DESCRIBE) as N-Triples lines; returns the
     number of triples. -/
-def emitGraph (graph : Graph) (emit : ByteArray → IO Unit) : IO Nat := do
-  let mut n := 0
-  for tr in graph do
-    match nquadLine (match tr.s with | .iri i => .iri i | .bnode b => .bnode b) (.iri tr.p) tr.o none with
-    | .ok l =>
-      emit (l ++ "\n").toUTF8
-      n := n + 1
-    | .error e => throw (IO.userError e)
-  return n
+abbrev emitGraph (graph : Graph) (emit : ByteArray → IO Unit) : IO Nat := QuerySession.emitGraph graph emit
 
 /-- The query's environment for expressions (NOW read once, BASE, the
     GeoSPARQL extension functions), without a dataset: the id path's
@@ -1859,118 +1479,45 @@ def queryEnv (q : Query) : IO EvalEnv := do
   let clockEnv ← L4Wasm.Ops.emptyEnvNow
   return IdGroup.queryEnvOf clockEnv q.base
 
-/-- Write the answer of a post-processed id plan (issue 823) as
-    `runReference` writes the reference evaluator's answer of the same form. -/
-def emitPost (ans : IdQuery.PostAnswer) (emit : ByteArray → IO Unit) : IO Unit := do
-  match ans with
-  | .solutions vars rows => emit (QueryResult.bindings vars rows).toSrjFast.toUTF8
-  | .boolean b => emit (QueryResult.boolean b).toSrjFast.toUTF8
-  | .graph g => discard <| emitGraph g emit
+/-- Write the answer of a post-processed id plan (issue 823). -/
+abbrev emitPost (ans : IdQuery.PostAnswer) (emit : ByteArray → IO Unit) : IO Unit := QuerySession.emitPost ans emit
 
-/-- The reference evaluator over the selected dataset (the evaluation of
-    `Harness/QuadQuery.lean`'s `finish`). -/
+/-- The reference evaluator over the selected dataset
+    (`QuerySession.runReference`), NOW read once here. -/
 def runReference (ss : Session) (q : Query) (reason : String) (emit : ByteArray → IO Unit) :
     IO (Nat × String) := do
-  let (ds, what) ← selectedDataset ss q
-  let clockEnv ← L4Wasm.Ops.emptyEnvNow
-  let (applied, _) := applyDataset q.dataset ds ds.default
-  let stripped := stripDatasetClauses q
-  let env : EvalEnv := { clockEnv with dataset := some applied, ext := L4Factoidal.Geo.extFns, base := q.base }
-  let indexed := L4Factoidal.Storage.QuadDataset.namesAreIris applied
-  let line := s!"path=reference reason=\"{reason}\" {what}"
-  match stripped.serviceFailure env applied with
-  | some f => throw (IO.userError f.message)
-  | none =>
-  match q.form with
-  | .select _ =>
-    -- `SelectedDataset.referenceSelect`: the backend evaluator when every
-    -- graph name is an IRI, else (and for a query the backend runner hands on,
-    -- `text:query`) the reference evaluator. Its theorem over the model of
-    -- `selectedDataset`: `SelectedDataset.referenceSelect_selectedModel`.
-    let rows := L4Factoidal.Storage.SelectedDataset.referenceSelect env q applied
-    emit (QueryResult.bindings q.projectedVars rows).toSrjFast.toUTF8
-    return (rows.length, line)
-  | .ask =>
-    let answer? :=
-      if indexed then (L4Factoidal.Dataflow.LawfulDataset.ofDataset applied).runAsk env stripped
-      else some (evalAsk env applied stripped)
-    let answer := match answer? with
-      | some answer => answer
-      | none => evalAsk env applied stripped
-    emit (QueryResult.boolean answer).toSrjFast.toUTF8
-    return ((if answer then 1 else 0), line)
-  | .construct _ | .describe _ =>
-    let graph := match q.form with
-      | .construct _ => evalConstruct env applied stripped
-      | _ => evalDescribe env applied stripped
-    let n ← emitGraph graph emit
-    return (n, line)
+  QuerySession.runReference ss (← L4Wasm.Ops.emptyEnvNow) q reason emit
 
 /-! ## Running a query -/
 
-structure Outcome where
-  rows : Nat
-  /-- `path=ids` or `path=reference ...` -/
-  path : String
-  plan : Array String := #[]
+abbrev Outcome := QuerySession.Outcome
 
 def parse (text : String) (base : Option String) (version : SparqlVersion := .v11) : IO Query :=
-  match parseSparql text base version with
-  | .error e => throw (IO.userError s!"SPARQL parse error at {e.pos}: {e.msg}")
+  match QuerySession.parse? text base version with
+  | .error e => throw (IO.userError e)
   | .ok q => pure q
 
-/-- Run one parsed query on an open session. -/
+/-- Run one parsed query on an open session: `QuerySession.runOneWith` with
+    the stores of `threads` scan tasks per BGP scan (`storeWith`,
+    `storeNested`), the divided paths of `Session.par` above one thread, and,
+    before an id plan, the pool's workers woken (issue 961: blocked pool
+    workers poll again from here, so the first divided phase does not wait for
+    a kernel wake-up; only for a plan with two or more triple patterns: DBpedia
+    d17, one pattern answered from the PRM1 entries in 0.3 ms, took 0.37 ms at
+    4 threads against 0.29 ms with every query waking the workers) and a scan
+    started early for the query before dropped (stage 1o). -/
 def runOne (ss : Session) (q : Query) (emit : ByteArray → IO Unit) (forceReference referenceRender : Bool)
     (threads : Nat := 1) (sip : Option Nat := some 16) (aggOnIds : Bool := true) : IO Outcome := do
-  let plan? := if forceReference then .error "--reference" else IdQuery.translate q
-  match plan? with
-  | .error reason =>
-    let (n, line) ← runReference ss q reason emit
-    return { rows := n, path := line }
-  | .ok plan =>
-    -- issue 961: blocked pool workers poll again from here, so the first
-    -- divided phase does not wait for a kernel wake-up. Only for a plan with
-    -- two or more triple patterns (joins, then the steps after them): DBpedia
-    -- d17, one pattern answered from the PRM1 entries in 0.3 ms, took 0.37 ms
-    -- at 4 threads against 0.29 ms with every query waking the workers.
-    if plan.pats.size ≥ 2 then
-      if let some p := ss.pool then p.wake
-    let minRows ← minRangeRows
-    -- stage 1o: a scan started early for the query before and not taken
-    let _ ← prescanSlot.swap none
-    let par := if threads ≤ 1 then none else some (ss.par threads minRows)
-    let env ← queryEnv q
-    match plan.post with
-    | some ps =>
-      if plan.nested.isSome then
-        -- issue 959: a nested WHERE clause, the recursive evaluator on ids
-        match ← (IdGroup.runNestedM (ss.storeNested threads sip minRows aggOnIds) plan ps env).run with
-        | .ok (ans, st) =>
-          emitPost ans emit
-          return { rows := st.rows, path := "path=ids", plan := st.plan }
-        | .error e => refusedOr e
-      else
-      -- issue 823: the WHERE clause on ids, the reference post-processing on
-      -- the decoded solutions
-      match ← (IdQuery.runPostM (ss.storeWith threads sip minRows aggOnIds) plan ps env).run with
-      | .ok (ans, st) =>
-        emitPost ans emit
-        return { rows := st.rows, path := "path=ids", plan := st.plan }
-      | .error e => refusedOr e
-    | none =>
-    -- `runPlanM` refuses (issue 954) before it emits anything
-    match ← (IdQuery.runPlanM (ss.storeWith threads sip minRows) plan emit referenceRender par env).run with
-    | .ok st => return { rows := st.rows, path := "path=ids", plan := st.plan }
-    | .error e => refusedOr e
-where
-  /-- An id-path error that starts with `refused: ` (issue 954: a shape the
-      id path recognises only after reading the store) runs the reference
-      evaluator; any other error fails the query. -/
-  refusedOr (e : String) : IO Outcome := do
-    if e.startsWith "refused: " then
-      let (n, line) ← runReference ss q (e.drop 9).toString emit
-      return { rows := n, path := line }
-    throw (IO.userError s!"id query failed: {e}")
+  let minRows ← minRangeRows
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
+  QuerySession.runOneWith ss clockEnv q emit forceReference referenceRender
+    { store := ss.storeWith threads sip minRows aggOnIds
+      nested := ss.storeNested threads sip minRows aggOnIds
+      par := if threads ≤ 1 then none else some (ss.par threads minRows)
+      onPlan := fun plan => do
+        if plan.pats.size ≥ 2 then
+          if let some p := ss.pool then p.wake
+        let _ ← prescanSlot.swap none }
 
 def verifyText : Verify → String
   | .merkle => "each read widened to its 65,536-byte chunks, each chunk checked by its Merkle proof"

@@ -580,6 +580,19 @@ def idOfTerm (g : Gen) (t : Term) : IO (Option Nat) := do
 
 /-! ## The named graphs (GNL1) -/
 
+/-- The bytes of the graph list GNL1 of a generation, read as `g.verify`
+    says (`merkle`: each chunk checked by its Merkle proof against the
+    manifest's root), or `none` when the generation has no GNL1 file. The
+    read of `QuerySession.Reads.graphList` for the native session. -/
+def readGraphListBytes (g : Gen) : IO (Option ByteArray) := do
+  match artifactOf? g.manifest "GNL1" with
+  | none => pure none
+  | some a =>
+    let path := s!"{g.dir}/{a.file}"
+    let leaves ← loadLeaves g.verify g.fileBytes path a.merkle
+    let cache ← newChunkCache g.verify a.merkle
+    pure (some (← verifiedRead g path a.merkle leaves cache 0 a.bytes))
+
 /-- The ids of the named graphs that GNL1 lists, read whole and checked as every
     read of `g` is (`verifiedRead`: under `merkle` chunk by chunk against the
     manifest's root), decoded by `GraphList.decodeAt` (proved equal to the
@@ -588,16 +601,12 @@ def idOfTerm (g : Gen) (t : Term) : IO (Option Nat) := do
     quads (`Storage/Sbm11/Manifest.lean`, "The graph list and the readers before
     it"). -/
 def readGraphList (g : Gen) : IO (Option (Array Nat)) := do
-  match artifactOf? g.manifest "GNL1" with
+  match ← readGraphListBytes g with
   | none => pure none
-  | some a =>
-    let path := s!"{g.dir}/{a.file}"
-    let leaves ← loadLeaves g.verify g.fileBytes path a.merkle
-    let cache ← newChunkCache g.verify a.merkle
-    let bytes ← verifiedRead g path a.merkle leaves cache 0 a.bytes
+  | some bytes =>
     match GraphList.decodeAt bytes with
     | some ids => pure (some ids)
-    | none => throw (IO.userError s!"{path}: does not decode as a GNL1 graph list")
+    | none => throw (IO.userError s!"{g.dir}/{GraphList.fileName}: does not decode as a GNL1 graph list")
 
 /-- The distinct graph ids other than the default graph (0) of the quads of the
     base generation, in increasing order: one pass over the PSO permutation. The
