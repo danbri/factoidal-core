@@ -54,12 +54,82 @@ No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Storage.BackendRefinement
 
+namespace L4Factoidal.Storage.Sbm11.IdGroup
+
+open L4Factoidal.RDF
+open L4Factoidal.SPARQL
+
+/-! ## The reference answer, operator by operator (the equations of `allowed_ref`) -/
+
+theorem refSol_join_eq (env : EvalEnv) (ds : Dataset) {l r : QueryPattern} (a : Graph)
+    (hl : InIdFragment l) (hr : InIdFragment r) :
+    refSol env ds (.join l r) a = join (refSol env ds l a) (refSol env ds r a) := by
+  show (GraphPattern.join _ _).evalIn ds a = _
+  rw [evalIn_join ds a _ _ (lower_ne_serviceVar env l hl) (lower_ne_serviceVar env r hr),
+    hashJoin_eq_join]
+  rfl
+
+theorem refSol_leftJoin_eq (env : EvalEnv) (ds : Dataset) (l r : QueryPattern) (c : Expr) (a : Graph) :
+    refSol env ds (.leftJoin l r c) a =
+      leftJoin (refSol env ds l a) (refSol env ds r a) (filterFn env c a) := by
+  simp only [refSol, QueryPattern.lowerWith]
+  rw [GraphPattern.evalIn, hashLeftJoin_eq_leftJoin]
+  rfl
+
+theorem refSol_filter_eq (env : EvalEnv) (ds : Dataset) (c : Expr) (q : QueryPattern) (a : Graph) :
+    refSol env ds (.filter c q) a = (refSol env ds q a).filter (filterFn env c a) := by
+  simp only [refSol, QueryPattern.lowerWith]
+  rw [filterLowered_evalIn]
+  rfl
+
+theorem refSol_union_eq (env : EvalEnv) (ds : Dataset) (l r : QueryPattern) (a : Graph) :
+    refSol env ds (.union l r) a = refSol env ds l a ++ refSol env ds r a := by
+  simp only [refSol, QueryPattern.lowerWith]
+  rw [GraphPattern.evalIn]
+  rfl
+
+theorem refSol_minus_eq (env : EvalEnv) (ds : Dataset) (l r : QueryPattern) (a : Graph) :
+    refSol env ds (.minus l r) a = minus (refSol env ds l a) (refSol env ds r a) := by
+  simp only [refSol, QueryPattern.lowerWith]
+  rw [GraphPattern.evalIn, hashMinus_eq_minus]
+
+theorem refSol_graphIri_eq (env : EvalEnv) (ds : Dataset) (i : WfIri) (q : QueryPattern) (a : Graph) :
+    refSol env ds (.graph (.iri i) q) a =
+      match ds.lookupNamedIri i.val with
+      | some g => refSol env ds q g
+      | none => [] := by
+  show (GraphPattern.graph (.iri i) (QueryPattern.lowerWith env Binding.empty q)).evalIn ds a = _
+  rw [GraphPattern.evalIn]
+  rfl
+
+theorem refSol_graphVar_eq (env : EvalEnv) (ds : Dataset) (v : VarName) (q : QueryPattern) (a : Graph) :
+    refSol env ds (.graph (.var v) q) a =
+      ds.named.flatMap fun ng => (refSol env ds q ng.graph).filterMap
+        (Binding.bindIfCompatible v ng.name.toTerm) := by
+  show (GraphPattern.graph (.var v) (QueryPattern.lowerWith env Binding.empty q)).evalIn ds a = _
+  rw [GraphPattern.evalIn]
+  rfl
+
+theorem refSol_values_eq (env : EvalEnv) (ds : Dataset) (vars : List VarName)
+    (rows : List (List (Option Term))) (a : Graph) :
+    refSol env ds (.values vars rows) a = evalValues vars rows := by
+  simp only [refSol, QueryPattern.lowerWith]
+  rw [GraphPattern.evalIn]
+
+theorem refSol_empty_eq (env : EvalEnv) (ds : Dataset) (a : Graph) :
+    refSol env ds .empty a = [Binding.empty] := by
+  simp only [refSol, QueryPattern.lowerWith]
+  rw [GraphPattern.evalIn]
+
+end L4Factoidal.Storage.Sbm11.IdGroup
+
 namespace L4Factoidal.Storage.BackendAgreement
 
 open L4Factoidal.RDF
 open L4Factoidal.SPARQL
 open L4Factoidal.SPARQL.StoreBackend
 open L4Factoidal.SPARQL.StorePlan
+open L4Factoidal.SPARQL.StoreDataset
 open L4Factoidal.Storage.Sbm11.IdGroup (Pw PermPw BindEq SolEquiv Allowed refSol filterFn
   InIdFragment)
 open L4Factoidal.Storage.BackendRefinement (GraphRel NamedRel NativeFrag)
@@ -413,10 +483,361 @@ theorem filterFn_condOk (env : EvalEnv) {c : Expr} (hc : c.backendLocal = true) 
   simp only []
   rw [Storage.Sbm11.ExprLocalTheorems.evalIn_bindEq env mu mu' h c]
 
+
+/-! ## 6. Rows with distinct names -/
+
+/-- The names of the row are distinct. -/
+def Nd (mu : Binding) : Prop := (mu.map Prod.fst).Nodup
+
+theorem nd_empty : Nd Binding.empty := by simp [Nd, Binding.empty]
+
+theorem nd_bind {mu : Binding} (h : Nd mu) {v : VarName} (hv : mu.lookup v = none) (x : Term) :
+    Nd (mu.bind v x) := by
+  simp only [Nd, Binding.bind, List.map_cons, List.nodup_cons]
+  refine ⟨fun hm => ?_, h⟩
+  obtain ⟨⟨w, t⟩, hp, e⟩ := List.mem_map.mp hm
+  simp only at e
+  subst e
+  exact lookup_none_not_mem hv t hp
+
+theorem lookup_of_mem_nd : ∀ {mu : Binding}, Nd mu → ∀ {p : VarName × Term}, p ∈ mu →
+    mu.lookup p.1 = some p.2
+  | (w, t) :: rest, h, p, hp => by
+    simp only [Nd, List.map_cons, List.nodup_cons] at h
+    simp only [Binding.lookup]
+    rcases List.mem_cons.mp hp with e | hp
+    · subst e; simp
+    · have hne : w ≠ p.1 := fun e => h.1 (e ▸ List.mem_map_of_mem hp)
+      rw [if_neg hne]
+      exact lookup_of_mem_nd h.2 hp
+
+/-- For rows with distinct names, the same lookups give the same pairs. -/
+theorem rowS_of_nd {mu nu : Binding} (h : BindEq mu nu) (hm : Nd mu) (hn : Nd nu) : RowS mu nu := by
+  refine ⟨h, fun p => ⟨fun hp => ?_, fun hp => ?_⟩⟩
+  · have e := lookup_of_mem_nd hm hp
+    rw [h p.1] at e
+    exact mem_of_lookup e
+  · have e := lookup_of_mem_nd hn hp
+    rw [← h p.1] at e
+    exact mem_of_lookup e
+
+theorem solSEquiv_of_nd {A B : SolutionSeq} (h : SolEquiv A B) (hA : ∀ mu ∈ A, Nd mu)
+    (hB : ∀ mu ∈ B, Nd mu) : SolSEquiv A B := by
+  obtain ⟨C, p, w⟩ := h
+  exact ⟨C, p, BackendRefinement.pw_imp_mem w fun a ha b hb hab =>
+    rowS_of_nd hab (hA a (p.mem_iff.mpr ha)) (hB b hb)⟩
+
+theorem slotMatch_nd {s : BackendRefinement.TSlot} {x : Term} {mu mu' : Binding}
+    (h : BackendRefinement.slotMatch s x mu = some mu') (hm : Nd mu) : Nd mu' := by
+  rcases BackendRefinement.slot_var_or_const s with ⟨v, rfl⟩ | hc
+  · simp only [BackendRefinement.slotMatch] at h
+    cases hv : mu.lookup v with
+    | some e => rw [hv] at h; obtain ⟨-, rfl⟩ := BackendRefinement.ite_some' h; exact hm
+    | none => rw [hv] at h; cases h; exact nd_bind hm hv x
+  · rw [hc] at h; obtain ⟨-, rfl⟩ := BackendRefinement.ite_some' h; exact hm
+
+theorem matchSlots_nd : ∀ (S : List (BackendRefinement.TSlot × Term)) {mu mu' : Binding},
+    BackendRefinement.matchSlots S mu = some mu' → Nd mu → Nd mu'
+  | [], _, _, h, hm => by cases h; exact hm
+  | (s, x) :: rest, mu, mu', h, hm => by
+    simp only [BackendRefinement.matchSlots] at h
+    cases h1 : BackendRefinement.slotMatch s x mu with
+    | none => rw [h1] at h; cases h
+    | some m1 =>
+      rw [h1] at h
+      exact matchSlots_nd rest h (slotMatch_nd h1 hm)
+
+theorem tpMatch_nd {tp : TriplePattern} {t : Triple} {mu mu' : Binding}
+    (h : tpMatch tp t mu = some mu') (hm : Nd mu) : Nd mu' := by
+  rw [BackendRefinement.tpMatch_slots] at h
+  exact matchSlots_nd _ h hm
+
+theorem evalBgpFrom_nd {g : Graph} :
+    ∀ (ps : Bgp) {mu : Binding}, Nd mu → ∀ nu ∈ evalBgpFrom g ps mu, Nd nu
+  | [], _, hm, nu, hn => by simp [evalBgpFrom] at hn; subst hn; exact hm
+  | tp :: rest, mu, hm, nu, hn => by
+    simp only [evalBgpFrom, List.mem_flatMap, evalTP, List.mem_filterMap] at hn
+    obtain ⟨m1, ⟨t, _, h1⟩, hn⟩ := hn
+    exact evalBgpFrom_nd rest (tpMatch_nd h1 hm) nu hn
+
+theorem evalBgpFromMuFuel_nd {gb : GraphBackend} :
+    ∀ (n : Nat) (ps : Bgp) {mu : Binding}, Nd mu → ∀ nu ∈ evalBgpFromMuFuel ps gb mu n, Nd nu
+  | 0, _, _, hm, nu, hn => by simp [evalBgpFromMuFuel] at hn; subst hn; exact hm
+  | n + 1, [], _, hm, nu, hn => by
+    rw [evalBgpFromMuFuel_nil] at hn; simp at hn; subst hn; exact hm
+  | n + 1, p :: ps, mu, hm, nu, hn => by
+    cases hc : chooseBestTpBackend gb mu (p :: ps) with
+    | none => exact absurd ((chooseBest_none_iff_nil gb mu _).mp hc) (by simp)
+    | some pr =>
+      obtain ⟨tp, rest⟩ := pr
+      have e : evalBgpFromMuFuel (p :: ps) gb mu (n + 1) =
+          (evalSingleTpBackend tp gb mu).flatMap (fun mu' => evalBgpFromMuFuel rest gb mu' n) := by
+        simp only [evalBgpFromMuFuel, hc]
+        rw [BackendRefinement.evalBgpConcatMapAcc_eq]
+        simp
+      rw [e] at hn
+      simp only [List.mem_flatMap, evalSingleTpBackend, List.mem_filterMap] at hn
+      obtain ⟨m1, ⟨t, _, h1⟩, hn⟩ := hn
+      exact evalBgpFromMuFuel_nd n rest (tpMatch_nd h1 hm) nu hn
+
+/-! ## 7. The tightened relation -/
+
+/-- **The answers SPARQL 1.1 allows, with the same pairs in each row.** The
+    operators of `NativeFrag`, each the reference evaluator's own function
+    (as in `Allowed`), FILTER and OPTIONAL with a `backendLocal` condition,
+    and the rule `equiv` over `SolSEquiv` instead of `SolEquiv`. -/
+inductive AllowedS (env : EvalEnv) (ds : Dataset) : QueryPattern → Graph → SolutionSeq → Prop
+  | bgp (b : Bgp) (a : Graph) : AllowedS env ds (.bgp b) a (refSol env ds (.bgp b) a)
+  | join {l r : QueryPattern} {a : Graph} {A B : SolutionSeq} :
+      AllowedS env ds l a A → AllowedS env ds r a B → AllowedS env ds (.join l r) a (join A B)
+  | leftJoin {l r : QueryPattern} {c : Expr} {a : Graph} {A B : SolutionSeq} :
+      c.backendLocal = true → AllowedS env ds l a A → AllowedS env ds r a B →
+        AllowedS env ds (.leftJoin l r c) a (leftJoin A B (filterFn env c a))
+  | filter {c : Expr} {q : QueryPattern} {a : Graph} {A : SolutionSeq} :
+      c.backendLocal = true → AllowedS env ds q a A →
+        AllowedS env ds (.filter c q) a (A.filter (filterFn env c a))
+  | union {l r : QueryPattern} {a : Graph} {A B : SolutionSeq} :
+      AllowedS env ds l a A → AllowedS env ds r a B → AllowedS env ds (.union l r) a (A ++ B)
+  | minus {l r : QueryPattern} {a : Graph} {A B : SolutionSeq} :
+      AllowedS env ds l a A → AllowedS env ds r a B → AllowedS env ds (.minus l r) a (minus A B)
+  | graphIri {i : WfIri} {q : QueryPattern} {a g : Graph} {A : SolutionSeq} :
+      ds.lookupNamedIri i.val = some g → AllowedS env ds q g A →
+        AllowedS env ds (.graph (.iri i) q) a A
+  | graphIriNone {i : WfIri} {q : QueryPattern} {a : Graph} :
+      ds.lookupNamedIri i.val = none → AllowedS env ds (.graph (.iri i) q) a []
+  | graphVar {v : VarName} {q : QueryPattern} {a : Graph} (F : NamedGraph → SolutionSeq) :
+      (∀ ng ∈ ds.named, AllowedS env ds q ng.graph (F ng)) →
+        AllowedS env ds (.graph (.var v) q) a
+          (ds.named.flatMap fun ng => (F ng).filterMap (Binding.bindIfCompatible v ng.name.toTerm))
+  | values (vars : List VarName) (rows : List (List (Option Term))) (a : Graph) :
+      AllowedS env ds (.values vars rows) a (evalValues vars rows)
+  | empty (a : Graph) : AllowedS env ds .empty a [Binding.empty]
+  | equiv {p : QueryPattern} {a : Graph} {A B : SolutionSeq} :
+      AllowedS env ds p a A → SolSEquiv A B → AllowedS env ds p a B
+
+/-- Every answer `AllowedS` admits is an answer `Allowed` admits. -/
+theorem AllowedS.toAllowed {env : EvalEnv} {ds : Dataset} {p : QueryPattern} {a : Graph}
+    {A : SolutionSeq} (h : AllowedS env ds p a A) : Allowed env ds p a A := by
+  induction h with
+  | bgp b a => exact .bgp b a
+  | join _ _ ih1 ih2 => exact .join ih1 ih2
+  | leftJoin _ _ _ ih1 ih2 => exact .leftJoin ih1 ih2
+  | filter _ _ ih => exact .filter ih
+  | union _ _ ih1 ih2 => exact .union ih1 ih2
+  | minus _ _ ih1 ih2 => exact .minus ih1 ih2
+  | graphIri hg _ ih => exact .graphIri hg ih
+  | graphIriNone hg => exact .graphIriNone hg
+  | graphVar F _ ih => exact .graphVar F ih
+  | values vars rows a => exact .values vars rows a
+  | empty a => exact .empty a
+  | equiv _ hs ih => exact .equiv ih hs.toSolEquiv
+
+/-- Every pattern of `NativeFrag` is in the fragment of `allowed_ref`. -/
+theorem nativeFrag_inIdFragment : ∀ (p : QueryPattern), NativeFrag p → InIdFragment p
+  | .bgp _, _ => trivial
+  | .filter _ q, hp => nativeFrag_inIdFragment q hp.2
+  | .leftJoin l r _, hp => ⟨nativeFrag_inIdFragment l hp.2.1, nativeFrag_inIdFragment r hp.2.2⟩
+  | .join l r, hp => ⟨nativeFrag_inIdFragment l hp.1, nativeFrag_inIdFragment r hp.2⟩
+  | .union l r, hp => ⟨nativeFrag_inIdFragment l hp.1, nativeFrag_inIdFragment r hp.2⟩
+  | .minus l r, hp => ⟨nativeFrag_inIdFragment l hp.1, nativeFrag_inIdFragment r hp.2⟩
+  | .graph (.iri _) q, hp => nativeFrag_inIdFragment q hp
+  | .graph (.var _) q, hp => nativeFrag_inIdFragment q hp
+  | .empty, _ => trivial
+  | .values _ _, _ => trivial
+
+open L4Factoidal.Storage.Sbm11.IdGroup (refSol_join_eq refSol_leftJoin_eq refSol_filter_eq
+  refSol_union_eq refSol_minus_eq refSol_graphIri_eq refSol_graphVar_eq refSol_values_eq
+  refSol_empty_eq)
+
+/-- **Every answer `AllowedS` admits is the reference answer up to the order
+    of the solutions** (`SolSEquiv`), for a pattern of the fragment of
+    `allowed_ref`. -/
+theorem AllowedS.ref {env : EvalEnv} {ds : Dataset} {p : QueryPattern} {a : Graph}
+    {A : SolutionSeq} (h : AllowedS env ds p a A) (hp : InIdFragment p) :
+    SolSEquiv A (refSol env ds p a) := by
+  induction h with
+  | bgp b a => exact SolSEquiv.refl _
+  | join _ _ ih1 ih2 =>
+    rw [refSol_join_eq env ds _ hp.1 hp.2]
+    exact join_congr (ih1 hp.1) (ih2 hp.2)
+  | @leftJoin l r c a A B hc _ _ ih1 ih2 =>
+    rw [refSol_leftJoin_eq]
+    exact leftJoin_congr _ (filterFn_condOk env hc a) (ih1 hp.1) (ih2 hp.2)
+  | @filter c q a A hc _ ih =>
+    rw [refSol_filter_eq]
+    exact filter_congr _ (filterFn_condOk env hc a) (ih hp)
+  | union _ _ ih1 ih2 =>
+    rw [refSol_union_eq]
+    exact union_congr (ih1 hp.1) (ih2 hp.2)
+  | minus _ _ ih1 ih2 =>
+    rw [refSol_minus_eq]
+    exact minus_congr (ih1 hp.1) (ih2 hp.2)
+  | graphIri hg _ ih =>
+    rw [refSol_graphIri_eq, hg]
+    exact ih hp
+  | graphIriNone hg =>
+    rw [refSol_graphIri_eq, hg]
+    exact SolSEquiv.refl _
+  | graphVar F _ ih =>
+    rw [refSol_graphVar_eq]
+    exact graphVar_congr _ _ _ _ fun ng hng => ih ng hng hp
+  | values vars rows a =>
+    rw [refSol_values_eq]
+    exact SolSEquiv.refl _
+  | empty a =>
+    rw [refSol_empty_eq]
+    exact SolSEquiv.refl _
+  | equiv _ hs ih => exact SolSEquiv.trans hs.symm (ih hp)
+
+/-- **Two answers `AllowedS` admits for one pattern are one multiset**
+    (`SolSEquiv`), for a pattern of the fragment of `allowed_ref`. -/
+theorem AllowedS.unique {env : EvalEnv} {ds : Dataset} {p : QueryPattern} {a : Graph}
+    {A B : SolutionSeq} (hA : AllowedS env ds p a A) (hB : AllowedS env ds p a B)
+    (hp : InIdFragment p) : SolSEquiv A B :=
+  SolSEquiv.trans (hA.ref hp) (hB.ref hp).symm
+
+/-- **The reference answer is one `AllowedS` admits**, for every pattern of
+    `NativeFrag`. -/
+theorem allowedS_ref (env : EvalEnv) (ds : Dataset) :
+    ∀ (p : QueryPattern) (a : Graph), NativeFrag p → AllowedS env ds p a (refSol env ds p a)
+  | .bgp b, a, _ => .bgp b a
+  | .filter c q, a, hp => by
+    rw [refSol_filter_eq]
+    exact .filter hp.1 (allowedS_ref env ds q a hp.2)
+  | .leftJoin l r c, a, hp => by
+    rw [refSol_leftJoin_eq]
+    exact .leftJoin hp.1 (allowedS_ref env ds l a hp.2.1) (allowedS_ref env ds r a hp.2.2)
+  | .join l r, a, hp => by
+    rw [refSol_join_eq env ds a (nativeFrag_inIdFragment l hp.1) (nativeFrag_inIdFragment r hp.2)]
+    exact .join (allowedS_ref env ds l a hp.1) (allowedS_ref env ds r a hp.2)
+  | .union l r, a, hp => by
+    rw [refSol_union_eq]
+    exact .union (allowedS_ref env ds l a hp.1) (allowedS_ref env ds r a hp.2)
+  | .minus l r, a, hp => by
+    rw [refSol_minus_eq]
+    exact .minus (allowedS_ref env ds l a hp.1) (allowedS_ref env ds r a hp.2)
+  | .graph (.iri i) q, a, hp => by
+    rw [refSol_graphIri_eq]
+    cases hg : ds.lookupNamedIri i.val with
+    | none => exact .graphIriNone hg
+    | some g => exact .graphIri hg (allowedS_ref env ds q g hp)
+  | .graph (.var v) q, a, hp => by
+    rw [refSol_graphVar_eq]
+    exact .graphVar (fun ng => refSol env ds q ng.graph) fun ng _ => allowedS_ref env ds q ng.graph hp
+  | .empty, a, _ => by
+    rw [refSol_empty_eq]
+    exact .empty a
+  | .values vars rows, a, _ => by
+    rw [refSol_values_eq]
+    exact .values vars rows a
+
+/-! ## 8. The backend's answer -/
+
+/-- The backend's answer to a basic graph pattern with no `text:query`
+    pattern is one `AllowedS` admits: backend and reference rows have
+    distinct names, so `SolEquiv` gives `SolSEquiv`. -/
+theorem evalBgpBackend_allowedS (env : EvalEnv) (ds : Dataset) {gb : GraphBackend} {a : Graph}
+    (hr : GraphRel gb a) (b : Bgp) (hf : bgpHasFulltext b = false) :
+    AllowedS env ds (.bgp b) a (evalBgpBackend b gb) := by
+  refine .equiv (.bgp b a) ?_
+  rw [Storage.Sbm11.IdLeaf.refSol_bgp env ds b a hf]
+  refine solSEquiv_of_nd
+    (SolEquiv.symm (BackendRefinement.evalBgpBackend_solEquiv hr.exact hr.keyNodup (fun _ => Iff.rfl) b))
+    (fun mu hm => evalBgpFrom_nd b nd_empty mu hm)
+    (fun mu hm => evalBgpFromMuFuel_nd _ b nd_empty mu hm)
+
+/-- **The backend evaluator's WHERE answer is one `AllowedS` admits**, for
+    every pattern of `NativeFrag`, under the premises of
+    `evalPatternBackend_allowed`. -/
+theorem evalPatternBackend_allowedS (env : EvalEnv) (dsb : DatasetBackend) (ds : Dataset)
+    (hn : NamedRel dsb.named ds.named) (hnd : (dsb.named.map (·.name)).Nodup) :
+    ∀ (p : QueryPattern), NativeFrag p → ∀ (gb : GraphBackend) (a : Graph), GraphRel gb a →
+      AllowedS env ds p a (evalPatternBackend env dsb p gb)
+  | .bgp b, hp, gb, a, hr => by
+    rw [evalPatternBackend_bgp_native]
+    exact evalBgpBackend_allowedS env ds hr b hp
+  | .filter c q, hp, gb, a, hr => by
+    have e : evalPatternBackend env dsb (.filter c q) gb =
+        (evalPatternBackend env dsb q gb).filter (fun row => ebvOrFalse (Expr.evalIn env row c)) := by
+      simp [evalPatternBackend, hp.1]
+    rw [e, ← BackendRefinement.filterFn_local env hp.1 a]
+    exact .filter hp.1 (evalPatternBackend_allowedS env dsb ds hn hnd q hp.2 gb a hr)
+  | .leftJoin l r c, hp, gb, a, hr => by
+    rw [evalPatternBackend_leftJoin_spec env dsb l r c gb hp.1, ← BackendRefinement.filterFn_local env hp.1 a]
+    exact .leftJoin hp.1 (evalPatternBackend_allowedS env dsb ds hn hnd l hp.2.1 gb a hr)
+      (evalPatternBackend_allowedS env dsb ds hn hnd r hp.2.2 gb a hr)
+  | .join l r, hp, gb, a, hr => by
+    have e : evalPatternBackend env dsb (.join l r) gb =
+        SPARQL.hashJoin (evalPatternBackend env dsb l gb) (evalPatternBackend env dsb r gb) := by
+      simp [evalPatternBackend]
+    rw [e, SPARQL.hashJoin_eq_join]
+    exact .join (evalPatternBackend_allowedS env dsb ds hn hnd l hp.1 gb a hr)
+      (evalPatternBackend_allowedS env dsb ds hn hnd r hp.2 gb a hr)
+  | .union l r, hp, gb, a, hr => by
+    rw [evalPatternBackend_union_native]
+    exact .union (evalPatternBackend_allowedS env dsb ds hn hnd l hp.1 gb a hr)
+      (evalPatternBackend_allowedS env dsb ds hn hnd r hp.2 gb a hr)
+  | .minus l r, hp, gb, a, hr => by
+    have e : evalPatternBackend env dsb (.minus l r) gb =
+        SPARQL.hashMinus (evalPatternBackend env dsb l gb) (evalPatternBackend env dsb r gb) := by
+      simp [evalPatternBackend]
+    rw [e, SPARQL.hashMinus_eq_minus]
+    exact .minus (evalPatternBackend_allowedS env dsb ds hn hnd l hp.1 gb a hr)
+      (evalPatternBackend_allowedS env dsb ds hn hnd r hp.2 gb a hr)
+  | .graph (.iri i) q, hp, gb, a, hr => by
+    have e : evalPatternBackend env dsb (.graph (.iri i) q) gb =
+        match lookupNamedBackend i.val dsb.named with
+        | some g => evalPatternBackend env dsb q g
+        | none => [] := rfl
+    rw [e]
+    rcases BackendRefinement.lookup_rel i hn with ⟨h1, h2⟩ | ⟨gb', g, h1, h2, hr'⟩
+    · rw [h1]
+      exact .graphIriNone (by rw [BackendRefinement.lookupNamedIri_wf]; exact h2)
+    · rw [h1]
+      exact .graphIri (by rw [BackendRefinement.lookupNamedIri_wf]; exact h2)
+        (evalPatternBackend_allowedS env dsb ds hn hnd q hp gb' g hr')
+  | .graph (.var v) q, hp, gb, a, hr => by
+    have e : evalPatternBackend env dsb (.graph (.var v) q) gb =
+        dsb.named.flatMap (fun ngb => (evalPatternBackend env dsb q ngb.backend).filterMap
+          (fun mu => mu.bindIfCompatible v ngb.name.toTerm)) := rfl
+    rw [e, BackendRefinement.graphVar_eq env dsb q v hn
+      (fun x hx => BackendRefinement.lookupNamedSubject_of_mem hnd hx)]
+    refine .graphVar (fun ng => evalPatternBackend env dsb q
+      (BackendRefinement.backendFor dsb.named ng.name)) ?_
+    intro ng hng
+    obtain ⟨ngb, hngb, e1, hr'⟩ := BackendRefinement.namedRel_mem hn hng
+    have hbk : BackendRefinement.backendFor dsb.named ng.name = ngb.backend := by
+      simp only [BackendRefinement.backendFor]
+      rw [← e1, BackendRefinement.lookupNamedSubject_of_mem hnd hngb]
+      rfl
+    rw [hbk]
+    exact evalPatternBackend_allowedS env dsb ds hn hnd q hp ngb.backend ng.graph hr'
+  | .empty, _, gb, a, _ => by
+    rw [evalPatternBackend_empty]
+    exact .empty a
+  | .values vs rows, _, gb, a, _ => by
+    rw [evalPatternBackend_values_native]
+    exact .values vs rows a
+
+/-- **The backend evaluator's WHERE answer is the reference answer up to the
+    order of the solutions** (`SolSEquiv`: the same multiset of solution
+    mappings, each with the same pairs), for every pattern of `NativeFrag`. -/
+theorem evalPatternBackend_ref (env : EvalEnv) (dsb : DatasetBackend) (ds : Dataset)
+    (hn : NamedRel dsb.named ds.named) (hnd : (dsb.named.map (·.name)).Nodup)
+    (p : QueryPattern) (hp : NativeFrag p) (gb : GraphBackend) (a : Graph) (hr : GraphRel gb a) :
+    SolSEquiv (evalPatternBackend env dsb p gb) (refSol env ds p a) :=
+  (evalPatternBackend_allowedS env dsb ds hn hnd p hp gb a hr).ref (nativeFrag_inIdFragment p hp)
+
 #print axioms allowed_not_unique
 #print axioms join_congr
 #print axioms leftJoin_congr
 #print axioms minus_congr
 #print axioms graphVar_congr
+#print axioms AllowedS.toAllowed
+#print axioms AllowedS.ref
+#print axioms AllowedS.unique
+#print axioms allowedS_ref
+#print axioms evalPatternBackend_allowedS
+#print axioms evalPatternBackend_ref
 
 end L4Factoidal.Storage.BackendAgreement
