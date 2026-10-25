@@ -12,7 +12,8 @@ SHACL and ShEx, imports CSV, JSON and XML, canonicalises and signs RDF,
 serves data over HTTP, and keeps it on disk.
 
 The pages below run their examples in this page with the npm package
-`@factoidal/core`: edit a cell and press Run. The engine and the data stay
+`@factoidal/core` {{ factoidalRelease.version }}, the published release
+(loaded from `{{ factoidalRelease.base }}`): edit a cell and press Run. The engine and the data stay
 in your browser.
 
 ## Pages
@@ -22,6 +23,7 @@ in your browser.
   <li><a href="./sparql/">SPARQL</a> — query and update, property paths, aggregates, GeoSPARQL functions, <code>text:query</code>, extension functions in JavaScript and WebAssembly, SERVICE, SPARQL 1.2 triple patterns</li>
   <li><a href="./importers/">Data importers and pipelines</a> — CSVW, RML, JSON-LD and a GRDDL-style XSLT step, each step in its own named graph, one query across them</li>
   <li><a href="./inference/">Inference</a> — RDFS and OWL 2 RL closure over pipeline output, derived triples in their own graph, OWL 2 DL consistency and entailment</li>
+  <li><a href="./checked-pipelines/">Checked pipelines</a> — readers, reasoners, the SPARQL evaluator and writers as nodes; per-step status and contract, entailment explanations, and the list of what is proved and what is assumed</li>
   <li><a href="./validation/">SHACL and ShEx</a> — validation reports as RDF, SHACL-SPARQL, ShExC schemas</li>
   <li><a href="./canonical-and-credentials/">Canonical form and credentials</a> — RDFC-1.0, graph hashes, eddsa-rdfc-2022 proofs, did:key</li>
   <li><a href="./servers/">Servers</a> — SPARQL Protocol and Graph Store with Fuseki paths, read-only Jena TDB2, Linked Web Storage, Solid, XMPP (commands and recorded output)</li>
