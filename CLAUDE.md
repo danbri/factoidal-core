@@ -742,6 +742,26 @@ The choices below are the coordinator's, under that delegation.
   evidence record says so. Never report a guarantee the path does not have.
 - Record: https://github.com/danbri/factoidal/issues/975#issuecomment-6393905605
 
+### Network retrieval goes into the evidence record, as high-risk data (owner, 2026-10-25)
+
+> "Any transactions with the global web also need to go into the evidence
+> pipeline system - if we dereference http or https at least. maybe ftp,
+> gopher and others, keep records of headers, ip addresses, certs, timing etc
+> etc. Treat this information as potentially high risk re security/privacy."
+
+- Every HTTP or HTTPS read for a pipeline step gives a retrieval record
+  (request and response headers, redirects, remote address, TLS and server
+  certificate fingerprints, timing, body SHA-256). A scheme with no record type
+  is refused, not fetched without a record.
+- Default deny: credential values (Authorization, Cookie, Set-Cookie, token
+  query parameters) are removed, never hashed; no local address or client
+  certificate; the full record stays in a local store; shared provenance gets
+  a small subset unless the caller opts in.
+- A retrieval is an assumption of the run, named with the body checksum, never
+  a theorem.
+- Design: section 4 of `docs/designissues/2026-10-25-tabular-and-source-models.md`;
+  tracking https://github.com/danbri/factoidal/issues/1035.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where
