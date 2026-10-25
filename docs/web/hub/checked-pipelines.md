@@ -21,7 +21,10 @@ contract is a named assumption) or `missing` (no contract and no suite).
 
 `node(name, params)` makes a node for one component, `pipe(...)` composes
 nodes left to right, and `run(pipeline, input)` runs it. A value on a wire is
-`{graph, evidence}`; each node adds one evidence record. Status:
+`{graph, evidence}`; each node adds one evidence record. `pipe()` asks the
+engine's op `pipelineCheck` whether each node's output type is the next
+node's input type, and `run()` refuses a pipeline that is not well typed
+(see the last section). Status:
 [issue 975](https://github.com/danbri/factoidal/issues/975) (component
 contracts) and [issue 1002](https://github.com/danbri/factoidal/issues/1002)
 (dataflow and explanations).
@@ -149,7 +152,7 @@ no derivation exists, and that holds only if the closure the engine computed
 holds every RDFS consequence; that completeness is not proved yet, so the
 verdict names it as an assumption.
 
-In 0.14.0 the run's own `assumptions` list stays empty here: it is the union
+In 0.15.0 the run's own `assumptions` list stays empty here: it is the union
 of the components' registered assumptions, and the registry lists none for
 `rdfsReasoner` or `rdfsExplainGraphStage`. Read the verdict's list with the
 verdict.
@@ -170,9 +173,10 @@ writerRun = {
 ```
 
 `{ unchecked: true }` is the opt-in on `run`. With it, a step that is not
-checked carries `unchecked: true` and a `reason`. In 0.14.0 a run without the
-opt-in also runs a `tested` or `assumed` step (the result still says
-`proved: false`); it refuses only a `missing` stage:
+checked carries `unchecked: true` and a `reason`. In 0.15.0 a run without the
+opt-in also runs a well-typed pipeline with a `tested` or `assumed` step (the
+result still says `proved: false`). It refuses a `missing` stage, and a
+pipeline that is not well typed (next section):
 
 ```observable-js
 missingStage = {
@@ -183,6 +187,53 @@ missingStage = {
   } catch (e) {
     return ({ code: e.code, message: e.message });
   }
+}
+```
+
+## A pipeline that is not well typed
+
+The Turtle writer gives text, and the RDFS reasoner reads a graph. `pipe()`
+reports the type check as `wellTyped` and `check`: the mismatch is at the
+wire between node 1 (the writer) and node 2 (the reasoner). The check is
+computed in Lean from the stage registry; the theorem
+`Pipeline.guarantee_sound` gives the guarantee of every well-typed pipeline.
+
+```observable-js
+illTyped = Factoidal.pipe(
+  await Factoidal.node('turtleDocumentReader'),
+  await Factoidal.node('turtleDocumentWriter'),
+  await Factoidal.node('rdfsReasoner'),
+)
+```
+
+```observable-js
+illTypedCheck = ({
+  wellTyped: illTyped.wellTyped,
+  mismatch: illTyped.check.mismatch,
+  theorem: illTyped.check.contract.theorem,
+})
+```
+
+`run()` refuses it:
+
+```observable-js
+illTypedRun = {
+  try {
+    await Factoidal.run(illTyped, sources);
+    return 'ran';
+  } catch (e) {
+    return ({ code: e.code, message: e.message });
+  }
+}
+```
+
+With `{ unchecked: true }` it runs, and the result says `wellTyped: false`
+and `proved: false`:
+
+```observable-js
+illTypedUnchecked = {
+  const r = await Factoidal.run(illTyped, sources, { unchecked: true });
+  return ({ wellTyped: r.wellTyped, proved: r.proved, uncheckedSteps: r.uncheckedSteps });
 }
 ```
 
