@@ -1011,6 +1011,32 @@ reason = "host wiring: registers a byte reader for a source name (lib/sbm11.mjs)
 id = "npm:./browser#registerSbm11Source"
 reason = "host wiring: registers a byte reader for a source name (lib/sbm11.mjs); reads no RDF data and decides no format"
 
+[[entry]]
+id = "wasm:sbm11PackFiles"
+stages = ["sbm11PackStage"]
+covers = "part"
+note = "Wasm/Ops/Sbm11Pack.lean sbm11PackFiles: Storage/Sbm11/PackBytes.lean packText then packFiles; the data files (GDV1, GDX1, PRM1, PRB1) are PackSpec.packSpec's FileGen, checked equal by #guard; GNL1, manifest.sbm11 and the .merkle files are assembled from the library encoders and are tested, not proved: byte-identical to l4sbm11-pack on sbm11-tiny (23 of 23 files), the W3C SPARQL 1.0 and 1.1 census (605 of 605 generations), chinook and QUDT (21 of 21 files each), SBM11_PACKFILES=1 tests/sbm11/census.sh. Not covered: the manifest, GNL1 and Merkle assembly; CURRENT (written by activation); streaming (the whole document is in memory)."
+
+[[entry]]
+id = "npm:.#packSbm11"
+stages = ["sbm11PackStage"]
+covers = "part"
+note = "npm/factoidal/lib/sbm11.mjs packSbm11: the wasm op sbm11PackFiles, one file per call; the JS collects the files into a Map and decides nothing. Not covered: as wasm:sbm11PackFiles."
+
+[[entry]]
+id = "npm:./browser#packSbm11"
+stages = ["sbm11PackStage"]
+covers = "part"
+note = "npm/factoidal/lib/sbm11.mjs packSbm11 in the browser entry; as npm:.#packSbm11."
+
+[[nonstage]]
+id = "npm:.#mapReader"
+reason = "host byte reader (lib/sbm11.mjs): positioned reads over a Map of file name to bytes, handed to openSbm11 as a reader; the engine names every file and checks every length against the manifest (Storage/Medium.lean, assumption ReadsWritten); reads no RDF data and decides no format"
+
+[[nonstage]]
+id = "npm:./browser#mapReader"
+reason = "host byte reader (lib/sbm11.mjs) in the browser entry; as npm:.#mapReader"
+
 [[nonstage]]
 id = "npm:.#lwsSbm11Reader"
 reason = "host byte reader (lib/sbm11-lws.mjs, issue 1010 KR3): HTTP Range GETs of LWS resources, handed to openSbm11 as a reader; the engine names every file and checks every length against the manifest (Storage/Medium.lean, assumption ReadsWritten); reads no RDF data and decides no format"

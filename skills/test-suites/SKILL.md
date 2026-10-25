@@ -745,6 +745,23 @@ Rules:
   `ntriples-langdir-bad-4` keeps the RDF 1.2 refusal of a subtag of more than 8
   characters; do not turn that refusal into a warning.
 
+## ⚠️ A new wasm op or npm export must pass `tests/dataflow/run.sh` before it lands
+
+The pull-request CI of factoidal-core (`check`, `check-purity`, the full
+`lake build`) does not run `tests/dataflow/run.sh`. That suite holds the
+entry-point gate (`tools/entrypoint-gate.py`): every shipped wasm op, npm
+export and CLI command must be mapped to a registry stage in
+`foundation/entrypoints.toml`, or listed as a nonstage with a reason. The
+unbound list may only shrink.
+
+Cost of not running it: on 2026-10-25 the SBM11 pack landing
+(https://github.com/danbri/factoidal-core/pull/108) added the op
+`sbm11PackFiles` and the exports `packSbm11` and `mapReader` with green CI,
+and the entry-point gate failed on main with 5 errors until the next pipeline
+landing mapped them. Rule: a change that adds or renames a wasm op, an npm
+export or a CLI command runs `bash tests/dataflow/run.sh` (exit 0) and maps the
+new entry points in the same commit.
+
 ## Defective test data (owner rule, 2026-10-21)
 
 Owner, verbatim: "Dont list bad tests as our failing".
