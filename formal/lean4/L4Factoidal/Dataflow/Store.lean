@@ -117,12 +117,17 @@ inductive AssumptionName where
   /-- The dataset is a set of quads (`Dataset.IsSet`), or the graph a set of
   triples (`Graph.KeyNodup`), at a call site that does not carry the proof. -/
   | datasetIsSet
+  /-- Each GET of a Linked Web Storage snapshot returned the representation
+  its entity tag identifies at the snapshot instant, and the container
+  listings were the storage's containment at that instant
+  (`Dataflow/LwsSource.lean`, `ReadsAtSnapshot`): HTTP reads, outside Lean. -/
+  | lwsReadsAtSnapshot
   deriving Repr, DecidableEq, Inhabited
 
 /-- Every assumption name, in declaration order. -/
 def AssumptionName.all : List AssumptionName :=
   [.backendReadOpsExact, .cottasReadOpsExact, .rmlPushdownInvisible, .rmlVirtualIsMaterialised,
-   .datasetIsSet]
+   .datasetIsSet, .lwsReadsAtSnapshot]
 
 theorem AssumptionName.mem_all (a : AssumptionName) : a ∈ AssumptionName.all := by
   cases a <;> simp [AssumptionName.all]
@@ -447,7 +452,7 @@ private def opsNil : BackendReadOps := { search := fun _ => [], estimate := fun 
   = [.datasetIsSet]
 #guard names (LawfulDataset.ofCertified ⟨Dataset.empty, Dataset.isSet_empty⟩).assumed_contracts = []
 #guard names (LawfulDataset.ofDefault (hdt opsNil)).assumed_contracts = [.backendReadOpsExact]
-#guard AssumptionName.all.length = 5
+#guard AssumptionName.all.length = 6
 
 end Guards
 
