@@ -38,6 +38,34 @@ aggressively, because a change that broke standards compliance could
 not pass. Executable code is obtained by extraction from the formal
 source, never by hand-writing implementations that mirror it.
 
+## Checked components and pipelines (October 2026)
+
+- **Foundation.** `foundation/manifest.toml` names the Lean modules that
+  state the specifications (RDF and RDFS semantics, SPARQL, OWL, SHACL, RIF,
+  RDFC-1.0, the syntaxes). A CI gate stops a foundation module from
+  importing implementation code.
+- **Interface types.** Each component kind (reader, store, SPARQL evaluator,
+  writer, reasoner, validator, proof checker) has one type whose contract
+  against the foundation is part of the type. A contract that is not proved
+  yet is a named assumption; CI fails when the list of assumptions grows
+  without a stated reason.
+- **Registry.** Every component is a registered stage with its input and
+  output types, status (proved, tested, assumed, missing), contract and
+  assumptions: [docs/dataflow-inventory.md](docs/dataflow-inventory.md),
+  generated from the Lean source. A CI gate maps every npm export, wasm op
+  and CLI command to a stage or lists it as unbound (390 of 604 still unbound on 2026-10-25).
+- **End-to-end theorem.** The SPARQL answer agrees with the SPARQL 1.1
+  semantics for data from any source (a parsed document, an edited dataset,
+  an update, a reasoner's output, a union of stores), given the named
+  assumptions of the components used.
+- **Pipelines.** npm `stages()`, `node()`, `pipe()` and `run()` compose
+  registered stages; each value carries evidence of every step, and the
+  result lists what the answer depends on. `explain()` gives an RDFS
+  entailment with a checked derivation. No new CLI verbs.
+
+Status and open gaps: https://github.com/danbri/factoidal/issues/975 and
+https://github.com/danbri/factoidal/issues/1002.
+
 **Repositories.** This is `danbri/factoidal-core`, the source: the F\*
 tree (`formal/fstar`) and the Lean 4 tree (`formal/lean4`, the intended
 full-scope target) with their history, the tests and the tools. Compiled
