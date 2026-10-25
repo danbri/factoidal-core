@@ -503,7 +503,10 @@ private def tt12HasSub (s sub : String) : Bool := (s.splitOn sub).length > 1
 -- SPARQL 1.1 Federated Query §2.3
 -- (https://github.com/danbri/factoidal/issues/717): with no endpoint
 -- registered, a SERVICE call without SILENT is an error envelope, and
--- the same call with SILENT is one solution with no bindings.
+-- the same call with SILENT is one solution with no bindings. The header is
+-- the reference header, the variables in scope (section 18.2.1;
+-- https://github.com/danbri/factoidal/issues/1014; it was `[]`, read from the
+-- rows).
 private def svcData : String := "<http://e/x> <http://e/q> <http://e/y> ."
 #guard (queryDataset svcData
   "SELECT * WHERE { SERVICE <http://u.example/sparql> { ?s ?p ?o } }").startsWith
@@ -516,7 +519,7 @@ private def svcData : String := "<http://e/x> <http://e/q> <http://e/y> ."
 #guard (queryDataset svcData
   "SELECT * WHERE { SERVICE SILENT <http://u.example/sparql> { ?s ?p ?o } }") ==
   "{\"ok\":true,\"kind\":\"select\",\"srj\":" ++
-    QueryResult.toSrj (.bindings [] [Binding.empty]) ++ "}"
+    QueryResult.toSrj (.bindings ["s", "p", "o"] [Binding.empty]) ++ "}"
 #guard (queryDataset svcData
   "ASK { ?a ?b ?c SERVICE SILENT <http://u.example/sparql> { ?s ?p ?o } }") ==
   "{\"ok\":true,\"kind\":\"ask\",\"boolean\":true}"

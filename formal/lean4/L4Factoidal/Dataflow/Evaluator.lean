@@ -30,11 +30,29 @@ FOUNDATION (`foundation/manifest.toml`, level 1):
 * `out = referenceAnswer inp`: the answer of the foundation's SPARQL 1.1
   evaluation (`SPARQL.Query`: `evalSelect`, `evalAsk`, `evalConstruct`,
   `evalDescribe`, sections 16 and 18);
-* or, for SELECT and ASK: there is a WHERE answer `A` that SPARQL 1.1 allows
-  (`Storage.Sbm11.IdGroup.Allowed`, section 18.5 up to multiset equality; in
-  the manifest) for the WHERE pattern in the default graph, and `out` is the
+* or, for SELECT and ASK with no FROM clause: there is a WHERE answer `A` that
+  SPARQL 1.1 allows (`Storage.Sbm11.IdGroup.Allowed`, section 18.5 up to
+  multiset equality; in the manifest) for the WHERE pattern in the default
+  graph, `A` is the reference WHERE answer up to the order of the solutions
+  (`WhereAgrees`: `Storage.BackendAgreement.SolSEquiv`, the same multiset of
+  solution mappings with the same pairs in each), and `out` is the
   foundation's solution-modifier layer over `A` (`modifierLayer`: `selectPost`
-  for SELECT, `formHasSolution` for ASK; sections 18.2.4 and 18.2.5).
+  for SELECT, `formHasSolution` for ASK; sections 18.2.4 and 18.2.5), with the
+  reference SELECT header `Query.projectedVars`.
+
+`Allowed` alone does not fix the multiset (`BackendAgreement.allowed_not_unique`:
+its rule `equiv` admits a row with a hidden pair, and `Binding.compatible`
+reads it), so `WhereAgrees` is stated next to it
+(https://github.com/danbri/factoidal/issues/1014).
+
+Consequences (proved): `EvalContract.header` (every admitted SELECT answer has
+the reference header); `EvalContract.agrees` (when the solution modifiers do
+not read the order, `OrderFree`: ASK with no GROUP BY and no HAVING; SELECT
+with no GROUP BY, aggregate, SELECT expression, DISTINCT, REDUCED, OFFSET or
+LIMIT, ORDER BY and a trailing VALUES clause allowed, the answer is the
+reference answer up to the order of the rows, `AnswerAgrees`);
+`WhereAgrees.of_den` (the reference WHERE answer of a `NativeFrag` pattern
+depends on `ds.den` only).
 
 ## The interface type
 
@@ -78,13 +96,21 @@ backend path the answer is the reference answer (`shippedRun_of_noBackend`,
 `shippedRun_of_from`, `shippedRun_of_construct`, `shippedRun_of_describe`);
 on it, for SELECT (plain arm) and ASK over a `NativeFrag` pattern, the answer
 is the modifier layer over the backend's WHERE answer, which
-`evalPatternBackend_allowed` (PR 52) proves `Allowed`.
+`evalPatternBackend_allowed` (PR 52) proves `Allowed` and
+`BackendAgreement.evalPatternBackend_ref` proves `SolSEquiv` to the reference
+WHERE answer (`backendWhere_ref`). The backend path's SELECT header is
+`Query.projectedVars`, the reference header (until issue 1014 it was
+`collectVarsInOrder` of the rows, `[]` on an empty result for SELECT *).
 
-Not claimed: that two answers `Allowed` admits for one pattern are one
-multiset, so the second disjunct is not proved to give the reference answer;
-that the answer depends on `ds.den` only (two set datasets with one
-denotation, listed in another order); that the SELECT * header of the backend
-path (`collectVarsInOrder`) equals the reference header (`projectedVars`).
+Not claimed: that the answer equals the reference answer up to row order when
+the solution modifiers read the order (OFFSET, LIMIT, DISTINCT, REDUCED,
+GROUP_CONCAT, SAMPLE, a SELECT expression with BNODE(), UUID() or STRUUID()):
+SPARQL 1.1 admits more than one answer there (section 15.1), and
+`EvalContract` gives the modifier layer over a WHERE answer that is the
+reference WHERE answer up to order; that the whole answer, past the WHERE
+answer, depends on `ds.den` only; any of this for the assumed inputs
+(outside `NativeFrag`, the SELECT fast paths), where the contract is the named
+assumption.
 
 ## Joining with a store
 
@@ -101,6 +127,7 @@ true of every graph.
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Storage.BackendRefinement
+import L4Factoidal.Storage.BackendAgreement
 import L4Factoidal.Dataflow.Stage
 
 namespace L4Factoidal.Dataflow
@@ -110,7 +137,8 @@ open L4Factoidal.SPARQL
 open L4Factoidal.SPARQL.StoreBackend
 open L4Factoidal.SPARQL.StoreDataset
 open L4Factoidal.SPARQL.StoreFastPath
-open L4Factoidal.Storage.Sbm11.IdGroup (Allowed)
+open L4Factoidal.Storage.Sbm11.IdGroup (Allowed refSol)
+open L4Factoidal.Storage.BackendAgreement (SolSEquiv SelectOrderFree)
 open L4Factoidal.Storage.BackendRefinement (GraphRel NamedRel NativeFrag)
 
 /-! ## The input and the answer -/
@@ -198,29 +226,33 @@ step of `evalSelect` and of the backend runners). -/
 def _root_.L4Factoidal.SPARQL.Query.rewritten (q : Query) : Query :=
   .mk q.form q.dataset q.pattern.rewriteBnodes q.groupBy q.having q.modifier q.postValues q.base
 
-/-- The SELECT header of a set of rows: the projected variables, or for
-SELECT * the variables of the rows in order. -/
-def selectHeader (sel : SelectClause) (rows : SolutionSeq) : List VarName :=
-  match sel with
-  | .vars items => selectItemVars items
-  | .all => collectVarsInOrder rows
-
 /-- The foundation's solution-modifier layer of a SELECT or ASK query over a
-WHERE answer `A` (sections 18.2.4, 18.2.5), in the default graph. -/
+WHERE answer `A` (sections 18.2.4, 18.2.5), in the default graph. The SELECT
+header is the reference header `Query.projectedVars` (section 18.2.1: the
+variables in scope, read from the query, not from the rows). -/
 def modifierLayer (inp : EvalInput) (A : SolutionSeq) : Option Answer :=
   match inp.query.form with
-  | .select sel =>
+  | .select _ =>
     let rows := selectPost inp.env inp.ds.default inp.query.rewritten A
-    some (.select (selectHeader sel rows) rows)
+    some (.select inp.query.projectedVars rows)
   | .ask => some (.ask (formHasSolution inp.env inp.ds.default inp.query.rewritten A))
   | _ => none
 
-/-- **The contract of a query evaluator.** The reference answer, or the
-modifier layer over a WHERE answer SPARQL 1.1 allows. -/
+/-- The WHERE answer `A` is the reference evaluator's WHERE answer up to the
+order of the solutions: the same multiset of solution mappings, each with the
+same pairs (`Storage.BackendAgreement.SolSEquiv`). -/
+def WhereAgrees (inp : EvalInput) (A : SolutionSeq) : Prop :=
+  SolSEquiv A (refSol inp.env inp.ds inp.query.pattern.rewriteBnodes inp.ds.default)
+
+/-- **The contract of a query evaluator.** The reference answer, or, for a
+query with no FROM clause, the modifier layer over a WHERE answer that SPARQL
+1.1 allows and that is the reference WHERE answer up to the order of the
+solutions. -/
 def EvalContract (inp : EvalInput) (out : Answer) : Prop :=
   out = referenceAnswer inp ∨
+    inp.query.dataset.isEmpty = true ∧
     ∃ A, Allowed inp.env inp.ds inp.query.pattern.rewriteBnodes inp.ds.default A ∧
-      modifierLayer inp A = some out
+      WhereAgrees inp A ∧ modifierLayer inp A = some out
 
 /-! ## The interface type -/
 
@@ -279,9 +311,9 @@ def shippedRun (inp : EvalInput) : Answer :=
     match backendAsk? inp with
     | some b => .ask b
     | none => .ask (evalAsk inp.env inp.ds inp.query)
-  | .select sel =>
+  | .select _ =>
     match backendSelect? inp with
-    | some rows => .select (selectHeader sel rows) rows
+    | some rows => .select inp.query.projectedVars rows
     | none =>
       let r := evalSelect inp.env inp.ds inp.query
       .select r.1 r.2
@@ -431,6 +463,17 @@ theorem backendWhere_allowed (inp : EvalInput) (hw : inp.Wf) (dsb : DatasetBacke
   exact Storage.BackendRefinement.evalPatternBackend_allowed inp.env dsb inp.ds hr.named
     hr.namesNodup _ hn _ _ hr.default
 
+/-- The WHERE answer of the backend is the reference WHERE answer up to the
+order of the solutions, for a pattern of the fragment
+(`Storage.BackendAgreement.evalPatternBackend_ref`). -/
+theorem backendWhere_ref (inp : EvalInput) (hw : inp.Wf) (dsb : DatasetBackend)
+    (hb : inp.backend = some dsb) (hn : NativeFrag inp.query.pattern.rewriteBnodes) :
+    WhereAgrees inp (evalPatternBackend inp.env dsb inp.query.rewritten.pattern dsb.default) := by
+  have hr := hw.backendReads dsb hb
+  rw [rewritten_pattern]
+  exact Storage.BackendAgreement.evalPatternBackend_ref inp.env dsb inp.ds hr.named
+    hr.namesNodup _ hn _ _ hr.default
+
 /-- **The shipped evaluator satisfies the contract on every well-formed input
 outside `shippedAssumed`.** -/
 theorem shippedRun_sound (inp : EvalInput) (hw : inp.Wf) (ha : ¬ shippedAssumed inp) :
@@ -450,7 +493,7 @@ theorem shippedRun_sound (inp : EvalInput) (hw : inp.Wf) (ha : ¬ shippedAssumed
       have hn : NativeFrag inp.query.pattern.rewriteBnodes := by
         refine Classical.byContradiction fun hn => ha ⟨hpath, .inl hn⟩
       right
-      refine ⟨_, backendWhere_allowed inp hw dsb hb hn, ?_⟩
+      refine ⟨hd, _, backendWhere_allowed inp hw dsb hb hn, backendWhere_ref inp hw dsb hb hn, ?_⟩
       have hbv := evalAskBackendReference_some he
       rw [hact] at hbv
       simp only [modifierLayer, shippedRun, hform, hk, hbv]
@@ -470,7 +513,7 @@ theorem shippedRun_sound (inp : EvalInput) (hw : inp.Wf) (ha : ¬ shippedAssumed
         hact] at he
       injection he with he
       right
-      refine ⟨_, backendWhere_allowed inp hw dsb hb hn, ?_⟩
+      refine ⟨hd, _, backendWhere_allowed inp hw dsb hb hn, backendWhere_ref inp hw dsb hb hn, ?_⟩
       simp only [modifierLayer, shippedRun, hform, hk, ← he]
 
 /-- **The shipped evaluator** (the wasm query ops). -/
@@ -496,6 +539,131 @@ theorem shippedEvaluator_assumptionHolds (h1 : BackendOutsideFragmentAgrees)
   · exact h1 inp hw hp ho
   · exact h2 inp hw hp hs
 
+
+/-! ## The contract against the reference answer -/
+
+theorem env_with_self {env : EvalEnv} {ds : Dataset} (h : env.dataset = some ds) :
+    { env with dataset := some ds } = env := by
+  cases env
+  simp only at h
+  subst h
+  rfl
+
+theorem selectPost_rewritten (env : EvalEnv) (a : Graph) (q : Query) (A : SolutionSeq) :
+    selectPost env a q.rewritten A = selectPost env a q A := by
+  cases q
+  simp only [Query.rewritten]
+  rw [selectPost.eq_def, selectPost.eq_def]
+  rfl
+
+theorem formHasSolution_rewritten (env : EvalEnv) (a : Graph) (q : Query) (A : SolutionSeq) :
+    formHasSolution env a q.rewritten A = formHasSolution env a q A := by
+  cases q; rfl
+
+/-- The header of the reference SELECT answer is `Query.projectedVars`. -/
+theorem evalSelect_fst (env : EvalEnv) (ds : Dataset) (q : Query) (sel : SelectClause)
+    (hform : q.form = .select sel) : (evalSelect env ds q).1 = q.projectedVars := by
+  unfold evalSelect
+  generalize applyDataset q.dataset ds ds.default = r
+  obtain ⟨ds', act⟩ := r
+  simp only [hform]
+
+/-- With no FROM clause, the reference answer of a SELECT or ASK query is the
+modifier layer over the reference WHERE answer. -/
+theorem referenceAnswer_eq_modifierLayer (inp : EvalInput) (hw : inp.Wf)
+    (hd : inp.query.dataset.isEmpty = true)
+    (hsa : (∃ sel, inp.query.form = .select sel) ∨ inp.query.form = .ask) :
+    modifierLayer inp (refSol inp.env inp.ds inp.query.pattern.rewriteBnodes inp.ds.default) =
+      some (referenceAnswer inp) := by
+  have ha : applyDataset inp.query.dataset inp.ds inp.ds.default = (inp.ds, inp.ds.default) := by
+    simp [applyDataset, hd]
+  rcases hsa with ⟨sel, hform⟩ | hform
+  · simp only [modifierLayer, referenceAnswer, hform, selectPost_rewritten]
+    unfold evalSelect
+    rw [ha]
+    simp only [env_with_self hw.envDataset, hform]
+    rfl
+  · simp only [modifierLayer, referenceAnswer, hform, formHasSolution_rewritten]
+    unfold evalAsk
+    rw [ha]
+    simp only [env_with_self hw.envDataset, hform]
+    rfl
+
+/-- **The reference WHERE answer depends on the denotation only**
+(`Storage.BackendAgreement.refSol_den`): a WHERE answer that agrees with the
+reference over one input agrees with it over any input with the same query,
+an environment that agrees on the extension functions, `NOW()` and the base
+IRI, and a set dataset with the same denotation, for a pattern of
+`NativeFrag`. -/
+theorem WhereAgrees.of_den {inp inp' : EvalInput} (hw : inp.Wf) (hw' : inp'.Wf)
+    (hq : inp.query = inp'.query)
+    (he : Storage.Sbm11.ExprLocalTheorems.EnvAgree inp.env inp'.env)
+    (hden : inp.ds.den = inp'.ds.den) (hn : NativeFrag inp.query.pattern.rewriteBnodes)
+    {A : SolutionSeq} (h : WhereAgrees inp A) : WhereAgrees inp' A := by
+  unfold WhereAgrees at h ⊢
+  rw [← hq]
+  exact SolSEquiv.trans h
+    (Storage.BackendAgreement.refSol_den he hw.isSet hw'.isSet hden _ hn)
+
+/-- **The SELECT header is the reference header** on every answer the
+contract admits. -/
+theorem EvalContract.header {inp : EvalInput} {out : Answer} (h : EvalContract inp out)
+    {sel : SelectClause} (hform : inp.query.form = .select sel) :
+    ∃ rows, out = .select inp.query.projectedVars rows := by
+  rcases h with rfl | ⟨-, A, -, -, hm⟩
+  · simp only [referenceAnswer, hform]
+    exact ⟨_, by rw [evalSelect_fst _ _ _ sel hform]⟩
+  · simp only [modifierLayer, hform] at hm
+    exact ⟨_, (Option.some.inj hm).symm⟩
+
+/-- The solution modifiers of the query do not read the order of the WHERE
+solutions (`Storage.BackendAgreement` section 9): ASK with no GROUP BY and no
+HAVING; SELECT with no GROUP BY, aggregate, SELECT expression, DISTINCT,
+REDUCED, OFFSET or LIMIT. CONSTRUCT and DESCRIBE: always (the contract gives
+the reference answer for them). -/
+def OrderFree (q : Query) : Prop :=
+  match q.form with
+  | .select sel => SelectOrderFree q sel
+  | .ask => q.groupsSolutions = false
+  | _ => True
+
+/-- Two answers agree: the same SELECT header and the same multiset of rows
+(`SolSEquiv`), the same ASK boolean, the same graph. -/
+def AnswerAgrees : Answer → Answer → Prop
+  | .select h r, .select h' r' => h = h' ∧ SolSEquiv r r'
+  | .ask b, .ask b' => b = b'
+  | .graph g, .graph g' => g = g'
+  | _, _ => False
+
+theorem AnswerAgrees.refl : ∀ (x : Answer), AnswerAgrees x x
+  | .select _ r => ⟨rfl, SolSEquiv.refl r⟩
+  | .ask _ => rfl
+  | .graph _ => rfl
+
+/-- **The contract gives the reference answer up to the order of the rows**
+when the solution modifiers do not read the order (`OrderFree`): the same
+header and the same multiset of rows for SELECT, the same boolean for ASK. -/
+theorem EvalContract.agrees {inp : EvalInput} {out : Answer} (hw : inp.Wf)
+    (hof : OrderFree inp.query) (h : EvalContract inp out) :
+    AnswerAgrees out (referenceAnswer inp) := by
+  rcases h with rfl | ⟨hd, A, -, hA, hm⟩
+  · exact AnswerAgrees.refl _
+  · cases hform : inp.query.form with
+    | select sel =>
+      have href := referenceAnswer_eq_modifierLayer inp hw hd (.inl ⟨sel, hform⟩)
+      simp only [OrderFree, hform] at hof
+      simp only [modifierLayer, hform, selectPost_rewritten] at hm href
+      rw [← Option.some.inj hm, ← Option.some.inj href]
+      exact ⟨rfl, Storage.BackendAgreement.selectPost_congr _ _ _ sel hform hof hA⟩
+    | ask =>
+      have href := referenceAnswer_eq_modifierLayer inp hw hd (.inr hform)
+      simp only [OrderFree, hform] at hof
+      simp only [modifierLayer, hform, formHasSolution_rewritten] at hm href
+      rw [← Option.some.inj hm, ← Option.some.inj href]
+      exact Storage.BackendAgreement.formHasSolution_congr _ _ _ hof hA
+    | construct t => simp [modifierLayer, hform] at hm
+    | describe t => simp [modifierLayer, hform] at hm
+
 #print axioms backendReads_indexed
 #print axioms EvalInput.wf_indexed
 #print axioms LawfulEvaluator.contract
@@ -506,5 +674,10 @@ theorem shippedEvaluator_assumptionHolds (h1 : BackendOutsideFragmentAgrees)
 #print axioms shippedRun_sound
 #print axioms shippedEvaluator
 #print axioms shippedEvaluator_assumptionHolds
+#print axioms backendWhere_ref
+#print axioms referenceAnswer_eq_modifierLayer
+#print axioms EvalContract.header
+#print axioms EvalContract.agrees
+#print axioms WhereAgrees.of_den
 
 end L4Factoidal.Dataflow

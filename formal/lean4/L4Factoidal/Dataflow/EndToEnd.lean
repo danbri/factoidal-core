@@ -43,9 +43,11 @@ q`, and
   `evalSelect`, `evalAsk`, `evalConstruct`, `evalDescribe`), OR, for SELECT and
   ASK on the backend path, the foundation's solution-modifier layer over a
   WHERE answer that SPARQL 1.1 allows (`Allowed`, section 18.5, up to multiset
-  equality). The second disjunct is NOT claimed equal to the first: the tree
-  has no theorem that two `Allowed` answers of one pattern are one multiset
-  (`Dataflow/Evaluator.lean`, "Not claimed").
+  equality) and that is the reference WHERE answer up to the order of the
+  solutions (`WhereAgrees`, https://github.com/danbri/factoidal/issues/1014);
+  when the solution modifiers do not read the order (`OrderFree`), the answer
+  is the reference answer up to the order of the rows (`AnswerAgrees`: the same
+  SELECT header and multiset of rows, the same ASK boolean).
 
 Premises, and only these:
 
@@ -65,8 +67,9 @@ the inputs outside `ev.assumed_contractOn`; that premise names the domain of
 the assumption, it does not restate the conclusion.
 
 Anti-pattern 29 check: the conclusion is `pipeline … = .ok (ev.run x) ∧
-(reader facts) ∧ (store facts) ∧ EvalContract x (ev.run x)`. No premise
-contains `pipeline`, `ReaderContract`, `SetOf`, `den` or `LawfulDataset`.
+(reader facts) ∧ (store facts) ∧ EvalContract x (ev.run x) ∧ (OrderFree q →
+AnswerAgrees (ev.run x) (referenceAnswer x))`. No premise contains `pipeline`,
+`ReaderContract`, `SetOf`, `den`, `LawfulDataset` or `AnswerAgrees`.
 `hev` contains `EvalContract`, but only on the inputs in
 `ev.assumed_contractOn`; that restriction is the named assumption of item 2,
 which item 5 admits as a premise. On the other inputs the conclusion comes
@@ -188,8 +191,11 @@ parse with the parse's denotation; the pipeline loads a store for every graph
 name, with that denotation and a proved law, and the evaluator input carries
 its backend; and the answer satisfies the evaluator contract against the
 foundation's SPARQL 1.1 semantics (`EvalContract`: the reference answer, or
-for SELECT and ASK the modifier layer over a WHERE answer that `Allowed`
-admits).
+for SELECT and ASK with no FROM clause the modifier layer over a WHERE
+answer that `Allowed` admits and that is the reference WHERE answer up to the
+order of the solutions); when the solution modifiers do not read the order
+(`OrderFree`), the answer is the reference answer up to the order of the rows
+(`AnswerAgrees`).
 
 Since 2026-10-25 this is a corollary: the reader source theorem
 (`readerSource_spec`) and the query theorem over any lawful record
@@ -208,7 +214,7 @@ theorem pipeline_sound (r : RdfReader) (ev : LawfulEvaluator) (hev : ev.Assumpti
         SetOf out.1 raw ∧ out.1.den = raw.den) ∧
       ((loadStore c).den = out.1.den ∧ (loadStore c).Proved ∧
         x.backend = some (loadStore c).backend) ∧
-      EvalContract x (ev.run x) := by
+      EvalContract x (ev.run x) ∧ (OrderFree q → AnswerAgrees (ev.run x) (referenceAnswer x)) := by
   intro c x
   obtain ⟨⟨raw, hraw, hs, hden⟩, hpr⟩ := readerSource_spec r h
   have hq := (readerSource r h).query_sound ev hev
@@ -217,7 +223,9 @@ theorem pipeline_sound (r : RdfReader) (ev : LawfulEvaluator) (hev : ev.Assumpti
   · unfold pipeline
     rw [certified_of_run h]
     rfl
-  · show EvalContract (pipelineInput env c q) (ev.run (pipelineInput env c q))
+  · show EvalContract (pipelineInput env c q) (ev.run (pipelineInput env c q)) ∧
+      (OrderFree q → AnswerAgrees (ev.run (pipelineInput env c q))
+        (referenceAnswer (pipelineInput env c q)))
     rw [pipelineInput_eq]
     exact hq.2
 
@@ -243,7 +251,8 @@ theorem shipped_pipeline_sound (r : RdfReader) (h1 : BackendOutsideFragmentAgree
         SetOf out.1 raw ∧ out.1.den = raw.den) ∧
       ((loadStore c).den = out.1.den ∧ (loadStore c).Proved ∧
         x.backend = some (loadStore c).backend) ∧
-      EvalContract x (shippedEvaluator.run x) :=
+      EvalContract x (shippedEvaluator.run x) ∧
+      (OrderFree q → AnswerAgrees (shippedEvaluator.run x) (referenceAnswer x)) :=
   pipeline_sound r shippedEvaluator (shippedEvaluator_assumptionHolds h1 h2) inp env q h
 
 /-- The reference path needs no assumption: a CONSTRUCT query through the

@@ -31,7 +31,7 @@ private def sameMultiset {α} [BEq α] (a b : List α) : Bool :=
   a.length == b.length && a.all (fun x => a.count x == b.count x)
 
 private def sameAnswer : Answer → Answer → Bool
-  | .select h1 r1, .select h2 r2 => sameMultiset h1 h2 && sameMultiset r1 r2
+  | .select h1 r1, .select h2 r2 => h1 == h2 && sameMultiset r1 r2
   | a, b => a == b
 
 /-- The backend path answers the query over the record, and the answer is the
@@ -107,14 +107,14 @@ private def upd1 : Option Sourced :=
 #guard upd1.isSome
 #guard agrees upd1 "SELECT * WHERE { GRAPH ?g { ?s ?p ?o } }"
 -- After the DELETE DATA the default graph is empty. The backend's SELECT *
--- header over no rows is `[]` (`collectVarsInOrder`), the reference header is
--- `[s, p, o]` (`projectedVars`): the header gap that `Dataflow/Evaluator.lean`
--- lists under "Not claimed". The rows agree (none).
+-- header is the reference header `[s, p, o]` (`projectedVars`, section
+-- 18.2.1; before issue 1014 it was `[]`, read from the rows), and the rows
+-- agree (none).
 #guard (match upd1, parseSparql "SELECT * WHERE { ?s ?p ?o }" none .v11 with
   | some s, .ok q =>
     let x := s.input {} q
     (match shippedEvaluator.run x, referenceAnswer x with
-     | .select h1 r1, .select h2 r2 => h1 == [] && h2 == ["s", "p", "o"] && r1.isEmpty && r2.isEmpty
+     | .select h1 r1, .select h2 r2 => h1 == h2 && h2 == ["s", "p", "o"] && r1.isEmpty && r2.isEmpty
      | _, _ => false)
   | _, _ => false)
 #guard agrees upd1 "SELECT ?s ?p ?o WHERE { ?s ?p ?o }"

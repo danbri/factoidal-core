@@ -34,7 +34,11 @@ Premises, and only these:
   reference evaluator reads.
 
 Anti-pattern 29 check: the conclusion is `x.ds.IsSet ∧ x.ds.den = S.den ∧
-x.backend = some S.backend ∧ EvalContract x (ev.run x)`. `hden` and `hset`
+x.backend = some S.backend ∧ EvalContract x (ev.run x) ∧ (OrderFree q →
+AnswerAgrees (ev.run x) (referenceAnswer x))`. No premise mentions
+`AnswerAgrees`; it comes from `EvalContract.agrees`
+(`Storage.BackendAgreement.evalPatternBackend_ref`, `selectPost_congr`,
+`formHasSolution_congr`). `hden` and `hset`
 are about `ds`, not about `x.ds = alignNamed S.backend ds`; the first two
 conjuncts are proved (`alignNamed_isSet`, `alignNamed_den`), the third is
 `rfl`, and `EvalContract` comes from `ev.contract` and `EvalInput.Wf`, which
@@ -257,8 +261,12 @@ owner-approved plan, step 1). For every `LawfulDataset` `S`, whatever produced
 it, and every set dataset `ds` with `S`'s denotation: the evaluator input has
 a set dataset with denotation `S.den` and `S`'s backend, and the evaluator's
 answer satisfies the evaluator contract (`EvalContract`: the SPARQL 1.1
-reference answer, or for SELECT and ASK the modifier layer over a WHERE answer
-that `Allowed` admits).
+reference answer, or for SELECT and ASK with no FROM clause the modifier layer
+over a WHERE answer that `Allowed` admits and that is the reference WHERE
+answer up to the order of the solutions); when the solution modifiers do not
+read the order (`OrderFree`), the answer is the reference answer up to the
+order of the rows (`AnswerAgrees`: the same SELECT header and multiset of
+rows, the same ASK boolean).
 
 Premises: the evaluator's named assumption `hev`, the record's named
 assumptions `hS`, and `hset`, `hden`, which name the reference dataset. -/
@@ -266,10 +274,12 @@ theorem query_sound (ev : LawfulEvaluator) (hev : ev.AssumptionHolds) (S : Lawfu
     (hS : Assumed S.assumed_contracts) {ds : Dataset} (hset : ds.IsSet) (hden : ds.den = S.den)
     (env : EvalEnv) (q : Query) :
     let x := queryInput env S ds q
-    x.ds.IsSet ∧ x.ds.den = S.den ∧ x.backend = some S.backend ∧ EvalContract x (ev.run x) := by
+    x.ds.IsSet ∧ x.ds.den = S.den ∧ x.backend = some S.backend ∧ EvalContract x (ev.run x) ∧
+      (OrderFree q → AnswerAgrees (ev.run x) (referenceAnswer x)) := by
   intro x
-  refine ⟨alignNamed_isSet (S.law hS) hset, ?_, rfl,
-    ev.contract hev x (queryInput_wf env S hS hset hden q)⟩
+  have hw := queryInput_wf env S hS hset hden q
+  have hc := ev.contract hev x hw
+  refine ⟨alignNamed_isSet (S.law hS) hset, ?_, rfl, hc, fun hof => hc.agrees hw hof⟩
   show (alignNamed S.backend ds).den = S.den
   rw [alignNamed_den (S.law hS) hset hden, hden]
 
@@ -314,9 +324,10 @@ whose denotation is the source's `den`, under the source's named assumptions
 and the evaluator's. -/
 theorem query_sound (s : Sourced) (ev : LawfulEvaluator) (hev : ev.AssumptionHolds)
     (hs : Assumed s.assumptions) (env : EvalEnv) (q : Query) :
-    (s.input env q).ds.den = s.den ∧ EvalContract (s.input env q) (ev.run (s.input env q)) :=
+    (s.input env q).ds.den = s.den ∧ EvalContract (s.input env q) (ev.run (s.input env q)) ∧
+      (OrderFree q → AnswerAgrees (ev.run (s.input env q)) (referenceAnswer (s.input env q))) :=
   let h := Dataflow.query_sound ev hev s.store hs s.isSet (s.den_eq hs) env q
-  ⟨h.2.1, h.2.2.2⟩
+  ⟨h.2.1, h.2.2.2.1, h.2.2.2.2⟩
 
 /-- The source of a certified dataset: the indexed record the wasm query ops
 build (`LawfulDataset.ofCertified`, proved law). -/

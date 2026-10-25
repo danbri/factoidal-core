@@ -55,9 +55,11 @@ against `Allowed`, the answers SPARQL 1.1 allows
 * The SELECT layer of `runSelectQueryBackendDataset` (the streaming
   COUNT and GROUP BY paths, ORDER BY, projection, DISTINCT, slices).
 * That two answers `Allowed` admits for one pattern of `NativeFrag` are the
-  same multiset (`SolEquiv`). So the id path (`IdLeaf.where_allowed`) and the
-  fallback are both proved to give an allowed answer, and are not proved to
-  give the same one.
+  same multiset (`SolEquiv`): false (`BackendAgreement.allowed_not_unique`).
+  `Storage/BackendAgreement.lean` proves the backend's answer `SolSEquiv` to
+  the reference answer through the tightened relation `AllowedS`
+  (https://github.com/danbri/factoidal/issues/1014). The id path
+  (`IdLeaf.where_allowed`) is proved to give an `Allowed` answer only.
 
 ## Why RDF term equality, and why it is now structural equality
 
