@@ -187,6 +187,24 @@ covers = "part"
 note = "lib/api.mjs owlClosure calls closure (datasetClosure) with mode RDFS or OWL-RL."
 
 [[entry]]
+id = "npm:.#run"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader", "rdfsReasoner", "owlRlReasoner", "rhoDfReasoner", "shaclValidator", "shippedEvaluator", "ntriplesDocumentWriter", "nquadsDocumentWriter", "turtleDocumentWriter", "trigDocumentWriter", "rdfxmlDocumentWriter", "rdfcStage", "rdfsExplainGraphStage"]
+covers = "part"
+note = "lib/nodes.mjs run: each node calls the package function that foundation/entrypoints.toml maps to its stage (npm:.#parse, #closure, #shaclValidate, #query, #serialize, #canonicalize, #explain), so it covers what those cover. Not covered: the wiring (the evidence records and the union of the named assumptions, which copy fields of the stageList op), and the refusal of a missing or unbound stage (stageList runnable) (issue 1002)."
+
+[[nonstage]]
+id = "npm:.#stages"
+reason = "reflection: the stage registry (wasm op stageList), reads no data"
+
+[[nonstage]]
+id = "npm:.#node"
+reason = "reflection: one row of the stage registry with its parameters, runs nothing"
+
+[[nonstage]]
+id = "npm:.#pipe"
+reason = "composition of nodes into a list, runs nothing"
+
+[[entry]]
 id = "npm:.#explain"
 stages = ["rdfsExplainGraphStage"]
 covers = "part"
@@ -265,6 +283,24 @@ covers = "part"
 note = "lib/api.mjs owlClosure calls closure (datasetClosure) with mode RDFS or OWL-RL."
 
 [[entry]]
+id = "npm:./browser#run"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader", "rdfsReasoner", "owlRlReasoner", "rhoDfReasoner", "shaclValidator", "shippedEvaluator", "ntriplesDocumentWriter", "nquadsDocumentWriter", "turtleDocumentWriter", "trigDocumentWriter", "rdfxmlDocumentWriter", "rdfcStage", "rdfsExplainGraphStage"]
+covers = "part"
+note = "lib/nodes.mjs run: each node calls the package function that foundation/entrypoints.toml maps to its stage (npm:.#parse, #closure, #shaclValidate, #query, #serialize, #canonicalize, #explain), so it covers what those cover. Not covered: the wiring (the evidence records and the union of the named assumptions, which copy fields of the stageList op), and the refusal of a missing or unbound stage (stageList runnable) (issue 1002)."
+
+[[nonstage]]
+id = "npm:./browser#stages"
+reason = "reflection: the stage registry (wasm op stageList), reads no data"
+
+[[nonstage]]
+id = "npm:./browser#node"
+reason = "reflection: one row of the stage registry with its parameters, runs nothing"
+
+[[nonstage]]
+id = "npm:./browser#pipe"
+reason = "composition of nodes into a list, runs nothing"
+
+[[entry]]
 id = "npm:./browser#explain"
 stages = ["rdfsExplainGraphStage"]
 covers = "part"
@@ -309,6 +345,10 @@ note = "lib/api.mjs calls the wasm op vcEddsaVerifyFromCanonical."
 [[nonstage]]
 id = "wasm:ops"
 reason = "reflection: lists the op table, reads no data"
+
+[[nonstage]]
+id = "wasm:stageList"
+reason = "reflection: the stage registry (L4Factoidal.Dataflow.registry, Wasm/Ops/StageList.lean), reads no data"
 
 [[nonstage]]
 id = "wasm:engineTables"

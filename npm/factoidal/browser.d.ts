@@ -11,6 +11,7 @@ export type {
   DataFormat, EntailRegime, Bindings, DataInput, QueryInput, ParseOptions,
   QueryOptions, SerializeOptions, StoreReader, OpenStoreOptions,
   DeltaLogHandle, DeltaLogInspection,
+  ExplainResult, StageInfo, EvidenceRecord, Wire, FactoidalNode, Pipeline, RunResult,
 } from './index';
 
 export {
@@ -51,6 +52,10 @@ export {
   coreRdfsClosure,
   coreRdfsCheck,
   explain,
+  stages,
+  node,
+  pipe,
+  run,
   rdfsPlusClosure,
   rhoDfClosure,
   rhoDfFragmentCheck,

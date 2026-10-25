@@ -675,6 +675,98 @@ export function explain(
   }
 ): Promise<ExplainResult>;
 
+/**
+ * One registered stage, as the engine's op stageList reads it from the Lean
+ * registry (L4Factoidal.Dataflow.registry).
+ * https://github.com/danbri/factoidal/issues/1002
+ */
+export interface StageInfo {
+  /** The stage declaration relative to L4Factoidal.Dataflow (or L4Factoidal); the area when there is none. */
+  name: string;
+  /** The full Lean declaration name, or null (status tested or missing). */
+  declaration: string | null;
+  area: string;
+  dir: string;
+  /** The interface type of the declaration (Stage, RdfReader, SoundReasoner, ...), or null. */
+  kind: string | null;
+  wireIn: string;
+  wireOut: string;
+  status: 'proved' | 'tested' | 'assumed' | 'missing';
+  /** The contract declaration (full Lean name), or null. */
+  contract: string | null;
+  theorems: string[];
+  /** The named assumptions of the stage (full Lean names). */
+  assumptions: string[];
+  tests: string[];
+  note: string;
+  /** false exactly when status is 'missing': such a stage does not run. */
+  runnable: boolean;
+  /** true when this package has a function that runs the stage as a node. */
+  bound: boolean;
+}
+
+/** One evidence record: the node that ran and what it produced. */
+export interface EvidenceRecord {
+  stage: string;
+  status: StageInfo['status'];
+  contract: string | null;
+  assumptions: string[];
+  /** The node's own output beside the graph: the explain result, the SHACL report, the written text, ... */
+  artefact: unknown;
+}
+
+/** The value on a wire. */
+export interface Wire<G = unknown> {
+  graph: G;
+  evidence: EvidenceRecord[];
+}
+
+/** A node: a registered stage with its parameters. */
+export interface FactoidalNode {
+  readonly stage: string;
+  readonly kind: string | null;
+  readonly status: StageInfo['status'];
+  readonly contract: string | null;
+  readonly assumptions: readonly string[];
+  readonly wireIn: string;
+  readonly wireOut: string;
+  readonly runnable: boolean;
+  readonly bound: boolean;
+  readonly params: Readonly<Record<string, unknown>>;
+}
+
+/** A pipeline: nodes in order; `assumptions` is the union of theirs. */
+export interface Pipeline {
+  readonly nodes: readonly FactoidalNode[];
+  readonly assumptions: readonly string[];
+}
+
+/** The result of run(): the last graph, one record per node, the assumption union. */
+export interface RunResult<G = unknown> extends Wire<G> {
+  assumptions: string[];
+}
+
+/** The engine's stage list (op stageList, full engine). */
+export function stages(): Promise<StageInfo[]>;
+
+/**
+ * A node for the registered stage `name`. `params` are passed to the
+ * package function that runs it: reader options; `{shapes}` for
+ * shaclValidator; `{query}` for shippedEvaluator; `{description}` for
+ * rdfsExplainGraphStage. An unknown name rejects with a FactoidalError.
+ */
+export function node(name: string, params?: Record<string, unknown>): Promise<FactoidalNode>;
+
+/** Compose nodes and pipelines left to right. */
+export function pipe(...nodes: Array<FactoidalNode | Pipeline>): Pipeline;
+
+/**
+ * Run a node or pipeline on `input` (a Wire, or the graph: text for a
+ * reader, else a Dataset or data input). Rejects before any node runs when
+ * a node's stage has status 'missing' or has no package function.
+ */
+export function run(pipeline: FactoidalNode | Pipeline, input: unknown): Promise<RunResult>;
+
 /** Literature-name alias for coreRdfsClosure (ρdf). */
 export function rhoDfClosure(
   data: DataInput,
@@ -1355,6 +1447,7 @@ export function capabilities(): Promise<{
   shex: boolean;
   owlClosure: boolean;
   explain: boolean;
+  stages: boolean;
   tableau: boolean;
   rml: boolean;
   csvw: boolean;

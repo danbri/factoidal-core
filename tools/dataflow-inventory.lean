@@ -23,7 +23,9 @@ With `DATAFLOW_REGISTRY=negative` it checks `negativeRegistry`
 
 Output: one line per entry between `BEGIN-INVENTORY` and `END-INVENTORY`,
 fields separated by a tab: area, dir, stage, wire in, wire out, contract,
-status, theorems, IO assumptions, tests, note.
+status, theorems, IO assumptions, tests, note. Then one line per entry with a
+stage declaration between `BEGIN-KINDS` and `END-KINDS`: the declaration and
+the constant at the head of its type (the interface type), tab-separated.
 -/
 import Lean
 import L4Factoidal.Dataflow.Registry
@@ -92,3 +94,12 @@ def stageKind (env : Environment) (n : Name) : StageKind :=
       listField (e.ioAssumptions.map Name.toString), listField e.tests, e.note]
     IO.println ("\t".intercalate (fields.map clean))
   IO.println "END-INVENTORY"
+  -- The interface type of each `stage` declaration (the constant at the head
+  -- of its type), for the generated L4Factoidal/Dataflow/StageKinds.lean that
+  -- the wasm op `stageList` reads (it has no environment at run time).
+  IO.println "BEGIN-KINDS"
+  for e in entries do
+    if !e.stage.isAnonymous then
+      let head := (resultHead env e.stage).map Name.toString |>.getD ""
+      IO.println s!"{e.stage}\t{head}"
+  IO.println "END-KINDS"
