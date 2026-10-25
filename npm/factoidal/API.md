@@ -474,6 +474,7 @@ const rows = await store.query(`
     ?c <http://www.w3.org/2004/02/skos/core#prefLabel> ?l
     FILTER(CONTAINS(LCASE(STR(?l)), "video")) } LIMIT 5`);
 console.log(store.rows);                             // 15
+console.log(store.layout);                           // quad-ibk5-ptd2-lgi4-gbi1-merkle-v0
 await store.close();
 
 // One query: open only the blocks this query's plan names, query, close.
@@ -644,7 +645,7 @@ native `l4block-id-v3-query`.
 
 ```console
 $ factoidal serve ./mystore --port 3030
-serve: listening on http://127.0.0.1:3030 for ./mystore (layout predicate-ibk3-…, 6455 rows, delta batches replayed: 0, write scope default-graph)
+serve: listening on http://127.0.0.1:3030 for ./mystore (layout quad-ibk5-…, 6455 rows, delta batches replayed: 0, write scope all-graphs)
 serve: query http://127.0.0.1:3030/sparql, graph store http://127.0.0.1:3030/data
 http://127.0.0.1:3030
 $ curl -s 'http://127.0.0.1:3030/sparql?query=SELECT%20(COUNT(*)%20AS%20%3Fn)%20%7B%3Fs%20%3Fp%20%3Fo%7D'
@@ -659,10 +660,10 @@ $ curl -s 'http://127.0.0.1:3030/sparql?query=SELECT%20(COUNT(*)%20AS%20%3Fn)%20
 
 The engine decides the request framing, routing, status codes, negotiation
 and what an update stores; `bin/serve.mjs` moves bytes and appends the batch
-the engine hands it. An IBK3 store takes changes to the default graph only (a
-named-graph change answers 501), because its delta log is replayed and
-compacted for that graph only; a quad store (`--layout ibk4`, `ibk5`) takes
-every graph. Fold the log into a new generation with `l4block-shard-compact`,
+the engine hands it. A quad store (`--layout ibk5`, the default, or `ibk4`)
+takes changes to every graph. An IBK3 store (`--layout ibk3`) takes changes
+to the default graph only (a named-graph change answers 501), because its
+delta log is replayed and compacted for that graph only. Fold the log into a new generation with `l4block-shard-compact`,
 activate it and restart the server. W3C protocol, graph-store and
 service-description tests over a live socket: 50 pass, 0 fail (out of 50).
 Measured on 888,949 triples: about 7 s to open, 0.5 ms median for a
