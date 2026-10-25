@@ -25,7 +25,7 @@ an answer SPARQL 1.1 allows.
 The hypotheses that remain are invariants of the store, of the dictionary
 and of the dataset the store denotes, to be discharged from the generation
 (E0, L3c) and from the `IO` store against `m = Id` (L4e): `hpm`, `hscan`,
-`hid`, `hdec`, `hsok`, `hcid`, `hidv`, `hcid0`, `htag`, `hcidN`, `htermOf`,
+`hid`, `hdec`, `hsok`, `hcid`, `hidv`, `hcid0`, `hcidN`, `htermOf`,
 `hloc`, `hcidok`, `htagk`, `hnamed`, and the store part of `ExecHyps`
 (`ExecLeaf` of each leaf: `StoreGraph` of the active graph over the
 listings of its context: the default graph's rows for the default graph, the
@@ -79,7 +79,6 @@ theorem harness_where_allowed (st : Store Id) (clock : EvalEnv) (base : Option S
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec ok c (cid c))
     (hidv : ∀ t x, cid t = some x → idv t = x) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
-    (htag : ∀ x, sok x → IdPathEval.litTag x = some (!isNotLiteral (dec x)))
     (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t)
     (htermOf : ∀ x, ok x → st.termOf x = pure (dec x)) (hloc : ∀ x, ok x → tagOf x ≠ tagLocal)
     (hcidok : ∀ t x, cid t = some x → ok x) (htagk : ∀ x, ok x → TagKind x (dec x))
@@ -91,7 +90,7 @@ theorem harness_where_allowed (st : Store Id) (clock : EvalEnv) (base : Option S
         WhereOk { queryEnvOf clock base with dataset := some ds } ds cid dec ok p ds.default {} t s := by
   let cx : NCx Id := { st, env := queryEnvOf clock base, ds := plan.dataset, named }
   have hE := query_where_allowed_exec_init cx prb ms cid dec idv sok ok
-    { queryEnvOf clock base with dataset := some ds } ds hpm hscan hdsq hid hdec hsok hcid hidv hcid0 htag hcidN
+    { queryEnvOf clock base with dataset := some ds } ds hpm hscan hdsq hid hdec hsok hcid hidv hcid0 hcidN
     (ExprLocalTheorems.EnvAgree.withDataset _ _) rfl htermOf hloc hcidok htagk p ds.default .dflt h
   have hrun : nestedTableM st plan (queryEnvOf clock base) =
       ((evalGroupM cx p .dflt).run {} >>= fun (r : Table × NSt) =>

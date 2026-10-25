@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- SPARQL: the inverse path `^p` keeps a pair whose object is a literal. SPARQL 1.1 §9.3 and §18.4 make `?x ^p ?y` the same as `?y p ?x`, so `?x` can bind a literal; up to 0.15.0 both evaluators (the in-memory one and the SBM11 id path) dropped those pairs, and `SELECT ?x ?y WHERE { ?x ^<http://e/p> ?y }` over `<http://e/s> <http://e/p> "v" .` gave no row. Apache Jena ARQ 5.6.0 gives the same rows as the fix (https://github.com/danbri/factoidal/issues/1023). Tests: `test/inverse-path-literal-1023.test.mjs` and the `#guard`s in `SPARQL/QueryTests.lean`. The F* tree has the same fix.
+
 ## 0.15.0
 
 - `openSbm11(source)` and `registerSbm11Source(source, reader)` are back, with the wasm ops `sbm11Open`, `sbm11Query`, `sbm11Close`: SPARQL over an SBM11 generation (the Shardborough store) in Node and in the browser, reading each file at an offset through a host reader (https://github.com/danbri/factoidal/issues/1009, https://github.com/danbri/factoidal-core/pull/93). Fix: in 0.14.0 `sbm11Open` trapped (wasm `unreachable`) because the C host-read functions had a signature that differs from the generated one; the wasm build now fails on any such mismatch. Not yet: the Merkle check of each read, a generation with a delta log (refused at open), packing SBM11 from npm.

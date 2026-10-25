@@ -439,7 +439,7 @@ theorem harness_where_allowed_mem (hG : G.check = true) (clock : EvalEnv) (base 
   exact HarnessWhereTheorems.harness_where_allowed G.store clock base plan p G.denote G.named G.prb G.ms
     G.cid G.dec G.idv G.ok G.ok hnest hdsq hnamed (mem_hpm G hG) (mem_hscan G) (mem_hid G)
     (mem_hdec G (check_keys G hG)) (fun _ hx => hx) (mem_hcid G (check_keys G hG)) (mem_hidv G)
-    (mem_hcid0 G) (mem_htag G) (mem_hcidN G) (mem_htermOf G) (mem_hloc G) (mem_hcidok G) (mem_htagk G)
+    (mem_hcid0 G) (mem_hcidN G) (mem_htermOf G) (mem_hloc G) (mem_hcidok G) (mem_htagk G)
     (execHyps_of_q G hG _ rfl rfl p .dflt hq)
 
 end L4Factoidal.Storage.Sbm11.MemGen

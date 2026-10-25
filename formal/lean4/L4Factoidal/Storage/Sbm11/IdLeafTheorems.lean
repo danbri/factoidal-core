@@ -1216,12 +1216,12 @@ theorem rowIds_idPathRows (ok : UInt64 → Prop) (s o : IdPath.End) (pairs : IdP
 
 /-- The rows of a path pattern over ids (`IdPath`'s model: `idEvalPath` over
     the store's listing that decodes to the graph, the predicate ids by
-    `cid`, the literal test by the decoded term). -/
-def pathRows (cid : Term → Option UInt64) (dec : UInt64 → Term) (idv : Term → UInt64) (T : List IdTriple)
+    `cid`). -/
+def pathRows (cid : Term → Option UInt64) (idv : Term → UInt64) (T : List IdTriple)
     (s : PatternSubject) (path : PropertyPath) (o : PatternTerm) : List IdRow :=
   IdPath.idPathRows (endS idv s) (endO idv o)
     (IdPath.idConstRefl (IdPath.pathZeroLen path) (IdPath.idConsts (endS idv s) (endO idv o))
-      (IdPath.idEvalPath (fun i => cid (.iri i)) (fun x => isNotLiteral (dec x)) path T))
+      (IdPath.idEvalPath (fun i => cid (.iri i)) path T))
 
 /-- **A property path pattern from the store.** -/
 theorem path_leaf (dec : UInt64 → Term) (sok ok : UInt64 → Prop) (cid : Term → Option UInt64)
@@ -1231,14 +1231,14 @@ theorem path_leaf (dec : UInt64 → Term) (sok ok : UInt64 → Prop) (cid : Term
     (T : List IdTriple) (g : Graph) (hTg : GraphDec dec sok T g)
     (s : PatternSubject) (path : PropertyPath) (o : PatternTerm)
     (hs : IdPath.SubjDecodes dec ok (endS idv s) s) (ho : IdPath.ObjDecodes dec ok (endO idv o) o) :
-    (pathRows cid dec idv T s path o).map (decRow dec) =
+    (pathRows cid idv T s path o).map (decRow dec) =
         pathResultToSolutions s o (addConstantReflexivity s o path (evalPath path g)) ∧
-      ∀ r ∈ pathRows cid dec idv T s path o, RowIds ok r := by
+      ∀ r ∈ pathRows cid idv T s path o, RowIds ok r := by
   have hG := graphDecodes_of dec sok ok cid hsok hcid T g hTg
-  refine ⟨IdPath.pathPattern_decode dec ok hdec _ _ (fun _ _ => rfl) T g hG _ _ s o hs ho path, ?_⟩
+  refine ⟨IdPath.pathPattern_decode dec ok hdec _ T g hG _ _ s o hs ho path, ?_⟩
   apply rowIds_idPathRows
   apply IdPath.constRefl_ok ok _ _ _ (IdPath.consts_decode dec ok _ _ s o hs ho).2
-  exact IdPath.eval_ok dec ok _ _ T g hG path
+  exact IdPath.eval_ok dec ok _ T g hG path
 
 /-! ## The leaves of the id evaluator from the store, and the WHERE clause -/
 
@@ -1256,9 +1256,9 @@ def spo : Fin 4 := 2
     permutation of `b`); a property path is `IdPath`'s evaluation over the
     SPO listing. -/
 def storeLeaves (TP : Listings) (pick : IPat → Fin 4) (order : Graph → (b : Bgp) → { o : Bgp // o.Perm b })
-    (cid : Term → Option UInt64) (dec : UInt64 → Term) (idv : Term → UInt64) : IdGroup.Leaves where
+    (cid : Term → Option UInt64) (idv : Term → UInt64) : IdGroup.Leaves where
   bgp a b := bgpJoin (fun t => TP (pick t) a) ((order a b).val.map (ipat cid)) [[]]
-  path a s path o := pathRows cid dec idv (TP spo a) s path o
+  path a s path o := pathRows cid idv (TP spo a) s path o
 
 /-- The store invariant of one graph: the SPO listing decodes to the graph,
     triple for triple, with store ids; every listing is a permutation of
@@ -1286,7 +1286,7 @@ theorem leafRel_of_store (env : EvalEnv) (ds : Dataset) (TP : Listings) (pick : 
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec sok c (cid c)) :
     ∀ (p : QueryPattern) (a : Graph), StoreLeaf dec sok ok idv TP p a →
-      IdGroup.LeafRel env ds (storeLeaves TP pick order cid dec idv) dec ok p a
+      IdGroup.LeafRel env ds (storeLeaves TP pick order cid idv) dec ok p a
   | .bgp b, a, ⟨⟨hg, hperm⟩, htt, hf⟩ => by
     show SolEquiv (IdGroup.refSol env ds (.bgp b) a)
         ((bgpJoin (fun t => TP (pick t) a) ((order a b).val.map (ipat cid)) [[]]).map (decRow dec)) ∧ _
@@ -1297,7 +1297,7 @@ theorem leafRel_of_store (env : EvalEnv) (ds : Dataset) (TP : Listings) (pick : 
     obtain ⟨e, hr⟩ := path_leaf dec sok ok cid idv hdec hsok hcid (TP spo a) a hg s path o hs ho
     refine ⟨?_, hr⟩
     show SolEquiv (IdGroup.refSol env ds (.propertyPath s path o) a)
-      ((pathRows cid dec idv (TP spo a) s path o).map (decRow dec))
+      ((pathRows cid idv (TP spo a) s path o).map (decRow dec))
     rw [refSol_path, ← e]
     exact SolEquiv.refl _
   | .join _ _, _, _ => trivial
@@ -1328,10 +1328,10 @@ theorem where_allowed (env : EvalEnv) (ds : Dataset) (TP : Listings) (pick : IPa
     (dec : UInt64 → Term) (idv : Term → UInt64) (sok ok : UInt64 → Prop)
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec sok c (cid c)) (p : QueryPattern) (a : Graph) (hp : IdGroup.InIdFragment p)
-    (h : IdGroup.HypsW (StoreLeaf dec sok ok idv TP) env ds (storeLeaves TP pick order cid dec idv) dec idv ok p a) :
+    (h : IdGroup.HypsW (StoreLeaf dec sok ok idv TP) env ds (storeLeaves TP pick order cid idv) dec idv ok p a) :
     IdGroup.Allowed env ds p a
-        ((IdGroup.evalGroupIds env ds (storeLeaves TP pick order cid dec idv) dec idv p a).map (decRow dec)) ∧
-      ∀ r ∈ IdGroup.evalGroupIds env ds (storeLeaves TP pick order cid dec idv) dec idv p a, RowIds ok r :=
+        ((IdGroup.evalGroupIds env ds (storeLeaves TP pick order cid idv) dec idv p a).map (decRow dec)) ∧
+      ∀ r ∈ IdGroup.evalGroupIds env ds (storeLeaves TP pick order cid idv) dec idv p a, RowIds ok r :=
   IdGroup.evalGroupIds_allowed env ds _ dec idv ok hdec p a hp
     (IdGroup.HypsW.mono env ds _ dec idv ok
       (leafRel_of_store env ds TP pick order cid dec idv sok ok hdec hsok hcid) p a h)

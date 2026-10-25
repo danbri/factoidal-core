@@ -7898,9 +7898,7 @@ let rec eval_property_path (p : property_path) (g : RDF_Graph.rdf_graph) :
       let pairs = eval_property_path pp g in
       RDF_List_Helpers.concatMap_tr
         (fun pair ->
-           let uu___ = pair in
-           match uu___ with
-           | (s, o) -> if is_not_literal o then [(o, s)] else []) pairs
+           let uu___ = pair in match uu___ with | (s, o) -> [(o, s)]) pairs
   | PP_Sequence (p1, p2) ->
       let r1 = eval_property_path p1 g in
       let r2 = eval_property_path p2 g in

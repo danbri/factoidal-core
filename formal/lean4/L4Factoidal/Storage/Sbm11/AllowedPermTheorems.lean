@@ -238,12 +238,10 @@ theorem evalPath_fixed (g : Graph) (hg : GraphFixed g) :
     · cases h
   | .inverse p, x, hx => by
     simp only [evalPath] at hx
-    obtain ⟨pr, hpr, h⟩ := List.mem_filterMap.1 hx
-    split at h
-    · simp only [Option.some.injEq] at h; subst h
-      have := evalPath_fixed g hg p pr hpr
-      exact ⟨this.2, this.1⟩
-    · cases h
+    obtain ⟨pr, hpr, h⟩ := List.mem_map.1 hx
+    subst h
+    have := evalPath_fixed g hg p pr hpr
+    exact ⟨this.2, this.1⟩
   | .sequence p1 p2, x, hx => by
     simp only [evalPath] at hx
     obtain ⟨a, ha, h⟩ := List.mem_flatMap.1 hx
@@ -297,7 +295,7 @@ theorem evalPath_fixed (g : Graph) (hg : GraphFixed g) :
 theorem evalPath_perm {g g' : Graph} (h : g.Perm g') (hg : GraphFixed g) :
     ∀ (path : PropertyPath), (evalPath path g).Perm (evalPath path g')
   | .iri i => by simp only [evalPath]; exact List.Perm.filterMap _ h
-  | .inverse p => by simp only [evalPath]; exact List.Perm.filterMap _ (evalPath_perm h hg p)
+  | .inverse p => by simp only [evalPath]; exact List.Perm.map _ (evalPath_perm h hg p)
   | .sequence p1 p2 => by
     simp only [evalPath]
     exact perm_flatMap (evalPath_perm h hg p1) _ _ fun a _ => List.Perm.filterMap _ (evalPath_perm h hg p2)
