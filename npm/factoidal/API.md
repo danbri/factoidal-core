@@ -1063,6 +1063,57 @@ Details: `lws/README.md`, `solid/server/README.md`,
 [`docs/lws-solid-conformance.md`](https://github.com/danbri/factoidal/blob/main/docs/lws-solid-conformance.md).
 
 
+### An LWS storage as a dataset: `openLwsDataset`
+
+`openLwsDataset(storageRootUrl, { fetch, auth, engine })` from
+`@factoidal/core/lws/dataset` crawls one LWS storage with the LWS client and
+answers it as an RDF dataset (https://github.com/danbri/factoidal/issues/1011):
+
+- each RDF resource is one named graph, named by the resource IRI;
+- the default graph holds `<container> ldp:contains <member>` for each member
+  of each container listing read;
+- a resource whose media type has no RDF reader is left out and listed in
+  `skipped` with the reason.
+
+LWS 1.0 does not define this view; it is Factoidal's definition
+(`formal/lean4/L4Factoidal/LWS/DatasetView.lean`). The result has `dataset`
+(a `Dataset`), `evidence` (`[{ resource, etag, lastModified }]`, every RDF
+resource read), `skipped`, `graphs` (the number of named graphs),
+`query(sparql, options)`, which answers `{ result, evidence }` (`result` as
+`Dataset.query` answers it), and `dispose()`. `auth` is passed to
+`createLwsClient` (`{ subjectToken, subjectTokenType }`, `{ selfIssued }` or
+`{ session }`).
+
+```js
+import { listen } from '@factoidal/core/lws'
+import { createLwsClient } from '@factoidal/core/lws/client'
+import { openLwsDataset, lwsDatasetOpsAvailable } from '@factoidal/core/lws/dataset'
+import { loadEngine } from '@factoidal/core/engine'
+
+const engine = await loadEngine()
+if ((await lwsDatasetOpsAvailable(engine)).available) {
+  const running = await listen({ engine, port: 0, insecureNoAuth: true })
+  const root = `${running.origin}/`
+  const client = await createLwsClient({ engine })
+  await client.create(root, { slug: 'a.ttl', mediaType: 'text/turtle', body: '<> <http://e/p> 1 .' })
+  const lws = await openLwsDataset(root, { engine })
+  const { result, evidence } = await lws.query('SELECT ?g WHERE { GRAPH ?g { ?s ?p ?o } }')
+  console.log(result.length, evidence[0].etag)   // 1 and the ETag of a.ttl
+  lws.dispose()
+  await running.close()
+}
+```
+
+Limits of this first version: a full crawl on every open (one `list` per
+container and one `GET` per RDF resource); no use of a search index; no
+caching; metadata resources are not crawled; the crawl is a sequence of
+GETs, so a write during the crawl can give a dataset that the storage never
+held at one instant. The Lean source theorem `lwsSource_query_sound`
+(`Dataflow/LwsSource.lean`) rests on the named assumption
+`lwsReadsAtSnapshot`: each GET returned the representation its ETag
+identifies at the snapshot instant. A TriG or N-Quads resource gives its
+default graph only.
+
 ## Functional API (fn)
 
 `@factoidal/core/fn` is a functional variant of the API above. `FnDataset`
