@@ -40,8 +40,6 @@ export {
   openStore,
   queryStore,
   listStores,
-  openSbm11,
-  registerSbm11Source,
   deltaLogOpen,
   deltaLogAppend,
   deltaLogReadAllHex,

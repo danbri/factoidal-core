@@ -1096,12 +1096,7 @@ export interface Sbm11Store {
   close(): void;
 }
 
-/** Open an SBM11 generation (https://github.com/danbri/factoidal/issues/1009).
- * Node: `source` is a directory unless a reader is given or registered. */
-export function openSbm11(source: string, options?: { reader?: Sbm11Reader }): Promise<Sbm11Store>;
 
-/** Serve `source` with `reader`; `null` removes it. */
-export function registerSbm11Source(source: string, reader: Sbm11Reader | null): void;
 
 /** One query against a store: open with the query's plan, query, close. */
 export function queryStore(
