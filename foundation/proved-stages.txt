@@ -49,7 +49,9 @@ rdfcStage
 rdfsChecker
 rdfsClosureStage
 rdfsExplainCheckStage
+rdfsExplainGraphStage
 rdfsExplainStage
+rdfsGraphChecker
 rdfsReasoner
 rdfsSelectStage
 rdfxmlDocumentReader

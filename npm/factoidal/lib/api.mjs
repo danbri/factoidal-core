@@ -1031,6 +1031,36 @@ function buildApi(driver) {
   const rhoDfFragmentCheck = coreRdfsCheck;
 
   /**
+   * Is `description` (a graph whose blank nodes are shared variables)
+   * RDFS-entailed by `sources`? Returns the evidence bundle when it is
+   * (https://github.com/danbri/factoidal/issues/1002). Op explainGraph, full
+   * engine only. `entailed: false` also relies on the named assumption in
+   * `assumptions`. Text inputs are Turtle unless `format` says otherwise.
+   * @param {Dataset|string|Array} sources
+   * @param {Dataset|string|Array} description default graph only
+   * @param {{profile?: 'rdfs', format?: string, baseIRI?: string,
+   *   sourcesFormat?: string, descriptionFormat?: string}} [options]
+   * @returns {Promise<{profile: string, entailed: boolean, bundle: object|null,
+   *   assumptions: string[], rejection: object|null, entailedMeans: string}>}
+   */
+  async function explain(sources, description, options) {
+    const o = optionsOf('explain', options);
+    if (o.profile !== undefined && o.profile !== 'rdfs') {
+      throw new TypeError(`explain: unsupported profile '${o.profile}' (only 'rdfs')`);
+    }
+    const { profile: _profile, sourcesFormat, descriptionFormat, ...rest } = o;
+    // The engine's option table has no entry for explain; the options here are read-only hints.
+    const opts = rest;
+    const fmt = opts.format || 'turtle';
+    const srcNq = await nquadsOf(sources, { ...opts, format: sourcesFormat || fmt }, 'explain(sources)');
+    const descNq = await nquadsOf(description, { ...opts, format: descriptionFormat || fmt }, 'explain(description)');
+    const e = await entry();
+    requireEntryFn(e, 'explainGraph', 'explain');
+    const { ok: _ok, ...out } = entryResult(e.explainGraph(srcNq, descNq), 'explain');
+    return out;
+  }
+
+  /**
    * RDFS-Plus closure (RDFS with owl:sameAs, inverseOf, Symmetric,
    * Transitive, Functional and InverseFunctional properties,
    * equivalentClass and equivalentProperty), as a new Dataset.
@@ -2085,7 +2115,7 @@ function buildApi(driver) {
    * @returns {Promise<{entry: boolean, construct: boolean,
    *   update: boolean, canonicalize: boolean, graphs: boolean,
    *   canonicalHash: boolean, shacl: boolean, shex: boolean,
-   *   owlClosure: boolean, rml: boolean, csvw: boolean, jsonld: boolean,
+   *   owlClosure: boolean, explain: boolean, rml: boolean, csvw: boolean, jsonld: boolean,
    *   rif: boolean}>}
    */
   let capsCache = null;
@@ -2106,6 +2136,7 @@ function buildApi(driver) {
       shacl: has('shaclValidate'),
       shex: has('shexValidate'),
       owlClosure: has('owlClosure'),
+      explain: has('explainGraph'),
       entailment: has('queryRaw'),
       tableau: has('tableauMaterialise') && has('tableauDlInconsistent'),
       rml: has('rmlMap'),
@@ -2161,6 +2192,7 @@ function buildApi(driver) {
     owlClosure,
     coreRdfsClosure,
     coreRdfsCheck,
+    explain,
     rdfsPlusClosure,
     rhoDfClosure,
     rhoDfFragmentCheck,
