@@ -148,6 +148,7 @@ def fullOnlyOpNames : List String :=
   , "datasetFromCsvw", "datasetFromRml", "datasetFromJsonLd", "datasetToJsonLd"
   , "datasetShexValidate", "datasetRifEval", "datasetQuadsBin"
   , "storeOpen", "storeHandleQuery", "storeHandleList", "storeHandleClose"
+  , "sbm11Open", "sbm11Query", "sbm11Close"
   , "storeServeKeys", "storeServeOpen", "storeServeRequest", "storeServeCommit"
   , "storeServeClose", "tdb2ServeKeys", "tdb2ServeOpen"
   , "packBegin", "packFeed", "packEndPass", "packNext", "packFinish", "packClose"

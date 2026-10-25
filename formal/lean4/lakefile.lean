@@ -198,6 +198,20 @@ extern_lib libl4exthost pkg := do
   let name := nameToStaticLib "l4exthost"
   buildStaticLib (pkg.staticLibDir / name) #[ext]
 
+/-- The host reads of the storage-medium interface (`Wasm/MediumHost.lean`'s
+    `@[extern "l4_medium_read"]` and `@[extern "l4_medium_size"]`,
+    https://github.com/danbri/factoidal/issues/1010 KR1). On a native build
+    the store root is a directory read with POSIX `pread`; the Emscripten
+    build compiles the same file with EM_JS bodies onto the JavaScript host
+    (`Wasm/build-wasm.sh`). -/
+target l4_medium.o pkg : FilePath :=
+  buildHaclO pkg "l4_medium" (pkg.dir / "ffi" / "l4_medium.c")
+
+extern_lib libl4mediumhost pkg := do
+  let medium ← l4_medium.o.fetch
+  let name := nameToStaticLib "l4mediumhost"
+  buildStaticLib (pkg.staticLibDir / name) #[medium]
+
 @[default_target] lean_lib L4Factoidal
 
 -- Observable cardinality of the dataset handle store: 41 assertions over
@@ -233,6 +247,7 @@ extern_lib libl4exthost pkg := do
              `Wasm.Ops.Block,
              `Wasm.Ops.Store,
              `Wasm.Ops.StoreHandles,
+             `Wasm.MediumHost, `Wasm.Ops.Sbm11,
              `Wasm.Ops.StoreServe,
              `Wasm.Ops.Proof,
              `Wasm.Ops.Explain,

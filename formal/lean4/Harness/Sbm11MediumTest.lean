@@ -21,7 +21,7 @@ reference) of each query is checked too.
 The session runs in `IO` (its caches are `IO.Ref`s), and the id path reaches
 `@[extern c inline]` primitives (`Prim.Bytes.pushU64LE`) that the interpreter
 cannot call, so the checks are a compiled executable, not `#eval` (the rule of
-`L4Factoidal/Prim/Bytes.lean`). `tests/sbm11/run.sh` part (m) runs it; exit 0
+`L4Factoidal/Prim/Bytes.lean`). `tests/sbm11/run.sh` part (aa) runs it; exit 0
 only when every case passes. The pure parts (the generation's objects, the
 pointer refusal) are `#guard`s.
 

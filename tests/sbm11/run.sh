@@ -1290,6 +1290,17 @@ if [ -x "$BIN/l4scanfold-test" ]; then
   record scanfold l4scanfold-test "$rc" "$out"
 else record scanfold l4scanfold-test 1 "missing $BIN/l4scanfold-test (lake build l4scanfold-test)"; fi
 
+echo "=== (aa) the SBM11 session over a storage medium and the wasm-dispatch ops (issue 1009 KR1)"
+# l4sbm11-medium-test: a generation built in Lean, read through the pure medium
+# model, answers equal to the reference evaluator; medium_ops.sh: the ops
+# sbm11Open, sbm11Query, sbm11Close (through l4wasm-cli callseq) against
+# l4sbm11 query on the gate fixtures.
+if [ -x "$BIN/l4sbm11-medium-test" ]; then
+  rc=0; out="$("$BIN/l4sbm11-medium-test" 2>&1)" || rc=$?
+  record medium l4sbm11-medium-test "$rc" "$(printf '%s' "$out" | head -1)"
+else record medium l4sbm11-medium-test 1 "missing $BIN/l4sbm11-medium-test (lake build l4sbm11-medium-test)"; fi
+add_script_counts medium medium_ops.sh "sbm11 medium ops"
+
 echo
 echo "sbm11 stages 4 and 5: $PASS pass, $FAIL fail, $XFAILS expected-fail (out of $((PASS + FAIL + XFAILS)))"
 [ "$FAIL" -eq 0 ]

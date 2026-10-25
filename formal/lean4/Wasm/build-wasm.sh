@@ -418,6 +418,12 @@ emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_hpke.c" -o "$LIB_OBJ/
 # answers the section 17.6 error.  Without this object the link fails on
 # l4_ext_call.
 emcc $CFLAGS -c "$LEAN_DIR/ffi/l4_ext.c" -o "$LIB_OBJ/l4_ext.o"
+# The storage-medium host reads (Wasm/MediumHost.lean's `l4_medium_read` and
+# `l4_medium_size`, issue 1010 KR1): EM_JS thunks onto
+# globalThis.__factoidalMediumRead and __factoidalMediumSize, which the
+# JavaScript host installs (npm/factoidal/lib/sbm11-hosts.mjs). Without this
+# object the link fails on l4_medium_read.
+emcc $CFLAGS -c "$LEAN_DIR/ffi/l4_medium.c" -o "$LIB_OBJ/l4_medium.o"
 echo "  library objects: $(ls "$LIB_OBJ"/*.o | wc -l | tr -d ' ')"
 
 # ---------------------------------------------------------------------

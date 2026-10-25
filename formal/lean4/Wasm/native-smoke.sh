@@ -3206,6 +3206,49 @@ args "$TMP/dl-empty.json"
 check "ops reflection lists the delta-log ops" ops "$TMP/dl-empty.json" \
   'set(["deltaLogEncode","deltaLogDecode","deltaLogMerge"]) <= set(r["ops"])'
 
+# --- SBM11 store ops over the storage medium (issue 1009 KR1) ---------
+# The fixture is the test generation of Harness/Sbm11MediumTest.lean, written
+# as files (a collection root with CURRENT); natively the medium is POSIX
+# pread of ROOT/name (ffi/l4_medium.c).
+MEDTEST="$LEAN_DIR/.lake/build/bin/l4sbm11-medium-test"
+if [ -x "$MEDTEST" ]; then
+  "$MEDTEST" --write "$TMP/sbm11-root" >/dev/null
+  python3 - "$TMP/sbm11-seq.json" "$TMP/sbm11-root" <<'PY'
+import json, sys
+seq, root = sys.argv[1:3]
+json.dump([["sbm11Open", [root]],
+           ["sbm11Query", ["sbm11-1", "SELECT ?s ?o WHERE { ?s <http://ex.org/p> ?o }"]],
+           ["sbm11Query", ["sbm11-1", "ASK { <http://ex.org/a> <http://ex.org/q> 5 }"]],
+           ["sbm11Query", ["sbm11-1", "CONSTRUCT { ?o <http://ex.org/r> ?s } WHERE { ?s <http://ex.org/p> ?o }"]],
+           ["sbm11Query", ["sbm11-1", "SELECT ?s (EXISTS { ?s <http://ex.org/q> ?x } AS ?e) WHERE { ?s <http://ex.org/p> ?o }"]],
+           ["sbm11Query", ["sbm11-1", "SELECT WHERE {"]],
+           ["sbm11Query", ["sbm11-1", "ASK {}", "{\"version\":\"9\"}"]],
+           ["sbm11Close", ["sbm11-1"]],
+           ["sbm11Query", ["sbm11-1", "ASK {}"]],
+           ["sbm11Close", ["sbm11-9"]],
+           ["sbm11Open", [root + "/no-such-dir"]],
+           ["sbm11Open", [""]]], open(seq, "w"))
+PY
+  checkseq "sbm11 ops: open, query on ids and by the fallback, close, refusals" "$TMP/sbm11-seq.json" \
+    'rs[0]["ok"] and rs[0]["handle"] == "sbm11-1" and rs[0]["generation"] == "gen1" and rs[0]["quads"] == 8
+     and rs[1]["path"] == "ids" and rs[1]["rows"] == 3 and len(rs[1]["results"]["results"]["bindings"]) == 3
+     and rs[2]["results"]["boolean"] is True
+     and rs[3]["form"] == "construct" and rs[3]["ntriples"].count("\n") == 2
+     and rs[4]["path"] == "reference" and rs[4]["rows"] == 3
+     and rs[5]["ok"] is False and rs[5]["code"] == "query.parse"
+     and rs[6]["ok"] is False and "version" in rs[6]["error"]
+     and rs[7]["ok"] is True
+     and rs[8]["code"] == "handle.disposed" and rs[9]["code"] == "handle.unknown"
+     and rs[10]["ok"] is False and "no such object" in rs[10]["error"]
+     and rs[11]["ok"] is False and "empty" in rs[11]["error"]'
+else
+  echo "FAIL sbm11 ops: missing $MEDTEST (lake build l4sbm11-medium-test)"
+  FAIL=$((FAIL + 1))
+fi
+args "$TMP/sbm11-empty.json"
+check "ops reflection lists the SBM11 store ops" ops "$TMP/sbm11-empty.json" \
+  'set(["sbm11Open","sbm11Query","sbm11Close"]) <= set(r["ops"])'
+
 # --- Dispatch reflection + unknown op ---------------------------------
 args "$TMP/empty.json"
 check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \

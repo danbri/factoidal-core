@@ -52,6 +52,7 @@ import Wasm.Ops.Canon
 import Wasm.Ops.Block
 import Wasm.Ops.Store
 import Wasm.Ops.StoreHandles
+import Wasm.Ops.Sbm11
 import Wasm.Ops.StoreServe
 import Wasm.Ops.CL
 import Wasm.Ops.Proof
@@ -285,6 +286,15 @@ def storeHandleOpNames : List String :=
   , "storeHandleList"
   , "storeHandleClose" ]
 
+/-- The SBM11 store op names (`Wasm/Ops/Sbm11.lean`,
+https://github.com/danbri/factoidal/issues/1009 KR1), served ONLY by `callIO`
+— the store table is an `IO.Ref`, and every read of the store goes to the
+host's storage medium (`Wasm/MediumHost.lean`). -/
+def sbm11OpNames : List String :=
+  [ "sbm11Open"
+  , "sbm11Query"
+  , "sbm11Close" ]
+
 /-- The SPARQL 1.1 §17.6 extension-registry op names
 (`Wasm/Ops/ExtFns.lean`), served ONLY by `callIO` and `callBlobIO` — the
 registry is an `IO.Ref` the pure `call` cannot reach, so that entry keeps
@@ -430,7 +440,7 @@ private def opsReflection : String := opsReflectionFor (opNames ++ formatOpNames
 /-- The `ops` reflection of `callIO`: every op of the full table. -/
 def opsReflectionIO : String :=
   opsReflectionFor
-    (opNames ++ handleOpNames ++ storeHandleOpNames ++ storeServeOpNames ++ packOpNames
+    (opNames ++ handleOpNames ++ storeHandleOpNames ++ sbm11OpNames ++ storeServeOpNames ++ packOpNames
        ++ extOpNames ++ lwsSolidOpNames ++ Ops.authzOpNames ++ xmppSessionOpNamesList
        ++ formatOpNames ++ serviceOpNames
        ++ query12OpNames)
@@ -601,6 +611,14 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
       pure (errJson s!"{op} carries a byte region; call it through l4_call_blob_io")
   | "storeOpen"        => withArgs (arityIO2 op (fun a b => Ops.storeOpen a b ByteArray.empty))
   | "storeHandleQuery" => withArgs (arityIO2 op Ops.storeHandleQuery)
+  -- SBM11 over the host's storage medium (issue 1009 KR1)
+  | "sbm11Open"        => withArgs (arityIO1 op Ops.sbm11Open)
+  | "sbm11Query"       => withArgs (fun args =>
+      match args with
+      | [a, b]    => Ops.sbm11Query a b
+      | [a, b, c] => Ops.sbm11Query a b c
+      | args => pure (errJson s!"sbm11Query expects 2 or 3 arguments, got {args.length}"))
+  | "sbm11Close"       => withArgs (arityIO1 op Ops.sbm11Close)
   -- The dataset-handle ops of the full engine (`Wasm/Ops/DatasetFull.lean`).
   | "datasetFromCsvw"  => withArgs (arityIO3 op Ops.datasetFromCsvw)
   | "datasetFromRml"   => withArgs (arityIO3 op Ops.datasetFromRml)
