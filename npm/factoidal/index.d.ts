@@ -1136,6 +1136,18 @@ export function openSbm11(source: string, options?: { reader?: Sbm11Reader }): P
 /** Serve `source` with `reader`; `null` removes it. */
 export function registerSbm11Source(source: string, reader: Sbm11Reader | null): void;
 
+/** Pack an RDF document into the files of one SBM11 generation, in memory
+ * (wasm op `sbm11PackFiles`, https://github.com/danbri/factoidal/issues/1009
+ * stage 2): file name to bytes, the files `l4sbm11-pack` writes for the same
+ * quads, without `CURRENT`. Rejects with `code: 'SBM11_NO_PACK_OP'` on a wasm
+ * module that has no such op. */
+export function packSbm11(text: string | Uint8Array,
+  options: { syntax: 'turtle' | 'trig' | 'nquads' | 'ntriples' | 'rdfxml' | 'jsonld' | string; base?: string }
+): Promise<Map<string, Uint8Array>>;
+
+/** A reader over files held in memory (for example the result of `packSbm11`). */
+export function mapReader(files: Map<string, Uint8Array> | Record<string, Uint8Array>): Sbm11Reader;
+
 /** One LWS resource an SBM11 reader read (https://github.com/danbri/factoidal/issues/1010). */
 export interface Sbm11ReadEvidence {
   resource: string;

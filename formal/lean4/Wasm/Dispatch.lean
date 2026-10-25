@@ -80,6 +80,7 @@ import Wasm.Ops.Validate
 import Wasm.Ops.ShExValidate
 import Wasm.Ops.QueryHdt
 import Wasm.Ops.Sbm11
+import Wasm.Ops.Sbm11Pack
 
 namespace L4Wasm
 
@@ -176,7 +177,7 @@ because both are served by the one entry which carries a region in either
 direction. -/
 def blobIoOpNames : List String :=
   [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit",
-    "datasetQuadsBin", "sbm11Query" ] ++
+    "datasetQuadsBin", "sbm11Query", "sbm11PackFiles" ] ++
   Ops.lwsBlobIoOpNames
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
@@ -613,6 +614,8 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
       | [a, b, c] => Ops.sbm11Query a b c
       | args => pure (errJson s!"sbm11Query expects 2 or 3 arguments, got {args.length}"))
   | "sbm11Close"       => withArgs (arityIO1 op Ops.sbm11Close)
+  | "sbm11PackFiles"   =>
+      pure (errJson s!"{op} carries a byte region; call it through l4_call_blob_io")
   -- The dataset-handle ops of the full engine (`Wasm/Ops/DatasetFull.lean`).
   | "datasetFromCsvw"  => withArgs (arityIO3 op Ops.datasetFromCsvw)
   | "datasetFromRml"   => withArgs (arityIO3 op Ops.datasetFromRml)
@@ -807,6 +810,15 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a, b]    => Ops.sbm11QueryBlob a b ""
       | .ok [a, b, c] => Ops.sbm11QueryBlob a b c
       | .ok args      => pure (errJson s!"sbm11Query expects 2 or 3 arguments, got {args.length}",
+                               ByteArray.empty)
+  -- Pack an SBM11 generation in memory (`Wasm/Ops/Sbm11Pack.lean`,
+  -- https://github.com/danbri/factoidal/issues/1009 stage 2): the document is
+  -- the IN region, file `index` of the generation the OUT region.
+  | "sbm11PackFiles" =>
+      match decodeArgs argsJson with
+      | .error e      => pure (errJson e, ByteArray.empty)
+      | .ok [a, b, c] => Ops.sbm11PackFiles a b c blob
+      | .ok args      => pure (errJson s!"sbm11PackFiles expects 3 arguments, got {args.length}",
                                ByteArray.empty)
   | "storeServeCommit" =>
       match decodeArgs argsJson with

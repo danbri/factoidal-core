@@ -68,6 +68,32 @@ export function setDefaultSbm11Reader (factory) {
   defaultReader = factory
 }
 
+/**
+ * A reader over files held in memory: `files` is a Map (or a plain object)
+ * from file name to Uint8Array, for example the result of packSbm11. It
+ * moves bytes only; a read past the end of a file, or of a file it does not
+ * hold, answers null, and the engine refuses it with the file name.
+ */
+export function mapReader (files) {
+  const m = files instanceof Map ? files : new Map(Object.entries(files || {}))
+  return {
+    readAt (file, offset, length) {
+      const b = m.get(file)
+      if (!b || offset < 0 || length < 0 || offset + length > b.length) return null
+      return b.subarray(offset, offset + length)
+    },
+    size (file) {
+      const b = m.get(file)
+      return b ? b.length : null
+    }
+  }
+}
+
+function opsReflection (eng) {
+  const r = eng.call('ops', [])
+  return typeof r === 'string' ? JSON.parse(r) : r
+}
+
 function envelope (raw) {
   const j = typeof raw === 'string' ? JSON.parse(raw) : raw
   if (!j || j.ok !== true) {
@@ -151,5 +177,44 @@ export function sbm11Api (loadEngine) {
       }
     }
   }
-  return { openSbm11 }
+  /**
+   * Pack an RDF document into the files of one SBM11 generation, in memory
+   * (the wasm op sbm11PackFiles, formal/lean4/Wasm/Ops/Sbm11Pack.lean;
+   * https://github.com/danbri/factoidal/issues/1009 stage 2). `text` is a
+   * string or UTF-8 bytes; `options.syntax` is turtle, trig, nquads,
+   * ntriples, rdfxml or jsonld; `options.base` the base IRI. Resolves to a
+   * Map from file name to Uint8Array: the files `l4sbm11-pack` writes for the
+   * same quads (data files, `.merkle` sidecars, `manifest.sbm11`), without
+   * `CURRENT`. Open them with `openSbm11(name, { reader: mapReader(files) })`,
+   * or write each under its name into one directory. The engine names every
+   * file and computes every byte (iron rule 7).
+   */
+  async function packSbm11 (text, options = {}) {
+    const syntax = options.syntax ?? options.format
+    if (typeof syntax !== 'string' || syntax === '') {
+      throw new TypeError('packSbm11: options.syntax is required (turtle, trig, nquads, ntriples, rdfxml or jsonld)')
+    }
+    const eng = await loadEngine()
+    const refl = opsReflection(eng)
+    const blobIoOps = Array.isArray(refl && refl.blobIoOps) ? refl.blobIoOps : []
+    if (typeof eng.callBlobIO !== 'function' || !blobIoOps.includes('sbm11PackFiles')) {
+      const e = new Error('packSbm11: this wasm module has no sbm11PackFiles op (it was built before ' +
+        'https://github.com/danbri/factoidal/issues/1009 stage 2)')
+      e.code = 'SBM11_NO_PACK_OP'
+      throw e
+    }
+    const bytes = typeof text === 'string' ? new TextEncoder().encode(text) : new Uint8Array(text)
+    const base = options.base == null ? '' : String(options.base)
+    const files = new Map()
+    let count = 1
+    for (let i = 0; i < count; i++) {
+      const answer = eng.callBlobIO('sbm11PackFiles', [syntax, base, String(i)], bytes)
+      const j = envelope(answer.envelope)
+      count = Number(j.count)
+      files.set(j.name, answer.bytes)
+    }
+    return files
+  }
+
+  return { openSbm11, packSbm11 }
 }

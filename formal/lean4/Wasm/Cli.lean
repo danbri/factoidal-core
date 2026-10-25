@@ -1317,6 +1317,42 @@ def sbm11QueryCmd (args : List String) : IO UInt32 := do
     stdout.write "\n".toUTF8
     pure 0
 
+/-- `l4factoidal sbm11-pack SOURCE OUTDIR [--format F] [--base IRI]`: the op
+`sbm11PackFiles` (`Wasm/Ops/Sbm11Pack.lean`,
+https://github.com/danbri/factoidal/issues/1009 stage 2) over the document
+SOURCE, one call per file, through the byte-region entry the wasm module
+serves. Writes every file the op names into OUTDIR (the files of
+`l4sbm11-pack --via-dataset`, without `CURRENT`). F: a label of
+`RDF.formatOfLabel`, else the extension of SOURCE. -/
+def sbm11PackCmd (args : List String) : IO UInt32 := do
+  match scanArgs ["--format", "--base"] [] args with
+  | .error e => IO.eprintln s!"l4factoidal sbm11-pack: {e}"; pure 2
+  | .ok s =>
+    let [source, outDir] := s.positional
+      | IO.eprintln "l4factoidal sbm11-pack: need SOURCE and OUTDIR"; pure 2
+    let syntaxLabel? := match s.value? "--format" with
+      | some f => some f
+      | none => (L4Factoidal.RDF.formatOfPath source).map L4Factoidal.RDF.formatLabel
+    let some syntaxLabel := syntaxLabel?
+      | IO.eprintln s!"l4factoidal sbm11-pack: {source}: no syntax from the extension; give --format"; pure 2
+    let text ← IO.FS.readBinFile source
+    IO.FS.createDirAll outDir
+    let argsOf (i : Nat) : String :=
+      (Json.array [.string syntaxLabel, .string ((s.value? "--base").getD ""), .string (toString i)]).toString
+    let (first, bytes0) ← callBlobIO "sbm11PackFiles" (argsOf 0) text
+    let some j0 ← parseEnvelope first | pure 1
+    let count := ((numberField? j0 "count").bind String.toNat?).getD 0
+    let write (j : Json) (bytes : ByteArray) : IO Unit := do
+      let some name := j.getString? "name" | throw (IO.userError "internal: sbm11PackFiles answered no name")
+      IO.FS.writeBinFile s!"{outDir}/{name}" bytes
+    write j0 bytes0
+    for i in [1:count] do
+      let (answer, bytes) ← callBlobIO "sbm11PackFiles" (argsOf i) text
+      let some j ← parseEnvelope answer | return 1
+      write j bytes
+    IO.println s!"sbm11-pack: files={count} quads={(numberField? j0 "quads").getD "?"} terms={(numberField? j0 "terms").getD "?"} named-graphs={(numberField? j0 "graphs").getD "?"}"
+    pure 0
+
 def usageLines : List String :=
   [ "l4factoidal — Lean 4 RDF/SPARQL/OWL/CL engine, command line"
   , ""
@@ -1396,6 +1432,9 @@ def usageLines : List String :=
   , "              [--reference]"
   , "      SPARQL over the SBM11 generation directory GEN through the wasm ops"
   , "      sbm11Open / sbm11Query / sbm11Close (host positioned reads)."
+  , "  sbm11-pack SOURCE OUTDIR [--format F] [--base IRI]"
+  , "      Pack the document SOURCE into the SBM11 generation directory OUTDIR"
+  , "      through the wasm op sbm11PackFiles (in memory, one call per file)."
   , "  ops"
   , "      List every dispatch ABI operation (the l4wasm-cli / wasm"
   , "      surface this CLI is built on)."
@@ -1418,6 +1457,7 @@ def main (args : List String) : IO UInt32 := do
   | "parse" :: rest => parseCmd rest
   | "query" :: rest => queryCmd rest
   | "sbm11-query" :: rest => sbm11QueryCmd rest
+  | "sbm11-pack" :: rest => sbm11PackCmd rest
   | "tdb2-dump" :: [dir] =>
       match ← L4Factoidal.Tdb2.readDatabaseNQuads dir with
       | .error e => IO.eprintln s!"l4factoidal tdb2-dump: {e}"; pure 1

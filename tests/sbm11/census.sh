@@ -30,6 +30,10 @@
 # SBM11_PACKSPEC: when set, `l4sbm11 packspec-check` compares each packed
 # generation with the pure specification `PackSpec.packSpec` of its input,
 # file by file (issue 776, row L3c).
+# SBM11_PACKFILES: when set, `l4sbm11 packfiles-check` compares every file of
+# each packed generation (data files, `.merkle` sidecars, manifest) with the
+# in-memory packer `PackBytes.packText` of its input, byte for byte (the packer
+# of the wasm op `sbm11PackFiles`, issue 1009 stage 2).
 # SBM11_BIN: the `l4sbm11` to run (default: the one this tree builds), to
 # compare the census of two builds. SBM11_SIP: when set, the `--sip` mode
 # (auto, the CLI default; always: candidates into every join scan the shape
@@ -103,6 +107,7 @@ eligible=0; missing=0; rpack=0; rquery=0; executed=0; matched=0; differed=0; unc
 ids_exec=0; ids_match=0; ref_exec=0; ref_match=0; sip_tests=0; agg_tests=0
 mg_q=0; mg_eq=0; mg_diff=0; mg_ref=0; mg_fail=0
 ps_n=0; ps_same=0; ps_diff=0
+pf_n=0; pf_same=0; pf_diff=0
 host_same=0; host_diff=0
 MIS="$RUN/mismatches.txt"; : >"$MIS"
 n=0
@@ -187,6 +192,14 @@ for t in "${order[@]}"; do
     else ps_diff=$((ps_diff + 1))
       printf '%s (packspec-check): exit %s: %s\n' "${t##*/}" "$prc" "$(tail -1 "$st/ps")" >>"$MIS"; fi
   fi
+  if [ -n "${SBM11_PACKFILES:-}" ]; then
+    frc=0
+    timeout 120 "$S11" packfiles-check "$input" "$st" >"$st/pf" 2>&1 || frc=$?
+    pf_n=$((pf_n + 1))
+    if [ "$frc" -eq 0 ]; then pf_same=$((pf_same + 1))
+    else pf_diff=$((pf_diff + 1))
+      printf '%s (packfiles-check): exit %s: %s\n' "${t##*/}" "$frc" "$(tail -1 "$st/pf")" >>"$MIS"; fi
+  fi
   rrc=0
   timeout 120 "$BIN/l4factoidal" query "$input" --format nquads --base "file://$input" --query "$qfile" \
     >"$st/want" 2>/dev/null || rrc=$?
@@ -212,6 +225,9 @@ if [ -n "${SBM11_MEMGEN:-}" ]; then
 fi
 if [ -n "${SBM11_PACKSPEC:-}" ]; then
   echo "  packspec-check (issue 776, row L3c): $ps_n generations, $ps_same byte-identical to packSpec with check = true, $ps_diff differ"
+fi
+if [ -n "${SBM11_PACKFILES:-}" ]; then
+  echo "  packfiles-check (issue 1009 stage 2): $pf_n generations, $pf_same with every file byte-identical to PackBytes.packText, $pf_diff differ"
 fi
 if [ -n "${SBM11_HOST:-}" ]; then
   echo "  host session (wasm ops over host reads, issue 1009 KR1): $host_same of the $executed executed tests gave the bytes and path of l4sbm11 query, $host_diff differ"

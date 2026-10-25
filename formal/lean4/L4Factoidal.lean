@@ -502,6 +502,7 @@ import L4Factoidal.Storage.Sbm11.MemGenStoreTheorems
 import L4Factoidal.Storage.Sbm11.MemGenWhereTheorems
 import L4Factoidal.Storage.Sbm11.FileGenTheorems
 import L4Factoidal.Storage.Sbm11.PackSpec
+import L4Factoidal.Storage.Sbm11.PackBytes
 import L4Factoidal.Storage.Sbm11.PackSpecTheorems
 import L4Factoidal.RDF.DictInjective
 import L4Factoidal.Storage.Sbm11.OverlayDict

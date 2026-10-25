@@ -3243,7 +3243,7 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "tdb2ServeKeys","tdb2ServeOpen"]) <= set(r["ops"])
    and r["blobIoOps"] == ["blobEcho","packFeed","packNext",
                           "storeServeRequest","storeServeCommit","datasetQuadsBin",
-                          "sbm11Query","lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead"]'
+                          "sbm11Query","sbm11PackFiles","lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead"]'
 
 # SBM11 over host positioned reads (https://github.com/danbri/factoidal/issues/1009).
 # Natively the host is a pread of source/file (ffi/l4_hostread.c). A bad
@@ -3277,6 +3277,26 @@ checkseq "sbm11 open (collection root), query, close: the bytes of l4sbm11 query
    and rs[1]["ok"] is True and rs[1]["result"] == open(__import__("os").environ["SBM11_COUNT_FILE"]).read()
    and rs[2]["ok"] is False and isinstance(rs[2].get("code"), str)
    and rs[3]["ok"] is True and rs[4]["ok"] is False'
+
+# SBM11 pack in memory (https://github.com/danbri/factoidal/issues/1009 stage 2):
+# the op through the string entry is refused by name; through the byte-region
+# entry (`l4factoidal sbm11-pack`, one call per file) it gives the files of
+# the fixture generation, which l4sbm11-pack wrote, byte for byte.
+args "$TMP/sbm11pack.json" nquads "" 0
+check "sbm11PackFiles through the string entry -> names the byte-region entry" sbm11PackFiles \
+  "$TMP/sbm11pack.json" 'r["ok"] is False and "l4_call_blob_io" in r["error"]'
+L4F="$LEAN_DIR/.lake/build/bin/l4factoidal"
+if [ -x "$L4F" ]; then
+  PRC=0
+  "$L4F" sbm11-pack "$SBM11_ROOT/../input.nq" "$TMP/sbm11-packed" >/dev/null 2>&1 || PRC=$?
+  if [ "$PRC" -eq 0 ] && diff -r "$TMP/sbm11-packed" "$SBM11_ROOT/gen" >/dev/null; then
+    echo "ok   sbm11PackFiles: every file of the fixture generation, byte for byte"; PASS=$((PASS + 1))
+  else
+    echo "FAIL sbm11PackFiles: exit $PRC or files differ from $SBM11_ROOT/gen"; FAIL=$((FAIL + 1))
+  fi
+else
+  echo "FAIL sbm11PackFiles: $L4F not built"; FAIL=$((FAIL + 1))
+fi
 
 check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
   'r["ok"] is False and "unknown op" in r["error"]'

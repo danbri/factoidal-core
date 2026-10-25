@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `packSbm11(text, { syntax, base })` packs an RDF document into the files of one SBM11 generation in memory and resolves to a `Map` from file name to bytes (data files, `.merkle` sidecars, `manifest.sbm11`; no `CURRENT`); `mapReader(files)` is a reader over such files for `openSbm11(source, { reader })`. The wasm op is `sbm11PackFiles` (Lean `Storage/Sbm11/PackBytes.lean`), one call per file. The files are byte for byte those of the native `l4sbm11-pack` for the same quads: 23 of 23 files for `test/fixtures/sbm11-tiny`, and all files of 605 of 605 W3C SPARQL 1.0 and 1.1 inputs (`SBM11_PACKFILES=1 tests/sbm11/census.sh`) (https://github.com/danbri/factoidal/issues/1009 stage 2). It needs a wasm module rebuilt after this change; on an older module `packSbm11` rejects with `code: 'SBM11_NO_PACK_OP'`. The whole document and every file are in memory at once. Not yet: `factoidal pack` on SBM11, and a pack that streams its input.
 - SPARQL: the inverse path `^p` keeps a pair whose object is a literal. SPARQL 1.1 §9.3 and §18.4 make `?x ^p ?y` the same as `?y p ?x`, so `?x` can bind a literal; up to 0.15.0 both evaluators (the in-memory one and the SBM11 id path) dropped those pairs, and `SELECT ?x ?y WHERE { ?x ^<http://e/p> ?y }` over `<http://e/s> <http://e/p> "v" .` gave no row. Apache Jena ARQ 5.6.0 gives the same rows as the fix (https://github.com/danbri/factoidal/issues/1023). Tests: `test/inverse-path-literal-1023.test.mjs` and the `#guard`s in `SPARQL/QueryTests.lean`. The F* tree has the same fix.
 
 ## 0.15.0

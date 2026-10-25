@@ -21,7 +21,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildApi } from './lib/api.mjs';
 import { entryFromEngine } from './lib/lean-entry.mjs';
-import { sbm11Api, registerSbm11Source, setDefaultSbm11Reader } from './lib/sbm11.mjs';
+import { sbm11Api, registerSbm11Source, setDefaultSbm11Reader, mapReader } from './lib/sbm11.mjs';
 import { nodeDefaultReaderFactory } from './lib/sbm11-node.mjs';
 import { lwsSbm11Reader as lwsSbm11ReaderWith } from './lib/sbm11-lws.mjs';
 import { nodeSyncTransport } from './lib/sync-http-node.mjs';
@@ -74,8 +74,12 @@ export const clearServiceEndpoints = api.clearServiceEndpoints;
 // (lib/sbm11.mjs; https://github.com/danbri/factoidal/issues/1009). In Node a
 // source with no registered reader is a directory.
 setDefaultSbm11Reader(nodeDefaultReaderFactory());
-export const openSbm11 = sbm11Api(loadEngine).openSbm11;
-export { registerSbm11Source };
+const sbm11 = sbm11Api(loadEngine);
+export const openSbm11 = sbm11.openSbm11;
+// Pack a document into the files of an SBM11 generation in memory, and a
+// reader over such files (issue 1009 stage 2).
+export const packSbm11 = sbm11.packSbm11;
+export { registerSbm11Source, mapReader };
 
 // A reader of an SBM11 generation held as LWS resources (lib/sbm11-lws.mjs;
 // https://github.com/danbri/factoidal/issues/1010 KR3). In Node the default
