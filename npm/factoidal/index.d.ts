@@ -711,6 +711,12 @@ export interface EvidenceRecord {
   status: StageInfo['status'];
   contract: string | null;
   assumptions: string[];
+  /** true iff `status` is 'proved'. */
+  checked: boolean;
+  /** true on a step that ran under run()'s `unchecked` opt-in and is not checked. */
+  unchecked?: true;
+  /** With `unchecked`: the status and named assumptions, or 'no contract' for a missing stage. */
+  reason?: string;
   /** The node's own output beside the graph: the explain result, the SHACL report, the written text, ... */
   artefact: unknown;
 }
@@ -744,6 +750,20 @@ export interface Pipeline {
 /** The result of run(): the last graph, one record per node, the assumption union. */
 export interface RunResult<G = unknown> extends Wire<G> {
   assumptions: string[];
+  /** true iff every evidence record is checked (status 'proved'). */
+  proved: boolean;
+  /** The stage names of the records that are not checked. */
+  uncheckedSteps: string[];
+}
+
+/** Options of run(). */
+export interface RunOptions {
+  /**
+   * Let stages that are not 'proved' run, and 'missing' stages too when the
+   * package has a runner for them. Each such step's record says so, and the
+   * result's `proved` is false. A stage with no runner still rejects (op.unknown).
+   */
+  unchecked?: boolean;
 }
 
 /** The engine's stage list (op stageList, full engine). */
@@ -763,9 +783,10 @@ export function pipe(...nodes: Array<FactoidalNode | Pipeline>): Pipeline;
 /**
  * Run a node or pipeline on `input` (a Wire, or the graph: text for a
  * reader, else a Dataset or data input). Rejects before any node runs when
- * a node's stage has status 'missing' or has no package function.
+ * a node's stage has status 'missing' (unless `options.unchecked`) or has
+ * no package function.
  */
-export function run(pipeline: FactoidalNode | Pipeline, input: unknown): Promise<RunResult>;
+export function run(pipeline: FactoidalNode | Pipeline, input: unknown, options?: RunOptions): Promise<RunResult>;
 
 /** Literature-name alias for coreRdfsClosure (ρdf). */
 export function rhoDfClosure(

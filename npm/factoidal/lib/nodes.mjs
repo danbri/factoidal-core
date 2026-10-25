@@ -12,7 +12,9 @@
 // function that runs it (RUNNERS below; each is the function that
 // foundation/entrypoints.toml maps to that stage), and the wiring: a value
 // on a wire is `{ graph, evidence }`, and each node appends one evidence
-// record `{ stage, status, contract, assumptions, artefact }`. The result of
+// record `{ stage, status, contract, assumptions, checked, artefact }` (plus
+// `unchecked` and `reason` for a step run under run()'s `unchecked` opt-in;
+// the record logic is in evidence.mjs). The result of
 // a run also reports the union of the named assumptions of the nodes it
 // passed: the premise list of the pipeline's soundness statement
 // (Dataflow/EndToEnd.lean) as the user sees it.
@@ -20,6 +22,7 @@
 // ES module, no Node built-ins: the browser loads this file as it is.
 
 import { FactoidalError } from './errors.mjs';
+import { refusalFor, makeRecord, summarize, unionAssumptions } from './evidence.mjs';
 
 /**
  * @param {object} deps the package functions and the engine entry
@@ -157,17 +160,6 @@ export function buildNodes(deps) {
     return out;
   }
 
-  function unionAssumptions(records) {
-    const seen = new Set();
-    const out = [];
-    for (const r of records) {
-      for (const a of r.assumptions) {
-        if (!seen.has(a)) { seen.add(a); out.push(a); }
-      }
-    }
-    return out;
-  }
-
   /**
    * A pipeline: the nodes in order (pipelines are flattened).
    * `assumptions` is the union of the nodes' named assumptions.
@@ -179,33 +171,27 @@ export function buildNodes(deps) {
     return Object.freeze({ nodes: Object.freeze(nodes), assumptions: Object.freeze(unionAssumptions(nodes)) });
   }
 
-  // Refuse before anything runs: a stage with status `missing` has no
-  // contract and no suite (issue 975, item 3); a stage the package has no
-  // function for cannot run here.
-  function refusal(n) {
-    if (!n.runnable) {
-      return new FactoidalError(`run: stage '${n.stage}' has status ${n.status}: ` +
-        'no contract and no test suite, so it does not run as a node', { code: 'op.failed' });
-    }
-    if (!n.bound) {
-      return new FactoidalError(`run: stage '${n.stage}' has no package function that runs it`,
-        { code: 'op.unknown' });
-    }
-    return null;
-  }
-
   const isWire = (v) => v !== null && typeof v === 'object' && !(v instanceof Dataset) &&
     Object.prototype.hasOwnProperty.call(v, 'graph') && Array.isArray(v.evidence);
 
   /**
    * Run a node or a pipeline. `input` is a wire value `{graph, evidence}`
    * or the graph itself (text for a reader, else a Dataset or data input).
-   * @returns {Promise<{graph: any, evidence: object[], assumptions: string[]}>}
+   * `options.unchecked: true` lets stages that are not `proved` run,
+   * `missing` ones too when the package has a runner for them; each such
+   * step's record says so (evidence.mjs). Without it, a `missing` stage
+   * refuses before any node runs.
+   * @returns {Promise<{graph: any, evidence: object[], assumptions: string[],
+   *   proved: boolean, uncheckedSteps: string[]}>}
    */
-  async function run(pipeline, input) {
+  async function run(pipeline, input, options) {
+    if (options !== undefined && (options === null || typeof options !== 'object')) {
+      throw new TypeError('run: options must be an object');
+    }
+    const unchecked = !!(options && options.unchecked);
     const nodes = nodesOf([pipeline], 'run');
     for (const n of nodes) {
-      const why = refusal(n);
+      const why = refusalFor(n, unchecked, Object.prototype.hasOwnProperty.call(RUNNERS, n.stage));
       if (why) throw why;
     }
     let wire = isWire(input) ? { graph: input.graph, evidence: [...input.evidence] }
@@ -213,13 +199,7 @@ export function buildNodes(deps) {
     let owned = null; // a Dataset an earlier node of this run made
     for (const n of nodes) {
       const out = await RUNNERS[n.stage](wire, n.params);
-      const record = Object.freeze({
-        stage: n.stage,
-        status: n.status,
-        contract: n.contract,
-        assumptions: n.assumptions,
-        artefact: out.artefact === undefined ? null : out.artefact,
-      });
+      const record = makeRecord(n, out.artefact, unchecked);
       let graph = wire.graph;
       if (out.graph !== undefined && out.graph !== wire.graph) {
         if (owned && owned === wire.graph && typeof owned.dispose === 'function') owned.dispose();
@@ -228,7 +208,7 @@ export function buildNodes(deps) {
       }
       wire = { graph, evidence: [...wire.evidence, record] };
     }
-    return { graph: wire.graph, evidence: wire.evidence, assumptions: unionAssumptions(wire.evidence) };
+    return { graph: wire.graph, evidence: wire.evidence, ...summarize(wire.evidence) };
   }
 
   return { stages, node, pipe, run };

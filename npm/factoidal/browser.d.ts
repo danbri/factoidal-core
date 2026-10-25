@@ -11,7 +11,7 @@ export type {
   DataFormat, EntailRegime, Bindings, DataInput, QueryInput, ParseOptions,
   QueryOptions, SerializeOptions, StoreReader, OpenStoreOptions,
   DeltaLogHandle, DeltaLogInspection,
-  ExplainResult, StageInfo, EvidenceRecord, Wire, FactoidalNode, Pipeline, RunResult,
+  ExplainResult, StageInfo, EvidenceRecord, Wire, FactoidalNode, Pipeline, RunResult, RunOptions,
 } from './index';
 
 export {
