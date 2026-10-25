@@ -737,6 +737,21 @@ section "Stage 1b", subsection "What failed on the way"):
   writes is made by that task (create the `IO.Ref` inside the task body); a
   structure tasks share and write is one whose update copies one path (a
   `Std.TreeMap`), behind a lock.
+- **A value reachable from a global is MT too, with no task anywhere.** An
+  `initialize` handle table (`IO.Ref (Std.HashMap String Session)`) is a
+  global, so the session put in it, its `IO.Ref`s, and every value later
+  stored in those references are marked MT. Paid for 2026-10-25
+  (https://github.com/danbri/factoidal/issues/1009 KR1, `Wasm/Ops/Sbm11.lean`):
+  the single-thread SBM11 session held by the wasm op took 374 ms on olympics
+  q19 against 196 ms for native `l4sbm11 query` over the same reads
+  (strace: the same 8,396 `pread`s); callgrind gave 25 percent of the
+  instructions to `lean_mark_mt` and 22 percent to `lean_del_core_other` and
+  `lean_copy_expand_array`, because each page-cache insert marked the whole
+  cache and copied its bucket array. Rule: a handle table holds the session;
+  each request runs on a copy with references of its own
+  (`HostSession.Session.localize`) and writes the caches back once at the end
+  (`Session.keep`). Then q19 took 200 ms. Raising the page limit and removing
+  a `try` per store call had changed nothing: profile first.
 - **Taking and releasing a reference to an MT object is an atomic operation.**
   Reading the parent's `ScanSpec` in every block from 4 tasks made them
   contend on its cache lines: DBpedia d17 took 7.9 ms at 4 threads against

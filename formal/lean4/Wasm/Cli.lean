@@ -1305,13 +1305,16 @@ def sbm11QueryCmd (args : List String) : IO UInt32 := do
     let opts := Json.object
       ((match s.value? "--base" with | some b => [("base", Json.string b)] | none => []) ++
        [("sparql12", .bool (s.hasBool "--sparql12")), ("reference", .bool (s.hasBool "--reference"))])
-    let answer ← callIO "sbm11Query" (Json.array [.string h, .string sparql, .string opts.toString]).toString
+    -- the byte-region entry: the result bytes come back as the out region
+    let (answer, bytes) ← callBlobIO "sbm11Query"
+      (Json.array [.string h, .string sparql, .string opts.toString]).toString ByteArray.empty
     discard <| callIO "sbm11Close" (Json.array [.string h]).toString
     let some j ← parseEnvelope answer | pure 1
     IO.eprintln s!"sbm11-query: {(j.getString? "path").getD "?"} bytes-read={(numberField? j "bytesRead").getD "?"} reads={(numberField? j "reads").getD "?"}"
     -- `l4sbm11 query` ends its answer with one line break (Harness/Sbm11Query.lean)
-    IO.print ((j.getString? "result").getD "")
-    IO.print "\n"
+    let stdout ← IO.getStdout
+    stdout.write bytes
+    stdout.write "\n".toUTF8
     pure 0
 
 def usageLines : List String :=

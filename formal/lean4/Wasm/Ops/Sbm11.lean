@@ -7,7 +7,9 @@ https://github.com/danbri/factoidal/issues/1007).
     -> {"ok":true,"handle":"sbm11-1","generation":G,"terms":N,"artifacts":K,"bytesRead":B}
   sbm11Query(handle, sparql [, optionsJson])
     -> {"ok":true,"path":"path=ids"|"path=reference ...","rows":N,
-        "format":"srj"|"ntriples","result":"...","bytesRead":B,"reads":R}
+        "format":"srj"|"ntriples","bytesRead":B,"reads":R,"result":"..."}
+    through l4_call_blob_io: "resultBytes":N in place of "result", and the
+    result bytes as the out region
   sbm11Close(handle)
     -> {"ok":true}
 
@@ -88,35 +90,53 @@ private def queryOpts (optionsJson : String) : Except String QueryOpts := do
     return o
   | .ok _ => throw "optionsJson must be a JSON object"
 
-/-- `sbm11Query(handle, sparql, optionsJson)`. -/
-def sbm11Query (h sparql optionsJson : String) : IO String := do
+/-- Run `sbm11Query`: the envelope fields (without the result) and the
+    result bytes, or an error message. -/
+def sbm11Run (h sparql optionsJson : String) : IO (Except String (List (String × Json) × ByteArray)) := do
   match (← sbm11HandleTable.get)[h]? with
-  | none => return errJson s!"sbm11Query: no open SBM11 handle {h}"
-  | some ss =>
+  | none => return .error s!"sbm11Query: no open SBM11 handle {h}"
+  | some held =>
   match queryOpts optionsJson with
-  | .error e => return errJson s!"sbm11Query: {e}"
+  | .error e => return .error s!"sbm11Query: {e}"
   | .ok o =>
   match parseSparql sparql o.base (if o.sparql12 then .v12 else .v11) with
-  | .error e => return errJson s!"sbm11Query: SPARQL parse error at {e.pos}: {e.msg}"
+  | .error e => return .error s!"sbm11Query: SPARQL parse error at {e.pos}: {e.msg}"
   | .ok q =>
+  -- the query runs on references of its own (`Session.localize`: the held
+  -- session is reachable from the handle table, a global)
+  let ss ← held.localize
   let b0 ← ss.bytesRead.get
   let r0 ← ss.reads.get
   let out ← IO.mkRef (ByteArray.emptyWithCapacity 4096)
   try
     let clockEnv ← emptyEnvNow
     let outcome ← runOne ss clockEnv q (fun b => out.modify (· ++ b)) o.reference
+    held.keep ss
     let format := match q.form with
       | .select _ | .ask => "srj"
       | _ => "ntriples"
-    let text := String.fromUTF8! (← out.get)
-    return okWith
-      [ ("path", .string outcome.path)
-      , ("rows", .number (toString outcome.rows))
-      , ("format", .string format)
-      , ("result", .string text)
-      , ("bytesRead", .number (toString ((← ss.bytesRead.get) - b0)))
-      , ("reads", .number (toString ((← ss.reads.get) - r0))) ]
-  catch e => return errJson s!"sbm11Query: {ioMessage e}"
+    return .ok
+      ([ ("path", .string outcome.path)
+       , ("rows", .number (toString outcome.rows))
+       , ("format", .string format)
+       , ("bytesRead", .number (toString ((← ss.bytesRead.get) - b0)))
+       , ("reads", .number (toString ((← ss.reads.get) - r0))) ], ← out.get)
+  catch e => return .error s!"sbm11Query: {ioMessage e}"
+
+/-- `sbm11Query(handle, sparql, optionsJson)` through `callIO`: the result as
+    the member `result` of the envelope. -/
+def sbm11Query (h sparql optionsJson : String) : IO String := do
+  match ← sbm11Run h sparql optionsJson with
+  | .error e => return errJson e
+  | .ok (fields, bytes) => return okWith (fields ++ [("result", .string (String.fromUTF8! bytes))])
+
+/-- `sbm11Query(handle, sparql, optionsJson)` through `callBlobIO`: the result
+    bytes as the out region, not in the envelope. A large answer is then not
+    escaped into a JSON string and parsed again (olympics q20: 18.8 MB). -/
+def sbm11QueryBlob (h sparql optionsJson : String) : IO (String × ByteArray) := do
+  match ← sbm11Run h sparql optionsJson with
+  | .error e => return (errJson e, ByteArray.empty)
+  | .ok (fields, bytes) => return (okWith (fields ++ [("resultBytes", .number (toString bytes.size))]), bytes)
 
 /-- `sbm11Close(handle)`. -/
 def sbm11Close (h : String) : IO String := do

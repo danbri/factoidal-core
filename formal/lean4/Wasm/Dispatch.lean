@@ -175,7 +175,7 @@ because both are served by the one entry which carries a region in either
 direction. -/
 def blobIoOpNames : List String :=
   [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit",
-    "datasetQuadsBin" ] ++
+    "datasetQuadsBin", "sbm11Query" ] ++
   Ops.lwsBlobIoOpNames
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
@@ -799,6 +799,13 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a]   => Ops.storeServeRequest a blob
       | .ok args  => pure (errJson s!"storeServeRequest expects 1 argument, got {args.length}",
                            ByteArray.empty)
+  | "sbm11Query" =>
+      match decodeArgs argsJson with
+      | .error e      => pure (errJson e, ByteArray.empty)
+      | .ok [a, b]    => Ops.sbm11QueryBlob a b ""
+      | .ok [a, b, c] => Ops.sbm11QueryBlob a b c
+      | .ok args      => pure (errJson s!"sbm11Query expects 2 or 3 arguments, got {args.length}",
+                               ByteArray.empty)
   | "storeServeCommit" =>
       match decodeArgs argsJson with
       | .error e        => pure (errJson e, ByteArray.empty)

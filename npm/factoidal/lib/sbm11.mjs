@@ -108,15 +108,33 @@ export function sbm11Api (loadEngine) {
         if (qopts.base != null) o.base = String(qopts.base)
         if (qopts.sparql12) o.sparql12 = true
         if (qopts.reference) o.reference = true
-        const j = envelope(eng.call('sbm11Query', [handle, String(sparql), JSON.stringify(o)]))
+        const args = [handle, String(sparql), JSON.stringify(o)]
+        // The byte-region entry returns the result bytes outside the
+        // envelope; a large answer is then not escaped into a JSON string
+        // and parsed again (Wasm/Ops/Sbm11.lean sbm11QueryBlob).
+        let j, bytes
+        if (typeof eng.callBlobIO === 'function') {
+          const answer = eng.callBlobIO('sbm11Query', args, new Uint8Array(0))
+          j = envelope(answer.envelope)
+          bytes = answer.bytes
+        } else {
+          j = envelope(eng.call('sbm11Query', args))
+        }
+        let text = bytes === undefined ? j.result : undefined
         return {
           path: j.path,
           rows: Number(j.rows),
           format: j.format,
-          result: j.result,
           bytesRead: Number(j.bytesRead),
           reads: Number(j.reads),
-          get json () { return j.format === 'srj' ? JSON.parse(j.result) : undefined }
+          /** the answer as bytes (UTF-8) */
+          get bytes () { return bytes ?? new TextEncoder().encode(text) },
+          /** the answer as text */
+          get result () {
+            if (text === undefined) text = new TextDecoder().decode(bytes)
+            return text
+          },
+          get json () { return j.format === 'srj' ? JSON.parse(this.result) : undefined }
         }
       },
       close () {

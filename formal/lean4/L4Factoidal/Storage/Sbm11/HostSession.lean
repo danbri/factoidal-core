@@ -113,7 +113,42 @@ structure Session where
   bytesRead : IO.Ref Nat
   /-- host reads since the session opened -/
   reads : IO.Ref Nat
-  pageLimit : Nat := 4096
+  /-- the most decoded dictionary pages kept (about 4.5 KB each): the native
+      default `SBM11_PAGES` (`Harness.Sbm11Query.defaultPages`). Olympics q19
+      and q21 need between 4,096 and 8,192 pages; at 4,096 they ran 2.2 to 2.6
+      times as long as native `l4sbm11 query`. -/
+  pageLimit : Nat := 8192
+
+/-- A session for one query, with references of its own that hold the
+    caches of `ss` (`keep` writes them back). A session in a global handle
+    table (`Wasm/Ops/Sbm11.lean`) is reachable from a global, so the Lean
+    runtime marks it and everything stored in its references as shared
+    between threads (`lean_mark_mt`), and a shared object is never updated in
+    place: every insert into the page cache walked the whole cache to mark it
+    and copied its bucket array. Olympics q19, callgrind: 25 percent of the
+    instructions in `lean_mark_mt`, 22 percent in `lean_del_core_other` and
+    `lean_copy_expand_array`, and twice the time of native `l4sbm11 query`.
+    On the copies the first insert copies a shared map once; the rest are in
+    place. -/
+def Session.localize (ss : Session) : IO Session := do
+  let perms ← (← ss.perms.get).mapM fun o => do
+    match o with
+    | some p => return some { p with ranges := ← IO.mkRef (← p.ranges.get) }
+    | none => return none
+  return { ss with perms := ← IO.mkRef perms, pages := ← IO.mkRef (← ss.pages.get),
+                   idMemo := ← IO.mkRef (← ss.idMemo.get),
+                   baseNamedRef := ← IO.mkRef (← ss.baseNamedRef.get),
+                   bytesRead := ← IO.mkRef (← ss.bytesRead.get), reads := ← IO.mkRef (← ss.reads.get) }
+
+/-- Write the caches and counters of a query's session (`localize`) back to
+    `ss`, for the next query. -/
+def Session.keep (ss q : Session) : IO Unit := do
+  ss.perms.set (← q.perms.get)
+  ss.pages.set (← q.pages.get)
+  ss.idMemo.set (← q.idMemo.get)
+  ss.baseNamedRef.set (← q.baseNamedRef.get)
+  ss.bytesRead.set (← q.bytesRead.get)
+  ss.reads.set (← q.reads.get)
 
 def ioErr {α : Type} (msg : String) : IO α := throw (IO.userError msg)
 
@@ -303,9 +338,10 @@ def Session.prb (ss : Session) (p off len : Nat) : IO ByteArray := do
   let lp ← ss.perm p
   ss.fetch lp.prbFile lp.prbBytes off len
 
-def liftIO {α : Type} (x : IO α) : ExceptT String IO α :=
-  ExceptT.mk do
-    try pure (.ok (← x)) catch e => pure (.error (toString e))
+/-- An IO action in the store's monad. Its IO error is not caught here: it
+    leaves `runPlanM` as an IO error, which the caller reports (as
+    `Harness.Sbm11Query.liftIO`; a `try` per call cost time on every key). -/
+def liftIO {α : Type} (x : IO α) : ExceptT String IO α := ExceptT.lift x
 
 /-- The session as the id engine's store (`IdQuery.Store IO`), single thread. -/
 def Session.store (ss : Session) : IdQuery.Store IO :=

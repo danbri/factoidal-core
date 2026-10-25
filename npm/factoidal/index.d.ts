@@ -1077,7 +1077,9 @@ export interface Sbm11Answer {
   /** `srj` (SELECT, ASK) or `ntriples` (CONSTRUCT, DESCRIBE) */
   format: 'srj' | 'ntriples';
   /** the bytes `l4sbm11 query` writes, as text */
-  result: string;
+  readonly result: string;
+  /** the same answer as UTF-8 bytes */
+  readonly bytes: Uint8Array;
   bytesRead: number;
   reads: number;
   /** the parsed SPARQL JSON for SELECT and ASK */
