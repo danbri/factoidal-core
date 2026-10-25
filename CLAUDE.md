@@ -704,6 +704,24 @@ The choices below are the coordinator's, under that delegation.
   cache misses, and a linear parse alone gives 2.1 to 2.2 on the same
   machine. No instruction-count harness is added for this row.
 
+### Freeform composition over checked components (owner, 2026-10-25)
+
+> "we want to enable and underwrite freeform composition as I sketch, using
+> checked components and checkable paths, without anticipating each path
+> explicitly. ANd maybe sure do stuff \"off the ranch\" but know we're in the
+> jungle when doing so"
+
+- Prove each component's contract once, against the wire types; a general
+  composition lemma gives the guarantee of any pipeline that type-checks.
+  Do not write one theorem per path (`pipeline_sound` was one path; the
+  replacement is `query_sound` over any `LawfulStore` plus one theorem per
+  data source).
+- The guarantee of a path is computed: the composed contract plus the union
+  of the named assumptions of its components (npm `run()` reports it).
+- A component that is not proved may run after an explicit opt-in; its
+  evidence record says so. Never report a guarantee the path does not have.
+- Record: https://github.com/danbri/factoidal/issues/975#issuecomment-6393905605
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where
