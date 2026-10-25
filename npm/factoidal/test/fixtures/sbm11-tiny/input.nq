@@ -1,0 +1,11 @@
+<http://example.org/alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
+<http://example.org/alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
+<http://example.org/alice> <http://xmlns.com/foaf/0.1/knows> <http://example.org/bob> .
+<http://example.org/alice> <http://xmlns.com/foaf/0.1/knows> _:c .
+_:c <http://xmlns.com/foaf/0.1/name> "Carol"@en .
+_:c <http://xmlns.com/foaf/0.1/name> "Carol"@EN .
+<http://example.org/bob> <http://xmlns.com/foaf/0.1/name> "Bob"@en-GB .
+<http://example.org/bob> <http://xmlns.com/foaf/0.1/age> "42"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://example.org/alice> <http://xmlns.com/foaf/0.1/age> "37"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://example.org/bob> <http://xmlns.com/foaf/0.1/knows> <http://example.org/alice> <http://example.org/g1> .
+<http://example.org/bob> <http://www.w3.org/2000/01/rdf-schema#comment> "line\nbreak" <http://example.org/g1> .

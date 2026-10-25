@@ -1283,6 +1283,40 @@ def clCmd (sub : String) (args : List String) : IO UInt32 :=
 
 /-! ## Help + dispatch -/
 
+/-- `l4factoidal sbm11-query GEN (--query FILE | --query-string Q) [--base IRI]
+[--sparql12] [--reference]`: the ops `sbm11Open`, `sbm11Query`, `sbm11Close`
+(`Wasm/Ops/Sbm11.lean`, https://github.com/danbri/factoidal/issues/1009) over
+the generation directory GEN, through the same host reads the wasm module
+makes (`ffi/l4_hostread.c`, native form). Writes the result as `l4sbm11
+query` does; the path on stderr (`sbm11-query: path=...`). -/
+def sbm11QueryCmd (args : List String) : IO UInt32 := do
+  match scanArgs ["--base", "--query", "--query-string"] ["--sparql12", "--reference"] args with
+  | .error e => IO.eprintln s!"l4factoidal sbm11-query: {e}"; pure 2
+  | .ok s =>
+    let some gen := s.positional[0]?
+      | IO.eprintln "l4factoidal sbm11-query: need a generation directory"; pure 2
+    match ← resolveTextArg "sbm11-query" "--query" "--query-string" "SPARQL" s with
+    | .error code => pure code
+    | .ok sparql =>
+    let args1 := (Json.array [.string gen]).toString
+    let some opened ← parseEnvelope (← callIO "sbm11Open" args1) | pure 1
+    let some h := opened.getString? "handle"
+      | IO.eprintln "internal: sbm11Open answered no handle"; pure 1
+    let opts := Json.object
+      ((match s.value? "--base" with | some b => [("base", Json.string b)] | none => []) ++
+       [("sparql12", .bool (s.hasBool "--sparql12")), ("reference", .bool (s.hasBool "--reference"))])
+    -- the byte-region entry: the result bytes come back as the out region
+    let (answer, bytes) ← callBlobIO "sbm11Query"
+      (Json.array [.string h, .string sparql, .string opts.toString]).toString ByteArray.empty
+    discard <| callIO "sbm11Close" (Json.array [.string h]).toString
+    let some j ← parseEnvelope answer | pure 1
+    IO.eprintln s!"sbm11-query: {(j.getString? "path").getD "?"} bytes-read={(numberField? j "bytesRead").getD "?"} reads={(numberField? j "reads").getD "?"}"
+    -- `l4sbm11 query` ends its answer with one line break (Harness/Sbm11Query.lean)
+    let stdout ← IO.getStdout
+    stdout.write bytes
+    stdout.write "\n".toUTF8
+    pure 0
+
 def usageLines : List String :=
   [ "l4factoidal — Lean 4 RDF/SPARQL/OWL/CL engine, command line"
   , ""
@@ -1358,6 +1392,10 @@ def usageLines : List String :=
   , "      quantifies a sequence marker, naming the condition."
   , "  version"
   , "      Print the engine version and the dispatch ABI version."
+  , "  sbm11-query GEN (--query FILE | --query-string Q) [--base IRI] [--sparql12]"
+  , "              [--reference]"
+  , "      SPARQL over the SBM11 generation directory GEN through the wasm ops"
+  , "      sbm11Open / sbm11Query / sbm11Close (host positioned reads)."
   , "  ops"
   , "      List every dispatch ABI operation (the l4wasm-cli / wasm"
   , "      surface this CLI is built on)."
@@ -1379,6 +1417,7 @@ def main (args : List String) : IO UInt32 := do
   | "ops" :: _ => opsCmd
   | "parse" :: rest => parseCmd rest
   | "query" :: rest => queryCmd rest
+  | "sbm11-query" :: rest => sbm11QueryCmd rest
   | "tdb2-dump" :: [dir] =>
       match ← L4Factoidal.Tdb2.readDatabaseNQuads dir with
       | .error e => IO.eprintln s!"l4factoidal tdb2-dump: {e}"; pure 1

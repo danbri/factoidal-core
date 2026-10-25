@@ -418,6 +418,12 @@ emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_hpke.c" -o "$LIB_OBJ/
 # answers the section 17.6 error.  Without this object the link fails on
 # l4_ext_call.
 emcc $CFLAGS -c "$LEAN_DIR/ffi/l4_ext.c" -o "$LIB_OBJ/l4_ext.o"
+# The positioned reads of a store whose bytes the host supplies
+# (Wasm/HostRead.lean: l4_host_read_at, l4_host_size; issue 1009).  EM_JS
+# thunks onto globalThis.__factoidalReadAt and __factoidalFileSize, which
+# npm/factoidal/lib/sbm11.mjs installs.  Without this object the link fails
+# on l4_host_read_at.
+emcc $CFLAGS -c "$LEAN_DIR/ffi/l4_hostread.c" -o "$LIB_OBJ/l4_hostread.o"
 echo "  library objects: $(ls "$LIB_OBJ"/*.o | wc -l | tr -d ' ')"
 
 # ---------------------------------------------------------------------

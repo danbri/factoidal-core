@@ -198,6 +198,19 @@ extern_lib libl4exthost pkg := do
   let name := nameToStaticLib "l4exthost"
   buildStaticLib (pkg.staticLibDir / name) #[ext]
 
+/-- The positioned reads of a store whose bytes a host supplies
+    (`Wasm/HostRead.lean`'s `l4_host_read_at` and `l4_host_size`,
+    https://github.com/danbri/factoidal/issues/1009). Native: one `pread` of
+    `source/file`; the Emscripten build compiles the same file with EM_JS
+    bodies (`Wasm/build-wasm.sh`). -/
+target l4_hostread.o pkg : FilePath :=
+  buildHaclO pkg "l4_hostread" (pkg.dir / "ffi" / "l4_hostread.c")
+
+extern_lib libl4hostread pkg := do
+  let hr ← l4_hostread.o.fetch
+  let name := nameToStaticLib "l4hostread"
+  buildStaticLib (pkg.staticLibDir / name) #[hr]
+
 @[default_target] lean_lib L4Factoidal
 
 -- Observable cardinality of the dataset handle store: 41 assertions over
@@ -233,6 +246,7 @@ extern_lib libl4exthost pkg := do
              `Wasm.Ops.Block,
              `Wasm.Ops.Store,
              `Wasm.Ops.StoreHandles,
+             `Wasm.HostRead, `Wasm.Ops.Sbm11,
              `Wasm.Ops.StoreServe,
              `Wasm.Ops.Proof,
              `Wasm.Ops.Explain,
