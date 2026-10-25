@@ -299,6 +299,19 @@ executable edge only.
 
 ## Pitfalls already paid for (don't rediscover)
 
+0. **A contract relation must fix the answer it admits; prove that it
+   does.** `EvalContract` (PRs 63 and 66) said "the reference answer, or an
+   answer that `Allowed` admits", and PR descriptions called that agreement
+   with SPARQL. On 2026-10-25 `allowed_not_unique` (PR 86) proved that
+   `Allowed` admits two answers with different row counts for one pattern:
+   `VALUES ?x { _:t }` joined with itself gives 1 row and 0 rows, through
+   the `equiv` constructor, whose `BindEq` ignores pairs that an earlier
+   pair of the same name hides. The backend was correct; the contract
+   proved less than the text claimed for two days. Rule: when a relation
+   stands in for "the specified answer", prove a uniqueness lemma
+   (`R a → R b → a ≈ b`) and that the reference answer satisfies it before
+   any description says "equal to the specification" (`AllowedS.unique`,
+   `allowedS_ref`, `Storage/BackendAgreement.lean`).
 1. **Derived `BEq` is lawless.** `deriving BEq` gives an instance
    with no `LawfulBEq`, so `x == x` is unprovable by `simp` and
    `beq_iff_eq` is unavailable. Derive `DecidableEq` INSTEAD and let
