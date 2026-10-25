@@ -327,11 +327,18 @@ private def bnMix : ReaderInput :=
       "<http://e/d> <http://e/p> <http://e/o> .\n" ++
       "<http://e/t> <http://e/q> <http://e/o> _:k .\n" }
 
+/-- The same elements with the same multiplicities: equal lengths, and each
+element of `a` occurs as often in `b` as in `a`. Loops only (`count`, `all`):
+`List.isPerm` reaches `List.erase`, a recursion on the list length
+(`tools/lean-tail-recursion-audit.py --gate`). -/
+private def sameMultiset {α} [BEq α] (a b : List α) : Bool :=
+  a.length == b.length && a.all (fun x => a.count x == b.count x)
+
 /-- Two answers agree: the same boolean or graph; for SELECT, the same header
 and the same rows up to order (the backend's rows are an answer `Allowed`
 admits, `EvalContract`, which fixes the multiset and not the order). -/
 private def sameAnswer : Answer → Answer → Bool
-  | .select h1 r1, .select h2 r2 => h1.isPerm h2 && r1.isPerm r2
+  | .select h1 r1, .select h2 r2 => sameMultiset h1 h2 && sameMultiset r1 r2
   | a, b => a == b
 
 private def agrees (d : ReaderInput) (s : String) : Bool :=
