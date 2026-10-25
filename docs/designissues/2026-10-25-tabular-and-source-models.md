@@ -1,6 +1,6 @@
 # One table type and one source description for the pipeline
 
-Status: proposal, for owner review. No code yet.
+Status: accepted by the owner on 2026-10-25 (PR https://github.com/danbri/factoidal-core/pull/111 merged; answers in section 6). No code yet.
 Date: 2026-10-25. Base: `main` at `5fbd1ca`.
 Tracking: https://github.com/danbri/factoidal/issues/1033; network retrieval records: https://github.com/danbri/factoidal/issues/1035.
 
@@ -221,9 +221,36 @@ One `Retrieval` per request, redirects included, attached to the
 | response | status, headers (redacted), body length, body SHA-256 |
 | redirects | the chain of (status, Location), each with its own record |
 | network | resolved remote IP address and port, protocol (HTTP/1.1, 2, 3) |
-| TLS | version, cipher suite, server certificate chain: for each certificate the SHA-256 of its DER encoding, subject, issuer, validity period (RFC 5280); the verification result |
+| TLS | see "TLS and certificate details" below |
 | timing | start time (xsd:dateTime) and the durations of DNS, connect, TLS, first byte and total, the phases of W3C Resource Timing and of the HAR format |
 | outcome | completed, refused (with the rule), or failed (with the error) |
+
+### TLS and certificate details
+
+Owner, 2026-10-25, verbatim: "Re recording tls, keep more of the crypto
+details too, certs etc". For an HTTPS (or other TLS) exchange the record keeps:
+
+- the negotiated protocol version (RFC 8446 for TLS 1.3), cipher suite, key
+  exchange group (for example X25519), the server's signature algorithm, the
+  ALPN protocol, the SNI host name sent, and whether the session was resumed;
+- the full server certificate chain as sent, each certificate in DER (RFC
+  5280), with its SHA-256 fingerprint, subject, issuer, serial number,
+  validity period, subject alternative names, key type and size, and the
+  SHA-256 of its SubjectPublicKeyInfo;
+- the verification result: the trust anchor that the chain was verified to,
+  the trust store's name and version, the host-name check, and each error;
+- Certificate Transparency: the signed certificate timestamps received (RFC
+  6962), from the certificate, the TLS extension or OCSP;
+- revocation: the stapled OCSP response if one was sent (RFC 6960), with its
+  status and times;
+- the response's `Strict-Transport-Security` header (RFC 6797), already in the
+  headers, noted with the TLS facts.
+
+Never recorded: session keys, the master secret or any key log, the client's
+private key, and the client certificate. Server certificates are public data,
+but the chain and the SNI name show which hosts the user contacted, so they
+are in the local record only. The shared subset keeps the leaf certificate's
+SHA-256 fingerprint, as before.
 
 The host performs the IO and reports these facts. Lean builds the record,
 applies the redaction and decides what reaches the evidence (iron rule 11:
@@ -286,11 +313,13 @@ comparing H checks the assumption.
 
 Each step lands with its tests; steps 1 and 3 do not depend on each other.
 
-## 6. Open questions for the owner
+## 6. Owner answers (2026-10-25)
 
-1. SELECT gives `table` (a multiset with optional order) instead of `answer`.
-   That changes the npm wire names. There are no users, so this record proposes
-   the change, not a compatibility layer.
-2. Should `SourceDesc.name` default to the locator's URL when the caller gives
-   no name? Doing so mixes the two roles again; leaving it empty is the
-   alternative this record prefers.
+1. SELECT gives `table` instead of `answer`. Owner, verbatim: "select give
+   table? Sure". ASK stays `answer`; CONSTRUCT and DESCRIBE give `dataset`
+   (https://github.com/danbri/factoidal/issues/1026).
+2. `SourceDesc.name` has no default. Owner, verbatim: "no default". When the
+   caller gives no name, the field is empty; the locator is never copied into
+   it.
+3. Keep more TLS and certificate detail: "Re recording tls, keep more of the
+   crypto details too, certs etc" (section 4, "TLS and certificate details").
