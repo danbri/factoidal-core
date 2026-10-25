@@ -57,6 +57,7 @@ import L4Factoidal.Dataflow.Evaluator
 import L4Factoidal.Dataflow.EvaluatorTests
 import L4Factoidal.Dataflow.Compose
 import L4Factoidal.Dataflow.EndToEnd
+import L4Factoidal.Dataflow.Sources
 import L4Factoidal.Dataflow.Registry
 import L4Factoidal.Dataflow.RegistryTests
 import L4Factoidal.RDF.ConciseBoundedDescription
