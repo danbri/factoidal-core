@@ -2,7 +2,7 @@
 
 Status: proposal, for owner review. No code yet.
 Date: 2026-10-25. Base: `main` at `5fbd1ca`.
-Tracking: https://github.com/danbri/factoidal/issues/1033.
+Tracking: https://github.com/danbri/factoidal/issues/1033; network retrieval records: https://github.com/danbri/factoidal/issues/1035.
 
 Owner, 2026-10-25, verbatim:
 
@@ -192,7 +192,87 @@ The graph is built in Lean (CLAUDE.md anti-pattern 36: no RDF decisions in the
 JS). This is https://github.com/danbri/factoidal/issues/563. The Canary Wharf
 hub page builds such a graph by hand today; its shape is the test oracle.
 
-## 4. Order of work (proposed)
+## 4. Network retrieval records
+
+Owner, 2026-10-25, verbatim: "Any transactions with the global web also need
+to go into the evidence pipeline system - if we dereference http or https at
+least. maybe ftp, gopher and others, keep records of headers, ip addresses,
+certs, timing etc etc. Treat this information as potentially high risk re
+security/privacy." Tracking: https://github.com/danbri/factoidal/issues/1035.
+
+### Scope
+
+Every network read that the engine or a host makes for a pipeline step:
+`Locator.http`, `Locator.sparqlEndpoint` (SERVICE and the Protocol client),
+the LWS and Solid clients, and the fetches that a reader makes on its own
+(JSON-LD remote contexts, CSVW metadata discovery, RML sources, GRDDL
+transformations). HTTP and HTTPS first. A scheme with no record type (FTP,
+Gopher, and the rest) is refused with an error that names the scheme. It is
+not fetched without a record.
+
+### The record
+
+One `Retrieval` per request, redirects included, attached to the
+`SourceDesc` it produced:
+
+| Field | Content |
+|---|---|
+| request | method, URL (redacted as below), headers sent (redacted) |
+| response | status, headers (redacted), body length, body SHA-256 |
+| redirects | the chain of (status, Location), each with its own record |
+| network | resolved remote IP address and port, protocol (HTTP/1.1, 2, 3) |
+| TLS | version, cipher suite, server certificate chain: for each certificate the SHA-256 of its DER encoding, subject, issuer, validity period (RFC 5280); the verification result |
+| timing | start time (xsd:dateTime) and the durations of DNS, connect, TLS, first byte and total, the phases of W3C Resource Timing and of the HAR format |
+| outcome | completed, refused (with the rule), or failed (with the error) |
+
+The host performs the IO and reports these facts. Lean builds the record,
+applies the redaction and decides what reaches the evidence (iron rule 11:
+the host side is pure IO; the decisions are in the formal source).
+
+### Security and privacy: default deny
+
+The record can contain credentials, personal data and information about the
+user's network. Rules:
+
+1. Credentials never reach a record. The values of `Authorization`,
+   `Proxy-Authorization`, `Cookie` and `Set-Cookie` are removed, and so are
+   query parameters whose names are on a token list (for example `token`,
+   `key`, `access_token`, `sig`). The header NAME stays, with the value
+   replaced by `[removed]`, so the record still shows that a credential was
+   sent. A secret is not hashed instead of removed, because the hash of a
+   low-entropy secret can be reversed by trying candidates.
+2. The local IP address, the local port and any client certificate are not
+   recorded.
+3. Two levels of record. The full redacted record goes to a local store with
+   access control (a file the user owns, or browser storage), never to the
+   package's shared state. Shared or published provenance (the PROV-O graph
+   of section 3, a hub page, a pipeline record that someone shares) gets the
+   SUBSET: URL (redacted), status, media type, body SHA-256, server
+   certificate fingerprint, start time. Shared provenance gets more only when
+   the caller opts in for that pipeline.
+4. Retention: the local store has a limit (age or count) that the caller sets,
+   with a default.
+5. The response body is in the record only as its length and checksum. The
+   body itself is the data, and it goes where the data goes.
+
+### Proofs
+
+A retrieval cannot be proved. The evidence names it as an assumption: "a GET
+of URL U at time T returned status S and a body with SHA-256 H, from address
+A, with server certificate F". Every later step is proved or tested over the
+bytes with checksum H, as in section 3. Running the pipeline again and
+comparing H checks the assumption.
+
+### Tests that come with the first implementation
+
+- A redaction test that fails if any of the listed header values, or a value
+  of a listed query parameter, appears anywhere in a record or in the shared
+  subset.
+- An expected-failure case for each refused scheme, naming the issue.
+- A record built from a recorded HTTPS exchange (a fixture), checked field by
+  field.
+
+## 5. Order of work (proposed)
 
 1. `Table`, `Cell`, `SolutionSeq ↔ Table` with the round-trip theorem; `Cell.toTerm`
    shared by CSVW and RML. Expected-failure test for the RML datatype loss.
@@ -201,10 +281,12 @@ hub page builds such a graph by hand today; its shape is the test oracle.
    record.
 4. PROV-O and DCAT output of the evidence (issue 563).
 5. Planner catalog locators.
+6. Network retrieval records (section 4), with the redaction tests, before
+   any new code path fetches over the network.
 
 Each step lands with its tests; steps 1 and 3 do not depend on each other.
 
-## 5. Open questions for the owner
+## 6. Open questions for the owner
 
 1. SELECT gives `table` (a multiset with optional order) instead of `answer`.
    That changes the npm wire names. There are no users, so this record proposes
