@@ -1,12 +1,14 @@
 {
   "provenance": "extracted verbatim from tests/unit/xpath_tests.ml (the F* XPath 1.0 Stage-1 regression battery, 100 cases, F* score 100 pass 0 fail), which is itself spec-cited against XPath 1.0 REC-xpath-19991116. Case #9 (\"desugaring\") restates the original two-evaluation string comparison as a single boolean-equality expression over the same two counts; every other case is a direct str()/boolean()/parse_fails call lifted from the .ml with its fixture, expression and expected value unchanged.",
   "fixtures": {
-    "a": "<root a=\"1\" b=\"two\"><child id=\"c1\">first</child><child id=\"c2\">second</child><child id=\"c3\"><!--note-->third</child><ns:tagged>nsval</ns:tagged></root>",
+    "a": "<root xmlns:ns=\"urn:example:ns\" a=\"1\" b=\"two\"><child id=\"c1\">first</child><child id=\"c2\">second</child><child id=\"c3\"><!--note-->third</child><ns:tagged>nsval</ns:tagged></root>",
     "b": "<a><b><c><d>leaf</d></c></b></a>",
     "c": "<nums><n v=\"3\"/><n v=\"7\"/><n v=\"10\"/></nums>",
     "d": "<doc><?pi-target pi data?><a>x</a><?other more?></doc>",
     "ns": "<root xmlns=\"http://default.example/\" xmlns:b=\"http://b.example/\" xmlns:a=\"http://a.example/\"><child/></root>"
   },
+  "namespaces": {"ns": "urn:example:ns"},
+  "namespaces_note": "The expression context of every case (XPath 1.0 \u00a71). Fixture a declares the same prefix: Namespaces in XML 1.0 makes an undeclared prefix not namespace-well-formed, and the evaluator refuses such a document (https://github.com/danbri/factoidal/issues/1029).",
   "cases": [
     {"name": "§2.2 child axis count", "fixture": "a", "expr": "count(/root/child)", "kind": "string", "expected": "3"},
     {"name": "§2.2 attribute value via '='", "fixture": "a", "expr": "string(/root/@a)", "kind": "string", "expected": "1"},

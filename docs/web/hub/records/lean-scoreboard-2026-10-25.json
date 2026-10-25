@@ -1,6 +1,6 @@
 {
-  "generated_utc": "2026-10-25T20:35:52Z",
-  "git_head": "db5c9fd50",
+  "generated_utc": "2026-10-25T21:04:12Z",
+  "git_head": "7cb7e8005",
   "host": "Linux x86_64",
   "runner_timeout_s": 1200,
   "only": "",
@@ -2481,17 +2481,17 @@
       "runner": "l4xpath",
       "job": "l4xpath",
       "status": "ok",
-      "pass": 29,
-      "fail": 71,
+      "pass": 100,
+      "fail": 0,
       "other": 0,
       "total": 100,
       "parse": true,
       "note": "* repository unit battery, not a W3C suite",
       "command": "formal/lean4/.lake/build/bin/l4xpath",
       "log": ".claude-runs/lean-scoreboard/l4xpath.log",
-      "seconds": 0,
-      "exit_code": "1",
-      "raw_summary_line": "xpath 1.0 unit battery: 29 pass, 71 fail (out of 100)",
+      "seconds": 1,
+      "exit_code": "0",
+      "raw_summary_line": "xpath 1.0 unit battery: 100 pass, 0 fail (out of 100)",
       "detail": ""
     },
     {
@@ -2538,9 +2538,9 @@
       "runner": "l4mathml",
       "job": "l4mathml",
       "status": "ok",
-      "pass": 56,
-      "fail": 5,
-      "other": 20,
+      "pass": 81,
+      "fail": 0,
+      "other": 0,
       "total": 81,
       "parse": true,
       "note": "other = markup the reader did not parse",
@@ -2548,7 +2548,7 @@
       "log": ".claude-runs/lean-scoreboard/l4mathml.log",
       "seconds": 0,
       "exit_code": "0",
-      "raw_summary_line": "content-mathml evaluation: 56 pass, 5 fail, 20 markup-not-read (out of 81)",
+      "raw_summary_line": "content-mathml evaluation: 81 pass, 0 fail, 0 markup-not-read (out of 81)",
       "detail": ""
     },
     {
@@ -3540,5 +3540,5 @@
       "detail": ""
     }
   ],
-  "binaries_note": "The runners were the Lean native binaries built on 2026-10-25 from origin/main at 7bd6a8d02 (Lean 4.33.1, linux-x86_64); l4turtle-probe was rebuilt from db5c9fd50, which changes only Harness/TurtleProbe.lean (files outside a manifest are counted apart). git_head is the hub branch commit the script ran from. Fixtures: the vendored W3C and other suites under third_party/testing. l4diff measured nothing: no F* binary in this container (the factoidal-builds release listing returned HTTP 403). RIF Core, XPath 1.0, MathML and the XSD datatype instance tests changed for the worse since the 2026-10-20 record: https://github.com/danbri/factoidal/issues/1029."
+  "binaries_note": "The runners were the Lean native binaries built on 2026-10-25 from origin/main at 7bd6a8d02 (Lean 4.33.1, linux-x86_64); l4turtle-probe was rebuilt from db5c9fd50, which changes only Harness/TurtleProbe.lean (files outside a manifest are counted apart). git_head is the hub branch commit the script ran from. Fixtures: the vendored W3C and other suites under third_party/testing. l4diff measured nothing: no F* binary in this container (the factoidal-builds release listing returned HTTP 403). l4xpath and l4mathml were rebuilt and rerun from 7cb7e8005, which declares the namespaces their fixtures use (XPath 100 pass, 0 fail; MathML 81 pass, 0 fail). RIF Core and the XSD datatype instance tests changed since the 2026-10-20 record: https://github.com/danbri/factoidal/issues/1029 and https://github.com/danbri/factoidal/issues/1030."
 }
