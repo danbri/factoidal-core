@@ -55,9 +55,9 @@ predicate whose exact count is zero. So the interface keeps the complete law.
 
 | constructor | dataset record | named assumptions |
 |---|---|---|
-| `LawfulDataset.indexed d hset hdist` | `indexedDatasetBackend d` | none |
-| `LawfulDataset.ofCertified c` | `indexedDatasetBackend c.val` | none when every graph name is an IRI; else `graphNameKeysDistinct` |
-| `LawfulDataset.ofDataset d` | `indexedDatasetBackend d` | `datasetIsSet`; also `graphNameKeysDistinct` when a graph name is a blank node |
+| `LawfulDataset.indexed d hset` | `indexedDatasetBackend d` | none |
+| `LawfulDataset.ofCertified c` | `indexedDatasetBackend c.val` | none (IRI and blank-node graph names) |
+| `LawfulDataset.ofDataset d` | `indexedDatasetBackend d` | `datasetIsSet` |
 | `LawfulDataset.ofDefault s` | default `s.backend`, no named graph | those of `s` |
 
 The SBM11 store (`Storage/Sbm11/IdQuery.lean`, `Store m`) is not an instance.
@@ -93,7 +93,7 @@ open L4Factoidal.SPARQL
 open L4Factoidal.SPARQL.StoreBackend
 open L4Factoidal.SPARQL.StorePlan
 open L4Factoidal.SPARQL.StoreDataset
-open L4Factoidal.SPARQL.DatasetRestriction (ngKey indexedDatasetBackend_named)
+open L4Factoidal.SPARQL.DatasetRestriction (indexedDatasetBackend_named)
 open L4Factoidal.Storage.PlannerSoundness
 
 /-! ## 1. Named assumptions -/
@@ -117,15 +117,12 @@ inductive AssumptionName where
   /-- The dataset is a set of quads (`Dataset.IsSet`), or the graph a set of
   triples (`Graph.KeyNodup`), at a call site that does not carry the proof. -/
   | datasetIsSet
-  /-- No two named graphs of the dataset have one key (`distinctNames`): an
-  IRI name and a blank-node name can spell one string. -/
-  | graphNameKeysDistinct
   deriving Repr, DecidableEq, Inhabited
 
 /-- Every assumption name, in declaration order. -/
 def AssumptionName.all : List AssumptionName :=
   [.backendReadOpsExact, .cottasReadOpsExact, .rmlPushdownInvisible, .rmlVirtualIsMaterialised,
-   .datasetIsSet, .graphNameKeysDistinct]
+   .datasetIsSet]
 
 theorem AssumptionName.mem_all (a : AssumptionName) : a ∈ AssumptionName.all := by
   cases a <;> simp [AssumptionName.all]
@@ -363,77 +360,38 @@ def runSelect (L : LawfulDataset) (env : EvalEnv) (q : Query) : Option SolutionS
 def runAsk (L : LawfulDataset) (env : EvalEnv) (q : Query) : Option Bool :=
   runAskQueryBackendDataset env q L.backend
 
-/-- The dataset record of a dataset that is a set with distinct graph-name
-keys: proved (`indexedDatasetBackend_exact`). -/
-def indexed (d : Dataset) (hset : d.IsSet) (hdist : distinctNames d.named) : LawfulDataset where
+/-- The dataset record of a dataset that is a set: proved
+(`indexedDatasetBackend_exact`). -/
+def indexed (d : Dataset) (hset : d.IsSet) : LawfulDataset where
   backend := indexedDatasetBackend d
   den := d.den
-  law := fun _ => indexedDatasetBackend_exact hset hdist
+  law := fun _ => indexedDatasetBackend_exact hset
 
-/-- Graph names that are all IRIs and pairwise distinct have distinct keys. -/
-theorem distinctNames_of_iris : ∀ (l : List NamedGraph), (l.map (·.name)).Nodup →
-    Storage.QuadDataset.namesAreIris { default := [], named := l } = true → distinctNames l
-  | [], _, _ => trivial
-  | ng :: rest, hn, hi => by
-    simp only [Storage.QuadDataset.namesAreIris, List.all_cons, Bool.and_eq_true] at hi
-    rw [List.map_cons, List.nodup_cons] at hn
-    refine ⟨fun x hx e => ?_, distinctNames_of_iris rest hn.2 hi.2⟩
-    have hx' := List.all_eq_true.mp hi.2 x hx
-    revert e hx'
-    cases hng : ng.name with
-    | bnode _ => simp [hng] at hi
-    | iri j =>
-      cases hxn : x.name with
-      | bnode _ => intro _ h; simp at h
-      | iri k =>
-        intro e _
-        simp only [ngKey, hng, hxn] at e
-        have : k = j := Subtype.ext e
-        subst this
-        exact hn.1 (List.mem_map.mpr ⟨x, hx, by rw [hxn, hng]⟩)
-
-/-- The dataset record of a dataset that carries its set proof. When every
-graph name is an IRI the law is proved; else it rests on
-`graphNameKeysDistinct`. The record is `indexedDatasetBackend c.val` in both
-cases. -/
-def ofCertified (c : CertifiedDataset) : LawfulDataset :=
-  if hi : Storage.QuadDataset.namesAreIris c.val = true then
-    indexed c.val c.property (distinctNames_of_iris c.val.named c.property.names (by
-      simpa [Storage.QuadDataset.namesAreIris] using hi))
-  else
-    { backend := indexedDatasetBackend c.val
-      den := c.val.den
-      assumed_contracts := [⟨.graphNameKeysDistinct, distinctNames c.val.named⟩]
-      law := fun h => indexedDatasetBackend_exact c.property (h _ List.mem_cons_self) }
+/-- The dataset record of a dataset that carries its set proof: proved, for
+every graph name, an IRI or a blank node. Until 2026-10-25 a blank-node graph
+name made it rest on the named assumption `graphNameKeysDistinct`: the record
+spelled a graph name as a string, so an IRI and a blank-node label could name
+one backend (https://github.com/danbri/factoidal/issues/975). -/
+def ofCertified (c : CertifiedDataset) : LawfulDataset := indexed c.val c.property
 
 /-- The dataset record of a dataset at a call site that carries no set proof:
-it rests on `datasetIsSet`, and on `graphNameKeysDistinct` when a graph name
-is a blank node. The record is `indexedDatasetBackend d` in both cases. -/
-def ofDataset (d : Dataset) : LawfulDataset :=
-  if hi : Storage.QuadDataset.namesAreIris d = true then
-    { backend := indexedDatasetBackend d
-      den := d.den
-      assumed_contracts := [⟨.datasetIsSet, d.IsSet⟩]
-      law := fun h => indexedDatasetBackend_exact (h _ List.mem_cons_self)
-        (distinctNames_of_iris d.named (h _ List.mem_cons_self).names (by
-          simpa [Storage.QuadDataset.namesAreIris] using hi)) }
-  else
-    { backend := indexedDatasetBackend d
-      den := d.den
-      assumed_contracts := [⟨.datasetIsSet, d.IsSet⟩, ⟨.graphNameKeysDistinct, distinctNames d.named⟩]
-      law := fun h => indexedDatasetBackend_exact (h _ List.mem_cons_self)
-        (h _ (List.mem_cons_of_mem _ List.mem_cons_self)) }
+it rests on `datasetIsSet`. -/
+def ofDataset (d : Dataset) : LawfulDataset where
+  backend := indexedDatasetBackend d
+  den := d.den
+  assumed_contracts := [⟨.datasetIsSet, d.IsSet⟩]
+  law := fun h => indexedDatasetBackend_exact (h _ List.mem_cons_self)
 
 theorem ofCertified_backend (c : CertifiedDataset) :
-    (ofCertified c).backend = indexedDatasetBackend c.val := by
-  unfold ofCertified; split <;> rfl
+    (ofCertified c).backend = indexedDatasetBackend c.val := rfl
 
-theorem ofCertified_proved {c : CertifiedDataset}
-    (hi : Storage.QuadDataset.namesAreIris c.val = true) : (ofCertified c).Proved := by
-  unfold ofCertified Proved; rw [dif_pos hi]; rfl
+theorem ofCertified_den (c : CertifiedDataset) : (ofCertified c).den = c.val.den := rfl
 
-theorem ofDataset_backend (d : Dataset) : (ofDataset d).backend = indexedDatasetBackend d := by
-  unfold ofDataset; split <;> rfl
+/-- The record of a certified dataset rests on no named assumption, whatever
+its graph names. -/
+theorem ofCertified_proved (c : CertifiedDataset) : (ofCertified c).Proved := rfl
+
+theorem ofDataset_backend (d : Dataset) : (ofDataset d).backend = indexedDatasetBackend d := rfl
 
 /-- The default-graph denotation of a store: the triples RDF-term-equal to a
 triple of its graph, and no named graph. -/
@@ -486,10 +444,10 @@ private def opsNil : BackendReadOps := { search := fun _ => [], estimate := fun 
 #guard names (union [hdt opsNil, ofList gNil Graph.keyNodup_nil]).assumed_contracts = [.backendReadOpsExact]
 #guard names (LawfulDataset.ofDataset Dataset.empty).assumed_contracts = [.datasetIsSet]
 #guard names (LawfulDataset.ofDataset { default := [], named := [{ name := .bnode "g", graph := [] }] }).assumed_contracts
-  = [.datasetIsSet, .graphNameKeysDistinct]
+  = [.datasetIsSet]
 #guard names (LawfulDataset.ofCertified ⟨Dataset.empty, Dataset.isSet_empty⟩).assumed_contracts = []
 #guard names (LawfulDataset.ofDefault (hdt opsNil)).assumed_contracts = [.backendReadOpsExact]
-#guard AssumptionName.all.length = 6
+#guard AssumptionName.all.length = 5
 
 end Guards
 
@@ -499,7 +457,6 @@ end Guards
 #print axioms LawfulStore.search_nodupKeys
 #print axioms LawfulStore.backendsExact_map
 #print axioms LawfulStore.union_caps
-#print axioms LawfulDataset.distinctNames_of_iris
 #print axioms LawfulDataset.ofCertified_backend
 #print axioms LawfulDataset.ofCertified_proved
 #print axioms LawfulDataset.ofDataset_backend

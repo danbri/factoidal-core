@@ -68,26 +68,46 @@ def restrictDataset (keep : Triple → Bool) (d : Dataset) : Dataset :=
   { default := d.default.filter keep
   , named := restrictNamed keep d.named }
 
-/-- No two named graphs share a key. `Storage/QuadDataset.lean`'s
-`datasetOfQuads` gives this: it records each graph name once, at its first
-occurrence. -/
+/-- No two named graphs share a name. A dataset that is a set has this
+(`Dataset.IsSet.names`, `distinctNames_of_nodup`); `Storage/QuadDataset.lean`'s
+`datasetOfQuads` gives it too: it records each graph name once, at its first
+occurrence. Until 2026-10-25 the relation compared the key strings of the
+names, where an IRI and a blank-node label could spell one key
+(https://github.com/danbri/factoidal/issues/975). -/
 def distinctNames : List NamedGraph → Prop
   | [] => True
-  | ng :: rest => (∀ x ∈ rest, ngKey x ≠ ngKey ng) ∧ distinctNames rest
+  | ng :: rest => (∀ x ∈ rest, x.name ≠ ng.name) ∧ distinctNames rest
+
+/-- Graph names without a repeat are distinct names. -/
+theorem distinctNames_of_nodup : ∀ {l : List NamedGraph}, (l.map (·.name)).Nodup → distinctNames l
+  | [], _ => trivial
+  | ng :: rest, h => by
+      rw [List.map_cons, List.nodup_cons] at h
+      exact ⟨fun x hx e => h.1 (e ▸ List.mem_map_of_mem hx), distinctNames_of_nodup h.2⟩
+
+/-- Two graph names that are both the IRI `n` are one name. -/
+theorem iriNamed_unique {a b : Subject} {n : Iri} (ha : iriNamed a n = true)
+    (hb : iriNamed b n = true) : a = b := by
+  cases a with
+  | bnode _ => simp [iriNamed] at ha
+  | iri i =>
+    cases b with
+    | bnode _ => simp [iriNamed] at hb
+    | iri j =>
+      simp only [iriNamed, beq_iff_eq] at ha hb
+      exact congrArg Subject.iri (Subtype.ext (ha.trans hb.symm))
 
 theorem lookupGraph_none_of_keys (n : Iri) :
-    ∀ l : List NamedGraph, (∀ x ∈ l, ngKey x ≠ n) → lookupGraph l n = none
+    ∀ l : List NamedGraph, (∀ x ∈ l, iriNamed x.name n = false) → lookupGraph l n = none
   | [], _ => rfl
   | ng :: rest, h => by
       simp only [lookupGraph]
-      rw [if_neg (by
-        intro hk
-        exact h ng List.mem_cons_self (by simpa using hk))]
+      rw [if_neg (by rw [h ng List.mem_cons_self]; exact Bool.false_ne_true)]
       exact lookupGraph_none_of_keys n rest (fun x hx => h x (List.mem_cons_of_mem _ hx))
 
 theorem restrictNamed_keys {keep : Triple → Bool} (n : Iri) :
-    ∀ l : List NamedGraph, (∀ x ∈ l, ngKey x ≠ n) →
-      ∀ x ∈ restrictNamed keep l, ngKey x ≠ n
+    ∀ l : List NamedGraph, (∀ x ∈ l, iriNamed x.name n = false) →
+      ∀ x ∈ restrictNamed keep l, iriNamed x.name n = false
   | [], _ => by intro x hx; simp [restrictNamed] at hx
   | ng :: rest, h => by
       intro x hx
@@ -96,20 +116,20 @@ theorem restrictNamed_keys {keep : Triple → Bool} (n : Iri) :
       · exact restrictNamed_keys n rest
           (fun y hy => h y (List.mem_cons_of_mem _ hy)) x hx
       · rcases List.mem_cons.mp hx with hx | hx
-        · rw [hx, ngKey_graph]
+        · rw [hx, name_graph]
           exact h ng List.mem_cons_self
         · exact restrictNamed_keys n rest
             (fun y hy => h y (List.mem_cons_of_mem _ hy)) x hx
 
 theorem lookupGraph_cons_pos {ng : NamedGraph} {rest : List NamedGraph} {n : Iri}
-    (hk : ngKey ng = n) : lookupGraph (ng :: rest) n = some ng.graph := by
+    (hk : iriNamed ng.name n = true) : lookupGraph (ng :: rest) n = some ng.graph := by
   simp only [lookupGraph]
-  rw [if_pos (show ((ngKey ng == n) = true) by simp [hk])]
+  rw [if_pos hk]
 
 theorem lookupGraph_cons_neg {ng : NamedGraph} {rest : List NamedGraph} {n : Iri}
-    (hk : ¬ ngKey ng = n) : lookupGraph (ng :: rest) n = lookupGraph rest n := by
+    (hk : ¬ iriNamed ng.name n = true) : lookupGraph (ng :: rest) n = lookupGraph rest n := by
   simp only [lookupGraph]
-  rw [if_neg (show ¬((ngKey ng == n) = true) by simpa using hk)]
+  rw [if_neg hk]
 
 /-- The named-graph half of `DatasetRestricted`, for the canonical
 restriction. -/
@@ -122,12 +142,14 @@ theorem lookupGraph_restrictNamed (keep : Triple → Bool) (n : Iri) :
   | [], _ => Or.inl rfl
   | ng :: rest, hdist => by
       rw [restrictNamed_cons]
-      by_cases hk : ngKey ng = n
+      by_cases hk : iriNamed ng.name n = true
       · have hlook : lookupGraph (ng :: rest) n = some ng.graph := lookupGraph_cons_pos hk
         have hnone : lookupGraph (restrictNamed keep rest) n = none := by
           refine lookupGraph_none_of_keys n _ (restrictNamed_keys n rest ?_)
-          intro x hx hkx
-          exact hdist.1 x hx (by rw [hkx, ← hk])
+          intro x hx
+          cases hkx : iriNamed x.name n with
+          | false => rfl
+          | true => exact absurd (iriNamed_unique hkx hk) (hdist.1 x hx)
         by_cases hz : (ng.graph.filter keep).isEmpty = true
         · refine Or.inr ⟨by rw [if_pos hz]; exact hnone, ?_⟩
           intro g hg
@@ -137,7 +159,7 @@ theorem lookupGraph_restrictNamed (keep : Triple → Bool) (n : Iri) :
         · refine Or.inl ?_
           rw [if_neg hz, hlook,
             lookupGraph_cons_pos (ng := { ng with graph := ng.graph.filter keep })
-              (rest := restrictNamed keep rest) (by rw [ngKey_graph]; exact hk)]
+              (rest := restrictNamed keep rest) (by rw [name_graph]; exact hk)]
           rfl
       · rw [lookupGraph_cons_neg hk]
         by_cases hz : (ng.graph.filter keep).isEmpty = true
@@ -145,7 +167,7 @@ theorem lookupGraph_restrictNamed (keep : Triple → Bool) (n : Iri) :
           exact lookupGraph_restrictNamed keep n rest hdist.2
         · rw [if_neg hz,
             lookupGraph_cons_neg (ng := { ng with graph := ng.graph.filter keep })
-              (rest := restrictNamed keep rest) (by rw [ngKey_graph]; exact hk)]
+              (rest := restrictNamed keep rest) (by rw [name_graph]; exact hk)]
           exact lookupGraph_restrictNamed keep n rest hdist.2
 
 /-- **The canonical restriction satisfies the relation.** -/
@@ -679,24 +701,18 @@ theorem plannerSoundnessAskDen (env : EvalEnv) {keep : Triple → Bool}
 
 open L4Factoidal.SPARQL.StoreBackend (BackendExact)
 
-/-- The key of a graph name in a `DatasetBackend` (`indexedDatasetBackend`
-spells a name this way). -/
-def subjectKey : Subject → Iri
-  | .iri i => i.val
-  | .bnode b => b
-
 /-- A dataset record reads the dataset denotation `D`: the default backend
-reads the default graph; each named backend reads the graph of a name of `D`
-whose key is the backend's name; every name of `D` has a backend; no two
-backends share a name. -/
+reads the default graph; each named backend reads the graph of a name of `D`,
+the backend's name; every name of `D` has a backend; no two backends share a
+name. -/
 structure DatasetBackendExact (D : DatasetDen) (dsb : DatasetBackend) : Prop where
   default : BackendExact dsb.default (D.graph none)
-  named : ∀ ngb ∈ dsb.named, ∃ n, D.names n ∧ subjectKey n = ngb.name ∧
+  named : ∀ ngb ∈ dsb.named, ∃ n, D.names n ∧ n = ngb.name ∧
     BackendExact ngb.backend (D.graph (some n))
-  names : ∀ n, D.names n → ∃ ngb ∈ dsb.named, subjectKey n = ngb.name
+  names : ∀ n, D.names n → ∃ ngb ∈ dsb.named, n = ngb.name
   namesNodup : (dsb.named.map (·.name)).Nodup
 
-theorem distinctNames_nodup : ∀ {l : List NamedGraph}, distinctNames l → (l.map ngKey).Nodup
+theorem distinctNames_nodup : ∀ {l : List NamedGraph}, distinctNames l → (l.map (·.name)).Nodup
   | [], _ => List.nodup_nil
   | ng :: rest, h => by
       rw [List.map_cons, List.nodup_cons]
@@ -705,31 +721,27 @@ theorem distinctNames_nodup : ∀ {l : List NamedGraph}, distinctNames l → (l.
       exact h.1 x hx e
 
 /-- **The planner's dataset record is lawful**: `indexedDatasetBackend d`
-reads `d.den`, for a set with distinct graph-name keys. -/
-theorem indexedDatasetBackend_exact {d : Dataset} (hset : d.IsSet) (hdist : distinctNames d.named) :
+reads `d.den`, for every dataset that is a set. Until 2026-10-25 this also
+took `distinctNames d.named`, because the record keyed a blank-node graph name
+by its label string (https://github.com/danbri/factoidal/issues/975). -/
+theorem indexedDatasetBackend_exact {d : Dataset} (hset : d.IsSet) :
     DatasetBackendExact d.den (indexedDatasetBackend d) where
   default := ⟨d.default, OWL.RL.Index.Wf.ofGraph _, hset.default,
     Dataset.den_default_iff_keyMem (ds := d)⟩
   named ngb hngb := by
     rw [indexedDatasetBackend_named] at hngb
     obtain ⟨ng, hng, rfl⟩ := List.mem_map.mp hngb
-    refine ⟨ng.name, List.mem_map.mpr ⟨ng, hng, rfl⟩, ?_, ?_⟩
-    · show subjectKey ng.name = ngKey ng
-      unfold ngKey subjectKey
-      cases ng.name <;> rfl
-    · exact ⟨ng.graph, OWL.RL.Index.Wf.ofGraph _, hset.graphs ng hng,
-        Dataset.IsSet.graph_iff_keyMem_named hset hng⟩
+    exact ⟨ng.name, List.mem_map.mpr ⟨ng, hng, rfl⟩, rfl,
+      ⟨ng.graph, OWL.RL.Index.Wf.ofGraph _, hset.graphs ng hng,
+        Dataset.IsSet.graph_iff_keyMem_named hset hng⟩⟩
   names n hn := by
     obtain ⟨ng, hng, rfl⟩ := List.mem_map.mp hn
-    refine ⟨⟨ngKey ng, indexedGraphBackend ng.graph⟩, ?_, ?_⟩
-    · rw [indexedDatasetBackend_named]
-      exact List.mem_map.mpr ⟨ng, hng, rfl⟩
-    · show subjectKey ng.name = ngKey ng
-      unfold ngKey subjectKey
-      cases ng.name <;> rfl
+    refine ⟨⟨ng.name, indexedGraphBackend ng.graph⟩, ?_, rfl⟩
+    rw [indexedDatasetBackend_named]
+    exact List.mem_map.mpr ⟨ng, hng, rfl⟩
   namesNodup := by
     rw [indexedDatasetBackend_named, List.map_map]
-    exact distinctNames_nodup hdist
+    exact hset.names
 
 #print axioms PatternKept_mono
 #print axioms patternKept_of_quadPredicates
@@ -740,6 +752,8 @@ theorem indexedDatasetBackend_exact {d : Dataset} (hset : d.IsSet) (hdist : dist
 #print axioms eq_of_namedSub
 #print axioms restrictDataset_eq_of_cover
 #print axioms indexedDatasetBackend_exact
+#print axioms distinctNames_of_nodup
+#print axioms iriNamed_unique
 #print axioms plannerSoundnessSelectDen
 #print axioms plannerSoundnessAskDen
 

@@ -11,13 +11,16 @@ acceptance", item 5): document text → `RdfReader` → `LawfulDataset` →
 1. `r.certified inp`: the reader `r : RdfReader` reads the document text
    `inp` (the decoded text, its RDF mode, its base IRI) to a dataset with its
    set proof, or stops with the parse error;
-2. `loadStore c`: the lawful store of the dataset. When every graph name is an
-   IRI it is `LawfulDataset.ofCertified c` (the record the wasm query ops
-   build, `queryParsedCertified`); its law is proved
+2. `loadStore c`: the lawful store of the dataset, `LawfulDataset.ofCertified
+   c` (the record the wasm query ops build, `queryParsedCertified`), for every
+   dataset the reader accepts. Its law is proved
    (`LawfulDataset.ofCertified_proved`), so it carries no named assumption.
-   When a graph name is a blank node there is no store (`none`), and the
-   evaluator reads the dataset with the reference evaluator (the backend
-   record cannot read a blank-node graph name pair for pair, `NamedRel`);
+   A graph name is an IRI or a blank node (RDF 1.1 Concepts section 4); the
+   record names its backends by the graph name itself, so a blank-node graph
+   name has its own backend, `GRAPH ?g` binds `?g` to the blank node, and no
+   IRI can share the name (`NamedRel`, `Dataset.IsSet.names`). Until
+   2026-10-25 the record spelled a graph name as a string; a blank-node graph
+   name then gave no store and the reference evaluator answered;
 3. `ev.run`: the evaluator `ev : LawfulEvaluator` evaluates the parsed query
    `q` over the dataset and the store's backend, with an environment whose
    dataset is the read dataset (SPARQL 1.1 section 18.6).
@@ -31,8 +34,10 @@ q`, and
 * (reader) the parse of the document succeeds with a raw dataset `raw`, the
   read dataset is the set of quads of `raw`, and its denotation is
   `raw.den` (`RdfReader.set`, `SetOf.den_eq`);
-* (store) every store the pipeline loads has the denotation of the read
-  dataset and a proved law (`LawfulDataset.Proved`: no named assumption);
+* (store) the pipeline loads a store for every accepted document, the store
+  has the denotation of the read dataset and a proved law
+  (`LawfulDataset.Proved`: no named assumption), and the evaluator input
+  carries its backend (`x.backend = some (loadStore c).backend`);
 * (evaluator) the answer satisfies `EvalContract x`: it is the answer of the
   foundation's SPARQL 1.1 evaluation over the read dataset (`referenceAnswer`:
   `evalSelect`, `evalAsk`, `evalConstruct`, `evalDescribe`), OR, for SELECT and
@@ -54,8 +59,8 @@ Premises, and only these:
   `pipeline_error`), not an assumption.
 
 The reader `RdfReader` has no assumption field (every reader law is proved).
-The store of the pipeline is `ofCertified` with IRI graph names, whose law is
-proved (no `AssumptionName` is used). `pipeline_sound_proved` drops `hev` for
+The store of the pipeline is `ofCertified`, whose law is proved for every graph
+name (no `AssumptionName` is used). `pipeline_sound_proved` drops `hev` for
 the inputs outside `ev.assumed_contractOn`; that premise names the domain of
 the assumption, it does not restate the conclusion.
 
@@ -66,13 +71,15 @@ contains `pipeline`, `ReaderContract`, `SetOf`, `den` or `LawfulDataset`.
 `ev.assumed_contractOn`; that restriction is the named assumption of item 2,
 which item 5 admits as a premise. On the other inputs the conclusion comes
 from the field `ev.sound` and from `EvalInput.Wf`, which this module proves
-(`pipelineInput_wf`, from `LawfulDataset.backendReads_ofCertified`).
+(`pipelineInput_wf`, from `LawfulDataset.backendReads_ofCertified`, which has
+no premise on the graph names).
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.Dataflow.Reader
 import L4Factoidal.Dataflow.Store
 import L4Factoidal.Dataflow.Evaluator
+import L4Factoidal.Dataflow.Compose
 import L4Factoidal.SPARQL.Parser
 
 namespace L4Factoidal.Dataflow
@@ -85,30 +92,24 @@ open L4Factoidal.RDF.Source
 
 /-! ## The join of the store and the evaluator -/
 
-/-- **The backend of the lawful store of a certified dataset with IRI graph
-names reads the dataset** (`BackendReads`, the premise of `EvalInput.Wf`). -/
-theorem LawfulDataset.backendReads_ofCertified (c : CertifiedDataset)
-    (hi : Storage.QuadDataset.namesAreIris c.val = true) :
+/-- **The backend of the lawful store of a certified dataset reads the
+dataset** (`BackendReads`, the premise of `EvalInput.Wf`), for IRI and
+blank-node graph names alike. -/
+theorem LawfulDataset.backendReads_ofCertified (c : CertifiedDataset) :
     BackendReads (LawfulDataset.ofCertified c).backend c.val := by
   rw [LawfulDataset.ofCertified_backend]
-  exact backendReads_indexed c.val c.property hi
-
-theorem LawfulDataset.ofCertified_den (c : CertifiedDataset) :
-    (LawfulDataset.ofCertified c).den = c.val.den := by
-  unfold LawfulDataset.ofCertified; split <;> rfl
+  exact backendReads_indexed c.val c.property
 
 /-! ## The pipeline -/
 
-/-- The lawful store of a read dataset: `ofCertified` when every graph name is
-an IRI, else none. -/
-def loadStore (c : CertifiedDataset) : Option LawfulDataset :=
-  if Storage.QuadDataset.namesAreIris c.val = true then some (LawfulDataset.ofCertified c) else none
+/-- The lawful store of a read dataset. -/
+def loadStore (c : CertifiedDataset) : LawfulDataset := LawfulDataset.ofCertified c
 
 /-- The evaluator input of the pipeline: the environment reads the read
 dataset (section 18.6), and the backend is the store's. -/
 def pipelineInput (env : EvalEnv) (c : CertifiedDataset) (q : Query) : EvalInput :=
   { env := { env with dataset := some c.val }, ds := c.val,
-    backend := (loadStore c).map (·.backend), query := q }
+    backend := some (loadStore c).backend, query := q }
 
 /-- **The pipeline**: read, load, evaluate. -/
 def pipeline (r : RdfReader) (ev : LawfulEvaluator) (inp : ReaderInput) (env : EvalEnv)
@@ -116,16 +117,10 @@ def pipeline (r : RdfReader) (ev : LawfulEvaluator) (inp : ReaderInput) (env : E
   (r.certified inp).map fun c => ev.run (pipelineInput env c q)
 
 /-- The store of the pipeline has the read dataset's denotation and a proved
-law. -/
+law, for every graph name. -/
 theorem loadStore_spec (c : CertifiedDataset) :
-    ∀ L, loadStore c = some L → L.den = c.val.den ∧ L.Proved := by
-  intro L h
-  unfold loadStore at h
-  split at h
-  · next hi =>
-    cases h
-    exact ⟨LawfulDataset.ofCertified_den c, LawfulDataset.ofCertified_proved hi⟩
-  · cases h
+    (loadStore c).den = c.val.den ∧ (loadStore c).Proved :=
+  ⟨LawfulDataset.ofCertified_den c, LawfulDataset.ofCertified_proved c⟩
 
 /-- The pipeline input is well formed. -/
 theorem pipelineInput_wf (env : EvalEnv) (c : CertifiedDataset) (q : Query) :
@@ -134,12 +129,9 @@ theorem pipelineInput_wf (env : EvalEnv) (c : CertifiedDataset) (q : Query) :
   isSet := c.property
   backendReads := by
     intro dsb h
-    simp only [pipelineInput, loadStore] at h
-    split at h
-    · next hi =>
-      cases h
-      exact LawfulDataset.backendReads_ofCertified c hi
-    · cases h
+    simp only [pipelineInput, Option.some.injEq] at h
+    subst h
+    exact LawfulDataset.backendReads_ofCertified c
 
 theorem certified_of_run {r : RdfReader} {inp : ReaderInput} {out : Dataset × PrefixList}
     (h : r.run inp = .ok out) : r.certified inp = .ok ⟨out.1, r.isSet h⟩ := by
@@ -162,16 +154,46 @@ theorem pipeline_error (r : RdfReader) (ev : LawfulEvaluator) (inp : ReaderInput
   · next out h' => rw [hr] at h'; cases h'
   · next e' h' => rw [hr] at h'; cases h'; rfl
 
+/-! ## The reader as a source -/
+
+/-- The pipeline input is the query input of `Compose.lean` over the store of
+the read dataset: the read dataset is already in the order of its backend. -/
+theorem pipelineInput_eq (env : EvalEnv) (c : CertifiedDataset) (q : Query) :
+    pipelineInput env c q = queryInput env (loadStore c) c.val q := by
+  unfold pipelineInput queryInput loadStore
+  rw [Sourced.ofCertified_align c]
+
+/-- **The reader as a source** (source (a) of the composition table,
+`docs/2026-10-25-composition.md`): the output of an accepted document. -/
+def readerSource (r : RdfReader) {inp : ReaderInput} {out : Dataset × PrefixList}
+    (h : r.run inp = .ok out) : Sourced :=
+  Sourced.ofCertified ⟨out.1, r.isSet h⟩
+
+/-- **Source theorem (a), the reader**: the record of an accepted document has
+the denotation of the parse (`raw.den`) and no named assumption. -/
+theorem readerSource_spec (r : RdfReader) {inp : ReaderInput} {out : Dataset × PrefixList}
+    (h : r.run inp = .ok out) :
+    (∃ raw, parseDocumentRaw r.extra r.fmt inp.mode inp.base inp.text = .ok raw ∧
+      SetOf out.1 raw ∧ (readerSource r h).den = raw.den) ∧
+    (readerSource r h).assumptions = [] := by
+  obtain ⟨raw, hraw, hs⟩ := r.set inp out h
+  exact ⟨⟨raw, hraw, hs, SetOf.den_eq hs⟩, rfl⟩
+
 /-! ## The end-to-end theorem -/
 
 /-- **End to end (issue 975, item 5).** Document text → `RdfReader` →
 `LawfulDataset` → `LawfulEvaluator` → `Answer`. When the reader accepts the
 document, the pipeline answers `ev.run x`; the read dataset is the set of the
-parse with the parse's denotation; every loaded store has that denotation and
-a proved law; and the answer satisfies the evaluator contract against the
+parse with the parse's denotation; the pipeline loads a store for every graph
+name, with that denotation and a proved law, and the evaluator input carries
+its backend; and the answer satisfies the evaluator contract against the
 foundation's SPARQL 1.1 semantics (`EvalContract`: the reference answer, or
 for SELECT and ASK the modifier layer over a WHERE answer that `Allowed`
 admits).
+
+Since 2026-10-25 this is a corollary: the reader source theorem
+(`readerSource_spec`) and the query theorem over any lawful record
+(`query_sound`, `Dataflow/Compose.lean`), joined by `pipelineInput_eq`.
 
 Premises: `hev`, the named assumption of the evaluator
 (`LawfulEvaluator.assumed_contractOn`), and `h`, the case "the reader
@@ -184,15 +206,20 @@ theorem pipeline_sound (r : RdfReader) (ev : LawfulEvaluator) (hev : ev.Assumpti
     pipeline r ev inp env q = .ok (ev.run x) ∧
       (∃ raw, parseDocumentRaw r.extra r.fmt inp.mode inp.base inp.text = .ok raw ∧
         SetOf out.1 raw ∧ out.1.den = raw.den) ∧
-      (∀ L, loadStore c = some L → L.den = out.1.den ∧ L.Proved) ∧
+      ((loadStore c).den = out.1.den ∧ (loadStore c).Proved ∧
+        x.backend = some (loadStore c).backend) ∧
       EvalContract x (ev.run x) := by
   intro c x
-  obtain ⟨raw, hraw, hs⟩ := r.set inp out h
-  refine ⟨?_, ⟨raw, hraw, hs, SetOf.den_eq hs⟩, loadStore_spec c, ?_⟩
+  obtain ⟨⟨raw, hraw, hs, hden⟩, hpr⟩ := readerSource_spec r h
+  have hq := (readerSource r h).query_sound ev hev
+    (by rw [hpr]; exact Assumed.nil) env q
+  refine ⟨?_, ⟨raw, hraw, hs, hden⟩, ⟨rfl, hpr, rfl⟩, ?_⟩
   · unfold pipeline
     rw [certified_of_run h]
     rfl
-  · exact ev.contract hev x (pipelineInput_wf env c q)
+  · show EvalContract (pipelineInput env c q) (ev.run (pipelineInput env c q))
+    rw [pipelineInput_eq]
+    exact hq.2
 
 /-- The end-to-end theorem without the evaluator's named assumption, on the
 inputs outside `ev.assumed_contractOn`. -/
@@ -214,7 +241,8 @@ theorem shipped_pipeline_sound (r : RdfReader) (h1 : BackendOutsideFragmentAgree
     pipeline r shippedEvaluator inp env q = .ok (shippedEvaluator.run x) ∧
       (∃ raw, parseDocumentRaw r.extra r.fmt inp.mode inp.base inp.text = .ok raw ∧
         SetOf out.1 raw ∧ out.1.den = raw.den) ∧
-      (∀ L, loadStore c = some L → L.den = out.1.den ∧ L.Proved) ∧
+      ((loadStore c).den = out.1.den ∧ (loadStore c).Proved ∧
+        x.backend = some (loadStore c).backend) ∧
       EvalContract x (shippedEvaluator.run x) :=
   pipeline_sound r shippedEvaluator (shippedEvaluator_assumptionHolds h1 h2) inp env q h
 
@@ -235,6 +263,8 @@ theorem shipped_pipeline_construct (r : RdfReader) (inp : ReaderInput) (env : Ev
 #print axioms loadStore_spec
 #print axioms pipelineInput_wf
 #print axioms pipeline_error
+#print axioms pipelineInput_eq
+#print axioms readerSource_spec
 #print axioms pipeline_sound
 #print axioms pipeline_sound_proved
 #print axioms shipped_pipeline_sound
@@ -270,11 +300,68 @@ private def bn : ReaderInput := { text := "<http://e/s> <http://e/p> <http://e/o
 -- a parse error stops the pipeline
 #guard (match run? { text := "<http://e/s> <http://e/p> ." } "ASK {}" with
   | some (.error _) => true | _ => false)
--- a blank-node graph name: no store, the reference evaluator answers
+-- a blank-node graph name: the pipeline loads a store (issue 975)
 #guard (match nq.certified bn with
-  | .ok c => (loadStore c).isNone | .error _ => false)
+  | .ok c => match (loadStore c).backend.named.map (·.name) with
+    | [Subject.bnode _] => true
+    | _ => false
+  | .error _ => false)
 #guard (match nq.certified doc with
-  | .ok c => (loadStore c).isSome | .error _ => false)
+  | .ok c => (loadStore c).backend.named.length == 1 | .error _ => false)
 #guard rows? (run? bn "SELECT * WHERE { GRAPH ?g { ?s ?p ?o } }") = some 1
+
+/-! ### Blank-node graph names: the backend answers, equal to the reference
+
+`agrees d s`: the document reads, the query parses, the pipeline input has a
+store (`backend.isSome`), the backend path answers (`backendSelect?` or
+`backendAsk?` is `some`), and the pipeline's answer is `referenceAnswer` of
+the same input (`evalSelect`, `evalAsk` over the read dataset), SELECT rows up
+to order. -/
+
+/-- A document with a blank-node graph name, an IRI graph name, a default
+graph, and the label `g` used both as a graph name and as a subject. -/
+private def bnMix : ReaderInput :=
+  { text := "<http://e/s> <http://e/p> <http://e/o> _:g .\n" ++
+      "<http://e/s> <http://e/p> \"x\" <http://e/h> .\n" ++
+      "_:g <http://e/p> <http://e/o2> _:g .\n" ++
+      "<http://e/d> <http://e/p> <http://e/o> .\n" ++
+      "<http://e/t> <http://e/q> <http://e/o> _:k .\n" }
+
+/-- Two answers agree: the same boolean or graph; for SELECT, the same header
+and the same rows up to order (the backend's rows are an answer `Allowed`
+admits, `EvalContract`, which fixes the multiset and not the order). -/
+private def sameAnswer : Answer → Answer → Bool
+  | .select h1 r1, .select h2 r2 => h1.isPerm h2 && r1.isPerm r2
+  | a, b => a == b
+
+private def agrees (d : ReaderInput) (s : String) : Bool :=
+  match parseSparql s none .v11, nq.certified d with
+  | .ok q, .ok c =>
+    let x := pipelineInput {} c q
+    let onBackend := match q.form with
+      | .select _ => (backendSelect? x).isSome
+      | .ask => (backendAsk? x).isSome
+      | _ => false
+    x.backend.isSome && onBackend &&
+      (match pipeline nq shippedEvaluator d {} q with
+       | .ok a => sameAnswer a (referenceAnswer x)
+       | .error _ => false)
+  | _, _ => false
+
+#guard agrees bnMix "SELECT ?g ?s ?o WHERE { GRAPH ?g { ?s <http://e/p> ?o } }"
+#guard agrees bnMix "SELECT * WHERE { GRAPH ?g { ?s ?p ?o } }"
+#guard agrees bnMix "SELECT ?g WHERE { GRAPH ?g { ?g ?p ?o } }"
+#guard agrees bnMix "SELECT ?g WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 2"
+#guard agrees bnMix "SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g"
+#guard agrees bnMix "SELECT * WHERE { GRAPH <http://e/h> { ?s ?p ?o } }"
+#guard agrees bnMix "SELECT * WHERE { ?s ?p ?o }"
+#guard agrees bnMix "ASK { GRAPH ?g { <http://e/t> ?p ?o } }"
+#guard agrees bnMix "ASK { GRAPH <http://e/g> { ?s ?p ?o } }"
+-- the GRAPH ?g answer binds a blank node: four rows, two graphs a blank node
+#guard rows? (run? bnMix "SELECT * WHERE { GRAPH ?g { ?s ?p ?o } }") = some 4
+#guard (match run? bnMix "SELECT ?g WHERE { GRAPH ?g { <http://e/t> ?p ?o } }" with
+  | some (.ok (.select _ [mu])) => match Binding.lookup "g" mu with
+    | some (.bnode _) => true | _ => false
+  | _ => false)
 
 end L4Factoidal.Dataflow
