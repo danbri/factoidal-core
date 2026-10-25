@@ -455,3 +455,454 @@ id = "npm:./fn#rhoDfClosure"
 stages = ["rhoDfReasoner"]
 covers = "part"
 note = "alias of fn coreRdfsClosure."
+
+# Bound 2026-10-25 (issue 975 item 3, branch claude/bind-entrypoints-975). Each
+# note names the call chain checked.
+
+[[entry]]
+id = "wasm:storeServeRequest"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator", "updateStage"]
+covers = "part"
+note = "Wasm/Ops/StoreServe.lean storeServeRequest: HTTP.Wire.frameRequest, then StoreEndpoint.handle; a query goes protocolOutcome -> evalPayload, which is ev.run of a LawfulEvaluator (default shippedEvaluator; L4Factoidal/SPARQL/StoreEndpoint.lean, evalPayload_backendOrReference) over View.evalInput (the view's LawfulDataset.ofDataset record, View.of / backendOfRetained); an update goes applyUpdateIn (updateStage's run). Not covered: the HTTP framing and response bytes, the protocol decoder and negotiation, the results formats, the Graph Store Protocol (GraphStoreService.serve, parseQuadsAs), the service description, the delta-log batch (appendBytes)."
+
+[[entry]]
+id = "wasm:storeServeOpen"
+stages = ["LawfulDataset.ofDataset"]
+covers = "part"
+note = "Wasm/Ops/StoreServe.lean storeServeOpen: storeOpen (backendOfRetained: LawfulDataset.ofDataset) for the base, then View.of (LawfulDataset.ofDataset when every graph name is an IRI) after the delta-log replay. Not covered: the manifest decode, the block reads and decode, the delta-log decode and replay (openLog, applyDeltaEntries), the serve configuration."
+
+[[entry]]
+id = "wasm:tdb2ServeOpen"
+stages = ["LawfulDataset.ofDataset"]
+covers = "part"
+note = "Wasm/Ops/StoreServe.lean tdb2ServeOpen: tdb2DatasetOf (the TDB2 file read), then View.of (LawfulDataset.ofDataset when every graph name is an IRI). Not covered: the TDB2 reader (L4Factoidal.Tdb2.Read) and the journal check."
+
+[[entry]]
+id = "npm:./serve#listen"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator", "updateStage"]
+covers = "part"
+note = "npm/factoidal/bin/serve.mjs listen: the wasm op storeServeOpen (or tdb2ServeOpen with tdb2), then storeServeRequest and storeServeCommit for each connection's bytes (see wasm:storeServeRequest). Not covered: the sockets, the file reads and the delta-log append (host IO), and the steps wasm:storeServeRequest names."
+
+[[entry]]
+id = "npm:./serve#listenOnWorker"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator", "updateStage"]
+covers = "part"
+note = "npm/factoidal/bin/serve.mjs listenOnWorker (bin/serve-worker.mjs calls listen on a worker thread): the wasm op storeServeOpen (or tdb2ServeOpen with tdb2), then storeServeRequest and storeServeCommit for each connection's bytes (see wasm:storeServeRequest). Not covered: the sockets, the file reads and the delta-log append (host IO), and the steps wasm:storeServeRequest names."
+
+[[entry]]
+id = "npm:./serve#openServedStore"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator", "updateStage"]
+covers = "part"
+note = "npm/factoidal/bin/serve.mjs openServedStore: the wasm op storeServeOpen (or tdb2ServeOpen with tdb2), then storeServeRequest and storeServeCommit for each connection's bytes (see wasm:storeServeRequest). Not covered: the sockets, the file reads and the delta-log append (host IO), and the steps wasm:storeServeRequest names."
+
+[[entry]]
+id = "npm:./serve#openServedTdb2"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator", "updateStage"]
+covers = "part"
+note = "npm/factoidal/bin/serve.mjs openServedTdb2: the wasm op storeServeOpen (or tdb2ServeOpen with tdb2), then storeServeRequest and storeServeCommit for each connection's bytes (see wasm:storeServeRequest). Not covered: the sockets, the file reads and the delta-log append (host IO), and the steps wasm:storeServeRequest names."
+
+[[entry]]
+id = "cli:serve"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator", "updateStage"]
+covers = "part"
+note = "npm/factoidal/bin/factoidal.mjs commandServe: serve.mjs listen or listenOnWorker (see npm:./serve#listen); --file packs the file first (wasm pack ops, no stage). Not covered: as npm:./serve#listen, and the pack."
+
+[[entry]]
+id = "wasm:queryRaw"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader", "rdfsReasoner", "owlRlReasoner", "rhoDfReasoner", "shippedEvaluator"]
+covers = "part"
+note = "Wasm/Ops/QueryExtras.lean queryRawBy: parseTextToDatasetBy (readerOf, the RdfReader table), closeDefaultGraph (RDFS: rdfsReasoner.run; OWL-RL: owlRlReasoner.run; x-rdfscore: rhoDfReasoner.run), then evalRaw: shippedEvaluator.run with no backend (shippedRaw_reference: the reference answer). Not covered: the x-rdfsplus closure (RDFS.rdfsPlusClosureFix, no stage), the SPARQL grammar, the results formats and the table text (renderRaw)."
+
+[[entry]]
+id = "wasm:datasetQueryRaw"
+stages = ["rdfsReasoner", "owlRlReasoner", "rhoDfReasoner", "shippedEvaluator"]
+covers = "part"
+note = "Wasm/Ops/Handles.lean datasetQueryRaw: queryRawParsed over the stored dataset (closeDefaultGraph through the SoundReasoner values, then evalRaw: shippedEvaluator.run with no backend). Not covered: as wasm:queryRaw without the reader."
+
+[[entry]]
+id = "npm:.#queryRaw"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader", "rdfsReasoner", "owlRlReasoner", "rhoDfReasoner", "shippedEvaluator"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs queryRaw calls the wasm op queryRaw (see wasm:queryRaw). Not covered: as wasm:queryRaw, and the JSON parse of the answer."
+
+[[entry]]
+id = "npm:./browser#queryRaw"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader", "rdfsReasoner", "owlRlReasoner", "rhoDfReasoner", "shippedEvaluator"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs queryRaw calls the wasm op queryRaw (see wasm:queryRaw). Not covered: as wasm:queryRaw, and the JSON parse of the answer."
+
+[[entry]]
+id = "npm:./fn#entail"
+stages = ["rdfsReasoner", "owlRlReasoner", "rhoDfReasoner", "shippedEvaluator"]
+covers = "part"
+note = "npm/factoidal/fn.js entail: engineApi.query(ds, SELECT ?s ?p ?o, {entail}) (lib/api.mjs queryDatasetHandle), which calls the wasm op datasetQueryRaw for a regime other than none (see wasm:datasetQueryRaw). Not covered: x-rdfsplus (no stage), regime none (the wasm op datasetQuery), the FnDataset built from the rows, engineOf (datasetFromQuadsJson for an array-backed FnDataset)."
+
+[[entry]]
+id = "wasm:queryHdt"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
+covers = "part"
+note = "Wasm/Ops/QueryHdt.lean queryHdt: HDT.parseInventory, readTriples, searchTriples, then queryParsedDataset: queryParsedDatasetWith over LawfulDataset.ofDataset, ev.run of a LawfulEvaluator (default shippedEvaluator). Not covered: the HDT reader (not the LawfulStore.hdt record), the results envelope."
+
+[[entry]]
+id = "npm:.#queryHdt"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs queryHdt (fn.js re-exports it) calls the wasm op queryHdt through callBlobIO (lib/lean-entry.mjs). Not covered: as wasm:queryHdt."
+
+[[entry]]
+id = "npm:./browser#queryHdt"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs queryHdt (fn.js re-exports it) calls the wasm op queryHdt through callBlobIO (lib/lean-entry.mjs). Not covered: as wasm:queryHdt."
+
+[[entry]]
+id = "npm:./fn#queryHdt"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs queryHdt (fn.js re-exports it) calls the wasm op queryHdt through callBlobIO (lib/lean-entry.mjs). Not covered: as wasm:queryHdt."
+
+[[entry]]
+id = "wasm:storeOpen"
+stages = ["LawfulDataset.ofDataset"]
+covers = "part"
+note = "Wasm/Ops/StoreHandles.lean storeOpen: the handle's record is backendOfRetained (LawfulDataset.ofDataset; for a quad layout only when every graph name is an IRI). Not covered: the manifest decode, the artifact checks and the block reads and decode (IBK3, IBK4, IBK5), the handle table."
+
+[[entry]]
+id = "npm:.#openStore"
+stages = ["LawfulDataset.ofDataset"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs openStore: storeQueryPlan or storeManifestInspect for the keys, then the wasm op storeOpen (see wasm:storeOpen). Not covered: as wasm:storeOpen, the generation and file reads (lib/store.mjs)."
+
+[[entry]]
+id = "npm:.#queryStore"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs queryStore: openStore (the wasm op storeOpen) and Store.query, the wasm op storeHandleQuery (see wasm:storeHandleQuery). Not covered: as wasm:storeHandleQuery and wasm:storeOpen."
+
+[[entry]]
+id = "npm:./browser#openStore"
+stages = ["LawfulDataset.ofDataset"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs openStore: storeQueryPlan or storeManifestInspect for the keys, then the wasm op storeOpen (see wasm:storeOpen). Not covered: as wasm:storeOpen, the generation and file reads (lib/store.mjs)."
+
+[[entry]]
+id = "npm:./browser#queryStore"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs queryStore: openStore (the wasm op storeOpen) and Store.query, the wasm op storeHandleQuery (see wasm:storeHandleQuery). Not covered: as wasm:storeHandleQuery and wasm:storeOpen."
+
+[[entry]]
+id = "npm:./store#openStoreHandle"
+stages = ["LawfulDataset.ofDataset"]
+covers = "part"
+note = "npm/factoidal/bin/store.mjs openStoreHandle calls the wasm op storeOpen (see wasm:storeOpen). Not covered: as wasm:storeOpen, the file reads."
+
+[[entry]]
+id = "npm:./store-worker#openStoreHandleOnWorker"
+stages = ["LawfulDataset.ofDataset"]
+covers = "part"
+note = "npm/factoidal/bin/store-worker-host.mjs openStoreHandleOnWorker: openStoreHandle (store.mjs, the wasm op storeOpen) in this process or on the worker (bin/store-worker.mjs, kind 'open'). Not covered: as npm:./store#openStoreHandle, the worker transport."
+
+[[entry]]
+id = "npm:./store#queryStoreHandle"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
+covers = "part"
+note = "npm/factoidal/bin/store.mjs queryStoreHandle calls the wasm op storeHandleQuery (see wasm:storeHandleQuery). Not covered: as wasm:storeHandleQuery."
+
+[[entry]]
+id = "npm:./store#queryStore"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
+covers = "part"
+note = "npm/factoidal/bin/store.mjs queryStore: storeQueryPlan (the plan, no stage), then the wasm op storeQuery (see wasm:storeQuery): Wasm/Ops/Store.lean decodes the planned blocks and runs queryParsedDatasetWith over LawfulDataset.ofDataset, ev.run of a LawfulEvaluator (default shippedEvaluator). Not covered: as wasm:storeQuery, the plan and the file reads."
+
+[[entry]]
+id = "npm:./store-worker#queryStoreOnWorker"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
+covers = "part"
+note = "npm/factoidal/bin/store-worker-host.mjs queryStoreOnWorker: store.mjs queryStore here or on the worker (bin/store-worker.mjs, kind 'query-once'), the wasm op storeQuery (see wasm:storeQuery): Wasm/Ops/Store.lean decodes the planned blocks and runs queryParsedDatasetWith over LawfulDataset.ofDataset, ev.run of a LawfulEvaluator (default shippedEvaluator). Not covered: as npm:./store#queryStore, the worker transport."
+
+[[entry]]
+id = "cli:query"
+stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
+covers = "part"
+note = "npm/factoidal/bin/factoidal.mjs commandQuery: planQuery (storeQueryPlan), then store.mjs queryStore (or queryStoreOnWorker on a stack overflow), the wasm op storeQuery (see wasm:storeQuery): Wasm/Ops/Store.lean decodes the planned blocks and runs queryParsedDatasetWith over LawfulDataset.ofDataset, ev.run of a LawfulEvaluator (default shippedEvaluator). Not covered: as npm:./store#queryStore, --explain, and the rendering of the answer (the table text; Turtle output by the wasm op serializeTurtle, which is not the Turtle RdfWriter)."
+
+[[entry]]
+id = "npm:./fn#query"
+stages = ["LawfulDataset.ofCertified", "lawfulWhereStage", "shippedEvaluator"]
+covers = "part"
+note = "npm/factoidal/fn.js query: engineOf(ds) (the FnDataset's engine Dataset, or datasetFromQuadsJson of its quads), then engineApi.query (lib/api.mjs queryDatasetHandle): the wasm op datasetQuery or datasetQuery12 (see wasm:datasetQuery). Not covered: as wasm:datasetQuery, options entail and output (the wasm op datasetQueryRaw), the FnDataset wrapper."
+
+[[entry]]
+id = "npm:./fn#canonicalize"
+stages = ["rdfcStage"]
+covers = "part"
+note = "npm/factoidal/fn.js canonicalize: engineApi.canonicalize (lib/api.mjs: Dataset.toString('rdfc'), the wasm op datasetSerialize with tag rdfc, canonicalizeOf, RDF.Canonical.canonicalize). Not covered: engineOf (datasetFromQuadsJson), the JS cache."
+
+[[entry]]
+id = "npm:./fn#hash"
+stages = ["rdfcStage"]
+covers = "part"
+note = "npm/factoidal/fn.js hash: canonicalize (see npm:./fn#canonicalize), then the SHA-256 hex digest by node:crypto. Not covered: the digest (node:crypto, not the engine), a backend's precomputed hash, the JS cache."
+
+[[entry]]
+id = "npm:.#canonicalHash"
+stages = ["rdfcStage"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then Dataset.toString('rdfc'): datasetSerialize with tag rdfc, canonicalizeOf (rdfcStage's run). Not covered: datasetGraphAsDefault."
+
+[[entry]]
+id = "npm:./browser#canonicalHash"
+stages = ["rdfcStage"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then Dataset.toString('rdfc'): datasetSerialize with tag rdfc, canonicalizeOf (rdfcStage's run). Not covered: datasetGraphAsDefault."
+
+[[entry]]
+id = "npm:./fn#vcEddsaCreateFromCanonical"
+stages = ["vcSignStage"]
+covers = "part"
+note = "npm/factoidal/fn.js re-exports engineApi.vcEddsaCreateFromCanonical: the wasm op vcEddsaCreateFromCanonical (see npm:.#vcEddsaCreateFromCanonical)."
+
+[[entry]]
+id = "npm:./fn#vcEddsaVerifyFromCanonical"
+stages = ["vcVerifyStage"]
+covers = "part"
+note = "npm/factoidal/fn.js re-exports engineApi.vcEddsaVerifyFromCanonical: the wasm op vcEddsaVerifyFromCanonical (see npm:.#vcEddsaVerifyFromCanonical)."
+
+[[nonstage]]
+id = "npm:.#engine"
+reason = "the engine name string (driver.engineName, 'lean4-wasm')"
+
+[[nonstage]]
+id = "npm:.#loadEngine"
+reason = "loads the wasm engine and returns its raw dispatch handle; reads no RDF data; the ops it reaches are the wasm: entries"
+
+[[nonstage]]
+id = "npm:.#ready"
+reason = "loads the engine (lib/api.mjs ready: ctx()); reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#formats"
+reason = "reflection: the format table (the wasm op datasetFormats), reads no data"
+
+[[nonstage]]
+id = "npm:.#listStores"
+reason = "reflection: the open store handles and their sizes (the wasm op storeHandleList), reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#setAssetsUrl"
+reason = "configuration: the directory the engine files are loaded from (browser.js)"
+
+[[nonstage]]
+id = "npm:.#getAssetsUrl"
+reason = "configuration: the directory the engine files are loaded from (browser.js)"
+
+[[nonstage]]
+id = "npm:.#default"
+reason = "the API object; each member is its own npm:{sub}#<name> entry"
+
+[[nonstage]]
+id = "npm:./browser#engine"
+reason = "the engine name string (driver.engineName, 'lean4-wasm')"
+
+[[nonstage]]
+id = "npm:./browser#loadEngine"
+reason = "loads the wasm engine and returns its raw dispatch handle; reads no RDF data; the ops it reaches are the wasm: entries"
+
+[[nonstage]]
+id = "npm:./browser#ready"
+reason = "loads the engine (lib/api.mjs ready: ctx()); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#formats"
+reason = "reflection: the format table (the wasm op datasetFormats), reads no data"
+
+[[nonstage]]
+id = "npm:./browser#listStores"
+reason = "reflection: the open store handles and their sizes (the wasm op storeHandleList), reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#setAssetsUrl"
+reason = "configuration: the directory the engine files are loaded from (browser.js)"
+
+[[nonstage]]
+id = "npm:./browser#getAssetsUrl"
+reason = "configuration: the directory the engine files are loaded from (browser.js)"
+
+[[nonstage]]
+id = "npm:./browser#default"
+reason = "the API object; each member is its own npm:{sub}#<name> entry"
+
+[[nonstage]]
+id = "npm:./engine#loadEngine"
+reason = "loads the wasm engine and returns its raw dispatch handle; reads no RDF data; the ops it reaches are the wasm: entries"
+
+[[nonstage]]
+id = "npm:./engine#resolveEngine"
+reason = "names the engine files (a path lookup); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./engine#packageDirectory"
+reason = "the package directory path"
+
+[[nonstage]]
+id = "npm:./api#version"
+reason = "the package version string"
+
+[[nonstage]]
+id = "npm:./api#FactoidalError"
+reason = "the error class of the package (re-exported)"
+
+[[nonstage]]
+id = "npm:./api#createApi"
+reason = "builds the API object over a loaded engine (lib/api.mjs buildApi); reads no RDF data; the functions it returns are the npm:. entries"
+
+[[nonstage]]
+id = "npm:./api#buildApi"
+reason = "builds the API object over an engine driver; reads no RDF data; the functions it returns are the npm:. entries"
+
+[[nonstage]]
+id = "npm:./api#entryFromEngine"
+reason = "wraps a loaded engine handle as the entry object (lib/lean-entry.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./api#default"
+reason = "createApi (npm:./api#createApi)"
+
+[[nonstage]]
+id = "npm:./fn#capabilities"
+reason = "reflection: which ops the loaded engine has (engineApi.capabilities)"
+
+[[nonstage]]
+id = "npm:./fn#EMPTY"
+reason = "the empty FnDataset constant"
+
+[[nonstage]]
+id = "npm:./lws#lwsOpsAvailable"
+reason = "reflection: whether the loaded engine has the ops (lwsOpen with probe:true, then lwsClose); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./lws/client#lwsClientOpsAvailable"
+reason = "reflection: whether the loaded engine has the ops (lwsClientStart on a fixed HEAD request); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./solid/server#solidServerOpsAvailable"
+reason = "reflection: whether the loaded engine has the ops (solidOpen with probe:true, then solidClose); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./solid/client#solidClientOpsAvailable"
+reason = "reflection: whether the loaded engine has the ops (solidClientRequest on a fixed read request); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./xmpp#xmppOpsAvailable"
+reason = "reflection: whether the loaded engine has the ops (the op list (wasm op ops)); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./xmpp/server#xmppServerOpsAvailable"
+reason = "reflection: whether the loaded engine has the ops (the op list (wasm op ops)); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./pack#packSupported"
+reason = "reflection: whether the loaded engine has the ops (the op list (wasm op ops)); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./store-worker#workerRouteAvailable"
+reason = "reflection: whether the runtime has worker threads"
+
+[[nonstage]]
+id = "npm:./store-worker#workerStackMb"
+reason = "configuration: the worker stack size (FACTOIDAL_PACK_STACK_MB or WORKER_STACK_MB)"
+
+[[nonstage]]
+id = "npm:./store-worker#workerRefused"
+reason = "configuration: whether the caller asked for the in-process path (option or FACTOIDAL_NO_WORKER)"
+
+[[nonstage]]
+id = "npm:./store-worker#isStackOverflow"
+reason = "classifies a host error object as a stack overflow; reads no RDF data"
+
+[[nonstage]]
+id = "npm:./store-worker#WORKER_STACK_MB"
+reason = "the default worker stack size constant (64)"
+
+[[nonstage]]
+id = "npm:./store#stackLimitAdvice"
+reason = "the advice text for a stack overflow"
+
+[[nonstage]]
+id = "npm:./pack#StoreHostError"
+reason = "the error class of the store host (re-exported)"
+
+[[nonstage]]
+id = "npm:./store-host#StoreHostError"
+reason = "the error class of the store host (re-exported)"
+
+[[nonstage]]
+id = "npm:./rdfjs#XSD_STRING"
+reason = "the xsd:string IRI constant"
+
+[[nonstage]]
+id = "npm:./rdfjs#RDF_LANGSTRING"
+reason = "the rdf:langString IRI constant"
+
+[[nonstage]]
+id = "wasm:storeHandleList"
+reason = "reflection: the open store handles and their sizes, reads no RDF data"
+
+[[nonstage]]
+id = "wasm:extList"
+reason = "reflection: the registered extension-function IRIs, reads no RDF data"
+
+[[entry]]
+id = "npm:.#graphs"
+stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs graphs: the wasm op datasetGraphNames, then dataset.match(null, null, null, name) for each name (lib/dataset.mjs match, the wasm op datasetMatch; see wasm:datasetMatch). Not covered: datasetGraphNames, the JS Dataset wrappers."
+
+[[entry]]
+id = "npm:./browser#graphs"
+stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs graphs: the wasm op datasetGraphNames, then dataset.match(null, null, null, name) for each name (lib/dataset.mjs match, the wasm op datasetMatch; see wasm:datasetMatch). Not covered: datasetGraphNames, the JS Dataset wrappers."
+
+[[entry]]
+id = "npm:./fn#graphs"
+stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
+covers = "part"
+note = "npm/factoidal/fn.js graphs: an engine-backed FnDataset calls engineApi.graphs (see npm:.#graphs, the wasm op datasetMatch per graph). Not covered: an array-backed FnDataset (grouped and matched in JavaScript, no engine op), datasetGraphNames."
+
+[[entry]]
+id = "npm:./rdfjs#nquadsToQuads"
+stages = ["nquadsDocumentReader"]
+covers = "part"
+note = "npm/factoidal/rdfjs.mjs nquadsToQuads: the text engine that lib/api.mjs installTextEngine sets, parseQuads, the wasm op parseQuadsJson with tag nquads12 (Wasm/Ops/Handles.lean parseQuadsJsonBy: parseDocumentOutcomeBy, readerOf .nquads). Not covered: the TermJson to RDF/JS term conversion (quadFromJson), the blankNodePrefix option."
+
+[[entry]]
+id = "npm:./rdfjs#nquadsLineToQuad"
+stages = ["nquadsDocumentReader"]
+covers = "part"
+note = "npm/factoidal/rdfjs.mjs nquadsLineToQuad: the text engine that lib/api.mjs installTextEngine sets, parseQuads, the wasm op parseQuadsJson with tag nquads12 (Wasm/Ops/Handles.lean parseQuadsJsonBy: parseDocumentOutcomeBy, readerOf .nquads). Not covered: the TermJson to RDF/JS term conversion (quadFromJson), the blankNodePrefix option."
+
+[[entry]]
+id = "wasm:vcEd25519Verify"
+stages = ["ed25519VerifyIO"]
+covers = "part"
+note = "Wasm/Ops/Vc.lean vcEd25519Verify: byteArrayOfHex? of the three arguments, then Crypto.Ed25519.verify (@[extern l4_hacl_ed25519_verify], the HACL* call-out that ed25519VerifyIO names, assumption Ed25519Correct). Not covered: the hex decode (a malformed argument answers valid false)."
+
+[[entry]]
+id = "npm:.#vcEd25519Verify"
+stages = ["ed25519VerifyIO"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs vcEd25519Verify (fn.js re-exports it) calls the wasm op vcEd25519Verify (see wasm:vcEd25519Verify)."
+
+[[entry]]
+id = "npm:./browser#vcEd25519Verify"
+stages = ["ed25519VerifyIO"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs vcEd25519Verify (fn.js re-exports it) calls the wasm op vcEd25519Verify (see wasm:vcEd25519Verify)."
+
+[[entry]]
+id = "npm:./fn#vcEd25519Verify"
+stages = ["ed25519VerifyIO"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs vcEd25519Verify (fn.js re-exports it) calls the wasm op vcEd25519Verify (see wasm:vcEd25519Verify)."

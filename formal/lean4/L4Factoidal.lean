@@ -134,6 +134,7 @@ import L4Factoidal.SPARQL.OptionalFilterScope
 import L4Factoidal.SPARQL.ConstructLabelTests
 import L4Factoidal.Syntax.Lexing
 import L4Factoidal.Syntax.Diagnostics
+import L4Factoidal.Syntax.LangTagWarnings
 import L4Factoidal.Syntax.Locality
 import L4Factoidal.Syntax.LocalityLiteral
 import L4Factoidal.Syntax.LocalityLine

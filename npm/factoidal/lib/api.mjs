@@ -530,7 +530,10 @@ function buildApi(driver) {
       },
       missing: (what, op) => missingOpError(what, e, op),
       wrap(r, prefixes, extra) {
-        const { ok: _ok, handle, count, prefixes: own, ...info } = r;
+        // `warnings` (the reader's language-tag warnings) is not an info
+        // member: openText() and the lenient parse() pass the warnings of the
+        // caller's text in `extra`, with their offsets in UTF-16 units.
+        const { ok: _ok, handle, count, prefixes: own, warnings: _w, ...info } = r;
         return new Dataset(INTERNAL, c, handle, count,
           prefixes !== undefined ? prefixes : own, { ...(extra || {}), info });
       },
@@ -595,7 +598,10 @@ function buildApi(driver) {
       }
       throw err;
     }
-    return c.wrap(r, undefined, { format: tag, formatInferred: inferred });
+    return c.wrap(r, undefined, {
+      format: tag, formatInferred: inferred,
+      warnings: utf16Diagnostics(text, r.warnings),
+    });
   }
 
   // The Dataset a consumer reads: `data` itself when it is a Dataset, else
@@ -741,6 +747,7 @@ function buildApi(driver) {
       const opened = entryResult(c.e.datasetOpen(r.nquads, 'nquads', ''), 'parse');
       return c.wrap(opened, r.prefixes, {
         diagnostics: utf16Diagnostics(text, r.diagnostics),
+        warnings: utf16Diagnostics(text, r.warnings),
         format: tag, formatInferred: inferred,
       });
     }

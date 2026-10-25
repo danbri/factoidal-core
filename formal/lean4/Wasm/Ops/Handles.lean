@@ -184,9 +184,10 @@ def datasetOpenBy (extra : ExtraReader) (text formatTag baseIri : String) : IO S
       let n ← handleCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"h{n}"
       handleTable.modify (·.insert h od)
-      pure (okWith [("handle", .string h),
+      pure (okWith ([("handle", .string h),
                     ("count", .number (toString (datasetQuadCount od.ds))),
-                    ("prefixes", prefixesJson o.prefixes)])
+                    ("prefixes", prefixesJson o.prefixes)] ++
+                    warningsMembers (readerWarnings text formatTag o.ds)))
 
 /-- `datasetQuery(handle, sparql)` — the `queryDataset` envelope family
 over the stored dataset and its cached indexed backend, without the
