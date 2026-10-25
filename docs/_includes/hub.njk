@@ -48,6 +48,15 @@
   default page showed "registry unreachable" in every cell). Per-page
   opt-in; every other post's policy is unchanged.
 
+  Engine from the npm release: a page with `factoidalEngine: "release"`
+  (every page of docs/web/hub/, set by web/hub/hub.11tydata.json) imports
+  @factoidal/core from `factoidalRelease.browserUrl`
+  (docs/_data/factoidalRelease.js, one exact version), so that one CDN
+  host is added to script-src (browser.js and the Emscripten loader) and
+  connect-src (the wasm fetch). It is third-party code from one named host
+  at one immutable npm version; owner, 2026-10-25: the hub should be
+  "always using a shipped NPM release".
+
   `frame-ancestors` is deliberately NOT in the policy below: the CSP
   spec requires it be delivered as a real HTTP response header --
   every browser ignores it (with a console warning) when set via
@@ -55,7 +64,7 @@
   would just be console noise on every hub page for no enforcement
   gained.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'{% if hubAllowRegistryCdn %} https://cdn.jsdelivr.net https://unpkg.com{% endif %}; style-src 'self' 'unsafe-inline'; img-src 'self' data:{% if hubMode == 'live' %} https:{% endif %}; connect-src 'self'{% if hubMode == 'live' %} https:{% endif %}{% if hubAllowRegistryCdn %} https://cdn.jsdelivr.net https://unpkg.com{% endif %}; font-src 'self'; object-src 'none'; base-uri {% if hubMode == 'live' %}'self'{% else %}'none'{% endif %}">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'{% if hubAllowRegistryCdn %} https://cdn.jsdelivr.net https://unpkg.com{% endif %}{% if factoidalEngine == 'release' %} {{ factoidalRelease.cdnHost }}{% endif %}; style-src 'self' 'unsafe-inline'; img-src 'self' data:{% if hubMode == 'live' %} https:{% endif %}; connect-src 'self'{% if hubMode == 'live' %} https:{% endif %}{% if hubAllowRegistryCdn %} https://cdn.jsdelivr.net https://unpkg.com{% endif %}{% if factoidalEngine == 'release' %} {{ factoidalRelease.cdnHost }}{% endif %}; font-src 'self'; object-src 'none'; base-uri {% if hubMode == 'live' %}'self'{% else %}'none'{% endif %}">
 <title>{{ title }}{% if hubMode == 'live' %} (live mode){% endif %} — Factoidal</title>
 {% if hubMode == 'live' %}
 <!--
@@ -527,7 +536,12 @@ tiles or query remote SPARQL endpoints (data, never scripts){% endif %}.
 <script type="module">
 import { Runtime } from "{{ '/vendor/observable/runtime.esm.js' | url }}";
 import { Inspector } from "{{ '/vendor/observable/inspector.esm.js' | url }}";
-import * as Factoidal from "{{ '/npm/factoidal/browser.js' | url }}";
+// The engine: on a page with `factoidalEngine: "release"` (every page of
+// docs/web/hub/, through hub.11tydata.json) the published @factoidal/core
+// release named in docs/_data/factoidalRelease.js, loaded from the npm CDN,
+// with its wasm from the same package directory; elsewhere the same-origin
+// copy of npm/factoidal/.
+import * as Factoidal from "{% if factoidalEngine == 'release' %}{{ factoidalRelease.browserUrl }}{% else %}{{ '/npm/factoidal/browser.js' | url }}{% endif %}";
 import * as demoMaths from "{{ '/web/hub/assets/demo-maths.mjs' | url }}";
 import * as d3 from "{{ '/vendor/observable/d3.esm.js' | url }}";
 import * as Plot from "{{ '/vendor/observable/plot.esm.js' | url }}";

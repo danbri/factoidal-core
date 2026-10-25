@@ -12,6 +12,17 @@ Since 2026-10-20 the hub has two parts:
   `docs/_data/hubStandards.js`; refresh it by running
   `tools/lean-scoreboard.sh --json` and committing the JSON and the
   printed table there.
+- Engine: every page of this directory loads the published npm release
+  named in `docs/_data/factoidalRelease.js` (one exact version; a release
+  bump is that one line) from `https://cdn.jsdelivr.net/npm/@factoidal/core@<version>/`,
+  wasm included. `hub.11tydata.json` sets `factoidalEngine: "release"`
+  for the directory; `hub.njk` then imports that `browser.js` and adds the
+  CDN host to `script-src` and `connect-src`. The Node tests run
+  `npm/factoidal/` of the checkout, so they check the page only while that
+  directory holds the released files;
+  `tests/hub/hub_checked-pipelines_test.mjs` fails when the two versions
+  differ. `fn.openStoreOverHttp` still imports `store-http/` same-origin
+  (the published package has no `store-http/`).
 - `docs/web/historical-fstar-notebooks/NN-*.md`: the posts written before
   2026-10-20, kept unchanged, with redirect pages at their old
   `/web/hub/NN-*/` URLs (`docs/web/hub-redirects.11ty.js`). Their tests

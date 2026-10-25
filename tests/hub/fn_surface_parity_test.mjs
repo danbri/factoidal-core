@@ -57,7 +57,10 @@ const helpersSource = (() => {
 const helperNames = new Set([...helpersSource.matchAll(/^ {2}async\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/gm)].map((m) => m[1]));
 
 test('fn-surface parity: hub.njk binds Factoidal to the package browser entry and builds fn from it', () => {
-  assert.match(hub, /import \* as Factoidal from "\{\{ '\/npm\/factoidal\/browser\.js' \| url \}\}";/);
+  // A page with factoidalEngine "release" (docs/web/hub/) imports the
+  // published browser.js named in docs/_data/factoidalRelease.js; any other
+  // page imports the same-origin copy of npm/factoidal/.
+  assert.match(hub, /import \* as Factoidal from "\{% if factoidalEngine == 'release' %\}\{\{ factoidalRelease\.browserUrl \}\}\{% else %\}\{\{ '\/npm\/factoidal\/browser\.js' \| url \}\}\{% endif %\}";/);
   assert.equal(typeof browser.default, 'object');
   assert.ok(helperNames.has('l4Call') && helperNames.has('loadL4'), 'hubHelpers defines the Lean dispatch helpers');
 });
