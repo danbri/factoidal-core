@@ -79,6 +79,7 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 import L4Factoidal.Dataflow.Reader
 import L4Factoidal.Dataflow.Store
 import L4Factoidal.Dataflow.Evaluator
+import L4Factoidal.Dataflow.Compose
 import L4Factoidal.SPARQL.Parser
 
 namespace L4Factoidal.Dataflow
@@ -153,6 +154,31 @@ theorem pipeline_error (r : RdfReader) (ev : LawfulEvaluator) (inp : ReaderInput
   · next out h' => rw [hr] at h'; cases h'
   · next e' h' => rw [hr] at h'; cases h'; rfl
 
+/-! ## The reader as a source -/
+
+/-- The pipeline input is the query input of `Compose.lean` over the store of
+the read dataset: the read dataset is already in the order of its backend. -/
+theorem pipelineInput_eq (env : EvalEnv) (c : CertifiedDataset) (q : Query) :
+    pipelineInput env c q = queryInput env (loadStore c) c.val q := by
+  unfold pipelineInput queryInput loadStore
+  rw [Sourced.ofCertified_align c]
+
+/-- **The reader as a source** (source (a) of the composition table,
+`docs/2026-10-25-composition.md`): the output of an accepted document. -/
+def readerSource (r : RdfReader) {inp : ReaderInput} {out : Dataset × PrefixList}
+    (h : r.run inp = .ok out) : Sourced :=
+  Sourced.ofCertified ⟨out.1, r.isSet h⟩
+
+/-- **Source theorem (a), the reader**: the record of an accepted document has
+the denotation of the parse (`raw.den`) and no named assumption. -/
+theorem readerSource_spec (r : RdfReader) {inp : ReaderInput} {out : Dataset × PrefixList}
+    (h : r.run inp = .ok out) :
+    (∃ raw, parseDocumentRaw r.extra r.fmt inp.mode inp.base inp.text = .ok raw ∧
+      SetOf out.1 raw ∧ (readerSource r h).den = raw.den) ∧
+    (readerSource r h).assumptions = [] := by
+  obtain ⟨raw, hraw, hs⟩ := r.set inp out h
+  exact ⟨⟨raw, hraw, hs, SetOf.den_eq hs⟩, rfl⟩
+
 /-! ## The end-to-end theorem -/
 
 /-- **End to end (issue 975, item 5).** Document text → `RdfReader` →
@@ -164,6 +190,10 @@ its backend; and the answer satisfies the evaluator contract against the
 foundation's SPARQL 1.1 semantics (`EvalContract`: the reference answer, or
 for SELECT and ASK the modifier layer over a WHERE answer that `Allowed`
 admits).
+
+Since 2026-10-25 this is a corollary: the reader source theorem
+(`readerSource_spec`) and the query theorem over any lawful record
+(`query_sound`, `Dataflow/Compose.lean`), joined by `pipelineInput_eq`.
 
 Premises: `hev`, the named assumption of the evaluator
 (`LawfulEvaluator.assumed_contractOn`), and `h`, the case "the reader
@@ -180,13 +210,16 @@ theorem pipeline_sound (r : RdfReader) (ev : LawfulEvaluator) (hev : ev.Assumpti
         x.backend = some (loadStore c).backend) ∧
       EvalContract x (ev.run x) := by
   intro c x
-  obtain ⟨raw, hraw, hs⟩ := r.set inp out h
-  refine ⟨?_, ⟨raw, hraw, hs, SetOf.den_eq hs⟩,
-    ⟨(loadStore_spec c).1, (loadStore_spec c).2, rfl⟩, ?_⟩
+  obtain ⟨⟨raw, hraw, hs, hden⟩, hpr⟩ := readerSource_spec r h
+  have hq := (readerSource r h).query_sound ev hev
+    (by rw [hpr]; exact Assumed.nil) env q
+  refine ⟨?_, ⟨raw, hraw, hs, hden⟩, ⟨rfl, hpr, rfl⟩, ?_⟩
   · unfold pipeline
     rw [certified_of_run h]
     rfl
-  · exact ev.contract hev x (pipelineInput_wf env c q)
+  · show EvalContract (pipelineInput env c q) (ev.run (pipelineInput env c q))
+    rw [pipelineInput_eq]
+    exact hq.2
 
 /-- The end-to-end theorem without the evaluator's named assumption, on the
 inputs outside `ev.assumed_contractOn`. -/
@@ -230,6 +263,8 @@ theorem shipped_pipeline_construct (r : RdfReader) (inp : ReaderInput) (env : Ev
 #print axioms loadStore_spec
 #print axioms pipelineInput_wf
 #print axioms pipeline_error
+#print axioms pipelineInput_eq
+#print axioms readerSource_spec
 #print axioms pipeline_sound
 #print axioms pipeline_sound_proved
 #print axioms shipped_pipeline_sound
