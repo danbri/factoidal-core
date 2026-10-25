@@ -27,6 +27,16 @@ pipeline names (`Dataflow/Pipeline.lean`, `arrive`):
 No other pair converts. A pipeline whose stage output is neither the next
 stage's input nor converts to it is not well typed (`wellTyped`).
 
+## The table wire
+
+`table` is the wire of a SELECT answer of an evaluator node: the projected
+variables and the solution sequence (`Answer.select`). Owner, 2026-10-25,
+verbatim: "select give table? Sure". The shared table type of CSVW, RML and
+SPARQL results is a proposal
+(`docs/designissues/2026-10-25-tabular-and-source-models.md`,
+https://github.com/danbri/factoidal/issues/1033); until it lands, `table` names
+the SELECT answer only.
+
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 
@@ -37,7 +47,7 @@ inductive Wire where
   | text | document | formatText
   | dataset | datasetPrefixes | graph | graphs | triples | quads | chunks
   | patternBound | datasetBackend | graphBackend | certifiedDataset | store | lawfulDataset
-  | solutions | results | answer | bool
+  | solutions | results | answer | table | bool
   | validationReport | report
   | bundle | claim | graphBundle | graphClaim | explainGraphResult
   | canonical | bytes | digest
@@ -67,6 +77,7 @@ def Wire.label : Wire → String
   | .solutions => "SolutionSeq"
   | .results => "QueryResult"
   | .answer => "Answer"
+  | .table => "Table"
   | .bool => "Bool"
   | .validationReport => "ValidationReport"
   | .report => "report"
@@ -101,7 +112,7 @@ def Wire.all : List Wire :=
   [ .text, .document, .formatText
   , .dataset, .datasetPrefixes, .graph, .graphs, .triples, .quads, .chunks
   , .patternBound, .datasetBackend, .graphBackend, .certifiedDataset, .store, .lawfulDataset
-  , .solutions, .results, .answer, .bool
+  , .solutions, .results, .answer, .table, .bool
   , .validationReport, .report
   , .bundle, .claim, .graphBundle, .graphClaim, .explainGraphResult
   , .canonical, .bytes, .digest
@@ -128,7 +139,7 @@ theorem Wire.conv_cases {a b : Wire} (h : Wire.conv a b = true) :
 
 -- labels are distinct, so a label names one wire
 #guard (Wire.all.map Wire.label).eraseDups.length == Wire.all.length
-#guard Wire.all.length == 47
+#guard Wire.all.length == 48
 #guard (Wire.all.filter fun a => (Wire.all.filter fun b => Wire.conv a b).length > 0).length == 3
 
 end L4Factoidal.Dataflow

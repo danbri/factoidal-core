@@ -26,6 +26,18 @@
 // built before the op, pipe() and run() fall back to the union of the
 // nodes' fields and report `wellTyped: null`.
 //
+// Node settings (https://github.com/danbri/factoidal/issues/975,
+// https://github.com/danbri/factoidal/issues/1026): the params of node()
+// are the node's settings. When the engine has the op pipelineCheckNodes
+// (formal/lean4/Wasm/Ops/PipelineNodes.lean), the engine decides, per node:
+// the settings in canonical form with their SHA-256 digest, the role of each
+// setting in the stage's contract, the settings outside the proved domain
+// (a proved stage with one is `unproved`), and the output wire the settings
+// select (SELECT gives a Table, ASK an Answer, CONSTRUCT and DESCRIBE a
+// Dataset, so a CONSTRUCT node can feed the next node). This file only marshals: a Dataset setting is sent as
+// {"$nquads": its N-Quads text}. With an older engine, records carry no
+// settings and the evaluator's output wire is the registry's.
+//
 // ES module, no Node built-ins: the browser loads this file as it is.
 
 import { FactoidalError } from './errors.mjs';
@@ -37,7 +49,7 @@ import { refusalFor, makeRecord, summarize, unionAssumptions, unionLists } from 
  */
 export function buildNodes(deps) {
   const { entry, entryResult, requireEntryFn, Dataset,
-    parse, closure, shaclValidate, query, serialize, canonicalize, explain } = deps;
+    parse, closure, shaclValidate, query, serialize, canonicalize, explain, csvwToRdf } = deps;
 
   const reader = (format) => async (wire, params) => {
     if (typeof wire.graph !== 'string') {
@@ -88,6 +100,14 @@ export function buildNodes(deps) {
     rdfcStage: async (wire, params) => ({
       artefact: { canonical: await canonicalize(wire.graph, params) },
     }),
+    'CSVW (tabular data to RDF)': async (wire, params) => {
+      if (typeof wire.graph !== 'string') {
+        throw new TypeError(`node CSVW: the stage takes CSV text on its wire (got ${typeof wire.graph})`);
+      }
+      const { metadata, ...opts } = params;
+      const meta = metadata === undefined || typeof metadata === 'string' ? metadata : JSON.stringify(metadata);
+      return { graph: await csvwToRdf(wire.graph, meta, opts), artefact: { tabular: 'csv' } };
+    },
     rdfsExplainGraphStage: async (wire, params) => {
       const { description, ...opts } = params;
       if (description === undefined) {
@@ -116,7 +136,10 @@ export function buildNodes(deps) {
           theorems: Object.freeze([...s.theorems]),
           assumptions: Object.freeze([...s.assumptions]),
           tests: Object.freeze([...s.tests]),
-          bound: Object.prototype.hasOwnProperty.call(RUNNERS, s.name),
+          // bound: the package has a runner AND the engine lets the stage
+          // run. A runner for a stage that an older engine reports as
+          // `missing` is not bound (the engine's registry decides).
+          bound: s.runnable && Object.prototype.hasOwnProperty.call(RUNNERS, s.name),
         })));
       })();
       stageCache.catch(() => { stageCache = null; });
@@ -125,6 +148,32 @@ export function buildNodes(deps) {
   }
 
   const NODE = Symbol('factoidal.node');
+
+  // The settings as the engine reads them: JSON values, a Dataset as
+  // {"$nquads": text}. Anything else is refused.
+  function marshal(v, path) {
+    if (v === null || typeof v === 'string' || typeof v === 'boolean') return v;
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v)) throw new TypeError(`node: setting ${path} is not a finite number`);
+      return v;
+    }
+    if (v instanceof Dataset) return { $nquads: v.toNQuads() };
+    if (Array.isArray(v)) return v.map((x, i) => marshal(x, `${path}[${i}]`));
+    if (typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
+      const out = {};
+      for (const [k, x] of Object.entries(v)) if (x !== undefined) out[k] = marshal(x, `${path}.${k}`);
+      return out;
+    }
+    throw new TypeError(`node: setting ${path} must be a JSON value or a Dataset (got ${typeof v})`);
+  }
+
+  const hasNodeCheck = () => !!engine && typeof engine.pipelineCheckNodes === 'function';
+
+  // The engine's check of nodes with settings (op pipelineCheckNodes).
+  function nodeCheck(items) {
+    return entryResult(engine.pipelineCheckNodes(JSON.stringify(
+      items.map((n) => ({ stage: n.stage, settings: n.settingsWire })))), 'pipelineCheckNodes');
+  }
 
   /**
    * A node for the registered stage `name`, with its parameters (the
@@ -144,18 +193,28 @@ export function buildNodes(deps) {
       throw new FactoidalError(`node: no registered stage named '${name}' (see stages())`,
         { code: 'option.invalid-value' });
     }
+    const settingsWire = marshal({ ...(params || {}) }, 'params');
+    // The engine's reading of the settings, when it has the op.
+    let s = null;
+    if (hasNodeCheck()) s = nodeCheck([{ stage: info.name, settingsWire }]).stages[0];
     return Object.freeze({
       [NODE]: true,
       stage: info.name,
       kind: info.kind,
-      status: info.status,
+      status: s ? s.status : info.status,
+      registryStatus: info.status,
       contract: info.contract,
       assumptions: info.assumptions,
       wireIn: info.wireIn,
-      wireOut: info.wireOut,
+      wireOut: s ? s.wireOut : info.wireOut,
       runnable: info.runnable,
       bound: info.bound,
       params: Object.freeze({ ...(params || {}) }),
+      settingsWire,
+      settings: s ? s.settings : null,
+      settingsDigest: s ? s.settingsDigest : null,
+      outside: Object.freeze(s ? s.outside.map((o) => Object.freeze({ ...o })) : []),
+      derived: s ? Object.freeze({ ...s.derived }) : null,
     });
   }
 
@@ -174,8 +233,11 @@ export function buildNodes(deps) {
    * or null when the loaded engine has no such op.
    */
   function check(nodes) {
-    if (!engine || typeof engine.pipelineCheck !== 'function') return null;
-    const r = entryResult(engine.pipelineCheck(JSON.stringify(nodes.map((n) => n.stage))), 'pipelineCheck');
+    let r;
+    if (hasNodeCheck()) r = nodeCheck(nodes);
+    else if (engine && typeof engine.pipelineCheck === 'function') {
+      r = entryResult(engine.pipelineCheck(JSON.stringify(nodes.map((n) => n.stage))), 'pipelineCheck');
+    } else return null;
     return Object.freeze({
       wellTyped: r.wellTyped,
       wireIn: r.wireIn,
@@ -184,7 +246,11 @@ export function buildNodes(deps) {
       conversions: Object.freeze(r.conversions.map((c) => Object.freeze({ ...c }))),
       assumptions: Object.freeze([...r.assumptions]),
       contract: Object.freeze({ theorem: r.contract.theorem, stages: Object.freeze([...r.contract.stages]) }),
-      stages: Object.freeze(r.stages.map((s) => Object.freeze({ ...s, assumptions: Object.freeze([...s.assumptions]) }))),
+      stages: Object.freeze(r.stages.map((s) => Object.freeze({
+        ...s,
+        assumptions: Object.freeze([...s.assumptions]),
+        ...(s.outside ? { outside: Object.freeze(s.outside.map((o) => Object.freeze({ ...o }))) } : {}),
+      }))),
     });
   }
 

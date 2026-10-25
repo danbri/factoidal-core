@@ -701,14 +701,31 @@ export interface StageInfo {
   note: string;
   /** false exactly when status is 'missing': such a stage does not run. */
   runnable: boolean;
-  /** true when this package has a function that runs the stage as a node. */
+  /**
+   * true when this package has a function that runs the stage as a node AND
+   * the engine reports the stage runnable (an older engine that reports a
+   * stage 'missing' leaves it unbound).
+   */
   bound: boolean;
+}
+
+/**
+ * The status of a node: the registry status, or 'unproved' when the stage is
+ * 'proved' and one of the node's settings is outside its proved domain (op
+ * pipelineCheckNodes, Lean Dataflow/NodeSettings.lean).
+ */
+export type NodeStatus = StageInfo['status'] | 'unproved';
+
+/** A setting outside the proved domain of its stage, with the reason. */
+export interface OutsideSetting {
+  readonly setting: string;
+  readonly reason: string;
 }
 
 /** One evidence record: the node that ran and what it produced. */
 export interface EvidenceRecord {
   stage: string;
-  status: StageInfo['status'];
+  status: NodeStatus;
   contract: string | null;
   assumptions: string[];
   /** true iff `status` is 'proved'. */
@@ -719,6 +736,19 @@ export interface EvidenceRecord {
   reason?: string;
   /** The node's own output beside the graph: the explain result, the SHACL report, the written text, ... */
   artefact: unknown;
+  /**
+   * The node's settings in canonical form (keys sorted at every depth; the
+   * defaults of absent settings that narrow the contract, e.g. `lenient:
+   * false`, `entail: 'none'`; a Dataset value as `{nquadsSha256}`). Present
+   * when the engine has the op pipelineCheckNodes.
+   */
+  settings?: Record<string, unknown>;
+  /** `sha256:` and the hex SHA-256 of the canonical settings text. */
+  settingsDigest?: string;
+  /** With status 'unproved': the registry status ('proved'). */
+  registryStatus?: StageInfo['status'];
+  /** With status 'unproved': the settings outside the proved domain. */
+  outside?: OutsideSetting[];
 }
 
 /** The value on a wire. */
@@ -731,14 +761,31 @@ export interface Wire<G = unknown> {
 export interface FactoidalNode {
   readonly stage: string;
   readonly kind: string | null;
-  readonly status: StageInfo['status'];
+  /** The engine's status of this node with its settings (see NodeStatus). */
+  readonly status: NodeStatus;
+  /** The registry status of the stage. */
+  readonly registryStatus: StageInfo['status'];
   readonly contract: string | null;
   readonly assumptions: readonly string[];
   readonly wireIn: string;
+  /**
+   * The output wire with these settings: for shippedEvaluator, 'Table' for
+   * SELECT, 'Answer' for ASK, 'Dataset' for CONSTRUCT and DESCRIBE (Lean
+   * formWire, evalContract_wire). With an older engine, the registry wire.
+   */
   readonly wireOut: string;
   readonly runnable: boolean;
   readonly bound: boolean;
+  /** The settings as given (passed to the package function that runs the stage). */
   readonly params: Readonly<Record<string, unknown>>;
+  /** The settings as sent to the engine: JSON values, a Dataset as {$nquads}. */
+  readonly settingsWire: Readonly<Record<string, unknown>>;
+  /** The engine's canonical settings, or null with an older engine. */
+  readonly settings: Readonly<Record<string, unknown>> | null;
+  readonly settingsDigest: string | null;
+  readonly outside: readonly OutsideSetting[];
+  /** Values the engine read from the settings: `form` of a query, `mode` ('1.1' | '1.2') of a reader. */
+  readonly derived: Readonly<Record<string, string>> | null;
 }
 
 /** The engine's check of a list of stages (op pipelineCheck, Lean pipelineReport). */
@@ -755,9 +802,17 @@ export interface PipelineCheck {
   readonly assumptions: readonly string[];
   readonly contract: { readonly theorem: string; readonly stages: readonly (string | null)[] };
   readonly stages: readonly {
-    readonly name: string; readonly status: StageInfo['status']; readonly checked: boolean;
+    readonly name: string; readonly status: NodeStatus; readonly checked: boolean;
     readonly contract: string | null; readonly assumptions: readonly string[];
     readonly wireIn: string; readonly wireOut: string;
+    /** The fields below come from the op pipelineCheckNodes only. */
+    readonly registryStatus?: StageInfo['status'];
+    readonly settings?: Record<string, unknown>;
+    readonly settingsDigest?: string;
+    /** The role of each setting: 'parameter' | 'selects-wire' | 'inert' | 'narrows' | 'unlisted'. */
+    readonly roles?: Readonly<Record<string, string>>;
+    readonly outside?: readonly OutsideSetting[];
+    readonly derived?: Readonly<Record<string, string>>;
   }[];
 }
 
@@ -1582,6 +1637,8 @@ export function capabilities(): Promise<{
   stages: boolean;
   /** The op pipelineCheck: pipe() and run() use the engine's type check and assumption union. */
   pipelineCheck: boolean;
+  /** The op pipelineCheckNodes: node settings in evidence, and the evaluator's output wire from the query form. */
+  pipelineCheckNodes: boolean;
   tableau: boolean;
   rml: boolean;
   csvw: boolean;
