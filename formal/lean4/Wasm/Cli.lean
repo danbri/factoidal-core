@@ -275,6 +275,19 @@ def printSelectTable (srj : Json) : IO Unit := do
   for row in rows do
     IO.println (String.intercalate "\t" (vars.map fun v => (bindingValue? row v).getD ""))
 
+/-- Write the `warnings` member of a query envelope to standard error, one line
+each (`l4factoidal: warning: CLASS: MESSAGE`): a `FROM` / `FROM NAMED` IRI that
+names no graph of the dataset
+(https://github.com/danbri/factoidal/issues/1032). -/
+def printQueryWarnings (j : Json) : IO Unit := do
+  match j.getArray? "warnings" with
+  | none => pure ()
+  | some ws =>
+    let err ← IO.getStderr
+    for w in ws do
+      err.putStrLn s!"l4factoidal: warning: {(w.getString? "class").getD ""}: {(w.getString? "message").getD ""}"
+    err.flush
+
 /-- Print the `queryDataset` envelope family
 (select/ask/construct/describe; an error envelope is handled by
 `parseEnvelope`). -/
@@ -1056,7 +1069,9 @@ def queryCmd (args : List String) : IO UInt32 := do
           else Ops.queryDatasetOfSetKeepEmpty ds hds sparql queryBase (some now)
         match ← parseEnvelope answer with
         | none => pure 1
-        | some j => printQueryResult j (s.hasBool "--table")
+        | some j =>
+          printQueryWarnings j
+          printQueryResult j (s.hasBool "--table")
 
 def updateCmd (args : List String) : IO UInt32 := do
   match scanArgs ["--format", "--base", "--update", "--update-string"] ["--sparql12"] args with

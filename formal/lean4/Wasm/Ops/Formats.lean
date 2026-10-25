@@ -557,6 +557,57 @@ cover the rest of the surface through the real dispatch entry. -/
 #guard (xpathEval "<r/>" "count(").startsWith "{\"ok\":false"
 #guard (xpathEval "<r>" "/r").startsWith "{\"ok\":false"
 
+/-! ### WKT literals from CSVW and RML (no engine change)
+
+A GeoSPARQL `geo:wktLiteral` value made by (d) a CSVW column whose datatype
+object names the IRI with `@id` and the base `string` (CSVW Metadata §5.11.2,
+`CSVW/Emit.lean` `cellObjects`), and (e) an RML object map with a constant
+datatype, as the `rml:datatype` shortcut and as a `rml:datatypeMap` with
+`rml:constant` (RML-Core §6). -/
+
+private def nquadsOf (envelope : String) : String :=
+  match parseJson envelope with
+  | .ok j => (j.getString? "nquads").getD ""
+  | .error _ => ""
+
+private def hasSub (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+
+private def wktObj : String :=
+  "\"POINT(1 2)\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>"
+
+-- (d) CSVW
+#guard hasSub (nquadsOf (csvwToRdf "id,wkt\n1,POINT(1 2)\n"
+    ("{\"@context\":\"http://www.w3.org/ns/csvw\",\"url\":\"t.csv\",\"tableSchema\":{" ++
+     "\"aboutUrl\":\"http://e/r/{id}\",\"columns\":[{\"name\":\"id\",\"suppressOutput\":true}," ++
+     "{\"name\":\"wkt\",\"propertyUrl\":\"http://www.opengis.net/ont/geosparql#asWKT\"," ++
+     "\"datatype\":{\"@id\":\"http://www.opengis.net/ont/geosparql#wktLiteral\",\"base\":\"string\"}}]}}")
+    "{\"url\":\"http://e/t.csv\",\"mode\":\"minimal\"}"))
+  ("<http://e/r/1> <http://www.opengis.net/ont/geosparql#asWKT> " ++ wktObj ++ " .")
+
+private def rmlHead : String :=
+  "_:tm <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://w3id.org/rml/TriplesMap> .\n" ++
+  "_:tm <http://w3id.org/rml/logicalSource> _:ls .\n" ++
+  "_:ls <http://w3id.org/rml/source> \"d.csv\" .\n" ++
+  "_:ls <http://w3id.org/rml/referenceFormulation> <http://w3id.org/rml/CSV> .\n" ++
+  "_:tm <http://w3id.org/rml/subjectMap> _:sm .\n" ++
+  "_:sm <http://w3id.org/rml/template> \"http://e/r/{id}\" .\n" ++
+  "_:tm <http://w3id.org/rml/predicateObjectMap> _:pom .\n" ++
+  "_:pom <http://w3id.org/rml/predicate> <http://www.opengis.net/ont/geosparql#asWKT> .\n" ++
+  "_:pom <http://w3id.org/rml/objectMap> _:om .\n" ++
+  "_:om <http://w3id.org/rml/reference> \"wkt\" .\n"
+
+-- (e) RML, the `rml:datatype` shortcut
+#guard hasSub (nquadsOf (rmlMap (rmlHead ++
+    "_:om <http://w3id.org/rml/datatype> <http://www.opengis.net/ont/geosparql#wktLiteral> .\n")
+    "id,wkt\n1,POINT(1 2)\n" "csv"))
+  ("<http://e/r/1> <http://www.opengis.net/ont/geosparql#asWKT> " ++ wktObj ++ " .")
+-- (e) RML, a `rml:datatypeMap` with `rml:constant`
+#guard hasSub (nquadsOf (rmlMap (rmlHead ++
+    "_:om <http://w3id.org/rml/datatypeMap> _:dm .\n" ++
+    "_:dm <http://w3id.org/rml/constant> <http://www.opengis.net/ont/geosparql#wktLiteral> .\n")
+    "id,wkt\n1,POINT(1 2)\n" "csv"))
+  ("<http://e/r/1> <http://www.opengis.net/ont/geosparql#asWKT> " ++ wktObj ++ " .")
+
 #guard jsonSchemaValidate "{\"type\":\"integer\"}" "5"
          == "{\"ok\":true,\"valid\":true,\"result\":\"pass\",\"errors\":[]}"
 #guard jsonSchemaValidate "{\"type\":\"integer\"}" "\"x\""

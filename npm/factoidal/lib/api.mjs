@@ -684,7 +684,15 @@ function buildApi(driver) {
     if (r.kind === 'construct' || r.kind === 'describe') {
       return c.fromNQuads(r.nquads, ds.prefixes);
     }
-    return bindingsFromSrj(r.srj);
+    const rows = bindingsFromSrj(r.srj);
+    // The engine's warnings (class dataset-iri-not-found for a FROM or FROM
+    // NAMED IRI that names no graph, https://github.com/danbri/factoidal/issues/1032),
+    // passed through unchanged as a non-enumerable `warnings` property, so
+    // the rows themselves are unchanged.
+    if (Array.isArray(r.warnings) && r.warnings.length > 0) {
+      Object.defineProperty(rows, 'warnings', { value: r.warnings, enumerable: false });
+    }
+    return rows;
   }
 
   async function shaclOnHandle(c, ds, shapes, opts) {

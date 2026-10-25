@@ -2883,6 +2883,52 @@ def applyDataset (dcs : List DatasetClause) (ds : Dataset) (active : Graph) :
     let newDefault := fromMerge defaults
     ({ default := newDefault, named := named }, newDefault)
 
+/-! ### Dataset clauses that name no local graph (issue 1032)
+
+SPARQL 1.1 §13.2 lets the service decide how a `FROM` / `FROM NAMED` IRI is
+dereferenced. This engine looks each IRI up in the named graphs of the local
+dataset (`applyDataset`); an IRI with no such graph adds no graph. That stays
+the result. `datasetWarnings` reports each such clause beside the result, so a
+caller can tell an empty default graph from a misspelled graph name
+(https://github.com/danbri/factoidal/issues/1032). It is a separate function:
+`applyDataset` and its theorems (`FromMerge.applyDataset_default_isMergeOf`)
+do not change. -/
+
+/-- A dataset clause whose IRI names no graph of the local dataset. `named` is
+`true` for `FROM NAMED`, `false` for `FROM`. -/
+structure DatasetWarning where
+  iri : Iri
+  named : Bool
+  deriving DecidableEq, Repr, Inhabited
+
+/-- The warning class: `dataset-iri-not-found`. -/
+def DatasetWarning.cls (_ : DatasetWarning) : String := "dataset-iri-not-found"
+
+/-- The keyword of the clause: `FROM` or `FROM NAMED`. -/
+def DatasetWarning.clause (w : DatasetWarning) : String :=
+  if w.named then "FROM NAMED" else "FROM"
+
+def DatasetWarning.message (w : DatasetWarning) : String :=
+  s!"{w.clause} <{w.iri}>: the dataset has no graph with this name; the clause adds no graph"
+
+/-- The warning a clause gives if its IRI names no graph of `ds`. -/
+def DatasetClause.warningIn (ds : Dataset) : DatasetClause → Option DatasetWarning
+  | .default i => if (ds.lookupNamedIri i.val).isSome then none
+                  else some { iri := i.val, named := false }
+  | .named i   => if (ds.lookupNamedIri i.val).isSome then none
+                  else some { iri := i.val, named := true }
+
+/-- The warnings of the dataset clauses `dcs` over `ds`: one for each clause
+whose IRI names no graph of `ds`, in clause order, each (clause, IRI) once. -/
+def datasetWarnings (dcs : List DatasetClause) (ds : Dataset) : List DatasetWarning :=
+  (dcs.foldl (fun acc dc =>
+    match dc.warningIn ds with
+    | some w => if acc.contains w then acc else w :: acc
+    | none   => acc) []).reverse
+
+/-- A query with no dataset clause gives no warning. -/
+theorem datasetWarnings_nil (ds : Dataset) : datasetWarnings [] ds = [] := rfl
+
 
 /-! ## Query evaluation — §18.2.4, §16.2 -/
 
