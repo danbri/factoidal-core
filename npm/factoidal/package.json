@@ -92,6 +92,9 @@
     "./lws/client": {
       "default": "./lws/client.mjs"
     },
+    "./lws/dataset": {
+      "default": "./lws/dataset.mjs"
+    },
     "./authz": {
       "default": "./authz/server.mjs"
     },
