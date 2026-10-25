@@ -1079,7 +1079,15 @@ const { conforms, report } = await validate(ds, await parse(shapesTtl)); // SHAC
 ```js
 import { explain } from "@factoidal/core";
 
-const r = await explain(sourcesTurtle, descriptionTurtle, { profile: "rdfs" });
+const sources = `@prefix ex: <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+ex:alice ex:worksFor ex:acme .
+ex:worksFor rdfs:domain ex:Employee .
+ex:Employee rdfs:subClassOf ex:Person .`;
+const description = `@prefix ex: <http://example.org/> .
+_:x a ex:Person . _:x ex:worksFor ex:acme .`;
+const r = await explain(sources, description, { profile: "rdfs" });
+console.log(r.entailed); // true: _:x maps to ex:alice
 // { profile, entailed, bundle, assumptions, rejection, entailedMeans }
 ```
 
