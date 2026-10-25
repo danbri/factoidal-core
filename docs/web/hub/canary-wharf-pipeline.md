@@ -319,7 +319,11 @@ SELECT DISTINCT ?building ?stage ?status WHERE {
 ```
 
 So the record can be followed as data: named graphs say which source a fact
-came from, and the provenance graph says which steps made that graph. Two
+came from, and the provenance graph says which steps made that graph. The
+same computation is stated in Lean: the guarantee of a well-typed path is
+the composition of its stages' contracts plus the union of their named
+assumptions (`Dataflow.query_sound` and the source table in
+[docs/2026-10-25-composition.md](https://github.com/danbri/factoidal-core/blob/main/docs/2026-10-25-composition.md)). Two
 parts of it still come from the JavaScript side: this page copies the
 evidence objects into triples (the engine should give that graph,
 [issue 563](https://github.com/danbri/factoidal/issues/563)), and the CSVW
@@ -349,8 +353,12 @@ An SBM11 generation (the Shardborough store) holds such a dataset on disk,
 with its named graphs. In @factoidal/core {{ factoidalRelease.version }} the
 package can open and query an SBM11 generation (`openSbm11`), but it cannot
 pack one: packing SBM11 from npm is
-[issue 1009](https://github.com/danbri/factoidal/issues/1009). Today the
-native tools pack the text above:
+[issue 1009](https://github.com/danbri/factoidal/issues/1009), with its
+stages in
+[docs/designissues/2026-10-24-sbm11-in-npm.md](https://github.com/danbri/factoidal-core/blob/main/docs/designissues/2026-10-24-sbm11-in-npm.md)
+(its first user named there is the Docklands app,
+<https://danbri.github.io/londat/docklands/>). Today the native tools pack
+the text above:
 
 ```
 l4sbm11-pack canary-wharf.nq store/gen-1 && l4sbm11 activate store gen-1
