@@ -711,7 +711,7 @@ parse_shexc() {
 }
 
 parse_rif() {
-  local line nums u nr lo
+  local line nums u nr lo ex
   line="$(pick_line '^rif-core DECIDED: [0-9]+ pass' last)"
   if [ -z "$line" ]; then emit_status unparsed "$CUR_AREA" "" "no 'rif-core DECIDED:' line in the log"; return; fi
   if ! nums="$(scoreline_nums "$line")"; then emit_status unparsed "$CUR_AREA" "" "summary line does not follow the score-line grammar" "$line"; return; fi
@@ -721,9 +721,15 @@ parse_rif() {
   if [ -z "$u" ] || [ -z "$nr" ] || [ -z "$lo" ]; then
     emit_status unparsed "$CUR_AREA" "" "a count is missing (UNDECIDED, NOT READ, LOCAL OVERRIDE)" "$line"; return
   fi
+  # "; K excluded (defective test data)" follows the total: those cases are
+  # outside pass, fail and the total (skill test-suites, "Defective test data").
+  ex="$(printf '%s\n' "$line" | sed -nE 's/^.*; ([0-9]+) excluded \(defective test data\).*$/\1/p')"
+  if [ -z "$ex" ]; then
+    emit_status unparsed "$CUR_AREA" "" "no '; K excluded (defective test data)' after the total" "$line"; return
+  fi
   set -- $nums
   emit_ok "$CUR_AREA" "" "$1" "$2" $((u + nr + lo)) $(($1 + $2 + u + nr + lo)) \
-    "total derived: decided $(($1 + $2)) + undecided $u + not read $nr + local override $lo; the runner prints no total" "$line"
+    "total derived: decided $(($1 + $2)) + undecided $u + not read $nr + local override $lo; the runner prints no total; $ex excluded (defective test data), not in the total" "$line"
 }
 
 parse_csvw_rdf()      { row_sl "$CUR_AREA" "" '^csv2rdf TOTAL: [0-9]+ pass' last; }

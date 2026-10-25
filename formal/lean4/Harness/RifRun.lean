@@ -177,20 +177,41 @@ structure Tally where
   skipped   : Nat := 0
   overridden : Nat := 0
   staleOverrides : List String := []
+  excluded  : Nat := 0
+  staleExclusions : List String := []
 deriving Inhabited
+
+/-- W3C cases whose test data is defective, each with the open issue that
+records the evidence (skill test-suites, "Defective test data"; owner,
+2026-10-21: "Dont list bad tests as our failing"; owner, 2026-10-25, on
+https://github.com/danbri/factoidal/issues/1031: "1 yes excude bad
+issues, create cleaned up. Project-local unit tests to feplace them").
+They are reported as `excluded (defective test data)`, outside pass, fail,
+undecided and the total. One that passes fails the run. The corrected
+copies are in `tests/rif-local/` and run as the `rif-local` line.
+
+* `EBusiness_Contract`: the rule guards with `pred:is-literal-dateTime`
+  and `func:subtract-dateTimes`, and the facts are `xs:date` literals.
+  The value spaces of `xs:date` and `xs:dateTime` are disjoint (XSD 1.1
+  Part 2 §3.3.9 and §3.3.7), so the guard is false and the conclusion is
+  not entailed.
+* `Builtins_Time`: premise line 65 compares with
+  `"2000-11-02T12:27:00"^^xs:dayTime`. XSD has no datatype `dayTime`;
+  `func:add-dayTimeDuration-to-dateTime` returns `xs:dateTime`.
+* `Builtins_PlainLiteral`: premise line 18 compares with `"en"^^xs:lang`.
+  XSD has no datatype `lang`. -/
+def defectiveData : List (String × String) :=
+  [("EBusiness_Contract",    "https://github.com/danbri/factoidal/issues/1031"),
+   ("Builtins_Time",         "https://github.com/danbri/factoidal/issues/1031"),
+   ("Builtins_PlainLiteral", "https://github.com/danbri/factoidal/issues/1031")]
 
 def rounds : Nat := 24
 
-def main (args : List String) : IO UInt32 := do
-  let dir ← Harness.fixtureArgOr ((args.filter (fun a => !a.startsWith "--")).head?)
-    "third_party/testing/rif-core-suite/Core_v1.22/Approved"
-  let verbose := args.contains "--verbose"
-  let overrideDir ← Harness.resolveFixtureOr "tests/local-overrides/rif"
-  let overrides ← loadOverrides overrideDir
-  if !(← System.FilePath.isDir dir) then
-    IO.println s!"rif runner: corpus not found: {dir}"
-    IO.println "run tools/ensure-test-env.sh from the repository root first"
-    return 1
+/-- Run every case under `dir` (one subdirectory per test kind, one per
+case). Used for the W3C corpus and for the project-local corrected copies
+in `tests/rif-local/`. -/
+def runSuite (dir : String) (verbose : Bool) (overrides : List String)
+    (defective : List (String × String)) : IO Tally := do
   let mut t : Tally := {}
   for kindEntry in (← System.FilePath.readDir dir) do
     if ← System.FilePath.isDir kindEntry.path then
@@ -349,60 +370,99 @@ def main (args : List String) : IO UInt32 := do
                           -- which would have made a Simple import
                           -- inconsistent for a fact a Simple combination
                           -- allows.
-                          match (if unsupportedRegime
-                                 then Verdict.undecided
-                                   "the case imports under an entailment regime this port does not implement"
-                                 else if owlDirectOnly
-                                 then L4Factoidal.RIF.OwlDirect.entailsOwlDirect rules imported goal rounds
-                                 else if !graphMappingSupported g then Verdict.undecided
-                                   "RDF input cannot be represented in RIF (direction or triple term)"
-                                 else entails rules facts goal rounds) with
-                          | .holds =>
-                              if want then
-                                t := { t with pass := t.pass + 1 }
-                                if overrides.contains name then
-                                  t := { t with staleOverrides := t.staleOverrides ++ [name] }
-                              else if overrides.contains name then
-                                t := { t with overridden := t.overridden + 1 }
-                                IO.println s!"OVERRIDE {kind}/{name}: entailed, and the fixture says it must not be"
-                              else
-                                t := { t with fail := t.fail + 1 }
-                                IO.println s!"FAIL {kind}/{name}: entailed, and must not be"
-                          | .doesNotHold =>
-                              if !want then
-                                t := { t with pass := t.pass + 1 }
-                                if overrides.contains name then
-                                  t := { t with staleOverrides := t.staleOverrides ++ [name] }
-                              else if overrides.contains name then
-                                t := { t with overridden := t.overridden + 1 }
-                                IO.println s!"OVERRIDE {kind}/{name}: not entailed, and the fixture says it must be"
-                              else
-                                t := { t with fail := t.fail + 1 }
-                                IO.println s!"FAIL {kind}/{name}: not entailed, and must be"
-                          | .undecided why =>
-                              t := { t with undecided := t.undecided + 1 }
-                              -- Name the built-ins the case USES. They
-                              -- are candidates, not the measured cause:
-                              -- the engine threads a Bool, so it cannot
-                              -- say which one blocked.
-                              let used := externalIrisUsed rules goal
-                              let usedStr :=
-                                if used.isEmpty then ""
-                                else if verbose then
-                                  " — built-ins used: " ++ String.intercalate ", " used
-                                else s!" — {used.length} built-ins used, --verbose names them"
-                              IO.println s!"UNDECIDED {kind}/{name}: {why}{usedStr}"
+                          let verdict : Verdict :=
+                            (if unsupportedRegime
+                                   then Verdict.undecided
+                                     "the case imports under an entailment regime this port does not implement"
+                                   else if owlDirectOnly
+                                   then L4Factoidal.RIF.OwlDirect.entailsOwlDirect rules imported goal rounds
+                                   else if !graphMappingSupported g then Verdict.undecided
+                                     "RDF input cannot be represented in RIF (direction or triple term)"
+                                   else entails rules facts goal rounds)
+                          let ok := match verdict with
+                            | .holds => want
+                            | .doesNotHold => !want
+                            | .undecided _ => false
+                          -- Defective W3C test data (skill test-suites, "Defective test
+                          -- data"): reported apart, never in pass, fail or the total. A pass
+                          -- fails the run, so the exclusion cannot outlive a corrected test.
+                          if let some (_, url) := defective.find? (·.1 == name) then
+                            if ok then
+                              t := { t with staleExclusions := t.staleExclusions ++ [name] }
+                              IO.println s!"FAIL {kind}/{name}: unexpected pass: the defective-test-data exclusion is stale; remove it from defectiveData and close {url}"
+                            else
+                              t := { t with excluded := t.excluded + 1 }
+                              IO.println s!"EXCLUDED {name}: defective test data, {url}"
+                          else
+                            match verdict with
+                            | .holds =>
+                                if want then
+                                  t := { t with pass := t.pass + 1 }
+                                  if overrides.contains name then
+                                    t := { t with staleOverrides := t.staleOverrides ++ [name] }
+                                else if overrides.contains name then
+                                  t := { t with overridden := t.overridden + 1 }
+                                  IO.println s!"OVERRIDE {kind}/{name}: entailed, and the fixture says it must not be"
+                                else
+                                  t := { t with fail := t.fail + 1 }
+                                  IO.println s!"FAIL {kind}/{name}: entailed, and must not be"
+                            | .doesNotHold =>
+                                if !want then
+                                  t := { t with pass := t.pass + 1 }
+                                  if overrides.contains name then
+                                    t := { t with staleOverrides := t.staleOverrides ++ [name] }
+                                else if overrides.contains name then
+                                  t := { t with overridden := t.overridden + 1 }
+                                  IO.println s!"OVERRIDE {kind}/{name}: not entailed, and the fixture says it must be"
+                                else
+                                  t := { t with fail := t.fail + 1 }
+                                  IO.println s!"FAIL {kind}/{name}: not entailed, and must be"
+                            | .undecided why =>
+                                t := { t with undecided := t.undecided + 1 }
+                                -- Name the built-ins the case USES. They
+                                -- are candidates, not the measured cause:
+                                -- the engine threads a Bool, so it cannot
+                                -- say which one blocked.
+                                let used := externalIrisUsed rules goal
+                                let usedStr :=
+                                  if used.isEmpty then ""
+                                  else if verbose then
+                                    " — built-ins used: " ++ String.intercalate ", " used
+                                  else s!" — {used.length} built-ins used, --verbose names them"
+                                IO.println s!"UNDECIDED {kind}/{name}: {why}{usedStr}"
+  return t
+
+def main (args : List String) : IO UInt32 := do
+  let dir ← Harness.fixtureArgOr ((args.filter (fun a => !a.startsWith "--")).head?)
+    "third_party/testing/rif-core-suite/Core_v1.22/Approved"
+  let verbose := args.contains "--verbose"
+  let overrideDir ← Harness.resolveFixtureOr "tests/local-overrides/rif"
+  let overrides ← loadOverrides overrideDir
+  if !(← System.FilePath.isDir dir) then
+    IO.println s!"rif runner: corpus not found: {dir}"
+    IO.println "run tools/ensure-test-env.sh from the repository root first"
+    return 1
+  let t ← runSuite dir verbose overrides defectiveData
   let decided := t.pass + t.fail
+  -- The project-local corrected copies of the excluded cases
+  -- (https://github.com/danbri/factoidal/issues/1031). Exclusions do not
+  -- apply here: these must pass.
+  let localDir ← Harness.resolveFixtureOr "tests/rif-local"
+  let localTally ← if ← System.FilePath.isDir localDir
+    then runSuite localDir verbose [] [] else pure {}
+  let localTotal := localTally.pass + localTally.fail + localTally.undecided + localTally.notRead
   IO.println ""
-  IO.println s!"rif-core DECIDED: {t.pass} pass, {t.fail} fail (out of {decided} decided)"
+  IO.println (s!"rif-core DECIDED: {t.pass} pass, {t.fail + t.staleExclusions.length} fail " ++
+    s!"(out of {decided + t.staleExclusions.length} decided); " ++
+    s!"{t.excluded} excluded (defective test data)")
   IO.println s!"UNDECIDED: {t.undecided} cases — a built-in outside this port's slice"
   IO.println s!"  blocked a rule, the chain reached its round bound, or an import's"
   IO.println s!"  regime or ontology is outside what this port decides"
   IO.println s!"NOT READ: {t.notRead} cases"
-  if t.overridden > 0 then
-    IO.println s!"LOCAL OVERRIDE: {t.overridden} cases — a documented disagreement with a"
-    IO.println s!"  DEFECTIVE fixture, read from {overrideDir}. The engine still ran and"
-    IO.println "  its observed verdict is printed on the OVERRIDE line above."
+  -- Printed also when zero: `tools/lean-scoreboard.sh` reads the count.
+  IO.println s!"LOCAL OVERRIDE: {t.overridden} cases — a documented disagreement with a"
+  IO.println s!"  DEFECTIVE fixture, read from {overrideDir}. The engine still ran and"
+  IO.println "  its observed verdict is printed on the OVERRIDE line above."
   for stale in t.staleOverrides do
     IO.println s!"STALE OVERRIDE {stale}: this test now passes on its own — remove its .override file"
   if t.skipped > 0 then
@@ -411,7 +471,15 @@ def main (args : List String) : IO UInt32 := do
   IO.println "An UNDECIDED case is counted apart, never as a pass and never as a"
   IO.println "failure: a closure computed without a rule is not the closure, and"
   IO.println "reading `does not entail` off it would be a guess."
-  let inventory := t.pass + t.fail + t.undecided + t.notRead + t.skipped + t.overridden
+  let inventory := t.pass + t.fail + t.undecided + t.notRead + t.skipped + t.overridden + t.excluded
   if inventory == 0 then
     IO.eprintln "rif runner: empty inventory; no cases were scored or classified"
-  return if t.fail > 0 || !t.staleOverrides.isEmpty || inventory == 0 then 1 else 0
+  IO.println ""
+  IO.println (s!"rif-local: {localTally.pass} pass, {localTally.fail} fail, " ++
+    s!"{localTally.undecided} undecided, {localTally.notRead} not read (out of {localTotal}) " ++
+    s!"— corrected copies of the excluded W3C cases, {localDir}")
+  if localTotal == 0 then
+    IO.eprintln s!"rif runner: no project-local cases found under {localDir}"
+  let localOk := localTally.pass == localTotal && localTotal > 0
+  return if t.fail > 0 || !t.staleOverrides.isEmpty || !t.staleExclusions.isEmpty
+            || inventory == 0 || !localOk then 1 else 0
