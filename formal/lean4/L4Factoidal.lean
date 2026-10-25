@@ -307,6 +307,8 @@ import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.ParserTests
 import L4Factoidal.SPARQL.DescribeTests
 import L4Factoidal.SPARQL.ParserTheorems
+import L4Factoidal.SPARQL.PathAlternative
+import L4Factoidal.SPARQL.PathAlternativeTheorems
 import L4Factoidal.SPARQL.TriplesBlockRef
 import L4Factoidal.SPARQL.Update
 import L4Factoidal.SPARQL.UpdateParser
