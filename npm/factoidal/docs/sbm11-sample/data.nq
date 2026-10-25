@@ -1,0 +1,9 @@
+<http://ex.org/a> <http://ex.org/p> "x"@en .
+<http://ex.org/b> <http://ex.org/p> <http://ex.org/a> .
+<http://ex.org/a> <http://ex.org/q> "5"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex.org/b> <http://ex.org/q> "7"^^<http://www.w3.org/2001/XMLSchema#integer> .
+_:n1 <http://ex.org/p> <http://ex.org/c> .
+<http://ex.org/b> <http://ex.org/p> <http://ex.org/c> <http://ex.org/g1> .
+<http://ex.org/a> <http://ex.org/q> "9"^^<http://www.w3.org/2001/XMLSchema#integer> <http://ex.org/g1> .
+_:n1 <http://ex.org/p> <http://ex.org/a> <http://ex.org/g2> .
+<http://ex.org/c> <http://www.w3.org/2000/01/rdf-schema#label> "Ceci"@fr .
