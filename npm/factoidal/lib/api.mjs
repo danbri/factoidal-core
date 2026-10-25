@@ -2139,6 +2139,7 @@ function buildApi(driver) {
       owlClosure: has('owlClosure'),
       explain: has('explainGraph'),
       stages: has('stageList'),
+      pipelineCheck: has('pipelineCheck'),
       entailment: has('queryRaw'),
       tableau: has('tableauMaterialise') && has('tableauDlInconsistent'),
       rml: has('rmlMap'),

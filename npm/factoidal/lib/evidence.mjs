@@ -65,16 +65,25 @@ export function makeRecord(n, artefact, unchecked) {
 /** A record is checked; a record without `checked` (older producer) falls back to its status. */
 export const recordChecked = (r) => (typeof r.checked === 'boolean' ? r.checked : isChecked(r.status));
 
-/** The union of the named assumptions of the records, first-seen order. */
-export function unionAssumptions(records) {
+/** The union of lists of names, first-seen order. */
+export function unionLists(lists) {
   const seen = new Set();
   const out = [];
-  for (const r of records) {
-    for (const a of r.assumptions) {
+  for (const l of lists) {
+    for (const a of l) {
       if (!seen.has(a)) { seen.add(a); out.push(a); }
     }
   }
   return out;
+}
+
+/**
+ * The union of the named assumptions of the records, first-seen order.
+ * run() uses it for the records on its input wire, and for a pipeline only
+ * when the engine has no op pipelineCheck (nodes.mjs).
+ */
+export function unionAssumptions(records) {
+  return unionLists(records.map((r) => r.assumptions));
 }
 
 /** `{ assumptions, proved, uncheckedSteps }` of a record list. */

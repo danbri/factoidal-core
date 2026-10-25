@@ -190,7 +190,7 @@ note = "lib/api.mjs owlClosure calls closure (datasetClosure) with mode RDFS or 
 id = "npm:.#run"
 stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader", "rdfsReasoner", "owlRlReasoner", "rhoDfReasoner", "shaclValidator", "shippedEvaluator", "ntriplesDocumentWriter", "nquadsDocumentWriter", "turtleDocumentWriter", "trigDocumentWriter", "rdfxmlDocumentWriter", "rdfcStage", "rdfsExplainGraphStage"]
 covers = "part"
-note = "lib/nodes.mjs run: each node calls the package function that foundation/entrypoints.toml maps to its stage (npm:.#parse, #closure, #shaclValidate, #query, #serialize, #canonicalize, #explain), so it covers what those cover. Not covered: the wiring (the evidence records and the union of the named assumptions, which copy fields of the stageList op), and the refusal of a missing or unbound stage (stageList runnable) (issue 1002)."
+note = "lib/nodes.mjs run: each node calls the package function that foundation/entrypoints.toml maps to its stage (npm:.#parse, #closure, #shaclValidate, #query, #serialize, #canonicalize, #explain), so it covers what those cover. Not covered: the wiring (the evidence records, which copy fields of the stageList op), the type check and the union of the named assumptions (the op pipelineCheck, reflection), and the refusal of a missing or unbound stage (stageList runnable) (issue 1002)."
 
 [[nonstage]]
 id = "npm:.#stages"
@@ -286,7 +286,7 @@ note = "lib/api.mjs owlClosure calls closure (datasetClosure) with mode RDFS or 
 id = "npm:./browser#run"
 stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader", "rdfsReasoner", "owlRlReasoner", "rhoDfReasoner", "shaclValidator", "shippedEvaluator", "ntriplesDocumentWriter", "nquadsDocumentWriter", "turtleDocumentWriter", "trigDocumentWriter", "rdfxmlDocumentWriter", "rdfcStage", "rdfsExplainGraphStage"]
 covers = "part"
-note = "lib/nodes.mjs run: each node calls the package function that foundation/entrypoints.toml maps to its stage (npm:.#parse, #closure, #shaclValidate, #query, #serialize, #canonicalize, #explain), so it covers what those cover. Not covered: the wiring (the evidence records and the union of the named assumptions, which copy fields of the stageList op), and the refusal of a missing or unbound stage (stageList runnable) (issue 1002)."
+note = "lib/nodes.mjs run: each node calls the package function that foundation/entrypoints.toml maps to its stage (npm:.#parse, #closure, #shaclValidate, #query, #serialize, #canonicalize, #explain), so it covers what those cover. Not covered: the wiring (the evidence records, which copy fields of the stageList op), the type check and the union of the named assumptions (the op pipelineCheck, reflection), and the refusal of a missing or unbound stage (stageList runnable) (issue 1002)."
 
 [[nonstage]]
 id = "npm:./browser#stages"

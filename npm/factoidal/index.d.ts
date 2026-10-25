@@ -741,17 +741,47 @@ export interface FactoidalNode {
   readonly params: Readonly<Record<string, unknown>>;
 }
 
-/** A pipeline: nodes in order; `assumptions` is the union of theirs. */
+/** The engine's check of a list of stages (op pipelineCheck, Lean pipelineReport). */
+export interface PipelineCheck {
+  /** Each stage's output wire is the next stage's input wire or converts to it (Lean wellTyped_iff). */
+  readonly wellTyped: boolean;
+  readonly wireIn: string | null;
+  readonly wireOut: string | null;
+  /** The first stage `at` whose output does not feed stage `at + 1`. */
+  readonly mismatch: { readonly at: number; readonly out: string; readonly in: string } | null;
+  /** Where an output reaches the next input by a named conversion (Dataflow/Wire.lean). */
+  readonly conversions: readonly { readonly at: number; readonly from: string; readonly to: string }[];
+  /** The union of the stages' named assumptions: the premises of Pipeline.guarantee_sound. */
+  readonly assumptions: readonly string[];
+  readonly contract: { readonly theorem: string; readonly stages: readonly (string | null)[] };
+  readonly stages: readonly {
+    readonly name: string; readonly status: StageInfo['status']; readonly checked: boolean;
+    readonly contract: string | null; readonly assumptions: readonly string[];
+    readonly wireIn: string; readonly wireOut: string;
+  }[];
+}
+
+/**
+ * A pipeline: nodes in order. `check` is the engine's op pipelineCheck;
+ * `assumptions` and `wellTyped` are its fields. With an engine that has no
+ * such op, `check` and `wellTyped` are null and `assumptions` is the union
+ * of the nodes' assumptions.
+ */
 export interface Pipeline {
   readonly nodes: readonly FactoidalNode[];
   readonly assumptions: readonly string[];
+  readonly wellTyped: boolean | null;
+  readonly check: PipelineCheck | null;
 }
 
 /** The result of run(): the last graph, one record per node, the assumption union. */
 export interface RunResult<G = unknown> extends Wire<G> {
+  /** The assumptions of the records on the input wire, then the engine's union for the pipeline (op pipelineCheck). */
   assumptions: string[];
-  /** true iff every evidence record is checked (status 'proved'). */
+  /** true iff every evidence record is checked (status 'proved') and the pipeline is well typed. */
   proved: boolean;
+  /** The engine's type check of the pipeline; null when the engine has no op pipelineCheck. */
+  wellTyped: boolean | null;
   /** The stage names of the records that are not checked. */
   uncheckedSteps: string[];
 }
@@ -784,7 +814,8 @@ export function pipe(...nodes: Array<FactoidalNode | Pipeline>): Pipeline;
  * Run a node or pipeline on `input` (a Wire, or the graph: text for a
  * reader, else a Dataset or data input). Rejects before any node runs when
  * a node's stage has status 'missing' (unless `options.unchecked`) or has
- * no package function.
+ * no package function, or when the engine's check finds the pipeline not
+ * well typed (unless `options.unchecked`; then `proved` is false).
  */
 export function run(pipeline: FactoidalNode | Pipeline, input: unknown, options?: RunOptions): Promise<RunResult>;
 
@@ -1469,6 +1500,8 @@ export function capabilities(): Promise<{
   owlClosure: boolean;
   explain: boolean;
   stages: boolean;
+  /** The op pipelineCheck: pipe() and run() use the engine's type check and assumption union. */
+  pipelineCheck: boolean;
   tableau: boolean;
   rml: boolean;
   csvw: boolean;
