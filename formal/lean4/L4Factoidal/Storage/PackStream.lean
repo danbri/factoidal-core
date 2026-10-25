@@ -33,6 +33,7 @@
    https://github.com/danbri/factoidal/issues/837). No module under
    `L4Factoidal/Storage/` imports an `L4Factoidal.Syntax` module. -/
 import L4Factoidal.Storage.PredicateBlocks
+import L4Factoidal.Storage.PackSet
 import L4Factoidal.Storage.IndexedBlockWireV2
 import L4Factoidal.Storage.IndexedBlockWireV3
 import L4Factoidal.Storage.SubjectRowIndexWire
@@ -328,6 +329,11 @@ structure IngestState where
   digest : Sha256Stream
   packed : PackState
   chunksSincePublish : Nat
+  /-- The distinct triples written so far (`Storage/PackSet.lean`): a triple
+      that repeats one of them is not written again
+      (https://github.com/danbri/factoidal/issues/1006). It grows with the
+      number of distinct triples of the source. -/
+  seen : L4Factoidal.RDF.FastGraph := {}
 
 /-- Start the IBK2 and IBK3 second pass over a source in syntax `source`. The
     only failure is a syntax whose reader is not linked in (JSON-LD). -/
@@ -362,12 +368,13 @@ def ingestFeed (state : IngestState) (bytes : ByteArray) :
                           chunksSincePublish := nextCount }, [])
       else
         let (stream, triplesRev) := stream.withAcc fun acc => ([], acc)
-        match publishBatch state.hasher state.format state.packed triplesRev.reverse with
+        let (seen, fresh) := PackSet.dedupBatch state.seen triplesRev.reverse
+        match publishBatch state.hasher state.format state.packed fresh with
         | .error message => .error message
         | .ok (packed, made) =>
             .ok ({ state with stream := stream,
                               digest := state.digest.updateWith state.blocks bytes,
-                              packed := packed, chunksSincePublish := 0 }, made)
+                              packed := packed, chunksSincePublish := 0, seen := seen }, made)
 
 /-- End of input: the streamed source digest must equal the first-pass
     commitment before the manifest commits any artifact into a readable
@@ -382,7 +389,8 @@ def ingestFinish (state : IngestState) : Except String (PackState × List Artifa
         match reader.finish L4Factoidal.RDF.Source.collect with
         | .error error => .error (failureMessage state.source (.parse error))
         | .ok triples =>
-            publishBatch state.hasher state.format state.packed triples.reverse
+            publishBatch state.hasher state.format state.packed
+              (PackSet.dedupBatch state.seen triples.reverse).2
 
 /-! ## The manifest -/
 
@@ -814,6 +822,9 @@ structure QuadPub where
   /-- The named graphs the document declares, with or without a triple
       (`RDF.Source.Decl`). -/
   declared : Std.HashMap L4Factoidal.RDF.GraphRef Unit := ∅
+  /-- The distinct triples of each graph written so far
+      (`Storage/PackSet.lean`, https://github.com/danbri/factoidal/issues/1006). -/
+  seen : PackSet.QuadSeen := ∅
 
 /-- Record a declared graph name (the `RDF.Source.Decl` consumer). -/
 def declareQuadPub (state : QuadPub) (name : L4Factoidal.RDF.GraphRef) : QuadPub :=
@@ -828,13 +839,17 @@ def QuadPub.allGraphsHaveTriples (state : QuadPub) : Bool :=
     drain. -/
 def addQuadPub (state : QuadPub) (triple : L4Factoidal.RDF.Triple)
     (graph : Option L4Factoidal.RDF.Subject) : QuadPub :=
-  let (pub, made) := L4Factoidal.Storage.PredicateQuadBlocks.pubAdd state.pub (graph, triple)
-  { state with
-    pub := pub
-    readyRev := made.reverse ++ state.readyRev
-    graphs := match graph with
-      | none => state.graphs
-      | some name => state.graphs.insert name () }
+  match PackSet.addFreshQuad state.seen graph triple with
+  | none => state
+  | some seen =>
+    let (pub, made) := L4Factoidal.Storage.PredicateQuadBlocks.pubAdd state.pub (graph, triple)
+    { state with
+      pub := pub
+      readyRev := made.reverse ++ state.readyRev
+      seen := seen
+      graphs := match graph with
+        | none => state.graphs
+        | some name => state.graphs.insert name () }
 
 /-- Take the runs the fold has closed, and reset the ready list. `flushMin`
     is the batch rule: `none` publishes only what the per-block cut rule

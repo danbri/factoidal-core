@@ -57,6 +57,7 @@ def stageKinds : List (String × String) := [
   ("L4Factoidal.Dataflow.ibk3BuildWriteReadStage", "L4Factoidal.Dataflow.Stage"),
   ("L4Factoidal.Dataflow.ibk4BuildWriteReadStage", "L4Factoidal.Dataflow.Stage"),
   ("L4Factoidal.Dataflow.ibk5BuildWriteReadStage", "L4Factoidal.Dataflow.Stage"),
+  ("L4Factoidal.Dataflow.packSetStage", "L4Factoidal.Dataflow.Stage"),
   ("L4Factoidal.Dataflow.storeSearchStage", "L4Factoidal.Dataflow.Stage"),
   ("L4Factoidal.Dataflow.LawfulStore.ofList", "L4Factoidal.Dataflow.LawfulStore"),
   ("L4Factoidal.Dataflow.LawfulStore.ofIndexed", "L4Factoidal.Dataflow.LawfulStore"),

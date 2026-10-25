@@ -2227,5 +2227,8 @@ from the brief to the fix. Fixed by PR 26 (2026-10-23: every parser returns
    store read, query, write), and checks the count at the end of the path;
    a store build contract states the set condition, not only membership; a
    CHANGELOG sentence about "the stores" names each layout it was measured on.
-   Test: `npm/factoidal/test/pack-is-a-set-1006.test.mjs` (IBK3 cases are
-   expected failures of issue 1006).
+   Test: `npm/factoidal/test/pack-is-a-set-1006.test.mjs`. Fix: every packer
+   layout passes its triples through `Storage/PackSet.lean` (one seen graph for
+   the source; per graph on the quad layouts), registered as `packSetStage`
+   (`packedRows_keyNodup`), with `Storage/PackSetTests.lean` `#guard`s; the
+   IBK4 and IBK5 packers had written the repeated rows too.

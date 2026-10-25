@@ -5,7 +5,7 @@
 # entry that no longer exists or is now mapped, or when the count differs
 # from max-entries. The list may only shrink: when you map an entry, remove
 # its line and lower max-entries in the same commit.
-# max-entries: 393
+# max-entries: 390
 cli:activate  # npm/factoidal/bin/factoidal.mjs
 cli:authz-keys  # npm/factoidal/bin/factoidal.mjs
 cli:authz-serve  # npm/factoidal/bin/factoidal.mjs
@@ -13,7 +13,6 @@ cli:compact  # npm/factoidal/bin/factoidal.mjs
 cli:inspect  # npm/factoidal/bin/factoidal.mjs
 cli:lws-client  # npm/factoidal/bin/factoidal.mjs
 cli:lws-serve  # npm/factoidal/bin/factoidal.mjs
-cli:pack  # npm/factoidal/bin/factoidal.mjs
 cli:sample-store  # npm/factoidal/bin/factoidal.mjs
 cli:solid-client  # npm/factoidal/bin/factoidal.mjs
 cli:solid-serve  # npm/factoidal/bin/factoidal.mjs
@@ -329,8 +328,6 @@ wasm:owlEntails  # lean4/Wasm/CoreDispatch.lean
 wasm:owlIsConsistent  # lean4/Wasm/CoreDispatch.lean
 wasm:packBegin  # lean4/Wasm/CoreDispatch.lean
 wasm:packClose  # lean4/Wasm/CoreDispatch.lean
-wasm:packEndPass  # lean4/Wasm/CoreDispatch.lean
-wasm:packFeed  # lean4/Wasm/CoreDispatch.lean
 wasm:packFinish  # lean4/Wasm/CoreDispatch.lean
 wasm:packNext  # lean4/Wasm/CoreDispatch.lean
 wasm:proofInspect  # lean4/Wasm/CoreDispatch.lean

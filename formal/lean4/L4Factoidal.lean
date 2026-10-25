@@ -60,6 +60,9 @@ import L4Factoidal.Dataflow.EndToEnd
 import L4Factoidal.Dataflow.Sources
 import L4Factoidal.Dataflow.SourcesTests
 import L4Factoidal.Dataflow.Registry
+import L4Factoidal.Dataflow.PackSetStage
+import L4Factoidal.Storage.PackSet
+import L4Factoidal.Storage.PackSetTests
 import L4Factoidal.Dataflow.RegistryTests
 import L4Factoidal.RDF.ConciseBoundedDescription
 import L4Factoidal.RDF.ConciseBoundedDescriptionTheorems
