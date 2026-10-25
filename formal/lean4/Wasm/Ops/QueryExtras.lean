@@ -42,6 +42,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 import Wasm.Ops.Support
 import Wasm.Ops.Parse
 import Wasm.Ops.Query
+import L4Factoidal.Dataflow.Evaluator
 import Wasm.Ops.ExtFns
 import Wasm.Ops.Clock
 import L4Factoidal.SPARQL.Parser
@@ -97,6 +98,16 @@ private def closeDefaultGraph (entail : String) (ds : Dataset) : Except String D
   | other => .error
       s!"queryRaw: entail must be none, RDFS, OWL-RL, x-rdfscore or x-rdfsplus (got '{other}')"
 
+/-- The `RawAnswer` of an evaluator answer. -/
+private def rawOfAnswer : L4Factoidal.Dataflow.Answer → RawAnswer
+  | .ask b => .result (.boolean b)
+  | .select vars rows => .result (.bindings vars rows)
+  | .graph g => .graph g
+
+/-- Parse and evaluate a query over the (closed) dataset: the `run` of the
+`LawfulEvaluator` `shippedEvaluator` (`Dataflow/Evaluator.lean`,
+https://github.com/danbri/factoidal/issues/975 item 3) with no backend, which
+is the reference evaluation (`shippedRaw_reference`). -/
 private def evalRaw (ds : Dataset) (sparql : String) (now : Option String := none) :
     Except String RawAnswer :=
   match parseSparql sparql with
@@ -108,14 +119,27 @@ private def evalRaw (ds : Dataset) (sparql : String) (now : Option String := non
     -- answer (`Query.serviceFailure`, issue 717).
     match q.serviceFailure env ds with
     | some f => .error f.message
-    | none =>
-    match q.form with
-    | .ask => .ok (.result (.boolean (evalAsk env ds q)))
-    | .select _ =>
-        let (vars, rows) := evalSelect env ds q
-        .ok (.result (.bindings vars rows))
-    | .construct _ => .ok (.graph (evalConstruct env ds q))
-    | .describe _  => .ok (.graph (evalDescribe env ds q))
+    | none => .ok (rawOfAnswer (L4Factoidal.Dataflow.shippedEvaluator.run
+        { env, ds, backend := none, query := q }))
+
+/-- The evaluation of `evalRaw` is the foundation's reference answer
+(`Dataflow.referenceAnswer`: `evalSelect`, `evalAsk`, `evalConstruct`,
+`evalDescribe`): `shippedEvaluator` with no backend
+(`shippedRun_of_noBackend`). -/
+private theorem shippedRaw_reference (env : EvalEnv) (ds : Dataset) (q : Query) :
+    rawOfAnswer (L4Factoidal.Dataflow.shippedEvaluator.run
+        { env, ds, backend := none, query := q }) =
+      (match q.form with
+       | .ask => .result (.boolean (evalAsk env ds q))
+       | .select _ =>
+           let (vars, rows) := evalSelect env ds q
+           .result (.bindings vars rows)
+       | .construct _ => .graph (evalConstruct env ds q)
+       | .describe _  => .graph (evalDescribe env ds q)) := by
+  rw [L4Factoidal.Dataflow.shippedEvaluator_run,
+    L4Factoidal.Dataflow.shippedRun_of_noBackend _ rfl]
+  unfold L4Factoidal.Dataflow.referenceAnswer
+  cases q.form <;> rfl
 
 private def termText (t : Term) : String :=
   match L4Factoidal.Syntax.Term.toNTriples .rdf12 t with
