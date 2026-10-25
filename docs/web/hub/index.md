@@ -71,6 +71,16 @@ measured {{ hubStandards.generated }} with `tools/lean-scoreboard.sh`.
 </table>
 </div>
 
+OWL 2 rows by regime. The **RL closure regime** applies the OWL 2 RL rules
+(OWL 2 Profiles §4.3) and nothing else. Those rules are complete only for
+ontologies in the OWL 2 RL profile, so on the full catalogs
+(`type-positive-entailment.rdf`, `type-inconsistency.rdf`, `syntax-dl.rdf`
+and others) the cases that need OWL 2 DL reasoning are fails of that
+regime by design. Its "Approved, in scope" rows are the cases that the RL
+rules can decide. The **DL regime** (RL closure, then a tableau refuter)
+and the **RDF-Based regime** run the same catalogs and are the measures for
+the other cases.
+
 "Other" counts cases that are neither a pass nor a fail: skipped,
 unsupported, undecided, not attempted, or a local override named by an
 open issue. The notes of the record say which.
