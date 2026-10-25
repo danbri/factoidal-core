@@ -12,6 +12,9 @@ from one host function:
   Host.readAt file offset length : IO ByteArray   -- exactly `length` bytes
   Host.size file : IO (Option Nat)                -- `none`: no such file
 
+`Host` is the storage medium `Storage/Medium.lean` in `IO` (issue 1010 KR1);
+its write operations are not used here.
+
 `file` is the name of a file of the generation directory, as the manifest
 names it (and `manifest.sbm11`, `deltas.dlog`). The host decides where the
 generation is (a directory for Node, an OPFS directory, an HTTP base); it
@@ -38,6 +41,7 @@ each positioned read returns the bytes the packer wrote.
 
 No `sorry`, no `axiom`, no `partial`.
 -/
+import L4Factoidal.Storage.Medium
 import L4Factoidal.Storage.Sbm11.IdQuery
 import L4Factoidal.Storage.Sbm11.IdGroup
 import L4Factoidal.Storage.Sbm11.QueryEnv
@@ -67,13 +71,11 @@ open L4Factoidal.Storage.Sbm11
 open L4Factoidal.Storage.Sbm11.Block
 open L4Factoidal.Storage.Sbm11.Manifest
 
-/-- The positioned reads of one generation, supplied by the host. -/
-structure Host where
-  /-- Bytes `[off, off + len)` of a file of the generation; exactly `len`
-      bytes, else an error. -/
-  readAt : String → Nat → Nat → IO ByteArray
-  /-- The size of a file of the generation; `none` when it does not exist. -/
-  size : String → IO (Option Nat)
+/-- The positioned reads of one generation, supplied by the host: the
+    storage medium of `Storage/Medium.lean` in `IO`
+    (https://github.com/danbri/factoidal/issues/1010 KR1). This session uses
+    `readAt` and `size`; every host is read only today (`Medium.readOnlyIO`). -/
+abbrev Host := L4Factoidal.Storage.Medium.Medium IO
 
 /-- The file name of the manifest in a generation directory. -/
 def manifestName : String := "manifest.sbm11"
@@ -188,10 +190,9 @@ def currentName : String := "CURRENT"
 def safeGenerationName (name : String) : Bool :=
   !name.isEmpty && name != "." && name != ".." && !(name.contains '/') && !(name.contains '\\')
 
-/-- The host of the subdirectory `name`. -/
+/-- The host of the subdirectory `name` (`Medium.under`). -/
 def Host.under (h : Host) (name : String) : Host :=
-  { readAt := fun f off len => h.readAt s!"{name}/{f}" off len
-    size := fun f => h.size s!"{name}/{f}" }
+  L4Factoidal.Storage.Medium.Medium.under h name
 
 /-- The host of the generation that `h` names: the generation `CURRENT`
     names when the source is a collection root with that pointer, else the
