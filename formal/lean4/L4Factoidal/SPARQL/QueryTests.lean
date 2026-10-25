@@ -1117,6 +1117,11 @@ def pathPairs (path : PropertyPath) : List (String × String) :=
 #guard pathPairs (.iri pKnows) == [("alice", "bob"), ("bob", "carol")]
 -- `^:knows` is the converse.
 #guard pathPairs (.inverse (.iri pKnows)) == [("bob", "alice"), ("carol", "bob")]
+-- https://github.com/danbri/factoidal/issues/1023: §18.4 makes `?s ^:label ?o`
+-- the same as `?o :label ?s`, so `?s` binds the literal object "aaa".
+#guard pathPairs (.inverse (.iri pLabel)) == [("aaa", "alice")]
+-- The literal is also a middle node: `^:label/:label` joins on alice.
+#guard pathPairs (.sequence (.inverse (.iri pLabel)) (.iri pLabel)) == [("aaa", "aaa")]
 -- `:knows/:knows` composes.
 #guard pathPairs (.sequence (.iri pKnows) (.iri pKnows)) == [("alice", "carol")]
 -- `:knows|:label` is the union.
