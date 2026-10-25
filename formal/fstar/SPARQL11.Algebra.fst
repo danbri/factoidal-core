@@ -7072,7 +7072,7 @@ type path_result = list (rdf_term * rdf_term)
 
 (* Evaluate a property path over a graph *)
 
-(* Helper: check if an rdf_term is not a literal (can serve as a subject in inverse paths) *)
+(* Helper: check if an rdf_term is not a literal. The inverse path does not use it: section 18.4 keeps a literal object (issue 1023). *)
 let is_not_literal (t : rdf_term) : bool =
   match t with
   | T_Literal _ -> false
@@ -7136,12 +7136,14 @@ let rec eval_property_path (p : property_path) (g : rdf_graph)
       g
 
   | PP_Inverse pp ->
-    (* { (o, s) | (s, o) ∈ eval pp G }, filtering out pairs where o is a literal *)
+    // { (o, s) | (s, o) in eval pp G }. SPARQL 1.1 section 18.4: ?x ^p ?y is
+    // ?y p ?x, so a literal o is kept as the subject of the pair
+    // (https://github.com/danbri/factoidal/issues/1023).
     let pairs = eval_property_path pp g in
     Lh.concatMap_tr
       (fun (pair : rdf_term * rdf_term) ->
         let (s, o) = pair in
-        if is_not_literal o then [(o, s)] else [])
+        [(o, s)])
       pairs
 
   | PP_Sequence p1 p2 ->

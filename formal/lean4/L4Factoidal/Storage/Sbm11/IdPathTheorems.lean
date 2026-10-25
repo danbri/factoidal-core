@@ -11,13 +11,12 @@ A graph is a list of id triples (subject, predicate, object), `G`; the
 reference graph `g` is its decoding (`GraphDecodes`: per triple, the subject
 and the object decode to the reference triple's terms, and the reference
 predicate equals an IRI `i` exactly when `pid i` is the triple's predicate
-id). `idEvalPath` is `evalPath` with `Term.eqb` replaced by id equality and the
-literal test by `notLit`; the closures are the reference's own
+id). `idEvalPath` is `evalPath` with `Term.eqb` replaced by id equality; the closures are the reference's own
 `pathFixpoint` with the same fuel (the number of nodes of the graph).
 
 * `evalPath_decode`: decoding `idEvalPath p G` gives `evalPath p g`, list for
   list, when `Term.eqb` of two decoded ids is id equality on the ids of the
-  graph (`hdec`), and `notLit` agrees with `isNotLiteral` there (`hlit`).
+  graph (`hdec`).
 * `pathRows_decode`: decoding the rows `idPathRows` builds from the pairs, after
   `idConstRefl` (the reflexive pair of each constant endpoint of `p*` and
   `p?` that the pairs lack), gives `pathResultToSolutions` after
@@ -88,25 +87,25 @@ def idNpsInverse (pid : WfIri → Option UInt64) (ex : List WfIri) (G : List IdT
   G.filterMap fun x => if ex.any (fun j => pid j == some x.2.1) then none else some (x.2.2, x.1)
 
 /-- `evalPath` on ids: `pid i` the id of the IRI `i` (`none`: no triple has
-    it), `notLit` the literal test of `^p`. -/
-def idEvalPath (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) :
+    it). -/
+def idEvalPath (pid : WfIri → Option UInt64) :
     PropertyPath → List IdTriple → IdPairs
   | .iri i, G => G.filterMap fun x => if pid i == some x.2.1 then some (x.1, x.2.2) else none
   | .inverse p, G =>
-    (idEvalPath pid notLit p G).filterMap fun pr => if notLit pr.2 then some (pr.2, pr.1) else none
+    (idEvalPath pid p G).map fun pr => (pr.2, pr.1)
   | .sequence p1 p2, G =>
-    let r1 := idEvalPath pid notLit p1 G
-    let r2 := idEvalPath pid notLit p2 G
+    let r1 := idEvalPath pid p1 G
+    let r2 := idEvalPath pid p2 G
     r1.flatMap fun a => r2.filterMap fun b => if a.2 == b.1 then some (a.1, b.2) else none
-  | .alternative p1 p2, G => idEvalPath pid notLit p1 G ++ idEvalPath pid notLit p2 G
-  | .zeroOrOne p, G => idDedup ((idGraphNodes G).map (fun n => (n, n)) ++ idEvalPath pid notLit p G)
+  | .alternative p1 p2, G => idEvalPath pid p1 G ++ idEvalPath pid p2 G
+  | .zeroOrOne p, G => idDedup ((idGraphNodes G).map (fun n => (n, n)) ++ idEvalPath pid p G)
   | .zeroOrMore p, G =>
     let nodes := idGraphNodes G
-    let step := idEvalPath pid notLit p G
+    let step := idEvalPath pid p G
     idFixpoint step (idDedup (nodes.map (fun n => (n, n)) ++ step)) nodes.length
   | .oneOrMore p, G =>
     let nodes := idGraphNodes G
-    let step := idEvalPath pid notLit p G
+    let step := idEvalPath pid p G
     idFixpoint step (idDedup step) nodes.length
   | .negatedSet ps, G =>
     let exD := negatedDirectIris ps
@@ -347,8 +346,8 @@ theorem fixpoint_decode (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) =
 
 /-! ### The path relation -/
 
-theorem eval_ok' (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple)
-    (hG : ∀ x ∈ G, ok x.1 ∧ ok x.2.2) : ∀ p, PairsOk ok (idEvalPath pid notLit p G)
+theorem eval_ok' (pid : WfIri → Option UInt64) (G : List IdTriple)
+    (hG : ∀ x ∈ G, ok x.1 ∧ ok x.2.2) : ∀ p, PairsOk ok (idEvalPath pid p G)
   | .iri i => by
     intro pr hpr
     rcases List.mem_filterMap.mp hpr with ⟨x, hx, h⟩
@@ -357,18 +356,16 @@ theorem eval_ok' (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G :
     · cases h
   | .inverse p => by
     intro pr hpr
-    rcases List.mem_filterMap.mp hpr with ⟨q, hq, h⟩
-    split at h
-    · cases h; exact ⟨(eval_ok' pid notLit G hG p q hq).2, (eval_ok' pid notLit G hG p q hq).1⟩
-    · cases h
+    rcases List.mem_map.mp hpr with ⟨q, hq, h⟩
+    cases h; exact ⟨(eval_ok' pid G hG p q hq).2, (eval_ok' pid G hG p q hq).1⟩
   | .sequence p1 p2 => by
     intro pr hpr
     rcases List.mem_flatMap.mp hpr with ⟨a, ha, h⟩
     rcases List.mem_filterMap.mp h with ⟨b, hb, h⟩
     split at h
-    · cases h; exact ⟨(eval_ok' pid notLit G hG p1 a ha).1, (eval_ok' pid notLit G hG p2 b hb).2⟩
+    · cases h; exact ⟨(eval_ok' pid G hG p1 a ha).1, (eval_ok' pid G hG p2 b hb).2⟩
     · cases h
-  | .alternative p1 p2 => pairsOk_append ok (eval_ok' pid notLit G hG p1) (eval_ok' pid notLit G hG p2)
+  | .alternative p1 p2 => pairsOk_append ok (eval_ok' pid G hG p1) (eval_ok' pid G hG p2)
   | .zeroOrOne p => by
     have hn := nodes_ok' ok G hG
     apply pairsOk_sub ok (fun x hx => idDedup_mem hx)
@@ -376,10 +373,10 @@ theorem eval_ok' (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G :
     · intro pr hpr
       rcases List.mem_map.mp hpr with ⟨n, hm, rfl⟩
       exact ⟨hn n hm, hn n hm⟩
-    · exact eval_ok' pid notLit G hG p
+    · exact eval_ok' pid G hG p
   | .zeroOrMore p => by
     have hn := nodes_ok' ok G hG
-    have hs := eval_ok' pid notLit G hG p
+    have hs := eval_ok' pid G hG p
     apply fixpoint_ok ok _ hs
     apply pairsOk_sub ok (fun x hx => idDedup_mem hx)
     apply pairsOk_append ok _ hs
@@ -387,7 +384,7 @@ theorem eval_ok' (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G :
     rcases List.mem_map.mp hpr with ⟨n, hm, rfl⟩
     exact ⟨hn n hm, hn n hm⟩
   | .oneOrMore p => by
-    have hs := eval_ok' pid notLit G hG p
+    have hs := eval_ok' pid G hG p
     exact fixpoint_ok ok _ hs _ _ (pairsOk_sub ok (fun x hx => idDedup_mem hx) hs)
   | .negatedSet ps => by
     apply pairsOk_append ok
@@ -406,9 +403,9 @@ theorem eval_ok' (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G :
         · cases h
         · cases h; exact ⟨(hG x hx).2, (hG x hx).1⟩
 
-theorem eval_ok (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple) (g : Graph)
-    (hG : GraphDecodes dec ok pid G g) : ∀ p, PairsOk ok (idEvalPath pid notLit p G) :=
-  eval_ok' ok pid notLit G (graph_ok dec ok pid G g hG)
+theorem eval_ok (pid : WfIri → Option UInt64) (G : List IdTriple) (g : Graph)
+    (hG : GraphDecodes dec ok pid G g) : ∀ p, PairsOk ok (idEvalPath pid p G) :=
+  eval_ok' ok pid G (graph_ok dec ok pid G g hG)
 
 theorem iriInList_decode (pid : WfIri → Option UInt64) (x : IdTriple) (t : Triple)
     (h : TripleDecodes dec ok pid x t) (ex : List WfIri) :
@@ -423,10 +420,9 @@ theorem iriInList_decode (pid : WfIri → Option UInt64) (x : IdTriple) (t : Tri
 /-- Decoding the pair relation of a path over ids gives the reference
     evaluator's `evalPath` (SPARQL 1.1 sections 9 and 18.4), list for list. -/
 theorem evalPath_decode (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y))
-    (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool)
-    (hlit : ∀ x, ok x → notLit x = isNotLiteral (dec x))
+    (pid : WfIri → Option UInt64)
     (G : List IdTriple) (g : Graph) (hG : GraphDecodes dec ok pid G g) :
-    ∀ p, (idEvalPath pid notLit p G).map (decPair dec) = evalPath p g
+    ∀ p, (idEvalPath pid p G).map (decPair dec) = evalPath p g
   | .iri i => by
     simp only [idEvalPath, evalPath]
     apply graph_filterMap dec ok pid _ _ _ G g hG
@@ -437,59 +433,55 @@ theorem evalPath_decode (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) =
     · rfl
   | .inverse p => by
     simp only [idEvalPath, evalPath]
-    rw [← evalPath_decode hdec pid notLit hlit G g hG p, List.filterMap_map, List.map_filterMap]
-    apply filterMap_congr'
-    intro pr hpr
-    have e := hlit _ (eval_ok dec ok pid notLit G g hG p pr hpr).2
-    simp only [Function.comp_def, decPair, e]
-    split <;> simp_all [decPair]
+    rw [← evalPath_decode hdec pid G g hG p, List.map_map, List.map_map]
+    rfl
   | .sequence p1 p2 => by
     simp only [idEvalPath, evalPath]
-    rw [← evalPath_decode hdec pid notLit hlit G g hG p1, ← evalPath_decode hdec pid notLit hlit G g hG p2,
+    rw [← evalPath_decode hdec pid G g hG p1, ← evalPath_decode hdec pid G g hG p2,
       List.map_flatMap, List.flatMap_map]
     apply L4Factoidal.Qlvr.flatMap_congr'
     intro a ha
     rw [List.filterMap_map, List.map_filterMap]
     apply filterMap_congr'
     intro b hb
-    have e := hdec _ _ (eval_ok dec ok pid notLit G g hG p1 a ha).2 (eval_ok dec ok pid notLit G g hG p2 b hb).1
+    have e := hdec _ _ (eval_ok dec ok pid G g hG p1 a ha).2 (eval_ok dec ok pid G g hG p2 b hb).1
     simp only [Function.comp_def, decPair, e]
     split <;> simp_all [decPair]
   | .alternative p1 p2 => by
-    simp only [idEvalPath, evalPath, List.map_append, evalPath_decode hdec pid notLit hlit G g hG p1,
-      evalPath_decode hdec pid notLit hlit G g hG p2]
+    simp only [idEvalPath, evalPath, List.map_append, evalPath_decode hdec pid G g hG p1,
+      evalPath_decode hdec pid G g hG p2]
   | .zeroOrOne p => by
     have hn := nodes_ok dec ok pid G g hG
-    have hall : PairsOk ok ((idGraphNodes G).map (fun n => (n, n)) ++ idEvalPath pid notLit p G) := by
-      apply pairsOk_append ok _ (eval_ok dec ok pid notLit G g hG p)
+    have hall : PairsOk ok ((idGraphNodes G).map (fun n => (n, n)) ++ idEvalPath pid p G) := by
+      apply pairsOk_append ok _ (eval_ok dec ok pid G g hG p)
       intro pr hpr
       rcases List.mem_map.mp hpr with ⟨n, hm, rfl⟩
       exact ⟨hn n hm, hn n hm⟩
     simp only [idEvalPath, evalPath]
-    rw [dedup_decode dec ok hdec _ hall, List.map_append, evalPath_decode hdec pid notLit hlit G g hG p,
+    rw [dedup_decode dec ok hdec _ hall, List.map_append, evalPath_decode hdec pid G g hG p,
       ← nodes_decode dec ok hdec pid G g hG]
     simp [List.map_map, Function.comp_def, decPair]
   | .zeroOrMore p => by
     have hn := nodes_ok dec ok pid G g hG
-    have hs := eval_ok dec ok pid notLit G g hG p
-    have hall : PairsOk ok ((idGraphNodes G).map (fun n => (n, n)) ++ idEvalPath pid notLit p G) := by
+    have hs := eval_ok dec ok pid G g hG p
+    have hall : PairsOk ok ((idGraphNodes G).map (fun n => (n, n)) ++ idEvalPath pid p G) := by
       apply pairsOk_append ok _ hs
       intro pr hpr
       rcases List.mem_map.mp hpr with ⟨n, hm, rfl⟩
       exact ⟨hn n hm, hn n hm⟩
-    have hseed : PairsOk ok (idDedup ((idGraphNodes G).map (fun n => (n, n)) ++ idEvalPath pid notLit p G)) :=
+    have hseed : PairsOk ok (idDedup ((idGraphNodes G).map (fun n => (n, n)) ++ idEvalPath pid p G)) :=
       pairsOk_sub ok (fun x hx => idDedup_mem hx) hall
     simp only [idEvalPath, evalPath]
     rw [fixpoint_decode dec ok hdec _ hs _ _ hseed, dedup_decode dec ok hdec _ hall, List.map_append,
-      evalPath_decode hdec pid notLit hlit G g hG p, ← nodes_decode dec ok hdec pid G g hG, List.length_map]
+      evalPath_decode hdec pid G g hG p, ← nodes_decode dec ok hdec pid G g hG, List.length_map]
     simp [List.map_map, Function.comp_def, decPair]
   | .oneOrMore p => by
-    have hs := eval_ok dec ok pid notLit G g hG p
-    have hseed : PairsOk ok (idDedup (idEvalPath pid notLit p G)) :=
+    have hs := eval_ok dec ok pid G g hG p
+    have hseed : PairsOk ok (idDedup (idEvalPath pid p G)) :=
       pairsOk_sub ok (fun x hx => idDedup_mem hx) hs
     simp only [idEvalPath, evalPath]
     rw [fixpoint_decode dec ok hdec _ hs _ _ hseed, dedup_decode dec ok hdec _ hs,
-      evalPath_decode hdec pid notLit hlit G g hG p,
+      evalPath_decode hdec pid G g hG p,
       ← nodes_decode dec ok hdec pid G g hG, List.length_map]
   | .negatedSet ps => by
     simp only [idEvalPath, evalPath, List.map_append]
@@ -717,16 +709,15 @@ theorem pathRows_decode (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) =
     `GraphPattern.evalIn` for `.propertyPath`): decoding the rows of the
     pattern over the id graph gives them. -/
 theorem pathPattern_decode (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y))
-    (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool)
-    (hlit : ∀ x, ok x → notLit x = isNotLiteral (dec x))
+    (pid : WfIri → Option UInt64)
     (G : List IdTriple) (g : Graph) (hG : GraphDecodes dec ok pid G g)
     (s o : End) (ps : PatternSubject) (pt : PatternTerm)
     (hs : SubjDecodes dec ok s ps) (ho : ObjDecodes dec ok o pt) (path : PropertyPath) :
     (idPathRows s o (idConstRefl (pathZeroLen path) (idConsts s o)
-        (idEvalPath pid notLit path G))).map (decRow dec) =
+        (idEvalPath pid path G))).map (decRow dec) =
       pathResultToSolutions ps pt (addConstantReflexivity ps pt path (evalPath path g)) := by
-  rw [pathRows_decode dec ok hdec s o ps pt hs ho path _ (eval_ok dec ok pid notLit G g hG path),
-    evalPath_decode dec ok hdec pid notLit hlit G g hG path]
+  rw [pathRows_decode dec ok hdec s o ps pt hs ho path _ (eval_ok dec ok pid G g hG path),
+    evalPath_decode dec ok hdec pid G g hG path]
 
 end
 
