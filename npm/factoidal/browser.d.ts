@@ -11,6 +11,7 @@ export type {
   DataFormat, EntailRegime, Bindings, DataInput, QueryInput, ParseOptions,
   QueryOptions, SerializeOptions, StoreReader, OpenStoreOptions,
   DeltaLogHandle, DeltaLogInspection,
+  Sbm11Reader, Sbm11Answer, Sbm11Store,
   ExplainResult, StageInfo, EvidenceRecord, Wire, FactoidalNode, Pipeline, RunResult, RunOptions,
 } from './index';
 
@@ -39,6 +40,8 @@ export {
   openStore,
   queryStore,
   listStores,
+  openSbm11,
+  registerSbm11Source,
   deltaLogOpen,
   deltaLogAppend,
   deltaLogReadAllHex,
