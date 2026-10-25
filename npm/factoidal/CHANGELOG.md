@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.1 (unreleased)
+
+- `openSbm11(source)` and `registerSbm11Source(source, reader)` are back, with the wasm ops `sbm11Open`, `sbm11Query`, `sbm11Close` (https://github.com/danbri/factoidal/issues/1009). SPARQL over an SBM11 generation (the Shardborough store) in Node and in the browser. The engine reads each file of the generation at an offset through a host reader, and never copies a file in whole; in Node a source is a directory, and `registerSbm11Source` serves any other source (a browser worker over OPFS, for example). The answers are the bytes `l4sbm11 query` writes: 605 of 605 W3C SPARQL 1.0 and 1.1 evaluation tests give the same bytes and path. Not yet: the Merkle check of each read, a generation with a delta log (refused at open), packing SBM11 from npm.
+- Fix: in 0.14.0 `sbm11Open` trapped (wasm `unreachable`). The C functions of the host reads (`l4_host_read_at`, `l4_host_size`) took an IO world argument that the Lean 4.33 code generator does not pass; wasm-ld replaced each call with an `unreachable` stub and reported only a warning. The functions now have the generated signature, and the wasm build fails on any such signature mismatch.
+
 ## 0.14.0
 
 **Checked pipelines.** Each component (reader, store, query evaluator, writer, reasoner, validator, proof checker) has one interface type whose contract against the W3C specifications is part of the type. A component cannot be added without a contract; a contract that is not proved yet is a named assumption, listed and counted in CI. A theorem states that the SPARQL answer agrees with the SPARQL 1.1 semantics for data from any source (a parsed document, a Dataset after edits, an update, a reasoner's output, a union of stores), given the listed assumptions. Status and gaps: https://github.com/danbri/factoidal/issues/975.

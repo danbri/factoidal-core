@@ -16,8 +16,7 @@
 static lean_obj_res l4_empty_bytes(void) { return lean_alloc_sarray(1, 0, 0); }
 
 LEAN_EXPORT lean_obj_res l4_block_pread(b_lean_obj_arg path, uint64_t offset,
-                                        uint64_t length, lean_obj_arg world) {
-  (void)world;
+                                        uint64_t length) {
   if (length > SIZE_MAX || offset > INT64_MAX ||
       length > (uint64_t)INT64_MAX - offset + 1)
     return lean_io_result_mk_ok(l4_empty_bytes());
@@ -48,9 +47,7 @@ LEAN_EXPORT lean_obj_res l4_block_pread(b_lean_obj_arg path, uint64_t offset,
  * length. A concurrent winner makes this return false, so Lean reloads the
  * committed sequence, allocates a fresh sequence number, and retries. */
 LEAN_EXPORT lean_obj_res l4_delta_log_append_sync_at_size(
-    b_lean_obj_arg path, uint64_t expected_size, b_lean_obj_arg bytes,
-    lean_obj_arg world) {
-  (void)world;
+    b_lean_obj_arg path, uint64_t expected_size, b_lean_obj_arg bytes) {
   int ok = 0;
   int fd = open(lean_string_cstr(path), O_WRONLY | O_CREAT | O_APPEND, 0644);
   if (fd < 0) return lean_io_result_mk_ok(lean_box(0));
@@ -84,8 +81,7 @@ LEAN_EXPORT lean_obj_res l4_delta_log_append_sync_at_size(
  * does not change, so a concurrent compare-and-append is not affected. */
 LEAN_EXPORT lean_obj_res l4_delta_log_write_at_size(
     b_lean_obj_arg path, uint64_t expected_size, uint64_t offset,
-    b_lean_obj_arg bytes, lean_obj_arg world) {
-  (void)world;
+    b_lean_obj_arg bytes) {
   int ok = 0;
   size_t total = lean_sarray_size(bytes);
   if (offset > (uint64_t)INT64_MAX || (uint64_t)total > expected_size ||
@@ -143,9 +139,7 @@ static int l4_fsync_parent_dir(const char *path) {
  * readers see a whole pointer and the activation survives normal crash
  * recovery. */
 LEAN_EXPORT lean_obj_res l4_atomic_replace_file_sync(b_lean_obj_arg path,
-                                                      b_lean_obj_arg bytes,
-                                                      lean_obj_arg world) {
-  (void)world;
+                                                      b_lean_obj_arg bytes) {
   const char *dst = lean_string_cstr(path);
   size_t name_len = strlen(dst);
   const char suffix[] = ".tmp.XXXXXX";
@@ -184,8 +178,7 @@ LEAN_EXPORT lean_obj_res l4_atomic_replace_file_sync(b_lean_obj_arg path,
 #if defined(__linux__)
 #include <sys/prctl.h>
 #endif
-LEAN_EXPORT lean_obj_res l4_thp_disable(lean_obj_arg world) {
-  (void)world;
+LEAN_EXPORT lean_obj_res l4_thp_disable(void) {
 #if defined(__linux__) && defined(PR_SET_THP_DISABLE)
   int r = prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
 #else

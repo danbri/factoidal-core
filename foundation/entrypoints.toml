@@ -966,6 +966,7 @@ covers = "part"
 note = "npm/factoidal/lib/api.mjs vcEd25519Verify (fn.js re-exports it) calls the wasm op vcEd25519Verify (see wasm:vcEd25519Verify)."
 
 # SBM11 through host positioned reads (https://github.com/danbri/factoidal/issues/1009 KR1)
+
 [[entry]]
 id = "wasm:sbm11Open"
 stages = ["sbm11Disk"]
@@ -981,3 +982,23 @@ note = "Wasm/Ops/Sbm11.lean sbm11Query: HostSession.runOne, the engine of l4sbm1
 [[nonstage]]
 id = "wasm:sbm11Close"
 reason = "handle lifecycle: removes an SBM11 handle from the table, reads no RDF data"
+
+[[entry]]
+id = "npm:.#openSbm11"
+stages = ["sbm11Disk", "sbm11WhereStage", "sbm11DecodeStage"]
+covers = "part"
+note = "npm/factoidal/lib/sbm11.mjs openSbm11: the wasm op sbm11Open, and Sbm11Store.query, the wasm op sbm11Query (see wasm:sbm11Open, wasm:sbm11Query); the Node reader lib/sbm11-node.mjs moves bytes only. Not covered: as wasm:sbm11Open and wasm:sbm11Query."
+
+[[entry]]
+id = "npm:./browser#openSbm11"
+stages = ["sbm11Disk", "sbm11WhereStage", "sbm11DecodeStage"]
+covers = "part"
+note = "npm/factoidal/lib/sbm11.mjs openSbm11 in the browser entry, over a reader the caller registers (registerSbm11Source). Not covered: as npm:.#openSbm11."
+
+[[nonstage]]
+id = "npm:.#registerSbm11Source"
+reason = "host wiring: registers a byte reader for a source name (lib/sbm11.mjs); reads no RDF data and decides no format"
+
+[[nonstage]]
+id = "npm:./browser#registerSbm11Source"
+reason = "host wiring: registers a byte reader for a source name (lib/sbm11.mjs); reads no RDF data and decides no format"

@@ -447,6 +447,7 @@ link_module() {
     case "$(basename "$o")" in "$skip_exports"|"$skip_shim") continue;; esac
     objs+=("$o")
   done
+  local link_rc=0
   em++ -O3 -DNDEBUG -fwasm-exceptions \
   "${objs[@]}" "$CORE_OBJ"/*.o "$RT_OBJ"/*.o \
   -o "$WORK/$name.mjs" \
@@ -457,7 +458,23 @@ link_module() {
   -sSTACK_SIZE=8MB \
   -sENVIRONMENT=web,worker,node \
   -sASSERTIONS=0 \
-  -Wl,--Map="$WORK/$name.map"
+  -Wl,--Map="$WORK/$name.map" 2> "$WORK/$name.link.stderr" || link_rc=$?
+  cat "$WORK/$name.link.stderr" >&2
+  [ "$link_rc" -eq 0 ] || { echo "error: the link of $name failed (exit $link_rc)" >&2; exit 1; }
+  # wasm-ld replaces a call whose signature differs from the callee's
+  # definition with an `unreachable` stub, and reports it only as a warning.
+  # Issue 1009: ffi/l4_hostread.c took an IO world argument that the Lean
+  # 4.33 code generator does not pass, and sbm11Open trapped on its first
+  # host call. The two Lean-runtime mismatches below are known and
+  # unreachable from the exported ABI (skills/lean4-wasm-export, trap 11);
+  # any other mismatch fails the build.
+  local mism
+  mism=$(grep -o 'function signature mismatch: [A-Za-z0-9_]*' "$WORK/$name.link.stderr" \
+         | sed 's/.*: //' | sort -u | grep -v -x -e lean_io_create_tempfile -e lean_io_create_tempdir) || mism=""
+  if [ -n "$mism" ]; then
+    echo "error: $name: wasm-ld function signature mismatch (each call traps): $mism" >&2
+    exit 1
+  fi
   python3 "$REPO_ROOT/tools/wasm-size-profile.py" "$WORK/$name.map" \
       --wasm "$WORK/$name.wasm" --top 60 > "$WORK/$name.size.md"
   python3 "$REPO_ROOT/tools/wasm-size-profile.py" "$WORK/$name.map" \
