@@ -2,7 +2,9 @@
 // hub_rdf_syntaxes_test.mjs for the harness shape). The page runs the npm
 // release named in docs/_data/factoidalRelease.js; this test runs
 // npm/factoidal/ of this checkout (hub_checked-pipelines_test.mjs checks that
-// the two are the same version).
+// the two are the same version). Source 1 is an extract of the kgx graph
+// version https://kgx.foaf.tv/id/graphbuildings41263dc7cc077db2
+// (danbri/londat; ODbL-derived, attribution in the page).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +17,8 @@ const cells = extractObservableCells('canary-wharf-pipeline.md', HUB_PAGE_DIR);
 const post = runReactivePost(cells, { Factoidal, fn: Factoidal.default, pretty });
 const CW = 'https://example.org/canary-wharf/';
 const col = (rows, v) => rows.map((r) => r.get(v) && r.get(v).value);
-const local = (iri) => iri.slice(CW.length);
+const local = (iri) => (iri.startsWith(CW) ? iri.slice(CW.length) : iri);
+const row = (r, vars) => vars.map((v) => local(r.get(v).value)).join(' | ');
 
 // Every named cell evaluates. A cell that no other test reads is still
 // checked here: on 2026-10-25 the cell buildingsEvidence failed in the browser
@@ -23,85 +26,100 @@ const local = (iri) => iri.slice(CW.length);
 // because no test read it.
 test('canary-wharf: every named cell evaluates', async () => {
   const names = cells.map((c) => analyzeCell(c).name).filter(Boolean);
-  assert.ok(names.length >= 20);
+  assert.ok(names.length >= 25);
   for (const n of names) await post.value(n);
   const ev = await post.value('buildingsEvidence');
-  assert.deepEqual(ev.rows.map((r) => r[0]), ['turtleDocumentReader', 'rdfsReasoner', 'shippedEvaluator']);
+  assert.deepEqual(ev.rows.map((r) => r[0]), ['turtleDocumentReader', 'shippedEvaluator']);
 });
 
-test('canary-wharf: the buildings pipeline is well typed and every step is proved', async () => {
-  const c = await post.value('buildingsCheck');
-  assert.equal(c.wellTyped, true);
+test('canary-wharf: the kgx extract, heights measured or estimated, towers classified', async () => {
+  assert.equal((await post.value('buildingsCheck')).wellTyped, true);
   const run = await post.value('buildingsRun');
   assert.deepEqual(run.evidence.map((e) => [e.stage, e.status]),
-    [['turtleDocumentReader', 'proved'], ['rdfsReasoner', 'proved'], ['shippedEvaluator', 'proved']]);
-  assert.equal(run.proved, true);
-  // The RDFS closure typed Newfoundland (rdfs:domain) and One Canada Square
-  // (rdfs:subClassOf) as cw:Building, so the CONSTRUCT kept all four.
-  const nt = run.graph.toString('ntriples');
-  for (const b of ['newfoundland', 'oneCanadaSquare', 'eightCanadaSquare', 'crossrailPlace']) {
-    assert.ok(nt.includes(`<${CW}${b}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <${CW}Building>`), b);
-  }
-  assert.match(nt, new RegExp(`<${CW}newfoundland> <${CW}heightBand> "tall"`));
+    [['turtleDocumentReader', 'proved'], ['shippedEvaluator', 'proved']]);
+  const classify = await post.value('classifyRun');
+  assert.equal(classify.proved, true);
+  assert.equal(classify.graph.size, 84);
+  const towers = await post.value('towers');
+  assert.deepEqual(towers.map((r) => row(r, ['name', 'height', 'estimated'])), [
+    'Landmark Pinnacle | 262.5 | true',
+    'One Canada Square | 235 | false',
+    'One Park Drive | 205 | false',
+    'Newfoundland | 203.0 | true',
+    '8 Canada Square | 199.5 | false',
+  ]);
 });
 
 test('canary-wharf: CSVW is a plain function, not a registered stage', async () => {
-  assert.equal((await post.value('fromCsvw')).size, 16);
+  assert.equal((await post.value('fromCsvw')).size, 7);
   assert.deepEqual(await post.value('csvwStage'),
     { name: 'CSVW (tabular data to RDF)', status: 'missing', bound: false, runnable: false });
-  const run = await post.value('stationsRun');
+  const run = await post.value('linesRun');
   assert.deepEqual(run.evidence.map((e) => [e.stage, e.status]), [['shippedEvaluator', 'proved']]);
-  assert.equal(run.graph.size, 24);
+  assert.equal(run.graph.size, 13);
 });
 
-test('canary-wharf: one named graph per source, and the join across them', async () => {
+test('canary-wharf: one named graph per source, and the walking-distance join', async () => {
   const perGraph = await post.value('perGraph');
-  assert.deepEqual(col(perGraph, 'g').map(local), ['graph/buildings', 'graph/stations']);
-  assert.deepEqual(col(perGraph, 'triples'), ['22', '24']);
+  assert.deepEqual(perGraph.map((r) => row(r, ['g', 'triples'])), ['graph/buildings | 84', 'graph/lines | 13']);
   const answer = await post.value('answer');
-  assert.deepEqual(col(answer, 'building'), ['One Canada Square', '8 Canada Square']);
-  assert.deepEqual(col(answer, 'lines'), ['Jubilee', 'Elizabeth, Jubilee']);
-  assert.deepEqual(col(answer, 'entries'), ['38.2', '64.6']);
+  assert.deepEqual(answer.map((r) => row(r, ['tower', 'height', 'estimated', 'lines', 'entrances'])), [
+    'One Canada Square | 235 | false | Elizabeth, DLR, Jubilee | 5',
+    'One Park Drive | 205 | false | Jubilee, DLR | 3',
+    'Newfoundland | 203.0 | true | DLR | 1',
+    '8 Canada Square | 199.5 | false | Elizabeth, DLR, Jubilee | 5',
+  ]);
   const answerRun = await post.value('answerRun');
   assert.equal(answerRun.proved, true);
   const nt = answerRun.graph.toString('ntriples');
-  assert.ok(nt.includes(`<${CW}oneCanadaSquare> <${CW}answerTo> <${CW}question>`));
-  assert.ok(!nt.includes(`<${CW}newfoundland>`));
-  assert.ok(!nt.includes(`<${CW}crossrailPlace>`));
+  assert.ok(nt.includes(`<https://kgx.foaf.tv/id/cwb0590> <${CW}lineWithin300m> <${CW}line/DLR>`));
+  assert.ok(!nt.includes('<https://kgx.foaf.tv/id/cwb0577>'), 'Landmark Pinnacle has no station building within 300 m');
 });
 
-test('canary-wharf: the pipeline record queried as RDF', async () => {
+test('canary-wharf: the pipeline record queried as RDF, back to the kgx graph version', async () => {
   const steps = await post.value('stepsPerGraph');
-  assert.deepEqual(steps.map((r) => `${local(r.get('graph').value)} ${r.get('stage').value} ${r.get('status').value}`), [
-    'data/csvw-output CSVW (tabular data to RDF) missing',
-    'graph/answer shippedEvaluator proved',
-    'graph/buildings turtleDocumentReader proved',
-    'graph/buildings rdfsReasoner proved',
-    'graph/buildings shippedEvaluator proved',
-    'graph/stations shippedEvaluator proved',
+  assert.deepEqual(steps.map((r) => row(r, ['graph', 'stage', 'status'])), [
+    'data/csvw-output | CSVW (tabular data to RDF) | missing',
+    'data/heights | turtleDocumentReader | proved',
+    'data/heights | shippedEvaluator | proved',
+    'graph/answer | shippedEvaluator | proved',
+    'graph/buildings | shippedEvaluator | proved',
+    'graph/lines | shippedEvaluator | proved',
   ]);
   const lineage = await post.value('answerLineage');
   assert.deepEqual([...new Set(col(lineage, 'activity').map(local))].sort(),
-    ['activity/answer', 'activity/buildings', 'activity/csvw', 'activity/stations']);
+    ['activity/answer', 'activity/classify', 'activity/csvw', 'activity/heights', 'activity/lines']);
+  const sources = await post.value('answerSources');
+  assert.deepEqual(sources.map((r) => `${local(r.get('source').value)} ${r.get('derivedFrom') ? r.get('derivedFrom').value : '-'}`), [
+    'source/buildings.ttl https://kgx.foaf.tv/id/graphbuildings41263dc7cc077db2',
+    'source/station-lines.csv -',
+  ]);
   const allProved = await post.value('allProved');
-  assert.deepEqual(allProved.map((r) => `${local(r.get('graph').value)} ${r.get('allProved').value}`),
-    ['graph/answer false', 'graph/buildings true', 'graph/stations false']);
+  assert.deepEqual(allProved.map((r) => row(r, ['graph', 'allProved'])),
+    ['graph/answer | false', 'graph/buildings | true', 'graph/lines | false']);
   const caveats = await post.value('answerCaveats');
-  assert.deepEqual(caveats.map((r) => `${r.get('building').value} | ${r.get('stage').value} | ${r.get('status').value}`), [
+  assert.deepEqual(caveats.map((r) => row(r, ['tower', 'stage', 'status'])), [
     '8 Canada Square | CSVW (tabular data to RDF) | missing',
+    'Newfoundland | CSVW (tabular data to RDF) | missing',
     'One Canada Square | CSVW (tabular data to RDF) | missing',
+    'One Park Drive | CSVW (tabular data to RDF) | missing',
   ]);
 });
 
 test('canary-wharf: the N-Quads for the store', async () => {
   const s = await post.value('nquadsSummary');
   assert.equal(s.proved, true);
-  assert.deepEqual(s.graphs.map(local), ['graph/answer', 'graph/buildings', 'graph/provenance', 'graph/stations']);
-  assert.ok(s.quads > 46);
+  assert.equal(s.quads, 156);
+  assert.deepEqual(s.graphs.map(local), ['graph/answer', 'graph/buildings', 'graph/lines', 'graph/provenance']);
 });
 
-// The page states two shortfalls; each is an expected failure that turns
+// The page states four shortfalls; each is an expected failure that turns
 // the suite red when it starts to pass.
+xfail('canary-wharf: a CONSTRUCT node can be followed by another node',
+  'https://github.com/danbri/factoidal/issues/1026', async () => {
+    assert.equal((await post.value('chainedCheck')).wellTyped, true);
+  });
+
 xfail('canary-wharf: npm packs the dataset into an SBM11 generation',
   'https://github.com/danbri/factoidal/issues/1009', async () => {
     assert.ok((await post.value('sbm11PackInNpm')).length > 0);
