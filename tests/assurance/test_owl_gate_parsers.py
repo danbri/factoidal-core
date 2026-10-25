@@ -76,7 +76,7 @@ class ReportInventoryControls(unittest.TestCase):
                 (PUBLIC.read_cases, "OWL_PUBLIC_BOUNDARY=", public_cases())]
 
     def test_valid_synthetic_inventories(self):
-        self.assertEqual(len(READER.CASE_IDS), 54)
+        self.assertEqual(len(READER.CASE_IDS), 70)
         self.assertEqual(len(PUBLIC.IDS), 23)
         for parse, prefix, cases in self.parsers():
             with self.subTest(parser=parse.__name__):
