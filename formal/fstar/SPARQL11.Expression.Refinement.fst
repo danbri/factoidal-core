@@ -403,11 +403,18 @@ let lemma_eq_literal_different_datatype_typeerror (l1 l2 : wf_literal)
   = ()
 
 /// AGREEMENT (documented, not surprising): two literals of the SAME
-/// datatype but DIFFERENT language tags are unequal (not a Type Error) --
-/// RDF term identity already distinguishes them by tag, so `=` reports a
-/// definite `false` rather than refusing to compare.
+/// datatype whose language tags differ after case normalization
+/// (`lang_tag_option_eq` false) are unequal (not a Type Error) -- RDF term
+/// identity already distinguishes them by tag, so `=` reports a definite
+/// `false` rather than refusing to compare. A difference only in letter case
+/// does not satisfy the premise: RDF 1.1 Concepts section 3.3 makes "en" and
+/// "EN" one tag. Until 2026-10-25 the premise was `l1.lang_tag <> l2.lang_tag`,
+/// which "x"@en and "x"@EN satisfy while `value_compare` gives `Some true`;
+/// the lemma was false and failed to verify on main. The Lean theorem
+/// `eq_literal_same_datatype_diff_lang` (SPARQL/ExprRefinement.lean) has
+/// the corrected premise.
 let lemma_eq_literal_same_datatype_diff_lang (l1 l2 : wf_literal)
-  : Lemma (requires l1.datatype == l2.datatype /\ l1.lang_tag <> l2.lang_tag)
+  : Lemma (requires l1.datatype == l2.datatype /\ not (lang_tag_option_eq l1.lang_tag l2.lang_tag))
           (ensures value_compare (ER_Term (T_Literal l1)) (ER_Term (T_Literal l2)) CmpEq == Some false /\
                    value_compare (ER_Term (T_Literal l1)) (ER_Term (T_Literal l2)) CmpNe == Some true)
   = ()
