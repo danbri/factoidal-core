@@ -245,7 +245,7 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Reason, `Wasm.Ops.Canon, `Wasm.Ops.CL,
              `Wasm.Ops.Block,
              `Wasm.Ops.Store,
-             `Wasm.Ops.StoreHandles,
+             `Wasm.Ops.StoreHandles, `Wasm.StorePlanGateTests,
              `Wasm.HostRead, `Wasm.Ops.Sbm11,
              `Wasm.Ops.StoreServe,
              `Wasm.Ops.Proof,
