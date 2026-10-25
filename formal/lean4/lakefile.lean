@@ -315,6 +315,10 @@ extern_lib libl4exthost pkg := do
 @[default_target] lean_exe «l4prim-test» where root := `Harness.PrimBytesTest
 -- The scan-versus-old-scan differential of Storage/Sbm11/ScanFoldTests (needs compiled code).
 @[default_target] lean_exe «l4scanfold-test» where root := `Harness.ScanFoldTest
+-- The SBM11 query session over a medium (https://github.com/danbri/factoidal/issues/1009 KR1):
+-- a generation built in the test, read through `Medium.ofObjects`, answers equal to the
+-- reference evaluator (needs compiled code: the id path reaches `Prim.Bytes` externs).
+@[default_target] lean_exe «l4sbm11-medium-test» where root := `Harness.Sbm11MediumTest
 -- Capability-aware planner, KR 2.2 (https://github.com/danbri/factoidal/issues/801):
 -- the structural planner's test set, with its expected-failure bucket.
 @[default_target] lean_exe «l4planner-test» where root := `Harness.PlannerTest
