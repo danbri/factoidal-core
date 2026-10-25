@@ -454,7 +454,17 @@ a percent sign immediately followed by a close-brace) in immediate
 succession, and confirming every match is a genuine, already-valid
 Nunjucks tag.
 
-### Trap: a function call wrapped directly around a dotted chain hides the chain's own name from the reactive-cell analyzer
+### Fixed trap (2026-10-25): a function call wrapped directly around a dotted chain hid the chain's own name from the reactive-cell analyzer
+
+Fixed by https://github.com/danbri/factoidal/issues/690: `collectLocals()` now takes
+the innermost parenthesised group before `=>` (`/\(([^()]*)\)\s*=>/`), and
+`tests/hub/reactive_cells_flags_test.mjs` asserts the case below. The text
+below is the record of the defect. It came back on 2026-10-25 in the cell
+`buildingsEvidence` of `canary-wharf-pipeline.md`: the page test passed
+because it never read that cell, and the headless browser run showed
+`ReferenceError: buildingsRun is not defined`. Rule: a page test reads
+every named cell of its page.
+
 
 `reactive-cells.mjs`'s `collectLocals()` finds an arrow function's own
 parameter list with a pattern that looks for "open paren, anything that
