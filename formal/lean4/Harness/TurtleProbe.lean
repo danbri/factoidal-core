@@ -49,6 +49,11 @@ structure Tally where
   /-- Files walked that the suite's `manifest.ttl` does NOT list as an
   `mf:action` — present in the directory but not part of the suite. -/
   notInManifest : Nat := 0
+  /-- Of those, the files the parser refuses. They are reported apart and
+  are not in the parse-positive or reject-negative counts: a file that the
+  manifest does not list is not a test (rdf11/rdf-turtle/test-38.ttl, a
+  2006 librdf bug file with a surrogate-pair escape, is the only one today). -/
+  outsideRefused : Nat := 0
   failures      : List String := []
 
 def Tally.note (t : Tally) (msg : String) : Tally :=
@@ -119,8 +124,13 @@ def runTurtleSuite (dir : System.FilePath) (baseRoot : String) (actions : List S
       continue
     let base := baseRoot ++ name
     let listed := actions.isEmpty || actions.contains name
-    if !listed then t := { t with notInManifest := t.notInManifest + 1 }
     let res := parseTurtle text (some base)
+    if !listed then
+      t := { t with notInManifest := t.notInManifest + 1 }
+      if let .error e := res then
+        t := { t with outsideRefused := t.outsideRefused + 1 }
+        t := t.note s!"{name}: refused [NOT a manifest entry, not counted] — {e}"
+      continue
     if isBadName name then
       t := { t with rejectNegTotal := t.rejectNegTotal + 1 }
       match res with
@@ -130,7 +140,7 @@ def runTurtleSuite (dir : System.FilePath) (baseRoot : String) (actions : List S
       t := { t with parsePosTotal := t.parsePosTotal + 1 }
       match res with
       | .error e =>
-          t := t.note s!"{name}: parse failed{if listed then "" else " [NOT a manifest entry]"} — {e}"
+          t := t.note s!"{name}: parse failed — {e}"
       | .ok g =>
         t := { t with parsePosOk := t.parsePosOk + 1 }
         -- eval comparison when a sibling .nt exists
@@ -162,8 +172,13 @@ def runTriGSuite (dir : System.FilePath) (baseRoot : String) (actions : List Str
       continue
     let base := baseRoot ++ name
     let listed := actions.isEmpty || actions.contains name
-    if !listed then t := { t with notInManifest := t.notInManifest + 1 }
     let res := parseTriG text (some base)
+    if !listed then
+      t := { t with notInManifest := t.notInManifest + 1 }
+      if let .error e := res then
+        t := { t with outsideRefused := t.outsideRefused + 1 }
+        t := t.note s!"{name}: refused [NOT a manifest entry, not counted] — {e}"
+      continue
     if isBadName name then
       t := { t with rejectNegTotal := t.rejectNegTotal + 1 }
       match res with
@@ -173,7 +188,7 @@ def runTriGSuite (dir : System.FilePath) (baseRoot : String) (actions : List Str
       t := { t with parsePosTotal := t.parsePosTotal + 1 }
       match res with
       | .error e =>
-          t := t.note s!"{name}: parse failed{if listed then "" else " [NOT a manifest entry]"} — {e}"
+          t := t.note s!"{name}: parse failed — {e}"
       | .ok ds =>
         t := { t with parsePosOk := t.parsePosOk + 1 }
         let nqName := String.ofList (name.toList.take (name.length - 5)) ++ ".nq"
@@ -198,7 +213,7 @@ def report (label : String) (t : Tally) (verbose : Bool) : IO Unit := do
   IO.println s!"parse-positive: {t.parsePosOk} of {t.parsePosTotal}"
   IO.println s!"reject-negative: {t.rejectNegOk} of {t.rejectNegTotal}"
   IO.println s!"eval-iso: {t.evalIsoOk} of {t.evalIsoTotal}"
-  IO.println s!"walked but not listed in manifest.ttl: {t.notInManifest}"
+  IO.println s!"walked but not listed in manifest.ttl (not counted above): {t.notInManifest}, refused: {t.outsideRefused}"
   IO.println s!"failures listed: {t.failures.length}"
   if verbose then
     for f in t.failures do
