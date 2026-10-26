@@ -152,7 +152,7 @@ structure Hot where
   fl : UInt32 := 0
   depth : UInt32 := 0
   annot : UInt32 := 0
-  /-- the reader's directive head (`StatementScan.head`): the first 7 bytes
+  /-- the reader's directive head (`StatementScan.head`): the first 8 bytes
       after leading white space, lower case -/
   hv : UInt64 := 0
   hl : UInt8 := 0
@@ -192,6 +192,23 @@ def kwVersion : UInt64 := packWord "version"
 @[inline] def headIsDirective (v : UInt64) (len : UInt8) : Bool :=
   (len ≥ 6 && v &&& maskOf 6 == kwPrefix) || (len ≥ 4 && v &&& maskOf 4 == kwBase) ||
     (len ≥ 7 && v &&& maskOf 7 == kwVersion)
+
+/-- `StatementScan.continuesName` on a byte: a byte of UTF-8 outside ASCII
+    is `≥ 128`, as the character it belongs to is. -/
+@[inline] def continuesNameB (c : UInt8) : Bool :=
+  (c ≥ 97 && c ≤ 122) || (c ≥ 65 && c ≤ 90) || (c ≥ 48 && c ≤ 58) || c == 95 || c == 45 ||
+    c == 46 || c ≥ 128
+
+/-- Byte `k` of a packed head. -/
+@[inline] def byteAt (v : UInt64) (k : UInt8) : UInt8 := (v >>> (8 * k.toUInt64)).toUInt8
+
+/-- `StatementScan.beginsNoDotDirective` on the 8 head bytes: the keyword is
+    followed by a byte that ends the token. `prefix:Atto` is a prefixed name
+    (https://github.com/danbri/factoidal/issues/1028). -/
+@[inline] def headIsLineDirective (v : UInt64) (len : UInt8) : Bool :=
+  (len ≥ 7 && v &&& maskOf 6 == kwPrefix && !continuesNameB (byteAt v 6)) ||
+    (len ≥ 5 && v &&& maskOf 4 == kwBase && !continuesNameB (byteAt v 4)) ||
+    (len ≥ 8 && v &&& maskOf 7 == kwVersion && !continuesNameB (byteAt v 7))
 
 /-- The candidate can hold a directive: the `.` rule, or its first bytes. -/
 @[inline] def Hot.candDirective (h : Hot) : Bool :=
@@ -241,7 +258,7 @@ def kwVersion : UInt64 := packWord "version"
   let h :=
     if h.hl == 0 then
       if isWsB c then h else { h with hv := (lowerB c).toUInt64, hl := 1 }
-    else if h.hl < 7 then
+    else if h.hl < 8 then
       { h with hv := h.hv ||| ((lowerB c).toUInt64 <<< (8 * h.hl.toUInt64)), hl := h.hl + 1 }
     else h
   if !h.has fSigOpen then
@@ -293,7 +310,7 @@ def kwVersion : UInt64 := packWord "version"
     let h := (h.endCand eDot).set fDot false
     let h := h.stepMode c
     h.pushHeads c true
-  else if h.mode == 0 && !h.has fDot && (c == 10 || c == 13) && headIsDirective h.hv h.hl then
+  else if h.mode == 0 && !h.has fDot && (c == 10 || c == 13) && headIsLineDirective h.hv h.hl then
     let h := h.endCand eLine
     h.pushHeads c true
   else
@@ -409,7 +426,7 @@ structure State where
 /-- Whether the next bytes may be read by `fastRun`: both heads are full, and
     no flag waits for the next byte. -/
 @[inline] def Hot.canSkip (h : Hot) : Bool :=
-  h.hl == 7 && h.sl == 7 && h.mode != 2 && !h.inCollection &&
+  h.hl == 8 && h.sl == 7 && h.mode != 2 && !h.inCollection &&
     h.fl &&& (fDot ||| fNameEsc ||| fHeld ||| fStrEsc) == 0 && h.closing == 0
 
 @[inline] def packRun (i : USize) (mode quote : UInt8) : UInt64 :=
@@ -486,7 +503,7 @@ def loop (bytes : ByteArray) (base : Nat) (fuel : Nat) (i : USize) (h : Hot) (k 
   | fuel + 1 =>
     let (j, h) :=
       if h.canSkip then
-        let r := fastRun bytes (!headIsDirective h.hv h.hl) i h.mode h.quote
+        let r := fastRun bytes (!headIsLineDirective h.hv h.hl) i h.mode h.quote
         let j := (r >>> 16).toUSize
         if j != i then (j, h.afterRun (r >>> 8).toUInt8 r.toUInt8) else (i, h)
       else (i, h)
@@ -541,6 +558,12 @@ private def posOf (trig : Bool) (doc : String) : List Nat :=
 -- directive units: `@prefix`, SPARQL `PREFIX` on its own line, and a directive after a statement
 #guard ((allSplits false "@prefix p: <x> .\nPREFIX q: <y>\n<a> <b> <c> .\n<a> <b> \"x\".@base <z> .\n".toUTF8).directives.map
     (fun u => (u.start, u.stop))).toList == [(0, 16), (16, 30), (44, 68)]
+-- https://github.com/danbri/factoidal/issues/1028: `prefix:Atto` is a
+-- prefixed name, so its line end is not a boundary; the dot is
+#guard posOf false "prefix:Atto\n  a <C> ;\n  <p> <o> .\n<s> <p> <o> .\n" == [33, 47]
+#guard posOf false "base:x\n <p> <o> .\n<s> <p> <o> .\n" == [17, 31]
+#guard ((allSplits false "PREFIX q: <y>\nprefix:x <p> <o> .\n".toUTF8).directives.map
+    (fun u => (u.start, u.stop))).toList.take 1 == [(0, 13)]
 -- a language tag is not a directive
 #guard ((allSplits false "<a> <b> \"x\"@en . <a> <b> \"y\"@prefixx .".toUTF8).directives).size == 0
 -- the minted blank nodes: `[]`, and in the collection six cells and one `[ ... ]`

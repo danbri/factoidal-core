@@ -35,7 +35,7 @@ structure StatementScan where
   completedRev : List String := []
   /-- The first `directiveHeadLength` characters of the current candidate
       after its leading whitespace, in source order. Maintained per character
-      so that the no-dot directive test reads seven characters instead of
+      so that the no-dot directive test reads eight characters instead of
       reversing the whole current candidate at every line end (2026-09-02:
       that reversal made the scanner quadratic in statement length, about
       280 G list steps on a 134 MB statement group of the UK Parliament
@@ -56,8 +56,10 @@ private def startsCi : List Char → List Char → Bool
   | a :: as, b :: bs => a.toLower == b.toLower && startsCi as bs
   | _, _ => false
 
-/-- Longest directive keyword (`VERSION`): the head prefix the test needs. -/
-def directiveHeadLength : Nat := 7
+/-- The head prefix the directive test needs: the longest keyword,
+    `VERSION`, and the character after it
+    (https://github.com/danbri/factoidal/issues/1028). -/
+def directiveHeadLength : Nat := 8
 
 /-- The specification of `StatementScan.head`: the current candidate's text
     after leading whitespace, truncated to `directiveHeadLength`. -/
@@ -71,12 +73,32 @@ def pushHead (head : List Char) (c : Char) : List Char :=
   else if head.length < directiveHeadLength then head ++ [c]
   else head
 
+/-- A character that continues a name after a keyword: an ASCII letter or
+    digit, `_`, `-`, `:`, `.`, or any character outside ASCII. This is the
+    parser's token rule (`isDirectiveAt`, `keywordCiAt`: not `PN_CHARS` and
+    not `:`) made wider by `.` and by all of non-ASCII, so that the byte
+    scanner `SplitScan` can apply the same test to one byte. -/
+def continuesName (c : Char) : Bool :=
+  c.isAlphanum || c == '_' || c == '-' || c == ':' || c == '.' || c.toNat ≥ 128
+
+/-- `kw` (any case) is the first token of `head`: the head starts with `kw`
+    and the next character ends the token. A head that holds only `kw` is
+    not a directive: the line end comes at once after the keyword, and no
+    directive is complete there. `prefix:Atto` and `base:x` are prefixed
+    names, not directives (https://github.com/danbri/factoidal/issues/1028). -/
+def keywordTokenAt (kw head : List Char) : Bool :=
+  startsCi kw head &&
+    match head.drop kw.length with
+    | c :: _ => !continuesName c
+    | [] => false
+
 /-- The three SPARQL-style Turtle directives omit the terminating dot. Their
     ordinary layout is one directive per line, which gives the scanner a safe
     candidate boundary without treating arbitrary newlines as statement ends.
     The Turtle grammar still validates their full syntax and IRI. -/
-private def beginsNoDotDirective (head : List Char) : Bool :=
-  startsCi "PREFIX".toList head || startsCi "BASE".toList head || startsCi "VERSION".toList head
+def beginsNoDotDirective (head : List Char) : Bool :=
+  keywordTokenAt "PREFIX".toList head || keywordTokenAt "BASE".toList head ||
+    keywordTokenAt "VERSION".toList head
 
 private def append (scan : StatementScan) (c : Char) : StatementScan :=
   { scan with currentRev := c :: scan.currentRev, head := pushHead scan.head c }
