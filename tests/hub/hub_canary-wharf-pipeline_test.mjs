@@ -67,10 +67,10 @@ test('canary-wharf: the kgx extract, heights measured or estimated, towers class
   ]);
 });
 
-test('canary-wharf: CSVW is a plain function, not a registered stage', async () => {
+test('canary-wharf: CSVW is a function and a tested, bound stage (issue 975)', async () => {
   assert.equal((await post.value('fromCsvw')).size, 7);
   assert.deepEqual(await post.value('csvwStage'),
-    { name: 'CSVW (tabular data to RDF)', status: 'missing', bound: false, runnable: false });
+    { name: 'CSVW (tabular data to RDF)', status: 'tested', bound: true, runnable: true });
   const run = await post.value('linesRun');
   assert.deepEqual(run.evidence.map((e) => [e.stage, e.status]), [['shippedEvaluator', 'proved']]);
   assert.equal(run.graph.size, 13);
@@ -96,7 +96,7 @@ test('canary-wharf: one named graph per source, and the walking-distance join', 
 test('canary-wharf: the pipeline record queried as RDF, back to the kgx graph version', async () => {
   const steps = await post.value('stepsPerGraph');
   assert.deepEqual(steps.map((r) => row(r, ['graph', 'stage', 'status'])), [
-    'data/csvw-output | CSVW (tabular data to RDF) | missing',
+    'data/csvw-output | CSVW (tabular data to RDF) | tested',
     'data/heights | turtleDocumentReader | proved',
     'data/heights | shippedEvaluator | proved',
     'graph/answer | shippedEvaluator | proved',
@@ -116,10 +116,10 @@ test('canary-wharf: the pipeline record queried as RDF, back to the kgx graph ve
     ['graph/answer | false', 'graph/buildings | true', 'graph/lines | false']);
   const caveats = await post.value('answerCaveats');
   assert.deepEqual(caveats.map((r) => row(r, ['tower', 'stage', 'status'])), [
-    '8 Canada Square | CSVW (tabular data to RDF) | missing',
-    'Newfoundland | CSVW (tabular data to RDF) | missing',
-    'One Canada Square | CSVW (tabular data to RDF) | missing',
-    'One Park Drive | CSVW (tabular data to RDF) | missing',
+    '8 Canada Square | CSVW (tabular data to RDF) | tested',
+    'Newfoundland | CSVW (tabular data to RDF) | tested',
+    'One Canada Square | CSVW (tabular data to RDF) | tested',
+    'One Park Drive | CSVW (tabular data to RDF) | tested',
   ]);
 });
 
@@ -130,26 +130,22 @@ test('canary-wharf: the N-Quads for the store', async () => {
   assert.deepEqual(s.graphs.map(local), ['graph/answer', 'graph/buildings', 'graph/lines', 'graph/provenance']);
 });
 
-// The page states four shortfalls; each is an expected failure that turns
-// the suite red when it starts to pass.
-xfail('canary-wharf: a CONSTRUCT node can be followed by another node',
-  'https://github.com/danbri/factoidal/issues/1026', async () => {
-    assert.equal((await post.value('chainedCheck')).wellTyped, true);
-  });
+// 0.16.0 (2026-10-26): issues 1026, 1009 and 975 are done in the published
+// package, so their former expected failures are assertions. One shortfall
+// remains an expected failure that turns the suite red when it passes.
+test('canary-wharf: a CONSTRUCT node can be followed by another node (issue 1026)', async () => {
+  assert.equal((await post.value('chainedCheck')).wellTyped, true);
+});
 
-xfail('canary-wharf: npm packs the dataset into an SBM11 generation',
-  'https://github.com/danbri/factoidal/issues/1009', async () => {
-    assert.equal((await post.value('sbm11Pack')).packed, true);
-  });
+test('canary-wharf: npm packs the dataset into an SBM11 generation (issue 1009)', async () => {
+  const p = await post.value('sbm11Pack');
+  assert.equal(p.packed, true);
+  assert.ok(p.files > 0 && p.bytes > 0);
+});
 
 xfail('canary-wharf: run() gives its evidence as an RDF graph',
   'https://github.com/danbri/factoidal/issues/563', async () => {
     const run = await post.value('buildingsRun');
     const graphs = Object.values(run).filter((v) => v && typeof v.query === 'function' && v !== run.graph);
     assert.ok(graphs.length > 0);
-  });
-
-xfail('canary-wharf: CSVW is a bound pipeline stage',
-  'https://github.com/danbri/factoidal/issues/975', async () => {
-    assert.equal((await post.value('csvwStage')).bound, true);
   });
