@@ -966,6 +966,13 @@ def packUnsupportedSuffixes : List (String × String) :=
     (".json", "JSON-LD"), (".n3", "Notation3"), (".csv", "CSV"), (".tsv", "TSV"),
     (".hdt", "HDT") ]
 
+/-- The suffixes of the syntaxes that the pack which reads the whole document
+(`sbm11PackFiles`, `Wasm/Ops/Sbm11Pack.lean`) reads beyond `packSuffixes`,
+each with its `RDF.formatOfLabel` label. -/
+def packWholeSuffixes : List (String × String) :=
+  [ (".rdf", "rdfxml"), (".owl", "rdfxml"), (".xml", "rdfxml"), (".rdfxml", "rdfxml"),
+    (".jsonld", "jsonld"), (".json-ld", "jsonld"), (".json", "jsonld") ]
+
 /-- Every name table a host validates arguments against, so no host keeps its
 own copy (https://github.com/danbri/factoidal/issues/894 item 5). -/
 def engineTablesJson : Json :=
@@ -983,7 +990,8 @@ def engineTablesJson : Json :=
     , ("queryOutputs", .array (["json", "csv", "tsv", "xml", "table", "ntriples"].map Json.string))
     , ("packSyntaxes", .array (packSyntaxNames.map Json.string))
     , ("packSuffixes", strMap packSuffixes)
-    , ("packUnsupportedSuffixes", strMap packUnsupportedSuffixes) ]
+    , ("packUnsupportedSuffixes", strMap packUnsupportedSuffixes)
+    , ("packWholeSuffixes", strMap packWholeSuffixes) ]
 
 /-- `engineTables()` — `engineTablesJson`, plus `errorCodes`: each declared
 error code with its specification section and summary
