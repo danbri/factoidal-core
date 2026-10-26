@@ -25,10 +25,12 @@ same comparison `bin/jsonld-fromrdf-runner` makes.
 
 ## Scoped out
 
-  * RDF 1.2 triple terms have no settled JSON-LD serialisation; a
-    dataset containing one is reported as an error (`.ok none` never
-    hides it) rather than serialised wrongly. Same choice as the F*
-    source.
+  * RDF 1.2 triple terms: with the default options a dataset containing
+    one is reported as an error (`none`), as the F* source does. With
+    `rdfstar` (JSON-LD-star, https://github.com/json-ld/json-ld-star/pull/61,
+    `docs/designissues/2026-10-26-jsonld-star.md`) a triple term is written
+    as `@triple`, `rdf:reifies` as `@reifies`, and a blank-node reifier of an
+    asserted triple as `@annotation` (section "Annotations" below).
   * Framing, and the `@embed`-family options, are a separate
     specification.
 
@@ -343,32 +345,93 @@ def i18nValueObject (lex dt : String) : Ov :=
   let withLang := if lang.isEmpty then base else base ++ [("@language", Json.string lang)]
   .val (.object (withLang ++ [("@direction", Json.string dir)]))
 
+/-- §8.6 for a literal. `none` signals the fatal "invalid JSON literal" error
+the negative fixtures js08/js09 expect. -/
+def literalToObject (opts : Options) (l : WfLiteral) : Option Ov :=
+  let lex := l.val.lexicalForm
+  let dt  := l.val.datatype.val
+  match l.val.langTag with
+  | some tag => some (.val (.object [("@value", .string lex), ("@language", .string tag)]))
+  | none =>
+    if opts.rdfDirection == some "i18n-datatype" && dt.startsWith i18nPrefix then
+      some (i18nValueObject lex dt)
+    else if dt == rdfJsonIri then
+      match parseJson lex with
+      | .ok j    => some (.val (.object [("@value", j), ("@type", .string "@json")]))
+      | .error _ => none
+    else if dt == sXsdString then
+      some (.val (.object [("@value", .string lex)]))
+    else if opts.useNativeTypes then
+      some (nativeValue lex dt)
+    else
+      some (.val (.object [("@value", .string lex), ("@type", .string dt)]))
+
+/-! ### Triple terms (JSON-LD-star, `rdfstar`)
+
+A triple term `<<( s p o )>>` is written as the node object of its one triple:
+`{"@id": s, p: [o]}`, with `rdf:type` to a node folded into `@type` as in §8.5
+when `useRdfType` is false. A triple term in the object slot is written as
+`{"@triple": node}`. RDF 1.2 nests triple terms only in the object slot, so a
+nested triple term is a chain: `tripleFrames` walks it with a tail call and
+`tripleNodeJson` builds the node objects from the innermost one out with a left
+fold. The native stack does not grow with the depth of the nesting. -/
+
+/-- The `(subject, predicate)` frames of a triple-term chain, innermost first
+after the outermost, and the innermost object (never a triple term). -/
+def tripleFrames : List (Subject × WfIri) → Subject → WfIri → Term →
+    List (Subject × WfIri) × Subject × WfIri × Term
+  | acc, s, p, .tripleTerm s' p' o' => tripleFrames ((s, p) :: acc) s' p' o'
+  | acc, s, p, o => (acc, s, p, o)
+
+/-- The node object of the triple `s p o`, where `o` is not a triple term. -/
+def leafTripleNode (opts : Options) (s : Subject) (p : WfIri) (o : Term) : Option Json :=
+  let sid := ("@id", Json.string (subjId s))
+  match o with
+  | .iri i =>
+    if p.val == rdfTypeIri && !opts.useRdfType then
+      some (.object [sid, ("@type", .array [.string i.val])])
+    else some (.object [sid, (p.val, .array [.object [("@id", .string i.val)]])])
+  | .bnode b =>
+    if p.val == rdfTypeIri && !opts.useRdfType then
+      some (.object [sid, ("@type", .array [.string ("_:" ++ b)])])
+    else some (.object [sid, (p.val, .array [.object [("@id", .string ("_:" ++ b))]])])
+  | .literal l =>
+    (literalToObject opts l).map fun v =>
+      .object [sid, (p.val, .array [match v with | .val j => j | .ref x => .object [("@id", .string x)] | .lst _ => .null])]
+  | .tripleTerm _ _ _ => none
+
+/-- The node object of the triple of a triple term `<<( s p o )>>`. -/
+def tripleNodeJson (opts : Options) (s : Subject) (p : WfIri) (o : Term) : Option Json :=
+  let (frames, s0, p0, o0) := tripleFrames [] s p o
+  (leafTripleNode opts s0 p0 o0).map fun inner =>
+    frames.foldl (fun (j : Json) (f : Subject × WfIri) =>
+      .object [("@id", .string (subjId f.1)), (f.2.val, .array [.object [("@triple", j)]])]) inner
+
 /-- §8.6. `none` signals the fatal "invalid JSON literal" error the
-negative fixtures js08/js09 expect. -/
+negative fixtures js08/js09 expect. A triple term is `{"@triple": node}`
+when `rdfstar` is set; otherwise it is refused (`none`), because JSON-LD 1.1
+has no form for it. -/
 def rdfToObject (opts : Options) : Term → Option Ov
   | .iri i     => some (.ref i.val)
   | .bnode b   => some (.ref ("_:" ++ b))
-  -- RDF 1.2 triple terms have no from-RDF JSON-LD representation; report
-  -- unsupported rather than emit a wrong value object.
-  | .tripleTerm _ _ _ => none
-  | .literal l =>
-    let lex := l.val.lexicalForm
-    let dt  := l.val.datatype.val
-    match l.val.langTag with
-    | some tag => some (.val (.object [("@value", .string lex), ("@language", .string tag)]))
-    | none =>
-      if opts.rdfDirection == some "i18n-datatype" && dt.startsWith i18nPrefix then
-        some (i18nValueObject lex dt)
-      else if dt == rdfJsonIri then
-        match parseJson lex with
-        | .ok j    => some (.val (.object [("@value", j), ("@type", .string "@json")]))
-        | .error _ => none
-      else if dt == sXsdString then
-        some (.val (.object [("@value", .string lex)]))
-      else if opts.useNativeTypes then
-        some (nativeValue lex dt)
-      else
-        some (.val (.object [("@value", .string lex), ("@type", .string dt)]))
+  | .tripleTerm s p o =>
+    if opts.rdfstar then
+      (tripleNodeJson opts s p o).map fun n => .val (.object [("@triple", n)])
+    else none
+  | .literal l => literalToObject opts l
+
+def rdfReifiesIri : String := "http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies"
+
+/-- The entry a non-`rdf:type` triple adds to its subject's node: the property
+and the value. With `rdfstar`, `r rdf:reifies <<( t )>>` adds the node object of
+`t` under `@reifies` (json-ld-star PR 61, Serialize RDF as JSON-LD). -/
+def tripleEntry (opts : Options) (p : String) (o : Term) : Option (String × Ov) :=
+  match o with
+  | .tripleTerm s' p' o' =>
+    if opts.rdfstar && p == rdfReifiesIri then
+      (tripleNodeJson opts s' p' o').map fun n => ("@reifies", .val n)
+    else (rdfToObject opts o).map fun v => (p, v)
+  | _ => (rdfToObject opts o).map fun v => (p, v)
 
 /-! ## Node-map construction (per graph) — §8.5 steps 3-5 -/
 
@@ -386,9 +449,9 @@ def processTriple (opts : Options) (nm : List FrNode) (t : Triple)
     | some (oid, _) => some (nodeUpdateType nm2 sId oid)
     | none          => some nm2
   else
-    match rdfToObject opts t.o with
-    | none   => none
-    | some v => some (nodeUpdateProp nm2 sId p v)
+    match tripleEntry opts p t.o with
+    | none        => none
+    | some (k, v) => some (nodeUpdateProp nm2 sId k v)
 
 def buildNodemap (opts : Options) : List FrNode → List Triple → Option (List FrNode)
   | nm, []      => some nm
@@ -894,9 +957,9 @@ def processTripleF (opts : Options) (s : NmF) (t : Triple) : Option NmF :=
     | some (oid, _) => some (s2.updType sId oid)
     | none          => some s2
   else
-    match rdfToObject opts t.o with
-    | none   => none
-    | some v => some (s2.updProp sId p v)
+    match tripleEntry opts p t.o with
+    | none        => none
+    | some (k, v) => some (s2.updProp sId k v)
 
 theorem processTripleF_spec (opts : Options) (s : NmF) (t : Triple) (h : s.Good) :
     processTriple opts s.abs t = (processTripleF opts s t).map NmF.abs ∧
@@ -910,10 +973,10 @@ theorem processTripleF_spec (opts : Options) (s : NmF) (t : Triple) (h : s.Good)
     split
     · obtain ⟨e, g⟩ := NmF.updType_spec _ (subjId ts) i.val g2
       exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
-    · cases rdfToObject opts (Term.iri i) with
+    · cases tripleEntry opts tp.val (Term.iri i) with
       | none => exact ⟨rfl, fun s' hs' => by cases hs'⟩
-      | some v =>
-        obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) tp.val v g2
+      | some kv =>
+        obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) kv.1 kv.2 g2
         exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
   | bnode b =>
     obtain ⟨e2, g2⟩ := NmF.ensure_spec (s.ensure (subjId ts) (subjIsBlank ts)) ("_:" ++ b) true g1
@@ -921,26 +984,26 @@ theorem processTripleF_spec (opts : Options) (s : NmF) (t : Triple) (h : s.Good)
     split
     · obtain ⟨e, g⟩ := NmF.updType_spec _ (subjId ts) ("_:" ++ b) g2
       exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
-    · cases rdfToObject opts (Term.bnode b) with
+    · cases tripleEntry opts tp.val (Term.bnode b) with
       | none => exact ⟨rfl, fun s' hs' => by cases hs'⟩
-      | some v =>
-        obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) tp.val v g2
+      | some kv =>
+        obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) kv.1 kv.2 g2
         exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
   | literal l =>
     simp only [processTriple, processTripleF, termNodeId, ← e1, Bool.and_false,
       Bool.false_eq_true, if_false]
-    cases rdfToObject opts (Term.literal l) with
+    cases tripleEntry opts tp.val (Term.literal l) with
     | none => exact ⟨rfl, fun s' hs' => by cases hs'⟩
-    | some v =>
-      obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) tp.val v g1
+    | some kv =>
+      obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) kv.1 kv.2 g1
       exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
   | tripleTerm a b c =>
     simp only [processTriple, processTripleF, termNodeId, ← e1, Bool.and_false,
       Bool.false_eq_true, if_false]
-    cases rdfToObject opts (Term.tripleTerm a b c) with
+    cases tripleEntry opts tp.val (Term.tripleTerm a b c) with
     | none => exact ⟨rfl, fun s' hs' => by cases hs'⟩
-    | some v =>
-      obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) tp.val v g1
+    | some kv =>
+      obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) kv.1 kv.2 g1
       exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
 
 def buildF (opts : Options) : NmF → List Triple → Option NmF
@@ -2327,6 +2390,132 @@ theorem isGraphName_eq_firstMap (named : List NamedNm) (id : String) :
 
 end FastEmit
 
+/-! ## Annotations (JSON-LD-star, `rdfstar`)
+
+A reifier node is written as an `@annotation` on the value of the triple it
+reifies (folded) when all of these hold, in one graph:
+
+  1. the reifier is a blank node;
+  2. its node has exactly one `@reifies` value (one `rdf:reifies` statement);
+  3. that triple is asserted in the same graph: the node of its subject has
+     the triple's value under the triple's predicate (a triple written as
+     `@type`, or whose value became a `@list`, is not found and not folded);
+  4. the reifier is not the object of a triple in any graph, does not occur in
+     any triple term, and is not a graph name.
+
+Rule 4 keeps the writer from moving a node that something else points at, and it
+makes folding order-free: the subject of a reified triple occurs in a triple term,
+so a folded reifier is never the target of another fold. The annotation is the
+reifier's node object without `@reifies`; it keeps the reifier's `@id`, so the
+output reads back to the same quads. The fixtures fold blank-node reifiers only
+(st18, st19, st20, st20a, st28, st29, st34, st35, st38); they have no reifier
+that is an IRI, or that is referenced, of a triple that is asserted. -/
+
+section Annotations
+
+open Std
+
+/-- The blank nodes (as `_:label`) that occur in a triple term, added to `acc`. -/
+def tripleTermBnodes (acc : HashSet String) : Term → HashSet String
+  | .tripleTerm s _ o =>
+    tripleTermBnodes (match s with | .bnode b => acc.insert ("_:" ++ b) | .iri _ => acc) o
+  | .bnode b => acc.insert ("_:" ++ b)
+  | _ => acc
+
+/-- The blank nodes that occur in a triple term anywhere in the dataset. -/
+def datasetTripleTermBnodes (ds : Dataset) : HashSet String :=
+  let addG := fun (acc : HashSet String) (g : List Triple) =>
+    g.foldl (fun a t => match t.o with
+      | .tripleTerm _ _ _ => tripleTermBnodes a t.o
+      | _ => a) acc
+  ds.named.foldl (fun acc ng => addG acc ng.graph) (addG ∅ ds.default)
+
+/-- A value object or node reference without its `@annotation` entry. -/
+def stripAnnotation : Json → Json
+  | .object fs => .object (fs.filter (fun kv => kv.1 != "@annotation"))
+  | j => j
+
+/-- Add `ann` to the `@annotation` entry of a value object or node reference. -/
+def addAnnotation (ann : Json) : Json → Json
+  | .object fs =>
+    match fs.find? (fun kv => kv.1 == "@annotation") with
+    | some (_, .array xs) =>
+      .object (fs.map fun kv => if kv.1 == "@annotation" then (kv.1, .array (xs ++ [ann])) else kv)
+    | _ => .object (fs ++ [("@annotation", .array [ann])])
+  | j => j
+
+/-- The subject, predicate and value of the node object of one triple
+(`{"@id": s, p: [v]}`), or `none` for any other shape (`@type`). -/
+def tripleOfNode : Json → Option (String × String × Json)
+  | .object [("@id", .string sid), (p, .array [v])] =>
+    if p.startsWith "@" then none else some (sid, p, v)
+  | _ => none
+
+/-- One fold: the reifier, the subject node, the predicate, the value, and the
+annotation object. -/
+structure AnnFold where
+  reifier : String
+  target  : String
+  prop    : String
+  value   : Json
+  ann     : Json
+
+/-- The fold of node `n` of graph `look`, when rules 1-4 hold. -/
+def annFoldOf (look : HashMap String FrNode) (excluded : String → Bool) (n : FrNode) :
+    Option AnnFold :=
+  if !n.blank || excluded n.id then none else
+  match findProp n.props "@reifies" with
+  | some [.val tj] =>
+    match tripleOfNode tj with
+    | none => none
+    | some (sid, p, v) =>
+      match look[sid]? with
+      | none => none
+      | some tn =>
+        match findProp tn.props p with
+        | none => none
+        | some vals =>
+          if vals.any (fun x => stripAnnotation (ovToJson x) == v) then
+            let rest := { n with props := n.props.filter (fun kv => kv.1 != "@reifies") }
+            some ⟨n.id, sid, p, v, nodeToJson rest none⟩
+          else none
+  | _ => none
+
+/-- Apply one fold to the subject node. -/
+def applyAnnFold (n : FrNode) (f : AnnFold) : FrNode :=
+  { n with props := n.props.map fun kv =>
+      if kv.1 == f.prop then
+        (kv.1, kv.2.map fun x =>
+          let j := ovToJson x
+          if stripAnnotation j == f.value then .val (addAnnotation f.ann j) else x)
+      else kv }
+
+/-- Fold the reifiers of one graph into annotations. -/
+def foldAnnotations (excluded : String → Bool) (g : List FrNode) : List FrNode :=
+  let look := firstMap FrNode.id g
+  let folds := g.filterMap (annFoldOf look excluded)
+  if folds.isEmpty then g else
+  let gone : HashSet String := folds.foldl (fun s f => s.insert f.reifier) ∅
+  let upd : HashMap String FrNode := folds.foldl (fun m f =>
+    match m[f.target]? with
+    | some n => m.insert f.target (applyAnnFold n f)
+    | none =>
+      match look[f.target]? with
+      | some n => m.insert f.target (applyAnnFold n f)
+      | none => m) ∅
+  g.filterMap fun n => if gone.contains n.id then none else some (upd.getD n.id n)
+
+/-- Fold the reifiers of every graph. `dm` already carries the graph-name nodes. -/
+def foldAllAnnotations (ds : Dataset) (dm : List FrNode) (named : List NamedNm) :
+    List FrNode × List NamedNm :=
+  let cm := countMap (mapsRefids (dm :: named.map NamedNm.map))
+  let inTt := datasetTripleTermBnodes ds
+  let names := firstMap NamedNm.name named
+  let excluded := fun id => cm.getD id 0 != 0 || inTt.contains id || names.contains id
+  (foldAnnotations excluded dm, named.map fun ng => { ng with map := foldAnnotations excluded ng.map })
+
+end Annotations
+
 /-! ## Entry point — §8.5 -/
 
 /-- Serialize an RDF dataset as an expanded-form JSON-LD document.
@@ -2339,9 +2528,36 @@ def fromRdf (ds : Dataset) (opts : Options) : Option Json :=
     | none       => none
     | some named =>
       let dm := addGraphNames dm0 named
+      let (dm, named) := if opts.rdfstar then foldAllAnnotations ds dm named else (dm, named)
       let allMaps := dm :: named.map NamedNm.map
       let refids := mapsRefids allMaps
       let clMode := opts.rdfDirection == some "compound-literal"
       some (.array (emitDefaultNodes dm named refids clMode))
+
+/-! ### Checks of the JSON-LD-star path -/
+
+private def reifiesP : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies", rfl⟩
+private def starDs (extra : List Triple) : Dataset :=
+  { default := [⟨(Subject.iri ⟨"http://e/a", rfl⟩), (⟨"http://e/p", rfl⟩ : WfIri), (Term.iri ⟨"http://e/b", rfl⟩)⟩,
+                ⟨.bnode "r", reifiesP, .tripleTerm ((Subject.iri ⟨"http://e/a", rfl⟩)) ((⟨"http://e/p", rfl⟩ : WfIri)) ((Term.iri ⟨"http://e/b", rfl⟩))⟩,
+                ⟨.bnode "r", (⟨"http://e/q", rfl⟩ : WfIri), (Term.iri ⟨"http://e/c", rfl⟩)⟩] ++ extra,
+    named := [] }
+private def jstr (o : Option Json) : String := (o.map jcsDocument).getD "none"
+
+-- Without `rdfstar`, a triple term is refused, as before.
+#guard fromRdf (starDs []) {} == none
+-- A blank reifier of an asserted triple, referenced nowhere, is an `@annotation`.
+#guard jstr (fromRdf (starDs []) { rdfstar := true }) ==
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@annotation\":[{\"@id\":\"_:r\",\"http://e/q\":[{\"@id\":\"http://e/c\"}]}],\"@id\":\"http://e/b\"}]}]"
+-- A referenced reifier stays a node object with `@reifies`.
+#guard jstr (fromRdf (starDs [⟨(Subject.iri ⟨"http://e/d", rfl⟩), (⟨"http://e/s", rfl⟩ : WfIri), .bnode "r"⟩]) { rdfstar := true }) ==
+  "[{\"@id\":\"_:r\",\"@reifies\":[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"}]}],\"http://e/q\":[{\"@id\":\"http://e/c\"}]},{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"}]},{\"@id\":\"http://e/d\",\"http://e/s\":[{\"@id\":\"_:r\"}]}]"
+-- A triple term nested 3,000 deep is written without a native frame per level.
+private def deepTt (n : Nat) : Term :=
+  (List.range n).foldl (fun t _ =>
+    .tripleTerm (Subject.iri ⟨"http://e/s", rfl⟩) (⟨"http://e/p", rfl⟩ : WfIri) t)
+    (Term.iri ⟨"http://e/o", rfl⟩)
+#guard (fromRdf { default := [⟨(Subject.iri ⟨"http://e/x", rfl⟩), (⟨"http://e/p", rfl⟩ : WfIri), deepTt 3000⟩], named := [] }
+          { rdfstar := true }).isSome
 
 end L4Factoidal.JSONLD.FromRdf
