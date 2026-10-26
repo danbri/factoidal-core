@@ -785,6 +785,33 @@ cannot be read (for example an undeclared prefix). Rules:
 Model: `formal/lean4/Harness/CsvwValidateRun.lean`, test308,
 https://github.com/danbri/factoidal/issues/700.
 
+## ⚠️ An npm test of a new op is a plain assertion, never "xfail until the wasm is rebuilt"
+
+The danbri/factoidal-builds `web-gates` job runs `npm test` in
+`npm/factoidal/` against the wasm built from the SAME core commit. An expected
+failure in that suite must name a shortfall of the source at that commit. An
+xfail that says "fails until the wasm is rebuilt" fails the gate on exactly the
+build that rebuilds it: the case passes, the harness turns red on the
+unexpected pass, and the web set is not published.
+
+Cost: on 2026-10-25 `npm/factoidal/test/from-iri-not-found.test.mjs` had two
+such cases (https://github.com/danbri/factoidal/issues/1032). Core main
+`a76d8694` got native sets only; the web set and the 0.16.0 release were
+blocked. `scripts/resolve-core.sh` in factoidal-builds counts a commit as
+built when its linux set exists, so a missing web set is never retried (25 of
+102 built core commits had no web set on 2026-10-26). The audit:
+https://github.com/danbri/factoidal/issues/1038.
+
+Rules:
+- A test of a new wasm op or a changed result is a plain assertion. Run
+  locally against an older fetched wasm it fails, and that failure is correct:
+  it names the stale wasm.
+- A capability-probe skip (`{ skip: 'wasm has no X op' }`) passes silently on
+  an old wasm and is a weak test; prefer a plain assertion.
+- The hub tests (`tests/hub/`) are not in `web-gates`. Their xfails for
+  features that need a new wasm are flipped when that wasm is fetched and
+  the new values are measured, not guessed.
+
 ## Expected failures (owner rule, 2026-09-07)
 
 A stated shortfall is a failing test plus an open issue; prose alone is not a
