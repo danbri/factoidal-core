@@ -20,3 +20,43 @@ The IRIs, labels and structure are the IPTC's. The block layout, the
 dictionary, the indexes and the manifest are this package's encoding of
 them. Redistribution of the vocabulary content stays under CC BY 4.0.
 
+
+jena-arq-expr/
+--------------
+
+cases.json is derived from the one-line expression tests of Apache Jena,
+jena-arq/src/test/java/org/apache/jena/sparql/expr/*.java, at commit
+a1164c5dc5c9e1a9c58d94766c13d870e0a8ba98.
+
+  Licence: Apache License, Version 2.0
+           https://www.apache.org/licenses/LICENSE-2.0
+  Change notice (Factoidal, 2026-10-26): each Java test call is rewritten
+  as a SPARQL expression and a check kind by
+  tools/jena-facade-study/extract.py; the Java source text of each test is
+  kept in the "java" member. verdicts.json is Factoidal's own work.
+
+The NOTICE file of Apache Jena:
+
+  Apache Jena
+  Copyright 2011-2026 The Apache Software Foundation
+
+  This product includes software developed at
+  The Apache Software Foundation (http://www.apache.org/).
+
+  Portions of this software were originally based on the following:
+    - Copyright 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009 Hewlett-Packard Development Company, LP
+    - Copyright 2010, 2011 Epimorphics Ltd.
+    - Copyright 2010, 2011 Talis Systems Ltd.
+  These have been licensed to the Apache Software Foundation under a software grant.
+
+  This product includes software developed by
+  PluggedIn Software under a BSD license.
+
+  Portions of this software are from Apache Xerces and were originally based on the following:
+    - software copyright (c) 1999, IBM Corporation., http://www.ibm.com.
+    - software copyright (c) 1999, Sun Microsystems., http://www.sun.com.
+
+  This product includes software developed at the Open Geospatial Consortium:
+  http://www.opengeospatial.org/ogc/software
+
+"Apache Jena" and "Jena" are trademarks of The Apache Software Foundation.
