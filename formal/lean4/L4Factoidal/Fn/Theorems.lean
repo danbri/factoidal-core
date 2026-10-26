@@ -77,16 +77,18 @@ theorem listIndex_rif (len : Nat) (i : Int) :
 Each theorem below names the input that separates two Recommendations
 and proves what each of them answers on it. -/
 
-/-- **`substring`, SPARQL against F&O.** F&O §5.4.4 keeps every
-    position `p` with `start <= p < start + length`, so a start of 0
-    with a length of 3 keeps positions 1 and 2 and loses the third
-    character. SPARQL 1.1 §17.4.3.3 `SUBSTR` cites `fn:substring` but
-    CLAMPS a start below 1 to 1 instead, so it keeps three characters.
-    `"foobar"` with start 0 and length 3 is the witness. -/
-theorem substring_sparql_differs_from_fando :
-    L4Factoidal.SPARQL.substrSpec "foobar" 0 (some 3) = "foo"
-    ∧ Fn.String.substringFromLen "foobar" 0 3 = "fo" := by
-  constructor <;> rfl
+/-- **`substring`, SPARQL and F&O agree.** SPARQL 1.1 §17.4.3.3
+    `SUBSTR` "corresponds to the XPath `fn:substring` function", and
+    F&O §5.4.4 keeps every position `p` with `start <= p < start +
+    length`. So a start of 0 with a length of 3 keeps positions 1 and
+    2 only. An earlier `substrSpec` clamped the start to 1 and kept
+    three characters (https://github.com/danbri/factoidal/issues/1036). -/
+theorem substring_sparql_eq_fando (s : String) (start len : Int) :
+    L4Factoidal.SPARQL.substrSpec s start (some len) = Fn.String.substringFromLen s start len
+    ∧ L4Factoidal.SPARQL.substrSpec s start none = Fn.String.substringFrom s start :=
+  ⟨rfl, rfl⟩
+
+example : L4Factoidal.SPARQL.substrSpec "foobar" 0 (some 3) = "fo" := by rfl
 
 /-- **`substring`, RIF's 2-argument form against F&O's.** The Approved
     `Builtins_String` fixture writes `substring("foobar" 3) = "bar"`,
