@@ -122,12 +122,15 @@ of the text `canonicalizeOf` answers. -/
 def canonicalHashOf (ds : Dataset) : String :=
   withOpsDataset .rdf12 ds canonicalHashChecked
 
--- W3C rdf-canon test014 (third_party/testing/rdf-canon/tests/rdfc10/test014-rdfc10.nq):
--- `sha256sum test014-rdfc10.nq`.
-#guard canonicalHashParsed
-  (match L4Factoidal.Dataflow.readNQuadsText .rdf12 "_:b0 <http://example.org/vocab#p> _:b1 .\n" with
-   | .ok ds => ds | .error _ => {}) ==
-  okWith [("hash", .string (L4Factoidal.Crypto.hashHex .sha256 "_:c14n0 <http://example.org/vocab#p> _:c14n1 .\n")),
-          ("algorithm", .string "sha256")]
+-- Two blank nodes, one edge. RDFC-1.0 labels the object `_:c14n0`, so the
+-- canonical document is
+-- `_:c14n1 <http://example.org/vocab#p> _:c14n0 .\n`; the digest is pinned from
+-- `printf '_:c14n1 <http://example.org/vocab#p> _:c14n0 .\n' | shasum -a 256`,
+-- outside Lean, so this also checks `Crypto.hashHex`.
+#guard match L4Factoidal.Dataflow.readNQuadsText .rdf12 "_:b0 <http://example.org/vocab#p> _:b1 .\n" with
+  | .ok ds => canonicalHashParsed ds ==
+      okWith [("hash", .string "cb9ef7ede80f8b417cbd81fd6e6c63f88db6973087b4f638e69e94d8891b6e25"),
+              ("algorithm", .string "sha256")]
+  | .error _ => false
 
 end L4Wasm.Ops
