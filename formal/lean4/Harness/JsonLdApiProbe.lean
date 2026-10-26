@@ -115,6 +115,8 @@ structure Entry where
   processorFeature  : Option String
   rdfstar           : Bool
   createAnnotations : Bool
+  /-- The entry is from the json-ld-star suite (`specVersion: "json-ld-star"`). -/
+  starSuite         : Bool := false
   deriving Repr
 
 def typesOf (j : Json) : List String :=
@@ -172,7 +174,8 @@ def entryOf (dflt : Algo) (j : Json) : Option Entry :=
            extractAllScripts := optBool "extractAllScripts" false,
            processorFeature := optStr "processorFeature",
            rdfstar := optBool "rdfstar" false,
-           createAnnotations := optBool "createAnnotations" false }
+           createAnnotations := optBool "createAnnotations" false,
+           starSuite := optStr "specVersion" == some "json-ld-star" }
 
 /-! ## File-system helpers -/
 
@@ -237,6 +240,28 @@ structure RunResult where
   producedCode : Option String := none
   droppedLines : Nat := 0
   deriving Repr
+
+/-- A JSON tree with the elements of every array in a canonical order, except
+the array of a `@list`. `fuel` bounds the depth (`Json.size` is enough). -/
+def unorderedNorm : Nat → Bool → Json → Json
+  | 0, _, j => j
+  | f + 1, isList, .array xs =>
+    let ys := xs.map (unorderedNorm f false)
+    if isList then .array ys
+    else .array ((ys.map (fun y => (jcsDocument y, y))).mergeSort (fun a b => decide (a.1 ≤ b.1))
+                  |>.map (·.2))
+  | f + 1, _, .object fs => .object (fs.map (fun kv => (kv.1, unorderedNorm f (kv.1 == "@list") kv.2)))
+  | _, _, j => j
+
+/-- JSON-LD object comparison with arrays unordered except `@list` (the rule of
+the JSON-LD test suites, which the json-ld-star suite follows: "Tests are run
+broadly the same as those for the core JSON-LD test suite"). The json-ld-star
+fromRdf fixtures need it: their top-level node order is neither sorted by `@id`
+(st15, st16, st29) nor the order of the input (st19, st20). Used for the
+json-ld-star fromRdf manifest only; every other manifest keeps the F* rule. -/
+def unorderedEqual (a b : Json) : Bool :=
+  jcsDocument (unorderedNorm (Json.size a + 1) false a) ==
+    jcsDocument (unorderedNorm (Json.size b + 1) false b)
 
 def truncate (n : Nat) (s : String) : String :=
   if s.length ≤ n then s else String.ofList (s.toList.take n) ++ " …"
@@ -403,7 +428,8 @@ def runEntry (loader : Loader) (baseIri : String) (dir : System.FilePath) (e : E
               match parseJson expectTxt with
               | .error _ => return { outcome := .fail "expected file is not valid JSON" }
               | .ok expJson =>
-                if expandedEqual gotJson expJson then
+                if expandedEqual gotJson expJson ||
+                    (e.starSuite && e.algo == .fromRdf && unorderedEqual gotJson expJson) then
                   return { outcome := .pass, droppedLines := dropped }
                 else
                   let g := truncate 600 (jcsDocument gotJson)
