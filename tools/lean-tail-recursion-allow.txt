@@ -622,6 +622,7 @@ schemeBlind
 # "(c)" = the depth is bounded by a constant or by the height of a balanced
 # tree. Entries that were LENGTH-proportional over data were converted to
 # accumulator forms with csimp theorems instead (see the issue).
+JsonLdApiProbe_unorderedNorm  # (b) harness comparison; nesting of a json-ld-star fromRdf result or fixture; fuel-bounded by Json.size; arrays via List.map
 OwlProbe_showCe  # (b) harness printer; class-expression nesting; operand lists via List.map
 sortStrings  # (c) Array.qsort left-partition recursion in the xmlconf harness; input: test ids of one manifest (at most 2,184); median-of-three pivot, expected depth O(log n), worst case n
 L4Factoidal_Codec_ofHex_go  # (c) private fixture decoder; only the three hex literals of Codec/Archive.lean; longest 1,024 bytes

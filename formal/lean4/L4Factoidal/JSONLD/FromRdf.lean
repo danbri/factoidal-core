@@ -2553,9 +2553,10 @@ private def jstr (o : Option Json) : String := (o.map jcsDocument).getD "none"
 #guard jstr (fromRdf (starDs [⟨(Subject.iri ⟨"http://e/d", rfl⟩), (⟨"http://e/s", rfl⟩ : WfIri), .bnode "r"⟩]) { rdfstar := true }) ==
   "[{\"@id\":\"_:r\",\"@reifies\":[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"}]}],\"http://e/q\":[{\"@id\":\"http://e/c\"}]},{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"}]},{\"@id\":\"http://e/d\",\"http://e/s\":[{\"@id\":\"_:r\"}]}]"
 -- A triple term nested 3,000 deep is written without a native frame per level.
-private def deepTt : Nat → Term
-  | 0 => (Term.iri ⟨"http://e/o", rfl⟩)
-  | n + 1 => .tripleTerm ((Subject.iri ⟨"http://e/s", rfl⟩)) ((⟨"http://e/p", rfl⟩ : WfIri)) (deepTt n)
+private def deepTt (n : Nat) : Term :=
+  (List.range n).foldl (fun t _ =>
+    .tripleTerm (Subject.iri ⟨"http://e/s", rfl⟩) (⟨"http://e/p", rfl⟩ : WfIri) t)
+    (Term.iri ⟨"http://e/o", rfl⟩)
 #guard (fromRdf { default := [⟨(Subject.iri ⟨"http://e/x", rfl⟩), (⟨"http://e/p", rfl⟩ : WfIri), deepTt 3000⟩], named := [] }
           { rdfstar := true }).isSome
 
