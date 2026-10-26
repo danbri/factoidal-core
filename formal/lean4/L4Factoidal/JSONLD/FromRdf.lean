@@ -343,32 +343,93 @@ def i18nValueObject (lex dt : String) : Ov :=
   let withLang := if lang.isEmpty then base else base ++ [("@language", Json.string lang)]
   .val (.object (withLang ++ [("@direction", Json.string dir)]))
 
+/-- §8.6 for a literal. `none` signals the fatal "invalid JSON literal" error
+the negative fixtures js08/js09 expect. -/
+def literalToObject (opts : Options) (l : WfLiteral) : Option Ov :=
+  let lex := l.val.lexicalForm
+  let dt  := l.val.datatype.val
+  match l.val.langTag with
+  | some tag => some (.val (.object [("@value", .string lex), ("@language", .string tag)]))
+  | none =>
+    if opts.rdfDirection == some "i18n-datatype" && dt.startsWith i18nPrefix then
+      some (i18nValueObject lex dt)
+    else if dt == rdfJsonIri then
+      match parseJson lex with
+      | .ok j    => some (.val (.object [("@value", j), ("@type", .string "@json")]))
+      | .error _ => none
+    else if dt == sXsdString then
+      some (.val (.object [("@value", .string lex)]))
+    else if opts.useNativeTypes then
+      some (nativeValue lex dt)
+    else
+      some (.val (.object [("@value", .string lex), ("@type", .string dt)]))
+
+/-! ### Triple terms (JSON-LD-star, `rdfstar`)
+
+A triple term `<<( s p o )>>` is written as the node object of its one triple:
+`{"@id": s, p: [o]}`, with `rdf:type` to a node folded into `@type` as in §8.5
+when `useRdfType` is false. A triple term in the object slot is written as
+`{"@triple": node}`. RDF 1.2 nests triple terms only in the object slot, so a
+nested triple term is a chain: `tripleFrames` walks it with a tail call and
+`tripleNodeJson` builds the node objects from the innermost one out with a left
+fold. The native stack does not grow with the depth of the nesting. -/
+
+/-- The `(subject, predicate)` frames of a triple-term chain, innermost first
+after the outermost, and the innermost object (never a triple term). -/
+def tripleFrames : List (Subject × WfIri) → Subject → WfIri → Term →
+    List (Subject × WfIri) × Subject × WfIri × Term
+  | acc, s, p, .tripleTerm s' p' o' => tripleFrames ((s, p) :: acc) s' p' o'
+  | acc, s, p, o => (acc, s, p, o)
+
+/-- The node object of the triple `s p o`, where `o` is not a triple term. -/
+def leafTripleNode (opts : Options) (s : Subject) (p : WfIri) (o : Term) : Option Json :=
+  let sid := ("@id", Json.string (subjId s))
+  match o with
+  | .iri i =>
+    if p.val == rdfTypeIri && !opts.useRdfType then
+      some (.object [sid, ("@type", .array [.string i.val])])
+    else some (.object [sid, (p.val, .array [.object [("@id", .string i.val)]])])
+  | .bnode b =>
+    if p.val == rdfTypeIri && !opts.useRdfType then
+      some (.object [sid, ("@type", .array [.string ("_:" ++ b)])])
+    else some (.object [sid, (p.val, .array [.object [("@id", .string ("_:" ++ b))]])])
+  | .literal l =>
+    (literalToObject opts l).map fun v =>
+      .object [sid, (p.val, .array [match v with | .val j => j | .ref x => .object [("@id", .string x)] | .lst _ => .null])]
+  | .tripleTerm _ _ _ => none
+
+/-- The node object of the triple of a triple term `<<( s p o )>>`. -/
+def tripleNodeJson (opts : Options) (s : Subject) (p : WfIri) (o : Term) : Option Json :=
+  let (frames, s0, p0, o0) := tripleFrames [] s p o
+  (leafTripleNode opts s0 p0 o0).map fun inner =>
+    frames.foldl (fun (j : Json) (f : Subject × WfIri) =>
+      .object [("@id", .string (subjId f.1)), (f.2.val, .array [.object [("@triple", j)]])]) inner
+
 /-- §8.6. `none` signals the fatal "invalid JSON literal" error the
-negative fixtures js08/js09 expect. -/
+negative fixtures js08/js09 expect. A triple term is `{"@triple": node}`
+when `rdfstar` is set; otherwise it is refused (`none`), because JSON-LD 1.1
+has no form for it. -/
 def rdfToObject (opts : Options) : Term → Option Ov
   | .iri i     => some (.ref i.val)
   | .bnode b   => some (.ref ("_:" ++ b))
-  -- RDF 1.2 triple terms have no from-RDF JSON-LD representation; report
-  -- unsupported rather than emit a wrong value object.
-  | .tripleTerm _ _ _ => none
-  | .literal l =>
-    let lex := l.val.lexicalForm
-    let dt  := l.val.datatype.val
-    match l.val.langTag with
-    | some tag => some (.val (.object [("@value", .string lex), ("@language", .string tag)]))
-    | none =>
-      if opts.rdfDirection == some "i18n-datatype" && dt.startsWith i18nPrefix then
-        some (i18nValueObject lex dt)
-      else if dt == rdfJsonIri then
-        match parseJson lex with
-        | .ok j    => some (.val (.object [("@value", j), ("@type", .string "@json")]))
-        | .error _ => none
-      else if dt == sXsdString then
-        some (.val (.object [("@value", .string lex)]))
-      else if opts.useNativeTypes then
-        some (nativeValue lex dt)
-      else
-        some (.val (.object [("@value", .string lex), ("@type", .string dt)]))
+  | .tripleTerm s p o =>
+    if opts.rdfstar then
+      (tripleNodeJson opts s p o).map fun n => .val (.object [("@triple", n)])
+    else none
+  | .literal l => literalToObject opts l
+
+def rdfReifiesIri : String := "http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies"
+
+/-- The entry a non-`rdf:type` triple adds to its subject's node: the property
+and the value. With `rdfstar`, `r rdf:reifies <<( t )>>` adds the node object of
+`t` under `@reifies` (json-ld-star PR 61, Serialize RDF as JSON-LD). -/
+def tripleEntry (opts : Options) (p : String) (o : Term) : Option (String × Ov) :=
+  match o with
+  | .tripleTerm s' p' o' =>
+    if opts.rdfstar && p == rdfReifiesIri then
+      (tripleNodeJson opts s' p' o').map fun n => ("@reifies", .val n)
+    else (rdfToObject opts o).map fun v => (p, v)
+  | _ => (rdfToObject opts o).map fun v => (p, v)
 
 /-! ## Node-map construction (per graph) — §8.5 steps 3-5 -/
 
@@ -386,9 +447,9 @@ def processTriple (opts : Options) (nm : List FrNode) (t : Triple)
     | some (oid, _) => some (nodeUpdateType nm2 sId oid)
     | none          => some nm2
   else
-    match rdfToObject opts t.o with
-    | none   => none
-    | some v => some (nodeUpdateProp nm2 sId p v)
+    match tripleEntry opts p t.o with
+    | none        => none
+    | some (k, v) => some (nodeUpdateProp nm2 sId k v)
 
 def buildNodemap (opts : Options) : List FrNode → List Triple → Option (List FrNode)
   | nm, []      => some nm
@@ -894,9 +955,9 @@ def processTripleF (opts : Options) (s : NmF) (t : Triple) : Option NmF :=
     | some (oid, _) => some (s2.updType sId oid)
     | none          => some s2
   else
-    match rdfToObject opts t.o with
-    | none   => none
-    | some v => some (s2.updProp sId p v)
+    match tripleEntry opts p t.o with
+    | none        => none
+    | some (k, v) => some (s2.updProp sId k v)
 
 theorem processTripleF_spec (opts : Options) (s : NmF) (t : Triple) (h : s.Good) :
     processTriple opts s.abs t = (processTripleF opts s t).map NmF.abs ∧
@@ -910,10 +971,10 @@ theorem processTripleF_spec (opts : Options) (s : NmF) (t : Triple) (h : s.Good)
     split
     · obtain ⟨e, g⟩ := NmF.updType_spec _ (subjId ts) i.val g2
       exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
-    · cases rdfToObject opts (Term.iri i) with
+    · cases tripleEntry opts tp.val (Term.iri i) with
       | none => exact ⟨rfl, fun s' hs' => by cases hs'⟩
-      | some v =>
-        obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) tp.val v g2
+      | some kv =>
+        obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) kv.1 kv.2 g2
         exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
   | bnode b =>
     obtain ⟨e2, g2⟩ := NmF.ensure_spec (s.ensure (subjId ts) (subjIsBlank ts)) ("_:" ++ b) true g1
@@ -921,26 +982,26 @@ theorem processTripleF_spec (opts : Options) (s : NmF) (t : Triple) (h : s.Good)
     split
     · obtain ⟨e, g⟩ := NmF.updType_spec _ (subjId ts) ("_:" ++ b) g2
       exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
-    · cases rdfToObject opts (Term.bnode b) with
+    · cases tripleEntry opts tp.val (Term.bnode b) with
       | none => exact ⟨rfl, fun s' hs' => by cases hs'⟩
-      | some v =>
-        obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) tp.val v g2
+      | some kv =>
+        obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) kv.1 kv.2 g2
         exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
   | literal l =>
     simp only [processTriple, processTripleF, termNodeId, ← e1, Bool.and_false,
       Bool.false_eq_true, if_false]
-    cases rdfToObject opts (Term.literal l) with
+    cases tripleEntry opts tp.val (Term.literal l) with
     | none => exact ⟨rfl, fun s' hs' => by cases hs'⟩
-    | some v =>
-      obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) tp.val v g1
+    | some kv =>
+      obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) kv.1 kv.2 g1
       exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
   | tripleTerm a b c =>
     simp only [processTriple, processTripleF, termNodeId, ← e1, Bool.and_false,
       Bool.false_eq_true, if_false]
-    cases rdfToObject opts (Term.tripleTerm a b c) with
+    cases tripleEntry opts tp.val (Term.tripleTerm a b c) with
     | none => exact ⟨rfl, fun s' hs' => by cases hs'⟩
-    | some v =>
-      obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) tp.val v g1
+    | some kv =>
+      obtain ⟨e, g⟩ := NmF.updProp_spec _ (subjId ts) kv.1 kv.2 g1
       exact ⟨by simp [e], fun s' hs' => by cases hs'; exact g⟩
 
 def buildF (opts : Options) : NmF → List Triple → Option NmF
