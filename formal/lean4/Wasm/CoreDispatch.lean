@@ -148,7 +148,7 @@ def fullOnlyOpNames : List String :=
   , "tableauMaterialise", "tableauDlInconsistent", "queryHdt", "shexValidate"
   , "datasetFromCsvw", "datasetFromRml", "datasetFromJsonLd", "datasetToJsonLd"
   , "datasetShexValidate", "datasetRifEval", "datasetQuadsBin"
-  , "sbm11Open", "sbm11Query", "sbm11Close", "sbm11PackFiles"
+  , "sbm11Open", "sbm11Query", "sbm11Close", "sbm11Verify", "storeLayout", "sbm11PackFiles"
   , "storeOpen", "storeHandleQuery", "storeHandleList", "storeHandleClose"
   , "storeServeKeys", "storeServeOpen", "storeServeRequest", "storeServeCommit"
   , "storeServeClose", "tdb2ServeKeys", "tdb2ServeOpen"

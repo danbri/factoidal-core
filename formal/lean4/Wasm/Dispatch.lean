@@ -618,6 +618,8 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
       | [a, b, c] => Ops.sbm11Query a b c
       | args => pure (errJson s!"sbm11Query expects 2 or 3 arguments, got {args.length}"))
   | "sbm11Close"       => withArgs (arityIO1 op Ops.sbm11Close)
+  | "sbm11Verify"      => withArgs (arityIO1 op Ops.sbm11Verify)
+  | "storeLayout"      => withArgs (arityIO1 op Ops.storeLayout)
   | "sbm11PackFiles"   =>
       pure (errJson s!"{op} carries a byte region; call it through l4_call_blob_io")
   -- The dataset-handle ops of the full engine (`Wasm/Ops/DatasetFull.lean`).
