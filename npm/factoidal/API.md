@@ -462,6 +462,8 @@ that names no graph). This needs a wasm module built after 0.15.0; with the
 0.15.0 wasm the answer has no `warnings` property.
 
 ```js
+import { parse } from '@factoidal/core';
+const ds = await parse('<http://e/s> <http://e/p> "x" <http://e/g> .\n', { format: 'nquads' });
 const rows = await ds.query("SELECT * FROM <http://e/none> WHERE { ?s ?p ?o }");
 console.log(rows.length, rows.warnings?.[0]?.class); // 0 'dataset-iri-not-found'
 ```
