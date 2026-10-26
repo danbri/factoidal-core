@@ -226,7 +226,31 @@ def litDir : WfLiteral := mkDirLangLiteral "مرحبا" "ar" .rtl
 -- STRLEN counts codepoints, and works on a language-tagged literal.
 #guard (Expr.strLen (.lit (litStr "foobar"))).eval [] == .num 6
 #guard (Expr.strLen (.lit (litLang "chat" "fr"))).eval [] == .num 4
-#guard (Expr.strLen (.iri (iriE "http://example.org/a"))).eval [] == .num 20
+
+/-! #### §17.4.3.1 argument types (https://github.com/danbri/factoidal/issues/1036)
+
+The string functions take string literals: a simple literal, an
+`xsd:string`, or a language-tagged literal. A number, a boolean or an
+IRI is a type error, also when it has a lexical form. -/
+
+#guard (Expr.strLen (.iri (iriE "http://example.org/a"))).eval [] == .error
+#guard (Expr.strLen (.numericLit 1)).eval [] == .error
+#guard (Expr.strLen (.lit (litInt "1"))).eval [] == .error
+#guard (Expr.uCase (.numericLit 1)).eval [] == .error
+#guard (Expr.lCase (.lit (litInt "1"))).eval [] == .error
+#guard (Expr.substr (.numericLit 1) (.numericLit 1) (some (.numericLit 3))).eval [] == .error
+#guard (Expr.encodeForUri (.numericLit 1)).eval [] == .error
+#guard (Expr.encodeForUri (.iri (iriE "http://example.org/a"))).eval [] == .error
+#guard (Expr.strStarts (.numericLit 12) (.lit (litStr "1"))).eval [] == .error
+#guard (Expr.strEnds (.lit (litStr "12")) (.numericLit 2)).eval [] == .error
+-- §17.4.3.1.4 argument compatibility: a simple first argument with a
+-- tagged second argument is a type error; two different tags too.
+#guard (Expr.contains (.lit (litStr "abc")) (.lit (litLang "a" "en"))).eval [] == .error
+#guard (Expr.strStarts (.lit (litLang "abc" "en")) (.lit (litLang "a" "fr"))).eval [] == .error
+-- the compatible pairs answer
+#guard (Expr.contains (.lit (litLang "abc" "en")) (.lit (litLang "a" "en"))).eval [] == .bool true
+#guard (Expr.contains (.lit (litLang "abc" "en")) (.lit (litStr "b"))).eval [] == .bool true
+#guard (Expr.strEnds (.lit (litLang "abc" "en")) (.lit (litStr "c"))).eval [] == .bool true
 
 -- SUBSTR is ONE-BASED (§17.4.3.3): SUBSTR("foobar", 4) = "bar".
 #guard (Expr.substr (.lit (litStr "foobar")) (.numericLit 4) none).eval []
@@ -235,6 +259,22 @@ def litDir : WfLiteral := mkDirLangLiteral "مرحبا" "ar" .rtl
   == .term (.literal (litStr "b"))
 #guard (Expr.substr (.lit (litStr "foobar")) (.numericLit 1) (some (.numericLit 3))).eval []
   == .term (.literal (litStr "foo"))
+-- SUBSTR follows fn:substring (F&O §5.4.4): positions p, counted from 1,
+-- with start <= p < start + length. A start of 0 is not clamped to 1
+-- (https://github.com/danbri/factoidal/issues/1036).
+#guard (Expr.substr (.lit (litStr "12345")) (.numericLit 0) (some (.numericLit 3))).eval []
+  == .term (.literal (litStr "12"))
+#guard (Expr.substr (.lit (litStr "12345")) (.numericLit (-1)) (some (.numericLit 3))).eval []
+  == .term (.literal (litStr "1"))
+#guard (Expr.substr (.lit (litStr "12345")) (.numericLit 0) none).eval []
+  == .term (.literal (litStr "12345"))
+#guard (Expr.substr (.lit (litStr "12345")) (.numericLit 2) (some (.numericLit (-1)))).eval []
+  == .term (.literal (litStr ""))
+#guard (Expr.substr (.lit (litStr "12345")) (.numericLit 2) (some (.numericLit 3))).eval []
+  == .term (.literal (litStr "234"))
+-- a length that is not an integer is a type error, not "no length"
+#guard (Expr.substr (.lit (litStr "12345")) (.numericLit 2) (some (.lit (litStr "3")))).eval []
+  == .error
 -- SUBSTR preserves a language tag.
 #guard (Expr.substr (.lit (litLang "foobar" "en")) (.numericLit 4) none).eval []
   == .term (.literal (litLang "bar" "en"))
@@ -587,10 +627,14 @@ end AlgebraBridge
 #guard (Expr.sha512 (.lit (litStr "foo"))).eval []
   == erString "f7fbba6e0636f890e56fbbf3283e524c6fa3204ae298382d624741d0dc6638326e282c41be5e4254d8820772c5518a2c5a8c0c7f7eda19594a7eb539453e1ed7"
 -- Unicode input hashes its UTF-8 bytes (W3C `md5-02`).
-#guard (Expr.md5 (.lit (litLang "食べ物" "ja"))).eval [] == erString "e7ada485d13b1decf628c9211bc3a97b"
--- A hash of a promoted number uses its canonical lexical form; an
--- unbound variable or a blank node is a type error.
-#guard (Expr.md5 (.numericLit 1)).eval [] == erString "c4ca4238a0b923820dcc509a6f75849b"
+#guard (Expr.md5 (.lit (litStr "食べ物"))).eval [] == erString "e7ada485d13b1decf628c9211bc3a97b"
+-- §17.4.6.1: the argument is a simple literal or an xsd:string. A number,
+-- a language-tagged literal, an IRI, an unbound variable or a blank node
+-- is a type error (https://github.com/danbri/factoidal/issues/1036).
+#guard (Expr.md5 (.numericLit 1234)).eval [] == .error
+#guard (Expr.md5 (.lit (litInt "1"))).eval [] == .error
+#guard (Expr.md5 (.lit (litLang "食べ物" "ja"))).eval [] == .error
+#guard (Expr.sha1 (.iri (iriE "http://example.org/a"))).eval [] == .error
 #guard (Expr.sha256 errE).eval [] == .error
 #guard (Expr.sha1 (.var "b")).eval [("b", .bnode "x")] == .error
 
