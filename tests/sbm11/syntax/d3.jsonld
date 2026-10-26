@@ -1,0 +1,16 @@
+{
+  "@context": {
+    "ex": "http://example.org/",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "@graph": [
+    { "@id": "_:alice", "ex:name": "Alice", "ex:knows": { "@id": "_:bob" } },
+    { "@id": "_:bob", "ex:name": "Bob", "ex:knows": { "@id": "_:alice" } },
+    {
+      "@id": "ex:doc",
+      "ex:detail": { "ex:k": "v", "ex:n": { "@value": "7", "@type": "xsd:integer" } },
+      "ex:items": { "@list": [ { "@id": "ex:a" }, { "@id": "ex:b" }, { "@id": "ex:c" } ] }
+    },
+    { "ex:p": { "@id": "ex:o" } }
+  ]
+}

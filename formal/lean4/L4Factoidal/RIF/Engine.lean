@@ -18,7 +18,7 @@ The same applies to the round bound: a chain that stops at the bound
 has not reached a fixed point, and reporting `no` from it would be
 the same mistake.
 -/
-import L4Factoidal.RIF.Builtins
+import L4Factoidal.RIF.Matching
 
 namespace L4Factoidal.RIF
 
@@ -37,13 +37,12 @@ abbrev Subst := List (String × GTerm)
 def lookupVar (s : Subst) (v : String) : Option GTerm :=
   (s.find? (fun (k, _) => k == v)).map (·.2)
 
-/-- Extend a substitution, failing when the variable already stands
-    for a DIFFERENT term. This is what makes a repeated variable a
-    JOIN rather than two independent matches. -/
-def extend (s : Subst) (v : String) (t : GTerm) : Option Subst :=
+/-- Bind an unbound variable, or join its existing value using shared
+    datatype identity. Unresolved comparisons retain the blocked flag. -/
+def extend (s : Subst) (v : String) (t : GTerm) : Option Subst × Bool :=
   match lookupVar s v with
-  | some u => if u == t then some s else none
-  | none   => some ((v, t) :: s)
+  | some u => matchResult s (groundMatch u t)
+  | none   => (some ((v, t) :: s), false)
 
 /-- Whether a built-in blocked evaluation. Threaded through grounding
     and matching so a single `unknown` anywhere reaches the caller. -/
@@ -87,13 +86,20 @@ def groundTm (s : Subst) : Tm → Option GTerm × Bool
                         | some v => (some v, blocked)
                         | none   => (none, true))
 
-/-- Match a term pattern against a ground term. -/
+mutual
+/-- Match a pattern, binding variables inside lists/function arguments too. -/
 def matchTm (s : Subst) (pat : Tm) (t : GTerm) : Option Subst × Bool :=
-  match pat with
-  | .var v => (extend s v t, false)
-  | _      => match groundTm s pat with
-              | (some g, b) => (if g == t then some s else none, b)
-              | (none, b)   => (none, b)
+  match pat, t with
+  | .var v, _ => extend s v t
+  | .list ps, .list ts => matchTms s ps ts
+  | .fapp f sp ps, .fapp g sq ts =>
+      if f == g && sp == sq then matchTms s ps ts else (none, false)
+  | _, _ =>
+      match groundTm s pat with
+      | (some g, blocked) =>
+          let (result, unresolved) := matchResult s (groundMatch g t)
+          (result, blocked || unresolved)
+      | (none, blocked) => (none, blocked)
 
 private def matchTms (s : Subst) : List Tm → List GTerm → Option Subst × Bool
   | [],      []      => (some s, false)
@@ -102,30 +108,63 @@ private def matchTms (s : Subst) : List Tm → List GTerm → Option Subst × Bo
        | (none, b)    => (none, b)
        | (some s1, b) => let (r, b2) := matchTms s1 ps ts; (r, b || b2))
   | _, _ => (none, false)
+end
 
-/-! ## Equality in a rule body is equality of VALUES
+mutual
+/-- Tail-list executable matcher; term nesting remains structural. -/
+def matchTmTR (s : Subst) (pat : Tm) (t : GTerm) : Option Subst × Bool :=
+  match pat, t with
+  | .var v, _ => extend s v t
+  | .list ps, .list ts => matchTmsAcc s ps ts false
+  | .fapp f sp ps, .fapp g sq ts =>
+      if f == g && sp == sq then matchTmsAcc s ps ts false else (none, false)
+  | _, _ =>
+      match groundTm s pat with
+      | (some g, blocked) =>
+          let (result, unresolved) := matchResult s (groundMatch g t)
+          (result, blocked || unresolved)
+      | (none, blocked) => (none, blocked)
 
-RIF-BLD §3.5 reads `=` as equality in the domain of interpretation,
-and RIF-DTB §2.4 gives the numeric datatypes one value space ordered
-by `xs:decimal` containment. `2 = External(func:numeric-divide(6 3))`
-is therefore true although the two sides carry different datatype
-IRIs, and comparing the constants structurally made
-`Builtins_Numeric` derive nothing.
 
-The lexical-form-plus-family arm covers the string family, where
-`xs:language`'s value space is contained in `xs:string`'s. -/
-def gEqValue (a b : GTerm) : Bool :=
-  if a == b then true
-  else match numericLex a, numericLex b with
-    | some x, some y => L4Factoidal.CSVW.decimalCompare x y == some .eq
-    | _, _ =>
-      match a, b with
-      | .const l1 s1, .const l2 s2 =>
-          l1 == l2 &&
-          (match xsdLocal s1, xsdLocal s2 with
-           | some c1, some c2 => xsdFamily c1 == xsdFamily c2
-           | _, _             => false)
-      | _, _ => false
+private def matchTmsAcc (s : Subst) : List Tm → List GTerm → Bool → Option Subst × Bool
+  | [], [], blocked => (some s, blocked)
+  | p :: ps, t :: ts, blocked =>
+      match matchTmTR s p t with
+      | (none, b) => (none, blocked || b)
+      | (some s1, b) => matchTmsAcc s1 ps ts (blocked || b)
+  | _, _, blocked => (none, blocked)
+end
+
+private theorem matchTmTR_correct :
+    (∀ s p t, matchTmTR s p t = matchTm s p t) ∧
+    (∀ s ps ts blocked, matchTmsAcc s ps ts blocked =
+      let (r, b) := matchTms s ps ts; (r, blocked || b)) := by
+  apply matchTm.mutual_induct
+    (motive_1 := fun s p t => matchTmTR s p t = matchTm s p t)
+    (motive_2 := fun s ps ts => ∀ blocked, matchTmsAcc s ps ts blocked =
+      let (r, b) := matchTms s ps ts; (r, blocked || b))
+  all_goals intros
+  all_goals simp_all [matchTmTR, matchTmsAcc, matchTm, matchTms]
+  case case4 => grind
+  case case9 s p ps t ts s1 b h result unresolved htail blocked ihMatch ihRest =>
+    cases blocked <;> cases b <;> simp_all
+
+private def matchTmsTR (s : Subst) (ps : List Tm) (ts : List GTerm) : Option Subst × Bool :=
+  matchTmsAcc s ps ts false
+
+@[csimp] theorem matchTm_eq_matchTmTR : @matchTm = @matchTmTR := by
+  funext s p t
+  exact (matchTmTR_correct.1 s p t).symm
+
+@[csimp] private theorem matchTms_eq_matchTmsTR : @matchTms = @matchTmsTR := by
+  funext s ps ts
+  simp [matchTmsTR, matchTmTR_correct.2]
+
+
+/-- Legacy Boolean view of the shared operational matcher. Actual rule
+matching keeps `Ans.unknown` in its blocked flag; this compatibility helper
+cannot establish a negative RIF semantic judgment. -/
+def gEqValue (a b : GTerm) : Bool := groundMatch a b == .yes
 
 /-! ## `pred:iri-string` BINDS, it does not only test
 
@@ -144,8 +183,8 @@ def iriStringBind (s : Subst) (args : List Tm) : Option (List Subst × Bool) :=
             | (some (.const lex sp), b) =>
                 if sp == xsdNs ++ "string" then
                   some (match extend s v (gIri lex) with
-                        | some s' => ([s'], b)
-                        | none    => ([], b))
+                        | (some s', unresolved) => ([s'], b || unresolved)
+                        | (none, unresolved) => ([], b || unresolved))
                 else some ([], true)
             | (_, _) => none)
   | [other, .var v] =>
@@ -154,8 +193,8 @@ def iriStringBind (s : Subst) (args : List Tm) : Option (List Subst × Bool) :=
             | (some (.const lex sp), b) =>
                 if sp == iriSpace then
                   some (match extend s v (gStr lex) with
-                        | some s' => ([s'], b)
-                        | none    => ([], b))
+                        | (some s', unresolved) => ([s'], b || unresolved)
+                        | (none, unresolved) => ([], b || unresolved))
                 else some ([], true)
             | (_, _) => none)
   | _ => none
@@ -185,31 +224,17 @@ def matchAtom (facts : Facts) (s : Subst) (a : Atom) : List Subst × Bool :=
   -- `Factorial_Forward_Chaining` carries a computed value into the
   -- head. With both sides ground it is a value comparison.
   | .equal x y =>
-      (match x, y with
-       | .var v, _ =>
-           if (lookupVar s v).isSome then
-             (match groundTm s x, groundTm s y with
-              | (some a', b1), (some b', b2) => (if gEqValue a' b' then [s] else [], b1 || b2)
-              | (_, b1), (_, b2) => ([], b1 || b2))
-           else (match groundTm s y with
-                 | (some g, b) => (match extend s v g with
-                                   | some s' => ([s'], b)
-                                   | none    => ([], b))
-                 | (none, b)   => ([], b))
-       | _, .var v =>
-           if (lookupVar s v).isSome then
-             (match groundTm s x, groundTm s y with
-              | (some a', b1), (some b', b2) => (if gEqValue a' b' then [s] else [], b1 || b2)
-              | (_, b1), (_, b2) => ([], b1 || b2))
-           else (match groundTm s x with
-                 | (some g, b) => (match extend s v g with
-                                   | some s' => ([s'], b)
-                                   | none    => ([], b))
-                 | (none, b)   => ([], b))
-       | _, _ =>
-           (match groundTm s x, groundTm s y with
-            | (some a', b1), (some b', b2) => (if gEqValue a' b' then [s] else [], b1 || b2)
-            | (_, b1), (_, b2) => ([], b1 || b2)))
+      (match groundTm s x, groundTm s y with
+       | (some a', b1), (some b', b2) =>
+           let (result, unresolved) := matchResult s (groundMatch a' b')
+           (result.toList, b1 || b2 || unresolved)
+       | (some a', b1), (none, b2) =>
+           let (result, unresolved) := matchTm s y a'
+           (result.toList, b1 || b2 || unresolved)
+       | (none, b1), (some b', b2) =>
+           let (result, unresolved) := matchTm s x b'
+           (result.toList, b1 || b2 || unresolved)
+       | (none, _), (none, _) => ([], true))
   | .pos fn sp args =>
       facts.foldl (fun (acc, blk) f => match f with
         | .pos fn2 sp2 args2 =>
@@ -287,6 +312,32 @@ def splitEvaluable (s : Subst) : List Atom → Option (Atom × List Atom)
       if condEvaluable s a then some (a, rest)
       else (splitEvaluable s rest).map (fun (b, r) => (b, a :: r))
 
+/-- `splitEvaluable` with the passed conditions on a reverse accumulator: a
+tail call per condition (https://github.com/danbri/factoidal/issues/746). -/
+def splitEvaluableTR (s : Subst) (as : List Atom) : Option (Atom × List Atom) := go as []
+where
+  go : List Atom → List Atom → Option (Atom × List Atom)
+    | [], _ => none
+    | a :: rest, acc =>
+        if condEvaluable s a then some (a, acc.reverse ++ rest) else go rest (a :: acc)
+
+theorem splitEvaluableTR_go_eq (s : Subst) :
+    ∀ (as acc : List Atom),
+      splitEvaluableTR.go s as acc =
+        (splitEvaluable s as).map (fun (b, r) => (b, acc.reverse ++ r))
+  | [], acc => by simp [splitEvaluableTR.go, splitEvaluable]
+  | a :: rest, acc => by
+      by_cases h : condEvaluable s a = true
+      · simp [splitEvaluableTR.go, splitEvaluable, h]
+      · simp only [splitEvaluableTR.go, splitEvaluable, h]
+        rw [splitEvaluableTR_go_eq s rest]
+        cases splitEvaluable s rest <;> simp
+
+@[csimp] theorem splitEvaluable_eq_TR : @splitEvaluable = @splitEvaluableTR := by
+  funext s as
+  simp only [splitEvaluableTR, splitEvaluableTR_go_eq]
+  cases splitEvaluable s as <;> simp
+
 /-- Apply the pending conditions to a fixed point. Fuel is the pending
     count, since each step removes one. -/
 def runConds (facts : Facts) : Nat → Subst → List Atom → List Subst × Bool
@@ -358,7 +409,7 @@ def instantiate (s : Subst) (a : Atom) : Option GAtom × Bool :=
       (match groundTm s c, groundTm s d with
        | (some a', b1), (some b', b2) => (some (.sub a' b'), b1 || b2)
        | (_, b1), (_, b2) => (none, b1 || b2))
-  | .equal _ _ | .externalPred _ _ => (none, false)
+  | .equal _ _ | .externalPred _ _ => (none, true)
 
 /-- One round of forward chaining. -/
 def step (rules : List Rule) (facts : Facts) : Facts × Bool :=

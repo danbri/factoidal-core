@@ -1,0 +1,632 @@
+# Documentation hub — cell-authoring contract
+
+Since 2026-10-20 the hub has two parts:
+
+- `docs/web/hub/*.md` (this directory): the hub pages. Their cells call
+  `Factoidal.*`, the npm Dataset API (`parse` returns a `Dataset`; the
+  producers `csvwToRdf`, `rmlMap`, `jsonldToRdf` and the closures do too).
+  Each page has a pinned test `tests/hub/hub_<page>_test.mjs` that reads
+  its cells with `extractObservableCells(file, HUB_PAGE_DIR)`. The
+  standards table of the index is built from
+  `docs/web/hub/records/lean-scoreboard-YYYY-MM-DD.json` by
+  `docs/_data/hubStandards.js`; refresh it by running
+  `tools/lean-scoreboard.sh --json` and committing the JSON and the
+  printed table there.
+- Engine: every page of this directory loads the published npm release
+  named in `docs/_data/factoidalRelease.js` (one exact version; a release
+  bump is that one line) from `https://cdn.jsdelivr.net/npm/@factoidal/core@<version>/`,
+  wasm included. `hub.11tydata.json` sets `factoidalEngine: "release"`
+  for the directory; `hub.njk` then imports that `browser.js` and adds the
+  CDN host to `script-src` and `connect-src`. The Node tests run
+  `npm/factoidal/` of the checkout, so they check the page only while that
+  directory holds the released files;
+  `tests/hub/hub_checked-pipelines_test.mjs` fails when the two versions
+  differ. `fn.openStoreOverHttp` still imports `store-http/` same-origin
+  (the published package has no `store-http/`).
+- `docs/web/historical-fstar-notebooks/NN-*.md`: the posts written before
+  2026-10-20, kept unchanged, with redirect pages at their old
+  `/web/hub/NN-*/` URLs (`docs/web/hub-redirects.11ty.js`). Their tests
+  are `tests/hub/postNN_test.mjs`.
+
+The contract below applies to both.
+
+This is the implementation reference for writing a hub post. The
+reader-facing explanation lives in [the hub index](../)'s "How the
+interactive cells work" section; this file is the fuller contract for
+whoever writes the next post.
+
+<!-- Linked as `../` (the directory), not `index.md` -- `index.md`
+     is the one page in this directory Eleventy does NOT give its own
+     pretty-URL subdirectory, so docs/.eleventy.js's mdlink-to-slug
+     transform's blanket "prepend ../, drop .md, append /" rewrite
+     turns a `.md`-suffixed link to it into a nonexistent `index/`
+     path. See the equivalent note in index.md. -->
+
+## Front matter
+
+```yaml
+---
+title: "Post title"
+description: "One-sentence description."
+layout: hub.njk
+series: docs-hub
+series_order: N
+vocab: foaf | wikidata | schema.org | skos | none
+status: draft | published
+tests: tests/hub/postNN_test.mjs
+---
+```
+
+`layout: hub.njk` is required — it's what wires in the Observable
+runtime and the fenced-block cell convention. The rest of the fields
+are read by nothing at build time today; they're bookkeeping (the
+series plan doc, `docs/designissues/2026-07-05-docs-hub-plan.md`, is
+the source of truth for the series map) but keep them, since the next
+post's author will grep for them.
+
+## Fence conventions
+
+- ` ```observable-js ` — a **live cell**. `docs/_includes/hub.njk`'s
+  runtime script finds every `pre > code.language-observable-js`,
+  wraps its text content in an async function body, and runs it
+  through the vendored Observable Runtime + Inspector. Write a
+  `return` statement to produce the value the Inspector renders.
+
+### Cell chrome: Edit + Run
+
+Every mounted cell auto-runs on page load exactly as before, but now
+also gets a small toolbar (an Edit toggle and a Run button) inserted
+between the code and the output box. DOM order after `mountCell()`
+runs is:
+
+```
+<pre><code class="language-observable-js">...</code></pre>   <!-- original source, static view -->
+<textarea class="observable-cell-editor" hidden>...</textarea>  <!-- editable view, seeded from the pre -->
+<div class="observable-cell-toolbar">
+  <button class="observable-cell-edit-btn">Edit</button>
+  <button class="observable-cell-run-btn">Run</button>
+  <!-- + a one-line hint span, first cell of the page only -->
+</div>
+<div class="observable-cell" data-hub-cell="N">...</div>   <!-- Inspector output -->
+```
+
+- **Edit toggle** swaps the static `<pre>` for a `<textarea>` seeded
+  with the current source (`hidden` attribute flips both ways; the
+  button label flips "Edit" / "Done"). The textarea is a deliberate
+  choice over `contenteditable`: iOS Safari's contenteditable caret
+  placement and undo stack are unreliable (cursor jumps on
+  re-render, inconsistent Enter-key node splitting), whereas a plain
+  `<textarea>` gets the native mobile keyboard, native undo/redo, and
+  reliable `autocorrect`/`autocapitalize`/`spellcheck` suppression via
+  ordinary attributes — the properties code entry on a phone actually
+  needs. It autogrows via an `input` listener (`scrollHeight` resize
+  trick) instead of a fixed row count.
+- **Run** re-executes whatever the *current* source is (the textarea's
+  value if editing, otherwise the unedited source) using the vendored
+  Observable runtime's `module.redefine(name, inputs, definition)` —
+  confirmed present on the vendored bundle
+  (`third_party/observable/dist/runtime.esm.js`'s `module_redefine`,
+  exported on `Module.prototype.redefine`). `redefine` looks up the
+  already-`define()`d variable by name and re-runs `variable.define`
+  on it, so the *same* `Variable` (and therefore the same attached
+  `Inspector`/output node) recomputes in place — no delete+recreate,
+  no new output box. `hub.njk` names each cell's variable `"hubCell" +
+  index`, matching the name it was originally `define()`d with, so
+  `main.redefine("hubCell" + index, CELL_BINDINGS, newFn)` always finds
+  it.
+- **Errors don't kill the cell.** `hub.njk` wraps the `Inspector`
+  instance passed to `main.variable()` so a runtime rejection (thrown
+  inside the cell's async body, on the initial run or any subsequent
+  Run) adds the existing `.observable-cell-error` class to the output
+  box, and a later successful Run removes it again — the same styling
+  every static-render error already used, now also applied to
+  redefine-triggered errors. A synchronous compile error (bad syntax in
+  the edited source) is caught before `redefine` is even called and
+  reported the same way. Either way the cell stays mounted: fixing the
+  source and tapping Run again works.
+- **Output-format toggle.** Each cell's toolbar carries a small
+  radio-style segmented control, `Output: [Auto] [Table]`. `Auto`
+  (the default, so nothing regresses) renders the cell's returned
+  value with the Observable Inspector's js/json widget; `Table` wraps
+  the same value in the existing `pretty()` helper. `hub.njk`'s
+  `createOutput()` caches the last computed value and re-renders it on
+  toggle, so flipping the control does **not** re-run the cell's
+  computation. Because `pretty()` returns non-table shapes unchanged
+  (DOM nodes, `null`, empty arrays, …), `Table` on a cell that already
+  returns a DOM node (e.g. `Plot.plot(...)`) is a no-op — the Inspector
+  renders it identically either way.
+- **Keyboard:** Cmd/Ctrl+Enter inside the textarea runs the cell
+  without touching the Run button — the desktop equivalent of the
+  mobile tap target.
+- **Discoverability:** a `title` attribute on the toolbar documents the
+  Edit/Run affordance for desktop hover, but a phone has no hover — so
+  the first cell on each page also gets a small, visible, italic hint
+  ("Edit & re-run — computed in your browser.") next to its toolbar.
+  Only the first cell gets it, to avoid cluttering every cell on the
+  page with the same sentence.
+- **Tap targets** (`.observable-cell-btn`) are >= 44px in both
+  dimensions and wrap in a flex row, so the toolbar never forces
+  page-level horizontal scroll at a 390px viewport; the textarea is
+  `width: 100%` / `box-sizing: border-box` for the same reason.
+
+- ` ```js `, ` ```turtle `, ` ```fstar `, etc. — static, inert code
+  samples. Use these for pure notation (Turtle syntax being
+  introduced, an F\* type definition being quoted) where there is
+  nothing to *compute*, only something to *read*.
+
+Only convert a code sample to a live cell when it actually computes
+something a reader benefits from seeing run (a parse, a query, an
+entailment closure) — not every fenced block needs to be live.
+
+### Closed cells and the fold wrapper
+
+A fence line can carry flags after the language, separated by spaces:
+
+    ```observable-js closed
+    ```observable-js closed title="Library: circuit helpers"
+
+`closed` makes the cell mount collapsed. `title="..."` (the value can
+contain spaces) sets its summary line. `parseCellFlags(info)`
+(`docs/web/hub/reactive-cells.mjs`) parses this text into `{closed:
+boolean, title: string | null}`; an unrecognized word is ignored, so a
+future flag can be added without breaking a post written before it
+existed. Three places call it on the same string — everything after
+the `observable-js` word: `docs/.eleventy.js`'s fence renderer at
+build time, `hub.njk`'s `mountCell()` at mount time, and
+`tests/hub/_helpers.mjs`'s `extractObservableCellsWithFlags()` in the
+Node pinning tests.
+
+`docs/.eleventy.js` wraps markdown-it's own fence rule: for a fence
+whose info string starts with `observable-js` and carries more words,
+it renders the block exactly as the default rule would, then adds a
+`data-hub-cell-flags="<escaped rest of the info string>"` attribute to
+the `<code>` element. The `class` stays exactly
+`language-observable-js` — markdown-it's default fence renderer only
+ever takes the first word of the info string for the class, so every
+existing `pre > code.language-observable-js` selector keeps matching.
+
+`mountCell()` wraps a cell's four blocks — the static `<pre>`, the
+editor `<textarea>`, the toolbar, the output container — in a
+`<details class="observable-cell-fold">`, with a leading `<summary
+class="observable-cell-fold-summary">` ahead of them, same order
+inside as before:
+
+```
+<details class="observable-cell-fold" data-hub-cell-flags="...">
+  <summary class="observable-cell-fold-summary">Cell name</summary>
+  <pre><code class="language-observable-js">...</code></pre>
+  <textarea class="observable-cell-editor" hidden>...</textarea>
+  <div class="observable-cell-toolbar">...</div>
+  <div class="observable-cell" data-hub-cell="N">...</div>
+</details>
+```
+
+`open` is set on every cell's `<details>` except one flagged `closed`.
+The summary text is the `title` flag when given; otherwise `Cell
+<name>` for a named cell (`analyzeCell(source).name`), otherwise `Cell
+<index + 1>`. A native `<details>`/`<summary>` is focusable and toggles
+on Enter and Space on its own; `mountCell()` adds no key handling for
+this.
+
+A cell whose run rejects — the same `.observable-cell-error` state
+described above — also opens its `<details>` and adds
+`observable-cell-fold-error` to it, so a collapsed cell that fails is
+never hidden from a reader. A later successful run removes the class
+again; it leaves the `<details>` open, and closing it again is up to
+the reader.
+
+### Library cells at the end of a post
+
+`hub.njk` mounts a page's cells in two passes. Pass 1 walks every
+`observable-js` cell and registers its declared name. Pass 2 mounts
+each cell and hands it to the vendored Observable runtime, which
+computes the dependency order from the registered names and runs each
+cell once its inputs resolve, regardless of where either cell sits in
+the document. An earlier cell can call a function a later cell
+defines — a helper library, or any block of supporting definitions,
+does not have to precede its first use. The one rule: the defining
+cell must be a *named* cell (`name = ...`); an anonymous cell has no
+name for anything else to reference.
+
+[Post 47](../47-writing-hub-notebooks/)'s "Closed cells and library
+cells at the end" section is the worked example: an early cell calls
+`notebookHelpers.count(rows)`, and `notebookHelpers` is a closed,
+named cell at the very end of the file.
+
+## Named cells: declare once, reference everywhere
+
+This is the default authoring style for every post in the series, not
+an optional extra. A cell of the form `name = <expression>` or `name =
+{ ...statements...; return v; }` declares a **named** reactive
+variable; any later cell that mentions `name` becomes a dependent, and
+the vendored [Observable runtime](https://github.com/observablehq/runtime)
+topologically orders the cells and re-runs whatever needs re-running
+when an upstream value changes. A cell without a leading `name =`
+(starting with `const`, `return`, a bare expression, …) stays
+**anonymous**, exactly as before — naming is additive, not a
+requirement on every cell.
+
+The rule this replaces: earlier drafts of several posts had each live
+cell redeclare its own copy of the same Turtle/JSON text (`const ttl =
+\`…\`` pasted into every cell that needed it), so editing the data
+meant editing it N times and no cell could build on another's parsed
+result. That redundancy is the defect, not a style choice — when two or
+more cells in a post need the *same* data (byte-identical, not just
+similar), declare it once in a named cell — usually the first cell
+that introduces it, or a small dedicated cell right where the data
+first appears in the prose — and have every other cell reference the
+bare name instead of repeating the literal. Name an intermediate
+computed value (a parsed `Dataset`, a shared helper function) the same
+way, but only where a later cell actually reuses it — don't introduce a
+name nobody reads. Where two cells' data genuinely differs (even if
+structurally similar), leave them independent; forcing a shared name
+onto deliberately-different examples is the wrong direction.
+
+[Post 26](../26-reactive-cells-declare-once-use-everywhere/) is the
+worked example of the whole chain: `ttl = \`…\`` names the source text,
+`graph = fn.parse(ttl)` names the parsed dataset (a promise-valued
+cell — the runtime awaits it before any dependent reads it), `results
+= fn.query(graph, …)` names the query result, `table = pretty(results)`
+and a final anonymous chart cell both read `results`/further-derived
+names. Tap **Edit** on the `ttl` cell there and change the data: only
+the cells that actually depend on it re-run, not the whole page.
+
+The compiler that infers each cell's name and its cross-cell inputs is
+[`reactive-cells.mjs`](https://github.com/danbri/factoidal/blob/claude/main/docs/web/hub/reactive-cells.mjs) — shared, byte-for-byte,
+between `docs/_includes/hub.njk` (the browser) and
+`tests/hub/_helpers.mjs`'s `runReactivePost()` (the Node pinning
+harness), so a post's tests exercise the identical dependency inference
+the page runs. Read its header comment before writing a named cell —
+it documents the exact traps:
+
+- **`name = { … }` is a block body**, not an object literal — write
+  `return` inside it. Use `name = ({ … })` (parens around the braces)
+  when the value actually is an object.
+- **A cell must never shadow a KNOWN name** — a builtin (`fn`,
+  `Factoidal`, `Plot`, `d3`, `html`, `md`, `pretty`) or another cell's
+  declared name. Local-binding detection is coarse (regex-based, not a
+  real scope analysis), so a shadowed name can resolve unpredictably.
+- **A `return /regex/` right after a keyword can misparse** as
+  division — assign the regex to a `const` first, where detection is
+  reliable.
+
+A post's `tests/hub/postNN_test.mjs` pins the cross-cell wiring
+directly: `runReactivePost(cells, bindings)` builds the same headless
+Observable-runtime module the browser builds, and
+`post.value(post.names[i])` reads a named (or anonymously-indexed)
+cell's resolved value through its full dependency chain — proving the
+references actually resolve, not merely that each cell happens to run
+in isolation.
+
+## Cell bindings (`CELL_BINDINGS`)
+
+Every live cell's function body receives these bindings by parameter
+name. This list and the `new Function(...)` parameter list in
+`hub.njk` are mirrored deliberately — extend both together if a future
+post needs a new binding.
+
+| Name | What it is |
+|---|---|
+| `Factoidal` | `@factoidal/core`'s browser entry, `npm/factoidal/browser.js` (passed through to `/npm/factoidal/` by `docs/.eleventy.js`): the Lean 4 engine compiled to WebAssembly, fetched and compiled with `WebAssembly.instantiateStreaming` on the first call. Its exports are the package's typed API, the same functions `npm/factoidal/index.mjs` exports under Node (`index.d.ts`), plus `loadEngine()` and `setAssetsUrl()`. Since issue 726 (2026-10-10); until then it was the F\* engine's raw driver. |
+| `fn` | `Object.assign({}, Factoidal.default, hubHelpers)`: the package's typed API (`fn.parse(text, {format}) -> Promise<Dataset>`, `fn.query(dataset, sparql, {entail}) -> Promise<Bindings[] \| boolean \| Dataset>`, and every other function of `index.d.ts`), plus the hub-only helpers defined in `hub.njk`: the Lean dispatch ABI (`loadL4`, `l4Call`, `l4CallBlobIO`, `l4Parse`/`l4Query`/`l4Update`), `openStoreOverHttp`, `loadWikifunctions` and `loadRegistryPackage`. The Node harness (`tests/hub/`) binds `fn` to `npm/factoidal/index.mjs`, which exports the same functions. |
+| `d3` | vendored `d3` 7.9.0, for hand-rolled charts. |
+| `Plot` | vendored `@observablehq/plot` 0.6.17, for declarative charts. |
+| `html` | vendored `@observablehq/stdlib`'s tagged-template HTML helper. |
+| `md` | vendored `@observablehq/stdlib`'s tagged-template Markdown helper. |
+| `pretty` | opt-in prettier rendering for a cell's return value — see "The `pretty()` rendering option" below. Returns a DOM node in the browser; nothing else in the contract changes if a cell never calls it. |
+| `L` | vendored Leaflet 1.9.4 (`third_party/leaflet/`, BSD-2-Clause, no CDN) — `window.L` as set by the classic `<script>` load in `hub.njk`'s head. Use `L.map()`/`L.circleMarker()`/`L.geoJSON()` for vector map cells (no default marker-icon PNGs are vendored, so `L.marker()` with the stock icon will 404 — use `L.circleMarker` instead; a vendored GeoJSON basemap lives under `web/hub/assets/geo/`). `L.tileLayer()` against an external tile host is live-mode only (task #105): gate it on `data-hub-mode === "live"` — the strict page's CSP blocks the tile request, and `hub.njk` styles the layers-control toggle with a text glyph so the un-vendored `images/layers.png` is never requested either. |
+
+### The `fn` typed surface in full
+
+```
+fn.parse(text: string, options?: {format?: string, baseIRI?: string, lenient?: boolean}) -> Promise<Dataset>
+  // strict by default (issue #344): a syntax error rejects with a FactoidalError
+  // (code, position {line, column, offset, byteOffset}, spec); {lenient: true} recovers, with dataset.diagnostics
+
+fn.query(dataset: Dataset, sparql: string, options?: {entail?: 'none'|'RDFS'|'OWL-RL'})
+  -> Promise<Map<string, Term>[]>   // SELECT
+   | Promise<boolean>               // ASK
+   | Promise<Dataset>                // CONSTRUCT / DESCRIBE
+
+fn.shaclValidate(data: Dataset|string, shapes: Dataset|string, options?: {format?: string})
+  -> Promise<{conforms: boolean, report: Dataset}>
+  // report is SHACL_Validation.validation_report_to_graph's graph: one
+  // sh:ValidationResult per violation (sh:focusNode, sh:resultPath,
+  // sh:resultMessage, sh:sourceConstraintComponent). Throws if the
+  // loaded bundle predates the SHACL export -- see "Capability checks"
+  // below for the try/catch pattern a cell should use instead of
+  // assuming this always resolves.
+
+// Dataset:
+dataset.size                        // number of quads
+[...dataset]                        // iterate {subject, predicate, object} quads
+dataset.toNQuads()                  // N-Quads/N-Triples text
+
+// Term (subject/predicate/object, and Map values from query() rows):
+term.termType                       // 'NamedNode' | 'BlankNode' | 'Literal'
+term.value                          // IRI, blank-node label, or literal lexical form
+term.language                       // '' unless termType === 'Literal' and it has a language tag
+term.datatype.value                 // datatype IRI, Literal terms only
+```
+
+This is intentionally the same shape `npm/factoidal/index.js`'s
+`parse()`/`query()` expose — a post's code sample is written once
+against that typed API (and pinned by a `node:test` file importing the
+real `npm/factoidal` module directly), then dropped into an
+` ```observable-js ` fence with `factoidal.` renamed to `fn.` and any
+`import` statement removed (cell bodies are plain function bodies, not
+ES modules — no `import`/`export` inside a fence).
+
+### Capability checks
+
+Not every `fn` method is guaranteed to work against every loaded
+engine bundle — `fn.shaclValidate` (and the raw `Factoidal.shaclValidate`/
+`shexValidate`/`owlClosure`/etc. it's built on) needs the npm-entry ABI
+bundle, which an older or stale build might not expose. A cell that
+calls one of these should try/catch it and produce an explanatory
+value on failure rather than let the whole cell render as a hard
+`.observable-cell-error`:
+
+```js
+try {
+  const result = await fn.shaclValidate(data, shapes);
+  return { available: true, conforms: result.conforms };
+} catch (err) {
+  return { available: false, note: err.message };
+}
+```
+
+This is the same pattern `npm/factoidal/lib/api.js`'s own `capabilities()`
+probe uses server-side (per-function `typeof` checks); a cell doesn't
+have access to `capabilities()` directly (it's Node-only, `npm/factoidal`'s
+typed API, not exposed on `browser.js`), so try/catch around the call
+itself is the client-side equivalent.
+
+### Why `fn` is the package itself
+
+Since 0.9.0 (issue 713) `@factoidal/core` has one ES-module core
+(`lib/api.mjs`) with two entries: `index.mjs` for Node and `browser.js`
+for a page. Both export the same typed functions over the same Lean wasm.
+So the page binds `fn` to the browser entry's API and adds only what a
+notebook needs beyond the package (the dispatch ABI helpers, the store
+over HTTP, the Wikifunctions engine, the registry loader), and the Node
+harness binds the Node entry. No reshaping layer sits between a cell and
+the package: a cell that passes `node --test tests/hub/postNN_test.mjs`
+calls the same function on the page. The F\* adapter that reshaped the
+F\* driver's raw calls, with its own N-Quads parser, was removed with
+issue 726. `tests/hub/fn_surface_parity_test.mjs` checks that every
+`fn.*` and `Factoidal.*` name a post calls is on the browser surface.
+
+### Trap: `*/` inside a `fn`-wrapper JSDoc comment breaks EVERY post
+
+`hub.njk`'s `fn` object and its supporting functions live inside ONE
+inline `<script type="module">` block that every hub post's page
+shares. A JS block comment (`/** ... */`) closes at the FIRST `*/` it
+contains — same trap as F*'s nesting `(* ... *)` comments (CLAUDE.md's
+"F\* Syntax Traps"), except a JS block comment does not nest at all,
+so it is even easier to trip. Writing a glob-ish name like `rhoDf*/
+sigmoid` inside a doc comment (post 42's `toCottas`/`openCottas`
+wrapper, 2026-08-25) closes the comment right there; every line after
+it becomes literal top-level code, and the whole shared script fails
+to parse with a generic `Unexpected token '*'` — on EVERY post's page,
+not just the one being edited, since they all load the same script.
+Two fixes, either is enough: write the name without the slash
+(`rhoDf-family`, not `rhoDf*/`), or use `//` line comments instead of
+`/** */` for prose that might contain `*/`. Verify a hub.njk edit by
+extracting the ACTUAL rendered `<script type="module">…</script>`
+block from a built page (anchor on the line that is exactly
+`<script type="module">`, not a textual mention of that string inside
+the CSP `<!-- -->` comment near the top of the file — an easy
+false-negative) and running `node --check` on it.
+
+### Trap: an open double-brace inside a JSDoc type annotation breaks the whole Eleventy build
+
+Same family as the `*/` trap above, a different delimiter and a
+different parser. Nunjucks — the template engine `hub.njk` is rendered
+through, and (via `docs/.eleventy.js`'s `markdownTemplateEngine: "njk"`)
+every hub post's Markdown file too — scans the raw file text for its own
+tag delimiters before anything downstream ever sees JavaScript, a
+comment, or a Markdown code span; it does not know a `/** ... */` block
+is a comment or that backticks mark inline code. A TypeScript-style
+inline object-type JSDoc annotation — a curly-brace type that itself
+opens with another curly brace, to describe an object shape — reads to
+Nunjucks as the start of one of its own tags. The build fails with a
+generic `(./_includes/hub.njk) [Line N, Column M] expected variable
+end`, on every page the site builds. This is not caught by `node
+--check`, nor by any check (including the previous section's own
+verification recipe) that strips Nunjucks delimiters out before
+checking the JavaScript underneath — that never asks whether Nunjucks
+itself can parse the file. Caught the same day it was written
+(2026-09-16, the `fn.serialize` doc comment,
+danbri/factoidal#687) only because
+`tests/web-demos/hub_browser_all.sh` runs the real Eleventy build; a
+JS-only syntax check would have shipped it.
+
+Fix: never place two brace characters next to each other in this file,
+or in a hub post's Markdown, outside a genuine Nunjucks tag — not even
+inside a JSDoc comment, a Markdown code span, or a code fence. Split a
+JSDoc object-typed parameter into one line giving its own type as the
+plain word `object`, plus one line per field giving that field's own
+type. The only reliable check is running the actual Eleventy build, or
+searching the file by hand for two open-brace or two close-brace
+characters (or an open-brace immediately followed by a percent sign, or
+a percent sign immediately followed by a close-brace) in immediate
+succession, and confirming every match is a genuine, already-valid
+Nunjucks tag.
+
+### Fixed trap (2026-10-25): a function call wrapped directly around a dotted chain hid the chain's own name from the reactive-cell analyzer
+
+Fixed by https://github.com/danbri/factoidal/issues/690: `collectLocals()` now takes
+the innermost parenthesised group before `=>` (`/\(([^()]*)\)\s*=>/`), and
+`tests/hub/reactive_cells_flags_test.mjs` asserts the case below. The text
+below is the record of the defect. It came back on 2026-10-25 in the cell
+`buildingsEvidence` of `canary-wharf-pipeline.md`: the page test passed
+because it never read that cell, and the headless browser run showed
+`ReferenceError: buildingsRun is not defined`. Rule: a page test reads
+every named cell of its page.
+
+
+`reactive-cells.mjs`'s `collectLocals()` finds an arrow function's own
+parameter list with a pattern that looks for "open paren, anything that
+is not a close paren, close paren, arrow" — it has no notion of nested
+parentheses, so it cannot tell where a parameter list actually starts;
+it only knows where the *first* close paren after some open paren
+happens to land. For a cell that writes `pretty(rows.map((el) => ...))`
+that mismatch is invisible: the analyzer's naive scan starting at
+`pretty`'s own open paren runs forward until the first close paren it
+meets, which is the arrow's own, and — because an arrow token happens
+to follow it — the scan stops there and treats everything in between
+(`rows.map((el`) as if it were one parameter list, adding `rows`,
+`map` AND `el` as local bindings. `el` really is the parameter; `rows`
+and `map` are not, and if `rows` happens to be the exact name of
+another cell — as `model` was, in `model.elements.map((el) => ...)` —
+that cell silently drops out of the dependency graph. The runtime
+compiles and runs the cell anyway, with no `model` parameter on the
+generated function, and the browser throws `ReferenceError: model is
+not defined` — a `node --test` run of `runReactivePost()` reproduces
+the exact same wrong `inputs` list (this is shared, not browser-only
+code), so it did not need the browser sweep to be caught, only a
+closer look at the reactive-cell analyzer's own computed inputs for
+each cell.
+
+The failure only shows up when the wrapping call's own close paren is
+*not* the first one the naive scan reaches — `pretty(Object.values(x).
+map((c) => ...))` is safe, because `Object.values(x)`'s own close paren
+comes first, is not followed by an arrow, and the failed attempt moves
+the scan on to the real `map((c) => ...)` correctly. `pretty(x.method(
+(p) => ...))`, with nothing else between the outer call and the arrow's
+own parameter list, is exactly the unsafe shape. Fix: never pass a
+chained method call straight to an outer function call when the chain
+starts with a cell's own name — compute the chain into a local
+`const` first (`const rows = model.elements.map((el) => ...); return
+pretty(rows);`), so the cell name never sits inside the same
+mis-scanned span as an arrow's parameter list. Found and fixed the same
+day as the two traps above, hub post 55, danbri/factoidal#687; not
+specific to that post — any existing or future post with this shape
+carries the same defect.
+
+### The `pretty()` rendering option
+
+Every cell can return raw arrays/objects and let the Inspector render
+its default collapsed-JS-tree view — that's still the default, and
+most cells (posts 03-05, and any cell not explicitly converted) do
+exactly that. `pretty(value)` is an **opt-in** alternative for the
+common shapes a query cell tends to produce: wrap the cell's return
+value in `pretty(...)` and get a small styled HTML table instead of a
+JS-tree the reader has to expand.
+
+Shape dispatch (checked in this order):
+
+| Input shape | Rendering |
+|---|---|
+| Array of `Map` (SPARQL bindings rows — Map keys are variable names) | table, one column per variable, in first-seen order across all rows |
+| Dataset-like (has `.size` and is `Symbol.iterator`-able over quads) | a triples/quads table: `s`/`p`/`o` columns, plus `g` if any quad has a graph |
+| Array of plain objects | table from the union of keys across all objects, in first-seen order |
+| Plain object | a two-column key/value table |
+| Scalar (`string`/`number`/`boolean`/`bigint`) | a small styled value span |
+| Anything else (`null`, `undefined`, an empty array, a DOM node, a lone `Map` not inside an array, ...) | returned **unchanged** — the Inspector's own renderer handles it exactly as if `pretty()` had never been called |
+
+Term values (`NamedNode`/`BlankNode`/`Literal`) inside a table cell are
+shortened for display: an IRI compacts to its trailing path/fragment
+segment with the full IRI in a `title` tooltip (hover on desktop; the
+raw value is still there for anyone who needs it); a blank node is
+shown `_:`-prefixed; a literal is quoted, with an `@lang` or
+`^^datatype` suffix when present (datatype/language also folded into
+the tooltip). Tables sit inside a scrollable wrapper — both axes, so a
+wide table doesn't force the page to scroll horizontally at a 390px
+viewport (same `overflow-x` pattern `.observable-cell` already uses)
+and a tall table scrolls internally instead of pushing the rest of the
+page down — with a small caption line above the grid giving the row
+(or field) count, e.g. "12 rows".
+
+**Browser vs. test duality.** `hub.njk`'s `pretty()` returns an actual
+DOM node — the Inspector's contract for a DOM-Node return value is to
+insert it as-is, so this composes with the existing Inspector
+machinery with no special-casing. `tests/hub/_helpers.mjs` exports a
+`pretty` stub with the *same shape dispatch* but no DOM dependency: it
+returns a plain, JSON-serializable structure instead —
+`{kind: 'table', columns: [...], rows: [[...], ...]}` or
+`{kind: 'value', value}` — so a pinned `node:test` can assert on table
+shape (`result.columns`, `result.rows.length`, cell contents) without a
+browser. Both implementations satisfy the same shape-dispatch contract
+above; a cell written against `pretty()` runs unchanged against either.
+
+## Reader-added cells
+
+Below the pinned cells, `hub.njk`'s `initUserCells()` appends a "Your
+own cells" section with an `+ Add a cell` button. Clicking it mounts a
+fresh live cell — an editable `<textarea>` plus a `Run`, `Remove` and
+the same `Output: [Auto] [Table]` toggle — that evaluates through the
+**same** `compileCell()` / `CELL_BINDINGS` path the pinned cells use,
+so `fn`, `Factoidal`, `Plot`, `d3`, `html`, `md` and `pretty` are all
+in scope. Each user cell gets its own Observable runtime `Variable`
+(`userCell<seq>`); `Run` (re-)defines it in place, `Remove` calls
+`variable.delete()` to tear it out of the runtime and drops the DOM
+block. The pinned cells are never touched — this only adds cells on
+top. Nothing a reader types is persisted or sent anywhere; it runs in
+their browser and disappears on reload.
+
+## Testing discipline
+
+Every live cell's source must also be pinned in that post's test file
+under `tests/hub/postNN_test.mjs`. The pinning tests extract the exact
+fenced source out of the shipped post file
+(`extractObservableCells()` in `tests/hub/_helpers.mjs`) and execute it.
+A post whose cells are all anonymous (no cross-cell references) can
+run each cell standalone via `runObservableCell()` — the same `new
+Function(...CELL_BINDINGS, body)` construction `hub.njk`'s
+`mountCell()` uses. A post with named, cross-referencing cells (the
+norm — see "Named cells" above) instead uses `runReactivePost(cells,
+bindings)`, which builds the same headless Observable-runtime module
+`hub.njk` builds in the browser, wiring each cell's inputs through the
+identical `reactive-cells.mjs` compiler; `post.value(post.names[i])`
+then reads a cell's resolved value through its full dependency chain,
+so the test proves the cross-cell references actually resolve rather
+than merely that each cell runs alone. Either way, the test runs the
+literal string that ships on the page, not a hand-copied approximation
+that can drift. The Node-side `fn` binding used in tests is the *real*
+`npm/factoidal` typed API (imported the same way
+`npm/factoidal/test/*.js` does), not the browser adapter — since both
+implementations satisfy the same external contract above, one cell
+source works correctly executed against either.
+
+The browser-side correctness check (does `fn`'s adapter actually work
+against the real F\*-extracted engine in a real browser) is
+`tests/web-demos/hub_posts_smoke.sh`, which drives headless Chromium
+over each built post page and asserts every `.observable-cell` on the
+page computes without `.observable-cell-error` and produces a value.
+It also drives one interaction pass, on the first post's first cell:
+click the Edit toggle, overwrite the textarea with a trivially
+different deterministic expression (`return 6 * 7;`), click Run, and
+assert the output box updates to `42` with no
+`.observable-cell-error` — i.e. that the toolbar's Edit/Run chrome and
+`module.redefine()` re-run path actually work end to end, not just
+that the auto-run-on-load path does. The 390px no-horizontal-overflow
+check (`document.documentElement.scrollWidth <= clientWidth`) runs on
+every page after the toolbar has mounted, so it also covers the
+toolbar/editor chrome added by this change.
+
+## Constraints every cell must respect
+
+- **Same-origin only (strict pages).** Every import in `hub.njk` is a
+  same-origin Pages path (`{{ '...' | url }}`) — never a CDN URL. Cell
+  bodies inherit this: don't `fetch()` an external URL from inside a
+  cell — the strict hub's Content-Security-Policy (`img-src`/
+  `connect-src 'self'`, stated in `hub.njk`'s `<meta http-equiv>` tag)
+  blocks it anyway. **Live-mode caveat (task #105):** every post also
+  gets an auto-generated twin at `/web/hub-live/<slug>/`
+  (`docs/web/hub-live.11ty.js`) whose CSP additionally allows
+  `https:` on `img-src`/`connect-src` only — external *data* (map
+  tiles, remote SPARQL endpoints), never external *scripts*. A cell
+  that wants live-only behavior must feature-detect via the
+  `data-hub-mode` attribute `hub.njk` sets on `<body>` (`"strict"` or
+  `"live"`) and degrade cleanly when it reads `"strict"` — the same
+  cell source runs on both pages. See post 21's map cell for the
+  worked example.
+- **One engine.** Cells run the Lean wasm of `@factoidal/core`
+  (`Factoidal`/`fn`). There is no second engine to select.
+- **No engine changes from a post.** If a cell cannot be expressed
+  against `Factoidal`/`fn` as they stand, the gap is a package or Lean
+  library change with its own issue and an expected-failure case in the
+  post's test (CLAUDE.md, "A stated shortfall is a failing test plus an
+  open issue"), not a cell-side workaround.

@@ -8,11 +8,13 @@ But the F* port represents the finite case as an EXACT decimal
 (`mantissa / 10^scale`) rather than a float, so `0.1 + 0.2 = 0.3`
 holds and `number('0.1')` compares equal to the literal `0.1`.
 
-That combination — IEEE's special values, exact decimal arithmetic
-underneath — is deliberate: the special values are observable through
-`NaN`-producing conversions and division, while binary rounding is
-not something any XPath test actually asks for.
+This inherited representation is an implementation limitation: it does not
+model binary64 rounding or distinguish signed zero. Integral rounding shares
+`Fn.Rounding` with the F&O/SPARQL path, without claiming full numeric-model
+agreement between those consumers.
 -/
+
+import L4Factoidal.Fn.Rounding
 
 namespace L4Factoidal.XPath
 
@@ -30,6 +32,19 @@ namespace Num
 def pow10 : Nat → Int
   | 0     => 1
   | n + 1 => 10 * pow10 n
+
+/-- `pow10` as the core power: `Int.pow` of a non-negative base is one
+`Nat.pow` (`lean_nat_pow`, GMP), so no stack frame per digit
+(https://github.com/danbri/factoidal/issues/752). -/
+def pow10Fast (n : Nat) : Int := 10 ^ n
+
+theorem pow10_eq_pow : ∀ n, pow10 n = 10 ^ n
+  | 0     => rfl
+  | n + 1 => by rw [pow10, pow10_eq_pow n, Int.pow_succ, Int.mul_comm]
+
+/-- The compiler runs `pow10Fast` wherever the source says `pow10`. -/
+@[csimp] theorem pow10_eq_fast : @pow10 = @pow10Fast := by
+  funext n; exact pow10_eq_pow n
 
 def ofInt (i : Int) : Num := .finite i 0
 def zero : Num := ofInt 0
@@ -207,34 +222,20 @@ def toXString : Num → String
                     else String.ofList ip ++ "." ++ String.ofList fp
         if neg then "-" ++ body else body
 
-/-- §4.4 `floor()`.
-
-    `Int.fdiv` — flooring division — is named EXPLICITLY. Lean's `/`
-    on `Int` is Euclidean division, which floors for a positive
-    divisor and would work here by accident; `Int.tdiv` truncates
-    toward zero and would not. Writing the intended rounding rather
-    than relying on which of the three `/` denotes is what keeps
-    `floor`, `ceiling` and `mod` from silently disagreeing about
-    negative numbers, which is the only place they differ at all. -/
-def floorN : Num → Num
-  | .finite m s => if s == 0 then .finite m 0 else .finite (Int.fdiv m (pow10 s)) 0
+/-- XPath §4.4 integral rounding, shared with F&O's numeric value layer.
+    The inherited exact decimal model cannot preserve negative zero. -/
+def integralN (mode : Fn.Rounding.Mode) : Num → Num
+  | .finite m s => .finite (Fn.Rounding.integral mode m (pow10 s)) 0
   | other => other
+
+/-- §4.4 `floor()`. -/
+def floorN : Num → Num := integralN .floor
 
 /-- §4.4 `ceiling()`. -/
-def ceilingN : Num → Num
-  | .finite m s =>
-      if s == 0 then .finite m 0 else .finite (-(Int.fdiv (-m) (pow10 s))) 0
-  | other => other
+def ceilingN : Num → Num := integralN .ceiling
 
-/-- §4.4 `round()`: the nearest integer, HALF TO POSITIVE INFINITY.
-    `round(-0.5)` is `0`, not `-1` — the asymmetry the specification
-    states and that a naive "add a half and truncate" gets right only
-    on one side of zero. -/
-def roundN (x : Num) : Num :=
-  match x with
-  | .finite _ 0 => x
-  | .finite _ _ => floorN (add x (.finite 5 1))
-  | other       => other
+/-- §4.4 `round()`: nearest integer, ties toward positive infinity. -/
+def roundN : Num → Num := integralN .nearest
 
 /-- `mod`: the remainder with the sign of the DIVIDEND, as in Java and
     as XPath §3.5 states — not the always-non-negative modulus. -/

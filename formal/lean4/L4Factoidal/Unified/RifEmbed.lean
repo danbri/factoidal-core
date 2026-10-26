@@ -755,7 +755,9 @@ def rifEngineDatalogAgrees (rs : RifRuleSet) (p : DatalogProgram)
     (g : RDF.Graph) (rounds fuel : Nat) : Bool :=
   let eng := RIF.Saturate.saturateGraph "rules" rs g rounds
   let dl := (p.lfp (rifGraphFacts g) fuel).filterMap rifFactTriple?
-  eng.all (fun t => dl.contains t) && dl.all (fun t => eng.contains t)
+  match eng.completeGraph? with
+  | none => false
+  | some graph => graph.all (fun t => dl.contains t) && dl.all (fun t => graph.contains t)
 
 section Checks
 
@@ -766,7 +768,7 @@ section Checks
 /-! And the check is not vacuous: the engine's saturation is strictly
 larger than the input graph, so both sides are doing work. -/
 
-#guard (RIF.Saturate.saturateGraph "rules" demoRifRules demoRifGraph 8).length == 4
+#guard ((RIF.Saturate.saturateGraph "rules" demoRifRules demoRifGraph 8).completeGraph?.map List.length) == some 4
 #guard demoRifGraph.length == 2
 
 /-! ### The structural flattener agrees with `RIF/Translation.lean`'s

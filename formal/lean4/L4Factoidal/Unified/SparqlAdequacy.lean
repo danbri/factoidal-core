@@ -1193,13 +1193,14 @@ theorem regime_rhoDf_answers_closure_iff {g : RDF.Graph} {b : SPARQL.Bgp}
 
 /-- **`RDFS`** (`RDF.Regime.closure .rdfs`, the full closure): every
 answer over the closure is an answer over the graph under the RDFS
-schema. Carries the two hypotheses `unified_rdfs_closure_sound`
-carries — the `rdf:_n` slice condition and `rdf:XMLLiteral ∈ D`
-(stage 2 correction note 10b). -/
+schema. Carries the hypothesis `unified_rdfs_closure_sound` carries:
+the `rdf:_n` slice condition. (Until 2026-10-13 it also carried
+`rdf:XMLLiteral ∈ D`, stage 2 correction note 10b; the seed table lost
+its two `rdf:XMLLiteral` rows, https://github.com/danbri/factoidal/issues/767
+gap 1, and the hypothesis went with them.) -/
 theorem regime_sound_rdfs {g : RDF.Graph} {b : SPARQL.Bgp}
     {mu : SPARQL.Binding} (D cmps : List RDF.WfIri)
     (hcmps : ∀ c ∈ cmps, RDF.IsRdfMemberIri c)
-    (hxml : RDF.rdfXMLLiteral ∈ D)
     (h : mu ∈ SPARQL.evalBgp b (RDF.Regime.closure .rdfs D cmps g)) :
     Answers condTrue (bgpSchema (rdfsSchema (fun x => x ∈ D)))
       [rdfToTheorySk g] (sparqlBgpToQuery b) mu := by
@@ -1208,7 +1209,7 @@ theorem regime_sound_rdfs {g : RDF.Graph} {b : SPARQL.Bgp}
   refine RDF.derivesFull_holds hc ?_ hg (RDFS.fullClosure_sound D cmps g ht)
   exact RDF.axiomaticTriples_hold (skAssign i) D cmps hcmps hc.1.2
     (fun a' t' ht' => hc.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2 a' t' ht')
-    hc.2.2.2.1 hc.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1 hxml
+    hc.2.2.2.1
 
 /-! ## The assertion-decoration merge: a premise-list transform, not
 a closure
@@ -1407,38 +1408,14 @@ theorem unified_bgp_bnode_no_answer :
   have hm := (unified_adequate_bgp_spec wBbn wG _ wG_ttFree wBbn_ttFree).mpr h
   exact absurd (bgpMatchesCheck_iff.mpr hm) (by decide)
 
-/-- `termEqSchema` carries rows that are NOT instances of
-reflexivity: two DISTINCT RDF terms the engine identifies, whose
-`eq` row is a real sentence of the schema. Without such a row the
-soundness half is false wherever the graph and the pattern spell a
-language tag with different case.
-
-Stated with the language-tag fact as a hypothesis for a reason worth
-recording: `String.toLower` does not reduce in the Lean kernel, so
-neither `decide` nor `rfl` can discharge `langTagEq "EN" "en" = true`.
-The `#guard` under this theorem pins that concrete instance at build
-time, which is where the tree's other kernel-opaque facts are
-pinned. -/
-theorem termEqSchema_nontrivial {t1 t2 : String} (hne : t1 ≠ t2)
-    (heq : RDF.langTagEq t1 t2 = true) :
-    ∃ x y : RDF.Term, x ≠ y ∧ RDF.Term.eqb x y = true ∧
-      termEqSchema (.eq (embedTerm x) (embedTerm y)) := by
-  refine ⟨.literal ⟨{ lexicalForm := "a", datatype := RDF.rdfLangString,
-                      langTag := some t1, direction := none }, by rfl⟩,
-          .literal ⟨{ lexicalForm := "a", datatype := RDF.rdfLangString,
-                      langTag := some t2, direction := none }, by rfl⟩,
-          ?_, ?_, ?_⟩
-  · intro h
-    simp only [RDF.Term.literal.injEq, Subtype.ext_iff,
-               RDF.Literal.mk.injEq, Option.some.injEq] at h
-    exact hne h.2.2.1
-  · simp only [RDF.Term.eqb, RDF.Literal.eqb, RDF.langTagOptionEq, heq]
-    decide +kernel
-  · exact ⟨_, _, by
-      simp only [RDF.Term.eqb, RDF.Literal.eqb, RDF.langTagOptionEq, heq]
-      decide +kernel, rfl⟩
-
-/-! The concrete instance, pinned at build time. -/
+/-! Until 2026-10-24 a theorem here, `termEqSchema_nontrivial`, exhibited
+two DISTINCT terms the engine identifies (`"a"@EN` and `"a"@en`), so that
+`termEqSchema` had rows that are not instances of reflexivity. RDF 1.2
+Concepts §3.4 makes the two spellings one RDF term, and `RDF.literalWf` now
+requires the lower-case one, so `Term.eqb` is structural equality
+(`RDF.Term.eqb_iff_eq`) and every row of `termEqSchema` is an instance of
+reflexivity. The theorem became false and was removed
+(https://github.com/danbri/factoidal/issues/1001). -/
 #guard RDF.langTagEq "EN" "en"
 
 end Witnesses
@@ -1471,7 +1448,6 @@ section Audits
 #print axioms wBbn_not_bnodeFree
 #print axioms unified_bgp_bnode_answer_witness
 #print axioms unified_bgp_bnode_no_answer
-#print axioms termEqSchema_nontrivial
 
 end Audits
 

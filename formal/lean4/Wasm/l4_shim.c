@@ -72,9 +72,16 @@ extern lean_object *l4_call_blob(lean_object *op, lean_object *args_json,
 extern lean_object *l4_call_blob_io(lean_object *op, lean_object *args_json,
                                     lean_object *blob);
 
-/* Module initialiser for Wasm.Exports; it chains through every import,
-   Init included. Name pattern: initialize_<package>_<Module_Path>. */
-extern lean_object *initialize_l4factoidal_Wasm_Exports(uint8_t builtin);
+/* Module initialiser of the exports module; it chains through every
+   import, Init included. Name pattern: initialize_<package>_<Module_Path>.
+   The full module (l4factoidal.wasm) links Wasm.Exports; the core module
+   (l4factoidal-core.wasm, issue 713 stage 4) links Wasm.CoreExports, which
+   defines the same C symbols over the core dispatch. build-wasm.sh compiles
+   this file once per module, with -DL4_INIT_MODULE naming the initialiser. */
+#ifndef L4_INIT_MODULE
+#define L4_INIT_MODULE initialize_l4factoidal_Wasm_Exports
+#endif
+extern lean_object *L4_INIT_MODULE(uint8_t builtin);
 
 static int g_l4_initialized = 0;
 
@@ -82,7 +89,7 @@ static int g_l4_initialized = 0;
 static int l4_ensure_init(void) {
     if (g_l4_initialized) return 1;
     lean_initialize_runtime_module();
-    lean_object *res = initialize_l4factoidal_Wasm_Exports(1 /* builtin */);
+    lean_object *res = L4_INIT_MODULE(1 /* builtin */);
     if (!lean_io_result_is_ok(res)) {
         lean_io_result_show_error(res);
         lean_dec(res);
@@ -90,6 +97,25 @@ static int l4_ensure_init(void) {
     }
     lean_dec_ref(res);
     lean_io_mark_end_initialization();
+    /* Arena size of the allocator from here on
+       (https://github.com/danbri/factoidal/issues/744). On wasm32 mimalloc
+       takes its memory from emmalloc (`emmalloc_memalign`, 4 MiB aligned),
+       in arenas of 128 MiB / 4 = 32 MiB by default (`mi_arena_reserve`
+       divides by 4 where there is no virtual reserve). An object above the
+       4 MiB segment size that does not fit in a free run of an arena is
+       allocated from emmalloc directly and freed back to it, and the next
+       one, a little larger, does not fit in what was freed: measured
+       2026-10-12, `parseToDatasetJson` of 48,000 triples (a 4.5 MB envelope)
+       raised linear memory to 257 MB on the first call and to 1,224 MB after
+       six, while the live Lean heap after each call was 0.5 MB
+       (`l4_heap_tags_c`). With arenas of 512 MiB / 4 = 128 MiB after the first
+       one, the same six calls stay at 184 MB, and 192,000 triples at 340 MB
+       (1,588 MB before). The first arena, reserved during the module
+       initialisation above, keeps the default size, so the memory of a small
+       workload does not change (52.9 MB for 6,000 triples, before and after).
+       The value is in KiB (`mi_option_get_size`). Record:
+       docs/designissues/2026-10-10-lean-vs-fstar-performance.md section 11. */
+    mi_option_set(mi_option_arena_reserve, 512L * 1024L);
     g_l4_initialized = 1;
     return 1;
 }

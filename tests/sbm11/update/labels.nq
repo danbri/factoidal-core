@@ -1,0 +1,4 @@
+_:sbm11u0 <http://ex.org/p> "base zero" .
+_:sbm11u2 <http://ex.org/p> "base two" .
+<http://ex.org/s1> <http://ex.org/p> "one" .
+<http://ex.org/s2> <http://ex.org/p> "two" .

@@ -50,6 +50,7 @@ fuel `Nat` exactly where the F* source also needed one
 (`parse_object_12_f`'s `decreases fuel`).
 -/
 
+import L4Factoidal.Encoding.Hex
 namespace L4Factoidal.Syntax
 
 /-! ## Parse errors — message + position (RFC: W3C negative-syntax tests
@@ -76,11 +77,7 @@ instance : ToString ParseError :=
 `hex_val` the F* source keeps only for Turtle/TriG backward compatibility;
 every caller here treats an invalid hex digit as a parse error, never a
 silent 0. -/
-def hexVal (c : Char) : Option Nat :=
-  if '0' ≤ c ∧ c ≤ '9' then some (c.toNat - '0'.toNat)
-  else if 'A' ≤ c ∧ c ≤ 'F' then some (c.toNat - 'A'.toNat + 10)
-  else if 'a' ≤ c ∧ c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
-  else none
+def hexVal (c : Char) : Option Nat := Encoding.Hex.digitValue c
 
 /-! ## Codepoint validity — [26] UCHAR decode target
 
@@ -228,6 +225,68 @@ def readIriRefBody (pos : Nat) (cs : List Char) :
       have : rest.length < cs.length := iriNextStep_emit_shorter h
       (readIriRefBody (pos + w) rest).map (fun (s, p, r) => (c.toString ++ s, p, r))
 termination_by cs.length
+
+/-! ### The IRIREF body as a loop
+
+`readIriRefBody` above is the SPECIFICATION: its result is built by
+prepending each character to the result of the recursive call, so the
+call is not in tail position and compiled code uses one native stack frame
+per IRI character. `readIriRefBodyGo` carries the decoded prefix in an
+accumulator and calls itself in tail position, which the compiler turns
+into a loop. `readIriRefBody_eq_TR` proves the two equal and, as a
+`@[csimp]` lemma, makes the compiler run the loop wherever the
+specification is called. Same defect and repair as
+`readStringLiteralBody` below (2026-10-11). -/
+
+/-- The loop: `acc` is the decoded prefix of the IRI body. -/
+def readIriRefBodyGo (pos : Nat) (acc : String) (cs : List Char) :
+    Except ParseError (String × Nat × List Char) :=
+  match h : iriNextStep pos cs with
+  | .close rest => .ok (acc, pos + 1, rest)
+  | .fail e => .error e
+  | .emit c w rest =>
+      have : rest.length < cs.length := iriNextStep_emit_shorter h
+      readIriRefBodyGo (pos + w) (acc.push c) rest
+termination_by cs.length
+
+theorem readIriRefBodyGo_eq (pos : Nat) (acc : String) (cs : List Char) :
+    readIriRefBodyGo pos acc cs
+      = (readIriRefBody pos cs).map (fun (s, p, r) => (acc ++ s, p, r)) := by
+  rw [readIriRefBodyGo]
+  split
+  next rest h =>
+    have e : readIriRefBody pos cs = .ok ("", pos + 1, rest) := by
+      rw [readIriRefBody]; split <;> simp_all
+    rw [e]; simp [Except.map]
+  next e h =>
+    have e' : readIriRefBody pos cs = .error e := by
+      rw [readIriRefBody]; split <;> simp_all
+    rw [e']; rfl
+  next c w rest h =>
+    have : rest.length < cs.length := iriNextStep_emit_shorter h
+    have e : readIriRefBody pos cs = (readIriRefBody (pos + w) rest).map
+        (fun (s, p, r) => (c.toString ++ s, p, r)) := by
+      rw [readIriRefBody]; split <;> simp_all
+    rw [e, readIriRefBodyGo_eq (pos + w) (acc.push c) rest]
+    cases readIriRefBody (pos + w) rest with
+    | error e => rfl
+    | ok v =>
+      obtain ⟨s, p, r⟩ := v
+      simp only [Except.map]
+      rw [← String.append_assoc]; rfl
+termination_by cs.length
+
+/-- The executable form of `readIriRefBody`. -/
+def readIriRefBodyTR (pos : Nat) (cs : List Char) :
+    Except ParseError (String × Nat × List Char) :=
+  readIriRefBodyGo pos "" cs
+
+@[csimp] theorem readIriRefBody_eq_TR : @readIriRefBody = @readIriRefBodyTR := by
+  funext pos cs
+  rw [readIriRefBodyTR, readIriRefBodyGo_eq]
+  cases readIriRefBody pos cs with
+  | error e => rfl
+  | ok v => obtain ⟨s, p, r⟩ := v; simp [Except.map]
 
 
 /-- IRIREF: `'<' ... '>'`, `pos` pointing at the opening `<`. Port of
@@ -438,6 +497,66 @@ usable equations at all, which is
       = (readStringLiteralBody (pos + w) r).map
           (fun (s, p, rr) => (c.toString ++ s, p, rr)) := by
   rw [readStringLiteralBody]; split <;> simp_all
+
+/-! ### The literal body as a loop
+
+`readStringLiteralBody` is the SPECIFICATION and the form every theorem
+uses. Compiled as written, it prepends each decoded character to the
+result of the recursive call, so the call is not in tail position: one
+native stack frame per literal character, and a quadratic string build.
+Defect, measured 2026-10-11: `parse(text, {format: 'nquads'})` in
+`@factoidal/core` 0.9.0 (wasm) threw "Maximum call stack size exceeded" on
+a 23 MB N-Quads file whose `geo:asWKT` literals reach about 6,000
+characters; under `LEAN_STACK_SIZE_KB=512` the native `l4wasm-cli` showed
+8,000 nested `readStringLiteralBody` frames below `readNQuad11`.
+`readStringLiteralBodyGo` carries the decoded prefix in an accumulator and
+calls itself in tail position, which the compiler turns into a loop.
+`readStringLiteralBody_eq_TR` proves the two equal and, as a `@[csimp]`
+lemma, makes the compiler run the loop wherever the specification is
+called. Test: `nquads-long-literal` in `tests/stack/run.sh`. -/
+
+/-- The loop: `acc` is the decoded prefix of the literal body. -/
+def readStringLiteralBodyGo (pos : Nat) (acc : String) (cs : List Char) :
+    Except ParseError (String × Nat × List Char) :=
+  match h : strLitNextStep pos cs with
+  | .close rest => .ok (acc, pos + 1, rest)
+  | .fail e => .error e
+  | .emit c w rest =>
+      have : rest.length < cs.length := strLitNextStep_emit_shorter h
+      readStringLiteralBodyGo (pos + w) (acc.push c) rest
+termination_by cs.length
+
+theorem readStringLiteralBodyGo_eq (pos : Nat) (acc : String) (cs : List Char) :
+    readStringLiteralBodyGo pos acc cs
+      = (readStringLiteralBody pos cs).map (fun (s, p, r) => (acc ++ s, p, r)) := by
+  rw [readStringLiteralBodyGo]
+  split
+  next rest h => rw [readStringLiteralBody_close pos cs rest h]; simp [Except.map]
+  next e h => rw [readStringLiteralBody_fail pos cs e h]; rfl
+  next c w rest h =>
+    have : rest.length < cs.length := strLitNextStep_emit_shorter h
+    rw [readStringLiteralBody_emit pos cs rest c w h,
+      readStringLiteralBodyGo_eq (pos + w) (acc.push c) rest]
+    cases readStringLiteralBody (pos + w) rest with
+    | error e => rfl
+    | ok v =>
+      obtain ⟨s, p, r⟩ := v
+      simp only [Except.map]
+      rw [← String.append_assoc]; rfl
+termination_by cs.length
+
+/-- The executable form of `readStringLiteralBody`. -/
+def readStringLiteralBodyTR (pos : Nat) (cs : List Char) :
+    Except ParseError (String × Nat × List Char) :=
+  readStringLiteralBodyGo pos "" cs
+
+@[csimp] theorem readStringLiteralBody_eq_TR :
+    @readStringLiteralBody = @readStringLiteralBodyTR := by
+  funext pos cs
+  rw [readStringLiteralBodyTR, readStringLiteralBodyGo_eq]
+  cases readStringLiteralBody pos cs with
+  | error e => rfl
+  | ok v => obtain ⟨s, p, r⟩ := v; simp [Except.map]
 
 /-! ### Literal-shaped reductions
 

@@ -1,0 +1,14 @@
+Lean @[csimp] reach check
+=========================
+C files scanned: 983 (ignored, no Lean source: 0)   definitions: 88263   Lean modules: 1120
+@[csimp] theorems found: 219   distinct left sides: 218   not resolved: 0
+Calls of a replacement found in the emitted C (the positive control): 639
+  left side with two theorems: L4Factoidal.RDF.isIri (L4Factoidal/RDF/Core.lean:72, L4Factoidal/Syntax/NTriples.lean:73)
+Findings (a left side that compiled code still reaches): 94
+  new: 0   allowed: 30   suppressed, held by a specification nothing reaches: 64
+  by reason: after-theorem 2, before-theorem 16, not-imported 12
+Allow list: 30 lines, 0 match no finding, 0 malformed
+
+wrote ../logs/integration-final-csimp-report.json
+
+GATE PASS: every left side that compiled code still reaches is on tools/lean-csimp-reach-allow.txt with a reason

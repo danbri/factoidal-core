@@ -1,0 +1,2 @@
+PREFIX ex: <http://ex.org/>
+SELECT ?g (COUNT(*) AS ?n) WHERE { GRAPH ?g { ?s ?p ?o FILTER (?p != ex:none) } } GROUP BY ?g

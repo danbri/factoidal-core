@@ -26,6 +26,18 @@ comparison. This is the same defect the `Mini` port paid for once
 (`preceding-sibling-reverse-axis` counted zero for both rows), written
 down here so the second model does not repeat it.
 
+## Identity includes the DOCUMENT
+
+XSLT's `document()` brings nodes of other documents into the same
+evaluation. A node is identified by its document AND its path: the
+same child-index path names different nodes in two documents. Without
+the document in the address, `document('')//x` returned nodes whose
+parent, ancestors and in-scope namespaces were then looked up in the
+PRINCIPAL source document, and a union of nodes from two documents
+merged two different nodes that shared a path. `Loc.doc` is the
+document's number; `XPath.Eval.Ctx.docById` says which document each
+number names.
+
 ## Document order is the address, lexicographically
 
 Namespace nodes and attribute nodes belong to their element and come
@@ -35,6 +47,7 @@ puts them where the specification does, and no separate ordering rule
 is needed.
 -/
 import L4Factoidal.XML.Document
+import L4Factoidal.XML.NamespaceView
 
 /-!
 The namespace is `L4Factoidal.XPath.Full`, beside `XPath.Mini`'s
@@ -67,14 +80,24 @@ deriving Repr, DecidableEq, Inhabited
 structure Loc where
   path : List Nat
   slot : Option (Bool × Nat) := none
+  /-- The document the item belongs to. `0` is the document the
+      evaluation started from; the caller numbers the others (see
+      `XPath.Eval.Ctx.docById`). -/
+  doc  : Nat := 0
 deriving Repr, DecidableEq, Inhabited
 
 /-- The address as a list of integers, in DOCUMENT ORDER under plain
     lexicographic comparison. A namespace node gets `-3`, an
     attribute `-2`; every child index is `≥ 0`, so both sort before
-    the element's children and namespaces before attributes. -/
+    the element's children and namespaces before attributes.
+
+    The document number comes FIRST. XSLT 1.0 §12.1 leaves the order
+    of nodes from different documents implementation-dependent and
+    requires only that it be consistent; putting every node of
+    document `n` before every node of document `n + 1` is consistent,
+    and it keeps each document's own order intact. -/
 def Loc.key (l : Loc) : List Int :=
-  (l.path.map (fun n : Nat => (Int.ofNat n))) ++
+  (Int.ofNat l.doc) :: (l.path.map (fun n : Nat => (Int.ofNat n))) ++
     (match l.slot with
      | none            => []
      | some (false, i) => [-3, (i : Int)]
@@ -93,8 +116,9 @@ def keyCmp : List Int → List Int → Ordering
     carried alongside its address so that every accessor is a
     projection rather than a re-walk. -/
 inductive Item where
-  /-- The document node, holding its child list. -/
-  | doc  (kids : List Node)
+  /-- The document node, holding its child list, and its document
+      number (`Loc.doc`). -/
+  | doc  (kids : List Node) (id : Nat := 0)
   /-- An element, text, comment or PI node at `loc`. -/
   | tree (loc : Loc) (n : Node)
   /-- An attribute of the element at `loc.path`. -/
@@ -105,13 +129,13 @@ inductive Item where
 deriving Repr, DecidableEq, Inhabited
 
 def Item.loc : Item → Loc
-  | .doc _        => { path := [] }
+  | .doc _ i      => { path := [], doc := i }
   | .tree l _     => l
   | .attr l _     => l
   | .ns   l _ _   => l
 
 def Item.kind : Item → Kind
-  | .doc _              => .root
+  | .doc _ _            => .root
   | .tree _ (.element ..) => .element
   | .tree _ (.text _)   => .text
   | .tree _ (.cdata _)  => .text
@@ -159,7 +183,7 @@ partial def nodeText : Node → String
   | .element _ _ cs => String.join (cs.map nodeText)
 
 def Item.stringValue : Item → String
-  | .doc kids   => String.join (kids.map nodeText)
+  | .doc kids _ => String.join (kids.map nodeText)
   | .tree _ n   => match n with
       | .comment b => b
       | .pi _ d    => d
@@ -192,11 +216,11 @@ def nodeAt (kids : List Node) : List Nat → Option Node
 abbrev Doc := List Node
 
 /-- The item at an address, or `none` when the address does not name
-    one. -/
+    one. `d` is the document `l.doc` names. -/
 def itemAt (d : Doc) (l : Loc) : Option Item :=
   match l.slot with
   | none =>
-      if l.path.isEmpty then some (.doc d)
+      if l.path.isEmpty then some (.doc d l.doc)
       else (nodeAt d l.path).map (fun n => .tree l n)
   | some (true, i) =>
       (nodeAt d l.path).bind (fun n => ((attrsOfNode n)[i]?).map (fun a => .attr l a))
@@ -205,9 +229,9 @@ def itemAt (d : Doc) (l : Loc) : Option Item :=
 /-- The children of an item, in document order. Only the root and
     elements have any. -/
 def childrenOf : Item → List Item
-  | .doc kids => (kids.zipIdx).map (fun (n, i) => .tree { path := [i] } n)
+  | .doc kids k => (kids.zipIdx).map (fun (n, i) => .tree { path := [i], doc := k } n)
   | .tree l n => ((kidsOf n).zipIdx).map (fun (c, i) =>
-      .tree { path := l.path ++ [i] } c)
+      .tree { path := l.path ++ [i], doc := l.doc } c)
   | _ => []
 
 /-- The parent of an item. An attribute's and a namespace node's
@@ -216,13 +240,13 @@ def childrenOf : Item → List Item
     child step. -/
 def parentOf (d : Doc) (it : Item) : Option Item :=
   match it with
-  | .doc _ => none
-  | .attr l _ | .ns l _ _ => itemAt d { path := l.path }
+  | .doc _ _ => none
+  | .attr l _ | .ns l _ _ => itemAt d { path := l.path, doc := l.doc }
   | .tree l _ =>
       match l.path with
       | []  => none
-      | [_] => some (.doc d)
-      | p   => itemAt d { path := p.dropLast }
+      | [_] => some (.doc d l.doc)
+      | p   => itemAt d { path := p.dropLast, doc := l.doc }
 
 /-- Every descendant of an item, in document order. -/
 partial def descendantsOf (it : Item) : List Item :=
@@ -241,46 +265,26 @@ def attributesOf (it : Item) : List Item :=
   | .tree l n =>
       ((attrsOfNode n).zipIdx).filterMap (fun (a, i) =>
         if isNsDecl a then none
-        else some (.attr { path := l.path, slot := some (true, i) } a))
+        else some (.attr { path := l.path, slot := some (true, i), doc := l.doc } a))
   | _ => []
 
-/-- The namespace nodes IN SCOPE on an element: every declaration on
+/- The namespace nodes IN SCOPE on an element: every declaration on
     it or on an ancestor, nearer declarations winning, plus the
     implicit `xml` binding §5.4 requires on every element. A prefix
     undeclared by `xmlns:p=""` contributes no node. -/
+/-- XPath's node forest retains document identity but not the XML declaration.
+The XML parser validates version-specific rules; this view allows XML 1.1
+undeclarations while still rejecting unbound names and duplicate expansions. -/
+def namespaceScope (d : Doc) (path : List Nat) : Option NsScope :=
+  scopeAtPath "1.1" d path
+
 def namespacesOf (d : Doc) (it : Item) : List Item :=
   match it with
   | .tree l (.element _ _ _) =>
-      let chain : List (List Nat) :=
-        (List.range (l.path.length + 1)).map (fun k => l.path.take k)
-      let decls : List (String × String) :=
-        chain.flatMap (fun p =>
-          match nodeAt d p with
-          | some n => (attrsOfNode n).filterMap (fun a =>
-              if a.name == "xmlns" then some ("", a.value)
-              else if a.name.startsWith "xmlns:" then
-                some (String.ofList (a.name.toList.drop 6), a.value)
-              else none)
-          | none => [])
-      -- Nearer declarations are LATER in `chain`, so folding forward
-      -- with replacement makes the nearest win.
-      let merged := decls.foldl (fun acc (p, u) =>
-        (acc.filter (fun (q, _) => q != p)) ++ [(p, u)])
-        [("xml", "http://www.w3.org/XML/1998/namespace")]
-      -- Presentation order (not a document-order fact -- namespace
-      -- nodes have no source position of their own): the default
-      -- binding first, then the remaining prefixes ascending
-      -- lexicographic, `xml` included. Plain string `<` gives this
-      -- directly, since `""` is a PREFIX of every non-empty prefix
-      -- and so already sorts first. `slot`'s index feeds `normalize`'s
-      -- document-order sort, so the order has to be fixed HERE, not
-      -- by re-sorting the axis result afterward -- a later `normalize`
-      -- call re-sorts by this same key and would undo any reordering
-      -- done downstream.
-      let ordered := (merged.filter (fun (_, u) => u != "")).toArray.qsort
-        (fun (p1, _) (p2, _) => p1 < p2) |>.toList
+      let bindings := ((namespaceScope d l.path).map visibleBindings).getD []
+      let ordered := bindings.toArray.qsort (fun (p, _) (q, _) => p < q) |>.toList
       (ordered.zipIdx).map (fun ((p, u), i) =>
-        .ns { path := l.path, slot := some (false, i) } p u)
+        .ns { path := l.path, slot := some (false, i), doc := l.doc } p u)
   | _ => []
 
 /-! ## The thirteen axes -/
@@ -304,9 +308,10 @@ partial def ancestorsOf (d : Doc) (it : Item) : List Item :=
   | none   => []
 
 /-- Every item of the document, in document order: the root, then
-    each node with its namespace and attribute nodes. -/
-def allItems (d : Doc) : List Item :=
-  let root : Item := .doc d
+    each node with its namespace and attribute nodes. `k` is the
+    document's number. -/
+def allItems (d : Doc) (k : Nat := 0) : List Item :=
+  let root : Item := .doc d k
   root :: (descendantsOf root).flatMap (fun n =>
     namespacesOf d n ++ attributesOf n ++ [n])
 
@@ -315,7 +320,7 @@ def allItems (d : Doc) : List Item :=
     nodes. -/
 def followingOf (d : Doc) (it : Item) : List Item :=
   let k := it.loc.key
-  ((allItems d).filter (fun x =>
+  ((allItems d it.loc.doc).filter (fun x =>
     keyCmp x.loc.key k == .gt && x.kind != .attribute && x.kind != .namespace)).filter
     (fun x => !((descendantsOf it).any (fun y => y.loc == x.loc)))
 
@@ -324,7 +329,7 @@ def followingOf (d : Doc) (it : Item) : List Item :=
 def precedingOf (d : Doc) (it : Item) : List Item :=
   let k := it.loc.key
   let anc := (ancestorsOf d it).map (fun a => a.loc)
-  ((allItems d).filter (fun x =>
+  ((allItems d it.loc.doc).filter (fun x =>
     keyCmp x.loc.key k == .lt && x.kind != .attribute && x.kind != .namespace)).filter
     (fun x => !(anc.contains x.loc))
 

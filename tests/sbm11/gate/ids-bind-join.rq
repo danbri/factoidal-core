@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# A BIND variable joined with a later triple pattern (bind03 shape).
+SELECT ?s ?p ?n WHERE { ?s ex:knows ?o . BIND(?o AS ?p) ?p ex:name ?n }

@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!DOCTYPE a [
+<!ENTITY % content "EMPTY">
+<!ENTITY % decl "<!ELEMENT a &#37;content;>">
+%decl;
+]>
+<a/>

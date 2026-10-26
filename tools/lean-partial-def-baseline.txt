@@ -1,0 +1,32 @@
+# tools/lean-partial-def-baseline.txt
+#
+# The number of `partial def` declarations allowed in formal/lean4
+# (L4Factoidal, Harness, Wasm). Enforced by tools/lean-hygiene-audit.py.
+#
+# A `partial def` compiles to an opaque constant with no equation
+# lemmas and no kernel reduction, so no theorem can be stated about
+# the function it declares. The backlog is tracked at
+# https://github.com/danbri/factoidal/issues/617.
+#
+# This number goes DOWN in a commit that retires a partial def. It is
+# never raised to make a build pass: raising it is an owner decision
+# and needs its reason recorded here.
+#
+# 2026-09-03: 217, the count measured in
+# docs/designissues/2026-09-03-fstar-lean-coverage-gap.md.
+# 2026-09-04: 172. Harness/PredicateShardPack.lean's three host read
+# loops (pre-pass, IBK2/IBK3 ingest, IBK4 N-Quads ingest) became one
+# `foldHandle` taking the per-pass `feed`.
+# 2026-10-10: 171. OWL/Refute.lean's `repOf` and `existsDistinctSubset`
+# became total (two fewer); Harness/OwlProbe.lean gained `showCe`, a
+# trace printer over ClassExpr (one more).
+# 2026-10-10: 164. Seven fewer, all from work merged the same day: the
+# GRDDL agent (4bc38e2f, 9553b666) made `collectNsTransforms` and
+# `loadImports` total; the OWL functional-style reader (ab2e8613) made
+# `parseClassExprFS`, `parseDataRangeFS`, `parseDataComplementOf`,
+# `parseDataValuesFrom` and `parseObjectComplementOf` total. Lowered at the
+# merge of issue 746, when lean-hygiene-audit reported the gain.
+# 2026-10-26: 162. OWL/Refute.search became `searchF`, structurally
+# recursive on a fuel equal to the budget (merge of the 2026-09-08 laptop
+# total-search work onto the traced search).
+162

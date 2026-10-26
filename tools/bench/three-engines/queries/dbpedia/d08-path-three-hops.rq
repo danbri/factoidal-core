@@ -1,0 +1,8 @@
+# Path join, three hops: films whose director was born in a place in Sweden.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+SELECT ?film ?d ?c WHERE {
+  ?film dbo:director ?d .
+  ?d dbo:birthPlace ?c .
+  ?c dbo:country dbr:Sweden
+}

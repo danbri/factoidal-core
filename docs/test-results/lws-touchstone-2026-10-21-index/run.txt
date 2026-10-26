@@ -1,0 +1,7 @@
+lws-touchstone: building Touchstone 106087234aed2aab3f6bbf0485bd64095cc00fe5 (log: /tmp/lws912-touchstone/build.log)
+factoidal-open: 75 pass, 0 fail, 0 cantTell, 146 inapplicable (out of 221)
+factoidal-open: reports in /tmp/lws912-touchstone/touchstone/runs/2026-10-21T195558Z-a2f57e62
+factoidal-auth: 186 pass, 0 fail, 0 cantTell, 35 inapplicable (out of 221)
+factoidal-auth: reports in /tmp/lws912-touchstone/touchstone/runs/2026-10-21T195620Z-912faaeb
+factoidal-auth: of these, 40 tests (auth/*, core/authorization_server) exercise Touchstone's reference authorization server, not our storage server; 40 passed
+lws-touchstone: every configuration ran; no test failed

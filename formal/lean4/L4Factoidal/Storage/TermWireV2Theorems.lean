@@ -535,7 +535,8 @@ theorem resolve_toWire (h : ByteArray → ByteArray) (t : Term) :
         rw [resolve]
         simp only [hlk, bind, Option.bind, size_toUTF8, bne_self_eq_false,
           Bool.false_eq_true, if_false, ne_eq, not_true_eq_false, hutf, hrec]
-        rw [dif_pos l.property]
+        rw [Literal.toWf?_of_wf l.property]
+        rfl
 
 #print axioms parseLangField_serializeLangField?
 #print axioms tdepth_le_length
@@ -546,5 +547,7 @@ theorem resolve_toWire (h : ByteArray → ByteArray) (t : Term) :
 #print axioms toWire_inline_iff
 #print axioms toWire_blob_iff
 #print axioms resolve_toWire
+#print axioms parseInlineLoop_eq_go
+#print axioms parseInline_eq_fast
 
 end L4Factoidal.Storage.TermWireV2

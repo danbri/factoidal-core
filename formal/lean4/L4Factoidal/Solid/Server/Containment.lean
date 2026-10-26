@@ -85,7 +85,7 @@ def containedMetadata (baseIri : String) (e : Entry) : List Triple :=
   | some s =>
       [ { s := .iri s, p := rdfType,
           o := .iri (if e.kind.isContainer then ldpBasicContainerIri else ldpResourceIri) }
-      , { s := .iri s, p := statSize, o := .literal (intLiteral e.body.length) }
+      , { s := .iri s, p := statSize, o := .literal (intLiteral e.size) }
       , { s := .iri s, p := statMtime, o := .literal (intLiteral e.mtime) } ]
 
 /-- The whole RDF representation of a container: its own type triples, its

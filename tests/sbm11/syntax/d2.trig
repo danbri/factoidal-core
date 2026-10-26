@@ -1,0 +1,26 @@
+# Dataset D2: dataset D1 and two named graphs.
+@prefix ex: <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+{
+  ex:s1 ex:name "Alice" ;
+      ex:knows ex:s2 ;
+      ex:label "hello"@en , "bonjour"@fr , "Hallo"@de-DE ;
+      ex:age "42"^^xsd:integer .
+  ex:s2 ex:age "007"^^xsd:integer ;
+      ex:born "1990-05-17"^^xsd:date ;
+      ex:custom "abc"^^<http://example.org/datatype/Code> ;
+      ex:typedString "typed text"^^xsd:string .
+  ex:s3 ex:name "Carol \"C\" O'Neil\n2nd line" ;
+      ex:note "unicode: café 中文" .
+}
+
+ex:g1 {
+  ex:s1 ex:name "Alice" .
+  ex:s4 ex:p ex:o4
+}
+
+GRAPH ex:g2 {
+  ex:s4 ex:p "in g2"@en .
+  ex:s5 ex:q "5"^^xsd:integer .
+}

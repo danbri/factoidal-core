@@ -20,6 +20,9 @@ same first-degree hash" case that forces Hash N-Degree Quads (§4.7).
 -/
 import L4Factoidal.RDF.Canonical
 import L4Factoidal.Syntax.NQuads
+-- `parseNQuads_eq_fast` (@[csimp]): the calls of `parseNQuads` here run `parseNQuadsFast`
+-- (https://github.com/danbri/factoidal/issues/868; `tools/lean-csimp-reach.py`, not-imported).
+import L4Factoidal.Syntax.NQuadsFastTheorems
 
 namespace L4Factoidal.RDF.CanonicalTests
 
@@ -249,6 +252,24 @@ suite's test060 expected output relies on this. -/
 #guard strLe "<" "_"          -- U+003C before U+005F: IRI subjects sort first
 #guard sortStrings ["c", "a", "b"] == ["a", "b", "c"]
 #guard dedupAdj ["a", "a", "b"] == ["a", "b"]
+
+/-! The sort the algorithm runs is a STABLE merge sort (`sortByFast`): records
+whose keys compare equal keep their input order, which `groupByHfdq` relies on
+("members in ascending label order -- a stable sort keeps it"). The insertion
+sort it replaced is `sortBy`; the two agree on these inputs
+(`CanonicalTheorems.sortBy_eq_mergeSort` proves they agree on all). -/
+private def tiedPairs : List (String × Nat) :=
+  [("b", 1), ("a", 2), ("b", 0), ("c", 9), ("a", 3), ("b", 7)]
+#guard sortByFast (fun x y => strLe x.1 y.1) tiedPairs
+  == [("a", 2), ("a", 3), ("b", 1), ("b", 0), ("b", 7), ("c", 9)]
+#guard sortByFast (fun x y => strLe x.1 y.1) tiedPairs
+  == sortBy (fun x y => strLe x.1 y.1) tiedPairs
+-- It is not the identity and not a reversal: both would fail one of the guards above.
+#guard sortByFast (fun x y => strLe x.1 y.1) tiedPairs != tiedPairs
+#guard sortByFast (fun x y => strLe x.1 y.1) tiedPairs
+  != (sortByFast (fun x y => strLe x.1 y.1) tiedPairs).reverse
+#guard sortStrings ["b", "", "a", "ab", "b", "é", "a"]
+  == ["", "a", "a", "ab", "b", "b", "é"]
 /-! The output is a LIST of lines that the document concatenates, and
 each adjacent pair is in code-point order (proved in general in
 `CanonicalTheorems.canonicalLines_sorted`; checked concretely here). -/
@@ -290,11 +311,179 @@ the mechanism is live, not decorative. -/
 #guard permutationCap == 6
 #guard (permutationsOf (["a","b","c","d","e","f","g"].take permutationCap)).length == 720
 
+/-! ## `strLe` through the native string order
+
+`Canonical.lean` registers `strLe = strLeFast` as `csimp`, so `strLe` compiles to
+Lean's native string order. `charsLe` on the character lists is not rewritten,
+so these guards compare the two engines. The samples cover the empty string,
+equal strings, a proper prefix, a shared prefix, ASCII, a two-byte character, a
+character from the Basic Multilingual Plane above the surrogate range, and one
+from a supplementary plane (whose first UTF-8 byte is larger than any of the
+others, which is the order RDFC-1.0 section 3 asks for). -/
+
+private def strSamples : List String :=
+  [ "", "a", "ab", "abc", "b", "B", "z", "_:b0", "http://e/a", "http://e/b",
+    "http://e/a#x", "é", "éa", "zé", (String.singleton (Char.ofNat 0xFFFF)),
+    (String.singleton (Char.ofNat 0x10000)),
+    "a" ++ (String.singleton (Char.ofNat 0x10000)), "a" ++ (String.singleton (Char.ofNat 0xFFFF)) ]
+
+#guard strSamples.all fun a => strSamples.all fun b => strLe a b == charsLe a.toList b.toList
+-- Teeth: the comparison is not constant, not reversed, reflexive, and a prefix
+-- sorts before its extension.
+#guard strLe "a" "b" && !strLe "b" "a"
+#guard strLe "a" "a"
+#guard strLe "a" "ab" && !strLe "ab" "a"
+#guard strLe "" "a" && !strLe "a" ""
+#guard strLe (String.singleton (Char.ofNat 0xFFFF)) (String.singleton (Char.ofNat 0x10000))
+#guard !strLe (String.singleton (Char.ofNat 0x10000)) (String.singleton (Char.ofNat 0xFFFF))
+#guard (strSamples.filter fun a => strSamples.any fun b => !strLe a b).length > 5
+#guard (strSamples.filter fun a => strSamples.any fun b => strLe a b && !strLe b a).length > 5
+
+/-! ## The blank node to quads map and the label search tree (issue 745)
+
+`hfdqTableOf` and `relabelDataset` compile to `hfdqTableOfIx` and
+`relabelDatasetFast` (`csimp`), so a guard that called `hfdqTableOf` on both
+sides would compare one program with itself. The guards below compare the
+indexed forms with the scanning definitions written out here: `quadsForBnode`
+(a filter, not replaced), `hashFirstDegreeQuads` (not replaced) and
+`relabelDatasetBy` over `lookupMap` (not replaced).
+
+The fixture has every slot a blank node can occupy: the same blank node twice
+in one quad (`_:x <p> _:x`), a blank-node graph name, a blank node only in a
+graph name (`_:g`), a blank node inside an RDF 1.2 triple term, and a quad
+with no blank node. -/
+
+def indexFixture : String :=
+  "_:x <http://example.com/#p> _:x .\n" ++
+  "_:x <http://example.com/#q> _:y _:g .\n" ++
+  "_:y <http://example.com/#r> \"lit\" .\n" ++
+  "<http://example.com/#s> <http://example.com/#t> <http://example.com/#u> _:g .\n" ++
+  "_:z <http://example.com/#v> <<( _:y <http://example.com/#w> _:x )>> .\n" ++
+  "<http://example.com/#s> <http://example.com/#t> <http://example.com/#u> .\n"
+
+def indexDs : Dataset :=
+  match parseNQuads indexFixture .rdf12 with
+  | .ok d    => d
+  | .error _ => Dataset.empty
+
+def indexQuads : List QQuad := dedupQQuads (datasetQuads indexDs)
+
+#guard indexQuads.length == 6
+#guard datasetBnodes indexDs == ["g", "x", "y", "z"]
+-- Every blank node, plus one that does not occur: the map answers what the filter answers.
+#guard ["g", "x", "y", "z", "nope"].all fun b =>
+  quadsForBnodeIx (bnodeQuadIndex indexQuads) b == quadsForBnode b indexQuads
+-- Teeth: the quad `_:x <p> _:x` is in the list of `_:x` once, not twice;
+-- `_:x` occurs in 3 quads (subject twice, inside the triple term once);
+-- a blank node that does not occur has no quads; the graph name counts.
+#guard (quadsForBnodeIx (bnodeQuadIndex indexQuads) "x").length == 3
+#guard (quadsForBnodeIx (bnodeQuadIndex indexQuads) "g").length == 2
+#guard (quadsForBnodeIx (bnodeQuadIndex indexQuads) "nope").isEmpty
+#guard (quadsForBnodeIx (bnodeQuadIndex indexQuads) "x") !=
+  (quadsForBnodeIx (bnodeQuadIndex indexQuads) "x").reverse
+#guard hfdqTableOf .sha256 indexDs indexQuads ==
+  (datasetBnodes indexDs).map (fun b => (b, hashFirstDegreeQuads .sha256 b indexQuads))
+#guard hfdqTableOf .sha384 indexDs indexQuads ==
+  (datasetBnodes indexDs).map (fun b => (b, hashFirstDegreeQuads .sha384 b indexQuads))
+#guard hfdqTableOf .sha256 indexDs indexQuads != hfdqTableOf .sha384 indexDs indexQuads
+-- The search tree keeps the FIRST entry of a repeated label, as `lookupMap` does.
+#guard (labelTree [("a", "1"), ("b", "2"), ("a", "3")]).get? "a" == some "1"
+#guard (labelTree [("a", "1"), ("b", "2"), ("a", "3")]).get? "a" != some "3"
+#guard (labelTree [("a", "1"), ("b", "2"), ("a", "3")]).get? "c" == none
+#guard ["a", "b", "c"].all fun b =>
+  (labelTree [("a", "1"), ("b", "2"), ("a", "3")]).get? b == lookupMap b [("a", "1"), ("b", "2"), ("a", "3")]
+-- Relabelling through the tree equals relabelling through the scan, on every
+-- slot, with the canonical map and with a map that misses `_:z`.
+#guard relabelDataset (buildCanonicalMapping .sha256 indexDs) indexDs ==
+  relabelDatasetBy (fun b => lookupMap b (buildCanonicalMapping .sha256 indexDs)) indexDs
+#guard relabelDataset [("x", "c1"), ("g", "c0"), ("y", "c2")] indexDs ==
+  relabelDatasetBy (fun b => lookupMap b [("x", "c1"), ("g", "c0"), ("y", "c2")]) indexDs
+#guard relabelDataset [("x", "c1")] indexDs != indexDs
+#guard (relabelDataset [] indexDs) == indexDs
+-- The canonical form is the one the scanning definitions give, line for line.
+#guard indexDs.canonicalNQuads ==
+  joinStrings (dedupAdj (sortStrings ((datasetQuads (relabelDatasetBy
+    (fun b => lookupMap b (buildCanonicalMapping .sha256 indexDs)) indexDs)).map canonQuad)))
+
+/-! ## Hash N-Degree Quads through the map, with an indexed issuer
+
+https://github.com/danbri/factoidal/issues/751. `Canonical.lean` registers
+`buildCanonicalMappingBudgeted_eq_fast` as `csimp`, so every caller of
+`buildCanonicalMappingBudgeted` runs the twin. `issueIdentifier`, `issueFresh`,
+`hndqRun` and `walkGroups` have no `csimp` theorem of their own, so the guards
+below run the definitions on one side and the twins on the other. -/
+
+-- The fast issuer gives the labels, and the order of the issued list, that
+-- `issueFresh` (to the front) and `issueIdentifier` (to the back) give.
+private def fiTwo : FIssuer := ((FIssuer.empty "c14n").issueFresh "s").issueFresh "t"
+#guard ((fiTwo.issue "x").1.issue "y").1.toSpec.issued ==
+  (issueIdentifier (issueIdentifier
+    (issueFresh (issueFresh emptyIssuer "s") "t") "x").1 "y").1.issued
+#guard ((fiTwo.issue "x").1.issue "y").1.toSpec.issued ==
+  [("t", "c14n1"), ("s", "c14n0"), ("x", "c14n2"), ("y", "c14n3")]
+-- Issuing again answers the label already issued, from the front or the back.
+#guard (fiTwo.issue "s").2 == "c14n0" && (fiTwo.issue "s").1.counter == 2
+#guard ((fiTwo.issue "x").1.issue "x").2 == "c14n2"
+#guard ((fiTwo.issue "x").1.issue "x").1.counter == 3
+-- Teeth: a blank node not yet issued gets a new label, and the tree has no
+-- entry for it before.
+#guard (fiTwo.issue "x").2 != "c14n0"
+#guard fiTwo.tree.get? "x" == none
+#guard (fiTwo.issue "x").1.tree.get? "x" == some "c14n2"
+#guard (FIssuer.empty "b").toSpec.labelPrefix == "b"
+
+/-- `k` blank nodes with one quad each and one shared first-degree hash: the
+input of the `rdfc-bnode-collide` row of `tests/stack/lean_scaling.py`. -/
+def collideText (k : Nat) : String :=
+  String.join ((List.range k).map fun i =>
+    s!"_:p{i} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Person> .\n")
+
+/-- §4.4 steps 4 and 5 by the definitions and by the twins, with the map `ix`
+and the first-degree hash tree given to the twins: the issued list, the
+counter and the budget must agree. -/
+def walkGroupsAgreeWith (ds : Dataset) (ix : QuadIndex) : Bool :=
+  let qs := dedupQQuads (datasetQuads ds)
+  let tbl := hfdqTableOf .sha256 ds qs
+  let groups := groupByHfdq tbl
+  let fuel := (datasetBnodes ds).length + 1
+  let spec := walkGroups .sha256 fuel qs tbl emptyIssuer groups (hbInit defaultHndqBudget)
+  let fast := walkGroupsF .sha256 fuel ix (labelTree tbl) (FIssuer.empty "c14n") groups
+    (hbInit defaultHndqBudget)
+  spec.1.issued == fast.1.toSpec.issued && spec.1.counter == fast.1.counter &&
+    spec.2.remaining == fast.2.remaining && spec.2.exceeded == fast.2.exceeded
+
+def walkGroupsAgree (ds : Dataset) : Bool :=
+  walkGroupsAgreeWith ds (bnodeQuadIndex (dedupQQuads (datasetQuads ds)))
+
+#guard parsesOk (collideText 12)
+#guard (groupByHfdq (hfdqTableOf .sha256 (parseDs (collideText 12))
+  (dedupQQuads (datasetQuads (parseDs (collideText 12)))))).length == 1
+#guard walkGroupsAgree (parseDs (collideText 12))
+#guard walkGroupsAgree (parseDs sharedHashesInput)
+#guard walkGroupsAgree (parseDs uniqueHashesInput)
+#guard walkGroupsAgree (parseDs twoNodeCycle)
+#guard walkGroupsAgree (parseDs twoNodeChain)
+-- Teeth: Hash N-Degree Quads reads the related blank nodes from the map, so an
+-- empty map changes the result where §4.7 has buckets to fill.
+#guard !walkGroupsAgreeWith (parseDs sharedHashesInput) ∅
+#guard !walkGroupsAgreeWith (parseDs twoNodeCycle) ∅
+-- The canonical labels of the shared-hash shape: one per blank node, all distinct.
+#guard ((canonicalize (parseDs (collideText 12))).issued.map (·.2)).eraseDups.length == 12
+#guard (canonicalize (parseDs (collideText 12))).issued.length == 12
+#guard !(canonicalize (parseDs (collideText 12))).aborted
+-- The §4.4 excessive-calls abort still reaches the twin: 12 Hash N-Degree
+-- Quads calls do not fit in a budget of 5.
+#guard canonicalizeExceedsBudget .sha256 5 (parseDs (collideText 12))
+#guard !canonicalizeExceedsBudget .sha256 12 (parseDs (collideText 12))
+
 /-! ## Axiom audit — the whole point of the Lean port -/
 
 #print axioms L4Factoidal.RDF.Canonical.canonicalize
 #print axioms L4Factoidal.RDF.Dataset.canonicalNQuads
 #print axioms L4Factoidal.RDF.Canonical.hashFirstDegreeQuads
 #print axioms L4Factoidal.RDF.Canonical.hndqRun
+#print axioms L4Factoidal.RDF.Canonical.hfdqTableOf_eq_Ix
+#print axioms L4Factoidal.RDF.Canonical.relabelDataset_eq_fast
+#print axioms L4Factoidal.RDF.Canonical.buildCanonicalMappingBudgeted_eq_fast
 
 end L4Factoidal.RDF.CanonicalTests

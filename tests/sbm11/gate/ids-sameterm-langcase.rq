@@ -1,0 +1,6 @@
+# sameTerm compares language tags without case (RDF 1.1 Concepts 3.3,
+# Literal.sameTerm), as the packer folds them: "Bob"@EN-GB is the stored
+# term "Bob"@en-gb. Until 2026-10-23 the id path kept no row for a
+# constant whose tag is not in lower case (issue 776).
+PREFIX ex: <http://ex.org/>
+SELECT ?s WHERE { { ?s ex:name ?n } UNION { ?s ex:label ?n } FILTER(sameTerm(?n, "Bob"@EN-GB)) }

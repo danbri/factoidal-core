@@ -114,10 +114,25 @@ Positive tests (2xx expected): the decoder accepts. -/
        == .update "CLEAR ALL" [] []
 -- update_post_direct.
 #guard decodeRequest "POST" "/sparql/" "" "application/sparql-update" "CLEAR ALL" == .update "CLEAR ALL" [] []
--- update_dataset_default_graph: using-graph-uri in the URL, direct body.
+-- update_dataset_default_graph: using-graph-uri in the URL, direct
+-- body. §2.2.3: the URL parameter is the update's dataset.
 #guard decodeRequest "POST" "/sparql" "using-graph-uri=http%3A%2F%2Fkasei.us%2Fdata1.rdf"
          "application/sparql-update" "CLEAR ALL"
-       == .update "CLEAR ALL" [] []
+       == .update "CLEAR ALL" ["http://kasei.us/data1.rdf"] []
+-- update_dataset_named_graphs: using-named-graph-uri in the URL.
+#guard decodeRequest "POST" "/sparql" "using-named-graph-uri=http%3A%2F%2Fa%2F"
+         "application/sparql-update" "CLEAR ALL"
+       == .update "CLEAR ALL" [] ["http://a/"]
+-- A form-encoded update reads using-graph-uri, never default-graph-uri.
+#guard decodeRequest "POST" "/sparql/" "" "application/x-www-form-urlencoded"
+         "update=CLEAR%20ALL&using-graph-uri=http%3A%2F%2Fa%2F&default-graph-uri=http%3A%2F%2Fb%2F"
+       == .update "CLEAR ALL" ["http://a/"] []
+-- query_dataset_default_graphs_post: default-graph-uri in the URL,
+-- direct body (§2.1.3).
+#guard decodeRequest "POST" "/sparql/"
+         "default-graph-uri=http%3A%2F%2Fa%2F&named-graph-uri=http%3A%2F%2Fb%2F"
+         "application/sparql-query" "ASK {}"
+       == .query "ASK {}" ["http://a/"] ["http://b/"]
 -- A path ending in /update with update= in the form body.
 #guard decodeRequest "POST" "/sparql/update" "" "application/x-www-form-urlencoded" "update=CLEAR%20ALL"
        == .update "CLEAR ALL" [] []
@@ -155,6 +170,11 @@ Positive tests (2xx expected): the decoder accepts. -/
 -- bad_update_dataset_conflict (§2.2.4): using-graph-uri + USING in the text.
 #guard decodeRequest "POST" "/sparql/" "" "application/x-www-form-urlencoded"
          "using-graph-uri=http%3A%2F%2Fexample%2Fpeople&update=DELETE%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D%20USING%20%3Chttp%3A%2F%2Fexample%2Faddresses%3E%20WHERE%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D"
+       == .bad "using-graph-uri/using-named-graph-uri form params conflict with USING/WITH in update text (Protocol 2.2.4)"
+-- bad_update_dataset_conflict as the manifest sends it: a direct POST
+-- with using-named-graph-uri in the URL and WITH in the text.
+#guard decodeRequest "POST" "/sparql/" "using-named-graph-uri=http%3A%2F%2Fexample%2Fpeople"
+         "application/sparql-update" "WITH <http://example/addresses> DELETE { ?s ?p ?o } WHERE { ?s ?p ?o }"
        == .bad "using-graph-uri/using-named-graph-uri form params conflict with USING/WITH in update text (Protocol 2.2.4)"
 -- Both query= and update= on one request.
 #guard decodeRequest "POST" "/sparql/" "" "application/x-www-form-urlencoded" "query=ASK%20%7B%7D&update=CLEAR%20ALL"

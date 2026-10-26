@@ -1,0 +1,2 @@
+# A named graph with no triple exists: one solution.
+ASK { GRAPH <http://example.org/g0> { } }

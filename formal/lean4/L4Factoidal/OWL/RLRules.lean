@@ -153,6 +153,7 @@ shape and what is and is not claimed.
 -/
 import L4Factoidal.RDF.Graph
 import L4Factoidal.RDF.Datatypes
+import L4Factoidal.XSD.ValueSpaceTheorems
 import L4Factoidal.OWL.Vocabulary
 import L4Factoidal.XSD.Facets
 
@@ -555,26 +556,42 @@ def drivesXsdAxioms (t : Triple) : Bool :=
   datatypePositionPredicates.contains t.p &&
   (match t.o with | .iri i => iriInXsdNs i | _ => false)
 
-/-- The shape of the assumption the XSD tables carry: the value space
-of `sub` is inside the value space of `sup`, as `RDF/Datatypes.lean`'s
-modelled datatype map decides it. Stated over the modelled map so it is
-a real, checkable claim rather than a placeholder; the tower edges over
-datatypes that map does not model are assumed, and named as assumed. -/
+/-- Containment for literals with an established source value, not merely
+    a source datatype label. Malformed lexical forms denote no value in that
+    source space. Unmodelled tower edges remain assumptions. -/
 def XsdValueSpaceSubset (sub sup : WfIri) : Prop :=
-  ∀ l : Literal, l.datatype = sub → RDF.valueInSpace l sup = true
+  ∀ l : Literal, l.datatype = sub → RDF.valueInSpace l sub = true →
+    RDF.valueInSpace l sup = true
 
-/-- The one tower edge the Lean datatype map models, discharged.
-`RDF/Datatypes.lean`'s `valueInSpace` knows `int ⊂ integer ⊂ decimal`
-and nothing else, so this is the whole of what can be proved here
-rather than assumed. -/
+/-- The modelled integer-to-decimal edge, with source membership explicit. -/
 theorem xsdIntegerDecimal_subset : XsdValueSpaceSubset xsdInteger xsdDecimal := by
-  intro l h
-  simp [RDF.valueInSpace, h]
+  intro l h hm
+  simp only [RDF.valueInSpace, h] at hm ⊢
+  change (XSD.lexicalValueInBuiltin .xsd11 .integer l.lexicalForm .integer).getD false = true at hm
+  change (XSD.lexicalValueInBuiltin .xsd11 .integer l.lexicalForm .decimal).getD false = true
+  rw [XSD.lexicalValueInBuiltin, XSD.checked_integer_value] at hm ⊢
+  cases hp : XSD.parseIntegerLex l.lexicalForm with
+  | none => simp [hp] at hm
+  | some i => simp only [Option.map_some, Option.bind_some,
+      XSD.decimal_value_membership, Option.getD_some]
 
-/-- The second modelled edge: `xsd:int ⊂ xsd:integer`. -/
+/-- The modelled int-to-integer edge, with source membership explicit. -/
 theorem xsdIntInteger_subset : XsdValueSpaceSubset RDF.xsdInt xsdInteger := by
-  intro l h
-  simp [RDF.valueInSpace, h]
+  intro l h hm
+  simp only [RDF.valueInSpace, h] at hm ⊢
+  change (XSD.lexicalValueInBuiltin .xsd11 .int l.lexicalForm .int).getD false = true at hm
+  change (XSD.lexicalValueInBuiltin .xsd11 .int l.lexicalForm .integer).getD false = true
+  rw [XSD.lexicalValueInBuiltin, XSD.checked_int_value] at hm ⊢
+  cases hp : XSD.parseIntegerLex l.lexicalForm with
+  | none => simp [hp] at hm
+  | some i =>
+      by_cases hb : XSD.inIntBounds .int i = true
+      · simp only [Option.bind_some, hb, ↓reduceIte]
+        rfl
+      · simp [hp, hb] at hm
+
+#print axioms xsdIntegerDecimal_subset
+#print axioms xsdIntInteger_subset
 
 /-! ### Comprehension witnesses
 
@@ -650,6 +667,24 @@ def iriIndividuals (g : Graph) : List WfIri :=
     (match t.s with | .iri i => [i] | _ => []) ++
     (match t.o with | .iri i => [i] | _ => []))
 
+/-- `TtRep x y o o'` — `o'` is the triple term `o` with ONE occurrence
+of the IRI `x` inside it (subject, predicate or object position, at any
+nesting depth) replaced by `y`. RDF 1.2 Semantics, "Simple
+Interpretations": a triple term denotes a function of the denotations of
+its three components, so the IRIs inside it are transparent and
+`owl:sameAs` substitutes there as it does in asserted positions (W3C
+rdf12 `rdf-semantics` test `opaque-iri`). Only an occurrence INSIDE a
+triple term is covered; the top-level positions are eq-rep-s/p/o. -/
+inductive TtRep (x y : WfIri) : Term → Term → Prop where
+  | subj {p : WfIri} {o : Term} :
+      TtRep x y (.tripleTerm (.iri x) p o) (.tripleTerm (.iri y) p o)
+  | pred {s : Subject} {o : Term} :
+      TtRep x y (.tripleTerm s x o) (.tripleTerm s y o)
+  | obj {s : Subject} {p : WfIri} :
+      TtRep x y (.tripleTerm s p (.iri x)) (.tripleTerm s p (.iri y))
+  | deep {s : Subject} {p : WfIri} {o o' : Term} (h : TtRep x y o o') :
+      TtRep x y (.tripleTerm s p o) (.tripleTerm s p o')
+
 /-! ## The derivation relation
 
 `Derives g t` — "graph `g` OWL 2 RL/RDF-derives triple `t`". Base case
@@ -708,6 +743,17 @@ inductive Derives (g : Graph) : Triple → Prop where
   | eqRepO {os s : Subject} {o' : Term} {p : WfIri}
       (heq : Derives g ⟨os, owlSameAs, o'⟩)
       (hd : Derives g ⟨s, p, os.toTerm⟩) :
+      Derives g ⟨s, p, o'⟩
+  /-- **eq-rep-tt** `[ext]` — `T(?x, owl:sameAs, ?y) T(?s,?p,?o) |
+  T(?s,?p,?o')` where `?o'` is the triple term `?o` with one occurrence
+  of the IRI `?x` inside it replaced by the IRI `?y` (`TtRep`). OWL 2
+  Profiles §4.3's eq-rep-o replaces a whole object term; RDF 1.2
+  Semantics makes the IRIs inside a triple term transparent, which this
+  row implements (issue https://github.com/danbri/factoidal/issues/873,
+  W3C test `opaque-iri`). -/
+  | eqRepTt {x y : WfIri} {s : Subject} {p : WfIri} {o o' : Term}
+      (heq : Derives g ⟨Subject.iri x, owlSameAs, Term.iri y⟩)
+      (hd : Derives g ⟨s, p, o⟩) (hr : TtRep x y o o') :
       Derives g ⟨s, p, o'⟩
 
   -- ===================================================================
@@ -1724,6 +1770,7 @@ theorem Derives.mono {g g' : Graph} (hsub : ∀ u, u ∈ g → u ∈ g')
   | eqRepS _ _ ih1 ih2 => exact Derives.eqRepS ih1 ih2
   | eqRepP _ _ ih1 ih2 => exact Derives.eqRepP ih1 ih2
   | eqRepO _ _ ih1 ih2 => exact Derives.eqRepO ih1 ih2
+  | eqRepTt _ _ hr ih1 ih2 => exact Derives.eqRepTt ih1 ih2 hr
   | prpDom _ _ ih1 ih2 => exact Derives.prpDom ih1 ih2
   | prpRng _ _ ih1 ih2 => exact Derives.prpRng ih1 ih2
   | prpFp _ _ _ ih1 ih2 ih3 => exact Derives.prpFp ih1 ih2 ih3
@@ -1845,6 +1892,7 @@ theorem Derives.cut {g g' : Graph} (hall : ∀ u, u ∈ g' → Derives g u)
   | eqRepS _ _ ih1 ih2 => exact Derives.eqRepS ih1 ih2
   | eqRepP _ _ ih1 ih2 => exact Derives.eqRepP ih1 ih2
   | eqRepO _ _ ih1 ih2 => exact Derives.eqRepO ih1 ih2
+  | eqRepTt _ _ hr ih1 ih2 => exact Derives.eqRepTt ih1 ih2 hr
   | prpDom _ _ ih1 ih2 => exact Derives.prpDom ih1 ih2
   | prpRng _ _ ih1 ih2 => exact Derives.prpRng ih1 ih2
   | prpFp _ _ _ ih1 ih2 ih3 => exact Derives.prpFp ih1 ih2 ih3

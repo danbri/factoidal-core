@@ -17,6 +17,7 @@ json-ld-api manifests; these guards are a fast tripwire, not the score.
 import L4Factoidal.JSONLD.FromRdf
 import L4Factoidal.JSONLD.Flatten
 import L4Factoidal.JSONLD.Html
+import L4Factoidal.JSONLD.Frame
 
 namespace L4Factoidal.JSONLD.ApiTests
 
@@ -25,7 +26,7 @@ open L4Factoidal.JSONLD
 
 /-! ## Theorems
 
-Three small statements, each about a step the manifests cannot isolate.
+Small statements, each about a step the manifests cannot isolate.
 Nothing more is claimed: these are NOT a proof that the algorithms are
 correct — the conformance evidence is the manifest score. -/
 
@@ -65,6 +66,43 @@ theorem nmg_empty_array (st : NmState) (agraph : String) (asubj : Option Json)
     nmg st (.array []) agraph asubj aprop acc (fuel + 2) = .ok (st, acc) := by
   unfold nmg
   simp [nmgItems]
+
+/-! ## Theorems — Framing (JSON-LD Framing 1.1) -/
+
+/-- The empty value pattern `{}` matches every value object (Framing §4.3:
+a pattern with no `@value`, `@type` and `@language` constrains nothing).
+The guards in `Tests.lean` pin the other direction: a pattern with a
+component rejects a value that lacks it. -/
+theorem valueMatch_emptyPattern (v : Json) : valueMatch (.object []) v = true := by
+  simp [valueMatch, patternList, objGet, objFields]
+
+/-- A frame without an `@embed` entry takes the default embed flag
+(Framing §4.1: the flags are initialised from the options "overriding from
+any property values" in the frame). -/
+theorem frameEmbed_default (fr : Json) (d : String) (m : Bool)
+    (h : objGet fr "@embed" = none) : frameEmbed fr d m = .ok d := by
+  simp [frameEmbed, frameEntry, h]
+
+/-- Only a one-element array holding an object is a frame (Framing §4.1
+step 1): anything else is `invalid frame`. -/
+theorem validateFrame_notArray (j : Json) (h : ∀ xs, j ≠ .array xs) :
+    validateFrame j = .error .invalidFrame := by
+  cases j with
+  | array xs => exact absurd rfl (h xs)
+  | _ => rfl
+
+theorem validateFrame_empty : validateFrame (.array []) = .error .invalidFrame := rfl
+
+/-- Adding an output to an array container appends it, and leaves the
+container where it is in the arena (the property `@embed: @last` relies
+on when it later replaces an element in place). An `arr` stores its items
+newest first, so appending is a `cons`; `matCont` reverses at the end. -/
+theorem addOutput_array (st : FState) (i : Nat) (p : Option String) (xs : List OVal)
+    (item : OVal) (hi : i < st.arena.size) (h : st.get i = .arr xs) :
+    (st.addOutput i p item).get i = .arr (item :: xs) := by
+  unfold FState.addOutput
+  rw [h]
+  simp [FState.get, FState.put, hi]
 
 /-! ## Guards — Compaction (API §6) -/
 
@@ -114,8 +152,8 @@ def plainTerm : TermDef :=
 
 -- §7.2: the issuer relabels in first-issue order, starting at `_:b0`,
 -- and an already-issued label maps to the SAME identifier a second time.
-#guard (issueKeyed { graphs := [], idmap := [], ctr := 0 } "_:x").1 == "_:b0"
-#guard (let st0 : NmState := { graphs := [], idmap := [], ctr := 0 }
+#guard (issueKeyed { graphs := ∅, idmap := ∅, ctr := 0 } "_:x").1 == "_:b0"
+#guard (let st0 : NmState := { graphs := ∅, idmap := ∅, ctr := 0 }
         let (a, st1) := issueKeyed st0 "_:x"
         let (b, _)   := issueKeyed st1 "_:x"
         a == b && a == "_:b0")
@@ -133,6 +171,89 @@ def plainTerm : TermDef :=
         | .ok once => (match flattenExpanded (.array once) with
                        | .ok twice => expandedEqual (.array once) (.array twice)
                        | .error _  => false)
+        | .error _ => false)
+
+/-! ## Guards — the node map's persistent maps
+
+`Flatten.lean` keeps the node map in `OMap` / `Std.TreeMap` / `DedupArr`
+(see `NodeMapTheorems.lean` for the proofs against the association-list
+definitions). These guards pin the behaviour the proofs state, with a
+negative case beside each positive one. -/
+
+-- `OMap`: first-insertion order, replacement in place, sorted traversal.
+#guard ((((OMap.empty : OMap Nat).upsert "b" 1).upsert "a" 2).upsert "b" 3).toList
+         == [("b", 3), ("a", 2)]
+#guard (((OMap.empty : OMap Nat).upsert "b" 1).upsert "a" 2).toSortedList
+         == [("a", 2), ("b", 1)]
+#guard (((OMap.empty : OMap Nat).upsert "b" 1).upsert "a" 2).find? "a" == some 2
+#guard (((OMap.empty : OMap Nat).upsert "b" 1).upsert "a" 2).find? "c" == none
+#guard ((((OMap.empty : OMap Nat).upsert "b" 1).upsert "a" 2).erase "b").toList == [("a", 2)]
+
+-- `DedupArr`: "already in the array" is canonical-form equality
+-- (member order of an object is irrelevant, array order is not).
+#guard (DedupArr.empty.push (.object [("@id", .string "x"), ("@value", .string "y")])).has
+         (.object [("@value", .string "y"), ("@id", .string "x")])
+#guard !(DedupArr.empty.push (.string "x")).has (.string "y")
+#guard !(DedupArr.empty.push (.array [.string "x", .string "y"])).has
+         (.array [.string "y", .string "x"])
+#guard ((DedupArr.empty.push (.string "x")).pushDedup (.string "x") true).toList == [.string "x"]
+#guard ((DedupArr.empty.push (.string "x")).pushDedup (.string "x") false).toList
+         == [.string "x", .string "x"]
+#guard ((DedupArr.empty.push (.string "x")).pushDedup (.string "z") true).toList
+         == [.string "x", .string "z"]
+
+-- Node map generation end to end, on expanded input read from text.
+def flatEq (input expected : String) : Bool :=
+  match parseJson input, parseJson expected with
+  | .ok i, .ok e =>
+    (match flattenExpanded i with
+     | .ok nodes => expandedEqual (.array nodes) e
+     | .error _  => false)
+  | _, _ => false
+
+-- the same reference twice under one property is collected once, and a
+-- list keeps the order its items had
+#guard flatEq
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"},{\"@id\":\"http://e/b\"},{\"@list\":[{\"@value\":3},{\"@value\":1},{\"@value\":2}]}]}]"
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"},{\"@list\":[{\"@value\":3},{\"@value\":1},{\"@value\":2}]}]}]"
+#guard !flatEq
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"},{\"@list\":[{\"@value\":3},{\"@value\":1},{\"@value\":2}]}]}]"
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"},{\"@list\":[{\"@value\":3},{\"@value\":2},{\"@value\":1}]}]}]"
+-- values of a property keep their append order (three distinct nodes)
+#guard flatEq
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/z\"},{\"@id\":\"http://e/m\"},{\"@id\":\"http://e/b\"}]}]"
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/z\"},{\"@id\":\"http://e/m\"},{\"@id\":\"http://e/b\"}]}]"
+#guard !flatEq
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/z\"},{\"@id\":\"http://e/m\"},{\"@id\":\"http://e/b\"}]}]"
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"},{\"@id\":\"http://e/m\"},{\"@id\":\"http://e/z\"}]}]"
+-- nodes come out in code-point order of their identifiers, and two
+-- entries for one id merge into one node
+#guard flatEq
+  "[{\"@id\":\"http://e/b\",\"http://e/p\":[{\"@value\":1}]},{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@value\":2}]},{\"@id\":\"http://e/b\",\"http://e/q\":[{\"@value\":3}]}]"
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@value\":2}]},{\"@id\":\"http://e/b\",\"http://e/p\":[{\"@value\":1}],\"http://e/q\":[{\"@value\":3}]}]"
+#guard !flatEq
+  "[{\"@id\":\"http://e/b\",\"http://e/p\":[{\"@value\":1}]},{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@value\":2}]},{\"@id\":\"http://e/b\",\"http://e/q\":[{\"@value\":3}]}]"
+  "[{\"@id\":\"http://e/b\",\"http://e/p\":[{\"@value\":1}],\"http://e/q\":[{\"@value\":3}]},{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@value\":2}]}]"
+-- blank nodes are relabelled in first-issue order
+#guard flatEq
+  "[{\"@id\":\"_:x\",\"http://e/p\":[{\"@id\":\"_:y\"}]},{\"@id\":\"_:y\",\"http://e/q\":[{\"@value\":1}]}]"
+  "[{\"@id\":\"_:b0\",\"http://e/p\":[{\"@id\":\"_:b1\"}]},{\"@id\":\"_:b1\",\"http://e/q\":[{\"@value\":1}]}]"
+#guard !flatEq
+  "[{\"@id\":\"_:x\",\"http://e/p\":[{\"@id\":\"_:y\"}]},{\"@id\":\"_:y\",\"http://e/q\":[{\"@value\":1}]}]"
+  "[{\"@id\":\"_:b1\",\"http://e/p\":[{\"@id\":\"_:b0\"}]},{\"@id\":\"_:b0\",\"http://e/q\":[{\"@value\":1}]}]"
+-- a named graph is folded under its name node, ordered by name
+#guard flatEq
+  "[{\"@id\":\"http://e/g2\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":2}]}]},{\"@id\":\"http://e/g1\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":1}]}]}]"
+  "[{\"@id\":\"http://e/g1\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":1}]}]},{\"@id\":\"http://e/g2\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":2}]}]}]"
+#guard !flatEq
+  "[{\"@id\":\"http://e/g2\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":2}]}]},{\"@id\":\"http://e/g1\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":1}]}]}]"
+  "[{\"@id\":\"http://e/g2\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":2}]}]},{\"@id\":\"http://e/g1\",\"@graph\":[{\"@id\":\"http://e/n\",\"http://e/p\":[{\"@value\":1}]}]}]"
+-- two different @index values for one node id are an error
+#guard (match parseJson "[{\"@id\":\"http://e/a\",\"@index\":\"x\"},{\"@id\":\"http://e/a\",\"@index\":\"y\"}]" with
+        | .ok j => (match flattenExpanded j with | .error e => e.code == "conflicting indexes" | .ok _ => false)
+        | .error _ => false)
+#guard (match parseJson "[{\"@id\":\"http://e/a\",\"@index\":\"x\"},{\"@id\":\"http://e/a\",\"@index\":\"x\"}]" with
+        | .ok j => (match flattenExpanded j with | .ok _ => true | .error _ => false)
         | .error _ => false)
 
 /-! ## Guards — Serialize RDF as JSON-LD (API §8.5-8.7) -/
@@ -198,5 +319,10 @@ Every theorem above must rest on Lean's standard foundations only —
 #print axioms cmpTermLess_length_le
 #print axioms compactElem_empty_array
 #print axioms nmg_empty_array
+#print axioms valueMatch_emptyPattern
+#print axioms frameEmbed_default
+#print axioms validateFrame_notArray
+#print axioms validateFrame_empty
+#print axioms addOutput_array
 
 end L4Factoidal.JSONLD.ApiTests

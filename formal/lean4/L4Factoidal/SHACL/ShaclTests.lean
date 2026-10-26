@@ -10,6 +10,7 @@ are the unit-level checks that fail the BUILD when a clause regresses
 -/
 import L4Factoidal.SHACL.Report
 import L4Factoidal.SHACL.Sparql
+import L4Factoidal.SHACL.NodeExpr
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.RDF.Isomorphism
 
@@ -34,6 +35,13 @@ def ttl (body : String) : Graph :=
 /-- Validate a document against itself (data graph = shapes graph). -/
 def run (body : String) : ValidationReport :=
   let g := ttl body
+  validate g (decodeShapesGraph g)
+
+/-- Validate an RDF 1.2 Turtle document (triple terms) against itself. -/
+def run12 (body : String) : ValidationReport :=
+  let g := match parseTurtle (prefixes ++ body) (some "http://example.org/doc") .rdf12 with
+    | .ok g => g
+    | .error _ => []
   validate g (decodeShapesGraph g)
 
 def components (r : ValidationReport) : List WfIri :=
@@ -150,6 +158,35 @@ def closedDoc : String :=
 #guard (run closedDoc).results.length == 2
 #guard (run closedDoc).results.all fun v => v.path == some (.pred (exIri "bad"))
 
+/-- §4.8.1: the triples checked are those "that [have] a value node as
+[their] subject" — for a property shape, the path's values, not the
+focus node. -/
+def closedPropertyDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:n ; sh:property [ sh:path ex:p ; sh:closed true ; " ++
+  "sh:ignoredProperties ( ex:ok ) ] . ex:n ex:p ex:v . ex:v ex:ok 1 ; ex:bad 2 ."
+
+#guard (run closedPropertyDoc).results.map (·.path) == [some (.pred (exIri "bad"))]
+#guard (run closedPropertyDoc).results.map (·.focus) == [.iri (exIri "n")]
+
+/-! ### SHACL 1.2 sh:closed sh:ByTypes — collectProperties over the shapes graph -/
+
+def closedByTypesDoc : String :=
+  "ex:Root a rdfs:Class, sh:NodeShape ; sh:property [ sh:path ex:rootP ] ; sh:closed sh:ByTypes . " ++
+  "ex:Sub a rdfs:Class, sh:NodeShape ; rdfs:subClassOf ex:Root ; sh:property [ sh:path ex:subP ] . " ++
+  "ex:SubShape a sh:NodeShape ; sh:targetClass ex:Sub ; sh:node ex:Extra . " ++
+  "ex:Extra a sh:NodeShape ; sh:property [ sh:path ex:extraP ] . " ++
+  "ex:bad a ex:Root ; ex:subP 1 . ex:ok1 a ex:Root ; ex:rootP 1 . " ++
+  "ex:ok2 a ex:Sub ; ex:rootP 1 ; ex:subP 2 ; ex:extraP 3 ."
+
+-- ex:Root's own instances may use ex:rootP only; an ex:Sub instance
+-- also ex:subP (its own shape), ex:rootP (superclass) and ex:extraP
+-- (sh:targetClass ex:Sub, then sh:node ex:Extra).
+#guard (run closedByTypesDoc).results.map (·.focus) == [.iri (exIri "bad")]
+#guard (run closedByTypesDoc).results.map (·.path) == [some (.pred (exIri "subP"))]
+#guard components (run closedByTypesDoc) == [shClosedCC]
+#guard (collectProperties (ttl closedByTypesDoc) (exIri "Sub")).contains (exIri "extraP")
+#guard !(collectProperties (ttl closedByTypesDoc) (exIri "Root")).contains (exIri "subP")
+
 /-! ### §4.4.5 sh:uniqueLang — lexical "true" only -/
 
 def uniqueLangDoc : String :=
@@ -163,6 +200,19 @@ def uniqueLangOneDoc : String :=
   "ex:n ex:label \"a\"@en, \"b\"@en ."
 
 #guard (run uniqueLangOneDoc).conforms == true
+
+/-- SHACL 1.2 §UniqueLangConstraintComponent: the base direction is part
+of the key ("1"@ar--rtl and "1"@ar are different). Parsed as RDF 1.2. -/
+def uniqueLangDirOkDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:n ; sh:property [ sh:path ex:label ; sh:uniqueLang true ] . " ++
+  "ex:n ex:label \"A\"@ar, \"A\"@ar--ltr, \"A\"@ar--rtl ."
+
+def uniqueLangDirBadDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:n ; sh:property [ sh:path ex:label ; sh:uniqueLang true ] . " ++
+  "ex:n ex:label \"A\"@ar--ltr, \"B\"@ar--ltr, \"C\"@ar ."
+
+#guard (run12 uniqueLangDirOkDoc).conforms == true
+#guard (run12 uniqueLangDirBadDoc).results.length == 1
 
 /-! ### §4.5.3 sh:lessThan — one result per incomparable pair -/
 
@@ -180,7 +230,8 @@ def lessThanOkDoc : String :=
 
 /-! ### §4.3 value range on xsd:dateTime (timezone comparability) -/
 
-#guard numericCmpLe (Literal.string "2002-10-10T12:00:00") (Literal.string "x") == none
+-- These are strings, so the SPARQL relational mapping compares codepoints.
+#guard numericCmpLe (Literal.string "2002-10-10T12:00:00") (Literal.string "x") == some true
 #guard dtCmp "2002-10-10T12:00:00-05:00" "2002-10-10T12:00:01-05:00" == some (-1)
 #guard dtCmp "2002-10-10T12:00:00-05:00" "2002-10-10T17:00:00Z" == some 0
 #guard dtCmp "2002-10-10T12:00:00-05:00" "2002-10-10T12:00:00" == none
@@ -230,6 +281,294 @@ def subjObjDoc : String :=
 
 #guard (run subjObjDoc).results.length == 2
 #guard (run subjObjDoc).results.map (·.severity) == [.violation, .custom (exIri "Mine")]
+
+/-! ### SHACL 1.2 §severity / §conformance-definition: sh:Debug and sh:Trace
+
+A result at a severity outside the conformance-disallow set (default
+sh:Violation, sh:Warning, sh:Info) is reported but does not make the
+report non-conforming; one inside it does. -/
+
+def debugDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"x\" ; sh:datatype xsd:integer ; sh:severity sh:Debug ."
+
+#guard (run debugDoc).results.length == 1
+#guard (run debugDoc).conforms == true
+#guard (run debugDoc).results.map (·.severity) == [.debug]
+
+def traceDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"x\" ; sh:datatype xsd:integer ; sh:severity sh:Trace ."
+
+#guard (run traceDoc).conforms == true
+#guard (run traceDoc).results.map (·.severity) == [.trace]
+
+def warningDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"x\" ; sh:datatype xsd:integer ; sh:severity sh:Warning ."
+
+#guard (run warningDoc).conforms == false
+
+/-- §conformanceDisallows: an engine-chosen set `{sh:Violation}` lets a
+sh:Warning result conform, and the report states the set. -/
+def runWith (body : String) (cfg : ValidationConfig) : ValidationReport :=
+  let g := ttl body
+  validate g (decodeShapesGraph g) cfg
+
+#guard (runWith warningDoc { disallowed := some [.violation] }).conforms == true
+#guard (runWith warningDoc { disallowed := some [.violation] }).results.length == 1
+#guard (reportToGraph (runWith warningDoc { disallowed := some [.violation] })).any fun t =>
+         t.p == shConformanceDisallows && t.o == .iri shViolation
+#guard !((reportToGraph (run warningDoc)).any fun t => t.p == shConformanceDisallows)
+#guard (runWith debugDoc { disallowed := some [.debug] }).conforms == false
+
+/-- Conformance checking inside sh:not uses the same set: `ex:Inner`'s
+only result is at sh:Debug, so `ex:n` CONFORMS to `ex:Inner` and
+sh:not reports it. -/
+def debugNotDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:n ; sh:not ex:Inner . " ++
+  "ex:Inner sh:class ex:C ; sh:severity sh:Debug ."
+
+#guard components (run debugNotDoc) == [shNotCC]
+#guard (run debugNotDoc).conforms == false
+#guard (runWith debugNotDoc { disallowed := some [.debug] }).conforms == true
+
+/-! ### SHACL 1.2 list-valued sh:class / sh:datatype / sh:nodeKind (union)
+
+§ClassConstraintComponent: "Use lists for union semantics"; the same
+list form for sh:datatype and sh:nodeKind; sh:TripleTerm is the node
+kind of triple terms. -/
+
+def classListDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:a, ex:b, ex:c, \"lit\" ; sh:class ( ex:A ex:B ) . " ++
+  "ex:a a ex:A . ex:b a ex:B . ex:c a ex:C ."
+
+#guard (run classListDoc).results.map (·.focus) == [.iri (exIri "c"), .literal (Literal.string "lit")]
+#guard components (run classListDoc) == [shClassCC, shClassCC]
+
+def datatypeListDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"a\", \"b\"@en, 42, ex:i ; " ++
+  "sh:datatype ( xsd:string rdf:langString ) ."
+
+#guard (run datatypeListDoc).results.length == 2   -- 42 and ex:i
+
+def nodeKindListDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:a, \"lit\", <<( ex:a ex:p ex:b )>> ; " ++
+  "sh:nodeKind ( sh:BlankNode sh:IRI ) ."
+
+#guard (run12 nodeKindListDoc).results.length == 2   -- the literal and the triple term
+
+def tripleTermKindDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:a, <<( ex:a ex:p ex:b )>> ; sh:nodeKind sh:TripleTerm ."
+
+#guard (run12 tripleTermKindDoc).results.map (·.focus) == [.iri (exIri "a")]
+
+/-! ### SHACL 1.2 §SingleLineConstraintComponent -/
+
+def singleLineDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"one\", \"two\\nlines\", \"cr\\rhere\", ex:i ; " ++
+  "sh:singleLine true ."
+
+#guard (run singleLineDoc).results.length == 2
+#guard components (run singleLineDoc) == [shSingleLineCC, shSingleLineCC]
+
+def singleLineFalseDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"two\\nlines\" ; sh:singleLine false ."
+
+#guard (run singleLineFalseDoc).conforms == true
+
+/-! ### SHACL 1.2 §RootClassConstraintComponent — rdfs:subClassOf*, reflexive -/
+
+def rootClassDoc : String :=
+  "ex:Dog rdfs:subClassOf ex:Mammal . ex:Mammal rdfs:subClassOf ex:Animal . " ++
+  "ex:S a sh:NodeShape ; sh:targetNode ex:Dog, ex:Animal, ex:Car, \"Dog\" ; sh:rootClass ex:Animal ."
+
+#guard (run rootClassDoc).results.map (·.focus) ==
+         [.iri (exIri "Car"), .literal (Literal.string "Dog")]
+#guard components (run rootClassDoc) == [shRootClassCC, shRootClassCC]
+
+/-! ### SHACL 1.2 SHACL lists and the list constraint components
+
+§terminology "SHACL Lists": exactly one rdf:first and one rdf:rest, no
+rdf:rest+ cycle; rdf:nil is the empty list. "Each value node v must be
+a SHACL list - if v is not a SHACL list there is a validation result." -/
+
+def listsDoc : String :=
+  "ex:l2 rdf:first 1 ; rdf:rest ( 2 ) . ex:l3 rdf:first 1 ; rdf:rest ( 2 1 ) . " ++
+  "ex:cyc rdf:first 1 ; rdf:rest ex:cyc . ex:two rdf:first 1, 2 ; rdf:rest rdf:nil . " ++
+  "ex:mixed rdf:first ex:a ; rdf:rest ( \"b\" ) ."
+
+#guard shaclListMembers (ttl listsDoc) (.iri rdfNil) == some []
+#guard (shaclListMembers (ttl listsDoc) (.iri (exIri "l3"))).map (·.length) == some 3
+#guard shaclListMembers (ttl listsDoc) (.iri (exIri "cyc")) == none
+#guard shaclListMembers (ttl listsDoc) (.iri (exIri "two")) == none
+#guard shaclListMembers (ttl listsDoc) (.iri (exIri "notAList")) == none
+
+def minListDoc : String :=
+  listsDoc ++ " ex:S a sh:NodeShape ; sh:targetNode ex:l2, rdf:nil, ex:cyc ; sh:minListLength 1 ."
+
+#guard (run minListDoc).results.map (·.focus) == [.iri rdfNil, .iri (exIri "cyc")]
+
+def maxListDoc : String :=
+  listsDoc ++ " ex:S a sh:NodeShape ; sh:targetNode ex:l2, ex:l3, rdf:nil ; sh:maxListLength 2 ."
+
+#guard (run maxListDoc).results.map (·.focus) == [.iri (exIri "l3")]
+#guard components (run maxListDoc) == [shMaxListLengthCC]
+
+def uniqueMembersDoc : String :=
+  listsDoc ++ " ex:S a sh:NodeShape ; sh:targetNode ex:l2, ex:l3, ex:x ; sh:uniqueMembers true ."
+
+-- ex:l3 has the duplicate 1 (one sh:detail); ex:x is not a list (no detail).
+#guard (run uniqueMembersDoc).results.map (·.focus) == [.iri (exIri "l3"), .iri (exIri "x")]
+#guard (run uniqueMembersDoc).results.map (·.details.length) == [1, 0]
+#guard ((run uniqueMembersDoc).results.flatMap (·.details)).map (·.value) ==
+         [some (.literal (L4Factoidal.SPARQL.mkTypedLiteral "1" xsdInteger))]
+
+def uniqueMembersFalseDoc : String :=
+  listsDoc ++ " ex:S a sh:NodeShape ; sh:targetNode ex:l3 ; sh:uniqueMembers false ."
+
+#guard (run uniqueMembersFalseDoc).conforms == true
+
+def memberShapeDoc : String :=
+  listsDoc ++ " ex:S a sh:NodeShape ; sh:targetNode ex:mixed, ex:x, rdf:nil ; sh:memberShape ex:I . " ++
+  "ex:I sh:nodeKind sh:IRI ."
+
+-- ex:mixed has the literal member "b" (its nodeKind result is the detail);
+-- ex:x is not a list; rdf:nil has no members and conforms.
+#guard (run memberShapeDoc).results.map (·.focus) == [.iri (exIri "mixed"), .iri (exIri "x")]
+#guard components (run memberShapeDoc) == [shMemberShapeCC, shMemberShapeCC]
+#guard ((run memberShapeDoc).results.flatMap (·.details)).map
+         (fun d => constraintComponentIri d.constraint) == [shNodeKindCC]
+#guard (reportToGraph (run memberShapeDoc)).any fun t => t.p == shDetail
+
+/-! ### SHACL 1.2 §SubsetOfConstraintComponent and §SomeValueConstraintComponent -/
+
+def subsetOfDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:a, ex:b ; " ++
+  "sh:property [ sh:path ex:fav ; sh:subsetOf ex:child ] . " ++
+  "ex:a ex:fav ex:x ; ex:child ex:x, ex:y . ex:b ex:fav ex:x, ex:z ; ex:child ex:x ."
+
+#guard (run subsetOfDoc).results.map (·.value) == [some (.iri (exIri "z"))]
+#guard components (run subsetOfDoc) == [shSubsetOfCC]
+
+def someValueDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:alice, ex:bob, ex:carol ; " ++
+  "sh:property [ sh:path ex:tends ; sh:someValue [ sh:class ex:Duck ] ] . " ++
+  "ex:d a ex:Duck . ex:c a ex:Cow . ex:alice ex:tends ex:c . ex:bob ex:tends ex:c, ex:d ."
+
+-- ex:alice tends no duck; ex:carol tends nothing; ex:bob conforms.
+#guard (run someValueDoc).results.map (·.focus) == [.iri (exIri "alice"), .iri (exIri "carol")]
+#guard (run someValueDoc).results.map (·.value) == [none, none]
+#guard components (run someValueDoc) == [shSomeValueCC, shSomeValueCC]
+
+/-! ### SHACL 1.2 targets: sh:targetWhere, sh:shape, sh:ShapeClass -/
+
+def targetWhereDoc : String :=
+  "ex:Adult a sh:NodeShape ; sh:targetWhere [ sh:class ex:Person ; " ++
+  "sh:property [ sh:path ex:age ; sh:minInclusive 18 ; sh:minCount 1 ] ] ; " ++
+  "sh:property [ sh:path ex:voted ; sh:minCount 1 ] . " ++
+  "ex:a a ex:Person ; ex:age 20 . ex:b a ex:Person ; ex:age 10 . ex:c a ex:Person ; ex:age 30 ; ex:voted 1 ."
+
+-- ex:a and ex:c are targets (adults); only ex:a lacks ex:voted; ex:b is no target.
+#guard (run targetWhereDoc).results.map (·.focus) == [.iri (exIri "a")]
+#guard components (run targetWhereDoc) == [shMinCountCC]
+
+def shapeLinkDoc : String :=
+  "ex:S a sh:NodeShape ; sh:property [ sh:path ex:p ; sh:maxCount 0 ] . " ++
+  "ex:n sh:shape ex:S ; ex:p 1 . ex:m ex:p 2 ."
+
+-- ex:n is linked to ex:S in the data graph; ex:m is not.
+#guard (run shapeLinkDoc).results.map (·.focus) == [.iri (exIri "n")]
+
+def shapeClassDoc : String :=
+  "ex:Super a sh:ShapeClass ; sh:in ( ex:ok ) . ex:Sub rdfs:subClassOf ex:Super . " ++
+  "ex:ok a ex:Sub . ex:bad a ex:Sub ."
+
+#guard (run shapeClassDoc).results.map (·.focus) == [.iri (exIri "bad")]
+#guard components (run shapeClassDoc) == [shInCC]
+
+/-! ### SHACL 1.2 §UniqueValuesForConstraintComponent -/
+
+def uniqueValuesForDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetClass ex:R ; sh:uniqueValuesFor ( ex:id ex:scheme ) . " ++
+  "ex:r1 a ex:R ; ex:id 1 ; ex:scheme ex:A . ex:r2 a ex:R ; ex:id 1 ; ex:scheme ex:A . " ++
+  "ex:r3 a ex:R ; ex:id 1 ; ex:scheme ex:B . ex:r4 a ex:R ; ex:id 2 . ex:r5 a ex:R ; ex:id 2 . " ++
+  "ex:other ex:id 1 ; ex:scheme ex:B ."
+
+-- ex:r1 and ex:r2 share the full key; ex:r3 shares it only with ex:other,
+-- which is no target; ex:r4 and ex:r5 have no ex:scheme, so no key.
+#guard (run uniqueValuesForDoc).results.map (·.focus) == [.iri (exIri "r1"), .iri (exIri "r2")]
+#guard (run uniqueValuesForDoc).results.map (·.value) == [none, none]
+#guard components (run uniqueValuesForDoc) == [shUniqueValuesForCC, shUniqueValuesForCC]
+
+/-! ### SHACL 1.2 Node Expressions §NodeByExpressionConstraintComponent -/
+
+def nodeByExpressionDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:a, ex:b ; sh:nodeByExpression ex:T . " ++
+  "ex:T a sh:NodeShape ; sh:class ex:C . ex:a a ex:C ."
+
+#guard (run nodeByExpressionDoc).results.map (·.focus) == [.iri (exIri "b")]
+#guard components (run nodeByExpressionDoc) == [shNodeByExpressionCC]
+#guard (run nodeByExpressionDoc).results.map (·.sourceConstraint) == [some (.iri (exIri "T"))]
+#guard (reportToGraph (run nodeByExpressionDoc)).any fun t =>
+         t.p == shSourceConstraint && t.o == .iri (exIri "T")
+
+/-! ### SHACL 1.2 sh:values and the node-expression evaluator
+
+With the Core evaluator an IRI node expression is its own output
+(§IRIExpression). A caller-supplied evaluator decides blank-node
+expressions — here one that maps every blank node to `ex:a`, standing
+in for a SHACL-SPARQL select expression. -/
+
+def valuesDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:n ; " ++
+  "sh:property [ sh:path ex:p ; sh:values ex:v ; sh:minCount 2 ] . ex:n ex:p ex:w ."
+
+#guard (run valuesDoc).conforms == true   -- ex:w (path) and ex:v (sh:values)
+
+def bnodeTargetDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode [ ex:anything 1 ] ; sh:class ex:C ."
+
+def toA (e : Term) (_ : Option Term) : List Term :=
+  match e with | .bnode _ => [.iri (exIri "a")] | _ => [e]
+
+#guard (runWith bnodeTargetDoc { evalExpr := toA }).results.map (·.focus) == [.iri (exIri "a")]
+
+/-! ### SHACL 1.2 constraint reifiers: sh:severity, sh:message, sh:deactivated
+
+§severity / §message / §deactivated: a reifier of a triple whose subject
+is the shape and whose predicate is a parameter sets that constraint's
+severity or message, or deactivates it. RDF 1.2 annotation syntax. -/
+
+def reifiedSeverityDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode \"x\" ; " ++
+  "sh:datatype xsd:integer {| sh:severity sh:Warning ; sh:message \"not an integer\" |} ; " ++
+  "sh:nodeKind sh:IRI ."
+
+-- sh:datatype at sh:Warning with its message; sh:nodeKind keeps sh:Violation.
+#guard (run12 reifiedSeverityDoc).results.map (fun v => (constraintComponentIri v.constraint, v.severity)) ==
+         [(shDatatypeCC, .warning), (shNodeKindCC, .violation)]
+#guard (run12 reifiedSeverityDoc).results.map (·.message.map (·.val.lexicalForm)) ==
+         [some "not an integer", none]
+
+def reifiedDeactivatedDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:n ; sh:datatype xsd:boolean {| sh:deactivated true |} ; " ++
+  "sh:property ex:P {| sh:deactivated true |} ; sh:nodeKind sh:Literal . " ++
+  "ex:P sh:path ex:p ; sh:minCount 1 ."
+
+-- Only sh:nodeKind remains active.
+#guard components (run12 reifiedDeactivatedDoc) == [shNodeKindCC]
+
+/-! ### SHACL 1.2 §ReifierShapeConstraintComponent -/
+
+def reifierShapeDoc (required : String) : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode ex:a, ex:b, ex:c ; sh:property ex:SP . " ++
+  "ex:SP sh:path ex:p ; sh:reifierShape ex:R ; sh:reificationRequired " ++ required ++ " . " ++
+  "ex:R a sh:NodeShape ; sh:property [ sh:path ex:src ; sh:minCount 1 ] . " ++
+  "ex:a ex:p 1 {| ex:src ex:x |} . ex:b ex:p 2 {| ex:other 3 |} . ex:c ex:p 3 ."
+
+-- ex:b's reifier lacks ex:src; with sh:reificationRequired, ex:c has no reifier.
+#guard (run12 (reifierShapeDoc "false")).results.map (·.focus) == [.iri (exIri "b")]
+#guard (run12 (reifierShapeDoc "true")).results.map (·.focus) ==
+         [.iri (exIri "b"), .iri (exIri "c")]
+#guard components (run12 (reifierShapeDoc "true")) == [shReifierShapeCC, shReifierShapeCC]
 
 /-! ### §3.6.1 sh:deactivated -/
 
@@ -377,5 +716,147 @@ def askComponentDoc : String :=
           match v.value with
           | some (.literal l) => l.val.lexicalForm
           | _ => "") == ["20"]
+
+/-! ### SHACL-SPARQL 1.2 node expressions in validation
+
+§SelectExpression and §SPARQLExprExpression, reached through sh:values
+and sh:targetNode by `validateFull` (`NodeExpr.lean`). -/
+
+def runFull (body : String) : ValidationReport :=
+  let g := ttl body
+  validateFull g g (decodeShapesGraph g)
+
+-- "http://example.org/abc" has 22 characters.
+def sparqlExprDoc (n : Nat) : String :=
+  "ex:S a sh:PropertyShape ; sh:targetNode ex:abc ; sh:path ex:len ; " ++
+  "sh:values [ sh:sparqlExpr \"STRLEN(STR($this))\" ] ; sh:datatype xsd:integer ; " ++
+  s!"sh:hasValue {n} ."
+
+#guard (runFull (sparqlExprDoc 22)).conforms == true
+#guard (runFull (sparqlExprDoc 23)).conforms == false
+#guard components (runFull (sparqlExprDoc 23)) == [shHasValueCC]
+-- With the Core evaluator the blank node is a constant value, not 22.
+#guard (run (sparqlExprDoc 22)).conforms == false
+
+def selectTargetDoc : String :=
+  "ex:S a sh:NodeShape ; sh:targetNode [ sh:select " ++
+  "\"SELECT ?x WHERE { ?x <http://example.org/age> ?a FILTER (?a < 18) }\" ] ; " ++
+  "sh:class ex:Adult . ex:kid ex:age 10 . ex:old ex:age 40 ."
+
+#guard (runFull selectTargetDoc).results.map (·.focus) == [.iri (exIri "kid")]
+
+/-- `$this` is pre-bound to the focus node in a select expression. -/
+def selectThisDoc : String :=
+  "ex:e ex:expr [ sh:select \"SELECT ?o WHERE { $this <http://example.org/p> ?o }\" ] . " ++
+  "ex:f ex:p 7 . ex:g ex:p 8 ."
+
+def selectThisExpr : Term :=
+  (((ttl selectThisDoc).find? fun t => t.p == exIri "expr").map (·.o)).getD (.bnode "none")
+
+#guard evalSparqlNodeExpr (ttl selectThisDoc) (ttl selectThisDoc) selectThisExpr
+         (some (.iri (exIri "f"))) [] ==
+       some [.literal (L4Factoidal.SPARQL.mkTypedLiteral "7" xsdInteger)]
+-- "A failure is produced when one of the scope variables is called this."
+#guard evalSparqlNodeExpr (ttl selectThisDoc) (ttl selectThisDoc) selectThisExpr
+         (some (.iri (exIri "f"))) [("this", .iri (exIri "g"))] == some []
+-- An IRI is no SPARQL node expression.
+#guard (evalSparqlNodeExpr (ttl selectThisDoc) [] (.iri (exIri "e")) none []).isNone
+
+-- An ill-formed SPARQL node expression is a validation failure.
+def badSelectDoc : String :=
+  "ex:S a sh:PropertyShape ; sh:targetNode ex:n ; sh:path ex:p ; " ++
+  "sh:values [ sh:select \"SELECT ?x ?y WHERE { }\" ] ."
+
+#guard (runFull badSelectDoc).failure.isSome
+#guard (runFull selectTargetDoc).failure.isNone
+
+/-! ## Pre-binding is visible to GROUP BY and HAVING
+
+`queryWithPrebinding` joins the pre-binding row with the WHERE pattern.
+SPARQL 1.1 §18.2.4.3 joins a trailing VALUES clause after GROUP BY and
+HAVING, so a pre-binding carried that way would be unbound in a HAVING
+condition that reads `$this`. -/
+
+private def pbFocus : Term := .iri ⟨"http://ex/f", rfl⟩
+private def pbData : Graph := [⟨.iri ⟨"http://ex/f", rfl⟩, ⟨"http://ex/p", rfl⟩, .iri ⟨"http://ex/o", rfl⟩⟩]
+
+private def pbRows (queryText : String) : Option Nat :=
+  match preboundQuery queryText none [("this", pbFocus)] with
+  | .ok q    => some (SPARQL.evalSelect {} { default := pbData, named := [] } q).2.length
+  | .error _ => none
+
+#guard pbRows "SELECT $this WHERE { $this ?p ?o } GROUP BY $this HAVING ($this = <http://ex/f>)" == some 1
+#guard pbRows "SELECT $this WHERE { $this ?p ?o } GROUP BY $this HAVING ($this = <http://ex/g>)" == some 0
+-- The projection still carries the pre-bound value.
+#guard (match preboundQuery "SELECT $this WHERE { $this ?p ?o }" none [("this", pbFocus)] with
+        | .ok q => (SPARQL.evalSelect {} { default := pbData, named := [] } q).2.map (·.lookup "this")
+        | .error _ => []) == [some pbFocus]
+
+/-! ### The data index and the hash-indexed folds (https://github.com/danbri/factoidal/issues/723)
+
+`DataIndex.ofGraph` must answer `objectsOf` with the same list, in graph
+order, including repeated objects and pairs with no triple; an index built
+for another graph gives other answers, so these guards would fail if the
+indexed functions read the graph instead of the index. `dedupTerms` and
+`distinctSubjects` compile to their hash forms (`csimp`); the folds below are
+restated inline so the guards compare two programs. -/
+
+def ixDoc : String :=
+  "ex:a ex:p ex:o1 , ex:o2 . ex:b ex:p ex:o1 . ex:a ex:q \"x\" . ex:a ex:p ex:o3 . " ++
+  "ex:a ex:p ex:o2 . ex:Sub rdfs:subClassOf ex:Mid . ex:Mid rdfs:subClassOf ex:Super . " ++
+  "ex:x a ex:Sub . ex:y a ex:Other . _:n ex:p ex:o1 ."
+
+def ixG : Graph := ttl ixDoc
+def ixIx : DataIndex := DataIndex.ofGraph ixG
+def ixA : Subject := .iri (exIri "a")
+def ixP : WfIri := exIri "p"
+
+#guard ixIx.objectsOf ixG ixA ixP == objectsOf ixG ixA ixP
+#guard (ixIx.objectsOf ixG ixA ixP).length == 4
+#guard ixIx.objectsOf ixG ixA ixP ==
+  [.iri (exIri "o1"), .iri (exIri "o2"), .iri (exIri "o3"), .iri (exIri "o2")]
+#guard ixIx.objectsOf ixG (.iri (exIri "b")) ixP == objectsOf ixG (.iri (exIri "b")) ixP
+#guard ixIx.objectsOf ixG ixA (exIri "q") == objectsOf ixG ixA (exIri "q")
+#guard ixIx.objectsOf ixG (.iri (exIri "zz")) ixP == []
+#guard ixIx.length ixG == ixG.length && ixIx.length ixG == 11
+-- An index of the empty graph answers for the empty graph, not for `ixG`.
+#guard (DataIndex.ofGraph []).objectsOf ixG ixA ixP == []
+#guard DataIndex.none.objectsOf ixG ixA ixP == objectsOf ixG ixA ixP
+#guard [exIri "Super", exIri "Sub", exIri "Other"].all fun c =>
+  [Term.iri (exIri "x"), .iri (exIri "y"), .iri (exIri "a")].all fun n =>
+    isShaclInstanceIx ixIx ixG n c == isShaclInstance ixG n c
+#guard isShaclInstanceIx ixIx ixG (.iri (exIri "x")) (exIri "Super") == true
+#guard isShaclInstanceIx ixIx ixG (.iri (exIri "y")) (exIri "Super") == false
+#guard isShaclInstanceIx (DataIndex.ofGraph []) ixG (.iri (exIri "x")) (exIri "Super") == false
+#guard evalPathIx ixIx ixG (.iri (exIri "a")) (.oneOrMore (.pred ixP)) ==
+  evalPath ixG (.iri (exIri "a")) (.oneOrMore (.pred ixP))
+#guard evalPathIx ixIx ixG (.iri (exIri "x"))
+    (.seq [.pred (exIri "type" |> fun _ => rdfType), .zeroOrMore (.pred rdfsSubClassOf)]) ==
+  [.iri (exIri "Sub"), .iri (exIri "Mid"), .iri (exIri "Super")]
+
+private def dedupSpec (l : List Term) : List Term :=
+  l.foldl (fun acc t => if acc.any (fun u => u.eqb t) then acc else acc ++ [t]) []
+
+private def ixTerms : List Term :=
+  [.iri (exIri "o1"), .literal (Literal.langString "chat" "en"), .iri (exIri "o2"),
+   .literal (Literal.langString "chat" "EN"), .bnode "b", .iri (exIri "o1"),
+   .literal (Literal.string "chat"), .bnode "b", .literal (Literal.langString "chat" "fr")]
+
+#guard dedupTerms ixTerms == dedupSpec ixTerms
+#guard dedupTerms (ixTerms ++ ixTerms.reverse ++ ixTerms) == dedupSpec (ixTerms ++ ixTerms.reverse ++ ixTerms)
+-- "chat"@en and "chat"@EN are one term (language tags compare without case);
+-- the first stays. Plain "chat" and "chat"@fr stay apart.
+#guard (dedupTerms ixTerms).length == 6
+#guard (dedupTerms ixTerms).take 2 == [.iri (exIri "o1"), .literal (Literal.langString "chat" "en")]
+#guard dedupTerms [] == []
+
+private def distinctSubjectsSpec (g : Graph) : List Subject :=
+  g.foldl (fun acc t => if acc.contains t.s then acc else acc ++ [t.s]) []
+
+#guard distinctSubjects ixG == distinctSubjectsSpec ixG
+#guard (distinctSubjects ixG).take 6 == [ixA, .iri (exIri "b"), .iri (exIri "Sub"), .iri (exIri "Mid"),
+  .iri (exIri "x"), .iri (exIri "y")]
+#guard (distinctSubjects ixG).length == 7
+#guard (distinctSubjects (ixG ++ ixG)).length == 7
 
 end L4Factoidal.SHACL.Tests

@@ -7,12 +7,35 @@ one IBK3 SHA-256 and supplies a compact first-subject directory.
 -/
 import L4Factoidal.Storage.SubjectRowIndexWire
 import L4Factoidal.NatBounds
+import Std.Data.HashSet
 
 namespace L4Factoidal.Storage.SubjectRowIndexWireV2
 
 open L4Factoidal.Storage
 open L4Factoidal.Storage.IndexedBlock
 open L4Factoidal.Storage.SubjectRowIndexWire
+
+def distinctIdsGo : List Nat → Std.HashSet Nat → List Nat → List Nat
+  | [], _, reversed => reversed.reverse
+  | current :: rest, seen, reversed =>
+      if seen.contains current then distinctIdsGo rest seen reversed
+      else distinctIdsGo rest (seen.insert current) (current :: reversed)
+
+def distinctIds (ids : List Nat) : List Nat := distinctIdsGo ids ∅ []
+
+def selectedPostings (wanted : List Nat) (pages : List (Nat × Array (Nat × Nat))) :
+    List (Nat × Nat) :=
+  let keys := Std.HashSet.ofList wanted
+  pages.flatMap fun page => page.2.toList.filter fun pair => keys.contains pair.1
+
+#guard distinctIds [] == []
+#guard distinctIds [4, 1, 4, 2, 1, 3, 2] == [4, 1, 2, 3]
+#guard distinctIds [0, 0, 2 ^ 64, 0, 2 ^ 64, 7] == [0, 2 ^ 64, 7]
+#guard selectedPostings [3, 1, 3]
+  [(8, #[(3, 9), (2, 7), (1, 8), (3, 9)]), (0, #[(1, 0), (4, 5)])] ==
+    [(3, 9), (1, 8), (3, 9), (1, 0)]
+#guard selectedPostings [] [(0, #[(1, 9), (1, 9)])] == []
+#guard selectedPostings [1] [(0, #[]), (1, #[(1, 9)])] == [(1, 9)]
 
 def magic : UInt32 := 0x32495253 /-- `SRI2` little-endian. -/
 def version : UInt8 := 2
@@ -36,7 +59,7 @@ structure PageRef where
   maxSubject : Nat
   offset : Nat
   length : Nat
-  deriving DecidableEq, Repr
+  deriving DecidableEq, Repr, Hashable
 
 structure Index where
   targetIBKSha256 : ByteArray
@@ -72,6 +95,27 @@ def chunks : Nat → List α → List (List α)
   | 0, _ => []
   | _ + 1, [] => []
   | fuel + 1, xs => xs.take pagePairs :: chunks fuel (xs.drop pagePairs)
+
+/-- `chunks` with the pages on a reverse accumulator: a tail call per page.
+The fuel is the entry count, so `chunks` took one frame per page of a
+large index (https://github.com/danbri/factoidal/issues/746). -/
+def chunksTR (fuel : Nat) (xs : List α) : List (List α) := go fuel xs []
+where
+  go : Nat → List α → List (List α) → List (List α)
+    | 0, _, acc => acc.reverse
+    | _ + 1, [], acc => acc.reverse
+    | fuel + 1, x :: xs, acc =>
+        go fuel ((x :: xs).drop pagePairs) ((x :: xs).take pagePairs :: acc)
+
+theorem chunksTR_go_eq :
+    ∀ (fuel : Nat) (xs : List α) (acc : List (List α)),
+      chunksTR.go fuel xs acc = acc.reverse ++ chunks fuel xs
+  | 0, _, acc => by simp [chunksTR.go, chunks]
+  | _ + 1, [], acc => by simp [chunksTR.go, chunks]
+  | fuel + 1, x :: xs, acc => by simp [chunksTR.go, chunks, chunksTR_go_eq fuel]
+
+@[csimp] theorem chunks_eq_chunksTR : @chunks = @chunksTR := by
+  funext α fuel xs; simp [chunksTR, chunksTR_go_eq]
 
 def encodePair (pair : Nat × Nat) : List UInt8 :=
   writeU32LE (UInt32.ofNat pair.1) ++ writeU32LE (UInt32.ofNat pair.2)
@@ -254,11 +298,13 @@ private def collectCandidateRefs (refs : Array PageRef) (subject index stop : Na
     list may straddle more than two pages, so this returns every candidate.
     It binary-searches the monotone directory and scans only the candidate
     interval; ordinary subjects select one page. -/
-def pagesFor (refs : List PageRef) (subject : Nat) : List (Nat × PageRef) :=
-  let directory := refs.toArray
+def pagesForArray (directory : Array PageRef) (subject : Nat) : List (Nat × PageRef) :=
   let low := lowerBoundMaxGo directory subject 0 directory.size (directory.size + 1)
   let high := upperBoundFirstGo directory subject 0 directory.size (directory.size + 1)
   collectCandidateRefs directory subject low high (high - low + 1) []
+
+def pagesFor (refs : List PageRef) (subject : Nat) : List (Nat × PageRef) :=
+  pagesForArray refs.toArray subject
 
 def offsetsInPage (pairs : Array (Nat × Nat)) (subject : Nat) : List Nat :=
   pairs.toList.filterMap fun pair => if pair.1 == subject then some pair.2 else none

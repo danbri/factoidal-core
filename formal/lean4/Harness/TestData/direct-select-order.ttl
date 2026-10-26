@@ -1,0 +1,10 @@
+<urn:subject:a> <urn:kind> <urn:Person> .
+<urn:subject:b> <urn:kind> <urn:Person> .
+<urn:subject:c> <urn:kind> <urn:Person> .
+<urn:subject:b> <urn:name> "B" .
+<urn:subject:c> <urn:name> "C" .
+<urn:subject:a> <urn:name> "A" .
+<urn:subject:a> <urn:name> "A2" .
+<urn:subject:a> <urn:team> "Team A" .
+<urn:subject:b> <urn:team> "Team B" .
+<urn:subject:c> <urn:team> "Team C" .

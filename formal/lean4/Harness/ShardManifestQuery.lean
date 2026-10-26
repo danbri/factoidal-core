@@ -5,6 +5,8 @@
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
+import Wasm.Ops.Clock
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.ShardManifestQuery
 
@@ -16,6 +18,7 @@ private def safeLeafKey (key : ArtifactKey) : Bool :=
   !key.value.isEmpty && !(key.value.contains '/') && !(key.value.contains '\\')
 
 private def run (directory : System.FilePath) (queryText : String) : IO UInt32 := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   try
     let manifestPath := directory / "manifest.sbm1"
     let manifestBytes ← try IO.FS.readBinFile manifestPath catch _ => IO.FS.readBinFile (directory / "manifest.sbm0")
@@ -53,8 +56,8 @@ private def run (directory : System.FilePath) (queryText : String) : IO UInt32 :
             IO.eprintln "l4block-shard-query rejected: unavailable, changed, or malformed child artifact"
             return 1
         | some store =>
-            let dataset : DatasetBackend := { default := .hdt (readOps store), named := [] }
-            match runSelectQueryBackendDataset emptyEnv q dataset with
+            let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.hdt (readOps store))
+            match dataset.runSelect clockEnv q with
             | none =>
                 IO.eprintln "l4block-shard-query failed: query was not evaluated as SELECT"
                 return 1

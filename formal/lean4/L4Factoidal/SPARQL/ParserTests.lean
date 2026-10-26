@@ -20,7 +20,7 @@ that F* source, not by running a binary. The committed
 a different artifact (a COTTAS plan dump, and it refuses to run
 without `--data-cottas`), so it could not serve as the oracle. Two
 outputs a reader may find surprising, and both are faithful:
-  * a generated blank node prints as `_:_:bnode_6`, because the F*
+  * a generated blank node prints as `_:_:bnode_30`, because the F*
     `fresh_bnode_id` puts `_:` INSIDE the label and `sse_pattern_term`
     prepends `_:` again;
   * `(agg …)` drops the aggregate's name and its DISTINCT flag —
@@ -429,11 +429,21 @@ the file header on why the committed binary could not be the oracle. -/
 #guard sseOf "DESCRIBE <http://a/x>" ==
   "(describe\n  (table unit))"
 
+-- `[ … ]` is named from the token after `[` (`bracketBnodeId`), not from the
+-- `[` itself as in the F*. The F* name is the position a collection cell
+-- around the `[` also uses, which made `( [ … ] )` one node (issue 742's
+-- guards, `ConstructLabelTests.lean`). Since 2026-10-13 a generated label is
+-- the character offset of its token (`freshBnodeId`, issue 818 item 2): the
+-- token after `[` is at offset 30 here. The F* label, and this port's until
+-- that date, is the remaining token count (`_:_:bnode_5` here).
 #guard sseOf "SELECT ?s { ?s <http://a/p> [ <http://a/q> \"v\" ] }" ==
-  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_6))\n  (bgp (triple _:_:bnode_6 <http://a/q> \"v\"))))"
+  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_30))\n  (bgp (triple _:_:bnode_30 <http://a/q> \"v\"))))"
+-- The cell and the element of `( [ … ] )` are two nodes.
+#guard sseOf "SELECT ?s { ?s <http://a/p> ( [ <http://a/q> \"v\" ] ) }" ==
+  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_30))\n  (join (bgp (triple _:_:bnode_30 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:_:bnode_32)\n    (triple _:_:bnode_30 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil>))\n  (bgp (triple _:_:bnode_32 <http://a/q> \"v\")))))"
 
 #guard sseOf "SELECT ?s { ?s <http://a/p> (1 2) }" ==
-  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_5))\n  (join (bgp (triple _:_:bnode_5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"1\")\n    (triple _:_:bnode_5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:_:bnode_4))\n  (bgp (triple _:_:bnode_4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"2\")\n    (triple _:_:bnode_4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil>)))))"
+  "(project (?s)\n  (join (bgp (triple ?s <http://a/p> _:_:bnode_29))\n  (join (bgp (triple _:_:bnode_29 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"1\")\n    (triple _:_:bnode_29 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:_:bnode_31))\n  (bgp (triple _:_:bnode_31 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> \"2\")\n    (triple _:_:bnode_31 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil>)))))"
 
 #guard sseOf "SELECT * { ?s ?p ?o . { SELECT ?o { ?a ?b ?o } LIMIT 2 } }" ==
   "(project *\n  (join (bgp (triple ?s ?p ?o))\n  (project (?o)\n  (bgp (triple ?a ?b ?o))\n  (slice _ 2))))"
@@ -468,5 +478,148 @@ Each of these is a real bug this port shipped and the
 -- `(1 AS ?X)` aliases a name the sub-SELECT already projects.
 #guard errMsg "SELECT (1 AS ?X) { SELECT (2 AS ?X) {} }" ==
   "SELECT expression aliases variable already in scope"
+
+/-! ## The trailing VALUES clause and projection scope (W3C rdf-tests ec2ba15)
+
+SPARQL 1.1 [2] Query and [8] SubSelect end in a ValuesClause after any
+query form. §18.2.4.3 joins it after GROUP BY and HAVING and before the
+SELECT expressions, so its variables are in scope for §11.4 and
+§18.2.4.4. -/
+
+-- [2]: every query form takes a trailing VALUES clause.
+#guard parses "ASK { ?s ?p ?o } VALUES ?o { 42 }"
+#guard parses "CONSTRUCT { ?s <http://e/r> ?r } WHERE { ?s ?p ?o } VALUES (?s ?r) { (<http://e/a> 1) }"
+#guard parses "CONSTRUCT { ?s <http://e/r> ?r } WHERE { ?s ?p ?o } GROUP BY ?s VALUES (?s ?r) { (<http://e/a> 1) }"
+#guard parses "CONSTRUCT { ?s <http://e/r> ?r } WHERE { ?s ?p ?o } ORDER BY ?s LIMIT 1 VALUES (?s ?r) { (<http://e/a> 1) }"
+#guard parses "DESCRIBE ?s WHERE { ?s ?p ?o } VALUES ?s { <http://e/a> }"
+-- Only one trailing clause, and a malformed one is reported as such.
+#guard !parses "ASK { } VALUES ?x { 1 } VALUES ?y { 2 }"
+#guard errMsg "ASK { } VALUES (?x ?y) { (1) }" == "VALUES row has wrong number of terms"
+#guard errMsg "SELECT * { } VALUES (?x ?y) { (1) }" == "VALUES row has wrong number of terms"
+
+-- §11.4 at a grouping level: a VALUES variable is in scope for the
+-- projection; a non-grouped WHERE variable is not.
+#guard parses "SELECT ?s ?v { ?s ?p ?o } GROUP BY ?s VALUES ?v { 1 }"
+#guard parses "SELECT ?s (STR(?v) AS ?w) { ?s ?p ?o } GROUP BY ?s VALUES ?v { 1 }"
+#guard errMsg "SELECT ?s ?o { ?s ?p ?o } GROUP BY ?s VALUES ?v { 1 }" ==
+  "SELECT projects ungrouped variable"
+#guard errMsg "SELECT ?s ?v { ?s ?p ?o } GROUP BY ?s" == "SELECT projects ungrouped variable"
+-- An earlier SELECT expression's variable is in scope; a later one's
+-- is not.
+#guard parses "SELECT (COUNT(?v) AS ?c) (?c + 1 AS ?d) { VALUES ?v { 1 2 } }"
+#guard errMsg "SELECT (?c + 1 AS ?d) (COUNT(?v) AS ?c) { VALUES ?v { 1 2 } }" ==
+  "SELECT projects ungrouped variable"
+-- §18.2.4.4: the alias of `(expr AS ?v)` must not be in scope. At a
+-- grouping level the scope is the named GROUP BY variables and the
+-- VALUES variables (W3C sparql12 `group-by-scope-*`, sparql11
+-- `syn-group-by-values-scope-03`).
+#guard parses "SELECT (123 AS ?z) { ?s <http://e/p> ?z } GROUP BY ?s"
+#guard errMsg "SELECT (123 AS ?z) { } GROUP BY ?z" ==
+  "SELECT expression aliases variable already in scope"
+#guard errMsg "SELECT (123 AS ?z) { } GROUP BY (1 AS ?z)" ==
+  "SELECT expression aliases variable already in scope"
+#guard errMsg "SELECT ?s (COUNT(*) AS ?c) { ?s ?p ?o } GROUP BY ?s VALUES ?c { 0 1 }" ==
+  "SELECT expression aliases variable already in scope"
+#guard errMsg "SELECT (1 AS ?x) { } VALUES ?x { 2 }" ==
+  "SELECT expression aliases variable already in scope"
+
+-- Placement: at a grouping level the rows travel in `postValues`; at
+-- any other level they are joined with the WHERE pattern.
+#guard ((parseSparql "SELECT ?s (COUNT(*) AS ?c) { ?s ?p ?o } GROUP BY ?s VALUES ?s { <http://e/a> }").toOption.map
+          (fun q => q.postValues.isSome)) == some true
+#guard ((parseSparql "SELECT ?s { ?s ?p ?o } VALUES ?s { <http://e/a> }").toOption.map
+          (fun q => q.postValues.isSome)) == some false
+
+-- [24] OrderCondition: any [121] BuiltInCall, aggregates included.
+#guard parses "SELECT ?s (COUNT(*) AS ?c) { ?s ?p ?o } GROUP BY ?s ORDER BY LCASE(?s)"
+#guard parses "SELECT ?s (COUNT(*) AS ?c) { ?s ?p ?o } GROUP BY ?s ORDER BY COUNT(?o)"
+-- An aggregate does not start a [19] GroupCondition.
+#guard !parses "SELECT (COUNT(*) AS ?c) { ?s ?p ?o } GROUP BY COUNT(?o)"
+
+/-! ## [12] AskQuery takes a SolutionModifier (issue 699)
+
+`ASK` DatasetClause* WhereClause SolutionModifier. `pAskBody` used to
+stop after the WHERE clause, so each query below was refused with
+"unexpected tokens after query". The modifier now reaches the `Query`,
+where `evalAsk` applies it (`QueryTests.lean`). -/
+
+#guard parses "ASK { ?s ?p ?o } LIMIT 1"
+#guard parses "ASK { ?s ?p ?o } LIMIT 0"
+#guard parses "ASK { ?s ?p ?o } OFFSET 3"
+#guard parses "ASK { ?s ?p ?o } LIMIT 1 OFFSET 3"
+#guard parses "ASK { ?s ?p ?o } OFFSET 3 LIMIT 1"
+#guard parses "ASK { ?s ?p ?o } ORDER BY ?s"
+#guard parses "ASK { ?s ?p ?o } ORDER BY DESC(?s) LIMIT 1"
+#guard parses "ASK { ?s ?p ?o } GROUP BY ?s"
+#guard parses "ASK { ?s ?p ?o } GROUP BY ?s HAVING (COUNT(*) > 100)"
+#guard parses "ASK { ?s ?p ?o } GROUP BY ?s HAVING (COUNT(*) > 1) ORDER BY ?s LIMIT 1 OFFSET 1"
+#guard parses "ASK { ?s ?p ?o } HAVING (COUNT(*) > 1)"
+#guard parses "ASK WHERE { ?s ?p ?o } GROUP BY ?s VALUES ?s { <http://e/a> }"
+#guard parses "ASK FROM <http://e/g> { ?s ?p ?o } LIMIT 1"
+-- A malformed modifier is still refused: no integer after the keyword,
+-- a repeated LIMIT, clauses out of order, a keyword with no operand.
+#guard !parses "ASK { ?s ?p ?o } LIMIT"
+#guard !parses "ASK { ?s ?p ?o } LIMIT x"
+#guard !parses "ASK { ?s ?p ?o } LIMIT -1"
+#guard !parses "ASK { ?s ?p ?o } OFFSET"
+#guard !parses "ASK { ?s ?p ?o } LIMIT 1 LIMIT 2"
+#guard !parses "ASK { ?s ?p ?o } LIMIT 1 GROUP BY ?s"
+#guard !parses "ASK { ?s ?p ?o } ORDER BY ?s GROUP BY ?s"
+#guard !parses "ASK { ?s ?p ?o } GROUP BY"
+#guard !parses "ASK { ?s ?p ?o } HAVING"
+#guard !parses "ASK { ?s ?p ?o } ORDER BY"
+-- The same keywords without an operand are refused in the other forms.
+#guard !parses "SELECT * { ?s ?p ?o } LIMIT"
+#guard !parses "SELECT ?s { ?s ?p ?o } ORDER BY"
+#guard !parses "SELECT ?s { ?s ?p ?o } GROUP BY ?s HAVING"
+#guard !parses "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o } OFFSET"
+-- The clauses land in the `Query`: GROUP BY, HAVING, the modifier, and a
+-- trailing VALUES clause that travels in `postValues` because the query groups.
+#guard ((parseSparql "ASK { ?s ?p ?o } GROUP BY ?s HAVING (COUNT(*) > 1) ORDER BY ?s LIMIT 2 OFFSET 1").toOption.map
+          (fun q => (q.groupBy.isSome, q.having.length, q.modifier.orderBy.isSome,
+                     q.modifier.limit, q.modifier.offset)))
+        == some (true, 1, true, some 2, some 1)
+#guard ((parseSparql "ASK { ?s ?p ?o }").toOption.map
+          (fun q => (q.groupBy.isSome, q.having.length, q.modifier.orderBy.isSome,
+                     q.modifier.limit, q.modifier.offset)))
+        == some (false, 0, false, none, none)
+#guard ((parseSparql "ASK { ?s ?p ?o } GROUP BY ?s VALUES ?s { <http://e/a> }").toOption.map
+          (fun q => q.postValues.isSome)) == some true
+#guard ((parseSparql "ASK { ?s ?p ?o } HAVING (COUNT(*) > 1) VALUES ?s { <http://e/a> }").toOption.map
+          (fun q => q.postValues.isSome)) == some true
+#guard ((parseSparql "ASK { ?s ?p ?o } LIMIT 1 VALUES ?s { <http://e/a> }").toOption.map
+          (fun q => q.postValues.isSome)) == some false
+-- CONSTRUCT and DESCRIBE place the VALUES rows the same way when only
+-- HAVING groups the query.
+#guard ((parseSparql "CONSTRUCT { ?s <http://e/r> ?r } WHERE { ?s ?p ?o } HAVING (COUNT(*) > 1) VALUES ?r { 1 }").toOption.map
+          (fun q => q.postValues.isSome)) == some true
+#guard ((parseSparql "DESCRIBE ?s WHERE { ?s ?p ?o } HAVING (COUNT(*) > 1) VALUES ?s { <http://e/a> }").toOption.map
+          (fun q => q.postValues.isSome)) == some true
+
+/-! ## SPARQL 1.2 §19.2 escape sequences
+
+Numeric escapes are decoded per token, in IRIs and strings only, in one
+left-to-right pass, and a surrogate code point is an error (W3C
+sparql12 `codepoint-escapes`). -/
+
+-- `\u0022` in a string is a quotation mark in the value; it does not
+-- close the string.
+#guard parses "SELECT * { ?s ?p \"a\\u0022b\" }" .v12
+#guard tokensOf (tokenize12 "\"a\\u0022b\"") == [Token.str "a\"b", Token.eof]
+-- An escaped backslash does not start a second escape.
+#guard tokensOf (tokenize12 "\"\\u005Cn\"") == [Token.str "\\n", Token.eof]
+-- A query spelled with escapes is not a query; an escape in a local
+-- name is an error.
+#guard !parses "\\u0041SK {}" .v12
+#guard !parses "PREFIX ns: <http://e/> SELECT * { ?x ns:a\\u0062c ?o }" .v12
+-- Surrogates are errors in strings and in IRIs.
+#guard !parses "SELECT * { ?s ?p \"\\uD83C\\uDCA1\" }" .v12
+#guard errMsg "SELECT * { ?s ?p <http://e/\\uD83C\\uDCA1> }" .v12 ==
+  "invalid IRI escape (surrogate or malformed)"
+#guard errMsg "SELECT * { ?s ?p <http://e/\\uD83C> }" ==
+  "invalid IRI escape (surrogate or malformed)"
+-- A non-surrogate escape in an IRI decodes.
+#guard parses "SELECT * { ?s ?p <http://e/\\u0061\\U0001F47E> }" .v12
+#guard parses "SELECT * { ?s ?p <http://e/\\u0061> }"
 
 end L4Factoidal.SPARQL

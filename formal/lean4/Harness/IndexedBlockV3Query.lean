@@ -8,7 +8,10 @@ import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.SharedSubjectTriple
 import L4Factoidal.SPARQL.StoreDataset
 import L4Factoidal.SPARQL.StoreFastPath
+import L4Factoidal.SPARQL.ResultsJsonFast
 import L4Factoidal.Storage.ShardManifest
+import Wasm.Ops.Clock
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.IndexedBlockV3Query
 
@@ -23,6 +26,21 @@ open L4Factoidal.SPARQL.StoreDataset
 open L4Factoidal.SPARQL.StoreFastPath
 open L4Factoidal.Storage.ShardManifest
 
+private abbrev QueryIO := ReaderT Bool IO
+
+private def printDiagnostic (message : String) : QueryIO Unit := do
+  if ← read then IO.eprintln message else IO.println message
+
+private def printRows (query : Query) (rows : SolutionSeq) : QueryIO Unit := do
+  if ← read then
+    IO.println (QueryResult.bindings query.projectedVars rows).toSrjFast
+  else
+    IO.println s!"l4block-id-v3-query rows={rows.length} preview={toString (repr (rows.take 10))}"
+
+private def printBoolean (answer : Bool) : QueryIO Unit := do
+  if ← read then IO.println (QueryResult.boolean answer).toSrjFast
+  else IO.println s!"l4block-id-v3-query boolean={answer}"
+
 private def readOpsOf (triples : List Triple) : BackendReadOps :=
   { search := fun bound => tripleMatchesBound bound triples
     estimate := fun bound => (tripleMatchesBound bound triples).length
@@ -33,9 +51,9 @@ private def readOpsOf (triples : List Triple) : BackendReadOps :=
     whenever a structural key is not complete for SPARQL term equality. Delta
     overlays retain the established read-ops route until their own indexed
     materialisation contract is explicit. -/
-private def backendFor (triples : List Triple) (delta : DeltaResolved) : GraphBackend :=
-  if deltaResolvedIsEmpty delta then indexedGraphBackend triples
-  else .hdt (readOpsOfDelta triples delta)
+private def backendFor (triples : List Triple) (delta : DeltaResolved) : L4Factoidal.Dataflow.LawfulStore :=
+  if deltaResolvedIsEmpty delta then L4Factoidal.Dataflow.LawfulStore.ofIndexedGraph triples
+  else L4Factoidal.Dataflow.LawfulStore.hdt (readOpsOfDelta triples delta)
 
 /-- A physically safe bounded-prefix shape. Subject/object must be distinct
     variables: constants or repeated variables could make early rows fail the
@@ -86,43 +104,60 @@ private def countAllPredicates (directory : System.FilePath) (manifest : Manifes
 
 private def finish (query : Query) (entries : List Entry) (predicates : List WfIri)
     (triples : List Triple) (counters : Counters) (delta : DeltaResolved)
-    (mode : String := "ibk3-paged-merkle") : IO UInt32 := do
+    (mode : String := "ibk3-paged-merkle") : QueryIO UInt32 := do
+  let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
   let backend := backendFor triples delta
-  let dataset : DatasetBackend := { default := backend, named := [] }
+  let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault backend
   -- §18.6: EXISTS / NOT EXISTS evaluate against the query's dataset, which
   -- the backend runners read from `env.dataset`; the reference evaluator
   -- sets it itself.  The dataset is the same base-plus-delta graph the
   -- backend answers from (the CONSTRUCT arm below already reads it this
   -- way), so an EXISTS sub-pattern sees exactly the materialised fragment.
-  let env : EvalEnv := { emptyEnv with
-    dataset := some { default := backendSearch backend patternBoundAll, named := [] } }
+  let env : EvalEnv := { clockEnv with
+    dataset := some { default := backend.search patternBoundAll, named := [] } }
   let deltaMode := if deltaResolvedIsEmpty delta then "base" else "base-plus-delta"
   match query.form with
   | .select _ =>
-      match runSelectQueryBackendDataset env query dataset with
+      -- Backend runners require an already-selected dataset. Dataset clauses
+      -- therefore use the reference evaluator's local graph-selection policy.
+      let result := if query.dataset.isEmpty then dataset.runSelect env query
+        else some (evalSelect env (materialiseDatasetBackend dataset.backend) query).2
+      match result with
       | none => IO.eprintln "l4block-id-v3-query failed: query was not evaluated as SELECT"; return 1
       | some rows =>
-          IO.println s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
-          IO.println s!"l4block-id-v3-query sse={query.toSse}"
-          IO.println s!"l4block-id-v3-query rows={rows.length} preview={toString (repr (rows.take 10))}"
+          printDiagnostic s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
+          printDiagnostic s!"l4block-id-v3-query sse={query.toSse}"
+          printRows query rows
           return 0
   | .ask =>
-      match runAskQueryBackendDataset emptyEnv query dataset with
+      let result := if query.dataset.isEmpty then dataset.runAsk clockEnv query
+        else some (evalAsk env (materialiseDatasetBackend dataset.backend) query)
+      match result with
       | none => IO.eprintln "l4block-id-v3-query failed: query was not evaluated as ASK"; return 1
       | some answer =>
-          IO.println s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
-          IO.println s!"l4block-id-v3-query sse={query.toSse}"
-          IO.println s!"l4block-id-v3-query boolean={answer}"
+          printDiagnostic s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
+          printDiagnostic s!"l4block-id-v3-query sse={query.toSse}"
+          printBoolean answer
           return 0
   | .construct _ =>
-      let graph : Graph := evalConstruct emptyEnv
-        { default := backendSearch (backendFor triples delta) patternBoundAll, named := [] } query
+      let graph : Graph := evalConstruct clockEnv
+        { default := (backendFor triples delta).search patternBoundAll, named := [] } query
       IO.println s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
       IO.println s!"l4block-id-v3-query sse={query.toSse}"
       IO.println s!"l4block-id-v3-query triples={graph.length} preview={toString (repr (graph.take 10))}"
       return 0
   | .describe _ =>
-      IO.eprintln "l4block-id-v3-query rejected: DESCRIBE needs an explicit description policy"; return 1
+      -- §16.4 DESCRIBE reads every statement about the resources it names,
+      -- which no pattern selects. `Query.patternBoundedReads` refuses every
+      -- selective path and the predicate collector for it, so `triples` is
+      -- the whole generation here (mode `ibk3-paged-merkle-full-manifest`),
+      -- and the delta is applied by `backendFor` as for CONSTRUCT.
+      let graph : Graph := evalDescribe clockEnv
+        { default := (backendFor triples delta).search patternBoundAll, named := [] } query
+      IO.println s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
+      IO.println s!"l4block-id-v3-query sse={query.toSse}"
+      IO.println s!"l4block-id-v3-query triples={graph.length} preview={toString (repr (graph.take 10))}"
+      return 0
 
 /-- The narrow OLI2→SRI2 physical join has already established the two BGP
     constraints: every target row has a driver subject, and the driver object
@@ -176,17 +211,18 @@ private def objectSubjectDistinctSolutions (subjectVar : VarName)
 
 private def finishObjectSubjectSelect (query : Query) (entries : List Entry)
     (predicates : List WfIri) (subjectVar objectVar : VarName)
-    (drivers targets : List Triple) (counters : Counters) : IO UInt32 := do
+    (drivers targets : List Triple) (counters : Counters) : QueryIO UInt32 := do
+  let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
   let (executionQuery, inputRows, mode) :=
     match distinctSubjectOrderQuery? query subjectVar with
     | some q => (q, objectSubjectDistinctSolutions subjectVar targets,
         "ibk3-sri2-tli1-oli2-object-subject-direct-select-distinct-subject")
     | none => (query, objectSubjectSolutions subjectVar objectVar drivers targets,
         "ibk3-sri2-tli1-oli2-object-subject-direct-select")
-  let rows := selectPost emptyEnv emptyEnv.activeGraph executionQuery inputRows
-  IO.println s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
-  IO.println s!"l4block-id-v3-query sse={query.toSse}"
-  IO.println s!"l4block-id-v3-query rows={rows.length} preview={toString (repr (rows.take 10))}"
+  let rows := selectPost clockEnv clockEnv.activeGraph executionQuery inputRows
+  printDiagnostic s!"l4block-id-v3-query shards={entries.length} open-mode={mode}({predicates.length}) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
+  printDiagnostic s!"l4block-id-v3-query sse={query.toSse}"
+  printRows query rows
   return 0
 
 /-- The three-way direct path has already performed the BGP join using exact
@@ -196,43 +232,46 @@ private def finishObjectSubjectSelect (query : Query) (entries : List Entry)
     OFFSET and LIMIT centralised. -/
 private def finishSubjectTripleSelect (query : Query) (entries : List Entry)
     (predicates : List WfIri) (subjectVar driverVar leftVar rightVar : VarName)
-    (drivers lefts rights : List Triple) (counters : Counters) : IO UInt32 := do
-  let rows := selectPost emptyEnv emptyEnv.activeGraph query
+    (drivers lefts rights : List Triple) (counters : Counters) : QueryIO UInt32 := do
+  let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
+  let rows := selectPost clockEnv clockEnv.activeGraph query
     (subjectTripleSolutions subjectVar driverVar leftVar rightVar drivers lefts rights)
-  IO.println s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-sri2-tli1-subject-triple-direct-select({predicates.length}) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
-  IO.println s!"l4block-id-v3-query sse={query.toSse}"
-  IO.println s!"l4block-id-v3-query rows={rows.length} preview={toString (repr (rows.take 10))}"
+  printDiagnostic s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-sri2-tli1-subject-triple-direct-select({predicates.length}) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
+  printDiagnostic s!"l4block-id-v3-query sse={query.toSse}"
+  printRows query rows
   return 0
 
 private def finishCount (query : Query) (entries : List Entry)
-    (alias : VarName) (count : Nat) (counters : Counters) : IO UInt32 := do
+    (alias : VarName) (count : Nat) (counters : Counters) : QueryIO UInt32 := do
   let rows := sliceSolutions query.modifier.offset query.modifier.limit (countStarSolution alias count)
-  IO.println s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-paged-merkle-count(1) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
-  IO.println s!"l4block-id-v3-query sse={query.toSse}"
-  IO.println s!"l4block-id-v3-query rows={rows.length} preview={toString (repr rows)}"
+  printDiagnostic s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-paged-merkle-count(1) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
+  printDiagnostic s!"l4block-id-v3-query sse={query.toSse}"
+  printRows query rows
   return 0
 
 private def finishAsk (query : Query) (entries : List Entry) (predicates : List WfIri)
-    (triples : List Triple) (counters : Counters) (delta : DeltaResolved) : IO UInt32 := do
-  let dataset : DatasetBackend := { default := backendFor triples delta, named := [] }
-  match runAskQueryBackendDataset emptyEnv query dataset with
+    (triples : List Triple) (counters : Counters) (delta : DeltaResolved) : QueryIO UInt32 := do
+  let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
+  let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault (backendFor triples delta)
+  match dataset.runAsk clockEnv query with
   | none => IO.eprintln "l4block-id-v3-query failed: query was not evaluated as ASK"; return 1
   | some answer =>
       let deltaMode := if deltaResolvedIsEmpty delta then "base" else "base-plus-delta"
-      IO.println s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-paged-merkle({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
-      IO.println s!"l4block-id-v3-query sse={query.toSse}"
-      IO.println s!"l4block-id-v3-query boolean={answer}"
+      printDiagnostic s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-paged-merkle({predicates.length}) delta={deltaMode} logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
+      printDiagnostic s!"l4block-id-v3-query sse={query.toSse}"
+      printBoolean answer
       return 0
 
 private def finishAskCount (query : Query) (entries : List Entry) (count : Nat)
-    (counters : Counters) : IO UInt32 := do
-  IO.println s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-paged-merkle-ask(1) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
-  IO.println s!"l4block-id-v3-query sse={query.toSse}"
-  IO.println s!"l4block-id-v3-query boolean={if count > 0 then "true" else "false"}"
+    (counters : Counters) : QueryIO UInt32 := do
+  printDiagnostic s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-paged-merkle-ask(1) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
+  printDiagnostic s!"l4block-id-v3-query sse={query.toSse}"
+  printBoolean (count > 0)
   return 0
 
 private def finishPredicateGroup (query : Query) (entries : List Entry) (predicates : List WfIri)
-    (predicateVar countAlias : VarName) (counts : List (WfIri × Nat)) (counters : Counters) : IO UInt32 := do
+    (predicateVar countAlias : VarName) (counts : List (WfIri × Nat)) (counters : Counters) : QueryIO UInt32 := do
+  let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
   let backend : GraphBackend := .hdt
     { search := fun _ => []
       estimate := fun bound =>
@@ -243,11 +282,11 @@ private def finishPredicateGroup (query : Query) (entries : List Entry) (predica
   let grouped := predicateGroupBySolutions predicateVar countAlias backend predicates
   let ordered := match query.modifier.orderBy with
     | none => grouped
-    | some order => sortSolutions (compareOnConditions emptyEnv emptyEnv.activeGraph order) grouped
+    | some order => sortSolutions (compareOnConditions clockEnv clockEnv.activeGraph order) grouped
   let rows := sliceSolutions query.modifier.offset query.modifier.limit ordered
-  IO.println s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-paged-merkle-predicate-group-count({predicates.length}) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
-  IO.println s!"l4block-id-v3-query sse={query.toSse}"
-  IO.println s!"l4block-id-v3-query rows={rows.length} preview={toString (repr (rows.take 10))}"
+  printDiagnostic s!"l4block-id-v3-query shards={entries.length} open-mode=ibk3-paged-merkle-predicate-group-count({predicates.length}) delta=base logical-read-bytes={counters.requestedBytes} fetched-bytes={counters.fetchedBytes}"
+  printDiagnostic s!"l4block-id-v3-query sse={query.toSse}"
+  printRows query rows
   return 0
 
 /-- A deliberately narrow first SRI1 join admission.  The two BGP patterns
@@ -290,17 +329,21 @@ private def sharedSubjectTriple? (query : Query) : Option SharedSubjectTriplePla
       | _, _, _, _, _, _, _, _, _ => none
   | _ => none
 
-/-- The direct three-way binding sequence deliberately chooses the smallest
-    physical driver, so it proves a BGP *bag* rather than the source BGP's
-    incidental list order.  Keep the first executable admission to a basic
-    modifier-free SELECT: ORDER BY tie order, DISTINCT's retained occurrence,
-    grouping, and OFFSET/LIMIT can all observe list order.  Those forms stay
-    on the established evaluator until their own refinement contracts are
-    stated and proved. -/
-private def directSubjectTripleSelect? (query : Query) : Bool :=
+/-- Direct binding construction preserves the BGP bag, not its incidental
+    list order. Only variable-only, modifier-free SELECT is admitted here:
+    aggregate and freshness expressions can observe order even without an
+    explicit GROUP BY. Other forms use the established evaluator unless a
+    separate finishing criterion establishes order independence. -/
+private def directUnmodifiedSelect? (query : Query) : Bool :=
   match query.form with
-  | .select _ =>
-      query.groupBy.isNone && query.having.isEmpty && query.modifier.orderBy.isNone &&
+  | .select selection =>
+      let variablesOnly := match selection with
+        | .all => true
+        | .vars items => items.all fun item =>
+            match item with
+            | .var _ => true
+            | .expr _ _ => false
+      variablesOnly && query.groupBy.isNone && query.having.isEmpty && query.modifier.orderBy.isNone &&
         !query.modifier.distinct && !query.modifier.reduced &&
         query.modifier.offset.isNone && query.modifier.limit.isNone
   | _ => false
@@ -346,15 +389,17 @@ private def objectBoundPredicate? (query : Query) : Option (WfIri × Term) :=
     subset.  §18.6 evaluates an `EXISTS` / `NOT EXISTS` against the ACTIVE
     GRAPH, so a query carrying one in its projection, a GROUP BY key, a
     HAVING condition or an ORDER BY condition may not take a selective path;
-    it falls through to the full-manifest read.
+    it falls through to the full-manifest read. A DESCRIBE form may not take
+    one either: its answer holds every statement about the resources it
+    names, and no pattern selects those.
     `ShardManifest.queryNativeConstantPredicates?` carries the same guard for
     the pattern-driven opener below
     (https://github.com/danbri/factoidal/issues/638). -/
 private def selectivePathAdmissible (query : Query) : Bool :=
-  query.expressionsOutsidePatternExistsFree
+  query.patternBoundedReads
 
 private def tryObjectIndexScan (directory : System.FilePath) (manifest : Manifest) (query : Query) :
-    IO (Option UInt32) := do
+    QueryIO (Option UInt32) := do
   if !selectivePathAdmissible query then pure none else
   match objectBoundPredicate? query, ← readDefaultDelta? directory with
   | some (predicate, object), some delta =>
@@ -374,7 +419,7 @@ private def tryObjectIndexScan (directory : System.FilePath) (manifest : Manifes
     exact rows from the other predicate via SRI2/TLI1.  Different predicates
     avoid duplicating one physical fragment in the evaluator's input. -/
 private def tryObjectIndexJoin (directory : System.FilePath) (manifest : Manifest) (query : Query) :
-    IO (Option UInt32) := do
+    QueryIO (Option UInt32) := do
   if !selectivePathAdmissible query then pure none else
   if !query.dataset.isEmpty || query.postValues.isSome || manifest.version != 6 then pure none else
   match query.pattern, ← readDefaultDelta? directory with
@@ -416,9 +461,15 @@ private def tryObjectIndexJoin (directory : System.FilePath) (manifest : Manifes
                   let counters := addCounters driveCounters targetCounters
                   match query.form with
                   | .select _ =>
-                      some <$> finishObjectSubjectSelect query entries
-                        [drivePredicate, targetPredicate] subjectVar targetObjectVar
-                        driveTriples targetTriples counters
+                      if directUnmodifiedSelect? query ||
+                          (distinctSubjectOrderQuery? query subjectVar).isSome then
+                        some <$> finishObjectSubjectSelect query entries
+                          [drivePredicate, targetPredicate] subjectVar targetObjectVar
+                          driveTriples targetTriples counters
+                      else
+                        some <$> finish query entries [drivePredicate, targetPredicate]
+                          (driveTriples ++ targetTriples) counters delta
+                          "ibk3-sri2-tli1-oli2-object-subject-join"
                   | _ =>
                       some <$> finish query entries [drivePredicate, targetPredicate]
                         (driveTriples ++ targetTriples) counters delta
@@ -426,7 +477,7 @@ private def tryObjectIndexJoin (directory : System.FilePath) (manifest : Manifes
   | _, _ => pure none
 
 private def trySubjectIndexJoin (directory : System.FilePath) (manifest : Manifest) (query : Query) :
-    IO (Option UInt32) := do
+    QueryIO (Option UInt32) := do
   if !selectivePathAdmissible query then pure none else
   match sharedSubjectJoin? query, ← readDefaultDelta? directory with
   | some (leftPredicate, rightPredicate), some delta =>
@@ -459,7 +510,7 @@ private def trySubjectIndexJoin (directory : System.FilePath) (manifest : Manife
   | _, _ => pure none
 
 private def trySubjectTripleJoin (directory : System.FilePath) (manifest : Manifest) (query : Query) :
-    IO (Option UInt32) := do
+    QueryIO (Option UInt32) := do
   if !selectivePathAdmissible query then pure none else
   match sharedSubjectTriple? query, ← readDefaultDelta? directory with
   | some plan, some delta =>
@@ -488,7 +539,7 @@ private def trySubjectTripleJoin (directory : System.FilePath) (manifest : Manif
               let counters := addCounters dc (addCounters lc rc)
               let code ← match query.form with
                 | .select _ =>
-                    if directSubjectTripleSelect? query then
+                    if directUnmodifiedSelect? query then
                       finishSubjectTripleSelect query (de ++ le ++ re) [drive, left, right]
                         plan.subject driveVar leftVar rightVar drivers ls rs counters
                     else
@@ -541,7 +592,7 @@ private def scanAllEntriesForSubject (directory : System.FilePath) (subject : Te
     The ordinary parsed evaluator supplies every SPARQL result semantic over
     that fragment. -/
 private def trySubjectPointLookup (directory : System.FilePath) (manifest : Manifest) (query : Query) :
-    IO (Option UInt32) := do
+    QueryIO (Option UInt32) := do
   if !selectivePathAdmissible query then pure none else
   match subjectPointSubject? query, ← readDefaultDelta? directory with
   | some subject, some delta =>
@@ -558,21 +609,27 @@ private def trySubjectPointLookup (directory : System.FilePath) (manifest : Mani
     physical BGP order, delta contents, grouping, ordering and expression
     evaluation: `sliceSolutions` necessarily returns `[]`.  Handle it after
     query/manifest/activation admission but before opening any artifact. -/
-private def finishSelectLimitZero (query : Query) : IO UInt32 := do
-  IO.println "l4block-id-v3-query shards=0 open-mode=ibk3-limit-zero(0) delta=not-read logical-read-bytes=0 fetched-bytes=0"
-  IO.println s!"l4block-id-v3-query sse={query.toSse}"
-  IO.println "l4block-id-v3-query rows=0 preview=[]"
+private def finishSelectLimitZero (query : Query) : QueryIO UInt32 := do
+  printDiagnostic "l4block-id-v3-query shards=0 open-mode=ibk3-limit-zero(0) delta=not-read logical-read-bytes=0 fetched-bytes=0"
+  printDiagnostic s!"l4block-id-v3-query sse={query.toSse}"
+  printRows query []
   return 0
 
-private def run (directoryText queryText : String) : IO UInt32 := do
+private def run (directoryText queryText : String) (base : Option String := none) : QueryIO UInt32 := do
   try
     let root := System.FilePath.mk directoryText
     let directory ← resolveStoreDirectory root
     let manifestBytes ← IO.FS.readBinFile (directory / "manifest.sbm2")
-    match decode? manifestBytes, parseSparql queryText with
-    | none, _ => IO.eprintln "l4block-id-v3-query rejected: malformed SBM2 manifest"; return 1
+    match decode? manifestBytes, parseSparql queryText base with
+    | none, _ =>
+        IO.eprintln s!"l4block-id-v3-query rejected: {(retiredLayoutNote? manifestBytes).getD "malformed SBM2 manifest"}"
+        return 1
     | _, .error error => IO.eprintln s!"l4block-id-v3-query query parse error at {error.pos}: {error.msg}"; return 1
     | some manifest, .ok query =>
+        if ← read then
+          match query.form with
+          | .select _ | .ask => pure ()
+          | _ => IO.eprintln "l4block-id-v3-query --json supports SELECT and ASK only"; return 2
         if isIbk4Layout manifest.layout || manifest.version == 7 || manifest.version == 8 ||
             manifest.version == 9 then
           IO.eprintln "l4block-id-v3-query rejected: this generation is SBM7, SBM8 or SBM9 with IBK4 quad blocks; the quad-aware query path is not implemented, and an IBK3 reader would misread its rows"
@@ -678,24 +735,58 @@ private def run (directoryText queryText : String) : IO UInt32 := do
     iteration still opens the immutable generation and validates its requested
     ranges; this mode exists so a profiler can observe an otherwise sub-second
     physical query without changing query semantics. -/
-private def repeatRun (remaining : Nat) (directoryText queryText : String) : IO UInt32 :=
+private def repeatRun (remaining : Nat) (directoryText queryText : String)
+    (base : Option String := none) : QueryIO UInt32 :=
   match remaining with
   | 0 => pure 0
   | count + 1 => do
-      let code ← run directoryText queryText
-      if code == 0 then repeatRun count directoryText queryText else pure code
+      let code ← run directoryText queryText base
+      if code == 0 then repeatRun count directoryText queryText base else pure code
+
+/-- Options before `--query`: `--json`, `--repeat N`, `--base IRI`, in any
+    order. `--base` is the base IRI of the query (SPARQL 1.1 section 4.1.1.1,
+    RFC 3986 section 5.1): relative IRIs in the query text resolve against it,
+    as `l4factoidal query` resolves them against the query file's IRI. -/
+structure Options where
+  json : Bool := false
+  repeatCount : Option Nat := none
+  base : Option String := none
+
+def parseOptions : Options → List String → Except String (Options × List String)
+  | o, "--json" :: rest => parseOptions { o with json := true } rest
+  | o, "--repeat" :: n :: rest =>
+      match n.toNat? with
+      | some c => parseOptions { o with repeatCount := some c } rest
+      | none => .error "l4block-id-v3-query --repeat requires a natural number"
+  | o, "--base" :: iri :: rest => parseOptions { o with base := some iri } rest
+  | o, "--query" :: query => .ok (o, query)
+  | _, _ => .error "usage: l4block-id-v3-query SHARD-DIR [--json] [--repeat N] [--base IRI] --query SELECT..."
+
+-- `--base` is read in any position before `--query`; a missing IRI, a missing
+-- `--query` and a non-numeric `--repeat` are refused.
+#guard (match parseOptions {} ["--json", "--base", "http://e/d/", "--repeat", "3", "--query", "ASK", "{}"] with
+  | .ok (o, q) => o.base == some "http://e/d/" && o.json && o.repeatCount == some 3 && q == ["ASK", "{}"]
+  | .error _ => false)
+#guard (match parseOptions {} ["--query", "ASK {}"] with
+  | .ok (o, _) => o.base.isNone && !o.json
+  | .error _ => false)
+#guard (parseOptions {} ["--base"]).toOption.isNone
+#guard (parseOptions {} ["--base", "http://e/"]).toOption.isNone
+#guard (parseOptions {} ["--repeat", "x", "--query", "ASK {}"]).toOption.isNone
 
 def main (args : List String) : IO UInt32 := do
   match args with
-  | directory :: "--query" :: queryParts =>
-      if queryParts.isEmpty then IO.eprintln "l4block-id-v3-query requires a query"; return 2
-      else run directory (String.intercalate " " queryParts)
-  | directory :: "--repeat" :: countText :: "--query" :: queryParts =>
-      if queryParts.isEmpty then IO.eprintln "l4block-id-v3-query requires a query"; return 2
-      else match countText.toNat? with
-      | some count => repeatRun count directory (String.intercalate " " queryParts)
-      | none => IO.eprintln "l4block-id-v3-query --repeat requires a natural number"; return 2
-  | _ => IO.eprintln "usage: l4block-id-v3-query SHARD-DIR [--repeat N] --query SELECT..."; return 2
+  | directory :: rest =>
+      match parseOptions {} rest with
+      | .error message => IO.eprintln message; return 2
+      | .ok (o, queryParts) =>
+          if queryParts.isEmpty then IO.eprintln "l4block-id-v3-query requires a query"; return 2
+          else
+            let query := String.intercalate " " queryParts
+            match o.repeatCount with
+            | some count => (repeatRun count directory query o.base).run o.json
+            | none => (run directory query o.base).run o.json
+  | [] => IO.eprintln "usage: l4block-id-v3-query SHARD-DIR [--json] [--repeat N] [--base IRI] --query SELECT..."; return 2
 
 end Harness.IndexedBlockV3Query
 

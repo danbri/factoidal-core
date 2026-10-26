@@ -18,7 +18,12 @@ system with the Web at its heart needs its Web surface specified,
 not bolted on.
 -/
 
+import L4Factoidal.Encoding.Hex
 namespace L4Factoidal.HTTP
+
+/-- `Repr` of a byte region as its list of bytes, so the request and response
+records below can derive `Repr` with a `ByteArray` field. Local to this file. -/
+local instance : Repr ByteArray := ⟨fun b _ => repr b.toList⟩
 
 /-- A parsed request. Header names arrive LOWERCASED and values
     trimmed, so lookup is a plain comparison — the normalisation
@@ -30,7 +35,16 @@ structure Request where
   version  : String := "HTTP/1.1"
   headers  : List (String × String) := []
   body     : String := ""
+  /-- The content as bytes, when it is carried as bytes. `some b` means `b`
+  IS the content and `body` is not read; `none` means the content is the
+  UTF-8 encoding of `body`. Linked Web Storage data resources ("a document,
+  image, or structured information") need the first form, because an image
+  is not a UTF-8 string (https://github.com/danbri/factoidal/issues/889). -/
+  bytes    : Option ByteArray := none
 deriving Repr, Inhabited
+
+/-- The content of a request as bytes. -/
+def Request.content (r : Request) : ByteArray := r.bytes.getD r.body.toUTF8
 
 inductive Error where
   | malformedRequestLine
@@ -54,11 +68,7 @@ private def splitOnChar (c : Char) (s : String) : List String :=
                  else go (x :: cur) acc r
   go [] [] s.toList
 
-private def hexVal (c : Char) : Option Nat :=
-  if '0' ≤ c && c ≤ '9' then some (c.toNat - '0'.toNat)
-  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
-  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 'A'.toNat + 10)
-  else none
+private def hexVal (c : Char) : Option Nat := Encoding.Hex.digitValue c
 
 /-- Percent-decoding for `application/x-www-form-urlencoded`, where
     `+` also means space.
@@ -185,29 +195,41 @@ structure Response where
   status  : Nat
   headers : List (String × String) := []
   body    : String := ""
+  /-- The content as bytes, when it is carried as bytes: `some b` means `b`
+  IS the content and `body` is not read (see `Request.bytes`). -/
+  bytes   : Option ByteArray := none
 deriving Repr, Inhabited
 
-def Response.ok (contentType body : String) : Response :=
-  ⟨200, [("content-type", contentType)], body⟩
+/-- The content of a response as bytes. -/
+def Response.content (r : Response) : ByteArray := r.bytes.getD r.body.toUTF8
 
-def Response.noContent : Response := ⟨204, [], ""⟩
+/-- A response whose content is the text `t`: `body := t` and no byte form,
+so a layer that rewrites the content of a response it received does not
+leave the old bytes in force. -/
+def Response.withText (r : Response) (t : String) : Response :=
+  { r with body := t, bytes := none }
+
+def Response.ok (contentType body : String) : Response :=
+  ⟨200, [("content-type", contentType)], body, none⟩
+
+def Response.noContent : Response := ⟨204, [], "", none⟩
 
 def Response.badRequest (msg : String) : Response :=
-  ⟨400, [("content-type", "text/plain")], msg⟩
+  ⟨400, [("content-type", "text/plain")], msg, none⟩
 
 def Response.notFound : Response :=
-  ⟨404, [("content-type", "text/plain")], "Not Found"⟩
+  ⟨404, [("content-type", "text/plain")], "Not Found", none⟩
 
 /-- 405 MUST carry `Allow` (RFC 7231 §6.5.5) — a bare 405 is a
     protocol violation, not merely unhelpful. -/
 def Response.methodNotAllowed (allowed : List String) : Response :=
-  ⟨405, [("allow", String.intercalate ", " allowed)], ""⟩
+  ⟨405, [("allow", String.intercalate ", " allowed)], "", none⟩
 
 def Response.notAcceptable : Response :=
-  ⟨406, [("content-type", "text/plain")], "Not Acceptable"⟩
+  ⟨406, [("content-type", "text/plain")], "Not Acceptable", none⟩
 
 def Response.unsupportedMediaType : Response :=
-  ⟨415, [("content-type", "text/plain")], "Unsupported Media Type"⟩
+  ⟨415, [("content-type", "text/plain")], "Unsupported Media Type", none⟩
 
 /-- The methods each route accepts. -/
 def allowedMethods : Route → List String

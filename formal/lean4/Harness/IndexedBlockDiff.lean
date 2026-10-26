@@ -10,6 +10,8 @@ import L4Factoidal.Storage.IndexedBlockWireV1
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
+import Wasm.Ops.Clock
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.IndexedBlockDiff
 
@@ -20,19 +22,20 @@ open L4Factoidal.Storage.IndexedBlock
 open L4Factoidal.Storage.IndexedBlockWireV1
 open L4Factoidal.SPARQL.StoreDataset
 
-private def listDataset (graph : Graph) : DatasetBackend :=
-  { default := .list graph, named := [] }
+private def listDataset (graph : Graph) : L4Factoidal.Dataflow.LawfulDataset :=
+  L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.ofGraph graph)
 
-private def indexedDataset (block : Block) : DatasetBackend :=
-  { default := .hdt (readOps block), named := [] }
+private def indexedDataset (block : Block) : L4Factoidal.Dataflow.LawfulDataset :=
+  L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.hdt (readOps block))
 
 private def check (path queryText : String) (graph : Graph) : IO UInt32 := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   match parseSparql queryText with
   | .error e =>
       IO.eprintln s!"l4block-id-diff query parse error at {e.pos}: {e.msg}"
       return 1
   | .ok q =>
-      let expected := runSelectQueryBackendDataset emptyEnv q (listDataset graph)
+      let expected := (listDataset graph).runSelect clockEnv q
       let sourceBlock := fromGraph graph
       match encode? sourceBlock with
       | none =>
@@ -44,7 +47,7 @@ private def check (path queryText : String) (graph : Graph) : IO UInt32 := do
               IO.eprintln "l4block-id-diff failed: V1 did not decode its own bytes"
               return 1
           | some decoded =>
-              let actual := runSelectQueryBackendDataset emptyEnv q (indexedDataset decoded)
+              let actual := (indexedDataset decoded).runSelect clockEnv q
               if expected == actual then
                 IO.println s!"l4block-id-diff pass path={path} triples={graph.length} bytes={bytes.size} rows={(actual.getD []).length}"
                 IO.println s!"l4block-id-diff sse={q.toSse}"

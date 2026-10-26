@@ -1,0 +1,4 @@
+# Stage 1b: GROUP BY an object column (groups first seen in different block
+# ranges; the order of the groups is the order of first appearance).
+PREFIX ex: <http://ex.org/>
+SELECT ?o (COUNT(*) AS ?c) WHERE { ?s ex:knows ?o } GROUP BY ?o

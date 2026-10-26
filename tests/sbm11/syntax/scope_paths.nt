@@ -1,0 +1,15 @@
+# The same triples as scope_paths.rdf.
+<http://example.org/dir/s1> <http://example.org/literal> "a"@fr .
+<http://example.org/dir/s1> <http://example.org/afterLiteral> "b"@en .
+<http://example.org/dir/s1> <http://example.org/typed> "1"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://example.org/dir/s1> <http://example.org/afterTyped> "c"@en .
+<http://example.org/dir/s1> <http://example.org/empty> ""@fr .
+<http://example.org/dir/s1> <http://example.org/afterEmpty> "d"@en .
+<http://example.org/dir/s1> <http://example.org/cleared> "e" .
+<http://example.org/dir/s1> <http://example.org/afterCleared> "f"@en .
+<http://example.org/dir/s1> <http://example.org/resource> <http://other.example/x/y> .
+<http://example.org/dir/s1> <http://example.org/afterResource> <http://example.org/dir/z> .
+<http://example.org/dir/s1> <http://example.org/nested> <http://other.example/n/m> .
+<http://other.example/n/m> <http://example.org/inner> "g"@it .
+<http://other.example/n/m> <http://example.org/afterInner> "h"@de .
+<http://example.org/dir/s1> <http://example.org/afterNested> "i"@en .

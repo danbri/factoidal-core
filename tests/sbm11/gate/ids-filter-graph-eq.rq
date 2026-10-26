@@ -1,0 +1,6 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# A FILTER over the variable of a GRAPH group, beside the group: `?g` is bound
+# in every row of the group (Graph(?g, P) binds it), so the FILTER runs on ids
+# (term identity on the graph column).
+SELECT ?s ?g WHERE { GRAPH ?g { ?s ex:knows ?o } FILTER(?g = ex:g1) }

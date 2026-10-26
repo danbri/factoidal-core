@@ -1,0 +1,2 @@
+# A graph name that the dataset does not have: no solution.
+ASK { GRAPH <http://example.org/g9> { } }

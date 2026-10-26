@@ -72,7 +72,7 @@ private def exP   : WfIri := ⟨"http://example.org/p", by decide⟩
 private def batch : DeltaBatch := {
   seq := 7, epoch := 3,
   ops := [.add ⟨.iri exIri, exP, .literal (Literal.string "hello")⟩ none,
-          .remove ⟨.iri exIri, exP, .iri exIri⟩ (some "http://example.org/g")] }
+          .remove ⟨.iri exIri, exP, .iri exIri⟩ (some (.iri "http://example.org/g"))] }
 
 -- A compacted base through epoch 3 replays only the later request.
 #guard (filterBatchesSinceEpoch (some 3) [batch, { batch with seq := 8, epoch := 4 }]).map (·.seq) == [8]
@@ -95,5 +95,33 @@ private def batch : DeltaBatch := {
   (.add ⟨.iri exIri, exP, .tripleTerm (.iri exIri) exP (.iri exIri)⟩ none)).isNone
 #guard parseLog (serializeLog [batch] ++ (serializeDeltaBatch { batch with seq := 8 }).take 11)
   == some ([batch], (serializeDeltaBatch { batch with seq := 8 }).take 11)
+
+#guard frameEntry pay ==
+  [68, 76, 69, 49, 1, 0, 0, 0, 3, 0, 0, 0, 10, 20, 30, 60, 0, 0, 0]
+#guard frameEntry? pay == some (frameEntry pay)
+#guard serializeFramedDeltaEntry? (.clear none) == some (serializeFramedDeltaEntry (.clear none))
+#guard parseEntry (frameEntry pay ++ [0xAA]) == some (pay, [0xAA])
+#guard replay (frameEntry [1] ++ frameEntry [2, 3, 4, 5]) == ([[1], [2, 3, 4, 5]], true)
+#guard parseEpoch (frameEpoch ⟨UInt32.size + 9⟩) == some ⟨UInt32.size + 9⟩
+#guard parseEpoch (frameEpoch ⟨7⟩ ++ [0xAA]) == none
+#guard frameEpoch ⟨UInt64.size⟩ == []
+
+private def directed : Term := .literal (Literal.dirLangString "hello" "en" .ltr)
+
+#guard (serializeTerm? directed).isNone
+#guard (serializeFramedDeltaEntry? (.add ⟨.iri exIri, exP, directed⟩ none)).isNone
+#guard (serializeDeltaEntryPayload? (.add ⟨.iri exIri, exP, directed⟩ none)).isNone
+#guard (serializeDeltaBatch?
+  { batch with ops := [.add ⟨.iri exIri, exP, directed⟩ none] }).isNone
+#guard (serializeLog?
+  [batch, { batch with seq := 8, ops := [.add ⟨.iri exIri, exP, directed⟩ none] }]).isNone
+
+#print axioms readU32LE_writeU32LE_append
+#print axioms crc32cAppendArray_eq
+#print axioms readU64LE_writeU64LE_append
+#print axioms parseEntry_frameEntry_append
+#print axioms parseEntry_frameEntry?_append
+#print axioms parseEpoch_frameEpoch
+#print axioms splitBatchesSinceEpoch?_sound
 
 end L4Factoidal.Storage

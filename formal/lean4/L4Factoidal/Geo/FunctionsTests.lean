@@ -6,6 +6,7 @@ import L4Factoidal.Geo.Functions
 
 namespace L4Factoidal.Geo
 open L4Factoidal.SPARQL
+open L4Factoidal.RDF
 
 /-- Build a `geo:wktLiteral` argument the way the evaluator presents
     one. The datatype IRI is well-formed by `rfl`, the Lean
@@ -95,5 +96,95 @@ private def sq : String := "POLYGON((0 0,4 0,4 4,0 4,0 0))"
            wktLit sq]).isNone
 -- Unparseable lexical form is a type error too.
 #guard (extFns (geofNs ++ "sfWithin") [wktLit "POINT(oops)", wktLit sq]).isNone
+
+/-! ## `geof:distance` and `geof:envelope` through `extFns`
+
+The expected lexical forms are the F\* engine's answers on the same
+literals (`tests/parity/geo-fulltext/run-parity.py`; London–Manchester is
+post 21's value). -/
+
+/-- The lexical form of a term result, for comparing against the F\* text. -/
+private def lexOf : Option EvalResult → Option String
+  | some (.term (.literal l)) => some l.val.lexicalForm
+  | _ => none
+
+private def dtOf : Option EvalResult → Option String
+  | some (.term (.literal l)) => some l.val.datatype.val
+  | _ => none
+
+private def iriArg (s : String) : EvalResult :=
+  if h : isIri s then .term (.iri ⟨s, h⟩) else .error
+
+private def uomIri (s : String) : EvalResult :=
+  iriArg ("http://www.opengis.net/def/uom/OGC/1.0/" ++ s)
+
+private def anyUri (s : String) : EvalResult :=
+  .term (.literal (mkTypedLiteral s ⟨"http://www.w3.org/2001/XMLSchema#anyURI", rfl⟩))
+
+private def dist (args : List EvalResult) : Option EvalResult := extFns (geofNs ++ "distance") args
+private def env (args : List EvalResult) : Option EvalResult := extFns (geofNs ++ "envelope") args
+
+private def london : EvalResult := wktLit "POINT(-0.1278 51.5074)"
+private def manchester : EvalResult := wktLit "POINT(-2.2426 53.4808)"
+private def bng (s : String) : EvalResult :=
+  wktLit ("<http://www.opengis.net/def/crs/EPSG/0/27700> " ++ s)
+
+-- Two arguments: the F\* answers, typed xsd:double.
+#guard lexOf (dist [london, manchester]) == some "2.89252253232364639"
+#guard dtOf (dist [london, manchester]) == some "http://www.w3.org/2001/XMLSchema#double"
+#guard lexOf (dist [london, london]) == some "0.00000000000000000"
+#guard lexOf (dist [wktLit "POINT(0 0)", wktLit "POINT(3 4)"]) == some "5.000000000"
+-- A CRS84 literal with the CRS IRI written out is the same reference system.
+#guard lexOf (dist [wktLit "<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POINT(0 0)",
+                    wktLit "POINT(3 4)"]) == some "5.000000000"
+
+-- Refused: a non-point geometry, two different reference systems, a
+-- non-WKT argument, an empty point, and the wrong number of arguments.
+#guard (dist [wktLit "POINT(0 0)", wktLit sq]).isNone
+#guard (dist [wktLit "POINT(0 0)", bng "POINT(3 4)"]).isNone
+#guard (dist [.num 1, wktLit "POINT(3 4)"]).isNone
+#guard (dist [wktLit "POINT EMPTY", wktLit "POINT(3 4)"]).isNone
+#guard (dist [wktLit "POINT(0 0)"]).isNone
+#guard (dist [wktLit "POINT(0 0)", wktLit "POINT(3 4)", uomIri "degree", uomIri "degree"]).isNone
+
+-- Three arguments (GeoSPARQL 1.1): the answer is given only in the unit of
+-- geom1's reference system. CRS84 is in degrees.
+#guard lexOf (dist [wktLit "POINT(0 0)", wktLit "POINT(3 4)", uomIri "degree"])
+         == some "5.000000000"
+#guard lexOf (dist [wktLit "POINT(0 0)", wktLit "POINT(3 4)",
+                    anyUri "http://www.opengis.net/def/uom/OGC/1.0/degree"]) == some "5.000000000"
+#guard lexOf (dist [wktLit "POINT(0 0)", wktLit "POINT(3 4)",
+                    iriArg "http://www.opengis.net/def/uom/EPSG/0/9102"]) == some "5.000000000"
+-- EPSG:27700 is in metres.
+#guard lexOf (dist [bng "POINT(530000 180000)", bng "POINT(530003 180004)", uomIri "metre"])
+         == some "5.000000000"
+-- Never a number in a unit other than the one asked for: metres between two
+-- CRS84 points (that is a geodesic distance, not done:
+-- https://github.com/danbri/factoidal/issues/772), degrees between two
+-- EPSG:27700 points, an unknown unit, a reference system whose unit is
+-- unknown here, and a unit that is not an IRI.
+#guard (dist [wktLit "POINT(0 0)", wktLit "POINT(3 4)", uomIri "metre"]).isNone
+#guard (dist [bng "POINT(0 0)", bng "POINT(3 4)", uomIri "degree"]).isNone
+#guard (dist [wktLit "POINT(0 0)", wktLit "POINT(3 4)", uomIri "radian"]).isNone
+#guard (dist [wktLit "<http://example.org/crs/unknown> POINT(0 0)",
+              wktLit "<http://example.org/crs/unknown> POINT(3 4)", uomIri "metre"]).isNone
+#guard (dist [wktLit "POINT(0 0)", wktLit "POINT(3 4)", .term (.literal (Literal.string "degree"))]).isNone
+
+-- geof:envelope: the bounding box as a closed rectangular POLYGON, typed
+-- geo:wktLiteral, in the argument's reference system.
+#guard lexOf (env [wktLit "LINESTRING(0 0, 3 4, -1 2)"])
+         == some "POLYGON((-1 0, 3 0, 3 4, -1 4, -1 0))"
+#guard dtOf (env [wktLit "LINESTRING(0 0, 3 4, -1 2)"]) == some wktLiteralIri
+#guard lexOf (env [london])
+         == some "POLYGON((-0.1278 51.5074, -0.1278 51.5074, -0.1278 51.5074, -0.1278 51.5074, -0.1278 51.5074))"
+#guard lexOf (env [bng "POINT(1 2)"])
+         == some "<http://www.opengis.net/def/crs/EPSG/0/27700> POLYGON((1 2, 1 2, 1 2, 1 2, 1 2))"
+-- The result is itself a WKT argument: it feeds another geof: call.
+#guard (env [wktLit "MULTIPOINT((1 1), (5 -2))"]).bind (fun e =>
+         extFns (geofNs ++ "sfWithin") [wktLit "POINT(2 0)", e]) == some (.bool true)
+-- Refused: an empty geometry has no bounding box; a non-WKT argument; two arguments.
+#guard (env [wktLit "POINT EMPTY"]).isNone
+#guard (env [.num 1]).isNone
+#guard (env [london, london]).isNone
 
 end L4Factoidal.Geo

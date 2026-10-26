@@ -1,0 +1,17 @@
+# Dataset D2: dataset D1 and two named graphs.
+<http://example.org/s1> <http://example.org/name> "Alice" .
+<http://example.org/s1> <http://example.org/knows> <http://example.org/s2> .
+<http://example.org/s1> <http://example.org/label> "hello"@en .
+<http://example.org/s1> <http://example.org/label> "bonjour"@fr .
+<http://example.org/s1> <http://example.org/label> "Hallo"@de-DE .
+<http://example.org/s1> <http://example.org/age> "42"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://example.org/s2> <http://example.org/age> "007"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://example.org/s2> <http://example.org/born> "1990-05-17"^^<http://www.w3.org/2001/XMLSchema#date> .
+<http://example.org/s2> <http://example.org/custom> "abc"^^<http://example.org/datatype/Code> .
+<http://example.org/s2> <http://example.org/typedString> "typed text"^^<http://www.w3.org/2001/XMLSchema#string> .
+<http://example.org/s3> <http://example.org/name> "Carol \"C\" O'Neil\n2nd line" .
+<http://example.org/s3> <http://example.org/note> "unicode: café 中文" .
+<http://example.org/s1> <http://example.org/name> "Alice" <http://example.org/g1> .
+<http://example.org/s4> <http://example.org/p> <http://example.org/o4> <http://example.org/g1> .
+<http://example.org/s4> <http://example.org/p> "in g2"@en <http://example.org/g2> .
+<http://example.org/s5> <http://example.org/q> "5"^^<http://www.w3.org/2001/XMLSchema#integer> <http://example.org/g2> .

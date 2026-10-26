@@ -375,6 +375,25 @@ theorem rangeIntersect_nonres {d1 d2 d3 : WfIri}
   · subst hmem; decide
   · rcases hmem with rfl | rfl <;> decide
 
+/-- A one-occurrence replacement by a non-reserved IRI keeps the IRI
+invariant. -/
+theorem ttRep_termIris {x y : WfIri} {o o' : Term} (hr : TtRep x y o o')
+    (hy : rlReservedIri y = false) (ho : termIrisNonReserved o = true) :
+    termIrisNonReserved o' = true := by
+  induction hr with
+  | subj =>
+      simp only [termIrisNonReserved, subjIrisNonReserved, Bool.and_eq_true] at ho ⊢
+      exact ⟨⟨by simp [hy], ho.1.2⟩, ho.2⟩
+  | pred =>
+      simp only [termIrisNonReserved, Bool.and_eq_true] at ho ⊢
+      exact ⟨⟨ho.1.1, by simp [hy]⟩, ho.2⟩
+  | obj =>
+      simp only [termIrisNonReserved, Bool.and_eq_true] at ho ⊢
+      exact ⟨ho.1, by simp [hy]⟩
+  | deep _ ih =>
+      simp only [termIrisNonReserved, Bool.and_eq_true] at ho ⊢
+      exact ⟨ho.1, ih ho.2⟩
+
 /-- **`Derives` preserves the IRI invariant**: from a reserved-free
 graph, every derivable triple mentions only non-reserved IRIs (its
 blank nodes may be minted witnesses — that is the point of the
@@ -397,6 +416,9 @@ theorem derives_irisNonReserved {g : Graph} (hg : RlReservedFree g)
   | eqRepP _ _ ih1 ih2 =>
       exact tin_mk (tin_s ih2) (irw_of_termIri (tin_o ih1)) (tin_o ih2)
   | eqRepO _ _ ih1 ih2 => exact tin_mk (tin_s ih2) (tin_p ih2) (tin_o ih1)
+  | eqRepTt _ _ hr ih1 ih2 =>
+      exact tin_mk (tin_s ih2) (tin_p ih2)
+        (ttRep_termIris hr (irw_of_termIri (tin_o ih1)) (tin_o ih2))
   | prpDom _ _ ih1 ih2 => exact tin_mk (tin_s ih2) (by decide) (tin_o ih1)
   | prpRng _ _ ih1 ih2 =>
       exact tin_mk (sin_of_toTerm (tin_o ih2)) (by decide) (tin_o ih1)
@@ -640,6 +662,25 @@ def RlCondEqRepP : Prop :=
 def RlCondEqRepO : Prop :=
   ∀ (p : WfIri) (s o o' : i.idom), i.iext (i.iIri owlSameAs) o o' →
     i.iext (i.iIri p) s o → i.iext (i.iIri p) s o'
+
+/-- `SemTtRep i x y o o'` — the denotation counterpart of `TtRep`: `o'`
+is `o` with one argument `x` of a (possibly nested) triple-term
+denotation `i.iTt` replaced by `y`. -/
+inductive SemTtRep (x y : i.idom) : i.idom → i.idom → Prop where
+  | subj (b c : i.idom) : SemTtRep x y (i.iTt x b c) (i.iTt y b c)
+  | pred (a c : i.idom) : SemTtRep x y (i.iTt a x c) (i.iTt a y c)
+  | obj (a b : i.idom) : SemTtRep x y (i.iTt a b x) (i.iTt a b y)
+  | deep (a b : i.idom) {c c' : i.idom} (h : SemTtRep x y c c') :
+      SemTtRep x y (i.iTt a b c) (i.iTt a b c')
+
+/-- **eq-rep-tt** `[ext]` — `owl:sameAs` substitutes inside a triple
+term. RDF 1.2 Semantics gives a triple term a denotation that is a
+function of its components' denotations; in an interpretation where
+`owl:sameAs` is the identity (OWL 2 RDF-Based Semantics §5.10) this
+condition holds because `SemTtRep x x o o'` forces `o' = o`. -/
+def RlCondEqRepTt : Prop :=
+  ∀ (p : WfIri) (s x y o o' : i.idom), i.iext (i.iIri owlSameAs) x y →
+    SemTtRep i x y o o' → i.iext (i.iIri p) s o → i.iext (i.iIri p) s o'
 
 /-- **prp-dom** — the `WfIri`-instance family of
 `OWL/Semantics.lean`'s `CondDomain`. -/
@@ -1299,6 +1340,7 @@ structure RlConditions (i : Interp) : Prop where
   eqRepS : RlCondEqRepS i
   eqRepP : RlCondEqRepP i
   eqRepO : RlCondEqRepO i
+  eqRepTt : RlCondEqRepTt i
   prpDom : RlCondPrpDom i
   prpRng : RlCondPrpRng i
   prpFp : RlCondPrpFp i
@@ -1813,6 +1855,17 @@ theorem holds_rlExtend_of_nonReserved {i : Interp}
 
 /-! ## Truth preservation — the missing model-theoretic layer -/
 
+/-- The syntactic replacement inside a triple term denotes the semantic
+one. -/
+theorem semTtRep_of_ttRep {i : Interp} {a : BnodeAssignment i.idom}
+    {x y : WfIri} {o o' : Term} (h : TtRep x y o o') :
+    SemTtRep i (i.iIri x) (i.iIri y) (denotTerm i a o) (denotTerm i a o') := by
+  induction h with
+  | subj => exact SemTtRep.subj _ _
+  | pred => exact SemTtRep.pred _ _
+  | obj => exact SemTtRep.obj _ _
+  | deep _ ih => exact SemTtRep.deep _ _ ih
+
 /-- **Truth preservation for the OWL 2 RL/RDF rule relation** (the
 port of the F* `OWL.Semantics.Soundness` layer this tree lacked —
 `RLTheorems.lean` header, "what is NOT proved" item 1): in every
@@ -1851,6 +1904,9 @@ theorem rl_derives_holds {i : Interp} (hc : RlConditions i) {g : Graph}
   | eqRepO _ _ ih1 ih2 =>
       simp only [TripleHolds, denot_toTerm] at ih1 ih2 ⊢
       exact hc.eqRepO _ _ _ _ ih1 ih2
+  | eqRepTt _ _ hr ih1 ih2 =>
+      simp only [TripleHolds] at ih1 ih2 ⊢
+      exact hc.eqRepTt _ _ _ _ _ _ ih1 (semTtRep_of_ttRep hr) ih2
   | prpDom _ _ ih1 ih2 =>
       simp only [TripleHolds] at ih1 ih2 ⊢
       exact hc.prpDom _ _ _ _ ih1 ih2

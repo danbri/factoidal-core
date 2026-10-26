@@ -1,0 +1,10 @@
+WARNING manifest-json#test153 http://www.w3.org/2013/csvw/tests/test153.csv row 0 column string1: malformed regex format ignored (delimiter, trailing escape or leading quantifier)
+
+csv2json POSITIVE: 212 pass, 0 fail, 0 skip, 0 unsupported (out of 212 attempted)
+csv2json NEGATIVE (validator must reject): 58 pass, 0 fail, 0 skip (out of 58)
+csv2json TOTAL: 270 pass, 0 fail, 0 skip, 0 unsupported (out of 270 manifest entries)
+VALIDATOR CROSS-CHECK: 0 positive tests whose metadata the validator wrongly rejects
+
+Comparison is STRUCTURAL: object members are a set, array items
+a sequence. csv2json fixes the order of `row` and `describes`,
+so ignoring array order would pass output that lost it.

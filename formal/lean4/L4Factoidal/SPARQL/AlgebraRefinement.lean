@@ -33,19 +33,22 @@ partial ports and the coverage count.
 
 The engine's `Binding.compatible` decides agreement with `Term.eqb`,
 which bottoms out in `Literal.eqb`. That test folds language-tag case
-and compares two `rdf:XMLLiteral` lexical forms by exclusive canonical
-XML. The specification's `Compatible` demands `t1 = t2`.
+(until 2026-10-23 it also compared two `rdf:XMLLiteral` lexical forms by
+exclusive canonical XML, https://github.com/danbri/factoidal/issues/963).
+The specification's `Compatible` demands `t1 = t2`.
 
-So the engine's test is strictly COARSER, and the two directions are
-not alike:
+Until 2026-10-24 the engine's test was strictly COARSER: a term model
+that held `"x"@en` and `"x"@EN` as two values made the engine accept a
+pair `Compatible` rejects, and a witness theorem showed the hypothesis of
+the converse could not be dropped. RDF 1.2 Concepts §3.4 makes the two
+spellings ONE RDF term, and `RDF.literalWf` now requires the lower-case
+spelling, so every `Term` is canonical and `Term.eqb` is structural
+equality (`Term.eqb_iff_eq`;
+https://github.com/danbri/factoidal/issues/1001). Now:
 
-* `compatible_of_Compatible` is UNCONDITIONAL — a coarser test accepts
-  everything the specification demands.
-* the converse needs `BindingLitExact`, which says every literal the
-  two mappings bind is compared exactly.
-* `compatible_not_Compatible_witness` is the machine-checked witness
-  that the hypothesis cannot be dropped: `"x"@en` and `"x"@EN` are
-  accepted by the engine and are different RDF terms.
+* `compatible_of_Compatible` holds on a mapping with no repeated
+  variable (the engine tests every pair, `sval` sees only the first);
+* `Compatible_of_compatible`, the converse, holds UNCONDITIONALLY.
 
 This is the same shape as finding SR-2 in the F* source, reached the
 same way, and the same shape as finding SE-1 on the simple-entailment
@@ -239,67 +242,51 @@ theorem compatible_of_Compatible : ∀ {mu1 mu2 : SMap},
           have : t = t2 := h v t t2 hvt (by rw [← binding_lookup_eq_sval v mu2]; exact h2)
           rw [this]; exact Term.eqb_refl t2
 
-/-- Every literal these two mappings bind is one `Literal.eqb` compares
-exactly — the fragment on which the engine's test IS the
-specification's relation. -/
-def BindingLitExact (mu1 mu2 : SMap) : Prop :=
-  ∀ v l1 l2, sval v mu1 = some (.literal l1) → sval v mu2 = some (.literal l2) →
-    Literal.eqb l1.val l2.val = true → l1 = l2
+/-- **The converse, unconditionally.** The engine's test accepts only
+mappings §18.3 calls compatible: `Term.eqb` is structural equality on
+every term (`Term.eqb_iff_eq`), and the first binding of each variable,
+the one `sval` sees, is among the pairs the engine tests. -/
+theorem Compatible_of_compatible : ∀ {mu1 mu2 : SMap},
+    Binding.compatible mu1 mu2 = true → Compatible mu1 mu2
+  | [], _, _ => by
+      intro v t1 t2 h1
+      simp [sval] at h1
+  | (w, t) :: rest, mu2, h => by
+      simp only [Binding.compatible, Bool.and_eq_true] at h
+      obtain ⟨hh, hr⟩ := h
+      intro v t1 t2 h1 h2
+      by_cases hwv : v = w
+      · subst hwv
+        simp only [sval, List.lookup, beq_self_eq_true, Option.some.injEq] at h1
+        subst h1
+        rw [← binding_lookup_eq_sval] at h2
+        rw [h2] at hh
+        exact Term.eq_of_eqb hh
+      · have hb : (v == w) = false := by simp [hwv]
+        have h1' : sval v rest = some t1 := by
+          simp only [sval, List.lookup, hb] at h1
+          exact h1
+        exact Compatible_of_compatible hr v t1 t2 h1' h2
 
-/-! ## 4. The witness: the hypothesis cannot be dropped
-
-Any pair of literals the engine's test conflates makes the converse of
-`compatible_of_Compatible` false. `"x"@en` and `"x"@EN` are such a
-pair, because `Literal.eqb` folds language-tag case.
-
-### Why the pair is a `#guard` and not a `decide`
-
-The theorem below is stated over ABSTRACT literals with the conflation
-as a hypothesis, and the concrete pair is checked by `#guard` rather
-than proved in the kernel. That is forced, not preferred:
-`langTagEq` calls `String.toLower`, which is `String.mapAux`, and the
-kernel does not reduce it — `decide` gets stuck at
-`(String.mapAux Char.toLower "en" "en".startPos).1.1.toList`.
-
-The `#guard`s are what stop the theorem being vacuous. They run the
-compiled evaluator on every `lake build`, so a hypothesis no pair can
-satisfy would fail the build.
-
-The abstract form is also the stronger statement: it holds of EVERY
-pair the engine conflates, not only of this one. -/
+/-- On a mapping with no repeated variable the engine's test decides
+§18.3's relation. -/
+theorem compatible_iff_Compatible {mu1 mu2 : SMap} (hwf : noRepeats (sdom mu1) = true) :
+    Binding.compatible mu1 mu2 = true ↔ Compatible mu1 mu2 :=
+  ⟨Compatible_of_compatible, compatible_of_Compatible hwf⟩
 
 private def vX : VarName := "x"
 private def litEn : WfLiteral := Literal.langString "x" "en"
 private def litEN : WfLiteral := Literal.langString "x" "EN"
-
-/-- For ANY two literals the engine's term test conflates and that are
-not equal, the engine calls the two singleton mappings compatible and
-the specification does not. So `compatible_of_Compatible` has no
-converse, and no statement that the engine DECIDES `Compatible` is
-true as written. -/
-theorem compatible_not_Compatible_of_coarse {l1 l2 : WfLiteral}
-    (heq : Term.eqb (.literal l1) (.literal l2) = true) (hne : l1 ≠ l2) :
-    Binding.compatible [(vX, .literal l1)] [(vX, .literal l2)] = true ∧
-    ¬ Compatible [(vX, .literal l1)] [(vX, .literal l2)] := by
-  constructor
-  · simp only [Binding.compatible, Binding.lookup, if_true]
-    simpa using heq
-  · intro h
-    have := h vX (.literal l1) (.literal l2) (by simp [sval, List.lookup])
-                                             (by simp [sval, List.lookup])
-    exact hne (Term.literal.inj this)
 
 /-! ## Build-time checks -/
 
 #guard union [] [] == ([] : SolutionSeq)
 #guard (union [[(vX, Term.literal litEn)]] []).length == 1
 
-/-! The satisfiability evidence for `compatible_not_Compatible_of_coarse`.
-The engine's term test conflates the pair; the two literals are not
-equal. Both run on the compiled evaluator, which does what the kernel
-will not. -/
+/-! `"x"@en` and `"x"@EN` are one RDF term with one representation
+(https://github.com/danbri/factoidal/issues/1001). -/
 #guard Term.eqb (Term.literal litEn) (Term.literal litEN) == true
-#guard litEn != litEN
+#guard litEn.val == litEN.val
 
 /-! ## Axiom audit -/
 
@@ -308,6 +295,7 @@ will not. -/
 #print axioms filter_card
 #print axioms filter_set
 #print axioms compatible_of_Compatible
-#print axioms compatible_not_Compatible_of_coarse
+#print axioms Compatible_of_compatible
+#print axioms compatible_iff_Compatible
 
 end L4Factoidal.SPARQL.AlgebraRefinement

@@ -16,7 +16,7 @@ scaled-decimal numeric model (`parse_to_scaled`,
 
 WHAT THIS FILE IMPLEMENTS (SPARQL 1.1 Query, W3C Rec. 21 March 2013):
   * §17.2.2 effective boolean value — `ebv`, the operand-mapping table
-    transcribed row by row;
+    with the SPARQL 1.2 malformed-lexical error policy (see `ebv`);
   * §17.3 the error-tolerant / error-preserving `&&`, `||`, `!` tables;
   * §17.4.1 functional forms: BOUND, IF, COALESCE, IN, NOT IN, `=`,
     `!=`, `<`, `>`, `<=`, `>=`, sameTerm;
@@ -105,6 +105,7 @@ Readability contract (as elsewhere in this port): every definition
 cites the spec section it implements, and names track the spec's
 vocabulary rather than implementation jargon.
 -/
+import L4Factoidal.RDF.TermIdentity
 import L4Factoidal.SPARQL.Algebra
 import L4Factoidal.Fn.String
 import L4Factoidal.Syntax.IriResolve
@@ -112,8 +113,15 @@ import L4Factoidal.Crypto.SHA2
 import L4Factoidal.Crypto.MD5
 import L4Factoidal.Crypto.SHA1
 import L4Factoidal.Regex.XPath
-import L4Factoidal.XSD.IEEE754
 import L4Factoidal.XSD.Datatypes
+import L4Factoidal.Regex.Profiles
+import L4Factoidal.XSD.Lexical
+import L4Factoidal.Fn.Comparison
+import L4Factoidal.Fn.Numeric
+import L4Factoidal.Fn.Cast
+import L4Factoidal.Fn.Arithmetic
+import L4Factoidal.Fn.NumericUnary
+import L4Factoidal.Fn.String
 
 namespace L4Factoidal.SPARQL
 
@@ -128,7 +136,8 @@ def xsdFloat : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#float", rfl⟩
 /-- `xsd:dateTime` — the operand type of the §17.4.5 accessors. -/
 def xsdDateTime : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#dateTime", rfl⟩
 
-/-- `xsd:date` — an implementation extension to the SPARQL operator table. -/
+/-- `xsd:date` — compared by value under `=` (the `XsdDateOperations`
+extension of the W3C SPARQL tests). -/
 def xsdDate : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#date", rfl⟩
 
 /-- `xsd:dayTimeDuration` — the result type of §17.4.5.7 TIMEZONE. -/
@@ -143,24 +152,58 @@ UUID(), STRUUID() and BNODE() on (the parser maps those keywords to
 `functionCall` with these IRIs). -/
 def fnNamespace : String := "http://www.w3.org/2005/xpath-functions#"
 
-/-- The XML Schema datatypes derived from `xsd:integer` that SPARQL 1.0
-§11.3 treats as valid numeric operands through subtype substitution. -/
-def xsdIntegerDerivedDatatypeIris : List String :=
-  [xsdNamespace ++ "nonPositiveInteger", xsdNamespace ++ "negativeInteger",
-   xsdNamespace ++ "long", xsdNamespace ++ "int", xsdNamespace ++ "short",
-   xsdNamespace ++ "byte", xsdNamespace ++ "nonNegativeInteger",
-   xsdNamespace ++ "unsignedLong", xsdNamespace ++ "unsignedInt",
-   xsdNamespace ++ "unsignedShort", xsdNamespace ++ "unsignedByte",
-   xsdNamespace ++ "positiveInteger"]
+/-- SPARQL §17.1 includes integer-derived types; lexical validity is separate. -/
+abbrev isNumericDatatype := Fn.Numeric.isDatatype
 
-/-- `xsd:integer` and every built-in datatype derived from it. -/
-def isIntegerDatatype (dt : WfIri) : Bool :=
-  dt == xsdInteger || xsdIntegerDerivedDatatypeIris.contains dt.val
+/-! ### The types derived from `xsd:integer`
 
-/-- SPARQL §17.1 / SPARQL 1.0 §11.3 numeric operand types, including
-the integer-derived types admitted by subtype substitution. -/
-def isNumericDatatype (dt : WfIri) : Bool :=
-  isIntegerDatatype dt || dt == xsdDecimal || dt == xsdDouble || dt == xsdFloat
+SPARQL 1.1 §17.1 counts as numeric the "types derived from xsd:integer
+and xsd:decimal". XSD 1.1 Part 2 §3.4 has twelve built-in types derived
+from `xsd:integer`, and none derived from `xsd:decimal` other than
+`xsd:integer` itself.
+
+A value of a derived type is kept as its TERM (`EvalResult.term`), so
+DATATYPE, STR, sameTerm and an assignment see the literal as written.
+Only the numeric operators read its value, through `numericView`. A
+literal whose lexical form is not in the type's lexical space, or whose
+value is outside the type's bounds, is ill-typed and has no value: it
+stays a term, so a relational operator or arithmetic on it is a type
+error. The lexical form is read without whitespace processing (RDF 1.1
+Semantics §7, the rule `RDF/Datatypes.lean` applies), so
+`" 72"^^xsd:int` is ill-typed.
+https://github.com/danbri/factoidal/issues/782 -/
+
+/-- XSD 1.1 Part 2 §3.4.14-§3.4.26: the built-in type a datatype IRI
+names, when that type is derived from `xsd:integer`. A direct match on
+the IRI: every relational operator on a literal asks this, and
+`XSD.builtinOfIri?` searches a list. `NumericDerivedTests` checks this
+table against `XSD.derivedFrom` for every built-in. -/
+def integerDerivedBuiltinOfIri? : String → Option XSD.Builtin
+  | "http://www.w3.org/2001/XMLSchema#long" => some .long
+  | "http://www.w3.org/2001/XMLSchema#int" => some .int
+  | "http://www.w3.org/2001/XMLSchema#short" => some .short
+  | "http://www.w3.org/2001/XMLSchema#byte" => some .byte
+  | "http://www.w3.org/2001/XMLSchema#nonNegativeInteger" => some .nonNegativeInteger
+  | "http://www.w3.org/2001/XMLSchema#positiveInteger" => some .positiveInteger
+  | "http://www.w3.org/2001/XMLSchema#nonPositiveInteger" => some .nonPositiveInteger
+  | "http://www.w3.org/2001/XMLSchema#negativeInteger" => some .negativeInteger
+  | "http://www.w3.org/2001/XMLSchema#unsignedLong" => some .unsignedLong
+  | "http://www.w3.org/2001/XMLSchema#unsignedInt" => some .unsignedInt
+  | "http://www.w3.org/2001/XMLSchema#unsignedShort" => some .unsignedShort
+  | "http://www.w3.org/2001/XMLSchema#unsignedByte" => some .unsignedByte
+  | _ => none
+
+/-- The value of a literal whose datatype is derived from `xsd:integer`:
+the §3.4.13 lexical mapping (`XSD.parseIntegerLex`), then the type's
+bounds (`XSD.inIntBounds`). `none` for an ill-typed literal and for
+every other datatype. -/
+def integerDerivedValue? (l : WfLiteral) : Option Int :=
+  match integerDerivedBuiltinOfIri? l.val.datatype.val with
+  | none => none
+  | some b =>
+      match XSD.parseIntegerLex l.val.lexicalForm with
+      | some i => if XSD.inIntBounds b i then some i else none
+      | none => none
 
 /-! ## Well-formed literal builders
 
@@ -188,8 +231,7 @@ def mkLangLiteral (lex tag : String) : WfLiteral := Literal.langString lex tag
 /-- A directional language-tagged literal (RDF 1.2 Concepts §3.3) —
 SPARQL 1.2 STRLANGDIR. -/
 def mkDirLangLiteral (lex tag : String) (d : TextDirection) : WfLiteral :=
-  ⟨{ lexicalForm := lex, datatype := rdfDirLangString,
-     langTag := some tag, direction := some d }, rfl⟩
+  Literal.dirLangString lex tag d
 
 /-! ## Operators — SPARQL 1.1 §17.4.1.7 (comparison) / §17.4.1 (arithmetic) -/
 
@@ -342,10 +384,12 @@ inductive SelectClause where
   | vars (items : List SelectItem)
   | all
 
-/-- §18.2 query forms. DESCRIBE is carried in the AST for completeness
-but evaluates to nothing, exactly as the F* source's `QF_Describe`
-does — the description shape is a policy decision the spec leaves to
-implementations, and this port makes no choice for it. -/
+/-- §18.2 query forms. `describe terms` lists the IRIs and variables of
+the DESCRIBE clause; `DESCRIBE *` is the empty list. The description of
+a resource is a policy decision the specification leaves to the query
+service (§16.4); `evalDescribe` in `Query.lean` returns the Concise
+Bounded Description. The F* source's `QF_Describe` evaluates to the
+empty graph. -/
 inductive QueryForm where
   | select    (sel : SelectClause)
   | construct (template : List TriplePattern)
@@ -425,13 +469,12 @@ end
 
 /-! ## The value space of expression evaluation
 
-Port of the F* `eval_result`, extended with the distinct `xsd:float`
-kind required by SPARQL's four-type promotion lattice. The numeric constructors exist so
+Port of the F* `eval_result`. The three numeric constructors exist so
 that a value keeps the numeric TYPE it was promoted to (§17.1's
-xsd:integer / xsd:decimal / xsd:float / xsd:double lattice) without repeatedly
+xsd:integer / xsd:decimal / xsd:double lattice) without repeatedly
 re-parsing a literal — the promoted-type discipline every operator arm
 below has to honour (an operator that only looks at
-`term (Term.literal _)` and forgets `num`/`dec`/`flt`/`dbl`/`bool` is the
+`term (Term.literal _)` and forgets `num`/`dec`/`dbl`/`bool` is the
 classic bug this shape is designed to make visible). -/
 
 inductive EvalResult where
@@ -439,98 +482,19 @@ inductive EvalResult where
   | bool  (b : Bool)
   | num   (n : Int)
   | dec   (s : String)
-  | flt   (s : String)
   | dbl   (s : String)
   | error
   deriving DecidableEq, Repr
 
-def charToDigit (c : Char) : Option Nat :=
-  let n := c.toNat
-  if n ≥ 48 && n ≤ 57 then some (n - 48) else none
+/-- Shared XSD lexical values for the numeric EBV rows of SPARQL §17.2.2.
+    Zero and NaN are false; malformed lexicals have no value. -/
+def numericLexicalEbv (dt : WfIri) (s : String) : Option Bool :=
+  (Fn.Numeric.lexicalValue? dt s).bind Fn.Numeric.booleanValue?
 
-def parseIntChars : List Char → Int → Option Int
-  | [], acc => some acc
-  | c :: rest, acc =>
-      match charToDigit c with
-      | some d => parseIntChars rest (10 * acc + (d : Int))
-      | none => none
-
-/-- Parse an XSD integer lexical form (port of `parse_int_string`). -/
-def parseIntString (s : String) : Option Int :=
-  match s.toList with
-  | [] => none
-  | c :: rest =>
-      if c == '-' then
-        if rest.isEmpty then none else (parseIntChars rest 0).map (fun n => -n)
-      else if c == '+' then
-        if rest.isEmpty then none else parseIntChars rest 0
-      else parseIntChars (c :: rest) 0
-
-/-- Check the value-space facet of each built-in integer-derived datatype. -/
-def integerValueFitsDatatype (dt : WfIri) (n : Int) : Bool :=
-  let name := dt.val
-  if name == xsdNamespace ++ "nonPositiveInteger" then n ≤ 0
-  else if name == xsdNamespace ++ "negativeInteger" then n < 0
-  else if name == xsdNamespace ++ "long" then
-    -9223372036854775808 ≤ n && n ≤ 9223372036854775807
-  else if name == xsdNamespace ++ "int" then
-    -2147483648 ≤ n && n ≤ 2147483647
-  else if name == xsdNamespace ++ "short" then -32768 ≤ n && n ≤ 32767
-  else if name == xsdNamespace ++ "byte" then -128 ≤ n && n ≤ 127
-  else if name == xsdNamespace ++ "nonNegativeInteger" then 0 ≤ n
-  else if name == xsdNamespace ++ "unsignedLong" then
-    0 ≤ n && n ≤ 18446744073709551615
-  else if name == xsdNamespace ++ "unsignedInt" then 0 ≤ n && n ≤ 4294967295
-  else if name == xsdNamespace ++ "unsignedShort" then 0 ≤ n && n ≤ 65535
-  else if name == xsdNamespace ++ "unsignedByte" then 0 ≤ n && n ≤ 255
-  else if name == xsdNamespace ++ "positiveInteger" then 0 < n
-  else true
-
-/-- EBV of a decimal lexical form. `m = 0` recognizes every signed
-spelling of zero; exponent syntax is rejected because it is outside
-the `xsd:decimal` lexical space. -/
-private def decimalNumericEbv (s : String) : Option Bool :=
-  if s.toList.contains 'e' || s.toList.contains 'E' then some false else
-  match L4Factoidal.XSD.parseLexical s with
-  | some (.num _ m _) => some (m != 0)
-  | _ => some false
-
-/-- EBV for the integer family also checks lexical form and the
-derived datatype's value-space facet before reading the value. -/
-private def integerNumericEbv (dt : WfIri) (s : String) : Option Bool :=
-  match parseIntString s with
-  | some n => if integerValueFitsDatatype dt n then some (n != 0) else some false
-  | none => some false
-
-/-- EBV of an IEEE floating lexical form after rounding to its value
-space. Signed zero and NaN are false; finite nonzero values and
-infinities are true. -/
-private def floatingEbv (isFloat : Bool) (s : String) : Option Bool :=
-  match L4Factoidal.XSD.parseLexical s with
-  | none => some false
-  | some .nan => some false
-  | some (.inf _) => some true
-  | some parsed@(.num _ m e) =>
-      if m == 0 then some false else
-      -- EBV only distinguishes rounded zero from nonzero. Half the
-      -- smallest subnormal is about 7.0E-46 for binary32 and 2.47E-324
-      -- for binary64. Therefore a base-10 order below -46/-324 is
-      -- certainly zero, and one above it is certainly nonzero; only
-      -- the boundary decade needs exact IEEE rounding. This also keeps
-      -- a short `1E±1000000000` lexical from allocating `10^1000000000`.
-      let k10 : Int := ((toString m).length : Int) - 1 + e
-      let boundary : Int := if isFloat then -46 else -324
-      if k10 < boundary then some false
-      else if k10 > boundary then some true
-      else
-        let value := if isFloat then L4Factoidal.XSD.canon 24 (-126) 127 parsed
-                     else L4Factoidal.XSD.canonDouble parsed
-        match value.cls with
-        | .zero | .nan => some false
-        | .finite _ _ | .inf => some true
-
-/-- SPARQL 1.1 §17.2.2, "Effective Boolean Value" — the operand
-mapping table, transcribed row for row:
+/-- Effective Boolean Value: the common SPARQL operand table, using the
+    SPARQL 1.2 §17.2.3 error policy for malformed lexical forms. SPARQL 1.1
+    §17.2.2 instead returns false for malformed booleans/numerics; selecting
+    that edition's policy throughout evaluation remains unimplemented.
 
 | argument | EBV |
 |---|---|
@@ -546,28 +510,15 @@ is what lets §17.3's connectives below stay error-PRESERVING. -/
 def ebv : EvalResult → Option Bool
   | .bool b => some b
   | .num n  => some (n ≠ 0)
-  | .dec s  => decimalNumericEbv s
-  | .flt s  => floatingEbv true s
-  | .dbl s  => floatingEbv false s
+  | .dec s  => numericLexicalEbv xsdDecimal s
+  | .dbl s  => numericLexicalEbv xsdDouble s
   | .term (.literal l) =>
       if l.val.datatype == xsdBoolean then
-        -- Valid lexical forms only (XSD 1.1 §3.3.2). SPARQL 1.1
-        -- §17.2.2 sent an ill-formed boolean to `false`; SPARQL 1.2
-        -- removed that rule, so it is a type error (`not-not`: the
-        -- row for `"z"^^xsd:boolean` leaves its BIND unbound). No
-        -- sparql11 suite test exercises the removed rule — measured,
-        -- all 34 suites stay green — so one behaviour serves both.
-        match l.val.lexicalForm with
-        | "true" | "1" => some true
-        | "false" | "0" => some false
-        | _ => none
+        XSD.parseBooleanLex l.val.lexicalForm
       else if l.val.datatype == xsdString then
         some (l.val.lexicalForm.length > 0)
-      else if isIntegerDatatype l.val.datatype then
-        integerNumericEbv l.val.datatype l.val.lexicalForm
-      else if l.val.datatype == xsdDecimal then decimalNumericEbv l.val.lexicalForm
-      else if l.val.datatype == xsdFloat then floatingEbv true l.val.lexicalForm
-      else if l.val.datatype == xsdDouble then floatingEbv false l.val.lexicalForm
+      else if isNumericDatatype l.val.datatype then
+        numericLexicalEbv l.val.datatype l.val.lexicalForm
       else none
   | .term _ => none
   | .error  => none
@@ -616,7 +567,6 @@ def EvalResult.toTerm? : EvalResult → Option Term
   | .bool false => some (.literal (mkTypedLiteral "false" xsdBoolean))
   | .num n      => some (.literal (mkTypedLiteral (toString n) xsdInteger))
   | .dec s      => some (.literal (mkTypedLiteral s xsdDecimal))
-  | .flt s      => some (.literal (mkTypedLiteral s xsdFloat))
   | .dbl s      => some (.literal (mkTypedLiteral s xsdDouble))
   | .error      => none
 
@@ -629,7 +579,6 @@ def EvalResult.toString? : EvalResult → Option String
   | .term (.iri i)     => some i.val
   | .num n             => some (toString n)
   | .dec s             => some s
-  | .flt s             => some s
   | .dbl s             => some s
   | .bool b            => some (if b then "true" else "false")
   | _                  => none
@@ -641,7 +590,6 @@ def EvalResult.stringInfo? : EvalResult → Option (String × Option String × W
   | .term (.literal l) => some (l.val.lexicalForm, l.val.langTag, l.val.datatype)
   | .num n             => some (toString n, none, xsdInteger)
   | .dec s             => some (s, none, xsdDecimal)
-  | .flt s             => some (s, none, xsdFloat)
   | .dbl s             => some (s, none, xsdDouble)
   | .bool b            => some ((if b then "true" else "false"), none, xsdBoolean)
   | _                  => none
@@ -662,9 +610,16 @@ def EvalResult.stringLiteralInfo? : EvalResult → Option (String × Option Stri
       else none
   | _ => none
 
+/-- SPARQL §17.4.3.13 simple-literal arguments. Numeric/IRI rendering and
+    language-tagged strings are not implicit conversions to xsd:string. -/
+def EvalResult.simpleLiteral? : EvalResult → Option String
+  | .term (.literal l) =>
+      if l.val.datatype == xsdString then some l.val.lexicalForm else none
+  | _ => none
+
 /-- The base direction a value carries, if any (RDF 1.2 Concepts §3.3).
-Kept separate from `stringInfo?` because only CONCAT is specified to
-preserve direction. Port of `er_direction`. -/
+Kept separate from `stringInfo?` so callers explicitly thread this metadata;
+CONCAT and REPLACE currently do. Port of `er_direction`. -/
 def EvalResult.direction? : EvalResult → Option TextDirection
   | .term (.literal l) => l.val.direction
   | _                  => none
@@ -675,10 +630,11 @@ def erString (s : String) : EvalResult := .term (.literal (Literal.string s))
 
 /-- Rebuild a string result carrying its argument's metadata forward
 (port of `er_string_preserve`): a language tag survives only on
-`rdf:langString`, a datatype survives only when it is neither of the
-language-tagged datatypes; everything else degrades to a simple
-literal. -/
-def erStringPreserve (s : String) (lang : Option String) (dt : WfIri) : EvalResult :=
+`rdf:langString`, or on `rdf:dirLangString` when a direction is supplied.
+Other datatypes survive; incomplete language metadata degrades to a simple
+literal. Existing callers that omit direction retain their old policy. -/
+def erStringPreserve (s : String) (lang : Option String) (dt : WfIri)
+    (direction : Option TextDirection := none) : EvalResult :=
   match lang with
   | none =>
       if dt != rdfLangString && dt != rdfDirLangString then
@@ -686,6 +642,10 @@ def erStringPreserve (s : String) (lang : Option String) (dt : WfIri) : EvalResu
       else erString s
   | some l =>
       if dt == rdfLangString then .term (.literal (mkLangLiteral s l))
+      else if dt == rdfDirLangString then
+        match direction with
+        | some d => .term (.literal (mkDirLangLiteral s l d))
+        | none => erString s
       else erString s
 
 /-! ## Integer helpers
@@ -707,6 +667,19 @@ def intDivT (a b : Int) : Int :=
 def pow10 : Nat → Int
   | 0 => 1
   | n + 1 => 10 * pow10 n
+
+/-- `pow10` as the core power: `Int.pow` of a non-negative base is one
+`Nat.pow` (`lean_nat_pow`, GMP), so no stack frame per digit
+(https://github.com/danbri/factoidal/issues/752). -/
+def pow10Fast (n : Nat) : Int := 10 ^ n
+
+theorem pow10_eq_pow : ∀ n, pow10 n = 10 ^ n
+  | 0     => rfl
+  | n + 1 => by rw [pow10, pow10_eq_pow n, Int.pow_succ, Int.mul_comm]
+
+/-- The compiler runs `pow10Fast` wherever the source says `pow10`. -/
+@[csimp] theorem pow10_eq_fast : @pow10 = @pow10Fast := by
+  funext n; exact pow10_eq_pow n
 
 /-- Three-way integer comparison: `-1`, `0`, `1` (port of `int_compare`). -/
 def intCompare (a b : Int) : Int :=
@@ -798,14 +771,13 @@ def fnLangMatches (tag range : String) : Bool := Fn.String.langMatchesBasic tag 
 /-! ## The scaled-decimal numeric model — SPARQL 1.1 §17.1 / XSD 1.1
 
 A value is `mantissa / 10 ^ scale`. Every xsd:decimal lexical form and
-every FINITE xsd:double lexical form is EXACT in this model, so finite
-arithmetic inputs can be represented without host floating point — the same representation the
+every FINITE xsd:double lexical form is EXACT in this model, so `=`,
+`<` and `+ - *` over them are exact too — the same representation the
 F* tree uses (`parse_to_scaled` / `parse_double_to_scaled`), and the
 reason `1 = 1.0` and `1 = 1.0E0` decide correctly without floating
-point. IEEE comparisons use the separate canonical value path below so
-that rounding, infinities, and NaN follow their promoted value spaces.
-Arithmetic on non-finite values remains outside this scaled model, and
-`/` is approximated at a fixed 10-digit scale exactly as the F* source does. -/
+point. Consequences worth stating: `INF`/`-INF`/`NaN` have no scaled
+value (they parse to `none`, hence a type error), and `/` is
+approximated at a fixed 10-digit scale exactly as the F* source does. -/
 
 /-- A number as `mantissa / 10 ^ scale`. -/
 structure Scaled where
@@ -813,64 +785,31 @@ structure Scaled where
   scale : Nat
   deriving DecidableEq, Repr
 
-/-- The four numeric types of SPARQL's promotion lattice. -/
+/-- The three numeric types of §17.1's promotion lattice. -/
 inductive NumKind where
-  | int | dec | flt | dbl
+  | int | dec | dbl
   deriving DecidableEq, Repr
 
-/-- Numeric type promotion: double dominates float, which dominates
-decimal, which dominates integer. -/
+/-- §17.1 numeric type promotion: double dominates decimal dominates
+integer (port of `promote_kind`). -/
 def promoteKind : NumKind → NumKind → NumKind
   | .dbl, _ | _, .dbl => .dbl
-  | .flt, _ | _, .flt => .flt
   | .dec, _ | _, .dec => .dec
   | _, _ => .int
 
-/-- Split a decimal lexical form into integer part, fraction digits and
-"was there a point" (port of `split_decimal`). -/
-def splitDecimal (s : String) : Option Int × List Char × Bool :=
-  let chars := s.toList
-  let before := chars.takeWhile (fun c => c != '.')
-  match chars.dropWhile (fun c => c != '.') with
-  | [] => (parseIntString (String.ofList before), [], false)
-  | _ :: frac => (parseIntString (String.ofList before), frac, true)
+/-- XSD integer lexical forms share the datatype parser (§17.1). -/
+def parseIntString : String → Option Int := XSD.parseIntegerLex
 
-/-- `"3.5" ↦ 35/10¹`, `"100" ↦ 100/10⁰`, `"-2.2" ↦ -22/10¹`. Port of
-`parse_to_scaled`; note the explicit negative-zero handling ("-0.5"
-has integer part `0` but is negative). -/
+/-- Exact decimal adapter for the remaining scaled-arithmetic operations.
+    XSD owns lexical validation and decimal normalization. -/
 def parseToScaled (s : String) : Option Scaled :=
-  let (ip, frac, _) := splitDecimal s
-  match ip with
-  | none => none
-  | some intPart =>
-      let scale := frac.length
-      if scale = 0 then some ⟨intPart, 0⟩
-      else
-        match parseIntString (String.ofList frac) with
-        | none => some ⟨intPart * pow10 scale, scale⟩
-        | some f =>
-            let isNeg := intPart < 0 || (intPart = 0 && strStartsWith s "-")
-            let absScaled := (intPart.natAbs : Int) * pow10 scale + (f.natAbs : Int)
-            some ⟨if isNeg then -absScaled else absScaled, scale⟩
+  (XSD.parseDecimalLex s).map (fun d => ⟨d.mantissa, d.scale⟩)
 
-/-- `"1.0E2" ↦ 100/10⁰`, `"2.0E-1" ↦ 20/10²`. Port of
-`parse_double_to_scaled`. A lexical form with no exponent falls
-through to `parseToScaled`, which is why double-aware parsing must be
-TRIED FIRST on a value that might carry E-notation. -/
+/-- Shared exact scientific-notation parser for legacy scaled arithmetic
+    and ORDER BY. This adapter does not implement IEEE rounding; numeric
+    comparison uses `Fn.Comparison` instead. -/
 def parseDoubleToScaled (s : String) : Option Scaled :=
-  let chars := s.toList
-  let notE := fun (c : Char) => c != 'E' && c != 'e'
-  let beforeE := chars.takeWhile notE
-  match chars.dropWhile notE with
-  | [] => parseToScaled s
-  | _ :: expChars =>
-      match parseToScaled (String.ofList beforeE), parseIntString (String.ofList expChars) with
-      | some m, some exp =>
-          let effectiveScale : Int := (m.scale : Int) - exp
-          if effectiveScale ≤ 0 then
-            some ⟨m.mantissa * pow10 (-effectiveScale).toNat, 0⟩
-          else some ⟨m.mantissa, effectiveScale.toNat⟩
-      | _, _ => none
+  (XSD.decimalOrScientific s).map (fun d => ⟨d.mantissa, d.scale⟩)
 
 def makeZeros : Nat → String
   | 0 => ""
@@ -916,6 +855,27 @@ def countDigitsFuel : Nat → Nat → Nat
   | 0, _ => 1
   | _ + 1, n => if n < 10 then 1 else 1 + countDigitsFuel n (n / 10)
 
+/-- `countDigitsFuel` with the count in an accumulator, so each step is a
+tail call (the digits of a literal in the data;
+https://github.com/danbri/factoidal/issues/752). -/
+def countDigitsLoop : Nat → Nat → Nat → Nat
+  | 0, _, k => k + 1
+  | _ + 1, n, k => if n < 10 then k + 1 else countDigitsLoop n (n / 10) (k + 1)
+
+theorem countDigitsLoop_eq (f n k : Nat) :
+    countDigitsLoop f n k = k + countDigitsFuel f n := by
+  fun_induction countDigitsLoop f n k with
+  | case1 n k => simp [countDigitsFuel]
+  | case2 f n k h => rw [countDigitsFuel]; simp [h]
+  | case3 f n k h ih => rw [countDigitsFuel, ih]; simp [h]; omega
+
+def countDigitsFuelFast (f n : Nat) : Nat := countDigitsLoop f n 0
+
+/-- The compiler runs `countDigitsFuelFast` wherever the source says
+`countDigitsFuel`. -/
+@[csimp] theorem countDigitsFuel_eq_fast : @countDigitsFuel = @countDigitsFuelFast := by
+  funext f n; simp [countDigitsFuelFast, countDigitsLoop_eq]
+
 def countDigits (n : Nat) : Nat := countDigitsFuel n n
 
 /-- xsd:double canonical lexical form: `(32100, 0) ↦ "3.21E4"`,
@@ -931,45 +891,125 @@ def formatAsDouble (value : Int) (scale : Nat) : String :=
     let withDot := if strContains stripped "." then stripped else stripped ++ ".0"
     (if value < 0 then "-" else "") ++ withDot ++ "E" ++ toString exp
 
-/-- Convert a finite canonical IEEE value to the exact scaled-decimal
-value it denotes.  A negative binary exponent uses
-`m × 2⁻ᵏ = m × 5ᵏ / 10ᵏ`; no host floating arithmetic is involved. -/
-def fvalToScaled? (v : L4Factoidal.XSD.Fval) : Option Scaled :=
-  match v.cls with
-  | .zero => some ⟨0, 0⟩
-  | .finite m e =>
-      let signed : Int := if v.neg then -(m : Int) else (m : Int)
-      if e ≥ 0 then
-        some ⟨signed * ((2 ^ e.toNat : Nat) : Int), 0⟩
-      else
-        let scale := (-e).toNat
-        some ⟨signed * ((5 ^ scale : Nat) : Int), scale⟩
-  | .inf | .nan => none
+/-- Promote a literal to the numeric/boolean result it denotes, so that
+comparison sees VALUES rather than lexical forms (port of
+`literal_promote`). The `xsd:integer` lexical mapping is the shared
+XSD one (§3.4.13 `[\-+]?[0-9]+`, so a leading `+` is admitted and a lone
+sign is not). Types derived from `xsd:integer` are NOT promoted here:
+they stay terms and `numericView` reads their value. -/
+def literalPromote (l : WfLiteral) : EvalResult :=
+  if l.val.datatype == xsdInteger then
+    match XSD.parseIntegerLex l.val.lexicalForm with
+    | some n => .num n
+    | none => .term (.literal l)
+  else if l.val.datatype == xsdDecimal then .dec l.val.lexicalForm
+  else if l.val.datatype == xsdDouble || l.val.datatype == xsdFloat then
+    .dbl l.val.lexicalForm
+  else if l.val.datatype == xsdBoolean then
+    -- Valid lexical forms only, like the integer arm above: an
+    -- ill-formed boolean has no value to promote TO, and promoting it
+    -- to `false` hid the type error `ebv` must raise (sparql12
+    -- `expression/not-not`, the `"z"^^xsd:boolean` row).
+    match l.val.lexicalForm with
+    | "true" | "1" => .bool true
+    | "false" | "0" => .bool false
+    | _ => .term (.literal l)
+  else .term (.literal l)
 
-/-- Round an exact scaled decimal directly to the target IEEE format.
-The float arm deliberately calls `canon 24 ...` rather than
-`canonFloat`, whose RDF value-comparison contract uses host-compatible
-decimal → binary64 → binary32 double rounding. -/
-def roundScaledToKind? (v : Scaled) : NumKind → Option Scaled
-  | .int | .dec => some v
-  | .flt =>
-      fvalToScaled? (L4Factoidal.XSD.canon 24 (-126) 127
-        (.num (v.mantissa < 0) v.mantissa.natAbs (-(v.scale : Int))))
-  | .dbl =>
-      fvalToScaled? (L4Factoidal.XSD.canonDouble
-        (.num (v.mantissa < 0) v.mantissa.natAbs (-(v.scale : Int))))
+/-- The value an operator reads from a literal TERM (SPARQL 1.1 §17.3
+operator mapping, §17.1 operand types). A literal of a type derived from
+`xsd:integer` with a value becomes its `xsd:integer` value (XPath 3.1
+§B.1 type promotion). A literal of `xsd:integer`, `xsd:decimal`,
+`xsd:double`, `xsd:float` or `xsd:boolean` whose lexical form has a value
+becomes that value, as `literalPromote` gives it. Any other literal, and
+an ill-typed one, stays the term: it has no value, and §17.4.1.7
+compares it as an RDF term.
+
+The same literal reaches an operator from a variable binding
+(`Expr.evalIn` promotes it there) and from the query text (`.lit`, kept
+as a term so DATATYPE, STR, sameTerm and an assignment see it as
+written). This function gives both the same value: SPARQL 1.1 §4.1.2
+makes `72` and `"72"^^xsd:integer` the same term.
+https://github.com/danbri/factoidal/issues/784 -/
+def literalOperandView (l : WfLiteral) : EvalResult :=
+  match integerDerivedValue? l with
+  | some i => .num i
+  | none =>
+      match literalPromote l with
+      | .dec s => if (parseToScaled s).isSome then .dec s else .term (.literal l)
+      | .dbl s => if (parseDoubleToScaled s).isSome then .dbl s else .term (.literal l)
+      | v => v
+
+/-- A literal of a datatype that is neither numeric, nor derived from
+`xsd:integer`, nor `xsd:boolean` has no value for the operators: it
+stays the term. -/
+theorem literalOperandView_of_datatype (l : WfLiteral)
+    (hd : integerDerivedBuiltinOfIri? l.val.datatype.val = none)
+    (h1 : (l.val.datatype == xsdInteger) = false)
+    (h2 : (l.val.datatype == xsdDecimal) = false)
+    (h3 : (l.val.datatype == xsdDouble) = false)
+    (h4 : (l.val.datatype == xsdFloat) = false)
+    (h5 : (l.val.datatype == xsdBoolean) = false) :
+    literalOperandView l = .term (.literal l) := by
+  have hi : integerDerivedValue? l = none := by simp [integerDerivedValue?, hd]
+  simp [literalOperandView, literalPromote, hi, h1, h2, h3, h4, h5]
+
+/-- The five shapes `literalOperandView` returns: the term itself, or a
+value; a decimal or double value always has a scaled reading. -/
+theorem literalOperandView_cases (l : WfLiteral) :
+    literalOperandView l = .term (.literal l) ∨
+    (∃ i, literalOperandView l = .num i) ∨
+    (∃ s v, literalOperandView l = .dec s ∧ parseToScaled s = some v) ∨
+    (∃ s v, literalOperandView l = .dbl s ∧ parseDoubleToScaled s = some v) ∨
+    (∃ b, literalOperandView l = .bool b) := by
+  have hp : literalPromote l = .term (.literal l) ∨ (∃ n, literalPromote l = .num n) ∨
+      (∃ s, literalPromote l = .dec s) ∨ (∃ s, literalPromote l = .dbl s) ∨
+      (∃ b, literalPromote l = .bool b) := by
+    unfold literalPromote
+    split
+    · split <;> simp
+    · split
+      · simp
+      · split
+        · simp
+        · split
+          · split <;> simp
+          · simp
+  unfold literalOperandView
+  cases hi : integerDerivedValue? l with
+  | some i => exact Or.inr (Or.inl ⟨i, rfl⟩)
+  | none =>
+      simp only
+      rcases hp with h | ⟨n, h⟩ | ⟨s, h⟩ | ⟨s, h⟩ | ⟨b, h⟩ <;> rw [h]
+      · exact Or.inl rfl
+      · exact Or.inr (Or.inl ⟨n, rfl⟩)
+      · cases hs : parseToScaled s with
+        | none => exact Or.inl (by simp [hs])
+        | some v => exact Or.inr (Or.inr (Or.inl ⟨s, v, by simp [hs], hs⟩))
+      · cases hs : parseDoubleToScaled s with
+        | none => exact Or.inl (by simp [hs])
+        | some v => exact Or.inr (Or.inr (Or.inr (Or.inl ⟨s, v, by simp [hs], hs⟩)))
+      · exact Or.inr (Or.inr (Or.inr (Or.inr ⟨b, rfl⟩)))
+
+/-- Value operators opt into literal conversion. Term-returning expressions
+    and RDF accessors retain the original literal. -/
+def EvalResult.promoteLiteral : EvalResult → EvalResult
+  | .term (.literal l) => literalPromote l
+  | v => v
 
 /-- The scaled value and numeric type a result denotes; `none` for
 anything non-numeric (port of `er_to_numeric`). -/
-def EvalResult.toNumeric? : EvalResult → Option (Scaled × NumKind)
+def EvalResult.toNumeric? (v : EvalResult) : Option (Scaled × NumKind) :=
+  match v.promoteLiteral with
   | .num n => some (⟨n, 0⟩, .int)
+  | .term (.literal l) =>
+      match literalOperandView l with
+      | .num i => some (⟨i, 0⟩, .int)
+      | .dec s => (parseToScaled s).map (fun v => (v, .dec))
+      | .dbl s => (parseDoubleToScaled s).map (fun v => (v, .dbl))
+      | _ => none
   | .dec s => (parseToScaled s).map (fun v => (v, .dec))
-  | .flt s =>
-      (L4Factoidal.XSD.parseLexical s).bind fun p =>
-        (fvalToScaled? (L4Factoidal.XSD.canon 24 (-126) 127 p)).map (fun v => (v, .flt))
-  | .dbl s =>
-      (L4Factoidal.XSD.parseLexical s).bind fun p =>
-        (fvalToScaled? (L4Factoidal.XSD.canonDouble p)).map (fun v => (v, .dbl))
+  | .dbl s => (parseDoubleToScaled s).map (fun v => (v, .dbl))
   | _ => none
 
 /-- Three-way comparison of two scaled values, by normalising to the
@@ -980,101 +1020,12 @@ def Scaled.cmp (a b : Scaled) : Int :=
   else
     intCompare (a.mantissa * pow10 (b.scale - a.scale)) b.mantissa
 
-/-- Numeric comparison of two results; `none` if either is not numeric
-(port of `numeric_compare`). -/
+/-- Legacy scaled ordering for Query's ORDER BY/MIN/MAX path (port of
+    `numeric_compare`). It does not implement IEEE numeric promotion and
+    must not be used for expression equality or relational comparisons. -/
 def numericCompare (a b : EvalResult) : Option Int :=
   match a.toNumeric?, b.toNumeric? with
-  | some (x, kx), some (y, ky) =>
-      let k := promoteKind kx ky
-      match roundScaledToKind? x k, roundScaledToKind? y k with
-      | some xr, some yr => some (xr.cmp yr)
-      | _, _ => none
-  | _, _ => none
-
-/-- The numeric kind of a well-formed numeric evaluator value. Unlike
-`toNumeric?`, this also accepts NaN and infinities, which have no finite
-`Scaled` representation. -/
-def numericKind? : EvalResult → Option NumKind
-  | .num _ => some .int
-  | .dec s => if (parseToScaled s).isSome then some .dec else none
-  | .flt s => if (L4Factoidal.XSD.parseLexical s).isSome then some .flt else none
-  | .dbl s => if (L4Factoidal.XSD.parseLexical s).isSome then some .dbl else none
-  | _ => none
-
-/-- Canonical IEEE value of a numeric result at the common promoted
-floating-point kind. Integer and decimal inputs are rounded directly from
-their exact scaled values. A float input is first rounded to binary32; when
-promoted to double that already-rounded binary32 value is exact in binary64. -/
-def canonicalNumericAt? (v : EvalResult) (target : NumKind) : Option L4Factoidal.XSD.Fval :=
-  let canonScaled (x : Scaled) : Option L4Factoidal.XSD.Fval :=
-    let p : L4Factoidal.XSD.Parsed :=
-      .num (x.mantissa < 0) x.mantissa.natAbs (-(x.scale : Int))
-    match target with
-    | .flt => some (L4Factoidal.XSD.canon 24 (-126) 127 p)
-    | .dbl => some (L4Factoidal.XSD.canonDouble p)
-    | _ => none
-  match v with
-  | .num n => canonScaled ⟨n, 0⟩
-  | .dec s => (parseToScaled s).bind canonScaled
-  | .flt s =>
-      (L4Factoidal.XSD.parseLexical s).bind fun p =>
-        let f := L4Factoidal.XSD.canon 24 (-126) 127 p
-        match target with
-        | .flt | .dbl => some f
-        | _ => none
-  | .dbl s =>
-      (L4Factoidal.XSD.parseLexical s).bind fun p =>
-        match target with
-        | .dbl => some (L4Factoidal.XSD.canonDouble p)
-        | _ => none
-  | _ => none
-
-/-- Compare two positive finite dyadics `m × 2^e` exactly. -/
-def finiteDyadicCompare (m1 : Nat) (e1 : Int) (m2 : Nat) (e2 : Int) : Int :=
-  if e1 ≥ e2 then
-    intCompare ((m1 * 2 ^ (e1 - e2).toNat : Nat) : Int) (m2 : Int)
-  else
-    intCompare (m1 : Int) ((m2 * 2 ^ (e2 - e1).toNat : Nat) : Int)
-
-/-- Three-way comparison of non-NaN IEEE values. SPARQL numeric equality
-identifies signed zero, while retaining the usual ordering of finite values
-and signed infinities. -/
-def canonicalNumericCompare (a b : L4Factoidal.XSD.Fval) : Option Int :=
-  match a.cls, b.cls with
-  | .nan, _ | _, .nan => none
-  | .zero, .zero => some 0
-  | ac, bc =>
-      if a.neg != b.neg then some (if a.neg then -1 else 1)
-      else
-        let mag : Int :=
-          match ac, bc with
-          | .zero, _ => -1
-          | _, .zero => 1
-          | .inf, .inf => 0
-          | .inf, _ => 1
-          | _, .inf => -1
-          | .finite m1 e1, .finite m2 e2 => finiteDyadicCompare m1 e1 m2 e2
-          | .nan, _ | _, .nan => 0
-        some (if a.neg then -mag else mag)
-
-/-- Apply a SPARQL numeric comparison after promotion. Floating operands
-are rounded to the common IEEE format before comparison, so decimal
-overflow spellings, promoted huge integers, and explicit infinities share
-one value-space path. NaN is unequal to every value, including itself; all
-ordered comparisons with NaN are false. -/
-def numericValueCompare (a b : EvalResult) (op : CompOp) : Option Bool :=
-  match numericKind? a, numericKind? b with
-  | some ka, some kb =>
-      let target := promoteKind ka kb
-      match target with
-      | .int | .dec => (numericCompare a b).map (fun c => applyCompOp c op)
-      | .flt | .dbl =>
-          match canonicalNumericAt? a target, canonicalNumericAt? b target with
-          | some ca, some cb =>
-              match canonicalNumericCompare ca cb with
-              | some c => some (applyCompOp c op)
-              | none => some (op == .ne)
-          | _, _ => none
+  | some (x, _), some (y, _) => some (x.cmp y)
   | _, _ => none
 
 /-- Sum at the larger scale (port of `add_scaled`). -/
@@ -1107,30 +1058,13 @@ def Scaled.div? (a b : Scaled) : Option Scaled :=
     if divisor = 0 then none
     else some ⟨intDivT extended divisor, extra⟩
 
-/-- A compact decimal lexical form suitable for finite `xsd:float`
-results. Trailing fractional zeroes and a now-empty decimal point are
-removed, matching the DAWG arithmetic result graphs. -/
-def formatAsFloat (value : Int) (scale : Nat) : String :=
-  if scale = 0 then toString value
-  else
-    let reversed := (formatScaledValue value scale).toList.reverse.dropWhile (· == '0')
-    let reversed := match reversed with | '.' :: rest => rest | rest => rest
-    String.ofList reversed.reverse
-
-/-- Present a scaled result in its promoted type: an integer result
-truncates, a decimal result is canonicalised, a float is a compact
-decimal lexical form, and a double uses E-notation. -/
+/-- Present a scaled result in its promoted type (port of
+`format_numeric_result`): an integer result truncates, a decimal
+result is canonicalised, a double result goes to E-notation. -/
 def formatNumericResult (v : Scaled) : NumKind → EvalResult
   | .int => if v.scale = 0 then .num v.mantissa else .num (intDivT v.mantissa (pow10 v.scale))
   | .dec => .dec (stripTrailingDecimalZeros (formatScaledValue v.mantissa v.scale))
-  | .flt =>
-      match roundScaledToKind? v .flt with
-      | some r => .flt (formatAsFloat r.mantissa r.scale)
-      | none => .error
-  | .dbl =>
-      match roundScaledToKind? v .dbl with
-      | some r => .dbl (formatAsDouble r.mantissa r.scale)
-      | none => .error
+  | .dbl => .dbl (formatAsDouble v.mantissa v.scale)
 
 /-- §17.4.1 integer arithmetic. Note `integer / integer` is an
 xsd:DECIMAL, not an integer (port of `eval_arith_int`). -/
@@ -1146,47 +1080,146 @@ def evalArithInt (op : ArithOp) (a b : Int) : EvalResult :=
 
 /-! ## §17.4.1.7 value comparison and RDF-term equality -/
 
-/-- Promote a literal to the numeric/boolean result it denotes, so that
-comparison sees VALUES rather than lexical forms (port of
-`literal_promote`). -/
-def literalPromote (l : WfLiteral) : EvalResult :=
-  if isIntegerDatatype l.val.datatype then
-    match parseIntString l.val.lexicalForm with
-    | some n => if integerValueFitsDatatype l.val.datatype n then .num n
-                else .term (.literal l)
-    | none => .term (.literal l)
-  else if l.val.datatype == xsdDecimal then
-    if l.val.lexicalForm.toList.contains 'e' || l.val.lexicalForm.toList.contains 'E' then
-      .term (.literal l)
-    else
-      match L4Factoidal.XSD.parseLexical l.val.lexicalForm with
-      | some (.num _ _ _) => .dec l.val.lexicalForm
-      | _ => .term (.literal l)
-  else if l.val.datatype == xsdFloat then
-    if (L4Factoidal.XSD.parseLexical l.val.lexicalForm).isSome then .flt l.val.lexicalForm
-    else .term (.literal l)
-  else if l.val.datatype == xsdDouble then
-    if (L4Factoidal.XSD.parseLexical l.val.lexicalForm).isSome then .dbl l.val.lexicalForm
-    else .term (.literal l)
-  else if l.val.datatype == xsdBoolean then
-    -- Valid lexical forms only, like the integer arm above. An
-    -- ill-formed boolean has no value to promote. Its EBV is false,
-    -- while operators requiring a boolean value report a type error.
-    match l.val.lexicalForm with
-    | "true" | "1" => .bool true
-    | "false" | "0" => .bool false
-    | _ => .term (.literal l)
-  else .term (.literal l)
+/-- §17.1 the value an operand denotes: a literal term is read through
+`literalOperandView` (a numeric or boolean literal with a value becomes
+that value); every other result is unchanged. The operators apply this
+to their operands; nothing else does, so the term itself survives
+evaluation. -/
+def numericView : EvalResult → EvalResult
+  | .term (.literal l) => literalOperandView l
+  | v => v
+
+/-- SPARQL §17.3 numeric dispatch includes integer-derived datatypes.
+    Invalid forms need the restricted RDF-term fallback, not lexical order. -/
+def EvalResult.isNumericOperand : EvalResult → Bool
+  | .num _ | .dec _ | .dbl _ => true
+  | .term (.literal l) => Fn.Comparison.numericDatatype l.val.datatype
+  | _ => false
+
+/-- Preserve bound float versus double before promotion at the common
+    operand type. Computed integers need no lexical round trip. -/
+def EvalResult.numericValue? : EvalResult → Option XSD.Val
+  | .num n => some (.dec (XSD.Dec.ofInt n))
+  | .dec s => (XSD.parseDecimalLex s).map XSD.Val.dec
+  | .dbl s => XSD.lexicalFor .xsd10 .double s
+  | .term (.literal l) => Fn.Numeric.literalValue? l.val
+  | _ => none
+
+/-- Result-type selection after shared numeric validation. -/
+def EvalResult.isIntegerOperand : EvalResult → Bool
+  | .num _ => true
+  | .term (.literal l) =>
+      (XSD.builtinOfIri? l.val.datatype.val).any (fun b => (XSD.intBounds b).isSome)
+  | _ => false
+
+def ArithOp.numericOp : ArithOp → Fn.Arithmetic.Op
+  | .add => .add | .sub => .sub | .mul => .mul | .div => .div
+
+/-- Shared XSD numeric result projection. Integer/decimal distinction belongs
+    to the expression layer; floating types must survive serialization. -/
+def numericResult (integer : Bool) : XSD.Val → EvalResult
+  | .dec d => if integer then .num d.mantissa else .dec d.canonical
+  | .flt f => .term (.literal (mkTypedLiteral (XSD.canonicalFval f) xsdFloat))
+  | .dbl f => .dbl (XSD.canonicalFval f)
+  | _ => .error
+
+/-- SPARQL §17.3/§17.4.4 delegates unary operations to F&O numeric values.
+    Unary plus validates even though it preserves the value. Result types
+    are the base numeric types, including for derived integer operands. -/
+def evalNumericUnary (op : Fn.NumericUnary.Op) (v : EvalResult) : EvalResult :=
+  match v.numericValue? with
+  | none => .error
+  | some n =>
+      match Fn.NumericUnary.apply op n with
+      | some result => numericResult v.isIntegerOperand result
+      | none => .error
+
+/-- SPARQL §17.3: validate before promotion and retain floating result types.
+    Decimal-only division retains the existing bounded-precision policy.
+    Floating output uses XSD's exact round-tripping decimal formatter; shortest
+    canonical lexical formatting remains an independent implementation gap. -/
+def evalArithmetic (op : ArithOp) (a b : EvalResult) : EvalResult :=
+  match a.numericValue?, b.numericValue? with
+  | some (.dec x), some (.dec y) =>
+      if a.isIntegerOperand && b.isIntegerOperand then evalArithInt op x.mantissa y.mantissa
+      else
+        match Fn.Arithmetic.decimal 10 op.numericOp x y with
+        | some result =>
+            -- Preserve the existing expression-layer decimal spelling: an
+            -- integral result of fractional arithmetic retains its `.0`.
+            let scale := match op with
+              | .mul => x.scale + y.scale
+              | .div => 10
+              | _ => max x.scale y.scale
+            formatNumericResult
+              ⟨result.mantissa * pow10 (scale - result.scale), scale⟩ .dec
+        | none => .error
+  | some x, some y =>
+      match Fn.Arithmetic.floating op.numericOp x y with
+      | some result => numericResult false result
+      | none => .error
+  | _, _ => .error
+
+/-- `evalArithmetic` with the numeric readings of its operands already made:
+`na`/`nb` stand for `numericValue?` and `ia`/`ib` for `isIntegerOperand` of the
+two operands. A caller that meets the same operand many times (the SUM and AVG
+accumulators of the SBM11 id path, one reading per distinct term id) reads it
+once; `evalArithmetic_eq_read` says the result is `evalArithmetic`'s whenever
+the readings are those of the operands
+(https://github.com/danbri/factoidal/issues/862). -/
+def evalArithmeticRead (op : ArithOp) (na nb : Option XSD.Val) (ia ib : Bool) : EvalResult :=
+  match na, nb with
+  | some (.dec x), some (.dec y) =>
+      if ia && ib then evalArithInt op x.mantissa y.mantissa
+      else
+        match Fn.Arithmetic.decimal 10 op.numericOp x y with
+        | some result =>
+            let scale := match op with
+              | .mul => x.scale + y.scale
+              | .div => 10
+              | _ => max x.scale y.scale
+            formatNumericResult
+              ⟨result.mantissa * pow10 (scale - result.scale), scale⟩ .dec
+        | none => .error
+  | some x, some y =>
+      match Fn.Arithmetic.floating op.numericOp x y with
+      | some result => numericResult false result
+      | none => .error
+  | _, _ => .error
+
+/-- The fast form with the operands' own readings is the shared arithmetic. -/
+theorem evalArithmetic_eq_read (op : ArithOp) (a b : EvalResult) :
+    evalArithmetic op a b =
+      evalArithmeticRead op a.numericValue? b.numericValue? a.isIntegerOperand b.isIntegerOperand := by
+  unfold evalArithmetic evalArithmeticRead
+  rfl
+
+def numericValueCompare (a b : EvalResult) (op : Fn.Comparison.Op) : Option Bool := do
+  let x ← a.numericValue?
+  let y ← b.numericValue?
+  Fn.Comparison.numericCompare x y op
+
+/-- SPARQL §§17.3/17.4.1.7: numeric values take precedence (including NaN),
+    but identical ill-typed RDF literals can use RDFterm-equal. Other failed
+    numeric comparisons remain errors. Computed invalid values are errors. -/
+def numericEquality (a b : EvalResult) (negate : Bool) : Option Bool :=
+  match numericValueCompare a b (if negate then .ne else .eq) with
+  | some result => some result
+  | none => match a, b with
+    | .term (.literal x), .term (.literal y) =>
+        if x.val.sameTerm y.val then some (!negate) else none
+    | _, _ => none
 
 /-- Literal equality that compares numeric literals by VALUE and
-everything else by the engine's term equality (port of
-`literal_value_eq_numeric`). -/
+everything else by `Literal.valueEqb` (`rdf:XMLLiteral` by canonical
+XML, other literals by term equality; port of
+`literal_value_eq_numeric`). Value comparison is explicit here: since
+https://github.com/danbri/factoidal/issues/963 `Literal.eqb` is term
+equality. -/
 def literalValueEqNumeric (l1 l2 : WfLiteral) : Bool :=
-  if isNumericDatatype l1.val.datatype || isNumericDatatype l2.val.datatype then
-    match numericValueCompare (literalPromote l1) (literalPromote l2) .eq with
-    | some b => b
-    | none => false
-  else l1.val.eqb l2.val
+  if Fn.Comparison.numericDatatype l1.val.datatype || Fn.Comparison.numericDatatype l2.val.datatype then
+    (numericEquality (.term (.literal l1)) (.term (.literal l2)) false).getD false
+  else l1.val.valueEqb l2.val
 
 /-- RDF 1.2 triple-term VALUE equality, used by `=` (op:triple):
 subject and predicate compare structurally, the object recurses and
@@ -1201,23 +1234,6 @@ def tripleTermValueEq : Term → Term → Bool
       s1.eqb s2 && p1 == p2 && tripleTermValueEq o1 o2
   | _, _ => false
 
-/-- RDF-term identity for SPARQL `sameTerm`. Literal lexical form,
-datatype, and base direction are exact. RDF 1.2 language tags compare
-ASCII-case-insensitively, while XML literals remain lexical (unlike
-the broader engine `Term.eqb`, which canonicalizes XML content).
-Triple terms recurse through their object term. -/
-def sameTermEq : Term → Term → Bool
-  | .iri i1, .iri i2 => i1 == i2
-  | .bnode b1, .bnode b2 => b1 == b2
-  | .literal l1, .literal l2 =>
-      l1.val.lexicalForm == l2.val.lexicalForm &&
-      l1.val.datatype == l2.val.datatype &&
-      langTagOptionEq l1.val.langTag l2.val.langTag &&
-      l1.val.direction == l2.val.direction
-  | .tripleTerm s1 p1 o1, .tripleTerm s2 p2 o2 =>
-      s1.eqb s2 && p1 == p2 && sameTermEq o1 o2
-  | _, _ => false
-
 /-- Lexicographic codepoint comparison of two strings, as three-way
 (the F* source's `String.compare`). -/
 def listCharCompare : List Char → List Char → Int
@@ -1230,167 +1246,242 @@ def listCharCompare : List Char → List Char → Int
 
 def strCompare (a b : String) : Int := listCharCompare a.toList b.toList
 
-/-- The equality result for two RDF terms already known to be different.
-RDF terms of different kinds, and language-tagged versus untagged literals,
-are unequal rather than a type error. -/
-def unequalRdfTerms : CompOp → Option Bool
-  | .eq => some false
-  | .ne => some true
-  | _ => none
+/-! ### The comparison the compiler emits
 
-def isDateDatatype (dt : WfIri) : Bool := dt == xsdDate || dt == xsdDateTime
+`strCompare` builds two character lists for every comparison. On
+`ORDER BY ?s ?p` over 1,250 paragraphs of `gene.ttl` it is 53.6 percent of
+the instructions (`lean_string_data` 36.2, `utf8_decode` 23.6; survey record
+`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`, section 8.5).
+Every ordering on the query path reaches it: ORDER BY (`sparqlOrder`), the
+GROUP BY and DISTINCT-aggregate keys (`erEqual`), MIN and MAX, and the
+relational operators on IRIs and literals (`valueCompare`). Lean's order on
+`String` is the lexicographic order on code points, the order
+`listCharCompare` computes, and its decision procedure is native code
+(`String.decidableLT`, `String.decEq`). `listCharCompare_eq_lt` proves the
+three-way result equal to the one read off `<` and `=`; the `csimp` theorem
+makes every function compiled after this point call `strCompareFast`. The
+definition of `strCompare` and every theorem about it do not change. The
+same repair was made for RDFC-1.0's `strLe` (`RDF/Canonical.lean`,
+`strLe_eq_strLeFast`). -/
 
-def dateKind? (dt : WfIri) : Option L4Factoidal.XSD.DTKind :=
-  if dt == xsdDate then some .date
-  else if dt == xsdDateTime then some .dateTime
+/-- `listCharCompare` is the three-way form of Lean's list order. -/
+theorem listCharCompare_eq_lt : ∀ (as bs : List Char),
+    listCharCompare as bs = if as < bs then -1 else if as = bs then 0 else 1
+  | [], [] => by simp [listCharCompare]
+  | [], b :: bs => by simp [listCharCompare, List.nil_lt_cons]
+  | a :: as, [] => by simp [listCharCompare, List.not_lt_nil]
+  | a :: as, b :: bs => by
+      have ih := listCharCompare_eq_lt as bs
+      have key : (a :: as < b :: bs) ↔ (a < b ∨ a = b ∧ as < bs) := List.cons_lt_cons_iff
+      simp only [listCharCompare, intCompare]
+      by_cases h1 : a.toNat < b.toNat
+      · have hlt : a < b := (UInt32.lt_iff_toNat_lt).2 h1
+        have hp : (a :: as < b :: bs) := key.2 (Or.inl hlt)
+        have hi : ((a.toNat : Int) < (b.toNat : Int)) := by omega
+        simp [hi, hp]
+      · by_cases h2 : a = b
+        · subst h2
+          have hiff : (a :: as < a :: bs) ↔ as < bs := by
+            rw [key]; constructor
+            · rintro (h | ⟨_, h⟩)
+              · exact absurd h (Char.lt_irrefl a)
+              · exact h
+            · intro h; exact Or.inr ⟨rfl, h⟩
+          have hc : ¬ ((a.toNat : Int) < (a.toNat : Int)) := Int.lt_irrefl _
+          simp only [hc, if_false, if_true, beq_self_eq_true, hiff, List.cons.injEq, true_and]
+          rw [ih]
+        · have hgt : b.toNat < a.toNat := by
+            have : a.toNat ≠ b.toNat := fun h => h2 (Char.toNat_inj.1 h)
+            omega
+          have hn : ¬ (a :: as < b :: bs) := by
+            rw [key]; rintro (h | ⟨h, _⟩)
+            · have : a.toNat < b.toNat := (UInt32.lt_iff_toNat_lt).1 h; omega
+            · exact h2 h
+          have hi1 : ¬ ((a.toNat : Int) < (b.toNat : Int)) := by omega
+          have hi2 : ¬ ((a.toNat : Int) = (b.toNat : Int)) := by omega
+          simp [hi1, hi2, hn, h2]
+
+/-- `strCompare` through Lean's native string order and equality. -/
+def strCompareFast (a b : String) : Int :=
+  if a < b then -1 else if a = b then 0 else 1
+
+theorem strCompare_eq_fast (a b : String) : strCompare a b = strCompareFast a b := by
+  unfold strCompare strCompareFast
+  rw [listCharCompare_eq_lt]
+  have h1 : (a.toList < b.toList) ↔ a < b := Iff.rfl
+  have h2 : (a.toList = b.toList) ↔ a = b := String.toList_inj
+  simp only [h1, h2]
+
+/-- The compiler calls `strCompareFast` wherever the source says `strCompare`. -/
+@[csimp] theorem strCompare_eq_strCompareFast : @strCompare = @strCompareFast :=
+  funext fun a => funext fun b => strCompare_eq_fast a b
+
+/-- SPARQL §17.3 relational operations share the XSD/F&O adapter with
+    SHACL. Project computed values to their RDF types without promoting away
+    the datatype of bound float literals. -/
+def relationalCompare (v1 v2 : EvalResult) (op : Fn.Comparison.Op) : Option Bool := do
+  let a ← v1.toTerm?
+  let b ← v2.toTerm?
+  Fn.Comparison.termCompare a b op
+
+/-- The datatypes whose lexical mapping is the identity on lexical forms
+    (`xsd:string`; `rdf:langString` and `rdf:dirLangString` with the
+    language tag and direction compared apart; RDF 1.1 Concepts 3.3 and 5.1):
+    two literals of one of them, with the same language tag and direction,
+    have the same value exactly when their lexical forms are the same. -/
+def lexicalValueDatatype (dt : WfIri) : Bool :=
+  dt == xsdString || dt == rdfLangString || dt == rdfDirLangString
+
+/-- §17.4.1.7 `=` and `!=` of two literals of one datatype with the same
+    language tag and direction. The same lexical form is the same RDF term
+    (`RDFterm-equal` is true). Different lexical forms: for a datatype of
+    `lexicalValueDatatype`, different values; else the value comparison of
+    `Fn.Comparison.literalCompare` (`xsd:boolean`, `xsd:dateTime`,
+    `xsd:date`); a datatype with no value comparison here (`rdf:XMLLiteral`,
+    an unknown datatype), or a lexical form outside the lexical space, is a
+    type error (`none`): `RDFterm-equal` "produces a type error if the
+    arguments are both literal but are not the same RDF term". Until
+    2026-10-23 every datatype compared the lexical forms, so two
+    `rdf:XMLLiteral` literals that are different terms were `false` under
+    `=` (https://github.com/danbri/factoidal/issues/963). -/
+def sameDatatypeLiteralEq (l1 l2 : Literal) (op : CompOp) : Option Bool :=
+  if l1.lexicalForm == l2.lexicalForm || lexicalValueDatatype l1.datatype then
+    some (applyCompOp (strCompare l1.lexicalForm l2.lexicalForm) op)
+  else
+    Fn.Comparison.literalCompare l1 l2 (if op == .ne then .ne else .eq)
+
+/-- The lexical form of `l` is in the lexical space of its datatype:
+    `Fn.Comparison.literalCompare` reads a value from it (used here for
+    `xsd:dateTime` and `xsd:date`). -/
+def literalHasComparableValue (l : Literal) : Bool :=
+  (Fn.Comparison.literalCompare l l .eq).isSome
+
+/-- `xsd:dateTime` and `xsd:date`, in either order. -/
+def dateTimeDatePair (a b : WfIri) : Bool :=
+  (a == xsdDateTime && b == xsdDate) || (a == xsdDate && b == xsdDateTime)
+
+/-- §17.4.1.7 RDFterm-equal of two literals that are different RDF terms,
+    where no row of the section 17.3 operator table applies. The base rule is
+    a type error. The note to section 17.4.1.7 says that RDFterm-equal on
+    typed literals "tests for equivalent values" and gives the type error for
+    "unsupported datatypes"; section 17.3.1 lets an extension replace a type
+    error, and only a type error, with a value. This function gives `false`
+    only in the two cases that W3C tests with the manifest requirement
+    `mf:KnownTypesDefault2Neq` ("Values in disjoint value spaces are not
+    equal") expect:
+      * one literal is an `rdf:langString` and the other is not
+        (open-world/open-eq-08, -10, -11, -12; these tests expect `false`
+        also when the other literal is ill-formed or of an unknown
+        datatype);
+      * an `xsd:dateTime` and an `xsd:date` literal, both in the lexical
+        space (open-world/date-2).
+    Every other pair stays a type error (`none`): ill-formed literals,
+    unknown datatypes, `rdf:XMLLiteral`
+    (https://github.com/danbri/factoidal/issues/963), and pairs such as
+    `xsd:integer` and `xsd:boolean` that no W3C test asks about. -/
+def distinctLiteralsEq (l1 l2 : Literal) : Option Bool :=
+  if (l1.datatype == rdfLangString) != (l2.datatype == rdfLangString) then some false
+  else if dateTimeDatePair l1.datatype l2.datatype &&
+      literalHasComparableValue l1 && literalHasComparableValue l2 then some false
   else none
 
-def orderingInt : Ordering → Int
-  | .lt => -1
-  | .eq => 0
-  | .gt => 1
-
-/-- Compare two literals in the same XSD date value space. The XSD
-parser rejects ill-formed lexicals; `dtCompare` compares timeline values,
-normalizes timezones, and reports incomparable timezone-less pairs. -/
-def dateValueCompare (l1 l2 : WfLiteral) (op : CompOp) : Option Bool :=
-  match dateKind? l1.val.datatype, dateKind? l2.val.datatype with
-  | some k1, some k2 =>
-      if k1 != k2 then unequalRdfTerms op
-      else
-        match L4Factoidal.XSD.parseDateTimeLex k1 l1.val.lexicalForm,
-              L4Factoidal.XSD.parseDateTimeLex k2 l2.val.lexicalForm with
-        | some a, some b =>
-            (L4Factoidal.XSD.dtCompare a b).map
-              (fun c => applyCompOp (orderingInt c) op)
-        | _, _ => none
+/-- §17.4.1.7 RDFterm-equal where the section 17.3 operator table and the
+    same-kind arms of `valueCompare` give no answer. Two terms of different
+    kinds (IRI, blank node, literal, triple term) are not the same RDF term
+    and are not both literals: RDFterm-equal "returns FALSE otherwise". Two
+    literals that are different RDF terms: `distinctLiteralsEq`. Two
+    literals that are the same RDF term: `none`; the callers have already
+    answered that case where the terms come from the data, and a computed
+    value that is not in the lexical space stays an error. -/
+def rdfTermEqualFallback : Term → Term → Option Bool
+  | .literal x, .literal y =>
+      if x.val.sameTerm y.val then none else distinctLiteralsEq x.val y.val
+  | .literal _, _ => some false
+  | _, .literal _ => some false
+  | .iri _, .bnode _ => some false
+  | .bnode _, .iri _ => some false
+  | .iri _, .tripleTerm _ _ _ => some false
+  | .tripleTerm _ _ _, .iri _ => some false
+  | .bnode _, .tripleTerm _ _ _ => some false
+  | .tripleTerm _ _ _, .bnode _ => some false
   | _, _ => none
 
-/-- Whether two RDF terms select one of the typed operator mappings that
-must run before the generic RDF-term equality fallback. -/
-def validNumericLiteral (l : WfLiteral) : Bool :=
-  match literalPromote l with
-  | .num _ | .dec _ | .flt _ | .dbl _ => true
-  | _ => false
+/-- `=` (`.eq`) or `!=` (any other `op`) by `rdfTermEqualFallback` on the
+    RDF terms of two values. An error operand is an error. -/
+def termEqualFallback (v1 v2 : EvalResult) (op : CompOp) : Option Bool := do
+  let a ← v1.toTerm?
+  let b ← v2.toTerm?
+  let r ← rdfTermEqualFallback a b
+  some (if op == .eq then r else !r)
 
-def validBooleanLiteral (l : WfLiteral) : Bool :=
-  l.val.datatype == xsdBoolean &&
-    ["true", "false", "1", "0"].contains l.val.lexicalForm
+theorem distinctLiteralsEq_ne_true (a b : Literal) : distinctLiteralsEq a b ≠ some true := by
+  unfold distinctLiteralsEq
+  split
+  · simp
+  · split <;> simp
 
-def validDateLiteral (l : WfLiteral) : Bool :=
-  match dateKind? l.val.datatype with
-  | some k => (L4Factoidal.XSD.parseDateTimeLex k l.val.lexicalForm).isSome
-  | none => false
+theorem rdfTermEqualFallback_ne_true (a b : Term) : rdfTermEqualFallback a b ≠ some true := by
+  cases a <;> cases b <;> simp only [rdfTermEqualFallback] <;> (try split) <;>
+    simp [distinctLiteralsEq_ne_true]
 
-def hasSpecificEqualityMapping : Term → Term → Bool
-  | .literal l1, .literal l2 =>
-      (validNumericLiteral l1 && validNumericLiteral l2) ||
-      (validBooleanLiteral l1 && validBooleanLiteral l2) ||
-      (validDateLiteral l1 && validDateLiteral l2)
-  | _, _ => false
+/-- The fallback never makes `=` true: read as a FILTER condition
+    (`getD false`), it is `false`. -/
+theorem termEqualFallback_eq_getD (v1 v2 : EvalResult) :
+    (termEqualFallback v1 v2 .eq).getD false = false := by
+  unfold termEqualFallback
+  cases v1.toTerm? with
+  | none => rfl
+  | some a =>
+    cases v2.toTerm? with
+    | none => rfl
+    | some b =>
+      have hn := rdfTermEqualFallback_ne_true a b
+      cases h : rdfTermEqualFallback a b with
+      | none => simp [h]
+      | some r => cases r <;> simp_all
 
-/-- The value-comparison rules after the RDF-term-equality shortcut. -/
-def valueCompareCore (v1 v2 : EvalResult) (op : CompOp) : Option Bool :=
-  match v1, v2 with
-  | .num _, .num _ | .num _, .dec _ | .num _, .flt _ | .num _, .dbl _
-  | .dec _, .num _ | .dec _, .dec _ | .dec _, .flt _ | .dec _, .dbl _
-  | .flt _, .num _ | .flt _, .dec _ | .flt _, .flt _ | .flt _, .dbl _
-  | .dbl _, .num _ | .dbl _, .dec _ | .dbl _, .flt _ | .dbl _, .dbl _ =>
-      numericValueCompare v1 v2 op
-  | .bool a, .bool b =>
-      some (applyCompOp (intCompare (if a then 1 else 0) (if b then 1 else 0)) op)
-  | .term (.iri i1), .term (.iri i2) =>
-      if i1 == i2 then
-        match op with
-        | .eq => some true
-        | .ne => some false
-        | _ => none
-      else unequalRdfTerms op
-  | .term (.bnode _), .term (.bnode _) => unequalRdfTerms op
-  | .term (.literal l1), .term (.literal l2) =>
-      match l1.val.langTag, l2.val.langTag with
-      | some a, some b =>
-          -- Lexical ordering for same-language literals is retained as an
-          -- implementation extension; the SPARQL operator table defines
-          -- these relational rows only for simple and xsd:string literals.
-          if langTagOptionEq (some a) (some b) then
-            if l1.val.direction == l2.val.direction then
-              some (applyCompOp (strCompare l1.val.lexicalForm l2.val.lexicalForm) op)
-            else unequalRdfTerms op
-          else unequalRdfTerms op
-      | some _, none | none, some _ => unequalRdfTerms op
-      | none, none =>
-          if isNumericDatatype l1.val.datatype || isNumericDatatype l2.val.datatype then
-            numericValueCompare (literalPromote l1) (literalPromote l2) op
-          else if l1.val.datatype == xsdBoolean && l2.val.datatype == xsdBoolean then
-            match literalPromote l1, literalPromote l2 with
-            | .bool a, .bool b =>
-                some (applyCompOp (intCompare (if a then 1 else 0) (if b then 1 else 0)) op)
-            | _, _ => none
-          else if isDateDatatype l1.val.datatype && isDateDatatype l2.val.datatype then
-            dateValueCompare l1 l2 op
-          else if l1.val.datatype == xsdString && l2.val.datatype == xsdString then
-            some (applyCompOp (strCompare l1.val.lexicalForm l2.val.lexicalForm) op)
-          else none
-  | .term (.tripleTerm s1 p1 o1), .term (.tripleTerm s2 p2 o2) =>
-      match op with
-      | .eq => some (tripleTermValueEq (.tripleTerm s1 p1 o1) (.tripleTerm s2 p2 o2))
-      | .ne => some (!tripleTermValueEq (.tripleTerm s1 p1 o1) (.tripleTerm s2 p2 o2))
-      | _ => none
-  | .term _, .term _ => unequalRdfTerms op
-  | _, _ => none
-
-@[simp] def promoteComparisonResult : EvalResult → EvalResult
-  | .term (.literal l) => literalPromote l
-  | v => v
-
-@[simp] def bothNumericResults : EvalResult → EvalResult → Bool
-  | .num _, .num _ | .num _, .dec _ | .num _, .flt _ | .num _, .dbl _
-  | .dec _, .num _ | .dec _, .dec _ | .dec _, .flt _ | .dec _, .dbl _
-  | .flt _, .num _ | .flt _, .dec _ | .flt _, .flt _ | .flt _, .dbl _
-  | .dbl _, .num _ | .dbl _, .dec _ | .dbl _, .flt _ | .dbl _, .dbl _ => true
-  | _, _ => false
-
-/-- §17.4.1.7 operator mapping for `= != < > <= >=`, with §17.1 numeric
-promotion and the SPARQL 1.0 RDF-term-equality shortcut. Identical RDF terms
-compare equal even when their datatype is unknown or their lexical form is
-ill-typed. A different unknown/ill-typed untagged literal remains a type
-error, preserving the open-world rule. -/
+/-- §17.3/§17.4.1.7 comparison. Numeric equality and relational operations
+    share the XSD/F&O value model; other equality uses the RDF fallback.
+    This does not equate relational ordering with ORDER BY or sameTerm. -/
 def valueCompare (v1 v2 : EvalResult) (op : CompOp) : Option Bool :=
-  let w1 := promoteComparisonResult v1
-  let w2 := promoteComparisonResult v2
-  if bothNumericResults w1 w2 then valueCompareCore w1 w2 op
-  else
-    match op, v1, v2 with
-    | .eq, .term t1, .term t2 =>
-        if hasSpecificEqualityMapping t1 t2 then valueCompareCore w1 w2 op
-        else if sameTermEq t1 t2 then some true
-        else
-          match valueCompareCore w1 w2 op with
-          | some b => some b
-          | none => valueCompareCore v1 v2 op
-    | .ne, .term t1, .term t2 =>
-        if hasSpecificEqualityMapping t1 t2 then valueCompareCore w1 w2 op
-        else if sameTermEq t1 t2 then some false
-        else
-          match valueCompareCore w1 w2 op with
-          | some b => some b
-          | none => valueCompareCore v1 v2 op
-    | _, _, _ => valueCompareCore w1 w2 op
-
-/-- Recover the RDF term denoted by an expression when value promotion has
-changed its evaluator representation. This lets equality apply the RDF-term
-fallback consistently to variables, constants, and computed values. -/
-def comparisonIdentityTerm (mu : Binding) (e : Expr) (v : EvalResult) : Option Term :=
-  match e with
-  | .var name => mu.lookup name
-  | .iri i => some (.iri i)
-  | .lit l => some (.literal l)
-  | .boolLit b => some (.literal (mkTypedLiteral (if b then "true" else "false") xsdBoolean))
-  | .numericLit n => some (.literal (mkTypedLiteral (toString n) xsdInteger))
-  | .decimalLit s => some (.literal (mkTypedLiteral s xsdDecimal))
-  | .doubleLit s => some (.literal (mkTypedLiteral s xsdDouble))
-  | _ => v.toTerm?
+  match op with
+  | .lt => relationalCompare v1 v2 .lt
+  | .le => relationalCompare v1 v2 .le
+  | .gt => relationalCompare v1 v2 .gt
+  | .ge => relationalCompare v1 v2 .ge
+  | .eq | .ne =>
+    if v1.isNumericOperand || v2.isNumericOperand then
+      match numericEquality v1 v2 (op == .ne) with
+      | some r => some r
+      | none => termEqualFallback v1 v2 op
+    else
+    match v1.promoteLiteral, v2.promoteLiteral with
+    | .bool a, .bool b =>
+        some (applyCompOp (intCompare (if a then 1 else 0) (if b then 1 else 0)) op)
+    | .term (.iri i1), .term (.iri i2) =>
+        some (applyCompOp (strCompare i1.val i2.val) op)
+    | .term (.literal l1), .term (.literal l2) =>
+        if l1.val.datatype == l2.val.datatype then
+          if langTagOptionEq l1.val.langTag l2.val.langTag &&
+              l1.val.direction == l2.val.direction then
+            sameDatatypeLiteralEq l1.val l2.val op
+          else
+            match op with
+            | .eq => some false
+            | .ne => some true
+            | _ => none
+        else termEqualFallback v1 v2 op
+    | .term (.bnode a), .term (.bnode b) =>
+        match op with
+        | .eq => some (a == b)
+        | .ne => some (a != b)
+        | _ => none
+    | .term (.tripleTerm s1 p1 o1), .term (.tripleTerm s2 p2 o2) =>
+        match op with
+        | .eq => some (tripleTermValueEq (.tripleTerm s1 p1 o1) (.tripleTerm s2 p2 o2))
+        | .ne => some (!tripleTermValueEq (.tripleTerm s1 p1 o1) (.tripleTerm s2 p2 o2))
+        | _ => none
+    | _, _ => termEqualFallback v1 v2 op
 
 /-! ## §17.4.2 node tests and accessors -/
 
@@ -1406,27 +1497,24 @@ def fnIsBlank : EvalResult → EvalResult
 
 def fnIsLiteral : EvalResult → EvalResult
   | .term (.literal _) => .bool true
-  | .num _ | .dec _ | .flt _ | .dbl _ | .bool _ => .bool true
+  | .num _ | .dec _ | .dbl _ | .bool _ => .bool true
   | .error => .error
   | _ => .bool false
 
 def fnIsNumeric : EvalResult → EvalResult
-  | .num _ | .dec _ | .flt _ | .dbl _ => .bool true
-  | .term (.literal l) => .bool (isNumericDatatype l.val.datatype)
   | .error => .error
-  | _ => .bool false
+  | v => .bool v.numericValue?.isSome
 
 /-- §17.4.2.5 STR. Not defined on a triple term (which is neither
 literal nor IRI). -/
 def fnStr : EvalResult → EvalResult
   | .term (.iri i) => erString i.val
   | .term (.literal l) => erString l.val.lexicalForm
-  | .term (.bnode b) => erString b
+  | .term (.bnode _) => .error
   | .num n => erString (toString n)
   | .dec s => erString s
-  | .flt s => erString s
   | .dbl s => erString s
-  | .bool b => .term (.literal (mkTypedLiteral (if b then "true" else "false") xsdBoolean))
+  | .bool b => erString (if b then "true" else "false")
   | .term (.tripleTerm _ _ _) => .error
   | .error => .error
 
@@ -1434,7 +1522,7 @@ def fnStr : EvalResult → EvalResult
 error for a non-literal. -/
 def fnLang : EvalResult → EvalResult
   | .term (.literal l) => erString (l.val.langTag.getD "")
-  | .num _ | .dec _ | .flt _ | .dbl _ | .bool _ => erString ""
+  | .num _ | .dec _ | .dbl _ | .bool _ => erString ""
   | _ => .error
 
 /-- §17.4.2.7 DATATYPE. -/
@@ -1442,7 +1530,6 @@ def fnDatatype : EvalResult → EvalResult
   | .term (.literal l) => .term (.iri l.val.datatype)
   | .num _ => .term (.iri xsdInteger)
   | .dec _ => .term (.iri xsdDecimal)
-  | .flt _ => .term (.iri xsdFloat)
   | .dbl _ => .term (.iri xsdDouble)
   | .bool _ => .term (.iri xsdBoolean)
   | _ => .error
@@ -1475,13 +1562,13 @@ def fnLangDir : EvalResult → EvalResult
       erString (match l.val.direction with
                 | some d => textDirectionToString d
                 | none => "")
-  | .num _ | .dec _ | .flt _ | .dbl _ | .bool _ => erString ""
+  | .num _ | .dec _ | .dbl _ | .bool _ => erString ""
   | _ => .error
 
 /-! ### §17.4.5 xsd:dateTime component accessors
 
-The accessors read the canonical lexical form positionally, exactly as
-the F* `dt_*` helpers do. -/
+The accessors share the validated XSD value model; SPARQL retains its
+own return types and missing-timezone error policy. -/
 
 /-- The xsd:dateTime lexical form behind a value, if it has one. -/
 def erToDateTimeLex : EvalResult → Option String
@@ -1489,20 +1576,14 @@ def erToDateTimeLex : EvalResult → Option String
       if l.val.datatype == xsdDateTime then some l.val.lexicalForm else none
   | _ => none
 
-/-- Positional substring of a lexical form, by codepoint offset. -/
-def lexSlice (s : String) (from_ len : Nat) : String :=
-  String.ofList ((s.toList.drop from_).take len)
+/-- SPARQL 1.1 §17.4.5 uses XSD 1.0/F&O dateTime values. -/
+def dtValue (s : String) : Option XSD.DTValue := XSD.parseDateTimeFor .xsd10 .dateTime s
 
-def dtYear (s : String) : Option Int :=
-  if s.length < 4 then none else parseIntString (lexSlice s 0 4)
-def dtMonth (s : String) : Option Int :=
-  if s.length < 7 then none else parseIntString (lexSlice s 5 2)
-def dtDay (s : String) : Option Int :=
-  if s.length < 10 then none else parseIntString (lexSlice s 8 2)
-def dtHours (s : String) : Option Int :=
-  if s.length < 13 then none else parseIntString (lexSlice s 11 2)
-def dtMinutes (s : String) : Option Int :=
-  if s.length < 16 then none else parseIntString (lexSlice s 14 2)
+def dtYear (s : String) : Option Int := (dtValue s).bind (XSD.yearForEdition .xsd10)
+def dtMonth (s : String) : Option Int := ((dtValue s).bind (·.month)).map Int.ofNat
+def dtDay (s : String) : Option Int := ((dtValue s).bind (·.day)).map Int.ofNat
+def dtHours (s : String) : Option Int := ((dtValue s).bind (·.hour)).map Int.ofNat
+def dtMinutes (s : String) : Option Int := ((dtValue s).bind (·.minute)).map Int.ofNat
 
 /-- Strip leading zeros from a numeric lexical form, keeping one digit
 before a decimal point: `"01" ↦ "1"`, `"00" ↦ "0"`, `"01.5" ↦ "1.5"`,
@@ -1518,84 +1599,28 @@ def stripLeadingZerosNum (s : String) : String :=
   | [] => "0"
   | cs => String.ofList cs
 
-/-- SECONDS returns an xsd:decimal (fractional seconds are in scope);
-the lexical form is canonicalised (`"01"` ↦ `"1"`), the W3C
-`seconds01` expectation. -/
+/-- Exact decimal seconds; invalid dateTime lexicals yield a type error. -/
 def dtSeconds (s : String) : Option String :=
-  if s.length < 19 then none
-  else
-    let after := s.toList.drop 17
-    let secChars := after.takeWhile (fun c => c != 'Z' && c != '+' && c != '-')
-    if secChars.isEmpty then none
-    else some (stripLeadingZerosNum (String.ofList secChars))
+  ((dtValue s).bind (·.second)).map XSD.Dec.canonical
 
-/-- Codepoint offset of the timezone sign (`+`/`-`) at or after
-position 19 of an xsd:dateTime lexical form. -/
-def dtTzPos (s : String) : Option Nat :=
-  let rec go : List Char → Nat → Option Nat
-    | [], _ => none
-    | c :: rest, pos =>
-        if pos ≥ 19 && (c == '+' || c == '-') then some pos else go rest (pos + 1)
-  go s.toList 0
+/-- §17.4.5.7 TIMEZONE: absent timezone remains a caller-visible error. -/
+def dtTimezone (s : String) : Option String := do
+  let v ← dtValue s
+  match v.tz with
+  | none => some ""
+  | some 0 => some "PT0S"
+  | some offset =>
+      let h := offset.natAbs / 60
+      let m := offset.natAbs % 60
+      some ((if offset < 0 then "-" else "") ++ "PT" ++ toString h ++ "H" ++
+        (if m == 0 then "" else toString m ++ "M"))
 
-/-- §17.4.5.7 TIMEZONE: the timezone as an xsd:dayTimeDuration lexical
-form — `Z ↦ "PT0S"`, `-08:00 ↦ "-PT8H"`, `+05:30 ↦ "PT5H30M"`; `""`
-when the value carries no timezone (the caller turns that into the
-spec's type error). Port of `dt_timezone`. -/
-def dtTimezone (s : String) : Option String :=
-  let len := s.length
-  if len < 19 then none
-  else if s.toList.getLast? == some 'Z' then some "PT0S"
-  else match dtTzPos s with
-    | none => some ""
-    | some pos =>
-        if len ≥ pos + 6 then
-          let signStr := if lexSlice s pos 1 == "-" then "-" else ""
-          match parseIntString (lexSlice s (pos + 1) 2), parseIntString (lexSlice s (pos + 4) 2) with
-          | some h, some m =>
-              if m = 0 then some (signStr ++ "PT" ++ toString h ++ "H")
-              else some (signStr ++ "PT" ++ toString h ++ "H" ++ toString m ++ "M")
-          | _, _ => none
-        else none
-
-/-- §17.4.5.8 TZ: the timezone part of the lexical form as written —
-`"Z"`, `"-08:00"`, or `""` when there is none. Port of `dt_tz`. -/
-def dtTz (s : String) : Option String :=
-  let len := s.length
-  if len < 19 then none
-  else if s.toList.getLast? == some 'Z' then some "Z"
-  else match dtTzPos s with
-    | none => some ""
-    | some pos => if pos < len then some (lexSlice s pos (len - pos)) else none
-
-/-! ### §17.4.4 numeric functions -/
-
-def allZeros (cs : List Char) : Bool := cs.all (fun c => c == '0')
-
-/-- FLOOR on a decimal lexical form (port of `int_floor`). -/
-def lexFloor (s : String) : Int :=
-  let (ip, frac, hasDot) := splitDecimal s
-  match ip with
-  | none => 0
-  | some n => if !hasDot || allZeros frac then n else if n ≥ 0 then n else n - 1
-
-/-- CEIL on a decimal lexical form (port of `int_ceil`). -/
-def lexCeil (s : String) : Int :=
-  let (ip, frac, hasDot) := splitDecimal s
-  match ip with
-  | none => 0
-  | some n => if !hasDot || allZeros frac then n else if n ≥ 0 then n + 1 else n
-
-/-- ROUND, half away from zero (port of `int_round`). -/
-def lexRound (s : String) : Int :=
-  let (ip, frac, hasDot) := splitDecimal s
-  match ip with
-  | none => 0
-  | some n =>
-      if !hasDot || frac.isEmpty || allZeros frac then n
-      else match frac.head? with
-        | some c => if c.toNat ≥ 53 then (if n ≥ 0 then n + 1 else n - 1) else n
-        | none => n
+/-- §17.4.5.8 TZ preserves a validated lexical timezone spelling. -/
+def dtTz (s : String) : Option String := do
+  let v ← dtValue s
+  if v.tz.isNone then some ""
+  else if s.endsWith "Z" then some "Z"
+  else some (String.ofList (s.toList.drop (s.length - 6)))
 
 /-! ## The evaluation environment
 
@@ -1695,24 +1720,21 @@ text (a string literal — simple, xsd:string or language-tagged),
 pattern and flags (simple literals). An invalid pattern or flag
 (FORX0001/FORX0002) is an expression error. -/
 def regexCore (t p f : EvalResult) : EvalResult :=
-  match t.stringLiteralInfo?, p.toString?, f.toString? with
+  match t.stringLiteralInfo?, p.simpleLiteral?, f.simpleLiteral? with
   | some (s, _, _), some pat, some fl =>
-      match Regex.compile pat fl with
-      | .ok r    => .bool (Regex.isMatch r s)
+      match Regex.Profiles.matchSparql pat fl s with
+      | .ok matched => .bool matched
       | .error _ => .error
   | _, _, _ => .error
 
 /-- §17.4.3.15 REPLACE: like REGEX, plus the replacement template
 (FORX0003 for a nullable pattern, FORX0004 for a bad template); the
-text's language tag / datatype is kept (`erStringPreserve`). -/
+text's language tag, datatype and base direction are kept (`erStringPreserve`). -/
 def replaceCore (t p r f : EvalResult) : EvalResult :=
-  match t.stringLiteralInfo?, p.toString?, r.toString?, f.toString? with
+  match t.stringLiteralInfo?, p.simpleLiteral?, r.simpleLiteral?, f.simpleLiteral? with
   | some (s, lg, dt), some pat, some rep, some fl =>
-      match Regex.compile pat fl with
-      | .ok re =>
-          match Regex.replace re s rep with
-          | .ok out  => erStringPreserve out lg dt
-          | .error _ => .error
+      match Regex.Profiles.replaceSparql pat fl s rep with
+      | .ok out => erStringPreserve out lg dt t.direction?
       | .error _ => .error
   | _, _, _, _ => .error
 
@@ -1721,12 +1743,12 @@ Split out of the evaluator so that each evaluator arm stays a plain
 structural match — which is what lets Lean generate the equation
 lemmas the proofs in `ExprTheorems` rewrite with. -/
 def substrResult (v1 v2 : EvalResult) (vlen : Option EvalResult) : EvalResult :=
-  match v1.stringInfo?, v2 with
+  match v1.stringInfo?, v2.promoteLiteral with
   | some (s, tg, dt), .num start =>
       if start < 0 then .error
       else
         let lenVal :=
-          match vlen with
+          match vlen.map EvalResult.promoteLiteral with
           | some (.num n) => if n ≥ 0 then some n.toNat else none
           | _ => none
         erStringPreserve (substrSpec s start.toNat lenVal) tg dt
@@ -1786,34 +1808,16 @@ def stripLeadingPlus (s : String) : String :=
 def isDigit (c : Char) : Bool := c.toNat ≥ 48 && c.toNat ≤ 57
 
 /-- XSD integer lexical space: `[+-]?[0-9]+`. -/
-def isIntegerLexical (s : String) : Bool :=
-  let cs := match s.toList with
-    | '+' :: rest | '-' :: rest => rest
-    | cs => cs
-  !cs.isEmpty && cs.all isDigit
+def isIntegerLexical (s : String) : Bool := (XSD.parseIntegerLex s).isSome
 
 /-- XSD decimal lexical space: `[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)`. -/
-def isDecimalLexical (s : String) : Bool :=
-  let cs := match s.toList with
-    | '+' :: rest | '-' :: rest => rest
-    | cs => cs
-  let intPart := cs.takeWhile isDigit
-  match cs.dropWhile isDigit with
-  | [] => !intPart.isEmpty
-  | '.' :: frac => (!intPart.isEmpty || !frac.isEmpty) && frac.all isDigit
-  | _ => false
+def isDecimalLexical (s : String) : Bool := (XSD.parseDecimalLex s).isSome
 
 /-- XSD double/float lexical space: a decimal with an optional
-`[Ee][+-]?[0-9]+` exponent, or `INF` / `-INF` / `NaN`. -/
-def isDoubleLexical (s : String) : Bool :=
-  if s == "INF" || s == "-INF" || s == "+INF" || s == "NaN" then true
-  else
-    let cs := s.toList
-    let notE := fun (c : Char) => c != 'E' && c != 'e'
-    let mant := String.ofList (cs.takeWhile notE)
-    match cs.dropWhile notE with
-    | [] => isDecimalLexical mant
-    | _ :: ex => isDecimalLexical mant && isIntegerLexical (String.ofList ex)
+`[Ee][+-]?[0-9]+` exponent, or `INF` / `-INF` / `NaN`.
+The existing cast extension accepting `+INF` is retained explicitly; it
+differs from the XSD 1.0 adapter used by SHACL and XForms. -/
+def isDoubleLexical (s : String) : Bool := (XSD.parseLexical s).isSome
 
 /-- Canonical xsd:decimal lexical form of a decimal lexical: no
 leading `+`, a digit before the point, trailing zeros dropped but one
@@ -1843,85 +1847,35 @@ have none. -/
 def castLexical : EvalResult → Option String
   | .num n => some (toString n)
   | .dec s => some s
-  | .flt s => some s
   | .dbl s => some s
   | .bool b => some (if b then "true" else "false")
   | .term (.literal l) => some l.val.lexicalForm
   | .term (.iri i) => some i.val
   | _ => none
 
-/-- `xsd:integer(v)`: a boolean maps to 1/0, a number truncates toward
-zero (`-7.875 ↦ -7`), a string must be an integer lexical form. -/
-def castInteger (v : EvalResult) (lex : String) : EvalResult :=
-  match v with
-  | .bool b => .num (if b then 1 else 0)
-  | .num n => .num n
-  | .dec _ =>
-      match parseDoubleToScaled lex with
-      | some sv => .num (intDivT sv.mantissa (pow10 sv.scale))
-      | none => .error
-  | .flt _ | .dbl _ =>
-      match v.toNumeric? with
-      | some (sv, _) => .num (intDivT sv.mantissa (pow10 sv.scale))
-      | none => .error
-  | _ =>
-      if isIntegerLexical lex then
-        match parseIntString lex with
-        | some n => .num n
-        | none => .error
-      else .error
-
-/-- `xsd:decimal(v)`: a boolean maps to `1.0`/`0.0`, an integer gains
-`.0`, a double converts by value, a string must be a decimal lexical
-form (no exponent) and is canonicalised. -/
-def castDecimal (v : EvalResult) (lex : String) : EvalResult :=
-  match v with
-  | .bool b => .dec (if b then "1.0" else "0.0")
-  | .num n => .dec (toString n ++ ".0")
-  | .dec _ => if isDecimalLexical lex then .dec (canonDecimalLexical lex) else .error
-  | .flt _ | .dbl _ =>
-      match v.toNumeric? with
-      | some (sv, _) => .dec (scaledToDecimalLexical sv)
-      | none => .error
-  | _ => if isDecimalLexical lex then .dec (canonDecimalLexical lex) else .error
-
-/-- `xsd:double(v)`: booleans and integers use the established lexical
-conventions; decimal and float operands convert their numeric VALUE;
-a string must be a double lexical form. -/
-def castDouble (v : EvalResult) (lex : String) : EvalResult :=
+/-- Candidate result spelling only, checked against the shared cast value.
+    `xsd:double(v)`: the F* lexical conventions — a boolean is
+`1.0E0`/`0.0E0`, an integer `<n>.0E0`, a decimal or double keeps its
+lexical form, a string must be a double lexical form. -/
+private def doubleCastSpelling (v : EvalResult) (lex : String) : EvalResult :=
   match v with
   | .bool b => .dbl (if b then "1.0E0" else "0.0E0")
   | .num n => .dbl (toString n ++ ".0E0")
-  | .dec _ =>
-      match v.toNumeric? with
-      | some (sv, _) => formatNumericResult sv .dbl
-      | none => .error
-  | .flt _ =>
-      match v.toNumeric? with
-      | some (sv, _) => formatNumericResult sv .dbl
-      | none =>
-          match L4Factoidal.XSD.parseLexical lex with
-          | some p =>
-              let fv := L4Factoidal.XSD.canon 24 (-126) 127 p
-              match fv.cls with
-              | .inf => .dbl (if fv.neg then "-INF" else "INF")
-              | .nan => .dbl "NaN"
-              | _ => .error
-          | none => .error
-  | .dbl _ => if isDoubleLexical lex then .dbl lex else .error
+  | .dbl _ | .dec _ => if isDoubleLexical lex then .dbl lex else .error
   | _ => if isDoubleLexical lex then .dbl lex else .error
 
-/-- `xsd:float(v)`: a typed `xsd:float` literal. Lexical conventions
-follow the F* source (ARQ's, which
+/-- Candidate result spelling only, checked against the shared cast value.
+    `xsd:float(v)`: a typed `xsd:float` literal (no promoted float
+kind exists). Lexical conventions follow the F* source (ARQ's, which
 the W3C `cast-float` expectation records): boolean `1.0E0`/`0E0`,
 integer `0` or `<n>.0`, an integer-VALUED double `0.0`/`<n>.0`,
 anything else its own lexical form. -/
-def castFloat (v : EvalResult) (lex : String) : EvalResult :=
+private def floatCastSpelling (v : EvalResult) (lex : String) : EvalResult :=
   let mkFloat := fun (s : String) => EvalResult.term (.literal (mkTypedLiteral s xsdFloat))
   match v with
   | .bool b => mkFloat (if b then "1.0E0" else "0E0")
   | .num n => mkFloat (if n = 0 then "0" else toString n ++ ".0")
-  | .flt _ | .dbl _ =>
+  | .dbl _ =>
       match parseDoubleToScaled lex with
       | some sv =>
           let p := pow10 sv.scale
@@ -1933,20 +1887,62 @@ def castFloat (v : EvalResult) (lex : String) : EvalResult :=
   | .dec _ => if isDecimalLexical lex then mkFloat lex else .error
   | _ => if isDoubleLexical lex then mkFloat lex else .error
 
-/-- `xsd:boolean(v)`: a number is `true` iff non-zero; a string must
-be one of `true`, `false`, `1`, `0`. -/
-def castBoolean (v : EvalResult) (lex : String) : EvalResult :=
-  match v with
-  | .bool b => .bool b
-  | .num n => .bool (n ≠ 0)
-  | .dec _ | .flt _ | .dbl _ =>
-      match ebv v with
-      | some b => .bool b
-      | none => .error
-  | _ =>
-      if lex == "true" || lex == "1" then .bool true
-      else if lex == "false" || lex == "0" then .bool false
-      else .error
+/-- Source validation for constructors, before literal promotion can erase
+    float precision or the restrictions on derived numeric datatypes. -/
+def EvalResult.castValue? : EvalResult → Option XSD.Val
+  | .num n => some (.dec (XSD.Dec.ofInt n))
+  | .dec s => XSD.checkedLexicalValue .xsd10 .decimal s
+  | .dbl s => XSD.checkedLexicalValue .xsd10 .double s
+  | .bool b => some (.bool b)
+  | .term (.literal l) => do
+      let b ← XSD.builtinOfIri? l.val.datatype.val
+      XSD.checkedLexicalValue .xsd10 b l.val.lexicalForm
+  | _ => none
+
+/-- Shared F&O numeric constructors. Existing expression spellings are kept
+    only if reparsing them gives exactly the shared conversion result. The
+    historical +INF string extension remains explicit, not a source-type cast. -/
+def castNumeric (target : XSD.Builtin) (v : EvalResult) : EvalResult := Id.run do
+  let some source := v.castValue? | return .error
+  let edition := match source with
+    | .str .string s => if (target == .float || target == .double) &&
+        XSD.applyWhiteSpace .collapse s == "+INF" then XSD.Edition.xsd11 else .xsd10
+    | _ => .xsd10
+  let some result := Fn.Cast.cast edition target source | return .error
+  let promoted := v.promoteLiteral
+  let lex := stripLeadingPlus ((castLexical promoted).getD "")
+  let candidate := match target with
+    | .double => doubleCastSpelling promoted lex
+    | .float => floatCastSpelling promoted lex
+    | _ => .error
+  if candidate.castValue?.any (XSD.valIdentical result) then return candidate
+  match result with
+  | .dec d =>
+      if target == .integer then
+        return (d.toInt?.map EvalResult.num).getD .error
+      else return .dec (canonDecimalLexical d.canonical)
+  | .flt _ | .dbl _ => return numericResult false result
+  | _ => return .error
+
+/-- Compatibility entry points; `lex` is no longer trusted as a source value. -/
+def castInteger (v : EvalResult) (_lex : String) := castNumeric .integer v
+def castDecimal (v : EvalResult) (_lex : String) := castNumeric .decimal v
+def castDouble (v : EvalResult) (_lex : String) := castNumeric .double v
+def castFloat (v : EvalResult) (_lex : String) := castNumeric .float v
+
+/-- F&O §17.1.6: Boolean casts share numeric EBV, preserving the source
+    float type before rounding. String casts use the target's whitespace
+    facet (§17.1.1); unsupported RDF datatypes are not strings. -/
+def castBoolean (v : EvalResult) : EvalResult :=
+  let result := match v with
+    | .bool b => some b
+    | .term (.literal l) =>
+        if l.val.datatype == xsdBoolean then XSD.parseBooleanLex l.val.lexicalForm
+        else if l.val.datatype == xsdString then
+          XSD.parseBooleanLex (XSD.applyWhiteSpace .collapse l.val.lexicalForm)
+        else v.numericValue?.bind Fn.Numeric.booleanValue?
+    | _ => v.numericValue?.bind Fn.Numeric.booleanValue?
+  (result.map EvalResult.bool).getD .error
 
 /-- `xsd:string(v)`: a simple literal; an integer-valued decimal or
 double prints as its integer (`1.0 ↦ "1"`, `1E0 ↦ "1"`), as in the F*
@@ -1959,7 +1955,7 @@ def castString (v : EvalResult) (lex : String) : EvalResult :=
           let p := pow10 sv.scale
           if sv.mantissa % p = 0 then erString (toString (intDivT sv.mantissa p)) else erString lex
       | none => erString lex
-  | .flt _ | .dbl _ =>
+  | .dbl _ =>
       match parseDoubleToScaled lex with
       | some sv =>
           let p := pow10 sv.scale
@@ -1967,21 +1963,36 @@ def castString (v : EvalResult) (lex : String) : EvalResult :=
       | none => erString lex
   | _ => erString lex
 
-/-- §17.5: dispatch `xsd:<targetType>(v)`. Any other XSD datatype IRI
-(`xsd:dateTime`, …) constructs a typed literal from the lexical form;
-the language-tagged datatypes are never constructible this way. -/
+/-- §17.5 / F&O casting to dateTime: in the supported SPARQL type table,
+    accept string/simple literals or dateTime values with a valid lexical.
+    Reuse the same XSD 1.0 decision as the date component accessors.
+    Preserve the input spelling; numeric leading-plus removal does not apply. -/
+def castDateTime (v : EvalResult) : EvalResult :=
+  match v with
+  | .term (.literal l) =>
+      if (l.val.datatype == xsdString || l.val.datatype == xsdDateTime) &&
+          (dtValue l.val.lexicalForm).isSome then
+        .term (.literal (mkTypedLiteral l.val.lexicalForm xsdDateTime))
+      else .error
+  | _ => .error
+
+/-- §17.5: dispatch `xsd:<targetType>(v)`. Other XSD datatype IRIs retain
+the historical typed-literal fallback; their constructor semantics remain a
+coverage gap. Language-tagged datatypes are never constructible this way. -/
 def evalXsdCast (v : EvalResult) (targetType : String) (fullIri : WfIri) : EvalResult :=
+  if targetType == "integer" then castNumeric .integer v else
+  if targetType == "decimal" then castNumeric .decimal v else
+  if targetType == "double" then castNumeric .double v else
+  if targetType == "float" then castNumeric .float v else
+  if targetType == "dateTime" then castDateTime v else
+  if targetType == "boolean" then castBoolean v else
+  let v := v.promoteLiteral
   match castLexical v with
   | none => .error
   | some lex0 =>
       let lex := if targetType == "string" || targetType == "boolean" then lex0
                  else stripLeadingPlus lex0
-      if targetType == "integer" then castInteger v lex
-      else if targetType == "decimal" then castDecimal v lex
-      else if targetType == "double" then castDouble v lex
-      else if targetType == "float" then castFloat v lex
-      else if targetType == "boolean" then castBoolean v lex
-      else if targetType == "string" then castString v lex
+      if targetType == "string" then castString v lex
       else if fullIri != rdfLangString && fullIri != rdfDirLangString then
         .term (.literal (mkTypedLiteral lex fullIri))
       else .error
@@ -2032,17 +2043,14 @@ mutual
 `eval_expr_with_base` (with the BASE-IRI parameter dropped — see the
 deviation note on `Expr.iriFn`). -/
 def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
-  -- §18.2 primary expressions. A bound variable holding a numeric or
-  -- boolean literal is PROMOTED here, so `?x = 1` compares values.
+  -- §18.2 primary expressions preserve RDF terms, including lexical spelling.
+  -- Numeric and comparison operators opt into value conversion locally.
   | .var v =>
       match mu.lookup v with
-      | some (.literal l) => literalPromote l
       | some t => .term t
       | none => .error
   | .iri i => .term (.iri i)
-  | .lit l =>
-      if l.val.datatype == xsdFloat then literalPromote l
-      else .term (.literal l)
+  | .lit l => .term (.literal l)
   | .boolLit b => .bool b
   | .numericLit n => .num n
   | .decimalLit s => .dec s
@@ -2050,70 +2058,15 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
 
   -- §17.4.1 arithmetic, with §17.1 numeric promotion.
   | .arith op e1 e2 =>
-      let v1 := Expr.evalIn env mu e1
-      let v2 := Expr.evalIn env mu e2
-      match v1, v2 with
-      | .num a, .num b => evalArithInt op a b
-      | _, _ =>
-          match v1.toNumeric?, v2.toNumeric? with
-          | some (a, ka), some (b, kb) =>
-              let k := promoteKind ka kb
-              -- `/` never yields an integer: integer ÷ integer is decimal.
-              let k := match op, k with | .div, .int => .dec | _, _ => k
-              -- SPARQL promotes both operands before applying the
-              -- operator. This matters at binary32 boundaries: a
-              -- decimal operand must first be rounded to float, and
-              -- the result is rounded again to float.
-              match roundScaledToKind? a k, roundScaledToKind? b k with
-              | some ar, some br =>
-                  match op with
-                  | .add => formatNumericResult (ar.add br) k
-                  | .sub => formatNumericResult (ar.sub br) k
-                  | .mul => formatNumericResult (ar.mul br) k
-                  | .div =>
-                      match ar.div? br with
-                      | some q => formatNumericResult q k
-                      | none => .error
-              | _, _ => .error
-          | _, _ => .error
-  | .unaryMinus e1 =>
-      match Expr.evalIn env mu e1 with
-      | .num n => .num (-n)
-      | .dec s =>
-          if strStartsWith s "-" && s.length > 1 then .dec (String.ofList (s.toList.drop 1))
-          else if strStartsWith s "-" then .dec "0"
-          else .dec ("-" ++ s)
-      | .flt s =>
-          if strStartsWith s "-" && s.length > 1 then .flt (String.ofList (s.toList.drop 1))
-          else if strStartsWith s "-" then .flt "0"
-          else .flt ("-" ++ s)
-      | .dbl s =>
-          if strStartsWith s "-" && s.length > 1 then .dbl (String.ofList (s.toList.drop 1))
-          else if strStartsWith s "-" then .dbl "0"
-          else .dbl ("-" ++ s)
-      | _ => .error
-  | .unaryPlus e1 => Expr.evalIn env mu e1
+      evalArithmetic op (Expr.evalIn env mu e1) (Expr.evalIn env mu e2)
+  | .unaryMinus e1 => evalNumericUnary .minus (Expr.evalIn env mu e1)
+  | .unaryPlus e1 => evalNumericUnary .plus (Expr.evalIn env mu e1)
 
   -- §17.4.1.7 comparison.
   | .compare op e1 e2 =>
-      let v1 := Expr.evalIn env mu e1
-      let v2 := Expr.evalIn env mu e2
-      match valueCompare v1 v2 op with
+      match valueCompare (Expr.evalIn env mu e1) (Expr.evalIn env mu e2) op with
       | some b => .bool b
-      | none =>
-          -- Variable lookup and primary-literal evaluation may promote
-          -- RDF literals to numeric values. If the numeric operator mapping
-          -- does not apply, equality still has the RDF-term fallback.
-          match op, comparisonIdentityTerm mu e1 v1, comparisonIdentityTerm mu e2 v2 with
-          | .eq, some t1, some t2 =>
-              match valueCompare (.term t1) (.term t2) .eq with
-              | some b => .bool b
-              | none => .error
-          | .ne, some t1, some t2 =>
-              match valueCompare (.term t1) (.term t2) .ne with
-              | some b => .bool b
-              | none => .error
-          | _, _, _ => .error
+      | none => .error
 
   -- §17.3 connectives: error-tolerant and error-preserving.
   | .and e1 e2 =>
@@ -2218,11 +2171,11 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
         (Expr.evalOpt env mu lenOpt)
   | .uCase e1 =>
       match (Expr.evalIn env mu e1).stringInfo? with
-      | some (s, tg, dt) => erStringPreserve s.toUpper tg dt
+      | some (s, tg, dt) => erStringPreserve (Fn.String.upperCase s) tg dt
       | none => .error
   | .lCase e1 =>
       match (Expr.evalIn env mu e1).stringInfo? with
-      | some (s, tg, dt) => erStringPreserve s.toLower tg dt
+      | some (s, tg, dt) => erStringPreserve (Fn.String.lowerCase s) tg dt
       | none => .error
   | .strStarts e1 e2 =>
       match (Expr.evalIn env mu e1).toString?, (Expr.evalIn env mu e2).toString? with
@@ -2282,35 +2235,11 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
   | .replace e1 pat rep (some f) =>
       replaceCore (Expr.evalIn env mu e1) (Expr.evalIn env mu pat) (Expr.evalIn env mu rep) (Expr.evalIn env mu f)
 
-  -- §17.4.4 numeric functions.
-  | .abs e1 =>
-      match Expr.evalIn env mu e1 with
-      | .num n => .num (n.natAbs : Int)
-      | .dec s => .dec (if strStartsWith s "-" then String.ofList (s.toList.drop 1) else s)
-      | .flt s => .flt (if strStartsWith s "-" then String.ofList (s.toList.drop 1) else s)
-      | .dbl s => .dbl (if strStartsWith s "-" then String.ofList (s.toList.drop 1) else s)
-      | _ => .error
-  | .round e1 =>
-      match Expr.evalIn env mu e1 with
-      | .num n => .num n
-      | .dec s => .dec (toString (lexRound s))
-      | .flt s => .flt (toString (lexRound s))
-      | .dbl s => .dbl (toString (lexRound s))
-      | _ => .error
-  | .ceil e1 =>
-      match Expr.evalIn env mu e1 with
-      | .num n => .num n
-      | .dec s => .dec (toString (lexCeil s))
-      | .flt s => .flt (toString (lexCeil s))
-      | .dbl s => .dbl (toString (lexCeil s))
-      | _ => .error
-  | .floor e1 =>
-      match Expr.evalIn env mu e1 with
-      | .num n => .num n
-      | .dec s => .dec (toString (lexFloor s))
-      | .flt s => .flt (toString (lexFloor s))
-      | .dbl s => .dbl (toString (lexFloor s))
-      | _ => .error
+  -- §17.4.4 numeric functions share XSD values and F&O operations.
+  | .abs e1 => evalNumericUnary .abs (Expr.evalIn env mu e1)
+  | .round e1 => evalNumericUnary (.integral .nearest) (Expr.evalIn env mu e1)
+  | .ceil e1 => evalNumericUnary (.integral .ceiling) (Expr.evalIn env mu e1)
+  | .floor e1 => evalNumericUnary (.integral .floor) (Expr.evalIn env mu e1)
 
   -- §17.4.4.7–11 hash builtins: pure Lean digests of the UTF-8 bytes,
   -- lowercase hex. SHA-2 goes through the hash-agile `Crypto.hashHex`.
@@ -2365,17 +2294,10 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
       | some s => match dtTz s with | some tzStr => erString tzStr | none => .error
       | none => .error
 
-  -- §17.4.1.2 sameTerm — term IDENTITY, stricter than `=`.
+  -- §17.4.1.8 sameTerm uses RDF identity, including computed result terms.
   | .sameTerm e1 e2 =>
-      let v1 := Expr.evalIn env mu e1
-      let v2 := Expr.evalIn env mu e2
-      -- Primary expressions retain their source RDF terms here. In
-      -- particular, variable lookup promotion must not erase lexical
-      -- identity (`"01"^^xsd:integer` differs from `"1"`), and a
-      -- float literal must still agree with the identical term made by
-      -- a cast. Computed values use their result term.
-      match comparisonIdentityTerm mu e1 v1, comparisonIdentityTerm mu e2 v2 with
-      | some t1, some t2 => .bool (sameTermEq t1 t2)
+      match (Expr.evalIn env mu e1).toTerm?, (Expr.evalIn env mu e2).toTerm? with
+      | some t1, some t2 => .bool (t1.sameTerm t2)
       | _, _ => .error
 
   -- §18.6 EXISTS: evaluated by the pattern layer, which replaces every
@@ -2399,7 +2321,7 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
       if i == langMatchesIri then
         match vals with
         | [v1, v2] =>
-            match v1.toString?, v2.toString? with
+            match v1.simpleLiteral?, v2.simpleLiteral? with
             | some tag, some range => .bool (fnLangMatches tag range)
             | _, _ => .error
         | _ => .error

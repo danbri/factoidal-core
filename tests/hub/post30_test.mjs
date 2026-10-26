@@ -1,0 +1,153 @@
+// Pins docs/web/historical-fstar-notebooks/30-owl-reasoning-tableau.md.
+//
+// The cells call the typed `fn` methods (tableauMaterialise /
+// tableauDlInconsistent / owlIsConsistent / owlEntails) and reference
+// each other ObservableHQ-style, exercised via runReactivePost(). `fn`
+// here is the real npm/factoidal typed API; the live page binds `fn` to
+// the in-browser adapter in docs/_includes/hub.njk, which exposes the
+// same methods over browser.js. See tests/hub/_helpers.mjs.
+
+import {
+  NPM_FACTOIDAL_INDEX,
+  extractObservableCells,
+  runReactivePost,
+  pretty,
+} from './_helpers.mjs';
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+const POST_FILE = '30-owl-reasoning-tableau.md';
+const fn = (await import(NPM_FACTOIDAL_INDEX)).default;
+
+const cells = extractObservableCells(POST_FILE);
+
+test('post30: post ships twenty-three live cells', () => {
+  assert.equal(cells.length, 23, `expected 23 live cells, found ${cells.length}`);
+});
+
+test('post30: dependency inference names the cells in order', () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  assert.deepEqual(post.names, [
+    'someValuesOntology',
+    'someValuesMaterialised',
+    'parentOfDoctorMembers',
+    'hasValueOntology',
+    'hasValueMaterialised',
+    'britishCitizens',
+    'unsatisfiableOntology',
+    'inconsistencyVerdict',
+    'disjointClassesOntology',
+    'disjointClassesVerdict',
+    'cardinalityClashOntology',
+    'cardinalityClashVerdict',
+    'functionalClashOntology',
+    'functionalClashVerdict',
+    'satisfiableOntology',
+    'satisfiableVerdict',
+    'clashFamilySummary',
+    'budgetOutVerdict',
+    'entailmentPremise',
+    'entailmentConclusion',
+    'entailmentVerdict',
+    'unionPremise',
+    'unionVerdict',
+  ]);
+});
+
+test('post30: the tableau materialises at least one membership for the someValuesFrom ontology', async () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  const m = await post.value('someValuesMaterialised');
+  assert.ok(m.addedCount >= 1, `expected addedCount >= 1, got ${m.addedCount}`);
+});
+
+test('post30: Alice is classified as a member of ParentOfDoctor (someValuesFrom)', async () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  const members = await post.value('parentOfDoctorMembers');
+  assert.deepEqual(members, ['http://example.org/Alice']);
+});
+
+test('post30: Alice is classified as a BritishCitizen (hasValue)', async () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  const members = await post.value('britishCitizens');
+  assert.deepEqual(members, ['http://example.org/Alice']);
+});
+
+test('post30: the DL pipeline flags the unsatisfiable restriction that RL leaves consistent', async () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  const verdict = await post.value('inconsistencyVerdict');
+  // rlAlone flipped false -> true on 2026-08-02: the RL closure's
+  // comprehension-witness layer now catches THIS shape too (asserting
+  // an individual into someValuesFrom(p, owl:Nothing) is a clash the
+  // witness machinery reaches without the tableau). The ontology IS
+  // inconsistent, so both verdicts are sound; the DL pipeline remains
+  // the decider for the WebOnt shapes RL still cannot reach.
+  assert.deepEqual(verdict, { inconsistent: true, rlAlone: true });
+});
+
+// These archived examples have known OWL verdicts, but their syntax is outside
+// the checked reader. Pin explicit refusal; do not count these as conformance.
+test('post30: checked consistency refuses the disjoint-classes syntax', async () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  const v = await post.value('disjointClassesVerdict');
+  assert.equal(v.consistent, null);
+  assert.match(v.reason, /unsupported-syntax/);
+});
+
+test('post30: checked consistency refuses the min/max cardinality syntax', async () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  const v = await post.value('cardinalityClashVerdict');
+  assert.equal(v.consistent, null);
+  assert.match(v.reason, /unsupported-syntax/);
+});
+
+test('post30: checked consistency refuses the functional-property syntax', async () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  const v = await post.value('functionalClashVerdict');
+  assert.equal(v.consistent, null);
+  assert.match(v.reason, /unsupported-syntax/);
+});
+
+test('post30: checked consistency refuses the satisfiable control syntax', async () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  const v = await post.value('satisfiableVerdict');
+  assert.equal(v.consistent, null);
+  assert.match(v.reason, /unsupported-syntax/);
+});
+
+test('post30: the archived clash-family summary exposes four unsupported cases', async () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  const rows = await post.value('clashFamilySummary');
+  assert.equal(rows.length, 4);
+  assert.deepEqual(rows.map((r) => r.consistent), [null, null, null, null]);
+  for (const r of rows) assert.match(r.reason, /unsupported-syntax/, r.family);
+});
+
+test('post30: unsupported consistency syntax is rejected before fuel matters', async () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  const v = await post.value('budgetOutVerdict');
+  assert.equal(v.consistent, null);
+  assert.equal(typeof v.reason, 'string');
+  assert.match(v.reason, /unsupported-syntax/);
+});
+
+// The conclusion is in the OWL 2 RL/RDF closure of the premise:
+// cls-svf1 (OWL 2 Profiles § 4.3, Table 6) types Alice with the
+// someValuesFrom restriction and cax-eqc2 (Table 7) carries the type to
+// :ParentOfDoctor. owlEntails checks the closure first, so `via` is
+// 'closure'. (The F* closure had no cls-svf1 row and reached the same
+// verdict by refutation.)
+test('post30: owlEntails decides the someValuesFrom entailment in the OWL 2 RL closure (cls-svf1, cax-eqc2)', async () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  const v = await post.value('entailmentVerdict');
+  assert.deepEqual(v, { entailed: true, via: 'closure' });
+});
+
+// No OWL 2 RL row derives a superclass of every member of a union from
+// membership of the union (cls-uni derives the union from a member), so
+// this entailment needs the refuter: both branches of the union close.
+test('post30: owlEntails proves the union entailment by refutation', async () => {
+  const post = runReactivePost(cells, { fn, pretty });
+  const v = await post.value('unionVerdict');
+  assert.deepEqual(v, { entailed: true, via: 'refutation' });
+});

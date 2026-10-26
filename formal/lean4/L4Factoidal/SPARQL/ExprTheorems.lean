@@ -20,9 +20,8 @@ Contents:
     `cmp b a = -cmp a b` (hence antisymmetry), the cross-multiplied
     characterisation that reconciles the two scale-normalisation
     branches, and TRANSITIVITY of the strict order;
-  * §17.4.1.7 — reflexivity of `=` on IRI, literal, Boolean and numeric
-    values, and its NON-reflexivity on blank nodes (a fact about the
-    operator mapping, not an omission);
+  * §17.4.1.7 — reflexivity of `=` on IRIs, blank nodes, Booleans,
+    integers and the nonnumeric unpromoted-literal fallback;
   * §18.5 — the FILTER bridge collapses a type error to `false`.
 
 Each theorem pins down behaviour a plausible-looking simplification
@@ -63,7 +62,10 @@ theorem ebv_num_nonzero {n : Int} (h : n ≠ 0) : ebv (.num n) = some true := by
 language-tagged literal is a TYPE ERROR — not `true` because it happens
 to be non-empty. -/
 theorem ebv_langString (lex tag : String) :
-    ebv (.term (.literal (Literal.langString lex tag))) = none := rfl
+    ebv (.term (.literal (Literal.langString lex tag))) = none := by
+  have hn : isNumericDatatype rdfLangString = false := by decide +kernel
+  simp only [ebv, Literal.langString, hn]
+  rfl
 
 /-- A plain `xsd:string` literal, by contrast, does have an EBV. -/
 theorem ebv_string (lex : String) :
@@ -354,11 +356,9 @@ theorem Scaled.cmp_trans {a b c : Scaled}
 
 /-! ## §17.4.1.7 — reflexivity of `=`
 
-`=` is reflexive on the term kinds its operator mapping covers. It is
-NOT reflexive on blank nodes: §17.4.1.7 gives no `op:` mapping for
-them, so `?b = ?b` on a blank node is a type error. That is the
-specification, and pinning it down here stops a future "obvious"
-catch-all arm from quietly changing FILTER results. -/
+Numeric value equality is distinct from RDF term identity (for example NaN
+is not reflexive under value equality). Blank-node equality uses the RDFterm
+fallback. Literal reflexivity below explicitly covers unpromoted terms. -/
 
 theorem listCharCompare_refl (cs : List Char) : listCharCompare cs cs = 0 := by
   induction cs with
@@ -371,71 +371,45 @@ theorem listCharCompare_refl (cs : List Char) : listCharCompare cs cs = 0 := by
 /-- `=` holds between an IRI term and itself. -/
 theorem valueCompare_eq_refl_iri (i : WfIri) :
     valueCompare (.term (.iri i)) (.term (.iri i)) .eq = some true := by
-  simp [valueCompare, promoteComparisonResult, bothNumericResults,
-        hasSpecificEqualityMapping, sameTermEq]
+  simp [valueCompare, EvalResult.isNumericOperand, EvalResult.promoteLiteral, applyCompOp]
 
-/-- `=` is reflexive on a well-formed xsd:string literal. Recognized
-value-space mappings can have non-reflexive values (NaN) or reject an
-ill-formed lexical, so the statement is deliberately specific. -/
-theorem valueCompare_eq_refl_string (s : String) :
-    valueCompare (.term (.literal (Literal.string s)))
-      (.term (.literal (Literal.string s))) .eq = some true := by
-  let l := Literal.string s
-  change valueCompare (.term (.literal l)) (.term (.literal l)) .eq = some true
-  have hi : isIntegerDatatype l.val.datatype = false := by
-    simpa [l, Literal.string] using (show isIntegerDatatype xsdString = false by decide)
-  have hdec : (l.val.datatype == xsdDecimal) = false := by
-    simpa [l, Literal.string] using (show (xsdString == xsdDecimal) = false by decide)
-  have hflt : (l.val.datatype == xsdFloat) = false := by
-    simpa [l, Literal.string] using (show (xsdString == xsdFloat) = false by decide)
-  have hdbl : (l.val.datatype == xsdDouble) = false := by
-    simpa [l, Literal.string] using (show (xsdString == xsdDouble) = false by decide)
-  have hb : (l.val.datatype == xsdBoolean) = false := by
-    simpa [l, Literal.string] using (show (xsdString == xsdBoolean) = false by decide)
-  have hdate : isDateDatatype l.val.datatype = false := by
-    simpa [l, Literal.string] using (show isDateDatatype xsdString = false by decide)
-  have hp : literalPromote l = .term (.literal l) := by
-    simp [literalPromote, hi, hdec, hflt, hdbl, hb]
-  have hvn : validNumericLiteral l = false := by
-    simp [validNumericLiteral, hp]
-  have hvb : validBooleanLiteral l = false := by
-    simp [validBooleanLiteral, hb]
-  have hdate1 : (xsdString == xsdDate) = false := by decide
-  have hdate2 : (xsdString == xsdDateTime) = false := by decide
-  have hvd : validDateLiteral l = false := by
-    simp [validDateLiteral, dateKind?, l, Literal.string, hdate1, hdate2]
-  have hm : hasSpecificEqualityMapping (.literal l) (.literal l) = false := by
-    simp [hasSpecificEqualityMapping, hvn, hvb, hvd]
-  have hs : sameTermEq (.literal l) (.literal l) = true := by
-    simp [sameTermEq]
-  simp only [valueCompare, promoteComparisonResult, hp, bothNumericResults,
-             Bool.false_eq_true, hm, hs, ↓reduceIte]
+/-- `=` is reflexive in the nonnumeric RDF fallback. Numeric value and
+    ill-typed-literal fallback have their own entry points. -/
+theorem valueCompare_eq_refl_unpromoted_literal (l : WfLiteral)
+    (h : literalPromote l = .term (.literal l))
+    (hn : Fn.Comparison.numericDatatype l.val.datatype = false) :
+    valueCompare (.term (.literal l)) (.term (.literal l)) .eq = some true := by
+  simp [valueCompare, EvalResult.isNumericOperand, hn, EvalResult.promoteLiteral, h, sameDatatypeLiteralEq,
+    applyCompOp]
 
 /-- `=` holds between a Boolean value and itself. -/
 theorem valueCompare_eq_refl_bool (b : Bool) :
     valueCompare (.bool b) (.bool b) .eq = some true := by
-  cases b <;> simp [valueCompare, promoteComparisonResult, bothNumericResults,
-                      valueCompareCore, applyCompOp]
+  cases b <;> simp [valueCompare, EvalResult.isNumericOperand, EvalResult.promoteLiteral, applyCompOp]
+
+/-- SPARQL §17.4.1.7 preserves identity of ill-typed numeric RDF literals
+    after numeric value lookup fails. This is not a NaN identity shortcut. -/
+theorem numericEquality_refl_invalid_literal (l : WfLiteral)
+    (h : Fn.Comparison.numericLiteralValue? l.val = none) :
+    numericEquality (.term (.literal l)) (.term (.literal l)) false = some true ∧
+    numericEquality (.term (.literal l)) (.term (.literal l)) true = some false := by
+  simp [numericEquality, numericValueCompare, EvalResult.numericValue?, h, Literal.sameTerm_refl]
 
 /-- `=` holds between an integer value and itself. -/
 theorem valueCompare_eq_refl_num (n : Int) :
     valueCompare (.num n) (.num n) .eq = some true := by
-  simp [valueCompare, promoteComparisonResult, bothNumericResults,
-        valueCompareCore, numericValueCompare, numericKind?,
-        numericCompare, EvalResult.toNumeric?,
-        promoteKind, roundScaledToKind?, applyCompOp]
+  simp [valueCompare, EvalResult.isNumericOperand, numericEquality, numericValueCompare, EvalResult.numericValue?,
+    Fn.Comparison.numericCompare, XSD.Dec.cmp, XSD.Dec.ofInt, Fn.Comparison.Op.apply]
 
-/-- With no more-specific operator mapping, RDF-term equality makes a
-blank node equal to itself. -/
-theorem valueCompare_eq_bnode_refl (b : BNodeId) :
+/-- §17.4.1.7's RDFterm fallback compares blank-node identity. -/
+theorem valueCompare_eq_bnode (b : BNodeId) :
     valueCompare (.term (.bnode b)) (.term (.bnode b)) .eq = some true := by
-  simp [valueCompare, promoteComparisonResult, bothNumericResults,
-        hasSpecificEqualityMapping, sameTermEq]
+  simp [valueCompare, EvalResult.isNumericOperand, EvalResult.promoteLiteral]
 
-/-- `sameTerm`, by contrast, IS reflexive on every RDF literal term. -/
+/-- `sameTerm` is reflexive even when datatype value comparison is not. -/
 theorem eval_sameTerm_refl (env : EvalEnv) (mu : Binding) (l : WfLiteral) :
     Expr.evalIn env mu (.sameTerm (.lit l) (.lit l)) = .bool true := by
-  simp [Expr.evalIn, comparisonIdentityTerm, sameTermEq]
+  simp [Expr.evalIn, EvalResult.toTerm?, Term.sameTerm]
 
 /-! ## §18.5 — the FILTER bridge -/
 
@@ -469,8 +443,9 @@ The lines below put that in every build log. -/
 #print axioms Scaled.cmp_refl
 #print axioms Scaled.cmp_swap
 #print axioms Scaled.cmp_trans
-#print axioms valueCompare_eq_refl_string
-#print axioms valueCompare_eq_bnode_refl
+#print axioms valueCompare_eq_refl_unpromoted_literal
+#print axioms valueCompare_eq_bnode
+#print axioms numericEquality_refl_invalid_literal
 #print axioms toCond_bound
 
 end L4Factoidal.SPARQL

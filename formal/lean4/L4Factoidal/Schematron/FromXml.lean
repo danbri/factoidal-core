@@ -6,16 +6,12 @@ Spec: ISO/IEC 19757-3:2016. The elements this reads are §5.4.1
 `schema`, §5.4.9 `ns`, §5.4.11 `let`, §5.4.6 `pattern`, §5.4.5 `rule`,
 §5.4.3 `assert` and §5.4.4 `report`.
 
-## Names are matched on the LOCAL part
+## Names are resolved before vocabulary matching
 
-The project's XML parser is deliberately NON-NAMESPACE: it keeps a
-`[5] Name` exactly as written, so a Schematron document writes
-`sch:pattern` and an unprefixed one writes `pattern`, and both must
-read the same. This module therefore strips everything up to the last
-`:` before matching. That is weaker than a namespace check — it would
-accept `other:pattern` — and the weakness is stated rather than
-hidden: a namespace-aware reader belongs with `XML.Namespaces`, and
-the corpus here declares the ISO namespace on every schema it uses.
+XML.NamespaceView validates namespace well-formedness and resolves all names.
+Only elements in the ISO Schematron namespace become vocabulary names. Foreign
+names and qualified attributes cannot masquerade as Schematron constructs.
+The helpers below consume this internal projection, not raw XML nodes.
 
 ## An element this module does not know is SKIPPED, not guessed
 
@@ -27,17 +23,16 @@ a dropped construct shows up as a missing finding rather than as a
 silent pass.
 -/
 import L4Factoidal.Schematron.Validate
-import L4Factoidal.XML.Parser
+import L4Factoidal.XML.NamespaceView
 
 namespace L4Factoidal.Schematron
 
 open L4Factoidal.XML
 
-/-- The part of a `[5] Name` after the last `:`. -/
-def localOf (n : String) : String :=
-  match (n.splitOn ":").getLast? with
-  | some l => l
-  | none   => n
+def schematronNamespace : String := "http://purl.oclc.org/dsdl/schematron"
+
+/-- Names in the vocabulary projection are compared exactly. -/
+def localOf (n : String) : String := n
 
 /-- Element children whose LOCAL name is `nm`. -/
 def childrenNamed (nm : String) : Node → List Node
@@ -132,10 +127,10 @@ def schemaOf (root : Node) : Option Schema :=
     are kept apart: one says the file is not XML, the other says it is
     XML that is not Schematron. -/
 def parseSchematron (src : String) : Except String Schema :=
-  match parseXML src with
-  | .error e => .error s!"the schema is not well-formed XML: {e.message} at {e.position}"
+  match parseNamespaceView src with
+  | .error e => .error s!"the schema is not namespace-well-formed XML: {e}"
   | .ok doc  =>
-      match schemaOf doc.root with
+      match schemaOf (doc.forVocabulary schematronNamespace) with
       | none   => .error "the document element is not a Schematron <schema>"
       | some s => .ok s
 

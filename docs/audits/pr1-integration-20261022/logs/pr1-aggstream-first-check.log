@@ -1,0 +1,63 @@
+L4Factoidal/SPARQL/AggStream.lean:295:6: error: unsolved goals
+case pos
+keep : Int → Bool
+v : EvalResult
+rest : List EvalResult
+ih :
+  ∀ (a : EvalResult),
+    List.foldl (AggAcc.stepKeep keep) (AggAcc.best (some (a, numericView a))) (List.map Summary.of rest) =
+      AggAcc.best (some (bestFold keep a (filterNonError rest), numericView (bestFold keep a (filterNonError rest))))
+a : EvalResult
+hv : ¬v = EvalResult.error
+hv' : (Summary.of v).v ≠ EvalResult.error
+hk : keep (sparqlOrder (numericView v) (numericView a)) = true
+h1 : AggAcc.stepKeep keep (AggAcc.best (some (a, numericView a))) (Summary.of v) = AggAcc.best (some (v, numericView v))
+⊢ List.foldl (fun acc x => if keep (sparqlOrder x acc) = true then x else acc) v (filterNonError rest) =
+      List.foldl (fun acc x => if keep (sparqlOrder x acc) = true then x else acc)
+        (if keep (sparqlOrder v a) = true then v else a) (filterNonError rest) ∧
+    numericView (List.foldl (fun acc x => if keep (sparqlOrder x acc) = true then x else acc) v (filterNonError rest)) =
+      numericView
+        (List.foldl (fun acc x => if keep (sparqlOrder x acc) = true then x else acc)
+          (if keep (sparqlOrder v a) = true then v else a) (filterNonError rest))
+L4Factoidal/SPARQL/AggStream.lean:300:6: error: unsolved goals
+case neg
+keep : Int → Bool
+v : EvalResult
+rest : List EvalResult
+ih :
+  ∀ (a : EvalResult),
+    List.foldl (AggAcc.stepKeep keep) (AggAcc.best (some (a, numericView a))) (List.map Summary.of rest) =
+      AggAcc.best (some (bestFold keep a (filterNonError rest), numericView (bestFold keep a (filterNonError rest))))
+a : EvalResult
+hv : ¬v = EvalResult.error
+hv' : (Summary.of v).v ≠ EvalResult.error
+hk : ¬keep (sparqlOrder (numericView v) (numericView a)) = true
+h1 : AggAcc.stepKeep keep (AggAcc.best (some (a, numericView a))) (Summary.of v) = AggAcc.best (some (a, numericView a))
+⊢ List.foldl (fun acc x => if keep (sparqlOrder x acc) = true then x else acc) a (filterNonError rest) =
+      List.foldl (fun acc x => if keep (sparqlOrder x acc) = true then x else acc)
+        (if keep (sparqlOrder v a) = true then v else a) (filterNonError rest) ∧
+    numericView (List.foldl (fun acc x => if keep (sparqlOrder x acc) = true then x else acc) a (filterNonError rest)) =
+      numericView
+        (List.foldl (fun acc x => if keep (sparqlOrder x acc) = true then x else acc)
+          (if keep (sparqlOrder v a) = true then v else a) (filterNonError rest))
+L4Factoidal/SPARQL/AggStream.lean:299:42: warning: This simp argument is unused:
+  hk
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [bestFold, sparqlOrderValue]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+L4Factoidal/SPARQL/AggStream.lean:304:42: warning: This simp argument is unused:
+  hk
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [bestFold, sparqlOrderValue]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+'L4Factoidal.SPARQL.AggStream.evalAggregate_stream' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.evalAggregate_star' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.evalSelectItemsGroup_pre' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.selectPost_grouped' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.selectPost_aggPlan' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.varView_ne_error' depends on axioms: [propext, Classical.choice, Quot.sound]
+

@@ -57,7 +57,7 @@ open L4Factoidal.RDF
 `Derives g t` — "graph `g` rdfs-core-derives triple `t`". Membership of
 the base case is LIST membership (`t ∈ g`), not the engine's
 `Graph.mem`; the engine's `Triple.eqb` is coarser than equality on
-literals (language-tag case folding, `rdf:XMLLiteral` canonicalisation),
+literals (language-tag case folding),
 and a specification relation should not inherit that. Where the coarse
 comparison does appear — the executable closure's deduplication — the
 theorems say so explicitly.
@@ -104,13 +104,17 @@ inductive Derives (g : Graph) : Triple → Prop where
       (hdecl : Derives g ⟨Subject.iri p, rdfsSubPropertyOf, Term.iri q⟩)
       (hdata : Derives g ⟨s, p, o⟩) :
       Derives g ⟨s, q, o⟩
-  /-- **rdfs9** — §9.2: `uuu rdfs:subClassOf xxx . vvv rdf:type uuu .`
-  entails `vvv rdf:type xxx .` The sub-class `uuu` is read off a
-  `rdf:type` object, so it is an IRI; the super-class term is
-  unrestricted (matching `rdfs_rule_subClassOf`). -/
-  | rdfs9 {s : Subject} {a : WfIri} {b : Term}
-      (hdata : Derives g ⟨s, rdfType, Term.iri a⟩)
-      (hdecl : Derives g ⟨Subject.iri a, rdfsSubClassOf, b⟩) :
+  /-- **rdfs9** — §9.2 rule table: `xxx rdfs:subClassOf yyy .
+  zzz rdf:type xxx .` entails `zzz rdf:type yyy .` The table puts no
+  restriction on `xxx`: an IRI or a blank node. The sub-class is read off
+  the object of a `rdf:type` triple, so it must be usable as a subject
+  (`hsub`; a literal object licenses nothing, as in rdfs11). The
+  super-class term `yyy` is unrestricted. Until 2026-10-24 `xxx` was an
+  IRI only (https://github.com/danbri/factoidal/issues/982). -/
+  | rdfs9 {s : Subject} {x : Term} {a : Subject} {b : Term}
+      (hdata : Derives g ⟨s, rdfType, x⟩)
+      (hsub  : x.toSubject? = some a)
+      (hdecl : Derives g ⟨a, rdfsSubClassOf, b⟩) :
       Derives g ⟨s, rdfType, b⟩
   /-- **rdfs11** — §9.2: `uuu rdfs:subClassOf vvv .
   vvv rdfs:subClassOf xxx .` entails `uuu rdfs:subClassOf xxx .`
@@ -137,7 +141,7 @@ theorem Derives.mono {g g' : Graph} (hsub : ∀ u, u ∈ g → u ∈ g')
   | rdfs3 _ _ hs ih1 ih2 => exact Derives.rdfs3 ih1 ih2 hs
   | rdfs5 _ hs _ ih1 ih2 => exact Derives.rdfs5 ih1 hs ih2
   | rdfs7 _ _ ih1 ih2 => exact Derives.rdfs7 ih1 ih2
-  | rdfs9 _ _ ih1 ih2 => exact Derives.rdfs9 ih1 ih2
+  | rdfs9 _ hs _ ih1 ih2 => exact Derives.rdfs9 ih1 hs ih2
   | rdfs11 _ hs _ ih1 ih2 => exact Derives.rdfs11 ih1 hs ih2
 
 /-- Cut: if every triple of `g'` is derivable from `g`, then everything
@@ -152,7 +156,7 @@ theorem Derives.cut {g g' : Graph} (hall : ∀ u, u ∈ g' → Derives g u)
   | rdfs3 _ _ hs ih1 ih2 => exact Derives.rdfs3 ih1 ih2 hs
   | rdfs5 _ hs _ ih1 ih2 => exact Derives.rdfs5 ih1 hs ih2
   | rdfs7 _ _ ih1 ih2 => exact Derives.rdfs7 ih1 ih2
-  | rdfs9 _ _ ih1 ih2 => exact Derives.rdfs9 ih1 ih2
+  | rdfs9 _ hs _ ih1 ih2 => exact Derives.rdfs9 ih1 hs ih2
   | rdfs11 _ hs _ ih1 ih2 => exact Derives.rdfs11 ih1 hs ih2
 
 end L4Factoidal.RDFS

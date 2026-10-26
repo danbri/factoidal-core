@@ -62,13 +62,22 @@ def expectedBytes? (ref : Ref) (index : Nat) : Option Nat := do
   let offset ← offset? ref index
   some (min ref.chunkBytes (ref.totalBytes - offset))
 
+private def proofMatchesIndex : Nat → Nat → List Step → Bool
+  | count, index, [] => count == 1 && index == 0
+  | count, index, step :: rest =>
+      count > 1 && index < count && step.siblingOnLeft == (index % 2 == 1) &&
+        proofMatchesIndex ((count + 1) / 2) (index / 2) rest
+
 /-- Admission for one independently fetched fixed chunk. The caller is still
-    responsible for using `offset?` as the actual positioned-read offset. -/
+    responsible for using `offset?` as the actual positioned-read offset and
+    obtaining the commitment from a trusted manifest. The proof's orientation
+    and depth must agree with this chunk index and the committed chunk count. -/
 def verifyChunkWith (h : Hasher) (ref : Ref) (index : Nat) (bytes : ByteArray)
     (proof : List Step) : Bool :=
   match expectedBytes? ref index with
   | none => false
-  | some expected => bytes.size == expected && BlockMerkle.verifyWith h ref.root bytes proof
+  | some expected => bytes.size == expected && proofMatchesIndex ref.chunkCount index proof &&
+      BlockMerkle.verifyWith h ref.root bytes proof
 
 def verifyChunk (ref : Ref) (index : Nat) (bytes : ByteArray) (proof : List Step) : Bool :=
   verifyChunkWith pureHasher ref index bytes proof
@@ -81,7 +90,19 @@ private def leaves := chunks.map leaf
 private def sample : Ref :=
   { totalBytes := 5, chunkBytes := 2, chunkCount := 3, root := root leaves }
 
+private def generatedProofsVerify (chunks : List ByteArray) : Bool :=
+  match fromChunks? 2 chunks with
+  | none => false
+  | some ref =>
+      let leaves := chunks.map leaf
+      chunks.zipIdx.all fun (chunk, index) =>
+        ((proof? leaves index).map (verifyChunk ref index chunk)).getD false
+
 #guard valid sample
+#guard generatedProofsVerify [c0]
+#guard generatedProofsVerify [c0, c1]
+#guard generatedProofsVerify [c0, c1, c0, c2]
+#guard generatedProofsVerify [c0, c1, c0, c1, c2]
 #guard chunksOf 2 (ByteArray.mk #[1, 2, 3, 4, 5]) == chunks
 #guard (fromChunks? 2 chunks) == some sample
 #guard (fromChunks? 2 [c0, c2, c1]).isNone
@@ -91,6 +112,10 @@ private def sample : Ref :=
 #guard ((proof? leaves 0).map (verifyChunk sample 0 c0)) == some true
 #guard ((proof? leaves 2).map (verifyChunk sample 2 c2)) == some true
 #guard ((proof? leaves 2).map (verifyChunk sample 2 c1)) == some false
+#guard ((proof? leaves 0).map (verifyChunk sample 1 c0)) == some false
+#guard ((proof? leaves 1).map (verifyChunk sample 0 c1)) == some false
+#guard ((proof? leaves 0).map
+  (verifyChunk { sample with totalBytes := 2, chunkCount := 1 } 0 c0)) == some false
 #guard !(verifyChunk sample 3 c2 [])
 #guard !(verifyChunk { sample with chunkCount := 2 } 0 c0 [])
 

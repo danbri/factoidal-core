@@ -403,7 +403,7 @@ theorem isCandidate_of_evalTerm {op : GeoOp} (hop : op ≠ GeoOp.disjoint)
 
 /-- The dictionary positions of a block, paired with what the index knows
 about each term. The position is the PTD1 local ID, the identity TLI1 and
-LGI1 use. -/
+LGI3 use. -/
 def withIds : Nat → List Term → List (Nat × TermGeo)
   | _, [] => []
   | i, t :: rest => (i, classify t) :: withIds (i + 1) rest

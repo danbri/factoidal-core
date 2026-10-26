@@ -1,0 +1,46 @@
+{
+  "source_commit": "87af61c",
+  "scope": "PR2 applied to main dac8e98; native source gates only, before PR1/PR3 integration",
+  "files": [
+    {
+      "path": "integration-pr2-library.log",
+      "sha256": "43fa3a2d7c466a1013e1b60bd9ac22dcd6189191701b0640a670759064e567eb",
+      "size": 376931
+    },
+    {
+      "path": "integration-owl-reader.json",
+      "sha256": "976cbe6a23aaa6b73da369db2ac8b77f824499178407999b10d11f4ac0e14a92",
+      "size": 57632
+    },
+    {
+      "path": "integration-owl-reader.log",
+      "sha256": "d1360cca478215c677be174b2ff045e6e455d91b79fdbbe8faa4faf40abb3787",
+      "size": 125
+    },
+    {
+      "path": "integration-owl-public.json",
+      "sha256": "a14e70c34123e3f8fbffa0c7b4336d5060359881a45fe7953da6a71b9bbeb8e5",
+      "size": 150289
+    },
+    {
+      "path": "integration-owl-public.log",
+      "sha256": "ac2f18cdf09212624aeee1e89ee064ab8f305e3f146732bec687bcf2916d641b",
+      "size": 120
+    },
+    {
+      "path": "integration-owl-parser-controls.log",
+      "sha256": "636205ae8b095ea79ca17937f18da1dd2449c08fa4924eda6da4e35e471eebcc",
+      "size": 119
+    },
+    {
+      "path": "integration-owl-adapter-probes.lean",
+      "sha256": "b062c18ead5404925b9849349d498ea2a99e566c83b646ab4c3154f7bffe1e4c",
+      "size": 590
+    },
+    {
+      "path": "integration-owl-adapter-probes.log",
+      "sha256": "8c4320ff628770e7d15df6ffa5f7ff459610261911217197db92fcf1a6fd611e",
+      "size": 691
+    }
+  ]
+}

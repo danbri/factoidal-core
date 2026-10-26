@@ -1,0 +1,9 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Groups keyed by IRIs and a blank node; numbers of every kind in the groups (integers
+# of several datatypes, a non-canonical integer, a double, a decimal, one beyond the
+# inline range), a string in the blank-node group (SUM and AVG are errors there),
+# a group where ?v is unbound in one row (G3 has s10 without a score: COUNT(?v) is 1,
+# COUNT(*) 2).
+SELECT ?g (COUNT(*) AS ?n) (COUNT(?v) AS ?c) (SUM(?v) AS ?s) (MIN(?v) AS ?lo) (MAX(?v) AS ?hi) (AVG(?v) AS ?m)
+WHERE { ?x ex:grp ?g OPTIONAL { ?x ex:score ?v } } GROUP BY ?g ORDER BY ?g

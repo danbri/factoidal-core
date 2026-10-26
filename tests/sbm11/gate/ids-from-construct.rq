@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# CONSTRUCT over the merged default graph.
+CONSTRUCT { ?o ex:knownBy ?s } FROM ex:g1 FROM ex:g2 WHERE { ?s ex:knows ?o }

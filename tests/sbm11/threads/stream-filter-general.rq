@@ -1,0 +1,4 @@
+# Stage 1b: streamed with a FILTER the reference evaluator decides in each
+# block range (terms decoded in the scan tasks).
+PREFIX ex: <http://ex.org/>
+SELECT ?s ?n WHERE { ?s ex:name ?n FILTER(STRSTARTS(?n, "A") || ?n = "carol") }

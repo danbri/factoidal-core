@@ -1,0 +1,620 @@
+/-
+Harness/Sbm11Cli — `l4sbm11`: read an SBM11 generation (stage 3,
+https://github.com/danbri/factoidal/issues/789).
+
+  l4sbm11 stats GEN
+      The manifest, the files, per permutation the blocks, rows and frame
+      codecs.
+  l4sbm11 scan GEN PERM [KEY...] [--limit N] [--ids]
+      The rows of permutation PERM (pso, pos, spo, osp) whose key starts with
+      KEY... (each an IRI `<...>` or a decimal id), in key order, as N-Quads
+      (or as ids with `--ids`). Reads only the blocks whose first and last
+      key meet the prefix, by verified positioned reads.
+  l4sbm11 count GEN PERM [KEY...]
+      The number of such rows: from the PRM1 row counts for every block whose
+      first and last row carry the prefix; other blocks are read.
+  l4sbm11 dump GEN [PERM]
+      Every quad as N-Quads, in the order of PERM (default spo). Under
+      `--verify merkle` it forgets the verified chunks that it is done with, so
+      that its memory does not grow with the generation
+      (https://github.com/danbri/factoidal/issues/859).
+  l4sbm11 dump-ids GEN PERM
+      Every row as `s p o g` ids (the quad order, whatever the permutation).
+  l4sbm11 graphs GEN
+      The named graphs of the generation, one name per line (N-Triples term
+      syntax), in id order: the graph list GNL1 (empty named graphs included),
+      or, for a generation that has no list, the graph names of its quads. It
+      reads the base of a generation, as `dump` does.
+  --verify merkle|none   (query, serve, scan, count, dump, dump-ids, export)
+      How reads are checked (https://github.com/danbri/factoidal/issues/796,
+      `Sbm11Gen.Verify`). `merkle`: each read is widened to the 65,536-byte
+      chunks it touches and each chunk is checked by its Merkle proof; PRM1
+      and GDX1 are checked by SHA-256 at open. `none`: each read is one
+      `pread` of exactly the needed bytes, no file is hashed; the open checks
+      only that the manifest decodes and every file has its length, and a
+      changed byte is not detected. Default: `none` when a `CURRENT` pointer
+      names GEN (activation checked every file), `merkle` otherwise.
+      `stats`, `verify`, `activate`, `prm-check` and `frame-check` always use
+      `merkle` (or hash every file).
+  l4sbm11 canon SOURCE [--format F] [--base IRI]
+      The quads of a source in any of the six RDF syntaxes (N-Triples,
+      N-Quads, Turtle, TriG, RDF/XML, JSON-LD; the format from `--format`,
+      else from the file extension, as for `l4sbm11-pack`) as N-Quads, with the
+      term normalisation of the packer (language tags in lower case), so that
+      `sort -u` of this and of `dump` compare the quad sets. Blank node labels
+      are those of the document and of the readers' generated labels.
+  l4sbm11 export GEN --format F [--out FILE] [--graph default|all|IRI] [--prefix LABEL=IRI]...
+      The dataset of the generation in any of the six RDF syntaxes (ntriples,
+      nquads, turtle, trig, rdfxml, jsonld), by the serialiser layer
+      (`L4Factoidal/RDF/Sink.lean`): `Harness/Sbm11Export.lean` has the details.
+  l4sbm11 verify GEN
+      The activation checks, without activating.
+  l4sbm11 activate ROOT NAME
+      The activation checks on ROOT/NAME, then `ROOT/CURRENT` := NAME.
+  l4sbm11 query GEN ('SPARQL' | --file Q.rq) [--base IRI] [--explain] [--repeat N]
+                [--reference-render] [--reference] [--verify merkle|none]
+  l4sbm11 serve GEN [--verify merkle|none]
+  l4sbm11 prm-check GEN
+  l4sbm11 frame-check GEN
+      SPARQL over the generation (stage 4): `Harness/Sbm11Query.lean`.
+  l4sbm11 memgen-check GEN [--base IRI] Q.rq...
+      The files read into `MemGen`, `MemGen.check`, and each query on ids
+      answered by the I/O store and by `MemGen.store`, byte for byte (issue
+      776): `Harness/Sbm11MemGenCheck.lean`.
+  l4sbm11 packspec-check SOURCE GEN [--block-rows B] [--base IRI]
+      The bytes of the pure packer specification `PackSpec.packSpec` of
+      SOURCE against the files of GEN, file by file (issue 776, row L3c):
+      `Harness/Sbm11PackSpecCheck.lean`.
+  l4sbm11 packfiles-check SOURCE GEN [--block-rows B] [--base IRI]
+      Every file of the in-memory packer `PackBytes.packText` of SOURCE (data
+      files, `.merkle` sidecars, manifest) against the files of GEN, byte for
+      byte (issue 1009 stage 2): `Harness/Sbm11PackSpecCheck.lean`.
+  l4sbm11 reseal GEN
+      Test support: rewrite the manifest digests and the `.merkle` sidecars
+      from the files as they are (`tests/sbm11/stage3_check.sh` uses it to
+      reach the block checks with a changed PRM1 or PRB1).
+
+Activation checks: the manifest decodes and is admitted; every file has the
+manifest's length, SHA-256 and Merkle root, and its `.merkle` sidecar holds
+the same leaves; the dictionary keys are strictly increasing and their count
+is the manifest's; every PRM1 file decodes (blocks sorted, not overlapping,
+contiguous in PRB1) and its PRB1 file ends where its last block ends; every
+block decodes, its rows are strictly increasing between its PRM1 first and
+last row, and every frame is the frame the packer's encoder writes for its
+column; every id has a known tag, a dictionary id is below the term count, a
+predicate is an IRI, a subject is an IRI or a blank node, a graph is the
+default graph or an IRI or a blank node; the graph list GNL1, when the
+generation has one, decodes (`GraphList.decodeAt`), each of its ids is a
+dictionary id of an IRI or a blank node, and the graph of every quad is in it; the four permutations have the
+manifest's row count and the same quad digest (sum and xor of a 64-bit hash
+of each quad); and the exact check that they hold the same quads: the rows of
+POS, SPO and OSP re-keyed to PSO rows, cut into segments (one per predicate
+for POS, the whole permutation for SPO and OSP), each segment sorted (in
+memory, or as compressed sorted runs on disk that are merged) and compared
+row by row with PSO (`Sbm11PermCheck`; the check is proved to give equal
+quad multisets, `PermSet.perms_same`).
+
+Exit 1 on any error or failed check. Timings, bytes and VmHWM go to stderr.
+-/
+import Harness.Sbm11Gen
+import Harness.Sbm11Query
+import Harness.Sbm11Compact
+import Harness.Sbm11PermCheck
+import Harness.Sbm11Export
+import Harness.Sbm11MemGenCheck
+import Harness.Sbm11PackSpecCheck
+import Std.Data.HashSet
+
+open L4Factoidal.RDF
+open L4Factoidal.Storage.Sbm11
+open L4Factoidal.Storage.Sbm11.Block
+open L4Factoidal.Storage.Sbm11.Column
+open L4Factoidal.Storage.Sbm11.Manifest
+open Harness.Sbm11Gen
+
+namespace Sbm11Cli
+
+def permArg (s : String) : IO Nat :=
+  match permOfName? s with
+  | some p => pure p
+  | none => throw (IO.userError s!"unknown permutation {s} (pso, pos, spo, osp)")
+
+def keyArg (g : Gen) (s : String) : IO (Option Nat) := do
+  if s.startsWith "<" && s.endsWith ">" then
+    let iri := ((s.drop 1).dropEnd 1).toString
+    if h : isIri iri = true then idOfTerm g (.iri ⟨iri, h⟩)
+    else throw (IO.userError s!"not an IRI: {s}")
+  else
+    match s.toNat? with
+    | some n => pure (some n)
+    | none => throw (IO.userError s!"a key is an IRI <...> or a decimal id: {s}")
+
+/-- The N-Quads line of a quad of ids, with the page window `limit`, the choice
+    `dropChunks` and the bytes `keepBytes` of `termOfIdLimit`. -/
+def quadTextWith (g : Gen) (cache : PageCache) (limit : Nat) (dropChunks : Bool) (keepBytes : Nat)
+    (s p o gid : Nat) : IO String := do
+  let st ← termOfIdLimit g cache limit dropChunks s keepBytes
+  let pt ← termOfIdLimit g cache limit dropChunks p keepBytes
+  let ot ← termOfIdLimit g cache limit dropChunks o keepBytes
+  let gt ← if gid == 0 then pure none else some <$> termOfIdLimit g cache limit dropChunks gid keepBytes
+  ok "N-Quads" (nquadLine st pt ot gt)
+
+def quadText (g : Gen) (cache : PageCache) (s p o gid : Nat) : IO String :=
+  quadTextWith g cache 4096 false 0 s p o gid
+
+def report (g : Gen) (t0 : Nat) (extra : String) : IO Unit := do
+  let t1 ← IO.monoNanosNow
+  IO.eprintln s!"sbm11: {extra} verify={g.verify.name} read-bytes={← g.readBytes.get} fetched-bytes={← g.fetchedBytes.get} file-bytes={← g.fileBytes.get} ms={ms t0 t1} peak-rss={← vmHWM}"
+
+/-- `--verify V` out of an argument list (the last one wins), and the other
+    arguments in order. -/
+def splitVerify : List String → List String → Option Verify → Except String (List String × Option Verify)
+  | [], acc, v => .ok (acc.reverse, v)
+  | "--verify" :: x :: rest, acc, _ =>
+    match Verify.ofString? x with
+    | some v => splitVerify rest acc (some v)
+    | Option.none => .error "--verify takes merkle or none"
+  | ["--verify"], _, _ => .error "--verify takes merkle or none"
+  | x :: rest, acc, v => splitVerify rest (x :: acc) v
+
+/-- The `--verify` option, or the CLI default (`cliDefaultVerify`). -/
+def verifyFor (dir : String) : Option Verify → IO Verify
+  | some v => pure v
+  | Option.none => cliDefaultVerify dir
+
+/-! ## stats -/
+
+def runStats (dir : String) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  let g ← openGen .merkle dir
+  let m := g.manifest
+  IO.println s!"generation: {g.dir}"
+  IO.println s!"layout: {m.layout}"
+  IO.println s!"source-bytes: {m.sourceBytes} source-sha256: {hex m.sourceSha256}"
+  IO.println s!"quads: {m.quads} terms: {m.terms} dictionary-pages: {g.dictHdr.pageCount}"
+  match ← readGraphList g with
+  | some ids => IO.println s!"named-graphs: {ids.size} (GNL1)"
+  | none => IO.println "named-graphs: no graph list (the named graphs are the graph names of the quads)"
+  let mut total := 0
+  for a in m.artifacts do
+    IO.println s!"artifact {a.role}: {a.file} bytes={a.bytes} chunks={a.merkle.chunkCount} sha256={hex a.sha256}"
+    total := total + a.bytes
+  IO.println s!"generation-bytes: {total}"
+  for ps in g.perms do
+    let mut codecs : Array Nat := #[0, 0, 0, 0]
+    let mut minRows := 0
+    let mut maxRows := 0
+    for i in [0:ps.metas.size] do
+      let b := ps.metas[i]!
+      let bytes ← verifiedRead g ps.prbPath ps.prbRef ps.leaves ps.cache b.offset b.size
+      for off in [0, b.len0, b.len0 + b.len1, b.len0 + b.len1 + b.len2] do
+        let t := (bytes.get! off).toNat
+        codecs := codecs.modify (min t 3) (· + 1)
+      minRows := if i == 0 then b.rows else min minRows b.rows
+      maxRows := max maxRows b.rows
+    IO.println s!"permutation {permNamesArr[ps.perm]!}: blocks={ps.metas.size} rows={ps.rows} prb1-bytes={ps.prbRef.totalBytes} block-rows-min={minRows} block-rows-max={maxRows} frames-const={codecs[0]!} frames-raw={codecs[1]!} frames-delta={codecs[2]!} frames-other={codecs[3]!}"
+  report g t0 "stats"
+  pure 0
+
+/-! ## scan and count -/
+
+def parseScanArgs : List String → List String → Option Nat → Bool → (List String × Option Nat × Bool)
+  | [], keys, lim, ids => (keys.reverse, lim, ids)
+  | "--limit" :: n :: rest, keys, _, ids => parseScanArgs rest keys n.toNat? ids
+  | "--ids" :: rest, keys, lim, _ => parseScanArgs rest keys lim true
+  | k :: rest, keys, lim, ids => parseScanArgs rest (k :: keys) lim ids
+
+def prefixOf (g : Gen) (keys : List String) : IO (Option Prefix) := do
+  let mut vals : Array Nat := #[]
+  for k in keys do
+    match ← keyArg g k with
+    | some v => vals := vals.push v
+    | none => return none
+  pure (some ⟨vals⟩)
+
+def runScan (dir permS : String) (rest : List String) (verify? : Option Verify) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  let g ← openGen (← verifyFor dir verify?) dir
+  let perm ← permArg permS
+  let (keys, lim, ids) := parseScanArgs rest [] none false
+  let tOpen ← IO.monoNanosNow
+  let some p ← prefixOf g keys
+    | IO.eprintln "sbm11: a key is not in the dictionary: 0 rows"; report g t0 "scan rows=0"; return 0
+  let cache ← IO.mkRef ({} : Std.HashMap Nat (Array ByteArray))
+  let outRef ← IO.mkRef (0 : Nat)
+  let readBefore ← g.readBytes.get
+  let fetchedBefore ← g.fetchedBytes.get
+  let st ← scan g perm p fun r => do
+    let n ← outRef.get
+    if lim.all (n < ·) then
+      let (s, pp, o, gg) := ofPerm perm r.c0 r.c1 r.c2 r.g
+      if ids then IO.println s!"{s} {pp} {o} {gg}"
+      else IO.println (← quadText g cache s pp o gg)
+      outRef.set (n + 1)
+  let tScan ← IO.monoNanosNow
+  IO.eprintln s!"sbm11: scan perm={permS} prefix={p.vals} blocks-read={st.blocks} rows={st.rows} block-read-bytes={(← g.readBytes.get) - readBefore} block-fetched-bytes={(← g.fetchedBytes.get) - fetchedBefore} open-ms={ms t0 tOpen} scan-ms={ms tOpen tScan}"
+  report g t0 "scan"
+  pure 0
+
+def runCount (dir permS : String) (keys : List String) (verify? : Option Verify) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  let g ← openGen (← verifyFor dir verify?) dir
+  let perm ← permArg permS
+  let tOpen ← IO.monoNanosNow
+  let some p ← prefixOf g keys
+    | IO.println "0"; report g t0 "count"; return 0
+  let readBefore ← g.readBytes.get
+  let (n, st) ← count g perm p
+  let tCount ← IO.monoNanosNow
+  IO.println s!"{n}"
+  IO.eprintln s!"sbm11: count perm={permS} prefix={p.vals} rows={n} whole-blocks-from-prm1={st.wholeBlocks} blocks-read={st.blocks} block-read-bytes={(← g.readBytes.get) - readBefore} open-ms={ms t0 tOpen} count-ms={ms tOpen tCount}"
+  report g t0 "count"
+  pure 0
+
+/-! ## dump -/
+
+def runDump (dir permS : String) (idsOnly : Bool) (verify? : Option Verify) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  let g ← openGen (← verifyFor dir verify?) dir
+  let perm ← permArg permS
+  let src ← permSrc g perm
+  let ps := src.metas
+  let cache ← IO.mkRef ({} : Std.HashMap Nat (Array ByteArray))
+  let out ← IO.getStdout
+  -- The reader passes over the permutation once, in order, and over the dictionary
+  -- through a window of pages. Under `merkle` it forgets the verified chunks that it is
+  -- done with, as `export` does (Sbm11Export.lean), so that the memory does not grow with
+  -- the store (https://github.com/danbri/factoidal/issues/859): the window is the
+  -- `export` window (256 pages), which bounds the chunks read since the last drop, and
+  -- the chunks of the dictionary stay while a file holds at most `chunkKeepBytes` of
+  -- them. Under `none` no chunk is held, so the window stays 4,096 pages, as before:
+  -- the smaller window costs 16 percent of the time on the olympics generation.
+  let (pages, keep) := if g.verify == .merkle then (Sbm11Export.pageLimit, chunkKeepBytes) else (4096, 0)
+  let mut dropped := 0
+  let mut n := 0
+  for i in [0:ps.size] do
+    let c ← readBlock g src i
+    let mut text := ""
+    for j in [0:c.size] do
+      let r := c.row j
+      let (s, p, o, gg) := ofPerm perm r.c0 r.c1 r.c2 r.g
+      if idsOnly then text := text ++ s!"{s} {p} {o} {gg}\n"
+      else text := text ++ (← quadTextWith g cache pages true keep s p o gg) ++ "\n"
+      n := n + 1
+    out.putStr text
+    -- the chunks that end before the next block starts are not read again
+    dropped ← dropChunksBefore g src.cache src.prbRef dropped
+      (if i + 1 < ps.size then ps[i + 1]!.offset else src.prbRef.totalBytes)
+  out.flush
+  report g t0 s!"dump perm={permS} rows={n}"
+  pure 0
+
+/-! ## graphs -/
+
+/-- The named graphs of the base generation, one name per line in N-Triples term
+    syntax, in id order: the GNL1 list (empty graphs included), or, for a
+    generation that has no list, the graph names of its quads. Like `dump`, it reads
+    the base of a generation, not its log. -/
+def runGraphs (dir : String) (verify? : Option Verify) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  let g ← openGen (← verifyFor dir verify?) dir
+  let (ids, source) ← baseNamedGraphs g
+  let cache ← IO.mkRef ({} : Std.HashMap Nat (Array ByteArray))
+  let mut text := ""
+  for x in ids do
+    let t ← termOfIdLimit g cache 4096 false x
+    text := text ++ (← ok "N-Triples" (L4Factoidal.Syntax.Term.toNTriples .rdf12 t)) ++ "\n"
+  IO.print text
+  report g t0 s!"graphs count={ids.size} from={source}"
+  pure 0
+
+/-! ## canon -/
+
+def runCanon (source : String) (opts : Sbm11Pack.SourceOpts) : IO UInt32 := do
+  let size ← fileSize source
+  let cfg ← Sbm11Pack.readCfg source size opts
+  let out ← IO.getStdout
+  let flushAcc (acc : Sbm11Pack.P1) : IO Sbm11Pack.P1 := do
+    let mut text := ""
+    for (tr, g) in acc.pending.reverse do
+      let gt := g.map fun s => normalizeTerm s.toTerm
+      text := text ++ (← ok "N-Quads" (nquadLine (normalizeTerm tr.s.toTerm) (.iri tr.p) (normalizeTerm tr.o) gt)) ++ "\n"
+    out.putStr text
+    pure {}
+  let _ ← Sbm11Pack.streamRange cfg source 0 size Sbm11Pack.consume ({} : Sbm11Pack.P1) flushAcc
+  out.flush
+  pure 0
+
+/-! ## Activation checks -/
+
+def idOk (termCount : Nat) (id : Nat) : Bool :=
+  let tag := id / two60
+  if isDictTag tag then id % two60 < termCount
+  else tag == tagInt || tag == tagBool
+
+def checkPosition (termCount : Nat) (s p o g : Nat) : Option String :=
+  if !(idOk termCount s && idOk termCount p && idOk termCount o) then some "id with an unknown tag or a rank past the dictionary"
+  else if p / two60 != tagIri then some "predicate is not an IRI"
+  else if s / two60 != tagIri && s / two60 != tagBnode then some "subject is not an IRI or a blank node"
+  else if g != 0 && !(idOk termCount g && (g / two60 == tagIri || g / two60 == tagBnode)) then
+    some "graph is not the default graph, an IRI or a blank node"
+  else none
+
+/-- The activation checks of a generation directory, with `tmp` the
+    directory for the bucket files of the exact permutation check. Returns
+    the number of failures; prints what it checked. -/
+def verifyGenIn (dir tmp : String) : IO Nat := do
+  let t0 ← IO.monoNanosNow
+  let mut fails := 0
+  -- the manifest and every file
+  let mbytes ← IO.FS.readBinFile s!"{dir}/{manifestName}"
+  let some m := decodeManifest mbytes.data.toList
+    | IO.eprintln "FAIL: the manifest does not decode or is not admitted"; return 1
+  for a in m.artifacts do
+    let path := s!"{dir}/{a.file}"
+    let size ← fileSize path
+    if size != a.bytes then
+      fails := fails + 1
+      IO.eprintln s!"FAIL {a.file}: {size} bytes, the manifest says {a.bytes}"
+      continue
+    let (sha, leaves, ref) ← hashFile path
+    if sha != a.sha256 then
+      fails := fails + 1; IO.eprintln s!"FAIL {a.file}: SHA-256 differs from the manifest"
+    if !(ref == a.merkle) then
+      fails := fails + 1; IO.eprintln s!"FAIL {a.file}: Merkle root differs from the manifest"
+    let side ← IO.FS.readBinFile (path ++ ".merkle")
+    let mut want := ByteArray.empty
+    for l in leaves do want := want ++ l
+    if side != want then
+      fails := fails + 1; IO.eprintln s!"FAIL {a.file}.merkle: leaves differ from the file"
+  let t1 ← IO.monoNanosNow
+  IO.eprintln s!"sbm11-verify: manifest and {m.artifacts.length} files: failures={fails} ms={ms t0 t1}"
+  if fails > 0 then return fails
+  let g ← openGen .merkle dir
+  -- the dictionary
+  if g.dictHdr.termCount != m.terms then
+    fails := fails + 1; IO.eprintln s!"FAIL: GDX1 term count {g.dictHdr.termCount}, the manifest says {m.terms}"
+  let mut prev : Option ByteArray := none
+  let mut keys := 0
+  for pg in [0:g.dictHdr.pageCount] do
+    let ks ← ok s!"GDV1 page {pg}" (← (Dict.pageM (gdxFetch g) (gdvFetch g) pg).run)
+    if pg + 1 < g.dictHdr.pageCount && ks.size != Dict.pageTerms then
+      fails := fails + 1; IO.eprintln s!"FAIL: GDV1 page {pg} holds {ks.size} keys"
+    for k in ks do
+      if let some p := prev then
+        if Dict.cmpBytesAt p k != .lt then
+          if fails < 5 then IO.eprintln s!"FAIL: dictionary key {keys} not after the previous one"
+          fails := fails + 1
+      prev := some k
+      keys := keys + 1
+  if keys != m.terms then
+    fails := fails + 1; IO.eprintln s!"FAIL: {keys} dictionary keys, the manifest says {m.terms}"
+  -- the graph list (GNL1): every id names a blank node or an IRI of the dictionary
+  let listRead : Except String (Option (Array Nat)) ← try pure (.ok (← readGraphList g)) catch e => pure (.error (toString e))
+  let mut listed : Std.HashSet Nat := {}
+  let mut hasList := false
+  match listRead with
+  | .error e => fails := fails + 1; IO.eprintln s!"FAIL: {e}"
+  | .ok none => pure ()
+  | .ok (some ids) =>
+    hasList := true
+    let cache ← IO.mkRef ({} : Std.HashMap Nat (Array ByteArray))
+    for x in ids do
+      listed := listed.insert x
+      if !idOk m.terms x then
+        if fails < 5 then IO.eprintln s!"FAIL: graph list id {x}: an unknown tag or a rank past the dictionary"
+        fails := fails + 1
+      else
+        let t? : Except String Term ← try pure (.ok (← termOfIdLimit g cache 4096 false x)) catch e => pure (.error (toString e))
+        match t? with
+        | .ok (.iri _) | .ok (.bnode _) => pure ()
+        | .ok _ =>
+          if fails < 5 then IO.eprintln s!"FAIL: graph list id {x} is not an IRI or a blank node"
+          fails := fails + 1
+        | .error e =>
+          if fails < 5 then IO.eprintln s!"FAIL: graph list id {x}: {e}"
+          fails := fails + 1
+  let t2 ← IO.monoNanosNow
+  IO.eprintln s!"sbm11-verify: dictionary keys={keys}: failures={fails} ms={ms t1 t2}"
+  IO.eprintln s!"sbm11-verify: graph list: {if hasList then s!"{listed.size} named graphs (GNL1)" else "none (the named graphs are the graph names of the quads)"}"
+  -- the permutations: digests, and the buckets of the exact check (lemma
+  -- L3b, `Sbm11PermCheck`, `PermSet.perms_same`)
+  let groupRows ← Harness.Sbm11PermCheck.groupRowsOf
+  let maxSpills ← Harness.Sbm11PermCheck.maxSpillsOf
+  let disk ← IO.mkRef ({} : Harness.Sbm11PermCheck.Disk)
+  let mut exactFails := 0
+  let mut segments := 0
+  let mut runs := 0
+  let mut tExact := 0
+  -- the permutations whose segments are still being compared in the background
+  let mut open_ : Array Harness.Sbm11PermCheck.St := #[]
+  let mut digests : Array Digest2 := #[]
+  for ps in g.perms do
+    let mut st : Harness.Sbm11PermCheck.St := { perm := ps.perm, limit := groupRows, dir := tmp, maxSpills }
+    let pso? := g.perms[0]?
+    let name := permNamesArr[ps.perm]!
+    let hdr ← verifiedRead g ps.prbPath ps.prbRef ps.leaves ps.cache 0 prbHeaderBytes
+    if hdr.data.toList != prbHeader ps.perm then
+      fails := fails + 1; IO.eprintln s!"FAIL {name}.prb1: header"
+    let endOff := match ps.metas.back? with
+      | some b => b.offset + b.size
+      | none => prbHeaderBytes
+    if endOff != ps.prbRef.totalBytes then
+      fails := fails + 1; IO.eprintln s!"FAIL {name}.prb1: {ps.prbRef.totalBytes} bytes, the last block ends at {endOff}"
+    let mut d : Digest2 := {}
+    for i in [0:ps.metas.size] do
+      let b := ps.metas[i]!
+      let bytes ← verifiedRead g ps.prbPath ps.prbRef ps.leaves ps.cache b.offset b.size
+      match decodeBlockAt bytes b 0 with
+      | .error e =>
+        fails := fails + 1; IO.eprintln s!"FAIL {name} block {i}: {e}"
+      | .ok c =>
+        -- the frames are the packer encoder's frames for these columns
+        let canon := encodeColumnFast c.c0 ++ encodeColumnFast c.c1 ++ encodeColumnFast c.c2 ++ encodeColumnFast c.g
+        if canon != bytes then
+          fails := fails + 1; IO.eprintln s!"FAIL {name} block {i}: frames are not the encoder's frames"
+        for j in [0:c.size] do
+          let (s, p, o, gg) := ofPerm ps.perm c.c0[j]! c.c1[j]! c.c2[j]! c.g[j]!
+          if let some e := checkPosition m.terms s p o gg then
+            if fails < 5 then IO.eprintln s!"FAIL {name} block {i} row {j}: {e}"
+            fails := fails + 1
+          -- the graph of every quad is in the graph list, when the generation has one (the
+          -- permutations hold the same quads: PSO is enough)
+          if hasList && ps.perm == 0 && gg != 0 && !listed.contains gg then
+            if fails < 5 then IO.eprintln s!"FAIL {name} block {i} row {j}: graph {gg} is not in the graph list"
+            fails := fails + 1
+          d := d.add (quadDigest s p o gg)
+          if ps.perm != 0 then
+            if let some pso := pso? then
+              -- `PermSet.rekeyCols_eq`: this is `PermSet.rekey ps.perm (c.row j)`
+              st ← st.add g pso disk (PermSet.rekeyCols ps.perm c.c0[j]! c.c1[j]! c.c2[j]! c.g[j]!)
+    if ps.perm != 0 then
+      if let some pso := pso? then
+        st ← st.close g pso disk
+        open_ := open_.push st
+    if d.rows != m.quads then
+      fails := fails + 1; IO.eprintln s!"FAIL {name}: {d.rows} rows, the manifest says {m.quads}"
+    digests := digests.push d
+    IO.eprintln s!"sbm11-verify: {name} blocks={ps.metas.size} rows={d.rows} digest={d.sum}/{d.xor}"
+  let digestOn := (← IO.getEnv "SBM11_VERIFY_DIGEST") != some "0"
+  if digestOn then
+    for i in [1:digests.size] do
+      if !(digests[i]! == digests[0]!) then
+        fails := fails + 1; IO.eprintln s!"FAIL: {permNamesArr[i]!} holds other quads than pso (digest)"
+  let t3 ← IO.monoNanosNow
+  IO.eprintln s!"sbm11-verify: permutations: failures={fails} ms={ms t2 t3}"
+  -- the exact check ran with the permutation pass (segments compared as they
+  -- end, in background tasks): wait for it
+  if let some pso := g.perms[0]? then
+    let te ← IO.monoNanosNow
+    for st in open_ do
+      let w ← st.finish pso
+      segments := segments + w.segments
+      runs := runs + st.runsWritten + w.merged
+      if let some e := w.fail then
+        exactFails := exactFails + 1
+        IO.eprintln s!"FAIL: {e}"
+    tExact := tExact + ((← IO.monoNanosNow) - te)
+  open_ := #[]
+  fails := fails + exactFails
+  let t4 ← IO.monoNanosNow
+  let dk ← disk.get
+  IO.eprintln s!"sbm11-verify: exact permutation check: segments={segments} runs={runs} group-rows={groupRows} digest={if digestOn then "on" else "off"} failures={exactFails} ms-waiting-at-end={tExact.toFloat / 1000000.0} temp-written-bytes={dk.written} temp-peak-bytes={dk.peak}"
+  let t3 := t4
+  IO.eprintln s!"sbm11-verify: failures={fails} total-ms={ms t0 t3} read-bytes={← g.readBytes.get} peak-rss={← vmHWM}"
+  pure fails
+
+/-- The activation checks of a generation directory; the bucket files of the
+    exact permutation check go to a directory next to it, removed at the end. -/
+def verifyGen (dir : String) : IO Nat := do
+  let tmp := s!"{dir}.verify-{← IO.Process.getPID}"
+  try verifyGenIn dir tmp
+  finally
+    if ← System.FilePath.pathExists tmp then IO.FS.removeDirAll tmp
+
+def runVerify (dir : String) : IO UInt32 := do
+  let f ← verifyGen dir
+  IO.println s!"sbm11-verify: {if f == 0 then "admitted" else "refused"} failures={f}"
+  pure (if f == 0 then 0 else 1)
+
+def runActivate (root name : String) : IO UInt32 := do
+  if !Harness.GenerationPointer.safeGenerationName name then
+    throw (IO.userError s!"not a safe generation name: {name}")
+  let f ← verifyGen s!"{root}/{name}"
+  if f != 0 then
+    IO.println s!"sbm11-activate: refused failures={f}"
+    return 1
+  if !(← Harness.GenerationPointer.activateGeneration root name) then
+    throw (IO.userError "CURRENT was not written")
+  IO.println s!"sbm11-activate: admitted pointer={root}/CURRENT generation={name}"
+  pure 0
+
+/-- Test support: recompute every file's length, SHA-256, Merkle root and
+    `.merkle` sidecar and rewrite the manifest, so that a test can change a
+    file and still reach the checks after the digest checks. -/
+def runReseal (dir : String) : IO UInt32 := do
+  let mbytes ← IO.FS.readBinFile s!"{dir}/{manifestName}"
+  let some m := decodeManifest mbytes.data.toList
+    | throw (IO.userError "the manifest does not decode")
+  let mut arts : Array Artifact := #[]
+  for a in m.artifacts do
+    let path := s!"{dir}/{a.file}"
+    let (sha, leaves, ref) ← hashFile path
+    writeLeaves path leaves
+    arts := arts.push { a with bytes := ref.totalBytes, sha256 := sha, merkle := ref }
+  match encodeManifest? { m with artifacts := arts.toList } with
+  | none => throw (IO.userError "the manifest encoder refuses the resealed manifest")
+  | some b => IO.FS.writeBinFile s!"{dir}/{manifestName}" (listBytes b)
+  IO.println s!"sbm11-reseal: {dir}"
+  pure 0
+
+def usage : String :=
+  "usage: l4sbm11 stats GEN | scan GEN PERM [KEY...] [--limit N] [--ids] | count GEN PERM [KEY...]\n" ++
+  "       | dump GEN [PERM] | dump-ids GEN PERM | graphs GEN | canon SOURCE [--format F] [--base IRI] | verify GEN\n" ++
+  "       | activate ROOT NAME\n" ++
+  "       | export GEN --format F [--out FILE] [--graph default|all|IRI] [--prefix LABEL=IRI]...\n" ++
+  "       | query GEN (SPARQL | --file Q.rq) [--base IRI] [--explain] [--repeat N] [--reference-render] [--reference]\n" ++
+  "         [--sparql12]\n" ++
+  "       | serve GEN [--sparql12] | prm-check GEN | frame-check GEN\n" ++
+  "       | memgen-check GEN [--base IRI] Q.rq...\n" ++
+  "       | packspec-check SOURCE GEN [--block-rows B] [--base IRI]\n" ++
+  "       | packfiles-check SOURCE GEN [--block-rows B] [--base IRI]\n" ++
+  "       | update GEN ('SPARQL UPDATE' | --file U.ru) [--max-overlay-entries N] [--max-overlay-bytes N]\n" ++
+  "       | compact GEN OUTDIR [--block-rows B] [--sort-rows M]\n" ++
+  "  --verify merkle|none (query, serve, scan, count, dump, dump-ids): merkle checks every 65,536-byte chunk\n" ++
+  "    read by its Merkle proof; none reads exact byte ranges and hashes nothing (a changed byte is not\n" ++
+  "    detected). Default: none when a CURRENT pointer names GEN (activated: every file was checked at\n" ++
+  "    activation), merkle otherwise. --explain prints the choice (plan: verify=...)."
+
+end Sbm11Cli
+
+/-- Transparent huge pages off for this process (`ffi/block_pread.c`;
+    issue 961, stage 1i of docs/designissues/2026-10-12-parallel-block-scans.md).
+    A default allocator setting: not for `main` without the owner's approval.
+    `L4_THP=on` keeps huge pages. -/
+@[extern "l4_thp_disable"]
+opaque thpDisableRaw : IO UInt32
+
+open Sbm11Cli in
+def main (args0 : List String) : IO UInt32 := do
+  if (← IO.getEnv "L4_THP") != some "on" then
+    let _ ← thpDisableRaw
+  try
+    let (args, verify?) ← match splitVerify args0 [] Option.none with
+      | .ok r => pure r
+      | .error e => IO.eprintln s!"l4sbm11: {e}"; return 2
+    let verifyUsed := match args with
+      | c :: _ => ["query", "serve", "scan", "count", "dump", "dump-ids", "graphs", "compact", "export"].contains c
+      | [] => false
+    if verify?.isSome && !verifyUsed then
+      IO.eprintln "l4sbm11: --verify applies to query, serve, scan, count, dump, dump-ids, compact and export"
+      return 2
+    match args with
+    | ["stats", dir] => runStats dir
+    | "scan" :: dir :: perm :: rest => runScan dir perm rest verify?
+    | "count" :: dir :: perm :: keys => runCount dir perm keys verify?
+    | ["dump", dir] => runDump dir "spo" false verify?
+    | ["dump", dir, perm] => runDump dir perm false verify?
+    | ["dump-ids", dir, perm] => runDump dir perm true verify?
+    | ["graphs", dir] => runGraphs dir verify?
+    | "canon" :: src :: rest =>
+      match Sbm11Pack.parseOpts rest {} with
+      | some o => runCanon src o.source
+      | none => IO.eprintln usage; pure 2
+    | "export" :: dir :: rest =>
+      match Sbm11Export.parseOpts rest {} with
+      | some o => Sbm11Export.runExport dir (← verifyFor dir verify?) o
+      | none => IO.eprintln Sbm11Export.usage; pure 2
+    | ["verify", dir] => runVerify dir
+    | ["activate", root, name] => runActivate root name
+    | ["reseal", dir] => runReseal dir
+    | ["serve", dir] => Harness.Sbm11Query.runServe dir verify?
+    | ["serve", dir, "--sparql12"] => Harness.Sbm11Query.runServe dir verify? .v12
+    | "query" :: _ | ["prm-check", _] | ["frame-check", _] => Harness.Sbm11Query.main args0
+    | "update" :: _ | "compact" :: _ => Harness.Sbm11Compact.main args0
+    | "memgen-check" :: _ => Harness.Sbm11MemGenCheck.main args0
+    | "packspec-check" :: _ | "packfiles-check" :: _ => Harness.Sbm11PackSpecCheck.main args0
+    | _ => IO.eprintln usage; pure 2
+  catch e =>
+    IO.eprintln s!"l4sbm11: {e}"
+    pure 1

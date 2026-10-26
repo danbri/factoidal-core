@@ -110,6 +110,13 @@ inductive JsonLdError where
   /-- HTML Content Algorithms: the script element's content is not the
   JSON it must be. -/
   | invalidScriptElement
+  /-- JSON-LD Framing §5.2: the frame is not a single frame object, or its
+  `@id` or `@type` entry holds an entry that is not an IRI, a wildcard or
+  a default object (blank node identifiers included). -/
+  | invalidFrame
+  /-- JSON-LD Framing §5.2: the value of `@embed` is not one the object
+  embed flag accepts. -/
+  | invalidEmbedValue
   | notJsonLd
   deriving DecidableEq, Repr
 
@@ -166,6 +173,8 @@ def code : JsonLdError → String
   | conflictingIndexes          => "conflicting indexes"
   | loadingDocumentFailed       => "loading document failed"
   | invalidScriptElement        => "invalid script element"
+  | invalidFrame                => "invalid frame"
+  | invalidEmbedValue           => "invalid @embed value"
   | notJsonLd                   => "not JSON-LD"
 
 instance : ToString JsonLdError := ⟨code⟩
@@ -205,6 +214,49 @@ def charListLt : List Char → List Char → Bool
   | a :: as, b :: bs => if a < b then true else if b < a then false else charListLt as bs
 
 def strLt (a b : String) : Bool := charListLt a.toList b.toList
+
+/-- `charListLt` is the lexicographic order `List.lt` on characters. -/
+theorem charListLt_iff : ∀ (xs ys : List Char), charListLt xs ys = true ↔ xs < ys := by
+  intro xs
+  induction xs with
+  | nil =>
+    intro ys
+    cases ys with
+    | nil => simp [charListLt]
+    | cons b bs => simp [charListLt]
+  | cons a as ih =>
+    intro ys
+    cases ys with
+    | nil => simp [charListLt]
+    | cons b bs =>
+      rw [List.cons_lt_cons_iff]
+      simp only [charListLt]
+      by_cases hab : a < b
+      · simp [hab]
+      · by_cases hba : b < a
+        · have : a ≠ b := fun h => by subst h; exact absurd hba (Char.lt_irrefl _)
+          simp [hab, hba, this]
+        · have heq : a = b := Char.le_antisymm (Char.not_lt.mp hba) (Char.not_lt.mp hab)
+          subst heq
+          simp [hab, ih]
+
+/-- `strLt` through the string primitive `String.decLt` (a byte comparison
+in the runtime, which for valid UTF-8 is code-point order). `strLt` itself
+converts both strings to `List Char` at every call, which dominates every
+sort that compares keys; the code generator uses this form instead, by
+`strLt_eq_strLtFast`. -/
+def strLtFast (a b : String) : Bool := decide (a < b)
+
+theorem strLt_eq_strLtFast_apply (a b : String) : strLt a b = strLtFast a b := by
+  unfold strLt strLtFast
+  apply Bool.eq_iff_iff.mpr
+  rw [charListLt_iff]
+  simp only [decide_eq_true_eq]
+  exact Iff.rfl
+
+@[csimp] theorem strLt_eq_strLtFast : @strLt = @strLtFast := by
+  funext a b
+  exact strLt_eq_strLtFast_apply a b
 
 /-! ## Term definitions — JSON-LD 1.1 API §4.2 Create Term Definition -/
 

@@ -1,0 +1,95 @@
+✔ OWL consistency rejects sameAs and differentFrom (143.632875ms)
+✔ OWL consistency rejects reversed differentFrom (0.459708ms)
+✔ OWL consistency rejects self differentFrom (0.209041ms)
+✔ OWL consistency rejects transitive sameAs and differentFrom (0.261ms)
+✔ OWL consistency does not claim a model for sameAs alone (0.441042ms)
+✔ OWL consistency does not claim a model for differentFrom alone (0.181917ms)
+✔ OWL consistency does not claim a model for ordinary class membership (0.206375ms)
+✖ OWL consistency catches a negative object property assertion (1.167334ms)
+✔ OWL entailment still returns a closure consequence (6.312458ms)
+✔ OWL entailment does not turn a quiescent search into a countermodel (11.692958ms)
+✖ OWL entailment reports an unsupported negation as indeterminate (2.394208ms)
+✖ OWL budget exhaustion remains distinct from incomplete search (0.403209ms)
+✖ OWL Direct Semantics punning is indeterminate before RDF closure (0.414459ms)
+✔ OWL entailment does not substitute sameAs into a punned class name (0.440125ms)
+✔ OWL punning across premise and conclusion is indeterminate (0.225458ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 11
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 241.130542
+
+✖ failing tests:
+
+test at npm/factoidal/test/owl-verdict-regression.test.mjs:38:1
+✖ OWL consistency catches a negative object property assertion (1.167334ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  null !== false
+  
+      at TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/npm/factoidal/test/owl-verdict-regression.test.mjs:44:10)
+      at async Test.run (node:internal/test_runner/test:1404:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:969:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: null,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at npm/factoidal/test/owl-verdict-regression.test.mjs:64:1
+✖ OWL entailment reports an unsupported negation as indeterminate (2.394208ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'refutation'
+  - 'closure'
+  
+      at TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/npm/factoidal/test/owl-verdict-regression.test.mjs:67:10)
+      at async Test.run (node:internal/test_runner/test:1404:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:969:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'refutation',
+    expected: 'closure',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at npm/factoidal/test/owl-verdict-regression.test.mjs:71:1
+✖ OWL budget exhaustion remains distinct from incomplete search (0.403209ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /budget-out.*fuel 1 /. Input:
+  
+  'unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)'
+  
+      at TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/npm/factoidal/test/owl-verdict-regression.test.mjs:78:10)
+      at async Test.run (node:internal/test_runner/test:1404:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:969:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)',
+    expected: /budget-out.*fuel 1 /,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at npm/factoidal/test/owl-verdict-regression.test.mjs:91:1
+✖ OWL Direct Semantics punning is indeterminate before RDF closure (0.414459ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /unsupported-punning/. Input:
+  
+  'unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)'
+  
+      at TestContext.<anonymous> (file:///Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/npm/factoidal/test/owl-verdict-regression.test.mjs:94:10)
+      at async Test.run (node:internal/test_runner/test:1404:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:969:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'unsupported-syntax: the whole default graph is outside the admitted atomic OWL fragment (indeterminate)',
+    expected: /unsupported-punning/,
+    operator: 'match',
+    diff: 'simple'
+  }

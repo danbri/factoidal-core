@@ -79,6 +79,17 @@ Readability contract: every definition cites the SPARQL 1.1 spec
 section it implements.
 -/
 import L4Factoidal.SPARQL.Expr
+import L4Factoidal.SPARQL.ExprRefinement
+import L4Factoidal.SPARQL.FullText
+import L4Factoidal.RDF.ConciseBoundedDescription
+import Std.Data.HashMap
+import L4Factoidal.SPARQL.OrderedPrefix
+-- `ExistsIndex`: the indexed §18.6 EXISTS test for a BGP body that the
+-- `.filter` lowering uses (https://github.com/danbri/factoidal/issues/881).
+import L4Factoidal.SPARQL.ExistsIndex
+-- `DocumentScope`: `docLabel`, the labels that rename the FROM graphs apart
+-- (https://github.com/danbri/factoidal/issues/979).
+import L4Factoidal.RDF.DocumentScope
 
 namespace L4Factoidal.SPARQL
 
@@ -152,7 +163,7 @@ def erRank : EvalResult → Int
   | .term (.bnode _)         => 1
   | .term (.iri _)           => 2
   | .bool _                  => 3
-  | .num _ | .dec _ | .flt _ | .dbl _ => 4
+  | .num _ | .dec _ | .dbl _ => 4
   | .term (.literal _)       => 7
   | .term (.tripleTerm _ _ _) => 8
 
@@ -161,17 +172,15 @@ last-resort tiebreak below (port of `er_numeric_lexical`). -/
 def erNumericLexical : EvalResult → String
   | .num n             => toString n
   | .dec s             => s
-  | .flt s             => s
   | .dbl s             => s
   | .term (.literal l) => l.val.lexicalForm
   | _                  => ""
 
-/-- Ordering on the numeric fragment. §15.1 leaves the position of
-operands with no defined `<` undefined and requires only CONSISTENCY,
-so "a value that parses sorts before one that does not; two
-unparseable values compare lexically" is conformant — and it is what
-the F* source settled on (its own note records that the earlier
-"unparseable means tie" rule was NOT transitive). -/
+/-- Legacy numeric ordering inherited from F*. Values accepted by the
+    scaled parser precede rejected values; rejected pairs compare lexically.
+    IEEE rounding, infinities and NaN still need integration with the shared
+    value model. §15.1's freedom for undefined pairs does not establish that
+    this entire ordering is conformant. -/
 def sparqlOrderNumeric (a b : EvalResult) : Int :=
   match numericCompare a b with
   | some cmp => cmp
@@ -183,7 +192,7 @@ def sparqlOrderNumeric (a b : EvalResult) : Int :=
 
 /-- §15.1 ordering of two evaluated values: `-1`, `0`, `1` (port of
 `sparql_order`). -/
-def sparqlOrder (a b : EvalResult) : Int :=
+def sparqlOrderValues (a b : EvalResult) : Int :=
   let ra := erRank a
   let rb := erRank b
   if ra < rb then -1
@@ -194,13 +203,160 @@ def sparqlOrder (a b : EvalResult) : Int :=
     | .term (.bnode x), .term (.bnode y) => strCompare x y
     | .term (.iri x),   .term (.iri y)   => strCompare x.val y.val
     | .bool x, .bool y => intCompare (if x then 1 else 0) (if y then 1 else 0)
-    | .num _, _ | .dec _, _ | .flt _, _ | .dbl _, _ => sparqlOrderNumeric a b
+    | .num _, _ | .dec _, _ | .dbl _, _ => sparqlOrderNumeric a b
     | .term (.literal l1), .term (.literal l2) => literalOrder l1.val l2.val
     | .term t1, .term t2 => termOrder t1 t2
     | _, _ => 0
 
-/-- Order-equality of two evaluated values (port of `er_equal`). -/
-def erEqual (a b : EvalResult) : Bool := sparqlOrder a b == 0
+/-- ORDER BY and MIN/MAX compare datatype values but leave the original
+    results intact. Grouping uses RDF term identity separately. -/
+def sparqlOrder (a b : EvalResult) : Int :=
+  -- Compare admitted numeric values before representation-only literal
+  -- promotion: a source float has already rounded at float precision.
+  let numericOrder : Option Int := if a.isNumericOperand && b.isNumericOperand then do
+    let x ← a.numericValue?
+    let y ← b.numericValue?
+    let nan : XSD.Val → Bool := fun
+      | .flt f | .dbl f => f.cls == .nan
+      | _ => false
+    -- SPARQL leaves unordered numeric pairs open to implementation policy.
+    -- Give NaN a fixed position rather than tying it with every number.
+    if nan x || nan y then pure (if nan x == nan y then 0 else if nan x then 1 else -1)
+    else
+      let less ← Fn.Comparison.numericCompare x y .lt
+      let greater ← Fn.Comparison.numericCompare x y .gt
+      pure (if less then -1 else if greater then 1 else 0)
+    else none
+  match numericOrder with
+  | some order => order
+  | none =>
+    let view : EvalResult → EvalResult := fun v => match v with
+      | .term (.literal l) => match integerDerivedValue? l with
+        | some i => .num i
+        | none => v.promoteLiteral
+      | _ => v
+    sparqlOrderValues (view a) (view b)
+
+/-- `sparqlOrder` with the numeric readings of its operands already made:
+`ia`/`ib` stand for `isNumericOperand` and `na`/`nb` for `numericValue?`. The
+MIN and MAX accumulators of the SBM11 id path read each distinct term id once
+and keep the reading of the best value, so a step compares two readings
+(https://github.com/danbri/factoidal/issues/862). `sparqlOrder_eq_read`: with
+the operands' own readings this is `sparqlOrder`. -/
+def sparqlOrderRead (a b : EvalResult) (ia ib : Bool) (na nb : Option XSD.Val) : Int :=
+  let numericOrder : Option Int := if ia && ib then do
+    let x ← na
+    let y ← nb
+    let nan : XSD.Val → Bool := fun
+      | .flt f | .dbl f => f.cls == .nan
+      | _ => false
+    if nan x || nan y then pure (if nan x == nan y then 0 else if nan x then 1 else -1)
+    else
+      let less ← Fn.Comparison.numericCompare x y .lt
+      let greater ← Fn.Comparison.numericCompare x y .gt
+      pure (if less then -1 else if greater then 1 else 0)
+    else none
+  match numericOrder with
+  | some order => order
+  | none =>
+    let view : EvalResult → EvalResult := fun v => match v with
+      | .term (.literal l) => match integerDerivedValue? l with
+        | some i => .num i
+        | none => v.promoteLiteral
+      | _ => v
+    sparqlOrderValues (view a) (view b)
+
+/-- The fast form with the operands' own readings is the reference order. -/
+theorem sparqlOrder_eq_read (a b : EvalResult) :
+    sparqlOrder a b =
+      sparqlOrderRead a b a.isNumericOperand b.isNumericOperand a.numericValue? b.numericValue? := by
+  unfold sparqlOrder sparqlOrderRead
+  rfl
+
+/-- The value that `sparqlOrderRead` compares when the numeric readings do
+not decide: a literal of an integer-derived datatype as its integer, else
+`promoteLiteral`. -/
+def orderView (v : EvalResult) : EvalResult :=
+  match v with
+  | .term (.literal l) => match integerDerivedValue? l with
+    | some i => .num i
+    | none => v.promoteLiteral
+  | _ => v
+
+/-- `sparqlOrderRead` with both operands' views (`orderView`) already made.
+An ORDER BY over `n` distinct values compares about `n log n` pairs; with
+the readings and views made once per value, a comparison no longer reads
+datatype IRIs (olympics q07 on the SBM11 id path, 291 labels, issue 961).
+`sparqlOrderRead_eq_viewed`: it is `sparqlOrderRead`. -/
+def sparqlOrderViewed (ia ib : Bool) (na nb : Option XSD.Val) (va vb : EvalResult) : Int :=
+  let numericOrder : Option Int := if ia && ib then do
+    let x ← na
+    let y ← nb
+    let nan : XSD.Val → Bool := fun
+      | .flt f | .dbl f => f.cls == .nan
+      | _ => false
+    if nan x || nan y then pure (if nan x == nan y then 0 else if nan x then 1 else -1)
+    else
+      let less ← Fn.Comparison.numericCompare x y .lt
+      let greater ← Fn.Comparison.numericCompare x y .gt
+      pure (if less then -1 else if greater then 1 else 0)
+    else none
+  match numericOrder with
+  | some order => order
+  | none => sparqlOrderValues va vb
+
+theorem sparqlOrderRead_eq_viewed (a b : EvalResult) (ia ib : Bool) (na nb : Option XSD.Val) :
+    sparqlOrderRead a b ia ib na nb = sparqlOrderViewed ia ib na nb (orderView a) (orderView b) := by
+  unfold sparqlOrderRead sparqlOrderViewed orderView
+  rfl
+
+/-- `sparqlOrder` is `sparqlOrderViewed` of the operands' readings and views. -/
+theorem sparqlOrder_eq_viewed (a b : EvalResult) :
+    sparqlOrder a b = sparqlOrderViewed a.isNumericOperand b.isNumericOperand
+      a.numericValue? b.numericValue? (orderView a) (orderView b) := by
+  rw [sparqlOrder_eq_read, sparqlOrderRead_eq_viewed]
+
+/-- `sparqlOrderRead` when both readings are `xsd:decimal` values (every
+integer type reads as one): one `Dec.cmp`, no `Option` chain and no second
+comparison. `sparqlOrderReadFast_eq`: it is `sparqlOrderRead`. -/
+def sparqlOrderReadFast (a b : EvalResult) (ia ib : Bool) (na nb : Option XSD.Val) : Int :=
+  match ia, ib, na, nb with
+  | true, true, some (.dec x), some (.dec y) =>
+    match XSD.Dec.cmp x y with
+    | .lt => -1
+    | .gt => 1
+    | .eq => 0
+  | _, _, _, _ => sparqlOrderRead a b ia ib na nb
+
+theorem sparqlOrderReadFast_eq (a b : EvalResult) (ia ib : Bool) (na nb : Option XSD.Val) :
+    sparqlOrderReadFast a b ia ib na nb = sparqlOrderRead a b ia ib na nb := by
+  unfold sparqlOrderReadFast
+  split
+  · rename_i x y
+    cases h : XSD.Dec.cmp x y <;>
+      simp [sparqlOrderRead, Fn.Comparison.numericCompare, h, Fn.Comparison.Op.apply]
+  · rfl
+
+/-- SPARQL §18.5 grouping compares RDF term keys. Failed/unbound keys
+    form one group; numeric value equality does not erase lexical spelling. -/
+def groupTermEqual (a b : Option Term) : Bool :=
+  match a, b with
+  | none, none => true
+  | some x, some y => x.sameTerm y
+  | _, _ => false
+
+/-- Grouping equality shares the RDF term view used by projection. -/
+def erEqual (a b : EvalResult) : Bool := groupTermEqual a.toTerm? b.toTerm?
+
+/-- Aggregate DISTINCT compares RDF terms; error results are filtered by
+    its caller. Lexically different integers remain distinct. -/
+def erTermEqual (a b : EvalResult) : Bool :=
+  match a.toTerm?, b.toTerm? with
+  | some x, some y => x.sameTerm y
+  | _, _ => false
+
+/-- Main compatibility name for value ordering. -/
+abbrev sparqlOrderValue := sparqlOrder
 
 /-! ## The query AST — SPARQL 1.1 §18.2.4
 
@@ -418,6 +574,31 @@ def Query.expressionsOutsidePatternExistsFree (query : Query) : Bool :=
     && Expr.existsFreeList query.having
     && (query.modifier.orderBy.getD []).all OrderCondition.existsFree
 
+/-- Does the query form read statements that no pattern of the query
+selects? DESCRIBE does: it returns every statement about each resource
+it describes (`evalDescribe`), and the WHERE clause names the resources,
+not those statements. SELECT, ASK and CONSTRUCT read the dataset only
+through the pattern. -/
+def QueryForm.readsBeyondPattern : QueryForm → Bool
+  | .describe _ => true
+  | .select _ | .construct _ | .ask => false
+
+/-- The admission test of every planner that opens a PROPER SUBSET of a
+store's statements chosen from the query's pattern: the shards of the
+predicates the pattern names, the graphs it names, the blocks whose zone
+maps can hold its constants, the rows an index lists for its filter.
+
+The test holds when the pattern alone decides which statements the
+query reads. Two things break that. An `EXISTS` outside the pattern
+reads the active graph (`expressionsOutsidePatternExistsFree`). And a
+DESCRIBE form reads every statement about the resources it names, which
+`ASK`-style pruning by pattern predicates would drop: `DESCRIBE <x>`
+has an empty pattern, so a planner that read only the pattern's
+predicates would open no shard and describe nothing. A planner that
+fails this test opens the complete store. -/
+def Query.patternBoundedReads (query : Query) : Bool :=
+  query.expressionsOutsidePatternExistsFree && !query.form.readsBeyondPattern
+
 /-- Build a query, defaulting every optional part — the shape most
 call sites (and every test below) want. -/
 def mkQuery (form : QueryForm) (pattern : QueryPattern)
@@ -476,8 +657,8 @@ def Binding.distinctKeyFor (mu : Binding) (vars : List VarName) : List (Option T
   vars.map fun v => (mu.lookup v).map Term.joinKey
 
 /-- Tail-recursive worker for `distinctSolutionsFast`.  It is deliberately
-    named rather than local so `DistinctFastRefinement` can state the bucket
-    invariant over exactly the compiled runtime loop.  `vars` is fixed for the
+    named rather than local so `SPARQL/QueryTheorems.lean` can state the bucket
+    invariant over exactly the compiled runtime loop. `vars` is fixed for the
     invocation.  The full `equiv` test means a hash collision or coarser key
     cannot remove a non-duplicate. -/
 def distinctSolutionsFastGo (vars : List VarName) : SolutionSeq →
@@ -553,6 +734,70 @@ def sortSolutions (cmp : Binding → Binding → Int) : SolutionSeq → Solution
 def sortSolutionsFast (cmp : Binding → Binding → Int) (omega : SolutionSeq) : SolutionSeq :=
   omega.mergeSort (fun left right => cmp left right ≤ 0)
 
+/-- The final SELECT stages: order, project, remove duplicates, then slice.
+    SELECT expressions and row freshness contexts have already been evaluated. -/
+def finishSelectRows (order : Option (Binding → Binding → Int))
+    (project : Binding → Binding) (distinct reduced : Bool)
+    (offset limit : Option Nat) (rows : SolutionSeq) : SolutionSeq :=
+  let ordered := match order with
+    | none => rows
+    | some cmp => sortSolutionsFast cmp rows
+  let projected := ordered.map project
+  let deduped := if distinct then distinctSolutionsFast projected
+                else if reduced then reducedSolutions projected else projected
+  sliceSolutions offset limit deduped
+
+/-- Only a finite slice without duplicate removal can truncate the ordered
+    input. Projection preserves row count, including entirely unbound rows. -/
+def finishSelectRowsPrefix (order : Option (Binding → Binding → Int))
+    (project : Binding → Binding) (distinct reduced : Bool)
+    (offset limit : Option Nat) (rows : SolutionSeq) : SolutionSeq :=
+  match order with
+  | none => finishSelectRows order project distinct reduced offset limit rows
+  | some cmp =>
+      if distinct || reduced then
+        finishSelectRows order project distinct reduced offset limit rows
+      else match limit with
+        | none => finishSelectRows order project distinct reduced offset limit rows
+        | some count =>
+            let orderedPrefix := mergeSortPrefix rows (fun a b => cmp a b ≤ 0)
+              (offset.getD 0 + count)
+            sliceSolutions offset limit (orderedPrefix.map project)
+
+theorem sliceSolutions_map_prefix (offset : Option Nat) (count : Nat)
+    (rows : SolutionSeq) (project : Binding → Binding) :
+    sliceSolutions offset (some count) ((rows.take (offset.getD 0 + count)).map project)
+      = sliceSolutions offset (some count) (rows.map project) := by
+  cases offset <;>
+    simp [sliceSolutions, List.map_take, List.drop_take, List.take_take]
+
+theorem sliceSolutions_take_prefix (offset : Option Nat) (count : Nat)
+    (rows : SolutionSeq) :
+    sliceSolutions offset (some count) (rows.take (offset.getD 0 + count))
+      = sliceSolutions offset (some count) rows := by
+  cases offset <;> simp [sliceSolutions, List.drop_take, List.take_take]
+
+theorem finishSelectRowsPrefix_eq (order : Option (Binding → Binding → Int))
+    (project : Binding → Binding) (distinct reduced : Bool)
+    (offset limit : Option Nat) (rows : SolutionSeq) :
+    finishSelectRowsPrefix order project distinct reduced offset limit rows
+      = finishSelectRows order project distinct reduced offset limit rows := by
+  cases order with
+  | none => rfl
+  | some cmp =>
+      cases distinct <;> cases reduced <;> cases limit <;>
+        simp [finishSelectRowsPrefix, finishSelectRows, reducedSolutions,
+          mergeSortPrefix_eq_take, sortSolutionsFast, sliceSolutions_take_prefix]
+
+/-- Compile the proven prefix implementation while retaining the full-sort
+    specification for reduction and downstream proofs. -/
+@[csimp] theorem finishSelectRows_eq_prefix :
+    @finishSelectRows = @finishSelectRowsPrefix := by
+  funext order project distinct reduced offset limit rows
+  exact (finishSelectRowsPrefix_eq order project distinct reduced offset limit rows).symm
+
+#print axioms finishSelectRows_eq_prefix
+
 /-! ## §18.5.1 grouping and aggregation -/
 
 /-- One GROUP BY group: the key its rows share, and those rows. -/
@@ -613,6 +858,137 @@ def groupSolutions (env : EvalEnv) (conds : List GroupCondition)
     addToGroups (evalGroupKey env conds mu)
       (extendWithGroupAliases env conds mu) groups) []
 
+
+/-! ### Hash-indexed grouping (2026-10-10)
+
+`addToGroups` scans every group for each row and appends the row to a group's
+list with `++ [mu]`: O(rows x groups) for the scan and O(rows x group size) for
+the append. Measured on the Lean command line against the F\* engine, on
+slices of `examples/wikidata/subsets/lifesci-kgx/data/gene.ttl`
+(`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`): `GROUP BY ?p` with
+6 groups over 20,000 paragraphs took 45 s against 0.79 s, and `GROUP BY ?s`
+with about 5,000 groups over 5,000 paragraphs did not finish in 120 s against
+7 s.
+
+`groupSolutionsFast` keeps the groups in an array in creation order, each with
+its rows newest first (reversed once at the end), and a hash index from the
+key bucket to the groups in that bucket. A row is compared with `keysEqual`
+only against the groups in its own bucket, and is appended to every group
+that matches, exactly as `addToGroups` does; a row that matches none starts a
+new group at the end. The bucket never hides a match
+(`keysEqual_keyBucket`, from `erEqual_erBucket`). `groupSolutions` stays as
+the specification. The two are equal: `groupSolutionsFast_eq` in
+`L4Factoidal.SPARQL.GroupFastTheorems` proves
+`groupSolutionsFast env conds omega = groupSolutions env conds omega` for every
+input, without assuming that `keysEqual` is transitive. The `#guard`s below on
+tied, interleaved, cross-type numeric, error-keyed and literal-keyed groups
+stay as tests. -/
+
+/-- A coarse key that is constant on the equivalence classes of `erEqual`: two
+evaluated values with different keys are never order-equal, so a group can only
+match a row whose key bucket is its own (`erEqual_erBucket`). Numerics share one
+bucket, because `sparqlOrderNumeric` compares across `xsd:integer`, `xsd:decimal`
+and `xsd:double`; literals are keyed by datatype, lexical form and language tag. -/
+def termBucket : Term → Nat × String
+  | .bnode x => (1, x)
+  | .iri x => (2, x.val)
+  | .literal l => (7, l.val.datatype.val ++ "\x1f" ++ l.val.lexicalForm ++ "\x1f" ++
+      (l.val.langTag.map String.toLower).getD "")
+  | .tripleTerm _ _ _ => (8, "")
+
+def erBucket (v : EvalResult) : Nat × String :=
+  match v.toTerm? with | none => (0, "") | some t => termBucket t
+
+theorem sameTerm_termBucket {a b : Term} (same : a.sameTerm b = true) :
+    termBucket a = termBucket b := by
+  cases a <;> cases b <;> simp only [Term.sameTerm] at same
+  all_goals try { cases same }
+  all_goals try { rfl }
+  · simp only [beq_iff_eq] at same
+    subst same
+    rfl
+  · simp only [beq_iff_eq] at same
+    subst same
+    rfl
+  · rename_i left right
+    simp only [Literal.sameTerm, Bool.and_eq_true, beq_iff_eq] at same
+    obtain ⟨⟨⟨lexical, datatype⟩, language⟩, _⟩ := same
+    have tag : (left.val.langTag.map String.toLower).getD "" =
+        (right.val.langTag.map String.toLower).getD "" := by
+      cases hl : left.val.langTag <;> cases hr : right.val.langTag <;>
+        simp_all [langTagOptionEq, langTagEq]
+    simp [termBucket, lexical, datatype, tag]
+
+theorem erEqual_erBucket {a b : EvalResult} (same : erEqual a b = true) :
+    erBucket a = erBucket b := by
+  cases ha : a.toTerm? with
+  | none => cases hb : b.toTerm? <;> simp_all [erEqual, groupTermEqual, erBucket]
+  | some x =>
+    cases hb : b.toTerm? with
+    | none => simp [erEqual, groupTermEqual, ha, hb] at same
+    | some y =>
+      simp only [erEqual, groupTermEqual, ha, hb] at same
+      simpa only [erBucket, ha, hb] using sameTerm_termBucket same
+
+theorem erTermEqual_erBucket {a b : EvalResult} (same : erTermEqual a b = true) :
+    erBucket a = erBucket b := by
+  apply erEqual_erBucket
+  cases ha : a.toTerm? <;> cases hb : b.toTerm? <;>
+    simp_all [erTermEqual, erEqual, groupTermEqual]
+
+/-- The bucket of a whole group key. -/
+def keyBucket (k : List EvalResult) : List (Nat × String) := k.map erBucket
+
+/-- Order-equal keys share a bucket, component by component. -/
+theorem keysEqual_keyBucket : ∀ {k1 k2 : List EvalResult},
+    keysEqual k1 k2 = true → keyBucket k1 = keyBucket k2
+  | [], [], _ => rfl
+  | a :: r1, b :: r2, h => by
+      simp only [keysEqual, Bool.and_eq_true] at h
+      simp only [keyBucket, List.map_cons, List.cons.injEq]
+      exact ⟨erEqual_erBucket h.1, keysEqual_keyBucket (k1 := r1) (k2 := r2) h.2⟩
+  | [], _ :: _, h => by simp [keysEqual] at h
+  | _ :: _, [], h => by simp [keysEqual] at h
+
+/-- One group under construction: its key and its rows, newest first. -/
+structure GroupRec where
+  key     : List EvalResult
+  solsRev : List Binding
+
+instance : Inhabited GroupRec := ⟨⟨[], []⟩⟩
+
+/-- Groups in creation order, and for each key bucket the positions of the
+groups in it. -/
+structure GroupAcc where
+  recs  : Array GroupRec := #[]
+  index : Std.HashMap (List (Nat × String)) (Array Nat) := ∅
+
+/-- Add a row: to every group of its bucket whose key is order-equal to the
+row's key, or as a new last group when there is none. -/
+def GroupAcc.add (acc : GroupAcc) (key : List EvalResult) (mu : Binding) : GroupAcc :=
+  let b := keyBucket key
+  let ids := acc.index.getD b #[]
+  let hits := ids.filter (fun i => keysEqual key (acc.recs[i]!).key)
+  if hits.isEmpty then
+    let n := acc.recs.size
+    let index' := acc.index.erase b
+    { recs := acc.recs.push ⟨key, [mu]⟩, index := index'.insert b (ids.push n) }
+  else
+    { acc with
+      recs := hits.foldl
+        (fun rs i => rs.modify i (fun g => { g with solsRev := mu :: g.solsRev })) acc.recs }
+
+def GroupAcc.groups (acc : GroupAcc) : List SolutionGroup :=
+  acc.recs.toList.map (fun g => ⟨g.key, g.solsRev.reverse⟩)
+
+/-- `Group(exprlist, Ω)` with the hash index; the same list of groups as
+`groupSolutions`, groups in first-appearance order, rows in input order. -/
+def groupSolutionsFast (env : EvalEnv) (conds : List GroupCondition)
+    (omega : SolutionSeq) : List SolutionGroup :=
+  (omega.foldl (fun acc mu =>
+      acc.add (evalGroupKey env conds mu) (extendWithGroupAliases env conds mu))
+    ({} : GroupAcc)).groups
+
 /-- With no GROUP BY, the whole sequence is one group (§18.5.1: an
 aggregate with no GROUP BY groups over everything). Port of
 `implicit_group`. -/
@@ -626,63 +1002,142 @@ def evalOverGroup (env : EvalEnv) (e : Expr) (g : SolutionGroup) :
     List EvalResult :=
   g.solutions.map (fun mu => Expr.evalIn env mu e)
 
-/-- Drop type errors (an aggregate ignores rows whose expression
-errors, §18.5.1.1). -/
+/-- Retained engine policy: aggregate inputs omit expression errors.
+COUNT explicitly removes errors in SPARQL 1.1; this helper's use for other
+aggregates is a compatibility boundary, not general conformance established
+by §18.5.1.1 (see errata-query-6). -/
 def filterNonError (vals : List EvalResult) : List EvalResult :=
   vals.filter (fun v => v != .error)
 
-/-- Deduplicate values under the §15.1 ordering, keeping the first
-occurrence — what `COUNT(DISTINCT ?x)` and friends need (port of
-`dedup_er`). -/
+/-- Aggregate DISTINCT removes repeated RDF terms, keeping their first
+occurrence. Group error keys have a separate equivalence policy. -/
 def dedupErAcc : List EvalResult → List EvalResult → List EvalResult
   | [],       acc => acc.reverse
   | v :: rest, acc =>
-      if acc.any (fun x => erEqual v x) then dedupErAcc rest acc
+      if acc.any (fun x => erTermEqual v x) then dedupErAcc rest acc
       else dedupErAcc rest (v :: acc)
 
 def dedupEr (vals : List EvalResult) : List EvalResult := dedupErAcc vals []
 
-/-- Running sum over the numeric values, carrying the promoted type
-and the count of numeric operands (port of `sum_numeric_acc`). -/
-def sumNumericAcc : List EvalResult → Scaled → NumKind → Nat →
-    (Scaled × NumKind × Nat)
-  | [],       acc, k, c => (acc, k, c)
-  | v :: rest, acc, k, c =>
-      match v.toNumeric? with
-      | some (s, vk) => sumNumericAcc rest (acc.add s) (promoteKind k vk) (c + 1)
-      | none         => sumNumericAcc rest acc k c
+/-! ### Indexed duplicate removal for aggregates with DISTINCT (2026-10-10)
 
-/-- §18.5.1.4 SUM. The sum of no values is `0` (the spec's stated
-identity). -/
+`dedupErAcc` compares each value with every value kept so far: O(values x
+distinct values) calls of `sparqlOrder`. Measured with callgrind on
+`SELECT (COUNT(DISTINCT ?s) AS ?c) WHERE { ?s ?p ?o }` over 625 paragraphs of
+`examples/wikidata/subsets/lifesci-kgx/data/gene.ttl`: `dedupErAcc` was 89.1
+percent of 3.70 billion instructions, and the command took 1.4 s at 1,250
+paragraphs and 22.8 s at 5,000 (https://github.com/danbri/factoidal/issues/722).
+
+`dedupErFastGo` keeps, beside the kept values, a hash index from the
+`erBucket` key to the kept values of that key, newest first. A value is
+compared only with the kept values of its own bucket. `erEqual_erBucket` says
+that an order-equal value is always in that bucket, so the answer of the test
+is the answer of the scan (`dedupErBucketAny_eq`), and the two functions return
+the same list (`dedupErFastGo_eq`). The `csimp` theorem below makes every
+caller of `dedupEr` that is compiled after it run `dedupErFast`; the
+definition of `dedupEr` does not change. -/
+
+/-- Tail-recursive worker of `dedupErFast`. `acc` holds the values kept so
+far, newest first; `buckets` maps each `erBucket` key to the kept values with
+that key, newest first. -/
+def dedupErFastGo : List EvalResult → Std.HashMap (Nat × String) (List EvalResult) →
+    List EvalResult → List EvalResult
+  | [],        _,       acc => acc.reverse
+  | v :: rest, buckets, acc =>
+      let k := erBucket v
+      let bucket := buckets.getD k []
+      if bucket.any (fun x => erTermEqual v x) then dedupErFastGo rest buckets acc
+      else dedupErFastGo rest (buckets.insert k (v :: bucket)) (v :: acc)
+
+/-- `dedupEr` with a hash index on `erBucket`; the same list (`dedupEr_eq_dedupErFast`). -/
+def dedupErFast (vals : List EvalResult) : List EvalResult :=
+  dedupErFastGo vals (∅ : Std.HashMap (Nat × String) (List EvalResult)) []
+
+/-- The index holds, under each key, exactly the kept values with that key, in
+kept order. -/
+def DedupErBucketWf (buckets : Std.HashMap (Nat × String) (List EvalResult))
+    (acc : List EvalResult) : Prop :=
+  ∀ k, buckets.getD k [] = acc.filter (fun x => erBucket x == k)
+
+/-- Scanning the kept values of the bucket of `v` answers the same as scanning
+every kept value: an order-equal kept value has the bucket of `v`. -/
+theorem dedupErBucketAny_eq (v : EvalResult) : ∀ acc : List EvalResult,
+    (acc.filter (fun x => erBucket x == erBucket v)).any (fun x => erTermEqual v x) =
+      acc.any (fun x => erTermEqual v x)
+  | [] => rfl
+  | x :: rest => by
+      have ih := dedupErBucketAny_eq v rest
+      by_cases hx : erTermEqual v x = true
+      · have hk : (erBucket x == erBucket v) = true := by
+          simp [erTermEqual_erBucket hx]
+        simp [hx, hk]
+      · by_cases hk : (erBucket x == erBucket v) = true
+        · simp [hx, hk, ih]
+        · simp [hx, hk, ih]
+
+/-- `dedupErFastGo` returns what `dedupErAcc` returns, from any kept list whose
+index is well formed. -/
+theorem dedupErFastGo_eq : ∀ (vals : List EvalResult)
+    (buckets : Std.HashMap (Nat × String) (List EvalResult)) (acc : List EvalResult),
+    DedupErBucketWf buckets acc →
+    dedupErFastGo vals buckets acc = dedupErAcc vals acc
+  | [], _, _, _ => by simp [dedupErFastGo, dedupErAcc]
+  | v :: rest, buckets, acc, hwf => by
+      have hany : (buckets.getD (erBucket v) []).any (fun x => erTermEqual v x) =
+          acc.any (fun x => erTermEqual v x) := by
+        rw [hwf (erBucket v)]
+        exact dedupErBucketAny_eq v acc
+      simp only [dedupErFastGo, dedupErAcc, hany]
+      split
+      · exact dedupErFastGo_eq rest buckets acc hwf
+      · apply dedupErFastGo_eq rest
+        intro k
+        rw [Std.HashMap.getD_insert]
+        by_cases hk : erBucket v = k
+        · subst hk
+          simp [hwf (erBucket v)]
+        · have hb : (erBucket v == k) = false := by simpa using hk
+          simp [hb, hwf k]
+
+theorem dedupEr_eq_dedupErFast_apply (vals : List EvalResult) :
+    dedupEr vals = dedupErFast vals :=
+  (dedupErFastGo_eq vals ∅ [] (fun k => by simp [Std.HashMap.getD_empty])).symm
+
+/-- The compiler runs `dedupErFast` wherever the source says `dedupEr`. -/
+@[csimp] theorem dedupEr_eq_dedupErFast : @dedupEr = @dedupErFast :=
+  funext dedupEr_eq_dedupErFast_apply
+
+/-- SPARQL §§18.3/18.5.1.3: right-nested numeric addition over the chosen
+reverse enumeration of the aggregate bag, with integer zero as the base.
+Validation, promotion and rounding belong to shared arithmetic. -/
 def sumNumeric (vals : List EvalResult) : EvalResult :=
-  let (s, k, c) := sumNumericAcc vals ⟨0, 0⟩ .int 0
-  if c == 0 then .num 0 else formatNumericResult s k
+  vals.foldl (fun acc v => evalArithmetic .add v acc) (.num 0)
 
-/-- §18.5.1.5 AVG. The result is never an integer: an average of
-integers is an `xsd:decimal`. Division carries ten extra fraction
-digits, as in the F* source. -/
+/-- SPARQL §18.3 permits any ToList enumeration of an aggregate multiset.
+We choose reverse input enumeration for §18.5.1.3's right-nested Sum, so the
+implementation keeps constant aggregate state. This equality assumes no
+associativity or commutativity of rounded numeric addition. -/
+theorem sumNumeric_reverse_enumeration (vals : List EvalResult) :
+    sumNumeric vals = vals.reverse.foldr (evalArithmetic .add) (.num 0) := by
+  simp only [sumNumeric, List.foldr_reverse]
+
+/-- SPARQL 1.1 §18.5.1.4: AVG is SUM / count, including arithmetic's result
+    type and rounding. Empty input is the specified integer zero. -/
 def avgNumeric (vals : List EvalResult) : EvalResult :=
-  let (s, k, c) := sumNumericAcc vals ⟨0, 0⟩ .int 0
-  if c == 0 then .num 0
-  else
-    let resultKind := match k with | .int => NumKind.dec | other => other
-    let extra : Nat := 10
-    let extended := s.mantissa * pow10 extra
-    let divided := intDivT extended (Int.ofNat c)
-    let resultScale := s.scale + extra
-    formatNumericResult ⟨divided, resultScale⟩ resultKind
+  if vals.isEmpty then .num 0
+  else evalArithmetic .div (sumNumeric vals) (.num (Int.ofNat vals.length))
 
 /-- §18.5.1.6 MIN by the §15.1 ordering; MIN of nothing is an error. -/
 def findMin (vals : List EvalResult) : EvalResult :=
   match vals with
   | []      => .error
-  | v :: rest => rest.foldl (fun acc x => if sparqlOrder x acc ≤ 0 then x else acc) v
+  | v :: rest => rest.foldl (fun acc x => if sparqlOrderValue x acc ≤ 0 then x else acc) v
 
 /-- §18.5.1.7 MAX by the §15.1 ordering. -/
 def findMax (vals : List EvalResult) : EvalResult :=
   match vals with
   | []      => .error
-  | v :: rest => rest.foldl (fun acc x => if sparqlOrder x acc ≥ 0 then x else acc) v
+  | v :: rest => rest.foldl (fun acc x => if sparqlOrderValue x acc ≥ 0 then x else acc) v
 
 /-- The first non-error value — §18.5.1.9 SAMPLE (any one value of the
 group; the spec explicitly allows an arbitrary choice). -/
@@ -698,14 +1153,20 @@ same two spellings the F* source accepts. `COUNT(DISTINCT *)` counts
 DISTINCT ROWS: the F* source builds a string key per row, this port
 uses `distinctSolutions`, which is the §18.3 row equality — the same
 count whenever the two agree, and the row equality is the one DISTINCT
-itself uses. -/
+itself uses. The code calls `distinctSolutionsFast`, the hash-bucketed
+form that the DISTINCT modifier runs; `distinctSolutionsFast_eq`
+(`QueryTheorems.lean`) proves it returns the list `distinctSolutions`
+returns, and `evalAggregate_countDistinctStar` restates this arm with
+`distinctSolutions`. The scan cost 74.8 percent of the instructions of
+`COUNT(DISTINCT *)` over 625 paragraphs of `gene.ttl`
+(https://github.com/danbri/factoidal/issues/722). -/
 def evalAggregate (env : EvalEnv) (fn : AggregateFn) (distinct : Bool)
     (e : Expr) (g : SolutionGroup) : EvalResult :=
   match fn with
   | .count =>
       match e with
       | .var "*" | .boolLit true =>
-          if distinct then .num (Int.ofNat (distinctSolutions g.solutions).length)
+          if distinct then .num (Int.ofNat (distinctSolutionsFast g.solutions).length)
           else .num (Int.ofNat g.solutions.length)
       | _ =>
           let vals := filterNonError (evalOverGroup env e g)
@@ -714,12 +1175,11 @@ def evalAggregate (env : EvalEnv) (fn : AggregateFn) (distinct : Bool)
   | .sum =>
       let vals := filterNonError (evalOverGroup env e g)
       let vals := if distinct then dedupEr vals else vals
-      -- §18.5.1.4: a non-numeric operand makes the whole sum an error.
-      if vals.any (fun v => v.toNumeric?.isNone) then .error else sumNumeric vals
+      sumNumeric vals
   | .avg =>
       let vals := filterNonError (evalOverGroup env e g)
       let vals := if distinct then dedupEr vals else vals
-      if vals.any (fun v => v.toNumeric?.isNone) then .error else avgNumeric vals
+      avgNumeric vals
   | .min =>
       let vals := filterNonError (evalOverGroup env e g)
       findMin (if distinct then dedupEr vals else vals)
@@ -734,17 +1194,111 @@ def evalAggregate (env : EvalEnv) (fn : AggregateFn) (distinct : Bool)
       erString (String.intercalate s (vals.filterMap EvalResult.toString?))
   | .sample => firstNonError (evalOverGroup env e g)
 
+mutual
 /-- Replace every aggregate sub-expression by its computed value, so
 an ordinary §17 evaluation can finish the job — this is what lets
 `HAVING (COUNT(?o) > 2)` and `SELECT (COUNT(?o) * 2 AS ?c)` work
 (port of `rewrite_aggregates`). -/
 def rewriteAggregates (env : EvalEnv) (g : SolutionGroup) : Expr → Expr
+  | .existsPat p    => .existsPat p
+  | .notExistsPat p => .notExistsPat p
+  -- Leaves.
+  | .var v => .var v
+  | .iri i => .iri i
+  | .lit l => .lit l
+  | .boolLit b => .boolLit b
+  | .numericLit n => .numericLit n
+  | .decimalLit s => .decimalLit s
+  | .doubleLit s => .doubleLit s
+  | .bound v => .bound v
+  | .now => .now
+  -- Recurse into sub-expressions.
+  | .arith op a b => .arith op (rewriteAggregates env g a)
+                              (rewriteAggregates env g b)
+  | .unaryMinus a => .unaryMinus (rewriteAggregates env g a)
+  | .unaryPlus a => .unaryPlus (rewriteAggregates env g a)
+  | .compare op a b => .compare op (rewriteAggregates env g a)
+                                  (rewriteAggregates env g b)
+  | .and a b => .and (rewriteAggregates env g a)
+                     (rewriteAggregates env g b)
+  | .or a b => .or (rewriteAggregates env g a)
+                   (rewriteAggregates env g b)
+  | .not a => .not (rewriteAggregates env g a)
+  | .isIri a => .isIri (rewriteAggregates env g a)
+  | .isBlank a => .isBlank (rewriteAggregates env g a)
+  | .isLiteral a => .isLiteral (rewriteAggregates env g a)
+  | .isNumeric a => .isNumeric (rewriteAggregates env g a)
+  | .str a => .str (rewriteAggregates env g a)
+  | .lang a => .lang (rewriteAggregates env g a)
+  | .datatype a => .datatype (rewriteAggregates env g a)
+  | .iriFn a => .iriFn (rewriteAggregates env g a)
+  | .hasLang a => .hasLang (rewriteAggregates env g a)
+  | .hasLangDir a => .hasLangDir (rewriteAggregates env g a)
+  | .langDir a => .langDir (rewriteAggregates env g a)
+  | .strDt a b => .strDt (rewriteAggregates env g a)
+                         (rewriteAggregates env g b)
+  | .strLang a b => .strLang (rewriteAggregates env g a)
+                             (rewriteAggregates env g b)
+  | .strLangDir a b c => .strLangDir (rewriteAggregates env g a)
+                                     (rewriteAggregates env g b)
+                                     (rewriteAggregates env g c)
+  | .cond c t e => .cond (rewriteAggregates env g c)
+                         (rewriteAggregates env g t)
+                         (rewriteAggregates env g e)
+  | .coalesce es => .coalesce (rewriteAggregateList env g es)
+  | .inList a es => .inList (rewriteAggregates env g a)
+                            (rewriteAggregateList env g es)
+  | .notInList a es => .notInList (rewriteAggregates env g a)
+                                  (rewriteAggregateList env g es)
+  | .strLen a => .strLen (rewriteAggregates env g a)
+  | .substr a b c => .substr (rewriteAggregates env g a)
+                             (rewriteAggregates env g b)
+                             (rewriteAggregateOpt env g c)
+  | .uCase a => .uCase (rewriteAggregates env g a)
+  | .lCase a => .lCase (rewriteAggregates env g a)
+  | .strStarts a b => .strStarts (rewriteAggregates env g a)
+                                 (rewriteAggregates env g b)
+  | .strEnds a b => .strEnds (rewriteAggregates env g a)
+                             (rewriteAggregates env g b)
+  | .contains a b => .contains (rewriteAggregates env g a)
+                               (rewriteAggregates env g b)
+  | .strBefore a b => .strBefore (rewriteAggregates env g a)
+                                 (rewriteAggregates env g b)
+  | .strAfter a b => .strAfter (rewriteAggregates env g a)
+                               (rewriteAggregates env g b)
+  | .concat es => .concat (rewriteAggregateList env g es)
+  | .encodeForUri a => .encodeForUri (rewriteAggregates env g a)
+  | .replace a b c d => .replace (rewriteAggregates env g a)
+                                 (rewriteAggregates env g b)
+                                 (rewriteAggregates env g c)
+                                 (rewriteAggregateOpt env g d)
+  | .regex a b c => .regex (rewriteAggregates env g a)
+                           (rewriteAggregates env g b)
+                           (rewriteAggregateOpt env g c)
+  | .abs a => .abs (rewriteAggregates env g a)
+  | .round a => .round (rewriteAggregates env g a)
+  | .ceil a => .ceil (rewriteAggregates env g a)
+  | .floor a => .floor (rewriteAggregates env g a)
+  | .md5 a => .md5 (rewriteAggregates env g a)
+  | .sha1 a => .sha1 (rewriteAggregates env g a)
+  | .sha256 a => .sha256 (rewriteAggregates env g a)
+  | .sha384 a => .sha384 (rewriteAggregates env g a)
+  | .sha512 a => .sha512 (rewriteAggregates env g a)
+  | .year a => .year (rewriteAggregates env g a)
+  | .month a => .month (rewriteAggregates env g a)
+  | .day a => .day (rewriteAggregates env g a)
+  | .hours a => .hours (rewriteAggregates env g a)
+  | .minutes a => .minutes (rewriteAggregates env g a)
+  | .seconds a => .seconds (rewriteAggregates env g a)
+  | .timezone a => .timezone (rewriteAggregates env g a)
+  | .tz a => .tz (rewriteAggregates env g a)
+  | .sameTerm a b => .sameTerm (rewriteAggregates env g a)
+                               (rewriteAggregates env g b)
   | .aggregate fn distinct sub =>
       match evalAggregate env fn distinct sub g with
       | .num n     => .numericLit n
       | .bool b    => .boolLit b
       | .dec s     => .decimalLit s
-      | .flt f     => .lit (mkTypedLiteral f xsdFloat)
       | .dbl d     => .doubleLit d
       | .term (.iri i)     => .iri i
       | .term (.literal l) => .lit l
@@ -752,14 +1306,23 @@ def rewriteAggregates (env : EvalEnv) (g : SolutionGroup) : Expr → Expr
       -- An unbound variable is exactly the §17 type error the F*
       -- source encodes here with the same sentinel name.
       | .error     => .var "_:error:"
-  | .compare op e1 e2 =>
-      .compare op (rewriteAggregates env g e1) (rewriteAggregates env g e2)
-  | .and e1 e2 => .and (rewriteAggregates env g e1) (rewriteAggregates env g e2)
-  | .or e1 e2  => .or (rewriteAggregates env g e1) (rewriteAggregates env g e2)
-  | .arith op e1 e2 =>
-      .arith op (rewriteAggregates env g e1) (rewriteAggregates env g e2)
-  | .not e1    => .not (rewriteAggregates env g e1)
-  | e          => e
+  | .functionCall i args => .functionCall i (rewriteAggregateList env g args)
+  | .tripleTerm a b c => .tripleTerm (rewriteAggregates env g a)
+                                     (rewriteAggregates env g b)
+                                     (rewriteAggregates env g c)
+  | .ttSubject a => .ttSubject (rewriteAggregates env g a)
+  | .ttPredicate a => .ttPredicate (rewriteAggregates env g a)
+  | .ttObject a => .ttObject (rewriteAggregates env g a)
+  | .isTriple a => .isTriple (rewriteAggregates env g a)
+
+def rewriteAggregateList (env : EvalEnv) (g : SolutionGroup) : List Expr → List Expr
+  | [] => []
+  | e :: rest => rewriteAggregates env g e :: rewriteAggregateList env g rest
+
+def rewriteAggregateOpt (env : EvalEnv) (g : SolutionGroup) : Option Expr → Option Expr
+  | none => none
+  | some e => some (rewriteAggregates env g e)
+end
 
 /-- The group's REPRESENTATIVE row: the solution mapping §18.5.4
 evaluates a HAVING condition and a projected expression against. Every
@@ -785,20 +1348,111 @@ EXISTS positions are already booleans. -/
 def evalExprInGroup (env : EvalEnv) (g : SolutionGroup) (e : Expr) : EvalResult :=
   Expr.evalIn env g.representative (rewriteAggregates env g e)
 
+/-- The solution mapping a group contributes after grouping: the named
+GROUP BY variables (`GROUP BY ?v`, `GROUP BY (e AS ?v)`) with the value
+the group's rows share. §18.3.1 makes exactly these in scope after
+GROUP BY; `GROUP BY (e)` without `AS` binds nothing, and a key that
+evaluated to an error leaves its variable unbound. -/
+def groupKeyBinding (gb : Option (List GroupCondition)) (g : SolutionGroup) : Binding :=
+  match gb with
+  | none => []
+  | some conds =>
+      conds.filterMap (fun gc =>
+        let named := match gc with
+          | .var v           => some v
+          | .expr _ (some v) => some v
+          | .expr _ none     => none
+        match named with
+        | none   => none
+        | some v => (g.representative.lookup v).map (fun t => (v, t)))
+
+/-- §18.2.4.3 (SPARQL 1.2 §18.3.4.3) at a grouping level: "P :=
+Join(P, ToMultiset(data))" where P is the grouped solution sequence.
+Each surviving group is paired with every VALUES row compatible with
+its `groupKeyBinding`; the row that results is the VALUES row merged
+over `base g`. With no VALUES clause each group is paired with `base g`.
+
+`base` is the one place the query forms differ. A SELECT passes the
+group's representative row (`groupedRowsWithValues`), so a VALUES
+variable is visible to the projection even when the WHERE pattern never
+binds it, and ORDER BY can still read a non-grouped variable as its
+SAMPLE. A form with no SELECT clause (ASK, CONSTRUCT, DESCRIBE) passes
+`groupKeyBinding gb`, because after grouping only the named GROUP BY
+variables are in scope (`formGroupedRows`). -/
+def groupedRowsWithValuesOn (base : SolutionGroup → Binding)
+    (gb : Option (List GroupCondition))
+    (pv : Option (List Binding)) (groups : List SolutionGroup) :
+    List (SolutionGroup × Binding) :=
+  match pv with
+  | none      => groups.map (fun g => (g, base g))
+  | some vals =>
+      groups.flatMap (fun g =>
+        let key := groupKeyBinding gb g
+        vals.filterMap (fun mv =>
+          if key.compatible mv then some (g, mv.merge (base g)) else none))
+
+/-- `groupedRowsWithValuesOn` for a SELECT: the row a group contributes
+starts as its representative. -/
+def groupedRowsWithValues (gb : Option (List GroupCondition))
+    (pv : Option (List Binding)) (groups : List SolutionGroup) :
+    List (SolutionGroup × Binding) :=
+  groupedRowsWithValuesOn SolutionGroup.representative gb pv groups
+
+/-- §18.5.1 Group(exprlist, Ω), or, with no GROUP BY clause, the whole
+sequence as one group (`implicitGroup`). The one grouping step every
+query form runs: `selectPost` for SELECT and `formGroupedRows` for the
+forms without a SELECT clause both call it. -/
+def groupWhere (env : EvalEnv) (gb : Option (List GroupCondition))
+    (omega : SolutionSeq) : List SolutionGroup :=
+  match gb with
+  | some conds => groupSolutionsFast env conds omega
+  | none       => implicitGroup omega
+
+mutual
 /-- Does this expression contain an aggregate anywhere? An aggregate
 in the SELECT clause triggers grouping even with no GROUP BY
 (§18.2.4.1). Port of `expr_has_aggregate`. -/
 def exprHasAggregate : Expr → Bool
-  | .aggregate _ _ _ => true
-  | .arith _ e1 e2   => exprHasAggregate e1 || exprHasAggregate e2
-  | .compare _ e1 e2 => exprHasAggregate e1 || exprHasAggregate e2
-  | .and e1 e2       => exprHasAggregate e1 || exprHasAggregate e2
-  | .or e1 e2        => exprHasAggregate e1 || exprHasAggregate e2
-  | .not e1          => exprHasAggregate e1
-  | .unaryMinus e1   => exprHasAggregate e1
-  | .unaryPlus e1    => exprHasAggregate e1
-  | .cond c t f      => exprHasAggregate c || exprHasAggregate t || exprHasAggregate f
-  | _                => false
+  | .aggregate _ _ _   => true
+  | .var _ | .iri _ | .lit _ | .boolLit _ | .numericLit _
+  | .decimalLit _ | .doubleLit _ | .bound _ | .now
+  | .existsPat _ | .notExistsPat _ => false
+  | .arith _ a b | .compare _ a b | .and a b | .or a b
+  | .strDt a b | .strLang a b
+  | .strStarts a b | .strEnds a b | .contains a b
+  | .strBefore a b | .strAfter a b | .sameTerm a b =>
+      exprHasAggregate a || exprHasAggregate b
+  | .unaryMinus a | .unaryPlus a | .not a
+  | .isIri a | .isBlank a | .isLiteral a | .isNumeric a
+  | .str a | .lang a | .datatype a | .iriFn a
+  | .hasLang a | .hasLangDir a | .langDir a
+  | .strLen a | .uCase a | .lCase a | .encodeForUri a
+  | .abs a | .round a | .ceil a | .floor a
+  | .md5 a | .sha1 a | .sha256 a | .sha384 a | .sha512 a
+  | .year a | .month a | .day a | .hours a | .minutes a | .seconds a
+  | .timezone a | .tz a
+  | .ttSubject a | .ttPredicate a | .ttObject a | .isTriple a =>
+      exprHasAggregate a
+  | .strLangDir a b c | .cond a b c | .tripleTerm a b c =>
+      exprHasAggregate a || exprHasAggregate b || exprHasAggregate c
+  | .coalesce es | .concat es | .functionCall _ es => exprHasAggregateList es
+  | .inList a es | .notInList a es => exprHasAggregate a || exprHasAggregateList es
+  | .substr a b o => exprHasAggregate a || exprHasAggregate b || exprHasAggregateOpt o
+  | .replace a b c o =>
+      exprHasAggregate a || exprHasAggregate b || exprHasAggregate c || exprHasAggregateOpt o
+  | .regex a b o => exprHasAggregate a || exprHasAggregate b || exprHasAggregateOpt o
+
+/-- `expr_list_has_aggregate`. -/
+def exprHasAggregateList : List Expr → Bool
+  | []        => false
+  | e :: rest => exprHasAggregate e || exprHasAggregateList rest
+
+/-- `expr_opt_has_aggregate`. -/
+def exprHasAggregateOpt : Option Expr → Bool
+  | none   => false
+  | some e => exprHasAggregate e
+
+end
 
 /-- Does the SELECT clause use aggregation? (`SELECT *` never can.) -/
 def selectHasAggregates : SelectClause → Bool
@@ -825,6 +1479,34 @@ def numberRows (f : String → Binding → Binding) :
     SolutionSeq → Nat → SolutionSeq
   | [],        _ => []
   | mu :: rest, i => f (toString i) mu :: numberRows f rest (i + 1)
+
+/-- `numberRows` with a reverse accumulator: one stack frame for any number
+of rows. `numberRows` conses after its recursive call, so it takes one frame
+per row; in the wasm module under Node's default stack a SELECT with a
+projection expression overflowed at about 11,000 rows ("Maximum call stack
+size exceeded"; https://github.com/danbri/factoidal/issues/713 stage 5). The
+`csimp` theorem below makes the compiler emit this definition for every call
+of `numberRows`, which stays the specification. -/
+def numberRowsTR (f : String → Binding → Binding) (rows : SolutionSeq) (i : Nat) :
+    SolutionSeq :=
+  go rows i []
+where
+  /-- The rows after `rest`'s predecessors, numbered from `i`, onto `acc`
+  (newest first). -/
+  go : SolutionSeq → Nat → SolutionSeq → SolutionSeq
+    | [],          _, acc => acc.reverse
+    | mu :: rest,  i, acc => go rest (i + 1) (f (toString i) mu :: acc)
+
+theorem numberRowsTR_go_eq (f : String → Binding → Binding) :
+    ∀ (rows : SolutionSeq) (i : Nat) (acc : SolutionSeq),
+      numberRowsTR.go f rows i acc = acc.reverse ++ numberRows f rows i
+  | [], _, acc => by simp [numberRowsTR.go, numberRows]
+  | mu :: rest, i, acc => by
+      simp [numberRowsTR.go, numberRows, numberRowsTR_go_eq f rest (i + 1)]
+
+@[csimp] theorem numberRows_eq_numberRowsTR : @numberRows = @numberRowsTR := by
+  funext f rows i
+  simp [numberRowsTR, numberRowsTR_go_eq]
 
 /-- `is_synthetic_bnode_var`: the variables `QueryPattern.rewriteBnodes`
 (below) invents for WHERE-clause blank nodes. -/
@@ -1241,23 +1923,216 @@ verbatim; the two agree whenever the body rebinds, or does not mention,
 the outer variables — every W3C case — and this port keeps the
 spec-literal reading the previous EXISTS stage chose.) -/
 
+/-- Lower one BGP. A BGP with no `text:query` pattern lowers to itself.
+Each `text:query` pattern (`TriplePattern.fulltext?`) is taken out of the
+BGP and joined back as its own pattern, whose rows `fulltextSolutions`
+computes from the ACTIVE graph (so `GRAPH` selects the graph it
+searches, as `store_search gs` does in the F\* engine).
+
+Why a join gives the F\* answer: the F\* `eval_fulltext_tp_store` reads
+its candidates with an unbound subject (`bs = None`), so the candidate
+list, the match and the limit are the same for every row μ the rest of
+the BGP produces, and only `try_bind_subject … mu` depends on μ. That is
+`Join(Ω_rest, Ω_text)` for the variable and constant subject alike. Row
+ORDER can differ from the F\* nested evaluation; SPARQL fixes no order
+without ORDER BY. -/
+def lowerBgp (b : Bgp) : GraphPattern :=
+  if bgpHasFulltext b then
+    b.foldl (fun acc tp =>
+        match tp.fulltext? with
+        | some ftq => .join acc (.modified (fun active _ => fulltextSolutions ftq tp.s active) .empty)
+        | none     => acc)
+      (.bgp (b.filter (fun tp => tp.fulltext?.isNone)))
+  else .bgp b
+
+theorem lowerBgp_of_no_fulltext (b : Bgp) (h : bgpHasFulltext b = false) :
+    lowerBgp b = .bgp b := by
+  simp [lowerBgp, h]
+
+/-! ## Can evaluating this pattern or expression invoke a SERVICE?
+
+A cheap syntactic pre-check for the SERVICE failure channel
+(`GraphPattern.serviceFailure`, Federated Query §2.3). `false` means no
+SERVICE clause can be reached: none in the pattern, none in the body of
+an EXISTS or NOT EXISTS in any expression the pattern holds. A sub-SELECT
+counts as `true` without a look inside. When the answer is `false`, the
+failure channel answers `none` without evaluating anything, and the
+lowering gives a condition no failure twin. An answer of `true` is only
+a reason to look. -/
+
+mutual
+/-- Does the pattern hold a SERVICE clause, directly or in the body of
+an EXISTS / NOT EXISTS in one of its expressions? -/
+def QueryPattern.mentionsService : QueryPattern → Bool
+  | .bgp _              => false
+  | .join l r           => l.mentionsService || r.mentionsService
+  | .leftJoin l r c     => l.mentionsService || r.mentionsService || c.mentionsService
+  | .filter c p         => c.mentionsService || p.mentionsService
+  | .union l r          => l.mentionsService || r.mentionsService
+  | .minus l r          => l.mentionsService || r.mentionsService
+  | .graph _ p          => p.mentionsService
+  | .lateral l r        => l.mentionsService || r.mentionsService
+  | .bind e _ p         => e.mentionsService || p.mentionsService
+  | .values _ _         => false
+  | .service _ _ _      => true
+  | .serviceVar _ _ _   => true
+  | .subSelect _        => true
+  | .propertyPath _ _ _ => false
+  | .empty              => false
+
+/-- Does an EXISTS or NOT EXISTS in the expression hold a SERVICE
+clause? Arm for arm with `Expr.existsFree`. -/
+def Expr.mentionsService : Expr → Bool
+  | .existsPat p | .notExistsPat p => p.mentionsService
+  | .var _ | .iri _ | .lit _ | .boolLit _ | .numericLit _ | .decimalLit _
+  | .doubleLit _ | .bound _ | .now => false
+  | .unaryMinus e | .unaryPlus e | .not e
+  | .isIri e | .isBlank e | .isLiteral e | .isNumeric e
+  | .str e | .lang e | .datatype e | .iriFn e
+  | .hasLang e | .hasLangDir e | .langDir e
+  | .strLen e | .uCase e | .lCase e | .encodeForUri e
+  | .abs e | .round e | .ceil e | .floor e
+  | .md5 e | .sha1 e | .sha256 e | .sha384 e | .sha512 e
+  | .year e | .month e | .day e | .hours e | .minutes e | .seconds e
+  | .timezone e | .tz e
+  | .aggregate _ _ e
+  | .ttSubject e | .ttPredicate e | .ttObject e | .isTriple e =>
+      Expr.mentionsService e
+  | .arith _ left right | .compare _ left right | .and left right
+  | .or left right | .sameTerm left right
+  | .strDt left right | .strLang left right
+  | .strStarts left right | .strEnds left right | .contains left right
+  | .strBefore left right | .strAfter left right =>
+      Expr.mentionsService left || Expr.mentionsService right
+  | .strLangDir a b c | .cond a b c | .tripleTerm a b c =>
+      Expr.mentionsService a || Expr.mentionsService b || Expr.mentionsService c
+  | .coalesce es | .concat es | .functionCall _ es => Expr.mentionsServiceList es
+  | .inList e es | .notInList e es =>
+      Expr.mentionsService e || Expr.mentionsServiceList es
+  | .substr e start none => Expr.mentionsService e || Expr.mentionsService start
+  | .substr e start (some len) =>
+      Expr.mentionsService e || Expr.mentionsService start || Expr.mentionsService len
+  | .regex e pat none => Expr.mentionsService e || Expr.mentionsService pat
+  | .regex e pat (some flags) =>
+      Expr.mentionsService e || Expr.mentionsService pat || Expr.mentionsService flags
+  | .replace e pat rep none =>
+      Expr.mentionsService e || Expr.mentionsService pat || Expr.mentionsService rep
+  | .replace e pat rep (some flags) =>
+      Expr.mentionsService e || Expr.mentionsService pat || Expr.mentionsService rep
+        || Expr.mentionsService flags
+
+/-- `Expr.mentionsService` over an argument list. -/
+def Expr.mentionsServiceList : List Expr → Bool
+  | [] => false
+  | e :: es => Expr.mentionsService e || Expr.mentionsServiceList es
+end
+
+/-- Does an expression the post-WHERE pipeline evaluates with
+`substituteExistentials` (a HAVING condition, a SELECT expression, an
+ORDER BY condition) hold an EXISTS whose body holds a SERVICE clause? -/
+def Query.postMentionsService (q : Query) : Bool :=
+  q.having.any Expr.mentionsService ||
+  (match q.form with
+   | .select (.vars items) => items.any (fun
+       | .var _    => false
+       | .expr e _ => e.mentionsService)
+   | _ => false) ||
+  (match q.modifier.orderBy with
+   | none    => false
+   | some os => os.any (fun
+       | .asc e  => e.mentionsService
+       | .desc e => e.mentionsService))
+
+/-- Can evaluating the query invoke a SERVICE: in its WHERE clause, or
+in an EXISTS of its post-WHERE pipeline? -/
+def Query.mentionsService (q : Query) : Bool :=
+  q.pattern.mentionsService || q.postMentionsService
+
+/-- The first `some` that `f` gives over the rows, each with its index
+as a string (the row half of the freshness context, as `numberRows`
+passes it). A tail call per row. -/
+def findSomeNumbered (f : String → Binding → Option ServiceFailure) :
+    SolutionSeq → Nat → Option ServiceFailure
+  | [],         _ => none
+  | mu :: rest, i =>
+      match f (toString i) mu with
+      | some x => some x
+      | none   => findSomeNumbered f rest (i + 1)
+
+/-- One row of `existsBgpFilter`: the indexed §18.6 test of `EXISTS { BGP }`
+(`negated = false`) or `NOT EXISTS { BGP }` (`negated = true`) on `row`,
+with the reference condition `general` as the fallback. It substitutes the
+row into the BGP (§18.6 `substitute`) and tests the result with
+`ExistsIndex.bgpNonempty` from the empty binding. With no dataset in the
+environment, or a full-text pattern in the BGP, it is `general`. -/
+def existsBgpRow (env : EvalEnv) (mu : Binding) (b : Bgp) (negated : Bool)
+    (general : Graph → Binding → Bool) (ix : ExistsIndex) (active : Graph)
+    (row : Binding) : Bool :=
+  match env.dataset with
+  | none => general active row
+  | some _ =>
+      let b' := substBgp (mu.merge row) b
+      if bgpHasFulltext b' then general active row
+      else
+        let found := ix.bgpNonempty b' Binding.empty
+        if negated then !found else found
+
+/-- The FILTER of `EXISTS { BGP }` or `NOT EXISTS { BGP }` over a whole row
+sequence (https://github.com/danbri/factoidal/issues/881). It builds ONE
+`ExistsIndex` of the active graph for all the rows, so the rows probe the
+same lazy indexes. It is a function of the row SEQUENCE (the `.modified`
+form) because the code generator compiles a function of type
+`Graph → Binding → Bool` as one function of both arguments: a `let`
+between the two lambdas is computed again for each row (measured
+2026-10-20: 424 s for 10,000 subjects, against 7.2 s before any index).
+`filterLowered_evalIn` proves the result equal to the reference FILTER. -/
+def existsBgpFilter (env : EvalEnv) (mu : Binding) (b : Bgp) (negated : Bool)
+    (general : Graph → Binding → Bool) : Graph → SolutionSeq → SolutionSeq :=
+  fun active rows =>
+    let ix := ExistsIndex.ofGraph active
+    rows.filter (existsBgpRow env mu b negated general ix active)
+
+/-- The pattern the FILTER lowering builds: the indexed form for
+`EXISTS { BGP }` and `NOT EXISTS { BGP }`, the reference `.filter` with
+`general` otherwise. -/
+def filterLowered (env : EvalEnv) (mu : Binding) (c : Expr)
+    (general : Graph → Binding → Bool) (q : GraphPattern)
+    (twin : Option (Graph → Binding → Option ServiceFailure)) : GraphPattern :=
+  match c with
+  | .existsPat (.bgp b) => .modified (existsBgpFilter env mu b false general) q none
+  | .notExistsPat (.bgp b) => .modified (existsBgpFilter env mu b true general) q none
+  | _ => .filter general q twin
+
 mutual
 
 def QueryPattern.lowerWith (env : EvalEnv) (mu : Binding) (p : QueryPattern) :
     GraphPattern :=
   match p with
-  | .bgp b       => .bgp (substBgp mu b)
+  | .bgp b       => lowerBgp (substBgp mu b)
   | .join l r    => .join (QueryPattern.lowerWith env mu l) (QueryPattern.lowerWith env mu r)
+  -- Each expression gets its failure twin (Federated Query §2.3): the
+  -- failed SERVICE call an EXISTS in it makes on the same row, read by
+  -- `GraphPattern.serviceFailure`. An expression whose EXISTS bodies
+  -- hold no SERVICE gets none.
   | .leftJoin l r c =>
       .leftJoin (QueryPattern.lowerWith env mu l) (QueryPattern.lowerWith env mu r)
         (fun active row =>
           let mu' := mu.merge row
           ebvOrFalse (Expr.evalIn env mu' (substituteExistentials env active mu' c)))
+        (if c.mentionsService then
+           some (fun active row => existsFailure env active (mu.merge row) c)
+         else none)
   | .filter c q  =>
-      .filter (fun active row =>
+      -- `filterLowered`: one index of the active graph for all the rows
+      -- when `c` is `EXISTS { BGP }` or `NOT EXISTS { BGP }`; the
+      -- reference FILTER below otherwise (`filterLowered_evalIn`).
+      filterLowered env mu c (fun active row =>
           let mu' := mu.merge row
           ebvOrFalse (Expr.evalIn env mu' (substituteExistentials env active mu' c)))
         (QueryPattern.lowerWith env mu q)
+        (if c.mentionsService then
+           some (fun active row => existsFailure env active (mu.merge row) c)
+         else none)
   | .union l r   => .union (QueryPattern.lowerWith env mu l) (QueryPattern.lowerWith env mu r)
   | .minus l r   => .minus (QueryPattern.lowerWith env mu l) (QueryPattern.lowerWith env mu r)
   | .graph name q =>
@@ -1276,16 +2151,19 @@ def QueryPattern.lowerWith (env : EvalEnv) (mu : Binding) (p : QueryPattern) :
           let mu' := mu.merge row
           (Expr.evalIn env mu' (substituteExistentials env active mu' e)).toTerm?) v
         (QueryPattern.lowerWith env mu q)
+        (if e.mentionsService then
+           some (fun active row => existsFailure env active (mu.merge row) e)
+         else none)
   | .values vars rows => .values vars rows
   | .service i silent q =>
-      .service (env.resolveService i.val) silent (QueryPattern.lowerWith env mu q)
+      .service i.val (env.resolveService i.val) silent (QueryPattern.lowerWith env mu q)
   | .serviceVar v silent q =>
       -- A row that already binds the endpoint variable to an IRI
       -- resolves it here (the F* `lateral_substitute` GP_ServiceVar
       -- arm); otherwise the algebra resolves it per row inside a join.
       (match mu.lookup v with
        | some (.iri i) =>
-           .service (env.resolveService i.val) silent (QueryPattern.lowerWith env mu q)
+           .service i.val (env.resolveService i.val) silent (QueryPattern.lowerWith env mu q)
        | _ =>
            .serviceVar v env.resolveService silent (QueryPattern.lowerWith env mu q))
   | .subSelect q =>
@@ -1302,6 +2180,9 @@ def QueryPattern.lowerWith (env : EvalEnv) (mu : Binding) (p : QueryPattern) :
         (match q with
          | .mk form _dcs inner _gb _hv _md _pv _bs =>
              QueryPattern.lowerWith env (lateralVisibleMu mu form inner) inner)
+        (if q.postMentionsService then
+           some (fun active => selectPostFailure env active q)
+         else none)
   | .propertyPath s path o =>
       .propertyPath (substPatternSubject mu s) path (substPatternTerm mu o)
   | .empty => .empty
@@ -1450,6 +2331,76 @@ def substituteExistentialsOpt (env : EvalEnv) (active : Graph) (mu : Binding) :
   | none   => none
   | some e => some (substituteExistentials env active mu e)
 
+/-- The failure twin of `substituteExistentials`: the first failed
+SERVICE call without SILENT that replacing the EXISTS / NOT EXISTS
+sub-expressions of `e` by their booleans makes (Federated Query §2.3).
+Each EXISTS body is lowered under `mu` and evaluated against the active
+graph and the query's dataset, exactly as `substituteExistentials`
+does; its failed calls are the ones `GraphPattern.serviceFailure`
+reports for that lowered body. `substituteExistentials` evaluates EVERY
+EXISTS in the expression (both operands of `&&`, both branches of
+`IF`), so this function checks every one, left to right. An EXISTS in
+an aggregate's argument is not evaluated (the expression-layer error,
+https://github.com/danbri/factoidal/issues/639), so it invokes nothing.
+With no dataset in the environment no EXISTS is evaluated. -/
+def existsFailure (env : EvalEnv) (active : Graph) (mu : Binding) :
+    Expr → Option ServiceFailure
+  | .existsPat p =>
+      match env.dataset with
+      | some ds => (QueryPattern.lowerWith env mu p).serviceFailure ds active
+      | none    => none
+  | .notExistsPat p =>
+      match env.dataset with
+      | some ds => (QueryPattern.lowerWith env mu p).serviceFailure ds active
+      | none    => none
+  | .var _ | .iri _ | .lit _ | .boolLit _ | .numericLit _ | .decimalLit _
+  | .doubleLit _ | .bound _ | .now => none
+  | .aggregate _ _ _ => none
+  | .unaryMinus a | .unaryPlus a | .not a
+  | .isIri a | .isBlank a | .isLiteral a | .isNumeric a
+  | .str a | .lang a | .datatype a | .iriFn a
+  | .hasLang a | .hasLangDir a | .langDir a
+  | .strLen a | .uCase a | .lCase a | .encodeForUri a
+  | .abs a | .round a | .ceil a | .floor a
+  | .md5 a | .sha1 a | .sha256 a | .sha384 a | .sha512 a
+  | .year a | .month a | .day a | .hours a | .minutes a | .seconds a
+  | .timezone a | .tz a
+  | .ttSubject a | .ttPredicate a | .ttObject a | .isTriple a =>
+      existsFailure env active mu a
+  | .arith _ a b | .compare _ a b | .and a b | .or a b | .sameTerm a b
+  | .strDt a b | .strLang a b
+  | .strStarts a b | .strEnds a b | .contains a b
+  | .strBefore a b | .strAfter a b =>
+      (existsFailure env active mu a).or (existsFailure env active mu b)
+  | .strLangDir a b c | .cond a b c | .tripleTerm a b c =>
+      (existsFailure env active mu a).or
+        ((existsFailure env active mu b).or (existsFailure env active mu c))
+  | .coalesce es | .concat es | .functionCall _ es => existsFailureList env active mu es
+  | .inList a es | .notInList a es =>
+      (existsFailure env active mu a).or (existsFailureList env active mu es)
+  | .substr a b c =>
+      (existsFailure env active mu a).or
+        ((existsFailure env active mu b).or (existsFailureOpt env active mu c))
+  | .regex a b c =>
+      (existsFailure env active mu a).or
+        ((existsFailure env active mu b).or (existsFailureOpt env active mu c))
+  | .replace a b c d =>
+      (existsFailure env active mu a).or
+        ((existsFailure env active mu b).or
+          ((existsFailure env active mu c).or (existsFailureOpt env active mu d)))
+
+/-- `existsFailure` over an argument list, left to right. -/
+def existsFailureList (env : EvalEnv) (active : Graph) (mu : Binding) :
+    List Expr → Option ServiceFailure
+  | []      => none
+  | e :: es => (existsFailure env active mu e).or (existsFailureList env active mu es)
+
+/-- `existsFailure` of an optional argument. -/
+def existsFailureOpt (env : EvalEnv) (active : Graph) (mu : Binding) :
+    Option Expr → Option ServiceFailure
+  | none   => none
+  | some e => existsFailure env active mu e
+
 /- The §18.2.4 post-WHERE pipeline (a plain comment, not a section
 doc: a mutual block admits only definitions).
 
@@ -1491,10 +2442,10 @@ def compareOnCondition (env : EvalEnv) (active : Graph) (c : OrderCondition)
     (mu1 mu2 : Binding) : Int :=
   match c with
   | .asc e  =>
-      sparqlOrder (Expr.evalIn env mu1 (substituteExistentials env active mu1 e))
+      sparqlOrderValue (Expr.evalIn env mu1 (substituteExistentials env active mu1 e))
                   (Expr.evalIn env mu2 (substituteExistentials env active mu2 e))
   | .desc e =>
-      sparqlOrder (Expr.evalIn env mu2 (substituteExistentials env active mu2 e))
+      sparqlOrderValue (Expr.evalIn env mu2 (substituteExistentials env active mu2 e))
                   (Expr.evalIn env mu1 (substituteExistentials env active mu1 e))
 
 /-- Lexicographic comparison over the ORDER BY list: the first
@@ -1521,24 +2472,32 @@ def havingSatisfies (env : EvalEnv) (active : Graph) :
       && havingSatisfies env active rest g
 
 /-- One SELECT item's value for one group (port of
-`eval_select_item_group`). -/
+`eval_select_item_group`). `row` is the solution mapping the item's
+variables are read from: the group's representative row, overlaid with
+the trailing-VALUES row joined onto the group (§18.2.4.3) and with the
+items already evaluated. Aggregates are computed over the group `g`. -/
 def evalSelectItemGroup (env : EvalEnv) (active : Graph) (item : SelectItem)
-    (g : SolutionGroup) : Option (VarName × Term) :=
+    (g : SolutionGroup) (row : Binding) : Option (VarName × Term) :=
   match item with
-  | .var v => (g.representative.lookup v).map (fun t => (v, t))
+  | .var v => (row.lookup v).map (fun t => (v, t))
   | .expr e v =>
-      ((evalExprInGroup env g
-        (substituteExistentials env active g.representative e)).toTerm?).map
+      ((Expr.evalIn env row
+        (rewriteAggregates env g (substituteExistentials env active row e))).toTerm?).map
           (fun t => (v, t))
 
-/-- One group's row: every SELECT item that produced a value. -/
+/-- One group's row: every SELECT item that produced a value. Each item
+sees the bindings of the items before it, because §11.4 lets a SELECT
+expression use "a variable introduced by an earlier SELECT expression
+in the same SELECT clause" (W3C sparql12 grouping test
+`select-variable-reuse`: `(COUNT(?v) AS ?count) (?count + 1 AS
+?countPlusOne)`). -/
 def evalSelectItemsGroup (env : EvalEnv) (active : Graph) :
-    List SelectItem → SolutionGroup → Binding
-  | [],         _ => []
-  | it :: rest, g =>
-      match evalSelectItemGroup env active it g with
-      | some b => b :: evalSelectItemsGroup env active rest g
-      | none   => evalSelectItemsGroup env active rest g
+    List SelectItem → SolutionGroup → Binding → Binding
+  | [],         _, _   => []
+  | it :: rest, g, row =>
+      match evalSelectItemGroup env active it g row with
+      | some b => b :: evalSelectItemsGroup env active rest g (b :: row)
+      | none   => evalSelectItemsGroup env active rest g row
 
 /-- Evaluate the `(expr AS ?v)` items of a non-aggregating SELECT over
 one row; each item sees the bindings the earlier items added (port of
@@ -1565,10 +2524,6 @@ def selectPost (env : EvalEnv) (active : Graph) (q : Query)
     (omega0 : SolutionSeq) : SolutionSeq :=
   match q with
   | .mk form _dcs _pattern gb hv md pv _base =>
-    -- 1b. Post-query VALUES joins onto the WHERE result (§10.2).
-    let omega := match pv with
-      | none      => omega0
-      | some vals => join omega0 vals
     match md with
     | { orderBy := ob, distinct := dd, reduced := rr, offset := oo, limit := ll } =>
     match form with
@@ -1578,33 +2533,50 @@ def selectPost (env : EvalEnv) (active : Graph) (q : Query)
           -- 2. GROUP BY (§18.5.1). A GROUP BY key expression is still
           -- evaluated by `Expr.evalIn` alone, so an EXISTS there stays
           -- the expression-layer error; that position is not covered.
-          let groups := match gb with
-            | some conds => groupSolutions env conds omega
-            | none       => implicitGroup omega
+          let groups := groupWhere env gb omega0
           -- 3. HAVING (§18.5.4 and §18.6). `having_filter`, inlined:
           -- the condition list has to reach `havingSatisfies` as a
           -- strict subterm of `q` for the recursion to stay structural.
           let filtered := if hv.isEmpty then groups
                           else groups.filter (fun g => havingSatisfies env active hv g)
-          -- 4. Aggregation: one row per surviving group
-          -- (`aggregate_groups`, inlined for the same reason).
+          -- 3b. The trailing VALUES clause, joined AFTER grouping and
+          -- HAVING and BEFORE the SELECT expressions (§18.2.4.3; SPARQL
+          -- 1.2 §18.3.4.3). Compatibility is decided on the grouped
+          -- solution, which binds the named GROUP BY variables only
+          -- (§18.3.1); the VALUES row then overlays the representative.
+          let rows := groupedRowsWithValues gb pv filtered
+          -- 4. Aggregation and SELECT expressions: one row per surviving
+          -- (group, VALUES row) pair (`aggregate_groups`, inlined for
+          -- the same reason). The row keeps the other variables ORDER BY
+          -- may name (a non-grouped one reads as its SAMPLE, the
+          -- representative's value, per the §18.2.4.1 rewrite); a
+          -- projected name is taken from the items only, so an item
+          -- whose expression errs stays unbound. Projection follows the
+          -- ordering.
           let omega' := match sel with
-            | .vars items => filtered.map (fun g => evalSelectItemsGroup env active items g)
-            | .all        =>
-                stripSyntheticBnodeVars (filtered.map (fun g => g.solutions.headD Binding.empty))
-          -- 6. ORDER BY.
-          let ordered := match ob with
-            | none   => omega'
-            | some o => sortSolutionsFast
-                          (fun mu1 mu2 => compareOnConditions env active o mu1 mu2) omega'
-          -- 8. DISTINCT / REDUCED.
-          let deduped :=
-            if dd then distinctSolutionsFast ordered
-            else if rr then reducedSolutions ordered
-            else ordered
-          -- 9. OFFSET / LIMIT.
-          sliceSolutions oo ll deduped
+            | .vars items =>
+                rows.map (fun gr =>
+                  evalSelectItemsGroup env active items gr.1 gr.2 ++
+                    gr.2.filter (fun p => !(selectItemVars items).contains p.1))
+            | .all        => stripSyntheticBnodeVars (rows.map Prod.snd)
+          -- 6–9. Ordering, projection, duplicate removal and slicing
+          -- (`finishSelectRows`, compiled through its proved prefix form).
+          -- ORDER BY precedes projection, so it can read a non-grouped
+          -- variable as its SAMPLE before the projection drops it.
+          let project := match sel with
+            | .vars items => projectBinding (selectItemVars items)
+            | .all        => id
+          match ob with
+          | none => finishSelectRows none project dd rr oo ll omega'
+          | some o => finishSelectRows
+              (some (fun mu1 mu2 => compareOnConditions env active o mu1 mu2))
+              project dd rr oo ll omega'
         else
+          -- 1b. With no grouping, no step sits between the WHERE
+          -- pattern and the trailing VALUES join (§18.2.4.3).
+          let omega := match pv with
+            | none      => omega0
+            | some vals => join omega0 vals
           -- 5. SELECT expressions (`eval_select_items`, inlined for
           -- the same reason).
           let omega' := match sel with
@@ -1612,28 +2584,210 @@ def selectPost (env : EvalEnv) (active : Graph) (q : Query)
                 numberRows (fun row mu => evalSelectItemsRowFrom env active row items mu 0)
                   omega 0
             | .all        => omega
-          -- 6. ORDER BY (before projection, so ORDER BY can name a
-          -- variable the projection drops — §15.1).
-          let ordered := match ob with
-            | none   => omega'
-            | some o => sortSolutionsFast
-                          (fun mu1 mu2 => compareOnConditions env active o mu1 mu2) omega'
-          -- 7. Projection. `SELECT *` drops the rewrite-invented
-          -- `_bnode_*` variables here, before DISTINCT (F* site).
-          let projected := match sel with
-            | .vars items => projectSolutions (selectItemVars items) ordered
-            | .all        => stripSyntheticBnodeVars ordered
-          let deduped :=
-            if dd then distinctSolutionsFast projected
-            else if rr then reducedSolutions projected
-            else projected
-          sliceSolutions oo ll deduped
+          -- 6–9. ORDER BY precedes projection, so it can use variables the
+          -- projection drops. SELECT * strips synthetic blank-node variables
+          -- before DISTINCT, exactly as the full-sort specification does.
+          let project := match sel with
+            | .vars items => projectBinding (selectItemVars items)
+            | .all => fun mu => mu.filter (fun b => !isSyntheticBnodeVar b.1)
+          match ob with
+          | none => finishSelectRows none project dd rr oo ll omega'
+          | some o => finishSelectRows
+              (some (fun mu1 mu2 => compareOnConditions env active o mu1 mu2))
+              project dd rr oo ll omega'
     -- ASK / CONSTRUCT / DESCRIBE have their own entry points; as a
     -- SOLUTION SEQUENCE producer they contribute nothing, exactly as
     -- `eval_select_query`'s other arms return `[]`.
     | _ => []
 
+/- The failure twins of the post-WHERE pipeline (plain comments: a
+mutual block admits only definitions).
+
+Federated Query §2.3: a failed SERVICE call without SILENT made by an
+EXISTS in a HAVING condition, a SELECT expression or an ORDER BY
+condition fails the query. Each function below follows one step of
+`selectPost` and applies `existsFailure` to the solution mapping that
+step hands `substituteExistentials`:
+  * HAVING: every condition on every group, under the group's
+    representative row (`havingSatisfies`);
+  * SELECT expressions: every item on every row, under the row the item
+    sees (`evalSelectItemsGroup`, `evalSelectItemsRowFrom`, with the
+    bindings of the earlier items and the freshness context);
+  * ORDER BY: every condition on every row of the sequence being
+    ordered. `compareOnCondition` evaluates a condition on the two rows
+    it compares, so the sort reaches every row of a sequence of two or
+    more; this reading also counts the row of a one-row sequence, the
+    sort key that §15.1 assigns to every solution.
+GROUP BY keys and aggregate arguments evaluate no EXISTS (the
+expression-layer error, https://github.com/danbri/factoidal/issues/639),
+so they invoke nothing. -/
+
+/-- HAVING (twin of `havingSatisfies`): every condition, left to right,
+under the group's representative row. -/
+def havingFailure (env : EvalEnv) (active : Graph) :
+    List Expr → SolutionGroup → Option ServiceFailure
+  | [],        _ => none
+  | c :: rest, g =>
+      (existsFailure env active g.representative c).or (havingFailure env active rest g)
+
+/-- One SELECT item over one group (twin of `evalSelectItemGroup`). -/
+def selectItemGroupFailure (env : EvalEnv) (active : Graph) (item : SelectItem)
+    (row : Binding) : Option ServiceFailure :=
+  match item with
+  | .var _    => none
+  | .expr e _ => existsFailure env active row e
+
+/-- The SELECT items over one group (twin of `evalSelectItemsGroup`):
+each item sees the bindings of the items before it. -/
+def selectItemsGroupFailure (env : EvalEnv) (active : Graph) :
+    List SelectItem → SolutionGroup → Binding → Option ServiceFailure
+  | [],         _, _   => none
+  | it :: rest, g, row =>
+      (selectItemGroupFailure env active it row).or
+        (match evalSelectItemGroup env active it g row with
+         | some b => selectItemsGroupFailure env active rest g (b :: row)
+         | none   => selectItemsGroupFailure env active rest g row)
+
+/-- The SELECT items over one row of a non-aggregating SELECT (twin of
+`evalSelectItemsRowFrom`): the same accumulated row and the same
+freshness context. -/
+def selectItemsRowFailure (env : EvalEnv) (active : Graph) (row : String) :
+    List SelectItem → Binding → Nat → Option ServiceFailure
+  | [],                _,   _ => none
+  | .var _ :: rest,    acc, i => selectItemsRowFailure env active row rest acc (i + 1)
+  | .expr e v :: rest, acc, i =>
+      let mu := acc.withFreshnessCtx row (toString i)
+      (existsFailure env active mu e).or
+        (match (Expr.evalIn env mu (substituteExistentials env active mu e)).toTerm? with
+         | some t => selectItemsRowFailure env active row rest (acc.bind v t) (i + 1)
+         | none   => selectItemsRowFailure env active row rest acc (i + 1))
+
+/-- One ORDER BY condition on one row. -/
+def orderConditionFailure (env : EvalEnv) (active : Graph) (c : OrderCondition)
+    (mu : Binding) : Option ServiceFailure :=
+  match c with
+  | .asc e  => existsFailure env active mu e
+  | .desc e => existsFailure env active mu e
+
+/-- The ORDER BY conditions on one row, left to right. -/
+def orderFailure (env : EvalEnv) (active : Graph) :
+    List OrderCondition → Binding → Option ServiceFailure
+  | [],        _  => none
+  | c :: rest, mu =>
+      (orderConditionFailure env active c mu).or (orderFailure env active rest mu)
+
+/-- The failure twin of `selectPost`: the same steps over the same
+intermediate sequences, each checked with the twin of the function
+`selectPost` calls there. -/
+def selectPostFailure (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) : Option ServiceFailure :=
+  match q with
+  | .mk form _dcs _pattern gb hv md pv _base =>
+    match md with
+    | { orderBy := ob, distinct := _, reduced := _, offset := _, limit := _ } =>
+    match form with
+    | .select sel =>
+        let needsGrouping := gb.isSome || selectHasAggregates sel
+        if needsGrouping then
+          let groups := groupWhere env gb omega0
+          let filtered := if hv.isEmpty then groups
+                          else groups.filter (fun g => havingSatisfies env active hv g)
+          let rows : List (SolutionGroup × Binding) := groupedRowsWithValues gb pv filtered
+          let omega' : SolutionSeq := match sel with
+            | .vars items =>
+                rows.map (fun (gr : SolutionGroup × Binding) =>
+                  evalSelectItemsGroup env active items gr.1 gr.2 ++
+                    gr.2.filter (fun p => !(selectItemVars items).contains p.1))
+            | .all        => stripSyntheticBnodeVars (rows.map Prod.snd)
+          (groups.findSome? (fun g => havingFailure env active hv g)).or
+            ((match sel with
+              | .vars items =>
+                  rows.findSome? (fun (gr : SolutionGroup × Binding) =>
+                    selectItemsGroupFailure env active items gr.1 gr.2)
+              | .all => none).or
+              (match ob with
+               | none   => none
+               | some o => omega'.findSome? (fun mu => orderFailure env active o mu)))
+        else
+          let omega := match pv with
+            | none      => omega0
+            | some vals => join omega0 vals
+          let omega' := match sel with
+            | .vars items =>
+                numberRows (fun row mu => evalSelectItemsRowFrom env active row items mu 0)
+                  omega 0
+            | .all        => omega
+          (match sel with
+           | .vars items =>
+               findSomeNumbered (fun row mu => selectItemsRowFailure env active row items mu 0)
+                 omega 0
+           | .all => none).or
+            (match ob with
+             | none   => none
+             | some o => omega'.findSome? (fun mu => orderFailure env active o mu))
+    | _ => none
+
 end
+
+/-- One row of the indexed FILTER has the value of the reference condition:
+for `EXISTS { BGP }` and `NOT EXISTS { BGP }`, the indexed test has the value
+that §18.6 `exists(substitute(BGP, μ))` has
+(https://github.com/danbri/factoidal/issues/881). -/
+theorem existsBgpRow_ofGraph (env : EvalEnv) (mu : Binding) (b : Bgp) (negated : Bool)
+    (active : Graph) (row : Binding) :
+    existsBgpRow env mu b negated (fun active row =>
+        let mu' := mu.merge row
+        ebvOrFalse (Expr.evalIn env mu' (substituteExistentials env active mu'
+          (if negated then .notExistsPat (.bgp b) else .existsPat (.bgp b)))))
+      (ExistsIndex.ofGraph active) active row
+      = (let mu' := mu.merge row
+         ebvOrFalse (Expr.evalIn env mu' (substituteExistentials env active mu'
+          (if negated then .notExistsPat (.bgp b) else .existsPat (.bgp b))))) := by
+  unfold existsBgpRow
+  cases hd : env.dataset with
+  | none => rfl
+  | some ds =>
+    simp only
+    split
+    · rfl
+    · rename_i hft
+      cases negated <;>
+        simp only [substituteExistentials, hd, QueryPattern.lowerWith,
+          lowerBgp_of_no_fulltext _ (by simpa using hft), evalIn_bgp, evalBgp,
+          ExistsIndex.bgpNonempty_ofGraph, Bool.false_eq_true, if_false, if_true] <;>
+        simp [Expr.evalIn, ebvOrFalse, ebv]
+
+/-- The pattern the FILTER lowering builds evaluates to the reference
+FILTER, `filterSeq` of the reference condition, for every dataset and
+active graph (https://github.com/danbri/factoidal/issues/881). -/
+theorem filterLowered_evalIn (env : EvalEnv) (mu : Binding) (c : Expr)
+    (q : GraphPattern) (twin : Option (Graph → Binding → Option ServiceFailure))
+    (ds : Dataset) (active : Graph) :
+    (filterLowered env mu c (fun active row =>
+        let mu' := mu.merge row
+        ebvOrFalse (Expr.evalIn env mu' (substituteExistentials env active mu' c)))
+      q twin).evalIn ds active
+      = filterSeq (fun row =>
+          let mu' := mu.merge row
+          ebvOrFalse (Expr.evalIn env mu' (substituteExistentials env active mu' c)))
+        (q.evalIn ds active) := by
+  unfold filterLowered
+  split
+  · rw [GraphPattern.evalIn]
+    unfold existsBgpFilter filterSeq
+    simp only
+    apply List.filter_congr
+    intro row _
+    exact existsBgpRow_ofGraph env mu _ false active row
+  · rw [GraphPattern.evalIn]
+    unfold existsBgpFilter filterSeq
+    simp only
+    apply List.filter_congr
+    intro row _
+    exact existsBgpRow_ofGraph env mu _ true active row
+  · rw [GraphPattern.evalIn]
+
+#print axioms filterLowered_evalIn
 
 /-- Compile a query pattern into the §18.5 algebra. -/
 def QueryPattern.lower (env : EvalEnv) (p : QueryPattern) : GraphPattern :=
@@ -1653,43 +2807,134 @@ def EvalEnv.activeGraph (env : EvalEnv) : Graph :=
   | some ds => ds.default
   | none    => Graph.empty
 
-/-! ## §13.2 FROM / FROM NAMED -/
+/-! ## §13.2 FROM / FROM NAMED
+
+SPARQL 1.1 Query section 13.2: "The dataset resulting from a number of FROM
+and FROM NAMED clauses is: a default graph consisting of the RDF merge of the
+graphs referred to in the FROM clauses, and a set of (IRI, graph) pairs, one
+from each FROM NAMED clause." Section 13.2.1: "If a query provides more than
+one FROM clause, providing more than one IRI to indicate the default graph,
+then the default graph is the RDF merge of the graphs obtained from
+representations of the resources identified by the given IRIs."
+
+RDF 1.1 Semantics section 5.2: the merge of a set of graphs that share blank
+nodes is "the union of a set of graphs that is obtained by replacing the graphs
+in the set by equivalent graphs that share no blank nodes". So with two or more
+FROM graphs, graph number `k` (in clause order, each IRI once) is relabelled by
+`docLabel k` before the union (`fromMerge`). Two FROM graphs that both hold
+`_:b0` then hold two blank nodes. Until 2026-10-24 the graphs were combined by
+`Graph.union` with no relabelling, which is the union and not the merge
+(https://github.com/danbri/factoidal/issues/979).
+
+* One FROM graph: the merge of one graph is the graph (an isomorphic copy; the
+  identity is chosen). Its blank nodes stay the blank nodes of the store.
+* The same IRI in two FROM clauses names one graph: the merge is of the set of
+  graphs referred to (`fromIris`).
+* FROM NAMED graphs keep their own graphs and labels (section 13.2.2: "Each IRI
+  is used to provide one named graph in the RDF Dataset"). Section 13.1: "The
+  definition of RDF Dataset does not restrict the relationships of named and
+  default graphs." So the relation between the blank nodes of the merged
+  default graph and those of a FROM NAMED graph of the same store is not fixed
+  by the specification. With one FROM graph they are shared; with two or more
+  they are not (the relabelled default graph). The W3C tests dataset-09b,
+  dataset-10b and graph-10b give the FROM and the FROM NAMED graph from two
+  different documents (`data-g3-dup.ttl`, `data-g3.ttl`), whose blank nodes
+  are different because RDF 1.1 Concepts section 3.4 scopes blank node
+  identifiers to the document; the W3C harness scopes each fixture file
+  (`Harness/Run.lean`, `addDataFile`, `addGraphFile`).
+
+The theorem: `SPARQL.FromMerge.applyDataset_default_isMergeOf`
+(`SPARQL/FromMerge.lean`). -/
+
+/-- The IRIs of the FROM clauses, in clause order, each IRI once. -/
+def fromIris (dcs : List DatasetClause) : List WfIri :=
+  (dcs.foldl (fun acc dc =>
+    match dc with
+    | .default i => if acc.any (·.val == i.val) then acc else i :: acc
+    | .named _   => acc) []).reverse
+
+/-- Graph number `n`, `n + 1`, ... of a list, each relabelled by its
+`docLabel`. -/
+def scopeFromGraphs : Nat → List Graph → List Graph
+  | _, []      => []
+  | n, g :: gs => g.renameBnodes (docLabel n) :: scopeFromGraphs (n + 1) gs
+
+/-- The RDF merge of the FROM graphs (section 13.2.1): the union of the
+graphs, each relabelled by its position when there are two or more. -/
+def fromMerge (gs : List Graph) : Graph :=
+  (if gs.length ≤ 1 then gs else scopeFromGraphs 0 gs).foldl Graph.union Graph.empty
 
 /-- Apply the query's dataset clauses. With no clause the dataset is
-untouched; otherwise `FROM` graphs merge into a new default graph and
-`FROM NAMED` graphs become the named ones (port of
+untouched; otherwise the default graph is the RDF merge of the `FROM` graphs
+(`fromMerge`) and the `FROM NAMED` graphs become the named ones (port of
 `apply_query_dataset`). -/
 def applyDataset (dcs : List DatasetClause) (ds : Dataset) (active : Graph) :
     Dataset × Graph :=
   if dcs.isEmpty then (ds, active)
   else
-    let defaults := dcs.filterMap (fun dc =>
+    let defaults := (fromIris dcs).filterMap (fun i => ds.lookupNamedIri i.val)
+    let named := dcs.filterMap (fun dc =>
       match dc with
-      | .default i => (ds.lookupNamedIri i.val).map (fun g =>
-          g.scopeBnodes ["dataset-default", i.val])
-      | .named _   => none)
-    -- §13.2.2: duplicate FROM NAMED clauses identify one named graph.
-    -- Keep the first occurrence and preserve the source graph's existing
-    -- blank-node co-reference across stored graphs under one uniform renaming.
-    let namedRev := dcs.foldl (fun acc dc =>
-      match dc with
-      | .named i =>
-          if acc.any (fun ng => ng.name == Subject.iri i) then acc
-          else match ds.lookupNamedIri i.val with
-            | some g => ({ name := .iri i,
-                           graph := g.scopeBnodes ["dataset-named"] } : NamedGraph) :: acc
-            | none => acc
-      | .default _ => acc) []
-    let named := namedRev.reverse
-    let newDefault := defaults.foldl Graph.union Graph.empty
+      -- §13.2: a `FROM NAMED` clause carries an IRI, so the graph it
+      -- installs is IRI-named.
+      | .named i => (ds.lookupNamedIri i.val).map (fun g =>
+          ({ name := .iri i, graph := g } : NamedGraph))
+      | .default _ => none)
+    let newDefault := fromMerge defaults
     ({ default := newDefault, named := named }, newDefault)
+
+/-! ### Dataset clauses that name no local graph (issue 1032)
+
+SPARQL 1.1 §13.2 lets the service decide how a `FROM` / `FROM NAMED` IRI is
+dereferenced. This engine looks each IRI up in the named graphs of the local
+dataset (`applyDataset`); an IRI with no such graph adds no graph. That stays
+the result. `datasetWarnings` reports each such clause beside the result, so a
+caller can tell an empty default graph from a misspelled graph name
+(https://github.com/danbri/factoidal/issues/1032). It is a separate function:
+`applyDataset` and its theorems (`FromMerge.applyDataset_default_isMergeOf`)
+do not change. -/
+
+/-- A dataset clause whose IRI names no graph of the local dataset. `named` is
+`true` for `FROM NAMED`, `false` for `FROM`. -/
+structure DatasetWarning where
+  iri : Iri
+  named : Bool
+  deriving DecidableEq, Repr, Inhabited
+
+/-- The warning class: `dataset-iri-not-found`. -/
+def DatasetWarning.cls (_ : DatasetWarning) : String := "dataset-iri-not-found"
+
+/-- The keyword of the clause: `FROM` or `FROM NAMED`. -/
+def DatasetWarning.clause (w : DatasetWarning) : String :=
+  if w.named then "FROM NAMED" else "FROM"
+
+def DatasetWarning.message (w : DatasetWarning) : String :=
+  s!"{w.clause} <{w.iri}>: the dataset has no graph with this name; the clause adds no graph"
+
+/-- The warning a clause gives if its IRI names no graph of `ds`. -/
+def DatasetClause.warningIn (ds : Dataset) : DatasetClause → Option DatasetWarning
+  | .default i => if (ds.lookupNamedIri i.val).isSome then none
+                  else some { iri := i.val, named := false }
+  | .named i   => if (ds.lookupNamedIri i.val).isSome then none
+                  else some { iri := i.val, named := true }
+
+/-- The warnings of the dataset clauses `dcs` over `ds`: one for each clause
+whose IRI names no graph of `ds`, in clause order, each (clause, IRI) once. -/
+def datasetWarnings (dcs : List DatasetClause) (ds : Dataset) : List DatasetWarning :=
+  (dcs.foldl (fun acc dc =>
+    match dc.warningIn ds with
+    | some w => if acc.contains w then acc else w :: acc
+    | none   => acc) []).reverse
+
+/-- A query with no dataset clause gives no warning. -/
+theorem datasetWarnings_nil (ds : Dataset) : datasetWarnings [] ds = [] := rfl
 
 
 /-! ## Query evaluation — §18.2.4, §16.2 -/
 
 /-- Every distinct variable a solution sequence binds, in first-seen
-order — the projected variable list `SELECT *` denotes (port of
-`collect_distinct_vars_in_order`). -/
+order (port of `collect_distinct_vars_in_order`). This describes observed
+bindings, not the projected header of a SELECT query. -/
 def collectVarsFromRow : Binding → List VarName → List VarName
   | [],            acc => acc
   | (v, _) :: rest, acc =>
@@ -1698,6 +2943,52 @@ def collectVarsFromRow : Binding → List VarName → List VarName
 
 def collectVarsInOrder (omega : SolutionSeq) : List VarName :=
   omega.foldl (fun acc row => collectVarsFromRow row acc) []
+
+/-- Variables inside a term pattern; RDF constants and query blank nodes
+    do not declare projected variables. -/
+def projectionTermVars : PatternTerm → List VarName
+  | .var name => [name]
+  | .tripleTerm s p o => projectionTermVars s ++ projectionTermVars p ++ projectionTermVars o
+  | _ => []
+
+def projectionSubjectVars : PatternSubject → List VarName
+  | .var name => [name]
+  | .tripleTerm s p o => projectionTermVars s ++ projectionTermVars p ++ projectionTermVars o
+  | _ => []
+
+mutual
+
+/-- SPARQL 1.1 §18.2.1: variables in scope, determined from syntax rather
+    than the returned solutions. FILTER expressions and MINUS's right side
+    introduce none; a subquery exposes only its projected variables. -/
+def QueryPattern.inScopeVars : QueryPattern → List VarName
+  | .bgp patterns => patterns.flatMap fun tp =>
+      projectionSubjectVars tp.s ++ projectionTermVars tp.p ++ projectionTermVars tp.o
+  | .join l r | .union l r | .leftJoin l r _ | .lateral l r =>
+      l.inScopeVars ++ r.inScopeVars
+  | .minus l _ | .filter _ l => l.inScopeVars
+  | .graph name pattern => projectionTermVars name ++ pattern.inScopeVars
+  | .bind _ name pattern => pattern.inScopeVars ++ [name]
+  | .values names _ => names
+  | .service _ _ pattern => pattern.inScopeVars
+  | .serviceVar name _ pattern => name :: pattern.inScopeVars
+  | .subSelect query => query.projectedVars
+  | .propertyPath s _ o => projectionSubjectVars s ++ projectionTermVars o
+  | .empty => []
+
+/-- §16.1.1 and §18.2.4.4: declared projection, independent of data, row
+    order, LIMIT and unbound values. The parser retains trailing VALUES as
+    a `.values names rows` pattern, including empty and all-UNDEF columns.
+    The legacy `postValues` field contributes any binding names it carries.
+    SELECT * has no specified header order; first syntactic occurrence is
+    retained here. Explicit projections retain their declared order. -/
+def Query.projectedVars : Query → List VarName
+  | .mk (.select (.vars items)) _ _ _ _ _ _ _ => selectItemVars items
+  | .mk (.select .all) _ pattern _ _ _ postValues _ =>
+      (pattern.inScopeVars ++ (postValues.getD []).flatMap (fun row => row.map Prod.fst)).eraseDups
+  | _ => []
+
+end
 
 /-- Evaluate a SELECT query — §18.2.4. Returns the projected variable
 list (the result-set header) and the solution sequence.
@@ -1715,27 +3006,131 @@ def evalSelect (env : EvalEnv) (ds : Dataset) (q : Query) :
   -- query's dataset (after FROM / FROM NAMED).
   let env := { env with dataset := some ds' }
   match q.form with
-  | .select sel =>
+  | .select _ =>
       let omega := (q.pattern.rewriteBnodes.lower env).evalIn ds' active
       let rows := selectPost env active q omega
-      let vars := match sel with
-        | .vars items => selectItemVars items
-        | .all        => collectVarsInOrder rows
-      (vars, rows)
+      (q.projectedVars, rows)
   | _ => ([], [])
 
-/-- Evaluate an ASK query — §18.2.4: true exactly when the pattern has
-at least one solution (port of `eval_ask_query`). -/
+/-! ### The post-WHERE pipeline of the forms without a SELECT clause
+
+SPARQL 1.1 §18.2.4 builds the same modifier steps for every query form:
+GROUP BY and HAVING (§18.2.4.1), the trailing VALUES join (§18.2.4.3),
+ORDER BY, and Slice for OFFSET and LIMIT. ASK ([12]), CONSTRUCT ([10])
+and DESCRIBE ([11]) each take a SolutionModifier, and the answer is read
+off the solution sequence that results: §16.2 instantiates the CONSTRUCT
+template over it, and ASK is true when it is non-empty.
+
+`selectPost` is this pipeline for SELECT. The functions below are the
+same pipeline for the other forms, and they call the SELECT path's own
+steps (`groupWhere`, `havingSatisfies`, `groupedRowsWithValuesOn`,
+`sortSolutionsFast`, `sliceSolutions`) instead of repeating them.
+
+The one difference is the row a group contributes. A SELECT row starts
+as the group's representative, because SELECT expressions and ORDER BY
+read the representative's other variables (`evalSelectItemsGroup`).
+These forms have no SELECT expressions, so no aggregate alias is added,
+and after grouping only the named GROUP BY variables are in scope
+(`GROUP BY ?v`, `GROUP BY (e AS ?v)`; §18.2.4.1, SPARQL 1.2 §18.3.1).
+A CONSTRUCT template variable that is not a GROUP BY variable is
+therefore unbound, and the template triple that mentions it is skipped
+(§16.2). -/
+
+/-- Do a GROUP BY and a HAVING clause, given as the parser reads them,
+group the WHERE solutions? This is the test for the forms without a
+SELECT clause; a SELECT also groups on an aggregate in its projection
+(`selectPost`).
+
+Reading of §11.2 and §18.2.4.1, not a rule the specification states in
+these words: HAVING filters groups, so a query with a HAVING clause and
+no GROUP BY has the whole solution sequence as its one group
+(`implicitGroup`). `ASK { ?s ?p ?o } HAVING (COUNT(*) > 100)` is then
+false on a graph of fewer than 101 triples. -/
+def groupsSolutionsOf (gb : Option (List GroupCondition)) (hv : List Expr) : Bool :=
+  gb.isSome || !hv.isEmpty
+
+/-- `groupsSolutionsOf` for a whole query. -/
+def Query.groupsSolutions (q : Query) : Bool :=
+  groupsSolutionsOf q.groupBy q.having
+
+/-- GROUP BY, HAVING and the trailing VALUES join for a form without a
+SELECT clause (§18.2.4.1, §18.2.4.3): one solution per group that passes
+every HAVING condition, binding the named GROUP BY variables, with the
+trailing VALUES rows joined onto it AFTER grouping and HAVING.
+
+`active` is the graph an EXISTS in a HAVING condition evaluates
+against (§18.6), as in `selectPost`. -/
+def formGroupedRows (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) : SolutionSeq :=
+  let filtered := (groupWhere env q.groupBy omega0).filter
+    (fun g => havingSatisfies env active q.having g)
+  (groupedRowsWithValuesOn (groupKeyBinding q.groupBy) q.groupBy q.postValues
+    filtered).map Prod.snd
+
+/-- The solution sequence before ORDER BY and Slice, for a form without
+a SELECT clause. A query that does not group joins its trailing VALUES
+rows directly onto the WHERE solutions: no step sits between the two
+(§18.2.4.3), and `attachValues` has already placed the rows in the
+pattern for a parsed query, so `postValues` is `none` there. -/
+def formRows (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) : SolutionSeq :=
+  if q.groupsSolutions then formGroupedRows env active q omega0
+  else
+    match q.postValues with
+    | none      => omega0
+    | some vals => join omega0 vals
+
+/-- The solution sequence a form without a SELECT clause reads its
+answer from: `Slice(OrderBy(formRows))`. -/
+def formSolutions (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) : SolutionSeq :=
+  let rows := formRows env active q omega0
+  let ordered := match q.modifier.orderBy with
+    | none   => rows
+    | some o => sortSolutionsFast (compareOnConditions env active o) rows
+  sliceSolutions q.modifier.offset q.modifier.limit ordered
+
+/-- Is the solution sequence of an ASK query non-empty? (§18.2.4,
+§18.2.5.) ORDER BY is not run: it permutes the sequence, Slice and the
+emptiness test read only its length, and `formHasSolution_eq`
+(`QueryTheorems.lean`) proves the answer equals the one read off
+`formSolutions`. -/
+def formHasSolution (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) : Bool :=
+  !(sliceSolutions q.modifier.offset q.modifier.limit
+      (formRows env active q omega0)).isEmpty
+
+/-- The failure twin of `formSolutions` (Federated Query §2.3): the
+failed SERVICE call an EXISTS in a HAVING condition (every condition on
+every group) or in an ORDER BY condition (every condition on every row
+of `formRows`) makes. ASK uses it too: `formHasSolution` skips the sort
+because the sort cannot change the answer, but the query's algebra
+still orders by the conditions, and a failed call there fails the
+query. -/
+def formFailure (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) : Option ServiceFailure :=
+  (if q.groupsSolutions then
+     (groupWhere env q.groupBy omega0).findSome? (fun g => havingFailure env active q.having g)
+   else none).or
+    (match q.modifier.orderBy with
+     | none   => none
+     | some o => (formRows env active q omega0).findSome? (orderFailure env active o))
+
+/-- Evaluate an ASK query — §18.2.4, §18.2.5: true exactly when the
+solution sequence after GROUP BY, HAVING, the trailing VALUES join,
+ORDER BY, OFFSET and LIMIT has at least one solution (port of
+`eval_ask_query`, extended with the SolutionModifier of grammar rule
+[12]). `ASK { ?s ?p ?o } LIMIT 0` is false, and
+`ASK { ?s ?p ?o } GROUP BY ?s HAVING (COUNT(*) > 100)` is false on a
+graph of fewer than 101 triples. Tracked at
+https://github.com/danbri/factoidal/issues/699. -/
 def evalAsk (env : EvalEnv) (ds : Dataset) (q : Query) : Bool :=
   let (ds', active) := applyDataset q.dataset ds ds.default
   let env := { env with dataset := some ds' }
   match q.form with
   | .ask =>
-      let omega0 := (q.pattern.rewriteBnodes.lower env).evalIn ds' active
-      let omega := match q.postValues with
-        | none      => omega0
-        | some vals => join omega0 vals
-      !omega.isEmpty
+      formHasSolution env active q
+        ((q.pattern.rewriteBnodes.lower env).evalIn ds' active)
   | _ => false
 
 /-! ### CONSTRUCT — §16.2
@@ -1748,9 +3143,29 @@ solutions. A template triple is emitted only when all three positions
 resolve to terms of a legal kind (subject IRI or blank node,
 predicate IRI); ill-formed instantiations are skipped, not errors. -/
 
-/-- Port of `fresh_bnode_for`. -/
+/-- The part of a fresh label that comes from the template label. The parser
+names a blank node it makes for `[ ]`, a collection `( … )` or a reifier
+`_:bnode_<n>`, with the `_:` INSIDE the name (`freshBnodeId`,
+`Parser.lean`): a label the query wrote never has a `:`, so the two kinds of
+name cannot be the same. RDF 1.1 N-Triples [141s] BLANK_NODE_LABEL has no
+`:` either, so the generated name cannot be copied into an output label
+(https://github.com/danbri/factoidal/issues/742; the F* `fresh_bnode_for`
+copied it, issue 740). A generated name `_:X` becomes `g_X`; a written label
+`L` becomes `_L`. The first character tells the two kinds apart, so the map
+is injective. -/
+def templateLabelPart (templateLabel : String) : String :=
+  if "_:".isPrefixOf templateLabel then "g_" ++ String.ofList (templateLabel.toList.drop 2)
+  else "_" ++ templateLabel
+
+/-- Port of `fresh_bnode_for`, with `templateLabelPart` in place of the
+template label. §16.2: one label per (solution index, template label) — the
+solution index ends at the first non-digit, and `templateLabelPart` is
+injective, so two different pairs never get the same label. Every label is
+`tpl_<n>_L` or `tpl_<n>g_X` with `L` a SPARQL BLANK_NODE_LABEL body (the same
+production as N-Triples [141s]) and `X` = `bnode_<n>`, so it is an N-Triples
+BLANK_NODE_LABEL (`ConstructLabelTests.lean`). -/
 def freshBnodeFor (solIx : Nat) (templateLabel : String) : BNodeId :=
-  "tpl_" ++ toString solIx ++ "_" ++ templateLabel
+  "tpl_" ++ toString solIx ++ templateLabelPart templateLabel
 
 def constructSubject (ps : PatternSubject) (mu : Binding) (solIx : Nat) :
     Option Subject :=
@@ -1833,21 +3248,190 @@ sequence, as in Jena / RDF4J.
 Found by the differential harness (2026-08-22, generated seeds 169 and
 324): this function sliced the UNORDERED sequence, and so does the F*
 `eval_construct_query` — the two trees disagreed only because their
-unordered evaluation orders differ. -/
+unordered evaluation orders differ.
+
+GROUP BY and HAVING apply to the solution sequence too (§18.2.4.1
+applies to every query form), through the same steps SELECT uses
+(`formSolutions`). After grouping the solutions bind the named GROUP BY
+variables and the trailing VALUES variables only, so a template triple
+that mentions any other variable is skipped:
+`CONSTRUCT { ?s :p ?o } WHERE { ?s :p ?o } GROUP BY ?s` is empty, and
+`CONSTRUCT { ?s :p 1 } WHERE { ?s :p ?o } GROUP BY ?s` makes one triple
+per group. Tracked at https://github.com/danbri/factoidal/issues/699. -/
 def evalConstruct (env : EvalEnv) (ds : Dataset) (q : Query) : Graph :=
   let (ds', active) := applyDataset q.dataset ds ds.default
   let env := { env with dataset := some ds' }
   match q.form with
   | .construct template =>
       let omega0 := (q.pattern.rewriteBnodes.lower env).evalIn ds' active
-      let omega := match q.postValues with
-        | none      => omega0
-        | some vals => join omega0 vals
-      let ordered := match q.modifier.orderBy with
-        | none   => omega
-        | some o => sortSolutionsFast (compareOnConditions env active o) omega
-      let limited := sliceSolutions q.modifier.offset q.modifier.limit ordered
-      (instantiateSolutions template limited 0).foldl (fun g t => g.add t) Graph.empty
+      let solutions := formSolutions env active q omega0
+      (instantiateSolutions template solutions 0).foldl (fun g t => g.add t) Graph.empty
   | _ => []
+
+/-! ### DESCRIBE — §16.4
+
+"The DESCRIBE form returns a single result RDF graph containing RDF data
+about resources ... The query service determines the description"
+(https://www.w3.org/TR/sparql11-query/#describe). The specification
+fixes WHICH resources are described and leaves WHAT is said about each
+to the service:
+
+  * §16.4.1: the IRIs written in the DESCRIBE clause;
+  * §16.4.2: the values the solutions bind to the variables written in
+    the clause. `DESCRIBE *` names every variable in scope in the WHERE
+    clause (grammar rule [11]); the parser gives it the empty target
+    list.
+
+A literal is not a resource a graph describes (it has no statements as
+subject), and neither is an RDF 1.2 triple term. A blank node bound to a
+variable is described, by the label it has in the queried graph.
+
+The description chosen here is the Concise Bounded Description,
+`Graph.cbd` in `RDF/ConciseBoundedDescription.lean`, taken from the
+active default graph of the query's dataset (`FROM` clauses applied, as
+for CONSTRUCT). The solutions come from `formSolutions`, so GROUP BY,
+HAVING, the trailing VALUES join, ORDER BY, OFFSET and LIMIT apply
+before the resources are collected: `DESCRIBE ?x WHERE { ... } LIMIT 1`
+describes the one resource of the first solution. Tracked at
+https://github.com/danbri/factoidal/issues/698. -/
+
+/-- Does the DESCRIBE clause need the solutions? An explicit list of
+IRIs names its resources without the WHERE clause. -/
+def describeNeedsSolutions (targets : List PatternTerm) : Bool :=
+  targets.isEmpty || targets.any fun
+    | .var _ => true
+    | _      => false
+
+/-- The resources a DESCRIBE query describes: the IRIs of the clause,
+then for each solution the described values of the clause's variables
+(for `DESCRIBE *`, of every variable of the solution except the
+variables `QueryPattern.rewriteBnodes` invents, which are not variables
+the user wrote). A value that is not an IRI or a blank node names no
+resource and is dropped. -/
+def describeRoots (targets : List PatternTerm) (solutions : SolutionSeq) :
+    List Subject :=
+  let explicit := targets.filterMap fun
+    | .iri i => some (Subject.iri i)
+    | _      => none
+  let bound :=
+    if targets.isEmpty then
+      (stripSyntheticBnodeVars solutions).flatMap fun mu =>
+        mu.filterMap fun b => b.2.toSubject?
+    else
+      solutions.flatMap fun mu =>
+        targets.filterMap fun
+          | .var v => (mu.lookup v).bind Term.toSubject?
+          | _      => none
+  explicit ++ bound
+
+/-- Evaluate a DESCRIBE query — §16.4: the union of the Concise Bounded
+Descriptions of the resources `describeRoots` collects from the
+solutions of `formSolutions`, taken from the active default graph. The
+result keeps the statement order of that graph. Every other query form
+gives the empty graph. -/
+def evalDescribe (env : EvalEnv) (ds : Dataset) (q : Query) : Graph :=
+  let (ds', active) := applyDataset q.dataset ds ds.default
+  let env := { env with dataset := some ds' }
+  match q.form with
+  | .describe targets =>
+      let solutions :=
+        if describeNeedsSolutions targets then
+          formSolutions env active q
+            ((q.pattern.rewriteBnodes.lower env).evalIn ds' active)
+        else []
+      Graph.cbd active (describeRoots targets solutions)
+  | _ => []
+
+/-! ## A failed SERVICE call fails the query — Federated Query §2.3, §3.2
+
+"If the SILENT keyword is not present, the query will stop and return
+the error" (SPARQL 1.1 Federated Query §2.3;
+https://github.com/danbri/factoidal/issues/717). `evalSelect`, `evalAsk`,
+`evalConstruct` and `evalDescribe` return the rows; `Query.serviceFailure`
+returns the error, and an entry point that answers a query (the dispatch
+op, the CLI, the W3C runner) checks it first and answers the error in
+place of the rows. The `*Checked` forms below do both. -/
+
+/-- Does the pattern hold a `text:query` pattern in a BGP the backend
+evaluator (`SPARQL/StoreDataset.lean`) could reach? A sub-SELECT, a
+VALUES block, a property path and the empty pattern answer `false`: the
+backend evaluator hands a sub-SELECT to the reference evaluator, which
+lowers `text:query` itself (`lowerBgp`). An EXISTS body is never
+evaluated by the backend either. The backend entry points answer `none`
+when this is `true`, so the reference evaluator answers the query. -/
+def QueryPattern.mentionsFulltext : QueryPattern → Bool
+  | .bgp b              => bgpHasFulltext b
+  | .join l r           => l.mentionsFulltext || r.mentionsFulltext
+  | .leftJoin l r _     => l.mentionsFulltext || r.mentionsFulltext
+  | .filter _ p         => p.mentionsFulltext
+  | .union l r          => l.mentionsFulltext || r.mentionsFulltext
+  | .minus l r          => l.mentionsFulltext || r.mentionsFulltext
+  | .graph _ p          => p.mentionsFulltext
+  | .lateral l r        => l.mentionsFulltext || r.mentionsFulltext
+  | .bind _ _ p         => p.mentionsFulltext
+  | .values _ _         => false
+  | .service _ _ p      => p.mentionsFulltext
+  | .serviceVar _ _ p   => p.mentionsFulltext
+  | .subSelect _        => false
+  | .propertyPath _ _ _ => false
+  | .empty              => false
+
+/-- The failed SERVICE invocation without SILENT that evaluating the
+query makes, if any (§2.3, §3.2), under the same dataset (FROM / FROM
+NAMED applied) and environment the query evaluators use: first the
+WHERE clause, including every EXISTS in its expressions, then an EXISTS
+in the post-WHERE pipeline (HAVING, SELECT expressions, ORDER BY;
+`selectPostFailure` for SELECT, `formFailure` for the other forms). A
+DESCRIBE that names only IRIs does not evaluate its WHERE clause
+(`describeNeedsSolutions`), so it invokes nothing. -/
+def Query.serviceFailure (env : EvalEnv) (ds : Dataset) (q : Query) :
+    Option ServiceFailure :=
+  if !q.mentionsService then none
+  else
+    let (ds', active) := applyDataset q.dataset ds ds.default
+    let env := { env with dataset := some ds' }
+    let evaluatesWhere := match q.form with
+      | .describe targets => describeNeedsSolutions targets
+      | _                 => true
+    if evaluatesWhere then
+      let pattern := q.pattern.rewriteBnodes.lower env
+      match pattern.serviceFailure ds' active with
+      | some f => some f
+      | none   =>
+          if !q.postMentionsService then none
+          else
+            let omega := pattern.evalIn ds' active
+            match q.form with
+            | .select _ => selectPostFailure env active q omega
+            | _         => formFailure env active q omega
+    else none
+
+/-- `evalSelect`, or the §2.3 error. -/
+def evalSelectChecked (env : EvalEnv) (ds : Dataset) (q : Query) :
+    Except ServiceFailure (List VarName × SolutionSeq) :=
+  match q.serviceFailure env ds with
+  | some f => .error f
+  | none   => .ok (evalSelect env ds q)
+
+/-- `evalAsk`, or the §2.3 error. -/
+def evalAskChecked (env : EvalEnv) (ds : Dataset) (q : Query) :
+    Except ServiceFailure Bool :=
+  match q.serviceFailure env ds with
+  | some f => .error f
+  | none   => .ok (evalAsk env ds q)
+
+/-- `evalConstruct`, or the §2.3 error. -/
+def evalConstructChecked (env : EvalEnv) (ds : Dataset) (q : Query) :
+    Except ServiceFailure Graph :=
+  match q.serviceFailure env ds with
+  | some f => .error f
+  | none   => .ok (evalConstruct env ds q)
+
+/-- `evalDescribe`, or the §2.3 error. -/
+def evalDescribeChecked (env : EvalEnv) (ds : Dataset) (q : Query) :
+    Except ServiceFailure Graph :=
+  match q.serviceFailure env ds with
+  | some f => .error f
+  | none   => .ok (evalDescribe env ds q)
 
 end L4Factoidal.SPARQL

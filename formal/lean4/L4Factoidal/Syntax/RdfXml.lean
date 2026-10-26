@@ -238,14 +238,31 @@ element and every `rdf:parseType="Resource"` group. -/
 def St.resetLi (st : St) : St := { st with liCounter := 1 }
 
 /-- Close a child's scope: `base` / `scope` / `lang` / `dir` /
-`sawVersion12` / `liCounter` are XML-scoped and revert to the parent's;
-`bnodeCounter` / `seenIds` / `err` are document-scoped and flow out.
-Port of F* `restore_scope`. -/
+`sawVersion12` are XML-scoped and `liCounter` is node-element-scoped; all
+five revert to the parent's. `bnodeCounter` / `seenIds` / `err` are
+document-scoped and flow out. Port of F* `restore_scope`. -/
 def restoreScope (parent child : St) : St :=
   { parent with
     bnodeCounter := child.bnodeCounter,
     seenIds := child.seenIds,
     err := match parent.err with | some e => some e | none => child.err }
+
+/-- Close a property element's scope (RDF 1.1 XML Syntax §7.2.14; XML 1.0
+§2.12; XML Base §3; Namespaces in XML §6.1). The `xml:lang`, `xml:base`,
+`its:dir`, `rdf:version` and `xmlns` declarations of a property element apply
+to that element and its content and to nothing after it, so `base` / `scope` /
+`lang` / `dir` / `sawVersion12` revert to the node element's (`parent`).
+The `rdf:li` counter belongs to the node element that holds the property
+element, and an `rdf:li` property element advances it, so `liCounter` flows out
+of the property element with the document-scoped `bnodeCounter` / `seenIds` /
+`err`. That is `restoreScope` with the child's `liCounter`.
+
+Until 2026-10-14 `propertyElt` returned the state of the property element
+itself, and the `xml:lang` of one property element was applied to the property
+elements after it in the same node element
+(https://github.com/danbri/factoidal/issues/841). -/
+def closePropertyScope (parent child : St) : St :=
+  { restoreScope parent child with liCounter := child.liCounter }
 
 /-! ## Reading the context off an element
 
@@ -261,6 +278,38 @@ def findNsAttr (st : St) (ns localName : String) (attrs : List XML.Attribute) :
     match XML.resolveAttributeName st.scope a.name with
     | some e => e.namespace_ == some ns && e.localPart == localName
     | none   => false)).map (·.value)
+
+/-- `findNsAttr` that first asks whether the attribute's name ends with
+`localName`, which every name resolving to that local part does
+(`XML.endsWith_of_resolveAttributeName`); only such an attribute has its
+name split and its prefix looked up. Most lookups are for attributes an
+element does not carry (`checkCommonAttrs` alone asks for four), and each
+one used to split every attribute name of the element
+(https://github.com/danbri/factoidal/issues/814: 975,008 name resolutions for
+25,000 triples, 33 percent of the instructions after `splitQName_eq_fast`). -/
+def findNsAttrFast (st : St) (ns localName : String) (attrs : List XML.Attribute) :
+    Option String :=
+  (attrs.find? (fun a =>
+    a.name.endsWith localName &&
+    match XML.resolveAttributeName st.scope a.name with
+    | some e => e.namespace_ == some ns && e.localPart == localName
+    | none   => false)).map (·.value)
+
+/-- The compiler runs `findNsAttrFast` wherever the source says
+`findNsAttr`: the same attribute for every state, name and list. -/
+@[csimp] theorem findNsAttr_eq_fast : @findNsAttr = @findNsAttrFast := by
+  funext st ns localName attrs
+  unfold findNsAttr findNsAttrFast
+  congr 2
+  funext a
+  cases he : XML.resolveAttributeName st.scope a.name with
+  | none => simp
+  | some e =>
+    by_cases hl : e.localPart = localName
+    · have hw := XML.endsWith_of_resolveAttributeName he
+      rw [hl] at hw
+      simp [hw]
+    · simp [hl]
 
 /-- An attribute in the RDF namespace, by local name. -/
 def findRdfAttr (st : St) (localName : String) (attrs : List XML.Attribute) :
@@ -573,12 +622,13 @@ canonical-form rules matter for the shape produced here:
   * an empty element is written open+close, never self-closing;
   * the top-level element(s) of the content carry the namespace
     declarations inherited from the enclosing document.
-Attribute ORDER is also part of c14n, but it is not part of this
-function's job: `RDF.XmlCanon` sorts attributes when it compares two
-`rdf:XMLLiteral` values (RDF 1.1 §5.1 defines their value space that
-way), so `Literal.eqb` — and therefore graph equality and isomorphism —
-is already insensitive to it. `RDF.XmlCanon.canonTag` likewise expands
-a self-closing tag, so the two rules above are belt and braces. -/
+Attribute ORDER and the namespace axis are also part of c14n:
+`parseTypeLiteral` passes this function's text through
+`RDF.XmlCanon.canonicalize`, which sorts attributes, keeps only the
+visibly used namespace declarations and expands a self-closing tag.
+(Until 2026-10-23 that was left to `Literal.eqb`, which compared
+`rdf:XMLLiteral` values by canonical XML; issue 963 made it RDF term
+equality.) -/
 
 /-- §2.4 escaping for character data. -/
 def escapeText (s : String) : String :=
@@ -653,11 +703,213 @@ def serializeNodes : Nat → String → List XML.Node → String
 
 end
 
+mutual
+
+/-- `serializeNode` whose child list is written by `serializeNodesLoop`. -/
+def serializeNodeF : Nat → String → Bool → XML.Node → String
+  | 0, _, _, _ => ""
+  | _ + 1, _, _, .text t    => escapeText t
+  | _ + 1, _, _, .cdata t   => escapeText t
+  | _ + 1, _, _, .comment _ => ""
+  | _ + 1, _, _, .pi tgt d  => "<?" ++ tgt ++ (if d.isEmpty then "" else " " ++ d) ++ "?>"
+  | fuel + 1, nsDecls, isRoot, .element tag attrs children =>
+    serializeNodesLoop fuel nsDecls children
+        ("<" ++ tag ++ (if isRoot then nsDecls else "") ++ renderAttrs attrs ++ ">")
+      ++ "</" ++ tag ++ ">"
+
+/-- `serializeNodes` as a loop: the text so far is `acc`, each sibling is
+appended and the next one is a tail call, so the stack grows with the
+element nesting only (sibling nodes of an XMLLiteral are data;
+https://github.com/danbri/factoidal/issues/752). The fuel decreases per
+sibling exactly as in `serializeNodes`. -/
+def serializeNodesLoop : Nat → String → List XML.Node → String → String
+  | 0, _, _, acc => acc
+  | _ + 1, _, [], acc => acc
+  | fuel + 1, nsDecls, c :: rest, acc =>
+    serializeNodesLoop fuel nsDecls rest (acc ++ serializeNodeF fuel nsDecls false c)
+
+end
+
+theorem serializeLoop_eq : ∀ fuel : Nat,
+    (∀ nsDecls isRoot n, serializeNodeF fuel nsDecls isRoot n = serializeNode fuel nsDecls isRoot n) ∧
+    (∀ nsDecls l acc, serializeNodesLoop fuel nsDecls l acc = acc ++ serializeNodes fuel nsDecls l)
+  | 0 => ⟨fun _ _ _ => by simp [serializeNodeF, serializeNode],
+          fun _ _ _ => by simp [serializeNodesLoop, serializeNodes, String.append_empty]⟩
+  | fuel + 1 =>
+    have ih := serializeLoop_eq fuel
+    ⟨fun nsDecls isRoot n => by
+        cases n with
+        | element tag attrs children =>
+          simp only [serializeNodeF, serializeNode, ih.2, String.append_assoc]
+        | text t => simp [serializeNodeF, serializeNode]
+        | cdata t => simp [serializeNodeF, serializeNode]
+        | comment b => simp [serializeNodeF, serializeNode]
+        | pi t d => simp [serializeNodeF, serializeNode],
+     fun nsDecls l acc => by
+        cases l with
+        | nil => simp [serializeNodesLoop, serializeNodes, String.append_empty]
+        | cons c rest =>
+          simp only [serializeNodesLoop, serializeNodes, ih.2, ih.1, String.append_assoc]⟩
+
+def serializeNodesFast (fuel : Nat) (nsDecls : String) (l : List XML.Node) : String :=
+  serializeNodesLoop fuel nsDecls l ""
+
+/-- The compiler runs `serializeNodeF` wherever the source says
+`serializeNode` outside the readable pair. -/
+@[csimp] theorem serializeNode_eq_fast : @serializeNode = @serializeNodeF := by
+  funext fuel nsDecls isRoot n; exact ((serializeLoop_eq fuel).1 nsDecls isRoot n).symm
+
+/-- And `serializeNodesFast` wherever it says `serializeNodes`. -/
+@[csimp] theorem serializeNodes_eq_fast : @serializeNodes = @serializeNodesFast := by
+  funext fuel nsDecls l
+  simp [serializeNodesFast, (serializeLoop_eq fuel).2, String.empty_append]
+
+/-! ### The serializer with no fuel (https://github.com/danbri/factoidal/issues/818 item 3)
+
+`serializeLiteralContent` gave each top-level node the fuel 10,000, and each
+sibling spends one unit, so an element with more than about 10,000 children
+lost the children after that, with no error. `serializeNodeT` and
+`serializeNodesT` recurse on the node and on the child list, so no input is
+cut; `litNeed` is the fuel the fuelled pair needs to write a node
+completely, and `serialize_fuel_eq` proves that whenever that fuel is there
+the two pairs agree. The twin `serializeNodeTF` / `serializeNodesTLoop` runs
+the siblings as a loop (`csimp` on both members). -/
+
+mutual
+/-- The fuel `serializeNode` needs to write a node completely. -/
+def litNeed : XML.Node → Nat
+  | .element _ _ children => litNeeds children + 1
+  | _ => 1
+/-- The fuel `serializeNodes` needs to write a child list completely: each
+sibling spends one unit. -/
+def litNeeds : List XML.Node → Nat
+  | [] => 0
+  | c :: rest => max (litNeed c) (litNeeds rest) + 1
+end
+
+mutual
+/-- `serializeNode` with no fuel: structural on the node. -/
+def serializeNodeT : String → Bool → XML.Node → String
+  | _, _, .text t    => escapeText t
+  | _, _, .cdata t   => escapeText t
+  | _, _, .comment _ => ""
+  | _, _, .pi tgt d  => "<?" ++ tgt ++ (if d.isEmpty then "" else " " ++ d) ++ "?>"
+  | nsDecls, isRoot, .element tag attrs children =>
+    "<" ++ tag ++ (if isRoot then nsDecls else "") ++ renderAttrs attrs ++ ">"
+      ++ serializeNodesT nsDecls children
+      ++ "</" ++ tag ++ ">"
+/-- `serializeNodes` with no fuel: structural on the list. -/
+def serializeNodesT : String → List XML.Node → String
+  | _, [] => ""
+  | nsDecls, c :: rest => serializeNodeT nsDecls false c ++ serializeNodesT nsDecls rest
+end
+
+/-- On a node the fuelled serializer writes completely (`litNeed n ≤ f`), it
+writes what the fuel-free one writes. -/
+theorem serialize_fuel_eq : ∀ f : Nat,
+    (∀ nsDecls isRoot n, litNeed n ≤ f → serializeNode f nsDecls isRoot n = serializeNodeT nsDecls isRoot n) ∧
+    (∀ nsDecls l, litNeeds l ≤ f → serializeNodes f nsDecls l = serializeNodesT nsDecls l)
+  | 0 => ⟨fun _ _ n h => by cases n <;> simp [litNeed] at h,
+          fun _ l h => by cases l with
+            | nil => simp [serializeNodes, serializeNodesT]
+            | cons c rest => simp [litNeeds] at h⟩
+  | f + 1 =>
+    have ih := serialize_fuel_eq f
+    ⟨fun nsDecls isRoot n h => by
+        cases n with
+        | element tag attrs children =>
+          simp only [litNeed] at h
+          simp only [serializeNode, serializeNodeT, ih.2 nsDecls children (by omega)]
+        | text t => simp [serializeNode, serializeNodeT]
+        | cdata t => simp [serializeNode, serializeNodeT]
+        | comment b => simp [serializeNode, serializeNodeT]
+        | pi t d => simp [serializeNode, serializeNodeT],
+     fun nsDecls l h => by
+        cases l with
+        | nil => simp [serializeNodes, serializeNodesT]
+        | cons c rest =>
+          simp only [litNeeds] at h
+          simp only [serializeNodes, serializeNodesT, ih.1 nsDecls false c (by omega),
+            ih.2 nsDecls rest (by omega)]⟩
+
+mutual
+/-- `serializeNodeT` whose child list is written by `serializeNodesTLoop`. -/
+def serializeNodeTF : String → Bool → XML.Node → String
+  | _, _, .text t    => escapeText t
+  | _, _, .cdata t   => escapeText t
+  | _, _, .comment _ => ""
+  | _, _, .pi tgt d  => "<?" ++ tgt ++ (if d.isEmpty then "" else " " ++ d) ++ "?>"
+  | nsDecls, isRoot, .element tag attrs children =>
+    serializeNodesTLoop nsDecls children
+        ("<" ++ tag ++ (if isRoot then nsDecls else "") ++ renderAttrs attrs ++ ">")
+      ++ "</" ++ tag ++ ">"
+/-- `serializeNodesT` as a loop: each sibling is appended to `acc` and the
+next one is a tail call. -/
+def serializeNodesTLoop : String → List XML.Node → String → String
+  | _, [], acc => acc
+  | nsDecls, c :: rest, acc =>
+    serializeNodesTLoop nsDecls rest (acc ++ serializeNodeTF nsDecls false c)
+end
+
+mutual
+theorem serializeNodeTF_eq : ∀ (nsDecls : String) (isRoot : Bool) (n : XML.Node),
+    serializeNodeTF nsDecls isRoot n = serializeNodeT nsDecls isRoot n
+  | _, _, .text t    => by simp [serializeNodeTF, serializeNodeT]
+  | _, _, .cdata t   => by simp [serializeNodeTF, serializeNodeT]
+  | _, _, .comment _ => by simp [serializeNodeTF, serializeNodeT]
+  | _, _, .pi tgt d  => by simp [serializeNodeTF, serializeNodeT]
+  | nsDecls, isRoot, .element tag attrs children => by
+    simp only [serializeNodeTF, serializeNodeT, serializeNodesTLoop_eq nsDecls children,
+      String.append_assoc]
+theorem serializeNodesTLoop_eq : ∀ (nsDecls : String) (l : List XML.Node) (acc : String),
+    serializeNodesTLoop nsDecls l acc = acc ++ serializeNodesT nsDecls l
+  | _, [], acc => by simp [serializeNodesTLoop, serializeNodesT, String.append_empty]
+  | nsDecls, c :: rest, acc => by
+    simp only [serializeNodesTLoop, serializeNodesT, serializeNodesTLoop_eq nsDecls rest,
+      serializeNodeTF_eq nsDecls false c, String.append_assoc]
+end
+
+def serializeNodesTFast (nsDecls : String) (l : List XML.Node) : String :=
+  serializeNodesTLoop nsDecls l ""
+
+@[csimp] theorem serializeNodeT_eq_fast : @serializeNodeT = @serializeNodeTF := by
+  funext nsDecls isRoot n; exact (serializeNodeTF_eq nsDecls isRoot n).symm
+
+@[csimp] theorem serializeNodesT_eq_fast : @serializeNodesT = @serializeNodesTFast := by
+  funext nsDecls l
+  simp [serializeNodesTFast, serializeNodesTLoop_eq, String.empty_append]
+
 /-- The lexical form of the `rdf:XMLLiteral` a `[7.2.17]` property
 element denotes. -/
 def serializeLiteralContent (scope : XML.NsScope) (children : List XML.Node) : String :=
   let nsDecls := renderNsDecls scope
-  String.join (children.map (fun c => serializeNode 10000 nsDecls true c))
+  String.join (children.map (fun c => serializeNodeT nsDecls true c))
+
+/-- Where the fuel 10,000 of the earlier definition wrote every top-level
+node completely, the lexical form is the one that definition gave. -/
+theorem serializeLiteralContent_eq_fuel (scope : XML.NsScope) (children : List XML.Node)
+    (h : ∀ c ∈ children, litNeed c ≤ 10000) :
+    serializeLiteralContent scope children =
+      String.join (children.map (fun c => serializeNode 10000 (renderNsDecls scope) true c)) := by
+  simp only [serializeLiteralContent]
+  congr 1
+  apply List.map_congr_left
+  intro c hc
+  exact ((serialize_fuel_eq 10000).1 _ true c (h c hc)).symm
+
+#print axioms serializeNodesT_eq_fast
+#print axioms serializeLiteralContent_eq_fuel
+
+/-! The 10,001st child of one element is kept, where the fuel 10,000 cut
+it; the fuelled definition, shown cutting it. -/
+#guard (serializeLiteralContent []
+    [.element "w" [] ((List.replicate 10000 (XML.Node.element "c" [] [])) ++ [.element "last" [] []])]).endsWith
+  "<last></last></w>"
+#guard !(String.join ([XML.Node.element "w" [] ((List.replicate 10000 (XML.Node.element "c" [] [])) ++
+    [.element "last" [] []])].map (fun c => serializeNode 10000 "" true c))).endsWith "<last></last></w>"
+#guard serializeLiteralContent [] [.element "a" [] [.text "x", .element "b" [⟨"k", "v"⟩] [], .comment "c"]] ==
+  String.join ([XML.Node.element "a" [] [.text "x", .element "b" [⟨"k", "v"⟩] [], .comment "c"]].map
+    (fun c => serializeNode 10000 "" true c))
 
 /-! ## The grammar walk
 
@@ -681,11 +933,23 @@ structure Res where
   triples : List Triple
   st : St
 
+/-- What a property element (read in the state `st` of the node element that
+holds it) contributes to the node element: the triples it made, and the state
+after `closePropertyScope`. -/
+def closePropertyElt (st : St) (r : Res) : Res :=
+  ⟨r.triples, closePropertyScope st r.st⟩
+
 /-- `[7.2.17] parseTypeLiteralPropertyElt` (also the target of
-`[7.2.20]`). -/
+`[7.2.20]`). The lexical form is the exclusive canonical XML of the content
+(`XmlCanon.canonicalize`: a namespace declaration only where its prefix is
+visibly used, attributes in order, no self-closing tag). Since
+https://github.com/danbri/factoidal/issues/963 `Literal.eqb` compares
+`rdf:XMLLiteral` lexical forms as written, so the parser writes the canonical
+form itself (W3C `xml-canon-test001`, `xml-canon-test002`,
+`rdf12-xml-an-13`, `rdf12-xml-an-14`). -/
 def parseTypeLiteral (st : St) (subj : Subject) (pred : WfIri)
     (reif : Option WfIri) (annot : Option Subject) (children : List XML.Node) : Res :=
-  let lex := serializeLiteralContent st.scope children
+  let lex := String.ofList (XmlCanon.canonicalize (serializeLiteralContent st.scope children))
   match mkTypedLiteral? lex rdfXMLLiteral with
   | none => ⟨[], st.fail "rdf:XMLLiteral cannot type this literal"⟩
   | some l =>
@@ -720,6 +984,23 @@ def determineSubject (st : St) (attrs : List XML.Attribute) : Subject × St :=
       | none   =>
         let (b, st1) := st.freshBnode
         (.bnode b, st1)
+
+/-- One cell of an RDF/XML collection: its blank node, the item's term, and
+the triples the item element made. -/
+abbrev CollectionCell := BNodeId × Term × List Triple
+
+/-- Build the `rdf:first`/`rdf:rest` chain of a collection from its cells,
+newest first, onto `acc` (the chain after the last cell read: `rdf:nil` and
+no triples). One tail call per cell. -/
+def linkCollectionCells : List CollectionCell → Term × List Triple → Term × List Triple
+  | [], acc => acc
+  | (cellId, itemTerm, itemTriples) :: cellsRev, (restHead, restTriples) =>
+    let cell : Subject := .bnode cellId
+    linkCollectionCells cellsRev
+      (Term.bnode cellId,
+       { s := cell, p := rdfFirstIri, o := itemTerm }
+         :: { s := cell, p := rdfRestIri, o := restHead }
+         :: (itemTriples ++ restTriples))
 
 mutual
 
@@ -785,10 +1066,18 @@ def propertyEltList : Nat → St → Subject → List XML.Node → List Triple �
     | _ => propertyEltList fuel st subj rest acc
 
 /-- `[7.2.14] propertyElt` — the dispatch over the six property-element
-productions, in the order §7.2.14 lists them. -/
+productions, in the order §7.2.14 lists them.
+
+The scope that a property element opens closes with it, on every path
+(`closePropertyElt`): the state after the element has the `xml:lang`,
+`xml:base`, `its:dir`, `rdf:version` and `xmlns` declarations of the node
+element that holds it, so the `xml:lang` of one property element does not reach
+the next (XML 1.0 §2.12; `propertyElt_scope` in `RdfXmlTheorems.lean`;
+https://github.com/danbri/factoidal/issues/841). -/
 def propertyElt : Nat → St → Subject → XML.Node → Res
   | 0, st, _, _ => ⟨[], st.fail "recursion budget exhausted"⟩
   | fuel + 1, st, subj, node =>
+    closePropertyElt st <|
     match node with
     | .element tag attrs children =>
       let st1 := updateState st attrs
@@ -847,7 +1136,7 @@ def propertyEltBody : Nat → St → Subject → WfIri → Option WfIri →
     -- [7.2.19] parseTypeCollectionPropertyElt
     | some "Collection" =>
       let items := children.filter (fun c => c.elementTag.isSome)
-      let (head, ts, st1) := collectionList fuel st items
+      let (head, ts, st1) := collectionCells fuel st items []
       ⟨{ s := subj, p := pred, o := head } :: reifyAll reif annot subj pred head ++ ts, st1⟩
     -- RDF 1.2: `rdf:parseType="Triple"` — the property element holds
     -- exactly ONE `rdf:Description` making exactly ONE triple, and that
@@ -937,9 +1226,34 @@ def propertyEltBody : Nat → St → Subject → WfIri → Option WfIri →
               let obj := Term.literal (mkPlainLiteral text st.lang st.effectiveDir)
               ⟨{ s := subj, p := pred, o := obj } :: reifyAll reif annot subj pred obj, st⟩
 
+/-- `[7.2.19]`'s list construction, read by a loop: each item is read
+(`nodeElement`), its cell's blank node is allocated, and the cell (name,
+item term, item triples) goes on the newest-first list `cellsRev`; the next
+item is a tail call. When the items (or the fuel) end,
+`linkCollectionCells` builds the `rdf:first`/`rdf:rest` chain, last cell
+first. The allocation order (item, then its cell) is that of the readable
+form `collectionList`, defined after this block and proved equal
+(`collectionCells_eq`; the members of a collection are data,
+https://github.com/danbri/factoidal/issues/752). -/
+def collectionCells : Nat → St → List XML.Node → List CollectionCell →
+    Term × List Triple × St
+  | 0, st, _, cellsRev =>
+    let r := linkCollectionCells cellsRev (Term.iri rdfNilIri, [])
+    (r.1, r.2, st)
+  | _ + 1, st, [], cellsRev =>
+    let r := linkCollectionCells cellsRev (Term.iri rdfNilIri, [])
+    (r.1, r.2, st)
+  | fuel + 1, st, item :: rest, cellsRev =>
+    let nr := nodeElement fuel st item
+    let (cellId, st1) := nr.st.freshBnode
+    collectionCells fuel st1 rest ((cellId, nr.subj.toTerm, nr.triples) :: cellsRev)
+
+end
+
 /-- `[7.2.19]`'s list construction: the collection's items become an
 `rdf:first`/`rdf:rest` chain terminated by `rdf:nil`. Returns the head
-term, the triples, and the outgoing state. -/
+term, the triples, and the outgoing state. The readable form, one recursive
+call per item; the parser runs `collectionCells`, proved equal below. -/
 def collectionList : Nat → St → List XML.Node → Term × List Triple × St
   | 0, st, _ => (Term.iri rdfNilIri, [], st)
   | _ + 1, st, [] => (Term.iri rdfNilIri, [], st)
@@ -954,7 +1268,30 @@ def collectionList : Nat → St → List XML.Node → Term × List Triple × St
        :: (nr.triples ++ restTriples),
      st2)
 
-end
+/-- The loop reads the same items with the same fuel and state as the
+readable form, and links the cells read before (`cellsRev`) in front of its
+chain; the outgoing state is the same. -/
+theorem collectionCells_eq : ∀ (fuel : Nat) (st : St) (items : List XML.Node)
+    (cellsRev : List CollectionCell),
+    collectionCells fuel st items cellsRev =
+      let r := collectionList fuel st items
+      let l := linkCollectionCells cellsRev (r.1, r.2.1)
+      (l.1, l.2, r.2.2)
+  | 0, st, items, cellsRev => by simp [collectionCells, collectionList]
+  | fuel + 1, st, [], cellsRev => by simp [collectionCells, collectionList]
+  | fuel + 1, st, item :: rest, cellsRev => by
+      simp only [collectionCells, collectionList]
+      rw [collectionCells_eq fuel]
+      simp [linkCollectionCells]
+
+def collectionListFast (fuel : Nat) (st : St) (items : List XML.Node) :
+    Term × List Triple × St :=
+  collectionCells fuel st items []
+
+/-- A caller of the readable form runs the loop. -/
+@[csimp] theorem collectionList_eq_fast : @collectionList = @collectionListFast := by
+  funext fuel st items
+  simp [collectionListFast, collectionCells_eq, linkCollectionCells]
 
 /-! ## `[7.2.2] doc` and `[7.2.8] RDF` -/
 
@@ -989,12 +1326,498 @@ well-formed, or an RDF/XML rule violation anywhere in it, is a
 rejection, not a partial graph. -/
 def parseRdfXml (text : String) (base : Option String := none) :
     Except ParseError Graph :=
+  -- The walk's fuel is computed before the XML parse, so that `text` is not
+  -- held while the element tree is built (https://github.com/danbri/factoidal/issues/771).
+  let fuel := text.length + 2
   match XML.parseXML text with
   | .error e => .error { msg := s!"XML: {e.message}", pos := e.position }
   | .ok doc =>
-    let res := processDocument (text.length + 2) (St.init (base.getD "")) doc.root
+    let res := processDocument fuel (St.init (base.getD "")) doc.root
     match res.st.err with
     | some e => .error e
     | none   => .ok res.triples
+
+/-! ## `parseRdfXml` without the element tree of the document element
+
+https://github.com/danbri/factoidal/issues/771,
+https://github.com/danbri/factoidal/issues/814.
+
+`RdfXml.parseRdfXml` parses the whole document into an XML element tree
+(`XML.parseXML`) and then walks the tree with the productions of RDF 1.1 XML
+Syntax section 7 (`processDocument`). At the end of the XML parse both the
+document characters (one `Char` per array cell, 8 bytes) and the whole tree
+are live: for 13,177,910 bytes of RDF/XML (100,000 `rdf:Description`
+elements) that is 105 MB of characters and about 90 MB of tree, in a process
+of 227 MB peak resident memory.
+
+When the document element is `rdf:RDF` ([7.2.8] RDF), the walk of
+`nodeElementList` takes its children one at a time and never looks at one
+again. `parseRdfXmlStream` reads the children with the same XML functions in
+the same order (`parseChildrenFold`, a copy of `XML.parseChildren` that hands
+each child to a step function instead of putting it on a list) and runs the
+step of `nodeElementList` (`WalkSt.step`) on each child as soon as it is read.
+No child is kept after its step. Every other document element (a single node
+element, [7.2.2] doc) goes the readable way.
+
+The theorems, in this section:
+
+* `nodeElementList_eq_fold`: `nodeElementList` is a left fold of
+  `WalkSt.step` over the children.
+* `parseChildrenFold_eq`: `parseChildrenFold` gives the fold of the step over
+  the children `XML.parseChildren` reads, with the same flags, notes,
+  position and errors.
+* `parseRootFold_eq`: the same for the document element.
+* `parseRdfXml_eq_stream` (`csimp`): `parseRdfXml = parseRdfXmlStream`, so
+  every caller of `parseRdfXml` runs the stream.
+-/
+
+section Stream
+open L4Factoidal.XML
+
+/-! ## `nodeElementList` as a fold -/
+
+/-- The state of `nodeElementList` between two children: the parser state,
+the fuel, and the triples so far, newest first. -/
+structure WalkSt where
+  st : St
+  fuel : Nat
+  acc : List Triple
+
+/-- One child of `rdf:RDF`, as `nodeElementList` takes it: with no fuel left
+nothing happens; an element is a `[7.2.11] nodeElement`; any other node only
+uses one unit of fuel. -/
+def WalkSt.step (w : WalkSt) (c : XML.Node) : WalkSt :=
+  match w.fuel with
+  | 0 => w
+  | f + 1 =>
+    match c with
+    | .element _ _ _ =>
+      let r := nodeElement f w.st c
+      { st := r.st, fuel := f, acc := r.triples.reverse ++ w.acc }
+    | _ => { w with fuel := f }
+
+/-- With no fuel left the step does nothing, for every child after. -/
+theorem foldl_step_zero (cs : List XML.Node) (st : St) (acc : List Triple) :
+    cs.foldl WalkSt.step ⟨st, 0, acc⟩ = ⟨st, 0, acc⟩ := by
+  induction cs with
+  | nil => rfl
+  | cons c cs ih => simp only [List.foldl_cons, WalkSt.step]; exact ih
+
+/-- `nodeElementList` is the fold of `WalkSt.step` over the children, then
+the triples in order. -/
+theorem nodeElementList_eq_fold : ∀ (fuel : Nat) (st : St) (cs : List XML.Node)
+    (acc : List Triple),
+    nodeElementList fuel st cs acc =
+      let w := cs.foldl WalkSt.step ⟨st, fuel, acc⟩
+      ⟨w.acc.reverse, w.st⟩
+  | 0, st, cs, acc => by
+      simp only [foldl_step_zero]; cases cs <;> simp [nodeElementList]
+  | f + 1, st, [], acc => by simp [nodeElementList]
+  | f + 1, st, c :: rest, acc => by
+      simp only [List.foldl_cons]
+      cases c with
+      | element t a ch =>
+        rw [nodeElementList, nodeElementList_eq_fold f]
+        rfl
+      | text _ =>
+        rw [nodeElementList, nodeElementList_eq_fold f] <;>
+          first | rfl | (intro _ _ _ h; cases h)
+      | comment _ =>
+        rw [nodeElementList, nodeElementList_eq_fold f] <;>
+          first | rfl | (intro _ _ _ h; cases h)
+      | cdata _ =>
+        rw [nodeElementList, nodeElementList_eq_fold f] <;>
+          first | rfl | (intro _ _ _ h; cases h)
+      | pi _ _ =>
+        rw [nodeElementList, nodeElementList_eq_fold f] <;>
+          first | rfl | (intro _ _ _ h; cases h)
+
+/-! ## The children of the document element, one at a time -/
+
+/-- `XML.parseChildren`, with every child handed to `f` as soon as it is read
+instead of being put on a list. Same branches, same calls, same order; the
+children of a markup entity's replacement text are read by `parseChildren`
+itself and then handed to `f` in order. -/
+def parseChildrenFold {α : Type} (f : α → XML.Node → α) (ents : EntityTable)
+    (atts : List AttDecl) (s : Chars) (pos : Nat) (a : α) (flags : RefFlags)
+    (notes : Notes) : Nat → PResult (α × RefFlags × Notes)
+  | 0 => .ok (a, flags, notes) pos
+  | fuel + 1 =>
+    if pos ≥ s.size then .ok (a, flags, notes) pos
+    else if charAt s pos == '<' then
+      if pos + 1 < s.size then
+        let ch2 := charAt s (pos + 1)
+        if ch2 == '/' then .ok (a, flags, notes) pos
+        else if ch2 == '!' then
+          if peekLit "<!--" s pos then
+            match parseComment ents.version s pos with
+            | .err m p => .err m p
+            | .ok node pos' => parseChildrenFold f ents atts s pos' (f a node) flags notes fuel
+          else
+            match parseCdata ents.version s pos with
+            | .err m p => .err m p
+            | .ok node pos' => parseChildrenFold f ents atts s pos' (f a node) flags notes fuel
+        else if ch2 == '?' then
+          match parsePi ents.version s pos with
+          | .err m p => .err m p
+          | .ok node pos' => parseChildrenFold f ents atts s pos' (f a node) flags notes fuel
+        else
+          match parseElement ents atts s pos notes fuel with
+          | .err m p => .err m p
+          | .ok (node, notes') pos' => parseChildrenFold f ents atts s pos' (f a node) flags notes' fuel
+      else .err "unexpected end after '<'" pos
+    else
+      match markupFragAt ents s pos with
+      | some (txt, posAfter) =>
+          let farr : Chars := txt.toList.toArray
+          (match parseChildren ents atts farr 0 [] {} notes fuel with
+           | .err m p => .err m p
+           | .ok (nodes, fl2, notes2) q =>
+               if q < farr.size then
+                 .err "an entity's replacement text does not parse as content (WFC: Parsed Entity)" pos
+               else
+                 parseChildrenFold f ents atts s posAfter (nodes.foldl f a)
+                   ({ fl2 with entityRef := true }.merge flags) notes2 fuel)
+      | none =>
+      match parseTextContent ents s pos [] (s.size + 1) with
+      | .err m p => .err m p
+      | .ok text pos' =>
+        if pos' == pos then .ok (a, flags, notes) pos
+        else
+          let (rf, undecl) := scanRefs ents s pos pos' (pos' - pos + 1)
+          let flags' := rf.merge flags
+          let notes' := if undecl then { notes with undeclared := true } else notes
+          if text.isEmpty then parseChildrenFold f ents atts s pos' a flags' notes' fuel
+          else parseChildrenFold f ents atts s pos' (f a (.text text)) flags' notes' fuel
+
+/-- `parseChildrenFold` from the fold of the children already read (`acc`,
+newest first) gives the fold of all the children `parseChildren` reads, with
+the same flags, notes, position and errors. -/
+theorem parseChildrenFold_eq {α : Type} (f : α → XML.Node → α) (a0 : α) (ents : EntityTable)
+    (atts : List AttDecl) (s : Chars) : ∀ (fuel pos : Nat) (acc : List XML.Node) (a : α)
+    (flags : RefFlags) (notes : Notes), a = acc.reverse.foldl f a0 →
+    parseChildrenFold f ents atts s pos a flags notes fuel =
+      match parseChildren ents atts s pos acc flags notes fuel with
+      | .err m p => .err m p
+      | .ok (cs, fl, nt) p => .ok (cs.foldl f a0, fl, nt) p := by
+  intro fuel
+  induction fuel with
+  | zero =>
+    intro pos acc a flags notes ha; subst ha; simp [parseChildrenFold, parseChildren]
+  | succ fuel ih =>
+    intro pos acc a flags notes ha
+    subst ha
+    rw [parseChildrenFold, parseChildren]
+    by_cases h1 : pos ≥ s.size
+    · simp [h1]
+    simp only [h1, if_false]
+    by_cases h2 : (charAt s pos == '<') = true
+    · simp only [h2, if_true]
+      by_cases h3 : pos + 1 < s.size
+      · simp only [h3, if_true]
+        by_cases h4 : (charAt s (pos + 1) == '/') = true
+        · simp [h4]
+        simp only [h4, if_false, Bool.false_eq_true]
+        by_cases h5 : (charAt s (pos + 1) == '!') = true
+        · simp only [h5, if_true]
+          by_cases h6 : peekLit "<!--" s pos = true
+          · simp only [h6, if_true]
+            cases hc : parseComment ents.version s pos with
+            | err m p => rfl
+            | ok node pos' => exact ih pos' (node :: acc) _ flags notes (by simp)
+          · simp only [h6, if_false, Bool.false_eq_true]
+            cases hc : parseCdata ents.version s pos with
+            | err m p => rfl
+            | ok node pos' => exact ih pos' (node :: acc) _ flags notes (by simp)
+        simp only [h5, if_false, Bool.false_eq_true]
+        by_cases h7 : (charAt s (pos + 1) == '?') = true
+        · simp only [h7, if_true]
+          cases hc : parsePi ents.version s pos with
+          | err m p => rfl
+          | ok node pos' => exact ih pos' (node :: acc) _ flags notes (by simp)
+        simp only [h7, if_false, Bool.false_eq_true]
+        cases hc : parseElement ents atts s pos notes fuel with
+        | err m p => rfl
+        | ok r pos' =>
+          obtain ⟨node, notes'⟩ := r
+          exact ih pos' (node :: acc) _ flags notes' (by simp)
+      · simp [h3]
+    simp only [h2, if_false, Bool.false_eq_true]
+    cases hm : markupFragAt ents s pos with
+    | some tp =>
+      obtain ⟨txt, posAfter⟩ := tp
+      dsimp only
+      cases hp : parseChildren ents atts txt.toList.toArray 0 [] {} notes fuel with
+      | err m p => rfl
+      | ok r q =>
+        obtain ⟨nodes, fl2, notes2⟩ := r
+        dsimp only
+        by_cases hq : q < txt.toList.toArray.size
+        · simp only [hq, if_true]
+        · simp only [hq, if_false]
+          exact ih posAfter (nodes.reverse ++ acc) _ _ notes2 (by simp [List.foldl_append])
+    | none =>
+      dsimp only
+      cases ht : parseTextContent ents s pos [] (s.size + 1) with
+      | err m p => rfl
+      | ok text pos' =>
+        dsimp only
+        by_cases he : (pos' == pos) = true
+        · simp [he]
+        simp only [he, if_false, Bool.false_eq_true]
+        by_cases hx : text.isEmpty = true
+        · simp only [hx, if_true]
+          exact ih pos' acc _ _ _ rfl
+        · simp only [hx, if_false, Bool.false_eq_true]
+          exact ih pos' (.text text :: acc) _ _ _ (by simp)
+
+/-- The document element: `XML.parseElement`'s start tag, then (when `start`
+accepts the tag and attributes) the children through `parseChildrenFold` from
+the state `start` gives, then the end tag. When `start` answers `none`, the
+element is read by `XML.parseElement` itself, from the same position. -/
+def parseRootFold {α : Type} (f : α → XML.Node → α)
+    (start : String → List XML.Attribute → Option α) (ents : EntityTable)
+    (atts : List AttDecl) (s : Chars) (pos : Nat) (notes : Notes) :
+    Nat → PResult ((XML.Node ⊕ α) × Notes)
+  | 0 => .err "element nesting too deep (out of fuel)" pos
+  | fuel + 1 =>
+    match pchar '<' s pos with
+    | .err m p => .err m p
+    | .ok _ pos1 =>
+      match parseName s pos1 with
+      | .err m p => .err m p
+      | .ok tag pos2 =>
+        match parseAttributes ents s pos2 (s.size + 1) with
+        | .err m p => .err m p
+        | .ok attrs0 pos3 =>
+          let attrs1 := normalizeAttrsByType atts tag attrs0
+          match defaultedAttrs ents atts tag attrs1 with
+          | .error m => .err m pos2
+          | .ok defaulted =>
+          let attrs := attrs1 ++ defaulted
+          match start tag attrs with
+          | none =>
+            match parseElement ents atts s pos notes (fuel + 1) with
+            | .err m p => .err m p
+            | .ok (node, notes') p => .ok (.inl node, notes') p
+          | some a0 =>
+          let (_, undeclAttr) := scanRefs ents s pos2 pos3 (pos3 - pos2 + 1)
+          let notes0 := if undeclAttr then { notes with undeclared := true } else notes
+          let normalized := changedAttrs attrs0 attrs1
+          let defaultedNames := defaulted.map (·.name)
+          let pos4 := skipSpace s pos3
+          if peekLit "/>" s pos4 then
+            .ok (.inr a0,
+                 { notes0 with elems :=
+                     { normalized := normalized, defaulted := defaultedNames } :: notes0.elems }) (pos4 + 2)
+          else
+            match pchar '>' s pos4 with
+            | .err m p => .err m p
+            | .ok _ pos5 =>
+              match parseChildrenFold f ents atts s pos5 a0 {} notes0 fuel with
+              | .err m p => .err m p
+              | .ok (a, cflags, notes1) pos6 =>
+                match pstring "</" s pos6 with
+                | .err m p => .err m p
+                | .ok _ pos7 =>
+                  match parseName s pos7 with
+                  | .err m p => .err m p
+                  | .ok closeTag pos8 =>
+                    if closeTag != tag then
+                      .err s!"closing tag '</{closeTag}>' does not match opening '<{tag}>' (WFC: Element Type Match)" pos7
+                    else
+                      match pchar '>' s (skipSpace s pos8) with
+                      | .err m p => .err m p
+                      | .ok _ pos10 =>
+                          .ok (.inr a,
+                               { notes1 with elems :=
+                                   { normalized := normalized, defaulted := defaultedNames,
+                                     entityRef := cflags.entityRef,
+                                     wsCharRef := cflags.wsCharRef } :: notes1.elems }) pos10
+
+/-- What `parseRootFold` gives for a document element `parseElement` read. -/
+def rootResult {α : Type} (f : α → XML.Node → α)
+    (start : String → List XML.Attribute → Option α) : XML.Node → (XML.Node ⊕ α)
+  | .element tag attrs children =>
+    match start tag attrs with
+    | none => .inl (.element tag attrs children)
+    | some a0 => .inr (children.foldl f a0)
+  | n => .inl n
+
+/-- `parseRootFold` gives `rootResult` of the element `parseElement` reads,
+with the same notes, position and errors. -/
+theorem parseRootFold_eq {α : Type} (f : α → XML.Node → α)
+    (start : String → List XML.Attribute → Option α) (ents : EntityTable)
+    (atts : List AttDecl) (s : Chars) (pos : Nat) (notes : Notes) (fuel : Nat) :
+    parseRootFold f start ents atts s pos notes fuel =
+      match parseElement ents atts s pos notes fuel with
+      | .err m p => .err m p
+      | .ok (node, nt) p => .ok (rootResult f start node, nt) p := by
+  cases fuel with
+  | zero => simp [parseRootFold, parseElement]
+  | succ fuel =>
+    rw [parseRootFold]
+    cases h1 : pchar '<' s pos with
+    | err m p => simp [parseElement, h1]
+    | ok u pos1 =>
+    dsimp only
+    cases h2 : parseName s pos1 with
+    | err m p => simp [parseElement, h1, h2]
+    | ok tag pos2 =>
+    dsimp only
+    cases h3 : parseAttributes ents s pos2 (s.size + 1) with
+    | err m p => simp [parseElement, h1, h2, h3]
+    | ok attrs0 pos3 =>
+    dsimp only
+    cases h4 : defaultedAttrs ents atts tag (normalizeAttrsByType atts tag attrs0) with
+    | error m => simp [parseElement, h1, h2, h3, h4]
+    | ok defaulted =>
+    dsimp only
+    cases h5 : start tag (normalizeAttrsByType atts tag attrs0 ++ defaulted) with
+    | none =>
+      dsimp only
+      cases h6 : parseElement ents atts s pos notes (fuel + 1) with
+      | err m p => rfl
+      | ok r p =>
+        obtain ⟨node, nt⟩ := r
+        dsimp only
+        -- the node is the element whose start tag was read above
+        rw [parseElement] at h6
+        simp only [h1, h2, h3, h4] at h6
+        split at h6
+        · cases h6; simp [rootResult, h5]
+        · split at h6
+          · cases h6
+          · split at h6
+            · cases h6
+            · split at h6
+              · cases h6
+              · split at h6
+                · cases h6
+                · split at h6
+                  · cases h6
+                  · split at h6
+                    · cases h6
+                    · cases h6; simp [rootResult, h5]
+    | some a0 =>
+      dsimp only
+      rw [parseElement]
+      simp only [h1, h2, h3, h4]
+      cases hs : scanRefs ents s pos2 pos3 (pos3 - pos2 + 1) with
+      | mk x undeclAttr =>
+      dsimp only
+      by_cases hp : peekLit "/>" s (skipSpace s pos3) = true
+      · simp [hp, rootResult, h5]
+      simp only [hp, if_false, Bool.false_eq_true]
+      cases hg : pchar '>' s (skipSpace s pos3) with
+      | err m p => rfl
+      | ok u2 pos5 =>
+      dsimp only
+      rw [parseChildrenFold_eq f a0 ents atts s fuel pos5 [] a0 {} _ rfl]
+      cases hc : parseChildren ents atts s pos5 [] {} (if undeclAttr = true then { notes with undeclared := true } else notes) fuel with
+      | err m p => rfl
+      | ok r pos6 =>
+      obtain ⟨children, cflags, notes1⟩ := r
+      dsimp only
+      cases hq : pstring "</" s pos6 with
+      | err m p => rfl
+      | ok u3 pos7 =>
+      dsimp only
+      cases hn : parseName s pos7 with
+      | err m p => rfl
+      | ok closeTag pos8 =>
+      dsimp only
+      by_cases ht : (closeTag != tag) = true
+      · simp only [ht, if_true]
+      simp only [ht, if_false, Bool.false_eq_true]
+      cases hz : pchar '>' s (skipSpace s pos8) with
+      | err m p => rfl
+      | ok u4 pos10 => simp [rootResult, h5]
+
+/-! ## The entry point -/
+
+/-- The start of the walk when the document element is `rdf:RDF`
+([7.2.8] RDF): the state after the element's own attributes, and the fuel
+`processDocument` hands to `nodeElementList`. `none` for any other document
+element. -/
+def rdfStart (fuel : Nat) (st : St) (tag : String) (attrs : List XML.Attribute) :
+    Option WalkSt :=
+  let st1 := updateState st attrs
+  match elementIri st1 tag with
+  | some full => if full == rdfTerm "RDF" then some ⟨st1, fuel, []⟩ else none
+  | none => none
+
+/-- The outcome of the walk: `processDocument` on a document element read
+whole, or the triples and state of a walk that ran as the children were
+read. -/
+def streamRes (fuel : Nat) (st0 : St) : (XML.Node ⊕ WalkSt) → Res
+  | .inl root => processDocument fuel st0 root
+  | .inr w => ⟨w.acc.reverse, w.st⟩
+
+/-- `parseRdfXml`, with the children of an `rdf:RDF` document element walked
+as they are read: no element tree of the document is built. -/
+def parseRdfXmlStream (text : String) (base : Option String := none) :
+    Except ParseError Graph :=
+  let fuel := text.length + 2
+  let st0 := St.init (base.getD "")
+  match XML.documentPrologue (fun _ => none) false text with
+  | .error e => .error { msg := s!"XML: {e.message}", pos := e.position }
+  | .ok pr =>
+    match parseRootFold WalkSt.step (rdfStart fuel st0) pr.ents pr.usable pr.s pr.pos {}
+        (pr.s.size + 1) with
+    | .err m p => .error { msg := s!"XML: {m}", pos := p }
+    | .ok (r, _) pos4 =>
+      match XML.documentEpilog pr.ver pr.s pos4 with
+      | .error e => .error { msg := s!"XML: {e.message}", pos := e.position }
+      | .ok _ =>
+        let res := streamRes fuel st0 r
+        match res.st.err with
+        | some e => .error e
+        | none => .ok res.triples
+
+/-- The walk of a document element read as a stream is `processDocument`
+of that element. -/
+theorem processDocument_rootResult (fuel : Nat) (st0 : St) (node : XML.Node) :
+    streamRes fuel st0 (rootResult WalkSt.step (rdfStart fuel st0) node)
+      = processDocument fuel st0 node := by
+  cases node with
+  | element tag attrs children =>
+    simp only [rootResult, rdfStart]
+    cases he : elementIri (updateState st0 attrs) tag with
+    | none => rfl
+    | some full =>
+      by_cases hr : (full == rdfTerm "RDF") = true
+      · simp only [hr, if_true, streamRes]
+        rw [processDocument]
+        simp only [he, hr, if_true, nodeElementList_eq_fold]
+      · simp only [hr, if_false, Bool.false_eq_true, streamRes]
+  | text _ => rfl
+  | comment _ => rfl
+  | cdata _ => rfl
+  | pi _ _ => rfl
+
+/-- The compiler runs `parseRdfXmlStream` wherever the source says
+`parseRdfXml`: the same graph, and the same error, for every text and base. -/
+@[csimp] theorem parseRdfXml_eq_stream : @parseRdfXml = @parseRdfXmlStream := by
+  funext text base
+  unfold parseRdfXml parseRdfXmlStream XML.parseXML XML.parseXMLWith XML.parseXMLCore
+    XML.parseXMLNotes
+  cases hp : XML.documentPrologue (fun _ => none) false text with
+  | error e => rfl
+  | ok pr =>
+    simp only []
+    rw [parseRootFold_eq]
+    cases he : parseElement pr.ents pr.usable pr.s pr.pos {} (pr.s.size + 1) with
+    | err m p => rfl
+    | ok r pos4 =>
+      obtain ⟨node, nt⟩ := r
+      simp only []
+      cases hq : XML.documentEpilog pr.ver pr.s pos4 with
+      | error e => rfl
+      | ok post =>
+        simp only []
+        rw [processDocument_rootResult]
+
+end Stream
 
 end L4Factoidal.Syntax.RdfXml

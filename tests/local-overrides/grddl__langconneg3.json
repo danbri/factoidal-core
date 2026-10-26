@@ -1,0 +1,15 @@
+{
+  "test_id": "langconneg3",
+  "suite": "grddl",
+  "issue": "https://github.com/danbri/factoidal/issues/730",
+  "dispute_kind": "fixture-drift",
+  "upstream_expectation": "the expected output file of the W3C GRDDL Test Cases (2007), which assumes the 2007 input documents",
+  "our_expectation": "the GRDDL result of both representations, merged as served by www.w3.org today; both representations of td/conneg.html carry <link rel=\"alternate\" href=\"https://musicbrainz.org/...\"> while the 2007 expected output uses http://musicbrainz.org/..., so the result differs from the expected output only by the IRI scheme",
+  "rationale": "Owner, 2026-10-10, verbatim: \"Grddl - postpone for now, i am making enquiries. So just mark it as not a valid test currently.\" and, correcting the scope: \"Grddl should not be postponed, only that test\". Marked not a valid test while the owner makes enquiries. The 2007 archive (https://www.w3.org/TR/2007/REC-grddl-tests-20070911/grddl-tests.zip) holds only the local inputs; the 2007 networked inputs were not found. The runner counts the case as local-override and reports a STALE override (a failure) if it starts to pass. Added for this case by the owner, 2026-10-10, verbatim: \"730 - do langconneg2 and langconneg3 join h - yes\" (the question was whether langconneg2 and langconneg3 join the cases of issue 730 as local overrides, since they differ from the expected graphs only by the http/https scheme). The German representation was vendored on 2026-10-10 (third_party/testing/grddl/PROVENANCE.md); l4grddl selects it per case by language (Harness/GrddlRun.lean).",
+  "analysis_refs": [
+    "formal/lean4/Harness/GrddlRun.lean",
+    "third_party/testing/grddl/PROVENANCE.md"
+  ],
+  "date": "2026-10-10",
+  "owner_directive": "730 - do langconneg2 and langconneg3 join h - yes (owner, 2026-10-10)"
+}

@@ -119,7 +119,8 @@ declares and what the host transferred. It is a PROXY for resident memory,
 and the multiplier between the two is measured rather than assumed.
 
 Measured 2026-09-05 on the full skosdex corpus (7,315,251 quads, 3,286
-blocks, 204 named graphs, SBM8 with an LGI1 per block), through
+blocks, 204 named graphs, SBM8 with an LGI1 per block; the first layout is
+named LGI3 since 2026-10-10), through
 `l4block-literal-gate --probe`, one handle over the corpus-wide
 `skos:prefLabel` plan:
 
@@ -229,7 +230,7 @@ inductive RetainedRows where
 
 /-- What one block's candidate-filter sidecars let a query skip.
 
-`literal` and `geo` are the decoded LGI1 and GBI1 sidecars, each present only
+`literal` and `geo` are the decoded LGI3 and GBI1 sidecars, each present only
 when the manifest declared it, the host supplied its bytes, it decoded, and it
 names THIS block. They share the row machinery below because they index the
 SAME local dictionary IDs.
@@ -239,7 +240,7 @@ dictionary local ID to the positions whose OBJECT is that term — the OLI2
 role, rebuilt here at `storeOpen` because SBM8 and SBM9 commit no graph-aware
 OLI2. `nonLiteralRows` is every position whose object is not a literal; a
 `STR` shape keeps those, because `STR` of an IRI is a string a `CONTAINS` can
-match and LGI1 indexes no IRI (`LiteralIndexPlan.Plan.keepNonLiterals`). The
+match and LGI3 indexes no IRI (`LiteralIndexPlan.Plan.keepNonLiterals`). The
 geometry path never keeps them: `Geo.wktArg` refuses a non-literal term, so
 such a row is a type error and the filter excludes it. -/
 structure RetainedIndexes where
@@ -275,8 +276,11 @@ structure RetainedArtifact where
 /-- An open store: the manifest it was opened against, every artifact it
 retains in manifest order, and the dataset and index over the whole retained
 set. `backend` is `none` for an IBK4 dataset carrying a blank-node graph
-name, which `materialiseDatasetBackend` cannot represent — the same rule
-`storeQuery` applies. -/
+name — the same rule `storeQuery` applies. Since 2026-10-25 `materialiseDatasetBackend` keeps a blank-node graph name
+(the record names a graph by its `Subject`,
+https://github.com/danbri/factoidal/issues/975), so the backend reads such a
+dataset; the test is kept here so that this change does not move those
+queries to the backend path, whose SELECT rows may come in another order. -/
 structure OpenStore where
   ordinal : Nat
   identity : String
@@ -290,7 +294,7 @@ structure OpenStore where
   /-- How many out-of-line literals this handle resolved at `storeOpen`. -/
   retainedBlobs : Nat := 0
   ds : Dataset
-  backend : Option DatasetBackend
+  backend : Option L4Factoidal.Dataflow.LawfulDataset
 
 /-- Handle ids already issued; `storeOpen` numbers them "s1", "s2", … in open
 order and never reuses one. -/
@@ -323,11 +327,12 @@ def datasetOfRetained (quads : Bool) (arts : List RetainedArtifact) : Dataset :=
   if quads then datasetOfQuads (arts.flatMap quadRowsOf)
   else { default := arts.flatMap ibk3RowsOf, named := [] }
 
-/-- The indexed backend for such a dataset, or `none` where the reference
-evaluator is required (an IBK4 dataset with a blank-node graph name). -/
-def backendOfRetained (quads : Bool) (ds : Dataset) : Option DatasetBackend :=
-  if quads then (if namesAreIris ds then some (indexedDatasetBackend ds) else none)
-  else some (indexedDatasetBackend ds)
+/-- The indexed backend for such a dataset, as a `LawfulDataset` (its law rests
+on `datasetIsSet`), or `none` where the reference evaluator is required (an
+IBK4 dataset with a blank-node graph name). -/
+def backendOfRetained (quads : Bool) (ds : Dataset) : Option L4Factoidal.Dataflow.LawfulDataset :=
+  if quads then (if namesAreIris ds then some (L4Factoidal.Dataflow.LawfulDataset.ofDataset ds) else none)
+  else some (L4Factoidal.Dataflow.LawfulDataset.ofDataset ds)
 
 /-! ## storeOpen -/
 
@@ -342,16 +347,39 @@ def storeCodec? (op : String) (manifest : Manifest) : Except String StoreCodec :
   else
     .error s!"{op}: layout '{manifest.layout}' is not an IBK3, IBK4 or IBK5 generation"
 
+/-- The admitted bytes of one sidecar the manifest declared, or `none` when the
+host did not supply it or its bytes fail the manifest's commitment. -/
+private def sidecarBytes? (op : String) (ref? : Option ArtifactRef)
+    (sources : List (String × ArtifactSource)) (blob : ByteArray) : Option ByteArray := do
+  let ref ← ref?
+  let _ ← supplied? sources ref.key.value
+  (admitRef op ref sources blob).toOption
+
 /-- One sidecar the manifest declared, decoded and checked against this block,
 or `none`. Every `none` is a FALLBACK, not an error: the handle then scans,
 which is what it did before the sidecar existed. -/
 private def retainedSidecar? {α : Type} (op : String) (ref? : Option ArtifactRef)
     (sources : List (String × ArtifactSource)) (blob : ByteArray)
     (decode : ByteArray → Option α) : Option α := do
-  let ref ← ref?
-  let _ ← supplied? sources ref.key.value
-  let indexBytes ← (admitRef op ref sources blob).toOption
-  decode indexBytes
+  decode (← sidecarBytes? op ref? sources blob)
+
+/-- A literal-index sidecar whose bytes start with the magic of LGI1 or LGI2
+refuses the open. `retainedSidecar?` turns every failure into a fallback to the
+scan, and a scan is correct: that is the right answer for a sidecar the host did
+not supply, or one sized for another dictionary. It is the wrong answer for a
+retired sidecar. The manifest named it, the planner will report an index path,
+and it holds grams folded with the ASCII-only fold, so it is not a superset of
+the rows the Unicode `LCASE` keeps. The open says so and says to re-pack.
+
+A manifest packed under the retired fold is already refused at its layout label
+(`ShardManifest.retiredLiteralIndexLayouts`). This is the second line, for a
+manifest that names a current label over a retired sidecar. -/
+def refuseRetiredLiteral (op : String) (ref? : Option ArtifactRef)
+    (bytes? : Option ByteArray) : Except String Unit :=
+  match ref?, bytes?.bind L4Factoidal.Storage.LiteralGramIndexWire.retiredName? with
+  | some ref, some name =>
+      .error s!"{op}: artifact '{ref.key.value}': {L4Factoidal.Storage.LiteralGramIndexWire.retiredMessage name}"
+  | _, _ => pure ()
 
 /-- The two row-position tables both codecs need, over one block's rows:
 `objectRows` maps a dictionary local ID to the row positions whose OBJECT is
@@ -375,11 +403,12 @@ private def rowTables (dictSize rowCount : Nat)
 /-- Build the retained candidate-filter indexes of one IBK4 block, or `none`
 when the manifest declares neither sidecar, the host supplied bytes for
 neither, neither decodes, or neither names this block. -/
-def retainedIndexes? (op : String) (entry : Entry)
+private def retainedIndexesOf? (op : String) (entry : Entry)
     (sources : List (String × ArtifactSource)) (blob : ByteArray)
+    (literalBytes? : Option ByteArray)
     (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow) (blockBytes : ByteArray) :
     Option RetainedIndexes := do
-  let literal? := retainedSidecar? op entry.literalIndex sources blob (fun bytes =>
+  let literal? := literalBytes?.bind (fun bytes =>
     match L4Factoidal.Storage.LiteralGramIndexWire.decode? bytes with
     | some artifact =>
         if artifact.targetIBKSha256 == entry.artifact.sha256 then some artifact.index else none
@@ -405,17 +434,28 @@ def retainedIndexes? (op : String) (entry : Entry)
       (fun o => match block.dict[o]? with | some (.literal _) => true | _ => false)
   some { literal := literal?, geo := geo?, rows, objectRows, nonLiteralRows, v5 := none }
 
-/-- The same, for an IBK5 block: LGI2 in the `literalIndex` role, GBI1
+/-- `retainedIndexesOf?`, after the refusal of a retired literal sidecar. The
+`Except` is the one place an index problem is an error and not a fallback. -/
+def retainedIndexes? (op : String) (entry : Entry)
+    (sources : List (String × ArtifactSource)) (blob : ByteArray)
+    (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow) (blockBytes : ByteArray) :
+    Except String (Option RetainedIndexes) := do
+  let literalBytes? := sidecarBytes? op entry.literalIndex sources blob
+  refuseRetiredLiteral op entry.literalIndex literalBytes?
+  pure (retainedIndexesOf? op entry sources blob literalBytes? quads blockBytes)
+
+/-- The same, for an IBK5 block: LGI4 in the `literalIndex` role, GBI1
 unchanged in the `geoIndex` role, and the decoded block retained so both
 candidate paths can add its out-of-line literals. The `rows` are the
 RESOLVED quads, in the block's own row order, so a candidate position still
 names the same row it names in the block. -/
-def retainedIndexesV5? (op : String) (entry : Entry)
+private def retainedIndexesV5Of? (op : String) (entry : Entry)
     (sources : List (String × ArtifactSource)) (blob : ByteArray)
+    (literalBytes? : Option ByteArray)
     (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow)
     (block : L4Factoidal.Storage.IndexedBlockWireV5.QuadBlock) :
     Option RetainedIndexes := do
-  let literal? := retainedSidecar? op entry.literalIndex sources blob (fun bytes =>
+  let literal? := literalBytes?.bind (fun bytes =>
     match L4Factoidal.Storage.LiteralGramIndexWire.decode2? bytes with
     | some artifact =>
         if artifact.targetIBKSha256 == entry.artifact.sha256 then some artifact.index else none
@@ -440,6 +480,16 @@ def retainedIndexesV5? (op : String) (entry : Entry)
                 | _ => false)
   some { literal := literal?, geo := geo?, rows, objectRows, nonLiteralRows, v5 := some block }
 
+/-- `retainedIndexesV5Of?`, after the refusal of a retired literal sidecar. -/
+def retainedIndexesV5? (op : String) (entry : Entry)
+    (sources : List (String × ArtifactSource)) (blob : ByteArray)
+    (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow)
+    (block : L4Factoidal.Storage.IndexedBlockWireV5.QuadBlock) :
+    Except String (Option RetainedIndexes) := do
+  let literalBytes? := sidecarBytes? op entry.literalIndex sources blob
+  refuseRetiredLiteral op entry.literalIndex literalBytes?
+  pure (retainedIndexesV5Of? op entry sources blob literalBytes? quads block)
+
 /-- Admit and decode each selected entry, in manifest order. Every artifact
 goes through the same `admitArtifact` `storeQuery` uses, so the digest check
 is the same check in the same place in the sequence. -/
@@ -457,12 +507,12 @@ def readRetained (op : String) (codec : StoreCodec) (blobs : BlobBytes)
               let block ← ibk5BlockOf op entry bytes
               let quads ← resolveIbk5 op entry block blobs
               pure (RetainedRows.ibk5 quads,
-                    retainedIndexesV5? op entry sources blob quads block))
+                    ← retainedIndexesV5? op entry sources blob quads block))
         | .ibk4 =>
             (do
               let quads ← ibk4QuadsOf op entry bytes
               pure (RetainedRows.ibk4 quads,
-                    retainedIndexes? op entry sources blob quads bytes))
+                    ← retainedIndexes? op entry sources blob quads bytes))
         | .ibk3 =>
             (do let triples ← ibk3TriplesOf op entry bytes
                 pure (RetainedRows.ibk3 triples, none))
@@ -556,6 +606,18 @@ private def buildOpenStore (held : Nat) (manifestHex artifactsJson : String)
        , ds
        , backend := backendOfRetained quads ds }
 
+/-- How many of a handle's blocks retained a decoded literal index, and how many
+a geometry index. A handle opened without the sidecars, or over a manifest that
+declares none, reports zero and scans. The count is what lets a gate that
+compares an index handle with a scan handle know that the index handle really
+took the index path: without it, a sidecar that failed to decode would fall back
+to the scan and the gate would compare two scans and pass. -/
+def retainedLiteralIndexCount (store : OpenStore) : Nat :=
+  store.artifacts.countP fun art => art.indexes.any fun retained => retained.literal.isSome
+
+def retainedGeoIndexCount (store : OpenStore) : Nat :=
+  store.artifacts.countP fun art => art.indexes.any fun retained => retained.geo.isSome
+
 private def openStoreJson (handle : String) (store : OpenStore) : List (String × Json) :=
   [ ("handle", .string handle)
   , ("identity", .string store.identity)
@@ -563,7 +625,9 @@ private def openStoreJson (handle : String) (store : OpenStore) : List (String �
   , ("wireVersion", .number (toString store.wireVersion))
   , ("artifacts", .number (toString store.artifacts.length))
   , ("bytes", .number (toString store.retainedBytes))
-  , ("rows", .number (toString store.retainedRows)) ]
+  , ("rows", .number (toString store.retainedRows))
+  , ("literalIndexes", .number (toString (retainedLiteralIndexCount store)))
+  , ("geoIndexes", .number (toString (retainedGeoIndexCount store))) ]
 
 /-- `storeOpen(manifestHex, artifactsJson)` over one blob region — verify
 every supplied artifact against the SHA-256 its manifest commits, decode each
@@ -624,7 +688,7 @@ def rowsOfCandidates (retained : RetainedIndexes) (extra : Array Nat) (ids : Lis
 
 /-- The candidate dictionary positions of one needle. An IBK5 block goes
 through `BlockV5Plan.literalCandidates?`, which unions the block's out-of-line
-literals into every candidate set the LGI2 index can serve: such a literal has
+literals into every candidate set the LGI4 index can serve: such a literal has
 no lexical form in the block, so it carries no gram, and without the union a
 needle inside a 70,000-byte literal would answer no row. -/
 def literalCandidatePositions? (retained : RetainedIndexes) (needle : String) :
@@ -700,6 +764,19 @@ def geoRestricted? (arts : List RetainedArtifact)
 def unknownStoreHandle (h : String) : String :=
   errJson s!"unknown store handle: {h}"
 
+/-- `handle.disposed` for a store handle this engine issued and closed,
+else the unknown-handle error. -/
+def missingStoreHandle (h : String) : IO String := do
+  let issued ← storeHandleCounter.get
+  let isIssued := h.startsWith "s" &&
+    match (String.ofList (h.toList.drop 1)).toNat? with
+    | some n => 1 ≤ n && n ≤ issued
+    | none => false
+  if isIssued then
+    pure (errCoded "handle.disposed"
+      s!"store handle {h} was closed; a closed handle cannot be used again")
+  else pure (unknownStoreHandle h)
+
 private def retainedFor (store : OpenStore) (keys : List String) :
     List RetainedArtifact :=
   store.artifacts.filter fun art => keys.contains art.key
@@ -714,9 +791,13 @@ handle answers the whole plan or it answers nothing. -/
 def storeHandleQuery (h sparql : String) : IO String := do
   -- The caller-registered extension functions (SPARQL 1.1 section 17.6),
   -- read ONCE per query so the evaluator stays a function of its inputs.
+  -- The clock is read once too: `NOW()` is the instant of this query
+  -- (SPARQL 1.1 section 17.4.5.1,
+  -- https://github.com/danbri/factoidal/issues/743).
   let extIris ← extSnapshot
+  let now ← nowDateTime
   match (← storeHandleTable.get)[h]? with
-  | none => pure (unknownStoreHandle h)
+  | none => missingStoreHandle h
   | some store =>
     let outcome : Except String String := do
       let query ← parseQuery "storeHandleQuery" sparql
@@ -749,14 +830,17 @@ def storeHandleQuery (h sparql : String) : IO String := do
              else none) with
       | some quads =>
           let ds := datasetOfQuads quads
-          pure (queryParsedDatasetWith ds (backendOfRetained true ds) sparql extra extIris)
+          pure (queryParsedDatasetWith ds (backendOfRetained true ds) sparql extra extIris
+                  [] .v11 none (some now))
       | none =>
         if planKeys.length == store.artifacts.length then
-          pure (queryParsedDatasetWith store.ds store.backend sparql extra extIris)
+          pure (queryParsedDatasetWith store.ds store.backend sparql extra extIris
+                  [] .v11 none (some now))
         else
           let quads := store.codec != .ibk3
           let ds := datasetOfRetained quads planned
-          pure (queryParsedDatasetWith ds (backendOfRetained quads ds) sparql extra extIris)
+          pure (queryParsedDatasetWith ds (backendOfRetained quads ds) sparql extra extIris
+                  [] .v11 none (some now))
     match outcome with
     | .error e => pure (errJson e)
     | .ok envelope => pure envelope
@@ -786,7 +870,7 @@ def storeHandleClose (h : String) : IO String := do
     storeHandleTable.set (table.erase h)
     pure (okWith [])
   else
-    pure (unknownStoreHandle h)
+    missingStoreHandle h
 
 /-! ## Cap tests
 
@@ -825,5 +909,65 @@ private def capEntry (bytes : Nat) : Entry :=
 -- second handle over the same set is not.
 #guard (checkHandleBytes 0 [capEntry 103341302]).toOption.isSome
 #guard (checkHandleBytes 103341302 [capEntry 103341302]).toOption.isNone
+
+/-! ## A retired literal index refuses the open (2026-10-10)
+
+`retiredCurrent` is the LGI3 file of a one-literal dictionary. `retiredBytes` is
+the same file with the magic and version byte of LGI1, which is what a packer
+that folded with the ASCII-only fold wrote. -/
+
+private def retiredCurrent : ByteArray :=
+  (L4Factoidal.Storage.LiteralGramIndexWire.encode?
+    { targetIBKSha256 := ByteArray.mk (Array.replicate 32 0)
+      index := L4Factoidal.Storage.LiteralGramIndex.build
+        #[.literal (Literal.string "\u00C9cole")] }).getD ByteArray.empty
+
+private def retiredBytes : ByteArray :=
+  ByteArray.mk (#[0x4C, 0x47, 0x49, 0x31, 1] ++ retiredCurrent.data.extract 5 retiredCurrent.size)
+
+private def retiredRef (bytes : ByteArray) : ArtifactRef :=
+  { key := { value := "predicate-0.ibk4.lgi3" }, bytes := bytes.size,
+    sha256 := L4Factoidal.Crypto.sha256 bytes }
+
+private def retiredEntry (bytes : ByteArray) : Entry :=
+  { predicate := ⟨"http://example.org/p", by decide⟩
+  , artifact := { key := ⟨"predicate-0.ibk4"⟩, bytes := 1, sha256 := ByteArray.empty,
+                  chunked := none }
+  , literalIndex := some (retiredRef bytes)
+  , rows := 1
+  , ordinal := 0 }
+
+private def retiredSources (bytes : ByteArray) : List (String × ArtifactSource) :=
+  [("predicate-0.ibk4.lgi3", .hex (hexOfBytes bytes))]
+
+-- The fixture is what it claims to be.
+#guard retiredCurrent.size > 5
+#guard (L4Factoidal.Storage.LiteralGramIndexWire.retiredName? retiredCurrent).isNone
+#guard L4Factoidal.Storage.LiteralGramIndexWire.retiredName? retiredBytes == some "LGI1"
+#guard (L4Factoidal.Storage.LiteralGramIndexWire.decode? retiredCurrent).isSome
+#guard (L4Factoidal.Storage.LiteralGramIndexWire.decode? retiredBytes).isNone
+
+-- The retired sidecar refuses the open and names the cause, the key and the remedy.
+#guard match refuseRetiredLiteral "storeOpen" (some (retiredRef retiredBytes)) (some retiredBytes) with
+  | .error e => e.startsWith "storeOpen: artifact 'predicate-0.ibk4.lgi3': literal index LGI1"
+                && e.contains "ASCII-only fold" && e.contains "Re-pack"
+  | .ok _ => false
+-- The current sidecar, an absent sidecar and an undeclared sidecar do not.
+#guard (refuseRetiredLiteral "storeOpen" (some (retiredRef retiredCurrent)) (some retiredCurrent)).toOption.isSome
+#guard (refuseRetiredLiteral "storeOpen" (some (retiredRef retiredBytes)) none).toOption.isSome
+#guard (refuseRetiredLiteral "storeOpen" none (some retiredBytes)).toOption.isSome
+
+-- Through the function `readRetained` calls, with the host supplying the bytes
+-- and the manifest committing their SHA-256: the open is refused, not scanned.
+#guard match retainedIndexes? "storeOpen" (retiredEntry retiredBytes)
+    (retiredSources retiredBytes) ByteArray.empty [] ByteArray.empty with
+  | .error e => e.contains "ASCII-only fold" && e.contains "Re-pack"
+  | .ok _ => false
+-- The same entry with the current bytes is not refused (it falls back, because
+-- the block bytes here are empty, which is a different and quiet outcome).
+#guard (retainedIndexes? "storeOpen" (retiredEntry retiredCurrent)
+    (retiredSources retiredCurrent) ByteArray.empty [] ByteArray.empty).toOption.isSome
+-- A retired sidecar the host did NOT supply is not read at all.
+#guard (retainedIndexes? "storeOpen" (retiredEntry retiredBytes) [] ByteArray.empty [] ByteArray.empty).toOption.isSome
 
 end L4Wasm.Ops

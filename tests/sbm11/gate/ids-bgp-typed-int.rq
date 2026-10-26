@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT ?s WHERE { ?s ex:age "72"^^xsd:int }

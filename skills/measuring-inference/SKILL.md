@@ -1,0 +1,550 @@
+---
+name: measuring-inference
+description: How to measure what an inference engine actually does — closure/entailment performance, and whether a green test measured anything at all. Use before optimising any reasoning path, when a perf claim needs an acceptance criterion, when a suite is green but you suspect it is not exercising the rules, when choosing benchmark shapes, or when a plausible-sounding mechanism is about to become a work order. Every rule here was paid for by a wrong confident claim in this repo, each one named with its date and its correction.
+---
+
+# Measuring inference behaviour
+
+Reasoning engines mislead measurement in ways ordinary code does not. A
+parser either parses or does not; a closure can produce a green suite, a
+fast benchmark and a proved theorem while doing almost nothing.
+
+Every rule below is followed by the specific wrong claim that produced
+it. They are kept because the pattern recurs — during 2026-07-30/31, four
+confident causal stories about this engine's performance were overturned
+by measurement, three of them the orchestrator's own.
+
+---
+
+## 1. A plausible mechanism is not a measured one
+
+**Never write an acceptance criterion for a fix until you have measured
+which phase the time is actually in.**
+
+> 🔴 **2026-07-31.** "The RDFS rules slowed the closure, so
+> `WebOnt-description-logic-501` blew its CPU budget; recovering closure
+> speed will bring it back." A 33× closure speedup later, the suite ran
+> **1064.73 s → 1064.11 s** and the test was still capped. The cost was
+> in the DL clash-seeking tableau, which is what the test's own
+> diagnostic had said all along. The rules had knocked it out by making
+> the closed graph **bigger**, not slower to produce — and no closure
+> optimisation shrinks its output.
+
+Before optimising: measure the phase split. `entail` time is not
+`closure` time; a suite's wall clock is not the component you are about
+to change.
+
+## 2. Synthetic shapes lie about real vocabularies
+
+**Benchmark on real vocabularies before believing a synthetic speedup.**
+
+> 🔴 **2026-07-31.** A `subClassOf` chain went 109 s → 3.24 s, a 33×
+> improvement, exponent ~3.0 → ~2.3. The same change on **schema.org**
+> (17949 triples): 5.00 s → 4.82 s, **~4%**. Real vocabularies are wide
+> and shallow — no deep transitive closure to skip. The chain is a
+> pathological shape our data does not have.
+
+Cover at minimum: chain (transitive worst case), wide-flat (instance
+rules), diamond/DAG (multiple derivation routes), and **real
+vocabularies** — SKOS, schema.org, FOAF, Dublin Core, GO. Report the
+real ones first; they decide whether the work mattered.
+
+Corollary: **the shape that matters is schema + instance data together.**
+Measured 2026-07-31, that regime was already near-linear (n¹·²⁹) and the
+real limit was throughput — ~2,500 input triples/sec — not complexity.
+An asymptotic fix aimed at a non-asymptotic problem buys nothing.
+
+## 3. A negative test passes for free when the engine derives nothing
+
+A test asserting "X must NOT be entailed" is passed trivially by an
+engine that derives nothing at all.
+
+> 🔴 **2026-07-31.** `tools/negative-test-vacuity.py` found **19 of 42**
+> negative tests vacuous. `rdf-mt` scored 39 pass, 0 fail with exactly
+> **one** of its negatives doing on-target work. After the RDFS rules and
+> the regime un-shadowing landed, vacuity fell 19 → 3 and 21 tests
+> changed status, every one an improvement — movement that **no W3C
+> score showed**, in either direction.
+
+Run `tools/negative-test-vacuity.py` after any change to a rule set or an
+entailment regime. Its criterion subtracts the closure of the *empty*
+graph first, because RDFS injects 16 axiomatic triples into every result
+and "the closure grew" would otherwise score every test as working.
+
+⚠️ The "this test legitimately expects nothing" carve-out must come from
+a **checkable property of the test's own data** — never a hand-kept list
+of inconvenient names.
+
+## 4. A theorem whose hypothesis is unsatisfiable proves nothing
+
+> 🔴 **2026-07-30.** A draft `rdfs_closure_sound` assumed
+> `forall h. ig_wf_sp (build_indexed h)`. That is **false** — a
+> blank-node label containing U+001F breaks it — so the theorem was
+> vacuous. It verified cleanly.
+
+Exhibit a witness. `formal/fstar/RDF.Semantics.HypothesisWitness.fst`
+holds satisfiability witnesses for the hypothesis predicates the
+refinement theorems restrict on, and proves the fifteen-conjunct
+`rdfs_conditions` bundle is jointly satisfiable *and* admits a model that
+falsifies a graph — without which `rdfs_entails` would be the
+everything-relation.
+
+⚠️ Satisfiable is not the same as instantiable: `closure_chain_wf` is
+mathematically satisfiable but **no graph in the tree can be shown to
+satisfy it**, so the RDFS fixed-point theorem has no machine-checked
+instance (#338).
+
+## 5. Verify output identity byte-for-byte, not by count
+
+> **2026-07-31.** Every closure change this week was validated with
+> `sort | cmp`, not triple counts. Counts can match while contents
+> differ.
+
+Include the awkward term kinds — language-tagged literals, typed
+literals, blank nodes — and a **reflective-trap graph**, where a rule
+injects a schema edge that transitivity must then run over.
+
+## 6. Real vocabularies violate the pre-conditions you would like to assume
+
+**Prefer a post-hoc check to an a-priori side condition.**
+
+> 🔴 **2026-07-31.** A fast path was designed around "no
+> `rdfs:subPropertyOf` declaration targets `rdf:type`". Three of eight
+> real vocabularies violate the condition, and **schema.org contains
+> `schema:additionalType rdfs:subPropertyOf rdf:type`** — the reflective
+> trap itself, in a vocabulary millions of sites use. Gating a-priori
+> would have silently excluded it.
+
+The landed design runs the fast path, then **checks** the property the
+enumeration exists to establish, and discards the result for the general
+path if it fails. A hole in the reasoning then costs speed, never
+correctness. Given how often confident reasoning about this rule set has
+been wrong, not trusting an enumeration at runtime is the correct
+default.
+
+## 7. Do not assume a rule is non-recursive because it looks like it
+
+> 🔴 **2026-07-31.** "rdfs1, rdfs4a, rdfs4b, rdfs8 and rdfs13 are
+> non-recursive, so hoist them out of the fixed-point loop." **All five
+> are recursive.** rdfs13 produces `x rdfs:subClassOf rdfs:Literal`,
+> which rdfs9 consumes; rdfs1 feeds rdfs13 feeds rdfs9. The counterexample
+> is "declare a datatype, then use it" — ordinary data. The hoist would
+> have silently lost derivations.
+
+Derive stratification from the **conclusion templates in the rule
+table**, not from a rule's appearance. What landed instead — emit-once,
+each rule emitting each result once rather than once per round — kept all
+twelve rules in the loop and still measured 3.7×.
+
+## 8. A silent cap is a lie with a green face
+
+> ⚠️ `rdfs_closure` returns its input unchanged when `fuel` runs out — no
+> error, no marker. A graph needing more than 100 rounds yields a
+> silently incomplete closure.
+
+Same family as the OWL cap-escapes (#326) and the vacuous negatives
+(#333). Any budget that can be exhausted must **say so in the result**.
+Fixing #326 is why a capped OWL test now reports `unsupported` instead of
+passing.
+
+> 🔴 **2026-08-26 (`owl2_dl_inconsistency`, per-test cap).** The
+> aggregated JSON records a cap trip as an ordinary `fail`. The runner
+> log prints `[owl_refuter_escape] tableau_consistent abandoned
+> (Owl_runner.Owl_closure_timeout); the clash search did not finish`,
+> but `docs/test-results/latest.json` carries only `pass`, `fail`,
+> `skip` and `oracle_assisted`. A reader of the dashboard cannot tell a
+> wrong answer from an unfinished search.
+>
+> The score is therefore load-dependent. `generate-report.sh` sets
+> `FACTOIDAL_OWL_CAP_SEC=20` for each test. In the full-suite run of
+> 2026-08-26 the `type-inconsistency.rdf` catalog scored **125 pass,
+> 2 fail (out of 127)**. Three consecutive runs of the SAME binary over
+> the SAME catalog on an idle machine scored **126 pass, 1 fail (out of
+> 127)**. The difference is `WebOnt-description-logic-502`, whose
+> tableau clash search sits near the 20-second boundary.
+> `WebOnt-description-logic-909` fails in all four runs.
+>
+> Cost: the extraction-drift repair gate of 2026-08-26 read RED on this
+> suite, and the decrease was investigated as a possible regression
+> from the restored extraction output. It was not one. The committed
+> `latest.json` for that run records 125 pass, 2 fail with no marker
+> that a cap tripped.
+>
+> Rule: before you attribute a suite decrease to a code change, run
+> that suite alone on an idle machine and compare. Any budget that can
+> be exhausted must be reported in the result; until it is, treat every
+> capped suite as load-sensitive.
+
+> 🔴 **2026-10-10 (an expected failure at the cap).** The first version
+> of `tests/stack/owl_real_gate.py` marked "the Cell Ontology
+> consistency check finishes in 600 s" as an expected failure, because
+> the benchmark had killed it at 600 s (load 6 to 8). In the gate run at
+> load 3.5 it finished in 598 s, and the row read UNEXPECTED PASS while
+> nothing had been repaired. Rule: the bound of an expected-failure row
+> sits far from the measured time (that row now uses 120 s, against
+> about 600 s measured and 6.1 s for HermiT), so the row fails or passes
+> because of the code, not the load.
+
+> 🔴 **2026-10-13 (a comparison tool that compared nothing).**
+> `tools/owl-real-hermit.py` with a wrong `--hermit-jar` path printed
+> "HermiT not decided" for every pair of every ontology and exited 0. Java
+> had not loaded HermiT at all. The output reads like a slow reasoner. Rule:
+> a tool whose reference engine did not start exits non-zero and says why
+> (the script now exits 2 on a missing JAR or a class Java cannot load); a
+> run where the reference decided NOTHING is a setup error until shown
+> otherwise.
+
+## 9. A timer around a pure `let` in Lean measures nothing
+
+**Force the value between the two clock reads with an I/O action that
+consumes it (an `IO.Ref` write), and print a total the parts must add
+up to.**
+
+> 🔴 **2026-08-22 (Lean, OWL RL closure).** The first per-row profile of
+> `OWL.RL.step` read `rows total … ms=587` and `cls-int1 … ms=0` — every
+> row 0 ms, the round seconds. Lean's compiler had moved the pure
+> `let out := g.flatMap (f g)` past the second `IO.monoMsNow`, to the
+> point where `out` was first used. The numbers were internally
+> consistent enough to read as "the cost is somewhere else". With the
+> value forced through an `IO.Ref` between the reads, the same row read
+> `cls-int1 … ms=6443` of `ms=6640` — 97 % of the round, one quadratic
+> join (every subject × a `memB` scan per class). That row alone kept
+> WebOnt-miscellaneous-001 from finishing one round in 20 s
+> (`cls-int1 … ms=20634` of `ms=20724`); the index that replaced the
+> scan took the round to 88 ms.
+
+A per-part timing whose parts do not sum to the whole it sits inside is
+an instrument that did not run. The same applies to `decide`/`rfl`
+over results: keep measurement in `IO`, force it, and cross-check the
+sum.
+
+### Task timeouts need a compiled execution check too (2026-09-08)
+
+Putting `match expensivePure input with ... => pure result` inside an
+`IO.asTask` action does not establish that the worker performs the work.
+The native OWL harness evaluated `Refute.refute` before `lean_io_as_task`;
+the worker wrapped an already-computed result. A configured 20-second
+timeout then allowed a 40-second case with no timeout line. Inspect the
+generated C and run a case that must time out.
+
+A task that does the work is still not a hard bound. An abandoned pure task
+keeps using CPU, and the native runtime waits for it at shutdown: a
+one-second caller deadline made the process take 110.94 seconds.
+
+`Harness/OwlProbe.lean` now runs each bounded refutation and entailment
+check in a child process group. It polls `IO.monoMsNow`, then calls
+`Child.kill` and `Child.wait` before it continues. The certificate and
+profile runs (`certifyBounded`, `profileBounded`) still use `IO.asTask`;
+their bound is a wall clock on the wait only. Measure the complete native
+process time with an external timer; timing only the caller is not enough.
+The graph wire must keep term fields, blank-node co-reference, duplicate
+triples and list order, because order changes a bounded search. See the
+[hard-timeout record](../../docs/20260908-owl-refuter-hard-timeout.md) and
+[timeout tracking](https://github.com/danbri/factoidal/issues/655).
+
+## 10. A new rule row has TWO cost gates, and a green suite sees neither
+
+Adding a rule row to a closure is measured by its score delta. Two
+costs sit outside that number, and each has stopped a correct,
+verbatim transcription of a W3C table in this repository.
+
+**Elaboration time.** OWL 2 RDF-Based Semantics Table 6.1 is 51
+axiomatic triples. Transcribed correctly, they put a cyclic
+`rdfs:subClassOf` lattice over the OWL 2 class vocabulary into every
+closure, scm-sco saturates it, six `RLTests` guards go red and
+`RLSemantics` elaboration goes from 26 s to 189 s. Caught by
+`lake build` wall-clock on the module.
+
+**Peak resident memory in the `--dl` regime.** On 2026-09-04 the five
+Table 9 restriction rows (scm-svf1, scm-svf2, scm-avf1, scm-avf2,
+scm-hv) were transcribed, built and measured. RL: 11 units closed, no
+regressions, `cap_hits` 0, `RLSemantics` elaboration 37 s to 44 s.
+Every gate green. The `--dl` regime then could not finish: three full
+runs were killed by the operating system at the same case.
+
+**The gate, and run it before landing any rule row.** One catalog,
+under two minutes, and it sees what a green `lake build` and a green RL
+run do not:
+
+```
+cd formal/lean4 && /usr/bin/time -l ./.lake/build/bin/l4owl-probe \
+  --dl --dir ../../third_party/testing/owl type-positive-entailment.rdf
+```
+
+Read `maximum resident set size`, not only the score.
+
+## 11. A budget that counts UNITS OF INPUT cannot see a change in the
+cost per unit
+
+The correction to section 10, and it cost two agents.
+
+The first diagnosis of that memory kill — written into the design
+document and into this skill — was that the refuter branches on the new
+`rdfs:subClassOf` edges between restriction nodes. **Measurement
+overturned it.** With the refuter's `tableauConsistent` stubbed to
+`none` the case still died, at 414 s and 10.08 GB; with
+`--refute-budget 1`, at 344 s and 9.14 GB. The refuter was not the
+cause. Neither was the closure: the case's first closure is 1 869
+triples in 6 rounds in 39 ms with the rows in place.
+
+The cause was `OWL.Mat.materialiseWithBudget`, and the reason it was
+not caught is the shape of its budget. It capped the membership pass at
+400 000 (individual, class expression) PAIRS. The pass that exhausted
+9.1 GB presented **12 596 pairs**. The rows had raised the cost of one
+pair — `namedSuperCEs` walked `rdfs:subClassOf` to depth 8 with no
+visited set, so a class with 18 outgoing edges cost of the order of
+`18 ^ 8` — and left the pair count alone.
+
+Rules that follow.
+
+- **A resource budget must count the resource.** A count of inputs
+  is a cost model with an unstated constant factor in it, and a rule
+  row is exactly the kind of change that moves that factor. Thread a
+  counter through the recursion (`StateM`, one counter for the whole
+  pass) and spend from it at every step.
+- **Set the number from a measurement and write the measurement into
+  the comment next to it.** The replacement budget is 4 000 000 units,
+  ten times the most expensive pass measured over the whole OWL corpus.
+  Changing 400 000 to a smaller number would have been a guess.
+- **A cap that never fires has never been tested.** `cap_hits` was 0
+  before and after, which is the gate — and it is also why the pair
+  budget's blindness went unnoticed for as long as it did.
+- **Time the PARTS before naming a cause.** The localisation that
+  settled this took four timing probes: closure, witnesses, subject
+  collection, membership pass; then one class expression; then one
+  pair. Every step of that was cheap. The two wrong diagnoses before it
+  were free-hand.
+- **When forcing a value to time it in Lean, make the forcing
+  observable.** A first attempt at the per-class-expression timing put
+  `bm.length` inside an `if` that did not fire, so the `let` was never
+  evaluated and the loop measured nothing — 94 class expressions in 8
+  ms, against a batch over the same 94 that did not return. Print the
+  value, or the measurement is of a thunk.
+
+## 12. A negative test checks only the components it runs
+
+**Every component that can turn a unit into a pass must also run on the
+units where its "yes" is wrong.**
+
+> 🔴 **2026-10-10 (Lean OWL, `--dl`).** The PositiveEntailmentTest judge
+> passed a unit when the RL closure contained the conclusion OR when the
+> tableau refuted every negation goal of it. The NegativeEntailmentTest
+> judge ran the closure only. So no test in the corpus could catch the
+> refuter claiming an entailment that does not hold, and the DL
+> NegativeEntailmentTest line read 23 pass, 0 fail while measuring
+> nothing about the refuter. When the negative judge was made to ask the
+> same refutation, it fired on 3 of 23 units of
+> `type-negative-entailment.rdf`. All three were correct under the
+> Direct Semantics (two cases are RDF-Based only, one is OWL 2 Full
+> only), so the check now runs on the DIRECT, DL units, 11 of 23, and
+> the runner prints that count as `ne_refuter_checked`.
+
+## 13. A refutation needs EVERY branch, so a filtered branch list is unsound
+
+In a tableau, a node is refuted when every branch offered at a choice
+point closes. A filter or cap on the LIST of branches therefore makes a
+refutation easier, which is the unsound direction. A cut is sound only
+when the cut branch is counted as open (the rule then offers nothing,
+and the search answers "not refuted").
+
+> 🔴 **2026-10-10 (Lean OWL refuter, ported from F\*).** The ≤-rule
+> offered merges only between successors that are nodes, and dropped
+> pairs with a literal member. The F\* original's comment called this
+> "conservative (fewer merges attempted), never unsound". It is unsound:
+> `a : ≤ 2 dp`, `a dp 1`, `a dp "x"`, `a : ∃dp.xsd:integer`,
+> `a : ∃dp.¬xsd:integer` has a model (the witnesses are `1` and `"x"`),
+> and the refuter refuted it, because the only branch offered merged the
+> two witnesses. The same day a parser that ignored `owl:onDataRange`
+> read `DataMaxCardinality(1 dp xsd:string)` as `≤ 1 dp` and refuted a
+> consistent graph. Both were found by small probes written to break a
+> rule, not by the corpus: the consistency catalogs read
+> `refuter_flips_to_fail=0` throughout. Record:
+> `docs/designissues/2026-09-07-lean-owl-corpus-gap.md` § 15.
+
+## 14. A theorem cited as a licence licenses only what its conclusion states
+
+**Before a cited theorem becomes a work order, read its conclusion and
+its hypotheses in the specification text, and write the quote next to
+the method that relies on it.**
+
+> 🔴 **2026-10-10 (OWL 2 RDF-Based Semantics regime, issue 721).** The
+> task brief said "the OWL 2 RL/RDF rules are sound for the RDF-Based
+> Semantics (OWL 2 Profiles, Theorem PR1)" and "for premise and
+> conclusion that are OWL 2 DL and satisfy the correspondence theorem's
+> conditions, the DL refuter's entailments carry over". Neither citation
+> says that. PR1 is a completeness result for OWL 2 RL ontologies under
+> the DIRECT Semantics; RL soundness for the RDF-Based Semantics is
+> Profiles § 4.3, "a partial axiomatization of the OWL 2 RDF-Based
+> Semantics". Theorem 7.1 concludes that SUBSTITUTE graphs `G1`, `G2`
+> exist for which Direct entailment carries over; § 7.1 works an
+> example where the input pair is Direct-entailed and not
+> RDF-Based-entailed. Carrying the refuter's verdicts over would have
+> counted non-entailments as proved. Caught by reading § 7.2 before
+> writing code; cost, none. Record:
+> `docs/designissues/2026-10-10-owl2-rdf-based-semantics.md` § 4.
+>
+> The same reading found that this tree's OWL 2 RL closure contains
+> three `[ext]` rows that read the informative § 8 comprehension
+> conditions (`caxDwToComplement`, `clsMaxqc1ToComplement`,
+> `minCard1Comprehension`). A closure "sound for OWL 2 RL" is not
+> thereby sound for a semantics whose normative conditions exclude
+> those rows; the RDF-Based regime removes their witness triples.
+
+## 15. The function an issue names is not the phase that costs
+
+**Time every phase inside the function the issue names, and count the
+units each phase works on, before you name a mechanism.**
+
+> 🔴 **2026-10-12 (Lean `owl-consistent`, https://github.com/danbri/factoidal/issues/760).**
+> The issue said "the cost is in the tableau refuter
+> (`OWL.Refute.tableauConsistent` on the closure)", measured by subtracting
+> the closure time from the command time, and its work order was to count
+> expansion steps, branches and nodes. The counters
+> (`l4refute-profile`, `formal/lean4/Harness/RefuteProfile.lean`) showed a
+> search of TWO steps with NO branch point on both ontologies.
+>
+> * Cell Ontology, first 20,000 lines: 101.9 s of 104.3 s was the
+>   class-size counting rung (`CountingOracle.classSizeUnsat`), which
+>   `tableauConsistent` runs BEFORE the search. It built a linear system by
+>   scanning the graph once per IRI, and the system had no equality row, so
+>   it could only answer `false`. After a proved short cut: 3.9 ms.
+> * RO, first 4,000 lines: the search was the cost, but not through steps
+>   or branches. Every range axiom `⊤ ⊑ ∀p.C` was a label on every node:
+>   342,869 labels on 923 nodes, because the OWL 2 RL closure has 8,246
+>   `rdfs:range` triples. After range absorption (the label only where the
+>   node has a `p`-edge): 8 labels on the largest node, 0.57 s for the
+>   command instead of 28.1 s.
+>
+> Both ontologies now finish (Cell Ontology 13.3 s, RO 9.9 s CPU; record:
+> `docs/designissues/2026-10-10-owl-real-ontologies.md` § 9). Steps and
+> branches, the quantities the issue asked for, were constant across every
+> prefix: they could not have explained a cost that grew 5 to 27 times per
+> doubling.
+
+Rules that follow.
+
+- **A component boundary is not a phase boundary.** "Command minus
+  closure" located the cost in a function; it did not say which part of
+  that function. Profile inside it, phase by phase.
+- **Count the units each phase iterates over, and watch which count grows.**
+  A per-pass cost of nodes × labels is fixed by the label COUNT, and a rule
+  that writes one label per node per axiom makes that count the product of
+  two input sizes. The step count can stay at 2 while the work grows
+  quadratically.
+- **A check that must answer the same for a whole class of inputs should
+  answer before it does the work, and the short cut should be proved equal
+  to the full check.** `classSizeUnsat_eq_ref` is that proof; without it the
+  short cut would be a guess about the eliminator.
+## 16. A prefix of a sorted file is not a sample of the file
+
+**A size ladder made of prefixes of one file changes the content with the
+size. Before reading a growth factor from it as a growth rate, count the
+input feature the cost depends on at each rung.**
+
+> 🔴 **2026-10-10 (Lean OWL species check, issue 766).** The issue read "34
+> times longer from 32,000 to 65,000 lines" of the sorted QUDT N-Triples.
+> The rungs were prefixes of `sort -u` output. The cost was the
+> anonymous-individual check, one scan of the graph per blank node in an
+> object property assertion, and those blank nodes are not spread through a
+> sorted file: 1 in the first 32,000 lines, 1,308 in the first 65,000, 4,860
+> in the whole. The factor 34 measured that change of content, not the
+> exponent (the algorithm was quadratic: blank nodes times triples). The
+> repair was the same, but a reader of the factor as a rate (34 per
+> doubling) would have expected the whole file, two doublings above 32,000
+> lines, to take about 1,200 times longer; it took 280 times (0.91 s and
+> 253.4 s of CPU time). Found 2026-10-13 by counting the vertices per rung
+> (`docs/designissues/2026-10-10-owl-real-ontologies.md` § 10.2).
+
+Use a generated input whose units are all alike for the n, 2n, 4n assertion
+(`tests/stack/lean_scaling.py` row `owl-species`), and report a real file's
+rungs together with the count of the feature that drives the cost.
+
+## 17. Count emitted against new, per round and per row, before writing a delta term
+
+**Before a semi-naive form, print for every round the input size, the delta,
+the conclusions emitted, the new triples and the time; and for every row in
+every round its emitted conclusions, how many are new, and its time. Build
+the state the rows share once per round, print every row (also those that
+emit nothing), and check that the row times add up to about the round time.**
+
+> 🔴 **2026-10-13 (Lean OWL 2 RL closure, https://github.com/danbri/factoidal/issues/756
+> item 2).** The naive indexed closure of RO took 6 rounds; rounds 4 to 6
+> emitted 1.27 million conclusions to add 1,176 triples. A first semi-naive
+> form, with delta terms for the rows whose premises come from one lookup,
+> took RO only from 10.5 s to 8.0 s of CPU time. The per-row profile of the
+> semi-naive rounds named the cause: prp-spo2 was 7.0 s of the 8. It is not
+> a redundant-derivation cost: at each `owl:propertyChainAxiom` it walks
+> every subject of the graph (172 chain axioms times 42,736 triples per
+> round), and it emitted 26,600 conclusions in all. A delta term that
+> evaluates the row at an old chain axiom only when the delta holds an edge
+> on one of its chain properties took RO to 2.9 s (deltas of rounds 3 to 5
+> hold no such edge). The instrument had two defects first: it built the
+> rows' store (a list conversion of the whole input) once per ROW, 74 times
+> per round, and charged that to every row; and it printed only rows that
+> emitted something, so cls-int1 on RO (0 conclusions, 0.30 s) was absent
+> from the per-round family sums (the cls family read 88 ms where its rows'
+> totals were 388 ms). Record:
+> `docs/designissues/2026-10-10-owl-real-ontologies.md` § 11; harness
+> `formal/lean4/Harness/OwlRlProfile.lean` (`l4owl-rl-profile`).
+
+Rules that follow.
+
+- **Emitted divided by new is the redundancy a delta term can remove.** A
+  row with a high ratio (eq-rep-s on the Cell Ontology: 730,016 emitted, 0
+  new, in 6 naive rounds) is what semi-naive evaluation is for.
+- **Time divided by emitted finds the other cost.** A row that is slow and
+  emits little iterates the graph per driving triple (prp-spo2, cls-int1).
+  A delta term over its premises does not remove the iteration; a test that
+  the delta cannot change the row's output at that driving triple does.
+- **Measure the round's floor.** With a delta of 4 triples, the Cell
+  Ontology's last semi-naive round still took about 0.47 s: the iteration
+  over 163,444 old driving triples and the rows evaluated in full. A
+  dispatch on the driving triple's predicate (one hash lookup in place of a
+  test per row) took the round from about 0.88 s to 0.49 s.
+- **Time the test of a delta term, not only what it saves.** A test that
+  skips scm-svf1/2, scm-avf1/2 and scm-hv at an old driving triple when the
+  delta holds no triple on their predicates was proved correct and made the
+  Cell Ontology's closure SLOWER (2026-10-13: round 3 took 2.5 s against
+  0.5 s without it; scm-svf1 8.25 s over the run). The test
+  `(sD.withPred p).isEmpty` built the delta's whole `rdfs:subClassOf` list,
+  tens of thousands of triples, once per old `owl:someValuesFrom` triple. The
+  five rows went back to full evaluation; the proof stays, unused, until the
+  store can answer emptiness without building the list.
+
+## The standing discipline
+
+1. State the acceptance criterion **as a number**, before the work.
+2. Measure the phase you intend to change, not the wall clock around it.
+3. Measure on real vocabularies, not only synthetic shapes.
+4. Verify output identity byte-for-byte.
+5. Re-run the vacuity checker; a change with no vacuity movement and no
+   score movement may have changed nothing.
+6. Before landing a rule row, run the `--dl` cost gate of section 10
+   and read peak resident memory, not only the score. Check that every
+   budget on the path counts work rather than inputs (section 11).
+7. Let the number rewrite the plan. It did, twice, on 2026-07-31 —
+   `docs/designissues/2026-07-31-rdfs-performance-scalability.md` §0.5 is
+   the reprioritisation that measurement forced.
+
+**A measured 15% is a useful result. A claimed 5× that does not survive
+re-measurement is worse than nothing.**
+
+## Related
+
+* `skills/perf-benchmarking/SKILL.md` — timing harnesses, baselines,
+  profiling policy generally.
+* `skills/test-suites/SKILL.md` — suites and score-reporting discipline.
+* `docs/designissues/2026-07-31-rdfs-performance-scalability.md` — the
+  live plan, its measurements, and what measurement ruled out.
+* `tools/negative-test-vacuity.py` — the vacuity checker.
+* `tools/owl-real-bench.py` and
+  `docs/designissues/2026-10-10-owl-real-ontologies.md` — OWL RL closure, DL
+  consistency and DL entailment on ten real ontologies (section 2's rule
+  applied to the DL regime), with time, memory and the open issues; § 9 is
+  the phase profile of section 15.
+* `formal/lean4/Harness/RefuteProfile.lean` (`l4refute-profile FILE.nt
+  [--trace] [--check] [--goal CONCL.nt]`) — the refuter's phases, steps,
+  branch points and label counts on the OWL 2 RL closure of one file, or on
+  the refutation `owl-entails` runs for a conclusion.
+* `formal/fstar/RDF.Semantics.HypothesisWitness.fst` — theorem-vacuity
+  witnesses.

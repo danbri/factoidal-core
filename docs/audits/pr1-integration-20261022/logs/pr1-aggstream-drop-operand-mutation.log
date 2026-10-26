@@ -1,0 +1,21 @@
+L4Factoidal/SPARQL/AggStream.lean:110:33: warning: Variable name `s` is not explicitly referenced.
+
+Hint: The binding can be removed (if unused) or named `_` (if used implicitly). Alternatively, prefix the name with `_` to silence this warning:
+  [apply] _s
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+L4Factoidal/SPARQL/AggStream.lean:253:6: error: omega could not prove the goal:
+No usable constraints found. You may need to unfold definitions so `omega` can see linear arithmetic facts about `Nat` and `Int`, which may also involve multiplication, division, and modular remainder by constants.
+L4Factoidal/SPARQL/AggStream.lean:251:33: warning: This simp argument is unused:
+  Summary.of_v
+
+Hint: Omit it from the simp argument list.
+  [apply] simp only [AggAcc.stepNum, ih, List.length_cons]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+'L4Factoidal.SPARQL.AggStream.evalAggregate_stream' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.evalAggregate_star' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.evalSelectItemsGroup_pre' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.selectPost_grouped' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.selectPost_aggPlan' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.varView_ne_error' depends on axioms: [propext, Classical.choice, Quot.sound]

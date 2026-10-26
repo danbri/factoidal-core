@@ -1,0 +1,400 @@
+const fs = require("fs");
+const path = require("path");
+const { execSync } = require("child_process");
+
+// Site is served under GitHub Pages at /factoidal/ — kept as one
+// constant so it's never hand-duplicated between the Eleventy config
+// (pathPrefix) and the offline-support precache-URL builder below.
+const PATH_PREFIX = "/factoidal/";
+
+// Stamp a fresh build version on every build so the ServiceWorker's
+// cache name (docs/sw.js: `factoidal-hub-` + BUILD_VERSION) changes on
+// every deploy. That's the load-bearing bit of the offline-support
+// anti-stale-lock design (issue #69): a new cache name means the old
+// one gets purged in the SW's `activate` handler, so users can never
+// get pinned to a stale js/npm bundle. Falls back to a timestamp if
+// git isn't available (e.g. a tarball checkout with no .git).
+function computeBuildVersion() {
+  try {
+    return execSync("git rev-parse --short=12 HEAD", { cwd: __dirname })
+      .toString()
+      .trim();
+  } catch (err) {
+    return "ts" + Date.now();
+  }
+}
+const BUILD_VERSION = computeBuildVersion();
+
+module.exports = function(eleventyConfig) {
+  // Pass-through copy: F*-extracted browser artifacts (js_of_ocaml + wasm_of_ocaml).
+  // fstar-extracted/ holds w3c-runner.js (pure JS) and the wasm_of_ocaml loader
+  // w3c-runner.wasm.js plus its companion assets directory. Keep directory layout
+  // intact so the loader's fetch("./w3c-runner.wasm.assets/code-*.wasm") resolves.
+  eleventyConfig.addPassthroughCopy("fstar-extracted");
+  // Any wasm demo HTML that lives under fstar-extracted/ will come along for the
+  // ride because of the directory pass-through above.
+
+  // Pass-through the browser files of the npm package @factoidal/core
+  // (npm/factoidal/, the Lean 4 engine only since 0.9.0, issue 713) to
+  // /npm/factoidal/, so the hub (docs/_includes/hub.njk) imports the
+  // package's own browser.js same-origin, with no npm install and no CDN
+  // (issue 726). The source is the package directory itself: one copy in
+  // git, the files `npm publish` ships. l4-assets/ holds the wasm, which
+  // `tools/fetch-builds.sh --set web` or formal/lean4/Wasm/build-wasm.sh
+  // installs (gitignored). Until 0.9.0 this was a pass-through of a
+  // generated mirror, docs/npm/, which carried the F* bundles; that
+  // mirror is no longer read, and a directory there would write the same
+  // output paths as these entries.
+  for (const rel of [
+    "browser.js", "api.mjs", "rdfjs.mjs",
+    "lib", "l4-assets", "store-host", "store-http",
+  ]) {
+    eleventyConfig.addPassthroughCopy({ [`../npm/factoidal/${rel}`]: `npm/factoidal/${rel}` });
+  }
+
+  // Pass-through the vendored Observable browser bundles
+  // (third_party/observable/dist/, esbuild-bundled self-contained ESM —
+  // see its README.md) so the documentation hub can load them
+  // same-origin from Pages at /vendor/observable/*.esm.js. The source
+  // of truth stays under third_party/ (one copy, license-documented);
+  // this passthrough is the only thing that puts bytes under docs/.
+  eleventyConfig.addPassthroughCopy({ "../third_party/observable/dist": "vendor/observable" });
+
+  // Pass-through the vendored Leaflet library (third_party/leaflet/ --
+  // leaflet.js + leaflet.css, BSD-2-Clause, see its PROVENANCE.md) so
+  // the GeoSPARQL hub post's live map cell can load it same-origin from
+  // Pages at /vendor/leaflet/*, no CDN. Same pattern as the Observable
+  // passthrough above.
+  eleventyConfig.addPassthroughCopy({ "../third_party/leaflet": "vendor/leaflet" });
+
+  // Pass-through the vendored vector basemap (task #105) -- the
+  // London-borough + Thames GeoJSON the GeoSPARQL hub post's map cell
+  // fetches same-origin (see docs/web/hub/assets/geo/PROVENANCE.md for
+  // source/licence). Kept alongside the post that uses it rather than
+  // under third_party/, since it's project-derived (clipped,
+  // simplified, re-keyed) rather than an unmodified vendored file.
+  eleventyConfig.addPassthroughCopy("web/hub/assets/geo");
+
+  // Pass-through the vendored Valis vocabulary and example circuits
+  // (third_party/valis/ -- MIT, see its PROVENANCE.md) so hub post 55's
+  // live cells can fetch them same-origin. Same pattern as the Leaflet
+  // passthrough above: one copy of the bytes stays under third_party/,
+  // this passthrough is the only thing that puts them under docs/.
+  eleventyConfig.addPassthroughCopy({ "../third_party/valis": "web/hub/assets/valis" });
+
+  // Pass-through the vendored wikifn-fstar compiled engine (hub post
+  // 35's fn.loadWikifunctions target; provenance + licence in
+  // docs/web/hub/assets/wikifn/README.md).
+  eleventyConfig.addPassthroughCopy("web/hub/assets/wikifn");
+
+  // Pass-through the Lean 4 engine compiled to WebAssembly (hub post
+  // 36's fn.loadL4 target; built by formal/lean4/Wasm/build-wasm.sh).
+  // All three files must ship together and keep their names: the
+  // Emscripten glue resolves l4factoidal.wasm from its OWN basename,
+  // so renaming either one breaks loading in every runtime.
+  eleventyConfig.addPassthroughCopy("web/hub/assets/l4");
+
+  // Pass-through the Valis DAW engine modules (hub post 55: compiler,
+  // DSP, AudioWorklet processor, audio host, sequencer -- the owner's
+  // clean-room JavaScript reimplementation of the Valis engine, see
+  // docs/web/hub/assets/valis-daw/README.md and
+  // third_party/valis/PROVENANCE.md). Same-origin so the page's
+  // script-src 'self' CSP can addModule() the worklet file directly.
+  eleventyConfig.addPassthroughCopy("web/hub/assets/valis-daw");
+
+  // Pass-through the COTTAS demo corpus (hub post 42's fixture: a
+  // 4,000-triple, four-graph TriG corpus, and the generator script
+  // that produced it -- docs/web/hub/assets/data/gen-cottas-corpus.mjs).
+  eleventyConfig.addPassthroughCopy("web/hub/assets/data");
+
+  // Small checked block artifacts used by the browser-inspection notebook.
+  // Larger generated corpora belong outside this source repository.
+  eleventyConfig.addPassthroughCopy("web/hub/assets/blocks");
+
+  // Reusable, dependency-free custom elements for rendering SELECT, ASK,
+  // graph and error results in Hub notebooks.  Kept as a normal module asset
+  // so it can also be reused by non-notebook documentation pages.
+  eleventyConfig.addPassthroughCopy("web/hub/assets/sparql-result-elements.mjs");
+  // The demonstration maths wrappers posts 28 and 34 call (not in the npm
+  // package since 0.10.0; docs/web/hub/assets/demo-maths.mjs).
+  eleventyConfig.addPassthroughCopy("web/hub/assets/demo-maths.mjs");
+
+  // The store-over-HTTP host of @factoidal/core (hub post 54's
+  // fn.openStoreOverHttp target) reaches /npm/factoidal/store-http/
+  // through the package pass-through above. One source per output path:
+  // Eleventy 3 refuses a build where two pass-throughs write the same
+  // file ("Multiple passthrough copy files are trying to write to the
+  // same output file", deploy-pages run 3945 on the 0.8.0 merge).
+
+  // Pass-through the sample Shardborough store the package ships (13
+  // predicate blocks of IPTC NewsCodes SKOS, CC BY 4.0 -- provenance in
+  // npm/factoidal/test/fixtures/sample-store.mjs and NOTICE). Post 54 opens it as an
+  // ordinary object store over HTTP, so the notebook's default target is
+  // same-origin and works under the strict page's connect-src 'self'.
+  // Again one copy in git, under npm/, where its tests read it.
+  eleventyConfig.addPassthroughCopy({
+    "../npm/factoidal/test/fixtures/sample-store": "web/hub/assets/store/sample"
+  });
+  // The live twin (hub-live/) resolves the same relative path from its own
+  // directory, so it needs its own copy; without it the twin's sample
+  // target answered 404 (found on the deployed site, 2026-09-07).
+  eleventyConfig.addPassthroughCopy({
+    "../npm/factoidal/test/fixtures/sample-store": "web/hub-live/assets/store/sample"
+  });
+
+  // Pass-through the project-owned reactive-cell compiler
+  // (docs/web/hub/reactive-cells.mjs) to /vendor/hub/reactive-cells.mjs
+  // so hub.njk can import it same-origin (no CDN). .mjs isn't an
+  // Eleventy template format, so without this passthrough the file would
+  // be dropped from _site. The SAME file is imported by the Node pinning
+  // harness (tests/hub/_helpers.mjs) directly from its source path, so
+  // the browser and the tests share one dependency-inference implementation.
+  eleventyConfig.addPassthroughCopy({ "web/hub/reactive-cells.mjs": "vendor/hub/reactive-cells.mjs" });
+
+  // Pass-through the test-results directory so the machine-readable CSV/JSON
+  // artifacts and the history/ subdirectory land on GitHub Pages alongside
+  // index.html. Without this, /factoidal/test-results/latest.csv 404s even
+  // though the file exists in the repo — Eleventy was processing index.html
+  // but dropping sibling CSV/JSON.
+  eleventyConfig.addPassthroughCopy("test-results");
+
+  // Pass-through the offline-support ServiceWorker (issue #69). The
+  // source file ships with literal `__BUILD_VERSION__` /
+  // `__PRECACHE_URLS__` placeholder tokens; the `eleventy.after` hook
+  // below rewrites the copy that lands in _site/sw.js once the rest of
+  // the build (and therefore the real asset paths it precaches) exists.
+  eleventyConfig.addPassthroughCopy("sw.js");
+
+  // Live proof/evidence design note runner. Kept as a real module file
+  // rather than inline Markdown so the script is not entity-escaped by
+  // the Markdown renderer.
+  eleventyConfig.addPassthroughCopy("designissues/proof-evidence-runner.js");
+
+  // Expose the build version to templates (base.njk uses it to
+  // cache-bust the SW registration URL) so it's computed exactly once
+  // per build, in one place, shared with the sw.js stamping below.
+  eleventyConfig.addGlobalData("buildVersion", BUILD_VERSION);
+
+  // The numbered historical hub posts (web/historical-fstar-notebooks/NN-*.md),
+  // moved from web/hub/ on 2026-10-20, excluding their index
+  // and its README, as a collection -- the "least duplication"
+  // mechanism task #105 asked for: web/hub-live.11ty.js paginates over
+  // this collection to auto-generate one relaxed-CSP "live mode" twin
+  // per post at /web/hub-live/<slug>/, reusing each post's already-
+  // rendered `templateContent` rather than re-authoring or copying any
+  // post's markdown. Matched on the input path's basename (`NN-slug`)
+  // rather than front matter, so a post never needs to opt in by hand.
+  eleventyConfig.addCollection("hubPosts", (collectionApi) =>
+    collectionApi
+      .getFilteredByGlob("web/historical-fstar-notebooks/*.md")
+      .filter((item) => /\/web\/historical-fstar-notebooks\/\d+-[^/]+\.md$/.test(item.inputPath))
+  );
+
+  // HDT hub post (web/hub/24-...) fetches the in-repo RML-Core ontology
+  // HDT fixture as raw bytes and runs SPARQL over it via
+  // runFactoidalCli --data-hdt. The single source of truth stays under
+  // third_party/testing/hdt/ (vendored, license-documented); this
+  // passthrough is the only thing that puts the .hdt bytes under docs/,
+  // served alongside the post so a page-relative fetch("../rml-core-
+  // ontology.hdt") resolves regardless of pathPrefix.
+  eleventyConfig.addPassthroughCopy({
+    "../third_party/testing/hdt/rml-core-ontology.hdt":
+      "web/historical-fstar-notebooks/rml-core-ontology.hdt",
+  });
+
+  // The historical notebooks (docs/web/historical-fstar-notebooks/, the
+  // hub posts before 2026-10-20, kept unchanged) refer to their assets
+  // as ../assets/...; the directory sits at the same depth as web/hub/,
+  // so a second copy of web/hub/assets/ beside it keeps those relative
+  // URLs working without editing the posts.
+  // The scoreboard records the hub index's standards table is built from
+  // (docs/_data/hubStandards.js); each row of the table links to them.
+  eleventyConfig.addPassthroughCopy("web/hub/records");
+
+  eleventyConfig.addPassthroughCopy({ "web/hub/assets": "web/historical-fstar-notebooks/assets" });
+  eleventyConfig.addPassthroughCopy({ "../third_party/valis": "web/historical-fstar-notebooks/assets/valis" });
+  eleventyConfig.addPassthroughCopy({
+    "../npm/factoidal/test/fixtures/sample-store": "web/historical-fstar-notebooks/assets/store/sample"
+  });
+
+  // F* module dep-graph demo (web/demos/dep-graph/index.html) fetches
+  // modules.json + namespaces.json. JSON isn't an Eleventy template
+  // format so it isn't emitted by default. We also ship the static
+  // Graphviz/Mermaid/PNG/SVG/TXT renders alongside for embedding in
+  // design docs and offline viewing.
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/modules.json");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/namespaces.json");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/terms.json");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/terms.dot");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/terms.svg");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/terms.png");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/modules.dot");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/modules.mmd");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/modules.png");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/modules.svg");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/modules.txt");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/namespaces.dot");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/namespaces.mmd");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/namespaces.png");
+  eleventyConfig.addPassthroughCopy("web/demos/dep-graph/namespaces.svg");
+
+  // Rewrite cross-refs to .md files inside the rendered HTML so they point
+  // at the .md-less URL Eleventy actually emits. Two shape fixes:
+  //
+  // (1) Strip `.md` extension, add trailing `/`.
+  // (2) Prepend `../` — Eleventy's default pretty-URL output places each
+  //     page at `dir/page.md` → `_site/dir/page/index.html`, so a sibling
+  //     reference `sibling.md` from the new location resolves as a CHILD
+  //     of `page/`, not a sibling of `page/` on disk. Prepending `../`
+  //     restores sibling semantics.
+  //
+  // Link sources use bare .md links because they're also readable on
+  // GitHub directly; Eleventy's default doesn't rewrite them. Caught
+  // 40+ broken links via tests/local/check_pages_links.sh.
+  eleventyConfig.addTransform("mdlink-to-slug", function(content, outputPath) {
+    if (!outputPath || !outputPath.endsWith(".html")) return content;
+    return content.replace(
+      /(\bhref=")([^"#?]*)\.md(#[^"]*)?"/g,
+      (_m, prefix, path, frag) => {
+        if (/^(https?:|mailto:|ftp:|data:|\/)/.test(path)) return _m;
+        // `./sibling.md` or `sibling.md` → `../sibling/`
+        // `../other-dir/page.md` → `../../other-dir/page/`
+        let clean = path.replace(/^\.\//, "");
+        return `${prefix}../${clean}/${frag || ""}"`;
+      }
+    );
+  });
+
+  // Deep-linkable notebook sections: give every heading a stable slug
+  // `id` and a subtle permalink, so any hub section can be shared by URL
+  // (`…/post/#the-section`). No plugin dependency — a small markdown-it
+  // core rule (this site is no-CDN / offline, and markdown-it-anchor
+  // isn't vendored). Slugs are de-duplicated within a page.
+  eleventyConfig.amendLibrary("md", (md) => {
+    const slugify = (s) =>
+      (s || "").toLowerCase().trim()
+        .replace(/[^\w\s-]/g, "")
+        .replace(/[\s_]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, "") || "section";
+    md.core.ruler.push("heading_anchors", (state) => {
+      const seen = new Map();
+      const toks = state.tokens;
+      for (let i = 0; i < toks.length; i++) {
+        if (toks[i].type !== "heading_open") continue;
+        const inline = toks[i + 1];
+        if (!inline || inline.type !== "inline") continue;
+        let slug = slugify(inline.content);
+        const n = seen.get(slug) || 0;
+        seen.set(slug, n + 1);
+        if (n > 0) slug = `${slug}-${n}`;
+        toks[i].attrSet("id", slug);
+        const link = new state.Token("html_inline", "", 0);
+        link.content =
+          `<a class="heading-anchor" href="#${slug}"` +
+          ` aria-label="Permalink to this section"` +
+          ` style="margin-left:.4em;opacity:.3;text-decoration:none;font-weight:normal">#</a>`;
+        inline.children.push(link);
+      }
+    });
+  });
+
+  // Fence flags for observable-js cells
+  // (https://github.com/danbri/factoidal/issues/686). A fence line may
+  // carry flags after the language:
+  //   ```observable-js closed title="Library: circuit helpers"
+  // docs/web/hub/reactive-cells.mjs's parseCellFlags() is what actually
+  // reads these; this rule only has to carry the raw text through onto
+  // the rendered <code> element so docs/_includes/hub.njk's mountCell()
+  // can read it back client-side. It wraps whatever fence renderer is
+  // already registered (markdown-it's own built-in one) instead of
+  // replacing it, so any other fence behavior stays intact, and it
+  // never touches token.info's first word -- markdown-it's own fence
+  // renderer already takes only that first word for the `class`
+  // attribute, so `class="language-observable-js"` is unaffected either
+  // way and every existing `pre > code.language-observable-js` selector
+  // keeps matching.
+  eleventyConfig.amendLibrary("md", (md) => {
+    const defaultFence = md.renderer.rules.fence || md.renderer.renderToken.bind(md.renderer);
+    md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+      const token = tokens[idx];
+      const info = token.info ? md.utils.unescapeAll(token.info).trim() : "";
+      const m = /^observable-js(?:\s+(.*))?$/.exec(info);
+      const rest = m && m[1] ? m[1].trim() : "";
+      if (rest) token.attrSet("data-hub-cell-flags", rest);
+      return defaultFence(tokens, idx, options, env, self);
+    };
+  });
+
+  // Stamp docs/sw.js (already landed in _site/sw.js by the passthrough
+  // copy above) with the real BUILD_VERSION and a precache URL list
+  // built from what this build actually emitted — never a guessed or
+  // hand-maintained filename list. Runs once after the full build (and
+  // once per rebuild under --serve/--watch), so it always sees the
+  // finished _site tree.
+  eleventyConfig.on("eleventy.after", ({ dir }) => {
+    const outputDir = path.resolve(__dirname, dir.output);
+    const swPath = path.join(outputDir, "sw.js");
+    if (!fs.existsSync(swPath)) return; // sw.js wasn't part of this build (e.g. a filtered rebuild)
+
+    // Candidates are (outputDir-relative path, is this the pretty-URL
+    // shell for a directory?) pairs. Only ones that actually exist in
+    // this build's _site are kept, so a rename anywhere in this list
+    // can never produce a precache entry that 404s.
+    const candidates = [
+      "index.html", // site home — also doubles as the SW's offline fallback shell
+      "web/hub/index.html", // hub landing page
+      "vendor/observable/runtime.esm.js",
+      "vendor/observable/inspector.esm.js",
+      "vendor/observable/d3.esm.js",
+      "vendor/observable/plot.esm.js",
+      "vendor/observable/stdlib.esm.js",
+      "vendor/hub/reactive-cells.mjs",
+      // The hub's engine (hub.njk): @factoidal/core's browser entry, the
+      // modules it imports, and the Lean wasm's two loaders. The wasm
+      // itself (about 10 MB) is not precached: docs/sw.js keeps large
+      // wasm out of the install step and warms it from the first use.
+      "npm/factoidal/browser.js",
+      "npm/factoidal/rdfjs.mjs",
+      "npm/factoidal/lib/api.mjs",
+      "npm/factoidal/lib/lean-entry.mjs",
+      "npm/factoidal/lib/browser-engine.mjs",
+      "npm/factoidal/lib/store.mjs",
+      "npm/factoidal/lib/version.mjs",
+      "npm/factoidal/store-host/paths.mjs",
+      "npm/factoidal/store-host/errors.mjs",
+      "npm/factoidal/l4-assets/l4factoidal.js",
+      "npm/factoidal/l4-assets/l4factoidal.mjs",
+    ];
+
+    const precacheUrls = candidates
+      .filter((rel) => fs.existsSync(path.join(outputDir, rel)))
+      .map((rel) => {
+        if (rel.endsWith("/index.html")) return PATH_PREFIX + rel.slice(0, -"index.html".length);
+        if (rel === "index.html") return PATH_PREFIX;
+        return PATH_PREFIX + rel;
+      });
+
+    if (precacheUrls.length === 0) {
+      console.warn("[sw] no precache candidates found under", outputDir, "— shipping an SW with an empty precache list");
+    }
+
+    const swSource = fs.readFileSync(swPath, "utf8");
+    const stamped = swSource
+      .split("__BUILD_VERSION__").join(BUILD_VERSION)
+      .split("__PRECACHE_URLS__").join(JSON.stringify(precacheUrls));
+    fs.writeFileSync(swPath, stamped);
+  });
+
+  return {
+    dir: {
+      input: ".",
+      output: "_site",
+      includes: "_includes",
+      data: "_data"
+    },
+    markdownTemplateEngine: "njk",
+    htmlTemplateEngine: false,
+    pathPrefix: PATH_PREFIX
+  };
+};

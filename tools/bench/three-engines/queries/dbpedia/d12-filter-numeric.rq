@@ -1,0 +1,8 @@
+# FILTER on a numeric literal (xsd:nonNegativeInteger in the data).
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+SELECT ?c ?pop WHERE {
+  ?c dbo:country dbr:Norway .
+  ?c dbo:populationTotal ?pop
+  FILTER(?pop > 20000)
+}

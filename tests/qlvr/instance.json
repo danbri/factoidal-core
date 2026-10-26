@@ -1,0 +1,294 @@
+{
+ "issue": "https://github.com/danbri/factoidal/issues/778",
+ "image": "docker.io/adfreiburg/qlever@sha256:b2087ec92254f0ee2fca68d4c886c538f492c7740885cee9c98ada219d90c810",
+ "qlever_commit": "ceace86e093c434fa6ed14c6d5a1fde6f84c1d06",
+ "qlever_control_version": "0.6.0",
+ "index_format_version": {
+  "date": "2026-09-26",
+  "pull-request-number": 3470
+ },
+ "dataset": {
+  "name": "olympics",
+  "repository": "https://github.com/wallscope/olympics-rdf",
+  "commit": "54483d539082641d48e1d49873662b3af628ca4d",
+  "url": "https://github.com/wallscope/olympics-rdf/raw/54483d539082641d48e1d49873662b3af628ca4d/data/olympics-nt-nodup.zip",
+  "zip_sha256": "758dbc09029a303514c3fa70fa9f725f412d24e9db000a65a1d30569e74bd41f",
+  "ntriples_file": "olympics.nt",
+  "ntriples_sha256": "44e15095a3a9beefe09c512882a08d9b7aa82bba5e48fa22bfbfb361dde01ce0",
+  "ntriples_bytes": 337695911,
+  "licence": "The RDF repository has no licence file. The RDF is derived from the Kaggle dataset '120 years of Olympic history: athletes and results' (https://www.kaggle.com/datasets/heesoo37/120-years-of-olympic-history-athletes-and-results), whose page states 'CC0: Public Domain' (read 2026-10-11)."
+ },
+ "triples": {
+  "normal": 1781625,
+  "internal": 680749
+ },
+ "meta_data_json": {
+  "date-of-index-build": "2026-10-11T17:23:51Z",
+  "encoded-iri-prefixes": {
+   "prefixes-with-leading-angle-brackets": [
+    "<http://qlever.cs.uni-freiburg.de/builtin-functions/graph/"
+   ]
+  },
+  "geo-point-encoding": "z-order",
+  "git-hash": "ceace86",
+  "graphNameManager": {
+   "allocatedGraphs": 1,
+   "prefix": "http://qlever.cs.uni-freiburg.de/builtin-functions/graph/"
+  },
+  "has-all-permutations": true,
+  "has-icu-support": true,
+  "index-format-version": {
+   "date": "2026-09-26",
+   "pull-request-number": 3470
+  },
+  "index-rows-per-block": 31250,
+  "locale": {
+   "country": "US",
+   "ignore-punctuation": false,
+   "language": "en"
+  },
+  "num-blank-nodes-total": 0,
+  "num-objects": {
+   "internal": 0,
+   "normal": 274300
+  },
+  "num-predicates": {
+   "internal": 3,
+   "normal": 16
+  },
+  "num-subjects": {
+   "internal": 0,
+   "normal": 406700
+  },
+  "num-triples": {
+   "internal": 680749,
+   "normal": 1781625
+  },
+  "vocabulary-type": "on-disk-compressed"
+ },
+ "index_files": [
+  {
+   "name": "olympics.index.ops",
+   "bytes": 3544121,
+   "sha256": "0a1b4206b190dd897e0b7aef55f2e542ce58e0d5787b8053fe723dd31e06e387"
+  },
+  {
+   "name": "olympics.index.ops.meta",
+   "bytes": 128,
+   "sha256": "f5a8c45e7faab01d66710bae781120bbf9f50cb7e5b066c3ea6f3aa3f5ea9c28"
+  },
+  {
+   "name": "olympics.index.osp",
+   "bytes": 3544527,
+   "sha256": "5b37d167618c21bcbe9b9c6095cbb9fca80904eb9a7432d0ac26edc7217ed4d2"
+  },
+  {
+   "name": "olympics.index.osp.meta",
+   "bytes": 128,
+   "sha256": "8eba68583b21805b3b122c96ed4e1ae5d93021a48ddacf7926d61ac1eeaa54c2"
+  },
+  {
+   "name": "olympics.index.patterns",
+   "bytes": 672,
+   "sha256": "0a70677ec1c836a410d45f1b79e5cd088da1a39fd9653807a2d53a7e7499b281"
+  },
+  {
+   "name": "olympics.index.pos",
+   "bytes": 3483038,
+   "sha256": "f5568bbb08e422f356824ba814ee17667b28bb86b31399b9adf6cd58af751357"
+  },
+  {
+   "name": "olympics.index.pos.meta",
+   "bytes": 384,
+   "sha256": "f52af6a75d6f612d11e520a421bcb65509ee37cd45aac6fd0fe4afba3055d464"
+  },
+  {
+   "name": "olympics.index.pso",
+   "bytes": 3306536,
+   "sha256": "9804c15642deb8438e7fb4136553f65f58a610ba38df6ccecfa68b82147721de"
+  },
+  {
+   "name": "olympics.index.pso.meta",
+   "bytes": 384,
+   "sha256": "55a20f01419c3d59324528641304053aba0bc300af18c0dde6374b8e0414f1f6"
+  },
+  {
+   "name": "olympics.index.sop",
+   "bytes": 3284034,
+   "sha256": "6e61b0e61bf8f31834a21fb6991a9275cc5d4d85cdcddbc0445e4bc2bb29f5fd"
+  },
+  {
+   "name": "olympics.index.sop.meta",
+   "bytes": 32,
+   "sha256": "72345d3e4997db59879d91729b1bfde8efc675f862cca24f6c12e7fb5ac0fb30"
+  },
+  {
+   "name": "olympics.index.spo",
+   "bytes": 3282780,
+   "sha256": "ceba7fcf53114e204a1585051b13cb5d450b85a232148dad0c8bd78910d486ff"
+  },
+  {
+   "name": "olympics.index.spo.meta",
+   "bytes": 32,
+   "sha256": "72345d3e4997db59879d91729b1bfde8efc675f862cca24f6c12e7fb5ac0fb30"
+  },
+  {
+   "name": "olympics.internal.index.pos",
+   "bytes": 912226,
+   "sha256": "b7c2adcd97b93a8bc4e40baa98c5fc80d4cf8ff06f48424aa09e2c49ad198cc7"
+  },
+  {
+   "name": "olympics.internal.index.pos.meta",
+   "bytes": 128,
+   "sha256": "1089ac81f4588ddf77ac6b486c9e0872017988134c75dfde97e99fe37033f059"
+  },
+  {
+   "name": "olympics.internal.index.pso",
+   "bytes": 942675,
+   "sha256": "a53bf6de0db0a4f58ebbcc9fa7baa73b2617e2875d29ea7c437844f5a5763663"
+  },
+  {
+   "name": "olympics.internal.index.pso.meta",
+   "bytes": 128,
+   "sha256": "1d489f6de4bb8d01b4ab9ee677e39d6c764ea5e218965031beca4accab8bbffb"
+  },
+  {
+   "name": "olympics.meta-data.json",
+   "bytes": 807,
+   "sha256": "eaea25eb64349662b420ad373af098a0f6ab347377413413698c54396d7c25bc"
+  },
+  {
+   "name": "olympics.vocabulary.codebooks",
+   "bytes": 4616,
+   "sha256": "510bf0b6e09d11998d2ee2ffa3adb25f8619fd3a426db3cfd4d9f7bcc34679bf"
+  },
+  {
+   "name": "olympics.vocabulary.words.external",
+   "bytes": 11783453,
+   "sha256": "9990fb514cc29454a368465ab1b88d2623e529e827ed2e22c4e6706ee7e8b1bd"
+  },
+  {
+   "name": "olympics.vocabulary.words.external.offsets",
+   "bytes": 4350072,
+   "sha256": "c29677a71621cc17105ce966ed7fb88975527ef464f18b2bd4426da324b18ca1"
+  },
+  {
+   "name": "olympics.vocabulary.words.internal",
+   "bytes": 16525,
+   "sha256": "957e12a6993743b9d0f13cfc3a18b1c59219c90778c1e209214cecb82dabfaf0"
+  },
+  {
+   "name": "olympics.vocabulary.words.internal.ids",
+   "bytes": 4416,
+   "sha256": "48e6e793fd62dfb02d19ca6d8c34ae6e0c9c14e33bbb5d8547d07287eeedd245"
+  }
+ ],
+ "oracle": [
+  {
+   "query": "tests/qlvr/queries/q01-count-all.rq",
+   "rows": 1,
+   "sha256": "b3ff8febdb9fa5d15b8e3e8e15ce6265deb6fcb3b054d5bacecb20ea35b2f306"
+  },
+  {
+   "query": "tests/qlvr/queries/q02-predicate-counts.rq",
+   "rows": 16,
+   "sha256": "3be4e7d2cfaf31165c709eb122c1ef4343562a32d9d44d7c5d0399b0a19720a2"
+  },
+  {
+   "query": "tests/qlvr/queries/q03-scan-bound-predicate-int.rq",
+   "rows": 51,
+   "sha256": "297514f8c6f76a0a1838ff5689832a0603649fc8d42036f756b202be4d294b90"
+  },
+  {
+   "query": "tests/qlvr/queries/q04-subject-lookup.rq",
+   "rows": 5,
+   "sha256": "8794e518dd056e9d4f56288b4804c469e5c2fa74b555d00ee6d9c955cbae3823"
+  },
+  {
+   "query": "tests/qlvr/queries/q05-object-bound-type.rq",
+   "rows": 51,
+   "sha256": "21b4318525cb4354436d0483b441c7ae19b7ef6ef348a039a85328e5abb02bd6"
+  },
+  {
+   "query": "tests/qlvr/queries/q06-join-two.rq",
+   "rows": 52,
+   "sha256": "07fee159e17446b635476e9e8bb9c579794ffcb81fd47bafb61fef3f5ec245ba"
+  },
+  {
+   "query": "tests/qlvr/queries/q07-join-three.rq",
+   "rows": 313,
+   "sha256": "fef630490d309c44a50913d0830185915de665dbe69e47a5bb354293f614ceef"
+  },
+  {
+   "query": "tests/qlvr/queries/q08-filter-lang-literal.rq",
+   "rows": 1,
+   "sha256": "256676995e22c210c4268ae0dd839b88a193367d8084293cc88da2cf5c2403e5"
+  },
+  {
+   "query": "tests/qlvr/queries/q09-bgp-lang-literal.rq",
+   "rows": 1,
+   "sha256": "256676995e22c210c4268ae0dd839b88a193367d8084293cc88da2cf5c2403e5"
+  },
+  {
+   "query": "tests/qlvr/queries/q10-orderby-limit-double.rq",
+   "rows": 10,
+   "sha256": "2554f081b4a7e88e774685928daf6c5a2e2d045e342a847c3224c9a35bf2abeb"
+  },
+  {
+   "query": "tests/qlvr/queries/q11-filter-numeric.rq",
+   "rows": 34,
+   "sha256": "123ea9e21e106bed1739de68f01dbfeafebf73ae77815f3f02902b89d44bb298"
+  },
+  {
+   "query": "tests/qlvr/queries/q12-group-medals.rq",
+   "rows": 3,
+   "sha256": "aa2bf3d746842165afb1e4ec59735c1d93f18f17aba9b09bdf151638b3973369"
+  },
+  {
+   "query": "tests/qlvr/queries/q13-subclass-of.rq",
+   "rows": 10,
+   "sha256": "570f7689bfcd963001a443521ea2560d6a6fdbe3b8e746c284cfe99d80eaed78"
+  },
+  {
+   "query": "tests/qlvr/queries/q14-typed-int-object.rq",
+   "rows": 2,
+   "sha256": "3aadfc404232746fa7b6c3842c1fe27ce8ac2097f4bea2a857aa2078cd7e50f9"
+  },
+  {
+   "query": "tests/qlvr/queries/q15-integer-object-matches-int.rq",
+   "rows": 2,
+   "sha256": "3aadfc404232746fa7b6c3842c1fe27ce8ac2097f4bea2a857aa2078cd7e50f9"
+  },
+  {
+   "query": "tests/qlvr/queries/q16-strstarts.rq",
+   "rows": 5,
+   "sha256": "1e4cecbfb180049009a259d62f1f7d69f488e887f2ed7bb27bc32bc38fc82596"
+  },
+  {
+   "query": "tests/qlvr/queries/q17-noc-team-join.rq",
+   "rows": 1,
+   "sha256": "3585703e0ba7abc5633639501d530adaa6715f9e7d01b635f7484b51aaff6b5a"
+  },
+  {
+   "query": "tests/qlvr/queries/q18-games-by-year-limit.rq",
+   "rows": 5,
+   "sha256": "0ef17401ec2474f1d49f6bffea9bf3fcd2872d73a22bbd01a3caff2e80bf0541"
+  },
+  {
+   "query": "tests/qlvr/queries/q19-scan-bound-predicate-iri.rq",
+   "rows": 39768,
+   "sha256": "aa17b5d5174c35873b334e1bb156d7d63180c5b53083f4fac2615e5aa177e7e6"
+  },
+  {
+   "query": "tests/qlvr/queries/q20-scan-bound-predicate-double.rq",
+   "rows": 100666,
+   "sha256": "0bde5f04dd3a181e474ac69926ad0761711845c4bda492970d699aa3ac4e7976"
+  },
+  {
+   "query": "tests/qlvr/queries/q21-scan-bound-predicate-lang.rq",
+   "rows": 137026,
+   "sha256": "9a80a6c8361ddd535829464eb47304777772775f3219c51b83f3378241cf24fd"
+  }
+ ],
+ "note": "olympics.meta-data.json holds the build date, so its sha256 changes on every rebuild. See docs/designissues/2026-10-11-qlever-index-format.md for which other files are byte-reproducible."
+}

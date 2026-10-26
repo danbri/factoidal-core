@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Three branches with different variables: each row binds its own branch's variables only.
+SELECT * WHERE { { ?x ex:age ?a } UNION { ?x ex:flag ?f } UNION { ?x ex:knows ?k } }

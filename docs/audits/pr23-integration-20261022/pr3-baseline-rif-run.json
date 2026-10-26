@@ -1,0 +1,48 @@
+{
+  "sourceCommit": "eef88c3ac775e8f831ffeaf880f7f1cf5dda5b42",
+  "command": [
+    "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr3/formal/lean4/.lake/build/bin/l4rif",
+    "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/third_party/testing/rif-core-suite/Core_v1.22/Approved",
+    "--verbose"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr3",
+  "binarySha256": "b19a1fafcdb08e865e05ba795b363642d705528219decca19c7f7b7d4c5aa348",
+  "runnerSourceSha256": "fb4fb75dfc73298649888202bd374e6ccd12d31739d5d0d12171156eb69af47a",
+  "elapsedSeconds": 0.40626945812255144,
+  "exitCode": 0,
+  "timedOut": false,
+  "peakChildRssBytesDarwin": 8044544,
+  "counts": {
+    "pass": 45,
+    "fail": 0,
+    "decided": 45,
+    "undecided": 0,
+    "notRead": 0,
+    "localOverride": 1,
+    "skippedImportRejection": 0
+  },
+  "fixtureInventory": "pr3-baseline-rif-inventory.json",
+  "fixtureHashesSha256": "a7803b0ecf23bf627fa32979e68cc18d90503e71fcbffb039a1e93afd4ff265b",
+  "totalCorpusCases": 46,
+  "accountedCases": 46,
+  "overridesSha256": {
+    "tests/local-overrides/rif/RDF_Combination_Constant_Equivalence_4.override": "3a9b5548b0cf6ffa259155e0f2473792aa753f2d8d85f48dcd6306dfebcaa1f3"
+  },
+  "observedFailures": [],
+  "observedUndecided": [],
+  "observedOverrides": [
+    "PositiveEntailmentTest/RDF_Combination_Constant_Equivalence_4: not entailed, and the fixture says it must be"
+  ],
+  "staleOverrides": [],
+  "importRejectionPasses": [
+    "RDF_Combination_Invalid_Profiles_1: two declared import profiles have no defined ordering, so the imports have no highest profile",
+    "RDF_Combination_Invalid_Constant_1: an imported graph carries a rif:iri or rdf:PlainLiteral typed literal, which RIF-RDF Combination does not permit",
+    "Multiple_Context_Error: a constant is used both as a positional-atom predicate and as a frame slot property across the imports closure",
+    "OWL_Combination_Invalid_DL_Import: under OWL-Direct an empty imported graph is not recognisable as an OWL 2 DL ontology",
+    "OWL_Combination_Invalid_DL_Formula: under OWL-Direct a Frame slot property must be a constant, and one is a variable",
+    "RDF_Combination_Invalid_Constant_2: an imported graph carries a rif:iri or rdf:PlainLiteral typed literal, which RIF-RDF Combination does not permit"
+  ],
+  "log": "pr3-baseline-rif-run.log",
+  "logSha256": "d839539b6a97c324ad0bdc70900751c534fa67d1619fb6ebe90041cbe4281482",
+  "note": "Runner returns zero even for failures; inspect counts. Core Approved corpus only; not BLD/PRD or the separate four SPARQL-manifest cases."
+}

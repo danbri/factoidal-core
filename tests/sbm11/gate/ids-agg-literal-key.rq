@@ -1,0 +1,6 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# GROUP BY a literal (dictionary literals are not admitted as keys on ids; the rows
+# are decoded and the reference groups them).
+SELECT ?l (COUNT(*) AS ?n) (MAX(?v) AS ?hi)
+WHERE { ?x ex:label ?l . ?x ex:grp ?g OPTIONAL { ?x ex:score ?v } } GROUP BY ?l ORDER BY ?l

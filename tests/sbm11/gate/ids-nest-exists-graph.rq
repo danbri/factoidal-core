@@ -1,0 +1,3 @@
+PREFIX ex: <http://ex.org/>
+# EXISTS inside GRAPH: the active graph is the named graph.
+SELECT ?s WHERE { GRAPH ex:g1 { ?s ex:knows ?o FILTER EXISTS { ?o ex:knows ?z } } }

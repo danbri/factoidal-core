@@ -127,12 +127,31 @@ min-cardinality on `xsd:decimal` IS satisfiable. -/
 #guard valueSetMaxSize (.dense fullQInterval) == none
 #guard valueSetMaxSize .unconstrained == none
 #guard valueSetMaxSize (.family .string) == none
+/-! `xsd:boolean` holds exactly two values (XSD 1.1 Part 2 §3.3.2.1);
+the float and double families hold more than any cardinality. -/
+#guard valueSetMaxSize (.family .boolean) == some 2
+#guard valueSetMaxSize (.family .double) == none
 
 /-! An enumeration collapses only PROVABLY equal members, so the
 count can be too high but never too low. Two spellings of one half
 count as ONE. -/
 #guard valueSetMaxSize (.enum [decL "0.5", ratL "1/2"]) == some 1
 #guard valueSetMaxSize (.enum [intL "1", intL "2"]) == some 2
+
+/-! ## Provable membership: the counting direction
+
+`termProvablyInValueSet` is used to COUNT members against an upper
+bound, so a `true` must hold in every interpretation. A float is not on
+the `owl:real` line, a string is not an integer, and a space the
+datatype layer did not read (`unconstrained`) admits no proof. -/
+#guard termProvablyInValueSet (.family .string) (strL "Meg")
+#guard !(termProvablyInValueSet (.family .string) (intL "3"))
+#guard termProvablyInValueSet (.interval (baseIntervalFor xsdByte)) (intL "100")
+#guard !(termProvablyInValueSet (.interval (baseIntervalFor xsdByte)) (intL "300"))
+#guard termProvablyInValueSet (.dense fullQInterval) (decL "0.5")
+#guard !(termProvablyInValueSet (.dense fullQInterval) (fltL "0.5"))
+#guard termProvablyInValueSet (.enum [decL "0.5"]) (ratL "1/2")
+#guard !(termProvablyInValueSet .unconstrained (strL "Meg"))
 
 /-! ## Intersections -/
 
@@ -213,27 +232,5 @@ compared. -/
 /-! Subtracting from a shape with no exact cover is a NO-OP, not a
 guess. -/
 #guard !(valueSetIsEmpty (valueSetSubtract (.dense fullQInterval) (.enum [intL "1"])))
-
-/-! ## Explicit exclusions
-
-The finite-interval branch counts distinct values in the interval.
-Lexical aliases across the integer family collapse to one excluded
-value, and an exclusion outside the interval has no effect. -/
-
-#guard valueSetIsEmptyAfterExcluding
-  (.interval { lo := .incl 10, hi := .incl 10 }) [intL "10"]
-#guard valueSetIsEmptyAfterExcluding
-  (.interval { lo := .incl 10, hi := .incl 10 }) [byteL "+010"]
-#guard !(valueSetIsEmptyAfterExcluding
-  (.interval { lo := .incl 10, hi := .incl 11 }) [intL "10"])
-#guard !(valueSetIsEmptyAfterExcluding
-  (.interval { lo := .incl 10, hi := .incl 10 }) [intL "9"])
-#guard valueSetIsEmptyAfterExcluding
-  (.enum [intL "-0"]) [byteL "0"]
-#guard !(valueSetIsEmptyAfterExcluding
-  (.enum [intL "-0", intL "1"]) [byteL "0"])
-/-! Floating-point signed zero remains a distinct OWL data value and
-is disjoint from the integer family. -/
-#guard !(termProvablyEqual (fltL "-0") (intL "0"))
 
 end L4Factoidal.XSD

@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+# GRAPH <i> inside GRAPH ?g: the inner context is the name's, whatever the
+# outer graph.
+SELECT * WHERE { GRAPH ?g { ?x ex:q ?v GRAPH ex:gd { ?a ex:p ?b } } }

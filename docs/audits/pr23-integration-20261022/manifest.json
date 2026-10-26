@@ -1,0 +1,208 @@
+{
+  "scope": "PR2+PR3 reconciled on main dac8e98; before PR1 and latest main integration",
+  "source_commit": "6b2c847e9ad5dc0e44f181bdee690eb6e3fbb53f",
+  "native_baseline_commit": "eef88c3ac775e8f831ffeaf880f7f1cf5dda5b42",
+  "wasm_versions": {
+    "npm/factoidal/l4-assets/version.json": {
+      "engine": "lean4",
+      "note": "The Lean 4 (L4Factoidal) engine build provenance and claims: the only engine of @factoidal/core since 0.9.0 (issue 713). This committed file is a placeholder. tools/fetch-builds.sh --set web (through tools/stamp-l4-version.mjs) writes the provenance members from the danbri/factoidal-builds release that built the wasm; formal/lean4/Wasm/build-wasm.sh step 9 writes them for a local build. Do not commit a stamped copy.",
+      "stamped": true,
+      "claims": {
+        "source": "formal/lean4 (L4Factoidal): no sorry, no user axioms, no native_decide; W3C behaviour pinned by build-time #guard",
+        "suitesAtBuildSha": "see docs/test-results and formal/lean4/PORT_NOTES.md at gitSha"
+      },
+      "version": "0.1.0",
+      "gitSha": "6b2c847e9ad5dc0e44f181bdee690eb6e3fbb53f",
+      "builtAt": "2026-10-22T16:44:22+00:00",
+      "leanToolchain": "leanprover/lean4:v4.33.1",
+      "emscripten": "emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 6.0.8-git",
+      "abiVersion": "1",
+      "wasmSha256": "64ec60e2c52ab0f8c871e2147d553dad1a9326185fb90f282bb1615fbf280fd9",
+      "wasmBytes": 14052465
+    },
+    "npm/factoidal-lean/version.json": {
+      "stamped": true,
+      "version": "0.1.0",
+      "gitSha": "6b2c847e9ad5dc0e44f181bdee690eb6e3fbb53f",
+      "builtAt": "2026-10-22T16:44:22+00:00",
+      "leanToolchain": "leanprover/lean4:v4.33.1",
+      "emscripten": "emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 6.0.8-git",
+      "abiVersion": "1",
+      "wasmSha256": "64ec60e2c52ab0f8c871e2147d553dad1a9326185fb90f282bb1615fbf280fd9",
+      "wasmBytes": 14052465,
+      "claims": {
+        "source": "formal/lean4 (L4Factoidal): no sorry, no user axioms, no native_decide; W3C behaviour pinned by build-time #guard",
+        "suitesAtBuildSha": "see docs/test-results and formal/lean4/PORT_NOTES.md at gitSha"
+      }
+    }
+  },
+  "files": [
+    {
+      "path": "integration-pr23-wasm.log",
+      "sha256": "f1c74060265544be96eb1cce957bf2aac6395bc3a4923130cdfa39b4b3dfc08a",
+      "bytes": 102077
+    },
+    {
+      "path": "integration-pr23-pack.json",
+      "sha256": "289779364ab575309810ed8a36742901ef3ccc155e558c069e9404a43627c4c1",
+      "bytes": 5653
+    },
+    {
+      "path": "integration-pr23-owl-artifact.json",
+      "sha256": "72c166b2c529ddbfa47f78012dffe23a2e56110526c437a59201f36ab3ea54a5",
+      "bytes": 25081
+    },
+    {
+      "path": "integration-pr23-public-tests-direct.log",
+      "sha256": "5c9a0e8cdd77113de37767b84eaf5294bf14b16418a0d0855f900e59dfb6a2af",
+      "bytes": 7008
+    },
+    {
+      "path": "integration-pr23-public-tests.log",
+      "sha256": "3ecdb66b0b12042e870b7974d549cbbd64531818a4e8c780b3824bb53c1eaa29",
+      "bytes": 5041
+    },
+    {
+      "path": "integration-pr23-npm.log",
+      "sha256": "e2d277c7350703c2f0650ba856d035046ec0ad111b0c9064ac341f86a41e83d6",
+      "bytes": 115847
+    },
+    {
+      "path": "integration-pr23-npm.json",
+      "sha256": "090884f2490e129e2acf13dde87c70393168b992d1deccfebc79bc66cb6f33c9",
+      "bytes": 2602
+    },
+    {
+      "path": "integration-pr23-repaired-tests.log",
+      "sha256": "73e3445ad2e1e1574781171d6ed8d1b8a7025e4b001871bf0be5ede4ea7572fe",
+      "bytes": 8419
+    },
+    {
+      "path": "integration-pr23-xmpp-interop.log",
+      "sha256": "7db65c8b99d756ad204afd66bf93611a14207979485b7f56618d558a80946cf2",
+      "bytes": 516
+    },
+    {
+      "path": "integration-xmpp-host.log",
+      "sha256": "0424c366ac80bd4f248a83887dfadad3cb58bf0050b07a85ef2989a46fc1ab6e",
+      "bytes": 2354
+    },
+    {
+      "path": "integration-xmpp-dependencies.json",
+      "sha256": "02bac9471772fbed1d075e183660ebbff66e1a07b0bbecf0880939cfd7be9c3f",
+      "bytes": 53265
+    },
+    {
+      "path": "integration-fixture-downloads.json",
+      "sha256": "34a99bbe1d40220c368023d1ed4040dd5eedae3e760dbe707a6a97c4a9f6163f",
+      "bytes": 321
+    },
+    {
+      "path": "integration-fixture-provenance.json",
+      "sha256": "24a239bd0eccb4d213216d20ec1401b12b80be59f57efefff9deb78673f2f74c",
+      "bytes": 1632
+    },
+    {
+      "path": "integration-xsd-fixture.json",
+      "sha256": "f614771413c6f07fa7d28099ccdda9ae1576eb7b7af1dc89b33b63fb59c1cc40",
+      "bytes": 616
+    },
+    {
+      "path": "20261022-pr1-reconciliation-review.md",
+      "sha256": "5dcda5a1084873d7c1dd3ca7fba471826b14807604b6d36054caf7c430cd8125",
+      "bytes": 4777
+    },
+    {
+      "path": "pr3-baseline-xsd-run.log",
+      "sha256": "20406e0ee519afff8fd566e03161a24221339c6b1abcacbb9b77c795b812b0ce",
+      "bytes": 19883
+    },
+    {
+      "path": "pr3-baseline-xsd-build.log",
+      "sha256": "cd9a8d048de66f40d3a165f0e0aced7122b3ddf48888f69b730d9e41c08abb78",
+      "bytes": 4143
+    },
+    {
+      "path": "pr3-baseline-rif.md",
+      "sha256": "ea40a38a09578469485b1efa0aa5b0ded2595eb0b7772b2afb314a8ec3b2efcc",
+      "bytes": 3500
+    },
+    {
+      "path": "pr3-baseline-xsd-datatype-counts.json",
+      "sha256": "e51da382e7d170e24193a4ef349431040623f24880e224a0cb115ddd46311c41",
+      "bytes": 3961
+    },
+    {
+      "path": "pr3-baseline-xsd.md",
+      "sha256": "c8aacc97dee3c20f59b5126591fad2ee59b9821742e9fee498f34a37b50e24c3",
+      "bytes": 3542
+    },
+    {
+      "path": "pr3-baseline-rif-build.log",
+      "sha256": "1d24f0afb7daf13ab02212c11ff038f05ea7c14795b535d1a5e6b47962abb96e",
+      "bytes": 7549
+    },
+    {
+      "path": "pr3-baseline-xsd-environment.json",
+      "sha256": "0ff4162312c2418ee848ac2f4671cef043a81a583f176ca837795fcb81b04ef4",
+      "bytes": 220
+    },
+    {
+      "path": "pr3-baseline-xsd-run.json",
+      "sha256": "9a77d0d9d525999fbeaa2b87cd7086526dc4a6516dc540d65a3e33f29f477fd5",
+      "bytes": 2090
+    },
+    {
+      "path": "pr3-baseline-xsd-build.json",
+      "sha256": "e76ad489fc12e60b05524144a7769f177238721b63f70e3d6a49ea5619f17918",
+      "bytes": 350
+    },
+    {
+      "path": "pr3-baseline-rif-build.json",
+      "sha256": "7dc8448b85a499f462a24d17dc0bead4798d84eabba5b8b2841e07724a5dc95f",
+      "bytes": 340
+    },
+    {
+      "path": "pr3-baseline-xsd-inventory.json",
+      "sha256": "2d58984f1c6edd9c54a077c781acca6ef9487a7b714fde6fb229327d63b73e94",
+      "bytes": 22238
+    },
+    {
+      "path": "pr3-baseline-rif-run.log",
+      "sha256": "d839539b6a97c324ad0bdc70900751c534fa67d1619fb6ebe90041cbe4281482",
+      "bytes": 1716
+    },
+    {
+      "path": "pr3-baseline-rif-inventory.json",
+      "sha256": "ceab7b6f1c8b70436daad267186aa6335e5785ad35ca5970bc840565152a53d9",
+      "bytes": 42863
+    },
+    {
+      "path": "pr3-baseline-rif-run.json",
+      "sha256": "adc46c3747e03ab3b839f4382309797f36d66c9504bc25ea225bd6b2bf11cb1f",
+      "bytes": 2641
+    },
+    {
+      "path": "integration-pr23-pack-node26.log",
+      "sha256": "14aac2d439183a99c44165399ca92337ac229e9a2bd2d3f1c85c3928239b00be",
+      "bytes": 212
+    },
+    {
+      "path": "integration-pr23-hub.log",
+      "sha256": "bbaeaa28d13decc7676d97d80457a07474c020de4c21401a5efd8071938e1196",
+      "bytes": 123747
+    },
+    {
+      "path": "integration-pr23-historical-owl.log",
+      "sha256": "2cab6e419c2b8199deef698970e434257afcc3cbded9399b2c6a45e3c834a5db",
+      "bytes": 12682
+    },
+    {
+      "path": "integration-pr23-hub-owl-repaired.log",
+      "sha256": "d564f390d43bdc5b305252db69d68c4fcf7ba94e7119da2a94d221747f39765a",
+      "bytes": 9089
+    }
+  ],
+  "interpretation": "Original full npm result: 579 total, 575 pass, 3 fail, 1 skipped (external Jena missing). Focused repaired tests: 41 pass. Public-tests.log is a sandbox-restricted failed run; direct.log is the successful rerun. These are not final all-PR integration results.",
+  "hub_interpretation": "Full historical+live hub run timed out after 397 reported cases; not a complete suite result. Before repair: nine obsolete OWL verdict assertions, two missing RML fixtures, one pre-split provenance assertion. Focused repaired OWL files: 31 test-runner passes, including one preexisting RDF1.2 expected-failure case."
+}

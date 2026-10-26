@@ -26,6 +26,15 @@ The op tables below are the whole v1 surface plus a reflection op:
 (through `callIO` the list includes the handle ops; through the pure
 `call` it does not, because that entry cannot serve them).
 
+The arms of the ops the core engine also serves are in
+`Wasm/CoreDispatch.lean` (`Core.callArgsBy` and `Core.callIOArgsBy`); `call`
+and `callIO` below try those first, with `jsonLdReader` as the reader of the
+syntaxes outside `Wasm/Ops/Parse.lean`'s table, so each op has one arm and the
+two engines answer a core op with the same envelope
+(https://github.com/danbri/factoidal/issues/713 stage 4). The name lists below
+are the whole full table, core ops included; `Wasm/CoreDispatchTests.lean`
+checks them against the core table at build time.
+
 This module owns the tables; the op bodies live in `Wasm/Ops/*.lean`
 (split-ready: each imports only the `L4Factoidal.*` modules it needs —
 never the umbrella, whose initializer dies under wasm32; see
@@ -33,23 +42,46 @@ never the umbrella, whose initializer dies under wasm32; see
 exports in `Wasm/Abi.lean` are a separate, pinned surface (hub post
 36) and are not routed through this dispatch.
 -/
+import Wasm.CoreDispatch
+import Wasm.Ops.ParseJsonLd
 import Wasm.Ops.Parse
 import Wasm.Ops.Query
 import Wasm.Ops.Reason
+import Wasm.Ops.ReasonDl
 import Wasm.Ops.Canon
 import Wasm.Ops.Block
 import Wasm.Ops.Store
 import Wasm.Ops.StoreHandles
+import Wasm.Ops.StoreServe
 import Wasm.Ops.CL
 import Wasm.Ops.Proof
+import Wasm.Ops.Explain
+import Wasm.Ops.StageList
+import Wasm.Ops.PipelineNodes
 import Wasm.Ops.Handles
+import Wasm.Ops.DatasetFull
 import Wasm.Ops.Pack
 import Wasm.Ops.ExtFns
 import Wasm.Ops.Lws
 import Wasm.Ops.Solid
+import Wasm.Ops.LwsClient
+import Wasm.Ops.Authz
 import Wasm.Ops.Toan
 import Wasm.Ops.Xmpp
+import Wasm.Ops.XmppSession
 import Wasm.Ops.Crypto
+import Wasm.Ops.Formats
+import Wasm.Ops.Reasoning
+import Wasm.Ops.QueryExtras
+import Wasm.Ops.ServiceReg
+import Wasm.Ops.Maths
+import Wasm.Ops.Vc
+import Wasm.Ops.Lenient
+import Wasm.Ops.Validate
+import Wasm.Ops.ShExValidate
+import Wasm.Ops.QueryHdt
+import Wasm.Ops.Sbm11
+import Wasm.Ops.Sbm11Pack
 
 namespace L4Wasm
 
@@ -91,6 +123,10 @@ def opNames : List String :=
   , "clFiniteSat"
   , "proofCheck"
   , "proofInspect"
+  , "explainGraph"
+  , "stageList"
+  , "pipelineCheck"
+  , "pipelineCheckNodes"
   , "toanSummation"
   , "toanProduct"
   , "toanSimplify"
@@ -118,7 +154,7 @@ region the host wrote directly into the wasm heap, and the op's JSON argument
 describes windows into it (`Wasm/Ops/Store.lean`). Through the plain `call`
 these ops still answer — with an empty region, so a descriptor naming blob
 bytes is refused by name rather than silently reading nothing. -/
-def blobOpNames : List String := [ "storeQuery", "activateVerify" ]
+def blobOpNames : List String := [ "storeQuery", "activateVerify", "queryHdt" ]
 
 /-- The op names that also RETURN a contiguous byte region, served by
 `callBlobIO` below (the `l4_call_blob_io` C export, wired to
@@ -141,7 +177,10 @@ reads one chunk of the source from the IN region and builds no OUT region;
 `packNext` reads nothing and returns one artifact's bytes. Both are here
 because both are served by the one entry which carries a region in either
 direction. -/
-def blobIoOpNames : List String := [ "blobEcho", "packFeed", "packNext" ]
+def blobIoOpNames : List String :=
+  [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit",
+    "datasetQuadsBin", "sbm11Query", "sbm11PackFiles" ] ++
+  Ops.lwsBlobIoOpNames
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
 this is refused by name rather than made into an allocation the module
@@ -202,9 +241,42 @@ answers "unknown op" for these. -/
 def handleOpNames : List String :=
   [ "datasetOpen"
   , "datasetQuery"
+  , "datasetQuery12"
   , "datasetUpdate"
   , "datasetSerialize"
-  , "datasetClose" ]
+  , "datasetSerializeWith"
+  , "datasetClose"
+  , "datasetClone"
+  , "datasetCanonicalize"
+  , "datasetClosure"
+  , "datasetShaclValidate"
+  , "datasetQueryRaw"
+  , "datasetFormats"
+  , "detectFormat"
+  , "datasetMatch"
+  , "datasetMatchCount"
+  , "datasetAddQuads"
+  , "datasetDeleteQuads"
+  , "datasetQuadsJson"
+  , "datasetAddQuadsJson"
+  , "datasetDeleteQuadsJson"
+  , "datasetFromQuadsJson"
+  , "datasetGraphNames"
+  , "datasetGraphAsDefault"
+  , "datasetIsomorphic"
+  , "termsToNTriples"
+  , "resolveIri"
+  , "queryForm"
+  , "engineTables"
+  , "apiCheck"
+  , "parseQuadsJson"
+  , "quadsToNQuads"
+  , "datasetFromCsvw"
+  , "datasetFromRml"
+  , "datasetFromJsonLd"
+  , "datasetToJsonLd"
+  , "datasetShexValidate"
+  , "datasetRifEval" ]
 
 /-- The store-handle op names (`Wasm/Ops/StoreHandles.lean`), served ONLY by
 `callIO` and `callBlobIO` — the pure `call` cannot reach the store-handle
@@ -241,6 +313,20 @@ def packOpNames : List String :=
   , "packFinish"
   , "packClose" ]
 
+/-- The SPARQL endpoint op names over a served generation
+(`Wasm/Ops/StoreServe.lean`, https://github.com/danbri/factoidal/issues/669),
+served ONLY by `callIO` and `callBlobIO`: the served handles are an `IO.Ref`.
+`storeServeRequest` and `storeServeCommit` answer a byte region, so they are
+in `blobIoOpNames` too. -/
+def storeServeOpNames : List String :=
+  [ "storeServeKeys"
+  , "storeServeOpen"
+  , "storeServeRequest"
+  , "storeServeCommit"
+  , "storeServeClose"
+  , "tdb2ServeKeys"
+  , "tdb2ServeOpen" ]
+
 /-- The Linked Web Storage 1.0 and Solid Protocol op names
 (`Wasm/Ops/Lws.lean`, `Wasm/Ops/Solid.lean`), served ONLY by `callIO`: the
 server operations hold a storage in a handle table, which the pure `call`
@@ -253,48 +339,136 @@ def lwsSolidOpNames : List String :=
   [ "lwsOpen"
   , "lwsStep"
   , "lwsClose"
+  , "lwsSnapshot"
+  , "lwsFetched"
+  , "lwsDelivered"
+  , "lwsFlush"
+  , "lwsLoad"
+  , "lwsPersist"
+  , "lwsRead"
   , "solidOpen"
   , "solidStep"
   , "solidClose"
+  , "solidSnapshot"
+  , "solidFetched"
   , "solidClientRequest"
-  , "solidClientResponse" ]
+  , "solidClientResponse"
+  , "lwsClientStart"
+  , "lwsClientStep" ]
+
+/-- The XMPP server-handle op names (`Wasm/Ops/XmppSession.lean`), served
+ONLY by `callIO`: a server and its sessions live in handle tables the pure
+`call` cannot reach. The stateless `xmpp*` parsers stay in `opNames`. -/
+def xmppSessionOpNamesList : List String := Ops.xmppSessionOpNames
+
+/-- The format, transform and reasoning op names of
+`Wasm/Ops/Formats.lean`, `Wasm/Ops/Reasoning.lean` and
+`Wasm/Ops/QueryExtras.lean`: the operations of the F* npm entry that the
+table did not serve before https://github.com/danbri/factoidal/issues/713
+stage 1, and the SHACL and ShEx validation of `Wasm/Ops/Validate.lean`
+(stage 3). All are pure and served by both `call` and `callIO`; `queryHdt`
+also reads a byte region (it is in `blobOpNames`). -/
+def formatOpNames : List String :=
+  [ "jsonldToRdf"
+  , "jsonldFromRdf"
+  , "rmlMap"
+  , "csvwToRdf"
+  , "xmlWellformed"
+  , "xpathEval"
+  , "xsltTransform"
+  , "schematronValidate"
+  , "jsonSchemaValidate"
+  , "mathmlEval"
+  , "xformsRecalc"
+  , "rifEval"
+  , "tableauMaterialise"
+  , "tableauDlInconsistent"
+  , "queryRaw"
+  , "queryHdt"
+  , "shaclValidate"
+  , "shexValidate" ]
+
+/-- `queryDataset12`, the stateless SPARQL 1.2 query op (`Wasm/Ops/Query.lean`),
+served ONLY by `callIO` and `callBlobIO`, like `queryDataset`'s IO form: the
+caller's §17.6 extension and SERVICE registrations are in scope. -/
+def query12OpNames : List String := [ "queryDataset12" ]
+
+/-- The SPARQL SERVICE endpoint registry op names
+(`Wasm/Ops/ServiceReg.lean`), served ONLY by `callIO` and `callBlobIO` —
+the registry is an `IO.Ref` the pure `call` cannot reach. -/
+def serviceOpNames : List String :=
+  [ "registerServiceEndpoint"
+  , "clearServiceEndpoints" ]
+
+/-- Stage 2 of https://github.com/danbri/factoidal/issues/713: the matrix and
+sigmoid ops (`Wasm/Ops/Maths.lean`) and the VC and DID ops (`Wasm/Ops/Vc.lean`).
+They are stateless, so `call` serves them and `callIO` reaches them through its
+fall-through to `call`. The names are appended to every `ops` reflection by
+`opsReflectionFor`; the arms are in the fall-through case of `call`. -/
+def stage2OpNames : List String :=
+  mathsOpNames ++ vcOpNames ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames
+
+/-- Serve a stage 2 op of the full table, or answer the unknown-op error.
+`serializeTurtleWith` and `parseDocument` (the lenient parse,
+https://github.com/danbri/factoidal/issues/716) are core ops and are served
+before this by `Core.callArgsBy`. -/
+private def callStage2 (op : String) (args : List String) : String :=
+  match callMaths op args with
+  | some r => r
+  | none =>
+    match callVc op args with
+    | some r => r
+    | none => errJson s!"unknown op '{op}'"
 
 /-- `{"ok":true,"abiVersion":"…","ops":[…],"blobOps":[…],"blobIoOps":[…]}`. -/
 private def opsReflectionFor (names : List String) : String :=
   (Json.object
     [ ("ok", .bool true)
     , ("abiVersion", .string dispatchAbiVersion)
-    , ("ops", .array (names.map Json.string))
+    , ("engine", .string "full")
+    , ("ops", .array ((names ++ stage2OpNames).map Json.string))
     , ("blobOps", .array (blobOpNames.map Json.string))
     , ("blobIoOps", .array (blobIoOpNames.map Json.string)) ]).toString
 
-private def opsReflection : String := opsReflectionFor opNames
+private def opsReflection : String := opsReflectionFor (opNames ++ formatOpNames)
 
-/-- The dispatch entry the `l4_call` C export serves. -/
-def call (op : String) (argsJson : String) : String :=
+/-- The `ops` reflection of `callIO`: every op of the full table. -/
+def opsReflectionIO : String :=
+  opsReflectionFor
+    (opNames ++ handleOpNames ++ storeHandleOpNames ++ Ops.sbm11OpNames ++ storeServeOpNames ++ packOpNames
+       ++ extOpNames ++ lwsSolidOpNames ++ Ops.authzOpNames ++ xmppSessionOpNamesList
+       ++ formatOpNames ++ serviceOpNames
+       ++ query12OpNames)
+
+/-- The dispatch entry the `l4_call` C export serves. The core ops are
+served by `Core.callArgsBy` with the JSON-LD reader; the arms here are the
+ops of the full table only.
+
+This entry is pure and has no clock. A `NOW()` in a query (SPARQL 1.1
+§17.4.5.1) is bound only when the caller passes the instant: `queryDataset`,
+`updateDataset`, `queryRaw`, `storeQuery` and `queryHdt` take an optional last
+argument `now`, an `xsd:dateTime` lexical form (after the base IRI where an op
+has one), and an empty string means none. A text that is not a dateTime lexical
+form is an error envelope (`Core.nowArg`,
+https://github.com/danbri/factoidal/issues/748). `callIO` reads the clock once
+per execution instead (https://github.com/danbri/factoidal/issues/743). -/
+def callUncoded (op : String) (argsJson : String) : String :=
   match decodeArgs argsJson with
   | .error e => errJson e
   | .ok args =>
+    match (if op == "ops" then none else Core.callArgsBy jsonLdReader op args) with
+    | some r => r
+    | none =>
     match op with
-    | "parseToDatasetJson"   => arity3 op parseToDatasetJson args
-    | "queryDataset"         => arity2 op queryDataset args
-    | "updateDataset"        => arity2 op updateDataset args
-    | "serializeNQuads"      => arity1 op serializeNQuads args
-    | "serializeTurtle"      => arity1 op serializeTurtle args
-    | "canonicalizeToNQuads" => arity1 op canonicalizeToNQuads args
     | "scanIBK2Predicate"    => arity2 op scanIBK2Predicate args
     | "scanIBK3Predicate"    => arity3 op scanIBK3Predicate args
     | "queryIBK3BlockSetPreview"    => arity3 op queryIBK3BlockSetPreview args
     | "storeManifestInspect" => arity1 op storeManifestInspect args
     | "storeQueryPlan"       => arity2 op storeQueryPlan args
-    | "storeQuery"           => arity3 op (fun a b c => storeQuery a b c ByteArray.empty) args
+    | "storeQuery"           => Core.arity3Now op (fun a b c n => storeQuery a b c ByteArray.empty [] n) args
     | "activateVerify"       => arity2 op (fun a b => activateVerify a b ByteArray.empty) args
-    | "owlClosure"           => arity2 op owlClosure args
     | "owlIsConsistent"      => arity2 op owlIsConsistent args
     | "owlEntails"           => arity3 op owlEntails args
-    | "rhoDfClosure"         => arity1 op rhoDfClosure args
-    | "rhoDfFragmentCheck"   => arity1 op rhoDfFragmentCheck args
-    | "rdfsPlusClosure"      => arity1 op rdfsPlusClosure args
     | "clParse"              => arity1 op clParse args
     | "clSerialize"          => arity1 op clSerialize args
     | "clAlphaNorm"          => arity1 op clAlphaNorm args
@@ -302,6 +476,12 @@ def call (op : String) (argsJson : String) : String :=
     | "clFiniteSat"          => arity2 op clFiniteSat args
     | "proofCheck"           => arity1 op proofCheck args
     | "proofInspect"         => arity1 op proofInspect args
+    | "explainGraph"         => arity2 op explainGraph args
+    | "stageList"            => (match args with
+                                  | [] => stageList
+                                  | _ => errJson s!"{op} expects 0 arguments, got {args.length}")
+    | "pipelineCheck"        => arity1 op pipelineCheck args
+    | "pipelineCheckNodes"   => arity1 op pipelineCheckNodes args
     | "toanSummation"        => arity4 op toanSummation args
     | "toanProduct"          => arity4 op toanProduct args
     | "toanSimplify"         => arity1 op toanSimplify args
@@ -317,25 +497,52 @@ def call (op : String) (argsJson : String) : String :=
     | "hpkeSeal"             => arity1 op hpkeSeal args
     | "hpkeOpen"             => arity1 op hpkeOpen args
     | "xmppStanzaParse"      => arity1 op xmppStanzaParse args
+    -- Format, transform and reasoning ops (`formatOpNames`).
+    | "jsonldToRdf"          => arity2 op jsonldToRdf args
+    | "jsonldFromRdf"        => arity2 op jsonldFromRdf args
+    | "rmlMap"               => arity3 op rmlMap args
+    | "csvwToRdf"            => arity3 op csvwToRdf args
+    | "xmlWellformed"        => arity1 op xmlWellformed args
+    | "xpathEval"            => arity2 op xpathEval args
+    | "xsltTransform"        => arity2 op xsltTransform args
+    | "schematronValidate"   => arity2 op schematronValidate args
+    | "jsonSchemaValidate"   => arity2 op jsonSchemaValidate args
+    | "mathmlEval"           => arity2 op mathmlEval args
+    | "xformsRecalc"         => arity2 op xformsRecalc args
+    | "rifEval"              => arity2 op rifEval args
+    | "tableauMaterialise"   => arity1 op tableauMaterialise args
+    | "tableauDlInconsistent" => arity1 op tableauDlInconsistent args
+    | "queryHdt"             => Core.arity1Now op (fun a n => queryHdt a ByteArray.empty n) args
+    | "shexValidate"         => arity4 op shexValidate args
     | "ops"                  => opsReflection
-    | _                      => errJson s!"unknown op '{op}'"
+    | _                      => callStage2 op args
 
 /-- The dispatch entry the `l4_call_blob` C export serves: the string
 arguments of `call`, plus one byte region. Every other op delegates to `call`,
-envelope for envelope, so a host may route everything through this entry. -/
-def callBlob (op : String) (argsJson : String) (blob : ByteArray) : String :=
+envelope for envelope, so a host may route everything through this entry.
+This entry is pure and has no clock. A `NOW()` in a `storeQuery` or `queryHdt`
+query (SPARQL 1.1 §17.4.5.1) is bound only when the caller passes the instant:
+both ops take an optional last argument `now`, an `xsd:dateTime` lexical form,
+after their other arguments (`storeQuery` fourth, `queryHdt` second), and an
+empty string means none (https://github.com/danbri/factoidal/issues/748). The
+IO entry `callBlobIO` reads the clock once per query and serves both ops with it
+(https://github.com/danbri/factoidal/issues/743). -/
+def callBlobUncoded (op : String) (argsJson : String) (blob : ByteArray) : String :=
   match op with
   | "storeQuery" =>
       match decodeArgs argsJson with
       | .error e => errJson e
-      | .ok [a, b, c] => storeQuery a b c blob
-      | .ok args => errJson s!"storeQuery expects 3 arguments, got {args.length}"
+      | .ok args => Core.arity3Now op (fun a b c n => storeQuery a b c blob [] n) args
   | "activateVerify" =>
       match decodeArgs argsJson with
       | .error e => errJson e
       | .ok [a, b] => activateVerify a b blob
       | .ok args => errJson s!"activateVerify expects 2 arguments, got {args.length}"
-  | _ => call op argsJson
+  | "queryHdt" =>
+      match decodeArgs argsJson with
+      | .error e => errJson e
+      | .ok args => Core.arity1Now op (fun a n => queryHdt a blob n) args
+  | _ => callUncoded op argsJson
 
 private def arityIO1 (op : String) (f : String → IO String) :
     List String → IO String
@@ -353,38 +560,35 @@ private def arityIO3 (op : String) (f : String → String → String → IO Stri
   | args => pure (errJson s!"{op} expects 3 arguments, got {args.length}")
 
 /-- The dispatch entry the wire (`l4_call_c` via the `l4_call_io` C
-export) and the native CLI serve: the dataset-handle ops, plus every
-stateless op via `call`, envelope for envelope. -/
-def callIO (op : String) (argsJson : String) : IO String :=
+export) and the native CLI serve: the stateful ops, plus every stateless op
+via `call`, envelope for envelope. The core ops that need `IO` (dataset
+handles, the §17.6 and SERVICE registries, the IO forms of `queryDataset`,
+`queryDataset12`, `parseToDatasetJson` and `parseDocument`) are served by
+`Core.callIOArgsBy` with the JSON-LD reader; the arms here are the ops of the
+full table only.
+
+The ops that evaluate a query or an update read the system clock once per
+execution, so `NOW()` is bound (SPARQL 1.1 §17.4.5.1,
+https://github.com/danbri/factoidal/issues/743). They take no `now` argument:
+the instant is an argument of the pure entries `call` and `callBlob` only
+(https://github.com/danbri/factoidal/issues/748). -/
+def callIOUncoded (op : String) (argsJson : String) : IO String :=
   let withArgs (k : List String → IO String) : IO String :=
     match decodeArgs argsJson with
     | .error e  => pure (errJson e)
     | .ok args  => k args
+  let core : Option (IO String) :=
+    match decodeArgs argsJson with
+    | .ok args => if op == "ops" then none else Core.callIOArgsBy jsonLdReader op args
+    | .error _ => none
+  match core with
+  | some r => r
+  | none =>
   match op with
-  -- §17.6 extension functions. `queryDataset` and `storeQuery` are
-  -- overridden here (rather than delegating to the pure `call`) so a
-  -- caller registration reaches the stateless query ops too; every other
-  -- stateless op still falls through to `call` unchanged.
-  | "extRegister"      => withArgs (arityIO1 op Ops.extRegister)
-  | "extUnregister"    => withArgs (arityIO1 op Ops.extUnregister)
-  | "extClear" =>
-      withArgs (fun args =>
-        match args with
-        | [] => Ops.extClear
-        | args => pure (errJson s!"extClear expects 0 arguments, got {args.length}"))
-  | "extList" =>
-      withArgs (fun args =>
-        match args with
-        | [] => Ops.extList
-        | args => pure (errJson s!"extList expects 0 arguments, got {args.length}"))
-  | "queryDataset"     => withArgs (arityIO2 op Ops.queryDatasetIO)
+  -- `storeQuery` is served here (rather than by the pure `call`) so a §17.6
+  -- registration reaches it, as `Core.callIOArgsBy` does for `queryDataset`.
   | "storeQuery"       => withArgs (arityIO3 op
                             (fun a b c => Ops.storeQueryIO a b c ByteArray.empty))
-  | "datasetOpen"      => withArgs (arityIO3 op Ops.datasetOpen)
-  | "datasetQuery"     => withArgs (arityIO2 op Ops.datasetQuery)
-  | "datasetUpdate"    => withArgs (arityIO2 op Ops.datasetUpdate)
-  | "datasetSerialize" => withArgs (arityIO2 op Ops.datasetSerialize)
-  | "datasetClose"     => withArgs (arityIO1 op Ops.datasetClose)
   -- packBegin takes an optional third argument, the base IRI, and an
   -- optional fourth, the publication batch in source bytes. Fewer arguments
   -- means no base and the default batch, which keeps every host written
@@ -404,17 +608,91 @@ def callIO (op : String) (argsJson : String) : IO String :=
       pure (errJson s!"{op} carries a byte region; call it through l4_call_blob_io")
   | "storeOpen"        => withArgs (arityIO2 op (fun a b => Ops.storeOpen a b ByteArray.empty))
   | "storeHandleQuery" => withArgs (arityIO2 op Ops.storeHandleQuery)
+  -- SPARQL over an SBM11 generation through host positioned reads
+  -- (`Wasm/Ops/Sbm11.lean`, https://github.com/danbri/factoidal/issues/1009).
+  | "sbm11Open"        => withArgs (arityIO1 op Ops.sbm11Open)
+  | "sbm11Query"       => withArgs (fun args =>
+      match args with
+      | [a, b]    => Ops.sbm11Query a b ""
+      | [a, b, c] => Ops.sbm11Query a b c
+      | args => pure (errJson s!"sbm11Query expects 2 or 3 arguments, got {args.length}"))
+  | "sbm11Close"       => withArgs (arityIO1 op Ops.sbm11Close)
+  | "sbm11PackFiles"   =>
+      pure (errJson s!"{op} carries a byte region; call it through l4_call_blob_io")
+  -- The dataset-handle ops of the full engine (`Wasm/Ops/DatasetFull.lean`).
+  | "datasetFromCsvw"  => withArgs (arityIO3 op Ops.datasetFromCsvw)
+  | "datasetFromRml"   => withArgs (arityIO3 op Ops.datasetFromRml)
+  | "datasetFromJsonLd" => withArgs (arityIO2 op Ops.datasetFromJsonLd)
+  | "datasetToJsonLd"  => withArgs (arityIO2 op Ops.datasetToJsonLd)
+  | "datasetShexValidate" => withArgs (fun args =>
+      match args with
+      | [a, b, c, d] => Ops.datasetShexValidate a b c d
+      | _ => pure (errJson s!"{op} expects 4 arguments, got {args.length}"))
+  | "datasetRifEval"   => withArgs (arityIO2 op Ops.datasetRifEval)
   | "storeHandleClose" => withArgs (arityIO1 op Ops.storeHandleClose)
+  -- The SPARQL endpoint over a served generation (issue 669). The open
+  -- carries a byte region; through this entry it takes the hex descriptor
+  -- form only, like `storeOpen`.
+  | "storeServeKeys"   => withArgs (fun args =>
+      match args with
+      | [a] => pure (Ops.storeServeKeys a)
+      | args => pure (errJson s!"storeServeKeys expects 1 argument, got {args.length}"))
+  | "storeServeOpen"   => withArgs (fun args =>
+      match args with
+      | [a, b, c, d] => Ops.storeServeOpen a b c d ByteArray.empty
+      | args => pure (errJson s!"storeServeOpen expects 4 arguments, got {args.length}"))
+  | "storeServeClose"  => withArgs (arityIO1 op Ops.storeServeClose)
+  | "tdb2ServeKeys"    => withArgs (fun args =>
+      match args with
+      | [a, b] => pure (Ops.tdb2ServeKeys a b)
+      | args => pure (errJson s!"tdb2ServeKeys expects 2 arguments, got {args.length}"))
+  | "tdb2ServeOpen"    => withArgs (fun args =>
+      match args with
+      | [a, b] => Ops.tdb2ServeOpen a b ByteArray.empty
+      | args => pure (errJson s!"tdb2ServeOpen expects 2 arguments, got {args.length}"))
+  | "storeServeRequest" | "storeServeCommit" | "datasetQuadsBin" =>
+      pure (errJson s!"{op} answers a byte region; call it through l4_call_blob_io")
   -- Linked Web Storage 1.0 and the Solid Protocol
   -- (https://github.com/danbri/factoidal/issues/659). `lwsOpen`,
   -- `solidOpen`, `solidClientRequest` and `solidClientResponse` take their
   -- arguments as strings and answer one envelope, like every other op.
+  -- The authorization server component (https://github.com/danbri/factoidal/issues/916).
+  | "authzOpen"        => withArgs (arityIO1 op Ops.authzOpen)
+  | "authzStep"        => withArgs (arityIO2 op Ops.authzStep)
+  | "authzFetched"     => withArgs (arityIO2 op Ops.authzFetched)
+  | "authzKeys"        => withArgs (fun args =>
+      match args with
+      | [a] => Ops.authzKeys a ""
+      | [a, b] => Ops.authzKeys a b
+      | args => pure (errJson s!"authzKeys expects 1 or 2 arguments, got {args.length}"))
+  | "authzRotate"      => withArgs (arityIO2 op Ops.authzRotate)
+  | "authzClose"       => withArgs (arityIO1 op Ops.authzClose)
   | "lwsOpen"          => withArgs (arityIO1 op Ops.lwsOpen)
   | "lwsStep"          => withArgs (arityIO2 op Ops.lwsStep)
   | "lwsClose"         => withArgs (arityIO1 op Ops.lwsClose)
+  -- `lwsSnapshot` and `solidSnapshot` take an optional second argument,
+  -- `{"nonce":"<base64>"}`, for a storage sealed under a key (issue 921).
+  | "lwsSnapshot"      => withArgs (fun args =>
+      match args with
+      | [a] => Ops.lwsSnapshot a
+      | [a, b] => Ops.lwsSnapshot a b
+      | args => pure (errJson s!"lwsSnapshot expects 1 or 2 arguments, got {args.length}"))
+  | "lwsFetched"       => withArgs (arityIO2 op Ops.lwsFetched)
+  | "lwsDelivered"     => withArgs (arityIO2 op Ops.lwsDelivered)
+  | "lwsFlush"         => withArgs (arityIO2 op Ops.lwsFlush)
+  -- A storage kept in files (https://github.com/danbri/factoidal/issues/918):
+  -- both carry file bytes, in and out.
+  | "lwsLoad" | "lwsPersist" | "lwsRead" =>
+      pure (errJson s!"{op} carries file bytes; call it through l4_call_blob_io")
+  | "solidSnapshot"    => withArgs (fun args =>
+      match args with
+      | [a] => Ops.solidSnapshot a
+      | [a, b] => Ops.solidSnapshot a b
+      | args => pure (errJson s!"solidSnapshot expects 1 or 2 arguments, got {args.length}"))
   | "solidOpen"        => withArgs (arityIO1 op Ops.solidOpen)
   | "solidStep"        => withArgs (arityIO2 op Ops.solidStep)
   | "solidClose"       => withArgs (arityIO1 op Ops.solidClose)
+  | "solidFetched"     => withArgs (arityIO2 op Ops.solidFetched)
   | "solidClientRequest" =>
       withArgs (fun args =>
         match args with
@@ -425,15 +703,35 @@ def callIO (op : String) (argsJson : String) : IO String :=
         match args with
         | [a, b] => pure (Ops.solidClientResponse a b)
         | args => pure (errJson s!"solidClientResponse expects 2 arguments, got {args.length}"))
+  -- The LWS client (https://github.com/danbri/factoidal/issues/917): stateless,
+  -- the state is the JSON document the host passes back.
+  | "lwsClientStart" =>
+      withArgs (fun args =>
+        match args with
+        | [a] => pure (Ops.lwsClientStart a "")
+        | [a, b] => pure (Ops.lwsClientStart a b)
+        | args => pure (errJson s!"lwsClientStart expects 1 or 2 arguments, got {args.length}"))
+  | "lwsClientStep" =>
+      withArgs (fun args =>
+        match args with
+        | [a, b] => pure (Ops.lwsClientStep a b)
+        | args => pure (errJson s!"lwsClientStep expects 2 arguments, got {args.length}"))
+  -- The XMPP server as handles (`Wasm/Ops/XmppSession.lean`).
+  | "xmppOpen"           => withArgs (arityIO1 op Ops.xmppOpen)
+  | "xmppClose"          => withArgs (arityIO1 op Ops.xmppClose)
+  | "xmppSessionOpen"    => withArgs (arityIO2 op Ops.xmppSessionOpen)
+  | "xmppSessionFeed"    => withArgs (arityIO2 op Ops.xmppSessionFeed)
+  | "xmppSessionDeliver" => withArgs (arityIO2 op Ops.xmppSessionDeliver)
+  | "xmppSessionClose"   => withArgs (arityIO1 op Ops.xmppSessionClose)
+  | "xmppRosterGet"      => withArgs (arityIO2 op Ops.xmppRosterGet)
+  | "xmppRosterSet"      => withArgs (arityIO3 op Ops.xmppRosterSet)
   | "storeHandleList" =>
       withArgs (fun args =>
         match args with
         | [] => Ops.storeHandleList
         | args => pure (errJson s!"storeHandleList expects 0 arguments, got {args.length}"))
-  | "ops"              => pure (opsReflectionFor
-                                 (opNames ++ handleOpNames ++ storeHandleOpNames ++ packOpNames
-                                    ++ extOpNames ++ lwsSolidOpNames))
-  | _                  => pure (call op argsJson)
+  | "ops"              => pure opsReflectionIO
+  | _                  => pure (callUncoded op argsJson)
 
 /-- The dispatch entry the `l4_call_blob_io` C export serves: the string
 arguments of `callIO`, ONE byte region in, and ONE byte region out.
@@ -443,7 +741,7 @@ exactly as it does today with an EMPTY out region — the blob-in ops of
 `blobOpNames` still read their region through `callBlob`, and everything else
 goes to `callIO` — so a host may route every call through this entry without
 changing any envelope. -/
-def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
+def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
     IO (String × ByteArray) :=
   match op with
   | "blobEcho" =>
@@ -475,6 +773,102 @@ def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a, b, c] => do pure (← Ops.storeQueryIO a b c blob, ByteArray.empty)
       | .ok args      => pure (errJson s!"storeQuery expects 3 arguments, got {args.length}",
                                ByteArray.empty)
+  -- `queryHdt` is served here so that `NOW()` is the instant read once for the
+  -- query (SPARQL 1.1 §17.4.5.1,
+  -- https://github.com/danbri/factoidal/issues/743).
+  | "queryHdt" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a]    => do pure (← Ops.queryHdtIO a blob, ByteArray.empty)
+      | .ok args   => pure (errJson s!"queryHdt expects 1 argument, got {args.length}",
+                            ByteArray.empty)
+  | "storeServeOpen" =>
+      match decodeArgs argsJson with
+      | .error e            => pure (errJson e, ByteArray.empty)
+      | .ok [a, b, c, d]    => do pure (← Ops.storeServeOpen a b c d blob, ByteArray.empty)
+      | .ok args            => pure (errJson s!"storeServeOpen expects 4 arguments, got {args.length}",
+                                     ByteArray.empty)
+  | "tdb2ServeOpen" =>
+      match decodeArgs argsJson with
+      | .error e         => pure (errJson e, ByteArray.empty)
+      | .ok [a, b]       => do pure (← Ops.tdb2ServeOpen a b blob, ByteArray.empty)
+      | .ok args         => pure (errJson s!"tdb2ServeOpen expects 2 arguments, got {args.length}",
+                                  ByteArray.empty)
+  | "datasetQuadsBin" =>
+      match decodeArgs argsJson with
+      | .error e    => pure (errJson e, ByteArray.empty)
+      | .ok [a]     => Ops.datasetQuadsBin a ""
+      | .ok [a, b]  => Ops.datasetQuadsBin a b
+      | .ok args    => pure (errJson s!"datasetQuadsBin expects 1 or 2 arguments, got {args.length}",
+                             ByteArray.empty)
+  | "storeServeRequest" =>
+      match decodeArgs argsJson with
+      | .error e  => pure (errJson e, ByteArray.empty)
+      | .ok [a]   => Ops.storeServeRequest a blob
+      | .ok args  => pure (errJson s!"storeServeRequest expects 1 argument, got {args.length}",
+                           ByteArray.empty)
+  | "sbm11Query" =>
+      match decodeArgs argsJson with
+      | .error e      => pure (errJson e, ByteArray.empty)
+      | .ok [a, b]    => Ops.sbm11QueryBlob a b ""
+      | .ok [a, b, c] => Ops.sbm11QueryBlob a b c
+      | .ok args      => pure (errJson s!"sbm11Query expects 2 or 3 arguments, got {args.length}",
+                               ByteArray.empty)
+  -- Pack an SBM11 generation in memory (`Wasm/Ops/Sbm11Pack.lean`,
+  -- https://github.com/danbri/factoidal/issues/1009 stage 2): the document is
+  -- the IN region, file `index` of the generation the OUT region.
+  | "sbm11PackFiles" =>
+      match decodeArgs argsJson with
+      | .error e      => pure (errJson e, ByteArray.empty)
+      | .ok [a, b, c] => Ops.sbm11PackFiles a b c blob
+      | .ok args      => pure (errJson s!"sbm11PackFiles expects 3 arguments, got {args.length}",
+                               ByteArray.empty)
+  | "storeServeCommit" =>
+      match decodeArgs argsJson with
+      | .error e        => pure (errJson e, ByteArray.empty)
+      | .ok [a, b, c]   => Ops.storeServeCommit a b c
+      | .ok args        => pure (errJson s!"storeServeCommit expects 3 arguments, got {args.length}",
+                                 ByteArray.empty)
+  -- LWS and Solid resource bodies are bytes
+  -- (https://github.com/danbri/factoidal/issues/889): the IN region is the
+  -- request content and the OUT region is the response content, with no
+  -- encoding, as `blobIoOpNames` above explains.
+  | "lwsStep" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.lwsStepWith a b (some blob)
+      | .ok args   => pure (errJson s!"lwsStep expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
+  -- A storage kept in files (https://github.com/danbri/factoidal/issues/918):
+  -- `lwsLoad` takes the bytes of the files the engine named (IN region) and
+  -- may answer the plan of the start (OUT region); `lwsPersist` answers the
+  -- plan of one write (OUT region).
+  | "lwsLoad" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.lwsLoad a b blob
+      | .ok args   => pure (errJson s!"lwsLoad expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
+  | "lwsPersist" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.lwsPersist a b
+      | .ok args   => pure (errJson s!"lwsPersist expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
+  -- Stage 2 (issue 918): `lwsRead` takes the bytes of the body files a
+  -- step named (`read`, IN region).
+  | "lwsRead" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.lwsRead a b blob
+      | .ok args   => pure (errJson s!"lwsRead expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
+  | "solidStep" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.solidStepWith a b (some blob)
+      | .ok args   => pure (errJson s!"solidStep expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
   | "storeOpen" =>
       match decodeArgs argsJson with
       | .error e   => pure (errJson e, ByteArray.empty)
@@ -483,10 +877,41 @@ def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
                             ByteArray.empty)
   | _ =>
       if blobOpNames.contains op then
-        pure (callBlob op argsJson blob, ByteArray.empty)
+        pure (callBlobUncoded op argsJson blob, ByteArray.empty)
       else do
-        let envelope ← callIO op argsJson
+        let envelope ← callIOUncoded op argsJson
         pure (envelope, ByteArray.empty)
+
+/-! ## The four entries, with the error model
+
+Each entry is its `…Uncoded` form with `attachCode` applied to the answer
+(`Wasm/Ops/ErrorModel.lean`): every error envelope leaves the engine with a
+declared `code`, the `spec` section of that code where one applies, and the
+`position` of a parse failure (https://github.com/danbri/factoidal/issues/882
+item 4). -/
+
+private def argsForCode (argsJson : String) : List String :=
+  match decodeArgs argsJson with
+  | .ok args => args
+  | .error _ => []
+
+/-- The pure entry (`l4_call`). -/
+def call (op : String) (argsJson : String) : String :=
+  attachCode op (argsForCode argsJson) (callUncoded op argsJson)
+
+/-- The byte-region entry (`l4_call_blob`). -/
+def callBlob (op : String) (argsJson : String) (blob : ByteArray) : String :=
+  attachCode op (argsForCode argsJson) (callBlobUncoded op argsJson blob)
+
+/-- The IO entry (`l4_call_io`, the wire entry and the native CLI). -/
+def callIO (op : String) (argsJson : String) : IO String := do
+  pure (attachCode op (argsForCode argsJson) (← callIOUncoded op argsJson))
+
+/-- The byte-region-in-and-out entry (`l4_call_blob_io`). -/
+def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
+    IO (String × ByteArray) := do
+  let (envelope, out) ← callBlobIOUncoded op argsJson blob
+  pure (attachCode op (argsForCode argsJson) envelope, out)
 
 /-- Decode a `callseq` document — a JSON array of `[op, [arg, …]]`
 pairs — into each op paired with its args RE-SERIALISED as the JSON
@@ -511,5 +936,132 @@ def decodeCallSeq (seqJson : String) :
               (op, (Json.array (ss.map Json.string)).toString)
         | _ => .error "callseq: each entry must be [op, [arg, …]]"
   | .ok _ => .error "callseq: document must be a JSON array"
+
+
+/-! ### The optional base argument of `queryDataset` / `updateDataset` (issue 741) -/
+
+private def dispatchHas (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+
+#guard dispatchHas
+  (call "queryDataset" "[\"\",\"SELECT ?x WHERE { BIND(<rel> AS ?x) }\",\"http://e/b/\"]")
+  "http://e/b/rel"
+-- Two arguments, or an empty third: no base, so the relative IRI is an error.
+#guard dispatchHas
+  (call "queryDataset" "[\"\",\"SELECT ?x WHERE { BIND(<rel> AS ?x) }\"]") "invalid IRI"
+#guard dispatchHas
+  (call "queryDataset" "[\"\",\"SELECT ?x WHERE { BIND(<rel> AS ?x) }\",\"\"]") "invalid IRI"
+#guard dispatchHas
+  (call "updateDataset" "[\"\",\"INSERT DATA { <s> <p> <o> }\",\"http://e/b/\"]")
+  "<http://e/b/s> <http://e/b/p> <http://e/b/o> ."
+-- A fifth argument, or one argument, is an arity error. (Until issue 748 the
+-- fourth argument was one too; it is now the optional instant `now`, below.)
+#guard dispatchHas (call "queryDataset" "[\"\",\"ASK {}\",\"\",\"\",\"x\"]") "expects 2, 3 or 4 arguments"
+#guard dispatchHas (call "queryDataset" "[\"\"]") "expects 2, 3 or 4 arguments"
+#guard dispatchHas (call "updateDataset" "[\"\"]") "expects 2, 3 or 4 arguments"
+
+/-! ### The optional `now` argument of the pure query ops (issue 748)
+
+SPARQL 1.1 §17.4.5.1: `NOW()` is an `xsd:dateTime` for the query execution. The
+pure entries `call` and `callBlob` read no clock, so a host that wants `NOW()`
+bound passes the instant as the LAST argument: `queryDataset` and
+`updateDataset` fourth (after the base IRI), `queryRaw` and `storeQuery` fourth,
+`queryHdt` second. An empty string means none, and two- and three-argument hosts
+do not change. A text that is not an `xsd:dateTime` lexical form is an error
+envelope, never a silent "none". -/
+
+private def pureArgs (xs : List String) : String :=
+  (Json.array (xs.map Json.string)).toString
+
+private def nowFixed : String := "2026-10-10T12:34:56.789Z"
+
+-- W3C functions/now01.rq
+private def nowAskQ : String :=
+  "ASK { BIND(NOW() AS ?n) FILTER(DATATYPE(?n) = <http://www.w3.org/2001/XMLSchema#dateTime>) }"
+
+private def nowSelectQ : String := "SELECT ?n WHERE { BIND(NOW() AS ?n) }"
+
+private def nowInsertQ : String :=
+  "INSERT { <http://e/s> <http://e/p> ?n } WHERE { BIND(NOW() AS ?n) }"
+
+private def nowRawData : String := "<http://e/a> <http://e/p> <http://e/b> .\n"
+
+private def nowRawOpts : String := "{\"dataFormat\":\"ntriples\",\"output\":\"csv\"}"
+
+-- Positive: given the instant, NOW() is bound to it, as an xsd:dateTime.
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowAskQ, "", nowFixed])) "\"boolean\":true"
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowSelectQ, "", nowFixed]))
+  "\"value\":\"2026-10-10T12:34:56.789Z\""
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowSelectQ, "", nowFixed]))
+  "\"datatype\":\"http://www.w3.org/2001/XMLSchema#dateTime\""
+-- Positive: the base IRI in the third place still works beside the instant.
+#guard dispatchHas (call "queryDataset" (pureArgs
+    ["", "SELECT ?x ?n WHERE { BIND(<rel> AS ?x) BIND(NOW() AS ?n) }", "http://e/b/", nowFixed]))
+  "\"value\":\"http://e/b/rel\""
+#guard dispatchHas (call "queryDataset" (pureArgs
+    ["", "SELECT ?x ?n WHERE { BIND(<rel> AS ?x) BIND(NOW() AS ?n) }", "http://e/b/", nowFixed]))
+  "\"value\":\"2026-10-10T12:34:56.789Z\""
+-- Positive: update, queryRaw, and the blob entry (which delegates to `call`).
+#guard dispatchHas (call "updateDataset" (pureArgs ["", nowInsertQ, "", nowFixed]))
+  "\\\"2026-10-10T12:34:56.789Z\\\"^^<http://www.w3.org/2001/XMLSchema#dateTime>"
+#guard dispatchHas (call "queryRaw" (pureArgs [nowRawData, nowSelectQ, nowRawOpts, nowFixed]))
+  "2026-10-10T12:34:56.789Z"
+#guard dispatchHas (callBlob "queryDataset" (pureArgs ["", nowAskQ, "", nowFixed]) ByteArray.empty)
+  "\"boolean\":true"
+-- Positive: the dispatch of the blob ops takes the instant. With the instant
+-- given and no HDT bytes, the answer is the missing-bytes error, not an arity
+-- or `now` error; likewise a `storeQuery` with a bad manifest names the manifest.
+#guard dispatchHas (callBlob "queryHdt" (pureArgs ["ASK {}", nowFixed]) ByteArray.empty) "no HDT bytes"
+#guard !dispatchHas (callBlob "queryHdt" (pureArgs ["ASK {}", nowFixed]) ByteArray.empty) "expects"
+#guard !dispatchHas (call "storeQuery" (pureArgs ["00", "ASK {}", "[]", nowFixed])) "expects"
+#guard !dispatchHas (callBlob "storeQuery" (pureArgs ["00", "ASK {}", "[]", nowFixed]) ByteArray.empty)
+  "expects"
+
+-- Negative: with no instant, or an empty one, NOW() is an error (no clock):
+-- ASK answers false. A two- or three-argument host sees what it saw before.
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowAskQ])) "\"boolean\":false"
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowAskQ, ""])) "\"boolean\":false"
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowAskQ, "", ""])) "\"boolean\":false"
+#guard !dispatchHas (call "updateDataset" (pureArgs ["", nowInsertQ, "", ""])) "dateTime"
+#guard !dispatchHas (call "queryRaw" (pureArgs [nowRawData, nowSelectQ, nowRawOpts]))
+  "2026-10-10"
+-- Negative: the value comes from the argument. A different instant gives a
+-- different answer, so a constant or a hard-coded clock fails.
+#guard !dispatchHas (call "queryDataset" (pureArgs ["", nowSelectQ, "", "2000-01-01T00:00:00Z"]))
+  "2026-10-10"
+#guard dispatchHas (call "queryDataset" (pureArgs ["", nowSelectQ, "", "2000-01-01T00:00:00Z"]))
+  "\"value\":\"2000-01-01T00:00:00Z\""
+-- Negative: an instant that is not an xsd:dateTime lexical form is an error
+-- envelope on every op, and no result member appears.
+private def badNowAnswers (bad : String) : List String :=
+  [ call "queryDataset" (pureArgs ["", nowAskQ, "", bad])
+  , call "updateDataset" (pureArgs ["", nowInsertQ, "", bad])
+  , call "queryRaw" (pureArgs [nowRawData, nowSelectQ, nowRawOpts, bad])
+  , call "storeQuery" (pureArgs ["00", "ASK {}", "[]", bad])
+  , callBlob "storeQuery" (pureArgs ["00", "ASK {}", "[]", bad]) ByteArray.empty
+  , callBlob "queryHdt" (pureArgs ["ASK {}", bad]) ByteArray.empty ]
+
+private def refusesNow (bad : String) : Bool :=
+  (badNowAnswers bad).all (fun r =>
+    r.startsWith "{\"ok\":false" && dispatchHas r "not an xsd:dateTime lexical form"
+      && !dispatchHas r "\"boolean\"" && !dispatchHas r "\"nquads\"")
+
+#guard refusesNow "x"
+#guard refusesNow "now"
+#guard refusesNow "yesterday"
+#guard refusesNow "2026-10-10"
+#guard refusesNow "2026-02-30T00:00:00Z"
+#guard refusesNow "2026-13-10T00:00:00Z"
+#guard refusesNow " 2026-10-10T12:34:56Z"
+#guard refusesNow "2026-10-10T12:34:56Z "
+-- Negative: a refusal differs from "no instant": the same text without the
+-- bad argument answers.
+#guard !(call "queryDataset" (pureArgs ["", nowAskQ])).startsWith "{\"ok\":false"
+-- Negative: too many arguments are still an arity error.
+#guard dispatchHas (call "queryRaw" (pureArgs [nowRawData, nowSelectQ, nowRawOpts, nowFixed, "x"]))
+  "expects 3 or 4 arguments"
+#guard dispatchHas (callBlob "queryHdt" (pureArgs ["ASK {}", nowFixed, "x"]) ByteArray.empty)
+  "expects 1 or 2 arguments"
+#guard dispatchHas (callBlob "storeQuery" (pureArgs ["00", "ASK {}"]) ByteArray.empty)
+  "expects 3 or 4 arguments"
 
 end L4Wasm

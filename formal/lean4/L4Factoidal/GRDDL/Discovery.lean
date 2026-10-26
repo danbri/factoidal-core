@@ -15,28 +15,29 @@ document names a transformation, and where each is implemented:
   * §4 an XHTML `head/@profile` naming the GRDDL profile, which GATES
     `link`/`a` elements whose `@rel` token list includes
     `transformation` (`profileLinks`);
-  * §5 a CUSTOM `head/@profile` document, whose own
-    `rel="profileTransformation"` links apply to every document
-    referencing it (`profileDocTransformations`);
-  * §3 the root element's NAMESPACE document, whose
-    `grddl:namespaceTransformation` elements apply to every document
-    in that namespace (`namespaceDocTransformations`).
+  * §5 a CUSTOM `head/@profile` document, whose GRDDL RESULT asserts
+    `PROFILE grddl:profileTransformation TX` (`customProfileUris` names
+    the documents; `GRDDL.Agent` computes their results);
+  * §3 the root element's NAMESPACE document, whose GRDDL RESULT
+    asserts `NS grddl:namespaceTransformation TX` (`rootNamespaceUri`
+    names it; `GRDDL.Agent` computes its result).
 
-The first two read the document itself. The second two need a SECOND
-resource, and fetching it is the caller's business — those functions
-take an already-parsed tree. Nothing in this module does I/O.
+The first two read the document itself and live here. The second two
+need the GRDDL result of a SECOND resource, which may need a third, and
+a document may be its own namespace document; `GRDDL.Agent` computes
+all of them together to a fixpoint. Nothing in this module does I/O.
 
-A source that is ITSELF RDF/XML is its own GRDDL result (§2, the
-"faithful rendition" case), so `grddlResult` unions the RDF/XML
-reading of the source with every transform's output.
+A source that is ITSELF RDF/XML is its own GRDDL result (§3, the base
+case); `GRDDL.Agent` merges that reading with every transform's output.
 
-## One level, not a fixpoint
-
-A fetched namespace or profile document that itself declares further
-namespace or profile documents is NOT recursed into. The corpus's
-`loop`, `loopx` and `ns-ns-*` cases exercise exactly that, and they
-stay named residue rather than an approximation — an approximation
-would answer them confidently and wrongly.
+Until 2026-10-10 this module answered §3 and §5 by scanning the second
+document's elements for the local names `namespaceTransformation` and
+`rel="profileTransformation"`, one level deep, and appended transform
+outputs without renaming blank nodes apart. The element scan read
+assertions that are in no GRDDL result and missed every assertion that
+a transformation of the second document produces (the `ns-*`/`pf-*`
+layering tests, `loop`, `loopx`); the append merged `_:b0` of one
+output with `_:b0` of another (`four-transforms`).
 -/
 import L4Factoidal.XSLT.Transform
 import L4Factoidal.Syntax.RdfXml
@@ -209,18 +210,6 @@ def customProfileUris (fallback : String) (root : Node) : List String :=
       | none   => []
   | none   => []
 
-/-- §5: the transformations a fetched profile document associates with
-    documents that reference it — the `@href` of every
-    `rel="profileTransformation"` link — resolved against the profile
-    document's own base. The profile document must itself carry the
-    GRDDL profile in its head, which is the §5 gate. -/
-def profileDocTransformations (profileIri : String) (profileDoc : Node)
-    : List String :=
-  if headHasGrddlProfile profileDoc then
-    resolveAll (docBase profileIri profileDoc)
-      (collectLinks "profileTransformation" profileDoc)
-  else []
-
 /-! ## §3 — namespace documents -/
 
 /-- The root element's namespace URI: the namespace document the agent
@@ -229,22 +218,6 @@ def profileDocTransformations (profileIri : String) (profileDoc : Node)
 def rootNamespaceUri (root : Node) : Option String :=
   let nsm := nsMapOf (attrsOf root)
   (nsm.find? (fun (p, _) => p == prefixOf (tagOf root))).map (·.2)
-
-/-- A `grddl:namespaceTransformation` element carries the transform
-    IRI in its `rdf:resource` attribute. Matched by LOCAL NAME, and
-    gated on the presence of an `rdf:resource`, so a stray element of
-    that name without one contributes nothing. -/
-partial def collectNsTransforms : Node → List String
-  | n@(.element t _ ks) =>
-      (if localOf t == "namespaceTransformation" then
-         (attrVal n "rdf:resource").toList else []) ++
-      ks.flatMap collectNsTransforms
-  | _ => []
-
-/-- §3: the transformations a fetched namespace document declares,
-    resolved against that document's own base. -/
-def namespaceDocTransformations (nsIri : String) (nsDoc : Node) : List String :=
-  resolveAll (docBase nsIri nsDoc) (collectNsTransforms nsDoc)
 
 /-! ## The result -/
 
@@ -270,28 +243,5 @@ def applyTransformation (base : String) (stylesheet : Document) (source : Docume
       match L4Factoidal.Syntax.RdfXml.parseRdfXml t (some base) with
       | .ok g    => .ok g
       | .error e => .error ("the transform output is not RDF/XML: " ++ e.msg)
-
-/-- The full GRDDL result: the RDF/XML-base contribution unioned with
-    every transform's output (§7, "merge those GRDDL results").
-    An error when any transformation failed to produce a graph,
-    carrying that transformation's reason. -/
-def grddlResult (fallbackBase : String) (source : Document) (sourceText : String)
-    (stylesheets : List (Document × List (String × Node))) : Except String Graph :=
-  -- The transform's output describes the SOURCE, and a relative
-  -- reference in it — `rdf:about=""` above all — resolves against the
-  -- source's EFFECTIVE base, which a root `xml:base` or an XHTML
-  -- `<base href>` may move. Using the fetch IRI instead named the
-  -- wrong subject while producing exactly the right number of
-  -- triples: `xmlbase1` and five others differed in one IRI and
-  -- nothing else.
-  let base := docBase fallbackBase source.root
-  let ownTriples : Graph :=
-    if isRdfXmlRoot source.root then
-      match L4Factoidal.Syntax.RdfXml.parseRdfXml sourceText (some base) with
-      | .ok g    => g
-      | .error _ => []
-    else []
-  stylesheets.foldlM (fun acc (s, imps) =>
-    (applyTransformation base s source imps).map (fun g => acc ++ g)) ownTriples
 
 end L4Factoidal.GRDDL

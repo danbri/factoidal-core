@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<!DOCTYPE p:a [
+<!ELEMENT p:a EMPTY>
+<!ATTLIST p:a xmlns:p CDATA "urn:example:p">
+]>
+<p:a/>

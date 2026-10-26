@@ -85,6 +85,17 @@ def isPreflight (r : Request) : Bool :=
 
 /-- Add the CORS fields to a response. -/
 def withCors (r : Request) (resp : Response) : Response :=
-  { resp with headers := resp.headers ++ corsHeaders (r.header? "origin") (isPreflight r) }
+  { resp with headers := mergeVary (resp.headers ++ corsHeaders (r.header? "origin") (isPreflight r)) }
+where
+  /-- Join every `Vary` field into one, values in order, comma separated.
+  RFC 9110 §12.5.5 gives `Vary` a list value; a container or a negotiated
+  RDF source already varies on `Accept`, and §8.1 adds `Origin`. -/
+  mergeVary (hs : List (String × String)) : List (String × String) :=
+    let vs := hs.filterMap (fun (k, v) => if k == "vary" then some v else none)
+    match vs with
+    | [] | [_] => hs
+    | _ =>
+        let rest := hs.filter (fun (k, _) => k != "vary")
+        rest ++ [("vary", String.intercalate ", " vs)]
 
 end L4Factoidal.Solid.Server

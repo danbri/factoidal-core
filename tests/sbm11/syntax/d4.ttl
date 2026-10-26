@@ -1,0 +1,8 @@
+@prefix ex: <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+# RDF 1.2 Turtle: the same dataset with triple terms.
+ex:alice ex:says <<( ex:bob ex:age "42"^^xsd:integer )>> ;
+    ex:name "Alice"@en ;
+    ex:title "Dr"@en--ltr .
+ex:carol ex:says <<( ex:bob ex:knows ex:dave )>> .
+ex:eve ex:doubts <<( ex:carol ex:says <<( ex:bob ex:knows ex:dave )>> )>> .

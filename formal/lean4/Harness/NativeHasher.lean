@@ -14,18 +14,19 @@
    translation unit, so the browser worker's closure is unaffected.
    (The browser worker checks CRC, not Merkle, so it has no use for it.)
 
-   The substitution is sound only because the two hashers agree on every
-   input. That is MEASURED, not proved: `lake exe l4vc-probe` runs a
-   `sha256 differential` section over the FIPS 180-4 vectors, the SHA-256 block
-   and padding boundaries, and a 1 MiB buffer, and exits non-zero on any
-   mismatch. -/
+   The substitution requires agreement on inputs within the native
+   binding's u32 length bound. `lake exe l4native-crypto-smoke` measures
+   agreement on FIPS vectors, block and padding boundaries, and a 1 MiB
+   buffer. It exits nonzero on a mismatch; universal agreement remains an
+   explicit host trust condition. -/
 import L4Factoidal.Crypto.SHA2Native
 import L4Factoidal.Storage.BlockMerkle
 
 namespace Harness
 
 /-- HACL* SHA-256 for host callers that hash a whole artifact rather than
-build a tree. Extensionally equal to `L4Factoidal.Crypto.sha256`; see the
+build a tree. Agreement with `L4Factoidal.Crypto.sha256` is required on
+messages within the native binding's u32 length bound; see the
 module comment for where that equality is checked. Every host call site goes
 through this name (and `nativeHasher` below) rather than naming the extern
 directly, so the whole executable edge can be moved back to the pure
@@ -33,8 +34,8 @@ specification hash by editing this one file — which is how the before/after
 measurements of the change were taken. -/
 def nativeSha256 : ByteArray → ByteArray := L4Factoidal.Crypto.sha256Hacl
 
-/-- HACL* SHA-256 as a `BlockMerkle.Hasher`. Extensionally equal to
-`L4Factoidal.Storage.BlockMerkle.pureHasher`. -/
+/-- HACL* SHA-256 as a `BlockMerkle.Hasher`, with the native input-length
+bound and measured-agreement boundary of `nativeSha256`. -/
 def nativeHasher : L4Factoidal.Storage.BlockMerkle.Hasher := ⟨nativeSha256⟩
 
 /-! ## The streaming edge
@@ -69,10 +70,11 @@ private def stateBytesToWords (b : ByteArray) : Array UInt32 :=
     (Array.empty)
 
 /-- The SHA-256 compression walk realised by HACL* C. Extensionally equal to
-`L4Factoidal.Crypto.pureBlockFold256`; see `Crypto/SHA2Native.lean` for where
-that equality is measured. A refusal from the extern (an empty result, which
-is never a chaining value) falls back to the pure walk, so this function
-computes the specification fold whatever the extern answers. -/
+`L4Factoidal.Crypto.pureBlockFold256` on eight-word states and in-range
+block runs; see `Crypto/SHA2Native.lean` for the measurement boundary.
+A refusal from the extern (an empty result, which is never a chaining
+value) falls back to the pure walk. A returned 32-byte state is accepted
+and requires the stated agreement condition. -/
 def nativeBlockFold256 : L4Factoidal.Crypto.BlockFold256 :=
   ⟨fun h data offset blocks =>
     if blocks == 0 then h

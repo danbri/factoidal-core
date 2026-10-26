@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<!DOCTYPE a [
+<!ELEMENT a EMPTY>
+<!ATTLIST a r IDREF "nowhere">
+]>
+<a/>

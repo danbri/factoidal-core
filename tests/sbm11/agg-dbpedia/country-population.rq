@@ -1,0 +1,6 @@
+# Per country: COUNT, MIN, MAX, SUM, AVG of the population (xsd:nonNegativeInteger, inline ids)
+# over 326,365 joined rows, 730 groups keyed by IRIs.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+SELECT ?country (COUNT(?c) AS ?n) (MIN(?pop) AS ?lo) (MAX(?pop) AS ?hi) (SUM(?pop) AS ?sum) (AVG(?pop) AS ?mean)
+WHERE { ?c dbo:country ?country . ?c dbo:populationTotal ?pop }
+GROUP BY ?country ORDER BY ?country

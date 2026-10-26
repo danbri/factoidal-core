@@ -16,11 +16,18 @@
 static lean_obj_res l4_empty_bytes(void) { return lean_alloc_sarray(1, 0, 0); }
 
 LEAN_EXPORT lean_obj_res l4_block_pread(b_lean_obj_arg path, uint64_t offset,
-                                        uint64_t length, lean_obj_arg world) {
-  (void)world;
-  if (length > SIZE_MAX || offset > INT64_MAX) return lean_io_result_mk_ok(l4_empty_bytes());
+                                        uint64_t length) {
+  if (length > SIZE_MAX || offset > INT64_MAX ||
+      length > (uint64_t)INT64_MAX - offset + 1)
+    return lean_io_result_mk_ok(l4_empty_bytes());
   int fd = open(lean_string_cstr(path), O_RDONLY);
   if (fd < 0) return lean_io_result_mk_ok(l4_empty_bytes());
+  struct stat st;
+  if (fstat(fd, &st) != 0 || st.st_size < 0 ||
+      offset > (uint64_t)st.st_size || length > (uint64_t)st.st_size - offset) {
+    close(fd);
+    return lean_io_result_mk_ok(l4_empty_bytes());
+  }
   lean_obj_res out = lean_alloc_sarray(1, (size_t)length, (size_t)length);
   size_t done = 0;
   while (done < (size_t)length) {
@@ -40,9 +47,7 @@ LEAN_EXPORT lean_obj_res l4_block_pread(b_lean_obj_arg path, uint64_t offset,
  * length. A concurrent winner makes this return false, so Lean reloads the
  * committed sequence, allocates a fresh sequence number, and retries. */
 LEAN_EXPORT lean_obj_res l4_delta_log_append_sync_at_size(
-    b_lean_obj_arg path, uint64_t expected_size, b_lean_obj_arg bytes,
-    lean_obj_arg world) {
-  (void)world;
+    b_lean_obj_arg path, uint64_t expected_size, b_lean_obj_arg bytes) {
   int ok = 0;
   int fd = open(lean_string_cstr(path), O_WRONLY | O_CREAT | O_APPEND, 0644);
   if (fd < 0) return lean_io_result_mk_ok(lean_box(0));
@@ -55,6 +60,44 @@ LEAN_EXPORT lean_obj_res l4_delta_log_append_sync_at_size(
     ok = 1;
     while (done < total) {
       ssize_t n = write(fd, lean_sarray_cptr(bytes) + done, total - done);
+      if (n > 0) { done += (size_t)n; continue; }
+      if (n < 0 && errno == EINTR) continue;
+      ok = 0;
+      break;
+    }
+    if (ok && fsync(fd) != 0) ok = 0;
+  }
+  flock(fd, LOCK_UN);
+  if (close(fd) != 0) ok = 0;
+  return lean_io_result_mk_ok(lean_box(ok));
+}
+
+/* In-place counterpart of the compare-and-append: overwrite `bytes` at
+ * `offset`, inside the file, only if the file still has `expected_size`
+ * bytes, under the same exclusive advisory lock, then fsync. The DLOG writer
+ * uses it to set the header version to 2 (four bytes at offset 4) before it
+ * appends the first batch that holds an RDF 1.2 term
+ * (https://github.com/danbri/factoidal/issues/792 item 1). The file size
+ * does not change, so a concurrent compare-and-append is not affected. */
+LEAN_EXPORT lean_obj_res l4_delta_log_write_at_size(
+    b_lean_obj_arg path, uint64_t expected_size, uint64_t offset,
+    b_lean_obj_arg bytes) {
+  int ok = 0;
+  size_t total = lean_sarray_size(bytes);
+  if (offset > (uint64_t)INT64_MAX || (uint64_t)total > expected_size ||
+      offset > expected_size - (uint64_t)total)
+    return lean_io_result_mk_ok(lean_box(0));
+  int fd = open(lean_string_cstr(path), O_WRONLY);
+  if (fd < 0) return lean_io_result_mk_ok(lean_box(0));
+  if (flock(fd, LOCK_EX) != 0) { close(fd); return lean_io_result_mk_ok(lean_box(0)); }
+  struct stat st;
+  if (fstat(fd, &st) == 0 && st.st_size >= 0 &&
+      (uint64_t)st.st_size == expected_size) {
+    size_t done = 0;
+    ok = 1;
+    while (done < total) {
+      ssize_t n = pwrite(fd, lean_sarray_cptr(bytes) + done, total - done,
+                         (off_t)offset + (off_t)done);
       if (n > 0) { done += (size_t)n; continue; }
       if (n < 0 && errno == EINTR) continue;
       ok = 0;
@@ -96,9 +139,7 @@ static int l4_fsync_parent_dir(const char *path) {
  * readers see a whole pointer and the activation survives normal crash
  * recovery. */
 LEAN_EXPORT lean_obj_res l4_atomic_replace_file_sync(b_lean_obj_arg path,
-                                                      b_lean_obj_arg bytes,
-                                                      lean_obj_arg world) {
-  (void)world;
+                                                      b_lean_obj_arg bytes) {
   const char *dst = lean_string_cstr(path);
   size_t name_len = strlen(dst);
   const char suffix[] = ".tmp.XXXXXX";
@@ -126,4 +167,22 @@ LEAN_EXPORT lean_obj_res l4_atomic_replace_file_sync(b_lean_obj_arg path,
   }
   free(tmp);
   return lean_io_result_mk_ok(lean_box(ok));
+}
+
+/* Not for main without the owner's approval (issue 961, stage 1i of
+ * docs/designissues/2026-10-12-parallel-block-scans.md): transparent huge
+ * pages off for this process. mimalloc calls madvise(MADV_HUGEPAGE) on its
+ * memory; without huge pages each thread's heap grows in 4 KB pages, and the
+ * peak RSS of `l4sbm11 query --threads 4` is 17 to 31 MB smaller. Returns 0
+ * on success, -1 otherwise (and on a system without the call). */
+#if defined(__linux__)
+#include <sys/prctl.h>
+#endif
+LEAN_EXPORT lean_obj_res l4_thp_disable(void) {
+#if defined(__linux__) && defined(PR_SET_THP_DISABLE)
+  int r = prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
+#else
+  int r = -1;
+#endif
+  return lean_io_result_mk_ok(lean_box_uint32((uint32_t)(int32_t)r));
 }

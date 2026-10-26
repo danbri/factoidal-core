@@ -1,0 +1,2 @@
+# A join over base and overlay rows, merge on ?s.
+SELECT ?s ?n ?a WHERE { ?s <http://ex.org/name> ?n . ?s <http://ex.org/age> ?a }

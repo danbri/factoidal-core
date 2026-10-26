@@ -1,0 +1,4 @@
+warning: failed to query latest release, using existing version 'leanprover/lean4:v4.35.0'
+error: [root]: no configuration file with a supported extension:
+/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/lakefile.lean
+/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/lakefile.toml

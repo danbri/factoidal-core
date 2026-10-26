@@ -17,6 +17,7 @@ import Harness.CompactedEpoch
 import Harness.PosixRangeIO
 import L4Factoidal.Crypto.SHA2
 import L4Factoidal.Storage.DeltaLog
+import L4Factoidal.Storage.DeltaLogBytesTheorems
 import L4Factoidal.Storage.ShardManifest
 
 namespace Harness.ShardDeltaCompact
@@ -84,11 +85,12 @@ private def readDelta (directory : System.FilePath) : IO (List DeltaBatch × Byt
   let path := directory / "deltas.dlog"
   try
     let bytes ← IO.FS.readBinFile path
-    match parseLog bytes.toList with
-    | some (batches, []) =>
+    match DeltaLogBytes.parseLogCheckedV1BA bytes with
+    | .ok (batches, false) =>
         if validBatchHistory batches then pure (batches, bytes)
         else throw <| IO.userError "DLOG batch sequence or epoch order is invalid"
-    | _ => throw <| IO.userError "DLOG is malformed or has an uncommitted suffix"
+    | .ok (_, true) => throw <| IO.userError "DLOG is malformed or has an uncommitted suffix"
+    | .error e => throw <| IO.userError s!"DLOG: {e}"
   catch e =>
     if (← path.pathExists) then throw e else pure ([], ByteArray.empty)
 

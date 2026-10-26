@@ -36,11 +36,14 @@ def cfg : ServerConfig :=
 
 def emptyStorage : MemState :=
   { entries := [{ path := "/", kind := .storageRoot, contentType := "text/turtle",
-                  body := "", mtime := 0 }], clock := 1 }
+                  body := ByteArray.empty, mtime := 0 }], clock := 1 }
 
 def req (method target : String) (headers : List (String × String) := [])
     (body : String := "") : Request :=
   { method, path := target, queryStr := "", headers, body }
+
+/-- The content of a response read as UTF-8 text. -/
+def rtext (r : Response) : String := (String.fromUTF8? r.content).getD ""
 
 def run (c : ServerConfig) (r : Request) (st : MemState) : Response × MemState :=
   Server.step MemStore c r st
@@ -126,7 +129,7 @@ def solidGuardContainment : Bool :=
   let (resp, _) := run cfg (req "GET" "/alice/") populated
   -- The response body is read back through the Turtle parser, so the check
   -- covers the serialisation as well as the containment relation.
-  let served := aclGraphOf resp.body
+  let served := aclGraphOf (rtext resp)
   let contains := served.filter (fun t => t.p == ldpContains)
   resp.status == 200 && hdr resp "content-type" == some "text/turtle" &&
   contains.length == 2 &&
@@ -177,10 +180,10 @@ header fields." -/
 def solidGuardAcceptHeaders : Bool :=
   let (container, _) := run cfg (req "GET" "/alice/") populated
   let (resource, _) := run cfg (req "GET" "/alice/card") populated
-  hdr container "accept-patch" == some "text/n3" &&
+  hdr container "accept-patch" == some "text/n3, application/json-patch+json" &&
   hdr container "accept-post" == some "text/turtle" &&
   hdr container "accept-put" == some "text/turtle" &&
-  hdr resource "accept-patch" == some "text/n3" &&
+  hdr resource "accept-patch" == some "text/n3, application/json-patch+json" &&
   hdr resource "accept-put" == some "text/turtle"
 
 #guard solidGuardAllowHeader
@@ -269,13 +272,13 @@ def solidGuardN3PatchApplies : Bool :=
   | none => false
   | some e =>
       resp.status == 204 &&
-      (e.body.splitOn "Alex").length > 1 && (e.body.splitOn "Claudia").length == 1 &&
-      (e.body.splitOn "Garcia").length > 1
+      (e.text.splitOn "Alex").length > 1 && (e.text.splitOn "Claudia").length == 1 &&
+      (e.text.splitOn "Garcia").length > 1
 
 /-- "Servers MUST indicate support of N3 Patch by listing text/n3 as a field
 value of the Accept-Patch header field." -/
 def solidGuardN3PatchAcceptPatch : Bool :=
-  hdr (run cfg (req "GET" "/alice/card") populated).1 "accept-patch" == some "text/n3"
+  hdr (run cfg (req "GET" "/alice/card") populated).1 "accept-patch" == some "text/n3, application/json-patch+json"
 
 /-- "The ?insertions and ?deletions formulae MUST NOT contain blank nodes."
 "Servers MUST respond with a 422 status code if a patch document does not
@@ -358,12 +361,12 @@ def solidGuardN3PatchRelativeIri : Bool :=
   | none => false
   | some e =>
       resp.status == 204 &&
-      (e.body.splitOn "added").length > 1 &&
-      (e.body.splitOn "one").length > 1 &&
+      (e.text.splitOn "added").length > 1 &&
+      (e.text.splitOn "one").length > 1 &&
       -- The fragment resolved against the target, not against nothing. The
       -- stored body is read back through the Turtle parser, because the
       -- serialiser writes the IRI with a prefix.
-      (graphOf none e.body).all (fun t =>
+      (graphOf none e.text).all (fun t =>
         t.s == Subject.iri ⟨"http://example.org/notes/three#it", by rfl⟩)
 
 /-- A PATCH body that is not `text/n3` is refused. -/
@@ -449,7 +452,8 @@ the Vary header field value." -/
 def solidGuardCorsHeaders : Bool :=
   let (resp, _) := run cfg (req "GET" "/alice/card" [("origin", "https://app.example")]) populated
   hdr resp "access-control-allow-origin" == some "https://app.example" &&
-  hdr resp "vary" == some "Origin" &&
+  has resp "vary" "Origin" &&
+  (resp.headers.filter (fun (k, _) => k == "vary")).length == 1 &&
   has resp "access-control-expose-headers" "WAC-Allow" &&
   has resp "access-control-expose-headers" "Link"
 
@@ -545,6 +549,24 @@ def solidGuardWacEnforced : Bool :=
   (run strict (req "GET" "/alice/card") st).1.status == 401 &&
   (run strictBob (req "GET" "/alice/card.acl") st).1.status == 403 &&
   (run strictBob (req "GET" "/alice/card") st).1.status == 200
+
+/-- A CORS-preflight request carries no credentials, so with enforcement on
+it is answered 204 with the CORS fields before Web Access Control
+(https://github.com/danbri/factoidal/issues/923). An `OPTIONS` without
+`Access-Control-Request-Method` is still refused. -/
+def solidGuardPreflightBeforeWac : Bool :=
+  let st := (run cfg (req "PUT" "/alice/card.acl" turtle aclDoc) populated).2
+  let strict : ServerConfig := { cfg with enforceWac := true }
+  let pre := (run strict (req "OPTIONS" "/alice/card"
+    [("origin", "https://app.example"), ("access-control-request-method", "PUT")]) st).1
+  pre.status == 204 &&
+  hdr pre "access-control-allow-origin" == some "https://app.example" &&
+  has pre "access-control-allow-methods" "PUT" &&
+  (run strict (req "OPTIONS" "/alice/card" [("origin", "https://app.example")]) st).1.status == 401 &&
+  -- With no Origin it is no CORS request at all.
+  (run strict (req "OPTIONS" "/alice/card" [("access-control-request-method", "PUT")]) st).1.status == 401
+
+#guard solidGuardPreflightBeforeWac
 
 /-! ## Solid-OIDC (Solid Protocol §10.1, RFC 9449)
 
@@ -814,6 +836,65 @@ def solidGuardClientLinkFieldShapes : Bool :=
 #guard solidGuardClientStorageWalkSteps
 #guard solidGuardClientWacAllowParsing
 #guard solidGuardClientProfile
+
+/-! ## §5.5 — RDF sources in text/turtle and application/ld+json
+
+"When a server creates an RDF source on HTTP PUT, POST, or PATCH requests,
+the server MUST satisfy GET requests on this resource when the Accept header
+field requests text/turtle or application/ld+json." -/
+
+def acceptJsonLd : List (String × String) := [("accept", "application/ld+json")]
+def acceptTurtle : List (String × String) := [("accept", "text/turtle")]
+
+/-- A Turtle resource asked for as JSON-LD answers JSON-LD with the same
+triple, a tag of its own, and `Vary: accept`. -/
+def solidGuardTurtleAsJsonLd : Bool :=
+  let (resp, _) := run cfg (req "GET" "/alice/card" acceptJsonLd) populated
+  resp.status == 200 &&
+  hdr resp "content-type" == some "application/ld+json" &&
+  has resp "vary" "accept" &&
+  (match hdr resp "etag" with | some t => (t.splitOn "-jsonld").length == 2 | none => false) &&
+  (readRdfSource mediaJsonLd "http://example.org/alice/card" (rtext resp)).map (·.length) == some 1
+
+/-- Asked for as Turtle, the same resource answers its stored bytes. -/
+def solidGuardTurtleAsTurtle : Bool :=
+  let (resp, _) := run cfg (req "GET" "/alice/card" acceptTurtle) populated
+  resp.status == 200 && hdr resp "content-type" == some "text/turtle" &&
+  ((rtext resp).splitOn "Alice").length == 2 && !((rtext resp).startsWith "[")
+
+/-- A JSON-LD resource asked for as Turtle answers Turtle with its triples. -/
+def solidGuardJsonLdAsTurtle : Bool :=
+  let st := (runAll cfg [req "PUT" "/alice/shop.json" [("content-type", "application/ld+json")]
+      "{\"@context\":{\"name\":\"http://store.example.com/name\"},\"@id\":\"http://store.example.com/\",\"name\":\"Links Bike Shop\"}"]
+      populated).2
+  let (resp, _) := run cfg (req "GET" "/alice/shop.json" acceptTurtle) st
+  let (plain, _) := run cfg (req "GET" "/alice/shop.json") st
+  resp.status == 200 && hdr resp "content-type" == some "text/turtle" &&
+  (readRdfSource mediaTurtle "http://example.org/alice/shop.json" (rtext resp)).map (·.length) == some 1 &&
+  -- With no Accept field the stored JSON-LD is answered.
+  hdr plain "content-type" == some "application/ld+json" && (rtext plain).startsWith "{"
+
+/-- A container listed as JSON-LD; and its Turtle listing writes a dotted
+member IRI in full, so a Notation3 reader does not read a path. -/
+def solidGuardContainerNegotiated : Bool :=
+  let (j, _) := run cfg (req "GET" "/alice/" acceptJsonLd) populated
+  let (t, _) := run cfg (req "GET" "/alice/" acceptTurtle) populated
+  hdr j "content-type" == some "application/ld+json" && (rtext j).startsWith "[" &&
+  hdr t "content-type" == some "text/turtle" &&
+  ((rtext t).splitOn "<http://example.org/alice/card>").length ≥ 2 &&
+  ((rtext t).splitOn "ns1:").length == 1
+
+/-- Negative: a non-RDF resource is never converted. -/
+def solidGuardPlainNotConverted : Bool :=
+  let st := (runAll cfg [req "PUT" "/alice/hello.txt" [("content-type", "text/plain")] "hi"] populated).2
+  let (resp, _) := run cfg (req "GET" "/alice/hello.txt" acceptJsonLd) st
+  hdr resp "content-type" == some "text/plain" && (rtext resp) == "hi"
+
+#guard solidGuardTurtleAsJsonLd
+#guard solidGuardTurtleAsTurtle
+#guard solidGuardJsonLdAsTurtle
+#guard solidGuardContainerNegotiated
+#guard solidGuardPlainNotConverted
 
 /-! ## The registry's own arithmetic -/
 

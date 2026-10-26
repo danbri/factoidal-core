@@ -92,6 +92,12 @@ inductive GraphBackend where
   | union (members : List GraphBackend)
   /-- A non-materialised backend over an RML mapping. -/
   | virtualRml (vs : RML.VirtualSource)
+  /-- Any capability record. A store that is not one of the arms above enters
+  the planner through this arm; its law is `StoreCapsExact` of the record
+  itself (`BackendExact`, `SPARQL/StoreBackendDenotation.lean`), and the
+  interface type `Dataflow.LawfulStore` carries that law as a field
+  (https://github.com/danbri/factoidal/issues/975, item 2). -/
+  | caps (c : StoreCaps)
 
 /-! ## 3. The one dispatch point
 
@@ -144,6 +150,7 @@ def capsOfBackend : GraphBackend → StoreCaps
   | .cottasOnDiskDelta ops scope delta => overlay (capsOfCottas ops scope) delta
   | .union members => unionCaps (capsOfBackendList members)
   | .virtualRml vs => RML.capsOfRmlSource vs
+  | .caps c => c
 
 /-- Structural twin over a list, so `unionCaps` — the single union
 combinator — gets the shape it consumes. -/
@@ -267,9 +274,9 @@ not invent rows. -/
 #guard (backendSearchLimited bList patternBoundAll 0).length == 0
 #guard (backendSearchLimited bList patternBoundAll 5).length == 1
 
-/-! A union of two copies answers twice; the union of nothing answers
+/-! A union of two copies answers once (a set union); the union of nothing answers
 nothing. -/
-#guard (backendSearch (.union [bList, bList]) patternBoundAll).length == 2
+#guard (backendSearch (.union [bList, bList]) patternBoundAll).length == 1
 #guard (backendSearch (.union []) patternBoundAll).length == 0
 
 /-! Flag rows, one per arm. Only the on-disk COTTAS reader approximates

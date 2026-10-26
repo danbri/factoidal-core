@@ -58,10 +58,16 @@ DIFFERENCES FROM THE F* SOURCE, all deliberate and all listed:
      explicit (`canonicalizeExceedsBudget`), so a poison input is a
      reported abort rather than a wrong answer.
   4. Sorting. F* uses a merge sort (its inputs reach 100k+ lines).
-     Here sorting is a STABLE INSERTION SORT: the same total preorder,
+     `sortBy` here is a STABLE INSERTION SORT: the same total preorder,
      the same stable tie-breaking, and short enough to prove sorted
-     (`RDF/CanonicalTheorems.lean`). The whole W3C corpus is under 50
-     lines per file.
+     (`RDF/CanonicalTheorems.lean`). It is the specification of the
+     sort and costs O(n^2): 4,000 quads took 25 s (2026-10-10). The
+     algorithm runs `sortByFast`, `List.mergeSort`, at the five places
+     where the input grows with the dataset, and
+     `CanonicalTheorems.sortBy_eq_mergeSort` proves the two return the
+     same list for every total preorder, ties included. The whole W3C
+     corpus is under 50 lines per file, so the suites cannot see the
+     difference; `tests/stack/lean_scaling.sh` can.
   5. Not ported: the F* module's Section 6b/6c "bounded neighbour
      hash" ladder (`compute_all_nbr1`/`nbr2`/`nbr3`, `bn_full_key`,
      `sort_full_keys`). Those are dead code in the F* tree — an
@@ -70,12 +76,22 @@ DIFFERENCES FROM THE F* SOURCE, all deliberate and all listed:
      omitting them.
   6. Not ported: the F* performance machinery whose only purpose is
      the OCaml extraction's cost model (byte-level `fs_byte_at`
-     scanning, the `bn_lookup_tree` balanced BST for relabelling, the
-     accumulator/`rev` rewrites of every list build). The spec/engine
-     split of this Lean tree keeps the specification evaluator plain.
+     scanning, the accumulator/`rev` rewrites of every list build).
+     Where a plain definition was measured to cost time or stack, a
+     fast twin sits beside it with a proved `csimp` equality, and the
+     definition stays as written: the merge sort (item 4), the
+     accumulator forms of `dedupAdj` and `collapseKeyedQQuads`, the
+     §4.4 step 2 blank node to quads map (`bnodeQuadIndex`, replacing a
+     filter over every quad per blank node) and a search tree for
+     relabelling (`labelTree`, the role of F*'s `bn_lookup_tree`);
+     https://github.com/danbri/factoidal/issues/745. Hash N-Degree Quads
+     reads the same map, and its issuers keep a search tree beside the
+     issued list (`FIssuer`, `buildCanonicalMappingBudgeted_eq_fast`);
+     https://github.com/danbri/factoidal/issues/751.
 -/
 import L4Factoidal.RDF.Graph
 import L4Factoidal.Crypto.SHA2
+import Std.Data.TreeMap
 
 namespace L4Factoidal.RDF.Canonical
 
@@ -102,6 +118,70 @@ def charsLe : List Char → List Char → Bool
 /-- Code-point ≤ over strings (RDFC-1.0 §3, "code point order"). -/
 def strLe (a b : String) : Bool := charsLe a.toList b.toList
 
+/-! ### The comparison the compiler emits
+
+`strLe` builds two character lists for every comparison. On a graph of 2,000
+IRIs without blank nodes that conversion (`lean_string_data`) and the list walk
+are 57 percent of the instructions of `canonicalize`, after the sorts were
+changed to merge sorts (survey of 2026-10-10,
+`docs/designissues/2026-10-10-lean-vs-fstar-performance.md`). Lean's order on
+`String` is the same lexicographic order on code points, and its decision
+procedure is native code. `strLe_eq_not_lt` proves the equality; the `csimp`
+theorem makes every function compiled after this point call `strLeFast`. The
+definition of `strLe` and every theorem about it do not change. -/
+
+private theorem char_lt_iff (x y : Char) : x < y ↔ x.val.toNat < y.val.toNat :=
+  UInt32.lt_iff_toNat_lt
+
+private theorem char_eq_of_not_lt {x y : Char} (h1 : ¬ x.val < y.val)
+    (h2 : ¬ y.val < x.val) : x = y := by
+  apply Char.ext
+  exact UInt32.le_antisymm (UInt32.not_lt.1 h2) (UInt32.not_lt.1 h1)
+
+/-- `charsLe` is the negation of Lean's list order read backwards. -/
+theorem charsLe_eq_not_lt : ∀ (as bs : List Char), charsLe as bs = !decide (bs < as)
+  | [], bs => by
+      cases bs with
+      | nil => simp [charsLe]
+      | cons b bs => simp [charsLe, List.not_lt_nil]
+  | a :: as, [] => by simp [charsLe, List.nil_lt_cons]
+  | a :: as, b :: bs => by
+      have ih := charsLe_eq_not_lt as bs
+      have key : (b :: bs < a :: as) ↔ (b < a ∨ b = a ∧ bs < as) := List.cons_lt_cons_iff
+      simp only [charsLe]
+      by_cases h1 : a.val < b.val
+      · have h1' := (UInt32.lt_iff_toNat_lt).1 h1
+        have hn : ¬ (b :: bs < a :: as) := by
+          rw [key]
+          rintro (h | ⟨h, _⟩)
+          · have := (char_lt_iff b a).1 h; omega
+          · subst h; omega
+        simp [h1, hn]
+      · by_cases h2 : b.val < a.val
+        · have hp : (b :: bs < a :: as) := key.2 (Or.inl h2)
+          simp [h1, h2, hp]
+        · have heq : b = a := (char_eq_of_not_lt h2 h1)
+          have hiff : (b :: bs < a :: as) ↔ bs < as := by
+            rw [key]
+            constructor
+            · rintro (h | ⟨_, h⟩)
+              · exact absurd h h2
+              · exact h
+            · intro h; exact Or.inr ⟨heq, h⟩
+          simp [h1, h2, ih, hiff]
+
+theorem strLe_eq_not_lt (a b : String) : strLe a b = !decide (b < a) := by
+  unfold strLe
+  rw [charsLe_eq_not_lt]
+  rfl
+
+/-- `strLe` through Lean's native string order. -/
+def strLeFast (a b : String) : Bool := !decide (b < a)
+
+/-- The compiler calls `strLeFast` wherever the source says `strLe`. -/
+@[csimp] theorem strLe_eq_strLeFast : @strLe = @strLeFast :=
+  funext fun a => funext fun b => strLe_eq_not_lt a b
+
 /-! ## Stable insertion sort
 
 Stability matters: RDFC-1.0 §4.4 step 5.3 orders exploration results
@@ -115,12 +195,37 @@ def insertSortedBy (le : α → α → Bool) (x : α) : List α → List α
   | []      => [x]
   | y :: ys => if le y x then y :: insertSortedBy le x ys else x :: y :: ys
 
+/-- `insertSortedBy` with the passed prefix on a reverse accumulator: a tail
+call per element. `sortBy` runs on the blank nodes left unissued after a
+budget is exhausted, as many as the dataset has (https://github.com/danbri/factoidal/issues/746). -/
+def insertSortedByTR (le : α → α → Bool) (x : α) (ys : List α) : List α := go ys []
+where
+  go : List α → List α → List α
+    | [], acc => (x :: acc).reverse
+    | y :: ys, acc => if le y x then go ys (y :: acc) else acc.reverse ++ x :: y :: ys
+
+theorem insertSortedByTR_go_eq (le : α → α → Bool) (x : α) :
+    ∀ (ys acc : List α), insertSortedByTR.go le x ys acc = acc.reverse ++ insertSortedBy le x ys
+  | [], acc => by simp [insertSortedByTR.go, insertSortedBy]
+  | y :: ys, acc => by
+      simp only [insertSortedByTR.go, insertSortedBy]
+      split <;> rename_i h <;> simp [h, insertSortedByTR_go_eq le x ys]
+
+@[csimp] theorem insertSortedBy_eq_TR : @insertSortedBy = @insertSortedByTR := by
+  funext α le x ys; simp [insertSortedByTR, insertSortedByTR_go_eq]
+
 /-- Stable insertion sort under the total preorder `le`. -/
 def sortBy (le : α → α → Bool) (xs : List α) : List α :=
   xs.foldl (fun acc x => insertSortedBy le x acc) []
 
+/-- The sort the algorithm runs: `List.mergeSort`, O(n log n) and stable.
+`CanonicalTheorems.sortBy_eq_mergeSort` proves it returns exactly what
+`sortBy` returns whenever `le` is transitive and total, and every
+comparator passed to it below is `strLe` on a projection. -/
+def sortByFast (le : α → α → Bool) (xs : List α) : List α := xs.mergeSort le
+
 /-- Sort strings into code-point order (RDFC-1.0 §3). -/
-def sortStrings (xs : List String) : List String := sortBy strLe xs
+def sortStrings (xs : List String) : List String := sortByFast strLe xs
 
 /-- Drop adjacent duplicates from a sorted list — RDF set semantics
 (RDF 1.1 Concepts §4: a dataset's quads form a set). The F* source
@@ -131,6 +236,37 @@ def dedupAdj : List String → List String
   | [x]          => [x]
   | x :: y :: rest =>
       if x == y then dedupAdj (y :: rest) else x :: dedupAdj (y :: rest)
+
+/-- `dedupAdj` with an accumulator. `dedupAdj` conses after its recursive
+call: one stack frame per line. In the wasm module under Node's default
+stack, `canonicalize` of 24,000 quads ran out of stack here after
+`collapseKeyedQQuads` was repaired
+(https://github.com/danbri/factoidal/issues/713 stage 5). The `csimp`
+theorem below makes the compiler emit this form for every call. -/
+def dedupAdjTR : List String → List String
+  | []        => []
+  | x :: rest => go x rest []
+where
+  /-- `x` is the last survivor so far; `acc` holds the earlier ones, newest
+  first. -/
+  go (x : String) : List String → List String → List String
+    | [],        acc => (x :: acc).reverse
+    | y :: rest, acc => if x == y then go y rest acc else go y rest (x :: acc)
+
+theorem dedupAdjTR_go_eq :
+    ∀ (rest : List String) (x : String) (acc : List String),
+      dedupAdjTR.go x rest acc = acc.reverse ++ dedupAdj (x :: rest)
+  | [], x, acc => by simp [dedupAdjTR.go, dedupAdj]
+  | y :: rest, x, acc => by
+      by_cases h : (x == y) = true
+      · simp [dedupAdjTR.go, dedupAdj, h, dedupAdjTR_go_eq rest y acc]
+      · simp [dedupAdjTR.go, dedupAdj, h, dedupAdjTR_go_eq rest y (x :: acc)]
+
+@[csimp] theorem dedupAdj_eq_dedupAdjTR : @dedupAdj = @dedupAdjTR := by
+  funext xs
+  cases xs with
+  | nil => rfl
+  | cons x rest => simp [dedupAdjTR, dedupAdjTR_go_eq]
 
 /-- Concatenate a list of strings. -/
 def joinStrings (xs : List String) : String := xs.foldl (· ++ ·) ""
@@ -248,8 +384,45 @@ def collapseKeyedQQuads : List (String × QQuad) → List QQuad
       if k1 == k2 then collapseKeyedQQuads ((k2, q2) :: rest)
       else q1 :: collapseKeyedQQuads ((k2, q2) :: rest)
 
+/-- `collapseKeyedQQuads` with an accumulator. `collapseKeyedQQuads` conses
+after its recursive call: one stack frame per quad. In the wasm module under
+Node's default stack, `canonicalize` of 24,000 quads ran out of stack here
+("Maximum call stack size exceeded";
+https://github.com/danbri/factoidal/issues/713 stage 5). The `csimp` theorem
+below makes the compiler emit this form for every call. -/
+def collapseKeyedQQuadsTR : List (String × QQuad) → List QQuad
+  | []             => []
+  | (k, q) :: rest => go k q rest []
+where
+  /-- `q`, keyed `k`, is the last survivor so far; `acc` holds the earlier
+  survivors, newest first. -/
+  go (k : String) (q : QQuad) : List (String × QQuad) → List QQuad → List QQuad
+    | [],                acc => (q :: acc).reverse
+    | (k2, q2) :: rest,  acc =>
+        if k == k2 then go k2 q2 rest acc else go k2 q2 rest (q :: acc)
+
+theorem collapseKeyedQQuadsTR_go_eq :
+    ∀ (rest : List (String × QQuad)) (k : String) (q : QQuad) (acc : List QQuad),
+      collapseKeyedQQuadsTR.go k q rest acc =
+        acc.reverse ++ collapseKeyedQQuads ((k, q) :: rest)
+  | [], k, q, acc => by simp [collapseKeyedQQuadsTR.go, collapseKeyedQQuads]
+  | (k2, q2) :: rest, k, q, acc => by
+      by_cases h : (k == k2) = true
+      · simp [collapseKeyedQQuadsTR.go, collapseKeyedQQuads, h,
+          collapseKeyedQQuadsTR_go_eq rest k2 q2 acc]
+      · simp [collapseKeyedQQuadsTR.go, collapseKeyedQQuads, h,
+          collapseKeyedQQuadsTR_go_eq rest k2 q2 (q :: acc)]
+
+@[csimp] theorem collapseKeyedQQuads_eq_TR : @collapseKeyedQQuads = @collapseKeyedQQuadsTR := by
+  funext xs
+  cases xs with
+  | nil => rfl
+  | cons p rest =>
+      obtain ⟨k, q⟩ := p
+      simp [collapseKeyedQQuadsTR, collapseKeyedQQuadsTR_go_eq]
+
 def dedupQQuads (qs : List QQuad) : List QQuad :=
-  collapseKeyedQQuads (sortBy (fun a b => strLe a.1 b.1) (qs.map (fun q => (canonQuad q, q))))
+  collapseKeyedQQuads (sortByFast (fun a b => strLe a.1 b.1) (qs.map (fun q => (canonQuad q, q))))
 
 /-! ## Blank-node enumeration -/
 
@@ -635,7 +808,7 @@ def groupSortedHfdq : List (BNodeId × String) → String → List BNodeId → L
       else groupSortedHfdq rest h [b] ((curH, curMembers.reverse) :: acc)
 
 def groupByHfdq (table : List (BNodeId × String)) : List Bucket :=
-  match sortBy (fun a b => strLe a.2 b.2) table with
+  match sortByFast (fun a b => strLe a.2 b.2) table with
   | []               => []
   | (b0, h0) :: rest => groupSortedHfdq rest h0 [b0] []
 
@@ -684,7 +857,7 @@ def processCollisionMembers (alg : HashAlgorithm) (fuel : Nat) (qs : List QQuad)
     (hfdqTable : List (BNodeId × String)) (st : IssuerState) (members : List BNodeId)
     (hb : HndqBudget) : IssuerState × HndqBudget :=
   let (results, hb1) := exploreMembers alg fuel qs hfdqTable st members hb
-  (replayAll st (sortBy (fun a b => strLe a.1 b.1) results), hb1)
+  (replayAll st (sortByFast (fun a b => strLe a.1 b.1) results), hb1)
 
 /-- §4.4 step 5: the collision groups, in hash order. -/
 def processCollisionGroups (alg : HashAlgorithm) (fuel : Nat) (qs : List QQuad)
@@ -718,6 +891,120 @@ def hfdqTableOf (alg : HashAlgorithm) (ds : Dataset) (qs : List QQuad) :
     List (BNodeId × String) :=
   (datasetBnodes ds).map (fun b => (b, hashFirstDegreeQuads alg b qs))
 
+/-! ### The blank node to quads map (§4.4 step 2)
+
+`hashFirstDegreeQuads` finds the quads of its blank node with
+`quadsForBnode`, a filter over EVERY quad of the dataset, and `hfdqTableOf`
+calls it once per blank node: B blank nodes and Q quads cost B times Q
+calls of `quadMentionsBnode`. On 8,000 blank nodes in 24,000 quads that was
+192 million calls, and 61 to 70 percent of the instructions of
+`l4factoidal canonicalize` at 2,000 blank nodes
+(https://github.com/danbri/factoidal/issues/745). RDFC-1.0 §4.4 step 2 builds
+the "blank node to quads map" once, with one pass over the quads.
+`bnodeQuadIndex` is that map: a `Std.TreeMap` from a blank node to the quads
+it occurs in, newest first. `quadsForBnodeIx_bnodeQuadIndex` proves that the
+map returns, for every blank node, the list `quadsForBnode` returns, in the
+same order, so `hfdqTableOf_eq_hfdqTableOfIx` holds for every dataset and the
+`csimp` theorem makes the compiler emit the indexed form. -/
+
+/-- The blank node to quads map, each list newest first. -/
+abbrev QuadIndex := Std.TreeMap BNodeId (List QQuad) compare
+
+/-- Add one quad to the map, under every blank node it mentions. Each new
+list is built from `m`, the map BEFORE this quad, so a blank node that
+occurs twice in the quad gets the quad once. -/
+def indexQuad (m : QuadIndex) (q : QQuad) : QuadIndex :=
+  (bnodesInQuad q).foldl (fun acc b => acc.insert b (q :: m.getD b [])) m
+
+/-- RDFC-1.0 §4.4 step 2: the blank node to quads map of `qs`. -/
+def bnodeQuadIndex (qs : List QQuad) : QuadIndex := qs.foldl indexQuad ∅
+
+/-- The quads of `target`, in input order, read from the map. -/
+def quadsForBnodeIx (ix : QuadIndex) (target : BNodeId) : List QQuad :=
+  (ix.getD target []).reverse
+
+private theorem quadIndex_getD_insert (t : QuadIndex) (a k : BNodeId) (v : List QQuad) :
+    (t.insert k v).getD a [] = if k = a then v else t.getD a [] := by
+  have := @Std.TreeMap.getD_insert _ _ _ t _ k a [] v
+  simpa [Std.compare_eq_iff_eq] using this
+
+private theorem foldl_insert_getD (m : QuadIndex) (q : QQuad) (a : BNodeId) :
+    ∀ (L : List BNodeId) (acc : QuadIndex),
+      (L.foldl (fun acc b => acc.insert b (q :: m.getD b [])) acc).getD a [] =
+        if a ∈ L then q :: m.getD a [] else acc.getD a []
+  | [], acc => by simp
+  | c :: L, acc => by
+      rw [List.foldl_cons, foldl_insert_getD m q a L, quadIndex_getD_insert]
+      by_cases hL : a ∈ L
+      · simp [hL]
+      · by_cases hc : c = a
+        · subst hc; simp
+        · have hac : a ≠ c := fun h => hc h.symm
+          simp [hL, hc, hac]
+
+/-- A blank node is in `bnodesInQuad q` exactly when `quadMentionsBnode`
+says the quad mentions it. -/
+theorem mem_bnodesInQuad_iff (a : BNodeId) (q : QQuad) :
+    a ∈ bnodesInQuad q ↔ quadMentionsBnode a q = true := by
+  obtain ⟨g, t⟩ := q
+  obtain ⟨s, p, o⟩ := t
+  unfold bnodesInQuad quadMentionsBnode
+  cases s <;> rcases g with _ | (_ | _) <;> simp <;> (try simp only [@eq_comm _ a]) <;> (try simp only [or_assoc])
+
+theorem indexQuad_getD (m : QuadIndex) (q : QQuad) (a : BNodeId) :
+    (indexQuad m q).getD a [] =
+      if quadMentionsBnode a q then q :: m.getD a [] else m.getD a [] := by
+  unfold indexQuad
+  rw [foldl_insert_getD]
+  by_cases h : quadMentionsBnode a q = true
+  · simp [h, (mem_bnodesInQuad_iff a q).2 h]
+  · have h' : a ∉ bnodesInQuad q := fun hm => h ((mem_bnodesInQuad_iff a q).1 hm)
+    simp [h, h']
+
+theorem foldl_indexQuad_getD (a : BNodeId) :
+    ∀ (qs : List QQuad) (m : QuadIndex),
+      (qs.foldl indexQuad m).getD a [] =
+        (qs.filter (quadMentionsBnode a)).reverse ++ m.getD a []
+  | [], m => by simp
+  | q :: qs, m => by
+      rw [List.foldl_cons, foldl_indexQuad_getD a qs, indexQuad_getD]
+      by_cases h : quadMentionsBnode a q = true
+      · simp [h]
+      · simp [h]
+
+/-- The map answers what the filter answers, for every blank node. -/
+theorem quadsForBnodeIx_bnodeQuadIndex (qs : List QQuad) (a : BNodeId) :
+    quadsForBnodeIx (bnodeQuadIndex qs) a = quadsForBnode a qs := by
+  unfold quadsForBnodeIx bnodeQuadIndex quadsForBnode
+  rw [foldl_indexQuad_getD]
+  simp
+
+/-- `hashFirstDegreeQuads` over the quads the map holds for `target`. -/
+def hashFirstDegreeQuadsIx (alg : HashAlgorithm) (ix : QuadIndex) (target : BNodeId) :
+    String :=
+  hashHex alg (joinStrings (sortStrings ((quadsForBnodeIx ix target).map (renderForHfdq target))))
+
+theorem hashFirstDegreeQuadsIx_eq (alg : HashAlgorithm) (qs : List QQuad) (b : BNodeId) :
+    hashFirstDegreeQuadsIx alg (bnodeQuadIndex qs) b = hashFirstDegreeQuads alg b qs := by
+  unfold hashFirstDegreeQuadsIx hashFirstDegreeQuads
+  rw [quadsForBnodeIx_bnodeQuadIndex]
+
+/-- `hfdqTableOf` with the map built once (§4.4 step 2) and read once per
+blank node (§4.4 step 3). -/
+def hfdqTableOfIx (alg : HashAlgorithm) (ds : Dataset) (qs : List QQuad) :
+    List (BNodeId × String) :=
+  let ix := bnodeQuadIndex qs
+  (datasetBnodes ds).map (fun b => (b, hashFirstDegreeQuadsIx alg ix b))
+
+theorem hfdqTableOf_eq_hfdqTableOfIx (alg : HashAlgorithm) (ds : Dataset) (qs : List QQuad) :
+    hfdqTableOf alg ds qs = hfdqTableOfIx alg ds qs := by
+  unfold hfdqTableOf hfdqTableOfIx
+  simp only [hashFirstDegreeQuadsIx_eq]
+
+/-- The compiler calls `hfdqTableOfIx` wherever the source says `hfdqTableOf`. -/
+@[csimp] theorem hfdqTableOf_eq_Ix : @hfdqTableOf = @hfdqTableOfIx := by
+  funext alg ds qs; exact hfdqTableOf_eq_hfdqTableOfIx alg ds qs
+
 /-- The full §4.4 run under an explicit Hash-N-Degree-Quads budget.
 `none` means the budget was spent before every blank node had a
 canonical identifier — the §4.4 "excessive calls to Hash N-Degree
@@ -738,18 +1025,6 @@ def buildCanonicalMappingBudgeted (alg : HashAlgorithm) (budget : Nat) (ds : Dat
       sortBy (fun a b => if a.2 == b.2 then strLe a.1 b.1 else strLe a.2 b.2)
         (leftover.map (fun b => (b, lookupHfdq b hfdqTable)))
     some (leftoverSorted.foldl (fun s p => (issueIdentifier s p.1).1) st).issued
-
-/-- The blank-node label map: original label → `c14nN`. -/
-def buildCanonicalMapping (alg : HashAlgorithm := .sha256) (ds : Dataset) :
-    List (BNodeId × String) :=
-  (buildCanonicalMappingBudgeted alg defaultHndqBudget ds).getD []
-
-/-- True when canonicalization under `budget` aborted for excessive
-calls to Hash N-Degree Quads — the W3C suite's `RDFC10NegativeEvalTest`
-criterion. Use a budget well below `defaultHndqBudget` so a
-pathological input aborts promptly. -/
-def canonicalizeExceedsBudget (alg : HashAlgorithm) (budget : Nat) (ds : Dataset) : Bool :=
-  (buildCanonicalMappingBudgeted alg budget ds).isNone
 
 /-! ### Applying the map -/
 
@@ -781,6 +1056,738 @@ def relabelDataset (m : List (BNodeId × String)) (ds : Dataset) : Dataset :=
     named := ds.named.map (fun ng =>
       { name := relabelGraphName m ng.name, graph := ng.graph.map (relabelTriple m) }) }
 
+/-! ### Relabelling through a search tree
+
+`relabelDataset` finds each blank node's canonical label with `lookupMap`, a
+scan of the issued list, which has one entry per blank node: B blank nodes in
+Q quads cost about Q times B comparisons (6.4 percent of the instructions of
+`l4factoidal canonicalize` at 4,000 blank nodes, growing 4.7 times from 2,000;
+https://github.com/danbri/factoidal/issues/745). `relabelDatasetBy` is the
+same walk over any lookup function; `labelTree` holds the issued list in a
+`Std.TreeMap` whose answer is the FIRST entry of each label, as `lookupMap`'s
+is (`labelTree_get?`). The `csimp` theorem makes the compiler build the tree
+once per dataset. -/
+
+def relabelSubjectBy (look : BNodeId → Option String) : Subject → Subject
+  | .bnode b => match look b with | some l => .bnode l | none => .bnode b
+  | s        => s
+
+def relabelTermBy (look : BNodeId → Option String) : Term → Term
+  | .bnode b => match look b with | some l => .bnode l | none => .bnode b
+  | .tripleTerm s p o => .tripleTerm (relabelSubjectBy look s) p (relabelTermBy look o)
+  | t => t
+
+def relabelTripleBy (look : BNodeId → Option String) (t : Triple) : Triple :=
+  { s := relabelSubjectBy look t.s, p := t.p, o := relabelTermBy look t.o }
+
+def relabelDatasetBy (look : BNodeId → Option String) (ds : Dataset) : Dataset :=
+  { default := ds.default.map (relabelTripleBy look),
+    named := ds.named.map (fun ng =>
+      { name := relabelSubjectBy look ng.name, graph := ng.graph.map (relabelTripleBy look) }) }
+
+theorem relabelSubject_eq_by (m : List (BNodeId × String)) (s : Subject) :
+    relabelSubject m s = relabelSubjectBy (fun b => lookupMap b m) s := by
+  cases s <;> rfl
+
+theorem relabelTerm_eq_by (m : List (BNodeId × String)) :
+    ∀ (t : Term), relabelTerm m t = relabelTermBy (fun b => lookupMap b m) t
+  | .iri _ => rfl
+  | .bnode _ => rfl
+  | .literal _ => rfl
+  | .tripleTerm s p o => by
+      simp only [relabelTerm, relabelTermBy, relabelSubject_eq_by, relabelTerm_eq_by m o]
+
+theorem relabelDataset_eq_by (m : List (BNodeId × String)) (ds : Dataset) :
+    relabelDataset m ds = relabelDatasetBy (fun b => lookupMap b m) ds := by
+  have ht : relabelTriple m = relabelTripleBy (fun b => lookupMap b m) := by
+    funext t
+    simp only [relabelTriple, relabelTripleBy, relabelSubject_eq_by, relabelTerm_eq_by]
+  simp only [relabelDataset, relabelDatasetBy, relabelGraphName, ht, relabelSubject_eq_by]
+
+/-- The issued list as a search tree. Inserting from the LAST entry to the
+first leaves the first entry of each blank node in the tree. -/
+def labelTree (m : List (BNodeId × String)) : Std.TreeMap BNodeId String compare :=
+  m.reverse.foldl (fun t p => t.insert p.1 p.2) ∅
+
+private theorem labelTree_foldr_get? (b : BNodeId) :
+    ∀ (m : List (BNodeId × String)),
+      (m.foldr (fun p t => t.insert p.1 p.2) (∅ : Std.TreeMap BNodeId String compare)).get? b =
+        lookupMap b m
+  | [] => by simp [lookupMap]
+  | (k, v) :: rest => by
+      have h := @Std.TreeMap.getElem?_insert _ _ _
+        (rest.foldr (fun p t => t.insert p.1 p.2) (∅ : Std.TreeMap BNodeId String compare)) _ b k v
+      simp only [Std.compare_eq_iff_eq] at h
+      simp only [List.foldr_cons, Std.TreeMap.get?_eq_getElem?, h, lookupMap]
+      rw [← Std.TreeMap.get?_eq_getElem?, labelTree_foldr_get? b rest]
+      by_cases hk : k = b
+      · simp [hk]
+      · simp [hk]
+
+/-- The tree answers what `lookupMap` answers, for every blank node. -/
+theorem labelTree_get? (m : List (BNodeId × String)) (b : BNodeId) :
+    (labelTree m).get? b = lookupMap b m := by
+  unfold labelTree
+  rw [List.foldl_reverse]
+  exact labelTree_foldr_get? b m
+
+/-- `relabelDataset` with the label map built once as a search tree. -/
+def relabelDatasetFast (m : List (BNodeId × String)) (ds : Dataset) : Dataset :=
+  let t := labelTree m
+  relabelDatasetBy (fun b => t.get? b) ds
+
+/-- The compiler calls `relabelDatasetFast` wherever the source says
+`relabelDataset`. -/
+@[csimp] theorem relabelDataset_eq_fast : @relabelDataset = @relabelDatasetFast := by
+  funext m ds
+  rw [relabelDataset_eq_by]
+  unfold relabelDatasetFast
+  simp only [labelTree_get?]
+
+/-! ### Hash N-Degree Quads through the map, with an indexed issuer
+
+When k blank nodes share one first-degree hash, §4.4 step 5 runs Hash
+N-Degree Quads (§4.7) once for each of them. Two costs then grew with k
+squared (https://github.com/danbri/factoidal/issues/751; callgrind, 4,000 blank
+nodes: 3,139 of 5,168 million instructions in `buildBucketsFor`, 482 million in
+the replay):
+
+  1. `hndqRun` gave `buildBucketsFor` every quad of the dataset, and
+     `buildBucketsFor` tested each one with `quadMentionsBnode`, once per call.
+     A `csimp` theorem on `buildBucketsFor` alone would build the §4.4 step 2
+     map once per call, so the map is built once, in
+     `buildCanonicalMappingBudgetedFast`, and passed down.
+  2. `IssuerState.issued` is a list: `issueIdentifier` scans it
+     (`lookupIssued`) and appends at its end, and `filterUnissued`,
+     `exploreMembers` and `lookupIssued2` scan it once per blank node.
+
+The twins below run the same steps with `FIssuer`: the issued list held as
+`front ++ backRev.reverse` (`issueFresh` adds to the front, `issueIdentifier`
+to the back, each in constant time) and a search tree that answers
+`lookupIssued` on that list (the field `tree_get`, carried by every value).
+`FIssuer.toSpec` gives the `IssuerState` a value stands for. Every twin is
+proved to give the definition's result through `toSpec` (`*_toSpec` and
+`*_eq` below), and `buildCanonicalMappingBudgeted_eq_fast` makes the compiler
+emit the twin for every caller: the issued identifiers, in the order the
+definition gives them, are unchanged. -/
+
+/-- A search tree from a blank node to a label (or a hash). -/
+abbrev LabelTree := Std.TreeMap BNodeId String compare
+
+theorem lookupIssued_eq_lookupMap (b : BNodeId) :
+    ∀ (l : List (BNodeId × String)), lookupIssued b l = lookupMap b l
+  | [] => rfl
+  | (k, v) :: rest => by simp only [lookupIssued, lookupMap, lookupIssued_eq_lookupMap b rest]
+
+theorem lookupHfdq_eq_lookupMap (b : BNodeId) :
+    ∀ (l : List (BNodeId × String)), lookupHfdq b l = (lookupMap b l).getD ""
+  | [] => rfl
+  | (k, v) :: rest => by
+      simp only [lookupHfdq, lookupMap, lookupHfdq_eq_lookupMap b rest]
+      split <;> rfl
+
+theorem labelTree_get?_insert (t : LabelTree) (k a : BNodeId) (v : String) :
+    (t.insert k v).get? a = if k = a then some v else t.get? a := by
+  have h := @Std.TreeMap.getElem?_insert _ _ _ t _ a k v
+  simp only [Std.compare_eq_iff_eq] at h
+  simp only [Std.TreeMap.get?_eq_getElem?, h]
+
+/-- Adding a blank node that is not yet in the list at its end: a lookup of
+any blank node answers as before, except for the new one. -/
+theorem lookupIssued_append_fresh {b0 : BNodeId} (l : String) (b : BNodeId) :
+    ∀ {L : List (BNodeId × String)}, lookupIssued b0 L = none →
+      lookupIssued b (L ++ [(b0, l)]) = if b0 = b then some l else lookupIssued b L
+  | [], _ => by
+      by_cases h : b0 = b
+      · simp [lookupIssued, h]
+      · simp [lookupIssued, h]
+  | (k, v) :: rest, h0 => by
+      have hk : k ≠ b0 := by
+        intro hk; subst hk; simp [lookupIssued] at h0
+      have hrest : lookupIssued b0 rest = none := by
+        simp only [lookupIssued] at h0
+        split at h0
+        · cases h0
+        · exact h0
+      simp only [List.cons_append, lookupIssued, lookupIssued_append_fresh l b hrest]
+      by_cases hkb : k = b
+      · subst hkb
+        have hb0 : b0 ≠ k := fun h => hk h.symm
+        simp [hb0]
+      · by_cases hb : b0 = b
+        · simp [hkb, hb]
+        · simp [hkb, hb]
+
+/-- An identifier issuer (§4.8) whose issued list is `front ++ backRev.reverse`
+and whose `tree` answers `lookupIssued` on that list. -/
+structure FIssuer where
+  labelPrefix : String
+  counter : Nat
+  front : List (BNodeId × String)
+  backRev : List (BNodeId × String)
+  tree : LabelTree
+  tree_get : ∀ b, tree.get? b = lookupIssued b (front ++ backRev.reverse)
+
+/-- The issuer state a fast issuer stands for. -/
+def FIssuer.toSpec (st : FIssuer) : IssuerState :=
+  { labelPrefix := st.labelPrefix, counter := st.counter, issued := st.front ++ st.backRev.reverse }
+
+/-- A fresh issuer with the label prefix `pfx`. -/
+def FIssuer.empty (pfx : String) : FIssuer :=
+  { labelPrefix := pfx, counter := 0, front := [], backRev := [], tree := ∅,
+    tree_get := fun b => by simp [lookupIssued] }
+
+theorem FIssuer.empty_toSpec_c14n : (FIssuer.empty "c14n").toSpec = emptyIssuer := rfl
+
+theorem FIssuer.empty_toSpec_b : (FIssuer.empty "b").toSpec = emptyTempIssuer := rfl
+
+theorem FIssuer.get?_eq (st : FIssuer) (b : BNodeId) :
+    st.tree.get? b = lookupIssued b st.toSpec.issued := st.tree_get b
+
+/-- Issue a label to a blank node the issuer has not seen. -/
+def FIssuer.issueNew (st : FIssuer) (b : BNodeId) (h : st.tree.get? b = none) : FIssuer :=
+  { labelPrefix := st.labelPrefix, counter := st.counter + 1, front := st.front,
+    backRev := (b, mkLabel st.labelPrefix st.counter) :: st.backRev,
+    tree := st.tree.insert b (mkLabel st.labelPrefix st.counter),
+    tree_get := fun a => by
+      rw [labelTree_get?_insert, List.reverse_cons, ← List.append_assoc,
+        lookupIssued_append_fresh _ _ (by rw [← st.tree_get]; exact h), st.tree_get] }
+
+/-- `issueIdentifier` (§4.8) on a fast issuer. -/
+def FIssuer.issue (st : FIssuer) (b : BNodeId) : FIssuer × String :=
+  match h : st.tree.get? b with
+  | some v => (st, v)
+  | none => (st.issueNew b h, mkLabel st.labelPrefix st.counter)
+
+theorem FIssuer.issue_of_some {st : FIssuer} {b : BNodeId} {v : String}
+    (h : st.tree.get? b = some v) : st.issue b = (st, v) := by
+  unfold FIssuer.issue
+  split
+  · rename_i v' h'
+    rw [h] at h'
+    cases h'
+    rfl
+  · rename_i h'
+    rw [h] at h'
+    cases h'
+
+theorem FIssuer.issue_of_none {st : FIssuer} {b : BNodeId} (h : st.tree.get? b = none) :
+    st.issue b = (st.issueNew b h, mkLabel st.labelPrefix st.counter) := by
+  unfold FIssuer.issue
+  split
+  · rename_i v' h'
+    rw [h] at h'
+    cases h'
+  · rfl
+
+theorem FIssuer.issue_toSpec (st : FIssuer) (b : BNodeId) :
+    issueIdentifier st.toSpec b = ((st.issue b).1.toSpec, (st.issue b).2) := by
+  unfold issueIdentifier
+  rw [← FIssuer.get?_eq]
+  cases hc : st.tree.get? b with
+  | some v => rw [FIssuer.issue_of_some hc]
+  | none =>
+      rw [FIssuer.issue_of_none hc]
+      simp [FIssuer.toSpec, FIssuer.issueNew]
+
+/-- `issueFresh` on a fast issuer: the new pair goes to the FRONT, as in
+`issueFresh`. -/
+def FIssuer.issueFresh (st : FIssuer) (b : BNodeId) : FIssuer :=
+  { labelPrefix := st.labelPrefix, counter := st.counter + 1,
+    front := (b, mkLabel st.labelPrefix st.counter) :: st.front, backRev := st.backRev,
+    tree := st.tree.insert b (mkLabel st.labelPrefix st.counter),
+    tree_get := fun a => by
+      rw [labelTree_get?_insert, st.tree_get]
+      by_cases h : b = a
+      · simp [lookupIssued, h]
+      · simp [lookupIssued, h] }
+
+theorem FIssuer.issueFresh_toSpec (st : FIssuer) (b : BNodeId) :
+    (st.issueFresh b).toSpec = L4Factoidal.RDF.Canonical.issueFresh st.toSpec b := rfl
+
+/-- `lookupIssued2` (§4.6 step 3) on fast issuers. -/
+def lookupIssued2F (b : BNodeId) (canonF localF : FIssuer) : Option String :=
+  match canonF.tree.get? b with
+  | some lbl => some lbl
+  | none     => localF.tree.get? b
+
+theorem lookupIssued2F_eq (b : BNodeId) (canonF localF : FIssuer) :
+    lookupIssued2F b canonF localF = lookupIssued2 b canonF.toSpec localF.toSpec := by
+  unfold lookupIssued2F lookupIssued2
+  rw [FIssuer.get?_eq, FIssuer.get?_eq]
+
+/-- `insertRelatedEntries` with fast issuers and the first-degree hashes in a
+search tree. -/
+def insertRelatedEntriesF (alg : HashAlgorithm) (pred : String) (hT : LabelTree)
+    (canonF localF : FIssuer) : List (String × BNodeId) → List Bucket → List Bucket
+  | [],                acc => acc
+  | (pos, rb) :: rest, acc =>
+      let identifier := match lookupIssued2F rb canonF localF with
+        | some lbl => "_:" ++ lbl
+        | none     => (hT.get? rb).getD ""
+      insertRelatedEntriesF alg pred hT canonF localF rest
+        (bucketInsert (hashRelatedBlankNode alg pos pred identifier) rb acc)
+
+theorem insertRelatedEntriesF_eq (alg : HashAlgorithm) (pred : String) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl)
+    (canonF localF : FIssuer) :
+    ∀ (xs : List (String × BNodeId)) (acc : List Bucket),
+      insertRelatedEntriesF alg pred hT canonF localF xs acc =
+        insertRelatedEntries alg pred tbl canonF.toSpec localF.toSpec xs acc
+  | [], acc => rfl
+  | (pos, rb) :: rest, acc => by
+      simp only [insertRelatedEntriesF, insertRelatedEntries, lookupIssued2F_eq, hhT]
+      exact insertRelatedEntriesF_eq alg pred hhT canonF localF rest _
+
+/-- `buildBucketsFor` with fast issuers, run over the quads of `target` only. -/
+def buildBucketsForF (alg : HashAlgorithm) (target : BNodeId) (hT : LabelTree)
+    (canonF localF : FIssuer) : List QQuad → List Bucket → List Bucket
+  | [],       acc => acc
+  | q :: rest, acc =>
+      if !quadMentionsBnode target q then
+        buildBucketsForF alg target hT canonF localF rest acc
+      else
+        buildBucketsForF alg target hT canonF localF rest
+          (insertRelatedEntriesF alg q.2.p.val hT canonF localF (relatedComponents target q) acc)
+
+theorem buildBucketsForF_eq (alg : HashAlgorithm) (target : BNodeId) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl)
+    (canonF localF : FIssuer) :
+    ∀ (qs : List QQuad) (acc : List Bucket),
+      buildBucketsForF alg target hT canonF localF qs acc =
+        buildBucketsFor alg target tbl canonF.toSpec localF.toSpec qs acc
+  | [], acc => rfl
+  | q :: rest, acc => by
+      simp only [buildBucketsForF, buildBucketsFor,
+        insertRelatedEntriesF_eq alg _ hhT canonF localF]
+      split
+      · exact buildBucketsForF_eq alg target hhT canonF localF rest _
+      · exact buildBucketsForF_eq alg target hhT canonF localF rest _
+
+/-- `buildBucketsFor` skips every quad that does not mention `target`, so it
+gives the same buckets over the quads of `target` alone. -/
+theorem buildBucketsFor_filter (alg : HashAlgorithm) (target : BNodeId)
+    (tbl : List (BNodeId × String)) (canonSt localSt : IssuerState) :
+    ∀ (qs : List QQuad) (acc : List Bucket),
+      buildBucketsFor alg target tbl canonSt localSt (qs.filter (quadMentionsBnode target)) acc =
+        buildBucketsFor alg target tbl canonSt localSt qs acc
+  | [], acc => rfl
+  | q :: rest, acc => by
+      by_cases h : quadMentionsBnode target q = true
+      · simp only [List.filter_cons, h, if_true, buildBucketsFor, Bool.not_true]
+        exact buildBucketsFor_filter alg target tbl canonSt localSt rest _
+      · simp only [List.filter_cons, h, buildBucketsFor]
+        simp only [Bool.not_eq_true] at h
+        simp only [Bool.not_false, if_true, Bool.false_eq_true, if_false]
+        exact buildBucketsFor_filter alg target tbl canonSt localSt rest _
+
+/-- The result of one step of the fast §4.7 walk. -/
+abbrev HndqOutF := String × FIssuer × HndqBudget
+
+/-- "Run Hash N-Degree Quads one level down" with a fast issuer. -/
+abbrev HndqRecF := FIssuer → BNodeId → HndqBudget → HndqOutF
+
+/-- The `HndqOut` a fast result stands for. -/
+def HndqOutF.toSpec (o : HndqOutF) : HndqOut := (o.1, o.2.1.toSpec, o.2.2)
+
+/-- `buildPathLabels` (§4.7 step 5.4.4) with fast issuers. -/
+def buildPathLabelsF (canonF : FIssuer) : FIssuer → List BNodeId → String →
+    List BNodeId → String × FIssuer × List BNodeId
+  | localF, [],        path, recursion => (path, localF, recursion)
+  | localF, b :: rest, path, recursion =>
+      match lookupIssued2F b canonF localF with
+      | some lbl => buildPathLabelsF canonF localF rest (path ++ "_:" ++ lbl) recursion
+      | none     =>
+          let r := localF.issue b
+          buildPathLabelsF canonF r.1 rest (path ++ "_:" ++ r.2) (recursion ++ [b])
+
+theorem buildPathLabelsF_eq (canonF : FIssuer) :
+    ∀ (localF : FIssuer) (bs : List BNodeId) (path : String) (recursion : List BNodeId),
+      (fun r => (r.1, r.2.1.toSpec, r.2.2)) (buildPathLabelsF canonF localF bs path recursion) =
+        buildPathLabels canonF.toSpec localF.toSpec bs path recursion
+  | localF, [], path, recursion => rfl
+  | localF, b :: rest, path, recursion => by
+      simp only [buildPathLabelsF, buildPathLabels, lookupIssued2F_eq]
+      split
+      · exact buildPathLabelsF_eq canonF localF rest _ _
+      · rw [FIssuer.issue_toSpec]
+        exact buildPathLabelsF_eq canonF _ rest _ _
+
+/-- `walkRecursion` (§4.7 step 5.4.5) with fast issuers. -/
+def walkRecursionF (rec : HndqRecF) : FIssuer → List BNodeId → String → HndqBudget → HndqOutF
+  | localF, [],        path, hb => (path, localF, hb)
+  | localF, b :: rest, path, hb =>
+      if hb.exceeded then (path, localF, hb)
+      else
+        let r1 := localF.issue b
+        let r2 := rec r1.1 b hb
+        walkRecursionF rec r2.2.1 rest (path ++ "_:" ++ r1.2 ++ "<" ++ r2.1 ++ ">") r2.2.2
+
+theorem walkRecursionF_eq {recF : HndqRecF} {rec : HndqRec}
+    (hrec : ∀ st b hb, (recF st b hb).toSpec = rec st.toSpec b hb) :
+    ∀ (localF : FIssuer) (bs : List BNodeId) (path : String) (hb : HndqBudget),
+      (walkRecursionF recF localF bs path hb).toSpec = walkRecursion rec localF.toSpec bs path hb
+  | localF, [], path, hb => rfl
+  | localF, b :: rest, path, hb => by
+      simp only [walkRecursionF, walkRecursion]
+      split
+      · rfl
+      · rw [FIssuer.issue_toSpec, ← hrec]
+        exact walkRecursionF_eq hrec _ rest _ _
+
+/-- `walkPerm` with fast issuers. -/
+def walkPermF (rec : HndqRecF) (canonF localF : FIssuer) (perm : List BNodeId)
+    (path : String) (hb : HndqBudget) : HndqOutF :=
+  let r := buildPathLabelsF canonF localF perm path []
+  walkRecursionF rec r.2.1 r.2.2 r.1 hb
+
+theorem walkPermF_eq {recF : HndqRecF} {rec : HndqRec}
+    (hrec : ∀ st b hb, (recF st b hb).toSpec = rec st.toSpec b hb)
+    (canonF localF : FIssuer) (perm : List BNodeId) (path : String) (hb : HndqBudget) :
+    (walkPermF recF canonF localF perm path hb).toSpec =
+      walkPerm rec canonF.toSpec localF.toSpec perm path hb := by
+  unfold walkPermF walkPerm
+  rw [← buildPathLabelsF_eq]
+  exact walkRecursionF_eq hrec _ _ _ _
+
+/-- `pickBest` with fast issuers. -/
+def pickBestF (rec : HndqRecF) (canonF localStInitial : FIssuer) :
+    List (List BNodeId) → String → FIssuer → HndqBudget → HndqOutF
+  | [],       bestHash, bestSt, hb => (bestHash, bestSt, hb)
+  | p :: rest, bestHash, bestSt, hb =>
+      if hb.exceeded then (bestHash, bestSt, hb)
+      else
+        let r := walkPermF rec canonF localStInitial p "" hb
+        if strLe r.1 bestHash && r.1 != bestHash then
+          pickBestF rec canonF localStInitial rest r.1 r.2.1 r.2.2
+        else
+          pickBestF rec canonF localStInitial rest bestHash bestSt r.2.2
+
+theorem pickBestF_eq {recF : HndqRecF} {rec : HndqRec}
+    (hrec : ∀ st b hb, (recF st b hb).toSpec = rec st.toSpec b hb)
+    (canonF localStInitial : FIssuer) :
+    ∀ (perms : List (List BNodeId)) (bestHash : String) (bestSt : FIssuer) (hb : HndqBudget),
+      (pickBestF recF canonF localStInitial perms bestHash bestSt hb).toSpec =
+        pickBest rec canonF.toSpec localStInitial.toSpec perms bestHash bestSt.toSpec hb
+  | [], bestHash, bestSt, hb => rfl
+  | p :: rest, bestHash, bestSt, hb => by
+      simp only [pickBestF, pickBest]
+      split
+      · rfl
+      · rw [← walkPermF_eq hrec]
+        simp only [HndqOutF.toSpec]
+        split
+        · rename_i hc
+          simp only [hc, if_true]
+          exact pickBestF_eq hrec canonF localStInitial rest _ _ _
+        · rename_i hc
+          simp only [hc, if_false, Bool.false_eq_true]
+          exact pickBestF_eq hrec canonF localStInitial rest _ _ _
+
+/-- `bestPermutation` with fast issuers. -/
+def bestPermutationF (rec : HndqRecF) (canonF localF : FIssuer)
+    (perms : List (List BNodeId)) (hb : HndqBudget) : HndqOutF :=
+  match perms with
+  | []       => ("", localF, hb)
+  | p :: rest =>
+      if hb.exceeded then ("", localF, hb)
+      else
+        let r := walkPermF rec canonF localF p "" hb
+        pickBestF rec canonF localF rest r.1 r.2.1 r.2.2
+
+theorem bestPermutationF_eq {recF : HndqRecF} {rec : HndqRec}
+    (hrec : ∀ st b hb, (recF st b hb).toSpec = rec st.toSpec b hb)
+    (canonF localF : FIssuer) (perms : List (List BNodeId)) (hb : HndqBudget) :
+    (bestPermutationF recF canonF localF perms hb).toSpec =
+      bestPermutation rec canonF.toSpec localF.toSpec perms hb := by
+  unfold bestPermutationF bestPermutation
+  cases perms with
+  | nil => rfl
+  | cons p rest =>
+      simp only
+      split
+      · rfl
+      · rw [← walkPermF_eq hrec]
+        exact pickBestF_eq hrec canonF localF rest _ _ _
+
+/-- `walkBuckets` with fast issuers. -/
+def walkBucketsF (alg : HashAlgorithm) (rec : HndqRecF) (canonF : FIssuer) :
+    FIssuer → List Bucket → String → HndqBudget → HndqOutF
+  | localF, [],                 data, hb => (hashHex alg data, localF, hb)
+  | localF, (k, members) :: rest, data, hb =>
+      if hb.exceeded then (hashHex alg data, localF, hb)
+      else
+        let perms := permutationsOf (members.take permutationCap)
+        let r := bestPermutationF rec canonF localF perms hb
+        walkBucketsF alg rec canonF r.2.1 rest (data ++ k ++ r.1) r.2.2
+
+theorem walkBucketsF_eq (alg : HashAlgorithm) {recF : HndqRecF} {rec : HndqRec}
+    (hrec : ∀ st b hb, (recF st b hb).toSpec = rec st.toSpec b hb) (canonF : FIssuer) :
+    ∀ (localF : FIssuer) (bs : List Bucket) (data : String) (hb : HndqBudget),
+      (walkBucketsF alg recF canonF localF bs data hb).toSpec =
+        walkBuckets alg rec canonF.toSpec localF.toSpec bs data hb
+  | localF, [], data, hb => rfl
+  | localF, (k, members) :: rest, data, hb => by
+      simp only [walkBucketsF, walkBuckets]
+      split
+      · rfl
+      · rw [← bestPermutationF_eq hrec]
+        exact walkBucketsF_eq alg hrec canonF _ rest _ _
+
+/-- RDFC-1.0 §4.7 with the blank node to quads map `ix` (§4.4 step 2), the
+first-degree hashes in the search tree `hT`, and fast issuers. -/
+def hndqRunF (alg : HashAlgorithm) (ix : QuadIndex) (hT : LabelTree) (canonF : FIssuer) :
+    Nat → FIssuer → BNodeId → HndqBudget → HndqOutF
+  | 0,        localF, _,      hb => ("", localF, hbConsume hb)
+  | fuel + 1, localF, target, hb =>
+      let hb1 := hbConsume hb
+      if hb1.exceeded then ("", localF, hb1)
+      else
+        let buckets := buildBucketsForF alg target hT canonF localF (quadsForBnodeIx ix target) []
+        walkBucketsF alg (hndqRunF alg ix hT canonF fuel) canonF localF buckets "" hb1
+
+theorem hndqRunF_eq (alg : HashAlgorithm) {ix : QuadIndex} {qs : List QQuad}
+    (hix : ∀ t, quadsForBnodeIx ix t = quadsForBnode t qs) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl)
+    (canonF : FIssuer) :
+    ∀ (fuel : Nat) (localF : FIssuer) (target : BNodeId) (hb : HndqBudget),
+      (hndqRunF alg ix hT canonF fuel localF target hb).toSpec =
+        hndqRun alg qs tbl canonF.toSpec fuel localF.toSpec target hb
+  | 0, localF, target, hb => rfl
+  | fuel + 1, localF, target, hb => by
+      simp only [hndqRunF, hndqRun]
+      split
+      · rfl
+      · rw [hix, buildBucketsForF_eq alg target hhT, quadsForBnode, buildBucketsFor_filter]
+        exact walkBucketsF_eq alg (hndqRunF_eq alg hix hhT canonF fuel) canonF _ _ _ _
+
+/-! The §4.4 steps 4 and 5 with fast issuers. -/
+
+def assignSingletonsF (st : FIssuer) : List Bucket → FIssuer
+  | []                => st
+  | (_, [b]) :: rest  => assignSingletonsF (st.issueFresh b) rest
+  | (_, _) :: rest    => assignSingletonsF st rest
+
+theorem assignSingletonsF_toSpec :
+    ∀ (st : FIssuer) (groups : List Bucket),
+      (assignSingletonsF st groups).toSpec = assignSingletons st.toSpec groups
+  | st, [] => rfl
+  | st, (_, []) :: rest => by
+      simp only [assignSingletonsF, assignSingletons]
+      exact assignSingletonsF_toSpec st rest
+  | st, (_, [b]) :: rest => by
+      simp only [assignSingletonsF, assignSingletons]
+      rw [← FIssuer.issueFresh_toSpec]
+      exact assignSingletonsF_toSpec _ rest
+  | st, (_, b :: c :: more) :: rest => by
+      simp only [assignSingletonsF, assignSingletons]
+      exact assignSingletonsF_toSpec st rest
+
+def filterUnissuedF (st : FIssuer) (xs : List BNodeId) : List BNodeId :=
+  xs.filter (fun b => (st.tree.get? b).isNone)
+
+theorem filterUnissuedF_eq (st : FIssuer) (xs : List BNodeId) :
+    filterUnissuedF st xs = filterUnissued st.toSpec xs := by
+  unfold filterUnissuedF filterUnissued
+  simp only [FIssuer.get?_eq]
+
+/-- `exploreMembers` with fast issuers and the map, the results on a reverse
+accumulator (one loop instead of one stack frame per member). -/
+def exploreMembersF (alg : HashAlgorithm) (fuel : Nat) (ix : QuadIndex) (hT : LabelTree)
+    (canonF : FIssuer) : List BNodeId → HndqBudget → List (String × List (BNodeId × String)) →
+    List (String × List (BNodeId × String)) × HndqBudget
+  | [],       hb, acc => (acc.reverse, hb)
+  | m :: rest, hb, acc =>
+      if hb.exceeded then (acc.reverse, hb)
+      else match canonF.tree.get? m with
+        | some _ => exploreMembersF alg fuel ix hT canonF rest hb acc
+        | none   =>
+            let r := hndqRunF alg ix hT canonF fuel ((FIssuer.empty "b").issue m).1 m hb
+            exploreMembersF alg fuel ix hT canonF rest r.2.2 ((r.1, r.2.1.toSpec.issued) :: acc)
+
+theorem exploreMembersF_eq (alg : HashAlgorithm) (fuel : Nat) {ix : QuadIndex}
+    {qs : List QQuad} (hix : ∀ t, quadsForBnodeIx ix t = quadsForBnode t qs) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl)
+    (canonF : FIssuer) :
+    ∀ (ms : List BNodeId) (hb : HndqBudget) (acc : List (String × List (BNodeId × String))),
+      exploreMembersF alg fuel ix hT canonF ms hb acc =
+        (acc.reverse ++ (exploreMembers alg fuel qs tbl canonF.toSpec ms hb).1,
+         (exploreMembers alg fuel qs tbl canonF.toSpec ms hb).2)
+  | [], hb, acc => by simp [exploreMembersF, exploreMembers]
+  | m :: rest, hb, acc => by
+      simp only [exploreMembersF, exploreMembers]
+      split
+      · simp
+      · rw [← FIssuer.get?_eq]
+        split
+        · exact exploreMembersF_eq alg fuel hix hhT canonF rest hb acc
+        · rw [← FIssuer.empty_toSpec_b, FIssuer.issue_toSpec,
+            ← hndqRunF_eq alg hix hhT canonF fuel]
+          rw [exploreMembersF_eq alg fuel hix hhT canonF rest]
+          simp [HndqOutF.toSpec]
+
+def replayOneF (canonF : FIssuer) : List (BNodeId × String) → FIssuer
+  | []             => canonF
+  | (b, _) :: rest => replayOneF (canonF.issue b).1 rest
+
+theorem replayOneF_toSpec :
+    ∀ (canonF : FIssuer) (l : List (BNodeId × String)),
+      (replayOneF canonF l).toSpec = replayOne canonF.toSpec l
+  | canonF, [] => rfl
+  | canonF, (b, _) :: rest => by
+      simp only [replayOneF, replayOne, FIssuer.issue_toSpec]
+      exact replayOneF_toSpec _ rest
+
+def replayAllF (canonF : FIssuer) : List (String × List (BNodeId × String)) → FIssuer
+  | []                      => canonF
+  | (_, tempIssued) :: rest => replayAllF (replayOneF canonF tempIssued) rest
+
+theorem replayAllF_toSpec :
+    ∀ (canonF : FIssuer) (l : List (String × List (BNodeId × String))),
+      (replayAllF canonF l).toSpec = replayAll canonF.toSpec l
+  | canonF, [] => rfl
+  | canonF, (_, tempIssued) :: rest => by
+      simp only [replayAllF, replayAll, ← replayOneF_toSpec]
+      exact replayAllF_toSpec _ rest
+
+def processCollisionMembersF (alg : HashAlgorithm) (fuel : Nat) (ix : QuadIndex)
+    (hT : LabelTree) (st : FIssuer) (members : List BNodeId) (hb : HndqBudget) :
+    FIssuer × HndqBudget :=
+  let r := exploreMembersF alg fuel ix hT st members hb []
+  (replayAllF st (sortByFast (fun a b => strLe a.1 b.1) r.1), r.2)
+
+theorem processCollisionMembersF_eq (alg : HashAlgorithm) (fuel : Nat) {ix : QuadIndex}
+    {qs : List QQuad} (hix : ∀ t, quadsForBnodeIx ix t = quadsForBnode t qs) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl)
+    (st : FIssuer) (members : List BNodeId) (hb : HndqBudget) :
+    (fun r => (r.1.toSpec, r.2)) (processCollisionMembersF alg fuel ix hT st members hb) =
+      processCollisionMembers alg fuel qs tbl st.toSpec members hb := by
+  simp only [processCollisionMembersF, processCollisionMembers,
+    exploreMembersF_eq alg fuel hix hhT st members hb [], replayAllF_toSpec]
+  simp
+
+def processCollisionGroupsF (alg : HashAlgorithm) (fuel : Nat) (ix : QuadIndex)
+    (hT : LabelTree) : FIssuer → List Bucket → HndqBudget → FIssuer × HndqBudget
+  | st, [],                   hb => (st, hb)
+  | st, (_, [_]) :: rest,     hb => processCollisionGroupsF alg fuel ix hT st rest hb
+  | st, (_, members) :: rest, hb =>
+      if hb.exceeded then (st, hb)
+      else
+        let r := processCollisionMembersF alg fuel ix hT st (filterUnissuedF st members) hb
+        processCollisionGroupsF alg fuel ix hT r.1 rest r.2
+
+theorem processCollisionGroupsF_eq (alg : HashAlgorithm) (fuel : Nat) {ix : QuadIndex}
+    {qs : List QQuad} (hix : ∀ t, quadsForBnodeIx ix t = quadsForBnode t qs) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl) :
+    ∀ (st : FIssuer) (groups : List Bucket) (hb : HndqBudget),
+      (fun r => (r.1.toSpec, r.2)) (processCollisionGroupsF alg fuel ix hT st groups hb) =
+        processCollisionGroups alg fuel qs tbl st.toSpec groups hb
+  | st, [], hb => rfl
+  | st, (_, [_]) :: rest, hb => by
+      simp only [processCollisionGroupsF, processCollisionGroups]
+      exact processCollisionGroupsF_eq alg fuel hix hhT st rest hb
+  | st, (h, []) :: rest, hb => by
+      simp only [processCollisionGroupsF, processCollisionGroups]
+      split
+      · rfl
+      · rw [filterUnissuedF_eq, ← processCollisionMembersF_eq alg fuel hix hhT]
+        exact processCollisionGroupsF_eq alg fuel hix hhT _ rest _
+  | st, (h, b :: c :: more) :: rest, hb => by
+      simp only [processCollisionGroupsF, processCollisionGroups]
+      split
+      · rfl
+      · rw [filterUnissuedF_eq, ← processCollisionMembersF_eq alg fuel hix hhT]
+        exact processCollisionGroupsF_eq alg fuel hix hhT _ rest _
+
+def walkGroupsF (alg : HashAlgorithm) (fuel : Nat) (ix : QuadIndex) (hT : LabelTree)
+    (st : FIssuer) (groups : List Bucket) (hb : HndqBudget) : FIssuer × HndqBudget :=
+  processCollisionGroupsF alg fuel ix hT (assignSingletonsF st groups) groups hb
+
+theorem walkGroupsF_eq (alg : HashAlgorithm) (fuel : Nat) {ix : QuadIndex}
+    {qs : List QQuad} (hix : ∀ t, quadsForBnodeIx ix t = quadsForBnode t qs) {hT : LabelTree}
+    {tbl : List (BNodeId × String)} (hhT : ∀ b, (hT.get? b).getD "" = lookupHfdq b tbl)
+    (st : FIssuer) (groups : List Bucket) (hb : HndqBudget) :
+    (fun r => (r.1.toSpec, r.2)) (walkGroupsF alg fuel ix hT st groups hb) =
+      walkGroups alg fuel qs tbl st.toSpec groups hb := by
+  unfold walkGroupsF walkGroups
+  rw [← assignSingletonsF_toSpec]
+  exact processCollisionGroupsF_eq alg fuel hix hhT _ _ _
+
+theorem foldl_issue_toSpec (l : List (BNodeId × String)) :
+    ∀ (st : FIssuer),
+      (l.foldl (fun s p => (s.issue p.1).1) st).toSpec =
+        l.foldl (fun s p => (issueIdentifier s p.1).1) st.toSpec := by
+  induction l with
+  | nil => intro st; rfl
+  | cons p rest ih =>
+      intro st
+      simp only [List.foldl_cons, FIssuer.issue_toSpec]
+      exact ih _
+
+/-- `buildCanonicalMappingBudgeted` with the §4.4 step 2 map built once and
+shared by §4.4 step 3 and every Hash N-Degree Quads call, the first-degree
+hashes in a search tree, and fast issuers. -/
+def buildCanonicalMappingBudgetedFast (alg : HashAlgorithm) (budget : Nat) (ds : Dataset) :
+    Option (List (BNodeId × String)) :=
+  let qs := dedupQQuads (datasetQuads ds)
+  let bs := datasetBnodes ds
+  let ix := bnodeQuadIndex qs
+  let hfdqTable := bs.map (fun b => (b, hashFirstDegreeQuadsIx alg ix b))
+  let hT := labelTree hfdqTable
+  let groups := groupByHfdq hfdqTable
+  let r := walkGroupsF alg (bs.length + 1) ix hT (FIssuer.empty "c14n") groups (hbInit budget)
+  if r.2.exceeded then none
+  else
+    let st := r.1
+    let leftover := if st.toSpec.issued.length == bs.length then [] else filterUnissuedF st bs
+    let leftoverSorted :=
+      sortBy (fun a b => if a.2 == b.2 then strLe a.1 b.1 else strLe a.2 b.2)
+        (leftover.map (fun b => (b, (hT.get? b).getD "")))
+    some (leftoverSorted.foldl (fun s p => (s.issue p.1).1) st).toSpec.issued
+
+theorem buildCanonicalMappingBudgeted_eq_fast_apply (alg : HashAlgorithm) (budget : Nat)
+    (ds : Dataset) :
+    buildCanonicalMappingBudgeted alg budget ds = buildCanonicalMappingBudgetedFast alg budget ds := by
+  have htbl : hfdqTableOf alg ds (dedupQQuads (datasetQuads ds)) =
+      (datasetBnodes ds).map (fun b =>
+        (b, hashFirstDegreeQuadsIx alg (bnodeQuadIndex (dedupQQuads (datasetQuads ds))) b)) := by
+    unfold hfdqTableOf
+    simp only [hashFirstDegreeQuadsIx_eq]
+  have hix := quadsForBnodeIx_bnodeQuadIndex (dedupQQuads (datasetQuads ds))
+  have hhT : ∀ b, ((labelTree ((datasetBnodes ds).map (fun b =>
+        (b, hashFirstDegreeQuadsIx alg (bnodeQuadIndex (dedupQQuads (datasetQuads ds))) b)))).get?
+          b).getD "" =
+      lookupHfdq b ((datasetBnodes ds).map (fun b =>
+        (b, hashFirstDegreeQuadsIx alg (bnodeQuadIndex (dedupQQuads (datasetQuads ds))) b))) := by
+    intro b
+    rw [labelTree_get?, lookupHfdq_eq_lookupMap]
+  unfold buildCanonicalMappingBudgeted buildCanonicalMappingBudgetedFast
+  dsimp only
+  rw [htbl, ← FIssuer.empty_toSpec_c14n, ← walkGroupsF_eq alg _ hix hhT]
+  dsimp only
+  split
+  · rfl
+  · simp only [filterUnissuedF_eq, hhT, foldl_issue_toSpec]
+
+/-- The compiler calls `buildCanonicalMappingBudgetedFast` wherever the source
+says `buildCanonicalMappingBudgeted`. -/
+@[csimp] theorem buildCanonicalMappingBudgeted_eq_fast :
+    @buildCanonicalMappingBudgeted = @buildCanonicalMappingBudgetedFast := by
+  funext alg budget ds
+  exact buildCanonicalMappingBudgeted_eq_fast_apply alg budget ds
+
+/-- The blank-node label map: original label → `c14nN`. -/
+def buildCanonicalMapping (alg : HashAlgorithm := .sha256) (ds : Dataset) :
+    List (BNodeId × String) :=
+  (buildCanonicalMappingBudgeted alg defaultHndqBudget ds).getD []
+
+/-- True when canonicalization under `budget` aborted for excessive
+calls to Hash N-Degree Quads — the W3C suite's `RDFC10NegativeEvalTest`
+criterion. Use a budget well below `defaultHndqBudget` so a
+pathological input aborts promptly. -/
+def canonicalizeExceedsBudget (alg : HashAlgorithm) (budget : Nat) (ds : Dataset) : Bool :=
+  (buildCanonicalMappingBudgeted alg budget ds).isNone
+
 /-! ### Canonical N-Quads output -/
 
 /-- The canonical N-Quads LINES of an already-relabelled dataset:
@@ -811,7 +1818,7 @@ def canonicalize (ds : Dataset) (alg : HashAlgorithm := .sha256) : CanonResult :
   | none => { nquads := joinStrings (canonicalLinesOf ds), issued := [], aborted := true }
   | some m =>
       { nquads  := joinStrings (canonicalLinesOf (relabelDataset m ds)),
-        issued  := sortBy (fun a b => strLe a.1 b.1) m,
+        issued  := sortByFast (fun a b => strLe a.1 b.1) m,
         aborted := false }
 
 /-- The canonical N-Quads document of a dataset. -/

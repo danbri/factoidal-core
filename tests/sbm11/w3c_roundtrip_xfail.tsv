@@ -1,0 +1,23 @@
+# Expected failures of tests/sbm11/w3c_roundtrip.sh.
+# Columns, separated by one tab: suite, test name, route, issue URL, reason.
+# route `store`: the store fails and the parser passes. route `both`: the store and
+# the parser fail. The issue must be open. The run fails when a listed test passes
+# in the store (remove the row and close the issue) and when a row matches no test.
+JSON-LD toRdf	#tc031	both	https://github.com/danbri/factoidal/issues/848	no document loader: relative @context IRI resolved against a file the manifest ships
+JSON-LD toRdf	#tc034	both	https://github.com/danbri/factoidal/issues/848	no document loader: remote scoped context
+JSON-LD toRdf	#tdi09	both	https://github.com/danbri/factoidal/issues/848	no rdfDirection option (i18n-datatype)
+JSON-LD toRdf	#tdi10	both	https://github.com/danbri/factoidal/issues/848	no rdfDirection option (i18n-datatype)
+JSON-LD toRdf	#tdi11	both	https://github.com/danbri/factoidal/issues/848	no rdfDirection option (compound-literal)
+JSON-LD toRdf	#tdi12	both	https://github.com/danbri/factoidal/issues/848	no rdfDirection option (compound-literal)
+JSON-LD toRdf	#te014	both	https://github.com/danbri/factoidal/issues/848	no processing mode: the test is json-ld-1.0
+JSON-LD toRdf	#te026	both	https://github.com/danbri/factoidal/issues/848	no processing mode: the test is json-ld-1.0
+JSON-LD toRdf	#te071	both	https://github.com/danbri/factoidal/issues/848	no processing mode: the test is json-ld-1.0
+JSON-LD toRdf	#te077	both	https://github.com/danbri/factoidal/issues/848	no expandContext option
+JSON-LD toRdf	#te126	both	https://github.com/danbri/factoidal/issues/848	no document loader: scoped context that includes itself
+JSON-LD toRdf	#te127	both	https://github.com/danbri/factoidal/issues/848	no document loader: scoped context that includes itself, indirect
+JSON-LD toRdf	#te128	both	https://github.com/danbri/factoidal/issues/848	no document loader: shared context of two scoped contexts
+JSON-LD toRdf	#tso05	both	https://github.com/danbri/factoidal/issues/848	no document loader: sourced context (@import)
+JSON-LD toRdf	#tso06	both	https://github.com/danbri/factoidal/issues/848	no document loader: sourced context (@import)
+JSON-LD toRdf	#tso08	both	https://github.com/danbri/factoidal/issues/848	no document loader: sourced context
+JSON-LD toRdf	#tso09	both	https://github.com/danbri/factoidal/issues/848	no document loader: sourced context
+JSON-LD toRdf	#tso11	both	https://github.com/danbri/factoidal/issues/848	no document loader: sourced context

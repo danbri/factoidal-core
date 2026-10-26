@@ -1,0 +1,2 @@
+# A GRAPH group with a FILTER and no triple pattern: one solution for each named graph.
+SELECT ?g WHERE { GRAPH ?g { FILTER(true) } }

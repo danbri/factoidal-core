@@ -1,0 +1,2 @@
+# Stage 1b: two ORDER BY keys.
+SELECT ?s ?p ?o WHERE { ?s ?p ?o } ORDER BY ?p DESC(?s) LIMIT 10

@@ -55,6 +55,7 @@ nothing about plain XML 1.0 well-formedness, which is `parseXML`'s job
 and must be established first.
 -/
 import L4Factoidal.XML.Parser
+import L4Factoidal.XML.Wellformedness
 
 namespace L4Factoidal.XML
 
@@ -86,7 +87,7 @@ neither the first nor the last character (either would leave an empty
 `[8] Prefix` or an empty `[10] LocalPart`). Any other colon pattern is
 `malformed` — a violation of the NAMESPACE layer only, never of XML 1.0
 itself. Port of F* `split_qname`. -/
-def splitQName (str : String) : QNameSplit :=
+def splitQNameShape (str : String) : QNameSplit :=
   let cs := str.toList
   match findColons cs 0 with
   | [] => .simple str
@@ -94,6 +95,237 @@ def splitQName (str : String) : QNameSplit :=
     if i == 0 || i + 1 ≥ cs.length then .malformed
     else .prefixed (String.ofList (cs.take i)) (String.ofList (cs.drop (i + 1)))
   | _ => .malformed
+
+/-- The state of the one-pass `[7] QName` split: the characters before the
+first colon, the characters after it, and the number of colons seen,
+counted up to 2 ("two or more"). -/
+structure QNameScan where
+  pre : String
+  post : String
+  colons : Nat
+
+/-- One character of the split. After the second colon nothing changes. -/
+def qnameStep (st : QNameScan) (c : Char) : QNameScan :=
+  if st.colons = 0 then
+    if c = ':' then { st with colons := 1 } else { st with pre := st.pre.push c }
+  else if st.colons = 1 then
+    if c = ':' then { st with colons := 2 } else { st with post := st.post.push c }
+  else st
+
+/-- `splitQName` in one pass over the UTF-8 string (`String.foldl`), with
+no `List Char`, no `findColons` and no `take`/`drop`. The readable form
+cost about 5,000 instructions per call (callgrind,
+https://github.com/danbri/factoidal/issues/814: 1,125,011 calls, 53 percent
+of the instructions of `l4factoidal parse --format rdfxml` on 25,000
+`rdf:Description` elements), most of it in `String.toList` and two
+`String.ofList`. `splitQNameShape_eq_fast` proves the two equal. -/
+def splitQNameShapeFast (str : String) : QNameSplit :=
+  let r := str.foldl qnameStep ⟨"", "", 0⟩
+  if r.colons = 0 then .simple str
+  else if r.colons = 1 then
+    if r.pre.isEmpty || r.post.isEmpty then .malformed else .prefixed r.pre r.post
+  else .malformed
+
+theorem qnameScan_two (l : List Char) (p q : String) (k : Nat) (hk : 2 ≤ k) :
+    l.foldl qnameStep ⟨p, q, k⟩ = ⟨p, q, k⟩ := by
+  induction l with
+  | nil => rfl
+  | cons c l ih =>
+    simp only [List.foldl_cons]
+    have h0 : k ≠ 0 := by omega
+    have h1 : k ≠ 1 := by omega
+    have : qnameStep ⟨p, q, k⟩ c = ⟨p, q, k⟩ := by
+      simp [qnameStep, h0, h1]
+    rw [this]; exact ih
+
+theorem qnameScan_one_nocolon (l : List Char) (p q : String) (h : ':' ∉ l) :
+    (l.foldl qnameStep ⟨p, q, 1⟩).pre = p ∧
+    (l.foldl qnameStep ⟨p, q, 1⟩).post.toList = q.toList ++ l ∧
+    (l.foldl qnameStep ⟨p, q, 1⟩).colons = 1 := by
+  induction l generalizing q with
+  | nil => simp
+  | cons c l ih =>
+    simp only [List.mem_cons, not_or] at h
+    have hc : c ≠ ':' := fun e => h.1 e.symm
+    have step : qnameStep ⟨p, q, 1⟩ c = ⟨p, q.push c, 1⟩ := by simp [qnameStep, hc]
+    simp only [List.foldl_cons, step]
+    obtain ⟨a, b, d⟩ := ih (q.push c) h.2
+    exact ⟨a, by rw [b, String.toList_push]; simp, d⟩
+
+theorem qnameScan_one_colon (l : List Char) (p q : String) (h : ':' ∈ l) :
+    (l.foldl qnameStep ⟨p, q, 1⟩).colons = 2 := by
+  induction l generalizing q with
+  | nil => simp at h
+  | cons c l ih =>
+    simp only [List.foldl_cons]
+    by_cases hc : c = ':'
+    · have step : qnameStep ⟨p, q, 1⟩ c = ⟨p, q, 2⟩ := by simp [qnameStep, hc]
+      rw [step, qnameScan_two _ _ _ _ (Nat.le_refl 2)]
+    · have step : qnameStep ⟨p, q, 1⟩ c = ⟨p, q.push c, 1⟩ := by simp [qnameStep, hc]
+      simp only [List.mem_cons] at h
+      have h' : ':' ∈ l := by
+        rcases h with h | h
+        · exact absurd h.symm hc
+        · exact h
+      rw [step]; exact ih _ h'
+
+theorem qnameScan_zero_nocolon (l : List Char) (p : String) (h : ':' ∉ l) :
+    (l.foldl qnameStep ⟨p, "", 0⟩).colons = 0 := by
+  induction l generalizing p with
+  | nil => simp
+  | cons c l ih =>
+    simp only [List.mem_cons, not_or] at h
+    have hc : c ≠ ':' := fun e => h.1 e.symm
+    have step : qnameStep ⟨p, "", 0⟩ c = ⟨p.push c, "", 0⟩ := by simp [qnameStep, hc]
+    simp only [List.foldl_cons, step]
+    exact ih _ h.2
+
+/-- The first colon splits the list: before it no colon. -/
+theorem qnameScan_zero_split (l1 l2 : List Char) (p : String) (h : ':' ∉ l1) :
+    (l1 ++ ':' :: l2).foldl qnameStep ⟨p, "", 0⟩
+      = l2.foldl qnameStep ⟨String.ofList (p.toList ++ l1), "", 1⟩ := by
+  induction l1 generalizing p with
+  | nil => simp [qnameStep]
+  | cons c l ih =>
+    simp only [List.mem_cons, not_or] at h
+    have hc : c ≠ ':' := fun e => h.1 e.symm
+    have step : qnameStep ⟨p, "", 0⟩ c = ⟨p.push c, "", 0⟩ := by simp [qnameStep, hc]
+    simp only [List.cons_append, List.foldl_cons, step]
+    rw [ih _ h.2]
+    congr 3
+    simp [String.toList_push]
+
+/-- No colon, no positions. -/
+theorem findColons_nocolon (l : List Char) (n : Nat) (h : ':' ∉ l) : findColons l n = [] := by
+  induction l generalizing n with
+  | nil => rfl
+  | cons c l ih =>
+    simp only [List.mem_cons, not_or] at h
+    have hc : (c == ':') = false := by simpa using (fun e => h.1 e.symm)
+    simp [findColons, hc, ih _ h.2]
+
+/-- The first colon is the first position. -/
+theorem findColons_split (l1 l2 : List Char) (n : Nat) (h : ':' ∉ l1) :
+    findColons (l1 ++ ':' :: l2) n = (n + l1.length) :: findColons l2 (n + l1.length + 1) := by
+  induction l1 generalizing n with
+  | nil => simp [findColons]
+  | cons c l ih =>
+    simp only [List.mem_cons, not_or] at h
+    have hc : (c == ':') = false := by simpa using (fun e => h.1 e.symm)
+    simp only [List.cons_append, findColons, hc, ih _ h.2, List.length_cons]
+    rw [show n + 1 + l.length = n + (l.length + 1) by omega]
+    rfl
+
+theorem findColons_ne_nil (l : List Char) (n : Nat) (h : ':' ∈ l) : findColons l n ≠ [] := by
+  induction l generalizing n with
+  | nil => simp at h
+  | cons c l ih =>
+    by_cases hc : c = ':'
+    · simp [findColons, hc]
+    · simp only [List.mem_cons] at h
+      have h' : ':' ∈ l := by
+        rcases h with h | h
+        · exact absurd h.symm hc
+        · exact h
+      have hb : (c == ':') = false := by simpa using hc
+      simp only [findColons, hb]
+      exact ih _ h'
+
+/-- A list with a colon has a first one. -/
+theorem exists_first_colon (cs : List Char) (h : ':' ∈ cs) :
+    ∃ l1 l2, cs = l1 ++ ':' :: l2 ∧ ':' ∉ l1 := by
+  induction cs with
+  | nil => simp at h
+  | cons c cs ih =>
+    by_cases hc : c = ':'
+    · exact ⟨[], cs, by simp [hc], by simp⟩
+    · have h' : ':' ∈ cs := by
+        simp only [List.mem_cons] at h
+        rcases h with h | h
+        · exact absurd h.symm hc
+        · exact h
+      obtain ⟨l1, l2, e, hn⟩ := ih h'
+      refine ⟨c :: l1, l2, by simp [e], ?_⟩
+      simp only [List.mem_cons, not_or]
+      exact ⟨fun e => hc e.symm, hn⟩
+
+/-- The compiler runs `splitQNameShapeFast` wherever the source says
+`splitQName`: the same split for every string. -/
+@[csimp] theorem splitQNameShape_eq_fast : @splitQNameShape = @splitQNameShapeFast := by
+  funext str
+  unfold splitQNameShape splitQNameShapeFast
+  rw [String.foldl_eq_foldl_toList]
+  generalize hcs : str.toList = cs
+  by_cases h0 : ':' ∈ cs
+  · -- the first colon
+    obtain ⟨l1, l2, hsplit, hl1⟩ := exists_first_colon cs h0
+    subst hsplit
+    dsimp only
+    rw [qnameScan_zero_split _ _ _ hl1, findColons_split _ _ _ hl1]
+    by_cases h2 : ':' ∈ l2
+    · have hne := findColons_ne_nil l2 (0 + l1.length + 1) h2
+      obtain ⟨x, xs, hx⟩ := List.exists_cons_of_ne_nil hne
+      rw [hx, qnameScan_one_colon _ _ _ h2]
+      simp
+    · rw [findColons_nocolon _ _ h2]
+      have e : String.ofList ("".toList ++ l1) = String.ofList l1 := by simp
+      rw [e]
+      obtain ⟨a, b, d⟩ := qnameScan_one_nocolon l2 (String.ofList l1) "" h2
+      have hr : l2.foldl qnameStep ⟨String.ofList l1, "", 1⟩
+          = ⟨String.ofList l1, String.ofList l2, 1⟩ := by
+        generalize l2.foldl qnameStep ⟨String.ofList l1, "", 1⟩ = r at a b d
+        cases r with
+        | mk pr po k =>
+          try dsimp only at a b d
+          subst a d
+          have : po = String.ofList l2 := by
+            rw [← String.toList_inj, b]; simp
+          subst this
+          rfl
+      rw [hr]
+      simp only [Nat.zero_add, List.length_append, List.length_cons]
+      by_cases e1 : l1 = []
+      · subst e1; simp
+      · by_cases e2 : l2 = []
+        · subst e2; simp
+        · have n1 : l1.length ≠ 0 := by simpa using e1
+          have n2 : ¬ (l1.length + 1 ≥ l1.length + (l2.length + 1)) := by
+            have : l2.length ≠ 0 := by simpa using e2
+            omega
+          have i1 : (String.ofList l1).isEmpty = false := by
+            simpa [String.isEmpty_iff, ← String.toList_inj] using e1
+          have i2 : (String.ofList l2).isEmpty = false := by
+            simpa [String.isEmpty_iff, ← String.toList_inj] using e2
+          simp [n1, n2, i1, i2, List.take_left']
+  · dsimp only
+    rw [findColons_nocolon _ _ h0, qnameScan_zero_nocolon _ _ h0]
+    simp
+
+/-- Namespace QName components are NCNames, beyond the colon shape checked
+by the shared one-pass splitter. Plain XML Names may contain a colon followed
+by a digit; Namespaces in XML §3 forbids that QName. -/
+def checkedQName : QNameSplit → QNameSplit
+  | .simple name => if isValidNCName name then .simple name else .malformed
+  | .prefixed p name =>
+      if isValidNCName p && isValidNCName name then .prefixed p name else .malformed
+  | .malformed => .malformed
+
+def splitQName (str : String) : QNameSplit := checkedQName (splitQNameShape str)
+def splitQNameFast (str : String) : QNameSplit := checkedQName (splitQNameShapeFast str)
+
+@[csimp] theorem splitQName_eq_fast : @splitQName = @splitQNameFast := by
+  funext str
+  simp only [splitQName, splitQNameFast, splitQNameShape_eq_fast]
+
+#guard splitQNameFast "rdf:about" == .prefixed "rdf" "about"
+#guard splitQNameFast "about" == .simple "about"
+#guard splitQNameFast ":about" == .malformed
+#guard splitQNameFast "rdf:" == .malformed
+#guard splitQNameFast "a:b:c" == .malformed
+#guard splitQNameFast "" == .malformed
+#guard splitQNameFast "p:1bad" == .malformed
+#guard splitQNameFast "xmlns:1bad" == .malformed
+#guard splitQNameFast "é:ü" == .prefixed "é" "ü"
 
 /-! ## Namespace scope
 
@@ -205,6 +437,19 @@ def attrsUniqueExpanded (scope : NsScope) (attrs : List Attribute) : Bool :=
   let keys := attrs.filterMap (expandAttrKey scope)
   keys.length == keys.eraseDups.length
 
+/-- Namespaces in XML 1.0 §6 (erratum NE08): an entity name, a
+processing instruction target and a notation name contain no colon,
+because those names are not QNames and the namespace layer does not
+interpret a colon in them. -/
+def noColon (name : String) : Bool := !(name.toList.contains ':')
+
+/-- The DTD half of that constraint: no declared entity name (general,
+parameter or unparsed), no notation name and no processing instruction
+target inside the DTD contains a colon. -/
+def Doctype.namesColonFree (dt : Doctype) : Bool :=
+  dt.declared.entities.all noColon && dt.declared.notations.all noColon &&
+  dt.declared.piTargets.all noColon
+
 mutual
 
 /-- Check one node and, for an element, everything under it. A
@@ -225,6 +470,8 @@ def checkElement (version : String) (scope : NsScope) : Node → Bool
         attrsPrefixesBound newScope attrs &&
         attrsUniqueExpanded newScope attrs &&
         checkChildren version newScope children
+  -- §6 (NE08): a processing instruction target contains no colon.
+  | .pi target _ => noColon target
   | _ => true
 
 /-- `checkElement` over a child list. Port of F* `check_children`. -/
@@ -248,9 +495,15 @@ def isNamespaceWellFormed (version : String) (root : Node) : Bool :=
 /-- The namespace check applied to a parsed `Document`, reading the
 declared version out of its `[23] XMLDecl` and defaulting to `"1.0"`
 when there is none — the `version` argument the F* entry point requires
-the caller to supply. -/
+the caller to supply.
+
+It covers the whole document, not only the element tree: a processing
+instruction in the prolog or epilog, and the names the DTD declares
+(§6, erratum NE08). -/
 def Document.namespaceWellFormed (d : Document) : Bool :=
-  isNamespaceWellFormed ((d.decl.map (·.version)).getD "1.0") d.root
+  isNamespaceWellFormed ((d.decl.map (·.version)).getD "1.0") d.root &&
+  (d.prolog ++ d.epilog).all (fun n => match n with | .pi t _ => noColon t | _ => true) &&
+  (d.doctype.map Doctype.namesColonFree).getD true
 
 /-- Parse `input` and then decide namespace well-formedness on top of
 plain XML 1.0 well-formedness. `false` when the document is not
@@ -290,5 +543,78 @@ def resolveAttributeName (scope : NsScope) (name : String) : Option ExpandedName
     | none => none
     | some uri => some { namespace_ := some uri, localPart := localPart }
   | .malformed => none
+
+/-- An unprefixed split is the whole name. -/
+theorem splitQNameShape_simple {str n : String} (h : splitQNameShape str = .simple n) : n = str := by
+  unfold splitQNameShape at h
+  dsimp only at h
+  split at h
+  · cases h; rfl
+  · split at h <;> cases h
+  · cases h
+
+/-- A prefixed split is the name around its one colon. -/
+theorem splitQNameShape_prefixed {str p l : String} (h : splitQNameShape str = .prefixed p l) :
+    str.toList = p.toList ++ ':' :: l.toList := by
+  unfold splitQNameShape at h
+  dsimp only at h
+  generalize hcs : str.toList = cs at h
+  by_cases h0 : ':' ∈ cs
+  · obtain ⟨l1, l2, hsplit, hl1⟩ := exists_first_colon cs h0
+    subst hsplit
+    rw [findColons_split _ _ _ hl1] at h
+    by_cases h2 : ':' ∈ l2
+    · have hne := findColons_ne_nil l2 (0 + l1.length + 1) h2
+      obtain ⟨x, xs, hx⟩ := List.exists_cons_of_ne_nil hne
+      rw [hx] at h
+      cases h
+    · rw [findColons_nocolon _ _ h2] at h
+      dsimp only at h
+      split at h
+      · cases h
+      · cases h
+        simp [List.take_left']
+  · rw [findColons_nocolon _ _ h0] at h
+    cases h
+
+private theorem checkedQName_simple (q : QNameSplit) (n : String)
+    (h : checkedQName q = .simple n) : q = .simple n := by
+  cases q with
+  | simple x => simp only [checkedQName] at h; split at h <;> cases h; rfl
+  | prefixed p x => simp only [checkedQName] at h; split at h <;> cases h
+  | malformed => cases h
+
+private theorem checkedQName_prefixed (q : QNameSplit) (p l : String)
+    (h : checkedQName q = .prefixed p l) : q = .prefixed p l := by
+  cases q with
+  | simple x => simp only [checkedQName] at h; split at h <;> cases h
+  | prefixed p x => simp only [checkedQName] at h; split at h <;> cases h; rfl
+  | malformed => cases h
+
+theorem splitQName_simple {str n : String} (h : splitQName str = .simple n) : n = str :=
+  splitQNameShape_simple (checkedQName_simple _ _ h)
+
+theorem splitQName_prefixed {str p l : String} (h : splitQName str = .prefixed p l) :
+    str.toList = p.toList ++ ':' :: l.toList :=
+  splitQNameShape_prefixed (checkedQName_prefixed _ _ _ h)
+
+/-- An attribute name ends with the local part it resolves to. -/
+theorem endsWith_of_resolveAttributeName {sc : NsScope} {name : String} {e : ExpandedName}
+    (h : resolveAttributeName sc name = some e) : name.endsWith e.localPart = true := by
+  unfold resolveAttributeName at h
+  split at h
+  · rename_i n hs
+    cases h
+    rw [splitQName_simple hs, ← String.endsWith_toSlice, String.Slice.endsWith_string_iff]
+    simp
+  · rename_i p l hs
+    split at h
+    · cases h
+    · cases h
+      have := splitQName_prefixed hs
+      rw [← String.endsWith_toSlice, String.Slice.endsWith_string_iff]
+      simp only [String.copy_toSlice, this]
+      exact List.suffix_append_of_suffix (List.suffix_cons _ _)
+  · cases h
 
 end L4Factoidal.XML

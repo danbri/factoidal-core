@@ -1,0 +1,2 @@
+# The named graphs with no triple.
+SELECT ?g WHERE { GRAPH ?g { } MINUS { GRAPH ?g { ?s ?p ?o } } }

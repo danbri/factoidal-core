@@ -1,0 +1,58 @@
+<http://ex.org/a> <http://ex.org/age> "72"^^<http://www.w3.org/2001/XMLSchema#int> .
+<http://ex.org/b> <http://ex.org/age> "072"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex.org/c> <http://ex.org/age> "71"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex.org/d> <http://ex.org/age> "72.0"^^<http://www.w3.org/2001/XMLSchema#decimal> .
+<http://ex.org/e> <http://ex.org/age> "abc" .
+<http://ex.org/f> <http://ex.org/age> "72"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex.org/a> <http://ex.org/name> "Alice"@en .
+<http://ex.org/b> <http://ex.org/name> "Bob"@en-gb .
+<http://ex.org/c> <http://ex.org/name> "carol" .
+<http://ex.org/d> <http://ex.org/name> "Dave"^^<http://www.w3.org/2001/XMLSchema#string> .
+<http://ex.org/e> <http://ex.org/name> "Eve\nwith a \"quote\""@fr .
+<http://ex.org/a> <http://ex.org/knows> <http://ex.org/b> .
+<http://ex.org/b> <http://ex.org/knows> <http://ex.org/c> .
+<http://ex.org/c> <http://ex.org/knows> _:x .
+_:x <http://ex.org/name> "anon" .
+<http://ex.org/b> <http://ex.org/flag> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .
+<http://ex.org/c> <http://ex.org/flag> "1"^^<http://www.w3.org/2001/XMLSchema#boolean> .
+<http://ex.org/a> <http://ex.org/knows> <http://ex.org/c> <http://ex.org/g1> .
+<http://ex.org/d> <http://ex.org/knows> <http://ex.org/a> <http://ex.org/g1> .
+<http://ex.org/e> <http://ex.org/age> "5"^^<http://www.w3.org/2001/XMLSchema#byte> <http://ex.org/g2> .
+<http://ex.org/a> <http://ex.org/name> "Alice"@en <http://ex.org/g2> .
+<http://ex.org/a> <http://ex.org/knows> <http://ex.org/b> <http://ex.org/g2> .
+<http://ex.org/s1> <http://ex.org/grp> <http://ex.org/G1> .
+<http://ex.org/s1> <http://ex.org/score> "10"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex.org/s2> <http://ex.org/grp> <http://ex.org/G1> .
+<http://ex.org/s2> <http://ex.org/score> "20"^^<http://www.w3.org/2001/XMLSchema#int> .
+<http://ex.org/s3> <http://ex.org/grp> <http://ex.org/G1> .
+<http://ex.org/s3> <http://ex.org/score> "1.5E1"^^<http://www.w3.org/2001/XMLSchema#double> .
+<http://ex.org/s4> <http://ex.org/grp> <http://ex.org/G1> .
+<http://ex.org/s4> <http://ex.org/score> "007"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex.org/s5> <http://ex.org/grp> <http://ex.org/G2> .
+<http://ex.org/s5> <http://ex.org/score> "5.5"^^<http://www.w3.org/2001/XMLSchema#decimal> .
+<http://ex.org/s6> <http://ex.org/grp> <http://ex.org/G2> .
+<http://ex.org/s6> <http://ex.org/score> "-7"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex.org/s7> <http://ex.org/grp> <http://ex.org/G2> .
+<http://ex.org/s7> <http://ex.org/score> "36028797018963968"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex.org/s8> <http://ex.org/grp> _:gb .
+<http://ex.org/s8> <http://ex.org/score> "abc" .
+<http://ex.org/s9> <http://ex.org/grp> _:gb .
+<http://ex.org/s9> <http://ex.org/score> "300"^^<http://www.w3.org/2001/XMLSchema#unsignedLong> .
+<http://ex.org/s10> <http://ex.org/grp> <http://ex.org/G3> .
+<http://ex.org/s11> <http://ex.org/grp> <http://ex.org/G3> .
+<http://ex.org/s11> <http://ex.org/score> "-36028797018963969"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex.org/s1> <http://ex.org/tag> "1"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex.org/s2> <http://ex.org/tag> "1"^^<http://www.w3.org/2001/XMLSchema#int> .
+<http://ex.org/s3> <http://ex.org/tag> "2"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex.org/s5> <http://ex.org/tag> "2"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex.org/s6> <http://ex.org/tag> "2"^^<http://www.w3.org/2001/XMLSchema#integer> .
+<http://ex.org/s1> <http://ex.org/ok> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .
+<http://ex.org/s2> <http://ex.org/ok> "false"^^<http://www.w3.org/2001/XMLSchema#boolean> .
+<http://ex.org/s3> <http://ex.org/ok> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .
+<http://ex.org/s1> <http://ex.org/when> "2020-01-01"^^<http://www.w3.org/2001/XMLSchema#date> .
+<http://ex.org/s2> <http://ex.org/when> "2021-06-30"^^<http://www.w3.org/2001/XMLSchema#date> .
+<http://ex.org/s3> <http://ex.org/when> "2020-01-01T10:00:00"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
+<http://ex.org/s1> <http://ex.org/label> "one"@en .
+<http://ex.org/s2> <http://ex.org/label> "two"@fr .
+<http://ex.org/s3> <http://ex.org/label> "three" .
+<http://ex.org/s5> <http://ex.org/label> "five"^^<http://www.w3.org/2001/XMLSchema#string> .

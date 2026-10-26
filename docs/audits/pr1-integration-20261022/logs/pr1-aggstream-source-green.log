@@ -1,0 +1,7 @@
+'L4Factoidal.SPARQL.AggStream.evalAggregate_stream' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.evalAggregate_star' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.evalSelectItemsGroup_pre' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.selectPost_grouped' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.selectPost_aggPlan' depends on axioms: [propext, Classical.choice, Quot.sound]
+'L4Factoidal.SPARQL.AggStream.varView_ne_error' depends on axioms: [propext, Classical.choice, Quot.sound]
+

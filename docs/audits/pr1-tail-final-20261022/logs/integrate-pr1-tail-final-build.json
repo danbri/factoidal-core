@@ -1,0 +1,18 @@
+{
+  "source_commit": "37746b6733ded80931c7c96662197b5fc68df209",
+  "argv": [
+    "lake",
+    "build",
+    "l4rif",
+    "l4xsd-datatypes"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4",
+  "environment": {
+    "LEAN_NUM_THREADS": "2"
+  },
+  "toolchain": "leanprover/lean4:v4.33.1",
+  "exit_code": 0,
+  "jobs": 160,
+  "status": "native runner build; not a full library or Wasm build",
+  "initial_launch": "Wrong working directory failed before compilation; exact setup error retained separately."
+}

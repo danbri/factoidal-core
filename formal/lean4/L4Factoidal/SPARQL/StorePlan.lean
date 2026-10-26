@@ -198,9 +198,13 @@ def patternPredicateHint : QueryPattern → Option WfIri
   | .subSelect _ => none
   | .propertyPath _ _ _ => none
 
-/-- A named graph plus its backend. -/
+/-- A named graph plus its backend. The name is the graph name as an RDF
+term (RDF 1.1 Concepts section 4: an IRI or a blank node), the same type as
+`NamedGraph.name`; a blank-node graph name is kept as a blank node, so a
+`GRAPH ?g` pattern binds `?g` to it (SPARQL 1.1 section 18.6) and no IRI
+can share its name (https://github.com/danbri/factoidal/issues/975). -/
 structure NamedGraphBackend where
-  name : Iri
+  name : Subject
   backend : GraphBackend
 
 /-- Narrow the named graphs by the hint. No hint means every graph
@@ -369,11 +373,11 @@ shared variable. -/
 
 /-! No hint keeps every named graph. -/
 #guard (namedCandidateBackends
-          [{ name := iriA.val, backend := gb2 }] none).length == 1
+          [{ name := .iri iriA, backend := gb2 }] none).length == 1
 #guard (namedCandidateBackends
-          [{ name := iriA.val, backend := gb2 }] (some iriP)).length == 1
+          [{ name := .iri iriA, backend := gb2 }] (some iriP)).length == 1
 #guard (namedCandidateBackends
-          [{ name := iriA.val, backend := gb2 }]
+          [{ name := .iri iriA, backend := gb2 }]
           (some ⟨"http://example.org/absent", by decide⟩)).length == 0
 
 /-! ## Axiom audit -/

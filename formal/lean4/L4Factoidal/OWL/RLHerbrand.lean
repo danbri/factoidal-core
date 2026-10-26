@@ -696,6 +696,12 @@ theorem rlHerb_conditions (hcons : ¬ Clash c) :
     obtain ⟨s2, o2, hm2, rfl, rfl⟩ := herb_decode hnp h2
     exact herb_encode (hcut (Derives.eqRepP (Derives.base hm1)
       (Derives.base hm2)))
+  eqRepTt := by
+    -- `iTt` is constant in this model, so both sides of a replacement
+    -- denote the same element.
+    intro p s x y o o' _ hr h
+    have heq : o' = o := by cases hr <;> rfl
+    rw [heq]; exact h
   eqRepO := by
     intro p s o o' hoo hso
     obtain ⟨so, oo, hm1, hxo, rfl⟩ := herb_decode (by decide) hoo

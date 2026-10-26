@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!DOCTYPE doc [
+<!ELEMENT doc (p)>
+<!ELEMENT p EMPTY>
+<!ATTLIST p xml:id ID #IMPLIED>
+]>
+<doc><p xml:id="q:r"/></doc>

@@ -66,10 +66,19 @@ a column that fails to decode contributes zero rows silently, so
 downstream, and ASK would turn a read failure into a wrong answer with
 a clean exit.
 
+ASK applies its SolutionModifier (grammar rule [12];
+https://github.com/danbri/factoidal/issues/699). With only LIMIT and
+ORDER BY, rows lost to a decode failure can change an answer only from
+`true` to `false`, so a `true` answer stands. GROUP BY, HAVING and OFFSET
+depend on counts and positions, so for those `evalAskBackend` answers
+`none` on any decode failure, whether the partial answer is `true` or
+`false` (`askNeedsCompleteRead`).
+
 No `sorry`, no user `axiom`, no `native_decide`.
 -/
 import L4Factoidal.SPARQL.StoreFastPath
 import L4Factoidal.SPARQL.IndexedEvalRefinement
+import L4Factoidal.SPARQL.IndexedExists
 
 namespace L4Factoidal.SPARQL.StoreDataset
 
@@ -81,11 +90,14 @@ open L4Factoidal.SPARQL.StoreFastPath
 
 /-! ## 0. Two small conversions
 
-`NamedGraphBackend.name` is a raw `Iri`, matching the F* `ngb_name`,
-while `NamedGraph.name` is a `Subject` and a bound graph variable takes
-a `WfIri`. `wfIriOf?` is the well-formedness test the F* source spells
-`is_iri`, and `integerTerm` is the `xsd:integer` literal both GROUP BY
-paths bind their counts to. -/
+`NamedGraphBackend.name` is a `Subject`, the type of `NamedGraph.name`
+(until 2026-10-25 it was a raw `Iri`, matching the F* `ngb_name`, and a
+blank-node graph name was spelled as its label: the record could not tell
+it from an IRI and `GRAPH ?g` dropped it,
+https://github.com/danbri/factoidal/issues/975). `wfIriOf?` is the
+well-formedness test the F* source spells `is_iri`; the COTTAS record
+builders apply it to the graph names they read. `integerTerm` is the
+`xsd:integer` literal both GROUP BY paths bind their counts to. -/
 
 def wfIriOf? (s : Iri) : Option WfIri :=
   if h : isIri s then some ⟨s, h⟩ else none
@@ -102,23 +114,29 @@ structure DatasetBackend where
   default : GraphBackend
   named : List NamedGraphBackend
 
+/-- The graph name `s` is the IRI `n`. A blank-node graph name is no IRI. -/
+def iriNamed : Subject → Iri → Bool
+  | .iri j, n => j.val == n
+  | .bnode _, _ => false
+
 def lookupNamedBackend (name : Iri) : List NamedGraphBackend → Option GraphBackend
   | [] => none
-  | ng :: rest => if ng.name == name then some ng.backend else lookupNamedBackend name rest
+  | ng :: rest => if iriNamed ng.name name then some ng.backend else lookupNamedBackend name rest
 
-/-- The capability-shaped view: `capsOfBackend` once per graph. -/
+/-- The capability-shaped view: `capsOfBackend` once per graph. `DatasetCaps`
+keys its named graphs by IRI, so a blank-node graph name has no entry. -/
 def datasetCapsOfBackend (dsb : DatasetBackend) : DatasetCaps :=
   { default := capsOfBackend dsb.default
-  , named := dsb.named.map (fun ngb => (ngb.name, capsOfBackend ngb.backend)) }
+  , named := dsb.named.filterMap (fun ngb => match ngb.name with
+      | .iri j => some (j.val, capsOfBackend ngb.backend)
+      | .bnode _ => none) }
 
 /-- Read every backend with an unbound search. This is what the
 delegating arms of the evaluator consume. -/
 def materialiseDatasetBackend (dsb : DatasetBackend) : Dataset :=
   { default := backendSearch dsb.default patternBoundAll
-  , named := dsb.named.filterMap (fun ngb =>
-      -- a graph name that is not a well-formed IRI cannot name a graph
-      (wfIriOf? ngb.name).map (fun i =>
-        { name := .iri i, graph := backendSearch ngb.backend patternBoundAll })) }
+  , named := dsb.named.map (fun ngb =>
+      { name := ngb.name, graph := backendSearch ngb.backend patternBoundAll }) }
 
 /-- Wrap a graph as an indexed backend; the index is built once here. -/
 def indexedGraphBackend (g : Graph) : GraphBackend := .indexed (OWL.RL.Index.ofGraph g)
@@ -126,10 +144,7 @@ def indexedGraphBackend (g : Graph) : GraphBackend := .indexed (OWL.RL.Index.ofG
 def indexedDatasetBackend (ds : Dataset) : DatasetBackend :=
   { default := indexedGraphBackend ds.default
   , named := ds.named.map (fun ng =>
-      { name := match ng.name with
-                | .iri i => i.val
-                | .bnode b => b
-      , backend := indexedGraphBackend ng.graph }) }
+      { name := ng.name, backend := indexedGraphBackend ng.graph }) }
 
 /-! ## 2. The backend-routed pattern evaluator
 
@@ -177,8 +192,10 @@ def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
         (QueryPattern.leftJoin p1 p2 cond).lowerWith env Binding.empty |>.evalIn ds gCurrent
   | .union p1 p2, gb =>
       SPARQL.union (evalPatternBackend env dsb p1 gb) (evalPatternBackend env dsb p2 gb)
+  -- The hash MINUS, equal to `SPARQL.minus` as a list
+  -- (`hashMinus_eq_minus`, https://github.com/danbri/factoidal/issues/881).
   | .minus p1 p2, gb =>
-      SPARQL.minus (evalPatternBackend env dsb p1 gb) (evalPatternBackend env dsb p2 gb)
+      SPARQL.hashMinus (evalPatternBackend env dsb p1 gb) (evalPatternBackend env dsb p2 gb)
   -- GRAPH with a CONSTANT IRI routes to that graph's own backend. An
   -- IRI the dataset does not name contributes nothing, as in §18.6.
   | .graph (.iri i) p, _ =>
@@ -186,11 +203,10 @@ def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
       | some g => evalPatternBackend env dsb p g
       | none => []
   -- GRAPH with a VARIABLE evaluates the inner pattern against every
-  -- named backend and binds the variable to that graph's name, which is
-  -- §18.6's `ds.named.flatMap … bindIfCompatible` over the SAME list:
-  -- `materialiseDatasetBackend` builds `ds.named` from `dsb.named` in
-  -- order and drops exactly the names that are not well-formed IRIs, so
-  -- the same `wfIriOf?` test is applied here.
+  -- named backend and binds the variable to that graph's name, an IRI or
+  -- a blank node, which is §18.6's `ds.named.flatMap … bindIfCompatible`
+  -- over the SAME list: `materialiseDatasetBackend` builds `ds.named` from
+  -- `dsb.named` in order, one graph per backend.
   --
   -- Without this arm the shape fell to the materialise-and-delegate
   -- case below, which rebuilds the WHOLE dataset as lists for every
@@ -200,11 +216,8 @@ def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
   -- (https://github.com/danbri/factoidal/issues/653).
   | .graph (.var v) p, _ =>
       dsb.named.flatMap (fun ngb =>
-        match wfIriOf? ngb.name with
-        | none => []
-        | some i =>
-            (evalPatternBackend env dsb p ngb.backend).filterMap (fun mu =>
-              mu.bindIfCompatible v (.iri i)))
+        (evalPatternBackend env dsb p ngb.backend).filterMap (fun mu =>
+          mu.bindIfCompatible v ngb.name.toTerm))
   -- BIND with a `backendLocal` expression stays on the backend path, for
   -- the same reason the `.filter` arm does: the binder reads only the row
   -- and `EvalEnv`, so existential substitution is a no-op and the active
@@ -230,6 +243,7 @@ def evalPatternBackend (env : EvalEnv) (dsb : DatasetBackend) :
         (QueryPattern.bind expression v pattern).lowerWith env Binding.empty
           |>.evalIn ds gCurrent
   | .empty, _ => [Binding.empty]
+  | .values variables rows, _ => evalValues variables rows
   | p, gb =>
       -- Materialise and delegate. The active graph is this backend's
       -- own content, so an EXISTS inside the delegated pattern sees
@@ -249,11 +263,11 @@ def countGroupByGraphAcc (graphVar countAlias : VarName) :
   | acc, [] => acc.reverse
   | acc, ngb :: rest =>
       let cnt := backendCountExact ngb.backend patternBoundAll
-      let mu0 := Binding.bind countAlias (integerTerm cnt) Binding.empty
-      let mu := match wfIriOf? ngb.name with
-                | some i => Binding.bind graphVar (.iri i) mu0
-                | none => mu0
-      countGroupByGraphAcc graphVar countAlias (mu :: acc) rest
+      if cnt == 0 then countGroupByGraphAcc graphVar countAlias acc rest
+      else
+        let mu0 := Binding.bind countAlias (integerTerm cnt) Binding.empty
+        let mu := Binding.bind graphVar ngb.name.toTerm mu0
+        countGroupByGraphAcc graphVar countAlias (mu :: acc) rest
 
 def countGroupByGraphSolutions (graphVar countAlias : VarName)
     (named : List NamedGraphBackend) : SolutionSeq :=
@@ -289,20 +303,17 @@ def limitGraphVarAcc (v : VarName) (tp : TriplePattern) (limit : Nat) :
   | ngb :: rest, acc =>
       if limit <= acc.length then acc.reverse
       else
-        match wfIriOf? ngb.name with
-        | none => limitGraphVarAcc v tp limit rest acc
-        | some i =>
-            -- `capsTakeN` again, for the same reason `evalLimitSingleTp`
-            -- truncates after the match: `solveLimited` is a backend
-            -- capability, so nothing here proves it honoured the limit.
-            let rows :=
-              capsTakeN (limit - acc.length)
-                ((backendSearchLimited ngb.backend (patternBoundFor tp Binding.empty)
-                    (limit - acc.length)).filterMap (fun t =>
-                  match tpMatch tp t Binding.empty with
-                  | none => none
-                  | some mu => mu.bindIfCompatible v (.iri i)))
-            limitGraphVarAcc v tp limit rest (rows.reverseAux acc)
+        -- `capsTakeN` again, for the same reason `evalLimitSingleTp`
+        -- truncates after the match: `solveLimited` is a backend
+        -- capability, so nothing here proves it honoured the limit.
+        let rows :=
+          capsTakeN (limit - acc.length)
+            ((backendSearchLimited ngb.backend (patternBoundFor tp Binding.empty)
+                (limit - acc.length)).filterMap (fun t =>
+              match tpMatch tp t Binding.empty with
+              | none => none
+              | some mu => mu.bindIfCompatible v ngb.name.toTerm))
+        limitGraphVarAcc v tp limit rest (rows.reverseAux acc)
 
 /-- The three scopes of the LIMIT push-down. `.active` is the existing
 one-graph path; `.named` routes to that graph's own backend and answers
@@ -321,7 +332,7 @@ def evalLimitSingleTpScoped (sel : SelectClause) (tp : TriplePattern)
       let omega := limitGraphVarAcc v tp k dsb.named []
       match sel with
       | .vars items => projectSolutions (selectItemVars items) omega
-      | .all => omega
+      | .all => stripSyntheticBnodeVars omega
 
 /-- The push-down never returns more rows than the limit, in every
 scope. -/
@@ -335,12 +346,10 @@ theorem limitGraphVarAcc_bounded (v : VarName) (tp : TriplePattern) (limit : Nat
       split
       · simpa using hacc
       · rename_i hlt
-        split
-        · exact ih acc hacc
-        · refine ih _ ?_
-          simp only [List.reverseAux_eq, List.length_append, List.length_reverse,
-                     capsTakeN, List.length_take]
-          omega
+        refine ih _ ?_
+        simp only [List.reverseAux_eq, List.length_append, List.length_reverse,
+                   capsTakeN, List.length_take]
+        omega
 
 /-- Shape detection plus capability availability. The fast path runs
 only when the target backend actually offers cheap predicate
@@ -387,8 +396,8 @@ a read. -/
 def cottasOnDiskDatasetBackend (ops : RDF.CottasCaps.CottasReadOps)
     (namedGraphs : List Iri) : DatasetBackend :=
   { default := .cottasOnDisk ops .defaultGraph
-  , named := namedGraphs.map (fun gname =>
-      { name := gname, backend := .cottasOnDisk ops (.named gname) }) }
+  , named := namedGraphs.filterMap (fun gname => (wfIriOf? gname).map (fun i =>
+      { name := .iri i, backend := .cottasOnDisk ops (.named gname) })) }
 
 /-- The same shape with a resolved delta threaded through `overlay`'s
 single dispatch arm. A graph the delta creates that the base store has
@@ -398,9 +407,9 @@ def cottasWithDeltaDatasetBackend (ops : RDF.CottasCaps.CottasReadOps)
     (namedGraphs : List Iri) (deltaFor : Option Iri → DeltaResolved) :
     DatasetBackend :=
   { default := .cottasOnDiskDelta ops .defaultGraph (deltaFor none)
-  , named := namedGraphs.map (fun gname =>
-      { name := gname
-      , backend := .cottasOnDiskDelta ops (.named gname) (deltaFor (some gname)) }) }
+  , named := namedGraphs.filterMap (fun gname => (wfIriOf? gname).map (fun i =>
+      { name := .iri i
+      , backend := .cottasOnDiskDelta ops (.named gname) (deltaFor (some gname)) })) }
 
 /-! ## 5. Full-text search over a backend
 
@@ -514,36 +523,118 @@ def evalSelectBackendDataset (env : EvalEnv) (q : Query) (dsb : DatasetBackend) 
       some (sliceSolutions q.modifier.offset q.modifier.limit ordered)
   | none => evalSelectBackendOnGraph env q dsb.default dsb
 
+/-- SELECT through the backend evaluator, or `none` when the query holds a
+`text:query` pattern (`QueryPattern.mentionsFulltext`). The backend
+evaluator and its fast paths read a BGP as triple patterns matched
+against stored triples, and a `text:query` pattern is not one: matched
+that way it answers no rows. `none` sends the query to the reference
+evaluator, whose lowering (`lowerBgp`) evaluates it. The query entry points
+(`Wasm/Ops/Query.lean`, `SPARQL/StoreEndpoint.lean`, `Harness/QuadQuery.lean`)
+fall back to `evalSelect` on `none`. The diagnostic harnesses that run only
+this evaluator (`Harness/BlockCorpus.lean`, `IndexedBlockV3Query.lean`,
+`ShardMerkleQuery.lean`, `ShardMerkleSession.lean`, `PredicateBlocksQuery.lean`,
+`BlockFileQuery.lean`) report "query was not evaluated" and exit 1 for such a
+query, instead of answering zero rows. -/
 def runSelectQueryBackendDataset (env : EvalEnv) (q : Query) (dsb : DatasetBackend) :
     Option SolutionSeq :=
+  if q.pattern.mentionsFulltext then none else
   evalSelectBackendDataset env
     (.mk q.form q.dataset q.pattern.rewriteBnodes q.groupBy q.having q.modifier
          q.postValues q.base) dsb
 
-/-- ASK. An empty answer is `some false` only when every backend
-decoded cleanly; otherwise it is `none`, because a column that failed
-to decode contributes zero rows silently and ASK would report a read
-failure as the answer `false`. -/
-def evalAskBackend (env : EvalEnv) (q : Query) (dsb : DatasetBackend) : Option Bool :=
+/-- Does the answer of this ASK query change when the read drops rows?
+With no GROUP BY, no HAVING and no OFFSET the answer can only go from
+true to false when rows are lost: LIMIT and ORDER BY keep a non-empty
+sequence non-empty. GROUP BY and HAVING make the answer depend on counts
+(`HAVING (COUNT(*) < 2)` can turn from false to true when a row is
+lost), and OFFSET on the length of the sequence. -/
+def askNeedsCompleteRead (q : Query) : Bool :=
+  q.groupsSolutions || q.modifier.offset.isSome
+
+/-- ASK, with its SolutionModifier applied (§18.2.4, §18.2.5; grammar rule
+[12]) through the same steps as `evalAsk` (`formHasSolution`).
+
+An empty answer is `some false` only when every backend decoded cleanly;
+otherwise it is `none`, because a column that failed to decode
+contributes zero rows silently and ASK would report a read failure as the
+answer `false`. A `true` answer is kept when a read failed only if the
+modifiers cannot turn a shorter sequence into a true answer
+(`askNeedsCompleteRead`); a query that groups, filters groups or skips
+rows answers `none` on any decode failure, in both directions. -/
+def evalAskBackendReference (env : EvalEnv) (q : Query) (dsb : DatasetBackend) : Option Bool :=
   match q.form with
   | .ask =>
       let omega0 := evalPatternBackend env dsb q.pattern dsb.default
-      let omega := match q.postValues with
-        | none => omega0
-        | some vals => SPARQL.join omega0 vals
-      match omega with
-      | [] =>
-          if backendDecodeFailure dsb.default
-             || dsb.named.any (fun ngb => backendDecodeFailure ngb.backend)
-          then none else some false
-      | _ => some true
+      let answer := formHasSolution env env.activeGraph q omega0
+      let readFailed := backendDecodeFailure dsb.default
+        || dsb.named.any (fun ngb => backendDecodeFailure ngb.backend)
+      if readFailed && (!answer || askNeedsCompleteRead q) then none
+      else some answer
   | _ => none
+
+/-- The `none`/`some` decision of `evalAskBackendReference` for a query
+whose answer is the non-emptiness of its WHERE solutions. -/
+def finishAskBackend (nonempty : Bool) (dsb : DatasetBackend) : Option Bool :=
+  if nonempty then some true
+  else if backendDecodeFailure dsb.default
+          || dsb.named.any (fun ngb => backendDecodeFailure ngb.backend)
+       then none else some false
+
+/-- Does the ASK answer depend on anything but the non-emptiness of the
+WHERE solutions? GROUP BY, HAVING, a trailing VALUES join, OFFSET and
+LIMIT can each change it; ORDER BY cannot (`formHasSolution`). -/
+def askUsesModifiers (q : Query) : Bool :=
+  q.groupsSolutions || q.postValues.isSome
+    || q.modifier.offset.isSome || q.modifier.limit.isSome
+
+/-- ASK over the backends. A single triple pattern over an indexed default
+graph, with no modifier that can change the answer, stops at its first
+match (`indexedSingleTpExists`). Every other shape runs
+`evalAskBackendReference`; `evalAskBackend_eq_reference` proves the two
+agree on every input. -/
+def evalAskBackend (env : EvalEnv) (q : Query) (dsb : DatasetBackend) : Option Bool :=
+  match q.form, q.pattern, dsb.default with
+  | .ask, .bgp [tp], .indexed index =>
+      if askUsesModifiers q then evalAskBackendReference env q dsb
+      else finishAskBackend (indexedSingleTpExists index tp []) dsb
+  | _, _, _ => evalAskBackendReference env q dsb
+
+theorem formHasSolution_no_modifiers (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) (h : askUsesModifiers q = false) :
+    formHasSolution env active q omega0 = !omega0.isEmpty := by
+  simp only [askUsesModifiers, Bool.or_eq_false_iff, Option.isSome_eq_false_iff,
+    Option.isNone_iff_eq_none] at h
+  obtain ⟨⟨⟨hg, hv⟩, ho⟩, hl⟩ := h
+  simp [formHasSolution, formRows, sliceSolutions, hg, hv, ho, hl]
+
+theorem evalAskBackend_eq_reference (env : EvalEnv) (q : Query)
+    (dsb : DatasetBackend) :
+    evalAskBackend env q dsb = evalAskBackendReference env q dsb := by
+  unfold evalAskBackend
+  split
+  · rename_i tp index hf hp hb
+    cases hm : askUsesModifiers q
+    · have hn : askNeedsCompleteRead q = false := by
+        simp only [askUsesModifiers, Bool.or_eq_false_iff] at hm
+        simp [askNeedsCompleteRead, hm.1.1.1, hm.1.2]
+      simp only [Bool.false_eq_true, if_false, evalAskBackendReference, hf, hp, hb]
+      have hbgp : evalPatternBackend env dsb (.bgp [tp]) (.indexed index)
+          = evalBgpBackend [tp] (.indexed index) := by
+        simp [evalPatternBackend]
+      rw [formHasSolution_no_modifiers env _ q _ hm, hbgp,
+        evalBgpBackend_single, indexedSingleTpExists_eq, hn]
+      cases (evalSingleTpBackend tp (.indexed index) []).isEmpty <;>
+        simp [finishAskBackend, hb]
+    · simp
+  · rfl
 
 /-- The blank-node rewrite happens once, at the entry point. The F*
 source records why it cannot live inside the evaluator: replacing the
 pattern breaks the recursion's termination metric. -/
 def runAskQueryBackendDataset (env : EvalEnv) (q : Query) (dsb : DatasetBackend) :
     Option Bool :=
+  -- `text:query`: the reference evaluator answers, as for SELECT above.
+  if q.pattern.mentionsFulltext then none else
   evalAskBackend env
     (.mk q.form q.dataset q.pattern.rewriteBnodes q.groupBy q.having q.modifier
          q.postValues q.base) dsb
@@ -656,17 +747,20 @@ theorem evalBgpBackend_allVars_list (g : Graph) (sv pv ov : VarName) :
 
 /-! ## 9. What the GROUP BY paths guarantee -/
 
-/-- One row per named graph, however many that is. -/
+/-- One row per nonempty named graph. Empty graphs contribute no group, just
+    as the materialised GRAPH pattern contributes no solution from one. -/
 theorem countGroupByGraph_length (graphVar countAlias : VarName) :
     ∀ (named : List NamedGraphBackend) (acc : SolutionSeq),
       (countGroupByGraphAcc graphVar countAlias acc named).length
-        = acc.length + named.length
+        = acc.length + (named.filter (fun ngb =>
+            backendCountExact ngb.backend patternBoundAll != 0)).length
   | [], acc => by simp [countGroupByGraphAcc]
   | ngb :: rest, acc => by
-      simp only [countGroupByGraphAcc,
-                 countGroupByGraph_length graphVar countAlias rest,
-                 List.length_cons]
-      omega
+      simp only [countGroupByGraphAcc, List.filter_cons]
+      split
+      · simp_all [countGroupByGraph_length graphVar countAlias rest]
+      · simp_all [countGroupByGraph_length graphVar countAlias rest]
+        omega
 
 /-- A predicate with no rows contributes no group. -/
 theorem predicateGroupBy_skips_empty (predVar countAlias : VarName)
@@ -681,13 +775,24 @@ theorem predicateGroupBy_skips_empty (predVar countAlias : VarName)
 theorem evalAskBackend_none_on_decode_failure (env : EvalEnv) (q : Query)
     (dsb : DatasetBackend) (hform : q.form = .ask)
     (hfail : backendDecodeFailure dsb.default = true)
-    (hempty : (match q.postValues with
-               | none => evalPatternBackend env dsb q.pattern dsb.default
-               | some vals =>
-                   SPARQL.join (evalPatternBackend env dsb q.pattern dsb.default) vals)
-              = []) :
+    (hempty : formHasSolution env env.activeGraph q
+                (evalPatternBackend env dsb q.pattern dsb.default) = false) :
     evalAskBackend env q dsb = none := by
-  simp only [evalAskBackend, hform, hempty, hfail, Bool.true_or, if_true]
+  rw [evalAskBackend_eq_reference]
+  simp only [evalAskBackendReference, hform, hempty, hfail, Bool.true_or, Bool.not_false,
+    Bool.true_and, if_true]
+
+/-- A query that groups, filters groups or skips rows has no answer to
+give from a read that dropped rows, whichever way the partial answer
+came out. -/
+theorem evalAskBackend_none_on_decode_failure_non_monotone (env : EvalEnv)
+    (q : Query) (dsb : DatasetBackend) (hform : q.form = .ask)
+    (hfail : backendDecodeFailure dsb.default = true)
+    (hmod : askNeedsCompleteRead q = true) :
+    evalAskBackend env q dsb = none := by
+  rw [evalAskBackend_eq_reference]
+  simp only [evalAskBackendReference, hform, hmod, hfail, Bool.true_or, Bool.or_true,
+    Bool.true_and, if_true]
 
 /-! ## Build-time checks -/
 
@@ -703,7 +808,49 @@ private def gNamed : Graph :=
 
 private def dsb1 : DatasetBackend :=
   { default := .list gDefault
-  , named := [{ name := iG.val, backend := .list gNamed }] }
+  , named := [{ name := .iri iG, backend := .list gNamed }] }
+
+private def repeatedVariableCountQuery : Query :=
+  mkQuery (.select (.vars [.expr (.aggregate .count false (.var "*")) "n"]))
+    (.bgp [{ s := .var "x", p := .iri iP, o := .var "x" }])
+
+private def limitProjectedExpressionQuery : Query :=
+  mkQuery (.select (.vars [.expr (.str (.var "o")) "label"]))
+    (.bgp [{ s := .var "s", p := .iri iP, o := .var "o" }])
+    (modifier := { limit := some 1 })
+
+#guard runSelectQueryBackendDataset {} repeatedVariableCountQuery dsb1 ==
+  some (evalSelect {} (materialiseDatasetBackend dsb1) repeatedVariableCountQuery).2
+#guard runSelectQueryBackendDataset {} limitProjectedExpressionQuery dsb1 ==
+  some (evalSelect {} (materialiseDatasetBackend dsb1) limitProjectedExpressionQuery).2
+
+private def groupedGraphCountQuery : Query :=
+  mkQuery (.select (.vars [.var "g", .expr (.aggregate .count false (.var "*")) "n"]))
+    (.graph (.var "g") (.bgp [{ s := .var "s", p := .var "p", o := .var "o" }]))
+    (groupBy := some [.var "g"])
+
+private def dsbWithEmptyNamed : DatasetBackend :=
+  { default := .list []
+  , named := [{ name := .iri iA, backend := .list [] },
+              { name := .iri iG, backend := .list gNamed }] }
+
+private def limitBlankNodeQuery : Query :=
+  mkQuery (.select .all)
+    (.bgp [{ s := .bnode "anonymous", p := .iri iP, o := .var "o" }])
+    (modifier := { limit := some 1 })
+
+private def limitNamedBlankNodeQuery : Query :=
+  mkQuery (.select .all)
+    (.graph (.var "g")
+      (.bgp [{ s := .bnode "anonymous", p := .iri iP, o := .var "o" }]))
+    (modifier := { limit := some 1 })
+
+#guard runSelectQueryBackendDataset {} groupedGraphCountQuery dsbWithEmptyNamed ==
+  some (evalSelect {} (materialiseDatasetBackend dsbWithEmptyNamed) groupedGraphCountQuery).2
+#guard runSelectQueryBackendDataset {} limitBlankNodeQuery dsb1 ==
+  some (evalSelect {} (materialiseDatasetBackend dsb1) limitBlankNodeQuery).2
+#guard runSelectQueryBackendDataset {} limitNamedBlankNodeQuery dsb1 ==
+  some (evalSelect {} (materialiseDatasetBackend dsb1) limitNamedBlankNodeQuery).2
 
 private def tpAll : TriplePattern :=
   { s := .var "s", p := .var "p", o := .var "o" }
@@ -711,6 +858,35 @@ private def tpAll : TriplePattern :=
 /-! Named lookup finds the graph it names and nothing else. -/
 #guard (lookupNamedBackend iG.val dsb1.named).isSome == true
 #guard (lookupNamedBackend iA.val dsb1.named).isSome == false
+
+/-! A blank-node graph name (https://github.com/danbri/factoidal/issues/975):
+the record of `indexedDatasetBackend` keeps it as a blank node, `GRAPH ?g`
+binds `?g` to it, and the backend answers what the reference evaluator answers
+over the dataset. The label `g` is also an IRI-free string that a lookup by
+IRI must not find. -/
+
+private def dsBnodeNamed : Dataset :=
+  { default := gDefault
+  , named := [{ name := .bnode "g", graph := gNamed }, { name := .iri iG, graph := gDefault }] }
+
+private def graphVarQuery : Query :=
+  mkQuery (.select .all)
+    (.graph (.var "g") (.bgp [{ s := .var "s", p := .iri iP, o := .var "o" }]))
+
+private def graphCountQuery : Query :=
+  mkQuery (.select (.vars [.var "g", .expr (.aggregate .count false (.var "*")) "n"]))
+    (.graph (.var "g") (.bgp [{ s := .var "s", p := .var "p", o := .var "o" }]))
+    (groupBy := some [.var "g"])
+
+#guard (materialiseDatasetBackend (indexedDatasetBackend dsBnodeNamed)).named.map (·.name) ==
+  dsBnodeNamed.named.map (·.name)
+#guard runSelectQueryBackendDataset {} graphVarQuery (indexedDatasetBackend dsBnodeNamed) ==
+  some (evalSelect {} dsBnodeNamed graphVarQuery).2
+#guard (runSelectQueryBackendDataset {} graphVarQuery (indexedDatasetBackend dsBnodeNamed)).map
+  (·.length) == some 3
+#guard runSelectQueryBackendDataset {} graphCountQuery (indexedDatasetBackend dsBnodeNamed) ==
+  some (evalSelect {} dsBnodeNamed graphCountQuery).2
+#guard (lookupNamedBackend "g" (indexedDatasetBackend dsBnodeNamed).named).isNone
 
 /-! Materialising reads every backend: one default triple, two named. -/
 #guard (materialiseDatasetBackend dsb1).default.length == 1
@@ -751,6 +927,73 @@ not. -/
 #guard runAskQueryBackendDataset {} (mkQuery .ask (.bgp [tpAll])) dsb1 == some true
 #guard runAskQueryBackendDataset {}
         (mkQuery .ask (.graph (.iri iA) (.bgp [tpAll]))) dsb1 == some false
+
+/-! ASK applies its SolutionModifier on the backend path too (§18.2.4,
+§18.2.5; issue 699), through the same `formHasSolution` as `evalAsk`.
+`dsb1` holds one default triple, so one solution and, grouped by `?s`,
+one group. -/
+private def countGtB (n : Nat) : Expr :=
+  .compare .gt (.aggregate .count false (.var "*")) (.numericLit n)
+private def askMod (groupBy : Option (List GroupCondition) := none)
+    (having : List Expr := []) (md : SolutionModifier := {}) : Query :=
+  mkQuery .ask (.bgp [tpAll]) (groupBy := groupBy) (having := having) (modifier := md)
+
+#guard runAskQueryBackendDataset {} (askMod (md := { limit := some 0 })) dsb1 == some false
+#guard runAskQueryBackendDataset {} (askMod (md := { limit := some 1 })) dsb1 == some true
+#guard runAskQueryBackendDataset {} (askMod (md := { offset := some 1 })) dsb1 == some false
+#guard runAskQueryBackendDataset {} (askMod (md := { offset := some 0 })) dsb1 == some true
+#guard runAskQueryBackendDataset {} (askMod (groupBy := some [.var "s"])) dsb1 == some true
+#guard runAskQueryBackendDataset {}
+        (askMod (groupBy := some [.var "s"]) (having := [countGtB 0])) dsb1 == some true
+#guard runAskQueryBackendDataset {}
+        (askMod (groupBy := some [.var "s"]) (having := [countGtB 1])) dsb1 == some false
+#guard runAskQueryBackendDataset {} (askMod (having := [countGtB 0])) dsb1 == some true
+#guard runAskQueryBackendDataset {} (askMod (having := [countGtB 1])) dsb1 == some false
+-- The backend answer is the reference answer over the materialised dataset.
+#guard runAskQueryBackendDataset {}
+        (askMod (groupBy := some [.var "s"]) (having := [countGtB 1])) dsb1
+    == some (evalAsk {} (materialiseDatasetBackend dsb1)
+        (askMod (groupBy := some [.var "s"]) (having := [countGtB 1])))
+
+/-! A read that reports a decode failure. The ops serve `gDefault` and
+flag the failure, as a COTTAS column that cannot be decoded does. -/
+private def failingOps : L4Factoidal.RDF.CottasCaps.CottasReadOps :=
+  { searchTok := fun _ b => tripleMatchesBound b gDefault
+  , searchLimitedTok := fun _ b n => capsTakeN n (tripleMatchesBound b gDefault)
+  , estimateTok := fun _ b => (tripleMatchesBound b gDefault).length
+  , countExactTok := fun _ b => (tripleMatchesBound b gDefault).length
+  , predicatePresent := fun _ => true
+  , hasDecodeFailure := fun _ => true
+  , distinctPredicates := fun _ => none
+  , searchTokSelective := fun _ b _ => tripleMatchesBound b gDefault }
+private def dsbFailing : DatasetBackend :=
+  { default := .cottasOnDisk failingOps L4Factoidal.RDF.CottasCaps.CottasScope.defaultGraph
+  , named := [] }
+
+#guard backendDecodeFailure dsbFailing.default == true
+-- With no modifier, or only LIMIT or ORDER BY, a non-empty answer stands:
+-- rows that failed to decode could only add solutions.
+#guard runAskQueryBackendDataset {} (mkQuery .ask (.bgp [tpAll])) dsbFailing == some true
+#guard runAskQueryBackendDataset {} (askMod (md := { limit := some 1 })) dsbFailing == some true
+#guard runAskQueryBackendDataset {}
+        (askMod (md := { orderBy := some [.asc (.var "s")], limit := some 1 })) dsbFailing
+    == some true
+-- An empty answer from a failed read is not `false`.
+#guard runAskQueryBackendDataset {}
+        (mkQuery .ask (.graph (.iri iA) (.bgp [tpAll]))) dsbFailing == (none : Option Bool)
+#guard runAskQueryBackendDataset {} (askMod (md := { limit := some 0 })) dsbFailing
+    == (none : Option Bool)
+-- GROUP BY, HAVING and OFFSET make the answer depend on rows the read
+-- may have lost, so even a `true` answer is withheld.
+#guard runAskQueryBackendDataset {} (askMod (groupBy := some [.var "s"])) dsbFailing
+    == (none : Option Bool)
+#guard runAskQueryBackendDataset {} (askMod (having := [countGtB 0])) dsbFailing
+    == (none : Option Bool)
+#guard runAskQueryBackendDataset {} (askMod (md := { offset := some 0 })) dsbFailing
+    == (none : Option Bool)
+-- The same queries on a clean read are answered.
+#guard runAskQueryBackendDataset {} (askMod (groupBy := some [.var "s"])) dsb1 == some true
+#guard runAskQueryBackendDataset {} (askMod (md := { offset := some 0 })) dsb1 == some true
 
 /-! A SELECT is not an ASK, so the ASK entry point declines it. -/
 #guard runAskQueryBackendDataset {} (mkQuery (.select .all) (.bgp [tpAll])) dsb1
@@ -1087,6 +1330,21 @@ of a BIND(EXISTS) is refused one level down instead, by
 #guard Expr.backendLocal existsQ == false
 #guard Expr.backendLocal notExistsQ == false
 
+/-! DESCRIBE reads every statement about the resources it names
+(`evalDescribe`), which no pattern selects, so `patternBoundedReads` refuses
+it although it carries no EXISTS. The EXISTS test alone admits it, and the
+first guard below shows why that is not enough. -/
+private def describeQuery : Query :=
+  mkQuery (.describe [.var "s"]) (.bgp [tpPredicateP])
+#guard describeQuery.expressionsOutsidePatternExistsFree == true
+#guard describeQuery.patternBoundedReads == false
+#guard (mkQuery (.describe []) (.bgp [tpPredicateP])).patternBoundedReads == false
+-- The other forms and the HAVING cases keep the answers they had.
+#guard havingFreeQuery.patternBoundedReads == true
+#guard havingExistsQuery.patternBoundedReads == false
+#guard (mkQuery (.construct []) (.bgp [tpPredicateP])).patternBoundedReads == true
+#guard (mkQuery .ask (.bgp [tpPredicateP])).patternBoundedReads == true
+
 /-! HAVING EXISTS. §18.6 substitutes the group's representative row into
 `{ ?s <q> ?z }`: for the group `?s = a` that is `{ <a> <q> ?z }`, which has one
 solution, and for `?s = g` it is `{ <g> <q> ?z }`, which has none. One group
@@ -1152,14 +1410,62 @@ plus the default. -/
           , searchTokSelective := fun _ _ _ => [] }
           [iG.val, iA.val]).named.length == 2
 
+theorem evalPatternBackend_values_native (env : EvalEnv) (dataset : DatasetBackend)
+    (variables : List VarName) (rows : List (List (Option Term))) (graph : GraphBackend) :
+    evalPatternBackend env dataset (.values variables rows) graph = evalValues variables rows := by
+  rfl
+
+theorem evalPatternBackend_values_reference (env : EvalEnv) (dataset : DatasetBackend)
+    (variables : List VarName) (rows : List (List (Option Term))) (graph : GraphBackend)
+    (referenceDataset : Dataset) (referenceGraph : Graph) :
+    evalPatternBackend env dataset (.values variables rows) graph =
+      ((QueryPattern.values variables rows).lowerWith env Binding.empty).evalIn
+        referenceDataset referenceGraph := by
+  rfl
+
+private def inlineValueCases :
+    List (List VarName × List (List (Option Term)) × SolutionSeq) :=
+  [([], [], []),
+   ([], [[]], [[]]),
+   (["x"], [[some (.iri iA)], [none], [some (.iri iA)]],
+     [[("x", .iri iA)], [], [("x", .iri iA)]]),
+   (["x", "y"], [[some (.iri iA), none], [none, some (.iri iB)], [none, none]],
+     [[("x", .iri iA)], [("y", .iri iB)], []]),
+   (["x", "y"], [[some (.iri iA), some (.iri iB)]],
+     [[("y", .iri iB), ("x", .iri iA)]]),
+   (["x", "x"], [[some (.iri iA), some (.iri iB)]],
+     [[("x", .iri iB), ("x", .iri iA)]]),
+   (["x", "y"], [[some (.iri iA)]], [[("x", .iri iA)]]),
+   (["x"], [[some (.iri iA), some (.iri iB)]], [[("x", .iri iA)]]),
+   ([], [[some (.iri iA)]], [[]])]
+
+#guard inlineValueCases.all fun (variables, rows, expected) =>
+  evalPatternBackend {} dsb1 (.values variables rows) dsb1.default == expected
+
+#guard inlineValueCases.all fun (variables, rows, expected) =>
+  evalPatternBackend {} { default := .list [], named := [] }
+    (.values variables rows) (.list []) == expected
+
+#guard inlineValueCases.all fun (variables, rows, expected) =>
+  let graph : GraphBackend := .hdt
+    { search := fun _ => gDefault ++ gDefault
+      estimate := fun _ => 999999
+      predicatePresent := fun _ => true }
+  evalPatternBackend {} { default := graph, named := [] }
+    (.values variables rows) graph == expected
+
 /-! ## Axiom audit -/
 
 #print axioms evalPatternBackend_bgp_native
+#print axioms evalPatternBackend_values_native
+#print axioms evalPatternBackend_values_reference
 #print axioms evalPatternBackend_leftJoin_native
 #print axioms evalPatternBackend_leftJoin_spec
 #print axioms evalBgpBackend_allVars_list
 #print axioms countGroupByGraph_length
 #print axioms evalAskBackend_none_on_decode_failure
+#print axioms evalAskBackend_none_on_decode_failure_non_monotone
+#print axioms evalAskBackend_eq_reference
 #print axioms limitGraphVarAcc_bounded
 
 end L4Factoidal.SPARQL.StoreDataset

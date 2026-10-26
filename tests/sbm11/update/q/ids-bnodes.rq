@@ -1,0 +1,1 @@
+SELECT DISTINCT ?b WHERE { { ?b ?p ?o } UNION { ?s ?p ?b } FILTER(isBlank(?b)) }

@@ -22,7 +22,7 @@ whether the validator is honest:
    `multipleOf` and the range keywords are exact.
 -/
 import L4Factoidal.JSON.Value
-import L4Factoidal.Regex.XPath
+import L4Factoidal.Regex.Profiles
 import L4Factoidal.Syntax.IriResolve
 
 namespace L4Factoidal.JSONSchema
@@ -50,6 +50,14 @@ def vor : VResult → VResult → VResult
 
 def vall (rs : List VResult) : VResult := rs.foldl vand .pass
 def vany (rs : List VResult) : VResult := rs.foldl vor .fail
+
+/-- JSON Schema 2020-12 validation §6.3.3 uses ECMA-262, not XPath.
+    Invalid/unsupported patterns cannot prove that a property is unmatched. -/
+def patternMatch (pattern text : String) : VResult :=
+  match Regex.Profiles.matchWith .ecma2020 pattern "" text with
+  | .ok true => .pass
+  | .ok false => .fail
+  | .error _ => .unsupported
 
 /-! ## Exact rationals from JSON number lexemes -/
 
@@ -490,7 +498,7 @@ partial def validateIn (reg : Registry) (root : Json) (base : String) (fuel : Na
            | .string s, .string pat =>
                -- UNANCHORED, per draft-07: the pattern must match
                -- SOMEWHERE in the string, not the whole of it.
-               if L4Factoidal.Regex.regexMatch s pat "" then .pass else .fail
+               patternMatch pat s
            | .string _, _ => .unsupported
            | _, _ => .pass)
         else if k == "minItems" then
@@ -559,17 +567,21 @@ partial def validateIn (reg : Registry) (root : Json) (base : String) (fuel : Na
            | .object o, .object ps =>
                vall (o.flatMap (fun (nm, got) =>
                  ps.filterMap (fun (pat, sub) =>
-                   if L4Factoidal.Regex.regexMatch nm pat "" then some (rec' sub got)
-                   else none)))
+                   match patternMatch pat nm with
+                   | .pass => some (rec' sub got)
+                   | .fail => none
+                   | .unsupported => some .unsupported)))
            | _, _ => .pass)
         else if k == "additionalProperties" then
           (match inst with
            | .object o =>
                vall (o.filterMap (fun (nm, got) =>
                  if props.contains nm then none
-                 else if patProps.any (fun pat =>
-                          L4Factoidal.Regex.regexMatch nm pat "") then none
-                 else some (rec' v got)))
+                 else
+                   let matched := patProps.map (fun pat => patternMatch pat nm)
+                   if matched.contains .pass then none
+                   else if matched.contains .unsupported then some .unsupported
+                   else some (rec' v got)))
            | _ => .pass)
         else if k == "propertyNames" then
           (match inst with

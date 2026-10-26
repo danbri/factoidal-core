@@ -77,9 +77,30 @@ def dedupPath : PathResult → PathResult
   | []      => []
   | x :: xs => if xs.any (pathPairEq x) then dedupPath xs else x :: dedupPath xs
 
-/-- Is this term usable as a subject? An inverse path turns objects
-into subjects, and a literal cannot be one — port of
-`is_not_literal`. -/
+/-- `dedupPath` as a loop: the kept pairs go on a newest-first list, one tail
+call per pair, reversed once at the end (https://github.com/danbri/factoidal/issues/752). -/
+def dedupPathLoop : PathResult → PathResult → PathResult
+  | [],      acc => acc.reverse
+  | x :: xs, acc =>
+      if xs.any (pathPairEq x) then dedupPathLoop xs acc else dedupPathLoop xs (x :: acc)
+
+theorem dedupPathLoop_eq : ∀ (l acc : PathResult),
+    dedupPathLoop l acc = acc.reverse ++ dedupPath l
+  | [],      acc => by simp [dedupPathLoop, dedupPath]
+  | x :: xs, acc => by
+      by_cases h : xs.any (pathPairEq x) = true
+      · simp [dedupPathLoop, dedupPath, h, dedupPathLoop_eq xs]
+      · simp [dedupPathLoop, dedupPath, h, dedupPathLoop_eq xs]
+
+def dedupPathFast (l : PathResult) : PathResult := dedupPathLoop l []
+
+/-- The compiler runs `dedupPathFast` wherever the source says `dedupPath`. -/
+@[csimp] theorem dedupPath_eq_fast : @dedupPath = @dedupPathFast := by
+  funext l; simp [dedupPathFast, dedupPathLoop_eq]
+
+/-- Is this term something other than a literal? Port of
+`is_not_literal`. The inverse path does not use it: §18.4 keeps the
+pairs whose object is a literal (https://github.com/danbri/factoidal/issues/1023). -/
 def isNotLiteral : Term → Bool
   | .literal _ => false
   | _          => true
@@ -146,11 +167,12 @@ def evalPath : PropertyPath → Graph → PathResult
   -- §9.3 PredicatePath: { (s,o) | (s, iri, o) ∈ G }.
   | .iri i, g =>
       g.filterMap (fun t => if t.p == i then some (t.s.toTerm, t.o) else none)
-  -- §9.1 InversePath: the converse relation, dropping pairs whose new
-  -- subject would be a literal.
+  -- §9.1 InversePath: the converse relation. §18.4 makes `?x ^p ?y` the
+  -- same as `?y p ?x`, so a literal object of `p` is a subject of `^p` and
+  -- the pair is kept. The F* source dropped those pairs (`is_not_literal`),
+  -- and this port did too until https://github.com/danbri/factoidal/issues/1023.
   | .inverse p, g =>
-      (evalPath p g).filterMap (fun pr =>
-        if isNotLiteral pr.2 then some (pr.2, pr.1) else none)
+      (evalPath p g).map (fun pr => (pr.2, pr.1))
   -- §9.1 SequencePath: relational composition. Bag semantics — two
   -- distinct routes through the middle node give two pairs.
   | .sequence p1 p2, g =>
@@ -169,11 +191,17 @@ def evalPath : PropertyPath → Graph → PathResult
       let nodes := graphNodes g
       let step  := evalPath p g
       pathFixpoint step (dedupPath (nodes.map (fun n => (n, n)) ++ step)) nodes.length
-  -- §9.1 OneOrMorePath: transitive closure (no reflexive seed).
+  -- §9.1 OneOrMorePath: transitive closure (no reflexive seed). The seed is
+  -- the step relation without repeated pairs: `pathFixpoint` stops when a
+  -- round does not make the list longer, and that is a fixpoint test only
+  -- when the list it starts from has each pair once. With the step list
+  -- itself as the seed, a pair that `eval(p)` holds twice let the first round
+  -- add a new pair and drop the repeat at the same length, and the closure
+  -- stopped short (https://github.com/danbri/factoidal/issues/955).
   | .oneOrMore p, g =>
       let nodes := graphNodes g
       let step  := evalPath p g
-      pathFixpoint step step nodes.length
+      pathFixpoint step (dedupPath step) nodes.length
   -- §9.1 NegatedPropertySet. A set containing only inverse members
   -- contributes no forward pairs, and vice versa — the F* source's
   -- `has_direct` / `has_inverse` gates, kept verbatim.

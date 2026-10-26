@@ -84,6 +84,7 @@ import L4Factoidal.Solid.Server.N3Patch
 import L4Factoidal.Solid.Server.Cors
 import L4Factoidal.Solid.Server.Ldn
 import L4Factoidal.Syntax.TurtleSerialize
+import L4Factoidal.Solid.Server.Representation
 
 namespace L4Factoidal.Solid.Server
 
@@ -132,7 +133,12 @@ def targetsAcl (p : String) : Bool := p.endsWith ".acl"
 
 /-! ## Reading a request -/
 
-def hasContent (r : Request) : Bool := r.body != ""
+def hasContent (r : Request) : Bool := r.content.size != 0
+
+/-- The content of a request read as UTF-8 text, or `""` when it is not
+UTF-8. Only Turtle and N3 readers use it; `LWS.step` refuses an RDF write
+whose bytes are not UTF-8 before anything is stored. -/
+def contentText (r : Request) : String := (String.fromUTF8? r.content).getD ""
 
 def contentTypeOf (r : Request) : Option String :=
   (r.header? "content-type").map (fun ct => (ct.splitOn ";").headD ct)
@@ -145,7 +151,7 @@ def requesterOf (cfg : ServerConfig) (r : Request) : Requester :=
 /-! ## Refusals -/
 
 def refuse (status : Nat) (msg : String) : Response :=
-  ⟨status, [("content-type", "text/plain")], msg⟩
+  ⟨status, [("content-type", "text/plain")], msg, none⟩
 
 /-! ## The step function -/
 
@@ -157,24 +163,38 @@ containment triples". -/
 def bodyEditsContainment (baseIri target body : String) : Bool :=
   (graphOf (some (iriOfPath baseIri target)) body).any (fun t => t.p == ldpContains)
 
-/-- One Solid request. Total, like the LWS `step` it refines. -/
-def step (S : Store σ) (cfg : ServerConfig) (r : Request) (st : σ) :
+/-- One Solid request made by the requester `who`. Total, like the LWS
+`step` it refines. `step` calls it with the handle configuration's
+requester; `Auth.authenticatedStep` calls it with the requester that
+Solid-OIDC authentication decided. -/
+def stepAs (S : Store σ) (cfg : ServerConfig) (who : Requester) (r : Request) (st : σ) :
     Response × σ :=
+  -- Solid applies N3 Patch itself and passes JSON Patch to the LWS binding,
+  -- so its `Accept-Patch` names both.
+  let cfg := { cfg with lws := { cfg.lws with acceptPatch := ["text/n3", mediaJsonPatch] } }
   let target := r.path
-  let who := requesterOf cfg r
   let mode := requiredMode r.method (targetsAcl target)
   let subject := authorizationSubject target
   let granted :=
     !cfg.enforceWac ||
     allowed S aclGraphOf cfg.lws.baseIri st subject who mode
-  if !granted then
+  -- A CORS-preflight request (§8.1: "A server MUST also support the HTTP
+  -- OPTIONS method such that it can respond appropriately to CORS preflight
+  -- requests") carries no credentials (Fetch §3.2.2), and Fetch §4.8 needs
+  -- an ok status: it is answered 204 before Web Access Control
+  -- (https://github.com/danbri/factoidal/issues/923). Until then a preflight
+  -- to a resource that is not public got 401 and the browser refused the
+  -- request it preceded.
+  if isPreflight r && (r.header? "origin").isSome then
+    (withCors r ⟨204, [], "", none⟩, st)
+  else if !granted then
     let resp := match who.webId with
       | none   => refuse 401 "Unauthorized"
       | some _ => refuse 403 "Forbidden"
     (withCors r resp, st)
   else
     match slashRedirect? S st target with
-    | some other => (withCors r ⟨301, [("location", other)], ""⟩, st)
+    | some other => (withCors r ⟨301, [("location", other)], "", none⟩, st)
     | none =>
         let (resp, st') := solidStep S cfg r st target
         let resp := withInboxLink cfg r.path resp
@@ -205,7 +225,7 @@ where
         match S.lookup st (aclPathOf owner) with
         | none => "user=\"\",public=\"\""
         | some e =>
-            wacAllow (aclGraphOf e.body) (iriOfPath cfg.lws.baseIri target)
+            wacAllow (aclGraphOf e.text) (iriOfPath cfg.lws.baseIri target)
                      (iriOfPath cfg.lws.baseIri owner) inherited who
   /-- Everything after the access decision and the redirect. -/
   solidStep (S : Store σ) (cfg : ServerConfig) (r : Request) (st : σ)
@@ -217,17 +237,47 @@ where
             if e.kind.isContainer then
               let g := containerGraph S cfg.lws.baseIri st target
               let (base, st') := LWS.step S cfg.lws r st
-              ({ base with
-                 body := if r.method == "HEAD" then "" else turtleOfGraphAuto g,
+              if base.status != 200 then (base, st') else
+              -- §5.5 for the container representation: Turtle unless the
+              -- Accept field prefers JSON-LD.
+              let (media, body) := match writeRdfSource
+                  (negotiateRdf (r.header? "accept") mediaTurtle) g with
+                | some b => (negotiateRdf (r.header? "accept") mediaTurtle, b)
+                | none => (mediaTurtle, solidTurtle g)
+              ({ base.withText (if r.method == "HEAD" then "" else body) with
                  headers := base.headers.map (fun (k, v) =>
-                   if k == "content-type" then (k, "text/turtle") else (k, v)) }, st')
+                   if k == "content-type" then (k, media) else (k, v)) }, st')
+            else if isRdfSourceMedia e.contentType then
+              -- §5.5: an RDF source is served as text/turtle and as
+              -- application/ld+json, whichever the Accept field asks for.
+              let want := negotiateRdf (r.header? "accept") e.contentType
+              if want == e.contentType then
+                let (resp, st') := LWS.step S cfg.lws r st
+                ({ resp with headers := resp.headers ++ [("vary", "accept")] }, st')
+              else
+              match convertRdfSource e.contentType want
+                      (iriOfPath cfg.lws.baseIri target) e.text with
+              | some body =>
+                  -- The converted representation is a whole one: a Range
+                  -- field applies to the stored bytes, so it is not passed on.
+                  let r0 := { r with headers := r.headers.filter (fun (k, _) =>
+                                k != "range" && k != "if-range") }
+                  let (resp, st') := LWS.step S cfg.lws r0 st
+                  if resp.status != 200 then (resp, st') else
+                  ({ resp.withText (if r.method == "HEAD" then "" else body) with
+                     headers := (resp.headers.filter (fun (k, _) => k != "accept-ranges")).map
+                       (fun (k, v) =>
+                         if k == "content-type" then (k, want)
+                         else if k == "etag" then (k, convertedTag v want)
+                         else (k, v)) ++ [("vary", "accept")] }, st')
+              | none => LWS.step S cfg.lws r st
             else LWS.step S cfg.lws r st
         | none => LWS.step S cfg.lws r st
     | "PUT" =>
         if hasContent r && (r.header? "content-type").isNone then
           (refuse 400 "PUT with content requires a Content-Type header field", st)
         else if pathIsContainer target &&
-                bodyEditsContainment cfg.lws.baseIri target r.body then
+                bodyEditsContainment cfg.lws.baseIri target (contentText r) then
           (refuse 409 "a container's containment triples cannot be edited", st)
         else LWS.step S cfg.lws r st
     | "POST" =>
@@ -239,6 +289,7 @@ where
     | "PATCH" =>
         if hasContent r && (r.header? "content-type").isNone then
           (refuse 400 "PATCH with content requires a Content-Type header field", st)
+        else if contentTypeOf r == some mediaJsonPatch then LWS.step S cfg.lws r st
         else if contentTypeOf r != some "text/n3" then
           (refuse 415 "PATCH accepts text/n3 (N3 Patch)", st)
         else if pathIsContainer target then
@@ -247,29 +298,38 @@ where
           let existing := S.lookup st target
           let targetIri := iriOfPath cfg.lws.baseIri target
           let current := match existing with
-            | some e => graphOf (some targetIri) e.body
+            | some e => graphOf (some targetIri) e.text
             | none   => []
-          match applyN3Patch r.body current (some targetIri) with
+          match rdfContentRefused "text/n3" r.content target with
+          | some resp => (resp, st)
+          | none =>
+          match applyN3Patch (contentText r) current (some targetIri) with
           | .error e => (refuse e.status e.message, st)
           | .ok g' =>
               let st1 := ensureAncestors S (ancestors target) st
               let e : Entry := { path := target, kind := .dataResource,
                                  contentType := "text/turtle",
-                                 body := turtleOfGraphAuto g', mtime := S.now st1 }
+                                 body := textBytes (solidTurtle g'), mtime := S.now st1 }
               let st2 := touchContainer S (S.tick (S.put st1 e)) target
               match existing with
               | none   => (⟨201, [("location", target),
-                                  ("last-modified", httpDate e.mtime)], ""⟩, st2)
-              | some _ => (⟨204, [("last-modified", httpDate e.mtime)], ""⟩, st2)
+                                  ("last-modified", httpDate e.mtime)], "", none⟩, st2)
+              | some _ => (⟨204, [("last-modified", httpDate e.mtime)], "", none⟩, st2)
     | "DELETE" =>
         if target == rootPath || target == aclPathOf rootPath then
           (⟨405, [("allow", String.intercalate ", "
-                    (allowFor .storageRoot (target == rootPath)))], ""⟩, st)
+                    (allowFor .storageRoot (target == rootPath)))], "", none⟩, st)
         else
           let (resp, st') := LWS.step S cfg.lws r st
           if resp.status == 204 then
             (resp, (auxiliaryPaths target).foldl (fun s a => S.remove s a) st')
           else (resp, st')
     | _ => LWS.step S cfg.lws r st
+
+/-- One Solid request, made by the requester the handle configuration
+names (`requesterOf`). -/
+def step (S : Store σ) (cfg : ServerConfig) (r : Request) (st : σ) :
+    Response × σ :=
+  stepAs S cfg (requesterOf cfg r) r st
 
 end L4Factoidal.Solid.Server

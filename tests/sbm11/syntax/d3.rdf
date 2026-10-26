@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Dataset D3: blank nodes: labelled, anonymous, a property list, a collection. -->
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:ex="http://example.org/">
+  <rdf:Description rdf:nodeID="alice">
+    <ex:name>Alice</ex:name>
+    <ex:knows rdf:nodeID="bob"/>
+  </rdf:Description>
+  <rdf:Description rdf:nodeID="bob">
+    <ex:name>Bob</ex:name>
+    <ex:knows rdf:nodeID="alice"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://example.org/doc">
+    <ex:detail>
+      <rdf:Description>
+        <ex:k>v</ex:k>
+        <ex:n rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">7</ex:n>
+      </rdf:Description>
+    </ex:detail>
+    <ex:items rdf:parseType="Collection">
+      <rdf:Description rdf:about="http://example.org/a"/>
+      <rdf:Description rdf:about="http://example.org/b"/>
+      <rdf:Description rdf:about="http://example.org/c"/>
+    </ex:items>
+  </rdf:Description>
+  <rdf:Description>
+    <ex:p rdf:resource="http://example.org/o"/>
+  </rdf:Description>
+</rdf:RDF>

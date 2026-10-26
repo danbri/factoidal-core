@@ -1,0 +1,2 @@
+# ORDER BY over base and overlay literals (section 15.1 order).
+SELECT ?s ?n WHERE { ?s <http://ex.org/name> ?n } ORDER BY ?n ?s

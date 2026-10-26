@@ -1,0 +1,24 @@
+UNDECIDED PositiveEntailmentTest/Builtins_PlainLiteral: a built-in outside this port's slice blocked a rule or the goal
+UNDECIDED PositiveEntailmentTest/RDF_Combination_Constant_Equivalence_4: a built-in outside this port's slice blocked a rule or the goal
+UNDECIDED PositiveEntailmentTest/Modeling_Brain_Anatomy: the case imports under an entailment regime this port does not implement
+UNDECIDED PositiveEntailmentTest/Factorial_Forward_Chaining: a built-in outside this port's slice blocked a rule or the goal
+FAIL PositiveEntailmentTest/EBusiness_Contract: not entailed, and must be
+UNDECIDED PositiveEntailmentTest/IRI_from_RDF_Literal: a built-in outside this port's slice blocked a rule or the goal
+UNDECIDED PositiveEntailmentTest/OWL_Combination_Vocabulary_Separation_Inconsistency_2: the case imports under an entailment regime this port does not implement
+UNDECIDED PositiveEntailmentTest/Builtins_XMLLiteral: a built-in outside this port's slice blocked a rule or the goal
+UNDECIDED PositiveEntailmentTest/Builtins_String: a built-in outside this port's slice blocked a rule or the goal
+UNDECIDED PositiveEntailmentTest/Builtins_Time: a built-in outside this port's slice blocked a rule or the goal
+UNDECIDED PositiveEntailmentTest/Builtins_List: a built-in outside this port's slice blocked a rule or the goal
+UNDECIDED PositiveEntailmentTest/OWL_Combination_Vocabulary_Separation_Inconsistency_1: the case imports under an entailment regime this port does not implement
+UNDECIDED NegativeEntailmentTest/Non-Annotation_Entailment: the case imports under an entailment regime this port does not implement
+
+rif-core DECIDED: 26 pass, 1 fail (out of 27 decided)
+UNDECIDED: 12 cases — unresolved operations, round limits,
+  unsupported RDF mappings or import entailment regimes
+NOT READ: 1 cases
+IMPORT REJECTION: 6 cases, not attempted — this port has no
+  import profile checker and makes no claim about them
+
+An UNDECIDED case is counted apart, never as a pass and never as a
+failure: a closure computed without a rule is not the closure, and
+reading `does not entail` off it would be a guess.

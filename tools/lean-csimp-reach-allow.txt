@@ -1,0 +1,70 @@
+# Findings of `tools/lean-csimp-reach.py --gate` that were read and left on purpose.
+# https://github.com/danbri/factoidal/issues/871
+#
+# One line per finding:    <left side of the @[csimp] theorem> <owner>   # reason
+# A finding is a C function (the owner) that still reaches the left side after the
+# replacement. The reason is required: the gate fails on a line without one. `*` in a
+# name matches any text. A line that matches no finding is reported as stale; remove it.
+# Removing a line because the finding was repaired is the goal, as in
+# tools/lean-tail-recursion-allow.txt.
+#
+# A finding that is held by a specification (the left side of another theorem) that no
+# live code reaches needs no line: the tool suppresses it. A specification is live when a
+# finding against it, held by live code, is not on this list. So the lines below name the
+# call that first reaches each specification, and not each call inside it.
+#
+# Reasons used (read on 2026-10-15; each names the file where it can be checked):
+#   leaf      the fast form (a loop) calls the specification for an input where the
+#             specification does not recurse, as its comment says
+#   bound     the call is in a branch for a size that no array reaches (2^64 characters)
+#   twin      the fast form handles the shapes it improves and calls the specification,
+#             whose parts are fast forms, for the others
+#   guard     a private definition that only the `#guard` lines of the same module call;
+#             its C function is emitted and nothing runs it
+#   spec      a specification whose callers are `#guard` lines and theorem statements
+#   dead arm  a step function whose arm that names the specification is not taken by the loop
+#   fixture   a known-bad example kept on purpose
+
+# ---- fixture: L4Factoidal/CsimpReachFixture.lean (the self-test asserts the tool reports each)
+L4Factoidal.CsimpReachFixture.weightSpec L4Factoidal.CsimpReachFixture.callBefore      # fixture: compiled before the theorem
+L4Factoidal.CsimpReachFixture.weightSpec L4Factoidal.CsimpReachFixture.callViaInstance # fixture: the inlined instance instWeighList was compiled before the theorem
+L4Factoidal.CsimpReachFixture.weightSpec L4Factoidal.CsimpReachFixture.callViaInline   # fixture: the inlined body of weightInline was compiled before the theorem
+L4Factoidal.CsimpReachFixture.weightSpec L4Factoidal.CsimpReachFixture.weightInline    # fixture: compiled before the theorem
+L4Factoidal.CsimpReachFixture.weightSpec L4Factoidal.CsimpReachFixture.instWeighList   # fixture: the instance is a static closure over the specification
+
+# ---- leaf: RDF 1.2 triple terms (the loops of https://github.com/danbri/factoidal/issues/867)
+L4Factoidal.RDF.Term.joinKey L4Factoidal.RDF.Term.joinKeyLoop                  # leaf: RDF/Core.lean, joinKeyLoop: a term that is not a triple term is keyed by the specification
+L4Factoidal.Syntax.readObject12 L4Factoidal.Syntax.readObject12Down            # leaf: Syntax/NTriples.lean, readObject12Down: an object that is not a triple term is read by the specification
+L4Factoidal.Syntax.Term.toNTriples L4Factoidal.Syntax.toNTriplesClose          # leaf: Syntax/NTriples.lean, toNTriplesClose: the text of a term that is not a triple term
+L4Factoidal.Syntax.readTtObject L4Factoidal.Syntax.readTtObjectLoop            # leaf: Syntax/Turtle.lean, readTtObjectLoop: an object that is not a triple term
+L4Factoidal.Syntax.readTtObject L4Factoidal.Syntax.readTripleTermDown          # leaf: Syntax/Turtle.lean, readTripleTermDown: an object that is not a triple term
+
+# ---- bound: XML entities on a worklist (https://github.com/danbri/factoidal/issues/755)
+L4Factoidal.XML.expandEntityValue L4Factoidal.XML.expandEntityLoop             # bound: XML/Parser.lean, expandEntityLoop: the branch for a replacement text longer than expandPendingBound (2^64 characters)
+L4Factoidal.XML.entityHasWsCharRef L4Factoidal.XML.entityWsLoop                # bound: XML/Parser.lean, entityWsLoop: the same bound
+
+# ---- twin: the fast form calls the specification for the shapes it does not improve
+L4Factoidal.Syntax.freshTopSpec L4Factoidal.Syntax.freshTopFast                # twin: Syntax/TurtleSerialize.lean: with a budget above 0 fewer than 8 rows are covered, so the specification's filter is linear
+L4Factoidal.SPARQL.finishSelectRows L4Factoidal.SPARQL.finishSelectRowsPrefix  # twin: SPARQL/Query.lean: ORDER BY with LIMIT takes the prefix sort; DISTINCT, REDUCED and no LIMIT take the specification, whose sort and dedup are fast forms
+L4Factoidal.Qlvr.cmpBytes L4Factoidal.Qlvr.cmpBytesFast                        # bound: Qlvr/CmpBytesFast.lean: arrays of USize.size bytes or more take the specification (none exist)
+
+# ---- dead arm: the step functions of the loops that replace the bnode label walks
+L4Factoidal.SPARQL.ggpLabeledBnodes L4Factoidal.SPARQL.labelStepSem            # dead arm: SPARQL/Parser.lean: labelsLoop calls labelStepSem with .union2 only; the .visit arm names the specification
+
+# ---- guard: private helpers and test logs of the #guard lines
+L4Factoidal.OWL.SyntaxDL.graphBodyViolations L4Factoidal.OWL.SyntaxDL.hasV     # guard: OWL/SyntaxDL.lean, a private helper of the #guard lines that follow it
+L4Factoidal.Storage.appendPlan? L4Factoidal.Storage.v2log                      # guard: Storage/DeltaLog.lean, a private test log (evaluated once, at module initialisation)
+L4Factoidal.Storage.appendPlan? L4Factoidal.Storage.DeltaLogBytes.v1log        # guard: Storage/DeltaLogBytes.lean, a private test log
+L4Factoidal.Storage.appendPlan? L4Factoidal.Storage.DeltaLogBytes.v2log        # guard: Storage/DeltaLogBytes.lean, a private test log
+L4Factoidal.Storage.appendPlan? L4Factoidal.Storage.v3log                      # guard: Storage/DeltaLog.lean, a private test log with a graph named by a blank node (evaluated once, at module initialisation)
+L4Factoidal.Storage.appendPlan? L4Factoidal.Storage.DeltaLogBytes.v3log        # guard: Storage/DeltaLogBytes.lean, a private test log with a graph named by a blank node
+L4Factoidal.Storage.parseLogChecked L4Factoidal.Storage.checkedIs              # guard: Storage/DeltaLog.lean, a private helper of the #guard lines
+L4Factoidal.Storage.parseLogChecked L4Factoidal.Storage.DeltaLogBytes.sameChecked     # guard: Storage/DeltaLogBytes.lean, a private helper that compares the specification with the byte array reader on purpose
+L4Factoidal.Storage.parseLogCheckedV1 L4Factoidal.Storage.DeltaLogBytes.sameCheckedV1 # guard: the same, for the version 1 reader
+
+# ---- spec: specifications whose callers are #guard lines and theorem statements
+L4Factoidal.SPARQL.validateBnodeScope L4Factoidal.SPARQL.scopeStepSem          # spec: SPARQL/Parser.lean: the semantic step function of scopeLoop; scopeLoop calls scopeCombine, and only the proofs (scopeLoop_eq) call scopeStepSem
+L4Factoidal.OWL.RL.closure L4Factoidal.OWL.RL.inconsistent                     # spec: OWL/RLClosure.lean: callers are the #guard lines of OWL/RLTests.lean and a theorem of OWL/RLClosureIndexed.lean; RLClosure cannot import the indexed module (it imports RLClosure)
+L4Factoidal.OWL.RL.closure L4Factoidal.OWL.RL.inconsistentPlus                 # spec: the same
+L4Factoidal.OWL.RL.closure L4Factoidal.OWL.RdfBased.rbRound                    # spec: OWL/RdfBased/Engine.lean: the readable alternation; callers are the #guard lines of OWL/RdfBased/Tests.lean; Harness/OwlProbe.lean runs the alternation with the indexed closure
+L4Factoidal.OWL.RL.closure L4Factoidal.OWL.RdfBased.rbSaturate                 # spec: the same

@@ -1,0 +1,10 @@
+# One document with explicit labels that a fixed generated prefix would
+# mint (anon___0, anon___1) and anonymous nodes: five distinct blank nodes.
+@prefix ex: <http://example.org/> .
+{
+  _:anon___0 ex:p "explicit anon___0" .
+  [] ex:p "generated first" .
+  _:anon___1 ex:p "explicit anon___1" .
+  [ ex:q "generated second" ] .
+  _:genid1 ex:p "explicit genid1" .
+}

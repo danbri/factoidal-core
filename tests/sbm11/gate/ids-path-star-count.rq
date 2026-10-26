@@ -1,0 +1,2 @@
+PREFIX ex: <http://ex.org/>
+SELECT (COUNT(*) AS ?n) WHERE { ?s (ex:knows|ex:grp)* ?o }

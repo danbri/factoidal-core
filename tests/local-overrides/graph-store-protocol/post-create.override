@@ -1,0 +1,40 @@
+# Factoidal local test override
+# See tests/local-overrides/README.md for the convention + runner contract.
+suite: graph-store-protocol
+test: Graph creation via POST on the GSP endpoint, then GET of the resulting graph (direct graph identification)
+category: GraphStoreProtocolTest
+upstream-result: POST to the endpoint with no graph parameter creates a new graph, answers 201 Created with a Location header, and GET of the Location IRI returns the graph
+our-result: request 1 of 2 fails: SPARQL_GraphStore has no graph creation (no fresh graph IRI, no Location)
+kind: engine-gap
+disposition: local-override
+date: 2026-10-10
+issue: https://github.com/danbri/factoidal/issues/714
+provenance: w3c/rdf-tests ec2ba15, sparql/sparql11/graph-store-protocol/ (manifest-direct.ttl, manifest-indirect.ttl; structured ht:Connection form from 02f98ff)
+---
+EXPECTED FAILURE, NOT A DISAGREEMENT WITH THE FIXTURE. The fixture is
+correct; the F* tree does not yet provide graph creation by POST with a Location header.
+
+Specification
+  GSP section 5.5 (HTTP POST) and section 4: a POST to the Graph Store itself creates a graph in the store; the response is 201 Created and the Location header names the new graph.
+
+What the F* tree has
+  SPARQL.GraphStore.fst is a pure store model: gsp_get, gsp_head,
+  gsp_put, gsp_post, gsp_delete and the status functions. The runner
+  (bin/w3c-runner/w3c_runner.ml, _gsp_run_exchanges) replays the
+  structured exchanges over it and parses and compares RDF bodies with the
+  F* Turtle parser and RDF.GraphIsomorphism. It has no multipart parser and
+  no way to mint the IRI of a created graph, and iron rule 7 forbids adding
+  either to the runner. The Lean tree passes this test
+  (formal/lean4/L4Factoidal/SPARQL/GraphStoreService.lean).
+
+How this file behaves
+  The runner still runs the test. While it fails, it is counted as a
+  local-override, apart from pass and fail. When the F* module gains the
+  feature and the test passes, the runner marks this override STALE and
+  exits non-zero until this file is removed (CLAUDE.md, "A stated
+  shortfall is a failing test plus an open issue").
+
+Issue
+  https://github.com/danbri/factoidal/issues/714 (opened 2026-10-10): F*
+  SPARQL.GraphStore has no multipart/form-data bodies and no graph creation
+  with a Location header.

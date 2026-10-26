@@ -7,6 +7,7 @@ import Harness.PosixRangeIO
 import Harness.NativeHasher
 import L4Factoidal.Crypto.SHA2
 import L4Factoidal.Storage.DeltaLog
+import L4Factoidal.Storage.DeltaLogBytesTheorems
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.Storage.TermLocalIndexWire
 import L4Factoidal.Storage.TermLocalIndex
@@ -17,6 +18,7 @@ import L4Factoidal.Storage.SubjectRowIndexWire
 import L4Factoidal.Storage.SubjectRowIndexWireV2
 import L4Factoidal.Storage.ChunkedArtifact
 import L4Factoidal.Storage.GenerationVerify
+import L4Factoidal.Storage.LiteralGramIndexWire
 
 namespace Harness.ShardActivate
 
@@ -60,31 +62,12 @@ private def compactedIbk3Sri2Tli1Layout : String :=
 private def compactedIbk3Sri2Tli1Oli2Layout : String :=
   "predicate-ibk3-ptd1-sri2-tli1-oli2-merkle-v0-compacted-default-dlog-v1"
 
-/-- The IBK4 layout labels: SBM7's, SBM8's, which adds the LGI1 literal search
-    index sidecar, and SBM9's, which adds the GBI1 geometry bounding-box index
-    beside it. There is no compacted variant of any of the three: the
-    compactor does not build IBK4 generations. -/
-private def ibk4Layout : String :=
-  "quad-ibk4-ptd1-merkle-v0"
-
-private def ibk4Lgi1Layout : String :=
-  "quad-ibk4-ptd1-lgi1-merkle-v0"
-
-private def ibk4Lgi1Gbi1Layout : String :=
-  "quad-ibk4-ptd1-lgi1-gbi1-merkle-v0"
-
-private def isIbk4Layout (layout : String) : Bool :=
-  layout == ibk4Layout || layout == ibk4Lgi1Layout || layout == ibk4Lgi1Gbi1Layout
-
-/-- The SBM10 layout label: IBK5 blocks over a PTD2 dictionary, an LGI2
-    literal index and the GBI1 geometry index. It is deliberately NOT a member
-    of `isIbk4Layout`: an IBK4 reader over IBK5 bytes misreads terms rather
-    than failing, so a reader selects its block codec by name. -/
-private def ibk5Layout : String :=
-  "quad-ibk5-ptd2-lgi2-gbi1-merkle-v0"
-
-private def isIbk5Layout (layout : String) : Bool :=
-  layout == ibk5Layout
+/- The IBK4 and IBK5 layout labels are `ShardManifest.isIbk4Layout` and
+   `ShardManifest.isIbk5Layout`. This file kept its own copies of the strings
+   until 2026-10-10, when the literal index was renamed (LGI1 to LGI3, LGI2 to
+   LGI4) and the labels with it: a copy here would have kept admitting the
+   retired labels in activation's choice of block codec, which `valid` refuses
+   in the manifest. There is one list of labels now, and it is the manifest's. -/
 
 private def isIbk3Layout (layout : String) : Bool :=
   layout == ibk3Layout || layout == ibk3Sri1Layout || layout == compactedIbk3Layout ||
@@ -112,11 +95,12 @@ private def sourceIdentity? (directory : System.FilePath) : IO ByteArray := do
   let dlog := directory / "deltas.dlog"
   let delta ← try
     let bytes ← IO.FS.readBinFile dlog
-    match parseLog bytes.toList with
-    | some (batches, []) =>
+    match DeltaLogBytes.parseLogCheckedV1BA bytes with
+    | .ok (batches, false) =>
         if validBatchHistory batches then pure bytes
         else throw <| IO.userError "source DLOG batch sequence or epoch order is invalid"
-    | _ => throw <| IO.userError "source DLOG is malformed or has an uncommitted suffix"
+    | .ok (_, true) => throw <| IO.userError "source DLOG is malformed or has an uncommitted suffix"
+    | .error e => throw <| IO.userError s!"source DLOG: {e}"
   catch e =>
     if (← dlog.pathExists) then throw e else pure ByteArray.empty
   pure <| nativeSha256 (manifest ++ delta)
@@ -202,6 +186,10 @@ private def verifyQuadV5Entries (directory : System.FilePath) (manifest : Manife
 /-- The SBM10 blob table. Each `blob-<hex>.lit` satisfies the same two
     commitments every other child satisfies, and its key names its own
     digest. -/
+private def retiredLiteralSidecar? (read : L4Factoidal.Storage.GenerationVerify.Reader IO)
+    (entries : List Entry) : IO (Option String) :=
+  L4Factoidal.Storage.GenerationVerify.retiredLiteralSidecar? read entries
+
 private def verifyBlobArtifacts (directory : System.FilePath) (manifest : Manifest) : IO Bool :=
   L4Factoidal.Storage.GenerationVerify.verifyBlobArtifacts nativeHasher
     (directoryReader directory) manifest.blobs
@@ -233,7 +221,9 @@ private def activate (rootText generation : String) : IO UInt32 := do
     let candidate := root / generation
     let manifestBytes ← readManifest candidate
     match decode? manifestBytes with
-    | none => throw <| IO.userError "candidate manifest is malformed or unsupported"
+    | none =>
+        throw <| IO.userError
+          ((retiredLayoutNote? manifestBytes).getD "candidate manifest is malformed or unsupported")
     | some manifest =>
         if !rangeCommitted manifest then
           throw <| IO.userError "candidate manifest has no Merkle range commitment"
@@ -248,6 +238,13 @@ private def activate (rootText generation : String) : IO UInt32 := do
         | none => pure ()
         match ← verifyReadableEntries candidate manifest with
         | none =>
+            /- A literal-index sidecar that starts with the magic of LGI1 or LGI2
+               makes every quad check below fail for one reason. Say it. -/
+            match ← retiredLiteralSidecar? (directoryReader candidate) manifest.entries with
+            | some name =>
+                throw <| IO.userError
+                  (L4Factoidal.Storage.LiteralGramIndexWire.retiredMessage name)
+            | none => pure ()
             if isIbk5Layout manifest.layout then throw <| IO.userError quadV5EntryFailure
             else if isIbk4Layout manifest.layout then throw <| IO.userError quadEntryFailure
             else throw <| IO.userError "candidate child artifact is missing, changed, or malformed"

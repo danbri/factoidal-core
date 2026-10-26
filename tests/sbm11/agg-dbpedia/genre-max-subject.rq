@@ -1,0 +1,5 @@
+# MIN and MAX over IRIs (576,001 rows), grouped by the genre IRI.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+SELECT ?g (COUNT(*) AS ?n) (MIN(?s) AS ?lo) (MAX(?s) AS ?hi)
+WHERE { ?s dbo:genre ?g }
+GROUP BY ?g ORDER BY DESC(?n) ?g LIMIT 50

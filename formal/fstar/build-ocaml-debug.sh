@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build a bytecode executable for ocamldebug without changing the normal
 # extract/compile pipeline.
 #

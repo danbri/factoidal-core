@@ -1,0 +1,272 @@
+[
+  {
+    "datatype": "\u00abunion\u00bb",
+    "pass": 423,
+    "fail": 0,
+    "scored": 423
+  },
+  {
+    "datatype": "dateTimeStamp",
+    "pass": 7,
+    "fail": 0,
+    "scored": 7
+  },
+  {
+    "datatype": "dayTimeDuration",
+    "pass": 5,
+    "fail": 0,
+    "scored": 5
+  },
+  {
+    "datatype": "yearMonthDuration",
+    "pass": 5,
+    "fail": 0,
+    "scored": 5
+  },
+  {
+    "datatype": "\u00abxsi:type\u00bb",
+    "pass": 5,
+    "fail": 0,
+    "scored": 5
+  },
+  {
+    "datatype": "anySimpleType",
+    "pass": 1,
+    "fail": 0,
+    "scored": 1
+  },
+  {
+    "datatype": "decimal",
+    "pass": 390,
+    "fail": 0,
+    "scored": 390
+  },
+  {
+    "datatype": "integer",
+    "pass": 344,
+    "fail": 0,
+    "scored": 344
+  },
+  {
+    "datatype": "nonPositiveInteger",
+    "pass": 340,
+    "fail": 0,
+    "scored": 340
+  },
+  {
+    "datatype": "negativeInteger",
+    "pass": 340,
+    "fail": 0,
+    "scored": 340
+  },
+  {
+    "datatype": "long",
+    "pass": 340,
+    "fail": 0,
+    "scored": 340
+  },
+  {
+    "datatype": "int",
+    "pass": 342,
+    "fail": 0,
+    "scored": 342
+  },
+  {
+    "datatype": "short",
+    "pass": 335,
+    "fail": 0,
+    "scored": 335
+  },
+  {
+    "datatype": "byte",
+    "pass": 315,
+    "fail": 0,
+    "scored": 315
+  },
+  {
+    "datatype": "nonNegativeInteger",
+    "pass": 340,
+    "fail": 0,
+    "scored": 340
+  },
+  {
+    "datatype": "unsignedLong",
+    "pass": 340,
+    "fail": 0,
+    "scored": 340
+  },
+  {
+    "datatype": "unsignedInt",
+    "pass": 340,
+    "fail": 0,
+    "scored": 340
+  },
+  {
+    "datatype": "unsignedShort",
+    "pass": 335,
+    "fail": 0,
+    "scored": 335
+  },
+  {
+    "datatype": "unsignedByte",
+    "pass": 315,
+    "fail": 0,
+    "scored": 315
+  },
+  {
+    "datatype": "positiveInteger",
+    "pass": 340,
+    "fail": 0,
+    "scored": 340
+  },
+  {
+    "datatype": "double",
+    "pass": 124,
+    "fail": 0,
+    "scored": 124
+  },
+  {
+    "datatype": "float",
+    "pass": 120,
+    "fail": 0,
+    "scored": 120
+  },
+  {
+    "datatype": "duration",
+    "pass": 285,
+    "fail": 0,
+    "scored": 285
+  },
+  {
+    "datatype": "dateTime",
+    "pass": 309,
+    "fail": 0,
+    "scored": 309
+  },
+  {
+    "datatype": "time",
+    "pass": 290,
+    "fail": 0,
+    "scored": 290
+  },
+  {
+    "datatype": "date",
+    "pass": 289,
+    "fail": 0,
+    "scored": 289
+  },
+  {
+    "datatype": "gYearMonth",
+    "pass": 289,
+    "fail": 0,
+    "scored": 289
+  },
+  {
+    "datatype": "gYear",
+    "pass": 283,
+    "fail": 0,
+    "scored": 283
+  },
+  {
+    "datatype": "gMonthDay",
+    "pass": 285,
+    "fail": 0,
+    "scored": 285
+  },
+  {
+    "datatype": "gDay",
+    "pass": 270,
+    "fail": 0,
+    "scored": 270
+  },
+  {
+    "datatype": "gMonth",
+    "pass": 275,
+    "fail": 0,
+    "scored": 275
+  },
+  {
+    "datatype": "string",
+    "pass": 245,
+    "fail": 0,
+    "scored": 245
+  },
+  {
+    "datatype": "normalizedString",
+    "pass": 210,
+    "fail": 0,
+    "scored": 210
+  },
+  {
+    "datatype": "token",
+    "pass": 205,
+    "fail": 0,
+    "scored": 205
+  },
+  {
+    "datatype": "Name",
+    "pass": 205,
+    "fail": 0,
+    "scored": 205
+  },
+  {
+    "datatype": "NMTOKEN",
+    "pass": 205,
+    "fail": 0,
+    "scored": 205
+  },
+  {
+    "datatype": "NCName",
+    "pass": 180,
+    "fail": 0,
+    "scored": 180
+  },
+  {
+    "datatype": "language",
+    "pass": 200,
+    "fail": 0,
+    "scored": 200
+  },
+  {
+    "datatype": "anyURI",
+    "pass": 255,
+    "fail": 0,
+    "scored": 255
+  },
+  {
+    "datatype": "QName",
+    "pass": 107,
+    "fail": 0,
+    "scored": 107
+  },
+  {
+    "datatype": "boolean",
+    "pass": 62,
+    "fail": 0,
+    "scored": 62
+  },
+  {
+    "datatype": "base64Binary",
+    "pass": 130,
+    "fail": 0,
+    "scored": 130
+  },
+  {
+    "datatype": "hexBinary",
+    "pass": 130,
+    "fail": 0,
+    "scored": 130
+  },
+  {
+    "datatype": "\u00ablist\u00bb",
+    "pass": 8593,
+    "fail": 0,
+    "scored": 8593
+  },
+  {
+    "datatype": "NMTOKENS",
+    "pass": 207,
+    "fail": 0,
+    "scored": 207
+  }
+]

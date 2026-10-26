@@ -1,0 +1,3 @@
+# Sideways information passing (issue 809), hash join: the objects of ex:knows (the left table is sorted on ?s) are sorted into candidates for the scan of ex:name, a blank node among them.
+PREFIX ex: <http://ex.org/>
+SELECT ?s ?o ?n WHERE { ?s ex:knows ?o . ?o ex:name ?n }

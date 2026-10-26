@@ -1,0 +1,81 @@
+⚠ [9/27] Replayed L4Factoidal.XML.Parser
+warning: L4Factoidal/XML/Parser.lean:1716:20: This simp argument is unused:
+  Bool.or_assoc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [Bool.or_comm, Bool.or_left_comm]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/XML/Parser.lean:2224:5: This simp argument is unused:
+  List.append_nil
+
+Hint: Omit it from the simp argument list.
+  [apply] simp_all (config := { zetaDelta := true }) only [resumeC_exit, resumeC_err, resumeC_nil, resumeC_cons_ok,
+    ↓reduceIte, Bool.false_eq_true, decide_true, decide_false, Bool.and_true, Bool.or_false, Bool.and_false,
+    Bool.false_and, Bool.true_or, Bool.or_true, List.cons_append, List.append_assoc, List.nil_append]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/XML/Parser.lean:2787:14: Variable name `f` is not explicitly referenced.
+
+Hint: The binding can be removed (if unused) or named `_` (if used implicitly). Alternatively, prefix the name with `_` to silence this warning:
+  [apply] _f
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+✔ [12/61] Built L4Factoidal.Regex.Derivative:c.o (803ms)
+✔ [13/61] Built L4Factoidal.Regex.Exec:c.o (1.8s)
+✔ [15/61] Built L4Factoidal.XSD.IEEE754:c.o (3.4s)
+✔ [16/61] Built L4Factoidal.Regex.Syntax:c.o (3.4s)
+✔ [17/61] Built l4factoidal/hacl_ed25519_shim.o (834ms)
+✔ [18/61] Built L4Factoidal.Regex.XSDPattern:c.o (4.4s)
+✔ [19/61] Built L4Factoidal.Text.CaseMap:c.o (6.5s)
+✔ [20/61] Built l4factoidal/Hacl_Curve25519_51.o (2.6s)
+✔ [21/61] Built l4factoidal/hacl_p256_shim.o (667ms)
+✔ [22/61] Built l4factoidal/hacl_rsa_shim.o (404ms)
+✔ [23/61] Built l4factoidal/Hacl_Bignum64.o (1.4s)
+✔ [24/61] Built l4factoidal/hacl_chachapoly_shim.o (483ms)
+✔ [25/61] Built l4factoidal/Hacl_Hash_SHA2.o (4.7s)
+✔ [26/61] Built l4factoidal/hacl_hpke_shim.o (271ms)
+✔ [27/61] Built l4factoidal/hacl_kdf_shim.o (811ms)
+✔ [28/61] Built l4factoidal/Hacl_Chacha20.o (741ms)
+✔ [29/61] Built l4factoidal/Hacl_AEAD_Chacha20Poly1305.o (407ms)
+✔ [30/61] Built l4factoidal/Hacl_MAC_Poly1305.o (701ms)
+✔ [31/61] Built l4factoidal/Hacl_HKDF.o (351ms)
+✔ [32/61] Built l4factoidal/Hacl_HMAC.o (711ms)
+✔ [33/61] Built l4factoidal/Hacl_Hash_SHA1.o (671ms)
+✔ [34/61] Built l4factoidal/Hacl_Ed25519.o (10s)
+✔ [35/61] Built l4factoidal/Lib_Memzero0.o (175ms)
+✔ [36/61] Built L4Factoidal.XML.Document:c.o (14s)
+✔ [37/61] Built l4factoidal/Hacl_HPKE_Curve51_CP32_SHA256.o (485ms)
+✔ [38/61] Built l4factoidal/Hacl_Hash_Blake2s.o (2.3s)
+✔ [39/61] Built l4factoidal/block_pread.o (591ms)
+✔ [40/61] Built L4Factoidal.Text.CaseMapData:c.o (15s)
+✔ [41/61] Built l4factoidal/l4_ext.o (462ms)
+✔ [42/61] Built l4factoidal/qlvr_zstd.o (469ms)
+⚠ [43/61] Replayed L4Factoidal.XSD.SchemaReader
+warning: L4Factoidal/XSD/SchemaReader.lean:282:15: `String.trim` has been deprecated: Use `String.trimAscii` instead
+
+Note: The updated constant has a different type:
+  String → String.Slice
+instead of
+  String → String
+warning: L4Factoidal/XSD/SchemaReader.lean:633:14: `String.trim` has been deprecated: Use `String.trimAscii` instead
+
+Note: The updated constant has a different type:
+  String → String.Slice
+instead of
+  String → String
+✔ [44/61] Built l4factoidal/libl4blockhost.static (222ms)
+✔ [46/61] Built l4factoidal/libl4exthost.static (244ms)
+✔ [48/61] Built l4factoidal/libl4qlvrzstd.static (240ms)
+✔ [50/61] Built l4factoidal/Hacl_Hash_Blake2b.o (2.9s)
+✔ [51/61] Built l4factoidal/Hacl_Bignum.o (8.4s)
+✔ [52/61] Built Harness.XsdDatatypesRun (5.9s)
+✔ [53/61] Built L4Factoidal.XSD.SimpleType:c.o (7.1s)
+✔ [54/61] Built l4factoidal/Hacl_P256.o (16s)
+✔ [55/61] Built l4factoidal/libl4hacl.static (137ms)
+✔ [57/61] Built L4Factoidal.XSD.SchemaReader:c.o (10s)
+✔ [58/61] Built Harness.XsdDatatypesRun:c.o (8.8s)
+✔ [59/61] Built L4Factoidal.XSD.Datatypes:c.o (30s)
+✔ [60/61] Built L4Factoidal.XML.Parser:c.o (43s)
+✔ [61/61] Built «l4xsd-datatypes»:exe (689ms)
+Build completed successfully (61 jobs).

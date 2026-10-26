@@ -1,0 +1,2 @@
+# FROM NAMED selects a graph with no triple and a graph with triples.
+SELECT ?g FROM NAMED <http://example.org/g0> FROM NAMED <http://example.org/g1> WHERE { GRAPH ?g { } }

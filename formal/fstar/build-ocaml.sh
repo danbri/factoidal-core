@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build script for the F* → OCaml → JavaScript extraction pipeline
 #
 # Prerequisites:
@@ -1127,7 +1127,7 @@ if [[ "$STEP" == "all" || "$STEP" == "compile" ]]; then
     RDF_Geo_Types.ml RDF_Geo_BBox.ml Parser_WKT.ml RDF_Geo_Topology.ml RDF_Geo_Functions.ml \
     Parser_OWLFunctional.ml \
     RDF_Turtle_Serialize.ml \
-    Parser_NQuads.ml Parser_TriG.ml Parser_XML.ml XML_Wellformedness.ml XML_Namespaces.ml Parser_XPath.ml XPath_Eval.ml XSLT_Transform.ml Schematron_Validate.ml Parser_RDFXML.ml Math_Expr.ml Math_Subst.ml Math_Diff.ml Math_Simplify.ml Math_Matrix.ml MathML_Content.ml Math_Series.ml MathML_Present.ml Math_Sigmoid.ml \
+    Parser_NQuads.ml Parser_TriG.ml Parser_Diagnostics.ml Parser_XML.ml XML_Wellformedness.ml XML_Namespaces.ml Parser_XPath.ml XPath_Eval.ml XSLT_Transform.ml Schematron_Validate.ml Parser_RDFXML.ml Math_Expr.ml Math_Subst.ml Math_Diff.ml Math_Simplify.ml Math_Matrix.ml MathML_Content.ml Math_Series.ml MathML_Present.ml Math_Sigmoid.ml \
     Parser_SRX.ml Parser_CSVResults.ml \
     SPARQL_JSON_Escape.ml \
     Parser_JSON.ml Parser_JSONResults.ml JSONLD_Loader.ml JSONLD_Context.ml JSONLD_Expand.ml Parser_JSONLD.ml Parser_JSONLD_Html.ml JSONLD_Compact.ml JSONLD_Flatten.ml JSONLD_FromRdf.ml JSONLD_Frame.ml JSONSchema_Validate.ml \
@@ -2256,17 +2256,48 @@ if [[ "$STEP" == "all" || "$STEP" == "test" ]]; then
   _W3C_LOG_ABS="$(pwd)/$OUTDIR/w3c_results.log"
   ( cd ../.. && "$_RUNNER_ABS" --all ) 2>&1 | tee "$_W3C_LOG_ABS" || W3C_RC=$?
   echo "  Full results: $OUTDIR/w3c_results.log ($(wc -l < "$OUTDIR/w3c_results.log") lines)"
+  # generate-report.sh reads one log per runner mode (sparql_results.log and
+  # rdf_results.log). `--all` writes both into the one log above, so cut it at
+  # the RDF banner. Without this step a fresh checkout has no such logs and
+  # generate-report.sh exits 1 with "No cached test logs" on every run, green
+  # or red; before the core/builds split these logs were committed, which hid it.
+  awk '/^=== W3C RDF 1\.1 Test Runner ===/ { rdf = 1 } !rdf' "$_W3C_LOG_ABS" > "$OUTDIR/sparql_results.log"
+  awk '/^=== W3C RDF 1\.1 Test Runner ===/ { rdf = 1 } rdf'  "$_W3C_LOG_ABS" > "$OUTDIR/rdf_results.log"
   # Refresh the human-readable test-results page (docs/test-results/index.html
   # + latest.{csv,json} + history snapshot). generate-report.sh used to be a
   # separate manual step, which is how the published page got 24h-stale on
   # 2026-04-29: builds were green, w3c_results.log was current, but no one
   # had remembered to regenerate the HTML. Now wired in unconditionally
   # because the cost is fast and the value is the public-facing dashboard.
+  # Its exit status is captured, not piped through `tail`: a pipe would hide it
+  # (or, under pipefail, abort the script before the verdict below is printed).
+  REPORT_RC=0
   if [[ -x ./generate-report.sh ]]; then
-    ./generate-report.sh 2>&1 | tail -10
+    _REPORT_LOG_ABS="$(pwd)/$OUTDIR/generate_report.log"
+    ./generate-report.sh > "$_REPORT_LOG_ABS" 2>&1 || REPORT_RC=$?
+    tail -n 10 "$_REPORT_LOG_ABS"
   fi
   record_phase_timing "test" "$PHASE_START_TEST" "$EXTRACT_COUNT"
   echo ""
+  # EXIT STATUS OF THIS STEP. It is the first non-zero of:
+  #   1. the runner's status. `w3c_runner --all` exits 0 when no suite has a
+  #      FAIL and no local-override is stale; 1 when a test fails or an
+  #      override went stale (the test now passes; delete the override file);
+  #      2 when the run is untrustworthy (a suite found no manifest or no
+  #      tests, or nothing was discovered). Honoured local overrides
+  #      (tests/local-overrides/) are counted apart and do not fail the run.
+  #   2. generate-report.sh's status, when the runner passed.
+  # Until 2026-10-10 this step discarded W3C_RC, so the exit status said
+  # nothing about the tests.
+  if [[ "$W3C_RC" -ne 0 ]]; then
+    echo "TEST_STATUS=FAIL (w3c_runner --all exited $W3C_RC; 1 = a test failed or an override is stale, 2 = nothing or a whole suite was not discovered)" >&2
+    exit "$W3C_RC"
+  fi
+  if [[ "$REPORT_RC" -ne 0 ]]; then
+    echo "TEST_STATUS=FAIL (generate-report.sh exited $REPORT_RC; see $OUTDIR/generate_report.log)" >&2
+    exit "$REPORT_RC"
+  fi
+  echo "TEST_STATUS=OK"
 fi
 
 # Step 4: Build JavaScript via js_of_ocaml
@@ -2305,7 +2336,7 @@ if [[ "$STEP" == "all" || "$STEP" == "js" ]]; then
     RDF_Geo_Types.ml RDF_Geo_BBox.ml Parser_WKT.ml RDF_Geo_Topology.ml RDF_Geo_Functions.ml
     Parser_OWLFunctional.ml
     RDF_Turtle_Serialize.ml
-    Parser_NQuads.ml Parser_TriG.ml Parser_XML.ml XML_Wellformedness.ml XML_Namespaces.ml Parser_XPath.ml XPath_Eval.ml XSLT_Transform.ml Schematron_Validate.ml Parser_RDFXML.ml Math_Expr.ml Math_Subst.ml Math_Diff.ml Math_Simplify.ml Math_Matrix.ml MathML_Content.ml Math_Series.ml MathML_Present.ml Math_Sigmoid.ml
+    Parser_NQuads.ml Parser_TriG.ml Parser_Diagnostics.ml Parser_XML.ml XML_Wellformedness.ml XML_Namespaces.ml Parser_XPath.ml XPath_Eval.ml XSLT_Transform.ml Schematron_Validate.ml Parser_RDFXML.ml Math_Expr.ml Math_Subst.ml Math_Diff.ml Math_Simplify.ml Math_Matrix.ml MathML_Content.ml Math_Series.ml MathML_Present.ml Math_Sigmoid.ml
     Parser_SRX.ml Parser_CSVResults.ml
     SPARQL_JSON_Escape.ml
     Parser_JSON.ml Parser_JSONResults.ml JSONLD_Loader.ml JSONLD_Context.ml JSONLD_Expand.ml Parser_JSONLD.ml Parser_JSONLD_Html.ml JSONLD_Compact.ml JSONLD_Flatten.ml JSONLD_FromRdf.ml JSONLD_Frame.ml JSONSchema_Validate.ml
@@ -2380,9 +2411,11 @@ if [[ "$STEP" == "all" || "$STEP" == "js" ]]; then
     w3c_runner.byte
     factoidal.byte
     npm_entry.byte
+    npm_entry_lite.byte
     ../../../docs/fstar-extracted/w3c-runner.js
     ../../../docs/fstar-extracted/factoidal.js
     ../../../docs/fstar-extracted/factoidal-npm-entry.js
+    ../../../docs/fstar-extracted/factoidal-npm-entry-lite.js
   )
   JS_SOURCES=(
     "${FSTAR_MODULES[@]}"
@@ -2391,7 +2424,10 @@ if [[ "$STEP" == "all" || "$STEP" == "js" ]]; then
     ../../../bin/factoidal-serve/factoidal_serve_jsoo.ml
     ../../../bin/factoidal-http-client/factoidal_http_client_jsoo.ml
     ../../../bin/factoidal-cli/factoidal_cli.ml
+    ../../../bin/npm-entry/entry_core.ml
+    ../../../bin/npm-entry/entry_extras.ml
     ../../../bin/npm-entry/entry_jsoo.ml
+    ../../../bin/npm-entry/entry_lite_jsoo.ml
     parquet_zstd_stubs_jsoo.c
     hacl_stubs_jsoo.c
     fstar_int_stubs.js
@@ -2464,13 +2500,25 @@ if [[ "$STEP" == "all" || "$STEP" == "js" ]]; then
     fi
     grep -i error _ocamlc_factoidal.log || true
 
-    # Build npm-entry bytecode (bin/npm-entry/entry_jsoo.ml): the
-    # persistent string/JSON ABI for the npm package. Needs the
-    # js_of_ocaml library for Js.export / Js.wrap_callback.
+    # Build npm-entry bytecode (bin/npm-entry/entry_core.ml +
+    # entry_extras.ml + entry_jsoo.ml, https://github.com/danbri/factoidal/issues/684):
+    # the persistent string/JSON ABI for the npm package, full profile.
+    # Needs the js_of_ocaml library for Js.export / Js.wrap_callback.
+    # Order matters: entry_core.ml first (entry_extras.ml references
+    # Entry_core.*), entry_jsoo.ml last (it references both modules).
+    # -I ../../../bin/npm-entry: ocamlc writes each cross-directory
+    # source's .cmi/.cmo next to that SOURCE file, not into cwd, so
+    # without this entry_extras.ml (which `open`s Entry_core) and
+    # entry_jsoo.ml (which references both) cannot find the earlier
+    # modules' interfaces even though they compiled moments before in
+    # this same invocation ("Unbound module Entry_core").
     run_with_heartbeat "ocamlc npm_entry.byte" "_ocamlc_npm_entry.log" -- \
       ocamlfind ocamlc -package fstar.lib,str,zarith,sha,digestif.c,unix,uucp,js_of_ocaml -linkpkg -w -8-14-26 \
       -custom parquet_zstd_stubs_jsoo.c hacl_stubs_jsoo.c \
+      -I ../../../bin/npm-entry \
       "${FSTAR_MODULES[@]}" \
+      ../../../bin/npm-entry/entry_core.ml \
+      ../../../bin/npm-entry/entry_extras.ml \
       ../../../bin/npm-entry/entry_jsoo.ml \
       -o npm_entry.byte
     grep -i error _ocamlc_npm_entry.log || true
@@ -2524,6 +2572,78 @@ if [[ "$STEP" == "all" || "$STEP" == "js" ]]; then
       -o ../../../docs/fstar-extracted/factoidal-npm-entry.js
     grep -v "Warning \[deprecated" _jsoo_npm_entry.log | grep -v "^$" || true
     echo "  Built: docs/fstar-extracted/factoidal-npm-entry.js ($(wc -c < ../../../docs/fstar-extracted/factoidal-npm-entry.js) bytes)"
+
+    # Lite npm-entry bundle (https://github.com/danbri/factoidal/issues/684):
+    # bin/npm-entry/entry_core.ml + entry_lite_jsoo.ml ONLY (no
+    # entry_extras.ml). Every FSTAR_MODULES unit is compiled to a
+    # scratch bytecode object in _lite_cmo/ (gitignored by the existing
+    # *.cmo/*.cmi rules) and archived into one .cma; the final link runs
+    # WITHOUT -linkall, so only the units entry_core.ml/entry_lite_jsoo.ml
+    # transitively reference are pulled from the archive -- that omission
+    # (SHACL/ShEx/OWL closures+tableau/RIF/JSON-LD/XML/XPath/CSVW/RML/VC/
+    # DID/COTTAS/delta-log/XSLT/MathML/XForms/JSON Schema/Schematron/TOAN/
+    # matrix/sigmoid, all entry_extras.ml-only) is the size lever.
+    rm -rf _lite_cmo
+    mkdir -p _lite_cmo
+    run_with_heartbeat "ocamlc lite per-module .cmo (${#FSTAR_MODULES[@]} units)" "_ocamlc_lite_cmo.log" -- \
+      bash -c '
+        set -euo pipefail
+        for m in "$@"; do
+          base="${m%.ml}"
+          ocamlfind ocamlc -c -w -8-14-26 -package fstar.lib,str,zarith,sha,digestif.c,unix,uucp,js_of_ocaml \
+            -I _lite_cmo -o "_lite_cmo/${base}.cmo" "$m"
+          # -o places both .cmo and .cmi from the basename in the same
+          # directory in every ocamlc version this project has run on;
+          # this is a defensive fallback, not the expected path.
+          if [[ ! -f "_lite_cmo/${base}.cmi" && -f "${base}.cmi" ]]; then
+            cp "${base}.cmi" "_lite_cmo/${base}.cmi"
+          fi
+        done
+      ' _ "${FSTAR_MODULES[@]}"
+    grep -i error _ocamlc_lite_cmo.log || true
+
+    LITE_CMO_LIST=()
+    for m in "${FSTAR_MODULES[@]}"; do
+      LITE_CMO_LIST+=("_lite_cmo/${m%.ml}.cmo")
+    done
+    run_with_heartbeat "ocamlc factoidal_fstar.cma" "_ocamlc_lite_cma.log" -- \
+      ocamlfind ocamlc -a -o _lite_cmo/factoidal_fstar.cma "${LITE_CMO_LIST[@]}"
+    grep -i error _ocamlc_lite_cma.log || true
+
+    # -I ../../../bin/npm-entry: same reason as the full build above --
+    # entry_lite_jsoo.ml needs entry_core.ml's .cmi, which lands next
+    # to its source, not in cwd.
+    run_with_heartbeat "ocamlc npm_entry_lite.byte" "_ocamlc_npm_entry_lite.log" -- \
+      ocamlfind ocamlc -package fstar.lib,str,zarith,sha,digestif.c,unix,uucp,js_of_ocaml -linkpkg -w -8-14-26 \
+      -custom parquet_zstd_stubs_jsoo.c hacl_stubs_jsoo.c \
+      -I _lite_cmo -I ../../../bin/npm-entry \
+      _lite_cmo/factoidal_fstar.cma \
+      ../../../bin/npm-entry/entry_core.ml \
+      ../../../bin/npm-entry/entry_lite_jsoo.ml \
+      -o npm_entry_lite.byte
+    grep -i error _ocamlc_npm_entry_lite.log || true
+
+    run_with_heartbeat "js_of_ocaml npm-entry-lite" "_jsoo_npm_entry_lite.log" -- \
+      js_of_ocaml \
+      +zarith_stubs_js/biginteger.js \
+      +zarith_stubs_js/runtime.js \
+      fstar_int_stubs.js \
+      fstar_hash_stubs.js \
+      fstar_utf8_output_stubs.js \
+      vendor/fzstd.umd.js \
+      parquet_zstd_stubs.js \
+      hacl_stubs.js \
+      npm_entry_lite.byte \
+      -o ../../../docs/fstar-extracted/factoidal-npm-entry-lite.js
+    grep -v "Warning \[deprecated" _jsoo_npm_entry_lite.log | grep -v "^$" || true
+    echo "  Built: docs/fstar-extracted/factoidal-npm-entry-lite.js ($(wc -c < ../../../docs/fstar-extracted/factoidal-npm-entry-lite.js) bytes)"
+
+    FULL_ENTRY_RAW=$(wc -c < ../../../docs/fstar-extracted/factoidal-npm-entry.js)
+    FULL_ENTRY_GZIP=$(gzip -9 -c ../../../docs/fstar-extracted/factoidal-npm-entry.js | wc -c)
+    LITE_ENTRY_RAW=$(wc -c < ../../../docs/fstar-extracted/factoidal-npm-entry-lite.js)
+    LITE_ENTRY_GZIP=$(gzip -9 -c ../../../docs/fstar-extracted/factoidal-npm-entry-lite.js | wc -c)
+    echo "  Bundle size (full js):  ${FULL_ENTRY_RAW} bytes raw / ${FULL_ENTRY_GZIP} bytes gzip -9"
+    echo "  Bundle size (lite js):  ${LITE_ENTRY_RAW} bytes raw / ${LITE_ENTRY_GZIP} bytes gzip -9"
 
     echo "  Built: docs/fstar-extracted/w3c-runner.js ($(wc -c < ../../../docs/fstar-extracted/w3c-runner.js) bytes)"
     echo "  Built: docs/fstar-extracted/factoidal.js   ($(wc -c < ../../../docs/fstar-extracted/factoidal.js) bytes)"
@@ -2656,6 +2776,25 @@ if [[ "$STEP" == "wasm-factoidal" ]]; then
       -o ../../../docs/fstar-extracted/factoidal-npm-entry.wasm.js
     python3 wasm_stub_shims.py ../../../docs/fstar-extracted/factoidal-npm-entry.wasm.js
   fi
+
+  # Lite npm-entry wasm mirror (https://github.com/danbri/factoidal/issues/684).
+  # Same shims as the full entry above; npm_entry_lite.byte comes from
+  # the `js` step's lite build (entry_core.ml + entry_lite_jsoo.ml,
+  # linked from _lite_cmo/factoidal_fstar.cma without -linkall).
+  if [[ -f npm_entry_lite.byte ]]; then
+    run_with_heartbeat "wasm_of_ocaml npm-entry-lite" "_waoc_npm_entry_lite.log" -- \
+      wasm_of_ocaml compile \
+      +zarith_stubs_js/biginteger.js \
+      +zarith_stubs_js/runtime.js \
+      wasm_runtime/zarith_runtime_wasm.js \
+      wasm_runtime/zarith_runtime.wat \
+      wasm_runtime/stdint_uint32_runtime.wat \
+      fstar_int_stubs.js \
+      hacl_stubs.js \
+      npm_entry_lite.byte \
+      -o ../../../docs/fstar-extracted/factoidal-npm-entry-lite.wasm.js
+    python3 wasm_stub_shims.py ../../../docs/fstar-extracted/factoidal-npm-entry-lite.wasm.js
+  fi
   cd ..
   record_phase_timing "wasm-factoidal" "$PHASE_START_WASM_FACTOIDAL" "$EXTRACT_COUNT"
   echo ""
@@ -2734,12 +2873,28 @@ if [[ "$STEP" == "npm" ]]; then
     echo "  Copied: $JSDIR/factoidal-npm-entry.wasm.assets/ -> $NPMDIR/factoidal-npm-entry.wasm.assets/ ($(ls -1 "$NPMDIR/factoidal-npm-entry.wasm.assets" | wc -l | tr -d ' ') file(s))"
   fi
 
+  # Lite npm-entry bundle (https://github.com/danbri/factoidal/issues/684)
+  # -- optional-if-present, same pattern as the full copies above.
+  if [[ -f "$JSDIR/factoidal-npm-entry-lite.js" ]]; then
+    cp "$JSDIR/factoidal-npm-entry-lite.js" "$NPMDIR/factoidal-npm-entry-lite.js"
+    echo "  Copied: $JSDIR/factoidal-npm-entry-lite.js -> $NPMDIR/factoidal-npm-entry-lite.js ($(wc -c < "$NPMDIR/factoidal-npm-entry-lite.js") bytes)"
+  fi
+  if [[ -f "$JSDIR/factoidal-npm-entry-lite.wasm.js" ]]; then
+    cp "$JSDIR/factoidal-npm-entry-lite.wasm.js" "$NPMDIR/factoidal-npm-entry-lite.wasm.js"
+    echo "  Copied: $JSDIR/factoidal-npm-entry-lite.wasm.js -> $NPMDIR/factoidal-npm-entry-lite.wasm.js ($(wc -c < "$NPMDIR/factoidal-npm-entry-lite.wasm.js") bytes)"
+  fi
+  if [[ -d "$JSDIR/factoidal-npm-entry-lite.wasm.assets" ]]; then
+    rm -rf "$NPMDIR/factoidal-npm-entry-lite.wasm.assets"
+    cp -R "$JSDIR/factoidal-npm-entry-lite.wasm.assets" "$NPMDIR/factoidal-npm-entry-lite.wasm.assets"
+    echo "  Copied: $JSDIR/factoidal-npm-entry-lite.wasm.assets/ -> $NPMDIR/factoidal-npm-entry-lite.wasm.assets/ ($(ls -1 "$NPMDIR/factoidal-npm-entry-lite.wasm.assets" | wc -l | tr -d ' ') file(s))"
+  fi
+
   # Packaging invariant: every entry in package.json "files" must
   # exist, or a published tarball silently ships a degraded API.
   MISSING_PKG_FILES=$(cd "$NPMDIR" && node -e '
     const fs = require("fs");
     const files = JSON.parse(fs.readFileSync("package.json", "utf8")).files || [];
-    const missing = files.filter(f => !fs.existsSync(f.replace(/\/$/, "")));
+    const missing = files.filter(f => !f.startsWith("!") && !fs.existsSync(f.replace(/\/$/, "")));
     if (missing.length) { console.log(missing.join(" ")); }
   ')
   if [[ -n "$MISSING_PKG_FILES" ]]; then

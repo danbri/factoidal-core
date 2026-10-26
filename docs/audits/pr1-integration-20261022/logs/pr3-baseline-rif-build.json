@@ -1,0 +1,12 @@
+{
+  "command": [
+    "/Users/danbri/.elan/bin/lake",
+    "build",
+    "l4rif"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr3/formal/lean4",
+  "sourceCommit": "eef88c3ac775e8f831ffeaf880f7f1cf5dda5b42",
+  "exitCode": 0,
+  "elapsedSeconds": 85.10265433322638,
+  "log": "pr3-baseline-rif-build.log"
+}

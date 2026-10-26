@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# ASK with GROUP BY and HAVING that no group passes: false.
+ASK { ?s ex:age ?a } GROUP BY ?s HAVING (COUNT(*) > 1)

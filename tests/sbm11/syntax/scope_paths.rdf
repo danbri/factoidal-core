@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- One property element of each kind sets xml:lang or xml:base; the property
+     element after it must not see it (XML 1.0 section 2.12, XML Base section 3).
+     No blank node. The same triples as scope_paths.nt. -->
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:ex="http://example.org/"
+         xml:base="http://example.org/dir/doc.rdf">
+  <rdf:Description rdf:about="s1" xml:lang="en">
+    <ex:literal xml:lang="fr">a</ex:literal>
+    <ex:afterLiteral>b</ex:afterLiteral>
+    <ex:typed xml:lang="fr" rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</ex:typed>
+    <ex:afterTyped>c</ex:afterTyped>
+    <ex:empty xml:lang="fr"/>
+    <ex:afterEmpty>d</ex:afterEmpty>
+    <ex:cleared xml:lang="">e</ex:cleared>
+    <ex:afterCleared>f</ex:afterCleared>
+    <ex:resource xml:lang="fr" xml:base="http://other.example/x/" rdf:resource="y"/>
+    <ex:afterResource rdf:resource="z"/>
+    <ex:nested xml:lang="de" xml:base="http://other.example/n/">
+      <rdf:Description rdf:about="m">
+        <ex:inner xml:lang="it">g</ex:inner>
+        <ex:afterInner>h</ex:afterInner>
+      </rdf:Description>
+    </ex:nested>
+    <ex:afterNested>i</ex:afterNested>
+  </rdf:Description>
+</rdf:RDF>

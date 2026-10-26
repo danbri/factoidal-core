@@ -140,7 +140,7 @@ inductive MetaRead where
     not when it doesn't. `none` means the entry could not be attempted
     at all (a file the manifest names is missing) — reported as a
     SKIP, never silently dropped from the denominator. -/
-def runOne (dir : String) (e : VEntry) : IO (Option (Bool × List String)) := do
+def runOne (dir : String) (e : VEntry) : IO (Option (Option Bool × List String)) := do
   let suiteBase := "http://www.w3.org/2013/csvw/tests/"
   -- Read one metadata document: its raw JSON tree (for the structural
   -- checks), its decoded group + context (for the data-level checks,
@@ -183,7 +183,7 @@ def runOne (dir : String) (e : VEntry) : IO (Option (Bool × List String)) := do
     -- processing if a metadata document does not use valid JSON
     -- syntax" (test092). Reading it as a skip, as this runner did
     -- until 2026-09-07, drops the one test that states the rule.
-    return some (false, ["metadata is not valid JSON"])
+    return some (some false, ["metadata is not valid JSON"])
   if metaMissing then
     -- A named metadata file that is not on disk: the entry cannot be
     -- attempted (this suite ships every fixture it references, so
@@ -202,7 +202,7 @@ def runOne (dir : String) (e : VEntry) : IO (Option (Bool × List String)) := do
       -- the entry (test119).
       let path := dir ++ "/" ++ suiteRelative suiteBase e.action
       if !(← System.FilePath.pathExists path) then return none
-      return some (true, [])
+      return some (some true, [])
   | some (rawJson, none, _) =>
       -- The JSON parsed but the lenient decoder could not build ANY
       -- table or table group from it (`parseMetadata` returned
@@ -211,7 +211,7 @@ def runOne (dir : String) (e : VEntry) : IO (Option (Bool × List String)) := do
       -- (a root with neither `tables` nor `url`, for instance).
       let structural := validate rawJson
       let findings := (err "metadata failed to decode") :: structural
-      return some (passes findings, (findings.filter (·.severity == .error)).map (·.message))
+      return some (validationDecision? findings, (findings.filter (·.severity != .warning)).map (·.message))
   | some (rawJson, some (group, ctx), mbase) =>
       let structural := validate rawJson
       -- Resolve any `tableSchema` given as a URL, exactly as
@@ -246,7 +246,19 @@ def runOne (dir : String) (e : VEntry) : IO (Option (Bool × List String)) := do
           pairs := pairs ++ [(t, ({ header := [], rows := [] } : Table))]
       let dataFindings := checkData group pairs
       let findings := structural ++ dataFindings
-      return some (passes findings, (findings.filter (·.severity == .error)).map (·.message))
+      return some (validationDecision? findings, (findings.filter (·.severity != .warning)).map (·.message))
+
+/-- Cases whose W3C test data is defective, each with the open issue that
+records the defect. They are NOT failures of this engine: they are reported
+as `excluded (defective test data)`, outside pass, fail and the total
+(owner, 2026-10-21: "Dont list bad tests as our failing"). One that passes
+fails the run, so the exclusion cannot outlive a corrected test.
+
+* test308 (`rdft:Proposed`) expects an ERROR for an unknown absolute datatype
+  IRI. Metadata Vocabulary §5.7 with §4 makes it a WARNING, as the approved
+  tests 150 and 238 require: https://github.com/danbri/factoidal/issues/700 -/
+def expectedFailures : List (String × String) :=
+  [("manifest-validation#test308", "https://github.com/danbri/factoidal/issues/700")]
 
 def main (args : List String) : IO UInt32 := do
   let argDir := (args.filter (fun a => !a.startsWith "--")).head?
@@ -270,6 +282,8 @@ def main (args : List String) : IO UInt32 := do
         IO.println "csvw-validation: manifest parsed but named no entries"
         IO.println (Harness.Diag.line "csvw-validation" { zeroTests := 1 })
         return 1
+      let mut xfail : Nat := 0
+      let mut xpass : List String := []
       let mut posScore : Harness.Score := {}
       let mut warnScore : Harness.Score := {}
       let mut negScore : Harness.Score := {}
@@ -282,11 +296,27 @@ def main (args : List String) : IO UInt32 := do
             | .positive => posScore := posScore.bump (.skip "missing fixture")
             | .warning  => warnScore := warnScore.bump (.skip "missing fixture")
             | .negative => negScore := negScore.bump (.skip "missing fixture")
-        | some (conforms, reasons) =>
+        | some (none, reasons) =>
+            let why := String.intercalate "; " reasons
+            IO.println s!"UNSUPPORTED {e.id} ({bucket}): {why}"
+            match e.kind with
+            | .positive => posScore := posScore.bump (.unsupported why)
+            | .warning => warnScore := warnScore.bump (.unsupported why)
+            | .negative => negScore := negScore.bump (.unsupported why)
+        | some (some conforms, reasons) =>
             let ok := match e.kind with
               | .negative => !conforms
               | _         => conforms
-            if ok then
+            let xf := expectedFailures.find? (·.1 == e.id)
+            if ok && xf.isSome then
+              -- An expected failure that passes is a failure of the run:
+              -- flip the entry to an assertion and close the issue.
+              IO.println s!"FAIL {e.id} ({bucket}): unexpected pass: remove it from expectedFailures and close {(xf.map (·.2)).getD ""}"
+              xpass := e.id :: xpass
+            else if !ok && xf.isSome then
+              IO.println s!"EXCLUDED {e.id} ({bucket}): defective test data, {(xf.map (·.2)).getD ""}"
+              xfail := xfail + 1
+            else if ok then
               IO.println s!"PASS {e.id} ({bucket})"
               match e.kind with
               | .positive => posScore := posScore.bump .pass
@@ -306,10 +336,16 @@ def main (args : List String) : IO UInt32 := do
       IO.println (Harness.Score.line "csvw-validation positive" posScore)
       IO.println (Harness.Score.line "csvw-validation warning" warnScore)
       IO.println (Harness.Score.line "csvw-validation negative" negScore)
-      IO.println (Harness.Score.line "csvw-validation" total3)
+      -- Defective test data is reported apart: never as a pass, never in
+      -- `fail`, never in the total. Skill test-suites, section
+      -- "Defective test data".
+      IO.println (s!"csvw-validation: {total3.pass} pass, {total3.fail + xpass.length} fail, " ++
+        s!"{total3.skip} skip, {total3.unsupported} unsupported " ++
+        s!"(out of {total3.total + xpass.length}); " ++
+        s!"{xfail} excluded (defective test data)")
       IO.println (Harness.Diag.line "csvw-validation" ({} : Harness.Diag))
       IO.println ""
       IO.println "A PositiveValidationTest / WarningValidationTest passes iff the"
       IO.println "document CONFORMS (a warning does not fail it); a"
       IO.println "NegativeValidationTest passes iff it does NOT."
-      return if total3.fail > 0 then 1 else 0
+      return if total3.fail + xpass.length > 0 then 1 else 0

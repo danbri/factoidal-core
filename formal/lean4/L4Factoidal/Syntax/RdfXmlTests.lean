@@ -253,13 +253,19 @@ def soleLiteralLex (body : String) : Option String :=
   ("<http://example.org/s> <http://example.org/p> \"text\""
     ++ "^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> .")
 
--- [7.2.17]: an empty element is written open+close, and the ambient
--- namespace declarations land on the top-level element of the content.
+-- [7.2.17]: an empty element is written open+close, and the lexical form is
+-- exclusive canonical XML: an ambient namespace declaration that the
+-- content does not visibly use is dropped (issue 963).
 #guard soleLiteralLex
   ("<rdf:Description rdf:about='http://example.org/s'>"
     ++ "<eg:p rdf:parseType='Literal'><br/></eg:p></rdf:Description>")
-  == some ("<br xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\""
-            ++ " xmlns:eg=\"http://example.org/\"></br>")
+  == some "<br></br>"
+
+-- [7.2.17]: a visibly used prefix keeps its declaration.
+#guard soleLiteralLex
+  ("<rdf:Description rdf:about='http://example.org/s'>"
+    ++ "<eg:p rdf:parseType='Literal'><eg:q/></eg:p></rdf:Description>")
+  == some "<eg:q xmlns:eg=\"http://example.org/\"></eg:q>"
 
 -- [7.2.17]: markup-significant characters in character data are escaped.
 #guard soleLiteralLex
@@ -267,13 +273,12 @@ def soleLiteralLex (body : String) : Option String :=
     ++ "<eg:p rdf:parseType='Literal'>a &amp; b</eg:p></rdf:Description>")
   == some "a &amp; b"
 
--- [7.2.17]: nested elements keep their structure; only the TOP-level
--- element carries the ambient declarations.
+-- [7.2.17]: nested elements keep their structure; unused ambient
+-- declarations are dropped.
 #guard soleLiteralLex
   ("<rdf:Description rdf:about='http://example.org/s'>"
     ++ "<eg:p rdf:parseType='Literal'><a><b>x</b></a></eg:p></rdf:Description>")
-  == some ("<a xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\""
-            ++ " xmlns:eg=\"http://example.org/\"><b>x</b></a>")
+  == some "<a><b>x</b></a>"
 
 -- [7.2.20] parseTypeOtherPropertyElt: any other `rdf:parseType` value is
 -- treated as if it were `Literal`.
@@ -793,6 +798,198 @@ def rejectsIts (extra body : String) : Bool :=
     ++ "<http://example.org/r> <http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies> "
     ++ "<<( <http://example.org/s> <http://example.org/p> \"blah\" )>> .")
 
+/-! ## A property element's scope closes with it
+
+XML 1.0 §2.12: the language that `xml:lang` specifies "applies to the element
+where it is specified ... and to all elements in its content unless
+overridden". XML Base §3 and Namespaces in XML §6.1 scope `xml:base` and `xmlns`
+declarations the same way, and `its:dir` and `rdf:version` follow `xml:lang`
+(RDF 1.2 XML Syntax). Until 2026-10-14 the state that `propertyElt` returned
+still held the scope of the property element, and the next property element of
+the same node element read in it
+(https://github.com/danbri/factoidal/issues/841; the F* parser has the same
+defect, `tests/known-defects/run.sh` case RDFXML-LANG-SCOPE).
+
+One guard (or two) for each path of `propertyEltBody`: a property element sets
+`xml:lang` (or `xml:base`, `its:dir`, `rdf:version`, `xmlns`) and a following
+property element must read in the scope of the node element that holds both.
+Each guard fails on the parser of 2026-10-13. -/
+
+/-- A node element for `http://example.org/s` holding the property elements
+`props`; `extra` is added to its start tag. -/
+def descWith (extra props : String) : String :=
+  "<rdf:Description rdf:about='http://example.org/s'" ++ extra ++ ">" ++ props
+    ++ "</rdf:Description>"
+
+/-- The N-Triples line with subject `http://example.org/s`, predicate
+`http://example.org/` ++ `p`, and the object text `o`. -/
+def sp (p o : String) : String :=
+  "<http://example.org/s> <http://example.org/" ++ p ++ "> " ++ o ++ " .\n"
+
+-- Literal content ([7.2.16]): `lang_scope.rdf` of tests/sbm11/syntax.
+#guard iso (descWith "" "<eg:p xml:lang='fr'>a</eg:p><eg:q>b</eg:q>")
+  (sp "p" "\"a\"@fr" ++ sp "q" "\"b\"")
+
+-- The language that applies after the property element is the node element's,
+-- not none: the node element says `en`, the first property element `fr`.
+#guard iso (descWith " xml:lang='en'" "<eg:p xml:lang='fr'>a</eg:p><eg:q>b</eg:q>")
+  (sp "p" "\"a\"@fr" ++ sp "q" "\"b\"@en")
+
+-- `xml:lang=""` clears the language for its own element only.
+#guard iso (descWith " xml:lang='en'" "<eg:p xml:lang=''>a</eg:p><eg:q>b</eg:q>")
+  (sp "p" "\"a\"" ++ sp "q" "\"b\"@en")
+
+-- Before a datatyped literal, and the property element after that: neither
+-- takes the language of the first.
+#guard iso (descWith ""
+    ("<eg:p xml:lang='fr'>a</eg:p>"
+      ++ "<eg:q rdf:datatype='http://www.w3.org/2001/XMLSchema#integer'>1</eg:q>"
+      ++ "<eg:r>c</eg:r>"))
+  (sp "p" "\"a\"@fr"
+    ++ sp "q" "\"1\"^^<http://www.w3.org/2001/XMLSchema#integer>"
+    ++ sp "r" "\"c\"")
+
+-- A datatyped property element that sets the language does not give it to the
+-- next one either.
+#guard iso (descWith ""
+    ("<eg:p xml:lang='fr' rdf:datatype='http://www.w3.org/2001/XMLSchema#integer'>1</eg:p>"
+      ++ "<eg:q>b</eg:q>"))
+  (sp "p" "\"1\"^^<http://www.w3.org/2001/XMLSchema#integer>" ++ sp "q" "\"b\"")
+
+-- Empty property elements ([7.2.21]): the empty literal takes the language in
+-- scope, and the first one's is not in scope for the second.
+#guard iso (descWith "" "<eg:p xml:lang='fr'/><eg:q/>")
+  (sp "p" "\"\"@fr" ++ sp "q" "\"\"")
+
+-- `rdf:resource` ([7.2.21]).
+#guard iso (descWith ""
+    "<eg:p xml:lang='fr' rdf:resource='http://example.org/o'/><eg:q>b</eg:q>")
+  (sp "p" "<http://example.org/o>" ++ sp "q" "\"b\"")
+
+-- `rdf:parseType="Literal"` ([7.2.17]).
+#guard iso (descWith ""
+    "<eg:p rdf:parseType='Literal' xml:lang='fr'>text</eg:p><eg:q>b</eg:q>")
+  (sp "p" "\"text\"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral>"
+    ++ sp "q" "\"b\"")
+
+-- `rdf:parseType="Resource"` ([7.2.18]): the language reaches the property
+-- elements inside the group, and stops at its end.
+#guard iso (descWith ""
+    ("<eg:p rdf:parseType='Resource' xml:lang='fr'><eg:r>c</eg:r></eg:p>"
+      ++ "<eg:q>b</eg:q>"))
+  (sp "p" "_:x" ++ "_:x <http://example.org/r> \"c\"@fr .\n" ++ sp "q" "\"b\"")
+
+-- Inside a `parseType="Resource"` group the same holds between its own
+-- property elements.
+#guard iso (descWith ""
+    ("<eg:p rdf:parseType='Resource'><eg:r xml:lang='fr'>c</eg:r><eg:t>d</eg:t></eg:p>"
+      ++ "<eg:q>b</eg:q>"))
+  (sp "p" "_:x" ++ "_:x <http://example.org/r> \"c\"@fr .\n"
+    ++ "_:x <http://example.org/t> \"d\" .\n" ++ sp "q" "\"b\"")
+
+-- `rdf:parseType="Collection"` ([7.2.19]).
+#guard iso (descWith ""
+    ("<eg:p rdf:parseType='Collection' xml:lang='fr'>"
+      ++ "<rdf:Description rdf:about='http://example.org/i'><eg:r>c</eg:r></rdf:Description>"
+      ++ "</eg:p><eg:q>b</eg:q>"))
+  (sp "p" "_:l"
+    ++ "_:l <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <http://example.org/i> .\n"
+    ++ "_:l <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> "
+    ++ "<http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .\n"
+    ++ "<http://example.org/i> <http://example.org/r> \"c\"@fr .\n"
+    ++ sp "q" "\"b\"")
+
+-- A node element as the object ([7.2.15]): nested node elements. The inner
+-- `xml:lang` of `eg:r` ends with `eg:r`, so `eg:t` has the language of `eg:p`;
+-- the language of `eg:p` ends with `eg:p`, so `eg:q` has none.
+#guard iso (descWith ""
+    ("<eg:p xml:lang='fr'><rdf:Description rdf:about='http://example.org/o'>"
+      ++ "<eg:r xml:lang='de'>c</eg:r><eg:t>d</eg:t></rdf:Description></eg:p>"
+      ++ "<eg:q>b</eg:q>"))
+  (sp "p" "<http://example.org/o>"
+    ++ "<http://example.org/o> <http://example.org/r> \"c\"@de .\n"
+    ++ "<http://example.org/o> <http://example.org/t> \"d\"@fr .\n"
+    ++ sp "q" "\"b\"")
+
+-- Three levels of node elements, each with a property element that sets the
+-- language and one that does not.
+#guard iso (descWith " xml:lang='en'"
+    ("<eg:p xml:lang='fr'><rdf:Description rdf:about='http://example.org/o'>"
+      ++ "<eg:r xml:lang='de'><rdf:Description rdf:about='http://example.org/o2'>"
+      ++ "<eg:u xml:lang='it'>e</eg:u><eg:w>f</eg:w></rdf:Description></eg:r>"
+      ++ "<eg:t>d</eg:t></rdf:Description></eg:p>"
+      ++ "<eg:q>b</eg:q>"))
+  (sp "p" "<http://example.org/o>"
+    ++ "<http://example.org/o> <http://example.org/r> <http://example.org/o2> .\n"
+    ++ "<http://example.org/o2> <http://example.org/u> \"e\"@it .\n"
+    ++ "<http://example.org/o2> <http://example.org/w> \"f\"@de .\n"
+    ++ "<http://example.org/o> <http://example.org/t> \"d\"@fr .\n"
+    ++ sp "q" "\"b\"@en")
+
+-- The `rdf:li` counter still runs across property elements that set the
+-- language (§5.3): the counter belongs to the node element.
+#guard iso (descWith "" "<rdf:li xml:lang='fr'>a</rdf:li><rdf:li>b</rdf:li><rdf:li>c</rdf:li>")
+  ("<http://example.org/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#_1> \"a\"@fr .\n"
+    ++ "<http://example.org/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#_2> \"b\" .\n"
+    ++ "<http://example.org/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#_3> \"c\" .\n")
+
+-- and across a `parseType="Resource"` group, whose own counter starts again.
+#guard iso (descWith ""
+    ("<rdf:li rdf:parseType='Resource' xml:lang='fr'><rdf:li>x</rdf:li></rdf:li>"
+      ++ "<rdf:li>b</rdf:li>"))
+  ("<http://example.org/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#_1> _:g .\n"
+    ++ "_:g <http://www.w3.org/1999/02/22-rdf-syntax-ns#_1> \"x\"@fr .\n"
+    ++ "<http://example.org/s> <http://www.w3.org/1999/02/22-rdf-syntax-ns#_2> \"b\" .\n")
+
+-- `xml:base` (XML Base §3): resolution of `rdf:resource` after a property
+-- element with its own base uses the base of the node element.
+#guard iso (descWith ""
+    ("<eg:p xml:base='http://other.example/x/' rdf:resource='y'/>"
+      ++ "<eg:q rdf:resource='z'/>"))
+  (sp "p" "<http://other.example/x/y>" ++ sp "q" "<http://example.org/dir/z>")
+
+-- `xml:base` on a property element whose object is a node element.
+#guard iso (descWith ""
+    ("<eg:p xml:base='http://other.example/x/'><rdf:Description rdf:about='y'/></eg:p>"
+      ++ "<eg:q rdf:resource='z'/>"))
+  (sp "p" "<http://other.example/x/y>" ++ sp "q" "<http://example.org/dir/z>")
+
+-- `xml:base` on a property element with literal content and a datatype.
+#guard iso (descWith ""
+    ("<eg:p xml:base='http://other.example/x/' rdf:datatype='t'>1</eg:p>"
+      ++ "<eg:q rdf:datatype='t'>2</eg:q>"))
+  (sp "p" "\"1\"^^<http://other.example/x/t>" ++ sp "q" "\"2\"^^<http://example.org/dir/t>")
+
+-- `xmlns` (Namespaces in XML §6.1): a prefix that a property element declares
+-- is unbound after it. The first document is the control: the node element
+-- declares the prefix, and the document is accepted.
+#guard accepts (descWith " xmlns:foo='http://foo.example/'"
+    "<eg:p xmlns:foo='http://foo.example/'>a</eg:p><foo:q>b</foo:q>")
+#guard rejects (descWith ""
+    "<eg:p xmlns:foo='http://foo.example/'>a</eg:p><foo:q>b</foo:q>")
+
+-- RDF 1.2 XML Syntax: `its:dir` and `xml:lang` of one property element do not
+-- reach the next.
+#guard isoIts " rdf:version='1.2'"
+  (descWith "" "<eg:p xml:lang='he' its:dir='rtl'>a</eg:p><eg:q>b</eg:q>")
+  (sp "p" "\"a\"@he--rtl" ++ sp "q" "\"b\"")
+
+-- The direction after the property element is the node element's.
+#guard isoIts " rdf:version='1.2'"
+  (descWith " xml:lang='en' its:dir='ltr'"
+    "<eg:p xml:lang='he' its:dir='rtl'>a</eg:p><eg:q its:dir=''>b</eg:q><eg:r>c</eg:r>")
+  (sp "p" "\"a\"@he--rtl" ++ sp "q" "\"b\"@en" ++ sp "r" "\"c\"@en--ltr")
+
+-- `rdf:version` on a property element does not switch the version-gated
+-- features on for the next one: without `rdf:version="1.2"` in scope a
+-- `parseType="Triple"` property element is ignored.
+#guard isoIts ""
+  (descWith ""
+    ("<eg:p rdf:version='1.2'>a</eg:p>"
+      ++ "<eg:q rdf:parseType='Triple'><rdf:Description rdf:about='http://example.org/s2'>"
+      ++ "<eg:r rdf:resource='http://example.org/o2'/></rdf:Description></eg:q>"))
+  (sp "p" "\"a\"")
+
 /-! ## `[7.2.17] parseTypeLiteralPropertyElt` — the namespace axis
 
 `rdf:XMLLiteral` values are compared under **Exclusive XML
@@ -885,5 +1082,38 @@ def nsLiteralExpected002 : String :=
 
 #guard canonStr nsLiteralExpected002 == nsLiteralExpected002
 #guard (firstXmlLiteral nsLiteralDoc002).map canonStr == some nsLiteralExpected002
+
+/-! ## The children of `rdf:RDF` walked as they are read
+
+`parseRdfXml` runs `parseRdfXmlStream` (`RdfXml.parseRdfXml_eq_stream`,
+https://github.com/danbri/factoidal/issues/771). These cases reach each branch
+of `parseChildrenFold` and `parseRootFold`: comments, processing instructions
+and text between node elements, an empty `rdf:RDF`, a document element that
+is a node element, a markup entity whose replacement text is a node element,
+and an XML error after an RDF/XML error (the XML error is reported). -/
+
+#guard iso "<!-- c --><?pi x?>\n<rdf:Description rdf:about='http://example.org/a'><eg:p>1</eg:p></rdf:Description><rdf:Description rdf:about='http://example.org/b'><eg:p>2</eg:p></rdf:Description>"
+  "<http://example.org/a> <http://example.org/p> \"1\" .\n<http://example.org/b> <http://example.org/p> \"2\" .\n"
+#guard isoDoc "<rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'/>" ""
+#guard isoDoc "<rdf:Description xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#' xmlns:eg='http://example.org/' rdf:about='http://example.org/a'><eg:p>1</eg:p></rdf:Description>"
+  "<http://example.org/a> <http://example.org/p> \"1\" .\n"
+#guard isoDoc ("<!DOCTYPE rdf:RDF [<!ENTITY d \"<rdf:Description rdf:about='http://example.org/e'><eg:p>3</eg:p></rdf:Description>\">]>"
+    ++ hdr ++ "&d;<rdf:Description rdf:about='http://example.org/f'><eg:p>4</eg:p></rdf:Description>" ++ ftr)
+  "<http://example.org/e> <http://example.org/p> \"3\" .\n<http://example.org/f> <http://example.org/p> \"4\" .\n"
+-- An RDF/XML error (rdf:aboutEach, RDF/XML §5.1) before an XML error
+-- (end tag mismatch): the XML error is the one reported.
+#guard (match RdfXml.parseRdfXml (doc "<rdf:Description rdf:aboutEach='x'/><eg:a></eg:b>") (some base) with
+  | .error e => e.msg.startsWith "XML: closing tag"
+  | .ok _ => false)
+#guard (match RdfXml.parseRdfXml (doc "<rdf:Description rdf:aboutEach='x'/><eg:a/>") (some base) with
+  | .error e => e.msg == "rdf:aboutEach was withdrawn from RDF (RDF/XML §5.1)"
+  | .ok _ => false)
+-- Content after the document element is still an XML error.
+#guard (match RdfXml.parseRdfXml (doc "" ++ "<x/>") (some base) with
+  | .error e => e.msg.startsWith "XML: content after the document element"
+  | .ok _ => false)
+
+#print axioms RdfXml.parseRdfXml_eq_stream
+#print axioms RdfXml.nodeElementList_eq_fold
 
 end L4Factoidal.Syntax.RdfXmlTests

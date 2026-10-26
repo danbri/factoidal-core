@@ -58,6 +58,7 @@ operation list).
 -/
 import L4Factoidal.SPARQL.Query
 import L4Factoidal.RDF.Isomorphism
+import L4Factoidal.RDF.GraphIndex
 
 namespace L4Factoidal.SPARQL
 
@@ -131,6 +132,12 @@ inductive UpdateError where
   /-- `CLEAR` / `DROP` / `COPY` / `MOVE` / `ADD` naming a graph the
   store does not hold (§3.1.5, §3.2.2–§3.2.5). -/
   | graphMissing (name : WfIri)
+  /-- `DELETE WHERE` / `DELETE … INSERT … WHERE` whose WHERE clause makes a
+  SERVICE call without SILENT that fails. The WHERE clause is a query
+  pattern (§3.1.3), and SPARQL 1.1 Federated Query §2.3 makes such a call
+  stop the evaluation with an error
+  (https://github.com/danbri/factoidal/issues/717). -/
+  | serviceFailed (failure : ServiceFailure)
   deriving Repr, DecidableEq
 
 instance : ToString UpdateError where
@@ -138,6 +145,7 @@ instance : ToString UpdateError where
     | .loadUnavailable i => s!"LOAD <{i.val}> cannot be performed (no document fetch)"
     | .graphExists i     => s!"graph <{i.val}> already exists"
     | .graphMissing i    => s!"graph <{i.val}> does not exist"
+    | .serviceFailed f   => f.message
 
 /-- `is_implemented_op` negated: does the request contain a `LOAD`
 without `SILENT`? Such a request cannot be evaluated by a pure
@@ -230,6 +238,129 @@ def Dataset.deleteQuad (ds : Dataset) : Quad → Dataset
 def Dataset.deleteQuads (ds : Dataset) (qs : List Quad) : Dataset :=
   qs.foldl Dataset.deleteQuad ds
 
+/-! ## Many inserts through graph indexes
+
+`Dataset.insertQuads` is a fold of `insertQuad`, and `insertQuad` is
+`Graph.add` on one graph: a scan and a copy of the graph per quad, so INSERT
+DATA of n triples took time in n² (https://github.com/danbri/factoidal/issues/821).
+`DatasetIx` holds each graph as a `GraphSlot` (`RDF/GraphIndex.lean`), which
+makes a hash set of the graph's triples on its second add. `DatasetIx.insertQuad`
+does what `Dataset.insertQuad` does, on the first named graph of that name,
+and appends a new named graph at the end, as `replaceNamed` does
+(`DatasetIx.toDataset_insertQuad`). So `Dataset.insertQuadsFast` gives the
+same dataset, graphs and triples in the same order (`insertQuads_eq_fast`,
+`csimp`). -/
+
+structure DatasetIx where
+  default : GraphSlot
+  named : List (Subject × GraphSlot)
+
+def DatasetIx.namedToGraph (p : Subject × GraphSlot) : NamedGraph :=
+  { name := p.1, graph := p.2.toGraph }
+
+def DatasetIx.toDataset (d : DatasetIx) : Dataset :=
+  { default := d.default.toGraph, named := d.named.map DatasetIx.namedToGraph }
+
+def DatasetIx.ofDataset (ds : Dataset) : DatasetIx :=
+  { default := .plain ds.default, named := ds.named.map (fun ng => (ng.name, .plain ng.graph)) }
+
+@[simp] theorem DatasetIx.toDataset_ofDataset (ds : Dataset) :
+    (DatasetIx.ofDataset ds).toDataset = ds := by
+  obtain ⟨dflt, named⟩ := ds
+  simp only [DatasetIx.ofDataset, DatasetIx.toDataset, GraphSlot.toGraph_plain, List.map_map,
+    Dataset.mk.injEq, true_and]
+  conv => rhs; rw [← List.map_id named]
+  apply List.map_congr_left
+  intro ng _
+  rfl
+
+/-- Add `t` to the first named graph called `i`, or append that graph. -/
+def DatasetIx.addNamed (i : WfIri) (t : Triple) :
+    List (Subject × GraphSlot) → List (Subject × GraphSlot)
+  | [] => [(.iri i, (GraphSlot.plain []).add t)]
+  | (n, s) :: rest =>
+    if n == .iri i then (n, s.add t) :: rest
+    else (n, s) :: DatasetIx.addNamed i t rest
+
+/-- `addNamed` as a loop: the graphs passed so far are kept newest first in
+`acc`, so the stack does not grow with the number of named graphs. -/
+def DatasetIx.addNamedGo (i : WfIri) (t : Triple) :
+    List (Subject × GraphSlot) → List (Subject × GraphSlot) → List (Subject × GraphSlot)
+  | acc, [] => acc.reverseAux [(.iri i, (GraphSlot.plain []).add t)]
+  | acc, (n, s) :: rest =>
+    if n == .iri i then acc.reverseAux ((n, s.add t) :: rest)
+    else DatasetIx.addNamedGo i t ((n, s) :: acc) rest
+
+theorem DatasetIx.addNamedGo_eq (i : WfIri) (t : Triple) (acc l : List (Subject × GraphSlot)) :
+    DatasetIx.addNamedGo i t acc l = acc.reverse ++ DatasetIx.addNamed i t l := by
+  induction l generalizing acc with
+  | nil => simp [DatasetIx.addNamedGo, DatasetIx.addNamed, List.reverseAux_eq]
+  | cons hd rest ih =>
+    obtain ⟨n, s⟩ := hd
+    by_cases h : (n == Subject.iri i) = true
+    · simp [DatasetIx.addNamedGo, DatasetIx.addNamed, h, List.reverseAux_eq]
+    · simp [DatasetIx.addNamedGo, DatasetIx.addNamed, h, ih]
+
+/-- What runs in place of `addNamed`. -/
+def DatasetIx.addNamedFast (i : WfIri) (t : Triple) (l : List (Subject × GraphSlot)) :
+    List (Subject × GraphSlot) :=
+  DatasetIx.addNamedGo i t [] l
+
+@[csimp] theorem DatasetIx.addNamed_eq_fast : @DatasetIx.addNamed = @DatasetIx.addNamedFast := by
+  funext i t l
+  simp [DatasetIx.addNamedFast, DatasetIx.addNamedGo_eq]
+
+theorem DatasetIx.addNamed_toGraph (i : WfIri) (t : Triple) (l : List (Subject × GraphSlot))
+    (d : Graph) :
+    (DatasetIx.addNamed i t l).map DatasetIx.namedToGraph =
+      replaceNamed i ((Dataset.graphOf i ⟨d, l.map DatasetIx.namedToGraph⟩).add t)
+        (l.map DatasetIx.namedToGraph) := by
+  induction l with
+  | nil =>
+    simp [DatasetIx.addNamed, replaceNamed, DatasetIx.namedToGraph, Dataset.graphOf,
+      Dataset.lookupNamed]
+  | cons hd rest ih =>
+    obtain ⟨n, s⟩ := hd
+    by_cases h : (n == Subject.iri i) = true
+    · simp [DatasetIx.addNamed, replaceNamed, DatasetIx.namedToGraph, Dataset.graphOf,
+        Dataset.lookupNamed, h]
+    · simp only [Bool.not_eq_true] at h
+      simp only [Dataset.graphOf, Dataset.lookupNamed] at ih
+      simp [DatasetIx.addNamed, replaceNamed, DatasetIx.namedToGraph, Dataset.graphOf,
+        Dataset.lookupNamed, h, ih]
+
+/-- `Dataset.insertQuad` on the index. The structure is taken apart by the
+match, so a slot is updated in place when the `DatasetIx` is not shared. -/
+def DatasetIx.insertQuad : DatasetIx → Quad → DatasetIx
+  | ⟨dflt, named⟩, (none, t) => ⟨dflt.add t, named⟩
+  | ⟨dflt, named⟩, (some g, t) => ⟨dflt, DatasetIx.addNamed g t named⟩
+
+theorem DatasetIx.toDataset_insertQuad (d : DatasetIx) (q : Quad) :
+    (d.insertQuad q).toDataset = d.toDataset.insertQuad q := by
+  obtain ⟨dflt, named⟩ := d
+  obtain ⟨g, t⟩ := q
+  cases g with
+  | none => simp [DatasetIx.insertQuad, DatasetIx.toDataset, Dataset.insertQuad]
+  | some g =>
+    simp only [DatasetIx.insertQuad, DatasetIx.toDataset, Dataset.insertQuad, Dataset.setGraph]
+    rw [DatasetIx.addNamed_toGraph g t named dflt.toGraph]
+
+theorem DatasetIx.toDataset_foldl_insertQuad (qs : List Quad) (d : DatasetIx) :
+    (qs.foldl DatasetIx.insertQuad d).toDataset = qs.foldl Dataset.insertQuad d.toDataset := by
+  induction qs generalizing d with
+  | nil => rfl
+  | cons q qs ih => simp only [List.foldl_cons, ih, DatasetIx.toDataset_insertQuad]
+
+/-- What runs in place of `Dataset.insertQuads`. -/
+def Dataset.insertQuadsFast (ds : Dataset) (qs : List Quad) : Dataset :=
+  (qs.foldl DatasetIx.insertQuad (DatasetIx.ofDataset ds)).toDataset
+
+@[csimp] theorem Dataset.insertQuads_eq_fast : @Dataset.insertQuads = @Dataset.insertQuadsFast := by
+  funext ds qs
+  simp [Dataset.insertQuads, Dataset.insertQuadsFast, DatasetIx.toDataset_foldl_insertQuad]
+
+#print axioms Dataset.insertQuads_eq_fast
+
 /-- §3.1.2 / §4.1.2: DELETE DATA may not mention blank nodes (they could
 not denote an existing node). The parser rejects them; the semantics
 drops any that reach it, as the F* `filter_no_bnode_quads` does. -/
@@ -311,6 +442,41 @@ def collectQuads (outer : Option WfIri) : QueryPattern → List Quad
   | .graph (.iri g) inner => collectQuads (some g) inner
   | .graph _ inner        => collectQuads outer inner
   | _ => []
+
+/-- `collectQuads` as a loop over a work list of (graph, pattern) pairs,
+first pair first. A `join` puts its two sides on the front of the list, so
+the stack does not grow with the length of a join chain: the desugaring of
+an INSERT DATA collection of n members is a chain of n joins, and
+`collectQuads` took one native frame per member
+(https://github.com/danbri/factoidal/issues/818 item 4). `acc` holds the
+quads so far, newest first. -/
+def collectQuadsLoop : List (Option WfIri × QueryPattern) → List Quad → List Quad
+  | [], acc => acc.reverse
+  | (outer, p) :: work, acc =>
+    match p with
+    | .empty  => collectQuadsLoop work acc
+    | .bgp b  =>
+      collectQuadsLoop work (((b.filterMap groundTriple).map (fun t => (outer, t))).reverseAux acc)
+    | .join a b => collectQuadsLoop ((outer, a) :: (outer, b) :: work) acc
+    | .graph (.iri g) inner => collectQuadsLoop ((some g, inner) :: work) acc
+    | .graph _ inner        => collectQuadsLoop ((outer, inner) :: work) acc
+    | _ => collectQuadsLoop work acc
+termination_by work _ => (work.map (fun w => 2 * sizeOf w.2 + 1)).sum
+decreasing_by all_goals (simp_wf <;> (try simp only [List.map_cons, List.sum_cons]) <;> omega)
+
+theorem collectQuadsLoop_eq (work : List (Option WfIri × QueryPattern)) (acc : List Quad) :
+    collectQuadsLoop work acc = acc.reverse ++ work.flatMap (fun w => collectQuads w.1 w.2) := by
+  fun_induction collectQuadsLoop work acc <;> simp_all [collectQuads, List.reverseAux_eq]
+
+/-- What runs in place of `collectQuads`. -/
+def collectQuadsFast (outer : Option WfIri) (p : QueryPattern) : List Quad :=
+  collectQuadsLoop [(outer, p)] []
+
+@[csimp] theorem collectQuads_eq_fast : @collectQuads = @collectQuadsFast := by
+  funext outer p
+  simp [collectQuadsFast, collectQuadsLoop_eq]
+
+#print axioms collectQuads_eq_fast
 
 /-! ## Fresh blank nodes -/
 
@@ -412,6 +578,15 @@ same view. -/
 def evalWhere (env : EvalEnv) (ds : Dataset) (p : QueryPattern) : SolutionSeq :=
   let env := { env with dataset := some ds }
   (p.rewriteBnodes.lower env).evalIn ds ds.default
+
+/-- The failed SERVICE call without SILENT that `evalWhere env ds p`
+makes, if any (Federated Query §2.3, `GraphPattern.serviceFailure`). -/
+def whereServiceFailure (env : EvalEnv) (ds : Dataset) (p : QueryPattern) :
+    Option ServiceFailure :=
+  if !p.mentionsService then none
+  else
+    let env := { env with dataset := some ds }
+    (p.rewriteBnodes.lower env).serviceFailure ds ds.default
 
 /-- §3.1.3.3 DELETE WHERE: the pattern is both the WHERE clause and the
 DELETE template. Port of `apply_delete_where`. -/
@@ -579,8 +754,14 @@ def applyOp (env : EvalEnv) (pre : String) (opIx : Nat) (ds : Dataset) :
   | .copy silent src dst   => applyCopy ds silent src dst
   | .insertData q          => .ok (applyInsertData pre ds q)
   | .deleteData q          => .ok (applyDeleteData ds q)
-  | .deleteWhere p         => .ok (applyDeleteWhere env ds p)
-  | .modify w d i u p      => .ok (applyModify env pre opIx ds w d i u p)
+  | .deleteWhere p         =>
+      match whereServiceFailure env ds p with
+      | some f => .error (.serviceFailed f)
+      | none   => .ok (applyDeleteWhere env ds p)
+  | .modify w d i u p      =>
+      match whereServiceFailure env (whereDataset ds w u) p with
+      | some f => .error (.serviceFailed f)
+      | none   => .ok (applyModify env pre opIx ds w d i u p)
 
 /-- The operations in order; the first error stops the request
 (§3: "the operations of a request are performed in order … an error

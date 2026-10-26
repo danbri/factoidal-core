@@ -1,0 +1,8 @@
+{
+  "stamped": false,
+  "status": "stamped at release (tools/fetch-builds.sh --set web, or formal/lean4/Wasm/build-wasm.sh step 9)",
+  "claims": {
+    "source": "formal/lean4 (L4Factoidal): no sorry, no user axioms, no native_decide; W3C behaviour pinned by build-time #guard",
+    "suitesAtBuildSha": "see docs/test-results and formal/lean4/PORT_NOTES.md at gitSha"
+  }
+}

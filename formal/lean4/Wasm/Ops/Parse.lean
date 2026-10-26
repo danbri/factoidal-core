@@ -11,10 +11,59 @@ Envelopes match `bin/npm-entry/entry_jsoo.ml`:
     -> {"ok":true,"turtle":"…"}
 
 The dataset handle IS the returned N-Quads string, exactly as in the F*
-entry. Format tags follow `RDF.Format.fst`'s `format_of_string` table
+entry.
+
+The N-Quads text of `serializeNQuads`, `serializeTurtle` and `serializeTurtleWith`
+is read as RDF 1.2 N-Quads and, when the RDF 1.2 reader refuses it, as RDF 1.1
+N-Quads (`RDF.parseNQuadsFast12Or11`,
+https://github.com/danbri/factoidal/issues/870). A triple term is accepted, and
+so is every text that the RDF 1.1 reader accepted before.
+
+Envelope parity with the F* entry (https://github.com/danbri/factoidal/issues/685),
+added after the lines above were written:
+
+  * `parseToDatasetJson` also answers `"prefixes":{label:iri}` (Turtle and TriG;
+    `{}` for the other formats), each label once, in declaration order, with its
+    latest binding.
+  * A parse failure of Turtle, TriG, N-Triples or N-Quads answers
+    `{"ok":false,"error":"<msg> at line L, column C","offset":N,"line":L,
+    "column":C,"format":"<tag>"}`. The line and the column are 1-based, the
+    column counted in Unicode scalar values; `offset` is a count of Unicode
+    scalar values from the start of the text (the F* entry counts UTF-8 bytes,
+    which the two agree with on ASCII text). RDF/XML and a missing format carry
+    the message and `format` only.
+  * `serializeTurtleWith(nquads, optionsJson)`, with `{"prefixes":{label:iri},
+    "literalShorthand":bool}`.
+  * Per-document blank-node scope: the IO entry (`parseToDatasetJsonScoped`,
+    which `callIO` serves under the name `parseToDatasetJson`) prefixes every
+    blank-node label of a document with `d<N>_`, `N` counting parses in the
+    process, as `RDF.Dataset.Merge.rename_dataset_bnodes` does in the F* entry.
+    Two documents that both write `_:b0` stay two nodes when their N-Quads are
+    concatenated. The pure entry keeps the labels as written, because it has no
+    counter. Format tags follow `RDF.Format.fst`'s `format_of_string` table
 for the formats the Lean engine parses; a `*12` tag routes to the RDF
 1.2 (`Mode.rdf12`) entry points, mirroring `entry_jsoo.ml`'s
-consumer-side dispatch. `jsonld` is a named gap, not a silent one.
+consumer-side dispatch.
+
+One table of readers (https://github.com/danbri/factoidal/issues/975, item 2).
+The document readers below name a format by its tag (`RDF.formatOfLabel`; the
+empty tag is Turtle) and read the document through `readerOf`, the
+`RdfReader` of the table `Dataflow.readers` (`L4Factoidal/Dataflow/Reader.lean`).
+An `RdfReader` holds its contract as fields: its dataset is the set of the
+parse, its scoped dataset satisfies `ReaderContract`, and it fails exactly when
+the parser fails. The N-Quads text of a dataset handle is read the same way
+(`Dataflow.readNQuadsText`, `readNQuadsText12Or11`).
+
+JSON-LD: the functions that read a document take an `ExtraReader`
+(`parseTextToDatasetBy` and the other `…By` forms), which carries the
+source-layer readers the build links in. The full dispatch passes
+`jsonLdReader` (`Wasm/Ops/ParseJsonLd.lean`, `Source.withJsonLd`: JSON-LD 1.1
+through `JSONLD.parseJsonLd` with no document loader), and the core dispatch
+(`Wasm/CoreDispatch.lean`) passes a reader that refuses JSON-LD by name. That
+parameter is what lets the core wasm link without the JSON-LD library
+(https://github.com/danbri/factoidal/issues/713 stage 4). The names without
+`By` (`parseTextToDataset`, `parseToDatasetJson`, …) are the JSON-LD-reading
+forms and live in `Wasm/Ops/ParseJsonLd.lean`.
 
 Targeted imports only — never the L4Factoidal umbrella (see
 `Wasm/Abi.lean`'s import note: the umbrella initializer dies under
@@ -22,12 +71,20 @@ wasm32).
 -/
 import Wasm.Ops.Support
 import L4Factoidal.Syntax.Turtle
+import L4Factoidal.Syntax.TurtleChunkFold
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.Syntax.TriG
 import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.Syntax.TurtleSerialize
 import L4Factoidal.Syntax.NQuadsFast
+import L4Factoidal.RDF.Source
+import L4Factoidal.Dataflow.Reader
+import Std.Data.HashSet
+import L4Factoidal.RDF.DatasetMerge
+import L4Factoidal.RDF.DocumentScope
+import Wasm.Ops.FromDataset
+import L4Factoidal.Syntax.LangTagWarnings
 
 namespace L4Wasm.Ops
 
@@ -40,62 +97,522 @@ Not private: `Wasm/Ops/Handles.lean`'s count envelopes use it too. -/
 def datasetQuadCount (ds : Dataset) : Nat :=
   ds.default.length + (ds.named.map (·.graph.length)).foldl (· + ·) 0
 
+/-- Consumer-side RDF 1.2 opt-in, exactly as entry_jsoo.ml: a "*12" tag
+selects Mode.rdf12; every other tag keeps the 1.1 path. Returns the mode and
+the lower-cased base tag. -/
+def resolveModeAndTag (formatTag : String) : Mode × String :=
+  let lo := formatTag.toLower
+  match lo with
+  | "ttl12" | "turtle12"   => (Mode.rdf12, "ttl")
+  | "nt12"  | "ntriples12" => (Mode.rdf12, "nt")
+  | "nq12"  | "nquads12"   => (Mode.rdf12, "nq")
+  | "trig12"               => (Mode.rdf12, "trig")
+  | _                      => (Mode.rdf11, lo)
+
+/-- The source-layer readers of a dispatch. `extra` is what the build links
+in: `Source.withJsonLd` in the full dispatch (`Wasm/Ops/ParseJsonLd.lean`),
+`{}` in the core dispatch, so that the core wasm links without the JSON-LD
+library (https://github.com/danbri/factoidal/issues/713 stage 4). `refuse`
+gives the error text for a JSON-LD tag when `extra` has no JSON-LD parser;
+`none` treats the tag as unknown. Every syntax, JSON-LD included, is read by
+the reader of the table `Dataflow.readers extra` (`readerOf`). -/
+structure ExtraReader where
+  extra : L4Factoidal.RDF.Source.Extra := {}
+  refuse : Option (String → String) := none
+
+/-- The reader with no extra syntax: a JSON-LD tag is unknown. -/
+def noExtraReader : ExtraReader := {}
+
+/-- **The reader of syntax `fmt` in this dispatch**: the `RdfReader` of the
+table `Dataflow.readers`. The document-reading functions below read through it
+and through no other parser. -/
+def readerOf (extra : ExtraReader) (fmt : RdfFormat) : L4Factoidal.Dataflow.RdfReader :=
+  L4Factoidal.Dataflow.readers extra.extra fmt
+
+/-- The format tags of JSON-LD 1.1 (`RDF.Format.fst`'s `format_of_string`). -/
+def jsonLdFormatTags : List String := [ "jsonld", "json-ld", "application/ld+json" ]
+
+/-- The format a lower-cased tag names: the labels of `RDF.formatOfLabel`, and
+the empty tag, which is Turtle (`RDF.rdfFormatDefault`, the F* entry's default). -/
+def formatOfTag (tag : String) : Option RdfFormat :=
+  if tag == "" then some rdfFormatDefault else formatOfLabel tag
+
 /-- Parse `text` under `formatTag` into a `Dataset`. Graph-shaped
-formats (Turtle, N-Triples, RDF/XML) wrap as the default graph.
-Not private: `Wasm/Ops/Handles.lean`'s `datasetOpen` is the same parse. -/
-def parseTextToDataset (text formatTag baseIRI : String) :
+formats (Turtle, N-Triples, RDF/XML) wrap as the default graph; JSON-LD and a
+tag outside the table go to `extra`. The dataset is a set of quads
+(`Source.parseDocument`; the answer of `extra` goes through `Dataset.toSet`;
+`parseTextToDatasetBy_isSet`).
+Not private: `Wasm/Ops/Handles.lean`'s `datasetOpenBy` is the same parse. -/
+def parseTextToDatasetBy (extra : ExtraReader) (text formatTag baseIRI : String) :
     Except String Dataset :=
   let base : Option String := if baseIRI == "" then none else some baseIRI
-  -- Consumer-side RDF 1.2 opt-in, exactly as entry_jsoo.ml: a "*12"
-  -- tag selects Mode.rdf12; every other tag keeps the 1.1 path.
-  let lo := formatTag.toLower
-  let (mode, tag) :=
-    match lo with
-    | "ttl12" | "turtle12"   => (Mode.rdf12, "ttl")
-    | "nt12"  | "ntriples12" => (Mode.rdf12, "nt")
-    | "nq12"  | "nquads12"   => (Mode.rdf12, "nq")
-    | "trig12"               => (Mode.rdf12, "trig")
-    | _                      => (Mode.rdf11, lo)
-  let wrapGraph (r : Except ParseError Graph) : Except String Dataset :=
-    match r with
-    | .error e => .error (fmtParseError e)
-    | .ok g    => .ok { default := g, named := [] }
-  match tag with
-  | "" | "turtle" | "ttl" => wrapGraph (parseTurtle text base mode)
-  | "ntriples" | "nt" | "n-triples" => wrapGraph (parseNTriples text mode)
-  | "nquads" | "nq" | "n-quads" =>
-      (parseNQuadsFast text mode).mapError fmtParseError
-  | "trig" => (parseTriG text base mode).mapError fmtParseError
-  | "rdfxml" | "rdf/xml" | "rdf" | "xml" =>
-      wrapGraph (RdfXml.parseRdfXml text base)
-  | "jsonld" | "json-ld" | "application/ld+json" =>
-      .error "JSON-LD is not in the Lean engine's v1 surface"
-  | _ => .error s!"unknown format tag '{formatTag}'"
+  let (mode, tag) := resolveModeAndTag formatTag
+  let unknown : Except String Dataset := .error s!"unknown format tag '{formatTag}'"
+  match formatOfTag tag with
+  | none => unknown
+  | some fmt =>
+      if fmt == .jsonld then
+        match extra.extra.jsonld, extra.refuse with
+        | some _, _ => ((readerOf extra fmt).dataset { text, mode, base }).mapError (·.msg)
+        | none, some refuse => .error (refuse tag)
+        | none, none => unknown
+      else ((readerOf extra fmt).dataset { text, mode, base }).mapError fmtParseError
 
-/-- `parseToDatasetJson(text, formatTag, baseIRI)`. -/
-def parseToDatasetJson (text formatTag baseIRI : String) : String :=
-  match parseTextToDataset text formatTag baseIRI with
+/-- `parseToDatasetJson(text, formatTag, baseIRI)`, the pure entry's envelope
+(no prefixes, labels as written). -/
+def parseToDatasetJsonBy (extra : ExtraReader) (text formatTag baseIRI : String) : String :=
+  match parseTextToDatasetBy extra text formatTag baseIRI with
   | .error msg => errJson msg
   | .ok ds =>
       okWith [("count", .number (toString (datasetQuadCount ds))),
               ("nquads", .string (Dataset.toCanonicalNQuads ds))]
 
+/-- The N-Quads text of a dataset handle, read as RDF 1.2 N-Quads and, when the
+RDF 1.2 reader refuses it, as RDF 1.1 N-Quads, both by the N-Quads reader of
+the table (`Dataflow.readNQuadsText`). It is `parseNQuadsFast12Or11`. -/
+def readNQuadsText12Or11 (nq : String) : Except ParseError Dataset :=
+  match L4Factoidal.Dataflow.readNQuadsText .rdf12 nq with
+  | .ok ds => .ok ds
+  | .error _ => L4Factoidal.Dataflow.readNQuadsText .rdf11 nq
+
+theorem readNQuadsText12Or11_eq (nq : String) :
+    readNQuadsText12Or11 nq = parseNQuadsFast12Or11 nq := by
+  cases h : parseNQuadsFast nq .rdf12 <;>
+    simp [readNQuadsText12Or11, parseNQuadsFast12Or11, L4Factoidal.Dataflow.readNQuadsText_eq, h]
+
 /-- `serializeNQuads(nquads)` — reparse and re-serialise in canonical
-N-Quads form. -/
+N-Quads form. The text is read as RDF 1.2 N-Quads, and as RDF 1.1 N-Quads when
+the RDF 1.2 reader refuses it (`parseNQuadsFast12Or11`,
+https://github.com/danbri/factoidal/issues/870). -/
 def serializeNQuads (nq : String) : String :=
-  match parseNQuadsFast nq with
+  match readNQuadsText12Or11 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds   => okWith [("nquads", .string (Dataset.toCanonicalNQuads ds))]
 
 /-- `serializeTurtle(nquads)` — prefix-compacted pretty-print. Named
 graphs are flattened into the default graph for this path (the
 fidelity-preserving path is serializeNQuads / canonicalizeToNQuads),
-mirroring `entry_jsoo.ml`'s `serialize_turtle`. -/
+mirroring `entry_jsoo.ml`'s `serialize_turtle`. The text is read as in
+`serializeNQuads`, so a triple term is written as `<<( ... )>>`. -/
 def serializeTurtle (nq : String) : String :=
-  match parseNQuadsFast nq with
+  match readNQuadsText12Or11 nq with
   | .error e => errJson (fmtParseError e)
   | .ok ds =>
       let g := ds.default ++ ds.named.flatMap (·.graph)
       okWith [("turtle", .string (turtleOfGraphAuto g))]
+
+/-- The Turtle text `serializeTurtle` would put in its envelope for the
+canonical N-Quads of `ds`, or the envelope's error text, computed from the
+parsed dataset (`datasetForOps12Or11`, issues 724 and 870). The command line
+prints it without the JSON envelope. -/
+def serializeTurtleTextOf (ds : Dataset) : Except String String :=
+  match datasetForOps12Or11 ds with
+  | .error e => .error (fmtParseError e)
+  | .ok d => .ok (turtleOfGraphAuto (d.default ++ d.named.flatMap (·.graph)))
+
+/-- `serializeTurtleTextOf` carries exactly the text and the error of the
+`serializeTurtle` envelope on the dataset's canonical N-Quads. -/
+theorem serializeTurtleTextOf_eq (ds : Dataset) :
+    serializeTurtle (Dataset.toCanonicalNQuads ds) =
+      match serializeTurtleTextOf ds with
+      | .error e => errJson e
+      | .ok t => okWith [("turtle", .string t)] := by
+  unfold serializeTurtle serializeTurtleTextOf
+  rw [datasetForOps12Or11_eq]
+  rw [readNQuadsText12Or11_eq]
+  cases parseNQuadsFast12Or11 (Dataset.toCanonicalNQuads ds) <;> rfl
+
+/-! ## Positions, prefixes and blank-node scope (issue 685) -/
+
+/-- A parse failure in the shape the envelope reports. `position` is
+(offset, line, column) when the failing grammar reports one. -/
+structure ParseFailure where
+  message  : String
+  position : Option (Nat × Nat × Nat) := none
+
+/-- A parsed document and the prefixes it declared: each label once, in
+declaration order, with its latest binding. -/
+structure ParseOutcome where
+  ds       : Dataset
+  prefixes : List (String × String)
+  /-- The RDF version mode the reader read the document in. -/
+  mode     : Mode := .rdf12
+
+/-- 1-based line and 1-based column, counted in Unicode scalar values, of the
+character at codepoint `offset` in `text`. An offset past the end gives the
+position just after the last character. Port of `position_of_offset`. -/
+def lineColumnOfOffset (text : String) (offset : Nat) : Nat × Nat :=
+  go (text.toList.take offset) 1 1
+where
+  go : List Char → Nat → Nat → Nat × Nat
+    | [], line, col => (line, col)
+    | ch :: rest, line, col =>
+        if ch == '\n' then go rest (line + 1) 1 else go rest line (col + 1)
+
+def failureAt (text : String) (e : ParseError) : ParseFailure :=
+  let (line, col) := lineColumnOfOffset text e.pos
+  { message := e.msg, position := some (e.pos, line, col) }
+
+/-- Keep each label once with its LATEST binding, in the order those latest
+bindings were declared. The parsers hold prefixes most recent first and a
+re-binding does not remove the older one. Port of
+`declaration_order_prefixes`.
+
+This is the SPECIFICATION. It scans the list of the labels seen for each prefix, so a
+document of `P` prefixes takes `P * P / 2` string comparisons: 6.3 s for 32,000
+prefixes (https://github.com/danbri/factoidal/issues/864). The compiler runs
+`declarationOrderPrefixesFast` in its place (`declarationOrderPrefixes_eq_fast`, a
+`csimp` theorem), so `parseDocumentOutcomeBy` and `datasetOpen` take linear time. -/
+def declarationOrderPrefixes (mostRecentFirst : List (String × String)) :
+    List (String × String) :=
+  go [] [] mostRecentFirst
+where
+  go (seen : List String) (acc : List (String × String)) :
+      List (String × String) → List (String × String)
+    | [] => acc
+    | (label, iri) :: rest =>
+        if seen.contains label then go seen acc rest
+        else go (label :: seen) ((label, iri) :: acc) rest
+
+/-- The loop of `declarationOrderPrefixesFast`: `go` with the labels seen held in a hash
+set. -/
+def declarationOrderPrefixesLoop (seen : Std.HashSet String) (acc : List (String × String)) :
+    List (String × String) → List (String × String)
+  | [] => acc
+  | (label, iri) :: rest =>
+      if seen.contains label then declarationOrderPrefixesLoop seen acc rest
+      else declarationOrderPrefixesLoop (seen.insert label) ((label, iri) :: acc) rest
+
+/-- The loop, for every state it can be in: the hash set holds the strings of the
+list. -/
+theorem declarationOrderPrefixesLoop_eq :
+    ∀ (l : List (String × String)) (seenS : Std.HashSet String) (seenL : List String)
+      (acc : List (String × String)), (∀ x, seenS.contains x = seenL.contains x) →
+      declarationOrderPrefixesLoop seenS acc l = declarationOrderPrefixes.go seenL acc l
+  | [], seenS, seenL, acc, _ => by simp [declarationOrderPrefixesLoop, declarationOrderPrefixes.go]
+  | (label, iri) :: rest, seenS, seenL, acc, hseen => by
+      unfold declarationOrderPrefixesLoop declarationOrderPrefixes.go
+      by_cases h : seenL.contains label = true
+      · have h' : seenS.contains label = true := by rw [hseen]; exact h
+        rw [if_pos h', if_pos h]
+        exact declarationOrderPrefixesLoop_eq rest seenS seenL acc hseen
+      · have h' : ¬ seenS.contains label = true := by rw [hseen]; exact h
+        rw [if_neg h', if_neg h]
+        refine declarationOrderPrefixesLoop_eq rest _ _ _ ?_
+        intro x
+        have hc : (label == x) = (x == label) := by
+          rw [Bool.eq_iff_iff, beq_iff_eq, beq_iff_eq]
+          exact ⟨Eq.symm, Eq.symm⟩
+        rw [Std.HashSet.contains_insert, hseen x, List.contains_cons, hc]
+
+/-- `declarationOrderPrefixes` as a loop with a hash set: linear time. -/
+def declarationOrderPrefixesFast (mostRecentFirst : List (String × String)) :
+    List (String × String) :=
+  declarationOrderPrefixesLoop ∅ [] mostRecentFirst
+
+theorem declarationOrderPrefixesFast_eq (mostRecentFirst : List (String × String)) :
+    declarationOrderPrefixesFast mostRecentFirst = declarationOrderPrefixes mostRecentFirst := by
+  unfold declarationOrderPrefixesFast declarationOrderPrefixes
+  exact declarationOrderPrefixesLoop_eq mostRecentFirst ∅ [] [] (fun x => by simp)
+
+/-- Any call of the specification runs the loop. `parseDocumentOutcomeBy` is compiled
+after this line. -/
+@[csimp] theorem declarationOrderPrefixes_eq_fast :
+    @declarationOrderPrefixes = @declarationOrderPrefixesFast := by
+  funext l; exact (declarationOrderPrefixesFast_eq l).symm
+
+#print axioms declarationOrderPrefixesLoop_eq
+#print axioms declarationOrderPrefixes_eq_fast
+
+/-- `parseTextToDatasetBy`, with the position of a failure and the prefixes of
+the document. The two share one dispatch table of formats; only the failure
+and the extra result differ. RDF/XML failures carry no position, as in the F*
+entry; so does a syntax read by `extra` (JSON-LD), which declares no
+prefixes. -/
+def parseDocumentOutcomeBy (extra : ExtraReader) (text formatTag baseIRI : String) :
+    Except ParseFailure ParseOutcome :=
+  let base : Option String := if baseIRI == "" then none else some baseIRI
+  let (mode, tag) := resolveModeAndTag formatTag
+  let noPosition (m : String) : ParseFailure := { message := m }
+  let unknown : ParseFailure := noPosition s!"unknown format tag '{formatTag}'"
+  match formatOfTag tag with
+  | none => .error unknown
+  | some fmt =>
+      if fmt == .jsonld then
+        match extra.extra.jsonld, extra.refuse with
+        | some _, _ =>
+            match (readerOf extra fmt).run { text, mode, base } with
+            | .error e => .error (noPosition e.msg)
+            | .ok (ds, _) => .ok { ds := ds, prefixes := [], mode }
+        | none, some refuse => .error (noPosition (refuse tag))
+        | none, none => .error unknown
+      else
+        match (readerOf extra fmt).run { text, mode, base } with
+        | .error e => .error (if fmt == .rdfxml then noPosition e.msg else failureAt text e)
+        | .ok (ds, ps) => .ok { ds := ds, prefixes := declarationOrderPrefixes ps, mode }
+
+theorem readerDataset_mapError_isSet (r : L4Factoidal.Dataflow.RdfReader)
+    (inp : L4Factoidal.Dataflow.ReaderInput) (f : ParseError → String) (ds : Dataset)
+    (h : (r.dataset inp).mapError f = .ok ds) : ds.IsSet := by
+  unfold L4Factoidal.Dataflow.RdfReader.dataset at h
+  cases hr : r.run inp with
+  | error e => rw [hr] at h; cases h
+  | ok out =>
+    rw [hr] at h
+    simp only [Except.map, Except.mapError, Except.ok.injEq] at h
+    subst h
+    exact r.isSet hr
+
+/-- The dataset of `parseTextToDatasetBy` is a set of quads (RDF 1.1 Concepts
+section 3: "An RDF graph is a set of RDF triples"): it is the dataset of an
+`RdfReader` (`RdfReader.isSet`). -/
+theorem parseTextToDatasetBy_isSet (extra : ExtraReader) (text formatTag baseIRI : String)
+    (ds : Dataset) (h : parseTextToDatasetBy extra text formatTag baseIRI = .ok ds) :
+    ds.IsSet := by
+  unfold parseTextToDatasetBy at h
+  simp only at h
+  split at h
+  · cases h
+  · split at h
+    · split at h
+      · exact readerDataset_mapError_isSet _ _ _ ds h
+      · cases h
+      · cases h
+    · exact readerDataset_mapError_isSet _ _ _ ds h
+
+/-- The dataset of `parseDocumentOutcomeBy`, which `datasetOpen` stores, is a
+set of quads: it is the dataset of an `RdfReader`. -/
+theorem parseDocumentOutcomeBy_isSet (extra : ExtraReader) (text formatTag baseIRI : String)
+    (o : ParseOutcome) (h : parseDocumentOutcomeBy extra text formatTag baseIRI = .ok o) :
+    o.ds.IsSet := by
+  unfold parseDocumentOutcomeBy at h
+  simp only at h
+  split at h
+  · cases h
+  · split at h
+    · split at h
+      · split at h
+        · cases h
+        · next out hr =>
+          simp only [Except.ok.injEq] at h
+          subst h
+          exact (readerOf extra _).isSet hr
+      · cases h
+      · cases h
+    · split at h
+      · cases h
+      · next out hr =>
+        simp only [Except.ok.injEq] at h
+        subst h
+        exact (readerOf extra _).isSet hr
+
+#print axioms parseTextToDatasetBy_isSet
+#print axioms parseDocumentOutcomeBy_isSet
+
+/-- The display tag of an error envelope: the caller's own spelling,
+lower-cased, or `turtle` for the empty default. -/
+def displayFormatTag (formatTag : String) : String :=
+  if formatTag == "" then "turtle" else formatTag.toLower
+
+/-- `{"ok":false,"error":"<msg>[ at line L, column C]","offset"?,"line"?,
+"column"?,"format":"<tag>"}`. Shared by `parseToDatasetJson` and `datasetOpen`. -/
+def parseFailureEnvelope (formatTag : String) (f : ParseFailure) : String :=
+  let fmt := ("format", Json.string (displayFormatTag formatTag))
+  match f.position with
+  | none =>
+      (Json.object [("ok", .bool false), ("error", .string f.message), fmt]).toString
+  | some (offset, line, col) =>
+      (Json.object
+        [ ("ok", .bool false)
+        , ("error", .string s!"{f.message} at line {line}, column {col}")
+        , ("offset", .number (toString offset))
+        , ("line", .number (toString line))
+        , ("column", .number (toString col))
+        , fmt ]).toString
+
+/-- `{label: iri, …}` in the order given. -/
+def prefixesJson (ps : List (String × String)) : Json :=
+  .object (ps.map fun (label, iri) => (label, Json.string iri))
+
+/-- Give the dataset a document scope: every blank-node label gets `scope`
+in front of it. -/
+def scopeBnodes (scope : String) (ds : Dataset) : Dataset :=
+  L4Factoidal.RDF.renameDatasetBnodes scope ds
+
+/-- One diagnostic (a recovered error of the lenient parse, or a warning) as an
+envelope carries it. -/
+def diagnosticJson (d : Diagnostic) : Json :=
+  .object
+    [ ("message", .string d.message)
+    , ("offset", .number (toString d.offset))
+    , ("line", .number (toString d.line))
+    , ("column", .number (toString d.column))
+    , ("class", .string d.cls.tag) ]
+
+/-- The syntax of `formatTag` is of the N-Triples family, so
+`Syntax.scanLangTags` finds the position of each language tag. -/
+def tagScanFormat (formatTag : String) : Bool :=
+  match formatOfTag (resolveModeAndTag formatTag).2 with
+  | some .nt | some .nquads | some .turtle | some .trig => true
+  | _ => false
+
+/-- The warnings of a document read under `formatTag` into `ds`: one for each
+language tag that is not well-formed under BCP 47 (owner decision of
+2026-10-24, `Syntax/LangTagWarnings.lean`). -/
+def readerWarnings (text formatTag : String) (ds : Dataset) : List Diagnostic :=
+  langTagWarnings (tagScanFormat formatTag) text ds
+
+/-- The member `"warnings"` of a successful parse envelope, present only when
+there is a warning (so every envelope of a document with no warning is as it
+was). -/
+def warningsMembers (ws : List Diagnostic) : List (String × Json) :=
+  if ws.isEmpty then [] else [("warnings", .array (ws.map diagnosticJson))]
+
+/-- `parseToDatasetJson`, the parity envelope. `scope` is the blank-node label
+prefix, or `none` to keep the labels as written. -/
+def parseToDatasetJsonWithBy (extra : ExtraReader) (scope : Option String)
+    (text formatTag baseIRI : String) : String :=
+  match parseDocumentOutcomeBy extra text formatTag baseIRI with
+  | .error f => parseFailureEnvelope formatTag f
+  | .ok o =>
+      let ds := match scope with
+        | some pre => scopeBnodes pre o.ds
+        | none => o.ds
+      okWith ([("count", .number (toString (datasetQuadCount ds))),
+              ("nquads", .string (Dataset.toCanonicalNQuads ds)),
+              ("prefixes", prefixesJson o.prefixes)] ++
+              warningsMembers (readerWarnings text formatTag o.ds))
+
+/-- Parses so far in this process. The scope of the next one is `d<N>_`. -/
+initialize documentScopeCounter : IO.Ref Nat ← IO.mkRef 0
+
+/-- The next document scope prefix, `d0_`, `d1_`, … (`RDF.docScope`; two
+scope numbers give disjoint labels, `RDF.docLabel_inj`). Never reused. -/
+def nextDocumentScope : IO String := do
+  let n ← documentScopeCounter.modifyGet fun n => (n, n + 1)
+  pure (L4Factoidal.RDF.docScope n)
+
+/-- `parseToDatasetJson` with a fresh blank-node scope per call. `callIO`
+serves this entry under the op name `parseToDatasetJson`. -/
+def parseToDatasetJsonScopedBy (extra : ExtraReader) (text formatTag baseIRI : String) :
+    IO String := do
+  let scope ← nextDocumentScope
+  pure (parseToDatasetJsonWithBy extra (some scope) text formatTag baseIRI)
+
+/-! ## `serializeTurtleWith` -/
+
+/-- Options of `serializeTurtleWith` and `datasetSerializeWith`: `""` or
+`{"prefixes":{label:iri},"literalShorthand":bool}`. `prefixes` maps each label
+(the key, without a colon) to its namespace; the renderer wants
+(namespace, `label:`) pairs, so this transposes and appends the colon. A
+`prefixes` member that is absent keeps `defaultPrefixes`; one entry whose value
+is not a string is skipped. `literalShorthand` absent, or not a boolean, is
+`true`. -/
+def turtleOptionsOfJson (defaultPrefixes : PrefixTable) (optionsJson : String) :
+    Except String TurtleRenderOptions :=
+  if optionsJson == "" then .ok { prefixes := defaultPrefixes }
+  else
+    match parseJson optionsJson with
+    | .error _ => .error "invalid optionsJson (not valid JSON)"
+    | .ok root =>
+        let prefixes := match root.field? "prefixes" with
+          | some (.object fields) =>
+              fields.filterMap fun (label, v) => match v with
+                | .string iri => some (iri, label ++ ":")
+                | _ => none
+          | _ => defaultPrefixes
+        let shorthand := match root.field? "literalShorthand" with
+          | some (.bool b) => b
+          | _ => true
+        .ok { prefixes := prefixes, literalShorthand := shorthand }
+
+/-- The graph the pretty-print path renders: named graphs are flattened into
+the default graph (the fidelity-preserving path is `serializeNQuads`). -/
+def flattenedGraph (ds : Dataset) : Graph :=
+  ds.default ++ ds.named.flatMap (·.graph)
+
+/-- `serializeTurtleWith(nquads, optionsJson)`. The text is read as in
+`serializeNQuads`. -/
+def serializeTurtleWith (nq optionsJson : String) : String :=
+  match readNQuadsText12Or11 nq with
+  | .error e => errJson (fmtParseError e)
+  | .ok ds =>
+      match turtleOptionsOfJson [] optionsJson with
+      | .error msg => errJson msg
+      | .ok opts => okWith [("turtle", .string (turtleOfGraphOpts opts (flattenedGraph ds)))]
+
+/-- The op names this module adds to the pure dispatch. -/
+def parityOpNames : List String := [ "serializeTurtleWith" ]
+
+/-- Serve one of `parityOpNames`, or `none`. -/
+def callParity (op : String) (args : List String) : Option String :=
+  match op, args with
+  | "serializeTurtleWith", [a, b] => some (serializeTurtleWith a b)
+  | "serializeTurtleWith", _ =>
+      some (errJson s!"serializeTurtleWith expects 2 arguments, got {args.length}")
+  | _, _ => none
+
+/-! ## Build-time checks -/
+
+-- Lines are 1-based, columns are 1-based and count Unicode scalar values.
+#guard lineColumnOfOffset "" 0 == (1, 1)
+#guard lineColumnOfOffset "abc" 0 == (1, 1)
+#guard lineColumnOfOffset "abc" 2 == (1, 3)
+#guard lineColumnOfOffset "ab\ncd" 3 == (2, 1)
+#guard lineColumnOfOffset "ab\ncd" 4 == (2, 2)
+-- A multi-byte character is one column.
+#guard lineColumnOfOffset "\u00e9\u00e9x" 2 == (1, 3)
+#guard lineColumnOfOffset "\u00e9\n\u00e9x" 3 == (2, 2)
+-- An offset past the end is the position after the last character.
+#guard lineColumnOfOffset "ab\ncd" 99 == (2, 3)
+
+-- Each label once, its latest binding, in the order those bindings were made.
+#guard declarationOrderPrefixes [] == []
+#guard declarationOrderPrefixes [("a", "3"), ("b", "2"), ("a", "1")] == [("b", "2"), ("a", "3")]
+#guard declarationOrderPrefixes [("b", "2"), ("a", "1")] == [("a", "1"), ("b", "2")]
+
+-- The caller's `prefixes` replace the defaults; an absent one keeps them.
+#guard (match turtleOptionsOfJson [("http://d/", "d:")] "" with
+        | .ok o => o.prefixes == [("http://d/", "d:")] && o.literalShorthand
+        | .error _ => false)
+#guard (match turtleOptionsOfJson [("http://d/", "d:")] "{}" with
+        | .ok o => o.prefixes == [("http://d/", "d:")] && o.literalShorthand
+        | .error _ => false)
+#guard (match turtleOptionsOfJson [("http://d/", "d:")]
+          "{\"prefixes\":{\"x\":\"http://x/\",\"n\":3},\"literalShorthand\":false}" with
+        | .ok o => o.prefixes == [("http://x/", "x:")] && !o.literalShorthand
+        | .error _ => false)
+#guard (match turtleOptionsOfJson [] "{\"literalShorthand\":\"no\"}" with
+        | .ok o => o.literalShorthand
+        | .error _ => false)
+#guard (match turtleOptionsOfJson [] "{" with
+        | .error m => m == "invalid optionsJson (not valid JSON)"
+        | .ok _ => false)
+
+-- The N-Quads text of the serialising ops is read as RDF 1.2 and, when that reader
+-- refuses it, as RDF 1.1 (issue 870). A triple term one level deep, one nested two
+-- deep, and a base direction; the document is canonical, so `serializeNQuads` gives
+-- it back.
+private def tripleTermDoc : String :=
+  "<http://e/a> <http://e/p> <<( <http://e/b> <http://e/q> \"x\"@en--ltr )>> .\n" ++
+  "<http://e/c> <http://e/p> <<( <http://e/b> <http://e/q> <<( <http://e/d> <http://e/q> <http://e/f> )>> )>> .\n"
+#guard serializeNQuads tripleTermDoc == okWith [("nquads", .string tripleTermDoc)]
+#guard ((serializeTurtle tripleTermDoc).splitOn "<<(").length == 4
+#guard ((serializeTurtleWith tripleTermDoc "").splitOn "<<(").length == 4
+-- White space before `@` is RDF 1.2 syntax.
+#guard serializeNQuads "<http://e/a> <http://e/p> \"x\" @en .\n" ==
+  okWith [("nquads", .string "<http://e/a> <http://e/p> \"x\"@en .\n")]
+-- A language tag that only the RDF 1.1 reader reads: the second reader is reached.
+private def longTagDoc : String := "<http://e/a> <http://e/p> \"x\"@abcdefghijk .\n"
+#guard (parseNQuadsFast longTagDoc .rdf12).toOption.isNone
+#guard serializeNQuads longTagDoc == okWith [("nquads", .string longTagDoc)]
+#guard ((serializeTurtle longTagDoc).splitOn "@abcdefghijk").length == 2
+-- Both readers refuse: the error is the RDF 1.1 reader's, as before.
+private def badDoc : String := "<http://e/a> <http://e/p> .\n"
+#guard serializeNQuads badDoc ==
+  (match parseNQuadsFast badDoc with
+   | .error e => errJson (fmtParseError e)
+   | .ok _ => "")
+#guard (parseNQuadsFast badDoc .rdf12).toOption.isNone
 
 end L4Wasm.Ops

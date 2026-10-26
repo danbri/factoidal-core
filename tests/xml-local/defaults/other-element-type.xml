@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!DOCTYPE a [
+<!ELEMENT a (b)>
+<!ELEMENT b EMPTY>
+<!ATTLIST b x CDATA "dx">
+]>
+<a><b/></a>

@@ -63,6 +63,16 @@ def utNs   : String := "http://www.w3.org/2009/sparql/tests/test-update#"
 carries the HTTP exchange of a Protocol / Graph Store test. -/
 def rdfsNs : String := "http://www.w3.org/2000/01/rdf-schema#"
 
+/-- W3C HTTP Vocabulary in RDF 1.0 (`ht:`), Representing Content in RDF
+1.0 (`cnt:`) and the HTTP status-code terms (`hts:`) — the structured
+form of a `ProtocolTest` / `GraphStoreProtocolTest` since w3c/rdf-tests
+`c7817c2` (Protocol) and `02f98ff` (Graph Store): `mf:action` is an
+`ht:Connection` whose `ht:requests` list holds the `ht:Request`s to run
+in order, each with its expected `ht:resp`. -/
+def htNs  : String := "http://www.w3.org/2011/http#"
+def cntNs : String := "http://www.w3.org/2011/content#"
+def htsNs : String := "http://www.w3.org/2011/http-statusCodes#"
+
 def rdfType  : String := rdfNs ++ "type"
 def rdfFirst : String := rdfNs ++ "first"
 def rdfRest  : String := rdfNs ++ "rest"
@@ -129,6 +139,92 @@ def collectList (g : Graph) : Nat → Term → List Term
 last `#`. `http://www.w3.org/ns/entailment/RDFS` → `RDFS`. -/
 def lastSegment (iri : String) : String := lastAfter (lastAfter iri "/") "#"
 
+/-! ## HTTP exchanges — the structured protocol test form -/
+
+/-- The expected response of one request (`ht:resp`). -/
+structure ExpectedResponse where
+  /-- `mf:expectedStatus` values as local names of `hts:` terms
+  (`StatusCode2xx`, `Created`, `NotFound`, …). Several values mean any
+  of them. -/
+  statuses : List String := []
+  /-- `mf:expectedBoolean`: the ASK result. -/
+  boolean  : Option Bool := none
+  /-- `mf:expectedFormat`: `"boolean"`, `"tabular"` or `"RDF"`. -/
+  format   : Option String := none
+  /-- `mf:expectedLocation`: a template variable the response's
+  `Location` header value is bound to, for the later requests of the
+  same connection. -/
+  location : Option String := none
+  /-- `ht:headers` on the response, names lower-cased. They describe
+  the expected `ht:body`. -/
+  headers  : List (String × String) := []
+  /-- `ht:body` / `cnt:chars`: RDF content the response must be
+  isomorphic to. -/
+  body     : Option String := none
+  deriving Repr
+
+/-- One `ht:Request` of an `ht:Connection`. -/
+structure HttpExchange where
+  method       : String
+  /-- `ht:absolutePath`: path and query string, as sent. -/
+  absolutePath : String
+  /-- `ht:headers`, names lower-cased. -/
+  headers      : List (String × String)
+  /-- `ht:body` / `cnt:chars`. -/
+  body         : Option String
+  resp         : ExpectedResponse
+  deriving Repr
+
+/-- An `ht:headers` list: `ht:fieldName` / `ht:fieldValue` pairs. -/
+def readHttpHeaders (g : Graph) (fuel : Nat) (node : Term) : List (String × String) :=
+  (collectList g fuel node).filterMap (fun h =>
+    match subjectOfTerm h with
+    | none => none
+    | some hs =>
+      match findObject? g hs (htNs ++ "fieldName"), findObject? g hs (htNs ++ "fieldValue") with
+      | some n, some v => some ((termKey n).toLower, termKey v)
+      | _, _ => none)
+
+/-- `ht:body [ cnt:chars "…" ]` on a request or response. -/
+def readHttpBody (g : Graph) (s : Subject) : Option String :=
+  match findObject? g s (htNs ++ "body") with
+  | none => none
+  | some b =>
+    match subjectOfTerm b with
+    | none    => none
+    | some bs => (findObject? g bs (cntNs ++ "chars")).map termKey
+
+def readExpectedResponse (g : Graph) (fuel : Nat) (s : Subject) : ExpectedResponse :=
+  { statuses := (findObjects g s (mfNs ++ "expectedStatus")).map (fun t => localName (termKey t)),
+    boolean  := (findObject? g s (mfNs ++ "expectedBoolean")).map (fun t => termKey t == "true"),
+    format   := (findObject? g s (mfNs ++ "expectedFormat")).map termKey,
+    location := (findObject? g s (mfNs ++ "expectedLocation")).map termKey,
+    headers  := match findObject? g s (htNs ++ "headers") with
+                | some h => readHttpHeaders g fuel h
+                | none   => [],
+    body     := readHttpBody g s }
+
+/-- The `ht:requests` list of an `ht:Connection`, in order. -/
+def readExchanges (g : Graph) (fuel : Nat) (connection : Subject) : List HttpExchange :=
+  match findObject? g connection (htNs ++ "requests") with
+  | none => []
+  | some listHead =>
+    (collectList g fuel listHead).filterMap (fun r =>
+      match subjectOfTerm r with
+      | none => none
+      | some rs =>
+        match findObject? g rs (htNs ++ "methodName"), findObject? g rs (htNs ++ "absolutePath") with
+        | some m, some p =>
+          some { method := termKey m, absolutePath := termKey p,
+                 headers := match findObject? g rs (htNs ++ "headers") with
+                            | some h => readHttpHeaders g fuel h
+                            | none   => [],
+                 body := readHttpBody g rs,
+                 resp := match (findObject? g rs (htNs ++ "resp")).bind subjectOfTerm with
+                         | some resp => readExpectedResponse g fuel resp
+                         | none      => {} }
+        | _, _ => none)
+
 /-! ## The test case record -/
 
 /-- One manifest entry, in the shape the F* runner models it.
@@ -188,10 +284,20 @@ structure TestCase where
   (Positive) / is not (Negative) inconsistent". Recorded as a flag;
   `resultFile` is `none` for such an entry. -/
   resultFalse : Bool := false
-  /-- The first non-empty `rdfs:comment` literal on the entry: the
-  HTTP request/response description of a `ProtocolTest` or
-  `GraphStoreProtocolTest` (the F* runner's `protocol_comment`). -/
+  /-- The entry's `rdfs:comment` that carries a `#### Request` block,
+  else its first non-empty `rdfs:comment`: the Markdown HTTP exchange
+  of a `ProtocolTest` / `GraphStoreProtocolTest` in the manifests
+  before the structured form (the F* runner's `protocol_comment`). -/
   comment : Option String := none
+  /-- `ht:connectionAuthority` of an `ht:Connection` action. -/
+  connectionAuthority : Option String := none
+  /-- The `ht:requests` of an `ht:Connection` action, in order. -/
+  exchanges : List HttpExchange := []
+  /-- `mf:requires` local names (`DirectGraphIdentification`, …). -/
+  requires : List String := []
+  /-- `ut:graphData` on the ENTRY (not on the action): the graphs a
+  `ProtocolTest` loads into the Graph Store before its requests. -/
+  entryGraphData : List (String × String) := []
   deriving Repr
 
 /-- `ut:data` / `qt:data` files and `ut:graphData` / `qt:graphData`
@@ -303,16 +409,33 @@ def extractTestCase (manifestDir : String) (g : Graph) (entry : Term) : TestCase
                           | _, _ => none)
             (none, (q, d, gd, regimes, sd))
       | none => (none, noBnodeAction)
-    -- `rdfs:comment`: the first literal with a non-empty lexical form.
-    let comment : Option String :=
-      (findObjects g subj (rdfsNs ++ "comment")).findSome? (fun (t : Term) =>
+    -- `rdfs:comment`: the one with a `#### Request` block, else the
+    -- first literal with a non-empty lexical form. (The deprecated
+    -- http-rdf-update entries carry a deprecation note first.)
+    let comments : List String :=
+      (findObjects g subj (rdfsNs ++ "comment")).filterMap (fun (t : Term) =>
         match t with
         | .literal l => if l.val.lexicalForm.isEmpty then none else some l.val.lexicalForm
         | _          => none)
+    let comment : Option String :=
+      match comments.find? (fun c => (c.splitOn "#### Request").length > 1) with
+      | some c => some c
+      | none   => comments.head?
+    -- The structured HTTP form: `mf:action` is an `ht:Connection`.
+    let fuel := g.length + 1
+    let connection : Option Subject := actionTerm.bind subjectOfTerm
+    let connectionAuthority :=
+      connection.bind (fun c => (findObject? g c (htNs ++ "connectionAuthority")).map termKey)
+    let exchanges := match connection with
+                     | some c => readExchanges g fuel c
+                     | none   => []
+    let requires := (findObjects g subj (mfNs ++ "requires")).map (fun t => localName (termKey t))
+    let entryGraphData := (dataAndGraphData manifestDir g subj).2
     { name, entryId, testType, action, queryFile, dataFiles, graphData,
       resultFile, approval, hashAlgorithm, entailmentRegimes, serviceData,
       updateResultData, updateResultGraphData,
-      entailmentRegime, recognizedDatatypes, resultFalse, comment }
+      entailmentRegime, recognizedDatatypes, resultFalse, comment,
+      connectionAuthority, exchanges, requires, entryGraphData }
 
 /-- `mf:assumedTestBase` — the base IRI the suite documents for its own
 fixtures. Read out of the manifest rather than hardcoded, because the

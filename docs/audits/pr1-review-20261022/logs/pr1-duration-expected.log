@@ -1,0 +1,6 @@
+../../../logs/pr1-probes/DurationCastExpected.lean:4:0: error: Expression
+  evalFunc "cast-string" [gLit "P0M" (xsdNs ++ "yearMonthDuration")] == some (gStr "P0M")
+did not evaluate to `true`
+../../../logs/pr1-probes/DurationCastExpected.lean:5:0: error: Expression
+  evalFunc "cast-string" [gLit "P0Y" (xsdNs ++ "yearMonthDuration")] == some (gStr "P0M")
+did not evaluate to `true`

@@ -1,0 +1,7 @@
+# ORDER BY with LIMIT over a join: the 10 largest populations in Norway.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+SELECT ?c ?pop WHERE {
+  ?c dbo:country dbr:Norway .
+  ?c dbo:populationTotal ?pop
+} ORDER BY DESC(?pop) ?c LIMIT 10

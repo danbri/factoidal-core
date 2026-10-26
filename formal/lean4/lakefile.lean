@@ -27,7 +27,11 @@ F*/Low*-verified HACL* extracted C under `third_party/hacl/`
 HACL* translation units are compiled UNMODIFIED, exactly as the F*
 tree's `build-ocaml.sh` compiles them (`-O2 -fPIC -I include`), and
 archived into `libl4hacl.a`, which Lake links into every executable of
-this package. -/
+this package. `Crypto/SHA2Native.lean` also exposes whole SHA-256 and raw
+block compression through the same shim. Differential smoke tests compare
+them with pure Lean; a universal native-equivalence proof is not supplied
+(https://github.com/danbri/factoidal/issues/777; expected-failure case
+NX-1 in `tests/known-defects/run.sh`). -/
 
 /-- `third_party/hacl`, relative to this package (`formal/lean4`). -/
 def haclDir (pkg : Package) : FilePath :=
@@ -167,6 +171,20 @@ extern_lib libl4blockhost pkg := do
   let name := nameToStaticLib "l4blockhost"
   buildStaticLib (pkg.staticLibDir / name) #[pread]
 
+/-- Optional libzstd call-out for the `l4qlvr` measurements
+    (https://github.com/danbri/factoidal/issues/778): `Harness/Qlvr.lean`'s
+    `@[extern "l4_zstd_decompress"]`. libzstd is loaded with dlopen at run
+    time, so the build needs no zstd headers; the pure Lean decoder
+    (`L4Factoidal.Codec.Zstd`) stays the reference and the default. Not part
+    of the WASM closure. -/
+target qlvr_zstd.o pkg : FilePath :=
+  buildHaclO pkg "qlvr_zstd" (pkg.dir / "ffi" / "qlvr_zstd.c")
+
+extern_lib libl4qlvrzstd pkg := do
+  let z ← qlvr_zstd.o.fetch
+  let name := nameToStaticLib "l4qlvrzstd"
+  buildStaticLib (pkg.staticLibDir / name) #[z]
+
 /-- The host call-out for caller-registered SPARQL 1.1 section 17.6
     extension functions (`Wasm/ExtHost.lean`'s `@[extern "l4_ext_call"]`).
     On a native build it has no host and answers the empty string, which
@@ -180,7 +198,24 @@ extern_lib libl4exthost pkg := do
   let name := nameToStaticLib "l4exthost"
   buildStaticLib (pkg.staticLibDir / name) #[ext]
 
+/-- The positioned reads of a store whose bytes a host supplies
+    (`Wasm/HostRead.lean`'s `l4_host_read_at` and `l4_host_size`,
+    https://github.com/danbri/factoidal/issues/1009). Native: one `pread` of
+    `source/file`; the Emscripten build compiles the same file with EM_JS
+    bodies (`Wasm/build-wasm.sh`). -/
+target l4_hostread.o pkg : FilePath :=
+  buildHaclO pkg "l4_hostread" (pkg.dir / "ffi" / "l4_hostread.c")
+
+extern_lib libl4hostread pkg := do
+  let hr ← l4_hostread.o.fetch
+  let name := nameToStaticLib "l4hostread"
+  buildStaticLib (pkg.staticLibDir / name) #[hr]
+
 @[default_target] lean_lib L4Factoidal
+
+-- Observable cardinality of the dataset handle store: 41 assertions over
+-- open / clone / update / add / delete (RDF 1.1 Concepts §3: a graph is a set).
+@[default_target] lean_exe «l4dataset-set-regression» where root := `Harness.DatasetSetRegression
 
 -- The W3C harness's shared modules. They live in a lib rather than
 -- hanging off an executable root because `Harness.Main` imports them
@@ -188,10 +223,14 @@ extern_lib libl4exthost pkg := do
 -- library: these do file I/O and print scores. The probes
 -- (`Harness.TurtleProbe`, `Harness.CanonProbe`) stay executable roots.
 @[default_target] lean_lib Harness where globs :=
-  #[`Harness.Common, `Harness.Fixtures, `Harness.Manifest, `Harness.Compare, `Harness.ProtocolRun, `Harness.Run, `Harness.HarnessTests,
+  (#[`Harness.Common, `Harness.RifImport, `Harness.Fixtures, `Harness.Manifest, `Harness.Compare, `Harness.ProtocolRun, `Harness.Run, `Harness.HarnessTests,
     `Harness.NativeHasher,
     `Harness.PosixRangeIO, `Harness.CompactedEpoch, `Harness.GenerationPointer, `Harness.ShardMerkleMaterialize, `Harness.ShardMerkleProfile, `Harness.ShardPublish,
-    `Harness.IndexedBlockV3Materialize]
+    `Harness.IndexedBlockV3Materialize, `Harness.JsonLdScale, `Harness.LenientRun, `Harness.QlvrKernel,
+    `Harness.Sbm11Gen, `Harness.RunHeap, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11Update, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
+    `Harness.Sbm11Export, `Harness.Sbm11MemGenCheck, `Harness.Sbm11PackSpecCheck,
+    `Harness.PlannerCheck, `Harness.PlannerKinds, `Harness.PlannerSbm11IO,
+    `Harness.ProofObligations, `Harness.WorkerPool] : Array Lean.Name).map Glob.one
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
 -- (Wasm/Abi.lean) and the `@[export]` C symbols (Wasm/Exports.lean).
@@ -200,20 +239,42 @@ extern_lib libl4exthost pkg := do
 @[default_target] lean_lib l4wasm where
   srcDir := "."
   roots := #[`Wasm.Abi, `Wasm.Exports, `Wasm.Dispatch,
-             `Wasm.ExtHost, `Wasm.Ops.ExtFns,
-             `Wasm.Ops.Support, `Wasm.Ops.Parse, `Wasm.Ops.Query,
+             `Wasm.ExtHost, `Wasm.Ops.ExtFns, `Wasm.Ops.Clock,
+             `Wasm.Ops.ErrorModel, `Wasm.ErrorModelTests,
+             `Wasm.Ops.Support, `Wasm.Ops.FromDataset, `Wasm.Ops.Parse, `Wasm.Ops.Query,
              `Wasm.Ops.Reason, `Wasm.Ops.Canon, `Wasm.Ops.CL,
              `Wasm.Ops.Block,
              `Wasm.Ops.Store,
-             `Wasm.Ops.StoreHandles,
+             `Wasm.Ops.StoreHandles, `Wasm.StorePlanGateTests,
+             `Wasm.HostRead, `Wasm.Ops.Sbm11, `Wasm.Ops.Sbm11Pack,
+             `Wasm.Ops.StoreServe,
              `Wasm.Ops.Proof,
+             `Wasm.Ops.Explain,
+             `Wasm.Ops.StageList,
+             `Wasm.Ops.PipelineNodes,
              `Wasm.Ops.Handles,
+             `Wasm.Ops.DatasetFull,
              `Wasm.Ops.Pack,
              `Wasm.Ops.Lws,
              `Wasm.Ops.Solid,
+             `Wasm.Ops.LwsClient,
+             `Wasm.Ops.Authz,
              `Wasm.Ops.Toan,
              `Wasm.Ops.Xmpp,
-             `Wasm.Ops.Crypto]
+             `Wasm.Ops.XmppSession,
+             `Wasm.Ops.Crypto,
+             `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests, `Wasm.GraphSetTests,
+             `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
+             `Wasm.Ops.Maths,
+             `Wasm.Ops.Vc,
+             `Wasm.Ops.Lenient, `Wasm.Ops.Validate,
+             `Wasm.Ops.DeltaLog,
+             -- The core wasm (issue 713 stage 4): its dispatch, its C symbols,
+             -- the op modules the split moved out of the core closure, and the
+             -- build-time agreement checks of the two tables.
+             `Wasm.CoreDispatch, `Wasm.CoreExports, `Wasm.CoreDispatchTests,
+             `Wasm.Ops.ParseJsonLd, `Wasm.Ops.ReasonDl, `Wasm.Ops.ReasonDlCertified, `Wasm.Ops.ShExValidate,
+             `Wasm.Ops.QueryHdt]
 
 -- Runs the XML parser over real W3C XML Conformance Test Suite files:
 -- reads paths from stdin, prints WF / NWF per file. See
@@ -255,6 +316,69 @@ extern_lib libl4exthost pkg := do
 -- printed scores.
 @[default_target] lean_exe «l4owl-probe» where root := `Harness.OwlProbe
 
+-- Factoidal/qlvr (https://github.com/danbri/factoidal/issues/778): the pure-Lean
+-- zstd decoder (L4Factoidal.Codec.Zstd) against libzstd's answers, on the
+-- committed vectors and on every column frame of the QLever instance.
+@[default_target] lean_exe «l4qlvr-zstd-check» where root := `Harness.QlvrZstdCheck
+
+-- Factoidal/qlvr (https://github.com/danbri/factoidal/issues/778): read a QLever
+-- index directory (stats, bound-predicate scan over PSO, full SPO dump, vocabulary).
+@[default_target] lean_exe «l4qlvr» where root := `Harness.Qlvr
+-- L4Factoidal.Prim.Bytes (https://github.com/danbri/factoidal/issues/797): the
+-- differential test of the `@[extern c inline]` store against its Lean reference.
+-- tests/prim/run.sh runs it natively and as wasm32 under node.
+@[default_target] lean_exe «l4prim-test» where root := `Harness.PrimBytesTest
+-- The scan-versus-old-scan differential of Storage/Sbm11/ScanFoldTests (needs compiled code).
+@[default_target] lean_exe «l4scanfold-test» where root := `Harness.ScanFoldTest
+-- Capability-aware planner, KR 2.2 (https://github.com/danbri/factoidal/issues/801):
+-- the structural planner's test set, with its expected-failure bucket.
+@[default_target] lean_exe «l4planner-test» where root := `Harness.PlannerTest
+-- The q07 kernel timing loop alone (no FFI in its imports), for the native and
+-- wasm32 measurements of issue 797 (tools/lean-wasm-exe.sh builds the wasm32 one).
+@[default_target] lean_exe «l4qlvr-kernel» where root := `Harness.QlvrKernelBench
+-- Start latency of a short job on the Lean task pool and on the per-session
+-- worker pool of the SBM11 harness (issue 961, Harness/WorkerPool.lean).
+@[default_target] lean_exe «l4pool-bench» where root := `Harness.WorkerPoolBench
+-- SBM11 stage 2 (https://github.com/danbri/factoidal/issues/788): packer
+-- phases 1 and 2 (global dictionary GDV1/GDX1), its check and lookup bench.
+@[default_target] lean_exe «l4sbm11-dict-pack» where root := `Harness.Sbm11DictPack
+-- SBM11 stage 3 (https://github.com/danbri/factoidal/issues/789): packer phases
+-- 1 to 3 (dictionary, then the PSO/POS/SPO/OSP permutations as PRB1 blocks with
+-- PRM1 metadata, the SBM11 manifest), and the reader: stats, scan, count, dump,
+-- verify and activate.
+@[default_target] lean_exe «l4sbm11-pack» where root := `Harness.Sbm11Pack
+@[default_target] lean_exe «l4sbm11» where root := `Harness.Sbm11Cli
+-- Read a document in any of the six RDF syntaxes through the source layer and
+-- write it in any of the six with the library serialisers (issue 837).
+@[default_target] lean_exe «l4source-convert» where root := `Harness.SourceConvert
+-- The lists and the comparisons of the W3C round trip through the SBM11 store
+-- (tests/sbm11/w3c_roundtrip.sh, issue 837 item 5): the manifests' positive
+-- evaluation tests as rows, and the isomorphism of a dump with a result file.
+@[default_target] lean_exe «l4sbm11-w3c» where root := `Harness.Sbm11W3c
+-- Tests of the producers of RDF quads (L4Factoidal/RDF/QuadSource.lean) and of the
+-- packer entry that takes them (tests/sbm11/quad_source.sh, issue 866).
+@[default_target] lean_exe «l4sbm11-quad-source» where root := `Harness.Sbm11QuadSource
+-- The OWL 2 species verdict (DL or Full) of one ontology document and its
+-- imports, read as N-Triples (Harness/OwlSpeciesFile.lean). The verdict is
+-- `OWL.SyntaxDL.speciesViolations`, the function `l4owl-probe --species`
+-- scores; this executable only reads files and prints JSON. Used by
+-- tools/owl-real-bench.sh (https://github.com/danbri/factoidal/issues/651).
+@[default_target] lean_exe «l4owl-species» where root := `Harness.OwlSpeciesFile
+
+-- Where the OWL DL tableau refuter spends its work: steps, branch points,
+-- state size and the time of each phase of `OWL.Refute.search`, on the OWL
+-- RL closure of one N-Triples file (Harness/RefuteProfile.lean). Holds no
+-- OWL logic; `--check` compares its verdict with `tableauConsistent`.
+-- https://github.com/danbri/factoidal/issues/760
+@[default_target] lean_exe «l4refute-profile» where root := `Harness.RefuteProfile
+
+-- Where the OWL 2 RL closure spends its rounds: per round the input size, the
+-- conclusions emitted, the new triples and the time; with --rows, per row the
+-- emitted, new and delta-driven conclusions and the time
+-- (Harness/OwlRlProfile.lean). Holds no OWL logic.
+-- https://github.com/danbri/factoidal/issues/756
+@[default_target] lean_exe «l4owl-rl-profile» where root := `Harness.OwlRlProfile
+
 -- Native driver for the same ABI, so it can be exercised without wasm.
 @[default_target] lean_exe «l4wasm-cli» where
   srcDir := "."
@@ -270,6 +394,26 @@ extern_lib libl4exthost pkg := do
 @[default_target] lean_exe «l4factoidal» where
   srcDir := "."
   root := `Wasm.Cli
+
+-- `l4query-phases` — the phases of `l4factoidal query` (read, parse,
+-- normalize, index, eval, output), each followed by the resident memory of
+-- the process, with `--stop-after PHASE` (Harness/QueryPhases.lean,
+-- https://github.com/danbri/factoidal/issues/729).
+-- The phases of the Dataset iteration ops, timed natively
+-- (Harness/IterPhases.lean, https://github.com/danbri/factoidal/issues/900).
+@[default_target] lean_exe «l4iter-phases» where
+  srcDir := "."
+  root := `Harness.IterPhases
+
+-- Pack and load time of the store dictionaries of issue 977 (language-tag
+-- fold, literal de-duplication) on one N-Quads file (Bench/DictFoldBench.lean).
+lean_exe «l4dict-fold-bench» where
+  srcDir := "."
+  root := `Bench.DictFoldBench
+
+@[default_target] lean_exe «l4query-phases» where
+  srcDir := "."
+  root := `Harness.QueryPhases
 
 -- Native executable for the first RDF block MVP. It exercises the total
 -- `Storage.BlockMvp.scan` path over a small in-memory graph; it does not claim
@@ -299,6 +443,8 @@ extern_lib libl4exthost pkg := do
 @[default_target] lean_exe «l4block-id-v3-merkle-scan» where root := `Harness.IndexedBlockV3MerkleScan
 @[default_target] lean_exe «l4block-id-v3-query» where root := `Harness.IndexedBlockV3Query
 @[default_target] lean_exe «l4block-paged-dictionary-probe» where root := `Harness.PagedDictionaryProbe
+@[default_target] lean_exe «l4termwire-page-decode» where root := `Harness.TermWirePageDecode
+@[default_target] lean_exe «l4merkle-range-read» where root := `Harness.MerkleRangeRead
 @[default_target] lean_exe «l4block-shard-merkle-pread» where root := `Harness.ShardMerklePread
 @[default_target] lean_exe «l4block-shard-merkle-scan» where root := `Harness.ShardMerkleScan
 @[default_target] lean_exe «l4block-shard-merkle-query» where root := `Harness.ShardMerkleQuery
@@ -314,14 +460,23 @@ extern_lib libl4exthost pkg := do
 -- SBM7 by layout. `GRAPH <iri>`, `GRAPH ?g`, `FROM` / `FROM NAMED` and
 -- default-graph patterns all run against the dataset the blocks denote.
 @[default_target] lean_exe «l4block-quad-query» where root := `Harness.QuadQuery
+-- The W3C SPARQL 1.1 Protocol, Graph Store and Service Description tests
+-- replayed against a live `factoidal serve` (issue 669 step 1).
+@[default_target] lean_exe «l4protocol-live» where root := `Harness.ProtocolLive
 @[default_target] lean_exe «l4block-literal-gram» where root := `Harness.LiteralGramProbe
 @[default_target] lean_exe «l4block-geo-bbox» where root := `Harness.GeoBBoxProbe
 
 -- Write an IBK4 generation's quads back out as N-Quads, so the SAME corpus
 -- can be packed again under a changed format and the two compared.
 @[default_target] lean_exe «l4block-quad-dump» where root := `Harness.QuadDump
+-- Native differential smokes for the HACL* SHA-256 entry points and the
+-- POSIX range reader, and the prepared-snapshot session driver
+-- (`L4Factoidal/SPARQL/PreparedSnapshot.lean`).
+@[default_target] lean_exe «l4native-crypto-smoke» where root := `Harness.NativeCryptoSmoke
+@[default_target] lean_exe «l4native-range-smoke» where root := `Harness.NativeRangeSmoke
+@[default_target] lean_exe «l4block-snapshot-session» where root := `Harness.SnapshotSession
 
--- The row-identity gate for the LGI1 literal search index, driven through
+-- The row-identity gate for the LGI3 and LGI4 literal search index, driven through
 -- `storeHandleQuery` — the operation a host calls. It opens one handle with
 -- the sidecars and one without, and compares the two answer envelopes.
 @[default_target] lean_exe «l4block-literal-gate» where
@@ -351,6 +506,13 @@ extern_lib libl4exthost pkg := do
 -- Turtle parser. Separate from the library so the library stays
 -- specification-only, per the spec/pragmatics split in PORT_NOTES.md.
 @[default_target] lean_exe «l4rdfxml-probe» where root := `Harness.RdfXmlProbe
+
+-- The RDF/XML chunk fold of the source layer against the whole-document
+-- reader (https://github.com/danbri/factoidal/issues/838).
+@[default_target] lean_exe «l4rdfxml-chunk-diff» where root := `Harness.RdfXmlChunkDiff
+@[default_target] lean_exe «l4jsonld-chunk-diff» where root := `Harness.JsonLdChunkDiff
+-- A Turtle or TriG document read by several range readers against the single reader (issue 842).
+@[default_target] lean_exe «l4split-diff» where root := `Harness.SplitReadDiff
 
 -- Reader-level probe over the vendored W3C csvw corpus. Named a
 -- PROBE, not a conformance runner, because it measures whether the
@@ -504,3 +666,4 @@ extern_lib libl4exthost pkg := do
 -- outside it (XEP-0368 direct TLS); see deploy/fly/xmpp/. Every
 -- protocol decision is in L4Factoidal/XMPP/Server.lean, not here.
 @[default_target] lean_exe «l4xmpp-serve» where root := `Harness.XmppServe
+@[default_target] lean_exe «l4xml-namespaces» where root := `Harness.NamespaceRun

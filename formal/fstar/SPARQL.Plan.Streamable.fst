@@ -159,6 +159,7 @@ let common_modifiers_ok (q : query) : bool =
   None? q.q_group_by &&
   None? q.q_having &&
   None? q.q_values &&
+  None? q.q_post_values &&
   not q.q_modifier.sm_distinct &&
   not q.q_modifier.sm_reduced &&
   None? q.q_modifier.sm_order_by
@@ -224,7 +225,10 @@ let detect_count_any_named_graph (q : query) : option stream_plan =
 let detect_ask_default (q : query) : option stream_plan =
   match q.q_form with
   | QF_Ask ->
-    if Some? q.q_values then None
+    // The plan answers "does one triple match", with no offset or limit:
+    // anything that groups, filters groups, joins VALUES or slices is not it.
+    if not (common_modifiers_ok q)
+       || Some? q.q_modifier.sm_offset || Some? q.q_modifier.sm_limit then None
     else
       (match extract_single_tp_bgp q.q_pattern with
        | None -> None

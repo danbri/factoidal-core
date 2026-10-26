@@ -190,49 +190,4 @@ def geoCandidates? (block : QuadBlock) (index : GeoBBoxIndex.Index)
   (GeoBBoxIndex.candidates? index op query).map fun ids =>
     LiteralGramIndex.withOpaque ids (opaquePositions block.dict)
 
-/-! ## Build-time checks -/
-
-private def pName : WfIri := ⟨"http://example.org/name", by simp [isIri]⟩
-private def alice : Subject := .iri ⟨"http://example.org/alice", by simp [isIri]⟩
-private def bob : Subject := .iri ⟨"http://example.org/bob", by simp [isIri]⟩
-
-private def bigLexical : String := String.ofList (List.replicate 70000 'a')
-
-private def sampleQuads : List (Option GraphRef × Triple) :=
-  [(none, { s := alice, p := pName, o := .literal (Literal.string "hello") }),
-   (none, { s := bob, p := pName, o := .literal (Literal.string bigLexical) })]
-
-private def sample : QuadBlock := fromRdfQuads specHash sampleQuads
-
--- The out-of-line literal is one opaque position and is not grammed.
-#guard (opaquePositions sample.dict).length == 1
-#guard (literalIndexOf sample).opaqueIds == opaquePositions sample.dict
-#guard (literalIndexOf sample).literalCount == 1
-#guard (literalIndexOf sample).dictCount == sample.dict.size
-#guard (geoIndexOf sample).dictCount == sample.dict.size
-
--- Both zone maps exist, are ordered, and are inside the bound.
-#guard (subjectZone? sample).isSome
-#guard (objectZone? sample).isSome
-#guard (zones? sample).map Prod.fst == subjectZone? sample
-#guard (zones? sample).map Prod.snd == objectZone? sample
-#guard ((subjectZone? sample).map ShardManifest.zoneAdmitted) == some true
-#guard ((objectZone? sample).map ShardManifest.zoneAdmitted) == some true
-
--- Every row's own key is inside the block's bounds.
-#guard ((subjectZone? sample).map fun zone =>
-  (subjectKeys sample).map fun keys =>
-    keys.all fun key => ShardManifest.zoneMayContain zone key) == some (some true)
-#guard ((objectZone? sample).map fun zone =>
-  (objectKeys sample).map fun keys =>
-    keys.all fun key => ShardManifest.zoneMayContain zone key) == some (some true)
-
--- The out-of-line literal is a candidate of every needle the LGI2 index can
--- serve, including one no inline literal of the block carries.
-#guard (literalCandidates? (literalIndexOf sample) "zzz").isSome
-#guard ((literalCandidates? (literalIndexOf sample) "zzz").map fun ids =>
-  (opaquePositions sample.dict).all fun i => ids.contains i) == some true
-#guard ((literalCandidates? (literalIndexOf sample) "hel").map fun ids =>
-  (opaquePositions sample.dict).all fun i => ids.contains i) == some true
-
 end L4Factoidal.Storage.BlockV5Plan

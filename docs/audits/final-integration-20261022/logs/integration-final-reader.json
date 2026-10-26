@@ -1,0 +1,18 @@
+{
+  "command": [
+    "python3",
+    "tools/check-owl-reader-contracts.py",
+    "--json",
+    "../logs/integration-final-reader-report.json"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core",
+  "node": "v22.22.2",
+  "source": "ebe0188a3ae8d5a1d58b80b0356c50a6dfd6cf50",
+  "nodeBin": "/opt/homebrew/Cellar/node@22/22.22.2_2/bin",
+  "npmCache": "/private/tmp/factoidal-public-pack-cache",
+  "started": "2026-10-22T19:00:59.494Z",
+  "elapsedMs": 175068,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}

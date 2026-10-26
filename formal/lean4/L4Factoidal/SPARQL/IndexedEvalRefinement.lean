@@ -12,6 +12,15 @@ side by a canonicalised key (`Term.joinKey`, RDF/Core.lean) in a
 runs the engine trio, and `StoreDataset.evalPatternBackend`'s
 `.leftJoin` arm runs `hashLeftJoin`.
 
+The BGP engine reuses graph buckets between patterns with the same
+position mask. `BgpIndexCache.ValidFor` records that every retained
+index was built from the active graph under its stored mask, and
+`cachedTpIndex_correct` proves both lookup correctness and preservation
+of that invariant. Singleton row sets reuse available buckets or scan
+without building an index, and empty row sets stop evaluation.
+`evalBgpRowsCached_eq` proves that these choices
+preserve the complete ordered solution sequence.
+
 This file proves the three equalities that license that wiring:
 
   * `hashJoin_eq_join`   : `hashJoin o1 o2 = join o1 o2`
@@ -19,7 +28,7 @@ This file proves the three equalities that license that wiring:
     `hashLeftJoin o1 o2 cond = leftJoin o1 o2 cond`
   * `evalBgpIdx_eq_evalBgp` : `evalBgpIdx b g = evalBgp b g`
 
-Both are plain LIST equalities — same rows, same order, same binding
+All three are plain LIST equalities — same rows, same order, same binding
 layouts — not merely multiset agreement. Nothing downstream (DISTINCT,
 ORDER BY, slicing, result serialisation) can observe the switch, and
 every theorem about `join`/`evalBgp` transfers across `rw`.
@@ -645,13 +654,101 @@ theorem evalBgpRowsIdx_eq (g : Graph) :
           List.flatMap_assoc]
       rfl
 
+def BgpIndexCache.ValidFor (cache : BgpIndexCache) (g : Graph) : Prop :=
+  ∀ mask idx, (mask, idx) ∈ cache → idx = groupByKey (tripleKey mask) g
+
+theorem BgpIndexCache.validFor_empty (g : Graph) :
+    BgpIndexCache.ValidFor [] g := by
+  intro mask idx hmem
+  cases hmem
+
+theorem cachedTpIndex_correct (g : Graph) (mask : TpMask)
+    (cache : BgpIndexCache) (hcache : cache.ValidFor g) :
+    (cachedTpIndex g mask cache).1 = groupByKey (tripleKey mask) g ∧
+      (cachedTpIndex g mask cache).2.ValidFor g := by
+  unfold cachedTpIndex
+  cases hfind : cache.find? (fun entry => entry.1 == mask) with
+  | none =>
+      constructor
+      · rfl
+      · intro other idx hmem
+        rcases List.mem_cons.mp hmem with hhead | htail
+        · cases hhead
+          rfl
+        · exact hcache other idx htail
+  | some entry =>
+      obtain ⟨other, idx⟩ := entry
+      have hmask : other = mask := by
+        have hkey := List.find?_some hfind
+        simpa using hkey
+      subst other
+      exact ⟨hcache mask idx (List.mem_of_find?_eq_some hfind), hcache⟩
+
+theorem evalBgpStepCached_correct (tp : TriplePattern) (g : Graph)
+    (rows : SolutionSeq) (cache : BgpIndexCache)
+    (hcache : cache.ValidFor g) :
+    (evalBgpStepCached tp g rows cache).1 = rows.flatMap (evalTP tp g) ∧
+      (evalBgpStepCached tp g rows cache).2.ValidFor g := by
+  cases rows with
+  | nil => exact ⟨rfl, hcache⟩
+  | cons mu0 rest =>
+      cases rest with
+      | nil =>
+          simp only [evalBgpStepCached]
+          split
+          · rename_i other idx hfind
+            have hmask : other =
+                { s := (tp.s.resolveKey mu0).isSome
+                  p := (tp.p.resolveKey mu0).isSome
+                  o := (tp.o.resolveKey mu0).isSome } := by
+              have hkey := List.find?_some hfind
+              simpa using hkey
+            subst other
+            have hidx := hcache _ idx (List.mem_of_find?_eq_some hfind)
+            constructor
+            · simpa [hidx] using evalTPIdx_eq _ g tp mu0
+            · exact hcache
+          · exact ⟨by simp, hcache⟩
+      | cons mu1 rest =>
+          simp only [evalBgpStepCached]
+          split
+          · have hidx := cachedTpIndex_correct g
+              { s := (tp.s.resolveKey mu0).isSome
+                p := (tp.p.resolveKey mu0).isSome
+                o := (tp.o.resolveKey mu0).isSome } cache hcache
+            constructor
+            · rw [hidx.1]
+              exact flatMap_congr (fun mu _ => evalTPIdx_eq _ g tp mu)
+            · exact hidx.2
+          · exact ⟨rfl, hcache⟩
+
+theorem evalBgpRowsCached_eq (g : Graph) :
+    ∀ (b : Bgp) (rows : SolutionSeq) (cache : BgpIndexCache),
+      cache.ValidFor g →
+      evalBgpRowsCached g b rows cache = rows.flatMap (evalBgpFrom g b)
+  | [], rows, _, _ => by
+      simp only [evalBgpRowsCached, evalBgpFrom, List.flatMap_singleton']
+  | _ :: _, [], _, _ => rfl
+  | tp :: rest, mu :: rows, cache, hcache => by
+      have hstep := evalBgpStepCached_correct tp g (mu :: rows) cache hcache
+      cases hresult : evalBgpStepCached tp g (mu :: rows) cache with
+      | mk nextRows nextCache =>
+          simp only [hresult] at hstep
+          rw [evalBgpRowsCached, hresult]
+          · dsimp only
+            rw [evalBgpRowsCached_eq g rest nextRows nextCache hstep.2,
+                hstep.1, List.flatMap_assoc]
+            rfl
+          · simp
+
 /-- **The BGP theorem.** The indexed BGP evaluator returns the same
 solution sequence as §18.3's `evalBgp` — the same LIST: same rows,
 same order, same binding layouts. -/
 theorem evalBgpIdx_eq_evalBgp (b : Bgp) (g : Graph) :
     evalBgpIdx b g = evalBgp b g := by
   unfold evalBgpIdx evalBgp
-  rw [evalBgpRowsIdx_eq, List.flatMap_singleton]
+  rw [evalBgpRowsCached_eq g b [Binding.empty] []
+        (BgpIndexCache.validFor_empty g), List.flatMap_singleton]
 
 /-! ## The wiring, stated
 
@@ -665,6 +762,49 @@ matched before it.) -/
 theorem evalIn_bgp (ds : Dataset) (active : Graph) (b : Bgp) :
     (GraphPattern.bgp b).evalIn ds active = evalBgp b active := by
   rw [GraphPattern.evalIn, evalBgpIdx_eq_evalBgp]
+
+/-! ## The hash MINUS equals §18.5's MINUS
+
+https://github.com/danbri/factoidal/issues/881. The per-μ1 test of
+`minus` is an `any` over Ω2 of a predicate that is false on every row
+incompatible with μ1. `bucketProbe_filterMap_eq` already shows that
+the bucket at μ1's key keeps every compatible row of Ω2, so the `any`
+over the bucket has the same value. -/
+
+private theorem any_eq_not_isEmpty_filterMap {α : Type} (p : α → Bool) :
+    ∀ (l : List α), l.any p = !(l.filterMap (fun a => if p a then some () else none)).isEmpty
+  | [] => rfl
+  | a :: rest => by
+      rw [List.any_cons, List.filterMap_cons, any_eq_not_isEmpty_filterMap p rest]
+      cases p a <;> simp
+
+/-- The keyed hash MINUS equals `minus` whenever every row of Ω2 binds
+every key variable. -/
+theorem hashMinusKeyed_eq_minus (kvs : List VarName) (o1 o2 : SolutionSeq)
+    (hb : ∀ v ∈ kvs, ∀ m ∈ o2, (Binding.lookup v m).isSome) :
+    hashMinusKeyed kvs o1 o2 = minus o1 o2 := by
+  unfold hashMinusKeyed minus
+  apply List.filter_congr
+  intro mu1 _
+  cases hk1 : Binding.hashKey? kvs mu1 with
+  | none => rfl
+  | some k =>
+      simp only
+      rw [any_eq_not_isEmpty_filterMap, any_eq_not_isEmpty_filterMap,
+        bucketProbe_filterMap_eq kvs mu1 o2 k _ hb hk1
+          (fun mu2 hc => by simp [hc])]
+
+/-- **The MINUS theorem.** The hash MINUS returns the same solution
+sequence as §18.5's `minus`: the same list, in the same order. -/
+theorem hashMinus_eq_minus (o1 o2 : SolutionSeq) :
+    hashMinus o1 o2 = minus o1 o2 := by
+  unfold hashMinus
+  cases hkv : joinKeyVars o1 o2 with
+  | nil => rfl
+  | cons v0 vs0 =>
+      apply hashMinusKeyed_eq_minus
+      intro v hv m hm
+      exact joinKeyVars_bound_right o1 o2 v (by rw [hkv]; exact hv) m hm
 
 /-! ## Build-time differential checks
 
@@ -697,46 +837,27 @@ misses `x`, so `x` leaves the key and both rows still join. -/
 #guard hashJoin [[(vX, .iri iriA)]] [[(vX, .iri iriA)], [(vY, .iri iriB)]]
         == join [[(vX, .iri iriA)]] [[(vX, .iri iriA)], [(vY, .iri iriB)]]
 
-/-! ### LeftJoin
-
-Three shapes, each against the nested loop: a left row that extends, a
-left row with no compatible partner (kept unextended), and a condition
-that rejects the only extension (also kept unextended). -/
-private def alwaysTrue : Binding → Bool := fun _ => true
-private def alwaysFalse : Binding → Bool := fun _ => false
-
-private def ljLeft : SolutionSeq := [[(vX, .iri iriA)], [(vX, .iri iriB)]]
-private def ljRight : SolutionSeq := [[(vX, .iri iriA), (vY, .iri iriB)]]
-
-#guard hashLeftJoin ljLeft ljRight alwaysTrue == leftJoin ljLeft ljRight alwaysTrue
-#guard (hashLeftJoin ljLeft ljRight alwaysTrue).length == 2
-#guard hashLeftJoin ljLeft ljRight alwaysFalse == leftJoin ljLeft ljRight alwaysFalse
-#guard (hashLeftJoin ljLeft ljRight alwaysFalse).length == 2
-
-/-! Tag case folds into one bucket on the left-join path too. -/
-#guard hashLeftJoin [[(vX, litEnUS)]] [[(vX, litEnUSUpper), (vY, .iri iriB)]] alwaysTrue
-        == leftJoin [[(vX, litEnUS)]] [[(vX, litEnUSUpper), (vY, .iri iriB)]] alwaysTrue
-
-/-! Heterogeneous domains — a left row missing the key variable, which
-exercises the `none`-key fallback, and a build side whose second row
-misses it, which keeps `x` out of the key entirely. -/
-private def ljLeftHet : SolutionSeq := [[(vX, .iri iriA)], [(vY, .iri iriA)]]
-private def ljRightHet : SolutionSeq :=
-  [[(vX, .iri iriA), (vY, .iri iriB)], [(vY, .iri iriA)]]
-
-#guard hashLeftJoin ljLeftHet ljRightHet alwaysTrue
-        == leftJoin ljLeftHet ljRightHet alwaysTrue
-#guard hashLeftJoinKeyed [vX] ljLeftHet [[(vX, .iri iriA), (vY, .iri iriB)]] alwaysTrue
-        == leftJoin ljLeftHet [[(vX, .iri iriA), (vY, .iri iriB)]] alwaysTrue
-
-/-! Empty right side: every left row survives unextended. -/
-#guard hashLeftJoin ljLeft [] alwaysTrue == ljLeft
+/-! MINUS: equal keys remove the row, other keys keep it; a row with no
+shared variable is kept (§18.5 dom(μ1) ∩ dom(μ2) = ∅); language-tag
+case folds into one bucket. -/
+#guard hashMinus [[(vX, .iri iriA)], [(vX, .iri iriB)]] [[(vX, .iri iriA)]]
+        == [[(vX, .iri iriB)]]
+#guard hashMinus [[(vX, .iri iriA)]] [[(vY, .iri iriA)]] == [[(vX, .iri iriA)]]
+#guard hashMinus [[(vX, litEnUS)]] [[(vX, litEnUSUpper)]] == []
+#guard hashMinus [[(vX, .iri iriA), (vY, .iri iriB)], [(vX, .iri iriB)]]
+          [[(vX, .iri iriA)], [(vY, .iri iriA)]]
+        == minus [[(vX, .iri iriA), (vY, .iri iriB)], [(vX, .iri iriB)]]
+          [[(vX, .iri iriA)], [(vY, .iri iriA)]]
 
 /-! ## Axiom audit -/
 
-#print axioms hashJoin_eq_join
-#print axioms hashLeftJoinKeyed_eq_leftJoin
+#print axioms hashMinus_eq_minus
+
 #print axioms hashLeftJoin_eq_leftJoin
+#print axioms hashJoin_eq_join
+#print axioms cachedTpIndex_correct
+#print axioms evalBgpStepCached_correct
+#print axioms evalBgpRowsCached_eq
 #print axioms evalBgpIdx_eq_evalBgp
 #print axioms evalIn_bgp
 

@@ -11,10 +11,11 @@ of RIF-DTB (https://www.w3.org/TR/rif-dtb/).
 RIF does not have "IRIs and literals": it has constants in symbol
 spaces, and `rif:iri` and `rif:local` are two of them beside every
 XSD datatype. That distinction is not decoration —
-`pred:literal-not-identical` compares the PAIR, so
-`"1"^^xs:integer` and `"1"^^xs:string` are different constants with
-the same lexical form, and a model that flattened them to RDF terms
-could not state the test the corpus writes.
+the pair preserves the source datatype for lexical-to-value mapping.
+`pred:literal-not-identical` compares decoded VALUES: integer `1` and
+string `"1"` are distinct, while integer `1` and decimal `1.0` are
+identical. `GTerm.decEq` below remains syntactic term equality; it is
+not a datatype-value identity decision.
 
 This REPLACES the earlier `RIF/Core.lean`, which modelled a RIF rule
 as RDF triples. Two models of one thing is the confusion this header

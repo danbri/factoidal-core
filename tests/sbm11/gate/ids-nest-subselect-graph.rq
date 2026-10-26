@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Issue 959: a sub-SELECT inside GRAPH ?g reads the named graph.
+SELECT ?g ?s WHERE { GRAPH ?g { { SELECT ?s WHERE { ?s ex:knows ?o } } } }

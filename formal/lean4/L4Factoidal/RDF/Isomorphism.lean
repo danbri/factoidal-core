@@ -78,6 +78,9 @@ that already agree on labels — the common case for a parser eval test
 — cost one set comparison and never enter the search or the budget.
 -/
 import L4Factoidal.RDF.Graph
+import L4Factoidal.RDF.GraphIndex
+import L4Factoidal.RDF.IsoRefine
+import Std.Data.HashMap
 
 namespace L4Factoidal.RDF
 
@@ -100,6 +103,44 @@ def Term.bnodes : Term → List BNodeId
   | .bnode b          => [b]
   | .literal _        => []
   | .tripleTerm s _ o => s.bnodes ++ o.bnodes
+
+/-! ### The labels of a term nested deep
+
+`Term.bnodes` above is the SPECIFICATION. It takes one native frame for each
+level of triple-term nesting, and the writers of the N-Triples family reach it
+for every triple (`Dataset.relabelForWrite` reads `Dataset.bnodes`): a triple
+term nested 300,000 deep overflowed the stack
+(https://github.com/danbri/factoidal/issues/1003). `Term.bnodesLoop` keeps the
+labels of the subjects of the open triple terms in a list, newest first, and
+reverses it at the innermost term. `Term.bnodes_eq_fast` proves it equal and
+`@[csimp]` makes every caller compiled after it run the loop. -/
+
+/-- The labels of a term, after the labels of `acc` (newest first). -/
+def Term.bnodesLoop : List BNodeId → Term → List BNodeId
+  | acc, .tripleTerm s _ o => Term.bnodesLoop (s.bnodes.reverse ++ acc) o
+  | acc, .iri _ => acc.reverse
+  | acc, .bnode b => acc.reverse ++ [b]
+  | acc, .literal _ => acc.reverse
+
+theorem Term.bnodesLoop_eq : ∀ (t : Term) (acc : List BNodeId),
+    Term.bnodesLoop acc t = acc.reverse ++ t.bnodes
+  | .tripleTerm s p o, acc => by
+      rw [Term.bnodesLoop, Term.bnodesLoop_eq o, Term.bnodes]
+      simp [List.reverse_append, List.append_assoc]
+  | .iri i, acc => by rw [Term.bnodesLoop, Term.bnodes, List.append_nil]
+  | .bnode b, acc => by rw [Term.bnodesLoop, Term.bnodes]
+  | .literal l, acc => by rw [Term.bnodesLoop, Term.bnodes, List.append_nil]
+
+/-- `Term.bnodes` as the loop. -/
+def Term.bnodesFast (t : Term) : List BNodeId := Term.bnodesLoop [] t
+
+/-- Any label list compiled after this line is computed by the loop. -/
+@[csimp] theorem Term.bnodes_eq_fast : @Term.bnodes = @Term.bnodesFast := by
+  funext t
+  rw [Term.bnodesFast, Term.bnodesLoop_eq, List.reverse_nil, List.nil_append]
+
+#print axioms Term.bnodesLoop_eq
+#print axioms Term.bnodes_eq_fast
 
 /-- Blank-node labels occurring in a triple. -/
 def Triple.bnodes (t : Triple) : List BNodeId := t.s.bnodes ++ t.o.bnodes
@@ -129,6 +170,106 @@ def dedupLabels : List BNodeId → List BNodeId
       let r := dedupLabels bs
       if r.contains b then r else b :: r
 
+/-! ### Fast forms of the label utilities (https://github.com/danbri/factoidal/issues/868)
+
+`noDupLabels` and `dedupLabels` compare each label with every other one, so
+they take time in n² for n labels. The forms below keep a hash set of the
+labels seen so far. Each is proved equal to the definition above and is the
+`@[csimp]` replacement, so the compiled code runs it and every theorem about
+the definition still holds. -/
+
+/-- The set of the elements of a list. -/
+def labelSet (l : List BNodeId) : Std.HashSet BNodeId :=
+  l.foldl (fun s x => s.insert x) ∅
+
+theorem contains_foldl_insert (l : List BNodeId) (s : Std.HashSet BNodeId) (x : BNodeId) :
+    (l.foldl (fun s x => s.insert x) s).contains x = (s.contains x || l.contains x) := by
+  induction l generalizing s with
+  | nil => simp
+  | cons y ys ih =>
+    simp only [List.foldl_cons, ih, Std.HashSet.contains_insert, List.contains_cons]
+    cases h1 : (y == x) <;> cases h2 : (x == y) <;> cases s.contains x <;> cases ys.contains x <;>
+      simp_all [beq_iff_eq]
+
+@[simp] theorem labelSet_contains (l : List BNodeId) (x : BNodeId) :
+    (labelSet l).contains x = l.contains x := by
+  simp [labelSet, contains_foldl_insert]
+
+
+
+def noDupAux (seen : Std.HashSet BNodeId) : List BNodeId → Bool
+  | []      => true
+  | b :: bs => if seen.contains b then false else noDupAux (seen.insert b) bs
+
+theorem all_not_insert (bs : List BNodeId) (s : Std.HashSet BNodeId) (b : BNodeId) :
+    bs.all (fun x => !(s.insert b).contains x) =
+      (!bs.contains b && bs.all (fun x => !s.contains x)) := by
+  induction bs with
+  | nil => simp
+  | cons y ys ih =>
+    rw [List.all_cons, ih, List.contains_cons, List.all_cons, Std.HashSet.contains_insert]
+    have hc : (b == y) = (y == b) := by
+      cases h1 : (b == y) <;> cases h2 : (y == b) <;> simp_all [beq_iff_eq]
+    rw [hc]
+    cases (y == b) <;> cases s.contains y <;> cases ys.contains b <;>
+      cases ys.all (fun x => !s.contains x) <;> rfl
+
+theorem noDupAux_eq (seen : Std.HashSet BNodeId) (l : List BNodeId) :
+    noDupAux seen l = (noDupLabels l && l.all (fun x => !seen.contains x)) := by
+  induction l generalizing seen with
+  | nil => rfl
+  | cons b bs ih =>
+    simp only [noDupAux, ih, all_not_insert, noDupLabels, List.all_cons]
+    cases seen.contains b <;> cases bs.contains b <;> cases noDupLabels bs <;>
+      cases bs.all (fun x => !seen.contains x) <;> rfl
+
+def noDupLabelsFast (l : List BNodeId) : Bool := noDupAux ∅ l
+
+@[csimp] theorem noDupLabels_eq_fast : @noDupLabels = @noDupLabelsFast := by
+  funext l
+  simp [noDupLabelsFast, noDupAux_eq]
+
+
+
+def dedupStepH (st : List BNodeId × Std.HashSet BNodeId) (b : BNodeId) :
+    List BNodeId × Std.HashSet BNodeId :=
+  if st.2.contains b then st else (b :: st.1, st.2.insert b)
+
+def dedupLabelsFast (l : List BNodeId) : List BNodeId :=
+  (l.reverse.foldl dedupStepH ([], ∅)).1
+
+theorem dedup_foldr (l : List BNodeId) :
+    (l.foldr (fun b st => dedupStepH st b) ([], ∅)).1 = dedupLabels l ∧
+    ∀ x, (l.foldr (fun b st => dedupStepH st b) ([], ∅)).2.contains x =
+      (l.foldr (fun b st => dedupStepH st b) ([], ∅)).1.contains x := by
+  induction l with
+  | nil => simp [dedupLabels]
+  | cons b bs ih =>
+    obtain ⟨h1, h2⟩ := ih
+    simp only [List.foldr_cons]
+    generalize (bs.foldr (fun b st => dedupStepH st b) ([], ∅)) = st at h1 h2
+    obtain ⟨r, s⟩ := st
+    simp only at h1 h2
+    subst h1
+    unfold dedupStepH
+    by_cases hb : s.contains b = true
+    · simp only [hb, if_true]
+      refine ⟨?_, h2⟩
+      simp only [dedupLabels]
+      rw [if_pos (by rw [← h2]; exact hb)]
+    · simp only [hb, if_false, Bool.false_eq_true]
+      refine ⟨?_, ?_⟩
+      · simp only [dedupLabels]
+        rw [if_neg (by rw [← h2]; exact hb)]
+      · intro x
+        simp only [Std.HashSet.contains_insert, List.contains_cons, h2]
+        cases h3 : (b == x) <;> cases h4 : (x == b) <;> simp_all [beq_iff_eq]
+
+@[csimp] theorem dedupLabels_eq_fast : @dedupLabels = @dedupLabelsFast := by
+  funext l
+  simp only [dedupLabelsFast, List.foldl_reverse]
+  exact (dedup_foldr l).1.symm
+
 /-- The blank-node labels of a graph, without duplicates. -/
 def Graph.bnodes (g : Graph) : List BNodeId :=
   dedupLabels (g.flatMap Triple.bnodes)
@@ -145,6 +286,70 @@ def Graph.dedup : Graph → Graph
   | t :: ts =>
       let r := Graph.dedup ts
       if r.mem t then r else t :: r
+
+/-- One step of `Graph.dedup`: keep `r`, or put `t` in front of it. -/
+def Graph.dedupStep (r : Graph) (t : Triple) : Graph := if r.mem t then r else t :: r
+
+/-- `Graph.dedup` as a left fold over the reversed graph: the same steps in
+the same order, one tail call per triple (https://github.com/danbri/factoidal/issues/752). -/
+def Graph.dedupFast (g : Graph) : Graph := g.reverse.foldl Graph.dedupStep []
+
+theorem Graph.dedup_eq_foldr :
+    ∀ g : Graph, Graph.dedup g = g.foldr (fun t r => Graph.dedupStep r t) []
+  | []      => rfl
+  | t :: ts => by
+      simp only [Graph.dedup, List.foldr_cons, Graph.dedup_eq_foldr ts, Graph.dedupStep]
+
+/-- The compiler runs `Graph.dedupFast` wherever the source says `Graph.dedup`. -/
+theorem Graph.dedup_eq_fast : @Graph.dedup = @Graph.dedupFast := by
+  funext g; rw [Graph.dedup_eq_foldr, Graph.dedupFast, List.foldl_reverse]
+
+
+/-- `Graph.dedup` with a hash set of the keys (`Triple.key`, `RDF/GraphIndex.lean`)
+of the triples kept so far: one set lookup per triple in place of a scan of the
+result (https://github.com/danbri/factoidal/issues/868). `Graph.dedupFast` above
+is the same fold with the scan; it stays proved equal, and this form is the
+`@[csimp]` replacement. -/
+def dedupGStep (st : Graph × Std.HashSet Triple) (t : Triple) : Graph × Std.HashSet Triple :=
+  if st.2.contains t.key then st else (t :: st.1, st.2.insert t.key)
+
+def dedupHash (g : Graph) : Graph := (g.reverse.foldl dedupGStep ([], ∅)).1
+
+theorem dedupG_foldr (g : Graph) :
+    (g.foldr (fun t st => dedupGStep st t) ([], ∅)).1 = Graph.dedup g ∧
+    ∀ k, (g.foldr (fun t st => dedupGStep st t) ([], ∅)).2.contains k = true ↔
+      ∃ u ∈ (g.foldr (fun t st => dedupGStep st t) ([], ∅)).1, u.key = k := by
+  induction g with
+  | nil => simp [Graph.dedup]
+  | cons t ts ih =>
+    obtain ⟨h1, h2⟩ := ih
+    simp only [List.foldr_cons]
+    generalize (ts.foldr (fun t st => dedupGStep st t) ([], ∅)) = st at h1 h2
+    obtain ⟨r, s⟩ := st
+    simp only at h1 h2
+    subst h1
+    have hm : s.contains t.key = Graph.mem t (Graph.dedup ts) := by
+      apply Bool.eq_iff_iff.mpr
+      rw [h2, Graph.mem_iff_key]
+    unfold dedupGStep
+    by_cases hb : s.contains t.key = true
+    · simp only [hb, if_true]
+      refine ⟨?_, h2⟩
+      simp only [Graph.dedup]
+      rw [if_pos (by rw [← hm]; exact hb)]
+    · simp only [hb, if_false, Bool.false_eq_true]
+      refine ⟨?_, ?_⟩
+      · simp only [Graph.dedup]
+        rw [if_neg (by rw [← hm]; exact hb)]
+      · intro k
+        rw [Std.HashSet.contains_insert, Bool.or_eq_true, h2]
+        simp only [beq_iff_eq, List.mem_cons, exists_eq_or_imp]
+
+@[csimp] theorem Graph.dedup_eq_hash : @Graph.dedup = @dedupHash := by
+  funext g
+  simp only [dedupHash, List.foldl_reverse]
+  exact (dedupG_foldr g).1.symm
+
 
 /-! ## Triple-set equality
 
@@ -167,6 +372,26 @@ def Graph.SetEq (g1 g2 : Graph) : Prop := g1.SubsetOf g2 ∧ g2.SubsetOf g1
 
 /-- Decision procedure for `Graph.SubsetOf`. -/
 def Graph.subsetB (g1 g2 : Graph) : Bool := g1.all (fun t => g2.mem t)
+
+
+/-- `Graph.subsetB` with the keys of `g2` in a hash set: time linear in the two
+graphs, where `Graph.mem` scans `g2` for each triple of `g1`
+(https://github.com/danbri/factoidal/issues/868; 161 s for 52,800 quads before).
+`GraphIx.contains_insertKeys` and `Graph.mem_iff_key` prove a set lookup of the
+key equal to `Graph.mem`. -/
+def Graph.subsetBFast (g1 g2 : Graph) : Bool :=
+  let ks := GraphIx.insertKeys ∅ g2
+  g1.all (fun t => ks.contains t.key)
+
+theorem Graph.contains_insertKeys_empty (g : Graph) (t : Triple) :
+    (GraphIx.insertKeys ∅ g).contains t.key = g.mem t := by
+  apply Bool.eq_iff_iff.mpr
+  rw [GraphIx.contains_insertKeys, Graph.mem_iff_key]
+  simp
+
+@[csimp] theorem Graph.subsetB_eq_fast : @Graph.subsetB = @Graph.subsetBFast := by
+  funext g1 g2
+  simp only [Graph.subsetB, Graph.subsetBFast, Graph.contains_insertKeys_empty]
 
 /-- Decision procedure for `Graph.SetEq`. -/
 def Graph.setEqB (g1 g2 : Graph) : Bool := g1.subsetB g2 && g2.subsetB g1
@@ -212,13 +437,28 @@ Soundness of the pruning: renaming blank nodes changes neither the
 predicate, nor any IRI or literal, nor which occurrences are `b`
 itself — so a real isomorphism maps `b` only to a blank node with an
 equal signature, and restricting candidates this way can never lose a
-mapping that the certificate would have accepted... with one
-qualification, recorded honestly: the key writes literals out
-lexically after folding the language tag, so two literals that
-`Literal.eqb` equates through `rdf:XMLLiteral` canonicalisation get
-DIFFERENT keys. That can only make the search give up early, never
-make it accept — the certificate is the sole arbiter of a `true`
-answer — and the identity fast path covers the case in practice. -/
+mapping that the certificate would have accepted. That needs the key
+to equate every pair of literals `Literal.eqb` equates: the language
+tag is folded to lower case (`langTagOptionEq` case-folds), and an
+`rdf:XMLLiteral` lexical form is written as its exclusive canonical
+form (`XmlCanon.canonicalize`; `Literal.eqb` compares XML literals by
+`XmlCanon.xmlCanonEq`, which is equality of those forms).
+
+Until 2026-10-10 the key wrote the XML literal's lexical form as it
+stood, so two literals `Literal.eqb` equates through canonicalisation
+got DIFFERENT keys and the search gave up on a real isomorphism. The
+W3C rdf12 test `rdf-xml/eval/rdf12-xml-an-14` showed it: the parser
+writes the ambient namespace declarations onto `<br/>`, the expected
+N-Triples writes `<br></br>`, and the triples that carry the literal
+also carry a blank node (`rdf:annotationNodeID`), so the identity fast
+path did not apply. -/
+
+/-- The lexical form a signature key writes for a literal: the
+exclusive canonical form for `rdf:XMLLiteral`, the lexical form
+otherwise. -/
+def sigLexical (l : Literal) : String :=
+  if l.datatype == rdfXMLLiteral then String.ofList (XmlCanon.canonicalize l.lexicalForm)
+  else l.lexicalForm
 
 private def dirKey : Option TextDirection → String
   | none      => "-"
@@ -235,7 +475,7 @@ def Term.sigKey (b : BNodeId) : Term → String
   | .iri i     => "I<" ++ i.val ++ ">"
   | .bnode c   => if c == b then "S" else "B"
   | .literal l =>
-      "L<" ++ l.val.lexicalForm ++ ">^<" ++ l.val.datatype.val ++ ">@"
+      "L<" ++ sigLexical l.val ++ ">^<" ++ l.val.datatype.val ++ ">@"
         ++ (l.val.langTag.getD "").toLower ++ dirKey l.val.direction
   | .tripleTerm s p o =>
       "T(" ++ Subject.sigKey b s ++ " I<" ++ p.val ++ "> "
@@ -302,6 +542,58 @@ renaming `g1` by it yields exactly `g2`'s triple set. -/
 def Graph.isoCert (m : List (BNodeId × BNodeId)) (g1 g2 : Graph)
     (bs1 bs2 : List BNodeId) : Bool :=
   bijectiveCert m bs1 bs2 && Graph.setEqB (g1.renameBnodes (mapWith m)) g2
+
+
+/-- `bijectiveCert` with hash sets for the three containment tests. -/
+def bijectiveCertFast (m : List (BNodeId × BNodeId)) (bs1 bs2 : List BNodeId) : Bool :=
+  noDupLabels (mapDomain m) &&
+  noDupLabels (mapImage m) &&
+  (let s1 := labelSet bs1; m.all (fun p => s1.contains p.1)) &&
+  (let sd := labelSet (mapDomain m); bs1.all (fun b => sd.contains b)) &&
+  (let si := labelSet (mapImage m); bs2.all (fun b => si.contains b))
+
+@[csimp] theorem bijectiveCert_eq_fast : @bijectiveCert = @bijectiveCertFast := by
+  funext m bs1 bs2
+  simp only [bijectiveCert, bijectiveCertFast, labelSet_contains]
+
+/-- `mapWith m` looks a label up with `List.find?`, a scan of `m`. The table
+below answers the same lookup from a hash map built once per mapping
+(`mapWith_eq_table`); the certificates use it through their `@[csimp]` forms. -/
+def mapTable (m : List (BNodeId × BNodeId)) : Std.HashMap BNodeId BNodeId :=
+  m.reverse.foldl (fun h p => h.insert p.1 p.2) ∅
+
+def mapWithTable (h : Std.HashMap BNodeId BNodeId) (b : BNodeId) : BNodeId :=
+  match h[b]? with
+  | some c => c
+  | none   => b
+
+theorem mapTable_get (m : List (BNodeId × BNodeId)) (b : BNodeId) :
+    (m.foldr (fun p h => h.insert p.1 p.2) (∅ : Std.HashMap BNodeId BNodeId))[b]? =
+      (m.find? (fun p => p.1 == b)).map Prod.snd := by
+  induction m with
+  | nil => simp
+  | cons p ps ih =>
+    simp only [List.foldr_cons, Std.HashMap.getElem?_insert, ih, List.find?_cons]
+    cases h : (p.1 == b) <;> simp
+
+theorem mapWith_eq_table (m : List (BNodeId × BNodeId)) :
+    mapWith m = mapWithTable (mapTable m) := by
+  funext b
+  have := mapTable_get m b
+  simp only [mapTable, List.foldl_reverse]
+  unfold mapWith mapWithTable
+  rw [this]
+  cases m.find? (fun p => p.1 == b) <;> rfl
+
+/-- `Graph.isoCert` with the mapping as a hash map. -/
+def Graph.isoCertFast (m : List (BNodeId × BNodeId)) (g1 g2 : Graph)
+    (bs1 bs2 : List BNodeId) : Bool :=
+  bijectiveCert m bs1 bs2 &&
+    (let h := mapTable m; Graph.setEqB (g1.renameBnodes (mapWithTable h)) g2)
+
+@[csimp] theorem Graph.isoCert_eq_fast : @Graph.isoCert = @Graph.isoCertFast := by
+  funext m g1 g2 bs1 bs2
+  simp only [Graph.isoCert, Graph.isoCertFast, mapWith_eq_table]
 
 /-! ## The search
 
@@ -432,21 +724,31 @@ def Graph.isoSearchStepFull (g1 g2 : Graph) :
   else if !Graph.setEqB g1.ground g2.ground then (none, isoWorkBudget)
   else if g1.bnodes.length > isoBnodeBudget then (none, 0)
   else
+    -- The signature tables are computed once here, not inside the candidate
+    -- test, which the search calls once per candidate pair (issue 868).
+    let t1 := g1.sigTable
+    let t2 := g2.sigTable
     searchBijectionFuel
       (fun m => Graph.isoCert m g1 g2 g1.bnodes g2.bnodes)
-      (fun b1 b2 => keyMultisetEq (sigLookup g1.sigTable b1)
-                                  (sigLookup g2.sigTable b2))
+      (fun b1 b2 => keyMultisetEq (sigLookup t1 b1) (sigLookup t2 b2))
       g1.bnodes g2.bnodes [] isoWorkBudget
 
 def Graph.isoSearchStep (g1 g2 : Graph) : Option (List (BNodeId × BNodeId)) :=
   (Graph.isoSearchStepFull g1 g2).1
 
 /-- Candidate mapping: the identity first (the common eval-test case,
-one set comparison, no search and no budget), then the search. -/
+one set comparison, no search and no budget), then the mapping of colour
+refinement (`RDF/IsoRefine.lean`, certified inside it; no blank-node limit),
+then the search. -/
 def Graph.isoSearch (g1 g2 : Graph) : Option (List (BNodeId × BNodeId)) :=
   if Graph.isoCert g1.idMapping g1 g2 g1.bnodes g2.bnodes
   then some g1.idMapping
-  else Graph.isoSearchStep g1 g2
+  else
+    match IsoRefine.candidate (IsoRefine.graphQuads g1) (IsoRefine.graphQuads g2)
+            g1.bnodes g2.bnodes (fun m => Graph.isoCert m g1 g2 g1.bnodes g2.bnodes) with
+    | some m =>
+        if Graph.isoCert m g1 g2 g1.bnodes g2.bnodes then some m else Graph.isoSearchStep g1 g2
+    | none   => Graph.isoSearchStep g1 g2
 
 /-- The mapping search for graphs. Returns the WITNESS, not just a
 Bool, and certifies it on the way out, so soundness needs NOTHING from
@@ -563,6 +865,22 @@ def Dataset.checkMapping (m : List (BNodeId × BNodeId)) (ds1 ds2 : Dataset) : B
     | none    => false) &&
   Dataset.namesMatchB m ds1 ds2
 
+
+/-- `Dataset.checkMapping` with the mapping as a hash map. -/
+def Dataset.checkMappingFast (m : List (BNodeId × BNodeId)) (ds1 ds2 : Dataset) : Bool :=
+  let h := mapTable m
+  Graph.setEqB (ds1.default.renameBnodes (mapWithTable h)) ds2.default &&
+  ds1.named.all (fun ng =>
+    match ds2.lookupNamed (ng.name.renameBnodes (mapWithTable h)) with
+    | some g2 => Graph.setEqB (ng.graph.renameBnodes (mapWithTable h)) g2
+    | none    => false) &&
+  Dataset.namesMatchB m ds1 ds2
+
+@[csimp] theorem Dataset.checkMapping_eq_fast :
+    @Dataset.checkMapping = @Dataset.checkMappingFast := by
+  funext m ds1 ds2
+  simp only [Dataset.checkMapping, Dataset.checkMappingFast, mapWith_eq_table]
+
 /-- The full certificate for datasets. -/
 def Dataset.isoCert (m : List (BNodeId × BNodeId)) (ds1 ds2 : Dataset)
     (bs1 bs2 : List BNodeId) : Bool :=
@@ -601,10 +919,11 @@ def Dataset.isoSearchStepFull (ds1 ds2 : Dataset) :
   else if !Dataset.namesPrune ds1 ds2 then (none, isoWorkBudget)
   else if ds1.bnodes.length > isoBnodeBudget then (none, 0)
   else
+    let t1 := ds1.flatten.sigTable
+    let t2 := ds2.flatten.sigTable
     searchBijectionFuel
       (fun m => Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes)
-      (fun b1 b2 => keyMultisetEq (sigLookup ds1.flatten.sigTable b1)
-                                  (sigLookup ds2.flatten.sigTable b2))
+      (fun b1 b2 => keyMultisetEq (sigLookup t1 b1) (sigLookup t2 b2))
       ds1.bnodes ds2.bnodes [] isoWorkBudget
 
 def Dataset.isoSearchStep (ds1 ds2 : Dataset) :
@@ -614,7 +933,12 @@ def Dataset.isoSearchStep (ds1 ds2 : Dataset) :
 def Dataset.isoSearch (ds1 ds2 : Dataset) : Option (List (BNodeId × BNodeId)) :=
   if Dataset.isoCert ds1.idMapping ds1 ds2 ds1.bnodes ds2.bnodes
   then some ds1.idMapping
-  else Dataset.isoSearchStep ds1 ds2
+  else
+    match IsoRefine.candidate (IsoRefine.datasetQuads ds1) (IsoRefine.datasetQuads ds2)
+            ds1.bnodes ds2.bnodes (fun m => Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes) with
+    | some m =>
+        if Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes then some m else Dataset.isoSearchStep ds1 ds2
+    | none   => Dataset.isoSearchStep ds1 ds2
 
 /-- The mapping search for datasets. Same shape as the graph one; the
 signature pruning uses the flattened dataset, the certificate does
@@ -633,6 +957,159 @@ def Dataset.isomorphic? (ds1 ds2 : Dataset) : Bool :=
 /-- Dataset comparison with the three-way outcome. -/
 def Dataset.isomorphicOutcome (ds1 ds2 : Dataset) : IsoOutcome :=
   if (ds1.isomorphismMap? ds2).isSome then .equal
+  else if ds1.bnodes.length > isoBnodeBudget || ds2.bnodes.length > isoBnodeBudget
+  then .budgetExceeded
+  else if (Dataset.isoSearchStepFull ds1 ds2).2 == 0 then .budgetExceeded
+  else .notEqual
+
+/-! ## The executable forms: each certificate runs once
+
+`isomorphismMap?` certifies the mapping of `isoSearch` again, and
+`isoSearch` certifies the mapping of `IsoRefine.candidate` again, which
+`candidate` already certified (`IsoRefine.candidate_cert`). So an
+`equal` answer from colour refinement ran the full certificate three
+times, and the blank-node lists `Dataset.bnodes` five times
+(https://github.com/danbri/factoidal/issues/868, measured 2026-10-18:
+the certificate was 23 per cent of the instructions of
+`l4sbm11-w3c compare` at 52,800 quads). The forms below compute the
+blank-node lists once and run each certificate once. The `@[csimp]`
+theorems prove them equal to the definitions above, so every theorem
+about those definitions holds of the compiled code. -/
+
+def Graph.isomorphismMapFast? (g1 g2 : Graph) : Option (List (BNodeId × BNodeId)) :=
+  let bs1 := g1.bnodes
+  let bs2 := g2.bnodes
+  let idm := bs1.map (fun b => (b, b))
+  if Graph.isoCert idm g1 g2 bs1 bs2 then some idm
+  else
+    match IsoRefine.candidate (IsoRefine.graphQuads g1) (IsoRefine.graphQuads g2)
+            bs1 bs2 (fun m => Graph.isoCert m g1 g2 bs1 bs2) with
+    | some m => some m
+    | none =>
+        match Graph.isoSearchStep g1 g2 with
+        | some m => if Graph.isoCert m g1 g2 bs1 bs2 then some m else none
+        | none => none
+
+@[csimp] theorem Graph.isomorphismMap_eq_fast :
+    @Graph.isomorphismMap? = @Graph.isomorphismMapFast? := by
+  funext g1 g2
+  unfold Graph.isomorphismMap? Graph.isomorphismMapFast? Graph.isoSearch Graph.idMapping
+  by_cases hid : Graph.isoCert (g1.bnodes.map (fun b => (b, b))) g1 g2 g1.bnodes g2.bnodes = true
+  · simp only [hid, ↓reduceIte]
+  · simp only [hid, Bool.false_eq_true, ↓reduceIte]
+    cases hc : IsoRefine.candidate (IsoRefine.graphQuads g1) (IsoRefine.graphQuads g2)
+          g1.bnodes g2.bnodes (fun m => Graph.isoCert m g1 g2 g1.bnodes g2.bnodes) with
+    | none => rfl
+    | some m =>
+      have hm : Graph.isoCert m g1 g2 g1.bnodes g2.bnodes = true := IsoRefine.candidate_cert hc
+      simp only [hm, ↓reduceIte]
+
+def Graph.isomorphicOutcomeFast (g1 g2 : Graph) : IsoOutcome :=
+  if (g1.isomorphismMapFast? g2).isSome then .equal
+  else if g1.bnodes.length > isoBnodeBudget || g2.bnodes.length > isoBnodeBudget
+  then .budgetExceeded
+  else if (Graph.isoSearchStepFull g1 g2).2 == 0 then .budgetExceeded
+  else .notEqual
+
+@[csimp] theorem Graph.isomorphicOutcome_eq_fast :
+    @Graph.isomorphicOutcome = @Graph.isomorphicOutcomeFast := by
+  funext g1 g2
+  simp only [Graph.isomorphicOutcome, Graph.isomorphicOutcomeFast, Graph.isomorphismMap_eq_fast]
+
+def Graph.isomorphicFast? (g1 g2 : Graph) : Bool := (g1.isomorphismMapFast? g2).isSome
+
+@[csimp] theorem Graph.isomorphic_eq_fast : @Graph.isomorphic? = @Graph.isomorphicFast? := by
+  funext g1 g2
+  simp only [Graph.isomorphic?, Graph.isomorphicFast?, Graph.isomorphismMap_eq_fast]
+
+def Dataset.isomorphismMapFast? (ds1 ds2 : Dataset) : Option (List (BNodeId × BNodeId)) :=
+  let bs1 := ds1.bnodes
+  let bs2 := ds2.bnodes
+  let idm := bs1.map (fun b => (b, b))
+  if Dataset.isoCert idm ds1 ds2 bs1 bs2 then some idm
+  else
+    match IsoRefine.candidate (IsoRefine.datasetQuads ds1) (IsoRefine.datasetQuads ds2)
+            bs1 bs2 (fun m => Dataset.isoCert m ds1 ds2 bs1 bs2) with
+    | some m => some m
+    | none =>
+        match Dataset.isoSearchStep ds1 ds2 with
+        | some m => if Dataset.isoCert m ds1 ds2 bs1 bs2 then some m else none
+        | none => none
+
+@[csimp] theorem Dataset.isomorphismMap_eq_fast :
+    @Dataset.isomorphismMap? = @Dataset.isomorphismMapFast? := by
+  funext ds1 ds2
+  unfold Dataset.isomorphismMap? Dataset.isomorphismMapFast? Dataset.isoSearch Dataset.idMapping
+  by_cases hid :
+      Dataset.isoCert (ds1.bnodes.map (fun b => (b, b))) ds1 ds2 ds1.bnodes ds2.bnodes = true
+  · simp only [hid, ↓reduceIte]
+  · simp only [hid, Bool.false_eq_true, ↓reduceIte]
+    cases hc : IsoRefine.candidate (IsoRefine.datasetQuads ds1) (IsoRefine.datasetQuads ds2)
+          ds1.bnodes ds2.bnodes (fun m => Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes) with
+    | none => rfl
+    | some m =>
+      have hm : Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes = true := IsoRefine.candidate_cert hc
+      simp only [hm, ↓reduceIte]
+
+def Dataset.isomorphicOutcomeFast (ds1 ds2 : Dataset) : IsoOutcome :=
+  if (ds1.isomorphismMapFast? ds2).isSome then .equal
+  else if ds1.bnodes.length > isoBnodeBudget || ds2.bnodes.length > isoBnodeBudget
+  then .budgetExceeded
+  else if (Dataset.isoSearchStepFull ds1 ds2).2 == 0 then .budgetExceeded
+  else .notEqual
+
+@[csimp] theorem Dataset.isomorphicOutcome_eq_fast :
+    @Dataset.isomorphicOutcome = @Dataset.isomorphicOutcomeFast := by
+  funext ds1 ds2
+  simp only [Dataset.isomorphicOutcome, Dataset.isomorphicOutcomeFast,
+    Dataset.isomorphismMap_eq_fast]
+
+def Dataset.isomorphicFast? (ds1 ds2 : Dataset) : Bool := (ds1.isomorphismMapFast? ds2).isSome
+
+@[csimp] theorem Dataset.isomorphic_eq_fast :
+    @Dataset.isomorphic? = @Dataset.isomorphicFast? := by
+  funext ds1 ds2
+  simp only [Dataset.isomorphic?, Dataset.isomorphicFast?, Dataset.isomorphismMap_eq_fast]
+
+/-! ## The procedure without colour refinement
+
+`isoSearchRef` is `isoSearch` as it was before colour refinement
+(https://github.com/danbri/factoidal/issues/868): the identity, then the
+bijection search. The outcome functions built on it are the reference of the
+differential tests (`IsomorphismTests.lean`) and of the theorems
+`Graph.isomorphicOutcome_vs_ref` and `Dataset.isomorphicOutcome_vs_ref`
+(`IsomorphismTheorems.lean`): the outcome is the reference outcome, or it is
+`equal` and the inputs are isomorphic. -/
+
+def Graph.isoSearchRef (g1 g2 : Graph) : Option (List (BNodeId × BNodeId)) :=
+  if Graph.isoCert g1.idMapping g1 g2 g1.bnodes g2.bnodes
+  then some g1.idMapping
+  else Graph.isoSearchStep g1 g2
+
+def Graph.isomorphismMapRef? (g1 g2 : Graph) : Option (List (BNodeId × BNodeId)) :=
+  match Graph.isoSearchRef g1 g2 with
+  | some m => if Graph.isoCert m g1 g2 g1.bnodes g2.bnodes then some m else none
+  | none   => none
+
+def Graph.isomorphicOutcomeRef (g1 g2 : Graph) : IsoOutcome :=
+  if (g1.isomorphismMapRef? g2).isSome then .equal
+  else if g1.bnodes.length > isoBnodeBudget || g2.bnodes.length > isoBnodeBudget
+  then .budgetExceeded
+  else if (Graph.isoSearchStepFull g1 g2).2 == 0 then .budgetExceeded
+  else .notEqual
+
+def Dataset.isoSearchRef (ds1 ds2 : Dataset) : Option (List (BNodeId × BNodeId)) :=
+  if Dataset.isoCert ds1.idMapping ds1 ds2 ds1.bnodes ds2.bnodes
+  then some ds1.idMapping
+  else Dataset.isoSearchStep ds1 ds2
+
+def Dataset.isomorphismMapRef? (ds1 ds2 : Dataset) : Option (List (BNodeId × BNodeId)) :=
+  match Dataset.isoSearchRef ds1 ds2 with
+  | some m => if Dataset.isoCert m ds1 ds2 ds1.bnodes ds2.bnodes then some m else none
+  | none   => none
+
+def Dataset.isomorphicOutcomeRef (ds1 ds2 : Dataset) : IsoOutcome :=
+  if (ds1.isomorphismMapRef? ds2).isSome then .equal
   else if ds1.bnodes.length > isoBnodeBudget || ds2.bnodes.length > isoBnodeBudget
   then .budgetExceeded
   else if (Dataset.isoSearchStepFull ds1 ds2).2 == 0 then .budgetExceeded

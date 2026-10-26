@@ -3,7 +3,8 @@ Harness.Differential — `l4diff`: the same (dataset, query) pair run
 through the F* native binary (`bin/<platform>/factoidal`) and through
 the Lean evaluator, compared with the W3C harness's own comparator.
 
-    l4diff [--fstar BIN] [--gen N] [--seed S] [--tmp DIR] [--verbose] [manifest.ttl ...]
+    l4diff [--fstar BIN] [--lean-cli PATH] [--gen N] [--seed S] [--tmp DIR] [--verbose]
+           [manifest.ttl ...]
 
 Corpus:
   * every `QueryEvaluationTest` / `CSVResultFormatTest` of the
@@ -20,6 +21,23 @@ outside `L4Factoidal/`. The query is run with `-o json` (SELECT / ASK,
 read back with `parseSrj`) or `-o ntriples` (CONSTRUCT, read back with
 `parseNTriples`); the Lean side is `parseSparql` + `evalSelect` /
 `evalAsk` / `evalConstruct`, the path `Harness/Run.lean` takes.
+
+`--lean-cli PATH` runs the Lean side through the Lean command line
+(`l4factoidal query`, `Wasm/Cli.lean`) instead of the library, with the
+query FILE the F* side gets, and compares its PRINTED answer: SPARQL
+Results JSON for SELECT, `true`/`false` for ASK, N-Triples for CONSTRUCT.
+The data: a test with one `qt:data` file and no `qt:graphData` gives the
+CLI that file (format by extension, base = the file's IRI, as
+`parseDataFile`); any other test gives it the test's dataset as one
+N-Quads file under `--tmp` (the CLI reads one dataset), each `qt:graphData`
+graph named by its file's IRI. A generated case gives the CLI the same
+`.nt` and `.rq` files as the F* side. The default mode compares the Lean
+LIBRARY with the F* COMMAND LINE, so it cannot see a defect of the Lean
+command line or of the Lean serialisers; on 2026-10-10 two such defects
+(https://github.com/danbri/factoidal/issues/741 and
+https://github.com/danbri/factoidal/issues/742) were in the items the
+default mode reported as Lean-correct (design note,
+`docs/designissues/2026-10-10-lean-vs-fstar-differential.md`, "Correction").
 
 Outcomes per case: `agree` / `disagree` / `tie-order` / `fstar-error`
 / `lean-error` / `skipped`. `tie-order` is a disagreement that
@@ -121,51 +139,160 @@ def showGraph (g : Graph) : String :=
 
 /-! ## The comparison — pure -/
 
-/-- Compare the F* output text with the Lean evaluation of `q` over
-`ds`. `queryText` is echoed into every non-agreeing line. -/
-def compareOutputs (queryText : String) (env : EvalEnv) (ds : Dataset) (q : Query)
-    (fstarOut : String) : DiffOutcome :=
-  let tag := s!"query: {queryText.replace "\n" " "}"
+/-- The Lean side's answer: from the library (`leanLibAnswer`) or read
+back from the Lean command line's output (`leanCliAnswer`). -/
+inductive LeanAnswer where
+  | rows    (rows : List Binding)
+  | boolean (b : Bool)
+  | graph   (g : Graph)
+  | failed  (msg : String)
+  | skip    (reason : String)
+
+def describeSkip : String := "DESCRIBE (the F* tree answers it with the empty graph)"
+
+/-- The Lean library's answer to `q` over `ds`. -/
+def leanLibAnswer (env : EvalEnv) (ds : Dataset) (q : Query) : LeanAnswer :=
+  -- Federated Query §2.3: the Lean answer is the error when a SERVICE
+  -- call without SILENT fails (`Query.serviceFailure`).
+  match q.serviceFailure env ds with
+  | some f => .failed f.message
+  | none =>
   match q.form with
-  | .describe _ => .skipped "DESCRIBE (neither tree fixes a description policy)"
+  | .describe _  => .skip describeSkip
+  | .ask         => .boolean (evalAsk env ds q)
+  | .select _    => .rows (evalSelect env ds q).2
+  | .construct _ => .graph (evalConstruct env ds q)
+
+/-- SELECT: the F* rows against the Lean rows. -/
+def selectOutcome (tag : String) (q : Query) (frows lrows : List Binding) : DiffOutcome :=
+  let n := frows.length + lrows.length
+  let ordered := q.modifier.orderBy.isSome
+  let detail := s!"{tag}; F* rows: {showRows frows}; Lean rows: {showRows lrows}"
+  match compareSelectRows ordered false frows lrows with
+  | .equal => .agree n
+  | .budgetExceeded => .disagree s!"{tag}; bijection budget exceeded" n
+  | .notEqual =>
+      if ordered && compareSelectRows false false frows lrows == .equal then
+        .tieOrder detail n
+      else .disagree detail n
+
+/-- CONSTRUCT: the F* graph against the Lean graph. -/
+def constructOutcome (tag : String) (fg lg : Graph) : DiffOutcome :=
+  let n := fg.length + lg.length
+  match Graph.isomorphicOutcome fg lg with
+  | .equal => .agree n
+  | .budgetExceeded => .disagree s!"{tag}; isomorphism budget exceeded" n
+  | .notEqual => .disagree s!"{tag}; F* graph: {showGraph fg}; Lean graph: {showGraph lg}" n
+
+/-- Compare the F* output text with the Lean answer to `q`. `queryText`
+is echoed into every non-agreeing line. -/
+def compareAnswers (queryText : String) (q : Query) (fstarOut : String)
+    (lean : LeanAnswer) : DiffOutcome :=
+  let tag := s!"query: {queryText.replace "\n" " "}"
+  match lean with
+  | .failed m => .leanError s!"{m}; {tag}"
+  | .skip r   => .skipped r
+  | _ =>
+  match q.form with
+  | .describe _ => .skipped describeSkip
   | .ask =>
       match parseSrj fstarOut with
       | .error e => .fstarError s!"F* JSON did not parse ({e}): {firstLine fstarOut}"
       | .ok (.boolean b) =>
-          let a := evalAsk env ds q
-          if a == b then .agree 1 else .disagree s!"{tag}; F* {b}; Lean {a}" 1
+          match lean with
+          | .boolean a =>
+              if a == b then .agree 1 else .disagree s!"{tag}; F* {b}; Lean {a}" 1
+          | _ => .leanError s!"the Lean side gave no boolean for an ASK; {tag}"
       | .ok (.bindings _ _) => .disagree s!"{tag}; F* returned bindings for an ASK" 0
   | .select _ =>
       match parseSrj fstarOut with
       | .error e => .fstarError s!"F* JSON did not parse ({e}): {firstLine fstarOut}"
       | .ok (.boolean _) => .disagree s!"{tag}; F* returned a boolean for a SELECT" 0
       | .ok (.bindings _ frows) =>
-          let lrows := (evalSelect env ds q).2
-          let n := frows.length + lrows.length
-          let ordered := q.modifier.orderBy.isSome
-          let detail := s!"{tag}; F* rows: {showRows frows}; Lean rows: {showRows lrows}"
-          match compareSelectRows ordered false frows lrows with
-          | .equal => .agree n
-          | .budgetExceeded => .disagree s!"{tag}; bijection budget exceeded" n
-          | .notEqual =>
-              if ordered && compareSelectRows false false frows lrows == .equal then
-                .tieOrder detail n
-              else .disagree detail n
+          match lean with
+          | .rows lrows => selectOutcome tag q frows lrows
+          | _ => .leanError s!"the Lean side gave no rows for a SELECT; {tag}"
   | .construct _ =>
       match parseNTriples fstarOut .rdf11 with
       | .error e => .fstarError s!"F* N-Triples did not parse ({e.msg} at {e.pos}): {firstLine fstarOut}"
       | .ok fg =>
-          let lg := evalConstruct env ds q
-          let n := fg.length + lg.length
-          match Graph.isomorphicOutcome fg lg with
-          | .equal => .agree n
-          | .budgetExceeded => .disagree s!"{tag}; isomorphism budget exceeded" n
-          | .notEqual =>
-              .disagree s!"{tag}; F* graph: {showGraph fg}; Lean graph: {showGraph lg}" n
+          match lean with
+          | .graph lg => constructOutcome tag fg lg
+          | _ => .leanError s!"the Lean side gave no graph for a CONSTRUCT; {tag}"
+
+/-- The default mode: the F* output against the Lean library's answer. -/
+def compareOutputs (queryText : String) (env : EvalEnv) (ds : Dataset) (q : Query)
+    (fstarOut : String) : DiffOutcome :=
+  compareAnswers queryText q fstarOut (leanLibAnswer env ds q)
+
+/-! ## The Lean command line (`--lean-cli`) -/
+
+/-- Read the Lean command line's printed answer back (`l4factoidal query`:
+SPARQL Results JSON for SELECT; `true` exit 0 / `false` exit 1 for ASK;
+N-Triples for CONSTRUCT; an error is exit 1 with the message on stderr). -/
+def leanCliAnswer (cli : String) (q : Query) (args : List String) : IO LeanAnswer := do
+  match q.form with
+  | .describe _ => return .skip describeSkip
+  | _ =>
+  let (rc, out, err) ← runFstar cli ("query" :: args)
+  let failed := LeanAnswer.failed s!"Lean CLI exit {rc}: {firstLine (err ++ out)}"
+  let word := String.ofList (out.toList.filter (fun c => !c.isWhitespace))
+  match q.form with
+  | .ask =>
+      if rc == 0 && word == "true" then return .boolean true
+      else if rc == 1 && word == "false" then return .boolean false
+      else return failed
+  | .select _ =>
+      if rc != 0 then return failed
+      match parseSrj out with
+      | .ok (.bindings _ rows) => return .rows rows
+      | .ok (.boolean _) => return .failed "Lean CLI printed a boolean for a SELECT"
+      | .error e => return .failed s!"Lean CLI JSON did not parse ({e}): {firstLine out}"
+  | _ =>
+      if rc != 0 then return failed
+      match parseNTriples out .rdf11 with
+      | .ok g => return .graph g
+      | .error e =>
+          return .failed s!"Lean CLI N-Triples did not parse ({e.msg} at {e.pos}): {firstLine out}"
+
+/-- The outcome in `--lean-cli` mode. The Lean command line runs even when
+the F* run failed, and its failure is counted first: a defect the two command
+lines share (issues 739 and 741: no base IRI for the query) is then a
+`lean-error`, and is not hidden behind the `fstar-error`. -/
+def cliOutcome (queryText : String) (q : Query) (rc : UInt32) (out err : String)
+    (lean : LeanAnswer) : DiffOutcome :=
+  let tag := s!"query: {queryText.replace "\n" " "}"
+  match lean with
+  | .failed m =>
+      if rc != 0 then .leanError s!"{m}; F* also failed, exit {rc}: {firstLine (err ++ out)}; {tag}"
+      else .leanError s!"{m}; {tag}"
+  | _ =>
+      if rc != 0 then .fstarError s!"exit {rc}: {firstLine (err ++ out)}; {tag}"
+      else compareAnswers queryText q out lean
+
+/-- The `--format` tag for a data file, by extension (as `parseDataFile`). -/
+def cliFormatOf (path : String) : String :=
+  if path.endsWith ".nt" then "ntriples"
+  else if path.endsWith ".nq" then "nquads"
+  else if path.endsWith ".trig" then "trig"
+  else if path.endsWith ".rdf" then "rdfxml"
+  else "turtle"
+
+/-- The Lean command line's data arguments for a W3C test: its one data
+file, or the loaded dataset as one N-Quads file under `tmp`. -/
+def cliDataArgs (tmp : String) (tc : TestCase) (ds : Dataset) : IO (List String) := do
+  match tc.dataFiles, tc.graphData with
+  | [f], [] => return [f, "--format", cliFormatOf f, "--base", "file://" ++ f]
+  | _, _ =>
+      IO.FS.createDirAll tmp
+      let nq := tmp ++ "/lean_cli_dataset.nq"
+      IO.FS.writeFile nq (Dataset.toCanonicalNQuads ds)
+      return [nq, "--format", "nquads"]
 
 /-! ## W3C corpus -/
 
-def diffTestCase (bin : String) (tc : TestCase) : IO DiffOutcome := do
+def diffTestCase (bin : String) (leanCli : Option String) (tmp : String) (tc : TestCase) :
+    IO DiffOutcome := do
   if tc.testType != "QueryEvaluationTest" && tc.testType != "CSVResultFormatTest" then
     return .skipped s!"not a query evaluation test ({tc.testType})"
   if !tc.entailmentRegimes.isEmpty then
@@ -196,17 +323,23 @@ def diffTestCase (bin : String) (tc : TestCase) : IO DiffOutcome := do
               tc.graphData.flatMap (fun (iri, f) => ["-n", iri ++ "=" ++ f]) ++
               ["--query", qf, "-o", fmt]
   let (rc, out, err) ← runFstar bin args
+  match leanCli with
+  | some cli =>
+      let dataArgs ← cliDataArgs tmp tc ds
+      let lean ← leanCliAnswer cli q (dataArgs ++ ["--query", qf])
+      return cliOutcome qtext q rc out err lean
+  | none =>
   if rc != 0 then
     return .fstarError s!"exit {rc}: {firstLine (err ++ out)}; query: {qtext.replace "\n" " "}"
   let env : EvalEnv := { now := some fixedNow, services := services, base := q.base }
   return compareOutputs qtext env ds q out
 
 /-- Walk one manifest (following includes) and diff every entry. -/
-def diffManifest : Nat → String → System.FilePath → Bool → IO DiffScore
-  | 0, _, path, _ => do
+def diffManifest : Nat → String → Option String → String → System.FilePath → Bool → IO DiffScore
+  | 0, _, _, _, path, _ => do
       IO.println s!"  (mf:include nesting too deep: {path})"
       return {}
-  | depth + 1, bin, path, verbose => do
+  | depth + 1, bin, leanCli, tmp, path, verbose => do
     let label := suiteLabel path.toString
     match ← loadManifest path with
     | none =>
@@ -227,13 +360,13 @@ def diffManifest : Nat → String → System.FilePath → Bool → IO DiffScore
         if tests.isEmpty && !includes.isEmpty then
           let mut total : DiffScore := {}
           for inc in includes do
-            total := total.add (← diffManifest depth bin (System.FilePath.mk inc) verbose)
+            total := total.add (← diffManifest depth bin leanCli tmp (System.FilePath.mk inc) verbose)
           IO.println (DiffScore.line (label ++ " (all)") total)
           return total
         else
           let mut score : DiffScore := {}
           for tc in tests do
-            let r ← diffTestCase bin tc
+            let r ← diffTestCase bin leanCli tmp tc
             score := score.bump r
             if verbose || !r.isQuiet then IO.println (r.line tc.name)
           IO.println (DiffScore.line label score)
@@ -241,7 +374,8 @@ def diffManifest : Nat → String → System.FilePath → Bool → IO DiffScore
 
 /-! ## Generated corpus -/
 
-def diffGenerated (bin tmp : String) (seed : Nat) : IO (Case × DiffOutcome) := do
+def diffGenerated (bin : String) (leanCli : Option String) (tmp : String) (seed : Nat) :
+    IO (Case × DiffOutcome) := do
   let c := genCase seed
   let nt := tmp ++ "/case_" ++ toString seed ++ ".nt"
   let rq := tmp ++ "/case_" ++ toString seed ++ ".rq"
@@ -261,6 +395,11 @@ def diffGenerated (bin tmp : String) (seed : Nat) : IO (Case × DiffOutcome) := 
     | .construct _ => "ntriples"
     | _            => "json"
   let (rc, out, err) ← runFstar bin ["-d", nt, "--query", rq, "-o", fmt]
+  match leanCli with
+  | some cli =>
+      let lean ← leanCliAnswer cli q [nt, "--format", "ntriples", "--query", rq]
+      return (c, cliOutcome rqText q rc out err lean)
+  | none =>
   if rc != 0 then
     return (c, .fstarError s!"exit {rc}: {firstLine (err ++ out)}; query: {rqText}")
   let env : EvalEnv := { now := some fixedNow, base := q.base }
@@ -283,7 +422,7 @@ def parseStrArg (args : List String) (flag : String) (dflt : String) : String :=
 /-- Positional arguments: everything that is neither a flag nor a
 flag's value. -/
 def positional (args : List String) : List String :=
-  let valued := ["--fstar", "--gen", "--seed", "--tmp"]
+  let valued := ["--fstar", "--lean-cli", "--gen", "--seed", "--tmp"]
   let rec go : List String → List String
     | []          => []
     | a :: b :: rest => if valued.contains a then go rest
@@ -298,22 +437,30 @@ def main (args : List String) : IO UInt32 := do
   let seed0 := parseNatArg args "--seed" 0
   let tmp := parseStrArg args "--tmp" ".claude-runs/l4diff-cases"
   let verbose := args.contains "--verbose"
+  let leanCli := findFlag args "--lean-cli"
   let manifests := positional args
   if manifests.isEmpty && genN == 0 then
-    IO.eprintln "usage: l4diff [--fstar BIN] [--gen N] [--seed S] [--tmp DIR] [--verbose] [manifest.ttl ...]"
+    IO.eprintln "usage: l4diff [--fstar BIN] [--lean-cli PATH] [--gen N] [--seed S] [--tmp DIR] [--verbose] [manifest.ttl ...]"
     IO.eprintln "  run from the repository root so bin/<platform>/factoidal and the manifests resolve"
     return 2
   if !(← System.FilePath.pathExists bin) then
     IO.eprintln s!"F* binary not found: {bin} (pass --fstar PATH; run from the repository root)"
     return 2
+  match leanCli with
+  | some cli =>
+      if !(← System.FilePath.pathExists cli) then
+        IO.eprintln s!"Lean CLI not found: {cli} (pass --lean-cli PATH, e.g. formal/lean4/.lake/build/bin/l4factoidal)"
+        return 2
+      IO.println s!"Lean side: the command line {cli} (query FILE), not the library"
+  | none => IO.println "Lean side: the library (parseSparql + evalSelect / evalAsk / evalConstruct)"
   let mut total : DiffScore := {}
   for m in manifests do
-    total := total.add (← diffManifest 4 bin (System.FilePath.mk m) verbose)
+    total := total.add (← diffManifest 4 bin leanCli tmp (System.FilePath.mk m) verbose)
   if genN > 0 then
     IO.FS.createDirAll tmp
     let mut score : DiffScore := {}
     for i in List.range genN do
-      let (c, r) ← diffGenerated bin tmp (seed0 + i)
+      let (c, r) ← diffGenerated bin leanCli tmp (seed0 + i)
       score := score.bump r
       if verbose || !r.isQuiet then
         IO.println (r.line s!"generated seed {c.seed}")

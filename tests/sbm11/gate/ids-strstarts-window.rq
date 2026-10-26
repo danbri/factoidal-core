@@ -1,0 +1,6 @@
+# Issue 929: a STRSTARTS conjunct on the object variable of one pattern. The
+# scan uses POS (sorted on the object after the predicate) and does not read
+# the blocks whose object ids the rank test rejects; tests/sbm11/run.sh part
+# (l) checks the --explain line on blocks of 2 rows.
+PREFIX ex: <http://ex.org/>
+SELECT ?s ?n WHERE { ?s ex:name ?n FILTER(STRSTARTS(?n, "D")) }

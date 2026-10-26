@@ -81,41 +81,6 @@ def dsMain : Dataset := { default := gNoCarol, named := [] }
 def dsNums : Dataset := { default := gNums, named := [] }
 def dsChain : Dataset := { default := gChain, named := [] }
 
-/-- The same source graph used by FROM and FROM NAMED denotes two graph
-instances whose blank nodes are scoped apart. -/
-def dsFromBnode : Dataset :=
-  { default := [],
-    named := [{ name := .iri gOne,
-                graph := [{ s := .bnode "x", p := pVal, o := .bnode "x" }] }] }
-
-#guard
-  let applied := (applyDataset [.default gOne, .named gOne] dsFromBnode []).1
-  match applied.default.head?, applied.named.head? with
-  | some td, some ng =>
-      match ng.graph.head? with
-      | some tn => td.s != tn.s
-      | none => false
-  | _, _ => false
-
--- Uniform, role-specific renaming prevents a default-graph generated label
--- from colliding with an adversarial source label in the named graph.
-def collidingBnode : String := bnodeScopePrefix ["dataset-default", gOne.val] ++ "x"
-def collidingSubject : Subject := .bnode collidingBnode
-
-def dsFromCollision : Dataset :=
-  { default := [],
-    named := [
-      { name := .iri gOne,
-        graph := [{ s := .bnode "x", p := pVal, o := .iri iAlice }] },
-      { name := .iri gTwo,
-        graph := [{ s := (collidingSubject : Subject), p := pVal, o := .iri iBob }] }] }
-
-#guard
-  let applied := (applyDataset [.default gOne, .named gTwo] dsFromCollision []).1
-  match applied.default.head?, applied.named.head? >>= (fun ng => ng.graph.head?) with
-  | some td, some tn => td.s != tn.s
-  | _, _ => false
-
 def dsNamedSharedBnode : Dataset :=
   { default := [],
     named := [
@@ -314,8 +279,9 @@ Cases from the F* tree's `tests/unit/lateral_service_unit.ml`. -/
     (qAll (.service epNone true pLabels)) == [[]]
 #guard colS "s" (rowsIn envSvc dsMain
     (qAll (.join pPersons (.service epNone true pLabels)))) == ["alice", "bob"]
--- Non-SILENT to an unregistered endpoint yields NO rows (the error
--- sentinel a total evaluator can express).
+-- Non-SILENT to an unregistered endpoint: the rows of `evalSelect` are
+-- empty, and the query's answer is the §2.3 error (the
+-- `Query.serviceFailure` guards below).
 #guard rowsIn envSvc { default := [], named := [] }
     (qAll (.service epNone false pLabels)) == []
 #guard rowsIn envSvc dsMain (qAll (.join pPersons (.service epNone false pLabels))) == []
@@ -347,6 +313,312 @@ Cases from the F* tree's `tests/unit/lateral_service_unit.ml`. -/
     (qAll (.join (.values ["ep"] [[some (sLit "not-an-iri")]])
                  (.serviceVar "ep" false pLabels))) == []
 
+/-! ### A failed SERVICE call fails the query — Federated Query §2.3, §3.2
+
+https://github.com/danbri/factoidal/issues/717. `failIn` is the error
+the query answers; `none` means the query answers the rows above. Each
+error case is beside the same query with SILENT (no error) or with a
+registered endpoint (no error), so an evaluator that always fails, or
+never fails, breaks the build. -/
+
+def failIn (env : EvalEnv) (ds : Dataset) (q : Query) : Option ServiceFailure :=
+  q.serviceFailure env ds
+
+def dsEmpty : Dataset := { default := [], named := [] }
+
+-- Fixed endpoint, unregistered: error without SILENT, none with it.
+#guard failIn envSvc dsEmpty (qAll (.service epNone false pLabels)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsEmpty (qAll (.service epNone true pLabels)) == none
+-- Registered endpoint: no error, with or without SILENT.
+#guard failIn envSvc dsEmpty (qAll (.service epOne false pLabels)) == none
+-- Joined with local rows: the error is the answer, the rows are not.
+#guard failIn envSvc dsMain (qAll (.join pPersons (.service epNone false pLabels))) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.join pPersons (.service epNone true pLabels))) == none
+-- Under OPTIONAL and UNION the call is still made, so it still fails.
+#guard failIn envSvc dsMain (qAll (.leftJoin pPersons (.service epNone false pLabels)
+    (.boolLit true))) == some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.union pPersons (.service epNone false pLabels))) ==
+  some (.unreachable epNone.val)
+-- The first failure in evaluation order is the one reported.
+#guard failIn envSvc dsEmpty (qAll (.join (.service epNone false pLabels)
+    (.service (iriQ "https://example.org/other") false pLabels))) ==
+  some (.unreachable epNone.val)
+-- A nested SERVICE without SILENT inside a reachable endpoint's body
+-- fails the outer call (§3.2), and the outer call has no SILENT here,
+-- so the query fails. (Outer SILENT: the guards in the issue 735
+-- section below.)
+#guard failIn envSvc dsEmpty (qAll (.service epOne false
+    (.join pLabels (.service epNone false pLabels)))) == some (.unreachable epNone.val)
+#guard failIn envSvc dsEmpty (qAll (.service epOne false
+    (.join pLabels (.service epNone true pLabels)))) == none
+-- GRAPH ?g evaluates its body once per named graph: with no named graph
+-- the SERVICE inside is never invoked, so nothing fails.
+#guard failIn envSvc dsEmpty (qAll (.graph (.var "g") (.service epNone false pLabels))) == none
+#guard failIn envSvc { default := [], named := [{ name := .iri gOne, graph := [] }] }
+    (qAll (.graph (.var "g") (.service epNone false pLabels))) == some (.unreachable epNone.val)
+-- SERVICE ?v (§4): one invocation per solution. Every endpoint
+-- registered: no error.
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (.iri epOne)], [some (.iri epTwo)]])
+                 (.serviceVar "ep" false pLabels))) == none
+-- One solution names an unregistered endpoint: error without SILENT,
+-- none with it.
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (.iri epOne)], [some (.iri epNone)]])
+                 (.serviceVar "ep" false pLabels))) == some (.unreachable epNone.val)
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (.iri epOne)], [some (.iri epNone)]])
+                 (.serviceVar "ep" true pLabels))) == none
+-- No solution: no invocation, no error.
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] []) (.serviceVar "ep" false pLabels))) == none
+-- `?v` bound to a literal, or unbound: no endpoint to invoke.
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (sLit "not-an-iri")]])
+                 (.serviceVar "ep" false pLabels))) == some (.noEndpoint "ep")
+#guard failIn envSvc dsEmpty (qAll (.serviceVar "ep" false pLabels)) == some (.noEndpoint "ep")
+#guard failIn envSvc dsEmpty (qAll (.serviceVar "ep" true pLabels)) == none
+-- LATERAL: one invocation per left solution; none when there is none.
+#guard failIn envSvc dsMain (qAll (.lateral pPersons (.service epNone false pLabels))) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsEmpty (qAll (.lateral pPersons (.service epNone false pLabels))) == none
+-- Inside a sub-SELECT the call is made too.
+#guard failIn envSvc dsMain (qAll (.subSelect (qAll (.service epNone false pLabels)))) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.subSelect (qAll (.service epNone true pLabels)))) == none
+-- No SERVICE: no error.
+#guard failIn envSvc dsMain (qAll pPersons) == none
+-- ASK and CONSTRUCT fail the same way; a DESCRIBE of IRIs alone does
+-- not evaluate its WHERE clause, so it invokes nothing.
+#guard failIn envSvc dsEmpty (mkQuery .ask (.service epNone false pLabels)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsEmpty (mkQuery (.describe [.iri epOne]) (.service epNone false pLabels)) == none
+#guard failIn envSvc dsEmpty (mkQuery (.describe [.var "s"]) (.service epNone false pLabels)) ==
+  some (.unreachable epNone.val)
+-- The checked evaluators answer the error, or exactly the rows.
+#guard (match evalSelectChecked envSvc dsEmpty (qAll (.service epNone false pLabels)) with
+        | .error (.unreachable i) => i == epNone.val
+        | _ => false)
+#guard (match evalSelectChecked envSvc dsEmpty (qAll (.service epOne false pLabels)) with
+        | .ok (_, r) => colS "label" r == ["aaa", "bbb"]
+        | _ => false)
+#guard (match evalAskChecked envSvc dsEmpty (mkQuery .ask (.service epNone true pLabels)) with
+        | .ok b => b
+        | _ => false)
+
+/-! ### A failed SERVICE call inside EXISTS, and under an outer SILENT
+
+https://github.com/danbri/factoidal/issues/735, Federated Query §2.3 and
+§3.2. Each error case is beside the same query with SILENT, or with a
+registered endpoint, or with no row to evaluate the expression on, so an
+evaluator that always fails, or never fails, breaks the build. -/
+
+/-- `EXISTS { SERVICE [SILENT] <ep> { ?s :label ?label } }`. -/
+def exSvc (ep : WfIri) (silent : Bool) : Expr := .existsPat (.service ep silent pLabels)
+/-- `NOT EXISTS { SERVICE [SILENT] <ep> { ?s :label ?label } }`. -/
+def notExSvc (ep : WfIri) (silent : Bool) : Expr := .notExistsPat (.service ep silent pLabels)
+/-- `ORDER BY ASC(e)`. -/
+def orderAsc (e : Expr) : SolutionModifier := { orderBy := some [.asc e] }
+/-- `GROUP BY ?s`. -/
+def groupS : Option (List GroupCondition) := some [.var "s"]
+
+-- 1. FILTER EXISTS. Without SILENT the failed call fails the query; with
+-- SILENT, or with a registered endpoint, it does not.
+#guard failIn envSvc dsMain (qAll (.filter (exSvc epNone false) pPersons)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.filter (exSvc epNone true) pPersons)) == none
+#guard failIn envSvc dsMain (qAll (.filter (exSvc epOne false) pPersons)) == none
+-- The rows are unchanged: EXISTS over the registered endpoint keeps
+-- alice and bob; over SILENT it sees Ω0, one solution, so it is true.
+#guard colS "s" (rowsIn envSvc dsMain (qAll (.filter (exSvc epOne false) pPersons))) ==
+  ["alice", "bob"]
+#guard colS "s" (rowsIn envSvc dsMain (qAll (.filter (exSvc epNone true) pPersons))) ==
+  ["alice", "bob"]
+-- No row reaches the FILTER: the EXISTS is never evaluated, nothing fails.
+#guard failIn envSvc dsEmpty (qAll (.filter (exSvc epNone false) pPersons)) == none
+-- Every EXISTS in the expression is evaluated, also the right operand of
+-- an `||` whose left operand is true.
+#guard failIn envSvc dsMain
+    (qAll (.filter (.or (.boolLit true) (exSvc epNone false)) pPersons)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (qAll (.filter (.or (.boolLit true) (exSvc epNone true)) pPersons)) == none
+-- An expression with no EXISTS gets no failure twin.
+#guard failIn envSvc dsMain (qAll (.filter (.boolLit true) pPersons)) == none
+
+-- 2. FILTER NOT EXISTS, the same three ways.
+#guard failIn envSvc dsMain (qAll (.filter (notExSvc epNone false) pPersons)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.filter (notExSvc epNone true) pPersons)) == none
+#guard failIn envSvc dsMain (qAll (.filter (notExSvc epTwo false) pPersons)) == none
+-- epTwo holds a label for carol only, so NOT EXISTS keeps alice and bob;
+-- the SILENT call is Ω0, so NOT EXISTS is false for every row.
+#guard colS "s" (rowsIn envSvc dsMain (qAll (.filter (notExSvc epTwo false) pPersons))) ==
+  ["alice", "bob"]
+#guard rowsIn envSvc dsMain (qAll (.filter (notExSvc epNone true) pPersons)) == []
+
+-- 3. BIND(EXISTS { ... } AS ?e).
+#guard failIn envSvc dsMain (qAll (.bind (exSvc epNone false) "e" pPersons)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.bind (exSvc epNone true) "e" pPersons)) == none
+#guard failIn envSvc dsMain (qAll (.bind (notExSvc epOne false) "e" pPersons)) == none
+#guard colS "e" (rowsIn envSvc dsMain (qAll (.bind (notExSvc epOne false) "e" pPersons))) ==
+  ["false", "false"]
+
+-- 4. An OPTIONAL condition: evaluated on every compatible merge.
+#guard failIn envSvc dsMain (qAll (.leftJoin pPersons pLabels (exSvc epNone false))) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (qAll (.leftJoin pPersons pLabels (exSvc epNone true))) == none
+#guard failIn envSvc dsMain (qAll (.leftJoin pPersons pLabels (notExSvc epOne false))) == none
+-- No compatible merge (no ages in this graph): the condition is never
+-- evaluated, so nothing fails.
+#guard failIn envSvc dsMain
+    (qAll (.leftJoin pPersons (.bgp [tpv "s" pAge (.var "a")]) (exSvc epNone false))) == none
+
+-- 5. HAVING, for SELECT and for ASK.
+#guard failIn envSvc dsMain
+    (mkQuery (.select .all) pPersons (groupBy := groupS) (having := [exSvc epNone false])) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (mkQuery (.select .all) pPersons (groupBy := groupS) (having := [exSvc epNone true])) == none
+#guard failIn envSvc dsMain
+    (mkQuery (.select .all) pPersons (groupBy := groupS) (having := [exSvc epOne false])) == none
+#guard failIn envSvc dsMain (mkQuery .ask pPersons (having := [notExSvc epNone false])) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain (mkQuery .ask pPersons (having := [notExSvc epNone true])) == none
+
+-- 6. ORDER BY, for SELECT and for CONSTRUCT.
+#guard failIn envSvc dsMain
+    (mkQuery (.select .all) pPersons (modifier := orderAsc (exSvc epNone false))) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (mkQuery (.select .all) pPersons (modifier := orderAsc (exSvc epNone true))) == none
+#guard failIn envSvc dsMain
+    (mkQuery (.construct []) pPersons (modifier := orderAsc (notExSvc epNone false))) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (mkQuery (.construct []) pPersons (modifier := orderAsc (notExSvc epOne false))) == none
+-- No row to order: nothing fails.
+#guard failIn envSvc dsEmpty
+    (mkQuery (.select .all) pPersons (modifier := orderAsc (exSvc epNone false))) == none
+
+-- 7. A SELECT expression, at the top and inside a sub-SELECT.
+#guard failIn envSvc dsMain
+    (mkQuery (.select (.vars [.var "s", .expr (exSvc epNone false) "e"])) pPersons) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (mkQuery (.select (.vars [.var "s", .expr (exSvc epNone true) "e"])) pPersons) == none
+#guard failIn envSvc dsMain
+    (qAll (.subSelect (mkQuery (.select (.vars [.var "s", .expr (exSvc epNone false) "e"]))
+      pPersons))) == some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (qAll (.subSelect (mkQuery (.select .all) pPersons (groupBy := groupS)
+      (having := [exSvc epNone false])))) == some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (qAll (.subSelect (mkQuery (.select .all) pPersons (groupBy := groupS)
+      (having := [exSvc epNone true])))) == none
+
+-- 8. EXISTS nested in EXISTS, one and two levels.
+#guard failIn envSvc dsMain
+    (qAll (.filter (.existsPat (.filter (exSvc epNone false) pLabels)) pPersons)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (qAll (.filter (.existsPat (.filter (exSvc epNone true) pLabels)) pPersons)) == none
+#guard failIn envSvc dsMain
+    (qAll (.filter (.existsPat (.filter (.notExistsPat (.filter (exSvc epNone false) pLabels))
+      pLabels)) pPersons)) == some (.unreachable epNone.val)
+
+-- 9. §3.2, one level: a failed SERVICE nested in an outer SERVICE SILENT
+-- is a failure of the outer call, so the outer SILENT gives one
+-- solution with no bindings. Without SILENT on the outer call the query
+-- fails.
+#guard failIn envSvc dsEmpty (qAll (.service epOne true (.service epNone false pLabels))) ==
+  none
+#guard rowsIn envSvc dsEmpty (qAll (.service epOne true (.service epNone false pLabels))) ==
+  [[]]
+#guard failIn envSvc dsEmpty (qAll (.service epOne false (.service epNone false pLabels))) ==
+  some (.unreachable epNone.val)
+-- A nested call that succeeds: the outer SILENT gives the body's rows.
+#guard failIn envSvc dsEmpty (qAll (.service epOne true (.service epTwo false pLabels))) ==
+  none
+#guard colS "label" (rowsIn envSvc dsEmpty
+    (qAll (.service epOne true (.service epTwo false pLabels)))) == ["ccc"]
+-- Joined with local rows: Ω0 keeps them unextended.
+#guard colS "s" (rowsIn envSvc dsMain
+    (qAll (.join pPersons (.service epOne true (.service epNone false pLabels))))) ==
+  ["alice", "bob"]
+#guard failIn envSvc dsMain
+    (qAll (.join pPersons (.service epOne true (.service epNone false pLabels)))) == none
+-- The failure inside the body may sit in an EXISTS.
+#guard failIn envSvc dsEmpty
+    (qAll (.service epOne true (.filter (exSvc epNone false) pLabels))) == none
+#guard rowsIn envSvc dsEmpty
+    (qAll (.service epOne true (.filter (exSvc epNone false) pLabels))) == [[]]
+#guard failIn envSvc dsEmpty
+    (qAll (.service epOne false (.filter (exSvc epNone false) pLabels))) ==
+  some (.unreachable epNone.val)
+-- SERVICE ?v: each invocation is covered by its own SILENT.
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (.iri epOne)]])
+                 (.serviceVar "ep" true (.service epNone false pLabels)))) == none
+#guard colS "ep" (rowsIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (.iri epOne)]])
+                 (.serviceVar "ep" true (.service epNone false pLabels))))) == ["endpoint1"]
+#guard failIn envSvc dsEmpty
+    (qAll (.join (.values ["ep"] [[some (.iri epOne)]])
+                 (.serviceVar "ep" false (.service epNone false pLabels)))) ==
+  some (.unreachable epNone.val)
+
+-- 10. §3.2, two levels: the innermost SILENT that encloses the failure
+-- covers it.
+#guard failIn envSvc dsEmpty
+    (qAll (.service epOne true (.service epTwo false (.service epNone false pLabels)))) == none
+#guard rowsIn envSvc dsEmpty
+    (qAll (.service epOne true (.service epTwo false (.service epNone false pLabels)))) == [[]]
+#guard failIn envSvc dsEmpty
+    (qAll (.service epOne false (.service epTwo true (.service epNone false pLabels)))) == none
+#guard rowsIn envSvc dsEmpty
+    (qAll (.service epOne false (.service epTwo true (.service epNone false pLabels)))) == [[]]
+#guard failIn envSvc dsEmpty
+    (qAll (.service epOne false (.service epTwo false (.service epNone false pLabels)))) ==
+  some (.unreachable epNone.val)
+-- Two levels with no failure: the rows come through both SILENT calls.
+#guard colS "label" (rowsIn envSvc dsEmpty
+    (qAll (.service epOne true (.service epTwo true (.service epOne false pLabels))))) ==
+  ["aaa", "bbb"]
+
+-- 11. Both together: an outer SILENT inside an EXISTS covers the nested
+-- failure, so the EXISTS sees Ω0 and is true; without it the query fails.
+#guard failIn envSvc dsMain
+    (qAll (.filter (.existsPat (.service epOne true (.service epNone false pLabels)))
+      pPersons)) == none
+#guard colS "s" (rowsIn envSvc dsMain
+    (qAll (.filter (.existsPat (.service epOne true (.service epNone false pLabels)))
+      pPersons))) == ["alice", "bob"]
+#guard failIn envSvc dsMain
+    (qAll (.filter (.existsPat (.service epOne false
+      (.service epTwo false (.service epNone false pLabels)))) pPersons)) ==
+  some (.unreachable epNone.val)
+#guard failIn envSvc dsMain
+    (qAll (.filter (.existsPat (.service epOne false
+      (.service epTwo true (.service epNone false pLabels)))) pPersons)) == none
+
+-- 12. The checked evaluators answer the error for an EXISTS failure.
+#guard (match evalSelectChecked envSvc dsMain
+          (qAll (.filter (exSvc epNone false) pPersons)) with
+        | .error (.unreachable i) => i == epNone.val
+        | _ => false)
+#guard (match evalAskChecked envSvc dsMain
+          (mkQuery .ask (.filter (notExSvc epNone false) pPersons)) with
+        | .error (.unreachable i) => i == epNone.val
+        | _ => false)
+#guard (match evalSelectChecked envSvc dsEmpty
+          (qAll (.service epOne true (.service epNone false pLabels))) with
+        | .ok (_, r) => r == [[]]
+        | _ => false)
+
 /-! ## §18.2.4 projection and SELECT expressions -/
 
 def qAgeDouble : Query :=
@@ -357,11 +629,9 @@ def qAgeDouble : Query :=
 -- The projection drops ?a: it is neither in the header nor in a row.
 #guard hdr { default := gMain, named := [] } qAgeDouble == ["s", "d"]
 #guard colS "a" (rows { default := gMain, named := [] } qAgeDouble) == ["", ""]
--- `SELECT *` reports the variables the rows actually bind, in
--- first-seen order. BGP matching CONSES each new binding onto the
--- front of the row (`Binding.bind`, as in the F* `sm_bind`), so the
--- object variable is seen before the subject variable.
-#guard hdr dsMain (qAll pLabels) == ["label", "s"]
+-- SELECT * reports syntactically in-scope variables, including ones
+-- unbound in every result. We choose first occurrence in the query.
+#guard hdr dsMain (qAll pLabels) == ["s", "label"]
 -- An expression error leaves the alias unbound; the row survives.
 #guard colS "e" (rows dsMain
     (mkQuery (.select (.vars [.var "s", .expr (.var "nosuch") "e"])) pPersons)) == ["", ""]
@@ -549,6 +819,70 @@ def qHaving (h : List Expr) : Query :=
     (qHaving [.compare .gt (.aggregate .count false (.var "*")) (.numericLit 99)]) == []
 #guard (rows dsNums (qHaving [.boolLit true])).length == 2
 
+/-! ## §18.2.4.3 the trailing VALUES clause at a grouping level
+
+SPARQL 1.1 §18.2.4.3 (1.2 §18.3.4.3): the VALUES rows join AFTER
+GROUP BY and HAVING and BEFORE the SELECT expressions. The grouped
+solution binds the named GROUP BY variables only, so compatibility is
+decided on those. W3C sparql11 `bindings/values-group-by-*`. -/
+
+def qGroupValues (items : List SelectItem) (vals : List Binding)
+    (md : SolutionModifier := {}) : Query :=
+  mkQuery (.select (.vars items)) (.bgp [tpv "s" pVal (.var "v")])
+    (groupBy := some [.var "s"]) (modifier := md) (postValues := some vals)
+
+def countItem : SelectItem := .expr (.aggregate .count false (.var "*")) "c"
+
+-- A VALUES variable the WHERE pattern never binds reaches the
+-- projection of every group.
+#guard colS "w" (rows dsNums (qGroupValues [.var "s", .var "w"] [[("w", nLit "7")]]))
+    == ["7", "7"]
+#guard colS "x" (rows dsNums (qGroupValues [.var "s", .expr (.str (.var "w")) "x"]
+    [[("w", nLit "7")]])) == ["7", "7"]
+-- The join is on the grouping variable: only alice's group survives.
+#guard colS "s" (rows dsNums (qGroupValues [.var "s", countItem]
+    [[("s", .iri iAlice)], [("s", .iri iZed)]])) == ["alice"]
+#guard colS "c" (rows dsNums (qGroupValues [.var "s", countItem]
+    [[("s", .iri iAlice)], [("s", .iri iZed)]])) == ["2"]
+-- `?v` is not in scope after GROUP BY ?s, so a VALUES row binding it
+-- does not filter any group, and every count stays whole. Joining the
+-- VALUES rows BEFORE grouping would keep only bob's row (`?v = 3`).
+#guard colS "s" (rows dsNums (qGroupValues [.var "s", countItem] [[("v", nLit "3")]]))
+    == ["alice", "bob"]
+#guard colS "c" (rows dsNums (qGroupValues [.var "s", countItem] [[("v", nLit "3")]]))
+    == ["2", "1"]
+-- ORDER BY may name a VALUES variable that is not projected.
+#guard colS "s" (rows dsNums (qGroupValues [.var "s", countItem]
+    [[("s", .iri iAlice), ("k", sLit "b")], [("s", .iri iBob), ("k", sLit "a")]]
+    { orderBy := some [.asc (.var "k")] })) == ["bob", "alice"]
+#guard colS "s" (rows dsNums (qGroupValues [.var "s", countItem]
+    [[("s", .iri iAlice), ("k", sLit "a")], [("s", .iri iBob), ("k", sLit "b")]]
+    { orderBy := some [.asc (.var "k")] })) == ["alice", "bob"]
+-- The ORDER BY key is not projected.
+#guard (rows dsNums (qGroupValues [.var "s", countItem]
+    [[("s", .iri iAlice), ("k", sLit "b")]] { orderBy := some [.asc (.var "k")] })).all
+    (fun mu => (mu.lookup "k").isNone)
+
+/-! ## §11.4 a SELECT expression reads the earlier ones
+
+"the variable is introduced by an earlier SELECT expression in the same
+SELECT clause" (W3C sparql12 `grouping/select-variable-reuse`). -/
+
+#guard colS "d" (rows dsNums
+    (mkQuery (.select (.vars [.expr (.aggregate .count false (.var "v")) "c",
+                              .expr (.arith .add (.var "c") (.numericLit 1)) "d"]))
+      (.bgp [tpv "s" pVal (.var "v")]))) == ["4"]
+-- A LATER item is not visible: `?c` is unbound when `?d` is computed.
+#guard colS "d" (rows dsNums
+    (mkQuery (.select (.vars [.expr (.arith .add (.var "c") (.numericLit 1)) "d",
+                              .expr (.aggregate .count false (.var "v")) "c"]))
+      (.bgp [tpv "s" pVal (.var "v")]))) == [""]
+-- An item whose expression errs stays unbound, even when a non-grouped
+-- WHERE variable of the same name is bound in the group's rows.
+#guard colS "v" (rows dsNums
+    (mkQuery (.select (.vars [.var "s", .expr (.var "unbound") "v"]))
+      (.bgp [tpv "s" pVal (.var "v")]) (groupBy := some [.var "s"]))) == ["", ""]
+
 /-! ## §18.2.4 ASK -/
 
 #guard evalAsk emptyEnv dsMain (mkQuery .ask pLabels) == true
@@ -559,6 +893,85 @@ def qHaving (h : List Expr) : Query :=
 -- ASK sees the trailing VALUES block.
 #guard evalAsk emptyEnv dsMain
     (mkQuery .ask pLabels (postValues := some [[("s", .iri iZed)]])) == false
+
+/-! ### ASK with a SolutionModifier — grammar rule [12], §18.2.4, §18.2.5
+
+ASK is true exactly when the solution sequence after GROUP BY, HAVING,
+the trailing VALUES join, ORDER BY, OFFSET and LIMIT is non-empty. The
+fixture is `dsNums`: `:alice :val 1, 2` and `:bob :val 3`, so three
+solutions in two groups. Issue 699. -/
+
+/-- `ASK { ?s :val ?v }` with the given clauses after the WHERE clause. -/
+def qAskVal (groupBy : Option (List GroupCondition) := none)
+    (having : List Expr := []) (md : SolutionModifier := {})
+    (vals : Option (List Binding) := none) : Query :=
+  mkQuery .ask (.bgp [tpv "s" pVal (.var "v")]) (groupBy := groupBy)
+    (having := having) (modifier := md) (postValues := vals)
+
+def askNums (q : Query) : Bool := evalAsk emptyEnv dsNums q
+
+/-- `COUNT(*) > n`. -/
+def countGt (n : Nat) : Expr :=
+  .compare .gt (.aggregate .count false (.var "*")) (.numericLit n)
+
+-- No modifier: three solutions.
+#guard askNums (qAskVal) == true
+-- LIMIT 0 keeps no solution, whatever the data holds.
+#guard askNums (qAskVal (md := { limit := some 0 })) == false
+#guard askNums (qAskVal (md := { limit := some 1 })) == true
+-- OFFSET skips solutions: two of three leaves one; three of three leaves none.
+#guard askNums (qAskVal (md := { offset := some 2 })) == true
+#guard askNums (qAskVal (md := { offset := some 3 })) == false
+#guard askNums (qAskVal (md := { offset := some 99 })) == false
+-- OFFSET is applied before LIMIT, so `OFFSET 2 LIMIT 0` is empty and
+-- `OFFSET 2 LIMIT 1` keeps the last solution.
+#guard askNums (qAskVal (md := { offset := some 2, limit := some 0 })) == false
+#guard askNums (qAskVal (md := { offset := some 2, limit := some 1 })) == true
+-- ORDER BY changes no length: the answers are those of the same query without it.
+#guard askNums (qAskVal (md := { orderBy := some [.desc (.var "v")], limit := some 0 })) == false
+#guard askNums (qAskVal (md := { orderBy := some [.desc (.var "v")], limit := some 1 })) == true
+-- GROUP BY ?s makes two groups (alice, bob).
+#guard askNums (qAskVal (groupBy := some [.var "s"])) == true
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (md := { offset := some 1 })) == true
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (md := { offset := some 2 })) == false
+-- HAVING filters groups: alice has two rows, bob one.
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (having := [countGt 1])) == true
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (having := [countGt 2])) == false
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (having := [countGt 100])) == false
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (having := [.boolLit true])) == true
+-- HAVING and LIMIT together: the group that passes HAVING survives LIMIT 1,
+-- and OFFSET 1 skips it.
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (having := [countGt 1])
+    (md := { limit := some 1 })) == true
+#guard askNums (qAskVal (groupBy := some [.var "s"]) (having := [countGt 1])
+    (md := { offset := some 1 })) == false
+-- HAVING with no GROUP BY: the whole sequence is one group of three rows.
+#guard askNums (qAskVal (having := [countGt 2])) == true
+#guard askNums (qAskVal (having := [countGt 3])) == false
+-- ... and that one group is one solution, so OFFSET 1 leaves nothing.
+#guard askNums (qAskVal (having := [countGt 2]) (md := { offset := some 1 })) == false
+-- An empty WHERE result still forms the one implicit group, whose count is 0.
+#guard evalAsk emptyEnv dsNums
+    (mkQuery .ask (.bgp [tpv "s" pLabel (.var "v")]) (having := [countGt 0])) == false
+#guard evalAsk emptyEnv dsNums
+    (mkQuery .ask (.bgp [tpv "s" pLabel (.var "v")])
+      (having := [.compare .eq (.aggregate .count false (.var "*")) (.numericLit 0)])) == true
+-- The trailing VALUES join comes AFTER grouping: a row for a subject with
+-- no group (`:zed`) leaves nothing; a row for `:alice` keeps her group.
+#guard askNums (qAskVal (groupBy := some [.var "s"])
+    (vals := some [[("s", .iri iZed)]])) == false
+#guard askNums (qAskVal (groupBy := some [.var "s"])
+    (vals := some [[("s", .iri iAlice)]])) == true
+-- `?v` is not in scope after GROUP BY ?s, so a VALUES row that binds it
+-- filters no group. Joining the rows BEFORE grouping would find no
+-- solution with `?v = 99` and answer false.
+#guard askNums (qAskVal (groupBy := some [.var "s"])
+    (vals := some [[("v", nLit "99")]])) == true
+-- The same VALUES row joined to the ungrouped solutions (no GROUP BY, no HAVING).
+#guard askNums (qAskVal (vals := some [[("v", nLit "99")]])) == false
+-- A CONSTRUCT is not an ASK: the ASK entry point answers false.
+#guard evalAsk emptyEnv dsNums
+    (mkQuery (.construct []) (.bgp [tpv "s" pVal (.var "v")])) == false
 
 /-! ## §16.2 CONSTRUCT -/
 
@@ -609,6 +1022,102 @@ def bnodeSubjects : List String :=
     (mkQuery (.construct [{ s := .iri iZed, p := .iri pType, o := .iri cPerson }])
       pLabels)).length == 1
 
+/-! ### CONSTRUCT with GROUP BY and HAVING — §18.2.4.1, §16.2
+
+§18.2.4.1 applies to every query form, and §16.2 instantiates the
+template over the resulting solution sequence. After grouping the
+solutions bind the named GROUP BY variables only. The fixture is
+`dsNums`: `:alice :val 1, 2` and `:bob :val 3`. Issue 699. -/
+
+def pValPat : QueryPattern := .bgp [tpv "s" pVal (.var "v")]
+
+/-- `CONSTRUCT { <template> } WHERE { ?s :val ?v }` with clauses. -/
+def qConstructVal (template : List TriplePattern)
+    (groupBy : Option (List GroupCondition) := none) (having : List Expr := [])
+    (md : SolutionModifier := {}) (vals : Option (List Binding) := none) : Query :=
+  mkQuery (.construct template) pValPat (groupBy := groupBy) (having := having)
+    (modifier := md) (postValues := vals)
+
+/-- `?s :age 1`: uses only the grouping variable. -/
+def tmplKey : TriplePattern := { s := .var "s", p := .iri pAge, o := .literal (Literal.string "k") }
+/-- `?s :age ?v`: uses a variable that GROUP BY ?s does not keep. -/
+def tmplNonKey : TriplePattern := { s := .var "s", p := .iri pAge, o := .var "v" }
+
+def constructNums (q : Query) : Graph := evalConstruct emptyEnv dsNums q
+
+def aliceKey : Triple := tr iAlice pAge (sLit "k")
+def bobKey : Triple := tr iBob pAge (sLit "k")
+
+-- Without GROUP BY every solution drives the template: `?v` gives three
+-- triples, and the constant object gives one per subject (a graph).
+#guard (constructNums (qConstructVal [tmplNonKey])).length == 3
+#guard (constructNums (qConstructVal [tmplKey])).length == 2
+-- A template variable that is a GROUP BY variable: one triple per group.
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"]))
+    == [aliceKey, bobKey]
+-- A template variable that is NOT a GROUP BY variable is unbound after
+-- grouping, so the triple is not produced (§16.2). Ungrouped, the same
+-- template yields three triples.
+#guard constructNums (qConstructVal [tmplNonKey] (groupBy := some [.var "s"])) == []
+-- A template with one triple of each kind keeps only the first.
+#guard constructNums (qConstructVal [tmplKey, tmplNonKey] (groupBy := some [.var "s"]))
+    == [aliceKey, bobKey]
+-- GROUP BY (expr AS ?k) keeps ?k, and drops the variable it was computed from.
+#guard (constructNums (qConstructVal
+    [{ s := .var "k", p := .iri pAge, o := .literal (Literal.string "k") }]
+    (groupBy := some [.expr (.str (.var "s")) (some "k")]))) == []
+#guard (constructNums (qConstructVal
+    [{ s := .var "s", p := .iri pAge, o := .var "k" }]
+    (groupBy := some [.expr (.str (.var "s")) (some "k")]))) == []
+#guard (constructNums (qConstructVal
+    [{ s := .iri iZed, p := .iri pAge, o := .var "k" }]
+    (groupBy := some [.expr (.str (.var "s")) (some "k")]))).length == 2
+-- HAVING filters groups before the template is instantiated: only
+-- alice has more than one row.
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (having := [countGt 1])) == [aliceKey]
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (having := [countGt 99])) == []
+-- HAVING with no GROUP BY: the one implicit group of three rows. A
+-- ground template triple is produced once, or not at all.
+#guard constructNums (qConstructVal [{ s := .iri iZed, p := .iri pAge, o := .iri iZed }]
+    (having := [countGt 2])) == [tr iZed pAge (.iri iZed)]
+#guard constructNums (qConstructVal [{ s := .iri iZed, p := .iri pAge, o := .iri iZed }]
+    (having := [countGt 3])) == []
+-- ... and a variable is unbound in that group.
+#guard constructNums (qConstructVal [tmplKey] (having := [countGt 2])) == []
+-- A template blank node is fresh per SOLUTION: after grouping there are
+-- two solutions (groups), where the ungrouped sequence has three.
+def tmplBnode : TriplePattern :=
+  { s := .bnode "b", p := .iri pAge, o := .iri iZed }
+#guard (constructNums (qConstructVal [tmplBnode])).length == 3
+#guard (constructNums (qConstructVal [tmplBnode] (groupBy := some [.var "s"]))).length == 2
+-- ORDER BY, OFFSET and LIMIT act on the grouped solutions.
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (md := { orderBy := some [.desc (.var "s")], limit := some 1 })) == [bobKey]
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (md := { orderBy := some [.asc (.var "s")], limit := some 1 })) == [aliceKey]
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (md := { offset := some 1 })) == [bobKey]
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (md := { offset := some 2 })) == []
+#guard constructNums (qConstructVal [tmplKey] (groupBy := some [.var "s"])
+    (md := { limit := some 0 })) == []
+-- The trailing VALUES rows join after grouping (W3C sparql11
+-- `bindings/values-construct-group-by`): a row for a subject with no
+-- group adds nothing, and a row's variables are visible to the template.
+#guard constructNums (qConstructVal
+    [{ s := .var "s", p := .iri pAge, o := .var "rank" }]
+    (groupBy := some [.var "s"])
+    (vals := some [[("s", .iri iAlice), ("rank", nLit "1")],
+                   [("s", .iri iBob), ("rank", nLit "2")],
+                   [("s", .iri iZed), ("rank", nLit "9")]]))
+    == [tr iAlice pAge (nLit "1"), tr iBob pAge (nLit "2")]
+-- `?v` is not a GROUP BY variable, so a VALUES row on it joins every
+-- group and the template still cannot read the WHERE pattern's `?v`.
+#guard constructNums (qConstructVal [tmplNonKey] (groupBy := some [.var "s"])
+    (vals := some [[("v", nLit "99")]])) == [tr iAlice pAge (nLit "99"), tr iBob pAge (nLit "99")]
+
 /-! ## §9 / §18.4 property paths -/
 
 def qPath (path : PropertyPath) : Query :=
@@ -622,6 +1131,11 @@ def pathPairs (path : PropertyPath) : List (String × String) :=
 #guard pathPairs (.iri pKnows) == [("alice", "bob"), ("bob", "carol")]
 -- `^:knows` is the converse.
 #guard pathPairs (.inverse (.iri pKnows)) == [("bob", "alice"), ("carol", "bob")]
+-- https://github.com/danbri/factoidal/issues/1023: §18.4 makes `?s ^:label ?o`
+-- the same as `?o :label ?s`, so `?s` binds the literal object "aaa".
+#guard pathPairs (.inverse (.iri pLabel)) == [("aaa", "alice")]
+-- The literal is also a middle node: `^:label/:label` joins on alice.
+#guard pathPairs (.sequence (.inverse (.iri pLabel)) (.iri pLabel)) == [("aaa", "aaa")]
 -- `:knows/:knows` composes.
 #guard pathPairs (.sequence (.iri pKnows) (.iri pKnows)) == [("alice", "carol")]
 -- `:knows|:label` is the union.
@@ -629,6 +1143,22 @@ def pathPairs (path : PropertyPath) : List (String × String) :=
 -- `:knows+` is the transitive closure: alice reaches carol.
 #guard ((pathPairs (.oneOrMore (.iri pKnows))).contains ("alice", "carol")) == true
 #guard (pathPairs (.oneOrMore (.iri pKnows))).length == 3
+-- https://github.com/danbri/factoidal/issues/955: a step relation with a pair
+-- twice. `(:knows|:val)+` over alice knows bob, bob knows carol, alice val bob
+-- has the step list [(alice, bob), (bob, carol), (alice, bob)]. The first
+-- round adds (alice, carol) and the deduplication removes one (alice, bob),
+-- so a length test against the step list stops before the §18.4 fixpoint.
+def gDupStep : Graph :=
+  [ tr iAlice pKnows (.iri iBob),
+    tr iBob   pKnows (.iri iCarol),
+    tr iAlice pVal   (.iri iBob) ]
+def dupStepPairs : List (String × String) :=
+  (rows { default := gDupStep, named := [] }
+      (qPath (.oneOrMore (.alternative (.iri pKnows) (.iri pVal))))).map (fun mu =>
+    (shortName ((col "s" [mu]).headD ""), shortName ((col "o" [mu]).headD "")))
+#guard dupStepPairs.contains ("alice", "carol") == true
+-- §18.4 ALP: the closure is a set, each pair once.
+#guard dupStepPairs.length == 3
 -- `:knows*` adds the reflexive pairs over the graph's nodes.
 #guard ((pathPairs (.zeroOrMore (.iri pKnows))).contains ("alice", "alice")) == true
 #guard ((pathPairs (.zeroOrMore (.iri pKnows))).contains ("alice", "carol")) == true
@@ -670,19 +1200,27 @@ def pathPairs (path : PropertyPath) : List (String × String) :=
 #guard colS "label" (rows dsNamed
     (mkQuery (.select .all) (.graph (.iri gTwo) pLabels) (dataset := [.named gTwo])))
     == ["bbb"]
--- Repeating one FROM NAMED IRI denotes one named graph, so GRAPH ?g
--- evaluates it once rather than multiplying the solution bag.
-#guard (rows dsNamed
-    (mkQuery (.select .all) (.graph (.var "g") pLabels)
-      (dataset := [.named gOne, .named gOne]))).length == 1
--- One uniform named-graph renaming preserves a blank node shared by two
--- stored named graphs, so a join through that identity still succeeds.
+-- FROM NAMED graphs keep their blank nodes (section 13.2.2), so a blank node
+-- shared by two stored named graphs still joins.
 #guard (rows dsNamedSharedBnode
     (mkQuery (.select .all)
       (.join
         (.graph (.iri gOne) (.bgp [tpv "x" pVal (.var "v")]))
         (.graph (.iri gTwo) (.bgp [tpv "x" pAge (.var "a")])))
       (dataset := [.named gOne, .named gTwo]))).length == 1
+-- https://github.com/danbri/factoidal/issues/1032: a FROM / FROM NAMED IRI that
+-- names no graph of the dataset gives a `dataset-iri-not-found` warning; the
+-- rows do not change (still the RDF merge of the graphs that are found).
+#guard datasetWarnings [.default gOne, .named gTwo] dsNamed == []
+#guard datasetWarnings [.default epNone] dsNamed == [{ iri := epNone.val, named := false }]
+#guard datasetWarnings [.named epNone] dsNamed == [{ iri := epNone.val, named := true }]
+#guard datasetWarnings [.default gOne, .named epNone, .default epNone, .named epNone] dsNamed
+    == [{ iri := epNone.val, named := true }, { iri := epNone.val, named := false }]
+#guard (datasetWarnings [.named epNone] dsNamed).map DatasetWarning.cls == ["dataset-iri-not-found"]
+#guard (datasetWarnings [.named epNone] dsNamed).map DatasetWarning.clause == ["FROM NAMED"]
+#guard colS "label" (rows dsNamed
+    (mkQuery (.select .all) pLabels (dataset := [.default gOne, .default epNone]))) == ["aaa"]
+#guard rows dsNamed (mkQuery (.select .all) pLabels (dataset := [.default epNone])) == []
 -- Trailing VALUES joins onto the WHERE result (§10.2).
 #guard colS "label" (rows { default := gMain, named := [] }
     (mkQuery (.select .all) pLabels (postValues := some [[("s", .iri iBob)]]))) == ["bbb"]
@@ -771,10 +1309,9 @@ the same query on 2026-08-26). -/
   == ["s", "s", "s", "t", "t"]
 
 -- `SELECT *` does not return the rewrite's variable (§18.2.4
--- OutScope): the header carries `?p` and `?s` only, in first-seen
--- order of the stripped rows.
+-- OutScope): the header carries `?s` and `?p` only, in query order.
 #guard hdr dsExists (qAll (.bgp [{ s := .var "s", p := .var "p", o := .bnode "b" }]))
-  == ["p", "s"]
+  == ["s", "p"]
 
 -- Inside an EXISTS body the same reading must hold: `<s> <p> _:b`
 -- after substitution asks whether the row's subject has ANY object,
@@ -792,6 +1329,119 @@ the same query on 2026-08-26). -/
       (.bgp [{ s := .var "s", p := .var "p", o := .iri oEx1 }])))
   == []
 
+/-! ### The hash-indexed grouping agrees with the specification
+
+`groupSolutionsFast` (hash buckets, rows newest first) must return exactly the
+groups `groupSolutions` (`addToGroups` per row) returns: same keys, same first
+appearance order, same rows in input order. The keys below are evaluated
+values, so the cases that decide the bucket choice are exercised directly:
+`1`, `1.0` and `1.0E0` denote distinct RDF terms across `xsd:integer`,
+`xsd:decimal` and `xsd:double` and must remain separate groups; an unbound variable is an error key;
+two literals that differ only in language tag or datatype are different
+groups. -/
+
+private def gkNum1  : EvalResult := .num 1
+private def gkDec1  : EvalResult := .dec "1.0"
+private def gkDbl1  : EvalResult := .dbl "1.0E0"
+private def gkNum2  : EvalResult := .num 2
+private def gkDec2  : EvalResult := .dec "2.00"
+private def gkTrue  : EvalResult := .bool true
+private def gkFalse : EvalResult := .bool false
+private def gkErr   : EvalResult := .error
+private def gkAlice : EvalResult := .term (.iri iAlice)
+private def gkBob   : EvalResult := .term (.iri iBob)
+private def gkBn    : EvalResult := .term (.bnode "b1")
+private def gkLitEn : EvalResult := .term (.literal (Literal.langString "chat" "en"))
+private def gkLitFr : EvalResult := .term (.literal (Literal.langString "chat" "fr"))
+private def gkLitPl : EvalResult := .term (.literal (Literal.string "chat"))
+private def gkLitI  : EvalResult := .term (nLit "1")
+
+private def gkeys : List (List EvalResult) :=
+  [ [gkNum1], [gkAlice], [gkDec1], [gkErr], [gkBob], [gkNum2], [gkDbl1], [gkTrue],
+    [gkLitEn], [gkDec2], [gkLitFr], [gkAlice, gkNum1], [gkLitPl], [gkAlice, gkDec1],
+    [gkBn], [gkFalse], [gkLitI], [gkErr], [gkBob, gkErr], [gkBn], [gkTrue], [gkLitEn],
+    [gkNum1], [], [], [gkAlice, gkNum2] ]
+
+/-- Row `i` carries its position, so rows are all distinct. -/
+private def gkRows (cycles : Nat) : List (List EvalResult × Binding) :=
+  (List.range (cycles * gkeys.length)).map (fun i =>
+    (gkeys[i % gkeys.length]!, [("i", nLit (toString i))]))
+
+private def gkShape (gs : List SolutionGroup) : List (List EvalResult × List Binding) :=
+  gs.map (fun g => (g.key, g.solutions))
+
+private def gkSpec (rows : List (List EvalResult × Binding)) : List SolutionGroup :=
+  rows.foldl (fun gs (r : List EvalResult × Binding) => addToGroups r.1 r.2 gs) []
+
+private def gkFast (rows : List (List EvalResult × Binding)) : List SolutionGroup :=
+  (rows.foldl (fun acc (r : List EvalResult × Binding) => acc.add r.1 r.2)
+    ({} : GroupAcc)).groups
+
+#guard gkShape (gkFast []) == gkShape (gkSpec [])
+#guard gkShape (gkFast (gkRows 1)) == gkShape (gkSpec (gkRows 1))
+#guard gkShape (gkFast (gkRows 2)) == gkShape (gkSpec (gkRows 2))
+#guard gkShape (gkFast (gkRows 7)) == gkShape (gkSpec (gkRows 7))
+
+-- The groups are the expected ones, so a grouping that put every row in one
+-- group, or every row in its own group, fails. Numeric value equality does
+-- not erase RDF datatype or lexical spelling in one- or two-component keys.
+#guard (gkFast (gkRows 3)).length == (gkSpec (gkRows 3)).length
+#guard (gkFast (gkRows 3)).length > 10
+#guard (gkFast (gkRows 3)).length < gkeys.length
+#guard ((gkFast (gkRows 1)).head?.map (fun g => g.solutions.length)) == some 3
+#guard ((gkFast (gkRows 2)).head?.map (fun g => g.solutions.length)) == some 6
+#guard (gkFast (gkRows 3)).all (fun g => g.solutions.length > 1)
+-- Rows keep their input order inside a group.
+#guard ((gkFast (gkRows 1)).head?.map (fun g => g.solutions)) ==
+  some [[("i", nLit "0")], [("i", nLit "16")], [("i", nLit "22")]]
+
+-- These identity-distinct terms have distinct datatype/lexical bucket keys.
+#guard keyBucket [gkNum1] != keyBucket [gkDec1] && keyBucket [gkDec1] != keyBucket [gkDbl1]
+#guard keyBucket [gkAlice] != keyBucket [gkBob]
+#guard keyBucket [gkLitEn] != keyBucket [gkLitFr]
+#guard keyBucket [gkLitI] != keyBucket [gkLitPl]
+
+/-! ### Aggregate DISTINCT: the indexed duplicate removal agrees with the scan
+
+`dedupEr` is registered with `csimp` to compile as `dedupErFast`
+(https://github.com/danbri/factoidal/issues/722), so a guard on `dedupEr` runs
+the indexed code. `dedupErAcc` is not rewritten: these guards compare the
+indexed code with the scan. The values are the first components of the group
+keys above, repeated, so order-equal values of three numeric types, error
+values, IRIs, blank nodes and literals that differ only in language tag or
+datatype all occur. -/
+
+private def dkVals (cycles : Nat) : List EvalResult :=
+  (List.range (cycles * gkeys.length)).filterMap (fun i => (gkeys[i % gkeys.length]!).head?)
+
+#guard dedupErFast [] == dedupErAcc [] []
+#guard dedupErFast (dkVals 1) == dedupErAcc (dkVals 1) []
+#guard dedupErFast (dkVals 5) == dedupErAcc (dkVals 5) []
+#guard dedupEr (dkVals 3) == dedupErAcc (dkVals 3) []
+-- RDF term identities remain distinct. Direct low-level dedup preserves
+-- errors (no RDF term); aggregate callers remove them before deduplication.
+-- There are thirteen distinct bound terms and eight errors in four cycles.
+#guard (dedupErFast (dkVals 4)).length == 21
+#guard dedupErFast [gkNum1, gkDec1, gkDbl1, gkNum2, gkDec2] == [gkNum1, gkDec1, gkDbl1, gkNum2, gkDec2]
+#guard dedupErFast [gkDec1, gkNum1] == [gkDec1, gkNum1]
+#guard dedupErFast [gkLitEn, gkLitFr, gkLitPl, gkLitEn, gkLitI] == [gkLitEn, gkLitFr, gkLitPl, gkLitI]
+#guard dedupErFast [gkErr, gkErr, gkBn, gkBn, gkAlice] == [gkErr, gkErr, gkBn, gkAlice]
+
+-- COUNT(DISTINCT *) counts distinct rows (the code runs `distinctSolutionsFast`,
+-- `evalAggregate_countDistinctStar` restates it with `distinctSolutions`), and
+-- COUNT(DISTINCT ?x) counts distinct bound values.
+private def cdGroup : SolutionGroup :=
+  { key := [], solutions :=
+      [[("x", .iri iAlice)], [("x", .iri iBob)], [("x", .iri iAlice)], [], [],
+       [("x", .iri iAlice), ("y", .iri iBob)], [("y", .iri iBob), ("x", .iri iAlice)]] }
+
+#guard evalAggregate emptyEnv .count true (.var "*") cdGroup == .num 4
+#guard evalAggregate emptyEnv .count true (.var "*") cdGroup ==
+  .num (Int.ofNat (distinctSolutions cdGroup.solutions).length)
+#guard evalAggregate emptyEnv .count false (.var "*") cdGroup == .num 7
+#guard evalAggregate emptyEnv .count true (.var "x") cdGroup == .num 2
+#guard evalAggregate emptyEnv .count false (.var "x") cdGroup == .num 5
+
 /-! ### Axiom audit — the whole pipeline is definition-only -/
 
 #print axioms GraphPattern.evalIn
@@ -800,4 +1450,65 @@ the same query on 2026-08-26). -/
 #print axioms evalConstruct
 #print axioms evalPath
 
+
+/-! ### ORDER BY order through the native string comparison
+
+`strCompare` compiles to `strCompareFast` (`Expr.lean`, `csimp`). These check
+that the §15.1 order still reads the code point order of IRIs, blank-node
+labels and lexical forms, in both directions. -/
+
+#guard sparqlOrder (.term (.iri (iriQ "http://e/a"))) (.term (.iri (iriQ "http://e/b"))) == -1
+#guard sparqlOrder (.term (.iri (iriQ "http://e/b"))) (.term (.iri (iriQ "http://e/a"))) == 1
+#guard sparqlOrder (.term (.iri (iriQ "http://e/a"))) (.term (.iri (iriQ "http://e/a"))) == 0
+#guard sparqlOrder (.term (.bnode "b10")) (.term (.bnode "b2")) == -1
+#guard sparqlOrder (.term (.literal (Literal.string "b"))) (.term (.literal (Literal.string "ab"))) == 1
+#guard sparqlOrder (.term (.literal (Literal.string "Z"))) (.term (.literal (Literal.string "a"))) == -1
+#guard erEqual (.term (.literal (Literal.string "x"))) (.term (.literal (Literal.string "x")))
+#guard !erEqual (.term (.literal (Literal.string "x"))) (.term (.literal (Literal.string "X")))
+
+/-! ### sameTerm over variable bindings (issue 794)
+
+W3C SPARQL 1.0 `expr-builtin/sameTerm-simple` and `sameTerm-eq`: a
+variable bound to a numeric or boolean literal is promoted to its value
+for `=`, but `sameTerm` compares RDF terms (SPARQL 1.1 §17.4.1.8). Eight
+objects: "1"^^integer twice, "01"^^integer, "1.0"^^decimal, "true" and
+"1" booleans, "1.0e0" and "1.0" doubles. Terms equal under sameTerm: the
+two "1"^^integer objects in both orders plus each object with itself. -/
+
+def pSt : WfIri := iriQ "https://example.org/things#p"
+def lt (lex : String) (dt : WfIri) : Term := .literal (mkTypedLiteral lex dt)
+
+def gSame : Graph :=
+  [ tr iAlice pSt (lt "1" xsdInteger),
+    tr iBob   pSt (lt "1" xsdInteger),
+    tr iCarol pSt (lt "01" xsdInteger),
+    tr iDave  pSt (lt "1.0" xsdDecimal),
+    tr iZed   pSt (lt "true" xsdBoolean),
+    tr epOne  pSt (lt "1" xsdBoolean),
+    tr epTwo  pSt (lt "1.0e0" xsdDouble),
+    tr gOne   pSt (lt "1.0" xsdDouble) ]
+
+def pSame : QueryPattern :=
+  .bgp [tpv "x1" pSt (.var "v1"), tpv "x2" pSt (.var "v2")]
+
+def dsSame : Dataset := { default := gSame, named := [] }
+
+-- 8 self pairs plus the (x1, x2) and (x2, x1) pair of equal terms.
+#guard (rows dsSame (qAll (.filter (.sameTerm (.var "v1") (.var "v2")) pSame))).length == 10
+-- `=` is value equality: the six numeric objects of value 1 give 36
+-- pairs and the two true booleans give 4, so it keeps more rows.
+#guard (rows dsSame (qAll (.filter (.compare .eq (.var "v1") (.var "v2")) pSame))).length == 40
+-- sameTerm and `=` together: sameTerm already decides, so 10 rows.
+#guard (rows dsSame (qAll (.filter
+    (.and (.sameTerm (.var "v1") (.var "v2")) (.compare .eq (.var "v1") (.var "v2"))) pSame))).length == 10
+
 end L4Factoidal.SPARQL.QueryTests
+
+-- Numeric ORDER BY preserves source rounding; NaN has one fixed position,
+-- rather than tying every finite pair through an unordered intermediary.
+#guard L4Factoidal.SPARQL.sparqlOrder (.dbl "1") (.dbl "NaN") == -1
+#guard L4Factoidal.SPARQL.sparqlOrder (.dbl "NaN") (.dbl "2") == 1
+#guard L4Factoidal.SPARQL.sparqlOrder (.dbl "NaN") (.dbl "NaN") == 0
+#guard L4Factoidal.SPARQL.sparqlOrder (.dbl "1") (.dbl "2") == -1
+#guard L4Factoidal.SPARQL.findMin [.dbl "NaN", .num 1] == .num 1
+#guard L4Factoidal.SPARQL.findMax [.num 1, .dbl "NaN"] == .dbl "NaN"

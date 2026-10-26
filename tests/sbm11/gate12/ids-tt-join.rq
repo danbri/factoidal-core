@@ -1,0 +1,5 @@
+PREFIX : <http://ex.org/>
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Two subjects that say the same triple term: a join on tag-9 ids.
+SELECT ?x ?y WHERE { ?x :says ?t . ?y :says ?t . FILTER(?x != ?y) }

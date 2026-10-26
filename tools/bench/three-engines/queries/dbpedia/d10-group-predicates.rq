@@ -1,0 +1,2 @@
+# Aggregate with GROUP BY over every triple (full scan).
+SELECT ?p (COUNT(*) AS ?n) WHERE { ?s ?p ?o } GROUP BY ?p

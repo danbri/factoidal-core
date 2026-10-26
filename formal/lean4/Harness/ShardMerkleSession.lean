@@ -6,6 +6,8 @@ import Harness.ShardMerkleProfile
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
+import Wasm.Ops.Clock
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.ShardMerkleSession
 
@@ -74,6 +76,7 @@ private def readEntries (directory : System.FilePath) (cache : IO.Ref (List Cach
 
 private def execute (directory : System.FilePath) (manifest : Manifest)
     (cache : IO.Ref (List CachedArtifact)) (queryNumber : Nat) (queryText : String) : IO Bool := do
+  let clockEnv ← L4Wasm.Ops.emptyEnvNow
   match parseSparql queryText with
   | .error e =>
       IO.eprintln s!"l4block-shard-merkle-session query={queryNumber} parse-error at {e.pos}: {e.msg}"
@@ -90,9 +93,9 @@ private def execute (directory : System.FilePath) (manifest : Manifest)
               IO.eprintln s!"l4block-shard-merkle-session query={queryNumber} rejected: unavailable, changed, or malformed proof-carrying child artifact"
               pure false
           | some loaded =>
-              let dataset : DatasetBackend := { default := .hdt (readOpsOf loaded.triples), named := [] }
+              let dataset := L4Factoidal.Dataflow.LawfulDataset.ofDefault (L4Factoidal.Dataflow.LawfulStore.hdt (readOpsOf loaded.triples))
               let evalStart ← IO.monoMsNow
-              match runSelectQueryBackendDataset emptyEnv query dataset with
+              match dataset.runSelect clockEnv query with
               | none =>
                   IO.eprintln s!"l4block-shard-merkle-session query={queryNumber} failed: query was not evaluated as SELECT"
                   pure false

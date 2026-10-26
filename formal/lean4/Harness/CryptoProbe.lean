@@ -54,6 +54,43 @@ Sections, each one score line:
 
   7. `aes-gcm` — NOT RUN, and reported as such. See below.
 
+  8. `lws-snapshot-seal` — the sealed LWS snapshot of
+     `L4Factoidal/LWS/SnapshotSeal.lean`
+     (https://github.com/danbri/factoidal/issues/921) with the real
+     ChaCha20-Poly1305, under the RFC 8439 §2.8.2 key and nonce: the round
+     trip; a wrong key; every one-character change of the sealed document's
+     JSON text and every truncation of it must fail to open (a change that
+     breaks the JSON counts as refused, because the host refuses a file that
+     is not JSON); a clear-text document with a key and a sealed one without
+     must both be refused. This is the run-time half of the property
+     "any change to the header or ciphertext makes open fail", which is the
+     AEAD's authentication property and so is not a Lean theorem.
+
+  9. `p256-sign-rfc6979` — `P256.p256SignSha256` (HACL*
+     `Hacl_P256_ecdsa_sign_p256_sha2`) with the nonce `k` RFC 6979 A.2.5
+     gives for NIST P-256, SHA-256, messages "sample" and "test": the
+     signature must be the published `r || s` byte for byte, and HACL*'s
+     verifier must accept it. Negative: a changed message, a changed `s`, a
+     nonce of zero, a nonce equal to the group order `q`, a private key of
+     zero and a 31-byte key must each be refused.
+
+ 10. `p256-secret-to-public` — `P256.p256SecretToPublic` (HACL*
+     `Hacl_P256_dh_initiator`): the RFC 6979 A.2.5 private key gives the
+     published `Ux || Uy`; every private JWK of Wycheproof
+     `ecdh_secp256r1_webcrypto_test.json` gives its own `x || y`. Negative:
+     zero, `q` and a 33-byte key are refused.
+
+ 11. `p256-compressed` — `P256.p256CompressedToRaw` (HACL*
+     `Hacl_P256_compressed_to_raw`): every `valid` uncompressed point of
+     Wycheproof `ecdh_secp256r1_ecpoint_test.json`, written in SEC 1
+     compressed form, must decompress to the same `x || y`; every 33-byte
+     compressed point the corpus marks `invalid` must be refused (the
+     `acceptable` ones are counted apart); a 0x04 prefix and a 32-byte input
+     are refused.
+
+The three P-256 sections check the externs the authorization server signs
+and decompresses with (https://github.com/danbri/factoidal/issues/916).
+
 ## Section 7: the AES-GCM gap
 
 OMEMO 0.8 uses AES-128-GCM, so AES-GCM was in scope for this work and is
@@ -83,6 +120,9 @@ import L4Factoidal.Crypto.Hkdf
 import L4Factoidal.Crypto.X25519
 import L4Factoidal.Crypto.Hpke
 import L4Factoidal.JSON.Parser
+import L4Factoidal.LWS.SnapshotSeal
+import L4Factoidal.Crypto.P256Native
+import L4Factoidal.JOSE.Base64Url
 
 namespace CryptoProbe
 
@@ -137,6 +177,40 @@ def hexToBytesAux : List Char → Option (List UInt8)
       match hexDigit? a, hexDigit? b with
       | some x, some y => (hexToBytesAux rest).map (UInt8.ofNat (x * 16 + y) :: ·)
       | _, _ => none
+
+/-- `hexToBytesAux` onto a reverse accumulator: a tail call per byte. A
+test vector file can hold long messages; the readable form conses after its
+recursive call, one frame per byte
+(https://github.com/danbri/factoidal/issues/746). -/
+def hexToBytesAuxTR (cs : List Char) : Option (List UInt8) := go cs []
+where
+  go : List Char → List UInt8 → Option (List UInt8)
+    | [], acc => some acc.reverse
+    | [_], _ => none
+    | a :: b :: rest, acc =>
+        match hexDigit? a, hexDigit? b with
+        | some x, some y => go rest (UInt8.ofNat (x * 16 + y) :: acc)
+        | _, _ => none
+
+theorem hexToBytesAuxTR_go_eq :
+    ∀ (cs : List Char) (acc : List UInt8),
+      hexToBytesAuxTR.go cs acc = (hexToBytesAux cs).map (acc.reverse ++ ·)
+  | [], acc => by simp [hexToBytesAuxTR.go, hexToBytesAux]
+  | [_], acc => by simp [hexToBytesAuxTR.go, hexToBytesAux]
+  | a :: b :: rest, acc => by
+      simp only [hexToBytesAuxTR.go, hexToBytesAux]
+      cases hexDigit? a with
+      | none => cases hexDigit? b <;> rfl
+      | some x =>
+          cases hexDigit? b with
+          | none => rfl
+          | some y =>
+              simp only
+              rw [hexToBytesAuxTR_go_eq rest]
+              cases hexToBytesAux rest <;> simp
+
+@[csimp] theorem hexToBytesAux_eq_TR : @hexToBytesAux = @hexToBytesAuxTR := by
+  funext cs; simp only [hexToBytesAuxTR, hexToBytesAuxTR_go_eq]; cases hexToBytesAux cs <;> simp
 
 def hexToBytes? (s : String) : Option ByteArray :=
   (hexToBytesAux s.toList).map fun bs => ⟨bs.toArray⟩
@@ -594,7 +668,108 @@ def runHpke : IO Tally := do
         hpkePt).isNone)
   t.get
 
-/-! ## Section 7: the AES-GCM gap -/
+/-!   9. `p256-sign-rfc6979` — `P256.p256SignSha256` (HACL*
+     `Hacl_P256_ecdsa_sign_p256_sha2`) with the nonce `k` RFC 6979 A.2.5
+     gives for NIST P-256, SHA-256, messages "sample" and "test": the
+     signature must be the published `r || s` byte for byte, and HACL*'s
+     verifier must accept it. Negative: a changed message, a changed `s`, a
+     nonce of zero, a nonce equal to the group order `q`, a private key of
+     zero and a 31-byte key must each be refused.
+
+ 10. `p256-secret-to-public` — `P256.p256SecretToPublic` (HACL*
+     `Hacl_P256_dh_initiator`): the RFC 6979 A.2.5 private key gives the
+     published `Ux || Uy`; every private JWK of Wycheproof
+     `ecdh_secp256r1_webcrypto_test.json` gives its own `x || y`. Negative:
+     zero, `q` and a 33-byte key are refused.
+
+ 11. `p256-compressed` — `P256.p256CompressedToRaw` (HACL*
+     `Hacl_P256_compressed_to_raw`): every `valid` uncompressed point of
+     Wycheproof `ecdh_secp256r1_ecpoint_test.json`, written in SEC 1
+     compressed form, must decompress to the same `x || y`; every 33-byte
+     compressed point the corpus marks `invalid` must be refused (the
+     `acceptable` ones are counted apart); a 0x04 prefix and a 32-byte input
+     are refused.
+
+The three P-256 sections check the externs the authorization server signs
+and decompresses with (https://github.com/danbri/factoidal/issues/916).
+
+## Section 7: the AES-GCM gap -/
+
+/-! ## Section 8: the sealed LWS snapshot (issue 921) -/
+
+/-- A clear-text snapshot document of format 2, as `snapshotJson` writes. -/
+def lwsClearDoc : Json :=
+  .object [ ("format", .string "lws-snapshot-2"), ("clock", .number "3")
+          , ("entries", .array [.object [ ("path", .string "/"), ("kind", .string "storageRoot")
+                                        , ("contentType", .string "text/turtle")
+                                        , ("bodyBase64", .string "PHM+IDxwPiA8bz4gLgo=")
+                                        , ("mtime", .number "1") ]]) ]
+
+/-- Open the text of a stored file as the host and the engine do: the host
+refuses text that is not JSON; the engine opens the document. -/
+def lwsOpenText (key? : Option ByteArray) (text : String) : Except String (Option Json) :=
+  match parseJson text with
+  | .error e => .error s!"not JSON: {toString e}"
+  | .ok j => L4Factoidal.LWS.Seal.openSnapshot L4Factoidal.LWS.Seal.hacl key? (some j)
+
+def refused (e : Except String (Option Json)) : Bool := match e with
+  | .error _ => true
+  | .ok _ => false
+
+/-- One-character change at `i`: the low bit of an ASCII character flipped
+(the sealed document is ASCII). -/
+def lwsChangeAt (t : String) (i : Nat) : String :=
+  String.ofList (t.toList.mapIdx (fun j c =>
+    if j == i then Char.ofNat (c.toNat ^^^ 1) else c))
+
+def runLwsSeal : IO Tally := do
+  let t ← IO.mkRef ({} : Tally)
+  IO.println "-- lws-snapshot-seal"
+  let key := rfc8439Key
+  match L4Factoidal.LWS.Seal.sealSnapshot L4Factoidal.LWS.Seal.hacl (some key)
+      (some rfc8439Nonce) lwsClearDoc with
+  | .error e => check t "seal the snapshot" false e
+  | .ok d =>
+      let text := Json.toString d
+      check t "sealed document is ASCII" (text.toList.all (fun c => c.toNat < 128))
+      check t "sealed document names format, cipher and key id"
+        (d.getString? "format" == some "lws-snapshot-sealed-1" &&
+         d.getString? "cipher" == some "chacha20-poly1305" &&
+         d.getString? "keyId" == some "82d86408530b765e")
+      check t "plaintext is not in the sealed document"
+        ((text.splitOn "storageRoot").length == 1 && (text.splitOn "PHM+").length == 1)
+      check t "round trip: open (seal doc) = doc"
+        (match lwsOpenText (some key) text with
+         | .ok (some inner) => Json.toString inner == Json.toString lwsClearDoc
+         | _ => false)
+      check t "a wrong key is refused" (refused (lwsOpenText (some (flipBit key 0)) text))
+      check t "a sealed file without a key is refused" (refused (lwsOpenText none text))
+      check t "a clear-text file with a key is refused"
+        (refused (lwsOpenText (some key) (Json.toString lwsClearDoc)))
+      check t "a clear-text file without a key opens unchanged"
+        (match lwsOpenText none (Json.toString lwsClearDoc) with
+         | .ok (some j) => Json.toString j == Json.toString lwsClearDoc
+         | _ => false)
+      let n := text.length
+      let changed := (List.range n).filter (fun i => refused (lwsOpenText (some key) (lwsChangeAt text i)))
+      check t s!"every one-character change of the sealed document is refused ({changed.length} of {n})"
+        (changed.length == n)
+      let cuts := (List.range n).filter (fun k =>
+        refused (lwsOpenText (some key) (String.ofList (text.toList.take k))))
+      check t s!"every truncation of the sealed document is refused ({cuts.length} of {n})"
+        (cuts.length == n)
+      -- A nonce change that stays canonical base64 of 12 bytes reaches the
+      -- AEAD, which must refuse it.
+      let d2 := match d with
+        | .object fs => Json.object (fs.map (fun (k, v) =>
+            if k == "nonce" then (k, .string (L4Factoidal.LWS.Base64.encode (flipBit rfc8439Nonce 0)))
+            else (k, v)))
+        | other => other
+      check t "a changed nonce is refused by the AEAD"
+        (match lwsOpenText (some key) (Json.toString d2) with
+         | .error e => (e.splitOn "authentication failed").length > 1
+         | .ok _ => false)
+  t.get
 
 def runAesGcm (path : System.FilePath) : IO Tally := do
   let t ← IO.mkRef ({} : Tally)
@@ -624,6 +799,127 @@ def runAesGcm (path : System.FilePath) : IO Tally := do
       t.modify fun s => { s with notRun := s.notRun + n }
   t.get
 
+/-! ## P-256: signing, public keys, point decompression -/
+
+/-- RFC 6979 A.2.5: NIST P-256 key pair. -/
+def rfc6979X : ByteArray := hx "C9AFA9D845BA75166B5C215767B1D6934E50C3DB36E89B127B8A622B120F6721"
+def rfc6979U : ByteArray :=
+  hx ("60FED4BA255A9D31C961EB74C6356D68C049B8923B61FA6CE669622E60F29FB6" ++
+      "7903FE1008B8BC99A41AE9E95628BC64F2F1B20C2D7E9F5177A3C294D4462299")
+/-- The group order `q` of P-256 (RFC 6979 A.2.5). -/
+def p256Order : ByteArray := hx "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551"
+
+/-- RFC 6979 A.2.5, SHA-256: (message, k, r || s). -/
+def rfc6979Sha256 : List (String × ByteArray × ByteArray) :=
+  [ ("sample", hx "A6E3C57DD01ABE90086538398355DD4C3B17AA873382B0F24D6129493D8AAD60",
+      hx ("EFD48B2AACB6A8FD1140DD9CD45E81D69D2C877B56AAF991C34D0EA84EAF3716" ++
+          "F7CB1C942D657C41D436C7A1B6E29F65F3E900DBB9AFF4064DC4AB2F843ACDA8"))
+  , ("test", hx "D16B6AE827F17175E040871A1C7EC3500192C4C92677336EC2537ACAEE0008E0",
+      hx ("F1ABB023518351CD71D881567B1EA663ED3EFCF6C5132B354F28D3B0B7D38367" ++
+          "019F4113742A2B14BD25926B49C649155F267E60D3814B4C0CC84250E46F0083")) ]
+
+def zeros (n : Nat) : ByteArray := ⟨Array.replicate n 0⟩
+
+def runP256Sign : IO Tally := do
+  let t ← IO.mkRef ({} : Tally)
+  IO.println "-- p256-sign-rfc6979"
+  for (m, k, rs) in rfc6979Sha256 do
+    let msg := m.toUTF8
+    let got := P256.p256SignSha256 rfc6979X msg k
+    check t s!"RFC 6979 A.2.5 SHA-256 \"{m}\": signature is the published r || s"
+      (got == some rs) s!"got {(got.map hexOf).getD "none"}"
+    check t s!"RFC 6979 A.2.5 SHA-256 \"{m}\": HACL* verifies it"
+      (P256.p256VerifySha256 rfc6979U msg rs)
+    check t s!"RFC 6979 A.2.5 SHA-256 \"{m}\": a changed message is refused"
+      (!P256.p256VerifySha256 rfc6979U (msg ++ "x".toUTF8) rs)
+    check t s!"RFC 6979 A.2.5 SHA-256 \"{m}\": a changed s is refused"
+      (!P256.p256VerifySha256 rfc6979U msg (flipBit rs 63))
+  let msg := "sample".toUTF8
+  check t "a nonce of zero is refused" (P256.p256SignSha256 rfc6979X msg (zeros 32) == none)
+  check t "a nonce equal to the group order is refused" (P256.p256SignSha256 rfc6979X msg p256Order == none)
+  check t "a private key of zero is refused"
+    (P256.p256SignSha256 (zeros 32) msg (hx "A6E3C57DD01ABE90086538398355DD4C3B17AA873382B0F24D6129493D8AAD60") == none)
+  check t "a 31-byte private key is refused"
+    (P256.p256SignSha256 (rfc6979X.extract 0 31) msg (hx "A6E3C57DD01ABE90086538398355DD4C3B17AA873382B0F24D6129493D8AAD60") == none)
+  t.get
+
+def b64u (j : Json) (k : String) : Option ByteArray :=
+  (j.getString? k).bind L4Factoidal.JOSE.Base64Url.decode
+
+def runP256Public (path : System.FilePath) : IO Tally := do
+  let t ← IO.mkRef ({} : Tally)
+  IO.println "-- p256-secret-to-public"
+  check t "RFC 6979 A.2.5: the private key gives Ux || Uy"
+    (P256.p256SecretToPublic rfc6979X == some rfc6979U)
+  check t "a private key of zero is refused" (P256.p256SecretToPublic (zeros 32) == none)
+  check t "a private key equal to the group order is refused" (P256.p256SecretToPublic p256Order == none)
+  check t "a 33-byte private key is refused" (P256.p256SecretToPublic (zeros 33) == none)
+  match ← readJsonFile path with
+  | none =>
+      IO.println s!"  [NOT RUN] {path} is not present"
+      t.modify fun s => { s with notRun := s.notRun + 1 }
+  | some j =>
+      for g in (j.getArray? "testGroups").getD [] do
+        for v in (g.getArray? "tests").getD [] do
+          match v.field? "private" with
+          | some pj =>
+              let tc := (v.field? "tcId").map toStringCompact |>.getD "?"
+              match b64u pj "d", b64u pj "x", b64u pj "y" with
+              | some d, some x, some y =>
+                  check t s!"wycheproof webcrypto tcId {tc}: d gives x || y"
+                    (P256.p256SecretToPublic d == some (x ++ y))
+              | _, _, _ => check t s!"wycheproof webcrypto tcId {tc}: private JWK readable" false
+          | none => pure ()
+  t.get
+
+def runP256Compressed (path : System.FilePath) : IO Tally := do
+  let t ← IO.mkRef ({} : Tally)
+  IO.println "-- p256-compressed"
+  let compressed (raw : ByteArray) : ByteArray :=
+    let y := raw.extract 32 64
+    let odd := (y.get! 31) % 2 == 1
+    ByteArray.mk #[if odd then 3 else 2] ++ raw.extract 0 32
+  check t "RFC 6979 A.2.5 public key: compressed form decompresses to Ux || Uy"
+    (P256.p256CompressedToRaw (compressed rfc6979U) == some rfc6979U)
+  check t "the other parity gives the other y, never the same point"
+    (let c := compressed rfc6979U
+     let c' := c.set! 0 (if c.get! 0 == 2 then 3 else 2)
+     match P256.p256CompressedToRaw c' with
+     | some r => r.extract 0 32 == rfc6979U.extract 0 32 && r != rfc6979U
+     | none => false)
+  check t "a 0x04 prefix on 33 bytes is refused"
+    (P256.p256CompressedToRaw ((compressed rfc6979U).set! 0 4) == none)
+  check t "a 32-byte input is refused"
+    (P256.p256CompressedToRaw (rfc6979U.extract 0 32) == none)
+  match ← readJsonFile path with
+  | none =>
+      IO.println s!"  [NOT RUN] {path} is not present"
+      t.modify fun s => { s with notRun := s.notRun + 1 }
+  | some j =>
+      for g in (j.getArray? "testGroups").getD [] do
+        for v in (g.getArray? "tests").getD [] do
+          let tc := (v.field? "tcId").map toStringCompact |>.getD "?"
+          let res := (v.getString? "result").getD ""
+          match (v.getString? "public").bind hexToBytes? with
+          | none => pure ()
+          | some p =>
+              if p.size == 65 && p.get! 0 == 4 && res == "valid" then
+                let raw := p.extract 1 65
+                check t s!"wycheproof ecpoint tcId {tc}: compressed form decompresses"
+                  (P256.p256CompressedToRaw (compressed raw) == some raw)
+              else if p.size == 33 then
+                if res == "invalid" then
+                  check t s!"wycheproof ecpoint tcId {tc}: invalid compressed point refused"
+                    (P256.p256CompressedToRaw p == none)
+                else if res == "acceptable" then
+                  IO.println s!"  [acceptable] tcId {tc}: {if (P256.p256CompressedToRaw p).isSome then "decompressed" else "refused"}"
+                  t.modify fun s => { s with acceptable := s.acceptable + 1 }
+                else
+                  check t s!"wycheproof ecpoint tcId {tc}: valid compressed point decompresses"
+                    (P256.p256CompressedToRaw p).isSome
+              else pure ()
+  t.get
+
 /-! ## Entry point -/
 
 def main (_args : List String) : IO UInt32 := do
@@ -642,6 +938,10 @@ def main (_args : List String) : IO UInt32 := do
   let t5 ← runX25519File (wp / "x25519_test.json") "wycheproof-x25519"
   let t6 ← runHpke
   let t7 ← runAesGcm (wp / "aes_gcm_test.json")
+  let t8 ← runLwsSeal
+  let t9 ← runP256Sign
+  let t10 ← runP256Public (wp / "ecdh_secp256r1_webcrypto_test.json")
+  let t11 ← runP256Compressed (wp / "ecdh_secp256r1_ecpoint_test.json")
   IO.println "\n========================================"
   IO.println (scoreLine "rfc8439" t1)
   IO.println (scoreLine "wycheproof-chacha20-poly1305" t2)
@@ -650,7 +950,11 @@ def main (_args : List String) : IO UInt32 := do
   IO.println (scoreLine "wycheproof-x25519" t5)
   IO.println (scoreLine "rfc9180-a2" t6)
   IO.println (scoreLine "aes-gcm" t7)
-  let ts := [t1, t2, t3, t4, t5, t6, t7]
+  IO.println (scoreLine "lws-snapshot-seal" t8)
+  IO.println (scoreLine "p256-sign-rfc6979" t9)
+  IO.println (scoreLine "p256-secret-to-public" t10)
+  IO.println (scoreLine "p256-compressed" t11)
+  let ts := [t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11]
   let total : Tally :=
     { pass := (ts.map Tally.pass).foldl (· + ·) 0,
       fail := (ts.map Tally.fail).foldl (· + ·) 0,

@@ -1,0 +1,25 @@
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+       "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head profile='pf-pf-ns-fnd'>
+  <title>Layering Test Profile</title>
+</head>
+<body>
+<p>
+This is an HTML document, whose 
+<a href='pf-pf-ns-fnd'>profile</a> is set
+via a server side include, to be
+<a href='pf-pf-ns-fnd'>
+pf-pf-ns-fnd</a>.
+It is intended itself to be used as a profile or
+namespace document.
+Rewrite rules in the .htaccess file set the
+environment variable <code>arg</code>,
+(i.e. <code>REDIRECT_arg</code>) which is used
+as the profile.
+<!-- server environment variables printed by the SSI script removed at vendoring (they name other visitors' addresses and cookies); see PROVENANCE.md -->
+
+</p>
+</body>
+</html>

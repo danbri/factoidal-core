@@ -19,15 +19,19 @@ full closure computes is derivable (`fullClosure_sound`).
 RDF 1.1 Semantics §8.1, RDF entailment rules:
 
   * rdfD2  `xxx aaa yyy .`  ⊢  `aaa rdf:type rdf:Property .`
-  * rdfD1  `xxx aaa "sss"^^ddd .` (ddd in D)  ⊢  `_:nnn rdf:type ddd .`
-    NOT a row here: it mints a fresh blank node per literal. Its only
-    observable consequences on a non-generalised conclusion graph are
-    (a) `_:b rdf:type ddd` answered by a blank node that can ALSO map
-    to the literal itself under simple entailment, which the instance
-    search in `RDF/Entailment.lean` permits, and (b) D-inconsistency
-    of ill-formed literals, which `Entailment.dInconsistent` decides.
-    The F\* tree makes the same cut (`RDFS.Closure.fsti` banner:
-    "rdfD1 ... mint fresh blank nodes — a scoped gap").
+  * rdfD1  `xxx aaa "sss"^^ddd .` (ddd in D)  ⊢
+           `xxx aaa _:nnn . _:nnn rdf:type ddd .`
+    NOT a row here: it mints a fresh blank node per literal, and this
+    closure must mint none (the SPARQL entailment regimes answer over
+    it; see `RDF.Regime.closure`). The graph-entailment procedure
+    applies it, with RDF 1.2's rdfs14 and rdfs14a, BEFORE this closure
+    runs (`RDF.Regime.generalize`, `RDF/Entailment.lean`). Until
+    2026-10-09 this note claimed the conclusion `_:b rdf:type ddd` was
+    answered by mapping `_:b` to the literal itself; that is false —
+    `_:b` is in SUBJECT position there, where a literal cannot go — and
+    the rdf12 `literal-type` test failed for it. The F\* tree still
+    makes the cut (`RDFS.Closure.fsti` banner: "rdfD1 ... mint fresh
+    blank nodes — a scoped gap").
 
 RDF 1.1 Semantics §9.2, RDFS entailment rules (quoted from the table):
 
@@ -87,7 +91,8 @@ namespace L4Factoidal.RDFS
 
 open L4Factoidal.RDF
 
-/-! ## Axiomatic triples — RDF 1.1 Semantics §8.2 and §9.3 -/
+/-! ## Axiomatic triples — RDF 1.1 Semantics §8.2 and §9.3, with the
+four rows RDF 1.2 Semantics §8 and §9 add -/
 
 /-- Shorthand: an all-IRI triple. -/
 def iriTriple (s p o : WfIri) : Triple := ⟨.iri s, p, .iri o⟩
@@ -122,12 +127,16 @@ def containerMembershipIn (g : Graph) : List WfIri :=
 Quoted: "rdf:type rdf:type rdf:Property . rdf:subject rdf:type
 rdf:Property . rdf:predicate … rdf:object … rdf:first … rdf:rest …
 rdf:value rdf:type rdf:Property . rdf:nil rdf:type rdf:List . rdf:_1
-rdf:type rdf:Property . rdf:_2 … ". -/
+rdf:type rdf:Property . rdf:_2 … ". Plus the row RDF 1.2 Semantics §8
+adds: "rdf:reifies rdf:type rdf:Property ." The finite part is the
+same list as `RDF.rdfAxiomaticTriples` (`RDF/VocabularyAxioms.lean`);
+`Unified/RdfsSchema.axiomaticTriples_hold` checks the inclusion. -/
 def rdfAxiomaticTriples (cmps : List WfIri) : Graph :=
   [ iriTriple rdfType rdfType rdfProperty,
     iriTriple rdfSubject rdfType rdfProperty,
     iriTriple rdfPredicate rdfType rdfProperty,
     iriTriple rdfObject rdfType rdfProperty,
+    iriTriple rdfReifies rdfType rdfProperty,  -- RDF 1.2 Semantics §8
     iriTriple rdfFirst rdfType rdfProperty,
     iriTriple rdfRest rdfType rdfProperty,
     iriTriple rdfValue rdfType rdfProperty,
@@ -136,9 +145,23 @@ def rdfAxiomaticTriples (cmps : List WfIri) : Graph :=
 
 /-- §9.3, the RDFS axiomatic triples (the fixed part). Transcribed in
 the table's order: the `rdfs:domain` block, the `rdfs:range` block,
-then the subclass / subproperty / datatype block. -/
+then the subclass / subproperty / datatype block. The three rows RDF 1.2
+Semantics §9 adds (`rdf:reifies` domain and range, `rdfs:Proposition
+rdfs:subClassOf rdfs:Resource`) sit where the RDF 1.2 table puts them.
+
+The table has no `rdf:XMLLiteral` row (decision of 2026-10-13,
+https://github.com/danbri/factoidal/issues/767 gap 1). The RDF 1.0
+(2004) table had `rdf:XMLLiteral rdf:type rdfs:Datatype .` and
+`rdf:XMLLiteral rdfs:subClassOf rdfs:Literal .`; the RDF 1.1 §9 table
+does not, and §8 says "RDF-D interpretations MAY fail to recognize these
+datatypes". Until 2026-10-13 this table carried both rows, so the RDFS
+regime emitted two triples that are not RDFS-entailed when
+`rdf:XMLLiteral ∉ D`. When `rdf:XMLLiteral ∈ D`, the closure still
+derives both: rdfs1 (`datatypeAxioms D`) gives the first and rdfs13 the
+second. -/
 def rdfsAxiomaticTriplesFixed : Graph :=
   [ iriTriple rdfType rdfsDomain rdfsResource,
+    iriTriple rdfReifies rdfsDomain rdfsResource,           -- RDF 1.2 §9
     iriTriple rdfsDomain rdfsDomain rdfProperty,
     iriTriple rdfsRange rdfsDomain rdfProperty,
     iriTriple rdfsSubPropertyOf rdfsDomain rdfProperty,
@@ -156,6 +179,7 @@ def rdfsAxiomaticTriplesFixed : Graph :=
     iriTriple rdfValue rdfsDomain rdfsResource,
 
     iriTriple rdfType rdfsRange rdfsClass,
+    iriTriple rdfReifies rdfsRange rdfsProposition,         -- RDF 1.2 §9
     iriTriple rdfsDomain rdfsRange rdfsClass,
     iriTriple rdfsRange rdfsRange rdfsClass,
     iriTriple rdfsSubPropertyOf rdfsRange rdfProperty,
@@ -176,9 +200,8 @@ def rdfsAxiomaticTriplesFixed : Graph :=
     iriTriple rdfBag rdfsSubClassOf rdfsContainer,
     iriTriple rdfSeq rdfsSubClassOf rdfsContainer,
     iriTriple rdfsContainerMembershipProperty rdfsSubClassOf rdfProperty,
+    iriTriple rdfsProposition rdfsSubClassOf rdfsResource,  -- RDF 1.2 §9
     iriTriple rdfsIsDefinedBy rdfsSubPropertyOf rdfsSeeAlso,
-    iriTriple rdfXMLLiteral rdfType rdfsDatatype,
-    iriTriple rdfXMLLiteral rdfsSubClassOf rdfsLiteral,
     iriTriple rdfsDatatype rdfsSubClassOf rdfsClass ]
 
 /-- §9.3, the per-`rdf:_n` RDFS axioms: "rdf:_1 rdf:type
@@ -263,10 +286,13 @@ inductive DerivesFull (ax : Graph) (g : Graph) : Triple → Prop where
   | rdfs8 {x : Subject}
       (h : DerivesFull ax g ⟨x, rdfType, Term.iri rdfsClass⟩) :
       DerivesFull ax g ⟨x, rdfsSubClassOf, Term.iri rdfsResource⟩
-  /-- **rdfs9** — as in `RdfsCore.Derives.rdfs9`. -/
-  | rdfs9 {s : Subject} {a : WfIri} {b : Term}
-      (hdata : DerivesFull ax g ⟨s, rdfType, Term.iri a⟩)
-      (hdecl : DerivesFull ax g ⟨Subject.iri a, rdfsSubClassOf, b⟩) :
+  /-- **rdfs9** — as in `RdfsCore.Derives.rdfs9`: the sub-class is an IRI
+  or a blank node (§9.2: `xxx rdfs:subClassOf yyy . zzz rdf:type xxx .`
+  gives `zzz rdf:type yyy .`). -/
+  | rdfs9 {s : Subject} {x : Term} {a : Subject} {b : Term}
+      (hdata : DerivesFull ax g ⟨s, rdfType, x⟩)
+      (hsub  : x.toSubject? = some a)
+      (hdecl : DerivesFull ax g ⟨a, rdfsSubClassOf, b⟩) :
       DerivesFull ax g ⟨s, rdfType, b⟩
   /-- **rdfs10** — §9.2: `xxx rdf:type rdfs:Class .` ⊢
   `xxx rdfs:subClassOf xxx .` -/
@@ -364,6 +390,68 @@ def fullClosureLoop (g : Graph) (fuel : Nat) : Graph :=
   | n + 1 =>
       let g' := fullStep g
       if g'.length = g.length then g else fullClosureLoop g' n
+
+/-! ## Indexed evaluation of the same rounds (2026-10-10)
+
+`fullStep` reads the six rdfs-core rows through `stepConclusions`, whose
+premise lookups scan the whole graph, and adds the result with the
+`Graph.add` scan; one round costs O(|g|^2) (see the section of the same name
+in `Closure.lean`). `fullStepFast` computes the same list of conclusions with
+`stepConclusionsIx` and adds it with `FastGraph.addAll`; `fullStepFast_eq`
+proves it equal to `fullStep` as a LIST, and `fullClosureLoop_eq_fast` is
+registered `@[csimp]`, so every later call of `fullClosureLoop`, and therefore
+of `fullClosure`, runs the indexed loop and prints the closure in the same
+order as before. The eight single-premise rows read one triple each and are
+unchanged. -/
+
+/-- `fullStepConclusions` with the rdfs-core rows read through an index. -/
+def fullStepConclusionsIx (g : Graph) : List Triple :=
+  stepConclusionsIx g ++
+  g.flatMap rdfD2For ++
+  g.flatMap rdfs4aFor ++
+  g.flatMap rdfs4bFor ++
+  g.flatMap rdfs6For ++
+  g.flatMap rdfs8For ++
+  g.flatMap rdfs10For ++
+  g.flatMap rdfs12For ++
+  g.flatMap rdfs13For
+
+theorem fullStepConclusionsIx_eq (g : Graph) :
+    fullStepConclusionsIx g = fullStepConclusions g := by
+  simp only [fullStepConclusionsIx, fullStepConclusions, stepConclusionsIx_eq]
+
+/-- One round with the indexed conclusions and the bucketed duplicate test. -/
+def fullStepFast (g : Graph) : Graph :=
+  ((FastGraph.ofGraph g).addAll (fullStepConclusionsIx g)).toGraph
+
+theorem fullStepFast_eq (g : Graph) : fullStepFast g = fullStep g := by
+  unfold fullStepFast fullStep
+  rw [FastGraph.addAll_toGraph _ _ (FastGraph.ofGraph_inv g), FastGraph.ofGraph_toGraph,
+    fullStepConclusionsIx_eq, addAll_eq_graphAddAll]
+
+/-- `fullClosureLoop` with `fullStepFast`. -/
+def fullClosureLoopFast (g : Graph) (fuel : Nat) : Graph :=
+  match fuel with
+  | 0     => g
+  | n + 1 =>
+      let g' := fullStepFast g
+      if g'.length = g.length then g else fullClosureLoopFast g' n
+
+theorem fullClosureLoopFast_eq (g : Graph) (fuel : Nat) :
+    fullClosureLoopFast g fuel = fullClosureLoop g fuel := by
+  induction fuel generalizing g with
+  | zero => rfl
+  | succ n ih =>
+      simp only [fullClosureLoopFast, fullClosureLoop, fullStepFast_eq]
+      split
+      · rfl
+      · exact ih _
+
+/-- The compiler emits `fullClosureLoopFast` for every later call of
+`fullClosureLoop`. -/
+@[csimp] theorem fullClosureLoop_eq_fast : @fullClosureLoop = @fullClosureLoopFast := by
+  funext g fuel
+  exact (fullClosureLoopFast_eq g fuel).symm
 
 /-- Fuel budget. Same counting shape as `closureFuelBound`: the loop
 only recurses on strict growth, and every conclusion is built from

@@ -1,0 +1,2 @@
+# Overlay ids (tag 14) in a BGP: the new name of a new subject.
+SELECT ?n WHERE { <http://ex.org/z> <http://ex.org/name> ?n }

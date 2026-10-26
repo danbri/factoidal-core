@@ -1,6 +1,6 @@
 /-
-L4Factoidal.Storage.LiteralGramIndex — the meaning of the LGI1 literal search
-index.
+L4Factoidal.Storage.LiteralGramIndex — the meaning of the LGI3 and LGI4 literal
+search index.
 
 Design record: `docs/designissues/2026-09-04-literal-token-index.md`.
 
@@ -18,10 +18,21 @@ Two decisions are stated here and nothing downstream may restate them.
 **The unit is a character.** `SPARQL.Expr.strContains` compares `List Char`,
 so a byte n-gram index would be a second, disagreeing notion of substring.
 
-**The fold is the engine's own `LCASE`.** `foldChars` maps `Char.toLower`
-across the characters, which is exactly what `Expr.evalIn` computes for
-`LCASE` through `String.toLower`. The two cannot drift because there is one
-function.
+**The fold agrees with the engine's own `LCASE`.** `foldChars` maps each
+character to `Text.CaseMap.searchFoldImage`: the context-free full lowercase
+of Unicode default case mapping, with capital sigma and final sigma both
+folded to `σ`. `LCASE` itself (`Text.CaseMap.lowerCase`) is not a character
+map, because `İ` lower-cases to two characters and `Σ` depends on its
+neighbours. The two outputs of `lowerCase` that depend on context, `σ` and
+`ς`, fold to the same image, so folding the result of `LCASE` gives the same
+characters as folding its argument (pinned below by `#guard`s and, over every
+case-affected code point, in `Text/CaseMapTests`).
+A row that `CONTAINS(LCASE(?x), "needle")` keeps therefore carries every gram
+of the folded needle. Before 2026-10-10 `LCASE` was the ASCII-only
+`String.toLower` and this fold was `Char.toLower`, which agreed with it; an
+index built then folds only the ASCII letters and is not a superset for the
+non-ASCII lexical forms the Unicode `LCASE` matches. Re-pack it
+(`docs/designissues/2026-10-10-unicode-case-mapping.md`).
 
 ## The superset theorem
 
@@ -36,6 +47,7 @@ No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
 import Std.Data.HashMap
 import L4Factoidal.SPARQL.Expr
+import L4Factoidal.Text.CaseMap
 
 namespace L4Factoidal.Storage.LiteralGramIndex
 
@@ -48,9 +60,11 @@ open L4Factoidal.SPARQL
 falls back to the scan. -/
 def gramLength : Nat := 3
 
-/-- The case fold, character by character. This is `String.toLower`'s
-character map, which is what `LCASE` evaluates to. -/
-def foldChars (cs : List Char) : List Char := cs.map Char.toLower
+/-- The case fold: each character becomes the characters of its fold image
+(`Text.CaseMap.searchFoldImage`), so a contiguous part of the input folds to a
+contiguous part of the result. `LCASE` evaluates to the same characters up to
+this fold. -/
+def foldChars (cs : List Char) : List Char := Text.CaseMap.searchFold cs
 
 /-- The folded characters of a string. -/
 def foldString (s : String) : List Char := foldChars s.toList
@@ -121,9 +135,15 @@ def gramsOfNeedle (needle : String) : List (List Char) :=
 
 /-! ## 2. Folding preserves the substring relation -/
 
-theorem listIsPrefix_map (f : Char → Char) :
+theorem listIsPrefix_append_left (l a b : List Char) :
+    listIsPrefix (l ++ a) (l ++ b) = listIsPrefix a b := by
+  induction l with
+  | nil => simp
+  | cons x xs ih => simp [listIsPrefix, ih]
+
+theorem listIsPrefix_flatMap (f : Char → List Char) :
     ∀ (a b : List Char), listIsPrefix a b = true →
-      listIsPrefix (a.map f) (b.map f) = true := by
+      listIsPrefix (a.flatMap f) (b.flatMap f) = true := by
   intro a
   induction a with
   | nil => intro b _; simp [listIsPrefix]
@@ -135,12 +155,24 @@ theorem listIsPrefix_map (f : Char → Char) :
           simp only [listIsPrefix, Bool.and_eq_true, beq_iff_eq] at h
           obtain ⟨hxy, hrest⟩ := h
           subst hxy
-          simp only [List.map_cons, listIsPrefix, Bool.and_eq_true, beq_iff_eq]
-          exact ⟨trivial, ih ys hrest⟩
+          simp only [List.flatMap_cons]
+          rw [listIsPrefix_append_left]
+          exact ih ys hrest
 
-theorem listContainsSublist_map (f : Char → Char) :
+theorem listContainsSublist_append_left (n : List Char) :
+    ∀ (l t : List Char), listContainsSublist n t = true →
+      listContainsSublist n (l ++ t) = true := by
+  intro l
+  induction l with
+  | nil => intro t h; simpa using h
+  | cons x xs ih =>
+      intro t h
+      simp only [List.cons_append, listContainsSublist, Bool.or_eq_true]
+      exact Or.inr (ih t h)
+
+theorem listContainsSublist_flatMap (f : Char → List Char) :
     ∀ (needle hay : List Char), listContainsSublist needle hay = true →
-      listContainsSublist (needle.map f) (hay.map f) = true := by
+      listContainsSublist (needle.flatMap f) (hay.flatMap f) = true := by
   intro needle hay
   induction hay with
   | nil =>
@@ -151,10 +183,23 @@ theorem listContainsSublist_map (f : Char → Char) :
   | cons y ys ih =>
       intro h
       simp only [listContainsSublist, Bool.or_eq_true] at h
-      simp only [List.map_cons, listContainsSublist, Bool.or_eq_true]
+      simp only [List.flatMap_cons]
       cases h with
-      | inl hp => exact Or.inl (by simpa using listIsPrefix_map f needle (y :: ys) hp)
-      | inr hr => exact Or.inr (ih hr)
+      | inl hp =>
+          have hpf := listIsPrefix_flatMap f needle (y :: ys) hp
+          simp only [List.flatMap_cons] at hpf
+          cases hs : f y ++ ys.flatMap f with
+          | nil =>
+              rw [hs] at hpf
+              cases hn : needle.flatMap f with
+              | nil => simp [listContainsSublist]
+              | cons _ _ => rw [hn] at hpf; simp [listIsPrefix] at hpf
+          | cons z zs =>
+              rw [hs] at hpf
+              simp only [listContainsSublist, Bool.or_eq_true]
+              exact Or.inl hpf
+      | inr hr =>
+          exact listContainsSublist_append_left _ (f y) _ (ih hr)
 
 /-- Folding both sides preserves the substring relation, so a case-sensitive
 `CONTAINS` match implies a match of the folded needle in the folded lexical
@@ -162,7 +207,7 @@ form. -/
 theorem foldChars_containsSublist (needle hay : List Char)
     (h : listContainsSublist needle hay = true) :
     listContainsSublist (foldChars needle) (foldChars hay) = true :=
-  listContainsSublist_map Char.toLower needle hay h
+  listContainsSublist_flatMap Text.CaseMap.searchFoldImage needle hay h
 
 /-! ## 3. A window of a contiguous sublist is a window of the whole -/
 
@@ -266,7 +311,7 @@ def withIds : Nat → List Term → List (Nat × List (List Char))
   | i, t :: rest => (i, gramsOfTerm t) :: withIds (i + 1) rest
 
 /-- The local IDs whose term carries a gram. This is the specification of one
-LGI1 posting list. -/
+LGI3 posting list. -/
 def idsWithGram (dict : Array Term) (gram : List Char) : List Nat :=
   (withIds 0 dict.toList).filterMap
     (fun p => if gram ∈ p.2 then some p.1 else none)
@@ -386,7 +431,7 @@ structure Index where
   /-- How many dictionary terms are literals. Informational. -/
   literalCount : Nat
   postings : Array Posting
-  /-- LGI2 only: the dictionary positions of the literals the index did NOT
+  /-- LGI4 only: the dictionary positions of the literals the index did NOT
   gram, ascending and distinct. They are the out-of-line (tag 4) literals of
   the version-2 term codec: the block dictionary names the digest and the byte
   length of such a literal, not its lexical form, so no gram of it can be
@@ -395,7 +440,7 @@ structure Index where
   caller re-evaluates the original SPARQL expression on the candidates, which
   for an opaque literal means fetching its blob.
 
-  Empty in LGI1, whose encoder refuses a non-empty list because its bytes have
+  Empty in LGI3, whose encoder refuses a non-empty list because its bytes have
   nowhere to carry it. -/
   opaqueIds : List Nat := []
   deriving DecidableEq, Repr
@@ -484,10 +529,10 @@ def candidates? (idx : Index) (needle : String) : Option (List Nat) :=
 def agreesWithSpec (dict : Array Term) (needle : String) : Bool :=
   candidates? (build dict) needle == candidatesSpec dict needle
 
-/-! ## 7. Opaque literals: the LGI2 candidate set
+/-! ## 7. Opaque literals: the LGI4 candidate set
 
 An out-of-line literal has no lexical form in the block, so it has no gram and
-no posting list can hold it. LGI2 stores the list of such positions and the
+no posting list can hold it. LGI4 stores the list of such positions and the
 candidate set is the union of the gram intersection and that list.
 
 `mem_candidatesOpaque_of_match` and `mem_candidatesOpaque_of_opaque` are the
@@ -499,7 +544,7 @@ can serve. -/
 def withOpaque (ids opaqueList : List Nat) : List Nat :=
   ids ++ opaqueList.filter (fun i => !ids.contains i)
 
-/-- The specification form of the LGI2 candidate set. `none` still means the
+/-- The specification form of the LGI4 candidate set. `none` still means the
 index cannot serve this needle and the caller must scan: a needle that folds to
 fewer than `gramLength` characters names no gram, and an opaque literal is not
 a reason to answer a needle the gram index cannot answer. -/
@@ -511,7 +556,7 @@ def candidatesSpecOpaque (dict : Array Term) (opaqueList : List Nat) (needle : S
 def candidatesOpaque? (idx : Index) (needle : String) : Option (List Nat) :=
   (candidates? idx needle).map (fun ids => withOpaque ids idx.opaqueIds)
 
-/-- The contract between the two, the LGI2 form of `agreesWithSpec`. -/
+/-- The contract between the two, the LGI4 form of `agreesWithSpec`. -/
 def agreesWithSpecOpaque (dict : Array Term) (opaqueList : List Nat) (needle : String) : Bool :=
   candidatesOpaque? { build dict with opaqueIds := opaqueList } needle ==
     candidatesSpecOpaque dict opaqueList needle
@@ -528,7 +573,7 @@ theorem mem_withOpaque_right {i : Nat} {ids opaqueList : List Nat} (h : i ∈ op
     exact ⟨h, by simpa using hin⟩
 
 /-- **The soundness gate, part one.** A grammed dictionary term whose folded
-lexical form contains the folded needle is still in the LGI2 candidate list. -/
+lexical form contains the folded needle is still in the LGI4 candidate list. -/
 theorem mem_candidatesOpaque_of_match (dict : Array Term) (opaqueList : List Nat)
     (needle : String) (i : Nat) (t : Term) (ids : List Nat)
     (hget : dict.toList[i]? = some t)
@@ -581,7 +626,7 @@ private def sampleDict : Array Term :=
 #guard (build sampleDict).literalCount == 4
 #guard (build sampleDict).opaqueIds == []
 
-/-! LGI2: position 3 is an IRI in this fixture, so treating it as opaque is
+/-! LGI4: position 3 is an IRI in this fixture, so treating it as opaque is
 artificial, but it pins the union. An opaque position is a candidate for every
 needle the index serves, and is not a candidate for a needle it refuses. -/
 #guard candidatesSpecOpaque sampleDict [3] "water" == some [0, 1, 4, 3]
@@ -593,6 +638,59 @@ needle the index serves, and is not a candidate for a needle it refuses. -/
 #guard agreesWithSpecOpaque sampleDict [3] "bicycle"
 #guard agreesWithSpecOpaque sampleDict [0, 3] "water"
 #guard agreesWithSpecOpaque sampleDict [3] "ab"
+
+/-! Unicode `LCASE` (https://github.com/danbri/factoidal/issues/706). `LCASE`
+is the full lowercase mapping with the Final_Sigma rule, so a row that
+`CONTAINS(LCASE(?x), "needle")` keeps is a row whose lowercased text holds the
+needle. The index must list it. With the ASCII-only fold the lexical form
+`École Normale` carried the grams `Éco` and `Nor`, and the needle `école` the
+gram `éco`, so the filter dropped a row the scan keeps. -/
+
+private def uniDict : Array Term :=
+  #[lit "École Normale", lit "\u212AELVIN", lit "İstanbul", lit "ΟΔΥΣΣΕΥΣ", lit "Straße", lit "plain"]
+
+/-- The positions a scan keeps for `CONTAINS(LCASE(?x), needle)`. -/
+private def scanLcase (dict : Array Term) (needle : String) : List Nat :=
+  (List.range dict.size).filter fun i =>
+    match dict[i]? with
+    | some (.literal l) =>
+        listContainsSublist needle.toList (Fn.String.lowerCase l.val.lexicalForm).toList
+    | _ => false
+
+/-- The index lists every position the scan keeps (or declines to serve). -/
+private def lcaseSound (dict : Array Term) (needle : String) : Bool :=
+  match candidatesSpec dict needle with
+  | none => true
+  | some ids => (scanLcase dict needle).all (ids.contains ·)
+
+#guard scanLcase uniDict "école" == [0]
+#guard scanLcase uniDict "kelvin" == [1]            -- KELVIN SIGN lower-cases to k
+#guard scanLcase uniDict "i\u0307stanbul" == [2]     -- İ lower-cases to i + U+0307
+#guard scanLcase uniDict "οδυσσευς" == [3]          -- final sigma at the word end
+#guard scanLcase uniDict "straße" == [4]
+#guard candidatesSpec uniDict "école" == some [0]
+#guard candidatesSpec uniDict "kelvin" == some [1]
+#guard candidatesSpec uniDict "i\u0307stanbul" == some [2]
+#guard candidatesSpec uniDict "οδυσσευς" == some [3]
+#guard candidatesSpec uniDict "straße" == some [4]
+#guard lcaseSound uniDict "école"
+#guard lcaseSound uniDict "kelvin"
+#guard lcaseSound uniDict "i\u0307stanbul"
+#guard lcaseSound uniDict "οδυσσευς"
+#guard lcaseSound uniDict "straße"
+#guard lcaseSound uniDict "plain"
+-- a needle that is in no lexical form lists nothing
+#guard candidatesSpec uniDict "ecole" == some []
+-- case-sensitive shapes (no LCASE) are served by the same fold
+#guard (candidatesSpec uniDict "École").getD [] == [0]
+#guard agreesWithSpec uniDict "école"
+#guard agreesWithSpec uniDict "kelvin"
+#guard agreesWithSpec uniDict "οδυσσευς"
+-- the fold of the engine's LCASE result is the fold of its argument
+#guard uniDict.toList.all fun t =>
+  foldedOfTerm t == foldChars (match t with
+    | .literal l => (Fn.String.lowerCase l.val.lexicalForm).toList
+    | _ => [])
 
 #print axioms mem_candidatesSpec
 #print axioms mem_candidatesOpaque_of_match

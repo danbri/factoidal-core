@@ -36,10 +36,23 @@ eval Q (D S) = eval Q (restrict keep (D S))
 so the storage side has to prove an equality of DATASETS, which is a
 statement about which quads survive, and never mentions the evaluator.
 
+## Against the denotation (https://github.com/danbri/factoidal/issues/975, B2)
+
+Section 4 states the storage obligation against `Dataset.den`
+(`RDF/DatasetDenotation.lean`): `plannerSoundnessSelectDen` and
+`plannerSoundnessAskDen` replace the list equality `hagree` by `hcover`, "every
+kept quad of the denotation of `dE` is a quad of the denotation of `dS`", plus
+`SubEntries dS dE` (the kept entries keep their order), `dE.IsSet`, and a
+`keep` that respects RDF term equality. `restrictDataset_eq_of_cover` derives
+`hagree` from these, so the old theorems stay and the new ones are corollaries
+of them. `indexedDatasetBackend_exact`: the dataset record both theorems
+evaluate over is lawful (`DatasetBackendExact`) with the denotation `d.den`.
+
 No `sorry`, no user `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.SPARQL.DatasetRestriction
 import L4Factoidal.Storage.ShardManifest
+import L4Factoidal.SPARQL.StoreBackendDenotation
 
 namespace L4Factoidal.Storage.PlannerSoundness
 
@@ -55,26 +68,46 @@ def restrictDataset (keep : Triple → Bool) (d : Dataset) : Dataset :=
   { default := d.default.filter keep
   , named := restrictNamed keep d.named }
 
-/-- No two named graphs share a key. `Storage/QuadDataset.lean`'s
-`datasetOfQuads` gives this: it records each graph name once, at its first
-occurrence. -/
+/-- No two named graphs share a name. A dataset that is a set has this
+(`Dataset.IsSet.names`, `distinctNames_of_nodup`); `Storage/QuadDataset.lean`'s
+`datasetOfQuads` gives it too: it records each graph name once, at its first
+occurrence. Until 2026-10-25 the relation compared the key strings of the
+names, where an IRI and a blank-node label could spell one key
+(https://github.com/danbri/factoidal/issues/975). -/
 def distinctNames : List NamedGraph → Prop
   | [] => True
-  | ng :: rest => (∀ x ∈ rest, ngKey x ≠ ngKey ng) ∧ distinctNames rest
+  | ng :: rest => (∀ x ∈ rest, x.name ≠ ng.name) ∧ distinctNames rest
+
+/-- Graph names without a repeat are distinct names. -/
+theorem distinctNames_of_nodup : ∀ {l : List NamedGraph}, (l.map (·.name)).Nodup → distinctNames l
+  | [], _ => trivial
+  | ng :: rest, h => by
+      rw [List.map_cons, List.nodup_cons] at h
+      exact ⟨fun x hx e => h.1 (e ▸ List.mem_map_of_mem hx), distinctNames_of_nodup h.2⟩
+
+/-- Two graph names that are both the IRI `n` are one name. -/
+theorem iriNamed_unique {a b : Subject} {n : Iri} (ha : iriNamed a n = true)
+    (hb : iriNamed b n = true) : a = b := by
+  cases a with
+  | bnode _ => simp [iriNamed] at ha
+  | iri i =>
+    cases b with
+    | bnode _ => simp [iriNamed] at hb
+    | iri j =>
+      simp only [iriNamed, beq_iff_eq] at ha hb
+      exact congrArg Subject.iri (Subtype.ext (ha.trans hb.symm))
 
 theorem lookupGraph_none_of_keys (n : Iri) :
-    ∀ l : List NamedGraph, (∀ x ∈ l, ngKey x ≠ n) → lookupGraph l n = none
+    ∀ l : List NamedGraph, (∀ x ∈ l, iriNamed x.name n = false) → lookupGraph l n = none
   | [], _ => rfl
   | ng :: rest, h => by
       simp only [lookupGraph]
-      rw [if_neg (by
-        intro hk
-        exact h ng List.mem_cons_self (by simpa using hk))]
+      rw [if_neg (by rw [h ng List.mem_cons_self]; exact Bool.false_ne_true)]
       exact lookupGraph_none_of_keys n rest (fun x hx => h x (List.mem_cons_of_mem _ hx))
 
 theorem restrictNamed_keys {keep : Triple → Bool} (n : Iri) :
-    ∀ l : List NamedGraph, (∀ x ∈ l, ngKey x ≠ n) →
-      ∀ x ∈ restrictNamed keep l, ngKey x ≠ n
+    ∀ l : List NamedGraph, (∀ x ∈ l, iriNamed x.name n = false) →
+      ∀ x ∈ restrictNamed keep l, iriNamed x.name n = false
   | [], _ => by intro x hx; simp [restrictNamed] at hx
   | ng :: rest, h => by
       intro x hx
@@ -83,20 +116,20 @@ theorem restrictNamed_keys {keep : Triple → Bool} (n : Iri) :
       · exact restrictNamed_keys n rest
           (fun y hy => h y (List.mem_cons_of_mem _ hy)) x hx
       · rcases List.mem_cons.mp hx with hx | hx
-        · rw [hx, ngKey_graph]
+        · rw [hx, name_graph]
           exact h ng List.mem_cons_self
         · exact restrictNamed_keys n rest
             (fun y hy => h y (List.mem_cons_of_mem _ hy)) x hx
 
 theorem lookupGraph_cons_pos {ng : NamedGraph} {rest : List NamedGraph} {n : Iri}
-    (hk : ngKey ng = n) : lookupGraph (ng :: rest) n = some ng.graph := by
+    (hk : iriNamed ng.name n = true) : lookupGraph (ng :: rest) n = some ng.graph := by
   simp only [lookupGraph]
-  rw [if_pos (show ((ngKey ng == n) = true) by simp [hk])]
+  rw [if_pos hk]
 
 theorem lookupGraph_cons_neg {ng : NamedGraph} {rest : List NamedGraph} {n : Iri}
-    (hk : ¬ ngKey ng = n) : lookupGraph (ng :: rest) n = lookupGraph rest n := by
+    (hk : ¬ iriNamed ng.name n = true) : lookupGraph (ng :: rest) n = lookupGraph rest n := by
   simp only [lookupGraph]
-  rw [if_neg (show ¬((ngKey ng == n) = true) by simpa using hk)]
+  rw [if_neg hk]
 
 /-- The named-graph half of `DatasetRestricted`, for the canonical
 restriction. -/
@@ -109,12 +142,14 @@ theorem lookupGraph_restrictNamed (keep : Triple → Bool) (n : Iri) :
   | [], _ => Or.inl rfl
   | ng :: rest, hdist => by
       rw [restrictNamed_cons]
-      by_cases hk : ngKey ng = n
+      by_cases hk : iriNamed ng.name n = true
       · have hlook : lookupGraph (ng :: rest) n = some ng.graph := lookupGraph_cons_pos hk
         have hnone : lookupGraph (restrictNamed keep rest) n = none := by
           refine lookupGraph_none_of_keys n _ (restrictNamed_keys n rest ?_)
-          intro x hx hkx
-          exact hdist.1 x hx (by rw [hkx, ← hk])
+          intro x hx
+          cases hkx : iriNamed x.name n with
+          | false => rfl
+          | true => exact absurd (iriNamed_unique hkx hk) (hdist.1 x hx)
         by_cases hz : (ng.graph.filter keep).isEmpty = true
         · refine Or.inr ⟨by rw [if_pos hz]; exact hnone, ?_⟩
           intro g hg
@@ -124,7 +159,7 @@ theorem lookupGraph_restrictNamed (keep : Triple → Bool) (n : Iri) :
         · refine Or.inl ?_
           rw [if_neg hz, hlook,
             lookupGraph_cons_pos (ng := { ng with graph := ng.graph.filter keep })
-              (rest := restrictNamed keep rest) (by rw [ngKey_graph]; exact hk)]
+              (rest := restrictNamed keep rest) (by rw [name_graph]; exact hk)]
           rfl
       · rw [lookupGraph_cons_neg hk]
         by_cases hz : (ng.graph.filter keep).isEmpty = true
@@ -132,7 +167,7 @@ theorem lookupGraph_restrictNamed (keep : Triple → Bool) (n : Iri) :
           exact lookupGraph_restrictNamed keep n rest hdist.2
         · rw [if_neg hz,
             lookupGraph_cons_neg (ng := { ng with graph := ng.graph.filter keep })
-              (rest := restrictNamed keep rest) (by rw [ngKey_graph]; exact hk)]
+              (rest := restrictNamed keep rest) (by rw [name_graph]; exact hk)]
           exact lookupGraph_restrictNamed keep n rest hdist.2
 
 /-- **The canonical restriction satisfies the relation.** -/
@@ -141,9 +176,14 @@ theorem datasetRestricted_restrictDataset (keep : Triple → Bool)
     (hdist : distinctNames d.named) (hne : ∀ ng ∈ d.named, ng.graph ≠ []) :
     DatasetRestricted keep readable d (restrictDataset keep d) :=
   { dflt := rfl
-  , named := fun i _ => lookupGraph_restrictNamed keep i.val d.named hdist
-  , namedList := fun _ => rfl
-  , noEmpty := hne }
+  , named := fun i _ => by
+      rcases lookupGraph_restrictNamed keep i.val d.named hdist with h | ⟨h1, h2⟩
+      · exact Or.inl h
+      · refine Or.inr ⟨h1, fun g hg => ⟨h2 g hg, ?_⟩⟩
+        obtain ⟨ng, hng, hngg⟩ := lookupGraph_mem d.named i.val g hg
+        rw [← hngg]
+        exact hne ng hng
+  , namedList := fun _ => namedRestricted_restrictNamed keep d.named hne }
 
 /-! ## 2. The composition -/
 
@@ -399,10 +439,322 @@ theorem patternKept_of_queryPredicates (q : Query) (P : List WfIri)
   · exact patternKept_of_quadPredicates _ P h
   · simp at h
 
+/-! ## 4. The storage obligation against the denotation (issue 975, step B2)
+
+`plannerSoundnessSelect` and `plannerSoundnessAsk` take the storage obligation
+as a LIST equality, `restrictDataset keep dS = restrictDataset keep dE`. That
+is a statement about representations. Here it is derived from a statement
+about denotations (`Dataset.den`, `RDF/DatasetDenotation.lean`):
+
+* `hcover`: every quad of the denotation of `dE` that `keep` keeps is a quad of
+  the denotation of `dS`. This is "a skipped entry cannot contribute a row",
+  with no list in it;
+* `hsub` (`SubEntries dS dE`): the lists of `dS` are sublists of those of
+  `dE`, in order. This is what reading a subset of the entries gives;
+* `hset`: `dE` is a set (`Dataset.IsSet`);
+* `hkeep`: `keep` respects RDF term equality (`keepPred P` does:
+  `keepPred_key`).
+
+`restrictDataset_eq_of_cover` derives the list equality from these.
+`plannerSoundnessSelectDen` and `plannerSoundnessAskDen` are the two planner
+theorems with `hcover` in place of `hagree`; the old theorems stay, and the new
+ones are proved from them.
+
+A premise about denotations alone cannot give the conclusion. The conclusion
+equates two solution SEQUENCES, and a sequence depends on the order of the
+rows the store returns; two lists with one denotation are a permutation of each
+other (`Dataset.IsSet.default_perm_of_den_eq`), not one list. `hsub` is the
+premise that fixes the order: the kept entries keep the order of all entries.
+
+`indexedDatasetBackend_exact`: the dataset record the planner theorems
+evaluate over, `indexedDatasetBackend d`, is lawful with the denotation
+`d.den` (`DatasetBackendExact`), for a set with distinct graph-name keys. -/
+
+/-- `l₁` keeps some of the named graphs of `l₂`, in order, each with a
+sublist of its triples. -/
+inductive NamedSub : List NamedGraph → List NamedGraph → Prop
+  | nil : NamedSub [] []
+  | skip {l₁ l₂ : List NamedGraph} (ng : NamedGraph) : NamedSub l₁ l₂ → NamedSub l₁ (ng :: l₂)
+  | cons {l₁ l₂ : List NamedGraph} (ng ng' : NamedGraph) (hn : ng.name = ng'.name)
+      (hg : ng.graph.Sublist ng'.graph) : NamedSub l₁ l₂ → NamedSub (ng :: l₁) (ng' :: l₂)
+
+/-- The lists of `dS` keep some entries of the lists of `dE`, in order. -/
+def SubEntries (dS dE : Dataset) : Prop :=
+  dS.default.Sublist dE.default ∧ NamedSub dS.named dE.named
+
+theorem NamedSub.names_sub : ∀ {l₁ l₂ : List NamedGraph}, NamedSub l₁ l₂ →
+    ∀ y ∈ l₁, y.name ∈ l₂.map (·.name)
+  | _, _, .nil, y, hy => absurd hy List.not_mem_nil
+  | _, _, .skip _ h, y, hy => List.mem_cons_of_mem _ (h.names_sub y hy)
+  | _, _, .cons ng ng' hn _ h, y, hy => by
+      rcases List.mem_cons.mp hy with rfl | hy
+      · rw [hn]; exact List.mem_cons_self
+      · exact List.mem_cons_of_mem _ (h.names_sub y hy)
+
+/-- A sublist that holds every entry of a list without RDF-term-equal entries,
+up to RDF term equality, is the list. -/
+theorem eq_of_sublist_keyCover : ∀ {l₁ l₂ : Graph}, l₁.Sublist l₂ → l₂.KeyNodup →
+    (∀ t ∈ l₂, KeyMem l₁ t) → l₁ = l₂
+  | _, _, .slnil, _, _ => rfl
+  | _, _, @List.Sublist.cons _ _ l₂ a h, hn, hc => by
+      obtain ⟨u, hu, e⟩ := hc a List.mem_cons_self
+      have hn' : a.key ∉ l₂.map Triple.key := (List.nodup_cons.mp hn).1
+      exact absurd (List.mem_map.mpr ⟨u, h.subset hu, e⟩) hn'
+  | _, _, .cons_cons a h, hn, hc => by
+      have hn' := List.nodup_cons.mp hn
+      congr 1
+      refine eq_of_sublist_keyCover h hn'.2 (fun t ht => ?_)
+      obtain ⟨u, hu, e⟩ := hc t (List.mem_cons_of_mem _ ht)
+      rcases List.mem_cons.mp hu with rfl | hu
+      · exact absurd (List.mem_map.mpr ⟨t, ht, e.symm⟩) hn'.1
+      · exact ⟨u, hu, e⟩
+
+/-- A `NamedSub` of a list with distinct names and set graphs that holds each
+name and each triple of each graph is the list. -/
+theorem eq_of_namedSub : ∀ {l₁ l₂ : List NamedGraph}, NamedSub l₁ l₂ →
+    (l₂.map (·.name)).Nodup → (∀ x ∈ l₂, x.graph.KeyNodup) →
+    (∀ x ∈ l₂, ∃ y ∈ l₁, y.name = x.name) →
+    (∀ x ∈ l₂, ∀ t ∈ x.graph, ∃ y ∈ l₁, y.name = x.name ∧ KeyMem y.graph t) → l₁ = l₂
+  | _, _, .nil, _, _, _, _ => rfl
+  | _, _, .skip ng h, hnd, _, hnm, _ => by
+      obtain ⟨y, hy, e⟩ := hnm ng List.mem_cons_self
+      have := h.names_sub y hy
+      rw [e] at this
+      exact absurd this (List.nodup_cons.mp hnd).1
+  | _, _, @NamedSub.cons l₁ _ ng ng' hn hg h, hnd, hk, hnm, hcv => by
+      have hnd' := List.nodup_cons.mp hnd
+      simp only at hnd'
+      have notTail : ∀ y ∈ l₁, y.name ≠ ng'.name := by
+        intro y hy e
+        have hm := h.names_sub y hy
+        rw [e] at hm
+        exact hnd'.1 hm
+      have hgr : ng.graph = ng'.graph := by
+        refine eq_of_sublist_keyCover hg (hk ng' List.mem_cons_self) (fun t ht => ?_)
+        obtain ⟨y, hy, e, hm⟩ := hcv ng' List.mem_cons_self t ht
+        rcases List.mem_cons.mp hy with rfl | hy
+        · exact hm
+        · exact absurd e (notTail y hy)
+      have hhead : ng = ng' := by
+        obtain ⟨n1, g1⟩ := ng
+        obtain ⟨n2, g2⟩ := ng'
+        simp only at hn hgr
+        rw [hn, hgr]
+      rw [hhead]
+      congr 1
+      refine eq_of_namedSub h hnd'.2 (fun x hx => hk x (List.mem_cons_of_mem _ hx)) ?_ ?_
+      · intro x hx
+        obtain ⟨y, hy, e⟩ := hnm x (List.mem_cons_of_mem _ hx)
+        rcases List.mem_cons.mp hy with rfl | hy
+        · rw [hn] at e
+          have hm : x.name ∈ _ := List.mem_map_of_mem (f := fun x : NamedGraph => x.name) hx
+          rw [← e] at hm
+          exact absurd hm hnd'.1
+        · exact ⟨y, hy, e⟩
+      · intro x hx t ht
+        obtain ⟨y, hy, e, hm⟩ := hcv x (List.mem_cons_of_mem _ hx) t ht
+        rcases List.mem_cons.mp hy with rfl | hy
+        · rw [hn] at e
+          have hm' : x.name ∈ _ := List.mem_map_of_mem (f := fun x : NamedGraph => x.name) hx
+          rw [← e] at hm'
+          exact absurd hm' hnd'.1
+        · exact ⟨y, hy, e, hm⟩
+
+theorem mem_restrictNamed {keep : Triple → Bool} : ∀ {l : List NamedGraph} {x : NamedGraph},
+    x ∈ restrictNamed keep l →
+      ∃ ng ∈ l, x = { ng with graph := ng.graph.filter keep } ∧ ng.graph.filter keep ≠ []
+  | [], _, hx => by simp [restrictNamed] at hx
+  | ng :: rest, x, hx => by
+      rw [restrictNamed_cons] at hx
+      split at hx
+      · obtain ⟨y, hy, e, hne⟩ := mem_restrictNamed hx
+        exact ⟨y, List.mem_cons_of_mem _ hy, e, hne⟩
+      · rename_i hz
+        rcases List.mem_cons.mp hx with rfl | hx
+        · exact ⟨ng, List.mem_cons_self, rfl, by simpa using hz⟩
+        · obtain ⟨y, hy, e, hne⟩ := mem_restrictNamed hx
+          exact ⟨y, List.mem_cons_of_mem _ hy, e, hne⟩
+
+theorem restrictNamed_mem {keep : Triple → Bool} : ∀ {l : List NamedGraph} {ng : NamedGraph},
+    ng ∈ l → ng.graph.filter keep ≠ [] →
+      { ng with graph := ng.graph.filter keep } ∈ restrictNamed keep l
+  | [], _, h, _ => absurd h List.not_mem_nil
+  | y :: rest, ng, h, hne => by
+      rw [restrictNamed_cons]
+      rcases List.mem_cons.mp h with rfl | h
+      · rw [if_neg (by simpa using hne)]
+        exact List.mem_cons_self
+      · split
+        · exact restrictNamed_mem h hne
+        · exact List.mem_cons_of_mem _ (restrictNamed_mem h hne)
+
+theorem restrictNamed_names_sublist (keep : Triple → Bool) : ∀ l : List NamedGraph,
+    ((restrictNamed keep l).map (·.name)).Sublist (l.map (·.name))
+  | [] => by simp [restrictNamed]
+  | ng :: rest => by
+      rw [restrictNamed_cons]
+      split
+      · exact (restrictNamed_names_sublist keep rest).cons _
+      · exact (restrictNamed_names_sublist keep rest).cons_cons _
+
+theorem NamedSub.restrict (keep : Triple → Bool) : ∀ {l₁ l₂ : List NamedGraph}, NamedSub l₁ l₂ →
+    NamedSub (restrictNamed keep l₁) (restrictNamed keep l₂)
+  | _, _, .nil => .nil
+  | _, _, .skip ng h => by
+      rw [restrictNamed_cons]
+      split
+      · exact h.restrict keep
+      · exact .skip _ (h.restrict keep)
+  | _, _, .cons ng ng' hn hg h => by
+      rw [restrictNamed_cons, restrictNamed_cons]
+      have hsub : (ng.graph.filter keep).Sublist (ng'.graph.filter keep) := hg.filter keep
+      by_cases h2 : (ng'.graph.filter keep).isEmpty = true
+      · have h1 : (ng.graph.filter keep).isEmpty = true := by
+          rw [List.isEmpty_iff] at h2 ⊢
+          rw [h2] at hsub
+          exact List.eq_nil_of_sublist_nil hsub
+        rw [if_pos h1, if_pos h2]
+        exact h.restrict keep
+      · rw [if_neg h2]
+        split
+        · exact .skip _ (h.restrict keep)
+        · exact .cons _ _ hn hsub (h.restrict keep)
+
+/-- `keepPred P` respects RDF term equality: the key does not change the
+predicate. -/
+theorem keepPred_key (P : List WfIri) (t u : Triple) (e : t.key = u.key) :
+    keepPred P t = keepPred P u := by
+  have : t.p = u.p := show t.key.p = u.key.p from congrArg Triple.p e
+  simp [keepPred, this]
+
+/-- **The storage obligation from the denotation.** -/
+theorem restrictDataset_eq_of_cover {keep : Triple → Bool} {dS dE : Dataset}
+    (hsub : SubEntries dS dE) (hset : dE.IsSet)
+    (hkeep : ∀ t u, t.key = u.key → keep t = keep u)
+    (hcover : ∀ gn t, keep t = true → dE.den.graph gn t → dS.den.graph gn t) :
+    restrictDataset keep dS = restrictDataset keep dE := by
+  unfold restrictDataset
+  congr 1
+  · refine eq_of_sublist_keyCover (hsub.1.filter keep) (keyNodup_filter hset.default keep) ?_
+    intro t ht
+    obtain ⟨htE, hkt⟩ := List.mem_filter.mp ht
+    have hS := hcover none t hkt (Dataset.den_graph_of_listQuad htE)
+    obtain ⟨u, hu, e⟩ := (Dataset.den_graph_iff dS none t).mp hS
+    exact ⟨u, List.mem_filter.mpr ⟨hu, (hkeep u t e).trans hkt⟩, e⟩
+  · have hcv : ∀ x ∈ restrictNamed keep dE.named, ∀ t ∈ x.graph,
+        ∃ y ∈ restrictNamed keep dS.named, y.name = x.name ∧ KeyMem y.graph t := by
+      intro x hx t ht
+      obtain ⟨ng, hng, rfl, _⟩ := mem_restrictNamed hx
+      obtain ⟨htE, hkt⟩ := List.mem_filter.mp ht
+      have hS := hcover (some ng.name) t hkt
+        (Dataset.den_graph_of_listQuad (ds := dE) ⟨ng, hng, rfl, htE⟩)
+      obtain ⟨u, ⟨ng₂, hng₂, hn₂, hu⟩, e⟩ := (Dataset.den_graph_iff dS _ t).mp hS
+      have hku : keep u = true := (hkeep u t e).trans hkt
+      have hne : ng₂.graph.filter keep ≠ [] :=
+        List.ne_nil_of_mem (List.mem_filter.mpr ⟨hu, hku⟩)
+      exact ⟨_, restrictNamed_mem hng₂ hne, hn₂, u, List.mem_filter.mpr ⟨hu, hku⟩, e⟩
+    refine eq_of_namedSub (hsub.2.restrict keep)
+      (List.Nodup.sublist (restrictNamed_names_sublist keep dE.named) hset.names)
+      (fun x hx => ?_) (fun x hx => ?_) hcv
+    · obtain ⟨ng, hng, rfl, _⟩ := mem_restrictNamed hx
+      exact keyNodup_filter (hset.graphs ng hng) keep
+    · obtain ⟨ng, hng, rfl, hne⟩ := mem_restrictNamed hx
+      obtain ⟨t, ht⟩ := List.exists_mem_of_ne_nil _ hne
+      obtain ⟨y, hy, e, _⟩ := hcv _ hx t ht
+      exact ⟨y, hy, e⟩
+
+/-- **Planner soundness for SELECT, against the denotation.** -/
+theorem plannerSoundnessSelectDen (env : EvalEnv) {keep : Triple → Bool}
+    {readable : Option (List WfIri)} {dE dS : Dataset} (q : Query)
+    (hdistE : distinctNames dE.named) (hneE : ∀ ng ∈ dE.named, ng.graph ≠ [])
+    (hdistS : distinctNames dS.named) (hneS : ∀ ng ∈ dS.named, ng.graph ≠ [])
+    (hsub : SubEntries dS dE) (hset : dE.IsSet)
+    (hkeep : ∀ t u, t.key = u.key → keep t = keep u)
+    (hcover : ∀ gn t, keep t = true → dE.den.graph gn t → dS.den.graph gn t)
+    (hf : plannerFragment q.pattern.rewriteBnodes = true)
+    (hk : PatternKept keep q.pattern.rewriteBnodes)
+    (hn : ∀ i ∈ graphNamesIn q.pattern.rewriteBnodes, readableName readable i)
+    (hv : graphVarIn q.pattern.rewriteBnodes = true → readable = none) :
+    runSelectQueryBackendDataset env q (indexedDatasetBackend dS)
+      = runSelectQueryBackendDataset env q (indexedDatasetBackend dE) :=
+  plannerSoundnessSelect env q hdistE hneE hdistS hneS
+    (restrictDataset_eq_of_cover hsub hset hkeep hcover) hf hk hn hv
+
+/-- **Planner soundness for ASK, against the denotation.** -/
+theorem plannerSoundnessAskDen (env : EvalEnv) {keep : Triple → Bool}
+    {readable : Option (List WfIri)} {dE dS : Dataset} (q : Query)
+    (hdistE : distinctNames dE.named) (hneE : ∀ ng ∈ dE.named, ng.graph ≠ [])
+    (hdistS : distinctNames dS.named) (hneS : ∀ ng ∈ dS.named, ng.graph ≠ [])
+    (hsub : SubEntries dS dE) (hset : dE.IsSet)
+    (hkeep : ∀ t u, t.key = u.key → keep t = keep u)
+    (hcover : ∀ gn t, keep t = true → dE.den.graph gn t → dS.den.graph gn t)
+    (hf : plannerFragment q.pattern.rewriteBnodes = true)
+    (hk : PatternKept keep q.pattern.rewriteBnodes)
+    (hn : ∀ i ∈ graphNamesIn q.pattern.rewriteBnodes, readableName readable i)
+    (hv : graphVarIn q.pattern.rewriteBnodes = true → readable = none) :
+    runAskQueryBackendDataset env q (indexedDatasetBackend dS)
+      = runAskQueryBackendDataset env q (indexedDatasetBackend dE) :=
+  plannerSoundnessAsk env q hdistE hneE hdistS hneS
+    (restrictDataset_eq_of_cover hsub hset hkeep hcover) hf hk hn hv
+
+/-! ### The dataset record is lawful -/
+
+open L4Factoidal.SPARQL.StoreBackend (BackendExact)
+
+/-- A dataset record reads the dataset denotation `D`: the default backend
+reads the default graph; each named backend reads the graph of a name of `D`,
+the backend's name; every name of `D` has a backend; no two backends share a
+name. -/
+structure DatasetBackendExact (D : DatasetDen) (dsb : DatasetBackend) : Prop where
+  default : BackendExact dsb.default (D.graph none)
+  named : ∀ ngb ∈ dsb.named, ∃ n, D.names n ∧ n = ngb.name ∧
+    BackendExact ngb.backend (D.graph (some n))
+  names : ∀ n, D.names n → ∃ ngb ∈ dsb.named, n = ngb.name
+  namesNodup : (dsb.named.map (·.name)).Nodup
+
+theorem distinctNames_nodup : ∀ {l : List NamedGraph}, distinctNames l → (l.map (·.name)).Nodup
+  | [], _ => List.nodup_nil
+  | ng :: rest, h => by
+      rw [List.map_cons, List.nodup_cons]
+      refine ⟨fun hm => ?_, distinctNames_nodup h.2⟩
+      obtain ⟨x, hx, e⟩ := List.mem_map.mp hm
+      exact h.1 x hx e
+
+/-- **The planner's dataset record is lawful**: `indexedDatasetBackend d`
+reads `d.den`, for every dataset that is a set. Until 2026-10-25 this also
+took `distinctNames d.named`, because the record keyed a blank-node graph name
+by its label string (https://github.com/danbri/factoidal/issues/975). -/
+theorem indexedDatasetBackend_exact {d : Dataset} (hset : d.IsSet) :
+    DatasetBackendExact d.den (indexedDatasetBackend d) where
+  default := ⟨d.default, OWL.RL.Index.Wf.ofGraph _, hset.default,
+    Dataset.den_default_iff_keyMem (ds := d)⟩
+  named ngb hngb := by
+    rw [indexedDatasetBackend_named] at hngb
+    obtain ⟨ng, hng, rfl⟩ := List.mem_map.mp hngb
+    exact ⟨ng.name, List.mem_map.mpr ⟨ng, hng, rfl⟩, rfl,
+      ⟨ng.graph, OWL.RL.Index.Wf.ofGraph _, hset.graphs ng hng,
+        Dataset.IsSet.graph_iff_keyMem_named hset hng⟩⟩
+  names n hn := by
+    obtain ⟨ng, hng, rfl⟩ := List.mem_map.mp hn
+    refine ⟨⟨ng.name, indexedGraphBackend ng.graph⟩, ?_, rfl⟩
+    rw [indexedDatasetBackend_named]
+    exact List.mem_map.mpr ⟨ng, hng, rfl⟩
+  namesNodup := by
+    rw [indexedDatasetBackend_named, List.map_map]
+    exact hset.names
+
 #print axioms PatternKept_mono
 #print axioms patternKept_of_quadPredicates
 #print axioms patternKept_of_queryPredicates
 #print axioms plannerSoundnessSelect
 #print axioms plannerSoundnessAsk
+#print axioms eq_of_sublist_keyCover
+#print axioms eq_of_namedSub
+#print axioms restrictDataset_eq_of_cover
+#print axioms indexedDatasetBackend_exact
+#print axioms distinctNames_of_nodup
+#print axioms iriNamed_unique
+#print axioms plannerSoundnessSelectDen
+#print axioms plannerSoundnessAskDen
 
 end L4Factoidal.Storage.PlannerSoundness

@@ -51,8 +51,8 @@ variable's name by the embedding of the term it is bound to.
    F\* bag-refinement proof is not ported.
 3. **Engine term equality is COARSER than syntactic identity.**
    `RDF.Term.eqb` identifies literals that differ in language-tag CASE
-   and `rdf:XMLLiteral` lexical forms that are exclusive-canonical-XML
-   equal, and `RDF.Graph.mem` is stated over it. Two such literals
+   (until 2026-10-23 also `rdf:XMLLiteral` lexical forms that are
+   exclusive-canonical-XML equal, issue 963), and `RDF.Graph.mem` is stated over it. Two such literals
    embed to DIFFERENT CL terms, so a plain CL interpretation may
    separate them. The unified layer therefore evaluates BGP answers
    under `termEqSchema` — one `eq` sentence per `Term.eqb`-equal pair
@@ -219,7 +219,7 @@ def Answers (conds : CL.Interp → Prop) (S : Schema)
 Delimitation 3 of the module header. One `eq` row per pair of RDF
 terms the engine's `Term.eqb` identifies. The `Term.eqb`-reflexive
 rows are trivially true in every interpretation; the rows that do work
-are the language-tag-case and `rdf:XMLLiteral` pairs. -/
+are the language-tag-case pairs. -/
 
 /-- The engine-term-equality schema: `x = y` for every pair
 `RDF.Term.eqb` accepts. -/

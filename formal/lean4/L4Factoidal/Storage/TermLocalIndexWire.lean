@@ -72,6 +72,27 @@ def chunks : Nat → List α → List (List α)
   | _ + 1, [] => []
   | fuel + 1, xs => xs.take pageTerms :: chunks fuel (xs.drop pageTerms)
 
+/-- `chunks` with the pages on a reverse accumulator: a tail call per page.
+The fuel is the entry count, so `chunks` took one frame per page of a
+large index (https://github.com/danbri/factoidal/issues/746). -/
+def chunksTR (fuel : Nat) (xs : List α) : List (List α) := go fuel xs []
+where
+  go : Nat → List α → List (List α) → List (List α)
+    | 0, _, acc => acc.reverse
+    | _ + 1, [], acc => acc.reverse
+    | fuel + 1, x :: xs, acc =>
+        go fuel ((x :: xs).drop pageTerms) ((x :: xs).take pageTerms :: acc)
+
+theorem chunksTR_go_eq :
+    ∀ (fuel : Nat) (xs : List α) (acc : List (List α)),
+      chunksTR.go fuel xs acc = acc.reverse ++ chunks fuel xs
+  | 0, _, acc => by simp [chunksTR.go, chunks]
+  | _ + 1, [], acc => by simp [chunksTR.go, chunks]
+  | fuel + 1, x :: xs, acc => by simp [chunksTR.go, chunks, chunksTR_go_eq fuel]
+
+@[csimp] theorem chunks_eq_chunksTR : @chunks = @chunksTR := by
+  funext α fuel xs; simp [chunksTR, chunksTR_go_eq]
+
 def pageBytes (entries : List Entry) : List (List UInt8) :=
   (chunks entries.length entries).map (fun page => page.flatMap encodeEntry)
 
@@ -114,7 +135,7 @@ def supported (index : Index) : Bool :=
     index.entries.toList.all (fun entry =>
       entry.localId < index.entries.size && entry.key == serializeTerm entry.term &&
         entry.key.length < two32 && termSupported entry.term &&
-        termFitsU32b entry.term) &&
+        termFitsU32b entry.term && TermFold.termFolded entry.term) &&
     localIdsPermutation index.entries.toList index.entries.size
 
 def encode? (index : Index) : Option ByteArray := do
@@ -185,8 +206,14 @@ def refsStrictlyIncreasing : List PageRef → Bool
   | [] | [_] => true
   | left :: right :: rest => lessKey left.firstKey right.firstKey && refsStrictlyIncreasing (right :: rest)
 
+/-- Every entry holds a folded term (language tags in lower case, issue 977).
+    A TLI1 file written before the fold is refused, not read with keys that a
+    folded lookup could not find; it is rebuilt from its IBK3 block. -/
+def foldedEntries (entries : List Entry) : Bool :=
+  entries.all fun entry => TermFold.termFolded entry.term
+
 def canonicalEntries (entries : List Entry) (termCount : Nat) : Bool :=
-  strictlyIncreasing entries && localIdsPermutation entries termCount
+  strictlyIncreasing entries && localIdsPermutation entries termCount && foldedEntries entries
 
 /-- Strictly decode just the fixed-length TLI1 header. -/
 def decodePrefix? (bytes : ByteArray) : Option Prefix := do
@@ -239,7 +266,7 @@ def decodePage? (header : Prefix) (ordinal : Nat) (ref : PageRef) (bytes : ByteA
   | [] => none
   | first :: _ =>
       if !trailing.isEmpty || first.key != ref.firstKey ||
-          !strictlyIncreasing entries ||
+          !strictlyIncreasing entries || !foldedEntries entries ||
           !entries.all (fun entry => entry.localId < header.termCount) then none else
         some entries.toArray
 

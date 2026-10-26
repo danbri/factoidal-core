@@ -1,0 +1,17 @@
+{
+  "test_id": "#t0010",
+  "suite": "jsonld-frame",
+  "issue": "https://github.com/danbri/factoidal/issues/703",
+  "dispute_kind": "version",
+  "upstream_expectation": "the json-ld-1.0 framing result of \"property CURIE conflict\" (option.specVersion=json-ld-1.0): the property `dcterms:creator` compacted to the term `dcterms:creator` with the embedded node as its only value",
+  "our_expectation": "the JSON-LD 1.1 result: IRI Compaction (JSON-LD 1.1 API §6.2, last-but-one step) raises `IRI confused with prefix`, because the input property is the absolute IRI `dcterms:creator` (the input context defines that term without a `dcterms` prefix), its scheme `dcterms` is a prefix term in the frame context, and it has no IRI authority",
+  "rationale": "Version dispute of the same class as jsonld-compact #t0038. With the IRI-confused-with-prefix check disabled in 1.0 mode the output becomes \"dcterms:creator\": [node, null], and the fixture expects the node alone, so the fixture needs 1.0-era compaction as a whole; a 1.1 engine cannot give it without a separate 1.0 processing mode. Diagnosed 2026-10-10 by the Lean framing work (Harness/JsonLdFrameRun.lean, L4Factoidal/JSONLD/Frame.lean). The test runs; the runner counts it as local-override and reports a STALE override (a failure) if it starts to pass.",
+  "analysis_refs": [
+    "formal/lean4/L4Factoidal/JSONLD/Compact.lean",
+    "formal/lean4/Harness/JsonLdFrameRun.lean"
+  ],
+  "upstream_provenance": [
+    "https://github.com/w3c/json-ld-framing/blob/main/tests/frame-manifest.jsonld"
+  ],
+  "date": "2026-10-10"
+}

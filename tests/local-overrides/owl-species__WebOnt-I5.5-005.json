@@ -1,0 +1,13 @@
+{
+  "test_id": "WebOnt-I5.5-005",
+  "suite": "owl-species",
+  "issue": "https://github.com/danbri/factoidal/issues/711",
+  "dispute_kind": "corpus-data-defect",
+  "upstream_expectation": "test:species DL (the catalog annotates the case as within OWL 2 DL)",
+  "our_expectation": "FULL: the conclusion document has no owl:Ontology header, so it does not map back to an OWL 2 DL ontology",
+  "rationale": "OWL 2 Mapping to RDF Graphs section 3.1.2, Table 4: the reverse mapping finds the ontology header by matching exactly one header pattern. The conclusion of WebOnt-I5.5-005 contains no 'x rdf:type owl:Ontology' triple, so it does not map back to an OWL 2 DL ontology and the case is not within OWL 2 DL. The Lean species check (formal/lean4/L4Factoidal/OWL/SyntaxDL.lean) reports the violation 'conclusion: no-ontology-header'. In 154 other premise cases of the catalog a document with no header is annotated FULL, which agrees with this reading; the DL annotation on this case is an OWL 1 era annotation. This is a disposition, not a semantic change: the species runner still computes and prints its real verdict; the override only counts it in the local-override bucket. If the case starts to pass, the runner reports the override STALE and the run fails.",
+  "spec": "https://www.w3.org/TR/owl2-mapping-to-rdf/#Mapping_from_RDF_Graphs_to_the_Structural_Specification",
+  "disposition": "local-override",
+  "owner_directive": "711 accept your recommendation (owner, 2026-10-10)",
+  "date": "2026-10-10"
+}

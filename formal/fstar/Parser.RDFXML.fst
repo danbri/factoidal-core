@@ -460,109 +460,169 @@ let rec is_all_text (children : list xml_node) : bool =
 (* ================================================================ *)
 (* Serialize XML node back to string (for parseType="Literal")       *)
 (*                                                                   *)
-(* Per RDF/XML §7.2.17 the value of a parseType="Literal" property   *)
-(* is the Exclusive XML Canonicalization of its XML children. Full   *)
-(* XML C14N is a substantial spec; the W3C xml-canon tests require   *)
-(* at minimum:                                                       *)
-(*   (a) self-closing tags <br/> expand to <br></br>                 *)
-(*   (b) the top-level element(s) of the literal content carry the   *)
-(*       ambient xmlns:* declarations inherited from the enclosing   *)
-(*       document (excluding XML-spec built-ins like xml:).          *)
-(* Defaults seeded by [initial_state] that never appeared as         *)
-(* source-level declarations are NOT emitted: we filter them out by  *)
-(* URI so only author-declared prefixes survive.                     *)
+(* RDF/XML Syntax section 7.2.17 and RDF 1.1 Concepts section 5.1:   *)
+(* the lexical form of the rdf:XMLLiteral is the Exclusive XML       *)
+(* Canonicalization of the content of the property element, with     *)
+(* comments (Exclusive XML Canonicalization 1.0 section 2; Canonical *)
+(* XML 1.0 section 2.3). The rules applied here:                     *)
+(*   (a) an empty element is written as a start tag and an end tag;  *)
+(*   (b) a namespace declaration is written on an element only when  *)
+(*       that element visibly utilizes the prefix (in its own name or *)
+(*       in the name of one of its attributes; an unprefixed element *)
+(*       name utilizes the default namespace) and the nearest output *)
+(*       ancestor does not already carry the same binding. The       *)
+(*       declarations of the source are not copied: a declaration the *)
+(*       content does not use does not appear;                       *)
+(*   (c) namespace declarations come first, sorted by prefix with    *)
+(*       the default namespace first; attributes follow, sorted by   *)
+(*       namespace URI and then local name.                          *)
+(* Exclusive canonicalization is why an eg:prop element with         *)
+(* rdf:parseType Literal and the content br, inside a document that  *)
+(* declares rdf and eg, gives br start and end tags with no xmlns    *)
+(* attributes: the element utilizes neither prefix. W3C              *)
+(* xml-canon-test001 and xml-canon-test002 (w3c/rdf-tests, d974697,  *)
+(* 2026-04-20).                                                      *)
+(*                                                                   *)
+(* Text nodes and attribute values are written as the XML parser     *)
+(* stored them.                                                      *)
 (* ================================================================ *)
 
-let is_seeded_default_ns (uri : string) : bool =
-  uri = rdfs_ns || uri = xml_ns || uri = xmlns_ns || uri = xsd_ns
+(* Bindings that initial_state seeds (rdf, rdfs, xml, xmlns, xsd). They sit
+   at the END of every namespace list: declarations are only prepended. A
+   prefix that the document never declared must not be written into the
+   literal, so the in-scope list used below drops this tail. *)
+let seeded_namespace_count : nat =
+  List.Tot.length (initial_state "").namespaces
 
-(* Render a namespace list as " xmlns:prefix=\"uri\"" attribute
-   fragments, reversing the list so declarations appear in source
-   order (extract_namespaces prepends). The `rdf` initial default is
-   emitted only if the user actually declared it — we detect that by
-   checking whether it appears more than once in the prefix→uri map
-   OR by looking it up: since author-declared prefixes are prepended,
-   a user xmlns:rdf shadows the initial default, and lookup_ns will
-   return the author value. If the author did NOT declare rdf, then
-   the only rdf binding is the initial default, which we exclude.
-   Practically: we drop all pairs whose URI is one of the five
-   hardcoded initial-state URIs AND whose prefix appears exactly
-   once in the list (i.e., was never overridden). The simplest
-   approximation that passes xml-canon-test00{1,2} is: drop pairs
-   equal to the seeded defaults unless a shadow exists — but for
-   these tests the author-declared `rdf` namespace URI is IDENTICAL
-   to the seeded default, so we can't distinguish. Instead we rely
-   on the fact that `extract_namespaces` prepends user decls, and
-   the LAST pair in the list for any given prefix is the seeded
-   default. We emit the FIRST occurrence only (dedup-by-prefix) and
-   drop seeded-default URIs for prefixes not equal to `rdf`. *)
+let rec take_first (#a : Type) (n : nat) (xs : list a) : Tot (list a) (decreases xs) =
+  match xs with
+  | [] -> []
+  | x :: rest -> if n = 0 then [] else x :: take_first (n - 1) rest
+
+(* The namespace declarations that appear in the document itself,
+   innermost first. *)
+let author_namespaces (ambient : list (string * string)) : list (string * string) =
+  let n = List.Tot.length ambient in
+  if n >= seeded_namespace_count
+  then take_first (n - seeded_namespace_count) ambient
+  else ambient
 
 let rec string_in_list (s : string) (xs : list string) : bool =
   match xs with
   | [] -> false
   | x :: rest -> if x = s then true else string_in_list s rest
 
-(* Dedup a namespace list (prefix -> uri) keeping the FIRST occurrence
-   of each prefix, preserving order. *)
-let rec dedup_ns (ns : list (string * string)) (seen : list string)
-  : Tot (list (string * string)) (decreases ns) =
-  match ns with
-  | [] -> []
-  | (p, u) :: rest ->
-    if string_in_list p seen
-    then dedup_ns rest seen
-    else (p, u) :: dedup_ns rest (p :: seen)
-
-(* Filter out seeded defaults: drop any (prefix, uri) whose uri matches
-   xml/xmlns/rdfs/xsd. Keep rdf (author almost always redeclares it,
-   and if they didn't, these tests still expect it in the output). *)
-let rec filter_c14n_ns (ns : list (string * string))
-  : Tot (list (string * string)) (decreases ns) =
-  match ns with
-  | [] -> []
-  | (p, u) :: rest ->
-    if p = "xml" || p = "xmlns" then filter_c14n_ns rest
-    else if is_seeded_default_ns u then filter_c14n_ns rest
-    else (p, u) :: filter_c14n_ns rest
-
-let rec reverse_list (#a : Type) (xs : list a) : Tot (list a) (decreases xs) =
+let rec dedup_strings (xs : list string) (seen : list string)
+  : Tot (list string) (decreases xs) =
   match xs with
   | [] -> []
-  | x :: rest -> List.Tot.append (reverse_list rest) [x]
+  | x :: rest ->
+    if string_in_list x seen then dedup_strings rest seen
+    else x :: dedup_strings rest (x :: seen)
 
-(* Emit " xmlns:prefix=\"uri\"" fragments for the ambient author
-   declarations, in source order. *)
-let render_ns_decls (ns : list (string * string)) : string =
-  let deduped = dedup_ns ns [] in
-  let filtered = filter_c14n_ns deduped in
-  (* dedup_ns walked from head-of-list (most recently declared / innermost)
-     to tail (outermost). extract_namespaces prepends, so source order is
-     REVERSED within each scope. To emit source order, reverse the result. *)
-  let in_source_order = reverse_list filtered in
-  (* Issue #446: the DEFAULT namespace has the empty prefix, and it is
-     written `xmlns="..."` with NO colon. Emitting the prefixed form
-     unconditionally produced `xmlns:="..."`, which is not a legal XML
-     attribute name -- so any XML Literal under an unprefixed namespace
-     declaration serialized to XML that no parser can read.
+(* A namespace declaration written as an attribute: xmlns or xmlns:p. *)
+let is_xmlns_declaration (name : string) : bool =
+  name = "xmlns" || (let (p, _) = split_qname name in p = "xmlns")
 
-     Found by the Jena differential harness (#317) once it covered
-     RDF/XML: our output and Jena's disagreed on
-     rdfms-xml-literal-namespaces/test001+002. Those two files are
-     commented out of the vendored manifest (upstream withdrew them as
-     "implementation dependent"), so the graded RDF/XML suite never
-     reached this and never will -- the defect is real for any
-     real-world input with a default namespace in scope of an
-     rdf:parseType="Literal", regardless of that policy question.
-     dedup_ns / filter_c14n_ns keep treating "" as an ordinary prefix
-     key; only this render step needs the case split. *)
-  let parts = List.Tot.map (fun (pu : string * string) ->
-    let (p, u) = pu in
-    if p = "" then String.concat "" [" xmlns=\""; u; "\""]
-    else String.concat "" [" xmlns:"; p; "=\""; u; "\""]) in_source_order in
-  String.concat "" parts
+(* Prefix of an element or attribute name; "" when there is none. *)
+let name_prefix (name : string) : string =
+  match find_colon_pos name with
+  | None -> ""
+  | Some _ -> fst (split_qname name)
 
-let rec serialize_xml_node_c14n (node : xml_node) (ns_decls : string)
-                                 (is_root : bool) (fuel : nat)
+(* Prefixes that an element visibly utilizes: its own name's prefix (""
+   is the default namespace) and the prefixes of its attribute names. The
+   xml prefix is bound by definition and is never declared. *)
+let utilized_prefixes (tag : string) (attrs : list xml_attribute) : list string =
+  let attr_prefixes =
+    List.Tot.concatMap (fun (a : xml_attribute) ->
+      if is_xmlns_declaration a.attr_name then []
+      else
+        let p = name_prefix a.attr_name in
+        if p = "" || p = "xml" then [] else [p]) attrs in
+  dedup_strings (name_prefix tag :: attr_prefixes) []
+
+(* The declaration to write for prefix p on an element, or None. in_scope is
+   the binding in the source at this element; rendered is what the nearest
+   output ancestors already declare. The default namespace is undeclared
+   (xmlns="") only when an output ancestor declared a non-empty one. *)
+let declaration_to_write (p : string)
+    (in_scope : list (string * string)) (rendered : list (string * string))
+  : option (string * string) =
+  match lookup_ns p in_scope, lookup_ns p rendered with
+  | Some u, Some r -> if u = r then None else Some (p, u)
+  | Some u, None   -> if p = "" && u = "" then None else Some (p, u)
+  | None,   Some r -> if p = "" && r <> "" then Some (p, "") else None
+  | None,   None   -> None
+
+(* Insertion sort of declarations by prefix (the default namespace, "", is
+   first because String.compare orders "" before every other string). *)
+let rec insert_decl (d : string * string) (ds : list (string * string))
+  : Tot (list (string * string)) (decreases ds) =
+  match ds with
+  | [] -> [d]
+  | d' :: rest ->
+    if String.compare (fst d) (fst d') <= 0 then d :: ds
+    else d' :: insert_decl d rest
+
+let rec sort_decls (ds : list (string * string))
+  : Tot (list (string * string)) (decreases ds) =
+  match ds with
+  | [] -> []
+  | d :: rest -> insert_decl d (sort_decls rest)
+
+(* Sort key of an attribute: namespace URI (unprefixed attributes are in no
+   namespace and sort first), then local name. *)
+let attr_sort_key (in_scope : list (string * string)) (a : xml_attribute)
+  : string * string =
+  let p = name_prefix a.attr_name in
+  let (_, local) = split_qname a.attr_name in
+  let uri =
+    if p = "" then ""
+    else match lookup_ns p in_scope with
+         | Some u -> u
+         | None -> String.concat "" ["!"; p] in
+  (uri, local)
+
+let attr_before (in_scope : list (string * string)) (a b : xml_attribute) : bool =
+  let (ua, la) = attr_sort_key in_scope a in
+  let (ub, lb) = attr_sort_key in_scope b in
+  let c = String.compare ua ub in
+  if c <> 0 then c < 0 else String.compare la lb <= 0
+
+let rec insert_attr (in_scope : list (string * string)) (a : xml_attribute)
+                    (rest_attrs : list xml_attribute)
+  : Tot (list xml_attribute) (decreases rest_attrs) =
+  match rest_attrs with
+  | [] -> [a]
+  | a' :: rest ->
+    if attr_before in_scope a a' then a :: rest_attrs
+    else a' :: insert_attr in_scope a rest
+
+let rec sort_attrs (in_scope : list (string * string)) (all_attrs : list xml_attribute)
+  : Tot (list xml_attribute) (decreases all_attrs) =
+  match all_attrs with
+  | [] -> []
+  | a :: rest -> insert_attr in_scope a (sort_attrs in_scope rest)
+
+let render_decl (d : string * string) : string =
+  let (p, u) = d in
+  if p = "" then String.concat "" [" xmlns=\""; u; "\""]
+  else String.concat "" [" xmlns:"; p; "=\""; u; "\""]
+
+let rec concat_decl_strings (ds : list (string * string))
+  : Tot string (decreases ds) =
+  match ds with
+  | [] -> ""
+  | d :: rest -> String.concat "" [render_decl d; concat_decl_strings rest]
+
+(* in_scope: the source's namespace bindings at this point (innermost
+   first). rendered: the bindings written by output ancestors, innermost
+   first. *)
+let rec serialize_xml_node_c14n (node : xml_node)
+                                 (in_scope : list (string * string))
+                                 (rendered : list (string * string))
+                                 (fuel : nat)
   : Tot string (decreases fuel) =
   if fuel = 0 then ""
   else
@@ -572,20 +632,29 @@ let rec serialize_xml_node_c14n (node : xml_node) (ns_decls : string)
     | XComment t -> String.concat "" ["<!--"; t; "-->"]
     | XPI tg d -> String.concat "" ["<?"; tg; " "; d; "?>"]
     | XElement tag attrs children ->
+      let in_scope' = List.Tot.append (extract_namespaces attrs []) in_scope in
+      let to_write =
+        sort_decls
+          (List.Tot.concatMap (fun (p : string) ->
+             match declaration_to_write p in_scope' rendered with
+             | Some d -> [d]
+             | None -> []) (utilized_prefixes tag attrs)) in
+      let rendered' = List.Tot.append to_write rendered in
+      let plain_attrs =
+        List.Tot.filter (fun (a : xml_attribute) -> not (is_xmlns_declaration a.attr_name)) attrs in
       let attr_strs = List.Tot.map (fun (a : xml_attribute) ->
-        String.concat "" [" "; a.attr_name; "=\""; a.attr_value; "\""]) attrs in
-      let attr_str = String.concat "" attr_strs in
-      let root_ns = if is_root then ns_decls else "" in
-      (* C14N: always use explicit open+close, never self-closing *)
+        String.concat "" [" "; a.attr_name; "=\""; a.attr_value; "\""])
+        (sort_attrs in_scope' plain_attrs) in
       let child_strs = List.Tot.map (fun (c : xml_node) ->
-        serialize_xml_node_c14n c ns_decls false (fuel - 1)) children in
-      let children_str = String.concat "" child_strs in
-      String.concat "" ["<"; tag; root_ns; attr_str; ">"; children_str; "</"; tag; ">"]
+        serialize_xml_node_c14n c in_scope' rendered' (fuel - 1)) children in
+      String.concat ""
+        ["<"; tag; concat_decl_strings to_write; String.concat "" attr_strs; ">";
+         String.concat "" child_strs; "</"; tag; ">"]
 
 let serialize_children_xml (children : list xml_node) (ambient_ns : list (string * string)) : string =
-  let ns_decls = render_ns_decls ambient_ns in
+  let in_scope = author_namespaces ambient_ns in
   let strs = List.Tot.map (fun (c : xml_node) ->
-    serialize_xml_node_c14n c ns_decls true 100) children in
+    serialize_xml_node_c14n c in_scope [] 100) children in
   String.concat "" strs
 
 (* Kept for backwards-compat in case anything else calls it.

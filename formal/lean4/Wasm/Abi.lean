@@ -283,8 +283,9 @@ def mkLiteral (lex : String) (dt lang dir : Option String) :
         | none   => pure xsdString
   let l : Literal :=
     { lexicalForm := lex, datatype := dtIri, langTag := lang, direction := direction }
-  if h : literalWf l then .ok ⟨l, h⟩
-  else .error s!"ill-formed literal '{lex}'"
+  match Literal.toWf? l with
+  | some w => .ok w
+  | none => .error s!"ill-formed literal '{lex}'"
 
 private def litOf (o : List (String × Value)) (v : String) : Except String WfLiteral :=
   mkLiteral v (strField? o "datatype") (strField? o "xml:lang") (strField? o "its:dir")

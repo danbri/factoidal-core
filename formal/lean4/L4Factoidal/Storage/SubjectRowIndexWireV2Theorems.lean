@@ -42,6 +42,42 @@ namespace L4Factoidal.Storage.SubjectRowIndexWireV2
 
 open L4Factoidal.Storage
 
+private theorem distinctIdsGo_eq_loop (ids : List Nat) (seen : Std.HashSet Nat)
+    (reversed : List Nat)
+    (agreement : ∀ value, seen.contains value = reversed.any (fun previous => value == previous)) :
+    distinctIdsGo ids seen reversed = List.eraseDupsBy.loop (· == ·) ids reversed := by
+  induction ids generalizing seen reversed with
+  | nil => rfl
+  | cons current rest inductionHypothesis =>
+      cases present : seen.contains current with
+      | false =>
+          have previous : reversed.any (fun value => current == value) = false :=
+            (agreement current).symm.trans present
+          simp only [distinctIdsGo, present, Bool.false_eq_true, if_false,
+            List.eraseDupsBy.loop, previous]
+          apply inductionHypothesis
+          intro value
+          simp only [Std.HashSet.contains_insert, List.any_cons, agreement value]
+          rw [BEq.comm]
+      | true =>
+          have previous : reversed.any (fun value => current == value) = true :=
+            (agreement current).symm.trans present
+          simp only [distinctIdsGo, present, if_true, List.eraseDupsBy.loop, previous]
+          exact inductionHypothesis seen reversed agreement
+
+theorem distinctIds_eq_eraseDups (ids : List Nat) : distinctIds ids = ids.eraseDups := by
+  apply distinctIdsGo_eq_loop
+  intro value
+  simp
+
+theorem selectedPostings_eq_filter (wanted : List Nat) (pages : List (Nat × Array (Nat × Nat))) :
+    selectedPostings wanted pages =
+      pages.flatMap (fun page => page.2.toList.filter fun pair => wanted.contains pair.1) := by
+  simp only [selectedPostings, Std.HashSet.contains_ofList]
+
+#print axioms distinctIds_eq_eraseDups
+#print axioms selectedPostings_eq_filter
+
 /-! ## Byte array bridge -/
 
 /-- The byte array built from a list has that list's length. -/

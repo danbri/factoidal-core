@@ -4,16 +4,25 @@ and `rml:reference` need, over `JSON.Json`.
 
 ## The subset, stated in full
 
-    Path ::= '$' Step*
-    Step ::= '.' Name | '[' '*' ']' | '[' Digits ']' | "['" Name "']"
+    Path ::= '$' Step* | RelStep Step*
+    RelStep ::= Name | '[' ... ']'
+    Step ::= '.' Name | '.' '*' | '[' '*' ']' | '[' Digits ']' | "['" Name "']"
 
 `Name` is a run of characters that is not `.` or `[`.
+
+A path with no leading `$` is a RELATIVE path, read from the current
+node: `name`, `values.*`, `departments[*].employees[*].name`. RML-IO and
+RML-CC write references both ways (`RMLSTC0011a` uses `{name}` where
+RML-Core writes `{$.name}`), and a processor that read only the first
+form would produce no term for half the corpus. `.*` is the dotted
+spelling of `[*]`.
 
 ANYTHING ELSE fails to parse, and `evalPath` on an unparsed path
 yields NOTHING rather than guessing. That distinction carries: a
 mapping whose reference this module cannot read produces no term,
 which is what RML says an unresolved reference does — not an empty
-string, and not a silent match.
+string, and not a silent match. (`RML.Validate` rejects such a
+reference before any record is read.)
 
 The RML-Core corpus writes `$.students[*]`, `$.ID`, `$[*]` and one
 `$.students[*]]`, which is malformed and is a negative test. Nothing
@@ -39,6 +48,7 @@ def parseJsonPath (p : String) : Option (List JStep) :=
   let rec go (acc : List JStep) : Nat → List Char → Option (List JStep)
     | 0,      _  => none
     | _,      [] => some acc
+    | fuel + 1, '.' :: '*' :: rest => go (acc ++ [.wildcard]) fuel rest
     | fuel + 1, '.' :: rest =>
         let name := rest.takeWhile isNameChar
         if name.isEmpty then none
@@ -61,7 +71,11 @@ def parseJsonPath (p : String) : Option (List JStep) :=
     | _ + 1,  _  => none
   match p.toList with
   | '$' :: rest => go [] (rest.length + 1) rest
-  | _           => none
+  | []          => none
+  | cs          =>
+      -- a relative path: a leading name is a field step
+      let cs' := if cs.head? == some '[' || cs.head? == some '.' then cs else '.' :: cs
+      go [] (cs'.length + 1) cs'
 
 /-- Every value a path selects, in document order. -/
 def evalSteps : List JStep → Json → List Json

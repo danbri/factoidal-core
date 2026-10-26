@@ -44,10 +44,10 @@ def owlMinQualifiedCardinality : WfIri :=
 def owlQualifiedCardinality : WfIri :=
   ⟨"http://www.w3.org/2002/07/owl#qualifiedCardinality", rfl⟩
 def owlCardinality : WfIri := ⟨"http://www.w3.org/2002/07/owl#cardinality", rfl⟩
+def owlOnDataRange : WfIri := ⟨"http://www.w3.org/2002/07/owl#onDataRange", rfl⟩
 
-/-- Datatype facets read by the current concrete-domain decision
-    procedures. Unsupported facets are absent from a parse, never
-    guessed at. -/
+/-- The four ordering facets, then `pattern` and the three length
+    facets. -/
 def facetMinInclusive : WfIri :=
   ⟨"http://www.w3.org/2001/XMLSchema#minInclusive", rfl⟩
 def facetMaxInclusive : WfIri :=
@@ -56,12 +56,31 @@ def facetMinExclusive : WfIri :=
   ⟨"http://www.w3.org/2001/XMLSchema#minExclusive", rfl⟩
 def facetMaxExclusive : WfIri :=
   ⟨"http://www.w3.org/2001/XMLSchema#maxExclusive", rfl⟩
-def facetPattern : WfIri :=
-  ⟨"http://www.w3.org/2001/XMLSchema#pattern", rfl⟩
 
-def supportedDatatypeFacets : List WfIri :=
-  [facetMinInclusive, facetMaxInclusive, facetMinExclusive, facetMaxExclusive,
-   facetPattern]
+def orderingFacets : List WfIri :=
+  [facetMinInclusive, facetMaxInclusive, facetMinExclusive, facetMaxExclusive]
+
+def facetPatternIri : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#pattern", rfl⟩
+def facetLength : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#length", rfl⟩
+def facetMinLength : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#minLength", rfl⟩
+def facetMaxLength : WfIri := ⟨"http://www.w3.org/2001/XMLSchema#maxLength", rfl⟩
+
+/-- The facets a parse READS: the ordering facets, `xsd:pattern` and
+    the length facets (OWL 2 Syntax §4, the facets of the datatype
+    map).
+
+    Until 2026-10-10 only the ordering facets were read, and a
+    restriction's other facets were dropped. Dropping one makes two
+    DIFFERENT data ranges parse to one expression:
+    `xsd:string[pattern "a*"]` and `xsd:string[pattern "b*"]` both
+    became `xsd:string[]`, so `x : D₁` beside `x : ¬D₂` read as a
+    complement pair, which is a clash no model forces. Every consumer
+    that computes a value space folds the facets through `foldBound`,
+    which ignores a facet it does not interpret; a facet a consumer
+    does not interpret can only leave the space larger, which withholds
+    a clash. -/
+def readFacets : List WfIri :=
+  orderingFacets ++ [facetPatternIri, facetLength, facetMinLength, facetMaxLength]
 
 /-! ## The AST -/
 
@@ -205,15 +224,34 @@ def cardinalityValue (st : Store) (s : Subject) (p : WfIri) : Option Nat :=
   | _                 => none
 
 /-- One `owl:withRestrictions` element is a blank node carrying
-    exactly one `<facetIRI> <value>` triple. Supported facets are
-    probed by name; an unrecognised facet is absent from the result
-    rather than guessed at. -/
+    exactly one `<facetIRI> <value>` triple. The facets of `readFacets`
+    are probed by name, and an unrecognised facet is absent from the
+    result rather than guessed at. -/
 def facetPairsOf (st : Store) (heads : List Term) : List (WfIri × Term) :=
   heads.flatMap (fun h =>
     match termAsSubject h with
     | none   => []
-    | some s => supportedDatatypeFacets.filterMap (fun f =>
+    | some s => readFacets.filterMap (fun f =>
         (firstObject st s f).map (fun v => (f, v))))
+
+/-- The filler of a QUALIFIED cardinality restriction: `owl:onClass`
+    for an object property, `owl:onDataRange` for a data property.
+
+    OWL 2 Mapping to RDF Graphs, Table 1: `ObjectMinCardinality(n OPE
+    CE)` maps to `owl:minQualifiedCardinality` with `owl:onClass T(CE)`,
+    and `DataMinCardinality(n DPE DR)` maps to the same predicate with
+    `owl:onDataRange T(DR)`; the max and exact forms are the same.
+
+    Until 2026-10-10 only `owl:onClass` was read, and a restriction with
+    `owl:onDataRange` parsed as the UNQUALIFIED `≥ n p` / `≤ n p` /
+    `= n p`. For `≤` that is a stronger class than the one written:
+    `DataMaxCardinality(1 dp xsd:string)` read as `≤ 1 dp`, so an
+    individual with the two integer values `1` and `2` on `dp` was
+    refuted though it has a model. -/
+def qualifiedFiller (st : Store) (s : Subject) : Option Term :=
+  match firstObject st s owlOnClass with
+  | some c => some c
+  | none   => firstObject st s owlOnDataRange
 
 mutual
 
@@ -296,19 +334,19 @@ def parseCeMarkers (st : Store) (s : Subject) (n : Nat) : ClassExpr :=
               | none =>
               match cardinalityValue st s owlMinQualifiedCardinality with
               | some k =>
-                  (match firstObject st s owlOnClass with
+                  (match qualifiedFiller st s with
                    | some c => .minQualCard k p (parseClassExpr st c n)
                    | none   => .minCard k p)
               | none =>
               match cardinalityValue st s owlMaxQualifiedCardinality with
               | some k =>
-                  (match firstObject st s owlOnClass with
+                  (match qualifiedFiller st s with
                    | some c => .maxQualCard k p (parseClassExpr st c n)
                    | none   => .maxCard k p)
               | none =>
               match cardinalityValue st s owlQualifiedCardinality with
               | some k =>
-                  (match firstObject st s owlOnClass with
+                  (match qualifiedFiller st s with
                    | some c => .exactQualCard k p (parseClassExpr st c n)
                    | none   => .exactCard k p)
               | none =>
@@ -343,11 +381,20 @@ end
     markers at all still falls back to `named` for an IRI, which is
     what it denotes, and to `unknown` for a blank node, which denotes
     nothing this reader can name. -/
-def parseCeOfSubject (st : Store) (s : Subject) : ClassExpr :=
-  match parseCeMarkers st s (st.graph.length + 8) with
+def parseCeOfSubjectFuel (st : Store) (fuel : Nat) (s : Subject) : ClassExpr :=
+  match parseCeMarkers st s fuel with
   | .unknown => (match s with
                  | .iri i   => .named i
                  | .bnode _ => .unknown)
   | ce       => ce
+
+/-- `parseCeOfSubjectFuel` with the fuel `st.graph.length + 8`.
+    Computing that length walks the whole graph list, so a caller that
+    parses many subjects of one store computes it ONCE and calls
+    `parseCeOfSubjectFuel`: per subject, it made the OWL refuter's TBox
+    read quadratic in the graph (11 seconds on the 82,168-triple goal
+    graphs of `WebOnt-miscellaneous-011`). -/
+def parseCeOfSubject (st : Store) (s : Subject) : ClassExpr :=
+  parseCeOfSubjectFuel st (st.graph.length + 8) s
 
 end L4Factoidal.OWL

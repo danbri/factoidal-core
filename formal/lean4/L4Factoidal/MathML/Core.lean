@@ -124,6 +124,31 @@ def powNat (x : Int × Int) : Nat → Int × Int
   | 0     => (1, 1)
   | n + 1 => mulRat x (powNat x n)
 
+/-- `powNat` as a loop: `powNatLoop x k acc` applies `mulRat x` to `acc`
+`k` times, in the same order as `powNat`, with a tail call per step (the
+exponent comes from the document; issue
+https://github.com/danbri/factoidal/issues/752). -/
+def powNatLoop (x : Int × Int) : Nat → Int × Int → Int × Int
+  | 0,     acc => acc
+  | k + 1, acc => powNatLoop x k (mulRat x acc)
+
+theorem powNatLoop_mulRat (x : Int × Int) :
+    ∀ k acc, powNatLoop x k (mulRat x acc) = mulRat x (powNatLoop x k acc)
+  | 0,     _   => rfl
+  | k + 1, acc => powNatLoop_mulRat x k (mulRat x acc)
+
+theorem powNatLoop_eq (x : Int × Int) : ∀ n, powNatLoop x n (1, 1) = powNat x n
+  | 0     => rfl
+  | n + 1 => by
+      show powNatLoop x n (mulRat x (1, 1)) = mulRat x (powNat x n)
+      rw [powNatLoop_mulRat, powNatLoop_eq x n]
+
+def powNatFast (x : Int × Int) (n : Nat) : Int × Int := powNatLoop x n (1, 1)
+
+/-- The compiler runs `powNatFast` wherever the source says `powNat`. -/
+@[csimp] theorem powNat_eq_fast : @powNat = @powNatFast := by
+  funext x n; exact (powNatLoop_eq x n).symm
+
 /-- The exact `n`th root of a NON-NEGATIVE integer, or `none`. Found by
     a bounded search rather than a floating-point guess, so it is
     exact by construction. -/

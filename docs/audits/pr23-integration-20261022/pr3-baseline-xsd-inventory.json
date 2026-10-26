@@ -1,0 +1,757 @@
+{
+  "purpose": "Independent manifest inventory only; not a datatype validity comparator",
+  "fixtureRoot": "/private/tmp/xsdtests-7bc3365c652a322f3d762021b3879eb92dae7e30",
+  "fixtureCommit": "7bc3365c652a322f3d762021b3879eb92dae7e30",
+  "suiteSha256": "c64c3b12e9a3dc2d1ad75d4ac1acd7e097cabb82cc017a7cfaee1b09387b98b2",
+  "testSetRefs": 93,
+  "missingTestSets": [],
+  "unparsedTestSets": [],
+  "manifestInstanceTests": 26357,
+  "manifestSchemaTests": 15378,
+  "sets": [
+    {
+      "path": "common/introspection.testSet",
+      "exists": true,
+      "sha256": "fd72087461ac2e6ebeb51b81a50ca42d5d05b124f35429124185129120f9dc80",
+      "groups": 1,
+      "schemaTests": 1,
+      "instanceTests": 91
+    },
+    {
+      "path": "nistMeta/NISTXMLSchemaDatatypes.testSet",
+      "exists": true,
+      "sha256": "826f1af75841d345fd3728863d47c3d53fd8a3a26c8e40930e410cb29f505778",
+      "groups": 3953,
+      "schemaTests": 3953,
+      "instanceTests": 19217
+    },
+    {
+      "path": "sunMeta/suntest.testSet",
+      "exists": true,
+      "sha256": "0e5385104ebff07daeebb850766e4795f45338706877e94b7369e6cc17de7d71",
+      "groups": 54,
+      "schemaTests": 54,
+      "instanceTests": 209
+    },
+    {
+      "path": "sunMeta/AGroupDef.testSet",
+      "exists": true,
+      "sha256": "f5b484f615e8be072ff533b45440b18303f8396f40c27a8497ca0a5e7f1e0734",
+      "groups": 13,
+      "schemaTests": 13,
+      "instanceTests": 6
+    },
+    {
+      "path": "sunMeta/AttrDecl.testSet",
+      "exists": true,
+      "sha256": "5dccf6ccbb0df69854b9652c4491f1c34c7128156a96d468d2cd45f6673e4a4b",
+      "groups": 83,
+      "schemaTests": 83,
+      "instanceTests": 95
+    },
+    {
+      "path": "sunMeta/AttrUse.testSet",
+      "exists": true,
+      "sha256": "080bf3d96f28132f81e8f6e6ba0dab36604e947e36f8fd17fe0c3f0c7b9177b9",
+      "groups": 4,
+      "schemaTests": 4,
+      "instanceTests": 5
+    },
+    {
+      "path": "sunMeta/CType.testSet",
+      "exists": true,
+      "sha256": "e73caff9c6739c4a977bdc5c3d94c28e82ee303e055157a998125bcb1535b04b",
+      "groups": 31,
+      "schemaTests": 31,
+      "instanceTests": 54
+    },
+    {
+      "path": "sunMeta/ElemDecl.testSet",
+      "exists": true,
+      "sha256": "8dd39a8a0c40af89625afeac3d479edf78b0e906b6cd8fa3c99f991f0cf76a86",
+      "groups": 227,
+      "schemaTests": 227,
+      "instanceTests": 237
+    },
+    {
+      "path": "sunMeta/IdConstrDefs.testSet",
+      "exists": true,
+      "sha256": "da0bf95d96474bfbb3fbfdb59b015d6d2e6b0b5e51e3d884705bd0720f2f6b40",
+      "groups": 27,
+      "schemaTests": 27,
+      "instanceTests": 21
+    },
+    {
+      "path": "sunMeta/MGroup.testSet",
+      "exists": true,
+      "sha256": "0c6b455792a39c54e567640462e05ec22ba639a5f364f4ea689dc975d84e4800",
+      "groups": 40,
+      "schemaTests": 40,
+      "instanceTests": 39
+    },
+    {
+      "path": "sunMeta/MGroupDef.testSet",
+      "exists": true,
+      "sha256": "16f2f3c18d6ca49f9c732ea1f34406b1e057b6c704748153ea9e035ae8ca48da",
+      "groups": 19,
+      "schemaTests": 19,
+      "instanceTests": 14
+    },
+    {
+      "path": "sunMeta/Notation.testSet",
+      "exists": true,
+      "sha256": "67f32c973dfc7c427dbb641e064628f2f359ee431a1543bb5513702177a4cf95",
+      "groups": 13,
+      "schemaTests": 13,
+      "instanceTests": 8
+    },
+    {
+      "path": "sunMeta/SType.testSet",
+      "exists": true,
+      "sha256": "3a6390d2e9433c76495ea194a919afae1edb6fbffa136c1f2a8d1350059918a1",
+      "groups": 138,
+      "schemaTests": 138,
+      "instanceTests": 200
+    },
+    {
+      "path": "sunMeta/Schema.testSet",
+      "exists": true,
+      "sha256": "41d34211d756e15296e8e968a4232873f703977a48012f23e63d960b2ba43024",
+      "groups": 6,
+      "schemaTests": 6,
+      "instanceTests": 6
+    },
+    {
+      "path": "sunMeta/Wildcard.testSet",
+      "exists": true,
+      "sha256": "558c4d8a03c1b6c265942eaede6fdbd6e8134acf9a614f90417798181f0b23e6",
+      "groups": 26,
+      "schemaTests": 26,
+      "instanceTests": 35
+    },
+    {
+      "path": "msMeta/Additional_w3c.xml",
+      "exists": true,
+      "sha256": "03446f965f65351d7e70550d2f62490a89aeffee4272d88c842a327efd66d16f",
+      "groups": 287,
+      "schemaTests": 257,
+      "instanceTests": 188
+    },
+    {
+      "path": "msMeta/Annotations_w3c.xml",
+      "exists": true,
+      "sha256": "43ce7a3aa7873b40fb7c580515a2dbfdd16e93f079a3cc8f4f8caa880aa2db87",
+      "groups": 80,
+      "schemaTests": 80,
+      "instanceTests": 0
+    },
+    {
+      "path": "msMeta/AttributeGroup_w3c.xml",
+      "exists": true,
+      "sha256": "d4a2999c5e927e486dca299f46c5967e20814221d88fb8ff13cb9dcd3a2e1cf9",
+      "groups": 114,
+      "schemaTests": 114,
+      "instanceTests": 35
+    },
+    {
+      "path": "msMeta/Attribute_w3c.xml",
+      "exists": true,
+      "sha256": "65ae63f0554818efa90b5e4d094ab22fb61f043b46b23d80b79a474931aad135",
+      "groups": 290,
+      "schemaTests": 279,
+      "instanceTests": 124
+    },
+    {
+      "path": "msMeta/ComplexType_w3c.xml",
+      "exists": true,
+      "sha256": "d7f8de9ca16885f17049acc36580641bc01fafed35d532446cf9ec9e5cad2d65",
+      "groups": 551,
+      "schemaTests": 550,
+      "instanceTests": 262
+    },
+    {
+      "path": "msMeta/DataTypes_w3c.xml",
+      "exists": true,
+      "sha256": "20cefe2551319c1658e16e59604f3152f7c619f0e991045a0cd5e680e5cc616b",
+      "groups": 2247,
+      "schemaTests": 2247,
+      "instanceTests": 1187
+    },
+    {
+      "path": "msMeta/Element_w3c.xml",
+      "exists": true,
+      "sha256": "6d056718faff0dc30d2554bbba585d2d15b03324b207ef8e8d169b717710f1ea",
+      "groups": 358,
+      "schemaTests": 356,
+      "instanceTests": 171
+    },
+    {
+      "path": "msMeta/Errata10_w3c.xml",
+      "exists": true,
+      "sha256": "f427a6de64fcd74da7c3d705696098d3505eeb334caa723a0cbad5411595243e",
+      "groups": 19,
+      "schemaTests": 19,
+      "instanceTests": 12
+    },
+    {
+      "path": "msMeta/Group_w3c.xml",
+      "exists": true,
+      "sha256": "85cca5737431b818e6c1e532b95d1e01117eb728aca5c02f112753ea7a7a7a33",
+      "groups": 218,
+      "schemaTests": 218,
+      "instanceTests": 126
+    },
+    {
+      "path": "msMeta/IdentityConstraint_w3c.xml",
+      "exists": true,
+      "sha256": "8cf0f3cf70eb4464ca8f80216032b5ddb4f8467f2ea032971bc6414c55be7874",
+      "groups": 844,
+      "schemaTests": 844,
+      "instanceTests": 228
+    },
+    {
+      "path": "msMeta/ModelGroups_w3c.xml",
+      "exists": true,
+      "sha256": "b127312899fb18b36bd04a5d878f09a136e32f7de76e0a86466973fa918693e1",
+      "groups": 391,
+      "schemaTests": 391,
+      "instanceTests": 207
+    },
+    {
+      "path": "msMeta/Notations_w3c.xml",
+      "exists": true,
+      "sha256": "c5cdac90510bbf0623719178774df1d5c981206804b11703f285714510d4ce8f",
+      "groups": 116,
+      "schemaTests": 116,
+      "instanceTests": 3
+    },
+    {
+      "path": "msMeta/Particles_w3c.xml",
+      "exists": true,
+      "sha256": "b07572c609a1f7d987e3bf917baf2b4b9af38720cab2b8ef20ec63c1b8597a9d",
+      "groups": 857,
+      "schemaTests": 856,
+      "instanceTests": 516
+    },
+    {
+      "path": "msMeta/Regex_w3c.xml",
+      "exists": true,
+      "sha256": "cffcf9d8010ff0032c6fc7d9a778f01264034a62098979992c2431efd3cd61df",
+      "groups": 2590,
+      "schemaTests": 2590,
+      "instanceTests": 1432
+    },
+    {
+      "path": "msMeta/Schema_w3c.xml",
+      "exists": true,
+      "sha256": "486c831895933c4f795eaef1ff0f8033a068ce04eaa1ff3753609ba0c00672d4",
+      "groups": 132,
+      "schemaTests": 130,
+      "instanceTests": 35
+    },
+    {
+      "path": "msMeta/SimpleType_w3c.xml",
+      "exists": true,
+      "sha256": "adf300162cfa0cb4e41fe1e95760a9389df3acd5424203178e78e30d6b4c7752",
+      "groups": 341,
+      "schemaTests": 333,
+      "instanceTests": 110
+    },
+    {
+      "path": "msMeta/Wildcards_w3c.xml",
+      "exists": true,
+      "sha256": "474722ba1fca968dc8ece9257ebcc7eba5e54852376dc7e1b249ab7ec8f69297",
+      "groups": 315,
+      "schemaTests": 315,
+      "instanceTests": 119
+    },
+    {
+      "path": "boeingMeta/BoeingXSDTestSet.testSet",
+      "exists": true,
+      "sha256": "881c0704163174f56336aff23c3a4f2945405b413265f1f4854703b800ffdb9e",
+      "groups": 6,
+      "schemaTests": 6,
+      "instanceTests": 12
+    },
+    {
+      "path": "saxonMeta/All.testSet",
+      "exists": true,
+      "sha256": "d08c4bcb391c1daa4e59258b43af206ce7effd48b5b269ed696a79999b97a86e",
+      "groups": 62,
+      "schemaTests": 62,
+      "instanceTests": 48
+    },
+    {
+      "path": "saxonMeta/Assert.testSet",
+      "exists": true,
+      "sha256": "4c1946ed84958098979843ec584be0cd9e6cd4bd5a03a62fda9bc2cf97107ec2",
+      "groups": 34,
+      "schemaTests": 34,
+      "instanceTests": 67
+    },
+    {
+      "path": "saxonMeta/Complex.testSet",
+      "exists": true,
+      "sha256": "a2b55bc09bc87c0ffb2fe006f28320d7355613ada773a0a0b8b15b145646db1f",
+      "groups": 30,
+      "schemaTests": 30,
+      "instanceTests": 62
+    },
+    {
+      "path": "saxonMeta/CTA.testSet",
+      "exists": true,
+      "sha256": "fc6cd3403d1e3977bd5c8b3ccfa49810007de44db1470faaf7f9b9680b9bda0d",
+      "groups": 44,
+      "schemaTests": 44,
+      "instanceTests": 69
+    },
+    {
+      "path": "saxonMeta/Id.testSet",
+      "exists": true,
+      "sha256": "097e36824fb7ce38d7384f952f4ef9e211160906af676a1db5e177d56e5081c2",
+      "groups": 32,
+      "schemaTests": 32,
+      "instanceTests": 89
+    },
+    {
+      "path": "saxonMeta/Missing.testSet",
+      "exists": true,
+      "sha256": "b24ea35cdc51bc567aa242a63e923409391ed08137bf66d9df53286ff1032660",
+      "groups": 6,
+      "schemaTests": 6,
+      "instanceTests": 8
+    },
+    {
+      "path": "saxonMeta/Open.testSet",
+      "exists": true,
+      "sha256": "9c6936198d090324b42cf52959dde0a31d469051b148a20502f64e24a5ee91b8",
+      "groups": 51,
+      "schemaTests": 51,
+      "instanceTests": 114
+    },
+    {
+      "path": "saxonMeta/Override.testSet",
+      "exists": true,
+      "sha256": "5cbe4648f637fa4d25f8bd6a069a3f44e86074d48bc97be8daa74afedd8eb5a9",
+      "groups": 31,
+      "schemaTests": 31,
+      "instanceTests": 55
+    },
+    {
+      "path": "saxonMeta/Simple.testSet",
+      "exists": true,
+      "sha256": "7d288066a931e5fa59c76ceefe8a3e7e77fe7b2394e9c46697e3133a19b03aa4",
+      "groups": 65,
+      "schemaTests": 65,
+      "instanceTests": 43
+    },
+    {
+      "path": "saxonMeta/Subsgroup.testSet",
+      "exists": true,
+      "sha256": "3f28c5d307b7874d89a9db5e327b0f1ba1546064fe229b5e88180b96b0e6a4bb",
+      "groups": 6,
+      "schemaTests": 6,
+      "instanceTests": 5
+    },
+    {
+      "path": "saxonMeta/TargetNS.testSet",
+      "exists": true,
+      "sha256": "be972b71b2583c457aea402ece7879010575343372d50a4d2f9714f8c8d291c8",
+      "groups": 5,
+      "schemaTests": 5,
+      "instanceTests": 5
+    },
+    {
+      "path": "saxonMeta/VC.testSet",
+      "exists": true,
+      "sha256": "37ab134cc6fdf85a967f7909816fac89125950e61f399d3b29848053394f3680",
+      "groups": 24,
+      "schemaTests": 24,
+      "instanceTests": 26
+    },
+    {
+      "path": "saxonMeta/Wild.testSet",
+      "exists": true,
+      "sha256": "c2a0d84019c5a2614d00f055f0b53f37e4d818d2dd2f00f0416e6950cac9397c",
+      "groups": 88,
+      "schemaTests": 88,
+      "instanceTests": 196
+    },
+    {
+      "path": "saxonMeta/XmlVersions.testSet",
+      "exists": true,
+      "sha256": "329a95dc4d971ad13a61606e10a369bcc7da945f4809d672c1dd276182402f4c",
+      "groups": 13,
+      "schemaTests": 13,
+      "instanceTests": 38
+    },
+    {
+      "path": "saxonMeta/Zone.testSet",
+      "exists": true,
+      "sha256": "ce72606cc0dc66680038d14f3f262c86fbceb0adc4b3e8281d7354112f329340",
+      "groups": 20,
+      "schemaTests": 20,
+      "instanceTests": 54
+    },
+    {
+      "path": "oracleMeta/Zone.testSet",
+      "exists": true,
+      "sha256": "a8a3ec085840d089e88797b92e32082cfb505afafc627f8567e647af89f01976",
+      "groups": 9,
+      "schemaTests": 9,
+      "instanceTests": 17
+    },
+    {
+      "path": "wgMeta/substitution-groups.testSet",
+      "exists": true,
+      "sha256": "2163679447d964824b7d7d5d94fbd05cda26bed5833cd0b49bb00e9ac514ba2d",
+      "groups": 6,
+      "schemaTests": 6,
+      "instanceTests": 41
+    },
+    {
+      "path": "wgMeta/IRI.testSet",
+      "exists": true,
+      "sha256": "3347f5f945ec80942d07eff14d9a40bf7145ab0797c0c6070bfd0beeee476efa",
+      "groups": 1,
+      "schemaTests": 1,
+      "instanceTests": 12
+    },
+    {
+      "path": "ibmMeta/allGroup.testSet",
+      "exists": true,
+      "sha256": "55e4d8ec41d88fba9159bd038a933e667ce5a951994460318472fd31534b1564",
+      "groups": 9,
+      "schemaTests": 9,
+      "instanceTests": 6
+    },
+    {
+      "path": "ibmMeta/anyAttribute.testSet",
+      "exists": true,
+      "sha256": "3a03cd61aed1b98a518bb1352e51284d2752607a4652698acfd1d4f51a415320",
+      "groups": 9,
+      "schemaTests": 9,
+      "instanceTests": 7
+    },
+    {
+      "path": "ibmMeta/assert.testSet",
+      "exists": true,
+      "sha256": "8f459e9ce7c5deec6f1d20e0bbbd0205d32fb8321133f7b4d8ca3f511ffd8e44",
+      "groups": 35,
+      "schemaTests": 35,
+      "instanceTests": 44
+    },
+    {
+      "path": "ibmMeta/assertion.testSet",
+      "exists": true,
+      "sha256": "04522fa64e96c67acf3b7fb7c8297d9d904940b72ded0be945610e1e42a332d5",
+      "groups": 51,
+      "schemaTests": 51,
+      "instanceTests": 50
+    },
+    {
+      "path": "ibmMeta/conditionalInclusion.testSet",
+      "exists": true,
+      "sha256": "1b202aa62fec71194d8500cb097a720b50fc015c16c375b0885d50d14cc6ac0b",
+      "groups": 3,
+      "schemaTests": 3,
+      "instanceTests": 2
+    },
+    {
+      "path": "ibmMeta/constraintsOnAttribute.testSet",
+      "exists": true,
+      "sha256": "347e5f887af518af03f22b258f3b1ac275c9909f09917707c76a860152b40ef7",
+      "groups": 16,
+      "schemaTests": 16,
+      "instanceTests": 6
+    },
+    {
+      "path": "ibmMeta/cyclicRedefineIncludeImportOverride.testSet",
+      "exists": true,
+      "sha256": "67e5f03ce0c20bfe71d288bfd73908dc74f4fef1ac30e96005df45d8445eef41",
+      "groups": 5,
+      "schemaTests": 5,
+      "instanceTests": 0
+    },
+    {
+      "path": "ibmMeta/date.testSet",
+      "exists": true,
+      "sha256": "2a5f1afe89ca87f0da088b560e3254a80b9323eb3355b339140ba382d4d20bdc",
+      "groups": 1,
+      "schemaTests": 1,
+      "instanceTests": 1
+    },
+    {
+      "path": "ibmMeta/dateTimeStamp.testSet",
+      "exists": true,
+      "sha256": "b71991e9d4bc99a9ef07f4abcfe1f9de9bd7caa7af39097e1e965b9437e9bee7",
+      "groups": 28,
+      "schemaTests": 28,
+      "instanceTests": 15
+    },
+    {
+      "path": "ibmMeta/dayTimeDuration.testSet",
+      "exists": true,
+      "sha256": "109f444eb0d81e61bb8beef5d2276eb86fd98904a0052666926a36adfff5070c",
+      "groups": 24,
+      "schemaTests": 24,
+      "instanceTests": 12
+    },
+    {
+      "path": "ibmMeta/defaultAttributesApply.testSet",
+      "exists": true,
+      "sha256": "e3153d067a23da067b32d87a23fffd272df0d7a95209af8bd87fde63c56cff1a",
+      "groups": 17,
+      "schemaTests": 17,
+      "instanceTests": 14
+    },
+    {
+      "path": "ibmMeta/defaultFixed.testSet",
+      "exists": true,
+      "sha256": "95060eca08645e97b2bd97ece017fa3f97d2d829a29e85cc79e7c196d48cd9b4",
+      "groups": 5,
+      "schemaTests": 5,
+      "instanceTests": 5
+    },
+    {
+      "path": "ibmMeta/double.testSet",
+      "exists": true,
+      "sha256": "6fc573e00893fdc1f8dd5bbdc02e4d6fd34912883fbfbea64645895c0f708955",
+      "groups": 2,
+      "schemaTests": 2,
+      "instanceTests": 2
+    },
+    {
+      "path": "ibmMeta/edcWildcard.testSet",
+      "exists": true,
+      "sha256": "ce49b601bc438bda9d5ef1e2a7f10c6867afcf335557fc11cf9676164bfba649",
+      "groups": 2,
+      "schemaTests": 2,
+      "instanceTests": 2
+    },
+    {
+      "path": "ibmMeta/explicitTimezone.testSet",
+      "exists": true,
+      "sha256": "25e494b625e636d72abbd5091723515b1d49356f194c5c95758206f4327b43c5",
+      "groups": 18,
+      "schemaTests": 18,
+      "instanceTests": 14
+    },
+    {
+      "path": "ibmMeta/float.testSet",
+      "exists": true,
+      "sha256": "3dd8ea7bf5844deaa14137e53bd28220d43fe60acd33cfe59750037d5e5729ae",
+      "groups": 2,
+      "schemaTests": 2,
+      "instanceTests": 2
+    },
+    {
+      "path": "ibmMeta/gYearMonth.testSet",
+      "exists": true,
+      "sha256": "d32d3f28dada76fe14bcd5c6249dbffd223e7134e84d4aa893f9929950ca1162",
+      "groups": 1,
+      "schemaTests": 1,
+      "instanceTests": 1
+    },
+    {
+      "path": "ibmMeta/gYear.testSet",
+      "exists": true,
+      "sha256": "ee2df724880119e0d01f4881b23e81968a01b97247e67b6c8ddc6eff505acd9f",
+      "groups": 1,
+      "schemaTests": 1,
+      "instanceTests": 1
+    },
+    {
+      "path": "ibmMeta/gMonthDay.testSet",
+      "exists": true,
+      "sha256": "36a74b814ab52fcd049085ba3409391d7fc36e0fb5bcd707f7a1071dcd7d9f67",
+      "groups": 1,
+      "schemaTests": 1,
+      "instanceTests": 1
+    },
+    {
+      "path": "ibmMeta/gDay.testSet",
+      "exists": true,
+      "sha256": "5f06f19222569882fc766575c0683108b3fcbd10b71f6a71897f95da4961f3d4",
+      "groups": 1,
+      "schemaTests": 1,
+      "instanceTests": 1
+    },
+    {
+      "path": "ibmMeta/gMonth.testSet",
+      "exists": true,
+      "sha256": "1d9fbd03d47ca46726934a3e9533f81681274ec29c7275de9488b58a9256888a",
+      "groups": 1,
+      "schemaTests": 1,
+      "instanceTests": 0
+    },
+    {
+      "path": "ibmMeta/idIDREF.testSet",
+      "exists": true,
+      "sha256": "a4ecf82dfb5c53acf8264db97455bfed7e6b8b02219442c07aba3b17d52cd64c",
+      "groups": 77,
+      "schemaTests": 77,
+      "instanceTests": 57
+    },
+    {
+      "path": "ibmMeta/identityConstraint.testSet",
+      "exists": true,
+      "sha256": "b4e46d60f2718a149a833c13cb9eaacd78fbad25ea9073e8a9360998b8852c39",
+      "groups": 12,
+      "schemaTests": 12,
+      "instanceTests": 6
+    },
+    {
+      "path": "ibmMeta/list.testSet",
+      "exists": true,
+      "sha256": "a9e390795a47fc9adba73617c339358cde42fe50b4c3e21498533a15045f4bfc",
+      "groups": 2,
+      "schemaTests": 2,
+      "instanceTests": 1
+    },
+    {
+      "path": "ibmMeta/openContent.testSet",
+      "exists": true,
+      "sha256": "41654c48da43742a64b274c00010c5376e73e72b576f3097d77663ff98c79fad",
+      "groups": 24,
+      "schemaTests": 24,
+      "instanceTests": 16
+    },
+    {
+      "path": "ibmMeta/regularExpression.testSet",
+      "exists": true,
+      "sha256": "7fb0a6bea131800ee73d60ea08f199248f5b4bac6203aedff43cf356ea5eff83",
+      "groups": 8,
+      "schemaTests": 8,
+      "instanceTests": 8
+    },
+    {
+      "path": "ibmMeta/restrictionOfComplexTypes.testSet",
+      "exists": true,
+      "sha256": "49149cabe1ab4af788e1293b22b70ff393d8a2fc27bc6d949d9c768fbfe31d23",
+      "groups": 13,
+      "schemaTests": 13,
+      "instanceTests": 6
+    },
+    {
+      "path": "ibmMeta/rf_whiteSpace.testSet",
+      "exists": true,
+      "sha256": "3e287379425830f8e5e7d5f4994481516c2cf7689d99b5896faeff5e54790536",
+      "groups": 2,
+      "schemaTests": 2,
+      "instanceTests": 2
+    },
+    {
+      "path": "ibmMeta/substitutionGroup.testSet",
+      "exists": true,
+      "sha256": "af343a637c2b51ed17a708ff763383de65edb0ed430542f079bdafcd7a7dbd61",
+      "groups": 5,
+      "schemaTests": 5,
+      "instanceTests": 3
+    },
+    {
+      "path": "ibmMeta/targetNamespace.testSet",
+      "exists": true,
+      "sha256": "17ac4fa2f1e9fca0270e54ecd00e41b8025607007700c18e55b458f28232c4b1",
+      "groups": 2,
+      "schemaTests": 2,
+      "instanceTests": 2
+    },
+    {
+      "path": "ibmMeta/time.testSet",
+      "exists": true,
+      "sha256": "fde8da56fa090c5e3355cdc5701ab5aa0ee42d9738c1af55a0f6dff510399408",
+      "groups": 1,
+      "schemaTests": 1,
+      "instanceTests": 4
+    },
+    {
+      "path": "ibmMeta/typeAlternatives.testSet",
+      "exists": true,
+      "sha256": "371686e1075063124f8d74fbb15e989a8998fdba1ee2535fae2eb32c43c46050",
+      "groups": 23,
+      "schemaTests": 23,
+      "instanceTests": 16
+    },
+    {
+      "path": "ibmMeta/typeAlternativesMixed.testSet",
+      "exists": true,
+      "sha256": "91b589284e6bfdba4bb973d6d6f1596dc189409141178a2407ff5071bf4d46f1",
+      "groups": 6,
+      "schemaTests": 6,
+      "instanceTests": 9
+    },
+    {
+      "path": "ibmMeta/union.testSet",
+      "exists": true,
+      "sha256": "6971376f13dd3ff63082b4db28a8dad0a0963d937deaf6d7d045d050fea2f2b3",
+      "groups": 19,
+      "schemaTests": 19,
+      "instanceTests": 14
+    },
+    {
+      "path": "ibmMeta/unitsLength.testSet",
+      "exists": true,
+      "sha256": "3906627a67e23281090f5dcb09b90adb3d185d91d35691394c26ff80586ccd3f",
+      "groups": 8,
+      "schemaTests": 8,
+      "instanceTests": 6
+    },
+    {
+      "path": "ibmMeta/unsignedInteger.testSet",
+      "exists": true,
+      "sha256": "8a97abef24e238723f50d3d0328283a3a1fba1921964d178b240553f444041af",
+      "groups": 8,
+      "schemaTests": 8,
+      "instanceTests": 8
+    },
+    {
+      "path": "ibmMeta/vc.testSet",
+      "exists": true,
+      "sha256": "5975e14e73401dd4571f8b950034afb93fd22dc39f4d9d0779820b73d158313c",
+      "groups": 6,
+      "schemaTests": 6,
+      "instanceTests": 8
+    },
+    {
+      "path": "ibmMeta/wildcard.testSet",
+      "exists": true,
+      "sha256": "02985ac3299db1db1dcebbdc666bb21ceea9c3f4a6f212777ef5ff5a6d2abc63",
+      "groups": 17,
+      "schemaTests": 17,
+      "instanceTests": 15
+    },
+    {
+      "path": "ibmMeta/xml11Support.testSet",
+      "exists": true,
+      "sha256": "cce75ec78a13c53d5c83b7e2c3137709dbbb3458acd90c1aea8bd7c94a46d8c0",
+      "groups": 11,
+      "schemaTests": 11,
+      "instanceTests": 11
+    },
+    {
+      "path": "ibmMeta/xpathDefaultNSonKeyKeyRefUnique.testSet",
+      "exists": true,
+      "sha256": "9bb00d4822f58f3373dd4a98aae4db3acf385fdc12457df97a4085e53fc425be",
+      "groups": 13,
+      "schemaTests": 13,
+      "instanceTests": 13
+    },
+    {
+      "path": "ibmMeta/xsImportReference.testSet",
+      "exists": true,
+      "sha256": "903b588d0d2810b6d3db987fa174331c402c05b9d9c05838c1b8547cf0093e35",
+      "groups": 1,
+      "schemaTests": 1,
+      "instanceTests": 0
+    },
+    {
+      "path": "ibmMeta/yearMonthDuration.testSet",
+      "exists": true,
+      "sha256": "094a2c88586503ea14187ee4fd8eef17ea17139fa2bbb99f123eb2a1529ddea8",
+      "groups": 25,
+      "schemaTests": 25,
+      "instanceTests": 13
+    }
+  ]
+}

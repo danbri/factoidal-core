@@ -113,7 +113,10 @@ private structure BuildState where
   rows : Array IdQuad := #[]
   byPredicate : Std.HashMap TermId (List IdQuad) := ∅
 
-private def intern (state : BuildState) (term : Term) : BuildState × TermId :=
+/-- Intern the fold of a term (`TermFold.foldTerm`, language tags in lower
+    case; issue 977), so two terms that `Term.eqb` makes one get one id. -/
+private def intern (state : BuildState) (term0 : Term) : BuildState × TermId :=
+  let term := TermFold.foldTerm term0
   match state.idByTerm[term]? with
   | some id => (state, id)
   | none =>
@@ -160,8 +163,12 @@ def rowWellFormed (dict : Array Term) (row : IdQuad) : Bool :=
 
 /-- Reconstruct a quad block from a decoded dictionary and decoded ID rows.
     `buildIdMap` is IBK3's: it refuses a dictionary with repeated terms, whose
-    ID map would not be injective. -/
-def fromParts? (dict : Array Term) (rows : Array IdQuad) : Option QuadBlock := do
+    ID map would not be injective. The dictionary is folded first
+    (`TermFold.foldTerm`), as in `IndexedBlock.fromParts?`: a file written
+    before the fold reads back with lower-case language tags, and one whose
+    fold makes two entries one is refused. -/
+def fromParts? (dict0 : Array Term) (rows : Array IdQuad) : Option QuadBlock := do
+  let dict := dict0.map TermFold.foldTerm
   let ids ← buildIdMap dict.toList 0 ∅
   if rows.toList.all (rowWellFormed dict) then
     some { dict := dict, idByTerm := ids, rows := rows,
@@ -185,6 +192,10 @@ def decodeQuad? (dict : Array Term) (row : IdQuad) : Option QuadRow := do
   match p with
   | .iri predicate => some (graph, { s := subject, p := predicate, o := o })
   | _ => none
+
+/-- The id of an RDF term in a block: the id of its fold. -/
+def QuadBlock.termId? (block : QuadBlock) (t : Term) : Option TermId :=
+  block.idByTerm[TermFold.foldTerm t]?
 
 /-- The RDF dataset content the rows denote, in physical row order: the quads
     `(g, s, p, o)` with `g = none` for the default graph. -/
@@ -297,11 +308,14 @@ def fieldsSupported (block : QuadBlock) : Bool :=
        including the u32 length-prefix condition of the total term encoder.
     4. `(fromParts? block.dict block.rows).isSome` — the decoder's own
        reconstruction step, which refuses a dictionary with repeated terms and
-       rows whose subject, predicate, object or graph ID does not resolve. -/
+       rows whose subject, predicate, object or graph ID does not resolve.
+    5. `TermFold.dictFolded block.dict` — every dictionary term is folded
+       (issue 977); `fromParts?` folds what it reads. -/
 def supported (block : QuadBlock) : Bool :=
   fieldsSupported block && onePredicate block &&
     PagedTermDictionary.supported block.dict &&
-    (fromParts? block.dict block.rows).isSome
+    (fromParts? block.dict block.rows).isSome &&
+    TermFold.dictFolded block.dict
 
 /-- The unchecked byte assembly, for negative tests that must produce a
     well-framed artifact the encoder itself refuses. Production writers call
@@ -487,6 +501,196 @@ def decode (bytes : ByteArray) : Option QuadBlock := do
   fromParts? dictionary rows
 
 /-! ## Build-time checks -/
+
+/-! ## The builder denotes its input
+
+`fromQuads` decodes back to its input with every term folded
+(`fromQuads_denotes`; https://github.com/danbri/factoidal/issues/975). The
+proof is the one of `IndexedBlock.fromGraph_denotes`, with the graph column. -/
+
+open L4Factoidal.Storage.IndexedBlock (foldTerm_subject toSubject?_toTerm getElem?_push_of_eq_some)
+
+/-- A row that decodes in `d` decodes to the same quad in a dictionary that
+    extends `d`. -/
+theorem decodeQuad?_mono {d d' : Array Term}
+    (hext : ∀ (i : Nat) (v : Term), d[i]? = some v → d'[i]? = some v)
+    {r : IdQuad} {u : QuadRow} (h : decodeQuad? d r = some u) : decodeQuad? d' r = some u := by
+  unfold decodeQuad? at h ⊢
+  cases hs : d[r.s]? with
+  | none => simp [hs] at h
+  | some a =>
+    cases hp : d[r.p]? with
+    | none => simp [hs, hp] at h
+    | some b =>
+      cases ho : d[r.o]? with
+      | none => simp [hs, hp, ho] at h
+      | some c =>
+        rw [hext _ _ hs, hext _ _ hp, hext _ _ ho]
+        rw [hs, hp, ho] at h
+        cases hg : r.g with
+        | none => rw [hg] at h; exact h
+        | some gid =>
+          rw [hg] at h
+          simp only at h ⊢
+          cases hn : d[gid]? with
+          | none => simp [hn] at h
+          | some n =>
+            rw [hn] at h
+            rw [hext _ _ hn]
+            exact h
+
+private def BuildState.IdsOk (st : BuildState) : Prop :=
+  ∀ (t : Term) (id : TermId), st.idByTerm[t]? = some id → st.dict[id]? = some t
+
+private def BuildState.RowsOk (st : BuildState) (acc : List QuadRow) : Prop :=
+  st.rows.toList.filterMap (decodeQuad? st.dict) = acc ∧
+    ∀ r ∈ st.rows.toList, ∃ u, decodeQuad? st.dict r = some u
+
+private theorem intern_spec {st st' : BuildState} {x : Term} {id : TermId}
+    (h : intern st x = (st', id)) (hinv : st.IdsOk) :
+    st'.IdsOk ∧ st'.dict[id]? = some (TermFold.foldTerm x) ∧
+      (∀ (i : Nat) (v : Term), st.dict[i]? = some v → st'.dict[i]? = some v) ∧ st'.rows = st.rows := by
+  unfold intern at h
+  dsimp only at h
+  split at h
+  · rename_i id' hid
+    cases h
+    exact ⟨hinv, hinv _ _ hid, fun _ _ h => h, rfl⟩
+  · cases h
+    refine ⟨?_, ?_, getElem?_push_of_eq_some _ _, rfl⟩
+    · intro t id h
+      simp only at h ⊢
+      rw [Std.HashMap.getElem?_insert] at h
+      split at h
+      · rename_i heq
+        have : TermFold.foldTerm x = t := by simpa using heq
+        cases h
+        subst this
+        simp
+      · exact getElem?_push_of_eq_some _ _ _ _ (hinv _ _ h)
+    · simp
+
+private theorem filterMap_ext {d d' : Array Term}
+    (hext : ∀ (i : Nat) (v : Term), d[i]? = some v → d'[i]? = some v)
+    (l : List IdQuad) (hall : ∀ r ∈ l, ∃ u, decodeQuad? d r = some u) :
+    l.filterMap (decodeQuad? d') = l.filterMap (decodeQuad? d) := by
+  induction l with
+  | nil => rfl
+  | cons r rest ih =>
+    obtain ⟨u, hu⟩ := hall r List.mem_cons_self
+    rw [List.filterMap_cons, List.filterMap_cons, hu, decodeQuad?_mono hext hu,
+      ih (fun x hx => hall x (List.mem_cons_of_mem _ hx))]
+
+/-- The graph step of `internQuad`. -/
+private def graphStep (st : BuildState) : Option GraphRef → BuildState × Option TermId
+  | none => (st, none)
+  | some name =>
+      let (next, id) := intern st name.toTerm
+      (next, some id)
+
+/-- The rest of `internQuad`, after the graph step. -/
+private def internRest (state0 : BuildState) (g : Option TermId) (t : Triple) : BuildState :=
+  let (state1, s) := intern state0 t.s.toTerm
+  let (state2, p) := intern state1 (.iri t.p)
+  let (state3, o) := intern state2 t.o
+  let row : IdQuad := { g := g, s := s, p := p, o := o }
+  { state3 with
+    rows := state3.rows.push row
+    byPredicate := addPartition state3.byPredicate row }
+
+private theorem internQuad_eq (st : BuildState) (gq : Option GraphRef) (t : Triple) :
+    internQuad st (gq, t) = internRest (graphStep st gq).1 (graphStep st gq).2 t := by
+  cases gq with
+  | none => simp only [internQuad, internRest, graphStep]
+  | some name =>
+    rcases h : intern st name.toTerm with ⟨a, b⟩
+    simp only [internQuad, internRest, graphStep, h]
+
+private theorem graphStep_spec (st : BuildState) (gq : Option GraphRef) (hinv : st.IdsOk) :
+    (graphStep st gq).1.IdsOk ∧
+      (∀ (i : Nat) (v : Term), st.dict[i]? = some v → (graphStep st gq).1.dict[i]? = some v) ∧
+      (graphStep st gq).1.rows = st.rows ∧
+      (match (graphStep st gq).2 with
+       | none => gq = none
+       | some gid => ∃ name, gq = some name ∧ (graphStep st gq).1.dict[gid]? = some name.toTerm) := by
+  cases gq with
+  | none => exact ⟨hinv, fun _ _ h => h, rfl, rfl⟩
+  | some name =>
+    rcases h0 : intern st name.toTerm with ⟨st0, gid⟩
+    obtain ⟨i0, d0, e0, r0⟩ := intern_spec h0 hinv
+    simp only [graphStep, h0]
+    refine ⟨i0, e0, r0, name, rfl, ?_⟩
+    rw [d0, foldTerm_subject]
+
+private theorem internQuad_spec (st : BuildState) (acc : List QuadRow) (q : QuadRow)
+    (hinv : st.IdsOk) (hrows : st.RowsOk acc) :
+    (internQuad st q).IdsOk ∧ (internQuad st q).RowsOk (acc ++ [TermFold.foldQuad q]) := by
+  obtain ⟨gq, t⟩ := q
+  rw [internQuad_eq]
+  obtain ⟨i0, e0, r0, hg⟩ := graphStep_spec st gq hinv
+  generalize (graphStep st gq).1 = st0 at i0 e0 r0 hg ⊢
+  generalize (graphStep st gq).2 = g at hg ⊢
+  rcases h1 : intern st0 t.s.toTerm with ⟨st1, s⟩
+  rcases h2 : intern st1 (.iri t.p) with ⟨st2, p⟩
+  rcases h3 : intern st2 t.o with ⟨st3, o⟩
+  obtain ⟨i1, d1, e1, r1⟩ := intern_spec h1 i0
+  obtain ⟨i2, d2, e2, r2⟩ := intern_spec h2 i1
+  obtain ⟨i3, d3, e3, r3⟩ := intern_spec h3 i2
+  have ext : ∀ (i : Nat) (v : Term), st.dict[i]? = some v → st3.dict[i]? = some v :=
+    fun i v h => e3 _ _ (e2 _ _ (e1 _ _ (e0 _ _ h)))
+  have hnew : decodeQuad? st3.dict { g := g, s := s, p := p, o := o } =
+      some (TermFold.foldQuad (gq, t)) := by
+    unfold decodeQuad?
+    rw [e3 _ _ (e2 _ _ d1), e3 _ _ d2, d3]
+    have hp : TermFold.foldTerm (Term.iri t.p) = Term.iri t.p := rfl
+    cases g with
+    | none =>
+      simp only at hg
+      subst hg
+      simp [foldTerm_subject, toSubject?_toTerm, hp, TermFold.foldQuad, TermFold.foldTriple]
+    | some gid =>
+      obtain ⟨name, rfl, hn⟩ := hg
+      have hn3 := e3 _ _ (e2 _ _ (e1 _ _ hn))
+      simp [foldTerm_subject, toSubject?_toTerm, hp, hn3, TermFold.foldQuad, TermFold.foldTriple]
+  obtain ⟨hf, hall⟩ := hrows
+  have hall3 : ∀ r ∈ st.rows.toList, ∃ u, decodeQuad? st3.dict r = some u := by
+    intro r hr
+    obtain ⟨u, hu⟩ := hall r hr
+    exact ⟨u, decodeQuad?_mono ext hu⟩
+  unfold internRest
+  simp only [h1, h2, h3]
+  refine ⟨i3, ?_, ?_⟩
+  · simp only [Array.toList_push, List.filterMap_append, r3, r2, r1, r0]
+    rw [filterMap_ext ext _ hall, hf]
+    simp [hnew]
+  · intro r hr
+    simp only [Array.toList_push, List.mem_append, List.mem_singleton, r3, r2, r1, r0] at hr
+    rcases hr with hr | rfl
+    · exact hall3 r hr
+    · exact ⟨_, hnew⟩
+
+private theorem foldl_internQuad_spec : ∀ (qs : List QuadRow) (st : BuildState) (acc : List QuadRow),
+    st.IdsOk → st.RowsOk acc →
+      (qs.foldl internQuad st).IdsOk ∧
+        (qs.foldl internQuad st).RowsOk (acc ++ qs.map TermFold.foldQuad)
+  | [], st, acc, hi, hr => by simpa using And.intro hi hr
+  | q :: rest, st, acc, hi, hr => by
+    obtain ⟨hi', hr'⟩ := internQuad_spec st acc q hi hr
+    have := foldl_internQuad_spec rest _ _ hi' hr'
+    simpa using this
+
+/-- **`fromQuads` denotes its input**: the rows of the built block decode, in
+    order, to the quads with every term folded (`TermFold.foldQuad`). No
+    hypothesis: a repeated quad gives a repeated row. -/
+theorem fromQuads_denotes (quads : List QuadRow) :
+    (fromQuads quads).denotes = quads.map TermFold.foldQuad := by
+  have h0 : ({} : BuildState).IdsOk := by
+    unfold BuildState.IdsOk
+    intro t id h
+    simp at h
+  have h1 : ({} : BuildState).RowsOk [] := ⟨by simp, by simp⟩
+  have := (foldl_internQuad_spec quads {} [] h0 h1).2.1
+  simpa [QuadBlock.denotes, fromQuads] using this
 
 private def pName : WfIri := ⟨"http://example.org/name", by simp [isIri]⟩
 private def alice : Subject := .iri ⟨"http://example.org/alice", by simp [isIri]⟩

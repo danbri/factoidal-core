@@ -128,12 +128,33 @@ def patHasVar : QueryPattern → Bool
   | .serviceVar _ _ _ => true
   | .subSelect _      => true
 
-/-- Port of `bgp_has_any_bnode`. -/
+/-- A blank node among the pattern terms, at any depth of a triple term.
+    SPARQL 1.2 Update: blank node syntax is not allowed in DELETE DATA, DELETE
+    WHERE or a DELETE template, inside a triple term too
+    (https://github.com/danbri/factoidal/issues/792 item 1; until 2026-10-14
+    only the top level was checked, so `DELETE DATA { :s :p <<( _:b :q :o )>> }`
+    was admitted). A loop over a work list: a triple term nested `n` deep costs
+    no stack frame per level. -/
+def patternTermsHaveBnode : List PatternTerm → Bool
+  | [] => false
+  | .bnode _ :: _ => true
+  | .tripleTerm s p o :: rest => patternTermsHaveBnode (s :: p :: o :: rest)
+  | .var _ :: rest => patternTermsHaveBnode rest
+  | .iri _ :: rest => patternTermsHaveBnode rest
+  | .literal _ :: rest => patternTermsHaveBnode rest
+termination_by ts => (ts.map sizeOf).sum
+decreasing_by all_goals (simp_wf; omega)
+
+/-- A blank node in a subject position, at any depth of a triple term. -/
+def patternSubjectHasBnode : PatternSubject → Bool
+  | .bnode _ => true
+  | .tripleTerm s p o => patternTermsHaveBnode [s, p, o]
+  | _ => false
+
+/-- Port of `bgp_has_any_bnode`, with triple terms (SPARQL 1.2). -/
 def bgpHasBnode (b : Bgp) : Bool :=
   b.any (fun tp =>
-    (match tp.s with | .bnode _ => true | _ => false) ||
-    (match tp.p with | .bnode _ => true | _ => false) ||
-    (match tp.o with | .bnode _ => true | _ => false))
+    patternSubjectHasBnode tp.s || patternTermsHaveBnode [tp.p, tp.o])
 
 /-- Port of `gp_has_bnode`. -/
 def patHasBnode : QueryPattern → Bool
@@ -141,9 +162,7 @@ def patHasBnode : QueryPattern → Bool
   | .empty            => false
   | .join a b         => patHasBnode a || patHasBnode b
   | .graph _ inner    => patHasBnode inner
-  | .propertyPath s _ o =>
-      (match s with | .bnode _ => true | _ => false) ||
-      (match o with | .bnode _ => true | _ => false)
+  | .propertyPath s _ o => patternSubjectHasBnode s || patternTermsHaveBnode [o]
   | .leftJoin a b _   => patHasBnode a || patHasBnode b
   | .union a b        => patHasBnode a || patHasBnode b
   | .minus a b        => patHasBnode a || patHasBnode b
@@ -193,12 +212,12 @@ def pQuadBlock (fuel : Nat) (st : PState) (acc : QueryPattern) (ts : TStream) :
             let ts4 := if peekTok ts4 == Token.dot then advTok ts4 else ts4
             pQuadBlock f st (ggpJoin acc (.graph gn .empty)) ts4
         | _ => do
-            let (inner, ts4) ← pTriplesBlock f st .empty ts3
+            let (inner, ts4) ← pTriplesBlock f st (.empty, []) ts3
             let (_, ts5)     ← expectTok .rbrace ts4
             let ts5 := if peekTok ts5 == Token.dot then advTok ts5 else ts5
             pQuadBlock f st (ggpJoin acc (.graph gn inner)) ts5
     | _ =>
-        match pTriplesBlock f st .empty ts with
+        match pTriplesBlock f st (.empty, []) ts with
         | .error _            => .ok (acc, ts)
         | .ok (triples, ts1)  => pQuadBlock f st (ggpJoin acc triples) ts1
 
@@ -409,6 +428,110 @@ def bnodeLabelsUniqueAcrossDataOps (seen : List String) : List UpdateOp → Bool
       if strOverlaps labels seen then false
       else bnodeLabelsUniqueAcrossDataOps (strUnion labels seen) rest
 
+/-! The check above keeps the labels seen in a list: `strUnion` and
+`strOverlaps` scan it once per label, so one INSERT DATA block with n
+blank-node labels took time in n² (16,000 triples with blank-node subjects:
+1.37 s, against 0.09 s for 4,000; https://github.com/danbri/factoidal/issues/821).
+`bnodeLabelsUniqueSet` keeps them in a set. The verdict depends on the list
+only through membership, so it is the same (`bnodeLabelsUnique_eq_fast`). -/
+
+theorem mem_strAddUnique (x y : String) (ys : List String) :
+    y ∈ strAddUnique x ys ↔ y = x ∨ y ∈ ys := by
+  unfold strAddUnique
+  by_cases h : strMem x ys = true
+  · rw [if_pos h]
+    have hx := (strMem_iff x ys).mp h
+    constructor
+    · exact Or.inr
+    · rintro (rfl | hy)
+      · exact hx
+      · exact hy
+  · rw [if_neg h]
+    simp
+
+theorem mem_strUnion (xs ys : List String) (y : String) :
+    y ∈ strUnion xs ys ↔ y ∈ xs ∨ y ∈ ys := by
+  induction xs generalizing ys with
+  | nil => simp [strUnion]
+  | cons x xs ih =>
+    simp only [strUnion, ih, mem_strAddUnique, List.mem_cons]
+    constructor
+    · rintro (h | h | h)
+      · exact Or.inl (Or.inr h)
+      · exact Or.inl (Or.inl h)
+      · exact Or.inr h
+    · rintro ((h | h) | h)
+      · exact Or.inr (Or.inl h)
+      · exact Or.inl h
+      · exact Or.inr (Or.inr h)
+
+theorem strOverlaps_eq_any (xs ys : List String) :
+    strOverlaps xs ys = xs.any (fun x => strMem x ys) := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih => simp [strOverlaps, ih]
+
+/-- Insert every label of the list into the set. -/
+def insertLabels (s : Std.HashSet String) (xs : List String) : Std.HashSet String :=
+  xs.foldl (fun acc x => acc.insert x) s
+
+theorem contains_insertLabels (s : Std.HashSet String) (xs : List String) (y : String) :
+    (insertLabels s xs).contains y = true ↔ y ∈ xs ∨ s.contains y = true := by
+  induction xs generalizing s with
+  | nil => simp [insertLabels]
+  | cons x xs ih =>
+    simp only [insertLabels, List.foldl_cons] at ih ⊢
+    rw [ih, Std.HashSet.contains_insert, Bool.or_eq_true, beq_iff_eq, List.mem_cons]
+    constructor
+    · rintro (h | h | h)
+      · exact Or.inl (Or.inr h)
+      · exact Or.inl (Or.inl h.symm)
+      · exact Or.inr h
+    · rintro ((h | h) | h)
+      · exact Or.inr (Or.inl h.symm)
+      · exact Or.inl h
+      · exact Or.inr (Or.inr h)
+
+/-- `bnodeLabelsUniqueAcrossDataOps` with the labels seen in a set. -/
+def bnodeLabelsUniqueSet (seen : Std.HashSet String) : List UpdateOp → Bool
+  | []        => true
+  | op :: rest =>
+      let labels := labeledBnodesInDataOp op
+      if labels.any (fun x => seen.contains x) then false
+      else bnodeLabelsUniqueSet (insertLabels seen labels) rest
+
+theorem bnodeLabelsUniqueSet_eq (ops : List UpdateOp) (seen : List String)
+    (s : Std.HashSet String) (h : ∀ y, s.contains y = true ↔ y ∈ seen) :
+    bnodeLabelsUniqueSet s ops = bnodeLabelsUniqueAcrossDataOps seen ops := by
+  induction ops generalizing seen s with
+  | nil => rfl
+  | cons op rest ih =>
+    simp only [bnodeLabelsUniqueSet, bnodeLabelsUniqueAcrossDataOps, strOverlaps_eq_any]
+    have hf : (fun x => s.contains x) = (fun x => strMem x seen) := by
+      funext x
+      apply Bool.eq_iff_iff.mpr
+      rw [h, strMem_iff]
+    rw [hf]
+    split
+    · rfl
+    · apply ih
+      intro y
+      rw [contains_insertLabels, h, mem_strUnion]
+
+/-- What runs in place of `bnodeLabelsUniqueAcrossDataOps`. -/
+def bnodeLabelsUniqueFast (seen : List String) (ops : List UpdateOp) : Bool :=
+  bnodeLabelsUniqueSet (insertLabels ∅ seen) ops
+
+@[csimp] theorem bnodeLabelsUnique_eq_fast :
+    @bnodeLabelsUniqueAcrossDataOps = @bnodeLabelsUniqueFast := by
+  funext seen ops
+  rw [bnodeLabelsUniqueFast, bnodeLabelsUniqueSet_eq ops seen]
+  intro y
+  rw [contains_insertLabels]
+  simp
+
+#print axioms bnodeLabelsUnique_eq_fast
+
 /-! ## Entry points -/
 
 /-- Parse a SPARQL 1.1 Update request. `base` is the BASE in scope
@@ -435,8 +558,82 @@ def parseSparqlUpdateWith (fuel : Nat) (text : String) (base : Option String)
       else .ok { base := st.base, prefixes := st.prefixes, ops := ops }
 
 /-- Parse at the query parser's fuel seed. -/
-def parseSparqlUpdate (text : String) (base : Option String := none)
+def parseSparqlUpdateAtTopFuel (text : String) (base : Option String := none)
     (version : SparqlVersion := .v11) : Except ParseError Update :=
   parseSparqlUpdateWith topFuel text base version
+
+/-- Parse a SPARQL Update request: first at the fuel seed `topFuel`; when
+that pass rejects the request, once more at `scaledFuel` (the seed plus the
+number of characters), and its answer when it accepts. An `INSERT DATA`
+block of more than about 10,000 triples, or a collection of more than about
+10,000 members, ran out of the constant fuel
+(https://github.com/danbri/factoidal/issues/818 item 1). A request the first
+pass accepts gets the same answer (`parseSparqlUpdate_of_topFuel`); a request
+that both passes reject gets the first pass's error
+(`parseSparqlUpdate_error`). -/
+def parseSparqlUpdate (text : String) (base : Option String := none)
+    (version : SparqlVersion := .v11) : Except ParseError Update :=
+  match parseSparqlUpdateWith topFuel text base version with
+  | .ok u => .ok u
+  | .error e =>
+    match parseSparqlUpdateWith (scaledFuel text) text base version with
+    | .ok u => .ok u
+    | .error _ => .error e
+
+theorem parseSparqlUpdate_of_topFuel {text : String} {base : Option String}
+    {version : SparqlVersion} {u : Update}
+    (h : parseSparqlUpdateWith topFuel text base version = .ok u) :
+    parseSparqlUpdate text base version = .ok u := by
+  simp [parseSparqlUpdate, h]
+
+theorem parseSparqlUpdate_error {text : String} {base : Option String}
+    {version : SparqlVersion} {e : ParseError}
+    (h : parseSparqlUpdate text base version = .error e) :
+    parseSparqlUpdateWith topFuel text base version = .error e := by
+  unfold parseSparqlUpdate at h
+  cases h1 : parseSparqlUpdateWith topFuel text base version with
+  | ok u => simp [h1] at h
+  | error e1 =>
+    cases h2 : parseSparqlUpdateWith (scaledFuel text) text base version with
+    | ok u => simp [h1, h2] at h
+    | error e2 => simp [h1, h2] at h; rw [h]
+
+theorem parseSparqlUpdate_ok {text : String} {base : Option String}
+    {version : SparqlVersion} {u : Update}
+    (h : parseSparqlUpdate text base version = .ok u) :
+    ∃ fuel, parseSparqlUpdateWith fuel text base version = .ok u := by
+  unfold parseSparqlUpdate at h
+  cases h1 : parseSparqlUpdateWith topFuel text base version with
+  | ok u1 => simp [h1] at h; exact ⟨topFuel, h ▸ h1⟩
+  | error e1 =>
+    cases h2 : parseSparqlUpdateWith (scaledFuel text) text base version with
+    | ok u2 => simp [h1, h2] at h; exact ⟨scaledFuel text, h ▸ h2⟩
+    | error e2 => simp [h1, h2] at h
+
+#print axioms parseSparqlUpdate_error
+#print axioms parseSparqlUpdate_ok
+
+/-! An INSERT DATA collection of 10,001 members ran out of the constant
+fuel; the second pass reads it. -/
+private def collectionUpdate (n : Nat) : String :=
+  "INSERT DATA { <http://e/s> <http://e/q> ( " ++ " ".intercalate ((List.range n).map toString) ++ " ) }"
+#guard (parseSparqlUpdate (collectionUpdate 10001)).toOption.isSome
+#guard (parseSparqlUpdateAtTopFuel (collectionUpdate 10001)).toOption.isNone
+#guard (parseSparqlUpdate "INSERT DATA { ?s <http://e/p> 1 }").toOption.isNone
+
+/-! SPARQL 1.2: a blank node inside a triple term, at any depth, is blank node
+syntax in DELETE DATA, DELETE WHERE and a DELETE template, so the request is
+refused; INSERT DATA admits it. -/
+#guard (parseSparqlUpdate "DELETE DATA { <http://e/s> <http://e/p> <<( _:b <http://e/q> 1 )>> }"
+  none .v12).toOption.isNone
+#guard (parseSparqlUpdate
+  "DELETE DATA { <http://e/s> <http://e/p> <<( <http://e/a> <http://e/q> <<( _:b <http://e/q> 1 )>> )>> }"
+  none .v12).toOption.isNone
+#guard (parseSparqlUpdate "DELETE WHERE { ?s <http://e/p> <<( _:b <http://e/q> ?o )>> }"
+  none .v12).toOption.isNone
+#guard (parseSparqlUpdate "DELETE DATA { <http://e/s> <http://e/p> <<( <http://e/a> <http://e/q> 1 )>> }"
+  none .v12).toOption.isSome
+#guard (parseSparqlUpdate "INSERT DATA { <http://e/s> <http://e/p> <<( _:b <http://e/q> 1 )>> }"
+  none .v12).toOption.isSome
 
 end L4Factoidal.SPARQL

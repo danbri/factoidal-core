@@ -93,44 +93,6 @@ def detectCountStarSelect : SelectClause → Option VarName
 
 /-! ## 2. The two whole-query detectors -/
 
-/-- The streaming `COUNT(*)` shape. Returns the alias, the triple
-pattern, and the constant graph IRI when the pattern is
-`GRAPH <g> { tp }`. -/
-def detectStreamingCountStar (q : Query) :
-    Option (VarName × TriplePattern × Option WfIri) :=
-  match q.form with
-  | .select sel =>
-      match detectCountStarSelect sel with
-      | none => none
-      | some v =>
-          if q.groupBy.isSome then none
-          else if !q.having.isEmpty then none
-          else if q.postValues.isSome then none
-          else if q.modifier.distinct then none
-          else if q.modifier.reduced then none
-          else if q.modifier.orderBy.isSome then none
-          else
-            match extractSingleTpBgpScoped q.pattern with
-            | none => none
-            | some (tp, scope) => some (v, tp, scope)
-  | _ => none
-
-/-! ## 2a. The LIMIT push-down: scope and the pattern it may claim
-
-`evalLimitSingleTp` asks the backend for `limit` CANDIDATES and then
-applies the full pattern match to them. The bound is a filter, not the
-whole test, so a pattern whose match can REJECT a candidate the bound
-admits would answer with fewer rows than the materialise path — the
-push-down would stop early on rows it then throws away.
-
-Two shapes do that. A repeated variable (`?x ?p ?x`, `GRAPH ?g { ?g ?p
-?o }`) carries an implicit equality the bound does not express; the
-GROUP BY detectors of section 3 refuse it for the same reason. An
-RDF-star triple term in a position grounds to `none` whenever any of
-its own positions is a variable, and its match is structural. Both are
-refused here, so the candidates the backend returns are exactly the
-rows the match keeps. -/
-
 /-- Every variable of a pattern term, in position order. A pattern
 blank node counts: §18.1.6 gives it the same role as a variable, and
 two occurrences of one label constrain the match the same way. -/
@@ -163,6 +125,46 @@ def limitPushdownSafe (tp : TriplePattern) : Bool :=
   triplePatternFlat tp &&
   (triplePatternVars tp).eraseDups.length == (triplePatternVars tp).length
 
+/-- The streaming `COUNT(*)` shape. Returns the alias, the triple
+pattern, and the constant graph IRI when the pattern is
+`GRAPH <g> { tp }`. The bound must express every matching constraint,
+because an exact bound count does not run `tpMatch`. -/
+def detectStreamingCountStar (q : Query) :
+    Option (VarName × TriplePattern × Option WfIri) :=
+  match q.form with
+  | .select sel =>
+      match detectCountStarSelect sel with
+      | none => none
+      | some v =>
+          if q.groupBy.isSome then none
+          else if !q.having.isEmpty then none
+          else if q.postValues.isSome then none
+          else if q.modifier.distinct then none
+          else if q.modifier.reduced then none
+          else if q.modifier.orderBy.isSome then none
+          else
+            match extractSingleTpBgpScoped q.pattern with
+            | none => none
+            | some (tp, scope) =>
+                if limitPushdownSafe tp then some (v, tp, scope) else none
+  | _ => none
+
+/-! ## 2a. The LIMIT push-down: scope and the pattern it may claim
+
+`evalLimitSingleTp` asks the backend for `limit` CANDIDATES and then
+applies the full pattern match to them. The bound is a filter, not the
+whole test, so a pattern whose match can REJECT a candidate the bound
+admits would answer with fewer rows than the materialise path — the
+push-down would stop early on rows it then throws away.
+
+Two shapes do that. A repeated variable (`?x ?p ?x`, `GRAPH ?g { ?g ?p
+?o }`) carries an implicit equality the bound does not express; the
+GROUP BY detectors of section 3 refuse it for the same reason. An
+RDF-star triple term in a position grounds to `none` whenever any of
+its own positions is a variable, and its match is structural. Both are
+refused here, so the candidates the backend returns are exactly the
+rows the match keeps. -/
+
 /-- Where a one-triple LIMIT push-down evaluates. -/
 inductive LimitScope where
   /-- A bare BGP: the active graph. -/
@@ -190,6 +192,13 @@ def extractSingleTpBgpLimitScope : QueryPattern → Option (TriplePattern × Lim
   | .graph (.var v) (.bgp [tp]) => some (tp, .everyNamed v)
   | _ => none
 
+/-- A SELECT clause that only projects existing variables. §18.2.4 expression
+items must run the ordinary SELECT post-processing pipeline. -/
+def selectIsProjection : SelectClause → Bool
+  | .all => true
+  | .vars items => items.all fun item =>
+      match item with | .var _ => true | .expr _ _ => false
+
 /-- The LIMIT-pushdown shape, scoped. `GRAPH ?v { tp }` is refused when
 `?v` also occurs in `tp`: `bindIfCompatible` would then drop rows the
 backend already counted against the limit. -/
@@ -197,7 +206,7 @@ def detectLimitSingleTpScoped (q : Query) :
     Option (TriplePattern × LimitScope × Nat) :=
   match q.form with
   | .select sel =>
-      if selectHasAggregates sel then none
+      if !selectIsProjection sel then none
       else if q.groupBy.isSome then none
       else if !q.having.isEmpty then none
       else if q.postValues.isSome then none
@@ -344,7 +353,7 @@ def evalLimitSingleTp (sel : SelectClause) (tp : TriplePattern)
   let omega' := capsTakeN limit omega
   match sel with
   | .vars items => projectSolutions (selectItemVars items) omega'
-  | .all => omega'
+  | .all => stripSyntheticBnodeVars omega'
 
 /-! ## 5. What the detectors refuse
 
@@ -406,6 +415,16 @@ claims it. -/
 theorem detectStreamingCountStar_rejects_ask (q : Query) (h : q.form = .ask) :
     detectStreamingCountStar q = none := by
   simp only [detectStreamingCountStar, h]
+
+/-- An admitted streaming count has flat positions and no repeated
+    variables, the same conservative condition used by LIMIT push-down. -/
+theorem detectStreamingCountStar_safe {q : Query} {alias : VarName}
+    {tp : TriplePattern} {scope : Option WfIri}
+    (h : detectStreamingCountStar q = some (alias, tp, scope)) :
+    limitPushdownSafe tp = true := by
+  unfold detectStreamingCountStar at h
+  repeat' split at h
+  all_goals simp_all
 
 theorem detectLimitSingleTpScoped_rejects_ask (q : Query) (h : q.form = .ask) :
     detectLimitSingleTpScoped q = none := by
@@ -501,7 +520,7 @@ theorem evalLimitSingleTp_bounded (sel : SelectClause) (tp : TriplePattern)
                  List.length_take]
       exact Nat.min_le_left _ _
   | all =>
-      simp only [capsTakeN, List.length_take]
+      simp only [stripSyntheticBnodeVars, List.length_map, capsTakeN, List.length_take]
       exact Nat.min_le_left _ _
 
 /-! ## Build-time checks -/
@@ -574,6 +593,7 @@ private def countQuery : Query := mkQuery (.select countStarSel) (.bgp [tp1])
 #print axioms detectCountStarSelect_rejects_distinct
 #print axioms extractSingleTpBgpScoped_rejects_graph_var
 #print axioms detectStreamingCountStar_rejects_distinct
+#print axioms detectStreamingCountStar_safe
 #print axioms evalLimitSingleTp_bounded
 #print axioms detectLimitSingleTpScoped_rejects_orderBy
 #print axioms detectLimitSingleTpScoped_rejects_offset

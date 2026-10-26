@@ -6,6 +6,7 @@ Wasm.Ops.Proof — the FPP0 proof-checker ops.
         "counts":{"foundational":N,"verifiedReplay":N,"replay":N,
                   "attestation":N},"countsOver":"…",
         "foundationalOnly":B,"conclusionIsAssumption":B,
+        "rejection":null|"…",
         "checkedSteps":N,"soundness":"…","validMeans":"…"}
      | {"ok":false,"error":"…"}
   proofInspect(bundleJson)
@@ -29,7 +30,17 @@ verdict field is copied out of the `CheckResult` the kernel returned.
 `L4Factoidal.FPP0.checkBundle_sound` says, and no more:
 
     (checkBundle b).valid = true ->
-      Derives (checkBundle b).assumptions (checkBundle b).conclusion
+      ∃ s, Derives b.artifacts (checkBundle b).assumptions
+             ((checkBundle b).conclusion.scoped s)
+
+Blank nodes are scoped to the artifact or assumption they were read
+from (issue 976): `_:x` in artifact `G1` and `_:x` in artifact `G2`
+are different nodes, also when the two artifacts share an RDFC-1.0
+digest. `checkBundle_merge` states the consequence: with an empty
+frontier, the conclusion is derivable from the RDF 1.1 Semantics
+section 5.2 MERGE of the cited artifacts. `rejection` names the first
+failed check of a refused bundle; it is diagnostic text, and `valid`
+is the verdict.
 
 That is a statement about the FRONTIER, not a verdict that something
 was proved. Adoption-doc section 8a: a bundle that declares its own
@@ -123,10 +134,11 @@ RDF 1.2 mode. `body` is optional; every other member is required.
 `citation` is optional except at `verifiedReplay`.
 
 ⚠️ The whole-bundle round trip `decodeBundle (encodeBundle b) = .ok b`
-is PINNED BY `#guard` on the fixtures below, NOT proved. The obstacle
-is named: the general N-Triples round trip
-(`Syntax.SyntaxTheorems.graph_roundtrip`) is STATED AND NOT PROVED in
-this tree, so a bundle-level theorem would rest on it. What IS proved
+is PINNED BY `#guard` on the fixtures below, NOT proved. The N-Triples
+round trip it would rest on is proved since 2026-10-24
+(`Syntax.NTriplesRoundTrip.parseNTriples_toNTriples`, on the domain
+`Triple.ntLex`); a bundle-level theorem also needs the JSON layer of
+`encodeBundle`/`decodeBundle` and is not written. What IS proved
 here is the enum layer — the three decoders where a lenient reading
 would silently weaken a bundle.
 
@@ -552,12 +564,16 @@ def proofCheck (bundleJson : String) : String :=
             ++ "depends on, not every step of the bundle"))
         , ("foundationalOnly", .bool r.foundationalOnly)
         , ("conclusionIsAssumption", .bool r.conclusionIsAssumption)
+        , ("rejection", match r.rejection with
+            | some why => .string why
+            | none => .null)
         , ("checkedSteps", .number (toString b.steps.size))
         , ("soundness", .string "L4Factoidal.FPP0.checkBundle_sound")
         , ("validMeans", .string ("the conclusion is Derives-derivable from the "
-            ++ "assumptions reported here; it is NOT a claim that the conclusion "
-            ++ "was proved — read counts.foundational, foundationalOnly and "
-            ++ "conclusionIsAssumption with it")) ]
+            ++ "assumptions reported here, with each blank node scoped to the "
+            ++ "artifact or assumption it was read from; it is NOT a claim that the "
+            ++ "conclusion was proved — read counts.foundational, foundationalOnly "
+            ++ "and conclusionIsAssumption with it")) ]
 
 /-! ## `proofInspect` -/
 
@@ -629,7 +645,7 @@ the pins live here, where a wrong answer is a build error.
 They are a MATCHED PAIR (`skills/measuring-inference` sections 3 and
 4). An op that errored on every input would trivially never return a
 wrong verdict, so the ACCEPTED half is mandatory: the three real
-bundles of `L4Factoidal/Proof/Tests.lean` — the 147-step RDFS witness,
+bundles of `L4Factoidal/Proof/Tests.lean` — the 150-step RDFS witness,
 the mixed one-assumption bundle and the R-level adapter bundle —
 encoded to JSON, fed to `proofCheck`, and pinned BOTH against literal
 expected values AND against the kernel's own `checkBundle` answer for
@@ -646,7 +662,7 @@ could read.
 
 ⚠️ The fixtures below are FUNCTIONS of `Unit`, not constants. A
 top-level `def` is computed by the module INITIALIZER, and this module
-initializes inside the wasm instance — a 147-step RDFS closure and two
+initializes inside the wasm instance — a 150-step RDFS closure and two
 RDFC-1.0 digests would then be paid for on every load, by every
 caller, whether or not they ever call a proof op. -/
 
@@ -661,7 +677,7 @@ private def pfExP : WfIri := ⟨"http://example.org/p", by rfl⟩
 private def pfDataTriple : Triple := ⟨.iri pfExA, pfExP, .iri pfExB⟩
 private def pfDataGraph : Graph := [pfDataTriple]
 
-/-- POSITIVE 1 — the 147-step RDFS witness wrapped as an FPP0 bundle,
+/-- POSITIVE 1 — the 150-step RDFS witness wrapped as an FPP0 bundle,
 the fixture `Proof/Tests.lean` pins as accepted with an EMPTY
 frontier. -/
 private def pfRdfsBundle : Unit → Bundle := fun _ =>
@@ -732,10 +748,9 @@ private def pfJson (b : Bundle) : String :=
   | .error _ => "ENCODE-FAILED"
 
 /-- **The round trip**, as a Bool a `#guard` can pin: encode, decode,
-and recover the very same bundle. NOT a theorem — the general
-N-Triples round trip (`Syntax.SyntaxTheorems.graph_roundtrip`) is
-stated and not proved in this tree, so a bundle-level theorem would
-rest on an open lemma. The enum layer IS proved, above. -/
+and recover the very same bundle. NOT a theorem: the N-Triples round
+trip is proved (`Syntax.NTriplesRoundTrip.parseNTriples_toNTriples`),
+the JSON layer of the bundle is not. The enum layer IS proved, above. -/
 private def roundTrips (b : Bundle) : Bool :=
   match decodeBundle (pfJson b) with
   | .error _ => false
@@ -754,6 +769,9 @@ private def envelopeMatchesKernel (b : Bundle) : Bool :=
     && subOf out s!"\"counts\":{(countsJson r.counts).toString}"
     && subOf out s!"\"assumptions\":{(Json.array (r.assumptions.toList.map assumptionJson)).toString}"
     && subOf out s!"\"checkedSteps\":{b.steps.size}"
+    && (match r.rejection with
+        | none => subOf out "\"rejection\":null"
+        | some why => subOf out s!"\"rejection\":{(Json.string why).toString}")
 
 /-! ### ACCEPTED — the three real bundles
 
@@ -761,15 +779,17 @@ Literal pins first. `envelopeMatchesKernel` alone would still pass if
 `checkBundle` itself changed its answer, so the numbers the RDFS layer
 already pins are restated here against the ABI. -/
 
--- The 147-step witness: accepted, all foundational, EMPTY frontier,
--- and 4 foundational steps in the SUPPORT of its conclusion out of 147
+-- The 150-step witness (147 before the RDF 1.2 axiomatic triples
+-- joined the seed table, 2026-10-09): accepted, all foundational, EMPTY frontier,
+-- and 4 foundational steps in the SUPPORT of its conclusion out of 150
+-- (156 until the two rdf:XMLLiteral seed rows left the RDFS table, 2026-10-13, issue 767 gap 1)
 -- steps in the bundle.
 #guard subOf (proofCheck (pfJson (pfRdfsBundle ()))) "\"valid\":true"
 #guard subOf (proofCheck (pfJson (pfRdfsBundle ()))) "\"assumptions\":[]"
 #guard subOf (proofCheck (pfJson (pfRdfsBundle ()))) "\"foundationalOnly\":true"
 #guard subOf (proofCheck (pfJson (pfRdfsBundle ())))
   "\"counts\":{\"foundational\":4,\"verifiedReplay\":0,\"replay\":0,\"attestation\":0}"
-#guard subOf (proofCheck (pfJson (pfRdfsBundle ()))) "\"checkedSteps\":147"
+#guard subOf (proofCheck (pfJson (pfRdfsBundle ()))) "\"checkedSteps\":150"
 #guard roundTrips (pfRdfsBundle ())
 #guard envelopeMatchesKernel (pfRdfsBundle ())
 
@@ -804,9 +824,9 @@ already pins are restated here against the ABI. -/
 #guard envelopeMatchesKernel (pfDegenerateBundle ())
 
 -- `proofInspect` reads the same document and reports NO verdict.
-#guard subOf (proofInspect (pfJson (pfRdfsBundle ()))) "\"steps\":147"
+#guard subOf (proofInspect (pfJson (pfRdfsBundle ()))) "\"steps\":150"
 #guard subOf (proofInspect (pfJson (pfRdfsBundle ())))
-  "\"declaredStepLevels\":{\"foundational\":147,\"verifiedReplay\":0,\"replay\":0,\"attestation\":0}"
+  "\"declaredStepLevels\":{\"foundational\":150,\"verifiedReplay\":0,\"replay\":0,\"attestation\":0}"
 #guard !(subOf (proofInspect (pfJson (pfRdfsBundle ()))) "\"valid\"")
 #guard subOf (proofInspect (pfJson (pfAdapterBundle ()))) "\"adapters\":[\"sparql\"]"
 
@@ -889,6 +909,39 @@ everything would satisfy the rejection half above. -/
     "\"level\":\"replay\"}" "\"level\":\"foundational\"}")) "\"ok\":true"
 #guard subOf (proofCheck ((pfMixedJson ()).replace
     "\"level\":\"replay\"}" "\"level\":\"foundational\"}")) "\"valid\":false"
+
+/-! ### Issue 976 — blank nodes are scoped to their artifact
+
+https://github.com/danbri/factoidal/issues/976, through the op the npm
+`proofCheck` calls, on literal documents (the same three documents are
+`npm/factoidal/test/fixtures/fpp0-976-*.json`). `G1` and `G2` differ
+only by swapping `_:x` and `_:y`, so they share an RDFC-1.0 digest; the
+first document joins the raw label `_:x` across them by rdfs11. On
+main at f0a7e5c3, before the fix, it came back
+`"valid":true,"foundationalOnly":true,"assumptions":[]`. The two
+controls are the same chain inside ONE artifact, and a chain across
+two artifacts through IRI-only triples; both stay accepted. -/
+
+private def pf976Cross : String :=
+  "{\"profile\":\"fpp0/1\",\"artifacts\":[{\"id\":\"G1\",\"kind\":\"graph\",\"digest\":\"2a4c6d667cb2856370231a664a755d7171a7d8091251d1ec63ebcc3e34b549d1\",\"body\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:x .\\n_:y <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n\"},{\"id\":\"G2\",\"kind\":\"graph\",\"digest\":\"2a4c6d667cb2856370231a664a755d7171a7d8091251d1ec63ebcc3e34b549d1\",\"body\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:y .\\n_:x <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n\"},{\"id\":\"AX\",\"kind\":\"graph\",\"digest\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"body\":\"\"}],\"assumptions\":[],\"steps\":[{\"id\":\"p1\",\"justification\":{\"kind\":\"rule\",\"row\":\"base\",\"graphArtifact\":\"G1\",\"axiomArtifact\":\"AX\"},\"premises\":[],\"conclusion\":{\"kind\":\"rdfDerivable\",\"graph\":\"2a4c6d667cb2856370231a664a755d7171a7d8091251d1ec63ebcc3e34b549d1\",\"axioms\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"triple\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:x .\\n\"},\"level\":\"foundational\",\"profile\":\"fpp0/1\"},{\"id\":\"p2\",\"justification\":{\"kind\":\"rule\",\"row\":\"base\",\"graphArtifact\":\"G2\",\"axiomArtifact\":\"AX\"},\"premises\":[],\"conclusion\":{\"kind\":\"rdfDerivable\",\"graph\":\"2a4c6d667cb2856370231a664a755d7171a7d8091251d1ec63ebcc3e34b549d1\",\"axioms\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"triple\":\"_:x <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n\"},\"level\":\"foundational\",\"profile\":\"fpp0/1\"},{\"id\":\"s\",\"justification\":{\"kind\":\"rule\",\"row\":\"rdfs11\",\"graphArtifact\":\"G1\",\"axiomArtifact\":\"AX\"},\"premises\":[\"p1\",\"p2\"],\"conclusion\":{\"kind\":\"rdfDerivable\",\"graph\":\"2a4c6d667cb2856370231a664a755d7171a7d8091251d1ec63ebcc3e34b549d1\",\"axioms\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"triple\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n\"},\"level\":\"foundational\",\"profile\":\"fpp0/1\"}],\"conclusion\":{\"kind\":\"rdfDerivable\",\"graph\":\"2a4c6d667cb2856370231a664a755d7171a7d8091251d1ec63ebcc3e34b549d1\",\"axioms\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"triple\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n\"}}"
+
+private def pf976OneArtifact : String :=
+  "{\"profile\":\"fpp0/1\",\"artifacts\":[{\"id\":\"G0\",\"kind\":\"graph\",\"digest\":\"c91c4943245981e949ca40e2be31634e08326e95b115c9aecabff5e14f91df2a\",\"body\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:x .\\n_:x <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n\"},{\"id\":\"AX\",\"kind\":\"graph\",\"digest\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"body\":\"\"}],\"assumptions\":[],\"steps\":[{\"id\":\"p1\",\"justification\":{\"kind\":\"rule\",\"row\":\"base\",\"graphArtifact\":\"G0\",\"axiomArtifact\":\"AX\"},\"premises\":[],\"conclusion\":{\"kind\":\"rdfDerivable\",\"graph\":\"c91c4943245981e949ca40e2be31634e08326e95b115c9aecabff5e14f91df2a\",\"axioms\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"triple\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:x .\\n\"},\"level\":\"foundational\",\"profile\":\"fpp0/1\"},{\"id\":\"p2\",\"justification\":{\"kind\":\"rule\",\"row\":\"base\",\"graphArtifact\":\"G0\",\"axiomArtifact\":\"AX\"},\"premises\":[],\"conclusion\":{\"kind\":\"rdfDerivable\",\"graph\":\"c91c4943245981e949ca40e2be31634e08326e95b115c9aecabff5e14f91df2a\",\"axioms\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"triple\":\"_:x <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n\"},\"level\":\"foundational\",\"profile\":\"fpp0/1\"},{\"id\":\"s\",\"justification\":{\"kind\":\"rule\",\"row\":\"rdfs11\",\"graphArtifact\":\"G0\",\"axiomArtifact\":\"AX\"},\"premises\":[\"p1\",\"p2\"],\"conclusion\":{\"kind\":\"rdfDerivable\",\"graph\":\"c91c4943245981e949ca40e2be31634e08326e95b115c9aecabff5e14f91df2a\",\"axioms\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"triple\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n\"},\"level\":\"foundational\",\"profile\":\"fpp0/1\"}],\"conclusion\":{\"kind\":\"rdfDerivable\",\"graph\":\"c91c4943245981e949ca40e2be31634e08326e95b115c9aecabff5e14f91df2a\",\"axioms\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"triple\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n\"}}"
+
+private def pf976IriCross : String :=
+  "{\"profile\":\"fpp0/1\",\"artifacts\":[{\"id\":\"H1\",\"kind\":\"graph\",\"digest\":\"a4ff5d898ba34762cd182b447b6dc489c2d098b7b60db91bd4c12484a31bff79\",\"body\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/B> .\\n<http://example.org/B> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n_:x <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:y .\\n\"},{\"id\":\"H2\",\"kind\":\"graph\",\"digest\":\"a4ff5d898ba34762cd182b447b6dc489c2d098b7b60db91bd4c12484a31bff79\",\"body\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/B> .\\n<http://example.org/B> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n_:y <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:x .\\n\"},{\"id\":\"AX\",\"kind\":\"graph\",\"digest\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"body\":\"\"}],\"assumptions\":[],\"steps\":[{\"id\":\"p1\",\"justification\":{\"kind\":\"rule\",\"row\":\"base\",\"graphArtifact\":\"H1\",\"axiomArtifact\":\"AX\"},\"premises\":[],\"conclusion\":{\"kind\":\"rdfDerivable\",\"graph\":\"a4ff5d898ba34762cd182b447b6dc489c2d098b7b60db91bd4c12484a31bff79\",\"axioms\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"triple\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/B> .\\n\"},\"level\":\"foundational\",\"profile\":\"fpp0/1\"},{\"id\":\"p2\",\"justification\":{\"kind\":\"rule\",\"row\":\"base\",\"graphArtifact\":\"H2\",\"axiomArtifact\":\"AX\"},\"premises\":[],\"conclusion\":{\"kind\":\"rdfDerivable\",\"graph\":\"a4ff5d898ba34762cd182b447b6dc489c2d098b7b60db91bd4c12484a31bff79\",\"axioms\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"triple\":\"<http://example.org/B> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n\"},\"level\":\"foundational\",\"profile\":\"fpp0/1\"},{\"id\":\"s\",\"justification\":{\"kind\":\"rule\",\"row\":\"rdfs11\",\"graphArtifact\":\"H1\",\"axiomArtifact\":\"AX\"},\"premises\":[\"p1\",\"p2\"],\"conclusion\":{\"kind\":\"rdfDerivable\",\"graph\":\"a4ff5d898ba34762cd182b447b6dc489c2d098b7b60db91bd4c12484a31bff79\",\"axioms\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"triple\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n\"},\"level\":\"foundational\",\"profile\":\"fpp0/1\"}],\"conclusion\":{\"kind\":\"rdfDerivable\",\"graph\":\"a4ff5d898ba34762cd182b447b6dc489c2d098b7b60db91bd4c12484a31bff79\",\"axioms\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"triple\":\"<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/C> .\\n\"}}"
+
+#guard subOf (proofCheck pf976Cross) "\"ok\":true,\"valid\":false"
+#guard subOf (proofCheck pf976Cross) "\"foundationalOnly\":false"
+#guard subOf (proofCheck pf976Cross)
+  "\"rejection\":\"step 's': the step joins blank nodes from different scopes"
+#guard subOf (proofCheck pf976OneArtifact) "\"ok\":true,\"valid\":true"
+#guard subOf (proofCheck pf976OneArtifact) "\"foundationalOnly\":true"
+#guard subOf (proofCheck pf976OneArtifact) "\"assumptions\":[]"
+#guard subOf (proofCheck pf976OneArtifact) "\"rejection\":null"
+#guard subOf (proofCheck pf976IriCross) "\"ok\":true,\"valid\":true"
+#guard subOf (proofCheck pf976IriCross) "\"foundationalOnly\":true"
+#guard subOf (proofCheck pf976IriCross) "\"rejection\":null"
 
 /-! ### The enum layer refuses aliases
 

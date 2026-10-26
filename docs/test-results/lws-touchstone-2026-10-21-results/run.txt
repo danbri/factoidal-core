@@ -1,0 +1,8 @@
+factoidal-open-unstable: 76 pass, 0 fail, 0 cantTell, 145 inapplicable (out of 221)
+factoidal-open-unstable: reports in /tmp/lws922-ts/touchstone/runs/2026-10-21T213636Z-9db984fc
+factoidal-auth-unstable: 216 pass, 0 fail, 0 cantTell, 5 inapplicable (out of 221)
+factoidal-auth-unstable: reports in /tmp/lws922-ts/touchstone/runs/2026-10-21T213652Z-e2a55245
+factoidal-auth-unstable: of these, 40 tests (auth/*, core/authorization_server) exercise Touchstone's reference authorization server, not our storage server; 40 passed
+NOTE: --unstable-search-results was on (issue 922): an anticipatory, unstable extension.
+lws-touchstone: every configuration ran; no test failed
+rc=0

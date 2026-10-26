@@ -35,6 +35,7 @@ closure. That is a narrowing of the F\* behaviour and it is stated here
 rather than left to be discovered.
 -/
 import L4Factoidal.RDFS.RDFSPlus
+import L4Factoidal.OWL.RLClosureIndexed
 
 namespace L4Factoidal.RDFS
 

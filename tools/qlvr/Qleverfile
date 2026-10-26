@@ -1,0 +1,33 @@
+# Qleverfile for the Factoidal/qlvr reference instance
+# (https://github.com/danbri/factoidal/issues/778).
+#
+# Derived from the `olympics` preset of the qlever control script 0.6.0
+# (pip install qlever==0.6.0; `qlever setup-config olympics`). Changes from
+# the preset: the data comes from a pinned commit of the source repository
+# (fetched and checked by tools/qlvr/build-instance.sh, so GET_DATA_CMD does
+# nothing), the image is pinned by digest, and the server memory is smaller.
+# build-instance.sh copies this file into the work directory and runs qlever
+# there. Do not run qlever inside the repository.
+
+[data]
+NAME              = olympics
+BASE_URL          = https://github.com/wallscope/olympics-rdf
+GET_DATA_CMD      = true
+DESCRIPTION       = 120 Years of Olympics, data from ${BASE_URL} at commit 54483d539082641d48e1d49873662b3af628ca4d
+TEXT_DESCRIPTION  = All literals, search with FILTER CONTAINS(?var, "...")
+
+[index]
+INPUT_FILES     = olympics.nt
+CAT_INPUT_FILES = cat ${INPUT_FILES}
+SETTINGS_JSON   = { "ascii-prefixes-only": false, "num-triples-per-batch": 100000 }
+
+[server]
+PORT               = 7019
+ACCESS_TOKEN       = olympics_qlvr
+MEMORY_FOR_QUERIES = 2G
+CACHE_MAX_SIZE     = 1G
+TIMEOUT            = 30s
+
+[runtime]
+SYSTEM = docker
+IMAGE  = docker.io/adfreiburg/qlever@sha256:b2087ec92254f0ee2fca68d4c886c538f492c7740885cee9c98ada219d90c810

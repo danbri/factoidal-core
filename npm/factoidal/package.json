@@ -1,0 +1,156 @@
+{
+  "name": "@factoidal/core",
+  "version": "0.16.0",
+  "description": "RDF parsing and writing (Turtle, TriG, N-Triples, N-Quads, RDF/XML, JSON-LD), SPARQL 1.1 and 1.2, RDFS and OWL reasoning, SHACL and ShEx validation, CSVW and RML mapping, RDFC-1.0, and SPARQL, LWS and Solid servers, for Node, Deno and browsers.",
+  "keywords": [
+    "sparql",
+    "rdf",
+    "turtle",
+    "ntriples",
+    "nquads",
+    "trig",
+    "rdf-xml",
+    "semantic-web",
+    "webassembly",
+    "shacl",
+    "json-ld",
+    "owl",
+    "shex",
+    "csvw",
+    "linked-data",
+    "solid"
+  ],
+  "homepage": "https://github.com/danbri/factoidal",
+  "bugs": {
+    "url": "https://github.com/danbri/factoidal/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "Dan Brickley <danbri@danbri.org>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/danbri/factoidal.git",
+    "directory": "npm/factoidal"
+  },
+  "main": "./index.js",
+  "module": "./index.mjs",
+  "browser": "./browser.js",
+  "types": "./index.d.ts",
+  "bin": {
+    "factoidal": "./bin/factoidal.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "browser": "./browser.js",
+      "import": "./index.mjs",
+      "require": "./index.js",
+      "default": "./index.js"
+    },
+    "./api": {
+      "types": "./api.d.ts",
+      "import": "./api.mjs",
+      "require": "./api.js",
+      "default": "./api.js"
+    },
+    "./rdfjs": {
+      "import": "./rdfjs.mjs",
+      "require": "./rdfjs.js",
+      "default": "./rdfjs.js"
+    },
+    "./fn": {
+      "types": "./fn.d.ts",
+      "default": "./fn.js"
+    },
+    "./browser": {
+      "types": "./browser.d.ts",
+      "default": "./browser.js"
+    },
+    "./package.json": "./package.json",
+    "./l4-assets/*": "./l4-assets/*",
+    "./store-host": "./store-host/index.mjs",
+    "./store-host/paths": "./store-host/paths.mjs",
+    "./xmpp": "./xmpp/index.mjs",
+    "./xmpp/server": "./xmpp/server.mjs",
+    "./store": {
+      "default": "./bin/store.mjs"
+    },
+    "./store-worker": {
+      "default": "./bin/store-worker-host.mjs"
+    },
+    "./serve": {
+      "default": "./bin/serve.mjs"
+    },
+    "./pack": {
+      "default": "./bin/pack.mjs"
+    },
+    "./engine": {
+      "default": "./bin/engine.mjs"
+    },
+    "./lws": {
+      "default": "./lws/server.mjs"
+    },
+    "./lws/client": {
+      "default": "./lws/client.mjs"
+    },
+    "./authz": {
+      "default": "./authz/server.mjs"
+    },
+    "./solid/server": {
+      "default": "./solid/server/index.mjs"
+    },
+    "./solid/client": {
+      "default": "./solid/client/index.mjs"
+    },
+    "./sample-store": {
+      "types": "./sample-store.d.ts",
+      "default": "./sample-store.mjs"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.mjs",
+    "index.d.ts",
+    "api.js",
+    "api.mjs",
+    "api.d.ts",
+    "rdfjs.js",
+    "rdfjs.mjs",
+    "fn.js",
+    "fn.d.ts",
+    "browser.js",
+    "browser.d.ts",
+    "l4-assets/",
+    "!l4-assets/l4factoidal-core.*",
+    "lib/",
+    "bin/",
+    "lws/",
+    "authz/",
+    "solid/",
+    "store-host/",
+    "xmpp/",
+    "sample-store.mjs",
+    "sample-store.d.ts",
+    "docs/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "bash ../../formal/lean4/Wasm/build-wasm.sh",
+    "test": "node --test 'test/*.test.js' 'test/*.test.mjs'",
+    "test:speed": "node ../../tests/perf/npm_speed_gate.mjs",
+    "test:costs": "node ../../tests/perf/npm_costs.mjs",
+    "prepublishOnly": "npm test"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

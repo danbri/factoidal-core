@@ -48,9 +48,17 @@ denotes nothing, so no blank node can be it — §7).
 
 * `simple`: no closure, strict literal identity, any term bindable.
 * `d`     : no closure, D-value literal equality.
-* `rdf`   : `RDFS.rdfClosure` (§8.2 axioms + rdfD2), D-value equality.
-* `rdfs`  : `RDFS.fullClosure` (§8 + §9 rules and axioms), D-value
-            equality.
+* `rdf`   : rdfD1 towards E (`Regime.generalize`), then
+            `RDFS.rdfClosure` (§8.2 axioms + rdfD2), D-value equality.
+* `rdfs`  : rdfD1, rdfs14 and rdfs14a towards E, then
+            `RDFS.fullClosure` (§8 + §9 rules and axioms, with the
+            four RDF 1.2 axiomatic triples), D-value equality.
+
+The axiom tables are RDF 1.2 Semantics' (RDF 1.1's plus `rdf:reifies`
+and `rdfs:Proposition` rows), and rdfD1 has its RDF 1.2 "appears in"
+reading, which reaches into triple terms; on an RDF 1.1 graph both
+agree with RDF 1.1 Semantics except for triples that name `rdf:reifies`
+or `rdfs:Proposition`.
 
 `regimeEntails r D g h` is `inconsistent ∨ instance-found`: an
 inconsistent graph entails everything (§5.1, "an inconsistent graph
@@ -77,9 +85,10 @@ decides in the F\* tree:
       be in the range (§7).
 
 Not decided: XMLLiteral IS decided here (the XML parser is in the
-tree), which the F\* module leaves as `Unsupported`. Anything needing
-rdfD1's surrogate blank nodes is not, and is documented in
-`RDFS/FullClosure.lean`.
+tree), which the F\* module leaves as `Unsupported`. A clash between
+two datatype classes asserted of one node (`_:x rdf:type xsd:boolean .
+_:x rdf:type xsd:integer .`, §8.1.1) is not decided, including when
+the node is an rdfD1 surrogate.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -129,59 +138,32 @@ def SimpleEntails (g h : Graph) : Prop :=
 
 RDF 1.2's triple terms are TRANSPARENT (Concepts §3.3): the terms
 inside `<<( s p o )>>` denote what they denote when asserted, which is
-why `<<( )>>` replaced RDF-star's opaque `<< >>`. The rdf12
-`rdf-semantics` manifest agrees for IRIs (`opaque-iri`, positive:
-`owl:sameAs` substitutes inside a triple term) and for language-tagged
-strings (`opaque-language-string`, positive: `"hello"@en-us` inside a
-triple term matches `"hello"@en-US`) — and then makes ONE exception:
+why `<<( )>>` replaced RDF-star's opaque `<< >>`. A literal inside a
+triple term is therefore compared by the same `leq` as an asserted one.
+The rdf12 `rdf-semantics` manifest agrees, for IRIs (`opaque-iri`:
+`owl:sameAs` substitutes inside a triple term), for language-tagged
+strings (`opaque-language-string`: `"hello"@en-us` matches
+`"hello"@en-US`) and, since w3c/rdf-tests `38bc6d9` (2026-02-19), for
+directional ones (`opaque-dir-language-string`, now a
+`PositiveEntailmentTest`: "Literals within reifying terms (including
+directional language strings) are transparent").
 
-| test | polarity | interior literal pair |
-| --- | --- | --- |
-| `opaque-language-string` | Positive | `"hello"@en-us` vs `"hello"@en-US` |
-| `opaque-dir-language-string` | **Negative** | `"hello"@en-us--ltr` vs `"hello"@en-US--ltr` |
-
-Both are `mf:entailmentRegime "simple"` with `mf:recognizedDatatypes ()`,
-and the fixtures are identical but for the `--ltr`. So the suite asserts
-that a language tag inside a triple term matches without regard to ASCII
-case, and a language tag CARRYING A BASE DIRECTION does not.
-
-That is a divergence from RDF 1.2 Concepts §3.3, which gives the value
-space of `rdf:dirLangString` as triples whose language-tag component is
-compared case-insensitively, with no clause about position. Both
-fixtures are `rdft:approval rdft:NotClassified`. The suite is
-implemented here and the divergence is recorded, with both readings and
-the reasons for this choice, in
-`docs/designissues/2026-09-07-rdf12-sparql12-semantics.md` § 3. The F\*
-tree carries the same clause in `RDF.Entailment.Regime.fst`'s
-`dt_value_leq`.
-
-The choice is the CONSERVATIVE one: it makes entailment strictly less
-permissive inside a triple term, so it cannot manufacture an
-entailment. -/
-
-/-- `leq`, tightened for use INSIDE a triple term: two
-`rdf:dirLangString` literals must additionally agree on their language
-tag exactly, not up to ASCII case. On every other literal pair this is
-`leq` unchanged, so `stricterInTripleTerm leq a b = true → leq a b =
-true` — which is what keeps `termMatch_eq_of_implies_eq` going through
-the triple-term arm. -/
-def stricterInTripleTerm (leq : Literal → Literal → Bool)
-    (a b : Literal) : Bool :=
-  leq a b &&
-  (if a.datatype == rdfDirLangString && b.datatype == rdfDirLangString
-   then a.langTag == b.langTag
-   else true)
+Until that fixture move the suite had `opaque-dir-language-string` as
+a NEGATIVE test, and the comparator was tightened inside a triple term
+(`stricterInTripleTerm`, removed in the same landing as the fixture
+move); the record is `docs/designissues/2026-09-07-rdf12-sparql12-semantics.md`
+§ 3. -/
 
 /-- Term matching: IRIs and blank nodes by identity, literals by `leq`,
 triple terms componentwise. `u` is the candidate from the premise
-graph, `t` the (instantiated) conclusion term. Descending into a triple
-term's object tightens the comparator — see the section above. -/
+graph, `t` the (instantiated) conclusion term. A triple term's object
+is compared with the same `leq` — see the section above. -/
 def termMatch : (Literal → Literal → Bool) → Term → Term → Bool
   | _,   .iri i,     .iri j     => i == j
   | _,   .bnode a,   .bnode b   => a == b
   | leq, .literal l, .literal m => leq l.val m.val
   | leq, .tripleTerm s1 p1 o1, .tripleTerm s2 p2 o2 =>
-      s1 == s2 && p1 == p2 && termMatch (stricterInTripleTerm leq) o1 o2
+      s1 == s2 && p1 == p2 && termMatch leq o1 o2
   | _,   _, _ => false
 
 /-- Triple matching: subject and predicate exact, object via `termMatch`. -/
@@ -253,11 +235,11 @@ def matchObject : (Literal → Literal → Bool) → (Term → Bool) →
   | leq, bindable, m, .tripleTerm ps pp po, .tripleTerm gs gp go =>
       if pp == gp then
         match matchSubject m ps gs with
-        -- The comparator tightens on the way in, exactly as `termMatch`
-        -- tightens: the search and the check must agree about the
-        -- triple-term interior or the certificate `searchInstance`
-        -- returns will not satisfy `instanceCert`.
-        | some m1 => matchObject (stricterInTripleTerm leq) bindable m1 po go
+        -- The same comparator as `termMatch` uses inside a triple term:
+        -- the search and the check must agree about the interior or the
+        -- certificate `searchInstance` returns will not satisfy
+        -- `instanceCert`.
+        | some m1 => matchObject leq bindable m1 po go
         | none    => none
       else none
   | leq, _, m, ho, go => if termMatch leq go ho then some m else none
@@ -418,34 +400,23 @@ changes below, and `regimeEntails` / `regimeInconsistent` go on
 calling the SAME `entailsWith`, just fed a richer `leq` and a richer
 closure.
 
-### `RDFS-Plus` and the RDF 1.2 `rdf:reifies` range step
+### `RDFS-Plus`
 
-Port of `RDF.Entailment.Regime.fst`'s `rdf12_reifies_closure` /
-`owl_closure` (F* tree). The reifies step was named `rdfs_closure`
-there until 2026-07-31 and SHADOWED the real RDFS rule driver
-(issue #335) — naming it `rdf12ReifiesClosure` here avoids repeating
-that hazard. -/
+Port of `RDF.Entailment.Regime.fst`'s `owl_closure` (F* tree): the
+RDFS-regime closure, then `owl:sameAs` IRI transparency.
 
-def rdfsPropositionIri : WfIri :=
-  ⟨"http://www.w3.org/2000/01/rdf-schema#Proposition", rfl⟩
-def rdfReifiesIri : WfIri :=
-  ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies", rfl⟩
+The `rdf:reifies` range step that used to precede the RDFS closure here
+(`rdf12ReifiesClosure`, a port of the F* tree's `rdf12_reifies_closure`)
+was removed on 2026-10-09. RDF 1.2 Semantics §9 states the range as an
+RDFS AXIOMATIC TRIPLE (`rdf:reifies rdfs:range rdfs:Proposition .`), and
+that row is now in the axiom tables (`RDFS.rdfsAxiomaticTriplesFixed`,
+`RDF.rdfsAxiomaticTriples`), so `fullClosure` derives the conclusion by
+rdfs3 under `.rdfs` as well. A reifies object that is a triple term (the
+usual case, `_:r rdf:reifies <<( s p o )>>`) cannot be an rdfs3 subject;
+rdfs14 below types it instead. -/
+
 def owlSameAsIri : WfIri :=
   ⟨"http://www.w3.org/2002/07/owl#sameAs", rfl⟩
-
-/-- `X rdf:reifies Y` ⊢ `Y rdf:type rdfs:Proposition`, `Y` an IRI or a
-blank node (RDF 1.2 Semantics WD). -/
-def reifiesPropOf (t : Triple) : List Triple :=
-  if t.p == rdfReifiesIri then
-    match t.o.toSubject? with
-    | some ySub => [⟨ySub, rdfType, Term.iri rdfsPropositionIri⟩]
-    | none      => []
-  else []
-
-/-- The RDF 1.2 reifies-range step, applied once — it cannot chain
-(its own conclusion's predicate is `rdf:type`, never `rdf:reifies`). -/
-def rdf12ReifiesClosure (g : Graph) : Graph :=
-  g ++ g.flatMap reifiesPropOf
 
 /-- IRI substitution through a term, recursing into a triple term's
 interior — `owl:sameAs` is transparent even there (RDF 1.2 Semantics
@@ -481,20 +452,10 @@ def applySameAsPair (g : Graph) (p : WfIri × WfIri) : Graph :=
 def owlSameAsClosure (g : Graph) : Graph :=
   (sameAsPairs g).foldl applySameAsPair g
 
-/-- The RDFS-regime closure: the RDF 1.2 reifies-range step FIRST (so
-its `rdf:type rdfs:Proposition` conclusions are visible to rdfs9 /
-rdfs2 / rdfs3 inside the fixed-point loop), then the ordinary RDFS
-rule set (`fullClosure`) to saturation. Adds nothing for a graph with
-no `rdf:reifies` triple, so this cannot change any existing rdf-mt
-(RDF 1.1) RDFS-regime verdict — that suite's fixtures never use the
-predicate. -/
-def rdfsRegimeClosure (D cmps : List WfIri) (g : Graph) : Graph :=
-  fullClosure D cmps (rdf12ReifiesClosure g)
-
-/-- RDFS-Plus: the RDFS-regime closure, then `owl:sameAs` IRI
-transparency. -/
+/-- RDFS-Plus: the RDFS-regime closure (`fullClosure`), then
+`owl:sameAs` IRI transparency. -/
 def rdfsPlusRegimeClosure (D cmps : List WfIri) (g : Graph) : Graph :=
-  owlSameAsClosure (rdfsRegimeClosure D cmps g)
+  owlSameAsClosure (fullClosure D cmps g)
 
 /-! ### `xsd:double` / `xsd:float` / `rdf:JSON` D-value equality
 
@@ -620,11 +581,14 @@ def Regime.name : Regime → String
   | .rdfsPlus => "RDFS-Plus"
 
 /-- The antecedent closure a regime applies. `cmps` is the `rdf:_n`
-slice (see `RDFS/FullClosure.lean`). The `.rdfs` arm goes through
-`rdfsRegimeClosure` (RDF 1.2 reifies-range step, then `fullClosure`)
-rather than `fullClosure` directly — identical to `fullClosure` on any
-graph without an `rdf:reifies` triple, so no existing RDF 1.1 verdict
-moves. -/
+slice (see `RDFS/FullClosure.lean`). This closure mints no blank node:
+the SPARQL entailment regimes (`Harness/Run.lean`'s `closeDataset`)
+answer over it directly, and `Unified/SparqlAdequacy.regime_sound_rdfs`
+proves those answers sound under the Skolem assignment of the queried
+graph — a statement a fresh blank node would falsify. The two
+bnode-minting entailment patterns (rdfD1, rdfs14) are therefore applied
+BEFORE this closure, by `Regime.generalize`, and only on the
+graph-entailment path (`regimeEntails`). -/
 def Regime.closure (r : Regime) (D cmps : List WfIri) (g : Graph) : Graph :=
   match r with
   | .simple   => g
@@ -632,14 +596,131 @@ def Regime.closure (r : Regime) (D cmps : List WfIri) (g : Graph) : Graph :=
   | .rdf      => rdfClosure cmps g
   -- `.rdfs` is `fullClosure` — the closure its soundness theorems are
   -- about (`Unified/SparqlAdequacy.regime_sound_rdfs`,
-  -- `unified_rdfs_closure_sound`). The RDF 1.2 `rdf:reifies`-range
-  -- step was inserted here on 2026-09-07 and the tree stopped
-  -- building: the proof could not see through the extra step, and
-  -- widening a closure a soundness theorem is stated about is a
-  -- semantic change, not a refactor. The step lives in `.rdfsPlus`,
-  -- which carries no such theorem.
+  -- `unified_rdfs_closure_sound`). An extra rule step inserted here on
+  -- 2026-09-07 (the `rdf:reifies` range) stopped the tree building:
+  -- the proof could not see through it. Since 2026-10-09 the range is
+  -- an axiomatic triple of the seed table instead (RDF 1.2 Semantics
+  -- §9), which the proofs are parametric in.
   | .rdfs     => fullClosure D cmps g
   | .rdfsPlus => rdfsPlusRegimeClosure D cmps g
+
+/-! ### Generalisation towards E — the patterns that mint a blank node
+
+RDF 1.2 Semantics gives three entailment patterns whose conclusion has
+a blank node that is not in the premise (quoted from §8.1.1 and
+§9.2.1):
+
+| row | if S contains | then S entails |
+| --- | --- | --- |
+| rdfD1 (RDF, recognising D) | any triple ttt such that "sss"^^ddd appears in ttt, for ddd in D | ttt["sss"^^ddd/_:nnn] . _:nnn rdf:type ddd . |
+| rdfs14 (RDFS) | any triple ttt such that <<(aaa bbb ccc)>> appears in ttt | ttt[<<(aaa bbb ccc)>>/_:nnn] . _:nnn rdf:type rdfs:Proposition . |
+| rdfs14a (RDFS) | (for every S, even empty) | _:nnn rdf:type rdfs:Proposition . |
+
+A closure cannot apply a pattern that mints a node to saturation (each
+application mints another), so the specification decides entailment by
+the closure "towards E" (§A). `generalizeTowardsE` applies each pattern
+ONCE per distinct generalised term, with one fresh blank node per term
+— the surrogate blank node method of ter Horst [HORST05] — and the
+closure then runs on the result. Applying them once suffices: no
+closure rule creates a literal or a triple term, so every literal and
+triple term the closure will ever hold is already in S, and a rule
+whose premise held the literal or triple term also fires on its
+surrogate (which is where the patterns gain over generalised RDF: rdfs3
+and rdfs4b DROP a literal or triple-term object, because the term model
+cannot hold it in subject position, but they fire on its surrogate).
+
+The generalised graph keeps every original triple, so D-inconsistency
+detection (`hasIllFormedLiteral`, `hasRangeClash`) sees exactly what it
+saw before. An ill-typed literal gets a surrogate like any other: the
+pattern "is valid even when the literal is ill-typed, since an
+unsatisfiable graph entails any triple" (§8.1.1).
+
+Freshness: every surrogate label starts with `freshLabelPrefix g`,
+which is longer than every blank-node label `g` mentions (triple-term
+interiors included), so no surrogate label can equal one of them.
+Distinct generalised terms get distinct labels (`prefix ++ index`), and
+rdfs14a's node gets the prefix alone.
+
+`.simple` and `.d` are left unchanged: rdfD1 rests on the RDF semantic
+condition on `rdf:type` (§8), which simple and D-interpretations do not
+have. `Unified/DSchema.regimeEntails_d_sound_mt` depends on `.d` being
+unchanged. -/
+
+/-- Blank-node labels a term mentions, triple-term interiors included. -/
+def Term.bnodeLabels : Term → List BNodeId
+  | .iri _ => []
+  | .bnode b => [b]
+  | .literal _ => []
+  | .tripleTerm s _ o =>
+      (match s with | .iri _ => [] | .bnode b => [b]) ++ o.bnodeLabels
+
+/-- Blank-node labels a graph mentions, triple-term interiors included. -/
+def Graph.bnodeLabels (g : Graph) : List BNodeId :=
+  g.flatMap (fun t =>
+    (match t.s with | .iri _ => [] | .bnode b => [b]) ++ t.o.bnodeLabels)
+
+/-- A label prefix longer than every blank-node label of `g`. Any label
+that starts with it is therefore not a label of `g`. -/
+def freshLabelPrefix (g : Graph) : String :=
+  String.ofList (List.replicate ((g.bnodeLabels.map String.length).foldl max 0 + 1) '_')
+
+/-- Does `x` occur in the object chain of a term: the term itself, or,
+for a triple term, (recursively) its object? A triple term's subject
+is an IRI or a blank node and its predicate an IRI, so no literal or
+triple term can occur anywhere else. -/
+def termMentions (x : Term) : Term → Bool
+  | .tripleTerm s p o => Term.tripleTerm s p o == x || termMentions x o
+  | t => t == x
+
+/-- `ttt[x/r]`: every occurrence of `x` in the object chain replaced by
+`r` (RDF 1.2 Semantics §8.1.1, "substitution mapping notation"). -/
+def replaceTermIn (x r : Term) : Term → Term
+  | .tripleTerm s p o =>
+      if Term.tripleTerm s p o == x then r else .tripleTerm s p (replaceTermIn x r o)
+  | t => if t == x then r else t
+
+/-- The terms of an object chain that a regime generalises, each with
+the class its surrogate is typed into: a literal whose datatype is in
+`D` (rdfD1), and, when `props` is set, a triple term (rdfs14). -/
+def generalisableTerms (D : List WfIri) (props : Bool) : Term → List (Term × WfIri)
+  | .iri _ => []
+  | .bnode _ => []
+  | .literal l => if D.contains l.val.datatype then [(.literal l, l.val.datatype)] else []
+  | .tripleTerm s p o =>
+      (if props then [(.tripleTerm s p o, rdfsProposition)] else []) ++
+      generalisableTerms D props o
+
+/-- The distinct generalised terms of `g`, in order of first
+occurrence. -/
+def generalisedTermsOf (D : List WfIri) (props : Bool) (g : Graph) : List (Term × WfIri) :=
+  (g.flatMap (fun t => generalisableTerms D props t.o)).foldl
+    (fun acc k => if acc.any (fun a => a.1 == k.1) then acc else acc ++ [k]) []
+
+/-- The triples rdfD1 (and, when `props` is set, rdfs14 and rdfs14a)
+add to `g`: for every distinct generalised term `x` with class `c` and
+surrogate `_:b`, the triple `_:b rdf:type c` and, for every triple
+`ttt` of `g` in which `x` appears, `ttt[x/_:b]`. -/
+def surrogateTriples (D : List WfIri) (props : Bool) (g : Graph) : Graph :=
+  let pre := freshLabelPrefix g
+  let keyed := (generalisedTermsOf D props g).zipIdx.map
+    (fun (k, i) => (k.1, k.2, pre ++ toString i))
+  let typed : Graph := keyed.map (fun (_, c, b) => ⟨.bnode b, rdfType, .iri c⟩)
+  let replaced : Graph := g.flatMap (fun t =>
+    keyed.filterMap (fun (x, _, b) =>
+      if termMentions x t.o then some ⟨t.s, t.p, replaceTermIn x (.bnode b) t.o⟩ else none))
+  let rdfs14a : Graph := if props then [⟨.bnode pre, rdfType, .iri rdfsProposition⟩] else []
+  typed ++ replaced ++ rdfs14a
+
+/-- **Generalisation towards E**, per regime: rdfD1 under the RDF
+regime; rdfD1, rdfs14 and rdfs14a under the RDFS regimes; nothing under
+`simple` and `D`. The original triples are kept. -/
+def Regime.generalize (r : Regime) (D : List WfIri) (g : Graph) : Graph :=
+  match r with
+  | .simple   => g
+  | .d        => g
+  | .rdf      => g ++ surrogateTriples D false g
+  | .rdfs     => g ++ surrogateTriples D true g
+  | .rdfsPlus => g ++ surrogateTriples D true g
 
 /-- The literal comparison a regime matches with.
 
@@ -705,8 +786,10 @@ def Regime.literalEq (r : Regime) (D : List WfIri) : Literal → Literal → Boo
 
 /-- What a blank node may range over under a regime: anything, except
 (under D) an ill-formed recognised literal (§7: such a literal denotes
-nothing, so no blank node can denote it — the
-`malformed-literal-bnode-neg` polarity). A triple term is bindable at
+nothing, so no blank node can denote it). The rdf12 test
+`malformed-literal-bnode-neg` was written for this polarity; under RDF
+1.2 its action is D-inconsistent and entails everything, and upstream
+withdrew it (w3c/rdf-tests `5d82be0`). A triple term is bindable at
 its own level even when its INTERIOR mentions an ill-formed literal:
 any premise graph exhibiting such a term is already D-inconsistent
 (`hasIllFormedLiteral` on `mentionedLiterals`, WD §5 + §7.1) and
@@ -729,20 +812,21 @@ def Regime.inconsistent (r : Regime) (D : List WfIri) (closed : Graph) : Bool :=
   | .d | .rdf => hasIllFormedLiteral D closed
   | .rdfs | .rdfsPlus => hasIllFormedLiteral D closed || hasRangeClash D closed
 
-/-- **Regime entailment**: close `g`, then `h` follows if the closure
-is inconsistent or has an instance of `h` as a subgraph (up to the
+/-- **Regime entailment**: generalise `g` towards E
+(`Regime.generalize`), close it, then `h` follows if the closure is
+inconsistent or has an instance of `h` as a subgraph (up to the
 regime's literal equality). `D` is taken as given (callers apply
 `withMinimalD`); the `rdf:_n` slice is harvested from both graphs. -/
 def regimeEntails (r : Regime) (D : List WfIri) (g h : Graph) : Bool :=
   let cmps := (containerMembershipIn (g ++ h)).foldl
                 (fun acc i => if acc.contains i then acc else acc ++ [i]) [rdf1]
-  let c := r.closure D cmps g
+  let c := r.closure D cmps (r.generalize D g)
   r.inconsistent D c || entailsWith (r.literalEq D) (r.bindable D) c h
 
 /-- **Regime consistency check** on a graph by itself. -/
 def regimeInconsistent (r : Regime) (D : List WfIri) (g : Graph) : Bool :=
   let cmps := (containerMembershipIn g).foldl
                 (fun acc i => if acc.contains i then acc else acc ++ [i]) [rdf1]
-  r.inconsistent D (r.closure D cmps g)
+  r.inconsistent D (r.closure D cmps (r.generalize D g))
 
 end L4Factoidal.RDF

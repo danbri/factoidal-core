@@ -25,12 +25,22 @@ escapes `\p{...}` / `\P{...}`, and backreferences `\1` (not regular).
 category-table definition is not ported (no fixture needs it), as in
 the F*.
 
+The flag `i` (F&O 3.1 section 5.6.1.1,
+https://www.w3.org/TR/xpath-functions-31/#flags) is a parser parameter `ci`.
+With it, a literal character, a character range and a single-character escape
+accept their case-variants (`Text.CaseMap.ciRanges`), and a negated class
+`[^...]` takes the complement AFTER that expansion, so `[^Q]` rejects `Q` and
+`q`. The multi-character escapes (`\d \w \W \i ...`) and `.` are left as they
+are: "all other constructs are unaffected by the `i` flag". `ci = false` is the
+parser of the F*.
+
 Totality: recursive descent over `List Nat`, terminated by an explicit
 fuel that decreases on every call (`parseCps` sets it to a multiple of
 the input length, so no real pattern exhausts it). The F* class scanner
 recurses on the input length; here it carries the same fuel.
 -/
 import L4Factoidal.Regex.Syntax
+import L4Factoidal.Text.CaseMap
 
 namespace L4Factoidal.Regex.XSDPattern
 
@@ -62,6 +72,16 @@ def cpUU       : Nat := 0x55   -- `U`
 
 /-- A single-codepoint literal class (F* `single`). -/
 def single (c : Nat) : Re := .ranges [(c, c)]
+
+/-- The ranges of a literal character class under the flag `ci`: the class
+itself, and with the flag also every case-variant of its code points (F&O 3.1
+section 5.6.1.1). -/
+def ciLit (ci : Bool) (rs : List (Nat × Nat)) : List (Nat × Nat) :=
+  if ci then Text.CaseMap.ciRanges rs else rs
+
+/-- A single-codepoint literal atom under the flag `ci`. Without the flag it is
+`single c`. -/
+def singleCi (ci : Bool) (c : Nat) : Re := .ranges (ciLit ci [(c, c)])
 
 /-- XSD `.`: any character except newline (#xA) and carriage return (#xD)
 (F* `dot_regex`). -/
@@ -142,42 +162,46 @@ def classEscapeRanges (letter : Nat) : Option (List (Nat × Nat)) :=
   else if letter = 0x69 then some nameStartCharRanges                                -- \i
   else if letter = 0x49 then some (complementRanges nameStartCharRanges)             -- \I
   else if letter = 0x63 then some nameCharRanges                                     -- \c
-  else if letter = 0x43 then some (complementRanges nameCharRanges)                  -- \C
+  -- NameChar appends ranges to NameStartChar; complement needs sorted,
+  -- disjoint intervals. Positive-class union semantics does not need that.
+  else if letter = 0x43 then
+    some (complementRanges (Text.CaseMap.normalizeRanges nameCharRanges))             -- \C
   else none
 
 /-- Escape as an ATOM (top-level `\...`) (F* `parse_escape_atom`). -/
-def parseEscapeAtom (letter : Nat) (t2 : List Nat) : Option (Re × List Nat) :=
+def parseEscapeAtom (ci : Bool) (letter : Nat) (t2 : List Nat) : Option (Re × List Nat) :=
   match classEscapeRanges letter with
   | some rs => some (.ranges rs, t2)
   | none =>
     if letter = cpU then
       match readHexN 4 t2 0 with
-      | some (cp, rest) => if cp ≤ maxCodepoint then some (single cp, rest) else none
+      | some (cp, rest) => if cp ≤ maxCodepoint then some (singleCi ci cp, rest) else none
       | none => none
     else if letter = cpUU then
       match readHexN 8 t2 0 with
-      | some (cp, rest) => if cp ≤ maxCodepoint then some (single cp, rest) else none
+      | some (cp, rest) => if cp ≤ maxCodepoint then some (singleCi ci cp, rest) else none
       | none => none
     else match charEscape letter with
-      | some cp => some (single cp, t2)
+      | some cp => some (singleCi ci cp, t2)
       | none => none
 
 /-- Escape INSIDE a character class: the ranges it contributes
 (F* `class_escape_item`). -/
-def classEscapeItem (letter : Nat) (t2 : List Nat) : Option (List (Nat × Nat) × List Nat) :=
+def classEscapeItem (ci : Bool) (letter : Nat) (t2 : List Nat) :
+    Option (List (Nat × Nat) × List Nat) :=
   match classEscapeRanges letter with
   | some rs => some (rs, t2)
   | none =>
     if letter = cpU then
       match readHexN 4 t2 0 with
-      | some (cp, rest) => if cp ≤ maxCodepoint then some ([(cp, cp)], rest) else none
+      | some (cp, rest) => if cp ≤ maxCodepoint then some (ciLit ci [(cp, cp)], rest) else none
       | none => none
     else if letter = cpUU then
       match readHexN 8 t2 0 with
-      | some (cp, rest) => if cp ≤ maxCodepoint then some ([(cp, cp)], rest) else none
+      | some (cp, rest) => if cp ≤ maxCodepoint then some (ciLit ci [(cp, cp)], rest) else none
       | none => none
     else match charEscape letter with
-      | some cp => some ([(cp, cp)], t2)
+      | some cp => some (ciLit ci [(cp, cp)], t2)
       | none => none
 
 /-! ## Character classes `[...]` -/
@@ -186,7 +210,8 @@ def classEscapeItem (letter : Nat) (t2 : List Nat) : Option (List (Nat × Nat) �
 Range items `a-z` need plain-codepoint endpoints with `lo ≤ hi`. The F*
 recurses on the input length; the fuel here is set to that length by
 `parseClass`. -/
-def parseClassItems : Nat → List Nat → List (Nat × Nat) → Option (List (Nat × Nat) × List Nat)
+def parseClassItems (ci : Bool) :
+    Nat → List Nat → List (Nat × Nat) → Option (List (Nat × Nat) × List Nat)
   | 0, _, _ => none
   | _ + 1, [], _ => none                                     -- unterminated class
   | fuel + 1, h :: t, acc =>
@@ -195,16 +220,16 @@ def parseClassItems : Nat → List Nat → List (Nat × Nat) → Option (List (N
       match t with
       | [] => none
       | letter :: t2 =>
-        match classEscapeItem letter t2 with
+        match classEscapeItem ci letter t2 with
         | none => none
-        | some (rs, t3) => parseClassItems fuel t3 (acc ++ rs)
+        | some (rs, t3) => parseClassItems ci fuel t3 (acc ++ rs)
     else
       match t with
       | d :: c2 :: t2 =>
         if d = cpHyphen && c2 ≠ cpRbracket && c2 ≠ cpBackslash && h ≤ c2 then
-          parseClassItems fuel t2 (acc ++ [(h, c2)])         -- range h-c2
-        else parseClassItems fuel t (acc ++ [(h, h)])        -- literal h
-      | _ => parseClassItems fuel t (acc ++ [(h, h)])
+          parseClassItems ci fuel t2 (acc ++ ciLit ci [(h, c2)])   -- range h-c2
+        else parseClassItems ci fuel t (acc ++ ciLit ci [(h, h)])  -- literal h
+      | _ => parseClassItems ci fuel t (acc ++ ciLit ci [(h, h)])
 
 /-- Insertion sort of an interval list by lower bound (F* `insert_range`
 / `sort_ranges`): `complementRanges` needs SORTED input, and a negated
@@ -220,16 +245,20 @@ def sortRanges : List (Nat × Nat) → List (Nat × Nat)
 /-- Entry after the opening `[` (F* `parse_class`). A negated class
 `[^...]` takes the complement (over `[0, maxCodepoint]`) of its sorted
 ranges; exact for disjoint ranges. -/
-def parseClass (input : List Nat) : Option (Re × List Nat) :=
+def parseClass (ci : Bool) (input : List Nat) : Option (Re × List Nat) :=
   match input with
   | [] => none
   | h :: t =>
     if h = cpCaret then
-      match parseClassItems (t.length + 1) t [] with
+      match parseClassItems ci (t.length + 1) t [] with
       | none => none
-      | some (ranges, rest) => some (.ranges (complementRanges (sortRanges ranges)), rest)
+      | some (ranges, rest) =>
+        -- With `i` the expanded items can overlap or touch, so they are merged
+        -- before the complement is taken.
+        let positive := if ci then Text.CaseMap.normalizeRanges ranges else sortRanges ranges
+        some (.ranges (complementRanges positive), rest)
     else
-      match parseClassItems (input.length + 1) input [] with
+      match parseClassItems ci (input.length + 1) input [] with
       | none => none
       | some (ranges, rest) => some (.ranges ranges, rest)
 
@@ -310,23 +339,23 @@ def isAtomMeta (h : Nat) : Bool :=
 
 mutual
   /-- F* `parse_alt`. -/
-  def parseAlt : Nat → List Nat → Option (Re × List Nat)
+  def parseAlt (ci : Bool) : Nat → List Nat → Option (Re × List Nat)
     | 0, _ => none
     | fuel + 1, input =>
-      match parseSeq fuel input with
+      match parseSeq ci fuel input with
       | none => none
       | some (r1, rest) =>
         match rest with
         | c :: t =>
           if c = cpPipe then
-            match parseAlt fuel t with
+            match parseAlt ci fuel t with
             | none => none
             | some (r2, rest2) => some (.alt r1 r2, rest2)
           else some (r1, c :: t)
         | [] => some (r1, [])
 
   /-- F* `parse_seq`. -/
-  def parseSeq : Nat → List Nat → Option (Re × List Nat)
+  def parseSeq (ci : Bool) : Nat → List Nat → Option (Re × List Nat)
     | 0, _ => none
     | fuel + 1, input =>
       match input with
@@ -334,7 +363,7 @@ mutual
       | h :: _ =>
         if h = cpPipe || h = cpRparen then some (.eps, input)
         else
-          match parseRep fuel input with
+          match parseRep ci fuel input with
           | none => none
           | some (r1, rest) =>
             match rest with
@@ -342,56 +371,56 @@ mutual
             | h2 :: _ =>
               if h2 = cpPipe || h2 = cpRparen then some (r1, rest)
               else
-                match parseSeq fuel rest with
+                match parseSeq ci fuel rest with
                 | none => none
                 | some (r2, rest2) => some (.cat r1 r2, rest2)
 
   /-- F* `parse_rep`. -/
-  def parseRep : Nat → List Nat → Option (Re × List Nat)
+  def parseRep (ci : Bool) : Nat → List Nat → Option (Re × List Nat)
     | 0, _ => none
     | fuel + 1, input =>
-      match parseAtom fuel input with
+      match parseAtom ci fuel input with
       | none => none
       | some (r, rest) => parseQuant r rest
 
   /-- F* `parse_atom`. `^` / `$` parse to `eps` (whole-string reading). -/
-  def parseAtom : Nat → List Nat → Option (Re × List Nat)
+  def parseAtom (ci : Bool) : Nat → List Nat → Option (Re × List Nat)
     | 0, _ => none
     | fuel + 1, input =>
       match input with
       | [] => none
       | h :: t =>
-        if h = cpLparen then parseGroup fuel t
-        else if h = cpLbracket then parseClass t
+        if h = cpLparen then parseGroup ci fuel t
+        else if h = cpLbracket then parseClass ci t
         else if h = cpDot then some (dotRegex, t)
         else if h = cpCaret then some (.eps, t)
         else if h = cpDollar then some (.eps, t)
         else if h = cpBackslash then
           match t with
           | [] => none
-          | letter :: t2 => parseEscapeAtom letter t2
+          | letter :: t2 => parseEscapeAtom ci letter t2
         else if isAtomMeta h then none
-        else some (single h, t)
+        else some (singleCi ci h, t)
 
   /-- F* `parse_group`: `(?:` non-capturing, any other `(?` unsupported. -/
-  def parseGroup : Nat → List Nat → Option (Re × List Nat)
+  def parseGroup (ci : Bool) : Nat → List Nat → Option (Re × List Nat)
     | 0, _ => none
     | fuel + 1, t =>
       match t with
       | q :: c :: t2 =>
-        if q = cpQuestion && c = cpColon then parseGroupClose fuel t2
+        if q = cpQuestion && c = cpColon then parseGroupClose ci fuel t2
         else if q = cpQuestion then none
-        else parseGroupClose fuel t
+        else parseGroupClose ci fuel t
       | q :: _ =>
         if q = cpQuestion then none
-        else parseGroupClose fuel t
-      | [] => parseGroupClose fuel t
+        else parseGroupClose ci fuel t
+      | [] => parseGroupClose ci fuel t
 
   /-- F* `parse_group_close`. -/
-  def parseGroupClose : Nat → List Nat → Option (Re × List Nat)
+  def parseGroupClose (ci : Bool) : Nat → List Nat → Option (Re × List Nat)
     | 0, _ => none
     | fuel + 1, t =>
-      match parseAlt fuel t with
+      match parseAlt ci fuel t with
       | none => none
       | some (r, rest) =>
         match rest with
@@ -403,11 +432,14 @@ end
 
 /-- Parse a pattern given as a codepoint list; succeeds only if the ENTIRE
 input is consumed (F* `parse_cps`). -/
-def parseCps (cps : List Nat) : Option Re :=
+def parseCpsWith (ci : Bool) (cps : List Nat) : Option Re :=
   let fuel := 16 * (cps.length + 4)
-  match parseAlt fuel cps with
+  match parseAlt ci fuel cps with
   | some (r, []) => some r
   | _ => none
+
+/-- `parseCpsWith` without the flag `i` (F* `parse_cps`). -/
+def parseCps (cps : List Nat) : Option Re := parseCpsWith false cps
 
 /-- Parse an XSD-flavour pattern string, or `none` if it uses a construct
 outside the supported fragment (F* `parse_xsd_pattern`). -/

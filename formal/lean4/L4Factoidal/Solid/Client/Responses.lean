@@ -39,6 +39,7 @@ answers; the members are named in `docs/lws-solid-conformance.md` § wasm
 ABI.
 -/
 import L4Factoidal.Solid.Client.Discovery
+import L4Factoidal.Solid.Server.Representation
 
 namespace L4Factoidal.Solid.Client
 
@@ -165,5 +166,45 @@ def storageReading (target? : Option String) (resp : Response) : StorageReading 
   | some t =>
       let s := storageStepOf t resp
       { facts := f, storage := s.storage, more := s.next.isSome, next := s.next }
+
+/-! ## Containment — §4.2
+
+"Clients can determine the containment of a container by its containment
+triples": the `ldp:contains` triples of the container's representation.
+
+RFC 3986 §5.1.3: the base IRI of a retrieved representation is the URI it
+was retrieved from. Community Solid Server writes members as relative
+references (`<one>`), so a reading with no base parses nothing and reported
+an empty container (2026-10-21, against Community Solid Server 7.2).
+`base` is the request URI; the host passes it as `requestUri`. -/
+def containmentMembers (base : Option String) (resp : Response) : List String :=
+  let media := ((headerOf resp "content-type").map (fun c => trim2 ((c.splitOn ";").headD c))).getD
+                 Server.mediaTurtle
+  let media := if Server.isRdfSourceMedia media then media else Server.mediaTurtle
+  let g := match base with
+    | some b => Server.readRdfSource media b resp.body
+    | none =>
+        match L4Factoidal.Syntax.parseTurtle resp.body none .rdf11 with
+        | .ok g => some g
+        | .error _ => none
+  (g.getD []).filterMap (fun t =>
+    if t.p.val == "http://www.w3.org/ns/ldp#contains" then
+      match t.o with | .iri i => some i.val | _ => none
+    else none)
+
+-- Relative members resolve against the request URI.
+#guard containmentMembers (some "http://pod.example/c/")
+  { status := 200, headers := [("content-type", "text/turtle")],
+    body := "@prefix ldp: <http://www.w3.org/ns/ldp#>. <> ldp:contains <one>, <two/>." } ==
+  ["http://pod.example/c/one", "http://pod.example/c/two/"]
+-- A JSON-LD listing is read as JSON-LD.
+#guard containmentMembers (some "http://pod.example/c/")
+  { status := 200, headers := [("content-type", "application/ld+json; charset=utf-8")],
+    body := "{\"@id\":\"\",\"http://www.w3.org/ns/ldp#contains\":{\"@id\":\"one\"}}" } ==
+  ["http://pod.example/c/one"]
+-- Negative: no containment triple, no member; other predicates are not members.
+#guard containmentMembers (some "http://pod.example/c/")
+  { status := 200, headers := [("content-type", "text/turtle")],
+    body := "<> <http://www.w3.org/2000/01/rdf-schema#seeAlso> <one>." } == []
 
 end L4Factoidal.Solid.Client

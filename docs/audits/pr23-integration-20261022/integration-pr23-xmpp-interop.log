@@ -1,0 +1,10 @@
+xmpp://127.0.0.1:15222
+  ok   @xmpp/client authenticates and binds against the Lean server
+  ok   the resource the client asked for is the one it got
+  ok   a roster get through the library returns an IQ result with a query
+  ok   a second session authenticates and binds independently
+  ok   a message sent by one session reaches the other
+  ok   the from the receiver sees is the sender's full JID
+  ok   the library reports a refusal for the wrong password
+
+xmpp interop (@xmpp/client): 7 pass, 0 fail (out of 7)

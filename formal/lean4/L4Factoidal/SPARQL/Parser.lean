@@ -92,10 +92,15 @@ NOT PORTED (each with its reason)
   * SPARQL 1.1 Update ([29]-[52]). The tokenizer emits the update
     keywords, but `parse_single_update_op` and friends are a separate
     rung; `parseSparql` is a QUERY parser, as its name says.
-  * The jena-text `text:query` object grammar
-    (`parse_fulltext_query_object`). A vendor extension outside
-    §19.8, whose encoding lives in `SPARQL.FullText.fst` — no Lean
-    counterpart exists to encode into.
+
+PORTED IN A LATER WAVE (https://github.com/danbri/factoidal/issues/727):
+the jena-text `text:query` object grammar (`parse_fulltext_query_object`
+→ `pFulltextObject`), a vendor extension outside §19.8. A `text:query`
+predicate takes a bare string, `( field "term" )` or
+`( field "term" limit )`, read before any collection desugaring, and the
+resolved query is encoded into one marker-typed literal in the object
+position (`SPARQL/FullText.lean`). The grammar and the error messages are
+the F*'s.
 
 PORTED IN A LATER WAVE (issue #556): SPARQL 1.2 bare reified triples
 `<< s p o (~ reifier)? >>` in subject and object position, and the
@@ -108,8 +113,10 @@ were already ported. All of it is v12-only: the tokenizer emits the
 `<<` / `>>` / `~` / `{|` / `|}` tokens only under the v12 flag.
 -/
 import L4Factoidal.SPARQL.Query
+import L4Factoidal.SPARQL.PathAlternative
 import L4Factoidal.SPARQL.Tokenizer
 import L4Factoidal.Syntax.IriResolve
+import Std.Data.HashSet
 
 namespace L4Factoidal.SPARQL
 
@@ -188,8 +195,7 @@ def mkLangLit (lex tag : String) : WfLiteral := Literal.langString lex tag
 
 /-- `make_dir_lang_literal` — RDF 1.2 Concepts §3.3. -/
 def mkDirLangLit (lex tag : String) (d : TextDirection) : WfLiteral :=
-  ⟨{ lexicalForm := lex, datatype := rdfDirLangString,
-     langTag := some tag, direction := some d }, rfl⟩
+  Literal.dirLangString lex tag d
 
 /-- `rdf_type_iri_str` — [82] VerbSimple's `a`. -/
 def rdfTypeIri : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#type", rfl⟩
@@ -284,6 +290,36 @@ def ggpJoin (a b : QueryPattern) : QueryPattern :=
               | .empty => a
               | _      => .join a b
 
+/-- §18.2.2.6 "If FS is not empty ... G := Filter(X, G)": the FILTERs a
+group collected (newest first, the order `pGgpBody` gathers them) around
+the group's pattern, one `Filter` per expression. A row passes the
+nest exactly when every expression is true on it, which is the
+condition of one `Filter` over their conjunction. -/
+def wrapFilters (filters : List Expr) (g : QueryPattern) : QueryPattern :=
+  filters.foldl (fun g e => .filter e g) g
+
+/-- §18.2.2.6 "Let X := Conjunction of expressions in FS": the FILTERs a
+group collected (newest first) as one `&&` expression in source order;
+`none` when the group has no FILTER. -/
+def filterConjunction? (filters : List Expr) : Option Expr :=
+  match filters.reverse with
+  | []      => none
+  | e :: es => some (es.foldl .and e)
+
+/-- §18.2.2.5, the OPTIONAL step: "If E is of the form OPTIONAL{P}: Let
+A := Translate(P). If A is of the form Filter(F, A2): G :=
+LeftJoin(G, A2, F) else G := LeftJoin(G, A, true)". `body` is the
+pattern of the group P and `filters` are the FILTERs of P itself (not
+of a group nested in it), so `Translate(P)` is `Filter(F, body)` with
+F their conjunction exactly when `filters` is not empty. The condition
+F of the LeftJoin is evaluated on the merged solution (§18.5), so it
+reads the variables of G as well as those of P
+(https://github.com/danbri/factoidal/issues/815). -/
+def optionalGroup (acc body : QueryPattern) (filters : List Expr) : QueryPattern :=
+  match filterConjunction? filters with
+  | some f => .leftJoin acc body f
+  | none   => .leftJoin acc body (.boolLit true)
+
 /-- `ggp_add_triple`: extend the accumulator's BGP in place when it is
 one, so a triples block stays a single §18.3 BGP. -/
 def ggpAddTriple (acc : QueryPattern) (tp : TriplePattern) : QueryPattern :=
@@ -297,11 +333,131 @@ def ggpAddPp (acc : QueryPattern) (s : PatternSubject) (pp : PropertyPath)
     (o : PatternTerm) : QueryPattern :=
   ggpJoin acc (.propertyPath s pp o)
 
-/-- `fresh_bnode_id`: the label is derived from the REMAINING token
-count, so it is stable and collision-free within one parse. The `_:`
-is part of the label, exactly as in the F*; `isLabeledBnodeId` below
-uses that to tell a generated label from a user-written one. -/
-def freshBnodeId (ts : TStream) : String := "_:bnode_" ++ toString ts.length
+/-! ### The triples-block accumulator
+
+The parser of a triples block (`pTriplesBlock`, `pPredObjList`,
+`pObjectListSimple`, `pObjectListPath`) adds triple patterns one by one with
+`ggpAddTriple`, which appends to the end of the BGP list, so a block of n
+triples took time in n² (https://github.com/danbri/factoidal/issues/821). Those
+functions now carry a `TriplesAcc`: a pattern and the triple patterns added to
+it since, newest first. `flushTriples` is the pattern the accumulator stands
+for: the triple patterns added with `ggpAddTriple`, oldest first. It runs as
+`flushTriplesFast`, one append for a BGP (`flushTriples_eq_fast`, `csimp`). The
+readable definitions of the four functions are after the grammar block, with
+the theorems that the parser computes them (`pTriplesBlock_eq_ref` and the
+three before it). -/
+
+/-- A pattern, then the triple patterns of the list added to it with
+`ggpAddTriple`, the last one first. -/
+abbrev TriplesAcc := QueryPattern × List TriplePattern
+
+/-- The pattern a `TriplesAcc` stands for. -/
+def flushTriples : QueryPattern → List TriplePattern → QueryPattern
+  | acc, [] => acc
+  | acc, tp :: pend => ggpAddTriple (flushTriples acc pend) tp
+
+/-- `ggpAddTriple` of each triple pattern of `tps`, first to last, with one
+append when the pattern is a BGP. -/
+def ggpAddTriples (acc : QueryPattern) (tps : List TriplePattern) : QueryPattern :=
+  match acc, tps with
+  | .bgp ts, tps => .bgp (ts ++ tps)
+  | .empty, [] => .empty
+  | .empty, tp :: tps => .bgp (tp :: tps)
+  | acc, tps => tps.foldl ggpAddTriple acc
+
+theorem foldl_ggpAddTriple_bgp (ts tps : List TriplePattern) :
+    tps.foldl ggpAddTriple (.bgp ts) = .bgp (ts ++ tps) := by
+  induction tps generalizing ts with
+  | nil => simp
+  | cons tp tps ih => simp [ggpAddTriple, ih]
+
+theorem ggpAddTriples_eq (acc : QueryPattern) (tps : List TriplePattern) :
+    ggpAddTriples acc tps = tps.foldl ggpAddTriple acc := by
+  unfold ggpAddTriples
+  split
+  · rw [foldl_ggpAddTriple_bgp]
+  · rfl
+  · simp only [List.foldl_cons, ggpAddTriple]
+    rw [foldl_ggpAddTriple_bgp]
+    rfl
+  · rfl
+
+theorem flushTriples_eq_foldl (acc : QueryPattern) (pend : List TriplePattern) :
+    flushTriples acc pend = pend.reverse.foldl ggpAddTriple acc := by
+  induction pend with
+  | nil => rfl
+  | cons tp pend ih => simp [flushTriples, ih]
+
+/-- What runs in place of `flushTriples`. -/
+def flushTriplesFast (acc : QueryPattern) (pend : List TriplePattern) : QueryPattern :=
+  ggpAddTriples acc pend.reverse
+
+@[csimp] theorem flushTriples_eq_fast : @flushTriples = @flushTriplesFast := by
+  funext acc pend
+  rw [flushTriplesFast, ggpAddTriples_eq, flushTriples_eq_foldl]
+
+theorem ggpJoin_empty_right (a : QueryPattern) : ggpJoin a .empty = a := by
+  unfold ggpJoin
+  split <;> simp_all
+
+/-- `ggpJoin` on the accumulator: the empty pattern changes nothing, so the
+pending triple patterns stay pending. -/
+def joinTriples (a : TriplesAcc) (x : QueryPattern) : TriplesAcc :=
+  match x with
+  | .empty => a
+  | _ => (ggpJoin (flushTriples a.1 a.2) x, [])
+
+theorem flushTriples_joinTriples (a : TriplesAcc) (x : QueryPattern) :
+    flushTriples (joinTriples a x).1 (joinTriples a x).2 = ggpJoin (flushTriples a.1 a.2) x := by
+  unfold joinTriples
+  split
+  · rw [ggpJoin_empty_right]
+  · rfl
+
+-- One append for a block of BGP triples; a join keeps its shape.
+private def tpA : TriplePattern := { s := .var "a", p := .var "p", o := .var "o" }
+private def tpB : TriplePattern := { s := .var "b", p := .var "p", o := .var "o" }
+#guard match flushTriples .empty [tpB, tpA] with
+  | .bgp l => l == [tpA, tpB] | _ => false
+#guard match flushTriplesFast .empty [tpB, tpA] with
+  | .bgp l => l == [tpA, tpB] | _ => false
+#guard match flushTriplesFast (.bgp [tpA]) [tpB] with
+  | .bgp l => l == [tpA, tpB] | _ => false
+-- After a join each added triple pattern is joined on, as `ggpAddTriple` does.
+#guard match flushTriplesFast (.join (.bgp [tpA]) (.values [] [])) [tpB] with
+  | .join (.join (.bgp l1) (.values [] [])) (.bgp l2) => l1 == [tpA] && l2 == [tpB]
+  | _ => false
+#guard match flushTriplesFast .empty [] with
+  | .empty => true | _ => false
+
+/-- `fresh_bnode_id`: the label is derived from the character offset at
+which the current token starts. Token offsets increase along the token
+list (each token after the first starts after the one before it), so the
+label is stable and collision-free within one parse. The F* label is the
+REMAINING token count, which is collision-free for the same reason; this
+port used it until 2026-10-13, when it was found to cost a walk over the
+rest of the token list for each generated blank node, so a collection of n
+members took time in n² (https://github.com/danbri/factoidal/issues/818
+item 2). The labels name fresh blank nodes (SPARQL 1.1 §4.1.4), so only
+their distinctness is observable up to blank node renaming. The `_:` is
+part of the label, exactly as in the F*; `isLabeledBnodeId` below uses
+that to tell a generated label from a user-written one. -/
+def freshBnodeId (ts : TStream) : String :=
+  match ts with
+  | []      => "_:bnode_end"
+  | pt :: _ => "_:bnode_" ++ toString pt.pos
+
+/-- The name of the blank node `[ … ]` or `[]` makes, where `ts` starts at the
+`[`: `freshBnodeId` of the stream after the `[`. SPARQL 1.1 §4.1.4: each `[ ]`
+and each collection cell is a new blank node. A collection cell takes
+`freshBnodeId` of the position where its element starts (`pCollection`), which
+is the position of the `[` when the element is `[ … ]`, so the `[` must not
+use that position too. The token after `[` is `]` or a verb, which never
+starts a collection element or another `[`, so no other generated name uses
+its position. (The F* `SPARQL11.Parser.fst` uses the `[` position, and gives
+the cell and the element one name; found 2026-10-10 by the CONSTRUCT label
+guards of https://github.com/danbri/factoidal/issues/742.) -/
+def bracketBnodeId (ts : TStream) : String := freshBnodeId (advTok ts)
 
 /-- `is_labeled_bnode_id`: true for a label the QUERY wrote, false for
 one this parser generated for `[]` or a collection. -/
@@ -373,6 +529,76 @@ def bnodesInTriple (tp : TriplePattern) : List String :=
 def bnodesInBgp : Bgp → List String
   | []        => []
   | tp :: rest => strUnion (bnodesInTriple tp) (bnodesInBgp rest)
+
+/-- `strUnion xs acc`, with the set of the members of `acc` beside it, so
+that each test of a label is a set lookup. -/
+def strUnionSet : List String → List String × Std.HashSet String →
+    List String × Std.HashSet String
+  | [], st => st
+  | x :: xs, (acc, s) =>
+    if s.contains x then strUnionSet xs (acc, s) else strUnionSet xs (x :: acc, s.insert x)
+
+theorem strMem_iff (x : String) (xs : List String) : strMem x xs = true ↔ x ∈ xs := by
+  simp [strMem, List.any_eq_true, beq_iff_eq]
+
+theorem strUnionSet_eq (xs acc : List String) (s : Std.HashSet String)
+    (h : ∀ y, s.contains y = true ↔ y ∈ acc) :
+    (strUnionSet xs (acc, s)).1 = strUnion xs acc ∧
+      ∀ y, (strUnionSet xs (acc, s)).2.contains y = true ↔ y ∈ (strUnionSet xs (acc, s)).1 := by
+  induction xs generalizing acc s with
+  | nil => exact ⟨rfl, h⟩
+  | cons x xs ih =>
+    by_cases hx : s.contains x = true
+    · have hm : strMem x acc = true := (strMem_iff x acc).mpr ((h x).mp hx)
+      simp only [strUnionSet, hx, ↓reduceIte, strUnion, strAddUnique, hm]
+      exact ih acc s h
+    · have hm : strMem x acc = false := by
+        cases hc : strMem x acc
+        · rfl
+        · exact absurd ((h x).mpr ((strMem_iff x acc).mp hc)) hx
+      simp only [strUnionSet, hx, Bool.false_eq_true, ↓reduceIte, strUnion, strAddUnique, hm]
+      apply ih
+      intro y
+      rw [Std.HashSet.contains_insert, Bool.or_eq_true, beq_iff_eq, h, List.mem_cons]
+      exact ⟨fun hy => hy.elim (fun e => Or.inl e.symm) Or.inr,
+             fun hy => hy.elim (fun e => Or.inl e.symm) Or.inr⟩
+
+/-- `bnodesInBgp` without a native frame per triple pattern (the fold runs
+as `List.foldrTR`, over an array) and with a set lookup per label: an INSERT
+DATA block of 40,000 triples overflowed the 512 KB canary stack in
+`bnodesInBgp`, and 16,000 triples with blank-node subjects took 2.0 s against
+0.17 s for 4,000 (https://github.com/danbri/factoidal/issues/821). The same
+list (`bnodesInBgp_eq_fast`). -/
+def bnodesInBgpFast (b : Bgp) : List String :=
+  (b.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅)).1
+
+theorem bnodesInBgp_foldr (b : Bgp) :
+    (b.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅)).1 = bnodesInBgp b ∧
+      ∀ y, (b.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅)).2.contains y = true ↔
+        y ∈ (b.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅)).1 := by
+  induction b with
+  | nil => simp [bnodesInBgp]
+  | cons tp rest ih =>
+    simp only [List.foldr_cons]
+    generalize hst : List.foldr (fun tp st => strUnionSet (bnodesInTriple tp) st) ([], ∅) rest = st at ih ⊢
+    obtain ⟨acc, s⟩ := st
+    obtain ⟨h1, h2⟩ := ih
+    have := strUnionSet_eq (bnodesInTriple tp) acc s h2
+    refine ⟨?_, this.2⟩
+    rw [this.1]
+    simp only at h1
+    simp [bnodesInBgp, h1]
+
+@[csimp] theorem bnodesInBgp_eq_fast : @bnodesInBgp = @bnodesInBgpFast := by
+  funext b
+  exact (bnodesInBgp_foldr b).1.symm
+
+private def tpBn (b : String) : TriplePattern := { s := .bnode b, p := .var "p", o := .bnode "z" }
+#guard bnodesInBgpFast [tpBn "a", tpBn "b", tpBn "a"] == ["b", "z", "a"]
+#guard bnodesInBgpFast [tpBn "a", tpBn "b", tpBn "a"] != ["a", "b", "z"]
+#guard bnodesInBgpFast [tpBn "_:bnode_3"] == ["z"]
+
+#print axioms bnodesInBgp_eq_fast
 
 /-! ## Aggregate detection — `expr_has_aggregate` (F* line 1586)
 
@@ -446,6 +672,66 @@ def exprHasUngroupedVar (isGrp : VarName → Bool) : Expr → Bool
       exprHasUngroupedVar isGrp a || exprHasUngroupedVar isGrp b ||
       exprHasUngroupedVar isGrp c
   | _ => false
+
+/-! ## Projection scope — SPARQL 1.1 §11.4 and §18.2.4, SPARQL 1.2 §18.3.1 and §18.3.4
+
+The trailing VALUES clause ([2] Query, [8] SubSelect) is joined AFTER
+GROUP BY and HAVING and BEFORE the SELECT expressions (§18.2.4.3 in 1.1,
+§18.3.4.3 in 1.2: "If the query has a trailing VALUES clause: P :=
+Join(P, ToMultiset(data))"). Its variables are therefore in scope for
+the projection checks below, at a grouping level as well as at any
+other. -/
+
+/-- The named GROUP BY variables: `GROUP BY ?v` and `GROUP BY (e AS ?v)`.
+The §18.3.1 in-scope table lists both forms; `GROUP BY (e)` without
+`AS` names nothing. -/
+def groupNamedVars (gcs : List GroupCondition) : List VarName :=
+  gcs.filterMap (fun gc =>
+    match gc with
+    | .var v           => some v
+    | .expr _ (some v) => some v
+    | .expr _ none     => none)
+
+/-- §11.4 Aggregate Projection Restrictions, checked left to right over
+the SELECT clause of a grouping query level. Every variable that a
+projection item uses outside an aggregate must be a named GROUP BY
+variable or "introduced by an earlier SELECT expression in the same
+SELECT clause"; a variable of the trailing VALUES clause is also in
+scope (see the section header). `inScope` starts as the GROUP BY names
+plus the VALUES variables, and each `(expr AS ?v)` adds `?v` for the
+items after it. `true` means some item violates the rule. -/
+def projectionHasUngrouped (inScope : List VarName) : List SelectItem → Bool
+  | []                => false
+  | .var v :: rest    => !inScope.contains v || projectionHasUngrouped inScope rest
+  | .expr e v :: rest =>
+      exprHasUngroupedVar (fun x => inScope.contains x) e ||
+      projectionHasUngrouped (v :: inScope) rest
+
+/-- §18.2.4.4 (1.1) / §18.3.4.4 (1.2), Select expressions: for each
+`(expr AS var)`, "var must not appear in VS' nor in PV; if it does then
+generate a syntax error". `inVS` decides membership of VS', the
+variables visible at the projection; `pv` collects the projection
+variables of the items already read. `true` means a clash. -/
+def projectionAliasClash (inVS : VarName → Bool) (pv : List VarName) :
+    List SelectItem → Bool
+  | []                => false
+  | .var v :: rest    => projectionAliasClash inVS (v :: pv) rest
+  | .expr _ v :: rest =>
+      inVS v || pv.contains v || projectionAliasClash inVS (v :: pv) rest
+
+/-- Place a parsed trailing VALUES clause (§18.2.4.3 in 1.1, §18.3.4.3
+in 1.2). At a grouping level the join comes after GROUP BY and HAVING,
+so the rows travel in `postValues` and the evaluator joins them there.
+At any other level no step sits between the WHERE pattern and the join,
+so Join(P, data) is the join of the WHERE pattern with the VALUES
+pattern, and that is what is built. -/
+def attachValues (grouping : Bool) (pattern : QueryPattern) :
+    Option QueryPattern → QueryPattern × Option (List Binding)
+  | some (.values vs rows) =>
+    if grouping then (pattern, some (evalValues vs rows))
+    else (ggpJoin pattern (.values vs rows), none)
+  | some g => (ggpJoin pattern g, none)
+  | none   => (pattern, none)
 
 /-! ## Variables and blank nodes in a pattern
 
@@ -522,6 +808,88 @@ def ggpLabeledBnodesQ : Query → List String
 
 end
 
+/-- The steps of the loop that computes `ggpLabeledBnodes`: read a pattern,
+or replace the two label lists on top of the value stack by their
+`strUnion`. -/
+inductive LabelStep where
+  | visit (p : QueryPattern)
+  | union2
+
+/-- What one step does to the value stack. -/
+def labelStepSem : LabelStep → List (List String) → List (List String)
+  | .visit p, vs => ggpLabeledBnodes p :: vs
+  | .union2, b :: a :: vs => strUnion a b :: vs
+  | .union2, vs => vs
+
+/-- `ggpLabeledBnodes` as a loop over a work list of steps and a stack of
+label lists. A two-sided pattern puts its sides and a `union2` on the front of
+the work list, so the stack does not grow with the length of a join chain: an
+INSERT DATA collection of n members is a chain of n joins, and
+`ggpLabeledBnodes` took one native frame per member
+(https://github.com/danbri/factoidal/issues/818). The answer is the same list
+(`labelsLoop_eq`): the leaves and `strUnion` are the same functions. -/
+def labelsLoop : List LabelStep → List (List String) → List String
+  | [], vs => vs.headD []
+  | .visit p :: ks, vs =>
+    match p with
+    | .bgp b => labelsLoop ks (bnodesInBgp b :: vs)
+    | .propertyPath s _ o => labelsLoop ks (strUnion (bnodesInSubject s) (bnodesInTerm o) :: vs)
+    | .join a b | .union a b | .minus a b | .lateral a b | .leftJoin a b _ =>
+      labelsLoop (.visit a :: .visit b :: .union2 :: ks) vs
+    | .filter _ q | .graph _ q | .bind _ _ q | .service _ _ q | .serviceVar _ _ q =>
+      labelsLoop (.visit q :: ks) vs
+    | .subSelect (.mk _ _ pat _ _ _ _ _) => labelsLoop (.visit pat :: ks) vs
+    | .values _ _ | .empty => labelsLoop ks ([] :: vs)
+  | .union2 :: ks, vs => labelsLoop ks (labelStepSem .union2 vs)
+termination_by ks _ =>
+  (ks.map fun k => match k with | .visit p => 3 * sizeOf p + 1 | .union2 => 1).sum
+decreasing_by
+  all_goals
+    (simp_wf <;>
+      (try simp only [List.map_cons, List.sum_cons, QueryPattern.join.sizeOf_spec,
+        QueryPattern.union.sizeOf_spec, QueryPattern.minus.sizeOf_spec,
+        QueryPattern.lateral.sizeOf_spec, QueryPattern.leftJoin.sizeOf_spec,
+        QueryPattern.filter.sizeOf_spec, QueryPattern.graph.sizeOf_spec,
+        QueryPattern.bind.sizeOf_spec, QueryPattern.service.sizeOf_spec,
+        QueryPattern.serviceVar.sizeOf_spec, QueryPattern.subSelect.sizeOf_spec,
+        Query.mk.sizeOf_spec]) <;>
+      omega)
+
+theorem labelsLoop_eq (ks : List LabelStep) (vs : List (List String)) :
+    labelsLoop ks vs = (ks.foldl (fun vs k => labelStepSem k vs) vs).headD [] := by
+  fun_induction labelsLoop ks vs <;>
+    simp_all [labelStepSem, ggpLabeledBnodes, ggpLabeledBnodesQ]
+
+/-- What runs in place of `ggpLabeledBnodes`. -/
+def ggpLabeledBnodesFast (p : QueryPattern) : List String := labelsLoop [.visit p] []
+
+/-- What runs in place of `ggpLabeledBnodesQ`. -/
+def ggpLabeledBnodesQFast : Query → List String
+  | .mk _ _ pat _ _ _ _ _ => labelsLoop [.visit pat] []
+
+@[csimp] theorem ggpLabeledBnodes_eq_fast : @ggpLabeledBnodes = @ggpLabeledBnodesFast := by
+  funext p
+  simp [ggpLabeledBnodesFast, labelsLoop_eq, labelStepSem]
+
+@[csimp] theorem ggpLabeledBnodesQ_eq_fast : @ggpLabeledBnodesQ = @ggpLabeledBnodesQFast := by
+  funext q
+  cases q
+  simp [ggpLabeledBnodesQ, ggpLabeledBnodesQFast, labelsLoop_eq, labelStepSem]
+
+#print axioms ggpLabeledBnodes_eq_fast
+
+private def bnA : QueryPattern := .bgp [{ s := .bnode "a", p := .var "p", o := .var "o" }]
+private def bnB : QueryPattern := .bgp [{ s := .bnode "b", p := .var "p", o := .var "o" }]
+private def bnGen : QueryPattern := .bgp [{ s := .bnode "_:bnode_7", p := .var "p", o := .var "o" }]
+
+-- The loop answers the lists of the recursive definition, in the same order
+-- (`strUnion` of the left side into the right).
+#guard labelsLoop [.visit (.join bnA bnB)] [] == ["a", "b"]
+#guard labelsLoop [.visit (.join bnB bnA)] [] == ["b", "a"]
+#guard labelsLoop [.visit (.join bnA bnB)] [] != ["b", "a"]
+#guard labelsLoop [.visit (.filter (.boolLit true) (.union bnA (.graph (.var "g") bnB)))] [] == ["a", "b"]
+#guard labelsLoop [.visit (.join bnA bnGen)] [] == ["a"]
+
 /-! ## Blank-node scope validation — `validate_bnode_scope_pattern`
 (F* line 4350)
 
@@ -569,6 +937,199 @@ def validateBnodeScopeQ : Query → Bool × List String
   | .mk _ _ pat _ _ _ _ _ => validateBnodeScope pat
 
 end
+
+/-! ### The scope check in one pass
+
+`validateBnodeScope` calls `preservesBgpScope` on both sides of every join,
+and each call walks the whole side, so a join chain of n patterns (the
+desugaring of a collection of n members) took time in n², and one native frame
+per join (https://github.com/danbri/factoidal/issues/824). `scopeLoop` reads
+each pattern once and carries, for each finished side, the pair
+`validateBnodeScope` answers and `preservesBgpScope`, on a value stack; the
+work list replaces the native stack. `scopeLoop_eq` proves it equal, and
+`validateBnodeScope_eq_fast` (`csimp`) makes the parser run it. -/
+
+/-- The answer for one pattern: `validateBnodeScope` and `preservesBgpScope`. -/
+abbrev ScopeVal := (Bool × List String) × Bool
+
+/-- §19.6 for `Join(l, r)`: labels may be shared when both sides preserve the
+BGP scope. -/
+def scopeJoin (l r : ScopeVal) : ScopeVal :=
+  ((l.1.1 && r.1.1 && ((l.2 && r.2) || !strOverlaps l.1.2 r.1.2), strUnion l.1.2 r.1.2),
+   l.2 && r.2)
+
+/-- §19.6 for Union, Minus, Lateral and LeftJoin: labels may not be shared. -/
+def scopeApart (l r : ScopeVal) : ScopeVal :=
+  ((l.1.1 && r.1.1 && !strOverlaps l.1.2 r.1.2, strUnion l.1.2 r.1.2), false)
+
+/-- The steps of the scope loop. -/
+inductive ScopeStep where
+  | visit (p : QueryPattern)
+  | joinScope
+  | apartScope
+  /-- GRAPH, SERVICE and a sub-SELECT: the answer of the inner pattern, which
+  does not preserve the BGP scope. -/
+  | closeScope
+
+/-- What a step that is not `visit` does to the value stack. -/
+def scopeCombine : ScopeStep → List ScopeVal → List ScopeVal
+  | .joinScope, r :: l :: vs => scopeJoin l r :: vs
+  | .apartScope, r :: l :: vs => scopeApart l r :: vs
+  | .closeScope, v :: vs => (v.1, false) :: vs
+  | _, vs => vs
+
+/-- What one step does to the value stack. -/
+def scopeStepSem : ScopeStep → List ScopeVal → List ScopeVal
+  | .visit p, vs => (validateBnodeScope p, preservesBgpScope p) :: vs
+  | k, vs => scopeCombine k vs
+
+/-- The scope check as a loop (see the section header). -/
+def scopeLoop : List ScopeStep → List ScopeVal → ScopeVal
+  | [], vs => vs.headD ((true, []), true)
+  | .visit p :: ks, vs =>
+    match p with
+    | .bgp b => scopeLoop ks (((true, bnodesInBgp b), true) :: vs)
+    | .propertyPath s _ o =>
+      scopeLoop ks (((true, strUnion (bnodesInSubject s) (bnodesInTerm o)), true) :: vs)
+    | .values _ _ | .empty => scopeLoop ks (((true, []), true) :: vs)
+    | .filter _ q | .bind _ _ q => scopeLoop (.visit q :: ks) vs
+    | .join a b => scopeLoop (.visit a :: .visit b :: .joinScope :: ks) vs
+    | .union a b | .minus a b | .lateral a b | .leftJoin a b _ =>
+      scopeLoop (.visit a :: .visit b :: .apartScope :: ks) vs
+    | .graph _ q | .service _ _ q | .serviceVar _ _ q =>
+      scopeLoop (.visit q :: .closeScope :: ks) vs
+    | .subSelect (.mk _ _ pat _ _ _ _ _) => scopeLoop (.visit pat :: .closeScope :: ks) vs
+  | .joinScope :: ks, vs => scopeLoop ks (scopeCombine .joinScope vs)
+  | .apartScope :: ks, vs => scopeLoop ks (scopeCombine .apartScope vs)
+  | .closeScope :: ks, vs => scopeLoop ks (scopeCombine .closeScope vs)
+termination_by ks _ =>
+  (ks.map fun k => match k with | .visit p => 3 * sizeOf p + 1 | _ => 1).sum
+decreasing_by
+  all_goals
+    (simp_wf <;>
+      (try simp only [List.map_cons, List.sum_cons, QueryPattern.join.sizeOf_spec,
+        QueryPattern.union.sizeOf_spec, QueryPattern.minus.sizeOf_spec,
+        QueryPattern.lateral.sizeOf_spec, QueryPattern.leftJoin.sizeOf_spec,
+        QueryPattern.filter.sizeOf_spec, QueryPattern.graph.sizeOf_spec,
+        QueryPattern.bind.sizeOf_spec, QueryPattern.service.sizeOf_spec,
+        QueryPattern.serviceVar.sizeOf_spec, QueryPattern.subSelect.sizeOf_spec,
+        Query.mk.sizeOf_spec]) <;>
+      omega)
+
+theorem scope_join (a b : QueryPattern) :
+    (validateBnodeScope (.join a b), preservesBgpScope (.join a b)) =
+      scopeJoin (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeJoin]
+
+theorem scope_union (a b : QueryPattern) :
+    (validateBnodeScope (.union a b), preservesBgpScope (.union a b)) =
+      scopeApart (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeApart]
+
+theorem scope_minus (a b : QueryPattern) :
+    (validateBnodeScope (.minus a b), preservesBgpScope (.minus a b)) =
+      scopeApart (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeApart]
+
+theorem scope_lateral (a b : QueryPattern) :
+    (validateBnodeScope (.lateral a b), preservesBgpScope (.lateral a b)) =
+      scopeApart (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeApart]
+
+theorem scope_leftJoin (a b : QueryPattern) (e : Expr) :
+    (validateBnodeScope (.leftJoin a b e), preservesBgpScope (.leftJoin a b e)) =
+      scopeApart (validateBnodeScope a, preservesBgpScope a) (validateBnodeScope b, preservesBgpScope b) := by
+  simp only [validateBnodeScope, preservesBgpScope, scopeApart]
+
+theorem scope_filter (e : Expr) (p : QueryPattern) :
+    (validateBnodeScope (.filter e p), preservesBgpScope (.filter e p)) =
+      (validateBnodeScope p, preservesBgpScope p) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_bind (e : Expr) (v : VarName) (p : QueryPattern) :
+    (validateBnodeScope (.bind e v p), preservesBgpScope (.bind e v p)) =
+      (validateBnodeScope p, preservesBgpScope p) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_graph (g : PatternTerm) (p : QueryPattern) :
+    (validateBnodeScope (.graph g p), preservesBgpScope (.graph g p)) =
+      (validateBnodeScope p, false) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_service (i : WfIri) (b : Bool) (p : QueryPattern) :
+    (validateBnodeScope (.service i b p), preservesBgpScope (.service i b p)) =
+      (validateBnodeScope p, false) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_serviceVar (v : VarName) (b : Bool) (p : QueryPattern) :
+    (validateBnodeScope (.serviceVar v b p), preservesBgpScope (.serviceVar v b p)) =
+      (validateBnodeScope p, false) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_subSelect (f : QueryForm) (d : List DatasetClause) (pat : QueryPattern)
+    (g : Option (List GroupCondition)) (h : List Expr) (m : SolutionModifier)
+    (pv : Option (List Binding)) (base : Option String) :
+    (validateBnodeScope (.subSelect (.mk f d pat g h m pv base)),
+      preservesBgpScope (.subSelect (.mk f d pat g h m pv base))) =
+      (validateBnodeScope pat, false) := by
+  simp only [validateBnodeScope, validateBnodeScopeQ, preservesBgpScope]
+
+theorem scope_bgp (b : Bgp) :
+    (validateBnodeScope (.bgp b), preservesBgpScope (.bgp b)) = ((true, bnodesInBgp b), true) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_propertyPath (s : PatternSubject) (pp : PropertyPath) (o : PatternTerm) :
+    (validateBnodeScope (.propertyPath s pp o), preservesBgpScope (.propertyPath s pp o)) =
+      ((true, strUnion (bnodesInSubject s) (bnodesInTerm o)), true) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_values (vs : List VarName) (rows : List (List (Option Term))) :
+    (validateBnodeScope (.values vs rows), preservesBgpScope (.values vs rows)) =
+      ((true, []), true) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scope_empty :
+    (validateBnodeScope .empty, preservesBgpScope .empty) = ((true, []), true) := by
+  simp only [validateBnodeScope, preservesBgpScope]
+
+theorem scopeLoop_eq (ks : List ScopeStep) (vs : List ScopeVal) :
+    scopeLoop ks vs = (ks.foldl (fun vs k => scopeStepSem k vs) vs).headD ((true, []), true) := by
+  fun_induction scopeLoop ks vs <;>
+    simp_all only [List.foldl_cons, scopeStepSem, scopeCombine, scope_join, scope_union,
+      scope_minus, scope_lateral, scope_leftJoin, scope_filter, scope_bind, scope_graph,
+      scope_service, scope_serviceVar, scope_subSelect, scope_bgp, scope_propertyPath,
+      scope_values, scope_empty, List.foldl_nil]
+
+/-- What runs in place of `validateBnodeScope`. -/
+def validateBnodeScopeFast (p : QueryPattern) : Bool × List String :=
+  (scopeLoop [.visit p] []).1
+
+/-- What runs in place of `validateBnodeScopeQ`. -/
+def validateBnodeScopeQFast : Query → Bool × List String
+  | .mk _ _ pat _ _ _ _ _ => (scopeLoop [.visit pat] []).1
+
+@[csimp] theorem validateBnodeScope_eq_fast : @validateBnodeScope = @validateBnodeScopeFast := by
+  funext p
+  simp [validateBnodeScopeFast, scopeLoop_eq, scopeStepSem]
+
+@[csimp] theorem validateBnodeScopeQ_eq_fast : @validateBnodeScopeQ = @validateBnodeScopeQFast := by
+  funext q
+  cases q
+  simp [validateBnodeScopeQ, validateBnodeScopeQFast, scopeLoop_eq, scopeStepSem]
+
+#print axioms validateBnodeScope_eq_fast
+
+private def scA : QueryPattern := .bgp [{ s := .bnode "a", p := .var "p", o := .var "o" }]
+private def scB : QueryPattern := .bgp [{ s := .bnode "b", p := .var "p", o := .var "o" }]
+
+-- §19.6: a join of two BGP-preserving sides may share a label; a union may
+-- not; a join with a GRAPH side may not.
+#guard (scopeLoop [.visit (.join scA scA)] []).1.1
+#guard !(scopeLoop [.visit (.union scA scA)] []).1.1
+#guard !(scopeLoop [.visit (.join scA (.graph (.var "g") scA))] []).1.1
+#guard (scopeLoop [.visit (.join scA (.graph (.var "g") scB))] []).1.1
+#guard !(scopeLoop [.visit (.join scA (.graph (.var "g") scB))] []).2
+#guard (scopeLoop [.visit (.join (.filter (.boolLit true) scA) scA)] []).2
 
 /-- `validate_bnode_scope_top`. -/
 def validateBnodeScopeTop (q : Query) : Bool := (validateBnodeScopeQ q).1
@@ -619,6 +1180,19 @@ def firstInvalidToken : TStream → Option ParseError
   | pt :: rest =>
     match pt.tok with
     | .invalid m => some ⟨m, pt.pos⟩
+    -- [139] IRIREF admits no backslash except as the start of a UCHAR
+    -- escape (SPARQL 1.2 §19.7; in 1.1 the escapes are decoded before
+    -- the grammar applies and the production excludes `\` outright).
+    -- `processIriEscapesRec` leaves an escape it cannot decode in the
+    -- lexeme verbatim — malformed, a surrogate code point (SPARQL 1.2
+    -- §19.2: "MUST NOT produce a code point value in the range U+D800
+    -- to U+DFFF"), or above U+10FFFF — so a backslash still in the
+    -- lexeme marks a lexical error. `isIri` checks only for a colon and
+    -- would accept it.
+    | .iri s =>
+      if s.toList.contains '\\' then
+        some ⟨"invalid IRI escape (surrogate or malformed)", pt.pos⟩
+      else firstInvalidToken rest
     | _          => firstInvalidToken rest
 
 /-- `tokens_only_eof`: nothing but padding left. -/
@@ -668,14 +1242,32 @@ def startsGroupCondition : Token → Bool
   | .isLiteral | .isNumeric | .sameTerm | .coalesce | .iri _ | .pname _ => true
   | _ => false
 
-/-- The tokens `parse_order_by_list` accepts as the start of a
-[24] OrderCondition. -/
-def startsOrderCondition : Token → Bool
-  | .asc | .desc | .var _ | .lparen | .iri _ | .pname _
-  | .strKw | .langKw | .langMatches | .datatype | .bound
-  | .ifKw | .iriKw | .uriKw | .concat | .isIri | .isBlank
-  | .isLiteral | .isNumeric | .sameTerm | .coalesce => true
+/-- The [127] Aggregate keywords. [121] BuiltInCall includes Aggregate,
+so an aggregate can start a [24] OrderCondition or a [22]
+HavingCondition (SPARQL 1.2 §19.7 note: "Aggregate functions may only
+be used in SELECT, HAVING and ORDER BY clauses"). -/
+def startsAggregate : Token → Bool
+  | .count | .sum | .minKw | .maxKw | .avg | .groupConcat | .sample => true
   | _ => false
+
+/-- The SPARQL 1.2 [121] BuiltInCall keywords. The tokenizer emits
+them only in 1.2 mode, so in 1.1 mode this set is never met. -/
+def startsBuiltinCall12 : Token → Bool
+  | .tripleKw | .subjectKw | .predicateKw | .objectKw | .isTripleKw
+  | .hasLangKw | .hasLangDirKw | .langDirKw | .strLangDirKw => true
+  | _ => false
+
+/-- The tokens that can start a [24] OrderCondition ::= ( ( 'ASC' |
+'DESC' ) BrackettedExpression ) | ( Constraint | Var ), where [69]
+Constraint ::= BrackettedExpression | BuiltInCall | FunctionCall.
+The F* `parse_order_by_list` lookahead lists only some [121]
+BuiltInCall keywords, so `ORDER BY LCASE(?name)` (W3C sparql11
+bindings test `values-group-order-by`) ended the ORDER BY list before
+its first condition. This set admits every BuiltInCall keyword,
+aggregates included. -/
+def startsOrderCondition : Token → Bool
+  | .asc | .desc | .var _ | .lparen | .iri _ | .pname _ => true
+  | t => startsBuiltinCall t || startsAggregate t || startsBuiltinCall12 t
 
 /-- The tokens `parse_having_list` accepts as a bare [22]
 HavingCondition. -/
@@ -713,12 +1305,36 @@ def pReifierId (st : PState) (ts : TStream) : Except ParseError (PatternSubject 
   | .bnode b => .ok (.bnode b, advTok ts)
   | _ => .ok (.bnode (freshBnodeId ts), ts)
 
+/-- Is this predicate the jena-text `text:query` IRI
+(`SPARQL/FullText.lean`'s `fulltextQueryPred`)? -/
+def isFulltextPredicate : PatternTerm → Bool
+  | .iri p => p == fulltextQueryPred
+  | _      => false
+
 /-! ## The grammar — one mutual block, structural on `fuel`
 
 Every function takes `fuel` FIRST and every recursive call passes the
 post-destructuring `f`, so the block is structurally recursive with no
 `termination_by` — the same discipline `JSON/Parser.lean` uses, and the
 Lean counterpart of the F*'s `decreases fuel`. -/
+
+/-- One cell of a SPARQL collection: the blank-node name of the cell and the
+element read for it (term and the pattern its `[ ... ]` or nested
+collection adds). -/
+abbrev CollectionCell := String × (PatternTerm × QueryPattern)
+
+/-- Build the `rdf:first` / `rdf:rest` chain of a collection from its cells,
+newest first, onto `acc` (the chain after the last cell read: `rdf:nil` and
+the empty pattern at `)`). One tail call per cell. -/
+def linkCollectionCells : List CollectionCell → (PatternTerm × QueryPattern) →
+    (PatternTerm × QueryPattern)
+  | [], acc => acc
+  | (bid, item) :: cellsRev, acc =>
+    let bsub : PatternSubject := .bnode bid
+    let firstT : TriplePattern := { s := bsub, p := .iri rdfFirstIri, o := item.1 }
+    let restT  : TriplePattern := { s := bsub, p := .iri rdfRestIri,  o := acc.1 }
+    linkCollectionCells cellsRev
+      (.bnode bid, ggpJoin (ggpJoin (.bgp [firstT, restT]) item.2) acc.2)
 
 mutual
 
@@ -909,8 +1525,10 @@ def pPrimaryExpr (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (
     | .falseKw   => .ok (.boolLit false, advTok ts)
     | .integer n =>
       match parseIntStr n with
-      | some i => .ok (.numericLit i, advTok ts)
-      | none   => .ok (.decimalLit n, advTok ts)
+      | some i =>
+          if toString i == n then .ok (.numericLit i, advTok ts)
+          else .ok (.lit (mkTypedLiteral n RDF.xsdInteger), advTok ts)
+      | none => .ok (.lit (mkTypedLiteral n RDF.xsdInteger), advTok ts)
     | .decimal d => .ok (.decimalLit d, advTok ts)
     | .double d  => .ok (.doubleLit d, advTok ts)
     | .str s     => pRdfLiteralExpr f st s (advTok ts)
@@ -1362,34 +1980,64 @@ def pGroupGraphPattern (fuel : Nat) (st : PState) (ts : TStream) : Except ParseE
       .ok (.subSelect q, ts3)
     | .rbrace => .ok (.empty, advTok ts1)
     | _ => do
-      let (g, ts2) ← pGgpBody f st .empty [] false ts1
+      let ((g, filters), ts2) ← pGgpBody f st .empty [] false ts1
       let (_, ts3) ← expectTok .rbrace ts2
-      .ok (g, ts3)
+      .ok (wrapFilters filters g, ts3)
+
+/-- [53] GroupGraphPattern, with the group's pattern and its OWN FILTERs
+(§18.2.2.6 FS, newest first) returned apart instead of wrapped
+(`pGroupGraphPattern` is this with `wrapFilters` applied:
+`pGroupGraphPattern_eq_parts`). The OPTIONAL arm of `pGgpBody` needs
+them apart, because §18.2.2.5 makes them the LeftJoin condition. A
+SubSelect and the empty group have no FILTER of their own; a FILTER of
+a group nested in this one is inside the pattern. -/
+def pGroupGraphPatternParts (fuel : Nat) (st : PState) (ts : TStream) :
+    Except ParseError ((QueryPattern × List Expr) × TStream) :=
+  match fuel with
+  | 0     => pErr "recursion limit" ts
+  | f + 1 => do
+    let (_, ts1) ← expectTok .lbrace ts
+    match peekTok ts1 with
+    | .select => do
+      let (q, ts2) ← pSelectQuery f st none ts1
+      let (_, ts3) ← expectTok .rbrace ts2
+      .ok ((.subSelect q, []), ts3)
+    | .rbrace => .ok ((.empty, []), advTok ts1)
+    | _ => do
+      let (parts, ts2) ← pGgpBody f st .empty [] false ts1
+      let (_, ts3) ← expectTok .rbrace ts2
+      .ok (parts, ts3)
 
 /-- [54] GroupGraphPatternSub: triples blocks interleaved with
 [56] GraphPatternNotTriples elements. FILTERs are COLLECTED and
-wrapped around the whole group at the end, per §18.2.4 — a filter
-scopes over its entire group, not over what precedes it.
+returned beside the group's pattern (newest first); the caller wraps
+them around the whole group (`wrapFilters`, §18.2.2.6: a filter scopes
+over its entire group, not over what precedes it), or, for an
+OPTIONAL group, makes them the LeftJoin condition (§18.2.2.5,
+`optionalGroup`).
 
 `crossScope` tracks whether a nested group has already been seen, so a
 following triples block's blank-node labels are checked against the
 accumulated ones (§19.6). -/
 def pGgpBody (fuel : Nat) (st : PState) (acc : QueryPattern)
-    (filters : List Expr) (crossScope : Bool) (ts : TStream) : Except ParseError (QueryPattern × TStream) :=
+    (filters : List Expr) (crossScope : Bool) (ts : TStream) :
+    Except ParseError ((QueryPattern × List Expr) × TStream) :=
   match fuel with
-  | 0     => .ok (filters.foldl (fun g e => .filter e g) acc, ts)
+  | 0     => .ok ((acc, filters), ts)
   | f + 1 =>
     let tok := peekTok ts
     if startsTriples tok then do
-      let (tri, ts1) ← pTriplesBlock f st .empty ts
+      let (tri, ts1) ← pTriplesBlock f st (.empty, []) ts
       if crossScope && strOverlaps (ggpLabeledBnodes acc) (ggpLabeledBnodes tri) then
         pErr "blank node label reused across nested group scope" ts
       else pGgpBody f st (ggpJoin acc tri) filters false ts1
     else
       match tok with
       | .optional => do
-        let (g, ts1) ← pGroupGraphPattern f st (advTok ts)
-        let acc' : QueryPattern := .leftJoin acc g (.boolLit true)
+        -- §18.2.2.5: the group's own FILTERs are the LeftJoin
+        -- condition, evaluated on the merged solution (issue 815).
+        let ((g, gFilters), ts1) ← pGroupGraphPatternParts f st (advTok ts)
+        let acc' : QueryPattern := optionalGroup acc g gFilters
         let ts2 := if peekTok ts1 == Token.dot then advTok ts1 else ts1
         pGgpBody f st acc' filters true ts2
       | .minusKw => do
@@ -1466,7 +2114,7 @@ def pGgpBody (fuel : Nat) (st : PState) (acc : QueryPattern)
           let acc' : QueryPattern := match acc with | .empty => g | _ => .join acc g
           let ts2 := if peekTok ts1 == Token.dot then advTok ts1 else ts1
           pGgpBody f st acc' filters true ts2
-      | _ => .ok (filters.foldl (fun g e => .filter e g) acc, ts)
+      | _ => .ok ((acc, filters), ts)
 
 /-- [67] GroupOrUnionGraphPattern ::= GroupGraphPattern
 ( 'UNION' GroupGraphPattern )* — right-associated, as in the F*. -/
@@ -1766,6 +2414,20 @@ def pValuesClause (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError 
       else pErr "VALUES row has wrong number of terms" ts4
     | _ => pErr "expected variable or '(' after VALUES" ts
 
+/-- [28] ValuesClause ::= ( 'VALUES' DataBlock )?, the trailing clause
+of [2] Query and [8] SubSelect. Absent clause: `none`. A malformed
+clause is an error, not an absent clause. -/
+def pTrailingValues (fuel : Nat) (st : PState) (ts : TStream) :
+    Except ParseError (Option QueryPattern × TStream) :=
+  match fuel with
+  | 0     => .ok (none, ts)
+  | f + 1 =>
+    match peekTok ts with
+    | .values => do
+      let (g, t) ← pValuesClause f st (advTok ts)
+      .ok (some g, t)
+    | _ => .ok (none, ts)
+
 -- ### Triples — [75]-[87]
 
 /-- [129] RDFLiteral in TERM position. -/
@@ -1862,17 +2524,21 @@ def pObjectWithExtras (fuel : Nat) (st : PState) (ts : TStream) :
       .ok ((pt, .empty), ts1)
     | .a => .ok ((.iri rdfTypeIri, .empty), advTok ts)
     | .lbracket =>
-      -- [99] BlankNodePropertyList / [138] ANON.
-      let bid := freshBnodeId ts
+      -- [99] BlankNodePropertyList / [138] ANON. The name comes from the
+      -- token AFTER `[` (`bracketBnodeId`), never from the `[` itself: a
+      -- collection names its cell from the position where the element
+      -- starts (`pCollection`), so `( [ … ] )` gave the cell and the element
+      -- one name, and so one node.
+      let bid := bracketBnodeId ts
       let ts1 := advTok ts
       (match peekTok ts1 with
        | .rbracket => .ok ((.bnode bid, .empty), advTok ts1)
        | _ =>
-         (do let (extras, ts2) ← pPredObjList f st (.bnode bid) .empty ts1
+         (do let (extras, ts2) ← pPredObjList f st (.bnode bid) (.empty, []) ts1
              match expectTok .rbracket ts2 with
              | .error _     => pErr "expected ']' after blank node property list" ts2
-             | .ok (_, ts3) => .ok ((.bnode bid, extras), ts3)))
-    | .lparen => pCollection f st (advTok ts)
+             | .ok (_, ts3) => .ok ((.bnode bid, flushTriples extras.1 extras.2), ts3)))
+    | .lparen => pCollectionCells f st (advTok ts) []
     | .ttOpen => pTripleTermPattern f st (advTok ts)
     | .ttBareOpen => do
       -- SPARQL 1.2 bare reified triple in object position; also the
@@ -1991,32 +2657,34 @@ def pAnnotations (fuel : Nat) (st : PState) (baseS : PatternSubject)
         | none   =>
           let r : PatternSubject := .bnode (freshBnodeId ts)
           (r, QueryPattern.bgp [{ s := r, p := .iri rdfReifiesIri, o := tt }])
-      let (blk, ts2) ← pPredObjList f st rsubj .empty ts1
+      let (blk, ts2) ← pPredObjList f st rsubj (.empty, []) ts1
       match expectTok .annotClose ts2 with
       | .error _     => pErr "expected '|}' to close annotation block" ts2
       | .ok (_, ts3) => do
         let (rest, ts4) ← pAnnotations f st baseS baseP baseO none ts3
-        .ok (ggpJoin (ggpJoin pre blk) rest, ts4)
+        .ok (ggpJoin (ggpJoin pre (flushTriples blk.1 blk.2)) rest, ts4)
     | _ => .ok (.empty, ts)
 
-/-- [102] Collection ::= '(' GraphNode+ ')' — desugared into an
-`rdf:first` / `rdf:rest` chain, `rdf:nil` when empty. -/
-def pCollection (fuel : Nat) (st : PState) (ts : TStream) :
+/-- [102] Collection ::= '(' GraphNode+ ')', read by a loop: each element
+is read (`pObjectWithExtras`) and pushed with its cell's blank-node name
+onto the newest-first list `cellsRev`, then the next element is read by a
+tail call; at `)` `linkCollectionCells` builds the `rdf:first` / `rdf:rest`
+chain, last cell first. The readable form `pCollection` (one recursive
+call per element) is defined after this block and proved equal
+(`pCollectionCells_eq`; https://github.com/danbri/factoidal/issues/752: an
+INSERT DATA collection is data, so its length is not bounded by the query). -/
+def pCollectionCells (fuel : Nat) (st : PState) (ts : TStream)
+    (cellsRev : List (String × (PatternTerm × QueryPattern))) :
     Except ParseError ((PatternTerm × QueryPattern) × TStream) :=
   match fuel with
   | 0     => pErr "recursion limit" ts
   | f + 1 =>
     match peekTok ts with
-    | .rparen => .ok ((.iri rdfNilIri, .empty), advTok ts)
-    | _ => do
-      let (item, ts1) ← pObjectWithExtras f st ts
-      let bid  := freshBnodeId ts
-      let bsub : PatternSubject := .bnode bid
-      let (rest, ts2) ← pCollection f st ts1
-      let firstT : TriplePattern := { s := bsub, p := .iri rdfFirstIri, o := item.1 }
-      let restT  : TriplePattern := { s := bsub, p := .iri rdfRestIri,  o := rest.1 }
-      let triples : QueryPattern := .bgp [firstT, restT]
-      .ok ((.bnode bid, ggpJoin (ggpJoin triples item.2) rest.2), ts2)
+    | .rparen => .ok (linkCollectionCells cellsRev (.iri rdfNilIri, .empty), advTok ts)
+    | _ =>
+      match pObjectWithExtras f st ts with
+      | .error e => .error e
+      | .ok (item, ts1) => pCollectionCells f st ts1 ((freshBnodeId ts, item) :: cellsRev)
 
 /-- [78] Verb / [88] Path in predicate position. A path that turned out
 to be a single IRI is reported as a plain term, so a simple triple
@@ -2180,33 +2848,92 @@ def pPathOneInSetList (fuel : Nat) (st : PState) (ts : TStream) : Except ParseEr
       .ok (p :: ps, ts2)
     | _ => .ok ([p], ts1)
 
-/-- [79] ObjectList for a simple (non-path) predicate. -/
+/-- [79] ObjectList for a simple (non-path) predicate.
+
+A `text:query` predicate takes the jena-text object argument instead
+(`pFulltextObject`), before any collection desugaring could turn its
+argument list into an `rdf:first` / `rdf:rest` chain — port of the F\*
+`parse_object_list_simple`'s `is_fulltext_query` arm. Like the F\* arm, it
+reads exactly one object: no `,` list and no annotation follow it. -/
 def pObjectListSimple (fuel : Nat) (st : PState) (subj : PatternSubject)
-    (pred : PatternTerm) (acc : QueryPattern) (ts : TStream) : Except ParseError (QueryPattern × TStream) :=
+    (pred : PatternTerm) (acc : TriplesAcc) (ts : TStream) :
+    Except ParseError (TriplesAcc × TStream) :=
   match fuel with
   | 0     => .ok (acc, ts)
-  | f + 1 => do
+  | f + 1 =>
+    if isFulltextPredicate pred then do
+      let (args, ts1) ← pFulltextObject f st ts
+      .ok ((acc.1, { s := subj, p := pred, o := .literal args } :: acc.2), ts1)
+    else do
     let (obj, ts1) ← pObjectWithExtras f st ts
-    let acc1 := ggpAddTriple acc { s := subj, p := pred, o := obj.1 }
-    let acc2 := ggpJoin acc1 obj.2
+    let acc1 : TriplesAcc := (acc.1, { s := subj, p := pred, o := obj.1 } :: acc.2)
+    let acc2 := joinTriples acc1 obj.2
     -- SPARQL 1.2: this object may be followed by an annotation
     -- sequence (`~ reifier` and/or `{| … |}`) reifying THIS triple.
     -- Only on the simple-verb path, never pObjectListPath.
     let (ann, ts2) ← pAnnotations f st subj pred obj.1 none ts1
-    let acc3 := ggpJoin acc2 ann
+    let acc3 := joinTriples acc2 ann
     match peekTok ts2 with
     | .comma => pObjectListSimple f st subj pred acc3 (advTok ts2)
     | _      => .ok (acc3, ts2)
 
+/-- The jena-text `text:query` object argument — port of the F\*
+`parse_fulltext_query_object`, with its grammar and its messages:
+
+    "term"                   field none, limit none
+    ( field "term" )         field restriction
+    ( field "term" limit )   field restriction and a limit
+
+`field` is read by `pVerb`, so a prefixed name, an IRI and `a` are
+accepted, and a property path or a variable is refused, as in the F\*.
+There is no `( "term" limit )` form, because the F\* grammar has none.
+The resolved query is encoded into one marker-typed literal
+(`encodeFulltextLiteral`; `SPARQL/FullText.lean` explains why). -/
+def pFulltextObject (fuel : Nat) (st : PState) (ts : TStream) :
+    Except ParseError (WfLiteral × TStream) :=
+  match fuel with
+  | 0     => pErr "recursion limit" ts
+  | f + 1 =>
+    match peekTok ts with
+    | .str term =>
+      .ok (encodeFulltextLiteral { field := none, terms := term, limit := none }, advTok ts)
+    | .lparen => do
+      let (verb, ts2) ← pVerb f st (advTok ts)
+      match verb with
+      | .inr _ => pErr "text:query field must be a plain IRI, not a property path" ts2
+      | .inl (.iri fieldIri) =>
+        match peekTok ts2 with
+        | .str term =>
+          let ts3 := advTok ts2
+          match peekTok ts3 with
+          | .rparen =>
+            .ok (encodeFulltextLiteral { field := some fieldIri, terms := term, limit := none },
+                 advTok ts3)
+          | .integer n =>
+            let ts4 := advTok ts3
+            match expectTok .rparen ts4 with
+            | .error e => .error e
+            | .ok (_, ts5) =>
+              match n.toNat? with
+              | some lim =>
+                .ok (encodeFulltextLiteral { field := some fieldIri, terms := term,
+                                             limit := some lim }, ts5)
+              | none => pErr "invalid text:query limit" ts3
+          | _ => pErr "expected limit or ')' after text:query field/term" ts3
+        | _ => pErr "expected string term in text:query argument list" ts2
+      | .inl _ => pErr "text:query field must be an IRI" ts2
+    | _ => pErr "expected string or '(' after text:query" ts
+
 /-- [86] ObjectListPath for a property-path predicate. -/
 def pObjectListPath (fuel : Nat) (st : PState) (subj : PatternSubject)
-    (pp : PropertyPath) (acc : QueryPattern) (ts : TStream) : Except ParseError (QueryPattern × TStream) :=
+    (pp : PropertyPath) (acc : TriplesAcc) (ts : TStream) :
+    Except ParseError (TriplesAcc × TStream) :=
   match fuel with
   | 0     => .ok (acc, ts)
   | f + 1 => do
     let (obj, ts1) ← pObjectWithExtras f st ts
-    let acc1 := ggpAddPp acc subj pp obj.1
-    let acc2 := ggpJoin acc1 obj.2
+    let acc1 : TriplesAcc := (ggpAddPp (flushTriples acc.1 acc.2) subj pp obj.1, [])
+    let acc2 := joinTriples acc1 obj.2
     match peekTok ts1 with
     | .comma => pObjectListPath f st subj pp acc2 (advTok ts1)
     | _      => .ok (acc2, ts1)
@@ -2214,7 +2941,7 @@ def pObjectListPath (fuel : Nat) (st : PState) (subj : PatternSubject)
 /-- [83] PropertyListPathNotEmpty ::= Verb ObjectList
 ( ';' ( Verb ObjectList )? )*. -/
 def pPredObjList (fuel : Nat) (st : PState) (subj : PatternSubject)
-    (acc : QueryPattern) (ts : TStream) : Except ParseError (QueryPattern × TStream) :=
+    (acc : TriplesAcc) (ts : TStream) : Except ParseError (TriplesAcc × TStream) :=
   match fuel with
   | 0     => .ok (acc, ts)
   | f + 1 => do
@@ -2250,17 +2977,17 @@ def pSubjectWithExtras (fuel : Nat) (st : PState) (ts : TStream) :
        | none    => pErr "unresolved prefix" ts)
     | .bnode b => .ok ((.bnode b, .empty, false), advTok ts)
     | .lbracket =>
-      let bid := freshBnodeId ts
+      let bid := bracketBnodeId ts
       let ts1 := advTok ts
       (match peekTok ts1 with
        | .rbracket => .ok ((.bnode bid, .empty, false), advTok ts1)
        | _ =>
-         (do let (extras, ts2) ← pPredObjList f st (.bnode bid) .empty ts1
+         (do let (extras, ts2) ← pPredObjList f st (.bnode bid) (.empty, []) ts1
              match expectTok .rbracket ts2 with
              | .error _     => pErr "expected ']' after blank node property list" ts2
-             | .ok (_, ts3) => .ok ((.bnode bid, extras, true), ts3)))
+             | .ok (_, ts3) => .ok ((.bnode bid, flushTriples extras.1 extras.2, true), ts3)))
     | .lparen => do
-      let (pt, ts1) ← pCollection f st (advTok ts)
+      let (pt, ts1) ← pCollectionCells f st (advTok ts) []
       match patternTermToSubject pt.1 with
       | some s =>
           let complete := match pt.2 with | .empty => false | _ => true
@@ -2282,19 +3009,19 @@ def pSubjectWithExtras (fuel : Nat) (st : PState) (ts : TStream) :
 /-- [55] TriplesBlock ::= TriplesSameSubjectPath ( '.' TriplesBlock? )?.
 A term token immediately after a completed statement, with no `.`, is
 the rejection the F* words "expected dot between triples". -/
-def pTriplesBlock (fuel : Nat) (st : PState) (acc : QueryPattern) (ts : TStream) :
+def pTriplesBlock (fuel : Nat) (st : PState) (acc : TriplesAcc) (ts : TStream) :
     Except ParseError (QueryPattern × TStream) :=
   match fuel with
-  | 0     => .ok (acc, ts)
+  | 0     => .ok (flushTriples acc.1 acc.2, ts)
   | f + 1 =>
     match pSubjectWithExtras f st ts with
     | .error e =>
-      (match acc with
+      (match flushTriples acc.1 acc.2 with
        | .empty => .error e
-       | _      => .ok (acc, ts))
+       | p      => .ok (p, ts))
     | .ok ((subj, subjExtras, predObjOptional), ts1) =>
-      let acc0 := ggpJoin acc subjExtras
-      let r : Except ParseError (QueryPattern × TStream) :=
+      let acc0 := joinTriples acc subjExtras
+      let r : Except ParseError (TriplesAcc × TStream) :=
         match pPredObjList f st subj acc0 ts1 with
         | .ok res  => .ok res
         | .error e => if predObjOptional then .ok (acc0, ts1) else .error e
@@ -2305,10 +3032,10 @@ def pTriplesBlock (fuel : Nat) (st : PState) (acc : QueryPattern) (ts : TStream)
         | .dot =>
           let ts3 := advTok ts2
           if startsTriples (peekTok ts3) then pTriplesBlock f st acc1 ts3
-          else .ok (acc1, ts3)
+          else .ok (flushTriples acc1.1 acc1.2, ts3)
         | t =>
           if startsTriples t then pErr "expected dot between triples" ts2
-          else .ok (acc1, ts2)
+          else .ok (flushTriples acc1.1 acc1.2, ts2)
 
 -- ### Query forms — [1]-[27]
 
@@ -2536,7 +3263,14 @@ LimitOffsetClauses?. Returns the modifier together with GROUP BY and
 HAVING, which live outside `SolutionModifier` in the AST.
 
 Per [25] LimitOffsetClauses either order of LIMIT and OFFSET parses:
-try LIMIT, then OFFSET, then LIMIT again if it was not already seen. -/
+try LIMIT, then OFFSET, then LIMIT again if it was not already seen.
+
+A keyword without its operand (`LIMIT` or `OFFSET` with no integer, an
+empty GROUP BY, HAVING or ORDER BY list) is not consumed, so the
+enclosing rule reports the stray token. Rules [21] and [24]-[27] need at
+least one operand; before 2026-10-10 the bare keyword was dropped
+silently, and ASK, which started reading this clause then, would have
+accepted `ASK { } LIMIT`. -/
 def pSolutionModifier (fuel : Nat) (st : PState) (ts : TStream) :
     Except ParseError ((SolutionModifier × Option (List GroupCondition) × List Expr) × TStream) :=
   match fuel with
@@ -2548,14 +3282,14 @@ def pSolutionModifier (fuel : Nat) (st : PState) (ts : TStream) :
         let ts1 := advTok ts
         (match peekTok ts1 with
          | .by => (match pGroupByList f st [] (advTok ts1) with
-                   | .ok (conds, ts2) => (some conds, ts2)
+                   | .ok (conds, ts2) => if conds.isEmpty then (none, ts) else (some conds, ts2)
                    | .error _         => (none, ts))
          | _ => (none, ts))
       | _ => (none, ts)
     let (hv, tsB) :=
       match peekTok tsA with
       | .having => (match pHavingList f st [] (advTok tsA) with
-                    | .ok (conds, ts1) => (conds, ts1)
+                    | .ok (conds, ts1) => if conds.isEmpty then ([], tsA) else (conds, ts1)
                     | .error _         => ([], tsA))
       | _ => ([], tsA)
     let (ob, tsC) :=
@@ -2564,7 +3298,7 @@ def pSolutionModifier (fuel : Nat) (st : PState) (ts : TStream) :
         let ts1 := advTok tsB
         (match peekTok ts1 with
          | .by => (match pOrderByList f st [] (advTok ts1) with
-                   | .ok (conds, ts2) => (some conds, ts2)
+                   | .ok (conds, ts2) => if conds.isEmpty then (none, tsB) else (some conds, ts2)
                    | .error _         => (none, tsB))
          | _ => (none, tsB))
       | _ => (none, tsB)
@@ -2583,9 +3317,9 @@ where
       let ts1 := advTok ts
       (match peekTok ts1 with
        | .integer n => (match parseIntStr n with
-                        | some i => if i ≥ 0 then (some i.toNat, advTok ts1) else (none, ts1)
-                        | none   => (none, ts1))
-       | _ => (none, ts1))
+                        | some i => if i ≥ 0 then (some i.toNat, advTok ts1) else (none, ts)
+                        | none   => (none, ts))
+       | _ => (none, ts))
     | _ => (none, ts)
   /-- [27] OffsetClause. -/
   takeOffset (ts : TStream) : Option Nat × TStream :=
@@ -2594,13 +3328,26 @@ where
       let ts1 := advTok ts
       (match peekTok ts1 with
        | .integer n => (match parseIntStr n with
-                        | some i => if i ≥ 0 then (some i.toNat, advTok ts1) else (none, ts1)
-                        | none   => (none, ts1))
-       | _ => (none, ts1))
+                        | some i => if i ≥ 0 then (some i.toNat, advTok ts1) else (none, ts)
+                        | none   => (none, ts))
+       | _ => (none, ts))
     | _ => (none, ts)
 
-/-- [7]-[9] SelectQuery. All four SELECT-level well-formedness
-rejections live here — see the module header's table. -/
+/-- [7]-[9] SelectQuery, with the [2] / [8] trailing ValuesClause. All
+four SELECT-level well-formedness rejections live here — see the module
+header's table.
+
+Scope (§11.4, §18.2.4.4; SPARQL 1.2 §18.3.1, §18.3.4.4). The VALUES
+clause is read BEFORE the checks, because its variables are in scope
+for the projection. At a grouping level (GROUP BY, or an aggregate in
+the projection) the variables visible to the projection are the named
+GROUP BY variables and the VALUES variables; the WHERE pattern's other
+variables are not visible, so `SELECT (123 AS ?z) { ?s :p ?z } GROUP BY
+?s` is legal and `SELECT (123 AS ?z) {} GROUP BY ?z` is not (W3C
+sparql12 syntax tests `group-by-scope-*`). At any other level they are
+the WHERE pattern's in-scope variables and the VALUES variables.
+
+The VALUES join is placed by `attachValues`. -/
 def pSelectBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Query × TStream) :=
   match fuel with
   | 0     => pErr "recursion limit" ts
@@ -2616,74 +3363,58 @@ def pSelectBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Q
     let ts5 := if peekTok ts4 == Token.whereKw then advTok ts4 else ts4
     let (pattern, ts6) ← pGroupGraphPattern f st ts5
     let (sm, ts7) ← pSolutionModifier f st ts6
+    let (vals, ts8) ← pTrailingValues f st ts7
     let md := sm.1
     let gb := sm.2.1
     let hv := sm.2.2
+    let valuesVars : List VarName :=
+      match vals with
+      | some (.values vs _) => vs
+      | _                   => []
+    -- The same test `selectPost` uses to decide whether to group.
+    let grouping : Bool := gb.isSome || selectHasAggregates sel
+    let named : List VarName :=
+      match gb with
+      | some gcs => groupNamedVars gcs
+      | none     => []
     -- §18.2.4.1: SELECT * cannot be combined with GROUP BY.
     if (match sel with | .all => true | _ => false) && gb.isSome then
       pErr "SELECT * not allowed with GROUP BY" ts6
+    -- §11.4: at a grouping level every projected variable outside an
+    -- aggregate is grouped, from VALUES, or an earlier alias. With no
+    -- GROUP BY a BARE projected variable beside an aggregate is
+    -- ungrouped (agg10.rq: `SELECT ?P (COUNT(?O) AS ?C) WHERE { ?S ?P
+    -- ?O }`), as in the F*'s `not (for_all p items)`.
+    else if grouping && (match sel with
+                         | .vars items => projectionHasUngrouped (named ++ valuesVars) items
+                         | .all        => false) then
+      pErr "SELECT projects ungrouped variable" ts6
+    else if (match sel with
+             | .vars items =>
+               projectionAliasClash
+                 (fun v => valuesVars.contains v ||
+                           (if grouping then named.contains v else ggpHasVar v pattern))
+                 [] items
+             | .all => false) then
+      pErr "SELECT expression aliases variable already in scope" ts6
     else
-      let ungroupedWithGroupBy : Bool :=
-        match gb with
-        | none => false
-        | some gcs =>
-          let isGrouped := fun (v : VarName) =>
-            gcs.any (fun gc => match gc with
-                               | .var gv        => gv == v
-                               | .expr _ (some gv) => gv == v
-                               | _              => false)
-          match sel with
-          | .vars items =>
-            !items.all (fun i => match i with
-                                 | .var v    => isGrouped v
-                                 | .expr e _ => !exprHasUngroupedVar isGrouped e)
-          | _ => false
-      -- §18.2.4.1: with an aggregate in the projection and no GROUP BY,
-      -- every other projected expression must itself be aggregated.
-      let ungroupedImplicit : Bool :=
-        match gb with
-        | some _ => false
-        | none =>
-          match sel with
-          | .vars items =>
-            let hasAgg := items.any (fun i => match i with
-                                              | .expr (.aggregate _ _ _) _ => true
-                                              | _ => false)
-            -- The F* writes this as `not (for_all p items)` with
-            -- `p (SI_Var _) = false`, so a BARE PROJECTED VARIABLE
-            -- alongside an aggregate is itself ungrouped (agg10.rq:
-            -- `SELECT ?P (COUNT(?O) AS ?C) WHERE { ?S ?P ?O }`). The
-            -- negation has to be pushed through both arms.
-            let hasUngrouped :=
-              items.any (fun i => match i with
-                                  | .var _    => true
-                                  | .expr e _ => exprHasUngroupedVar (fun _ => false) e)
-            hasAgg && hasUngrouped
-          | _ => false
-      if ungroupedWithGroupBy || ungroupedImplicit then
-        pErr "SELECT projects ungrouped variable" ts6
-      else if (match sel with
-               | .vars items =>
-                 !items.all (fun i => match i with
-                                      | .expr _ v => !ggpHasVar v pattern
-                                      | _         => true)
-               | _ => false) then
-        pErr "SELECT expression aliases variable already in scope" ts6
-      else do
-        -- [28] the trailing VALUES clause, joined onto the WHERE result.
-        let (vals, ts8) :=
-          match peekTok ts7 with
-          | .values => (match pValuesClause f st (advTok ts7) with
-                        | .ok (g, t) => (some g, t)
-                        | .error _   => (none, ts7))
-          | _ => (none, ts7)
-        let pat := match vals with
-                   | some g => ggpJoin pattern g
-                   | none   => pattern
-        .ok (Query.mk (.select sel) ds pat gb hv
-               { md with distinct := dist, reduced := red } none st.base, ts8)
+      let (pat, pv) := attachValues grouping pattern vals
+      .ok (Query.mk (.select sel) ds pat gb hv
+             { md with distinct := dist, reduced := red } pv st.base, ts8)
 
-/-- [12] AskQuery ::= 'ASK' DatasetClause* WhereClause SolutionModifier. -/
+/-- [12] AskQuery ::= 'ASK' DatasetClause* WhereClause SolutionModifier,
+followed by the [2] trailing ValuesClause.
+
+The SolutionModifier is read and kept in the `Query`. `evalAsk` and
+`evalAskBackend` apply it (SPARQL 1.1 §18.2.4, §18.2.5): ASK is true
+exactly when the solution sequence after GROUP BY, HAVING, the trailing
+VALUES join, ORDER BY, OFFSET and LIMIT is non-empty.
+
+A GROUP BY or HAVING clause makes the query group
+(`Query.groupsSolutions`), and then a trailing VALUES clause joins after
+grouping and HAVING (`attachValues`), as it does for CONSTRUCT and
+SELECT. Tracked at
+https://github.com/danbri/factoidal/issues/699. -/
 def pAskBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Query × TStream) :=
   match fuel with
   | 0     => pErr "recursion limit" ts
@@ -2692,7 +3423,10 @@ def pAskBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Quer
     let (ds, ts2) ← pDatasetClauses f st ts1
     let ts3 := if peekTok ts2 == Token.whereKw then advTok ts2 else ts2
     let (pattern, ts4) ← pGroupGraphPattern f st ts3
-    .ok (Query.mk .ask ds pattern none [] {} none st.base, ts4)
+    let (r, ts5) ← pSolutionModifier f st ts4
+    let (vals, ts6) ← pTrailingValues f st ts5
+    let (pat, pv) := attachValues (groupsSolutionsOf r.2.1 r.2.2) pattern vals
+    .ok (Query.mk .ask ds pat r.2.1 r.2.2 r.1 pv st.base, ts6)
 
 /-- [10] ConstructQuery — the full form and the `CONSTRUCT WHERE`
 short form, whose WHERE pattern must be a basic graph pattern. -/
@@ -2710,16 +3444,20 @@ def pConstructBody (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError
         pErr "CONSTRUCT WHERE short form only allows basic graph patterns" ts3
       else do
         let (r, ts5) ← pSolutionModifier f st ts4
-        .ok (Query.mk (.construct (collectTemplateTriples pattern)) ds pattern
-               r.2.1 r.2.2 r.1 none st.base, ts5)
+        let (vals, ts6) ← pTrailingValues f st ts5
+        let (pat, pv) := attachValues (groupsSolutionsOf r.2.1 r.2.2) pattern vals
+        .ok (Query.mk (.construct (collectTemplateTriples pattern)) ds pat
+               r.2.1 r.2.2 r.1 pv st.base, ts6)
     | .lbrace => do
       let (tmpl, ts2)    ← pGroupGraphPattern f st ts1
       let (ds, ts3)      ← pDatasetClauses f st ts2
       let ts4 := if peekTok ts3 == Token.whereKw then advTok ts3 else ts3
       let (pattern, ts5) ← pGroupGraphPattern f st ts4
       let (r, ts6)       ← pSolutionModifier f st ts5
-      .ok (Query.mk (.construct (collectTemplateTriples tmpl)) ds pattern
-             r.2.1 r.2.2 r.1 none st.base, ts6)
+      let (vals, ts7)    ← pTrailingValues f st ts6
+      let (pat, pv) := attachValues (groupsSolutionsOf r.2.1 r.2.2) pattern vals
+      .ok (Query.mk (.construct (collectTemplateTriples tmpl)) ds pat
+             r.2.1 r.2.2 r.1 pv st.base, ts7)
     | _ => pErr "expected WHERE or '{' after CONSTRUCT" ts1
 
 /-- [11] DescribeQuery's `VarOrIri+` list. -/
@@ -2766,12 +3504,72 @@ def pDescribeAfterTargets (fuel : Nat) (st : PState) (targets : List PatternTerm
       let ts2 := if peekTok ts1 == Token.whereKw then advTok ts1 else ts1
       let (pattern, ts3) ← pGroupGraphPattern f st ts2
       let (r, ts4)       ← pSolutionModifier f st ts3
-      .ok (Query.mk (.describe targets) ds pattern r.2.1 r.2.2 r.1 none st.base, ts4)
+      let (vals, ts5)    ← pTrailingValues f st ts4
+      let (pat, pv) := attachValues (groupsSolutionsOf r.2.1 r.2.2) pattern vals
+      .ok (Query.mk (.describe targets) ds pat r.2.1 r.2.2 r.1 pv st.base, ts5)
     | _ => do
       let (r, ts2) ← pSolutionModifier f st ts1
-      .ok (Query.mk (.describe targets) ds .empty r.2.1 r.2.2 r.1 none st.base, ts2)
+      let (vals, ts3) ← pTrailingValues f st ts2
+      let (pat, pv) := attachValues (groupsSolutionsOf r.2.1 r.2.2) .empty vals
+      .ok (Query.mk (.describe targets) ds pat r.2.1 r.2.2 r.1 pv st.base, ts3)
 
 end
+
+/-- [102] Collection ::= '(' GraphNode+ ')' — desugared into an
+`rdf:first` / `rdf:rest` chain, `rdf:nil` when empty. The readable form, one
+recursive call per element; the parser runs `pCollectionCells`, proved equal
+below. -/
+def pCollection (fuel : Nat) (st : PState) (ts : TStream) :
+    Except ParseError ((PatternTerm × QueryPattern) × TStream) :=
+  match fuel with
+  | 0     => pErr "recursion limit" ts
+  | f + 1 =>
+    match peekTok ts with
+    | .rparen => .ok ((.iri rdfNilIri, .empty), advTok ts)
+    | _ => do
+      let (item, ts1) ← pObjectWithExtras f st ts
+      let bid  := freshBnodeId ts
+      let bsub : PatternSubject := .bnode bid
+      let (rest, ts2) ← pCollection f st ts1
+      let firstT : TriplePattern := { s := bsub, p := .iri rdfFirstIri, o := item.1 }
+      let restT  : TriplePattern := { s := bsub, p := .iri rdfRestIri,  o := rest.1 }
+      let triples : QueryPattern := .bgp [firstT, restT]
+      .ok ((.bnode bid, ggpJoin (ggpJoin triples item.2) rest.2), ts2)
+
+/-- The loop reads the same elements, with the same fuel at each element, as
+the readable form, and links the cells read before (`cellsRev`) in front of
+its answer; errors and positions are the same. -/
+theorem pCollectionCells_eq : ∀ (fuel : Nat) (st : PState) (ts : TStream)
+    (cellsRev : List CollectionCell),
+    pCollectionCells fuel st ts cellsRev =
+      (pCollection fuel st ts).map (fun r => (linkCollectionCells cellsRev r.1, r.2))
+  | 0, st, ts, cellsRev => by
+      simp [pCollectionCells, pCollection, pErr, Except.map]
+  | f + 1, st, ts, cellsRev => by
+      simp only [pCollectionCells, pCollection]
+      split
+      · simp [Except.map]
+      · cases h : pObjectWithExtras f st ts with
+        | error e => simp [bind, Except.bind, Except.map]
+        | ok p =>
+          obtain ⟨item, ts1⟩ := p
+          simp only [bind, Except.bind]
+          rw [pCollectionCells_eq f st ts1]
+          cases pCollection f st ts1 with
+          | error e => simp [Except.map]
+          | ok q =>
+            obtain ⟨rest, ts2⟩ := q
+            simp [Except.map, linkCollectionCells]
+
+def pCollectionFast (fuel : Nat) (st : PState) (ts : TStream) :
+    Except ParseError ((PatternTerm × QueryPattern) × TStream) :=
+  pCollectionCells fuel st ts []
+
+/-- A caller of the readable form runs the loop. -/
+@[csimp] theorem pCollection_eq_fast : @pCollection = @pCollectionFast := by
+  funext fuel st ts
+  rw [pCollectionFast, pCollectionCells_eq]
+  cases pCollection fuel st ts <;> simp [Except.map, linkCollectionCells]
 
 /-! ## Top-level entry points — F* Part 7's `parse_sparql*` -/
 
@@ -2802,9 +3600,97 @@ reason about the entry point without a tactic ever weak-head-
 normalising `pSelectQuery 10000 …` — doing so unfolds ten thousand
 levels of the mutual block and exhausts memory. See
 `SPARQL/ParserTheorems.lean`. -/
-def parseSparql (text : String) (base : Option String := none)
+def parseSparqlAtTopFuel (text : String) (base : Option String := none)
     (version : SparqlVersion := .v11) : Except ParseError Query :=
   parseSparqlWith topFuel text base version
+
+/-- The fuel of the second pass of `parseSparql`: the F* seed plus the
+number of characters of the request. A sibling loop of the parser (the
+members of a collection, the triples of a block, the values of a VALUES
+block) spends one unit of fuel per sibling, so with the constant seed alone
+a request with more than about 10,000 siblings in one loop was rejected
+("recursion limit", or a missing `}` after the loop stopped);
+https://github.com/danbri/factoidal/issues/818 item 1. Every sibling has at
+least one character. -/
+def scaledFuel (text : String) : Nat := topFuel + text.length
+
+/-- Parse a SPARQL query: first at the F* seed `topFuel`; when that pass
+rejects the request, once more at `scaledFuel`, and its answer when it
+accepts. A request the first pass accepts gets the same answer
+(`parseSparql_of_topFuel`), and a request that both passes reject gets the
+first pass's error (`parseSparql_error`), so the second pass adds answers
+and changes no other result. The nesting depth of a request is bounded by
+the stack in both passes, before and after this change: under a 512 KB
+native stack, 3,000 nested `{ }` groups overflowed with the constant fuel
+alone (measured 2026-10-13).
+
+The accepted query is returned with its property-path alternatives of IRIs
+rewritten as UNIONs of triple patterns (`Query.expandIriAlternatives`,
+`SPARQL/PathAlternative.lean`), once, here, so that every planner and every
+evaluator reads the same pattern
+(https://github.com/danbri/factoidal/issues/1008). The rewrite preserves the
+evaluation: `Query.expandIriAlternatives_eval` in
+`SPARQL/PathAlternativeTheorems.lean`. `parseSparqlWith` returns the pattern
+as written, and the theorems stated for it are unchanged. -/
+def parseSparql (text : String) (base : Option String := none)
+    (version : SparqlVersion := .v11) : Except ParseError Query :=
+  match parseSparqlWith topFuel text base version with
+  | .ok q => .ok q.expandIriAlternatives
+  | .error e =>
+    match parseSparqlWith (scaledFuel text) text base version with
+    | .ok q => .ok q.expandIriAlternatives
+    | .error _ => .error e
+
+/-- Where the F* seed answers, the answer is the F* seed's answer, with the
+alternatives of IRIs rewritten. -/
+theorem parseSparql_of_topFuel {text : String} {base : Option String}
+    {version : SparqlVersion} {q : Query}
+    (h : parseSparqlWith topFuel text base version = .ok q) :
+    parseSparql text base version = .ok q.expandIriAlternatives := by
+  simp [parseSparql, h]
+
+/-- A rejection is the F* seed's rejection, with its message. -/
+theorem parseSparql_error {text : String} {base : Option String}
+    {version : SparqlVersion} {e : ParseError}
+    (h : parseSparql text base version = .error e) :
+    parseSparqlWith topFuel text base version = .error e := by
+  unfold parseSparql at h
+  cases h1 : parseSparqlWith topFuel text base version with
+  | ok q => simp [h1] at h
+  | error e1 =>
+    cases h2 : parseSparqlWith (scaledFuel text) text base version with
+    | ok q => simp [h1, h2] at h
+    | error e2 => simp [h1, h2] at h; rw [h]
+
+/-- Every answer is an answer of the readable parser at some fuel, with the
+alternatives of IRIs rewritten, so the theorems stated for `parseSparqlWith`
+at every fuel (`parseSparql_bnodeScope_valid`, `parseSparql_consumes_stream`)
+hold of the query before the rewrite. -/
+theorem parseSparql_ok {text : String} {base : Option String}
+    {version : SparqlVersion} {q : Query}
+    (h : parseSparql text base version = .ok q) :
+    ∃ fuel q0, parseSparqlWith fuel text base version = .ok q0 ∧
+      q = q0.expandIriAlternatives := by
+  unfold parseSparql at h
+  cases h1 : parseSparqlWith topFuel text base version with
+  | ok q1 => simp [h1] at h; exact ⟨topFuel, q1, h1, h.symm⟩
+  | error e1 =>
+    cases h2 : parseSparqlWith (scaledFuel text) text base version with
+    | ok q2 => simp [h1, h2] at h; exact ⟨scaledFuel text, q2, h2, h.symm⟩
+    | error e2 => simp [h1, h2] at h
+
+#print axioms parseSparql_error
+#print axioms parseSparql_ok
+
+/-! A VALUES block of 10,001 values ran out of the constant fuel; the
+second pass reads it. The first pass alone still rejects it, and a query
+that is not SPARQL is rejected by both. -/
+private def valuesQuery (n : Nat) : String :=
+  "ASK { ?s ?p ?o } VALUES ?x { " ++ " ".intercalate ((List.range n).map toString) ++ " }"
+#guard (parseSparql (valuesQuery 10001)).toOption.isSome
+#guard (parseSparqlAtTopFuel (valuesQuery 10001)).toOption.isNone
+#guard (parseSparql (valuesQuery 100)).toOption.isSome
+#guard (parseSparql "ASK { ?s ?p }").toOption.isNone
 
 /-! ## The SSE algebra printer — F* Part 8
 

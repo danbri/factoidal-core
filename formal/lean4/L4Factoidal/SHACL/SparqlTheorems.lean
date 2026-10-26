@@ -53,74 +53,18 @@ namespace L4Factoidal.SHACL
 The property that makes AST substitution a faithful implementation of
 pre-binding in EXPRESSION positions: the expression the substitution
 puts in place of `$v` evaluates to exactly what `Expr.var v` would
-evaluate to under the pre-binding row — including SPARQL §17.1 numeric
-promotion, which `Expr.lit` alone does not perform. -/
+evaluate to under the pre-binding row. Numeric conversion is performed by
+operators, so substitution also preserves term identity and lexical spelling. -/
 
-theorem termToExpr_evalIn_eq_literalPromote (env : EvalEnv) (mu : Binding) (l : WfLiteral) :
-    (termToExpr? (.literal l)).map (Expr.evalIn env mu) = some (literalPromote l) := by
-  simp only [termToExpr?, literalPromote]
-  by_cases h1 : isIntegerDatatype l.val.datatype = true
-  · have hnf : l.val.datatype.val ≠ SPARQL.xsdFloat.val := by
-      intro heq
-      have hdt : l.val.datatype = SPARQL.xsdFloat := Subtype.ext heq
-      rw [hdt] at h1
-      have hfi : isIntegerDatatype SPARQL.xsdFloat = false := by decide
-      rw [hfi] at h1
-      contradiction
-    rw [if_pos h1, if_pos h1]
-    cases hp : parseIntString l.val.lexicalForm with
-    | none => simp [Expr.evalIn, hnf]
-    | some n =>
-        by_cases hf : integerValueFitsDatatype l.val.datatype n = true
-        · simp [Expr.evalIn, hf]
-        · simp [Expr.evalIn, hf, hnf]
-  · rw [if_neg h1, if_neg h1]
-    by_cases h2 : (l.val.datatype == RDF.xsdDecimal) = true
-    · have hnf : l.val.datatype.val ≠ SPARQL.xsdFloat.val := by
-        intro heq
-        have hdt : l.val.datatype = SPARQL.xsdFloat := Subtype.ext heq
-        rw [hdt] at h2
-        have hdf : (SPARQL.xsdFloat == RDF.xsdDecimal) = false := by decide
-        rw [hdf] at h2
-        contradiction
-      rw [if_pos h2, if_pos h2]
-      by_cases he :
-          'e' ∈ l.val.lexicalForm.toList ||
-          'E' ∈ l.val.lexicalForm.toList
-      · simp [he, Expr.evalIn, hnf]
-      · cases hp : L4Factoidal.XSD.parseLexical l.val.lexicalForm with
-        | none => simp [he, Expr.evalIn, hnf]
-        | some parsed =>
-            cases parsed <;> simp [he, Expr.evalIn, hnf]
-    · rw [if_neg h2, if_neg h2]
-      by_cases h3 : (l.val.datatype == SPARQL.xsdFloat) = true
-      · rw [if_pos h3, if_pos h3]
-        simp [Expr.evalIn, literalPromote, h1, h2, h3]
-      · rw [if_neg h3, if_neg h3]
-        by_cases h4 : (l.val.datatype == RDF.xsdDouble) = true
-        · rw [if_pos h4, if_pos h4]
-          cases hp : L4Factoidal.XSD.parseLexical l.val.lexicalForm <;>
-            simp [Expr.evalIn, h3]
-        · rw [if_neg h4, if_neg h4]
-          by_cases h5 : (l.val.datatype == RDF.xsdBoolean) = true
-          · rw [if_pos h5, if_pos h5]
-            split <;> simp_all [Expr.evalIn]
-          · rw [if_neg h5, if_neg h5]; simp [Expr.evalIn, h3]
+theorem termToExpr_evalIn_eq_literal (env : EvalEnv) (mu : Binding) (l : WfLiteral) :
+    (termToExpr? (.literal l)).map (Expr.evalIn env mu) = some (.term (.literal l)) := rfl
 
-/-- The same statement in the form the substitution uses it: replacing
-`Expr.var v` by `termToExpr? t` preserves the value `Expr.var v` has
-under a mapping that binds `v` to `t`. -/
+/-- Replacing a bound literal variable by a literal expression preserves its
+    complete RDF term, not merely its promoted datatype value. -/
 theorem substVarExpr_var_evalIn (env : EvalEnv) (mu : Binding) (v : VarName) (l : WfLiteral) :
     Expr.evalIn env mu (substVarExpr v (.literal l) (.var v)) =
       Expr.evalIn env [(v, .literal l)] (.var v) := by
-  have h := termToExpr_evalIn_eq_literalPromote env mu l
-  have hr : Expr.evalIn env [(v, Term.literal l)] (Expr.var v) = literalPromote l := by
-    simp [Expr.evalIn, Binding.lookup]
-  rw [hr]
-  simp only [substVarExpr, beq_self_eq_true, if_true]
-  cases he : termToExpr? (Term.literal l) with
-  | none => rw [he] at h; simp at h
-  | some e => rw [he] at h; simpa using h
+  simp [substVarExpr, termToExpr?, Expr.evalIn, Binding.lookup]
 
 /-! ## The failure channel produces no results -/
 
@@ -209,43 +153,58 @@ theorem evalCustomComponent_eq_nil_iff (data : Graph) (focus : Term) (s : Shape)
   | .minInclusive _ | .maxInclusive _ | .minExclusive _ | .maxExclusive _
   | .minLength _ | .maxLength _ | .pattern _ _ | .languageIn _ | .uniqueLang _
   | .equals _ | .disjoint _ | .lessThan _ | .lessThanOrEquals _
+  | .singleLine _ | .rootClass _ | .memberShape _ | .minListLength _ | .maxListLength _
+  | .uniqueMembers _ | .subsetOf _ | .someValue _ | .uniqueValuesFor _ | .nodeByExpression _ | .reifierShape _ _
   | .notOf _ | .andOf _ | .orOf _ | .xoneOf _ | .nodeOf _
   | .qualifiedMinCount _ _ _ | .qualifiedMaxCount _ _ _
-  | .closed _ | .hasValue _ | .inSet _ | .sparql _ _ _ _ =>
+  | .closed _ | .closedByTypes _ _ | .hasValue _ | .inSet _ | .sparql _ _ _ _ =>
     simp [SparqlOutcome.empty]
 
 /-! ## §3.1 the report -/
 
 /-- The report's `sh:conforms` decomposes into SHACL Core conformance
-and the two SHACL-SPARQL passes. Item 2 of the module header's
-"not covered" list is exactly the step from the two pass-emptiness
-conjuncts to `Spec.GraphConformsWithSparql`'s own quantifiers. -/
-theorem validateWithSparql_conforms_iff (data shapesRaw : Graph) (sg : ShapesGraph) :
-    (validateWithSparql data shapesRaw sg).conforms = true ↔
-      Spec.GraphConforms data sg ∧
-      (∀ s ∈ sg.shapes.filter (fun s => !s.targets.isEmpty),
-         (sparqlViolationsForShape data shapesRaw (distinctSubjects data) s).results = []) ∧
-      (∀ s ∈ sg.shapes.filter (fun s => !s.targets.isEmpty),
-         (customViolationsForShape data (distinctSubjects data) sg.shapes s
-            (validateFuel sg.shapes)).results = []) := by
-  have hcore : (validate data sg).results = [] ↔ Spec.GraphConforms data sg := by
-    have := validate_conforms_iff data sg
-    simpa [validate, List.isEmpty_iff] using this
-  simp only [validateWithSparql, SparqlOutcome.append, List.isEmpty_iff,
-    List.append_eq_nil_iff, SparqlOutcome.concat_results_eq_nil_iff, List.mem_map,
-    forall_exists_index, and_imp, forall_apply_eq_imp_iff₂, hcore, and_assoc]
+and SHACL 1.2 conformance checking (`ValidationEnv.conforms`) of the
+two SHACL-SPARQL passes' results. Item 2 of the module header's "not
+covered" list is exactly the step from the two pass conjuncts to
+`Spec.GraphConformsWithSparql`'s own quantifiers. -/
+theorem validateWithSparql_conforms_iff (data shapesRaw : Graph) (sg : ShapesGraph)
+    (cfg : ValidationConfig) :
+    (validateWithSparql data shapesRaw sg cfg).conforms = true ↔
+      Spec.GraphConforms (cfg.envFor data sg.shapes) data sg ∧
+      (∀ s ∈ sg.shapes,
+         (cfg.envFor data sg.shapes).conforms
+           (sparqlViolationsForShape (cfg.envFor data sg.shapes) data shapesRaw sg.shapes
+              (distinctSubjects data) s).results = true) ∧
+      (∀ s ∈ sg.shapes,
+         (cfg.envFor data sg.shapes).conforms
+           (customViolationsForShape (cfg.envFor data sg.shapes) data (distinctSubjects data)
+              sg.shapes s (validateFuel sg.shapes)).results = true) := by
+  have hcore : (cfg.envFor data sg.shapes).conforms (validate data sg cfg).results = true ↔
+      Spec.GraphConforms (cfg.envFor data sg.shapes) data sg := by
+    rw [← validate_conforms_iff data sg cfg]
+    simp [validate]
+  simp only [validateWithSparql, SparqlOutcome.append, conforms_append, Bool.and_eq_true,
+    hcore]
+  have hcat : ∀ (os : List SparqlOutcome),
+      (cfg.envFor data sg.shapes).conforms (SparqlOutcome.concat os).results = true ↔
+        ∀ o ∈ os, (cfg.envFor data sg.shapes).conforms o.results = true := by
+    intro os
+    induction os with
+    | nil => simp [SparqlOutcome.concat, SparqlOutcome.empty, conforms_nil]
+    | cons o rest ih =>
+      simp [SparqlOutcome.concat, SparqlOutcome.append, conforms_append, ih]
+  simp only [hcat, List.mem_map, forall_exists_index, and_imp, forall_apply_eq_imp_iff₂]
 
 /-- A conforming SHACL-SPARQL report is a certificate of SHACL Core
 conformance. -/
 theorem validateWithSparql_sound_core (data shapesRaw : Graph) (sg : ShapesGraph)
-    (h : (validateWithSparql data shapesRaw sg).conforms = true) :
-    Spec.GraphConforms data sg :=
-  ((validateWithSparql_conforms_iff data shapesRaw sg).mp h).1
+    (cfg : ValidationConfig)
+    (h : (validateWithSparql data shapesRaw sg cfg).conforms = true) :
+    Spec.GraphConforms (cfg.envFor data sg.shapes) data sg :=
+  ((validateWithSparql_conforms_iff data shapesRaw sg cfg).mp h).1
 
 /-! ## Axiom audit -/
 
-#print axioms termToExpr_evalIn_eq_literalPromote
-#print axioms substVarExpr_var_evalIn
 #print axioms withPreboundQuery_error
 #print axioms sparqlViolationsForFocus_eq_nil_iff
 #print axioms customAskViolation_eq_nil_iff

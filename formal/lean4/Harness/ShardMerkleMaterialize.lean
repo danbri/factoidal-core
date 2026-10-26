@@ -5,6 +5,7 @@ import Harness.PosixRangeIO
 import Harness.CompactedEpoch
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.Storage.DeltaLog
+import L4Factoidal.Storage.DeltaLogBytesTheorems
 import L4Factoidal.SPARQL.StorePlan
 
 namespace Harness.ShardMerkleMaterialize
@@ -248,14 +249,18 @@ def readDefaultDelta? (directory : System.FilePath) : IO (Option DeltaResolved) 
   let path := directory / "deltas.dlog"
   try
     let bytes ← IO.FS.readBinFile path
-    match parseLog bytes.toList with
-    | some (batches, []) =>
+    match DeltaLogBytes.parseLogCheckedV1BA bytes with
+    | .ok (batches, false) =>
         if validBatchHistory batches then
           match replayBatchesSinceEpoch? baseEpoch batches with
           | some replay => pure (some (foldDeltaBatches replay none))
           | none => pure none
         else pure none
-    | _ => pure none
+    | .ok (_, true) => pure none
+    | .error e =>
+        -- issue 843: say which frame stops the replay; the caller refuses.
+        IO.eprintln s!"{path}: {e}"
+        pure none
   catch _ =>
     if (← path.pathExists) then pure none else pure (some deltaResolvedEmpty)
 

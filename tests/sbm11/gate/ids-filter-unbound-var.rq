@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# ?zz is bound by no pattern: unbound in every row, before and after the
+# joins, so the FILTER is applied after them.
+SELECT ?s WHERE { ?s ex:age ?a FILTER(!BOUND(?zz)) }

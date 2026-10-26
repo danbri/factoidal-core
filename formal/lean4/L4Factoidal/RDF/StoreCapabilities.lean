@@ -47,6 +47,7 @@ accounts for every member explicitly, and `unionCaps` always advertises
 `some` with the per-member fallback inside.
 -/
 import L4Factoidal.SPARQL.Algebra
+import L4Factoidal.RDF.GraphIndex
 import L4Factoidal.Storage.DeltaLog
 import L4Factoidal.OWL.RLClosureIndexed
 
@@ -150,16 +151,29 @@ def capsTakeN (n : Nat) (xs : List α) : List α := xs.take n
 
 A read-only federation over a list of read seams. It mirrors the
 per-field arithmetic the six tag dispatchers did for a union backend,
-without a union-shaped constructor. -/
+without a union-shaped constructor.
+
+**The union is a SET union** (https://github.com/danbri/factoidal/issues/975,
+B1). RDF 1.1 Semantics defines the union of graphs as the set-theoretic union,
+and an RDF graph is a set of triples (RDF 1.1 Concepts section 3). Until
+2026-10-23 `unionSolve` concatenated the members' answers and
+`unionCountExact` summed their counts, as the F\* module does: two members that
+hold one triple returned it twice, and a basic graph pattern then counted each
+solution twice. Now `unionSolve` keeps the first occurrence of each triple up to
+RDF term equality (`Graph.unionFast`, equal to `Graph.union` by
+`Graph.union_eq_unionFast`), `unionCountExact` counts that answer, and
+`unionSolveLimited` returns its prefix. This is a deliberate divergence from
+the F\* source. `unionEstimate` stays the sum: an upper bound, and the record
+does not advertise an exact estimate. -/
 
 def unionSolve (members : List StoreCaps) (b : PatternBound) : List Triple :=
-  members.flatMap (fun m => m.solve b)
+  Graph.unionFast [] (members.flatMap (fun m => m.solve b))
 
 def unionEstimate (members : List StoreCaps) (b : PatternBound) : Nat :=
   members.foldl (fun acc m => acc + m.estimate b) 0
 
 def unionCountExact (members : List StoreCaps) (b : PatternBound) : Nat :=
-  members.foldl (fun acc m => acc + m.countExact b) 0
+  (unionSolve members b).length
 
 def unionPredicatePresent (members : List StoreCaps) (pred : WfIri) : Bool :=
   members.any (fun m => m.predicatePresent pred)
@@ -175,21 +189,31 @@ pushdown would be made to decode its entire result before the union
 threw most of it away, which defeats the one path that exists to avoid
 that. So each member is asked for only its REMAINING budget, and the
 walk stops before touching a later member at all once the budget is
-spent. -/
+spent.
 
-def unionSolveLimitedAcc : List StoreCaps → PatternBound → Nat → List Triple → Nat →
-    List Triple
-  | [], _, _, accRev, _ => accRev
-  | m :: rest, b, limit, accRev, accLen =>
-      if accLen ≥ limit then accRev
+With the set union a member's limited answer can repeat rows the union
+already holds, so it can add fewer rows than its budget. Then, and only then,
+the member is read in full: its limited answer filled the budget, so the
+member may hold more new rows. A member that returned fewer rows than its
+budget has no more, and a merge that filled the limit needs no later row. -/
+
+def unionSolveLimitedAcc : List StoreCaps → PatternBound → Nat → Graph → Graph
+  | [], _, _, acc => acc
+  | m :: rest, b, limit, acc =>
+      if acc.length ≥ limit then acc
       else
-        let part := m.solveLimited b (limit - accLen)
-        unionSolveLimitedAcc rest b limit (part.reverse ++ accRev) (accLen + part.length)
+        let budget := limit - acc.length
+        let part := m.solveLimited b budget
+        let merged := Graph.unionFast acc part
+        if part.length < budget || merged.length ≥ limit then
+          unionSolveLimitedAcc rest b limit merged
+        else
+          unionSolveLimitedAcc rest b limit (Graph.unionFast acc (m.solve b))
 
 def unionSolveLimited (members : List StoreCaps) (b : PatternBound) (limit : Nat) :
     List Triple :=
   if limit == 0 then []
-  else capsTakeN limit (unionSolveLimitedAcc members b limit [] 0).reverse
+  else capsTakeN limit (unionSolveLimitedAcc members b limit [])
 
 /-! ### DISTINCT predicates across a union
 
@@ -233,10 +257,10 @@ plain `solve` when it has no accelerated realisation. This mirrors
 
 def unionSolveSelective (members : List StoreCaps) (b : PatternBound) (need : ColNeed) :
     List Triple :=
-  members.flatMap (fun m =>
+  Graph.unionFast [] (members.flatMap (fun m =>
     match m.solveSelective with
     | some f => f b need
-    | none   => m.solve b)
+    | none   => m.solve b))
 
 def unionCaps (members : List StoreCaps) : StoreCaps :=
   { flags :=
@@ -262,10 +286,10 @@ call the tag dispatcher already made. -/
 
 /-- An OWL in-memory index hashes object terms structurally, while the SPARQL
     matcher uses `Term.eqb`: language tags compare case-insensitively and
-    `rdf:XMLLiteral` values compare after canonical XML.  An object in either
+    `rdf:XMLLiteral` values compare after canonical XML. An object in either
     class cannot safely select one exact hash bucket, because an equivalent
-    stored spelling may live in another bucket.  This asks only whether the
-    exact object access path is a *complete* candidate set; the normal matcher
+    stored spelling may live in another bucket. This asks only whether the
+    exact object access path is a complete candidate set; the normal matcher
     always remains the semantic authority. -/
 def exactObjectIndexKeySafe : Term → Bool
   | .iri _ | .bnode _ => true
@@ -291,6 +315,39 @@ def igSearch (i : OWL.RL.Index) (b : PatternBound) : List Triple :=
   tripleMatchesBound b candidates
 
 def igEstimate (i : OWL.RL.Index) (b : PatternBound) : Nat := (igSearch i b).length
+
+/-- Constant-time exact counts for unbound and predicate-only requests.
+    Every other bound retains the ordinary search, including the object
+    equality fallback for language tags and XML literals. -/
+def igEstimateFast (i : OWL.RL.Index) (b : PatternBound) : Nat :=
+  match b.s, b.p, b.o with
+  | none, none, none => i.all.size
+  | none, some p, none => i.byPCount.getD p 0
+  | _, _, _ => (igSearch i b).length
+
+theorem igEstimateFast_eq (i : OWL.RL.Index) (b : PatternBound) :
+    igEstimateFast i b = igEstimate i b := by
+  rcases b with ⟨s, p, o⟩
+  cases s <;> cases p <;> cases o <;> simp only [igEstimateFast] <;> try rfl
+  · change i.all.size = (i.all.toList.filter (fun _ => true)).length
+    rw [List.filter_eq_self.mpr (by intro _ _; rfl), Array.length_toList]
+  · rename_i p
+    rw [i.byPCount_valid]
+    change ((i.byP.getD p []).filter (fun t => p == t.p)).length =
+      ((i.byP.getD p []).reverse.filter (L4Factoidal.SPARQL.boundMatches { p := some p })).length
+    have bound_eq : L4Factoidal.SPARQL.boundMatches { p := some p } =
+        (fun t => p == t.p) := by
+      funext t
+      simp [L4Factoidal.SPARQL.boundMatches]
+    rw [bound_eq]
+    rw [List.filter_reverse, List.length_reverse]
+
+@[csimp] theorem igEstimate_csimp : igEstimate = igEstimateFast := by
+  funext i b
+  exact (igEstimateFast_eq i b).symm
+
+#print axioms igEstimateFast_eq
+#print axioms igEstimate_csimp
 
 def capsOfIndexed (i : OWL.RL.Index) : StoreCaps :=
   { flags :=
@@ -382,8 +439,6 @@ private def capsLang : StoreCaps := capsOfIndexed (OWL.RL.Index.ofGraph [lang1, 
 #guard capsA.solve { s := some (iriS "http://e.org/a"), o := some (iriT "http://e.org/2") } == []
 #guard capsA.predicatePresent (iriP "http://e.org/p")
 #guard !capsA.predicatePresent (iriP "http://e.org/q")
--- A structural hash bucket is not complete for language-tag equality; the
--- predicate bucket plus `Term.eqb` returns both W3C-equivalent spellings.
 #guard !exactObjectIndexKeySafe langEn
 #guard (capsLang.solve { p := some (iriP "http://e.org/lang"), o := some langEn }).length == 2
 
@@ -393,6 +448,15 @@ private def capsLang : StoreCaps := capsOfIndexed (OWL.RL.Index.ofGraph [lang1, 
 #guard (unionCaps [capsA, capsB]).countExact patternBoundAll == 3
 #guard (unionCaps []).solve patternBoundAll == []
 #guard (unionCaps [capsA, capsB]).predicatePresent (iriP "http://e.org/q")
+
+/-! ### The union is a set: a triple two members hold is read once, and
+the count and LIMIT agree with the read -/
+
+#guard (unionCaps [capsA, capsA]).solve patternBoundAll == [a, b2]
+#guard (unionCaps [capsA, capsA]).countExact patternBoundAll == 2
+#guard (unionCaps [capsA, capsA, capsB]).solveLimited patternBoundAll 3 == [a, b2, c]
+#guard (unionCaps [capsA, capsA, capsB]).solveLimited patternBoundAll 2 == [a, b2]
+#guard ((unionCaps [capsLang, capsLang]).solve patternBoundAll).length == 2
 
 /-! ### LIMIT pushdown truncates to exactly the limit, in order
 

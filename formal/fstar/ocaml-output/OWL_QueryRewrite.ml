@@ -256,7 +256,8 @@ let wrap_distinct_over_ggp (g : SPARQL11_Algebra.group_graph_pattern) :
           SPARQL11_Algebra.sm_offset = FStar_Pervasives_Native.None;
           SPARQL11_Algebra.sm_limit = FStar_Pervasives_Native.None
         };
-      SPARQL11_Algebra.q_values = FStar_Pervasives_Native.None
+      SPARQL11_Algebra.q_values = FStar_Pervasives_Native.None;
+      SPARQL11_Algebra.q_post_values = FStar_Pervasives_Native.None
     }
 let build_union_ggp (branch_bgps : SPARQL11_Algebra.bgp Prims.list) :
   SPARQL11_Algebra.group_graph_pattern=
@@ -1321,7 +1322,8 @@ let rewrite_query (q : SPARQL11_Algebra.query) : SPARQL11_Algebra.query=
     SPARQL11_Algebra.q_group_by = (q.SPARQL11_Algebra.q_group_by);
     SPARQL11_Algebra.q_having = (q.SPARQL11_Algebra.q_having);
     SPARQL11_Algebra.q_modifier = (q.SPARQL11_Algebra.q_modifier);
-    SPARQL11_Algebra.q_values = (q.SPARQL11_Algebra.q_values)
+    SPARQL11_Algebra.q_values = (q.SPARQL11_Algebra.q_values);
+    SPARQL11_Algebra.q_post_values = (q.SPARQL11_Algebra.q_post_values)
   }
 let rewrite_query_for_owl_direct (q : SPARQL11_Algebra.query) :
   SPARQL11_Algebra.query= rewrite_query q

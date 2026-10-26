@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!DOCTYPE doc [
+<!ELEMENT doc EMPTY>
+<!ATTLIST doc xmlns:q CDATA #FIXED "urn:example:q"
+              q:lang CDATA #IMPLIED q:id CDATA #IMPLIED q:base CDATA #IMPLIED>
+]>
+<doc q:lang="!!" q:id="1" q:base="%zz"/>

@@ -1,0 +1,17 @@
+{
+  "command": [
+    "/Users/danbri/.elan/bin/lake",
+    "env",
+    "lean",
+    "L4Factoidal/SPARQL/AggStream.lean"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4",
+  "mutation": "SUM/AVG step discards each input operand, retaining only prior total",
+  "exit_code": 1,
+  "seconds": 23.364,
+  "original_sha256": "0bc70b1b168f185e743032da24c40b35d378bdf7dffbefc648222fa4cd50a333",
+  "mutated_sha256": "f7d9f1ed494e9130f41295956dda0fd20ed4acc8861dcfe0ed127a08f49e2c5a",
+  "restored_sha256": "0bc70b1b168f185e743032da24c40b35d378bdf7dffbefc648222fa4cd50a333",
+  "resource_or_import_failure": false,
+  "proof_rejected": false
+}

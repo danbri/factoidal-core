@@ -54,10 +54,20 @@ string rendering is injective — because a non-injective rendering
 lets a step derived for one claim be read as a proof of another.
 `Claim.render` exists for display and is not the identity.
 
+## Blank nodes are scoped to their artifact (issue 976)
+
+A raw claim is read in a SCOPE before anything joins on it: the
+artifact the step reads, or the assumption or adapter step that states
+it. Equal blank-node labels in two scopes are different nodes, also
+when the two artifacts share an RDFC-1.0 digest (RDF 1.1 Concepts
+sections 3.4 and 3.5; RDF 1.1 Semantics section 5.2). Section "Blank-node
+scope" below, and adoption doc section 4a.
+
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.RDFS.DerivationCheck
 import L4Factoidal.RDF.Canonical
+import L4Factoidal.RDF.Isomorphism
 
 namespace L4Factoidal.FPP0
 
@@ -150,7 +160,11 @@ Two shapes, and identity is structural equality on them.
 * `rdfDerivable graph axioms t` — the triple `t` is derivable by the
   RDF 1.1 Semantics section 8.1 / section 9.2 rows from the graph
   whose RDFC-1.0 digest is `graph`, under the axiom set whose
-  RDFC-1.0 digest is `axioms`. BOTH digests are part of the claim:
+  RDFC-1.0 digest is `axioms`. The blank nodes of `t` are the
+  producer's raw labels; the kernel reads them in the scope of the
+  step or assumption that states the claim (issue 976), so a claim
+  never names a blank node of another artifact. BOTH digests are part
+  of the claim:
   derivability is relative to a regime, so a claim that named only
   the graph would be true under one axiom set and false under
   another, and two such claims must not join.
@@ -245,70 +259,205 @@ structure Bundle where
   conclusion : Claim
   deriving DecidableEq, Repr
 
+/-! ## Blank-node scope (issue 976)
+
+RDF 1.1 Concepts section 3.4: blank-node identifiers are LOCAL to a
+concrete syntax document or graph store, and section 3.5 lets an
+implementation replace them by others. RDF 1.1 Semantics section 5.2:
+the merge of two graphs renames their blank nodes apart before the
+union is taken. RDFC-1.0 identifies a graph up to blank-node
+isomorphism, so two artifacts with the same digest give NO
+correspondence between their raw labels.
+
+The kernel therefore never joins a raw label. A blank node `_:x` read
+from the graph artifact with id `G` is the scoped node
+`scopeLabel (.artifact "G") "x"`; a blank node in a declared
+assumption, or in the conclusion of an adapter step, is scoped by
+that assumption's or step's own id (`Scope.frontier`). Equal labels
+in two different scopes are different nodes (`scopeLabel_inj`).
+There is no relabelling step in FPP0/1: a premise can cross from one
+artifact to another only through triples with no blank node, which
+every scope leaves unchanged (`Triple.scoped_of_isGround`).
+
+The bundle FORMAT is unchanged. Claims in a bundle still carry the
+producer's raw labels; the kernel reads each raw claim in the scope of
+the step or assumption that states it. -/
+
+/-- Where the blank nodes of a claim live: a graph artifact, or the
+assumption or adapter step that states the claim. -/
+inductive Scope where
+  | artifact (id : String)
+  | frontier (id : String)
+  deriving DecidableEq, Repr, Inhabited
+
+/-- The scope as characters, with a one-character tag that keeps the
+two constructors apart. -/
+def Scope.tag : Scope → List Char
+  | .artifact id => 'a' :: id.toList
+  | .frontier id => 'f' :: id.toList
+
+theorem Scope.tag_inj : ∀ {s s' : Scope}, s.tag = s'.tag → s = s'
+  | .artifact a, .artifact a', h => by
+      simp only [Scope.tag, List.cons.injEq, true_and] at h
+      rw [String.toList_inj.1 h]
+  | .frontier a, .frontier a', h => by
+      simp only [Scope.tag, List.cons.injEq, true_and] at h
+      rw [String.toList_inj.1 h]
+  | .artifact _, .frontier _, h => by simp [Scope.tag] at h
+  | .frontier _, .artifact _, h => by simp [Scope.tag] at h
+
+/-- A self-delimiting encoding: every character is followed by `'0'`,
+and the end is the pair `'.' '1'`. So the encoded scope ends at a
+position the decoder can find, whatever characters the scope id and
+the label contain. -/
+def encodeScopeChars (l : List Char) : List Char :=
+  l.flatMap (fun c => [c, '0']) ++ ['.', '1']
+
+theorem encodeScopeChars_nil : encodeScopeChars [] = ['.', '1'] := rfl
+
+theorem encodeScopeChars_cons (c : Char) (cs : List Char) :
+    encodeScopeChars (c :: cs) = c :: '0' :: encodeScopeChars cs := by
+  simp [encodeScopeChars]
+
+theorem encodeScopeChars_append_inj :
+    ∀ {l l' r r' : List Char},
+      encodeScopeChars l ++ r = encodeScopeChars l' ++ r' → l = l' ∧ r = r'
+  | [], [], _, _, h => by simpa [encodeScopeChars_nil] using h
+  | [], _ :: _, _, _, h => by simp [encodeScopeChars_nil, encodeScopeChars_cons] at h
+  | _ :: _, [], _, _, h => by simp [encodeScopeChars_nil, encodeScopeChars_cons] at h
+  | c :: cs, c' :: cs', r, r', h => by
+      simp only [encodeScopeChars_cons, List.cons_append, List.cons.injEq, true_and] at h
+      obtain ⟨hc, hrest⟩ := h
+      obtain ⟨h1, h2⟩ := encodeScopeChars_append_inj hrest
+      exact ⟨by rw [hc, h1], h2⟩
+
+/-- The label a raw blank-node label `b` gets in scope `s`. -/
+def scopeLabel (s : Scope) (b : BNodeId) : BNodeId :=
+  String.ofList (encodeScopeChars s.tag ++ b.toList)
+
+/-- **Scoped labels are renamed apart.** Two scoped labels are equal
+only when the scopes AND the raw labels are equal. So `_:x` from
+artifact `G1` and `_:x` from artifact `G2` are different nodes, and
+the scoped artifacts below form an RDF 1.1 Semantics section 5.2
+merge, not a union. -/
+theorem scopeLabel_inj {s s' : Scope} {b b' : BNodeId}
+    (h : scopeLabel s b = scopeLabel s' b') : s = s' ∧ b = b' := by
+  have h1 := congrArg String.toList h
+  simp only [scopeLabel, String.toList_ofList] at h1
+  obtain ⟨ht, hb⟩ := encodeScopeChars_append_inj h1
+  exact ⟨Scope.tag_inj ht, String.toList_inj.1 hb⟩
+
+/-- A triple read in scope `s`: every blank node relabelled by
+`scopeLabel s`, inside RDF 1.2 triple terms too. -/
+def _root_.L4Factoidal.RDF.Triple.scoped (s : Scope) (t : Triple) : Triple :=
+  t.renameBnodes (scopeLabel s)
+
+/-- A claim read in scope `s`. A `clif` claim has no RDF blank node
+and is unchanged. -/
+def Claim.scoped (s : Scope) : Claim → Claim
+  | .rdfDerivable gd ad t => .rdfDerivable gd ad (t.scoped s)
+  | .clif p => .clif p
+
+theorem _root_.L4Factoidal.RDF.Term.renameBnodes_of_bnodes_nil (f : BNodeId → BNodeId)
+    (o : Term) (h : o.bnodes = []) : o.renameBnodes f = o := by
+  induction o with
+  | iri _ => rfl
+  | bnode _ => simp [Term.bnodes] at h
+  | literal _ => rfl
+  | tripleTerm s p o ih =>
+      simp only [Term.bnodes, List.append_eq_nil_iff] at h
+      cases s with
+      | iri i => simp [Term.renameBnodes, Subject.renameBnodes, ih h.2]
+      | bnode _ => simp [Subject.bnodes] at h
+
+/-- **A ground triple is the same in every scope.** This is the only
+way a premise crosses from one artifact to another in FPP0/1. -/
+theorem _root_.L4Factoidal.RDF.Triple.scoped_of_isGround {t : Triple} (s : Scope)
+    (h : t.isGround = true) : t.scoped s = t := by
+  simp only [Triple.isGround, Triple.bnodes, List.isEmpty_iff,
+    List.append_eq_nil_iff] at h
+  obtain ⟨hs, ho⟩ := h
+  cases t with
+  | mk ts tp to =>
+    cases ts with
+    | iri i =>
+        simp [Triple.scoped, Triple.renameBnodes, Subject.renameBnodes,
+          Term.renameBnodes_of_bnodes_nil _ to ho]
+    | bnode _ => simp [Subject.bnodes] at hs
+
+/-! ## The merge of the cited artifacts -/
+
+/-- An artifact's inline body, read in the artifact's own scope. A
+body-less artifact contributes nothing. -/
+def Artifact.scopedBody (a : Artifact) : Graph :=
+  match a.body with
+  | some g => g.map (Triple.scoped (.artifact a.id))
+  | none => []
+
+/-- The RDF 1.1 Semantics section 5.2 MERGE of every artifact filed
+under digest `d`: each body renamed apart by its artifact id
+(`scopeLabel_inj`), then the union taken. -/
+def mergeOf (A : List Artifact) (d : String) : Graph :=
+  (A.filter (fun a => a.digest == d)).flatMap Artifact.scopedBody
+
+theorem mem_mergeOf {A : List Artifact} {a : Artifact} {g : Graph} {t : Triple}
+    (hA : a ∈ A) (hb : a.body = some g) (ht : t ∈ g) :
+    t.scoped (.artifact a.id) ∈ mergeOf A a.digest := by
+  refine List.mem_flatMap.2 ⟨a, List.mem_filter.2 ⟨hA, by simp⟩, ?_⟩
+  simp only [Artifact.scopedBody, hb]
+  exact List.mem_map_of_mem ht
+
 /-! ## `Derives` — what a checked bundle establishes
 
 The FPP0 analogue of `RDFS.DerivesFull`, and the right-hand side of
 `checkBundle_sound`. Adoption doc section 3: the theorem target is
-`Derives assumptions conclusion`, NOT "the bundle is true".
+`Derives artifacts assumptions conclusion`, NOT "the bundle is true".
 
-Three of the four constructors are the RDFS family, and they carry
-`DerivesFull` terms rather than restating any row.
+Claims here are SCOPED claims (section "Blank-node scope" above). The
+artifact table `A` is a parameter: a leaf fact is a triple of an
+artifact's own inline body, read in that artifact's scope. Before
+issue 976 the leaf constructor accepted ANY graph whose digest matched,
+so two labellings of one isomorphism class could both supply leaves
+and their raw labels joined; `Derives.toMerge` below is the statement
+that rules this out.
 
 ⚠️ Adoption doc section 8a: this relation is TRIVIALLY satisfiable by
 declaring the conclusion as an assumption — the `assumption`
 constructor alone proves it. That is why `CheckResult` reports the
 frontier, the per-level counts and `foundationalOnly`, and why a
 reader must read those and not `valid` alone. -/
-inductive Derives (Γ : List Assumption) : Claim → Prop where
-  /-- An external fact, visible in the frontier. -/
-  | assumption {a : Assumption} (h : a ∈ Γ) : Derives Γ a.subject
-  /-- A triple of the graph the digest names — RDFS `base`. The
-  digest link is part of the constructor, so the claim is about the
-  graph the artifact is filed under and not about some other graph
-  that happened to be exhibited. -/
-  | rdfsBase {gd ad : String} {g : Graph} {t : Triple}
-      (hdig : graphDigest g = gd) (hmem : t ∈ g) :
-      Derives Γ (Claim.rdfDerivable gd ad t)
-  /-- An axiomatic triple of the axiom set the digest names — RDFS
-  `axiomatic`. -/
-  | rdfsAxiom {gd ad : String} {ax : Graph} {t : Triple}
-      (hdig : graphDigest ax = ad) (hmem : t ∈ ax) :
-      Derives Γ (Claim.rdfDerivable gd ad t)
-  /-- One RDF 1.1 Semantics inference row, over premises already
-  derived about the SAME graph and the SAME axiom set. `hd` is the
-  landed RDFS relation: `t` follows from the premise triples alone,
-  with no axioms, so the row is context-free and composes by
-  `DerivesFull.cut`. -/
+inductive Derives (A : List Artifact) (Γ : List Assumption) : Claim → Prop where
+  /-- An external fact, visible in the frontier, read in its own
+  scope. -/
+  | assumption {a : Assumption} (h : a ∈ Γ) :
+      Derives A Γ (a.subject.scoped (.frontier a.id))
+  /-- A triple of the inline body of a graph artifact filed under
+  digest `gd` — RDFS `base`, read in the artifact's scope. -/
+  | rdfsBase {gd ad : String} {art : Artifact} {g : Graph} {t : Triple}
+      (hA : art ∈ A) (hb : art.body = some g) (hdig : art.digest = gd) (hmem : t ∈ g) :
+      Derives A Γ (Claim.rdfDerivable gd ad (t.scoped (.artifact art.id)))
+  /-- A triple of the inline body of the axiom artifact filed under
+  digest `ad` — RDFS `axiomatic`, read in that artifact's scope. -/
+  | rdfsAxiom {gd ad : String} {art : Artifact} {ax : Graph} {t : Triple}
+      (hA : art ∈ A) (hb : art.body = some ax) (hdig : art.digest = ad) (hmem : t ∈ ax) :
+      Derives A Γ (Claim.rdfDerivable gd ad (t.scoped (.artifact art.id)))
+  /-- One RDF 1.1 Semantics inference row, over SCOPED premises
+  already derived about the same digests. `hd` is the landed RDFS
+  relation: `t` follows from the premise triples alone, with no
+  axioms, so the row composes by `DerivesFull.cut`. -/
   | rdfsRow {gd ad : String} {prem : List Triple} {t : Triple}
-      (hp : ∀ u ∈ prem, Derives Γ (Claim.rdfDerivable gd ad u))
+      (hp : ∀ u ∈ prem, Derives A Γ (Claim.rdfDerivable gd ad u))
       (hd : DerivesFull [] prem t) :
-      Derives Γ (Claim.rdfDerivable gd ad t)
+      Derives A Γ (Claim.rdfDerivable gd ad t)
 
-/-- Weakening: more assumptions never lose a derivation. Used
-nowhere in the soundness proof; stated because a reader checking that
-`Derives` is a sensible consequence relation looks for it. -/
-theorem Derives.weaken {Γ Δ : List Assumption} (hsub : ∀ a ∈ Γ, a ∈ Δ)
-    {c : Claim} (h : Derives Γ c) : Derives Δ c := by
+/-- Weakening: more assumptions never lose a derivation. -/
+theorem Derives.weaken {A : List Artifact} {Γ Δ : List Assumption}
+    (hsub : ∀ a ∈ Γ, a ∈ Δ) {c : Claim} (h : Derives A Γ c) : Derives A Δ c := by
   induction h with
   | assumption ha => exact Derives.assumption (hsub _ ha)
-  | rdfsBase hdig hmem => exact Derives.rdfsBase hdig hmem
-  | rdfsAxiom hdig hmem => exact Derives.rdfsAxiom hdig hmem
+  | rdfsBase hA hb hdig hmem => exact Derives.rdfsBase hA hb hdig hmem
+  | rdfsAxiom hA hb hdig hmem => exact Derives.rdfsAxiom hA hb hdig hmem
   | rdfsRow _ hd ih => exact Derives.rdfsRow ih hd
-
-/-! ## Collapsing an RDFS-only chain back to `DerivesFull`
-
-An FPP0 chain over one graph and one axiom set is an RDF 1.1
-Semantics derivation, and the theorem below turns it back into one.
-
-⚠️ The two collision hypotheses are the cryptographic assumption,
-written down instead of assumed silently: a claim names a graph by
-its RDFC-1.0 digest, so recovering THE graph from a claim needs the
-digest to name at most one graph. Lean cannot discharge that, and
-this file does not pretend it can. No machine-checked instance of
-`hcol` exists, for the same reason `closure_chain_wf` has none
-(`skills/measuring-inference` section 4); `Proof/Tests.lean` carries
-a concrete inhabitant of `Derives` instead, which is the part that
-CAN be checked. -/
 
 /-- Monotone in the axiom set. Every constructor but `axiomatic` is
 insensitive to it, and `axiomatic` needs only the inclusion. -/
@@ -326,41 +475,59 @@ theorem derivesFull_axMono {ax ax' g : Graph} (hsub : ∀ u ∈ ax, u ∈ ax')
   | rdfs6 _ ih => exact DerivesFull.rdfs6 ih
   | rdfs7 _ _ ih1 ih2 => exact DerivesFull.rdfs7 ih1 ih2
   | rdfs8 _ ih => exact DerivesFull.rdfs8 ih
-  | rdfs9 _ _ ih1 ih2 => exact DerivesFull.rdfs9 ih1 ih2
+  | rdfs9 _ hs _ ih1 ih2 => exact DerivesFull.rdfs9 ih1 hs ih2
   | rdfs10 _ ih => exact DerivesFull.rdfs10 ih
   | rdfs11 _ hs _ ih1 ih2 => exact DerivesFull.rdfs11 ih1 hs ih2
   | rdfs12 _ ih => exact DerivesFull.rdfs12 ih
   | rdfs13 _ ih => exact DerivesFull.rdfs13 ih
 
-/-- **An FPP0 chain about one graph IS an RDF 1.1 Semantics
-derivation**, given that the two digests name those graphs and no
-others, and that every assumption about them is itself derivable. -/
-theorem Derives.toDerivesFull {Γ : List Assumption} {g ax : Graph}
-    (hcolG : ∀ g' : Graph, graphDigest g' = graphDigest g → g' = g)
-    (hcolA : ∀ a' : Graph, graphDigest a' = graphDigest ax → a' = ax)
-    (hΓ : ∀ a ∈ Γ, ∀ u : Triple,
-        a.subject = Claim.rdfDerivable (graphDigest g) (graphDigest ax) u →
-        DerivesFull ax g u) :
-    ∀ {c : Claim}, Derives Γ c → ∀ t : Triple,
-      c = Claim.rdfDerivable (graphDigest g) (graphDigest ax) t →
-      DerivesFull ax g t := by
+/-- **A scoped FPP0 chain is an RDF 1.1 Semantics derivation from the
+MERGE of the cited artifacts.** For a claim about digests `gd` and
+`ad`, the scoped triple is `DerivesFull`-derivable with the merge of
+the artifacts filed under `ad` as the axiom set and the merge of the
+artifacts filed under `gd` as the graph — each body renamed apart by
+its artifact id.
+
+No digest-collision hypothesis: a leaf names the artifact it was read
+from, so nothing depends on recovering a graph from its digest. The
+one hypothesis, `hΓ`, is about the FRONTIER only: each assumption,
+read in its own scope, is itself derivable from those merges. It is
+vacuous when the frontier is empty (`checkBundle_merge`). -/
+theorem Derives.toMerge {A : List Artifact} {Γ : List Assumption}
+    (hΓ : ∀ a ∈ Γ, ∀ (gd ad : String) (u : Triple),
+        a.subject = Claim.rdfDerivable gd ad u →
+        DerivesFull (mergeOf A ad) (mergeOf A gd) (u.scoped (.frontier a.id))) :
+    ∀ {c : Claim}, Derives A Γ c → ∀ (gd ad : String) (t : Triple),
+      c = Claim.rdfDerivable gd ad t →
+      DerivesFull (mergeOf A ad) (mergeOf A gd) t := by
   intro c h
   induction h with
-  | @assumption a ha => intro t heq; exact hΓ a ha t heq
-  | @rdfsBase gd ad g' t' hdig hmem =>
-      intro t heq
-      cases heq
-      cases hcolG g' hdig
-      exact DerivesFull.base hmem
-  | @rdfsAxiom gd ad ax' t' hdig hmem =>
-      intro t heq
-      cases heq
-      cases hcolA ax' hdig
-      exact DerivesFull.axiomatic hmem
+  | @assumption a ha =>
+      intro gd ad t heq
+      cases hs : a.subject with
+      | clif p => rw [hs] at heq; simp [Claim.scoped] at heq
+      | rdfDerivable gd' ad' u =>
+          rw [hs] at heq
+          simp only [Claim.scoped, Claim.rdfDerivable.injEq] at heq
+          obtain ⟨rfl, rfl, rfl⟩ := heq
+          exact hΓ a ha _ _ u hs
+  | @rdfsBase gd ad art g t' hA hb hdig hmem =>
+      intro gd0 ad0 t heq
+      simp only [Claim.rdfDerivable.injEq] at heq
+      obtain ⟨rfl, rfl, rfl⟩ := heq
+      subst hdig
+      exact DerivesFull.base (mem_mergeOf hA hb hmem)
+  | @rdfsAxiom gd ad art ax t' hA hb hdig hmem =>
+      intro gd0 ad0 t heq
+      simp only [Claim.rdfDerivable.injEq] at heq
+      obtain ⟨rfl, rfl, rfl⟩ := heq
+      subst hdig
+      exact DerivesFull.axiomatic (mem_mergeOf hA hb hmem)
   | @rdfsRow gd ad prem t' _ hd ih =>
-      intro t heq
-      cases heq
-      refine DerivesFull.cut (fun u hu => ih u hu u rfl) ?_
+      intro gd0 ad0 t heq
+      simp only [Claim.rdfDerivable.injEq] at heq
+      obtain ⟨rfl, rfl, rfl⟩ := heq
+      refine DerivesFull.cut (fun u hu => ih u hu _ _ u rfl) ?_
       exact derivesFull_axMono (by intro u hu; cases hu) hd
 
 /-! ## Level counts and the check result -/
@@ -404,6 +571,10 @@ structure CheckResult where
   foundationalOnly : Bool
   /-- The conclusion is itself a declared assumption. -/
   conclusionIsAssumption : Bool
+  /-- Why the bundle was refused, when it was: the first failed check,
+  in words. DIAGNOSTIC ONLY — `valid` is the verdict, and no theorem
+  reads this field. `none` exactly when `valid` is true. -/
+  rejection : Option String := none
   deriving DecidableEq, Repr
 
 end L4Factoidal.FPP0

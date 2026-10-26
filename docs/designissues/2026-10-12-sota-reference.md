@@ -1,0 +1,659 @@
+# The Lean engine against state-of-the-art engines: parse, SPARQL, RDFC-1.0, OWL
+
+Date: 2026-10-13 (the record name keeps the date of the owner's goal,
+2026-10-12). Status: record (measurement). Key result 2.7 of
+https://github.com/danbri/factoidal/issues/768 (OKRs batch 1). Issue:
+https://github.com/danbri/factoidal/issues/811. Branch `claude/wt-sota-table`
+of `danbri/factoidal-core`, base commit `e3c3aa01`.
+
+Owner, 2026-10-12, verbatim: "/goal OKRs addresses successfully especially perf
+and scaling should approach SOTA".
+
+Update, 2026-10-13: the rows `parse-nt`, `parse-nt-mixed`, `parse-ttl-gene`,
+`parse-ttl-rich`, `count-nt` and `count-ttl-gene` were measured again for
+Lean, Oxigraph, Serd and Jena after the repair of
+https://github.com/danbri/factoidal/issues/813 (the strict `parse` reads a file
+in chunks; branch `claude/wt-strict-parse-stream`). The parse rows were taken
+at load average 6 to 7; the Lean count rows again after a further repair, at
+load 28 to 31 (the CPU time in section 4 and the appendix is the fairer
+figure for those). The `npm` rows and the `start` rows were not measured
+again. The results file holds both measurements; the later one is the row.
+
+Update, 2026-10-13 (RDF/XML): the rows `parse-rdfxml` (25,000, 50,000 and
+100,000 triples) and `parse-rdfxml-real` were measured again for Lean,
+Oxigraph and Jena after the repairs of
+https://github.com/danbri/factoidal/issues/814 and
+https://github.com/danbri/factoidal/issues/771 (branch
+`claude/wt-rdfxml-speed`, merged with `main` `80dc8ffc`;
+`docs/designissues/2026-09-03-rdf-parsing-strategy.md` section 3c), load
+average 1.4 to 1.8, 15:30 UTC. In this run Oxigraph's process start held
+18.1 MB and its RDF/XML rows 19.1 to 19.3 MB (22.8 MB in the first run, the
+same pyoxigraph 0.5.11); Lean's start held 19.7 MB. The `start` rows of the
+results file are not replaced.
+
+This record answers one question for each performance and scaling row of the
+Lean engine: on the same machine and the same input file, how many times the
+time and the peak memory of a state-of-the-art engine does the Lean engine
+take? It changes no engine code. Script: `tools/sota-bench.py`. Gate:
+`tests/perf/sota_gate.sh`. All rows: `2026-10-12-sota-reference.results.jsonl`
+beside this file.
+
+## 1. Result
+
+Ratio = Lean / the fastest reference engine on the same file, at the largest
+size (time: median wall time; memory: median peak resident set). Above 1, Lean
+is slower or larger. Section 4 has every size; section 6 lists the rows over 10.
+
+| Row | Lean | Fastest reference | Time ratio | Memory ratio | Issue |
+|---|---|---|---:|---:|---|
+| Parse N-Triples, 400,000 triples, to N-Quads | `parse --out nquads`: 1.95 s, 24 MB (2026-10-13, after the repair of https://github.com/danbri/factoidal/issues/813; before: 2.97 s, 1,186 MB) | Serd 0.44 s, 2 MB | 4.4 | 12.7 (4.7 MB above process start) | https://github.com/danbri/factoidal/issues/813 (repaired) |
+| the same, Lean streaming reader | `parse --lenient --out nquads`: 2.02 s, 24 MB | Serd | 4.6 | 12.7 (4.6 MB above process start) | — |
+| Parse Turtle, gene.ttl, 346,100 triples | 1.44 s, 26 MB (before the repair: 1.95 s, 243 MB) | Serd 0.48 s, 2 MB | 3.0 | 12.8 (6.1 MB above start) | https://github.com/danbri/factoidal/issues/813 (repaired) |
+| the same, Lean streaming reader | 1.61 s, 24 MB | Serd | 3.4 | 12.1 (4.7 MB above start) | — |
+| Parse RDF/XML, 100,000 triples | 2.23 s, 181 MB (2026-10-13, after the repairs of https://github.com/danbri/factoidal/issues/814 and https://github.com/danbri/factoidal/issues/771; before: 5.33 s, 671 MB) | Oxigraph 0.36 s, 19 MB | 6.2 | 9.5 (162 MB above process start) | https://github.com/danbri/factoidal/issues/814 (repaired), https://github.com/danbri/factoidal/issues/771 (open: 8 bytes per document character) |
+| Parse RDF/XML, the Cell Ontology (9.6 MB) | 1.09 s, 148 MB (before: 2.46 s, 479 MB) | Oxigraph 0.27 s, 19 MB | 4.0 | 7.7 | as above |
+| Count statements, N-Triples 400,000 (no output) | 5.66 s (3.28 s CPU, load 31), 226 MB (before the repair: 5.13 s, 1,186 MB); streaming 2.84 s, 24 MB (counts repeats) | Jena `riot --count` 4.31 s, 224 MB | 1.3; streaming 0.66 | 1.0; streaming 0.11 | https://github.com/danbri/factoidal/issues/813 (repaired) |
+| Count, npm package (wasm), gene.ttl 346,100 triples | 11.51 s, 4,045 MB (wasm from before the issue 744 repair) | Jena 2.29 s, 296 MB | 5.0 | 13.6 | https://github.com/danbri/factoidal/issues/744 |
+| SPARQL in memory, gene.ttl 346,100 triples, four queries (bound subject, COUNT, join, OPTIONAL+FILTER) | 3.97 to 4.77 s, 193 to 195 MB | Oxigraph 1.17 to 1.30 s, 141 MB | 3.4 to 4.1 | 1.4 | — |
+| RDFC-1.0, 100,000 quads, IRIs only | 2.24 s, 306 MB | Oxigraph 1.51 s, 189 MB | 1.5 | 1.6 | — |
+| RDFC-1.0, 20,000 persons (one blank node each) | 1.64 s, 127 MB | Oxigraph 0.80 s, 128 MB | 2.0 | 0.99 | — |
+| RDFC-1.0, 8,000 blank node pairs (two collision groups) | 10.23 s, 33 MB (`e3c3aa01`, before the repair) | Oxigraph 0.20 s, 48 MB | 50.3 | 0.67 | https://github.com/danbri/factoidal/issues/751 |
+| OWL RL closure, nine real ontologies (SKOS to the Cell Ontology) | 0.07 to 13.4 s, 25 to 446 MB | Jena OWL Micro 1.7 to 19.9 s, 147 to 1,658 MB (a different rule set; more than one thread) | 0.04 to 1.6 (CPU: 0.02 to 0.69) | 0.06 to 0.72 | — |
+| OWL 2 DL consistency, SKOS, FOAF, PROV-O, BFO, Pizza | 0.07 to 1.39 s, 24 to 43 MB | HermiT 1.0 to 1.6 s, 75 to 82 MB | 0.07 to 1.1 | 0.3 to 0.5 | — |
+| OWL 2 DL consistency, wine and food | 18.8 s, 80 MB | HermiT 2.1 s, 110 MB | 8.8 | 0.73 | — |
+| OWL 2 DL consistency, schema.org | 43.8 s, 104 MB | HermiT 1.4 s, 134 MB | 31.2 | 0.78 | https://github.com/danbri/factoidal/issues/819 |
+| OWL 2 DL consistency, QUDT (both: inconsistent) | 55.8 s, 1,351 MB | HermiT 6.5 s, 470 MB | 8.6 | 2.9 | — |
+| OWL 2 DL consistency, RO | TIMEOUT at 600 s (`e3c3aa01`; the repair, not in this binary, is reported at 9.9 s) | HermiT 14.6 s, 1,609 MB | over 41 | — | https://github.com/danbri/factoidal/issues/760 |
+| OWL 2 DL consistency, the Cell Ontology | TIMEOUT at 600 s (`e3c3aa01`; reported 13.3 s with the repair) | HermiT 3.4 s, 284 MB | over 178 | — | https://github.com/danbri/factoidal/issues/760 |
+
+- 📊 Parsing: the Lean streaming reader takes 2.7 to 5.1 times the time of
+  Serd and Oxigraph at the largest sizes, with constant memory (24 MB, of which 19.5 MB is the Lean process
+  start). The default strict `parse` kept the whole dataset in memory, 33 to
+  35 bytes per input byte; since 2026-10-13 it reads N-Triples, N-Quads and
+  Turtle in 64 KiB chunks and holds 24 to 26 MB at every size, 3.0 to 4.8
+  times Serd's time (https://github.com/danbri/factoidal/issues/813; rows of
+  2026-10-13 in section 4, binary of `claude/wt-strict-parse-stream`).
+  RDF/XML was 13 to 15 times Oxigraph's time; after the repairs of
+  https://github.com/danbri/factoidal/issues/814 and
+  https://github.com/danbri/factoidal/issues/771 it is 4.0 to 6.2 times
+  Oxigraph's time and 3.4 to 9.5 times its peak resident set (most of it the
+  document characters, 8 bytes each), and Jena `riot` (with about 0.9 s of
+  JVM start) takes 1.0 to 3.2 times Lean's time.
+- 📊 SPARQL over a file in memory: 3.0 to 4.3 times Oxigraph's time at every
+  size, 1.2 to 1.4 times its memory; faster than Jena `arq` at every size (Jena
+  includes 1.2 s of JVM start).
+- 📊 RDFC-1.0: 1.3 to 2.0 times Oxigraph where blank nodes have distinct
+  first-degree hashes. The pairs shape is 9 to 50 times on `e3c3aa01`; the repair of
+  https://github.com/danbri/factoidal/issues/751 (merging on 2026-10-13) takes
+  the shared-hash shape to 2.8 times Oxigraph. rdf-canonize, the JavaScript
+  reference implementation, is slower than Lean on every shape except pairs
+  and is superlinear on IRIs only (25,000 quads 10.8 s of CPU time, 100,000
+  quads 305 s: one run each in the trial run of 2026-10-13 00:58 UTC at load
+  4; the results file has the 25,000 case only).
+- 📊 OWL RL closure: Lean takes less wall time than Jena's OWL Micro rule
+  reasoner on seven of nine ontologies and 1.3 and 1.6 times its wall time on
+  RO and the Cell Ontology, where Jena uses 1.4 times Lean's CPU time on more
+  than one thread. Lean uses less memory on all nine. The rule sets differ
+  (section 2).
+- 📊 OWL 2 DL consistency: Lean is faster than HermiT on SKOS, FOAF, PROV-O
+  and Pizza and 1.1 times its time on BFO; 8.6 to 8.8 times on wine and QUDT;
+  31 times on
+  schema.org (https://github.com/danbri/factoidal/issues/819).
+  RO and the Cell Ontology: TIMEOUT at 600 s on `e3c3aa01` against HermiT's
+  14.6 s and 3.4 s (https://github.com/danbri/factoidal/issues/760).
+- ⚠️ Lean rows: `l4factoidal` from `e3c3aa01`. The repairs of key results
+  3.3 (OWL DL refuter), 2.4 (RDFC-1.0 shared hashes) and 3.4 (QUDT closure)
+  were merging into `main` during the run and are not in these rows; the
+  coordinator reported RO 9.9 s, the Cell Ontology 13.3 s, 64,000 colliding
+  blank nodes 2.66 s and the QUDT closure at 1,352 MB peak with them. Run
+  `tests/perf/sota_gate.sh` on the new binary: a repaired row over 10 shows
+  as UNEXPECTED PASS and its row and issue are then updated.
+- ⚠️ Load average: 1.9 to 5.9 for every Lean, Oxigraph, Serd, Jena and HermiT
+  row (the SPARQL, RDFC and OWL RL rows first measured at load 6 to 30 were
+  measured again; the results file keeps both, and the report takes the later
+  one). The npm and rdf-canonize RDFC rows were measured at load 10 to 26 and
+  not repeated; they are informative.
+- Persisted store (SBM11 against QLever and Virtuoso): not measured again;
+  section 5 cites the records.
+
+
+## 2. Engines
+
+| Engine | Version | How it runs here | Source, digest |
+|---|---|---|---|
+| Lean (`lean`) | `l4factoidal` built from `e3c3aa01` (Lean `v4.33.1`), copied once to a scratch directory before the run | the command line, one process per run | SHA-256 `98d5bc128281718eb82f325a359a0b02b6068d4b8bcef96e3c5c22ba9dd0f1d8` |
+| Lean, streaming reader (`lean-stream`) | the same binary | `parse --lenient`: the reader that takes a file in 64 KiB chunks and writes each statement as it is read; on valid input it keeps every statement (N-Triples and Turtle only) | as above |
+| Lean in wasm (`npm`) | `@factoidal/core` from `npm/factoidal`, wasm from release `build-3bf333414efd-web` of `danbri/factoidal-builds` (core commit `3bf33341`, an ancestor of `e3c3aa01`; before the issue 744 repair of `a7bdc189`) | Node 22.22.0, `tools/sota_bench_npm.mjs`: `parse()` then the dataset size, or `canonicalize()` | `tools/fetch-builds.sh --set web` (checks every file against the release's `build-info.json`); `l4factoidal.wasm` SHA-256 in the JSON meta line |
+| Oxigraph (`oxigraph`) | pyoxigraph 0.5.11 (the Rust Oxigraph library) | Python 3.13, `tools/sota_bench_oxigraph.py`: `parse` + `serialize` to N-Quads; an in-memory `Store`, `load`, `query`, TSV results; `Dataset.canonicalize(RDFC_1_0)` | `pip install pyoxigraph==0.5.11` into a venv under `/tmp/sota-dl` |
+| Serd (`serd`) | `serdi` 0.32.2 | `serdi -i FORMAT -o nquads FILE`; no RDF/XML reader | Ubuntu 24.04 packages `serdi_0.32.2-1_amd64.deb` (SHA-256 `a76f7fee…d460`) and `libserd-0-0_0.32.2-1_amd64.deb` (`5ede35e6…f57a`), unpacked with `dpkg -x`, not installed |
+| Apache Jena (`jena`) | 6.2.0, OpenJDK 21.0.12 | `riot --output=nquads`, `riot --count`, `arq --data FILE --query Q --results=TSV`; `JVM_ARGS=-Xmx4g` | `https://dlcdn.apache.org/jena/binaries/apache-jena-6.2.0.tar.gz`, SHA-256 `14c12ef4aa2f0078a473be4b10b015e0e0b85e767d6867e8581679de8fec3f6e` (the SHA-512 equals Apache's published `.sha512`) |
+| Jena OWL Micro (`jena-owl-micro`) | Jena 6.2.0 `OWLMicroFBRuleReasoner` | `arq --desc=ASSEMBLER --query 'SELECT ?s ?p ?o WHERE { ?s ?p ?o }' --results=TSV` over an `ja:InfModel` | as above |
+| HermiT (`hermit`) | 1.3.8, as shipped in owlready2 0.51 | `java -Xmx4g -cp HermiT.jar org.semanticweb.HermiT.cli.CommandLine --ignoreUnsupportedDatatypes -k FILE` (as `tools/owl-real-hermit.py`) | `pip install --target … owlready2==0.51`; `HermiT.jar` SHA-256 `97e53f519720a0a2e328556e03b806aa239347c85e57637a935e6433ed2ad3a8` |
+| rdf-canonize (`rdf-canonize`) | 5.0.0 (Digital Bazaar, JavaScript) | Node 22.22.0, `tools/sota_bench_rdfcanonize.mjs`, `canonize(dataset, {algorithm: 'RDFC-1.0'})`, default `maxWorkFactor` | `npm install rdf-canonize@5.0.0` under `/tmp/sota-dl` |
+
+`tools/sota-bench.py --install` fetches every reference engine into one
+directory (default `/tmp/sota-dl`) and checks the digests above. Nothing is
+vendored into the repository.
+
+What is a state-of-the-art engine for each row: for parsing, Serd (C) and
+Oxigraph's parsers (Rust); for in-memory SPARQL, Oxigraph; for RDFC-1.0,
+Oxigraph (rdf-canonize is the reference implementation of the specification
+editors, measured for information); for OWL 2 DL consistency, HermiT. For OWL
+RL closure the reference here is Jena's OWL Micro rule reasoner, which is
+neither OWL 2 RL nor the speed state of the art (RDFox and VLog are; neither is
+installed here). Its closure has a different rule set, so the closure sizes are
+not compared and the ratio says only that the Lean closure and a widely used
+rule engine take similar or different time on the same file.
+
+## 3. Machine and method
+
+**Machine.** Firecracker VM, Linux 6.18.44, Intel Xeon @ 2.80 GHz, 4 vCPU,
+16,479,424 kB of memory, no swap. Shared with two other agents (OWL refuter
+scaling, QUDT closure memory) and the coordinator's gates; every row carries the
+1-minute load average before each of its runs.
+
+**One number.** Each engine runs on the same file as
+`/usr/bin/time -v -o T timeout -s KILL 600 COMMAND`, three times. The table gives
+the median wall time of the runs (the harness clock around the process), the
+spread (maximum minus minimum, over the median), the median CPU time (user plus
+system, from `time -v`) and the median peak resident set (`Maximum resident set
+size`). A run killed at 600 s is TIMEOUT: a status, not a time; the case is not
+run again. A case whose first run takes more than 150 s runs once. When the
+spread is over 30 % and the median over 0.2 s, the case runs two more times and
+the median is over all five runs. Before each case the harness waits up to 30 s
+for the load average to fall under 5.0. Every time includes process start
+(row `start`: Lean 0.05 s, Oxigraph's Python 0.02 s, Serd 0.006 s, Jena's JVM
+1.2 s, Node with the wasm module 0.4 s, HermiT's JVM 0.1 s).
+
+**The answer of each engine.** The harness reads the whole standard output and
+computes one answer per run: the number of N-Quads statements written (parse),
+the number reported (count), the number of TSV solution lines or the COUNT
+value (SPARQL), the SHA-256 of the canonical N-Quads lines (RDFC-1.0), the
+number of closure triples (OWL RL), the verdict (OWL DL). Empty lines are not
+counted (the Lean command line ends its output with one). An answer that
+differs from the other engines of the same case is marked in the table. A time
+is a result only where the answers agree.
+
+**Ratio.** Lean time over reference time, and Lean peak resident set over
+reference peak resident set, at the same size. The summary table compares each
+Lean variant with the fastest reference engine of the case.
+
+**Inputs.** Generated with the generators of `tools/bench_lean_vs_fstar.py`
+(written to `/tmp/sota-dl/fixtures`, not committed) or real files:
+
+- N-Triples: `<ex:s{i}> <ex:p> <ex:o{i}>` (full IRIs); mixed terms (IRIs, plain,
+  language-tagged and typed literals, blank nodes).
+- Turtle: slices of `examples/wikidata/subsets/lifesci-kgx/data/gene.ttl`
+  (17,363,312 bytes, SHA-256 `dd0cc622cf9664df43692a04df3524c24217e76f15f63ae17040bc0bd3ba6cd6`;
+  a slice of k paragraphs takes every (N/k)-th statement block, so it has the
+  composition of the whole file); generated Turtle with predicate lists, object
+  lists, typed literals and blank node property lists.
+- RDF/XML: one `rdf:Description` per triple; the Cell Ontology
+  (`third_party/ontologies/cl-basic/cl-basic.owl`, 9,557,097 bytes).
+- SPARQL: the gene.ttl slices and four queries: the statements of one subject
+  (the subject of the first statement block, present in every slice), COUNT(*)
+  over all statements, a join on `?s` of `wdt:P688` and `wdt:P1057`, and
+  `wdt:P1057` with OPTIONAL `wdt:P688` and `FILTER(isIRI(?o1))`. Each engine
+  loads the file and runs the query in one process.
+- RDFC-1.0: IRIs only (no blank nodes); one blank node per person with shared
+  literal values; k pairs `_:a{i} ex:p _:b{i}` (two collision groups of k blank
+  nodes, the shape of https://github.com/danbri/factoidal/issues/751).
+- OWL: the ontologies of `tools/owl-real-bench.py`. The input of both engines
+  is the RDF merge of the source documents written as N-Triples by the Lean
+  parser, without the `owl:imports` triples (HermiT would fetch the imports).
+
+## 4. Every size: Lean against the fastest reference engine
+
+Ratio = Lean / reference (time: median wall time; CPU: median user plus system time; memory: median peak resident set). Above 1, Lean is slower or larger. The fastest reference is the one with the least median wall time.
+
+RSS above start: each engine's peak resident set minus the peak resident set of its own process start (row `start`); a reference that holds less than 1 MB above its start counts as 1 MB.
+
+| Workload | Size | Reference (fastest) | Reference time, RSS | Lean variant | Lean time, RSS | Time ratio | CPU ratio | RSS ratio | RSS above start, ratio |
+|---|---:|---|---|---|---|---:|---:|---:|---:|
+| parse-nt | 100000 | serd | 0.160 s, 2 MB | lean | 0.497 s ±3%, 24 MB | 3.1 | 4.6 | 12.8 | 4.8 |
+| parse-nt | 100000 | serd | 0.160 s, 2 MB | lean-stream | 0.563 s ±15%, 24 MB | 3.5 | 5.0 | 12.6 | 4.5 |
+| parse-nt | 200000 | serd | 0.216 s, 2 MB | lean | 0.891 s ±6%, 24 MB | 4.1 | 5.6 | 12.7 | 4.6 |
+| parse-nt | 200000 | serd | 0.216 s, 2 MB | lean-stream | 1.084 s ±7%, 24 MB | 5.0 | 6.9 | 12.7 | 4.6 |
+| parse-nt | 400000 | serd | 0.439 s, 2 MB | lean | 1.952 s ±7%, 24 MB | 4.4 | 6.2 | 12.7 | 4.7 |
+| parse-nt | 400000 | serd | 0.439 s, 2 MB | lean-stream | 2.023 s ±6%, 24 MB | 4.6 | 6.6 | 12.7 | 4.6 |
+| parse-nt-mixed | 100000 | serd | 0.118 s, 2 MB | lean | 0.506 s ±13%, 24 MB | 4.3 | 5.8 | 12.7 | 4.6 |
+| parse-nt-mixed | 100000 | serd | 0.118 s, 2 MB | lean-stream | 0.565 s ±16%, 24 MB | 4.8 | 6.4 | 12.6 | 4.5 |
+| parse-nt-mixed | 200000 | serd | 0.229 s, 2 MB | lean | 1.020 s ±3%, 24 MB | 4.4 | 5.9 | 12.7 | 4.7 |
+| parse-nt-mixed | 200000 | serd | 0.229 s, 2 MB | lean-stream | 1.126 s ±10%, 24 MB | 4.9 | 6.3 | 12.7 | 4.6 |
+| parse-nt-mixed | 400000 | serd | 0.471 s, 2 MB | lean | 2.250 s ±16%, 24 MB | 4.8 | 6.2 | 12.7 | 4.6 |
+| parse-nt-mixed | 400000 | serd | 0.471 s, 2 MB | lean-stream | 2.337 s ±12%, 24 MB | 5.0 | 6.5 | 12.7 | 4.6 |
+| parse-ttl-gene | 20000 | serd | 0.115 s, 2 MB | lean | 0.412 s ±13%, 26 MB | 3.6 | 4.8 | 12.8 | 6.1 |
+| parse-ttl-gene | 20000 | serd | 0.115 s, 2 MB | lean-stream | 0.407 s ±8%, 24 MB | 3.5 | 5.5 | 12.1 | 4.7 |
+| parse-ttl-gene | 40000 | serd | 0.260 s, 2 MB | lean | 0.687 s ±8%, 26 MB | 2.6 | 3.8 | 12.8 | 6.2 |
+| parse-ttl-gene | 40000 | serd | 0.260 s, 2 MB | lean-stream | 0.751 s ±10%, 24 MB | 2.9 | 4.3 | 12.0 | 4.5 |
+| parse-ttl-gene | 80000 | serd | 0.481 s, 2 MB | lean | 1.442 s ±1%, 26 MB | 3.0 | 4.3 | 12.8 | 6.1 |
+| parse-ttl-gene | 80000 | serd | 0.481 s, 2 MB | lean-stream | 1.614 s ±14%, 24 MB | 3.4 | 5.2 | 12.1 | 4.7 |
+| parse-ttl-rich | 100000 | serd | 0.119 s, 2 MB | lean | 0.521 s ±17%, 26 MB | 4.4 | 5.1 | 12.2 | 6.2 |
+| parse-ttl-rich | 100000 | serd | 0.119 s, 2 MB | lean-stream | 0.540 s ±3%, 24 MB | 4.5 | 5.9 | 11.5 | 4.6 |
+| parse-ttl-rich | 200000 | serd | 0.247 s, 2 MB | lean | 0.881 s ±19%, 26 MB | 3.6 | 5.1 | 12.2 | 6.2 |
+| parse-ttl-rich | 200000 | serd | 0.247 s, 2 MB | lean-stream | 1.046 s ±15%, 24 MB | 4.2 | 6.1 | 11.5 | 4.7 |
+| parse-ttl-rich | 400000 | serd | 0.564 s, 2 MB | lean | 1.836 s ±6%, 26 MB | 3.3 | 5.0 | 12.2 | 6.1 |
+| parse-ttl-rich | 400000 | serd | 0.564 s, 2 MB | lean-stream | 2.060 s ±10%, 24 MB | 3.7 | 5.6 | 11.5 | 4.6 |
+| parse-rdfxml | 25000 | oxigraph | 0.107 s, 19 MB | lean | 0.455 s ±66%, 65 MB | 4.3 | 5.0 | 3.4 | 45.7 |
+| parse-rdfxml | 50000 | oxigraph | 0.180 s, 19 MB | lean | 0.840 s ±13%, 101 MB | 4.7 | 4.9 | 5.3 | 81.8 |
+| parse-rdfxml | 100000 | oxigraph | 0.358 s, 19 MB | lean | 2.228 s ±23%, 181 MB | 6.2 | 6.4 | 9.5 | 161.9 |
+| parse-rdfxml-real | 1 | oxigraph | 0.273 s, 19 MB | lean | 1.094 s ±68%, 148 MB | 4.0 | 4.9 | 7.7 | 128.7 |
+| count-nt | 100000 | jena | 2.105 s, 158 MB | lean | 1.326 s ±28%, 72 MB | 0.63 | 0.25 | 0.45 | 0.79 |
+| count-nt | 100000 | jena | 2.105 s, 158 MB | lean-stream | 0.615 s ±60%, 24 MB | 0.29 | 0.14 | 0.15 | 0.07 |
+| count-nt | 100000 | jena | 2.105 s, 158 MB | npm | 6.085 s ±22%, 889 MB | 2.9 | 2.1 | 5.6 | 11.7 |
+| count-nt | 200000 | jena | 2.764 s, 193 MB | lean | 3.177 s ±54%, 124 MB | 1.1 | 0.61 | 0.64 | 1.0 |
+| count-nt | 200000 | jena | 2.764 s, 193 MB | lean-stream | 0.957 s ±14%, 24 MB | 0.35 | 0.26 | 0.12 | 0.05 |
+| count-nt | 200000 | jena | 2.764 s, 193 MB | npm | 10.048 s ±21%, 1660 MB | 3.6 | 3.3 | 8.6 | 15.2 |
+| count-nt | 400000 | jena | 4.310 s, 224 MB | lean | 5.663 s ±30%, 226 MB | 1.3 | 0.89 | 1.0 | 1.6 |
+| count-nt | 400000 | jena | 4.310 s, 224 MB | lean-stream | 2.835 s ±25%, 24 MB | 0.66 | 0.57 | 0.11 | 0.03 |
+| count-nt | 400000 | jena | 4.310 s, 224 MB | npm | 21.971 s ±5%, 3140 MB | 5.1 | 6.0 | 14.0 | 22.8 |
+| count-ttl-gene | 20000 | jena | 3.828 s, 203 MB | lean | 1.018 s ±4%, 57 MB | 0.27 | 0.16 | 0.28 | 0.34 |
+| count-ttl-gene | 20000 | jena | 3.828 s, 203 MB | lean-stream | 0.421 s ±47%, 24 MB | 0.11 | 0.09 | 0.12 | 0.04 |
+| count-ttl-gene | 20000 | jena | 3.828 s, 203 MB | npm | 3.676 s ±5%, 1095 MB | 0.96 | 1.1 | 5.4 | 8.8 |
+| count-ttl-gene | 40000 | jena | 5.049 s, 250 MB | lean | 1.897 s ±24%, 92 MB | 0.38 | 0.21 | 0.37 | 0.46 |
+| count-ttl-gene | 40000 | jena | 5.049 s, 250 MB | lean-stream | 0.883 s ±35%, 24 MB | 0.17 | 0.13 | 0.10 | 0.03 |
+| count-ttl-gene | 40000 | jena | 5.049 s, 250 MB | npm | 6.546 s ±4%, 2122 MB | 1.3 | 1.3 | 8.5 | 12.7 |
+| count-ttl-gene | 80000 | jena | 4.377 s, 298 MB | lean | 3.976 s ±6%, 163 MB | 0.91 | 0.49 | 0.55 | 0.70 |
+| count-ttl-gene | 80000 | jena | 4.377 s, 298 MB | lean-stream | 1.593 s ±17%, 24 MB | 0.36 | 0.28 | 0.08 | 0.02 |
+| count-ttl-gene | 80000 | jena | 4.377 s, 298 MB | npm | 11.514 s ±5%, 4045 MB | 2.6 | 2.7 | 13.6 | 19.0 |
+| sparql-bound-subject | 20000 | oxigraph | 0.279 s, 56 MB | lean | 1.212 s ±6%, 65 MB | 4.3 | 4.5 | 1.2 | 1.4 |
+| sparql-bound-subject | 40000 | oxigraph | 0.535 s, 84 MB | lean | 2.025 s ±11%, 112 MB | 3.8 | 3.7 | 1.3 | 1.5 |
+| sparql-bound-subject | 80000 | oxigraph | 1.296 s, 141 MB | lean | 4.356 s ±25%, 193 MB | 3.4 | 3.8 | 1.4 | 1.5 |
+| sparql-count | 20000 | oxigraph | 0.312 s, 56 MB | lean | 0.939 s ±10%, 65 MB | 3.0 | 3.0 | 1.2 | 1.4 |
+| sparql-count | 40000 | oxigraph | 0.664 s, 84 MB | lean | 1.992 s ±12%, 112 MB | 3.0 | 3.1 | 1.3 | 1.5 |
+| sparql-count | 80000 | oxigraph | 1.228 s, 141 MB | lean | 4.529 s ±9%, 193 MB | 3.7 | 3.7 | 1.4 | 1.5 |
+| sparql-join | 20000 | oxigraph | 0.320 s, 56 MB | lean | 0.984 s ±4%, 67 MB | 3.1 | 3.2 | 1.2 | 1.4 |
+| sparql-join | 40000 | oxigraph | 0.566 s, 84 MB | lean | 2.211 s ±8%, 111 MB | 3.9 | 3.9 | 1.3 | 1.5 |
+| sparql-join | 80000 | oxigraph | 1.175 s, 141 MB | lean | 3.972 s ±18%, 195 MB | 3.4 | 3.4 | 1.4 | 1.5 |
+| sparql-optional-filter | 20000 | oxigraph | 0.313 s, 56 MB | lean | 1.074 s ±20%, 67 MB | 3.4 | 3.2 | 1.2 | 1.4 |
+| sparql-optional-filter | 40000 | oxigraph | 0.598 s, 84 MB | lean | 2.255 s ±10%, 114 MB | 3.8 | 3.5 | 1.4 | 1.5 |
+| sparql-optional-filter | 80000 | oxigraph | 1.171 s, 141 MB | lean | 4.769 s ±13%, 195 MB | 4.1 | 4.1 | 1.4 | 1.5 |
+| rdfc-iri | 25000 | oxigraph | 0.448 s, 63 MB | lean | 0.583 s ±59%, 90 MB | 1.3 | 1.6 | 1.4 | 1.8 |
+| rdfc-iri | 25000 | oxigraph | 0.448 s, 63 MB | npm | 3.467 s ±55%, 264 MB | 7.7 | 5.8 | 4.2 | 3.5 |
+| rdfc-iri | 50000 | oxigraph | 0.778 s, 105 MB | lean | 1.081 s ±67%, 162 MB | 1.4 | 1.6 | 1.5 | 1.7 |
+| rdfc-iri | 50000 | oxigraph | 0.778 s, 105 MB | npm | 4.196 s ±25%, 494 MB | 5.4 | 5.3 | 4.7 | 4.5 |
+| rdfc-iri | 100000 | oxigraph | 1.512 s, 189 MB | lean | 2.240 s ±28%, 306 MB | 1.5 | 1.5 | 1.6 | 1.7 |
+| rdfc-iri | 100000 | oxigraph | 1.512 s, 189 MB | npm | 6.824 s ±19%, 873 MB | 4.5 | 4.0 | 4.6 | 4.5 |
+| rdfc-person | 5000 | oxigraph | 0.178 s, 49 MB | lean | 0.334 s ±12%, 47 MB | 1.9 | 2.1 | 0.96 | 1.1 |
+| rdfc-person | 5000 | oxigraph | 0.178 s, 49 MB | npm | 1.669 s ±21%, 166 MB | 9.4 | 9.4 | 3.4 | 1.7 |
+| rdfc-person | 10000 | oxigraph | 0.382 s, 75 MB | lean | 0.721 s ±8%, 72 MB | 1.9 | 1.9 | 0.96 | 1.0 |
+| rdfc-person | 10000 | oxigraph | 0.382 s, 75 MB | npm | 2.602 s ±5%, 237 MB | 6.8 | 6.7 | 3.2 | 2.2 |
+| rdfc-person | 20000 | oxigraph | 0.804 s, 128 MB | lean | 1.639 s ±29%, 127 MB | 2.0 | 2.1 | 0.99 | 1.0 |
+| rdfc-person | 20000 | oxigraph | 0.804 s, 128 MB | npm | 4.753 s ±10%, 410 MB | 5.9 | 5.0 | 3.2 | 2.7 |
+| rdfc-pairs | 2000 | oxigraph | 0.065 s, 29 MB | lean | 0.606 s ±24%, 24 MB | 9.3 | 11.2 | 0.85 | 0.85 |
+| rdfc-pairs | 2000 | oxigraph | 0.065 s, 29 MB | npm | 1.610 s ±24%, 131 MB | 24.8 | 27.8 | 4.6 | 1.6 |
+| rdfc-pairs | 4000 | oxigraph | 0.100 s, 35 MB | lean | 2.075 s ±7%, 27 MB | 20.8 | 25.5 | 0.77 | 0.62 |
+| rdfc-pairs | 4000 | oxigraph | 0.100 s, 35 MB | npm | 4.058 s ±8%, 136 MB | 40.6 | 41.2 | 3.8 | 1.1 |
+| rdfc-pairs | 8000 | oxigraph | 0.203 s, 48 MB | lean | 10.229 s ±6%, 33 MB | 50.3 | 55.4 | 0.67 | 0.51 |
+| rdfc-pairs | 8000 | oxigraph | 0.203 s, 48 MB | npm | exit1 (10.353 s), 149 MB | > 51 (exit1) | — | — | — |
+| owl-rl-closure | skos | jena-owl-micro | 1.668 s, 148 MB | lean | 0.071 s ±41%, 25 MB | 0.04 | 0.02 | 0.17 | 0.09 |
+| owl-rl-closure | foaf | jena-owl-micro | 1.877 s, 161 MB | lean | 0.102 s ±18%, 27 MB | 0.05 | 0.02 | 0.17 | 0.10 |
+| owl-rl-closure | prov-o | jena-owl-micro | 1.828 s, 147 MB | lean | 0.195 s ±8%, 30 MB | 0.11 | 0.04 | 0.20 | 0.18 |
+| owl-rl-closure | bfo | jena-owl-micro | 2.019 s, 158 MB | lean | 0.140 s ±16%, 29 MB | 0.07 | 0.03 | 0.18 | 0.14 |
+| owl-rl-closure | pizza | jena-owl-micro | 2.296 s, 238 MB | lean | 0.410 s ±10%, 47 MB | 0.18 | 0.08 | 0.20 | 0.19 |
+| owl-rl-closure | wine | jena-owl-micro | 7.405 s, 548 MB | lean | 4.765 s ±11%, 89 MB | 0.64 | 0.39 | 0.16 | 0.15 |
+| owl-rl-closure | schema.org | jena-owl-micro | 19.868 s, 1658 MB | lean | 2.840 s ±18%, 108 MB | 0.14 | 0.11 | 0.06 | 0.06 |
+| owl-rl-closure | ro | jena-owl-micro | 8.584 s, 849 MB | lean | 11.259 s ±10%, 77 MB | 1.3 | 0.69 | 0.09 | 0.08 |
+| owl-rl-closure | cl-basic | jena-owl-micro | 8.632 s, 619 MB | lean | 13.443 s ±6%, 446 MB | 1.6 | 0.69 | 0.72 | 0.81 |
+| owl-dl-consistent | skos | hermit | 0.991 s, 77 MB | lean | 0.068 s ±17%, 24 MB | 0.07 | 0.06 | 0.31 | 0.12 |
+| owl-dl-consistent | foaf | hermit | 1.065 s, 75 MB | lean | 0.143 s ±36%, 26 MB | 0.13 | 0.12 | 0.34 | 0.19 |
+| owl-dl-consistent | prov-o | hermit | 1.591 s, 82 MB | lean | 0.592 s ±16%, 30 MB | 0.37 | 0.36 | 0.36 | 0.27 |
+| owl-dl-consistent | bfo | hermit | 1.289 s, 79 MB | lean | 1.394 s ±15%, 33 MB | 1.1 | 1.2 | 0.42 | 0.39 |
+| owl-dl-consistent | pizza | hermit | 1.371 s, 82 MB | lean | 0.775 s ±6%, 43 MB | 0.57 | 0.54 | 0.53 | 0.62 |
+| owl-dl-consistent | wine | hermit | 2.135 s, 110 MB | lean | 18.778 s ±6%, 80 MB | 8.8 | 4.9 | 0.73 | 0.91 |
+| owl-dl-consistent | schema.org | hermit | 1.402 s, 134 MB | lean | 43.751 s ±1%, 104 MB | 31.2 | 16.8 | 0.78 | 0.94 |
+| owl-dl-consistent | qudt | hermit | 6.480 s, 470 MB | lean | 55.830 s ±9%, 1351 MB | 8.6 | 4.8 | 2.9 | 3.1 |
+| owl-dl-consistent | ro | hermit | 14.628 s, 1609 MB | lean | TIMEOUT (600.013 s), 2 MB | > 41 (TIMEOUT) | — | — | — |
+| owl-dl-consistent | cl-basic | hermit | 3.360 s, 284 MB | lean | TIMEOUT (600.005 s), 2 MB | > 179 (TIMEOUT) | — | — | — |
+
+
+## 5. Rows measured in other records (not measured again here)
+
+| Row | Lean | State of the art | Ratio | Record |
+|---|---|---|---|---|
+| Persisted store, DBpedia 2016-10 slice (23,269,560 triples): load | SBM11 pack 1,334 s | Virtuoso 7.2 bulk load 203 s; QLever index 56.5 s (2,069 MB) | 6.6 (Virtuoso), 23.6 (QLever) | [`2026-10-12-three-engine-benchmark.md`](2026-10-12-three-engine-benchmark.md) section 1, https://github.com/danbri/factoidal/issues/798 |
+| Persisted store, DBpedia slice: size on disk | SBM11 567.7 MB | Virtuoso 1,746.9 MB; QLever 872.5 MB | 0.33 (Virtuoso), 0.65 (QLever) | as above |
+| Persisted store, DBpedia slice: warm joins d05 to d09 | SBM11 | Virtuoso 3.6 to 26 times faster on joins; QLever 6.4 to 13 times faster | 3.6 to 26 | as above; https://github.com/danbri/factoidal/issues/799, https://github.com/danbri/factoidal/issues/801 |
+| Persisted store, DBpedia slice: scans and aggregates over large ranges, lookups | SBM11 | Virtuoso | SBM11 5.9 to 14 times faster (d10, d13, d16, d17) | as above |
+| Persisted store, DBpedia slice: OPTIONAL (d11) | SBM11 reference fallback 48.7 s, 849 MB | Virtuoso 19 ms | about 2,560 | as above; https://github.com/danbri/factoidal/issues/775 |
+| QLever's own index read from Lean (`l4qlvr`), four-pattern join q07, warm | 75 ms (23 ms with libzstd) | QLever 19 ms of computation | 3.9 (1.2) | [`2026-10-11-qlvr-performance.md`](2026-10-11-qlvr-performance.md), https://github.com/danbri/factoidal/issues/778 |
+| The q07 kernel, Lean against C | Lean | the same algorithm in C | 9 to 16 on `ByteArray`, 2.5 to 2.9 on word arrays | as above; https://github.com/danbri/factoidal/issues/797 |
+| RDFC-1.0, k blank nodes that share one first-degree hash, 64,000 | 2.66 s, 222 MB (after the repair of https://github.com/danbri/factoidal/issues/751, branch `claude/wt-rdfc-collide`, not yet on `main`) | Oxigraph 0.96 s, 167 MB; rdf-canonize 37.80 s | 2.8 (Oxigraph); 0.07 (rdf-canonize) | [`2026-10-10-npm-lean-only.md`](2026-10-10-npm-lean-only.md) section 10 on that branch, https://github.com/danbri/factoidal/issues/751 |
+
+The persisted-store rows belong to the SBM11 work (https://github.com/danbri/factoidal/issues/798, https://github.com/danbri/factoidal/issues/799, https://github.com/danbri/factoidal/issues/801, https://github.com/danbri/factoidal/issues/775); this record does not measure them again.
+
+## 6. Rows over 10, and their issues
+
+A row is over 10 when the Lean time is more than 10 times the time of the
+fastest reference engine of the case, or when the Lean peak resident set is
+more than 10 times the reference's and also more than 10 times its memory above
+process start (a reference under 1 MB above its start counts as 1 MB; this
+keeps the 19.5 MB of the Lean process start against Serd's 1.8 MB from listing
+the streaming reader).
+
+| Rows | Cause, as far as measured | Issue | Gate |
+|---|---|---|---|
+| `parse-nt`, `parse-nt-mixed` (all sizes; time 10.2 and 10.8 at 200,000), `parse-ttl-gene`, `parse-ttl-rich` (memory), on `e3c3aa01` | the strict `parse` kept the whole dataset in memory, 33 to 35 bytes per input byte. Repaired 2026-10-13 (`StrictFeed.lean`; `docs/designissues/2026-09-03-rdf-parsing-strategy.md` section 3b): no row is over 10 now | https://github.com/danbri/factoidal/issues/813 | the expected-failure marks `parse-nt` 400,000 and `parse-ttl-gene` 80,000 are removed; the rows are plain assertions |
+| `parse-rdfxml` (all sizes), `parse-rdfxml-real` (memory) | located 2026-10-13 (`2026-09-03-rdf-parsing-strategy.md` section 3c): the document as a `List Char` (633 MB of the 678 MB peak at 100,000 triples) and the name resolution of the grammar (`XML.splitQName` 53 percent of the instructions). Repaired: no row is over 10 now (time 4.0 to 6.2, memory 3.4 to 9.5 times Oxigraph's) | https://github.com/danbri/factoidal/issues/814; memory https://github.com/danbri/factoidal/issues/771 | the expected-failure mark `parse-rdfxml` 100,000 is removed (the gate reported UNEXPECTED PASS: time ratio 5.3, memory ratio 7.9); the row is a plain assertion |
+| `count-nt` 400,000 and `count-ttl-gene` 80,000, npm (memory) | wasm of release `build-3bf333414efd-web`, before the repair `a7bdc189` | https://github.com/danbri/factoidal/issues/744 (comment with these rows) | — (the gate runs native Lean only) |
+| `rdfc-pairs` 4,000 and 8,000 (Lean), 2,000 to 8,000 (npm; 8,000 stops with "Maximum call stack size exceeded") | Hash N-Degree Quads over a collision group, repaired on branch `claude/wt-rdfc-collide` | https://github.com/danbri/factoidal/issues/751 (comment with these rows) | expected failure `rdfc-pairs` 8,000 |
+| `owl-dl-consistent` schema.org | not located; HermiT decides the file in 1.4 s. 2026-10-13: located and below 10 times HermiT on a base with the repair of issue 760 and the semi-naive closure: the OWL 2 RL closure is most of the time (`2026-10-10-owl-real-ontologies.md` § 11.7) | https://github.com/danbri/factoidal/issues/819 (new) | expected failure `owl-dl-consistent` schema.org; removed 2026-10-13 (the gate reported UNEXPECTED PASS) |
+| `owl-dl-consistent` RO and the Cell Ontology: TIMEOUT at 600 s | the tableau refuter's growth; repaired on the branch of key result 3.3, merging into `main` | https://github.com/danbri/factoidal/issues/760 (comment with these rows) | — (a TIMEOUT row is not re-run by the gate; `tests/stack/owl_real_gate.sh` holds the expected failure) |
+
+The list the report prints (`tools/sota-bench.py --report`), every Lean variant:
+
+- count-nt 400000, npm against jena: time ratio 5.1, RSS ratio 14.0
+- count-ttl-gene 80000, npm against jena: time ratio 2.6, RSS ratio 13.6
+- rdfc-pairs 2000, npm against oxigraph: time ratio 24.8, RSS ratio 4.6
+- rdfc-pairs 4000, lean against oxigraph: time ratio 20.8, RSS ratio 0.8
+- rdfc-pairs 4000, npm against oxigraph: time ratio 40.6, RSS ratio 3.8
+- rdfc-pairs 8000, lean against oxigraph: time ratio 50.3, RSS ratio 0.7
+- rdfc-pairs 8000, npm against oxigraph: time ratio not finished, RSS ratio —
+- owl-dl-consistent schema.org, lean against hermit: time ratio 31.2, RSS ratio 0.8
+- owl-dl-consistent ro, lean against hermit: time ratio not finished, RSS ratio —
+- owl-dl-consistent cl-basic, lean against hermit: time ratio not finished, RSS ratio —
+
+
+
+## 7. What this method cannot see
+
+- A row measures a command line, including process start, reading the file and
+  writing the answer. Oxigraph runs inside Python, Jena and HermiT inside a
+  JVM; for small inputs the start of the process is most of the time (row
+  `start`).
+- Jena uses more than one thread (JIT compiler, garbage collector), so its CPU
+  time is above its wall time. Lean, Serd and Oxigraph's parsers use one.
+- The load average was 4 to 5 on 4 CPUs for the parse and count rows and 6 to
+  30 for the SPARQL, RDFC and OWL rows (other agents built the wasm module and
+  ran their gates). Wall times carry that load; the CPU column carries less of
+  it. The Lean default `parse` of N-Triples was bimodal at load 4 (100,000
+  triples: 0.67 to 1.78 s over five runs); the median of five is in the table.
+  Small rows (under 0.3 s) at load 10 have spreads near 100 %.
+- Peak resident set of a streaming parser (Serd: 2 MB) is the floor of the
+  method. A ratio against it compares an engine that keeps the dataset in
+  memory with one that keeps nothing; the `lean-stream` rows are the like for
+  like comparison.
+- The SPARQL rows load a file and run one query; they do not measure a warm
+  store, concurrent queries, property paths, aggregates other than COUNT,
+  updates or the persisted store.
+- One input shape per row. The RDFC rows do not include the shape where every
+  blank node has the same first-degree hash; that row is in
+  `2026-10-10-npm-lean-only.md` section 10 (issue 751).
+- The OWL RL rows compare different rule sets (section 2). The OWL RL closure
+  of QUDT was not run on `e3c3aa01`: it needs more than 6 GB there
+  (https://github.com/danbri/factoidal/issues/758; the repair of key result
+  3.4 reports 1,352 MB). The workload includes QUDT for the next binary.
+- A TIMEOUT row has no memory figure: `time -v` then reports the `timeout`
+  process (1.8 MB), not the killed step.
+- Every Lean row is the `l4factoidal` of `e3c3aa01` (SHA-256 prefix
+  `98d5bc128281718e`, field `lean_sha256` of the later rows). The repairs of
+  key results 3.3, 2.4 and 3.4, which the coordinator was merging into `main`
+  during the run, are not in it.
+- The OWL DL rows decide consistency only (`owl:Thing` satisfiable); no
+  classification, no entailment checks.
+
+## 8. The gate
+
+`tests/perf/sota_gate.sh` re-runs every Lean row (`lean`, `lean-stream`) of
+the results file whose median wall time is at most 60 s, three runs each, and
+fails a row whose answer differs, whose median CPU time is more than 1.25
+times the recorded one plus 0.05 s, or whose median peak resident set is more
+than 1.25 times the recorded one plus 8 MB; a failing row is measured a second
+time before it fails. The rows over 10 with an open issue are expected
+failures: such a row fails the gate (UNEXPECTED PASS) when it comes within 10
+times the recorded fastest reference. Run of 2026-10-13, 03:27 to 04:00 UTC,
+the same `e3c3aa01` binary, load average 2.6 to 11.5: 79 pass, 0 fail (out of
+79), the 5 expected failures still present (issues 813 twice, 814, 751, 819).
+A forced bound (`SOTA_TOLERANCE=-0.5`) failed the `parse-rdfxml-real` row with
+exit status 1, so the gate can fail.
+
+Run of 2026-10-13, 06:30 to 06:52 UTC, the binary of
+`claude/wt-strict-parse-stream` (after the repair of
+https://github.com/danbri/factoidal/issues/813), load average 14 to 16: 76
+pass, 3 fail (out of 79). The 36 rows of the parse and count workloads
+(`lean`, `lean-stream`) pass; issue 813's two rows are plain assertions now.
+The 3 failures: `parse-rdfxml` 100,000, CPU 6.68 s against a bound of 6.45 s
+(recorded at load 4; in a rerun at load 17 to 19 the row passed and
+`parse-rdfxml-real` failed by 3 percent, 3.11 s against 3.03 s; the RDF/XML
+reader is not changed by that branch except the faster `isIri`), and two
+UNEXPECTED PASSES: `rdfc-pairs` 8,000 (0.61 s, recorded 9.97 s; the repair
+of https://github.com/danbri/factoidal/issues/751 is in the base) and
+`owl-dl-consistent` schema.org (3.91 s, recorded 43.13 s;
+https://github.com/danbri/factoidal/issues/819). Those two marks and rows
+belong to their own issues and are not changed here.
+
+Run of 2026-10-13, 15:31 to 15:40 UTC, the binary of
+`claude/wt-rdfxml-speed` (the RDF/XML repairs of
+https://github.com/danbri/factoidal/issues/814 and
+https://github.com/danbri/factoidal/issues/771, merged with `main`
+`80dc8ffc`), with the RDF/XML rows of 15:30 UTC in the results file, load
+average 0.8 to 1.6: 79 pass, 0 fail (out of 79). Before the expected-failure
+mark of `parse-rdfxml` 100,000 was removed, the same row reported UNEXPECTED
+PASS (CPU 1.8 s against 5.12 s recorded; time ratio 5.3, memory ratio 7.9
+against the recorded Oxigraph row). No expected failure is left in the gate.
+
+## 9. Reproduce
+
+```
+cd formal/lean4 && lake build l4factoidal          # the Lean binary
+tools/fetch-builds.sh --set web                     # the wasm for the npm rows
+python3 tools/sota-bench.py --install               # reference engines into /tmp/sota-dl
+python3 tools/sota-bench.py --out /tmp/sota.jsonl   # every row, about 90 minutes
+python3 tools/sota-bench.py --report /tmp/sota.jsonl
+tests/perf/sota_gate.sh                             # the Lean rows against this record
+rm -rf /tmp/sota-dl                                 # the downloads
+```
+
+## Appendix: every measurement
+
+| Workload | Size | Engine | Wall, median (spread) | CPU, median | Peak RSS, median | Answer | Load (1 min) |
+|---|---:|---|---:|---:|---:|---|---|
+| start | 0 | lean | 0.047 s ±12% | 0.03 s | 20 MB | — | 4.11 to 4.11 |
+| start | 0 | oxigraph | 0.025 s ±3% | 0.01 s | 23 MB | — | 4.11 to 4.11 |
+| start | 0 | serd | 0.005 s ±20% | 0.00 s | 2 MB | — | 4.11 to 4.11 |
+| start | 0 | jena | 1.193 s ±6% | 1.69 s | 92 MB | — | 4.11 to 4.11 |
+| start | 0 | npm | 0.409 s ±6% | 0.50 s | 122 MB | — | 4.02 to 4.11 |
+| start | 0 | hermit | 0.107 s ±8% | 0.11 s | 43 MB | — | 4.02 to 4.02 |
+| parse-nt | 100000 | lean | 0.497 s ±3% | 0.41 s | 24 MB | 100000 | 6.66 to 6.66 |
+| parse-nt | 100000 | lean-stream | 0.563 s ±15% | 0.45 s | 24 MB | 100000 | 6.66 to 6.69 |
+| parse-nt | 100000 | oxigraph | 0.189 s ±14% | 0.13 s | 23 MB | 100000 | 6.69 to 6.69 |
+| parse-nt | 100000 | serd | 0.160 s ±26% | 0.09 s | 2 MB | 100000 | 6.69 to 6.69 |
+| parse-nt | 100000 | jena | 2.345 s ±6% | 2.93 s | 161 MB | 100000 | 6.69 to 6.71 |
+| parse-nt | 200000 | lean | 0.891 s ±6% | 0.79 s | 24 MB | 200000 | 6.71 to 6.9 |
+| parse-nt | 200000 | lean-stream | 1.084 s ±7% | 0.97 s | 24 MB | 200000 | 6.75 to 6.9 |
+| parse-nt | 200000 | oxigraph | 0.316 s ±15% | 0.24 s | 23 MB | 200000 | 6.75 to 6.75 |
+| parse-nt | 200000 | serd | 0.216 s ±16% | 0.14 s | 2 MB | 200000 | 6.75 to 6.75 |
+| parse-nt | 200000 | jena | 2.817 s ±8% | 3.28 s | 175 MB | 200000 | 6.62 to 6.85 |
+| parse-nt | 400000 | lean | 1.952 s ±7% | 1.75 s | 24 MB | 400000 | 6.49 to 6.62 |
+| parse-nt | 400000 | lean-stream | 2.023 s ±6% | 1.84 s | 24 MB | 400000 | 6.45 to 6.49 |
+| parse-nt | 400000 | oxigraph | 0.647 s ±3% | 0.50 s | 23 MB | 400000 | 6.25 to 6.25 |
+| parse-nt | 400000 | serd | 0.439 s ±6% | 0.28 s | 2 MB | 400000 | 6.23 to 6.25 |
+| parse-nt | 400000 | jena | 3.523 s ±3% | 3.88 s | 265 MB | 400000 | 6.05 to 6.23 |
+| parse-nt-mixed | 100000 | lean | 0.506 s ±13% | 0.46 s | 24 MB | 100000 | 5.97 to 5.97 |
+| parse-nt-mixed | 100000 | lean-stream | 0.565 s ±16% | 0.51 s | 24 MB | 100000 | 5.89 to 5.89 |
+| parse-nt-mixed | 100000 | oxigraph | 0.193 s ±14% | 0.15 s | 23 MB | 100000 | 5.89 to 5.89 |
+| parse-nt-mixed | 100000 | serd | 0.118 s ±7% | 0.08 s | 2 MB | 100000 | 5.89 to 5.89 |
+| parse-nt-mixed | 100000 | jena | 2.827 s ±15% | 3.53 s | 156 MB | 100000 | 5.89 to 5.9 |
+| parse-nt-mixed | 200000 | lean | 1.020 s ±3% | 0.95 s | 24 MB | 200000 | 5.99 to 5.99 |
+| parse-nt-mixed | 200000 | lean-stream | 1.126 s ±10% | 1.01 s | 24 MB | 200000 | 5.83 to 5.83 |
+| parse-nt-mixed | 200000 | oxigraph | 0.394 s ±17% | 0.29 s | 23 MB | 200000 | 5.83 to 5.92 |
+| parse-nt-mixed | 200000 | serd | 0.229 s ±9% | 0.16 s | 2 MB | 200000 | 5.92 to 5.92 |
+| parse-nt-mixed | 200000 | jena | 3.134 s ±5% | 4.15 s | 175 MB | 200000 | 5.92 to 6.09 |
+| parse-nt-mixed | 400000 | lean | 2.250 s ±16% | 2.05 s | 24 MB | 400000 | 5.99 to 6.16 |
+| parse-nt-mixed | 400000 | lean-stream | 2.337 s ±12% | 2.14 s | 24 MB | 400000 | 5.91 to 5.92 |
+| parse-nt-mixed | 400000 | oxigraph | 0.737 s ±21% | 0.56 s | 23 MB | 400000 | 5.92 to 6.48 |
+| parse-nt-mixed | 400000 | serd | 0.471 s ±8% | 0.33 s | 2 MB | 400000 | 6.48 to 6.48 |
+| parse-nt-mixed | 400000 | jena | 4.890 s ±12% | 4.72 s | 225 MB | 400000 | 6.48 to 6.77 |
+| parse-ttl-gene | 20000 | lean | 0.412 s ±13% | 0.29 s | 26 MB | 87468 | 6.53 to 6.57 |
+| parse-ttl-gene | 20000 | lean-stream | 0.407 s ±8% | 0.33 s | 24 MB | 87468 | 6.53 to 6.53 |
+| parse-ttl-gene | 20000 | oxigraph | 0.182 s ±16% | 0.12 s | 23 MB | 87468 | 6.53 to 6.53 |
+| parse-ttl-gene | 20000 | serd | 0.115 s ±6% | 0.06 s | 2 MB | 87468 | 6.53 to 6.53 |
+| parse-ttl-gene | 20000 | jena | 2.928 s ±20% | 3.77 s | 204 MB | 87468 | 6.33 to 6.53 |
+| parse-ttl-gene | 40000 | lean | 0.687 s ±8% | 0.57 s | 26 MB | 174225 | 6.12 to 6.22 |
+| parse-ttl-gene | 40000 | lean-stream | 0.751 s ±10% | 0.64 s | 24 MB | 174225 | 6.12 to 6.12 |
+| parse-ttl-gene | 40000 | oxigraph | 0.301 s ±4% | 0.21 s | 23 MB | 174225 | 6.12 to 6.12 |
+| parse-ttl-gene | 40000 | serd | 0.260 s ±23% | 0.15 s | 2 MB | 174225 | 5.95 to 6.12 |
+| parse-ttl-gene | 40000 | jena | 5.354 s ±48% | 4.78 s | 256 MB | 174225 | 5.95 to 6.61 |
+| parse-ttl-gene | 80000 | lean | 1.442 s ±1% | 1.17 s | 26 MB | 346100 | 6.58 to 6.72 |
+| parse-ttl-gene | 80000 | lean-stream | 1.614 s ±14% | 1.41 s | 24 MB | 346100 | 6.38 to 6.58 |
+| parse-ttl-gene | 80000 | oxigraph | 0.727 s ±9% | 0.46 s | 23 MB | 346100 | 6.38 to 6.38 |
+| parse-ttl-gene | 80000 | serd | 0.481 s ±12% | 0.27 s | 2 MB | 346100 | 6.51 to 6.51 |
+| parse-ttl-gene | 80000 | jena | 6.540 s ±9% | 5.92 s | 293 MB | 346100 | 6.51 to 6.89 |
+| parse-ttl-rich | 100000 | lean | 0.521 s ±17% | 0.41 s | 26 MB | 114280 | 6.9 to 6.9 |
+| parse-ttl-rich | 100000 | lean-stream | 0.540 s ±3% | 0.47 s | 24 MB | 114280 | 6.67 to 6.67 |
+| parse-ttl-rich | 100000 | oxigraph | 0.261 s ±36% | 0.20 s | 23 MB | 114280 | 6.67 to 6.67 |
+| parse-ttl-rich | 100000 | serd | 0.119 s ±5% | 0.08 s | 2 MB | 114280 | 6.67 to 6.67 |
+| parse-ttl-rich | 100000 | jena | 2.739 s ±13% | 3.69 s | 177 MB | 114280 | 6.61 to 6.67 |
+| parse-ttl-rich | 200000 | lean | 0.881 s ±19% | 0.77 s | 26 MB | 228568 | 6.44 to 6.56 |
+| parse-ttl-rich | 200000 | lean-stream | 1.046 s ±15% | 0.91 s | 24 MB | 228568 | 6.44 to 6.44 |
+| parse-ttl-rich | 200000 | oxigraph | 0.445 s ±21% | 0.35 s | 23 MB | 228568 | 6.44 to 6.56 |
+| parse-ttl-rich | 200000 | serd | 0.247 s ±9% | 0.15 s | 2 MB | 228568 | 6.56 to 6.56 |
+| parse-ttl-rich | 200000 | jena | 4.670 s ±20% | 4.68 s | 193 MB | 228568 | 6.56 to 7.16 |
+| parse-ttl-rich | 400000 | lean | 1.836 s ±6% | 1.61 s | 26 MB | 457136 | 6.91 to 7.07 |
+| parse-ttl-rich | 400000 | lean-stream | 2.060 s ±10% | 1.80 s | 24 MB | 457136 | 6.75 to 6.91 |
+| parse-ttl-rich | 400000 | oxigraph | 0.878 s ±1% | 0.68 s | 23 MB | 457136 | 6.75 to 6.77 |
+| parse-ttl-rich | 400000 | serd | 0.564 s ±40% | 0.32 s | 2 MB | 457136 | 6.77 to 7.03 |
+| parse-ttl-rich | 400000 | jena | 4.676 s ±50% | 5.83 s | 252 MB | 457136 | 7.01 to 7.27 |
+| parse-rdfxml | 25000 | lean | 0.455 s ±66% | 0.40 s | 65 MB | 25000 | 1.49 to 1.54 |
+| parse-rdfxml | 25000 | oxigraph | 0.107 s ±9% | 0.08 s | 19 MB | 25000 | 1.49 to 1.49 |
+| parse-rdfxml | 25000 | jena | 1.470 s ±23% | 3.19 s | 154 MB | 25000 | 1.49 to 1.49 |
+| parse-rdfxml | 50000 | lean | 0.840 s ±13% | 0.79 s | 101 MB | 50000 | 1.45 to 1.45 |
+| parse-rdfxml | 50000 | oxigraph | 0.180 s ±25% | 0.16 s | 19 MB | 50000 | 1.45 to 1.45 |
+| parse-rdfxml | 50000 | jena | 1.694 s ±10% | 3.87 s | 191 MB | 50000 | 1.42 to 1.45 |
+| parse-rdfxml | 100000 | lean | 2.228 s ±23% | 2.12 s | 181 MB | 100000 | 1.38 to 1.42 |
+| parse-rdfxml | 100000 | oxigraph | 0.358 s ±30% | 0.33 s | 19 MB | 100000 | 1.35 to 1.35 |
+| parse-rdfxml | 100000 | jena | 2.160 s ±4% | 5.08 s | 240 MB | 100000 | 1.35 to 1.48 |
+| parse-rdfxml-real | 1 | lean | 1.094 s ±68% | 1.02 s | 148 MB | 78835 | 1.56 to 1.61 |
+| parse-rdfxml-real | 1 | oxigraph | 0.273 s ±28% | 0.21 s | 19 MB | 78835 | 1.56 to 1.56 |
+| parse-rdfxml-real | 1 | jena | 1.644 s ±14% | 3.99 s | 143 MB | 78835 | 1.56 to 1.83 |
+| count-nt | 100000 | lean | 1.326 s ±28% | 0.74 s | 72 MB | 100000 | 30.41 to 30.41 |
+| count-nt | 100000 | lean-stream | 0.615 s ±60% | 0.42 s | 24 MB | 100000 | 7.07 to 7.07 |
+| count-nt | 100000 | npm | 6.085 s ±22% | 6.18 s | 889 MB | 100000 | 4.52 to 4.88 |
+| count-nt | 100000 | jena | 2.105 s ±26% | 2.92 s | 158 MB | 100000 | 7.31 to 7.31 |
+| count-nt | 200000 | lean | 3.177 s ±54% | 1.87 s | 124 MB | 200000 | 30.41 to 30.66 |
+| count-nt | 200000 | lean-stream | 0.957 s ±14% | 0.81 s | 24 MB | 200000 | 7.14 to 7.24 |
+| count-nt | 200000 | npm | 10.048 s ±21% | 10.26 s | 1660 MB | 200000 | 4.26 to 4.46 |
+| count-nt | 200000 | jena | 2.764 s ±24% | 3.09 s | 193 MB | 200000 | 6.89 to 7.14 |
+| count-nt | 400000 | lean | 5.663 s ±30% | 3.28 s | 226 MB | 400000 | 30.5 to 30.98 |
+| count-nt | 400000 | lean-stream | 2.835 s ±25% | 2.08 s | 24 MB | 400000 | 8.07 to 8.63 |
+| count-nt | 400000 | npm | 21.971 s ±5% | 22.15 s | 3140 MB | 400000 | 4.35 to 4.55 |
+| count-nt | 400000 | jena | 4.310 s ±12% | 3.68 s | 224 MB | 400000 | 8.63 to 8.91 |
+| count-ttl-gene | 20000 | lean | 1.018 s ±4% | 0.56 s | 57 MB | 87468 | 29.38 to 29.58 |
+| count-ttl-gene | 20000 | lean-stream | 0.421 s ±47% | 0.32 s | 24 MB | 87468 | 9.07 to 9.31 |
+| count-ttl-gene | 20000 | npm | 3.676 s ±5% | 3.79 s | 1095 MB | 87468 | 4.53 to 4.65 |
+| count-ttl-gene | 20000 | jena | 3.828 s ±62% | 3.57 s | 203 MB | 87468 | 9.31 to 11.34 |
+| count-ttl-gene | 40000 | lean | 1.897 s ±24% | 1.05 s | 92 MB | 174225 | 29.19 to 29.38 |
+| count-ttl-gene | 40000 | lean-stream | 0.883 s ±35% | 0.67 s | 24 MB | 174225 | 11.53 to 11.65 |
+| count-ttl-gene | 40000 | npm | 6.546 s ±4% | 6.70 s | 2122 MB | 174225 | 4.84 to 5.08 |
+| count-ttl-gene | 40000 | jena | 5.049 s ±39% | 5.03 s | 250 MB | 174225 | 11.35 to 11.84 |
+| count-ttl-gene | 80000 | lean | 3.976 s ±6% | 2.32 s | 163 MB | 346100 | 28.69 to 29.19 |
+| count-ttl-gene | 80000 | lean-stream | 1.593 s ±17% | 1.34 s | 24 MB | 346100 | 10.9 to 10.9 |
+| count-ttl-gene | 80000 | npm | 11.514 s ±5% | 12.74 s | 4045 MB | 346100 | 4.82 to 5.79 |
+| count-ttl-gene | 80000 | jena | 4.377 s ±21% | 4.73 s | 298 MB | 346100 | 10.53 to 10.75 |
+| sparql-bound-subject | 20000 | lean | 1.212 s ±6% | 1.16 s | 65 MB | 1 | 4.84 to 4.84 |
+| sparql-bound-subject | 20000 | oxigraph | 0.279 s ±27% | 0.26 s | 56 MB | 1 | 3.92 to 4.09 |
+| sparql-bound-subject | 20000 | jena | 2.370 s ±15% | 5.00 s | 353 MB | 1 | 3.92 to 3.93 |
+| sparql-bound-subject | 40000 | lean | 2.025 s ±11% | 1.91 s | 112 MB | 1 | 4.7 to 4.84 |
+| sparql-bound-subject | 40000 | oxigraph | 0.535 s ±18% | 0.52 s | 84 MB | 1 | 3.63 to 3.77 |
+| sparql-bound-subject | 40000 | jena | 3.006 s ±11% | 6.48 s | 516 MB | 1 | 3.63 to 3.9 |
+| sparql-bound-subject | 80000 | lean | 4.356 s ±25% | 4.27 s | 193 MB | 1 | 4.44 to 4.48 |
+| sparql-bound-subject | 80000 | oxigraph | 1.296 s ±19% | 1.12 s | 141 MB | 1 | 3.48 to 3.68 |
+| sparql-bound-subject | 80000 | jena | 6.784 s ±3% | 8.22 s | 771 MB | 1 | 3.68 to 5.2 |
+| sparql-count | 20000 | lean | 0.939 s ±10% | 0.90 s | 65 MB | 87468 | 4.22 to 4.33 |
+| sparql-count | 20000 | oxigraph | 0.312 s ±10% | 0.30 s | 56 MB | 87468 | 4.58 to 4.58 |
+| sparql-count | 20000 | jena | 3.596 s ±14% | 5.97 s | 360 MB | 87468 | 4.45 to 4.49 |
+| sparql-count | 40000 | lean | 1.992 s ±12% | 1.95 s | 112 MB | 174225 | 4.12 to 4.22 |
+| sparql-count | 40000 | oxigraph | 0.664 s ±3% | 0.62 s | 84 MB | 174225 | 4.53 to 4.53 |
+| sparql-count | 40000 | jena | 4.985 s ±5% | 8.02 s | 619 MB | 174225 | 4.53 to 4.61 |
+| sparql-count | 80000 | lean | 4.529 s ±9% | 4.42 s | 193 MB | 346100 | 4.02 to 4.12 |
+| sparql-count | 80000 | oxigraph | 1.228 s ±18% | 1.20 s | 141 MB | 346100 | 4.51 to 4.64 |
+| sparql-count | 80000 | jena | 7.401 s ±10% | 11.38 s | 916 MB | 346100 | 4.51 to 4.55 |
+| sparql-join | 20000 | lean | 0.984 s ±4% | 0.95 s | 67 MB | 101 | 4.1 to 4.1 |
+| sparql-join | 20000 | oxigraph | 0.320 s ±22% | 0.30 s | 56 MB | 101 | 4.57 to 4.57 |
+| sparql-join | 20000 | jena | 3.212 s ±10% | 5.59 s | 384 MB | 101 | 4.57 to 4.79 |
+| sparql-join | 40000 | lean | 2.211 s ±8% | 2.10 s | 111 MB | 365 | 4.01 to 4.1 |
+| sparql-join | 40000 | oxigraph | 0.566 s ±13% | 0.54 s | 84 MB | 365 | 4.72 to 4.79 |
+| sparql-join | 40000 | jena | 4.055 s ±12% | 6.45 s | 517 MB | 365 | 4.72 to 4.75 |
+| sparql-join | 80000 | lean | 3.972 s ±18% | 3.91 s | 195 MB | 1392 | 3.86 to 3.93 |
+| sparql-join | 80000 | oxigraph | 1.175 s ±3% | 1.16 s | 141 MB | 1392 | 4.48 to 4.61 |
+| sparql-join | 80000 | jena | 5.845 s ±4% | 8.81 s | 743 MB | 1392 | 4.48 to 4.56 |
+| sparql-optional-filter | 20000 | lean | 1.074 s ±20% | 0.97 s | 67 MB | 2428 | 3.95 to 3.95 |
+| sparql-optional-filter | 20000 | oxigraph | 0.313 s ±20% | 0.30 s | 56 MB | 2428 | 4.51 to 4.55 |
+| sparql-optional-filter | 20000 | jena | 3.826 s ±10% | 6.18 s | 405 MB | 2428 | 4.55 to 4.67 |
+| sparql-optional-filter | 40000 | lean | 2.255 s ±10% | 2.00 s | 114 MB | 4870 | 3.95 to 4.2 |
+| sparql-optional-filter | 40000 | oxigraph | 0.598 s ±8% | 0.57 s | 84 MB | 4870 | 4.69 to 4.69 |
+| sparql-optional-filter | 40000 | jena | 4.384 s ±6% | 7.34 s | 542 MB | 4870 | 4.56 to 4.69 |
+| sparql-optional-filter | 80000 | lean | 4.769 s ±13% | 4.68 s | 195 MB | 9768 | 4.01 to 4.2 |
+| sparql-optional-filter | 80000 | oxigraph | 1.171 s ±12% | 1.14 s | 141 MB | 9768 | 4.63 to 4.63 |
+| sparql-optional-filter | 80000 | jena | 9.753 s ±48% | 9.91 s | 772 MB | 9768 | 4.38 to 7.8 |
+| rdfc-iri | 25000 | lean | 0.583 s ±59% | 0.53 s | 90 MB | 9140d087a6bd9ea6 | 3.72 to 3.78 |
+| rdfc-iri | 25000 | oxigraph | 0.448 s ±68% | 0.33 s | 63 MB | 9140d087a6bd9ea6 | 9.17 to 9.17 |
+| rdfc-iri | 25000 | rdf-canonize | 21.561 s ±9% | 11.31 s | 89 MB | 9140d087a6bd9ea6 | 21.63 to 24.13 |
+| rdfc-iri | 25000 | npm | 3.467 s ±55% | 1.93 s | 264 MB | 9140d087a6bd9ea6 | 25.2 to 26.14 |
+| rdfc-iri | 50000 | lean | 1.081 s ±67% | 1.03 s | 162 MB | 67a533c65f2caa2c | 3.66 to 3.72 |
+| rdfc-iri | 50000 | oxigraph | 0.778 s ±23% | 0.64 s | 105 MB | 67a533c65f2caa2c | 8.66 to 8.69 |
+| rdfc-iri | 50000 | npm | 4.196 s ±25% | 3.41 s | 494 MB | 67a533c65f2caa2c | 16.6 to 16.88 |
+| rdfc-iri | 100000 | lean | 2.240 s ±28% | 2.16 s | 306 MB | fd78a6ba0579f813 | 3.61 to 3.66 |
+| rdfc-iri | 100000 | oxigraph | 1.512 s ±32% | 1.42 s | 189 MB | fd78a6ba0579f813 | 6.99 to 6.99 |
+| rdfc-iri | 100000 | npm | 6.824 s ±19% | 5.66 s | 873 MB | fd78a6ba0579f813 | 14.82 to 15.95 |
+| rdfc-person | 5000 | lean | 0.334 s ±12% | 0.32 s | 47 MB | 07d1a396c611f0f1 | 3.56 to 3.56 |
+| rdfc-person | 5000 | oxigraph | 0.178 s ±63% | 0.15 s | 49 MB | 07d1a396c611f0f1 | 5.39 to 5.39 |
+| rdfc-person | 5000 | rdf-canonize | 2.231 s ±5% | 1.96 s | 90 MB | 07d1a396c611f0f1 | 13.7 to 13.73 |
+| rdfc-person | 5000 | npm | 1.669 s ±21% | 1.41 s | 166 MB | 07d1a396c611f0f1 | 12.4 to 12.4 |
+| rdfc-person | 10000 | lean | 0.721 s ±8% | 0.70 s | 72 MB | 4c0220890254a1d0 | 3.56 to 3.56 |
+| rdfc-person | 10000 | oxigraph | 0.382 s ±3% | 0.36 s | 75 MB | 4c0220890254a1d0 | 4.87 to 4.87 |
+| rdfc-person | 10000 | rdf-canonize | 9.732 s ±14% | 9.03 s | 108 MB | 4c0220890254a1d0 | 13.04 to 13.27 |
+| rdfc-person | 10000 | npm | 2.602 s ±5% | 2.40 s | 237 MB | 4c0220890254a1d0 | 12.7 to 12.77 |
+| rdfc-person | 20000 | lean | 1.639 s ±29% | 1.60 s | 127 MB | 75628897e2a94f4a | 3.51 to 3.56 |
+| rdfc-person | 20000 | oxigraph | 0.804 s ±25% | 0.77 s | 128 MB | 75628897e2a94f4a | 4.87 to 4.87 |
+| rdfc-person | 20000 | npm | 4.753 s ±10% | 3.86 s | 410 MB | 75628897e2a94f4a | 10.49 to 10.71 |
+| rdfc-pairs | 2000 | lean | 0.606 s ±24% | 0.56 s | 24 MB | aed2277484f581a3 | 3.51 to 3.51 |
+| rdfc-pairs | 2000 | oxigraph | 0.065 s ±10% | 0.05 s | 29 MB | aed2277484f581a3 | 4.87 to 4.87 |
+| rdfc-pairs | 2000 | rdf-canonize | 0.378 s ±41% | 0.29 s | 69 MB | aed2277484f581a3 | 12.9 to 12.9 |
+| rdfc-pairs | 2000 | npm | 1.610 s ±24% | 1.39 s | 131 MB | aed2277484f581a3 | 11.84 to 12.0 |
+| rdfc-pairs | 4000 | lean | 2.075 s ±7% | 2.04 s | 27 MB | 3fe79d4bce6afb88 | 3.47 to 3.47 |
+| rdfc-pairs | 4000 | oxigraph | 0.100 s ±9% | 0.08 s | 35 MB | 3fe79d4bce6afb88 | 4.72 to 4.72 |
+| rdfc-pairs | 4000 | rdf-canonize | 0.468 s ±24% | 0.40 s | 82 MB | 3fe79d4bce6afb88 | 12.35 to 12.38 |
+| rdfc-pairs | 4000 | npm | 4.058 s ±8% | 3.30 s | 136 MB | 3fe79d4bce6afb88 | 12.71 to 13.61 |
+| rdfc-pairs | 8000 | lean | 10.229 s ±6% | 9.97 s | 33 MB | 84015726b01cb1d9 | 3.43 to 3.61 |
+| rdfc-pairs | 8000 | oxigraph | 0.203 s ±23% | 0.18 s | 48 MB | 84015726b01cb1d9 | 4.72 to 4.72 |
+| rdfc-pairs | 8000 | rdf-canonize | 0.927 s ±10% | 0.89 s | 104 MB | 84015726b01cb1d9 | 10.18 to 10.18 |
+| rdfc-pairs | 8000 | npm | exit1 (10.353 s) | — | 149 MB | — | 13.32 to 13.32 |
+| owl-rl-closure | skos | lean | 0.071 s ±41% | 0.06 s | 25 MB | 915 | 1.86 to 1.86 |
+| owl-rl-closure | skos | jena-owl-micro | 1.668 s ±9% | 3.34 s | 148 MB | 1023 | 1.86 to 2.12 |
+| owl-rl-closure | foaf | lean | 0.102 s ±18% | 0.08 s | 27 MB | 1872 | 2.12 to 2.12 |
+| owl-rl-closure | foaf | jena-owl-micro | 1.877 s ±7% | 3.48 s | 161 MB | 1909 | 2.11 to 2.12 |
+| owl-rl-closure | prov-o | lean | 0.195 s ±8% | 0.17 s | 30 MB | 3266 | 2.11 to 2.11 |
+| owl-rl-closure | prov-o | jena-owl-micro | 1.828 s ±6% | 3.88 s | 147 MB | 3240 | 2.11 to 2.34 |
+| owl-rl-closure | bfo | lean | 0.140 s ±16% | 0.13 s | 29 MB | 3837 | 2.34 to 2.34 |
+| owl-rl-closure | bfo | jena-owl-micro | 2.019 s ±17% | 4.07 s | 158 MB | 3675 | 2.31 to 2.34 |
+| owl-rl-closure | pizza | lean | 0.410 s ±10% | 0.39 s | 47 MB | 12813 | 2.53 to 2.53 |
+| owl-rl-closure | pizza | jena-owl-micro | 2.296 s ±7% | 5.15 s | 238 MB | 10804 | 2.53 to 2.64 |
+| owl-rl-closure | wine | lean | 4.765 s ±11% | 4.68 s | 89 MB | 28855 | 2.59 to 2.64 |
+| owl-rl-closure | wine | jena-owl-micro | 7.405 s ±254% | 12.00 s | 548 MB | 26650 | 2.58 to 4.3 |
+| owl-rl-closure | schema.org | lean | 2.840 s ±18% | 2.70 s | 108 MB | 60770 | 4.73 to 4.75 |
+| owl-rl-closure | schema.org | jena-owl-micro | 19.868 s ±4% | 25.36 s | 1658 MB | 43793 | 4.77 to 4.83 |
+| owl-rl-closure | ro | lean | 11.259 s ±10% | 11.02 s | 77 MB | 42736 | 4.6 to 4.71 |
+| owl-rl-closure | ro | jena-owl-micro | 8.584 s ±28% | 15.96 s | 849 MB | 36703 | 4.76 to 5.1 |
+| owl-rl-closure | cl-basic | lean | 13.443 s ±6% | 13.17 s | 446 MB | 163444 | 4.54 to 4.95 |
+| owl-rl-closure | cl-basic | jena-owl-micro | 8.632 s ±3% | 19.21 s | 619 MB | 149426 | 3.67 to 4.03 |
+| owl-dl-consistent | skos | lean | 0.068 s ±17% | 0.05 s | 24 MB | true | 3.37 to 3.37 |
+| owl-dl-consistent | skos | hermit | 0.991 s ±19% | 0.88 s | 77 MB | true | 11.4 to 11.4 |
+| owl-dl-consistent | foaf | lean | 0.143 s ±36% | 0.13 s | 26 MB | true | 3.37 to 3.37 |
+| owl-dl-consistent | foaf | hermit | 1.065 s ±12% | 1.06 s | 75 MB | true | 10.66 to 10.8 |
+| owl-dl-consistent | prov-o | lean | 0.592 s ±16% | 0.56 s | 30 MB | true | 3.37 to 3.37 |
+| owl-dl-consistent | prov-o | hermit | 1.591 s ±38% | 1.56 s | 82 MB | true | 10.04 to 10.11 |
+| owl-dl-consistent | bfo | lean | 1.394 s ±15% | 1.38 s | 33 MB | true | 3.34 to 3.37 |
+| owl-dl-consistent | bfo | hermit | 1.289 s ±1% | 1.16 s | 79 MB | true | 8.49 to 8.62 |
+| owl-dl-consistent | pizza | lean | 0.775 s ±6% | 0.73 s | 43 MB | true | 3.31 to 3.34 |
+| owl-dl-consistent | pizza | hermit | 1.371 s ±27% | 1.36 s | 82 MB | true | 7.58 to 8.01 |
+| owl-dl-consistent | wine | lean | 18.778 s ±6% | 18.45 s | 80 MB | true | 3.31 to 3.59 |
+| owl-dl-consistent | wine | hermit | 2.135 s ±11% | 3.74 s | 110 MB | true | 5.82 to 5.9 |
+| owl-dl-consistent | schema.org | lean | 43.751 s ±1% | 43.13 s | 104 MB | true | 3.86 to 4.14 |
+| owl-dl-consistent | schema.org | hermit | 1.402 s ±14% | 2.57 s | 134 MB | true | 4.66 to 4.8 |
+| owl-dl-consistent | qudt | lean | 55.830 s ±9% | 54.70 s | 1351 MB | false | 3.91 to 4.84 |
+| owl-dl-consistent | qudt | hermit | 6.480 s ±67% | 11.50 s | 470 MB | false | 4.35 to 4.72 |
+| owl-dl-consistent | ro | lean | TIMEOUT (600.013 s) | — | 2 MB | — | 5.35 to 5.35 |
+| owl-dl-consistent | ro | hermit | 14.628 s ±7% | 22.04 s | 1609 MB | true | 4.71 to 5.27 |
+| owl-dl-consistent | cl-basic | lean | TIMEOUT (600.005 s) | — | 2 MB | — | 5.91 to 5.91 |
+| owl-dl-consistent | cl-basic | hermit | 3.360 s ±5% | 6.02 s | 284 MB | true | 4.8 to 4.9 |

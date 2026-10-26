@@ -39,22 +39,20 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`, no solver.
 
 ## What is NOT proved, named rather than hidden
 
-1. **Truth preservation (model theory) is not ported.** The F* tree
-   proves, in `OWL.Semantics.fst` / `OWL.Semantics.Soundness.fst`, that
-   each row PRESERVES TRUTH: for every OWL 2 RL interpretation `I` and
-   graph `g`, if `I` satisfies `g` then `I` satisfies each row's
-   conclusion. In Lean that statement would read
-
-       theorem row_true {I : Interp} {g : Graph}
-           (hI : Satisfies I g) {t : Triple} (h : Derives g t) :
-           SatisfiesTriple I t
-
-   and it needs the interpretation machinery (`OWL.Semantics.fst`'s
-   `owl_interp`, `satisfies`, the class/property extension functions)
-   ported first. Nothing here claims it. T2 is PROOF-THEORETIC: every
-   computed triple has a derivation in the rule relation, which is the
-   object a reviewer checks against the W3C table by eye. Do not read
-   T2 as the F* model-theoretic soundness theorem.
+1. **Truth preservation (model theory) is in `OWL/RLSemantics.lean`,
+   not here.** Stage 4 of https://github.com/danbri/factoidal/issues/598
+   added `RLSemantics.rl_derives_holds` on 2026-08-26: in every interpretation that meets
+   `RlConditions` (one rule-shaped condition per `Derives` row), every
+   triple that `Derives` derives from a reserved-free graph is true. One
+   induction over all the constructors. It covers every row; the F*
+   `OWL.Semantics.Soundness.fst` proves four pilot rules. T2 here stays
+   PROOF-THEORETIC: every computed triple has a derivation in the rule
+   relation. What is still open is the link from the OWL 2 RDF-Based
+   Semantics itself to `RlConditions` (a theorem `RdfBasedConditions i →
+   RlConditions i'`): https://github.com/danbri/factoidal/issues/731.
+   (Until 2026-10-10 this item still said "not ported". An outside
+   review of the F* to Lean migration read it that day and concluded
+   that the Lean tree lacks the OWL model theory.)
 
 2. **`closureFuelBound` is stated, not proved adequate.** What IS
    proved is `closure_saturated_or_underfueled`: the only alternative
@@ -531,6 +529,86 @@ theorem eqRepOFor_sound {g : Graph} {d t : Triple} (hd : d ∈ g)
     obtain ⟨hug, huo⟩ := mem_withObj hu
     exact Derives.eqRepO (derives_of_parts hd rfl hp rfl)
       (derives_of_parts hug rfl rfl huo)
+  · simp at h
+
+/-- `ttRepAll` finds only one-occurrence replacements inside a triple
+term. -/
+theorem mem_ttRepAll {x y : WfIri} : ∀ {o o' : Term},
+    o' ∈ ttRepAll x y o → TtRep x y o o'
+  | .iri _, _, h => by simp [ttRepAll] at h
+  | .bnode _, _, h => by simp [ttRepAll] at h
+  | .literal _, _, h => by simp [ttRepAll] at h
+  | .tripleTerm s p o, o', h => by
+      simp only [ttRepAll, List.mem_append, List.mem_map] at h
+      rcases h with ((hs | hp) | ho) | hd
+      · cases s with
+        | iri a =>
+            simp only at hs
+            split at hs
+            · rename_i hax; rw [beq_iff_eq] at hax; subst hax
+              simp only [List.mem_singleton] at hs; subst hs; exact TtRep.subj
+            · simp at hs
+        | bnode _ => simp at hs
+      · split at hp
+        · rename_i hpx; rw [beq_iff_eq] at hpx; subst hpx
+          simp only [List.mem_singleton] at hp; subst hp; exact TtRep.pred
+        · simp at hp
+      · cases o with
+        | iri a =>
+            simp only at ho
+            split at ho
+            · rename_i hax; rw [beq_iff_eq] at hax; subst hax
+              simp only [List.mem_singleton] at ho; subst ho; exact TtRep.obj
+            · simp at ho
+        | bnode _ => simp at ho
+        | literal _ => simp at ho
+        | tripleTerm _ _ _ => simp at ho
+      · obtain ⟨o1, h1, rfl⟩ := hd
+        exact TtRep.deep (mem_ttRepAll h1)
+
+/-- `ttRepAll` finds every one-occurrence replacement. -/
+theorem ttRepAll_of_ttRep {x y : WfIri} {o o' : Term}
+    (h : TtRep x y o o') : o' ∈ ttRepAll x y o := by
+  induction h with
+  | subj => simp [ttRepAll]
+  | pred => simp [ttRepAll]
+  | obj => simp [ttRepAll]
+  | deep _ ih =>
+      simp only [ttRepAll, List.mem_append, List.mem_map]
+      exact Or.inr ⟨_, ih, rfl⟩
+
+/-- Replacing an IRI by itself gives the term back. -/
+theorem ttRep_self {x : WfIri} {o o' : Term} (h : TtRep x x o o') : o' = o := by
+  generalize hy : x = y at h
+  induction h with
+  | subj => subst hy; rfl
+  | pred => subst hy; rfl
+  | obj => subst hy; rfl
+  | deep _ ih => rw [ih]
+
+/-- **eq-rep-tt** `[ext]`. -/
+theorem eqRepTtFor_sound {g : Graph} {d t : Triple} (hd : d ∈ g)
+    (h : t ∈ eqRepTtFor g d) : Derives g t := by
+  rcases d with ⟨ds, dp, dob⟩
+  unfold eqRepTtFor at h
+  split at h
+  · rename_i hp; rw [beq_iff_eq] at hp
+    simp only at hp; subst hp
+    cases ds with
+    | bnode _ => simp at h
+    | iri x =>
+      cases dob with
+      | iri y =>
+          simp only at h
+          split at h
+          · simp at h
+          · simp only [List.mem_flatMap, List.mem_map] at h
+            obtain ⟨u, hu, o', ho', rfl⟩ := h
+            exact Derives.eqRepTt (Derives.base hd) (derives_of_parts hu rfl rfl rfl)
+              (mem_ttRepAll ho')
+      | bnode _ => simp at h
+      | literal _ => simp at h
+      | tripleTerm _ _ _ => simp at h
   · simp at h
 
 -- --- Table 4, property axioms ----------------------------------------
@@ -1718,7 +1796,7 @@ theorem conclusionsFrom_sound {g : Graph} {d t : Triple} (hd : d ∈ g)
     rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
     rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
     rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-    rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · exact eqRefSFor_sound hd ht
   · exact eqRefPFor_sound hd ht
   · exact eqRefOFor_sound hd ht
@@ -1793,6 +1871,7 @@ theorem conclusionsFrom_sound {g : Graph} {d t : Triple} (hd : d ∈ g)
   · exact minCard1ComprehensionFor_sound hd ht
   · exact caxAdcToDwFor_sound hd ht
   · exact inverseOfDomRngFlipFor_sound hd ht
+  · exact eqRepTtFor_sound hd ht
 
 /-- **cls-thing** and **cls-nothing1** are premise-free rows, and so is
 the `premiseFreeAxiom` `[ext]` row, so the axiom triples are derivable
@@ -2605,6 +2684,17 @@ theorem complete_of_saturated {sat : Graph} (hsat : step sat = sat)
       simp only [eqRepOFor, beq_self_eq_true, if_true, List.mem_map]
       exact ⟨⟨s, p, os.toTerm⟩, mem_withObj_of ih2 rfl, rfl⟩
     exact R ih1 hc (by simp [conclusionsList])
+  | @eqRepTt x y s p o o' _ _ hr ih1 ih2 =>
+    by_cases hxy : x = y
+    · subst hxy; rw [ttRep_self hr]; exact ih2
+    · have hb : (x == y) = false := by
+        simp only [beq_eq_false_iff_ne, ne_eq]; exact hxy
+      have hc : (⟨s, p, o'⟩ : Triple) ∈
+          eqRepTtFor sat ⟨Subject.iri x, owlSameAs, Term.iri y⟩ := by
+        simp only [eqRepTtFor, beq_self_eq_true, if_true, hb,
+          Bool.false_eq_true, ↓reduceIte, List.mem_flatMap, List.mem_map]
+        exact ⟨⟨s, p, o⟩, ih2, o', ttRepAll_of_ttRep hr, rfl⟩
+      exact R ih1 hc (by simp [conclusionsList])
   | @prpDom p cls x y _ _ ih1 ih2 =>
     have hc : (⟨x, rdfType, cls⟩ : Triple) ∈
         prpDomFor sat ⟨Subject.iri p, rdfsDomain, cls⟩ := by

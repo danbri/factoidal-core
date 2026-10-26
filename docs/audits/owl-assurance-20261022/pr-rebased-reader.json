@@ -1,0 +1,663 @@
+{
+  "format": "owl-reader-contracts-v1",
+  "time_utc": "2026-10-22T14:01:11.934501+00:00",
+  "status": "pass",
+  "phases": [
+    {
+      "command": [
+        "/Users/danbri/.elan/bin/lake",
+        "build",
+        "L4Factoidal.OWL.AtomicDirect",
+        "L4Factoidal.OWL.RefuteCertTests",
+        "L4Factoidal.Syntax.NQuadsFast"
+      ],
+      "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/formal/lean4",
+      "exit_code": 0,
+      "timed_out": false,
+      "output": "\u2139 [4/50] Replayed L4Factoidal.OWL.DirectCert\ninfo: L4Factoidal/OWL/DirectCert.lean:1563:0: 'L4Factoidal.OWL.respectsSame_subst' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/OWL/DirectCert.lean:1564:0: 'L4Factoidal.OWL.satAll_mergeAll' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/OWL/DirectCert.lean:1565:0: 'L4Factoidal.OWL.checkCert_sound' depends on axioms: [propext, Classical.choice, Quot.sound]\n\u2139 [5/50] Replayed L4Factoidal.OWL.CertifiedDecision\ninfo: L4Factoidal/OWL/CertifiedDecision.lean:185:0: 'L4Factoidal.OWL.CertifiedDecision.erase_sound' does not depend on any axioms\ninfo: L4Factoidal/OWL/CertifiedDecision.lean:186:0: 'L4Factoidal.OWL.CertifiedDecision.checkCert_rejects_model' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/OWL/CertifiedDecision.lean:187:0: 'L4Factoidal.OWL.CertifiedDecision.no_contradictory_booleans' does not depend on any axioms\ninfo: L4Factoidal/OWL/CertifiedDecision.lean:188:0: 'L4Factoidal.OWL.CertifiedDecision.checkedRefutation' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/OWL/CertifiedDecision.lean:189:0: 'L4Factoidal.OWL.CertifiedDecision.checkedRefutation_source_sound' depends on axioms: [propext,\n Classical.choice,\n Quot.sound]\ninfo: L4Factoidal/OWL/CertifiedDecision.lean:190:0: 'L4Factoidal.OWL.CertifiedDecision.consistent_source_sound' does not depend on any axioms\ninfo: L4Factoidal/OWL/CertifiedDecision.lean:191:0: 'L4Factoidal.OWL.CertifiedDecision.Controls.empty_has_model' does not depend on any axioms\ninfo: L4Factoidal/OWL/CertifiedDecision.lean:192:0: 'L4Factoidal.OWL.CertifiedDecision.Controls.same_different_no_model' does not depend on any axioms\n\u26a0 [7/50] Replayed L4Factoidal.RDF.Core\ninfo: L4Factoidal/RDF/Core.lean:239:0: 'L4Factoidal.RDF.Term.hashDown_eq' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/RDF/Core.lean:240:0: 'L4Factoidal.RDF.Term.hashFast_eq' depends on axioms: [propext, Classical.choice, Quot.sound]\nwarning: L4Factoidal/RDF/Core.lean:372:10: This simp argument is unused:\n  h\n\nHint: Omit it from the simp argument list.\n  [apply] simp [XmlCanon.xmlCanonEq]\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\ninfo: L4Factoidal/RDF/Core.lean:661:0: 'L4Factoidal.RDF.Term.joinKeyLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/RDF/Core.lean:662:0: 'L4Factoidal.RDF.Term.joinKey_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]\n\u2139 [9/50] Replayed L4Factoidal.OWL.AtomicDirect\ninfo: L4Factoidal/OWL/AtomicDirect.lean:373:0: 'L4Factoidal.OWL.AtomicDirect.accepted_covers_triples' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/OWL/AtomicDirect.lean:458:0: 'L4Factoidal.OWL.AtomicDirect.isAnnotation_sound' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/OWL/AtomicDirect.lean:459:0: 'L4Factoidal.OWL.AtomicDirect.readOntology_preserves_models' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/OWL/AtomicDirect.lean:460:0: 'L4Factoidal.OWL.AtomicDirect.readOntology_hasModel' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/OWL/AtomicDirect.lean:461:0: 'L4Factoidal.OWL.AtomicDirect.decide_sound' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/OWL/AtomicDirect.lean:462:0: 'L4Factoidal.OWL.AtomicDirect.definitive_admitted' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/OWL/AtomicDirect.lean:463:0: 'L4Factoidal.OWL.AtomicDirect.unsupported_is_unknown' depends on axioms: [propext, Classical.choice, Quot.sound]\n\u26a0 [11/50] Replayed L4Factoidal.XML.Parser\nwarning: L4Factoidal/XML/Parser.lean:1716:20: This simp argument is unused:\n  Bool.or_assoc\n\nHint: Omit it from the simp argument list.\n  [apply] simp [Bool.or_comm, Bool.or_left_comm]\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\nwarning: L4Factoidal/XML/Parser.lean:2224:5: This simp argument is unused:\n  List.append_nil\n\nHint: Omit it from the simp argument list.\n  [apply] simp_all (config := { zetaDelta := true }) only [resumeC_exit, resumeC_err, resumeC_nil, resumeC_cons_ok,\n    \u2193reduceIte, Bool.false_eq_true, decide_true, decide_false, Bool.and_true, Bool.or_false, Bool.and_false,\n    Bool.false_and, Bool.true_or, Bool.or_true, List.cons_append, List.append_assoc, List.nil_append]\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\nwarning: L4Factoidal/XML/Parser.lean:2787:14: Variable name `f` is not explicitly referenced.\n\nHint: The binding can be removed (if unused) or named `_` (if used implicitly). Alternatively, prefix the name with `_` to silence this warning:\n  [apply] _f\n\nNote: This linter can be disabled with `set_option linter.unusedVariables false`\n\u26a0 [38/50] Replayed L4Factoidal.Syntax.Locality\nwarning: L4Factoidal/Syntax/Locality.lean:276:23: This simp argument is unused:\n  if_pos\n\nHint: Omit it from the simp argument list.\n  [apply] simp only [hp] at h \u22a2\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\nwarning: L4Factoidal/Syntax/Locality.lean:278:23: This simp argument is unused:\n  if_neg\n\nHint: Omit it from the simp argument list.\n  [apply] simp only [hp, Bool.false_eq_true, not_false_eq_true] at h \u22a2\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\nwarning: L4Factoidal/Syntax/Locality.lean:278:31: This simp argument is unused:\n  Bool.false_eq_true\n\nHint: Omit it from the simp argument list.\n  [apply] simp only [hp, if_neg, not_false_eq_true] at h \u22a2\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\nwarning: L4Factoidal/Syntax/Locality.lean:278:51: This simp argument is unused:\n  not_false_eq_true\n\nHint: Omit it from the simp argument list.\n  [apply] simp only [hp, if_neg, Bool.false_eq_true] at h \u22a2\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\ninfo: L4Factoidal/Syntax/Locality.lean:385:0: 'L4Factoidal.Syntax.iriEmitAt_local' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/Locality.lean:386:0: 'L4Factoidal.Syntax.iriEmitAt_ne_close' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/Locality.lean:387:0: 'L4Factoidal.Syntax.iriNextStep_close_local' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/Locality.lean:388:0: 'L4Factoidal.Syntax.iriNextStep_emit_local' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/Locality.lean:389:0: 'L4Factoidal.Syntax.readIriRefBody_local' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/Locality.lean:390:0: 'L4Factoidal.Syntax.readIriRef_local' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/Locality.lean:391:0: 'L4Factoidal.Syntax.span_append_of_stopped' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/Locality.lean:392:0: 'L4Factoidal.Syntax.readBlankNodeLabel_local' depends on axioms: [propext, Classical.choice, Quot.sound]\n\u2139 [39/50] Replayed L4Factoidal.Syntax.LocalityLiteral\ninfo: L4Factoidal/Syntax/LocalityLiteral.lean:277:0: 'L4Factoidal.Syntax.strLitNextStep_emit_local' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityLiteral.lean:278:0: 'L4Factoidal.Syntax.strLitNextStep_close_local' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/LocalityLiteral.lean:279:0: 'L4Factoidal.Syntax.readStringLiteralBody_local' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityLiteral.lean:280:0: 'L4Factoidal.Syntax.readStringLiteralQuoted_local' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityLiteral.lean:281:0: 'L4Factoidal.Syntax.readLangTagRun_local' depends on axioms: [propext]\n\u2139 [40/50] Replayed L4Factoidal.Syntax.NTriples\ninfo: L4Factoidal/Syntax/NTriples.lean:466:0: 'L4Factoidal.Syntax.readObject12Down_eq' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/NTriples.lean:467:0: 'L4Factoidal.Syntax.readObject12_eq_loop' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/NTriples.lean:770:0: 'L4Factoidal.Syntax.Term.toNTriplesLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/NTriples.lean:771:0: 'L4Factoidal.Syntax.Term.toNTriples_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/NTriples.lean:883:0: 'L4Factoidal.Syntax.Graph.toNTriples_eq_lines' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/NTriples.lean:1044:0: 'L4Factoidal.Syntax.Term.toCanonicalNTriplesLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/NTriples.lean:1045:0: 'L4Factoidal.Syntax.Term.toCanonicalNTriples_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]\n\u26a0 [42/50] Replayed L4Factoidal.Syntax.LocalityLine\nwarning: L4Factoidal/Syntax/LocalityLine.lean:49:16: This simp argument is unused:\n  hsp\n\nHint: Omit it from the simp argument list.\n  [apply] simp [hd]\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\nwarning: L4Factoidal/Syntax/LocalityLine.lean:49:21: This simp argument is unused:\n  hd\n\nHint: Omit it from the simp argument list.\n  [apply] simp [hsp]\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\nwarning: L4Factoidal/Syntax/LocalityLine.lean:469:25: This simp argument is unused:\n  List.cons_append\n\nHint: Omit it from the simp argument list.\n  [apply] simp only at h\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\ninfo: L4Factoidal/Syntax/LocalityLine.lean:663:0: 'L4Factoidal.Syntax.skipWs_local' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/LocalityLine.lean:664:0: 'L4Factoidal.Syntax.readLangTag_local' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityLine.lean:665:0: 'L4Factoidal.Syntax.readDatatype_local' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityLine.lean:666:0: 'L4Factoidal.Syntax.readLiteral11_local' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityLine.lean:667:0: 'L4Factoidal.Syntax.readBlankNodeLabel_local'' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityLine.lean:668:0: 'L4Factoidal.Syntax.readSubject_local' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityLine.lean:669:0: 'L4Factoidal.Syntax.readPredicate_local' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityLine.lean:670:0: 'L4Factoidal.Syntax.readObject11_local' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityLine.lean:671:0: 'L4Factoidal.Syntax.readGraphLabel_local' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityLine.lean:672:0: 'L4Factoidal.Syntax.readOptGraphLabel_local' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityLine.lean:673:0: 'L4Factoidal.Syntax.readNQuad11_local' depends on axioms: [propext, Classical.choice, Quot.sound]\n\u26a0 [43/50] Replayed L4Factoidal.Syntax.LocalitySuffix\nwarning: L4Factoidal/Syntax/LocalitySuffix.lean:44:23: This simp argument is unused:\n  if_pos\n\nHint: Omit it from the simp argument list.\n  [apply] simp only [hp]\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:545:0: 'L4Factoidal.Syntax.readSubject_suffix' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:546:0: 'L4Factoidal.Syntax.readPredicate_suffix' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:547:0: 'L4Factoidal.Syntax.readObject11_suffix' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:548:0: 'L4Factoidal.Syntax.readGraphLabel_suffix' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:549:0: 'L4Factoidal.Syntax.readOptGraphLabel_suffix' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:550:0: 'L4Factoidal.Syntax.readNQuad11_dot' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:552:0: 'L4Factoidal.Syntax.readLangTag_suffix' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:553:0: 'L4Factoidal.Syntax.readDatatype_suffix' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:554:0: 'L4Factoidal.Syntax.readLiteral11_suffix' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:556:0: 'L4Factoidal.Syntax.iriNextStep_emit_drop' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:557:0: 'L4Factoidal.Syntax.readIriRefBody_suffix' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:558:0: 'L4Factoidal.Syntax.readIriRef_suffix' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:559:0: 'L4Factoidal.Syntax.readBlankNodeLabel_suffix' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:560:0: 'L4Factoidal.Syntax.readStringLiteralQuoted_suffix' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:562:0: 'L4Factoidal.Syntax.span_snd_suffix' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:563:0: 'L4Factoidal.Syntax.skipWs_suffix' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:564:0: 'L4Factoidal.Syntax.skipToEol_suffix' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:565:0: 'L4Factoidal.Syntax.skipComment_suffix' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySuffix.lean:566:0: 'L4Factoidal.Syntax.skipEol_suffix' depends on axioms: [propext, Quot.sound]\n\u26a0 [44/50] Replayed L4Factoidal.Syntax.LocalitySkips\nwarning: L4Factoidal/Syntax/LocalitySkips.lean:37:23: This simp argument is unused:\n  if_pos\n\nHint: Omit it from the simp argument list.\n  [apply] simp only [hp] at h\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\nwarning: L4Factoidal/Syntax/LocalitySkips.lean:44:23: This simp argument is unused:\n  Bool.false_eq_true\n\nHint: Omit it from the simp argument list.\n  [apply] simp only [hp, if_neg, not_false_eq_true] at h\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\nwarning: L4Factoidal/Syntax/LocalitySkips.lean:44:43: This simp argument is unused:\n  if_neg\n\nHint: Omit it from the simp argument list.\n  [apply] simp only [hp, Bool.false_eq_true, not_false_eq_true] at h\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\nwarning: L4Factoidal/Syntax/LocalitySkips.lean:44:51: This simp argument is unused:\n  not_false_eq_true\n\nHint: Omit it from the simp argument list.\n  [apply] simp only [hp, Bool.false_eq_true, if_neg] at h\n\nNote: This linter can be disabled with `set_option linter.unusedSimpArgs false`\ninfo: L4Factoidal/Syntax/LocalitySkips.lean:177:0: 'L4Factoidal.Syntax.skipToEol_local' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/LocalitySkips.lean:178:0: 'L4Factoidal.Syntax.skipComment_local' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySkips.lean:179:0: 'L4Factoidal.Syntax.skipEol_local' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalitySkips.lean:181:0: 'L4Factoidal.Syntax.span_fst_all' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/LocalitySkips.lean:182:0: 'L4Factoidal.Syntax.span_snd_ne_nil_of_last' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/LocalitySkips.lean:183:0: 'L4Factoidal.Syntax.getLast?_of_suffix' depends on axioms: [propext]\n\u2139 [45/50] Replayed L4Factoidal.Syntax.LocalityCount\ninfo: L4Factoidal/Syntax/LocalityCount.lean:480:0: 'L4Factoidal.Syntax.readBlankNodeLabel_counts' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:481:0: 'L4Factoidal.Syntax.readLangTag_counts' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:482:0: 'L4Factoidal.Syntax.readDatatype_counts' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:483:0: 'L4Factoidal.Syntax.readLiteral11_counts' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:484:0: 'L4Factoidal.Syntax.readSubject_counts' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:485:0: 'L4Factoidal.Syntax.readObject11_counts' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:486:0: 'L4Factoidal.Syntax.readOptGraphLabel_counts' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:487:0: 'L4Factoidal.Syntax.readNQuad11_counts' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:489:0: 'L4Factoidal.Syntax.readIriRef_counts' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:490:0: 'L4Factoidal.Syntax.readStringLiteralQuoted_counts' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:492:0: 'L4Factoidal.Syntax.iriNextStep_emit_count' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:493:0: 'L4Factoidal.Syntax.strLitNextStep_emit_count' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:494:0: 'L4Factoidal.Syntax.skipWs_counts' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:495:0: 'L4Factoidal.Syntax.skipToEol_counts' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:496:0: 'L4Factoidal.Syntax.skipComment_counts' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/LocalityCount.lean:497:0: 'L4Factoidal.Syntax.skipEol_counts' depends on axioms: [propext, Quot.sound]\n\u2139 [46/50] Replayed L4Factoidal.Syntax.NQuadsStreaming\ninfo: L4Factoidal/Syntax/NQuadsStreaming.lean:409:0: 'L4Factoidal.Syntax.NQuadsStreaming.parseQuadLinesAcc11_fuel_indep' depends on axioms: [propext,\n Classical.choice,\n Quot.sound]\ninfo: L4Factoidal/Syntax/NQuadsStreaming.lean:466:0: 'L4Factoidal.Syntax.NQuadsStreaming.splitCompleteLines_reconstruct' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/NQuadsStreaming.lean:467:0: 'L4Factoidal.Syntax.NQuadsStreaming.splitCompleteLines_carry_no_newline' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/NQuadsStreaming.lean:468:0: 'L4Factoidal.Syntax.NQuadsStreaming.splitCompleteLines_complete_ends_newline' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/NQuadsStreaming.lean:469:0: 'L4Factoidal.Syntax.NQuadsStreaming.streamParse_single_chunk' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/NQuadsStreaming.lean:470:0: 'L4Factoidal.Syntax.NQuadsStreaming.readNQuad11_len' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/NQuadsStreaming.lean:471:0: 'L4Factoidal.Syntax.NQuadsStreaming.parseQuadLinesAcc11_fuel_indep' depends on axioms: [propext,\n Classical.choice,\n Quot.sound]\n\u2139 [47/50] Replayed L4Factoidal.Syntax.NQuadsConcat\ninfo: L4Factoidal/Syntax/NQuadsConcat.lean:351:0: 'L4Factoidal.Syntax.NQuadsStreaming.skipToEol_stops' depends on axioms: [propext]\ninfo: L4Factoidal/Syntax/NQuadsConcat.lean:352:0: 'L4Factoidal.Syntax.NQuadsStreaming.skipComment_stops' depends on axioms: [propext, Quot.sound]\ninfo: L4Factoidal/Syntax/NQuadsConcat.lean:353:0: 'L4Factoidal.Syntax.NQuadsStreaming.parseQuadLines11_concat' depends on axioms: [propext, Classical.choice, Quot.sound]\n\u2139 [48/50] Replayed L4Factoidal.Syntax.NQuadsHomomorphism\ninfo: L4Factoidal/Syntax/NQuadsHomomorphism.lean:131:0: 'L4Factoidal.Syntax.NQuadsStreaming.foldl_feedChunk_inv' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/NQuadsHomomorphism.lean:132:0: 'L4Factoidal.Syntax.NQuadsStreaming.streamParse11_eq_batch' depends on axioms: [propext, Classical.choice, Quot.sound]\n\u2139 [49/50] Replayed L4Factoidal.Syntax.NQuadsFold\ninfo: L4Factoidal/Syntax/NQuadsFold.lean:614:0: 'L4Factoidal.Syntax.NQuadsStreaming.parseQuadLinesAcc_eq_fold' depends on axioms: [propext,\n Classical.choice,\n Quot.sound]\ninfo: L4Factoidal/Syntax/NQuadsFold.lean:615:0: 'L4Factoidal.Syntax.NQuadsStreaming.foldQuadLines11_fuel_indep' depends on axioms: [propext,\n Classical.choice,\n Quot.sound]\ninfo: L4Factoidal/Syntax/NQuadsFold.lean:616:0: 'L4Factoidal.Syntax.NQuadsStreaming.foldQuadLines11_concat' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/NQuadsFold.lean:617:0: 'L4Factoidal.Syntax.NQuadsStreaming.foldlC_inv' depends on axioms: [propext, Classical.choice, Quot.sound]\ninfo: L4Factoidal/Syntax/NQuadsFold.lean:618:0: 'L4Factoidal.Syntax.NQuadsStreaming.streamConsume11_eq_batch' depends on axioms: [propext, Classical.choice, Quot.sound]\nBuild completed successfully (50 jobs).\n"
+    },
+    {
+      "command": [
+        "/Users/danbri/.elan/bin/lake",
+        "env",
+        "lean",
+        "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tests/assurance/AtomicDirectAcceptance.lean"
+      ],
+      "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/formal/lean4",
+      "exit_code": 0,
+      "timed_out": false,
+      "output": "ATOMIC_DIRECT_ACCEPTANCE=[{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"empty\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"annotation-domain\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"annotation-declaration-last\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"annotation-range\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"annotation-blank-value\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"builtin-comment\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"builtin-label\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"builtin-version-info\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"empty-named-class\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"generated-prefix-user-class\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"data-prefix-user-class\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":false,\"expectedSupported\":true,\"id\":\"empty-class-with-member\",\"observed\":{\"consistent\":false,\"supported\":true},\"passed\":true},{\"expectedConsistent\":false,\"expectedSupported\":true,\"id\":\"bottom-membership\",\"observed\":{\"consistent\":false,\"supported\":true},\"passed\":true},{\"expectedConsistent\":false,\"expectedSupported\":true,\"id\":\"top-subclass-bottom\",\"observed\":{\"consistent\":false,\"supported\":true},\"passed\":true},{\"expectedConsistent\":false,\"expectedSupported\":true,\"id\":\"same-and-different\",\"observed\":{\"consistent\":false,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"same-only\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"different-only\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":false,\"expectedSupported\":true,\"id\":\"self-different\",\"observed\":{\"consistent\":false,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"class-individual-punning\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":false,\"expectedSupported\":true,\"id\":\"annotation-and-real-contradiction\",\"observed\":{\"consistent\":false,\"supported\":true},\"passed\":true},{\"expectedConsistent\":false,\"expectedSupported\":true,\"id\":\"duplicate-statements\",\"observed\":{\"consistent\":false,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"ontology-header\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"blank-ontology-header\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"named-individual-declaration\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-object-property\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-undeclared-predicate\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-import\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-restriction\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"forbidden-logical-predicate-annotation\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"mixed-property-roles\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"sameas-does-not-merge-classes\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-builtin-seeAlso\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-builtin-isDefinedBy\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-builtin-deprecated\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-builtin-priorVersion\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-builtin-backwardCompatibleWith\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-builtin-incompatibleWith\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-reserved-individual-declaration\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-reserved-individual-assertion\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-reserved-individual-same\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-reserved-individual-different\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-triple-among-annotations\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-directional-annotation\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":false,\"id\":\"unsupported-triple-term-annotation\",\"observed\":{\"consistent\":null,\"supported\":false},\"passed\":true},{\"expectedConsistent\":null,\"expectedSupported\":true,\"id\":\"multiple-headers-fragment-admission\",\"observed\":{\"consistent\":null,\"supported\":true},\"passed\":true}]\n'L4Factoidal.OWL.AtomicDirect.readOntology_preserves_models' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.accepted_covers_triples' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.readOntology_hasModel' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.decide_sound' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.isAnnotation_sound' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.addAxiom_preserves_model' depends on axioms: [propext]\n'L4Factoidal.OWL.AtomicDirect.erase_sound' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.definitive_admitted' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.unsupported_is_unknown' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.CertNames.decode_encode' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.CertNames.encode_injective' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.CertNames.source_ne_nominal' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.CertNames.source_ne_dataMin' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.CertNames.source_ne_dataMax' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.CertNames.frame_eq_frameTR' depends on axioms: [propext, Quot.sound]\n"
+    },
+    {
+      "command": [
+        "/Users/danbri/.elan/bin/lake",
+        "env",
+        "lean",
+        "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/tests/assurance/AtomicDirect.lean"
+      ],
+      "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/formal/lean4",
+      "exit_code": 0,
+      "timed_out": false,
+      "output": "'AtomicDirectModels.annotation_source_model' depends on axioms: [propext, Classical.choice, Quot.sound]\n'AtomicDirectModels.collision_source_model' depends on axioms: [propext, Classical.choice, Quot.sound]\n'AtomicDirectModels.annotation_ne_inconsistent' depends on axioms: [propext, Classical.choice, Quot.sound]\n'AtomicDirectModels.collision_ne_inconsistent' depends on axioms: [propext, Classical.choice, Quot.sound]\n'AtomicDirectModels.unsupported_source_model' depends on axioms: [propext, Classical.choice, Quot.sound]\n'AtomicDirectModels.unsupported_read_none' depends on axioms: [propext, Classical.choice, Quot.sound]\n'AtomicDirectModels.unsupported_not_admitted' depends on axioms: [propext, Classical.choice, Quot.sound]\n'AtomicDirectModels.unsupported_no_definitive' depends on axioms: [propext, Classical.choice, Quot.sound]\n"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "source-name-becomes-nominal",
+      "source": "formal/lean4/L4Factoidal/OWL/CertNames.lean",
+      "proof_lines": [
+        137,
+        142
+      ],
+      "rejected_by_proof": true,
+      "changed_sha256": "1db781362136ce5a8cdae98147924fffe0b41a1e4f9b8a3484197d8c4cb52f32",
+      "phase": {
+        "command": [
+          "/Users/danbri/.elan/bin/lake",
+          "env",
+          "lean",
+          "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-btvxr6zz/CertNames.lean"
+        ],
+        "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/formal/lean4",
+        "exit_code": 1,
+        "timed_out": false,
+        "output": "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-btvxr6zz/CertNames.lean:137:65: error: unsolved goals\ncase source\niri\u271d : String\n\u22a2 False\n/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-btvxr6zz/CertNames.lean:171:0: error: Expression\n  decode (encode (Name.source (String.ofList (List.replicate 100000 'x')))) ==\n    some (Name.source (String.ofList (List.replicate 100000 'x')))\ndid not evaluate to `true`\n'L4Factoidal.OWL.CertNames.decode_encode' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]\n/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-btvxr6zz/CertNames.lean:175:0: error: \u274c\ufe0f Docstring on `#guard_msgs` does not match generated message:\n\n- info: 'L4Factoidal.OWL.CertNames.decode_encode' depends on axioms: [propext, Classical.choice, Quot.sound]\n+ info: 'L4Factoidal.OWL.CertNames.decode_encode' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]\n"
+      }
+    },
+    {
+      "name": "maximum-name-becomes-minimum",
+      "source": "formal/lean4/L4Factoidal/OWL/CertNames.lean",
+      "proof_lines": [
+        137,
+        142
+      ],
+      "rejected_by_proof": true,
+      "changed_sha256": "427f8becbd3fc271abb20414cdef2a66fb703318a895f79d391fdb30201769e6",
+      "phase": {
+        "command": [
+          "/Users/danbri/.elan/bin/lake",
+          "env",
+          "lean",
+          "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-nz5p5yz9/CertNames.lean"
+        ],
+        "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/formal/lean4",
+        "exit_code": 1,
+        "timed_out": false,
+        "output": "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-nz5p5yz9/CertNames.lean:137:65: error: unsolved goals\ncase dataMax\nn\u271d : Nat\nproperty\u271d : String\n\u22a2 False\n/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-nz5p5yz9/CertNames.lean:170:0: error: Expression\n  decode (encode (Name.dataMax 0 \"\")) == some (Name.dataMax 0 \"\")\ndid not evaluate to `true`\n'L4Factoidal.OWL.CertNames.decode_encode' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]\n/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-nz5p5yz9/CertNames.lean:175:0: error: \u274c\ufe0f Docstring on `#guard_msgs` does not match generated message:\n\n- info: 'L4Factoidal.OWL.CertNames.decode_encode' depends on axioms: [propext, Classical.choice, Quot.sound]\n+ info: 'L4Factoidal.OWL.CertNames.decode_encode' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]\n"
+      }
+    },
+    {
+      "name": "annotation-lookup-accepts-any-property",
+      "source": "formal/lean4/L4Factoidal/OWL/AtomicDirect.lean",
+      "proof_lines": [
+        58,
+        66
+      ],
+      "rejected_by_proof": true,
+      "changed_sha256": "c44bd2596c08fc87441604b0389f194baf52039e7751f78ee913cf7d5c101ff2",
+      "phase": {
+        "command": [
+          "/Users/danbri/.elan/bin/lake",
+          "env",
+          "lean",
+          "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-ql57beb_/AtomicDirect.lean"
+        ],
+        "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/formal/lean4",
+        "exit_code": 1,
+        "timed_out": false,
+        "output": "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-ql57beb_/AtomicDirect.lean:61:17: error: Application type mismatch: The argument\n  builtin\nhas type\n  true = true\nbut is expected to have type\n  builtinAnnotation name = true\nin the application\n  Or.inl builtin\n'L4Factoidal.OWL.AtomicDirect.accepted_covers_triples' depends on axioms: [propext,\n sorryAx,\n Classical.choice,\n Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.isAnnotation_sound' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.readOntology_preserves_models' depends on axioms: [propext,\n sorryAx,\n Classical.choice,\n Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.readOntology_hasModel' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.decide_sound' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.definitive_admitted' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.unsupported_is_unknown' depends on axioms: [propext,\n sorryAx,\n Classical.choice,\n Quot.sound]\n"
+      }
+    },
+    {
+      "name": "reverse-subclass-compilation",
+      "source": "formal/lean4/L4Factoidal/OWL/AtomicDirect.lean",
+      "proof_lines": [
+        258,
+        294
+      ],
+      "rejected_by_proof": true,
+      "changed_sha256": "bde9e0e3f1da0c58ede48e6c3f123c1332eb4fbe61e7fa2cd2b1c0745fe6d1d2",
+      "phase": {
+        "command": [
+          "/Users/danbri/.elan/bin/lake",
+          "env",
+          "lean",
+          "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-qt3r_2oe/AtomicDirect.lean"
+        ],
+        "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/formal/lean4",
+        "exit_code": 1,
+        "timed_out": false,
+        "output": "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-qt3r_2oe/AtomicDirect.lean:271:80: error: Application type mismatch: The argument\n  hypothesis\nhas type\n  interpretation.sem (compileClass right, compileClass left).fst element\nbut is expected to have type\n  interpretation.sem (compileClass left) element\nin the application\n  (compileClass_correct interpretation left element).mp hypothesis\n'L4Factoidal.OWL.AtomicDirect.accepted_covers_triples' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.isAnnotation_sound' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.readOntology_preserves_models' depends on axioms: [propext,\n sorryAx,\n Classical.choice,\n Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.readOntology_hasModel' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.decide_sound' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.definitive_admitted' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.unsupported_is_unknown' depends on axioms: [propext,\n sorryAx,\n Classical.choice,\n Quot.sound]\n"
+      }
+    },
+    {
+      "name": "silently-drop-all-input-triples",
+      "source": "formal/lean4/L4Factoidal/OWL/AtomicDirect.lean",
+      "proof_lines": [
+        335,
+        374
+      ],
+      "rejected_by_proof": true,
+      "changed_sha256": "66b3f8a0808ab4e3fcd47898f8a256314f66008c87c3c0427701afd0ccf5f30a",
+      "phase": {
+        "command": [
+          "/Users/danbri/.elan/bin/lake",
+          "env",
+          "lean",
+          "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-gozmxio3/AtomicDirect.lean"
+        ],
+        "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/formal/lean4",
+        "exit_code": 1,
+        "timed_out": false,
+        "output": "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-gozmxio3/AtomicDirect.lean:363:8: error: Type mismatch: After simplification, term\n  parsed\n has type\n  some [] = some clauses\nbut is expected to have type\n  List.mapM visit (List.attach graph) = some clauses\n'L4Factoidal.OWL.AtomicDirect.accepted_covers_triples' depends on axioms: [propext,\n sorryAx,\n Classical.choice,\n Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.isAnnotation_sound' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.readOntology_preserves_models' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.readOntology_hasModel' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.decide_sound' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.definitive_admitted' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.unsupported_is_unknown' depends on axioms: [propext, Classical.choice, Quot.sound]\n"
+      }
+    },
+    {
+      "name": "bypass-actual-certificate-check",
+      "source": "formal/lean4/L4Factoidal/OWL/AtomicDirect.lean",
+      "proof_lines": [
+        406,
+        415
+      ],
+      "rejected_by_proof": true,
+      "changed_sha256": "a8d4aafb92ca2feeda297b17d73d63b3674dbc777b53905e3d84e92c012d4d15",
+      "phase": {
+        "command": [
+          "/Users/danbri/.elan/bin/lake",
+          "env",
+          "lean",
+          "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-x2ywdadj/AtomicDirect.lean"
+        ],
+        "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/formal/lean4",
+        "exit_code": 1,
+        "timed_out": false,
+        "output": "'L4Factoidal.OWL.AtomicDirect.accepted_covers_triples' depends on axioms: [propext, Classical.choice, Quot.sound]\n/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-x2ywdadj/AtomicDirect.lean:412:40: error: Application type mismatch: The argument\n  accepted\nhas type\n  True\nbut is expected to have type\n  checkCert ?m.14 ?m.15 = true\nin the application\n  checkCert_sound accepted\n/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-x2ywdadj/AtomicDirect.lean:452:2: error: Tactic `split` failed: Could not split an `if` or `match` expression in the goal\n\nHint: Use `set_option trace.split.failure true` to display additional diagnostic information\n\ngraph : Graph\nunsupported : readOntology graph = none\ncertificate : Cert\n\u22a2 erase (sorry graph certificate) = { consistent := none, reason := some CertifiedDecision.UnknownReason.unsupported }\n'L4Factoidal.OWL.AtomicDirect.isAnnotation_sound' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.readOntology_preserves_models' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.readOntology_hasModel' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.decide_sound' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.definitive_admitted' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.unsupported_is_unknown' depends on axioms: [propext,\n sorryAx,\n Classical.choice,\n Quot.sound]\n"
+      }
+    },
+    {
+      "name": "report-inconsistency-as-consistency",
+      "source": "formal/lean4/L4Factoidal/OWL/AtomicDirect.lean",
+      "proof_lines": [
+        425,
+        432
+      ],
+      "rejected_by_proof": true,
+      "changed_sha256": "1f5ba268c09b42b3d004b29b74c9de6cc5d2759678e748505963145353a8fed1",
+      "phase": {
+        "command": [
+          "/Users/danbri/.elan/bin/lake",
+          "env",
+          "lean",
+          "/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-wavzvxxx/AtomicDirect.lean"
+        ],
+        "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/pr-core/formal/lean4",
+        "exit_code": 1,
+        "timed_out": false,
+        "output": "'L4Factoidal.OWL.AtomicDirect.accepted_covers_triples' depends on axioms: [propext, Classical.choice, Quot.sound]\n/var/folders/8l/h5b0tb8s6tlft0wb4fl3w1y80000gn/T/owl-reader-mutation-wavzvxxx/AtomicDirect.lean:429:54: error: Application type mismatch: The argument\n  noModel\nhas type\n  \u00acSatisfiable graph\nbut is expected to have type\n  Satisfiable graph\nin the application\n  \u27e8admitted, noModel\u27e9\n'L4Factoidal.OWL.AtomicDirect.isAnnotation_sound' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.readOntology_preserves_models' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.readOntology_hasModel' depends on axioms: [propext, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.decide_sound' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.definitive_admitted' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]\n'L4Factoidal.OWL.AtomicDirect.unsupported_is_unknown' depends on axioms: [propext, Classical.choice, Quot.sound]\n"
+      }
+    }
+  ],
+  "cases": [
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "empty",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "annotation-domain",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "annotation-declaration-last",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "annotation-range",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "annotation-blank-value",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "builtin-comment",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "builtin-label",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "builtin-version-info",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "empty-named-class",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "generated-prefix-user-class",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "data-prefix-user-class",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": false,
+      "expectedSupported": true,
+      "id": "empty-class-with-member",
+      "observed": {
+        "consistent": false,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": false,
+      "expectedSupported": true,
+      "id": "bottom-membership",
+      "observed": {
+        "consistent": false,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": false,
+      "expectedSupported": true,
+      "id": "top-subclass-bottom",
+      "observed": {
+        "consistent": false,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": false,
+      "expectedSupported": true,
+      "id": "same-and-different",
+      "observed": {
+        "consistent": false,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "same-only",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "different-only",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": false,
+      "expectedSupported": true,
+      "id": "self-different",
+      "observed": {
+        "consistent": false,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "class-individual-punning",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": false,
+      "expectedSupported": true,
+      "id": "annotation-and-real-contradiction",
+      "observed": {
+        "consistent": false,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": false,
+      "expectedSupported": true,
+      "id": "duplicate-statements",
+      "observed": {
+        "consistent": false,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "ontology-header",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "blank-ontology-header",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "named-individual-declaration",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-object-property",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-undeclared-predicate",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-import",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-restriction",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "forbidden-logical-predicate-annotation",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "mixed-property-roles",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "sameas-does-not-merge-classes",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-builtin-seeAlso",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-builtin-isDefinedBy",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-builtin-deprecated",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-builtin-priorVersion",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-builtin-backwardCompatibleWith",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-builtin-incompatibleWith",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-reserved-individual-declaration",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-reserved-individual-assertion",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-reserved-individual-same",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-reserved-individual-different",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-triple-among-annotations",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-directional-annotation",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": false,
+      "id": "unsupported-triple-term-annotation",
+      "observed": {
+        "consistent": null,
+        "supported": false
+      },
+      "passed": true
+    },
+    {
+      "expectedConsistent": null,
+      "expectedSupported": true,
+      "id": "multiple-headers-fragment-admission",
+      "observed": {
+        "consistent": null,
+        "supported": true
+      },
+      "passed": true
+    }
+  ],
+  "scope": "restricted source reader and generated-name contracts; no public API certification",
+  "source_hashes": {
+    "tests/assurance/AtomicDirectAcceptance.lean": "973edb7a5a6b40c37f266c68754b7244215eaec79e623aa53f5032c806cfad6d",
+    "tests/assurance/AtomicDirect.lean": "f3e7bc5bd54ffcc1f7f57ccf9271aef9cd04b1a50c8f83cb5feb15fddff926be",
+    "formal/lean4/L4Factoidal/OWL/CertNames.lean": "2418f18576c777345ef226dff80f9e9733a1ece4f3a2c18201f61c22d00ee29d",
+    "formal/lean4/L4Factoidal/OWL/AtomicDirect.lean": "ae32a22e2de44fe669ee8851735ca7f94ea2728f8d39f11cb3325d7cfde3b870",
+    "tools/check-owl-reader-contracts.py": "64451a6f084282aa5e6155e4dc7cb3d6535db4cbddd9025f95eec64bf7989598",
+    "formal/lean4/L4Factoidal/OWL/DirectCert.lean": "6b5080ff8507b9910cae76cf27c6483076a847d6ce077f68f8246716ba1f5a25"
+  },
+  "hash_scope": "selected sources; not full transitive build closure",
+  "source_model_witnesses_passed": true
+}

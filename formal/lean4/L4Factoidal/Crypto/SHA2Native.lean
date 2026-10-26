@@ -67,6 +67,11 @@ The probe exits non-zero on any mismatch, so the agreement is a CI
 gate rather than an assumption. Externs do not evaluate at compile
 time, which is why this is a probe and not a `#guard`.
 
+`lake exe l4native-crypto-smoke` (`Harness/NativeCryptoSmoke.lean`)
+repeats the comparison and also checks native streaming folds at several
+chunk sizes and raw compression calls with arbitrary chaining states and
+nonzero offsets. Both measure agreement on their inputs only.
+
 ## Contract
 
   * `sha256Hacl m` → the 32-byte SHA-256 digest of `m`.

@@ -121,14 +121,16 @@ parser's message — that is a finding about the parser, not a skip.
 
 ## Budget and engine
 
-The closure is the library's INDEXED engine `OWL.RL.stepI`
-(`RLClosureIndexed.lean`), iterated here round by round in `IO` (same
+The closure is the library's indexed SEMI-NAIVE engine `OWL.RL.stepSNI`
+(`RLClosureIndexed.lean` Section 11; until 2026-10-13 the naive indexed
+round `OWL.RL.stepI`), iterated here round by round in `IO` (same
 stopping rule as `OWL.RL.closure`: stop when the size does not change)
 so that a wall-clock deadline can be checked inside a round. The
-indexed engine computes the same list as the specification-level
-`OWL.RL.closure` at every fuel (`RLClosureIndexed.indexedClosure_eq`,
+semi-naive engine computes the same list as the specification-level
+`OWL.RL.closure` at every fuel (`RLClosureIndexed.indexedClosureSN_eq`,
 a proved list equality), so the scores below are scores of the
-specification engine; the index only changes the wall clock. The F*
+specification engine; the index and the delta terms only change the
+wall clock. The F*
 runner uses fuel 100 and a per-test SIGALRM cap; this probe uses fuel
 100 and `--cap-ms` (default 30000) per closure. Every cap hit is
 counted in the diagnostics line and scores as a FAIL for any
@@ -149,6 +151,23 @@ the same input, and checks the two rounds produced the same list.
 FAIL lines carry a cause tag (`parser:`, `closure-gap:`, `clash:`,
 `cap:`, `harness:`) and are grouped by tag at the end of each catalog.
 
+After the FAIL-GROUP lines of each catalog (and after the per-catalog
+lines of `--rdf-based`), and once more for the TOTAL, the probe prints
+BREAKDOWN lines (added 2026-10-10, reporting only; see
+`breakdownLines`). `<tag>` is `rl-closure`, `dl`, `rl-refute` or
+`rdf-based`; the counts use the grammar of the regime's own score line:
+
+    BY-STATUS <catalog> [<tag>] Approved|Proposed|Extracredit|other: N pass, ...
+    BY-SPECIES <catalog> [<tag>] DL|FULL-only: N pass, ...
+    BY-PROFILE <catalog> [rl-closure] RL|not-RL: N pass, ...
+    IN-SCOPE <catalog> [<tag>] <scope>: N pass, ...
+    FAILING-UNITS <catalog> [<tag>]: N (out of T)
+      FAILING-UNIT <catalog> [<tag>] <id> [<TestType>]: status S, species P, in scope yes|no
+    SCOPE [<tag>]: <what IN-SCOPE counts>
+
+The lines of one facet add up to the catalog line they split. No F*
+number is printed: an F* comparison has to come from a measured F* run.
+
 NOT part of the verified library: this file does file I/O, reads the
 clock, and prints scores.
 -/
@@ -161,10 +180,19 @@ import L4Factoidal.OWL.Materialise
 import L4Factoidal.OWL.Comprehension
 import L4Factoidal.OWL.Refute
 import L4Factoidal.OWL.NegationGoals
+import L4Factoidal.OWL.RefuteCert
+import L4Factoidal.OWL.CountingOracle
 import L4Factoidal.OWL.FunctionalSyntax
+import L4Factoidal.OWL.SyntaxDL
+import L4Factoidal.OWL.OwlXml
+import L4Factoidal.OWL.RdfBased.Clash
+import L4Factoidal.OWL.RdfBased.Balanced
+import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.RdfXml
+import L4Factoidal.JSON.Parser
 import L4Factoidal.Syntax.NTriples
 import Harness.Common
+import Harness.Fixtures
 
 open L4Factoidal.XML
 open L4Factoidal.RDF
@@ -224,6 +252,27 @@ structure Case where
   fsNonConclusionText : Option String := none
   /-- `test:importedOntology` wrapper-node IRIs. -/
   imports       : List String := []
+  /-- Fragments of `test:species` (`DL` / `FULL`). A case annotated with
+      both is within OWL 2 DL: every DL ontology is also a Full one. -/
+  species       : List String := []
+  /-- Fragments of `test:status` (`Approved`, `Proposed`, `Extracredit`,
+      `Rejected`; OWL 2 Conformance 3.2.8). Read for REPORTING only: no
+      verdict depends on it. -/
+  status        : List String := []
+  /-- Fragments of `test:profile` (`EL`, `QL`, `RL`; OWL 2 Conformance
+      3.2.6). Read for REPORTING only: no verdict depends on it. -/
+  profiles      : List String := []
+  /-- `test:rdfXmlInputOntology` on the case itself: the document of a
+      case that has no premise (`WebOnt-imports-004` and its siblings),
+      the way an import wrapper node carries the imported document. -/
+  inputOntology : Option String := none
+  /-- OWL 2 XML Serialization documents (`test:owlXmlPremiseOntology`,
+      `test:owlXmlConclusionOntology`, `test:owlXmlNonConclusionOntology`).
+      The vendored catalogs carry none; the readers are exercised by
+      `L4Factoidal/OWL/OwlXmlTests.lean`. -/
+  owlXmlPremise       : Option String := none
+  owlXmlConclusion    : Option String := none
+  owlXmlNonConclusion : Option String := none
 deriving Inhabited
 
 /-- An import wrapper node: the ontology IRI the premise's `owl:imports`
@@ -255,6 +304,13 @@ def readCase (attrs : List Attribute) (kids : List Node) : Case := Id.run do
       | "fsNonConclusionOntology"     =>
           c := { c with fsNonConclusionText := some (directText k) }
       | "importedOntology"            => c := { c with imports := c.imports ++ [res] }
+      | "species"                     => c := { c with species := c.species ++ [fragmentOf res] }
+      | "status"                      => c := { c with status := c.status ++ [fragmentOf res] }
+      | "profile"                     => c := { c with profiles := c.profiles ++ [fragmentOf res] }
+      | "rdfXmlInputOntology"         => c := { c with inputOntology := some (directText k) }
+      | "owlXmlPremiseOntology"       => c := { c with owlXmlPremise := some (directText k) }
+      | "owlXmlConclusionOntology"    => c := { c with owlXmlConclusion := some (directText k) }
+      | "owlXmlNonConclusionOntology" => c := { c with owlXmlNonConclusion := some (directText k) }
       | _ => pure ()
     | _ => pure ()
   return c
@@ -574,13 +630,25 @@ structure ClosureResult where
 clock can be read INSIDE a round (a cap that only fires between rounds
 is not a cap). When the deadline has not passed the result is exactly
 `i.insertAll (stepConclusionsS (Store.ofIndex i))`, i.e. `stepI i`;
-`none` means the deadline passed mid-round. -/
-def stepIO (i : Index) (deadlineMs : Nat) : IO (Option Index) := do
+`none` means the deadline passed mid-round.
+
+Since 2026-10-13 the rounds are the library's SEMI-NAIVE rounds
+(`OWL.RL.stepSNI`, `RLClosureIndexed.lean` Section 11): a driving triple
+that the previous round's input already held is evaluated through the delta
+terms (`oldBlockFast`), the others through every row. `lo` is the length of
+the previous round's input (0 in the first round, which is then the naive
+round). The list this builds is `stepConclusionsSN`, and
+`indexedClosureSN_eq` proves that the semi-naive loop returns the list of
+`OWL.RL.closure` at every fuel (https://github.com/danbri/factoidal/issues/756
+item 2). -/
+def stepIO (i : Index) (lo : Nat) (deadlineMs : Nat) : IO (Option Index) := do
   let s := Store.ofIndex i
+  let sD := Store.ofIndex (if lo = 0 then Index.empty else Index.ofGraph (i.toGraph.drop lo))
   let mut acc : Array Triple := #[]
   let mut n := 0
   for d in s.graph do
-    acc := acc ++ (conclusionsFromS s d).toArray
+    let out := if n < lo then oldBlockFast s sD lo d else conclusionsFromS s d
+    acc := acc ++ out.toArray
     n := n + 1
     if n % 32 == 0 then
       if (← IO.monoMsNow) > deadlineMs then return none
@@ -591,15 +659,17 @@ did not change), one `stepIO` per loop iteration. Fuel exhausted
 without saturation counts as a cap hit too. -/
 def closureIO (g : Graph) (fuel : Nat) (deadlineMs : Nat) : IO ClosureResult := do
   let mut cur := Index.ofGraph g
+  let mut lo := 0
   let mut rounds := 0
   for _ in [0:fuel] do
-    match ← stepIO cur deadlineMs with
+    match ← stepIO cur lo deadlineMs with
     | none =>
       return { graph := cur.toGraph, index := cur, rounds := rounds, capped := true }
     | some i' =>
       rounds := rounds + 1
       if i'.all.size = cur.all.size then
         return { graph := cur.toGraph, index := cur, rounds := rounds, capped := false }
+      lo := cur.all.size
       cur := i'
   return { graph := cur.toGraph, index := cur, rounds := rounds, capped := true }
 
@@ -682,9 +752,6 @@ structure Measure where
   closureRounds  : Nat := 0
   clashes        : Nat := 0
   capHits        : Nat := 0
-  /-- Refuter calls abandoned at their monotonic wall-clock deadline.
-      This is separate from closure caps and tableau budget exhaustion. -/
-  refuterTimeouts : Nat := 0
   parseFailures  : Nat := 0
   /-- Positive-entailment units the containment check missed and for
   which `negationGoals` produced NO goal at all: the refuter could not
@@ -692,25 +759,28 @@ structure Measure where
   refuter's negation coverage and it is counted here so that it is
   visible in the diagnostics instead of hidden inside a fail count. -/
   peNoGoals      : Nat := 0
-  /-- Containment missed, goals stated, and a tableau result was
-  indeterminate because its visit budget or a bounded witness limit
-  was exhausted. -/
-  peLimits       : Nat := 0
-  /-- Containment missed, goals stated, and a bounded tableau reached a
-  quiescent open branch. This is not a certified model and does not
-  establish non-entailment. -/
-  peOpen         : Nat := 0
+  /-- Containment missed, goals stated, a goal exhausted the tableau
+  budget: indeterminate. -/
+  peBudget       : Nat := 0
+  /-- Containment missed, goals stated, a goal has a countermodel:
+  the refuter says the entailment does not hold. -/
+  peCountermodel : Nat := 0
+  /-- NegativeEntailmentTest units whose non-conclusion the refuter was
+  asked about (`judgeNegative`, refuter regimes, DIRECT and DL cases).
+  A cross-check that is never asked is no evidence, so its reach is
+  printed. -/
+  neChecked      : Nat := 0
 deriving Repr
 
 def Measure.add (a b : Measure) : Measure :=
   { triplesParsed := a.triplesParsed + b.triplesParsed,
     closureRounds := a.closureRounds + b.closureRounds,
     clashes := a.clashes + b.clashes, capHits := a.capHits + b.capHits,
-    refuterTimeouts := a.refuterTimeouts + b.refuterTimeouts,
     parseFailures := a.parseFailures + b.parseFailures,
     peNoGoals := a.peNoGoals + b.peNoGoals,
-    peLimits := a.peLimits + b.peLimits,
-    peOpen := a.peOpen + b.peOpen }
+    peBudget := a.peBudget + b.peBudget,
+    peCountermodel := a.peCountermodel + b.peCountermodel,
+    neChecked := a.neChecked + b.neChecked }
 
 /-- What a judge returns: the verdict UNDER THE REGIME, the verdict the
 CLOSURE ALONE reached, and the measurement delta. The two verdicts are
@@ -721,6 +791,12 @@ structure Verdict where
   regime  : Harness.Outcome
   closure : Harness.Outcome
   measure : Measure
+  /-- For a unit the refuter decided: whether its refutation is
+  certificate-checked (`OWL/RefuteCert.lean`), and how the refuter
+  refuted (the clash sources and branch counts). Reporting only; the
+  verdict above never reads it. -/
+  cert    : Option L4Factoidal.OWL.Refute.CertOutcome := none
+  profile : Option String := none
 
 /-- The closure decided it; the regime agrees. -/
 def Verdict.same (o : Harness.Outcome) (m : Measure) : Verdict :=
@@ -743,10 +819,48 @@ def isRdfBasedOnly (c : Case) : Bool :=
 def fsGraph (txt? : Option String) : Option Graph :=
   txt?.bind L4Factoidal.OWL.FS.parseFunctionalSyntax
 
+/-- The functional-style graph of a document, else the OWL/XML graph. -/
+def altGraph (fs owl : Option String) : Option Graph :=
+  match fsGraph fs with
+  | some g => some g
+  | none => owl.bind L4Factoidal.OWL.OwlXml.parseOwlXmlGraph
+
 /-- Is the case functional-syntax-only AND outside the subset the
     parser reads? Only then is it `unsupported`. -/
 def isFunctionalUnread (c : Case) : Bool :=
   isFunctionalOnly c && (fsGraph c.fsPremiseText).isNone
+
+/-- The functional-syntax premise, when the case names the functional
+syntax as normative (`test:normativeSyntax FUNCTIONAL`) and the reader
+accepts the document. -/
+def normativeFsPremise? (c : Case) : Option Graph :=
+  if c.normSyntax.contains "FUNCTIONAL" then fsGraph c.fsPremiseText else none
+
+/-- The RDF/XML premise does not parse, and a normative functional-syntax
+premise exists: the parse error, which is a defect of the RDF/XML fixture.
+The case is then judged from the functional-syntax premise
+(`premiseGraph`, `speciesDocs`), and the run prints a `FIXTURE-DEFECT`
+line with this text.
+
+This is a COORDINATOR DEFAULT, recorded in
+https://github.com/danbri/factoidal/issues/721 (2026-10-10), not an owner
+ruling. The case it was written for is `FS2RDF-literals-ar`: its RDF/XML
+premise puts element content inside a property element that carries
+`rdf:datatype`, and RDF 1.1 XML Syntax §7.2.16 allows only text there, so
+the parser rejects it correctly. -/
+def rdfXmlPremiseDefect? (c : Case) : Option String :=
+  match c.premise with
+  | none => none
+  | some ptxt =>
+    match parseDoc "premise" c.iri ptxt with
+    | .ok _ => none
+    | .error e => if (normativeFsPremise? c).isSome then some e else none
+
+/-- The log line for `rdfXmlPremiseDefect?`. -/
+def fixtureDefectLine (c : Case) (e : String) : String :=
+  s!"FIXTURE-DEFECT {c.id}: the RDF/XML premise does not parse ({e}); \
+judged from the normative functional-syntax premise \
+(coordinator default, https://github.com/danbri/factoidal/issues/721)"
 
 /-- Parse the premise and merge its imports: the graph the closure
 runs on. -/
@@ -758,16 +872,25 @@ def premiseGraph (cat : Catalog) (c : Case) : Except Harness.Outcome Graph :=
       -- same triples an RDF/XML premise would have carried.
       (match fsGraph c.fsPremiseText with
        | some g => .ok g
-       | none   => .error (.fail "harness: no RDF/XML premise"))
+       | none   =>
+         -- OWL 2 XML Serialization, the third syntax.
+         match c.owlXmlPremise.bind L4Factoidal.OWL.OwlXml.parseOwlXmlGraph with
+         | some g => .ok g
+         | none   => .error (.fail "harness: no RDF/XML premise"))
   | some ptxt =>
-    match parseDoc "premise" c.iri ptxt with
-    | .error e => .error (.fail e)
-    | .ok gp0 =>
-      let allowed := c.imports.filterMap (fun w =>
-        (cat.imports.find? (fun d => d.wrapper == w)).map (·.ontIri))
+    let allowed := c.imports.filterMap (fun w =>
+      (cat.imports.find? (fun d => d.wrapper == w)).map (·.ontIri))
+    let withImports := fun (gp0 : Graph) =>
       match loadImports cat.imports allowed gp0 [] (allowed.length + 1) with
-      | .error e => .error (.fail e)
+      | .error e => Except.error (Harness.Outcome.fail e)
       | .ok gp => .ok gp
+    match parseDoc "premise" c.iri ptxt with
+    | .error e =>
+        -- `rdfXmlPremiseDefect?`: the coordinator default of issue 721.
+        match normativeFsPremise? c with
+        | some g => withImports g
+        | none => .error (.fail e)
+    | .ok gp0 => withImports gp0
 
 /-- Parse the premise, merge imports, run the closure. Shared by the
 four judges. Returns the closure result or a fail outcome, plus the
@@ -938,16 +1061,23 @@ no case that passes on containment can fail because of it.
 Decision and the specification citations:
 `docs/designissues/2026-09-04-owl-b1-class-expression-structure.md`. -/
 
+/- Every document is parsed on its own, so a conclusion blank node `_:b0` and
+a closure blank node `_:b0` are unrelated but EQUAL as labels. A fixed
+prefix is not a freshness guarantee: a parser accepts it as a label. So
+`OWL.Refute.prepareNegationGoals` scopes the premise and the conclusion into
+disjoint namespaces before the goal builders add their own names, and every
+caller below combines the scoped premise it returns with each goal (laptop
+work of 2026-09-08). -/
+
 /-- Why the refutation check answered as it did.
 
 `entailed` is the only verdict that can turn a containment failure
 into a pass. The other three are the refuter's LIMITS and each is
 counted separately: `noGoals` means `negationGoals` does not negate
 this conclusion shape, so the refuter never got to ask the question;
-`limit` means a tableau ran out of visits or retained an unresolved
-bounded witness obligation; `open` means one bounded expansion reached
-quiescence without a clash. The executable produces no model
-certificate, so both are indeterminate.
+`budget` means a tableau ran out of steps; `countermodel` means the
+refuter found a model of the premise closure plus the negated
+conclusion and so says the entailment does not hold.
 
 The goals are ANDed because a conclusion graph is the conjunction of
 its content assertions, and each is negated SEPARATELY
@@ -955,12 +1085,12 @@ its content assertions, and each is negated SEPARATELY
 while proving another is the unsound direction). -/
 inductive RefuteWhy where
   | entailed
-  | open
-  | limit
+  | countermodel
+  | budget
   | noGoals
   deriving DecidableEq, Repr
 
-/-! ## A hard native-process deadline on the refuter
+/-! ## A wall-clock bound on the refuter
 
 `--refute-budget` bounds the tableau's BRANCH expansions, and it is
 threaded, so it bounds the shape of the search. It does not bound the
@@ -971,27 +1101,40 @@ why `type-consistency.rdf --dl` at the default budget did not finish in
 40 minutes on 2026-09-07 while `--cap-ms` sat there bounding only the
 closure.
 
-The refutation runs in a child invocation of this executable. The
-parent polls the child against a monotonic deadline. At the deadline it
-terminates the child's process group and waits for the child, so no
-abandoned pure worker remains for Lean's native runtime to join during
-shutdown.
+The bound here is on the HARNESS, not inside the tableau. Lean cannot
+interrupt a pure computation, and `IO.cancel` is a request a pure loop
+never observes. So the refutation and entailment calls run in a child
+process that the parent kills and reaps at `refuteMs` (the section below);
+this bounds the work, not only the wait. The certificate and profile runs
+still use `pollTask`: their abandoned tasks keep running until the process
+exits, so for them the bound is a WALL CLOCK per case, not bounded work.
 
-A timed-out call returns the same limit verdict as an exhausted visit
-budget or unresolved bounded witness obligation: no verdict. The
-refuter then decides nothing, and the closure's verdict
+A timed-out call returns the same verdict a budget-out returns: no
+verdict. The refuter then decides nothing, and the closure's verdict
 stands, which is the withholding rule the module header states. So the
 bound can only LOSE refutations; it can never manufacture one. Every
 timeout prints a `REFUTER-WALLCLOCK` line, so a score computed under it
 says which cases it withheld on. -/
 
-/-- Default hard process deadline for one refuter call, overridable with
+/-- Default wall clock for one refuter call, overridable with
 `--refute-ms N`. -/
 def defaultRefuteMs : Nat := 20000
 
-structure BoundedResult (α : Type) where
-  value : α
-  timedOut : Bool
+/-- Poll a task to completion or to `steps` five-millisecond waits. -/
+def pollTask {α : Type} (t : Task (Except IO.Error α)) (steps : Nat)
+    : IO (Option α) := do
+  let mut got : Option α := none
+  let mut done := false
+  for _ in [0:steps] do
+    if !done then
+      if ← IO.hasFinished t then
+        done := true
+        match t.get with
+        | .ok v => got := some v
+        | .error _ => got := none
+      else
+        IO.sleep 5
+  pure got
 
 def refuteEntailsWhy (closure : Graph) (gc : Graph) (rb : Nat) : RefuteWhy :=
   match L4Factoidal.OWL.Refute.prepareNegationGoals closure gc with
@@ -1002,27 +1145,35 @@ def refuteEntailsWhy (closure : Graph) (gc : Graph) (rb : Nat) : RefuteWhy :=
       | .entailed =>
         match L4Factoidal.OWL.Refute.tableauConsistent (premise ++ goal) rb with
         | some false => .entailed      -- this conjunct is entailed
-        | some true  => .open          -- open expansion: no model certificate
-        | none       => .limit        -- budget or witness limit: indeterminate
+        | some true  => .countermodel  -- countermodel: not entailed
+        | none       => .budget        -- budget out: indeterminate
       | other => other
     goals.foldl step .entailed
 
-/-! The subprocess wire is RDF 1.2 N-Triples. Before serialisation every
-blank-node identifier is injectively encoded as a complete component of
-`bnodeScopePrefix`; this makes arbitrary in-memory identifiers legal in
-the concrete syntax while preserving co-reference. `renameBnodes`
-also reaches blank nodes nested inside RDF 1.2 triple terms. -/
+/-! ### The refuter in a child process (laptop work of 2026-09-08)
+
+`pollTask` bounds the WAIT, not the work: the abandoned pure task keeps
+running, and the native runtime joins it at process exit. On
+`WebOnt-description-logic-502` a one-second deadline returned to the judge
+and the process then ran for 110.94 seconds. `refuteBounded` and
+`refuteEntailsWhyBounded` therefore run the refuter in a child invocation of
+this executable, in a new process group (`setsid`). At the deadline the parent
+kills the process group and reaps the child, so nothing outlives the call. A
+timeout is still the withholding verdict. The certificate and profile runs
+below keep the task mechanism.
+
+The graphs cross the process boundary as RDF 1.2 N-Triples in a temporary
+directory. Every blank-node identifier is first encoded injectively by
+`bnodeScopePrefix [b]`, which makes it legal N-Triples syntax and keeps
+co-reference; `renameBnodes` reaches triple terms too. -/
 
 def refuteWireGraph (g : Graph) : Except String String :=
   L4Factoidal.Syntax.Graph.toNTriples
     (g.renameBnodes (fun b => bnodeScopePrefix [b])) .rdf12
 
-/-- Decode the serializer's one-triple-per-line wire without feeding
-the entire input through the list-character parser at once. Each line
-still uses the project N-Triples parser. The tail fold preserves
-duplicates and restores the original line order with one final
-reverse. Serializer escapes make embedded literal newlines `\\n`, so a
-physical newline is an unambiguous record boundary. -/
+/-- Decode the one-triple-per-line wire with the project N-Triples parser,
+line by line. Serializer escapes make an embedded newline `\n`, so a physical
+newline is a record boundary. Order and duplicates are kept. -/
 def parseRefuteWireGraph (text : String) : Except String Graph :=
   let parsed : Except String Graph := text.splitOn "\n" |>.foldl (fun acc line =>
     match acc with
@@ -1033,13 +1184,12 @@ def parseRefuteWireGraph (text : String) : Except String Graph :=
           match L4Factoidal.Syntax.parseNTriples line .rdf12 with
           | .ok [t] => .ok (t :: triples)
           | .ok _ => .error "wire record did not decode to exactly one triple"
-          | .error e => .error s!"N-Triples parse error: {e}"
+          | .error e => .error s!"N-Triples parse error: {e.msg}"
     ) (Except.ok [])
   parsed.map List.reverse
 
-/-- Concrete wire guard covering exact list order and duplication,
-literal fields, nested RDF 1.2 terms, and an abstract blank-node id
-that is not itself legal N-Triples syntax. -/
+/-- The wire keeps order, duplicates, literal fields, a nested RDF 1.2
+triple term and a blank-node id that is not legal N-Triples syntax. -/
 private def refuteWireGuardGraph : Graph :=
   let p : WfIri := ⟨"urn:factoidal:wire:p", rfl⟩
   let odd := "space / newline\n_:not-a-label"
@@ -1049,9 +1199,8 @@ private def refuteWireGuardGraph : Graph :=
   let first : Triple :=
     ⟨.bnode odd, p, .tripleTerm (.bnode odd) p (.literal (Literal.string "q\"\n\\"))⟩
   [ first,
-    ⟨.iri p, p, .literal (Literal.langString "colour" "en-GB")⟩,
+    ⟨.iri p, p, .literal (Literal.langString "colour" "en-gb")⟩,
     first,
-    ⟨.iri p, p, .literal (Literal.dirLangString "right" "ar" .rtl)⟩,
     ⟨.iri p, p, .literal typed⟩ ]
 
 private def refuteWireGuard : Bool :=
@@ -1061,32 +1210,37 @@ private def refuteWireGuard : Bool :=
       match parseRefuteWireGraph text with
       | .error _ => false
       | .ok decoded =>
-          decoded == refuteWireGuardGraph.renameBnodes
-            (fun b => bnodeScopePrefix [b])
+          decoded == refuteWireGuardGraph.renameBnodes (fun b => bnodeScopePrefix [b])
 
 #guard refuteWireGuard
 
 def readRefuteWireGraph (path : System.FilePath) : IO (Except String Graph) := do
   try
     let text ← IO.FS.readFile path
-    match parseRefuteWireGraph text with
-    | .ok g => pure (.ok g)
-    | .error e => pure (.error e)
+    pure (parseRefuteWireGraph text)
   catch e =>
     pure (.error s!"wire file read error: {e}")
+
+def writeRefuteWireGraph (path : System.FilePath) (g : Graph) : IO (Except String Unit) := do
+  match refuteWireGraph g with
+  | .error e => pure (.error e)
+  | .ok text =>
+      try
+        IO.FS.writeFile path text
+        pure (.ok ())
+      catch e => pure (.error s!"wire file write error: {e}")
 
 def consistencyFalseCode : UInt32 := 10
 def consistencyTrueCode : UInt32 := 11
 def consistencyLimitCode : UInt32 := 12
 def entailsCode : UInt32 := 20
-def entailsOpenCode : UInt32 := 21
-def entailsLimitCode : UInt32 := 22
+def entailsCountermodelCode : UInt32 := 21
+def entailsBudgetCode : UInt32 := 22
 def entailsNoGoalsCode : UInt32 := 23
 def workerErrorCode : UInt32 := 70
 
-/-- Hidden child entry point. Returning an exit code avoids an output
-pipe that could itself block. The parent supplies secure temporary file
-paths and controlled numeric arguments. -/
+/-- The hidden child entry point. The answer is the exit code, so no output
+pipe can block. The parent passes temporary file paths and a number. -/
 def refuteWorkerMain : List String → IO (Option UInt32)
   | ["--owl-refute-worker-consistency", path, budgetText] => do
       match budgetText.toNat? with
@@ -1107,15 +1261,14 @@ def refuteWorkerMain : List String → IO (Option UInt32)
           | .ok closure, .ok conclusion =>
               pure (some <| match refuteEntailsWhy closure conclusion budget with
                 | .entailed => entailsCode
-                | .open => entailsOpenCode
-                | .limit => entailsLimitCode
+                | .countermodel => entailsCountermodelCode
+                | .budget => entailsBudgetCode
                 | .noGoals => entailsNoGoalsCode)
           | _, _ => pure (some workerErrorCode)
   | _ => pure none
 
-/-- Poll a child until the monotonic deadline. A returned exit code has
-already been reaped by `tryWait`; timeout cleanup is handled by the
-caller. The finite range makes this orchestration total. -/
+/-- Poll a child until the monotonic deadline. A returned exit code has been
+reaped by `tryWait`. The finite range keeps the loop total. -/
 def waitChildUntil {cfg} (child : IO.Process.Child cfg) (deadline : Nat)
     : IO (Option UInt32) := do
   let started ← IO.monoMsNow
@@ -1134,11 +1287,9 @@ def waitChildUntil {cfg} (child : IO.Process.Child cfg) (deadline : Nat)
         | none => IO.sleep (UInt32.ofNat (min 5 (deadline - now)))
   pure answer
 
-/-- Spawn this executable in a fresh process group. On timeout, kill
-and reap the child before returning; therefore no Lean worker survives
-the call or delays parent-process shutdown. The deadline includes
-process startup, child wire parsing, and refutation. Parent-side wire
-serialisation and the secure temporary-file write happen before it. -/
+/-- Spawn this executable in a new process group; on timeout kill and reap
+it. The deadline covers process start, the child's wire parse and the
+refutation. -/
 def runRefuteChild (ms : Nat) (args : Array String) : IO (Option UInt32) := do
   let exe ← IO.appPath
   let started ← IO.monoMsNow
@@ -1156,72 +1307,131 @@ def runRefuteChild (ms : Nat) (args : Array String) : IO (Option UInt32) := do
       discard child.wait
       pure none
 
-def writeRefuteWireGraph (path : System.FilePath) (g : Graph) : IO (Except String Unit) := do
-  match refuteWireGraph g with
-  | .error e => pure (.error e)
-  | .ok text =>
-      try
-        IO.FS.writeFile path text
-        pure (.ok ())
-      catch e => pure (.error s!"wire file write error: {e}")
-
 /-- `Refute.refute` under a hard child-process deadline. -/
 def refuteBounded (ms : Nat) (label : String) (g : Graph) (rb : Nat)
-    : IO (BoundedResult (Option Bool)) :=
+    : IO (Option Bool) :=
   IO.FS.withTempDir fun dir => do
     let path := dir / "graph.nt"
     match ← writeRefuteWireGraph path g with
     | .error e =>
         IO.println s!"REFUTER-WIRE {label}: {e}; no verdict"
-        pure { value := none, timedOut := false }
+        pure none
     | .ok _ =>
         match ← runRefuteChild ms
           #["--owl-refute-worker-consistency", path.toString, toString rb] with
         | none =>
             IO.println s!"REFUTER-WALLCLOCK {label}: killed and reaped after {ms} ms \
 ({g.length} triples, budget {rb}); no verdict"
-            pure { value := none, timedOut := true }
+            pure none
         | some code =>
-            if code == consistencyFalseCode then
-              pure { value := some false, timedOut := false }
-            else if code == consistencyTrueCode then
-              pure { value := some true, timedOut := false }
-            else if code == consistencyLimitCode then
-              pure { value := none, timedOut := false }
+            if code == consistencyFalseCode then pure (some false)
+            else if code == consistencyTrueCode then pure (some true)
+            else if code == consistencyLimitCode then pure none
             else
               IO.println s!"REFUTER-WORKER {label}: exit code {code}; no verdict"
-              pure { value := none, timedOut := false }
+              pure none
 
 /-- `refuteEntailsWhy` under the same hard child-process deadline; a
-timeout is `.limit`, the verdict that withholds. -/
+timeout is `.budget`, the verdict that withholds. -/
 def refuteEntailsWhyBounded (ms : Nat) (label : String) (closure : Graph)
-    (gc : Graph) (rb : Nat) : IO (BoundedResult RefuteWhy) :=
+    (gc : Graph) (rb : Nat) : IO RefuteWhy :=
   IO.FS.withTempDir fun dir => do
     let closurePath := dir / "closure.nt"
     let conclusionPath := dir / "conclusion.nt"
-    match ← writeRefuteWireGraph closurePath closure, ← writeRefuteWireGraph conclusionPath gc with
+    match ← writeRefuteWireGraph closurePath closure,
+          ← writeRefuteWireGraph conclusionPath gc with
     | .ok _, .ok _ =>
         match ← runRefuteChild ms #["--owl-refute-worker-entails", closurePath.toString,
             conclusionPath.toString, toString rb] with
         | none =>
             IO.println s!"REFUTER-WALLCLOCK {label}: killed and reaped after {ms} ms \
 ({closure.length} triples, budget {rb}); no verdict"
-            pure { value := .limit, timedOut := true }
+            pure .budget
         | some code =>
-            if code == entailsCode then
-              pure { value := .entailed, timedOut := false }
-            else if code == entailsOpenCode then
-              pure { value := .open, timedOut := false }
-            else if code == entailsLimitCode then
-              pure { value := .limit, timedOut := false }
-            else if code == entailsNoGoalsCode then
-              pure { value := .noGoals, timedOut := false }
+            if code == entailsCode then pure .entailed
+            else if code == entailsCountermodelCode then pure .countermodel
+            else if code == entailsBudgetCode then pure .budget
+            else if code == entailsNoGoalsCode then pure .noGoals
             else
               IO.println s!"REFUTER-WORKER {label}: exit code {code}; no verdict"
-              pure { value := .limit, timedOut := false }
+              pure .budget
     | .error e, _ | _, .error e =>
         IO.println s!"REFUTER-WIRE {label}: {e}; no verdict"
-        pure { value := .limit, timedOut := false }
+        pure .budget
+
+/-! ## Certificates for refutations (`--dl`)
+
+Design record `docs/designissues/2026-10-10-owl-dl-refutation-certificates.md`.
+For every unit the refuter decided, the probe asks `Refute.certify` for a
+checked certificate and prints `PROVED-BY-CERTIFICATE` or
+`DECIDED-BY-REFUTER (unchecked)`. The certificate run repeats the
+refuter's search on the same graph; it never changes the unit's
+verdict. A run that exceeds the wall clock is `unchecked`. -/
+
+/-- Default wall clock for one certificate run (search plus check),
+not a flag: a timeout is reported as `unchecked` with the time. -/
+def defaultCertMs : Nat := 20000
+
+def certOutcomeOf : L4Factoidal.OWL.Refute.CertOutcome → L4Factoidal.OWL.Refute.CertOutcome
+  | .proved => .proved
+  | .unchecked r => .unchecked r
+  | .notRefuted => .notRefuted
+
+/-- `Refute.certify` under the wall clock. -/
+def certifyBounded (ms : Nat) (g : Graph) (rb : Nat)
+    : IO L4Factoidal.OWL.Refute.CertOutcome := do
+  let t ← IO.asTask (pure (certOutcomeOf (L4Factoidal.OWL.Refute.certify g rb)))
+  match ← pollTask t (ms / 5 + 1) with
+  | some v => pure v
+  | none =>
+    IO.cancel t
+    pure (.unchecked s!"certificate run abandoned after {ms} ms")
+
+/-- How the refuter refuted `g`, under the wall clock. -/
+def profileBounded (ms : Nat) (g : Graph) (rb : Nat) : IO String := do
+  let t ← IO.asTask (pure ((L4Factoidal.OWL.Refute.refutationProfileLine g rb).getD "not refuted"))
+  match ← pollTask t (ms / 5 + 1) with
+  | some v => pure v
+  | none => IO.cancel t; pure s!"profile run abandoned after {ms} ms"
+
+/-- An entailment decided by refutation is certified when EVERY negation
+goal's refutation is (`refuteEntailsWhy` asks the same goals). Soundness
+of the reduction to the goals is obligation O3 of the design record. -/
+def certifyEntailsBounded (ms : Nat) (closure gc : Graph) (rb : Nat)
+    : IO (L4Factoidal.OWL.Refute.CertOutcome × String) := do
+  match L4Factoidal.OWL.Refute.prepareNegationGoals closure gc with
+  | none => pure (.unchecked "no negation goals", "no negation goals")
+  | some (premise, goals) =>
+    let mut k := 0
+    let mut profs : List String := []
+    let mut out : L4Factoidal.OWL.Refute.CertOutcome := .proved
+    for goal in goals do
+      k := k + 1
+      let gg := premise ++ goal
+      profs := profs ++ [s!"goal {k}: " ++ (← profileBounded ms gg rb)]
+      match out with
+      | .proved =>
+          match ← certifyBounded ms gg rb with
+          | .proved => pure ()
+          | .unchecked r =>
+              out := .unchecked s!"goal {k} of {goals.length}: {r}"
+              if (← IO.getEnv "OWL_CERT_DEBUG").isSome then
+                IO.println s!"CERT-DEBUG goal {k}: {L4Factoidal.OWL.Refute.certifyDebug gg rb}"
+          | .notRefuted => out := .unchecked s!"goal {k} of {goals.length}: not refuted on the certificate run"
+      | _ => pure ()
+    pure (out, String.intercalate "; " profs)
+
+/-- The comprehension / existential-witness layer, applied ONCE over a
+stable closure, then one plain re-closure. Shared by the positive judge
+and, under a refuter regime, by the negative judge's cross-check, so
+both ask the refuter about the same graph. -/
+def withComprehension (r0 : ClosureResult) (capMs : Nat) : IO ClosureResult := do
+  let gw := L4Factoidal.OWL.Comp.comprehensionLayer r0.graph
+  if gw.length == r0.graph.length then pure r0 else
+    let t2 ← IO.monoMsNow
+    let r2 ← closureIO gw closureFuel (t2 + capMs)
+    pure { r2 with rounds := r0.rounds + r2.rounds,
+                   capped := r0.capped || r2.capped }
 
 def judgePositive (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : Nat)
     (rms : Nat) (strict : Bool)
@@ -1229,7 +1439,7 @@ def judgePositive (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : N
   if isFunctionalUnread c then return Verdict.same (.unsupported "functional-syntax") {}
   match (match c.conclusion with
          | some ctxt => parseDoc "conclusion" c.iri ctxt
-         | none => match fsGraph c.fsConclusionText with
+         | none => match altGraph c.fsConclusionText c.owlXmlConclusion with
              | some g => .ok g
              | none   => .error "harness: no RDF/XML conclusion") with
     | .error e => return Verdict.same (.fail e) { parseFailures := 1 }
@@ -1249,13 +1459,7 @@ def judgePositive (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : N
         -- `type-inconsistency.rdf`). One plain re-closure afterwards
         -- lets ordinary rows see the witnesses' shape triples; it does
         -- NOT re-run the layer, so this cannot iterate.
-        let r ← do
-          let gw := L4Factoidal.OWL.Comp.comprehensionLayer r0.graph
-          if gw.length == r0.graph.length then pure r0 else
-            let t2 ← IO.monoMsNow
-            let r2 ← closureIO gw closureFuel (t2 + capMs)
-            pure { r2 with rounds := r0.rounds + r2.rounds,
-                           capped := r0.capped || r2.capped }
+        let r ← withComprehension r0 capMs
         let gc := if isDirectOnly c then excludeAnnotationTriples gc0 else gc0
         let m := { m with triplesParsed := m.triplesParsed + gc0.length }
         -- `strict`: one mapping for the whole conclusion graph
@@ -1289,15 +1493,11 @@ def judgePositive (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : N
         -- conformance relation itself to be tried: entailment by
         -- refutation. Only `entailed` overrides; anything else leaves
         -- the containment verdict in place.
-        let bounded ← refuteEntailsWhyBounded rms c.id r.graph gc rb
-        let w := bounded.value
-        let m := { m with
-                          refuterTimeouts := m.refuterTimeouts +
-                            (if bounded.timedOut then 1 else 0),
-                          peNoGoals := m.peNoGoals + (if w == .noGoals then 1 else 0),
-                          peLimits := m.peLimits +
-                            (if w == .limit && !bounded.timedOut then 1 else 0),
-                          peOpen := m.peOpen + (if w == .open then 1 else 0) }
+        let w ← refuteEntailsWhyBounded rms c.id r.graph gc rb
+        let m := { m with peNoGoals := m.peNoGoals + (if w == .noGoals then 1 else 0),
+                          peBudget := m.peBudget + (if w == .budget then 1 else 0),
+                          peCountermodel :=
+                            m.peCountermodel + (if w == .countermodel then 1 else 0) }
         if w == .entailed then
           -- Evidence line, one per fallback pass. `premise_alone` is
           -- falsification test 2 of the decision document: a premise
@@ -1305,27 +1505,26 @@ def judgePositive (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : N
           -- pass on such a case proves nothing about the conclusion.
           -- `premise_alone=false` is the reading that keeps the pass
           -- meaningful.
-          let aloneRun ← refuteBounded rms c.id r.graph rb
-          let alone := aloneRun.value == some false
-          let m := { m with refuterTimeouts := m.refuterTimeouts +
-                            (if aloneRun.timedOut then 1 else 0) }
+          let alone := (← refuteBounded rms c.id r.graph rb) == some false
           IO.println s!"PE-BY-REFUTATION {c.id}: premise_alone_refuted={alone} \
 (closure {r.graph.length} triples)"
+          let (cert, prof) ← certifyEntailsBounded defaultCertMs r.graph gc rb
           return { regime := .pass, closure := closureOutcome,
-                   measure := { m with clashes := m.clashes + 1 } }
+                   measure := { m with clashes := m.clashes + 1 },
+                   cert := some cert, profile := some prof }
         else
           -- Named, not silent: a fail the refuter could not even ask
           -- about reads differently from one it asked and lost.
           IO.println s!"PE-REFUTER-WITHHELD {c.id}: {repr w}"
           return { regime := closureOutcome, closure := closureOutcome, measure := m }
 
-def judgeNegative (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime)
-    (strict : Bool)
+def judgeNegative (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : Nat)
+    (rms : Nat) (strict : Bool)
     : IO Verdict := do
   if isFunctionalUnread c then return Verdict.same (.unsupported "functional-syntax") {}
   match (match c.nonConclusion with
          | some ctxt => parseDoc "non-conclusion" c.iri ctxt
-         | none => match fsGraph c.fsNonConclusionText with
+         | none => match altGraph c.fsNonConclusionText c.owlXmlNonConclusion with
              | some g => .ok g
              | none   => .error "harness: no RDF/XML non-conclusion") with
     | .error e => return Verdict.same (.fail e) { parseFailures := 1 }
@@ -1344,7 +1543,36 @@ def judgeNegative (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime)
         if !contained then
           if r.capped then
             return Verdict.same (.fail s!"cap: absence verdict on a closure that hit the budget after {r.rounds} rounds") m
-          else return Verdict.same .pass m
+          else if !rg.refuter || isRdfBasedOnly c || !c.species.contains "DL" then
+            return Verdict.same .pass m
+          else
+            -- Under a refuter regime the engine answers "entailed" on
+            -- containment OR on refutation of the negated conclusion
+            -- (`judgePositive`). A NegativeEntailmentTest is the case
+            -- where that answer MUST NOT be True (OWL 2 Conformance
+            -- §3.1.2.2), so the same refutation is asked here. A refuter
+            -- scored only on PositiveEntailmentTests cannot be caught
+            -- claiming an entailment that does not hold.
+            --
+            -- The refuter decides the Direct Semantics, so the check is
+            -- made only where the catalog says that semantics applies
+            -- (`test:semantics DIRECT`) to OWL 2 DL inputs
+            -- (`test:species DL`; Conformance §2.2.1 defines Direct
+            -- Semantics entailment over ontology structures that satisfy
+            -- the OWL 2 Syntax §3 restrictions). `WebOnt-Class-005` and
+            -- `WebOnt-Restriction-005` are RDF-BASED only, and their
+            -- `-direct` alternatives are PositiveEntailmentTests;
+            -- `WebOnt-Ontology-003` is FULL only, and its non-conclusion
+            -- differs from the premise's consequences only by an
+            -- `owl:Ontology` triple, which is no axiom.
+            let rc ← withComprehension r capMs
+            let w ← refuteEntailsWhyBounded rms c.id rc.graph gc rb
+            let m := { m with neChecked := m.neChecked + 1 }
+            if w == .entailed then
+              IO.println s!"NEGATIVE-REFUTER-ENTAILED {c.id}: the tableau refuted every negation goal of a non-conclusion"
+              return { regime := .fail s!"refuter: the tableau claims an entailment the catalog denies ({rc.graph.length} triples)",
+                       closure := .pass, measure := m }
+            else return Verdict.same .pass m
         else
           return Verdict.same (.fail s!"closure-gap: every non-conclusion triple was derived (unexpected entailment)") m
 
@@ -1361,14 +1589,11 @@ def judgeConsistency (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb 
     -- refuter, and it has to be visible as a failure — a refuter
     -- scored only on the cases it is meant to close cannot be caught
     -- fabricating a contradiction.
-    let (refuted, refuterTimedOut) ←
+    let refuted ←
       if rg.refuter then
-        let bounded ← refuteBounded rms c.id r.graph rb
-        pure (bounded.value == some false, bounded.timedOut)
-      else pure (false, false)
-    let m := { m with clashes := m.clashes + (if clash then 1 else 0),
-                      refuterTimeouts := m.refuterTimeouts +
-                        (if refuterTimedOut then 1 else 0) }
+        pure ((← refuteBounded rms c.id r.graph rb) == some false)
+      else pure false
+    let m := { m with clashes := m.clashes + (if clash then 1 else 0) }
     let closureOutcome : Harness.Outcome :=
       if clash then
         .fail s!"clash: detectClash fired on a premise asserted consistent ({r.graph.length} triples)"
@@ -1382,23 +1607,24 @@ def judgeConsistency (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb 
                closure := closureOutcome, measure := m }
     else return Verdict.same closureOutcome m
 
-def judgeInconsistency (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : Nat)
+/-- The DL path of an InconsistencyTest: the premise closure of the
+regime, its clash rows, then the refuter and the certificate run. It
+reads no `test:semantics` annotation; `judgeInconsistency` adds the
+`--dl` skip of RDF-BASED-only cases, and the balanced line of
+`--rdf-based` (issue 732) calls this directly. -/
+def judgeInconsistencyDl (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : Nat)
     (rms : Nat) : IO Verdict := do
   if isFunctionalUnread c then return Verdict.same (.unsupported "functional-syntax") {}
-  if isRdfBasedOnly c then return Verdict.same (.skip "semantics-rdf-based-only") {}
   let (res, m) ← premiseClosure cat c capMs rg
   match res with
   | .error o => return Verdict.same o m
   | .ok r =>
     let clash := detectClashPlusI r.index
-    let (refuted, refuterTimedOut) ←
+    let refuted ←
       if rg.refuter then
-        let bounded ← refuteBounded rms c.id r.graph rb
-        pure (bounded.value == some false, bounded.timedOut)
-      else pure (false, false)
-    let m := { m with clashes := m.clashes + (if clash || refuted then 1 else 0),
-                      refuterTimeouts := m.refuterTimeouts +
-                        (if refuterTimedOut then 1 else 0) }
+        pure ((← refuteBounded rms c.id r.graph rb) == some false)
+      else pure false
+    let m := { m with clashes := m.clashes + (if clash || refuted then 1 else 0) }
     let closureOutcome : Harness.Outcome :=
       if clash then .pass
       else if r.capped then
@@ -1409,8 +1635,19 @@ def judgeInconsistency (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (r
     else if refuted then
       IO.println s!"INCONSISTENCY-BY-REFUTATION {c.id}: no RL clash row fired; \
 the tableau refuted the premise closure ({r.graph.length} triples)"
-      return { regime := .pass, closure := closureOutcome, measure := m }
+      let cert ← certifyBounded defaultCertMs r.graph rb
+      let prof ← profileBounded defaultCertMs r.graph rb
+      if (← IO.getEnv "OWL_CERT_DEBUG").isSome && !cert.isProved then
+        IO.println s!"CERT-DEBUG {c.id}: {L4Factoidal.OWL.Refute.certifyDebug r.graph rb}"
+      return { regime := .pass, closure := closureOutcome, measure := m,
+               cert := some cert, profile := some prof }
     else return Verdict.same closureOutcome m
+
+def judgeInconsistency (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : Nat)
+    (rms : Nat) : IO Verdict := do
+  if isFunctionalUnread c then return Verdict.same (.unsupported "functional-syntax") {}
+  if isRdfBasedOnly c then return Verdict.same (.skip "semantics-rdf-based-only") {}
+  judgeInconsistencyDl cat c capMs rg rb rms
 
 def testTypes : List String :=
   ["PositiveEntailmentTest", "NegativeEntailmentTest", "ConsistencyTest", "InconsistencyTest"]
@@ -1419,7 +1656,7 @@ def judge (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime) (rb : Nat)
     (rms : Nat) (strict : Bool)
     : String → IO Verdict
   | "PositiveEntailmentTest" => judgePositive cat c capMs rg rb rms strict
-  | "NegativeEntailmentTest" => judgeNegative cat c capMs rg strict
+  | "NegativeEntailmentTest" => judgeNegative cat c capMs rg rb rms strict
   | "ConsistencyTest"        => judgeConsistency cat c capMs rg rb rms
   | "InconsistencyTest"      => judgeInconsistency cat c capMs rg rb rms
   | ty                       => pure (Verdict.same (.unsupported s!"test type {ty}") {})
@@ -1429,6 +1666,240 @@ def causeOf (reason : String) : String :=
   match reason.splitOn ":" with
   | c :: _ :: _ => c
   | _           => "other"
+
+/-! ## Breakdown reporting (added 2026-10-10; REPORTING ONLY)
+
+No verdict, no count and no existing summary line depends on this
+section. It prints extra lines that SPLIT the units of a regime and a
+catalog by what the catalog says about each case, so that one score is
+readable per facet. Every line uses the score-line grammar of the line
+it splits ("N pass, M fail, ... (out of T)"), and the lines of one
+facet add up to the catalog line.
+
+* `BY-STATUS`: `test:status` of the case (OWL 2 Conformance 3.2.8 and
+  section 4). Approved cases are the official test repository. A
+  Proposed case is a case the Working Group did not decide. An
+  Extracredit case is approved, and "there is no expectation that any
+  implementation will successfully run" it (section 4).
+* `BY-SPECIES`: DL when `test:species` names DL; FULL-only when it names
+  FULL and not DL (OWL 2 Conformance 3.2.5).
+* `BY-PROFILE` (RL closure regime only): the case is annotated
+  `test:profile RL`, or not (OWL 2 Conformance 3.2.6).
+* `IN-SCOPE`: the units inside the conformance claim of the regime
+  (`Scope`, below). A unit outside the claim stays counted in the
+  existing lines; the new line only adds a view (issue 721: the FULL-only
+  units are counted where they were).
+* `FAILING-UNITS` and `FAILING-UNIT`: every failing unit, with its
+  status and species, so that no failure is hidden by a split.
+
+The facts are read from the catalog by `readCase`, in the same pass as
+every other field of `Case`. -/
+
+/-- The facts about one unit's case that the breakdown reads. -/
+structure UnitFacts where
+  caseId    : String
+  ty        : String
+  /-- Approved, Proposed, Extracredit, or other (Rejected or absent). -/
+  status    : String
+  /-- DL, FULL-only, or none (no `test:species`). -/
+  species   : String
+  /-- `test:profile` names RL. -/
+  rlProfile : Bool
+  /-- `test:semantics` names DIRECT. -/
+  direct    : Bool
+deriving Repr
+
+/-- The status buckets, in print order. -/
+def statusBuckets : List String := ["Approved", "Proposed", "Extracredit", "other"]
+
+def statusOf (c : Case) : String :=
+  match ["Approved", "Proposed", "Extracredit"].find? (fun b => c.status.contains b) with
+  | some b => b
+  | none   => "other"
+
+def speciesOf (c : Case) : String :=
+  if c.species.contains "DL" then "DL"
+  else if c.species.contains "FULL" then "FULL-only"
+  else "none"
+
+def UnitFacts.ofCase (c : Case) (ty : String) : UnitFacts :=
+  { caseId := c.id, ty := ty, status := statusOf c, species := speciesOf c,
+    rlProfile := c.profiles.contains "RL", direct := c.semantics.contains "DIRECT" }
+
+/-- The conformance claim a regime makes, as a predicate on a unit. -/
+inductive Scope where
+  /-- RL closure alone. The OWL 2 RL entailment checker is complete for
+  OWL 2 RL ontologies (OWL 2 Conformance 2.2.1); the cases annotated
+  `test:profile RL` are those (3.2.6). -/
+  | rlProfile
+  /-- A regime with the refuter: the OWL 2 DL entailment checker under
+  the Direct Semantics. It takes OWL 2 DL documents (2.2.1, 3.2.5), and
+  a test applies to it when it names DIRECT (3.2.4). -/
+  | directDl
+  /-- The RDF-Based Semantics regime (issue 721): it judges OWL 2 Full
+  documents, which is every case, so only the status selects. -/
+  | rdfBased
+deriving DecidableEq
+
+def Scope.inScope : Scope → UnitFacts → Bool
+  | .rlProfile, f => f.status == "Approved" && f.rlProfile
+  | .directDl,  f => f.status == "Approved" && f.species == "DL" && f.direct
+  | .rdfBased,  f => f.status == "Approved"
+
+def Scope.describe : Scope → String
+  | .rlProfile => "status Approved, case annotated test:profile RL"
+  | .directDl  => "status Approved, species DL, semantics DIRECT"
+  | .rdfBased  => "status Approved"
+
+/-- The claim of a `runCatalog` regime: the refuter makes it the DL
+claim; the closure alone makes it the RL claim. -/
+def scopeOfRegime (r : Regime) : Scope := if r.refuter then .directDl else .rlProfile
+
+/-- The tag in square brackets on the new lines. -/
+def regimeTag (r : Regime) : String :=
+  if r.refuter && r.materialise then "dl"
+  else if r.refuter then "rl-refute"
+  else "rl-closure"
+
+/-- The breakdown lines of one catalog under one regime. `units` pairs
+the facts of every unit with its outcome `ω`; `bump` adds one outcome to
+a tally `σ`; `line` prints a tally in the grammar of the regime's own
+score line. -/
+def breakdownLines {ω σ : Type} (name tag : String) (scope : Scope)
+    (units : List (UnitFacts × ω)) (empty : σ) (bump : σ → ω → σ)
+    (line : String → σ → String) : List String :=
+  let tally (keep : UnitFacts → Bool) : σ :=
+    units.foldl (fun s p => if keep p.1 then bump s p.2 else s) empty
+  let byStatus := statusBuckets.map fun b =>
+    line s!"BY-STATUS {name} [{tag}] {b}" (tally (fun f => f.status == b))
+  let speciesKeys := ["DL", "FULL-only"] ++
+    (if units.any (fun p => p.1.species == "none") then ["none"] else [])
+  let bySpecies := speciesKeys.map fun k =>
+    line s!"BY-SPECIES {name} [{tag}] {k}" (tally (fun f => f.species == k))
+  let byProfile :=
+    if scope == .rlProfile then
+      [line s!"BY-PROFILE {name} [{tag}] RL" (tally (fun f => f.rlProfile)),
+       line s!"BY-PROFILE {name} [{tag}] not-RL" (tally (fun f => !f.rlProfile))]
+    else []
+  let inScope :=
+    [line s!"IN-SCOPE {name} [{tag}] {scope.describe}" (tally scope.inScope)]
+  byStatus ++ bySpecies ++ byProfile ++ inScope
+
+/-- The block that names every failing unit. `failing` pairs the facts of
+a failing unit with a note (empty, or the local override that counts it
+apart). The header is printed when there is no failing unit too, so an
+absence is visible. -/
+def failingLines (name tag : String) (scope : Scope) (total : Nat)
+    (failing : List (UnitFacts × String)) : List String :=
+  s!"FAILING-UNITS {name} [{tag}]: {failing.length} (out of {total})" ::
+  failing.map fun (f, note) =>
+    s!"  FAILING-UNIT {name} [{tag}] {f.caseId} [{f.ty}]: status {f.status}, \
+species {f.species}, in scope {if scope.inScope f then "yes" else "no"}{note}"
+
+/-- The sentences that say what the `IN-SCOPE` lines of a regime count.
+Printed once per run, after the totals. -/
+def scopeLines (tag : String) : Scope → List String
+  | .rlProfile =>
+      [s!"SCOPE [{tag}]: an IN-SCOPE line counts the units of cases with status Approved that \
+are annotated test:profile RL. Only those units are inside the claim of this regime.",
+       s!"SCOPE [{tag}]: the OWL 2 RL closure is complete for OWL 2 RL ontologies only \
+(OWL 2 Conformance 2.2.1, 3.2.6). A unit outside the claim can fail by design, and its failure \
+is not a defect of the closure. Every unit stays counted in the other lines.",
+       s!"SCOPE [{tag}]: a TOTAL line adds catalogs that overlap, and it includes units outside the \
+claim. For the RL conformance number, read the profile-RL.rdf lines: the IN-SCOPE line for the \
+Approved units, and the line without a split for all units."]
+  | .directDl =>
+      [s!"SCOPE [{tag}]: an IN-SCOPE line counts the units of cases with status Approved, species DL \
+and semantics DIRECT. The OWL 2 DL entailment checker takes OWL 2 DL documents \
+(OWL 2 Conformance 2.2.1, 3.2.4, 3.2.5).",
+       s!"SCOPE [{tag}]: a unit of a FULL-only case is judged in the RDF-Based regime \
+(https://github.com/danbri/factoidal/issues/721). It stays counted in the other lines of this run. \
+A Proposed or Extracredit unit is not inside the claim (OWL 2 Conformance 3.2.8, section 4).",
+       s!"SCOPE [{tag}]: a TOTAL line adds catalogs that overlap."]
+  | .rdfBased =>
+      [s!"SCOPE [{tag}]: an IN-SCOPE line counts the units with status Approved. Every case is an \
+OWL 2 Full document. A pass is a proved entailment or a proved inconsistency; a not-refuted unit \
+is never a pass."]
+
+/-! ### Guards for the reporting functions
+
+Positive and negative: a `Scope.inScope` that answers yes for every
+unit, a status or species bucket that is mis-assigned, or a split that
+drops or repeats a unit, fails the build. The six cases cover every
+branch: an Approved DL case that is RL, a Proposed FULL-only case, an
+Extracredit DL case, a case without status, an Approved FULL-only case,
+and an Approved DL case that is not DIRECT. -/
+
+private def gCase (id : String) (st sp sem pr : List String) : Case :=
+  { id := id, status := st, species := sp, semantics := sem, profiles := pr }
+
+private def gA : Case := gCase "a" ["Approved"] ["FULL", "DL"] ["DIRECT", "RDF-BASED"] ["RL"]
+private def gB : Case := gCase "b" ["Proposed"] ["FULL"] ["DIRECT", "RDF-BASED"] []
+private def gC : Case := gCase "c" ["Extracredit"] ["FULL", "DL"] ["DIRECT"] []
+private def gD : Case := gCase "d" [] ["FULL"] [] []
+private def gE : Case := gCase "e" ["Approved"] ["FULL"] ["DIRECT", "RDF-BASED"] []
+private def gF : Case := gCase "f" ["Approved"] ["FULL", "DL"] ["RDF-BASED"] []
+
+private def gUnits : List (UnitFacts × Harness.Outcome) :=
+  [(UnitFacts.ofCase gA "ConsistencyTest", .pass),
+   (UnitFacts.ofCase gB "PositiveEntailmentTest", .fail "x"),
+   (UnitFacts.ofCase gC "InconsistencyTest", .fail "y"),
+   (UnitFacts.ofCase gD "ConsistencyTest", .pass),
+   (UnitFacts.ofCase gE "ConsistencyTest", .pass),
+   (UnitFacts.ofCase gF "ConsistencyTest", .fail "z")]
+
+private def gLines (sc : Scope) (tag : String) : List String :=
+  breakdownLines "g.rdf" tag sc gUnits ({} : Harness.Score) (fun s o => s.bump o)
+    Harness.Score.line
+
+#guard [gA, gB, gC, gD].map statusOf == ["Approved", "Proposed", "Extracredit", "other"]
+#guard [gA, gB, gD].map speciesOf == ["DL", "FULL-only", "FULL-only"]
+#guard speciesOf (gCase "z" [] [] [] []) == "none"
+-- Direct Semantics claim: Approved, DL and DIRECT. Each of the five other
+-- cases fails one condition.
+#guard [gA, gB, gC, gD, gE, gF].map (fun c => Scope.directDl.inScope (UnitFacts.ofCase c "ConsistencyTest"))
+  == [true, false, false, false, false, false]
+-- RL claim: Approved and annotated profile RL.
+#guard [gA, gB, gC, gD, gE, gF].map (fun c => Scope.rlProfile.inScope (UnitFacts.ofCase c "ConsistencyTest"))
+  == [true, false, false, false, false, false]
+-- RDF-Based claim: status Approved only.
+#guard [gA, gB, gC, gD, gE, gF].map (fun c => Scope.rdfBased.inScope (UnitFacts.ofCase c "ConsistencyTest"))
+  == [true, false, false, false, true, true]
+#guard gLines .directDl "dl" ==
+  ["BY-STATUS g.rdf [dl] Approved: 2 pass, 1 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-STATUS g.rdf [dl] Proposed: 0 pass, 1 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-STATUS g.rdf [dl] Extracredit: 0 pass, 1 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-STATUS g.rdf [dl] other: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-SPECIES g.rdf [dl] DL: 1 pass, 2 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-SPECIES g.rdf [dl] FULL-only: 2 pass, 1 fail, 0 skip, 0 unsupported (out of 3)",
+   "IN-SCOPE g.rdf [dl] status Approved, species DL, semantics DIRECT: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)"]
+#guard gLines .rlProfile "rl-closure" ==
+  ["BY-STATUS g.rdf [rl-closure] Approved: 2 pass, 1 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-STATUS g.rdf [rl-closure] Proposed: 0 pass, 1 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-STATUS g.rdf [rl-closure] Extracredit: 0 pass, 1 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-STATUS g.rdf [rl-closure] other: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-SPECIES g.rdf [rl-closure] DL: 1 pass, 2 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-SPECIES g.rdf [rl-closure] FULL-only: 2 pass, 1 fail, 0 skip, 0 unsupported (out of 3)",
+   "BY-PROFILE g.rdf [rl-closure] RL: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)",
+   "BY-PROFILE g.rdf [rl-closure] not-RL: 2 pass, 3 fail, 0 skip, 0 unsupported (out of 5)",
+   "IN-SCOPE g.rdf [rl-closure] status Approved, case annotated test:profile RL: 1 pass, 0 fail, 0 skip, 0 unsupported (out of 1)"]
+-- The lines of one facet add up to the catalog: 6 units in each split.
+#guard (["Approved", "Proposed", "Extracredit", "other"].map fun b =>
+    (gUnits.filter (fun p => p.1.status == b)).length).foldl (· + ·) 0 == gUnits.length
+#guard (["DL", "FULL-only", "none"].map fun k =>
+    (gUnits.filter (fun p => p.1.species == k)).length).foldl (· + ·) 0 == gUnits.length
+-- The failing block names each failing unit with its status, species and scope.
+#guard failingLines "g.rdf" "dl" .directDl 6
+    ((gUnits.filter (fun p => p.2.isFail)).map (fun p => (p.1, ""))) ==
+  ["FAILING-UNITS g.rdf [dl]: 3 (out of 6)",
+   "  FAILING-UNIT g.rdf [dl] b [PositiveEntailmentTest]: status Proposed, species FULL-only, in scope no",
+   "  FAILING-UNIT g.rdf [dl] c [InconsistencyTest]: status Extracredit, species DL, in scope no",
+   "  FAILING-UNIT g.rdf [dl] f [ConsistencyTest]: status Approved, species DL, in scope no"]
+#guard failingLines "g.rdf" "dl" .directDl 1 [(UnitFacts.ofCase gA "ConsistencyTest", "")] ==
+  ["FAILING-UNITS g.rdf [dl]: 1 (out of 1)",
+   "  FAILING-UNIT g.rdf [dl] a [ConsistencyTest]: status Approved, species DL, in scope yes"]
+-- No failing unit: the header is printed, with 0.
+#guard failingLines "g.rdf" "dl" .directDl 6 [] == ["FAILING-UNITS g.rdf [dl]: 0 (out of 6)"]
 
 /-! ## Per-catalog run -/
 
@@ -1451,8 +1922,41 @@ structure CatalogResult where
   fabricates a contradiction, so a non-zero count here is a defect
   report, not a score. -/
   refuterFlips  : Nat := 0
+  /-- Of `refuterPasses`: certificate-checked, and not, with the
+  reasons of the second. -/
+  certProved    : Nat := 0
+  certUnchecked : Nat := 0
+  certReasons   : List (String × Nat) := []
+  /-- The clash sources and branch kinds of the refuter-decided units,
+  counted (`Refute.refutationProfileLine`). -/
+  profiles      : List (String × Nat) := []
   units    : Nat := 0
   wallMs   : Nat := 0
+  /-- The facts and the regime's outcome of every unit, for the
+  breakdown lines (`breakdownLines`). Reporting only. -/
+  unitFacts : List (UnitFacts × Harness.Outcome) := []
+
+def bumpCount (l : List (String × Nat)) (k : String) : List (String × Nat) :=
+  match l.find? (fun p => p.1 == k) with
+  | some _ => l.map (fun p => if p.1 == k then (p.1, p.2 + 1) else p)
+  | none   => l ++ [(k, 1)]
+
+/-- The countable parts of a profile line: the graph-level check, or
+each leaf clash source and each kind of branch point that occurred. -/
+def profileKeys (pr : String) : List String :=
+  if pr.startsWith "graph-level" || pr.startsWith "counting" then [pr]
+  else
+    let words := (pr.splitOn " ").filter (· ≠ "")
+    let leafPart := match pr.splitOn "leaves=[" with
+      | _ :: rest :: _ => (rest.splitOn "]").headD ""
+      | _ => ""
+    let leaves := ((leafPart.splitOn ", ").filter (· ≠ "")).map (fun k => "leaf " ++ k)
+    let branches := words.filterMap (fun w =>
+      match w.splitOn "=" with
+      | [k, v] => if (k == "unions" || k == "merges" || k == "nominal_choices" ||
+                      k == "forced_identifications") && v != "0" then some ("uses " ++ k) else none
+      | _ => none)
+    (leaves ++ branches).eraseDups
 
 def bumpType (l : List (String × Harness.Score)) (ty : String) (o : Harness.Outcome)
     : List (String × Harness.Score) :=
@@ -1461,14 +1965,21 @@ def bumpType (l : List (String × Harness.Score)) (ty : String) (o : Harness.Out
   | none   => l ++ [(ty, Harness.Score.bump {} o)]
 
 def runCatalog (name : String) (cat : Catalog) (capMs : Nat) (rg : Regime) (rb : Nat)
-    (rms : Nat) (strict : Bool) (verbose : Bool)
+    (rms : Nat) (strict : Bool) (verbose : Bool) (slowMs : Nat := 0)
     : IO CatalogResult := do
   let t0 ← IO.monoMsNow
   let mut r : CatalogResult := {}
   for c in cat.cases do
+    if c.types.any testTypes.contains then
+      if let some e := rdfXmlPremiseDefect? c then IO.println (fixtureDefectLine c e)
     for ty in testTypes do
       if c.types.contains ty then
+        let tu0 ← IO.monoMsNow
         let v ← judge cat c capMs rg rb rms strict ty
+        let tu1 ← IO.monoMsNow
+        -- `--slow-ms N`: name every unit that took N ms or more.
+        if slowMs > 0 && tu1 - tu0 ≥ slowMs then
+          IO.println s!"SLOW {c.id} [{ty}]: {tu1 - tu0} ms"
         let o := v.regime
         let m := v.measure
         let label := s!"{c.id} [{ty}]"
@@ -1493,6 +2004,30 @@ def runCatalog (name : String) (cat : Catalog) (capMs : Nat) (rg : Regime) (rb :
           | .pass, .fail cr =>
               IO.println s!"DECIDED-BY-REFUTER {label}: the closure did not ({cr})"
               r := { r with refuterPasses := r.refuterPasses + 1 }
+              -- The certificate verdict for the same unit, on its own
+              -- line (design record 2026-10-10-owl-dl-refutation-certificates).
+              match v.cert with
+              | some .proved =>
+                  IO.println s!"PROVED-BY-CERTIFICATE {label}"
+                  r := { r with certProved := r.certProved + 1 }
+              | some (.unchecked why) =>
+                  IO.println s!"DECIDED-BY-REFUTER (unchecked) {label}: {why}"
+                  r := { r with certUnchecked := r.certUnchecked + 1,
+                                certReasons := bumpCount r.certReasons why }
+              | some .notRefuted =>
+                  IO.println s!"DECIDED-BY-REFUTER (unchecked) {label}: not refuted on the certificate run"
+                  r := { r with certUnchecked := r.certUnchecked + 1,
+                                certReasons := bumpCount r.certReasons "not refuted on the certificate run" }
+              | none =>
+                  IO.println s!"DECIDED-BY-REFUTER (unchecked) {label}: no certificate run"
+                  r := { r with certUnchecked := r.certUnchecked + 1,
+                                certReasons := bumpCount r.certReasons "no certificate run" }
+              match v.profile with
+              | some pr =>
+                  IO.println s!"REFUTATION-PROFILE {label}: {pr}"
+                  for part in profileKeys pr do
+                    r := { r with profiles := bumpCount r.profiles part }
+              | none => pure ()
           | .fail _, .pass =>
               IO.println s!"REFUTER-FLIPPED-TO-FAIL {label}: the closure passed it"
               r := { r with refuterFlips := r.refuterFlips + 1 }
@@ -1500,7 +2035,8 @@ def runCatalog (name : String) (cat : Catalog) (capMs : Nat) (rg : Regime) (rb :
         r := { r with score := r.score.bump o, perType := bumpType r.perType ty o,
                       closureScore := r.closureScore.bump v.closure,
                       perTypeClosure := bumpType r.perTypeClosure ty v.closure,
-                      measure := r.measure.add m, units := r.units + 1 }
+                      measure := r.measure.add m, units := r.units + 1,
+                      unitFacts := r.unitFacts ++ [(UnitFacts.ofCase c ty, o)] }
   let t1 ← IO.monoMsNow
   r := { r with wallMs := t1 - t0 }
   -- Score lines. With the refuter off the two are the same run and
@@ -1523,16 +2059,841 @@ def runCatalog (name : String) (cat : Catalog) (capMs : Nat) (rg : Regime) (rb :
   IO.println s!"HARNESS-DIAG-OWL {name}: cases={cat.cases.length} units={r.units} \
 triples_parsed={r.measure.triplesParsed} closure_rounds={r.measure.closureRounds} \
 clashes={r.measure.clashes} cap_hits={r.measure.capHits} \
-refuter_timeouts={r.measure.refuterTimeouts} \
 parse_failures={r.measure.parseFailures} \
 refuter_passes={r.refuterPasses} refuter_flips_to_fail={r.refuterFlips} \
-pe_no_negation_goal={r.measure.peNoGoals} pe_refuter_indeterminate_limits={r.measure.peLimits} \
-pe_refuter_open={r.measure.peOpen} wall_ms={r.wallMs}"
+pe_no_negation_goal={r.measure.peNoGoals} pe_refuter_budget={r.measure.peBudget} \
+pe_countermodel={r.measure.peCountermodel} \
+ne_refuter_checked={r.measure.neChecked} wall_ms={r.wallMs}"
+  if rg.refuter then
+    IO.println s!"CERTIFICATE {name}: {r.certProved} certificate-checked, \
+{r.certUnchecked} unchecked (out of {r.refuterPasses} decided by refutation)"
+    for (why, n) in r.certReasons do
+      IO.println s!"  CERTIFICATE-UNCHECKED {name} ({n}): {why}"
+    for (k, n) in r.profiles do
+      IO.println s!"  REFUTATION-USES {name} ({n}): {k}"
   -- FAILs grouped by cause.
   let causes := (r.fails.map (·.1)).eraseDups
   for cause in causes do
     let these := r.fails.filter (fun f => f.1 == cause)
     IO.println s!"  FAIL-GROUP {name} {cause}: {these.length} — {String.intercalate ", " (these.map (·.2.1))}"
+  -- Breakdown by status and species, then every failing unit with its
+  -- status and species (reporting only; see `breakdownLines`).
+  let tag := regimeTag rg
+  let scope := scopeOfRegime rg
+  for l in breakdownLines name tag scope r.unitFacts ({} : Harness.Score)
+      (fun s o => s.bump o) Harness.Score.line do
+    IO.println l
+  for l in failingLines name tag scope r.units
+      ((r.unitFacts.filter (fun p => p.2.isFail)).map (fun p => (p.1, ""))) do
+    IO.println l
+  return r
+
+/-! ## Species (`--species`)
+
+OWL 2 Conformance §2.2 (syntactic conformance) and the `test:species`
+annotation of each test case: a case annotated `test:DL` is within OWL 2
+DL; a case annotated only `test:FULL` is OWL 2 Full and not DL. The
+verdict is `L4Factoidal.OWL.SyntaxDL.speciesIsDl`, a syntax-directed
+check of the OWL 2 Mapping to RDF Graphs §3 (reverse mapping) and the
+Structural Specification §11 (global restrictions) over the RDF graphs
+of ALL the case's documents. The harness only reads documents and
+compares the verdict with the annotation.
+
+Which documents: the premise, and the conclusion or non-conclusion.
+Two cases with the same premise differ in species when only their
+conclusions differ (`WebOnt-I5.5-005` against `WebOnt-I5.5-006`), so the
+conclusion document is part of the input, as it is for the F* runner
+(`owl_runner.ml`, "Species mode").
+
+The premise comes from `test:rdfXmlPremiseOntology`; when a case has
+none, from `test:rdfXmlInputOntology` on the case itself (the import
+test cases); when it has neither, from the functional-syntax premise,
+read by `L4Factoidal.OWL.FS` and checked with the body checks only,
+because a successful parse of `Ontology(...)` is the header evidence.
+`owl:imports` is resolved against the import wrapper nodes the case
+links with `test:importedOntology`. -/
+
+/-- The input of one species verdict. -/
+structure SpeciesDocs where
+  functional    : Bool
+  /-- The IRIs of the documents the catalog provides for this case:
+  the `test:importedOntologyIRI` of each linked import wrapper. -/
+  available     : List String := []
+  pDoc          : Graph
+  pMerged       : Graph
+  hasConclusion : Bool
+  cDoc          : Graph
+  uMerged       : Graph
+
+/-- The conclusion document of a case: the RDF/XML conclusion, else the
+RDF/XML non-conclusion, else the functional-syntax ones. `none` when the
+case has no conclusion document. `Except` carries a parse failure. -/
+def conclusionDoc (c : Case) : Except String (Option Graph) :=
+  match c.conclusion <|> c.nonConclusion with
+  | some t =>
+      match parseDoc "conclusion" c.iri t with
+      | .ok g => .ok (some g)
+      | .error e => .error e
+  | none =>
+      let fs := c.fsConclusionText <|> c.fsNonConclusionText
+      let ox := c.owlXmlConclusion <|> c.owlXmlNonConclusion
+      match fs, ox with
+      | none, none => .ok none
+      | _, _ =>
+          match altGraph fs ox with
+          | some g => .ok (some g)
+          | none => .error "unsupported: functional-syntax or OWL/XML conclusion outside the grammar the reader accepts"
+
+/-- The species documents of a case read from a functional-syntax
+premise `pDoc` (and the functional-syntax or OWL/XML conclusion). -/
+def speciesDocsFunctional (c : Case) (pDoc : Graph) : Except String SpeciesDocs :=
+  match conclusionDoc c with
+  | .error e => .error e
+  | .ok none =>
+      .ok { functional := true, pDoc := pDoc, pMerged := pDoc,
+            hasConclusion := false, cDoc := [], uMerged := pDoc }
+  | .ok (some g0) =>
+      let cDoc := g0.prefixBnodes "c_"
+      .ok { functional := true, pDoc := pDoc, pMerged := pDoc,
+            hasConclusion := true, cDoc := cDoc, uMerged := pDoc ++ cDoc }
+
+/-- Gather the documents of a case for the species verdict. -/
+def speciesDocs (cat : Catalog) (c : Case) : Except String SpeciesDocs :=
+  let allowed := c.imports.filterMap (fun w =>
+    (cat.imports.find? (fun d => d.wrapper == w)).map (·.ontIri))
+  match c.premise <|> c.inputOntology with
+  | some ptxt =>
+    match parseDoc "premise" c.iri ptxt with
+    | .error e =>
+        -- `rdfXmlPremiseDefect?`: the coordinator default of issue 721.
+        -- The functional-syntax premise is read with the body checks,
+        -- as for a case that has no RDF/XML premise.
+        match normativeFsPremise? c with
+        | some g => speciesDocsFunctional c g
+        | none => .error e
+    | .ok pDoc =>
+      match loadImports cat.imports allowed pDoc [] (allowed.length + 1) with
+      | .error e => .error e
+      | .ok pMerged =>
+        match conclusionDoc c with
+        | .error e => .error e
+        | .ok none =>
+            .ok { functional := false, available := allowed, pDoc := pDoc, pMerged := pMerged,
+                  hasConclusion := false, cDoc := [], uMerged := pMerged }
+        | .ok (some g0) =>
+            let cDoc := g0.prefixBnodes "c_"
+            match loadImports cat.imports allowed (pDoc ++ cDoc) [] (allowed.length + 1) with
+            | .error e => .error e
+            | .ok uMerged =>
+                .ok { functional := false, available := allowed, pDoc := pDoc,
+                      pMerged := pMerged, hasConclusion := true, cDoc := cDoc,
+                      uMerged := uMerged }
+  | none =>
+    let alt : Option (Option Graph) :=
+      match c.fsPremiseText with
+      | some ftxt => some (L4Factoidal.OWL.FS.parseFunctionalSyntax ftxt)
+      | none => c.owlXmlPremise.map L4Factoidal.OWL.OwlXml.parseOwlXmlGraph
+    match alt with
+    | none => .error "harness: the case has no premise document in any syntax"
+    | some none => .error "unsupported: functional-syntax or OWL/XML premise outside the grammar the reader accepts"
+    | some (some pDoc) => speciesDocsFunctional c pDoc
+
+/-! ## The OWL 2 RDF-Based Semantics regime (`--rdf-based`)
+
+Owner, 2026-10-10, verbatim: "721 Add an OWL 2 RDF-Based Semantics"
+(https://github.com/danbri/factoidal/issues/721). Design record:
+`docs/designissues/2026-10-10-owl2-rdf-based-semantics.md`.
+
+Which units: every (case, test type) of a case annotated
+`test:semantics RDF-BASED`, and every PositiveEntailmentTest annotated
+DIRECT whose species is not DL (the 12 cases of issue 721; in the
+vendored catalogs they carry RDF-BASED as well).
+
+Engine: the OWL 2 RL/RDF closure of the premise, then up to
+`rbRounds` rounds of (`RdfBased.rbConclusions`, the RL closure again).
+Clash check: the OWL 2 RL/RDF clash rows (`detectClashPlusI`) and the
+RDF-Based clash rows (`RdfBased.rbClashAny`, `RdfBased/Clash.lean`).
+No comprehension layer, no class-expression materialisation, no
+tableau refuter: none of them is proved sound for this semantics.
+Triples that mention a comprehension witness of the RL closure are
+removed before any judgement (`RdfBased.withoutCompWitness`).
+
+Entailment under the RDF-Based Semantics is undecidable. The regime
+PROVES entailments and inconsistencies and never proves their absence.
+So the buckets are:
+
+* PositiveEntailmentTest — `pass` = entailment proved (one blank-node
+  mapping of the conclusion into the closure); `fail` = not proved.
+* InconsistencyTest — `pass` = a clash row fired; `fail` = not proved.
+* NegativeEntailmentTest, ConsistencyTest — never `pass`. `not-refuted`
+  = the engine derived neither the non-conclusion nor a clash; `fail` =
+  it derived one, which contradicts the catalog. A `not-refuted` unit
+  is NOT counted as proved. -/
+
+/-- Rounds of (rules, RL closure) after the first closure. -/
+def rbRounds : Nat := 3
+
+/-- Is the unit judged by the RDF-Based regime? -/
+def inRdfBasedRegime (c : Case) (ty : String) : Bool :=
+  c.semantics.contains "RDF-BASED" ||
+  (ty == "PositiveEntailmentTest" && c.semantics.contains "DIRECT" &&
+   !c.species.contains "DL")
+
+structure RbClosure where
+  /-- The graph judgements read: closure minus comprehension witnesses. -/
+  graph : Graph
+  /-- The same, after the FIRST closure only (no RDF-Based rule). -/
+  firstGraph : Graph
+  rounds : Nat
+  capped : Bool
+  /-- Triples the RDF-Based rules added (not already in the closure). -/
+  ruleTriples : Nat
+  /-- Did the RL closure mint a comprehension witness? -/
+  witnesses : Bool
+
+/-- The regime's closure of `g`, with the rules directed by `goal`. One
+wall-clock deadline for the whole unit. -/
+def rbClosureIO (g goal : Graph) (capMs : Nat) : IO RbClosure := do
+  let t0 ← IO.monoMsNow
+  let deadline := t0 + capMs
+  let r0 ← closureIO g closureFuel deadline
+  let mut r := r0
+  let mut added := 0
+  for _ in [0:rbRounds] do
+    if r.capped then break
+    let cand := L4Factoidal.OWL.RdfBased.rbConclusions r.graph goal ++
+      L4Factoidal.OWL.RdfBased.svfWitTriples r.graph goal
+    let new := (cand.filter (fun t => !r.index.memB t)).eraseDups
+    if new.isEmpty then break
+    added := added + new.length
+    let r' ← closureIO (r.graph ++ new) closureFuel deadline
+    r := { r' with rounds := r.rounds + r'.rounds, capped := r.capped || r'.capped }
+  return { graph := L4Factoidal.OWL.RdfBased.withoutCompWitness r.graph,
+           firstGraph := L4Factoidal.OWL.RdfBased.withoutCompWitness r0.graph,
+           rounds := r.rounds, capped := r.capped, ruleTriples := added,
+           witnesses := r.graph.any L4Factoidal.OWL.RdfBased.tripleMentionsCompWitness }
+
+/-- One verdict of the regime. -/
+inductive RbOutcome where
+  | proved
+  | notProved (reason : String)
+  | notRefuted
+  | refuted (reason : String)
+  | unsupported (reason : String)
+  deriving Repr, BEq
+
+structure RbScore where
+  pass : Nat := 0
+  fail : Nat := 0
+  notRefuted : Nat := 0
+  unsupported : Nat := 0
+  /-- Units named by a local override (`tests/local-overrides`, suite
+  `owl-rdf-based`) whose verdict fails: counted here, never as a pass or a
+  fail. -/
+  overridden : Nat := 0
+
+def RbScore.total (s : RbScore) : Nat :=
+  s.pass + s.fail + s.notRefuted + s.unsupported + s.overridden
+
+def RbScore.bump (s : RbScore) : RbOutcome → RbScore
+  | .proved => { s with pass := s.pass + 1 }
+  | .notProved _ | .refuted _ => { s with fail := s.fail + 1 }
+  | .notRefuted => { s with notRefuted := s.notRefuted + 1 }
+  | .unsupported _ => { s with unsupported := s.unsupported + 1 }
+
+def RbScore.add (a b : RbScore) : RbScore :=
+  { pass := a.pass + b.pass, fail := a.fail + b.fail,
+    notRefuted := a.notRefuted + b.notRefuted, unsupported := a.unsupported + b.unsupported,
+    overridden := a.overridden + b.overridden }
+
+def RbScore.line (label : String) (s : RbScore) : String :=
+  s!"{label}: {s.pass} pass, {s.fail} fail, {s.notRefuted} not-refuted, \
+{s.unsupported} unsupported, {s.overridden} local-override (out of {s.total})"
+
+structure RbMeasure where
+  capHits : Nat := 0
+  parseFailures : Nat := 0
+  ruleTriples : Nat := 0
+  witnessClosures : Nat := 0
+  /-- Positive units proved only after the RDF-Based rules ran. -/
+  provedByRules : Nat := 0
+
+def RbMeasure.add (a b : RbMeasure) : RbMeasure :=
+  { capHits := a.capHits + b.capHits, parseFailures := a.parseFailures + b.parseFailures,
+    ruleTriples := a.ruleTriples + b.ruleTriples,
+    witnessClosures := a.witnessClosures + b.witnessClosures,
+    provedByRules := a.provedByRules + b.provedByRules }
+
+def rbMeasureOf (r : RbClosure) : RbMeasure :=
+  { capHits := if r.capped then 1 else 0, ruleTriples := r.ruleTriples,
+    witnessClosures := if r.witnesses then 1 else 0 }
+
+/-- The conclusion document (`nonConclusion = true`: the
+non-conclusion). -/
+def rbGoalDoc (c : Case) (nonConclusion : Bool) : Except String Graph :=
+  if nonConclusion then
+    match c.nonConclusion with
+    | some t => parseDoc "non-conclusion" c.iri t
+    | none => match altGraph c.fsNonConclusionText c.owlXmlNonConclusion with
+        | some g => .ok g
+        | none => .error "harness: no non-conclusion document"
+  else
+    match c.conclusion with
+    | some t => parseDoc "conclusion" c.iri t
+    | none => match altGraph c.fsConclusionText c.owlXmlConclusion with
+        | some g => .ok g
+        | none => .error "harness: no conclusion document"
+
+/-- PositiveEntailmentTest (`neg = false`) and NegativeEntailmentTest
+(`neg = true`). -/
+def rbJudgeEntailment (cat : Catalog) (c : Case) (capMs : Nat) (neg : Bool)
+    : IO (RbOutcome × RbMeasure) := do
+  if isFunctionalUnread c then return (.unsupported "functional-syntax", {})
+  match rbGoalDoc c neg with
+  | .error e => return (.notProved s!"parser: {e}", { parseFailures := 1 })
+  | .ok gc =>
+    if gc.isEmpty then
+      return (.notProved "parser: the conclusion parsed to zero triples", { parseFailures := 1 })
+    match premiseGraph cat c with
+    | .error o =>
+        let why := match o with | .fail r => r | _ => "harness: no premise"
+        return (.notProved why, { parseFailures := 1 })
+    | .ok gp =>
+      let r ← rbClosureIO gp gc capMs
+      let m := rbMeasureOf r
+      let found := graphInClosure? r.graph gc
+      if found == some true then
+        if neg then
+          return (.refuted s!"entailed: every non-conclusion triple was derived \
+({r.graph.length} triples, {r.rounds} rounds)", m)
+        else
+          let byRules := graphInClosure? r.firstGraph gc != some true
+          if byRules then IO.println s!"PROVED-BY-RDF-BASED-RULES {c.id} [PositiveEntailmentTest]"
+          return (.proved, { m with provedByRules := if byRules then 1 else 0 })
+      else if neg then return (.notRefuted, m)
+      else
+        let why :=
+          match gc.find? (fun t => !inClosure r.graph t) with
+          | some t => s!"missing {showTriple t}"
+          | none => if found == none then "match-budget: the single-mapping search ran out of steps"
+                    else "no single blank-node mapping serves every conclusion triple"
+        let capNote := if r.capped then "cap: " else "not-proved: "
+        return (.notProved s!"{capNote}{why} (closure {r.graph.length} triples, {r.rounds} rounds)", m)
+
+/-- ConsistencyTest (`inc = false`) and InconsistencyTest (`inc = true`). -/
+def rbJudgeConsistency (cat : Catalog) (c : Case) (capMs : Nat) (inc : Bool)
+    : IO (RbOutcome × RbMeasure) := do
+  if isFunctionalUnread c then return (.unsupported "functional-syntax", {})
+  match premiseGraph cat c with
+  | .error o =>
+      let why := match o with | .fail r => r | _ => "harness: no premise"
+      return (.notProved why, { parseFailures := 1 })
+  | .ok gp =>
+    let r ← rbClosureIO gp [] capMs
+    let m := rbMeasureOf r
+    let rlClash := detectClashPlusI (Index.ofGraph r.graph)
+    -- The clash rows of `RdfBased/Clash.lean`, each proved against
+    -- `RdfBasedConditions` (`rbClashAny_unsat`). Read only when no RL
+    -- row fired, so the line below names the units they decide.
+    let rbClash := !rlClash && L4Factoidal.OWL.RdfBased.rbClashAny r.graph
+    if rbClash then
+      IO.println s!"CLASH-BY-RDF-BASED-ROWS {c.id} [{if inc then "InconsistencyTest" else "ConsistencyTest"}]"
+    let clash := rlClash || rbClash
+    if inc then
+      if clash then return (.proved, m)
+      else
+        let capNote := if r.capped then "cap: " else "not-proved: "
+        return (.notProved s!"{capNote}no clash row fired ({r.graph.length} triples, {r.rounds} rounds)", m)
+    else
+      if clash then
+        return (.refuted s!"clash: a clash row fired on a premise asserted consistent ({r.graph.length} triples)", m)
+      else return (.notRefuted, m)
+
+def rbJudge (cat : Catalog) (c : Case) (capMs : Nat) : String → IO (RbOutcome × RbMeasure)
+  | "PositiveEntailmentTest" => rbJudgeEntailment cat c capMs false
+  | "NegativeEntailmentTest" => rbJudgeEntailment cat c capMs true
+  | "ConsistencyTest"        => rbJudgeConsistency cat c capMs false
+  | "InconsistencyTest"      => rbJudgeConsistency cat c capMs true
+  | ty                       => pure (.unsupported s!"test type {ty}", {})
+
+def RbOutcome.line (label : String) : RbOutcome → String
+  | .proved => s!"PASS {label}"
+  | .notProved r => s!"FAIL {label}: {r}"
+  | .refuted r => s!"FAIL {label}: {r}"
+  | .notRefuted => s!"NOT-REFUTED {label}"
+  | .unsupported r => s!"UNSUPPORTED {label}: {r}"
+
+/-! ### The balanced line, `[rdf-based or balanced refutation]` (issue 732)
+
+https://github.com/danbri/factoidal/issues/732; design record
+`docs/designissues/2026-10-10-owl2-rdf-based-semantics.md` § 6.2.
+
+OWL 2 RDF-Based Semantics § 7.3 proves relationship 4 of Theorem 7.1 for
+a BALANCED pair: if F(G1) Direct-entails F(G2), then G1 RDF-Based-entails
+G2. For a PositiveEntailmentTest or an InconsistencyTest that the
+RDF-Based rules did not prove, the probe checks that its pair is balanced
+(`RdfBased.Balanced.balancedDefects`; for an InconsistencyTest the
+conclusion is `Balanced.inconsistencyGoal`), and if it is, runs the DL
+path of `--dl` (`judgePositive` or `judgeInconsistencyDl` under
+`Regime.dl`) and prints the answer with its certificate status.
+
+The answers are printed on their own lines and counted on the separate
+line `[rdf-based or balanced refutation]`. They never change a verdict of
+the `[rdf-based]` line, its counts or the exit code. They are not proved:
+they rest on Theorem 7.1 (a proof sketch), on obligations O1 and O2 of
+the certificate record (https://github.com/danbri/factoidal/issues/761,
+https://github.com/danbri/factoidal/issues/762), and for an entailment
+on O3 (https://github.com/danbri/factoidal/issues/763); an answer of the
+DL closure has no certificate at all. -/
+
+/-- The tag of the separate line. -/
+def balancedTag : String := "rdf-based or balanced refutation"
+
+inductive BalOutcome where
+  /-- Balanced, and the DL path decided it. `certified`: the refutation
+  printed `PROVED-BY-CERTIFICATE` under `--dl`. -/
+  | passed (how : String) (byRefutation : Bool) (certified : Bool)
+  | notBalanced (defects : List String)
+  /-- Balanced, and the DL path did not decide it. -/
+  | undecided (why : String)
+
+/-- The pair `(G1, G2)` of a unit and the species violations of the
+pair (condition 1). G1 is the premise with its imports merged, read as
+`--species` reads it (`speciesDocs`); G2 is the conclusion document
+(blank nodes prefixed `c_`), or `Balanced.inconsistencyGoal` for an
+InconsistencyTest. -/
+def balancedPair (cat : Catalog) (c : Case) (ty : String)
+    : Except String (Graph × Graph × List String) :=
+  match speciesDocs cat c with
+  | .error e => .error e
+  | .ok d =>
+    if ty == "InconsistencyTest" then
+      let g2 := L4Factoidal.OWL.RdfBased.Balanced.inconsistencyGoal
+      let dl :=
+        if d.functional then
+          L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctional d.pDoc true (d.pDoc ++ g2)
+        else
+          L4Factoidal.OWL.SyntaxDL.speciesViolations d.pDoc d.pMerged true g2
+            (d.pMerged ++ g2) (some d.available)
+      .ok (d.pMerged, g2, dl)
+    else if !d.hasConclusion then .error "the case has no conclusion document"
+    else
+      let dl :=
+        if d.functional then
+          L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctional d.pDoc true d.uMerged
+        else
+          L4Factoidal.OWL.SyntaxDL.speciesViolations d.pDoc d.pMerged true d.cDoc d.uMerged
+            (some d.available)
+      .ok (d.pMerged, d.cDoc, dl)
+
+def outcomeReason : Harness.Outcome → String
+  | .pass => "pass"
+  | .fail r => r
+  | .skip r => s!"skip: {r}"
+  | .unsupported r => s!"unsupported: {r}"
+
+/-- Check the pair; when it is balanced, run the DL path. -/
+def balancedJudge (cat : Catalog) (c : Case) (ty : String) (capMs rb rms : Nat)
+    (strict : Bool) : IO BalOutcome := do
+  match balancedPair cat c ty with
+  | .error e => return .notBalanced [s!"the documents of the pair were not read: {e}"]
+  | .ok (g1, g2, dl) =>
+    let defects := L4Factoidal.OWL.RdfBased.Balanced.balancedDefects dl g1 g2
+    if !defects.isEmpty then return .notBalanced (defects.map (·.text))
+    let v ← if ty == "InconsistencyTest" then judgeInconsistencyDl cat c capMs Regime.dl rb rms
+            else judgePositive cat c capMs Regime.dl rb rms strict
+    match v.regime with
+    | .pass =>
+      if v.closure == .pass then
+        return .passed "decided by the DL closure; no certificate" false false
+      else match v.cert with
+        | some .proved => return .passed "PROVED-BY-CERTIFICATE" true true
+        | some (.unchecked w) =>
+            return .passed s!"decided by refutation; certificate unchecked: {w}" true false
+        | some .notRefuted =>
+            return .passed "decided by refutation; certificate unchecked: not refuted on the \
+certificate run" true false
+        | none => return .passed "decided by refutation; no certificate run" true false
+    | o => return .undecided (outcomeReason o)
+
+/-- At most `n` defects in the line, then how many more. -/
+def defectsText (ds : List String) (n : Nat := 4) : String :=
+  String.intercalate "; " (ds.take n) ++
+    (if ds.length > n then s!"; and {ds.length - n} more" else "")
+
+/-- The condition numbers of a unit's defects, once each. -/
+def defectConds (ds : List String) : List String :=
+  (ds.map fun d =>
+    match (d.splitOn ": ").head? with
+    | some h => h
+    | none => d).eraseDups
+
+/-- The condition numbers of a unit's defects, comma-separated. -/
+def condNumbers (ds : List String) : String :=
+  String.intercalate ", " ((defectConds ds).map fun k =>
+    if k.startsWith "condition " then (k.drop "condition ".length).toString else k)
+
+/-- What the balanced pass of one catalog gathers. Reporting only. -/
+structure BalResult where
+  /-- Every unit with its outcome on the separate line, for its score
+  lines (the `[rdf-based]` outcome, or `proved` for a balanced pass). -/
+  units : List (UnitFacts × (RbOutcome × Option String)) := []
+  /-- Units the RDF-Based rules did not prove, of type
+  PositiveEntailmentTest or InconsistencyTest, with the outcome here. -/
+  checked : List (UnitFacts × BalOutcome) := []
+
+def BalOutcome.isPassed : BalOutcome → Bool
+  | .passed _ _ _ => true
+  | _ => false
+
+def BalOutcome.isNotBalanced : BalOutcome → Bool
+  | .notBalanced _ => true
+  | _ => false
+
+def BalOutcome.isUndecided : BalOutcome → Bool
+  | .undecided _ => true
+  | _ => false
+
+/-- The unit facts of key result 3.2 of
+https://github.com/danbri/factoidal/issues/768: status Approved, species DL. -/
+def inApprovedDl (f : UnitFacts) : Bool := f.status == "Approved" && f.species == "DL"
+
+/-- The lines that name the units of one group, for one scope. -/
+def balancedGroupLines (name what : String) (xs : List (UnitFacts × BalOutcome)) : List String :=
+  let idsOf := fun (ys : List (UnitFacts × BalOutcome)) =>
+    String.intercalate ", " (ys.map fun p => s!"{p.1.caseId} [{p.1.ty}]")
+  let kr := xs.filter (fun p => inApprovedDl p.1)
+  let rest := xs.filter (fun p => !inApprovedDl p.1)
+  [s!"  {what} {name} [status Approved, species DL] ({kr.length}): {idsOf kr}",
+   s!"  {what} {name} [other units] ({rest.length}): {idsOf rest}"]
+
+/-- The summary lines of the balanced line for one catalog. They follow
+every line `runRdfBased` printed before this line existed. -/
+def balancedSummaryLines (name : String) (b : BalResult) : List String :=
+  let bumpU := fun (s : RbScore) (p : RbOutcome × Option String) =>
+    match p.2 with
+    | some _ => { s with overridden := s.overridden + 1 }
+    | none => s.bump p.1
+  let tallyOf := fun (us : List (UnitFacts × (RbOutcome × Option String))) =>
+    us.foldl (fun s u => bumpU s u.2) ({} : RbScore)
+  let perType := testTypes.filterMap fun ty =>
+    let us := b.units.filter (fun u => u.1.ty == ty)
+    if us.isEmpty then none
+    else some (RbScore.line s!"{name} {ty} [{balancedTag}]" (tallyOf us))
+  let total := RbScore.line s!"{name} [{balancedTag}]" (tallyOf b.units)
+  let breakdown := breakdownLines name balancedTag Scope.rdfBased b.units ({} : RbScore)
+    bumpU RbScore.line
+  let passed := b.checked.filter (fun p => p.2.isPassed)
+  let byRef := passed.filter (fun p => match p.2 with | .passed _ r _ => r | _ => false)
+  let cert := passed.filter (fun p => match p.2 with | .passed _ _ c => c | _ => false)
+  let notBal := b.checked.filter (fun p => p.2.isNotBalanced)
+  let undec := b.checked.filter (fun p => p.2.isUndecided)
+  let kr := b.checked.filter (fun p => inApprovedDl p.1)
+  let krPass := kr.filter (fun p => p.2.isPassed)
+  let krRef := krPass.filter (fun p => match p.2 with | .passed _ r _ => r | _ => false)
+  let krCert := krPass.filter (fun p => match p.2 with | .passed _ _ c => c | _ => false)
+  let conds := (notBal.flatMap fun p => match p.2 with
+    | .notBalanced ds => defectConds ds
+    | _ => []).eraseDups
+  let condLines := conds.map fun k =>
+    let n := (notBal.filter fun p => match p.2 with
+      | .notBalanced ds => (defectConds ds).contains k
+      | _ => false).length
+    s!"  NOT-BALANCED-BY-CONDITION {name} ({n}): {k}"
+  perType ++ [total] ++ breakdown ++
+  [s!"BALANCED {name}: {passed.length} passed on the balanced line ({byRef.length} by \
+refutation, of which {cert.length} certificate-checked; {passed.length - byRef.length} by \
+the DL closure), {notBal.length} not balanced, {undec.length} balanced and not decided by \
+the DL path (out of {b.checked.length} units of type PositiveEntailmentTest or \
+InconsistencyTest that the RDF-Based rules did not prove)",
+   s!"BALANCED {name} [status Approved, species DL]: {krPass.length} pass, \
+{(kr.filter (fun p => p.2.isNotBalanced)).length} not-balanced, \
+{(kr.filter (fun p => p.2.isUndecided)).length} undecided (out of {kr.length})",
+   s!"BALANCED-CERTIFICATE {name} [status Approved, species DL]: {krCert.length} \
+certificate-checked (PROVED-BY-CERTIFICATE), {krRef.length - krCert.length} decided by \
+refutation without a checked certificate, {krPass.length - krRef.length} decided by the \
+DL closure (out of {krPass.length} passed on the balanced line)"] ++
+  balancedGroupLines name "BALANCED-PASSED-UNITS" passed ++
+  balancedGroupLines name "NOT-BALANCED-UNITS" notBal ++
+  balancedGroupLines name "BALANCED-UNDECIDED-UNITS" undec ++
+  condLines ++
+  [s!"BALANCED-NOTE [{balancedTag}]: not counted as proved. A pass here rests on \
+OWL 2 RDF-Based Semantics Theorem 7.1 for a balanced pair (section 7.3, a proof sketch), \
+on obligations O1 and O2 (https://github.com/danbri/factoidal/issues/761, \
+https://github.com/danbri/factoidal/issues/762) and, for an entailment, O3 \
+(https://github.com/danbri/factoidal/issues/763)."]
+
+structure RbCatalogResult where
+  score : RbScore := {}
+  perType : List (String × RbScore) := []
+  measure : RbMeasure := {}
+  fails : List String := []
+  units : Nat := 0
+  wallMs : Nat := 0
+  /-- Override ids that took effect (a unit of the case failed). -/
+  applied : List String := []
+  /-- Override ids with a unit that now passes: each fails the run. -/
+  stale : List String := []
+  /-- The facts of every unit with its outcome, and the issue of the
+  local override that counts it apart (a failing unit only), for the
+  breakdown lines (`breakdownLines`). Reporting only. -/
+  unitFacts : List (UnitFacts × (RbOutcome × Option String)) := []
+  /-- The balanced line (issue 732), when it was run. Reporting only. -/
+  bal : BalResult := {}
+
+/-- `overrides`: `(test_id, issue)` of the local overrides of suite
+`owl-rdf-based` (`loadLocalOverrides`, below). A FAILING unit of a named
+case is counted in the `local-override` bucket and printed as `OVERRIDE`;
+a PASSING one is printed `STALE` and fails the run. Other outcomes
+(not-refuted, unsupported) are counted as usual. The verdict itself is
+never changed. First entries: `WebOnt-I5.5-001` and `-002`,
+https://github.com/danbri/factoidal/issues/734. -/
+def runRdfBased (name : String) (cat : Catalog) (capMs : Nat) (verbose : Bool)
+    (overrides : List (String × String) := [])
+    (balanced : Option (Nat × Nat × Bool) := none) : IO RbCatalogResult := do
+  let t0 ← IO.monoMsNow
+  let mut r : RbCatalogResult := {}
+  for c in cat.cases do
+    if testTypes.any (fun ty => c.types.contains ty && inRdfBasedRegime c ty) then
+      if let some e := rdfXmlPremiseDefect? c then IO.println (fixtureDefectLine c e)
+    for ty in testTypes do
+      if c.types.contains ty && inRdfBasedRegime c ty then
+        let (o, m) ← rbJudge cat c capMs ty
+        let label := s!"{c.id} [{ty}]"
+        let ov := overrides.find? (fun kv => kv.1 == c.id)
+        let isFail := match o with | .notProved _ | .refuted _ => true | _ => false
+        let isPass := match o with | .proved => true | _ => false
+        match ov with
+        | some (_, issue) =>
+            if isFail then
+              let why := match o with | .notProved w | .refuted w => w | _ => ""
+              IO.println s!"OVERRIDE {label}: {why} (local override, {issue})"
+              r := { r with applied := r.applied ++ [c.id] }
+            else if isPass then
+              IO.println s!"STALE {label}: the unit passes; delete its file in \
+tests/local-overrides/ and close {issue}"
+              r := { r with stale := r.stale ++ [c.id] }
+            else if verbose then IO.println (o.line label)
+        | none =>
+          match o with
+          | .proved | .notRefuted => if verbose then IO.println (o.line label)
+          | .notProved _ | .refuted _ =>
+              IO.println (o.line label)
+              r := { r with fails := r.fails ++ [label] }
+          | .unsupported _ => IO.println (o.line label)
+        if m.capHits > 0 then IO.println s!"CAP {label}: the closure budget ran out"
+        let bumpU := fun (s : RbScore) =>
+          if ov.isSome && isFail then { s with overridden := s.overridden + 1 } else s.bump o
+        let pt := match r.perType.find? (fun p => p.1 == ty) with
+          | some _ => r.perType.map (fun p => if p.1 == ty then (p.1, bumpU p.2) else p)
+          | none => r.perType ++ [(ty, bumpU {})]
+        let ovIssue : Option String := if isFail then ov.map (·.2) else none
+        r := { r with score := bumpU r.score, perType := pt, measure := r.measure.add m,
+                      units := r.units + 1,
+                      unitFacts := r.unitFacts ++ [(UnitFacts.ofCase c ty, (o, ovIssue))] }
+        -- The balanced line (issue 732). Printed after the unit's own
+        -- lines; it never changes `o` or the counts above.
+        if let some (rb, rms, strict) := balanced then
+          let notProved := match o with | .notProved _ => true | _ => false
+          let facts := UnitFacts.ofCase c ty
+          if notProved && (ty == "PositiveEntailmentTest" || ty == "InconsistencyTest") then
+            let b ← balancedJudge cat c ty capMs rb rms strict
+            match b with
+            | .passed how _ _ => IO.println s!"BALANCED-PASS {label}: {how}"
+            | .notBalanced ds =>
+                IO.println s!"NOT-BALANCED {label}: conditions {condNumbers ds}; {defectsText ds}"
+            | .undecided why => IO.println s!"BALANCED-UNDECIDED {label}: {why}"
+            let o2 : RbOutcome := match b with | .passed _ _ _ => .proved | _ => o
+            let ov2 : Option String := match b with | .passed _ _ _ => none | _ => ovIssue
+            r := { r with bal := { r.bal with
+                     units := r.bal.units ++ [(facts, (o2, ov2))],
+                     checked := r.bal.checked ++ [(facts, b)] } }
+          else
+            r := { r with bal := { r.bal with units := r.bal.units ++ [(facts, (o, ovIssue))] } }
+  let t1 ← IO.monoMsNow
+  r := { r with wallMs := t1 - t0 }
+  for ty in testTypes do
+    match r.perType.find? (fun p => p.1 == ty) with
+    | some (_, s) => IO.println (RbScore.line s!"{name} {ty} [rdf-based]" s)
+    | none => pure ()
+  IO.println (RbScore.line s!"{name} [rdf-based]" r.score)
+  IO.println s!"HARNESS-DIAG-OWL-RDF-BASED {name}: units={r.units} \
+cap_hits={r.measure.capHits} parse_failures={r.measure.parseFailures} \
+rule_triples={r.measure.ruleTriples} proved_by_rules={r.measure.provedByRules} \
+closures_with_comprehension_witness={r.measure.witnessClosures} wall_ms={r.wallMs}"
+  -- Breakdown by status and species, then every failing unit with its
+  -- status and species (reporting only; see `breakdownLines`).
+  for l in breakdownLines name "rdf-based" Scope.rdfBased r.unitFacts ({} : RbScore)
+      (fun s p => match p.2 with
+        | some _ => { s with overridden := s.overridden + 1 }
+        | none   => s.bump p.1)
+      RbScore.line do
+    IO.println l
+  let rbFailing := r.unitFacts.filterMap fun (f, o, ov) =>
+    match o with
+    | .notProved _ | .refuted _ =>
+        some (f, match ov with | some i => s!" (local override, {i})" | none => "")
+    | _ => none
+  for l in failingLines name "rdf-based" Scope.rdfBased r.units rbFailing do
+    IO.println l
+  if balanced.isSome then
+    for l in balancedSummaryLines name r.bal do IO.println l
+  return r
+
+/-- The species verdict of a case against its annotation. -/
+def judgeSpecies (cat : Catalog) (c : Case) : Harness.Outcome × List String :=
+  let expectDl := c.species.contains "DL"
+  match speciesDocs cat c with
+  | .error e =>
+      if e.startsWith "unsupported:" then (.unsupported (e.drop 13).toString, [])
+      else (.fail e, [])
+  | .ok d =>
+      let viols :=
+        if d.functional then
+          L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctional d.pDoc d.hasConclusion d.uMerged
+        else
+          L4Factoidal.OWL.SyntaxDL.speciesViolations d.pDoc d.pMerged d.hasConclusion d.cDoc
+            d.uMerged (some d.available)
+      let isDl := viols.isEmpty
+      let label := fun (b : Bool) => if b then "DL" else "FULL"
+      if isDl == expectDl then (.pass, [])
+      else (.fail s!"species: verdict {label isDl}, annotation {label expectDl}", viols.take 5)
+
+/-- The species verdict from the functional-syntax documents ALONE, for
+a case that has them: the body checks over the mapped graph of the
+premise (and of the conclusion, when there is one). `none` when the case
+has no functional-syntax premise. This is a second, independent input to
+`SyntaxDL` for every case that has two syntaxes. -/
+def judgeSpeciesFs (c : Case) : Option (Harness.Outcome × List String) :=
+  match c.fsPremiseText with
+  | none => none
+  | some ftxt =>
+    let expectDl := c.species.contains "DL"
+    match L4Factoidal.OWL.FS.parseFunctionalSyntax ftxt with
+    | none => some (.unsupported "functional-syntax premise outside the grammar", [])
+    | some pDoc =>
+      let cTxt := c.fsConclusionText <|> c.fsNonConclusionText
+      let cParsed : Option (Option Graph) := cTxt.map L4Factoidal.OWL.FS.parseFunctionalSyntax
+      match cParsed with
+      | some none => some (.unsupported "functional-syntax conclusion outside the grammar", [])
+      | _ =>
+        let cDoc : Option Graph :=
+          match cParsed with
+          | some (some g) => some (Graph.prefixBnodes "c_" g)
+          | _ => none
+        let u := pDoc ++ cDoc.getD []
+        let viols := L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctional pDoc cDoc.isSome u
+        let isDl := viols.isEmpty
+        let label := fun (b : Bool) => if b then "DL" else "FULL"
+        if isDl == expectDl then some (.pass, [])
+        else some (.fail s!"species[fs]: verdict {label isDl}, annotation {label expectDl}",
+                   viols.take 5)
+
+/-! ### Local overrides of the species verdict
+
+`tests/local-overrides/*.json` whose `suite` is `owl-species` name a case
+by `test_id` and the open issue that records the dispute (`issue`), the
+same files and keys `Harness/XmlConfRun.lean` and
+`Harness/JsonLdFrameRun.lean` read (`tests/local-overrides/README.md`,
+"Runner contract"). A case named by an override whose verdict FAILS is
+counted in a `local-override` bucket, apart from pass and fail. One whose
+verdict PASSES is a STALE override: it is counted as a pass, the run
+prints a `FAILURE` line naming the file to delete, and the process exits
+1. An override that names no scored case also fails the run. The
+override never changes the verdict the run computes.
+
+First entry: `WebOnt-I5.5-005`, https://github.com/danbri/factoidal/issues/711
+(owner, 2026-10-10, verbatim: "711 accept your recommendation"). -/
+
+/-- `(test_id, issue)` of every override file whose `suite` is `suite`.
+The directory is resolved from the repository root or from
+`formal/lean4`; an absent directory means no overrides. -/
+def loadLocalOverrides (suite : String) : IO (List (String × String)) := do
+  let dir : System.FilePath := ← Harness.resolveFixtureOr "tests/local-overrides"
+  let entries ← try dir.readDir catch _ => pure #[]
+  let mut out : List (String × String) := []
+  for f in entries do
+    if !f.fileName.endsWith ".json" then continue
+    let txt ← try IO.FS.readFile (dir / f.fileName) catch _ => pure ""
+    match L4Factoidal.JSON.parseJson txt with
+    | .error _ => pure ()
+    | .ok j =>
+      if (j.getString? "suite").getD "" == suite then
+        match j.getString? "test_id" with
+        | some i => out := out ++ [(i, (j.getString? "issue").getD "(no issue named)")]
+        | none   => pure ()
+  pure out
+
+/-- A score with the `local-override` bucket. The overridden units are
+in the denominator and in no other bucket. -/
+structure OvScore where
+  score      : Harness.Score := {}
+  overridden : Nat := 0
+
+def OvScore.line (label : String) (s : OvScore) : String :=
+  s!"{label}: {s.score.pass} pass, {s.score.fail} fail, {s.score.skip} skip, \
+{s.score.unsupported} unsupported, {s.overridden} local-override \
+(out of {s.score.total + s.overridden})"
+
+structure SpeciesResult where
+  score     : OvScore := {}
+  expectDl  : OvScore := {}
+  expectFull : OvScore := {}
+  /-- The same verdict computed from the functional-syntax documents
+  alone, over the cases that have them. -/
+  fsScore   : Harness.Score := {}
+  fails     : List String := []
+  units     : Nat := 0
+  /-- Override ids that took effect (the verdict failed). -/
+  applied   : List String := []
+  /-- Override ids whose case now passes: each fails the run. -/
+  stale     : List String := []
+
+/-- Count one verdict, through an override when `ov` is set. -/
+def bumpOv (s : OvScore) (o : Harness.Outcome) (ov : Bool) : OvScore :=
+  if ov && o.isFail then { s with overridden := s.overridden + 1 }
+  else { s with score := s.score.bump o }
+
+def runSpecies (name : String) (cat : Catalog) (verbose : Bool)
+    (overrides : List (String × String) := []) : IO SpeciesResult := do
+  let mut r : SpeciesResult := {}
+  for c in cat.cases do
+    if !c.species.isEmpty then
+      if let some e := rdfXmlPremiseDefect? c then IO.println (fixtureDefectLine c e)
+      let (o, viols) := judgeSpecies cat c
+      let label := s!"{c.id} [species]"
+      let ov := overrides.find? (fun kv => kv.1 == c.id)
+      match ov, o with
+      | some (_, issue), .fail reason =>
+          IO.println s!"OVERRIDE {label}: {reason} (local override, {issue})"
+          r := { r with applied := r.applied ++ [c.id] }
+      | some (_, issue), .pass =>
+          IO.println s!"STALE {label}: the case passes; delete its file in \
+tests/local-overrides/ and close {issue}"
+          r := { r with stale := r.stale ++ [c.id] }
+      | _, .pass => if verbose then IO.println (o.line label)
+      | _, _ => IO.println (o.line label)
+      for v in viols do IO.println s!"      violation: {v}"
+      if o.isFail && ov.isNone then r := { r with fails := r.fails ++ [c.id] }
+      let dl := c.species.contains "DL"
+      let isOv := ov.isSome
+      r := { r with score := bumpOv r.score o isOv,
+                    expectDl := if dl then bumpOv r.expectDl o isOv else r.expectDl,
+                    expectFull := if dl then r.expectFull else bumpOv r.expectFull o isOv,
+                    units := r.units + 1 }
+      match judgeSpeciesFs c with
+      | none => pure ()
+      | some (fo, fviols) =>
+          if fo != .pass then
+            IO.println (fo.line s!"{c.id} [species, functional-syntax documents]")
+            for v in fviols do IO.println s!"      violation: {v}"
+          r := { r with fsScore := r.fsScore.bump fo }
+  IO.println (OvScore.line s!"{name} species [expected DL]" r.expectDl)
+  IO.println (OvScore.line s!"{name} species [expected FULL]" r.expectFull)
+  IO.println (Harness.Score.line s!"{name} species [functional-syntax documents]" r.fsScore)
+  IO.println (OvScore.line s!"{name} species" r.score)
+  if !r.fails.isEmpty then
+    IO.println s!"  FAIL-GROUP {name} species: {r.fails.length} - {String.intercalate ", " r.fails}"
   return r
 
 /-! ## Census (kept from the first version) -/
@@ -1578,6 +2939,8 @@ structure Opts where
   verbose : Bool := false
   /-- `--profile`: per-row timing of the list engine on `--case` ids. -/
   profile : Bool := false
+  /-- `--case ID` (repeatable): the cases `--profile` and
+  `--tbox-census` read, and the cases a scored run is restricted to. -/
   cases   : List String := []
   rounds  : Nat := 3
   /-- `--indexed-only`: profile rounds of the indexed engine alone
@@ -1591,8 +2954,10 @@ structure Opts where
   regime : Regime := Regime.rl
   /-- `--refute-budget N`: the refuter's per-premise budget. -/
   refuteBudget : Nat := defaultRefuteBudget
-  /-- `--refute-ms N`: hard child-process deadline for one refuter
-  call. `--refute-budget` separately bounds the search shape. -/
+  /-- `--refute-ms N`: the wall clock allowed for ONE refuter call.
+  `--refute-budget` bounds the search shape; this bounds how long one
+  expansion may take. A timeout withholds a verdict — see
+  `refuteBounded`. -/
   refuteMs : Nat := defaultRefuteMs
   /-- `--tbox-census`: count the refuter's work per case instead of
   timing it. Prints, for every case, the TBox size, how many of its
@@ -1600,6 +2965,12 @@ structure Opts where
   initial tableau state, and the resulting axiom-test count of ONE
   `onePass`. A count is immune to machine load; a stopwatch is not. -/
   tboxCensus : Bool := false
+  /-- `--trace`: print the refuter's saturated state for the `--case`
+  ids instead of scoring (`traceMain`). -/
+  trace : Bool := false
+  /-- `--slow-ms N`: print every unit whose judgement took `N` ms or
+  more (0, the default, prints none). -/
+  slowMs : Nat := 0
   /-- Decide conclusion containment by ONE blank-node mapping over the
   whole conclusion graph (the RDF 1.1 Semantics interpolation lemma).
   This is the default since 2026-09-04. `--wildcard-match` restores the
@@ -1608,6 +2979,15 @@ structure Opts where
   kept only so the two numbers come from the same binary
   (`docs/designissues/2026-09-04-owl-conclusion-matching.md`). -/
   strictMatch : Bool := true
+  /-- `--species`: score the `test:species` facet (OWL 2 DL against
+  FULL) instead of entailment and consistency. -/
+  species : Bool := false
+  /-- `--fs-input`: judge the cases that have a functional-style premise
+  from their functional-style documents, and again from their RDF/XML
+  documents, and report both. -/
+  fsInput : Bool := false
+  /-- `--rdf-based`: the OWL 2 RDF-Based Semantics regime (issue 721). -/
+  rdfBased : Bool := false
 
 def parseArgs : List String → Opts → Opts
   | [], o => o
@@ -1615,6 +2995,12 @@ def parseArgs : List String → Opts → Opts
   | "-v" :: rest, o => parseArgs rest { o with verbose := true }
   | "--dir" :: d :: rest, o => parseArgs rest { o with dir := d }
   | "--profile" :: rest, o => parseArgs rest { o with profile := true }
+  | "--trace" :: rest, o => parseArgs rest { o with trace := true }
+  | "--species" :: rest, o => parseArgs rest { o with species := true }
+  | "--syntax" :: rest, o => parseArgs rest { o with species := true }
+  | "--fs-input" :: rest, o => parseArgs rest { o with fsInput := true }
+  | "--rdf-based" :: rest, o => parseArgs rest { o with rdfBased := true }
+  | "--slow-ms" :: n :: rest, o => parseArgs rest { o with slowMs := n.toNat! }
   | "--case" :: c :: rest, o => parseArgs rest { o with cases := o.cases ++ [c] }
   | "--rounds" :: n :: rest, o => parseArgs rest { o with rounds := n.toNat!.max 1 }
   | "--indexed-only" :: rest, o => parseArgs rest { o with indexedOnly := true }
@@ -1712,10 +3098,12 @@ def profileMain (o : Opts) : IO UInt32 := do
 
 /-! ## `--tbox-census` — counting the refuter's work, not timing it
 
-`onePass` folds over the WHOLE TBox four times for a node: once in
-`injectGlobalAxioms`, once per LABEL in `applyAxioms`, once in
-`applyAxiomsEdges` and once in `applyAxiomsConj`. So one pass tests
-each axiom `3 * nodes + labels` times, and `search` runs up to
+Before 2026-10-10 `onePass` folded over the WHOLE TBox four times for
+a node: once in `injectGlobalAxioms`, once per LABEL in `applyAxioms`,
+once in `applyAxiomsEdges` and once in `applyAxiomsConj`, so one pass
+tested each axiom `3 * nodes + labels` times. It now reads the TBox
+through `Refute.TBoxIndex`, and the count printed here is the upper
+bound the index cuts down, not the work done. `search` runs up to
 `--refute-budget` passes per goal. These counts do not move when the
 machine is loaded, which a wall clock does. -/
 
@@ -1744,7 +3132,7 @@ def censusCase (name : String) (cat : Catalog) (c : Case) (capMs : Nat) : IO Uni
     let tb := L4Factoidal.OWL.Refute.collectAxioms g
     let tbd := (distinctAxioms tb).length
     let st := L4Factoidal.OWL.Refute.initState g
-    let nodes := st.nodes.length
+    let nodes := st.nodes.size
     let labels := st.nodes.foldl (fun a n => a + n.labels.length) 0
     let perPass := tb.length * (3 * nodes + labels)
     IO.println s!"TBOX-CENSUS {name} {c.id} closure={g.length} \
@@ -1765,6 +3153,470 @@ def censusMain (o : Opts) : IO UInt32 := do
           if o.cases.isEmpty || o.cases.contains c.id then
             censusCase name cat c o.capMs
   return 0
+
+/-! ## `--trace` — the refuter's saturated state, for one case
+
+`--trace --case ID [catalog.rdf]` runs the premise closure under the
+selected regime and then, instead of scoring, prints what the tableau
+refuter sees: the graph-level violation test, the TBox size, the node
+labels after deterministic saturation (`onePass` to quiescence, capped
+by `--rounds`), the pending union and merge choices, and the verdict
+of `tableauConsistent`. A diagnostic: it decides nothing. -/
+
+def shortIri (i : WfIri) : String :=
+  let s := i.val
+  let afterHash := Harness.lastAfter s "#"
+  if afterHash != s then afterHash else Harness.lastAfter s "/"
+
+def shortTerm : Term → String
+  | .iri i     => shortIri i
+  | .bnode b   => s!"_:{b}"
+  | .literal l => s!"\"{l.val.lexicalForm}\"^^{shortIri l.val.datatype}"
+  | t          => showTerm t
+
+def shortSubject (s : Subject) : String := shortTerm s.toTerm
+
+partial def showCe : L4Factoidal.OWL.ClassExpr → String
+  | .named c => shortIri c
+  | .someOf p c => s!"∃{shortIri p}.{showCe c}"
+  | .allOf p c => s!"∀{shortIri p}.{showCe c}"
+  | .hasValue p v => s!"∋{shortIri p}.{shortTerm v}"
+  | .intersection cs => "(" ++ String.intercalate " ⊓ " (cs.map showCe) ++ ")"
+  | .union cs => "(" ++ String.intercalate " ⊔ " (cs.map showCe) ++ ")"
+  | .complement c => s!"¬{showCe c}"
+  | .minCard n p => s!"≥{n}{shortIri p}"
+  | .maxCard n p => s!"≤{n}{shortIri p}"
+  | .exactCard n p => s!"={n}{shortIri p}"
+  | .minQualCard n p c => s!"≥{n}{shortIri p}.{showCe c}"
+  | .maxQualCard n p c => s!"≤{n}{shortIri p}.{showCe c}"
+  | .exactQualCard n p c => s!"={n}{shortIri p}.{showCe c}"
+  | .oneOf vs => "{" ++ String.intercalate "," (vs.map shortTerm) ++ "}"
+  | .dataRestriction dt fs =>
+      s!"{shortIri dt}[" ++ String.intercalate "," (fs.map (fun (f, v) =>
+        s!"{shortIri f} {shortTerm v}")) ++ "]"
+  | .unknown => "?"
+
+/-- Dump the refuter's view of one graph: TBox, saturated labels,
+    pending choices, verdict. `axioms` prints the TBox. -/
+def traceGraph (g : Graph) (rb : Nat) (passes : Nat) (axioms : Bool) : IO Unit := do
+    IO.println s!"  closure triples={g.length} immediateInconsistency={L4Factoidal.OWL.Refute.immediateInconsistency g} inCountingFragment={L4Factoidal.OWL.CountingOracle.inCountingFragment g} classSizeUnsat={L4Factoidal.OWL.CountingOracle.classSizeUnsat g}"
+    let tA ← IO.monoMsNow
+    let tb ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.collectAxioms g)
+    IO.println s!"  tbox axioms={tb.length}"
+    let tB ← IO.monoMsNow
+    IO.println s!"  TIME collectAxioms {tB - tA} ms"
+    -- The parts of `collectAxioms`, each timed on its own.
+    let t0 ← IO.monoMsNow
+    let ix ← IO.lazyPure (fun _ => Index.ofGraph g)
+    IO.println s!"  TIME Index.ofGraph size={ix.all.size} {(← IO.monoMsNow) - t0} ms"
+    let sto ← IO.lazyPure (fun _ => Store.ofIndex ix)
+    let t1 ← IO.monoMsNow
+    let us ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.unsatNamedClassesS sto)
+    IO.println s!"  TIME unsatNamedClasses n={us.length} {(← IO.monoMsNow) - t1} ms"
+    let t2 ← IO.monoMsNow
+    let a1 ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.namedRestrictionAxioms us sto)
+    IO.println s!"  TIME namedRestrictionAxioms n={a1.length} {(← IO.monoMsNow) - t2} ms"
+    let t3 ← IO.monoMsNow
+    let a2 ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.namedBooleanAxioms us sto ++
+      L4Factoidal.OWL.Refute.namedOneOfAxioms sto ++
+      L4Factoidal.OWL.Refute.disjointUnionAxioms us sto)
+    IO.println s!"  TIME boolean/oneOf/disjointUnion n={a2.length} {(← IO.monoMsNow) - t3} ms"
+    let t4 ← IO.monoMsNow
+    let a3 ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.domainRangeAxioms us sto)
+    IO.println s!"  TIME domainRangeAxioms n={a3.length} {(← IO.monoMsNow) - t4} ms"
+    let t5 ← IO.monoMsNow
+    let raw ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.collectAxiomsS sto)
+    IO.println s!"  TIME collectAxiomsS n={raw.length} {(← IO.monoMsNow) - t5} ms"
+    let t6 ← IO.monoMsNow
+    let sp ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.splitUnionAntecedents raw)
+    IO.println s!"  TIME splitUnionAntecedents n={sp.length} {(← IO.monoMsNow) - t6} ms"
+    let t7 ← IO.monoMsNow
+    let dd ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.dedupAxioms sp)
+    IO.println s!"  TIME dedupAxioms n={dd.length} {(← IO.monoMsNow) - t7} ms"
+    if axioms then
+      for (a, d) in tb do
+        IO.println s!"    AX {showCe a} ⊑ {showCe d}"
+    let mut st : L4Factoidal.OWL.Refute.RState :=
+      { L4Factoidal.OWL.Refute.initState g with tbox := tb }
+    let mut n := 0
+    IO.println s!"  initState nodes={st.nodes.size}"
+    for _ in [0:passes] do
+      let t0 ← IO.monoMsNow
+      let cl := L4Factoidal.OWL.Refute.clashNodes g st
+      IO.println s!"  TIME clashNodes {(← IO.monoMsNow) - t0} ms -> {cl}"
+      if cl then break
+      let t1 ← IO.monoMsNow
+      let (st', ch) := L4Factoidal.OWL.Refute.onePass tb g st
+      IO.println s!"  TIME onePass {(← IO.monoMsNow) - t1} ms nodes={st'.nodes.size} changed={ch}"
+      st := st'
+      n := n + 1
+      if !ch then break
+    -- One round's rules timed apart, each over the saturated state (the
+    -- states are not threaded, so this apportions the work only).
+    let ix := L4Factoidal.OWL.Refute.TBoxIndex.build tb
+    let mut tRules := 0
+    let mut tAx := 0
+    let mut tEdges := 0
+    let mut tConj := 0
+    let mut nLabels := 0
+    let leaders := L4Factoidal.OWL.Refute.groupLeaders st
+    for nd in leaders do
+      let ls := L4Factoidal.OWL.Refute.labelsOf st nd.id
+      nLabels := nLabels + ls.length
+      let a0 ← IO.monoNanosNow
+      for l in ls do
+        let r ← IO.lazyPure (fun _ => (L4Factoidal.OWL.Refute.applyLabelRules g st nd.id l).2)
+        if r then pure () else pure ()
+      let a1 ← IO.monoNanosNow
+      for l in ls do
+        let r ← IO.lazyPure (fun _ => (L4Factoidal.OWL.Refute.applyAxioms
+          (ix.byKey.getD (L4Factoidal.OWL.Refute.ceIndexKey l) []) st nd.id l).2)
+        if r then pure () else pure ()
+      let a2 ← IO.monoNanosNow
+      let r2 ← IO.lazyPure (fun _ => (L4Factoidal.OWL.Refute.applyAxiomsEdges ix g st nd.id).2)
+      let a3 ← IO.monoNanosNow
+      let r3 ← IO.lazyPure (fun _ => (L4Factoidal.OWL.Refute.applyAxiomsConj ix st nd.id).2)
+      let a4 ← IO.monoNanosNow
+      if r2 || r3 then pure () else pure ()
+      tRules := tRules + (a1 - a0)
+      tAx := tAx + (a2 - a1)
+      tEdges := tEdges + (a3 - a2)
+      tConj := tConj + (a4 - a3)
+    IO.println s!"  ROUND leaders={leaders.length} labels={nLabels} labelRules={tRules / 1000000}ms axioms={tAx / 1000000}ms edges={tEdges / 1000000}ms conj={tConj / 1000000}ms edgeProps={ix.edgeProps.length}"
+    IO.println s!"  passes={n} clash={L4Factoidal.OWL.Refute.clashNodes g st} nodes={st.nodes.size} extra_edges={st.extra.size} ident={st.ident.length} distinct_groups={st.distinctGroups.length}"
+    let t2 ← IO.monoMsNow
+    let (stF, forced) := L4Factoidal.OWL.Refute.forcedIdentifications g st
+    IO.println s!"  forcedIdentifications changed={forced} ident_after={stF.ident.length}"
+    IO.println s!"  TIME forcedIdentifications {(← IO.monoMsNow) - t2} ms"
+    for (a, b) in stF.ident do
+      IO.println s!"    IDENT {shortTerm a} = {shortTerm b}"
+    -- Per-node cost of the propositional clash: label sets with two or
+    -- more unions, their clause sets, and the slowest ones.
+    let pix := L4Factoidal.OWL.Refute.LhsAtomIndex.build st.tbox
+    let mut rows : Array (Nat × Nat × Nat × Nat × String) := #[]
+    for nd in L4Factoidal.OWL.Refute.groupLeaders st do
+      let ls := L4Factoidal.OWL.Refute.labelsOf st nd.id
+      let nu := (ls.filter (fun l => match l with | .union _ => true | _ => false)).length
+      if nu ≥ 2 then
+        let tq ← IO.monoMsNow
+        let cs ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.nodeClausesIx pix ls 3)
+        let tq2 ← IO.monoMsNow
+        let r ← IO.lazyPure (fun _ => L4Factoidal.OWL.Refute.clausesSatisfiable L4Factoidal.OWL.Refute.propFuel cs)
+        let tq3 ← IO.monoMsNow
+        rows := rows.push (tq3 - tq2, tq2 - tq, cs.length, ls.length, s!"{shortSubject nd.id} {repr r}")
+    let sorted := rows.qsort (fun a b => a.1 > b.1)
+    IO.println s!"  PROP nodes_with_2_unions={rows.size} total_sat_ms={rows.foldl (fun a r => a + r.1) 0} total_clause_ms={rows.foldl (fun a r => a + r.2.1) 0}"
+    for r in sorted.toList.take 5 do
+      IO.println s!"    PROP sat={r.1}ms clauses_built={r.2.1}ms n_clauses={r.2.2.1} labels={r.2.2.2.1} {r.2.2.2.2}"
+    let t3 ← IO.monoMsNow
+    IO.println s!"  propositionalClash={L4Factoidal.OWL.Refute.propositionalClash st}"
+    let t4 ← IO.monoMsNow
+    IO.println s!"  nominalClash={L4Factoidal.OWL.Refute.nominalClash g st}"
+    let t5 ← IO.monoMsNow
+    IO.println s!"  TIME propositional {t4 - t3} ms nominal {t5 - t4} ms"
+    IO.println s!"  pendingNominal={(L4Factoidal.OWL.Refute.pendingNominal g st).map List.length}"
+    for nd in st.nodes do
+      IO.println s!"    NODE {shortSubject nd.id}: {String.intercalate ", " (nd.labels.map showCe)}"
+    for e in st.extra do
+      IO.println s!"    EDGE {shortSubject e.s} {shortIri e.p} {shortTerm e.o} counts={e.counts}"
+    match L4Factoidal.OWL.Refute.pendingUnion st with
+    | some (i, cs) => IO.println s!"  pendingUnion {shortSubject i}: {String.intercalate " | " (cs.map showCe)}"
+    | none => IO.println "  pendingUnion none"
+    match L4Factoidal.OWL.Refute.pendingMerge g st with
+    | some ps => IO.println s!"  pendingMerge {String.intercalate "; " (ps.map (fun (a, b) => s!"{shortTerm a}={shortTerm b}"))}"
+    | none => IO.println "  pendingMerge none"
+    IO.println s!"  tableauConsistent(budget {rb}) = {repr (L4Factoidal.OWL.Refute.tableauConsistent g rb)}"
+
+def traceCase (name : String) (cat : Catalog) (c : Case) (capMs : Nat) (rg : Regime)
+    (rb : Nat) (passes : Nat) : IO Unit := do
+  IO.println s!"TRACE {name} {c.id}"
+  let (res, _) ← premiseClosure cat c capMs rg
+  match res with
+  | .error o => IO.println (o.line c.id)
+  | .ok r =>
+    traceGraph r.graph rb passes true
+    -- A positive-entailment case: the refutation goals of its
+    -- conclusion, each over the premise closure.
+    match c.conclusion with
+    | none => pure ()
+    | some ctxt =>
+      match parseDoc "conclusion" c.iri ctxt with
+      | .error e => IO.println s!"  conclusion parse error: {e}"
+      | .ok gc =>
+        -- The graph `judgePositive` hands the refuter: the closure
+        -- with the comprehension layer and one re-closure.
+        let gw := L4Factoidal.OWL.Comp.comprehensionLayer r.graph
+        let pg ← if gw.length == r.graph.length then pure r.graph else do
+          let t2 ← IO.monoMsNow
+          pure (← closureIO gw closureFuel (t2 + capMs)).graph
+        match L4Factoidal.OWL.Refute.prepareNegationGoals pg gc with
+        | none => IO.println "  GOALS none"
+        | some (premise, goals) =>
+          IO.println s!"  GOALS {goals.length} (over {premise.length} triples)"
+          for goal in goals do
+            IO.println "  GOAL:"
+            for t in goal do
+              IO.println s!"    G {shortSubject t.s} {shortIri t.p} {shortTerm t.o}"
+            traceGraph (premise ++ goal) rb passes false
+
+def traceMain (o : Opts) : IO UInt32 := do
+  let dir : System.FilePath := o.dir
+  let names := if o.only.isEmpty then catalogs else o.only
+  for name in names do
+    let p := dir / name
+    if !(← p.pathExists) then IO.println s!"  MISSING {name}"
+    else
+      match ← readCatalog p with
+      | none => pure ()
+      | some cat =>
+        for c in cat.cases do
+          if o.cases.contains c.id then
+            traceCase name cat c o.capMs o.regime o.refuteBudget o.rounds
+  return 0
+
+/-! ## Cross-syntax agreement (`--species`, second block)
+
+OWL 2 Conformance section 2 and the test-case format: when a test case
+gives an ontology in two syntaxes, the two documents express the same
+ontology. The functional-style document, mapped to RDF by OWL 2 Mapping
+to RDF Graphs section 2, is therefore a graph isomorphic to the graph of
+the RDF/XML document (RDF 1.1 Concepts section 3.6, blank-node
+isomorphism). The comparison is made on the premise documents, and
+separately on the conclusion (or non-conclusion) documents, of every case
+that has both syntaxes. -/
+
+/-- A few triples of `a` with no blank node that `b` lacks: the part of
+a difference a reader can act on. -/
+def groundDifference (a b : Graph) : List String :=
+  (a.filter (fun t => t.bnodes.isEmpty && !b.mem t)).take 3 |>.map showTriple
+
+/-- Compare one RDF/XML document with a document in another syntax; `read`
+is that syntax's reader (mapped to RDF). -/
+def agreeOne (read : String → Option Graph) (what : String)
+    (base : String) (rdfTxt otherTxt : String) : Harness.Outcome × List String :=
+  match parseDoc "rdf/xml" base rdfTxt with
+  | .error e => (.fail e, [])
+  | .ok a =>
+    match read otherTxt with
+    | none => (.unsupported s!"{what} document outside the grammar", [])
+    | some b =>
+      match Graph.isomorphicOutcome a b with
+      | .equal => (.pass, [])
+      | .budgetExceeded => (.skip "isomorphism work budget exceeded", [])
+      | .notEqual =>
+          (.fail s!"{what}-rdfxml: graphs differ ({a.length} triples from RDF/XML, \
+{b.length} from the {what} mapping)",
+           (groundDifference a b).map (fun t => s!"only in RDF/XML: {t}") ++
+           (groundDifference b a).map (fun t => s!"only in {what}: {t}"))
+
+structure AgreeResult where
+  premise    : Harness.Score := {}
+  conclusion : Harness.Score := {}
+
+/-- One agreement block: for every case with an RDF/XML document and a
+document of the other syntax, in the premise position and in the
+conclusion position. `kind` names the pair in the output. -/
+def runAgreementWith (name kind : String) (read : String → Option Graph) (what : String)
+    (otherPremise : Case → Option String) (otherConclusion : Case → Option String)
+    (cat : Catalog) (verbose : Bool) : IO AgreeResult := do
+  let mut r : AgreeResult := {}
+  for c in cat.cases do
+    match c.premise, otherPremise c with
+    | some rx, some other =>
+        let (o, notes) := agreeOne read what c.iri rx other
+        let label := s!"{c.id} [{kind}, premise]"
+        match o with
+        | .pass => if verbose then IO.println (o.line label)
+        | _ => IO.println (o.line label)
+        for n in notes do IO.println s!"      {n}"
+        r := { r with premise := r.premise.bump o }
+    | _, _ => pure ()
+    match c.conclusion <|> c.nonConclusion, otherConclusion c with
+    | some rx, some other =>
+        let (o, notes) := agreeOne read what c.iri rx other
+        let label := s!"{c.id} [{kind}, conclusion]"
+        match o with
+        | .pass => if verbose then IO.println (o.line label)
+        | _ => IO.println (o.line label)
+        for n in notes do IO.println s!"      {n}"
+        r := { r with conclusion := r.conclusion.bump o }
+    | _, _ => pure ()
+  IO.println (Harness.Score.line s!"{name} {kind} agreement" r.premise)
+  IO.println (Harness.Score.line s!"{name} {kind} agreement [conclusion]" r.conclusion)
+  return r
+
+def runAgreement (name : String) (cat : Catalog) (verbose : Bool) : IO AgreeResult := do
+  let r ← runAgreementWith name "fs-rdfxml" L4Factoidal.OWL.FS.parseFunctionalSyntax
+    "functional-syntax" (·.fsPremiseText) (fun c => c.fsConclusionText <|> c.fsNonConclusionText)
+    cat verbose
+  let x ← runAgreementWith name "owlxml-rdfxml" L4Factoidal.OWL.OwlXml.parseOwlXmlGraph
+    "owl-xml" (·.owlXmlPremise) (fun c => c.owlXmlConclusion <|> c.owlXmlNonConclusion)
+    cat verbose
+  if x.premise.total + x.conclusion.total == 0 then
+    IO.println s!"NOT MEASURED {name} owlxml-rdfxml agreement: the catalog has no \
+test:owlXmlPremiseOntology or test:owlXmlConclusionOntology element, so no case \
+carries an OWL/XML document to compare"
+  return r
+
+/-! ## Functional-style input (`--fs-input`)
+
+A case that carries a functional-style premise is judged twice: once with
+the functional-style documents (`premise`, `conclusion` and
+`nonConclusion` blanked wherever a functional-style twin exists, so the
+judges take the `OWL.FS` path) and once with the RDF/XML documents. The
+verdict of a test case must not depend on the syntax its ontology is
+written in (OWL 2 Conformance section 2), so a unit the two disagree on
+is a defect in a reader, in the mapping, or in the fixture. -/
+
+/-- Use the functional-style documents of a case wherever it has them. -/
+def fsInputCase (c : Case) : Case :=
+  { c with premise := none,
+           conclusion := if c.fsConclusionText.isSome then none else c.conclusion,
+           nonConclusion := if c.fsNonConclusionText.isSome then none else c.nonConclusion }
+
+def fsInputMain (o : Opts) : IO UInt32 := do
+  let dir : System.FilePath := o.dir
+  let names := if o.only.isEmpty then ["all.rdf"] else o.only
+  let mut notRead : List String := []
+  let mut totalFs : Harness.Score := {}
+  let mut totalRx : Harness.Score := {}
+  for name in names do
+    let p := dir / name
+    if !(← p.pathExists) then
+      IO.println s!"  MISSING {name}"
+      notRead := notRead ++ [name]
+    else
+      match ← readCatalog p with
+      | none => notRead := notRead ++ [name]
+      | some cat0 =>
+        let withFs := cat0.cases.filter (·.fsPremiseText.isSome)
+        let withFs := if o.cases.isEmpty then withFs
+          else withFs.filter (fun c => o.cases.contains c.id)
+        IO.println s!"{name}: {withFs.length} test cases carry a functional-style premise"
+        let catFs := { cat0 with cases := withFs.map fsInputCase }
+        let catRx := { cat0 with cases := withFs }
+        IO.println "-- judged from the functional-style documents"
+        let rFs ← runCatalog s!"{name} [fs-input]" catFs o.capMs o.regime o.refuteBudget
+                    o.refuteMs o.strictMatch o.verbose o.slowMs
+        IO.println "-- judged from the RDF/XML documents (same cases)"
+        let rRx ← runCatalog s!"{name} [rdfxml-input]" catRx o.capMs o.regime o.refuteBudget
+                    o.refuteMs o.strictMatch o.verbose o.slowMs
+        let fsFail := rFs.fails.map (·.2.1)
+        let rxFail := rRx.fails.map (·.2.1)
+        IO.println s!"FS-INPUT-ONLY-FAILS {name}: {String.intercalate ", " (fsFail.filter (fun i => !rxFail.contains i))}"
+        IO.println s!"RDFXML-INPUT-ONLY-FAILS {name}: {String.intercalate ", " (rxFail.filter (fun i => !fsFail.contains i))}"
+        totalFs := totalFs.add rFs.score
+        totalRx := totalRx.add rRx.score
+        IO.println ""
+  IO.println (Harness.Score.line "fs-input TOTAL" totalFs)
+  IO.println (Harness.Score.line "rdfxml-input TOTAL (same cases)" totalRx)
+  for f in notRead do
+    IO.println s!"  catalog not read: {f}"
+  return (if notRead.isEmpty then 0 else 1)
+
+/-- `--rdf-based`: the OWL 2 RDF-Based Semantics regime over each
+catalog named (default `all.rdf`, the union of the others, so no unit
+is counted twice). Exit 0 when no unit FAILS; a `not-refuted` unit is
+not a failure and not a pass. -/
+def rdfBasedMain (o : Opts) : IO UInt32 := do
+  let dir : System.FilePath := o.dir
+  let names := if o.only.isEmpty then ["all.rdf"] else o.only
+  IO.println "regime: OWL 2 RDF-Based Semantics (--rdf-based): RL closure + RDF-Based rules"
+  IO.println s!"  ({rbRounds} rounds); no comprehension layer, no materialisation, no refuter."
+  IO.println "  Buckets: pass = entailment or inconsistency PROVED; not-refuted ="
+  IO.println "  non-entailment or consistency NOT REFUTED (never counted as proved);"
+  IO.println "  fail = not proved (positive, inconsistency) or refuted (negative, consistency)."
+  IO.println s!"  Separate line [{balancedTag}] (issue 732): a PositiveEntailmentTest or"
+  IO.println "  InconsistencyTest the rules did not prove, whose pair is balanced (section 7.3),"
+  IO.println "  is given to the DL path (--dl: RL closure, materialisation, refuter, certificate)."
+  IO.println "  Its answers are never counted in the [rdf-based] lines or the exit code."
+  let mut total : RbScore := {}
+  let mut notRead : List String := []
+  let overrides ← loadLocalOverrides "owl-rdf-based"
+  let mut applied : List String := []
+  let mut stale : List String := []
+  for name in names do
+    let p := dir / name
+    if !(← p.pathExists) then
+      IO.println s!"  MISSING {name}"
+      notRead := notRead ++ [name]
+    else
+      match ← readCatalog p with
+      | none => notRead := notRead ++ [name]
+      | some cat0 =>
+        let cat := if o.cases.isEmpty then cat0
+          else { cat0 with cases := cat0.cases.filter (fun c => o.cases.contains c.id) }
+        let r ← runRdfBased name cat o.capMs o.verbose overrides
+                  (some (o.refuteBudget, o.refuteMs, o.strictMatch))
+        total := total.add r.score
+        applied := applied ++ r.applied
+        stale := stale ++ r.stale
+        IO.println ""
+  for l in scopeLines "rdf-based" Scope.rdfBased do IO.println l
+  for f in notRead do
+    IO.println s!"  catalog not read: {f}"
+  if !overrides.isEmpty then
+    IO.println "LOCAL OVERRIDES (tests/local-overrides, suite owl-rdf-based): a disputed case"
+    IO.println "is counted in the local-override bucket, never as a pass."
+    for (i, issue) in overrides do
+      IO.println s!"  {i}: {issue}"
+  for i in stale do
+    IO.println s!"FAILURE: STALE local override {i}: a unit of the case now passes"
+  let unmatched := overrides.filter (fun kv =>
+    !(applied.contains kv.1) && !(stale.contains kv.1) &&
+    (o.cases.isEmpty || o.cases.contains kv.1))
+  for (i, issue) in unmatched do
+    IO.println s!"FAILURE: local override {i} ({issue}) matches no failing unit"
+  return (if notRead.isEmpty && total.fail == 0 && total.total > 0 &&
+             stale.isEmpty && unmatched.isEmpty then 0 else 1)
+
+/-- `--species`: read each catalog, score the species facet of every
+case that carries one. The default catalog is `all.rdf`, the union of
+the others. -/
+def speciesMain (o : Opts) : IO UInt32 := do
+  let dir : System.FilePath := o.dir
+  let names := if o.only.isEmpty then ["all.rdf"] else o.only
+  let mut total : Harness.Score := {}
+  let mut notRead : List String := []
+  let overrides ← loadLocalOverrides "owl-species"
+  let mut applied : List String := []
+  let mut stale : List String := []
+  for name in names do
+    let p := dir / name
+    if !(← p.pathExists) then
+      IO.println s!"  MISSING {name}"
+      notRead := notRead ++ [name]
+    else
+      match ← readCatalog p with
+      | none => notRead := notRead ++ [name]
+      | some cat0 =>
+        let cat := if o.cases.isEmpty then cat0
+          else { cat0 with cases := cat0.cases.filter (fun c => o.cases.contains c.id) }
+        let r ← runSpecies name cat o.verbose overrides
+        total := total.add r.score.score
+        applied := applied ++ r.applied
+        stale := stale ++ r.stale
+        IO.println ""
+        let _ ← runAgreement name cat o.verbose
+        IO.println ""
+  for f in notRead do
+    IO.println s!"  catalog not read: {f}"
+  if !overrides.isEmpty then
+    IO.println "LOCAL OVERRIDES (tests/local-overrides, suite owl-species): a disputed case"
+    IO.println "is counted in the local-override bucket, never as a pass."
+    for (i, issue) in overrides do
+      IO.println s!"  {i}: {issue}"
+  for i in stale do
+    IO.println s!"FAILURE: STALE local override {i}: the species verdict now passes"
+  -- An override that took effect nowhere names no scored case (a
+  -- `--case` filter that leaves it out is not such a run).
+  let unmatched := overrides.filter (fun kv =>
+    !(applied.contains kv.1) && !(stale.contains kv.1) &&
+    (o.cases.isEmpty || o.cases.contains kv.1))
+  for (i, issue) in unmatched do
+    IO.println s!"FAILURE: local override {i} ({issue}) matches no scored case"
+  return (if notRead.isEmpty && total.fail == 0 && total.total > 0 &&
+             stale.isEmpty && unmatched.isEmpty then 0 else 1)
 
 def main (args : List String) : IO UInt32 := do
   let o := parseArgs args {}
@@ -1800,13 +3652,20 @@ def main (args : List String) : IO UInt32 := do
 unrelated triple absent = {!unrelatedAbsent}"
   if o.tboxCensus then return (← censusMain o)
   if o.profile then return (← profileMain o)
+  if o.trace then return (← traceMain o)
+  if o.species then return (← speciesMain o)
+  if o.fsInput then return (← fsInputMain o)
+  if o.rdfBased then return (← rdfBasedMain o)
   let names := if o.only.isEmpty then catalogs else o.only
   let mut total : Harness.Score := {}
   let mut totalClosure : Harness.Score := {}
   let mut totalRefPass := 0
   let mut totalRefFlip := 0
+  let mut totalCertProved := 0
+  let mut totalCertUnchecked := 0
   let mut totalM : Measure := {}
   let mut totalCases := 0
+  let mut allUnits : List (UnitFacts × Harness.Outcome) := []
   let mut notRead : List String := []
   for name in names do
     let p := dir / name
@@ -1816,16 +3675,23 @@ unrelated triple absent = {!unrelatedAbsent}"
     else
       match ← readCatalog p with
       | none => notRead := notRead ++ [name]
-      | some cat =>
+      | some cat0 =>
+        -- `--case ID` (repeatable) restricts the scored run to the named
+        -- cases. A filtered run's score line covers those cases only.
+        let cat := if o.cases.isEmpty then cat0
+          else { cat0 with cases := cat0.cases.filter (fun c => o.cases.contains c.id) }
         printCensus name cat.cases
         let r ← runCatalog name cat o.capMs o.regime o.refuteBudget o.refuteMs
-                  o.strictMatch o.verbose
+                  o.strictMatch o.verbose o.slowMs
         total := total.add r.score
         totalClosure := totalClosure.add r.closureScore
         totalRefPass := totalRefPass + r.refuterPasses
         totalRefFlip := totalRefFlip + r.refuterFlips
+        totalCertProved := totalCertProved + r.certProved
+        totalCertUnchecked := totalCertUnchecked + r.certUnchecked
         totalM := totalM.add r.measure
         totalCases := totalCases + cat.cases.length
+        allUnits := allUnits ++ r.unitFacts
         IO.println ""
   if o.regime.refuter then
     IO.println (Harness.Score.line "TOTAL [closure alone]" totalClosure)
@@ -1835,30 +3701,28 @@ unrelated triple absent = {!unrelatedAbsent}"
   IO.println s!"HARNESS-DIAG-OWL TOTAL: cases={totalCases} units={total.total} \
 triples_parsed={totalM.triplesParsed} closure_rounds={totalM.closureRounds} \
 clashes={totalM.clashes} cap_hits={totalM.capHits} parse_failures={totalM.parseFailures} \
-refuter_timeouts={totalM.refuterTimeouts} \
 refuter_passes={totalRefPass} refuter_flips_to_fail={totalRefFlip} \
-pe_no_negation_goal={totalM.peNoGoals} pe_refuter_indeterminate_limits={totalM.peLimits} \
-pe_refuter_open={totalM.peOpen}"
+pe_no_negation_goal={totalM.peNoGoals} pe_refuter_budget={totalM.peBudget} \
+pe_countermodel={totalM.peCountermodel} ne_refuter_checked={totalM.neChecked}"
   if o.regime.refuter then
     IO.println s!"REFUTER-REACH: {totalRefPass} units the closure failed were decided \
 by refutation; {totalM.peNoGoals} positive-entailment units the closure failed produced \
 NO negation goal at all (`negationGoals` does not negate that conclusion shape, so the \
-refuter could not state the question), {totalM.peLimits} hit a tableau visit or witness limit, \
-{totalM.peOpen} reached a quiescent open branch without a model certificate."
+refuter could not state the question), {totalM.peBudget} exhausted the tableau budget, \
+{totalM.peCountermodel} were answered with a countermodel."
+    IO.println s!"CERTIFICATE TOTAL: {totalCertProved} certificate-checked, \
+{totalCertUnchecked} unchecked (out of {totalRefPass} decided by refutation)"
 
-  IO.println "F* owl_runner comparison (docs/test-results/latest.json, RL regime"
-  IO.println "  unless stated). Each F* number is the SUM of that catalog's"
-  IO.println "  per-test-type runs (PE + NE + Consistency + Inconsistency), the"
-  IO.println "  same unit this probe scores; functional-syntax skips are outside"
-  IO.println "  the F* denominator but INSIDE this probe's (as unsupported):"
-  IO.println "  owl_rl_positive_entailment 30 pass, 0 fail (out of 30)"
-  IO.println "     = profile-RL.rdf, PositiveEntailmentTest line only"
-  IO.println "  owl2_profile_ql 87 pass, 0 fail (out of 87)     = profile-QL.rdf, four types"
-  IO.println "  owl2_profile_el 119 pass, 1 fail (out of 120)   = profile-EL.rdf, four types"
-  IO.println "  owl2_dl_inconsistency 126 pass, 1 fail (out of 127)"
-  IO.println "     = type-inconsistency.rdf, DL regime (RL closure + tableau refuter)"
-  IO.println "  (type-positive-entailment.rdf and type-consistency.rdf have no"
-  IO.println "   published F* line in latest.json.)"
+  -- Breakdown of the TOTAL by status and species, and what the
+  -- IN-SCOPE lines count (reporting only; see `breakdownLines`). The
+  -- catalogs overlap, so these lines add the same units more than once,
+  -- exactly as the TOTAL line does.
+  let totalScope := scopeOfRegime o.regime
+  let totalTag := regimeTag o.regime
+  for l in breakdownLines "TOTAL" totalTag totalScope allUnits ({} : Harness.Score)
+      (fun s o => s.bump o) Harness.Score.line do
+    IO.println l
+  for l in scopeLines totalTag totalScope do IO.println l
   for f in notRead do
     IO.println s!"  catalog not read: {f}"
   return (if notRead.isEmpty && scoOk && total.fail == 0 then 0 else 1)

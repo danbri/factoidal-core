@@ -1,0 +1,13 @@
+{
+  "command": [
+    "python3",
+    "tools/lean-reuse-audit-test.py"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core",
+  "node": "v22.22.2",
+  "started": "2026-10-22T17:37:40.981Z",
+  "elapsedMs": 3019,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}

@@ -1,0 +1,14 @@
+{
+  "test_id": "grddlProfileBase1",
+  "suite": "grddl",
+  "issue": "https://github.com/danbri/factoidal/issues/730",
+  "dispute_kind": "fixture-drift",
+  "upstream_expectation": "the expected output file of the W3C GRDDL Test Cases (2007), which assumes the 2007 input documents",
+  "our_expectation": "the GRDDL result of the input documents as served by www.w3.org today; the served networked inputs were edited after 2007 (http changed to https in base or link attributes), so the result differs from the 2007 expected output only by the IRI scheme",
+  "rationale": "Owner, 2026-10-10, verbatim: \"Grddl - postpone for now, i am making enquiries. So just mark it as not a valid test currently.\" and, correcting the scope: \"Grddl should not be postponed, only that test\". Marked not a valid test while the owner makes enquiries. The 2007 archive (https://www.w3.org/TR/2007/REC-grddl-tests-20070911/grddl-tests.zip) holds only the local inputs; the 2007 networked inputs were not found. The runner counts the case as local-override and reports a STALE override (a failure) if it starts to pass.",
+  "analysis_refs": [
+    "formal/lean4/Harness/GrddlRun.lean",
+    "third_party/testing/grddl/PROVENANCE.md"
+  ],
+  "date": "2026-10-10"
+}

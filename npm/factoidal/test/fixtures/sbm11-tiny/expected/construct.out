@@ -1,0 +1,2 @@
+_:c <http://xmlns.com/foaf/0.1/knownBy> <http://example.org/alice> .
+<http://example.org/bob> <http://xmlns.com/foaf/0.1/knownBy> <http://example.org/alice> .

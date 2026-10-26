@@ -26,12 +26,15 @@ import Harness.NativeHasher
 import L4Factoidal.RDF.DatasetGraphs
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.StoreDataset
+import L4Factoidal.SPARQL.ResultsJsonFast
 import L4Factoidal.Geo.Functions
 import L4Factoidal.Storage.ChunkedArtifact
 import L4Factoidal.Storage.IndexedBlockWireV4
 import L4Factoidal.Storage.IndexedBlockWireV5
 import L4Factoidal.Storage.QuadDataset
 import L4Factoidal.Storage.ShardManifest
+import Wasm.Ops.Clock
+import L4Factoidal.Dataflow.Store
 
 namespace Harness.QuadQuery
 
@@ -170,11 +173,12 @@ whole dataset. Two things it cannot carry, so they are handled here:
 * `FROM` / `FROM NAMED`. `runSelectQueryBackendDataset` does not apply
   `query.dataset`; §13.2's `applyDataset` is applied to the materialised
   dataset first, and the query is then evaluated with no dataset clause.
-* A blank-node graph NAME. `materialiseDatasetBackend` keeps only graphs whose
-  name is a well-formed IRI, so a generation with a blank-node-named graph
-  would lose it in every delegating arm. SBM7 admits such a name
-  (`GraphName.bnode`), so such a generation takes the reference evaluator
-  directly over the materialised dataset instead. -/
+* A blank-node graph NAME. SBM7 admits such a name (`GraphName.bnode`); such
+  a generation takes the reference evaluator directly over the materialised
+  dataset. Until 2026-10-25 this was required: `materialiseDatasetBackend`
+  kept only IRI graph names. It now keeps a blank-node graph name (the record
+  names a graph by its `Subject`, https://github.com/danbri/factoidal/issues/975);
+  the rule is kept so that change does not reorder those SELECT rows. -/
 
 private def stripDatasetClauses (query : Query) : Query :=
   .mk query.form [] query.pattern query.groupBy query.having query.modifier
@@ -191,7 +195,9 @@ private def header (entries : List Entry) (mode : String) (graphs : Nat)
   s!"l4block-quad-query shards={entries.length} open-mode={mode}({entries.length}) graphs={graphs} logical-read-bytes={bytes} fetched-bytes={bytes} zone-excluded={zoneExcluded}"
 
 private def finish (query : Query) (entries : List Entry) (codec : String) (ds : Dataset)
-    (bytes : Nat) (zoneExcluded : Nat) : IO UInt32 := do
+    (bytes : Nat) (zoneExcluded : Nat) (json : Bool) : IO UInt32 := do
+  let clockEnv := { (← L4Wasm.Ops.emptyEnvNow) with base := query.base }
+  let printDiagnostic := if json then IO.eprintln else IO.println
   let (applied, _) := applyDataset query.dataset ds ds.default
   let stripped := stripDatasetClauses query
   -- §18.6: EXISTS / NOT EXISTS evaluate against the query's dataset, which
@@ -202,32 +208,53 @@ private def finish (query : Query) (entries : List Entry) (codec : String) (ds :
   -- a `geof:sf*` FILTER is evaluated here rather than being a type error.
   -- `Geo.extFns` refuses every IRI outside the `geof:` namespace, which is
   -- what §17.6 requires of an unregistered IRI.
-  let env : EvalEnv := { emptyEnv with dataset := some applied, ext := L4Factoidal.Geo.extFns }
+  let env : EvalEnv := { clockEnv with dataset := some applied, ext := L4Factoidal.Geo.extFns }
   let indexed := namesAreIris applied
   let mode := if indexed then codec ++ "-full-manifest" else codec ++ "-full-manifest-reference"
   let graphs := applied.named.length
+  -- Federated Query §2.3: a failed SERVICE call without SILENT stops the
+  -- query with an error (`Query.serviceFailure`, issue 717). This host
+  -- registers no endpoint.
+  match stripped.serviceFailure env applied with
+  | some f => IO.eprintln s!"l4block-quad-query failed: {f.message}"; return 1
+  | none =>
   match query.form with
   | .select _ =>
       let rows? :=
-        if indexed then runSelectQueryBackendDataset env stripped (indexedDatasetBackend applied)
+        if indexed then
+          match (L4Factoidal.Dataflow.LawfulDataset.ofDataset applied).runSelect env stripped with
+          | some rows => some rows
+          -- `text:query`: the backend declines and the reference evaluator
+          -- answers (`SPARQL/StoreDataset.lean`, `runSelectQueryBackendDataset`).
+          | none =>
+              if stripped.pattern.mentionsFulltext then some (evalSelect env applied stripped).2
+              else none
         else some (evalSelect env applied stripped).2
       match rows? with
       | none => IO.eprintln "l4block-quad-query failed: query was not evaluated as SELECT"; return 1
       | some rows =>
-          IO.println (header entries mode graphs bytes zoneExcluded)
-          IO.println s!"l4block-quad-query sse={query.toSse}"
-          IO.println s!"l4block-quad-query rows={rows.length} preview={previewOf rows}"
+          printDiagnostic (header entries mode graphs bytes zoneExcluded)
+          printDiagnostic s!"l4block-quad-query sse={query.toSse}"
+          if json then
+            IO.println (QueryResult.bindings query.projectedVars rows).toSrjFast
+          else IO.println s!"l4block-quad-query rows={rows.length} preview={previewOf rows}"
           return 0
   | .ask =>
       let answer? :=
-        if indexed then runAskQueryBackendDataset env stripped (indexedDatasetBackend applied)
+        if indexed then
+          match (L4Factoidal.Dataflow.LawfulDataset.ofDataset applied).runAsk env stripped with
+          | some answer => some answer
+          | none =>
+              if stripped.pattern.mentionsFulltext then some (evalAsk env applied stripped)
+              else none
         else some (evalAsk env applied stripped)
       match answer? with
       | none => IO.eprintln "l4block-quad-query failed: query was not evaluated as ASK"; return 1
       | some answer =>
-          IO.println (header entries mode graphs bytes zoneExcluded)
-          IO.println s!"l4block-quad-query sse={query.toSse}"
-          IO.println s!"l4block-quad-query boolean={answer}"
+          printDiagnostic (header entries mode graphs bytes zoneExcluded)
+          printDiagnostic s!"l4block-quad-query sse={query.toSse}"
+          if json then IO.println (QueryResult.boolean answer).toSrjFast
+          else IO.println s!"l4block-quad-query boolean={answer}"
           return 0
   | .construct _ =>
       let graph := evalConstruct env applied stripped
@@ -236,8 +263,15 @@ private def finish (query : Query) (entries : List Entry) (codec : String) (ds :
       IO.println s!"l4block-quad-query triples={graph.length} preview={toString (repr (graph.take 10))}"
       return 0
   | .describe _ =>
-      IO.eprintln "l4block-quad-query rejected: DESCRIBE needs an explicit description policy"
-      return 1
+      -- §16.4 DESCRIBE reads every statement about the resources it names,
+      -- which no pattern selects: `Query.patternBoundedReads` makes all
+      -- three entry collectors answer `none`, so `entries` is the whole
+      -- generation here.
+      let graph := evalDescribe env applied stripped
+      IO.println (header entries mode graphs bytes zoneExcluded)
+      IO.println s!"l4block-quad-query sse={query.toSse}"
+      IO.println s!"l4block-quad-query triples={graph.length} preview={toString (repr (graph.take 10))}"
+      return 0
 
 /-- The zone-map key function: the canonical version-2 wire bytes of a term,
     which are the bytes the packer compared when it computed an entry's zone
@@ -248,13 +282,16 @@ private def zoneTermKey (t : Term) : Option (List UInt8) :=
   L4Factoidal.Storage.TermWireV2.keyBytes
     (L4Factoidal.Storage.TermWireV2.toWire Harness.nativeHasher.digest t)
 
-private def run (directoryText queryText : String) : IO UInt32 := do
+private def run (directoryText queryText : String) (json : Bool := false)
+    (base : Option String := none) : IO UInt32 := do
   try
     let root := System.FilePath.mk directoryText
     let directory ← resolveStoreDirectory root
     let manifestBytes ← IO.FS.readBinFile (directory / "manifest.sbm2")
     match decode? manifestBytes with
-    | none => IO.eprintln "l4block-quad-query rejected: malformed SBM7 manifest"; return 1
+    | none =>
+        IO.eprintln s!"l4block-quad-query rejected: {(retiredLayoutNote? manifestBytes).getD "malformed SBM7 manifest"}"
+        return 1
     | some manifest =>
         let ibk5 := manifest.version == 10 && isIbk5Layout manifest.layout
         let ibk4 := (manifest.version == 7 || manifest.version == 8 || manifest.version == 9) &&
@@ -264,11 +301,15 @@ private def run (directoryText queryText : String) : IO UInt32 := do
            is what makes `LANGDIR`, `hasLANGDIR`, `STRLANGDIR` and the triple
            term syntax available. Every earlier generation keeps SPARQL 1.1,
            where those spellings are prefixed names. -/
-        match parseSparql queryText none (if ibk5 then .v12 else .v11) with
+        match parseSparql queryText base (if ibk5 then .v12 else .v11) with
         | .error error =>
             IO.eprintln s!"l4block-quad-query query parse error at {error.pos}: {error.msg}"
             return 1
         | .ok query =>
+        if json then
+          match query.form with
+          | .select _ | .ask => pure ()
+          | _ => IO.eprintln "l4block-quad-query --json supports SELECT and ASK only"; return 2
         if !ibk4 && !ibk5 then
           IO.eprintln "l4block-quad-query rejected: not an SBM7, SBM8, SBM9 or SBM10 generation of quad blocks; use l4block-id-v3-query for an IBK3 generation"
           return 1
@@ -292,15 +333,39 @@ private def run (directoryText queryText : String) : IO UInt32 := do
             return 1
         | some (quads, bytes) =>
             finish query entries (if ibk5 then "ibk5" else "ibk4") (datasetOfQuads quads)
-              bytes zoneExcluded
+              bytes zoneExcluded json
   catch error => IO.eprintln s!"l4block-quad-query failure: {error}"; return 1
+
+/-- Options before `--query`: `--json` and `--base IRI`, in either order.
+    `--base` is the base IRI of the query (SPARQL 1.1 section 4.1.1.1,
+    RFC 3986 section 5.1). -/
+def parseOptions (json : Bool) (base : Option String) :
+    List String → Except String (Bool × Option String × List String)
+  | "--json" :: rest => parseOptions true base rest
+  | "--base" :: iri :: rest => parseOptions json (some iri) rest
+  | "--query" :: query => .ok (json, base, query)
+  | _ => .error "usage: l4block-quad-query COLLECTION-ROOT [--json] [--base IRI] --query SELECT..."
+
+-- `--base` and `--json` are read in either order before `--query`; a missing
+-- IRI and a missing `--query` are refused.
+#guard (match parseOptions false none ["--base", "http://e/d/", "--json", "--query", "ASK", "{}"] with
+  | .ok (json, base, q) => json && base == some "http://e/d/" && q == ["ASK", "{}"]
+  | .error _ => false)
+#guard (match parseOptions false none ["--query", "ASK {}"] with
+  | .ok (json, base, _) => !json && base.isNone
+  | .error _ => false)
+#guard (parseOptions false none ["--base"]).toOption.isNone
+#guard (parseOptions false none ["--base", "http://e/"]).toOption.isNone
 
 def main (args : List String) : IO UInt32 := do
   match args with
-  | directory :: "--query" :: queryParts =>
-      if queryParts.isEmpty then IO.eprintln "l4block-quad-query requires a query"; return 2
-      else run directory (String.intercalate " " queryParts)
-  | _ => IO.eprintln "usage: l4block-quad-query COLLECTION-ROOT --query SELECT..."; return 2
+  | directory :: rest =>
+      match parseOptions false none rest with
+      | .error message => IO.eprintln message; return 2
+      | .ok (json, base, queryParts) =>
+          if queryParts.isEmpty then IO.eprintln "l4block-quad-query requires a query"; return 2
+          else run directory (String.intercalate " " queryParts) json base
+  | [] => IO.eprintln "usage: l4block-quad-query COLLECTION-ROOT [--json] [--base IRI] --query SELECT..."; return 2
 
 end Harness.QuadQuery
 

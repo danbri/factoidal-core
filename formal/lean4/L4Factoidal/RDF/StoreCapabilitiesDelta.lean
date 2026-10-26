@@ -19,6 +19,15 @@ flag flipped. That is what makes "an empty delta costs nothing" exact:
 it is this function's own short circuit, not an optimisation layered
 over a general path.
 
+## The estimate is not exact while a delta is live
+
+The live overlay estimates `base.estimate + added`, which overcounts under a
+tombstone. Until 2026-10-23 it copied the base's `estimateIsExact`, so over the
+in-memory index (which advertises an exact estimate) it broke
+`StoreCapsLawful.estimateExact` (https://github.com/danbri/factoidal/issues/975,
+B1). A live delta now sets the flag to `false`; an empty delta keeps the base's
+flag, because it changes no count.
+
 ## Two capabilities are withdrawn while a delta is live, for opposite
 reasons
 
@@ -48,7 +57,9 @@ def overlay (base : StoreCaps) (delta : DeltaResolved) : StoreCaps :=
   if deltaResolvedIsEmpty delta then
     { base with flags := { base.flags with supportsUpdate := true } }
   else
-    { flags := { base.flags with supportsUpdate := true }
+      -- the estimate below is base plus additions and overcounts under a
+      -- tombstone, so a live delta never advertises an exact estimate
+    { flags := { base.flags with supportsUpdate := true, estimateIsExact := false }
       -- pure composition on top of whatever the base already returns
     , solve := fun b => mergeOnRead (base.solve b) delta b
       -- no real pushdown once a delta is in play: solve the merged view
@@ -130,6 +141,12 @@ the exact count is 1, which is the approximation the flag allows. -/
 #guard addOverlay.estimate patternBoundAll == 3
 #guard delOverlay.estimate patternBoundAll == 2
 #guard delOverlay.countExact patternBoundAll == 1
+-- the base advertises an exact estimate; the live overlay does not, so the
+-- estimate 2 against the count 1 breaks no law (`StoreCapsLawful.estimateExact`)
+#guard baseCaps.flags.estimateIsExact
+#guard !delOverlay.flags.estimateIsExact
+#guard !addOverlay.flags.estimateIsExact
+#guard emptyOverlay.flags.estimateIsExact
 
 /-! ### DISTINCT-predicate enumeration is WITHDRAWN under a live delta,
 and inherited when the delta is empty. -/

@@ -1,763 +1,839 @@
 /-
-L4Factoidal.OWL.FunctionalSyntax — a narrow OWL 2 Functional-Syntax
-parser that produces RDF triples.
+L4Factoidal.OWL.FunctionalSyntax — the OWL 2 Functional-Style Syntax
+reader.
 
-Port of `formal/fstar/Parser.OWLFunctional.fst`.
+Spec: OWL 2 Web Ontology Language Structural Specification and
+Functional-Style Syntax (Second Edition), https://www.w3.org/TR/owl2-syntax/
+— the grammar productions of sections 2 to 10 (collected in the appendix
+of the specification), `ontologyDocument` of section 3.7.
 
-Spec: OWL 2 Structural Specification and Functional-Style Syntax
-(https://www.w3.org/TR/owl2-syntax/) for the grammar, and OWL 2
-Mapping to RDF Graphs (https://www.w3.org/TR/owl2-mapping-to-rdf/)
-for the axiom-to-triple tables every production below follows.
+The reader produces `L4Factoidal.OWL.Struct.Ontology`. The RDF graph
+comes from `L4Factoidal.OWL.StructureRdf` (OWL 2 Mapping to RDF Graphs
+section 2); `parseFunctionalSyntax` composes the two. Nothing in the
+reader knows about RDF.
 
-## This is a SUBSET, and the boundary is the point
+## Grammar covered
 
-It covers exactly the grammar the W3C OWL 2 catalogs need for their
-functional-syntax-only entries — the ones the OWL probe reports as
-`unsupported` today. Everything else is a CLEAN PARSE FAILURE
-(`none`), which the caller reports as "unsupported input syntax": the
-same honest skip, never a silent wrong answer. No production is a
-literal match on one test's text; every one is a general grammar rule
-over the alphabet the fixtures use.
+The WHOLE grammar of the specification, not the part the test catalogs
+happen to use:
 
-Accepted:
+    ontologyDocument := { Prefix( name = <IRI> ) } Ontology
+    Ontology := 'Ontology' '(' [ ontologyIRI [ versionIRI ] ]
+                { Import( IRI ) } { Annotation } { Axiom } ')'
+    Axiom: Declaration, the four class axioms, the thirteen object
+      property axioms, the six data property axioms, DatatypeDefinition,
+      HasKey, the eight assertions, the four annotation axioms
+    ClassExpression: the Class IRI and all sixteen Object*/Data*
+      constructs (including n-ary DataSomeValuesFrom/DataAllValuesFrom
+      and the qualified and unqualified cardinalities)
+    DataRange: Datatype, DataIntersectionOf, DataUnionOf,
+      DataComplementOf, DataOneOf, DatatypeRestriction
+    Literal: "lex"^^Datatype, "lex"@lang, "lex"
+    Individual: an IRI or a node ID _:label
 
-    Prefix( pfx = <IRI> )*        before Ontology
-    Ontology( Declaration/Axiom* )
-    Declaration(ObjectProperty|DataProperty|NamedIndividual|Class (IRI))
-    TransitiveObjectProperty(IRI)      FunctionalDataProperty(IRI)
-    DataPropertyRange(IRI IRI)         DataPropertyAssertion(IRI IRI Lit)
-    NegativeDataPropertyAssertion(IRI IRI Lit)
-    DisjointDataProperties(IRI IRI)    exactly two arguments
-    SubClassOf(CE CE)                  ClassAssertion(CE IRI)
-    SubObjectPropertyOf(ObjectPropertyChain(IRI IRI) IRI)
+An abbreviated IRI `p:local` resolves through the `Prefix` declarations.
+The four prefixes `owl`, `rdf`, `rdfs` and `xsd` are implicitly
+declared (Structural Specification section 3.7: "The following
+prefix declarations are implicitly present in every ontology
+document"); an explicit declaration of the same name replaces them.
 
-    CE ::= IRI | DataHasValue(IRI Lit) | DataSomeValuesFrom(IRI DR)
-         | DataAllValuesFrom(IRI DR)   | ObjectComplementOf(CE)
-    DR ::= IRI | DataOneOf(Lit+) | DataComplementOf(DR)
-         | DatatypeRestriction(IRI (IRI Lit)+)
+## What is rejected
 
-## Blank-node labels are generated, and the counter is threaded
+Anything outside the grammar is a clean `none`: an unknown keyword, an
+unbalanced parenthesis, an undeclared prefix, an IRI that is not an IRI,
+fewer operands than a production demands (`ObjectIntersectionOf` needs
+two), a trailing token after the closing parenthesis. A reader that
+skipped an axiom it did not understand would produce a graph missing an
+axiom, and a missing axiom makes an inconsistent ontology look
+consistent.
 
-Every fresh node takes a label built from a counter that every
-production threads through. Two expressions in one document therefore
-never collide, and one expression parsed twice gives the same labels
-— which is what makes a graph comparison of the result reproducible.
+## Termination
+
+Every recursive function takes a fuel argument and is structural on it;
+each call consumes at least one token, so the fuel `2 * tokens + 8`
+cannot run out on a well-formed document. Exhausted fuel is a parse
+failure, never a wrong parse.
 -/
-import L4Factoidal.OWL.Vocabulary
-import L4Factoidal.RDFS.Vocabulary
+import L4Factoidal.OWL.Structure
+import L4Factoidal.OWL.StructureRdf
 
 namespace L4Factoidal.OWL.FS
 
 open L4Factoidal.RDF
-open L4Factoidal.RDFS
-open L4Factoidal.OWL.RL
+open L4Factoidal.OWL.Struct
 
-/-! ## Vocabulary this module needs beyond the shared ones -/
+/-! ## Tokens -/
 
-def owlObjectPropertyIri : WfIri :=
-  ⟨"http://www.w3.org/2002/07/owl#ObjectProperty", rfl⟩
-def owlDatatypePropertyIri : WfIri :=
-  ⟨"http://www.w3.org/2002/07/owl#DatatypeProperty", rfl⟩
-def owlNamedIndividualIri : WfIri :=
-  ⟨"http://www.w3.org/2002/07/owl#NamedIndividual", rfl⟩
-def owlOnDatatypeIri : WfIri :=
-  ⟨"http://www.w3.org/2002/07/owl#onDatatype", rfl⟩
-def owlWithRestrictionsIri : WfIri :=
-  ⟨"http://www.w3.org/2002/07/owl#withRestrictions", rfl⟩
-def owlDatatypeComplementOfIri : WfIri :=
-  ⟨"http://www.w3.org/2002/07/owl#datatypeComplementOf", rfl⟩
-def owlNegativePropertyAssertionIri : WfIri :=
-  ⟨"http://www.w3.org/2002/07/owl#NegativePropertyAssertion", rfl⟩
+inductive Tok where
+  | lp | rp | eq | caret
+  /-- `<fullIRI>`, the content between the angle brackets. -/
+  | iri  (s : String)
+  /-- A keyword, a prefix name, an abbreviated IRI, a node ID or a number. -/
+  | name (s : String)
+  /-- `"quotedString"`, unescaped. -/
+  | str  (s : String)
+  /-- `@langTag`, without the `@`. -/
+  | lang (s : String)
+deriving DecidableEq, Inhabited
 
-/-! ## The character layer
+/-- A character of a name token: anything except white space and the
+delimiters of the grammar. -/
+def isNameChar (c : Char) : Bool :=
+  !(c.isWhitespace || c == '(' || c == ')' || c == '"' || c == '<' || c == '>' ||
+    c == '=' || c == '@' || c == '^')
 
-`Chars = Array Char` for O(1) indexing, as everywhere else in this
-tree. The F* module indexes UTF-8 BYTES; Lean's `Char` is a codepoint
-by construction, so the byte-rebuilding machinery has no counterpart
-here — see `PORT_NOTES.md`. -/
+def isLangChar (c : Char) : Bool := c.isAlphanum || c == '-'
 
-abbrev Chars := Array Char
-
-def charAt (s : Chars) (i : Nat) : Option Char := s[i]?
-
-def isFsWs (c : Char) : Bool :=
-  c == ' ' || c == '\t' || c == '\n' || c == '\r'
-
-def skipWs (s : Chars) (i : Nat) : Nat :=
-  let rec go (j : Nat) (fuel : Nat) : Nat :=
-    match fuel with
-    | 0 => j
-    | f + 1 => match s[j]? with
-      | some c => if isFsWs c then go (j + 1) f else j
-      | none   => j
-  go i (s.size + 1 - min i (s.size + 1))
-
-/-- Identifier characters: keywords and the two halves of an
-    abbreviated IRI. -/
-def isIdentChar (c : Char) : Bool :=
-  c.isAlphanum || c == '_' || c == '-'
-
-def takeIdent (s : Chars) (i : Nat) : String × Nat :=
+/-- The longest run from `i` of characters satisfying `p`, and the index
+after it. -/
+def takeRun (p : Char → Bool) (cs : Array Char) (i : Nat) : String × Nat :=
   let rec go (j : Nat) (acc : List Char) (fuel : Nat) : List Char × Nat :=
     match fuel with
     | 0 => (acc.reverse, j)
-    | f + 1 => match s[j]? with
-      | some c => if isIdentChar c then go (j + 1) (c :: acc) f else (acc.reverse, j)
+    | f + 1 => match cs[j]? with
+      | some c => if p c then go (j + 1) (c :: acc) f else (acc.reverse, j)
       | none   => (acc.reverse, j)
-  let (cs, j) := go i [] (s.size + 1)
-  (String.ofList cs, j)
+  let (r, j) := go i [] (cs.size + 1)
+  (String.ofList r, j)
 
-/-- Read a MAXIMAL identifier run and compare it with `kw`. Maximal
-    munch is what keeps a longer identifier that begins with `kw` from
-    matching — there are no such pairs among these keywords, but the
-    rule stays general. -/
-def tryWord (s : Chars) (i : Nat) (kw : String) : Option Nat :=
-  let (w, j) := takeIdent s i
-  if w.isEmpty then none else if w == kw then some j else none
+/-- The content of `<...>` and the index after the closing `>`. -/
+def scanAngle (cs : Array Char) (start : Nat) : Option (String × Nat) :=
+  let (s, j) := takeRun (fun c => c != '>') cs start
+  if cs[j]? == some '>' then some (s, j + 1) else none
 
-def isChar (s : Chars) (i : Nat) (c : Char) : Bool := s[i]? == some c
-
-/-! ## IRIs and literals -/
-
-/-- Scan from just after the opening `<`; returns the content and the
-    position after `>`. -/
-def scanAngleIri (s : Chars) (start : Nat) : Option (String × Nat) :=
+/-- The content of `"..."` with the two escapes the grammar allows
+(`\"` and `\\`), and the index after the closing quote. -/
+def scanQuoted (cs : Array Char) (start : Nat) : Option (String × Nat) :=
   let rec go (j : Nat) (acc : List Char) (fuel : Nat) : Option (String × Nat) :=
     match fuel with
     | 0 => none
-    | f + 1 => match s[j]? with
-      | none   => none
-      | some c => if c == '>' then some (String.ofList acc.reverse, j + 1)
-                  else go (j + 1) (c :: acc) f
-  go start [] (s.size + 1)
+    | f + 1 => match cs[j]? with
+      | none => none
+      | some '"' => some (String.ofList acc.reverse, j + 1)
+      | some '\\' =>
+          match cs[j + 1]? with
+          | some '"'  => go (j + 2) ('"' :: acc) f
+          | some '\\' => go (j + 2) ('\\' :: acc) f
+          | _ => none
+      | some c => go (j + 1) (c :: acc) f
+  go start [] (cs.size + 1)
 
-def lookupPrefix (ps : List (String × String)) (p : String) : Option String :=
-  (ps.find? (fun (q, _) => q == p)).map (·.2)
-
-/-- `PNAME_NS ':' PN_LOCAL`, e.g. `:a` (empty prefix) or
-    `xsd:integer`. -/
-def parseCurie (ps : List (String × String)) (s : Chars) (i : Nat)
-    : Option (WfIri × Nat) :=
-  let (pfx, i1) := takeIdent s i
-  if !(isChar s i1 ':') then none
-  else
-    let (localPart, i2) := takeIdent s (i1 + 1)
-    if localPart.isEmpty then none
-    else match lookupPrefix ps pfx with
-      | none    => none
-      | some ns =>
-          let full := ns ++ localPart
-          if h : isIri full then some (⟨full, h⟩, i2) else none
-
-def parseFsIri (ps : List (String × String)) (s : Chars) (i : Nat)
-    : Option (WfIri × Nat) :=
-  if isChar s i '<' then
-    match scanAngleIri s (i + 1) with
-    | none        => none
-    | some (t, j) => if h : isIri t then some (⟨t, h⟩, j) else none
-  else parseCurie ps s i
-
-def scanQuoted (s : Chars) (start : Nat) : Option (String × Nat) :=
-  let rec go (j : Nat) (acc : List Char) (fuel : Nat) : Option (String × Nat) :=
-    match fuel with
-    | 0 => none
-    | f + 1 => match s[j]? with
-      | none   => none
-      | some c => if c == '"' then some (String.ofList acc.reverse, j + 1)
-                  else go (j + 1) (c :: acc) f
-  go start [] (s.size + 1)
-
-/-- `"lexical"^^<datatype>`. Every literal in the target fixtures
-    carries a datatype, and a literal without one is a clean parse
-    failure rather than a guessed `xsd:string`. -/
-def parseFsLiteral (ps : List (String × String)) (s : Chars) (i : Nat)
-    : Option (WfLiteral × Nat) :=
-  if !(isChar s i '"') then none
-  else match scanQuoted s (i + 1) with
-    | none => none
-    | some (lex, j) =>
-      let j1 := skipWs s j
-      if isChar s j1 '^' && isChar s (j1 + 1) '^' then
-        match parseFsIri ps s (j1 + 2) with
+def lexGo (cs : Array Char) : Nat → Nat → Array Tok → Option (Array Tok)
+  | 0, _, _ => none
+  | f + 1, i, acc =>
+    match cs[i]? with
+    | none => some acc
+    | some c =>
+      if c.isWhitespace then lexGo cs f (i + 1) acc
+      else if c == '(' then lexGo cs f (i + 1) (acc.push .lp)
+      else if c == ')' then lexGo cs f (i + 1) (acc.push .rp)
+      else if c == '=' then lexGo cs f (i + 1) (acc.push .eq)
+      else if c == '^' then
+        if cs[i + 1]? == some '^' then lexGo cs f (i + 2) (acc.push .caret) else none
+      else if c == '<' then
+        match scanAngle cs (i + 1) with
         | none => none
-        | some (dt, j2) =>
-            let l : Literal :=
-              { lexicalForm := lex, datatype := dt, langTag := none, direction := none }
-            if h : literalWf l then some (⟨l, h⟩, j2) else none
+        | some (s, j) => lexGo cs f j (acc.push (.iri s))
+      else if c == '"' then
+        match scanQuoted cs (i + 1) with
+        | none => none
+        | some (s, j) => lexGo cs f j (acc.push (.str s))
+      else if c == '@' then
+        let (s, j) := takeRun isLangChar cs (i + 1)
+        if s.isEmpty then none else lexGo cs f j (acc.push (.lang s))
+      else if isNameChar c then
+        let (s, j) := takeRun isNameChar cs i
+        lexGo cs f j (acc.push (.name s))
       else none
 
-/-! ## Prefixes -/
+/-- Tokenise a document. `none` on an unterminated string or IRI, a
+lone `^` or `@`, or a character outside the grammar. -/
+def lex (input : String) : Option (Array Tok) :=
+  let cs := input.toList.toArray
+  lexGo cs (cs.size + 1) 0 #[]
 
-def parsePrefixes (s : Chars) : Option (List (String × String) × Nat) :=
-  let rec go (i : Nat) (acc : List (String × String)) (fuel : Nat)
-      : Option (List (String × String) × Nat) :=
-    match fuel with
-    | 0 => some (acc, i)
-    | f + 1 =>
-      let i0 := skipWs s i
-      match tryWord s i0 "Prefix" with
-      | none => some (acc, i0)
-      | some i1 =>
-        let i2 := skipWs s i1
-        if !(isChar s i2 '(') then none
-        else
-          let i3 := skipWs s (i2 + 1)
-          let (pfx, i4) := takeIdent s i3
-          if !(isChar s i4 ':') then none
-          else
-            let i5 := skipWs s (i4 + 1)
-            if !(isChar s i5 '=') then none
-            else
-              let i6 := skipWs s (i5 + 1)
-              if !(isChar s i6 '<') then none
-              else match scanAngleIri s (i6 + 1) with
-                | none => none
-                | some (ns, i7) =>
-                    let i8 := skipWs s i7
-                    if !(isChar s i8 ')') then none
-                    else go (i8 + 1) (acc ++ [(pfx, ns)]) f
-  go 0 [] (s.size + 1)
+/-! ## Parser state and leaf productions -/
 
-/-! ## Blank-node labels -/
+structure PS where
+  toks : Array Tok
+  /-- Prefix name (without the colon) to namespace. -/
+  pfx  : List (String × String)
 
-def bnRestriction (n : Nat) : Subject := .bnode ("owlfs_restr" ++ toString n)
-def bnComplement (n : Nat) : Subject := .bnode ("owlfs_comp" ++ toString n)
-def bnListCell (n : Nat) : Subject := .bnode ("owlfs_lst" ++ toString n)
-def bnFacet (n : Nat) : Subject := .bnode ("owlfs_facet" ++ toString n)
-def bnFacetCell (n : Nat) : Subject := .bnode ("owlfs_flst" ++ toString n)
-def bnDataOneOf (n : Nat) : Subject := .bnode ("owlfs_dtoneof" ++ toString n)
-def bnDataRestr (n : Nat) : Subject := .bnode ("owlfs_dtrestr" ++ toString n)
-def bnDataComp (n : Nat) : Subject := .bnode ("owlfs_dtcomp" ++ toString n)
-def bnNpa (n : Nat) : Subject := .bnode ("owlfs_npa" ++ toString n)
-def bnChain (n : Nat) : Subject := .bnode ("owlfs_chain" ++ toString n)
+def PS.at? (ps : PS) (i : Nat) : Option Tok := ps.toks[i]?
 
-def subjTerm : Subject → Term
-  | .iri i   => .iri i
-  | .bnode b => .bnode b
+/-- `kw(` at `i`: the index after the opening parenthesis. A keyword
+never contains a colon, so it cannot be mistaken for an abbreviated
+IRI. -/
+def PS.kwAt (ps : PS) (i : Nat) : Option (String × Nat) :=
+  match ps.toks[i]?, ps.toks[i + 1]? with
+  | some (.name w), some .lp => some (w, i + 2)
+  | _, _ => none
 
-def termToSubject : Term → Option Subject
-  | .iri i   => some (.iri i)
-  | .bnode b => some (.bnode b)
-  | _        => none
+def PS.expectRp (ps : PS) (i : Nat) : Option Nat :=
+  if ps.toks[i]? == some .rp then some (i + 1) else none
 
-/-! ## Literal and facet lists -/
+def PS.isRp (ps : PS) (i : Nat) : Bool := ps.toks[i]? == some .rp
 
-def parseLiteralList (ps : List (String × String)) (s : Chars) (i : Nat)
-    : Option (List WfLiteral × Nat) :=
-  let rec go (j : Nat) (acc : List WfLiteral) (fuel : Nat)
-      : Option (List WfLiteral × Nat) :=
-    match fuel with
-    | 0 => none
-    | f + 1 =>
-      let j0 := skipWs s j
-      if isChar s j0 ')' then
-        -- `DataOneOf` needs at least one literal; an empty one is a
-        -- parse failure rather than an empty datatype.
-        (if acc.isEmpty then none else some (acc, j0))
-      else match parseFsLiteral ps s j0 with
-        | none        => none
-        | some (l, j1) => go j1 (acc ++ [l]) f
-  go i [] (s.size + 1)
+def lookupPfx (ps : List (String × String)) (p : String) : Option String :=
+  (ps.find? (fun (q, _) => q == p)).map (·.2)
 
-/-- `T([v1 … vn])` — the `rdf:first`/`rdf:rest` collection. -/
-def buildLiteralList : List WfLiteral → Nat → List Triple × Term × Nat
-  | [],      bc => ([], .iri RL.rdfNil, bc)
-  | l :: rest, bc =>
-      let (restTriples, restTerm, bc1) := buildLiteralList rest bc
-      let node := bnListCell bc1
-      ( ⟨node, RL.rdfFirst, .literal l⟩ :: ⟨node, RL.rdfRest, restTerm⟩ :: restTriples,
-        subjTerm node, bc1 + 1 )
+/-- The four implicitly declared prefixes. -/
+def defaultPrefixes : List (String × String) :=
+  [ ("owl",  "http://www.w3.org/2002/07/owl#"),
+    ("rdf",  "http://www.w3.org/1999/02/22-rdf-syntax-ns#"),
+    ("rdfs", "http://www.w3.org/2000/01/rdf-schema#"),
+    ("xsd",  "http://www.w3.org/2001/XMLSchema#") ]
 
-def parseFacetList (ps : List (String × String)) (s : Chars) (i : Nat)
-    : Option (List (WfIri × WfLiteral) × Nat) :=
-  let rec go (j : Nat) (acc : List (WfIri × WfLiteral)) (fuel : Nat)
-      : Option (List (WfIri × WfLiteral) × Nat) :=
-    match fuel with
-    | 0 => none
-    | f + 1 =>
-      let j0 := skipWs s j
-      if isChar s j0 ')' then
-        (if acc.isEmpty then none else some (acc, j0))
-      else match parseFsIri ps s j0 with
+/-- A well-formed IRI from a string, or `none`. -/
+def mkIri (s : String) : Option WfIri :=
+  if h : isIri s then some ⟨s, h⟩ else none
+
+/-- `IRI := fullIRI | abbreviatedIRI`. -/
+def parseIri (ps : PS) (i : Nat) : Option (WfIri × Nat) :=
+  match ps.toks[i]? with
+  | some (.iri s) => (mkIri s).map (fun x => (x, i + 1))
+  | some (.name s) =>
+      match s.splitOn ":" with
+      | pfx :: rest@(_ :: _) =>
+          -- `p:local` with the FIRST colon splitting prefix from local
+          -- part; a node ID `_:x` is not an IRI.
+          if pfx == "_" then none else
+          match lookupPfx ps.pfx pfx with
+          | none => none
+          | some ns => (mkIri (ns ++ String.intercalate ":" rest)).map (fun x => (x, i + 1))
+      | _ => none
+  | _ => none
+
+/-- Does an IRI start at `i` (as opposed to a keyword or a number)? -/
+def PS.iriLike (ps : PS) (i : Nat) : Bool :=
+  match ps.toks[i]? with
+  | some (.iri _) => true
+  | some (.name s) => s.contains ':' && !s.startsWith "_:"
+  | _ => false
+
+def parseNat (ps : PS) (i : Nat) : Option (Nat × Nat) :=
+  match ps.toks[i]? with
+  | some (.name s) =>
+      if !s.isEmpty && s.all Char.isDigit then some (s.toNat!, i + 1) else none
+  | _ => none
+
+/-- `nodeID`: `_:label`. -/
+def parseNodeId (ps : PS) (i : Nat) : Option (String × Nat) :=
+  match ps.toks[i]? with
+  | some (.name s) =>
+      if s.startsWith "_:" && s.length > 2 then some ((s.drop 2).toString, i + 1) else none
+  | _ => none
+
+def parseIndividual (ps : PS) (i : Nat) : Option (Individual × Nat) :=
+  match parseIri ps i with
+  | some (x, j) => some (.named x, j)
+  | none => (parseNodeId ps i).map (fun (l, j) => (.anon l, j))
+
+def mkLiteral (lex : String) (dt : WfIri) (tag : Option String) : Option WfLiteral :=
+  let l : Literal := { lexicalForm := lex, datatype := dt, langTag := tag, direction := none }
+  Literal.toWf? l
+
+/-- `Literal := typedLiteral | stringLiteralNoLanguage |
+stringLiteralWithLanguage`. -/
+def parseLiteral (ps : PS) (i : Nat) : Option (WfLiteral × Nat) :=
+  match ps.toks[i]? with
+  | some (.str lex) =>
+      match ps.toks[i + 1]? with
+      | some .caret =>
+          match parseIri ps (i + 2) with
+          | none => none
+          | some (dt, j) => (mkLiteral lex dt none).map (fun l => (l, j))
+      | some (.lang tag) => some (Literal.langString lex tag, i + 2)
+      | _ => some (Literal.string lex, i + 1)
+  | _ => none
+
+/-- `AnnotationValue := AnonymousIndividual | IRI | Literal`. -/
+def parseAnnValue (ps : PS) (i : Nat) : Option (AnnValue × Nat) :=
+  match parseIri ps i with
+  | some (x, j) => some (.iri x, j)
+  | none =>
+    match parseNodeId ps i with
+    | some (l, j) => some (.anon l, j)
+    | none => (parseLiteral ps i).map (fun (l, j) => (.lit l, j))
+
+/-- `ObjectPropertyExpression := ObjectProperty | InverseObjectProperty`. -/
+def parseOPE (ps : PS) (i : Nat) : Option (ObjPropExpr × Nat) :=
+  match parseIri ps i with
+  | some (p, j) => some (.prop p, j)
+  | none =>
+    match ps.kwAt i with
+    | some ("ObjectInverseOf", k) =>
+        match parseIri ps k with
         | none => none
-        | some (facet, j1) =>
-            let j2 := skipWs s j1
-            match parseFsLiteral ps s j2 with
-            | none        => none
-            | some (l, j3) => go j3 (acc ++ [(facet, l)]) f
-  go i [] (s.size + 1)
+        | some (p, j) => (ps.expectRp j).map (fun e => (.inverse p, e))
+    | _ => none
 
-/-- Each `(facet, value)` pair becomes its OWN blank node carrying
-    exactly one triple — the mapping specification says a
-    facet-restriction node carries one — and the nodes are collected
-    into an `rdf:first`/`rdf:rest` list. -/
-def buildFacetList : List (WfIri × WfLiteral) → Nat → List Triple × Term × Nat
-  | [],             bc => ([], .iri RL.rdfNil, bc)
-  | (facet, l) :: rest, bc =>
-      let (restTriples, restTerm, bc1) := buildFacetList rest bc
-      let fnode := bnFacet bc1
-      let vnode := bnFacetCell (bc1 + 1)
-      ( ⟨fnode, facet, .literal l⟩
-          :: ⟨vnode, RL.rdfFirst, subjTerm fnode⟩
-          :: ⟨vnode, RL.rdfRest, restTerm⟩ :: restTriples,
-        subjTerm vnode, bc1 + 2 )
-
-/-! ## Class expressions and data ranges
-
-Each production returns the term that DENOTES the expression, the
-triples that define it, the position after the closing `)`, and the
-updated blank-node counter. -/
-
-/-- `DataHasValue(P Lit)` — a leaf; it never recurses. -/
-def parseDataHasValue (ps : List (String × String)) (s : Chars) (i : Nat) (bc : Nat)
-    : Option (Term × List Triple × Nat × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match parseFsIri ps s i2 with
-    | none => none
-    | some (prop, i3) =>
-      let i4 := skipWs s i3
-      match parseFsLiteral ps s i4 with
+/-- Zero or more `ObjectPropertyExpression`s, up to the next `)`. -/
+def parseOPEs (ps : PS) : Nat → Nat → List ObjPropExpr → Option (List ObjPropExpr × Nat)
+  | 0, _, _ => none
+  | f + 1, i, acc =>
+    if ps.isRp i then some (acc.reverse, i)
+    else match parseOPE ps i with
       | none => none
-      | some (l, i5) =>
-        let i6 := skipWs s i5
-        if !(isChar s i6 ')') then none
-        else
-          let r := bnRestriction bc
-          some (subjTerm r,
-                [ ⟨r, RL.rdfType, .iri owlRestriction⟩,
-                  ⟨r, owlOnProperty, .iri prop⟩,
-                  ⟨r, owlHasValue, .literal l⟩ ],
-                i6 + 1, bc + 1)
+      | some (o, j) => parseOPEs ps f j (o :: acc)
 
-/-- `DataOneOf(v1 … vn)` — a leaf. -/
-def parseDataOneOf (ps : List (String × String)) (s : Chars) (i : Nat) (bc : Nat)
-    : Option (Term × List Triple × Nat × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match parseLiteralList ps s i2 with
-    | none => none
-    | some (lits, i3) =>
-      let i4 := skipWs s i3
-      if !(isChar s i4 ')') then none
-      else
-        let (lt, head, bc1) := buildLiteralList lits bc
-        let dt := bnDataOneOf bc1
-        some (subjTerm dt,
-              lt ++ [ ⟨dt, RL.rdfType, .iri RL.rdfsDatatype⟩, ⟨dt, owlOneOf, head⟩ ],
-              i4 + 1, bc1 + 1)
-
-/-- `DatatypeRestriction(DT F1 v1 …)` — a leaf. -/
-def parseDatatypeRestriction (ps : List (String × String)) (s : Chars) (i : Nat)
-    (bc : Nat) : Option (Term × List Triple × Nat × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match parseFsIri ps s i2 with
-    | none => none
-    | some (baseDt, i3) =>
-      match parseFacetList ps s i3 with
+/-- Zero or more IRIs, up to the next `)`. -/
+def parseIris (ps : PS) : Nat → Nat → List WfIri → Option (List WfIri × Nat)
+  | 0, _, _ => none
+  | f + 1, i, acc =>
+    if ps.isRp i then some (acc.reverse, i)
+    else match parseIri ps i with
       | none => none
-      | some (facets, i4) =>
-        let i5 := skipWs s i4
-        if !(isChar s i5 ')') then none
-        else
-          let (ft, head, bc1) := buildFacetList facets bc
-          let dt := bnDataRestr bc1
-          some (subjTerm dt,
-                ft ++ [ ⟨dt, RL.rdfType, .iri RL.rdfsDatatype⟩,
-                        ⟨dt, owlOnDatatypeIri, .iri baseDt⟩,
-                        ⟨dt, owlWithRestrictionsIri, head⟩ ],
-                i5 + 1, bc1 + 1)
+      | some (x, j) => parseIris ps f j (x :: acc)
 
+def parseIndividuals (ps : PS) : Nat → Nat → List Individual →
+    Option (List Individual × Nat)
+  | 0, _, _ => none
+  | f + 1, i, acc =>
+    if ps.isRp i then some (acc.reverse, i)
+    else match parseIndividual ps i with
+      | none => none
+      | some (a, j) => parseIndividuals ps f j (a :: acc)
+
+def parseLiterals (ps : PS) : Nat → Nat → List WfLiteral → Option (List WfLiteral × Nat)
+  | 0, _, _ => none
+  | f + 1, i, acc =>
+    if ps.isRp i then some (acc.reverse, i)
+    else match parseLiteral ps i with
+      | none => none
+      | some (l, j) => parseLiterals ps f j (l :: acc)
+
+/-- `(constrainingFacet restrictionValue)+`, up to the next `)`. -/
+def parseFacets (ps : PS) : Nat → Nat → List (WfIri × WfLiteral) →
+    Option (List (WfIri × WfLiteral) × Nat)
+  | 0, _, _ => none
+  | f + 1, i, acc =>
+    if ps.isRp i then some (acc.reverse, i)
+    else match parseIri ps i with
+      | none => none
+      | some (facet, j) =>
+        match parseLiteral ps j with
+        | none => none
+        | some (v, k) => parseFacets ps f k ((facet, v) :: acc)
+
+/-! ## Data ranges, class expressions and annotations (mutually recursive) -/
+
+-- Data ranges, class expressions and annotations recurse into one another.
 mutual
 
-partial def parseClassExprFS (ps : List (String × String)) (s : Chars) (i : Nat)
-    (bc : Nat) : Option (Term × List Triple × Nat × Nat) :=
-  let i0 := skipWs s i
-  match parseFsIri ps s i0 with
-  | some (iri, i1) => some (.iri iri, [], i1, bc)
-  | none =>
-  match tryWord s i0 "DataHasValue" with
-  | some i1 => parseDataHasValue ps s i1 bc
-  | none =>
-  match tryWord s i0 "DataSomeValuesFrom" with
-  | some i1 => parseDataValuesFrom ps s i1 bc owlSomeValuesFrom
-  | none =>
-  match tryWord s i0 "DataAllValuesFrom" with
-  | some i1 => parseDataValuesFrom ps s i1 bc owlAllValuesFrom
-  | none =>
-  match tryWord s i0 "ObjectComplementOf" with
-  | some i1 => parseObjectComplementOf ps s i1 bc
-  | none => none
+def parseDR (ps : PS) : Nat → Nat → Option (DataRange × Nat)
+  | 0, _ => none
+  | f + 1, i =>
+    match parseIri ps i with
+    | some (dt, j) => some (.datatype dt, j)
+    | none =>
+      match ps.kwAt i with
+      | some ("DataIntersectionOf", k) =>
+          match parseDRs ps f k [] with
+          | some (drs, j) =>
+              if drs.length < 2 then none
+              else (ps.expectRp j).map (fun e => (.intersection drs, e))
+          | none => none
+      | some ("DataUnionOf", k) =>
+          match parseDRs ps f k [] with
+          | some (drs, j) =>
+              if drs.length < 2 then none
+              else (ps.expectRp j).map (fun e => (.union drs, e))
+          | none => none
+      | some ("DataComplementOf", k) =>
+          match parseDR ps f k with
+          | some (d, j) => (ps.expectRp j).map (fun e => (.complement d, e))
+          | none => none
+      | some ("DataOneOf", k) =>
+          match parseLiterals ps (ps.toks.size + 1) k [] with
+          | some (lits, j) =>
+              if lits.isEmpty then none
+              else (ps.expectRp j).map (fun e => (.oneOf lits, e))
+          | none => none
+      | some ("DatatypeRestriction", k) =>
+          match parseIri ps k with
+          | none => none
+          | some (dt, j) =>
+            match parseFacets ps (ps.toks.size + 1) j [] with
+            | some (fs, j2) =>
+                if fs.isEmpty then none
+                else (ps.expectRp j2).map (fun e => (.restriction dt fs, e))
+            | none => none
+      | _ => none
 
-/-- `DataSomeValuesFrom(P DR)` and `DataAllValuesFrom(P DR)` differ
-    only in which relation IRI the restriction carries. -/
-partial def parseDataValuesFrom (ps : List (String × String)) (s : Chars) (i : Nat)
-    (bc : Nat) (rel : WfIri) : Option (Term × List Triple × Nat × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match parseFsIri ps s i2 with
-    | none => none
-    | some (prop, i3) =>
-      let i4 := skipWs s i3
-      match parseDataRangeFS ps s i4 bc with
+def parseDRs (ps : PS) : Nat → Nat → List DataRange → Option (List DataRange × Nat)
+  | 0, _, _ => none
+  | f + 1, i, acc =>
+    if ps.isRp i then some (acc.reverse, i)
+    else match parseDR ps f i with
       | none => none
-      | some (drTerm, drTriples, i5, bc1) =>
-        let i6 := skipWs s i5
-        if !(isChar s i6 ')') then none
-        else
-          let r := bnRestriction bc1
-          some (subjTerm r,
-                drTriples ++ [ ⟨r, RL.rdfType, .iri owlRestriction⟩,
-                               ⟨r, owlOnProperty, .iri prop⟩,
-                               ⟨r, rel, drTerm⟩ ],
-                i6 + 1, bc1 + 1)
+      | some (d, j) => parseDRs ps f j (d :: acc)
 
-partial def parseObjectComplementOf (ps : List (String × String)) (s : Chars)
-    (i : Nat) (bc : Nat) : Option (Term × List Triple × Nat × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match parseClassExprFS ps s i2 bc with
+def parseCE (ps : PS) : Nat → Nat → Option (ClassExpr × Nat)
+  | 0, _ => none
+  | f + 1, i =>
+    match parseIri ps i with
+    | some (c, j) => some (.cls c, j)
+    | none =>
+      match ps.kwAt i with
+      | some (w, k) => parseCEBody ps f w k
+      | none => none
+
+/-- The constructs `Keyword( ... )`, after the opening parenthesis. -/
+def parseCEBody (ps : PS) : Nat → String → Nat → Option (ClassExpr × Nat)
+  | 0, _, _ => none
+  | f + 1, w, k =>
+    if w == "ObjectIntersectionOf" || w == "ObjectUnionOf" then
+      match parseCEs ps f k [] with
+      | some (ces, j) =>
+          if ces.length < 2 then none
+          else (ps.expectRp j).map (fun e =>
+                 ((if w == "ObjectUnionOf" then ClassExpr.union ces
+                   else ClassExpr.intersection ces), e))
+      | none => none
+    else if w == "ObjectComplementOf" then
+      match parseCE ps f k with
+      | some (c, j) => (ps.expectRp j).map (fun e => (.complement c, e))
+      | none => none
+    else if w == "ObjectOneOf" then
+      match parseIndividuals ps (ps.toks.size + 1) k [] with
+      | some (inds, j) =>
+          if inds.isEmpty then none
+          else (ps.expectRp j).map (fun e => (.oneOf inds, e))
+      | none => none
+    else if w == "ObjectSomeValuesFrom" || w == "ObjectAllValuesFrom" then
+      match parseOPE ps k with
+      | none => none
+      | some (o, j) =>
+        match parseCE ps f j with
+        | none => none
+        | some (c, j2) =>
+            (ps.expectRp j2).map (fun e =>
+              ((if w == "ObjectSomeValuesFrom" then ClassExpr.someValuesFrom o c
+                else ClassExpr.allValuesFrom o c), e))
+    else if w == "ObjectHasValue" then
+      match parseOPE ps k with
+      | none => none
+      | some (o, j) =>
+        match parseIndividual ps j with
+        | none => none
+        | some (a, j2) => (ps.expectRp j2).map (fun e => (.hasValue o a, e))
+    else if w == "ObjectHasSelf" then
+      match parseOPE ps k with
+      | none => none
+      | some (o, j) => (ps.expectRp j).map (fun e => (.hasSelf o, e))
+    else if w == "ObjectMinCardinality" || w == "ObjectMaxCardinality" ||
+            w == "ObjectExactCardinality" then
+      match parseNat ps k with
+      | none => none
+      | some (n, j) =>
+        match parseOPE ps j with
+        | none => none
+        | some (o, j2) =>
+          let build : Option ClassExpr → ClassExpr := fun q =>
+            if w == "ObjectMinCardinality" then ClassExpr.minCard n o q
+            else if w == "ObjectMaxCardinality" then ClassExpr.maxCard n o q
+            else ClassExpr.exactCard n o q
+          if ps.isRp j2 then some (build none, j2 + 1)
+          else match parseCE ps f j2 with
+            | none => none
+            | some (c, j3) => (ps.expectRp j3).map (fun e => (build (some c), e))
+    else if w == "DataSomeValuesFrom" || w == "DataAllValuesFrom" then
+      -- `DPE { DPE } DR`: parse every item as a data range; all but the
+      -- last must be plain IRIs (property names).
+      match parseDRs ps f k [] with
+      | none => none
+      | some (items, j) =>
+        match items.reverse with
+        | [] => none
+        | dr :: revProps =>
+          let props := revProps.reverse.filterMap (fun d => match d with
+            | .datatype p => some p | _ => none)
+          if props.length != revProps.length || props.isEmpty then none
+          else (ps.expectRp j).map (fun e =>
+            ((if w == "DataSomeValuesFrom" then ClassExpr.dataSomeValuesFrom props dr
+              else ClassExpr.dataAllValuesFrom props dr), e))
+    else if w == "DataHasValue" then
+      match parseIri ps k with
+      | none => none
+      | some (p, j) =>
+        match parseLiteral ps j with
+        | none => none
+        | some (l, j2) => (ps.expectRp j2).map (fun e => (.dataHasValue p l, e))
+    else if w == "DataMinCardinality" || w == "DataMaxCardinality" ||
+            w == "DataExactCardinality" then
+      match parseNat ps k with
+      | none => none
+      | some (n, j) =>
+        match parseIri ps j with
+        | none => none
+        | some (p, j2) =>
+          let build : Option DataRange → ClassExpr := fun q =>
+            if w == "DataMinCardinality" then ClassExpr.dataMinCard n p q
+            else if w == "DataMaxCardinality" then ClassExpr.dataMaxCard n p q
+            else ClassExpr.dataExactCard n p q
+          if ps.isRp j2 then some (build none, j2 + 1)
+          else match parseDR ps f j2 with
+            | none => none
+            | some (d, j3) => (ps.expectRp j3).map (fun e => (build (some d), e))
+    else none
+
+def parseCEs (ps : PS) : Nat → Nat → List ClassExpr → Option (List ClassExpr × Nat)
+  | 0, _, _ => none
+  | f + 1, i, acc =>
+    if ps.isRp i then some (acc.reverse, i)
+    else match parseCE ps f i with
+      | none => none
+      | some (c, j) => parseCEs ps f j (c :: acc)
+
+/-- Zero or more `Annotation( ... )` starting at `i`. -/
+def parseAnns (ps : PS) : Nat → Nat → List Annotation → Option (List Annotation × Nat)
+  | 0, _, _ => none
+  | f + 1, i, acc =>
+    match ps.kwAt i with
+    | some ("Annotation", k) =>
+        match parseAnnotationBody ps f k with
+        | none => none
+        | some (a, j) => parseAnns ps f j (a :: acc)
+    | _ => some (acc.reverse, i)
+
+/-- `annotationAnnotations AP av )`, after `Annotation(`. -/
+def parseAnnotationBody (ps : PS) : Nat → Nat → Option (Annotation × Nat)
+  | 0, _ => none
+  | f + 1, k =>
+    match parseAnns ps f k [] with
     | none => none
-    | some (ceTerm, ceTriples, i3, bc1) =>
-      let i4 := skipWs s i3
-      if !(isChar s i4 ')') then none
-      else
-        let c := bnComplement bc1
-        some (subjTerm c,
-              ceTriples ++ [ ⟨c, RL.rdfType, .iri owlClass⟩,
-                             ⟨c, owlComplementOf, ceTerm⟩ ],
-              i4 + 1, bc1 + 1)
-
-partial def parseDataRangeFS (ps : List (String × String)) (s : Chars) (i : Nat)
-    (bc : Nat) : Option (Term × List Triple × Nat × Nat) :=
-  let i0 := skipWs s i
-  match parseFsIri ps s i0 with
-  | some (iri, i1) => some (.iri iri, [], i1, bc)
-  | none =>
-  match tryWord s i0 "DataOneOf" with
-  | some i1 => parseDataOneOf ps s i1 bc
-  | none =>
-  match tryWord s i0 "DataComplementOf" with
-  | some i1 => parseDataComplementOf ps s i1 bc
-  | none =>
-  match tryWord s i0 "DatatypeRestriction" with
-  | some i1 => parseDatatypeRestriction ps s i1 bc
-  | none => none
-
-partial def parseDataComplementOf (ps : List (String × String)) (s : Chars)
-    (i : Nat) (bc : Nat) : Option (Term × List Triple × Nat × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match parseDataRangeFS ps s i2 bc with
-    | none => none
-    | some (drTerm, drTriples, i3, bc1) =>
-      let i4 := skipWs s i3
-      if !(isChar s i4 ')') then none
-      else
-        let dt := bnDataComp bc1
-        some (subjTerm dt,
-              drTriples ++ [ ⟨dt, RL.rdfType, .iri RL.rdfsDatatype⟩,
-                             ⟨dt, owlDatatypeComplementOfIri, drTerm⟩ ],
-              i4 + 1, bc1 + 1)
+    | some (inner, j) =>
+      match parseIri ps j with
+      | none => none
+      | some (ap, j2) =>
+        match parseAnnValue ps j2 with
+        | none => none
+        | some (v, j3) => (ps.expectRp j3).map (fun e => (.mk inner ap v, e))
 
 end
 
 /-! ## Axioms -/
 
-def parseDeclaration (ps : List (String × String)) (s : Chars) (i : Nat)
-    : Option (Triple × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    let kind : Option (Nat × WfIri) :=
-      match tryWord s i2 "ObjectProperty" with
-      | some p => some (p, owlObjectPropertyIri)
-      | none => match tryWord s i2 "DataProperty" with
-        | some p => some (p, owlDatatypePropertyIri)
-        | none => match tryWord s i2 "NamedIndividual" with
-          | some p => some (p, owlNamedIndividualIri)
-          | none => match tryWord s i2 "Class" with
-            | some p => some (p, owlClass)
-            | none => none
-    match kind with
-    | none => none
-    | some (i3, typeIri) =>
-      let i4 := skipWs s i3
-      if !(isChar s i4 '(') then none
-      else
-        let i5 := skipWs s (i4 + 1)
-        match parseFsIri ps s i5 with
-        | none => none
-        | some (iri, i6) =>
-          let i7 := skipWs s i6
-          if !(isChar s i7 ')') then none
-          else
-            let i8 := skipWs s (i7 + 1)
-            if !(isChar s i8 ')') then none
-            else some (⟨.iri iri, RL.rdfType, .iri typeIri⟩, i8 + 1)
+/-- A fuel large enough for any document: each call consumes a token. -/
+def fuelFor (ps : PS) : Nat := 2 * ps.toks.size + 8
 
-/-- `TransitiveObjectProperty(IRI)` and `FunctionalDataProperty(IRI)`
-    both map to one `rdf:type` triple; only the marker differs. -/
-def parseUnaryTypeAxiom (ps : List (String × String)) (s : Chars) (i : Nat)
-    (typeIri : WfIri) : Option (Triple × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match parseFsIri ps s i2 with
-    | none => none
-    | some (iri, i3) =>
-      let i4 := skipWs s i3
-      if !(isChar s i4 ')') then none
-      else some (⟨.iri iri, RL.rdfType, .iri typeIri⟩, i4 + 1)
-
-def parseDataPropertyRange (ps : List (String × String)) (s : Chars) (i : Nat)
-    : Option (Triple × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match parseFsIri ps s i2 with
-    | none => none
-    | some (prop, i3) =>
-      let i4 := skipWs s i3
-      match parseFsIri ps s i4 with
-      | none => none
-      | some (dt, i5) =>
-        let i6 := skipWs s i5
-        if !(isChar s i6 ')') then none
-        else some (⟨.iri prop, RL.rdfsRange, .iri dt⟩, i6 + 1)
-
-def parseDataPropertyAssertion (ps : List (String × String)) (s : Chars) (i : Nat)
-    : Option (Triple × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match parseFsIri ps s i2 with
-    | none => none
-    | some (prop, i3) =>
-      let i4 := skipWs s i3
-      match parseFsIri ps s i4 with
-      | none => none
-      | some (ind, i5) =>
-        let i6 := skipWs s i5
-        match parseFsLiteral ps s i6 with
-        | none => none
-        | some (l, i7) =>
-          let i8 := skipWs s i7
-          if !(isChar s i8 ')') then none
-          else some (⟨.iri ind, prop, .literal l⟩, i8 + 1)
-
-def parseSubClassOfFS (ps : List (String × String)) (s : Chars) (i : Nat) (bc : Nat)
-    : Option (List Triple × Nat × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match parseClassExprFS ps s i2 bc with
-    | none => none
-    | some (ce1, t1, i3, bc1) =>
-      let i4 := skipWs s i3
-      match parseClassExprFS ps s i4 bc1 with
-      | none => none
-      | some (ce2, t2, i5, bc2) =>
-        let i6 := skipWs s i5
-        if !(isChar s i6 ')') then none
-        else match termToSubject ce1 with
-          | none      => none
-          | some sub1 => some (t1 ++ t2 ++ [⟨sub1, RL.rdfsSubClassOf, ce2⟩], i6 + 1, bc2)
-
-def parseClassAssertionFS (ps : List (String × String)) (s : Chars) (i : Nat)
-    (bc : Nat) : Option (List Triple × Nat × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match parseClassExprFS ps s i2 bc with
-    | none => none
-    | some (ceTerm, ceTriples, i3, bc1) =>
-      let i4 := skipWs s i3
-      match parseFsIri ps s i4 with
-      | none => none
-      | some (ind, i5) =>
-        let i6 := skipWs s i5
-        if !(isChar s i6 ')') then none
-        else some (ceTriples ++ [⟨.iri ind, RL.rdfType, ceTerm⟩], i6 + 1, bc1)
-
-/-- `DisjointDataProperties(P1 P2)`, exactly two arguments. The
-    mapping specification makes n = 2 the direct-triple case; n > 2
-    needs an `owl:AllDisjointProperties` encoding this module does not
-    produce, so a third argument is a clean parse failure. -/
-def parseDisjointDataProperties (ps : List (String × String)) (s : Chars) (i : Nat)
-    : Option (Triple × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match parseFsIri ps s i2 with
-    | none => none
-    | some (p1, i3) =>
-      let i4 := skipWs s i3
-      match parseFsIri ps s i4 with
-      | none => none
-      | some (p2, i5) =>
-        let i6 := skipWs s i5
-        if !(isChar s i6 ')') then none
-        else some (⟨.iri p1, owlPropertyDisjointWith, .iri p2⟩, i6 + 1)
-
-def parseNegativeDataPropertyAssertion (ps : List (String × String)) (s : Chars)
-    (i : Nat) (bc : Nat) : Option (List Triple × Nat × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match parseFsIri ps s i2 with
-    | none => none
-    | some (prop, i3) =>
-      let i4 := skipWs s i3
-      match parseFsIri ps s i4 with
-      | none => none
-      | some (ind, i5) =>
-        let i6 := skipWs s i5
-        match parseFsLiteral ps s i6 with
-        | none => none
-        | some (l, i7) =>
-          let i8 := skipWs s i7
-          if !(isChar s i8 ')') then none
-          else
-            let n := bnNpa bc
-            some ([ ⟨n, RL.rdfType, .iri owlNegativePropertyAssertionIri⟩,
-                    ⟨n, owlSourceIndividual, .iri ind⟩,
-                    ⟨n, owlAssertionProperty, .iri prop⟩,
-                    ⟨n, owlTargetValue, .literal l⟩ ], i8 + 1, bc + 1)
-
-/-- `SubObjectPropertyOf(ObjectPropertyChain(P1 P2) Q)` — only the
-    two-link chain, which is the shape the corpus needs. -/
-def parseSubObjectPropertyOf (ps : List (String × String)) (s : Chars) (i : Nat)
-    (bc : Nat) : Option (List Triple × Nat × Nat) :=
-  let i1 := skipWs s i
-  if !(isChar s i1 '(') then none
-  else
-    let i2 := skipWs s (i1 + 1)
-    match tryWord s i2 "ObjectPropertyChain" with
-    | none => none
-    | some i3 =>
-      let i4 := skipWs s i3
-      if !(isChar s i4 '(') then none
-      else
-        let i5 := skipWs s (i4 + 1)
-        match parseFsIri ps s i5 with
-        | none => none
-        | some (p1, i6) =>
-          let i7 := skipWs s i6
-          match parseFsIri ps s i7 with
-          | none => none
-          | some (p2, i8) =>
-            let i9 := skipWs s i8
-            if !(isChar s i9 ')') then none
-            else
-              let i10 := skipWs s (i9 + 1)
-              match parseFsIri ps s i10 with
-              | none => none
-              | some (q, i11) =>
-                let i12 := skipWs s i11
-                if !(isChar s i12 ')') then none
-                else
-                  let b1 := bnChain bc
-                  let b2 := bnChain (bc + 1)
-                  some ([ ⟨b1, RL.rdfFirst, .iri p1⟩,
-                          ⟨b1, RL.rdfRest, subjTerm b2⟩,
-                          ⟨b2, RL.rdfFirst, .iri p2⟩,
-                          ⟨b2, RL.rdfRest, .iri RL.rdfNil⟩,
-                          ⟨.iri q, owlPropertyChainAxiom, subjTerm b1⟩ ],
-                        i12 + 1, bc + 2)
-
-/-! ## The ontology body and the entry point -/
-
-def parseAxioms (ps : List (String × String)) (s : Chars) (i0 : Nat)
-    : Option (List Triple × Nat) :=
-  let rec go (i : Nat) (bc : Nat) (acc : List Triple) (fuel : Nat)
-      : Option (List Triple × Nat) :=
-    match fuel with
-    | 0 => none
-    | f + 1 =>
-      let i' := skipWs s i
-      if isChar s i' ')' then some (acc, i')
-      else
-        let one : Option (List Triple × Nat × Nat) :=
-          match tryWord s i' "Declaration" with
-          | some j => (parseDeclaration ps s j).map (fun (t, k) => ([t], k, bc))
-          | none =>
-          match tryWord s i' "TransitiveObjectProperty" with
-          | some j => (parseUnaryTypeAxiom ps s j owlTransitiveProperty).map
-                        (fun (t, k) => ([t], k, bc))
-          | none =>
-          match tryWord s i' "FunctionalDataProperty" with
-          | some j => (parseUnaryTypeAxiom ps s j owlFunctionalProperty).map
-                        (fun (t, k) => ([t], k, bc))
-          | none =>
-          match tryWord s i' "DataPropertyRange" with
-          | some j => (parseDataPropertyRange ps s j).map (fun (t, k) => ([t], k, bc))
-          | none =>
-          match tryWord s i' "DataPropertyAssertion" with
-          | some j => (parseDataPropertyAssertion ps s j).map (fun (t, k) => ([t], k, bc))
-          | none =>
-          match tryWord s i' "ClassAssertion" with
-          | some j => parseClassAssertionFS ps s j bc
-          | none =>
-          match tryWord s i' "SubObjectPropertyOf" with
-          | some j => parseSubObjectPropertyOf ps s j bc
-          | none =>
-          match tryWord s i' "SubClassOf" with
-          | some j => parseSubClassOfFS ps s j bc
-          | none =>
-          match tryWord s i' "DisjointDataProperties" with
-          | some j => (parseDisjointDataProperties ps s j).map (fun (t, k) => ([t], k, bc))
-          | none =>
-          match tryWord s i' "NegativeDataPropertyAssertion" with
-          | some j => parseNegativeDataPropertyAssertion ps s j bc
-          -- An unknown construct is a CLEAN parse failure. Skipping it
-          -- would produce a graph missing an axiom, and a missing
-          -- axiom makes an inconsistent ontology look consistent.
-          | none => none
-        match one with
-        | none            => none
-        | some (ts, j, bc') => go j bc' (acc ++ ts) f
-  go i0 0 [] (s.size + 1)
-
-/-- Read a whole functional-syntax document into triples. `none` for
-    anything outside the subset — the caller reports that as
-    "unsupported input syntax", never as an empty ontology. -/
-def parseFunctionalSyntax (input : String) : Option (List Triple) :=
-  let s : Chars := input.toList.toArray
-  match parsePrefixes s with
+/-- Two or more class expressions up to `)`; returns the list. -/
+def parseCEsAtLeast (ps : PS) (n : Nat) (i : Nat) : Option (List ClassExpr × Nat) :=
+  match parseCEs ps (fuelFor ps) i [] with
+  | some (ces, j) => if ces.length < n then none else some (ces, j)
   | none => none
-  | some (ps, i0) =>
-    let i1 := skipWs s i0
-    match tryWord s i1 "Ontology" with
+
+def parseOPEsAtLeast (ps : PS) (n : Nat) (i : Nat) : Option (List ObjPropExpr × Nat) :=
+  match parseOPEs ps (fuelFor ps) i [] with
+  | some (os, j) => if os.length < n then none else some (os, j)
+  | none => none
+
+def parseIrisAtLeast (ps : PS) (n : Nat) (i : Nat) : Option (List WfIri × Nat) :=
+  match parseIris ps (fuelFor ps) i [] with
+  | some (xs, j) => if xs.length < n then none else some (xs, j)
+  | none => none
+
+def parseIndividualsAtLeast (ps : PS) (n : Nat) (i : Nat) : Option (List Individual × Nat) :=
+  match parseIndividuals ps (fuelFor ps) i [] with
+  | some (xs, j) => if xs.length < n then none else some (xs, j)
+  | none => none
+
+/-- Parse `IRI IRI )` and build. -/
+def twoIris (ps : PS) (k : Nat) : Option (WfIri × WfIri × Nat) :=
+  match parseIri ps k with
+  | none => none
+  | some (a, j) =>
+    match parseIri ps j with
     | none => none
-    | some i2 =>
-      let i3 := skipWs s i2
-      if !(isChar s i3 '(') then none
-      else
-        let i4 := skipWs s (i3 + 1)
-        match parseAxioms ps s i4 with
+    | some (b, j2) => (ps.expectRp j2).map (fun e => (a, b, e))
+
+def objPropCharOf : String → Option ObjPropChar
+  | "FunctionalObjectProperty"        => some .functional
+  | "InverseFunctionalObjectProperty" => some .inverseFunctional
+  | "ReflexiveObjectProperty"         => some .reflexive
+  | "IrreflexiveObjectProperty"       => some .irreflexive
+  | "SymmetricObjectProperty"         => some .symmetric
+  | "AsymmetricObjectProperty"        => some .asymmetric
+  | "TransitiveObjectProperty"        => some .transitive
+  | _ => none
+
+/-- `Entity := 'Class' '(' Class ')' | ...` of a declaration. -/
+def entityKindOf : String → Option EntityKind
+  | "Class"              => some .cls
+  | "Datatype"           => some .datatype
+  | "ObjectProperty"     => some .objectProperty
+  | "DataProperty"       => some .dataProperty
+  | "AnnotationProperty" => some .annotationProperty
+  | "NamedIndividual"    => some .namedIndividual
+  | _ => none
+
+/-- The body of the axiom `w( ... )`, after the opening parenthesis and
+with the axiom annotations already read. -/
+def parseAxiomBody (ps : PS) (w : String) (anns : List Annotation) (k : Nat) :
+    Option (Axiom × Nat) :=
+  let f := fuelFor ps
+  match w with
+  | "Declaration" =>
+      match ps.kwAt k with
+      | some (ek, k2) =>
+        match entityKindOf ek, parseIri ps k2 with
+        | some kind, some (x, j) =>
+          match ps.expectRp j with
+          | some j2 => (ps.expectRp j2).map (fun e => (.declaration anns kind x, e))
+          | none => none
+        | _, _ => none
+      | none => none
+  | "SubClassOf" =>
+      match parseCE ps f k with
+      | none => none
+      | some (a, j) =>
+        match parseCE ps f j with
         | none => none
-        | some (ts, i5) => if isChar s i5 ')' then some ts else none
+        | some (b, j2) => (ps.expectRp j2).map (fun e => (.subClassOf anns a b, e))
+  | "EquivalentClasses" =>
+      (parseCEsAtLeast ps 2 k).bind (fun (ces, j) =>
+        (ps.expectRp j).map (fun e => (.equivalentClasses anns ces, e)))
+  | "DisjointClasses" =>
+      (parseCEsAtLeast ps 2 k).bind (fun (ces, j) =>
+        (ps.expectRp j).map (fun e => (.disjointClasses anns ces, e)))
+  | "DisjointUnion" =>
+      match parseIri ps k with
+      | none => none
+      | some (c, j) =>
+        (parseCEsAtLeast ps 2 j).bind (fun (ces, j2) =>
+          (ps.expectRp j2).map (fun e => (.disjointUnion anns c ces, e)))
+  | "SubObjectPropertyOf" =>
+      let sub : Option (SubObjProp × Nat) :=
+        match ps.kwAt k with
+        | some ("ObjectPropertyChain", k2) =>
+            (parseOPEsAtLeast ps 2 k2).bind (fun (os, j) =>
+              (ps.expectRp j).map (fun e => (SubObjProp.chain os, e)))
+        | _ => (parseOPE ps k).map (fun (o, j) => (SubObjProp.single o, j))
+      match sub with
+      | none => none
+      | some (s, j) =>
+        match parseOPE ps j with
+        | none => none
+        | some (sup, j2) => (ps.expectRp j2).map (fun e => (.subObjectPropertyOf anns s sup, e))
+  | "EquivalentObjectProperties" =>
+      (parseOPEsAtLeast ps 2 k).bind (fun (os, j) =>
+        (ps.expectRp j).map (fun e => (.equivalentObjectProperties anns os, e)))
+  | "DisjointObjectProperties" =>
+      (parseOPEsAtLeast ps 2 k).bind (fun (os, j) =>
+        (ps.expectRp j).map (fun e => (.disjointObjectProperties anns os, e)))
+  | "InverseObjectProperties" =>
+      match parseOPE ps k with
+      | none => none
+      | some (a, j) =>
+        match parseOPE ps j with
+        | none => none
+        | some (b, j2) => (ps.expectRp j2).map (fun e => (.inverseObjectProperties anns a b, e))
+  | "ObjectPropertyDomain" =>
+      match parseOPE ps k with
+      | none => none
+      | some (o, j) =>
+        match parseCE ps f j with
+        | none => none
+        | some (c, j2) => (ps.expectRp j2).map (fun e => (.objectPropertyDomain anns o c, e))
+  | "ObjectPropertyRange" =>
+      match parseOPE ps k with
+      | none => none
+      | some (o, j) =>
+        match parseCE ps f j with
+        | none => none
+        | some (c, j2) => (ps.expectRp j2).map (fun e => (.objectPropertyRange anns o c, e))
+  | "SubDataPropertyOf" =>
+      (twoIris ps k).map (fun (a, b, e) => (.subDataPropertyOf anns a b, e))
+  | "EquivalentDataProperties" =>
+      (parseIrisAtLeast ps 2 k).bind (fun (xs, j) =>
+        (ps.expectRp j).map (fun e => (.equivalentDataProperties anns xs, e)))
+  | "DisjointDataProperties" =>
+      (parseIrisAtLeast ps 2 k).bind (fun (xs, j) =>
+        (ps.expectRp j).map (fun e => (.disjointDataProperties anns xs, e)))
+  | "DataPropertyDomain" =>
+      match parseIri ps k with
+      | none => none
+      | some (p, j) =>
+        match parseCE ps f j with
+        | none => none
+        | some (c, j2) => (ps.expectRp j2).map (fun e => (.dataPropertyDomain anns p c, e))
+  | "DataPropertyRange" =>
+      match parseIri ps k with
+      | none => none
+      | some (p, j) =>
+        match parseDR ps f j with
+        | none => none
+        | some (d, j2) => (ps.expectRp j2).map (fun e => (.dataPropertyRange anns p d, e))
+  | "FunctionalDataProperty" =>
+      match parseIri ps k with
+      | none => none
+      | some (p, j) => (ps.expectRp j).map (fun e => (.functionalDataProperty anns p, e))
+  | "DatatypeDefinition" =>
+      match parseIri ps k with
+      | none => none
+      | some (dt, j) =>
+        match parseDR ps f j with
+        | none => none
+        | some (d, j2) => (ps.expectRp j2).map (fun e => (.datatypeDefinition anns dt d, e))
+  | "HasKey" =>
+      match parseCE ps f k with
+      | none => none
+      | some (c, j) =>
+        if ps.toks[j]? != some .lp then none else
+        match parseOPEs ps f (j + 1) [] with
+        | none => none
+        | some (os, j2) =>
+          match ps.expectRp j2 with
+          | none => none
+          | some j3 =>
+            if ps.toks[j3]? != some .lp then none else
+            match parseIris ps f (j3 + 1) [] with
+            | none => none
+            | some (dps, j4) =>
+              match ps.expectRp j4 with
+              | none => none
+              | some j5 => (ps.expectRp j5).map (fun e => (.hasKey anns c os dps, e))
+  | "SameIndividual" =>
+      (parseIndividualsAtLeast ps 2 k).bind (fun (xs, j) =>
+        (ps.expectRp j).map (fun e => (.sameIndividual anns xs, e)))
+  | "DifferentIndividuals" =>
+      (parseIndividualsAtLeast ps 2 k).bind (fun (xs, j) =>
+        (ps.expectRp j).map (fun e => (.differentIndividuals anns xs, e)))
+  | "ClassAssertion" =>
+      match parseCE ps f k with
+      | none => none
+      | some (c, j) =>
+        match parseIndividual ps j with
+        | none => none
+        | some (a, j2) => (ps.expectRp j2).map (fun e => (.classAssertion anns c a, e))
+  | "ObjectPropertyAssertion" | "NegativeObjectPropertyAssertion" =>
+      match parseOPE ps k with
+      | none => none
+      | some (o, j) =>
+        match parseIndividual ps j with
+        | none => none
+        | some (a, j2) =>
+          match parseIndividual ps j2 with
+          | none => none
+          | some (b, j3) =>
+            (ps.expectRp j3).map (fun e =>
+              ((if w == "ObjectPropertyAssertion" then Axiom.objectPropertyAssertion anns o a b
+                else Axiom.negativeObjectPropertyAssertion anns o a b), e))
+  | "DataPropertyAssertion" | "NegativeDataPropertyAssertion" =>
+      match parseIri ps k with
+      | none => none
+      | some (p, j) =>
+        match parseIndividual ps j with
+        | none => none
+        | some (a, j2) =>
+          match parseLiteral ps j2 with
+          | none => none
+          | some (l, j3) =>
+            (ps.expectRp j3).map (fun e =>
+              ((if w == "DataPropertyAssertion" then Axiom.dataPropertyAssertion anns p a l
+                else Axiom.negativeDataPropertyAssertion anns p a l), e))
+  | "AnnotationAssertion" =>
+      match parseIri ps k with
+      | none => none
+      | some (ap, j) =>
+        match parseIndividual ps j with
+        | none => none
+        | some (s, j2) =>
+          match parseAnnValue ps j2 with
+          | none => none
+          | some (v, j3) => (ps.expectRp j3).map (fun e => (.annotationAssertion anns ap s v, e))
+  | "SubAnnotationPropertyOf" =>
+      (twoIris ps k).map (fun (a, b, e) => (.subAnnotationPropertyOf anns a b, e))
+  | "AnnotationPropertyDomain" =>
+      (twoIris ps k).map (fun (a, b, e) => (.annotationPropertyDomain anns a b, e))
+  | "AnnotationPropertyRange" =>
+      (twoIris ps k).map (fun (a, b, e) => (.annotationPropertyRange anns a b, e))
+  | _ =>
+      match objPropCharOf w with
+      | some ch =>
+        match parseOPE ps k with
+        | none => none
+        | some (o, j) => (ps.expectRp j).map (fun e => (.objectPropertyCharacteristic anns ch o, e))
+      | none => none
+
+/-- One axiom at `i`. -/
+def parseAxiom (ps : PS) (i : Nat) : Option (Axiom × Nat) :=
+  match ps.kwAt i with
+  | none => none
+  | some (w, k) =>
+    match parseAnns ps (fuelFor ps) k [] with
+    | none => none
+    | some (anns, k2) => parseAxiomBody ps w anns k2
+
+/-- Axioms up to the closing `)` of the ontology. -/
+def parseAxioms (ps : PS) : Nat → Nat → List Axiom → Option (List Axiom × Nat)
+  | 0, _, _ => none
+  | f + 1, i, acc =>
+    if ps.isRp i then some (acc.reverse, i)
+    else match parseAxiom ps i with
+      | none => none
+      | some (a, j) => parseAxioms ps f j (a :: acc)
+
+/-! ## The document -/
+
+/-- `Prefix( name = <IRI> )` declarations. -/
+def parsePrefixes (toks : Array Tok) : Nat → Nat → List (String × String) →
+    Option (List (String × String) × Nat)
+  | 0, _, _ => none
+  | f + 1, i, acc =>
+    match toks[i]?, toks[i + 1]?, toks[i + 2]?, toks[i + 3]?, toks[i + 4]?, toks[i + 5]? with
+    | some (.name "Prefix"), some .lp, some (.name pn), some .eq, some (.iri ns), some .rp =>
+        if pn.endsWith ":" then
+          parsePrefixes toks f (i + 6) (((pn.dropEnd 1).toString, ns) :: acc)
+        else none
+    | some (.name "Prefix"), _, _, _, _, _ => none
+    | _, _, _, _, _, _ => some (acc.reverse, i)
+
+/-- An optional IRI: absent when the next token is not IRI-like; a
+failure when it is IRI-like but does not resolve (an undeclared
+prefix must not be skipped silently). -/
+def parseOptIri (ps : PS) (i : Nat) : Option (Option WfIri × Nat) :=
+  if ps.iriLike i then
+    match parseIri ps i with
+    | some (x, j) => some (some x, j)
+    | none => none
+  else some (none, i)
+
+/-- `{ Import( IRI ) }`. -/
+def parseImports (ps : PS) : Nat → Nat → List WfIri → Option (List WfIri × Nat)
+  | 0, _, _ => none
+  | f + 1, j, acc =>
+    match ps.kwAt j with
+    | some ("Import", jj) =>
+        match parseIri ps jj with
+        | none => none
+        | some (x, j2) =>
+          match ps.expectRp j2 with
+          | none => none
+          | some j3 => parseImports ps f j3 (x :: acc)
+    | _ => some (acc.reverse, j)
+
+/-- Read a whole functional-style syntax document. -/
+def parseOntology (input : String) : Option Ontology := do
+  let toks ← lex input
+  let (declared, i0) ← parsePrefixes toks (toks.size + 1) 0 []
+  let ps : PS := { toks := toks, pfx := declared ++ defaultPrefixes }
+  let some ("Ontology", k) := ps.kwAt i0 | none
+  let (iri, k1) ← parseOptIri ps k
+  let (ver, k2) ← (if iri.isSome then parseOptIri ps k1 else some (none, k1))
+  let (imps, k3) ← parseImports ps (toks.size + 1) k2 []
+  let (anns, k4) ← parseAnns ps (fuelFor ps) k3 []
+  let (axs, k5) ← parseAxioms ps (toks.size + 1) k4 []
+  let k6 ← ps.expectRp k5
+  if k6 == toks.size then
+    some { iri := iri, versionIri := ver, imports := imps, annotations := anns, axioms := axs }
+  else none
+
+/-- A functional-style syntax document as RDF triples: the reader
+followed by the OWL 2 Mapping to RDF Graphs. `none` for anything the
+grammar does not accept. -/
+def parseFunctionalSyntax (input : String) : Option (List Triple) :=
+  (parseOntology input).map Ontology.toGraph
 
 end L4Factoidal.OWL.FS

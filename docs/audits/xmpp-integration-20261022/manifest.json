@@ -1,0 +1,64 @@
+{
+  "date": "2026-10-22",
+  "originalPr3": "87d1009df1842a64669530e3d1f1875e2b2c8e22",
+  "integrationBase": "87af61c9b7398ed1effa65744cbd3c84afe311be",
+  "cherryPick": "e124fe996bd68541697bbf7e2aee031f683ac104",
+  "scope": "Local host/native checks; no rebuilt Wasm conformance claim",
+  "sourceSha256": {
+    "formal/lean4/Wasm/Ops/XmppSession.lean": "ae44b7db1045eb2060825247873dce4b1ca7bef60fc9e02ad897997c82af9ddc",
+    "npm/factoidal/xmpp/server.mjs": "a1978dcfc75ad02803a4f748cc1e7134bf9c35149ed71e5988f26950e4d16264",
+    "npm/factoidal/package.json": "5b1556a7bfd29dea17198c1c58f424c62920a62441b635a445e8c397999fd492",
+    "npm/factoidal/test/xmpp-host.test.mjs": "a36e7b547a355412e150966775a78d28edd9d62757ace6493c4d928cc03c3f7d",
+    "npm/factoidal/test/xmpp-serve.test.mjs": "6fd8095c15e2ff0044e0115f5d9698443062a3e987ae05fbff1ff680b479837b",
+    "tests/xmpp/session-buffer.lean": "298432727d68a25388ae4df2e0c81cd13e2b30b8295f1c821d038596e355e296",
+    "formal/lean4/Wasm/Dispatch.lean": "9bd372cf0467d454b6210f3f99f42cc6133dd455162c7c97f78ad04b54865ab3",
+    "npm/factoidal/bin/factoidal.mjs": "193df18388bb5b7c05bca1f5b27f1c4d0685254d6faec1d59600f2d144eedae2"
+  },
+  "checks": [
+    {
+      "command": "node --test npm/factoidal/test/xmpp-host.test.mjs",
+      "cwd": "repository root",
+      "stage": "before repair (initial seven controls)",
+      "exit": 1,
+      "passed": 0,
+      "failed": 7,
+      "skipped": 0
+    },
+    {
+      "command": "/opt/homebrew/opt/node@22/bin/node --test npm/factoidal/test/xmpp-host.test.mjs",
+      "cwd": "repository root",
+      "stage": "final",
+      "exit": 0,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "/Users/danbri/.elan/bin/lake build Wasm.Ops.XmppSession Wasm.Dispatch Wasm.CoreDispatch",
+      "cwd": "formal/lean4",
+      "exit": 0,
+      "jobs": 408,
+      "logKind": "summary only"
+    },
+    {
+      "command": "/Users/danbri/.elan/bin/lake env lean ../../tests/xmpp/session-buffer.lean",
+      "cwd": "formal/lean4",
+      "exit": 0,
+      "byteChecksPassed": 3,
+      "sessionReleased": true
+    },
+    {
+      "command": "tools/ensure-test-env.sh --check",
+      "cwd": "repository root",
+      "exit": 1,
+      "meaning": "missing broad-suite fixtures, not a pass"
+    }
+  ],
+  "evidenceSha256": {
+    "host-final-green.log": "e378eece480eda7e13b85c3f4cfa425d3e0549a129484205f507a9da3a0373b2",
+    "host-initial-red.log": "ad1e88bd886dd4aba05a78df605f508dbf03adbeb74e79e684c9b2e969b648f5",
+    "native-build-summary.txt": "8c6eea1201a950595b6cd11d1b47c03b39214f95c43161e3dd43b3ab128363ab",
+    "native-session-buffer.log": "276ebac84b66f6d0a4118eaae33ab0175d4bf30ab20647f0b0c68e285df65a37",
+    "tls-idle-red.txt": "268b516427b6f2b1ad57fef219ac262aece84334df63335efa9a3b6edc7e7613"
+  }
+}

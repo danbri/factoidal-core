@@ -1,8 +1,27 @@
 /-
 Harness.ProtocolRun — the three protocol-shaped sparql11 test types:
 `ProtocolTest` (sparql11/protocol, 34 entries),
-`GraphStoreProtocolTest` (sparql11/http-rdf-update, 19 entries) and
+`GraphStoreProtocolTest` (sparql11/graph-store-protocol, 4 + 9 entries;
+the deprecated sparql11/http-rdf-update, 19 entries) and
 `ServiceDescriptionTest` (sparql11/service-description, 3 entries).
+
+THE STRUCTURED FORM (w3c/rdf-tests `c7817c2` and later for Protocol,
+`02f98ff` and later for the Graph Store). `mf:action` is an
+`ht:Connection`; its `ht:requests` list is run IN ORDER against one
+store, and every request's `ht:resp` is checked: `mf:expectedStatus`
+(an `hts:` class such as `StatusCode2xx` or a code such as `Created`;
+several values mean any of them), `mf:expectedFormat` and
+`mf:expectedBoolean` (Protocol), `mf:expectedLocation` and an RDF
+`ht:body` the response must be isomorphic to (Graph Store). The runner
+only reads the manifest and compares: the request is executed by the
+library — `SPARQL/ProtocolService.lean` for Protocol tests, over a
+Graph Store loaded from the entry's `ut:graphData`, and
+`SPARQL/GraphStoreService.lean` for Graph Store tests, over an empty
+store per entry. A test that `mf:requires` a feature the service does
+not offer is `unsupported`.
+
+THE MARKDOWN FORM, below, is kept for the manifests that still use it
+(the deprecated http-rdf-update suite).
 
 Each clause reproduces the corresponding clause of
 `bin/w3c-runner/w3c_runner.ml` — `run_protocol_test` (~line 1714),
@@ -34,6 +53,10 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 import Harness.Manifest
 import L4Factoidal.SPARQL.Protocol
 import L4Factoidal.SPARQL.GraphStore
+import L4Factoidal.SPARQL.ProtocolService
+import L4Factoidal.SPARQL.GraphStoreService
+import L4Factoidal.Syntax.NTriples
+import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.SPARQL.ServiceDescription
 import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.UpdateParser
@@ -71,7 +94,7 @@ def evalQueryNote (serviceIri : String) (q : Query) : String :=
   | .select _    => s!"SELECT evaluated: {(evalSelect env Dataset.empty q).2.length} rows"
   | .ask         => s!"ASK evaluated: {evalAsk env Dataset.empty q}"
   | .construct _ => s!"CONSTRUCT evaluated: {(evalConstruct env Dataset.empty q).length} triples"
-  | .describe _  => "DESCRIBE parsed (no description policy in the Lean tree)"
+  | .describe _  => s!"DESCRIBE evaluated: {(evalDescribe env Dataset.empty q).length} triples"
 
 /-- Apply a parsed update to the empty dataset; the summary is
 informational. -/
@@ -113,9 +136,125 @@ def protocolVerdict (req : ProtoRequest) (expected : StatusClass) : Outcome :=
     | .error e => passIf4xx s!"update parse error: {e.msg} (offset {e.pos})"
     | .ok u    => passIf2or3 (applyUpdateNote serviceIri u)
 
+/-! ## The structured form: shared checks -/
+
+/-- The status code an `hts:` term names (W3C HTTP Vocabulary in RDF,
+the status codes of RFC 2616 §10 by reason phrase). -/
+def statusCodeOfTerm : String → Option Nat
+  | "Continue" => some 100 | "SwitchingProtocols" => some 101
+  | "OK" => some 200 | "Created" => some 201 | "Accepted" => some 202
+  | "NonAuthoritativeInformation" => some 203 | "NoContent" => some 204
+  | "ResetContent" => some 205 | "PartialContent" => some 206
+  | "MultipleChoices" => some 300 | "MovedPermanently" => some 301 | "Found" => some 302
+  | "SeeOther" => some 303 | "NotModified" => some 304 | "UseProxy" => some 305
+  | "TemporaryRedirect" => some 307
+  | "BadRequest" => some 400 | "Unauthorized" => some 401 | "PaymentRequired" => some 402
+  | "Forbidden" => some 403 | "NotFound" => some 404 | "MethodNotAllowed" => some 405
+  | "NotAcceptable" => some 406 | "ProxyAuthenticationRequired" => some 407
+  | "RequestTimeout" => some 408 | "Conflict" => some 409 | "Gone" => some 410
+  | "LengthRequired" => some 411 | "PreconditionFailed" => some 412
+  | "RequestEntityTooLarge" => some 413 | "RequestURITooLong" => some 414
+  | "UnsupportedMediaType" => some 415 | "RequestedRangeNotSatisfiable" => some 416
+  | "ExpectationFailed" => some 417
+  | "InternalServerError" => some 500 | "NotImplemented" => some 501
+  | "BadGateway" => some 502 | "ServiceUnavailable" => some 503
+  | "GatewayTimeout" => some 504 | "HTTPVersionNotSupported" => some 505
+  | _ => none
+
+/-- Does an `hts:` term admit a status code? A `StatusCodeNxx` term
+admits its class. `none` for a term this table does not know — a
+manifest the runner cannot read, which must not score as a pass. -/
+def statusTermAdmits (term : String) (code : Nat) : Option Bool :=
+  match term with
+  | "StatusCode1xx" => some (100 ≤ code && code < 200)
+  | "StatusCode2xx" => some (200 ≤ code && code < 300)
+  | "StatusCode3xx" => some (300 ≤ code && code < 400)
+  | "StatusCode4xx" => some (400 ≤ code && code < 500)
+  | "StatusCode5xx" => some (500 ≤ code && code < 600)
+  | other => (statusCodeOfTerm other).map (· == code)
+
+/-- `mf:expectedStatus`: the code must be admitted by one of the terms.
+An absent `mf:expectedStatus` constrains nothing. -/
+def checkStatus (terms : List String) (code : Nat) : Except String Unit :=
+  if terms.isEmpty then .ok ()
+  else
+    match terms.mapM (fun t => (statusTermAdmits t code).map (fun b => (t, b))) with
+    | none => .error s!"unknown hts: status term among {terms}"
+    | some rs =>
+      if rs.any (·.2) then .ok ()
+      else .error s!"expected status {String.intercalate " or " terms}, got {code}"
+
+/-- Split `ht:absolutePath` at its first `?`. -/
+def splitAbsolutePath (p : String) : String × String :=
+  match p.splitOn "?" with
+  | [] => (p, "")
+  | path :: rest => (path, String.intercalate "?" rest)
+
+/-- Header lookup by lower-cased name, `""` when absent. -/
+def headerValue (hdrs : List (String × String)) (name : String) : String :=
+  (hdrs.find? (fun kv => kv.1 == name)).map (·.2) |>.getD ""
+
+/-- Parse an RDF data file by extension (`.nt`, else Turtle). -/
+def parseGraphFile (path text : String) : Except String Graph :=
+  if path.endsWith ".nt" then (L4Factoidal.Syntax.parseNTriples text).mapError (·.msg)
+  else (L4Factoidal.Syntax.parseTurtle text (some ("file://" ++ path))).mapError (·.msg)
+
+/-! ## ProtocolTest, structured form -/
+
+/-- Load the entry's `ut:graphData` files into a Graph Store, each as a
+named graph under its `rdfs:label` IRI. -/
+def loadProtocolStore (graphData : List (String × String)) : IO (Except Outcome Dataset) := do
+  let mut named : List NamedGraph := []
+  for (iri, path) in graphData do
+    match ← readOpt path with
+    | none => return .error (.skip s!"file missing: {path}")
+    | some text =>
+      match parseGraphFile path text with
+      | .error e => return .error (.fail s!"graph data parse error in {basename path}: {e}")
+      | .ok g =>
+        if h : isIri iri then named := named ++ [{ name := .iri ⟨iri, h⟩, graph := g }]
+        else return .error (.fail s!"ut:graphData label is not an IRI: {iri}")
+  return .ok { default := [], named := named }
+
+/-- Check one Protocol response against `ht:resp`. -/
+def checkProtocolResponse (exp : ExpectedResponse) (r : ProtocolService.Response) :
+    Except String Unit := do
+  checkStatus exp.statuses r.status
+  if let some fmt := exp.format then
+    if r.payload.formatName != fmt then
+      throw s!"expected result format {fmt}, got '{r.payload.formatName}'"
+  if let some b := exp.boolean then
+    match r.payload with
+    | .boolean b' => if b' != b then throw s!"expected boolean {b}, got {b'}"
+    | _ => throw s!"expected boolean {b}, got a '{r.payload.formatName}' result"
+
+def runProtocolExchanges (tc : TestCase) : IO Outcome := do
+  match ← loadProtocolStore tc.entryGraphData with
+  | .error o => return o
+  | .ok store0 =>
+    let authority := tc.connectionAuthority.getD "www.example"
+    let env : EvalEnv := { now := some protocolNow }
+    let mut store := store0
+    let mut i := 0
+    for ex in tc.exchanges do
+      i := i + 1
+      let (path, qs) := splitAbsolutePath ex.absolutePath
+      let serviceIri := "http://" ++ authority ++ path
+      let (store', r) := ProtocolService.serve env store serviceIri ex.method path qs
+                           (headerValue ex.headers "content-type") (ex.body.getD "")
+      store := store'
+      match checkProtocolResponse ex.resp r with
+      | .ok () => pure ()
+      | .error e =>
+        let why := if r.message.isEmpty then "" else s!" ({r.message})"
+        return .fail s!"request {i} of {tc.exchanges.length} ({ex.method} {ex.absolutePath}): {e}{why}"
+    return .pass
+
 def runProtocolTest (tc : TestCase) : IO Outcome := do
+  if !tc.exchanges.isEmpty then runProtocolExchanges tc
+  else
   match tc.comment with
-  | none => return .fail "Protocol test has no rdfs:comment (manifest-shape regression)"
+  | none => return .fail "Protocol test has neither ht:requests nor an rdfs:comment request (manifest-shape regression)"
   | some comment =>
     match extractRequest comment with
     | none     => return .fail "Protocol test: could not extract request block from rdfs:comment"
@@ -226,9 +365,74 @@ def gspStep (store : GraphStore) (name : String) (req : ProtoRequest) (expectedC
         else .fail s!"GSP {req.method}: expected {expectedCode}, got {actual} (target={target.show}, seeded={seeded})"
       (store, outcome, seeded)
 
+/-! ## GraphStoreProtocolTest, structured form -/
+
+/-- The path prefix of the Graph Store endpoint. The manifest:
+"Each request has a ht:absolutePath value that starts with `/gsp`". -/
+def gspEndpointPath : String := "/gsp"
+
+/-- The `mf:requires` features `GraphStoreService` offers. -/
+def gspSupportedFeatures : List String :=
+  ["DirectGraphIdentification", "IndirectGraphIdentification", "POSTGraphCreation"]
+
+/-- Replace every template variable bound so far (`$LOCATION$` → the
+`Location` value an earlier response returned). -/
+def substTemplateVars (vars : List (String × String)) (s : String) : String :=
+  vars.foldl (fun acc kv => acc.replace kv.1 kv.2) s
+
+/-- Check one Graph Store response against `ht:resp`; returns the
+template variable binding `mf:expectedLocation` asks for. `base` is the
+request IRI, the base for parsing both bodies. -/
+def checkGspResponse (exp : ExpectedResponse) (base : String) (r : L4Factoidal.HTTP.Response) :
+    Except String (Option (String × String)) := do
+  checkStatus exp.statuses r.status
+  if let some body := exp.body then
+    let expMt := match headerValue exp.headers "content-type" with
+                 | "" => "text/turtle"
+                 | ct => contentTypeBase ct
+    let actMt := contentTypeBase (headerValue r.headers "content-type")
+    let parse (mt text : String) : Except String Graph :=
+      match GraphStoreService.parseRdfAs mt base text with
+      | some (.ok g)    => .ok g
+      | some (.error e) => .error e
+      | none            => .error s!"media type {mt} not readable"
+    let expected ← (parse expMt body).mapError (fun e => s!"expected body does not parse: {e}")
+    let actual ← (parse actMt r.body).mapError (fun e => s!"response body does not parse: {e}")
+    if !(Graph.isomorphic? actual expected) then
+      throw s!"response graph ({actual.length} triples) is not isomorphic to the expected graph ({expected.length} triples)"
+  match exp.location with
+  | none => return none
+  | some var =>
+    match headerValue r.headers "location" with
+    | "" => throw "expected a Location header"
+    | loc => return some (var, loc)
+
+def runGspExchanges (tc : TestCase) : IO Outcome := do
+  match tc.requires.find? (fun f => !gspSupportedFeatures.contains f) with
+  | some f => return .unsupported s!"mf:requires {f}"
+  | none =>
+    let ep : GraphStoreService.Endpoint :=
+      { authority := tc.connectionAuthority.getD "www.example", path := gspEndpointPath }
+    let mut store : GraphStore := {}
+    let mut vars : List (String × String) := []
+    let mut i := 0
+    for ex in tc.exchanges do
+      i := i + 1
+      let absPath := substTemplateVars vars ex.absolutePath
+      let (path, qs) := splitAbsolutePath absPath
+      let (store', r) := GraphStoreService.serve ep store ex.method path qs ex.headers
+                           (substTemplateVars vars (ex.body.getD ""))
+      store := store'
+      match checkGspResponse ex.resp (ep.iriOf absPath) r with
+      | .ok none => pure ()
+      | .ok (some b) => vars := vars ++ [b]
+      | .error e => return .fail s!"request {i} of {tc.exchanges.length} ({ex.method} {absPath}): {e}"
+    return .pass
+
 def runGspTest (storeRef : IO.Ref GraphStore) (tc : TestCase) : IO (Outcome × Bool) := do
+  if !tc.exchanges.isEmpty then return (← runGspExchanges tc, false)
   match tc.comment with
-  | none => return (.fail "GSP test has no rdfs:comment (manifest-shape regression)", false)
+  | none => return (.fail "GSP test has neither ht:requests nor an rdfs:comment request (manifest-shape regression)", false)
   | some comment =>
     match extractRequest comment, extractResponseStatus comment with
     | none, _ => return (.fail "GSP test: could not extract HTTP request from rdfs:comment", false)

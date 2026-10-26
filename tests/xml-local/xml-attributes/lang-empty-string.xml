@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!DOCTYPE doc [
+<!ELEMENT doc (p)>
+<!ELEMENT p EMPTY>
+<!ATTLIST doc xml:lang CDATA #IMPLIED>
+<!ATTLIST p xml:lang CDATA #IMPLIED>
+]>
+<doc xml:lang="en"><p xml:lang=""/></doc>

@@ -6,8 +6,7 @@ import L4Factoidal.Schematron.FromXml
 
 namespace L4Factoidal.Schematron
 
--- The parser is non-namespace, so a name is matched on its LOCAL part.
-#guard localOf "sch:pattern" == "pattern"
+-- Reader helpers compare the resolved vocabulary projection exactly.
 #guard localOf "pattern" == "pattern"
 
 -- A message written across source lines reads as one line.
@@ -46,7 +45,7 @@ private def libRule : Rule :=
 
 -- An UNPREFIXED schematron document reads identically.
 #guard (match parseSchematron
-          ("<schema><pattern id=\"q\"><rule context=\"a\">" ++
+          ("<schema xmlns='http://purl.oclc.org/dsdl/schematron'><pattern id=\"q\"><rule context=\"a\">" ++
            "<assert test=\"b\">m</assert></rule></pattern></schema>") with
         | .ok s => s.patterns.length == 1
         | .error _ => false)
@@ -54,7 +53,7 @@ private def libRule : Rule :=
 -- An ABSTRACT pattern is a template, never fired, so it is dropped
 -- rather than run against the document.
 #guard (match parseSchematron
-          ("<schema><pattern abstract=\"true\" id=\"t\"><rule context=\"a\">" ++
+          ("<schema xmlns='http://purl.oclc.org/dsdl/schematron'><pattern abstract=\"true\" id=\"t\"><rule context=\"a\">" ++
            "<assert test=\"b\">m</assert></rule></pattern></schema>") with
         | .ok s => s.patterns.isEmpty
         | .error _ => false)
@@ -62,22 +61,38 @@ private def libRule : Rule :=
 -- A rule with no @context is abstract (it exists to be extended), and
 -- `extends` is outside this reader, so it is dropped.
 #guard (match parseSchematron
-          ("<schema><pattern id=\"t\"><rule id=\"r\">" ++
+          ("<schema xmlns='http://purl.oclc.org/dsdl/schematron'><pattern id=\"t\"><rule id=\"r\">" ++
            "<assert test=\"b\">m</assert></rule></pattern></schema>") with
         | .ok s => (s.patterns.head?.map (·.rules.isEmpty)) == some true
         | .error _ => false)
 
 -- The two failures are kept apart: not XML, versus XML that is not
 -- Schematron.
-#guard (match parseSchematron "<schema>" with | .error _ => true | .ok _ => false)
+#guard (match parseSchematron "<schema xmlns='http://purl.oclc.org/dsdl/schematron'>" with | .error _ => true | .ok _ => false)
 #guard (match parseSchematron "<html/>" with | .error _ => true | .ok _ => false)
 
 -- Namespace declarations and top-level variables are read.
 #guard (match parseSchematron
-          ("<schema><ns prefix=\"ex\" uri=\"http://ex/\"/>" ++
+          ("<schema xmlns='http://purl.oclc.org/dsdl/schematron'><ns prefix=\"ex\" uri=\"http://ex/\"/>" ++
            "<let name=\"n\" value=\"1\"/></schema>") with
         | .ok s => s.namespaces == [("ex", "http://ex/")] &&
                    (s.lets.map (·.name)) == ["n"]
         | .error _ => false)
+
+-- Namespace identity, scoped declarations and attribute qualification.
+private def rejectsSchema (src : String) : Bool :=
+  match parseSchematron src with | .error _ => true | _ => false
+
+#guard rejectsSchema "<schema/>"
+#guard rejectsSchema "<s:schema/>"
+#guard rejectsSchema "<s:schema xmlns:s='urn:wrong'/>"
+#guard (match parseSchematron
+    "<schema xmlns='http://purl.oclc.org/dsdl/schematron'><pattern xmlns='urn:wrong'/></schema>" with
+  | .ok s => s.patterns.isEmpty
+  | _ => false)
+#guard (match parseSchematron
+    "<schema xmlns='http://purl.oclc.org/dsdl/schematron' xmlns:f='urn:foreign'><pattern f:id='wrong'><rule f:context='a'/></pattern></schema>" with
+  | .ok s => (s.patterns.head?.map (fun p => p.id == "" && p.rules.isEmpty)) == some true
+  | _ => false)
 
 end L4Factoidal.Schematron

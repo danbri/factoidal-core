@@ -1,0 +1,2 @@
+# NOT EXISTS over the changed knows rows.
+SELECT ?s ?n WHERE { ?s <http://ex.org/name> ?n FILTER NOT EXISTS { ?s <http://ex.org/knows> ?o } }

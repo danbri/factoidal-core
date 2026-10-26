@@ -1,0 +1,5 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Groups keyed by inline integers: "1"^^xsd:integer and "1"^^xsd:int are two keys.
+SELECT ?t (COUNT(*) AS ?n) (SUM(?v) AS ?s) (MIN(?v) AS ?lo) (MAX(?v) AS ?hi) (AVG(?v) AS ?m)
+WHERE { ?x ex:tag ?t . ?x ex:score ?v } GROUP BY ?t ORDER BY ?t

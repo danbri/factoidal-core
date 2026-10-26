@@ -132,7 +132,7 @@ the probe sees the SAME blank-node label the full evaluation will
 produce — which is what makes the pushdown invisible in the result. -/
 
 def recordMatchesBoundSubject (bs : Option Subject) (tm : TriplesMap)
-    (rec' : Json) (i : Nat) : Bool :=
+    (rec' : Record) (i : Nat) : Bool :=
   match bs with
   | none => true
   | some s =>
@@ -142,11 +142,11 @@ def recordMatchesBoundSubject (bs : Option Subject) (tm : TriplesMap)
 
 /-- The indexed records of one candidate map that survive the pushdown. -/
 def recordsForMap (vs : VirtualSource) (b : PatternBound) (tm : TriplesMap) :
-    List (Json × Nat) :=
+    List (Record × Nat) :=
   match vs.docFor tm.source.path with
   | none => []
   | some doc =>
-      ((recordsOf tm.source doc).zipIdx).filter
+      (((recordsOf tm.source doc).map Record.json).zipIdx).filter
         (fun (rec', i) => recordMatchesBoundSubject b.s tm rec' i)
 
 /-! ## Solving
@@ -156,7 +156,8 @@ Default graph only: a quad with a graph is dropped, not misrouted. -/
 def solveOneMap (vs : VirtualSource) (b : PatternBound) (tm : TriplesMap) : Graph :=
   let tms := vs.mapping.map (fun t => { t with base := t.base.orElse (fun _ => vs.baseIri) })
   let tm := { tm with base := tm.base.orElse (fun _ => vs.baseIri) }
-  (quadsOfRecords tms vs.docFor tm (recordsForMap vs b tm)).filterMap (fun q =>
+  (quadsOfRecords { all := tms, src := jsonSourceTable tms vs.docFor } tm
+      (recordsForMap vs b tm)).filterMap (fun q =>
     match q.g with
     | none => some ({ s := q.s, p := q.p, o := q.o } : Triple)
     | some (.iri i) => if i.val == defaultGraphIri

@@ -5,13 +5,48 @@ Port of `formal/fstar/RDF.Graph.fsti` to Lean 4, plus the blank-node
 renaming operation from `RDF.Dataset.Merge` that per-document
 blank-node scoping needs.
 
-An RDF graph is a SET of triples (RDF 1.1 Concepts §3). Like the F*
-source, the representation is a `List Triple` so evaluation executes
-directly, with set semantics maintained by the operations
-(`Graph.mem` via the engine triple equality, `Graph.add`'s
-deduplication) rather than by the representation type. A
-`Finset`-based purely-specification twin is a candidate later layer;
-this file is the executable one, matching the F* module it ports.
+An RDF graph is a SET of triples (RDF 1.1 Semantics §4, which uses the
+definition of RDF 1.1 Concepts §3). Like the F* source, the representation
+is a `List Triple`, so evaluation executes directly. The type does NOT
+exclude a triple that occurs two times: `[t, t]` is a `Graph`. Set
+semantics is the invariant `Dataset.IsSet` (`RDF/DatasetSet.lean`): no two
+triples of one graph are `Triple.eqb`-equal (the same RDF term: lexical
+form, datatype and base direction exact, language tag without case), and
+no two named graphs have the same name.
+
+Where the invariant is enforced:
+
+* Parsers. `Source.parseDocument` and `parseDocumentOutcomeBy` give
+  `Dataset.toSet` of the reader output; the N-Quads and TriG readers add
+  with `addQuad`. Theorems `parseDocument_set`,
+  `parseDocumentOutcomeBy_isSet`.
+* The wasm dataset handle store. `OpenDataset` holds a `CertifiedDataset`
+  (`RDF/CertifiedDataset.lean`): a dataset with a proof of
+  `Dataset.IsSet`. Open, update, add, delete, clone and every derived
+  handle admit through it.
+* The graph and dataset operations (https://github.com/danbri/factoidal/issues/973).
+  `RDF/GraphSet.lean` has the one lemma, `Graph.KeyNodup.graphAddAll` (the
+  left fold of `Graph.add` keeps a set a set), and `Graph.toSet`.
+  `RDF/GraphOpsSet.lean` instantiates it: CONSTRUCT, the FROM merge,
+  DESCRIBE and CBD, the ρdf, RDFS, RDF and RDFS-Plus closures. The OWL 2 RL
+  closure adds by structural equality, so the ops that write it end with
+  `Graph.toSet` (`Wasm/Ops/Reason.lean` `owlRlClosureSet`). SPARQL Update:
+  `applyUpdateIn_isSet`. The stored-generation decode:
+  `Storage/QuadDatasetSet.lean` `datasetOfQuads_isSet`. The canonical
+  N-Quads lines: `RDF/CanonicalSet.lean` `canonicalLines_nodup`.
+
+Where it is NOT enforced: a value that no public operation gives to a
+serialiser, a count or a store (a hand-built value, an intermediate list of
+rule conclusions, the lenient N-Quads and TriG readers before the source
+layer's `Dataset.toSet`). `Graph.mem`, `Graph.add` and the model theory
+(`HoldsAll`) cannot detect a repeat, because they are stated with
+membership, and membership gives the same answer for `[t]` and `[t, t]`. A
+count, `COUNT(*)` and serializer output do detect it. A new producer of a
+graph that is stored, counted or written must return a `CertifiedDataset`,
+go through `Dataset.toSet` or `Graph.toSet`, or have a `KeyNodup` theorem,
+and must have a test of the observable count
+(`Harness/DatasetSetRegression.lean`, the `#guard`s next to the op).
+Hazard #46 in `skills/workflow-gotchas-debugging` has the defect this caused.
 -/
 import L4Factoidal.RDF.Core
 
@@ -19,8 +54,8 @@ namespace L4Factoidal.RDF
 
 /-! ## Graphs — RDF 1.1 Concepts §3 ("a set of RDF triples") -/
 
-/-- An RDF graph: a list of triples with set semantics maintained by
-the operations below. -/
+/-- An RDF graph: a list of triples. The type allows a repeated triple;
+the set invariant is `Dataset.IsSet` (module header). -/
 abbrev Graph := List Triple
 
 def Graph.empty : Graph := []
@@ -65,6 +100,46 @@ def Term.renameBnodes (f : BNodeId → BNodeId) : Term → Term
   | .bnode b          => .bnode (f b)
   | .literal l        => .literal l
   | .tripleTerm s p o => .tripleTerm (s.renameBnodes f) p (o.renameBnodes f)
+
+/-! ### The rename of a term nested deep
+
+`Term.renameBnodes` above is the SPECIFICATION. It takes one native frame for
+each level of triple-term nesting, and the writers of the N-Triples family
+reach it for every triple (`Dataset.relabelForWrite`): a triple term nested
+300,000 deep overflowed the stack
+(https://github.com/danbri/factoidal/issues/1003). `Term.renameBnodesLoop`
+keeps the renamed subject and the predicate of each open triple term in a list
+and wraps the rename of the innermost term in them, innermost first, as
+`Term.joinKeyLoop` (`RDF/Core.lean`). `Term.renameBnodes_eq_fast` proves it
+equal and `@[csimp]` makes every caller compiled after it run the loop. -/
+
+/-- The rename of a term, with the open triple terms (already renamed) in a
+list. A term that is not a triple term is renamed in place, as the
+specification does. -/
+def Term.renameBnodesLoop (f : BNodeId → BNodeId) : List (Subject × WfIri) → Term → Term
+  | frames, .tripleTerm s p o => Term.renameBnodesLoop f ((s.renameBnodes f, p) :: frames) o
+  | frames, .iri i => wrapTripleTerms frames (.iri i)
+  | frames, .bnode b => wrapTripleTerms frames (.bnode (f b))
+  | frames, .literal l => wrapTripleTerms frames (.literal l)
+
+theorem Term.renameBnodesLoop_eq (f : BNodeId → BNodeId) : ∀ (t : Term) (frames : List (Subject × WfIri)),
+    Term.renameBnodesLoop f frames t = wrapTripleTerms frames (Term.renameBnodes f t)
+  | .tripleTerm s p o, frames => by
+      rw [Term.renameBnodesLoop, Term.renameBnodesLoop_eq f o, Term.renameBnodes, wrapTripleTerms]
+  | .iri i, frames => by rw [Term.renameBnodesLoop, Term.renameBnodes]
+  | .bnode b, frames => by rw [Term.renameBnodesLoop, Term.renameBnodes]
+  | .literal l, frames => by rw [Term.renameBnodesLoop, Term.renameBnodes]
+
+/-- `Term.renameBnodes` as the loop. -/
+def Term.renameBnodesFast (f : BNodeId → BNodeId) (t : Term) : Term := Term.renameBnodesLoop f [] t
+
+/-- Any rename compiled after this line is computed by the loop. -/
+@[csimp] theorem Term.renameBnodes_eq_fast : @Term.renameBnodes = @Term.renameBnodesFast := by
+  funext f t
+  rw [Term.renameBnodesFast, Term.renameBnodesLoop_eq, wrapTripleTerms]
+
+#print axioms Term.renameBnodesLoop_eq
+#print axioms Term.renameBnodes_eq_fast
 
 def Triple.renameBnodes (f : BNodeId → BNodeId) (t : Triple) : Triple :=
   { s := t.s.renameBnodes f, p := t.p, o := t.o.renameBnodes f }
@@ -156,6 +231,22 @@ def Dataset.scopeBnodes (parts : List String) (ds : Dataset) : Dataset :=
   ds.prefixBnodes (bnodeScopePrefix parts)
 
 /-! ## Set-semantics theorems -/
+
+/-- Engine membership is list membership: `Triple.eqb` is structural
+equality, since every term is canonical (`Triple.eqb_iff_eq`;
+https://github.com/danbri/factoidal/issues/1001). -/
+theorem Graph.mem_iff (t : Triple) : ∀ g : Graph, Graph.mem t g = true ↔ t ∈ g
+  | [] => by simp [Graph.mem]
+  | hd :: tl => by
+      simp only [Graph.mem, Bool.or_eq_true, List.mem_cons, Graph.mem_iff t tl,
+        Triple.eqb_iff_eq]
+      constructor
+      · rintro (h | h)
+        · exact Or.inl h.symm
+        · exact Or.inr h
+      · rintro (h | h)
+        · exact Or.inl h.symm
+        · exact Or.inr h
 
 /-- Membership distributes over append. -/
 theorem Graph.mem_append (g1 g2 : Graph) (u : Triple) :

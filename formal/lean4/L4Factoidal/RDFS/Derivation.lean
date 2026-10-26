@@ -416,19 +416,19 @@ theorem rdfs3Ann_conclusions (ig : List (Nat × Triple)) (x : Nat × Triple) :
 
 /-- **rdfs9**, annotated (`Closure.rdfs9For`). -/
 def rdfs9Ann (ig : List (Nat × Triple)) (x : Nat × Triple) : List Step :=
-  match x.2.o with
-  | .iri a =>
+  match x.2.o.toSubject? with
+  | some a =>
       if x.2.p == rdfType then
         annJoin .rdfs9 ig x
-          (fun y => y.s == Subject.iri a && y.p == rdfsSubClassOf)
+          (fun y => y.s == a && y.p == rdfsSubClassOf)
           (fun y => some ⟨x.2.s, rdfType, y.o⟩)
       else []
-  | _ => []
+  | none => []
 
 theorem rdfs9Ann_conclusions (ig : List (Nat × Triple)) (x : Nat × Triple) :
     (rdfs9Ann ig x).map (·.conclusion) = rdfs9For (ig.map (·.2)) x.2 := by
   unfold rdfs9Ann rdfs9For
-  cases ho : x.2.o <;> dsimp only <;> (try split) <;>
+  cases ho : x.2.o.toSubject? <;> (try dsimp only) <;> (try split) <;>
     simp [annJoin_conclusions, objectsOf, filterMap_some_eq_map, List.map_map,
           Function.comp_def]
 

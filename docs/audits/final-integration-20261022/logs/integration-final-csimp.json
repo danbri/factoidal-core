@@ -1,0 +1,18 @@
+{
+  "command": [
+    "python3",
+    "tools/lean-csimp-reach.py",
+    "--gate",
+    "--json",
+    "../logs/integration-final-csimp-report.json"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core",
+  "node": "v22.22.2",
+  "nodeBin": "/opt/homebrew/Cellar/node@22/22.22.2_2/bin",
+  "npmCache": "/private/tmp/factoidal-public-pack-cache",
+  "started": "2026-10-22T17:50:21.377Z",
+  "elapsedMs": 58110,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}

@@ -1,0 +1,5 @@
+# Oracle queries that `l4qlvr query` refuses (exit 3), each with the open
+# issue that tracks the gap. Format: query name <TAB> issue URL <TAB> reason.
+# tests/qlvr/queries.sh counts a listed refusal as XFAIL and fails the run
+# when a listed query is answered (STALE): then remove the line and update
+# the issue.

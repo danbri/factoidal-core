@@ -52,20 +52,25 @@ def Outcome.isFail : Outcome → Bool
 
 /-! ## Scores -/
 
-/-- The four buckets. `total` is their sum, so the denominator is
-always the number of manifest entries actually walked. -/
+/-- The buckets. `total` is their sum, so the denominator is always
+the number of manifest entries actually walked. `xfail` counts the
+expected failures (`Harness.expectedFailures` below):
+a case that fails as its open issue says, counted apart from both
+`pass` and `fail` (skill test-suites, "Expected failures"). -/
 structure Score where
   pass        : Nat := 0
   fail        : Nat := 0
   skip        : Nat := 0
   unsupported : Nat := 0
+  xfail       : Nat := 0
   deriving DecidableEq, Repr
 
-def Score.total (s : Score) : Nat := s.pass + s.fail + s.skip + s.unsupported
+def Score.total (s : Score) : Nat := s.pass + s.fail + s.skip + s.unsupported + s.xfail
 
 def Score.add (a b : Score) : Score :=
   { pass := a.pass + b.pass, fail := a.fail + b.fail,
-    skip := a.skip + b.skip, unsupported := a.unsupported + b.unsupported }
+    skip := a.skip + b.skip, unsupported := a.unsupported + b.unsupported,
+    xfail := a.xfail + b.xfail }
 
 def Score.bump (s : Score) : Outcome → Score
   | .pass          => { s with pass        := s.pass + 1 }
@@ -77,7 +82,35 @@ def Score.bump (s : Score) : Outcome → Score
 every numerator labelled, the denominator always present. -/
 def Score.line (suite : String) (s : Score) : String :=
   s!"{suite}: {s.pass} pass, {s.fail} fail, {s.skip} skip, " ++
-  s!"{s.unsupported} unsupported (out of {s.total})"
+  s!"{s.unsupported} unsupported" ++
+  (if s.xfail == 0 then "" else s!", {s.xfail} expected-fail") ++
+  s!" (out of {s.total})"
+
+/-- An expected failure: a case the engine fails today, tracked by an
+open issue (CLAUDE.md, "A stated shortfall is a failing test plus an
+open issue"; skill test-suites, "Expected failures"). The case still
+runs. A FAIL is counted as `expected-fail` and printed with its issue;
+a PASS is a FAIL of the run ("unexpected pass"), so the entry is
+removed and the issue closed in the fixing commit. -/
+structure ExpectedFailure where
+  /-- The manifest path ends with this. -/
+  manifestSuffix : String
+  /-- `mf:name` of the entry. -/
+  name : String
+  issue : String
+  reason : String
+
+def expectedFailures : List ExpectedFailure :=
+  let tp := "sparql10/type-promotion/manifest.ttl"
+  let issue := "https://github.com/danbri/factoidal/issues/785"
+  let why := "xsd:float is promoted to xsd:double (SPARQL 1.1 §17.1 and XPath " ++
+    "promotion need float op float = float, float op decimal = float)"
+  [ { manifestSuffix := tp, name := "tP-float-float", issue := issue, reason := why },
+    { manifestSuffix := tp, name := "tP-float-decimal", issue := issue, reason := why },
+    { manifestSuffix := tp, name := "tP-short-float", issue := issue, reason := why } ]
+
+def expectedFailure? (manifestPath name : String) : Option ExpectedFailure :=
+  expectedFailures.find? (fun x => manifestPath.endsWith x.manifestSuffix && x.name == name)
 
 /-! ## Harness diagnostics
 

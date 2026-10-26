@@ -1,0 +1,113 @@
+/-
+  Harness/WorkerPoolBench.lean — start latency of a short job on the Lean task
+  pool (`IO.asTask`, default priority) and on `Harness.WorkerPool` (issue
+  https://github.com/danbri/factoidal/issues/961, stage 1g of
+  docs/designissues/2026-10-12-parallel-block-scans.md).
+
+  Usage: l4pool-bench [rounds] [gapUs] [jobs]
+         l4pool-bench stress [cycles] [maxGapUs] [workers]
+  Each round: the caller works (polls the clock) for `gapUs` microseconds, the
+  time a query spends between two divided phases, then starts `jobs` jobs
+  that each record the time they begin, and waits for all of them. Printed
+  per mode: the median and 90th percentile of the latest job start after
+  the post, and of the time until the caller has every result, in
+  microseconds.
+-/
+import Harness.WorkerPool
+import L4Factoidal.Qlvr.Sort
+
+open Harness.WorkerPool
+
+def busyUntil (t : Nat) : IO Unit := do
+  for _ in [0:100000000] do
+    if (← IO.monoNanosNow) ≥ t then return
+
+def pct (xs : Array Nat) (q : Nat) : Nat :=
+  let s := L4Factoidal.Qlvr.mergeSortBy xs (· ≤ ·)
+  if s.size == 0 then 0 else s[min (s.size - 1) (s.size * q / 100)]!
+
+def report (name : String) (starts dones : Array Nat) : IO Unit :=
+  IO.eprintln s!"{name}: start p50 {pct starts 50 / 1000} us p90 {pct starts 90 / 1000} us; \
+    all done p50 {pct dones 50 / 1000} us p90 {pct dones 90 / 1000} us"
+
+/-- The Lean task pool: one `IO.asTask` per job. -/
+def roundTasks (jobs : Nat) : IO (Nat × Nat) := do
+  let t0 ← IO.monoNanosNow
+  let mut ts := #[]
+  for _ in [0:jobs] do
+    ts := ts.push (← IO.asTask (IO.monoNanosNow))
+  let mut latest := 0
+  for t in ts do
+    match ← IO.wait t with
+    | .ok s => latest := max latest (s - t0)
+    | .error _ => pure ()
+  let t1 ← IO.monoNanosNow
+  return (latest, t1 - t0)
+
+/-- The worker pool: `jobs` jobs on the workers (`runAll` with a no-op job 0
+    on the caller). -/
+def roundPool (p : Pool Unit) (jobs : Nat) : IO (Nat × Nat) := do
+  let t0 ← IO.monoNanosNow
+  let js : Array (IO Nat) := #[(pure t0 : IO Nat)] ++ (Array.replicate jobs (IO.monoNanosNow : IO Nat))
+  let rs ← p.runAll js
+  let t1 ← IO.monoNanosNow
+  let mut latest := 0
+  for r in rs.extract 1 rs.size do
+    match r with
+    | .ok s => latest := max latest (s - t0)
+    | .error _ => pure ()
+  return (latest, t1 - t0)
+
+def runMode (name : String) (rounds gapUs : Nat) (step : IO (Nat × Nat)) : IO Unit := do
+  let mut starts := #[]
+  let mut dones := #[]
+  for _ in [0:rounds] do
+    busyUntil ((← IO.monoNanosNow) + gapUs * 1000)
+    let (s, d) ← step
+    starts := starts.push s
+    dones := dones.push d
+  report name starts dones
+
+/-- Start and stop the pool `cycles` times, as one `l4sbm11 query` process
+    does (issue https://github.com/danbri/factoidal/issues/981): start
+    `workers` threads, wake them, work for 0 to `maxGapUs` microseconds, in
+    every second cycle run one job on each worker, then shut the pool down.
+    The time between the start and the stop moves over the window in which a
+    new worker thread first reads its stop flag. A lost write of the flag
+    leaves a worker that never ends, and `shutdown` then waits for good: run
+    this under `timeout`. Prints the cycles done. -/
+def stress (cycles maxGapUs workers : Nat) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  for c in [0:cycles] do
+    let spin := if c % 4 < 2 then 1000000 else 0
+    let p ← start workers spin (pure ())
+    p.wake
+    let gap ← IO.rand 0 maxGapUs
+    busyUntil ((← IO.monoNanosNow) + gap * 1000)
+    if c % 2 == 1 then
+      let rs ← p.runAll ((Array.range (workers + 1)).map fun i => (pure i : IO Nat))
+      if rs.size != workers + 1 then
+        IO.eprintln s!"stress: cycle {c}: {rs.size} results"
+        return 1
+    p.shutdown
+    if (c + 1) % 10000 == 0 then
+      IO.eprintln s!"stress: {c + 1} cycles, {((← IO.monoNanosNow) - t0) / 1000000} ms"
+  IO.eprintln s!"stress: {cycles} cycles done, workers {workers}, gap 0 to {maxGapUs} us"
+  return 0
+
+def main (args : List String) : IO UInt32 := do
+  if args.head? == some "stress" then
+    return ← stress ((args[1]? >>= String.toNat?).getD 10000) ((args[2]? >>= String.toNat?).getD 200)
+      ((args[3]? >>= String.toNat?).getD 3)
+  let rounds := (args[0]? >>= String.toNat?).getD 2000
+  let gapUs := (args[1]? >>= String.toNat?).getD 200
+  let jobs := (args[2]? >>= String.toNat?).getD 3
+  IO.eprintln s!"rounds {rounds}, gap {gapUs} us, jobs {jobs}"
+  runMode "lean task pool (IO.asTask)" rounds gapUs (roundTasks jobs)
+  let spinning ← start jobs 1000000 (pure ())
+  runMode "worker pool, poll 1 ms" rounds gapUs (roundPool spinning jobs)
+  spinning.shutdown
+  let parking ← start jobs 0 (pure ())
+  runMode "worker pool, poll 0 (park at once)" rounds gapUs (roundPool parking jobs)
+  parking.shutdown
+  return 0

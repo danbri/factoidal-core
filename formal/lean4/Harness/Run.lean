@@ -43,6 +43,7 @@ Three rules this module keeps:
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
+import Harness.RifImport
 import Harness.Manifest
 import Harness.Compare
 import Harness.ProtocolRun
@@ -51,6 +52,7 @@ import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.RDF.Isomorphism
+import L4Factoidal.RDF.DocumentScope
 import L4Factoidal.RDF.Canonical
 import L4Factoidal.RDF.Entailment
 import L4Factoidal.SPARQL.Parser
@@ -58,7 +60,6 @@ import L4Factoidal.SPARQL.UpdateParser
 import L4Factoidal.SPARQL.ResultsXml
 import L4Factoidal.SPARQL.ResultsJson
 import L4Factoidal.SPARQL.ResultsCsvTsv
-import L4Factoidal.SPARQL.ResultsRdf
 import L4Factoidal.OWL.QueryEval
 import L4Factoidal.RIF.Saturate
 
@@ -142,7 +143,11 @@ Rules, in the order the F* runner applies them:
   5. ASK: the evaluated boolean against the expected one;
   6. CONSTRUCT: the expected Turtle graph, by isomorphism;
   7. parse failure → FAIL (named); missing file → SKIP (path);
-     an entailment regime or DESCRIBE → `unsupported`, named. -/
+     an entailment regime → `unsupported`, named.
+  8. DESCRIBE: the evaluated Concise Bounded Description against the
+     expected Turtle graph, by isomorphism. The W3C suites hold no
+     DESCRIBE evaluation test (§16.4 leaves the description to the
+     service), so this arm has no manifest case today. -/
 
 /-- `NOW()` for the whole run: fixed, so a result is reproducible. -/
 def fixedNow : String := "2026-08-22T00:00:00Z"
@@ -173,22 +178,36 @@ coming after, as in the F* runner). -/
 def mergeDatasets (a b : Dataset) : Dataset :=
   { default := Graph.union a.default b.default, named := a.named ++ b.named }
 
-/-- Give one retrieved RDF document its own blank-node scope. -/
-def scopeFixtureDataset (scope : List String) (ds : Dataset) : Dataset :=
-  ds.scopeBnodes scope
+/-- Add the data file with document number `i` to the store. Each fixture
+file is its own document, so its blank nodes are scoped by `i`
+(`Dataset.scopeDocument`): two files that both write `_:b0` hold two blank
+nodes, and the store is their RDF 1.1 Semantics section 5.2 merge
+(`scopeDocument_combine_isMerge`). Until 2026-10-24 the files were combined
+with no scope, which is the union
+(https://github.com/danbri/factoidal/issues/975, phase C). -/
+def addDataFile (ds : Dataset) (i : Nat) (d : Dataset) : Dataset :=
+  mergeDatasets ds (d.scopeDocument i)
+
+/-- Add the default graph of the graph file with document number `i` to the
+store as the named graph `name`, with its blank nodes scoped by `i`. -/
+def addGraphFile (ds : Dataset) (i : Nat) (name : Subject) (d : Dataset) : Dataset :=
+  { ds with named := ds.named ++ [{ name := name, graph := (d.scopeDocument i).default }] }
 
 /-- Read and parse every fixture of a test. `.error o` carries the
 outcome to report (skip for a missing file, fail for a parse error). -/
 def loadFixtures (tc : TestCase) (mode : Mode := .rdf11) :
     IO (Except Outcome (Dataset × List (Iri × Graph))) := do
   let mut ds : Dataset := Dataset.empty
+  let mut doc : Nat := 0
   for df in tc.dataFiles do
     match ← readOpt df with
     | none      => return .error (.skip s!"file missing: {df}")
     | some text =>
       match parseDataFile df text mode with
       | .error e => return .error (.fail s!"data parse error in {basename df}: {e}")
-      | .ok d    => ds := mergeDatasets ds (scopeFixtureDataset ["data", df] d)
+      | .ok d    =>
+        ds := addDataFile ds doc d
+        doc := doc + 1
   for (iri, path) in tc.graphData do
     match ← readOpt path with
     | none      => return .error (.skip s!"file missing: {path}")
@@ -197,8 +216,8 @@ def loadFixtures (tc : TestCase) (mode : Mode := .rdf11) :
       | .error e => return .error (.fail s!"graph data parse error in {basename path}: {e}")
       | .ok d    =>
         if h : isIri iri = true then
-          let scopedDs := scopeFixtureDataset ["graph", iri, path] d
-          ds := { ds with named := ds.named ++ [{ name := .iri ⟨iri, h⟩, graph := scopedDs.default }] }
+          ds := addGraphFile ds doc (.iri ⟨iri, h⟩) d
+          doc := doc + 1
         else return .error (.fail s!"qt:graphData name is not an IRI: {iri}")
   let mut services : List (Iri × Graph) := []
   for (endpoint, path) in tc.serviceData do
@@ -208,19 +227,21 @@ def loadFixtures (tc : TestCase) (mode : Mode := .rdf11) :
       match parseDataFile path text mode with
       | .error e => return .error (.fail s!"service data parse error in {basename path}: {e}")
       | .ok d    =>
-          let scopedDs := scopeFixtureDataset ["service", endpoint, path] d
-          services := services ++ [(endpoint, scopedDs.default)]
+          services := services ++ [(endpoint, (d.scopeDocument doc).default)]
+          doc := doc + 1
   return .ok (ds, services)
 
 /-- Materialise local RDF graphs named directly by query `FROM` and
 `FROM NAMED` clauses. Manifest `qt:data`/`qt:graphData` remains the
 first source; a local `file:` graph absent there is retrieved once and
 installed under its clause IRI so the semantic `applyDataset` function
-can construct the active dataset. Non-local IRIs remain unresolved in
-this offline runner. -/
-def loadQueryDatasetSources (q : Query) (initial : Dataset)
+can construct the active dataset. Each retrieved file is its own document,
+with document numbers from `firstDoc` (`Dataset.scopeDocument`, as
+`addGraphFile`). Non-local IRIs remain unresolved in this offline runner. -/
+def loadQueryDatasetSources (q : Query) (initial : Dataset) (firstDoc : Nat)
     (mode : Mode := .rdf11) : IO (Except Outcome Dataset) := do
   let mut ds := initial
+  let mut doc := firstDoc
   for dc in q.dataset do
     let i := match dc with | .default i | .named i => i
     if (ds.lookupNamedIri i.val).isNone && i.val.startsWith "file://" then
@@ -233,29 +254,42 @@ def loadQueryDatasetSources (q : Query) (initial : Dataset)
               return Except.error
                 (Outcome.fail s!"query dataset parse error in {basename path}: {e}")
           | .ok parsed =>
-              let scopedDs := scopeFixtureDataset ["query-source", i.val] parsed
-              ds := { ds with named := ds.named ++
-                [{ name := .iri i, graph := scopedDs.default }] }
+              ds := addGraphFile ds doc (.iri i) parsed
+              doc := doc + 1
   return .ok ds
 
-/-- What an expected-result file decodes to. -/
+/-- What an expected-result file decodes to. `ordered` is false when
+the file does not define an order for its rows (an `rs:ResultSet`
+without `rs:index`); the rows then compare as a multiset even under
+ORDER BY. -/
 inductive Expected where
-  | rows    (rows : List Binding) (csv : Bool)
+  | rows    (rows : List Binding) (csv : Bool) (ordered : Bool)
   | boolean (b : Bool)
   | graph   (g : Graph)
 
-/-- Decode the expected file by extension. RDF result-set graphs use
-the same decoder after either Turtle or RDF/XML parsing. -/
+/-- An expected graph: a DAWG `rs:ResultSet` (`rs:boolean` for ASK,
+else rows) or, without one, a CONSTRUCT/DESCRIBE graph. -/
+def expectedOfGraph (g : Graph) : Except String Expected :=
+  if isRsResultSet g then
+    match rsBoolean? g with
+    | some (some b) => .ok (.boolean b)
+    | some none     => .error "rs:boolean is not an xsd:boolean lexical form"
+    | none =>
+        match decodeRsResultSet g with
+        | some (_, rows) => .ok (.rows rows false (rsRowsOrdered g))
+        | none           => .error "rs:ResultSet typed but no result-set subject"
+  else .ok (.graph g)
+
+/-- Decode the expected file by extension (the `.srx/.srj/.tsv/.csv`
+and `.ttl` branches of `run_query_eval_test`, plus `.nt` and RDF/XML
+`.rdf`). -/
 def parseExpected (rf text : String) (mode : Mode := .rdf11) : Except String Expected :=
   let ofResult (label : String) (csv : Bool) (r : Except ResultsError QueryResult) :
       Except String Expected :=
     match r with
-    | .ok (.bindings _ rows) => .ok (.rows rows csv)
+    | .ok (.bindings _ rows) => .ok (.rows rows csv true)
     | .ok (.boolean b)       => .ok (.boolean b)
     | .error e               => .error s!"{label}: {e}"
-  let ofGraph (g : Graph) : Except String Expected :=
-    if isRdfResultSet g then ofResult "RDF result set" false (decodeRdfResultSet g)
-    else .ok (.graph g)
   if rf.endsWith ".srx" then ofResult "SRX" false (parseSrx text)
   else if rf.endsWith ".srj" then ofResult "SRJ" false (parseSrj text)
   else if rf.endsWith ".tsv" then ofResult "TSV" false (parseTsv text)
@@ -263,11 +297,19 @@ def parseExpected (rf text : String) (mode : Mode := .rdf11) : Except String Exp
   else if rf.endsWith ".ttl" then
     match parseTurtle text (some ("file://" ++ rf)) mode with
     | .error e => .error s!"Turtle: {fmtParseError e}"
-    | .ok g    => ofGraph g
+    | .ok g    => expectedOfGraph g
   else if rf.endsWith ".rdf" then
+    -- A result set (sparql10 `sort/result-sort-*.rdf`) or a graph, in
+    -- RDF/XML.
     match RdfXml.parseRdfXml text (some ("file://" ++ rf)) with
-    | .error e => .error s!"RDF/XML: {fmtParseError e}"
-    | .ok g    => ofGraph g
+    | .error e => .error s!"RDF/XML: {e}"
+    | .ok g    => expectedOfGraph g
+  else if rf.endsWith ".nt" then
+    -- A CONSTRUCT result given as N-Triples (W3C sparql12
+    -- `codepoint-esc-08.nt`).
+    match parseNTriples text mode with
+    | .error e => .error s!"N-Triples: {fmtParseError e}"
+    | .ok g    => .ok (.graph g)
   else .error s!"unknown result format: {basename rf}"
 
 /-- The FAIL text for a SELECT mismatch: counts plus the expected rows
@@ -379,34 +421,16 @@ def rifXmlPreprocess (raw : String) : String :=
       | [] => raw
   | [] => raw
 
-/-- Load one resolved import file by extension (`.rdf` RDF/XML,
-otherwise Turtle) and close it under the profile its `Import` names —
-the F* `materialise_import_graph` dispatch. -/
-def rifLoadImport (path : String) (profile : Option String) : IO Graph := do
-  let some text ← readOpt path | return []
-  let g := if path.endsWith ".rdf"
-           then (L4Factoidal.Syntax.RdfXml.parseRdfXml text (some ("file://" ++ path))).toOption.getD []
-           else (parseTurtle text (some ("file://" ++ path))).toOption.getD []
+/-- Apply the runner's existing import-profile materialization policy after
+    successful shared parsing. The OWL branch is the existing RL approximation. -/
+def rifMaterialiseImport (g : Graph) (profile : Option String) : Graph :=
   let entNs := "http://www.w3.org/ns/entailment/"
-  return (match profile with
-    | some p =>
-        if p == entNs ++ "RDF" || p == entNs ++ "RDFS" then
-          L4Factoidal.RDFS.closureFix g
-        else if (p.splitOn "OWL").length > 1 then
-          L4Factoidal.OWL.RL.closureFix g
-        else g
-    | none => g)
-
-/-- Resolve one `Import` location URL to a local file in `dir`:
-basename, tried bare, then `.rdf`, then `.ttl`. -/
-def rifResolveImport (dir url : String) : IO (Option String) := do
-  let bn := (url.splitOn "/").getLast?.getD url
-  let candidates :=
-    if bn.endsWith ".rdf" || bn.endsWith ".ttl" then [bn]
-    else [bn ++ ".rdf", bn ++ ".ttl", bn]
-  let found ← candidates.findM? (fun c =>
-    System.FilePath.pathExists (System.FilePath.mk (dir ++ "/" ++ c)))
-  return found.map (fun c => dir ++ "/" ++ c)
+  match profile with
+  | some p =>
+      if p == entNs ++ "RDF" || p == entNs ++ "RDFS" then L4Factoidal.RDFS.closureFix g
+      else if (p.splitOn "OWL").length > 1 then L4Factoidal.OWL.RL.closureFix g
+      else g
+  | none => g
 
 /-- The RIF regime's dataset: premise rules + imports + saturation.
 `.error` carries the outcome when the premise cannot be used. -/
@@ -424,12 +448,14 @@ def rifSaturateDataset (tc : TestCase) (ds : Dataset) :
     | return .error (.fail "RIF-XML premise did not parse")
   let mut imported : Graph := []
   for (url, profile) in doc.imports do
-    match ← rifResolveImport dir url with
-    | some path => imported := imported ++ (← rifLoadImport path profile)
-    | none => pure ()
+    match ← RifImport.load dir url with
+    | .ok loaded => imported := imported ++ rifMaterialiseImport loaded.graph profile
+    | .error why => return .error (.unsupported why)
   let merged := ds.default ++ imported
   let saturated := L4Factoidal.RIF.Saturate.saturateGraph "rules" doc.rules merged
-  return .ok { ds with default := saturated }
+  match saturated.completeGraph? with
+  | some graph => return .ok { ds with default := graph }
+  | none => return .error (.unsupported saturated.diagnostic)
 
 /-- One `QueryEvaluationTest` / `CSVResultFormatTest`. `mode` is the
 suite's RDF version; a `.rdf12` suite parses its queries with the
@@ -463,7 +489,8 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
   match ← loadFixtures tc mode with
   | .error o => return .ofOutcome o
   | .ok (dsLoaded, services) =>
-  match ← loadQueryDatasetSources q dsLoaded mode with
+  match ← loadQueryDatasetSources q dsLoaded
+      (tc.dataFiles.length + tc.graphData.length + tc.serviceData.length) mode with
   | .error o => return .ofOutcome o
   | .ok ds0 =>
   -- SPARQL 1.1 Entailment Regimes: answers are simple-entailment
@@ -531,13 +558,19 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
   -- install the query's dataset in the environment themselves.
   let env : EvalEnv := { now := some fixedNow, services := services, base := q.base }
   let ordered := q.modifier.orderBy.isSome
+  -- Federated Query §2.3: a failed SERVICE call without SILENT makes the
+  -- query fail, and a QueryEvaluationTest names a result, so the test
+  -- fails with the library's error (`Query.serviceFailure`).
+  match q.serviceFailure env ds with
+  | some f => return .ofOutcome (.fail s!"query failed: {f.message}")
+  | none =>
   match q.form, expected with
-  | .select _, .rows erows csv =>
+  | .select _, .rows erows csv eordered =>
       let arows := if owlRegime then
                      (L4Factoidal.OWL.QueryEval.evalSelectOwl env ds q).filter rowAllowed
                    else (evalSelect env ds q).2
       let n := erows.length + arows.length
-      return (match compareSelectRows ordered csv erows arows with
+      return (match compareSelectRows (ordered && eordered) csv erows arows with
         | .equal    => { outcome := .pass, rowsCompared := n }
         | .notEqual => { outcome := .fail (selectMismatch csv erows arows), rowsCompared := n }
         | .budgetExceeded =>
@@ -555,8 +588,16 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
         s!"CONSTRUCT graph not isomorphic to the expected one (got {got.length} triples, expected {g.length})"
         (Graph.isomorphicOutcome got g)
       return { r with triplesCompared := got.length + g.length }
-  | .describe _, _ =>
-      return .ofOutcome (.unsupported "DESCRIBE (the Lean port fixes no description policy)")
+  | .describe _, .graph g =>
+      -- §16.4 leaves the description to the service, so no W3C test fixes
+      -- one. A manifest that did would give an expected graph; the answer
+      -- is compared with it by isomorphism, as for CONSTRUCT.
+      let got := evalDescribe env ds q
+      let r := isoResult
+        s!"DESCRIBE graph not isomorphic to the expected one (got {got.length} triples, expected {g.length})"
+        (Graph.isomorphicOutcome got g)
+      return { r with triplesCompared := got.length + g.length }
+  | .describe _, _        => return .ofOutcome (.fail "expected file is not a graph but the query is DESCRIBE")
   | .select _, .boolean _ => return .ofOutcome (.fail "expected file is a boolean result but the query is SELECT")
   | .select _, .graph _   => return .ofOutcome (.fail "expected file is a graph but the query is SELECT")
   | .ask, _               => return .ofOutcome (.fail "expected file is not a boolean result but the query is ASK")
@@ -610,13 +651,16 @@ into named graphs (the F* `load_dataset` + `load_triples` fold). -/
 def loadUpdateStore (dataFiles : List String) (graphData : List (String × String))
     (mode : Mode := .rdf11) : IO (Except Outcome Dataset) := do
   let mut ds : Dataset := Dataset.empty
+  let mut doc : Nat := 0
   for df in dataFiles do
     match ← readOpt df with
     | none      => return .error (.skip s!"file missing: {df}")
     | some text =>
       match parseDataFile df text mode with
       | .error e => return .error (.fail s!"data parse error in {basename df}: {e}")
-      | .ok d    => ds := mergeDatasets ds d
+      | .ok d    =>
+        ds := addDataFile ds doc d
+        doc := doc + 1
   for (iri, path) in graphData do
     match ← readOpt path with
     | none      => return .error (.skip s!"file missing: {path}")
@@ -625,7 +669,8 @@ def loadUpdateStore (dataFiles : List String) (graphData : List (String × Strin
       | .error e => return .error (.fail s!"graph data parse error in {basename path}: {e}")
       | .ok d    =>
         if h : isIri iri = true then
-          ds := { ds with named := ds.named ++ [{ name := .iri ⟨iri, h⟩, graph := d.default }] }
+          ds := addGraphFile ds doc (.iri ⟨iri, h⟩) d
+          doc := doc + 1
         else return .error (.fail s!"ut:graphData label is not an IRI: {iri}")
   return .ok ds
 

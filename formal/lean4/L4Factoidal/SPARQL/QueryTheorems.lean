@@ -398,6 +398,14 @@ theorem distinctSolutionsFast_eq (omega : SolutionSeq) :
     (DistinctBucketWf.empty (distinctVariables omega)) (by simp [NoLaterDup])]
   simp
 
+/-- `COUNT(DISTINCT *)` counts the rows of the §18.4 reference DISTINCT. The
+code of `evalAggregate` calls the hash-bucketed `distinctSolutionsFast`
+(https://github.com/danbri/factoidal/issues/722); this is the same value. -/
+theorem evalAggregate_countDistinctStar (env : EvalEnv) (g : SolutionGroup) :
+    evalAggregate env .count true (.var "*") g =
+      .num (Int.ofNat (distinctSolutions g.solutions).length) := by
+  simp [evalAggregate, distinctSolutionsFast_eq]
+
 /-- DISTINCT is IDEMPOTENT (§18.4: `Distinct(Distinct(Ω)) =
 Distinct(Ω)` — deduplicating a deduplicated sequence changes
 nothing). -/
@@ -451,6 +459,44 @@ theorem length_sliceSolutions_le_input (offset limit : Option Nat)
   unfold sliceSolutions
   cases offset <;> cases limit <;>
     simp [List.length_take, List.length_drop] <;> omega
+
+/-- Slicing reads only the LENGTH of its input: two sequences of the same
+length have slices of the same length. -/
+theorem length_sliceSolutions_eq_of_length_eq (offset limit : Option Nat)
+    {omega omega' : SolutionSeq} (h : omega.length = omega'.length) :
+    (sliceSolutions offset limit omega).length
+      = (sliceSolutions offset limit omega').length := by
+  unfold sliceSolutions
+  cases offset <;> cases limit <;> simp [List.length_take, List.length_drop, h]
+
+/-- ORDER BY (the merge sort the evaluator runs) is a permutation, so it
+keeps the length. -/
+theorem length_sortSolutionsFast (cmp : Binding → Binding → Int)
+    (omega : SolutionSeq) : (sortSolutionsFast cmp omega).length = omega.length := by
+  unfold sortSolutionsFast
+  exact List.length_mergeSort omega
+
+/-- An ASK query reads only whether its solution sequence is empty
+(§18.2.5), and ORDER BY changes no length. So `evalAsk` may skip the
+sort: `formHasSolution` slices the unordered sequence and gives the same
+answer as the sequence `formSolutions` builds, which CONSTRUCT
+instantiates its template over. -/
+theorem formHasSolution_eq (env : EvalEnv) (active : Graph) (q : Query)
+    (omega0 : SolutionSeq) :
+    formHasSolution env active q omega0
+      = !(formSolutions env active q omega0).isEmpty := by
+  have isEmpty_len : ∀ (l : SolutionSeq), l.isEmpty = decide (l.length = 0) := by
+    intro l
+    cases l <;> simp
+  unfold formHasSolution formSolutions
+  generalize formRows env active q omega0 = rows
+  cases hob : q.modifier.orderBy with
+  | none => rfl
+  | some o =>
+      have hs := length_sliceSolutions_eq_of_length_eq q.modifier.offset q.modifier.limit
+        (omega := sortSolutionsFast (compareOnConditions env active o) rows) (omega' := rows)
+        (length_sortSolutionsFast _ _)
+      simp only [isEmpty_len, hs]
 
 /-! ## §18.4 projection -/
 
@@ -581,15 +627,74 @@ theorem length_evalValues (vars : List VarName) (rows : List (List (Option Term)
 
 /-- SERVICE SILENT against an unreachable endpoint yields the empty
 solution mapping, so a surrounding join keeps its rows (Federated
-Query §2). -/
+Query §2.3, §3.2 Ω0). -/
 @[simp] theorem evalIn_service_silent_miss (ds : Dataset) (active : Graph)
-    (p : GraphPattern) :
-    (GraphPattern.service none true p).evalIn ds active = [Binding.empty] := rfl
+    (endpoint : Iri) (p : GraphPattern) :
+    (GraphPattern.service endpoint none true p).evalIn ds active = [Binding.empty] := rfl
 
-/-- Without SILENT the same miss yields no rows. -/
+/-- Without SILENT the same miss gives no rows from `evalIn`. The query
+does not answer these rows: §3.2 makes the invocation an error, which
+`GraphPattern.serviceFailure` reports
+(`GraphPattern.serviceFailure_service_miss`) and every query evaluator
+answers in their place (`Query.serviceFailure`). -/
 @[simp] theorem evalIn_service_miss (ds : Dataset) (active : Graph)
-    (p : GraphPattern) :
-    (GraphPattern.service none false p).evalIn ds active = [] := rfl
+    (endpoint : Iri) (p : GraphPattern) :
+    (GraphPattern.service endpoint none false p).evalIn ds active = [] := rfl
+
+
+/-! ## §16.4 — DESCRIBE
+
+The specification fixes which resources a DESCRIBE query describes and
+leaves the description to the service (§16.4). What `evalDescribe`
+promises, whatever the description policy, is proved here: the answer
+is a subgraph of the active default graph, a resource named by IRI in
+the clause is described whatever the WHERE clause matches, and the
+other query forms describe nothing. That the description is the
+Concise Bounded Description is `Graph.cbd` in
+`RDF/ConciseBoundedDescription.lean`. -/
+
+/-- The answer of DESCRIBE is a subgraph of the active default graph:
+the default graph of the dataset after `FROM` / `FROM NAMED`. DESCRIBE
+invents no statement. -/
+theorem evalDescribe_subset (env : EvalEnv) (ds : Dataset) (q : Query) :
+    ∀ t ∈ evalDescribe env ds q, t ∈ (applyDataset q.dataset ds ds.default).2 := by
+  intro t ht
+  rcases hq : applyDataset q.dataset ds ds.default with ⟨ds', active⟩
+  unfold evalDescribe at ht
+  simp only [hq] at ht ⊢
+  split at ht
+  · exact cbd_subset _ _ t ht
+  · cases ht
+
+/-- Only a DESCRIBE query describes. -/
+theorem evalDescribe_of_not_describe (env : EvalEnv) (ds : Dataset) (q : Query)
+    (h : ∀ targets, q.form ≠ .describe targets) : evalDescribe env ds q = [] := by
+  unfold evalDescribe
+  split
+  rename_i ds' active _
+  split
+  · rename_i targets hform
+    exact absurd hform (h targets)
+  · rfl
+
+/-- Clause 1 of the description: a statement of the active default graph
+whose subject is an IRI named in the DESCRIBE clause is in the answer,
+whatever the WHERE clause matches (§16.4.1). -/
+theorem evalDescribe_mem_of_iri (env : EvalEnv) (ds : Dataset) (q : Query)
+    (targets : List PatternTerm) (hform : q.form = .describe targets)
+    (i : WfIri) (hi : PatternTerm.iri i ∈ targets) :
+    ∀ t ∈ (applyDataset q.dataset ds ds.default).2, t.s = Subject.iri i →
+      t ∈ evalDescribe env ds q := by
+  intro t ht hs
+  rcases hq : applyDataset q.dataset ds ds.default with ⟨ds', active⟩
+  simp only [hq] at ht
+  unfold evalDescribe
+  simp only [hq, hform]
+  apply cbd_root_triples _ _ t ht
+  rw [hs]
+  unfold describeRoots
+  simp only [List.mem_append, List.mem_filterMap]
+  exact Or.inl ⟨PatternTerm.iri i, hi, rfl⟩
 
 end L4Factoidal.SPARQL
 
@@ -607,6 +712,8 @@ open L4Factoidal.SPARQL
 #print axioms length_sliceSolutions_le
 #print axioms length_projectSolutions
 #print axioms sortSolutions_perm
+#print axioms length_sortSolutionsFast
+#print axioms formHasSolution_eq
 #print axioms evalIn_eq_eval_of_no_named
 #print axioms lateral_empty_rhs_per_row
 #print axioms Binding.equiv_trans
@@ -614,5 +721,17 @@ open L4Factoidal.SPARQL
 #print axioms DistinctBucketWf.bucketAnyEq
 #print axioms distinctSolutionsFastGo_eq
 #print axioms distinctSolutionsFast_eq
+#print axioms evalAggregate_countDistinctStar
+#print axioms dedupEr_eq_dedupErFast
+#print axioms evalDescribe_subset
+#print axioms evalDescribe_of_not_describe
+#print axioms evalDescribe_mem_of_iri
+-- Federated Query §3.2 and the failure twins (issue 735, `Algebra.lean`).
+#print axioms GraphPattern.serviceFailure_service_reachable
+#print axioms GraphPattern.serviceFailure_service_silent_reachable
+#print axioms GraphPattern.evalIn_service_silent_body_fails
+#print axioms GraphPattern.evalIn_service_silent_body_ok
+#print axioms GraphPattern.serviceFailure_filter_none
+#print axioms GraphPattern.serviceFailure_filter_some
 
 end Audit

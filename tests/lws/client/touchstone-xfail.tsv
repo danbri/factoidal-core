@@ -1,0 +1,8 @@
+# Touchstone client-lab rules that our LWS client is expected NOT to pass, each
+# with its open issue (CLAUDE.md, "A stated shortfall is a failing test plus an
+# open issue"). Read by tests/lws/client/touchstone-session.mjs: a listed rule
+# that passes turns the run red, so the row is removed when the gap closes.
+# rule<TAB>issue<TAB>why
+# OpenID sign-in (authorization code flow with PKCE) is not built; the client
+# exchanges an ID Token it is given, but has no way to obtain one.
+client-oidc-token-type-id-token	https://github.com/danbri/factoidal/issues/917	no OpenID sign-in (code flow with PKCE); issue to open

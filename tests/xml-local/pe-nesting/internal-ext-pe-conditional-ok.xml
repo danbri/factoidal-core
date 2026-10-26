@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<!DOCTYPE a [
+<!ENTITY % ext SYSTEM "internal-ext-pe-conditional-ok.ent">
+%ext;
+]>
+<a x="1"/>

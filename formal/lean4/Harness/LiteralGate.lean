@@ -1,6 +1,6 @@
 /-
-Harness.LiteralGate — the row-identity gate for the LGI1 literal search
-index, driven through the SHIPPED query path.
+Harness.LiteralGate — the row-identity gate for the LGI3 and LGI4 literal
+search index, driven through the SHIPPED query path.
 
     l4block-literal-gate <collection-root-or-generation-dir> <predicate-iri> <needle> [...]
 
@@ -10,7 +10,7 @@ For each needle this answers
 
 TWICE, through `L4Wasm.Ops.storeHandleQuery` both times:
 
-* through a handle opened WITH the LGI1 sidecars, which takes the index path
+* through a handle opened WITH the LGI3 or LGI4 sidecars, which takes the index path
   (`LiteralIndexPlan.plan?` admits the shape, so the handle materialises the
   candidate rows and re-evaluates the same query text on them), and
 * through a handle opened WITHOUT them, which scans.
@@ -19,6 +19,18 @@ The two answer envelopes are compared BYTE FOR BYTE. That compares the rows
 themselves and their order, not their count (anti-pattern 34): an index that
 returned a superset whose filter was not re-applied would add rows, and an
 index that dropped a match would remove one. Either shows here.
+
+The comparison proves nothing when the index handle did not take the index path:
+a sidecar that fails to decode falls back to the scan, and the gate would compare
+two scans and pass. So the gate also reads `literalIndexes` from each open
+envelope. Where the plan names sidecars, the index handle must retain a literal
+index for every block and the scan handle none; otherwise the gate fails and
+says which. A generation packed under the ASCII-only fold (LGI1 or LGI2) is
+refused at `storeOpen` with the cause and the remedy, so it cannot reach the
+comparison at all.
+
+Unicode needles are accepted: `école` finds `École Normale` through the index
+because the index folds with `Text.CaseMap.searchFold`, as `LCASE` folds.
 
 `Harness/LiteralGramProbe.lean` measures the same mechanism against a block
 in isolation. This is the gate through the operation a host actually calls.
@@ -65,6 +77,30 @@ def envelopeOf (text : String) : IO Json :=
           | some (_, .bool false) => throw (IO.userError s!"engine refused: {text}")
           | _ => pure json
       | _ => pure json
+
+/-- A numeric member of an envelope, read as a natural number. -/
+def natAt (json : Json) (field : String) : Option Nat :=
+  match json with
+  | .object members =>
+      match members.find? (fun m => m.1 == field) with
+      | some (_, .number text) => text.toNat?
+      | _ => none
+  | _ => none
+
+/-- The index-path precondition of the comparison: where the plan names
+sidecars, the handle opened with them retained a literal index for every block
+and the handle opened without them retained none. `none` is a pass; `some` is
+the reason the comparison would be vacuous. -/
+def indexPathProblem (sidecarKeys : List String) (blocks : Nat)
+    (indexOpened scanOpened : Json) : Option String :=
+  if sidecarKeys.isEmpty then none else
+  let withIndexes := (natAt indexOpened "literalIndexes").getD 0
+  let withoutIndexes := (natAt scanOpened "literalIndexes").getD 0
+  if withIndexes != blocks then
+    some s!"the handle opened with sidecars retained {withIndexes} literal indexes for {blocks} blocks; its answers would be the scan's, so the comparison proves nothing"
+  else if withoutIndexes != 0 then
+    some s!"the handle opened without sidecars retained {withoutIndexes} literal indexes; it is not a scan"
+  else none
 
 /-- How many result rows an answer envelope carries. Reported beside the
 identity verdict; the verdict itself compares the whole envelope. -/
@@ -214,6 +250,15 @@ def run (args : List String) : IO UInt32 := do
         let indexId ← handleId indexHandle
         let scanId ← handleId scanHandle
         IO.println s!"handles index={indexId} scan={scanId} bytes-with-sidecars {withBlob.size} bytes-without {scanBlob.size}"
+        let pathProblem := indexPathProblem sidecarKeys blockKeys.length indexHandle scanHandle
+        match pathProblem with
+        | some problem =>
+            IO.eprintln s!"l4block-literal-gate: {problem}"
+            let _ ← storeHandleClose indexId
+            let _ ← storeHandleClose scanId
+            pure 1
+        | none =>
+        IO.println s!"literal indexes retained: index handle {(natAt indexHandle "literalIndexes").getD 0}, scan handle {(natAt scanHandle "literalIndexes").getD 0}"
         let mut failures := 0
         for needle in needles do
           let sparql := queryFor shape predicate needle

@@ -1,0 +1,4 @@
+# NOT EXISTS whose body is not a basic graph pattern: the reference fallback.
+# (With the body a basic graph pattern, a row that binds ?o to a literal is
+# refused after the joins, so the path would depend on the state.)
+SELECT ?s ?p ?o WHERE { ?s ?p ?o FILTER NOT EXISTS { ?o ?p2 ?s2 FILTER(true) } }

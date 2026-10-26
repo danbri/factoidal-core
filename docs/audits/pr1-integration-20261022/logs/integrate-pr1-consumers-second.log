@@ -1,0 +1,142 @@
+⚠ [19/57] Replayed L4Factoidal.RDF.Core
+info: L4Factoidal/RDF/Core.lean:239:0: 'L4Factoidal.RDF.Term.hashDown_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/Core.lean:240:0: 'L4Factoidal.RDF.Term.hashFast_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+warning: L4Factoidal/RDF/Core.lean:372:10: This simp argument is unused:
+  h
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [XmlCanon.xmlCanonEq]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+info: L4Factoidal/RDF/Core.lean:661:0: 'L4Factoidal.RDF.Term.joinKeyLoop_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/Core.lean:662:0: 'L4Factoidal.RDF.Term.joinKey_eq_fast' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [38/57] Replayed L4Factoidal.Fn.ComparisonTheorems
+info: L4Factoidal/Fn/ComparisonTheorems.lean:20:0: 'L4Factoidal.Fn.Comparison.numericCompare_dec_refl' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Fn/ComparisonTheorems.lean:21:0: 'L4Factoidal.Fn.Comparison.fvalCmp_refl' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Fn/ComparisonTheorems.lean:22:0: 'L4Factoidal.Fn.Comparison.numericCompare_dbl_refl' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [41/57] Replayed L4Factoidal.RDF.ConciseBoundedDescription
+info: L4Factoidal/RDF/ConciseBoundedDescription.lean:368:0: 'L4Factoidal.RDF.cbd_subset' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/ConciseBoundedDescription.lean:369:0: 'L4Factoidal.RDF.cbd_root_triples' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/RDF/ConciseBoundedDescription.lean:370:0: 'L4Factoidal.RDF.cbd_nil' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [42/57] Replayed L4Factoidal.SPARQL.OrderedPrefix
+info: L4Factoidal/SPARQL/OrderedPrefix.lean:106:0: 'L4Factoidal.SPARQL.mergeSortPrefix_eq_take' depends on axioms: [propext, Quot.sound]
+info: L4Factoidal/SPARQL/OrderedPrefix.lean:107:0: 'L4Factoidal.SPARQL.mergePrefix_eq_TR' depends on axioms: [propext, Quot.sound]
+ℹ [43/57] Replayed L4Factoidal.SPARQL.IndexedEvalRefinement
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:854:0: 'L4Factoidal.SPARQL.hashMinus_eq_minus' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:856:0: 'L4Factoidal.SPARQL.hashLeftJoin_eq_leftJoin' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:857:0: 'L4Factoidal.SPARQL.hashJoin_eq_join' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:858:0: 'L4Factoidal.SPARQL.cachedTpIndex_correct' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:859:0: 'L4Factoidal.SPARQL.evalBgpStepCached_correct' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:860:0: 'L4Factoidal.SPARQL.evalBgpRowsCached_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:861:0: 'L4Factoidal.SPARQL.evalBgpIdx_eq_evalBgp' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/IndexedEvalRefinement.lean:862:0: 'L4Factoidal.SPARQL.evalIn_bgp' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [44/57] Replayed L4Factoidal.SPARQL.ExistsIndex
+info: L4Factoidal/SPARQL/ExistsIndex.lean:114:0: 'L4Factoidal.SPARQL.ExistsIndex.bgpNonempty_ofGraph' depends on axioms: [propext, Classical.choice, Quot.sound]
+⚠ [47/65] Replayed L4Factoidal.XML.Parser
+warning: L4Factoidal/XML/Parser.lean:1716:20: This simp argument is unused:
+  Bool.or_assoc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [Bool.or_comm, Bool.or_left_comm]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/XML/Parser.lean:2224:5: This simp argument is unused:
+  List.append_nil
+
+Hint: Omit it from the simp argument list.
+  [apply] simp_all (config := { zetaDelta := true }) only [resumeC_exit, resumeC_err, resumeC_nil, resumeC_cons_ok,
+    ↓reduceIte, Bool.false_eq_true, decide_true, decide_false, Bool.and_true, Bool.or_false, Bool.and_false,
+    Bool.false_and, Bool.true_or, Bool.or_true, List.cons_append, List.append_assoc, List.nil_append]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/XML/Parser.lean:2787:14: Variable name `f` is not explicitly referenced.
+
+Hint: The binding can be removed (if unused) or named `_` (if used implicitly). Alternatively, prefix the name with `_` to silence this warning:
+  [apply] _f
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+✖ [52/65] Building L4Factoidal.Fn.CastTheorems (1.0s)
+trace: .> LEAN_PATH=/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean /Users/danbri/.elan/toolchains/leanprover--lean4---v4.33.1/bin/lean /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/L4Factoidal/Fn/CastTheorems.lean -o /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/Fn/CastTheorems.olean -i /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/Fn/CastTheorems.ilean -c /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/Fn/CastTheorems.c --setup /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/Fn/CastTheorems.setup.json --json
+error: L4Factoidal/Fn/CastTheorems.lean:48:38: failed to synthesize
+  Decidable
+    (castFrom Edition.xsd11 Builtin.yearMonthDuration Builtin.string (Val.dur { months := 0, seconds := Dec.zero }) =
+      some (Val.str Builtin.string "P0M"))
+
+Hint: Additional diagnostic information may be available using the `set_option diagnostics true` command.
+info: L4Factoidal/Fn/CastTheorems.lean:50:0: 'L4Factoidal.Fn.Cast.castFrom_target_valid' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Fn/CastTheorems.lean:51:0: 'L4Factoidal.Fn.Cast.zero_yearMonthDuration_string' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]
+info: L4Factoidal/Fn/CastTheorems.lean:53:0: 'L4Factoidal.Fn.Cast.cast_target_valid' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Fn/CastTheorems.lean:54:0: 'L4Factoidal.Fn.Cast.cast_unsupported_target' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/Fn/CastTheorems.lean:55:0: 'L4Factoidal.Fn.Cast.floatingDecimal_infinity' does not depend on any axioms
+info: L4Factoidal/Fn/CastTheorems.lean:56:0: 'L4Factoidal.Fn.Cast.floatingDecimal_nan' does not depend on any axioms
+error: Lean exited with code 1
+✔ [53/65] Built L4Factoidal.Regex.Profiles (1.5s)
+✖ [54/65] Building L4Factoidal.XPath.Data (1.3s)
+trace: .> LEAN_PATH=/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean /Users/danbri/.elan/toolchains/leanprover--lean4---v4.33.1/bin/lean /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/L4Factoidal/XPath/Data.lean -o /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/XPath/Data.olean -i /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/XPath/Data.ilean -c /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/XPath/Data.c --setup /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/XPath/Data.setup.json --json
+error: L4Factoidal/XPath/Data.lean:274:54: unexpected token '/--'; expected '#guard_msgs', 'abbrev', 'add_decl_doc', 'axiom', 'binder_predicate', 'builtin_cbv_simproc', 'builtin_cbv_simproc_decl', 'builtin_dsimproc', 'builtin_dsimproc_decl', 'builtin_grind_propagator', 'builtin_initialize', 'builtin_simproc', 'builtin_simproc_decl', 'cbv_simproc', 'cbv_simproc_decl', 'class', 'coinductive', 'declare_simp_like_tactic', 'declare_syntax_cat', 'def', 'dsimproc', 'dsimproc_decl', 'elab', 'elab_rules', 'example', 'grind_propagator', 'inductive', 'infix', 'infixl', 'infixr', 'initialize', 'instance', 'macro', 'macro_rules', 'notation', 'opaque', 'postfix', 'prefix', 'recommended_spelling', 'register_error_explanation', 'register_tactic_tag', 'register_try?_tactic', 'simproc', 'simproc_decl', 'structure', 'syntax', 'tactic_extension', 'theorem' or 'unif_hint'
+error: Lean exited with code 1
+✔ [57/65] Built L4Factoidal.JSONSchema.Validate (2.0s)
+⚠ [58/65] Built L4Factoidal.CSVW.Formats (2.2s)
+warning: L4Factoidal/CSVW/Formats.lean:108:44: `String.mk` has been deprecated: Use `String.ofList` instead
+warning: L4Factoidal/CSVW/Formats.lean:152:26: `String.mk` has been deprecated: Use `String.ofList` instead
+✖ [59/65] Building L4Factoidal.Regex.ProfileTests (1.2s)
+trace: .> LEAN_PATH=/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean /Users/danbri/.elan/toolchains/leanprover--lean4---v4.33.1/bin/lean /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/L4Factoidal/Regex/ProfileTests.lean -o /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/Regex/ProfileTests.olean -i /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/Regex/ProfileTests.ilean -c /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/Regex/ProfileTests.c --setup /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/Regex/ProfileTests.setup.json --json
+info: L4Factoidal/Regex/ProfileTests.lean:25:0: 'L4Factoidal.Regex.Profiles.matchWith' depends on axioms: [propext, Classical.choice, Quot.sound]
+error: L4Factoidal/Regex/ProfileTests.lean:30:7: failed to synthesize instance of type class
+  BEq (Except Error Bool)
+
+Hint: Type class instance resolution failures can be inspected with the `set_option trace.Meta.synthInstance true` command.
+error: L4Factoidal/Regex/ProfileTests.lean:30:0: cannot evaluate code because 'sorryAx' uses 'sorry' and/or contains errors
+error: L4Factoidal/Regex/ProfileTests.lean:31:7: failed to synthesize instance of type class
+  BEq (Except Error Bool)
+
+Hint: Type class instance resolution failures can be inspected with the `set_option trace.Meta.synthInstance true` command.
+error: L4Factoidal/Regex/ProfileTests.lean:31:0: cannot evaluate code because 'sorryAx' uses 'sorry' and/or contains errors
+error: Lean exited with code 1
+✖ [60/65] Building L4Factoidal.RIF.Builtins (2.6s)
+trace: .> LEAN_PATH=/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean /Users/danbri/.elan/toolchains/leanprover--lean4---v4.33.1/bin/lean /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/L4Factoidal/RIF/Builtins.lean -o /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/RIF/Builtins.olean -i /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/lib/lean/L4Factoidal/RIF/Builtins.ilean -c /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/RIF/Builtins.c --setup /Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/RIF/Builtins.setup.json --json
+error: L4Factoidal/RIF/Builtins.lean:1002:0: Expression
+  decide (evalPred "is-literal-dateTime" [dC "2008-07-22Z"] = Ans.yes)
+did not evaluate to `true`
+error: L4Factoidal/RIF/Builtins.lean:1014:0: Expression
+  decide (evalPred "is-literal-dateTimeStamp" [gLit "2000-12-13T00:11:11.3" (xsdNs ++ "dateTimeStamp")] = Ans.no)
+did not evaluate to `true`
+error: Lean exited with code 1
+✔ [62/65] Built L4Factoidal.SPARQL.Expr (10s)
+ℹ [63/65] Built L4Factoidal.SPARQL.ExprTheorems (10s)
+info: L4Factoidal/SPARQL/ExprTheorems.lean:438:0: 'L4Factoidal.SPARQL.ebv_langString' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:439:0: 'L4Factoidal.SPARQL.eval_bound' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:440:0: 'L4Factoidal.SPARQL.eval_and_false_left' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:441:0: 'L4Factoidal.SPARQL.eval_and_true_error' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:442:0: 'L4Factoidal.SPARQL.Scaled.cmp_refl' depends on axioms: [propext, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:443:0: 'L4Factoidal.SPARQL.Scaled.cmp_swap' depends on axioms: [propext, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:444:0: 'L4Factoidal.SPARQL.Scaled.cmp_trans' depends on axioms: [propext, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:445:0: 'L4Factoidal.SPARQL.valueCompare_eq_refl_unpromoted_literal' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:446:0: 'L4Factoidal.SPARQL.valueCompare_eq_bnode' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:447:0: 'L4Factoidal.SPARQL.numericEquality_refl_invalid_literal' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprTheorems.lean:448:0: 'L4Factoidal.SPARQL.toCond_bound' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [64/65] Built L4Factoidal.SPARQL.ExprRefinement (5.1s)
+info: L4Factoidal/SPARQL/ExprRefinement.lean:440:0: 'L4Factoidal.SPARQL.ExprRefinement.ebvSpec_agrees' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:441:0: 'L4Factoidal.SPARQL.ExprRefinement.ebvOrFalse_of_spec_none' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:442:0: 'L4Factoidal.SPARQL.ExprRefinement.eval_and_matches_spec' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:443:0: 'L4Factoidal.SPARQL.ExprRefinement.eval_and_true_error_agrees' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:444:0: 'L4Factoidal.SPARQL.ExprRefinement.strCompare_beq_zero' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:445:0: 'L4Factoidal.SPARQL.ExprRefinement.eq_num_matches_spec' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:446:0: 'L4Factoidal.SPARQL.ExprRefinement.eq_plain_string_matches_spec' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:447:0: 'L4Factoidal.SPARQL.ExprRefinement.eq_literal_same_datatype_diff_lang' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+info: L4Factoidal/SPARQL/ExprRefinement.lean:448:0: 'L4Factoidal.SPARQL.ExprRefinement.eval_eq_num_matches_spec' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [65/65] Built L4Factoidal.SPARQL.Query (11s)
+info: L4Factoidal/SPARQL/Query.lean:672:0: 'L4Factoidal.SPARQL.finishSelectRows_eq_prefix' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: L4Factoidal/SPARQL/Query.lean:2644:0: 'L4Factoidal.SPARQL.filterLowered_evalIn' depends on axioms: [propext, Classical.choice, Quot.sound]
+Some required targets logged failures:
+- L4Factoidal.Fn.CastTheorems
+- L4Factoidal.XPath.Data
+- L4Factoidal.Regex.ProfileTests
+- L4Factoidal.RIF.Builtins
+error: build failed

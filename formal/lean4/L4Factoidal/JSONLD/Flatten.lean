@@ -43,6 +43,7 @@ group; every function in it carries an explicit fuel `Nat` derived from
 `Json.size`, exactly as the F* source does.
 -/
 import L4Factoidal.JSONLD.Compact
+import L4Factoidal.JSONLD.OrderedMap
 
 namespace L4Factoidal.JSONLD
 
@@ -50,28 +51,102 @@ open L4Factoidal.JSON
 
 /-! ## Node-map representation
 
-A node's collected entries: `@id` first (always present), then `@type` /
-`@index` / properties in first-seen order. Emitted verbatim as an
+The node map is a tree of persistent maps (see `OrderedMap.lean` for why
+persistent): the state maps a graph name to a graph, a graph maps a node
+identifier to a node, and a node maps a property to its value. Lookup and
+update cost a logarithmic number of string comparisons, so node map
+generation is `O(n log n)` in the number of nodes. The earlier port kept
+all four levels as association lists, which made every lookup a scan and
+node map generation quadratic
+(`docs/designissues/2026-10-10-jsonld-node-map-scaling.md`).
+
+Orders the spec and the fixtures observe:
+
+  * a node's entries come out in first-creation order (`@id` first, then
+    `@type` / `@index` / properties as they were first touched) — an
+    `OMap`;
+  * a graph's nodes and the graph names come out "ordered by id" /
+    "lexicographically" — the traversal order of a `Std.TreeMap` keyed by
+    `String`, which is code-point order (`strLt_iff_compare_lt` in
+    `NodeMapTheorems.lean` ties it to the `strLt` the earlier port sorted
+    with). -/
+
+/-- The values collected under one property of a node, in append order.
+`rev` is the list newest-first (appending is a `cons`); `seen` holds the
+RFC 8785 canonical form (`jcsDocument`) of every item in `rev`, so the
+spec's "the value is not already in the array" check
+(`expandedEqual`, which compares canonical forms) is one set lookup
+instead of a scan that serialises every item already present. -/
+structure DedupArr where
+  rev  : List Json
+  seen : Std.TreeSet String
+
+namespace DedupArr
+
+def empty : DedupArr := { rev := [], seen := Std.TreeSet.empty }
+
+/-- Append `v`, whose canonical form is `key`. -/
+def pushKeyed (a : DedupArr) (key : String) (v : Json) : DedupArr :=
+  { rev := v :: a.rev, seen := a.seen.insert key }
+
+def push (a : DedupArr) (v : Json) : DedupArr := a.pushKeyed (jcsDocument v) v
+
+/-- The spec's "already in the array" test. -/
+def has (a : DedupArr) (v : Json) : Bool := a.seen.contains (jcsDocument v)
+
+/-- The items, in append order. -/
+def toList (a : DedupArr) : List Json := a.rev.reverse
+
+/-- Append `v` unless `dedup` is set and an equal value is already
+present. -/
+def pushDedup (a : DedupArr) (v : Json) (dedup : Bool) : DedupArr :=
+  let key := jcsDocument v
+  if dedup && a.seen.contains key then a else a.pushKeyed key v
+
+def ofList (xs : List Json) : DedupArr := xs.foldl push empty
+
+end DedupArr
+
+/-- One entry of a node. `one` is a scalar entry (`@id`, `@index`);
+`many` is an array entry (`@type` and every property). -/
+inductive NmVal where
+  | one  : Json → NmVal
+  | many : DedupArr → NmVal
+
+/-- The JSON value an entry stands for. -/
+def NmVal.toJson : NmVal → Json
+  | .one j  => j
+  | .many a => .array a.toList
+
+/-- The entry read as a list of values (`asArray` of its JSON value). -/
+def NmVal.items : NmVal → List Json
+  | .one j  => asArray j
+  | .many a => a.toList
+
+/-- A node's collected entries: `@id` first (always present), then `@type`
+/ `@index` / properties in first-seen order. Emitted verbatim as an
 object — member order is insignificant under the suite's JCS-canonical
 comparison, but ARRAY order inside each property's value IS significant
 and follows the spec's append order. -/
+abbrev NmNode := OMap NmVal
 
-abbrev NmNode := List (String × Json)
-
-/-- One graph's node map: node id → node, in first-creation order
-(re-sorted by id at emission time — the spec's "ordered by id"). -/
-abbrev NmGraph := List (String × NmNode)
+/-- One graph's node map: node id → node. Its traversal order is the
+spec's "ordered by id". -/
+abbrev NmGraph := Std.TreeMap String NmNode
 
 /-- Whole-algorithm state: graph name → graph (`"@default"` plus named
 graphs), the blank-node relabelling map (old label → issued label), and
 the issuer counter. -/
 structure NmState where
-  graphs : List (String × NmGraph)
-  idmap  : List (String × String)
+  graphs : Std.TreeMap String NmGraph
+  idmap  : Std.TreeMap String String
   ctr    : Nat
-  deriving Repr
 
-/-! ## Association-list helpers -/
+/-! ## Association-list helpers
+
+These stay for the places that hold SMALL association lists: the members
+of one input JSON object or frame object. `NodeMapTheorems.lean` proves the
+node-map operations against them. -/
 
 def flLookup {α : Type} (xs : List (String × α)) (k : String) : Option α :=
   (xs.find? (fun kv => kv.1 == k)).map Prod.snd
@@ -87,7 +162,9 @@ def flRemove {α : Type} : List (String × α) → String → List (String × α
   | (k2, v2) :: rest, k => if k2 == k then rest else (k2, v2) :: flRemove rest k
 
 /-- Insertion sort by key, code-point order — the spec's "ordered
-lexicographically". Stable for equal keys. -/
+lexicographically". Equal keys come out in REVERSE of their input order
+(a later equal key is inserted after the earlier ones already placed
+ahead of it). -/
 def flInsertByKey {α : Type} (kv : String × α) : List (String × α) → List (String × α)
   | []      => [kv]
   | y :: rest => if strLt kv.1 y.1 then kv :: y :: rest else y :: flInsertByKey kv rest
@@ -105,70 +182,90 @@ def flArrContains (items : List Json) (v : Json) : Bool :=
 
 /-! ## Node-level operations -/
 
+/-- The node's entry under `k`, as a JSON value. -/
+def NmNode.getJson (n : NmNode) (k : String) : Option Json := (n.find? k).map NmVal.toJson
+
+/-- The node's entries as JSON members, in first-creation order. -/
+def NmNode.toFields (n : NmNode) : List (String × Json) :=
+  n.toList.map (fun kv => (kv.1, kv.2.toJson))
+
+/-- The node's entries as JSON members, in code-point order of the key. -/
+def NmNode.toSortedFields (n : NmNode) : List (String × Json) :=
+  n.toSortedList.map (fun kv => (kv.1, kv.2.toJson))
+
+/-- The node `{"@id": id}` a node map creates on first sight of `id`. -/
+def NmNode.fresh (id : String) : NmNode := OMap.upsert OMap.empty "@id" (.one (.string id))
+
 /-- Append `v` to the node's property array (creating the entry),
 skipping the append when `dedup` is set and an equal value is already
 present. -/
 def nodeAppendProp (n : NmNode) (prop : String) (v : Json) (dedup : Bool) : NmNode :=
-  match flLookup n prop with
-  | some (.array items) =>
-    if dedup && flArrContains items v then n else flUpd n prop (.array (items ++ [v]))
-  | some other => flUpd n prop (.array [other, v])  -- non-array: defensive, never built here
-  | none       => n ++ [(prop, .array [v])]
+  match n.find? prop with
+  | some (.many a) =>
+    let key := jcsDocument v
+    if dedup && a.seen.contains key then n else n.upsert prop (.many (a.pushKeyed key v))
+  | some (.one o) =>  -- non-array: defensive, never built here
+    n.upsert prop (.many ((DedupArr.empty.push o).push v))
+  | none => n.upsert prop (.many (DedupArr.empty.push v))
 
 /-- §7.1 step 6.12.2: the property entry exists even if no value
 survives recursion. -/
 def nodeEnsureProp (n : NmNode) (prop : String) : NmNode :=
-  match flLookup n prop with
-  | some _ => n
-  | none   => n ++ [(prop, .array [])]
+  if n.contains prop then n else n.upsert prop (.many DedupArr.empty)
 
 /-- Merge `@type` items into the node's `@type` array, skipping
 duplicates (step 6.7's "unless it already exists"). -/
-def flMergeTypeItems : List Json → List Json → List Json
-  | existing, []        => existing
-  | existing, hd :: tl  =>
-    if flArrContains existing hd then flMergeTypeItems existing tl
-    else flMergeTypeItems (existing ++ [hd]) tl
-
 def nodeMergeTypes (n : NmNode) (items : List Json) : NmNode :=
-  match flLookup n "@type" with
-  | some (.array existing) => flUpd n "@type" (.array (flMergeTypeItems existing items))
-  | some other             => flUpd n "@type" (.array (flMergeTypeItems [other] items))
-  | none                   => n ++ [("@type", .array (flMergeTypeItems [] items))]
+  let start : DedupArr :=
+    match n.find? "@type" with
+    | some (.many a) => a
+    | some (.one o)  => DedupArr.empty.push o  -- non-array: defensive, never built here
+    | none           => DedupArr.empty
+  n.upsert "@type" (.many (items.foldl (fun a hd => a.pushDedup hd true) start))
 
 /-- Step 6.8: a second, DIFFERENT `@index` for the same node id is the
 spec's "conflicting indexes" error (fixture e001). -/
 def nodeSetIndex (n : NmNode) (idx : Json) : Option NmNode :=
-  match flLookup n "@index" with
-  | some old => if expandedEqual old idx then some n else none
-  | none     => some (n ++ [("@index", idx)])
+  match n.find? "@index" with
+  | some old => if expandedEqual old.toJson idx then some n else none
+  | none     => some (n.upsert "@index" (.one idx))
 
-def nodeHasOnlyId : NmNode → Bool
-  | [(k, _)] => k == "@id"
-  | _        => false
+/-- A node that consists only of an `@id` entry. -/
+def nodeHasOnlyId (n : NmNode) : Bool :=
+  match n.rev with
+  | [k] => k == "@id"
+  | _   => false
 
 /-! ## State-level operations -/
 
+/-- The state before any node is seen: only the `"@default"` graph exists. -/
+def NmState.initial : NmState :=
+  { graphs := (Std.TreeMap.empty : Std.TreeMap String NmGraph).insert "@default" Std.TreeMap.empty,
+    idmap := Std.TreeMap.empty, ctr := 0 }
+
+/-- How many nodes the state holds, summed over every graph. -/
+def NmState.nodeCount (st : NmState) : Nat :=
+  st.graphs.foldl (fun a _ g => a + g.size) 0
+
 def stGraph (st : NmState) (g : String) : NmGraph :=
-  (flLookup st.graphs g).getD []
+  (st.graphs.get? g).getD Std.TreeMap.empty
 
 def stPutGraph (st : NmState) (g : String) (gr : NmGraph) : NmState :=
-  { st with graphs := flUpd st.graphs g gr }
+  { st with graphs := st.graphs.insert g gr }
 
 /-- Step 6.3: create `graph[id] = { "@id": id }` when absent (also
 registers the graph itself on first touch). -/
 def stEnsureNode (st : NmState) (g id : String) : NmState :=
   let gr := stGraph st g
-  match flLookup gr id with
-  | some _ => stPutGraph st g gr
-  | none   => stPutGraph st g (gr ++ [(id, [("@id", .string id)])])
+  if gr.contains id then st
+  else stPutGraph st g (gr.insert id (NmNode.fresh id))
 
 /-- Apply `f` to `graph[id]`, creating the node first if needed. -/
 def stNodeUpdate (st : NmState) (g id : String) (f : NmNode → NmNode) : NmState :=
   let gr := stGraph st g
-  match flLookup gr id with
-  | some n => stPutGraph st g (flUpd gr id (f n))
-  | none   => stPutGraph st g (gr ++ [(id, f [("@id", .string id)])])
+  match gr.get? id with
+  | some n => stPutGraph st g (gr.insert id (f n))
+  | none   => stPutGraph st g (gr.insert id (f (NmNode.fresh id)))
 
 /-- Add `v` to `subject-node[aprop]` when both an active subject (an
 IRI/bnode string) and an active property are in scope. A free-floating
@@ -187,11 +284,11 @@ def stAddValue (st : NmState) (agraph : String) (asubj : Option Json)
 label if seen before, else issue `_:b<counter>` and record the
 mapping. -/
 def issueKeyed (st : NmState) (old : String) : String × NmState :=
-  match flLookup st.idmap old with
+  match st.idmap.get? old with
   | some nid => (nid, st)
   | none =>
     let nid := "_:b" ++ toString st.ctr
-    (nid, { st with idmap := st.idmap ++ [(old, nid)], ctr := st.ctr + 1 })
+    (nid, { st with idmap := st.idmap.insert old nid, ctr := st.ctr + 1 })
 
 /-- Issue a fresh label — the spec's issuer called with a null
 identifier (an anonymous node object with no `@id`). -/
@@ -238,7 +335,9 @@ def flRelabelTypes (st : NmState) (fields : List (String × Json))
 the active graph (a graph name), the active subject (`none`, a
 `.string id`, or — for the `@reverse` case — an object node reference),
 the active property, and `acc`, the in-progress `@list` array (`none` is
-the spec's "list is null"). -/
+the spec's "list is null"). `acc` holds the items NEWEST FIRST, so adding
+an item is a `cons`; the list branch reverses it once when the list is
+complete. -/
 
 mutual
 
@@ -258,7 +357,7 @@ def nmg (st : NmState) (element : Json) (agraph : String) (asubj : Option Json)
         -- Step 4: value object.
         match acc with
         | none    => .ok (stAddValue st agraph asubj aprop (.object fields) true, none)
-        | some xs => .ok (st, some (xs ++ [.object fields]))
+        | some xs => .ok (st, some (.object fields :: xs))
       else if hasField "@list" fields then
         -- Step 5: list object — collect the nested items into a fresh
         -- accumulator, then attach {"@list": [...]} where the spec says.
@@ -266,11 +365,11 @@ def nmg (st : NmState) (element : Json) (agraph : String) (asubj : Option Json)
         | none      => .error .notJsonLd  -- unreachable: hasField just held
         | some lval =>
           match nmg st lval agraph asubj aprop (some []) fuel with
-          | .ok (st1, some litems) =>
-            let result := Json.object [("@list", .array litems)]
+          | .ok (st1, some litemsRev) =>
+            let result := Json.object [("@list", .array litemsRev.reverse)]
             (match acc with
              | none    => .ok (stAddValue st1 agraph asubj aprop result false, none)
-             | some xs => .ok (st1, some (xs ++ [result])))
+             | some xs => .ok (st1, some (result :: xs)))
           | .ok (_, none) => .error .notJsonLd
           | .error e      => .error e
       else
@@ -337,7 +436,7 @@ def nmgNode (st : NmState) (fields : List (String × Json)) (agraph : String)
           | some p =>
             let reference := Json.object [("@id", .string id)]
             match acc with
-            | some xs => (st, some (xs ++ [reference]))
+            | some xs => (st, some (reference :: xs))
             | none    => (stAddValue st agraph asubj (some p) reference true, none)
       -- Step 6.7: merge @type into the node.
       let st :=
@@ -351,11 +450,11 @@ def nmgNode (st : NmState) (fields : List (String × Json)) (agraph : String)
         match flLookup fields "@index" with
         | some idx =>
           let gr := stGraph st agraph
-          (match flLookup gr id with
+          (match gr.get? id with
            | some n =>
              (match nodeSetIndex n idx with
               | none    => none
-              | some n1 => some (stPutGraph st agraph (flUpd gr id n1), flRemove fields "@index"))
+              | some n1 => some (stPutGraph st agraph (gr.insert id n1), flRemove fields "@index"))
            | none => some (st, flRemove fields "@index"))
         | none => some (st, fields)
       match idxRes with
@@ -451,43 +550,44 @@ termination_by fuel
 
 end
 
+/-- API §7.1 Node Map Generation for a whole EXPANDED document: the
+entry point the flattening and framing algorithms share. The fuel is
+derived from the document size, as in `flattenExpanded`. -/
+def generateNodeMap (expanded : Json) : Res NmState :=
+  match nmg NmState.initial expanded "@default" none none none (16 * Json.size expanded + 128) with
+  | .error e => .error e
+  | .ok (st, _) => .ok st
+
 /-! ## The Flattening Algorithm — API §6.1 -/
 
-/-- Emit a sorted graph's nodes, dropping any that consist only of `@id`
-(the spec's "unless node consists only of `@id`"). -/
-def flEmitNodes : List (String × NmNode) → List Json
-  | []            => []
-  | (_, n) :: tl  => if nodeHasOnlyId n then flEmitNodes tl else .object n :: flEmitNodes tl
-
-def flFilterNamed : List (String × NmGraph) → List (String × NmGraph)
-  | []            => []
-  | (g, gr) :: tl => if g == "@default" then flFilterNamed tl else (g, gr) :: flFilterNamed tl
+/-- Emit a graph's nodes in id order, dropping any that consist only of
+`@id` (the spec's "unless node consists only of `@id`"). -/
+def flEmitNodes (gr : NmGraph) : List Json :=
+  gr.foldr (fun _ n acc => if nodeHasOnlyId n then acc else .object n.toFields :: acc) []
 
 /-- Step 3: fold each named graph (ordered by name) under a `@graph`
 entry of its name-node in the default graph. -/
 def flFoldNamed : NmGraph → List (String × NmGraph) → NmGraph
   | dflt, []                => dflt
   | dflt, (gname, gr) :: tl =>
-    let gnodes := flEmitNodes (flSortByKey gr)
-    let dflt1 := match flLookup dflt gname with
-                 | some n => flUpd dflt gname (n ++ [("@graph", .array gnodes)])
-                 | none   => dflt ++ [(gname, [("@id", .string gname),
-                                               ("@graph", .array gnodes)])]
+    let gnodes := flEmitNodes gr
+    let dflt1 := match dflt.get? gname with
+                 | some n => dflt.insert gname (n.upsert "@graph" (.one (.array gnodes)))
+                 | none   => dflt.insert gname
+                               ((NmNode.fresh gname).upsert "@graph" (.one (.array gnodes)))
     flFoldNamed dflt1 tl
 
 /-- Flatten an EXPANDED document (normally an array of node objects) to
 the ordered node array the flatten suite's context-free fixtures
 expect. -/
 def flattenExpanded (expanded : Json) : Res (List Json) :=
-  let fuel := 16 * Json.size expanded + 128
-  let st0 : NmState := { graphs := [("@default", [])], idmap := [], ctr := 0 }
-  match nmg st0 expanded "@default" none none none fuel with
+  match generateNodeMap expanded with
   | .error e => .error e
-  | .ok (st, _) =>
+  | .ok st =>
     let dflt := stGraph st "@default"
-    let named := flSortByKey (flFilterNamed st.graphs)
+    let named := (st.graphs.erase "@default").toList
     let dflt1 := flFoldNamed dflt named
-    .ok (flEmitNodes (flSortByKey dflt1))
+    .ok (flEmitNodes dflt1)
 
 /-! ## `JsonLdProcessor.flatten()` -/
 

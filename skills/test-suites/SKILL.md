@@ -1,0 +1,936 @@
+---
+name: test-suites
+description: Run and interpret every test suite in the Factoidal project — W3C conformance (SPARQL 1.1, RDF 1.1/1.2 syntax, rdf-mt, RDF canonicalization, OWL 2), local regression scripts, cross-runtime parity (native/JS/wasm), Apache Jena ARQ comparison probes, running only the suites a diff touches (`tools/affected-tests.sh`), regression-pinning discipline (write the failing test before the fix, confirm it fails for the right reason), and the policy for importing external suites. Use when the user asks to "run the tests", "check conformance", "compare against Jena", to investigate a score change, when landing a bug fix and deciding which regression to write, or before claiming any change is done. Testing (with perf measured separately — see perf-benchmarking) drives everything in this project.
+---
+
+# Test suites: what exists, how to run them, what the numbers mean
+
+**Backend rule (owner directive, 2026-07-04): semantic compliance is
+claimed PER BACKEND, and every semantic regression test runs on all
+backends.** The W3C scores exercise the in-memory evaluation path
+only; the on-disk COTTAS path has its own search/scope code, and
+every soundness bug found in 2026-07 (#261, the GROUP BY estimate
+leak, #267 dataset semantics) lived exactly in that gap. Until #118
+makes the F\* spec the single runtime for all storage layers (the
+architectural fix — one verified semantics, storage as a data source
+with equivalence lemmas), the cross-backend parity harness is the
+detector: new semantic tests follow the
+`graph_default_semantics_regressions.sh` pattern — same fixtures,
+same queries, every backend, results diffed.
+
+Every change in this repo is judged by test counts. Conformance and
+performance are measured on **separate, repeatable harnesses and never
+conflated**: this skill covers correctness; timing lives in the
+`perf-benchmarking` skill. A change is not done until the suites that
+cover it have been run and the numbers reported in full-sentence form
+(anti-pattern #25: "631 pass, 0 fail (out of 631)", never "631/631"
+without labels).
+
+## Run only affected suites
+
+For local iteration, don't run the full ~25-minute W3C battery on
+every landing — `tools/affected-tests.sh` maps your diff to the
+suites it actually touches (via the `.github/test-suites/*.yaml`
+manifests + `tools/dispatch_test_suites.sh --diff`) and runs just
+those, with a labelled pass/fail line per suite:
+
+```bash
+tools/affected-tests.sh                 # base=merge-base(origin/claude/main, HEAD); see the note below
+                                         # head=working tree (incl. uncommitted changes)
+tools/affected-tests.sh <base>          # explicit base, head=working tree
+tools/affected-tests.sh <base> <head>   # explicit base and head (committed refs only)
+tools/affected-tests.sh --only <suite>  # force-run one named suite, bypassing diff detection
+```
+
+It prints the plan (which changed paths fired which suites), runs
+each affected suite's runner with its manifest's `runner_args`, and
+SKIPs loudly (not silently) any suite whose runner binary isn't built
+in this checkout. Touching a **foundational** path
+(`.github/test-suites/_foundational.yaml`) fires every suite — that's
+by design, not a bug in the tool.
+
+Base branch in `danbri/factoidal-core` (2026-10-09): the script's default
+base is `origin/claude/main`. In core, `claude/main` is the older branch
+that the split did not overwrite, and core's current line is
+`claude/core-split` until the owner renames it to `main`. Pass the base
+explicitly (for example `tools/affected-tests.sh origin/claude/core-split`)
+and read the printed plan before trusting the suite list.
+
+**The full battery still gates release-grade landings** — the nightly
+full-suite run (`w3c-tests.yml`, inactive since 2026-10-09: see the
+"CI: what runs when" table) and any multi-package landing must still run
+the complete suite (`./w3c-tests.sh`) before those.
+`affected-tests.sh` is a fast local signal, not a substitute.
+
+## Step 0: verify fixtures exist (or every score below lies)
+
+```bash
+tools/ensure-test-env.sh          # init all 14 testing submodules + verify (idempotent)
+tools/ensure-test-env.sh --check  # verify only, no network
+```
+
+Fixtures live in git submodules that fresh containers, git worktrees,
+and CI runners do NOT populate automatically. A missing suite does not
+error loudly — it shows up as a 0/0 dashboard row, a "0 tests" run, or
+fixture-ENOENT test failures that look like engine regressions. Exit 1
+from the script means: fix the environment before trusting any number.
+
+## The one command
+
+```bash
+./w3c-tests.sh            # run the W3C suites, regenerate the dashboard
+./w3c-tests.sh --cached   # regenerate dashboard from the last logs, no re-run
+```
+
+Run it **from the repo root** — the runner resolves fixture base URIs
+via `Sys.getcwd()`; rdf-xml tests silently diverge (same triple counts,
+different IRI strings) if CWD changes. The wrapper enforces this by
+`cd`-ing to the repo root itself, so prefer it over calling the inner
+script directly.
+
+It wraps `formal/fstar/generate-report.sh`, which picks the platform
+binaries from `bin/darwin-arm64/` or `bin/linux-x86_64/`. Since
+2026-10-09 these are not committed (iron rule 9): `tools/fetch-builds.sh`
+installs them from the newest `danbri/factoidal-builds` release whose
+source commit is in your history, so a fresh clone runs tests with **no
+F\*/opam toolchain** once that has run (`tools/ensure-test-env.sh` calls
+it). It drives three runners:
+
+| Runner | Suites | Raw log |
+|---|---|---|
+| `w3c_runner` | SPARQL 1.1 query/update/protocol/service-description | `formal/fstar/ocaml-output/sparql_results.log` |
+| `w3c_runner --rdf` | N-Triples, Turtle, N-Quads, TriG, RDF/XML, rdf-mt | `formal/fstar/ocaml-output/rdf_results.log` |
+| `owl_runner` | OWL 2 RL PositiveEntailmentTests + 7 DL catalogs, each with its own timeout budget (60s–900s) | `owl_profile_rl_results.log` |
+| `rdfc10_runner` | RDF Dataset Canonicalization (RDFC-1.0; SHA-256 + SHA-384 per-test via rdfc:hashAlgorithm; Map tests compared structurally per the suite README; NegEval via HNDQ work budget). Baseline 2026-07-05 (wave 8): **86 pass, 0 fail (of 86) — suite complete** | `rdfc10_results.log` |
+| `shacl_runner` | W3C SHACL core suite (98 tests; full report-isomorphism compare by default, `--conforms-only` for the slice-1 floor). Baseline 2026-07-05 (wave 6): core 98 pass, 0 fail; sparql section (pass manifest path) 22 pass, 0 fail (of 22) — suite complete incl. custom constraint components | stdout |
+| `jsonld_runner` | W3C JSON-LD 1.1 **toRdf** manifest (467 tests; not yet folded into generate-report — run directly). Score 2026-08-22 (re-measured, darwin-arm64): 467 pass, 0 fail, 0 skip (out of 467). The Lean 4 port's `lake exe l4jsonld-probe` (run from the repo root) scores the same 467 pass, 0 fail, 0 skip (out of 467) and additionally checks negative tests' error codes (103 of 106 match `expectErrorCode`). History: 2026-07-05 wave 9 was 399 pass, 57 fail, 11 skip | stdout |
+| `jsonld_expand_runner` | W3C JSON-LD 1.1 **expand** manifest (§5.1 Expansion). F\* 2026-08-22: 385 pass, 0 fail, 0 skip (out of 385). Lean 4 (`lake exe l4jsonld-api`, run from the repo root) 2026-08-22: 385 pass, 0 fail, 0 local-override (out of 385) | stdout |
+| `jsonld_compact_runner` | W3C JSON-LD 1.1 **compact** manifest (§6 Compaction: inverse context, IRI compaction, term selection, value compaction). F\* 2026-08-22: 245 pass, 0 fail, 1 local-override, 0 skip (out of 246). Lean 4 2026-08-22: 245 pass, 0 fail, 1 local-override (out of 246). The local-override is `#t0038` (a JSON-LD 1.0-only expectation that contradicts the suite's own 1.1 pin `#tp001`), argued in `tests/local-overrides/` | stdout |
+| `jsonld_flatten_runner` | W3C JSON-LD 1.1 **flatten** manifest (§7 Flattening + node map generation). F\* 2026-08-22: 58 pass, 0 fail, 0 skip (out of 58). Lean 4 2026-08-22: 58 pass, 0 fail, 0 local-override (out of 58) | stdout |
+| `jsonld_fromrdf_runner` | W3C JSON-LD 1.1 **fromRdf** manifest (§8.5 Serialize RDF as JSON-LD; `useNativeTypes`, `useRdfType`, both `rdfDirection` modes, RDF-collection-to-`@list`). F\* 2026-08-22: 53 pass, 0 fail, 1 local-override (out of 54). Lean 4 2026-08-22: 53 pass, 0 fail, 1 local-override (out of 54). The local-override is `#t0008` (the JSON-LD 1.0 partially-ordered list conversion) | stdout |
+| `jsonld_html_runner` | W3C JSON-LD 1.1 **html** manifest (HTML Content Algorithms: `<script type="application/ld+json">` extraction, `<base href>`, fragment targeting, `extractAllScripts`; entries then run expand / compact / flatten / toRdf). F\* 2026-08-22: 50 pass, 0 fail, 0 skip (out of 50). Lean 4 2026-08-22: 50 pass, 0 fail, 0 local-override (out of 50) | stdout |
+| — (Lean 4 aggregate) | `lake exe l4jsonld-api` covers expand + compact + flatten + fromRdf + html in one run: **791 pass, 0 fail, 2 local-override, 0 unsupported (out of 793)**, matching the F\* runners manifest for manifest, plus 140 of 144 negative tests producing the exact `expectErrorCode` the manifest names | stdout |
+| — (Lean 4 scaling) | `tests/stack/jsonld_scaling.sh` runs `l4jsonld-api --scale`: JSON-LD node map generation, flatten and frame core on five document shapes at n to 16n, asserting time(4x) at most 9.0 times max(time(x), 20 ms). Score is "N pass, M fail (out of T) size pairs"; exit 1 on a failure | stdout |
+| — (Lean 4 OWL on real ontologies) | `tests/stack/owl_real_gate.sh`: one step of `tools/owl-real-bench.py` per row (closure, DL consistency, DL entailment, species, parse count) on the vendored real ontologies, under 600 s and `prlimit --as=6000000000`; one F* closure row, skipped without the F* binary. Seven rows were expected failures with open issues (329, 758, 759, 760, 765, 766, 771) on 2026-10-10: 5 pass, 0 fail, 7 expected-fail (out of 12). Row `ro-parse` (329) left the table on 2026-10-14: the Lean RDF/XML parser reads the 11,705 triples of RO (https://github.com/danbri/factoidal/issues/841). Record: `docs/designissues/2026-10-10-owl-real-ontologies.md` | stdout |
+| `shex_runner` | ShEx validation suite (shexSpec/shexTest, 1182 entries; ShExJ-first with hand-translated twins in tests/shex-shexj-twins/ for ShExC-only fixtures; DEFERRED = construct beyond current stage, never guessed). Baseline 2026-07-29: 1182 pass, 0 mismatch, 0 local-override, 0 deferred, 0 skipped. (Until 2026-07-29 this read 1181 pass, 1 mismatch — the upstream start2RefS2.json p1-vs-p2 fixture defect, carried as a local override. Upstream commit 0f45c51 reconciled all three formats to p2 and added synchronization actions; the submodule was updated, the test now passes on its own merits, and the override file was deleted.) Validation uses descendant-witness semantics (arXiv 2503.24299), differentially confirmed against @shexjs/validator. Two more modes: `--differential` (ShExC-vs-ShExJ parse oracle over schemas/, 433 of 433 structurally equal — the Parser.ShExC positive floor) and `--negative-syntax` (the 100-fixture ShExC grammar-reject suite; 2026-07-10 baseline 100 pass, 0 fail, log `shex_negative_syntax_results.log`). The vendored tree-sitter-shexc comparison probe (advisory, three-way vs expected verdicts) is `tests/shexc-treesitter/run.sh` — see §comparison probes | stdout |
+| `rml_runner` | RML (kg-construct suites, third_party/testing/rml-modules/). Baseline 2026-07-05: rml-core 76 pass, 0 fail (of 76); rml-io 17 pass, 15 fail (documented stage-4+ gaps), 41 logical-target skips (of 73) | stdout |
+| `rif_runner` | W3C RIF Core: 4 vendored SPARQL-manifest cases (third_party/testing/rif/tc/) + the official Core_v1.22 corpus (46 tests, third_party/testing/rif-core-suite/). Baseline 2026-07-05 (goal wave): 34 pass, 4 labelled fails (1 KNOWN-DEFECT W3C-zip, 3 KNOWN-GAP), 12 precise skips naming the exact builtin/feature (of 50). DTB builtins in RIF.Core.Builtins.fst; safeness + import-rejection in RIF.Core.Conformance.fst; details in bin/rif-runner/README.md. NOTE: new extracted modules must be registered in THREE places — build-ocaml.sh's three lists. tests/unit/run-all.sh used to be a fourth (a frozen copy of COMMON_MODULES); by 2026-08-22 that copy had drifted 22 modules behind and every unit-test link died with 'No implementations provided: RDFS_Closure_SemiNaive', so run-all.sh now extracts the list from build-ocaml.sh at runtime and the fourth place no longer exists | stdout |
+| `xml_runner` (`bin/linux-x86_64/xml_runner`, no `build-ocaml.sh` args — standalone `mktemp`-scratch compile, see `bin/xml-runner/README.md`) | W3C XML Conformance Test Suite (`xmlconf`, third_party/testing/xml/xmlconf/, jclark/sun/ibm/oasis/eduni/japanese collections). Assesses `Parser.XML.fst` + `XML.Wellformedness.fst` (informational NCName check only — its NCName production excludes `:`, so it's RDF/XML-domain, not generic XML) + `XML.Namespaces.fst` (new 2026-07-05 wave 2 — Namespaces-in-XML layer, gated to the `eduni/namespaces/{1.0,1.1}` collections only). 2026-07-08 integrity accounting (vacuous DOCTYPE-forced rejections no longer counted as passes): **244 real pass, 0 fail, 2341 skip (of 2585)**. A `not-wf` test counts as a pass only when the parser rejects it for the tested construct. The earlier **1442** was inflated: 1166 of those "passes" were vacuous (rejected only because `Parser.XML.fst` has no DOCTYPE/DTD production, so the reject is forced by that gap, not the documented construct) — now counted as SKIP, not pass (anti-patterns #3 / #25). `valid` bucket (labelled "wf-accept" — no DTD validation implemented) is 0/0/812: every `valid` test carries a DOCTYPE, so it's 100% `Skip "DOCTYPE/DTD not parsed"` (DTD slice plan: `docs/designissues/2026-07-08-xml-dtd-support.md`). `invalid`/`error` (275 tests) are always skip by design. `not-wf` is 244 real pass/0 fail/skip-balance (of 1498); of the skips, 1166 are vacuous DOCTYPE-forced and 32 are out-of-profile (not-wf only under XML 1.1 / Namespaces — the ibm xml-1.1 restricted-C1 and eduni rmt-ns10-042 colon-in-PITarget clusters; the parser accepts them since they are well-formed under its XML 1.0 non-namespace profile). Prolog PIs are now consumed per XML 1.0 §2.8 (un-skips 8 XSLT stylesheets: `xslt_runner` 22→25 pass). The wave-1 84 fails (non-character codepoints, XML declaration grammar, namespace-spec violations, epilog/trailing-content, comment `--`, `]]>`-in-text, attribute value/uniqueness, PI/decl target-name casing, 3 singletons) are now all fixed — per-cluster fix summary in `bin/xml-runner/README.md`'s "Wave 1 → wave 2" section; downstream SPARQL (631 pass, 0 fail) and RIF (30 pass, 8 fail, 12 skip — identical to the pre-change committed binary, so unchanged by this work) floors reverified after the `Parser.XML.fst` prolog-PI change, since it's also consumed by `Parser.RDFXML`/`Parser.RIFXML`/`Parser.SRX`; raw logs `.claude-runs/xml-runner-2026-07-05.log` (wave 1) and `.claude-runs/xml-runner-2026-07-05-fixed.log` (wave 2) | stdout |
+| `xslt_runner` (`bin/linux-x86_64/xslt_runner`) | XSLT 1.0 transform conformance against `XSLT.Transform.fst` (slice 1). Default corpus = the slice-1-scoped subset of `w3c/xslt30-test` vendored at `third_party/testing/xslt/` (88 tests). Baseline 2026-07-17: **87 pass, 1 fail (of 88)** — the 1 fail is `node-1601` (`namespace::` axis, unmodeled). ⚠️ This corpus is a **regression pin**, not a conformance measurement: its selection criteria blocklist every unimplemented feature (see `docs/designissues/2026-07-17-xpath-xslt-coverage-matrix.md`) | stdout |
+| `xslt_runner --base third_party/testing/xslt1-xalan` | **XSLT 1.0 conformance mirror** (Apache Xalan `xalan-test` `tests/conf`, Apache-2.0; submodule at `third_party/testing/xslt1-xalan/xalan-test-src` + generated `manifest.json`). 1690 test triples across 35 categories; same committed `xslt_runner` + F\*-extracted `XSLT.Transform` oracle, `--base` selects the corpus. Built to **surface** the coverage-matrix holes (namespace axis, translate/lang, xsl:number, key/generate-id, import/include, format-number/decimal-format, attribute-set, output attrs, …), so a large red count is expected and is the deliverable — the measured burndown target for the matrix. Baseline 2026-07-17 (no engine changes): **970 pass, 712 fail, 8 skip (of 1690)**; per-feature fail clustering in `third_party/testing/xslt1-xalan/INFO.txt`. Fresh-env restore + regen: `tools/ensure-test-env.sh`; `tools/gen-xslt1-xalan-manifest.py` | stdout |
+
+Outputs: `docs/test-results/index.html` (dashboard),
+`latest.csv` / `latest.json` (machine-readable),
+`history/<iso-timestamp>.{csv,json}` (archive). Until 2026-10-09 these
+were committed and CI-maintained on the main lines. In
+`danbri/factoidal-core` they are generated and gitignored: do not commit
+them. The `web` release set of `danbri/factoidal-builds` carries a
+generated dashboard.
+
+Known reporting gap: rdf-canon scores appear in `latest.csv` but are
+not folded into `latest.json`'s RDF totals. Treat the CSV as the
+complete record until that is fixed.
+
+## Direct runner invocation
+
+```bash
+cd formal/fstar/ocaml-output   # or repo root — see CWD note above
+./w3c_runner                   # all SPARQL suites
+./w3c_runner --rdf             # all RDF suites
+./w3c_runner --all             # both
+./w3c_runner --list            # list suite names
+./w3c_runner bind functions    # just the named suites
+./w3c_runner -v aggregates     # verbose: full expected/actual rows on stderr
+```
+
+Scores as of 2026-07-03 (verify against
+`docs/test-results/latest.json` rather than trusting this file):
+SPARQL 631 pass, 0 fail; RDF 1031 pass, 0 fail — 1662/1662 runnable.
+OWL 2 RL profile positive-entailment: 20 pass, 10 fail (out of 30).
+
+## Where the test data lives
+
+`third_party/testing/` (moved from `tests/w3c/` in 2026-04; the runner
+keeps the old path as a fallback):
+
+- `w3c/` — git **submodule** of `w3c/rdf-tests` (RDF 1.1 + SPARQL 1.1,
+  plus RDF 1.2 via the `sparql-mixed-rdf-version-tests` branch).
+  Without it the runner reports zero tests — and
+  `generate-report.sh --run` will then happily **overwrite the
+  committed logs and dashboard with a 0/0 result**. If a run reports
+  "0 pass, 0 fail", the suite didn't run: init the submodules,
+  `git checkout` the clobbered logs, and rerun. The two suites need:
+  `git submodule update --init third_party/testing/w3c
+  third_party/testing/rdf-canon` (full setup detail in the
+  `fstar-env` skill, §6).
+- `owl/` — vendored static drop of the W3C OWL 2 Test Cases.
+- `rdf-canon/` — submodule, RDFC-1.0 canonicalization tests.
+- `rif/tc/` — RIF test cases. The four RIF Core entailment tests run
+  via `bin/rif-runner` (4 pass, 0 fail since 2026-07-05; supported
+  subset documented in `docs/claude-rules/scope.md`). `w3c_runner`
+  still reports its own RIF entries as skips — the runner of record
+  is `rif_runner`.
+- `json-ld/` — submodule of w3c/json-ld-api (vendored 2026-07-04).
+  WIRED, and to more than toRdf: the toRdf, expand, compact, flatten,
+  fromRdf and html manifests all have runners (table above), in both
+  the F\* and Lean 4 trees. (Until 2026-08-22 this bullet read "Not yet wired"
+  and "compact/flatten/frame are JSON-to-JSON, out of scope for an RDF
+  engine" — both false by then: the F\* runners had been green for
+  weeks and the Lean port matched them on all five manifests that day.
+  A stale negative claim, exactly the kind the `obsolescence-sweep`
+  skill exists to catch.) Framing IS still out of scope in both trees —
+  a separate specification with a separate suite. The suite's "remote"
+  context documents ship as local fixture files; read
+  `docs/designissues/2026-07-04-jsonld-program-lessons.md` before
+  touching this program.
+- `shex/`, `csvw/`, `vc/`, `did/`, `rml/` — vendored for offline use.
+  `csvw/`, `vc/` and `did/` have runners in both trees (F\* `csvw_runner`
+  / `vc_runner`; Lean `Harness/CsvwJsonRun`, `CsvwRdfRun`, `l4vc-probe`);
+  `shex/` has a Lean module and its runner status is in the
+  `using-factoidal` capability matrix; `rml/` has no runner. (The earlier
+  "not yet wired to any runner" line was stale by 2026-09-02.)
+- `third_party/data/ukparliament/` — perf-bench corpus (see
+  `perf-benchmarking`).
+
+Iron Rule #6 applies: run the real W3C files from disk. No synthetic
+queries "inspired by" W3C tests. Never default to SPARQL 1.0 manifests
+when 1.1 exists (Iron Rule #5).
+
+## First-party harnesses under `tests/`
+
+- `tests/unit/` — OCaml unit tests + `run-all.sh` (includes
+  companion-file writer round-trips, UTF-8/codepoint semantics,
+  RDF/XML perf repros).
+- `tests/local/` — regression shell scripts:
+  `sparql_parser_regressions.sh`, `sparql_negative_regressions.sh`,
+  `backend_parity_regressions.sh`, `backend_parity_full.sh`,
+  `cottas_corpus_regressions.sh`, `cottas_groupby_counts_regressions.sh`,
+  `cottas_ask_decode_failure_regressions.sh`,
+  `graph_default_semantics_regressions.sh`, `graphs_api_regressions.sh`,
+  `jsonld_regressions.sh`, `parquet_footer_regressions.sh`,
+  `serializer_unicode_regressions.sh`, `turtle_pretty_regressions.sh`,
+  `check_pages_links.sh`. Each has a `local-*` manifest in
+  `.github/test-suites/`, so `tools/affected-tests.sh --only
+  local-<name>` runs any one of them directly. Run the ones touching
+  your area before pushing. Environment notes: the COTTAS/parity/footer
+  scripts need the pycottas venv at `_tmp.junk/pycottas-venv` (the
+  session bootstrap hook provisions it); `sparql_parser_regressions.sh`
+  additionally expects an external HDT corpus at `/tmp/Corpus3` —
+  without it, 6 of its 7 checks fail on environment, not on code;
+  `check_pages_links.sh` needs a fresh Eleventy build at `docs/_site`
+  first.
+- `tests/xml-local/` — repository-local XML fixtures in the format of the
+  W3C XML Conformance Test Suite (`xml-local.xml`, with the attributes it
+  adds explained in its header): attribute defaults (XML 1.0 3.3.2, 5.1),
+  the value syntax of `xml:lang`, `xml:id` and `xml:base`, and the nesting of
+  parameter entities in external parameter entities (2.8, 3.2, 3.4). The Lean
+  runner scores it on its own line, `xml-local: N pass, M fail, K
+  expected-fail (out of T)`, from the repository root:
+  `formal/lean4/.lake/build/bin/l4xmlconf`. A case with an `XFAIL`
+  attribute names an open issue, is counted in `expected-fail`, and fails the
+  run when it passes. The same run reads `tests/local-overrides/*.json` with
+  `"suite": "xmlconf"` (a case named by its manifest `ID`), counts an
+  overridden case in a `local-override` bucket on every line it belongs to,
+  fails when an overridden case passes, and exits 1 on any failure.
+  Record: [`docs/designissues/2026-10-10-xml-profile-widened.md`](../../docs/designissues/2026-10-10-xml-profile-widened.md).
+- `tests/beyond-w3c/` — cross-runtime parity: every demo-page query in
+  `tests/beyond-w3c/fixtures/index.json` runs on native and
+  js-of-ocaml-under-Node via `tests/beyond-w3c/bin/run-parity.py`. Any non-zero exit is an engine crash unless the
+  manifest declares a `known_failures` entry **pointing at an open
+  GitHub issue**. CI: `.github/workflows/beyond-w3c.yml` (per-PR).
+- `tests/web-demos/` — demo-specific checks (`lifesci_parity.sh`);
+  `hub_browser_all.sh` drives headless Chromium over every docs-hub
+  post (`docs/web/hub/NN-*.md`) to catch browser-only `observable-js`
+  cell regressions node-side tests can't see — see
+  `tests/web-demos/README.md`.
+
+## Comparison probes against other engines
+
+Jena ARQ probes (scripts in `tools/`, expect a Jena checkout at
+`/tmp/jena` with `jena-arq/testing/DAWG-Final`):
+
+```bash
+tools/jena_arq_syntax_probe.sh   # syntax accept/reject parity
+tools/jena_arq_basic_probe.sh    # SELECT execution, row-count compare
+tools/jena_arq_graph_probe.sh    # named-graph semantics
+tools/jena_arq_ask_probe.sh      # ASK
+```
+
+These deliberately compare **row counts**, not full result-set
+isomorphism — fast signal, narrower claim. Findings and current scores
+are logged in `docs/designissues/jena-arq-probe.md`,
+`jena-arq-basic-probe.md`, `jena-arq-graph-probe.md`. Interesting Jena
+disagreements get distilled into `tests/local/` regressions so the
+probe environment isn't needed to keep the lesson.
+
+Parser-count comparison against pyoxigraph:
+`tools/compare_rdf_parser_counts.py` (see
+`docs/designissues/2026-04-25-fstar-parser-vs-pyoxigraph-and-parquet-cli.md`).
+
+ShExC three-way grammar probe against tree-sitter-shexc (vendored at
+`third_party/tree-sitter-shexc/`, MIT — provenance in its
+PROVENANCE.md; never product code, never in the verified boundary or
+shipped bundles): `tests/shexc-treesitter/run.sh` compiles the vendored
+grammar with node-gyp and emits an expected × Parser.ShExC ×
+tree-sitter agreement table over the shexTest positive schemas and
+negativeSyntax fixtures. Advisory only — disagreements are triaged
+(our bug / tree-sitter grammar bug / corpus defect), not scored;
+dispositions live in
+`docs/designissues/2026-07-10-shexc-treesitter-grammar-audit.md`.
+
+## Importing external test suites
+
+Policy from
+`docs/designissues/2026-04-23-external-sparql-test-suites.md`:
+licence-clean only (no GPL/AGPL anywhere in the chain); land as
+`tests/external/<project>/` with provenance recorded in a
+`THIRD_PARTY_NOTICES.md`. Ranked candidates: Oxigraph (planner
+regressions, parser error-recovery), Eclipse RDF4J (SPARQL 1.2 draft
+fixtures, SERVICE federation), Apache Jena (RDFS rule tests, pre-baked
+BSBM). The single best idea found there: Jena's shaded-old-build
+pattern — benchmark the current build against a **frozen older binary
+of itself** (each built core commit has its own release in
+`danbri/factoidal-builds`, and `tools/fetch-builds.sh --commit <sha>`
+installs the build of a given commit. It installs into the same
+`bin/<platform>/` paths as the current build, so a diff script has to
+copy it aside first).
+
+## CI: what runs when
+
+Since 2026-10-09 the workflows are split between two repositories.
+
+In `danbri/factoidal-core` (`.github/workflows/`, source-only gates that
+need no built binary):
+
+| Workflow | Role |
+|---|---|
+| `verify-lean4.yml` | Lean 4 full-corpus gate: `lake build` of the whole tree (every `#guard`, every theorem) on each push to the main line; see `docs/20260831-lean-ci-gate.md` |
+| `verify-fstar.yml` | F\* full-corpus verification (`make verify`, no `--lax`) |
+| `check-derived-files.yml`, `check-fstar-purity.yml`, `check-ocaml-output-cleanliness.yml`, `check-extraction.yml` | Boundary/extraction discipline gates (see `ocaml-boundary`) |
+
+In `danbri/factoidal-builds`:
+
+| Workflow | Role |
+|---|---|
+| `build.yml` (active) | Builds a core commit (Lean native and wasm, F\* native, JS and wasm), runs its gates, and publishes releases `build-<12 hex>-<set>`. Polls core four times a day. Per `legacy-workflows/README.md` it replaces `w3c-tests.yml`; whether it runs every suite that `./w3c-tests.sh` runs was not checked |
+| `legacy-workflows/*.yml` (inactive, not under `.github/workflows/`) | `w3c-tests`, `beyond-w3c`, `conformance-rerun`, `dashboard-refresh`, `deploy-pages`, `fly-deploy`, `npm-publish`, `npm-publish-lean`, `ukparliament-bench`, `clean-room-build`, `debug-bytecode-build`. Each still assumes the old layout. What each port needs: `legacy-workflows/README.md` |
+
+Before 2026-10-09 `w3c-tests.yml` was the heavy pipeline on the main
+lines plus a nightly cron (debounced, dual-platform shadow builds to
+`bin/ci-<platform>/`, full suites, committed dashboard artifacts),
+`beyond-w3c.yml` ran per PR (native/JS parity over demo queries), and
+`ukparliament-bench.yml` was the perf-regression gate (see
+`perf-benchmarking`). `dashboard-refresh.yml` and `deploy-pages.yml` did
+the publishing (see `site-and-dashboard`). None of these runs now.
+
+`.github/test-suites/*.yaml` holds one manifest per suite (runner,
+args, log path, `domain`, `foundational`, trigger paths) — this
+covers both the W3C corpora (`rdf-*`, `sparql11-*`, `owl-profile-rl`,
+`rdfc10`, `jsonld-tordf`) and the `tests/local/*.sh` regression
+scripts (`local-*` manifests). `tools/dispatch_test_suites.sh --diff
+<base> [<head>]` computes which suites a change touches — the
+scaling plan for when OWL DL (~3000), JSON-LD (~800), SHACL (~400)
+tests are wired in — and `tools/affected-tests.sh` (see "Run only
+affected suites" above) wraps it with actual execution. When you add
+a suite (W3C or local script), add its manifest.
+
+## Drift signal: a suite that runs but is never RE-run is a silent gap
+
+The manifest system triggers a suite on a PR that touches ITS trigger
+paths. That leaves two silent gaps, both surfaced by the 2026-07-19 audit:
+
+1. A change that affects a suite TRANSITIVELY (not via its trigger paths)
+   never re-runs it — its committed score drifts with no signal.
+2. A suite with no manifest at all (the OWL 2 DL semantics catalogs had
+   none) is never triggered even by relevant changes.
+
+Proof it's real, not theoretical: committed `owl_type_inconsistency` +
+`csvw` result logs predated their own source files by a day. The green
+number on the dashboard was stale, not wrong-then — but nothing would have
+caught a *real* regression either.
+
+The durable fix (landed as `.github/workflows/conformance-rerun.yml`,
+epic #235): a **scheduled** (daily cron + `workflow_dispatch`) job that
+re-runs EVERY suite off the committed `bin/linux-x86_64` binaries via
+`generate-report.sh --run` and commits refreshed logs back — so drift
+becomes a visible scheduled-commit diff. Since 2026-10-09 this workflow
+is inactive: it moved to `legacy-workflows/` in `danbri/factoidal-builds`
+(its port is the `build-ocaml.sh test` step and the Lean scoreboard in
+`build.yml`, per that README), and core no longer commits result logs.
+Gap 1 above is open again. No tracking issue is recorded here yet.
+Rules that follow:
+
+- Every new suite gets a manifest AND is covered by the scheduled re-run
+  (it is, automatically, if `generate-report.sh --run` invokes its runner —
+  check that it does).
+- Before quoting a suite's score as *current*, remember the committed log
+  may be stale. If it matters, re-run the suite and read the LIVE number
+  (release binaries from `tools/fetch-builds.sh`, no toolchain). Cross-ref `obsolescence-sweep`
+  § "score-staleness trap."
+- Auditing "what's silently untested": the dangerous pattern is a clean
+  fully-dispositioned score nobody re-verifies — NOT a big labeled skip
+  pool (those are honest). Labeled skips = good discipline; un-re-run
+  scores = the hole.
+
+## Reporting a correct-but-net-zero change honestly
+
+Sometimes a spec-correct, F\*-verified fix flips ZERO tests because the
+target cases have a SEPARATE blocker (e.g. the XML UTF-8-BOM skip was
+correct per XML 1.0 §4.3.3, but its two BOM tests were also blocked by an
+internal-DTD subset and an undecoded encoding; the SPARQL 1.2 UPDATE
+VarOrIri-graph parser fix was necessary but the tests also needed the
+runner-side `.trig` dataset load). Land these — correct behaviour and a
+prerequisite are worth having — but label the commit and the report
+**"net-zero conformance"** with the reason, NEVER as the "+N" you
+predicted. Predicting +N and reporting +N when it was +0 is exactly the
+misleading-score anti-pattern (#3/#25), just in a subtler form. Measure
+before you claim the delta; re-baseline against the LAST landing's
+numbers, not an older snapshot.
+
+## Proving zero live callers before deleting verified code
+
+Retiring dead F\* (or its shadow OCaml glue) is high-value cleanup, but
+"dead" must be PROVEN, not assumed — and the audit doc that says something
+is dead can itself be stale (2026-07-19: the boundary audit claimed Bet7
+was "blocked on a Tot→ML cascade through `cottas_ondisk_row_to_quad`"; the
+whole chain already had zero callers — the code had moved past the doc).
+Before deleting a definition:
+
+- grep for callers across ALL of `*.fst`, `formal/fstar/ocaml-output/*.ml`,
+  `bin/*/*.ml`, `tests/unit/*.ml`, AND `experimental_ocaml_glue/*.sh`.
+- **Distinguish real call sites from comment/prose references** — most
+  hits on a retired name are historical `//` / `(* *)` / markdown
+  mentions. A name in `cottas_memory_buffer_unit.ml` was pure comment;
+  the live calls had migrated to the `_tok` variant.
+- Watch for cross-module callers the local grep misses (a
+  `Parser.Ballyhoo*` backend calling into the module you're pruning).
+- Gate the deletion on the real suites (unit 47/47, the relevant
+  conformance floors), not just "it still compiles" — a dead-code delete
+  that changes a live number means it wasn't dead.
+
+## Regression-pinning discipline
+
+When fixing a bug, write the regression BEFORE rebuilding, assert the
+FIXED behavior, and run it against the current (broken) binary to
+confirm it FAILS for the expected reason. That pre-fix failing run is
+the proof the test bites; paste it in the report/commit. Two
+refinements from 2026-07-04:
+
+- If a future improvement could make the fixture stop reproducing the
+  setup condition (e.g. a decoder gets smarter and the "undecodable
+  column" fixture decodes), have the script self-check the condition
+  and SKIP loudly instead of passing vacuously
+  (`cottas_ask_decode_failure_regressions.sh` pattern).
+- A strict external consumer is a regression test you didn't have to
+  write: the npm entry's JSON.parse caught a weeks-old escaper bug
+  the suites never fed. When adding a serializer/writer, give its
+  output to the strictest available parser somewhere in the battery.
+
+## Reporting discipline
+
+- Full-sentence scores, labelled numerators and denominators, always
+  (anti-pattern #25). Distinguish pass-vs-fail from pass-vs-total when
+  skips exist.
+- Regressions block: if a previously passing test fails, diagnose
+  before committing. Run the affected suites before AND after.
+- Disclose the standing caveats whenever claiming "verified" or
+  quoting scores in public prose (from
+  `docs/claude-rules/current-state.md`). (Two former caveats are gone:
+  since 2026-07-09 graph/result comparison is strict — RDFC-1.0
+  canonicalization + byte-compare, ASK booleans evaluated, SELECT
+  bnodes via canonicalized row reification; and since 2026-07-10
+  `SPARQL11.Parser.fst` verifies with zero admits.)
+- **Disposition taxonomy (owner directive 2026-07-10): a SKIP is
+  actionable debt — something we intend to run one day.** Tests the
+  upstream suite has WITHDRAWN (removed/deprecated as unsound) are a
+  separate disposition, "withdrawn-upstream": excluded from the
+  scorable denominator, never counted as skips, each carrying the
+  upstream commit/date that removed it. Calling them skips pollutes
+  the gap lists that direct work. Similarly keep "upstream fixture
+  defect" fails annotated as such (e.g. the ShEx start2RefS2 twin
+  mismatch) rather than silently patching around them. Precedent:
+  vc_runner's `Withdrawn` outcome (3 fixtures, 117-scorable
+  denominator, 2026-07-10).
+- Scope changes (a test becoming a permanent SKIP, or un-skipped) must
+  update `docs/claude-rules/scope.md` **in the same commit**.
+- Cap ad-hoc runs at 10 minutes (`timeout 600`, anti-pattern #17); log
+  long runs under `.claude-runs/` (#19).
+
+## OWL 2 scoring in the Lean probe (`l4owl-probe`)
+
+Record of the 2026-10-10 reporting change. The probe changed its output
+only. No verdict changed, and every score line that existed before is
+byte-identical (checked by diffing the scoreboard logs of all 10
+`l4owl-probe` jobs before and after, ignoring the `wall_ms` field).
+Run it with `tools/lean-scoreboard.sh --only l4owl-probe`. The DL jobs
+start threads: under `prlimit --as=4000000000` they abort with "failed to
+create thread" (exit 134, 0 s), and `lake` itself needs more than 8 GB of address space. Use
+`prlimit --as=16000000000` for them and for `lake`.
+
+**The unit.** One unit is one pair (test case, test type). A case that has
+two test types gives two units. The existing lines count units.
+
+**The regimes.** Each regime makes one conformance claim. A unit is inside
+the claim ("in scope") when its case meets the condition below. The
+conditions come from OWL 2 Conformance
+(https://www.w3.org/TR/owl2-conformance/): 2.2.1 (entailment checkers),
+3.2.4 (`test:semantics`), 3.2.5 (`test:species`), 3.2.6 (`test:profile`),
+3.2.8 and section 4 (`test:status`).
+
+| Tag in the lines | Flags | Claim | In scope |
+|---|---|---|---|
+| `rl-closure` | none | OWL 2 RL entailment checker. Complete for OWL 2 RL ontologies only. | status Approved, case annotated `test:profile RL` |
+| `dl` | `--dl` | OWL 2 DL entailment checker, Direct Semantics. Takes OWL 2 DL documents. | status Approved, species DL, semantics DIRECT |
+| `rl-refute` | `--rl-refute` | as `dl` | as `dl` |
+| `rdf-based` | `--rdf-based` | RDF-Based Semantics, OWL 2 Full documents (https://github.com/danbri/factoidal/issues/721) | status Approved |
+
+A unit outside the claim stays counted in every existing line. The new
+lines only add a view. In particular the 12 `PositiveEntailmentTest`
+units of FULL-only cases annotated DIRECT stay in the DL-regime numbers
+where they were, and the RDF-Based regime judges them too (issue 721).
+
+**Status.** Approved cases are the official test repository. A Proposed
+case is a case the Working Group did not decide. An Extracredit case is
+approved, and nobody expects an implementation to pass it (section 4).
+"other" is every other value: Rejected, or no `test:status` at all (the
+catalog all.rdf has 29 cases with none).
+
+**Species.** The probe reads a case as DL when `test:species` names DL.
+Every case also names FULL. "FULL-only" means FULL without DL.
+
+**The new lines** (per catalog and regime, after the existing lines of the
+catalog; once more for the TOTAL, which adds overlapping catalogs):
+
+```
+BY-STATUS  <catalog> [<tag>] Approved|Proposed|Extracredit|other: N pass, M fail, ... (out of T)
+BY-SPECIES <catalog> [<tag>] DL|FULL-only: ...
+BY-PROFILE <catalog> [rl-closure] RL|not-RL: ...
+IN-SCOPE   <catalog> [<tag>] <condition>: ...
+FAILING-UNITS <catalog> [<tag>]: N (out of T)
+  FAILING-UNIT <catalog> [<tag>] <id> [<TestType>]: status S, species P, in scope yes|no
+SCOPE [<tag>]: what IN-SCOPE counts, printed once per run
+```
+
+The lines of one facet add up to the catalog line they split. The counts
+use the grammar of the regime's own score line (the RDF-Based regime adds
+`not-refuted` and `local-override`). `FAILING-UNITS` is printed with 0
+when no unit fails. A failing unit that a local override counts apart is
+named too, with the issue. The unit tests are `#guard` cases in
+`Harness/OwlProbe.lean`: an `inScope` that says yes to every unit, or a
+split that loses a unit, fails the build.
+
+**Scoreboard rows.** `tools/lean-scoreboard.sh` adds one row per catalog
+and regime, labelled `<catalog> Approved, in scope`, after the existing
+rows of the same job (15 rows in a run of all 10 jobs; 61 rows became 76).
+Each row has a note that says what is in and what is out. The row is the
+conformance number of the regime on that catalog. The rows without
+"in scope" in the label count all units of all statuses.
+
+**Measured 2026-10-10** (Lean 4.33.1, checkout `claude/wt-owl-report`
+before the merge; the numbers move with the tree):
+
+| Regime and catalog | All units | In scope |
+|---|---|---|
+| `rl-closure`, profile-RL.rdf | 126 pass, 0 fail (out of 126) | 102 pass, 0 fail (out of 102) |
+| `rl-closure`, profile-EL.rdf | 118 pass, 2 fail, 1 skip (out of 121) | 66 pass, 0 fail (out of 66) |
+| `rl-closure`, profile-QL.rdf | 87 pass, 0 fail (out of 87) | 53 pass, 0 fail (out of 53) |
+| `rl-closure`, TOTAL of 6 overlapping catalogs | 1234 pass, 221 fail, 2 skip (out of 1457) | 379 pass, 0 fail (out of 379) |
+| `dl`, type-inconsistency.rdf | 126 pass, 1 fail, 1 skip (out of 128) | 97 pass, 0 fail (out of 97) |
+| `dl`, type-positive-entailment.rdf (PE and Consistency units) | 400 pass, 12 fail (out of 412) | 150 pass, 0 fail (out of 150) |
+| `dl`, type-consistency.rdf | 571 pass, 12 fail (out of 583) | 253 pass, 0 fail (out of 253) |
+| `dl`, syntax-dl.rdf | 422 pass, 1 fail, 1 skip (out of 424) | 350 pass, 0 fail (out of 350) |
+| `dl`, type-negative-entailment.rdf | 46 pass, 0 fail (out of 46) | 18 pass, 0 fail (out of 18) |
+| `rdf-based`, all.rdf | 202 pass, 125 fail, 370 not-refuted, 0 unsupported, 2 local-override (out of 699) | 155 pass, 103 fail, 242 not-refuted, 0 unsupported, 0 local-override (out of 500) |
+
+What the split shows:
+
+- The 221 failures of the RL closure over the whole catalog are all in
+  cases not annotated `test:profile RL`: the RL-annotated units are 471
+  pass, 0 fail (out of 471), the others 763 pass, 221 fail, 2 skip (out of
+  986). The closure is incomplete there by design (OWL 2 Conformance 2.2.1).
+  A failure there is not a defect of the closure.
+- The 12 failing units of the DL regime in type-positive-entailment.rdf are
+  all status Proposed and species FULL-only. The one failing inconsistency
+  unit (`WebOnt-description-logic-909`) is status Extracredit, species DL.
+- The RDF-Based numbers: a `not-refuted` unit is never a pass. The regime
+  proves entailments and inconsistencies and never proves their absence.
+
+**The separate line `[rdf-based or balanced refutation]`** (2026-10-12,
+https://github.com/danbri/factoidal/issues/732). The same `--rdf-based`
+run checks, for each PositiveEntailmentTest and InconsistencyTest the
+RDF-Based rules did not prove, whether its pair is balanced (OWL 2
+RDF-Based Semantics § 7.3, `OWL/RdfBased/Balanced.lean`), and gives a
+balanced pair to the DL path. It prints `BALANCED-PASS`, `NOT-BALANCED`
+or `BALANCED-UNDECIDED` per unit, the score lines with the tag
+`rdf-based or balanced refutation`, and `BALANCED all.rdf [status
+Approved, species DL]` for key result 3.2 of
+https://github.com/danbri/factoidal/issues/768. The `[rdf-based]` lines do
+not change. Never quote the separate line as a proved count: it rests on
+Theorem 7.1 (a proof sketch) and on obligations O1 and O2
+(https://github.com/danbri/factoidal/issues/761,
+https://github.com/danbri/factoidal/issues/762), and O3 for entailments
+(https://github.com/danbri/factoidal/issues/763). Record:
+`docs/designissues/2026-10-10-owl2-rdf-based-semantics.md` § 6.2.
+
+**Rules for quoting an OWL number.**
+
+1. Give the regime tag and the line. Give the `IN-SCOPE` line as the
+   conformance number and say which condition it uses. Give the unsplit
+   line as the count of all units of all statuses.
+2. Do not quote a `rl-closure` TOTAL as OWL 2 RL conformance. It adds
+   catalogs that overlap and units outside the RL claim. Read the
+   profile-RL.rdf lines.
+3. Do not move a unit out of a numerator because it is out of scope. The
+   scope view is an addition.
+4. The probe prints no F\* number. Until 2026-10-10 it printed a 13-line
+   block with four fixed F\* figures ("owl2_profile_el 119 pass, 1 fail
+   (out of 120)" and three more), copied from an old
+   `docs/test-results/latest.json` on 2026-08-22 and printed on every run.
+   They read as measurements of the run and were not. The F\* column of the
+   two OWL rows (EL profile, type-inconsistency) in
+   `docs/designissues/2026-10-09-lean-conformance-baseline.md` repeats
+   them. An F\* comparison has to come from a measured F\* run (for
+   example `tests/known-defects/run.sh`, or `l4diff`).
+
+## What this skill does NOT cover
+
+- Building the runners — `build-and-test` skill.
+- Making the verify/extract/compile loop itself fast — this skill's
+  `affected-tests.sh` cuts down which suites you run once you have a
+  binary; cutting down the build that produces the binary is
+  `fast-verify-extract`.
+- Timing/perf measurement — `perf-benchmarking` skill.
+- Publishing scores to the site/dashboard — `site-and-dashboard` skill.
+- Toolchain setup — `fstar-env` skill.
+
+## ⚠️ A green suite can measure nothing
+
+A negative test ("X must NOT be entailed") is passed for free by an
+engine that derives nothing. Measured 2026-07-31: **19 of 42** negative
+tests across rdf-mt, rdf12-semantics and sparql11-entailment were
+vacuous, while every W3C score stayed green. Run
+`python3 tools/negative-test-vacuity.py` after any change to a rule set
+or entailment regime, and read
+[`skills/measuring-inference/SKILL.md`](../measuring-inference/SKILL.md)
+for why a score alone cannot tell you whether the rules fired.
+
+## ⚠️ A test file the runner cannot parse must stay in the denominator
+
+A runner that skips a file it cannot read reports a smaller denominator,
+and the score line gives no sign of it. 2026-10-10: `l4shacl` parsed
+every SHACL test file as RDF 1.1 Turtle. Five SHACL 1.2 core files write
+constraint reifiers with the RDF 1.2 annotation syntax `{| … |}`; their
+parse failed, the runner printed "cannot read" to stderr only, and the
+Lean row read "out of 133" from the first 1.2 run while the F\* runner read "out of
+138". Rules: parse a suite in the syntax version the suite is written
+for (RDF 1.2 Turtle for the SHACL 1.2, SPARQL 1.2 and RDF 1.2 suites);
+count an unreadable file as a failing entry; and when two trees report
+different denominators for the same manifest, find the cause before
+quoting either number
+(https://github.com/danbri/factoidal/issues/698).
+
+## ⚠️ A suite score certifies only the evaluated path
+
+Learned 2026-08-02, the hard way. The engine has more than one
+evaluation path for the same query: the W3C runner calls
+`eval_select_query` (the pure algebra path), while `factoidal query`,
+the npm bundle, and the HTTP server all route through
+`SPARQL11.Store.eval_pattern_backend`. `FILTER EXISTS` was completely
+broken on the backend path — every row dropped, both EXISTS and NOT
+EXISTS empty at once — while the suite read **631 of 631**, because the
+suite only ever exercises the runner's path. The score was true and
+certified nothing about what users run. An external reviewer found it
+in minutes of ordinary use.
+
+Consequences for practice:
+
+1. **When quoting a score, know which code path it certifies.** A
+   public claim shaped "631 of 631 W3C SPARQL" implicitly claims the
+   *product* conforms; if the runner path and the product path diverge,
+   the claim is false in effect even though the number is exact.
+2. **Every user-facing entry point carries its own pins** —
+   `tests/local/cli_*.sh` run the actual CLI binary on actual W3C
+   fixtures plus the reported repro shapes. The npm surface pins live
+   in `npm/factoidal/test/`. A fix for any runner/user divergence adds
+   its regression THROUGH THE USER PATH, so the next path split fails a
+   test instead of a user.
+3. **Path splits are load-bearing architecture, not plumbing detail.**
+   `eval_pattern_backend` vs `eval_pattern` vs streaming fast-paths:
+   when adding an arm to one, ask what the corresponding arm in the
+   others does, and which suite would notice if they disagreed. Usually
+   the answer is "none" — that is what the pins are for.
+
+War story in full: issue #343; hazard #20 in
+`skills/workflow-gotchas-debugging/SKILL.md`.
+
+Measured again 2026-10-10 with `l4diff` (Lean against the F\* command line on
+SPARQL 1.1 `manifest-all.ttl`): six command-line answers come from the store
+backend and differ from the F\* reference evaluator (`FROM NAMED`, `UUID()`,
+`SERVICE SILENT`, a sub-SELECT inside `GRAPH ?g`). Twelve more are F\*
+evaluator errors that the F\* W3C runner scores as PASS, because its row
+matcher (`binding_row_matches_with`) accepts an actual row with EXTRA
+bindings. The Lean comparator requires equal domains. Record and per-item
+table:
+`docs/designissues/2026-10-10-lean-vs-fstar-differential.md`
+(https://github.com/danbri/factoidal/issues/718).
+
+Correction, 2026-10-10 (iron rule 14). The same day the coordinator reported
+on issue 718 that the Lean answer was the W3C expected answer on all 24
+`l4diff` items. That was true for the Lean LIBRARY only. `l4diff` (default
+mode) and `l4w3c` run `parseSparql` with the query file's IRI as base and
+compare the evaluated rows or graph in memory; neither runs `l4factoidal`, so
+neither can see a defect of the Lean command line's own code: reading the
+query file and its base IRI, the ops path (`Wasm/Ops/Query.lean`), and the
+printed answer. Six of the 24 items were also Lean command-line defects:
+https://github.com/danbri/factoidal/issues/741 (no base IRI for the query
+text) and https://github.com/danbri/factoidal/issues/742 (CONSTRUCT labels
+with `:`). Cost: the known-defect cases for 739 and 740 had to use other
+oracles, and two Lean issues were opened after the "no Lean change was
+necessary" report. Rules:
+
+- Name the surface a verdict covers: library (`l4w3c`, `l4diff`), command
+  line (`l4factoidal`, `l4diff --lean-cli PATH`), or wasm/npm. Do not carry a
+  verdict to a surface that was not run.
+- `l4diff --lean-cli PATH` runs the Lean side through `l4factoidal query`
+  with the query FILE the F\* side gets and compares the PRINTED answer. Run
+  it next to the default mode. On 2026-10-10 (manifest-all, F\* build
+  f7aa1a33b94f): default 234 agree, 18 disagree, 0 tie-order, 6 fstar-error,
+  0 lean-error, 392 skipped (out of 650); `--lean-cli` with the fixed
+  command line 233 agree, 19 disagree, 0 tie-order, 6 fstar-error,
+  0 lean-error, 392 skipped (out of 650); with the released command line from
+  before the fixes, 6 of those items are `lean-error` (items 19 to 24). The
+  19th disagreement is `NOW()`, a third command-line defect
+  (https://github.com/danbri/factoidal/issues/743); after the repair (the IO
+  entries read the clock once per execution) `--lean-cli` gives 234 agree,
+  18 disagree, 0 tie-order, 6 fstar-error, 0 lean-error, 392 skipped (out of
+  650), the same as the default mode, and `l4diff --verbose` prints
+  `AGREE NOW()`.
+
+## ⚠️ A new syntax feature needs a row for every reader and writer that can carry it
+
+2026-10-15, https://github.com/danbri/factoidal/issues/870. `l4factoidal parse
+FILE --out turtle` and the operations `serializeNQuads`, `serializeTurtle` and
+`serializeTurtleWith` answered "invalid character in IRIREF" for every RDF 1.2
+triple term. They read their N-Quads text with `parseNQuadsFast nq`, and the
+default mode of that function is RDF 1.1. The tests of the readers wrote
+`--out nquads`, and the tests of the writers used RDF 1.1 data, so no row crossed
+RDF 1.2 data with the Turtle writer. Of the 16 pairs of reader and writer that can
+hold a triple term, 4 failed, and every suite was green. The case was found on
+2026-10-15, while rows for triple terms nested 300,000 deep were written
+(https://github.com/danbri/factoidal/issues/867).
+
+Rules:
+
+- When a reader gains a syntax feature, write the matrix: one row for each reader
+  that accepts the feature, against each writer and each operation that takes the
+  data. `formal/lean4/Wasm/cli-smoke.sh` has the matrix of the triple term: the
+  fixture D4 (`tests/sbm11/syntax`) in four syntaxes, each written in four
+  syntaxes, and the output read back to the same five quads.
+- A call of `parseNQuadsFast` with no mode argument reads RDF 1.1. When RDF 1.2 data
+  enters an operation that takes N-Quads text, read the mode of the call.
+- The RDF 1.2 reader is not a superset of the RDF 1.1 reader: it refuses language
+  tags that the RDF 1.1 reader reads (a subtag of more than 8 characters, `@en-`,
+  `@en--xyz`) and reads white space before `@` and `^^`, which the RDF 1.1 reader
+  refuses. Measure both readers on the case before you pick a mode.
+  `RDF.parseNQuadsFast12Or11` reads RDF 1.2 first and RDF 1.1 second: every text
+  that either reader accepts is accepted, and a text that both refuse gets the RDF
+  1.1 error (`L4Factoidal/RDF/DatasetNormalize.lean`).
+- Language tags that are not well-formed under BCP 47 (owner decision of
+  2026-10-24, CLAUDE.md "Ill-formed BCP 47 language tags"): the reader keeps the
+  triple and warns (class `ill-formed-language-tag`), and every writer writes the
+  tag. A test of this case asserts three things: the triple is kept, the warning
+  names the tag and its position, and the written text holds the tag
+  (`npm/factoidal/test/serialize-turtle.test.js`, the `ill-formed language tag`
+  rows of `formal/lean4/Wasm/native-smoke.sh`). The W3C RDF 1.2 negative test
+  `ntriples-langdir-bad-4` keeps the RDF 1.2 refusal of a subtag of more than 8
+  characters; do not turn that refusal into a warning.
+
+## ⚠️ A new wasm op or npm export must pass `tests/dataflow/run.sh` before it lands
+
+The pull-request CI of factoidal-core (`check`, `check-purity`, the full
+`lake build`) does not run `tests/dataflow/run.sh`. That suite holds the
+entry-point gate (`tools/entrypoint-gate.py`): every shipped wasm op, npm
+export and CLI command must be mapped to a registry stage in
+`foundation/entrypoints.toml`, or listed as a nonstage with a reason. The
+unbound list may only shrink.
+
+Cost of not running it: on 2026-10-25 the SBM11 pack landing
+(https://github.com/danbri/factoidal-core/pull/108) added the op
+`sbm11PackFiles` and the exports `packSbm11` and `mapReader` with green CI,
+and the entry-point gate failed on main with 5 errors until the next pipeline
+landing mapped them. Rule: a change that adds or renames a wasm op, an npm
+export or a CLI command runs `bash tests/dataflow/run.sh` (exit 0) and maps the
+new entry points in the same commit.
+
+## Defective test data (owner rule, 2026-10-21)
+
+Owner, verbatim: "Dont list bad tests as our failing".
+
+A test whose upstream data is defective is not a failure of this engine and
+is not an expected failure. Defective means one of: the test contradicts an
+approved test of the same suite under any rule that is not specific to the
+value; the expected output contradicts the normative text; or the test entry
+cannot be read (for example an undeclared prefix). Rules:
+
+- Report it apart, after the total: "N pass, M fail (out of T); K excluded
+  (defective test data)". It is not in pass, fail or T.
+- Each case prints `EXCLUDED <id>: defective test data, <issue URL>`. The
+  issue is open and gives the evidence (the conflicting test, the spec
+  section).
+- The guard stays: if the case passes, the run fails, so the exclusion
+  cannot outlive a corrected test.
+- Use it only with evidence. An engine shortfall stays an expected failure
+  (next section). Calling an engine defect "bad test data" is a false score.
+
+Model: `formal/lean4/Harness/CsvwValidateRun.lean`, test308,
+https://github.com/danbri/factoidal/issues/700.
+
+## ⚠️ An npm test of a new op is a plain assertion, never "xfail until the wasm is rebuilt"
+
+The danbri/factoidal-builds `web-gates` job runs `npm test` in
+`npm/factoidal/` against the wasm built from the SAME core commit. An expected
+failure in that suite must name a shortfall of the source at that commit. An
+xfail that says "fails until the wasm is rebuilt" fails the gate on exactly the
+build that rebuilds it: the case passes, the harness turns red on the
+unexpected pass, and the web set is not published.
+
+Cost: on 2026-10-25 `npm/factoidal/test/from-iri-not-found.test.mjs` had two
+such cases (https://github.com/danbri/factoidal/issues/1032). Core main
+`a76d8694` got native sets only; the web set and the 0.16.0 release were
+blocked. `scripts/resolve-core.sh` in factoidal-builds counts a commit as
+built when its linux set exists, so a missing web set is never retried (25 of
+102 built core commits had no web set on 2026-10-26). The audit:
+https://github.com/danbri/factoidal/issues/1038.
+
+Rules:
+- A test of a new wasm op or a changed result is a plain assertion. Run
+  locally against an older fetched wasm it fails, and that failure is correct:
+  it names the stale wasm.
+- A capability-probe skip (`{ skip: 'wasm has no X op' }`) passes silently on
+  an old wasm and is a weak test; prefer a plain assertion.
+- The hub tests (`tests/hub/`) are not in `web-gates`. Their xfails for
+  features that need a new wasm are flipped when that wasm is fetched and
+  the new values are measured, not guessed.
+
+## Expected failures (owner rule, 2026-09-07)
+
+A stated shortfall is a failing test plus an open issue; prose alone is not a
+record. Conventions, by test kind:
+
+- **Node suites** (`node:test`): an `xfail(name, issueUrl, fn)` helper — runs
+  `fn`; if it throws, the case passes as a subtest whose NAME starts with
+  `xfail:` and carries the issue URL, with a diagnostic line quoting the
+  failure (the bucket is `grep -c '^ok .* xfail:'` over the TAP output);
+  if it PASSES, the case FAILS with
+  "unexpected pass: flip to an assertion and close <issue>". Never
+  `test.skip`/`test.todo` for a shortfall: those hide it. Model:
+  `npm/factoidal/test/xmpp.test.mjs` (PRECIS, https://github.com/danbri/factoidal/issues/676).
+- **Lean probes and `l4w3c`**: an `expected-fail` bucket in the score line
+  ("N pass, M fail, K expected-fail (out of T)") with the issue URL printed
+  per case, and the probe exits non-zero when an expected-fail case passes.
+  Local override files carry the issue URL in their reason field.
+- **`l4xmlconf`** (`tests/xml-local/xml-local.xml`): an `XFAIL="<issue URL>"`
+  attribute on a `TEST`; the `xml-local` line prints the `expected-fail` count
+  and the run fails if such a case passes.
+- **`formal/lean4/Wasm/cli-smoke.sh`**: `verdict LABEL ISSUE OK`. With ISSUE
+  set, a failed check prints `xfail LABEL (<issue URL>)`, and a check that
+  holds FAILS the run as an XPASS; the score line is "N pass, M fail, K xfail
+  (out of T)". Flip the case by setting ISSUE to "" in the fixing commit.
+- **`#guard`**: cannot express an expected failure; use the probe bucket or
+  a Node case instead, and say so beside the header prose.
+- **F\* runners**: the `tests/local-overrides/` reason string carries the
+  issue URL; a passing overridden test is a failure of the runner.
+  `bin/w3c-runner/w3c_runner.ml` implements this for every suite it runs
+  (`tests/local-overrides/<suite>/*.override`, kind `engine-gap`): the test
+  still runs, a FAIL is printed as `OVERRIDE:` and counted in its own
+  `local-override` column, and a PASS prints `STALE local-override` and makes
+  the run exit 1. The three graph-store-protocol files are the model.
+  Record of the 2026-10-10 landing (manifest shapes, classification, scores):
+  `docs/designissues/2026-10-10-fstar-w3c-ec2ba15.md`.
+- **F\* defects found outside a W3C manifest** (`tests/known-defects/run.sh`,
+  run from `bin/linux-x86_64`): one case per open
+  issue, with the case id in the JSON row and the issue number in the table.
+  XFAIL = the defect reproduces; XPASS and ERROR fail the suite. When the
+  correct answer is known, the case runs the Lean engine on the same input
+  as oracle and reports ERROR if Lean does not give that answer. The F\* OWL
+  tableau has no `factoidal` verb: the OWL cases wrap an RDF/XML ontology
+  (`tests/known-defects/fixtures/`) as the premise of a one-test
+  ConsistencyTest catalog and run `owl_runner --regime dl`. Those cases share
+  a sensitivity control (an ontology both engines must call inconsistent), so
+  a probe that sees nothing reads as ERROR and not as XPASS. RDF/XML premises
+  need `xmlns="http://example.org/"` for bare property elements: without it
+  the properties are dropped, the premise is empty and the case reads as
+  consistent. A case whose issue is closed is deleted, and a comment block in
+  `run.sh` records its id, issue URL and closing date (SR-1, SR-2, TTL-PFX, deleted
+  2026-10-10). Cases today: SE-1, JSONLD-MSG, OWL-719, OWL-720-DATA, OWL-720-NAMED (F\* tableau,
+  https://github.com/danbri/factoidal/issues/719 and
+  https://github.com/danbri/factoidal/issues/720), TTL-SER-725 (Turtle
+  serializer stack overflow, F\* run at 8192 KB; the Lean oracle writes the same input at
+  512 KB since 2026-10-15, https://github.com/danbri/factoidal/issues/863,
+  https://github.com/danbri/factoidal/issues/725), RDFXML-LANG-SCOPE (the F\*
+  RDF/XML parser gives the `xml:lang` of a property element to the next
+  property elements, https://github.com/danbri/factoidal/issues/841; the Lean
+  CLI is the oracle, so run with `L4FACTOIDAL_BIN` set to a build from the fix),
+  JSONLD-BNODE-COLLIDE (the F\* JSON-LD conversion gives a generated blank node
+  the label of a written one, so a document with five nodes reads as three,
+  https://github.com/danbri/factoidal/issues/840; the Lean CLI is the oracle in
+  the same way).
+  The SPARQL command-line cases read real W3C files from
+  `third_party/testing/w3c` (run `git submodule update --init --depth 1
+  third_party/testing/w3c` first; without it they read ERROR). They are
+  SPARQL-736-IF and SPARQL-736-CAST
+  (https://github.com/danbri/factoidal/issues/736, W3C `functions/if02` and
+  `cast/cast-int`), SPARQL-738-FROM-NAMED
+  (https://github.com/danbri/factoidal/issues/738, the three
+  `bindings/graph-from-named` tests; the UUID, SERVICE SILENT and sub-SELECT
+  items of that issue have no case yet), SPARQL-739-QUERY-BASE
+  (https://github.com/danbri/factoidal/issues/739, five queries with a
+  relative IRI) and SPARQL-740-CONSTRUCT-BNODE
+  (https://github.com/danbri/factoidal/issues/740, `construct/constructlist`).
+  The SELECT cases compare canonical rows (`tests/known-defects/sparql_rows.py`)
+  of the W3C `.srx`, the Lean CLI answer and the F\* answer, with equal
+  domains required; XFAIL needs the exact wrong row recorded in `run.sh`, XPASS
+  needs the expected result, and any other F\* answer reads ERROR. Two cases
+  cannot use the Lean CLI as oracle, because the Lean CLI has the same defect:
+  `l4factoidal query` also parses a query with no base IRI (the oracle for 739
+  is the `PASS` line of `l4w3c` for each test), and it prints the same invalid
+  blank node labels for 740 (the oracle is the Lean N-Triples parser, with a
+  control that accepts the colon-free copy and a control that rejects W3C
+  `nt-syntax-bad-bnode-02`).
+  Other rows. SPARQL-747-COLLECTION-BNODE
+  (https://github.com/danbri/factoidal/issues/747) and SPARQL-OPT-FILTER-SCOPE
+  (https://github.com/danbri/factoidal/issues/815) are SPARQL cases of the same
+  kind (the F\* answer against the Lean answer). NX-1
+  (https://github.com/danbri/factoidal/issues/777), SF-1 to SF-4
+  (https://github.com/danbri/factoidal/issues/826) and SK-1, SK-2
+  (https://github.com/danbri/factoidal/issues/852) read the Lean source: XFAIL
+  while no theorem of the expected name exists. JLD-STACK
+  (https://github.com/danbri/factoidal/issues/844, the JSON-LD reader) and
+  JLD-WSTACK (https://github.com/danbri/factoidal/issues/853, the JSON-LD writer,
+  through `l4factoidal parse --out jsonld`) ran `l4factoidal` under
+  `LEAN_STACK_SIZE_KB=512`: a control that must exit 0, then a probe that must
+  abort with "Stack overflow". Both were removed on 2026-10-18 with the repairs;
+  the cases are now `jsonld-read-fanout`, `jsonld-read-list` and
+  `jsonld-write-fanout` of `tests/stack/run.sh` and the `*-stack` rows of
+  `tests/stack/lean_scaling.py`.
+  Binaries. A row may start only the four programs that the web-gates step
+  "Known defects" of danbri/factoidal-builds installs: `factoidal` and
+  `owl_runner` (F\*), `l4factoidal` and `l4w3c` (Lean). A row that starts another
+  program (`l4sbm11`, `l4sbm11-pack`, ...) reads ERROR in CI, the step fails, and
+  the web set is not published. Cost, 2026-10-14: the row JLD-WSTACK started
+  `l4sbm11` and `l4sbm11-pack`; runs 72, 73 and 74 of factoidal-builds failed and
+  published no web set. Run the suite in the CI layout before a change to it
+  lands: copy the four programs into one directory DIR, set
+  `FACTOIDAL_BIN=DIR/factoidal` and `L4FACTOIDAL_BIN=DIR/l4factoidal`, and run
+  `tests/known-defects/run.sh`. Expected on 2026-10-23: 26 XFAIL, 0 XPASS, 0 ERROR
+  (out of 26).
+  A change to what a Lean command answers can break this suite, and
+  `tools/land-gates.sh` does not run it. Run it in the CI layout above when a
+  change alters `l4factoidal owl-consistent`, `parse` or `query` output. Cost,
+  2026-10-22/23: factoidal-core 87fd052e made `owl-consistent` answer unknown
+  outside the admitted atomic fragment (intended, issue 960); the OWL control
+  required Lean false, every OWL row read ERROR, and four factoidal-builds runs
+  (125 to 128) published no web set for about 20 hours.
+
+Every score line that includes expected failures prints them separately;
+they never count as passes.

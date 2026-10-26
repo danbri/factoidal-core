@@ -513,7 +513,8 @@ let wrap_distinct_over_ggp (g : group_graph_pattern) : group_graph_pattern =
       sm_offset   = None;
       sm_limit    = None
     };
-    q_values   = None
+    q_values   = None;
+    q_post_values = None
   })
 
 let build_union_ggp (branch_bgps : list bgp) : group_graph_pattern =

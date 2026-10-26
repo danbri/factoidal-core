@@ -64,17 +64,20 @@ def columnProperty (tableUrl : String) (inh : Inherited) (name : String) : Inher
 def linkIri? (base : String) (s : String) : Option WfIri :=
   refIri? base (expandPrefixed s)
 
+/-- Column count shared by conversion and metadata-format diagnostics. -/
+def tableFieldCount (tbl : Table) : Nat :=
+  match tbl.header.head? with
+    | some h => h.cells.length
+    | none   => match tbl.rows.head? with
+      | some r => r.cells.length
+      | none   => 0
+
 /-- One table's rows, converted. `base` resolves the table URL and any
     `aboutUrl` the schema states. -/
 def tableRowInputs (base : String) (ctx : Ctx) (g : TableGroup) (t : TableDesc)
     (tbl : Table) : List RowInput :=
   let tableUrl := L4Factoidal.Syntax.resolveIri base t.url
-  let fieldCount := match tbl.header.head? with
-    | some h => h.cells.length
-    | none   => match tbl.rows.head? with
-      | some r => r.cells.length
-      | none   => 0
-  let cols := effectiveColumns t.schema fieldCount
+  let cols := effectiveColumns t.schema (tableFieldCount tbl)
   -- The HEADER ROW supplies each column's title when the metadata
   -- does not (tabular-data-model §8, step 4.6). Without this a table
   -- with no metadata gets `_col.1`, `_col.2`, … as its predicates
@@ -163,6 +166,24 @@ def tableRowInputs (base : String) (ctx : Ctx) (g : TableGroup) (t : TableDesc)
               | none     => Subject.bnode ("row" ++ toString rowNum)
             some { subject := subj, inh := inh, result := r, name := nm }) })
 
+/-- Regex metadata warnings are column-level, including empty/null columns. -/
+def tableRegexWarnings (base : String) (ctx : Ctx) (g : TableGroup) (t : TableDesc)
+    (tbl : Table) : List ConversionIssue :=
+  (effectiveColumns t.schema (tableFieldCount tbl)).zipIdx.flatMap fun (col, i) =>
+    let inh := effectiveInherited g t t.schema col
+    let dtBase := (inh.datatype.bind Datatype.baseName).getD "string"
+    (regexFormatWarning dtBase (inh.datatype.bind Datatype.formatOf)).toList.map fun msg =>
+      { kind := .warning, message := msg,
+        table := L4Factoidal.Syntax.resolveIri base t.url,
+        column := columnName col (i + 1) (inh.lang.orElse (fun _ => ctx.lang)) }
+
+/-- Attach coordinates for cell errors. Format warnings are emitted once per
+    column by `tableRegexWarnings`, independently of the number of cells. -/
+def tableConversionIssues (tableUrl : String) (rows : List RowInput) : List ConversionIssue :=
+  rows.flatMap fun row => row.cells.flatMap fun cell =>
+    (cell.result.issues.filter (·.kind != .warning)).map fun issue =>
+      { issue with table := tableUrl, row := row.sourceRow, column := cell.name }
+
 /-- The node a table's triples hang off, which the GROUP must link to.
     Kept as its own function so the link and the triples cannot
     disagree about the subject.
@@ -193,8 +214,8 @@ def tableNodeOf (base : String) (idx : Nat) (t : TableDesc) : Subject :=
 
 /-- Everything one table contributes in STANDARD mode: the
     `csvw:Table` node with its common properties, and the rows. -/
-def tableStandard (base : String) (ctx : Ctx) (g : TableGroup) (idx : Nat)
-    (t : TableDesc) (tbl : Table) : List Triple :=
+def tableStandardRows (base : String) (ctx : Ctx) (idx : Nat)
+    (t : TableDesc) (rows : List RowInput) : List Triple :=
   let tableUrl := L4Factoidal.Syntax.resolveIri base t.url
   let tag := toString idx
   -- §5.4 `@id`: the table's node is that IRI, not a blank node. Every
@@ -204,7 +225,7 @@ def tableStandard (base : String) (ctx : Ctx) (g : TableGroup) (idx : Nat)
   -- that. An `@id` that is not a usable IRI leaves the blank node.
   let node : Subject := tableNodeOf base idx t
   tableTriplesStandard tag node tableUrl
-    (tableRowInputs base ctx g t tbl)
+    rows
     (fun n => commonPropsTriples tableUrl ctx.lang ("t" ++ tag) n t.common
               ++ notesTriples tableUrl ctx.lang ("n" ++ tag) n t.notes)
 
@@ -212,7 +233,7 @@ def tableStandard (base : String) (ctx : Ctx) (g : TableGroup) (idx : Nat)
 /-- The whole conversion, both modes. `tables` pairs each table
     DESCRIPTION with the rows read from its file. -/
 def convert (base : String) (ctx : Ctx) (g : TableGroup) (minimal : Bool)
-    (tables : List (TableDesc × Table)) : List Triple :=
+    (tables : List (TableDesc × Table)) : ConversionResult (List Triple) :=
   -- §5.4 `suppressOutput`: a table with it set contributes NOTHING —
   -- no rows, no table node, and no link from the table group. It is
   -- still READ, because other tables' foreign keys refer to it; it is
@@ -224,19 +245,23 @@ def convert (base : String) (ctx : Ctx) (g : TableGroup) (minimal : Bool)
   -- The INDEX is taken before the filter so a table's blank-node
   -- label does not shift when an earlier table is suppressed.
   let kept := (tables.zipIdx).filter (fun ((t, _), _) => t.suppress != some true)
-  if minimal then
-    kept.flatMap (fun ((t, tbl), _) =>
-      (tableRowInputs base ctx g t tbl).flatMap rowTriplesMinimalOf)
+  let prepared := kept.map (fun ((t, tbl), i) => (t, i, tableRowInputs base ctx g t tbl))
+  let warnings := kept.flatMap fun ((t, tbl), _) => tableRegexWarnings base ctx g t tbl
+  let issues := warnings ++ prepared.flatMap (fun (t, _, rows) =>
+    tableConversionIssues (L4Factoidal.Syntax.resolveIri base t.url) rows)
+  let output := if minimal then
+    prepared.flatMap (fun (_, _, rows) => rows.flatMap rowTriplesMinimalOf)
   else
     let group : Subject := .bnode "tablegroup"
-    let links := kept.map (fun ((t, _), i) =>
+    let links := prepared.map (fun (t, i, _) =>
       (⟨group, csvwTableProp, (tableNodeOf base i t).toTerm⟩ : Triple))
     (⟨group, rdfTypeIri, .iri csvwTableGroup⟩ : Triple)
       :: (commonPropsTriples base ctx.lang "g" group g.common
           ++ notesTriples base ctx.lang "ng" group g.notes
           ++ links
-          ++ kept.flatMap (fun ((t, tbl), i) =>
-                tableStandard base ctx g i t tbl))
+          ++ prepared.flatMap (fun (t, i, rows) =>
+                tableStandardRows base ctx i t rows))
+  finishConversion output issues
 
 /-- tabular-data-model §5.2: metadata found by DISCOVERY — at
     `<file>-metadata.json`, at `csv-metadata.json` in the directory, or

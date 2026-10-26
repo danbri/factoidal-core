@@ -154,7 +154,11 @@ let dt_value_leq (inside_tt : bool) (l1 l2 : literal) : bool =
     rdf_json_value_eq l1.lexical_form l2.lexical_form
   else if is_exact_scaled_dt l1.datatype && is_exact_scaled_dt l2.datatype then
     (match literal_to_scaled l1, literal_to_scaled l2 with
-     | Some s1, Some s2 -> l1.datatype = l2.datatype && scaled_cmp s1 s2 = 0
+     // xsd:integer and xsd:decimal compare by value ACROSS the two datatypes:
+     // the value space of xsd:integer is a subset of that of xsd:decimal (XSD
+     // 1.1 Part 2), so "10"^^xsd:integer and "10.0"^^xsd:decimal denote the
+     // same value (W3C rdf-mt datatypes-semantic-equivalence-between-datatypes).
+     | Some s1, Some s2 -> scaled_cmp s1 s2 = 0
      | _, _             -> literal_eq l1 l2)
   else literal_eq l1 l2
 

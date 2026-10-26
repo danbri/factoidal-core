@@ -1,0 +1,7 @@
+# Path join, two hops: people born in a place in Iceland.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+SELECT ?p ?c WHERE {
+  ?p dbo:birthPlace ?c .
+  ?c dbo:country dbr:Iceland
+}

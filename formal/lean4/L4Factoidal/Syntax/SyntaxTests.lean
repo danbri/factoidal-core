@@ -17,6 +17,9 @@ has no core `BEq`/`isOk`. `RDF.NamedGraph` and `RDF.Dataset` derive
 -/
 
 import L4Factoidal.Syntax.NQuads
+-- `parseNQuads_eq_fast` (@[csimp]): the calls of `parseNQuads` here run `parseNQuadsFast`
+-- (https://github.com/danbri/factoidal/issues/868; `tools/lean-csimp-reach.py`, not-imported).
+import L4Factoidal.Syntax.NQuadsFastTheorems
 
 namespace L4Factoidal.Syntax.SyntaxTests
 

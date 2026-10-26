@@ -24,7 +24,7 @@ private def deleteRequest :=
 
 #guard match deleteRequest with
   | .ok request => match deltaEntriesForUpdate? unchangedBnode request with
-    | some [.remove _ (some "http://example.org/g")] => true
+    | some [.remove _ (some (.iri "http://example.org/g"))] => true
     | _ => false
   | .error _ => false
 

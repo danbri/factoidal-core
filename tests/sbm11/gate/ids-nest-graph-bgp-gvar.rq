@@ -1,0 +1,4 @@
+# GRAPH ?g with ?g also inside the basic graph pattern: the scan's graph
+# column and the subject column must hold the same id (L4u).
+PREFIX ex: <http://ex.org/>
+SELECT ?g ?p WHERE { { GRAPH ?g { ?g ?p ?o } } UNION { GRAPH ?g { ?s ?p ?g } } }

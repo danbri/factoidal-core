@@ -54,15 +54,15 @@ WHAT IS PROVED HERE, and how it differs from the F* statements.
 ## Two membership relations, and why both appear
 
 `Graph.mem` is the engine's membership: it compares with `Triple.eqb`,
-which is COARSER than equality (language-tag case folding,
-`rdf:XMLLiteral` canonical-XML equality). List membership `∈` is exact.
+which is COARSER than equality (language-tag case folding). List
+membership `∈` is exact.
 
 * T1 and T2 use LIST membership. That is the strong reading in both
   directions: the closure really contains the input triples, and every
   list element really has a derivation.
 * T4 uses `Graph.mem`. It has to: `Graph.add t g` skips the insert
   when `g` already holds an eqb-equal triple, so after adding `t` the
-  graph may contain an XMLLiteral-variant of `t` instead of `t`
+  graph may contain a tag-case variant of `t` instead of `t`
   itself, and `t ∈ closure g fuel` would be false while the triple is
   present up to the equality the engine uses. `Graph.mem` is exactly
   the right relation there, and list membership implies it
@@ -312,20 +312,24 @@ theorem rdfs3For_sound {g : Graph} {decl t : Triple} (hd : decl ∈ g)
 /-- **rdfs9.** -/
 theorem rdfs9For_sound {g : Graph} {dt t : Triple} (hd : dt ∈ g)
     (h : t ∈ rdfs9For g dt) : Derives g t := by
-  obtain ⟨ds, dp, dob⟩ := dt
-  cases dob with
-  | bnode _ => simp [rdfs9For] at h
-  | literal _ => simp [rdfs9For] at h
-  | tripleTerm _ _ _ => simp [rdfs9For] at h
-  | iri a =>
-    by_cases hdp : dp = rdfType
-    · subst hdp
-      simp only [rdfs9For, beq_self_eq_true, if_true, List.mem_map] at h
-      obtain ⟨b, hb, rfl⟩ := h
-      exact Derives.rdfs9 (Derives.base hd) (Derives.base (mem_objectsOf hb))
-    · have hdp' : (dp == rdfType) = false := by
-        simp only [beq_eq_false_iff_ne, ne_eq]; exact hdp
-      simp [rdfs9For, hdp'] at h
+  by_cases hdp : dt.p = rdfType
+  · simp only [rdfs9For, hdp, beq_self_eq_true, if_true] at h
+    revert h
+    cases hsub : dt.o.toSubject? with
+    | none => intro h; simp at h
+    | some a =>
+      intro h
+      simp only [List.mem_map] at h
+      obtain ⟨c, hc, rfl⟩ := h
+      have hd1 : Derives g ⟨dt.s, rdfType, dt.o⟩ := by
+        have : (⟨dt.s, rdfType, dt.o⟩ : Triple) = dt := by rw [← hdp]
+        rw [this]; exact Derives.base hd
+      exact Derives.rdfs9 hd1 hsub (Derives.base (mem_objectsOf hc))
+  · have hdp' : (dt.p == rdfType) = false := by
+      simp only [beq_eq_false_iff_ne, ne_eq]; exact hdp
+    simp only [rdfs9For, hdp', Bool.false_eq_true, if_false] at h
+    revert h
+    cases dt.o.toSubject? <;> simp
 
 /-- **rdfs11.** -/
 theorem rdfs11For_sound {g : Graph} {dt t : Triple} (hd : dt ∈ g)
@@ -565,7 +569,7 @@ theorem complete_of_saturated {c : Graph} (hsat : step c = c) {g : Graph}
         exact ⟨⟨a2, b2, c2⟩, mem_triplesWithPredicate_of hu2 hp2, rfl⟩
       exact graphMem_of_graphMem_eqb (fire (mem_stepConclusions_rdfs7 hu1 hconcl))
         (Triple.eqb_of_parts hs2 rfl ho2)
-  | @rdfs9 s a b _ _ ih1 ih2 =>
+  | @rdfs9 s x a b _ hsub _ ih1 ih2 =>
       obtain ⟨u1, hu1, he1⟩ := exists_of_graphMem ih1
       obtain ⟨u2, hu2, he2⟩ := exists_of_graphMem ih2
       obtain ⟨a1, b1, c1⟩ := u1
@@ -573,11 +577,12 @@ theorem complete_of_saturated {c : Graph} (hsat : step c = c) {g : Graph}
       obtain ⟨hs1, hp1, ho1⟩ := Triple.eqb_parts he1
       obtain ⟨hs2, hp2, ho2⟩ := Triple.eqb_parts he2
       simp only at hs1 hp1 ho1 hs2 hp2 ho2
-      have hc1 : c1 = Term.iri a := Term.eqb_iri ho1
-      subst hp1; subst hc1; subst hs2; subst hp2
+      subst hp1; subst hs2; subst hp2
+      have hc1 : c1 = x := Term.eqb_eq_of_toSubject ho1 hsub
+      subst hc1
       have hconcl : (⟨a1, rdfType, c2⟩ : Triple) ∈
-          rdfs9For c ⟨a1, rdfType, Term.iri a⟩ := by
-        simp only [rdfs9For, beq_self_eq_true, if_true, List.mem_map]
+          rdfs9For c ⟨a1, rdfType, c1⟩ := by
+        simp only [rdfs9For, beq_self_eq_true, if_true, hsub, List.mem_map]
         exact ⟨c2, mem_objectsOf_of_mem hu2, rfl⟩
       exact graphMem_of_graphMem_eqb (fire (mem_stepConclusions_rdfs9 hu1 hconcl))
         (Triple.eqb_of_parts hs1 rfl ho2)

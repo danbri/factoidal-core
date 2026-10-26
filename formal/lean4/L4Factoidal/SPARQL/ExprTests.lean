@@ -23,14 +23,8 @@ def iriE (s : String) (h : isIri s := by rfl) : WfIri := ⟨s, h⟩
 
 def litInt (s : String) : WfLiteral := mkTypedLiteral s xsdInteger
 def litDec (s : String) : WfLiteral := mkTypedLiteral s xsdDecimal
-def litFloat (s : String) : WfLiteral := mkTypedLiteral s xsdFloat
-def xsdShort : WfIri := ⟨xsdNamespace ++ "short", rfl⟩
-def xsdUnsignedByte : WfIri := ⟨xsdNamespace ++ "unsignedByte", rfl⟩
 def litStr (s : String) : WfLiteral := Literal.string s
 def litLang (s tag : String) : WfLiteral := Literal.langString s tag
-def unknownDatatype : WfIri := iriE "http://example.org/unknown"
-def illTypedInteger : WfLiteral := mkTypedLiteral "xyz" xsdInteger
-def unknownLiteral : WfLiteral := mkTypedLiteral "xyz" unknownDatatype
 
 /-- A solution mapping binding two integer-typed literals with
 different lexical forms for the same value, and one plain string. -/
@@ -40,12 +34,6 @@ def muNums : Binding :=
    ("d", .literal (litDec "1.0")),
    ("s", .literal (litStr "Alice"))]
 
-def muPromoted : Binding :=
-  [("short", .literal (mkTypedLiteral "1" xsdShort)),
-   ("float", .literal (litFloat "1")),
-   ("decimal", .literal (litDec "1")),
-   ("double", .literal (mkTypedLiteral "1" xsdDouble))]
-
 /-! ### §17.2.2 — the effective boolean value table -/
 
 #guard ebv (.bool true) == some true
@@ -53,24 +41,7 @@ def muPromoted : Binding :=
 #guard ebv (.num 0) == some false
 #guard ebv (.num 42) == some true
 #guard ebv (.dec "0.0") == some false
-#guard ebv (.flt "-0") == some false
-#guard ebv (.flt "-0.0") == some false
-#guard ebv (.flt "0E0") == some false
-#guard ebv (.flt "NaN") == some false
-#guard ebv (.dbl "-0") == some false
-#guard ebv (.dbl "-0.0") == some false
-#guard ebv (.dbl "0E0") == some false
 #guard ebv (.dbl "NaN") == some false
-#guard ebv (.flt "1E1000000000") == some true
-#guard ebv (.flt "1E-1000000000") == some false
-#guard ebv (.term (.literal (mkTypedLiteral "1e0" xsdInteger))) == some false
-#guard ebv (.term (.literal
-    (mkTypedLiteral "1000" ⟨xsdNamespace ++ "byte", by rfl⟩))) == some false
-#guard ebv (.term (.literal (mkTypedLiteral "xyz" xsdDecimal))) == some false
-#guard ebv (.term (.literal (mkTypedLiteral "xyz" xsdDouble))) == some false
-#guard boolNot (ebv (.term (.literal (mkTypedLiteral "xyz" xsdInteger)))) == some true
-#guard parseIntString "+" == none
-#guard parseIntString "-" == none
 #guard ebv (.term (.literal (litStr ""))) == some false
 #guard ebv (.term (.literal (litStr "x"))) == some true
 #guard ebv (.term (.literal (mkTypedLiteral "true" xsdBoolean))) == some true
@@ -106,147 +77,30 @@ def muPromoted : Binding :=
 -- "1"^^xsd:integer and "01"^^xsd:integer are the same VALUE: a variable
 -- lookup promotes the literal, so `=` compares numbers.
 #guard (Expr.compare .eq (.var "a") (.var "b")).eval muNums == .bool true
+-- RDFterm-equal on blank nodes: the same node is equal, another is not.
+#guard (Expr.compare .eq (.var "n") (.var "n")).eval [("n", .bnode "b")] == .bool true
+#guard (Expr.compare .eq (.var "n") (.var "m")).eval [("n", .bnode "b"), ("m", .bnode "c")] == .bool false
+#guard (Expr.compare .ne (.var "n") (.var "m")).eval [("n", .bnode "b"), ("m", .bnode "c")] == .bool true
 #guard (Expr.compare .eq (.var "a") (.var "d")).eval muNums == .bool true
--- Promotion is representation-independent: a bound typed literal compares
--- by value with a raw typed literal in either operand order, and with a
--- numeric value produced by arithmetic.
-#guard (Expr.compare .eq (.var "a") (.lit (litInt "01"))).eval muNums == .bool true
-#guard (Expr.compare .eq (.lit (litInt "01")) (.var "a")).eval muNums == .bool true
-#guard (Expr.compare .eq
-    (.arith .add (.numericLit 0) (.numericLit 1))
-    (.lit (litInt "01"))).eval [] == .bool true
--- When the numeric mapping is inapplicable, equality still observes the
--- source RDF terms after variable promotion.
-#guard (Expr.compare .ne (.var "a") (.iri (iriE "http://example.org/one"))).eval muNums
-  == .bool true
-#guard valueCompare
-    (.term (.literal (litInt "1")))
-    (.term (.iri (iriE "http://example.org/one"))) .ne == some true
 
--- SPARQL 1.0 §11.3 subtype substitution and the complete promotion
--- lattice: integer-derived + integer stays integer; float dominates
--- decimal; double dominates float.
-#guard (Expr.datatype (.arith .add (.var "short") (.numericLit 1))).eval muPromoted
-  == .term (.iri xsdInteger)
-#guard (Expr.datatype (.arith .add (.var "float") (.var "decimal"))).eval muPromoted
-  == .term (.iri xsdFloat)
-#guard (Expr.datatype (.arith .add (.var "float") (.var "double"))).eval muPromoted
-  == .term (.iri xsdDouble)
-#guard (Expr.arith .add (.var "float") (.var "decimal")).eval muPromoted == .flt "2"
--- Arithmetic is rounded in the promoted value space. 2^24 + 1 is the
--- first integer tie lost by binary32, while promotion to binary64 keeps it.
-#guard (Expr.arith .add (.lit (litFloat "16777216")) (.lit (litFloat "1"))).eval []
-  == .flt "16777216"
-#guard (Expr.compare .eq
-    (.arith .add (.lit (litFloat "16777216")) (.lit (litFloat "1")))
-    (.lit (litFloat "16777216"))).eval [] == .bool true
-#guard (Expr.compare .gt
-    (.arith .add (.lit (litFloat "16777216")) (.doubleLit "1"))
-    (.doubleLit "16777216")).eval [] == .bool true
-#guard (Expr.datatype
-    (.arith .add (.lit (litFloat "16777216")) (.doubleLit "1"))).eval []
-  == .term (.iri xsdDouble)
--- A lexical value outside a derived datatype's value space is not promoted.
-#guard literalPromote (mkTypedLiteral "-1" xsdUnsignedByte)
-  == .term (.literal (mkTypedLiteral "-1" xsdUnsignedByte))
-
--- SPARQL 1.0 §11.3 and §11.4.10: the most specific viable typed mapping
--- applies; otherwise RDF-term equality makes an identical ill-typed or
--- unknown typed literal, and an identical blank node, equal. Different
--- untagged typed literals with no supported value comparison are errors. A
--- language-tagged literal or non-literal RDF term is simply unequal to them.
-#guard valueCompare (.term (.literal illTypedInteger))
-    (.term (.literal illTypedInteger)) .eq == some true
-#guard valueCompare (.term (.literal unknownLiteral))
-    (.term (.literal unknownLiteral)) .ne == some false
-#guard valueCompare (.term (.bnode "b")) (.term (.bnode "b")) .eq == some true
-#guard valueCompare (.term (.literal illTypedInteger))
-    (.term (.literal (litStr "xyz"))) .eq == none
-#guard valueCompare (.term (.literal unknownLiteral))
-    (.term (.literal illTypedInteger)) .ne == none
-#guard valueCompare (.term (.literal (litLang "xyz" "en")))
-    (.term (.literal illTypedInteger)) .eq == some false
-#guard valueCompare (.term (.literal illTypedInteger))
-    (.term (.iri (iriE "http://example.org/xyz"))) .ne == some true
-
-def nanDouble : WfLiteral := mkTypedLiteral "NaN" xsdDouble
-def muNaN : Binding := [("nan", .literal nanDouble)]
-#guard (Expr.compare .eq (.lit nanDouble) (.lit nanDouble)).eval [] == .bool false
-#guard (Expr.compare .ne (.lit nanDouble) (.lit nanDouble)).eval [] == .bool true
-#guard (Expr.compare .eq (.var "nan") (.var "nan")).eval muNaN == .bool false
-#guard (Expr.compare .ne (.var "nan") (.var "nan")).eval muNaN == .bool true
-#guard valueCompare (.dbl "INF") (.dbl "INF") .eq == some true
-#guard valueCompare (.flt "-INF") (.num 0) .lt == some true
-#guard valueCompare (.num 0) (.dbl "INF") .lt == some true
--- Overflow and explicit infinity meet only after both operands are rounded
--- to the common promoted IEEE format.
-#guard valueCompare (.flt "1e100") (.flt "INF") .eq == some true
-#guard valueCompare (.flt "-1e100") (.flt "-INF") .eq == some true
-#guard valueCompare (.dbl "1e400") (.dbl "INF") .eq == some true
-#guard valueCompare (.dbl "-1e400") (.dbl "-INF") .eq == some true
-#guard valueCompare (.dbl "1e400") (.dbl "1.0") .gt == some true
-#guard valueCompare (.dbl "-1e400") (.dbl "-1.0") .lt == some true
-def hugePositiveInteger : Int := ((10 : Int) ^ 400)
-def hugeNegativeInteger : Int := -hugePositiveInteger
-#guard valueCompare (.num hugePositiveInteger) (.dbl "INF") .eq == some true
-#guard valueCompare (.dbl "-INF") (.num hugeNegativeInteger) .eq == some true
-#guard valueCompare (.num hugePositiveInteger) (.dbl "1.0") .gt == some true
-#guard valueCompare (.dbl "-1.0") (.num hugeNegativeInteger) .gt == some true
--- NaN's numeric inequality mapping applies only when both operands are
--- numeric. A string or unknown typed literal is an inappropriate operand.
-#guard valueCompare (.term (.literal nanDouble))
-    (.term (.literal unknownLiteral)) .eq == none
-#guard valueCompare (.term (.literal unknownLiteral))
-    (.term (.literal nanDouble)) .ne == none
-#guard valueCompare (.term (.literal nanDouble))
-    (.term (.literal (litStr "NaN"))) .ne == none
-
-def dateLiteral (s : String) : WfLiteral := mkTypedLiteral s xsdDateTime
-#guard valueCompare
-    (.term (.literal (dateLiteral "2002-04-02T23:00:00-04:00")))
-    (.term (.literal (dateLiteral "2002-04-03T02:00:00-01:00"))) .eq == some true
-#guard valueCompare
-    (.term (.literal (dateLiteral "2002-04-02T23:00:00-04:00")))
-    (.term (.literal (dateLiteral "2002-04-03T04:00:00-01:00"))) .lt == some true
-#guard valueCompare
-    (.term (.literal (dateLiteral "2002-04-02T23:00:00")))
-    (.term (.literal (dateLiteral "2002-04-02T23:00:00+06:00"))) .eq == none
-#guard valueCompare
-    (.term (.literal (dateLiteral "not-a-date")))
-    (.term (.literal (dateLiteral "not-a-date"))) .eq == some true
-#guard valueCompare
-    (.term (.literal (dateLiteral "not-a-date")))
-    (.term (.literal (dateLiteral "also-not-a-date"))) .eq == none
-
--- Relational operators do not have the generic RDF-term mapping used by
--- equality. IRI ordering belongs to ORDER BY, not the `<` operator.
-#guard valueCompare (.term (.iri (iriE "http://example/a")))
-    (.term (.iri (iriE "http://example/a"))) .le == none
-
--- RDF language tags compare ASCII-case-insensitively for both value
--- comparison and RDF 1.2 term identity.
+-- RDF/SPARQL language tags compare case-insensitively for `=`; this is not
+-- the strict spelling-sensitive `sameTerm` relation.
 #guard (Expr.compare .eq (.lit (litLang "xyz" "en")) (.lit (litLang "xyz" "EN"))).eval [] == .bool true
 #guard (Expr.compare .ne (.lit (litLang "xyz" "en")) (.lit (litLang "xyz" "EN"))).eval [] == .bool false
--- Numeric lexical forms remain distinct terms.
+-- ...but they are different TERMS, so sameTerm on the terms is false.
 #guard (Expr.sameTerm (.lit (litInt "1")) (.lit (litInt "01"))).eval [] == .bool false
+-- ...and the same holds when the operands are VARIABLES bound to those
+-- literals: a variable is promoted to its value for `=` but sameTerm
+-- must read the bound term (issue 794; W3C sameTerm-simple, sameTerm-eq).
 #guard (Expr.sameTerm (.var "a") (.var "b")).eval muNums == .bool false
-#guard (Expr.sameTerm (.lit (litLang "xyz" "en")) (.lit (litLang "xyz" "EN"))).eval []
-  == .bool true
--- Base direction participates in both RDF-term identity and language
--- literal value equality.
-def dirLtr : WfLiteral := Literal.dirLangString "xyz" "en" .ltr
-def dirRtl : WfLiteral := Literal.dirLangString "xyz" "EN" .rtl
-#guard valueCompare (.term (.literal dirLtr)) (.term (.literal dirRtl)) .eq == some false
-#guard valueCompare (.term (.literal dirLtr)) (.term (.literal dirRtl)) .ne == some true
-#guard (Expr.sameTerm (.lit dirLtr) (.lit dirRtl)).eval [] == .bool false
--- XML canonical equivalence is broader than RDF-term identity: sameTerm
--- keeps the two lexical forms distinct.
-#guard (Expr.sameTerm
-    (.lit (mkTypedLiteral "<a></a>" rdfXMLLiteral))
-    (.lit (mkTypedLiteral "<a/>" rdfXMLLiteral))).eval [] == .bool false
-#guard (Expr.sameTerm (.var "missing") (.lit (litStr "x"))).eval [] == .error
--- Value comparison promotes numeric typed literals regardless of whether
--- they came from a variable or appeared directly in the expression.
+#guard (Expr.sameTerm (.var "a") (.var "a")).eval muNums == .bool true
+#guard (Expr.sameTerm (.var "a") (.var "d")).eval muNums == .bool false
+#guard (Expr.compare .eq (.var "a") (.var "b")).eval muNums == .bool true
+-- A literal written directly in the expression is the same term as the
+-- one a variable binds (SPARQL 1.1 §4.1.2), so the operators compare its
+-- value: "1"^^xsd:integer = "01"^^xsd:integer. The F* `E_Literal` arm
+-- returns the term as-is and answers false; that was a defect
+-- (https://github.com/danbri/factoidal/issues/784).
 #guard (Expr.compare .eq (.lit (litInt "1")) (.lit (litInt "01"))).eval [] == .bool true
 
 -- Two literals of DIFFERENT, unknown datatypes are a type error under
@@ -285,7 +139,7 @@ def errE : Expr := .var "unbound"
 #guard (Expr.arith .mul (.numericLit 2) (.numericLit 3)).eval [] == .num 6
 -- integer ÷ integer is an xsd:DECIMAL, never an integer (§17.4.1).
 #guard (Expr.arith .div (.numericLit 1) (.numericLit 2)).eval [] == .dec "0.5"
--- Division by zero is a type error, in every numeric type.
+-- Integer/decimal division by zero is an error; floating division has IEEE results.
 #guard (Expr.arith .div (.numericLit 1) (.numericLit 0)).eval [] == .error
 #guard (Expr.arith .div (.numericLit 1) (.decimalLit "0.0")).eval [] == .error
 -- Decimal addition is exact in the scaled model.
@@ -304,7 +158,8 @@ def errE : Expr := .var "unbound"
 #guard (Expr.floor (.decimalLit "-1.5")).eval [] == .dec "-2"
 #guard (Expr.ceil (.decimalLit "1.5")).eval [] == .dec "2"
 #guard (Expr.round (.decimalLit "1.5")).eval [] == .dec "2"
-#guard (Expr.round (.decimalLit "-1.5")).eval [] == .dec "-2"
+-- F&O §6.4.4: ties go toward positive infinity, including negatives.
+#guard (Expr.round (.decimalLit "-1.5")).eval [] == .dec "-1"
 #guard (Expr.round (.decimalLit "1.4")).eval [] == .dec "1"
 
 /-! ### §17.4.2 node tests and accessors -/
@@ -390,6 +245,29 @@ def litDir : WfLiteral := mkDirLangLiteral "مرحبا" "ar" .rtl
 #guard (Expr.uCase (.lit (litLang "chat" "fr"))).eval []
   == .term (.literal (litLang "CHAT" "fr"))
 
+-- §17.4.3.8-9: UCASE and LCASE are fn:upper-case and fn:lower-case, which
+-- follow Unicode default case mapping (https://github.com/danbri/factoidal/issues/706).
+#guard (Expr.uCase (.lit (litStr "é"))).eval [] == .term (.literal (litStr "É"))
+#guard (Expr.uCase (.lit (litStr "straße"))).eval [] == .term (.literal (litStr "STRASSE"))
+#guard (Expr.lCase (.lit (litStr "ÉCOLE"))).eval [] == .term (.literal (litStr "école"))
+#guard (Expr.lCase (.lit (litStr "ΑΣ"))).eval [] == .term (.literal (litStr "ας"))
+#guard (Expr.lCase (.lit (litStr "ß"))).eval [] == .term (.literal (litStr "ß"))
+#guard (Expr.lCase (.lit (litStr "ΑΣΑ"))).eval [] == .term (.literal (litStr "ασα"))
+-- the result can be longer than the argument, so STRLEN sees it
+#guard (Expr.strLen (.uCase (.lit (litStr "ß")))).eval [] == .num 2
+-- both keep the language tag
+#guard (Expr.uCase (.lit (litLang "straße" "de"))).eval []
+  == .term (.literal (litLang "STRASSE" "de"))
+#guard (Expr.lCase (.lit (litLang "ÉCOLE" "fr"))).eval []
+  == .term (.literal (litLang "école" "fr"))
+-- negative: ASCII-only case mapping answers these differently
+#guard (Expr.uCase (.lit (litStr "é"))).eval [] != .term (.literal (litStr "é"))
+#guard (Expr.lCase (.lit (litStr "ÉCOLE"))).eval [] != .term (.literal (litStr "École"))
+#guard (Expr.lCase (.lit (litStr "ΑΣ"))).eval [] != .term (.literal (litStr "ασ"))
+-- characters without case, and strings already in the target case, are unchanged
+#guard (Expr.uCase (.lit (litStr "ÉCOLE 123"))).eval [] == .term (.literal (litStr "ÉCOLE 123"))
+#guard (Expr.lCase (.lit (litStr "日本語 !?"))).eval [] == .term (.literal (litStr "日本語 !?"))
+
 #guard (Expr.strStarts (.lit (litStr "foobar")) (.lit (litStr "foo"))).eval [] == .bool true
 #guard (Expr.strEnds (.lit (litStr "foobar")) (.lit (litStr "bar"))).eval [] == .bool true
 #guard (Expr.contains (.lit (litStr "foobar")) (.lit (litStr "oob"))).eval [] == .bool true
@@ -470,6 +348,98 @@ def ttDec : Term :=
 #guard (Expr.sameTerm (.lit (litInt "1")) (.lit (litDec "1.0"))).eval [] == .bool false
 -- Triple terms have no ordering: `<` on them is a type error.
 #guard valueCompare (.term ttInt) (.term ttDec) .lt == none
+
+/-! ### §17.4.1.7 RDFterm-equal: literals of a datatype with no value comparison
+
+Two literals that are not the same RDF term, of a datatype this engine does
+not compare by value (`rdf:XMLLiteral`, an unknown datatype), are a type
+error under `=` and `!=` (SPARQL 1.1 section 17.4.1.7; W3C test
+open-world/open-eq-06). The same term is `true` under `=`. -/
+
+def litXml (s : String) : WfLiteral := mkTypedLiteral s rdfXMLLiteral
+def litUnknown (s : String) : WfLiteral := mkTypedLiteral s (iriE "http://example/t#type1")
+
+#guard valueCompare (.term (.literal (litXml "<x></x>"))) (.term (.literal (litXml "<x/>"))) .eq == none
+#guard valueCompare (.term (.literal (litXml "<x></x>"))) (.term (.literal (litXml "<x/>"))) .ne == none
+#guard valueCompare (.term (.literal (litXml "<x/>"))) (.term (.literal (litXml "<x/>"))) .eq == some true
+#guard valueCompare (.term (.literal (litXml "<x/>"))) (.term (.literal (litXml "<x/>"))) .ne == some false
+#guard valueCompare (.term (.literal (litUnknown "a"))) (.term (.literal (litUnknown "b"))) .ne == none
+#guard valueCompare (.term (.literal (litUnknown "a"))) (.term (.literal (litUnknown "a"))) .eq == some true
+-- `xsd:string` and language-tagged literals keep value comparison
+#guard valueCompare (.term (.literal (litStr "a"))) (.term (.literal (litStr "b"))) .eq == some false
+#guard valueCompare (.term (.literal (litLang "a" "en"))) (.term (.literal (litLang "b" "en"))) .ne == some true
+-- `xsd:dateTime` compares by value
+#guard valueCompare (.term (.literal (mkTypedLiteral "2006-08-23T09:00:00+01:00" xsdDateTime)))
+  (.term (.literal (mkTypedLiteral "2006-08-23T08:00:00Z" xsdDateTime))) .eq == some true
+
+/-! ### §17.4.1.7 RDFterm-equal: terms of different kinds, and known datatypes
+
+SPARQL 1.1 section 17.4.1.7: RDFterm-equal "returns TRUE if term1 and term2
+are the same RDF term ...; produces a type error if the arguments are both
+literal but are not the same RDF term; returns FALSE otherwise". Two terms
+of different kinds (IRI, blank node, literal, triple term) are not the same
+term and are not both literals, so `=` is `false` and `!=` is `true`.
+
+Two literals that are different terms: the note to section 17.4.1.7 says
+that RDFterm-equal on typed literals "tests for equivalent values", and that
+the type error is for unsupported datatypes. Section 17.3.1 lets an extended
+implementation replace a type error (and only a type error) with a value.
+The W3C tests open-world/open-eq-08, -10, -11, -12 and date-2 (manifest
+requirement `mf:KnownTypesDefault2Neq`, "Values in disjoint value spaces are
+not equal") expect `false` in two cases only: an `rdf:langString` literal
+against a literal of any other datatype, and an `xsd:dateTime` against an
+`xsd:date` literal, both well-formed. These are the only cases implemented.
+Ill-formed literals, unknown datatypes and other pairs stay type errors. -/
+
+def iriX : Term := .iri (iriE "http://example/xyz")
+def bnX : Term := .bnode "xyz"
+def litBadInt : WfLiteral := litInt "xyz"
+def litDate (s : String) : WfLiteral := mkTypedLiteral s xsdDate
+
+-- (a) different kinds: IRI, blank node, literal, triple term
+#guard valueCompare (.term iriX) (.term (.literal (litStr "xyz"))) .eq == some false
+#guard valueCompare (.term iriX) (.term (.literal (litStr "xyz"))) .ne == some true
+#guard valueCompare (.term (.literal (litStr "xyz"))) (.term iriX) .ne == some true
+#guard valueCompare (.term bnX) (.term (.literal (litLang "xyz" "en"))) .ne == some true
+#guard valueCompare (.term bnX) (.term iriX) .eq == some false
+#guard valueCompare (.term iriX) (.term bnX) .ne == some true
+#guard valueCompare (.term iriX) (.term (.literal (litUnknown "xyz"))) .ne == some true
+#guard valueCompare (.term iriX) (.term (.literal litBadInt)) .ne == some true
+#guard valueCompare (.term (.literal litBadInt)) (.term bnX) .ne == some true
+#guard valueCompare (.term iriX) (.num 1) .eq == some false
+#guard valueCompare (.bool true) (.term bnX) .ne == some true
+#guard valueCompare (.term ttInt) (.term iriX) .eq == some false
+-- (b) `rdf:langString` against a literal of another datatype
+#guard valueCompare (.term (.literal (litStr "xyz"))) (.term (.literal (litLang "xyz" "en"))) .ne == some true
+#guard valueCompare (.term (.literal (litLang "xyz" "en"))) (.term (.literal (litStr "xyz"))) .eq == some false
+#guard valueCompare (.term (.literal (litLang "xyz" "en"))) (.term (.literal (litUnknown "xyz"))) .ne == some true
+#guard valueCompare (.term (.literal (litLang "xyz" "en"))) (.term (.literal litBadInt)) .ne == some true
+#guard valueCompare (.term (.literal litBadInt)) (.term (.literal (litLang "abc" "EN"))) .ne == some true
+-- (b) `xsd:dateTime` against `xsd:date` (date-2)
+#guard valueCompare (.term (.literal (mkTypedLiteral "2006-08-23T09:00:00+01:00" xsdDateTime)))
+  (.term (.literal (litDate "2006-08-23"))) .ne == some true
+#guard valueCompare (.term (.literal (litDate "2006-08-23")))
+  (.term (.literal (mkTypedLiteral "2006-08-23T09:00:00+01:00" xsdDateTime))) .eq == some false
+-- Other pairs of known datatypes: no W3C test expects `false`, so the base
+-- rule (a type error) stays
+#guard valueCompare (.term (.literal (litStr "1"))) (.term (.literal (litInt "1"))) .eq == none
+#guard valueCompare (.bool true) (.term (.literal (litStr "true"))) .ne == none
+#guard valueCompare (.num 1) (.bool true) .eq == none
+-- A computed value outside the lexical space stays an error
+#guard valueCompare (.dbl "+INF") (.dbl "+INF") .eq == none
+-- An ill-formed `xsd:date` against an `xsd:dateTime` stays an error
+#guard valueCompare (.term (.literal (litDate "2006-13-45")))
+  (.term (.literal (mkTypedLiteral "2006-08-23T09:00:00Z" xsdDateTime))) .ne == none
+-- Type errors that stay: ill-formed literals, unknown datatypes, rdf:XMLLiteral
+#guard valueCompare (.term (.literal (litStr "xyz"))) (.term (.literal litBadInt)) .ne == none
+#guard valueCompare (.term (.literal (litStr "xyz"))) (.term (.literal (litUnknown "xyz"))) .ne == none
+#guard valueCompare (.term (.literal (litUnknown "xyz"))) (.term (.literal litBadInt)) .ne == none
+#guard valueCompare (.term (.literal litBadInt)) (.term (.literal (litInt "abc"))) .ne == none
+#guard valueCompare (.term (.literal (litStr "a"))) (.term (.literal (litXml "<x/>"))) .ne == none
+-- date-2: a date with a time zone against one without is not `!=`-true
+#guard valueCompare (.term (.literal (litDate "2006-08-23Z"))) (.term (.literal (litDate "2006-08-23"))) .ne != some true
+-- `<` keeps the type error for terms of different kinds
+#guard valueCompare (.term iriX) (.term (.literal (litStr "xyz"))) .lt == none
 
 /-! ### §17.4.3.14 REGEX / §17.4.3.15 REPLACE over the pure engine -/
 
@@ -572,15 +542,18 @@ open L4Factoidal.Tests
     (.compare .gt (.var "a") (.numericLit 18))
     (.bgp qNameAge)).eval g).length == 0
 
--- A typed literal constructed by STRDT participates in the same numeric
--- operator mapping as a bound or source literal.
-#guard ((GraphPattern.filterExpr
+-- STRDT builds a TERM; the operators read its value (`numericView`,
+-- SPARQL 1.1 §17.1 operand mapping), so `STRDT(STR(?a), xsd:integer) > 18`
+-- compares numbers and keeps Alice (30). The F* source keeps such terms
+-- unpromoted and drops every row; that was a defect
+-- (https://github.com/danbri/factoidal/issues/784).
+#guard (((GraphPattern.filterExpr
     (.compare .gt (.strDt (.str (.var "a")) (.iri xsdInteger)) (.numericLit 18))
-    (.bgp qNameAge)).eval g).length == 1
+    (.bgp qNameAge)).eval g).map (fun mu => mu.lookup "n"))
+  == [some (Term.literal (litStr "Alice"))]
 
--- With xsd:integer ages IN THE DATA, the variable lookup promotes and
--- the numeric filter works end to end: Alice (30) survives, Bob (7)
--- does not.
+-- Typed data follows the same operator conversion: Alice (30) survives,
+-- Bob (7) does not. Variable lookup itself retains the original term.
 def gTyped : Graph :=
   [{ s := alice, p := exName, o := .literal (litStr "Alice") },
    { s := alice, p := exAge,  o := .literal (litInt "30") },
@@ -692,15 +665,8 @@ def xsdFn (t : String) (e : Expr) (h : isIri (xsdNamespace ++ t) := by rfl) : Ex
 #guard (xsdFn "decimal" (.lit (litStr "1E0"))).eval [] == .error
 #guard (xsdFn "double" (.lit (litStr "-10.2E3"))).eval [] == .dbl "-10.2E3"
 #guard (xsdFn "double" (.lit (litStr "true"))).eval [] == .error
-#guard (xsdFn "double" (.lit (litFloat "16777217"))).eval []
-  == .dbl "1.6777216E7"
-#guard (xsdFn "integer" (.lit (litFloat "16777217"))).eval [] == .num 16777216
-#guard (xsdFn "decimal" (.lit (litFloat "16777217"))).eval [] == .dec "16777216.0"
-#guard (xsdFn "boolean" (.lit (litFloat "1E-50"))).eval [] == .bool false
 #guard (xsdFn "float" (.lit (litStr "1.5"))).eval []
   == .term (.literal (mkTypedLiteral "1.5" xsdFloat))
-#guard (Expr.sameTerm (.lit (litFloat "1.5"))
-    (xsdFn "float" (.lit (litStr "1.5")))).eval [] == .bool true
 #guard (xsdFn "boolean" (.lit (litStr "1"))).eval [] == .bool true
 #guard (xsdFn "boolean" (.lit (litStr "false"))).eval [] == .bool false
 #guard (xsdFn "boolean" (.lit (litStr "0.0"))).eval [] == .error
@@ -723,10 +689,17 @@ def xsdFn (t : String) (e : Expr) (h : isIri (xsdNamespace ++ t) := by rfl) : Ex
 #guard (xsdFn "string" (.decimalLit "1.0")).eval [] == erString "1"
 #guard (xsdFn "string" (.doubleLit "1E0")).eval [] == erString "1"
 #guard (xsdFn "string" (.boolLit false)).eval [] == erString "false"
--- Any other XSD datatype builds a typed literal; a blank node or an
--- unbound variable is a type error; the arity is one.
+-- dateTime uses the shared lexical decision and rejects unsupported source types.
 #guard (xsdFn "dateTime" (.lit (litStr "2002-10-10T17:00:00Z"))).eval []
   == .term (.literal (mkTypedLiteral "2002-10-10T17:00:00Z" xsdDateTime))
+#guard (xsdFn "dateTime" (.lit (litStr "not-a-date"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (litStr "2001-02-29T00:00:00Z"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (litStr "+2002-10-10T17:00:00Z"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (litLang "2002-10-10T17:00:00Z" "en"))).eval [] == .error
+#guard (xsdFn "dateTime" (.numericLit 13)).eval [] == .error
+#guard (xsdFn "dateTime" (.iri (iriE "2002-10-10T17:00:00Z"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (mkTypedLiteral "12345-01-01T00:00:00" xsdDateTime))).eval []
+  == .term (.literal (mkTypedLiteral "12345-01-01T00:00:00" xsdDateTime))
 #guard (xsdFn "integer" errE).eval [] == .error
 #guard (Expr.functionCall (iriE "http://www.w3.org/2001/XMLSchema#integer")
           [.numericLit 1, .numericLit 2]).eval [] == .error
@@ -767,5 +740,235 @@ def muRow (row occ : String) : Binding := Binding.withFreshnessCtx row occ []
 #guard (fnCall "bnode" [.numericLit 1, .numericLit 2]).eval (muRow "0" "b1") == .error
 -- The reserved context keys never reach an expression's variables.
 #guard (Expr.bound fxKeyRow).eval [] == .bool false
+
+
+/-! ### `strCompare` through the native string order
+
+`Expr.lean` registers `strCompare = strCompareFast` as `csimp`, so
+`strCompare` compiles to Lean's native string order. `listCharCompare` on the
+character lists is not rewritten, so these guards compare two programs. The
+samples cover the empty string, equal strings, a proper prefix, a shared
+prefix, upper and lower case ASCII, a two-byte character, U+FFFF and a
+supplementary-plane character (whose first UTF-8 byte is larger than any
+other, so a byte order and the code point order agree on it). -/
+
+private def strCmpSamples : List String :=
+  [ "", "a", "ab", "abc", "b", "B", "z", "_:b0", "http://e/a", "http://e/b",
+    "http://e/a#x", "é", "éa", "zé", (String.singleton (Char.ofNat 0xFFFF)),
+    (String.singleton (Char.ofNat 0x10000)),
+    "a" ++ (String.singleton (Char.ofNat 0x10000)), "a" ++ (String.singleton (Char.ofNat 0xFFFF)) ]
+
+#guard strCmpSamples.all fun a => strCmpSamples.all fun b =>
+  strCompare a b == listCharCompare a.toList b.toList
+-- Teeth: three-way, not constant, not reversed, antisymmetric, and a prefix
+-- sorts before its extension.
+#guard strCompare "a" "b" == -1 && strCompare "b" "a" == 1 && strCompare "a" "a" == 0
+#guard strCompare "a" "ab" == -1 && strCompare "ab" "a" == 1
+#guard strCompare "" "a" == -1 && strCompare "a" "" == 1 && strCompare "" "" == 0
+#guard strCompare "B" "a" == -1
+#guard strCompare (String.singleton (Char.ofNat 0xFFFF)) (String.singleton (Char.ofNat 0x10000)) == -1
+#guard strCmpSamples.all fun a => strCmpSamples.all fun b => strCompare a b == - strCompare b a
+#guard (strCmpSamples.filter fun a => strCmpSamples.any fun b => strCompare a b == -1).length > 5
+#guard (strCmpSamples.filter fun a => strCmpSamples.any fun b => strCompare a b == 1).length > 5
+
+/-! ## Guards from the laptop work of 2026-09-08 (merged 2026-10-26)
+
+The laptop guards that type-check against this tree's evaluator and hold
+here. Dropped at the merge: guards on the laptop's separate `xsd:float`
+evaluator kind (this tree reads float values through `Fn.Numeric`), and
+guards that a malformed numeric lexical form has EBV `false` (this tree
+uses the SPARQL 1.2 policy: a type error). -/
+
+def litFloat (s : String) : WfLiteral := mkTypedLiteral s xsdFloat
+
+def xsdShort : WfIri := ⟨xsdNamespace ++ "short", rfl⟩
+
+def xsdUnsignedByte : WfIri := ⟨xsdNamespace ++ "unsignedByte", rfl⟩
+
+def unknownDatatype : WfIri := iriE "http://example.org/unknown"
+
+def illTypedInteger : WfLiteral := mkTypedLiteral "xyz" xsdInteger
+
+def unknownLiteral : WfLiteral := mkTypedLiteral "xyz" unknownDatatype
+
+def muPromoted : Binding :=
+  [("short", .literal (mkTypedLiteral "1" xsdShort)),
+   ("float", .literal (litFloat "1")),
+   ("decimal", .literal (litDec "1")),
+   ("double", .literal (mkTypedLiteral "1" xsdDouble))]
+
+#guard ebv (.dbl "-0") == some false
+
+#guard ebv (.dbl "-0.0") == some false
+
+#guard ebv (.dbl "0E0") == some false
+
+#guard parseIntString "+" == none
+
+#guard parseIntString "-" == none
+
+#guard (Expr.compare .eq (.var "a") (.lit (litInt "01"))).eval muNums == .bool true
+
+#guard (Expr.compare .eq (.lit (litInt "01")) (.var "a")).eval muNums == .bool true
+
+#guard (Expr.compare .eq
+    (.arith .add (.numericLit 0) (.numericLit 1))
+    (.lit (litInt "01"))).eval [] == .bool true
+
+#guard (Expr.compare .ne (.var "a") (.iri (iriE "http://example.org/one"))).eval muNums
+  == .bool true
+
+#guard valueCompare
+    (.term (.literal (litInt "1")))
+    (.term (.iri (iriE "http://example.org/one"))) .ne == some true
+
+#guard (Expr.datatype (.arith .add (.var "short") (.numericLit 1))).eval muPromoted
+  == .term (.iri xsdInteger)
+
+#guard (Expr.datatype (.arith .add (.var "float") (.var "decimal"))).eval muPromoted
+  == .term (.iri xsdFloat)
+
+#guard (Expr.datatype (.arith .add (.var "float") (.var "double"))).eval muPromoted
+  == .term (.iri xsdDouble)
+
+#guard (Expr.compare .eq
+    (.arith .add (.lit (litFloat "16777216")) (.lit (litFloat "1")))
+    (.lit (litFloat "16777216"))).eval [] == .bool true
+
+#guard (Expr.compare .gt
+    (.arith .add (.lit (litFloat "16777216")) (.doubleLit "1"))
+    (.doubleLit "16777216")).eval [] == .bool true
+
+#guard (Expr.datatype
+    (.arith .add (.lit (litFloat "16777216")) (.doubleLit "1"))).eval []
+  == .term (.iri xsdDouble)
+
+#guard literalPromote (mkTypedLiteral "-1" xsdUnsignedByte)
+  == .term (.literal (mkTypedLiteral "-1" xsdUnsignedByte))
+
+#guard valueCompare (.term (.literal illTypedInteger))
+    (.term (.literal illTypedInteger)) .eq == some true
+
+#guard valueCompare (.term (.literal unknownLiteral))
+    (.term (.literal unknownLiteral)) .ne == some false
+
+#guard valueCompare (.term (.bnode "b")) (.term (.bnode "b")) .eq == some true
+
+#guard valueCompare (.term (.literal illTypedInteger))
+    (.term (.literal (litStr "xyz"))) .eq == none
+
+#guard valueCompare (.term (.literal unknownLiteral))
+    (.term (.literal illTypedInteger)) .ne == none
+
+#guard valueCompare (.term (.literal (litLang "xyz" "en")))
+    (.term (.literal illTypedInteger)) .eq == some false
+
+#guard valueCompare (.term (.literal illTypedInteger))
+    (.term (.iri (iriE "http://example.org/xyz"))) .ne == some true
+
+def nanDouble : WfLiteral := mkTypedLiteral "NaN" xsdDouble
+
+def muNaN : Binding := [("nan", .literal nanDouble)]
+
+#guard (Expr.compare .eq (.lit nanDouble) (.lit nanDouble)).eval [] == .bool false
+
+#guard (Expr.compare .ne (.lit nanDouble) (.lit nanDouble)).eval [] == .bool true
+
+#guard (Expr.compare .eq (.var "nan") (.var "nan")).eval muNaN == .bool false
+
+#guard (Expr.compare .ne (.var "nan") (.var "nan")).eval muNaN == .bool true
+
+#guard valueCompare (.dbl "INF") (.dbl "INF") .eq == some true
+
+#guard valueCompare (.num 0) (.dbl "INF") .lt == some true
+
+#guard valueCompare (.dbl "1e400") (.dbl "INF") .eq == some true
+
+#guard valueCompare (.dbl "-1e400") (.dbl "-INF") .eq == some true
+
+#guard valueCompare (.dbl "1e400") (.dbl "1.0") .gt == some true
+
+#guard valueCompare (.dbl "-1e400") (.dbl "-1.0") .lt == some true
+
+def hugePositiveInteger : Int := ((10 : Int) ^ 400)
+
+def hugeNegativeInteger : Int := -hugePositiveInteger
+
+#guard valueCompare (.num hugePositiveInteger) (.dbl "INF") .eq == some true
+
+#guard valueCompare (.dbl "-INF") (.num hugeNegativeInteger) .eq == some true
+
+#guard valueCompare (.num hugePositiveInteger) (.dbl "1.0") .gt == some true
+
+#guard valueCompare (.dbl "-1.0") (.num hugeNegativeInteger) .gt == some true
+
+#guard valueCompare (.term (.literal nanDouble))
+    (.term (.literal unknownLiteral)) .eq == none
+
+#guard valueCompare (.term (.literal unknownLiteral))
+    (.term (.literal nanDouble)) .ne == none
+
+#guard valueCompare (.term (.literal nanDouble))
+    (.term (.literal (litStr "NaN"))) .ne == none
+
+def dateLiteral (s : String) : WfLiteral := mkTypedLiteral s xsdDateTime
+
+#guard valueCompare
+    (.term (.literal (dateLiteral "2002-04-02T23:00:00-04:00")))
+    (.term (.literal (dateLiteral "2002-04-03T02:00:00-01:00"))) .eq == some true
+
+#guard valueCompare
+    (.term (.literal (dateLiteral "2002-04-02T23:00:00-04:00")))
+    (.term (.literal (dateLiteral "2002-04-03T04:00:00-01:00"))) .lt == some true
+
+#guard valueCompare
+    (.term (.literal (dateLiteral "2002-04-02T23:00:00")))
+    (.term (.literal (dateLiteral "2002-04-02T23:00:00+06:00"))) .eq == none
+
+#guard valueCompare
+    (.term (.literal (dateLiteral "not-a-date")))
+    (.term (.literal (dateLiteral "not-a-date"))) .eq == some true
+
+#guard valueCompare
+    (.term (.literal (dateLiteral "not-a-date")))
+    (.term (.literal (dateLiteral "also-not-a-date"))) .eq == none
+
+#guard valueCompare (.term (.iri (iriE "http://example/a")))
+    (.term (.iri (iriE "http://example/a"))) .le == none
+
+#guard (Expr.sameTerm (.var "a") (.var "b")).eval muNums == .bool false
+
+#guard (Expr.sameTerm (.lit (litLang "xyz" "en")) (.lit (litLang "xyz" "EN"))).eval []
+  == .bool true
+
+def dirLtr : WfLiteral := Literal.dirLangString "xyz" "en" .ltr
+
+def dirRtl : WfLiteral := Literal.dirLangString "xyz" "EN" .rtl
+
+#guard valueCompare (.term (.literal dirLtr)) (.term (.literal dirRtl)) .eq == some false
+
+#guard valueCompare (.term (.literal dirLtr)) (.term (.literal dirRtl)) .ne == some true
+
+#guard (Expr.sameTerm (.lit dirLtr) (.lit dirRtl)).eval [] == .bool false
+
+#guard (Expr.sameTerm
+    (.lit (mkTypedLiteral "<a></a>" rdfXMLLiteral))
+    (.lit (mkTypedLiteral "<a/>" rdfXMLLiteral))).eval [] == .bool false
+
+#guard (Expr.sameTerm (.var "missing") (.lit (litStr "x"))).eval [] == .error
+
+#guard (Expr.compare .eq (.lit (litInt "1")) (.lit (litInt "01"))).eval [] == .bool true
+
+#guard (xsdFn "double" (.lit (litFloat "16777217"))).eval []
+  == .dbl "1.6777216E7"
+
+#guard (xsdFn "integer" (.lit (litFloat "16777217"))).eval [] == .num 16777216
+
+#guard (xsdFn "decimal" (.lit (litFloat "16777217"))).eval [] == .dec "16777216.0"
+
+#guard (xsdFn "boolean" (.lit (litFloat "1E-50"))).eval [] == .bool false
+
+#guard (Expr.sameTerm (.lit (litFloat "1.5"))
+    (xsdFn "float" (.lit (litStr "1.5")))).eval [] == .bool true
 
 end L4Factoidal.SPARQL.ExprTests

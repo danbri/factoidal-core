@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# ASK with a residual FILTER (REGEX) that no row passes: false.
+ASK { ?s ex:name ?n FILTER(REGEX(?n, "^z")) }

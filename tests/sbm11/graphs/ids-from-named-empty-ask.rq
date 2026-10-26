@@ -1,0 +1,1 @@
+ASK FROM NAMED <http://example.org/g2> { GRAPH <http://example.org/g2> { } }

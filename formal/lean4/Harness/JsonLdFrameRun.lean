@@ -19,6 +19,7 @@ equality. Member order is insignificant, array order IS significant, and
 there is no blank-node relabelling — the fixtures pin the exact labels.
 -/
 import L4Factoidal.JSONLD.Frame
+import Harness.JsonLdScale
 
 open L4Factoidal.JSON
 open L4Factoidal.JSONLD
@@ -40,7 +41,8 @@ structure Entry where
   base           : Option String
   processingMode : Option String
   omitGraph      : Option Bool
-  deriving Repr
+  /-- The framing options the manifest may state under `option`. -/
+  frameOpts      : FrameOptions
 
 def typesOf (j : Json) : List String :=
   match j.field? "@type" with
@@ -52,6 +54,23 @@ def kindOf (types : List String) : Kind :=
   if types.contains "jld:NegativeEvaluationTest" then .negative
   else if types.contains "jld:PositiveEvaluationTest" then .positive
   else .unknown
+
+/-- The framing options of a manifest entry's `option` object. `embed`
+is a string or a boolean (`true` is `@once`, `false` is `@never`). -/
+def frameOptionsOf (opt : Option Json) : FrameOptions :=
+  let b (k : String) : Option Bool := opt.bind (fun o => o.getBool? k)
+  let embed : Option String :=
+    match opt.bind (fun o => o.field? "embed") with
+    | some (.string s) => some s
+    | some (.bool true) => some "@once"
+    | some (.bool false) => some "@never"
+    | _ => none
+  { embed := embed.getD "@once",
+    explicit := (b "explicit").getD false,
+    omitDefault := (b "omitDefault").getD false,
+    requireAll := (b "requireAll").getD false,
+    pruneBlankNodeIdentifiers := b "pruneBlankNodeIdentifiers",
+    ordered := (b "ordered").getD false }
 
 def entryOf (j : Json) : Option Entry := do
   let input ← j.getString? "input"
@@ -71,7 +90,8 @@ def entryOf (j : Json) : Option Entry := do
          errorCode := j.getString? "expectErrorCode",
          base := optStr "base",
          processingMode := pm,
-         omitGraph := opt.bind (fun o => o.getBool? "omitGraph") }
+         omitGraph := opt.bind (fun o => o.getBool? "omitGraph"),
+         frameOpts := frameOptionsOf opt }
 
 def readFileOpt (p : System.FilePath) : IO (Option String) := do
   try pure (some (← IO.FS.readFile p)) catch _ => pure none
@@ -133,7 +153,10 @@ def runEntry (loader : Loader) (baseIri : String) (dir : System.FilePath) (e : E
     let base : Option String := match e.base with
                                 | some b => some b
                                 | none   => some (baseIri ++ e.input)
-    let got := frameDocument loader inputTxt frameTxt base e.processingMode e.omitGraph
+    let got := frameDocumentWith loader inputTxt frameTxt
+      { e.frameOpts with base := base, processingMode := e.processingMode,
+                         omitGraph := e.omitGraph }
+    JsonLdScale.rawDump ("frame " ++ e.id) got
     match e.kind with
     | .unknown => return .unsupported "unreachable"
     | .negative =>
@@ -160,6 +183,29 @@ def runEntry (loader : Loader) (baseIri : String) (dir : System.FilePath) (e : E
                 let x := truncate 400 (jcsDocument expJson)
                 return .fail s!"output differs\n      expected:\n{x}\n      got:\n{g}"
 
+/-- Read `tests/local-overrides/*.json` (relative to the current
+directory, the repository root) and return the `test_id`s whose `suite`
+is `suite`. The same layer and file format `Harness/JsonLdApiProbe.lean`
+reads; each file names the issue that tracks the dispute. An absent
+directory means no overrides. -/
+def loadLocalOverrides (suite : String) : IO (List String) := do
+  let dir : System.FilePath := "tests" / "local-overrides"
+  let entries ← try dir.readDir catch _ => pure #[]
+  let mut ids : List String := []
+  for f in entries do
+    if !f.fileName.endsWith ".json" then continue
+    match ← readFileOpt (dir / f.fileName) with
+    | none => pure ()
+    | some txt =>
+      match parseJson txt with
+      | .error _ => pure ()
+      | .ok j =>
+        if (j.getString? "suite").getD "" == suite then
+          match j.getString? "test_id" with
+          | some i => ids := i :: ids
+          | none   => pure ()
+  pure ids
+
 def defaultTestsDir : System.FilePath := "third_party/testing/json-ld-framing/tests"
 def defaultCacheDir : System.FilePath := "third_party/jsonld-context-cache"
 
@@ -182,33 +228,39 @@ def main (args : List String) : IO UInt32 := do
     let entries := seq.filterMap entryOf
     let loader ← buildLoader dir cacheDir baseIri
     IO.println s!"manifest: {manifestPath}  ({entries.length} entries of {seq.length} sequence members)"
+    let overrides ← loadLocalOverrides "jsonld-frame"
     let mut pass := 0
     let mut fail := 0
+    let mut overrideN := 0
     let mut unsup := 0
     let mut failures : List String := []
     for e in entries do
-      match ← runEntry loader baseIri dir e with
-      | .pass => pass := pass + 1
-      | .fail msg =>
-        fail := fail + 1
-        failures := s!"{e.id} {e.name}: {msg}" :: failures
-      | .unsupported msg =>
-        unsup := unsup + 1
-        failures := s!"{e.id} {e.name}: UNSUPPORTED {msg}" :: failures
-    IO.println s!"jsonld-frame: {pass} pass, {fail} fail, {unsup} unsupported (out of {entries.length})"
+      let r ← runEntry loader baseIri dir e
+      if overrides.contains e.id then
+        -- A disputed fixture is counted apart, never as a pass. If it starts
+        -- to pass, the override is stale: that is a failure of the run, so
+        -- the override file and its issue cannot be forgotten.
+        match r with
+        | .pass =>
+          fail := fail + 1
+          failures := s!"{e.id} {e.name}: STALE local override (the test now passes; delete its file in tests/local-overrides/ and close its issue)" :: failures
+        | _ => overrideN := overrideN + 1
+      else
+        match r with
+        | .pass => pass := pass + 1
+        | .fail msg =>
+          fail := fail + 1
+          failures := s!"{e.id} {e.name}: {msg}" :: failures
+        | .unsupported msg =>
+          unsup := unsup + 1
+          failures := s!"{e.id} {e.name}: UNSUPPORTED {msg}" :: failures
+    IO.println s!"jsonld-frame: {pass} pass, {fail} fail, {overrideN} local-override, {unsup} unsupported (out of {entries.length})"
     IO.println "  F* (recorded in docs/test-results/assurance-inventory.json): 28 pass, 64 fail, 0 skip (out of 92)"
-    IO.println ""
-    IO.println "The framing port implements the same subset the F* module does:"
-    IO.println "@type / @id / property matching, node embedding with a visited"
-    IO.println "set, and @explicit. @default, @omitDefault, @requireAll,"
-    IO.println "the other @embed modes, @reverse, @included, named graphs and"
-    IO.println "value-object matching are absent in BOTH trees, and are what"
-    IO.println "most of the remaining failures need."
     if !failures.isEmpty then
       IO.println ""
       IO.println "  failures:"
       for f in failures.reverse do IO.println s!"    {f}"
-    return 0
+    return (if fail > 0 then 1 else 0)
 
 end JsonLdFrameRun
 

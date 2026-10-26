@@ -24,7 +24,7 @@ open L4Factoidal.JSON
 /-- A validation finding. Severity is part of the finding, not a
     caller's interpretation of it. -/
 inductive Severity where
-  | error | warning
+  | error | warning | unsupported
 deriving Repr, DecidableEq, Inhabited
 
 structure Finding where
@@ -35,8 +35,13 @@ deriving Repr, DecidableEq, Inhabited
 def err (m : String) : Finding := ⟨.error, m⟩
 def warn (m : String) : Finding := ⟨.warning, m⟩
 
-/-- Did validation pass? Warnings do NOT fail a document. -/
-def passes (fs : List Finding) : Bool := !(fs.any (·.severity == .error))
+/-- A legacy acceptance test. False includes unsupported checks; use
+`validationDecision?` when a negative validation verdict is required. -/
+def passes (fs : List Finding) : Bool := fs.all (·.severity == .warning)
+
+/-- Unsupported checks cannot establish either conformance verdict. -/
+def validationDecision? (fs : List Finding) : Option Bool :=
+  if fs.any (·.severity == .unsupported) then none else some (passes fs)
 
 private def field? (k : String) : Json → Option Json
   | .object ms => (ms.find? (fun (key, _) => key == k)).map (·.2)
@@ -102,7 +107,27 @@ def checkTitles (v : Json) : List Finding :=
     built-in name is a WARNING, not an error — the suite classifies
     both the non-builtin case and the absolute-URL case as
     `WarningValidationTest`. So this list drives a warning, never a
-    rejection. -/
+    rejection.
+
+    The rule is Metadata Vocabulary §5.7 (`datatype`: "If the value of
+    this property is a string, it MUST be the name of one of the
+    built-in datatypes"), and the consequence of breaking it is §4:
+    "If a property has a value that is not permitted by this
+    specification, then if a default value is provided for that
+    property, compliant applications MUST generate a warning and use
+    that default value. If no default value is provided for that
+    property, compliant applications MUST generate a warning and behave
+    as if the property had not been specified." The approved tests
+    agree: test150 (`"foo"`) and test238 (`"http://example.org/datatype"`)
+    are `WarningValidationTest`s that must conform.
+
+    `manifest-validation#test308` (`"http://example.org/bad/datatype"`)
+    is a `NegativeValidationTest` and FAILS here, as it does in the F*
+    engine. It is the only `rdft:Proposed` entry of the 282; it was
+    added on 2016-01-05, after the Recommendation, and never approved.
+    An error for it is also an error for test238, whose value differs
+    only in the URL path, so no rule passes both. Tracked in
+    https://github.com/danbri/factoidal/issues/698 (residues). -/
 def knownDatatype (n : String) : Bool :=
   ["anyAtomicType", "anyURI", "base64Binary", "boolean", "date", "dateTime",
    "dateTimeStamp", "decimal", "integer", "long", "int", "short", "byte",
@@ -319,6 +344,14 @@ def checkDatatypeObject (v : Json) : List Finding :=
 
 /-! ## Structure -/
 
+/-- Malformed regex metadata warns even when there are no non-null cells. -/
+def checkRegexFormat (v : Json) : List Finding :=
+  match field? "datatype" v with
+  | some d =>
+      (regexFormatWarning ((stringField? "base" d).getD "string")
+        (stringField? "format" d)).toList.map warn
+  | none => []
+
 def columnKeywords : List String :=
   ["name", "titles", "virtual", "suppressOutput", "aboutUrl", "datatype",
    "default", "lang", "null", "ordered", "propertyUrl", "required",
@@ -327,7 +360,7 @@ def columnKeywords : List String :=
 /-- A column object. -/
 def checkColumn (v : Json) : List Finding :=
   checkId "column" v ++ checkType "Column" v ++ checkTitles v ++ checkDatatype v
-    ++ checkDatatypeObject v ++ checkCommonProps columnKeywords v
+    ++ checkDatatypeObject v ++ checkRegexFormat v ++ checkCommonProps columnKeywords v
 
 /-- A foreign key: only `columnReference` and `reference` are allowed,
     and the reference itself takes only `resource` / `schemaReference`
@@ -394,7 +427,7 @@ def checkSchema (v : Json) : List Finding :=
   let orderFindings :=
     if (virtuals.zip (virtuals.drop 1)).any (fun (a, b) => a && !b)
     then [err "a virtual column precedes a non-virtual one"] else []
-  checkId "schema" v ++ checkType "Schema" v ++ colsShape ++ cols.flatMap checkColumn
+  checkId "schema" v ++ checkType "Schema" v ++ checkRegexFormat v ++ colsShape ++ cols.flatMap checkColumn
     ++ dupFindings ++ orderFindings
     -- `foreignKeys` given as a non-array, or holding a non-object
     -- member, is a WARNING and the offending value is ignored — the
@@ -424,7 +457,7 @@ def checkTable (v : Json) : List Finding :=
     | some (.string _) => []
     | some _           => [err "table url must be a string"]
     | none             => [err "a table must have a url"]
-  checkId "table" v ++ checkType "Table" v ++ urlFindings
+  checkId "table" v ++ checkType "Table" v ++ checkRegexFormat v ++ urlFindings
     -- MV §5.2: `tableSchema` is an object property, so it takes an
     -- inline object or a string naming one. Any other type is a
     -- warning for a converter, which proceeds as if an object with no
@@ -520,7 +553,7 @@ def checkTableGroup (v : Json) : List Finding :=
           | _         => [warn "a tables member is not a table object; ignored"])
     | some _ => [err "tables must be an array"]
     | none   => [err "a table group must have tables"]
-  checkId "table group" v ++ checkType "TableGroup" v ++ tablesFindings
+  checkId "table group" v ++ checkType "TableGroup" v ++ checkRegexFormat v ++ tablesFindings
     ++ checkForeignKeyTargets v
     ++ (match field? "dialect" v with
         | some d => checkId "dialect" d ++ checkType "Dialect" d
@@ -593,50 +626,40 @@ def stringFormatBase (b : String) : Bool :=
     both return `false`), so the parse is checked here, once, with
     `XSDPattern.parseXsdPattern`. -/
 def stringFormatOk (base : String) (fmt : Option String) (txt : String) : Bool :=
-  match fmt with
-  | none   => true
-  | some f =>
-      if stringFormatBase base then
-        match L4Factoidal.Regex.XSDPattern.parseXsdPattern f with
-        | none   => true
-        | some _ => L4Factoidal.Regex.regexMatch txt f ""
-      else true
+  if stringFormatBase base then match applyRegexFormat fmt txt with
+    | .invalid | .unsupported _ => false
+    | _ => true
+  else true
 
-/-- Is one raw cell value valid for its column's effective datatype?
-    Mirrors `CSVW.Conversion.prepareLexical`'s decision — the same
-    function that decides whether csv2rdf emits a typed literal for
-    this cell — with `stringFormatOk` added on top for the string-like
-    bases `formatConvert` leaves to its `.noFormat` branch.
-
-    An empty cell, or one equal to the column's `null` value, is
-    vacuously valid here; `required`-ness is `checkRequiredCells`'s
-    concern, not this one's. -/
-def cellValueValid (dt : Option Datatype) (nullProp : Option String) (txt : String) : Bool :=
-  if txt == "" || (match nullProp with | some n => txt == n | none => false) then true
-  else
-    match dt with
-    | none => true
+/-- Shared conversion decides format validity. `none` is unsupported, not
+an invalid cell, including regex syntax outside the admitted ECMA profile. -/
+def cellValueValidity (dt : Option Datatype) (nullProp : Option String) (txt : String) : Option Bool :=
+  if txt == "" || (match nullProp with | some n => txt == n | none => false) then some true
+  else match dt with
+    | none => some true
     | some d =>
-        let base := d.baseName.getD "string"
-        if !(stringFormatOk base d.formatOf txt) then false
-        else
-          match formatConvert base d.formatOf d.patternOf d.groupCharOf d.decimalCharOf txt with
-          | .invalid   => false
-          | .valid lex => satisfiesFacetsFor base d.facets lex
-          | .noFormat  => satisfiesFacetsFor base d.facets txt
+      let base := d.baseName.getD "string"
+      match formatConvert base d.formatOf d.patternOf d.groupCharOf d.decimalCharOf txt with
+      | .invalid => some false
+      | .valid lex => some (satisfiesFacetsFor base d.facets lex)
+      | .noFormat => some (satisfiesFacetsFor base d.facets txt)
+      | .unsupported _ => none
 
-/-- One physical column's raw cells, across every data row: an error
-    for each value ill-formed for the column's datatype. A
-    `separator` cell validates each split PART, not the whole raw
-    text (tabular-data-model §5.1.1, test228). -/
+/-- Legacy Boolean acceptance wrapper; callers issuing a negative verdict
+must retain `cellValueValidity`'s unsupported result. -/
+def cellValueValid (dt : Option Datatype) (nullProp : Option String) (txt : String) : Bool :=
+  (cellValueValidity dt nullProp txt).getD false
+
+/-- Each split cell retains unsupported separately from invalid values. -/
 def checkCellsForColumn (inh : Inherited) (name : String) (cells : List String) : List Finding :=
   cells.flatMap (fun txt =>
     let parts := match inh.separator with
       | some sep => splitSeparated sep txt
-      | none     => [txt]
-    parts.filterMap (fun part =>
-      if cellValueValid inh.datatype inh.null part then none
-      else some (err ("invalid value in column " ++ name ++ ": " ++ part))))
+      | none => [txt]
+    parts.filterMap (fun part => match cellValueValidity inh.datatype inh.null part with
+      | some true => none
+      | some false => some (err ("invalid value in column " ++ name ++ ": " ++ part))
+      | none => some ⟨.unsupported, "unsupported format in column " ++ name ++ ": " ++ part⟩))
 
 /-- A REQUIRED column (`required: true`) must have a non-null value in
     every data row (tabular-data-model §6.4.9): an empty cell, or one

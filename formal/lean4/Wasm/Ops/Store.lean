@@ -267,7 +267,12 @@ def decodeManifest? (op manifestHex : String) : Except String Manifest :=
   | none => .error s!"{op}: manifestHex must contain an even number of hexadecimal digits"
   | some bytes =>
       match decode? bytes with
-      | none => .error s!"{op}: bytes do not decode as an admitted SBM0 to SBM7 manifest"
+      | none =>
+          /- A manifest whose layout names LGI1 or LGI2 was packed under the
+             ASCII-only literal-index fold. Say that, and say to re-pack. -/
+          match retiredLayoutNote? bytes with
+          | some note => .error s!"{op}: {note}"
+          | none => .error s!"{op}: bytes do not decode as an admitted SBM0 to SBM7 manifest"
       | some manifest => .ok manifest
 
 /-- `storeManifestInspect(manifestHex)` — decode one Shardborough manifest and
@@ -300,7 +305,9 @@ same manifest and query.
 The EXISTS-outside-pattern guard is carried by the collectors themselves and
 is not re-implemented here: `queryNativeConstantPredicates?` and
 `queryQuadConstantPredicates?` both answer `none` unless
-`Query.expressionsOutsidePatternExistsFree`, and a `none` selects every entry.
+`Query.patternBoundedReads` (no EXISTS outside the pattern, and not a
+DESCRIBE, which reads every statement about the resources it names), and a
+`none` selects every entry.
 Section 18.6 evaluates an EXISTS in a projection, a GROUP BY key, a HAVING
 condition or an ORDER BY condition against the active graph, so a query
 carrying one must see the whole generation. -/
@@ -678,7 +685,7 @@ The answer is the ordinary `queryDataset` envelope with `"shards"` and
 `"mode"` in front of `"kind"`, so a host handles the result exactly as it
 handles `queryDataset`. -/
 def storeQuery (manifestHex sparql artifactsJson : String) (blob : ByteArray)
-    (extIris : List String := []) : String :=
+    (extIris : List String := []) (now : Option String := none) : String :=
   let outcome : Except String String := do
     let manifest ← decodeManifest? "storeQuery" manifestHex
     let query ← parseQuery "storeQuery" sparql
@@ -693,30 +700,35 @@ def storeQuery (manifestHex sparql artifactsJson : String) (blob : ByteArray)
         let blobs ← admitBlobs "storeQuery" plan.blobs sources blob
         let quads ← readIbk5 sources blob blobs plan.entries []
         let ds := datasetOfQuads quads
-        let backend := if namesAreIris ds then some (indexedDatasetBackend ds) else none
-        pure (queryParsedDatasetWith ds backend sparql extra extIris)
+        let backend := if namesAreIris ds then some (L4Factoidal.Dataflow.LawfulDataset.ofDataset ds) else none
+        pure (queryParsedDatasetWith ds backend sparql extra extIris [] .v11 none now)
     | .ibk4 =>
         let quads ← readIbk4 sources blob plan.entries []
         let ds := datasetOfQuads quads
-        -- A blank-node graph name cannot survive `materialiseDatasetBackend`,
-        -- so such a dataset takes the reference evaluator, exactly as
-        -- `Harness/QuadQuery.lean` does natively.
-        let backend := if namesAreIris ds then some (indexedDatasetBackend ds) else none
-        pure (queryParsedDatasetWith ds backend sparql extra extIris)
+        -- A dataset with a blank-node graph name takes the reference
+        -- evaluator, exactly as `Harness/QuadQuery.lean` does natively. Since
+        -- 2026-10-25 the backend reads such a dataset too (issue 975); the
+        -- rule is kept so that change does not reorder those SELECT rows.
+        let backend := if namesAreIris ds then some (L4Factoidal.Dataflow.LawfulDataset.ofDataset ds) else none
+        pure (queryParsedDatasetWith ds backend sparql extra extIris [] .v11 none now)
     | .ibk3 =>
         let triples ← readIbk3 sources blob plan.entries []
         let ds : Dataset := { default := triples, named := [] }
-        pure (queryParsedDatasetWith ds (some (indexedDatasetBackend ds)) sparql extra extIris)
+        pure (queryParsedDatasetWith ds (some (L4Factoidal.Dataflow.LawfulDataset.ofDataset ds)) sparql
+                extra extIris [] .v11 none now)
   match outcome with
   | .error e => errJson e
   | .ok envelope => envelope
 
 /-- `storeQuery` through the IO dispatch entry: the same envelope, with
 the caller's §17.6 extension registrations in scope (snapshot read once,
-before evaluation). -/
+before evaluation) and `NOW()` the instant read once here (§17.4.5.1,
+https://github.com/danbri/factoidal/issues/743). -/
 def storeQueryIO (manifestHex sparql artifactsJson : String) (blob : ByteArray) :
     IO String := do
-  pure (storeQuery manifestHex sparql artifactsJson blob (← extSnapshot))
+  let extIris ← extSnapshot
+  let now ← nowDateTime
+  pure (storeQuery manifestHex sparql artifactsJson blob extIris (some now))
 
 /-! ## Executable ABI pins
 
@@ -794,6 +806,16 @@ private def pinOverrunJson : String :=
 #guard (storeQueryPlan pinManifestHex
   "SELECT ?s (EXISTS { ?s ?q ?r } AS ?e) WHERE { ?s <http://example.org/p> ?o }").contains
     "ibk3-paged-merkle-full-manifest"
+-- The DESCRIBE guard: a DESCRIBE answers every statement about the resources
+-- it names, so no pattern may prune the shards. `DESCRIBE <s>` has an empty
+-- pattern, which the predicate collector alone would plan as zero shards.
+#guard (storeQueryPlan pinManifestHex "DESCRIBE <http://example.org/s>").contains
+    "ibk3-paged-merkle-full-manifest"
+#guard (storeQueryPlan pinManifestHex
+  "DESCRIBE ?s WHERE { ?s <http://example.org/p> ?o }").contains
+    "ibk3-paged-merkle-full-manifest"
+#guard !(storeQueryPlan pinManifestHex "DESCRIBE <http://example.org/s>").contains
+    "ibk3-paged-merkle(0)"
 #guard (storeQueryPlan pinManifestHex
   "SELECT ?s WHERE { ?s <http://example.org/p> ?o }").contains "\"keys\":[\"predicate-0.ibk3\"]"
 -- An SBM3 generation declares no literal index, so the sidecar list is empty.
@@ -817,6 +839,17 @@ private def pinOverrunJson : String :=
   pinArtifactsJson ByteArray.empty).contains "\"mode\":\"ibk3-paged-merkle(1)\""
 #guard (storeQuery pinManifestHex "ASK { ?s <http://example.org/p> ?o }"
   pinArtifactsJson ByteArray.empty).contains "\"boolean\":true"
+-- DESCRIBE over the generation: the description of the resource the clause
+-- names, in the `describe` envelope; a resource the generation says nothing
+-- about gets the empty graph.
+#guard (storeQuery pinManifestHex "DESCRIBE <http://example.org/s>"
+  pinArtifactsJson ByteArray.empty).contains "\"kind\":\"describe\""
+#guard (storeQuery pinManifestHex "DESCRIBE <http://example.org/s>"
+  pinArtifactsJson ByteArray.empty).contains
+    "<http://example.org/s> <http://example.org/p> <http://example.org/o> ."
+#guard (storeQuery pinManifestHex "DESCRIBE <http://example.org/o>"
+  pinArtifactsJson ByteArray.empty).contains "\"nquads\":\"\""
+
 #guard (storeQuery pinManifestHex "SELECT ?s WHERE { ?s <http://example.org/p> ?o }"
   pinTamperedJson ByteArray.empty).contains "the manifest declares"
 #guard (storeQuery pinManifestHex "SELECT ?s WHERE { ?s <http://example.org/p> ?o }"

@@ -1,0 +1,206 @@
+// serialize(data, {format:'turtle'}): the Turtle output path (ops
+// serializeTurtle and serializeTurtleWith).
+
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const factoidal = require('../index.js');
+
+// The engine is the package's own wasm: a load failure is a test failure,
+// so capabilities() is not wrapped in a try.
+async function entryAvailable() {
+  return !!(await factoidal.capabilities()).entry;
+}
+
+test("serialize(..., {format:'turtle'}) emits prefix-compacted Turtle", async (t) => {
+  assert.ok(await entryAvailable());
+  const nt = '<http://ex/s> <http://ex/p> <http://ex/o> .\n';
+  const ttl = await factoidal.serialize(nt, { format: 'turtle', inputFormat: 'ntriples' });
+  assert.equal(typeof ttl, 'string');
+  assert.match(ttl, /@prefix/, 'Turtle output carries a @prefix directive');
+  assert.match(ttl, /:s\b/, 'subject is prefix-compacted');
+  // 'ttl' is an accepted alias for 'turtle'.
+  const ttl2 = await factoidal.serialize(nt, { format: 'ttl', inputFormat: 'ntriples' });
+  assert.match(ttl2, /@prefix/);
+});
+
+// Triple terms through serializeTurtle, serializeTurtleWith and serializeNQuads
+// (https://github.com/danbri/factoidal/issues/870): the three ops read their N-Quads
+// text as RDF 1.2 and, when that reader refuses it, as RDF 1.1. A triple term one
+// level deep, one nested two deep, and a base direction.
+test('serialize: a triple term, one level and nested, with a base direction', async () => {
+  assert.ok(await entryAvailable());
+  const nt = '<http://ex/a> <http://ex/p> <<( <http://ex/b> <http://ex/q> "x"@en--ltr )>> .\n' +
+    '<http://ex/c> <http://ex/p> <<( <http://ex/b> <http://ex/q> <<( <http://ex/d> <http://ex/q> <http://ex/f> )>> )>> .\n';
+  const ttl = await factoidal.serialize(nt, { format: 'turtle', inputFormat: 'nt12' });
+  assert.equal(ttl.split('<<(').length - 1, 3, 'three triple terms in the Turtle text');
+  assert.match(ttl, /ns1:c ns1:p <<\( ns1:b ns1:q <<\( ns1:d ns1:q ns1:f \)>> \)>> \./);
+  assert.match(ttl, /"x"@en--ltr/);
+  const withPrefixes = await factoidal.serialize(nt, {
+    format: 'turtle', inputFormat: 'nt12', prefixes: { ex: 'http://ex/' },
+  });
+  assert.match(withPrefixes, /ex:a ex:p <<\( ex:b ex:q "x"@en--ltr \)>> \./);
+  // N-Quads is the canonical form: the text it was given.
+  assert.equal(await factoidal.serialize(nt, { format: 'nquads', inputFormat: 'nt12' }), nt);
+  // Text of RDF 1.1 syntax is still read. The tag is well-formed (BCP 47
+  // section 2.1: language "de", region "CH", variant "1901"), as RDF 1.1
+  // Concepts section 3.3 requires (https://github.com/danbri/factoidal/issues/1004).
+  const ttl11 = await factoidal.serialize('<http://ex/s> <http://ex/p> "v"@de-CH-1901 .\n',
+    { format: 'turtle', inputFormat: 'ntriples' });
+  assert.match(ttl11, /"v"@de-CH-1901/i);
+});
+
+// A language tag that is not well-formed (BCP 47 section 2.1: a primary
+// language subtag has 2 to 8 letters, so "abcdefghijk", 11 letters, is not a
+// language subtag). Owner decision, 2026-10-24, answer "B." on
+// https://github.com/danbri/factoidal/issues/1004 and
+// https://github.com/danbri/factoidal/issues/1005: "Jena style: the readers keep
+// the triple and warn, and the writers write the tag unchanged." The RDF 1.1
+// N-Triples reader reads the tag (LANGTAG [144s] has no length limit), keeps
+// the triple and gives one warning; every writer writes the tag.
+test('serialize: a language tag that is not well-formed is written, and the reader warns', async () => {
+  assert.ok(await entryAvailable());
+  const text = '<http://ex/s> <http://ex/p> "v"@abcdefghijk .\n';
+  const ds = await factoidal.parse(text, { format: 'ntriples' });
+  try {
+    assert.equal(ds.size, 1, 'the triple is kept');
+    assert.equal(ds.warnings.length, 1, 'one warning');
+    const [w] = ds.warnings;
+    assert.equal(w.class, 'ill-formed-language-tag');
+    assert.match(w.message, /"abcdefghijk"/);
+    assert.equal(w.line, 1);
+    assert.equal(w.column, 33);
+    assert.ok(text.slice(w.offset).startsWith('abcdefghijk'), 'offset is the first character of the tag');
+    // Each writer writes the tag unchanged.
+    for (const format of ['turtle', 'trig', 'ntriples', 'nquads']) {
+      assert.match(await ds.serialize({ format }), /"v"@abcdefghijk/, format);
+    }
+    // Round trip: the Turtle text read back keeps the tag and warns again.
+    const ttl = await factoidal.serialize(text, { format: 'turtle', inputFormat: 'ntriples' });
+    assert.match(ttl, /"v"@abcdefghijk/);
+    const back = await factoidal.parse(ttl, { format: 'turtle' });
+    try {
+      assert.equal(back.size, 1);
+      assert.equal(back.warnings.length, 1);
+      assert.ok(ttl.slice(back.warnings[0].offset).startsWith('abcdefghijk'));
+    } finally { back.dispose(); }
+  } finally { ds.dispose(); }
+  // A well-formed tag gives no warning.
+  const good = await factoidal.parse('<http://ex/s> <http://ex/p> "v"@de-CH-1901 .\n', { format: 'ntriples' });
+  try { assert.equal(good.warnings.length, 0); } finally { good.dispose(); }
+});
+
+test('serialize rejects an unknown output format', async () => {
+  await assert.rejects(
+    () => factoidal.serialize('<a> <b> <c> .', { format: 'hdt', inputFormat: 'ntriples' }),
+    /unknown format/);
+});
+
+// ---------------------------------------------------------------------
+// serialize(..., {format:'turtle', prefixes, literalShorthand}) --
+// issue #681.
+// ---------------------------------------------------------------------
+
+const NT_TWO_S = '<http://ex/a> <http://ex/p> <http://ex/o> .\n' +
+  '<http://ex/b> <http://ex/p> <http://ex/o> .\n';
+
+test('serialize turtle: caller prefixes appear as given', async (t) => {
+  assert.ok(await entryAvailable());
+  const ttl = await factoidal.serialize(NT_TWO_S, {
+    format: 'turtle', inputFormat: 'ntriples',
+    prefixes: { ex: 'http://ex/' },
+  });
+  assert.match(ttl, /@prefix ex: <http:\/\/ex\/>/);
+  assert.match(ttl, /\bex:a\b/);
+  assert.match(ttl, /\bex:b\b/);
+  assert.ok(!/ns1:/.test(ttl), 'no auto-generated label when a caller prefix already covers the namespace');
+});
+
+test('serialize turtle: unused caller prefixes are not emitted', async (t) => {
+  assert.ok(await entryAvailable());
+  const ttl = await factoidal.serialize(NT_TWO_S, {
+    format: 'turtle', inputFormat: 'ntriples',
+    prefixes: { ex: 'http://ex/', unused: 'http://unused.example/' },
+  });
+  assert.ok(!ttl.includes('unused:'), 'an unused caller namespace is dropped, not emitted');
+  assert.ok(!ttl.includes('unused.example'));
+});
+
+test('serialize turtle: auto ns1: labels skip caller labels already in use', async (t) => {
+  assert.ok(await entryAvailable());
+  // A second, unprefixed namespace still needs an auto label; the
+  // engine must not reuse 'ex' (the caller's own label) for it.
+  const nt = '<http://ex/a> <http://other/p> <http://other/o> .\n';
+  const ttl = await factoidal.serialize(nt, {
+    format: 'turtle', inputFormat: 'ntriples',
+    prefixes: { ex: 'http://ex/' },
+  });
+  assert.match(ttl, /@prefix ex: <http:\/\/ex\/>/);
+  assert.match(ttl, /@prefix ns1: <http:\/\/other\/>/,
+    'the auto label for the second namespace must not collide with the caller label');
+});
+
+test('serialize turtle: literal shorthand is on by default (220.0, true print bare)', async (t) => {
+  assert.ok(await entryAvailable());
+  const nt = '<http://ex/s> <http://ex/p> "220.0"^^<http://www.w3.org/2001/XMLSchema#decimal> .\n' +
+    '<http://ex/s> <http://ex/p> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .\n';
+  const ttl = await factoidal.serialize(nt, { format: 'turtle', inputFormat: 'ntriples' });
+  assert.match(ttl, /\bp>?\s*220\.0\b|\s220\.0[\s,.]/, 'the decimal literal prints bare');
+  assert.match(ttl, /\btrue\b(?!"?\^\^)/, 'the boolean literal prints bare');
+  assert.ok(!ttl.includes('^^'), 'neither literal carries an explicit datatype IRI');
+});
+
+test('serialize turtle: literalShorthand:false turns off the bare-literal printing', async (t) => {
+  assert.ok(await entryAvailable());
+  const nt = '<http://ex/s> <http://ex/p> "220.0"^^<http://www.w3.org/2001/XMLSchema#decimal> .\n' +
+    '<http://ex/s> <http://ex/p> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .\n';
+  const ttl = await factoidal.serialize(nt, {
+    format: 'turtle', inputFormat: 'ntriples', literalShorthand: false,
+  });
+  assert.match(ttl, /"220\.0"\^\^xsd:decimal/);
+  assert.match(ttl, /"true"\^\^xsd:boolean/);
+});
+
+test('serialize turtle: parse-then-serialize keeps the source prefixes', async (t) => {
+  assert.ok(await entryAvailable());
+  const ds = await factoidal.parse(
+    '@prefix ex: <http://ex/> .\n@prefix foaf: <http://xmlns.com/foaf/0.1/> .\n' +
+    'ex:s foaf:knows ex:o .\n', { format: 'turtle' });
+  assert.deepEqual(ds.prefixes, { ex: 'http://ex/', foaf: 'http://xmlns.com/foaf/0.1/' });
+  const ttl = await factoidal.serialize(ds, { format: 'turtle' });
+  assert.match(ttl, /@prefix ex: <http:\/\/ex\/>/);
+  assert.match(ttl, /@prefix foaf: <http:\/\/xmlns\.com\/foaf\/0\.1\/>/);
+  assert.match(ttl, /\bex:s\b/);
+  assert.match(ttl, /\bfoaf:knows\b/);
+});
+
+// Expected failure (owner rule 2026-09-07: a stated shortfall is a failing
+// test plus an open issue). The writer collects the xsd: prefix from the
+// datatype IRIs before literal shorthand removes them from the printed
+// text, so the declaration survives with no reference. The Lean writer
+// (formal/lean4/L4Factoidal/Syntax/TurtleSerialize.lean) has the same
+// defect as the F* writer the issue names. Flip to a real assertion and
+// close the issue when the Lean writer is fixed.
+const ISSUE_691 = 'https://github.com/danbri/factoidal/issues/691';
+test(`xfail: serialize turtle: no unused @prefix xsd: when shorthand elides every typed literal (${ISSUE_691})`, async (t) => {
+  assert.ok(await entryAvailable());
+  const ds = await factoidal.parse(
+    '@prefix ex: <http://ex/> .\nex:a ex:b 1.5, 42 .\n', { format: 'turtle' });
+  const ttl = await factoidal.serialize(ds, { format: 'turtle' });
+  let failure = null;
+  try {
+    assert.match(ttl, /\b1\.5\b/, 'shorthand is on: the decimal prints bare');
+    const body = ttl.split('\n').filter((line) => !line.startsWith('@prefix')).join('\n');
+    assert.doesNotMatch(body, /\bxsd:/, 'no term uses the xsd: prefix');
+    assert.doesNotMatch(ttl, /@prefix xsd:/, 'so no xsd: declaration is emitted');
+  } catch (error) {
+    failure = error;
+  }
+  if (failure) {
+    t.diagnostic(`expected failure: ${String(failure.message).slice(0, 200)}`);
+    return;
+  }
+  assert.fail(`unexpected pass: flip this xfail to a real assertion and close ${ISSUE_691}`);
+});

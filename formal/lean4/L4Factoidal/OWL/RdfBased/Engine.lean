@@ -1,0 +1,665 @@
+/-
+L4Factoidal.OWL.RdfBased.Engine — the executable side of the OWL 2
+RDF-Based Semantics rules of `RdfBased/Rules.lean`.
+
+`rbConclusions g goal` lists triples the rules derive from the graph
+`g` (an OWL 2 RL/RDF closure, in the regime). `rbConclusions_derives`
+proves that each of them is `RbDerives g`, so each is entailed by `g`
+(`Rules.rbDerives_entailed`).
+
+Two rule families are GOAL-DIRECTED by the conclusion graph `goal`,
+because they are premise-free and would otherwise add their whole
+table to every graph: the axiomatic triples (`axiomsFor`: only rows
+whose subject IRI the goal names) and the universal-class typings
+(`universalFor`: only when the goal asks for an `owl:Thing` or
+`rdfs:Resource` typing). The other rules read `g` alone: one pass over
+`g` with at most two nested lookups, or, for the three collection rules,
+one read of each collection and a pairwise comparison. No rule mints a
+blank node, so the result is finite and its size is bounded by a
+polynomial in `|g|`. The regime (`Harness/OwlProbe.lean`, `--rdf-based`) applies
+the rules and the RL closure alternately for a stated number of rounds.
+
+No `sorry`, no `axiom`, no `native_decide`, no `partial`.
+-/
+import L4Factoidal.OWL.RdfBased.Witness
+
+namespace L4Factoidal.OWL.RdfBased
+
+open L4Factoidal.RDF
+open L4Factoidal.OWL
+open L4Factoidal.OWL.RL
+open L4Factoidal.RDFS (rdfsClass rdfsLiteral rdfProperty rdfsResource rdfList)
+
+/-! ## The rules, executable -/
+
+/-- Every IRI the goal graph names. -/
+def goalIris (goal : Graph) : List WfIri :=
+  goal.flatMap (fun t => subjIri t.s ++ [t.p] ++ asIri t.o)
+
+def axiomsFor (goal : Graph) : List Triple :=
+  let ws := goalIris goal
+  rbAxioms.filter (fun t => (subjIri t.s).any (fun w => ws.contains w))
+
+def vocabTypeAll (g : Graph) : List Triple :=
+  g.flatMap (fun t =>
+    if t.p == rdfType then
+      (asIri t.o).flatMap (fun e1 =>
+        (extSubTable.filter (fun e => e.1 == e1)).map
+          (fun e => (⟨t.s, rdfType, .iri e.2⟩ : Triple)))
+    else [])
+
+/-- The subjects a universal-class goal is asked of: the goal's own
+subject when it is an IRI, every subject of `g` when it is a blank
+node. -/
+def universalSubjects (g : Graph) (s : Subject) : List Subject :=
+  match s with
+  | .iri _ => [s]
+  | .bnode _ => (g.map (·.s)).eraseDups
+
+def universalFor (g goal : Graph) : List Triple :=
+  goal.flatMap (fun t =>
+    if t.p == rdfType then
+      (asIri t.o).flatMap (fun c =>
+        if universalClasses.contains c then
+          (universalSubjects g t.s).map (fun s => (⟨s, rdfType, .iri c⟩ : Triple))
+        else [])
+    else [])
+
+/-- The universal typings the OWL 2 RL/RDF key row (`prp-key`) reads:
+for `c owl:hasKey (p1 … pn)` with `c` = `owl:Thing` or `rdfs:Resource`
+(Table 5.2: the class extension is IR), `x rdf:type c` for every subject
+`x` of a `pk`-triple. Premise-directed, like `universalFor` is
+goal-directed: adding `x rdf:type owl:Thing` for every subject of the
+graph would put the whole graph into the closure's `owl:Thing` rows. -/
+def universalForKeys (g : Graph) : List Triple :=
+  (g.filter (fun t => t.p == owlHasKey)).flatMap (fun t =>
+    match t.s with
+    | .iri c =>
+        if universalClasses.contains c then
+          (listSeqs g t.o (listFuel g)).flatMap (fun es => es.flatMap (fun e =>
+            (asIri e).flatMap (fun kp =>
+              (g.filter (fun u => u.p == kp)).map (fun u => (⟨u.s, rdfType, .iri c⟩ : Triple)))))
+        else []
+    | .bnode _ => [])
+
+def compSymAll (g : Graph) : List Triple :=
+  g.flatMap (fun t =>
+    if t.p == owlComplementOf then
+      (asSubject t.o).map (fun b => (⟨b, owlComplementOf, t.s.toTerm⟩ : Triple))
+    else [])
+
+/-- `aj owl:differentFrom ak` for every pair of distinct POSITIONS of
+the sequence whose `j`-th member is not a literal. -/
+def diffPairs (es : List Term) : List Triple :=
+  (List.range es.length).flatMap (fun j =>
+    (List.range es.length).flatMap (fun k =>
+      if j == k then []
+      else
+        match es[j]?, es[k]? with
+        | some aj, some ak =>
+            (asSubject aj).map (fun sj => (⟨sj, owlDifferentFrom, ak⟩ : Triple))
+        | _, _ => []))
+
+def allDiffAll (g : Graph) : List Triple :=
+  g.flatMap (fun t =>
+    if t.p == rdfType && t.o == Term.iri owlAllDifferent then
+      g.flatMap (fun u =>
+        if u.s == t.s && (u.p == owlMembers || u.p == owlDistinctMembers) then
+          (listSeqs g u.o (listFuel g)).flatMap diffPairs
+        else [])
+    else [])
+
+/-- The singleton-enumeration rule, for `rdfs:range` (`funSingleton`)
+and `rdfs:domain` (`ifpSingleton`). -/
+def singletonAll (g : Graph) (rel ch : WfIri) : List Triple :=
+  g.flatMap (fun t =>
+    if t.p == rel then
+      (asSubject t.o).flatMap (fun c =>
+        (withSubjPred g c owlOneOf).flatMap (fun u =>
+          (listSeqs g u.o (listFuel g)).flatMap (fun es =>
+            if es.length == 1 then [(⟨t.s, rdfType, .iri ch⟩ : Triple)] else [])))
+    else [])
+
+def typeDomainSubAll (g : Graph) : List Triple :=
+  g.flatMap (fun t =>
+    if t.s == Subject.iri rdfType && t.p == rdfsDomain then
+      g.flatMap (fun u =>
+        if u.p == rdfType && u.o == Term.iri rdfsClass then
+          [(⟨u.s, rdfsSubClassOf, t.o⟩ : Triple)]
+        else [])
+    else [])
+
+def avfRangeAll (g : Graph) : List Triple :=
+  g.flatMap (fun t =>
+    if t.s == Subject.iri owlThing && t.p == rdfsSubClassOf then
+      (asSubject t.o).flatMap (fun r =>
+        (withSubjPred g r owlOnProperty).flatMap (fun u =>
+          (asSubject u.o).flatMap (fun p =>
+            (withSubjPred g r owlAllValuesFrom).map
+              (fun v => (⟨p, rdfsRange, v.o⟩ : Triple)))))
+    else [])
+
+def svfDomainAll (g : Graph) : List Triple :=
+  g.flatMap (fun t =>
+    if t.p == owlSomeValuesFrom && t.o == Term.iri owlThing then
+      (withSubjPred g t.s owlOnProperty).flatMap (fun u =>
+        (asSubject u.o).flatMap (fun p =>
+          (withSubjPred g t.s rdfsSubClassOf).map
+            (fun v => (⟨p, rdfsDomain, v.o⟩ : Triple))))
+    else [])
+
+def emptySubPropAll (g : Graph) : List Triple :=
+  g.flatMap (fun t =>
+    if t.p == rdfsRange then
+      (asIri t.o).flatMap (fun d1 =>
+        (withSubjPred g t.s rdfsRange).flatMap (fun u =>
+          (asIri u.o).flatMap (fun d2 =>
+            if xsdValueSpacesDisjoint d1 d2 then
+              (g.filter (fun v => v.p == rdfType && v.o == Term.iri rdfProperty)).map
+                (fun v => (⟨t.s, rdfsSubPropertyOf, v.s.toTerm⟩ : Triple))
+            else [])))
+    else [])
+
+/-- Every `(subject, member list)` reading of the triples of `g` with
+predicate `pr` whose object is a well-formed collection. -/
+def listReadings (g : Graph) (pr : WfIri) : List (Subject × List Term) :=
+  (g.filter (fun t => t.p == pr)).flatMap (fun t =>
+    (listSeqs g t.o (listFuel g)).map (fun es => (t.s, es)))
+
+theorem listReadings_spec {g : Graph} {pr : WfIri} {a : Subject × List Term}
+    (h : a ∈ listReadings g pr) :
+    ∃ l : Term, (⟨a.1, pr, l⟩ : Triple) ∈ g ∧ ListDenotes g l a.2 := by
+  simp only [listReadings, List.mem_flatMap, List.mem_filter, List.mem_map] at h
+  obtain ⟨t, ⟨ht, hp⟩, es, hes, rfl⟩ := h
+  have hp' : t.p = pr := Subtype.ext (by simpa using hp)
+  exact ⟨t.o, mem_of_parts ht rfl hp' rfl, listSeqs_sound g _ _ hes⟩
+
+/-- `c1 rdfs:subClassOf c2` for two collection-valued class
+constructors with predicate `pr` whose member lists are in the
+relation `ok` (`List.all` membership, read in the direction the rule
+needs). -/
+def listSubAll (g : Graph) (pr : WfIri) (ok : List Term → List Term → Bool) : List Triple :=
+  -- Each collection is read ONCE (`listReadings`), then compared
+  -- pairwise. Reading it inside the pair loop cost a list walk per pair
+  -- and put the wine ontology (`WebOnt-miscellaneous-001`, `-002`,
+  -- `-011`) past the 30-second unit cap; measured 2026-10-10.
+  let rs := listReadings g pr
+  rs.flatMap (fun a =>
+    rs.flatMap (fun b =>
+      if ok a.2 b.2 then [(⟨a.1, rdfsSubClassOf, b.1.toTerm⟩ : Triple)] else []))
+
+/-- The `owl:hasValue` rule for two functional properties: for every
+functional `p` with domain `d`, every `owl:hasValue` restriction `r1` on
+`p` above `d`, and every `owl:hasValue` restriction `r2` above `d` on a
+functional `q` with the same domain and the same value. -/
+def hvEqPropAll (g : Graph) : List Triple :=
+  (g.filter (fun t => t.p == rdfType && t.o == Term.iri owlFunctionalProperty)).flatMap (fun tf =>
+    (withSubjPred g tf.s rdfsDomain).flatMap (fun td =>
+      (asSubject td.o).flatMap (fun d =>
+        (withSubjPred g d rdfsSubClassOf).flatMap (fun s1 =>
+          (asSubject s1.o).flatMap (fun r1 =>
+            if memB g ⟨r1, owlOnProperty, tf.s.toTerm⟩ then
+              (withSubjPred g r1 owlHasValue).flatMap (fun hv =>
+                (withSubjPred g d rdfsSubClassOf).flatMap (fun s2 =>
+                  (asSubject s2.o).flatMap (fun r2 =>
+                    (withSubjPred g r2 owlOnProperty).flatMap (fun o2 =>
+                      (asSubject o2.o).flatMap (fun q =>
+                        if memB g ⟨r2, owlHasValue, hv.o⟩ &&
+                           memB g ⟨q, rdfType, Term.iri owlFunctionalProperty⟩ &&
+                           memB g ⟨q, rdfsDomain, d.toTerm⟩
+                        then [(⟨tf.s, owlEquivalentProperty, q.toTerm⟩ : Triple)]
+                        else [])))))
+            else [])))))
+
+/-- The typed-literal value rule, goal-directed: for every goal triple
+whose object is an `xsd:decimal` or `xsd:integer` literal `l2`, every
+triple of `g` with the same predicate whose object `l1` has the same
+datatype or a datatype IRI `owl:sameAs` it, and the same value. -/
+def literalValueFor (g goal : Graph) : List Triple :=
+  goal.flatMap (fun gt =>
+    match gt.o with
+    | .literal l2 =>
+        if l2.val.datatype == xsdDecimal || l2.val.datatype == xsdInteger then
+          (g.filter (fun t => t.p == gt.p)).flatMap (fun t =>
+            match t.o with
+            | .literal l1 =>
+                if l1.val.langTag == none &&
+                   sameDecimalValue l2.val.datatype l1.val.lexicalForm l2.val.lexicalForm &&
+                   (l1.val.datatype == l2.val.datatype ||
+                    memB g ⟨.iri l1.val.datatype, owlSameAs, .iri l2.val.datatype⟩)
+                then [(⟨t.s, t.p, .literal l2⟩ : Triple)] else []
+            | _ => [])
+        else []
+    | _ => [])
+
+/-- The subject is a comprehension witness of the RL closure (§ 8, not
+normative; see `withoutCompWitness` below). -/
+def subjIsCompWitness (s : Subject) : Bool :=
+  match s with | .bnode b => rlReservedBnode b | _ => false
+
+/-- The `owl:minCardinality` rule for n = 0 and n = 1: every subject of
+a `p`-triple is a member of the restriction. A restriction that is a
+comprehension witness of the RL closure (`minCard1Comprehension` mints
+one with `owl:minCardinality 1` for every property) is not read: its
+existence rests on the § 8 comprehension conditions, which are not
+normative, so a typing derived from it would not be an RDF-Based
+entailment of the premise. (Found 2026-10-10: without this filter,
+`New-Feature-Keys-002` passed through `x rdf:type __rl_minc1__…` and
+the closure's `rdfs:subClassOf owl:Thing` for the witness.) -/
+def minCardSuccAll (g : Graph) : List Triple :=
+  (g.filter (fun t => t.p == owlMinCardinality && !subjIsCompWitness t.s)).flatMap (fun t =>
+    (asLit t.o).flatMap (fun l =>
+      match intLitValue l with
+      | some k =>
+          if decide (0 ≤ k) && decide (k ≤ 1) then
+            (withSubjPred g t.s owlOnProperty).flatMap (fun op =>
+              (asIri op.o).flatMap (fun p =>
+                (g.filter (fun u => u.p == p)).map
+                  (fun u => (⟨u.s, rdfType, t.s.toTerm⟩ : Triple))))
+          else []
+      | none => []))
+
+/-- Every member of `a` is a member of `b`. -/
+def allIn (a b : List Term) : Bool := a.all (fun e => decide (e ∈ b))
+
+/-- `allIn`, for two non-empty lists (the union and intersection rules
+read Table 5.4 for n ≥ 1 only). -/
+def allInNonEmpty (a b : List Term) : Bool := !a.isEmpty && !b.isEmpty && allIn a b
+
+/-- Everything the rules derive from `g` in one pass, with the
+premise-free families restricted to what `goal` names. -/
+def rbConclusions (g goal : Graph) : List Triple :=
+  axiomsFor goal ++ vocabTypeAll g ++ universalFor g goal ++ compSymAll g ++
+  allDiffAll g ++ singletonAll g rdfsRange owlFunctionalProperty ++
+  singletonAll g rdfsDomain owlInverseFunctionalProperty ++ typeDomainSubAll g ++
+  avfRangeAll g ++ svfDomainAll g ++ emptySubPropAll g ++
+  listSubAll g owlOneOf allIn ++ listSubAll g owlUnionOf allInNonEmpty ++
+  listSubAll g owlIntersectionOf (fun es1 es2 => allInNonEmpty es2 es1) ++ hvEqPropAll g ++
+  literalValueFor g goal ++ minCardSuccAll g ++ universalForKeys g
+
+/-! ## Every executable conclusion is a rule application -/
+
+theorem axiomsFor_derives {g goal : Graph} {t : Triple} (h : t ∈ axiomsFor goal) :
+    RbDerives g t := by
+  simp only [axiomsFor, List.mem_filter] at h
+  exact RbDerives.ax h.1
+
+theorem vocabTypeAll_derives {g : Graph} {t : Triple} (h : t ∈ vocabTypeAll g) :
+    RbDerives g t := by
+  simp only [vocabTypeAll, List.mem_flatMap] at h
+  obtain ⟨u, hu, h⟩ := h
+  split at h
+  · rename_i hp
+    simp only [List.mem_flatMap, List.mem_map, List.mem_filter, beq_iff_eq] at h
+    obtain ⟨e1, he1, e, ⟨he, hee⟩, rfl⟩ := h
+    have ho := mem_asIri he1
+    have hp' : u.p = rdfType := Subtype.ext (by simpa using hp)
+    have hm : (⟨u.s, rdfType, .iri e1⟩ : Triple) ∈ g := mem_of_parts hu rfl hp' ho
+    have hpair : (e1, e.2) ∈ extSubTable := by rw [← hee]; exact he
+    exact RbDerives.vocabType hm hpair
+  · simp at h
+
+theorem universalFor_derives {g goal : Graph} {t : Triple} (h : t ∈ universalFor g goal) :
+    RbDerives g t := by
+  simp only [universalFor, List.mem_flatMap] at h
+  obtain ⟨u, _, h⟩ := h
+  split at h
+  · simp only [List.mem_flatMap] at h
+    obtain ⟨c, _, h⟩ := h
+    split at h
+    · rename_i hc
+      simp only [List.mem_map] at h
+      obtain ⟨s, _, rfl⟩ := h
+      exact RbDerives.universal s (by simpa using hc)
+    · simp at h
+  · simp at h
+
+theorem universalForKeys_derives {g : Graph} {t : Triple} (h : t ∈ universalForKeys g) :
+    RbDerives g t := by
+  simp only [universalForKeys, List.mem_flatMap] at h
+  obtain ⟨u, _, h⟩ := h
+  split at h
+  · split at h
+    · rename_i c _ hc
+      simp only [List.mem_flatMap, List.mem_map] at h
+      obtain ⟨_, _, _, _, _, _, v, _, rfl⟩ := h
+      exact RbDerives.universal v.s (by simpa using hc)
+    · simp at h
+  · simp at h
+
+theorem compSymAll_derives {g : Graph} {t : Triple} (h : t ∈ compSymAll g) :
+    RbDerives g t := by
+  simp only [compSymAll, List.mem_flatMap] at h
+  obtain ⟨u, hu, h⟩ := h
+  split at h
+  · rename_i hp
+    simp only [List.mem_map] at h
+    obtain ⟨b, hb, rfl⟩ := h
+    have ho := mem_asSubject hb
+    have hp' : u.p = owlComplementOf := Subtype.ext (by simpa using hp)
+    exact RbDerives.compSym (mem_of_parts hu rfl hp' ho)
+  · simp at h
+
+theorem diffPairs_spec {es : List Term} {t : Triple} (h : t ∈ diffPairs es) :
+    ∃ (j k : Nat) (aj ak : Term) (sj : Subject), j ≠ k ∧ es[j]? = some aj ∧
+      es[k]? = some ak ∧ aj = sj.toTerm ∧ t = ⟨sj, owlDifferentFrom, ak⟩ := by
+  simp only [diffPairs, List.mem_flatMap] at h
+  obtain ⟨j, _, k, _, h⟩ := h
+  split at h
+  · simp at h
+  · rename_i hjk
+    split at h
+    · rename_i aj ak hj hk
+      simp only [List.mem_map] at h
+      obtain ⟨sj, hsj, rfl⟩ := h
+      exact ⟨j, k, aj, ak, sj, by simpa using hjk, hj, hk, mem_asSubject hsj, rfl⟩
+    · simp at h
+
+theorem allDiffAll_derives {g : Graph} {t : Triple} (h : t ∈ allDiffAll g) :
+    RbDerives g t := by
+  simp only [allDiffAll, List.mem_flatMap] at h
+  obtain ⟨u, hu, h⟩ := h
+  split at h
+  · rename_i hty
+    simp only [Bool.and_eq_true, beq_iff_eq] at hty
+    simp only [List.mem_flatMap] at h
+    obtain ⟨v, hv, h⟩ := h
+    split at h
+    · rename_i hmem
+      simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq] at hmem
+      simp only [List.mem_flatMap] at h
+      obtain ⟨es, hes, h⟩ := h
+      obtain ⟨j, k, aj, ak, sj, hjk, hj, hk, hs, rfl⟩ := diffPairs_spec h
+      have hl := listSeqs_sound g _ _ hes
+      have hty' : (⟨u.s, rdfType, .iri owlAllDifferent⟩ : Triple) ∈ g :=
+        mem_of_parts hu rfl hty.1 hty.2
+      have hm : (⟨u.s, v.p, v.o⟩ : Triple) ∈ g := mem_of_parts hv hmem.1 rfl rfl
+      exact RbDerives.allDiff hmem.2 hty' hm hl hjk hj hk hs
+    · simp at h
+  · simp at h
+
+theorem singletonAll_spec {g : Graph} {rel ch : WfIri} {t : Triple}
+    (h : t ∈ singletonAll g rel ch) :
+    ∃ (p c : Subject) (lst a : Term), (⟨p, rel, c.toTerm⟩ : Triple) ∈ g ∧
+      (⟨c, owlOneOf, lst⟩ : Triple) ∈ g ∧ ListDenotes g lst [a] ∧
+      t = ⟨p, rdfType, .iri ch⟩ := by
+  simp only [singletonAll, List.mem_flatMap] at h
+  obtain ⟨u, hu, h⟩ := h
+  split at h
+  · rename_i hp
+    simp only [List.mem_flatMap] at h
+    obtain ⟨c, hc, v, hv, es, hes, h⟩ := h
+    split at h
+    · rename_i hlen
+      simp only [List.mem_singleton] at h
+      subst h
+      have hl := listSeqs_sound g _ _ hes
+      obtain ⟨a, rfl⟩ := List.length_eq_one_iff.mp (by simpa using hlen)
+      obtain ⟨hvg, hvs, hvp⟩ := mem_withSubjPred hv
+      have hp' : u.p = rel := Subtype.ext (by simpa using hp)
+      exact ⟨u.s, c, v.o, a, mem_of_parts hu rfl hp' (mem_asSubject hc),
+        mem_of_parts hvg hvs hvp rfl, hl, rfl⟩
+    · simp at h
+  · simp at h
+
+theorem singletonRange_derives {g : Graph} {t : Triple}
+    (h : t ∈ singletonAll g rdfsRange owlFunctionalProperty) : RbDerives g t := by
+  obtain ⟨_, _, _, _, hr, ho, hl, rfl⟩ := singletonAll_spec h
+  exact RbDerives.funSingleton hr ho hl
+
+theorem singletonDomain_derives {g : Graph} {t : Triple}
+    (h : t ∈ singletonAll g rdfsDomain owlInverseFunctionalProperty) : RbDerives g t := by
+  obtain ⟨_, _, _, _, hd, ho, hl, rfl⟩ := singletonAll_spec h
+  exact RbDerives.ifpSingleton hd ho hl
+
+theorem typeDomainSubAll_derives {g : Graph} {t : Triple} (h : t ∈ typeDomainSubAll g) :
+    RbDerives g t := by
+  simp only [typeDomainSubAll, List.mem_flatMap] at h
+  obtain ⟨u, hu, h⟩ := h
+  split at h
+  · rename_i h1
+    simp only [Bool.and_eq_true, beq_iff_eq] at h1
+    simp only [List.mem_flatMap] at h
+    obtain ⟨v, hv, h⟩ := h
+    split at h
+    · rename_i h2
+      simp only [Bool.and_eq_true, beq_iff_eq] at h2
+      simp only [List.mem_singleton] at h
+      subst h
+      exact RbDerives.typeDomainSub (mem_of_parts hu h1.1 h1.2 rfl)
+        (mem_of_parts hv rfl h2.1 h2.2)
+    · simp at h
+  · simp at h
+
+theorem avfRangeAll_derives {g : Graph} {t : Triple} (h : t ∈ avfRangeAll g) :
+    RbDerives g t := by
+  simp only [avfRangeAll, List.mem_flatMap] at h
+  obtain ⟨u, hu, h⟩ := h
+  split at h
+  · rename_i h1
+    simp only [Bool.and_eq_true, beq_iff_eq] at h1
+    simp only [List.mem_flatMap, List.mem_map] at h
+    obtain ⟨r, hr, v, hv, p, hp, w, hw, rfl⟩ := h
+    obtain ⟨hvg, hvs, hvp⟩ := mem_withSubjPred hv
+    obtain ⟨hwg, hws, hwp⟩ := mem_withSubjPred hw
+    exact RbDerives.avfRange (mem_of_parts hu h1.1 h1.2 (mem_asSubject hr))
+      (mem_of_parts hvg hvs hvp (mem_asSubject hp)) (mem_of_parts hwg hws hwp rfl)
+  · simp at h
+
+theorem svfDomainAll_derives {g : Graph} {t : Triple} (h : t ∈ svfDomainAll g) :
+    RbDerives g t := by
+  simp only [svfDomainAll, List.mem_flatMap] at h
+  obtain ⟨u, hu, h⟩ := h
+  split at h
+  · rename_i h1
+    simp only [Bool.and_eq_true, beq_iff_eq] at h1
+    simp only [List.mem_flatMap, List.mem_map] at h
+    obtain ⟨v, hv, p, hp, w, hw, rfl⟩ := h
+    obtain ⟨hvg, hvs, hvp⟩ := mem_withSubjPred hv
+    obtain ⟨hwg, hws, hwp⟩ := mem_withSubjPred hw
+    exact RbDerives.svfDomain (mem_of_parts hu rfl h1.1 h1.2)
+      (mem_of_parts hvg hvs hvp (mem_asSubject hp)) (mem_of_parts hwg hws hwp rfl)
+  · simp at h
+
+theorem emptySubPropAll_derives {g : Graph} {t : Triple} (h : t ∈ emptySubPropAll g) :
+    RbDerives g t := by
+  simp only [emptySubPropAll, List.mem_flatMap] at h
+  obtain ⟨u, hu, h⟩ := h
+  split at h
+  · rename_i hp
+    have hp' : u.p = rdfsRange := Subtype.ext (by simpa using hp)
+    simp only [List.mem_flatMap] at h
+    obtain ⟨d1, hd1, v, hv, d2, hd2, h⟩ := h
+    split at h
+    · rename_i hdis
+      simp only [List.mem_map, List.mem_filter, Bool.and_eq_true, beq_iff_eq] at h
+      obtain ⟨w, ⟨hw, hwp, hwo⟩, rfl⟩ := h
+      obtain ⟨hvg, hvs, hvp⟩ := mem_withSubjPred hv
+      exact RbDerives.emptySubProp (mem_of_parts hu rfl hp' (mem_asIri hd1))
+        (mem_of_parts hvg hvs hvp (mem_asIri hd2)) hdis (mem_of_parts hw rfl hwp hwo)
+    · simp at h
+  · simp at h
+
+theorem listSubAll_spec {g : Graph} {pr : WfIri} {ok : List Term → List Term → Bool}
+    {t : Triple} (h : t ∈ listSubAll g pr ok) :
+    ∃ (c1 c2 : Subject) (l1 l2 : Term) (es1 es2 : List Term),
+      (⟨c1, pr, l1⟩ : Triple) ∈ g ∧ (⟨c2, pr, l2⟩ : Triple) ∈ g ∧
+      ListDenotes g l1 es1 ∧ ListDenotes g l2 es2 ∧ ok es1 es2 = true ∧
+      t = ⟨c1, rdfsSubClassOf, c2.toTerm⟩ := by
+  simp only [listSubAll, List.mem_flatMap] at h
+  obtain ⟨a, ha, b, hb, h⟩ := h
+  split at h
+  · rename_i hok
+    simp only [List.mem_singleton] at h
+    obtain ⟨l1, h1, hl1⟩ := listReadings_spec ha
+    obtain ⟨l2, h2, hl2⟩ := listReadings_spec hb
+    exact ⟨a.1, b.1, l1, l2, a.2, b.2, h1, h2, hl1, hl2, hok, h⟩
+  · simp at h
+
+theorem allIn_spec {a b : List Term} (h : allIn a b = true) : ∀ e ∈ a, e ∈ b := by
+  intro e he
+  have := List.all_eq_true.mp h e he
+  simpa using this
+
+theorem allInNonEmpty_spec {a b : List Term} (h : allInNonEmpty a b = true) :
+    a ≠ [] ∧ b ≠ [] ∧ ∀ e ∈ a, e ∈ b := by
+  simp only [allInNonEmpty, Bool.and_eq_true, Bool.not_eq_true',
+    List.isEmpty_eq_false_iff] at h
+  exact ⟨h.1.1, h.1.2, allIn_spec h.2⟩
+
+theorem hvEqPropAll_derives {g : Graph} {t : Triple} (h : t ∈ hvEqPropAll g) :
+    RbDerives g t := by
+  simp only [hvEqPropAll, List.mem_flatMap, List.mem_filter, Bool.and_eq_true, beq_iff_eq] at h
+  obtain ⟨tf, ⟨htf, hfp, hfo⟩, td, htd, d, hd, s1, hs1, r1, hr1, h⟩ := h
+  split at h
+  · rename_i hm1
+    simp only [List.mem_flatMap] at h
+    obtain ⟨hv, hhv, s2, hs2, r2, hr2, o2, ho2, q, hq, h⟩ := h
+    split at h
+    · rename_i hm2
+      obtain ⟨⟨hm2a, hm2b⟩, hm2c⟩ := hm2
+      simp only [List.mem_singleton] at h
+      subst h
+      obtain ⟨htdg, htds, htdp⟩ := mem_withSubjPred htd
+      obtain ⟨hs1g, hs1s, hs1p⟩ := mem_withSubjPred hs1
+      obtain ⟨hhvg, hhvs, hhvp⟩ := mem_withSubjPred hhv
+      obtain ⟨hs2g, hs2s, hs2p⟩ := mem_withSubjPred hs2
+      obtain ⟨ho2g, ho2s, ho2p⟩ := mem_withSubjPred ho2
+      exact RbDerives.hvEqProp
+        (mem_of_parts htdg htds htdp (mem_asSubject hd))
+        (mem_of_memB hm2c)
+        (mem_of_parts hs1g hs1s hs1p (mem_asSubject hr1))
+        (mem_of_parts hs2g hs2s hs2p (mem_asSubject hr2))
+        (mem_of_memB hm1)
+        (mem_of_parts hhvg hhvs hhvp rfl)
+        (mem_of_parts ho2g ho2s ho2p (mem_asSubject hq))
+        (mem_of_memB hm2a)
+        (mem_of_parts htf rfl hfp hfo)
+        (mem_of_memB hm2b)
+    · simp at h
+  · simp at h
+
+theorem literalValueFor_derives {g goal : Graph} {t : Triple} (h : t ∈ literalValueFor g goal) :
+    RbDerives g t := by
+  simp only [literalValueFor, List.mem_flatMap] at h
+  obtain ⟨gt, _, h⟩ := h
+  split at h
+  · rename_i l2 _
+    split at h
+    · simp only [List.mem_flatMap, List.mem_filter] at h
+      obtain ⟨u, ⟨hu, _⟩, h⟩ := h
+      split at h
+      · rename_i l1 ho
+        split at h
+        · rename_i hc
+          simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq] at hc
+          obtain ⟨⟨hl, hv⟩, hdt⟩ := hc
+          simp only [List.mem_singleton] at h
+          subst h
+          have hm : (⟨u.s, u.p, .literal l1⟩ : Triple) ∈ g := mem_of_parts hu rfl rfl ho
+          refine RbDerives.literalValue hm ?_ (by simpa using hl) hv
+          rcases hdt with hdt | hdt
+          · exact Or.inl hdt
+          · exact Or.inr (mem_of_memB hdt)
+        · simp at h
+      · simp at h
+    · simp at h
+  · simp at h
+
+theorem minCardSuccAll_derives {g : Graph} {t : Triple} (h : t ∈ minCardSuccAll g) :
+    RbDerives g t := by
+  simp only [minCardSuccAll, List.mem_flatMap, List.mem_filter, Bool.and_eq_true,
+    beq_iff_eq] at h
+  obtain ⟨tm, ⟨htm, hp, _⟩, l, hl, h⟩ := h
+  split at h
+  · rename_i k hk
+    split at h
+    · rename_i hb
+      simp only [decide_eq_true_eq] at hb
+      simp only [List.mem_flatMap, List.mem_map, List.mem_filter, beq_iff_eq] at h
+      obtain ⟨op, hop, pr, hpr, u, ⟨hu, hup⟩, rfl⟩ := h
+      obtain ⟨hopg, hops, hopp⟩ := mem_withSubjPred hop
+      exact RbDerives.minCardSucc (mem_of_parts htm rfl hp (mem_asLit hl))
+        (mem_of_parts hopg hops hopp (mem_asIri hpr)) (mem_of_parts hu rfl hup rfl) hk hb.1 hb.2
+    · simp at h
+  · simp at h
+
+theorem rbConclusions_derives {g goal : Graph} {t : Triple} (h : t ∈ rbConclusions g goal) :
+    RbDerives g t := by
+  simp only [rbConclusions, List.mem_append] at h
+  rcases h with (((((((((((((((((h | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h) | h)
+  · exact axiomsFor_derives h
+  · exact vocabTypeAll_derives h
+  · exact universalFor_derives h
+  · exact compSymAll_derives h
+  · exact allDiffAll_derives h
+  · exact singletonRange_derives h
+  · exact singletonDomain_derives h
+  · exact typeDomainSubAll_derives h
+  · exact avfRangeAll_derives h
+  · exact svfDomainAll_derives h
+  · exact emptySubPropAll_derives h
+  · obtain ⟨_, _, _, _, _, _, h1, h2, hl1, hl2, hok, rfl⟩ := listSubAll_spec h
+    exact RbDerives.oneOfSub h1 h2 hl1 hl2 (allIn_spec hok)
+  · obtain ⟨_, _, _, _, _, _, h1, h2, hl1, hl2, hok, rfl⟩ := listSubAll_spec h
+    obtain ⟨ha, hb, hin⟩ := allInNonEmpty_spec hok
+    exact RbDerives.unionSub h1 h2 hl1 hl2 ha hb hin
+  · obtain ⟨_, _, _, _, _, _, h1, h2, hl1, hl2, hok, rfl⟩ := listSubAll_spec h
+    obtain ⟨ha, hb, hin⟩ := allInNonEmpty_spec hok
+    exact RbDerives.interSub h1 h2 hl1 hl2 hb ha hin
+  · exact hvEqPropAll_derives h
+  · exact literalValueFor_derives h
+  · exact minCardSuccAll_derives h
+  · exact universalForKeys_derives h
+
+/-- Every triple `rbConclusions` lists is OWL 2 RDF-Based entailed by `g`. -/
+theorem rbConclusions_entailed {g goal : Graph} {t : Triple} (h : t ∈ rbConclusions g goal) :
+    RbEntails g [t] :=
+  rbDerives_entailed (rbConclusions_derives h)
+
+/-! ## The comprehension witnesses of the RL closure are not evidence here
+
+The OWL 2 RL/RDF closure of this tree has three `[ext]` rows that mint a
+blank node standing for a class expression (`caxDwToComplement`,
+`clsMaxqc1ToComplement`, `minCard1Comprehension`; labels
+`__rl_comp__…`, `__rl_minc1__…`, `RL.rlReservedBnode`). Their soundness
+(`RLSemantics.RlCondCompDw`, `RlCondCompMqc`, `RlCondMinc1`) rests on
+the comprehension conditions of RDF-Based Semantics §8, which are NOT
+part of the normative semantics (§9, "Correspondence Theorem and
+Comprehension Conditions [DEV]": combining them with §5 "would lead to
+formal inconsistency"). So the regime never uses a triple that mentions
+such a witness as evidence: `withoutCompWitness` removes them before a
+conclusion is matched and before the clash check. -/
+
+def tripleMentionsCompWitness (t : Triple) : Bool :=
+  (match t.s with | .bnode b => rlReservedBnode b | _ => false) ||
+  (match t.o with | .bnode b => rlReservedBnode b | _ => false)
+
+def withoutCompWitness (g : Graph) : Graph :=
+  g.filter (fun t => !tripleMentionsCompWitness t)
+
+theorem withoutCompWitness_sub {g : Graph} {t : Triple} (h : t ∈ withoutCompWitness g) :
+    t ∈ g := (List.mem_filter.mp h).1
+
+#guard (withoutCompWitness
+  [⟨.bnode "__rl_minc1__http://ex/p", rdfType, .iri owlRestriction⟩,
+   ⟨.iri ⟨"http://ex/a", rfl⟩, rdfType, .iri owlThing⟩]).length == 1
+
+/-! ## The regime, as a pure function
+
+`rbSaturate g goal fuel n`: `n` rounds of (OWL 2 RL/RDF closure at
+`fuel`, then `rbConclusions` and the existential witnesses of
+`Witness.lean` over it), then a last closure. The harness
+runs the same alternation in `IO` with the indexed closure and a wall
+clock (`Harness/OwlProbe.lean`, `rbClosureIO`); this definition is what
+the `#guard` cases of `RdfBased/Tests.lean` run. -/
+
+def rbRound (g goal : Graph) (fuel : Nat) : Graph :=
+  let c := closure g fuel
+  addAll c (rbConclusions c goal ++ svfWitTriples c goal)
+
+def rbSaturate (g goal : Graph) (fuel : Nat) : Nat → Graph
+  | 0     => closure g fuel
+  | n + 1 => rbSaturate (rbRound g goal fuel) goal fuel n
+
+end L4Factoidal.OWL.RdfBased

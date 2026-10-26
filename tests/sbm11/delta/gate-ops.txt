@@ -1,0 +1,29 @@
+# SBM11 stage 5 delta test over tests/sbm11/gate/gate.nq
+# (https://github.com/danbri/factoidal/issues/791). Format: tests/sbm11/delta_apply.py.
+# Terms are spelled as `l4sbm11 canon gate.nq` writes them.
+batch
+# new subject, new predicate, new literal terms (overlay ids, tag 14); an
+# inline integer and an inline boolean (no overlay id); a new named graph
++ <http://ex.org/z> <http://ex.org/name> "Zed"@en .
++ <http://ex.org/a> <http://ex.org/knows> <http://ex.org/new> .
++ <http://ex.org/z> <http://ex.org/age> "72"^^<http://www.w3.org/2001/XMLSchema#integer> .
++ <http://ex.org/z> <http://ex.org/knows> <http://ex.org/a> <http://ex.org/g3> .
++ <http://ex.org/b> <http://ex.org/flag> "false"^^<http://www.w3.org/2001/XMLSchema#boolean> .
++ <http://ex.org/z> <http://ex.org/note> "zz top"@en-gb .
++ <http://ex.org/z> <http://ex.org/name> "Zebedee" <http://ex.org/g1> .
+batch
+# base quads in the default graph and in a named graph; a quad of batch 1
+- <http://ex.org/b> <http://ex.org/knows> <http://ex.org/c> .
+- <http://ex.org/d> <http://ex.org/knows> <http://ex.org/a> <http://ex.org/g1> .
+- <http://ex.org/c> <http://ex.org/age> "71"^^<http://www.w3.org/2001/XMLSchema#integer> .
+- <http://ex.org/z> <http://ex.org/note> "zz top"@en-gb .
+batch
+# CLEAR of a named graph, then a quad into it; a deleted base quad again
+clear <http://ex.org/g2>
++ <http://ex.org/e> <http://ex.org/name> "Eve again"@fr <http://ex.org/g2> .
++ <http://ex.org/b> <http://ex.org/knows> <http://ex.org/c> .
+batch
+# a quad with a term that is nowhere (no change); a base quad again (no change)
+- <http://ex.org/nothere> <http://ex.org/knows> <http://ex.org/a> .
++ <http://ex.org/a> <http://ex.org/age> "72"^^<http://www.w3.org/2001/XMLSchema#int> .
+drop <http://ex.org/g3>

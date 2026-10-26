@@ -147,6 +147,45 @@ def pfx : String := "PREFIX : <http://example.org/> "
 -- §3.1.3.1: a blank node in WHERE is a non-distinguished variable.
 #guard run? dsDefault (pfx ++ "DELETE { :s :p :o } WHERE { _:x :p :o }") == some Dataset.empty
 
+/-! ## §3.1.3 with Federated Query §2.3: a failed SERVICE call in WHERE
+
+The WHERE clause is a query pattern, so a SERVICE call without SILENT
+that fails stops the operation with an error, and the request fails
+(https://github.com/danbri/factoidal/issues/717). With SILENT, the call
+is one solution with no bindings. `applyUpdate` has no endpoints. -/
+
+#guard error? dsDefault
+    (pfx ++ "DELETE { :s :p :o } WHERE { SERVICE <http://example.org/nowhere> { ?x ?y ?z } }")
+  == some (.serviceFailed (.unreachable "http://example.org/nowhere"))
+#guard error? dsDefault
+    (pfx ++ "DELETE WHERE { SERVICE <http://example.org/nowhere> { ?x ?y ?z } }")
+  == some (.serviceFailed (.unreachable "http://example.org/nowhere"))
+#guard error? dsDefault
+    (pfx ++ "INSERT { :s :q :o } WHERE { :s :p :o SERVICE <http://example.org/nowhere> { ?x ?y ?z } }")
+  == some (.serviceFailed (.unreachable "http://example.org/nowhere"))
+-- SILENT: the WHERE clause has its one solution, so the template applies.
+#guard run? dsDefault
+    (pfx ++ "DELETE { :s :p :o } WHERE { SERVICE SILENT <http://example.org/nowhere> { ?x ?y ?z } }")
+  == some Dataset.empty
+-- A failed operation stops the request: the INSERT DATA before it is not kept.
+#guard run? Dataset.empty
+    (pfx ++ "INSERT DATA { :s :p :o } ; DELETE { :s :p :o } WHERE { SERVICE <http://example.org/nowhere> { ?x ?y ?z } }")
+  == none
+-- No SERVICE: no error.
+#guard error? dsDefault (pfx ++ "DELETE { :s :p :o } WHERE { :s :p :o }") == none
+-- A failed call inside EXISTS in the WHERE clause fails the operation
+-- too (https://github.com/danbri/factoidal/issues/735); with SILENT the
+-- call is Ω0, so NOT EXISTS is false and nothing is deleted.
+#guard error? dsDefault
+    (pfx ++ "DELETE { :s :p :o } WHERE { :s :p :o FILTER EXISTS { SERVICE <http://example.org/nowhere> { ?x ?y ?z } } }")
+  == some (.serviceFailed (.unreachable "http://example.org/nowhere"))
+#guard error? dsDefault
+    (pfx ++ "DELETE { :s :p :o } WHERE { :s :p :o FILTER NOT EXISTS { SERVICE SILENT <http://example.org/nowhere> { ?x ?y ?z } } }")
+  == none
+#guard run? dsDefault
+    (pfx ++ "DELETE { :s :p :o } WHERE { :s :p :o FILTER NOT EXISTS { SERVICE SILENT <http://example.org/nowhere> { ?x ?y ?z } } }")
+  == some dsDefault
+
 /-! ## §3.1.4 LOAD -/
 
 #guard run? dsDefault (pfx ++ "LOAD SILENT <http://example.org/remote.ttl>") == some dsDefault

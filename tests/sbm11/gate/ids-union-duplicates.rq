@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# The same branch twice: Union is multiset union, every row twice.
+SELECT ?x ?f WHERE { ?x ex:name ?n { ?x ex:flag ?f } UNION { ?x ex:flag ?f } }

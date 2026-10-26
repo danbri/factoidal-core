@@ -96,4 +96,21 @@ def rdfsIsDefinedBy : WfIri := ⟨"http://www.w3.org/2000/01/rdf-schema#isDefine
 def rdfsComment     : WfIri := ⟨"http://www.w3.org/2000/01/rdf-schema#comment", rfl⟩
 def rdfsLabel       : WfIri := ⟨"http://www.w3.org/2000/01/rdf-schema#label", rfl⟩
 
+/-! ## RDF 1.2 additions
+
+RDF 1.2 Semantics (https://www.w3.org/TR/rdf12-semantics/) adds two
+terms to the vocabularies its axiomatic triples name: `rdf:reifies`
+in the RDF vocabulary (§8, "RDF axioms": `rdf:reifies rdf:type
+rdf:Property .`) and `rdfs:Proposition` in the RDFS vocabulary (§9:
+"RDFS also introduces the class rdfs:Proposition, whose extension is
+exactly the set of propositions ... This class is also declared as
+rdfs:range of the rdf:reifies property"). -/
+
+/-- `rdf:reifies` — the predicate of a reifying triple (RDF 1.2
+Concepts; RDF 1.2 Semantics §8 axiom, §9 domain and range axioms). -/
+def rdfReifies : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies", rfl⟩
+/-- `rdfs:Proposition` — the class of propositions (RDF 1.2 Semantics
+§9; the conclusion class of entailment patterns rdfs14 and rdfs14a). -/
+def rdfsProposition : WfIri := ⟨"http://www.w3.org/2000/01/rdf-schema#Proposition", rfl⟩
+
 end L4Factoidal.RDFS

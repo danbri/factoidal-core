@@ -1,0 +1,11 @@
+# Aggregates other than COUNT over a join: per country, the places with a
+# population, the largest and the mean population; the ten countries with
+# the most such places. Issue 823: the join on ids, then the reference
+# selectPost (GROUP BY, COUNT, MAX, AVG, ORDER BY, LIMIT) on the decoded rows.
+# Issue 825: the grouping and the aggregates run on the ids (AggStream, IdAgg);
+# the reference code that remains is the ORDER BY, projection and LIMIT.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+SELECT ?country (COUNT(?c) AS ?places) (MAX(?pop) AS ?maxPop) (AVG(?pop) AS ?meanPop) WHERE {
+  ?c dbo:country ?country .
+  ?c dbo:populationTotal ?pop
+} GROUP BY ?country ORDER BY DESC(?places) ?country LIMIT 10

@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Expressions over an OPTIONAL variable that is unbound in some rows.
+SELECT ?s (COALESCE(?f, "none") AS ?g) (BOUND(?f) AS ?b) WHERE { ?s ex:age ?a OPTIONAL { ?s ex:flag ?f } }

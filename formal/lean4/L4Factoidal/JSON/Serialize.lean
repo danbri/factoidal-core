@@ -43,6 +43,7 @@ without that workaround, as already demonstrated by `Json.size`,
 `decEqJson`, and this module.
 -/
 import L4Factoidal.JSON.Value
+import Init.Data.String.Lemmas.Iterate
 
 namespace L4Factoidal.JSON
 
@@ -81,10 +82,50 @@ def escapeChar (c : Char) : String :=
 /-- Escape every character of a string per `escapeChar`. Port of
 `json_escape` (there realised as a byte-run-splicing walk for
 performance under F*'s codegen; this port is the direct per-character
-map, since — as `Value.lean` and `Parser.lean` both note — this tree's
-Lean side is the SPECIFICATION evaluator, not the performance one). -/
+map specification. The proved compiler replacement below iterates the
+string directly for native execution). -/
 def escapeString (s : String) : String :=
   (s.toList.map escapeChar).foldl (· ++ ·) ""
+
+/-- Append one escaped character without allocating a singleton string for
+    an ordinary Unicode scalar. -/
+def appendEscaped (acc : String) (c : Char) : String :=
+  if c.toNat < 0x20 ∨ c = '\\' ∨ c = '"' then acc ++ escapeChar c
+  else acc.push c
+
+theorem appendEscaped_eq (acc : String) (c : Char) :
+    appendEscaped acc c = acc ++ escapeChar c := by
+  unfold appendEscaped
+  split
+  · rfl
+  · rename_i safe
+    have control : ¬ c.toNat < 0x20 := fun h => safe (Or.inl h)
+    have slash : c ≠ '\\' := fun h => safe (Or.inr (Or.inl h))
+    have quote : c ≠ '"' := fun h => safe (Or.inr (Or.inr h))
+    have lf : c.toNat ≠ 0x0a := by omega
+    have cr : c.toNat ≠ 0x0d := by omega
+    have tab : c.toNat ≠ 0x09 := by omega
+    have bs : c.toNat ≠ 0x08 := by omega
+    have ff : c.toNat ≠ 0x0c := by omega
+    simp [escapeChar, slash, quote, lf, cr, tab, bs, ff, control, String.append_singleton]
+
+/-- Iterate the string directly, retaining the exact specification escapes. -/
+def escapeStringFast (s : String) : String :=
+  s.foldl appendEscaped ""
+
+theorem escapeStringFast_eq (s : String) : escapeStringFast s = escapeString s := by
+  have step : appendEscaped = fun acc c => acc ++ escapeChar c := by
+    funext acc c
+    exact appendEscaped_eq acc c
+  simp only [escapeStringFast, String.foldl_eq_foldl_toList, step,
+    escapeString, List.foldl_map]
+
+@[csimp] theorem escapeString_csimp : escapeString = escapeStringFast := by
+  funext s
+  exact (escapeStringFast_eq s).symm
+
+#print axioms escapeStringFast_eq
+#print axioms escapeString_csimp
 
 /-! ## Compact writer
 

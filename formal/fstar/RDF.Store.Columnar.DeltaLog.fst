@@ -739,6 +739,11 @@ let lemma_delta_entry_frame_ok (e : delta_entry{delta_entry_ok e})
    produces, followed by arbitrary trailing bytes from the rest of the
    log stream, parse back to exactly `e` and the untouched trailing
    bytes — never a different entry, never a partial decode. *)
+// Scoped resource limit, measured 2026-10-10: at the default rlimit 5
+// this proof used 4.90-4.97 units when it succeeded and failed for 5 of 8
+// z3 seeds (`--quake 8/8`), and the macOS arm64 CI build failed it. The
+// statement and the proof are unchanged; only the budget is.
+#push-options "--z3rlimit 40"
 let lemma_delta_entry_roundtrip (e : delta_entry) (rest : B.bytes)
   : Lemma
       (requires delta_entry_ok e)
@@ -764,6 +769,7 @@ let lemma_delta_entry_roundtrip (e : delta_entry) (rest : B.bytes)
     B.lemma_parse_write_u32_le_inverse (simple_checksum payload) rest;
     lemma_delta_entry_payload_roundtrip e [];
     FStar.List.Tot.Properties.append_l_nil payload
+#pop-options
 
 (* ======================================================================
    7. delta_batch — one committed batch of ops (§3.1's original

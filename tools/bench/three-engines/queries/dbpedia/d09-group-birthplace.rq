@@ -1,0 +1,7 @@
+# Aggregate with GROUP BY over a two-hop join.
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+SELECT ?c (COUNT(*) AS ?n) WHERE {
+  ?p dbo:birthPlace ?c .
+  ?c dbo:country dbr:Iceland
+} GROUP BY ?c

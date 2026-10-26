@@ -78,6 +78,24 @@ structure Ctx where
   docs : List (String × Doc) := []
 deriving Inhabited
 
+/-- The document a document number names (`Loc.doc`): `0` is `doc`,
+    the document the evaluation started from; `1` is the stylesheet's
+    own document (`self?`); `k + 2` is the `k`-th entry of `docs`. A
+    number that names nothing gives the empty document, which has no
+    nodes, so no address in it resolves. -/
+def docTable (primary : Doc) (self? : Option Doc) (docs : List (String × Doc))
+    : Nat → Doc
+  | 0     => primary
+  | 1     => self?.getD []
+  | k + 2 => ((docs[k]?).map (·.2)).getD []
+
+def Ctx.docById (c : Ctx) (k : Nat) : Doc := docTable c.doc c.self? c.docs k
+
+/-- The document an item belongs to. Every axis, every parent and every
+    in-scope namespace of an item is read from THIS document, never
+    from `c.doc` alone. -/
+def Ctx.docOf (c : Ctx) (it : Item) : Doc := c.docById it.loc.doc
+
 /-! ## Conversions (§4.2, §4.3) -/
 
 def Value.toStr (v : Value) : String :=
@@ -121,24 +139,18 @@ private def unboundNs (pfx : String) : String := " unbound:" ++ pfx
     a document declares `xmlns=`, which is the shape of a bug that
     only appears on real-world input. -/
 def expandedName (d : Doc) (it : Item) : String × String :=
-  let q := it.qname
-  let pfx := prefixOf q
-  let loc := localOf q
+  let resolved := do
+    let scope ← namespaceScope d it.loc.path
+    let name ← match it.kind with
+      | .attribute => resolveAttributeName scope it.qname
+      | .element => resolveElementName scope it.qname
+      | _ => none
+    pure (name.namespace_.getD "", name.localPart)
   match it.kind with
-  | .attribute =>
-      if pfx == "" then ("", loc)
-      else
-        let owner := itemAt d { path := it.loc.path }
-        let nss := (owner.map (namespacesOf d)).getD []
-        (((nss.find? (fun n => n.qname == pfx)).map (fun n => n.stringValue)).getD (unboundNs pfx), loc)
-  | .element | .pi =>
-      let nss := namespacesOf d it
-      -- An UNPREFIXED element with no default namespace declared is in
-      -- no namespace, not "unbound" — only a genuine prefix falls back
-      -- to the opaque-match sentinel below.
-      let fallback := if pfx == "" then "" else unboundNs pfx
-      (((nss.find? (fun n => n.qname == pfx)).map (fun n => n.stringValue)).getD fallback, loc)
-  | _ => ("", loc)
+  | .element | .attribute =>
+      resolved.getD (unboundNs (prefixOf it.qname), localOf it.qname)
+  | .pi | .namespace => ("", it.qname)
+  | _ => ("", "")
 
 /-- Expand a name written in an EXPRESSION. An unprefixed name has no
     namespace — XPath 1.0 §2.3 says so explicitly, and it is the one
@@ -260,8 +272,8 @@ def substrIndex (hay needle : String) : Option Nat := Fn.String.indexOfSub hay n
 def idAttrNamed (a : Attribute) : Bool :=
   a.name == "xml:id" || a.name.toLower == "id"
 
-def resolveIds (d : Doc) (refs : List String) : List Item :=
-  normalize ((allItems d).filter (fun it =>
+def resolveIds (d : Doc) (k : Nat) (refs : List String) : List Item :=
+  normalize ((allItems d k).filter (fun it =>
     it.kind == .element &&
     (attributesOf it).any (fun x =>
       match x with
@@ -369,25 +381,25 @@ partial def evalExpr (c : Ctx) : Expr → Option Value
           (applyPreds c sorted preds).map Value.nodes
       | _ => none
   | .path abs start steps =>
+      -- §2: `/` selects the root node of the document CONTAINING the
+      -- context node, which is not always the document the
+      -- evaluation started from.
+      let root : Item := Item.doc (c.docOf c.item) c.item.loc.doc
       match start with
-      | none   => evalSteps c (if abs then [Item.doc c.doc] else [c.item]) steps
+      | none   => evalSteps c (if abs then [root] else [c.item]) steps
       | some e => do
           let v ← evalExpr c e
           match v with
           | .nodes ns =>
-              if abs then evalSteps c [Item.doc c.doc] steps
-              else
-                -- A node-set that came from ANOTHER document carries
-                -- addresses that only mean something against THAT
-                -- document. Walking them against the current one
-                -- reads the wrong tree and returns a plausible,
-                -- wrong node-set — which is exactly what
-                -- `document('')//ped:test` did: it silently selected
-                -- nothing (XSLT namespace-4801).
-                let d2 := match ns with
-                  | [.doc kids] => kids
-                  | _           => c.doc
-                evalSteps { c with doc := d2 } ns steps
+              -- A node-set from ANOTHER document (`document('')//x`)
+              -- carries that document's number in every address, and
+              -- each step reads the tree of the node it starts from
+              -- (`evalStep`), so no switch of `c.doc` is needed here.
+              -- Before addresses carried the document, walking them
+              -- against the principal document silently selected
+              -- nothing (XSLT namespace-4801).
+              if abs then evalSteps c [root] steps
+              else evalSteps c ns steps
           | _ => none
 
 /-- A step list applied to a node-set: each step maps every node of
@@ -400,7 +412,8 @@ partial def evalSteps (c : Ctx) (base : List Item) : List Step → Option Value
       evalSteps c (normalize out) rest
 
 partial def evalStep (c : Ctx) (it : Item) (s : Step) : Option (List Item) :=
-  applyPreds c ((axisItems c.doc s.ax it).filter (matchesTest c.doc c.nsctx s.ax s.test))
+  let d := c.docOf it
+  applyPreds c ((axisItems d s.ax it).filter (matchesTest d c.nsctx s.ax s.test))
     s.preds
 
 /-- Apply a predicate list to a node list, in the list's own order. -/
@@ -493,14 +506,15 @@ partial def evalCall (c : Ctx) (f : String) (args : List Expr) : Option Value :=
       let refs := match v with
         | .nodes ns => (normalize ns).flatMap (fun i => splitWs i.stringValue)
         | other     => splitWs other.toStr
-      some (.nodes (resolveIds c.doc refs))
+      -- §4.1: `id` selects elements in the context node's document.
+      some (.nodes (resolveIds (c.docOf c.item) c.item.loc.doc refs))
   | "local-name", _ =>
       some (.str (match firstNode with | some i => localOf i.qname | none => ""))
   | "name", _ =>
       some (.str (match firstNode with | some i => i.qname | none => ""))
   | "namespace-uri", _ =>
       some (.str (match firstNode with
-        | some i => (expandedName c.doc i).1
+        | some i => (expandedName (c.docOf i) i).1
         | none   => ""))
   | "generate-id", _ =>
       some (.str (match firstNode with
@@ -532,7 +546,7 @@ partial def evalCall (c : Ctx) (f : String) (args : List Expr) : Option Value :=
       -- §4.3: the nearest `xml:lang` on the node or an ancestor,
       -- matched case-insensitively, with a hyphenated suffix allowed.
       let want := v.toStr.toLower
-      let chain := c.item :: ancestorsOf c.doc c.item
+      let chain := c.item :: ancestorsOf (c.docOf c.item) c.item
       let found := chain.findSome? (fun i =>
         (attributesOf i).findSome? (fun a =>
           match a with
@@ -553,19 +567,28 @@ partial def evalCall (c : Ctx) (f : String) (args : List Expr) : Option Value :=
       -- answered from `c.docs`, which the caller supplies; a URI that
       -- is not there is `none`, so the transform is REFUSED rather
       -- than run against an empty tree.
-      if v.toStr == "" then (c.self?.map (fun d => Value.nodes [Item.doc d]))
-      else ((c.docs.find? (fun (u, _) => u == v.toStr)).map
-             (fun (_, d) => Value.nodes [Item.doc d]))
+      -- The document numbers are the ones `Ctx.docById` reads back.
+      if v.toStr == "" then (c.self?.map (fun d => Value.nodes [Item.doc d 1]))
+      else ((c.docs.findIdx? (fun (u, _) => u == v.toStr)).bind (fun k =>
+             (c.docs[k]?).map (fun (_, d) => Value.nodes [Item.doc d (k + 2)])))
   | _, _ => none
 
 end
 
-/-- Evaluate a parsed expression. -/
-def eval (c : Ctx) (e : Expr) : Option Value := evalExpr c e
+/-- Namespace admission for every supplied document; node addresses keep
+main's explicit document numbers and are resolved in their owning document. -/
+def Ctx.namespaceWellFormed (c : Ctx) : Bool :=
+  checkChildren "1.1" initialScope c.doc &&
+  c.self?.all (checkChildren "1.1" initialScope) &&
+  c.docs.all (fun (_, d) => checkChildren "1.1" initialScope d)
 
-/-- Parse and evaluate. -/
+/-- Evaluate a parsed expression after namespace admission. -/
+def eval (c : Ctx) (e : Expr) : Option Value :=
+  if c.namespaceWellFormed then evalExpr c e else none
+
+/-- Parse and evaluate through the same checked entry point. -/
 def evalText (c : Ctx) (s : String) : Option Value := do
   let e ← parseExpr s
-  evalExpr c e
+  eval c e
 
 end L4Factoidal.XPath.Full

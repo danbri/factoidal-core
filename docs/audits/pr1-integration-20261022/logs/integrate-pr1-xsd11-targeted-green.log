@@ -1,0 +1,33 @@
+✔ [12/21] Built L4Factoidal.Regex.XSDPattern (4.3s)
+✔ [13/21] Built L4Factoidal.Regex.Ecma (2.1s)
+⚠ [14/21] Built L4Factoidal.Regex.XPath (9.6s)
+warning: L4Factoidal/Regex/XPath.lean:628:22: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [replaceLoopAcc_eq cre prefixRe multiline rep inputAll fuel]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/Regex/XPath.lean:631:18: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [ho, replaceLoopAcc_eq cre prefixRe multiline rep inputAll fuel]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: L4Factoidal/Regex/XPath.lean:632:18: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [ho, replaceLoopAcc_eq cre prefixRe multiline rep inputAll fuel]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+✔ [15/21] Built L4Factoidal.Regex.Profiles (4.2s)
+✔ [16/21] Built L4Factoidal.XSD.Datatypes (18s)
+✔ [17/21] Built L4Factoidal.Regex.Xsd11 (2.2s)
+✔ [18/21] Built L4Factoidal.JSONSchema.Validate (6.0s)
+✔ [19/21] Built L4Factoidal.XSD.SimpleType (4.1s)
+ℹ [20/21] Built L4Factoidal.Regex.ProfileTests (3.7s)
+info: L4Factoidal/Regex/ProfileTests.lean:25:0: 'L4Factoidal.Regex.Profiles.matchWith' depends on axioms: [propext, Classical.choice, Quot.sound]
+✔ [21/21] Built L4Factoidal.XSD.DatatypesTests (4.8s)
+Build completed successfully (21 jobs).

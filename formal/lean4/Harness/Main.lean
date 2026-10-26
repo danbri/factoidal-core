@@ -21,10 +21,12 @@ Usage:
                    ../../third_party/testing/rdf-canon/tests/manifest.ttl
 
     lake exe l4w3c --quiet <manifest…>   # score lines + failures only
+    lake exe l4w3c --lenient <manifest…> # syntax tests in lenient mode
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import Harness.Run
+import Harness.LenientRun
 -- Imported so the harness's `#guard`s evaluate during THIS build: a
 -- wrong answer in the manifest walk or the score-line formatter is a
 -- build error, not a surprise at run time.
@@ -55,15 +57,15 @@ def modeOfManifest (assumedBase : Option String) (path : String) :
 `mf:include` list (`sparql11/manifest-all.ttl`) runs each included
 manifest in turn, printing one score line per sub-suite, and returns
 their sum — the F* runner follows includes the same way. -/
-def runManifest : Nat → System.FilePath → Bool → IO (Score × Diag)
+def runManifest (lenient : Bool := false) : Nat → System.FilePath → Bool → IO (Score × Diag)
   | 0, path, _ => do
-      let label := suiteLabel path.toString
+      let label := suiteLabel path.toString ++ (if lenient then " (lenient)" else "")
       IO.println (Score.line label {})
       IO.println (Diag.line label { noManifest := 1 })
       IO.println s!"  (mf:include nesting deeper than {includeDepth}: {path})"
       return ({}, { noManifest := 1 })
   | depth + 1, path, verbose => do
-  let label := suiteLabel path.toString
+  let label := suiteLabel path.toString ++ (if lenient then " (lenient)" else "")
   match ← loadManifest path with
   | none =>
       IO.println (Score.line label {})
@@ -90,7 +92,7 @@ def runManifest : Nat → System.FilePath → Bool → IO (Score × Diag)
         let mut total : Score := {}
         let mut totalDiag : Diag := {}
         for inc in includes do
-          let (s, d) ← runManifest depth (System.FilePath.mk inc) verbose
+          let (s, d) ← runManifest lenient depth (System.FilePath.mk inc) verbose
           total := total.add s
           totalDiag := totalDiag.add d
           IO.println ""
@@ -107,31 +109,47 @@ def runManifest : Nat → System.FilePath → Bool → IO (Score × Diag)
       -- The Graph Store the http-rdf-update entries share, in manifest order.
       let gspStore ← IO.mkRef L4Factoidal.SPARQL.GraphStore.GraphStore.empty
       for tc in tests do
-        let r ← runTest mode assumedBase manifestDir gspStore tc
-        score := score.bump r.outcome
+        let r ← if lenient then runLenientTest mode assumedBase manifestDir tc
+                else runTest mode assumedBase manifestDir gspStore tc
+        let xf := expectedFailure? abs tc.name
+        let outcome : Outcome := match xf, r.outcome with
+          | some x, .pass =>
+              .fail s!"unexpected pass: remove the expected-failure entry and close {x.issue}"
+          | _, o => o
+        match xf, outcome with
+        | some x, .fail _ =>
+            if r.outcome.isFail then
+              score := { score with xfail := score.xfail + 1 }
+              IO.println s!"XFAIL {tc.name} ({x.issue}): {x.reason}"
+            else
+              score := score.bump outcome
+        | _, _ => score := score.bump outcome
         diag := { diag with
                   budgetExceeded := diag.budgetExceeded + (if r.budgetExceeded then 1 else 0),
                   rowsCompared := diag.rowsCompared + r.rowsCompared,
                   triplesCompared := diag.triplesCompared + r.triplesCompared,
                   gspSeeded := diag.gspSeeded + (if r.gspSeeded then 1 else 0) }
-        if verbose || r.outcome.isFail then
-          IO.println (Outcome.line tc.name r.outcome)
+        if (verbose || outcome.isFail) && !(xf.isSome && r.outcome.isFail) then
+          IO.println (Outcome.line tc.name outcome)
       IO.println (Score.line label score)
       IO.println (Diag.line label diag)
       return (score, diag)
 
 def main (args : List String) : IO UInt32 := do
   let verbose := !(args.contains "--quiet")
+  -- `--lenient`: the Turtle, TriG, N-Triples and N-Quads syntax tests in
+  -- lenient (recovery) mode (`Harness/LenientRun.lean`); other tests skip.
+  let lenient := args.contains "--lenient"
   let manifests := args.filter (fun a => !a.startsWith "--")
   if manifests.isEmpty then
-    IO.eprintln "usage: l4w3c [--quiet] <manifest.ttl>..."
+    IO.eprintln "usage: l4w3c [--quiet] [--lenient] <manifest.ttl>..."
     IO.eprintln "  e.g. lake exe l4w3c ../../third_party/testing/w3c/rdf/rdf11/rdf-turtle/manifest.ttl"
     IO.eprintln "       lake exe l4w3c ../../third_party/testing/w3c/sparql/sparql11/manifest-all.ttl"
     return 2
   let mut total : Score := {}
   let mut totalDiag : Diag := {}
   for m in manifests do
-    let (s, d) ← runManifest includeDepth (System.FilePath.mk m) verbose
+    let (s, d) ← runManifest lenient includeDepth (System.FilePath.mk m) verbose
     total := total.add s
     totalDiag := totalDiag.add d
     IO.println ""

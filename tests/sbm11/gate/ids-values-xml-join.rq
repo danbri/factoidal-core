@@ -1,0 +1,10 @@
+# Two VALUES blocks with rdf:XMLLiterals that no stored term matches and
+# whose lexical forms differ but are the same canonical XML. They are two RDF
+# terms (RDF 1.1 Concepts 3.3), so the join (SPARQL 1.1 18.3) gives no row,
+# on ids and in the reference evaluator. Until 2026-10-23 the reference
+# joined them (Term.eqb compared canonical XML) and the id path refused
+# (https://github.com/danbri/factoidal/issues/963).
+SELECT ?x WHERE {
+  { VALUES ?x { "<a></a>"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> } }
+  { VALUES ?x { "<a/>"^^<http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral> } }
+}

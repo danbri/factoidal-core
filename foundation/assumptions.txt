@@ -1,0 +1,41 @@
+# Named assumptions, 2026-10-25 (https://github.com/danbri/factoidal/issues/975, item 4).
+# One line per assumption: ID  # reason. tools/assumption-gate.py counts
+#   io:<Name>                     IO assumptions in docs/dataflow-inventory.md
+#   field:<Module>.<Struct>.<f>   structure fields named assumed_* in L4Factoidal
+#   name:<Ctor>  uses=<N>         constructors of `inductive AssumptionName`
+#                                 (Dataflow/Store.lean) and the number of places
+#                                 that build an Assumption of that name
+#   demoted:<stage>               a pinned proved stage (proved-stages.txt) that
+#                                 is not proved now
+# and fails when the tree has an assumption that is not listed here, when a line
+# names an assumption that is gone, when a line has no reason, when a uses= count
+# differs from the tree, or when the line count differs from max-entries.
+# Adding a line needs a reason in the same change; removing one lowers max-entries.
+# Reasons are Claude-inferred (2026-10-24), not owner decisions.
+# max-entries: 26
+io:Ed25519Correct  # the native Ed25519 verify agrees with the Ed25519 specification (RFC 8032); crypto primitive realised outside Lean
+io:ReadsWritten  # reading back an SBM11 file returns what the writer wrote; file IO is not modelled in Lean
+io:SelectedAgrees  # a planner-selected SBM11 read returns the same triples as an unselected read; the on-disk selection index is outside Lean
+io:Sha256Agrees  # the native SHA-256 agrees with the Lean SHA-256 definition (FIPS 180-4); crypto primitive realised outside Lean
+field:L4Factoidal.Dataflow.Store.LawfulStore.assumed_contracts  # the store law rests on the listed Assumption values; their names are the name: lines below
+field:L4Factoidal.Dataflow.Store.LawfulDataset.assumed_contracts  # the dataset law rests on the listed Assumption values; their names are the name: lines below
+name:backendReadOpsExact  uses=2  # LawfulStore.hdt, LawfulStore.cottasInMemory: the reader is file access (HDT file, in-memory COTTAS pages); no theorem relates the bytes to the triples it returns
+name:cottasReadOpsExact  uses=2  # LawfulStore.cottasOnDisk, LawfulStore.cottasOnDiskDelta: the COTTAS reader reads memory-mapped pages; issue 975 table row "COTTAS store" is missing
+name:rmlPushdownInvisible  uses=1  # LawfulStore.virtualRml: the RML pushdown, structural narrowing and subject probe are checked by #guards (RML/VirtualSource.lean), not proved
+name:rmlVirtualIsMaterialised  uses=1  # LawfulStore.virtualRml: the unbounded virtual solve against RML.evalMapping is checked by #guards, not proved
+name:datasetIsSet  uses=3  # LawfulDataset.ofDataset, LawfulStore.ofGraph, LawfulStore.ofIndexedGraph: call sites that hold a Dataset or Graph without its set proof (storeQuery, storeHandleQuery, the served view, the CLI, harness tools); the readers prove it, the block decoders do not
+io:RDF.CottasReadOpsExact  # registry form of name:cottasReadOpsExact (LawfulStore.cottasOnDisk, cottasOnDiskDelta): memory-mapped COTTAS pages; no theorem relates the bytes to the triples returned
+io:RDF.Dataset.IsSet  # registry form of name:datasetIsSet (LawfulDataset.ofDataset): the call site holds a Dataset without its set proof
+io:RDF.Graph.KeyNodup  # registry form of name:datasetIsSet (LawfulStore.ofGraph, ofIndexedGraph): the call site holds a Graph without its set proof
+io:SPARQL.StoreBackend.BackendReadOpsExact  # registry form of name:backendReadOpsExact (LawfulStore.hdt, cottasInMemory): file access; no theorem relates the bytes to the triples returned
+io:SPARQL.StoreBackend.RmlPushdownInvisible  # registry form of name:rmlPushdownInvisible (LawfulStore.virtualRml): checked by #guards only
+io:SPARQL.StoreBackend.RmlVirtualIsMaterialised  # registry form of name:rmlVirtualIsMaterialised (LawfulStore.virtualRml): checked by #guards only
+field:L4Factoidal.Dataflow.Evaluator.LawfulEvaluator.assumed_contractOn  # the inputs on which the evaluator contract is assumed; for shippedEvaluator, the backend path outside NativeFrag (BackendOutsideFragmentAgrees) and the SELECT fast paths (SelectFastPathAgrees): no refinement proof yet
+field:L4Factoidal.Dataflow.Reasoner.SoundReasoner.assumed_completeness  # completeness of the closure against the regime is not proved for all graphs (3 instances: rho-df holds under closed-and-fragment scope, rhoDfReasoner_complete; RDFS fails finding C-1; OWL RL needs closureFix_saturated, issue 756)
+field:L4Factoidal.Dataflow.Validator.LawfulValidator.assumed_spec_iff  # the step from the two SHACL-SPARQL passes to the quantifiers of Spec.GraphConformsWithSparql is not proved (SHACL/SparqlTheorems.lean)
+field:L4Factoidal.Dataflow.Writer.RdfWriter.assumed_roundTrip  # a writer names the round-trip claim it does not prove; one field, five writers use it (Turtle, TriG, RDF/XML, JSON-LD, canonical N-Quads)
+io:TurtleWriterRoundTrip  # Turtle writer: the text read back by the matching reader is isomorphic to the projection; tested on seeded datasets (WriterTests.lean), not proved
+io:TrigWriterRoundTrip  # TriG writer: the text read back by the matching reader is isomorphic to the projection; tested on seeded datasets (WriterTests.lean), not proved
+io:RdfXmlWriterRoundTrip  # RDF/XML writer: the text read back by the matching reader is isomorphic to the projection; tested on seeded datasets (WriterTests.lean), not proved
+io:JsonLdWriterRoundTrip  # JSON-LD writer: the text read back by the matching reader is isomorphic to the projection; tested on seeded datasets (WriterTests.lean), not proved
+io:CanonicalNQuadsWriterRoundTrip  # canonical N-Quads writer of the dataset handles: the text read back by the matching reader is isomorphic to the projection; tested on seeded datasets (WriterTests.lean), not proved

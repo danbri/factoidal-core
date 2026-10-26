@@ -1,0 +1,5 @@
+# Expected failures of tests/sbm11/w3c_update.sh: suite, entry, issue URL, reason (tab separated).
+# A row names a W3C update evaluation test that the reference engine passes and the SBM11 store
+# fails today, and the open issue that tracks it. The row is checked on every run: a test in
+# this table that passes in the store FAILS the run ("unexpected pass"), so the table cannot
+# go stale.

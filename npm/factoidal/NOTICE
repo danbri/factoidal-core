@@ -1,0 +1,12 @@
+@factoidal/core — third-party content notices
+=============================================
+
+The code in this package is Apache-2.0; see LICENSE.
+
+HACL* (compiled into l4factoidal.wasm)
+--------------------------------------
+
+HACL* verified cryptographic primitives, from
+https://github.com/hacl-star/hacl-star, Apache-2.0 / MIT. See the
+provenance recorded in the Factoidal repository under
+skills/node-crypto-haclstar-vc-wasm-build/.

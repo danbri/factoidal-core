@@ -1,0 +1,8 @@
+# Star join with two bound objects and one large pattern (dbo:starring).
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX dbr: <http://dbpedia.org/resource/>
+SELECT ?film ?actor WHERE {
+  ?film dbo:musicComposer dbr:John_Williams .
+  ?film dbo:director dbr:Steven_Spielberg .
+  ?film dbo:starring ?actor
+}

@@ -27,9 +27,12 @@ scalar value by construction, so a resolved codepoint escape is one
     offset. Every rejection still names a position; the number differs.
   * A `\uD800`-`\uDFFF` escape inside an IRIREF, which the F* encodes
     as three bytes, is not representable as a Lean `Char`. This port
-    DROPS such an escape (the F* itself drops an out-of-Unicode-range
-    escape, returning `""` from `utf8_of_codepoint`); inside a STRING
-    the F* already rejects surrogates outright and so does this port
+    leaves such an escape in the lexeme verbatim, and the parser's
+    `firstInvalidToken` rejects an IRI token holding a backslash
+    (SPARQL 1.2 §19.2: a
+    numeric escape "MUST NOT produce a code point value in the range
+    U+D800 to U+DFFF"); see `processIriEscapesRec`. Inside a STRING the
+    F* already rejects surrogates outright and so does this port
     (`decodeStringEscape`).
 
 KEYWORD CASE. §19.8 note: "Keywords are matched in a case-insensitive
@@ -43,8 +46,9 @@ lexer flag: it adds `<<(` / `)>>` triple terms, bare `<<` / `>>`
 reified triples, `~`, `{|` / `|}`, the `TRIPLE`/`SUBJECT`/`PREDICATE`/
 `OBJECT`/`isTRIPLE` and `VERSION` and lang-direction keywords, the
 `@lang--ltr` directional language tags, strict ECHAR-follower
-rejection, and the whole-text codepoint-escape preprocessing pass
-(`tokenize12`). In `.v11` every one of those is off and the token
+rejection, and per-token escape decoding (`tokenize12`; the F*
+decodes escapes over the whole text first, which SPARQL 1.2 §19.2
+no longer allows). In `.v11` every one of those is off and the token
 stream is the F* 1.1 stream.
 
 TERMINATION. `tokenize` is fuel-bounded exactly as the F*
@@ -264,9 +268,14 @@ def charOfCodepoint? (cp : Nat) : Option Char :=
 
 /-- `process_iri_escapes_rec`: expand `\uXXXX` / `\UXXXXXXXX` in an
 IRIREF lexeme. Total, never fails: an escape that cannot parse leaves
-its backslash verbatim (the F*'s stated fallback), and a codepoint no
-`Char` can hold is dropped (the F*'s `utf8_of_codepoint` returns `""`
-for one out of Unicode range — see the module header on surrogates).
+its backslash verbatim (the F*'s stated fallback), and so does an
+escape whose code point no `Char` can hold — a surrogate (U+D800 to
+U+DFFF) or a value above U+10FFFF. SPARQL 1.2 §19.2: "A numeric escape
+sequence MUST NOT produce a code point value in the range U+D800 to
+U+DFFF". The parser's `firstInvalidToken` rejects an IRI token that
+still holds a backslash, so the query is rejected (W3C sparql12
+`surrogate-esc-05-bad`). The F* drops such an escape
+(`utf8_of_codepoint` returns `""`), which accepted the query.
 Fuel-bounded so it stays structural; the fuel is the input length,
 and every round consumes at least one character. -/
 def processIriEscapesRec : Nat → List Char → List Char → List Char
@@ -281,14 +290,14 @@ def processIriEscapesRec : Nat → List Char → List Char → List Char
           | some (cp, after) =>
             match charOfCodepoint? cp with
             | some ch => processIriEscapesRec f after (ch :: acc)
-            | none    => processIriEscapesRec f after acc
+            | none    => processIriEscapesRec f r1 (c1 :: acc)
           | none => processIriEscapesRec f r1 (c1 :: acc)
         else if c2 == 'U' then
           match readHexDigits 8 r2 0 with
           | some (cp, after) =>
             match charOfCodepoint? cp with
             | some ch => processIriEscapesRec f after (ch :: acc)
-            | none    => processIriEscapesRec f after acc
+            | none    => processIriEscapesRec f r1 (c1 :: acc)
           | none => processIriEscapesRec f r1 (c1 :: acc)
         else processIriEscapesRec f r1 (c1 :: acc)
       | [] => processIriEscapesRec f [] (c1 :: acc)
@@ -297,14 +306,6 @@ def processIriEscapesRec : Nat → List Char → List Char → List Char
 /-- `process_iri_escapes`. -/
 def processIriEscapes (cs : List Char) : List Char :=
   processIriEscapesRec (cs.length + 1) cs []
-
-/-- `process_codepoint_escapes` — the SPARQL 1.2 whole-text
-preprocessing pass. Identical transformation to `processIriEscapes`;
-a separate name because the CALL SITE is what carries the meaning
-(§19.8's codepoint-escape note lets an escape stand for any character
-anywhere in the query, keyword and quote delimiters included, so the
-decode cannot be scoped to one token's lexeme). -/
-def processCodepointEscapes (cs : List Char) : List Char := processIriEscapes cs
 
 /-- `decode_string_escape`: one ECHAR ([160]) or codepoint escape,
 positioned just past the backslash. `strict` (SPARQL 1.2 only) rejects
@@ -398,6 +399,92 @@ where
 input length. -/
 def skipWs (pos : Nat) (cs : List Char) : Nat × List Char :=
   skipWsComments (cs.length + 1) pos cs
+
+/-! ### Whitespace skipping without a length walk
+
+`skipWs` seeds its fuel with `cs.length + 1`, a walk over the whole rest of
+the input, and `nextToken` calls it once per token, so a request of n
+characters cost about n²/2 list steps
+(https://github.com/danbri/factoidal/issues/802). `skipWsLoop` is the same
+scan with no fuel: the flag says whether the scan is inside a `#` comment,
+and each step consumes one character, so the recursion is structural on the
+list and is a loop in the emitted C. `skipWs_eq_fast` (`csimp`) runs it
+wherever `skipWs` is called. It is stated here, before `nextToken`, because
+a `csimp` theorem changes only the code compiled after it. -/
+
+/-- The fuel-free whitespace and comment scan; `true` = inside a comment. -/
+def skipWsLoop : Bool → Nat → List Char → Nat × List Char
+  | _,     pos, []        => (pos, [])
+  | false, pos, c :: rest =>
+    if isWsC c then skipWsLoop false (pos + 1) rest
+    else if c == '#' then skipWsLoop true (pos + 1) rest
+    else (pos, c :: rest)
+  | true,  pos, c :: rest =>
+    if c == '\n' then skipWsLoop false (pos + 1) rest
+    else skipWsLoop true (pos + 1) rest
+
+/-- What runs in place of `skipWs`. -/
+def skipWsFast (pos : Nat) (cs : List Char) : Nat × List Char :=
+  skipWsLoop false pos cs
+
+/-- A comment scan returns a suffix, so it never grows the input. This
+is what makes the fuel induction below well-founded through the `#`
+branch. -/
+theorem scanToEol_length : ∀ (pos : Nat) (cs : List Char),
+    (skipWsComments.scanToEol pos cs).2.length ≤ cs.length := by
+  intro pos cs
+  induction cs generalizing pos with
+  | nil => simp [skipWsComments.scanToEol]
+  | cons c rest ih =>
+      conv => lhs; unfold skipWsComments.scanToEol
+      by_cases hc : c = '\n'
+      · simp [hc]
+      · simp only [hc, beq_iff_eq]
+        exact Nat.le_succ_of_le (ih (pos + 1))
+
+/-- Inside a comment, the loop is the comment scan followed by the loop. -/
+theorem skipWsLoop_comment : ∀ (pos : Nat) (cs : List Char),
+    skipWsLoop true pos cs =
+      skipWsLoop false (skipWsComments.scanToEol pos cs).1
+        (skipWsComments.scanToEol pos cs).2 := by
+  intro pos cs
+  induction cs generalizing pos with
+  | nil => simp [skipWsLoop, skipWsComments.scanToEol]
+  | cons c rest ih =>
+    by_cases hc : c = '\n'
+    · subst hc; simp [skipWsLoop, skipWsComments.scanToEol]
+    · simp [skipWsLoop, skipWsComments.scanToEol, hc, ih]
+
+/-- Above the input length, the fuelled scan is the loop. -/
+theorem skipWsComments_eq_loop : ∀ (f pos : Nat) (cs : List Char), cs.length < f →
+    skipWsComments f pos cs = skipWsLoop false pos cs := by
+  intro f
+  induction f with
+  | zero => intro pos cs h; omega
+  | succ k ih =>
+    intro pos cs h
+    cases cs with
+    | nil => simp [skipWsComments, skipWsLoop]
+    | cons c rest =>
+      simp only [List.length_cons] at h
+      by_cases hws : isWsC c = true
+      · simp only [skipWsComments, skipWsLoop, hws, if_true]
+        exact ih _ _ (by omega)
+      · by_cases hh : c = '#'
+        · subst hh
+          have hle := scanToEol_length (pos + 1) rest
+          rcases h2 : skipWsComments.scanToEol (pos + 1) rest with ⟨p', r'⟩
+          rw [h2] at hle
+          simp only [skipWsComments, skipWsLoop, hws, h2]
+          simp
+          rw [skipWsLoop_comment, h2]
+          exact ih _ _ (by simp at hle; omega)
+        · simp [skipWsComments, skipWsLoop, hws, hh]
+
+@[csimp] theorem skipWs_eq_fast : @skipWs = @skipWsFast := by
+  funext pos cs
+  simp only [skipWs, skipWsFast]
+  exact skipWsComments_eq_loop _ _ _ (by omega)
 
 /-- `scan_iri_end` + `scan_iri`: the content between `<` and `>`, with
 a backslash skipping the next character. §19.8 [139] IRIREF. -/
@@ -637,43 +724,60 @@ def scanPnameOrKeyword (v12 : Bool) (pos : Nat) (cs : List Char) :
       else (tok, pos1, rest1)
     | _ => (tok, pos1, rest1)
 
+/-- A `.` counts only when a digit follows it. -/
+def numHasDot : List Char → Bool
+  | '.' :: d :: _ => isDigitC d
+  | _             => false
+
+/-- An `e`/`E` after the digits (and fraction) starts an exponent. -/
+def numHasExp : List Char → Bool
+  | e :: _ => e == 'e' || e == 'E'
+  | []     => false
+
+/-- An `e`/`E` makes the whole lexeme a DOUBLE, else a `.` a DECIMAL. -/
+def numToken (hasDot hasExp : Bool) (text : String) : Token :=
+  if hasExp then .double text
+  else if hasDot then .decimal text
+  else .integer text
+
+/-- The fraction part of `scan_number`: when a `.` is followed by a digit,
+the `.` and the digits after it. -/
+def numFracStage (pos1 : Nat) (rest1 : List Char) (hasDot : Bool) :
+    List Char × Nat × List Char :=
+  if hasDot then
+    match rest1 with
+    | _ :: rest1' =>
+      let (fr, p, r) := scanWhile isDigitC (pos1 + 1) rest1' []
+      ('.' :: fr, p, r)
+    | []          => ([], pos1, rest1)
+  else ([], pos1, rest1)
+
+/-- The exponent part of `scan_number`: `e` or `E`, an optional sign, the
+digits. -/
+def numExpStage (pos2 : Nat) (rest2 : List Char) (hasExp : Bool) :
+    List Char × Nat × List Char :=
+  if hasExp then
+    match rest2 with
+    | e :: rest2' =>
+      let (signPart, posS, restS) :=
+        match rest2' with
+        | s :: rest2'' => if s == '+' || s == '-' then ([s], pos2 + 2, rest2'') else ([], pos2 + 1, rest2')
+        | []           => ([], pos2 + 1, [])
+      let (ds, p, r) := scanWhile isDigitC posS restS []
+      (e :: signPart ++ ds, p, r)
+    | []          => ([], pos2, rest2)
+  else ([], pos2, rest2)
+
 /-- `scan_number`: §19.8 [146] INTEGER / [147] DECIMAL / [148] DOUBLE.
 A `.` counts only when a digit follows it; an `e`/`E` makes the whole
 lexeme a DOUBLE. -/
 def scanNumber (pos : Nat) (cs : List Char) : Token × Nat × List Char :=
   let (int1, pos1, rest1) := scanWhile isDigitC pos cs []
-  let hasDot : Bool :=
-    match rest1 with
-    | '.' :: d :: _ => isDigitC d
-    | _             => false
-  let (fracPart, pos2, rest2) :=
-    if hasDot then
-      match rest1 with
-      | _ :: rest1' =>
-        let (fr, p, r) := scanWhile isDigitC (pos1 + 1) rest1' []
-        ('.' :: fr, p, r)
-      | []          => ([], pos1, rest1)
-    else ([], pos1, rest1)
-  let hasExp : Bool :=
-    match rest2 with
-    | e :: _ => e == 'e' || e == 'E'
-    | []     => false
-  let (expPart, pos3, rest3) :=
-    if hasExp then
-      match rest2 with
-      | e :: rest2' =>
-        let (signPart, posS, restS) :=
-          match rest2' with
-          | s :: rest2'' => if s == '+' || s == '-' then ([s], pos2 + 2, rest2'') else ([], pos2 + 1, rest2')
-          | []           => ([], pos2 + 1, [])
-        let (ds, p, r) := scanWhile isDigitC posS restS []
-        (e :: signPart ++ ds, p, r)
-      | []          => ([], pos2, rest2)
-    else ([], pos2, rest2)
-  let text := String.ofList (int1 ++ fracPart ++ expPart)
-  if hasExp then (.double text, pos3, rest3)
-  else if hasDot then (.decimal text, pos3, rest3)
-  else (.integer text, pos3, rest3)
+  let hasDot := numHasDot rest1
+  let (fracPart, pos2, rest2) := numFracStage pos1 rest1 hasDot
+  let hasExp := numHasExp rest2
+  let (expPart, pos3, rest3) := numExpStage pos2 rest2 hasExp
+  (numToken hasDot hasExp (String.ofList (int1 ++ fracPart ++ expPart)), pos3, rest3)
 
 /-- `scan_bnode_label`: [142] BLANK_NODE_LABEL after `_:`, with the
 trailing-dot trim. -/
@@ -886,12 +990,20 @@ def tokenizeLoop (v12 : Bool) : Nat → Nat → List Char → List PosToken →
 def tokenize (s : String) : List PosToken :=
   tokenizeLoop false (s.toList.length + 1) 0 s.toList []
 
-/-- SPARQL 1.2 tokenizer — port of `tokenize_12`. Decodes codepoint
-escapes over the WHOLE text first (§19.8's codepoint-escape note),
-then lexes in 1.2 mode. -/
+/-- SPARQL 1.2 tokenizer. Escapes are decoded per token, never over
+the whole text: SPARQL 1.2 §19.2 allows numeric escapes in IRIs and
+strings only ("Escape sequences may be used in the following places"),
+and processes them "by taking the sequence of Unicode code points
+matching the relevant grammar production" and scanning it once, left
+to right. So `\u0022` inside a string is a quotation mark in the value
+and does not close the string (W3C sparql12 `codepoint-esc-08`), an
+escaped backslash does not start a second escape (`codepoint-esc-09`),
+a query spelled with escapes is not a query (`codepoint-esc-01-bad`),
+and an escape in a local name is an error (`codepoint-esc-03-bad`).
+The F* `tokenize_12` decoded the whole text first, as SPARQL 1.1
+§19.2 did. -/
 def tokenize12 (s : String) : List PosToken :=
-  let decoded := processCodepointEscapes s.toList
-  tokenizeLoop true (decoded.length + 1) 0 decoded []
+  tokenizeLoop true (s.toList.length + 1) 0 s.toList []
 
 /-- Tokenize at the requested version. -/
 def tokenizeAt : SparqlVersion → String → List PosToken
@@ -902,5 +1014,387 @@ def tokenizeAt : SparqlVersion → String → List PosToken
 returns, and the convenient one for the case-insensitivity guards in
 `ParserTheorems.lean`. -/
 def tokensOf (ts : List PosToken) : List Token := ts.map PosToken.tok
+
+
+/-! ## The linear tokenizer (https://github.com/danbri/factoidal/issues/802)
+
+`tokenizeLoop` tests progress with `rest.length ≥ cs.length` and seeds
+`skipWs` with `cs.length + 1`: three walks over the rest of the input per
+token, so a request of n characters took time in n² (DELETE DATA of 4,000
+quads: 61.8 s). The whitespace scan is replaced before `nextToken`
+(`skipWs_eq_fast`). Here, `nextToken_len` proves that one token moves the
+position by exactly the characters it consumes (or uses up the input), so
+the length test is the position test `pos' ≤ pos` (`nextToken_progress`), and
+`tokenizeLoopFast` with that test is `tokenizeLoop` (`tokenizeLoop_eq_fast`).
+The `csimp` theorems at the end run it for `tokenize`, `tokenize12` and
+`tokenizeAt`; every theorem about the readable definitions still holds of
+what runs. Scaling row: `tests/stack/lean_scaling.py`, `sparql-update-insert`. -/
+
+
+/-- A scan from `pos` over `cs` with accumulator `acc` returned
+`(lexeme, pos', rest)`: the position moved by the characters consumed, and
+the lexeme holds them. -/
+def ScanLen (pos : Nat) (cs acc : List Char) (r : List Char × Nat × List Char) : Prop :=
+  r.2.1 + r.2.2.length = pos + cs.length ∧ r.1.length + r.2.2.length = acc.length + cs.length
+
+/-- The position part of `ScanLen` only (a scan that drops its closing
+delimiter from the lexeme). -/
+def ScanPos (pos : Nat) (cs : List Char) (r : List Char × Nat × List Char) : Prop :=
+  r.2.1 + r.2.2.length = pos + cs.length
+
+theorem scanWhile_len (p : Char → Bool) (pos : Nat) (cs acc : List Char) :
+    ScanLen pos cs acc (scanWhile p pos cs acc) := by
+  fun_induction scanWhile p pos cs acc
+  all_goals simp only [ScanLen, List.length_cons, List.length_reverse, List.length_nil] at *
+  all_goals first | trivial | (refine ⟨?_, ?_⟩ <;> omega)
+
+theorem scanIriBody_len (pos : Nat) (cs acc : List Char) :
+    ScanPos pos cs (scanIriBody pos cs acc) := by
+  fun_induction scanIriBody pos cs acc
+  all_goals simp only [ScanPos, List.length_cons, List.length_nil] at *
+  all_goals omega
+
+theorem scanShortStringBody_len (q : Char) (pos : Nat) (cs acc : List Char) :
+    ScanPos pos cs (scanShortStringBody q pos cs acc) := by
+  fun_induction scanShortStringBody q pos cs acc
+  all_goals simp only [ScanPos, List.length_cons, List.length_nil] at *
+  all_goals omega
+
+theorem scanLongStringBody_len (q : Char) (pos : Nat) (cs acc : List Char) :
+    ScanPos pos cs (scanLongStringBody q pos cs acc) := by
+  fun_induction scanLongStringBody q pos cs acc
+  all_goals simp only [ScanPos, List.length_cons, List.length_nil] at *
+  all_goals omega
+
+theorem scanPnLocal_len (pos : Nat) (cs acc : List Char) :
+    ScanLen pos cs acc (scanPnLocal pos cs acc) := by
+  fun_induction scanPnLocal pos cs acc
+  all_goals simp only [ScanLen, List.length_cons, List.length_reverse, List.length_nil] at *
+  all_goals first | trivial | (refine ⟨?_, ?_⟩ <;> omega)
+
+theorem trimDotsRev_len (r d : List Char) :
+    (trimDotsRev r d).2.length ≤ r.length + d.length := by
+  fun_induction trimDotsRev r d <;> simp_all <;> omega
+
+theorem trimTrailingDots_len (l : List Char) :
+    (trimTrailingDots l).2.length ≤ l.length := by
+  have := trimDotsRev_len l.reverse []
+  simp only [trimTrailingDots]
+  simpa using this
+
+
+
+theorem scanVarName_pos (pos : Nat) (cs : List Char) :
+    (scanVarName pos cs).2.1 + (scanVarName pos cs).2.2.length = pos + cs.length := by
+  have h := scanWhile_len (fun c => isAlnum c || c == '_') pos cs []
+  simp only [scanVarName]
+  rcases e : scanWhile (fun c => isAlnum c || c == '_') pos cs [] with ⟨raw, p', r⟩
+  rw [e] at h
+  simp only [ScanLen] at h
+  exact h.1
+
+theorem scanLangTag_pos (pos : Nat) (cs : List Char) :
+    (scanLangTag pos cs).2.1 + (scanLangTag pos cs).2.2.length = pos + cs.length := by
+  have h := scanWhile_len (fun c => isAlnum c || c == '-') pos cs []
+  simp only [scanLangTag]
+  rcases e : scanWhile (fun c => isAlnum c || c == '-') pos cs [] with ⟨raw, p', r⟩
+  rw [e] at h
+  simp only [ScanLen] at h
+  exact h.1
+
+theorem scanBnodeLabel_pos (pos : Nat) (cs : List Char) :
+    (scanBnodeLabel pos cs).2.1 + (scanBnodeLabel pos cs).2.2.length = pos + cs.length := by
+  have h := scanWhile_len isPnChar pos cs []
+  simp only [scanBnodeLabel]
+  rcases e : scanWhile isPnChar pos cs [] with ⟨raw, p', r⟩
+  rw [e] at h
+  have ht := trimTrailingDots_len raw
+  rcases e2 : trimTrailingDots raw with ⟨kept, dots⟩
+  rw [e2] at ht
+  simp only [ScanLen, List.length_nil] at h ht ⊢
+  simp only [List.length_append]
+  omega
+
+theorem scanPnameOrKeyword_pos (v12 : Bool) (pos : Nat) (cs : List Char) :
+    (scanPnameOrKeyword v12 pos cs).2.1 + (scanPnameOrKeyword v12 pos cs).2.2.length
+      = pos + cs.length := by
+  have h := scanWhile_len isPnChar pos cs []
+  simp only [scanPnameOrKeyword]
+  rcases e : scanWhile isPnChar pos cs [] with ⟨word, p1, r1⟩
+  rw [e] at h
+  simp only [ScanLen, List.length_nil] at h
+  split
+  · rename_i after hafter
+    simp only at hafter
+    subst hafter
+    have h2 := scanPnLocal_len (p1 + 1) after []
+    rcases e2 : scanPnLocal (p1 + 1) after [] with ⟨loc, p2, r2⟩
+    rw [e2] at h2
+    simp only [ScanLen, List.length_nil] at h2
+    have ht := trimTrailingDots_len (word ++ [':'] ++ loc)
+    rcases e3 : trimTrailingDots (word ++ [':'] ++ loc) with ⟨kept, dots⟩
+    rw [e3] at ht
+    simp only [List.length_append, List.length_cons, List.length_nil] at h ht ⊢
+    omega
+  · split <;> (try split) <;> simp_all
+
+theorem numFracStage_pos (pos1 : Nat) (rest1 : List Char) (b : Bool) :
+    (numFracStage pos1 rest1 b).2.1 + (numFracStage pos1 rest1 b).2.2.length
+      = pos1 + rest1.length := by
+  cases b with
+  | false => simp [numFracStage]
+  | true =>
+    cases rest1 with
+    | nil => simp [numFracStage]
+    | cons c r1' =>
+      have h := (scanWhile_len isDigitC (pos1 + 1) r1' []).1
+      rcases e : scanWhile isDigitC (pos1 + 1) r1' [] with ⟨fr, p, r⟩
+      rw [e] at h
+      simp only [numFracStage, if_true, e, List.length_cons] at h ⊢
+      omega
+
+theorem numExpStage_pos (pos2 : Nat) (rest2 : List Char) (b : Bool) :
+    (numExpStage pos2 rest2 b).2.1 + (numExpStage pos2 rest2 b).2.2.length
+      = pos2 + rest2.length := by
+  cases b with
+  | false => simp [numExpStage]
+  | true =>
+    cases rest2 with
+    | nil => simp [numExpStage]
+    | cons e r2' =>
+      cases r2' with
+      | nil => simp [numExpStage, scanWhile]
+      | cons s r2'' =>
+        by_cases hs : (s == '+' || s == '-') = true
+        · have h := (scanWhile_len isDigitC (pos2 + 2) r2'' []).1
+          rcases e1 : scanWhile isDigitC (pos2 + 2) r2'' [] with ⟨ds, p, r⟩
+          rw [e1] at h
+          simp only [numExpStage, if_true, hs, e1, List.length_cons] at h ⊢
+          omega
+        · have h := (scanWhile_len isDigitC (pos2 + 1) (s :: r2'') []).1
+          rcases e1 : scanWhile isDigitC (pos2 + 1) (s :: r2'') [] with ⟨ds, p, r⟩
+          rw [e1] at h
+          simp only [numExpStage, if_true, hs, e1, List.length_cons, Bool.false_eq_true,
+            if_false] at h ⊢
+          omega
+
+theorem scanNumber_pos (pos : Nat) (cs : List Char) :
+    (scanNumber pos cs).2.1 + (scanNumber pos cs).2.2.length = pos + cs.length := by
+  have h1 := (scanWhile_len isDigitC pos cs []).1
+  unfold scanNumber
+  rcases e1 : scanWhile isDigitC pos cs [] with ⟨int1, p1, r1⟩
+  rw [e1] at h1
+  simp only at h1 ⊢
+  have h2 := numFracStage_pos p1 r1 (numHasDot r1)
+  rcases e2 : numFracStage p1 r1 (numHasDot r1) with ⟨fr, p2, r2⟩
+  rw [e2] at h2
+  simp only at h2 ⊢
+  have h3 := numExpStage_pos p2 r2 (numHasExp r2)
+  rcases e3 : numExpStage p2 r2 (numHasExp r2) with ⟨ep, p3, r3⟩
+  rw [e3] at h3
+  simp only at h3 ⊢
+  omega
+
+/-! Whitespace skipping moves the position by what it skips, and only shrinks. -/
+
+theorem scanToEol_pos (pos : Nat) (cs : List Char) :
+    (skipWsComments.scanToEol pos cs).1 + (skipWsComments.scanToEol pos cs).2.length
+      = pos + cs.length := by
+  fun_induction skipWsComments.scanToEol pos cs <;> simp_all <;> omega
+
+theorem skipWsComments_pos (f pos : Nat) (cs : List Char) :
+    (skipWsComments f pos cs).1 + (skipWsComments f pos cs).2.length = pos + cs.length ∧
+    (skipWsComments f pos cs).2.length ≤ cs.length := by
+  induction f generalizing pos cs with
+  | zero => simp [skipWsComments]
+  | succ k ih =>
+    cases cs with
+    | nil => simp [skipWsComments]
+    | cons c rest =>
+      by_cases hws : isWsC c = true
+      · have := ih (pos + 1) rest
+        simp only [skipWsComments, hws, if_true, List.length_cons]
+        omega
+      · by_cases hh : c = '#'
+        · subst hh
+          have h1 := scanToEol_pos (pos + 1) rest
+          have hle := scanToEol_length (pos + 1) rest
+          rcases h2 : skipWsComments.scanToEol (pos + 1) rest with ⟨p', r'⟩
+          rw [h2] at h1 hle
+          have := ih p' r'
+          simp only [skipWsComments, hws, h2, List.length_cons] at h1 hle this ⊢
+          simp only [Bool.false_eq_true, if_false, beq_self_eq_true, if_true]
+          omega
+        · simp [skipWsComments, hws, hh]
+
+theorem skipWs_pos (pos : Nat) (cs : List Char) :
+    (skipWs pos cs).1 + (skipWs pos cs).2.length = pos + cs.length ∧
+    (skipWs pos cs).2.length ≤ cs.length :=
+  skipWsComments_pos _ pos cs
+
+
+theorem scanIriBody_pos (pos : Nat) (cs acc : List Char) :
+    (scanIriBody pos cs acc).2.1 + (scanIriBody pos cs acc).2.2.length = pos + cs.length :=
+  scanIriBody_len pos cs acc
+
+theorem scanShortStringBody_pos (q : Char) (pos : Nat) (cs acc : List Char) :
+    (scanShortStringBody q pos cs acc).2.1 + (scanShortStringBody q pos cs acc).2.2.length
+      = pos + cs.length :=
+  scanShortStringBody_len q pos cs acc
+
+theorem scanLongStringBody_pos (q : Char) (pos : Nat) (cs acc : List Char) :
+    (scanLongStringBody q pos cs acc).2.1 + (scanLongStringBody q pos cs acc).2.2.length
+      = pos + cs.length :=
+  scanLongStringBody_len q pos cs acc
+
+theorem pos_of_eq {α : Type} {r : α × Nat × List Char} {a : α} {b : Nat} {d : List Char}
+    {n : Nat} (hr : r.2.1 + r.2.2.length = n) (h : r = (a, b, d)) : b + d.length = n := by
+  subst h; exact hr
+
+/-- What one `nextToken` call does to the position and the input: the
+position moves by the characters consumed; or the input is used up and the
+position moved past its start (a lone `&` at the end advances by two, as the
+F* does). -/
+def NTLen (pos : Nat) (cs : List Char) (r : Token × Nat × Nat × List Char) : Prop :=
+  r.2.2.1 + r.2.2.2.length = pos + cs.length ∨
+    (r.2.2.2 = [] ∧ pos < r.2.2.1 ∧ 0 < cs.length)
+
+theorem NTLen.lift {p pos : Nat} {cs cs0 : List Char} {r : Token × Nat × Nat × List Char}
+    (h : NTLen p cs r) (h1 : p + cs.length = pos + cs0.length) (h2 : cs.length ≤ cs0.length) :
+    NTLen pos cs0 r := by
+  rcases h with h | ⟨hn, hlt, hc⟩
+  · left; omega
+  · right; exact ⟨hn, by omega, by omega⟩
+
+theorem ltCase_len (p : Nat) (c : Char) (rest : List Char) :
+    NTLen p (c :: rest) (nextToken.ltCase p c rest) := by
+  unfold nextToken.ltCase
+  cases rest with
+  | nil => left; simp
+  | cons d tl =>
+    simp only
+    split
+    · left; simp only [scanIriBody_pos, List.length_cons]; omega
+    · left; simp only [List.length_cons]; omega
+
+theorem NTLen_ite {p : Nat} {cs : List Char} {b : Prop} [Decidable b]
+    {x y : Token × Nat × Nat × List Char}
+    (hx : NTLen p cs x) (hy : NTLen p cs y) : NTLen p cs (if b then x else y) := by
+  by_cases h : b
+  · rw [if_pos h]; exact hx
+  · rw [if_neg h]; exact hy
+
+theorem nextToken_len (v12 : Bool) (pos0 : Nat) (cs0 : List Char) :
+    NTLen pos0 cs0 (nextToken v12 pos0 cs0) := by
+  have hs := skipWs_pos pos0 cs0
+  unfold nextToken
+  rcases e : skipWs pos0 cs0 with ⟨p, cs⟩
+  rw [e] at hs
+  simp only at hs ⊢
+  refine NTLen.lift ?_ hs.1 hs.2
+  split
+  · simp [NTLen]
+  · rename_i c rest
+    repeat' (first | apply NTLen_ite | apply ltCase_len | split)
+    all_goals (unfold NTLen; simp only [List.length_cons, List.length_nil, scanVarName_pos,
+      scanLangTag_pos, scanNumber_pos, scanPnameOrKeyword_pos, scanBnodeLabel_pos,
+      scanShortStringBody_pos, scanLongStringBody_pos] at *)
+    all_goals first
+      | (left; omega)
+      | (left; trivial)
+      | (right; refine ⟨rfl, ?_, ?_⟩ <;> omega)
+      | (right; refine ⟨trivial, ?_, ?_⟩ <;> omega)
+      | (left; have := pos_of_eq (scanIriBody_pos _ _ _) ‹scanIriBody _ _ _ = (_, _, _)›;
+         simp only [List.length_cons] at this; omega)
+
+
+/-- The progress test of `tokenizeLoop` (the rest is not shorter than the
+input) is the F* `tokenize_loop` test on positions. -/
+theorem nextToken_progress (v12 : Bool) (pos : Nat) (cs : List Char) :
+    ((nextToken v12 pos cs).2.2.2.length ≥ cs.length) ↔ ((nextToken v12 pos cs).2.2.1 ≤ pos) := by
+  have := nextToken_len v12 pos cs
+  unfold NTLen at this
+  rcases this with h | ⟨h1, h2, h3⟩
+  · omega
+  · rw [h1]; simp only [List.length_nil]; omega
+
+/-- What runs in place of `tokenizeLoop`: the same loop with the
+progress test on positions (`pos' ≤ pos`), which costs nothing, in place of
+two length walks over the rest of the input per token. -/
+def tokenizeLoopFast (v12 : Bool) : Nat → Nat → List Char → List PosToken →
+    List PosToken
+  | 0,     pos, _,  acc => (⟨.eof, pos⟩ :: acc).reverse
+  | f + 1, pos, cs, acc =>
+    let (tok, start, pos', rest) := nextToken v12 pos cs
+    match tok with
+    | .eof => (⟨Token.eof, start⟩ :: acc).reverse
+    | _    =>
+      if pos' ≤ pos then (⟨Token.eof, start⟩ :: acc).reverse
+      else tokenizeLoopFast v12 f pos' rest (⟨tok, start⟩ :: acc)
+
+theorem tokenizeLoop_eq_fast (v12 : Bool) : ∀ (f pos : Nat) (cs : List Char) (acc : List PosToken),
+    tokenizeLoop v12 f pos cs acc = tokenizeLoopFast v12 f pos cs acc := by
+  intro f
+  induction f with
+  | zero => intro pos cs acc; simp [tokenizeLoop, tokenizeLoopFast]
+  | succ k ih =>
+    intro pos cs acc
+    have hp := nextToken_progress v12 pos cs
+    simp only [tokenizeLoop, tokenizeLoopFast]
+    rcases e : nextToken v12 pos cs with ⟨tok, start, pos', rest⟩
+    rw [e] at hp
+    simp only at hp ⊢
+    split
+    · rfl
+    · rename_i hne
+      by_cases h : pos' ≤ pos
+      · rw [if_pos (hp.mpr h)]
+        split <;> first | rfl | (rw [if_pos h]) | (exfalso; omega)
+      · rw [if_neg (fun h' => h (hp.mp h')), ih]
+        split <;>
+          first | rfl | (rw [if_neg h]) | (exfalso; omega) | exact absurd rfl hne | simp_all
+
+def tokenizeFast (s : String) : List PosToken :=
+  tokenizeLoopFast false (s.toList.length + 1) 0 s.toList []
+
+def tokenize12Fast (s : String) : List PosToken :=
+  tokenizeLoopFast true (s.toList.length + 1) 0 s.toList []
+
+def tokenizeAtFast : SparqlVersion → String → List PosToken
+  | .v11, s => tokenizeFast s
+  | .v12, s => tokenize12Fast s
+
+@[csimp] theorem tokenize_eq_fast : @tokenize = @tokenizeFast := by
+  funext s; simp only [tokenize, tokenizeFast, tokenizeLoop_eq_fast]
+
+@[csimp] theorem tokenize12_eq_fast : @tokenize12 = @tokenize12Fast := by
+  funext s; simp only [tokenize12, tokenize12Fast, tokenizeLoop_eq_fast]
+
+@[csimp] theorem tokenizeAt_eq_fast : @tokenizeAt = @tokenizeAtFast := by
+  funext v s
+  cases v <;> simp only [tokenizeAt, tokenizeAtFast, tokenize_eq_fast, tokenize12_eq_fast]
+
+/-! The fast forms answer as the readable ones on queries that use every
+branch of `nextToken`: comments, a lone `&` at the end, a long string, an
+escape, numbers with a fraction and an exponent, a prefixed name with
+trailing dots, a blank node label, a language tag with a direction, a name
+that starts with a character above U+007F, and the SPARQL 1.2 triple-term
+brackets. -/
+#guard tokenizeFast "SELECT * # c\n{ ?s <http://e/p> \"\"\"a\nb\"\"\" , 'x\\'y' , 1.5e-3 , 2. , ex:a.b.. , _:b1. } &" ==
+  tokenizeLoop false 200 0 "SELECT * # c\n{ ?s <http://e/p> \"\"\"a\nb\"\"\" , 'x\\'y' , 1.5e-3 , 2. , ex:a.b.. , _:b1. } &".toList []
+#guard tokenize12Fast "SELECT * { << <a> <b> <c> >> ~ _:r . ?s ?p \"x\"@en--ltr . ?a ?b <<( 1 2 3 )>> } × ?z" ==
+  tokenizeLoop true 200 0 "SELECT * { << <a> <b> <c> >> ~ _:r . ?s ?p \"x\"@en--ltr . ?a ?b <<( 1 2 3 )>> } × ?z".toList []
+#guard (tokenize "?a × ?b").map (·.tok) == [.var "a", .pname "×", .var "b", .eof]
+/-! Token offsets increase along a token list: the generated blank node
+labels of the parser (`freshBnodeId`) rely on it. -/
+#guard (fun (ts : List PosToken) => (ts.zip ts.tail).all (fun (a, b) => a.pos < b.pos))
+  (tokenize "INSERT DATA { <s> <p> ( 1 [ <q> 2 ] \"x\"@en ) ; <r> _:b , ?v . } # end")
+#guard (fun (ts : List PosToken) => (ts.zip ts.tail).all (fun (a, b) => a.pos < b.pos))
+  (tokenize12 "SELECT * { << <a> <b> <c> >> ~ _:r {| <d> <e> |} . } VALUES ?x { 1.5 2e3 }")
+#guard skipWsFast 0 "  # one\n\t# two".toList == skipWs 0 "  # one\n\t# two".toList
+#guard skipWsFast 3 "x".toList == (3, ['x'])
+
+#print axioms nextToken_len
+#print axioms tokenizeAt_eq_fast
 
 end L4Factoidal.SPARQL

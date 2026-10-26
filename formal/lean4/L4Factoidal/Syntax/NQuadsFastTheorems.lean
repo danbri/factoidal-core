@@ -29,72 +29,6 @@ namespace L4Factoidal.Syntax
 open L4Factoidal.RDF
 open L4Factoidal.Syntax.NQuadsStreaming
 
-/-! ## Bucket keys -/
-
-/-- `Triple.eqb`-equal triples carry the same bucket key, so a bucket
-lookup never hides a match. -/
-theorem tripleKey_eq_of_eqb {a b : Triple} (h : Triple.eqb a b = true) :
-    tripleKey a = tripleKey b := by
-  simp only [Triple.eqb, Bool.and_eq_true, beq_iff_eq] at h
-  obtain ⟨⟨hs, hp⟩, ho⟩ := h
-  simp only [tripleKey, Prod.mk.injEq]
-  exact ⟨Subject.eqb_eq hs, hp, Term.joinKey_eq_of_eqb ho⟩
-
-/-- `Graph.mem` is the `Triple.eqb` scan of the list. -/
-theorem graphMem_eq_any (t : Triple) :
-    ∀ g : Graph, Graph.mem t g = g.any (fun u => u.eqb t)
-  | [] => rfl
-  | hd :: tl => by
-      simp only [Graph.mem, List.any_cons, graphMem_eq_any t tl]
-
-/-! ## The graph invariant -/
-
-/-- Every bucket holds exactly the accumulated triples with that key. -/
-def FastGraph.Inv (g : FastGraph) : Prop :=
-  ∀ key, g.buckets.getD key [] = g.rev.filter (fun u => tripleKey u == key)
-
-theorem FastGraph.inv_empty : FastGraph.Inv {} := by
-  intro key
-  simp
-
-theorem FastGraph.add_inv {g : FastGraph} {t : Triple} (h : g.Inv) :
-    (g.add t).Inv := by
-  intro key
-  simp only [FastGraph.add]
-  split
-  · exact h key
-  · simp only [Std.HashMap.getD_insert, List.filter_cons]
-    by_cases hk : (tripleKey t == key) = true
-    · have hk' : tripleKey t = key := eq_of_beq hk
-      subst hk'
-      simp [h (tripleKey t)]
-    · simp only [Bool.not_eq_true] at hk
-      simp [hk, h key]
-
-/-- The bucket scan and the whole-graph scan answer the same membership
-question. -/
-theorem FastGraph.bucket_any {g : FastGraph} (t : Triple) (h : g.Inv) :
-    (g.buckets.getD (tripleKey t) []).any (fun u => u.eqb t)
-      = g.rev.any (fun u => u.eqb t) := by
-  rw [h (tripleKey t), Bool.eq_iff_iff]
-  simp only [List.any_eq_true, List.mem_filter, beq_iff_eq]
-  constructor
-  · rintro ⟨u, ⟨hu, -⟩, hp⟩
-    exact ⟨u, hu, hp⟩
-  · rintro ⟨u, hu, hp⟩
-    exact ⟨u, ⟨hu, tripleKey_eq_of_eqb hp⟩, hp⟩
-
-/-- The indexed add refines `Graph.add` on the denoted graph. -/
-theorem FastGraph.add_toGraph {g : FastGraph} (t : Triple) (h : g.Inv) :
-    (g.add t).toGraph = Graph.add t g.toGraph := by
-  have hb := FastGraph.bucket_any t h
-  simp only [FastGraph.add, FastGraph.toGraph, Graph.add,
-    graphMem_eq_any, List.any_reverse]
-  rw [hb]
-  split
-  · rfl
-  · simp
-
 /-! ## The dataset invariant -/
 
 /-- `namesRev` lists exactly the keys of `named`, and every stored graph
@@ -261,6 +195,77 @@ theorem addQuadFast_toDataset {ds : FastDataset} (t : Triple) (gopt : Option Sub
             simp only [Std.HashMap.getD_insert, hbn, Bool.false_eq_true, if_false]
           · simp [Std.HashMap.getD_insert_self, FastGraph.add, FastGraph.toGraph]
 
+/-- `ensureNamedFast` keeps the invariant. -/
+theorem FastDataset.ensure_inv {ds : FastDataset} (name : Subject) (h : ds.Inv) :
+    (ensureNamedFast ds name).Inv := by
+  obtain ⟨hd, hnames, hgraphs⟩ := h
+  simp only [ensureNamedFast]
+  cases hlk : ds.named[name]? with
+  | some g =>
+      rw [if_pos (by rw [Std.HashMap.contains_eq_isSome_getElem?, hlk]; rfl)]
+      exact ⟨hd, hnames, hgraphs⟩
+  | none =>
+      rw [if_neg (by rw [Std.HashMap.contains_eq_isSome_getElem?, hlk]; simp)]
+      refine ⟨hd, ?_, ?_⟩
+      · intro n
+        simp only [Std.HashMap.getElem?_insert]
+        by_cases hb : (name == n) = true
+        · have hb' : name = n := eq_of_beq hb
+          subst hb'
+          simp
+        · simp only [Bool.not_eq_true] at hb
+          simp only [hb, Bool.false_eq_true, if_false, List.mem_cons]
+          constructor
+          · intro hi
+            exact Or.inr ((hnames n).mp hi)
+          · intro hi
+            rcases hi with hi | hi
+            · rw [hi] at hb; simp at hb
+            · exact (hnames n).mpr hi
+      · intro n g' hg'
+        simp only [Std.HashMap.getElem?_insert] at hg'
+        by_cases hb : (name == n) = true
+        · simp only [hb, if_pos] at hg'
+          cases hg'
+          exact FastGraph.inv_empty
+        · simp only [Bool.not_eq_true] at hb
+          simp only [hb, Bool.false_eq_true, if_false] at hg'
+          exact hgraphs n g' hg'
+
+/-- The indexed accumulator refines `ensureNamed` on the denoted dataset. -/
+theorem ensureNamedFast_toDataset {ds : FastDataset} (name : Subject) (h : ds.Inv) :
+    (ensureNamedFast ds name).toDataset = ensureNamed ds.toDataset name := by
+  obtain ⟨hd, hnames, hgraphs⟩ := h
+  simp only [ensureNamedFast]
+  cases hlk : ds.named[name]? with
+  | some g =>
+      rw [if_pos (by rw [Std.HashMap.contains_eq_isSome_getElem?, hlk]; rfl)]
+      have hmem : name ∈ ds.namesRev := (hnames name).mp (by rw [hlk]; rfl)
+      simp only [FastDataset.toDataset, ensureNamed]
+      rw [find?_map_named (fun n => (ds.named.getD n {}).toGraph) name
+            ds.namesRev.reverse (List.mem_reverse.mpr hmem)]
+  | none =>
+      rw [if_neg (by rw [Std.HashMap.contains_eq_isSome_getElem?, hlk]; simp)]
+      have hmem : name ∉ ds.namesRev := by
+        intro hc
+        have := (hnames name).mpr hc
+        rw [hlk] at this
+        simp at this
+      simp only [FastDataset.toDataset, ensureNamed]
+      rw [find?_map_named_none (fun n => (ds.named.getD n {}).toGraph) name
+            ds.namesRev.reverse (fun hc => hmem (List.mem_reverse.mp hc))]
+      simp only [List.reverse_cons, List.map_append, List.map_cons, List.map_nil]
+      congr 1
+      congr 1
+      · apply List.map_congr_left
+        intro n hn
+        have hbn : (name == n) = false := by
+          have : name ≠ n := by
+            intro hc; exact hmem (hc ▸ List.mem_reverse.mp hn)
+          simp [this]
+        simp only [Std.HashMap.getD_insert, hbn, Bool.false_eq_true, if_false]
+      · simp [Std.HashMap.getD_insert_self, FastGraph.toGraph]
+
 /-! ## Transporting a step-wise relation through the fold -/
 
 /-- Two parse outcomes agree: the same error, or accumulators in `R`. -/
@@ -372,6 +377,15 @@ theorem parseNQuadsFast_eq_parseNQuads (s : String) (mode : Mode) :
           simp [Except.map, hrel.2]
 
 /-! ## Axiom audit -/
+
+/-- The compiler runs `parseNQuadsFast` wherever a module that imports this one
+says `parseNQuads`. The reference parser adds each quad with `Graph.add`, a scan
+of the graph, so it takes time in n² for n quads; `l4sbm11-w3c compare` spent 80
+percent of its instructions there on 8,800 quads once the isomorphism test was
+linear (https://github.com/danbri/factoidal/issues/868). -/
+@[csimp] theorem parseNQuads_eq_fast : @parseNQuads = @parseNQuadsFast := by
+  funext s mode
+  exact (parseNQuadsFast_eq_parseNQuads s mode).symm
 
 #print axioms parseNQuadsFast_eq_parseNQuads
 

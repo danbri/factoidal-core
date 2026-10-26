@@ -1,0 +1,4 @@
+PREFIX ex: <http://ex.org/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# ASK with LIMIT 0: the slice is empty, so false (formHasSolution on every row).
+ASK { ?s ?p ?o } LIMIT 0

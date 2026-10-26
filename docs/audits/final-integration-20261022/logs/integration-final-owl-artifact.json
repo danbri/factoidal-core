@@ -1,0 +1,22 @@
+{
+  "command": [
+    "/opt/homebrew/Cellar/node@22/22.22.2_2/bin/node",
+    "tools/check-owl-public-artifact.mjs",
+    "--package",
+    "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/artifacts/integration-final/package",
+    "--cases",
+    "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/logs/integration-ci-86ca44f4b-owl/owl-public-boundary.json",
+    "--json",
+    "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/logs/integration-final-owl-artifact-report.json"
+  ],
+  "cwd": "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-core",
+  "node": "v22.22.2",
+  "source": "ebe0188a3ae8d5a1d58b80b0356c50a6dfd6cf50",
+  "nodeBin": "/opt/homebrew/Cellar/node@22/22.22.2_2/bin",
+  "npmCache": "/private/tmp/factoidal-public-pack-cache",
+  "started": "2026-10-22T19:03:01.341Z",
+  "elapsedMs": 27862,
+  "exit": 0,
+  "signal": null,
+  "error": null
+}

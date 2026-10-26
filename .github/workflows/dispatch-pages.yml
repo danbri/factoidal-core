@@ -1,0 +1,40 @@
+name: Ask danbri/factoidal to rebuild the site
+
+# https://danbri.github.io/factoidal/ is published by
+# danbri/factoidal/.github/workflows/deploy-pages.yml from the docs/ of this
+# repository (owner decision, 2026-10-25: "site serves from /factoidal/ repo").
+# This job sends it a repository_dispatch event when the site sources change
+# on main. It needs the secret FACTOIDAL_PAGES_DISPATCH_TOKEN: a fine-grained
+# token with "Contents: read and write" on danbri/factoidal (the permission
+# the repository_dispatch API requires). Without the secret the job does
+# nothing, and the site follows main by its daily schedule.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'npm/factoidal/**'
+      - 'third_party/eleventy/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send repository_dispatch to danbri/factoidal
+        env:
+          TOKEN: ${{ secrets.FACTOIDAL_PAGES_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::notice::FACTOIDAL_PAGES_DISPATCH_TOKEN is not set; the site rebuilds on its daily schedule."
+            exit 0
+          fi
+          curl -fsS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $TOKEN" \
+            https://api.github.com/repos/danbri/factoidal/dispatches \
+            -d "{\"event_type\":\"factoidal-core-docs\",\"client_payload\":{\"sha\":\"${GITHUB_SHA}\"}}"

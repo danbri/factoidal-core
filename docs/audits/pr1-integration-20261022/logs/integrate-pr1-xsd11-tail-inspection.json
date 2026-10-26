@@ -1,0 +1,10 @@
+{
+  "source_commit": "f90efa6f5",
+  "generated_file": "formal/lean4/.lake/build/ir/L4Factoidal/Regex/Xsd11.c",
+  "generated_sha256": "341772cb5f4553b84b4352d7b84bedcbb998985e277a5d2bacac9e16831d3a4c",
+  "function": "lp_l4factoidal_L4Factoidal_Regex_Profiles_xsd11EscapesSupported",
+  "body_start_line": 101,
+  "tail_goto_count": 2,
+  "recursive_self_calls_in_body": 0,
+  "status": "finite generated-C inspection; parent owns full tail/csimp gates"
+}

@@ -1,0 +1,6 @@
+# RDF 1.2: triple terms (also nested) and a directional language string.
+<http://example.org/alice> <http://example.org/says> <<( <http://example.org/bob> <http://example.org/age> "42"^^<http://www.w3.org/2001/XMLSchema#integer> )>> .
+<http://example.org/carol> <http://example.org/says> <<( <http://example.org/bob> <http://example.org/knows> <http://example.org/dave> )>> .
+<http://example.org/eve> <http://example.org/doubts> <<( <http://example.org/carol> <http://example.org/says> <<( <http://example.org/bob> <http://example.org/knows> <http://example.org/dave> )>> )>> .
+<http://example.org/alice> <http://example.org/name> "Alice"@en .
+<http://example.org/alice> <http://example.org/title> "Dr"@en--ltr .

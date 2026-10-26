@@ -29,14 +29,22 @@ wrapping are applied HERE, exactly as the F* does:
     real-character run + the END sentinel on the right, or nothing
     (when `P'` itself consumed a sentinel).
 
-Flag coverage, as in the F*:
-  `i` ASCII case-folding of literal ranges (`foldCi`) — non-ASCII case
-      folding is NOT applied (documented gap, both trees);
+Flag coverage, as in the F* except where stated:
+  `i` Unicode case-variants, as defined by F&O 3.1 section 5.6.1.1: a
+      case-variant has the same `fn:lower-case` or the same `fn:upper-case`
+      (`Text.CaseMap.caseVariants`). The parser takes the flag
+      (`XSDPattern.parseCpsWith`): a literal character, a character range
+      and a single-character escape accept their case-variants, a negated
+      class takes its complement after that expansion (`[^Q]` rejects `Q`
+      and `q`), and `.`, `\d`, `\w`, `\W` and the other multi-character
+      escapes are unaffected. `[A-Z]` matches U+212A KELVIN SIGN. The F* tree
+      folds the ASCII letters after parsing (`rx_fold_ci`), so on non-ASCII
+      input, and on a negated class, the two trees differ here;
   `s` `.` also matches #xA / #xD (`dotAll`);
   `x` unescaped, out-of-class whitespace elided before parsing
       (`stripWs`);
   `q` the whole pattern is a literal codepoint sequence
-      (`literalRegex`);
+      (`literalRegex`); replacement text is literal too, and m/s/x are ignored;
   `m` in the F*: ACCEPTED but treated as string-level anchoring (`^` /
       `$` match the string start / end, not interior line boundaries),
       which fails the W3C `sparql10/regex` test
@@ -51,42 +59,24 @@ Flag coverage, as in the F*:
       F* behaviour for side-by-side comparison.
 
 fn:replace (https://www.w3.org/TR/xpath-functions-31/#func-replace):
-  * WHOLE-MATCH SPANS are found by the verified engine: at each
-    candidate start the normalised derivative runs forward and the
-    LONGEST prefix whose residual is nullable is taken
-    (leftmost-longest, non-overlapping, left to right). This agrees
-    with XQuery ordered-alternation greedy semantics on every corpus
-    pattern (e.g. `(ab)|(a)`); it would differ only when an earlier
-    alternative is a proper prefix of a later one (`(a)|(ab)`).
-  * GROUP CAPTURE for `$N` is computed by a total, fuel-bounded
-    capturing matcher (`cmatch`) over a capturing AST (`CRe`) parsed by
-    `parseCapturing`, which reuses the XSD parser's leaf builders so
-    its language agrees with the span-finding regex by construction.
-    Every leaf accept / reject is decided by the verified engine
-    (`leafEnds`). The capturing matcher only EXPLAINS how the verified
-    span decomposes into numbered groups (filtered to outcomes ending
-    exactly at the verified span end); it never overrides the span.
-  * Template grammar: `$d` (single digit) → group d's text (`$0` = the
-    whole match; a non-participating group → ""); `\$` → `$`; `\\` →
-    `\`. Multi-digit `$12` reads as `$1` then `2`, as in the F*.
-  * `^` / `$` in a replace pattern parse to eps (no-op), as in the F*
-    (no fixture exercises them).
-
-Deviations from the F* (all in the DIRECTION of the XPath spec, and
-confined to the error channel the F* functions do not have):
-  * `compile` reports an unknown flag character (err:FORX0001) and an
-    unparseable pattern (err:FORX0002) as `RegexError`s; the F*
-    `regex_match` returns `false` and `regex_replace` returns the input
-    unchanged. `regexMatch` / `regexReplace` below keep the F*
-    behaviour for side-by-side comparison.
-  * `replace` reports a pattern that matches the empty string
-    (err:FORX0003) and an ill-formed replacement template — `\` not
-    followed by `\` or `$`, or `$` not followed by a digit
-    (err:FORX0004). The F* copies one codepoint through on an empty
-    match and expands `\c` to `c`.
+  * CRe retains anchors, alternative order and greedy/reluctant quantifiers.
+    The total continuation-based matcher selects the first successful outcome
+    at the leftmost input position and returns its capture spans. It reuses the
+    derivative engine for leaf matching; this does not transfer the derivative
+    proofs to the full ordered matcher or establish its fuel adequacy.
+  * Anchors test original codepoint positions, including LF-only multiline
+    boundaries. Later repetitions override earlier captures of the same group.
+  * Template grammar: `$d` (single digit) selects group d (`$0` is the whole
+    match); non-participating groups are empty. Multi-digit group references
+    remain incomplete. q mode treats replacement text literally.
+  * `compile` rejects invalid flags/patterns; `replace` rejects nullable patterns
+    and invalid templates. `regexReplace` shares this implementation, with its
+    legacy unchanged-input fallback on errors. The older `regexMatch` adapter
+    still has its distinct F* flag/error policy and is not claimed equivalent.
 -/
 import L4Factoidal.Regex.Exec
 import L4Factoidal.Regex.XSDPattern
+import L4Factoidal.Text.CaseMap
 
 namespace L4Factoidal.Regex
 
@@ -180,40 +170,12 @@ def wrapMultiline (cps : List Nat) : List Nat :=
   beginSentinel :: (cps.flatMap fun c => if c = 0x0A then [endSentinel, 0x0A, beginSentinel] else [c]) ++ [endSentinel]
 
 /-- `q` flag: the pattern as a literal codepoint sequence
-(F* `rx_literal_regex`). -/
-def literalRegex : List Nat → Re
+(F* `rx_literal_regex`). With the flag `i` each character also accepts its
+case-variants. -/
+def literalRegex (ci : Bool := false) : List Nat → Re
   | [] => .eps
-  | [c] => .ranges [(c, c)]
-  | c :: t => .cat (.ranges [(c, c)]) (literalRegex t)
-
-/-! ## `i` flag: ASCII case folding of literal ranges -/
-
-/-- The extra intervals a range also accepts under `i`: for the A–Z
-overlap add the a–z image (+0x20), for the a–z overlap the A–Z image
-(F* `rx_ci_extra`). -/
-def ciExtra (lo hi : Nat) : List (Nat × Nat) :=
-  let upLo := if lo > 0x41 then lo else 0x41
-  let upHi := if hi < 0x5A then hi else 0x5A
-  let imgLower := if upLo ≤ upHi then [(upLo + 0x20, upHi + 0x20)] else []
-  let loLo := if lo > 0x61 then lo else 0x61
-  let loHi := if hi < 0x7A then hi else 0x7A
-  let imgUpper := if loLo ≤ loHi then [(loLo - 0x20, loHi - 0x20)] else []
-  imgLower ++ imgUpper
-
-def ciRanges : List (Nat × Nat) → List (Nat × Nat)
-  | [] => []
-  | (lo, hi) :: t => (lo, hi) :: (ciExtra lo hi ++ ciRanges t)
-
-/-- F* `rx_fold_ci`. -/
-def foldCi : Re → Re
-  | .empty => .empty
-  | .eps => .eps
-  | .ranges rs => .ranges (ciRanges rs)
-  | .cat a b => .cat (foldCi a) (foldCi b)
-  | .alt a b => .alt (foldCi a) (foldCi b)
-  | .inter a b => .inter (foldCi a) (foldCi b)
-  | .compl a => .compl (foldCi a)
-  | .star a => .star (foldCi a)
+  | [c] => XSDPattern.singleCi ci c
+  | c :: t => .cat (XSDPattern.singleCi ci c) (literalRegex ci t)
 
 /-- `s` flag: rewrite the parser's `.` leaf (which excludes #xA / #xD) to
 accept every codepoint (F* `rx_dotall`). -/
@@ -240,22 +202,20 @@ def regexMatch (text pattern : String) (flags : String) : Bool :=
   let inputCps := cpsOfString text
   let patCps0 := cpsOfString pattern
   if hasQ then
-    let core0 := literalRegex patCps0
-    let core := if hasI then foldCi core0 else core0
+    let core := literalRegex hasI patCps0
     Exec.acceptsNorm (.cat Exec.dotStar (.cat core Exec.dotStar)) inputCps
   else
     let patCps1 := if hasX then stripWs patCps0 false else patCps0
     let patCps := replaceAnchors patCps1 false
-    match XSDPattern.parseCps patCps with
+    match XSDPattern.parseCpsWith hasI patCps with
     | none => false
     | some r0 =>
-      let r1 := if hasS then dotAll r0 else r0
-      let r2 := if hasI then foldCi r1 else r1
+      let r2 := if hasS then dotAll r0 else r0
       let m := Re.cat gapLeft (.cat r2 gapRight)
       let wrapped := beginSentinel :: (inputCps ++ [endSentinel])
       Exec.acceptsNorm m wrapped
 
-/-! ## fn:replace — spans from the verified engine -/
+/-! ## fn:replace — shared derivative leaf matching -/
 
 /-- `w[s, e)` (F* `rx_slice`). -/
 def slice (w : List Nat) (s e : Nat) : List Nat :=
@@ -272,50 +232,41 @@ def leafEndsFrom : Re → List Nat → Nat → List Nat
 
 def leafEnds (r : Re) (w : List Nat) : List Nat := leafEndsFrom r w 0
 
-def listMaxOpt : List Nat → Option Nat
-  | [] => none
-  | x :: t =>
-    match listMaxOpt t with
-    | none => some x
-    | some m => some (if x > m then x else m)
-
-/-- Longest prefix of `suffix` matched by `pr` (leftmost-longest at a
-fixed start), or `none` (F* `rx_longest_end`). -/
-def longestEnd (pr : Re) (suffix : List Nat) : Option Nat :=
-  listMaxOpt (leafEnds pr suffix)
-
 /-! ## Capturing AST and matcher (F* `rx_cre`, `rx_cmatch`) -/
 
-/-- A parallel AST over which `fn:replace` group spans are recovered.
-`leaf` carries an ordinary (group-less) sub-regex whose prefix matches
-are decided by the verified engine. -/
+/-- Ordered replacement AST with zero-width anchors and quantifier preference.
+`leaf` carries an ordinary group-less regex evaluated by the derivative engine. -/
 inductive CRe where
   | leaf : Re → CRe
   | eps : CRe
   | cat : CRe → CRe → CRe
   | alt : CRe → CRe → CRe
-  | star : CRe → CRe
+  | star : Bool → CRe → CRe
+  | anchorStart : CRe
+  | anchorEnd : CRe
   | group : Nat → CRe → CRe
   deriving DecidableEq, Repr, Inhabited
 
 namespace CRe
 
+/-- Over-approximate replacement's prefix language by erasing zero-width
+    assertions, capture metadata and preference. The existing derivative engine
+    can then reject impossible candidate starts before ordered backtracking. -/
+def eraseAssertions : CRe → Re
+  | .leaf r => r
+  | .eps | .anchorStart | .anchorEnd => .eps
+  | .cat a b => .cat (eraseAssertions a) (eraseAssertions b)
+  | .alt a b => .alt (eraseAssertions a) (eraseAssertions b)
+  | .star _ a => .star (eraseAssertions a)
+  | .group _ a => eraseAssertions a
+
 def size : CRe → Nat
   | .leaf _ => 1
-  | .eps => 1
+  | .eps | .anchorStart | .anchorEnd => 1
   | .cat a b => 1 + size a + size b
   | .alt a b => 1 + size a + size b
-  | .star a => 1 + size a
+  | .star _ a => 1 + size a
   | .group _ a => 1 + size a
-
-/-- Flag rewrites lifted to the leaves (F* `rx_cre_fold_ci`). -/
-def foldCi : CRe → CRe
-  | .leaf x => .leaf (Regex.foldCi x)
-  | .eps => .eps
-  | .cat a b => .cat (foldCi a) (foldCi b)
-  | .alt a b => .alt (foldCi a) (foldCi b)
-  | .star a => .star (foldCi a)
-  | .group n a => .group n (foldCi a)
 
 /-- F* `rx_cre_dotall`. -/
 def dotAll : CRe → CRe
@@ -323,16 +274,18 @@ def dotAll : CRe → CRe
   | .eps => .eps
   | .cat a b => .cat (dotAll a) (dotAll b)
   | .alt a b => .alt (dotAll a) (dotAll b)
-  | .star a => .star (dotAll a)
+  | .star greedy a => .star greedy (dotAll a)
+  | .anchorStart => .anchorStart
+  | .anchorEnd => .anchorEnd
   | .group n a => .group n (dotAll a)
 
 def repeatExact (r : CRe) : Nat → CRe
   | 0 => .eps
   | n + 1 => .cat r (repeatExact r n)
 
-def repeatOpt (r : CRe) : Nat → CRe
+def repeatOpt (r : CRe) (greedy : Bool) : Nat → CRe
   | 0 => .eps
-  | k + 1 => .cat (.alt r .eps) (repeatOpt r k)
+  | k + 1 => .cat (if greedy then .alt r .eps else .alt .eps r) (repeatOpt r greedy k)
 
 end CRe
 
@@ -348,7 +301,7 @@ def cparseBrace (r : CRe) (t : List Nat) : Option (CRe × List Nat) :=
       else if c = cpComma then
         match t2 with
         | c2 :: t3 =>
-          if c2 = cpRbrace then some (.cat (CRe.repeatExact r n) (.star r), t3)
+          if c2 = cpRbrace then some (.cat (CRe.repeatExact r n) (.star (t3.head? != some cpQuestion) r), t3)
           else
             match readUint t2 with
             | none => none
@@ -356,7 +309,7 @@ def cparseBrace (r : CRe) (t : List Nat) : Option (CRe × List Nat) :=
               match t3' with
               | c3 :: t4 =>
                 if c3 = cpRbrace && m ≥ n then
-                  some (.cat (CRe.repeatExact r n) (CRe.repeatOpt r (m - n)), t4)
+                  some (.cat (CRe.repeatExact r n) (CRe.repeatOpt r (t4.head? != some cpQuestion) (m - n)), t4)
                 else none
               | [] => none
         | [] => none
@@ -369,9 +322,10 @@ def cparseQuant (r : CRe) (rest : List Nat) : Option (CRe × List Nat) :=
   match rest with
   | [] => some (r, [])
   | q :: t =>
-    if q = cpStar then some (.star r, skipLazy t)
-    else if q = cpPlus then some (.cat r (.star r), skipLazy t)
-    else if q = cpQuestion then some (.alt r .eps, skipLazy t)
+    let greedy := t.head? != some cpQuestion
+    if q = cpStar then some (.star greedy r, skipLazy t)
+    else if q = cpPlus then some (.cat r (.star greedy r), skipLazy t)
+    else if q = cpQuestion then some ((if greedy then .alt r .eps else .alt .eps r), skipLazy t)
     else if q = cpLbrace then
       match cparseBrace r t with
       | none => none
@@ -386,22 +340,22 @@ next group number `g`; `(...)` takes the current `g` and parses its body
 with `g + 1` (outer groups number lower than nested); `(?:...)` is
 non-capturing (F* `rx_cparse_*`). -/
 mutual
-  def cparseAlt : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseAlt (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, input, g =>
-      match cparseSeq fuel input g with
+      match cparseSeq ci fuel input g with
       | none => none
       | some (r1, rest, g1) =>
         match rest with
         | c :: t =>
           if c = cpPipe then
-            match cparseAlt fuel t g1 with
+            match cparseAlt ci fuel t g1 with
             | none => none
             | some (r2, rest2, g2) => some (.alt r1 r2, rest2, g2)
           else some (r1, c :: t, g1)
         | [] => some (r1, [], g1)
 
-  def cparseSeq : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseSeq (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, input, g =>
       match input with
@@ -409,7 +363,7 @@ mutual
       | h :: _ =>
         if h = cpPipe || h = cpRparen then some (.eps, input, g)
         else
-          match cparseRep fuel input g with
+          match cparseRep ci fuel input g with
           | none => none
           | some (r1, rest, g1) =>
             match rest with
@@ -417,71 +371,71 @@ mutual
             | h2 :: _ =>
               if h2 = cpPipe || h2 = cpRparen then some (r1, rest, g1)
               else
-                match cparseSeq fuel rest g1 with
+                match cparseSeq ci fuel rest g1 with
                 | none => none
                 | some (r2, rest2, g2) => some (.cat r1 r2, rest2, g2)
 
-  def cparseRep : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseRep (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, input, g =>
-      match cparseAtom fuel input g with
+      match cparseAtom ci fuel input g with
       | none => none
       | some (r, rest, g1) =>
         match cparseQuant r rest with
         | none => none
         | some (r', rest') => some (r', rest', g1)
 
-  def cparseAtom : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseAtom (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, input, g =>
       match input with
       | [] => none
       | h :: t =>
-        if h = cpLparen then cparseGroup fuel t g
+        if h = cpLparen then cparseGroup ci fuel t g
         else if h = cpLbracket then
-          match parseClass t with
+          match parseClass ci t with
           | none => none
           | some (r, rest) => some (.leaf r, rest, g)
         else if h = cpDot then some (.leaf dotRegex, t, g)
-        else if h = cpCaret then some (.eps, t, g)
-        else if h = cpDollar then some (.eps, t, g)
+        else if h = cpCaret then some (.anchorStart, t, g)
+        else if h = cpDollar then some (.anchorEnd, t, g)
         else if h = cpBackslash then
           match t with
           | [] => none
           | letter :: t2 =>
-            match parseEscapeAtom letter t2 with
+            match parseEscapeAtom ci letter t2 with
             | none => none
             | some (r, rest) => some (.leaf r, rest, g)
         else if isAtomMeta h then none
-        else some (.leaf (single h), t, g)
+        else some (.leaf (singleCi ci h), t, g)
 
-  def cparseGroup : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseGroup (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, t, g =>
       match t with
       | q :: c :: t2 =>
-        if q = cpQuestion && c = cpColon then cparseNoncap fuel t2 g
+        if q = cpQuestion && c = cpColon then cparseNoncap ci fuel t2 g
         else if q = cpQuestion then none
-        else cparseCap fuel t g
+        else cparseCap ci fuel t g
       | q :: _ =>
         if q = cpQuestion then none
-        else cparseCap fuel t g
+        else cparseCap ci fuel t g
       | [] => none
 
-  def cparseCap : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseCap (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, t, g =>
-      match cparseAlt fuel t (g + 1) with
+      match cparseAlt ci fuel t (g + 1) with
       | none => none
       | some (r, rest, g') =>
         match rest with
         | c :: t2 => if c = cpRparen then some (.group g r, t2, g') else none
         | [] => none
 
-  def cparseNoncap : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
+  def cparseNoncap (ci : Bool) : Nat → List Nat → Nat → Option (CRe × List Nat × Nat)
     | 0, _, _ => none
     | fuel + 1, t, g =>
-      match cparseAlt fuel t g with
+      match cparseAlt ci fuel t g with
       | none => none
       | some (r, rest, g') =>
         match rest with
@@ -492,9 +446,9 @@ end
 end CapturingParser
 
 /-- F* `rx_parse_capturing`: groups numbered from 1. -/
-def parseCapturing (cps : List Nat) : Option CRe :=
+def parseCapturing (ci : Bool) (cps : List Nat) : Option CRe :=
   let fuel := 16 * (cps.length + 4)
-  match cparseAlt fuel cps 1 with
+  match cparseAlt ci fuel cps 1 with
   | some (r, [], _) => some r
   | _ => none
 
@@ -513,36 +467,51 @@ structure COut where
   caps   : List Cap
   deriving DecidableEq, Repr
 
-/-- ALL prefix outcomes of `r` starting at absolute position `pos` of the
-suffix `w` (F* `rx_cmatch`). Fuel-bounded: structural descent ≤ size,
-star iterations bounded by the strict-progress guard. -/
-def cmatch : Nat → CRe → List Nat → Nat → List COut
-  | 0, _, _, _ => []
-  | fuel + 1, r, w, pos =>
-    match r with
-    | .eps => [⟨w, pos, []⟩]
-    | .leaf x => (leafEnds x w).map fun k => ⟨w.drop k, pos + k, []⟩
-    | .cat a b =>
-      (cmatch fuel a w pos).flatMap fun oa =>
-        (cmatch fuel b oa.rest oa.endPos).map fun ob =>
-          ⟨ob.rest, ob.endPos, oa.caps ++ ob.caps⟩
-    | .alt a b => cmatch fuel a w pos ++ cmatch fuel b w pos
-    | .group n inner =>
-      (cmatch fuel inner w pos).map fun o => ⟨o.rest, o.endPos, ⟨n, pos, o.endPos⟩ :: o.caps⟩
-    | .star inner =>
-      ⟨w, pos, []⟩ ::
-      (cmatch fuel inner w pos).flatMap fun oi =>
-        if oi.rest.length < w.length then
-          (cmatch fuel (.star inner) oi.rest oi.endPos).map fun o2 =>
-            ⟨o2.rest, o2.endPos, oi.caps ++ o2.caps⟩
-        else []
+/-- XPath F&O §5.6.1: multiline boundaries use LF only, in the original input.
+    Replacement output never changes the positions used by anchor tests. -/
+def atStart (input : List Nat) (multiline : Bool) (pos : Nat) : Bool :=
+  pos == 0 || (multiline && pos > 0 && input[pos - 1]? == some 0x0A)
 
-/-- Caps of the FIRST outcome ending exactly at the verified span end
-(alternation order = ordered-alternation preference); else `[]`
-(F* `rx_pick_caps`). -/
-def pickCaps : List COut → Nat → List Cap
-  | [], _ => []
-  | o :: t, target => if o.endPos = target then o.caps else pickCaps t target
+def atEnd (suffix : List Nat) (multiline : Bool) : Bool :=
+  suffix.isEmpty || (multiline && suffix.head? == some 0x0A)
+
+/-- First successful outcome in backtracking preference order. The continuation
+    tests the rest of a concatenation before committing to an alternative. This
+    avoids materializing every possible match. Greedy repetition tries another
+    consuming iteration before stopping; reluctant repetition reverses that order.
+    Leaves use the verified derivative engine, and later captures override earlier
+    iterations. Fuel adequacy and worst-case search cost remain unproved. -/
+def cmatch (input : List Nat) (multiline : Bool) :
+    Nat → CRe → List Nat → Nat → (COut → Option COut) → Option COut
+  | 0, _, _, _, _ => none
+  | fuel + 1, r, w, pos, accept =>
+    match r with
+    | .eps => accept ⟨w, pos, []⟩
+    | .anchorStart => if atStart input multiline pos then accept ⟨w, pos, []⟩ else none
+    | .anchorEnd => if atEnd w multiline then accept ⟨w, pos, []⟩ else none
+    | .leaf x => (leafEnds x w).reverse.findSome? fun k => accept ⟨w.drop k, pos + k, []⟩
+    | .cat a b =>
+      cmatch input multiline fuel a w pos fun oa =>
+        cmatch input multiline fuel b oa.rest oa.endPos fun ob =>
+          accept ⟨ob.rest, ob.endPos, ob.caps ++ oa.caps⟩
+    | .alt a b =>
+      match cmatch input multiline fuel a w pos accept with
+      | some result => some result
+      | none => cmatch input multiline fuel b w pos accept
+    | .group n inner =>
+      cmatch input multiline fuel inner w pos fun o =>
+        accept ⟨o.rest, o.endPos, ⟨n, pos, o.endPos⟩ :: o.caps⟩
+    | .star greedy inner =>
+      let more := fun (_ : Unit) => cmatch input multiline fuel inner w pos fun oi =>
+        if oi.rest.length < w.length then
+          cmatch input multiline fuel (.star greedy inner) oi.rest oi.endPos fun o2 =>
+            accept ⟨o2.rest, o2.endPos, o2.caps ++ oi.caps⟩
+        else none
+      let stop := fun (_ : Unit) => accept ⟨w, pos, []⟩
+      if greedy then
+        match more () with | some result => some result | none => stop ()
+      else
+        match stop () with | some result => some result | none => more ()
 
 def findCap : List Cap → Nat → Option (Nat × Nat)
   | [], _ => none
@@ -600,64 +569,75 @@ def templateValid : List Nat → Bool
 def cmatchFuel (cre : CRe) (suffix : List Nat) : Nat :=
   (cre.size + 1) * (suffix.length + 2)
 
-/-- Global left-to-right, non-overlapping replace over codepoint lists
-(F* `rx_replace_loop`). `pr` is the verified whole-match oracle;
-`creOpt` the capturing AST when the template has group refs. An empty
-match copies one codepoint through without substitution (the F* policy;
-`replace` below rejects such patterns before reaching here). -/
-def replaceLoop (pr : Re) (creOpt : Option CRe) (rep inputAll : List Nat) :
+/-- F&O §5.6 replacement chooses the first preferred outcome at the leftmost
+    position, using one ordered matcher for both the span and its captures.
+    Each replacement advances past its nonempty match in the original input. -/
+def replaceLoop (cre : CRe) (prefixRe : Re) (multiline : Bool) (rep inputAll : List Nat) :
     Nat → List Nat → Nat → List Nat
   | 0, suffix, _ => suffix
   | fuel + 1, suffix, pos =>
     match suffix with
     | [] => []
     | c :: rest =>
-      match longestEnd pr suffix with
-      | none => c :: replaceLoop pr creOpt rep inputAll fuel rest (pos + 1)
-      | some len =>
-        if len = 0 then
-          c :: replaceLoop pr creOpt rep inputAll fuel rest (pos + 1)
-        else
-          let mend := pos + len
-          let caps : List Cap :=
-            match creOpt with
-            | none => []
-            | some cre => pickCaps (cmatch (cmatchFuel cre suffix) cre suffix pos) mend
-          let expanded := expandTemplate rep inputAll pos mend caps
-          let newSuffix := suffix.drop len
-          expanded ++ replaceLoop pr creOpt rep inputAll fuel newSuffix mend
-
-/-- XPath `fn:replace`, exactly the F* `regex_replace` (an unparseable
-pattern leaves the text unchanged; `flags = ""` is the F* `None`). -/
-def regexReplace (text pattern replacement : String) (flags : String) : String :=
-  let hasI := flagHas flags 'i'
-  let hasS := flagHas flags 's'
-  let hasX := flagHas flags 'x'
-  let hasQ := flagHas flags 'q'
-  let inputCps := cpsOfString text
-  let repCps := cpsOfString replacement
-  let patCps0 := cpsOfString pattern
-  let fuel := inputCps.length + 1
-  if hasQ then
-    let core0 := literalRegex patCps0
-    let pr := if hasI then foldCi core0 else core0
-    stringOfCps (replaceLoop pr none repCps inputCps fuel inputCps 0)
-  else
-    let patCps1 := if hasX then stripWs patCps0 false else patCps0
-    match XSDPattern.parseCps patCps1 with
-    | none => text
-    | some r0 =>
-      let r1 := if hasS then dotAll r0 else r0
-      let pr := if hasI then foldCi r1 else r1
-      let creOpt :=
-        if templateHasGroup repCps then
-          match parseCapturing patCps1 with
-          | none => none
-          | some cre0 =>
-            let cre1 := if hasS then cre0.dotAll else cre0
-            some (if hasI then cre1.foldCi else cre1)
+      let candidate := if Exec.acceptsNorm prefixRe suffix then
+          cmatch inputAll multiline (cmatchFuel cre suffix) cre suffix pos some
         else none
-      stringOfCps (replaceLoop pr creOpt repCps inputCps fuel inputCps 0)
+      match candidate with
+      | none => c :: replaceLoop cre prefixRe multiline rep inputAll fuel rest (pos + 1)
+      | some outcome =>
+        if outcome.endPos ≤ pos then
+          c :: replaceLoop cre prefixRe multiline rep inputAll fuel rest (pos + 1)
+        else
+          let expanded := expandTemplate rep inputAll pos outcome.endPos outcome.caps
+          expanded ++ replaceLoop cre prefixRe multiline rep inputAll fuel outcome.rest outcome.endPos
+
+/-- Tail-recursive implementation of the ordered replacement loop. The
+accumulator stores the output in reverse; the proof below preserves the
+readable match-span/capture semantics rather than replacing that contract. -/
+def replaceLoopAcc (cre : CRe) (prefixRe : Re) (multiline : Bool) (rep inputAll : List Nat) :
+    Nat → List Nat → Nat → List Nat → List Nat
+  | 0, suffix, _, acc => acc.reverseAux suffix
+  | fuel + 1, suffix, pos, acc =>
+    match suffix with
+    | [] => acc.reverse
+    | c :: rest =>
+      let candidate := if Exec.acceptsNorm prefixRe suffix then
+          cmatch inputAll multiline (cmatchFuel cre suffix) cre suffix pos some
+        else none
+      match candidate with
+      | none => replaceLoopAcc cre prefixRe multiline rep inputAll fuel rest (pos + 1) (c :: acc)
+      | some outcome =>
+        if outcome.endPos ≤ pos then
+          replaceLoopAcc cre prefixRe multiline rep inputAll fuel rest (pos + 1) (c :: acc)
+        else
+          let expanded := expandTemplate rep inputAll pos outcome.endPos outcome.caps
+          replaceLoopAcc cre prefixRe multiline rep inputAll fuel outcome.rest outcome.endPos
+            (expanded.reverseAux acc)
+
+theorem replaceLoopAcc_eq (cre : CRe) (prefixRe : Re) (multiline : Bool) (rep inputAll : List Nat) :
+    ∀ (fuel : Nat) (suffix : List Nat) (pos : Nat) (acc : List Nat),
+      replaceLoopAcc cre prefixRe multiline rep inputAll fuel suffix pos acc =
+        acc.reverse ++ replaceLoop cre prefixRe multiline rep inputAll fuel suffix pos
+  | 0, suffix, pos, acc => by simp [replaceLoopAcc, replaceLoop]
+  | fuel + 1, [], pos, acc => by simp [replaceLoopAcc, replaceLoop]
+  | fuel + 1, c :: rest, pos, acc => by
+      simp only [replaceLoopAcc, replaceLoop]
+      cases hc : (if Exec.acceptsNorm prefixRe (c :: rest) then
+          cmatch inputAll multiline (cmatchFuel cre (c :: rest)) cre (c :: rest) pos some
+        else none) with
+      | none => simp [hc, replaceLoopAcc_eq cre prefixRe multiline rep inputAll fuel]
+      | some o =>
+          by_cases ho : o.endPos ≤ pos
+          · simp [hc, ho, replaceLoopAcc_eq cre prefixRe multiline rep inputAll fuel]
+          · simp [hc, ho, replaceLoopAcc_eq cre prefixRe multiline rep inputAll fuel]
+
+def replaceLoopFast (cre : CRe) (prefixRe : Re) (multiline : Bool) (rep inputAll : List Nat)
+    (fuel : Nat) (suffix : List Nat) (pos : Nat) : List Nat :=
+  replaceLoopAcc cre prefixRe multiline rep inputAll fuel suffix pos []
+
+@[csimp] theorem replaceLoop_eq_fast : @replaceLoop = @replaceLoopFast := by
+  funext cre prefixRe multiline rep inputAll fuel suffix pos
+  simp [replaceLoopFast, replaceLoopAcc_eq]
 
 /-! ## Public API for the SPARQL evaluator -/
 
@@ -673,17 +653,17 @@ inductive RegexError where
   | invalidReplacement (replacement : String)
   deriving DecidableEq, Repr
 
-/-- A compiled pattern: the flag-rewritten regexes for matching and for
-replacing, plus the capturing AST (`none` only when the capturing
-parser diverged from the XSD parser, which no measured pattern does). -/
+/-- A compiled pattern has a derivative regex for Boolean search and an ordered
+    AST for replacement. Both parsers must accept; there is no capture fallback. -/
 structure Compiled where
   /-- `gapLeft · P' · gapRight` with real anchors; run on the sentinel-wrapped input. -/
   matchRe   : Re
-  /-- the whole-match oracle for `fn:replace` (anchors as eps, as in the F*). -/
-  replaceRe : Re
-  capt      : Option CRe
+  /-- Ordered replacement AST, retaining anchors and quantifier preference. -/
+  capt      : CRe
   /-- `m` flag: `isMatch` wraps every line in sentinels. -/
   multiline : Bool
+  /-- F&O 3.x q: replacement dollars and backslashes are literal too. -/
+  literalReplacement : Bool := false
   deriving Repr
 
 /-- The flag characters XPath F&O §5.6.1 defines. -/
@@ -700,30 +680,22 @@ def compile (pattern : String) (flags : String) : Except RegexError Compiled :=
     let hasS := flagHas flags 's'
     let hasX := flagHas flags 'x'
     let hasQ := flagHas flags 'q'
-    let hasM := flagHas flags 'm'
+    let hasM := flagHas flags 'm' && !hasQ
     let patCps0 := cpsOfString pattern
     let wrap (p : Re) : Re :=
       if hasM then .cat sigmaAllStar (.cat (absorbMarkers p) sigmaAllStar)
       else .cat gapLeft (.cat p gapRight)
     if hasQ then
-      let core0 := literalRegex patCps0
-      let core := if hasI then foldCi core0 else core0
-      .ok { matchRe := wrap core, replaceRe := core, capt := none, multiline := hasM }
+      let core := literalRegex hasI patCps0
+      .ok { matchRe := wrap core, capt := .leaf core, multiline := false,
+            literalReplacement := true }
     else
       let patCps1 := if hasX then stripWs patCps0 false else patCps0
-      match XSDPattern.parseCps (replaceAnchors patCps1 false), XSDPattern.parseCps patCps1 with
-      | some m0, some r0 =>
-        let m1 := if hasS then dotAll m0 else m0
-        let m2 := if hasI then foldCi m1 else m1
-        let r1 := if hasS then dotAll r0 else r0
-        let r2 := if hasI then foldCi r1 else r1
-        let capt :=
-          match parseCapturing patCps1 with
-          | none => none
-          | some cre0 =>
-            let cre1 := if hasS then cre0.dotAll else cre0
-            some (if hasI then cre1.foldCi else cre1)
-        .ok { matchRe := wrap m2, replaceRe := r2, capt := capt, multiline := hasM }
+      match XSDPattern.parseCpsWith hasI (replaceAnchors patCps1 false), parseCapturing hasI patCps1 with
+      | some m0, some cre0 =>
+        let m2 := if hasS then dotAll m0 else m0
+        let cre2 := if hasS then cre0.dotAll else cre0
+        .ok { matchRe := wrap m2, capt := cre2, multiline := hasM }
       | _, _ => .error (.invalidPattern pattern)
 
 /-- SPARQL `REGEX` / XPath `fn:matches`: unanchored search, `^` / `$`
@@ -734,16 +706,52 @@ def isMatch (r : Compiled) (s : String) : Bool :=
   let wrapped := if r.multiline then wrapMultiline cps else beginSentinel :: (cps ++ [endSentinel])
   Exec.acceptsNorm r.matchRe wrapped
 
+/-- F&O 3.x §5.6: quote a literal replacement for the shared template expander.
+    Only the two template metacharacters need escaping. -/
+def quoteReplacement : List Nat → List Nat
+  | [] => []
+  | c :: rest =>
+      if c == cpBackslash || c == cpDollar then cpBackslash :: c :: quoteReplacement rest
+      else c :: quoteReplacement rest
+
+def quoteReplacementAcc : List Nat → List Nat → List Nat
+  | [], acc => acc.reverse
+  | c :: rest, acc =>
+      quoteReplacementAcc rest
+        (if c == cpBackslash || c == cpDollar then c :: cpBackslash :: acc else c :: acc)
+
+theorem quoteReplacementAcc_eq (xs acc : List Nat) :
+    quoteReplacementAcc xs acc = acc.reverse ++ quoteReplacement xs := by
+  induction xs generalizing acc with
+  | nil => simp [quoteReplacementAcc, quoteReplacement]
+  | cons c xs ih =>
+    simp only [quoteReplacementAcc, quoteReplacement]
+    split <;> simp_all [List.reverse_cons, List.append_assoc]
+
+def quoteReplacementTR (xs : List Nat) : List Nat := quoteReplacementAcc xs []
+
+@[csimp] theorem quoteReplacement_eq_quoteReplacementTR :
+    @quoteReplacement = @quoteReplacementTR := by
+  funext xs
+  simp [quoteReplacementTR, quoteReplacementAcc_eq]
+
 /-- SPARQL `REPLACE` / XPath `fn:replace`: global, non-overlapping,
-leftmost-longest; `$N` group references, `\$` and `\\` escapes. -/
+ordered leftmost selection; `$N` group references, `\$` and `\\` escapes, or literal
+replacement when compiled with q. -/
 def replace (r : Compiled) (s replacement : String) : Except RegexError String :=
-  let repCps := cpsOfString replacement
+  let rawCps := cpsOfString replacement
+  let repCps := if r.literalReplacement then quoteReplacement rawCps else rawCps
   if !templateValid repCps then .error (.invalidReplacement replacement)
-  else if nullable r.replaceRe then .error (.matchesEmptyString "")
+  else if isMatch r "" then .error (.matchesEmptyString "")
   else
     let inputCps := cpsOfString s
-    let creOpt := if templateHasGroup repCps then r.capt else none
-    .ok (stringOfCps (replaceLoop r.replaceRe creOpt repCps inputCps (inputCps.length + 1) inputCps 0))
+    let prefixRe := Exec.anchoredPrefix r.capt.eraseAssertions
+    .ok (stringOfCps (replaceLoop r.capt prefixRe r.multiline repCps inputCps (inputCps.length + 1) inputCps 0))
+
+/-- Legacy string-returning adapter: share the public compiler/replacer, retaining
+    unchanged-input fallback on errors. Typed consumers use `replace` directly. -/
+def regexReplace (text pattern replacement : String) (flags : String) : String :=
+  ((compile pattern flags).bind (fun r => replace r text replacement)).toOption.getD text
 
 /-- The XSD `pattern` facet (XML Schema Part 2 §4.3.4): whole-string
 membership; `none` when the pattern is outside the supported fragment.

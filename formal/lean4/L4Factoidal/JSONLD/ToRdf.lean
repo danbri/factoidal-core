@@ -44,6 +44,16 @@ prefix, matching `RDF.Core.BNodeId`; `Syntax.NQuads` re-adds it. The
 label shape is `RDF.Canonical.mkLabel`'s, so its proved injectivity
 carries over (`JSONLD/Theorems.lean`'s `freshBnode_injective`).
 
+A label that the document writes (`@id`, `@type` or a graph name `_:label`) is
+passed through unchanged, so a generated label must not be able to equal one.
+The prefix of the generated labels is chosen from the document
+(`generatedPrefix`): `_jld_anon`, followed by the fewest underscores for which
+no label of the document begins with the prefix. A document that writes no
+label beginning with `_jld_anon` gets the labels `_jld_anon0`, `_jld_anon1`, ...
+as before. `JSONLD/Theorems.lean`'s `generated_ne_written` proves that a generated
+label is never a label that the document writes
+(https://github.com/danbri/factoidal/issues/840).
+
 A `@graph` whose `@id` is a blank node becomes a blank-node GRAPH NAME
 directly: `RDF.NamedGraph.name` is a `Subject`, so no `"_:<label>"`
 sentinel string is needed or used here.
@@ -54,6 +64,7 @@ import L4Factoidal.RDF.Core
 import L4Factoidal.RDF.Graph
 import L4Factoidal.RDF.Canonical
 import L4Factoidal.JSONLD.Expand
+import Std.Data.HashSet
 
 namespace L4Factoidal.JSONLD
 
@@ -301,6 +312,215 @@ def jcsSortFields : List (String × Json) → List (String × Json)
   | [] => []
   | kv :: rest => jcsInsertSorted kv (jcsSortFields rest)
 
+/-! ### Run-time forms of the JCS writer
+
+`jcsSortFields` inserts its head after its recursive call returns,
+`jcsInsertSorted` rebuilds the members in front of the new one after its recursive
+call returns, and `jcsSerializeItems` / `jcsSerializeFields` append the text of the
+rest of the list after their recursive call returns: each takes one native frame for
+each member or item (https://github.com/danbri/factoidal/issues/853). The forms
+below are loops over the siblings: `jcsInsertSortedGo` walks with a reversed
+accumulator, `jcsSortFieldsFast` inserts from the end with a left fold, and
+`jcsSerW` / `jcsItemsW` / `jcsFieldsW` append each piece to an accumulator string.
+The depth of the recursion is the nesting of the document. `jcsSerW_eq` proves the
+writer equal to `jcsSerialize` at every fuel (induction on the fuel, the three
+functions at once), and the `csimp` theorems make the compiler emit the loops. -/
+
+def jcsInsertSortedGo (kv : String × Json) :
+    List (String × Json) → List (String × Json) → List (String × Json)
+  | acc, [] => acc.reverseAux [kv]
+  | acc, (k2, v2) :: rest =>
+    if strLt kv.1 k2 then acc.reverseAux (kv :: (k2, v2) :: rest)
+    else jcsInsertSortedGo kv ((k2, v2) :: acc) rest
+
+theorem jcsInsertSortedGo_eq (kv : String × Json) : ∀ (acc l : List (String × Json)),
+    jcsInsertSortedGo kv acc l = acc.reverse ++ jcsInsertSorted kv l
+  | acc, [] => by simp [jcsInsertSortedGo, jcsInsertSorted, List.reverseAux_eq]
+  | acc, (k2, v2) :: rest => by
+    unfold jcsInsertSortedGo jcsInsertSorted
+    by_cases hh : strLt kv.1 k2 = true
+    · simp [hh, List.reverseAux_eq]
+    · simp [hh, jcsInsertSortedGo_eq kv ((k2, v2) :: acc) rest]
+
+def jcsInsertSortedFast (kv : String × Json) (l : List (String × Json)) : List (String × Json) :=
+  jcsInsertSortedGo kv [] l
+
+@[csimp] theorem jcsInsertSorted_eq_fast : @jcsInsertSorted = @jcsInsertSortedFast := by
+  funext kv l; simp [jcsInsertSortedFast, jcsInsertSortedGo_eq]
+
+/-! ### Insertion sort by a string key equals `List.mergeSort` on distinct keys
+
+The insertion sorts of this file and of `JSONLD.FromRdf` (`jcsSortFields`,
+`sortNodes`) take time quadratic in the number of members
+(https://github.com/danbri/factoidal/issues/712: one object of 20,000 members took
+1.6 s to sort, 80,000 took 9.4 s). On a list whose keys are distinct, an
+insertion sort that puts a new element after the smaller keys is
+`List.mergeSort` with the order `≤` on the keys (`foldr_insByKey_eq_mergeSort`).
+`keysDistinct` tests the condition in one pass with a hash set; on a list with a
+repeated key the insertion sort stays (`mergeSort` would order the equal keys
+differently). -/
+
+def insByKey {α : Type} (key : α → String) (x : α) : List α → List α
+  | []      => [x]
+  | h :: tl => if strLt (key x) (key h) then x :: h :: tl else h :: insByKey key x tl
+
+/-- `insByKey` with the elements passed in a reversed accumulator: a loop (the
+insertion sort is still the run-time sort of a list with a repeated key). -/
+def insByKeyGo {α : Type} (key : α → String) (x : α) : List α → List α → List α
+  | acc, []      => acc.reverseAux [x]
+  | acc, h :: tl =>
+    if strLt (key x) (key h) then acc.reverseAux (x :: h :: tl) else insByKeyGo key x (h :: acc) tl
+
+theorem insByKeyGo_eq {α : Type} (key : α → String) (x : α) : ∀ (acc l : List α),
+    insByKeyGo key x acc l = acc.reverse ++ insByKey key x l
+  | acc, [] => by simp [insByKeyGo, insByKey, List.reverseAux_eq]
+  | acc, h :: tl => by
+    unfold insByKeyGo insByKey
+    by_cases hh : strLt (key x) (key h) = true
+    · simp [hh, List.reverseAux_eq]
+    · simp [hh, insByKeyGo_eq key x (h :: acc) tl]
+
+def insByKeyFast {α : Type} (key : α → String) (x : α) (l : List α) : List α := insByKeyGo key x [] l
+
+@[csimp] theorem insByKey_eq_fast : @insByKey = @insByKeyFast := by
+  funext α key x l; simp [insByKeyFast, insByKeyGo_eq]
+
+def leByKey {α : Type} (key : α → String) (a b : α) : Bool := !strLt (key b) (key a)
+
+theorem strLt_iff_lt (a b : String) : strLt a b = true ↔ a < b := by
+  rw [strLt_eq_strLtFast_apply]; simp [strLtFast]
+
+theorem leByKey_iff {α : Type} (key : α → String) (a b : α) :
+    leByKey key a b = true ↔ key a ≤ key b := by
+  unfold leByKey
+  have hs := strLt_iff_lt (key b) (key a)
+  cases h : strLt (key b) (key a)
+  · simp only [Bool.not_false, true_iff]
+    exact String.not_lt.1 (fun hl => by rw [hs.2 hl] at h; cases h)
+  · simp only [Bool.not_true, Bool.false_eq_true, false_iff]
+    intro hle; exact (String.not_lt.2 hle) (hs.1 h)
+
+theorem leByKey_trans {α : Type} (key : α → String) :
+    ∀ (a b c : α), leByKey key a b → leByKey key b c → leByKey key a c := by
+  intro a b c h1 h2
+  rw [leByKey_iff] at *
+  exact String.le_trans h1 h2
+
+theorem leByKey_total {α : Type} (key : α → String) :
+    ∀ (a b : α), (leByKey key a b || leByKey key b a) := by
+  intro a b
+  rw [Bool.or_eq_true, leByKey_iff, leByKey_iff]
+  exact String.le_total _ _
+
+theorem insByKey_split {α : Type} (key : α → String) (x : α) : ∀ (l₁ l₂ : List α),
+    (∀ b ∈ l₁, strLt (key b) (key x) = true) → (∀ b ∈ l₂, strLt (key x) (key b) = true) →
+    insByKey key x (l₁ ++ l₂) = l₁ ++ x :: l₂
+  | [], [], _, _ => rfl
+  | [], b :: t, _, h2 => by simp [insByKey, h2 b List.mem_cons_self]
+  | b :: t, l₂, h1, h2 => by
+    have hb := (strLt_iff_lt _ _).1 (h1 b List.mem_cons_self)
+    have : strLt (key x) (key b) = false := by
+      cases e : strLt (key x) (key b)
+      · rfl
+      · exact absurd ((strLt_iff_lt _ _).1 e) (String.lt_asymm hb)
+    simp only [List.cons_append, insByKey, this, Bool.false_eq_true, if_false,
+      insByKey_split key x t l₂ (fun c hc => h1 c (List.mem_cons_of_mem _ hc)) h2]
+
+theorem foldr_insByKey_eq_mergeSort {α : Type} (key : α → String) : ∀ l : List α,
+    (l.map key).Nodup → l.foldr (insByKey key) [] = l.mergeSort (leByKey key)
+  | [], _ => by simp
+  | x :: l, nd => by
+    rw [List.map_cons, List.nodup_cons] at nd
+    obtain ⟨l₁, l₂, h1, h2, h3⟩ :=
+      List.mergeSort_cons (leByKey_trans key) (leByKey_total key) x l
+    rw [List.foldr_cons, foldr_insByKey_eq_mergeSort key l nd.2, h2, h1]
+    apply insByKey_split
+    · intro b hb
+      have := h3 b hb
+      simpa [leByKey] using this
+    · intro b hb
+      have hs := List.pairwise_mergeSort (leByKey_trans key) (leByKey_total key) (x :: l)
+      rw [h1, List.pairwise_append] at hs
+      have hxb : leByKey key x b = true := (List.pairwise_cons.1 hs.2.1).1 b hb
+      have hbl : b ∈ l := by
+        rw [← List.mem_mergeSort (le := leByKey key), h2]; exact List.mem_append_right _ hb
+      have hne : key x ≠ key b := fun e => nd.1 (e ▸ List.mem_map_of_mem hbl)
+      rw [strLt_iff_lt]
+      rw [leByKey_iff] at hxb
+      by_cases hlt : key x < key b
+      · exact hlt
+      · exact absurd (String.le_antisymm hxb (String.not_lt.1 hlt)) hne
+
+def keysDistinctGo {α : Type} (key : α → String) (seen : Std.HashSet String) : List α → Bool
+  | []      => true
+  | x :: tl => if seen.contains (key x) then false else keysDistinctGo key (seen.insert (key x)) tl
+
+theorem keysDistinctGo_spec {α : Type} (key : α → String) : ∀ (l : List α) (seen : Std.HashSet String),
+    keysDistinctGo key seen l = true → (l.map key).Nodup ∧ ∀ x ∈ l, seen.contains (key x) = false
+  | [], _, _ => by simp
+  | x :: tl, seen, h => by
+    unfold keysDistinctGo at h
+    by_cases hc : seen.contains (key x) = true
+    · simp [hc] at h
+    · simp only [hc, Bool.false_eq_true, if_false] at h
+      obtain ⟨nd, hs⟩ := keysDistinctGo_spec key tl _ h
+      refine ⟨?_, ?_⟩
+      · rw [List.map_cons, List.nodup_cons]
+        refine ⟨?_, nd⟩
+        intro m
+        obtain ⟨c, hc', e⟩ := List.mem_map.1 m
+        have := hs c hc'
+        rw [Std.HashSet.contains_insert, e] at this
+        simp at this
+      · intro c hc'
+        cases List.mem_cons.1 hc' with
+        | inl e => subst e; simpa using hc
+        | inr m =>
+          have := hs c m
+          rw [Std.HashSet.contains_insert] at this
+          simp only [Bool.or_eq_false_iff] at this
+          exact this.2
+
+/-- An insertion sort by `key`, run as `List.mergeSort` when the keys are distinct. -/
+def sortByKeyFast {α : Type} (key : α → String) (l : List α) : List α :=
+  if keysDistinctGo key ∅ l then l.mergeSort (leByKey key)
+  else l.reverse.foldl (fun acc x => insByKey key x acc) []
+
+theorem foldr_insByKey_eq_fast {α : Type} (key : α → String) (l : List α) :
+    l.foldr (insByKey key) [] = sortByKeyFast key l := by
+  unfold sortByKeyFast
+  split
+  · rename_i h
+    exact foldr_insByKey_eq_mergeSort key l (keysDistinctGo_spec key l ∅ h).1
+  · simp [List.foldl_reverse]
+
+theorem jcsInsertSorted_eq_insByKey (kv : String × Json) : ∀ l : List (String × Json),
+    jcsInsertSorted kv l = insByKey Prod.fst kv l
+  | [] => rfl
+  | (k2, v2) :: rest => by
+    simp only [jcsInsertSorted, insByKey, jcsInsertSorted_eq_insByKey kv rest]
+
+def jcsSortFieldsFast (l : List (String × Json)) : List (String × Json) :=
+  sortByKeyFast Prod.fst l
+
+theorem jcsSortFields_eq_foldr : ∀ l : List (String × Json),
+    jcsSortFields l = l.foldr jcsInsertSorted []
+  | [] => rfl
+  | kv :: tl => by simp [jcsSortFields, jcsSortFields_eq_foldr tl]
+
+@[csimp] theorem jcsSortFields_eq_fast : @jcsSortFields = @jcsSortFieldsFast := by
+  funext l
+  rw [jcsSortFields_eq_foldr, jcsSortFieldsFast, ← foldr_insByKey_eq_fast]
+  congr 1
+  funext kv acc
+  exact jcsInsertSorted_eq_insByKey kv acc
+
+#guard jcsSortFieldsFast [("b", .null), ("a", .null), ("c", .null)] ==
+  [("a", .null), ("b", .null), ("c", .null)]
+#guard jcsSortFieldsFast [("b", .null), ("a", .bool true), ("a", .bool false)] ==
+  jcsSortFields [("b", .null), ("a", .bool true), ("a", .bool false)]
+#guard jcsSortFieldsFast [("b", .null), ("a", .null)] != [("b", .null), ("a", .null)]
+
 mutual
 
 /-- The JCS document: object keys sorted, array order preserved, the
@@ -331,6 +551,77 @@ def jcsSerializeFields : List (String × Json) → Nat → String
 termination_by _ fuel => fuel
 
 end
+
+mutual
+
+def jcsSerW : Json → Nat → String
+  | _, 0 => "null"
+  | .null, _ => "null"
+  | .bool b, _ => if b then "true" else "false"
+  | .number lex, _ => jcsNumber lex
+  | .string s, _ => jcsString s
+  | .array items, fuel + 1 => jcsItemsW "[" items fuel ++ "]"
+  | .object fields, fuel + 1 => jcsFieldsW "{" (jcsSortFields fields) fuel ++ "}"
+termination_by _ fuel => fuel
+
+def jcsItemsW (acc : String) : List Json → Nat → String
+  | _, 0 => acc
+  | [], _ => acc
+  | [x], fuel + 1 => acc ++ jcsSerW x fuel
+  | x :: rest, fuel + 1 => jcsItemsW (acc ++ jcsSerW x fuel ++ ",") rest fuel
+termination_by _ fuel => fuel
+
+def jcsFieldsW (acc : String) : List (String × Json) → Nat → String
+  | _, 0 => acc
+  | [], _ => acc
+  | [(k, v)], fuel + 1 => acc ++ (jcsString k ++ ":" ++ jcsSerW v fuel)
+  | (k, v) :: rest, fuel + 1 =>
+    jcsFieldsW (acc ++ (jcsString k ++ ":" ++ jcsSerW v fuel ++ ",")) rest fuel
+termination_by _ fuel => fuel
+
+end
+
+theorem jcsSerW_eq : ∀ fuel : Nat,
+    (∀ j, jcsSerW j fuel = jcsSerialize j fuel) ∧
+    (∀ acc items, jcsItemsW acc items fuel = acc ++ jcsSerializeItems items fuel) ∧
+    (∀ acc fields, jcsFieldsW acc fields fuel = acc ++ jcsSerializeFields fields fuel)
+  | 0 => by
+    refine ⟨fun j => ?_, fun acc items => ?_, fun acc fields => ?_⟩
+    · cases j <;> simp [jcsSerW, jcsSerialize]
+    · simp [jcsItemsW, jcsSerializeItems]
+    · simp [jcsFieldsW, jcsSerializeFields]
+  | fuel + 1 => by
+    obtain ⟨ihS, ihI, ihF⟩ := jcsSerW_eq fuel
+    refine ⟨fun j => ?_, fun acc items => ?_, fun acc fields => ?_⟩
+    · cases j with
+      | array items => simp [jcsSerW, jcsSerialize, ihI, String.append_assoc]
+      | object fields => simp [jcsSerW, jcsSerialize, ihF, String.append_assoc]
+      | _ => simp [jcsSerW, jcsSerialize]
+    · match items with
+      | [] => simp [jcsItemsW, jcsSerializeItems]
+      | [x] => simp [jcsItemsW, jcsSerializeItems, ihS]
+      | x :: y :: rest => simp [jcsItemsW, jcsSerializeItems, ihS, ihI, String.append_assoc]
+    · match fields with
+      | [] => simp [jcsFieldsW, jcsSerializeFields]
+      | [(k, v)] => simp [jcsFieldsW, jcsSerializeFields, ihS]
+      | (k, v) :: kv2 :: rest => simp [jcsFieldsW, jcsSerializeFields, ihS, ihF, String.append_assoc]
+
+@[csimp] theorem jcsSerialize_eq_fast : @jcsSerialize = @jcsSerW := by
+  funext j fuel; exact ((jcsSerW_eq fuel).1 j).symm
+
+def jcsSerializeItemsFast (items : List Json) (fuel : Nat) : String := jcsItemsW "" items fuel
+def jcsSerializeFieldsFast (fields : List (String × Json)) (fuel : Nat) : String :=
+  jcsFieldsW "" fields fuel
+
+@[csimp] theorem jcsSerializeItems_eq_fast : @jcsSerializeItems = @jcsSerializeItemsFast := by
+  funext items fuel; simp [jcsSerializeItemsFast, (jcsSerW_eq fuel).2.1]
+
+@[csimp] theorem jcsSerializeFields_eq_fast : @jcsSerializeFields = @jcsSerializeFieldsFast := by
+  funext fields fuel; simp [jcsSerializeFieldsFast, (jcsSerW_eq fuel).2.2]
+
+#guard jcsSerW (.array [.number "1", .object [("b", .null), ("a", .bool true)], .string "x"]) 20 ==
+  "[1,{\"a\":true,\"b\":null},\"x\"]"
+#guard jcsSerW (.array [.number "1", .number "2"]) 20 != "[2,1]"
 
 def jcsDocument (v : Json) : String := jcsSerialize v (10 * Json.size v + 32)
 
@@ -389,13 +680,57 @@ def rdfDirectionModeOf : Option String → RdfDirectionMode
 
 /-! ## Small helpers -/
 
-/-- A fresh blank node from a threaded counter (§8.2's "generate blank
-node identifier"). The label is built by `RDF.Canonical.mkLabel`, whose
-`mkLabel_inj` already proves the shape injective in the counter — see
-`JSONLD/Theorems.lean`'s `freshBnode_injective`. The `_jld_anon` prefix
-keeps generated labels visually distinct from document-supplied `_:`
-labels. -/
-def freshBnode (ctr : Nat) : String × Nat := (Canonical.mkLabel "_jld_anon" ctr, ctr + 1)
+/-- The base of the prefix of the generated blank node labels. -/
+def anonBase : String := "_jld_anon"
+
+/-- The number of consecutive `_` at the start of a character list, added to
+`n`. A loop. -/
+def underscoreRun : List Char → Nat → Nat
+  | '_' :: rest, n => underscoreRun rest (n + 1)
+  | _, n => n
+
+/-- How many underscores the generated prefix needs after `_jld_anon` so that
+it is not the start of the label that the string `s` writes: 0 when `s` is not
+`_:` followed by a label that begins with `_jld_anon`; otherwise one more than
+the number of underscores that follow those nine characters. -/
+def anonNeed (s : String) : Nat :=
+  if s.startsWith "_:_jld_anon" then underscoreRun (s.toList.drop 11) 0 + 1 else 0
+
+mutual
+
+/-- The largest `anonNeed` over every key and every string value of a JSON tree
+and `m`. The siblings of an array or an object are a loop; the depth of the
+recursion is the nesting of the document. -/
+def maxNeed : Json → Nat → Nat
+  | .string s, m => max m (anonNeed s)
+  | .array xs, m => maxNeedItems xs m
+  | .object fs, m => maxNeedFields fs m
+  | _, m => m
+
+def maxNeedItems : List Json → Nat → Nat
+  | [], m => m
+  | x :: xs, m => maxNeedItems xs (maxNeed x m)
+
+def maxNeedFields : List (String × Json) → Nat → Nat
+  | [], m => m
+  | (k, v) :: fs, m => maxNeedFields fs (maxNeed v (max m (anonNeed k)))
+
+end
+
+/-- The prefix of the blank node labels that the conversion of `root` generates:
+`_jld_anon`, followed by the fewest underscores for which no key and no string
+value of `root` is `_:` and a label that begins with the prefix
+(`JSONLD/Theorems.lean`, `generated_ne_written`). -/
+def generatedPrefix (root : Json) : String :=
+  anonBase ++ String.ofList (List.replicate (maxNeed root 0) '_')
+
+/-- A fresh blank node from a threaded counter (§8.2's "generate blank node
+identifier"). The label is built by `RDF.Canonical.mkLabel`, whose
+`mkLabel_inj` already proves the shape injective in the counter for a fixed
+prefix — see `JSONLD/Theorems.lean`'s `freshBnode_injective`. `pfx` is the
+`generatedPrefix` of the document; it keeps generated labels apart from the
+labels that the document writes (`generated_ne_written`). -/
+def freshBnode (pfx : String) (ctr : Nat) : String × Nat := (Canonical.mkLabel pfx ctr, ctr + 1)
 
 /-- Begins with `_:`. -/
 def isBnodeLabel (s : String) : Bool := charAtD s 0 == '_' && charAtD s 1 == ':'
@@ -464,7 +799,7 @@ def makeLiteral (lexical dt : String) (lang : Option String) : Option Term :=
     | some dtWf =>
       let lit : Literal := { lexicalForm := lexical, datatype := dtWf,
                              langTag := lang, direction := none }
-      if h : literalWf lit = true then some (.literal ⟨lit, h⟩) else none
+      (Literal.toWf? lit).map Term.literal
   else none
 
 /-- A bare JSON scalar in value position, wrapped as §5.2 Value
@@ -576,8 +911,8 @@ a FRESH BLANK NODE carrying `rdf:value` (the lexical form),
 present — `rdf:language` (LOWERCASED) as plain `xsd:string` triples,
 instead of a single literal term. -/
 def compoundLiteralTerm (lex : String) (lang : Option String) (dir : String)
-    (ctr : Nat) (acc : List Triple) : Term × List Triple × Nat :=
-  let (b, ctr1) := freshBnode ctr
+    (pfx : String) (ctr : Nat) (acc : List Triple) : Term × List Triple × Nat :=
+  let (b, ctr1) := freshBnode pfx ctr
   let bsubj : Subject := .bnode b
   let plain (s : String) : Term :=
     .literal ⟨{ lexicalForm := s, datatype := xsdString, langTag := none, direction := none }, rfl⟩
@@ -591,11 +926,11 @@ def compoundLiteralTerm (lex : String) (lang : Option String) (dir : String)
 /-- Dispatcher for a value object: intercepts the one case
 `valueObjectToTerm` cannot express and routes it to
 `compoundLiteralTerm`. Every other value object is unaffected. -/
-def valueObjectStep (rdir : RdfDirectionMode) (obj : Json) (ctr : Nat) (acc : List Triple)
-    : Option Term × List Triple × Nat :=
+def valueObjectStep (rdir : RdfDirectionMode) (obj : Json) (pfx : String) (ctr : Nat)
+    (acc : List Triple) : Option Term × List Triple × Nat :=
   match rdir, obj.getString? "@direction", obj.getString? "@type", obj.field? "@value" with
   | .compoundLiteral, some dir, none, some (.string lex) =>
-    let (t, acc1, ctr1) := compoundLiteralTerm lex (obj.getString? "@language") dir ctr acc
+    let (t, acc1, ctr1) := compoundLiteralTerm lex (obj.getString? "@language") dir pfx ctr acc
     (some t, acc1, ctr1)
   | _, _, _, _ => (valueObjectToTerm rdir obj, acc, ctr)
 
@@ -612,6 +947,9 @@ structure RdfAcc where
   acc   : List Triple
   named : List NamedGraph
   ctr   : Nat
+  /-- The prefix of the generated blank node labels (`generatedPrefix` of the
+  document); it does not change during the walk. -/
+  labelPrefix : String
 
 mutual
 
@@ -627,7 +965,7 @@ def expandValue (rdir : RdfDirectionMode) (v : Json) (st : RdfAcc) (fuel : Nat)
     | .object _ =>
       match v.field? "@value" with
       | some _ =>
-        let (t, acc1, ctr1) := valueObjectStep rdir v st.ctr st.acc
+        let (t, acc1, ctr1) := valueObjectStep rdir v st.labelPrefix st.ctr st.acc
         (t, { st with acc := acc1, ctr := ctr1 })
       | none =>
         match v.field? "@list" with
@@ -661,7 +999,7 @@ def expandList (rdir : RdfDirectionMode) (items : List Json) (st : RdfAcc) (fuel
     | [] => (.iri rdfNilIri, st)
     | item :: rest =>
       let (oterm, st1) := expandValue rdir item st fuel
-      let (cell, ctr2) := freshBnode st1.ctr
+      let (cell, ctr2) := freshBnode st1.labelPrefix st1.ctr
       let (restTerm, st2) := expandList rdir rest { st1 with ctr := ctr2 } fuel
       let cellSubj : Subject := .bnode cell
       let acc3 := { s := cellSubj, p := rdfRestIri, o := restTerm } :: st2.acc
@@ -691,7 +1029,7 @@ def expandNodeR (rdir : RdfDirectionMode) (v : Json) (st : RdfAcc) (fuel : Nat)
         match v.field? "@id" with
         | some (.string idStr) => (idToSubject idStr, st.ctr)
         | some _ => (none, st.ctr)
-        | none => let (b, c) := freshBnode st.ctr; (some (Subject.bnode b), c)
+        | none => let (b, c) := freshBnode st.labelPrefix st.ctr; (some (Subject.bnode b), c)
       let st := { st with ctr := ctr1 }
       match subjOpt with
       | none => (none, st)
@@ -701,7 +1039,7 @@ def expandNodeR (rdir : RdfDirectionMode) (v : Json) (st : RdfAcc) (fuel : Nat)
           let stG := expandGraphNodes rdir (jldAsArray g) { st with acc := [] } fuel
           let ng : NamedGraph := { name := graphNameOfSubject subj, graph := stG.acc.reverse }
           let st1 := expandFieldsR rdir subj fields
-                       { acc := st.acc, named := ng :: stG.named, ctr := stG.ctr } fuel
+                       { st with named := ng :: stG.named, ctr := stG.ctr } fuel
           (some subj, st1)
         | none =>
           let st1 := expandFieldsR rdir subj fields st fuel
@@ -816,6 +1154,303 @@ termination_by fuel
 
 end
 
+/-! ### The run-time form of the walk
+
+`expandList` allocates the cell of the first item, converts the rest of the list,
+and only then prepends the `rdf:rest` and `rdf:first` triples of the first cell:
+one native frame for each item, so a `@list` of 5,000 items overflowed a stack of
+512 KB (https://github.com/danbri/factoidal/issues/844). `expandListGo` makes the
+same two passes as a loop: it converts the items left to right and keeps each
+cell with the term of its item in `pend` (the last one first); at the end of the
+list `listCells` prepends the triples of the cells from the last one to the
+first, which is the order in which the returns of `expandList` prepend them.
+The other functions of the block are those above, line for line, renamed with
+`W`, because a call inside one `mutual` block cannot be replaced by a `csimp`
+theorem (`skills/danbri-function-precrime-checkers`). `expandW_eq` proves each
+equal to its specification at every fuel (induction on the fuel, the nine
+functions at once); the `csimp` theorems after it make the compiler emit the `W`
+forms for the calls from `expandTop` and `expandTops`. -/
+
+/-- The triples of the list cells in `pend` (the last cell first), each linked by
+`rdf:rest` to the term after it; the answer is the term of the first cell. -/
+def listCells : List (String × Option Term) → Term → RdfAcc → Term × RdfAcc
+  | [], t, st => (t, st)
+  | (cell, oterm) :: pend, t, st =>
+    let cellSubj : Subject := .bnode cell
+    let acc3 := { s := cellSubj, p := rdfRestIri, o := t } :: st.acc
+    let acc4 := match oterm with
+                | some x => { s := cellSubj, p := rdfFirstIri, o := x } :: acc3
+                | none   => acc3
+    listCells pend (.bnode cell) { st with acc := acc4 }
+
+mutual
+
+def expandValueW (rdir : RdfDirectionMode) (v : Json) (st : RdfAcc) (fuel : Nat)
+    : Option Term × RdfAcc :=
+  match fuel with
+  | 0 => (none, st)
+  | fuel + 1 =>
+    match v with
+    | .object _ =>
+      match v.field? "@value" with
+      | some _ =>
+        let (t, acc1, ctr1) := valueObjectStep rdir v st.labelPrefix st.ctr st.acc
+        (t, { st with acc := acc1, ctr := ctr1 })
+      | none =>
+        match v.field? "@list" with
+        | some lst =>
+          let (t, st1) := expandListGo rdir (jldAsArray lst) st fuel []
+          (some t, st1)
+        | none =>
+          let (osubj, st1) := expandNodeRW rdir v st fuel
+          match osubj with
+          | some subj => (some subj.toTerm, st1)
+          | none      => (none, st1)
+    | _ => (scalarToTerm v, st)
+termination_by fuel
+
+def expandListGo (rdir : RdfDirectionMode) (items : List Json) (st : RdfAcc) (fuel : Nat)
+    (pend : List (String × Option Term)) : Term × RdfAcc :=
+  match fuel with
+  | 0 => listCells pend (.iri rdfNilIri) st
+  | fuel + 1 =>
+    match items with
+    | [] => listCells pend (.iri rdfNilIri) st
+    | item :: rest =>
+      let (oterm, st1) := expandValueW rdir item st fuel
+      let (cell, ctr2) := freshBnode st1.labelPrefix st1.ctr
+      expandListGo rdir rest { st1 with ctr := ctr2 } fuel ((cell, oterm) :: pend)
+termination_by fuel
+
+def expandNodeRW (rdir : RdfDirectionMode) (v : Json) (st : RdfAcc) (fuel : Nat)
+    : Option Subject × RdfAcc :=
+  match fuel with
+  | 0 => (none, st)
+  | fuel + 1 =>
+    match v with
+    | .object fields =>
+      let (subjOpt, ctr1) :=
+        match v.field? "@id" with
+        | some (.string idStr) => (idToSubject idStr, st.ctr)
+        | some _ => (none, st.ctr)
+        | none => let (b, c) := freshBnode st.labelPrefix st.ctr; (some (Subject.bnode b), c)
+      let st := { st with ctr := ctr1 }
+      match subjOpt with
+      | none => (none, st)
+      | some subj =>
+        match v.field? "@graph" with
+        | some g =>
+          let stG := expandGraphNodesW rdir (jldAsArray g) { st with acc := [] } fuel
+          let ng : NamedGraph := { name := graphNameOfSubject subj, graph := stG.acc.reverse }
+          let st1 := expandFieldsRW rdir subj fields
+                       { st with named := ng :: stG.named, ctr := stG.ctr } fuel
+          (some subj, st1)
+        | none =>
+          let st1 := expandFieldsRW rdir subj fields st fuel
+          (some subj, st1)
+    | _ => (none, st)
+termination_by fuel
+
+def expandFieldsRW (rdir : RdfDirectionMode) (subj : Subject) (fields : List (String × Json))
+    (st : RdfAcc) (fuel : Nat) : RdfAcc :=
+  match fuel with
+  | 0 => st
+  | fuel + 1 =>
+    match fields with
+    | [] => st
+    | (key, value) :: rest =>
+      let st1 :=
+        if key == "@type" then { st with acc := typePrepend subj value st.acc }
+        else if key == "@reverse" then expandReverseMapW rdir subj value st fuel
+        else if key == "@included" then expandGraphNodesW rdir (jldAsArray value) st fuel
+        else if isKeywordKey key then st
+        else if predicateIriWf key then
+          match mkWfIri? key with
+          | some p => expandPropertyRW rdir subj p (jldAsArray value) st fuel
+          | none   => st
+        else st
+      expandFieldsRW rdir subj rest st1 fuel
+termination_by fuel
+
+def expandReverseMapW (rdir : RdfDirectionMode) (subj : Subject) (v : Json) (st : RdfAcc)
+    (fuel : Nat) : RdfAcc :=
+  match fuel with
+  | 0 => st
+  | fuel + 1 =>
+    match v with
+    | .object entries => expandReverseEntriesW rdir subj entries st fuel
+    | _ => st
+termination_by fuel
+
+def expandReverseEntriesW (rdir : RdfDirectionMode) (subj : Subject)
+    (entries : List (String × Json)) (st : RdfAcc) (fuel : Nat) : RdfAcc :=
+  match fuel with
+  | 0 => st
+  | fuel + 1 =>
+    match entries with
+    | [] => st
+    | (prop, value) :: rest =>
+      let st1 :=
+        if predicateIriWf prop then
+          match mkWfIri? prop with
+          | some p => expandReversePropW rdir subj p (jldAsArray value) st fuel
+          | none   => st
+        else st
+      expandReverseEntriesW rdir subj rest st1 fuel
+termination_by fuel
+
+def expandReversePropW (rdir : RdfDirectionMode) (subj : Subject) (prop : WfIri)
+    (vals : List Json) (st : RdfAcc) (fuel : Nat) : RdfAcc :=
+  match fuel with
+  | 0 => st
+  | fuel + 1 =>
+    match vals with
+    | [] => st
+    | v :: rest =>
+      let (osubj, st1) := expandNodeRW rdir v st fuel
+      let st2 := match osubj with
+                 | some vsubj => { st1 with
+                     acc := { s := vsubj, p := prop, o := subj.toTerm } :: st1.acc }
+                 | none => st1
+      expandReversePropW rdir subj prop rest st2 fuel
+termination_by fuel
+
+def expandPropertyRW (rdir : RdfDirectionMode) (subj : Subject) (prop : WfIri)
+    (vals : List Json) (st : RdfAcc) (fuel : Nat) : RdfAcc :=
+  match fuel with
+  | 0 => st
+  | fuel + 1 =>
+    match vals with
+    | [] => st
+    | v :: rest =>
+      let (oterm, st1) := expandValueW rdir v st fuel
+      let st2 := match oterm with
+                 | some t => { st1 with acc := { s := subj, p := prop, o := t } :: st1.acc }
+                 | none   => st1
+      expandPropertyRW rdir subj prop rest st2 fuel
+termination_by fuel
+
+def expandGraphNodesW (rdir : RdfDirectionMode) (nodes : List Json) (st : RdfAcc) (fuel : Nat)
+    : RdfAcc :=
+  match fuel with
+  | 0 => st
+  | fuel + 1 =>
+    match nodes with
+    | [] => st
+    | n :: rest =>
+      let (_, st1) := expandNodeRW rdir n st fuel
+      expandGraphNodesW rdir rest st1 fuel
+termination_by fuel
+
+end
+
+theorem expandW_eq (rdir : RdfDirectionMode) : ∀ fuel : Nat,
+    (∀ v st, expandValueW rdir v st fuel = expandValue rdir v st fuel) ∧
+    (∀ items st pend, expandListGo rdir items st fuel pend =
+        listCells pend (expandList rdir items st fuel).1 (expandList rdir items st fuel).2) ∧
+    (∀ v st, expandNodeRW rdir v st fuel = expandNodeR rdir v st fuel) ∧
+    (∀ subj fields st, expandFieldsRW rdir subj fields st fuel = expandFieldsR rdir subj fields st fuel) ∧
+    (∀ subj v st, expandReverseMapW rdir subj v st fuel = expandReverseMap rdir subj v st fuel) ∧
+    (∀ subj entries st, expandReverseEntriesW rdir subj entries st fuel =
+        expandReverseEntries rdir subj entries st fuel) ∧
+    (∀ subj prop vals st, expandReversePropW rdir subj prop vals st fuel =
+        expandReverseProp rdir subj prop vals st fuel) ∧
+    (∀ subj prop vals st, expandPropertyRW rdir subj prop vals st fuel =
+        expandPropertyR rdir subj prop vals st fuel) ∧
+    (∀ nodes st, expandGraphNodesW rdir nodes st fuel = expandGraphNodes rdir nodes st fuel)
+  | 0 => by
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> intros <;>
+      simp [expandValueW, expandValue, expandListGo, expandList, expandNodeRW, expandNodeR,
+        expandFieldsRW, expandFieldsR, expandReverseMapW, expandReverseMap,
+        expandReverseEntriesW, expandReverseEntries, expandReversePropW, expandReverseProp,
+        expandPropertyRW, expandPropertyR, expandGraphNodesW, expandGraphNodes]
+  | n + 1 => by
+    obtain ⟨hV, hL, hN, hF, hM, hE, hRP, hP, hG⟩ := expandW_eq rdir n
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    · intro v st
+      rw [expandValueW.eq_def, expandValue.eq_def]
+      simp only [hL, hN, listCells]
+    · intro items st pend
+      cases items with
+      | nil => simp [expandListGo, expandList]
+      | cons item rest => simp only [expandListGo, expandList, hV, hL, listCells]
+    · intro v st
+      rw [expandNodeRW.eq_def, expandNodeR.eq_def]
+      simp only [hG, hF]
+    · intro subj fields st
+      cases fields with
+      | nil => simp [expandFieldsRW, expandFieldsR]
+      | cons kv rest =>
+        obtain ⟨key, value⟩ := kv
+        rw [expandFieldsRW.eq_def, expandFieldsR.eq_def]
+        simp only [hM, hG, hP, hF]
+    · intro subj v st
+      rw [expandReverseMapW.eq_def, expandReverseMap.eq_def]
+      simp only [hE]
+    · intro subj entries st
+      cases entries with
+      | nil => simp [expandReverseEntriesW, expandReverseEntries]
+      | cons kv rest =>
+        obtain ⟨prop, value⟩ := kv
+        rw [expandReverseEntriesW.eq_def, expandReverseEntries.eq_def]
+        simp only [hRP, hE]
+    · intro subj prop vals st
+      cases vals with
+      | nil => simp [expandReversePropW, expandReverseProp]
+      | cons v rest => simp only [expandReversePropW, expandReverseProp, hN, hRP]
+    · intro subj prop vals st
+      cases vals with
+      | nil => simp [expandPropertyRW, expandPropertyR]
+      | cons v rest => simp only [expandPropertyRW, expandPropertyR, hV, hP]
+    · intro nodes st
+      cases nodes with
+      | nil => simp [expandGraphNodesW, expandGraphNodes]
+      | cons nd rest => simp only [expandGraphNodesW, expandGraphNodes, hN, hG]
+
+@[csimp] theorem expandNodeR_eq_fast : @expandNodeR = @expandNodeRW := by
+  funext rdir v st fuel; exact ((expandW_eq rdir fuel).2.2.1 v st).symm
+
+@[csimp] theorem expandFieldsR_eq_fast : @expandFieldsR = @expandFieldsRW := by
+  funext rdir subj fields st fuel; exact ((expandW_eq rdir fuel).2.2.2.1 subj fields st).symm
+
+@[csimp] theorem expandGraphNodes_eq_fast : @expandGraphNodes = @expandGraphNodesW := by
+  funext rdir nodes st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.2.2.2.2 nodes st).symm
+
+-- The other members of the block get their own replacement, so that no compiled
+-- code keeps a call into the specification block.
+@[csimp] theorem expandValue_eq_fast : @expandValue = @expandValueW := by
+  funext rdir v st fuel; exact ((expandW_eq rdir fuel).1 v st).symm
+
+def expandListFast (rdir : RdfDirectionMode) (items : List Json) (st : RdfAcc) (fuel : Nat) :
+    Term × RdfAcc :=
+  expandListGo rdir items st fuel []
+
+@[csimp] theorem expandList_eq_fast : @expandList = @expandListFast := by
+  funext rdir items st fuel
+  simp [expandListFast, (expandW_eq rdir fuel).2.1, listCells]
+
+@[csimp] theorem expandReverseMap_eq_fast : @expandReverseMap = @expandReverseMapW := by
+  funext rdir subj v st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.1 subj v st).symm
+
+@[csimp] theorem expandReverseEntries_eq_fast : @expandReverseEntries = @expandReverseEntriesW := by
+  funext rdir subj entries st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.2.1 subj entries st).symm
+
+@[csimp] theorem expandReverseProp_eq_fast : @expandReverseProp = @expandReversePropW := by
+  funext rdir subj prop vals st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.2.2.1 subj prop vals st).symm
+
+@[csimp] theorem expandPropertyR_eq_fast : @expandPropertyR = @expandPropertyRW := by
+  funext rdir subj prop vals st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.2.2.2.1 subj prop vals st).symm
+
+private def listSt0 : RdfAcc := { acc := [], named := [], ctr := 0, labelPrefix := "_jld_anon" }
+-- A list of three items: three cells, three `rdf:first` and three `rdf:rest`
+-- triples, in the order of the specification; the empty list is `rdf:nil`.
+#guard (expandListGo .drop [.string "a", .string "b", .string "c"] listSt0 10 []).2.acc.length == 6
+#guard (expandListGo .drop [.string "a", .string "b", .string "c"] listSt0 10 []).2.acc ==
+  (expandList .drop [.string "a", .string "b", .string "c"] listSt0 10).2.acc
+#guard (expandListGo .drop [.string "a", .string "b"] listSt0 10 []).2.acc !=
+  (expandList .drop [.string "b", .string "a"] listSt0 10).2.acc
+#guard (expandListGo .drop [] listSt0 10 []).1 == .iri rdfNilIri
+
 /-! ## Top level: default graph + named graphs -/
 
 /-- One top-level array entry. -/
@@ -828,16 +1463,16 @@ def expandTop (rdir : RdfDirectionMode) (v : Json) (st : RdfAcc) (fuel : Nat) : 
         match v.field? "@id" with
         | some (.string idStr) => (idToSubject idStr, st.ctr)
         | some _ => (none, st.ctr)
-        | none => let (b, c) := freshBnode st.ctr; (some (Subject.bnode b), c)
+        | none => let (b, c) := freshBnode st.labelPrefix st.ctr; (some (Subject.bnode b), c)
       match subjOpt with
       | none => { st with ctr := ctr1 }
       | some gsubj =>
         let stG := expandGraphNodes rdir (jldAsArray g)
-                     { acc := [], named := st.named, ctr := ctr1 } fuel
+                     { st with acc := [], ctr := ctr1 } fuel
         -- Non-keyword members of the container node describe the
         -- graph-name resource in the DEFAULT graph.
         let stD := expandFieldsR rdir gsubj fields
-                     { acc := st.acc, named := stG.named, ctr := stG.ctr } fuel
+                     { st with named := stG.named, ctr := stG.ctr } fuel
         let ng : NamedGraph := { name := graphNameOfSubject gsubj, graph := stG.acc.reverse }
         { stD with named := ng :: stD.named }
     | none => let (_, st1) := expandNodeR rdir v st fuel; st1
@@ -858,10 +1493,11 @@ RDF dataset. `none` when the top level is neither an array nor an
 object. -/
 def datasetOfJson (rdir : RdfDirectionMode) (root : Json) : Option Dataset :=
   let fuel := Json.size root + 1
+  let init : RdfAcc := { acc := [], named := [], ctr := 0, labelPrefix := generatedPrefix root }
   let finish (st : RdfAcc) : Dataset :=
     { default := st.acc.reverse, named := st.named.reverse }
   match root with
-  | .array tops => some (finish (expandTops rdir tops { acc := [], named := [], ctr := 0 } fuel))
+  | .array tops => some (finish (expandTops rdir tops init fuel))
   | .object fields =>
     let tops :=
       if onlyGraphKeysJ fields then
@@ -869,8 +1505,36 @@ def datasetOfJson (rdir : RdfDirectionMode) (root : Json) : Option Dataset :=
         | some g => jldAsArray g
         | none   => [root]
       else [root]
-    some (finish (expandTops rdir tops { acc := [], named := [], ctr := 0 } fuel))
+    some (finish (expandTops rdir tops init fuel))
   | _ => none
+
+/-- `datasetOfJson` for one chunk of a document: the walk starts with the
+generated blank-node counter `ctr` and the prefix `pfx`, and gives the counter
+after the walk. `datasetOfJson` is this walk with `generatedPrefix root` and
+counter 0 (`datasetOfJson_eq_at`). The chunk reader of the source layer
+(`Syntax/JsonLdChunkFold.lean`) calls it once for each top-level node object. -/
+def datasetOfJsonAt (rdir : RdfDirectionMode) (pfx : String) (ctr : Nat) (root : Json) :
+    Option (Dataset × Nat) :=
+  let fuel := Json.size root + 1
+  let init : RdfAcc := { acc := [], named := [], ctr := ctr, labelPrefix := pfx }
+  let finish (st : RdfAcc) : Dataset × Nat :=
+    ({ default := st.acc.reverse, named := st.named.reverse }, st.ctr)
+  match root with
+  | .array tops => some (finish (expandTops rdir tops init fuel))
+  | .object fields =>
+    let tops :=
+      if onlyGraphKeysJ fields then
+        match root.field? "@graph" with
+        | some g => jldAsArray g
+        | none   => [root]
+      else [root]
+    some (finish (expandTops rdir tops init fuel))
+  | _ => none
+
+theorem datasetOfJson_eq_at (rdir : RdfDirectionMode) (root : Json) :
+    datasetOfJson rdir root = (datasetOfJsonAt rdir (generatedPrefix root) 0 root).map (·.1) := by
+  unfold datasetOfJson datasetOfJsonAt
+  cases root <;> simp
 
 /-! ## Public API -/
 

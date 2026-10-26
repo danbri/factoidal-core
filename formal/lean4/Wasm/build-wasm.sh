@@ -5,10 +5,20 @@
 #
 #   formal/lean4/Wasm/build-wasm.sh [work-dir]
 #
-# Outputs (committed, per the repo's commit-binaries rule):
-#   docs/web/hub/assets/l4/l4factoidal.wasm   the module
+# Outputs (build products, gitignored since 2026-10-09; the `web` release
+# set of danbri/factoidal-builds carries them):
+#   docs/web/hub/assets/l4/l4factoidal.wasm   the full module
 #   docs/web/hub/assets/l4/l4factoidal.mjs    Emscripten's glue
-#   docs/web/hub/assets/l4/l4factoidal.js     our ES-module loader
+#   docs/web/hub/assets/l4/l4factoidal.js     our ES-module loader (source,
+#                                             committed; step 9 stamps it)
+#   docs/web/hub/assets/l4/l4factoidal-core.{wasm,mjs,js}
+#       the CORE module (issue 713 stage 4): Wasm/CoreExports.lean over the
+#       core dispatch of Wasm/CoreDispatch.lean, a subset of the ops whose
+#       import closure leaves most of the library out, so the linker drops
+#       it. Its loader is generated from l4factoidal.js (step 8).
+#   $WORK/<module>.map, $WORK/<module>.size.md, $WORK/<module>.size-modules.md
+#       the wasm-ld link map and the size tables tools/wasm-size-profile.py
+#       makes from it (bytes per Lean namespace and per module)
 #
 # The glue's basename decides the sidecar name it looks for: emcc's
 # output `l4factoidal.mjs` resolves `l4factoidal.wasm` next to itself.
@@ -51,6 +61,11 @@ LEAN_TAG="$(tr -d ' \n' < "$LEAN_DIR/lean-toolchain" | sed 's|.*:||')"   # e.g. 
 # toolchain). Getting this wrong silently resolves to ~/.elan and the
 # build fails 40 lines later complaining about missing core sources.
 TOOLCHAIN="$(cd "$LEAN_DIR" && lean --print-prefix)"
+# Every `lean` call below resolves its toolchain from the working directory
+# (elan reads lean-toolchain there). Run from the repository root with no
+# `elan default`, step 3 printed GEN-FAIL for all 838 core modules (2026-10-10).
+WORK="$(mkdir -p "$WORK" && cd "$WORK" && pwd)"   # absolute, before the cd below
+cd "$LEAN_DIR"
 
 say() { printf '\n=== %s\n' "$*"; }
 
@@ -157,7 +172,7 @@ if [ ! -d "$WORK/mimalloc" ]; then
       https://github.com/microsoft/mimalloc "$WORK/mimalloc"
 fi
 cp "$WORK/mimalloc/include/mimalloc.h" "$INC/lean/mimalloc.h"
-printf '#pragma once\n#define LEAN_GITHASH "%s"\n' "$(lean --githash)" > "$INC/githash.h"
+printf '#pragma once\n#define LEAN_GITHASH "%s"\n' "$("$TOOLCHAIN/bin/lean" --githash)" > "$INC/githash.h"
 
 # ---------------------------------------------------------------------
 say "step 3 — regenerate the core library's C with the native lean"
@@ -166,21 +181,52 @@ gen_one() {
   local f="$1" out
   out="$CORE_C/$(echo "${f#$LEAN_SRC/}" | sed 's|/|_|g; s|\.lean$|.c|')"
   [ -s "$out" ] && return 0
-  lean -R "$LEAN_SRC" -c "$out" "$f" >/dev/null 2>&1 || { echo "GEN-FAIL $f" >&2; rm -f "$out"; }
+  # The toolchain's OWN binary, not the `lean` shim: elan resolves the
+  # shim from the CURRENT DIRECTORY's lean-toolchain file, and this
+  # script may be run from the repository root, which has none — then
+  # the default toolchain (another version) is used and every module
+  # fails with "incompatible header" (measured 2026-10-22: 631 GEN-FAILs,
+  # core-c with one file, an undefined-initialize_Init link).
+  "$TOOLCHAIN/bin/lean" -R "$LEAN_SRC" -c "$out" "$f" >/dev/null 2>&1 || { echo "GEN-FAIL $f" >&2; rm -f "$out"; }
 }
 export -f gen_one
-export CORE_C LEAN_SRC
+export CORE_C LEAN_SRC TOOLCHAIN
 # Init always; plus the Std subset the library imports (Std.Data.HashMap
 # / HashSet arrived with RLClosureIndexed and the COTTAS lazy dicts —
 # their initializers pull the Std/Data + Std/Classes import closure).
-# Std.Time / Std.Net / Std.Internal.UV are NOT regenerated: their C
+# Std.Net / Std.Internal.UV and most of Std.Time are NOT regenerated: their C
 # references libuv definitions the wasm link has only declarations for.
+#
+# The exception is the 26 Std.Time modules that `Std.Time.DateTime.Timestamp`
+# imports (listed below, none touches libuv). `Wasm/Ops/Clock.lean` imports
+# that one module to read the wall clock for NOW() (SPARQL 1.1 section
+# 17.4.5.1, https://github.com/danbri/factoidal/issues/743): its module
+# initialiser chains through those 26. The clock primitive itself,
+# `lean_get_current_time`, is in the runtime's io.cpp (step 5), over
+# `std::chrono::system_clock`, which Emscripten serves from the host's clock.
+# Recompute the list with the import closure of that module when the toolchain
+# is bumped: a module missing here is an undefined `initialize_Std_Time_*`
+# symbol at the link in step 8.
+STD_TIME_MODULES="Internal/Bounded Internal/UnitVal Internal
+  Time/Unit/Nanosecond Time/Unit/Second Time/Unit/Minute Time/Unit/Hour
+  Time/Unit/Millisecond Time/Unit/Basic Time/Basic Time/HourMarker
+  Time/PlainTime Time
+  Date/Unit/Day Date/Unit/Month Date/Unit/Year Date/Unit/Weekday Date/Unit/Week
+  Date/Unit/Basic Date/ValidDate Date/Basic Date/PlainDate Date
+  Duration DateTime/WallTime DateTime/Timestamp"
+STD_TIME_FILES=""
+for m in $STD_TIME_MODULES; do
+  [ -f "$LEAN_SRC/Std/Time/$m.lean" ] \
+    || { echo "Std.Time module $m is not in the toolchain sources"; exit 1; }
+  STD_TIME_FILES="$STD_TIME_FILES $LEAN_SRC/Std/Time/$m.lean"
+done
 STD_DIRS=""
 for d in "$LEAN_SRC/Std/Data" "$LEAN_SRC/Std/Classes" "$LEAN_SRC/Std/Do"; do
   [ -d "$d" ] && STD_DIRS="$STD_DIRS $d"
 done
 { echo "$LEAN_SRC/Init.lean"; find "$LEAN_SRC/Init" -name '*.lean'; \
-  [ -n "$STD_DIRS" ] && find $STD_DIRS -name '*.lean'; true; } \
+  [ -n "$STD_DIRS" ] && find $STD_DIRS -name '*.lean'; \
+  printf '%s\n' $STD_TIME_FILES; true; } \
   | xargs -P 8 -I{} bash -c 'gen_one "$@"' _ {}
 echo "  core C files: $(ls "$CORE_C"/*.c | wc -l | tr -d ' ')"
 
@@ -265,7 +311,12 @@ echo "  runtime objects: $(ls "$RT_OBJ"/*.o | wc -l | tr -d ' ') (incl. mimalloc
 
 # ---------------------------------------------------------------------
 say "step 6 — compile our library's C, the shim and the stub"
-rm -f "$LIB_OBJ"/*.o
+# Incremental and parallel: an object is recompiled when its .c is newer, and
+# objects whose module is gone are deleted (the stale-ir rule below). Until
+# 2026-10-10 this step deleted every object and compiled ~740 files one at a
+# time, about seven minutes on 4 CPUs; L4_WASM_JOBS sets the parallelism.
+JOBS="${L4_WASM_JOBS:-4}"
+LIBC_LIST="$WORK/lib-c.list"; : > "$LIBC_LIST"
 # Wasm/Main.c is the NATIVE CLI driver: it defines `main` and pulls in
 # lean_setup_args. It must never be linked into the wasm module — and
 # neither may Wasm/Cli.c (the l4factoidal CLI, its own `main`) nor ANY
@@ -285,9 +336,34 @@ while IFS= read -r f; do
   # C whose source module still exists.
   src="$LEAN_DIR/${rel%.c}.lean"
   [ -f "$src" ] || { echo "  (skipping stale ir: $rel — no $src)"; continue; }
-  emcc $CFLAGS -c "$f" -o "$LIB_OBJ/$b.o"
+  printf '%s %s\n' "$f" "$b" >> "$LIBC_LIST"
 done < <(find "$LEAN_DIR/.lake/build/ir" -name '*.c')
+# Delete every Lean library object that is not in the list (a module that was
+# deleted or renamed, or an object of an earlier layout), so a stale object
+# can never reach the link. The C objects compiled below are rebuilt anyway.
+for o in "${LIB_OBJ:?}"/*.o; do
+  [ -e "$o" ] || continue
+  b="$(basename "${o%.o}")"
+  case "$b" in Hacl_*|Lib_*|l4_*) continue;; esac
+  grep -q " $b\$" "$LIBC_LIST" || rm -f "$o"
+done
+lib_cc_one() {
+  local f="$1" b="$2" o="$LIB_OBJ/$2.o"
+  if [ -s "$o" ] && [ "$o" -nt "$f" ]; then return 0; fi
+  emcc $CFLAGS -c "$f" -o "$o.tmp" && mv "$o.tmp" "$o" \
+    || { echo "CC-FAIL $b" >&2; rm -f "$o.tmp" "$o"; return 1; }
+}
+export -f lib_cc_one
+export LIB_OBJ
+LIBCC_RC=0
+xargs -P "$JOBS" -L 1 bash -c 'lib_cc_one "$0" "$1"' < "$LIBC_LIST" || LIBCC_RC=$?
+[ "$LIBCC_RC" -eq 0 ] || { echo "step 6: a library C file failed to compile"; exit 1; }
+echo "  Lean library objects: $(wc -l < "$LIBC_LIST" | tr -d ' ')"
+# The shim, once per module: its initialiser names the exports module that
+# module links (Wasm/l4_shim.c, L4_INIT_MODULE).
 emcc $CFLAGS -c "$LEAN_DIR/Wasm/l4_shim.c"  -o "$LIB_OBJ/l4_shim.o"
+emcc $CFLAGS -DL4_INIT_MODULE=initialize_l4factoidal_Wasm_CoreExports \
+     -c "$LEAN_DIR/Wasm/l4_shim.c"  -o "$LIB_OBJ/l4_shim_core.o"
 emcc $CFLAGS -c "$LEAN_DIR/Wasm/l4_stubs.c" -o "$LIB_OBJ/l4_stubs.o"
 # HACL* Ed25519 + SHA-256 + P-256 + bignum — the library's `@[extern]`
 # crypto family (L4Factoidal/Crypto/Ed25519.lean, Crypto/SHA2Native.lean,
@@ -342,24 +418,81 @@ emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_hpke.c" -o "$LIB_OBJ/
 # answers the section 17.6 error.  Without this object the link fails on
 # l4_ext_call.
 emcc $CFLAGS -c "$LEAN_DIR/ffi/l4_ext.c" -o "$LIB_OBJ/l4_ext.o"
+# The positioned reads of a store whose bytes the host supplies
+# (Wasm/HostRead.lean: l4_host_read_at, l4_host_size; issue 1009).  EM_JS
+# thunks onto globalThis.__factoidalReadAt and __factoidalFileSize, which
+# npm/factoidal/lib/sbm11.mjs installs.  Without this object the link fails
+# on l4_host_read_at.
+emcc $CFLAGS -c "$LEAN_DIR/ffi/l4_hostread.c" -o "$LIB_OBJ/l4_hostread.o"
 echo "  library objects: $(ls "$LIB_OBJ"/*.o | wc -l | tr -d ' ')"
 
 # ---------------------------------------------------------------------
-say "step 7 — link"
+say "step 7 — link the full module and the core module"
 # em++ (not emcc) for the link: the C driver does not pull in libc++,
 # and Lean's runtime is C++.
 # The linker's dead-code elimination is what keeps this small — most of
 # Init is never reached from the exported entry points.
-em++ -O3 -DNDEBUG -fwasm-exceptions \
-  "$LIB_OBJ"/*.o "$CORE_OBJ"/*.o "$RT_OBJ"/*.o \
-  -o "$WORK/l4factoidal.mjs" \
+#
+# Two modules from one set of objects. Wasm_Exports.o and Wasm_CoreExports.o
+# define the same C symbols, so each link takes one of them and the shim
+# object compiled for its initialiser:
+#   l4factoidal.wasm       Wasm_Exports.o      + l4_shim.o
+#   l4factoidal-core.wasm  Wasm_CoreExports.o  + l4_shim_core.o
+# Every other object goes to both links; the core link drops what the core
+# dispatch does not reach (`--gc-sections`, the default).
+link_module() {
+  local name="$1" skip_exports="$2" skip_shim="$3"
+  local objs=()
+  for o in "$LIB_OBJ"/*.o; do
+    case "$(basename "$o")" in "$skip_exports"|"$skip_shim") continue;; esac
+    objs+=("$o")
+  done
+  local link_rc=0
+  em++ -O3 -DNDEBUG -fwasm-exceptions \
+  "${objs[@]}" "$CORE_OBJ"/*.o "$RT_OBJ"/*.o \
+  -o "$WORK/$name.mjs" \
   -sMODULARIZE=1 -sEXPORT_ES6=1 \
   -sEXPORTED_FUNCTIONS=_l4_init,_l4_version_c,_l4_bgp_query_c,_l4_call_c,_l4_call_blob_c,_l4_call_blob_io_c,_l4_free_result,_l4_free_blob,_l4_collect,_l4_mem_report_c,_l4_mem_stats_c,_l4_heap_tags_c,_l4_mi_option_set,_malloc,_free \
   -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToUTF8,lengthBytesUTF8,HEAPU8,getValue,setValue \
   -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4GB \
   -sSTACK_SIZE=8MB \
   -sENVIRONMENT=web,worker,node \
-  -sASSERTIONS=0
+  -sASSERTIONS=0 \
+  -Wl,--Map="$WORK/$name.map" 2> "$WORK/$name.link.stderr" || link_rc=$?
+  cat "$WORK/$name.link.stderr" >&2
+  [ "$link_rc" -eq 0 ] || { echo "error: the link of $name failed (exit $link_rc)" >&2; exit 1; }
+  # wasm-ld replaces a call whose signature differs from the callee's
+  # definition with an `unreachable` stub, and reports it only as a warning.
+  # Issue 1009: ffi/l4_hostread.c took an IO world argument that the Lean
+  # 4.33 code generator does not pass, and sbm11Open trapped on its first
+  # host call. The two Lean-runtime mismatches below are known and
+  # unreachable from the exported ABI (skills/lean4-wasm-export, trap 11);
+  # any other mismatch fails the build.
+  local mism
+  mism=$(grep -o 'function signature mismatch: [A-Za-z0-9_]*' "$WORK/$name.link.stderr" \
+         | sed 's/.*: //' | sort -u | grep -v -x -e lean_io_create_tempfile -e lean_io_create_tempdir) || mism=""
+  if [ -n "$mism" ]; then
+    echo "error: $name: wasm-ld function signature mismatch (each call traps): $mism" >&2
+    exit 1
+  fi
+  python3 "$REPO_ROOT/tools/wasm-size-profile.py" "$WORK/$name.map" \
+      --wasm "$WORK/$name.wasm" --top 60 > "$WORK/$name.size.md"
+  python3 "$REPO_ROOT/tools/wasm-size-profile.py" "$WORK/$name.map" \
+      --wasm "$WORK/$name.wasm" --by module --top 2000 > "$WORK/$name.size-modules.md"
+  echo "  $name.wasm: $(wc -c < "$WORK/$name.wasm") bytes (size table: $WORK/$name.size.md)"
+}
+link_module l4factoidal      Wasm_CoreExports.o l4_shim_core.o
+link_module l4factoidal-core Wasm_Exports.o     l4_shim.o
+
+# L4_WASM_NO_INSTALL=1: stop here, with both modules and their size tables in
+# the work directory and nothing installed. For a build that must not replace
+# the modules a running benchmark or test loads (2026-10-10, issue 713 stage
+# 5: a rebuild during the Lean vs F* bench would have swapped the wasm under
+# its child processes).
+if [ "${L4_WASM_NO_INSTALL:-0}" = "1" ]; then
+  echo "L4_WASM_NO_INSTALL=1: built $WORK/l4factoidal.wasm and $WORK/l4factoidal-core.wasm; nothing installed"
+  exit 0
+fi
 
 # ---------------------------------------------------------------------
 say "step 8 — install artifacts"
@@ -367,9 +500,20 @@ say "step 8 — install artifacts"
 # name and let our loader supply the bytes explicitly anyway.
 cp "$WORK/l4factoidal.mjs"  "$ASSETS/l4factoidal.mjs"
 cp "$WORK/l4factoidal.wasm" "$ASSETS/l4factoidal.wasm"
+cp "$WORK/l4factoidal-core.mjs"  "$ASSETS/l4factoidal-core.mjs"
+cp "$WORK/l4factoidal-core.wasm" "$ASSETS/l4factoidal-core.wasm"
+# The core module's loader is l4factoidal.js with the glue it imports and the
+# content-hash stamp changed: one loader source, two generated copies. The
+# core glue resolves l4factoidal-core.wasm from its own basename.
+CORE_SHA=$(sha256sum "$ASSETS/l4factoidal-core.wasm" | cut -d' ' -f1)
+sed -E -e "s|from './l4factoidal\.mjs';|from './l4factoidal-core.mjs';|" \
+       -e "s/^const WASM_VERSION = \"[0-9a-f]*\";/const WASM_VERSION = \"${CORE_SHA:0:12}\";/" \
+       "$ASSETS/l4factoidal.js" > "$ASSETS/l4factoidal-core.js"
+grep -q "from './l4factoidal-core.mjs';" "$ASSETS/l4factoidal-core.js" \
+  || { echo "step 8: the core loader does not import l4factoidal-core.mjs (the loader's import line changed)"; exit 1; }
 ls -l "$ASSETS"
 echo
-echo "wasm bytes: $(wc -c < "$ASSETS/l4factoidal.wasm")"
+echo "wasm bytes: $(wc -c < "$ASSETS/l4factoidal.wasm") (full), $(wc -c < "$ASSETS/l4factoidal-core.wasm") (core)"
 # ---------------------------------------------------------------------
 say "step 9 — companion npm package + Pages mirror + provenance"
 NPMLEAN="$LEAN_DIR/../../npm/factoidal-lean"
@@ -394,6 +538,7 @@ if [ -d "$NPMLEAN" ]; then
   python3 - "$NPMLEAN/version.json" <<PYEOF
 import json, sys, datetime
 json.dump({
+  "stamped": True,
   "version": "$PKG_VER",
   "gitSha": "$GIT_SHA",
   "builtAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -426,20 +571,30 @@ PYEOF
   L4ASSETS="$LEAN_DIR/../../npm/factoidal/l4-assets"
   if [ -d "$L4ASSETS" ]; then
     cp "$ASSETS/l4factoidal.js" "$ASSETS/l4factoidal.mjs" "$ASSETS/l4factoidal.wasm" "$L4ASSETS/"
+    # The package ships the full engine only (owner, 2026-10-20: "For now, we
+    # have a single fat core"); the core profile stays in the hub assets.
+    rm -f "$L4ASSETS/l4factoidal-core.js" "$L4ASSETS/l4factoidal-core.mjs" \
+       "$L4ASSETS/l4factoidal-core.wasm"
     # Its version.json carries `engine` and `note` members the companion
     # package's does not, so refresh the provenance fields in place
     # instead of overwriting the file.
     python3 - "$L4ASSETS/version.json" "$NPMLEAN/version.json" <<'PYSYNC'
-import json, sys
+import json, os, sys
 dst_path, src_path = sys.argv[1], sys.argv[2]
 src = json.load(open(src_path))
 dst = json.load(open(dst_path))
 for k in ("version", "gitSha", "builtAt", "leanToolchain", "emscripten",
           "abiVersion", "wasmSha256", "wasmBytes", "claims"):
     dst[k] = src[k]
+# The package carries no core module since 2026-10-20.
+dst.pop("coreWasmSha256", None)
+dst.pop("coreWasmBytes", None)
 # A stale-artifact note is a claim about the PREVIOUS build; a fresh
 # build is exactly the event that retires it.
 dst.pop("sourceDrift", None)
+# The committed placeholder says "stamped at release"; a local build stamps it.
+dst["stamped"] = True
+dst.pop("status", None)
 with open(dst_path, "w") as f:
     json.dump(dst, f, indent=2)
     f.write("\n")
@@ -462,8 +617,16 @@ PYSYNC
       BADCOPY=1
     fi
   done
+  for d in "$ASSETS"; do
+    [ -f "$d/l4factoidal-core.wasm" ] || continue
+    THIS=$(sha256sum "$d/l4factoidal-core.wasm" | cut -d' ' -f1)
+    if [ "$THIS" != "$CORE_SHA" ]; then
+      echo "  MISMATCH $d/l4factoidal-core.wasm has $THIS, expected $CORE_SHA"
+      BADCOPY=1
+    fi
+  done
   [ "$BADCOPY" -eq 0 ] || { echo "committed wasm copies disagree — refusing to report success"; exit 1; }
-  echo "  all committed wasm copies agree ($WASM_SHA)"
+  echo "  all committed wasm copies agree ($WASM_SHA; core $CORE_SHA)"
 else
   echo "  (npm/factoidal-lean absent — companion step skipped)"
 fi

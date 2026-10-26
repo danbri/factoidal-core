@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/tools/lean-tail-recursion-audit.py", line 1196, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/tools/lean-tail-recursion-audit.py", line 1024, in main
+    res = run_audit(args.ir_dir, args.lean_dir, REPO if not args.lean_dir else os.path.dirname(os.path.dirname(os.path.abspath(args.lean_dir))))
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/tools/lean-tail-recursion-audit.py", line 916, in run_audit
+    defs, calls, closures = scan_c_file(path)
+                            ~~~~~~~~~~~^^^^^^
+  File "/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/tools/lean-tail-recursion-audit.py", line 155, in scan_c_file
+    with open(path, "r", errors="replace") as fh:
+         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/Users/danbri/working/sandbox/october/tpac/codex-npm-review/integrate-pr1/formal/lean4/.lake/build/ir/L4Factoidal/RML/Targets.c'

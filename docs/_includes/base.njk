@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }} — Factoidal</title>
+<style>
+  /* Mobile-first: wide tables/code scroll inside their own box; the
+     page itself must never scroll horizontally on a phone. */
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 760px; margin: 1em auto; padding: 0 1em; line-height: 1.6; color: #333; background: #fff; overflow-wrap: break-word; }
+  @media (min-width: 720px) { body { margin: 2em auto; } }
+  h1 { border-bottom: 2px solid #2d6a4f; padding-bottom: 0.3em; }
+  h2 { margin-top: 1.8em; }
+  a { color: #2d6a4f; }
+  nav { margin-bottom: 1.5em; font-size: 0.95em; }
+  nav a { display: inline-block; padding: 0.5em 0.9em 0.5em 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; display: block; overflow-x: auto; }
+  @media (min-width: 720px) { table { display: table; overflow-x: visible; } }
+  th, td { border: 1px solid #ddd; padding: 0.4em 0.8em; text-align: left; }
+  th { background: #f5f5f5; }
+  pre { background: #f8f8f8; padding: 1em; overflow-x: auto; border-radius: 4px; }
+  code { background: #f0f0f0; padding: 0.15em 0.3em; border-radius: 3px; font-size: 0.9em; }
+  pre code { background: none; padding: 0; }
+  .score { font-size: 2em; font-weight: bold; color: #2d6a4f; }
+  footer { margin-top: 3em; border-top: 1px solid #ddd; padding-top: 1em; font-size: 0.9em; color: #666; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #121417; color: #d6dbe1; }
+    a { color: #7fd0a7; }
+    h1 { border-bottom-color: #7fd0a7; }
+    th { background: #1d2126; }
+    th, td { border-color: #333a42; }
+    pre { background: #1a1e23; }
+    code { background: #22272d; }
+    .score { color: #7fd0a7; }
+    footer { border-top-color: #333a42; color: #98a2ad; }
+  }
+</style>
+</head>
+<body>
+<nav>
+  <a href="{{ '/' | url }}">Home</a>
+  <a href="{{ '/web/hub/' | url }}">Hub</a>
+  <a href="{{ '/test-results/' | url }}">Test Results</a>
+  <a href="https://github.com/danbri/factoidal">GitHub</a>
+</nav>
+{{ content | safe }}
+<footer>
+Factoidal — verified RDF/SPARQL from F*.
+</footer>
+<script>
+// Offline support (issue #69). Registered from the site shell so it
+// runs on the very first page load a visitor makes; once active its
+// scope ("{{ '/' | url }}") covers the whole site including hub posts,
+// which use a different layout (hub.njk) and so don't run this script
+// themselves — they don't need to, the SW's fetch handler controls
+// their navigations regardless of which layout rendered the page.
+//
+// Anti-stale-lock: docs/sw.js is network-first for HTML and versions
+// its cache name to this build (see docs/.eleventy.js), so a new
+// deploy is never masked by an old cached bundle. The guarded
+// controllerchange reload below applies that new version to already-
+// open tabs without looping (it fires at most once per page load).
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("{{ '/sw.js' | url }}?v={{ buildVersion }}", { scope: "{{ '/' | url }}" })
+      .catch((err) => console.warn("[sw] registration failed", err));
+  });
+
+  let swRefreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (swRefreshing) return;
+    swRefreshing = true;
+    window.location.reload();
+  });
+}
+</script>
+</body>
+</html>

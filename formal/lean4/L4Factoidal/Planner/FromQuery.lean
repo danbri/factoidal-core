@@ -1,0 +1,91 @@
+/-
+Capability-aware planner, KR 2.2: a requirement from a parsed SPARQL query.
+
+https://github.com/danbri/factoidal/issues/801. `Requirement.ofQuery?`
+accepts a SELECT query whose WHERE clause is a basic graph pattern (or a
+join of basic graph patterns), with no dataset clause, no GROUP BY, no
+HAVING, no solution modifier and no trailing VALUES. It returns `none`
+for every other shape.
+
+A triple pattern with an RDF 1.2 triple term in any position is refused
+(`tpFlat`): the rewriting relation (`Planner.Plan`) has no access shape that
+returns a triple-term pattern (`patternTermOfTerm` maps no triple term) and
+`tpVars` reads only the three top positions, so the refusal is stated here,
+where a query enters the planner (CLAUDE.md anti-pattern 34;
+https://github.com/danbri/factoidal/issues/792 item 1).
+
+Two `none` cases are open shortfalls, each with an expected-failure case
+in `Harness/PlannerTest.lean` naming
+https://github.com/danbri/factoidal/issues/801:
+
+* `FILTER`: there is no `RowFilter` made from a SPARQL `Expr`. It needs a
+  proof that expression evaluation reads a solution mapping only through
+  `Binding.lookup` (the `respects` field of `RowFilter`).
+* `GRAPH`: the declared dataset has only a default graph; mappings do not
+  give quads.
+-/
+import L4Factoidal.Planner.Requirement
+
+namespace L4Factoidal.Planner
+
+open L4Factoidal.RDF L4Factoidal.SPARQL
+
+/-- No position of the triple pattern is a triple term. -/
+def tpFlat (tp : TriplePattern) : Bool :=
+  (match tp.s with | .tripleTerm _ _ _ => false | _ => true) &&
+  (match tp.p with | .tripleTerm _ _ _ => false | _ => true) &&
+  (match tp.o with | .tripleTerm _ _ _ => false | _ => true)
+
+/-- The triple patterns of a WHERE clause that is a basic graph pattern
+or a join of them, none with a triple term (`tpFlat`). Recursion is on
+the nesting of the pattern. -/
+def queryPatternBgp? : QueryPattern → Option Bgp
+  | .bgp ps   => if ps.all tpFlat then some ps else none
+  | .empty    => some []
+  | .join l r =>
+    match queryPatternBgp? l, queryPatternBgp? r with
+    | some a, some b => some (a ++ b)
+    | _, _ => none
+  | _ => none
+
+/-- SPARQL 1.1 Query §4.1.4 and §18.3: a blank node in a basic graph
+pattern behaves as a variable that is not projected. The planner's
+accesses treat a pattern constant as a key value, so `ofQuery?` renames
+each blank node `_:b` to the variable `_:b`. No SPARQL variable name can
+contain `:`, so the new name captures no query variable. Until 2026-10-22
+the blank node was kept as a constant, and a plan looked it up as a key:
+`tests/sbm11/gate/ids-bnode.rq` gave 0 rows where `l4sbm11 query` gives 1
+(found by `tests/planner/sbm11_gate.sh`). -/
+def bnodeVar (b : BNodeId) : VarName := "_:" ++ b
+
+def ptBnodeToVar : PatternTerm → PatternTerm
+  | .bnode b => .var (bnodeVar b)
+  | t => t
+
+def psBnodeToVar : PatternSubject → PatternSubject
+  | .bnode b => .var (bnodeVar b)
+  | t => t
+
+def tpBnodeToVar (tp : TriplePattern) : TriplePattern :=
+  { s := psBnodeToVar tp.s, p := ptBnodeToVar tp.p, o := ptBnodeToVar tp.o }
+
+/-- The projected variables; `none` for a `SELECT (expr AS ?v)` item.
+Tail call with an accumulator. -/
+def selectVarsGo : List SelectItem → List VarName → Option (List VarName)
+  | [], acc => some acc.reverse
+  | .var v :: rest, acc => selectVarsGo rest (v :: acc)
+  | .expr _ _ :: _, _ => none
+
+def Requirement.ofQuery? (q : Query) : Option Requirement :=
+  let m := q.modifier
+  if !q.pattern.mentionsFulltext && q.dataset.isEmpty && q.groupBy.isNone && q.having.isEmpty && q.postValues.isNone &&
+      m.orderBy.isNone && !m.distinct && !m.reduced && m.offset.isNone && m.limit.isNone then
+    match q.form, queryPatternBgp? q.pattern with
+    | .select .all, some b =>
+      some { bgp := b.map tpBnodeToVar, projection := (bgpVars b).eraseDups }
+    | .select (.vars items), some b =>
+      (selectVarsGo items []).map (fun vs => { bgp := b.map tpBnodeToVar, projection := vs })
+    | _, _ => none
+  else none
+
+end L4Factoidal.Planner

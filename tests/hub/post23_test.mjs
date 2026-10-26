@@ -1,0 +1,107 @@
+// Pins every live cell in
+// docs/web/historical-fstar-notebooks/23-decentralized-identifiers-did-key.md.
+//
+// The post's cells call `Factoidal.didKeyResolve` (the raw browser.js
+// export backed by the F*-extracted DID_Key.did_key_document) and the
+// typed `fn` adapter (fn.parse / fn.query) over the N-Triples it
+// returns. As with post12/post18, the Node-side `Factoidal` binding is
+// a small stub that mirrors browser.js's didKeyResolve -- it calls the
+// SAME npm-entry ABI function (abi.didKeyResolve) the browser build
+// loads, just backed by require() instead of fetch(). The `fn` binding
+// is the REAL npm/factoidal typed API; `pretty` is the shared node-side
+// stub from _helpers.mjs. The last cell renders with Observable Plot;
+// the browser has the vendored Plot, so here a tiny echo stub captures
+// the marks/data the cell computes so the pinning test can assert the
+// node/edge counts derived from the resolved document (the same
+// browser-vs-test duality documented for pretty() in hub/README.md).
+
+import { NPM_FACTOIDAL_INDEX, extractObservableCells, runReactivePost, pretty } from './_helpers.mjs';
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+const factoidal = (await import(NPM_FACTOIDAL_INDEX)).default;
+const POST_FILE = '23-decentralized-identifiers-did-key.md';
+
+const DID = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK';
+const VM = DID + '#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK';
+
+// The cells call the package's typed didKeyResolve -> Dataset through
+// `fn`, as the page does (issue 726).
+const Factoidal = factoidal;
+
+const Plot = {
+  plot: (spec) => ({ isPlot: true, ...spec }),
+  arrow: (data, options) => ({ mark: 'arrow', data, options }),
+  dot: (data, options) => ({ mark: 'dot', data, options }),
+  text: (data, options) => ({ mark: 'text', data, options }),
+};
+
+const cells = extractObservableCells(POST_FILE);
+const B = { Factoidal, fn: factoidal, pretty, Plot };
+
+test('post23: post has 6 live cells (DID + didDataset hoisted into named cells)', () => {
+  assert.equal(cells.length, 6, `expected 6 live cells, found ${cells.length}`);
+});
+
+test('post23: dependency inference wires DID -> didDataset -> every downstream cell', () => {
+  const post = runReactivePost(cells, B);
+  assert.deepEqual(post.names.slice(0, 2), ['DID', 'didDataset']);
+  assert.ok(post.infos[1].refs.includes('DID'), 'didDataset cell references DID');
+  for (const i of [2, 3, 4, 5]) {
+    assert.ok(post.infos[i].refs.includes('didDataset'), `cell ${i + 1} references didDataset`);
+  }
+});
+
+test('post23 cell 1 (resolve did:key): 8 triples, no network', async () => {
+  const post = runReactivePost(cells, B);
+  const result = await post.value(post.names[2]);
+  assert.equal(result, 8);
+});
+
+test('post23 cell 2 (DID Document as triples): 8-row s/p/o table', async () => {
+  const post = runReactivePost(cells, B);
+  const result = await post.value(post.names[3]);
+  assert.equal(result.kind, 'table');
+  assert.deepEqual(result.columns, ['s', 'p', 'o']);
+  assert.equal(result.rows.length, 8);
+  // Order-independent membership checks (the Dataset iterates its quads
+  // in sorted order, not the resolver's emission order).
+  const has = (row) => result.rows.some((r) => JSON.stringify(r) === JSON.stringify(row));
+  assert.ok(has([DID, 'https://w3id.org/security#verificationMethod', VM]),
+    'DID --verificationMethod--> method IRI');
+  assert.ok(has([VM, 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
+    'https://w3id.org/security#Ed25519VerificationKey2020']),
+    'method a Ed25519VerificationKey2020');
+  assert.ok(has([VM, 'https://w3id.org/security#publicKeyMultibase',
+    '"z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"^^https://w3id.org/security#multibase']),
+    'method publicKeyMultibase is the typed multibase literal');
+});
+
+test('post23 cell 3 (verification method via SPARQL): one row, typed key literal', async () => {
+  const post = runReactivePost(cells, B);
+  const result = await post.value(post.names[4]);
+  assert.deepEqual(result, {
+    kind: 'table',
+    columns: ['type', 'controller', 'key'],
+    rows: [[
+      'https://w3id.org/security#Ed25519VerificationKey2020',
+      DID,
+      '"z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"^^https://w3id.org/security#multibase',
+    ]],
+  });
+});
+
+test('post23 cell 4 (node-graph): 4 nodes, 8 edges derived from the document', async () => {
+  const post = runReactivePost(cells, B);
+  const result = await post.value(post.names[5]);
+  assert.equal(result.isPlot, true);
+  const arrow = result.marks.find((m) => m.mark === 'arrow');
+  const dots = result.marks.find((m) => m.mark === 'dot');
+  assert.ok(arrow, 'expected an arrow mark (the edges)');
+  assert.ok(dots, 'expected a dot mark (the nodes)');
+  assert.equal(arrow.data.length, 8, 'one arrow per triple');
+  assert.equal(dots.data.length, 4, 'DID, method, key-type, key-literal');
+  // Every edge carries a shortened predicate label.
+  assert.ok(arrow.data.every((e) => typeof e.pred === 'string' && e.pred.length > 0));
+});

@@ -1,0 +1,2 @@
+<!ENTITY % open "(#PCDATA">
+<!ELEMENT a %open;)*>

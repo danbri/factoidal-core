@@ -1,0 +1,68 @@
+# Foundation import exceptions, 2026-10-24 (version 0 of foundation/manifest.toml).
+# Each line: FOUNDATION_MODULE -> IMPORTED_MODULE  # kind: reason
+# kind 'impl': the import is outside the foundation. kind 'level': it is a
+# foundation module of a higher level. tools/foundation-gate.py fails when a
+# violation is missing here, when an entry is no longer a violation, or when
+# the entry count differs from max-entries. The list may only shrink: when you
+# remove an entry, lower max-entries in the same commit.
+# max-entries: 60
+L4Factoidal.CSVW.Conversion -> L4Factoidal.CSVW.Diagnostics  # impl: diagnostic messages of the CSVW pipeline; candidate support entry
+L4Factoidal.CSVW.Validate -> L4Factoidal.CSVW.Pipeline  # impl: the CSVW pipeline (implementation) imported by validation; invert the dependency
+L4Factoidal.Geo.Topology -> L4Factoidal.Geo.BBox  # impl: bounding-box prefilter inside the DE-9IM kernel; split
+L4Factoidal.JSONLD.Context -> L4Factoidal.JSONLD.Loader  # impl: document loader (IO boundary) imported by context processing; pass the loader as a parameter
+L4Factoidal.JSONLD.Expand -> L4Factoidal.ListTR  # impl: pure List lemma module (tail-recursion equations), no implementation; candidate support entry
+L4Factoidal.JSONLD.Flatten -> L4Factoidal.JSONLD.OrderedMap  # impl: insertion-ordered map data structure; candidate support entry
+L4Factoidal.OWL.OwlXml -> L4Factoidal.ListTR  # impl: pure List lemma module (tail-recursion equations), no implementation; candidate support entry
+L4Factoidal.OWL.RLRules -> L4Factoidal.XSD.ValueSpaceTheorems  # impl: value-space theorem module; move the import to a proof module
+L4Factoidal.OWL.RLSemantics -> L4Factoidal.OWL.RLTheorems  # impl: truth theorems over the executable RL rules; move the theorem import to a proof module
+L4Factoidal.OWL.RdfBased.Rules -> L4Factoidal.OWL.RLTheorems  # impl: truth theorems over the executable RL rules; move the theorem import to a proof module
+L4Factoidal.Proof.Syntax -> L4Factoidal.RDFS.DerivationCheck  # impl: FPP0 claim types import the derivation checker; the checker is an implementation (issue 976)
+L4Factoidal.RDF.DatasetSet -> L4Factoidal.RDF.GraphIndex  # impl: index used for a decision procedure inside the spec module; split the definition from the index
+L4Factoidal.RDF.DatasetSet -> L4Factoidal.Syntax.TriG  # level: the dataset set is defined over the TriG parser output; define it over RDF.Graph
+L4Factoidal.RDF.Datatypes -> L4Factoidal.JSON.Parser  # level: rdf:JSON datatype (RDF 1.2) lexical check uses the level-2 JSON parser; move the JSON value space to level 0
+L4Factoidal.RDF.Datatypes -> L4Factoidal.NatBounds  # impl: pure Nat bound lemmas, no implementation; candidate support entry
+L4Factoidal.RDF.Datatypes -> L4Factoidal.XML.Parser  # level: rdf:XMLLiteral lexical check uses the level-2 XML parser; move the XML value space to level 0
+L4Factoidal.RDF.Entailment -> L4Factoidal.JSON.Parser  # level: rdf:JSON datatype (RDF 1.2) lexical check uses the level-2 JSON parser; move the JSON value space to level 0
+L4Factoidal.RDF.EntailmentRdfsModelTheory -> L4Factoidal.OWL.Semantics  # level: RDFS model theory imports the OWL semantics module (level 1); split the shared interpretation structure
+L4Factoidal.RDF.EntailmentRdfsSpec -> L4Factoidal.RDFS.Closure  # impl: executable rdfs-core closure; the spec module should state the rules without the closure engine
+L4Factoidal.RDF.EntailmentRegimeSoundness -> L4Factoidal.RDFS.ReflexivityWitness  # impl: witness construction for the regime proof; move to a proof module
+L4Factoidal.RDF.EntailmentRegimeSoundness -> L4Factoidal.RDFS.RhoDfCompleteness  # impl: completeness proof imported by the regime spec; move to a proof module
+L4Factoidal.RDF.EntailmentRegimeSoundness -> L4Factoidal.Unified.RdfsSchema  # impl: unified-engine schema view imported by the regime spec; split
+L4Factoidal.RDF.Isomorphism -> L4Factoidal.RDF.GraphIndex  # impl: index used for a decision procedure inside the spec module; split the definition from the index
+L4Factoidal.RDF.Isomorphism -> L4Factoidal.RDF.IsoRefine  # impl: refinement-based isomorphism search used by the spec module; split the definition from the search
+L4Factoidal.RDFS.FullClosure -> L4Factoidal.RDFS.Closure  # impl: executable rdfs-core closure; the spec module should state the rules without the closure engine
+L4Factoidal.RIF.Builtins -> L4Factoidal.CSVW.Formats  # level: RIF built-ins reuse the CSVW number/date formats (level 3); move the shared format code to level 1
+L4Factoidal.RIF.OwlDirect -> L4Factoidal.RIF.Engine  # impl: forward-chaining engine imported by the RIF semantics module; split the semantics from the engine
+L4Factoidal.RIF.OwlDirect -> L4Factoidal.RIF.Saturate  # impl: saturation engine imported by RIF-OWL Direct; split the semantics from the engine
+L4Factoidal.RIF.RdfMapping -> L4Factoidal.RIF.Engine  # impl: forward-chaining engine imported by the RIF semantics module; split the semantics from the engine
+L4Factoidal.RIF.Xml -> L4Factoidal.ListTR  # impl: pure List lemma module (tail-recursion equations), no implementation; candidate support entry
+L4Factoidal.RML.Mapping -> L4Factoidal.RML.Error  # impl: error type of the RML runner; candidate support entry
+L4Factoidal.Regex.Profiles -> L4Factoidal.Regex.Ecma  # impl: regex engine used to decide pattern membership; the spec should state the XSD/F&O regex language, not the matcher
+L4Factoidal.Regex.XPath -> L4Factoidal.Regex.Exec  # impl: regex engine used to decide pattern membership; the spec should state the XSD/F&O regex language, not the matcher
+L4Factoidal.Regex.XPath -> L4Factoidal.Regex.XSDPattern  # impl: regex engine used to decide pattern membership; the spec should state the XSD/F&O regex language, not the matcher
+L4Factoidal.SHACL.Rules -> L4Factoidal.SPARQL.Parser  # level: SHACL-SPARQL parses SPARQL text with the level-2 grammar; take the parsed query as input
+L4Factoidal.SHACL.Sparql -> L4Factoidal.SPARQL.Parser  # level: SHACL-SPARQL parses SPARQL text with the level-2 grammar; take the parsed query as input
+L4Factoidal.SHACL.Validation -> L4Factoidal.NatBounds  # impl: pure Nat bound lemmas, no implementation; candidate support entry
+L4Factoidal.SHACL.Validation -> L4Factoidal.SHACL.DataIndex  # impl: SHACL validation uses the (subject, predicate) index; split the semantics from the index
+L4Factoidal.SPARQL.DatasetRestriction -> L4Factoidal.SPARQL.StoreDataset  # impl: store-side dataset assembly imported by the FROM/FROM NAMED spec; invert the dependency
+L4Factoidal.SPARQL.EntailmentRegimeRdfs -> L4Factoidal.RDFS.ClosureTheorems  # impl: executable rdfs-core closure; the spec module should state the rules without the closure engine
+L4Factoidal.SPARQL.EntailmentRegimeRdfs -> L4Factoidal.SPARQL.BgpRefinement  # impl: BGP refinement proof imported by the regime spec; move to a proof module
+L4Factoidal.SPARQL.Parser -> L4Factoidal.SPARQL.Tokenizer  # impl: the SPARQL grammar uses the tokenizer implementation; the token grammar is SPARQL §19.8
+L4Factoidal.SPARQL.Query -> L4Factoidal.RDF.ConciseBoundedDescription  # impl: DESCRIBE uses the CBD implementation (CBD is a W3C Member Submission, not a SPARQL form definition)
+L4Factoidal.SPARQL.Query -> L4Factoidal.SPARQL.ExistsIndex  # impl: EXISTS fast path imported by the query semantics; split the reference from the fast path
+L4Factoidal.SPARQL.Query -> L4Factoidal.SPARQL.ExprRefinement  # impl: expression refinement proof imported by the query semantics; move to a proof module
+L4Factoidal.SPARQL.Query -> L4Factoidal.SPARQL.OrderedPrefix  # impl: ordered-prefix (top-k) optimisation imported by the query semantics; split
+L4Factoidal.SPARQL.Update -> L4Factoidal.RDF.GraphIndex  # impl: index used for a decision procedure inside the spec module; split the definition from the index
+L4Factoidal.SPARQL.UpdateDenotation -> L4Factoidal.RDF.CertifiedDataset  # impl: handle store imported by the update denotation; invert the dependency
+L4Factoidal.ShEx.Validation -> L4Factoidal.ShEx.XsdLexical  # impl: ShEx-local copy of XSD lexical checks; replace with XSD.Lexical
+L4Factoidal.Storage.Sbm11.IdAllowedTheorems -> L4Factoidal.Storage.Sbm11.IdGroupTheorems  # impl: Allowed lives in the SBM11 storage proof tree; move Allowed to a SPARQL spec module
+L4Factoidal.Syntax.NTriples -> L4Factoidal.Syntax.Lexing  # impl: shared lexical primitives of the reference grammars; to be split into a grammar-spec part
+L4Factoidal.Syntax.RdfXml -> L4Factoidal.Syntax.Lexing  # impl: shared lexical primitives of the reference grammars; to be split into a grammar-spec part
+L4Factoidal.Syntax.TriG -> L4Factoidal.Syntax.NQuadsFastTheorems  # impl: TriG grammar imports the fast N-Quads theorems; split
+L4Factoidal.Syntax.Turtle -> L4Factoidal.NatBounds  # impl: pure Nat bound lemmas, no implementation; candidate support entry
+L4Factoidal.Syntax.Turtle -> L4Factoidal.Syntax.Lexing  # impl: shared lexical primitives of the reference grammars; to be split into a grammar-spec part
+L4Factoidal.XSD.Datatypes -> L4Factoidal.Regex.Exec  # impl: regex engine used to decide pattern membership; the spec should state the XSD/F&O regex language, not the matcher
+L4Factoidal.XSD.Datatypes -> L4Factoidal.Regex.XSDPattern  # impl: regex engine used to decide pattern membership; the spec should state the XSD/F&O regex language, not the matcher
+L4Factoidal.XSD.Datatypes -> L4Factoidal.XML.Document  # level: XSD datatypes use the XML document model (xsd:NCName and related); move the shared names to level 0
+L4Factoidal.XSD.Facets -> L4Factoidal.NatBounds  # impl: pure Nat bound lemmas, no implementation; candidate support entry
+L4Factoidal.XSD.SimpleType -> L4Factoidal.Regex.Xsd11  # impl: regex engine used to decide pattern membership; the spec should state the XSD/F&O regex language, not the matcher

@@ -1,0 +1,3 @@
+# Every named graph, with or without a triple, named by an IRI or a blank node
+# (SPARQL 1.1 Query section 18.6: GRAPH ?g { } gives one solution for each named graph).
+SELECT ?g WHERE { GRAPH ?g { } }

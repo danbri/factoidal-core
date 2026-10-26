@@ -1,0 +1,2 @@
+# COUNT over the default graph: the overlay merged into the count.
+SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }

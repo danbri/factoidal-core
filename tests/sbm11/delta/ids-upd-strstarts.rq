@@ -1,0 +1,2 @@
+# STRSTARTS on an overlay literal (not a dictionary rank).
+SELECT ?s ?n WHERE { ?s <http://ex.org/name> ?n FILTER(STRSTARTS(?n, "Ze")) }

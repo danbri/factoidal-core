@@ -45,6 +45,7 @@ equal to `"1.0"^^xsd:decimal`, which OWL 2 denies.
 import L4Factoidal.RDF.Core
 import L4Factoidal.NatBounds
 import L4Factoidal.XSD.Datatypes
+import L4Factoidal.XSD.Lexical
 
 namespace L4Factoidal.XSD
 
@@ -263,87 +264,14 @@ def facetsToInterval (baseDt : WfIri) (facets : List (WfIri × Term)) (acc : Int
 
 /-! ## `xsd:dateTime` as a UTC millisecond key
 
-An instant is a point on a fourth dimension, disjoint from every
-numeric one. The key is the UTC-normalised millisecond count, and a
-value WITHOUT an explicit timezone gets NO key: its instant is only
-partially ordered against timezoned bounds (XML Schema leaves the
-mixed comparison indeterminate), so it is kept in every intersection
-rather than compared.
-
-`L4Factoidal/SHACL/Validation.lean` carries the same parser for the
-SHACL ordering facets. The duplication is deliberate and matches the
-F\* tree: this module sits below SHACL in the import order, and the
-two differ in exactly the place that matters — SHACL returns the
-has-timezone flag and compares only same-flag pairs, this one drops
-an untimezoned value outright. -/
-
-/-- The proleptic Gregorian day number, on Int-valued month and day —
-one call into `XSD.Datatypes.daysFromCivil`, which is the same function
-this module used to carry a second copy of. -/
-def daysFromCivilInt (y m d : Int) : Int := daysFromCivil y m.toNat d.toNat
-
-def substrOf (s : String) (start len : Nat) : String :=
-  String.ofList ((s.toList.drop start).take len)
-
-def parseDigitsSub (s : String) (start len : Nat) : Option Int :=
-  let cs := (s.toList.drop start).take len
-  if cs.length != len || !(cs.all isAsciiDigit) then none
-  else some (cs.foldl (fun a c => a * 10 + digitVal c) 0)
-
-/-- The `(.fraction)?(Z|±HH:MM)?` tail: fraction in ms, timezone
-    offset in seconds, and whether a timezone was present. -/
-def dtParseTail (tail : String) : Option (Int × Int × Bool) :=
-  let cs := tail.toList
-  let (fracMs, tzStart) : Option Int × Nat :=
-    match cs with
-    | '.' :: rest =>
-        let digits := rest.takeWhile isAsciiDigit
-        if digits.isEmpty then (none, 0)
-        else
-          let digLen := min digits.length 3
-          match parseFacetInt (String.ofList (digits.take digLen)) with
-          | some f =>
-              let ms := if digLen == 1 then f * 100 else if digLen == 2 then f * 10 else f
-              (some ms, 1 + digits.length)
-          | none => (none, 0)
-    | _ => (some 0, 0)
-  match fracMs with
-  | none      => none
-  | some fms  =>
-    let rest := cs.drop tzStart
-    match rest with
-    | []      => some (fms, 0, false)
-    | ['Z']   => some (fms, 0, true)
-    | sign :: _ =>
-        if rest.length == 6 && (sign == '+' || sign == '-') then
-          match parseFacetInt (String.ofList ((rest.drop 1).take 2)),
-                parseFacetInt (String.ofList ((rest.drop 4).take 2)) with
-          | some th, some tm =>
-              let off := th * 3600 + tm * 60
-              some (fms, if sign == '-' then -off else off, true)
-          | _, _ => none
-        else none
-
-/-- The UTC millisecond key of a TIMEZONED `xsd:dateTime`. An
-    untimezoned value, an expanded or negative year, or a malformed
-    field answers `none` and is dropped. -/
-def dtParseUtcMs (s : String) : Option Int :=
-  let len := s.length
-  if len < 19 then none
-  else if substrOf s 0 1 == "-" then none
-  else
-    match parseDigitsSub s 0 4, parseDigitsSub s 5 2, parseDigitsSub s 8 2,
-          parseDigitsSub s 11 2, parseDigitsSub s 14 2, parseDigitsSub s 17 2 with
-    | some y, some mo, some d, some h, some mi, some se =>
-        (match dtParseTail (String.ofList (s.toList.drop 19)) with
-         | some (fms, tzoff, hasTz) =>
-             if hasTz then
-               let days := daysFromCivilInt y mo d
-               let secs := days * 86400 + h * 3600 + mi * 60 + se - tzoff
-               some (secs * 1000 + fms)
-             else none
-         | none => none)
-    | _, _, _, _, _, _ => none
+The interval solver uses integer milliseconds. Shared XSD 1.1 parsing
+handles calendar validation and offsets. Values with missing timezones or
+sub-millisecond precision have no exact key and remain unmodelled here;
+truncating them would equate distinct instants and permit false clashes. -/
+def dtParseUtcMs (s : String) : Option Int := do
+  let v ← parseDateTimeFor .xsd11 .dateTime s
+  if v.tz.isNone then none
+  else (Dec.mulInt (timeOnTimeline v) 1000).toInt?
 
 def termDateTimeKey : Term → Option Int
   | .literal l => if l.val.datatype == xsdDateTime then dtParseUtcMs l.val.lexicalForm
@@ -372,6 +300,19 @@ structure Rat where
 def pow10 : Nat → Int
   | 0     => 1
   | n + 1 => 10 * pow10 n
+
+/-- `pow10` as the core power: `Int.pow` of a non-negative base is one
+`Nat.pow` (`lean_nat_pow`, GMP), so no stack frame per digit
+(https://github.com/danbri/factoidal/issues/752). -/
+def pow10Fast (n : Nat) : Int := 10 ^ n
+
+theorem pow10_eq_pow : ∀ n, pow10 n = 10 ^ n
+  | 0     => rfl
+  | n + 1 => by rw [pow10, pow10_eq_pow n, Int.pow_succ, Int.mul_comm]
+
+/-- The compiler runs `pow10Fast` wherever the source says `pow10`. -/
+@[csimp] theorem pow10_eq_fast : @pow10 = @pow10Fast := by
+  funext n; exact pow10_eq_pow n
 
 def pow2i : Nat → Int
   | 0     => 1
@@ -789,6 +730,41 @@ def valueSetSubtract : ValueSet → ValueSet → ValueSet
       enumOr (filterEnumBy (fun t => !(ys.any (termProvablyEqual t))) xs)
   | acc, _ => acc
 
+/-! ## Is a literal provably IN a value set?
+
+The other direction from `provablyOutside…`: `true` only when the
+literal's value lies in the set in every interpretation, so a caller
+may count it as a member. Every shape this module cannot decide answers
+`false`, which under-counts members; an under-count only withholds a
+clash that counts members against an upper bound.
+
+* a family: the literal's own datatype is in that family and its
+  lexical form is in the lexical space where the family has a parser
+  (`xsd:string` admits every lexical form; boolean, integer and the
+  exact real datatypes are parsed). `xsd:float` and `xsd:double`
+  answer `false`.
+* an integer interval: the literal has an integer value inside it;
+* a dense stretch of the `owl:real` line: the literal has an exact
+  rational value inside it;
+* an enumeration: the literal is provably equal to a member.
+-/
+def termProvablyInValueSet (vs : ValueSet) (t : Term) : Bool :=
+  match t with
+  | .literal _ =>
+    match vs with
+    | .family .string  => termFamily t == some Family.string
+    | .family .boolean => (termBoolOpt t).isSome
+    | .family .numeric => (termExactRat t).isSome
+    | .interval iv     => match termIntOpt t with
+                          | some n => valueInInterval n iv
+                          | none   => false
+    | .dense qi        => match termExactRat t with
+                          | some q => ratInQInterval q qi
+                          | none   => false
+    | .enum xs         => xs.any (termProvablyEqual t)
+    | _                => false
+  | _ => false
+
 /-! ## How many values can this space hold?
 
 A SOUND UPPER bound. The direction matters: the answer `M` must be at
@@ -811,57 +787,6 @@ def intervalCount (iv : Interval) : Option Nat :=
   | some lo, some hi => some (if hi ≥ lo then (hi - lo + 1).toNat else 0)
   | _,       _       => none
 
-/-! ## Finite exclusions
-
-An OWL negative data-property assertion, or an asserted value on a
-disjoint data property, removes a VALUE from one existential
-obligation.  Enumeration operands can be filtered directly.  A
-bounded integer interval is handled by cardinality: count only
-distinct, exactly parsed integer values which lie in the interval.
-The count is therefore a lower bound on excluded values and cannot
-manufacture an empty value space.
--/
-
-/-- The upper bound on values left after `excludedDistinct` different
-    members of a finite space have been excluded.  This is the
-    arithmetic fact used by `valueSetIsEmptyAfterExcluding`. -/
-def finiteSpaceRemainingUpperBound (spaceSize excludedDistinct : Nat) : Nat :=
-  spaceSize - excludedDistinct
-
-theorem finiteSpaceRemainingUpperBound_eq_zero_iff
-    (spaceSize excludedDistinct : Nat) :
-    finiteSpaceRemainingUpperBound spaceSize excludedDistinct = 0 ↔
-      spaceSize ≤ excludedDistinct := by
-  exact Nat.sub_eq_zero_iff_le
-
-/-- Distinct excluded integer values that are members of `iv`.
-    Unreadable values and values from other datatype families are
-    absent, so the result can only under-count exclusions. -/
-def excludedIntegerValuesIn (iv : Interval) (excluded : List Term) : List Int :=
-  ((excluded.filterMap termIntOpt).filter (valueInInterval · iv)).eraseDups
-
-/-- Is `space` provably empty after removing the finite set
-    `excluded`?  Equality is OWL data-value equality through
-    `termProvablyEqual`; unknown comparisons retain the value.
-
-    Dense, date/time and family-only spaces are not made empty by a
-    finite exclusion.  A bounded integer interval is empty only when
-    its number of distinct, in-range excluded integer values reaches
-    the exact interval cardinality. -/
-def valueSetIsEmptyAfterExcluding (space : ValueSet) (excluded : List Term) : Bool :=
-  match space with
-  | .empty => true
-  | .enum xs =>
-      (xs.filter (fun x => !(excluded.any (termProvablyEqual x)))).isEmpty
-  | .interval iv =>
-      match intervalCount iv with
-      | some n => finiteSpaceRemainingUpperBound n
-                    (excludedIntegerValuesIn iv excluded).length == 0
-      | none   => false
-  | .dateInterval iv => intervalEmptyDense iv
-  | .dense qi => qIntervalEmpty qi
-  | .unconstrained | .family _ => false
-
 def dropProvablyEqual (h : Term) (xs : List Term) : List Term :=
   xs.filter (fun x => !(termProvablyEqual h x))
 
@@ -881,6 +806,9 @@ def valueSetMaxSize : ValueSet → Option Nat
   -- values, so no finite bound.
   | .dense qi        => if qIntervalEmpty qi then some 0 else none
   | .unconstrained   => none
+  -- XSD 1.1 Part 2 §3.3.2.1: the value space of `xsd:boolean` is
+  -- `{true, false}`. Every other family is infinite.
+  | .family .boolean => some 2
   | .family _        => none
 
 end L4Factoidal.XSD

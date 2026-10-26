@@ -1002,6 +1002,7 @@ theorem decodeSpec?_encoded (target : ByteArray) (es : List Entry)
     (htarget : target.size = 32) (hcountfit : es.length < UInt32.size)
     (hok : ∀ e ∈ es, entryOk e) (hinc : strictlyIncreasing es = true)
     (hperm : localIdsPermutation es es.length = true)
+    (hfold : foldedEntries es = true)
     (hpcfit : (pageRefs (pageBytes es) (chunks es.length es)).length < UInt32.size)
     (hdirfit : ((pageRefs (pageBytes es) (chunks es.length es)).flatMap
       encodePageRef).length < UInt32.size)
@@ -1215,7 +1216,7 @@ theorem decodeSpec?_encoded (target : ByteArray) (es : List Entry)
   rw [hcrcread, hpayex]
   simp only [bne_self_eq_false, Bool.false_eq_true, if_false, hdirex, hpagex, hdecrefs,
     List.isEmpty_nil, Bool.not_true, hcontig, hsum,
-    Bool.or_self, hdecpages, canonicalEntries, hinc, hperm, Bool.and_self, htlDef,
+    Bool.or_self, hdecpages, canonicalEntries, hinc, hperm, hfold, Bool.and_self, htlDef,
     byteArrayOfList_data_toList]
   rw [if_neg (by
       simp only [Bool.false_or, decide_eq_true_eq, Nat.not_lt, hinplen, prefixBytes, crcBytes]
@@ -1231,6 +1232,7 @@ theorem decode?_encoded (target : ByteArray) (es : List Entry)
     (htarget : target.size = 32) (hcountfit : es.length < UInt32.size)
     (hok : ∀ e ∈ es, entryOk e) (hinc : strictlyIncreasing es = true)
     (hperm : localIdsPermutation es es.length = true)
+    (hfold : foldedEntries es = true)
     (hpcfit : (pageRefs (pageBytes es) (chunks es.length es)).length < UInt32.size)
     (hdirfit : ((pageRefs (pageBytes es) (chunks es.length es)).flatMap
       encodePageRef).length < UInt32.size)
@@ -1254,7 +1256,7 @@ theorem decode?_encoded (target : ByteArray) (es : List Entry)
           (pageBytes es).flatten))))
       = some { targetIBKSha256 := target, entries := es.toArray } := by
   rw [decode?_eq_spec]
-  exact decodeSpec?_encoded target es htarget hcountfit hok hinc hperm hpcfit hdirfit hareafit
+  exact decodeSpec?_encoded target es htarget hcountfit hok hinc hperm hfold hpcfit hdirfit hareafit
 
 /-- The TLI1 codec round trip: whatever `encode?` accepts, `decode?` returns
 unchanged. The only hypothesis is that `encode?` accepted the input.
@@ -1291,8 +1293,12 @@ theorem decodeSpec?_encode? (index : Index) (bytes : ByteArray) (h : encode? ind
           rw [hlen]; exact hcnt
         have hok : ∀ e ∈ index.entries.toList, entryOk e := by
           intro e he
-          obtain ⟨⟨⟨⟨hid, hkey⟩, hklen⟩, hsup⟩, hfit⟩ := hall e he
+          obtain ⟨⟨⟨⟨⟨hid, hkey⟩, hklen⟩, hsup⟩, hfit⟩, -⟩ := hall e he
           exact ⟨hkey, hklen, Nat.lt_trans hid hcnt, hsup, (termFitsU32b_iff e.term).mp hfit⟩
+        have hfold : foldedEntries index.entries.toList = true := by
+          rw [foldedEntries, List.all_eq_true]
+          intro e he
+          exact (hall e he).2
         have hinc : strictlyIncreasing index.entries.toList = true := by
           cases hx : strictlyIncreasing index.entries.toList
           · rw [hx] at hordered; simp at hordered
@@ -1302,7 +1308,7 @@ theorem decodeSpec?_encode? (index : Index) (bytes : ByteArray) (h : encode? ind
         simp only [Bool.or_eq_true, Bool.not_eq_true', fitsU32, two32_eq_uint32Size, decide_eq_false_iff_not,
           Nat.not_lt, not_or, Nat.not_le] at hguard
         rw [decodeSpec?_encoded index.targetIBKSha256 index.entries.toList htsize hcountfit
-          hok hinc hperm' (by omega) (by omega) (by omega)]
+          hok hinc hperm' hfold (by omega) (by omega) (by omega)]
 
 #print axioms parseEntry_encodeEntry
 #print axioms parseRefs_ok
