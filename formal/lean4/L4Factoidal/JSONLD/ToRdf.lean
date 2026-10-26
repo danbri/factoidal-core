@@ -17,6 +17,11 @@ https://www.w3.org/TR/json-ld11-api/):
     (`RdfDirectionMode`);
   * RFC 8785 JSON Canonicalization Scheme — `jcsDocument`, used for
     `@json` literals (`rdf:JSON`).
+  * JSON-LD-star (RDF 1.2; `docs/designissues/2026-10-26-jsonld-star.md`),
+    on when `RdfAcc.rdfstar` is true: `@triple` is a triple term, `@reifies`
+    gives `rdf:reifies` triples to the triple terms of its values (those
+    triples are not asserted), `@annotation` makes a reifier of the asserted
+    triple through the reverse-property walk `expandReverseProp`.
 
 INPUT IS EXPANDED FORM ONLY: an array of node objects whose keys are
 absolute IRIs or keywords, and whose property values are arrays of node
@@ -81,6 +86,7 @@ def rdfJsonIri      : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#JS
 def rdfValueIri     : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#value", rfl⟩
 def rdfDirectionIri : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#direction", rfl⟩
 def rdfLanguageIri  : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#language", rfl⟩
+def rdfReifiesIri   : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies", rfl⟩
 
 /-! ## Number lexeme decomposition
 
@@ -950,6 +956,23 @@ structure RdfAcc where
   /-- The prefix of the generated blank node labels (`generatedPrefix` of the
   document); it does not change during the walk. -/
   labelPrefix : String
+  /-- JSON-LD-star (`option.rdfstar`): `@triple`, `@reifies` and `@annotation`
+  make triple terms and reifiers. When false they are ignored, as any unknown
+  keyword. It does not change during the walk. -/
+  rdfstar : Bool := false
+
+/-- `subj rdf:reifies <<( t )>>` for each triple `t` of `ts`, prepended to
+`acc`. A loop. -/
+def reifiesPrepend (subj : Subject) : List Triple → List Triple → List Triple
+  | [], acc => acc
+  | t :: rest, acc =>
+    reifiesPrepend subj rest ({ s := subj, p := rdfReifiesIri, o := .tripleTerm t.s t.p t.o } :: acc)
+
+/-- The one triple of a `@triple` value, as a triple term: `none` unless the
+walk of its node gave exactly one triple. -/
+def singleTripleTerm : List Triple → Option Term
+  | [t] => some (.tripleTerm t.s t.p t.o)
+  | _   => none
 
 mutual
 
@@ -973,10 +996,17 @@ def expandValue (rdir : RdfDirectionMode) (v : Json) (st : RdfAcc) (fuel : Nat)
           let (t, st1) := expandList rdir (jldAsArray lst) st fuel
           (some t, st1)
         | none =>
-          let (osubj, st1) := expandNodeR rdir v st fuel
-          match osubj with
-          | some subj => (some subj.toTerm, st1)
-          | none      => (none, st1)
+          match (if st.rdfstar then v.field? "@triple" else none) with
+          | some tn =>
+            -- JSON-LD-star: the triples of the node are not asserted; the
+            -- value is the triple term of the one triple that it gives.
+            let stT := expandGraphNodes rdir (jldAsArray tn) { st with acc := [] } fuel
+            (singleTripleTerm stT.acc, { stT with acc := st.acc })
+          | none =>
+            let (osubj, st1) := expandNodeR rdir v st fuel
+            match osubj with
+            | some subj => (some subj.toTerm, st1)
+            | none      => (none, st1)
     | _ => (scalarToTerm v, st)
 termination_by fuel
 
@@ -1064,6 +1094,11 @@ def expandFieldsR (rdir : RdfDirectionMode) (subj : Subject) (fields : List (Str
         if key == "@type" then { st with acc := typePrepend subj value st.acc }
         else if key == "@reverse" then expandReverseMap rdir subj value st fuel
         else if key == "@included" then expandGraphNodes rdir (jldAsArray value) st fuel
+        else if key == "@reifies" && st.rdfstar then
+          -- JSON-LD-star: `subj rdf:reifies <<( t )>>` for each triple `t`
+          -- that the values give; those triples are not asserted.
+          let stR := expandGraphNodes rdir (jldAsArray value) { st with acc := [] } fuel
+          { stR with acc := reifiesPrepend subj stR.acc.reverse st.acc }
         else if isKeywordKey key then st
         else if predicateIriWf key then
           match mkWfIri? key with
@@ -1096,7 +1131,7 @@ def expandReverseEntries (rdir : RdfDirectionMode) (subj : Subject)
       let st1 :=
         if predicateIriWf prop then
           match mkWfIri? prop with
-          | some p => expandReverseProp rdir subj p (jldAsArray value) st fuel
+          | some p => expandReverseProp rdir subj.toTerm p (jldAsArray value) st fuel
           | none   => st
         else st
       expandReverseEntries rdir subj rest st1 fuel
@@ -1106,7 +1141,7 @@ termination_by fuel
 node reference / node object exactly like an ordinary property value,
 and the emitted triple points FROM the item TO the enclosing node — the
 direction swap that makes it a "reverse" property. -/
-def expandReverseProp (rdir : RdfDirectionMode) (subj : Subject) (prop : WfIri)
+def expandReverseProp (rdir : RdfDirectionMode) (obj : Term) (prop : WfIri)
     (vals : List Json) (st : RdfAcc) (fuel : Nat) : RdfAcc :=
   match fuel with
   | 0 => st
@@ -1116,10 +1151,15 @@ def expandReverseProp (rdir : RdfDirectionMode) (subj : Subject) (prop : WfIri)
     | v :: rest =>
       let (osubj, st1) := expandNodeR rdir v st fuel
       let st2 := match osubj with
-                 | some vsubj => { st1 with
-                     acc := { s := vsubj, p := prop, o := subj.toTerm } :: st1.acc }
+                 | some vsubj =>
+                   let st1a := { st1 with acc := { s := vsubj, p := prop, o := obj } :: st1.acc }
+                   match (if st1a.rdfstar then v.field? "@annotation" else none) with
+                   | some anns =>
+                     expandReverseProp rdir (.tripleTerm vsubj prop obj) rdfReifiesIri
+                       (jldAsArray anns) st1a fuel
+                   | none => st1a
                  | none => st1
-      expandReverseProp rdir subj prop rest st2 fuel
+      expandReverseProp rdir obj prop rest st2 fuel
 termination_by fuel
 
 /-- The array of values of one property. -/
@@ -1133,7 +1173,16 @@ def expandPropertyR (rdir : RdfDirectionMode) (subj : Subject) (prop : WfIri)
     | v :: rest =>
       let (oterm, st1) := expandValue rdir v st fuel
       let st2 := match oterm with
-                 | some t => { st1 with acc := { s := subj, p := prop, o := t } :: st1.acc }
+                 | some t =>
+                   let st1a := { st1 with acc := { s := subj, p := prop, o := t } :: st1.acc }
+                   -- JSON-LD-star: each annotation node is a reifier of the
+                   -- triple, `r rdf:reifies <<( subj prop t )>>`, the reverse
+                   -- property `rdf:reifies` of the triple term.
+                   match (if st1a.rdfstar then v.field? "@annotation" else none) with
+                   | some anns =>
+                     expandReverseProp rdir (.tripleTerm subj prop t) rdfReifiesIri
+                       (jldAsArray anns) st1a fuel
+                   | none => st1a
                  | none   => st1
       expandPropertyR rdir subj prop rest st2 fuel
 termination_by fuel
@@ -1202,10 +1251,17 @@ def expandValueW (rdir : RdfDirectionMode) (v : Json) (st : RdfAcc) (fuel : Nat)
           let (t, st1) := expandListGo rdir (jldAsArray lst) st fuel []
           (some t, st1)
         | none =>
-          let (osubj, st1) := expandNodeRW rdir v st fuel
-          match osubj with
-          | some subj => (some subj.toTerm, st1)
-          | none      => (none, st1)
+          match (if st.rdfstar then v.field? "@triple" else none) with
+          | some tn =>
+            -- JSON-LD-star: the triples of the node are not asserted; the
+            -- value is the triple term of the one triple that it gives.
+            let stT := expandGraphNodesW rdir (jldAsArray tn) { st with acc := [] } fuel
+            (singleTripleTerm stT.acc, { stT with acc := st.acc })
+          | none =>
+            let (osubj, st1) := expandNodeRW rdir v st fuel
+            match osubj with
+            | some subj => (some subj.toTerm, st1)
+            | none      => (none, st1)
     | _ => (scalarToTerm v, st)
 termination_by fuel
 
@@ -1263,6 +1319,11 @@ def expandFieldsRW (rdir : RdfDirectionMode) (subj : Subject) (fields : List (St
         if key == "@type" then { st with acc := typePrepend subj value st.acc }
         else if key == "@reverse" then expandReverseMapW rdir subj value st fuel
         else if key == "@included" then expandGraphNodesW rdir (jldAsArray value) st fuel
+        else if key == "@reifies" && st.rdfstar then
+          -- JSON-LD-star: `subj rdf:reifies <<( t )>>` for each triple `t`
+          -- that the values give; those triples are not asserted.
+          let stR := expandGraphNodesW rdir (jldAsArray value) { st with acc := [] } fuel
+          { stR with acc := reifiesPrepend subj stR.acc.reverse st.acc }
         else if isKeywordKey key then st
         else if predicateIriWf key then
           match mkWfIri? key with
@@ -1293,13 +1354,13 @@ def expandReverseEntriesW (rdir : RdfDirectionMode) (subj : Subject)
       let st1 :=
         if predicateIriWf prop then
           match mkWfIri? prop with
-          | some p => expandReversePropW rdir subj p (jldAsArray value) st fuel
+          | some p => expandReversePropW rdir subj.toTerm p (jldAsArray value) st fuel
           | none   => st
         else st
       expandReverseEntriesW rdir subj rest st1 fuel
 termination_by fuel
 
-def expandReversePropW (rdir : RdfDirectionMode) (subj : Subject) (prop : WfIri)
+def expandReversePropW (rdir : RdfDirectionMode) (obj : Term) (prop : WfIri)
     (vals : List Json) (st : RdfAcc) (fuel : Nat) : RdfAcc :=
   match fuel with
   | 0 => st
@@ -1309,10 +1370,15 @@ def expandReversePropW (rdir : RdfDirectionMode) (subj : Subject) (prop : WfIri)
     | v :: rest =>
       let (osubj, st1) := expandNodeRW rdir v st fuel
       let st2 := match osubj with
-                 | some vsubj => { st1 with
-                     acc := { s := vsubj, p := prop, o := subj.toTerm } :: st1.acc }
+                 | some vsubj =>
+                   let st1a := { st1 with acc := { s := vsubj, p := prop, o := obj } :: st1.acc }
+                   match (if st1a.rdfstar then v.field? "@annotation" else none) with
+                   | some anns =>
+                     expandReversePropW rdir (.tripleTerm vsubj prop obj) rdfReifiesIri
+                       (jldAsArray anns) st1a fuel
+                   | none => st1a
                  | none => st1
-      expandReversePropW rdir subj prop rest st2 fuel
+      expandReversePropW rdir obj prop rest st2 fuel
 termination_by fuel
 
 def expandPropertyRW (rdir : RdfDirectionMode) (subj : Subject) (prop : WfIri)
@@ -1325,7 +1391,16 @@ def expandPropertyRW (rdir : RdfDirectionMode) (subj : Subject) (prop : WfIri)
     | v :: rest =>
       let (oterm, st1) := expandValueW rdir v st fuel
       let st2 := match oterm with
-                 | some t => { st1 with acc := { s := subj, p := prop, o := t } :: st1.acc }
+                 | some t =>
+                   let st1a := { st1 with acc := { s := subj, p := prop, o := t } :: st1.acc }
+                   -- JSON-LD-star: each annotation node is a reifier of the
+                   -- triple, `r rdf:reifies <<( subj prop t )>>`, the reverse
+                   -- property `rdf:reifies` of the triple term.
+                   match (if st1a.rdfstar then v.field? "@annotation" else none) with
+                   | some anns =>
+                     expandReversePropW rdir (.tripleTerm subj prop t) rdfReifiesIri
+                       (jldAsArray anns) st1a fuel
+                   | none => st1a
                  | none   => st1
       expandPropertyRW rdir subj prop rest st2 fuel
 termination_by fuel
@@ -1353,8 +1428,8 @@ theorem expandW_eq (rdir : RdfDirectionMode) : ∀ fuel : Nat,
     (∀ subj v st, expandReverseMapW rdir subj v st fuel = expandReverseMap rdir subj v st fuel) ∧
     (∀ subj entries st, expandReverseEntriesW rdir subj entries st fuel =
         expandReverseEntries rdir subj entries st fuel) ∧
-    (∀ subj prop vals st, expandReversePropW rdir subj prop vals st fuel =
-        expandReverseProp rdir subj prop vals st fuel) ∧
+    (∀ obj prop vals st, expandReversePropW rdir obj prop vals st fuel =
+        expandReverseProp rdir obj prop vals st fuel) ∧
     (∀ subj prop vals st, expandPropertyRW rdir subj prop vals st fuel =
         expandPropertyR rdir subj prop vals st fuel) ∧
     (∀ nodes st, expandGraphNodesW rdir nodes st fuel = expandGraphNodes rdir nodes st fuel)
@@ -1369,7 +1444,7 @@ theorem expandW_eq (rdir : RdfDirectionMode) : ∀ fuel : Nat,
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · intro v st
       rw [expandValueW.eq_def, expandValue.eq_def]
-      simp only [hL, hN, listCells]
+      simp only [hL, hN, hG, listCells]
     · intro items st pend
       cases items with
       | nil => simp [expandListGo, expandList]
@@ -1401,7 +1476,7 @@ theorem expandW_eq (rdir : RdfDirectionMode) : ∀ fuel : Nat,
     · intro subj prop vals st
       cases vals with
       | nil => simp [expandPropertyRW, expandPropertyR]
-      | cons v rest => simp only [expandPropertyRW, expandPropertyR, hV, hP]
+      | cons v rest => simp only [expandPropertyRW, expandPropertyR, hV, hP, hRP]
     · intro nodes st
       cases nodes with
       | nil => simp [expandGraphNodesW, expandGraphNodes]
@@ -1436,7 +1511,7 @@ def expandListFast (rdir : RdfDirectionMode) (items : List Json) (st : RdfAcc) (
   funext rdir subj entries st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.2.1 subj entries st).symm
 
 @[csimp] theorem expandReverseProp_eq_fast : @expandReverseProp = @expandReversePropW := by
-  funext rdir subj prop vals st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.2.2.1 subj prop vals st).symm
+  funext rdir obj prop vals st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.2.2.1 obj prop vals st).symm
 
 @[csimp] theorem expandPropertyR_eq_fast : @expandPropertyR = @expandPropertyRW := by
   funext rdir subj prop vals st fuel; exact ((expandW_eq rdir fuel).2.2.2.2.2.2.2.1 subj prop vals st).symm
@@ -1490,10 +1565,12 @@ def onlyGraphKeysJ (fields : List (String × Json)) : Bool :=
 
 /-- §8.2: deserialize an already-parsed EXPANDED-FORM value tree into an
 RDF dataset. `none` when the top level is neither an array nor an
-object. -/
-def datasetOfJson (rdir : RdfDirectionMode) (root : Json) : Option Dataset :=
+object. `rdfstar` turns on JSON-LD-star (`@triple`, `@reifies`, `@annotation`). -/
+def datasetOfJson (rdir : RdfDirectionMode) (root : Json) (rdfstar : Bool := false) :
+    Option Dataset :=
   let fuel := Json.size root + 1
-  let init : RdfAcc := { acc := [], named := [], ctr := 0, labelPrefix := generatedPrefix root }
+  let init : RdfAcc :=
+    { acc := [], named := [], ctr := 0, labelPrefix := generatedPrefix root, rdfstar := rdfstar }
   let finish (st : RdfAcc) : Dataset :=
     { default := st.acc.reverse, named := st.named.reverse }
   match root with
@@ -1513,10 +1590,10 @@ generated blank-node counter `ctr` and the prefix `pfx`, and gives the counter
 after the walk. `datasetOfJson` is this walk with `generatedPrefix root` and
 counter 0 (`datasetOfJson_eq_at`). The chunk reader of the source layer
 (`Syntax/JsonLdChunkFold.lean`) calls it once for each top-level node object. -/
-def datasetOfJsonAt (rdir : RdfDirectionMode) (pfx : String) (ctr : Nat) (root : Json) :
-    Option (Dataset × Nat) :=
+def datasetOfJsonAt (rdir : RdfDirectionMode) (pfx : String) (ctr : Nat) (root : Json)
+    (rdfstar : Bool := false) : Option (Dataset × Nat) :=
   let fuel := Json.size root + 1
-  let init : RdfAcc := { acc := [], named := [], ctr := ctr, labelPrefix := pfx }
+  let init : RdfAcc := { acc := [], named := [], ctr := ctr, labelPrefix := pfx, rdfstar := rdfstar }
   let finish (st : RdfAcc) : Dataset × Nat :=
     ({ default := st.acc.reverse, named := st.named.reverse }, st.ctr)
   match root with
@@ -1531,8 +1608,9 @@ def datasetOfJsonAt (rdir : RdfDirectionMode) (pfx : String) (ctr : Nat) (root :
     some (finish (expandTops rdir tops init fuel))
   | _ => none
 
-theorem datasetOfJson_eq_at (rdir : RdfDirectionMode) (root : Json) :
-    datasetOfJson rdir root = (datasetOfJsonAt rdir (generatedPrefix root) 0 root).map (·.1) := by
+theorem datasetOfJson_eq_at (rdir : RdfDirectionMode) (root : Json) (rdfstar : Bool := false) :
+    datasetOfJson rdir root rdfstar =
+      (datasetOfJsonAt rdir (generatedPrefix root) 0 root rdfstar).map (·.1) := by
   unfold datasetOfJson datasetOfJsonAt
   cases root <;> simp
 
@@ -1582,13 +1660,52 @@ def parseJsonLd (loader : Loader) (input : String) (base : Option String)
         match expand loader ac0 root with
         | .error e => .error e
         | .ok expanded =>
-          match datasetOfJson rdir expanded with
+          match datasetOfJson rdir expanded rdfstar with
           | some ds => .ok ds
           | none    => .error .notJsonLd
     else
-      match datasetOfJson rdir root with
+      match datasetOfJson rdir root rdfstar with
       | some ds => .ok ds
       | none    => .error .notJsonLd
+
+/-! ### JSON-LD-star on expanded input
+
+`@reifies` gives one `rdf:reifies` triple for each triple of its values and does
+not assert them; `@triple` is the triple term of the one triple of its node;
+`@annotation` makes a reifier of the asserted triple. With `rdfstar` false the
+three keywords are ignored. -/
+
+private def starDefault (src : String) (rdfstar : Bool) : Option (List Triple) :=
+  match parseJson src with
+  | .ok j => (datasetOfJson .drop j rdfstar).map (·.default)
+  | .error _ => none
+
+private def isTripleTermObj (t : Triple) : Bool :=
+  match t.o with
+  | .tripleTerm .. => true
+  | _ => false
+
+-- Multi-statement reification (tst13a): two `rdf:reifies` triples, no `rdf:type`.
+#guard (starDefault
+  "[{\"@id\":\"ex:s\",\"@reifies\":[{\"@id\":\"ex:r\",\"@type\":[\"ex:T1\",\"ex:T2\"]}]}]" true).map
+  (fun ts => ts.length == 2 && ts.all (fun t => t.p == rdfReifiesIri && isTripleTermObj t)) == some true
+#guard (starDefault
+  "[{\"@id\":\"ex:s\",\"@reifies\":[{\"@id\":\"ex:r\",\"@type\":[\"ex:T1\"]}]}]" false).map
+  List.length == some 0
+-- A triple term (tst04): one triple whose object is the triple term.
+#guard (starDefault
+  "[{\"@id\":\"ex:s\",\"ex:p\":[{\"@triple\":{\"ex:q\":[{\"@value\":\"v\"}]}}]}]" true).map
+  (fun ts => ts.length == 1 && ts.all isTripleTermObj) == some true
+#guard (starDefault
+  "[{\"@id\":\"ex:s\",\"ex:p\":[{\"@triple\":{\"ex:q\":[{\"@value\":\"v\"}]}}]}]" false).map
+  (fun ts => ts.length == 1 && ts.all isTripleTermObj) == some false
+-- An annotation (tst18): the asserted triple, the reifier's `rdf:reifies` and its property.
+#guard (starDefault
+  "[{\"@id\":\"ex:b\",\"ex:a\":[{\"@value\":23,\"@annotation\":[{\"ex:c\":[{\"@value\":1}]}]}]}]" true).map
+  List.length == some 3
+#guard (starDefault
+  "[{\"@id\":\"ex:b\",\"ex:a\":[{\"@value\":23,\"@annotation\":[{\"ex:c\":[{\"@value\":1}]}]}]}]" false).map
+  List.length == some 1
 
 /-- §5.1 Expansion as its own entry point (what the `expand` manifest
 compares). Same setup as `parseJsonLd`'s context-bearing branch, but it
