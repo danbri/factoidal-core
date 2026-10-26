@@ -1747,7 +1747,6 @@ def expandItem (loader : Loader) (ac : ActiveContext) (typeMap : Option String)
                                | some (_, .string ix) => [("@index", Json.string ix)]
                                | _ => []
               .ok (some (.object (("@list", .array items) :: idxFields)))
-      else if hasAliasedField ac "@reverse" fields then .error .invalidReversePropertyValue
       else if hasAliasedField ac "@language" fields then
         -- An object carrying `@language` but NO `@value` expands to a
         -- value object whose only member is `@language`, which §5.1 drops
