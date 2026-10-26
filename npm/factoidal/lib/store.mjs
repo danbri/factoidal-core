@@ -99,16 +99,18 @@ export function manifestKeys(inspectEnvelope) {
   return keys;
 }
 
-const HEX = (() => {
-  const t = new Array(256);
-  for (let b = 0; b < 256; b += 1) t[b] = b.toString(16).padStart(2, '0');
-  return t;
-})();
+const HEX_DIGIT = Uint8Array.from('0123456789abcdef', (c) => c.charCodeAt(0));
+const HEX_DECODER = new TextDecoder();
 
 /** Lowercase hexadecimal: the transport the manifest argument of the store
  *  ops takes. Artifact bytes never take this path. */
 export function hexOfBytes(bytes) {
-  const parts = new Array(bytes.length);
-  for (let i = 0; i < bytes.length; i += 1) parts[i] = HEX[bytes[i]];
-  return parts.join('');
+  // One byte buffer of ASCII digits, decoded once (issue 1039; see
+  // bin/engine.mjs hexOfBytes).
+  const out = new Uint8Array(bytes.length * 2);
+  for (let i = 0, at = 0; i < bytes.length; i += 1, at += 2) {
+    out[at] = HEX_DIGIT[bytes[i] >> 4];
+    out[at + 1] = HEX_DIGIT[bytes[i] & 15];
+  }
+  return HEX_DECODER.decode(out);
 }
