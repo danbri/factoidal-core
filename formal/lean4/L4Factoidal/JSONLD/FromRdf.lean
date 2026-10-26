@@ -25,10 +25,12 @@ same comparison `bin/jsonld-fromrdf-runner` makes.
 
 ## Scoped out
 
-  * RDF 1.2 triple terms have no settled JSON-LD serialisation; a
-    dataset containing one is reported as an error (`.ok none` never
-    hides it) rather than serialised wrongly. Same choice as the F*
-    source.
+  * RDF 1.2 triple terms: with the default options a dataset containing
+    one is reported as an error (`none`), as the F* source does. With
+    `rdfstar` (JSON-LD-star, https://github.com/json-ld/json-ld-star/pull/61,
+    `docs/designissues/2026-10-26-jsonld-star.md`) a triple term is written
+    as `@triple`, `rdf:reifies` as `@reifies`, and a blank-node reifier of an
+    asserted triple as `@annotation` (section "Annotations" below).
   * Framing, and the `@embed`-family options, are a separate
     specification.
 
@@ -2388,6 +2390,132 @@ theorem isGraphName_eq_firstMap (named : List NamedNm) (id : String) :
 
 end FastEmit
 
+/-! ## Annotations (JSON-LD-star, `rdfstar`)
+
+A reifier node is written as an `@annotation` on the value of the triple it
+reifies (folded) when all of these hold, in one graph:
+
+  1. the reifier is a blank node;
+  2. its node has exactly one `@reifies` value (one `rdf:reifies` statement);
+  3. that triple is asserted in the same graph: the node of its subject has
+     the triple's value under the triple's predicate (a triple written as
+     `@type`, or whose value became a `@list`, is not found and not folded);
+  4. the reifier is not the object of a triple in any graph, does not occur in
+     any triple term, and is not a graph name.
+
+Rule 4 keeps the writer from moving a node that something else points at, and it
+makes folding order-free: the subject of a reified triple occurs in a triple term,
+so a folded reifier is never the target of another fold. The annotation is the
+reifier's node object without `@reifies`; it keeps the reifier's `@id`, so the
+output reads back to the same quads. The fixtures fold blank-node reifiers only
+(st18, st19, st20, st20a, st28, st29, st34, st35, st38); they have no reifier
+that is an IRI, or that is referenced, of a triple that is asserted. -/
+
+section Annotations
+
+open Std
+
+/-- The blank nodes (as `_:label`) that occur in a triple term, added to `acc`. -/
+def tripleTermBnodes (acc : HashSet String) : Term → HashSet String
+  | .tripleTerm s _ o =>
+    tripleTermBnodes (match s with | .bnode b => acc.insert ("_:" ++ b) | .iri _ => acc) o
+  | .bnode b => acc.insert ("_:" ++ b)
+  | _ => acc
+
+/-- The blank nodes that occur in a triple term anywhere in the dataset. -/
+def datasetTripleTermBnodes (ds : Dataset) : HashSet String :=
+  let addG := fun (acc : HashSet String) (g : List Triple) =>
+    g.foldl (fun a t => match t.o with
+      | .tripleTerm _ _ _ => tripleTermBnodes a t.o
+      | _ => a) acc
+  ds.named.foldl (fun acc ng => addG acc ng.graph) (addG ∅ ds.default)
+
+/-- A value object or node reference without its `@annotation` entry. -/
+def stripAnnotation : Json → Json
+  | .object fs => .object (fs.filter (fun kv => kv.1 != "@annotation"))
+  | j => j
+
+/-- Add `ann` to the `@annotation` entry of a value object or node reference. -/
+def addAnnotation (ann : Json) : Json → Json
+  | .object fs =>
+    match fs.find? (fun kv => kv.1 == "@annotation") with
+    | some (_, .array xs) =>
+      .object (fs.map fun kv => if kv.1 == "@annotation" then (kv.1, .array (xs ++ [ann])) else kv)
+    | _ => .object (fs ++ [("@annotation", .array [ann])])
+  | j => j
+
+/-- The subject, predicate and value of the node object of one triple
+(`{"@id": s, p: [v]}`), or `none` for any other shape (`@type`). -/
+def tripleOfNode : Json → Option (String × String × Json)
+  | .object [("@id", .string sid), (p, .array [v])] =>
+    if p.startsWith "@" then none else some (sid, p, v)
+  | _ => none
+
+/-- One fold: the reifier, the subject node, the predicate, the value, and the
+annotation object. -/
+structure AnnFold where
+  reifier : String
+  target  : String
+  prop    : String
+  value   : Json
+  ann     : Json
+
+/-- The fold of node `n` of graph `look`, when rules 1-4 hold. -/
+def annFoldOf (look : HashMap String FrNode) (excluded : String → Bool) (n : FrNode) :
+    Option AnnFold :=
+  if !n.blank || excluded n.id then none else
+  match findProp n.props "@reifies" with
+  | some [.val tj] =>
+    match tripleOfNode tj with
+    | none => none
+    | some (sid, p, v) =>
+      match look[sid]? with
+      | none => none
+      | some tn =>
+        match findProp tn.props p with
+        | none => none
+        | some vals =>
+          if vals.any (fun x => stripAnnotation (ovToJson x) == v) then
+            let rest := { n with props := n.props.filter (fun kv => kv.1 != "@reifies") }
+            some ⟨n.id, sid, p, v, nodeToJson rest none⟩
+          else none
+  | _ => none
+
+/-- Apply one fold to the subject node. -/
+def applyAnnFold (n : FrNode) (f : AnnFold) : FrNode :=
+  { n with props := n.props.map fun kv =>
+      if kv.1 == f.prop then
+        (kv.1, kv.2.map fun x =>
+          let j := ovToJson x
+          if stripAnnotation j == f.value then .val (addAnnotation f.ann j) else x)
+      else kv }
+
+/-- Fold the reifiers of one graph into annotations. -/
+def foldAnnotations (excluded : String → Bool) (g : List FrNode) : List FrNode :=
+  let look := firstMap FrNode.id g
+  let folds := g.filterMap (annFoldOf look excluded)
+  if folds.isEmpty then g else
+  let gone : HashSet String := folds.foldl (fun s f => s.insert f.reifier) ∅
+  let upd : HashMap String FrNode := folds.foldl (fun m f =>
+    match m[f.target]? with
+    | some n => m.insert f.target (applyAnnFold n f)
+    | none =>
+      match look[f.target]? with
+      | some n => m.insert f.target (applyAnnFold n f)
+      | none => m) ∅
+  g.filterMap fun n => if gone.contains n.id then none else some (upd.getD n.id n)
+
+/-- Fold the reifiers of every graph. `dm` already carries the graph-name nodes. -/
+def foldAllAnnotations (ds : Dataset) (dm : List FrNode) (named : List NamedNm) :
+    List FrNode × List NamedNm :=
+  let cm := countMap (mapsRefids (dm :: named.map NamedNm.map))
+  let inTt := datasetTripleTermBnodes ds
+  let names := firstMap NamedNm.name named
+  let excluded := fun id => cm.getD id 0 != 0 || inTt.contains id || names.contains id
+  (foldAnnotations excluded dm, named.map fun ng => { ng with map := foldAnnotations excluded ng.map })
+
+end Annotations
+
 /-! ## Entry point — §8.5 -/
 
 /-- Serialize an RDF dataset as an expanded-form JSON-LD document.
@@ -2400,9 +2528,35 @@ def fromRdf (ds : Dataset) (opts : Options) : Option Json :=
     | none       => none
     | some named =>
       let dm := addGraphNames dm0 named
+      let (dm, named) := if opts.rdfstar then foldAllAnnotations ds dm named else (dm, named)
       let allMaps := dm :: named.map NamedNm.map
       let refids := mapsRefids allMaps
       let clMode := opts.rdfDirection == some "compound-literal"
       some (.array (emitDefaultNodes dm named refids clMode))
+
+/-! ### Checks of the JSON-LD-star path -/
+
+private def reifiesP : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies", rfl⟩
+private def starDs (extra : List Triple) : Dataset :=
+  { default := [⟨(Subject.iri ⟨"http://e/a", rfl⟩), (⟨"http://e/p", rfl⟩ : WfIri), (Term.iri ⟨"http://e/b", rfl⟩)⟩,
+                ⟨.bnode "r", reifiesP, .tripleTerm ((Subject.iri ⟨"http://e/a", rfl⟩)) ((⟨"http://e/p", rfl⟩ : WfIri)) ((Term.iri ⟨"http://e/b", rfl⟩))⟩,
+                ⟨.bnode "r", (⟨"http://e/q", rfl⟩ : WfIri), (Term.iri ⟨"http://e/c", rfl⟩)⟩] ++ extra,
+    named := [] }
+private def jstr (o : Option Json) : String := (o.map jcsDocument).getD "none"
+
+-- Without `rdfstar`, a triple term is refused, as before.
+#guard fromRdf (starDs []) {} == none
+-- A blank reifier of an asserted triple, referenced nowhere, is an `@annotation`.
+#guard jstr (fromRdf (starDs []) { rdfstar := true }) ==
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@annotation\":[{\"@id\":\"_:r\",\"http://e/q\":[{\"@id\":\"http://e/c\"}]}],\"@id\":\"http://e/b\"}]}]"
+-- A referenced reifier stays a node object with `@reifies`.
+#guard jstr (fromRdf (starDs [⟨(Subject.iri ⟨"http://e/d", rfl⟩), (⟨"http://e/s", rfl⟩ : WfIri), .bnode "r"⟩]) { rdfstar := true }) ==
+  "[{\"@id\":\"_:r\",\"@reifies\":[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"}]}],\"http://e/q\":[{\"@id\":\"http://e/c\"}]},{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"}]},{\"@id\":\"http://e/d\",\"http://e/s\":[{\"@id\":\"_:r\"}]}]"
+-- A triple term nested 3,000 deep is written without a native frame per level.
+private def deepTt : Nat → Term
+  | 0 => (Term.iri ⟨"http://e/o", rfl⟩)
+  | n + 1 => .tripleTerm ((Subject.iri ⟨"http://e/s", rfl⟩)) ((⟨"http://e/p", rfl⟩ : WfIri)) (deepTt n)
+#guard (fromRdf { default := [⟨(Subject.iri ⟨"http://e/x", rfl⟩), (⟨"http://e/p", rfl⟩ : WfIri), deepTt 3000⟩], named := [] }
+          { rdfstar := true }).isSome
 
 end L4Factoidal.JSONLD.FromRdf
