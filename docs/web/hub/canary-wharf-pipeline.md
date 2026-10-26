@@ -432,10 +432,11 @@ which holds the Elizabeth line station, `retail`. The lines table of
 source 2 says which buildings are stations, and the query joins on it. This
 step reads the
 first CONSTRUCT's output, so the natural pipeline puts it after the first
-one. The type check refuses that pipeline: the evaluator's output wire is
-`Answer` for every query form, and no stage reads `Answer`, although the
-answer of a CONSTRUCT is a graph
-([issue 1026](https://github.com/danbri/factoidal/issues/1026)):
+one. Since 0.16.0 the type check accepts that pipeline: the evaluator's
+output wire follows the query form (SELECT gives `Table`, ASK `Answer`,
+CONSTRUCT and DESCRIBE `Dataset`), and a theorem states it
+(`Dataflow.evalContract_wire`;
+[issue 1026](https://github.com/danbri/factoidal/issues/1026)):
 
 ```observable-js
 classifyQuery = `PREFIX cwk: <https://kgx.foaf.tv/vocab#>
@@ -459,9 +460,10 @@ chainedCheck = {
 }
 ```
 
-So the second step runs as its own one-node pipeline on the first run's
-output graph. Each run has its own evidence, and the record section below
-joins them by the graph that one generated and the other used.
+This page still runs the second step as its own one-node pipeline on the
+first run's output graph, so that each run has its own evidence, and the
+record section below joins them by the graph that one generated and the
+other used.
 
 ```observable-js
 classifyRun = Factoidal.run(Factoidal.pipe(await Factoidal.node('shippedEvaluator', { query: classifyQuery })), buildingsRun.graph)
@@ -509,10 +511,12 @@ linesMetadata = JSON.stringify({
 })
 ```
 
-The CSVW conversion is the function `csvwToRdf`. It is not a pipeline node:
-the stage registry lists CSVW with status `missing` (no contract and no
-test suite in the registry), so it adds no evidence record. The record
-section below shows what that does to the pipeline's record.
+The CSVW conversion is the function `csvwToRdf`. Since 0.16.0 the stage
+registry also lists CSVW as a stage with status `tested`: the W3C csv2rdf
+suite checks it, and it has no Lean contract, so its evidence records say
+`checked: false` ([issue 975](https://github.com/danbri/factoidal/issues/975)).
+This page calls the function and writes the step into its own record; the
+record section below shows what an unproved step does to the record.
 
 ```observable-js
 fromCsvw = Factoidal.csvwToRdf(linesCsv, linesMetadata, { base: CW, mode: 'minimal' })
@@ -751,8 +755,8 @@ assumptions (`Dataflow.query_sound` and the source table in
 Two parts of it still come from the JavaScript side: this page copies the
 evidence objects into triples (the engine should give that graph,
 [issue 563](https://github.com/danbri/factoidal/issues/563)), and the CSVW
-step has no evidence record because CSVW is not a registered stage with a
-contract ([issue 975](https://github.com/danbri/factoidal/issues/975),
+step is recorded by this page, and its status is `tested`, because CSVW
+has no Lean contract ([issue 975](https://github.com/danbri/factoidal/issues/975),
 component contracts).
 
 ## Writing the dataset for a persistent store
@@ -775,17 +779,15 @@ nquadsSummary = {
 
 An SBM11 generation (the Shardborough store) holds such a dataset on disk,
 with its named graphs; kgx itself is served from a Shardborough store. In
-@factoidal/core {{ factoidalRelease.version }} the package can open and
-query an SBM11 generation (`openSbm11`), but it cannot pack one. Packing in
+@factoidal/core {{ factoidalRelease.version }} the package can pack one in
 memory (`packSbm11(text, { syntax })`, which gives a `Map` of file name to
-bytes, and `mapReader` to query those files) is on `main` and comes with
-the next wasm build: stage 2 of
+bytes), and open and query it (`openSbm11` with `mapReader`): stage 2 of
 [issue 1009](https://github.com/danbri/factoidal/issues/1009), with its
 stages in
 [docs/designissues/2026-10-24-sbm11-in-npm.md](https://github.com/danbri/factoidal-core/blob/main/docs/designissues/2026-10-24-sbm11-in-npm.md)
 (its first user named there is the Docklands app,
-<https://danbri.github.io/londat/docklands/>). Today the native tools pack
-the text above:
+<https://danbri.github.io/londat/docklands/>). The native tools give the
+same files for the same quads:
 
 ```
 l4sbm11-pack canary-wharf.nq store/gen-1 && l4sbm11 activate store gen-1

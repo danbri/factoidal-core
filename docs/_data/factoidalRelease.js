@@ -12,7 +12,7 @@
 //
 // The historical notebooks (docs/web/historical-fstar-notebooks/) keep the
 // same-origin copy.
-const version = "0.15.0";
+const version = "0.16.0";
 
 if (!/^\d+\.\d+\.\d+$/.test(version)) {
   throw new Error(`factoidalRelease: version must be an exact x.y.z, got ${version}`);
