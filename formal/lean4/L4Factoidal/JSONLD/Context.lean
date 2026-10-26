@@ -117,6 +117,17 @@ inductive JsonLdError where
   /-- JSON-LD Framing §5.2: the value of `@embed` is not one the object
   embed flag accepts. -/
   | invalidEmbedValue
+  /-- JSON-LD-star expansion: a `@triple` value is not a node object
+  that gives exactly one triple, or the object that holds `@triple` has
+  other entries than `@triple` and `@annotation`. -/
+  | invalidTripleTerm
+  /-- JSON-LD-star expansion: a `@reifies` value is not a node object
+  that gives at least one triple. -/
+  | invalidReification
+  /-- JSON-LD-star expansion: `@annotation` on an object that is not the
+  value of a property, or an annotation that is not a node object, or an
+  annotation whose `@id` is not a blank node identifier. -/
+  | invalidAnnotation
   | notJsonLd
   deriving DecidableEq, Repr
 
@@ -175,6 +186,9 @@ def code : JsonLdError → String
   | invalidScriptElement        => "invalid script element"
   | invalidFrame                => "invalid frame"
   | invalidEmbedValue           => "invalid @embed value"
+  | invalidTripleTerm           => "invalid triple term"
+  | invalidReification          => "invalid reification"
+  | invalidAnnotation           => "invalid annotation"
   | notJsonLd                   => "not JSON-LD"
 
 instance : ToString JsonLdError := ⟨code⟩
@@ -432,6 +446,16 @@ def keywordForm (s : String) : Bool :=
 
 /-- Keyword-SHAPED but not a real keyword — ignorable with a warning. -/
 def keywordLookalike (s : String) : Bool := keywordForm s && !actualKeyword s
+
+/-- The JSON-LD-star keywords (json-ld-star PR 61). They are keywords only
+when the `rdfstar` option is on; otherwise they are keyword lookalikes
+and are ignored. -/
+def starKeyword (s : String) : Bool :=
+  s == "@triple" || s == "@reifies" || s == "@annotation"
+
+/-- An actual keyword under the given `rdfstar` option. -/
+def keywordIn (rdfstar : Bool) (s : String) : Bool :=
+  actualKeyword s || (rdfstar && starKeyword s)
 
 /-! ## Term-table helpers -/
 
@@ -747,7 +771,8 @@ def termObjFields (ac : ActiveContext) (acc : TermObjAcc)
       | .string s =>
         -- An `@id` value that LOOKS like a keyword is ignored: the entry
         -- is skipped and the mapping falls back to `@vocab` + term name.
-        if keywordLookalike s then termObjFields ac acc rest
+        -- Under `rdfstar` a JSON-LD-star keyword is a keyword alias.
+        if keywordLookalike s && !keywordIn ac.rdfstar s then termObjFields ac acc rest
         else
           match expandIriCtx ac s true with
           -- §4.2: "if it equals @context, an invalid keyword alias error".
@@ -1274,8 +1299,9 @@ def contextProcessOneField (loader : Loader) (ac : ActiveContext) (key : String)
       | none => .ok (ac.upd (fun c => { c with terms := (key, td) :: c.terms }))
     | .string s =>
       -- A simple-form definition whose VALUE looks like a keyword is
-      -- ignored entirely; the term stays undefined.
-      if keywordLookalike s then .ok ac
+      -- ignored entirely; the term stays undefined. Under `rdfstar` a
+      -- JSON-LD-star keyword is a keyword alias (`"triple": "@triple"`).
+      if keywordLookalike s && !keywordIn ac.rdfstar s then .ok ac
       -- Simple string form is sugar for `{"@id": s}`, so the same cyclic
       -- and self-consistency checks apply.
       else if selfCyclic ac key s then .error .cyclicIriMapping
