@@ -78,10 +78,42 @@ private def bytesOfHexCharsGo? : List Char → List UInt8 → Option (List UInt8
       let l ← hexDigitValue? lo
       bytesOfHexCharsGo? rest (UInt8.ofNat (h * 16 + l) :: reversed)
 
-/-- Decode an even-length hexadecimal string.  `none` on an odd length or a
-non-hexadecimal character. -/
-def bytesOfHex? (s : String) : Option ByteArray :=
+/-- The specification of `bytesOfHex?`: the character-list decoder. It builds
+one cons cell per character and one per byte, which for a store manifest
+(1.5 million hexadecimal digits) cost about 0.7 s per call in the wasm module
+(https://github.com/danbri/factoidal/issues/1039). -/
+def bytesOfHexSpec? (s : String) : Option ByteArray :=
   (bytesOfHexCharsGo? s.toList []).map fun bytes => ByteArray.mk bytes.toArray
+
+/-- The value of one hexadecimal digit given as a UTF-8 byte. A byte of a
+multi-byte character is 0x80 or more, so it is never a digit. -/
+@[inline] private def hexByteValue? (b : UInt8) : Option UInt8 :=
+  if 0x30 ≤ b && b ≤ 0x39 then some (b - 0x30)
+  else if 0x61 ≤ b && b ≤ 0x66 then some (b - 0x61 + 10)
+  else if 0x41 ≤ b && b ≤ 0x46 then some (b - 0x41 + 10)
+  else none
+
+private def bytesOfHexUtf8Go? (src : ByteArray) (i : Nat) (out : ByteArray) :
+    Option ByteArray :=
+  if h : i + 1 < src.size then
+    match hexByteValue? src[i], hexByteValue? src[i + 1] with
+    | some hi, some lo => bytesOfHexUtf8Go? src (i + 2) (out.push (hi * 16 + lo))
+    | _, _ => none
+  else if i < src.size then none
+  else some out
+termination_by src.size - i
+
+/-- Decode an even-length hexadecimal string.  `none` on an odd length or a
+non-hexadecimal character. It reads the UTF-8 bytes in place into a buffer of
+the final size; the `#guard`s below check it against `bytesOfHexSpec?`. -/
+def bytesOfHex? (s : String) : Option ByteArray :=
+  let src := s.toUTF8
+  bytesOfHexUtf8Go? src 0 (ByteArray.emptyWithCapacity (src.size / 2))
+
+#guard (["", "00", "ff", "FF", "0aB9", "deadBEEF", "0", "abc", "zz", "0g", "é0", "0é",
+         "éé", "00é", "Ab😀", "😀"].all fun t =>
+  (bytesOfHex? t).map (·.toList) == (bytesOfHexSpec? t).map (·.toList))
+#guard (bytesOfHex? "00ff10").map (·.toList) == some [0, 255, 16]
 
 private def hexChar (n : Nat) : Char :=
   if n < 10 then Char.ofNat (0x30 + n) else Char.ofNat (0x61 + n - 10)
