@@ -719,7 +719,11 @@ def compactValue (ac : ActiveContext) (co : CmpOpts) (aprop : Option String)
     | none   => ac.direction
   let hasIndex := hasField "@index" vfields
   let preserveIndex := hasIndex && !cmpHasContainer ac aprop "@index"
-  if hasField "@id" vfields && cmpKeysOnly vfields ["@id", "@index"] then
+  -- JSON-LD-star: a value or node object that carries `@annotation` keeps
+  -- its map form, so that §6.1 step 12 compacts the annotation (compact
+  -- tst18, tst37). Never under `rdfstar` false.
+  if ac.rdfstar && hasField "@annotation" vfields then .ok (.object vfields)
+  else if hasField "@id" vfields && cmpKeysOnly vfields ["@id", "@index"] then
     -- step 6: a subject reference
     match cmpField vfields "@id" with
     | some (.string idv) =>
@@ -1001,6 +1005,30 @@ def compactFields (loader : Loader) (ac tsc : ActiveContext) (aprop : Option Str
       else if k == "@index" || k == "@value" || k == "@language" || k == "@direction" then
         compactFields loader ac tsc aprop insideRev rest
           (res ++ [(aliasKw ac co k, v)]) co fuel
+      else if ac.rdfstar && k == "@triple" then
+        -- JSON-LD-star: a triple term. Its value is ONE node object; compact
+        -- it with a null active property, under the `@triple` alias (tst36).
+        match compactElem loader ac none v co fuel with
+        | .error e => .error e
+        | .ok cv =>
+          compactFields loader ac tsc aprop insideRev rest
+            (res ++ [(aliasKw ac co "@triple", cv)]) co fuel
+      else if ac.rdfstar && (k == "@reifies" || k == "@annotation") then
+        -- JSON-LD-star: the values are node objects; compact each with a
+        -- null active property, under the keyword alias (tst37). One value
+        -- collapses to a bare object unless `compactArrays` is false or the
+        -- alias is a `@set` term.
+        match compactItems loader ac none (asArray v) co fuel with
+        | .error e => .error e
+        | .ok outs =>
+          let alias := aliasKw ac co k
+          let asSet := match findTerm ac.terms alias with
+                       | some td => td.set_
+                       | none    => false
+          let cv := match outs with
+                    | [x] => if co.arrays && !asSet then x else Json.array [x]
+                    | xs  => Json.array xs
+          compactFields loader ac tsc aprop insideRev rest (res ++ [(alias, cv)]) co fuel
       else if k == "@preserve" then
         -- framing-only keyword; never present in expanded (non-framed) input
         compactFields loader ac tsc aprop insideRev rest res co fuel
@@ -1333,7 +1361,7 @@ def compactDocument (loader : Loader) (input ctxDoc : String) (base ctxUrl : Opt
       let mode10 := processingMode == some "json-ld-1.0"
       let acSeed : ActiveContext :=
         { cur := { emptyContextCore with
-                   base := base, mode10 := mode10,
+                   base := base, mode10 := mode10, rdfstar := rdfstar,
                    docUrl := (match ctxUrl with | some u => some u | none => base),
                    originalBase := base },
           prev := [] }
