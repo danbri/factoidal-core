@@ -806,8 +806,19 @@ Rules:
 - A test of a new wasm op or a changed result is a plain assertion. Run
   locally against an older fetched wasm it fails, and that failure is correct:
   it names the stale wasm.
-- A capability-probe skip (`{ skip: 'wasm has no X op' }`) passes silently on
-  an old wasm and is a weak test; prefer a plain assertion.
+- No capability-probe skip (`{ skip: 'wasm has no X op' }`). It passes
+  silently on a wasm that lacks the op. Assert the capability instead: one
+  case per file, `assert.equal(caps.X, true)` or the missing ops of the `ops`
+  reflection `deepEqual []`, and the other cases run with no `skip`. Model:
+  `npm/factoidal/test/explain-1002.test.mjs`. To test the refusal of an old
+  module, give the API a stub engine (model: the last case of
+  `npm/factoidal/test/sbm11-pack.test.mjs`); do not skip on the real one.
+- A skipped test is not a pass. `web-gates` fails when the `npm test` summary
+  has `# skipped N` with N > 0 (https://github.com/danbri/factoidal/issues/1038,
+  P3). A test that needs a tool CI does not install (Apache Jena for
+  `serve --tdb2`) goes in `npm/factoidal/test/jena/`, run by
+  `npm run test:jena`, and there it fails, not skips, when the tool is absent.
+  `npm test` reads only `test/*.test.js` and `test/*.test.mjs`.
 - The hub tests (`tests/hub/`) are not in `web-gates`. Their xfails for
   features that need a new wasm are flipped when that wasm is fetched and
   the new values are measured, not guessed.

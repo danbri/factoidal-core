@@ -1,0 +1,126 @@
+name: npm package suite and dataflow gate
+
+# Before 2026-10-26 core PR CI ran neither `npm test` nor
+# `tests/dataflow/run.sh`. Both ran for the first time after the merge, in
+# danbri/factoidal-builds (https://github.com/danbri/factoidal/issues/1038,
+# defect 3, fix P6). This workflow runs both on each pull request.
+#
+# The npm job tests against the newest web release of an ancestor of the
+# PR head (tools/fetch-builds.sh), not against a wasm built from the head.
+# - When that release's commit and the head have the same formal/lean4/,
+#   the wasm is the head's wasm: the job is a gate (any fail or skip is red).
+# - When formal/lean4/ differs, the wasm can be older than the head. A test
+#   of a new op then fails, and that failure is correct (skills/test-suites,
+#   "An npm test of a new op is a plain assertion"). The job then reports the
+#   result as a warning, not a failure. The gate for such a PR is the
+#   factoidal-builds `web-gates` job on the PR head
+#   (skills/github-and-prs, "Before merging a PR that changes shipped code").
+on:
+  pull_request:
+    paths:
+      - 'npm/**'
+      - 'formal/lean4/**'
+      - 'tests/dataflow/**'
+      - 'tests/foundation/**'
+      - 'foundation/**'
+      - 'tools/**'
+      - 'docs/dataflow-inventory.md'
+      - '.github/workflows/check-npm-dataflow.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-npm-dataflow-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dataflow:
+    name: Dataflow gate (tests/dataflow/run.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          lake-package-directory: formal/lean4
+      # run.sh builds this target under `timeout 600`; a cold runner can take
+      # longer, so build it first with no limit (run.sh then finds it built).
+      - name: Build the registry tests
+        working-directory: formal/lean4
+        run: lake build L4Factoidal.Dataflow.RegistryTests
+      - name: Dataflow gate
+        run: bash tests/dataflow/run.sh
+
+  npm:
+    name: npm package suite (newest ancestor web release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-builds.sh picks the newest release in HEAD's history, and
+          # the drift check below compares commits: full history is needed.
+          fetch-depth: 0
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          # The same Node as factoidal-builds `web-gates`.
+          node-version: '22'
+      - name: Install the newest ancestor web release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/fetch-builds.sh --set web
+      - name: Is the installed wasm built from this formal/lean4/?
+        id: drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=$(cat .factoidal-builds/web.tag)
+          SHA12=${TAG#build-}; SHA12=${SHA12%-web}
+          FULL=$(git rev-parse --verify "$SHA12^{commit}")
+          if git diff --quiet "$FULL" HEAD -- formal/lean4; then
+            echo "gate=true" >> "$GITHUB_OUTPUT"
+            echo "$TAG: formal/lean4/ is the same as HEAD; the npm suite is a gate"
+          else
+            echo "gate=false" >> "$GITHUB_OUTPUT"
+            N=$(git diff --name-only "$FULL" HEAD -- formal/lean4 | wc -l | tr -d ' ')
+            echo "::warning::$TAG was built from $SHA12; HEAD changes $N file(s) under formal/lean4/. The npm suite runs on an older wasm and is not a gate here; the gate is factoidal-builds web-gates on the PR head."
+          fi
+      - name: npm package suite
+        working-directory: npm/factoidal
+        shell: bash
+        run: |
+          set -o pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          rc=0
+          npm test 2>&1 | tee "$RUNNER_TEMP/npm-suite.txt" || rc=$?
+          echo "$rc" > "$RUNNER_TEMP/npm-suite.rc"
+      - name: Result (fail and skip counts)
+        shell: bash
+        env:
+          GATE: ${{ steps.drift.outputs.gate }}
+        run: |
+          # A skipped test is not a pass (issue 1038, P2 and P3).
+          set -euo pipefail
+          F="$RUNNER_TEMP/npm-suite.txt"
+          RC=$(cat "$RUNNER_TEMP/npm-suite.rc")
+          num() { grep -E "^(#|ℹ) $1 [0-9]+\$" "$F" | tail -n 1 | awk '{print $NF}' || true; }
+          TESTS=$(num tests); PASS=$(num pass); FAIL=$(num fail); SKIP=$(num skipped)
+          echo "npm test: ${PASS:-?} pass, ${FAIL:-?} fail, ${SKIP:-?} skipped (out of ${TESTS:-?}); exit $RC"
+          BAD=""
+          [ -z "$SKIP" ] || [ -z "$FAIL" ] && BAD="no summary counts in the npm suite output"
+          [ -z "$BAD" ] && [ "$RC" -ne 0 ] && BAD="npm test exited $RC"
+          [ -z "$BAD" ] && [ "$FAIL" -ne 0 ] && BAD="$FAIL test(s) failed"
+          [ -z "$BAD" ] && [ "$SKIP" -ne 0 ] && BAD="$SKIP test(s) skipped; a skip is not a pass"
+          if [ -z "$BAD" ]; then echo "npm suite: pass"; exit 0; fi
+          grep -E '^not ok|# SKIP' "$F" | head -n 40 || true
+          if [ "$GATE" = true ]; then
+            echo "::error::$BAD"; exit 1
+          fi
+          echo "::warning::$BAD (on an older wasm; not a gate, see the step above)"

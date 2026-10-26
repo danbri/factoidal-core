@@ -16,8 +16,8 @@
 //     through the local directory, and the store's evidence lists each
 //     resource read with its ETag (needs a wasm with the sbm11 ops).
 //
-// A wasm without the lws ops skips everything; one without the sbm11 ops
-// skips the query cases. No RDF logic here.
+// A wasm without the lws or sbm11 ops fails the cases, never skips them
+// (https://github.com/danbri/factoidal/issues/1038, P2). No RDF logic here.
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -40,8 +40,11 @@ const eng = await loadEngine()
 const opsText = (() => { const r = eng.call('ops', []); return typeof r === 'string' ? r : JSON.stringify(r) })()
 const hasLws = opsText.includes('"lwsStep"')
 const hasSbm11 = opsText.includes('"sbm11Query"')
-const skipLws = hasLws ? false : 'this wasm has no lws ops'
-const skipQuery = !hasLws ? 'this wasm has no lws ops' : (hasSbm11 ? false : 'this wasm has no sbm11 ops (built before issue 1009 KR1)')
+
+test('the package wasm serves the lws and sbm11 ops', () => {
+  assert.ok(hasLws, 'ops reflection names lwsStep')
+  assert.ok(hasSbm11, 'ops reflection names sbm11Query')
+})
 
 /** Every file under the collection root, as relative names. */
 function filesUnder (dir, prefix = '') {
@@ -84,12 +87,12 @@ async function startServer () {
   }
 }
 
-test('start lws-serve and upload the fixture generation', { skip: skipLws }, async () => {
+test('start lws-serve and upload the fixture generation', async () => {
   await startServer()
   assert.ok(FILES.includes('CURRENT') && FILES.includes('gen/manifest.sbm11'))
 })
 
-test('the LWS reader gives the bytes of the directory reader; the server answers 206', { skip: skipLws }, () => {
+test('the LWS reader gives the bytes of the directory reader; the server answers 206', () => {
   const local = nodeDirectoryReader(ROOT)
   const lws = lwsSbm11Reader(storeUrl)
   try {
@@ -114,7 +117,7 @@ test('the LWS reader gives the bytes of the directory reader; the server answers
   }
 })
 
-test('a server that ignores Range: whole GETs, one request per file', { skip: skipLws }, () => {
+test('a server that ignores Range: whole GETs, one request per file', () => {
   const inner = nodeSyncTransport()
   const noRange = (url, headers) => {
     const h = { ...headers }
@@ -141,7 +144,7 @@ test('a server that ignores Range: whole GETs, one request per file', { skip: sk
   }
 })
 
-test('a changed entity tag between two reads of one file refuses the read', { skip: skipLws }, async () => {
+test('a changed entity tag between two reads of one file refuses the read', async () => {
   const url = `${origin}/stores/changing/`
   await fetch(url + 'CURRENT', { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: 'gen' })
   const lws = lwsSbm11Reader(url)
@@ -158,7 +161,7 @@ test('a changed entity tag between two reads of one file refuses the read', { sk
 let local = null
 let remote = null
 let reader = null
-test('open the generation through LWS and through the directory', { skip: skipQuery }, async () => {
+test('open the generation through LWS and through the directory', async () => {
   local = await openSbm11(ROOT)
   reader = lwsSbm11Reader(storeUrl)
   remote = await openSbm11(storeUrl, { reader })
@@ -167,7 +170,7 @@ test('open the generation through LWS and through the directory', { skip: skipQu
 })
 
 for (const [name, sparql] of QUERIES) {
-  test(`sbm11 over LWS ${name}: the bytes and path of the directory`, { skip: skipQuery }, () => {
+  test(`sbm11 over LWS ${name}: the bytes and path of the directory`, () => {
     const want = local.query(sparql)
     const got = remote.query(sparql)
     assert.equal(got.result, want.result)
@@ -175,7 +178,7 @@ for (const [name, sparql] of QUERIES) {
   })
 }
 
-test('the store evidence names each resource read with its ETag', { skip: skipQuery }, () => {
+test('the store evidence names each resource read with its ETag', () => {
   const ev = remote.evidence
   assert.ok(Array.isArray(ev) && ev.length > 0)
   assert.ok(ev.some((e) => e.resource === storeUrl + 'gen/manifest.sbm11'))
@@ -185,7 +188,7 @@ test('the store evidence names each resource read with its ETag', { skip: skipQu
   assert.equal(local.evidence, undefined)
 })
 
-test('close and stop the server', { skip: skipLws }, () => {
+test('close and stop the server', () => {
   if (remote) remote.close()
   if (local) local.close()
   if (reader) reader.close()

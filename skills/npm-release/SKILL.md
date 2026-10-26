@@ -151,7 +151,7 @@ commit and no build date. Two writers fill them:
 
 | Writer | When | Source of every value |
 | --- | --- | --- |
-| `tools/fetch-builds.sh --set web` (calls `tools/stamp-l4-version.mjs`) | every install of a `web` release, and the publish workflow | the release's `build-info.json` (commit, build time, toolchains); sha256 and size of `l4factoidal.wasm` and `l4factoidal-core.wasm`, re-checked against `build-info.json`; `engineVersion` from the loaded wasm's own `version()` |
+| `tools/fetch-builds.sh --set web` (calls `tools/stamp-l4-version.mjs`) | every install of a `web` release, and the publish workflow | the release's `build-info.json` (commit, build time, toolchains); sha256 and size of `l4factoidal.wasm`, re-checked against `build-info.json` (since 0.10.0 the package has no `l4factoidal-core.wasm`, and `stamp-l4-version.mjs` writes no `coreWasm*` member for it); `engineVersion` from the loaded wasm's own `version()` |
 | `formal/lean4/Wasm/build-wasm.sh` step 9 | a local build | the local build |
 
 Members: `stamped`, `release`, `releaseRun`, `gitSha`, `builtAt`,
@@ -279,9 +279,15 @@ bundles or the Lean wasm need those files installed first
 | engine comparison (private build, not a release gate) | `tests/engine-compare/run.sh docs/fstar-extracted/factoidal-npm-entry.js` after `tools/fetch-builds.sh --set web` | 7 pass, 0 fail (out of 7) against the F\* bundle of build-dba1bdb1d320-web; exit 2 when the bundle is absent |
 | hub notebooks | `node --test tests/hub/*_test.mjs` and `tests/web-demos/hub_browser_all.sh` | the hub pages and the node harness both run this package (Lean) since issue 726: `hub.njk` imports `npm/factoidal/browser.js`, which `docs/.eleventy.js` passes through to `/npm/factoidal/`. A change to an exported name or a result shape can break a post; gate on both. Numbers: design record `docs/designissues/2026-10-10-npm-lean-only.md` § 8 |
 
-The package suite runs again inside `npm publish` through
-`prepublishOnly`, so a failure there aborts the publish after the
-workflow has already spent its F\* re-extraction time.
+**`prepublishOnly` does not run in the publish workflow.** The
+factoidal-builds `npm-publish.yml` packs with `npm pack --ignore-scripts`
+and then publishes the tarball (`npm publish "$TGZ"`); npm runs no
+lifecycle script of the package for a tarball. The package suite gate of a
+release is the `web-gates` job of the build that made its `web` release:
+the publish workflow refuses a release whose `web-gates` job did not pass.
+`prepublishOnly` (`npm test`) runs only for a `npm publish` from the
+directory, which this account cannot do (see "How publishing works").
+(https://github.com/danbri/factoidal/issues/1038, defect 6.)
 
 **Exit 2 is not a pass, and it is not "no browser here".** The browser,
 bundler and hub-browser gates exit 2 when a file or Playwright is missing,
@@ -303,7 +309,7 @@ another branch (2026-10-24: 4 store and 5 command failures, all from that).
 `test/set-semantics-972.test.mjs` runs the three 0.12.0 defects of
 https://github.com/danbri/factoidal/issues/972 (repeated triple; DISTINCT
 over `"01"` and `"1"`; STR of `"01"^^xsd:integer`) in the package suite,
-so `prepublishOnly` refuses a release that brings one back. It fails
+so `web-gates`, and with it the publish workflow, refuses a release that brings one back. It fails
 3 of 3 against `@factoidal/core@0.12.0`.
 
 Install the tarball somewhere else and run the command before
