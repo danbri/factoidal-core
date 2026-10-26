@@ -19,30 +19,42 @@
 # nothing and exits 1.
 #
 # Usage: tools/fetch-builds.sh [--set native|web|all] [--commit <sha>]
-#                              [--allow-unrelated] [--check]
+#                              [--allow-unrelated] [--check] [--strict]
 #   --set              which artifact sets (default: all = native + web)
 #   --commit           use the release built from exactly this commit
 #   --allow-unrelated  if no release is in HEAD's history (shallow clone,
 #                      unpushed branch), take the newest release instead,
 #                      with a warning
 #   --check            report what would be installed; change nothing
+#   --strict           fail (exit 1) when the release's commit differs from
+#                      HEAD in the source it was built from (below), or
+#                      cannot be compared
 #
-# Exit: 0 installed (or nothing to do), 1 verification/network failure,
-#       2 no matching release.
+# Drift (danbri/factoidal issue 1038, P4): the release picked is often an
+# older ancestor of HEAD. When that commit and HEAD differ in the source
+# the set is built from (web: formal/lean4/ and npm/; native: formal/lean4/
+# and formal/fstar/), the installed products may not match HEAD: a test of
+# a new op then runs against an old wasm. The script warns and names the
+# changed files; --strict makes it a failure. The comparison is between
+# commits (HEAD, not the working tree).
+#
+# Exit: 0 installed (or nothing to do), 1 verification/network failure or
+#       (with --strict) drift, 2 no matching release.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILDS_REPO="${FACTOIDAL_BUILDS_REPO:-danbri/factoidal-builds}"
 API="https://api.github.com/repos/$BUILDS_REPO/releases?per_page=100"
 
-SET=all; WANT_COMMIT=""; ALLOW_UNRELATED=0; CHECK=0
+SET=all; WANT_COMMIT=""; ALLOW_UNRELATED=0; CHECK=0; STRICT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --set) SET="$2"; shift 2 ;;
     --commit) WANT_COMMIT="$2"; shift 2 ;;
     --allow-unrelated) ALLOW_UNRELATED=1; shift ;;
     --check) CHECK=1; shift ;;
-    -h|--help) sed -n 2,33p "$0"; exit 0 ;;
+    --strict) STRICT=1; shift ;;
+    -h|--help) sed -n 2,42p "$0"; exit 0 ;;
     *) echo "fetch-builds: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -66,7 +78,12 @@ log() { echo "fetch-builds: $*" >&2; }
 fetch() { curl -fsSL --retry 4 --retry-delay 2 "$@"; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-fetch -H 'Accept: application/vnd.github+json' "$API" -o "$TMP/releases.json" \
+# A token (GH_TOKEN or GITHUB_TOKEN, as in a GitHub Actions job) raises the
+# API rate limit; the unauthenticated limit is 60 requests an hour per IP.
+AUTH=()
+TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+[ -n "$TOKEN" ] && AUTH=(-H "Authorization: Bearer $TOKEN")
+fetch -H 'Accept: application/vnd.github+json' ${AUTH[@]+"${AUTH[@]}"} "$API" -o "$TMP/releases.json" \
   || { log "cannot list releases of $BUILDS_REPO"; exit 1; }
 
 RC=0
@@ -101,6 +118,23 @@ PY
   if [ -z "$TAG" ]; then
     log "no $S release in $BUILDS_REPO matches HEAD's history (try --allow-unrelated)"
     RC=2; continue
+  fi
+  # Drift between the release's commit and HEAD (see the header).
+  if [ "$S" = web ]; then DRIFT_PATHS=(formal/lean4 npm); else DRIFT_PATHS=(formal/lean4 formal/fstar); fi
+  RFULL=$(git -C "$REPO_ROOT" rev-parse -q --verify "$SHA^{commit}" 2>/dev/null || true)
+  if [ -z "$RFULL" ]; then
+    log "WARNING: $S: release commit $SHA is not in this clone; cannot compare it with HEAD"
+    [ "$STRICT" = 1 ] && { log "$S: --strict: drift not checked, failing"; RC=1; }
+  else
+    CHANGED=$(git -C "$REPO_ROOT" diff --name-only "$RFULL" HEAD -- "${DRIFT_PATHS[@]}")
+    if [ -n "$CHANGED" ]; then
+      N=$(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ')
+      log "WARNING: $S: $TAG was built from $SHA, and HEAD differs from it in $N file(s) under ${DRIFT_PATHS[*]}:"
+      printf '%s\n' "$CHANGED" | head -n 10 | sed 's/^/fetch-builds:   /' >&2
+      [ "$N" -gt 10 ] && log "  ... and $((N - 10)) more"
+      log "  the installed $S products may not match HEAD; build locally, or wait for a release of a later commit"
+      [ "$STRICT" = 1 ] && { log "$S: --strict: drift, failing"; RC=1; }
+    fi
   fi
   STAMP="$REPO_ROOT/.factoidal-builds/$S.tag"
   if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$TAG" ]; then

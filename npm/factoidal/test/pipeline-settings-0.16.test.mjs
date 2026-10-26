@@ -237,16 +237,17 @@ test('reasonOf: an unproved node names its settings outside the domain', () => {
 
 // ---- Part 2: the real engine ----
 
-let skip = 'wasm engine not built';
-try {
+// The package wasm must serve the ops of this file: a missing op fails the
+// cases, never skips them (https://github.com/danbri/factoidal/issues/1038, P2).
+test('the package wasm serves stages, pipelineCheckNodes', async () => {
   const caps = await f.capabilities();
-  skip = caps.stages && caps.pipelineCheckNodes ? false
-    : 'wasm has no pipelineCheckNodes op (built before this change; rebuilt in danbri/factoidal-builds)';
-} catch (_err) { /* engine did not load: skip */ }
+  assert.equal(caps.stages, true, 'capabilities().stages');
+  assert.equal(caps.pipelineCheckNodes, true, 'capabilities().pipelineCheckNodes');
+});
 
 const DATA = '<http://example.org/a> <http://example.org/p> <http://example.org/b> .';
 
-test('engine: reader -> CONSTRUCT -> CONSTRUCT runs, each record with settings', { skip }, async () => {
+test('engine: reader -> CONSTRUCT -> CONSTRUCT runs, each record with settings', async () => {
   const q2 = 'CONSTRUCT { ?o ?p ?s } WHERE { ?s ?p ?o }';
   const p = f.pipe(await f.node('turtleDocumentReader'), await f.node('shippedEvaluator', { query: CQ }),
     await f.node('shippedEvaluator', { query: q2 }));
@@ -259,18 +260,18 @@ test('engine: reader -> CONSTRUCT -> CONSTRUCT runs, each record with settings',
   assert.equal(r.graph.size, 1);
 });
 
-test('engine: reader -> SELECT -> CONSTRUCT is not well typed', { skip }, async () => {
+test('engine: reader -> SELECT -> CONSTRUCT is not well typed', async () => {
   const p = f.pipe(await f.node('turtleDocumentReader'), await f.node('shippedEvaluator', { query: SQ }),
     await f.node('shippedEvaluator', { query: CQ }));
   assert.equal(p.wellTyped, false);
   assert.deepEqual({ ...p.check.mismatch }, { at: 1, out: 'Table', in: 'Dataset' });
 });
 
-test('engine: a query that does not parse is refused at node()', { skip }, async () => {
+test('engine: a query that does not parse is refused at node()', async () => {
   await assert.rejects(f.node('shippedEvaluator', { query: 'SELEKT' }), /does not parse/);
 });
 
-test('engine: CSVW runs as a node and its output feeds a CONSTRUCT', { skip }, async () => {
+test('engine: CSVW runs as a node and its output feeds a CONSTRUCT', async () => {
   const p = f.pipe(await f.node(CSVW, { mode: 'minimal' }),
     await f.node('shippedEvaluator', { query: CQ }));
   assert.equal(p.wellTyped, true);

@@ -2,17 +2,19 @@
 // step 2): stages() is the engine's op stageList (the Lean registry,
 // formal/lean4/Wasm/Ops/StageList.lean); node/pipe/run wire them, one
 // evidence record per node, and a run reports the union of the nodes' named
-// assumptions. Skipped when the loaded wasm has no stageList op.
+// assumptions. A wasm without the stageList op fails these cases.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as f from '../index.mjs';
 
-let skip = 'wasm engine not built';
-try {
+// The package wasm must serve the ops of this file: a missing op fails the
+// cases, never skips them (https://github.com/danbri/factoidal/issues/1038, P2).
+test('the package wasm serves stages, explain', async () => {
   const caps = await f.capabilities();
-  skip = caps.stages && caps.explain ? false : 'wasm has no stageList op';
-} catch (_err) { /* engine did not load: skip */ }
+  assert.equal(caps.stages, true, 'capabilities().stages');
+  assert.equal(caps.explain, true, 'capabilities().explain');
+});
 
 const SOURCES = `
   @prefix ex: <http://example.org/> .
@@ -28,7 +30,7 @@ const STATUSES = ['proved', 'tested', 'assumed', 'missing'];
 const byName = async () => new Map((await f.stages()).map((s) => [s.name, s]));
 const union = (lists) => [...new Set(lists.flat())].sort();
 
-test('stages(): one element per registry entry, unique names, runnable iff not missing', { skip }, async () => {
+test('stages(): one element per registry entry, unique names, runnable iff not missing', async () => {
   const list = await f.stages();
   assert.ok(list.length > 100, `only ${list.length} stages`);
   assert.equal(new Set(list.map((s) => s.name)).size, list.length);
@@ -48,7 +50,7 @@ test('stages(): one element per registry entry, unique names, runnable iff not m
   assert.equal(m.get('rdfsExplainGraphStage').declaration, 'L4Factoidal.Dataflow.rdfsExplainGraphStage');
 });
 
-test('every stage the package runs is registered and not missing', { skip }, async () => {
+test('every stage the package runs is registered and not missing', async () => {
   const bound = (await f.stages()).filter((s) => s.bound);
   const names = bound.map((s) => s.name);
   for (const n of ['turtleDocumentReader', 'rdfsReasoner', 'owlRlReasoner', 'shaclValidator',
@@ -59,7 +61,7 @@ test('every stage the package runs is registered and not missing', { skip }, asy
   for (const s of bound) assert.notEqual(s.status, 'missing', s.name);
 });
 
-test('parse Turtle -> RDFS closure -> explain: one record per node, statuses and the assumption union', { skip }, async () => {
+test('parse Turtle -> RDFS closure -> explain: one record per node, statuses and the assumption union', async () => {
   const m = await byName();
   const p = f.pipe(
     await f.node('turtleDocumentReader'),
@@ -84,7 +86,7 @@ test('parse Turtle -> RDFS closure -> explain: one record per node, statuses and
   assert.deepEqual([...p.assumptions].sort(), expected);
 });
 
-test('an assumed writer adds its named assumption to the union', { skip }, async () => {
+test('an assumed writer adds its named assumption to the union', async () => {
   const m = await byName();
   const w = m.get('turtleDocumentWriter');
   assert.equal(w.status, 'assumed');
@@ -98,7 +100,7 @@ test('an assumed writer adds its named assumption to the union', { skip }, async
   for (const a of w.assumptions) assert.ok(r.assumptions.includes(a));
 });
 
-test('a SHACL node keeps the graph and records the report', { skip }, async () => {
+test('a SHACL node keeps the graph and records the report', async () => {
   const shapes = `@prefix sh: <http://www.w3.org/ns/shacl#> . @prefix ex: <http://example.org/> .
     ex:S a sh:NodeShape ; sh:targetClass ex:Person ; sh:property [ sh:path ex:worksFor ; sh:minCount 1 ] .`;
   const r = await f.run(f.pipe(await f.node('turtleDocumentReader'), await f.node('rdfsReasoner'),
@@ -107,7 +109,7 @@ test('a SHACL node keeps the graph and records the report', { skip }, async () =
   assert.equal(r.evidence[2].artefact.conforms, true);
 });
 
-test('the evidence of the input wire is kept', { skip }, async () => {
+test('the evidence of the input wire is kept', async () => {
   const prior = { stage: 'upstream', status: 'tested', contract: null, assumptions: ['X.y'], artefact: null };
   const r = await f.run(await f.node('rdfsReasoner'), { graph: SOURCES, evidence: [prior] });
   assert.equal(r.evidence.length, 2);
@@ -115,7 +117,7 @@ test('the evidence of the input wire is kept', { skip }, async () => {
   assert.ok(r.assumptions.includes('X.y'));
 });
 
-test('a missing stage refuses to run, before any node runs', { skip }, async () => {
+test('a missing stage refuses to run, before any node runs', async () => {
   const missing = (await f.stages()).find((s) => s.status === 'missing');
   const n = await f.node(missing.name);
   assert.equal(n.runnable, false);
@@ -124,7 +126,7 @@ test('a missing stage refuses to run, before any node runs', { skip }, async () 
     (err) => err instanceof f.FactoidalError && /missing/.test(err.message));
 });
 
-test('an unknown stage name rejects', { skip }, async () => {
+test('an unknown stage name rejects', async () => {
   await assert.rejects(f.node('noSuchStage'), (err) => err instanceof f.FactoidalError);
   assert.throws(() => f.pipe(), TypeError);
   assert.throws(() => f.pipe({}), TypeError);
