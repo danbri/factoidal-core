@@ -293,6 +293,21 @@ def runAlgo (loader : Loader) (baseIri : String) (dir : System.FilePath) (e : En
       match ← readFileOpt (dir / ctxRel) with
       | none => pure (.error .loadingDocumentFailed, 0)
       | some ctxTxt =>
+        -- Rule "context is the expected output": every json-ld-star compact
+        -- entry names its EXPECTED OUTPUT file as `context`; the intent is
+        -- "compact with the expected output's context". Some of those files
+        -- have no `@context` entry (compact/st04-out.jsonld). Read as a
+        -- context document, the whole body would be processed as a context
+        -- and fail ("keyword redefinition"). So: when `context` equals
+        -- `expect` and that document is an object without `@context`,
+        -- compact with an empty context. Only in that case: the W3C suites
+        -- never name the expected output as `context`, so they do not change.
+        let ctxTxt :=
+          if e.expect == some ctxRel then
+            match parseJson ctxTxt with
+            | .ok (.object fs) => if fs.any (·.1 == "@context") then ctxTxt else "{}"
+            | _ => ctxTxt
+          else ctxTxt
         pure (compactDocument loader content ctxTxt base (some (baseIri ++ ctxRel))
                 e.compactArrays e.compactToRelative e.processingMode e.rdfstar, 0)
   | .flatten =>
