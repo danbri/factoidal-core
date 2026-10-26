@@ -9,9 +9,9 @@
 // native comparison of the same packer with `l4sbm11-pack` over the W3C SPARQL
 // 1.0 and 1.1 inputs is `SBM11_PACKFILES=1 tests/sbm11/census.sh`.
 //
-// A wasm module built before stage 2 has no sbm11PackFiles op: the pack cases
-// then SKIP with that reason (the module is rebuilt in danbri/factoidal-builds).
-// The mapReader cases run on any module that has the sbm11 query ops.
+// The package wasm must serve sbm11PackFiles: a wasm without it fails the pack
+// cases, never skips them (https://github.com/danbri/factoidal/issues/1038,
+// P2). The refusal of a module without the op is tested on a stub engine.
 //
 // No RDF logic here: the cases compare bytes and strings the engine wrote.
 
@@ -21,6 +21,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openSbm11, packSbm11, mapReader, loadEngine } from '../index.mjs'
+import { sbm11Api } from '../lib/sbm11.mjs'
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'sbm11-tiny')
 const GEN = join(FIX, 'root', 'gen')
@@ -40,9 +41,9 @@ async function hasPackOp () {
   return Array.isArray(j.blobIoOps) && j.blobIoOps.includes('sbm11PackFiles')
 }
 
-const NO_OP = 'this wasm has no sbm11PackFiles op (built before issue 1009 stage 2; ' +
-  'rebuilt in danbri/factoidal-builds)'
-const packSkip = (await hasPackOp()) ? false : NO_OP
+test('the package wasm serves sbm11PackFiles', async () => {
+  assert.ok(await hasPackOp(), 'ops reflection lists sbm11PackFiles in blobIoOps')
+})
 
 async function checkQueries (source, files) {
   const st = await openSbm11(source, { reader: mapReader(files) })
@@ -72,7 +73,7 @@ test('mapReader: a file it does not hold, or a read past the end, answers null',
   assert.equal(r.readAt('b', 0, 1), null)
 })
 
-test('packSbm11: every file of the fixture generation, byte for byte', { skip: packSkip }, async () => {
+test('packSbm11: every file of the fixture generation, byte for byte', async () => {
   const want = fixtureFiles()
   const got = await packSbm11(readFileSync(join(FIX, 'input.nq'), 'utf8'), { syntax: 'nquads' })
   assert.deepEqual([...got.keys()].sort(), [...want.keys()].sort())
@@ -81,16 +82,16 @@ test('packSbm11: every file of the fixture generation, byte for byte', { skip: p
   }
 })
 
-test('packSbm11 then openSbm11 over the files in memory: the answers of native l4sbm11 query', { skip: packSkip }, async () => {
+test('packSbm11 then openSbm11 over the files in memory: the answers of native l4sbm11 query', async () => {
   const files = await packSbm11(readFileSync(join(FIX, 'input.nq')), { syntax: 'nquads' })
   await checkQueries('memory:packed', files)
 })
 
-test('packSbm11: a syntax error is refused with a message', { skip: packSkip }, async () => {
+test('packSbm11: a syntax error is refused with a message', async () => {
   await assert.rejects(packSbm11('<http://e/a> <http://e/p> .', { syntax: 'nquads' }), /parse error/)
 })
 
-test('packSbm11: an unknown syntax is refused', { skip: packSkip }, async () => {
+test('packSbm11: an unknown syntax is refused', async () => {
   await assert.rejects(packSbm11('', { syntax: 'no-such-syntax' }), /unknown syntax/)
 })
 
@@ -98,6 +99,11 @@ test('packSbm11: no syntax is a TypeError', async () => {
   await assert.rejects(packSbm11('', {}), TypeError)
 })
 
-test('packSbm11 on a module without the op names the op', { skip: packSkip ? false : 'this wasm has the op' }, async () => {
-  await assert.rejects(packSbm11('', { syntax: 'nquads' }), (e) => e.code === 'SBM11_NO_PACK_OP')
+test('packSbm11 on a module without the op names the op', async () => {
+  // A stub engine whose ops reflection has no sbm11PackFiles, as a module
+  // built before issue 1009 stage 2 answers.
+  const old = { call: (op) => op === 'ops' ? { ops: ['ops'], blobIoOps: [] } : null, callBlobIO () {} }
+  const api = sbm11Api(async () => old)
+  await assert.rejects(api.packSbm11('', { syntax: 'nquads' }),
+    (e) => e.code === 'SBM11_NO_PACK_OP' && /sbm11PackFiles/.test(e.message))
 })

@@ -7,7 +7,7 @@
 // Part 1 needs no wasm: buildNodes over a stub engine whose stageList and
 // pipelineCheck return the outputs the Lean op gave for these stages
 // (recorded from `#eval pipelineCheck ...`). Part 2 runs the real engine and
-// is skipped when the loaded wasm has no pipelineCheck op.
+// fails when the loaded wasm has no pipelineCheck op.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -123,11 +123,14 @@ test('an engine without the op: wellTyped null, assumptions from the nodes', asy
 
 // ---- Part 2: the real engine ----
 
-let skip = 'wasm engine not built';
-try {
+// The package wasm must serve the ops of this file: a missing op fails the
+// cases, never skips them (https://github.com/danbri/factoidal/issues/1038, P2).
+test('the package wasm serves stages, pipelineCheck, explain', async () => {
   const caps = await f.capabilities();
-  skip = caps.stages && caps.pipelineCheck && caps.explain ? false : 'wasm has no pipelineCheck op';
-} catch (_err) { /* engine did not load: skip */ }
+  assert.equal(caps.stages, true, 'capabilities().stages');
+  assert.equal(caps.pipelineCheck, true, 'capabilities().pipelineCheck');
+  assert.equal(caps.explain, true, 'capabilities().explain');
+});
 
 const SOURCES = `
   @prefix ex: <http://example.org/> .
@@ -139,7 +142,7 @@ const SOURCES = `
 const DESCRIPTION = `@prefix ex: <http://example.org/> .
   _:x a ex:Person . _:x ex:worksFor ex:acme .`;
 
-test('engine: run().assumptions equals pipelineCheck\'s, reader -> reasoner -> explain', { skip }, async () => {
+test('engine: run().assumptions equals pipelineCheck\'s, reader -> reasoner -> explain', async () => {
   const p = f.pipe(await f.node('turtleDocumentReader'), await f.node('rdfsReasoner'),
     await f.node('rdfsExplainGraphStage', { description: DESCRIPTION }));
   assert.equal(p.wellTyped, true);
@@ -150,14 +153,14 @@ test('engine: run().assumptions equals pipelineCheck\'s, reader -> reasoner -> e
   assert.equal(r.wellTyped, true);
 });
 
-test('engine: an assumed writer\'s assumption is in pipelineCheck\'s union and in run()\'s', { skip }, async () => {
+test('engine: an assumed writer\'s assumption is in pipelineCheck\'s union and in run()\'s', async () => {
   const p = f.pipe(await f.node('turtleDocumentReader'), await f.node('turtleDocumentWriter'));
   assert.ok(p.check.assumptions.includes(TW));
   const r = await f.run(p, '<http://example.org/a> <http://example.org/p> <http://example.org/b> .');
   assert.deepEqual(r.assumptions, [...p.check.assumptions]);
 });
 
-test('engine: an ill-typed pipeline is rejected', { skip }, async () => {
+test('engine: an ill-typed pipeline is rejected', async () => {
   const p = f.pipe(await f.node('turtleDocumentWriter'), await f.node('rdfsReasoner'));
   assert.equal(p.wellTyped, false);
   assert.deepEqual({ ...p.check.mismatch }, { at: 0, out: 'String', in: 'Graph' });

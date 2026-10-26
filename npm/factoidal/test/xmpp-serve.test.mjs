@@ -7,9 +7,8 @@
 // binary. A pass means the wasm build of `L4Factoidal.XMPP.Server` did
 // it, through this host's sockets and routing table.
 //
-// Skips wholesale when the Lean wasm assets are not resolvable, and
-// when the resolved bundle predates the session ops (`xmppOpen` …) —
-// the same pattern `test/xmpp.test.mjs` uses.
+// A wasm that is not resolvable, or that lacks the session ops (`xmppOpen`
+// …), fails the cases, never skips them (https://github.com/danbri/factoidal/issues/1038, P2).
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -34,17 +33,13 @@ const bindIq = (id, resource) =>
   `<iq type='set' id='${id}'><bind xmlns='${NS_BIND}'>` +
   (resource ? `<resource>${resource}</resource>` : '') + '</bind></iq>'
 
-let serverModule = null
-let available = false
-let skipReason = ''
-try {
-  serverModule = await import('../xmpp/server.mjs')
+const serverModule = await import('../xmpp/server.mjs')
+
+test('xmpp-serve: the package wasm serves the session ops', async () => {
   const probe = await serverModule.xmppServerOpsAvailable()
-  available = probe.available
-  if (!available) skipReason = `the resolved wasm bundle lacks ${probe.missing.join(', ')}`
-} catch (error) {
-  skipReason = `the Lean wasm assets are not resolvable: ${error.message}`
-}
+  assert.deepEqual(probe.missing, [], `the resolved wasm bundle lacks ${probe.missing.join(', ')}`)
+  assert.equal(probe.available, true)
+})
 
 /** A raw client: write text, wait for a needle in everything received. */
 function connect (port) {
@@ -107,7 +102,7 @@ async function bound (port, user, pw, resource) {
   return { client: c, jid }
 }
 
-test('xmpp-serve: engine reports actual UTF-8 residual bytes despite a reply', { skip: available ? false : skipReason }, async () => {
+test('xmpp-serve: engine reports actual UTF-8 residual bytes despite a reply', async () => {
   const server = await serverModule.openXmppServer({ domain: DOMAIN })
   try {
     const session = server.openSession()
@@ -121,7 +116,7 @@ test('xmpp-serve: engine reports actual UTF-8 residual bytes despite a reply', {
   } finally { server.close() }
 })
 
-test('xmpp-serve: a full session over a TCP socket, through wasm', { skip: available ? false : skipReason }, async (t) => {
+test('xmpp-serve: a full session over a TCP socket, through wasm', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'l4xmpp-wasm-'))
   await writeFile(join(dir, 'accounts'), ACCOUNTS)
   const errors = []
@@ -289,7 +284,7 @@ test('xmpp-serve: a full session over a TCP socket, through wasm', { skip: avail
   assert.deepEqual(errors, [])
 })
 
-test('xmpp-serve: rosters persisted by one run are loaded by the next', { skip: available ? false : skipReason }, async (t) => {
+test('xmpp-serve: rosters persisted by one run are loaded by the next', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'l4xmpp-wasm-'))
   await writeFile(join(dir, 'accounts'), ACCOUNTS)
   t.after(async () => { await rm(dir, { recursive: true, force: true }) })

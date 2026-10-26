@@ -143,6 +143,7 @@
   "scripts": {
     "build": "bash ../../formal/lean4/Wasm/build-wasm.sh",
     "test": "node --test 'test/*.test.js' 'test/*.test.mjs'",
+    "test:jena": "node --test 'test/jena/*.test.mjs'",
     "test:speed": "node ../../tests/perf/npm_speed_gate.mjs",
     "test:costs": "node ../../tests/perf/npm_costs.mjs",
     "prepublishOnly": "npm test"
