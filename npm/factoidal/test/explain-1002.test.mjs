@@ -1,17 +1,18 @@
 // npm explain(): the Lean #guard cases of
 // formal/lean4/L4Factoidal/Dataflow/ExplainGraphTests.lean through the wasm
 // op explainGraph (https://github.com/danbri/factoidal/issues/1002).
-// Skipped when the loaded wasm has no explainGraph op.
+// A wasm without the explainGraph op fails these cases.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as f from '../index.mjs';
 
-let skip = 'wasm engine not built';
-try {
+// The package wasm must serve the ops of this file: a missing op fails the
+// cases, never skips them (https://github.com/danbri/factoidal/issues/1038, P2).
+test('the package wasm serves explain', async () => {
   const caps = await f.capabilities();
-  skip = caps.explain ? false : 'wasm has no explainGraph op';
-} catch (_err) { /* engine did not load: skip */ }
+  assert.equal(caps.explain, true, 'capabilities().explain');
+});
 
 const SOURCES = `
   @prefix ex: <http://example.org/> .
@@ -24,7 +25,7 @@ const SOURCES = `
 const PRE = '@prefix ex: <http://example.org/> .\n';
 const EX = 'http://example.org/';
 
-test('entailed: rdfs2 and rdfs9, _:x maps to ex:alice', { skip }, async () => {
+test('entailed: rdfs2 and rdfs9, _:x maps to ex:alice', async () => {
   const r = await f.explain(SOURCES, PRE +
     '_:x a ex:Person . _:x a ex:Employee . _:x ex:worksFor ex:acme .', { profile: 'rdfs' });
   assert.equal(r.entailed, true);
@@ -39,7 +40,7 @@ test('entailed: rdfs2 and rdfs9, _:x maps to ex:alice', { skip }, async () => {
   assert.equal(typeof r.entailedMeans, 'string');
 });
 
-test('not entailed, noMatch: names triple 1', { skip }, async () => {
+test('not entailed, noMatch: names triple 1', async () => {
   const r = await f.explain(SOURCES, PRE +
     '_:x a ex:Person . _:x ex:worksFor ex:globex .');
   assert.equal(r.entailed, false);
@@ -50,7 +51,7 @@ test('not entailed, noMatch: names triple 1', { skip }, async () => {
   assert.ok(r.assumptions.length > 0);
 });
 
-test('not entailed, noJointMapping', { skip }, async () => {
+test('not entailed, noJointMapping', async () => {
   const r = await f.explain(SOURCES, PRE +
     '_:x ex:worksFor ex:acme . _:x ex:name ex:BobName .');
   assert.equal(r.entailed, false);
@@ -59,12 +60,12 @@ test('not entailed, noJointMapping', { skip }, async () => {
   assert.ok(r.assumptions.length > 0);
 });
 
-test('a description with a named graph is refused', { skip }, async () => {
+test('a description with a named graph is refused', async () => {
   await assert.rejects(
     f.explain(SOURCES, '<http://e/a> <http://e/p> <http://e/b> <http://e/g> .', { format: 'nquads' }),
     (err) => err instanceof f.FactoidalError);
 });
 
-test('an unknown profile is a TypeError', { skip }, async () => {
+test('an unknown profile is a TypeError', async () => {
   await assert.rejects(f.explain('', '', { profile: 'owl' }), TypeError);
 });

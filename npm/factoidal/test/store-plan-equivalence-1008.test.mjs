@@ -16,7 +16,7 @@
 //
 // The test packs an IBK5 generation of the N-Quads below with the engine's
 // own packer, reads its manifest, and calls the ops storeQueryPlan and
-// storeOpen / storeHandleQuery. It is skipped when the loaded engine does
+// storeOpen / storeHandleQuery. It fails when the loaded engine does
 // not serve those ops; a missing engine fails, as every other test here.
 
 import test from 'node:test'
@@ -102,10 +102,7 @@ test('issue 1008: proved-equal queries plan the same blocks and answer the same 
   const engine = await loadEngine()
   const ops = engine.call('ops', []).ops
   const missing = NEEDED_OPS.filter((op) => !ops.includes(op))
-  if (missing.length > 0) {
-    t.skip(`the loaded engine does not serve ${missing.join(', ')}`)
-    return
-  }
+  assert.deepEqual(missing, [], `the loaded engine does not serve ${missing.join(', ')}`)
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'factoidal-1008-'))
   try {
     const input = path.join(root, 'source.nq')
