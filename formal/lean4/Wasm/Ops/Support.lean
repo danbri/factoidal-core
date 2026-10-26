@@ -42,9 +42,10 @@ def okWith (fields : List (String × Json)) : String :=
 def fmtParseError (e : L4Factoidal.Syntax.ParseError) : String :=
   s!"{e.msg} (offset {e.pos})"
 
-/-- Decode the dispatch argument envelope: a JSON ARRAY OF STRINGS
-(positional arguments). Anything else is a caller error. -/
-def decodeArgs (argsJson : String) : Except String (List String) :=
+/-- The general decoder of the dispatch argument envelope: `parseJson`, then a
+check that the value is an array of strings. `decodeArgs` falls back to it on
+every input its fast path does not read. -/
+def decodeArgsSpec (argsJson : String) : Except String (List String) :=
   match parseJson argsJson with
   | .error e => .error s!"argsJson: {toString e}"
   | .ok (.array items) =>
@@ -53,6 +54,75 @@ def decodeArgs (argsJson : String) : Except String (List String) :=
         | .string s => .ok s
         | _ => .error "argsJson must be a JSON array of strings"
   | .ok _ => .error "argsJson must be a JSON array of strings"
+
+/-- One escape-free JSON string at byte `i` of `src` (just after its opening
+quote): the bytes up to the closing quote. `none` at a backslash, a control
+character or the end of the input, so that the caller falls back. -/
+private def argsPlainStringEnd? (src : ByteArray) (i : Nat) : Option Nat :=
+  if h : i < src.size then
+    let b := src[i]
+    if b == 0x22 then some i
+    else if b == 0x5C || b < 0x20 then none
+    else argsPlainStringEnd? src (i + 1)
+  else none
+termination_by src.size - i
+
+/-- The fast path of `decodeArgs`: the exact form `JSON.stringify` gives an
+array of strings that hold no character JSON escapes, `["…","…"]` with no
+whitespace. `none` on anything else. -/
+private def argsPlainArrayGo? (src : ByteArray) (i : Nat) (acc : Array String) :
+    Option (List String) :=
+  if h : i < src.size then
+    if src[i] != 0x22 then none
+    else match argsPlainStringEnd? src (i + 1) with
+      | none => none
+      | some stop =>
+        match String.fromUTF8? (src.extract (i + 1) stop) with
+        | none => none
+        | some text =>
+          let acc := acc.push text
+          if h2 : stop + 1 < src.size then
+            let next := src[stop + 1]
+            if next == 0x5D then
+              if stop + 2 == src.size then some acc.toList else none
+            else if next == 0x2C then
+              if h3 : i < stop ∧ stop + 2 < src.size then
+                argsPlainArrayGo? src (stop + 2) acc
+              else none
+            else none
+          else none
+  else none
+termination_by src.size - i
+decreasing_by omega
+
+/-- Decode the dispatch argument envelope: a JSON ARRAY OF STRINGS
+(positional arguments). Anything else is a caller error.
+
+An argument can be a whole document or a store manifest as hexadecimal (1.5
+million characters for the londat store of
+https://github.com/danbri/factoidal/issues/1039), and `parseJson` over it
+cost about 0.4 s per call in the wasm module. So the form `JSON.stringify`
+gives escape-free strings is read in place, and every other input goes to
+`decodeArgsSpec`. The `#guard`s below check that the two agree. -/
+def decodeArgs (argsJson : String) : Except String (List String) :=
+  let src := argsJson.toUTF8
+  let fast : Option (List String) :=
+    if src.size == 2 && src[0]! == 0x5B && src[1]! == 0x5D then some []
+    else if 2 ≤ src.size && src[0]! == 0x5B then argsPlainArrayGo? src 1 #[]
+    else none
+  match fast with
+  | some args => .ok args
+  | none => decodeArgsSpec argsJson
+
+#guard ([ "[]", "[\"\"]", "[\"a\"]", "[\"a\",\"bc\"]", "[\"é😀\",\"x\"]",
+          "[\"a\\\"b\"]", "[\"a\\nb\",\"c\"]", "[ \"a\" ]", "[\"a\",]", "[\"a\"",
+          "[\"a\"]x", "[1]", "[\"a\",1]", "{}", "", "[", "[\"", "\"a\"", "[\"a\" ,\"b\"]",
+          "[\"\\u0041\"]", "[\"a\"][\"b\"]" ].all fun t =>
+  match decodeArgs t, decodeArgsSpec t with
+  | .ok a, .ok b => a == b
+  | .error _, .error _ => true
+  | _, _ => false)
+#guard decodeArgs "[\"ab\",\"\",\"c\"]" == .ok ["ab", "", "c"]
 
 /-! ## Hexadecimal byte transport
 
