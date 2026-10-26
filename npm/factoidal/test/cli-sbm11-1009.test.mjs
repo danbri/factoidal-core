@@ -79,10 +79,11 @@ test(`activate, query and inspect an SBM11 store give the answers of l4sbm11 que
       assert.deepEqual(JSON.parse(r.stdout), JSON.parse(expected(name)), name)
     }
     const c = ok(['query', store, QUERIES.get('construct'), '--format', 'nquads', '--quiet'])
-    assert.equal(c.stdout.replace(/\n$/, ''), expected('construct'))
+    // the command prints the engine's N-Triples and one line break
+    assert.equal(c.stdout.replace(/\n$/, ''), expected('construct').replace(/\n$/, ''))
 
     const table = ok(['query', store, QUERIES.get('count')])
-    assert.match(table.stderr, /^path ids, /m)
+    assert.match(table.stderr, /^path=ids, /m)
 
     const inspect = JSON.parse(ok(['inspect', store, '--json']).stdout)
     assert.equal(inspect.layout, 'sbm11')

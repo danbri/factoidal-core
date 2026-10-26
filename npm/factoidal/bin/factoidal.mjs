@@ -1062,7 +1062,7 @@ async function querySbm11 (engine, root, named, sparql, format, limit, options) 
     return EXIT_FAILURE
   }
   if (!quiet) {
-    err(`path ${answer.path}, ${plural(answer.reads, 'read')}, ${answer.bytesRead} bytes read`)
+    err(`${answer.path}, ${plural(answer.reads, 'read')}, ${answer.bytesRead} bytes read`)
   }
   let result
   if (answer.format === 'srj') {
