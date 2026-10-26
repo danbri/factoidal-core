@@ -1,6 +1,10 @@
 # Pipeline node settings: the API, the evidence record and the proofs
 
-Status: current. Date: 2026-10-25. Branch: `claude/pipeline-0.16`.
+Status: current. Date: 2026-10-25. Landed on `main` in
+https://github.com/danbri/factoidal-core/pull/116 (pipeline node settings,
+merged 2026-10-25, merge commit a76d8694; branch `claude/pipeline-0.16`).
+The engine parts need a wasm module built from a76d8694 or later; npm
+0.15.0 does not have them.
 Tracking: https://github.com/danbri/factoidal/issues/975 (checked pipelines),
 https://github.com/danbri/factoidal/issues/1026 (evaluator output wire).
 Companion record: `2026-10-25-tabular-and-source-models.md` (tables and
