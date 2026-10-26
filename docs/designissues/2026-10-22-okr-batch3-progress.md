@@ -54,3 +54,47 @@ queries d12, d17, d19.
   CPUs took 15 to 20 minutes each.
 - Free disk fell to 3.0 GB with three worktrees. Keep at most two worktrees, and
   let the third agent use the main checkout.
+
+## Final state (2026-10-24; written 2026-10-26)
+
+Source: the comments of https://github.com/danbri/factoidal/issues/875 (OKR
+batch 3), last one 2026-10-24 13:40 UTC. The sections above are the state at
+14:10 UTC on 2026-10-22; every branch named there has landed on `main`.
+
+Batch 3 is finished. Every KR is met except KR 1.2 for query q07.
+
+- O1, SBM11 against QLever. KR 1.1 met: 18 of 19 queries are as fast as
+  QLever on 1 CPU or faster (d12 7.55 ms against 10.10 ms; d14 6.03 ms
+  against 6.09 ms; d13 and d17 earlier). d19 is 208 ms, 2.0 times QLever,
+  within its acceptance target of 300 ms, with the remaining cost named in
+  section 11.21 of `2026-10-12-three-engine-benchmark.md` (the KR allows a
+  named remaining cost). KR 1.3 met (1.69 times C,
+  https://github.com/danbri/factoidal/issues/797). KR 1.4 met (activation
+  temporary disk 4.9 to 0.12 times the generation,
+  https://github.com/danbri/factoidal/issues/810).
+- KR 1.2, 4 threads against 1 thread: closed by the owner on 2026-10-24,
+  answer "Close: 3 of 4 met". 4/1 time (target at most 0.4) and peak RSS 4/1
+  (target at most 2): d10 0.39 and 1.21, q19 0.38 and 1.80, q21 0.36 and
+  1.67 (met); q07 0.50 and 1.22 (time not met). d17 was removed from the KR
+  (owner, 2026-10-23, "Remove it": block metadata answers it with no scan).
+  Stages 1e to 1p of `2026-10-12-parallel-block-scans.md`. q07 stays open in
+  https://github.com/danbri/factoidal/issues/961 (parallel scans, remaining
+  costs).
+- O2, every syntax in bounded memory: KR 2.1 to 2.5 met
+  (https://github.com/danbri/factoidal/issues/873 closed for 2.5).
+- O3, stated cost bounds: KR 3.1 to 3.3 met.
+- O4, run-time planner: KR 4.1 to 4.4 met.
+
+Follow-ups named at the close, with their state on 2026-10-26:
+
+- https://github.com/danbri/factoidal/issues/949 (long N-Triples and N-Quads
+  lines still cost a `List Char`): closed.
+- https://github.com/danbri/factoidal/issues/957 (RDFC-1.0 of a dataset with
+  an RDF 1.2 triple term: no W3C rule): open, refusal with expected failure.
+- https://github.com/danbri/factoidal/issues/958 (OWL 2 Direct Semantics
+  checks on a graph with an RDF 1.2 triple term: no mapping rule): open,
+  refusal with expected failure.
+- https://github.com/danbri/factoidal/issues/960 (OWL public verdicts: model
+  certificate, admission, fuel, checked countermodel): closed.
+- https://github.com/danbri/factoidal/issues/973 (no theorem that graph
+  operations keep a graph a set): closed.

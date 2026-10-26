@@ -255,15 +255,24 @@ to overwrite. Gates that read `docs/fstar-extracted/*.js`, `npm/factoidal/`
 bundles or the Lean wasm need those files installed first
 (`tools/fetch-builds.sh`) or built locally.
 
-| Gate | Command | Expected, measured 2026-10-10 (0.9.0, issue 713 stage 3) |
+> **Stale numbers, 2026-10-26.** The numbers in this table were measured at
+> 0.9.0 and 0.10.0 (the browser row at 0.13.0), and the releases since then
+> (0.11.0 to 0.15.0) did not write theirs here. Read every number below as
+> "measured at 0.10.0" unless its row names a later version. Do not use them
+> as the expected values for 0.16.0: measure each gate again and write the
+> new number with its version. An audit of the release process is in
+> progress (another session, 2026-10-26); this note does not change the
+> procedure.
+
+| Gate | Command | Expected, measured 2026-10-10 (0.9.0, issue 713 stage 3) and 2026-10-13 (0.10.0); stale, see the note above |
 | --- | --- | --- |
 | package suite | `cd npm/factoidal && npm test` | 432 pass, 0 fail, 0 skipped (out of 432), 2026-10-13, 0.10.0 (adds `test/pure-and-serve.test.mjs` 7 and `test/fuseki-compat.test.mjs` 6, of which 4 are expected failures naming issues 829, 830, 831). Earlier: 403 pass, 0 fail, 0 skipped (out of 403) on `claude/wt-npm-lean-45` after its merge with core-split (issue 713 stages 4 and 5 added `test/core-entry.test.mjs` 23, `test/dataset-scaling.test.js` 2, `test/large-inputs.test.mjs` 4); before: 372 pass, 0 fail, 0 skipped (out of 372), after the issue-716 merge (371 pass, 0 fail (out of 371) at the stage 3 merge). 4 of the 372 are expected-failure cases, each naming its open issue: 717 (1, `SERVICE` without `SILENT`), 691 (1, unused `@prefix xsd:`), 676 (2, PRECIS); the 2 cases of 716 (`{lenient:true}`) are assertions since that merge. A function the wasm does not serve FAILS; no test skips on a capability probe. (0.8.0: 340 pass, 0 fail, 2 skipped (out of 342), on the F\* bundles) |
-| store host | `node tests/store-host/conformance.mjs` | 34 pass, 0 fail, 0 skipped (out of 34) under Node |
-| the command | `node tests/store-host/cli.mjs` | 33 pass, 0 fail, 0 skipped (out of 33) under Node |
-| LWS and Solid hosts | `node tests/lws/server.mjs`, `node tests/solid/server/protocol.mjs`, `node tests/solid/client/against-own-server.mjs` | 8, 12 and 7 pass, 0 fail |
+| store host | `node tests/store-host/conformance.mjs` | 34 pass, 0 fail, 0 skipped (out of 34) under Node (measured at 0.10.0) |
+| the command | `node tests/store-host/cli.mjs` | 33 pass, 0 fail, 0 skipped (out of 33) under Node (measured at 0.10.0) |
+| LWS and Solid hosts | `node tests/lws/server.mjs`, `node tests/solid/server/protocol.mjs`, `node tests/solid/client/against-own-server.mjs` | 8, 12 and 7 pass, 0 fail (measured at 0.10.0) |
 | tarball | `cd npm/factoidal && npm pack --dry-run` | 0.10.0: 174 files, 3,787,140 bytes packed, 19.2 MB unpacked (the full wasm grew to 11.2 MB; the core wasm is 6.1 MB). 0.9.0: 161 files, 2,410,574 bytes packed, 12,042,704 unpacked; no F\* bundle, no `hacl-wasm/` (0.8.0: 193 files) |
 | wasm copies | the tail of `build-wasm.sh` | "all committed wasm copies agree" |
-| Lean native | `bash formal/lean4/Wasm/native-smoke.sh` | 297 pass, 0 fail (out of 297); needs `lake` on PATH (`export PATH=$HOME/.elan/bin:$PATH`) |
+| Lean native | `bash formal/lean4/Wasm/native-smoke.sh` | 297 pass, 0 fail (out of 297), measured at 0.10.0; needs `lake` on PATH (`export PATH=$HOME/.elan/bin:$PATH`) |
 | browser | `tests/web-demos/npm_browser_smoke.sh` | PASS: `browser.js` in headless Chromium runs a parse, a SELECT, `canonicalize`, `xpathEval` and `openStore` (over `fetch`, from `test/fixtures/sample-store`, COUNT 4434); one `instantiateStreaming` call; the wasm served as `application/wasm`. 0.13.0, 2026-10-24: PASS |
 | speed (not a release gate yet) | `cd npm/factoidal && npm run test:speed` after `tools/fetch-builds.sh --set web` | the Lean engine within 2 times the faster F\* bundle per row of `tests/perf/l4_vs_fstar_wasm_bench.mjs`, or an expected failure naming its issue; exit 2 without the F\* bundles. Numbers: design record § 10 |
 | bundler and CSP page | `tests/web-demos/bundler_csp_smoke.sh` | PASS, exit 0 (esbuild bundle of the package under `script-src 'self' 'wasm-unsafe-eval'`) |

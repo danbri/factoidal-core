@@ -452,6 +452,20 @@ unchanged. Text input takes `{format}`; with no format the engine infers one
 and reports it. An unknown option key rejects with a `FactoidalError` of
 code `option.unknown`; the engine checks the keys (op `apiCheck`).
 
+Query warnings. A SELECT answer can carry a non-enumerable `warnings`
+array. A `FROM` or `FROM NAMED` IRI that names no graph of the dataset gives
+a warning of class `dataset-iri-not-found` with `class`, `clause` (`FROM` or
+`FROM NAMED`), `iri` and `message`. The rows do not change: the clause adds
+no graph. The native `l4factoidal query` command writes the same warning to
+standard error (https://github.com/danbri/factoidal/issues/1032, FROM IRI
+that names no graph). This needs a wasm module built after 0.15.0; with the
+0.15.0 wasm the answer has no `warnings` property.
+
+```js
+const rows = await ds.query("SELECT * FROM <http://e/none> WHERE { ?s ?p ?o }");
+console.log(rows.length, rows.warnings?.[0]?.class); // 0 'dataset-iri-not-found'
+```
+
 ## The persisted store
 
 A **Shardborough** store is the on-disk format the Lean packer writes:
@@ -1123,6 +1137,43 @@ Not yet: writes to an LWS storage (packing a generation, switching
 `CURRENT` with a conditional PUT), the Merkle check of each read, eviction of
 in-memory copies.
 
+## Packing an SBM11 generation in memory: `packSbm11`, `mapReader`
+
+> `packSbm11` needs a wasm module built after 0.15.0 (the op
+> `sbm11PackFiles`). The 0.15.0 wasm does not have it: there `packSbm11`
+> rejects with `code: 'SBM11_NO_PACK_OP'`. `mapReader` works on any module
+> that has the SBM11 query ops.
+
+```js
+import { packSbm11, mapReader, openSbm11 } from "@factoidal/core";
+
+const files = await packSbm11(
+  "<http://e/s> <http://e/p> <http://e/o> .", { syntax: "nquads" });
+// files: Map from file name to Uint8Array (data files, .merkle sidecars,
+// manifest.sbm11; no CURRENT)
+const store = await openSbm11("mem", { reader: mapReader(files) });
+console.log(store.query("SELECT * WHERE { ?s ?p ?o }").json);
+store.close();
+```
+
+`packSbm11(text, { syntax, base? })`: `text` is a string or UTF-8 bytes;
+`syntax` is `turtle`, `trig`, `nquads`, `ntriples`, `rdfxml` or `jsonld`
+(required); `base` is the base IRI. It resolves to a `Map` from file name to
+bytes: the files of one SBM11 generation, byte for byte the files that the
+native `l4sbm11-pack` writes for the same quads (23 of 23 files for
+`test/fixtures/sbm11-tiny`; all files of 605 of 605 W3C SPARQL 1.0 and 1.1
+inputs). The engine names every file and computes every byte (Lean
+`Storage/Sbm11/PackBytes.lean`), with one engine call per file.
+
+`mapReader(files)` is a reader over files held in memory (a `Map` or a plain
+object from file name to `Uint8Array`). Give it to `openSbm11(source,
+{ reader })`. A read past the end of a file, or of a file that it does not
+hold, answers null, and the engine refuses the read with the file name.
+
+Limits: the whole document and every file are in memory at the same time.
+Not yet: `factoidal pack` for SBM11, and a pack that streams its input
+(https://github.com/danbri/factoidal/issues/1009, SBM11 in npm).
+
 ## Functional API (fn)
 
 `@factoidal/core/fn` is a functional variant of the API above. `FnDataset`
@@ -1290,6 +1341,44 @@ console.log(out.evidence[1].reason);
 ```
 
 Design: [issue 1002](https://github.com/danbri/factoidal/issues/1002).
+
+### Node settings, output wires and the CSVW stage (after 0.15.0)
+
+> These three need a wasm module built after 0.15.0 (the op
+> `pipelineCheckNodes`, the wire `table`, the CSVW stage bound in the
+> engine). With the 0.15.0 wasm: evidence records have no settings, the
+> evaluator's output wire is the registry's `Answer`, and the CSVW stage is
+> `missing` and not bound.
+
+Settings. The params of `node()` are the node's settings. Each evidence
+record carries `settings` (canonical form: keys sorted at every depth; the
+defaults of absent settings that narrow the contract, for example `lenient:
+false` and `entail: 'none'`; a Dataset value as `{nquadsSha256}`) and
+`settingsDigest` (`sha256:` and the hex SHA-256 of the canonical text). The
+node has the same fields, plus `outside`, `derived` and `settingsWire` (the
+settings as sent to the engine). A setting outside the proved domain of a
+proved stage (a lenient reader, an evaluator with `entail` other than
+`none` or with `output`, a key that the stage's settings table does not
+name) makes the node's status `unproved`. The record then has
+`registryStatus` and `outside` (each setting and the reason), and `run()`
+reports `proved: false`. A reader's `format` must name the stage's syntax
+(`ttl12` selects RDF 1.2 mode, reported as `derived.mode`); an evaluator's
+query must parse, else `node()` rejects. Design record:
+[2026-10-25-pipeline-settings-and-provenance.md](../../docs/designissues/2026-10-25-pipeline-settings-and-provenance.md).
+
+Output wire by query form. The output wire of a `shippedEvaluator` node
+follows its query form: SELECT gives `Table`, ASK gives `Answer`, CONSTRUCT
+and DESCRIBE give `Dataset` (`node.wireOut`; Lean `Dataflow.evalContract_wire`).
+So reader, CONSTRUCT, CONSTRUCT is well typed; reader, SELECT, CONSTRUCT is
+not (https://github.com/danbri/factoidal/issues/1026, CONSTRUCT wire).
+
+CSVW stage. `node('CSVW (tabular data to RDF)', { metadata, mode, base,
+url })` takes CSV text on its wire, runs `csvwToRdf` and gives a Dataset.
+Its evidence status is `tested` (the W3C csv2rdf suite; there is no Lean
+contract, so `checked` is false and `run()` needs `{ unchecked: true }`)
+(https://github.com/danbri/factoidal/issues/975, CSVW as a pipeline stage).
+`stages()` marks a stage `bound` only when the engine also reports it
+runnable.
 
 ## API
 
