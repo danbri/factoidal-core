@@ -248,6 +248,7 @@ def handleOpNames : List String :=
   , "datasetClose"
   , "datasetClone"
   , "datasetCanonicalize"
+  , "datasetCanonicalHash"
   , "datasetClosure"
   , "datasetShaclValidate"
   , "datasetQueryRaw"

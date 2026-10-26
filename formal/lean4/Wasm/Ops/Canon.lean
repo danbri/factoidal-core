@@ -86,4 +86,48 @@ RDF 1.1 dataset is canonicalised as before. -/
 #guard (canonicalizeToNQuads "_:x <http://example.com/p> <http://example.com/o> .\n").startsWith
   "{\"ok\":true"
 
+/-! ### The canonical hash (https://github.com/danbri/factoidal/issues/1040)
+
+The SHA-256 of the RDFC-1.0 canonical N-Quads document, as lowercase hex:
+`Dataset.canonicalHash` of `RDF/Canonical.lean`, the `canonicalHash` of the
+rdf-canonize implementations. The digest is computed in Lean
+(`Crypto.hashHex`), never by the host. The same two refusals as
+`canonicalizeChecked` apply: the §4.4 excessive-calls abort and an RDF 1.2
+term. -/
+
+/-- The `{"ok":true,"hash":…,"algorithm":"sha256"}` envelope over an
+ALREADY-PARSED dataset. -/
+def canonicalHashParsed (ds : Dataset) : String :=
+  let r := L4Factoidal.RDF.Canonical.canonicalize ds
+  if r.aborted then
+    errJson "datasetCanonicalHash: RDFC-1.0 §4.4 excessive-calls budget exceeded"
+  else
+    okWith [("hash", .string (L4Factoidal.Crypto.hashHex .sha256 r.nquads)),
+            ("algorithm", .string "sha256")]
+
+/-- When the run does not abort, the hash is `Dataset.canonicalHash`. -/
+theorem canonicalHashParsed_eq (ds : Dataset)
+    (h : (L4Factoidal.RDF.Canonical.canonicalize ds).aborted = false) :
+    canonicalHashParsed ds =
+      okWith [("hash", .string (ds.canonicalHash .sha256)), ("algorithm", .string "sha256")] := by
+  simp [canonicalHashParsed, h, Dataset.canonicalHash, Dataset.canonicalNQuads]
+
+/-- The canonical hash of an RDF 1.1 dataset; the RDF 1.2 refusal otherwise. -/
+def canonicalHashChecked (ds : Dataset) : String :=
+  if ds.isRdf11 then canonicalHashParsed ds else errJson canonRdf12Refusal
+
+/-- The canonical hash over a dataset the caller holds, read through its
+canonical N-Quads as `canonicalizeOf` reads it, so the hash is the SHA-256
+of the text `canonicalizeOf` answers. -/
+def canonicalHashOf (ds : Dataset) : String :=
+  withOpsDataset .rdf12 ds canonicalHashChecked
+
+-- W3C rdf-canon test014 (third_party/testing/rdf-canon/tests/rdfc10/test014-rdfc10.nq):
+-- `sha256sum test014-rdfc10.nq`.
+#guard canonicalHashParsed
+  (match L4Factoidal.Dataflow.readNQuadsText .rdf12 "_:b0 <http://example.org/vocab#p> _:b1 .\n" with
+   | .ok ds => ds | .error _ => {}) ==
+  okWith [("hash", .string (L4Factoidal.Crypto.hashHex .sha256 "_:c14n0 <http://example.org/vocab#p> _:c14n1 .\n")),
+          ("algorithm", .string "sha256")]
+
 end L4Wasm.Ops

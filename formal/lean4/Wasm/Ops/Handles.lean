@@ -434,6 +434,13 @@ the envelope `canonicalizeToNQuads` answers on its canonical N-Quads. -/
 def datasetCanonicalize (h : String) : IO String :=
   withHandleDataset h fun ds _ => pure (canonicalizeOf ds)
 
+/-- `datasetCanonicalHash(handle)` — `canonicalHashOf` of the stored dataset:
+`{"ok":true,"hash":"<64 hex>","algorithm":"sha256"}`, the SHA-256 of the
+canonical N-Quads `datasetCanonicalize` answers
+(https://github.com/danbri/factoidal/issues/1040). -/
+def datasetCanonicalHash (h : String) : IO String :=
+  withHandleDataset h fun ds _ => pure (canonicalHashOf ds)
+
 /-- The regime names `datasetClosure` reads. -/
 def closureRegimes : List String := ["rdfs", "owl-rl", "rho-df", "rdfs-plus"]
 
