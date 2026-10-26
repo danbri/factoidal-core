@@ -1,0 +1,20 @@
+[{
+  "@id": "ex:bob",
+  "ex:name": [{"@value": "Bob"}],
+  "ex:knows": [{
+    "@id": "ex:fred",
+    "@annotation": [{
+      "@id": "_:b1",
+      "ex:source": [{"@id": "http://example.org/"}]
+    }, {
+      "@id": "_:b2",
+      "ex:certainty": [{
+        "@value": "8.0E-1",
+        "@type": "http://www.w3.org/2001/XMLSchema#double"
+      }]
+    }]
+  }]
+}, {
+  "@id": "ex:fred",
+  "ex:name": [{"@value": "Fred"}]
+}]

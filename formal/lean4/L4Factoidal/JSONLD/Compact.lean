@@ -1318,8 +1318,9 @@ def cmpCtxIsEmpty : Json → Bool
   * `processingMode` — `"json-ld-1.0"` selects 1.0 mode, anything else
     1.1 (the same convention `expandDocument` uses). -/
 def compactDocument (loader : Loader) (input ctxDoc : String) (base ctxUrl : Option String)
-    (compactArrays compactToRelative : Bool) (processingMode : Option String) : Res Json :=
-  match expandDocument loader input base none processingMode with
+    (compactArrays compactToRelative : Bool) (processingMode : Option String)
+    (rdfstar : Bool := false) : Res Json :=
+  match expandDocument loader input base none processingMode (rdfstar := rdfstar) with
   | .error e => .error e
   | .ok expanded =>
     match parseJson ctxDoc with

@@ -1563,7 +1563,7 @@ document with none of the three goes straight to `datasetOfJson`, which
 requires EXPANDED FORM input. -/
 def parseJsonLd (loader : Loader) (input : String) (base : Option String)
     (rdfDirection : Option String) (expandContext : Option String)
-    (processingMode : Option String) : Res Dataset :=
+    (processingMode : Option String) (rdfstar : Bool := false) : Res Dataset :=
   let rdir := rdfDirectionModeOf rdfDirection
   let mode10 := processingMode == some "json-ld-1.0"
   match parseJson input with
@@ -1571,7 +1571,8 @@ def parseJsonLd (loader : Loader) (input : String) (base : Option String)
   | .ok root =>
     if hasInlineContext root || base.isSome || expandContext.isSome then
       let acSeed : ActiveContext :=
-        { cur := { emptyContextCore with base := base, mode10 := mode10 }, prev := [] }
+        { cur := { emptyContextCore with base := base, mode10 := mode10, rdfstar := rdfstar },
+          prev := [] }
       match (match expandContext with
              | none => Except.ok acSeed
              | some ctxRef => contextProcess loader acSeed (.string ctxRef) false
@@ -1600,14 +1601,15 @@ algorithm to drop unmapped properties, array-wrap values, and so on.
 never the input being framed. -/
 def expandDocument (loader : Loader) (input : String) (base : Option String)
     (expandContext : Option String) (processingMode : Option String)
-    (frameExpansion : Bool := false) : Res Json :=
+    (frameExpansion : Bool := false) (rdfstar : Bool := false) : Res Json :=
   let mode10 := processingMode == some "json-ld-1.0"
   match parseJson input with
   | .error _ => .error .notJsonLd
   | .ok root =>
     let acSeed : ActiveContext :=
       { cur := { emptyContextCore with
-                   base := base, mode10 := mode10, frameExpansion := frameExpansion },
+                   base := base, mode10 := mode10, frameExpansion := frameExpansion,
+                   rdfstar := rdfstar },
         prev := [] }
     match (match expandContext with
            | none => Except.ok acSeed

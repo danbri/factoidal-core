@@ -1,0 +1,181 @@
+{
+  "@context": ["context.jsonld", {"@base": "compact-manifest"}],
+  "@id": "",
+  "@type": "mf:Manifest",
+  "name": "Compaction",
+  "description": "These tests implement the requirements for the JSON-LD-star [Compaction Algorithm](https://json-ld.github.io/json-ld-star#compaction-algorithm).",
+  "baseIri": "https://json-ld.github.io/json-ld-star/tests/",
+  "sequence": [
+    {
+      "@id": "#tst04",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "triple term 1",
+      "purpose": "Node with triple term having no @id",
+      "input": "compact/st04-in.jsonld",
+      "context": "compact/st04-out.jsonld",
+      "expect": "compact/st04-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst05",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "triple term 2",
+      "purpose": "Node with triple term having IRI @id",
+      "input": "compact/st05-in.jsonld",
+      "context": "compact/st05-out.jsonld",
+      "expect": "compact/st05-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst06",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "triple term 3",
+      "purpose": "Node with triple term having BNode @id",
+      "input": "compact/st06-in.jsonld",
+      "context": "compact/st06-out.jsonld",
+      "expect": "compact/st06-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst07",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "triple term 4",
+      "purpose": "Node with triple term having a type",
+      "input": "compact/st07-in.jsonld",
+      "context": "compact/st07-out.jsonld",
+      "expect": "compact/st07-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst08",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "triple term 5",
+      "purpose": "Node with triple term having an IRI value",
+      "input": "compact/st08-in.jsonld",
+      "context": "compact/st08-out.jsonld",
+      "expect": "compact/st08-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst09",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "triple term 6",
+      "purpose": "Node with triple term having an BNode value",
+      "input": "compact/st09-in.jsonld",
+      "context": "compact/st09-out.jsonld",
+      "expect": "compact/st09-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst10",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "triple term 7",
+      "purpose": "Node with recursive triple term",
+      "input": "compact/st10-in.jsonld",
+      "context": "compact/st10-out.jsonld",
+      "expect": "compact/st10-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst18",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "Annotation node 1",
+      "purpose": "Node with @annotation property on value object",
+      "input": "compact/st18-in.jsonld",
+      "context": "compact/st18-out.jsonld",
+      "expect": "compact/st18-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst19",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "Annotation node 2",
+      "purpose": "Node with @annotation property on node object",
+      "input": "compact/st19-in.jsonld",
+      "context": "compact/st19-out.jsonld",
+      "expect": "compact/st19-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst20",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "Annotation node 3",
+      "purpose": "Node with @annotation property multiple values",
+      "input": "compact/st20-in.jsonld",
+      "context": "compact/st20-out.jsonld",
+      "expect": "compact/st20-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst20a",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "Annotation node 4",
+      "purpose": "Node with @annotation property containing multiple properties",
+      "input": "compact/st20a-in.jsonld",
+      "context": "compact/st20a-out.jsonld",
+      "expect": "compact/st20a-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst20b",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "Annotation node 5",
+      "purpose": "Node with @annotation property containing an empty node object",
+      "input": "compact/st20b-in.jsonld",
+      "context": "compact/st20b-out.jsonld",
+      "expect": "compact/st20b-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst34",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "Reverse annotation node 1",
+      "purpose": "node with @annotation property on node object with reverse relationship",
+      "input": "compact/st34-in.jsonld",
+      "context": "compact/st34-out.jsonld",
+      "expect": "compact/st34-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst35",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "Reverse annotation node 2",
+      "purpose": "reverse relationship inside annotation",
+      "input": "compact/st35-in.jsonld",
+      "context": "compact/st35-out.jsonld",
+      "expect": "compact/st35-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst36",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "Alias for triple term",
+      "purpose": "triple term with an alias of `@triple`",
+      "input": "compact/st36-in.jsonld",
+      "context": "compact/st36-out.jsonld",
+      "expect": "compact/st36-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst37",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "Alias for annotation node",
+      "purpose": "annotation node with an alias of `@annotation`",
+      "input": "compact/st37-in.jsonld",
+      "context": "compact/st37-out.jsonld",
+      "expect": "compact/st37-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }, {
+      "@id": "#tst40",
+      "@type": ["jld:PositiveEvaluationTest", "jld:CompactTest"],
+      "name": "annotation with annotation 1",
+      "purpose": "annotation node containing an annotation node",
+      "input": "compact/st40-in.jsonld",
+      "context": "compact/st40-out.jsonld",
+      "expect": "compact/st40-out.jsonld",
+      "requires": "JSON-LD-star",
+      "option": {"specVersion": "json-ld-star", "rdfstar": true}
+    }
+  ]
+}

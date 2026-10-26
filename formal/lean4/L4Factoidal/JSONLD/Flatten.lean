@@ -604,8 +604,9 @@ def flattenExpanded (expanded : Json) : Res (List Json) :=
   * `processingMode` — `"json-ld-1.0"` selects 1.0 mode. -/
 def flattenDocument (loader : Loader) (input : String) (ctxDoc : Option String)
     (base ctxUrl : Option String) (compactArrays : Bool) (processingMode : Option String)
-    : Res Json :=
-  match expandDocument loader input base none processingMode with
+    (rdfstar : Bool := false) (createAnnotations : Bool := false) : Res Json :=
+  let _ := createAnnotations  -- JSON-LD-star flattening option; not used yet
+  match expandDocument loader input base none processingMode (rdfstar := rdfstar) with
   | .error e => .error e
   | .ok expanded =>
     match flattenExpanded expanded with

@@ -63,6 +63,9 @@ structure Options where
   useNativeTypes : Bool := false
   useRdfType     : Bool := false
   rdfDirection   : Option String := none
+  /-- JSON-LD-star: write RDF 1.2 triple terms as `@triple` objects and
+  `rdf:reifies` statements as `@reifies` (https://github.com/json-ld/json-ld-star/pull/61). -/
+  rdfstar        : Bool := false
   deriving Repr
 
 def defaultOptions : Options := {}

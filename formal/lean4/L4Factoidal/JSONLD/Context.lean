@@ -337,6 +337,11 @@ structure ContextCore where
   /-- JSON-LD Framing's frame-expansion flag (not exercised by the toRdf
   path; carried so the expansion port's shape matches the F* source). -/
   frameExpansion : Bool
+  /-- JSON-LD-star (`option.rdfstar`): the keywords `@triple`, `@reifies`
+  and `@annotation` denote RDF 1.2 triple terms, reifiers and annotations
+  (https://github.com/json-ld/json-ld-star/pull/61). When false they are
+  ignored like any other unknown `@`-keyword. -/
+  rdfstar        : Bool := false
   deriving Repr
 
 /-- The active context: the current record plus the stack of enclosing
@@ -363,6 +368,7 @@ def mode10         (ac : ActiveContext) : Bool := ac.cur.mode10
 def docUrl         (ac : ActiveContext) : Option String := ac.cur.docUrl
 def originalBase   (ac : ActiveContext) : Option String := ac.cur.originalBase
 def suppressPop    (ac : ActiveContext) : Bool := ac.cur.suppressPop
+def rdfstar        (ac : ActiveContext) : Bool := ac.cur.rdfstar
 def frameExpansion (ac : ActiveContext) : Bool := ac.cur.frameExpansion
 
 /-- Update the current record, leaving the pop chain alone. -/
