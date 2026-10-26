@@ -37,6 +37,12 @@ covers = "part"
 note = "canonicalizeOf on the stored dataset, then the canonicalizeToNQuads path."
 
 [[entry]]
+id = "wasm:datasetCanonicalHash"
+stages = ["rdfcStage"]
+covers = "part"
+note = "Wasm/Ops/Canon.lean canonicalHashOf on the stored dataset: RDF.Canonical.canonicalize (rdfcStage's run), then Crypto.hashHex .sha256 of its canonical N-Quads (canonicalHashParsed_eq: Dataset.canonicalHash). Not covered: the digest (Crypto.hashHex), the RDF 1.2 refusal and the JSON envelope."
+
+[[entry]]
 id = "wasm:owlClosure"
 stages = ["rdfsReasoner", "owlRlReasoner"]
 covers = "part"
@@ -715,13 +721,13 @@ note = "npm/factoidal/fn.js hash: canonicalize (see npm:./fn#canonicalize), then
 id = "npm:.#canonicalHash"
 stages = ["rdfcStage"]
 covers = "part"
-note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then Dataset.toString('rdfc'): datasetSerialize with tag rdfc, canonicalizeOf (rdfcStage's run). Not covered: datasetGraphAsDefault."
+note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash): RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: datasetGraphAsDefault, the digest (Crypto.hashHex)."
 
 [[entry]]
 id = "npm:./browser#canonicalHash"
 stages = ["rdfcStage"]
 covers = "part"
-note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then Dataset.toString('rdfc'): datasetSerialize with tag rdfc, canonicalizeOf (rdfcStage's run). Not covered: datasetGraphAsDefault."
+note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash): RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: datasetGraphAsDefault, the digest (Crypto.hashHex)."
 
 [[entry]]
 id = "npm:./fn#vcEddsaCreateFromCanonical"

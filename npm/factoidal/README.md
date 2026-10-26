@@ -8,14 +8,15 @@ npm install @factoidal/core
 ```
 
 ```js
-import { parse, csvwToRdf } from "@factoidal/core";
+import { parse, csvwToRdf, canonicalHash } from "@factoidal/core";
 
 const ds = await parse('<http://x/a> <http://x/n> "A" .', { format: "ntriples" });
 const rows = await ds.query("SELECT ?n WHERE { ?s <http://x/n> ?n }");
 console.log(rows[0].get("n").value);              // A
 console.log(ds.toString("turtle"));
 console.log(await ds.serialize({ format: "rdfxml" }));
-console.log(await ds.canonicalize());              // RDFC-1.0
+console.log(await ds.canonicalize());              // RDFC-1.0 canonical N-Quads
+console.log(await canonicalHash(ds));              // its SHA-256, 64 hex digits
 
 const table = await csvwToRdf("id,name\n1,a\n", "", { mode: "minimal", url: "http://x/t.csv" });
 console.log(table.size);                           // 2

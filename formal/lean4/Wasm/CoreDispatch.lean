@@ -95,6 +95,7 @@ def coreIOOpNames : List String :=
   , "datasetClose"
   , "datasetClone"
   , "datasetCanonicalize"
+  , "datasetCanonicalHash"
   , "datasetClosure"
   , "datasetShaclValidate"
   , "datasetQueryRaw"
@@ -318,6 +319,7 @@ def callIOArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "datasetClose"     => some (arityIO1 op Ops.datasetClose args)
   | "datasetClone"     => some (arityIO1 op Ops.datasetClone args)
   | "datasetCanonicalize" => some (arityIO1 op Ops.datasetCanonicalize args)
+  | "datasetCanonicalHash" => some (arityIO1 op Ops.datasetCanonicalHash args)
   | "datasetClosure"   => some (arityIO2 op Ops.datasetClosure args)
   | "datasetShaclValidate" => some (arityIO2 op Ops.datasetShaclValidate args)
   | "datasetQueryRaw"  => some (arityIO3 op Ops.datasetQueryRaw args)
