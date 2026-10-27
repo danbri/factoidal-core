@@ -18,11 +18,14 @@ statement is the round trip through it, pinned by `#guard`s below.
 ## What it refuses
 
 RDF/XML names a property by a qualified name, so a predicate IRI must
-split into a namespace and an XML `NCName`. One that does not (its
-last segment starts with a digit, or the IRI has no `/` or `#`) has no
-RDF/XML form, and the serialiser says so instead of inventing a
-namespace (RDF/XML 1.1 section 7.2.2; the note on serialising URIs as
-property elements). A triple term object has no RDF/XML 1.1 form and is
+split into a namespace name and an XML `NCName` (`xmlSplit`). The split is
+after the last `/` or `#` when the rest is an NCName; else it is before the
+longest suffix that is an NCName, so `urn:example:p` is `urn:example:` and
+`p` (https://github.com/danbri/factoidal/issues/1048). RDF 1.1 XML Syntax
+section 8 lets a writer refuse only a graph whose "property names ... cannot
+be turned into XML namespace-qualified names": an IRI that ends in no NCName
+(`http://example.org/#`, `http://ex/p/1`, `http://ex/name(s)`) has no
+RDF/XML form, and the serialiser says so instead of inventing a namespace. A triple term object has no RDF/XML 1.1 form and is
 refused. A directional language string (RDF 1.2) is written with `its:dir`
 and `rdf:version="1.2"` on its property element (RDF 1.2 XML Syntax). Characters XML 1.0 cannot carry are refused.
 
@@ -82,10 +85,31 @@ private def escAttr (s : String) : String :=
 /-- Is every character one XML 1.0 can carry? -/
 private def xmlSafe (s : String) : Bool := s.toList.all L4Factoidal.XML.isXmlChar
 
+/-- The split of a predicate IRI at the start of the longest suffix that is an
+    XML `NCName` (Namespaces in XML 1.0 [4]: `NameStartChar` then `NameChar`s,
+    no `:`), with a non-empty namespace name before it. `none` when the IRI
+    ends in no such suffix. -/
+def ncNameSuffixSplit (iri : String) : Option (String × String) :=
+  let cs := iri.toList
+  let tail := (cs.reverse.takeWhile (fun c => c != ':' && L4Factoidal.XML.isNameChar c)).reverse
+  let local' := tail.dropWhile (fun c => !L4Factoidal.XML.isNameStartChar c)
+  if local'.isEmpty || local'.length ≥ cs.length then none
+  else some (String.ofList (cs.take (cs.length - local'.length)), String.ofList local')
+
+/-- The namespace name and the local name an RDF/XML property element is written
+    with (RDF 1.1 XML Syntax section 2.1: "the property element ... is the
+    namespace name concatenated with the local name"). The split after the last
+    `/` or `#` (`nsSplit`, the Turtle writer's) when its local part is an NCName;
+    otherwise `ncNameSuffixSplit`. The two parts concatenate to the IRI. -/
+def xmlSplit (iri : String) : Option (String × String) :=
+  match nsSplit iri with
+  | some (ns, l) => if L4Factoidal.XSD.isNCName l then some (ns, l) else ncNameSuffixSplit iri
+  | none => ncNameSuffixSplit iri
+
 /-- One step of the namespace list: the namespace of predicate `p`, when it has one,
     is not `rdf` and is not in the list yet, goes at the end. -/
 def nsStep (acc : List String) (p : WfIri) : List String :=
-  match nsSplit p.val with
+  match xmlSplit p.val with
   | some (ns, _) => if ns == rdfNs || acc.contains ns then acc else acc ++ [ns]
   | none => acc
 
@@ -102,8 +126,8 @@ def namespacesOf (ps : List WfIri) : List (String × String) :=
 def predicateNamespaces (g : Graph) : List (String × String) := namespacesOf (g.map (·.p))
 
 private def propertyName (nss : List (String × String)) (p : WfIri) : Except String String :=
-  match nsSplit p.val with
-  | none => .error s!"the predicate <{p.val}> has no namespace to write it in"
+  match xmlSplit p.val with
+  | none => .error s!"the predicate <{p.val}> does not end in an XML name (NCName), so it has no RDF/XML property element"
   | some (ns, local') =>
       if !L4Factoidal.XSD.isNCName local' then
         .error s!"the predicate <{p.val}> does not end in an XML name"
@@ -593,9 +617,28 @@ private def sample : Graph :=
                    | .ok g => g.isomorphic? sample
                    | .error _ => false)
        | .error _ => false
--- The refusals: a predicate with no XML name, a triple term, a control character.
-#guard (graphToRdfXml [{ s := .iri (iri! "http://ex/s"), p := iri! "http://ex/p/1x", o := .iri (iri! "http://ex/o") }]).toOption.isNone
-#guard (graphToRdfXml [{ s := .iri (iri! "http://ex/s"), p := iri! "urn:nopath", o := .iri (iri! "http://ex/o") }]).toOption.isNone
+-- The refusals: a predicate that ends in no XML name, a triple term, a control character.
+#guard (graphToRdfXml [{ s := .iri (iri! "http://ex/s"), p := iri! "http://ex/p/1", o := .iri (iri! "http://ex/o") }]).toOption.isNone
+#guard (graphToRdfXml [{ s := .iri (iri! "http://ex/s"), p := iri! "http://example.org/#", o := .iri (iri! "http://ex/o") }]).toOption.isNone
+#guard (graphToRdfXml [{ s := .iri (iri! "http://ex/s"), p := iri! "http://example.com/property/name(s)", o := .iri (iri! "http://ex/o") }]).toOption.isNone
+-- https://github.com/danbri/factoidal/issues/1048: a predicate with no `/` or `#`,
+-- or whose last segment does not start with a name character, splits before its
+-- longest NCName suffix, and reads back as the same IRI.
+#guard xmlSplit "urn:example:p" == some ("urn:example:", "p")
+#guard xmlSplit "example:p" == some ("example:", "p")
+#guard xmlSplit "http://ex/p/1x" == some ("http://ex/p/1", "x")
+#guard xmlSplit "http://xmlns.com/foaf/0.1/name" == some ("http://xmlns.com/foaf/0.1/", "name")
+#guard xmlSplit "http://ex/p/1" == none
+#guard xmlSplit "p" == none
+private def urnGraph : Graph :=
+  [ { s := .iri (iri! "urn:example:s"), p := iri! "urn:example:p", o := .literal (Literal.string "x") }
+  , { s := .iri (iri! "urn:example:s"), p := iri! "example:q", o := .iri (iri! "urn:example:o") }
+  , { s := .iri (iri! "urn:example:s"), p := iri! "http://ex/p/1x", o := .iri (iri! "urn:example:o") } ]
+#guard match graphToRdfXml urnGraph with
+       | .ok t => (match RdfXml.parseRdfXml t with
+                   | .ok g => g.isomorphic? urnGraph
+                   | .error _ => false)
+       | .error _ => false
 -- https://github.com/danbri/factoidal/issues/1047: a carriage return in a literal
 -- is written `&#xD;` and reads back as a carriage return, not as a line feed.
 private def crGraph : Graph :=
