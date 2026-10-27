@@ -41,7 +41,9 @@ The F\* JSON-LD tree has no JSON-LD-star; it keeps refusing triple terms.
 - RDF side: `Term.tripleTerm` of `L4Factoidal.RDF` (RDF 1.2 Concepts); fixtures
   are read with the RDF 1.2 N-Quads reader (`Mode.rdf12`).
 - Score: `formal/lean4/.lake/build/bin/l4jsonld-api --star`, run from the
-  repository root.
+  repository root; scoreboard job `l4jsonld-api-star`
+  (`tools/lean-scoreboard.sh`). 2026-10-27: 170 pass, 1 fail (out of 171):
+  expand 47/47, toRdf 47/47, fromRdf 20/21, compact 17/17, flatten 39/39.
 
 ## Rules taken from the fixtures (2026-10-26/27)
 
@@ -107,6 +109,29 @@ Compaction (`Compact.lean`): `@triple`, `@reifies` and `@annotation` values are
 compacted as node objects with a null active property and written under the
 keyword's alias; a value object with `@annotation` keeps its map form.
 
+Flattening (`Flatten.lean`, `generateNodeMap (rdfstar := …)`):
+
+- An `@annotation` on a value object, a `@triple` value or a node object
+  (also under `@reverse`) becomes a reifier node with
+  `@reifies: [{"@id": subject, property: [value]}]` and the annotation's own
+  properties; `@triple` and `@reifies` values stay embedded.
+- Blank-node labels follow the Ruby json-ld implementation, because the
+  fixtures pin exact labels: under `rdfstar`, every blank `@id` is renamed in
+  document order before node-map generation, and every annotation takes a
+  fresh label. One correction the reference lacks: blank nodes inside
+  embedded triples are mapped to their final labels after node-map
+  generation (no fixture tests this).
+- `createAnnotations` folds a reifier back into `@annotation` on the matching
+  value, as the outline says, even when another node references the reifier
+  (st35n). This is wider than the fromRdf folding rule above (which also
+  needs the reifier to be unreferenced). The two rules are different on
+  purpose for now: each follows its own fixtures. Record of the difference,
+  not a decision; revisit when the syntax settles.
+
+Source and sink layers: `Source.withJsonLdStar` and `Sink.withJsonLdStar`
+read and write JSON-LD-star; `withJsonLd` stays JSON-LD 1.1 on both sides.
+The `#guard`s in `RDF/SinkJsonLd.lean` check the round trip.
+
 Test harness (`Harness/JsonLdApiProbe.lean`):
 
 - `specVersion: "json-ld-star"` names the extension, not a processing mode;
@@ -114,9 +139,11 @@ Test harness (`Harness/JsonLdApiProbe.lean`):
 - Star fixtures are read with the RDF 1.2 N-Quads reader. Before this, the
   RDF 1.1 reader dropped every triple-term line, and empty-against-empty
   comparisons gave 11 false passes.
-- Star fromRdf results are compared with arrays unordered, except `@list`. The
-  fixtures' top-level node order is neither sorted by `@id` (st15, st16, st29)
-  nor in input order (st19, st20), so no single output order passes them all.
+- Star fromRdf and flatten results are compared with arrays unordered, except
+  `@list`. The fixtures' top-level node order is the Ruby implementation's
+  insertion order: neither sorted by `@id` (fromRdf st15, st16, st29) nor in
+  input order (fromRdf st19, st20). 16 of 39 flatten fixtures differ from our
+  sorted output only in that order.
 - Every star compact entry names its expected output as `context`. When that
   document has no `@context`, the test compacts with an empty context. Only
   that case is affected; the W3C suites never name the output as the context.
