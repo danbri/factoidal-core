@@ -97,6 +97,52 @@ def parseNQuadsFast (s : String) (mode : Mode := .rdf11) : Except ParseError Dat
   let cs := s.toList
   (foldQuadLinesAcc mode addQuadFast (cs.length + 1) 0 cs {}).map FastDataset.toDataset
 
+/-- **An N-Quads document**, RDF 1.2 version directives included (RDF 1.2
+N-Quads section 4.4: `[2] statement ::= directive | quad`,
+`[4] versionDirective ::= 'VERSION' versionSpecifier`): `parseNQuadsFast`, and
+under `.rdf12`, when that read fails and the document has a version directive
+line, the read with those lines blanked (`blankVersionDirectives`, as
+`parseNTriplesDocument`; https://github.com/danbri/factoidal/issues/1055). -/
+def parseNQuadsFastDocument (s : String) (mode : Mode := .rdf11) : Except ParseError Dataset :=
+  match parseNQuadsFast s mode with
+  | .ok d => .ok d
+  | .error e =>
+      match mode with
+      | .rdf11 => .error e
+      | .rdf12 =>
+          let cs := s.toList
+          let cs' := blankVersionDirectives cs
+          if cs' == cs then .error e else parseNQuadsFast (String.ofList cs') mode
+
+theorem parseNQuadsFastDocument_of_ok {s : String} {mode : Mode} {d : Dataset}
+    (h : parseNQuadsFast s mode = .ok d) : parseNQuadsFastDocument s mode = .ok d := by
+  simp [parseNQuadsFastDocument, h]
+
+/-- Every answer of `parseNQuadsFastDocument` is an answer of `parseNQuadsFast`
+on the document or on the document with its version lines blanked. -/
+theorem parseNQuadsFastDocument_cases (s : String) (mode : Mode) :
+    parseNQuadsFastDocument s mode = parseNQuadsFast s mode ∨
+      parseNQuadsFastDocument s mode =
+        parseNQuadsFast (String.ofList (blankVersionDirectives s.toList)) mode := by
+  unfold parseNQuadsFastDocument
+  split
+  · next h => exact Or.inl h.symm
+  · next e h =>
+    cases mode with
+    | rdf11 => exact Or.inl h.symm
+    | rdf12 =>
+      dsimp only
+      split
+      · exact Or.inl h.symm
+      · exact Or.inr rfl
+
+#guard (parseNQuadsFastDocument "VERSION \"1.2\"\n<http://a> <http://b> <http://c> <http://g> ." .rdf12).toOption.map
+  (fun ds => ds.named.map (·.graph.length)) == some [1]
+#guard (parseNQuadsFastDocument "VERSION\"1.2\"\n<http://a> <http://b> <http://c> ." .rdf12).toOption.map
+  (·.default.length) == some 1
+#guard (parseNQuadsFastDocument "VERSION \"1.2\"\n<http://a> <http://b> <http://c> <http://g> ." .rdf11).toOption.isNone
+#guard (parseNQuadsFastDocument "<http://a> <http://b> <http://c> <http://g> VERSION \"1.2\" ." .rdf12).toOption.isNone
+
 /-! ## Executable agreement with the reference parser
 
 Each guard compares whole `Dataset` values (structural equality) between the

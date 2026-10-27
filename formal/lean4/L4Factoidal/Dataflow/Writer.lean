@@ -269,7 +269,7 @@ theorem writerContractW_nt (sx : Sink.Extra) (rx : Source.Extra) (v : Syntax.Mod
   have hg : parseNTriples text v = .ok (Sink.flatten ds.relabelForWrite) :=
     NTriplesRoundTrip.parseNTriples_toNTriples v (Sink.flatten ds.relabelForWrite) hall text hser
   refine ⟨({ default := Sink.flatten ds.relabelForWrite, named := [] } : Dataset).toSet, ?_, ?_⟩
-  · simp [parseDocument, parseDocumentRaw, givesSet, hg, Except.map]
+  · simp [parseDocument, parseDocumentRaw, givesSet, parseNTriplesDocument_of_ok hg, Except.map]
   · rw [Dataset.den_toSet]
     have e : ({ default := Sink.flatten ds.relabelForWrite, named := [] } : Dataset) =
         (writerProjection .nt ds).renameBnodes ds.writeLabelMap := by
@@ -300,7 +300,8 @@ theorem writerContractW_nquads (sx : Sink.Extra) (rx : Source.Extra) (v : Syntax
       .ok (NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds.relabelForWrite)) :=
     NQuadsRoundTrip.parseNQuads_toNQuads v ds.relabelForWrite hall text hser
   refine ⟨NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds.relabelForWrite), ?_, ?_⟩
-  · show parseNQuadsFast text v = _
+  · show parseNQuadsFastDocument text v = _
+    apply parseNQuadsFastDocument_of_ok
     rw [parseNQuadsFast_eq_parseNQuads, hp]
   · have hden : (NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds.relabelForWrite)).den =
         (writerProjection .nquads ds.relabelForWrite).den := by

@@ -715,6 +715,13 @@ def scanPnameOrKeyword (v12 : Bool) (pos : Nat) (cs : List Char) :
     let (kept, dots) := trimTrailingDots whole
     (.pname (String.ofList kept), pos2 - dots.length, dots ++ rest2)
   | _ =>
+    -- With no `:` the lexeme is a keyword (or an error), never a [140]
+    -- PNAME_NS, and no keyword ends in `.`: the trailing dots are the
+    -- triple terminator. `true.` is [134] `true` then `.`
+    -- (https://github.com/danbri/factoidal/issues/1075).
+    let (word, dots) := trimTrailingDots word
+    let pos1 := pos1 - dots.length
+    let rest1 := dots ++ rest1
     let tok := keywordOfUpper v12 (String.ofList (charsUpper word)) (String.ofList word)
     match tok with
     | .versionKw =>
@@ -1114,7 +1121,8 @@ theorem scanPnameOrKeyword_pos (v12 : Bool) (pos : Nat) (cs : List Char) :
     rw [e3] at ht
     simp only [List.length_append, List.length_cons, List.length_nil] at h ht ⊢
     omega
-  · split <;> (try split) <;> simp_all
+  · have ht := trimTrailingDots_len word
+    split <;> (try split) <;> simp only [List.length_append] <;> omega
 
 theorem numFracStage_pos (pos1 : Nat) (rest1 : List Char) (b : Bool) :
     (numFracStage pos1 rest1 b).2.1 + (numFracStage pos1 rest1 b).2.2.length
@@ -1363,6 +1371,16 @@ brackets. -/
 #guard tokenize12Fast "SELECT * { << <a> <b> <c> >> ~ _:r . ?s ?p \"x\"@en--ltr . ?a ?b <<( 1 2 3 )>> } × ?z" ==
   tokenizeLoop true 200 0 "SELECT * { << <a> <b> <c> >> ~ _:r . ?s ?p \"x\"@en--ltr . ?a ?b <<( 1 2 3 )>> } × ?z".toList []
 #guard (tokenize "?a × ?b").map (·.tok) == [.var "a", .pname "×", .var "b", .eof]
+-- §19.8 [134] BooleanLiteral then `.`: a keyword never takes a trailing dot
+-- (https://github.com/danbri/factoidal/issues/1075).
+#guard (tokenize "<a> <p> true.").map (·.tok) == [.iri "a", .iri "p", .trueKw, .dot, .eof]
+#guard (tokenize "<a> <p> false. }").map (·.tok) == [.iri "a", .iri "p", .falseKw, .dot, .rbrace, .eof]
+#guard (tokenize "?s a.").map (·.tok) == [.var "s", .a, .dot, .eof]
+-- A prefixed name keeps a dot inside it and drops a trailing one.
+#guard (tokenize "ex:a.b.").map (·.tok) == [.pname "ex:a.b", .dot, .eof]
+-- Offsets still increase.
+#guard (fun (ts : List PosToken) => (ts.zip ts.tail).all (fun (a, b) => a.pos < b.pos))
+  (tokenize "{ <a> <p> true. <b> <p> false.. }")
 /-! Token offsets increase along a token list: the generated blank node
 labels of the parser (`freshBnodeId`) rely on it. -/
 #guard (fun (ts : List PosToken) => (ts.zip ts.tail).all (fun (a, b) => a.pos < b.pos))

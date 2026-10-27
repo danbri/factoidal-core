@@ -601,6 +601,118 @@ def parseNTriples (s : String) (mode : Mode := .rdf11) : Except ParseError Graph
   let cs := s.toList
   parseLinesAcc mode (cs.length + 1) 0 cs []
 
+/-! ## RDF 1.2 version directive — [3] directive, [4] versionDirective
+
+RDF 1.2 N-Triples section 5.3 (N-Quads 1.2 has the same productions):
+
+    [1] ntriplesDoc      ::= statement? (EOL statement)* EOL?
+    [2] statement        ::= directive | triple
+    [3] directive        ::= versionDirective
+    [4] versionDirective ::= 'VERSION' versionSpecifier
+    [5] versionSpecifier ::= STRING_LITERAL_QUOTE
+
+"The 'VERSION' terminal is in single quotes to indicate that it is
+case-sensitive." White space may surround the terminals, so `VERSION"1.2"` is a
+directive too. The directive adds no triple; section 6.1 says the version
+announcement "is only a hint", so the string is not checked.
+
+The line loop `parseLinesAcc` and the many proofs over it stay as they are. A
+line that is a version directive (and maybe a comment) is replaced by as many
+spaces (`blankVersionDirectives`), so error offsets do not move, and an RDF 1.2
+document is read that way only when the first read fails
+(`parseNTriplesDocument`). A document the line loop reads is read the same
+(`parseNTriplesDocument_of_ok`). RDF 1.1 has no directive.
+https://github.com/danbri/factoidal/issues/1055 -/
+
+/-- The rest of a line after `ws* 'VERSION' ws* STRING_LITERAL_QUOTE ws*`,
+when the line starts so. -/
+def versionDirectiveRest (cs : List Char) : Option (List Char) :=
+  match cs.dropWhile isNtWs with
+  | 'V' :: 'E' :: 'R' :: 'S' :: 'I' :: 'O' :: 'N' :: r1 =>
+      match readStringLiteralQuoted 0 (r1.dropWhile isNtWs) with
+      | .ok (_, _, r2) => some (r2.dropWhile isNtWs)
+      | .error _ => none
+  | _ => none
+
+/-- A line (with no EOL character) that is a version directive, maybe with a
+comment after it, with the directive replaced by spaces; any other line
+unchanged. -/
+def blankVersionLine (line : List Char) : List Char :=
+  match versionDirectiveRest line with
+  | some rest =>
+      match rest with
+      | [] | '#' :: _ => List.replicate (line.length - rest.length) ' ' ++ rest
+      | _ => line
+  | none => line
+
+/-- Every version directive line of a document replaced by spaces. EOL is
+`[#xD#xA]+` ([7] EOL), so both CR and LF end a line. -/
+def blankVersionDirectives (cs : List Char) : List Char :=
+  go cs [] []
+where
+  go : List Char → List Char → List Char → List Char
+    | [], cur, out => out.reverse ++ blankVersionLine cur.reverse
+    | c :: rest, cur, out =>
+        if c == '\n' || c == '\r' then
+          go rest [] (c :: ((blankVersionLine cur.reverse).reverse ++ out))
+        else go rest (c :: cur) out
+
+/-- **An N-Triples document**, RDF 1.2 version directives included
+(section 5.3 [2]–[5]): `parseNTriples`, and under `.rdf12`, when that read
+fails and the document has a version directive line, the read of the document
+with those lines blanked. -/
+def parseNTriplesDocument (s : String) (mode : Mode := .rdf11) : Except ParseError Graph :=
+  match parseNTriples s mode with
+  | .ok g => .ok g
+  | .error e =>
+      match mode with
+      | .rdf11 => .error e
+      | .rdf12 =>
+          let cs := s.toList
+          let cs' := blankVersionDirectives cs
+          if cs' == cs then .error e else parseNTriples (String.ofList cs') mode
+
+theorem parseNTriplesDocument_of_ok {s : String} {mode : Mode} {g : Graph}
+    (h : parseNTriples s mode = .ok g) : parseNTriplesDocument s mode = .ok g := by
+  simp [parseNTriplesDocument, h]
+
+/-- Every answer of `parseNTriplesDocument` is an answer of `parseNTriples` on
+the document or on the document with its version lines blanked. -/
+theorem parseNTriplesDocument_cases (s : String) (mode : Mode) :
+    parseNTriplesDocument s mode = parseNTriples s mode ∨
+      parseNTriplesDocument s mode =
+        parseNTriples (String.ofList (blankVersionDirectives s.toList)) mode := by
+  unfold parseNTriplesDocument
+  split
+  · next h => exact Or.inl h.symm
+  · next e h =>
+    cases mode with
+    | rdf11 => exact Or.inl h.symm
+    | rdf12 =>
+      dsimp only
+      split
+      · exact Or.inl h.symm
+      · exact Or.inr rfl
+
+#guard blankVersionLine "VERSION \"1.2\"".toList == "             ".toList
+#guard blankVersionLine "  VERSION\t\"1.2\" # c".toList == "                # c".toList
+#guard blankVersionLine "VERSION\"1.2\"".toList == "            ".toList
+#guard blankVersionLine "version \"1.2\"".toList == "version \"1.2\"".toList
+#guard blankVersionLine "VERSION '1.2'".toList == "VERSION '1.2'".toList
+#guard blankVersionLine "VERSION \"1.2\" <http://a> <http://b> <http://c> .".toList ==
+  "VERSION \"1.2\" <http://a> <http://b> <http://c> .".toList
+#guard (parseNTriplesDocument "VERSION \"1.2\"\n<http://a> <http://b> <http://c> ." .rdf12).toOption.map (·.length) == some 1
+#guard (parseNTriplesDocument "VERSION\"1.2\"\r\n<http://a> <http://b> <http://c> .\nVERSION \"1.2-basic\" # x\n" .rdf12).toOption.map (·.length) == some 1
+#guard (parseNTriplesDocument "VERSION \"1.2\"" .rdf12).toOption.map (·.length) == some 0
+#guard (parseNTriplesDocument "VERSION \"1.2\"\n<http://a> <http://b> <http://c> ." .rdf11).toOption.isNone
+#guard (parseNTriplesDocument "version \"1.2\"\n" .rdf12).toOption.isNone
+#guard (parseNTriplesDocument "VERSION \"\"\"1.2\"\"\"\n" .rdf12).toOption.isNone
+#guard (parseNTriplesDocument "VERSION \"1.2\" <http://a> <http://b> <http://c> .\n" .rdf12).toOption.isNone
+-- The error of a bad triple keeps its offset when a directive is blanked.
+#guard (match parseNTriplesDocument "VERSION \"1.2\"\n<http://a> <http://b> .\n" .rdf12 with
+        | .error e => e.pos == 36
+        | .ok _ => false)
+
 /-! ## Serialisation
 
 Port of `RDF.NQuads.Serialize.fst`'s N-Triples-shaped renderers

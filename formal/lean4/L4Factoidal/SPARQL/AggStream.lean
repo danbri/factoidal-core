@@ -565,7 +565,8 @@ the rows of the groups, then the shared tail. -/
 theorem selectPost_grouped (env : EvalEnv) (active : Graph) (dcs : List DatasetClause)
     (pat : QueryPattern) (gb : Option (List GroupCondition)) (md : SolutionModifier)
     (base : Option String) (items : List SelectItem)
-    (hgroup : (gb.isSome || selectHasAggregates (.vars items)) = true) (omega0 : SolutionSeq) :
+    (hgroup : (gb.isSome || selectHasAggregates (.vars items)) = true)
+    (hob : orderHasAggregate (md.orderBy.getD []) = false) (omega0 : SolutionSeq) :
     selectPost env active (.mk (.select (.vars items)) dcs pat gb [] md none base) omega0 =
       groupedTail env active items md
         ((groupWhere env gb omega0).map (groupOmegaRow env active items)) := by
@@ -583,7 +584,12 @@ theorem selectPost_grouped (env : EvalEnv) (active : Graph) (dcs : List DatasetC
       simp only [groupedRowsWithValues, groupedRowsWithValuesOn, List.map_map]
       rfl
     simp only [List.isEmpty_nil, if_true, hrows]
-    cases ob <;> rfl
+    cases ob with
+    | none => rfl
+    | some o =>
+      simp only [Option.getD_some] at hob
+      simp only [hob, Bool.false_eq_true, if_false]
+      rfl
 
 
 /-! ## The grouped SELECTs the id path aggregates -/
@@ -749,10 +755,13 @@ def groupVarsOf? : List GroupCondition → Option (List VarName)
   | .expr _ _ :: _ => none
 
 /-- A SELECT with items that are variables or non-DISTINCT COUNT, SUM, MIN, MAX
-and AVG of a variable (or `COUNT(*)`), GROUP BY variables or none, no HAVING and
-no trailing VALUES. -/
+and AVG of a variable (or `COUNT(*)`), GROUP BY variables or none, no HAVING,
+no trailing VALUES and no aggregate in ORDER BY (an ORDER BY aggregate is
+computed over the group's rows, which the id path does not keep:
+https://github.com/danbri/factoidal/issues/1050). -/
 def aggPlan? : Query → Option AggPlan
   | .mk (.select (.vars items)) _ _ gb [] md none _ =>
+    if orderHasAggregate (md.orderBy.getD []) then none else
     match itemSpecs? items with
     | none => none
     | some specs =>
@@ -790,10 +799,15 @@ theorem aggPlan_spec {q : Query} {p : AggPlan} (h : aggPlan? q = some p) :
     ∃ dcs pat gb base,
       q = .mk (.select (.vars p.items)) dcs pat gb [] p.md none base ∧
       itemSpecs? p.items = some p.specs ∧
-      (gb.isSome || selectHasAggregates (.vars p.items)) = true := by
+      (gb.isSome || selectHasAggregates (.vars p.items)) = true ∧
+      orderHasAggregate (p.md.orderBy.getD []) = false := by
   match q, h with
   | .mk (.select (.vars items)) dcs pat gb [] md none base, h =>
     simp only [aggPlan?] at h
+    by_cases ho : orderHasAggregate (md.orderBy.getD []) = true
+    · simp [ho] at h
+    have ho' : orderHasAggregate (md.orderBy.getD []) = false := by simpa using ho
+    simp only [ho', Bool.false_eq_true, if_false] at h
     cases hs : itemSpecs? items with
     | none => simp [hs] at h
     | some specs =>
@@ -805,14 +819,14 @@ theorem aggPlan_spec {q : Query} {p : AggPlan} (h : aggPlan? q = some p) :
         · simp only [he, Bool.false_eq_true, if_false] at h
           obtain rfl := Option.some.inj h
           have he' : specs.isEmpty = false := by simpa using he
-          exact ⟨dcs, pat, none, base, rfl, hs, by simpa using itemSpecs_hasAggregates hs he'⟩
+          exact ⟨dcs, pat, none, base, rfl, hs, by simpa using itemSpecs_hasAggregates hs he', ho'⟩
       | some conds =>
         cases hg : groupVarsOf? conds with
         | none => simp [hg] at h
         | some vs =>
           simp only [hg, Option.map_some] at h
           obtain rfl := Option.some.inj h
-          exact ⟨dcs, pat, some conds, base, rfl, hs, by simp⟩
+          exact ⟨dcs, pat, some conds, base, rfl, hs, by simp, ho'⟩
 
 /-- What a query that `aggPlan?` accepts computes: the rows of the groups from
 the values of their aggregates (`streamAgg`), then the shared tail. This is the
@@ -825,9 +839,9 @@ theorem selectPost_aggPlan {q : Query} {p : AggPlan} (h : aggPlan? q = some p)
       groupedTail env active p.items p.md
         ((groupWhere env q.groupBy omega0).map
           (fun g => groupedRow env p.items (p.specs.map (streamAgg env g)) g.representative)) := by
-  obtain ⟨dcs, pat, gb, base, hq, hs, hgroup⟩ := aggPlan_spec h
+  obtain ⟨dcs, pat, gb, base, hq, hs, hgroup, hob⟩ := aggPlan_spec h
   subst hq
-  rw [selectPost_grouped env active dcs pat gb p.md base p.items hgroup omega0]
+  rw [selectPost_grouped env active dcs pat gb p.md base p.items hgroup hob omega0]
   simp only [Query.groupBy]
   congr 1
   apply List.map_congr_left
