@@ -100,12 +100,15 @@ theorem lwsSource_spec (st : StorageAt) (s : Snapshot) :
   ⟨rfl, rfl, fun h => by show (view (st.at s)).den = _; rw [StorageAt.at_eq h]⟩
 
 /-- **A query over an LWS snapshot**: the evaluator contract over a dataset
-whose denotation is the view of the storage at the snapshot instant, under
+whose denotation is the view of the storage at the snapshot instant, and, for
+an order-free query, agreement with the reference answer, under
 `lwsReadsAtSnapshot` and the evaluator's named assumption. -/
 theorem lwsSource_query_sound (st : StorageAt) (s : Snapshot) (ev : LawfulEvaluator)
     (hev : ev.AssumptionHolds) (h : ReadsAtSnapshot st s) (env : EvalEnv) (q : Query) :
     ((lwsSource st s).input env q).ds.den = (view (st.at s)).den ∧
-      EvalContract ((lwsSource st s).input env q) (ev.run ((lwsSource st s).input env q)) :=
+      EvalContract ((lwsSource st s).input env q) (ev.run ((lwsSource st s).input env q)) ∧
+      (OrderFree q → AnswerAgrees (ev.run ((lwsSource st s).input env q))
+        (referenceAnswer ((lwsSource st s).input env q))) :=
   (lwsSource st s).query_sound ev hev
     (fun a ha => by
       rcases List.mem_singleton.mp ha with rfl
