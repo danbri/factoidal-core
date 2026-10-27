@@ -232,10 +232,14 @@ This AMENDS the rule below for AES (AES-GCM, AES-CBC, AES Key Wrap):
   runs only `encrypt`/`decrypt`/`wrapKey`/`unwrapKey` on bytes Lean names,
   through the same request-and-resume step as the authorization server's
   fetches. No crypto decision in JavaScript (iron rule 7).
-* Native Lean executables (no JavaScript host): NOT DECIDED by the owner on
-  2026-10-27. The coordinator's proposal is HACL\* Vale AES-GCM on x86-64 and
-  a refusal elsewhere; until the owner decides, native AES is refused with
-  https://github.com/danbri/factoidal/issues/677.
+* Native Lean executables (no JavaScript host): owner, 2026-10-27,
+  verbatim: "Ok for now: “My proposal is HACL* Vale on x86-64 and a refusal on
+  other CPU”". Native x86-64 links HACL\* Vale AES-GCM (verified assembly, the
+  `aesgcm-x86_64-*.S` files of the HACL\* distribution, with a run-time check
+  for AES-NI and PCLMULQDQ); every other native CPU, and an x86-64 CPU without
+  those instructions, refuses AES with a message that names
+  https://github.com/danbri/factoidal/issues/677. "For now": revisit when
+  HACL\* ships a portable AES.
 * WebCrypto is not formally verified. The obligation that replaces the proof
   is MEASURED: Wycheproof, NIST CAVP and RFC vectors, plus a random
   differential run across every implementation available (Node/OpenSSL,
