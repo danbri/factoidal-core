@@ -373,6 +373,64 @@ theorem verifyFromCanonical_createFromCanonical (signF : SignFn) (verifyF : Veri
     simp only [toByteArray_ofByteArray]
     exact hsig
 
+/-! ## Verification methods from controlled identifier documents -/
+
+/-- **A key from a URL that is not a did:key** (CID 1.0 §3.3,
+https://github.com/danbri/factoidal/issues/1100): `resolveKey` gave it only
+through Retrieve Verification Method with the relationship the proof
+purpose names, and the key is the method's Ed25519 key, in force at the
+verification time when one is given. -/
+theorem resolveKey_cid {docs : List (String × String)} {now : Option Int} {vm purpose : String}
+    {pk : ByteArray} (h : resolveKey docs now vm purpose = .ok pk)
+    (hd : DidKey.publicKeyOfVerificationMethod? vm = none) :
+    ∃ rel m, L4Factoidal.CID.Relationship.ofName? purpose = some rel ∧
+      L4Factoidal.CID.retrieveWith docs vm rel = .ok m ∧ ed25519Key? m = some pk ∧
+      inForceAt now m = true := by
+  unfold resolveKey at h
+  rw [hd] at h
+  simp only at h
+  split at h
+  · simp at h
+  · split at h
+    · simp at h
+    · rename_i rel hrel
+      split at h
+      · simp at h
+      · simp at h
+      · rename_i m hm
+        split at h
+        · simp at h
+        · rename_i hforce
+          split at h
+          · rename_i pk' hk
+            simp only [Except.ok.injEq] at h
+            subst h
+            exact ⟨rel, m, hrel, hm, hk, by simpa using hforce⟩
+          · simp at h
+
+/-- The same, down to the document: the host fetched it from the document
+URL of `vm`; it is a conforming controlled identifier document whose `id`
+is that URL; the method's absolute `id` is `vm` and its absolute
+`controller` is the document URL; and the relationship that the proof
+purpose names lists the method. -/
+theorem resolveKey_cid_document {docs : List (String × String)} {now : Option Int}
+    {vm purpose : String} {pk : ByteArray} (h : resolveKey docs now vm purpose = .ok pk)
+    (hd : DidKey.publicKeyOfVerificationMethod? vm = none) :
+    ∃ rel m u text j d, L4Factoidal.CID.Relationship.ofName? purpose = some rel ∧
+      (u, text) ∈ docs ∧ JSON.parseJson? text = some j ∧
+      L4Factoidal.CID.parseDocument j = .ok d ∧ d.id = u ∧
+      L4Factoidal.CID.absolute d.id m.id = vm ∧
+      L4Factoidal.CID.absolute d.id m.controller = u ∧
+      d.associated rel vm = true ∧ ed25519Key? m = some pk := by
+  obtain ⟨rel, m, hrel, hm, hk, _⟩ := resolveKey_cid h hd
+  obtain ⟨u, frag, text, j, hu, hmem, hj, hr⟩ := L4Factoidal.CID.retrieveWith_ok hm
+  obtain ⟨u', frag', d, hu', hdoc, hid, _, hmid, hctl, hassoc, _⟩ :=
+    L4Factoidal.CID.retrieveFromDocument_sound hr
+  rw [hu] at hu'
+  simp only [Except.ok.injEq, Prod.mk.injEq] at hu'
+  obtain ⟨rfl, rfl⟩ := hu'
+  exact ⟨rel, m, u, text, j, d, hrel, hmem, hj, hdoc, hid, hmid, hctl, hassoc, hk⟩
+
 end L4Factoidal.VC.DataIntegrity
 
 /-! ## Axiom audit -/
@@ -383,3 +441,5 @@ end L4Factoidal.VC.DataIntegrity
 #print axioms L4Factoidal.VC.DataIntegrity.verifyProofValue_of_canonical_eq
 #print axioms L4Factoidal.VC.DataIntegrity.verifyFromCanonical_createFromCanonical
 #print axioms L4Factoidal.VC.DataIntegrity.verifyDocument_noProof
+#print axioms L4Factoidal.VC.DataIntegrity.resolveKey_cid_document
+#print axioms L4Factoidal.CID.retrieveFromDocument_sound

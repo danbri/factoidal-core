@@ -431,6 +431,29 @@ def runSpecVectors (root : System.FilePath) : IO Tally := do
   check t "verifyDocument REFUSES a non-did:key verificationMethod"
     (verifyDocument loader Ed25519.verify badVm
        == .error (.unresolvableVerificationMethod "did:web:example.com#key-1"))
+  -- CID 1.0 (https://github.com/danbri/factoidal/issues/1100): the same key,
+  -- published in a controlled identifier document, named by an https URL.
+  let cidUrl := "https://issuer.example/cid"
+  let cidVm := cidUrl ++ "#k1"
+  let cidDoc (rel : String) : String :=
+    "{\"@context\": \"https://www.w3.org/ns/cid/v1\", \"id\": \"" ++ cidUrl ++ "\", " ++
+    "\"verificationMethod\": [{\"id\": \"#k1\", \"type\": \"Multikey\", \"controller\": \"" ++ cidUrl ++
+    "\", \"publicKeyMultibase\": \"" ++ specPkMultikey ++ "\"}], \"" ++ rel ++ "\": [\"#k1\"]}"
+  let securedCid ← match secureDocument loader Ed25519.sign sk cidVm "assertionMethod" specCreated credJson with
+    | .ok j => pure j
+    | .error e => check t "secureDocument (CID verificationMethod)" false e; pure .null
+  check t "CID: verifyDocument names the controlled identifier document it needs"
+    (verifyDocument loader Ed25519.verify securedCid == .error (.needDocument cidUrl))
+  let cidRes := verifyDocument loader Ed25519.verify securedCid (cidDocs := [(cidUrl, cidDoc "assertionMethod")])
+  check t "CID: verifyDocument(secured, its assertionMethod document) = ok" (cidRes == .ok ())
+    (match cidRes with | .ok _ => "" | .error e => e.describe)
+  check t "CID: verifyDocument REFUSES a method listed for authentication only"
+    (match verifyDocument loader Ed25519.verify securedCid (cidDocs := [(cidUrl, cidDoc "authentication")]) with
+     | .error (.cid _ e) => e.name == "INVALID_RELATIONSHIP_FOR_VERIFICATION_METHOD"
+     | _ => false)
+  check t "CID: verifyDocument REFUSES a changed claim (signatureRejected)"
+    (verifyDocument loader Ed25519.verify (setFieldFirst "name" (.string "forged") securedCid)
+       (cidDocs := [(cidUrl, cidDoc "assertionMethod")]) == .error .signatureRejected)
   check t "verifyDocument REFUSES the unsecured credential (noProof)"
     (verifyDocument loader Ed25519.verify credJson == .error .noProof)
   -- The canonical form is what is signed: input quad order is

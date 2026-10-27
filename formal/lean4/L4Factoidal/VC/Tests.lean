@@ -261,6 +261,56 @@ def sampleDoc : Json := .object [("@context", .string vcV2ContextIri), ("id", .s
          (setField "proof" (.object [("previousProof", .string "urn:p"), ("type", .string "DataIntegrityProof")]) sampleDoc)
        |> fun r => r != .ok ())
 
+/-! ### verificationMethod through a controlled identifier document (CID 1.0 §3.3)
+
+https://github.com/danbri/factoidal/issues/1100 item 8. The key of the vc-di-eddsa
+vectors, published as a Multikey (and as an OKP JsonWebKey) in a controlled
+identifier document. -/
+
+def issuerDoc (rel : String := "assertionMethod") (extra : String := "") : String :=
+  "{\"@context\": \"https://www.w3.org/ns/cid/v1\", \"id\": \"https://issuer.example/cid\", " ++
+  "\"verificationMethod\": [{\"id\": \"https://issuer.example/cid#k1\", \"type\": \"Multikey\", " ++
+  "\"controller\": \"https://issuer.example/cid\"" ++ extra ++ ", \"publicKeyMultibase\": \"" ++ specPkMultikey ++ "\"}, " ++
+  "{\"id\": \"https://issuer.example/cid#j1\", \"type\": \"JsonWebKey\", \"controller\": \"https://issuer.example/cid\", " ++
+  "\"publicKeyJwk\": {\"kty\": \"OKP\", \"crv\": \"Ed25519\", \"x\": \"" ++ JOSE.Base64Url.encode specPk ++ "\"}}], " ++
+  "\"" ++ rel ++ "\": [\"#k1\", \"#j1\"]}"
+def issuerDocs (rel : String := "assertionMethod") (extra : String := "") : List (String × String) :=
+  [("https://issuer.example/cid", issuerDoc rel extra)]
+
+-- did:key keeps working.
+#guard resolveKey [] none specVm "assertionMethod" == .ok specPk
+-- A CID document the host has not fetched yet: the engine names it.
+#guard resolveKey [] none "https://issuer.example/cid#k1" "assertionMethod"
+  == .error (.needDocument "https://issuer.example/cid")
+-- Multikey and JsonWebKey, under assertionMethod.
+#guard resolveKey (issuerDocs) none "https://issuer.example/cid#k1" "assertionMethod" == .ok specPk
+#guard resolveKey (issuerDocs) none "https://issuer.example/cid#j1" "assertionMethod" == .ok specPk
+-- The method is listed for authentication only: refused for an assertion.
+#guard (match resolveKey (issuerDocs "authentication") none "https://issuer.example/cid#k1" "assertionMethod" with
+        | .error (.cid _ e) => e.name == "INVALID_RELATIONSHIP_FOR_VERIFICATION_METHOD"
+        | _ => false)
+#guard resolveKey (issuerDocs "authentication") none "https://issuer.example/cid#k1" "authentication" == .ok specPk
+-- An unknown proof purpose, another DID method, a revoked method.
+#guard resolveKey (issuerDocs) none "https://issuer.example/cid#k1" "proofOfWork"
+  == .error (.unknownProofPurpose "proofOfWork")
+#guard resolveKey [] none "did:web:issuer.example#k1" "assertionMethod"
+  == .error (.unresolvableVerificationMethod "did:web:issuer.example#k1")
+#guard resolveKey (issuerDocs "assertionMethod" ", \"revoked\": \"2024-01-01T00:00:00Z\"") (some 1704067200)
+    "https://issuer.example/cid#k1" "assertionMethod"
+  == .error (.methodNotInForce "https://issuer.example/cid#k1")
+#guard resolveKey (issuerDocs "assertionMethod" ", \"revoked\": \"2024-01-01T00:00:00Z\"") (some 1704067199)
+    "https://issuer.example/cid#k1" "assertionMethod" == .ok specPk
+-- A document served at the URL but naming another id.
+#guard (match resolveKey [("https://issuer.example/cid", (issuerDoc).replace "\"https://issuer.example/cid\", \"verificationMethod" "\"https://other.example/cid\", \"verificationMethod")] none
+          "https://issuer.example/cid#k1" "assertionMethod" with
+        | .error (.cid _ e) => e.name == "INVALID_CONTROLLED_IDENTIFIER_DOCUMENT_ID"
+        | _ => false)
+-- A P-256 Multikey is not an eddsa-rdfc-2022 key.
+#guard resolveKey [("https://issuer.example/cid",
+    "{\"id\": \"https://issuer.example/cid\", \"assertionMethod\": [{\"id\": \"#p\", \"type\": \"Multikey\", \"controller\": \"https://issuer.example/cid\", \"publicKeyMultibase\": \"zDnaerx9CtbPJ1q36T5Ln5wYt3MQYeGRG5ehnPAmxcf5mDZpv\"}]}")]
+    none "https://issuer.example/cid#p" "assertionMethod"
+  == .error (.notEd25519 "https://issuer.example/cid#p")
+
 /-! ### base64 and base64url, lenient (the relatedResource digest decoder) -/
 
 -- RFC 4648 §10 vectors (padding optional).

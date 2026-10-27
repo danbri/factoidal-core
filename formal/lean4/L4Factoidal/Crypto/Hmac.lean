@@ -1,5 +1,5 @@
 /-
-L4Factoidal.Crypto.Hmac — HMAC-SHA-256 (RFC 2104, FIPS 198-1) and
+L4Factoidal.Crypto.Hmac — HMAC-SHA-256 and HMAC-SHA-512 (RFC 2104, FIPS 198-1) and
 PBKDF2-HMAC-SHA-256 (RFC 8018 section 5.2), in pure Lean over the
 existing `L4Factoidal.Crypto.sha256`.
 
@@ -100,6 +100,46 @@ def pbkdf2Sha256 (password salt : ByteArray) (iterations dkLen : Nat) : ByteArra
     (fun acc i => acc ++ pbkdf2Block password salt iters (i + 1)) ByteArray.empty
   full.extract 0 dkLen
 
+/-! ## HMAC-SHA-512 (RFC 2104 over FIPS 180-4 SHA-512)
+
+JWE `A256CBC-HS512` (RFC 7518 §5.2.5) authenticates with HMAC-SHA-512. The
+construction is the one above with SHA-512's 128-byte block. -/
+
+/-- The SHA-512 block size in bytes (FIPS 180-4 section 5.1.2). -/
+def hmacSha512BlockBytes : Nat := 128
+
+/-- `K0` for SHA-512: hash a key longer than one block, then pad with zeros
+to 128 bytes. -/
+def hmacSha512Key0 (key : ByteArray) : ByteArray :=
+  let k := if key.size > hmacSha512BlockBytes then sha512 key else key
+  k ++ ByteArray.mk (Array.replicate (hmacSha512BlockBytes - k.size) (0 : UInt8))
+
+private def xorPad512 (k : ByteArray) (b : UInt8) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity hmacSha512BlockBytes
+  for i in [0:hmacSha512BlockBytes] do
+    out := out.push ((k.get! i) ^^^ b)
+  return out
+
+/-- HMAC-SHA-512 (RFC 2104): `H((K0 ^ opad) ++ H((K0 ^ ipad) ++ msg))`. -/
+def hmacSha512 (key msg : ByteArray) : ByteArray :=
+  let k0 := hmacSha512Key0 key
+  let inner := sha512 (xorPad512 k0 0x36 ++ msg)
+  sha512 (xorPad512 k0 0x5c ++ inner)
+
+/-- The OR of the byte-wise XOR of `a` and `b` from index `i` on: zero exactly
+when the two agree there. Every byte is visited whatever the earlier bytes
+were, so the time does not depend on where the first difference is.
+Structural tail recursion on the count `n`. -/
+def ctDiffFrom (a b : ByteArray) : (n i : Nat) → UInt8 → UInt8
+  | 0, _, acc => acc
+  | n + 1, i, acc => ctDiffFrom a b n (i + 1) (acc ||| ((a.get! i) ^^^ (b.get! i)))
+
+/-- Compare two byte strings in time that depends only on their length (a
+MAC tag check, RFC 7518 §5.2.2.2 step 4 and §11.5). Lengths are public, so a
+length difference answers at once. -/
+def ctEqBytes (a b : ByteArray) : Bool :=
+  a.size == b.size && ctDiffFrom a b a.size 0 0 == 0
+
 /-! ## Test vectors -/
 
 private def hexOf (b : ByteArray) : String := bytesToHex b
@@ -137,5 +177,28 @@ private def repeatByte (b : UInt8) (n : Nat) : ByteArray :=
 #guard hexOf (pbkdf2Sha256 (bytesOfStr "passwd") (bytesOfStr "salt") 1 64)
   == ("55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc" ++
       "49ca9cccf179b645991664b39d77ef317c71b845b1e30bd509112041d3a19783")
+
+-- RFC 4231 section 4.2, case 1, HMAC-SHA-512.
+#guard hexOf (hmacSha512 (repeatByte 0x0b 20) (bytesOfStr "Hi There"))
+  == ("87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cde" ++
+      "daa833b7d6b8a702038b274eaea3f4e4be9d914eeb61f1702e696c203a126854")
+
+-- RFC 4231 section 4.3, case 2, HMAC-SHA-512.
+#guard hexOf (hmacSha512 (bytesOfStr "Jefe") (bytesOfStr "what do ya want for nothing?"))
+  == ("164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea250554" ++
+      "9758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737")
+
+-- RFC 4231 section 4.7, case 6, HMAC-SHA-512: the 131-byte key is longer than
+-- the 128-byte block, so `hmacSha512Key0` hashes it.
+#guard hexOf (hmacSha512 (repeatByte 0xaa 131)
+    (bytesOfStr "Test Using Larger Than Block-Size Key - Hash Key First"))
+  == ("80b24263c7c1a3ebb71493c1dd7be8b49b46d1f41b4aeec1121b013783f8f352" ++
+      "6b56d037e05f2598bd0fd2215d6a1e5295e64f73f63f0aec8b915a985d786598")
+
+-- The constant-time comparison.
+#guard ctEqBytes (repeatByte 7 16) (repeatByte 7 16)
+#guard !ctEqBytes (repeatByte 7 16) ((repeatByte 7 15).push 6)
+#guard !ctEqBytes (repeatByte 7 16) (repeatByte 7 15)
+#guard ctEqBytes ByteArray.empty ByteArray.empty
 
 end L4Factoidal.Crypto

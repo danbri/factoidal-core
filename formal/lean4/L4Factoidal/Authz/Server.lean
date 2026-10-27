@@ -106,17 +106,27 @@ structure AuthzConfig where
   subject tokens (lws10-authn-saml: trust is out of band). Empty: the
   token type is refused and not advertised. -/
   samlIdps : List L4Factoidal.SAML.Idp := []
+  /-- Private keys that decrypt `saml:EncryptedAssertion` and
+  `saml:EncryptedID` (https://github.com/danbri/factoidal/issues/1073);
+  none: encrypted SAML elements are refused. -/
+  samlKeys : L4Factoidal.XML.Enc.Keys := {}
+
+/-- The most AES answers kept: one exchange makes at most
+`CipherCall.maxRequests` requests. -/
+def maxCipherAnswers : Nat := 64
 
 structure AuthzState where
   keys : KeyStore := {}
   fetch : FetchState := {}
+  /-- The host's answers to AES requests (`Need.cipher`), newest first. -/
+  cipherAnswers : List (L4Factoidal.Crypto.CipherCall.Req × L4Factoidal.Crypto.CipherCall.Ans) := []
 
 def AuthzConfig.grace (cfg : AuthzConfig) : Nat := cfg.tokenLifetime + cfg.leeway
 
 /-- The context subject-token validation reads. -/
 def AuthzConfig.ctx (cfg : AuthzConfig) (C : Crypto) (st : AuthzState) (now : Nat) : Ctx :=
   { C, issuer := cfg.issuer, now, leeway := cfg.leeway, policy := cfg.fetch, fs := st.fetch,
-    samlIdps := cfg.samlIdps }
+    samlIdps := cfg.samlIdps, samlKeys := cfg.samlKeys, cipherAnswers := st.cipherAnswers }
 
 /-- The subject token types the token endpoint accepts. -/
 def AuthzConfig.tokenTypes (cfg : AuthzConfig) : List String :=
@@ -491,5 +501,11 @@ def recordFetched (cfg : AuthzConfig) (st : AuthzState) (url : String) (status :
 def recordResolved (cfg : AuthzConfig) (st : AuthzState) (host : String) (addresses : List String)
     (now : Nat) : AuthzState :=
   { st with fetch := recordHost cfg.fetch st.fetch host addresses now }
+
+/-- Record the host's answer to one AES request (`Need.cipher`). The list is
+bounded; an older answer for the same request is replaced. -/
+def AuthzState.recordCipher (st : AuthzState) (req : L4Factoidal.Crypto.CipherCall.Req)
+    (ans : L4Factoidal.Crypto.CipherCall.Ans) : AuthzState :=
+  { st with cipherAnswers := ((req, ans) :: st.cipherAnswers.filter (fun p => p.1 != req)).take maxCipherAnswers }
 
 end L4Factoidal.Authz

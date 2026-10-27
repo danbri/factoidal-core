@@ -16,6 +16,7 @@ executable edge uses HACL*'s public operation through the same function
 -/
 import L4Factoidal.Authz.Tests
 import L4Factoidal.SAML.Fixtures
+import L4Factoidal.XML.EncTests
 
 namespace L4Factoidal.SAML.Tests
 
@@ -128,7 +129,8 @@ def b64 (s : String) : String := L4Factoidal.JOSE.Base64Url.encode s.toUTF8
 #guard refusedWith (b64 (String.join (List.replicate 40 "<a>") ++ String.join (List.replicate 40 "</a>"))) "nests"
 #guard nestingOk "<a><b/><c></c><!-- x --><?p?></a>".toList 0
 
--- An encrypted assertion is refused, naming the issue.
+-- An encrypted assertion is refused, naming the issue, when no decryption
+-- key is configured (`validate` takes none; `validateWith` below).
 #guard refusedWith (b64 ("<saml:EncryptedAssertion xmlns:saml=\"" ++ samlNs ++ "\"/>")) encryptionIssue
 -- A declared encoding other than UTF-8.
 #guard refusedWith (b64 "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><a/>") "encoding"
@@ -154,5 +156,183 @@ open L4Factoidal.Authz in
 #guard (match validateSubject (ctxSaml [idp]) tokenTypeSaml2 altered with
   | .refused _ => true
   | _ => false)
+
+/-! ## Encrypted assertions (https://github.com/danbri/factoidal/issues/1073)
+
+The JDK's signed assertions, encrypted here with the stub cipher and stub
+primitives of `XML/EncTests.lean` (not cryptography). Real AES-GCM and
+RSA-OAEP over Apache Santuario's encryption: `lake exe l4xmlenc-probe`. -/
+
+open L4Factoidal.XML.EncTests (stubCipher stubPrims rsaN rand)
+open L4Factoidal.XML
+open L4Factoidal.XML.DSig (elOf? El)
+open L4Factoidal.XML.Canonical (rootScope)
+
+def encKeys : L4Factoidal.XML.Enc.Keys := { rsa := L4Factoidal.XML.EncTests.keys.rsa }
+
+def encPolicy : Policy := { policy with decryptKeys := encKeys }
+
+def rsaSpec (sha256 : Bool := false) : L4Factoidal.XML.Enc.EncryptSpec :=
+  { recipient := .rsa (some "rsa-1") rsaN ByteArray.empty sha256 }
+
+/-- The assertion of token `t` in a `saml:EncryptedAssertion`, as a token. -/
+def encryptedToken (t : String) (spec : L4Factoidal.XML.Enc.EncryptSpec := rsaSpec) : String :=
+  match decodeToken t with
+  | .ok d =>
+      match L4Factoidal.XML.Enc.encryptNode stubCipher stubPrims spec rand d.root with
+      | .ok ed =>
+          b64 (L4Factoidal.XML.Enc.serNode ""
+            (.element "saml:EncryptedAssertion" [{ name := "xmlns:saml", value := samlNs }] [ed]))
+      | .error _ => ""
+  | .error _ => ""
+
+def okEnc? (t : String) (p : Policy := encPolicy)
+    (cipher : L4Factoidal.Crypto.CipherCall.Cipher := stubCipher) : Option Claims :=
+  match validateWith cipher stubPrims rsa p t with
+  | .ok c => some c
+  | .error _ => none
+
+def refusedEnc (t frag : String) (p : Policy := encPolicy) : Bool :=
+  match validateWith stubCipher stubPrims rsa p t with
+  | .error (.refused w) => (w.splitOn frag).length ≥ 2
+  | _ => false
+
+-- Decrypted, then the same checks: the claims of the plain assertion.
+#guard (okEnc? (encryptedToken valid)).isSome
+#guard okEnc? (encryptedToken valid) == ok? valid
+#guard okEnc? (encryptedToken valid (rsaSpec true)) == ok? valid
+#guard okEnc? (encryptedToken inclusive) == ok? inclusive
+-- A plain assertion through validateWith, keys or not.
+#guard okEnc? valid == ok? valid
+#guard okEnc? valid policy == ok? valid
+-- No decryption key: refused, naming the issue, by both functions.
+#guard refusedWith (encryptedToken valid) encryptionIssue
+#guard refusedEnc (encryptedToken valid) encryptionIssue policy
+-- The decrypted assertion must be signed, and signed by the trusted key.
+#guard refusedEnc (encryptedToken unsigned) "exactly one ds:Signature"
+#guard refusedEnc (encryptedToken altered) "digest"
+#guard refusedEnc (encryptedToken attackerKey) "signature value does not verify"
+#guard refusedEnc (encryptedToken wrapChild) "not a child of the document element"
+-- A wrong RSA key: the one decryption error.
+#guard refusedEnc (encryptedToken valid) L4Factoidal.XML.Enc.decryptionError
+  { encPolicy with decryptKeys := { rsa := [{ kid := some "rsa-1", n := L4Factoidal.XML.EncTests.bytes 129 3, d := rsaN }] } }
+-- With no answer yet, the AES request comes back unchanged.
+#guard (match validateWith (L4Factoidal.Crypto.CipherCall.replayCipher []) stubPrims rsa encPolicy (encryptedToken valid) with
+  | .error (.need r) => r.op == .gcmDecrypt
+  | _ => false)
+-- Expiry still applies to a decrypted assertion.
+#guard refusedEnc (encryptedToken valid) "expired" { encPolicy with now := 1761313900 + 60 }
+
+/-! ### saml:EncryptedID -/
+
+/-- The assertion of `valid` with its `saml:NameID` in a `saml:EncryptedID`. -/
+def withEncryptedId : Option El :=
+  match decodeToken valid with
+  | .error _ => none
+  | .ok d =>
+      let encId (n : Node) : Node :=
+        match n with
+        | .element "saml:NameID" .. =>
+            match L4Factoidal.XML.Enc.encryptNode stubCipher stubPrims rsaSpec rand n with
+            | .ok ed => .element "saml:EncryptedID" [] [ed]
+            | .error _ => n
+        | _ => n
+      let inA (n : Node) : Node :=
+        match n with
+        | .element "saml:Subject" as ks => .element "saml:Subject" as (ks.map encId)
+        | _ => n
+      match d.root with
+      | .element t as ks => elOf? rootScope (.element t as (ks.map inA))
+      | _ => none
+
+-- Refused without decryption, read after.
+#guard match withEncryptedId with
+  | some a =>
+      (match claimsOf policy a "https://idp.example" with
+        | .error w => (w.splitOn encryptionIssue).length == 2
+        | .ok _ => false) &&
+      (match decryptSubjectIds stubCipher stubPrims encKeys a with
+        | .ok a' => (match claimsOf policy a' "https://idp.example" with
+            | .ok c => c.nameId == "https://id.example/end-user"
+            | .error _ => false)
+        | .error _ => false)
+  | none => false
+
+/-! ### The authorization server decrypts with `samlKeys` (issue 1073)
+
+`Authz.validateSaml` runs `validateWith` over the replay cipher: each AES
+request comes back as `.need (.cipher r)`, the host answers it, and the same
+token is checked again with the answer. Here the stub cipher answers, and the
+assertion is wrapped under a symmetric key (AES Key Wrap), so every step is a
+cipher request. RSA-OAEP and ECDH through the server: `tests/authz/server.mjs`. -/
+
+def kekSpec : L4Factoidal.XML.Enc.EncryptSpec :=
+  { recipient := .kek (some "kek128") L4Factoidal.XML.EncTests.kek16 }
+
+def ctxSamlKeys (answers : List (L4Factoidal.Crypto.CipherCall.Req × L4Factoidal.Crypto.CipherCall.Ans)) : L4Factoidal.Authz.Ctx :=
+  { ctxSaml [idp] with samlKeys := { sym := [{ kid := some "kek128", k := L4Factoidal.XML.EncTests.kek16 }] },
+                       cipherAnswers := answers }
+
+/-- Answer each request with the stub cipher until the result is not a
+cipher request, at most `fuel` times; a tail call per request. -/
+def runReplay (tok : String) :
+    Nat → List (L4Factoidal.Crypto.CipherCall.Req × L4Factoidal.Crypto.CipherCall.Ans) → L4Factoidal.Authz.SubjectResult × Nat
+  | 0, acc => (L4Factoidal.Authz.validateSubject (ctxSamlKeys acc) L4Factoidal.Authz.tokenTypeSaml2 tok, acc.length)
+  | fuel + 1, acc =>
+      match L4Factoidal.Authz.validateSubject (ctxSamlKeys acc) L4Factoidal.Authz.tokenTypeSaml2 tok with
+      | .need (.cipher r) =>
+          let a : L4Factoidal.Crypto.CipherCall.Ans := match stubCipher.call r with
+            | .ok b => .ok b
+            | .error _ => .refused
+          runReplay tok fuel (acc ++ [(r, a)])
+      | res => (res, acc.length)
+
+-- The first request is the key unwrap; after two answers (unwrap, GCM) the
+-- token is valid with the claims of the plain assertion.
+open L4Factoidal.Authz in
+#guard (match validateSubject (ctxSamlKeys []) tokenTypeSaml2 (encryptedToken valid kekSpec) with
+  | .need (.cipher r) => r.op == .kwUnwrap
+  | _ => false)
+#guard runReplay (encryptedToken valid kekSpec) 8 [] ==
+  (.valid "https://id.example/end-user" "https://app.example/SAML", 2)
+-- Decrypted, the signature checks still apply.
+#guard (match (runReplay (encryptedToken altered kekSpec) 8 []).1 with
+  | .refused w => (w.splitOn "digest").length ≥ 2
+  | _ => false)
+-- A refused answer is a refusal, with the one decryption error.
+open L4Factoidal.Authz in
+#guard (match validateSubject (ctxSamlKeys []) tokenTypeSaml2 (encryptedToken valid kekSpec) with
+  | .need (.cipher r) =>
+      (match validateSubject (ctxSamlKeys [(r, .refused)]) tokenTypeSaml2 (encryptedToken valid kekSpec) with
+        | .refused w => w == L4Factoidal.XML.Enc.decryptionError
+        | _ => false)
+  | _ => false)
+-- No samlKeys: still refused, naming the issue.
+open L4Factoidal.Authz in
+#guard (match validateSubject (ctxSaml [idp]) tokenTypeSaml2 (encryptedToken valid) with
+  | .refused w => (w.splitOn encryptionIssue).length == 2
+  | _ => false)
+-- The server keeps one answer per request, at most `maxCipherAnswers`.
+open L4Factoidal.Authz in
+#guard (match validateSubject (ctxSamlKeys []) tokenTypeSaml2 (encryptedToken valid kekSpec) with
+  | .need (.cipher r) =>
+      let st := ((({} : AuthzState).recordCipher r .refused).recordCipher r (.ok ByteArray.empty))
+      st.cipherAnswers.length == 1
+  | _ => false)
+
+/-! ### Expected failure: saml:EncryptedAttribute
+
+XFAIL, https://github.com/danbri/factoidal/issues/1073: an
+`EncryptedAttribute` is refused, never skipped. When attributes are read and
+decrypted, this guard fails and becomes a positive check. -/
+
+#guard match decodeToken (b64 ("<saml:Assertion xmlns:saml=\"" ++ samlNs ++ "\" ID=\"_x\" Version=\"2.0\">" ++
+    "<saml:AttributeStatement><saml:EncryptedAttribute/></saml:AttributeStatement></saml:Assertion>")) with
+  | .ok d => match elOf? rootScope d.root with
+    | some a => match claimsOf policy a "https://idp.example" with
+      | .error w => (w.splitOn encryptionIssue).length == 2
+      | .ok _ => false
+    | none => false
+  | .error _ => false
 
 end L4Factoidal.SAML.Tests
