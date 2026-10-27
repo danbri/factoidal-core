@@ -309,4 +309,9 @@ def labelsAfter (ds : Dataset) (text : String) : Option (List BNodeId) :=
 #guard freshDataBnode "b_" "_:bnode_41" == "b_d_g_bnode_41"
 #guard freshDataBnode "b_" "x" == "b_d__x"
 
+-- §19.8 [134]: `true.` is the keyword `true` and the terminator
+-- (https://github.com/danbri/factoidal/issues/1075).
+#guard parses "INSERT DATA { <http://e/a> <http://e/p> true. }"
+#guard parses "INSERT DATA { <http://e/a> <http://e/p> false.<http://e/a> <http://e/q> true }"
+
 end L4Factoidal.SPARQL.UpdateTests
