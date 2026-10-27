@@ -87,12 +87,13 @@ def listItems (g : Graph) (head : Term) : Except (ListFault × Term) (List Term)
 /-- The triples of a list of `items` over the node labels `labels` (one label
 per item; extra labels are not used), and its head. The empty list is
 `rdf:nil` with no triple. -/
-def listTriples : List BNodeId → List Term → Term × List Triple
-  | _, [] => (rdfNilTerm, [])
-  | [], _ :: _ => (rdfNilTerm, [])
-  | b :: bs, x :: xs =>
-    let (rest, ts) := listTriples bs xs
-    (.bnode b, ⟨.bnode b, rdfFirst, x⟩ :: ⟨.bnode b, rdfRest, rest⟩ :: ts)
+def listTriples (labels : List BNodeId) (items : List Term) : Term × List Triple :=
+  -- From the last item to the first, so the loop is a tail-recursive fold
+  -- (tail-recursion gate, issue 746): the triples are those of the head-first
+  -- recursion, in the same order.
+  (labels.zip items).reverse.foldl
+    (fun (rest, ts) (b, x) => (.bnode b, ⟨.bnode b, rdfFirst, x⟩ :: ⟨.bnode b, rdfRest, rest⟩ :: ts))
+    (rdfNilTerm, [])
 
 /-- The members of a resource, `(n, member)` sorted by `n` (stable). -/
 def containerMembersOf (outs : List (WfIri × Term)) : List (Nat × Term) :=
