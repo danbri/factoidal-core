@@ -279,7 +279,7 @@ def handleOpNames : List String :=
   , "datasetFromJsonLd"
   , "datasetToJsonLd"
   , "datasetShexValidate"
-  , "datasetRifEval" ]
+  , "datasetRifEval" ] ++ collectionOpNames
 
 /-- The store-handle op names (`Wasm/Ops/StoreHandles.lean`), served ONLY by
 `callIO` and `callBlobIO` — the pure `call` cannot reach the store-handle
@@ -413,7 +413,7 @@ They are stateless, so `call` serves them and `callIO` reaches them through its
 fall-through to `call`. The names are appended to every `ops` reflection by
 `opsReflectionFor`; the arms are in the fall-through case of `call`. -/
 def stage2OpNames : List String :=
-  mathsOpNames ++ vcOpNames ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames
+  mathsOpNames ++ vcOpNames ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames ++ termsOpNames
 
 /-- Serve a stage 2 op of the full table, or answer the unknown-op error.
 `serializeTurtleWith` and `parseDocument` (the lenient parse,

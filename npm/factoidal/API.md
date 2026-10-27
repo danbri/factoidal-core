@@ -436,8 +436,12 @@ Methods: `query(sparql, {sparql12?, version?, entail?, output?})`,
 `closure('rdfs' | 'owl-rl' | 'rho-df' | 'rdfs-plus')`, `canonicalize()`,
 `serialize({format, version?, prefixes?, literalShorthand?,
 useNativeTypes?, useRdfType?, rdfDirection?, rdfstar?})`, `toString(format)`
-(synchronous), `toNQuads()`, `clone()`, `has(quad)`, `match(s, p, o, g)`
-(a new Dataset), `toArray()`, iteration, `size`, `prefixes`,
+(synchronous), `toNQuads()`, `clone()`, `has(quad, {match?})`,
+`match(s, p, o, g, {match?})` (a new Dataset), `add(quad)`, `delete(quad,
+{match?})` (`match: 'value'` compares a literal object by value, see "Matching
+literals by value"), `listItems(head, graph?)`, `containerItems(node,
+graph?)`, `addList(items, graph?)` (see "RDF lists and containers"),
+`toArray()`, iteration, `size`, `prefixes`,
 `diagnostics`, `warnings`, `format`, `formatInferred`, `dispose()` and
 `[Symbol.dispose]` (for `using` where the runtime has it). A Dataset that is
 garbage collected without `dispose()` is released by a
@@ -476,6 +480,130 @@ import { parse } from '@factoidal/core';
 const ds = await parse('<http://e/s> <http://e/p> "x" <http://e/g> .\n', { format: 'nquads' });
 const rows = await ds.query("SELECT * FROM <http://e/none> WHERE { ?s ?p ?o }");
 console.log(rows.length, rows.warnings?.[0]?.class); // 0 'dataset-iri-not-found'
+```
+
+## Matching literals by value
+
+`has`, `match` and `delete` of a Dataset compare terms by default (RDF 1.1
+Concepts section 3.6; SPARQL 1.1 section 18.3): `"01"^^xsd:integer` is not
+`"1"^^xsd:integer`. With `{match: 'value'}` as the last argument, a literal
+object matches every object literal that is the same term or has the same
+value under SPARQL 1.1 `=` (sections 17.3 and 17.4.1.7). The subject, the
+predicate, the graph and an object that is not a literal match by term. The
+engine decides the relation and keeps an index of the object literals by value
+(https://github.com/danbri/factoidal/issues/1052, value-based matching).
+
+`sameValue(a, b)` answers the relation for two terms: `true`, `false`, or
+`null` for incomparable (the type error of `=`: two different literals of a
+datatype with no value comparison, an ill-typed literal and another literal,
+`xsd:integer` and `xsd:boolean`). It is synchronous and needs the engine
+loaded (`await ready()` or any other call first). Two consequences of the
+SPARQL operator: `"NaN"^^xsd:double` is not the same value as itself (the
+value match still finds the same term), and the relation is not transitive
+across `xsd:float` and `xsd:decimal` (F&O 3.1 section 4.2 rounds the decimal
+to the float type first).
+
+`sameValue` is SPARQL `=`, not Jena's `Node.sameValueAs`. Where `=` is a type
+error, `sameValue` gives `null` and Jena gives `false`: for example an
+ill-typed `"x"^^xsd:integer` against `"1"^^xsd:integer`, or two literals of
+an unknown datatype with different lexical forms. A caller that needs a
+two-valued answer treats `null` as "not the same value". The tests are in
+`test/value-match-1052.test.mjs`; the Jena-style echo (leana) records the
+difference as a divergence.
+
+```js
+import { parse, ready, sameValue, dataFactory as f } from '@factoidal/core';
+await ready();
+const xsd = (l) => f.namedNode('http://www.w3.org/2001/XMLSchema#' + l);
+console.log(sameValue(f.literal('01', xsd('integer')), f.literal('1.0', xsd('decimal')))); // true
+console.log(sameValue('"a"^^<http://e/dt>', '"b"^^<http://e/dt>'));                      // null
+
+const ds = await parse('<http://e/s> <http://e/p> "01"^^<http://www.w3.org/2001/XMLSchema#integer> .\n',
+  { format: 'ntriples' });
+const q = f.quad(f.namedNode('http://e/s'), f.namedNode('http://e/p'), f.literal('1', xsd('int')));
+console.log(ds.has(q), ds.has(q, { match: 'value' }));                                   // false true
+console.log(ds.match(null, null, f.literal('1e0', xsd('double')), null, { match: 'value' }).size); // 1
+ds.delete(q, { match: 'value' });
+console.log(ds.size);                                                                     // 0
+```
+
+## Syntax names, IRIs and vocabularies
+
+These functions are synchronous and need the engine loaded (`await ready()` or
+any other call first). The engine decides each answer.
+
+`syntaxFor(fileNameOrIri)` or `syntaxFor({fileName, mediaType})` gives the
+syntax of a document, a `name` of `formats()`, or `null`
+(https://github.com/danbri/factoidal/issues/1053). The table is the W3C
+registrations: Turtle `text/turtle` `.ttl`, N-Triples `application/n-triples`
+`.nt`, N-Quads `application/n-quads` `.nq`, TriG `application/trig` `.trig`,
+RDF/XML `application/rdf+xml` `.rdf`, JSON-LD `application/ld+json` `.jsonld`.
+The media type wins when it is given, and its parameters and letter case do not
+change the answer. An unknown media type (`text/plain`) gives `null`; it does not
+fall back to the name. The query and the fragment of an IRI are ignored.
+`.owl` and `.xml` are not registered and give `null`. Each row of `formats()`
+has the same `mediaTypes` and `extensions`.
+
+This table is not the one the file readers use. When `factoidal pack` or
+another file-reading command gets no `--format`, it uses the extension table
+`RDF.formatOfExtension` (`formal/lean4/L4Factoidal/RDF/Format.lean`). That
+table also maps `.owl`, `.xml` and `.rdfxml` to RDF/XML, `.ntriples` to
+N-Triples, `.turtle` to Turtle, `.nquads` to N-Quads and `.json-ld` to JSON-LD.
+`syntaxFor` keeps to the registrations, so `syntaxFor('onto.owl')` is `null`.
+Jena's `RDFLanguages.filenameToLang('onto.owl')` gives RDF/XML. The tests are
+in `test/syntax-names-1053.test.mjs`.
+
+`splitIri(iri)` gives `{namespace, localName}`
+(https://github.com/danbri/factoidal/issues/1051 item 4). The local name is the
+longest suffix of the IRI that is an XML NCName (the name an RDF/XML QName can
+carry), and `''` when there is none; `namespace + localName` is the IRI.
+`isNCName(text)` is the check of a prefix label or a local name.
+
+`vocabularies()` gives the engine's vocabulary table, `[{prefix, namespace,
+terms}]` (issue 1051 item 5): `rdf`, `rdfs`, `xsd` and `owl` with their term
+local names (RDF 1.2 Schema, XSD 1.1 Part 2 built-in datatypes, OWL 2 reserved
+vocabulary), and `foaf`, `dcterms`, `dc`, `schema` as namespaces only (no
+terms). The prefixes are those of the Turtle writer. `memberIri(n)` gives the
+container membership property `rdf:_n` (n >= 1) and `memberOrdinal(iri)` its
+`n`, or `null`.
+
+```js
+import { ready, syntaxFor, splitIri, vocabularies, memberIri } from '@factoidal/core';
+await ready();
+syntaxFor('data.ttl');                                    // 'turtle'
+syntaxFor({ fileName: 'a.nt', mediaType: 'text/turtle' }); // 'turtle'
+splitIri('http://e/123abc');                               // { namespace: 'http://e/123', localName: 'abc' }
+const rdf = vocabularies().find((v) => v.prefix === 'rdf');
+rdf.namespace + 'type';                                    // rdf:type
+memberIri(2).value;                                        // '...22-rdf-syntax-ns#_2'
+```
+
+## RDF lists and containers
+
+A Dataset reads and builds RDF lists (`rdf:first` / `rdf:rest`, RDF 1.2 Schema
+section 5.2) and reads containers (`rdf:_1`, `rdf:_2`, ..., section 5.1)
+(https://github.com/danbri/factoidal/issues/1051 item 6). The engine walks the
+list through its indexes, one lookup per node. The last argument `graph` is the
+graph name; omitted, `null` or the DefaultGraph is the default graph.
+
+- `ds.listItems(head, graph?)` gives the items in order; `rdf:nil` gives `[]`.
+  A list that is not well formed is a FactoidalError with code `op.failed`; the
+  message names the reason (`no-first`, `no-rest`, `branch` for two
+  `rdf:first` or `rdf:rest`, `cycle`) and the node.
+- `ds.containerItems(node, graph?)` gives `{kind, items}`: `items` is
+  `[{ordinal, term}]` sorted by `n` (a gap in the numbers is kept), `kind` is
+  `rdf:Bag`, `rdf:Seq` or `rdf:Alt` from the `rdf:type` of the node, or `null`.
+- `ds.addList(items, graph?)` adds a new list on blank nodes that are fresh in
+  the Dataset and gives its head; no items give `rdf:nil` and add nothing.
+  A graph named by a blank node cannot be changed.
+
+```js
+import { parse, dataFactory as f } from '@factoidal/core';
+const ds = await parse('@prefix : <http://e/> . :s :p ( :a "b" ) .', { format: 'turtle' });
+const head = ds.match(null, null, null).toArray().find((q) => q.predicate.value === 'http://e/p').object;
+ds.listItems(head).map((t) => t.value);   // ['http://e/a', 'b']
+const h2 = ds.addList([f.literal('x'), f.literal('y')]);
+ds.listItems(h2).length;                  // 2
 ```
 
 ## The persisted store
@@ -1414,7 +1542,14 @@ runnable.
 | `openDataset` | `(data, {format?, baseIRI?}) => Dataset` | a Dataset argument is cloned |
 | `closure` | `(data, 'rdfs' \| 'owl-rl' \| 'rho-df' \| 'rdfs-plus') => Dataset` | the closure of the default graph |
 | `serialize` | `(data, {format, version?, prefixes?, literalShorthand?, useNativeTypes?, useRdfType?, rdfDirection?, rdfstar?, inputFormat?, baseIRI?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle`, `trig`, `rdfxml`, `jsonld`, `rdfc`; see "Datasets" |
-| `formats` | `() => [{name, read11, read12, write11, write12, engine}]` | the engine's list |
+| `formats` | `() => [{name, read11, read12, write11, write12, engine, mediaTypes, extensions}]` | the engine's list; `mediaTypes` and `extensions` are the W3C registrations (issue 1053) |
+| `sameValue` | `(a, b) => boolean \| null` | SPARQL 1.1 `=` on two terms; `null` incomparable; synchronous after `ready()`; see "Matching literals by value" |
+| `syntaxFor` | `(name \| {fileName?, mediaType?}) => string \| null` | the syntax of a file name or media type; synchronous; see "Syntax names, IRIs and vocabularies" |
+| `splitIri` | `(iri) => {namespace, localName}` | the local name is the longest NCName suffix; synchronous |
+| `isNCName` | `(text) => boolean` | XML NCName check; synchronous |
+| `vocabularies` | `() => [{prefix, namespace, terms}]` | rdf, rdfs, xsd, owl terms; foaf, dcterms, dc, schema namespaces; synchronous |
+| `memberIri` | `(n) => NamedNode` | `rdf:_n`; synchronous |
+| `memberOrdinal` | `(iri) => number \| null` | the `n` of `rdf:_n`; synchronous |
 | `canonicalize` | `(data, {format?, baseIRI?}) => string` | RDFC-1.0 canonical N-Quads |
 | `graphs` | `(Dataset) => Array<[NamedNode \| BlankNode, Dataset]>` | named graphs, default graph excluded |
 | `canonicalHash` | `(Dataset) => string` | SHA-256 (64 lowercase hex digits) of the RDFC-1.0 canonical N-Quads that `canonicalize` answers, graph names included (since 0.20.0; before, graph names were dropped) |

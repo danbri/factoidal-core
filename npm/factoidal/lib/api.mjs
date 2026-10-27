@@ -979,6 +979,95 @@ function buildApi(driver) {
     await ctx();
   }
 
+  // The synchronous term functions (sameValue, syntaxFor, splitIri, ...) call
+  // the loaded engine: `await ready()`, or any other call, loads it first.
+  function loadedCtx(who, op = who) {
+    if (!ctxCache) {
+      throw new FactoidalError(
+        `${who}: the engine is not loaded yet. Await any @factoidal/core call first ` +
+        '(for example `await ready()`).', { code: 'op.unknown' });
+    }
+    requireEntryFn(ctxCache.e, op, who);
+    return ctxCache;
+  }
+
+  /**
+   * SPARQL 1.1 `=` on two RDF terms (sections 17.3 and 17.4.1.7), decided by
+   * the engine (L4Factoidal.SPARQL.sameValue;
+   * https://github.com/danbri/factoidal/issues/1052).
+   * @param {object|string} a an RDF/JS term or an N-Triples term string
+   * @param {object|string} b
+   * @returns {boolean|null} true: the same value; false: different values;
+   *   null: incomparable (the operator's type error)
+   */
+  function sameValue(a, b) {
+    const c = loadedCtx('sameValue');
+    const r = entryResult(c.e.sameValue(JSON.stringify(termToJson(a)),
+      JSON.stringify(termToJson(b))), 'sameValue');
+    return r.sameValue === 'true' ? true : (r.sameValue === 'false' ? false : null);
+  }
+
+  const iriText = (iri) => (typeof iri === 'string' ? iri : (iri && iri.value) || '');
+
+  /**
+   * The syntax of a document by its file name (or IRI path) and its media
+   * type, from the engine's table of W3C registrations
+   * (L4Factoidal.RDF.syntaxOfNames; https://github.com/danbri/factoidal/issues/1053).
+   * The media type wins when it is given; an unknown media type does not fall
+   * back to the name.
+   * @param {string|{fileName?: string, mediaType?: string}} what a file name or IRI,
+   *   or both names
+   * @returns {string|null} a syntax name of formats(), or null
+   */
+  function syntaxFor(what) {
+    const c = loadedCtx('syntaxFor');
+    const o = (typeof what === 'string') ? { fileName: what } : (what || {});
+    const r = entryResult(c.e.syntaxFor(String(o.fileName ?? ''), String(o.mediaType ?? '')), 'syntaxFor');
+    return r.syntax ?? null;
+  }
+
+  /**
+   * An IRI as a namespace and a local name: the local name is the longest
+   * suffix that is an XML NCName, '' when there is none
+   * (L4Factoidal.RDF.splitIriXml; https://github.com/danbri/factoidal/issues/1051 item 4).
+   * @param {string|{value: string}} iri
+   * @returns {{namespace: string, localName: string}}
+   */
+  function splitIri(iri) {
+    const c = loadedCtx('splitIri');
+    const r = entryResult(c.e.splitIri(iriText(iri)), 'splitIri');
+    return { namespace: r.namespace, localName: r.localName };
+  }
+
+  /** Is the text an XML NCName (Namespaces in XML 1.0, production [4])? */
+  function isNCName(text) {
+    const c = loadedCtx('isNCName');
+    return entryResult(c.e.isNCName(String(text)), 'isNCName').ncName === true;
+  }
+
+  /**
+   * The engine's vocabulary table: prefix, namespace and term local names of
+   * rdf, rdfs, xsd and owl, and the namespaces of foaf, dcterms, dc and schema
+   * (L4Factoidal.RDF.vocabularyTable; https://github.com/danbri/factoidal/issues/1051 item 5).
+   * @returns {Array<{prefix: string, namespace: string, terms: string[]}>}
+   */
+  function vocabularies() {
+    const c = loadedCtx('vocabularies');
+    return entryResult(c.e.vocabularies(), 'vocabularies').vocabularies;
+  }
+
+  /** The container membership property rdf:_n, n >= 1, as a NamedNode. */
+  function memberIri(n) {
+    const c = loadedCtx('memberIri');
+    return dataFactory.namedNode(entryResult(c.e.memberIri(String(n)), 'memberIri').iri);
+  }
+
+  /** The n of rdf:_n, or null for any other IRI. */
+  function memberOrdinal(iri) {
+    const c = loadedCtx('memberOrdinal');
+    return entryResult(c.e.memberOrdinal(iriText(iri)), 'memberOrdinal').ordinal ?? null;
+  }
+
   /** The engine's name tables (formats, regimes, query outputs, pack syntaxes). */
   async function engineTables() {
     return (await ctx()).tables();
@@ -2320,6 +2409,13 @@ function buildApi(driver) {
     fromQuads,
     ready,
     engineTables,
+    sameValue,
+    syntaxFor,
+    splitIri,
+    isNCName,
+    vocabularies,
+    memberIri,
+    memberOrdinal,
     Dataset,
     Store,
     FactoidalError,

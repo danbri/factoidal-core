@@ -132,6 +132,7 @@ import L4Factoidal.RDF.EntailmentRdfsSpec
 import L4Factoidal.RDF.EntailmentGeneralize
 import L4Factoidal.RDF.Semantics
 import L4Factoidal.SPARQL.Expr
+import L4Factoidal.SPARQL.SameValue
 import L4Factoidal.SPARQL.ExprTheorems
 import L4Factoidal.SPARQL.ExprRefinement
 import L4Factoidal.SPARQL.Query
@@ -755,6 +756,9 @@ import L4Factoidal.RDF.Format
 import L4Factoidal.RDF.FormatOfContent
 import L4Factoidal.RDF.MediaType
 import L4Factoidal.RDF.MediaTypeTests
+import L4Factoidal.RDF.IriSplit
+import L4Factoidal.RDF.VocabularyTable
+import L4Factoidal.RDF.Collections
 import L4Factoidal.RDF.Source
 import L4Factoidal.RDF.SourceJsonLd
 import L4Factoidal.RDF.SourceTheorems

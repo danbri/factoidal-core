@@ -236,6 +236,10 @@ export interface FormatCapability {
   write12: boolean;
   /** 'core' when both engines serve it; 'full' when only the full engine does. */
   engine: 'core' | 'full';
+  /** The registered media types (W3C registration; empty for a row with none). syntaxFor() reads the same table. */
+  mediaTypes: string[];
+  /** The registered file extensions, with the leading dot ('.ttl'). */
+  extensions: string[];
 }
 
 /**
@@ -283,11 +287,31 @@ export class Dataset implements Iterable<Quad> {
   toString(formatOrOptions?: WriteFormat | WriteOptions): string;
   toNQuads(): string;
   clone(): Dataset;
-  /** RDF/JS DatasetCore (https://rdf.js.org/dataset-spec/); match and has use the engine indexes. */
-  has(quad: Quad): boolean;
+  /**
+   * RDF/JS DatasetCore (https://rdf.js.org/dataset-spec/); match and has use
+   * the engine indexes. `{match: 'value'}`: a literal object matches every
+   * object literal that is the same term or has the same value (sameValue());
+   * the other positions match by term.
+   */
+  has(quad: Quad, options?: MatchOptions): boolean;
   add(quad: Quad): this;
-  delete(quad: Quad): this;
-  match(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null): Dataset;
+  /** With `{match: 'value'}`: remove every quad of the same subject, predicate
+   *  and graph whose object has the same value as the quad's literal object. */
+  delete(quad: Quad, options?: MatchOptions): this;
+  match(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null,
+    options?: MatchOptions): Dataset;
+  /**
+   * The items of the RDF list (rdf:first/rdf:rest) at `head`, in order
+   * (https://github.com/danbri/factoidal/issues/1051 item 6). `rdf:nil` is
+   * the empty list. A list that is not well formed (a node with no or with two
+   * rdf:first or rdf:rest, or a cycle) is a FactoidalError, code `op.failed`.
+   * `graph`: omitted, null or the DefaultGraph for the default graph.
+   */
+  listItems(head: Term, graph?: Term | null): Term[];
+  /** The members rdf:_1, rdf:_2, ... of `node`, sorted by n, and its kind (rdf:Bag, rdf:Seq, rdf:Alt) from its rdf:type. */
+  containerItems(node: Term, graph?: Term | null): { kind: NamedNode | null; items: Array<{ ordinal: number; term: Term }> };
+  /** Add a new RDF list of `items` on fresh blank nodes; answers its head (rdf:nil for no items). */
+  addList(items: Iterable<Term>, graph?: Term | null): Term;
   toArray(): Quad[];
   [Symbol.iterator](): Iterator<Quad>;
   dispose(): void;
@@ -576,6 +600,71 @@ export function ready(): Promise<void>;
 
 /** The engine's name tables: format names, entailment regimes, query outputs, pack syntaxes. */
 export function engineTables(): Promise<Record<string, unknown>>;
+
+/**
+ * How Dataset.has, match and delete compare the object position
+ * (https://github.com/danbri/factoidal/issues/1052). 'term' (the default):
+ * RDF term equality. 'value': a literal object matches by value (sameValue()).
+ */
+export interface MatchOptions {
+  match?: 'term' | 'value';
+}
+
+/**
+ * SPARQL 1.1 `=` on two RDF terms (sections 17.3 and 17.4.1.7), decided by the
+ * engine: `true` the same value (`"01"^^xsd:integer` and `"1.0"^^xsd:decimal`),
+ * `false` different values, `null` incomparable (the operator's type error:
+ * two different literals of an unknown datatype, an ill-typed literal and
+ * another literal, `xsd:integer` and `xsd:boolean`). `"NaN"^^xsd:double` is
+ * not the same value as itself. A term is an RDF/JS term or an N-Triples term
+ * string. Synchronous: the engine must be loaded (`await ready()`).
+ */
+export function sameValue(a: Term | string, b: Term | string): boolean | null;
+
+/**
+ * The syntax of a document by its file name (or IRI path; the query and the
+ * fragment are ignored) and its media type, from the engine's table of the
+ * W3C registrations (https://github.com/danbri/factoidal/issues/1053): Turtle
+ * `text/turtle` `.ttl`, N-Triples `application/n-triples` `.nt`, N-Quads
+ * `application/n-quads` `.nq`, TriG `application/trig` `.trig`, RDF/XML
+ * `application/rdf+xml` `.rdf`, JSON-LD `application/ld+json` `.jsonld`. The
+ * media type wins when it is given (its parameters are ignored); an unknown
+ * media type does not fall back to the name. Answers a `name` of formats(),
+ * or `null`. Synchronous: the engine must be loaded (`await ready()`).
+ */
+export function syntaxFor(what: string | { fileName?: string; mediaType?: string }): string | null;
+
+/**
+ * An IRI as a namespace and a local name: the local name is the longest
+ * suffix that is an XML NCName (what an RDF/XML QName can carry), `''` when
+ * there is none; `namespace + localName` is the IRI
+ * (https://github.com/danbri/factoidal/issues/1051 item 4). Synchronous.
+ */
+export function splitIri(iri: string | NamedNode): { namespace: string; localName: string };
+
+/** Is the text an XML NCName (Namespaces in XML 1.0, production [4])? A prefix label check. Synchronous. */
+export function isNCName(text: string): boolean;
+
+/** One row of the engine's vocabulary table. A term IRI is `namespace + term`. */
+export interface VocabularyRow {
+  prefix: string;
+  namespace: string;
+  /** Local names; empty for a namespace whose vocabulary is not in the engine table. */
+  terms: string[];
+}
+
+/**
+ * The engine's vocabulary table (https://github.com/danbri/factoidal/issues/1051
+ * item 5): rdf, rdfs, xsd and owl with their terms; foaf, dcterms, dc and
+ * schema as namespaces only. The prefixes are those of the Turtle writer. Synchronous.
+ */
+export function vocabularies(): VocabularyRow[];
+
+/** The container membership property `rdf:_n` (n >= 1). Synchronous. */
+export function memberIri(n: number): NamedNode;
+
+/** The `n` of `rdf:_n` (no leading zero, n >= 1), or `null` for any other IRI. Synchronous. */
+export function memberOrdinal(iri: string | NamedNode): number | null;
 
 /** A SHACL validation-report term (see shaclValidate). */
 export interface ShaclValidateResult {
@@ -1800,6 +1889,13 @@ declare const _default: {
   fromQuads: typeof fromQuads;
   ready: typeof ready;
   engineTables: typeof engineTables;
+  sameValue: typeof sameValue;
+  syntaxFor: typeof syntaxFor;
+  splitIri: typeof splitIri;
+  isNCName: typeof isNCName;
+  vocabularies: typeof vocabularies;
+  memberIri: typeof memberIri;
+  memberOrdinal: typeof memberOrdinal;
   shaclValidate: typeof shaclValidate;
   shexValidate: typeof shexValidate;
   owlClosure: typeof owlClosure;
