@@ -389,6 +389,21 @@ def ReadsWritten (written read : FileGen) : Prop := read = written
 named assumption `ReadsWritten`. -/
 def sbm11Disk : IOStage String FileGen FileGen := { assumption := ReadsWritten }
 
+/-- **The named IO assumption of a storage medium**
+(`L4Factoidal/Storage/Medium.lean`, https://github.com/danbri/factoidal/issues/1010
+KR1): every `readAt name off len` that a medium answers is `b.extract off
+(off + len)` of the bytes `b` written to the object `name`, and `size name` is
+`b.size`. At the level of `FileGen`: the files read back through the medium
+are the files written. It is `ReadsWritten` stated for any medium (Node `fs`,
+and later OPFS, HTTP `Range`, LWS); the session caches are not covered, as on
+the native disk. -/
+def MediumReadsWritten (written read : FileGen) : Prop := read = written
+
+/-- An SBM11 generation read through a storage medium. IO; its contract is the
+named assumption `MediumReadsWritten`. The wasm ops `sbm11Open` and
+`sbm11Query` (`Wasm/Ops/Sbm11.lean`) read through it. -/
+def sbm11Medium : IOStage String FileGen FileGen := { assumption := MediumReadsWritten }
+
 /-- The output of the SBM11 WHERE harness: the id table, the store with the
 query-local vocabulary, the plan lines and the scan counts. -/
 abbrev WhereOut := Qlvr.Table × Store Id × Array String × ScanStats
@@ -423,6 +438,33 @@ def sbm11WhereStage (clock : EvalEnv) (base : Option String) (plan : Plan) (p : 
       rw [he] at h'
       cases h'
       exact ⟨t, s, lines, stats, rfl, hok⟩
+
+/-- **SBM11 files through a medium, then the WHERE clause on ids**: the stage
+of the id path of `sbm11Query` (`Wasm/Ops/Sbm11.lean`, `QuerySession.runOne`).
+The read-back is the medium's (`sbm11Medium`). -/
+def mediumWhere (readBack : FileGen → Except String FileGen) (hrw : sbm11Medium.Realised readBack)
+    (clock : EvalEnv) (base : Option String) (plan : Plan) (p : QueryPattern)
+    (hnest : plan.nested = some p) (hdsq : plan.dataset = none) :
+    Stage String (MemGen × FileGen) WhereOut :=
+  (Stage.second (sbm11Medium.toStage readBack hrw)).comp (sbm11WhereStage clock base plan p hnest hdsq)
+
+/-- A successful run of `mediumWhere` meets the WHERE contract over the files
+written: under `MediumReadsWritten` (the premise `hrw`) the files the medium
+returns are the files the packer wrote, so `WhereContract` holds of the
+generation and the written files (`harness_where_allowed_file` through
+`sbm11WhereStage`). -/
+theorem mediumWhere_sound (readBack : FileGen → Except String FileGen)
+    (hrw : sbm11Medium.Realised readBack)
+    (clock : EvalEnv) (base : Option String) (plan : Plan) (p : QueryPattern)
+    (hnest : plan.nested = some p) (hdsq : plan.dataset = none)
+    (G : MemGen) (F : FileGen) (r : WhereOut)
+    (h : (mediumWhere readBack hrw clock base plan p hnest hdsq).run (G, F) = .ok r) :
+    WhereContract clock base p (G, F) r := by
+  obtain ⟨⟨G', F'⟩, ⟨hG, hrb⟩, hw⟩ := Stage.comp_ok_contract _ _ h
+  have hG' : G' = G := hG
+  have hF' : F' = F := hrb
+  subst hG' hF'
+  exact hw
 
 /-! ## The end-to-end composition: document bytes to a WHERE answer -/
 
@@ -741,6 +783,7 @@ def rdfsClosureStage (D cmps : List WfIri) (hcmps : ∀ c ∈ cmps, IsRdfMemberI
 #print axioms documentToSolutions_sound
 #print axioms plannerSelectStage
 #print axioms sbm11PlannerSelect_sound
+#print axioms mediumWhere_sound
 #print axioms proofCheckStage
 #print axioms rdfsClosureStage
 

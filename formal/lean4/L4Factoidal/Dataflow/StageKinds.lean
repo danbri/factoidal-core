@@ -46,6 +46,8 @@ def stageKinds : List (String × String) := [
   ("L4Factoidal.Dataflow.canonicalNQuadsDocumentWriter", "L4Factoidal.Dataflow.RdfWriter"),
   ("L4Factoidal.Dataflow.sbm11PackStage", "L4Factoidal.Dataflow.Stage"),
   ("L4Factoidal.Dataflow.sbm11Disk", "L4Factoidal.Dataflow.IOStage"),
+  ("L4Factoidal.Dataflow.sbm11Medium", "L4Factoidal.Dataflow.IOStage"),
+  ("L4Factoidal.Dataflow.mediumWhere", "L4Factoidal.Dataflow.Stage"),
   ("L4Factoidal.Dataflow.sbm11WhereStage", "L4Factoidal.Dataflow.Stage"),
   ("L4Factoidal.Dataflow.sbm11DecodeStage", "L4Factoidal.Dataflow.Stage"),
   ("L4Factoidal.Dataflow.documentToWhere", "L4Factoidal.Dataflow.Stage"),

@@ -17,10 +17,11 @@
 //
 // Types: index.d.ts. Every function is in lib/api.mjs.
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { buildApi } from './lib/api.mjs';
 import { entryFromEngine } from './lib/lean-entry.mjs';
+import { nodeMediumHost } from './lib/sbm11-hosts.mjs';
 
 /**
  * The loaded Lean engine handle: `call(op, args)`, `callBlob`,
@@ -40,7 +41,8 @@ export async function loadEngine() {
 const api = buildApi({
   engineName: 'lean4-wasm',
   loadEntry: async () => entryFromEngine(await loadEngine()),
-  storeReaderFor: (root) => (path) => readFileSync(join(root, path)),
+  storeReaderFor: (root) => (p) => fs.readFileSync(path.join(root, p)),
+  sbm11HostFor: () => nodeMediumHost({ fs, path }),
 });
 
 // RDF and SPARQL
@@ -70,6 +72,7 @@ export const clearServiceEndpoints = api.clearServiceEndpoints;
 export const openStore = api.openStore;
 export const queryStore = api.queryStore;
 export const listStores = api.listStores;
+export const openSbm11Store = api.openSbm11Store;
 
 // The durable update log (hub post 18)
 export const deltaLogOpen = api.deltaLogOpen;
@@ -143,6 +146,7 @@ export const didKeyResolve = api.didKeyResolve;
 export const capabilities = api.capabilities;
 export const Dataset = api.Dataset;
 export const Store = api.Store;
+export const Sbm11Store = api.Sbm11Store;
 export const FactoidalError = api.FactoidalError;
 export const dataFactory = api.dataFactory;
 export const version = api.version;

@@ -401,6 +401,16 @@ def registry : List Entry := [
     stage := ``sbm11Disk, wireIn := "FileGen", wireOut := "FileGen", status := .assumed
     ioAssumptions := [``ReadsWritten]
     note := "Session caches not covered" },
+  { area := "SBM11 storage medium (host reads of named objects)", dir := "Storage"
+    stage := ``sbm11Medium, wireIn := "FileGen", wireOut := "FileGen", status := .assumed
+    ioAssumptions := [``MediumReadsWritten]
+    note := "issue 1010 KR1; Node fs medium of the wasm ops sbm11Open, sbm11Query; Session caches not covered" },
+  { area := "SBM11 WHERE over the files read through a medium", dir := "Storage"
+    stage := ``mediumWhere, wireIn := "MemGen × FileGen", wireOut := "id table (WhereOut)"
+    contract := ``WhereContract, status := .proved
+    theorems := [``mediumWhere_sound, ``L4Factoidal.Storage.Sbm11.MemGen.harness_where_allowed_file]
+    ioAssumptions := [``MediumReadsWritten]
+    note := "the id path of the wasm op sbm11Query (QuerySession.runOne); premise: MediumReadsWritten" },
   { area := "SBM11 WHERE over the files", dir := "Storage"
     stage := ``sbm11WhereStage, wireIn := "MemGen × FileGen", wireOut := "id table (WhereOut)"
     contract := ``WhereContract, status := .proved

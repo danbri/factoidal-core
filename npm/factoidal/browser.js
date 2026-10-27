@@ -86,6 +86,7 @@ export const clearServiceEndpoints = api.clearServiceEndpoints;
 export const openStore = api.openStore;
 export const queryStore = api.queryStore;
 export const listStores = api.listStores;
+export const openSbm11Store = api.openSbm11Store;
 
 // The durable update log (hub post 18)
 export const deltaLogOpen = api.deltaLogOpen;
@@ -159,6 +160,7 @@ export const didKeyResolve = api.didKeyResolve;
 export const capabilities = api.capabilities;
 export const Dataset = api.Dataset;
 export const Store = api.Store;
+export const Sbm11Store = api.Sbm11Store;
 export const FactoidalError = api.FactoidalError;
 export const dataFactory = api.dataFactory;
 export const version = api.version;

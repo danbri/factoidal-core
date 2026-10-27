@@ -1072,6 +1072,55 @@ export function queryStore(
 /** The store handles this engine instance holds open, with the residency caps (op storeHandleList). */
 export function listStores(): Promise<Record<string, unknown>>;
 
+/** A storage-medium host of an SBM11 store (issue 1010 KR1): byte ranges of
+ *  named objects. The engine builds every name and checks every byte. */
+export interface Sbm11MediumHost {
+  /** Bytes [off, off + len) of object `name` of store `root`; null when absent or short. */
+  read(root: string, name: string, off: number, len: number): Uint8Array | null;
+  /** The length of object `name`; -1 when absent. */
+  size(root: string, name: string): number;
+  /** Called when the last store of `root` closes. */
+  close?(root: string): void;
+}
+
+/** How the last query of an Sbm11Store ran. */
+export interface Sbm11QueryReport {
+  form: 'select' | 'ask' | 'construct' | 'describe';
+  /** 'ids': the id path; 'reference': the reference evaluator over the selected quads. */
+  path: 'ids' | 'reference';
+  /** The engine's path line (the fallback's reason). */
+  detail: string;
+  rows: number;
+  blockBytes: number;
+  prmBytes: number;
+  mediumBytes: number;
+}
+
+/** An open SBM11 store (ops sbm11Open, sbm11Query, sbm11Close; issue 1009 KR1). */
+export class Sbm11Store {
+  readonly handle: string;
+  readonly root: string;
+  /** The generation directory CURRENT names ('' when the root is the generation). */
+  readonly generation: string;
+  readonly quads: number;
+  readonly terms: number;
+  /** Delta-log entries replayed at open. */
+  readonly deltaEntries: number;
+  readonly closed: boolean;
+  query(sparql: string, options?: { base?: string; version?: '1.1' | '1.2' }): Promise<Bindings[] | boolean | Dataset>;
+  /** How the last query ran; null before the first query. */
+  explain(): Sbm11QueryReport | null;
+  /** Release the handle. Idempotent. */
+  close(): Promise<void>;
+}
+
+/**
+ * Open an SBM11 store: a generation directory, or a collection root whose
+ * CURRENT names one. Node reads the files with positioned reads; other
+ * runtimes pass `options.host`.
+ */
+export function openSbm11Store(root: string, options?: { host?: Sbm11MediumHost }): Promise<Sbm11Store>;
+
 /**
  * A durable update log (hub post 18): the object deltaLogOpen() returns.
  * In the browser the log is an IndexedDB database named `dbName`; under
@@ -1494,6 +1543,8 @@ export function capabilities(): Promise<{
   sparql12: boolean;
   /** openStore() and the Store methods (storeOpen, storeHandleQuery). */
   store: boolean;
+  /** openSbm11Store() and the Sbm11Store methods (sbm11Open, sbm11Query, sbm11Close). */
+  sbm11: boolean;
   /** The deltaLog* functions (deltaLogEncode, deltaLogDecode, deltaLogMerge). */
   deltaLog: boolean;
   /** 'full': the whole library is in the wasm module. */
@@ -1605,6 +1656,7 @@ declare const _default: {
   openStore: typeof openStore;
   queryStore: typeof queryStore;
   listStores: typeof listStores;
+  openSbm11Store: typeof openSbm11Store;
   deltaLogOpen: typeof deltaLogOpen;
   deltaLogAppend: typeof deltaLogAppend;
   deltaLogReadAllHex: typeof deltaLogReadAllHex;
@@ -1635,6 +1687,7 @@ declare const _default: {
   capabilities: typeof capabilities;
   Dataset: typeof Dataset;
   Store: typeof Store;
+  Sbm11Store: typeof Sbm11Store;
   FactoidalError: typeof FactoidalError;
   dataFactory: DataFactory;
   queryRaw: typeof queryRaw;

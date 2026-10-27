@@ -511,6 +511,48 @@ use the native `l4block-*` tools. Large collections need a deeper call
 stack than Node gives by default: see "A handle on a large store: the
 worker route" below.
 
+## SBM11 stores
+
+An **SBM11** generation is the Shardborough baseline store: a dictionary
+(GDV1, GDX1), four permutations (PSO, POS, SPO, OSP) as PRM1 indexes over
+PRB1 blocks, a graph list, a manifest, and an optional delta log
+([`skills/disk-storage-format`](../../skills/disk-storage-format/SKILL.md)).
+The native `l4sbm11 pack` and `l4sbm11 activate` make one; packing in
+JavaScript is the next step (https://github.com/danbri/factoidal/issues/1009
+KR2). `openSbm11Store(root)` opens one through the wasm ops `sbm11Open`,
+`sbm11Query` and `sbm11Close`. The engine reads the store through a storage
+medium: it asks for byte ranges of named objects, and decodes and checks
+every byte (https://github.com/danbri/factoidal/issues/1010). In Node the
+medium is the file system, read with positioned reads; the package ships a
+small sample store in `docs/sbm11-sample/store`.
+
+```js
+import { openSbm11Store } from "@factoidal/core";
+import { fileURLToPath } from "node:url";
+const root = fileURLToPath(new URL("docs/sbm11-sample/store",
+  import.meta.resolve("@factoidal/core/package.json")));
+
+const store = await openSbm11Store(root);      // reads CURRENT, the manifest, the GDX1 header
+const rows = await store.query("SELECT ?s ?o WHERE { ?s <http://ex.org/p> ?o }");
+console.log(rows.length, store.explain().path); // 3 'ids'
+const found = await store.query("ASK { <http://ex.org/a> <http://ex.org/q> 5 }");
+console.log(found);                             // true
+await store.close();
+```
+
+A query runs on ids when the id path takes it, else by the reference
+evaluator over the quads the planner guard selects; `store.explain()` names
+the path and the bytes read. Another runtime passes a medium host:
+`openSbm11Store(root, { host: { read(root, name, off, len), size(root, name) } })`,
+where `read` answers a `Uint8Array` (or `null`) and `size` the length (or
+`-1` when the object is absent). OPFS and HTTP `Range` hosts are
+https://github.com/danbri/factoidal/issues/1010 KR2.
+
+What is not there yet: the reads are exact byte ranges inside the
+manifest's length of each file (the native `--verify none` reads); the
+Merkle proofs of the manifest are not checked through a medium. One
+thread: the native `--threads N` scans are not in the wasm module.
+
 ## The durable update log
 
 A SPARQL Update log that survives a page reload (hub post 18,

@@ -964,3 +964,43 @@ id = "npm:./fn#vcEd25519Verify"
 stages = ["ed25519VerifyIO"]
 covers = "part"
 note = "npm/factoidal/lib/api.mjs vcEd25519Verify (fn.js re-exports it) calls the wasm op vcEd25519Verify (see wasm:vcEd25519Verify)."
+
+[[entry]]
+id = "wasm:sbm11Open"
+stages = ["sbm11Medium"]
+covers = "part"
+note = "Wasm/Ops/Sbm11.lean sbm11Open: QuerySession.openMedium over L4Wasm.hostMedium root: CURRENT resolved, the manifest decoded, every file length checked against the manifest, the GDX1 header read, the delta log replayed; reads through the host medium (sbm11Medium, named assumption MediumReadsWritten). Not covered: the manifest decode and length checks, the delta-log decode and replay, the handle table. No Merkle proof is checked."
+
+[[entry]]
+id = "wasm:sbm11Query"
+stages = ["sbm11Medium", "mediumWhere", "sbm11SelectedRead", "sbm11PlannerSelect"]
+covers = "part"
+note = "Wasm/Ops/Sbm11.lean sbm11Query: QuerySession.runOne over the session sbm11Open made; every read is a byte range of a named object through the host medium (sbm11Medium, named assumption MediumReadsWritten). The id path is mediumWhere (the WHERE clause on ids, WhereContract via harness_where_allowed_file); the reference fallback reads the quads the planner guard selects (sbm11SelectedRead, named assumption SelectedAgrees) and runs SelectedDataset.referenceSelect (sbm11PlannerSelect). Not covered: the session caches, the delta overlay replay, the rendering of rows to SPARQL JSON, ASK and CONSTRUCT forms, the post-processing of runPostM and the nested evaluator of IdGroup.runNestedM, the handle table."
+
+[[nonstage]]
+id = "wasm:sbm11Close"
+reason = "removes a handle from the SBM11 store table; reads no data"
+
+[[entry]]
+id = "npm:.#openSbm11Store"
+stages = ["sbm11Medium"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs openSbm11Store: installs the medium host (lib/sbm11-hosts.mjs; Node: positioned file reads) and calls the wasm op sbm11Open (see wasm:sbm11Open). Not covered: as wasm:sbm11Open, the host's reads."
+
+[[entry]]
+id = "npm:.#Sbm11Store"
+stages = ["sbm11Medium", "mediumWhere", "sbm11SelectedRead", "sbm11PlannerSelect"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs Sbm11Store.query calls the wasm op sbm11Query (see wasm:sbm11Query) and converts its SPARQL JSON or N-Triples answer; close calls sbm11Close. Not covered: as wasm:sbm11Query, the conversion of the answer."
+
+[[entry]]
+id = "npm:./browser#openSbm11Store"
+stages = ["sbm11Medium"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs openSbm11Store: installs the medium host (lib/sbm11-hosts.mjs; Node: positioned file reads) and calls the wasm op sbm11Open (see wasm:sbm11Open). Not covered: as wasm:sbm11Open, the host's reads."
+
+[[entry]]
+id = "npm:./browser#Sbm11Store"
+stages = ["sbm11Medium", "mediumWhere", "sbm11SelectedRead", "sbm11PlannerSelect"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs Sbm11Store.query calls the wasm op sbm11Query (see wasm:sbm11Query) and converts its SPARQL JSON or N-Triples answer; close calls sbm11Close. Not covered: as wasm:sbm11Query, the conversion of the answer."

@@ -30,6 +30,7 @@ jsonldDocumentReader
 jsonldReader
 lawfulBgpStage
 lawfulWhereStage
+mediumWhere
 nquads11StreamStage
 nquadsDocumentReader
 nquadsDocumentWriter

@@ -28,6 +28,7 @@ import { version as packageVersion } from './version.mjs';
 import { openGeneration, readRegion, manifestKeys, hexOfBytes } from './store.mjs';
 import { fullEngineMessage } from './lean-entry.mjs';
 import { memoryDeltaLogStore } from './delta-log-hosts.mjs';
+import { installMediumBridge, releaseMediumBridge } from './sbm11-hosts.mjs';
 import { FactoidalError, errorFromEnvelope, envelopeResult } from './errors.mjs';
 import { buildNodes } from './nodes.mjs';
 
@@ -250,6 +251,75 @@ class Store {
 }
 
 /**
+ * An open SBM11 store (https://github.com/danbri/factoidal/issues/1009 KR1):
+ * a handle inside the engine (op sbm11Open, formal/lean4/Wasm/Ops/Sbm11.lean)
+ * over a storage medium. Every read of the store is a byte range of a named
+ * object that the engine asks the medium host for; the engine decodes and
+ * checks every byte. A query runs on ids when the id path takes it, else by
+ * the reference evaluator over the quads the planner guard selects; `path`
+ * of `explain()` says which.
+ */
+class Sbm11Store {
+  constructor(e, env, root, fromNQuads) {
+    this._e = e;
+    this._env = env;
+    this._root = root;
+    this._closed = false;
+    this._fromNQuads = fromNQuads;
+    this._last = null;
+  }
+  /** The engine's handle id. */
+  get handle() { return this._env.handle; }
+  /** The store root the store was opened from. */
+  get root() { return this._root; }
+  /** The generation directory its CURRENT pointer names ('' : the root itself). */
+  get generation() { return this._env.generation; }
+  /** The quad count the manifest records. */
+  get quads() { return this._env.quads; }
+  /** The term count the manifest records. */
+  get terms() { return this._env.terms; }
+  /** The entries of the delta log replayed at open. */
+  get deltaEntries() { return this._env.deltaEntries; }
+  /** True once close() has run. */
+  get closed() { return this._closed; }
+
+  /**
+   * One SPARQL query (SPARQL 1.1 grammar; `{version: '1.2'}` for 1.2).
+   * @param {string} sparql
+   * @param {{base?: string, version?: '1.1'|'1.2'}} [options]
+   * @returns {Promise<Array<Map<string, object>>|boolean|Dataset>}
+   */
+  async query(sparql, options) {
+    if (typeof sparql !== 'string') throw new TypeError('Sbm11Store.query: sparql must be a string');
+    const opts = options || {};
+    const r = entryResult(this._e.sbm11Query(this.handle, sparql,
+      JSON.stringify({ base: opts.base || '', version: opts.version || '1.1' })), 'Sbm11Store.query', sparql);
+    this._last = { form: r.form, path: r.path, detail: r.detail, rows: r.rows,
+      blockBytes: r.blockBytes, prmBytes: r.prmBytes, mediumBytes: r.mediumBytes };
+    if (r.form === 'construct' || r.form === 'describe') return this._fromNQuads(r.ntriples);
+    if (r.form === 'ask') return r.results.boolean;
+    return bindingsFromSrj(r.results);
+  }
+
+  /**
+   * How the last query ran: `path` ('ids' or 'reference'), the engine's
+   * `detail` line, the row count and the bytes read; null before a query.
+   */
+  explain() { return this._last; }
+
+  /** Release the handle. Idempotent. */
+  async close() {
+    if (this._closed) return;
+    this._closed = true;
+    try {
+      entryResult(this._e.sbm11Close(this.handle), 'Sbm11Store.close');
+    } finally {
+      releaseMediumBridge(this._root);
+    }
+  }
+}
+
+/**
  * Build the public API around a driver.
  *
  * @param {object} driver
@@ -260,6 +330,10 @@ class Store {
  * @param {(root: string) => ((path: string) => any)} [driver.storeReaderFor]
  *        Turns a collection root path into a store reader (Node: the file
  *        system). Without it, openStore() takes a reader function only.
+ * @param {(root: string) => object} [driver.sbm11HostFor]
+ *        The storage medium host of an SBM11 store root (lib/sbm11-hosts.mjs;
+ *        Node: nodeMediumHost over the file system). Without it,
+ *        openSbm11Store() needs options.host.
  * @param {object} [driver.deltaLogStore]
  *        Where the deltaLog* functions keep their records
  *        (lib/delta-log-hosts.mjs): IndexedDB in the browser entries. The
@@ -1929,6 +2003,40 @@ function buildApi(driver) {
     }
   }
 
+  /**
+   * Open an SBM11 store (https://github.com/danbri/factoidal/issues/1009 KR1).
+   * `root` is a generation directory, or a collection root whose CURRENT names
+   * one. In Node the medium is the file system (positioned reads); elsewhere
+   * pass `options.host`, an object {read(root, name, off, len) -> Uint8Array
+   * | null, size(root, name) -> number (-1: absent)}.
+   * @param {string} root
+   * @param {{host?: {read: Function, size: Function, close?: Function}}} [options]
+   * @returns {Promise<Sbm11Store>}
+   */
+  async function openSbm11Store(root, options) {
+    if (typeof root !== 'string' || root === '') {
+      throw new TypeError('openSbm11Store: root must be a non-empty string');
+    }
+    const opts = options || {};
+    const host = opts.host || (typeof driver.sbm11HostFor === 'function' ? driver.sbm11HostFor(root) : null);
+    if (!host) {
+      throw new FactoidalError('openSbm11Store: this entry has no storage medium; pass options.host',
+        { code: 'host.io' });
+    }
+    const e = await entry();
+    requireEntryFn(e, 'sbm11Open', 'openSbm11Store (sbm11Open)');
+    installMediumBridge(root, host);
+    let env;
+    try {
+      env = entryResult(e.sbm11Open(root), 'openSbm11Store');
+    } catch (err) {
+      releaseMediumBridge(root);
+      throw err;
+    }
+    const c = await ctx();
+    return new Sbm11Store(e, env, root, (nq) => c.fromNQuads(nq, {}));
+  }
+
   /** The store handles this engine instance holds open (op storeHandleList). */
   async function listStores() {
     const e = await entry();
@@ -2168,6 +2276,7 @@ function buildApi(driver) {
       parseDiagnostics: has('parseDocument'),
       turtlePrefixes: has('serializeTurtleWith'),
       store: has('storeOpen') && has('storeHandleQuery'),
+      sbm11: has('sbm11Open') && has('sbm11Query') && has('sbm11Close'),
       deltaLog: has('deltaLogEncode') && has('deltaLogDecode') && has('deltaLogMerge'),
     };
   }
@@ -2248,6 +2357,7 @@ function buildApi(driver) {
     openStore,
     queryStore,
     listStores,
+    openSbm11Store,
     deltaLogOpen,
     deltaLogAppend,
     deltaLogReadAllHex,
@@ -2262,6 +2372,7 @@ function buildApi(driver) {
     engineTables,
     Dataset,
     Store,
+    Sbm11Store,
     FactoidalError,
     dataFactory,
     // Metadata (issue #682): the same two fields on every driver's
@@ -2275,5 +2386,5 @@ function buildApi(driver) {
 
 export {
   buildApi, bindingsFromSrj, entryResult, parseResult,
-  missingOpError, FactoidalError, Store,
+  missingOpError, FactoidalError, Store, Sbm11Store,
 };

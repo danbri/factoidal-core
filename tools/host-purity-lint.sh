@@ -60,6 +60,9 @@ store_files=(
   # The LWS storage directory (`lws-serve --storage files`, issue 918): the
   # engine names every file and gives every byte; the host reads and writes.
   "$root/npm/factoidal/lws/persist.mjs"
+  # The storage-medium host of the SBM11 store ops (issue 1009 KR1): the
+  # engine names every object and checks every byte; the host reads ranges.
+  "$root/npm/factoidal/lib/sbm11-hosts.mjs"
 )
 
 protocol_pattern='\b(20[0-9]|30[0-9]|40[0-9]|41[0-9]|42[0-9]|50[1-9])\b|\b(Link|Allow|Accept-Patch|Accept-Post|Accept-Put|Last-Modified|ETag|If-Match|If-None-Match|Slug|Location|WAC-Allow|Access-Control-[A-Za-z-]+)\b|containment|describedby|\bacl\b|pim:|text/n3|\bldp:|\bsolid:|WebID|\binbox\b'
