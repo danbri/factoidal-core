@@ -169,6 +169,8 @@ async function fetchFrom (url, accept, address) {
  * @param {string|null} [options.storageKey] the key text; default FACTOIDAL_LWS_KEY; null reads none
  * @param {boolean|string[]} [options.cors] false for no CORS fields, or the origins to answer;
  *   default: echo any valid request Origin (issue 923)
+ * @param {{entityId: string, jwk: object}[]} [options.samlIdps] the SAML 2.0 identity providers
+ *   whose signed assertions are accepted, each with its RSA public JWK (issue 926)
  * @param {object} [options.engine] an engine to reuse
  */
 export async function openAuthorizationServer (options = {}) {
@@ -192,6 +194,9 @@ export async function openAuthorizationServer (options = {}) {
   // CORS (issue 923): false or a list of origins, passed unread; absent, the
   // engine echoes the request Origin (L4Factoidal/Authz/Server.lean stepCors).
   if (options.cors !== undefined) config.cors = options.cors
+  // SAML 2.0 identity providers (issue 926): [{ entityId, jwk }], passed
+  // unread; the engine checks each (Wasm/Ops/Authz.lean samlIdpsOf?).
+  if (options.samlIdps !== undefined) config.samlIdps = options.samlIdps
   const key = storageKeyText(options.storageKey)
   if (key !== undefined) config.storageKey = key
   if (dir !== null) {

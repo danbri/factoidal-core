@@ -74,6 +74,7 @@ import Wasm.Ops.Canon
 import Wasm.Ops.FromDataset
 import L4Factoidal.RDF.Sink
 import L4Factoidal.RDF.Format
+import L4Factoidal.RDF.FormatOfContent
 import L4Factoidal.RDF.TermJson
 import L4Factoidal.RDF.QuadsBinTheorems
 import L4Factoidal.RDF.Isomorphism
@@ -337,6 +338,12 @@ def datasetFormats : IO String :=
 private def handlePrefixTable (od : OpenDataset) : PrefixTable :=
   od.prefixes.map fun (label, iri) => (iri, label ++ ":")
 
+/-- Why a writer op refuses a dataset with an IRI that is not an absolute IRI:
+no reader of the engine reads the text a writer would write for it
+(https://github.com/danbri/factoidal/issues/1057). -/
+def unwritableIri (v : String) : String :=
+  s!"{invalidIriMessage v}; no reader reads the text a writer would write for it"
+
 /-- `datasetSerialize(handle, formatTag)` — canonical N-Quads, or Turtle in
 which the handle's own prefixes (the ones `datasetOpen` recorded) name their
 namespaces; named graphs are flattened into the default graph on the turtle
@@ -344,6 +351,9 @@ path. -/
 def datasetSerialize (h formatTag : String) : IO String :=
   withHandle h fun od =>
     let ds := od.ds
+    match firstInvalidIri? ds with
+    | some v => pure (errJson s!"datasetSerialize: {unwritableIri v}")
+    | none =>
     match formatTag.toLower with
     | "" | "nquads" | "nq" | "n-quads" =>
         match handleCanonicalNQuadsWriter.run od.writeMode {} ds with
@@ -366,6 +376,9 @@ the handle's own prefixes; a present one replaces them. -/
 def datasetSerializeWith (h formatTag optionsJson : String) : IO String :=
   withHandle h fun od =>
     let ds := od.ds
+    match firstInvalidIri? ds with
+    | some v => pure (errJson s!"datasetSerializeWith: {unwritableIri v}")
+    | none =>
     match formatTag.toLower with
     | "" | "nquads" | "nq" | "n-quads" =>
         match handleCanonicalNQuadsWriter.run od.writeMode {} ds with
@@ -486,13 +499,14 @@ def datasetQueryRaw (h sparql optsJson : String) : IO String := do
     pure (queryRawParsed ds sparql (field "entail" "none") (field "output" "json") (some now))
 
 /-- `detectFormat(text)` — `{"ok":true,"format":TAG}`, the parse tag of
-`formatOfContent`; Turtle and TriG are read in RDF 1.2 mode (`turtle12`,
-`trig12`), which also reads every RDF 1.1 document. -/
+`formatOfContent`; Turtle, TriG and N-Quads are read in RDF 1.2 mode
+(`turtle12`, `trig12`, `nquads12`), which also reads every RDF 1.1 document. -/
 def detectFormat (text : String) : IO String :=
   let tag := match L4Factoidal.RDF.formatOfContent text with
     | .jsonld => "jsonld"
     | .rdfxml => "rdfxml"
     | .trig => "trig12"
+    | .nquads => "nquads12"
     | _ => "turtle12"
   pure (okWith [("format", .string tag)])
 
@@ -663,7 +677,7 @@ def badIriLoop : Nat → List Json → Option String
       | .object fields =>
           if j.getString? "type" == some "uri" then
             match j.getString? "value" with
-            | some v => if isIri v then badIriLoop n rest else some v
+            | some v => if isIri v && isAbsoluteIri v then badIriLoop n rest else some v
             | none => badIriLoop n rest
           else badIriLoop n (fields.map (·.2) ++ rest)
       | .array items => badIriLoop n (items ++ rest)
@@ -686,7 +700,11 @@ def jsonQuadsLoop : List Json → Array TermJson.Quad → Except String (List Te
   | [], acc => .ok acc.toList
   | x :: r, acc =>
       match TermJson.decodeQuad x with
-      | some q => jsonQuadsLoop r (acc.push q)
+      | some q =>
+          -- RDF 1.2 Concepts section 3.2 (https://github.com/danbri/factoidal/issues/1057).
+          match (quadIris q.1 q.2).find? (fun v => !isAbsoluteIriFast v) with
+          | some v => .error s!"{invalidIriMessage v} in quad: {x.toString}"
+          | none => jsonQuadsLoop r (acc.push q)
       | none => .error (notAQuadMessage x)
 
 /-- Each quad as an Update quad, one frame for any number of quads. -/
@@ -1040,7 +1058,7 @@ private def serializeOpts : List (String × OptionDomain) :=
 positional mode argument is checked as the option of its name (`mode`,
 `sourceKind`). -/
 def apiOptionTable : List (String × List (String × OptionDomain)) :=
-  [ ("parse", parseOpts ++ [("lenient", .any), ("maxErrors", .any)])
+  [ ("parse", parseOpts ++ [("lenient", .any), ("maxErrors", .any), ("rdfstar", .any)])
   , ("openDataset", parseOpts), ("registerServiceEndpoint", parseOpts)
   , ("update", parseOpts), ("canonicalize", parseOpts), ("isomorphic", parseOpts)
   , ("shaclValidate", parseOpts), ("shexValidate", parseOpts), ("closure", parseOpts)
@@ -1132,6 +1150,14 @@ def optionConflict (who : String) (fields : List (String × Json)) : Option Stri
       some (errCoded "option.conflict"
         s!"{who}: useNativeTypes, useRdfType, rdfDirection, rdfstar apply to format 'jsonld' only")
     else none
+  else if who == "parse" && present "rdfstar" then
+    -- JSON-LD-star has one reader, the JSON-LD one; no lenient mode
+    let fmt := (str "format").map (fun t => (parseFormatNames.lookup t.toLower).getD t.toLower)
+    if fmt.isSome && fmt != some "jsonld" then
+      some (errCoded "option.conflict" s!"{who}: rdfstar applies to format 'jsonld' only")
+    else if str "lenient" == some "true" then
+      some (errCoded "option.conflict" s!"{who}: rdfstar and lenient cannot be combined")
+    else none
   else none
 
 /-- `apiCheck(who, optionsJson)`: `optionsJson` is the options object the
@@ -1173,6 +1199,10 @@ def apiCheck (who optionsJson : String) : String :=
 #guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"nt\",\"prefixes\":{}}") == some "option.conflict"
 #guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"ttl\",\"prefixes\":{}}") == none
 #guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"nt\",\"prefixes\":null}") == none
+#guard codeOf? (apiCheck "parse" "{\"format\":\"json-ld\",\"rdfstar\":\"true\"}") == none
+#guard codeOf? (apiCheck "parse" "{\"rdfstar\":\"true\"}") == none
+#guard codeOf? (apiCheck "parse" "{\"format\":\"ttl\",\"rdfstar\":\"true\"}") == some "option.conflict"
+#guard codeOf? (apiCheck "parse" "{\"format\":\"jsonld\",\"rdfstar\":\"true\",\"lenient\":\"true\"}") == some "option.conflict"
 
 #guard (datasetOfQuads [(none, ⟨.bnode "a", ⟨"http://e/p", rfl⟩, .bnode "b"⟩),
                         (none, ⟨.bnode "a", ⟨"http://e/p", rfl⟩, .bnode "b"⟩)]).default.length == 1
