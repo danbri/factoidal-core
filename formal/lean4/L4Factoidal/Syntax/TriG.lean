@@ -251,10 +251,10 @@ def readTriGStatement (fuel : Nat) (st : TurtleState) (pos : Nat) (cs : List Cha
                     | .error e => .error e
                     | .ok (ts, st3, p4, r4) =>
                         let (p5, r5) := tws p4 r4
+                        -- [3g] `labelOrSubject predicateObjectList '.'`: outside
+                        -- a graph block the '.' is required (issue 1056).
                         match r5 with
                         | '.' :: r6 => .ok ((none, ts), st3, p5 + 1, r6)
-                        | []        => .ok ((none, ts), st3, p5, r5)
-                        | '}' :: _  => .ok ((none, ts), st3, p5, r5)
                         | _ => .error ⟨"expected '.' after triple", p5⟩
 
 /-! ## [1g] trigDoc -/
@@ -434,10 +434,10 @@ def readTriGStatementSpec (st : TurtleState) (pos : Nat) (cs : List Char) :
                     | .error e => .error e
                     | .ok (ts, st3, p4, r4) =>
                         let (p5, r5) := tws p4 r4
+                        -- [3g] `labelOrSubject predicateObjectList '.'`: outside
+                        -- a graph block the '.' is required (issue 1056).
                         match r5 with
                         | '.' :: r6 => .ok ((none, ts), st3, p5 + 1, r6)
-                        | []        => .ok ((none, ts), st3, p5, r5)
-                        | '}' :: _  => .ok ((none, ts), st3, p5, r5)
                         | _ => .error ⟨"expected '.' after triple", p5⟩
 
 /-- `trigDoc ::= (directive | block)*`. STRICT, with a no-progress guard
@@ -519,7 +519,10 @@ private def trigDocs : List String :=
     "@prefix e: <http://e/> . GRAPH { e:a e:p e:b }",
     "{ }",
     "<http://e/g> { }",
-    "VERSION \"1.2\" PREFIX p: <http://a/> p:g { p:s p:p p:o ~ p:r . }" ]
+    "VERSION \"1.2\" PREFIX p: <http://a/> p:g { p:s p:p p:o ~ p:r . }",
+    "<http://e/a> <http://e/p> <http://e/b>",
+    "<http://e/a> <http://e/p> <http://e/b> }",
+    "{ <http://e/a> <http://e/p> <http://e/b> } <http://e/a> <http://e/p> <http://e/c>" ]
 
 private def sameResult : Except ParseError Dataset → Except ParseError Dataset → Bool
   | .ok a,    .ok b    => decide (a = b)
@@ -548,6 +551,18 @@ several are rejected (so one that accepted every input would fail too). -/
         | .ok ds => (ds.named.length, ds.default.length)
         | .error _ => (0, 0)) == (2, 1)
 
+
+/-! https://github.com/danbri/factoidal/issues/1056: TriG 1.2 [3g]
+`triplesOrGraph ::= labelOrSubject (wrappedGraph | predicateObjectList '.')`.
+A triple outside a graph block ends with '.'; only the last triple inside
+`{ }` may omit it ([6g] `triplesBlock ::= triples ('.' triplesBlock?)?`). -/
+#guard (parseTriG "<http://e/a> <http://e/p> <http://e/b>" none .rdf11).toOption.isNone
+#guard (parseTriG "<http://e/a> <http://e/p> <http://e/b>" none .rdf12).toOption.isNone
+#guard (parseTriG "<http://e/a> <http://e/p> <http://e/c> {| <http://e/d> <http://e/e> |}" none .rdf12).toOption.isNone
+#guard (parseTriG "<http://e/a> <http://e/p> <http://e/c> {| <http://e/d> <http://e/e> |} ." none .rdf12).toOption.isSome
+#guard (parseTriG "<http://e/a> <http://e/p> <http://e/b> }" none .rdf11).toOption.isNone
+#guard (parseTriG "{ <http://e/a> <http://e/p> <http://e/b> }" none .rdf11).toOption.isSome
+#guard (parseTriG "<http://e/a> <http://e/p> <http://e/b> ." none .rdf11).toOption.isSome
 
 /-! `parseTriGWithPrefixes` (the npm prefixes envelope) runs the same reader
 as `parseTriG`; on every document above it gives the same dataset or error. -/

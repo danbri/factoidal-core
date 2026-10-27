@@ -751,6 +751,7 @@ import L4Factoidal.Storage.QuadDatasetSet
 import L4Factoidal.RDF.CanonicalSet
 import L4Factoidal.RDF.DocumentScopeTests
 import L4Factoidal.RDF.Format
+import L4Factoidal.RDF.FormatOfContent
 import L4Factoidal.RDF.MediaType
 import L4Factoidal.RDF.MediaTypeTests
 import L4Factoidal.RDF.Source
@@ -963,6 +964,13 @@ import L4Factoidal.Authz.Server
 import L4Factoidal.Authz.Mount
 import L4Factoidal.Authz.Theorems
 import L4Factoidal.Authz.Tests
+-- SAML 2.0 subject tokens: exclusive canonicalization, the XML Signature
+-- profile of SAML Core section 5 (https://github.com/danbri/factoidal/issues/926).
+import L4Factoidal.XML.ExcC14n
+import L4Factoidal.XML.DSig
+import L4Factoidal.SAML.Assertion
+import L4Factoidal.SAML.Fixtures
+import L4Factoidal.SAML.Tests
 import L4Factoidal.Solid.Tests
 
 -- XMPP / GC3 (https://github.com/danbri/factoidal/ ... xmpp/DESIGN.md

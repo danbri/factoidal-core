@@ -27,8 +27,11 @@ export interface BlankNode {
 export interface Literal {
   termType: 'Literal';
   value: string;
-  /** Language tag ('' when none). */
+  /** Language tag, lowercase ('' when none). */
   language: string;
+  /** Base direction of a directional language-tagged string (RDF 1.2):
+   *  'ltr' or 'rtl'; '' when none. RDF/JS Data Model, Literal.direction. */
+  direction: '' | 'ltr' | 'rtl';
   /** Datatype IRI term (xsd:string for plain literals). */
   datatype: NamedNode;
   equals(other: Term | null | undefined): boolean;
@@ -378,6 +381,12 @@ export interface ParseOptions {
    * with one diagnostic of class 'too-many-errors'. Default: no limit.
    */
   maxErrors?: number;
+  /**
+   * Read JSON-LD as JSON-LD-star (`@triple`, `@reifies`, `@annotation` as
+   * RDF 1.2 triple terms and reifiers), as `jsonldToRdf` does. Format
+   * 'jsonld' only (given or inferred); not with `lenient`. Default: false.
+   */
+  rdfstar?: boolean;
 }
 
 export interface QueryOptions extends DatasetQueryOptions {
