@@ -820,6 +820,39 @@ Every `#guard` above is a kernel computation, so nothing here can
 depend on an axiom; the audit lines name the definitions the whole
 suite rests on. -/
 
+/-! ## https://github.com/danbri/factoidal/issues/1063 — tokens after `^^`, and `true:` as a prefix
+
+Turtle (RDF 1.2) [22] `RDFLiteral ::= String (LANG_DIR | '^^' iri)?`: `'^^'` and
+`iri` are two terminals, and section 6.2 lets white space and comments separate
+terminals. Section 6.5: "the longest match is chosen", so `true:o` is a
+PNAME_LN, not the keyword `true`. The same text through `parseTriG`;
+`TurtleChunkFoldTests.lean` checks `parseTurtleText`, the reader of the wasm ops. -/
+
+private def dtLine : String :=
+  "<http://e/a> <http://e/b> \"x\"^^<http://e/d> .\n"
+#guard ttlToNT "<http://e/a> <http://e/b> \"x\"^^ <http://e/d> ." == dtLine
+#guard ttlToNT "<http://e/a> <http://e/b> \"x\"^^\n<http://e/d> ." == dtLine
+#guard ttlToNT "<http://e/a> <http://e/b> \"x\"^^\t<http://e/d> ." == dtLine
+#guard ttlToNT "<http://e/a> <http://e/b> \"x\"^^\r<http://e/d> ." == dtLine
+#guard ttlToNT "<http://e/a> <http://e/b> \"x\"^^ # a comment\n <http://e/d> ." == dtLine
+#guard ttlToNT "@prefix e: <http://e/> . e:a e:b \"x\"^^ e:d ." == dtLine
+#guard (parseTriG "<http://e/a> <http://e/b> \"x\"^^ <http://e/d> ." none .rdf12).toOption.map (·.default.length) == some 1
+#guard ttlRejects "<http://e/a> <http://e/b> \"x\"^^ ."
+
+private def truePfx : String := "<urn:s> <urn:p> <http://example/c/o> .\n"
+#guard ttlToNT "@prefix true: <http://example/c/> . <urn:s> <urn:p> true:o ." == truePfx
+#guard ttlToNT "@prefix false: <http://example/c/> . <urn:s> <urn:p> false:o ." == truePfx
+#guard ttlToNT "@prefix true.x: <http://example/c/> . <urn:s> <urn:p> true.x:o ." == truePfx
+#guard ttlToNT "@prefix true: <http://example/c/> . <urn:s> <urn:p> true: ." ==
+  "<urn:s> <urn:p> <http://example/c/> .\n"
+#guard ttlToNT "@prefix true: <http://example/c/> . true:o <urn:p> true ." ==
+  "<http://example/c/o> <urn:p> \"true\"^^<http://www.w3.org/2001/XMLSchema#boolean> .\n"
+#guard ttlToNT "<urn:s> <urn:p> true." ==
+  "<urn:s> <urn:p> \"true\"^^<http://www.w3.org/2001/XMLSchema#boolean> .\n"
+#guard ttlToNT "<urn:s> <urn:p> false ." ==
+  "<urn:s> <urn:p> \"false\"^^<http://www.w3.org/2001/XMLSchema#boolean> .\n"
+#guard (parseTriG "@prefix true: <http://example/c/> . <urn:s> <urn:p> true:o ." none .rdf12).toOption.map (·.default.length) == some 1
+
 #print axioms parseTurtle
 #print axioms parseTriG
 #print axioms resolveIri

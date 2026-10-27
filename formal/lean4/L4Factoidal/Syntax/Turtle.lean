@@ -821,20 +821,49 @@ def pnCharsFollows : List Char → Bool
   | c :: _ => isPnChars c
   | []     => false
 
+/-- After a bare keyword that ends in a PN_CHARS character (`true`, `false`),
+the rest of a [139s] `PNAME_NS` follows: `:` at once, or `.` and then
+`(PN_CHARS | '.')*` ending in a PN_CHARS before `:` ([167s] `PN_PREFIX ::=
+PN_CHARS_BASE ((PN_CHARS | '.')* PN_CHARS)?`). Then the longest match is a
+prefixed name (`true:o`, `true.x:o`), not the keyword (Turtle section 6.5:
+"When tokenizing the input and choosing grammar rules, the longest match is
+chosen"; https://github.com/danbri/factoidal/issues/1063). -/
+def pnameNsFollows : List Char → Bool
+  | ':' :: _ => true
+  | '.' :: rest => go rest
+  | _ => false
+where
+  go : List Char → Bool
+    | [] => false
+    | c :: rest =>
+        if c == '.' then go rest
+        else if isPnChars c then (match rest with | ':' :: _ => true | _ => go rest)
+        else false
+
 /-- [133s] `BooleanLiteral ::= 'true' | 'false'`. Port of
-`parse_boolean_literal`. -/
+`parse_boolean_literal`. A keyword followed by more name characters, or by
+the rest of a prefix name and `:`, is not the keyword. -/
 def readBooleanLiteral (pos : Nat) (cs : List Char) :
     Except ParseError (Literal × Nat × List Char) :=
   let lit (s : String) : Literal :=
     { lexicalForm := s, datatype := xsdBoolean, langTag := none, direction := none }
   match cs with
   | 't' :: 'r' :: 'u' :: 'e' :: rest =>
-      if pnCharsFollows rest then .error ⟨"expected boolean literal", pos⟩
+      if pnCharsFollows rest || pnameNsFollows rest then .error ⟨"expected boolean literal", pos⟩
       else .ok (lit "true", pos + 4, rest)
   | 'f' :: 'a' :: 'l' :: 's' :: 'e' :: rest =>
-      if pnCharsFollows rest then .error ⟨"expected boolean literal", pos⟩
+      if pnCharsFollows rest || pnameNsFollows rest then .error ⟨"expected boolean literal", pos⟩
       else .ok (lit "false", pos + 5, rest)
   | _ => .error ⟨"expected boolean literal", pos⟩
+
+#guard pnameNsFollows ":o".toList
+#guard pnameNsFollows ".x:o".toList
+#guard pnameNsFollows ".x.y:o".toList
+#guard !pnameNsFollows ". <http://e/s>".toList
+#guard !pnameNsFollows ".\n".toList
+#guard !pnameNsFollows "..".toList
+#guard !pnameNsFollows ".x.:o".toList
+#guard !pnameNsFollows " ;".toList
 
 /-- `rdf:type` — what [9] verb's `a` abbreviates. -/
 def rdfType : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#type", rfl⟩
@@ -899,7 +928,11 @@ def readRdfLiteral (st : TurtleState) (pos : Nat) (cs : List Char) :
                    | .error e => .error e
                    | .ok wl   => .ok (wl, pos2, rest2))
       | '^' :: '^' :: rest2 =>
-          (match readTurtleIri st (pos1 + 2) rest2 with
+          -- `'^^'` and `iri` are two terminals of [128s] RDFLiteral, and white
+          -- space or a comment may separate terminals (Turtle section 6.2;
+          -- https://github.com/danbri/factoidal/issues/1063).
+          let (pos2, rest2') := tws (pos1 + 2) rest2
+          (match readTurtleIri st pos2 rest2' with
            | .error e => .error e
            | .ok (dt, pos2, rest3) =>
                match mkLiteral pos1
