@@ -90,6 +90,15 @@ function err (line) { console.error(line) }
 
 // ---------------------------------------------------------------- usage
 
+// Owner, 2026-10-27: every protocol, authentication and security component,
+// the CLIs and the core library carry this notice. It is printed with every
+// help text and on standard error when a server, client or key command starts.
+const REVIEW_WARNING = 'EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.'
+
+/** The commands that serve, speak a protocol, or handle keys and tokens. */
+const WARNED_COMMANDS = new Set(['serve', 'lws-serve', 'solid-serve', 'solid-client', 'lws-client',
+  'authz-serve', 'authz-keys', 'xmpp-serve', 'webdav-serve'])
+
 const USAGE = `factoidal - the Factoidal persisted store, from Node or Deno
 
 usage: factoidal <command> [options]
@@ -355,6 +364,7 @@ usage: factoidal authz-serve DIR --resource IRI[,IRI...] [--issuer IRI]
                            [--token-lifetime SECONDS] [--rotate-after SECONDS]
                            [--allow-http] [--allow-private-fetch]
                            [--cors-origin ORIGIN]... [--no-cors]
+                           [--saml-idp FILE]...
 
 An authorization server as a component (https://github.com/danbri/factoidal/issues/916),
 for lws-serve and any resource server that reads RFC 8414 metadata:
@@ -363,8 +373,17 @@ for lws-serve and any resource server that reads RFC 8414 metadata:
   POST /token                         RFC 8693 token exchange for an RFC 9068
                                       access token whose aud is the resource
 Subject tokens: OpenID Connect ID tokens (lws10-authn-openid) and
-self-issued JWTs for https and did:key subjects (lws10-authn-ssi-cid). SAML
-2.0 is not accepted (https://github.com/danbri/factoidal/issues/926).
+self-issued JWTs for https and did:key subjects (lws10-authn-ssi-cid), and
+SAML 2.0 assertions (lws10-authn-saml) from the identity providers --saml-idp
+names (https://github.com/danbri/factoidal/issues/926).
+
+--saml-idp FILE (repeatable) trusts one SAML 2.0 identity provider. FILE is
+JSON: {"entityId": "<the saml:Issuer value>", "jwk": <its RSA public JWK>}.
+An assertion must carry one enveloped XML Signature (exclusive
+canonicalization, rsa-sha256) that verifies under that key, an audience that
+names the issuer of this server, and bearer subject confirmation; its NameID
+is the subject and its Recipient the client. Encrypted assertions are
+refused. Without --saml-idp the token type is refused and not advertised.
 
 --resource names the resource IRIs (for lws-serve: BASE.well-known/lws-storage)
 tokens may be issued for; any other is refused with invalid_target.
@@ -520,7 +539,8 @@ is required):
                         BASE.well-known/lws-token, the JWK Set at
                         BASE.well-known/lws-jwks, signing keys in DIR (as
                         authz-serve; --alg, --token-lifetime, --rotate-after,
-                        --allow-http and --allow-private-fetch as there). The
+                        --allow-http, --allow-private-fetch and --saml-idp as
+                        there). The
                         storage trusts it, and any --issuer too. Each request
                         is the authorization server's when the engine says so
                         (L4Factoidal/Authz/Mount.lean); every other is the
@@ -807,7 +827,7 @@ function parseArguments (args, valueOptions) {
 class UsageError extends Error {}
 
 /** Options that may be given more than once; their value is the list. */
-const REPEATABLE_OPTIONS = new Set(['cors-origin'])
+const REPEATABLE_OPTIONS = new Set(['cors-origin', 'saml-idp'])
 
 const VALUE_OPTIONS = {
   version: new Set([]),
@@ -821,7 +841,8 @@ const VALUE_OPTIONS = {
   serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2']),
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
     'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window',
-    'redirects-max', 'storage', 'cors-origin', 'authz', 'alg', 'token-lifetime', 'rotate-after']),
+    'redirects-max', 'storage', 'cors-origin', 'authz', 'alg', 'token-lifetime', 'rotate-after',
+    'saml-idp']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret']),
   'lws-client': new Set(['body', 'file', 'content-type', 'slug', 'type', 'link', 'if-match',
@@ -829,7 +850,7 @@ const VALUE_OPTIONS = {
     'target', 'subject-token-file', 'subject-token-type', 'access-token', 'storage', 'root',
     'inbox']),
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
-    'cors-origin']),
+    'cors-origin', 'saml-idp']),
   'authz-keys': new Set([]),
   'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key']),
   'webdav-serve': new Set(['port', 'host'])
@@ -1744,6 +1765,16 @@ function corsConfig (options) {
   return {}
 }
 
+// --saml-idp FILE (repeatable): a SAML 2.0 identity provider whose signed
+// assertions the authorization server accepts, as the config member
+// `samlIdps`. FILE is JSON {"entityId": ID, "jwk": RSA public JWK}; passed
+// unread, the engine checks it (Wasm/Ops/Authz.lean, issue 926).
+function samlConfig (options) {
+  const files = options['saml-idp']
+  if (!Array.isArray(files)) return {}
+  return { samlIdps: files.map((f) => readJsonFile(f)) }
+}
+
 function serveHost (options) {
   if (options.host === undefined) return '127.0.0.1'
   if (typeof options.host !== 'string' || options.host.length === 0) {
@@ -1877,7 +1908,8 @@ async function commandLwsServe (positional, options) {
     ...(options['rotate-after'] !== undefined ? { rotateAfter: natOption('rotate-after', options['rotate-after']) } : {}),
     ...(options['allow-http'] === true ? { allowHttp: true } : {}),
     ...(options['allow-private-fetch'] === true ? { allowPrivateFetch: true } : {}),
-    ...corsConfig(options)
+    ...corsConfig(options),
+    ...samlConfig(options)
   }
   let auth
   if (authFile !== null) {
@@ -1964,7 +1996,8 @@ async function commandAuthzServe (positional, options) {
       ...(options['rotate-after'] !== undefined ? { rotateAfter: natOption('rotate-after', options['rotate-after']) } : {}),
       ...(options['allow-http'] === true ? { allowHttp: true } : {}),
       ...(options['allow-private-fetch'] === true ? { allowPrivateFetch: true } : {}),
-      ...corsConfig(options)
+      ...corsConfig(options),
+      ...samlConfig(options)
     })
   } catch (error) {
     if (error !== null && typeof error === 'object' && error.envelope !== undefined) {
@@ -2287,12 +2320,14 @@ const COMMANDS = {
 
 async function main () {
   if (argv.length === 0) {
+    out(REVIEW_WARNING + '\n')
     out(USAGE)
     return EXIT_USAGE
   }
   const command = argv[0]
   if (command === '--help' || command === '-h' || command === 'help') {
     const topic = argv[1]
+    out(REVIEW_WARNING + '\n')
     if (typeof topic === 'string' && Object.prototype.hasOwnProperty.call(COMMAND_USAGE, topic)) {
       out(COMMAND_USAGE[topic])
     } else {
@@ -2317,8 +2352,12 @@ async function main () {
     throw error
   }
   if (parsed.options.help) {
+    out(REVIEW_WARNING + '\n')
     out(COMMAND_USAGE[command])
     return EXIT_OK
+  }
+  if (WARNED_COMMANDS.has(command)) {
+    err(`factoidal ${command}: WARNING: ${REVIEW_WARNING}`)
   }
   try {
     return await COMMANDS[command](parsed.positional, parsed.options)

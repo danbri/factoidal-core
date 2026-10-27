@@ -7,7 +7,11 @@ tests: tests/hub/hub_servers_test.mjs
 
 # Servers
 
-[Hub](../) · SPARQL Protocol, Graph Store, Fuseki paths, TDB2, LWS, WebDAV, Solid, XMPP
+<p class="warning"><strong>⚠️ EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.</strong> This covers the whole core
+library and every command line tool, and in particular all protocol,
+authentication and security code.</p>
+
+[Hub](../) · SPARQL Protocol, Graph Store, Fuseki paths, TDB2, LWS, WebDAV, authorization server (OIDC, CID, SAML), Solid, XMPP
 
 A server cannot run in a browser page, so this page has no live cells.
 Each section gives the command, what the server does and does not do, and
@@ -235,6 +239,41 @@ $ curl -s -X PROPFIND -H 'Depth: 1' http://127.0.0.1:8090/alice/notes/
 $ curl -s -o /dev/null -w '%{http_code}\n' -X PUT --data 'hello' http://127.0.0.1:8090/alice/notes/hello.txt
 201
 ```
+
+## Authorization server (OAuth 2.0 token exchange)
+
+```
+factoidal authz-serve DIR --resource IRI[,IRI...] [--issuer IRI] [--saml-idp FILE]...
+```
+
+What it does: the authorization server of the LWS 1.0 drafts, as a component
+that any resource server can use. It serves RFC 8414 metadata, a JWK Set, and
+an RFC 8693 token endpoint that exchanges a subject token for an RFC 9068
+access token. It accepts three kinds of subject token:
+
+- OpenID Connect ID tokens (lws10-authn-openid);
+- self-issued CID credentials for `https` and `did:key` subjects
+  (lws10-authn-ssi-cid);
+- signed SAML 2.0 assertions from the identity providers that `--saml-idp`
+  names (lws10-authn-saml).
+
+A SAML assertion must carry one enveloped XML Signature in the SAML Core §5
+profile (Exclusive XML Canonicalization 1.0, rsa-sha256), and it must verify
+under the key in the configuration. The server never reads a key from the
+assertion. Documents with a DTD, comments or a second signature are refused,
+and so are wrapped assertions. `lws-serve --authz DIR` serves the
+authorization server and the storage on one port.
+
+`idp.json` is `{"entityId": "<the saml:Issuer value>", "jwk": <the RSA public
+JWK>}`.
+
+What it does not do: encrypted SAML assertions (XML Encryption) and JWE:
+<https://github.com/danbri/factoidal/issues/1081>.
+
+Touchstone, `--config auth --authz factoidal`, 2026-10-27: auth/saml 3 pass,
+0 fail (out of 3); auth/oidc 6 pass, 0 fail (out of 6); auth/cid 22 pass,
+0 fail (out of 22). Record:
+[docs/designissues/2026-10-27-saml-xml-signature.md](https://github.com/danbri/factoidal-core/blob/main/docs/designissues/2026-10-27-saml-xml-signature.md).
 
 ## Solid Protocol, server and client
 

@@ -6,12 +6,12 @@
 #
 # The source is the package at FACTOIDAL_VERSION, checked against
 # FACTOIDAL_INTEGRITY (the registry's dist.integrity, sha512).
-#   docker build --build-arg FACTOIDAL_VERSION=0.16.0 \
-#     --build-arg FACTOIDAL_INTEGRITY="$(npm view @factoidal/core@0.16.0 dist.integrity)" .
+#   docker build --build-arg FACTOIDAL_VERSION=0.18.0 \
+#     --build-arg FACTOIDAL_INTEGRITY="$(npm view @factoidal/core@0.18.0 dist.integrity)" .
 # To build from an unpacked package directory instead (no registry access):
 #   docker build --build-context source=../../npm/factoidal -t factoidal .
-ARG FACTOIDAL_VERSION=0.16.0
-ARG FACTOIDAL_INTEGRITY=sha512-5hYuxtlZ75LwPO0eqHSEHqnriBCtrn2k9fbZYPUjSlDY2mE+hqji+5YupArRk111iBlkxz5TvXabd08smUFhcQ==
+ARG FACTOIDAL_VERSION=0.18.0
+ARG FACTOIDAL_INTEGRITY=sha512-tlwc0FjgdyattSOGS9gsu5OjC0Cy9/op3J2BJMTpi+txMUHN+ej5Dda+J4SPKNKsE4YktD8r6Ie0HLq1NwRCpQ==
 
 # ---- source: the package, unpacked ----
 FROM node:24.21.0-trixie-slim AS fetch

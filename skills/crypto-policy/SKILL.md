@@ -214,8 +214,43 @@ No Lean theorem relates an extern to a pure Lean specification yet
 Options, sources and the recommended order:
 [`docs/designissues/2026-10-12-native-crypto-equivalence.md`](../../docs/designissues/2026-10-12-native-crypto-equivalence.md).
 
+### AES through WebCrypto on JavaScript hosts (owner, 2026-10-27)
+
+Owner, 2026-10-27, verbatim: "Ok  yeah ofc sorry - assembly can’t be wasm’d.
+We discussed reverse engineering it to lean but that is perilously close to
+rolling yr own crypto. Why not just WebCrypto everywhere (browser/node or wasm
+fallback?)." and, to the question whether to amend this policy and record the
+decision, "Yes".
+
+This AMENDS the rule below for AES (AES-GCM, AES-CBC, AES Key Wrap):
+
+* On every JavaScript host (Node, Deno, browsers) AES is the host's WebCrypto
+  `SubtleCrypto` (Node: OpenSSL; Chromium: BoringSSL; Firefox: NSS; Safari:
+  Apple CoreCrypto). The wasm engine never contains AES code.
+* Lean makes every decision (algorithm allowlist, key and IV lengths, the
+  XML Encryption and JWE structure, one error for every failure); the host
+  runs only `encrypt`/`decrypt`/`wrapKey`/`unwrapKey` on bytes Lean names,
+  through the same request-and-resume step as the authorization server's
+  fetches. No crypto decision in JavaScript (iron rule 7).
+* Native Lean executables (no JavaScript host): NOT DECIDED by the owner on
+  2026-10-27. The coordinator's proposal is HACL\* Vale AES-GCM on x86-64 and
+  a refusal elsewhere; until the owner decides, native AES is refused with
+  https://github.com/danbri/factoidal/issues/677.
+* WebCrypto is not formally verified. The obligation that replaces the proof
+  is MEASURED: Wycheproof, NIST CAVP and RFC vectors, plus a random
+  differential run across every implementation available (Node/OpenSSL,
+  Chromium/BoringSSL, Firefox/NSS when installed, Vale on x86-64), where any
+  difference in output or in accept/refuse is a failure that is reported with
+  its input. Owner, verbatim: "For testing hammer both and flag differences if
+  that makes sense, seek trustworthy tests too".
+* Every other primitive (RSA-OAEP over the HACL\* bignum, ECDH-ES over HACL\*
+  P-256 and Curve25519, SHA-2, HMAC, HKDF, Concat KDF) stays HACL\*; WebCrypto
+  is a second implementation in the same differential tests.
+* Tracking: https://github.com/danbri/factoidal/issues/1081 (XML Encryption
+  and JWE), https://github.com/danbri/factoidal/issues/677 (AES).
+
 🔴 **AES-GCM is NOT available and must not be hand-written or taken from
-the AES-NI path.** The pinned release ships no PORTABLE AES-GCM: every
+the AES-NI path.** (Superseded for JavaScript hosts by the section above.) The pinned release ships no PORTABLE AES-GCM: every
 AES-GCM branch of `EverCrypt_AEAD.c` is behind `#if HACL_CAN_COMPILE_VALE`
 and calls Vale x86-64 assembly the C distribution does not include, and
 `Hacl_AES128.h` declares symbols the release never defines. The AES-NI

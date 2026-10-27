@@ -1,19 +1,23 @@
 # @factoidal/core
 
+> ⚠️ **EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.**
+>
+> This covers the whole core library and every command line tool. Treat
+> every security component as under-reviewed and risky: the servers and
+> clients (SPARQL Protocol, LWS and its authorization server, Solid, WebDAV,
+> XMPP), authentication, bearer tokens and session keys, JOSE, XML
+> Signature and SAML, Verifiable Credentials Data Integrity, did:key,
+> signatures, hashes and the crypto bindings. They have had little
+> independent security review. Some of them use well-known primitives
+> (HACL\*, WebCrypto), but the code that combines and exposes those
+> primitives is new. A correct primitive does not make a protocol or a
+> server safe. Do not use these components to protect real data or real
+> accounts, and do not expose the servers to networks you do not trust.
+> Report security problems at https://github.com/danbri/factoidal/issues.
+
 RDF, SPARQL, reasoning, validation and Linked Data servers in one package.
 Runs in Node 22.12+, Deno 2 and browsers. No dependencies.
 
-> **Security warning.** Treat every security component as under-reviewed
-> and risky. This includes the servers (`serve`, `lws-serve` and its
-> authorization server, `webdav-serve`, `solid-serve`), authentication,
-> bearer tokens and session keys, Verifiable Credentials Data Integrity,
-> did:key, signatures and hashes. No independent security review has been
-> done. Some of these components use well-known primitives (HACL\*,
-> WebCrypto), but the code that combines and exposes those primitives is
-> new. A correct primitive does not make a protocol or a server safe. Do
-> not use these components to protect real data or real accounts, and do
-> not expose the servers to networks you do not trust. Report security
-> problems at https://github.com/danbri/factoidal/issues.
 
 
 ```bash
@@ -43,10 +47,14 @@ every consumer accepts one, so a pipeline does not re-parse between steps.
 An unknown option key throws. With no `format`, the format is inferred and
 reported in `dataset.format`; an explicit `format` is never overridden.
 RDF 1.2 input uses `turtle12`, `ntriples12`, `nquads12` or `trig12`.
+RDF 1.2 in JSON-LD (JSON-LD-star: `@triple`, `@reifies`, `@annotation`,
+`@direction`) needs the option `rdfstar`: `jsonldToRdf(text, { rdfstar: true })`
+and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
 
 ## What it does
 
 - Syntaxes: N-Triples, N-Quads, Turtle, TriG, RDF/XML, JSON-LD; RDF 1.1 and 1.2
+  (RDF 1.2 in JSON-LD through the JSON-LD-star draft, option `rdfstar`)
 - SPARQL 1.1 and 1.2 query and update; GeoSPARQL functions, text search,
   JavaScript extension functions, SERVICE
 - Reasoning: RDFS, OWL 2 RL closure, restricted checked OWL consistency,
@@ -56,8 +64,14 @@ RDF 1.2 input uses `turtle12`, `ntriples12`, `nquads12` or `trig12`.
 - Canonicalization: RDFC-1.0; Verifiable Credentials Data Integrity (eddsa-rdfc-2022), did:key
 - XML: XML 1.0, XPath 1.0, XSLT 1.0, XForms
 - Servers: SPARQL 1.1 Protocol and Graph Store (Fuseki-compatible paths,
-  Jena TDB2 read only), Linked Web Storage 1.0 with an authorization
-  server, WebDAV for file browsers, Solid
+  Jena TDB2 read only), Linked Web Storage 1.0, WebDAV for file
+  browsers, Solid, an OAuth 2.0
+  authorization server (token exchange for OpenID Connect ID tokens,
+  self-issued CID credentials and SAML 2.0 assertions)
+- Security: JWS/JWT (ES256, RS256, EdDSA), XML Signature verification in the
+  SAML Core profile (Exclusive XML Canonicalization 1.0, rsa-sha256), with
+  HACL\* primitives. XML Encryption and JWE are not implemented yet:
+  https://github.com/danbri/factoidal/issues/1081
 - A persisted store with a delta log for updates (early stage)
 - Terms: a JavaScript extension function can answer with an exact term
   (`{value: "007", datatype: XSD + "integer"}`, an RDF/JS term, a triple
@@ -255,6 +269,7 @@ $ npx factoidal query store 'SELECT * WHERE { ?s ?p ?o } LIMIT 5'
 $ npx factoidal query "$(npx factoidal sample-store)" 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }'
 $ npx factoidal lws-serve DIR --issuer IRI         # Linked Web Storage
 $ npx factoidal solid-serve DIR                    # Solid Protocol
+$ npx factoidal authz-serve DIR --resource IRI --saml-idp idp.json   # OAuth 2.0 authorization server
 ```
 
 `npx factoidal --help` lists every command. Replacing Apache Jena Fuseki:
@@ -290,6 +305,8 @@ and the [assurance record](https://github.com/danbri/factoidal-core/blob/main/do
 | JSON-LD 1.1 toRdf, expand, flatten | 910 / 0 / 910 |
 | JSON-LD 1.1 compact, fromRdf | 298 / 0 / 300 (2 not run) |
 | JSON-LD 1.1 Framing | 29 / 63 / 92 |
+| JSON-LD-star draft (RDF 1.2), option `rdfstar` | 168 / 1 / 171 (2 local override; 170 of 171 with them) [J] |
+| RDF 1.2 eval tests written as JSON-LD-star and read back | 140 / 0 / 140 [J] |
 | RDFC-1.0 | 86 / 0 / 86 |
 | OWL 2 RL | 126 / 0 / 126 |
 | OWL 2 DL type-inconsistency | 116 / 11 / 128 (1 other) |
@@ -313,6 +330,7 @@ and the [assurance record](https://github.com/danbri/factoidal-core/blob/main/do
 [L] 2026-10-22, https://github.com/danbri/factoidal-core/blob/2b9d2e39af53be31ed92463b58d3e132e65c4fe4/docs/designissues/2026-10-21-lws-touchstone-run.md (with server options, 220 of 221 pass in at least one configuration)
 [S] 2026-10-21, the current W3C manifest (29 active tests), https://github.com/danbri/factoidal-core/blob/2b9d2e39af53be31ed92463b58d3e132e65c4fe4/docs/claude-rules/current-state.md
 [C] 2026-10-21, validation test308, https://github.com/danbri/factoidal/issues/700
+[J] 2026-10-27, tests of https://github.com/json-ld/json-ld-star/pull/61; the fail is a defective fixture (fromRdf tst07), https://github.com/danbri/factoidal-core/blob/2a656d7bfb4af329d77669afb5e62eb00625bd15/docs/designissues/2026-10-26-jsonld-star.md
 
 ## Limits
 

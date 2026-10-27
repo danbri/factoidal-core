@@ -5,6 +5,10 @@ layout: hub.njk
 
 # Factoidal
 
+<p class="warning"><strong>⚠️ EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.</strong> This covers the whole core
+library and every command line tool, and in particular all protocol,
+authentication and security code.</p>
+
 Factoidal is an RDF engine written in Lean 4 and compiled to WebAssembly
 and to native code. It reads and writes the RDF 1.1 and RDF 1.2 syntaxes,
 answers SPARQL 1.1 and 1.2, reasons with RDFS and OWL 2, validates with
@@ -20,6 +24,7 @@ in your browser.
 
 <ul class="post-series">
   <li><a href="./rdf-syntaxes/">RDF syntaxes</a> — Turtle, N-Triples, N-Quads, TriG, RDF/XML, JSON-LD; RDF 1.2 triple terms, reifiers, annotations and base direction; error positions</li>
+  <li><a href="./jsonld-star/">JSON-LD-star and JSON-LD 1.3</a> — RDF 1.2 triple terms, reifiers, annotations and base direction in JSON-LD (<code>@triple</code>, <code>@reifies</code>, <code>@annotation</code>, option <code>rdfstar</code>); the draft, the choices made, scores, and the plan towards JSON-LD 1.3</li>
   <li><a href="./sparql/">SPARQL</a> — query and update, property paths, aggregates, GeoSPARQL functions, <code>text:query</code>, extension functions in JavaScript and WebAssembly, SERVICE, SPARQL 1.2 triple patterns</li>
   <li><a href="./importers/">Data importers and integration</a> — CSVW, RML, JSON-LD and a GRDDL-style XSLT step, four independent sources merged into one dataset, each in its own named graph, one query across them</li>
   <li><a href="./inference/">Inference</a> — RDFS and OWL 2 RL closure over pipeline output, derived triples in their own graph, OWL 2 DL consistency and entailment</li>

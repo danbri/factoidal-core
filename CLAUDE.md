@@ -784,6 +784,27 @@ The choices below are the coordinator's, under that delegation.
 - Design: section 4 of `docs/designissues/2026-10-25-tabular-and-source-models.md`;
   tracking https://github.com/danbri/factoidal/issues/1035.
 
+### Experimental code notice; AES through WebCrypto (owner, 2026-10-27)
+
+Owner, 2026-10-27, verbatim: "main docs, cli, readme, hub should say that all
+protocol, auth/security code, CLIs etc (core library) “EXPERIMENTAL
+UNDEREEVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS
+WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.”"
+
+- Owner, 2026-10-27, later: "I do want 'under-reviewed' not 'unreviewed'".
+- The notice, spelled `EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.`, is at the top of `README.md`,
+  `npm/factoidal/README.md`, the hub index and the hub servers page, in the
+  npm package description, in every `factoidal` help text, and on standard
+  error when a server, client or key command starts (`REVIEW_WARNING` in
+  `npm/factoidal/bin/factoidal.mjs`). A new server, protocol or security
+  surface carries it too.
+- AES (for XML Encryption and JWE, https://github.com/danbri/factoidal/issues/1081):
+  WebCrypto on every JavaScript host, decisions in Lean, measured by vectors
+  and a differential run. Owner, verbatim: "Why not just WebCrypto everywhere
+  (browser/node or wasm fallback?)"; then "Yes" to amending the crypto policy.
+  Native executables: not decided. Rule text: `skills/crypto-policy/SKILL.md`
+  § AES through WebCrypto.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where

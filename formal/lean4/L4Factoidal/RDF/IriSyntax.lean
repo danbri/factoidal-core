@@ -187,6 +187,58 @@ def isAbsoluteIri (s : String) : Bool :=
   | (scheme, some hier) => schemeOk scheme && hierPartOk hier && queryOk' && fragOk
   | (_, none) => false
 
+/-- The rest of an `http://` or `https://` IRI in its common shape: RFC 3986
+    `unreserved` characters and `/`, and at most one `#`. One pass over the
+    string, no allocation. -/
+def plainTailOk (r : Substring) : Bool :=
+  (r.foldl (fun (st : Bool × Bool) c =>
+     if !st.1 then st
+     else if isUnreservedAscii c || c == '/' then st
+     else if c == '#' && !st.2 then (true, true)
+     else (false, st.2)) (true, false)).1
+
+/-- `http://` or `https://`, then `plainTailOk`. Every such string is an
+    absolute IRI: the scheme is `http` or `https`, the authority is a reg-name
+    of unreserved characters (or empty), the path holds segments of unreserved
+    characters, and the fragment, after the one `#`, holds unreserved
+    characters and `/` (RFC 3987 section 2.2). The `#guard`s below check
+    `isAbsoluteIri` on such strings. -/
+def isPlainHttpIri (s : String) : Bool :=
+  if s.startsWith "https://" then plainTailOk (s.toSubstring.drop 8)
+  else if s.startsWith "http://" then plainTailOk (s.toSubstring.drop 7)
+  else false
+
+/-- `isAbsoluteIri`, with `isPlainHttpIri` first: the engine's one IRI check
+    on its hot paths (the readers and the dataset check of the ops). Most
+    IRIs of real data are in the plain shape and take one pass; the others
+    take the full check. -/
+def isAbsoluteIriFast (s : String) : Bool :=
+  isPlainHttpIri s || isAbsoluteIri s
+
+/-- Is `s` an RFC 3987 `irelative-ref` (section 2.2)?
+
+    irelative-ref  = irelative-part [ "?" iquery ] [ "#" ifragment ]
+    irelative-part = "//" iauthority ipath-abempty / ipath-absolute
+                   / ipath-noscheme / ipath-empty
+    ipath-noscheme = isegment-nz-nc *( "/" isegment )
+
+    `isegment-nz-nc` has no `:`, so the first segment of a relative path holds
+    no colon: `a_b:c` (whose `a_b` is not a scheme, section 3.1 of RFC 3986) and
+    `:foo` are neither IRIs nor relative references
+    (https://github.com/danbri/factoidal/issues/1057). -/
+def isRelativeIriRef (s : String) : Bool :=
+  let cs := s.toList
+  let (beforeFrag, frag) := splitFirst '#' cs
+  let fragOk := match frag with | some f => fragmentOk f | none => true
+  let (beforeQuery, query) := splitFirst '?' beforeFrag
+  let queryOk' := match query with | some q => queryOk q | none => true
+  !((beforeQuery.takeWhile (· != '/')).contains ':') && hierPartOk beforeQuery && queryOk' && fragOk
+
+/-- RFC 3987 `IRI-reference = IRI / irelative-ref`: what a Turtle or TriG
+    IRIREF may hold before it is resolved against the base. -/
+def isIriReference (s : String) : Bool :=
+  isAbsoluteIri s || isRelativeIriRef s
+
 /-- Is `s` an absolute URI (RFC 3986 section 3)? An absolute URI is an
     absolute IRI with no character beyond ASCII. -/
 def isAbsoluteUri (s : String) : Bool :=
@@ -240,5 +292,43 @@ returned `true` for everything, or `false` for everything, fails here. -/
 -- Authority rules: a non-numeric port, an unbalanced bracket.
 #guard !isAbsoluteIri "http://example.com:80a/"
 #guard !isAbsoluteIri "http://[2001:db8::1/x"
+-- https://github.com/danbri/factoidal/issues/1057: a scheme with `_`, a port
+-- that is not digits, a leading colon, and an unclosed IP literal.
+#guard !isAbsoluteIri "a_b:c"
+#guard !isAbsoluteIri "entity.beeldbank_leiden_person:A.E._Stuur."
+#guard !isAbsoluteIri "http://www:example.org/"
+#guard !isAbsoluteIri "1a:foo"
+#guard !isAbsoluteIri "http://[::1/"
+#guard !isAbsoluteIri "http://a.org/d{|^}-e"
+#guard !isAbsoluteIri "http://a/abc##def"
+#guard isAbsoluteIri "http://a/abc#def"
+#guard isAbsoluteIri "scheme:!$%25&'()*+,-./0123456789:/@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz~?#"
+-- Relative references (RFC 3987 irelative-ref).
+#guard isRelativeIriRef ""
+#guard isRelativeIriRef "#frag"
+#guard isRelativeIriRef "?q=1"
+#guard isRelativeIriRef "a/b:c"
+#guard isRelativeIriRef "../up"
+#guard isRelativeIriRef "/a:b"
+#guard isRelativeIriRef "//example.org/a"
+#guard !isRelativeIriRef "a_b:c"
+#guard !isRelativeIriRef ":foo"
+#guard !isRelativeIriRef "a%zz"
+#guard !isRelativeIriRef "//www:x/"
+#guard !isRelativeIriRef "a b"
+#guard isIriReference "http://e.org/a" && isIriReference "a" && !isIriReference "a_b:c"
+-- The fast path: every plain http(s) IRI is an absolute IRI, and the fast check
+-- refuses what the full check refuses.
+private def plainSamples : List String :=
+  [ "http://example.org/", "https://example.org/a/b-c_d.e~f", "http://a/ns#name",
+    "http://a/ns#frag/x", "http://", "https:///x", "http://xmlns.com/foaf/0.1/name",
+    "http://www.w3.org/1999/02/22-rdf-syntax-ns#type" ]
+#guard plainSamples.all isPlainHttpIri
+#guard plainSamples.all isAbsoluteIri
+#guard !isPlainHttpIri "http://a/b#c#d" && !isPlainHttpIri "http://a:80/" && !isPlainHttpIri "urn:x"
+#guard !isPlainHttpIri "http://a/%41" && !isPlainHttpIri "http://a/b c" && !isPlainHttpIri "http://a/{x}"
+#guard isAbsoluteIriFast "http://a:80/" && isAbsoluteIriFast "urn:x:y" && isAbsoluteIriFast "http://a/%41"
+#guard !isAbsoluteIriFast "http://www:example.org/" && !isAbsoluteIriFast "a_b:c" && !isAbsoluteIriFast "http://a/b#c#d"
+#guard !isAbsoluteIriFast "http://a.org/d{|^}-e" && !isAbsoluteIriFast "http://a/%zz"
 
 end L4Factoidal.RDF

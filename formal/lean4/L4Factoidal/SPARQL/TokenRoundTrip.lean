@@ -110,7 +110,7 @@ theorem nextToken_a (pos : Nat) (rest : List Char) :
     skipWs_of_ne_ws pos 'a' _ (by decide) (by decide)
   conv => lhs; unfold nextToken
   simp [hskip, scanPnameOrKeyword, hscan, isAlpha, isDigitC, keywordOfUpper,
-        charsUpper, charUpper]
+        charsUpper, charUpper, trimTrailingDots, trimDotsRev]
 
 /-! ## The printed form -/
 

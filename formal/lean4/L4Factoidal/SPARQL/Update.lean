@@ -486,15 +486,23 @@ any label it prefixes is not in the store. Computed once per request
 def requestPrefix (ds : Dataset) : String :=
   "b" ++ String.ofList (List.replicate ds.maxBnodeLabelLength '_') ++ "_"
 
-/-- INSERT DATA labels are scoped to the REQUEST (§19.6). -/
+/-- INSERT DATA labels are scoped to the REQUEST (§19.6). The label part
+goes through `templateLabelPart` (`Query.lean`): a blank node the parser
+made for `[ ]` or a collection is named `_:bnode_<n>`, and RDF 1.2
+N-Triples [141s] BLANK_NODE_LABEL has no `:`, so copying that name made a
+store label (`b_d__:bnode_41`) that the engine's own N-Quads reader refused
+(https://github.com/danbri/factoidal/issues/1074). `templateLabelPart` is
+injective, so two different labels of one request stay two nodes
+(§3.1.1, W3C `insert-data-same-bnode`). -/
 def freshDataBnode (pre : String) (label : String) : BNodeId :=
-  pre ++ "d_" ++ label
+  pre ++ "d_" ++ templateLabelPart label
 
 /-- INSERT template labels are fresh per (operation, solution) —
 §3.1.3.2: "blank nodes in the INSERT template are instantiated afresh
-for each solution". -/
+for each solution". The label part goes through `templateLabelPart`, as in
+`freshDataBnode` (issue 1074). -/
 def freshTemplateBnode (pre : String) (opIx solIx : Nat) (label : String) : BNodeId :=
-  pre ++ "o" ++ toString opIx ++ "_" ++ toString solIx ++ "_" ++ label
+  pre ++ "o" ++ toString opIx ++ "_" ++ toString solIx ++ "_" ++ templateLabelPart label
 
 /-- §3.1.1 INSERT DATA: the ground quads are added, their blank nodes
 renamed request-fresh (port of `apply_insert_data`). -/

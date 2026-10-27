@@ -275,6 +275,30 @@ IRI is a type error, also when it has a lexical form. -/
 -- a length that is not an integer is a type error, not "no length"
 #guard (Expr.substr (.lit (litStr "12345")) (.numericLit 2) (some (.lit (litStr "3")))).eval []
   == .error
+-- §17.4.3.3: "The arguments startingLoc and length may be derived types of
+-- xsd:integer" (https://github.com/danbri/factoidal/issues/1060).
+private def litTyped (s : String) (dt : String) (h : isIri dt := by rfl) : Expr :=
+  .lit (mkTypedLiteral s ⟨dt, h⟩)
+#guard (Expr.substr (.lit (litStr "foobar")) (litTyped "4" "http://www.w3.org/2001/XMLSchema#int") none).eval []
+  == .term (.literal (litStr "bar"))
+#guard (Expr.substr (.lit (litStr "foobar")) (litTyped "4" "http://www.w3.org/2001/XMLSchema#long") none).eval []
+  == .term (.literal (litStr "bar"))
+#guard (Expr.substr (.lit (litStr "foobar")) (litTyped "4" "http://www.w3.org/2001/XMLSchema#positiveInteger") none).eval []
+  == .term (.literal (litStr "bar"))
+#guard (Expr.substr (.lit (litStr "foobar")) (.numericLit 4)
+    (some (litTyped "2" "http://www.w3.org/2001/XMLSchema#int"))).eval []
+  == .term (.literal (litStr "ba"))
+#guard (Expr.substr (.lit (litStr "foobar")) (litTyped "1" "http://www.w3.org/2001/XMLSchema#short")
+    (some (litTyped "3" "http://www.w3.org/2001/XMLSchema#unsignedByte"))).eval []
+  == .term (.literal (litStr "foo"))
+-- Negative: an ill-typed or out-of-bounds derived integer, and a decimal, are errors.
+#guard (Expr.substr (.lit (litStr "foobar")) (litTyped "0" "http://www.w3.org/2001/XMLSchema#positiveInteger") none).eval []
+  == .error
+#guard (Expr.substr (.lit (litStr "foobar")) (litTyped "x" "http://www.w3.org/2001/XMLSchema#int") none).eval []
+  == .error
+#guard (Expr.substr (.lit (litStr "foobar")) (.decimalLit "4.0") none).eval [] == .error
+#guard (Expr.substr (.lit (litStr "foobar")) (.numericLit 4)
+    (some (litTyped "2" "http://www.w3.org/2001/XMLSchema#string"))).eval [] == .error
 -- SUBSTR preserves a language tag.
 #guard (Expr.substr (.lit (litLang "foobar" "en")) (.numericLit 4) none).eval []
   == .term (.literal (litLang "bar" "en"))
@@ -367,6 +391,21 @@ def langMatches (a b : Expr) : Expr := .functionCall langMatchesIri [a, b]
 #guard (Expr.inList (.numericLit 1) [.numericLit 2, .decimalLit "1.0"]).eval [] == .bool true
 #guard (Expr.inList (.numericLit 1) [.numericLit 2, .numericLit 3]).eval [] == .bool false
 #guard (Expr.notInList (.numericLit 1) [.numericLit 2, .numericLit 3]).eval [] == .bool true
+-- §17.4.1.9 / §17.4.1.10 (https://github.com/danbri/factoidal/issues/1049):
+-- an erroring comparison makes IN / NOT IN an error unless another element
+-- decides. The examples are the rows of the two tables in the specification.
+private def divZero : Expr := .arith .div (.numericLit 1) (.numericLit 0)
+#guard (Expr.inList (.numericLit 2) [.numericLit 3, divZero]).eval [] == .error
+#guard (Expr.notInList (.numericLit 2) [.numericLit 3, divZero]).eval [] == .error
+#guard (Expr.inList (.numericLit 2) [divZero, .numericLit 2]).eval [] == .bool true
+#guard (Expr.notInList (.numericLit 2) [divZero, .numericLit 2]).eval [] == .bool false
+#guard (Expr.inList (.numericLit 2) []).eval [] == .bool false
+#guard (Expr.notInList (.numericLit 2) []).eval [] == .bool true
+-- `"70" = 700` is a type error (§17.4.1.7 RDFterm-equal of two different
+-- literals), so `"70" IN (700)` is an error, as `"70" = 700` is.
+#guard (Expr.inList (.lit (litStr "70")) [.numericLit 700]).eval [] == .error
+#guard (Expr.inList (.lit (litStr "70")) [.numericLit 700]).eval [] ==
+  (Expr.compare .eq (.lit (litStr "70")) (.numericLit 700)).eval []
 
 #guard (Expr.sameTerm (.lit (litStr "x")) (.lit (litStr "x"))).eval [] == .bool true
 #guard (Expr.sameTerm (.lit (litStr "x")) (.lit (litLang "x" "en"))).eval [] == .bool false
@@ -734,8 +773,36 @@ def dirRes (s tag : String) (d : TextDirection) : EvalResult :=
 
 /-! ### §17.5 XSD constructor functions (the W3C `cast` suite's rules) -/
 
+-- §17.5: no cast from rdf:langString or rdf:dirLangString is defined
+-- (https://github.com/danbri/factoidal/issues/1062).
+#guard evalXsdCast (.term (.literal (litLang "foo" "en"))) "string" xsdString == .error
+#guard evalXsdCast (.term (.literal litDir)) "string" xsdString == .error
+#guard evalXsdCast (.term (.literal (litLang "2020-01-01" "en"))) "date" (iriE "http://www.w3.org/2001/XMLSchema#date") == .error
+#guard evalXsdCast (.term (.literal (litStr "foo"))) "string" xsdString == .term (.literal (litStr "foo"))
+#guard evalXsdCast (.term (.literal (litLang "1" "en"))) "integer" xsdInteger == .error
+
 def xsdFn (t : String) (e : Expr) (h : isIri (xsdNamespace ++ t) := by rfl) : Expr :=
   .functionCall ⟨xsdNamespace ++ t, h⟩ [e]
+
+-- PR 142 (F&O §19 casts) with issue 1062 (no cast from a language-tagged
+-- literal) and issue 1060 (SUBSTR with a type derived from xsd:integer).
+private def xsdByteIri : WfIri := ⟨xsdNamespace ++ "byte", rfl⟩
+#guard (xsdFn "byte" (.lit (litLang "1" "en"))).eval [] == .error
+#guard (xsdFn "byte" (.lit litDir)).eval [] == .error
+#guard (xsdFn "string" (.lit (litLang "foo" "en"))).eval [] == .error
+#guard (xsdFn "boolean" (.lit (litLang "true" "en"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (litLang "2020-01-01T00:00:00Z" "en"))).eval [] == .error
+#guard (xsdFn "double" (.lit (litLang "1" "en"))).eval [] == .error
+#guard (xsdFn "decimal" (.lit (litLang "1" "en"))).eval [] == .error
+#guard (xsdFn "float" (.lit (litLang "1" "en"))).eval [] == .error
+#guard (xsdFn "byte" (.lit (litStr "12"))).eval [] == .term (.literal (mkTypedLiteral "12" xsdByteIri))
+#guard (xsdFn "byte" (.lit (litStr "128"))).eval [] == .error
+-- SUBSTR takes the xsd:byte that the F&O cast gives (§17.4.3.3).
+#guard (Expr.substr (.lit (litStr "foobar")) (xsdFn "byte" (.lit (litStr "4"))) none).eval []
+  == .term (.literal (litStr "bar"))
+#guard (Expr.substr (.lit (litStr "foobar")) (xsdFn "byte" (.lit (litStr "2")))
+    (some (xsdFn "short" (.lit (litStr "3"))))).eval []
+  == .term (.literal (litStr "oob"))
 
 -- From a STRING: the lexical form must be in the target's lexical space.
 #guard (xsdFn "integer" (.lit (litStr "13"))).eval [] == .num 13
