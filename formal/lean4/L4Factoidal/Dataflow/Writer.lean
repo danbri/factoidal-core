@@ -188,7 +188,8 @@ def Term.hasDirectionB : Term → Bool
 
 /-- The datasets the writer of `fmt` accepts and is meant to keep. RDF/XML and
 JSON-LD: no triple term. JSON-LD: no directional language string (the writer
-accepts one and drops the direction, https://github.com/danbri/factoidal/issues/984).
+writes `@direction`; the JSON-LD 1.1 reader with no `rdfDirection` drops it,
+https://github.com/danbri/factoidal/issues/984).
 N-Triples: every IRI and language tag in the lexical space of its N-Triples
 production (`NTriplesRoundTrip.Triple.ntSafe`: IRIREF [8], LANGTAG [144s]); any
 blank-node label, as the writer relabels (`Dataset.relabelForWrite`,
