@@ -19,7 +19,9 @@
 //   authzStep    [handle, requestJson]     -> { ok, response, changed }
 //                                            | { ok, resolve: { host }, changed }
 //                                            | { ok, fetch: { url, accept, address }, changed }
-//   authzFetched [handle, { url, status, body, now } | { host, addresses, now }] -> { ok }
+//                                            | { ok, cipher: { op, key, iv, aad, data }, changed }
+//   authzFetched [handle, { url, status, body, now } | { host, addresses, now }
+//                         | { request, answer }] -> { ok }
 //   authzKeys    [handle, { nonce?, private? }] -> { ok, keys } | { ok, jwks }
 //   authzRotate  [handle, { now, random }]  -> { ok, changed, kid }
 //   authzOwns    [handle, target]          -> { ok, owns }
@@ -32,11 +34,17 @@
 // address to connect to: this host connects to exactly that address (the name
 // is not resolved again), sends no cookie or credential, follows no redirect,
 // reads at most MAX_DOCUMENT_BYTES, and passes the status and the text back.
+//
+// CIPHER. `cipher` names one AES operation (an encrypted SAML subject token,
+// issue 1073): this host runs exactly that WebCrypto call
+// (`answerCipherRequest`, ../lib/cipher-host.mjs) and passes the request and
+// the answer back. It reads no token and chooses no key or algorithm.
 
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { loadEngine } from '../bin/engine.mjs'
 import { storageKeyText } from '../lws/persist.mjs'
+import { answerCipherRequest, MAX_CIPHER_REQUESTS } from '../lib/cipher-host.mjs'
 
 /** The ops this host needs from the engine. */
 export const AUTHZ_OPS = ['authzOpen', 'authzStep', 'authzFetched', 'authzKeys', 'authzRotate', 'authzOwns', 'authzClose']
@@ -171,6 +179,8 @@ async function fetchFrom (url, accept, address) {
  *   default: echo any valid request Origin (issue 923)
  * @param {{entityId: string, jwk: object}[]} [options.samlIdps] the SAML 2.0 identity providers
  *   whose signed assertions are accepted, each with its RSA public JWK (issue 926)
+ * @param {object[]} [options.samlKeys] private JWKs (RSA, EC P-256, OKP X25519, oct) that decrypt
+ *   saml:EncryptedAssertion and saml:EncryptedID in a SAML subject token (issue 1073)
  * @param {object} [options.engine] an engine to reuse
  */
 export async function openAuthorizationServer (options = {}) {
@@ -197,6 +207,9 @@ export async function openAuthorizationServer (options = {}) {
   // SAML 2.0 identity providers (issue 926): [{ entityId, jwk }], passed
   // unread; the engine checks each (Wasm/Ops/Authz.lean samlIdpsOf?).
   if (options.samlIdps !== undefined) config.samlIdps = options.samlIdps
+  // SAML decryption keys (issue 1073): private JWKs, passed unread; the
+  // engine checks each (Wasm/Ops/Authz.lean samlKeysOf?).
+  if (options.samlKeys !== undefined) config.samlKeys = options.samlKeys
   const key = storageKeyText(options.storageKey)
   if (key !== undefined) config.storageKey = key
   if (dir !== null) {
@@ -234,6 +247,7 @@ export async function openAuthorizationServer (options = {}) {
      */
     async step (request) {
       let needs = 0
+      let ciphers = 0
       for (;;) {
         const now = nowSeconds()
         const record = { ...request, now, random: randomBase64(112) }
@@ -242,6 +256,13 @@ export async function openAuthorizationServer (options = {}) {
         if (envelope.response !== undefined && envelope.response !== null) {
           const r = envelope.response
           return { status: r.status, headers: Array.isArray(r.headers) ? r.headers : [], body: typeof r.body === 'string' ? r.body : '' }
+        }
+        if (envelope.cipher !== undefined && envelope.cipher !== null) {
+          ciphers += 1
+          if (ciphers > MAX_CIPHER_REQUESTS) throw new AuthzHostError(`the engine asked for more than ${MAX_CIPHER_REQUESTS} cipher operations`)
+          const answer = await answerCipherRequest(envelope.cipher)
+          engine.call('authzFetched', [handle, JSON.stringify({ request: envelope.cipher, answer })])
+          continue
         }
         needs += 1
         if (needs > MAX_NEEDS) throw new AuthzHostError('the engine asked for more than one request may fetch')
@@ -254,7 +275,7 @@ export async function openAuthorizationServer (options = {}) {
           const got = await fetchFrom(String(f.url), String(f.accept), String(f.address))
           engine.call('authzFetched', [handle, JSON.stringify({ url: f.url, status: got.status, body: got.body, now: nowSeconds() })])
         } else {
-          throw new AuthzHostError('authzStep answered with no response, resolve or fetch')
+          throw new AuthzHostError('authzStep answered with no response, resolve, fetch or cipher')
         }
       }
     },

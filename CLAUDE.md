@@ -801,8 +801,11 @@ WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.”"
   WebCrypto on every JavaScript host, decisions in Lean, measured by vectors
   and a differential run. Owner, verbatim: "Why not just WebCrypto everywhere
   (browser/node or wasm fallback?)"; then "Yes" to amending the crypto policy.
-  Native executables: not decided. Rule text: `skills/crypto-policy/SKILL.md`
-  § AES through WebCrypto.
+  Native executables: owner, 2026-10-27, verbatim: "Ok for now: “My proposal
+  is HACL* Vale on x86-64 and a refusal on other CPU”". So native x86-64 uses
+  HACL\* Vale AES-GCM; other native CPUs refuse AES with a message that names
+  https://github.com/danbri/factoidal/issues/677. Rule text:
+  `skills/crypto-policy/SKILL.md` § AES through WebCrypto.
 
 ### There are no users. Prefer the right structure to the compatible one
 

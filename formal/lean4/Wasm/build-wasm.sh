@@ -395,8 +395,13 @@ HACL_DIR="$REPO_ROOT/third_party/hacl"
 # unit for every HMAC hash; no Lean code calls them, and leaving them out
 # fails the link. Every unit here is the PORTABLE scalar variant: the
 # Simd128/Simd256 and Vec128/Vec256 units need target intrinsics wasm32 does
-# not have. AES-GCM is absent on purpose — the pinned release has no portable
-# AES-GCM, see https://github.com/danbri/factoidal/issues/677 and
+# not have. AES-GCM: the pinned release has no portable AES-GCM, only Vale
+# x86-64 assembly, which cannot be compiled to wasm32. The native x86-64
+# build links it (lakefile.lean, `valeHost`); here NO EverCrypt unit and NO
+# .S file is compiled. ffi/hacl_aesgcm.c IS compiled below: on wasm32 it is
+# the stub that refuses (available = 0), so the extern symbols resolve. On
+# JavaScript hosts AES is WebCrypto (skills/crypto-policy, "AES through
+# WebCrypto"). https://github.com/danbri/factoidal/issues/677 and
 # third_party/hacl/PROVENANCE.md.
 for f in "$HACL_DIR/src/Hacl_Ed25519.c" "$HACL_DIR/src/Hacl_Curve25519_51.c" \
          "$HACL_DIR/src/Hacl_Hash_SHA2.c" "$HACL_DIR/src/Hacl_P256.c" \
@@ -415,6 +420,7 @@ emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_rsa.c" -o "$LIB_OBJ/l
 emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_chachapoly.c" -o "$LIB_OBJ/l4_hacl_chachapoly_shim.o"
 emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_kdf.c" -o "$LIB_OBJ/l4_hacl_kdf_shim.o"
 emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_hpke.c" -o "$LIB_OBJ/l4_hacl_hpke_shim.o"
+emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_aesgcm.c" -o "$LIB_OBJ/l4_hacl_aesgcm_shim.o"
 # The SPARQL 1.1 section 17.6 extension-function host call-out
 # (Wasm/ExtHost.lean's `@[extern "l4_ext_call"]`).  Under Emscripten the
 # body is an EM_JS thunk onto globalThis.__factoidalExtCall, which the

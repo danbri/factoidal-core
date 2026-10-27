@@ -80,9 +80,13 @@ enough xml security and encryption to do this. Be minimal and secure."
 * `OneTimeUse` and `ProxyRestriction` are refused: they need a replay cache
   and a delegation model that the server does not have. An unknown condition
   is refused (SAML Core §2.5.1.1: the assertion is then not valid).
-* XML Encryption is refused, not skipped:
-  https://github.com/danbri/factoidal/issues/1073. Decryption needs RSA-OAEP
-  with a private key and AES-GCM, and the use case does not need it.
+* XML Encryption is refused, not skipped, by `SAML.validate` (no keys):
+  https://github.com/danbri/factoidal/issues/1073. Later the same day,
+  `SAML.validateWith` (with decryption keys) decrypts `EncryptedAssertion`
+  and `EncryptedID` (`XML/Enc.lean`; record
+  `docs/designissues/2026-10-27-xml-encryption-and-jwe.md`, section "XML
+  Encryption 1.1: as built"). The authorization server uses it when it has
+  decryption keys (`authz-serve --saml-decrypt-key FILE`, config `samlKeys`).
 
 ## What is proved and what is tested
 
@@ -114,3 +118,12 @@ gates pass): `node tests/authz/server.mjs` 39 pass, 0 fail, 0 xfail,
 of 221), auth/saml 3 pass, 0 fail (out of 3). Before this change the same
 run gave 212 passed, 0 failed, 9 inapplicable, with auth/saml 3
 inapplicable.
+
+Measured 2026-10-27 after the server got decryption keys
+(https://github.com/danbri/factoidal/issues/1073; full `lake build` green;
+the three gates pass): `node tests/authz/server.mjs` 48 pass, 0 fail,
+0 xfail, 0 skipped (out of 48). The 9 new checks: an encrypted assertion
+refused with no key; with a key, node:crypto encryptions (RSA-OAEP SHA-1 and
+SHA-256, AES-128-GCM) exchanged; a plain assertion still exchanged; an
+altered, an unsigned, a wrongly addressed and a tag-changed encrypted
+assertion refused; a public JWK refused as a decryption key.
