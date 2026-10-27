@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Correction to 0.18.0: `parse` does not take the option `rdfstar`; `parse(text, { format: 'jsonld', rdfstar: true })` is refused with `option.unknown`. Read JSON-LD-star with `jsonldToRdf(text, { rdfstar: true })`. Expected-failure test: `tests/hub/hub_jsonld-star_test.mjs`.
+- Docs: hub page "JSON-LD-star and JSON-LD 1.3" (`docs/web/hub/jsonld-star.md`), with live cells on 0.19.0; the hub pages load 0.19.0 (were 0.16.0).
+
 ## 0.19.0 (2026-10-27)
 
 - Notice (owner decision, 2026-10-27): "EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW." It is at the top of both READMEs and the hub, in the package description, in every `factoidal` help text, and on standard error when `serve`, `lws-serve`, `solid-serve`, `solid-client`, `lws-client`, `authz-serve`, `authz-keys`, `xmpp-serve` or `webdav-serve` starts.
