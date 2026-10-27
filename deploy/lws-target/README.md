@@ -65,24 +65,24 @@ to `compose.yaml` (and the two lines it names to `compose.local.yaml`), add
 `factoidal` to the router's target list if the router has one, then
 `targetservers/run-all.sh factoidal`.
 
-## Checked, 2026-10-26 (image of `@factoidal/core` 0.16.0)
+## Checked, 2026-10-27 (image built from a local checkout with `lws-serve --authz`)
 
-By hand with curl on one container, base `http://localhost:18080/targets/factoidal`,
-paths as the router sends them in its `strip` mode:
+Container with `LWS_PUBLIC_URL=http://localhost:18090/targets/factoidal`,
+probed with curl at the paths a prefix-stripping proxy sends:
 
-- `/.well-known/lws-configuration`: the RFC 8414 metadata, issuer, token
-  endpoint and `jwks_uri` under the public base; `/jwks` 200.
-- `/.well-known/lws-storage`: 200 `application/lws+cid`.
-- anonymous `GET /`: 401 with `resource_metadata`; that metadata at the
-  router's path `/.well-known/oauth-protected-resource/` names the resource
-  `.../targets/factoidal/`.
-- a token signed with the key that `authz-keys --private` prints, `sub` the
-  owner: `PUT` 201, `GET` 200; the same for another agent: 403.
-- after `docker restart`: same key, same content.
-- `LWS_INSECURE_NO_AUTH=1`: anonymous `POST` of a container 201.
+- `/.well-known/lws-configuration`: RFC 8414 metadata, issuer
+  `.../targets/factoidal`, `token_endpoint` `.../targets/factoidal/.well-known/lws-token`,
+  `jwks_uri` `.../targets/factoidal/.well-known/lws-jwks`; `/.well-known/lws-jwks` 200.
+- `/.well-known/oauth-protected-resource/x`: `resource` `.../targets/factoidal/x`.
+- the whole form `/.well-known/lws-configuration/targets/factoidal`: 200.
+- anonymous `GET /`: 401 with `resource_metadata`.
+- `factoidal authz-keys /data/as --private` prints the private JWK Set.
 
-These are hand checks. Touchstone scores of the same server outside Docker
-(`tools/lws-touchstone.sh`) are in
+The whole token flow (401, both metadata documents, token exchange with a
+did:key credential, PUT and GET as the owner, `/token` and `/jwks` as storage
+resources), at an origin and behind a proxy that removes `/targets/f`:
+`node tests/authz/mounted.mjs`, 6 pass, 0 fail (out of 6). Touchstone scores of
+the same server outside Docker (`tools/lws-touchstone.sh`) are in
 `docs/designissues/2026-10-21-lws-touchstone-run.md`.
 
 ## Known limits
