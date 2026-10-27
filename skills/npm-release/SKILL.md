@@ -151,7 +151,7 @@ commit and no build date. Two writers fill them:
 
 | Writer | When | Source of every value |
 | --- | --- | --- |
-| `tools/fetch-builds.sh --set web` (calls `tools/stamp-l4-version.mjs`) | every install of a `web` release, and the publish workflow | the release's `build-info.json` (commit, build time, toolchains); sha256 and size of `l4factoidal.wasm` and `l4factoidal-core.wasm`, re-checked against `build-info.json`; `engineVersion` from the loaded wasm's own `version()` |
+| `tools/fetch-builds.sh --set web` (calls `tools/stamp-l4-version.mjs`) | every install of a `web` release, and the publish workflow | the release's `build-info.json` (commit, build time, toolchains); sha256 and size of `l4factoidal.wasm`, re-checked against `build-info.json` (since 0.10.0 the package has no `l4factoidal-core.wasm`, and `stamp-l4-version.mjs` writes no `coreWasm*` member for it); `engineVersion` from the loaded wasm's own `version()` |
 | `formal/lean4/Wasm/build-wasm.sh` step 9 | a local build | the local build |
 
 Members: `stamped`, `release`, `releaseRun`, `gitSha`, `builtAt`,
@@ -255,24 +255,39 @@ to overwrite. Gates that read `docs/fstar-extracted/*.js`, `npm/factoidal/`
 bundles or the Lean wasm need those files installed first
 (`tools/fetch-builds.sh`) or built locally.
 
-| Gate | Command | Expected, measured 2026-10-10 (0.9.0, issue 713 stage 3) |
+> **Stale numbers, 2026-10-26.** The numbers in this table were measured at
+> 0.9.0 and 0.10.0 (the browser row at 0.13.0), and the releases since then
+> (0.11.0 to 0.15.0) did not write theirs here. Read every number below as
+> "measured at 0.10.0" unless its row names a later version. Do not use them
+> as the expected values for 0.16.0: measure each gate again and write the
+> new number with its version. An audit of the release process is in
+> progress (another session, 2026-10-26); this note does not change the
+> procedure.
+
+| Gate | Command | Expected, measured 2026-10-10 (0.9.0, issue 713 stage 3) and 2026-10-13 (0.10.0); stale, see the note above |
 | --- | --- | --- |
 | package suite | `cd npm/factoidal && npm test` | 432 pass, 0 fail, 0 skipped (out of 432), 2026-10-13, 0.10.0 (adds `test/pure-and-serve.test.mjs` 7 and `test/fuseki-compat.test.mjs` 6, of which 4 are expected failures naming issues 829, 830, 831). Earlier: 403 pass, 0 fail, 0 skipped (out of 403) on `claude/wt-npm-lean-45` after its merge with core-split (issue 713 stages 4 and 5 added `test/core-entry.test.mjs` 23, `test/dataset-scaling.test.js` 2, `test/large-inputs.test.mjs` 4); before: 372 pass, 0 fail, 0 skipped (out of 372), after the issue-716 merge (371 pass, 0 fail (out of 371) at the stage 3 merge). 4 of the 372 are expected-failure cases, each naming its open issue: 717 (1, `SERVICE` without `SILENT`), 691 (1, unused `@prefix xsd:`), 676 (2, PRECIS); the 2 cases of 716 (`{lenient:true}`) are assertions since that merge. A function the wasm does not serve FAILS; no test skips on a capability probe. (0.8.0: 340 pass, 0 fail, 2 skipped (out of 342), on the F\* bundles) |
-| store host | `node tests/store-host/conformance.mjs` | 34 pass, 0 fail, 0 skipped (out of 34) under Node |
-| the command | `node tests/store-host/cli.mjs` | 33 pass, 0 fail, 0 skipped (out of 33) under Node |
-| LWS and Solid hosts | `node tests/lws/server.mjs`, `node tests/solid/server/protocol.mjs`, `node tests/solid/client/against-own-server.mjs` | 8, 12 and 7 pass, 0 fail |
+| store host | `node tests/store-host/conformance.mjs` | 34 pass, 0 fail, 0 skipped (out of 34) under Node (measured at 0.10.0) |
+| the command | `node tests/store-host/cli.mjs` | 33 pass, 0 fail, 0 skipped (out of 33) under Node (measured at 0.10.0) |
+| LWS and Solid hosts | `node tests/lws/server.mjs`, `node tests/solid/server/protocol.mjs`, `node tests/solid/client/against-own-server.mjs` | 8, 12 and 7 pass, 0 fail (measured at 0.10.0) |
 | tarball | `cd npm/factoidal && npm pack --dry-run` | 0.10.0: 174 files, 3,787,140 bytes packed, 19.2 MB unpacked (the full wasm grew to 11.2 MB; the core wasm is 6.1 MB). 0.9.0: 161 files, 2,410,574 bytes packed, 12,042,704 unpacked; no F\* bundle, no `hacl-wasm/` (0.8.0: 193 files) |
 | wasm copies | the tail of `build-wasm.sh` | "all committed wasm copies agree" |
-| Lean native | `bash formal/lean4/Wasm/native-smoke.sh` | 297 pass, 0 fail (out of 297); needs `lake` on PATH (`export PATH=$HOME/.elan/bin:$PATH`) |
+| Lean native | `bash formal/lean4/Wasm/native-smoke.sh` | 297 pass, 0 fail (out of 297), measured at 0.10.0; needs `lake` on PATH (`export PATH=$HOME/.elan/bin:$PATH`) |
 | browser | `tests/web-demos/npm_browser_smoke.sh` | PASS: `browser.js` in headless Chromium runs a parse, a SELECT, `canonicalize`, `xpathEval` and `openStore` (over `fetch`, from `test/fixtures/sample-store`, COUNT 4434); one `instantiateStreaming` call; the wasm served as `application/wasm`. 0.13.0, 2026-10-24: PASS |
 | speed (not a release gate yet) | `cd npm/factoidal && npm run test:speed` after `tools/fetch-builds.sh --set web` | the Lean engine within 2 times the faster F\* bundle per row of `tests/perf/l4_vs_fstar_wasm_bench.mjs`, or an expected failure naming its issue; exit 2 without the F\* bundles. Numbers: design record § 10 |
 | bundler and CSP page | `tests/web-demos/bundler_csp_smoke.sh` | PASS, exit 0 (esbuild bundle of the package under `script-src 'self' 'wasm-unsafe-eval'`) |
 | engine comparison (private build, not a release gate) | `tests/engine-compare/run.sh docs/fstar-extracted/factoidal-npm-entry.js` after `tools/fetch-builds.sh --set web` | 7 pass, 0 fail (out of 7) against the F\* bundle of build-dba1bdb1d320-web; exit 2 when the bundle is absent |
 | hub notebooks | `node --test tests/hub/*_test.mjs` and `tests/web-demos/hub_browser_all.sh` | the hub pages and the node harness both run this package (Lean) since issue 726: `hub.njk` imports `npm/factoidal/browser.js`, which `docs/.eleventy.js` passes through to `/npm/factoidal/`. A change to an exported name or a result shape can break a post; gate on both. Numbers: design record `docs/designissues/2026-10-10-npm-lean-only.md` § 8 |
 
-The package suite runs again inside `npm publish` through
-`prepublishOnly`, so a failure there aborts the publish after the
-workflow has already spent its F\* re-extraction time.
+**`prepublishOnly` does not run in the publish workflow.** The
+factoidal-builds `npm-publish.yml` packs with `npm pack --ignore-scripts`
+and then publishes the tarball (`npm publish "$TGZ"`); npm runs no
+lifecycle script of the package for a tarball. The package suite gate of a
+release is the `web-gates` job of the build that made its `web` release:
+the publish workflow refuses a release whose `web-gates` job did not pass.
+`prepublishOnly` (`npm test`) runs only for a `npm publish` from the
+directory, which this account cannot do (see "How publishing works").
+(https://github.com/danbri/factoidal/issues/1038, defect 6.)
 
 **Exit 2 is not a pass, and it is not "no browser here".** The browser,
 bundler and hub-browser gates exit 2 when a file or Playwright is missing,
@@ -294,7 +309,7 @@ another branch (2026-10-24: 4 store and 5 command failures, all from that).
 `test/set-semantics-972.test.mjs` runs the three 0.12.0 defects of
 https://github.com/danbri/factoidal/issues/972 (repeated triple; DISTINCT
 over `"01"` and `"1"`; STR of `"01"^^xsd:integer`) in the package suite,
-so `prepublishOnly` refuses a release that brings one back. It fails
+so `web-gates`, and with it the publish workflow, refuses a release that brings one back. It fails
 3 of 3 against `@factoidal/core@0.12.0`.
 
 Install the tarball somewhere else and run the command before

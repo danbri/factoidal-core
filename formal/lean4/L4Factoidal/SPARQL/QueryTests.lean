@@ -1117,6 +1117,11 @@ def pathPairs (path : PropertyPath) : List (String × String) :=
 #guard pathPairs (.iri pKnows) == [("alice", "bob"), ("bob", "carol")]
 -- `^:knows` is the converse.
 #guard pathPairs (.inverse (.iri pKnows)) == [("bob", "alice"), ("carol", "bob")]
+-- https://github.com/danbri/factoidal/issues/1023: §18.4 makes `?s ^:label ?o`
+-- the same as `?o :label ?s`, so `?s` binds the literal object "aaa".
+#guard pathPairs (.inverse (.iri pLabel)) == [("aaa", "alice")]
+-- The literal is also a middle node: `^:label/:label` joins on alice.
+#guard pathPairs (.sequence (.inverse (.iri pLabel)) (.iri pLabel)) == [("aaa", "aaa")]
 -- `:knows/:knows` composes.
 #guard pathPairs (.sequence (.iri pKnows) (.iri pKnows)) == [("alice", "carol")]
 -- `:knows|:label` is the union.
@@ -1181,6 +1186,19 @@ def dupStepPairs : List (String × String) :=
 #guard colS "label" (rows dsNamed
     (mkQuery (.select .all) (.graph (.iri gTwo) pLabels) (dataset := [.named gTwo])))
     == ["bbb"]
+-- https://github.com/danbri/factoidal/issues/1032: a FROM / FROM NAMED IRI that
+-- names no graph of the dataset gives a `dataset-iri-not-found` warning; the
+-- rows do not change (still the RDF merge of the graphs that are found).
+#guard datasetWarnings [.default gOne, .named gTwo] dsNamed == []
+#guard datasetWarnings [.default epNone] dsNamed == [{ iri := epNone.val, named := false }]
+#guard datasetWarnings [.named epNone] dsNamed == [{ iri := epNone.val, named := true }]
+#guard datasetWarnings [.default gOne, .named epNone, .default epNone, .named epNone] dsNamed
+    == [{ iri := epNone.val, named := true }, { iri := epNone.val, named := false }]
+#guard (datasetWarnings [.named epNone] dsNamed).map DatasetWarning.cls == ["dataset-iri-not-found"]
+#guard (datasetWarnings [.named epNone] dsNamed).map DatasetWarning.clause == ["FROM NAMED"]
+#guard colS "label" (rows dsNamed
+    (mkQuery (.select .all) pLabels (dataset := [.default gOne, .default epNone]))) == ["aaa"]
+#guard rows dsNamed (mkQuery (.select .all) pLabels (dataset := [.default epNone])) == []
 -- Trailing VALUES joins onto the WHERE result (§10.2).
 #guard colS "label" (rows { default := gMain, named := [] }
     (mkQuery (.select .all) pLabels (postValues := some [[("s", .iri iBob)]]))) == ["bbb"]

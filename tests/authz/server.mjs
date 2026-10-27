@@ -15,12 +15,13 @@
 // expected failure that names its open issue; an unexpected pass is a FAIL.
 
 import { mkdtempSync, rmSync, statSync, readFileSync } from 'node:fs'
+import { generateKeyPairSync } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   TOKEN_EXCHANGE, JWT_TYPE, ID_TOKEN_TYPE, SAML2_TYPE, OPENID_PROVIDER,
   keyPair, didKeyOf, signJwt, verifyJwt, selfIssued, exchangeForm, postForm,
-  startDocuments, hostProvider, nowSeconds
+  startDocuments, hostProvider, nowSeconds, samlIdpKey, samlAssertion, samlEncrypted
 } from './fixtures.mjs'
 
 let passed = 0
@@ -129,7 +130,7 @@ async function main () {
       assert(m.token_endpoint === `${as}/token` && m.jwks_uri === `${as}/jwks`, 'endpoints')
       assert(m.grant_types_supported.includes(TOKEN_EXCHANGE), 'token exchange grant')
       assert(m.subject_token_types_supported.includes(JWT_TYPE) && m.subject_token_types_supported.includes(ID_TOKEN_TYPE), 'subject token types')
-      assert(!m.subject_token_types_supported.includes(SAML2_TYPE), 'saml2 advertised with no verifier')
+      assert(!m.subject_token_types_supported.includes(SAML2_TYPE), 'saml2 advertised with no trusted identity provider')
       assert(m.subject_identifier_types_supported.includes('https') && m.subject_identifier_types_supported.includes('did:key'), 'identifier types')
     })
     await check('RFC 8414: the same document at /.well-known/oauth-authorization-server', async () => {
@@ -229,11 +230,122 @@ async function main () {
     await check('OpenID Connect suite: an ID token without azp is refused', () =>
       refused({ subject_token: idToken(opPair, op, ['azp']), subject_token_type: ID_TOKEN_TYPE }, 'invalid_request'))
 
-    await xfail('SAML suite: a signed SAML 2.0 assertion is exchanged for a token', 'https://github.com/danbri/factoidal/issues/926', async () => {
-      const assertion = Buffer.from('<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"/>').toString('base64url')
-      const a = await exchange({ subject_token: assertion, subject_token_type: SAML2_TYPE })
-      assert(a.status === 200, `status ${a.status}: ${a.json && a.json.error_description}`)
+    // The SAML suite (issue 926): a second server that trusts one identity
+    // provider. Its issuer is the audience every assertion must name.
+    const idp = samlIdpKey()
+    const other = samlIdpKey()
+    const idpId = 'https://idp.example'
+    const saml = await listen({
+      engine, port: 0, resources: [STORAGE], storageKey: null,
+      samlIdps: [{ entityId: idpId, jwk: idp.publicJwk }]
     })
+    try {
+      const samlExchange = (token) => postForm(`${saml.origin}/token`, exchangeForm({
+        grant_type: TOKEN_EXCHANGE, resource: STORAGE, subject_token: token, subject_token_type: SAML2_TYPE
+      }))
+      const assertionFor = (opts = {}) => samlAssertion({
+        issuer: idpId, nameId: 'https://id.example/end-user', recipient: 'https://app.example/SAML',
+        audiences: ['https://app.example/SAML', saml.issuer], key: idp.privateKey, ...opts
+      })
+      const samlRefused = async (token) => {
+        const a = await samlExchange(token)
+        assert(a.status === 400 && a.json.error === 'invalid_request', `${a.status} ${a.text}`)
+      }
+      await check('SAML suite: the metadata names the saml2 token type when an identity provider is trusted', async () => {
+        const m = await (await fetch(`${saml.origin}/.well-known/lws-configuration`)).json()
+        assert(m.subject_token_types_supported.includes(SAML2_TYPE), 'saml2 not advertised')
+      })
+      await check('SAML suite: a signed SAML 2.0 assertion is exchanged for a token naming its NameID and Recipient', async () => {
+        const a = await samlExchange(assertionFor())
+        assert(a.status === 200, `status ${a.status}: ${a.text}`)
+        const header = JSON.parse(Buffer.from(a.json.access_token.split('.')[0], 'base64url').toString('utf8'))
+        const key = (await (await fetch(`${saml.origin}/jwks`)).json()).keys.find((k) => k.kid === header.kid)
+        const v = verifyJwt(a.json.access_token, key)
+        assert(v.ok, 'the access token does not verify (node:crypto)')
+        assert(v.claims.sub === 'https://id.example/end-user', `sub ${v.claims.sub}`)
+        assert(v.claims.client_id === 'https://app.example/SAML', `client_id ${v.claims.client_id}`)
+      })
+      await check('SAML suite: an assertion altered after signing is refused', () => samlRefused(assertionFor({ fault: 'altered' })))
+      await check('SAML suite: an unsigned assertion is refused', () => samlRefused(assertionFor({ fault: 'unsigned' })))
+      await check('SAML suite: an assertion signed with another key is refused', () => samlRefused(assertionFor({ key: other.privateKey })))
+      await check('SAML suite: an assertion from an untrusted issuer is refused', () => samlRefused(assertionFor({ issuer: 'https://rogue.example' })))
+      await check('SAML suite: an assertion whose audience omits this server is refused', () =>
+        samlRefused(assertionFor({ audiences: ['https://app.example/SAML'] })))
+      await check('SAML suite: an expired assertion is refused', () => samlRefused(assertionFor({ now: nowSeconds() - 3600 })))
+      await check('SAML suite: a private JWK is refused as a trust configuration', async () => {
+        const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+        let refusedPrivate = false
+        try {
+          await openAuthorizationServer({
+            engine, issuer: 'https://as.example', resources: [STORAGE], storageKey: null,
+            samlIdps: [{ entityId: idpId, jwk: privateKey.export({ format: 'jwk' }) }]
+          })
+        } catch (_e) { refusedPrivate = true }
+        assert(refusedPrivate, 'a private JWK was accepted')
+      })
+      // Encrypted assertions (issue 1073): this server has no decryption key.
+      const enc = generateKeyPairSync('rsa', { modulusLength: 2048 })
+      await check('SAML suite: an encrypted assertion is refused by a server with no decryption key', () =>
+        samlRefused(samlEncrypted(assertionFor(), enc.publicKey)))
+      // A third server with a decryption key (`samlKeys`): RSA-OAEP in Lean
+      // over HACL*, AES-GCM through WebCrypto on this host.
+      const samlDec = await listen({
+        engine, port: 0, resources: [STORAGE], storageKey: null,
+        samlIdps: [{ entityId: idpId, jwk: idp.publicJwk }],
+        samlKeys: [{ ...enc.privateKey.export({ format: 'jwk' }), kid: 'enc-1' }]
+      })
+      try {
+        const decExchange = (token) => postForm(`${samlDec.origin}/token`, exchangeForm({
+          grant_type: TOKEN_EXCHANGE, resource: STORAGE, subject_token: token, subject_token_type: SAML2_TYPE
+        }))
+        const decFor = (opts = {}) => samlAssertion({
+          issuer: idpId, nameId: 'https://id.example/end-user', recipient: 'https://app.example/SAML',
+          audiences: ['https://app.example/SAML', samlDec.issuer], key: idp.privateKey, ...opts
+        })
+        const decRefused = async (token) => {
+          const a = await decExchange(token)
+          assert(a.status === 400 && a.json.error === 'invalid_request', `${a.status} ${a.text}`)
+        }
+        const decAccepted = async (token) => {
+          const a = await decExchange(token)
+          assert(a.status === 200, `status ${a.status}: ${a.text}`)
+          const header = JSON.parse(Buffer.from(a.json.access_token.split('.')[0], 'base64url').toString('utf8'))
+          const key = (await (await fetch(`${samlDec.origin}/jwks`)).json()).keys.find((k) => k.kid === header.kid)
+          const v = verifyJwt(a.json.access_token, key)
+          assert(v.ok, 'the access token does not verify (node:crypto)')
+          assert(v.claims.sub === 'https://id.example/end-user', `sub ${v.claims.sub}`)
+          assert(v.claims.client_id === 'https://app.example/SAML', `client_id ${v.claims.client_id}`)
+        }
+        await check('SAML suite: an assertion encrypted by node:crypto (RSA-OAEP SHA-1, AES-128-GCM) is decrypted and exchanged', () =>
+          decAccepted(samlEncrypted(decFor(), enc.publicKey)))
+        await check('SAML suite: an assertion encrypted with xmlenc11 rsa-oaep SHA-256 is decrypted and exchanged', () =>
+          decAccepted(samlEncrypted(decFor(), enc.publicKey, { sha256: true })))
+        await check('SAML suite: a plain signed assertion is still exchanged by a server with a decryption key', () =>
+          decAccepted(decFor()))
+        await check('SAML suite: an encrypted assertion altered after signing is refused', () =>
+          decRefused(samlEncrypted(decFor({ fault: 'altered' }), enc.publicKey)))
+        await check('SAML suite: an encrypted unsigned assertion is refused', () =>
+          decRefused(samlEncrypted(decFor({ fault: 'unsigned' }), enc.publicKey)))
+        await check('SAML suite: an assertion encrypted to another key is refused', () =>
+          decRefused(samlEncrypted(decFor(), generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey)))
+        await check('SAML suite: an encrypted assertion with a changed GCM tag is refused', () =>
+          decRefused(samlEncrypted(decFor(), enc.publicKey, { tamper: true })))
+        await check('SAML suite: a public JWK is refused as a decryption key', async () => {
+          let refusedPublic = false
+          try {
+            await openAuthorizationServer({
+              engine, issuer: 'https://as.example', resources: [STORAGE], storageKey: null,
+              samlIdps: [{ entityId: idpId, jwk: idp.publicJwk }], samlKeys: [enc.publicKey.export({ format: 'jwk' })]
+            })
+          } catch (_e) { refusedPublic = true }
+          assert(refusedPublic, 'a public JWK was accepted as a decryption key')
+        })
+      } finally {
+        await samlDec.close()
+      }
+    } finally {
+      await saml.close()
+    }
 
     // The private-address guard: a second server without allowPrivateFetch.
     const guarded = await listen({ engine, port: 0, resources: [STORAGE], allowHttp: true, storageKey: null })

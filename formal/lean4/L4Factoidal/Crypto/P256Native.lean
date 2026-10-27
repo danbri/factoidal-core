@@ -88,10 +88,30 @@ with SHA-256; the caller passes the signing input, never a digest.
     64-byte `x || y` of a 33-byte SEC 1 compressed point, or EMPTY when the
     prefix is not 0x02/0x03 or the point is not on the curve.
 
+  * `p256EcdhRaw theirXY sk` (added for JWE `ECDH-ES` and XML Encryption
+    1.1 ECDH-ES, https://github.com/danbri/factoidal/issues/1083): HACL*
+    `Hacl_P256_dh_responder`, the 64-byte point `x || y` of `sk * Q`, or
+    EMPTY when `theirXY` is not 64 bytes, `sk` is not 32 bytes, `sk` is
+    outside `[1, n-1]`, or `Q` is not on the curve or is the point at
+    infinity. HACL*'s header (`third_party/hacl/include/Hacl_P256.h`,
+    `Hacl_P256_dh_responder`): "The function also checks whether
+    `private_key` and `their_pubkey` are valid." So an invalid-curve point
+    is refused in HACL*, before any scalar multiplication.
+  * `p256Ecdh theirXY sk`: the 32-byte shared secret `Z`, the x coordinate
+    of `sk * Q` (SP 800-56A §5.7.1.2, the ECC CDH primitive: `Z = x_P`;
+    SEC 1 §3.3.1; RFC 7518 §4.6.2: "Z  This is set to the representation of
+    the shared secret Z as an octet sequence."), or `none`.
+    The selection of x is this Lean definition, not the C shim.
+
 The run-time checks of the three: `lake exe l4crypto-probe`, sections
 `p256-sign-rfc6979` (RFC 6979 A.2.5), `p256-secret-to-public` (RFC 6979
 A.2.5 and the Wycheproof `ecdh_secp256r1_webcrypto_test.json` keys) and
-`p256-compressed` (Wycheproof `ecdh_secp256r1_ecpoint_test.json`).
+`p256-compressed` (Wycheproof `ecdh_secp256r1_ecpoint_test.json`). The run-time check of
+`p256Ecdh` is section `p256-ecdh`: Wycheproof
+`ecdh_secp256r1_ecpoint_test.json` and `ecdh_secp256r1_webcrypto_test.json`,
+and the NIST CAVP ECC CDH P-256 vectors
+(`third_party/nist-cavs-ecccdh/`). A differential run against node:crypto is
+`tests/crypto/ecdh-diff.mjs`.
 -/
 
 namespace L4Factoidal.Crypto.P256
@@ -143,5 +163,20 @@ def p256SecretToPublic (sk : ByteArray) : Option ByteArray :=
 def p256CompressedToRaw (pk : ByteArray) : Option ByteArray :=
   let p := p256CompressedToRawRaw pk
   if p.size == 64 then some p else none
+
+/-- ECDH over P-256 via HACL* `Hacl_P256_dh_responder`: the 64-byte point
+`x || y` of `sk * theirXY`, or the EMPTY array on any refusal (a wrong
+length, a private key outside `[1, n-1]`, a public key off the curve). -/
+@[extern "l4_hacl_p256_ecdh"]
+opaque p256EcdhRaw (theirXY : @& ByteArray) (sk : @& ByteArray) : ByteArray
+
+/-- The P-256 ECDH shared secret `Z` (SP 800-56A §5.7.1.2): the 32-byte x
+coordinate of `sk * theirXY`, or `none` when HACL* refuses the key pair.
+`theirXY` is the raw 64-byte `x || y` (the JWK `x` and `y` members, or an
+uncompressed SEC 1 point without its 0x04 prefix); `sk` is the 32-byte
+big-endian private scalar. -/
+def p256Ecdh (theirXY sk : ByteArray) : Option ByteArray :=
+  let p := p256EcdhRaw theirXY sk
+  if p.size == 64 then some (p.extract 0 32) else none
 
 end L4Factoidal.Crypto.P256

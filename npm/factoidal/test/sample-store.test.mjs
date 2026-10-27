@@ -16,6 +16,11 @@ test('sampleStorePath packs a store and openStore answers its triple count', asy
     assert.ok(existsSync(join(dir, 'CURRENT')));
     assert.equal(sampleStorePath(dir), dir, 'a second call reuses the store');
     const store = await f.openStore(dir);
+    // The default pack layout is IBK5 (owner, 2026-10-25,
+    // https://github.com/danbri/factoidal/issues/1009).
+    assert.equal(sampleStoreFacts.layout, 'ibk5');
+    assert.equal(store.layout, 'quad-ibk5-ptd2-lgi4-gbi1-merkle-v0');
+    assert.equal(store.wireVersion, 10);
     const n = await store.query('SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }');
     assert.equal(Number(n[0].get('n').value), sampleStoreFacts.triples);
     await store.close();

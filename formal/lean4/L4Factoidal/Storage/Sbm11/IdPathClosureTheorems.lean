@@ -377,21 +377,21 @@ theorem nodes_nodup (G : List IdTriple) : (idGraphNodes G).Nodup := by
     exact this ▸ hq
 
 /-- Every pair of a path relation is a pair of nodes of the graph. -/
-theorem eval_nodes (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple)
-    (p : PropertyPath) : ∀ pr ∈ idEvalPath pid notLit p G,
+theorem eval_nodes (pid : WfIri → Option UInt64) (G : List IdTriple)
+    (p : PropertyPath) : ∀ pr ∈ idEvalPath pid p G,
       pr.1 ∈ idGraphNodes G ∧ pr.2 ∈ idGraphNodes G :=
-  eval_ok' (fun n => n ∈ idGraphNodes G) pid notLit G
+  eval_ok' (fun n => n ∈ idGraphNodes G) pid G
     (fun x hx => ⟨(mem_nodes G x.1).mpr ⟨x, hx, Or.inl rfl⟩, (mem_nodes G x.2.2).mpr ⟨x, hx, Or.inr rfl⟩⟩) p
 
 /-- `p*` over ids: `(a, c)` exactly when `a` is a node of the graph and `c`
     is reached from `a` in zero or more steps of `p`. -/
-theorem star_mem (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple)
+theorem star_mem (pid : WfIri → Option UInt64) (G : List IdTriple)
     (p : PropertyPath) (x : UInt64 × UInt64) :
-    x ∈ idEvalPath pid notLit (.zeroOrMore p) G ↔
-      x.1 ∈ idGraphNodes G ∧ Reach (idEvalPath pid notLit p G) x.1 x.2 := by
-  let E := idEvalPath pid notLit p G
+    x ∈ idEvalPath pid (.zeroOrMore p) G ↔
+      x.1 ∈ idGraphNodes G ∧ Reach (idEvalPath pid p G) x.1 x.2 := by
+  let E := idEvalPath pid p G
   let N := idGraphNodes G
-  have hEN := eval_nodes pid notLit G p
+  have hEN := eval_nodes pid G p
   have hE : ObjsIn E N := fun pr h => (hEN pr h).2
   let S := idDedup (N.map (fun n => (n, n)) ++ E)
   have hS : S.Nodup := nodup_idDedup _
@@ -414,18 +414,18 @@ theorem star_mem (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G :
   · rintro ⟨hn, r⟩
     exact ⟨x.1, mem_idDedup.mpr (List.mem_append.mpr (Or.inl (List.mem_map.mpr ⟨x.1, hn, rfl⟩))), r⟩
 
-theorem star_nodup (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple)
-    (p : PropertyPath) : (idEvalPath pid notLit (.zeroOrMore p) G).Nodup :=
+theorem star_nodup (pid : WfIri → Option UInt64) (G : List IdTriple)
+    (p : PropertyPath) : (idEvalPath pid (.zeroOrMore p) G).Nodup :=
   fixpoint_nodup _ _ _ (nodup_idDedup _)
 
 /-- `p+` over ids, when the step relation has no pair twice: `(a, c)` exactly
     when a step `(a, b)` of `p` has `c` reached from `b`. -/
-theorem plus_mem (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple)
+theorem plus_mem (pid : WfIri → Option UInt64) (G : List IdTriple)
     (p : PropertyPath) (x : UInt64 × UInt64) :
-    x ∈ idEvalPath pid notLit (.oneOrMore p) G ↔
-      ∃ b, (x.1, b) ∈ idEvalPath pid notLit p G ∧ Reach (idEvalPath pid notLit p G) b x.2 := by
-  let E := idEvalPath pid notLit p G
-  have hE : ObjsIn E (idGraphNodes G) := fun pr h => (eval_nodes pid notLit G p pr h).2
+    x ∈ idEvalPath pid (.oneOrMore p) G ↔
+      ∃ b, (x.1, b) ∈ idEvalPath pid p G ∧ Reach (idEvalPath pid p G) b x.2 := by
+  let E := idEvalPath pid p G
+  have hE : ObjsIn E (idGraphNodes G) := fun pr h => (eval_nodes pid G p pr h).2
   have hS : ObjsIn (idDedup E) (idGraphNodes G) := fun pr h => hE pr (mem_idDedup.mp h)
   show x ∈ idFixpoint E (idDedup E) (idGraphNodes G).length ↔ _
   rw [fixpoint_mem E (idDedup E) (idGraphNodes G) hE (nodup_idDedup _) hS _ (Nat.le_refl _) x]
@@ -433,9 +433,9 @@ theorem plus_mem (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G :
   · rintro ⟨b, hb, r⟩; exact ⟨b, mem_idDedup.mp hb, r⟩
   · rintro ⟨b, hb, r⟩; exact ⟨b, mem_idDedup.mpr hb, r⟩
 
-theorem plus_nodup (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple)
+theorem plus_nodup (pid : WfIri → Option UInt64) (G : List IdTriple)
     (p : PropertyPath) :
-    (idEvalPath pid notLit (.oneOrMore p) G).Nodup :=
+    (idEvalPath pid (.oneOrMore p) G).Nodup :=
   fixpoint_nodup _ _ _ (nodup_idDedup _)
 
 /-! ## The worklist, as a list model of `IdPath.reachPlus` -/
@@ -672,12 +672,12 @@ theorem nodup_map_pair (a : UInt64) : ∀ (l : List UInt64), l.Nodup → (l.map 
 /-- The pairs the id path emits for `p*` from `a` are the pairs of the
     reference's closure (`idEvalPath (p*)`) whose subject is `a`, each once;
     with the round bound the id path passes, the worklist does not run out. -/
-theorem starFrom_mem (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple)
+theorem starFrom_mem (pid : WfIri → Option UInt64) (G : List IdTriple)
     (p : PropertyPath) (a : UInt64) (fuel : Nat)
-    (hf : (idEvalPath pid notLit p G).length + 2 ≤ fuel) :
-    ∃ l, starFrom (idEvalPath pid notLit p G) (idGraphNodes G) a fuel = some l ∧ l.Nodup ∧
-      ∀ x, x ∈ l ↔ x ∈ idEvalPath pid notLit (.zeroOrMore p) G ∧ x.1 = a := by
-  obtain ⟨r, hr⟩ := reachModel_some (idEvalPath pid notLit p G) a fuel hf
+    (hf : (idEvalPath pid p G).length + 2 ≤ fuel) :
+    ∃ l, starFrom (idEvalPath pid p G) (idGraphNodes G) a fuel = some l ∧ l.Nodup ∧
+      ∀ x, x ∈ l ↔ x ∈ idEvalPath pid (.zeroOrMore p) G ∧ x.1 = a := by
+  obtain ⟨r, hr⟩ := reachModel_some (idEvalPath pid p G) a fuel hf
   obtain ⟨hrn, hrm⟩ := reachModel_mem _ a fuel r hr
   refine ⟨_, by unfold starFrom; rw [hr]; rfl, ?_, ?_⟩
   · rw [List.nodup_append]
@@ -705,7 +705,7 @@ theorem starFrom_mem (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) 
       · rcases List.mem_map.mp hx with ⟨c, hc, rfl⟩
         have hr1 := (hrm c).mp (List.mem_filter.mp hc).1
         rcases hr1 with ⟨b, hb, rb⟩
-        exact ⟨⟨(eval_nodes pid notLit G p _ hb).1, Reach.head hb rb⟩, rfl⟩
+        exact ⟨⟨(eval_nodes pid G p _ hb).1, Reach.head hb rb⟩, rfl⟩
     · rintro ⟨⟨haN, r⟩, rfl⟩
       rcases reach_cases r with he | h1
       · apply List.mem_append_left
@@ -721,16 +721,16 @@ theorem starFrom_mem (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) 
 
 /-- The pairs the id path emits for `p+` from `a` are the pairs of the
     reference's closure (`idEvalPath (p+)`) whose subject is `a`, each once. -/
-theorem plusFrom_mem (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (G : List IdTriple)
+theorem plusFrom_mem (pid : WfIri → Option UInt64) (G : List IdTriple)
     (p : PropertyPath) (a : UInt64) (fuel : Nat)
-    (hf : (idEvalPath pid notLit p G).length + 2 ≤ fuel) :
-    ∃ l, plusFrom (idEvalPath pid notLit p G) a fuel = some l ∧ l.Nodup ∧
-      ∀ x, x ∈ l ↔ x ∈ idEvalPath pid notLit (.oneOrMore p) G ∧ x.1 = a := by
-  obtain ⟨r, hr⟩ := reachModel_some (idEvalPath pid notLit p G) a fuel hf
+    (hf : (idEvalPath pid p G).length + 2 ≤ fuel) :
+    ∃ l, plusFrom (idEvalPath pid p G) a fuel = some l ∧ l.Nodup ∧
+      ∀ x, x ∈ l ↔ x ∈ idEvalPath pid (.oneOrMore p) G ∧ x.1 = a := by
+  obtain ⟨r, hr⟩ := reachModel_some (idEvalPath pid p G) a fuel hf
   obtain ⟨hrn, hrm⟩ := reachModel_mem _ a fuel r hr
   refine ⟨_, by unfold plusFrom; rw [hr]; rfl, nodup_map_pair a r hrn, ?_⟩
   intro x
-  rw [plus_mem pid notLit G p]
+  rw [plus_mem pid G p]
   constructor
   · intro hx
     rcases List.mem_map.mp hx with ⟨c, hc, rfl⟩

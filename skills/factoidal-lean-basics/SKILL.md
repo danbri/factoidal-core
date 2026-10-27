@@ -36,6 +36,7 @@ https://github.com/danbri/factoidal/issues/466
 | Crypto | `Crypto/SHA2*.lean`, `Crypto/Ed25519.lean` | SHA-256/384/512 + `HashAlgorithm` agility; size theorems; FIPS vectors (million-byte ones parked opt-in). Ed25519 = the ONE `@[extern]` (HACL\* C through `lakefile.lean` `extern_lib`) |
 | JSON-LD 1.1 | `JSONLD/{Context,Expand,ToRdf,Compact,OrderedMap,Flatten,NodeMapTheorems,FromRdf,Html,Frame}.lean`, `Harness/{JsonLdProbe,JsonLdApiProbe,JsonLdFrameRun,JsonLdScale}.lean` | context processing, expansion, toRdf, compaction (§6), flattening (§7), Serialize RDF as JSON-LD (§8.5-8.7), HTML script extraction, Framing (`l4jsonld-frame`, run from the repo root: 91 pass, 1 fail (out of 92); the one failure, `#t0010`, is a json-ld-1.0 version dispute); loader is a parameter. `l4jsonld-probe` toRdf 467 pass, 0 fail, 0 skip (out of 467); `l4jsonld-api` expand+compact+flatten+fromRdf+html 791 pass, 0 fail, 2 local-override (out of 793) — matching the F\* runners manifest for manifest |
 | VC / DID | `VC/*.lean`, `Harness/VcProbe.lean` | Data Integrity `eddsa-rdfc-2022` create/verify (canonical forms, datasets, JSON-LD documents; primitives are parameters), base58/multibase with the decode-of-encode theorem, did:key both ways, the VCDM 2.0 data-model checks (`VC/Credential.lean` namespace `Doc`: structure, relatedResource digests, DATA_LOSS_DETECTION_ERROR, type-term resolution); `l4vc-probe` 236 pass, 0 fail (out of 236, 2026-10-10: RFC 8032 22, did:key 8, vc_runner roundtrip 8, W3C vc-di-eddsa spec vectors 20, SHA-256 differential 61, VCDM 2.0 fixtures 117). The wasm dispatch serves the lot as `vc*` and `didKeyResolve` ops (`Wasm/Ops/Vc.lean`) |
+| CID 1.0 | `CID/*.lean` | Controlled Identifiers v1.0 (https://github.com/danbri/factoidal/issues/1100): the §2 data model with one `DocError` per MUST (`parseDocument`), Multikey and JsonWebKey material, the five relationships (`relationship`), §3.4 Fragment Resolution, §3.3 Retrieve Verification Method with the §3.5 errors (`retrieveFromDocument`, `retrieveWith`; the host fetches), theorem `retrieveFromDocument_sound`. Users: `Authz/SubjectToken.lean` (`authentication`), `VC/DataIntegrity.lean` (`resolveKey`, the relationship of `proofPurpose`). Record: `docs/designissues/2026-10-27-cid-1.0.md` |
 | Unicode case mapping | `Text/CaseMap.lean`, `Text/CaseMapData.lean` (generated), `Text/CaseMapTests.lean`, `tools/gen_casemap.py` | Unicode default case mapping (`upperCase`, `lowerCase` with SpecialCasing unconditional lines and Final_Sigma, language-independent), simple `caseFold`, F&O 3.1 5.6.1.1 `caseVariants`/`ciRanges`, the index fold `searchFold`; tables are sorted run arrays searched by binary search, generated from Unicode 15.1.0 with source digests in the header. Callers: `Fn.String.upperCase`/`lowerCase` (SPARQL UCASE/LCASE, RIF, GREL), regex flag `i` (`XSDPattern.parseCpsWith`), `Storage/LiteralGramIndex.lean`. Lean core `String.toUpper`/`toLower` map ASCII only: use them for BCP 47 tags, header names and grammar keywords, never for text; record: [`docs/designissues/2026-10-10-unicode-case-mapping.md`](../../docs/designissues/2026-10-10-unicode-case-mapping.md) |
 | Wasm | `Wasm/`, `docs/web/hub/assets/l4/`, skill `lean4-wasm-export` | Lean→C→wasm via Emscripten (1.4 MB, ~40 ms load); hub post 36 runs Lean and F\* side by side |
 | Tests/demo | `Tests.lean`, `Demo.lean` | build-time guards + `#print axioms` audit; runnable tour |
@@ -147,6 +148,15 @@ shard packer, the proofs between them, the costs paid and open):
   which are still smoke-script-only. When you add an op, pin the
   NEGATIVE cases: an op answering `true` unconditionally passes every
   affirmative guard.
+- **Plan-equality gate** (`Wasm/StorePlanGateTests.lean`, npm
+  `test/store-plan-equivalence-1008.test.mjs`): a table of query pairs the
+  algebra proves equal, each with its theorem; `storeQueryPlan` must name the
+  same blocks and `storeQuery` the same multiset of rows for both texts. Paid
+  for by https://github.com/danbri/factoidal/issues/1008 (2026-10-25): the
+  path `?s p|q ?o` planned every block of a store (1,046 of 1,046, 10.9 MB,
+  8.4 s in londat) while the equal UNION planned 55. Fix a planner defect of
+  this class with an algebra rewrite plus its theorem, applied once in
+  `parseSparql`, and add a row to the table; do not special-case one store.
 - New `#guard`s go in `Tests.lean`; new theorems in `Invariants.lean`
   (or a sibling), each with a doc comment citing the spec section.
 
@@ -290,6 +300,19 @@ executable edge only.
 
 ## Pitfalls already paid for (don't rediscover)
 
+0. **A contract relation must fix the answer it admits; prove that it
+   does.** `EvalContract` (PRs 63 and 66) said "the reference answer, or an
+   answer that `Allowed` admits", and PR descriptions called that agreement
+   with SPARQL. On 2026-10-25 `allowed_not_unique` (PR 86) proved that
+   `Allowed` admits two answers with different row counts for one pattern:
+   `VALUES ?x { _:t }` joined with itself gives 1 row and 0 rows, through
+   the `equiv` constructor, whose `BindEq` ignores pairs that an earlier
+   pair of the same name hides. The backend was correct; the contract
+   proved less than the text claimed for two days. Rule: when a relation
+   stands in for "the specified answer", prove a uniqueness lemma
+   (`R a → R b → a ≈ b`) and that the reference answer satisfies it before
+   any description says "equal to the specification" (`AllowedS.unique`,
+   `allowedS_ref`, `Storage/BackendAgreement.lean`).
 1. **Derived `BEq` is lawless.** `deriving BEq` gives an instance
    with no `LawfulBEq`, so `x == x` is unprovable by `simp` and
    `beq_iff_eq` is unavailable. Derive `DecidableEq` INSTEAD and let

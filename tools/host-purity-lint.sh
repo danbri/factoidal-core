@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # host-purity-lint.sh — a host carries bytes and makes no decision the
-# specification reserves for the engine (CLAUDE.md iron rule 7). Three groups
-# of host files, three rules, one method (group 3 is at the end).
+# specification reserves for the engine (CLAUDE.md iron rule 7). Four groups
+# of host files, four rules, one method (group 3 is at the end).
 #
 # GROUP 1, the LWS, Solid and SPARQL endpoint hosts: no PROTOCOL decision. This lint fails
 # when one of those files contains
@@ -53,8 +53,14 @@ protocol_files=(
   "$root/npm/factoidal/bin/serve-worker.mjs"
   # The authorization server host (issue 916): also in the authz group below.
   "$root/npm/factoidal/authz/server.mjs"
+  # The WebDAV server host (issue 1066): sockets, the files and paths the
+  # engine names, lws requests and fetches; every WebDAV decision is in
+  # formal/lean4/L4Factoidal/WebDAV/. Also in the store group: it reads and
+  # writes files.
+  "$root/npm/factoidal/webdav/server.mjs"
 )
 store_files=(
+  "$root/npm/factoidal/webdav/server.mjs"
   "$root/npm/factoidal/store-http/index.mjs"
   "$root/npm/factoidal/store-host/index.mjs"
   "$root/npm/factoidal/bin/store.mjs"
@@ -63,6 +69,11 @@ store_files=(
   # The LWS storage directory (`lws-serve --storage files`, issue 918): the
   # engine names every file and gives every byte; the host reads and writes.
   "$root/npm/factoidal/lws/persist.mjs"
+  # The LWS reader of an SBM11 generation (issue 1010 KR3) and its Node
+  # synchronous transport: GETs and bytes only; the engine names every file
+  # and checks every length.
+  "$root/npm/factoidal/lib/sbm11-lws.mjs"
+  "$root/npm/factoidal/lib/sync-http-node.mjs"
 )
 
 protocol_pattern='\b(20[0-9]|30[0-9]|40[0-9]|41[0-9]|42[0-9]|50[1-9])\b|\b(Link|Allow|Accept-Patch|Accept-Post|Accept-Put|Last-Modified|ETag|If-Match|If-None-Match|Slug|Location|WAC-Allow|Access-Control-[A-Za-z-]+)\b|containment|describedby|\bacl\b|pim:|text/n3|\bldp:|\bsolid:|WebID|\binbox\b'
@@ -108,6 +119,38 @@ authz_pattern='invalid_(request|target|grant|client|token)|unsupported_grant_typ
 # The default bind address of the listening socket is not a fetch decision.
 for f in "${authz_files[@]}"; do scan "$f" "$authz_pattern" "s/'127\.0\.0\.1'//g"; done
 
+# GROUP 4, the lws-client adapter (https://github.com/danbri/factoidal/issues/1065):
+# it translates the lws-driver/1 protocol's JSON into calls of the Lean client
+# and returns the client's own `report`. It reads no response and decides
+# nothing about the wire. This lint fails when deploy/lws-client-adapter/adapter.mjs
+# (comments stripped) contains
+#
+#   * the patterns of group 1 (an HTTP status, a protocol header name,
+#     protocol vocabulary), except the word `inbox`, which is the name of an
+#     argument of the driver protocol (`subscribe`);
+#   * key or identifier construction (node:crypto key generation, base58, a
+#     multicodec, `did:key:`), a linkset media type, an ID token type URI, an
+#     LWS vocabulary IRI or a `.well-known` path: the client decides each.
+adapter_files=("$root/deploy/lws-client-adapter/adapter.mjs")
+adapter_pattern='\b(20[0-9]|30[0-9]|40[0-9]|41[0-9]|42[0-9]|50[1-9])\b|\b(Link|Allow|Accept-Patch|Accept-Post|Accept-Put|Last-Modified|ETag|If-Match|If-None-Match|Slug|Location|WAC-Allow|Access-Control-[A-Za-z-]+)\b|containment|describedby|\bacl\b|pim:|text/n3|\bldp:|\bsolid:|WebID|generateKeyPairSync|createPublicKey|createPrivateKey|base58|multicodec|did:key:|linkset\+json|id_token|token-type|lws#|\.well-known'
+for f in "${adapter_files[@]}"; do scan "$f" "$adapter_pattern" "s/^$//"; done
+
+# GROUP 5, the AES call-out host (https://github.com/danbri/factoidal/issues/1081):
+# npm/factoidal/lib/cipher-host.mjs runs the one WebCrypto operation the
+# engine names and answers bytes or a refusal with no reason. Lean checks every
+# length and chooses every algorithm (CipherCall.Req.wellFormed). This lint
+# fails when that file (comments stripped) contains
+#
+#   * a length comparison (`.length <`, `.byteLength ==`, `.size >`, ...):
+#     a host that checks a length has made a decision the engine owns;
+#   * an error message read or passed on (`.message`, `catch (e)`): every
+#     failure must be the same refusal (padding oracle, Jager and Somorovsky
+#     2011);
+#   * a key or tag size choice (`keySize`, `keyLength`, a `length:` member).
+cipher_files=("$root/npm/factoidal/lib/cipher-host.mjs")
+cipher_pattern='\.(length|byteLength|size) *(<|>|==|!=)|\.message\b|catch *\(|keySize|keyLength|\blength *:'
+for f in "${cipher_files[@]}"; do scan "$f" "$cipher_pattern" "s/^$//"; done
+
 # GROUP 3, the RDF/JS, dataset, CLI and hub JavaScript: no RDF SYNTAX, DATATYPE
 # or IRI decision (https://github.com/danbri/factoidal/issues/894; CLAUDE.md
 # anti-pattern 36). The engine parses, writes, escapes, chooses datatypes and
@@ -133,6 +176,7 @@ rdf_files=(
   "$root/npm/factoidal/fn.js"
   "$root/npm/factoidal/solid/client/index.mjs"
   "$root/npm/factoidal/lws/client.mjs"
+  "$root/deploy/lws-client-adapter/adapter.mjs"
 )
 for f in "$root"/npm/factoidal/lib/*.mjs "$root"/npm/factoidal/bin/*.mjs \
          "$root"/docs/web/hub/assets/*.mjs; do

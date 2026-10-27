@@ -354,13 +354,9 @@ theorem evalPayload_backendOrReference (env : EvalEnv) (view : View) (q : Query)
          match backend.bind (·.runAsk env q) with
          | some b => .boolean b
          | none => .boolean (evalAsk env ds q)
-       | .select sel =>
+       | .select _ =>
          match backend.bind (·.runSelect env q) with
-         | some rows =>
-           let vars := match sel with
-             | .vars items => selectItemVars items
-             | .all => collectVarsInOrder rows
-           .bindings vars rows
+         | some rows => .bindings q.projectedVars rows
          | none =>
            let (vars, rows) := evalSelect env ds q
            .bindings vars rows

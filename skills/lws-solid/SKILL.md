@@ -1,6 +1,6 @@
 ---
 name: lws-solid
-description: Run, test and extend Factoidal's Linked Web Storage 1.0 and Solid Protocol support - the Node hosts, the wasm ABI they call, the host test suites, the three community interop scripts and the conformance ledger. Use when serving a storage, driving a Solid client, adding a protocol rule, or reading a score from one of these suites.
+description: Run, test and extend Factoidal's Linked Web Storage 1.0 and Solid Protocol support - the Node hosts, the wasm ABI they call, the host test suites, the three community interop scripts, the conformance ledger, and the WebDAV server that shows LWS storages to file browsers. Use when serving a storage, driving a Solid client, adding a protocol rule, mounting a storage in Finder or Explorer, or reading a score from one of these suites.
 ---
 
 # Linked Web Storage 1.0 and the Solid Protocol
@@ -57,6 +57,18 @@ answer back. Any status code, `Link` relation, media type, containment
 triple or access decision found in a `.mjs` under `npm/factoidal/lws/` or
 `npm/factoidal/solid/` is a rule violation. The only status a host writes
 is `500`, for a failure of the host itself.
+
+## Docker target for other testers
+
+`deploy/lws-target/` (README there): `lws-serve` and `authz-serve` in one
+container that keeps the target contract of Touchstone's `targetservers/`, so
+that another party can test our server with Docker alone. Owner, 2026-10-26,
+verbatim: "Idea is we write dockerfiles for our lws server and they or someone
+hammer it in a docker based server". Our job is the container for OUR server.
+Do not build or run the other implementations in `targetservers/` unless the
+owner asks for that run. (2026-10-26: a pasted Touchstone README was read as a
+request to run `run-all.sh` against all six other servers; the owner
+corrected it. Cost: one turn and a Docker setup that was not needed.)
 
 ## Run the servers
 
@@ -914,6 +926,73 @@ https://github.com/danbri/factoidal/issues/916). Gap, an expected failure in
 PKCE) for `client-oidc-token-type-id-token` (issue to open; the row names
 https://github.com/danbri/factoidal/issues/917).
 
+The driver adapter (https://github.com/danbri/factoidal/issues/1065,
+`deploy/lws-client-adapter/`, check it with `driver/adapters/check.mjs` of
+ebremer/lws-client: 37 passed, 0 failed, 0 skipped) only translates JSON.
+Each `done` document has a `report` (the driver's Metadata, Item, Page, Storage
+and Subscription shapes, `Client/Report.lean`) and each `fail` a `report` with
+the error kind. A session key may be P-256 or Ed25519; `createDidKey({
+algorithm })` (wasm op `lwsClientNewKey`, `Client/Keys.lean`) makes a
+`did:key` agent. An operation can name its linkset (`linksetUrl`), service
+endpoint (`endpoint`) or storage description (`storage`) directly. Rule:
+the adapter reads no response; `tools/host-purity-lint.sh` group 4 checks it.
+
+## WebDAV for file browsers (https://github.com/danbri/factoidal/issues/1066)
+
+Design record: `docs/designissues/2026-10-27-webdav.md` (mount file format,
+the WebDAV and LWS mapping, statuses, limits, what each client needs).
+
+```
+factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]   # default 127.0.0.1:8090
+```
+
+CONFIGDIR holds one Markdown file per mount (`README.md` is not one):
+
+```
+# Alice's files
+- kind: local
+- path: ./alice-storage
+
+# (another file) Bob's remote storage
+- kind: lws
+- url: https://storage.example/bob/
+- auth: did-key
+- key-file: ./bob.jwk
+- writable: true
+```
+
+* `local`: an `lws-serve` storage directory, opened with the same ops
+  (`openLwsStorage`, `insecureNoAuth`: the WebDAV server is the owner,
+  pagination off). Do not serve the directory with `lws-serve` at the same
+  time. `storage: snapshot|files` defaults to what the directory holds.
+* `lws`: the LWS client (`L4Factoidal/LWS/Client/`); `did-key` signs a
+  self-issued credential with the P-256 key file (made, mode 0600, when it
+  does not exist; the start line prints the `did:key`), `bearer` sends the
+  token file's access token. To give a key access, start `lws-serve DIR
+  --authz ASDIR --owner <that did:key>`.
+* Connect: macOS Finder, Go > Connect to Server, `http://127.0.0.1:8090/`;
+  Windows, Map network drive, `http://127.0.0.1:8090/`; GNOME Files,
+  `dav://127.0.0.1:8090/`; KDE Dolphin, `webdav://127.0.0.1:8090/`. Not yet
+  checked with the real clients: https://github.com/danbri/factoidal/issues/1079.
+
+| path | what it is |
+| --- | --- |
+| `formal/lean4/L4Factoidal/WebDAV/Config.lean` | mount files (one loop; theorem `scan_known`) |
+| `formal/lean4/L4Factoidal/WebDAV/Server.lean` | every method as a program over six storage operations (`Backend.Prog`); theorem `refused_keeps_state` |
+| `formal/lean4/L4Factoidal/WebDAV/Local.lean`, `Remote.lean` | an operation as one LWS request; as one LWS client operation (the one module that uses the client API) |
+| `formal/lean4/L4Factoidal/WebDAV/Xml.lean`, `If.lean`, `Path.lean` | XML bodies (depth limit 256, work-list serializer), the `If` header, targets |
+| `formal/lean4/L4Factoidal/WebDAV/Tests.lean`, `Theorems.lean` | `#guard`s of every method against `LWS.step MemStore`, directly and through the client; `browse_no_write` |
+| `formal/lean4/Wasm/Ops/WebDAV.lean` | `webdavOpen`, `webdavLoad`, `webdavStep`, `webdavResume`, `webdavClose` |
+| `npm/factoidal/webdav/server.mjs` | the host: sockets, the files the engine names, `lws` requests to the storage handle, `fetch`es |
+
+Tests: `node tests/webdav/server.mjs` (every method through a local and a
+remote mount on `lws-serve --authz`; one expected failure,
+https://github.com/danbri/factoidal/issues/1078: dead properties and locks are
+lost at a restart), `node tests/webdav/litmus.mjs` (needs `apt-get install
+litmus`; expected failures in `tests/webdav/litmus-xfail.tsv`; 2026-10-27:
+208 pass, 0 fail, 0 xfail (out of 208)), `node tests/webdav/scaling.mjs`
+(the decoders at n, 2n, 4n through the wasm module).
+
 ## Run the tests
 
 ```
@@ -1000,10 +1079,10 @@ issuance (the LWS authorization server, `authz-serve`, issues LWS access
 tokens, which solid-serve does not accept yet:
 https://github.com/danbri/factoidal/issues/928), Access Control Policy, Solid Notifications channels on the Solid
 server (the LWS server has the webhook suite, above),
-and persistence into Shardborough. The LWS `authn-openid` and `authn-ssi`
-drafts are implemented by the authorization server (`skills/authz-server`);
-`authn-saml` is not (no XML Signature verifier:
-https://github.com/danbri/factoidal/issues/926).
+and persistence into Shardborough. The LWS `authn-openid`, `authn-ssi`
+and `authn-saml` drafts are implemented by the authorization server
+(`skills/authz-server`; SAML: https://github.com/danbri/factoidal/issues/926,
+record `docs/designissues/2026-10-27-saml-xml-signature.md`).
 
 **Authentication is decided in Lean.** The JOSE layer
 (`L4Factoidal/JOSE/`) verifies ES256, RS256 and EdDSA through the vendored

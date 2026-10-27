@@ -1,11 +1,11 @@
 ---
-title: Data importers and pipelines
+title: Data importers and integration
 description: Turn CSV, JSON, JSON-LD and XHTML into RDF with CSVW, RML, JSON-LD and a GRDDL-style XSLT step, keep each step's output in its own named graph, and query across the steps.
 layout: hub.njk
 tests: tests/hub/hub_importers_test.mjs
 ---
 
-# Data importers and pipelines
+# Data importers and integration
 
 [Hub](../) · CSVW, RML, JSON-LD, GRDDL, the RDF parsers
 
@@ -13,6 +13,18 @@ Each importer returns a `Dataset`. This page converts four sources about
 the same railway stations, writes each result into its own named graph,
 and queries across the graphs. The named graph of a triple then records
 which step produced it.
+
+The use case is a station accessibility check that combines four
+publishers: a station register published as CSV, a list of lines from a
+JSON API, accessibility data in JSON-LD, and service notices on a web page.
+A typical question: which stations claim step-free access but have a lift
+notice today, and which source says each part?
+
+The four steps do not form a pipeline: no step reads the output of another.
+Each step converts one source, and the last section merges the four results
+(integration). For composition in sequence, where each node takes the output
+of the node before it, see [Checked pipelines](../checked-pipelines/) and
+[A Canary Wharf pipeline](../canary-wharf-pipeline/).
 
 ## Step 1: CSV with CSVW metadata
 
@@ -121,13 +133,13 @@ noticeXslt = `<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XS
 fromXhtml = Factoidal.parse(await Factoidal.xsltTransform(noticeXslt, noticeXhtml), { format: 'rdfxml' })
 ```
 
-## One dataset, one named graph per step
+## Integration: one dataset, one named graph per step
 
 `Dataset` is an RDF/JS `DatasetCore`, so `add` puts a quad into it. Each
 step's triples go into a graph named after the step.
 
 ```observable-js
-pipeline = {
+integrated = {
   const { namedNode, quad } = Factoidal.dataFactory;
   const all = await Factoidal.parse('', { format: 'nquads' });
   const steps = { csvw: fromCsvw, rml: fromRml, jsonld: fromJsonLd, grddl: fromXhtml };
@@ -140,14 +152,14 @@ pipeline = {
 ```
 
 ```observable-js
-perGraph = pipeline.query(`SELECT ?g (COUNT(*) AS ?triples) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY ?g`)
+perGraph = integrated.query(`SELECT ?g (COUNT(*) AS ?triples) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g ORDER BY ?g`)
 ```
 
 A query that joins facts from four steps, and reports the graph of each
 fact:
 
 ```observable-js
-joined = pipeline.query(`PREFIX ex: <http://example.org/>
+joined = integrated.query(`PREFIX ex: <http://example.org/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 SELECT ?station ?line ?stepFree ?notice ?nameFrom ?lineFrom WHERE {
   GRAPH ?nameFrom { ?s rdfs:label ?station }
@@ -157,14 +169,14 @@ SELECT ?station ?line ?stepFree ?notice ?nameFrom ?lineFrom WHERE {
 } ORDER BY ?station`)
 ```
 
-The whole pipeline as TriG:
+The integrated dataset as TriG:
 
 ```observable-js
-return pipeline.serialize({ format: 'trig' })
+return integrated.serialize({ format: 'trig' })
 ```
 
-The [inference page](../inference/) runs RDFS and OWL reasoning over a
-pipeline of this shape.
+The [inference page](../inference/) runs RDFS and OWL reasoning over an
+integrated dataset of this shape.
 
 ## The parsers
 

@@ -19,6 +19,15 @@ Owner, 2026-08-24, verbatim:
    commitments. Lead with the result or the decision needed.
 6. **A repeated steer means the last report failed.** Record decisions
    in this file the first time, not the third.
+7. **Every issue, PR and CI run you mention gets a full URL and a short
+   gloss in parentheses**, e.g. "https://github.com/danbri/factoidal/issues/1009
+   (SBM11 in npm)". Only a passing mention may have one of the two. Status
+   lists are short paragraphs, not tables; text the owner may paste into
+   another session goes in its own code block (the iOS app copies whole
+   messages only). Owner, 2026-10-25: "Urls pls always as i am on phone";
+   "Please when you mention issues, either link them fully or give a brief
+   gloss in parens, ideally both unless the mention is very much \"in
+   passing\"."
 7. **An explanation of how a subsystem works, once given in chat, is
    written into `docs/designissues/` in the same landing** and linked
    from the worknote index and the relevant skill. Owner, 2026-09-03,
@@ -140,6 +149,17 @@ lines diverged by 82 and 87 commits; another session merged them
 Rule: before every push, `git fetch origin main` and check that
 `origin/main` is an ancestor of what you push
 (`git merge-base --is-ancestor origin/main HEAD`); push to `main` only.
+
+## The public site (owner, 2026-10-25)
+
+Owner, 2026-10-25, verbatim, on the publishing proposal of
+https://github.com/danbri/factoidal-core/pull/98: "site serves from /factoidal/
+repo". The URL stays https://danbri.github.io/factoidal/. Its Pages workflow
+(`danbri/factoidal/.github/workflows/deploy-pages.yml`) builds `docs/` of this
+repository, branch `main`, daily and on a `repository_dispatch` that
+`.github/workflows/dispatch-pages.yml` here sends when the site sources change
+(it needs the secret `FACTOIDAL_PAGES_DISPATCH_TOKEN`). Edit the site here,
+never in `danbri/factoidal/docs/`.
 
 ## Shardborough is a persistent store for very large data (owner, 2026-10-11)
 
@@ -704,6 +724,20 @@ The choices below are the coordinator's, under that delegation.
   cache misses, and a linear parse alone gives 2.1 to 2.2 on the same
   machine. No instruction-count harness is added for this row.
 
+### JSON-LD-star follows the RDF 1.2 direction (owner, 2026-10-26 and 2026-10-27)
+
+> "implement JSON-LD-star: JSON-LD-star is SOTA. It will likely change a bit,
+> but let's start there first."
+> "decisions - do something sensible and record the choice. Go for whatever is
+> closer to RDF 1.2 direction."
+
+- Target: the json-ld-star PR 61 tests (`third_party/testing/json-ld-star`),
+  Lean 4 only, opt-in option `rdfstar`; score `l4jsonld-api --star`.
+- Where the fixtures or the outline disagree with RDF 1.2 Turtle, follow RDF
+  1.2 and record a local override: an annotation's `@id` may be an IRI; fromRdf
+  folds any reifier of an asserted triple into `@annotation`.
+- Record: `docs/designissues/2026-10-26-jsonld-star.md` § Decisions.
+
 ### Freeform composition over checked components (owner, 2026-10-25)
 
 > "we want to enable and underwrite freeform composition as I sketch, using
@@ -721,6 +755,57 @@ The choices below are the coordinator's, under that delegation.
 - A component that is not proved may run after an explicit opt-in; its
   evidence record says so. Never report a guarantee the path does not have.
 - Record: https://github.com/danbri/factoidal/issues/975#issuecomment-6393905605
+
+### Network retrieval goes into the evidence record, as high-risk data (owner, 2026-10-25)
+
+> "Any transactions with the global web also need to go into the evidence
+> pipeline system - if we dereference http or https at least. maybe ftp,
+> gopher and others, keep records of headers, ip addresses, certs, timing etc
+> etc. Treat this information as potentially high risk re security/privacy."
+
+- Every HTTP or HTTPS read for a pipeline step gives a retrieval record
+  (request and response headers, redirects, remote address, TLS and server
+  certificate fingerprints, timing, body SHA-256). A scheme with no record type
+  is refused, not fetched without a record.
+- Default deny: credential values (Authorization, Cookie, Set-Cookie, token
+  query parameters) are removed, never hashed; no local address or client
+  certificate; the full record stays in a local store; shared provenance gets
+  a small subset unless the caller opts in.
+- TLS: keep the crypto details (version, cipher suite, key exchange group,
+  signature algorithm, ALPN, SNI, the full server certificate chain in DER,
+  the verification result and trust anchor, SCTs, a stapled OCSP response).
+  Owner, 2026-10-25, verbatim: "Re recording tls, keep more of the crypto
+  details too, certs etc". Never session keys, key logs or client
+  certificates.
+- A retrieval is an assumption of the run, named with the body checksum, never
+  a theorem.
+- Pipeline wires: SELECT gives `table` ("select give table? Sure"); a source's
+  name has no default from its locator ("no default"). Owner, 2026-10-25.
+- Design: section 4 of `docs/designissues/2026-10-25-tabular-and-source-models.md`;
+  tracking https://github.com/danbri/factoidal/issues/1035.
+
+### Experimental code notice; AES through WebCrypto (owner, 2026-10-27)
+
+Owner, 2026-10-27, verbatim: "main docs, cli, readme, hub should say that all
+protocol, auth/security code, CLIs etc (core library) “EXPERIMENTAL
+UNDEREEVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS
+WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.”"
+
+- The notice, spelled `EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.`, is at the top of `README.md`,
+  `npm/factoidal/README.md`, the hub index and the hub servers page, in the
+  npm package description, in every `factoidal` help text, and on standard
+  error when a server, client or key command starts (`REVIEW_WARNING` in
+  `npm/factoidal/bin/factoidal.mjs`). A new server, protocol or security
+  surface carries it too.
+- AES (for XML Encryption and JWE, https://github.com/danbri/factoidal/issues/1081):
+  WebCrypto on every JavaScript host, decisions in Lean, measured by vectors
+  and a differential run. Owner, verbatim: "Why not just WebCrypto everywhere
+  (browser/node or wasm fallback?)"; then "Yes" to amending the crypto policy.
+  Native executables: owner, 2026-10-27, verbatim: "Ok for now: “My proposal
+  is HACL* Vale on x86-64 and a refusal on other CPU”". So native x86-64 uses
+  HACL\* Vale AES-GCM; other native CPUs refuse AES with a message that names
+  https://github.com/danbri/factoidal/issues/677. Rule text:
+  `skills/crypto-policy/SKILL.md` § AES through WebCrypto.
 
 ### There are no users. Prefer the right structure to the compatible one
 

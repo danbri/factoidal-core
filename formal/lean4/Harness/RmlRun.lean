@@ -234,7 +234,7 @@ def datatypeDefects : List (String × String) :=
   , ("RMLTTC0004g", sibling), ("RMLTTC0005b", sibling), ("RMLTTC0006b", sibling)
   , ("RMLTTC0006c", sibling), ("RMLTTC0006d", sibling), ("RMLTTC0006e", sibling)
   , ("RMLSTC0003",
-      "the expected output writes the ages as xsd:integer; the data file holds plain literals, the results of a SPARQL query serialised as CSV are strings, and the mapping states no datatype") ]
+      "the expected output writes the ages as xsd:integer; the data file holds plain literals (so the solutions have no natural datatype), and the mapping states no datatype") ]
 
 /-- Compare a produced dataset with an expected one. A mismatch that
     disappears when every datatype is erased is a fixture defect only for

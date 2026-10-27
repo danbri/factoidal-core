@@ -226,6 +226,11 @@ level = 1
 spec = "SPARQL 1.1 Query §18.2.4-§18.2.5 and §18.5 (solution modifiers, query forms)"
 
 [[module]]
+name = "L4Factoidal.SPARQL.PathAlternative"
+level = 1
+spec = "SPARQL 1.1 Query §18.4 and §18.2.2.4 (an alternative of link paths as the UNION of triple patterns; issue 1008)"
+
+[[module]]
 name = "L4Factoidal.SPARQL.Exists"
 level = 1
 spec = "SPARQL 1.1 Query §18.6 (EXISTS evaluation)"

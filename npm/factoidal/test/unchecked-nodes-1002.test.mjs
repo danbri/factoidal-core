@@ -1,7 +1,7 @@
 // Unchecked composition (https://github.com/danbri/factoidal/issues/1002;
 // owner-approved: issue 975 comment 6393905605 item 3). Part 1 is pure JS
-// (lib/evidence.mjs) and needs no wasm. Part 2 runs the engine and is
-// skipped when the wasm is absent.
+// (lib/evidence.mjs) and needs no wasm. Part 2 runs the engine and
+// fails when the wasm is absent or has no stageList op.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -74,15 +74,17 @@ test('a prior record without `checked` falls back to its status', () => {
 
 // ---- Part 2: the engine ----
 
-let skip = 'wasm engine not built';
-try {
+// The package wasm must serve the ops of this file: a missing op fails the
+// cases, never skips them (https://github.com/danbri/factoidal/issues/1038, P2).
+test('the package wasm serves stages, explain', async () => {
   const caps = await f.capabilities();
-  skip = caps.stages && caps.explain ? false : 'wasm has no stageList op';
-} catch (_err) { /* engine did not load: skip */ }
+  assert.equal(caps.stages, true, 'capabilities().stages');
+  assert.equal(caps.explain, true, 'capabilities().explain');
+});
 
 const TTL = '<http://example.org/a> <http://example.org/p> <http://example.org/b> .';
 
-test('a pipeline of proved nodes: proved true, no unchecked steps', { skip }, async () => {
+test('a pipeline of proved nodes: proved true, no unchecked steps', async () => {
   const proved = (await f.stages()).find((s) => s.bound && s.status === 'proved');
   assert.ok(proved, 'no bound proved stage');
   const r = await f.run(f.pipe(await f.node('turtleDocumentReader'), await f.node('rdfsReasoner')),
@@ -93,7 +95,7 @@ test('a pipeline of proved nodes: proved true, no unchecked steps', { skip }, as
   for (const e of r.evidence) assert.equal(e.checked, e.status === 'proved');
 });
 
-test('a pipeline through an assumed writer: proved false and the stage is listed', { skip }, async () => {
+test('a pipeline through an assumed writer: proved false and the stage is listed', async () => {
   const w = (await f.stages()).find((s) => s.name === 'turtleDocumentWriter');
   assert.equal(w.status, 'assumed');
   const r = await f.run(f.pipe(await f.node('turtleDocumentReader'), await f.node('turtleDocumentWriter')), TTL);
@@ -105,7 +107,7 @@ test('a pipeline through an assumed writer: proved false and the stage is listed
   assert.equal('unchecked' in r.evidence[1], false);
 });
 
-test('with the opt-in an assumed step is marked unchecked with its reason', { skip }, async () => {
+test('with the opt-in an assumed step is marked unchecked with its reason', async () => {
   const r = await f.run(f.pipe(await f.node('turtleDocumentReader'), await f.node('turtleDocumentWriter')),
     TTL, { unchecked: true });
   const rec = r.evidence.find((e) => e.stage === 'turtleDocumentWriter');
@@ -114,14 +116,14 @@ test('with the opt-in an assumed step is marked unchecked with its reason', { sk
   assert.equal(r.proved, false);
 });
 
-test('a missing stage without the opt-in still refuses', { skip }, async () => {
+test('a missing stage without the opt-in still refuses', async () => {
   const missing = (await f.stages()).find((s) => s.status === 'missing');
   const n = await f.node(missing.name);
   await assert.rejects(f.run(f.pipe(await f.node('turtleDocumentReader'), n), TTL),
     (err) => err instanceof FactoidalError && err.code === 'op.failed');
 });
 
-test('a missing stage with the opt-in and no runner refuses op.unknown', { skip }, async () => {
+test('a missing stage with the opt-in and no runner refuses op.unknown', async () => {
   const missing = (await f.stages()).find((s) => s.status === 'missing' && !s.bound);
   const n = await f.node(missing.name);
   await assert.rejects(f.run(f.pipe(await f.node('turtleDocumentReader'), n), TTL, { unchecked: true }),

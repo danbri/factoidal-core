@@ -543,15 +543,14 @@ theorem store_nz (st : Store Id) (g : UInt64) (T : List IdTriple) (hst : BgpStor
     the table's rows bind no variable twice and are `IdEquiv` to the model's
     rows: `idPathRows` after `idConstRefl` of `idEvalPath` over `T`. -/
 theorem pathTableM_rows (st : Store Id) (g : UInt64) (T : List IdTriple) (hst : BgpStore st g T)
-    (cid : Term → Option UInt64) (notLit : UInt64 → Bool)
-    (hlit : ∀ x ∈ IdPath.idGraphNodes T, IdPathEval.litTag x = some (!notLit x))
+    (cid : Term → Option UInt64)
     (rp : RPath) (path : L4Factoidal.SPARQL.PropertyPath) (hg : rp.g = some g)
     (hip : IdPathEval.IPathOk cid path rp.ipath) (hz : rp.zeroLen = IdPath.pathZeroLen path)
     (hs : rp.s ≠ .missing) (ho : rp.o ≠ .missing) (hc0 : ∀ x, (rp.s = .const x ∨ rp.o = .const x) → x ≠ 0) :
     ∃ tab how s, pathTableM st rp IdGroup.unitTable = pure (tab, how, s) ∧ tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧
       IdEquiv tab.idRows (idPathRows (endOf rp.s) (endOf rp.o)
         (IdPath.idConstRefl (IdPath.pathZeroLen path) (IdPath.idConsts (endOf rp.s) (endOf rp.o))
-          (IdPath.idEvalPath (fun i => cid (.iri i)) notLit path T))) := by
+          (IdPath.idEvalPath (fun i => cid (.iri i)) path T))) := by
   have hpr := pathRestr_unit rp hs ho
   generalize hP : pathRestr rp IdGroup.unitTable = pr at hpr
   obtain ⟨fwd, R, how⟩ := pr
@@ -560,12 +559,12 @@ theorem pathTableM_rows (st : Store Id) (g : UInt64) (T : List IdTriple) (hst : 
     have := restrOf_good rp.s rp.o
     rw [← hpr] at this
     exact this
-  obtain ⟨pairs0, s, he, hp0⟩ := IdPathEval.evalIM_spec st g T hst cid notLit hlit path rp.ipath hip fwd R hR
-  let L := IdPath.idEvalPath (fun i => cid (.iri i)) notLit path T
+  obtain ⟨pairs0, s, he, hp0⟩ := IdPathEval.evalIM_spec st g T hst cid path rp.ipath hip fwd R hR
+  let L := IdPath.idEvalPath (fun i => cid (.iri i)) path T
   have hTnz := store_nz st g T hst
   have hLnz : ∀ pr ∈ L, pr.1 ≠ 0 ∧ pr.2 ≠ 0 := by
     intro pr hpr'
-    obtain ⟨h1, h2⟩ := IdPath.eval_nodes (fun i => cid (.iri i)) notLit T path pr hpr'
+    obtain ⟨h1, h2⟩ := IdPath.eval_nodes (fun i => cid (.iri i)) T path pr hpr'
     rw [IdPathScanTheorems.mem_graphNodes] at h1 h2
     obtain ⟨x, hx, e1 | e1⟩ := h1 <;> obtain ⟨y, hy, e2 | e2⟩ := h2 <;>
       exact ⟨e1 ▸ (by first | exact (hTnz x hx).1 | exact (hTnz x hx).2),
@@ -727,11 +726,11 @@ theorem keep_vv (v w : String) (c : Array UInt64) (fwd : Bool) (pr : UInt64 × U
 
 /-- No id of a pair of the path relation over the graph is 0. -/
 theorem eval_nz (st : Store Id) (g : UInt64) (T : List IdTriple) (hst : BgpStore st g T)
-    (cid : Term → Option UInt64) (notLit : UInt64 → Bool) (path : L4Factoidal.SPARQL.PropertyPath) :
-    ∀ pr ∈ IdPath.idEvalPath (fun i => cid (.iri i)) notLit path T, pr.1 ≠ 0 ∧ pr.2 ≠ 0 := by
+    (cid : Term → Option UInt64) (path : L4Factoidal.SPARQL.PropertyPath) :
+    ∀ pr ∈ IdPath.idEvalPath (fun i => cid (.iri i)) path T, pr.1 ≠ 0 ∧ pr.2 ≠ 0 := by
   have hTnz := store_nz st g T hst
   intro pr hpr'
-  obtain ⟨h1, h2⟩ := IdPath.eval_nodes (fun i => cid (.iri i)) notLit T path pr hpr'
+  obtain ⟨h1, h2⟩ := IdPath.eval_nodes (fun i => cid (.iri i)) T path pr hpr'
   rw [IdPathScanTheorems.mem_graphNodes] at h1 h2
   obtain ⟨x, hx, e1 | e1⟩ := h1 <;> obtain ⟨y, hy, e2 | e2⟩ := h2 <;>
     exact ⟨e1 ▸ (by first | exact (hTnz x hx).1 | exact (hTnz x hx).2),
@@ -746,11 +745,10 @@ theorem model_vv (v w : String) (z : Bool) (L : IdPairs) :
 
 section
 variable (st : Store Id) (g : UInt64) (T : List IdTriple) (hst : BgpStore st g T)
-    (cid : Term → Option UInt64) (notLit : UInt64 → Bool)
-    (hlit : ∀ x ∈ IdPath.idGraphNodes T, IdPathEval.litTag x = some (!notLit x))
+    (cid : Term → Option UInt64)
     (rp : RPath) (path : L4Factoidal.SPARQL.PropertyPath) (hg : rp.g = some g)
     (hip : IdPathEval.IPathOk cid path rp.ipath)
-include hst hlit hg hip
+include hst hg hip
 
 /-- `pathTableM` with candidates for a variable endpoint from the rows of
     `t`: its table, joined with `t`, gives the rows of the join of `t` with
@@ -764,21 +762,21 @@ theorem pathTableM_cands (v w : String) (hsv : rp.s = .var v) (hov : rp.o = .var
     (hc : pathCands t (if fwd then v else w) = some c) :
     ∃ tab how s, pathTableM st rp t = pure (tab, how, s) ∧ tab.WF ∧ (∀ r ∈ tab.idRows, Nd r) ∧
       IdEquiv (IdJoin.idJoin t.idRows tab.idRows)
-        (IdJoin.idJoin t.idRows (idPathRows (.var v) (.var w) (IdPath.idEvalPath (fun i => cid (.iri i)) notLit path T))) := by
+        (IdJoin.idJoin t.idRows (idPathRows (.var v) (.var w) (IdPath.idEvalPath (fun i => cid (.iri i)) path T))) := by
   obtain ⟨hgood, hrows⟩ := pathCands_rows t ht _ c hc
   generalize hP : pathRestr rp t = pr at hR
   obtain ⟨fwd', R, how⟩ := pr
   obtain ⟨e1, e2⟩ := hR
   simp only [] at e1 e2
   subst e1 e2
-  obtain ⟨pairs0, s, he, hp0⟩ := IdPathEval.evalIM_spec st g T hst cid notLit hlit path rp.ipath hip fwd' (some c) hgood
+  obtain ⟨pairs0, s, he, hp0⟩ := IdPathEval.evalIM_spec st g T hst cid path rp.ipath hip fwd' (some c) hgood
   have hpp : pathPairsOf rp pairs0 = pairs0 := by
     simp [pathPairsOf, hsv, hov]
-  have hLnz := eval_nz st g T hst cid notLit path
+  have hLnz := eval_nz st g T hst cid path
   have hpnz : ∀ pr ∈ pairs0.toList, pr.1 ≠ 0 ∧ pr.2 ≠ 0 := fun q hq =>
     hLnz q (List.mem_filter.mp (hp0.mem_iff.mp hq)).1
   obtain ⟨hwf, hpw⟩ := pathRowsTable_rows (.var v) (.var w) (by simp) (by simp) pairs0 hpnz
-  let L := IdPath.idEvalPath (fun i => cid (.iri i)) notLit path T
+  let L := IdPath.idEvalPath (fun i => cid (.iri i)) path T
   have hperm : (pairs0.toList.filterMap (idPathRow (endOf (.var v)) (endOf (.var w)))).Perm
       ((idPathRows (.var v) (.var w) L).filter (SemiJoin.keepRow (if fwd' then v else w) (fun x => c.contains x))) := by
     refine (hp0.filterMap _).trans (List.Perm.of_eq ?_)
@@ -814,9 +812,9 @@ theorem pathTableM_same (hz : rp.zeroLen = IdPath.pathZeroLen path)
       IdEquiv (IdJoin.idJoin t.idRows tab.idRows)
         (IdJoin.idJoin t.idRows (idPathRows (endOf rp.s) (endOf rp.o)
           (IdPath.idConstRefl (IdPath.pathZeroLen path) (IdPath.idConsts (endOf rp.s) (endOf rp.o))
-            (IdPath.idEvalPath (fun i => cid (.iri i)) notLit path T)))) := by
+            (IdPath.idEvalPath (fun i => cid (.iri i)) path T)))) := by
   obtain ⟨tab, how, s, he, hwf, hnd, heq⟩ :=
-    pathTableM_rows st g T hst cid notLit hlit rp path hg hip hz hs ho hc0
+    pathTableM_rows st g T hst cid rp path hg hip hz hs ho hc0
   have hnt := BgpTableTheorems.nd_idRows t ht.nodup
   refine ⟨tab, how, s, ?_, hwf, hnd, BgpTableTheorems.idJoin_equiv (IdEquiv.refl _) heq hnt hnt⟩
   have : pathTableM st rp t = pathTableM st rp IdGroup.unitTable := by
@@ -838,8 +836,8 @@ theorem pathTableM_join (hz : rp.zeroLen = IdPath.pathZeroLen path)
       IdEquiv (IdJoin.idJoin t.idRows tab.idRows)
         (IdJoin.idJoin t.idRows (idPathRows (endOf rp.s) (endOf rp.o)
           (IdPath.idConstRefl (IdPath.pathZeroLen path) (IdPath.idConsts (endOf rp.s) (endOf rp.o))
-            (IdPath.idEvalPath (fun i => cid (.iri i)) notLit path T)))) := by
-  have same := pathTableM_same st g T hst cid notLit hlit rp path hg hip hz hs ho hc0 t ht
+            (IdPath.idEvalPath (fun i => cid (.iri i)) path T)))) := by
+  have same := pathTableM_same st g T hst cid rp path hg hip hz hs ho hc0 t ht
   cases hs' : rp.s with
   | missing => exact absurd hs' hs
   | const x =>
@@ -855,12 +853,12 @@ theorem pathTableM_join (hz : rp.zeroLen = IdPath.pathZeroLen path)
       rw [model_vv]
       cases hcv : pathCands t v with
       | some c =>
-        exact pathTableM_cands st g T hst cid notLit hlit rp path hg hip v w hs' ho' t ht true c
+        exact pathTableM_cands st g T hst cid rp path hg hip v w hs' ho' t ht true c
           (by simp [pathRestr, hs', ho', hcv]) (by simpa using hcv)
       | none =>
         cases hcw : pathCands t w with
         | some c =>
-          exact pathTableM_cands st g T hst cid notLit hlit rp path hg hip v w hs' ho' t ht false c
+          exact pathTableM_cands st g T hst cid rp path hg hip v w hs' ho' t ht false c
             (by simp [pathRestr, hs', ho', hcv, hcw]) (by simpa using hcw)
         | none =>
           have := same (by simp [pathRestr, hs', ho', hcv, hcw, pathCands_unit])

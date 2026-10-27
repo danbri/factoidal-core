@@ -745,6 +745,23 @@ Rules:
   `ntriples-langdir-bad-4` keeps the RDF 1.2 refusal of a subtag of more than 8
   characters; do not turn that refusal into a warning.
 
+## ⚠️ A new wasm op or npm export must pass `tests/dataflow/run.sh` before it lands
+
+The pull-request CI of factoidal-core (`check`, `check-purity`, the full
+`lake build`) does not run `tests/dataflow/run.sh`. That suite holds the
+entry-point gate (`tools/entrypoint-gate.py`): every shipped wasm op, npm
+export and CLI command must be mapped to a registry stage in
+`foundation/entrypoints.toml`, or listed as a nonstage with a reason. The
+unbound list may only shrink.
+
+Cost of not running it: on 2026-10-25 the SBM11 pack landing
+(https://github.com/danbri/factoidal-core/pull/108) added the op
+`sbm11PackFiles` and the exports `packSbm11` and `mapReader` with green CI,
+and the entry-point gate failed on main with 5 errors until the next pipeline
+landing mapped them. Rule: a change that adds or renames a wasm op, an npm
+export or a CLI command runs `bash tests/dataflow/run.sh` (exit 0) and maps the
+new entry points in the same commit.
+
 ## Defective test data (owner rule, 2026-10-21)
 
 Owner, verbatim: "Dont list bad tests as our failing".
@@ -767,6 +784,44 @@ cannot be read (for example an undeclared prefix). Rules:
 
 Model: `formal/lean4/Harness/CsvwValidateRun.lean`, test308,
 https://github.com/danbri/factoidal/issues/700.
+
+## ⚠️ An npm test of a new op is a plain assertion, never "xfail until the wasm is rebuilt"
+
+The danbri/factoidal-builds `web-gates` job runs `npm test` in
+`npm/factoidal/` against the wasm built from the SAME core commit. An expected
+failure in that suite must name a shortfall of the source at that commit. An
+xfail that says "fails until the wasm is rebuilt" fails the gate on exactly the
+build that rebuilds it: the case passes, the harness turns red on the
+unexpected pass, and the web set is not published.
+
+Cost: on 2026-10-25 `npm/factoidal/test/from-iri-not-found.test.mjs` had two
+such cases (https://github.com/danbri/factoidal/issues/1032). Core main
+`a76d8694` got native sets only; the web set and the 0.16.0 release were
+blocked. `scripts/resolve-core.sh` in factoidal-builds counts a commit as
+built when its linux set exists, so a missing web set is never retried (25 of
+102 built core commits had no web set on 2026-10-26). The audit:
+https://github.com/danbri/factoidal/issues/1038.
+
+Rules:
+- A test of a new wasm op or a changed result is a plain assertion. Run
+  locally against an older fetched wasm it fails, and that failure is correct:
+  it names the stale wasm.
+- No capability-probe skip (`{ skip: 'wasm has no X op' }`). It passes
+  silently on a wasm that lacks the op. Assert the capability instead: one
+  case per file, `assert.equal(caps.X, true)` or the missing ops of the `ops`
+  reflection `deepEqual []`, and the other cases run with no `skip`. Model:
+  `npm/factoidal/test/explain-1002.test.mjs`. To test the refusal of an old
+  module, give the API a stub engine (model: the last case of
+  `npm/factoidal/test/sbm11-pack.test.mjs`); do not skip on the real one.
+- A skipped test is not a pass. `web-gates` fails when the `npm test` summary
+  has `# skipped N` with N > 0 (https://github.com/danbri/factoidal/issues/1038,
+  P3). A test that needs a tool CI does not install (Apache Jena for
+  `serve --tdb2`) goes in `npm/factoidal/test/jena/`, run by
+  `npm run test:jena`, and there it fails, not skips, when the tool is absent.
+  `npm test` reads only `test/*.test.js` and `test/*.test.mjs`.
+- The hub tests (`tests/hub/`) are not in `web-gates`. Their xfails for
+  features that need a new wasm are flipped when that wasm is fetched and
+  the new values are measured, not guessed.
 
 ## Expected failures (owner rule, 2026-09-07)
 

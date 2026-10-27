@@ -79,8 +79,19 @@ def varsOf (c : Json) : List (String × Value) :=
         | _         => none)
   | _ => []
 
+/-- The expression context's namespace declarations (XPath 1.0 §1: the
+    host supplies them; §2.3: a prefixed name in an expression is expanded
+    with them, and the document's own declarations do not apply). Read from
+    the manifest's top-level `namespaces` object, prefix to URI. -/
+def nsctxOf (j : Json) : List (String × String) :=
+  match field? "namespaces" j with
+  | some (.object ms) => ms.filterMap (fun (k, v) => match v with
+      | .string u => some (k, u)
+      | _         => none)
+  | _ => []
+
 /-- Score one case against its expected answer. -/
-def scoreCase (fixtures : Json) (c : Json) : String × Bool :=
+def scoreCase (fixtures : Json) (nsctx : List (String × String)) (c : Json) : String × Bool :=
   let name := (str? "name" c).getD "?"
   let fixtureKey := (str? "fixture" c).getD "a"
   let expr := (str? "expr" c).getD ""
@@ -91,7 +102,7 @@ def scoreCase (fixtures : Json) (c : Json) : String × Bool :=
     (s!"FAIL {name}: got \"{got}\", expected \"{expected}\"", got == expected)
   else
     let theDoc := fixtureDoc fixtures fixtureKey
-    let ctx : Ctx := { doc := theDoc, item := .doc theDoc, vars := varsOf c }
+    let ctx : Ctx := { doc := theDoc, item := .doc theDoc, vars := varsOf c, nsctx := nsctx }
     match evalText ctx expr with
     | none =>
         (s!"FAIL {name}: got \"<unreadable>\", expected \"{expected}\"", false)
@@ -118,7 +129,7 @@ def main (args : List String) : IO UInt32 := do
           let mut pass := 0
           let mut fail := 0
           for c in cases do
-            let (msg, ok) := scoreCase fixtures c
+            let (msg, ok) := scoreCase fixtures (nsctxOf j) c
             if ok then pass := pass + 1
             else
               fail := fail + 1

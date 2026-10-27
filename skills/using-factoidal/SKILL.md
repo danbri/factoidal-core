@@ -70,6 +70,13 @@ per-spec suite runners (`owl_runner`, `rdfc10_runner`, `shacl_runner`,
 
 ### 2. npm `@factoidal/core` — F\* flavour for Node and browsers
 
+> Note, 2026-10-26: this section describes the package as of 0.2.0.
+> Since 0.9.0 `@factoidal/core` carries one engine, the Lean 4 build
+> (https://github.com/danbri/factoidal/issues/713, npm Lean only); the
+> newest published version is 0.15.0. The current API reference is
+> `npm/factoidal/API.md`. The section "npm after 0.15.0" below lists what
+> main has that 0.15.0 does not.
+
 The npm registry serves `@factoidal/core` 0.1.0 (checked 2026-08-25);
 the in-tree package `npm/factoidal/` is 0.2.0 — run from a repository
 checkout (`require('<checkout>/npm/factoidal')`) to get the current
@@ -454,6 +461,59 @@ error. Parse format tags accepted by the Lean engine: `turtle`,
 `ntriples`, `nquads`, `trig`, `rdfxml`, plus RDF 1.2 modes
 (`turtle12`, `ntriples12`, `nquads12`, `trig12`); `jsonld` is a named
 gap and errors.
+
+## npm after 0.15.0 (on main 2026-10-25, not yet published)
+
+These landed on main on 2026-10-25 (`npm/factoidal/CHANGELOG.md`,
+"## Unreleased"). Each one marked "wasm" needs a wasm module built after
+0.15.0. The 0.15.0 wasm does not have the ops. Before you call them, check
+`capabilities()` or catch the error. Full text: `npm/factoidal/API.md`.
+
+```js
+import { packSbm11, mapReader, openSbm11, node, pipe, run, parse } from '@factoidal/core';
+
+// SBM11 generation packed in memory (wasm op sbm11PackFiles).
+// On the 0.15.0 wasm this rejects with code 'SBM11_NO_PACK_OP'.
+const files = await packSbm11(ttlText, { syntax: 'turtle', base: 'http://e/' });
+const store = await openSbm11('mem', { reader: mapReader(files) }); // mapReader: any wasm with SBM11 query ops
+store.query('SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }').json;
+store.close();
+
+// FROM / FROM NAMED IRI that names no graph: a warning, rows unchanged (wasm)
+const ds = await parse(ttlText, { format: 'turtle' });
+const rows = await ds.query('SELECT * FROM <http://e/none> WHERE { ?s ?p ?o }');
+rows.warnings;  // [{class:'dataset-iri-not-found', clause:'FROM', iri, message}] (non-enumerable)
+
+// Pipeline node settings in the evidence (wasm op pipelineCheckNodes)
+const p = pipe(await node('turtleDocumentReader'),
+               await node('shippedEvaluator', { query: 'CONSTRUCT WHERE { ?s ?p ?o }' }));
+const r = await run(p, ttlText);
+r.evidence[1].settings;        // canonical settings (keys sorted, narrowing defaults)
+r.evidence[1].settingsDigest;  // 'sha256:…'
+```
+
+- SBM11 in memory (wasm): `packSbm11(text, { syntax, base? })` resolves
+  to a `Map` from file name to bytes, the same bytes as native
+  `l4sbm11-pack` (no `CURRENT`); `mapReader(files)` is the reader for
+  `openSbm11`. Whole input and all files are in memory
+  (https://github.com/danbri/factoidal/issues/1009, SBM11 in npm).
+- Query warnings (wasm): `rows.warnings` with class `dataset-iri-not-found`
+  (https://github.com/danbri/factoidal/issues/1032, FROM IRI that names no
+  graph).
+- Node settings (wasm): evidence records carry `settings` and
+  `settingsDigest`; a setting outside the proved domain of a proved stage
+  makes the status `unproved` (with `registryStatus` and `outside`), and
+  `run()` reports `proved: false`.
+- Evaluator output wire by query form (wasm): SELECT gives `Table`, ASK
+  `Answer`, CONSTRUCT and DESCRIBE `Dataset`
+  (https://github.com/danbri/factoidal/issues/1026, CONSTRUCT wire).
+- CSVW as a pipeline stage (wasm): `node('CSVW (tabular data to RDF)',
+  { metadata, mode, base, url })`, CSV text in, Dataset out, status
+  `tested`, so `run()` needs `{ unchecked: true }`
+  (https://github.com/danbri/factoidal/issues/975, CSVW stage).
+- Inverse path `^p` keeps pairs whose object is a literal
+  (https://github.com/danbri/factoidal/issues/1023). This fix is already
+  in the web builds of danbri/factoidal-builds for main 8c275fcc and later.
 
 ## The Lean dispatch ABI for non-JS hosts
 

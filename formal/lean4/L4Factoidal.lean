@@ -61,10 +61,14 @@ import L4Factoidal.Dataflow.Sources
 import L4Factoidal.Dataflow.SourcesTests
 import L4Factoidal.Dataflow.LwsSource
 import L4Factoidal.Dataflow.Registry
+import L4Factoidal.Dataflow.NodeSettings
 import L4Factoidal.Dataflow.PackSetStage
 import L4Factoidal.Storage.PackSet
 import L4Factoidal.Storage.PackSetTests
 import L4Factoidal.Dataflow.RegistryTests
+import L4Factoidal.Dataflow.Wire
+import L4Factoidal.Dataflow.Pipeline
+import L4Factoidal.Dataflow.PipelineTests
 import L4Factoidal.RDF.ConciseBoundedDescription
 import L4Factoidal.RDF.ConciseBoundedDescriptionTheorems
 import L4Factoidal.RDF.StoreLoader
@@ -119,6 +123,7 @@ import L4Factoidal.Proof.Tests
 import L4Factoidal.Proof.RdfsProfile
 import L4Factoidal.RDFS.SchemaSplit
 import L4Factoidal.RDF.Datatypes
+import L4Factoidal.RDF.LiteralValue
 import L4Factoidal.RDF.Entailment
 import L4Factoidal.RDF.EntailmentTheorems
 import L4Factoidal.RDF.EntailmentSimpleRefinement
@@ -129,6 +134,7 @@ import L4Factoidal.RDF.EntailmentRdfsSpec
 import L4Factoidal.RDF.EntailmentGeneralize
 import L4Factoidal.RDF.Semantics
 import L4Factoidal.SPARQL.Expr
+import L4Factoidal.SPARQL.SameValue
 import L4Factoidal.SPARQL.ExprTheorems
 import L4Factoidal.SPARQL.ExprRefinement
 import L4Factoidal.SPARQL.Query
@@ -308,6 +314,8 @@ import L4Factoidal.SPARQL.Parser
 import L4Factoidal.SPARQL.ParserTests
 import L4Factoidal.SPARQL.DescribeTests
 import L4Factoidal.SPARQL.ParserTheorems
+import L4Factoidal.SPARQL.PathAlternative
+import L4Factoidal.SPARQL.PathAlternativeTheorems
 import L4Factoidal.SPARQL.TriplesBlockRef
 import L4Factoidal.SPARQL.Update
 import L4Factoidal.SPARQL.UpdateParser
@@ -356,17 +364,30 @@ import L4Factoidal.JOSE.Jwk
 import L4Factoidal.JOSE.Jws
 import L4Factoidal.JOSE.Jwt
 import L4Factoidal.JOSE.DPoP
+import L4Factoidal.JOSE.JweKey
+import L4Factoidal.JOSE.Jwe
+import L4Factoidal.JOSE.JweTests
 import L4Factoidal.Solid.Server.AuthConfig
 import L4Factoidal.Solid.Server.Auth
 import L4Factoidal.Solid.Server.Oidc
 import L4Factoidal.Crypto.P256Native
+import L4Factoidal.Crypto.ConcatKdf
+import L4Factoidal.Crypto.Aead
+import L4Factoidal.Crypto.AesGcmNative
+import L4Factoidal.Crypto.CipherCall
 import L4Factoidal.Crypto.RsaNative
+import L4Factoidal.Crypto.RsaOaep
+import L4Factoidal.Crypto.RsaOaepTests
 import L4Factoidal.VC.Multibase
 import L4Factoidal.VC.DidKey
 import L4Factoidal.VC.Context
 import L4Factoidal.VC.DataIntegrity
 import L4Factoidal.VC.Tests
 import L4Factoidal.VC.Theorems
+import L4Factoidal.CID.Multiformats
+import L4Factoidal.CID.Document
+import L4Factoidal.CID.Retrieve
+import L4Factoidal.CID.Tests
 import L4Factoidal.Geo.Types
 import L4Factoidal.Geo.Order
 import L4Factoidal.Geo.BBox
@@ -446,6 +467,10 @@ import L4Factoidal.Storage.Sbm11.GraphList
 import L4Factoidal.Storage.Sbm11.GraphListTheorems
 import L4Factoidal.Storage.Sbm11.PrmAt
 import L4Factoidal.Storage.Sbm11.PrmRange
+import L4Factoidal.Storage.Medium
+import L4Factoidal.Storage.Sbm11.HostSession
+import L4Factoidal.Storage.Sbm11.HostVerify
+import L4Factoidal.Storage.Sbm11.HostVerifyTests
 import L4Factoidal.Storage.Sbm11.DictRange
 import L4Factoidal.Storage.Sbm11.DictFinger
 import L4Factoidal.Storage.Sbm11.FrameWords
@@ -496,6 +521,7 @@ import L4Factoidal.Storage.Sbm11.MemGenStoreTheorems
 import L4Factoidal.Storage.Sbm11.MemGenWhereTheorems
 import L4Factoidal.Storage.Sbm11.FileGenTheorems
 import L4Factoidal.Storage.Sbm11.PackSpec
+import L4Factoidal.Storage.Sbm11.PackBytes
 import L4Factoidal.Storage.Sbm11.PackSpecTheorems
 import L4Factoidal.RDF.DictInjective
 import L4Factoidal.Storage.Sbm11.OverlayDict
@@ -742,8 +768,12 @@ import L4Factoidal.Storage.QuadDatasetSet
 import L4Factoidal.RDF.CanonicalSet
 import L4Factoidal.RDF.DocumentScopeTests
 import L4Factoidal.RDF.Format
+import L4Factoidal.RDF.FormatOfContent
 import L4Factoidal.RDF.MediaType
 import L4Factoidal.RDF.MediaTypeTests
+import L4Factoidal.RDF.IriSplit
+import L4Factoidal.RDF.VocabularyTable
+import L4Factoidal.RDF.Collections
 import L4Factoidal.RDF.Source
 import L4Factoidal.RDF.SourceJsonLd
 import L4Factoidal.RDF.SourceTheorems
@@ -859,6 +889,7 @@ import L4Factoidal.Storage.PlannerSoundness
 import L4Factoidal.Storage.SelectedDataset
 import L4Factoidal.Storage.SelectedDatasetTests
 import L4Factoidal.Storage.BackendRefinement
+import L4Factoidal.Storage.BackendAgreement
 import L4Factoidal.Storage.Sbm11.StoreCapsConnection
 import L4Factoidal.Storage.PackStream
 import L4Factoidal.Storage.GenerationVerify
@@ -932,16 +963,39 @@ import L4Factoidal.LWS.FileLayoutTests
 import L4Factoidal.HTTP.Cors
 import L4Factoidal.LWS.Cors
 import L4Factoidal.LWS.Client.Wire
+import L4Factoidal.LWS.Client.Report
 import L4Factoidal.LWS.Client.Machine
+import L4Factoidal.LWS.Client.Keys
+import L4Factoidal.LWS.Client.KeysTheorems
 import L4Factoidal.LWS.Client.Theorems
 import L4Factoidal.LWS.Client.Tests
+import L4Factoidal.WebDAV.Config
+import L4Factoidal.WebDAV.Path
+import L4Factoidal.WebDAV.Xml
+import L4Factoidal.WebDAV.If
+import L4Factoidal.WebDAV.Backend
+import L4Factoidal.WebDAV.Server
+import L4Factoidal.WebDAV.Local
+import L4Factoidal.WebDAV.Remote
+import L4Factoidal.WebDAV.Tests
+import L4Factoidal.WebDAV.Theorems
 -- The authorization server component (https://github.com/danbri/factoidal/issues/916).
 import L4Factoidal.Authz.Keys
 import L4Factoidal.Authz.Fetch
 import L4Factoidal.Authz.SubjectToken
 import L4Factoidal.Authz.Server
+import L4Factoidal.Authz.Mount
 import L4Factoidal.Authz.Theorems
 import L4Factoidal.Authz.Tests
+-- SAML 2.0 subject tokens: exclusive canonicalization, the XML Signature
+-- profile of SAML Core section 5 (https://github.com/danbri/factoidal/issues/926).
+import L4Factoidal.XML.ExcC14n
+import L4Factoidal.XML.DSig
+import L4Factoidal.XML.Enc
+import L4Factoidal.XML.EncTests
+import L4Factoidal.SAML.Assertion
+import L4Factoidal.SAML.Fixtures
+import L4Factoidal.SAML.Tests
 import L4Factoidal.Solid.Tests
 
 -- XMPP / GC3 (https://github.com/danbri/factoidal/ ... xmpp/DESIGN.md
@@ -1004,6 +1058,7 @@ import L4Factoidal.RIF.BoundaryTests
 import L4Factoidal.RIF.BoundaryTheorems
 import L4Factoidal.XSD.IdentityTheorems
 import L4Factoidal.XSD.ValueSpaceTheorems
+import L4Factoidal.XSD.CanonicalTheorems
 import L4Factoidal.Encoding.InteropTests
 import L4Factoidal.SPARQL.IdentityTests
 import L4Factoidal.SPARQL.NumericTests

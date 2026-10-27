@@ -188,7 +188,8 @@ def Term.hasDirectionB : Term → Bool
 
 /-- The datasets the writer of `fmt` accepts and is meant to keep. RDF/XML and
 JSON-LD: no triple term. JSON-LD: no directional language string (the writer
-accepts one and drops the direction, https://github.com/danbri/factoidal/issues/984).
+writes `@direction`; the JSON-LD 1.1 reader with no `rdfDirection` drops it,
+https://github.com/danbri/factoidal/issues/984).
 N-Triples: every IRI and language tag in the lexical space of its N-Triples
 production (`NTriplesRoundTrip.Triple.ntSafe`: IRIREF [8], LANGTAG [144s]); any
 blank-node label, as the writer relabels (`Dataset.relabelForWrite`,
@@ -269,7 +270,7 @@ theorem writerContractW_nt (sx : Sink.Extra) (rx : Source.Extra) (v : Syntax.Mod
   have hg : parseNTriples text v = .ok (Sink.flatten ds.relabelForWrite) :=
     NTriplesRoundTrip.parseNTriples_toNTriples v (Sink.flatten ds.relabelForWrite) hall text hser
   refine ⟨({ default := Sink.flatten ds.relabelForWrite, named := [] } : Dataset).toSet, ?_, ?_⟩
-  · simp [parseDocument, parseDocumentRaw, givesSet, hg, Except.map]
+  · simp [parseDocument, parseDocumentRaw, givesSet, parseNTriplesDocument_of_ok hg, Except.map]
   · rw [Dataset.den_toSet]
     have e : ({ default := Sink.flatten ds.relabelForWrite, named := [] } : Dataset) =
         (writerProjection .nt ds).renameBnodes ds.writeLabelMap := by
@@ -300,7 +301,8 @@ theorem writerContractW_nquads (sx : Sink.Extra) (rx : Source.Extra) (v : Syntax
       .ok (NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds.relabelForWrite)) :=
     NQuadsRoundTrip.parseNQuads_toNQuads v ds.relabelForWrite hall text hser
   refine ⟨NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds.relabelForWrite), ?_, ?_⟩
-  · show parseNQuadsFast text v = _
+  · show parseNQuadsFastDocument text v = _
+    apply parseNQuadsFastDocument_of_ok
     rw [parseNQuadsFast_eq_parseNQuads, hp]
   · have hden : (NQuadsRoundTrip.addAll Dataset.empty (NQuadsRoundTrip.quadsOf ds.relabelForWrite)).den =
         (writerProjection .nquads ds.relabelForWrite).den := by

@@ -26,6 +26,8 @@ import { buildApi } from './lib/api.mjs';
 import { entryFromEngine } from './lib/lean-entry.mjs';
 import { browserEngine } from './lib/browser-engine.mjs';
 import { indexedDbDeltaLogStore } from './lib/delta-log-hosts.mjs';
+import { sbm11Api, registerSbm11Source, mapReader } from './lib/sbm11.mjs';
+import { lwsSbm11Reader } from './lib/sbm11-lws.mjs';
 
 const l4Engine = browserEngine('l4factoidal', new URL('./l4-assets/', import.meta.url).href);
 
@@ -59,6 +61,20 @@ const api = buildApi({
   deltaLogStore: indexedDbDeltaLogStore(),
 });
 
+// SBM11, the Shardborough store, through host positioned reads
+// (lib/sbm11.mjs; https://github.com/danbri/factoidal/issues/1009). In a
+// browser every source needs a registered synchronous reader, for example
+// over OPFS FileSystemSyncAccessHandle in a dedicated worker.
+const sbm11 = sbm11Api(loadEngine);
+export const openSbm11 = sbm11.openSbm11;
+// Pack a document into the files of an SBM11 generation in memory, and a
+// reader over such files (issue 1009 stage 2).
+export const packSbm11 = sbm11.packSbm11;
+export { registerSbm11Source, mapReader };
+// A reader of an SBM11 generation held as LWS resources (issue 1010 KR3). In
+// a browser worker its default transport is a synchronous XMLHttpRequest.
+export { lwsSbm11Reader };
+
 // RDF and SPARQL
 export const parse = api.parse;
 export const query = api.query;
@@ -67,10 +83,24 @@ export const serialize = api.serialize;
 export const canonicalize = api.canonicalize;
 export const graphs = api.graphs;
 export const canonicalHash = api.canonicalHash;
+export const asDefaultGraph = api.asDefaultGraph;
 export const isomorphic = api.isomorphic;
 export const fromQuads = api.fromQuads;
+// Literal values (https://github.com/danbri/factoidal/issues/1051): synchronous
+// after the engine is loaded.
+export const literalValue = api.literalValue;
+export const isValidLiteral = api.isValidLiteral;
+export const canonicalLiteral = api.canonicalLiteral;
+export const literalFromValue = api.literalFromValue;
 export const ready = api.ready;
 export const engineTables = api.engineTables;
+export const sameValue = api.sameValue;
+export const syntaxFor = api.syntaxFor;
+export const splitIri = api.splitIri;
+export const isNCName = api.isNCName;
+export const vocabularies = api.vocabularies;
+export const memberIri = api.memberIri;
+export const memberOrdinal = api.memberOrdinal;
 export const openDataset = api.openDataset;
 export const closure = api.closure;
 export const formats = api.formats;
@@ -147,6 +177,12 @@ export const vcSha256Hex = api.vcSha256Hex;
 export const vcEd25519SecretToPublic = api.vcEd25519SecretToPublic;
 export const vcEd25519Sign = api.vcEd25519Sign;
 export const vcEd25519Verify = api.vcEd25519Verify;
+
+// XML Encryption 1.1 and JWE; AES through WebCrypto (lib/cipher-host.mjs)
+export const xmlDecrypt = api.xmlDecrypt;
+export const xmlEncrypt = api.xmlEncrypt;
+export const jweDecrypt = api.jweDecrypt;
+export const jweEncrypt = api.jweEncrypt;
 export const vcEddsaCreateFromCanonical = api.vcEddsaCreateFromCanonical;
 export const vcEddsaVerifyFromCanonical = api.vcEddsaVerifyFromCanonical;
 export const vcCheckCredential = api.vcCheckCredential;

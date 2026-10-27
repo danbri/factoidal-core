@@ -57,7 +57,22 @@ from the parts. It is not written for each path.
    step (`Sourced.union_spec`, `Sourced.unionAll_spec`), plus
    `ev.AssumptionHolds`.
 3. `Sourced.query_sound` gives `EvalContract` over that den, under those
-   assumptions.
+   assumptions, and, when the solution modifiers do not read the order of the
+   solutions (`OrderFree`), the reference answer up to the order of the rows
+   (`AnswerAgrees`: the same SELECT header and multiset of rows, the same ASK
+   boolean).
+
+Since https://github.com/danbri/factoidal/issues/1014, `EvalContract`'s
+backend disjunct states that the WHERE answer is the reference WHERE answer
+up to the order of the solutions (`WhereAgrees`, `Storage/BackendAgreement.lean`:
+`evalPatternBackend_ref`), and the backend's SELECT header is the reference
+header (`Query.projectedVars`). `Allowed` alone was not enough:
+`allowed_not_unique` shows it admits answers of different lengths for one
+pattern. `WhereAgrees.of_den`: the reference WHERE answer of a `NativeFrag`
+pattern depends on the den only. Not claimed: equality up to row order when
+the modifiers read the order (OFFSET, LIMIT, DISTINCT, REDUCED, GROUP_CONCAT,
+SAMPLE, BNODE() and UUID() in SELECT expressions); SPARQL 1.1 admits more than
+one answer there.
 
 A step that is not a source in this table has no den theorem. A path that
 contains such a step has no guarantee from this composition.
@@ -66,7 +81,12 @@ contains such a step has no guarantee from this composition.
 
 `Dataflow/SourcesTests.lean`, 41 `#guard`s. For each source (b) to (f), the
 backend path answers, and its answer equals `referenceAnswer` over the
-record's reference dataset (SELECT rows up to order). One guard pins the
-known SELECT `*` header gap on an empty result: the backend header is `[]`
-and the reference header is `[s, p, o]` (`Dataflow/Evaluator.lean`, "Not
-claimed").
+record's reference dataset (SELECT rows up to order, the header equal). One
+guard checks the SELECT `*` header on an empty result: backend and reference
+are both `[s, p, o]` (before issue 1014 the backend header was `[]`).
+
+`Dataflow/EvaluatorTests.lean` (issue 1014): on the evaluator queries and on
+queries whose answers have repeated rows, the backend's WHERE answer and the
+reference WHERE answer are one multiset, and the shipped answer is the
+reference answer up to row order with the same header. The multiset test is
+checked to see a difference of one in a multiplicity.

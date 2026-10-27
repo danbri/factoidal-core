@@ -195,6 +195,20 @@ Prerequisites and how much they cost:
 | generated core C | ~32 MB | in the work dir |
 | core wasm objects | ~17 MB | in the work dir |
 
+### Trap: `tools/ensure-test-env.sh` after a local wasm build replaces it
+
+`tools/ensure-test-env.sh` calls `tools/fetch-builds.sh`, which installs the
+newest `danbri/factoidal-builds` release into `npm/factoidal/l4-assets/` and
+`docs/web/hub/assets/l4/`. Run after `build-wasm.sh`, it silently replaces the
+module you just built with the release's older one, and every Node test then
+runs the old engine. (2026-10-27: a new op worked, `ensure-test-env.sh` ran
+to fetch test fixtures, and the next run of `lws-serve --authz` failed with
+"member issuer is required" from the old wasm; the npm suite had already
+passed once more against the old module. Cost: one wasm rebuild, 8 minutes.)
+Rule: run `ensure-test-env.sh` BEFORE `build-wasm.sh`, and before a test run
+check that `sha256sum npm/factoidal/l4-assets/l4factoidal.wasm` equals the
+digest step 9 printed.
+
 ## What the build actually does
 
 0. `lake build l4wasm` — also writes our modules' C into `.lake/build/ir/`.
@@ -623,7 +637,16 @@ Rules that keep it small:
 - A new op goes either into the core table (`Core.callArgsBy` or
   `Core.callIOArgsBy`; the full table delegates to them) or into the full
   table and `Core.fullOnlyOpNames`. `Wasm/CoreDispatchTests.lean` fails the
-  build when it is in neither list.
+  build when it is in neither list. That check is in the `l4wasm` library, so
+  a build of one executable (`lake build l4factoidal`) does not run it: after
+  adding an op, run the build of CI, `lake build L4Factoidal l4wasm
+  +Harness.Qlvr +Harness.CryptoProbe` (or plain `lake build`). Paid for
+  2026-10-25: PR https://github.com/danbri/factoidal-core/pull/83 added
+  `sbm11Open`, `sbm11Query` and `sbm11Close` to the full table only, was
+  checked with `lake build l4factoidal`, and was merged while its "Lake build
+  (full Lean corpus)" check was still running; the check failed at
+  `CoreDispatchTests.lean:47` and `main` was red until the next PR added the
+  three names to `Core.fullOnlyOpNames`.
 - After any change of imports, read `$WORK/l4factoidal-core.size.md` against
   the previous build. A namespace that appears or grows is a reference the
   core closure did not have. The size table is also how a lost `csimp`
@@ -646,6 +669,15 @@ loader method. Adding one is a `def` in an ops module plus two lines in
 `call`), and it shows up in the `ops` reflection automatically. The
 four CL/IKL ops of https://github.com/danbri/factoidal/issues/623 were
 added that way on 2026-08-26 and touched no C at all.
+
+Every new op, and every new npm function that calls one, is an entry
+point: map it to a stage in `foundation/entrypoints.toml`, or add a
+`[[nonstage]]` entry there with a reason. Then run `bash
+tests/dataflow/run.sh` (elan's `lake` on `PATH`) before the push. Cost of
+skipping it: on 2026-10-27 the XML Encryption and JWE ops and their four npm
+functions went to https://github.com/danbri/factoidal-core/pull/159 with
+14 unregistered entry points, and the PR's "Dataflow gate" check was red
+until a second push.
 
 Reach for the steps below only for a genuinely new C-level entry point
 — a different calling convention, not a new operation. `l4_call_blob`
@@ -846,6 +878,24 @@ against the old core library.
    this is noise, not a regression. What would NOT be noise is the
    undefined-symbol list growing; treat that as a design question per
    "the purity evidence" above.
+
+   **Any OTHER signature mismatch is a trap, and the build now fails on
+   it** (`link_module` in `Wasm/build-wasm.sh`). wasm-ld replaces a call
+   whose signature differs from the definition with an `unreachable` stub
+   and prints only a warning. 2026-10-25,
+   https://github.com/danbri/factoidal/issues/1009: `ffi/l4_hostread.c`
+   defined `l4_host_read_at` and `l4_host_size` with a trailing
+   `lean_obj_arg world`, but the Lean 4.33 code generator ERASES the IO
+   world token for `@[extern]` IO functions too (the generated
+   `.lake/build/ir/Wasm/HostRead.c` declares `l4_host_size(lean_object*,
+   lean_object*)`). Native arm64 and x86-64 ignore an extra argument, so
+   native `l4sbm11` and native-smoke passed; in wasm `sbm11Open` trapped on
+   its first host call, the 0.14.0 release shipped without SBM11 in npm
+   (https://github.com/danbri/factoidal-core/pull/92), and the two
+   warnings had been in the lean-wasm job log all along, read as this
+   item's "noise". Rule: an IO extern's C definition takes the explicit
+   arguments only, no world; check the generated declaration in
+   `.lake/build/ir/<Module>.c` before writing the C.
 
 12. **`pretty()` in a hub cell returns a DOM element in the browser and a
    plain object in the node harness.** Never read `.rows` off a

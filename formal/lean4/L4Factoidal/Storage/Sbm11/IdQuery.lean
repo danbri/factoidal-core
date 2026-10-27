@@ -4271,14 +4271,6 @@ structure RPath where
   g : Option UInt64
   deriving Inhabited
 
-/-- Whether an id is a literal (`isNotLiteral` false): by the id tag for the
-    dictionary and inline tags, else by the decoded term. -/
-def isLitIdM {m : Type → Type} [Monad m] (st : Store m) (x : UInt64) : ExceptT String m Bool := do
-  let t := tagOf x
-  if t == 3 || t == 4 || t == 5 then return true
-  if t == 1 || t == 2 || t == 9 then return false
-  return !(L4Factoidal.SPARQL.isNotLiteral (← st.termOf x))
-
 /-- The pairs of the columns `a` and `b` of a table, in row order. -/
 def pairsOf (t : Table) (a b : String) : IdPath.Pairs := Id.run do
   match t.idx a, t.idx b with
@@ -4424,22 +4416,6 @@ def closureM {m : Type → Type} [Monad m] (st : Store m) (g : Option UInt64)
   let out ← sources.foldlM (closureEmitM adj nodeSet zero dirFwd (edges.size + 2)) #[]
   return (out, total)
 
-/-- `^q` on a relation: `(b, a)` per pair `(a, b)` whose `b` is not a
-    literal (`isLitIdM`, once per distinct `b`). -/
-def invPairsM {m : Type → Type} [Monad m] (st : Store m) (r : IdPath.Pairs) :
-    ExceptT String m IdPath.Pairs := do
-  let mut out : IdPath.Pairs := Array.mkEmpty r.size
-  let mut memo : Std.HashMap UInt64 Bool := {}
-  for (a, b) in r do
-    let lit ← match memo.get? b with
-      | some l => pure l
-      | none => do
-        let l ← isLitIdM st b
-        memo := memo.insert b l
-        pure l
-    if !lit then out := out.push (b, a)
-  return out
-
 /-- The pairs of a negated property set from the table of a scan with the
     variables `?s`, `?p`, `?o`: per row whose predicate is not in `ex`,
     `(s, o)`, or `(o, s)` for the inverse members (`inv`). -/
@@ -4469,10 +4445,11 @@ def evalIM {m : Type → Type} [Monad m] (st : Store m) (g : Option UInt64) :
       let (t, s) ← pathScanM st g (some pid) perm R
       return (pairsOf t "s" "o", s)
   | fwd, .inv q, R => do
-    -- `^q`: (b, a) per pair (a, b) of `q` whose `b` is not a literal; the
-    -- subject of `^q` is the object of `q`
+    -- `^q`: (b, a) per pair (a, b) of `q`; the subject of `^q` is the
+    -- object of `q`, a literal included (SPARQL 1.1 section 18.4,
+    -- https://github.com/danbri/factoidal/issues/1023)
     let (r, s) ← evalIM st g (R.isSome && !fwd) q R
-    return (← invPairsM st r, s)
+    return (IdPath.swap r, s)
   | fwd, .seq a b, R => do
     if R.isNone || fwd then
       let (r1, s1) ← evalIM st g true a R

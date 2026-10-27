@@ -58,27 +58,23 @@ test('parseCellFlags: an empty title value is a real, non-null title', () => {
 });
 
 // ---------------------------------------------------------------------
-// Expected failure (https://github.com/danbri/factoidal/issues/690): the
-// local-binding scan takes a nested call's argument list for an arrow
-// parameter list, so `model` below is recorded as a local and not wired
-// as a reactive input. The convention is skills/test-suites/SKILL.md,
-// "Expected failures": this case FAILS the suite when it unexpectedly
-// passes, so the flip to a plain assertion and the issue closure cannot
-// be forgotten.
+// https://github.com/danbri/factoidal/issues/690: the local-binding scan
+// took a nested call's argument list for an arrow parameter list, so `model`
+// below was recorded as a local and not wired as a reactive input (in the
+// browser: ReferenceError). Fixed 2026-10-25; this case was an xfail.
 // ---------------------------------------------------------------------
 import { analyzeCell } from '../../docs/web/hub/reactive-cells.mjs';
 
-function xfail(name, issueUrl, fn) {
-  test(`xfail: ${name} (${issueUrl})`, async (t) => {
-    let failed = false;
-    try { await fn(t); } catch (error) { failed = true; t.diagnostic(`expected failure: ${String(error.message).slice(0, 160)}`); }
-    assert.ok(failed, `unexpected pass: ${name} now works — flip this xfail to an assertion and close ${issueUrl}`);
-  });
-}
+test('analyzeCell: an arrow function inside a nested call keeps the outer argument as a reference, not a local', () => {
+  const info = analyzeCell('return pretty(model.elements.map((el) => el.local));');
+  assert.ok(info.refs.includes('model'), 'model must be a reference of the cell');
+  assert.ok(!info.locals.has('model'), 'model must not be recorded as a local');
+  assert.ok(info.locals.has('el'), 'el is the arrow parameter');
+});
 
-xfail('analyzeCell: an arrow function inside a nested call keeps the outer argument as a reference, not a local',
-  'https://github.com/danbri/factoidal/issues/690', () => {
-    const info = analyzeCell('return pretty(model.elements.map((el) => el.local));');
-    assert.ok(info.refs.includes('model'), 'model must be a reference of the cell');
-    assert.ok(!info.locals.has('model'), 'model must not be recorded as a local');
-  });
+test('analyzeCell: the arrow parameters of nested and destructured forms are locals', () => {
+  const a = analyzeCell('x = f(g((a, b) => a + b), ({ c }) => c, (d = 1) => d)');
+  for (const v of ['a', 'b', 'c', 'd']) assert.ok(a.locals.has(v), v);
+  assert.ok(!a.locals.has('f') && !a.locals.has('g'), 'f and g are references');
+  assert.ok(a.refs.includes('f') && a.refs.includes('g'));
+});

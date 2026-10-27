@@ -67,9 +67,9 @@ state:
 
 `writerDomain fmt v` is the set of datasets the writer accepts and is meant to
 keep: RDF/XML and JSON-LD have no triple term (the writers refuse one with an
-error); JSON-LD has no directional language string (finding: the writer
-accepts one and drops its base direction,
-https://github.com/danbri/factoidal/issues/984); with N-Triples and N-Quads
+error); JSON-LD has no directional language string (the writer
+writes `@direction`, and the JSON-LD 1.1 reader with no `rdfDirection` drops
+it, https://github.com/danbri/factoidal/issues/984); with N-Triples and N-Quads
 every IRI and language tag must be in the lexical space of its grammar
 production (IRIREF, LANGTAG). Blank-node labels need no condition
 (https://github.com/danbri/factoidal/issues/986): the writers of the N-Triples
@@ -285,7 +285,7 @@ def nquads11StreamStage : Stage String (List String) Dataset where
     · next fd hr =>
       injection h with h
       subst h
-      exact nquads11_readAll_eq_parseNQuadsFast chunks fd hr
+      exact parseNQuadsFastDocument_of_ok (nquads11_readAll_eq_parseNQuadsFast chunks fd hr)
     · cases h
 
 /-- **Streamed, then scoped, is the batch reader.** A successful streamed

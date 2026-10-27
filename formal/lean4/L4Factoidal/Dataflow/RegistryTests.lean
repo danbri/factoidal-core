@@ -22,39 +22,39 @@ namespace L4Factoidal.Dataflow
 def negativeRegistry : List Entry := [
   -- proved with no theorems
   { area := "negative 1: proved, no theorems", dir := "Dataflow", stage := ``decodeStage
-    wireIn := "Document", wireOut := "RdfFormat × String", contract := ``DecodeContract
+    wireIn := .document, wireOut := .formatText, contract := ``DecodeContract
     status := .proved },
   -- proved, but the stage is an IOStage
   { area := "negative 2: proved, stage is an IOStage", dir := "Dataflow", stage := ``sbm11Disk
-    wireIn := "FileGen", wireOut := "FileGen", contract := ``ReadsWritten, status := .proved
+    wireIn := .fileGen, wireOut := .fileGen, contract := ``ReadsWritten, status := .proved
     theorems := [``Stage.comp_ok] },
   -- assumed, but the stage is a Stage
   { area := "negative 3: assumed, stage is a Stage", dir := "Dataflow", stage := ``decodeStage
-    wireIn := "Document", wireOut := "RdfFormat × String", status := .assumed
+    wireIn := .document, wireOut := .formatText, status := .assumed
     ioAssumptions := [``ReadsWritten] },
   -- assumed with no named assumption
   { area := "negative 4: assumed, no IO assumption", dir := "Dataflow", stage := ``sbm11Disk
-    wireIn := "FileGen", wireOut := "FileGen", status := .assumed },
+    wireIn := .fileGen, wireOut := .fileGen, status := .assumed },
   -- tested with a stage
   { area := "negative 5: tested, with a stage", dir := "Dataflow", stage := ``decodeStage
-    wireIn := "Document", wireOut := "RdfFormat × String", status := .tested
+    wireIn := .document, wireOut := .formatText, status := .tested
     tests := ["a suite"] },
   -- tested with no suite
   { area := "negative 6: tested, no suite", dir := "Dataflow"
-    wireIn := "Document", wireOut := "Dataset", status := .tested },
+    wireIn := .document, wireOut := .dataset, status := .tested },
   -- missing with a contract
   { area := "negative 7: missing, with a contract", dir := "Dataflow"
-    wireIn := "Document", wireOut := "Dataset", contract := ``DecodeContract, status := .missing },
+    wireIn := .document, wireOut := .dataset, contract := ``DecodeContract, status := .missing },
   -- missing with a suite
   { area := "negative 8: missing, with a suite", dir := "Dataflow"
-    wireIn := "Document", wireOut := "Dataset", status := .missing, tests := ["a suite"] },
+    wireIn := .document, wireOut := .dataset, status := .missing, tests := ["a suite"] },
   -- proved, but the stage is not a stage of either kind
   { area := "negative 9: proved, stage is a theorem", dir := "Dataflow"
-    stage := ``documentToWhere_sound, wireIn := "Document", wireOut := "WhereOut"
+    stage := ``documentToWhere_sound, wireIn := .document, wireOut := .idTable
     contract := ``documentToWhere_sound, status := .proved, theorems := [``documentToWhere_sound] },
   -- assumed, an interface value, with no named assumption
   { area := "negative 10: assumed, interface value, no assumption", dir := "Dataflow"
-    stage := ``LawfulStore.hdt, wireIn := "PatternBound", wireOut := "List Triple", status := .assumed }
+    stage := ``LawfulStore.hdt, wireIn := .patternBound, wireOut := .triples, status := .assumed }
 ]
 
 /-- The kind of the `stage` of each negative entry, as the report computes it. -/
@@ -67,16 +67,16 @@ def negativeKinds : List StageKind :=
 
 /-- Entries that agree with their fields, with the kind of their stage. -/
 def positiveEntries : List (Entry × StageKind) := [
-  ({ area := "ok proved", dir := "Dataflow", stage := ``decodeStage, wireIn := "", wireOut := ""
+  ({ area := "ok proved", dir := "Dataflow", stage := ``decodeStage, wireIn := .text, wireOut := .text
      contract := ``DecodeContract, status := .proved, theorems := [``fromUTF8?_toUTF8] }, .stage),
-  ({ area := "ok assumed", dir := "Dataflow", stage := ``sbm11Disk, wireIn := "", wireOut := ""
+  ({ area := "ok assumed", dir := "Dataflow", stage := ``sbm11Disk, wireIn := .text, wireOut := .text
      status := .assumed, ioAssumptions := [``ReadsWritten] }, .ioStage),
-  ({ area := "ok tested", dir := "Syntax", wireIn := "", wireOut := "", status := .tested
+  ({ area := "ok tested", dir := "Syntax", wireIn := .text, wireOut := .text, status := .tested
      tests := ["W3C"] }, .none),
-  ({ area := "ok missing", dir := "OWL", wireIn := "", wireOut := "", status := .missing }, .none),
-  ({ area := "ok proved interface", dir := "Dataflow", stage := ``LawfulStore.ofList, wireIn := "", wireOut := ""
+  ({ area := "ok missing", dir := "OWL", wireIn := .text, wireOut := .text, status := .missing }, .none),
+  ({ area := "ok proved interface", dir := "Dataflow", stage := ``LawfulStore.ofList, wireIn := .text, wireOut := .text
      contract := ``L4Factoidal.RDF.StoreCapsExact, status := .proved, theorems := [``LawfulStore.exact] }, .iface),
-  ({ area := "ok assumed interface", dir := "Dataflow", stage := ``LawfulStore.hdt, wireIn := "", wireOut := ""
+  ({ area := "ok assumed interface", dir := "Dataflow", stage := ``LawfulStore.hdt, wireIn := .text, wireOut := .text
      status := .assumed, ioAssumptions := [``L4Factoidal.SPARQL.StoreBackend.BackendReadOpsExact] }, .iface)
 ]
 

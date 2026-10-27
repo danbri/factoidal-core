@@ -1,0 +1,1 @@
+{"head":{"vars":["x","a"]},"results":{"bindings":[{"x":{"type":"bnode","value":"c"}},{"x":{"type":"uri","value":"http://example.org/alice"},"a":{"type":"literal","value":"37","datatype":"http://www.w3.org/2001/XMLSchema#integer"}},{"x":{"type":"uri","value":"http://example.org/bob"},"a":{"type":"literal","value":"42","datatype":"http://www.w3.org/2001/XMLSchema#integer"}}]}}

@@ -275,6 +275,19 @@ def printSelectTable (srj : Json) : IO Unit := do
   for row in rows do
     IO.println (String.intercalate "\t" (vars.map fun v => (bindingValue? row v).getD ""))
 
+/-- Write the `warnings` member of a query envelope to standard error, one line
+each (`l4factoidal: warning: CLASS: MESSAGE`): a `FROM` / `FROM NAMED` IRI that
+names no graph of the dataset
+(https://github.com/danbri/factoidal/issues/1032). -/
+def printQueryWarnings (j : Json) : IO Unit := do
+  match j.getArray? "warnings" with
+  | none => pure ()
+  | some ws =>
+    let err ← IO.getStderr
+    for w in ws do
+      err.putStrLn s!"l4factoidal: warning: {(w.getString? "class").getD ""}: {(w.getString? "message").getD ""}"
+    err.flush
+
 /-- Print the `queryDataset` envelope family
 (select/ask/construct/describe; an error envelope is handled by
 `parseEnvelope`). -/
@@ -1050,13 +1063,15 @@ def queryCmd (args : List String) : IO UInt32 := do
         -- https://github.com/danbri/factoidal/issues/792 item 1)
         let answer :=
           if s.hasBool "--sparql12" then
-            withOpsSetDataset .rdf12 ds hds (fun d =>
+            withOpsSetDatasetKeepEmpty .rdf12 ds hds (fun d =>
               queryParsedDatasetWith d (some (L4Factoidal.Dataflow.LawfulDataset.ofDataset d)) sparql
                 (version := .v12) (base := queryBase) (now := some now))
-          else Ops.queryDatasetOfSet ds hds sparql queryBase (some now)
+          else Ops.queryDatasetOfSetKeepEmpty ds hds sparql queryBase (some now)
         match ← parseEnvelope answer with
         | none => pure 1
-        | some j => printQueryResult j (s.hasBool "--table")
+        | some j =>
+          printQueryWarnings j
+          printQueryResult j (s.hasBool "--table")
 
 def updateCmd (args : List String) : IO UInt32 := do
   match scanArgs ["--format", "--base", "--update", "--update-string"] ["--sparql12"] args with
@@ -1283,6 +1298,76 @@ def clCmd (sub : String) (args : List String) : IO UInt32 :=
 
 /-! ## Help + dispatch -/
 
+/-- `l4factoidal sbm11-query GEN (--query FILE | --query-string Q) [--base IRI]
+[--sparql12] [--reference]`: the ops `sbm11Open`, `sbm11Query`, `sbm11Close`
+(`Wasm/Ops/Sbm11.lean`, https://github.com/danbri/factoidal/issues/1009) over
+the generation directory GEN, through the same host reads the wasm module
+makes (`ffi/l4_hostread.c`, native form). Writes the result as `l4sbm11
+query` does; the path on stderr (`sbm11-query: path=...`). -/
+def sbm11QueryCmd (args : List String) : IO UInt32 := do
+  match scanArgs ["--base", "--query", "--query-string"] ["--sparql12", "--reference"] args with
+  | .error e => IO.eprintln s!"l4factoidal sbm11-query: {e}"; pure 2
+  | .ok s =>
+    let some gen := s.positional[0]?
+      | IO.eprintln "l4factoidal sbm11-query: need a generation directory"; pure 2
+    match ← resolveTextArg "sbm11-query" "--query" "--query-string" "SPARQL" s with
+    | .error code => pure code
+    | .ok sparql =>
+    let args1 := (Json.array [.string gen]).toString
+    let some opened ← parseEnvelope (← callIO "sbm11Open" args1) | pure 1
+    let some h := opened.getString? "handle"
+      | IO.eprintln "internal: sbm11Open answered no handle"; pure 1
+    let opts := Json.object
+      ((match s.value? "--base" with | some b => [("base", Json.string b)] | none => []) ++
+       [("sparql12", .bool (s.hasBool "--sparql12")), ("reference", .bool (s.hasBool "--reference"))])
+    -- the byte-region entry: the result bytes come back as the out region
+    let (answer, bytes) ← callBlobIO "sbm11Query"
+      (Json.array [.string h, .string sparql, .string opts.toString]).toString ByteArray.empty
+    discard <| callIO "sbm11Close" (Json.array [.string h]).toString
+    let some j ← parseEnvelope answer | pure 1
+    IO.eprintln s!"sbm11-query: {(j.getString? "path").getD "?"} bytes-read={(numberField? j "bytesRead").getD "?"} reads={(numberField? j "reads").getD "?"}"
+    -- `l4sbm11 query` ends its answer with one line break (Harness/Sbm11Query.lean)
+    let stdout ← IO.getStdout
+    stdout.write bytes
+    stdout.write "\n".toUTF8
+    pure 0
+
+/-- `l4factoidal sbm11-pack SOURCE OUTDIR [--format F] [--base IRI]`: the op
+`sbm11PackFiles` (`Wasm/Ops/Sbm11Pack.lean`,
+https://github.com/danbri/factoidal/issues/1009 stage 2) over the document
+SOURCE, one call per file, through the byte-region entry the wasm module
+serves. Writes every file the op names into OUTDIR (the files of
+`l4sbm11-pack --via-dataset`, without `CURRENT`). F: a label of
+`RDF.formatOfLabel`, else the extension of SOURCE. -/
+def sbm11PackCmd (args : List String) : IO UInt32 := do
+  match scanArgs ["--format", "--base"] [] args with
+  | .error e => IO.eprintln s!"l4factoidal sbm11-pack: {e}"; pure 2
+  | .ok s =>
+    let [source, outDir] := s.positional
+      | IO.eprintln "l4factoidal sbm11-pack: need SOURCE and OUTDIR"; pure 2
+    let syntaxLabel? := match s.value? "--format" with
+      | some f => some f
+      | none => (L4Factoidal.RDF.formatOfPath source).map L4Factoidal.RDF.formatLabel
+    let some syntaxLabel := syntaxLabel?
+      | IO.eprintln s!"l4factoidal sbm11-pack: {source}: no syntax from the extension; give --format"; pure 2
+    let text ← IO.FS.readBinFile source
+    IO.FS.createDirAll outDir
+    let argsOf (i : Nat) : String :=
+      (Json.array [.string syntaxLabel, .string ((s.value? "--base").getD ""), .string (toString i)]).toString
+    let (first, bytes0) ← callBlobIO "sbm11PackFiles" (argsOf 0) text
+    let some j0 ← parseEnvelope first | pure 1
+    let count := ((numberField? j0 "count").bind String.toNat?).getD 0
+    let write (j : Json) (bytes : ByteArray) : IO Unit := do
+      let some name := j.getString? "name" | throw (IO.userError "internal: sbm11PackFiles answered no name")
+      IO.FS.writeBinFile s!"{outDir}/{name}" bytes
+    write j0 bytes0
+    for i in [1:count] do
+      let (answer, bytes) ← callBlobIO "sbm11PackFiles" (argsOf i) text
+      let some j ← parseEnvelope answer | return 1
+      write j bytes
+    IO.println s!"sbm11-pack: files={count} quads={(numberField? j0 "quads").getD "?"} terms={(numberField? j0 "terms").getD "?"} named-graphs={(numberField? j0 "graphs").getD "?"}"
+    pure 0
+
 def usageLines : List String :=
   [ "l4factoidal — Lean 4 RDF/SPARQL/OWL/CL engine, command line"
   , ""
@@ -1358,6 +1443,13 @@ def usageLines : List String :=
   , "      quantifies a sequence marker, naming the condition."
   , "  version"
   , "      Print the engine version and the dispatch ABI version."
+  , "  sbm11-query GEN (--query FILE | --query-string Q) [--base IRI] [--sparql12]"
+  , "              [--reference]"
+  , "      SPARQL over the SBM11 generation directory GEN through the wasm ops"
+  , "      sbm11Open / sbm11Query / sbm11Close (host positioned reads)."
+  , "  sbm11-pack SOURCE OUTDIR [--format F] [--base IRI]"
+  , "      Pack the document SOURCE into the SBM11 generation directory OUTDIR"
+  , "      through the wasm op sbm11PackFiles (in memory, one call per file)."
   , "  ops"
   , "      List every dispatch ABI operation (the l4wasm-cli / wasm"
   , "      surface this CLI is built on)."
@@ -1379,6 +1471,8 @@ def main (args : List String) : IO UInt32 := do
   | "ops" :: _ => opsCmd
   | "parse" :: rest => parseCmd rest
   | "query" :: rest => queryCmd rest
+  | "sbm11-query" :: rest => sbm11QueryCmd rest
+  | "sbm11-pack" :: rest => sbm11PackCmd rest
   | "tdb2-dump" :: [dir] =>
       match ← L4Factoidal.Tdb2.readDatabaseNQuads dir with
       | .error e => IO.eprintln s!"l4factoidal tdb2-dump: {e}"; pure 1

@@ -7,7 +7,7 @@ docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md).
 For `G : MemGen` whose keys pass `keysOk` (every key decodes to a term with
 its language tags in lower case), with
 `cid := G.cid`, `dec := G.dec`, `sok = ok := G.ok`, `idv := G.idv`, the
-hypotheses `hid`, `hdec`, `hsok`, `hcid`, `hidv`, `hcid0`, `htag`, `hcidN`,
+hypotheses `hid`, `hdec`, `hsok`, `hcid`, `hidv`, `hcid0`, `hcidN`,
 `htermOf`, `hloc`, `hcidok` and `htagk` hold (`dict_hyps`).
 
 Until 2026-10-23 `keysOk` also excluded `rdf:XMLLiteral`: `Term.eqb` then
@@ -28,7 +28,6 @@ import L4Factoidal.Storage.Sbm11.ExistsTableTheorems
 namespace L4Factoidal.Storage.Sbm11.MemGen
 
 open L4Factoidal.RDF
-open L4Factoidal.SPARQL (isNotLiteral)
 open L4Factoidal.Storage.Sbm11.IdQuery (tagOf tagLocal)
 open L4Factoidal.Storage.Sbm11.IdLeaf (CidOk)
 open L4Factoidal.Storage.Sbm11.ExistsTableTheorems (TagKind)
@@ -370,18 +369,6 @@ theorem mem_htagk (x : UInt64) (h : G.ok x) : TagKind x (G.dec x) := by
   · exact ⟨fun h => by omega, fun _ => ⟨l, rfl⟩⟩
   · rw [e]; exact ⟨fun h => by omega, fun h => by omega⟩
 
-/-- `htag` -/
-theorem mem_htag (x : UInt64) (h : G.ok x) : IdPathEval.litTag x = some (!isNotLiteral (G.dec x)) := by
-  obtain ⟨t, ht⟩ := h
-  rw [dec_of G t x ht]
-  unfold IdPathEval.litTag
-  rw [tagOf_eq]
-  rcases code_kind G.keys t _ ht with ⟨e, b, rfl⟩ | ⟨e, i, rfl⟩ | ⟨e, l, rfl⟩ | ⟨e, s, p, o, rfl⟩
-  · rw [e]; rfl
-  · rw [e]; rfl
-  · rcases e with e | e | e <;> rw [e] <;> rfl
-  · rw [e]; rfl
-
 /-- `hdec`, for a dictionary that passes `keysOk`. -/
 theorem mem_hdec (hk : keysOk G.keys = true) (x y : UInt64) (hx : G.ok x) (hy : G.ok y) :
     (G.dec x).eqb (G.dec y) = (x == y) := by
@@ -443,7 +430,6 @@ end L4Factoidal.Storage.Sbm11.MemGen
 
 #print axioms L4Factoidal.Storage.Sbm11.MemGen.mem_hdec
 #print axioms L4Factoidal.Storage.Sbm11.MemGen.mem_hcid
-#print axioms L4Factoidal.Storage.Sbm11.MemGen.mem_htag
 #print axioms L4Factoidal.Storage.Sbm11.MemGen.mem_htagk
 #print axioms L4Factoidal.Storage.Sbm11.MemGen.mem_htermOf
 #print axioms L4Factoidal.Storage.Sbm11.MemGen.mem_hloc

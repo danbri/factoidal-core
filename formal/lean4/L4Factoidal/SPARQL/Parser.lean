@@ -113,8 +113,10 @@ were already ported. All of it is v12-only: the tokenizer emits the
 `<<` / `>>` / `~` / `{|` / `|}` tokens only under the v12 flag.
 -/
 import L4Factoidal.SPARQL.Query
+import L4Factoidal.SPARQL.PathAlternative
 import L4Factoidal.SPARQL.Tokenizer
 import L4Factoidal.Syntax.IriResolve
+import L4Factoidal.RDF.IriSyntax
 import Std.Data.HashSet
 
 namespace L4Factoidal.SPARQL
@@ -753,8 +755,13 @@ mutual
 /-- `ggp_has_var`: is `v` in scope anywhere in this pattern? -/
 def ggpHasVar (v : VarName) : QueryPattern → Bool
   | .bgp b            => b.any (fun tp => tpHasVar v tp)
-  | .join a b | .union a b | .minus a b | .lateral a b =>
+  | .join a b | .union a b | .lateral a b =>
       ggpHasVar v a || ggpHasVar v b
+  -- §18.2.1: "use of a variable in FILTER, or in MINUS does not cause a
+  -- variable to be in-scope outside of those forms"; for `P1 MINUS P2`
+  -- the in-scope variables are those of P1
+  -- (https://github.com/danbri/factoidal/issues/1069).
+  | .minus a _        => ggpHasVar v a
   | .leftJoin a b _   => ggpHasVar v a || ggpHasVar v b
   | .filter _ p       => ggpHasVar v p
   | .graph _ p        => ggpHasVar v p
@@ -1191,6 +1198,12 @@ def firstInvalidToken : TStream → Option ParseError
     | .iri s =>
       if s.toList.contains '\\' then
         some ⟨"invalid IRI escape (surrogate or malformed)", pt.pos⟩
+      -- SPARQL 1.1 Query §19.5: "Text matched by the IRIREF production ...
+      -- must conform to the generic syntax of IRI references in section 2.2
+      -- of RFC 3987" (https://github.com/danbri/factoidal/issues/1057):
+      -- `<_:p>`, `<abc##def>` and `<a_b:c>` are not IRI references.
+      else if !isIriReferenceFast s then
+        some ⟨s!"invalid IRI <{s}>: not an IRI and not a relative reference (RFC 3987 section 2.2)", pt.pos⟩
       else firstInvalidToken rest
     | _          => firstInvalidToken rest
 
@@ -3614,21 +3627,31 @@ first pass's error (`parseSparql_error`), so the second pass adds answers
 and changes no other result. The nesting depth of a request is bounded by
 the stack in both passes, before and after this change: under a 512 KB
 native stack, 3,000 nested `{ }` groups overflowed with the constant fuel
-alone (measured 2026-10-13). -/
+alone (measured 2026-10-13).
+
+The accepted query is returned with its property-path alternatives of IRIs
+rewritten as UNIONs of triple patterns (`Query.expandIriAlternatives`,
+`SPARQL/PathAlternative.lean`), once, here, so that every planner and every
+evaluator reads the same pattern
+(https://github.com/danbri/factoidal/issues/1008). The rewrite preserves the
+evaluation: `Query.expandIriAlternatives_eval` in
+`SPARQL/PathAlternativeTheorems.lean`. `parseSparqlWith` returns the pattern
+as written, and the theorems stated for it are unchanged. -/
 def parseSparql (text : String) (base : Option String := none)
     (version : SparqlVersion := .v11) : Except ParseError Query :=
   match parseSparqlWith topFuel text base version with
-  | .ok q => .ok q
+  | .ok q => .ok q.expandIriAlternatives
   | .error e =>
     match parseSparqlWith (scaledFuel text) text base version with
-    | .ok q => .ok q
+    | .ok q => .ok q.expandIriAlternatives
     | .error _ => .error e
 
-/-- Where the F* seed answers, the answer is unchanged. -/
+/-- Where the F* seed answers, the answer is the F* seed's answer, with the
+alternatives of IRIs rewritten. -/
 theorem parseSparql_of_topFuel {text : String} {base : Option String}
     {version : SparqlVersion} {q : Query}
     (h : parseSparqlWith topFuel text base version = .ok q) :
-    parseSparql text base version = .ok q := by
+    parseSparql text base version = .ok q.expandIriAlternatives := by
   simp [parseSparql, h]
 
 /-- A rejection is the F* seed's rejection, with its message. -/
@@ -3644,19 +3667,21 @@ theorem parseSparql_error {text : String} {base : Option String}
     | ok q => simp [h1, h2] at h
     | error e2 => simp [h1, h2] at h; rw [h]
 
-/-- Every answer is an answer of the readable parser at some fuel, so the
-theorems stated for `parseSparqlWith` at every fuel
-(`parseSparql_bnodeScope_valid`, `parseSparql_consumes_stream`) hold of it. -/
+/-- Every answer is an answer of the readable parser at some fuel, with the
+alternatives of IRIs rewritten, so the theorems stated for `parseSparqlWith`
+at every fuel (`parseSparql_bnodeScope_valid`, `parseSparql_consumes_stream`)
+hold of the query before the rewrite. -/
 theorem parseSparql_ok {text : String} {base : Option String}
     {version : SparqlVersion} {q : Query}
     (h : parseSparql text base version = .ok q) :
-    ∃ fuel, parseSparqlWith fuel text base version = .ok q := by
+    ∃ fuel q0, parseSparqlWith fuel text base version = .ok q0 ∧
+      q = q0.expandIriAlternatives := by
   unfold parseSparql at h
   cases h1 : parseSparqlWith topFuel text base version with
-  | ok q1 => simp [h1] at h; exact ⟨topFuel, h ▸ h1⟩
+  | ok q1 => simp [h1] at h; exact ⟨topFuel, q1, h1, h.symm⟩
   | error e1 =>
     cases h2 : parseSparqlWith (scaledFuel text) text base version with
-    | ok q2 => simp [h1, h2] at h; exact ⟨scaledFuel text, h ▸ h2⟩
+    | ok q2 => simp [h1, h2] at h; exact ⟨scaledFuel text, q2, h2, h.symm⟩
     | error e2 => simp [h1, h2] at h
 
 #print axioms parseSparql_error

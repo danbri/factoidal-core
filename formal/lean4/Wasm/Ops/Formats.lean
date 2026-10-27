@@ -366,13 +366,17 @@ def jsonldDataset (text optsJson : String) : Except String Dataset :=
   let opts := readOptions optsJson
   match L4Factoidal.JSONLD.parseJsonLd L4Factoidal.JSONLD.Loader.none text
           (optString opts "base") (optString opts "rdfDirection")
-          (optString opts "expandContext") (optString opts "processingMode") with
+          (optString opts "expandContext") (optString opts "processingMode")
+          (optBool opts "rdfstar") with
   | .ok ds => .ok ds
   | .error e => .error ("invalid or unsupported JSON-LD (" ++ e.code ++ ")")
 
 /-- `jsonldToRdf(text, optsJson)`. `optsJson` is `""` or an object with
 the members `base`, `rdfDirection`, `expandContext`, `processingMode`
-(all strings). No document loader is installed, so a remote `@context`
+(all strings; `rdfDirection` also takes `rdf-1.2`, a directional string as
+`rdf:dirLangString`) and `rdfstar` (boolean: JSON-LD-star, `@triple`, `@reifies`,
+`@annotation` as RDF 1.2 triple terms and reifiers;
+`docs/designissues/2026-10-26-jsonld-star.md`). No document loader is installed, so a remote `@context`
 is the JSON-LD error `loading remote context failed`, as it is in the F*
 entry. -/
 def jsonldToRdf (text optsJson : String) : String :=
@@ -387,17 +391,21 @@ def jsonldFromRdfParsed (ds : Dataset) (optsJson : String) : String :=
     let o : L4Factoidal.JSONLD.FromRdf.Options :=
       { useNativeTypes := optBool opts "useNativeTypes"
         useRdfType := optBool opts "useRdfType"
-        rdfDirection := optString opts "rdfDirection" }
+        rdfDirection := optString opts "rdfDirection"
+        rdfstar := optBool opts "rdfstar" }
     match L4Factoidal.JSONLD.FromRdf.fromRdf ds o with
     | none =>
         errJson ("jsonldFromRdf: from_rdf returned none (an rdf:JSON typed "
-                 ++ "literal in the input is not valid JSON)")
+                 ++ "literal in the input is not valid JSON, or an RDF 1.2 triple term "
+                 ++ "without the option rdfstar)")
     | some doc => okWith [("jsonld", .string (L4Factoidal.JSONLD.jcsDocument doc))]
 
 /-- `jsonldFromRdf(nquads, optsJson)`: JSON-LD 1.1 API section 8,
 Serialize RDF as JSON-LD, to an expanded-form document written in
 RFC 8785 canonical form. `optsJson` members: `useNativeTypes`,
-`useRdfType` (booleans), `rdfDirection` (string). -/
+`useRdfType`, `rdfstar` (booleans), `rdfDirection` (string). With `rdfstar`
+a triple term is `@triple`, `rdf:reifies` is `@reifies`, and a reifier of an
+asserted triple is an `@annotation`. -/
 def jsonldFromRdf (nq optsJson : String) : String :=
   match readHandle "jsonldFromRdf" nq with
   | .error e => errJson e
@@ -557,6 +565,57 @@ cover the rest of the surface through the real dispatch entry. -/
 #guard (xpathEval "<r/>" "count(").startsWith "{\"ok\":false"
 #guard (xpathEval "<r>" "/r").startsWith "{\"ok\":false"
 
+/-! ### WKT literals from CSVW and RML (no engine change)
+
+A GeoSPARQL `geo:wktLiteral` value made by (d) a CSVW column whose datatype
+object names the IRI with `@id` and the base `string` (CSVW Metadata §5.11.2,
+`CSVW/Emit.lean` `cellObjects`), and (e) an RML object map with a constant
+datatype, as the `rml:datatype` shortcut and as a `rml:datatypeMap` with
+`rml:constant` (RML-Core §6). -/
+
+private def nquadsOf (envelope : String) : String :=
+  match parseJson envelope with
+  | .ok j => (j.getString? "nquads").getD ""
+  | .error _ => ""
+
+private def hasSub (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+
+private def wktObj : String :=
+  "\"POINT(1 2)\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>"
+
+-- (d) CSVW
+#guard hasSub (nquadsOf (csvwToRdf "id,wkt\n1,POINT(1 2)\n"
+    ("{\"@context\":\"http://www.w3.org/ns/csvw\",\"url\":\"t.csv\",\"tableSchema\":{" ++
+     "\"aboutUrl\":\"http://e/r/{id}\",\"columns\":[{\"name\":\"id\",\"suppressOutput\":true}," ++
+     "{\"name\":\"wkt\",\"propertyUrl\":\"http://www.opengis.net/ont/geosparql#asWKT\"," ++
+     "\"datatype\":{\"@id\":\"http://www.opengis.net/ont/geosparql#wktLiteral\",\"base\":\"string\"}}]}}")
+    "{\"url\":\"http://e/t.csv\",\"mode\":\"minimal\"}"))
+  ("<http://e/r/1> <http://www.opengis.net/ont/geosparql#asWKT> " ++ wktObj ++ " .")
+
+private def rmlHead : String :=
+  "_:tm <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://w3id.org/rml/TriplesMap> .\n" ++
+  "_:tm <http://w3id.org/rml/logicalSource> _:ls .\n" ++
+  "_:ls <http://w3id.org/rml/source> \"d.csv\" .\n" ++
+  "_:ls <http://w3id.org/rml/referenceFormulation> <http://w3id.org/rml/CSV> .\n" ++
+  "_:tm <http://w3id.org/rml/subjectMap> _:sm .\n" ++
+  "_:sm <http://w3id.org/rml/template> \"http://e/r/{id}\" .\n" ++
+  "_:tm <http://w3id.org/rml/predicateObjectMap> _:pom .\n" ++
+  "_:pom <http://w3id.org/rml/predicate> <http://www.opengis.net/ont/geosparql#asWKT> .\n" ++
+  "_:pom <http://w3id.org/rml/objectMap> _:om .\n" ++
+  "_:om <http://w3id.org/rml/reference> \"wkt\" .\n"
+
+-- (e) RML, the `rml:datatype` shortcut
+#guard hasSub (nquadsOf (rmlMap (rmlHead ++
+    "_:om <http://w3id.org/rml/datatype> <http://www.opengis.net/ont/geosparql#wktLiteral> .\n")
+    "id,wkt\n1,POINT(1 2)\n" "csv"))
+  ("<http://e/r/1> <http://www.opengis.net/ont/geosparql#asWKT> " ++ wktObj ++ " .")
+-- (e) RML, a `rml:datatypeMap` with `rml:constant`
+#guard hasSub (nquadsOf (rmlMap (rmlHead ++
+    "_:om <http://w3id.org/rml/datatypeMap> _:dm .\n" ++
+    "_:dm <http://w3id.org/rml/constant> <http://www.opengis.net/ont/geosparql#wktLiteral> .\n")
+    "id,wkt\n1,POINT(1 2)\n" "csv"))
+  ("<http://e/r/1> <http://www.opengis.net/ont/geosparql#asWKT> " ++ wktObj ++ " .")
+
 #guard jsonSchemaValidate "{\"type\":\"integer\"}" "5"
          == "{\"ok\":true,\"valid\":true,\"result\":\"pass\",\"errors\":[]}"
 #guard jsonSchemaValidate "{\"type\":\"integer\"}" "\"x\""
@@ -590,5 +649,15 @@ private def nqLines (env : String) : Nat := (env.splitOn "<http://e/p>").length 
 #guard (match jsonldDataset
   "{\"@id\":\"http://e/s\",\"http://e/p\":[{\"@value\":\"x\"},{\"@value\":\"x\"}]}" "" with
   | .ok ds => ds.default.length | .error _ => 0) == 2
+
+-- JSON-LD-star through the npm ops: `rdfstar` reads `@triple` as a triple term
+-- and writes it back; without it the triple term is refused on output.
+private def starDoc : String :=
+  "{\"@id\":\"http://e/s\",\"http://e/p\":{\"@triple\":{\"@id\":\"http://e/a\",\"http://e/q\":{\"@id\":\"http://e/b\"}}}}"
+#guard ((jsonldToRdf starDoc "{\"rdfstar\":true}").splitOn "<<(").length == 2
+#guard (match jsonldDataset starDoc "{\"rdfstar\":true}" with
+        | .ok ds => (jsonldFromRdfParsed ds "{\"rdfstar\":true}").startsWith "{\"ok\":true" &&
+                    (jsonldFromRdfParsed ds "").startsWith "{\"ok\":false"
+        | .error _ => false)
 
 end L4Wasm.Ops

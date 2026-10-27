@@ -997,8 +997,10 @@ runs on `path=ids` when the WHERE clause has no OPTIONAL and no FROM
 `SPARQL.evalPath` on ids under a restriction (a constant endpoint, else the ids
 the rows joined so far hold for an endpoint variable, `pathCands`): a step is a
 PSO or POS scan with the restriction as candidates; a sequence restricts its
-second part to the objects of its first; `^p` drops a pair whose new subject
-is a literal, as the reference does (`isNotLiteral`). The pair rows are joined
+second part to the objects of its first; `^p` swaps every pair, a literal
+object included (SPARQL 1.1 section 18.4; until
+https://github.com/danbri/factoidal/issues/1023 both evaluators dropped the
+pairs whose new subject is a literal). The pair rows are joined
 after the BIND blocks; a FILTER of the top group over an endpoint variable runs
 after every join. Theorems (`IdPathTheorems`, lemma L5p): `evalPath_decode`,
 `pathRows_decode`, `pathPattern_decode`. Gates: `ids-path-*` and `ref-path-*`

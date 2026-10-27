@@ -5,7 +5,7 @@
 # entry that no longer exists or is now mapped, or when the count differs
 # from max-entries. The list may only shrink: when you map an entry, remove
 # its line and lower max-entries in the same commit.
-# max-entries: 390
+# max-entries: 385
 cli:activate  # npm/factoidal/bin/factoidal.mjs
 cli:authz-keys  # npm/factoidal/bin/factoidal.mjs
 cli:authz-serve  # npm/factoidal/bin/factoidal.mjs
@@ -30,7 +30,6 @@ npm:.#clSerialize  # ./browser.js
 npm:.#clearExtensionFunctions  # ./browser.js
 npm:.#clearServiceEndpoints  # ./browser.js
 npm:.#coreRdfsCheck  # ./browser.js
-npm:.#csvwToRdf  # ./browser.js
 npm:.#dataFactory  # ./browser.js
 npm:.#deltaLogAppend  # ./browser.js
 npm:.#deltaLogDestroy  # ./browser.js
@@ -100,7 +99,6 @@ npm:./browser#clSerialize  # ./browser.js
 npm:./browser#clearExtensionFunctions  # ./browser.js
 npm:./browser#clearServiceEndpoints  # ./browser.js
 npm:./browser#coreRdfsCheck  # ./browser.js
-npm:./browser#csvwToRdf  # ./browser.js
 npm:./browser#dataFactory  # ./browser.js
 npm:./browser#deltaLogAppend  # ./browser.js
 npm:./browser#deltaLogDestroy  # ./browser.js
@@ -158,7 +156,6 @@ npm:./fn#difference  # ./fn.js
 npm:./fn#equals  # ./fn.js
 npm:./fn#filter  # ./fn.js
 npm:./fn#fromChunks  # ./fn.js
-npm:./fn#fromCsvw  # ./fn.js
 npm:./fn#fromDataset  # ./fn.js
 npm:./fn#fromMapping  # ./fn.js
 npm:./fn#jsonSchemaValidate  # ./fn.js
@@ -275,14 +272,12 @@ wasm:clNormalize  # lean4/Wasm/CoreDispatch.lean
 wasm:clParse  # lean4/Wasm/CoreDispatch.lean
 wasm:clSerialize  # lean4/Wasm/CoreDispatch.lean
 wasm:clearServiceEndpoints  # lean4/Wasm/CoreDispatch.lean
-wasm:csvwToRdf  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetAddQuads  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetAddQuadsJson  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetClone  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetClose  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetDeleteQuads  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetDeleteQuadsJson  # lean4/Wasm/CoreDispatch.lean
-wasm:datasetFromCsvw  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetFromJsonLd  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetFromQuadsJson  # lean4/Wasm/CoreDispatch.lean
 wasm:datasetFromRml  # lean4/Wasm/CoreDispatch.lean

@@ -562,7 +562,7 @@ theorem graphBgp_ends (env : EvalEnv) (ds : Dataset)
     intro ng hng x hx
     obtain ⟨h1, h2⟩ := hstore x (.bgp b) ng.graph (hq ng hng x hx).1
     have e : (IdLeaf.storeLeaves (listingsAt prb ms (.named x)) (fun _ => spo) (fun _ b => ⟨b, List.Perm.refl b⟩)
-        cid dec idv).bgp ng.graph b = M x := by
+        cid idv).bgp ng.graph b = M x := by
       show IdLeaf.bgpJoin (fun _ => listingsAt prb ms (.named x) spo ng.graph) (b.map (IdLeaf.ipat cid)) [[]] = _
       rw [hlist ng x spo]
       rfl
@@ -634,7 +634,7 @@ theorem graphBgp_ends (env : EvalEnv) (ds : Dataset)
     those of `ExecLeafTheorems.where_allowed_exec` for the store (`PermMem`
     of each permutation, single-thread scans, no dataset clause, a
     dictionary lookup `cid` that never fails, `hdec`, `hsok`, `hidv`,
-    `hcid0`, `htag`), with `CidOk` on the ids in `ok` (`hcid`, which gives
+    `hcid0`), with `CidOk` on the ids in `ok` (`hcid`, which gives
     the leaves' `CidOk` on `sok`) and the ids the lookup gives in `ok`
     (`hcidok`); for the conditions: the lookup answers the tag-folded term
     itself (`hcidN`), the reference's environment `env` has the query's
@@ -656,7 +656,6 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec ok c (cid c))
     (hidv : ∀ t x, cid t = some x → idv t = x) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
-    (htag : ∀ x, sok x → IdPathEval.litTag x = some (!isNotLiteral (dec x)))
     (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t) (henv : EnvAgree cx.env env)
     (hdsE : env.dataset = some ds)
     (htermOf : ∀ x, ok x → cx.st.termOf x = pure (dec x)) (hloc : ∀ x, ok x → tagOf x ≠ tagLocal)
@@ -672,7 +671,7 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
       ⟨fun k hk => ⟨prb k, ms k, hpm k hk, hs.1.2 ⟨k, hk⟩⟩, hscan⟩
     obtain ⟨tab, nst2, hrun, hv1, hv2, hwf, _, _⟩ := bgpM_rows cx cid hid hds g _ hst b htp nst1
     obtain ⟨hlr1, hlr2⟩ := leafRel_exec cx nst1 (fun _ => g) prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok
-      (cidOk_sok hsok hcid) hidv hcid0 htag (.bgp b) a ⟨hs, htp⟩
+      (cidOk_sok hsok hcid) hidv hcid0 (.bgp b) a ⟨hs, htp⟩
     have hrows : (execLeaves cx nst1 (fun _ => g)).bgp a b = tab.idRows := by
       show (match ((IdGroup.bgpM cx g b).run nst1).run with | .ok p => p.1.idRows | .error _ => []) = _
       rw [hrun]; rfl
@@ -685,17 +684,10 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
     obtain ⟨hl, hs, ho⟩ := h
     have hst : BgpTableTheorems.BgpStore cx.st (gctxId g) (listingsAt prb ms g spo a) :=
       ⟨fun k hk => ⟨prb k, ms k, hpm k hk, hl.1.2 ⟨k, hk⟩⟩, hscan⟩
-    have hlit : ∀ x ∈ IdPath.idGraphNodes (listingsAt prb ms g spo a),
-        IdPathEval.litTag x = some (!isNotLiteral (dec x)) := by
-      intro x hx
-      rw [IdPathScanTheorems.mem_graphNodes] at hx
-      obtain ⟨t, ht, e | e⟩ := hx
-      · rw [← e]; exact htag _ (graphDec_sok dec sok _ a hl.1.1 t ht).1
-      · rw [← e]; exact htag _ (graphDec_sok dec sok _ a hl.1.1 t ht).2
-    obtain ⟨tab, nst2, hrun, hv1, hv2, hwf, _, _⟩ := pathM_rows cx cid hid hds g _ hst dec idv hidv hcid0 hlit
+    obtain ⟨tab, nst2, hrun, hv1, hv2, hwf, _, _⟩ := pathM_rows cx cid hid hds g _ hst idv hidv hcid0
       s path o hs ho nst1
     obtain ⟨hlr1, hlr2⟩ := leafRel_exec cx nst1 (fun _ => g) prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok
-      (cidOk_sok hsok hcid) hidv hcid0 htag (.propertyPath s path o) a ⟨hl, hs, ho⟩
+      (cidOk_sok hsok hcid) hidv hcid0 (.propertyPath s path o) a ⟨hl, hs, ho⟩
     have hrows : (execLeaves cx nst1 (fun _ => g)).path a s path o = tab.idRows := by
       show (match ((IdGroup.pathM cx g s path o unitTable).run nst1).run with
         | .ok p => p.1.idRows | .error _ => []) = _
@@ -716,12 +708,12 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
     · obtain ⟨s, path, o, rfl⟩ := hrp
       obtain ⟨hgl, hs, ho⟩ := h.2
       rw [evalGroupM]
-      refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv hdsE
+      refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 hcidN henv hdsE
         htermOf hloc hcidok htagk l a g h.1 nst1 hi1) fun tl nst2 ⟨hwl, hAl, hol, hi2, hp12⟩ => ?_
       obtain ⟨tp, nst3, hrun, hv1, hv2, hjwf, hjeq⟩ := join_path_exec cx nst2 (fun _ => g) prb ms cid dec idv sok hpm hscan hds
-        hid hidv hcid0 htag a s path o hgl.1 hs ho tl hwl nst2
+        hid hidv hcid0 a s path o hgl.1 hs ho tl hwl nst2
       obtain ⟨hlr1, hlr2⟩ := leafRel_exec cx nst2 (fun _ => g) prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok
-        (cidOk_sok hsok hcid) hidv hcid0 htag (.propertyPath s path o) a ⟨hgl, hs, ho⟩
+        (cidOk_sok hsok hcid) hidv hcid0 (.propertyPath s path o) a ⟨hgl, hs, ho⟩
       have hi3 : LocalVocab.Inv cid nst3 := inv_congr hv1 hv2 hi2
       have hdecV' := hdecV cid dec ok hdec hcid hloc hi3
       have hlr2' : ∀ r ∈ (execLeaves cx nst2 (fun _ => g)).path a s path o, RowIds (okV ok nst3.vocab) r :=
@@ -739,9 +731,9 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
           (IdGroup.rowIds_idJoin _ _ _ hol' hlr2')
     · have hr : ∀ s path o, r ≠ .propertyPath s path o := fun s path o e => hrp ⟨s, path, o, e⟩
       rw [evalGroupM.eq_4 cx _ l r (fun s path o e => hr s path o e)]
-      refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv hdsE
+      refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 hcidN henv hdsE
         htermOf hloc hcidok htagk l a g h.1 nst1 hi1) fun tl nst2 ⟨hwl, hAl, hol, hi2, hp12⟩ => ?_
-      refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv hdsE
+      refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 hcidN henv hdsE
         htermOf hloc hcidok htagk r a g h.2 nst2 hi2) fun tr nst3 ⟨hwr, hAr, hor, hi3, hp23⟩ => ?_
       obtain ⟨hAl, hol⟩ := allowed_mono env ds dec hloc hp23 hi3.size hAl hol
       have hdecV' := hdecV cid dec ok hdec hcid hloc hi3
@@ -763,9 +755,9 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
           (IdGroup.rowIds_idJoin _ _ _ hol hor)
   | .union l r, a, g, h, nst1, hi1 => by
     rw [evalGroupM]
-    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv hdsE
+    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 hcidN henv hdsE
       htermOf hloc hcidok htagk l a g h.1 nst1 hi1) fun tl nst2 ⟨hwl, hAl, hol, hi2, hp12⟩ => ?_
-    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv hdsE
+    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 hcidN henv hdsE
       htermOf hloc hcidok htagk r a g h.2 nst2 hi2) fun tr nst3 ⟨hwr, hAr, hor, hi3, hp23⟩ => ?_
     obtain ⟨hAl, hol⟩ := allowed_mono env ds dec hloc hp23 hi3.size hAl hol
     obtain ⟨huwf, hur⟩ := TableTheorems.unionIds_rows #[tl, tr] (by
@@ -790,9 +782,9 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
       · exact hor x e
   | .minus l r, a, g, h, nst1, hi1 => by
     rw [evalGroupM]
-    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv hdsE
+    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 hcidN henv hdsE
       htermOf hloc hcidok htagk l a g h.1 nst1 hi1) fun tl nst2 ⟨hwl, hAl, hol, hi2, hp12⟩ => ?_
-    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv hdsE
+    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 hcidN henv hdsE
       htermOf hloc hcidok htagk r a g h.2 nst2 hi2) fun tr nst3 ⟨hwr, hAr, hor, hi3, hp23⟩ => ?_
     obtain ⟨hAl, hol⟩ := allowed_mono env ds dec hloc hp23 hi3.size hAl hol
     have hdecV' := hdecV cid dec ok hdec hcid hloc hi3
@@ -828,7 +820,7 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
     | some gr =>
       rw [hg] at hq
       obtain ⟨x, hx, hxn, hq'⟩ := hq
-      have := query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv hdsE
+      have := query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 hcidN henv hdsE
         htermOf hloc hcidok htagk q gr (.named x) hq' nst1 hi1
       simp only [hx, hxn, if_true]
       exact ends_mono this fun t s ⟨hwf, hA, hok, hi, hp⟩ => ⟨hwf, .graphIri hg hA, hok, hi, hp⟩
@@ -856,7 +848,7 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
     · exact graphBgp_ends cx prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok hcid hcidN hloc hcidok
         hcid0 v b hb htp hcn hfa hnr hq a g nst1 hi1
     exact graphVar_ends cx cid dec ok env ds hdec hcid hcidN hloc hcidok hcid0 v q hng hnb hnd hfa
-      (fun ng hng' x hx s hs => query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag
+      (fun ng hng' x hx s hs => query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0
         hcidN henv hdsE htermOf hloc hcidok htagk q ng.graph (.named x) (hq ng hng' x hx) s hs) a g nst1 hi1
   | .graph (.bnode _) _, _, _, h, _, _ => h.elim
   | .graph (.literal _) _, _, _, h, _, _ => h.elim
@@ -864,9 +856,9 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
   | .leftJoin l r c, a, g, h, nst1, hi1 => by
     obtain ⟨hc, h1, h2⟩ := h
     rw [evalGroupM]
-    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv hdsE
+    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 hcidN henv hdsE
       htermOf hloc hcidok htagk l a g h1 nst1 hi1) fun tl nst2 ⟨hwl, hAl, hol, hi2, hp12⟩ => ?_
-    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv hdsE
+    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 hcidN henv hdsE
       htermOf hloc hcidok htagk r a g h2 nst2 hi2) fun tr nst3 ⟨hwr, hAr, hor, hi3, hp23⟩ => ?_
     obtain ⟨hAl, hol⟩ := allowed_mono env ds dec hloc hp23 hi3.size hAl hol
     have hdecV' := hdecV cid dec ok hdec hcid hloc hi3
@@ -922,7 +914,7 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
   | .filter c q, a, g, h, nst1, hi1 => by
     obtain ⟨hc, hb, hq⟩ := h
     rw [evalGroupM]
-    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv hdsE
+    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 hcidN henv hdsE
       htermOf hloc hcidok htagk q a g hq nst1 hi1) fun tq nst2 ⟨hwq, hAq, hoq, hi2, hp12⟩ => ?_
     refine ends_mono (ExistsTableTheorems.filterM_run cx (fun _ => g) prb ms cid dec idv sok ok env ds henv hpm hscan hds hid
       hdec hsok hcid (cidOk_sok hsok hcid) htermOf hloc htagk hcidN hcidok nst2 hi2 a tq hwq hoq c hc (fun _ => ⟨ds, hdsE⟩) hb)
@@ -938,7 +930,7 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
   | .bind e v q, a, g, h, nst1, hi1 => by
     obtain ⟨hef, ⟨vs, hvs⟩, hfx, hq⟩ := h
     rw [evalGroupM]
-    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv hdsE
+    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 hcidN henv hdsE
       htermOf hloc hcidok htagk q a g hq nst1 hi1) fun tq nst2 ⟨hwq, hAq, hoq, hi2, hp12⟩ => ?_
     refine ends_mono (LocalTable.extendNM_spec cid dec ok cx hid hcid hcidok hcidN htermOf hloc hcid0 env henv e v vs
       hvs hef hfx tq hwq nst2 hi2 hoq a) fun T s ⟨hwf, hpw, hok, hi, hp⟩ => ⟨hwf, ?_, hok, hi, hp12.trans hp⟩
@@ -954,7 +946,7 @@ theorem query_where_allowed_exec (env : EvalEnv) (ds : Dataset)
   | .subSelect (.mk form dcs inner gb hv md pv bs), a, g, h, nst1, hi1 => by
     obtain ⟨hq, hs⟩ := h
     rw [evalGroupM]
-    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag hcidN henv hdsE
+    refine ends_bind (query_where_allowed_exec env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 hcidN henv hdsE
       htermOf hloc hcidok htagk inner a g hq nst1 hi1) fun tq nst2 ⟨hwq, hAq, hoq, hi2, hp12⟩ => ?_
     cases hpp : IdGroup.plainProjection? (.mk form dcs inner gb hv md pv bs) with
     | some pr =>
@@ -993,7 +985,6 @@ theorem query_where_allowed_exec_init (env : EvalEnv) (ds : Dataset)
     (hdec : ∀ x y, ok x → ok y → (dec x).eqb (dec y) = (x == y)) (hsok : ∀ x, sok x → ok x)
     (hcid : ∀ c, CidOk dec ok c (cid c))
     (hidv : ∀ t x, cid t = some x → idv t = x) (hcid0 : ∀ t x, cid t = some x → x ≠ 0)
-    (htag : ∀ x, sok x → IdPathEval.litTag x = some (!isNotLiteral (dec x)))
     (hcidN : ∀ t x, cid t = some x → dec x = normalizeTerm t) (henv : EnvAgree cx.env env)
     (hdsE : env.dataset = some ds)
     (htermOf : ∀ x, ok x → cx.st.termOf x = pure (dec x)) (hloc : ∀ x, ok x → tagOf x ≠ tagLocal)
@@ -1002,7 +993,7 @@ theorem query_where_allowed_exec_init (env : EvalEnv) (ds : Dataset)
     (h : ExecHyps (fun g => ExecLeaf cid dec sok ok idv (listingsAt prb ms g)) (NamedRows cx prb ms)
         cx cid ds p a g) :
     Ends ((evalGroupM cx p g).run {}) (WhereOk env ds cid dec ok p a {}) :=
-  query_where_allowed_exec cx prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok hcid hidv hcid0 htag
+  query_where_allowed_exec cx prb ms cid dec idv sok ok env ds hpm hscan hds hid hdec hsok hcid hidv hcid0
     hcidN henv hdsE htermOf hloc hcidok htagk p a g h {} (inv_empty cid)
 
 end

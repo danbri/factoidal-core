@@ -36,9 +36,9 @@
 # names on standard error the graphs it cannot state; and the refusal of N-Triples
 # without --graph.
 #
-# And expected failures that name open issues; the run fails when one passes:
-# `l4factoidal query`, the in-memory query ops, gives neither a graph with no triple nor a
-# graph named by a blank node (https://github.com/danbri/factoidal/issues/876); the IBK4
+# And `l4factoidal query`, the in-memory query ops, which keeps a graph with no triple
+# (https://github.com/danbri/factoidal/issues/876); and expected failures that name open
+# issues, the run failing when one passes: the IBK4
 # and IBK5 stores refuse a graph with no triple, in the pack and in CREATE GRAPH and CLEAR
 # GRAPH (https://github.com/danbri/factoidal/issues/880), and every update on them is refused
 # (https://github.com/danbri/factoidal/issues/935).
@@ -211,17 +211,24 @@ if store r2 && update r2 "$TMP/r2" "CLEAR NAMED" 3; then
   fi
 fi
 
-echo "=== shortfall: the in-memory query ops"
-# `l4factoidal query` gives its dataset to the query ops through the canonical N-Quads round
-# trip (`withOpsDataset`), which cannot state a graph with no triple, and the ops evaluate
-# on the indexed backend, which leaves out a graph named by a blank node: https://github.com/danbri/factoidal/issues/876
-rows=-
+echo "=== the in-memory query ops (l4factoidal query)"
+# `l4factoidal query` gives the parsed dataset to the query ops with the named graphs that have
+# no triple kept (`withOpsSetDatasetKeepEmpty`), since the canonical N-Quads text cannot state
+# one (https://github.com/danbri/factoidal/issues/876). A graph named by a blank node is a graph
+# name (Subject) and is kept by the indexed backend.
+l4f_rows() { # l4f_rows <file> <format>: the rows of GRAPH ?g { }, "error" on a failure
+  timeout 120 "$BIN/l4factoidal" query "$1" --format "$2" --query "$QDIR/ids-graph-names.rq" >"$TMP/l4f.srj" 2>"$TMP/l4f.err" \
+    && python3 -I -c 'import json, sys; print(len(json.load(open(sys.argv[1]))["results"]["bindings"]))' "$TMP/l4f.srj" 2>/dev/null || echo error
+}
 if [ -x "$BIN/l4factoidal" ]; then
-  timeout 120 "$BIN/l4factoidal" query "$FX" --format trig --query "$QDIR/ids-graph-names.rq" >"$TMP/l4f.srj" 2>"$TMP/l4f.err"
-  rows="$(python3 -I -c 'import json, sys; print(len(json.load(open(sys.argv[1]))["results"]["bindings"]))' "$TMP/l4f.srj" 2>/dev/null || echo error)"
-fi
-if [ "$rows" = 6 ]; then xfail xfail-l4factoidal-graph-names https://github.com/danbri/factoidal/issues/876 1 "l4factoidal query gives the 6 named graphs of d5.trig"
-else xfail xfail-l4factoidal-graph-names https://github.com/danbri/factoidal/issues/876 0 "GRAPH ?g { } on d5.trig: l4factoidal query gives $rows rows, the reference evaluator 6"; fi
+  rows="$(l4f_rows "$FX" trig)"
+  if [ "$rows" = 6 ]; then record l4factoidal-graph-names 0 "GRAPH ?g { } on d5.trig: 6 named graphs"
+  else record l4factoidal-graph-names 1 "GRAPH ?g { } on d5.trig: l4factoidal query gives $rows rows, expected 6"; fi
+  printf '@prefix ex: <http://example.org/> .\nex:g1 { }\n_:b { }\nex:g2 { ex:s ex:p ex:o }\n' >"$TMP/e876.trig"
+  rows="$(l4f_rows "$TMP/e876.trig" trig)"
+  if [ "$rows" = 3 ]; then record l4factoidal-graph-names-small 0 "empty IRI graph, empty blank-node graph and one graph with a triple: 3 rows"
+  else record l4factoidal-graph-names-small 1 "l4factoidal query gives $rows rows, expected 3"; fi
+else record l4factoidal-graph-names 1 "missing binary $BIN/l4factoidal"; fi
 
 echo "=== refusal: the IBK4 and IBK5 stores"
 # The IBK stores have no graph list and their log (DLOG version 1) has no graph slot. Owner

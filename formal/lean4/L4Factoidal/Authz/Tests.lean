@@ -129,12 +129,45 @@ def run (ps : List (String × String)) (st : AuthzState := st0) (c : AuthzConfig
 #guard (metadataJson cfg).getArray? "grant_types_supported" == some [.string tokenExchangeGrant]
 #guard (metadataJson cfg).getArray? "subject_identifier_types_supported" ==
   some [.string "https", .string "did:key"]
--- SAML is not advertised: no XML Signature verifier (issue 926).
+-- SAML is advertised only when an identity provider is trusted (issue 926).
 #guard !((metadataJson cfg).getArray? "subject_token_types_supported").get!.contains (.string tokenTypeSaml2)
+#guard ((metadataJson { cfg with samlIdps := [{ entityId := "https://idp.example", n := zeros 256, e := zeros 3 }] }).getArray?
+  "subject_token_types_supported").get!.contains (.string tokenTypeSaml2)
 #guard issuerPath "https://as.example" == ""
 #guard issuerPath "https://as.example/tenant/" == "/tenant"
 #guard lwsConfigurationPath "https://as.example/tenant" == "/.well-known/lws-configuration/tenant"
 #guard tokenPath "https://as.example/tenant" == "/tenant/token"
+
+/-! ## Endpoint paths: configurable, two forms (whole and issuer-relative) -/
+
+-- An issuer that shares its path with a storage, its endpoints under the
+-- storage's `.well-known/`, as `lws-serve --authz` sets it.
+def cfgMounted : AuthzConfig :=
+  { cfg with issuer := "https://h.example/targets/f"
+             tokenPath := "/.well-known/lws-token", jwksPath := "/.well-known/lws-jwks" }
+#guard (metadataJson cfgMounted).getString? "token_endpoint" ==
+  some "https://h.example/targets/f/.well-known/lws-token"
+#guard (metadataJson cfgMounted).getString? "jwks_uri" ==
+  some "https://h.example/targets/f/.well-known/lws-jwks"
+-- whole form
+#guard endpointOf? cfgMounted "/.well-known/lws-configuration/targets/f" == some .metadata
+#guard endpointOf? cfgMounted "/.well-known/oauth-authorization-server/targets/f" == some .metadata
+#guard endpointOf? cfgMounted "/targets/f/.well-known/lws-token" == some .token
+#guard endpointOf? cfgMounted "/targets/f/.well-known/lws-jwks" == some .jwks
+-- issuer form (a proxy removed /targets/f)
+#guard endpointOf? cfgMounted "/.well-known/lws-configuration" == some .metadata
+#guard endpointOf? cfgMounted "/.well-known/lws-token" == some .token
+#guard endpointOf? cfgMounted "/.well-known/lws-jwks" == some .jwks
+-- storage paths are not this server's
+#guard endpointOf? cfgMounted "/token" == none
+#guard endpointOf? cfgMounted "/.well-known/lws-storage" == none
+#guard endpointOf? cfgMounted "/.well-known/oauth-protected-resource/x" == none
+#guard !owns cfgMounted "/notes/a.txt"
+#guard owns cfgMounted "/.well-known/lws-token?x=1"
+-- the default paths are unchanged
+#guard endpointOf? cfg "/token" == some .token
+#guard endpointOf? cfg "/jwks" == some .jwks
+#guard endpointOf? cfg "/.well-known/lws-configuration" == some .metadata
 
 /-! ## Keys and the JWK Set -/
 
@@ -224,9 +257,10 @@ def keys1 : KeyStore := rotateWith keys0 k2 (now + 10) 360
 #guard errorOf (run (baseForm (jwt (es256Header "zOther") (selfClaims did) subjKey))) == some "invalid_request"
 #guard errorOf (run (baseForm (jwt (es256Header didMb) (selfClaims did [] ["sub"]) subjKey))) == some "invalid_request"
 #guard errorOf (run (baseForm "not.a.jwt")) == some "invalid_request"
--- SAML 2.0: refused, the stated gap of issue 926.
+-- SAML 2.0 with no trusted identity provider: refused (issue 926). The
+-- suite itself: `L4Factoidal/SAML/Tests.lean`.
 #guard (match validateSubject ctx0 tokenTypeSaml2 "PHNhbWw+" with
-        | .refused w => (w.splitOn "issues/926").length == 2
+        | .refused w => (w.splitOn "trusts no SAML identity provider").length == 2
         | _ => false)
 #guard errorOf (run (baseForm "PHNhbWw+" tokenTypeSaml2)) == some "invalid_request"
 

@@ -1,0 +1,5 @@
+# Expected failures of tests/webdav/litmus.mjs: one row per litmus test known
+# to fail, tab-separated: mount, suite, test number, test name, open issue URL.
+# A listed test that passes turns the run red; so does a failure not listed.
+# Measured 2026-10-27: no row (every test of basic, copymove, props, locks
+# and http passes on the local and the remote mount).

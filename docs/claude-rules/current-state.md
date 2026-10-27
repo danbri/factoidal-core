@@ -501,6 +501,8 @@ resolved `assume val`s).
 
 ## Standing priorities (as of 2026-07-16)
 
+HIGH (owner, 2026-10-25): https://github.com/danbri/factoidal/issues/1009 SBM11 in wasm and npm (Node + browser), every CLI built from API ops; storage media https://github.com/danbri/factoidal/issues/1010 KR1 is shared with 1009 KR1.
+
 **Active /goal (owner, 2026-07-21, verbatim):** _"important fixes
 urgent: RDF/XML 1.2, RDF 1.2 canonicalization (86) and entailment (74)
 suites, the 6 residual SPARQL 1.2 eval fails, RML-star mapping

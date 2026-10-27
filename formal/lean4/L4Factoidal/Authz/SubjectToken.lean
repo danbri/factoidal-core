@@ -39,7 +39,8 @@ be signed."
    relationship names (embedded, or referenced and defined under
    `verificationMethod`), and its `controller` must be the subject; §2.2: a
    method with a `revoked` or `expires` time at or before now is not used.
-   `cidKey`.
+   `cidKey`, through the CID 1.0 module `L4Factoidal.CID`
+   (https://github.com/danbri/factoidal/issues/1100).
 3. Self-issued credential, `did:key` subject (lws10-authn-ssi-cid, which
    covers DID subjects; lws10-authn-ssi-did-key is discontinued in its
    favour). The DID document is derived from the identifier (did:key
@@ -47,11 +48,17 @@ be signed."
    HACL\*) or `0xed` (Ed25519). The `kid` is `did:key:z…#z…` or `z…`.
    `didKeyJwk?`.
 4. SAML 2.0 assertion, `urn:ietf:params:oauth:token-type:saml2`
-   (lws10-authn-saml): REFUSED. "the signature of the credential MUST be
-   validated as described in SAML Core, section 5", and this tree has no
-   XML Signature verifier: https://github.com/danbri/factoidal/issues/926.
+   (lws10-authn-saml): "the signature of the credential MUST be validated
+   as described in SAML Core, section 5". `L4Factoidal.SAML.validate`:
+   base64url XML, `saml:Assertion` from an identity provider in
+   `Ctx.samlIdps` (trust is out of band), its enveloped XML Signature
+   (exclusive canonicalization, rsa-sha256) verified under that
+   provider's key, `saml:Conditions` times and `saml:Audience` (this
+   server's issuer), the subject `saml:NameID`, the client the bearer
+   `Recipient`. With no trusted provider the token type is refused and not
+   advertised. https://github.com/danbri/factoidal/issues/926.
 
-Every suite: `alg: none` and any algorithm outside ES256, RS256, EdDSA are
+Every JWT suite: `alg: none` and any algorithm outside ES256, RS256, EdDSA are
 refused by `JOSE.preKey` before a key is chosen; the signature is checked
 by `JOSE.verifyCompact`; `exp` (required), `iat` (required, not in the
 future), `nbf` (if present) are checked with `leeway` seconds of skew; and
@@ -60,8 +67,9 @@ future), `nbf` (if present) are checked with `leeway` seconds of skew; and
 import L4Factoidal.Authz.Keys
 import L4Factoidal.Authz.Fetch
 import L4Factoidal.JOSE.Jwt
-import L4Factoidal.VC.Multibase
+import L4Factoidal.CID.Retrieve
 import L4Factoidal.LWS.AccessPolicy
+import L4Factoidal.SAML.Assertion
 
 namespace L4Factoidal.Authz
 
@@ -91,6 +99,13 @@ structure Ctx where
   leeway : Nat := 60
   policy : FetchPolicy := {}
   fs : FetchState := {}
+  /-- The SAML identity providers this server trusts (out of band). -/
+  samlIdps : List L4Factoidal.SAML.Idp := []
+  /-- Private keys for `saml:EncryptedAssertion` and `saml:EncryptedID`;
+  none: encrypted elements are refused. -/
+  samlKeys : L4Factoidal.XML.Enc.Keys := {}
+  /-- The host's answers to the AES requests made so far. -/
+  cipherAnswers : List (L4Factoidal.Crypto.CipherCall.Req × L4Factoidal.Crypto.CipherCall.Ans) := []
 
 inductive SubjectResult where
   /-- The subject token is valid: the agent and the client it names. -/
@@ -159,18 +174,25 @@ def finish (ctx : Ctx) (p : Parsed) (k : Jwk) (subject client : String) : Subjec
 
 /-! ## Multikey and did:key -/
 
-/-- A Multikey value (`z` base58btc): multicodec `0x1200` P-256 compressed
-point (33 bytes, decompressed by the primitive) or `0xed` Ed25519 (32
-bytes). -/
+/-- The JOSE key of CID verification material (`CID.Material`): a
+`Multikey` P-256 compressed point (decompressed by the primitive) or
+Ed25519 key, or a `publicKeyJwk` that `JOSE.parsePublicJwk?` accepts
+(P-256, RSA, Ed25519, public members only). Other material is not usable
+for the JWS algorithms of this server. -/
+def materialJwk? (C : Crypto) : L4Factoidal.CID.Material → Option Jwk
+  | .multikey .p256 key =>
+      (C.p256Decompress ⟨key.toArray⟩).map (fun raw => .ec (raw.extract 0 32) (raw.extract 32 64))
+  | .multikey .ed25519 key => some (.okp ⟨key.toArray⟩)
+  | .jwk j => parsePublicJwk? j
+  | _ => none
+
+/-- A Multikey value (`z` base58btc, CID 1.0 §2.2.2) as a JOSE key:
+multicodec `0x1200` P-256 compressed point (33 bytes, decompressed by the
+primitive) or `0xed` Ed25519 (32 bytes). -/
 def multikeyJwk? (C : Crypto) (mb : String) : Option Jwk :=
-  if !mb.startsWith "z" then none
-  else match L4Factoidal.VC.Multibase.base58Decode? (mb.drop 1).toString with
-    | some (a :: b :: rest) =>
-        if a == 0x80 && b == 0x24 && rest.length == 33 then
-          (C.p256Decompress ⟨rest.toArray⟩).map (fun raw => .ec (raw.extract 0 32) (raw.extract 32 64))
-        else if a == 0xed && b == 0x01 && rest.length == 32 then some (.okp ⟨rest.toArray⟩)
-        else none
-    | _ => none
+  match L4Factoidal.CID.decodePublicMultikey mb with
+  | .ok (kt, key) => materialJwk? C (.multikey kt key)
+  | .error _ => none
 
 def didKeyPrefix : String := "did:key:"
 
@@ -182,70 +204,37 @@ def didKeyJwk? (C : Crypto) (did : String) : Option (Jwk × String) :=
     let mb := (did.drop didKeyPrefix.length).toString
     (multikeyJwk? C mb).map (·, mb)
 
-/-! ## Controlled identifier documents -/
+/-! ## Controlled identifier documents
 
-/-- A `#fragment` reference resolved against the subject's document IRI;
-anything else as written. -/
-def resolveRef (sub ref : String) : String :=
-  if ref.startsWith "#" then withoutFragment sub ++ ref else ref
+The CID suite uses `L4Factoidal.CID` (CID 1.0 §3.3 Retrieve Verification
+Method, with the relationship `authentication`), then §2.2 (a method with a
+`revoked` or `expires` time at or before now is not used), then the key of
+the method's material. -/
 
-def idOf (sub : String) (m : Json) : Option String := (m.getString? "id").map (resolveRef sub)
+def cidAccept : String := L4Factoidal.CID.acceptHeader
 
-/-- The verification methods the `authentication` relationship names (CID
-1.0 §3.3): embedded objects, and references to a `verificationMethod` of
-the same document. A method listed only under `verificationMethod`, or only
-for another relationship, is not among them. -/
-def authenticationMethods (doc : Json) (sub : String) : List Json :=
-  let defined := (doc.getArray? "verificationMethod").getD []
-  ((doc.getArray? "authentication").getD []).filterMap fun e =>
-    match e with
-    | .string r =>
-        let ref := resolveRef sub r
-        defined.find? (fun m => idOf sub m == some ref)
-    | .object _ => some e
-    | _ => none
-
-/-- Has the method been revoked or expired (CID 1.0 §2.2)? An unreadable
-time counts as revoked. -/
-def methodInForce (now : Nat) (m : Json) : Bool :=
-  ["revoked", "expires"].all fun n =>
-    match m.field? n with
-    | none => true
-    | some (.string t) =>
-        match L4Factoidal.LWS.AccessPolicy.parseXsdDateTime? t with
-        | some at_ => decide ((now : Int) < at_)
-        | none => false
-    | some _ => false
-
-/-- The public key of a verification method: `publicKeyJwk` (public members
-only), or a Multikey `publicKeyMultibase`. -/
-def methodKey? (C : Crypto) (m : Json) : Option Jwk :=
-  match m.field? "publicKeyJwk" with
-  | some j => parsePublicJwk? j
-  | none => (m.getString? "publicKeyMultibase").bind (multikeyJwk? C)
-
-/-- The method `methodId` of the subject's document, if it may be used to
-authenticate the subject. -/
-def selectMethod (ctx : Ctx) (doc : Json) (sub methodId : String) : Except String Jwk :=
-  if doc.getString? "id" != some sub then
-    .error s!"the controlled identifier document at {sub} names another id"
-  else match (authenticationMethods doc sub).find? (fun m => idOf sub m == some methodId) with
-    | none => .error s!"the controlled identifier document names no authentication method {methodId}"
-    | some m =>
-        if (m.getString? "controller").map (resolveRef sub) != some sub then
-          .error s!"verification method {methodId} is controlled by another identifier"
-        else if !methodInForce ctx.now m then
-          .error s!"verification method {methodId} is revoked or expired"
-        else match methodKey? ctx.C m with
-          | some k => .ok k
-          | none => .error s!"verification method {methodId} carries no usable public key"
-
-def cidAccept : String := "application/ld+json, application/cid+json, application/json"
-
-/-- The key of a CID-suite credential with an HTTPS subject. -/
+/-- The verification method a `kid` names: an absolute URL as written, else
+a fragment of the subject's document. -/
 def methodIdOf (sub kid : String) : String :=
   if (kid.splitOn ":").length > 1 then kid else withoutFragment sub ++ "#" ++ kid
 
+/-- The method `methodId` of the subject's document, if it may be used to
+authenticate the subject: it is in the subject's document (lws10-authn-ssi-cid
+dereferences the subject), §3.3 retrieves it for `authentication`, it is in
+force (§2.2), and its material is a usable key. -/
+def selectMethod (ctx : Ctx) (doc : Json) (sub methodId : String) : Except String Jwk :=
+  if L4Factoidal.CID.withoutFragment methodId != sub then
+    .error s!"the kid names {methodId}, which is not a verification method of the subject's document {sub}"
+  else match L4Factoidal.CID.retrieveFromDocument methodId .authentication doc with
+    | .error e => .error s!"{e.name}: {e.detail}"
+    | .ok m =>
+        if !L4Factoidal.CID.methodInForce ctx.now m then
+          .error s!"verification method {methodId} is revoked or expired"
+        else match materialJwk? ctx.C m.material with
+          | some k => .ok k
+          | none => .error s!"verification method {methodId} carries no usable public key"
+
+/-- The key of a CID-suite credential with an HTTPS subject. -/
 def cidKey (ctx : Ctx) (sub : String) (kid : String) : KeyFound :=
   match lookup ctx.policy ctx.fs ctx.now sub cidAccept with
   | .need n => .need n
@@ -399,10 +388,28 @@ def validateIdToken (ctx : Ctx) (p : Parsed) : SubjectResult :=
   | .error w => .refused w
   | .ok (iss, sub, azp) => withKey ctx p (oidcKey ctx iss sub (p.header.getString? "kid")) sub azp
 
+/-- The SAML policy of a context. -/
+def Ctx.samlPolicy (ctx : Ctx) : L4Factoidal.SAML.Policy :=
+  { idps := ctx.samlIdps, audience := ctx.issuer, now := ctx.now, leeway := ctx.leeway,
+    decryptKeys := ctx.samlKeys }
+
+/-- The SAML 2.0 suite. The audience is this server's issuer identifier. An
+encrypted assertion (when `samlKeys` holds a key) is decrypted with the
+replay cipher over `cipherAnswers`: a request the host has not answered is
+`.need (.cipher req)`. -/
+def validateSaml (ctx : Ctx) (token : String) : SubjectResult :=
+  if ctx.samlIdps.isEmpty then
+    .refused "SAML 2.0 assertions are not accepted: this server trusts no SAML identity provider"
+  else
+    match L4Factoidal.SAML.validateWith (L4Factoidal.Crypto.CipherCall.replayCipher ctx.cipherAnswers)
+        L4Factoidal.XML.Enc.nativePrims ctx.C.verifiers.rs256 ctx.samlPolicy token with
+    | .ok c => .valid c.nameId c.recipient
+    | .error (.need r) => .need (.cipher r)
+    | .error (.refused w) => .refused w
+
 /-- Validate a subject token of a token type. -/
 def validateSubject (ctx : Ctx) (tokenType token : String) : SubjectResult :=
-  if tokenType == tokenTypeSaml2 then
-    .refused s!"SAML 2.0 assertions are not accepted: this server has no XML Signature verifier ({samlIssue})"
+  if tokenType == tokenTypeSaml2 then validateSaml ctx token
   else if tokenType == tokenTypeJwt || tokenType == tokenTypeIdToken then
     match parseJwt token with
     | .error w => .refused w
@@ -426,5 +433,27 @@ theorem withKey_valid {ctx : Ctx} {p : Parsed} {kf : KeyFound} {s c s' c' : Stri
       simp at h
       exact ⟨k, rfl, hv, h.1.symm, h.2.symm⟩
     · simp at h
+
+/-- `validateSaml` gives `valid` only for an assertion (encrypted or not)
+whose signature verified under the key of a trusted identity provider of
+the context, whatever the host answered to the AES requests. -/
+theorem validateSaml_valid {ctx : Ctx} {token s c : String}
+    (h : validateSaml ctx token = .valid s c) :
+    ∃ cl d idp, L4Factoidal.SAML.validateWith (L4Factoidal.Crypto.CipherCall.replayCipher ctx.cipherAnswers)
+        L4Factoidal.XML.Enc.nativePrims ctx.C.verifiers.rs256 ctx.samlPolicy token = .ok cl ∧
+      cl.nameId = s ∧ cl.recipient = c ∧ idp ∈ ctx.samlIdps ∧ idp.entityId = cl.issuer ∧
+      L4Factoidal.SAML.openToken (L4Factoidal.Crypto.CipherCall.replayCipher ctx.cipherAnswers)
+        L4Factoidal.XML.Enc.nativePrims ctx.samlPolicy token = .ok d ∧
+      L4Factoidal.XML.DSig.verifyEnveloped ctx.C.verifiers.rs256 idp.n idp.e d = .ok () := by
+  unfold validateSaml at h
+  split at h
+  · cases h
+  · split at h
+    · rename_i cl hv
+      cases h
+      obtain ⟨d, idp, hd, hm, he, hver⟩ := L4Factoidal.SAML.validateWith_ok hv
+      exact ⟨cl, d, idp, hv, rfl, rfl, hm, he, hd, hver⟩
+    · cases h
+    · cases h
 
 end L4Factoidal.Authz

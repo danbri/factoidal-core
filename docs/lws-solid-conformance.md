@@ -346,11 +346,12 @@ Design record: `docs/designissues/2026-10-22-authorization-server.md`; skill:
 
 | op | arguments | answer |
 | --- | --- | --- |
-| `authzOpen` | config JSON: `issuer`, `resources`, `alg`, `tokenLifetime`, `leeway`, `rotateAfter`, `allowHttp`, `allowPrivateFetch`, `docTtl`, `cors` (as `lwsOpen`; issue 923), `now`, `entropy` (base64, 64 bytes), `keys` (the key file), `storageKey` | `{ok, handle, issuer, kid, changed}` |
+| `authzOpen` | config JSON: `issuer` or `mountedOn` (the root IRI of an LWS storage that shares the issuer: sets the issuer, the resource or `audience`, and the endpoint paths, `L4Factoidal/Authz/Mount.lean`), `resources`, `alg`, `tokenLifetime`, `leeway`, `rotateAfter`, `allowHttp`, `allowPrivateFetch`, `docTtl`, `cors` (as `lwsOpen`; issue 923), `tokenPath`, `jwksPath` (relative to the issuer; default `/token`, `/jwks`), `now`, `entropy` (base64, 64 bytes), `keys` (the key file), `storageKey` | `{ok, handle, issuer, resources, jwks, kid, changed}` |
 | `authzStep` | handle, request JSON: `method`, `target`, `headers`, `body`, `now`, `random` (base64, 112 bytes) | `{ok, response, changed}`, `{ok, resolve: {host}, changed}` or `{ok, fetch: {url, accept, address}, changed}` |
 | `authzFetched` | handle, `{url, status, body, now}` or `{host, addresses, now}` | `{ok}` |
 | `authzKeys` | handle, `{nonce?, private?}` | `{ok, keys}` (the key file document, sealed with a storage key) or `{ok, jwks}` (private keys, for a test harness) |
 | `authzRotate` | handle, `{now, random}` | `{ok, changed, kid}` |
+| `authzOwns` | handle, request target | `{ok, owns}`: whether the target is one of this server's paths, in either form (whole, or with the issuer's path removed by a proxy). `lws-serve --authz` asks it for each request |
 | `authzClose` | handle | `{ok}` |
 
 `changed: true`: the keys changed and the host writes `authzKeys` to
@@ -374,7 +375,7 @@ to `authzFetched` and steps the same request again.
 | "All invalid or unauthorized requests MUST result in an error response as described in Section 5.2" | implemented | `errorResponse` |
 | lws10-authn-openid "Authentication Credential Validation" | implemented | `oidcKey`, theorem `oidc_valid_named_provider` |
 | lws10-authn-ssi-cid "Authentication Credential Validation" (https and DID subjects) | implemented | `cidKey`, `didKeyJwk?`, theorems `cid_valid_verified`, `cidKey_method`, `didKey_valid_verified` |
-| lws10-authn-saml "Authentication Credential Validation" | NOT implemented: no XML Signature verifier; expected failure | https://github.com/danbri/factoidal/issues/926 |
+| lws10-authn-saml "Authentication Credential Validation" ("validated as described in SAML Core, section 5") | implemented for configured identity providers (`samlIdps`); encrypted assertions refused (https://github.com/danbri/factoidal/issues/1073); record `docs/designissues/2026-10-27-saml-xml-signature.md` | `validateSaml`, `SAML.validate`, `XML.DSig.verifyEnveloped`, theorems `validateSaml_valid`, `SAML.validate_ok`, `XML.DSig.verifyEnveloped_ok` (https://github.com/danbri/factoidal/issues/926) |
 
 ## LWS editor's draft 2026-10-19 audit
 

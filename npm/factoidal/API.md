@@ -397,6 +397,100 @@ Breaking changes in 0.10.0:
   graph IRI `urn:g` and an RDF/JS blank node with the label `urn:g` gave the
   same string.
 
+## Literal values
+
+Four functions give the value of a literal and the literal of a JavaScript
+value (https://github.com/danbri/factoidal/issues/1051 items 1 to 3). The
+engine makes every decision (`formal/lean4/L4Factoidal/RDF/LiteralValue.lean`,
+over the XSD code that SPARQL casts use; wasm ops `literalValue` and
+`literalFromValue`). The functions are SYNCHRONOUS after the engine is
+loaded: call `await ready()` (or any other call) first, else they throw a
+`FactoidalError`.
+
+```js
+import { ready, dataFactory as df, literalValue, isValidLiteral,
+         canonicalLiteral, literalFromValue } from '@factoidal/core';
+await ready();
+const XSD = 'http://www.w3.org/2001/XMLSchema#';
+
+literalValue(df.literal('01', df.namedNode(XSD + 'integer')));
+// { datatype: XSD+'integer', recognized: true, valid: true,
+//   value: { kind: 'decimal', decimal: '1', integer: true, number: 1 },
+//   canonical: '1' }
+isValidLiteral(df.literal('2147483648', df.namedNode(XSD + 'int')));   // false (ill-typed)
+isValidLiteral(df.literal('x', df.namedNode('http://example.org/dt'))); // null (unknown datatype)
+canonicalLiteral(df.literal('0.1', df.namedNode(XSD + 'double'))).value; // '1.0E-1'
+
+literalFromValue(99);                          // "99"^^xsd:integer
+literalFromValue(1.5);                         // "1.5E0"^^xsd:double
+literalFromValue(99, { datatype: 'int' });     // "99"^^xsd:int
+try { literalFromValue(300, { datatype: 'byte' }); }
+catch (err) { err.code; }                      // 'literal.value' (300 is not an xsd:byte)
+```
+
+`literalValue(term)` answers `{datatype, recognized, valid, value?, canonical?}`:
+
+- `recognized: false`: the engine has no lexical space for the datatype;
+  `valid` is `null`. RDF 1.1 Concepts §5: the literal is still a literal.
+- `valid`: the lexical form is in the lexical space of the datatype (XSD 1.1
+  Part 2 §3). There is no whiteSpace processing (RDF 1.1 Semantics §7), so
+  `" 3 "^^xsd:int` is not valid. `valid: false` is the "ill-typed" result
+  (RDFLib `Literal.ill_typed`, Jena `DatatypeFormatException`).
+- `value`: the value as JSON-safe data, with a `kind`. A number that a
+  JavaScript number does not hold exactly is a decimal string, and `number`
+  is present only when the value is exactly a binary64 value.
+- `canonical`: the canonical lexical form (XSD 1.1 Part 2 §2.3.1; float and
+  double by §E.1: the fewest digits that map back to the value).
+
+| `kind` | members |
+|---|---|
+| `string`, `anyURI` | `string` (also every type derived from `string`) |
+| `boolean` | `boolean` |
+| `decimal` | `decimal` (canonical text), `integer` (true for an integer value), `number` when exact (also every integer type) |
+| `float`, `double` | `number`; finite: `decimal` (the exact value); `-0`: `negativeZero: true`; `NaN`, `INF`, `-INF`: `special` |
+| `duration` | `months`, `seconds` (decimal text) (also `yearMonthDuration`, `dayTimeDuration`) |
+| `dateTime`, `time`, `date`, `gYearMonth`, `gYear`, `gMonthDay`, `gDay`, `gMonth` | the properties the type has: `year`, `month`, `day`, `hour`, `minute`, `second` (decimal text), `timezoneOffset` (minutes) |
+| `hexBinary`, `base64Binary` | `hex` (upper-case) |
+| `QName`, `NOTATION` | `prefix`, `localName` |
+| `list` | `items` (`NMTOKENS`, `IDREFS`, `ENTITIES`) |
+| `langString` | `string`, `language` (lower case), `direction` for `rdf:dirLangString` |
+
+`rdf:XMLLiteral` and `rdf:JSON` have `valid` and no `value`.
+
+`isValidLiteral(term)` is `literalValue(term).valid`. `canonicalLiteral(term)`
+is the literal with the canonical form and the same datatype (or language);
+`null` when the literal is not valid or has no canonical mapping.
+
+`literalFromValue(value, {datatype?})` answers an RDF/JS Literal. With no
+`datatype` the engine table (`L4Factoidal.XSD.JsValue.jsLiteral`, the same
+table as the answers of extension functions) chooses:
+
+| JavaScript value | datatype | lexical form |
+|---|---|---|
+| `boolean` | `xsd:boolean` | `true`, `false` |
+| `string` | `xsd:string` | the string |
+| `bigint` | `xsd:integer` | the integer |
+| `number`, a safe integer (`Number.isSafeInteger`, not `-0`) | `xsd:integer` | `99` |
+| any other `number` | `xsd:double` | canonical: `1.5E0`, `-0.0E0`, `NaN`, `INF` |
+| `Date` | `xsd:dateTime` | the instant in UTC: `2026-10-27T12:00:00.123Z`; an invalid Date is an error |
+
+`datatype` (an IRI, a NamedNode, or an XSD local name such as `'int'`) names
+the datatype. The value must be in its value space, else a `FactoidalError`
+with code `literal.value`:
+
+- a `string` is a lexical form of the datatype; it must be valid and is kept
+  as given (`literalFromValue('01', {datatype: 'integer'})` is `"01"`);
+- a `number` or `bigint` with an integer type or `xsd:decimal`: the exact
+  value (`2 ** 60` is `1152921504606846976`), within the type's bounds;
+- a `number` or `bigint` with `xsd:float` or `xsd:double`: the value of the
+  literal `"<Number::toString text>"^^datatype` (it rounds to nearest); a
+  finite value that rounds to an infinity is an error;
+- a `boolean` only with `xsd:boolean`; a `Date` only with `xsd:dateTime` or
+  `xsd:dateTimeStamp`.
+
+The lexical form of a non-string value is the canonical form.
+`capabilities().literalValues` is true when the loaded wasm has the two ops.
+
 ## Datasets
 
 A `Dataset` is a handle into the engine: its quads are parsed and indexed
@@ -435,9 +529,13 @@ Methods: `query(sparql, {sparql12?, version?, entail?, output?})`,
 {format?, baseIRI?})`, `validateShex(schema, {focus, shape?})`,
 `closure('rdfs' | 'owl-rl' | 'rho-df' | 'rdfs-plus')`, `canonicalize()`,
 `serialize({format, version?, prefixes?, literalShorthand?,
-useNativeTypes?, useRdfType?, rdfDirection?})`, `toString(format)`
-(synchronous), `toNQuads()`, `clone()`, `has(quad)`, `match(s, p, o, g)`
-(a new Dataset), `toArray()`, iteration, `size`, `prefixes`,
+useNativeTypes?, useRdfType?, rdfDirection?, rdfstar?})`, `toString(format)`
+(synchronous), `toNQuads()`, `clone()`, `has(quad, {match?})`,
+`match(s, p, o, g, {match?})` (a new Dataset), `add(quad)`, `delete(quad,
+{match?})` (`match: 'value'` compares a literal object by value, see "Matching
+literals by value"), `listItems(head, graph?)`, `containerItems(node,
+graph?)`, `addList(items, graph?)` (see "RDF lists and containers"),
+`toArray()`, iteration, `size`, `prefixes`,
 `diagnostics`, `warnings`, `format`, `formatInferred`, `dispose()` and
 `[Symbol.dispose]` (for `using` where the runtime has it). A Dataset that is
 garbage collected without `dispose()` is released by a
@@ -451,6 +549,156 @@ the engine's list with read and write support per RDF version. The functional
 unchanged. Text input takes `{format}`; with no format the engine infers one
 and reports it. An unknown option key rejects with a `FactoidalError` of
 code `option.unknown`; the engine checks the keys (op `apiCheck`).
+
+Format inference (op `detectFormat`; no W3C specification defines it, so
+name the format when you know it). The rules, in order:
+1. `jsonld` when the first non-space character is `{` or `[` and the whole
+   text is JSON. Turtle `[] <p> [] .` and TriG `{ <s> <p> <o> }` are not JSON.
+2. `rdfxml` when the text starts with `<?xml` or `<rdf:RDF`.
+3. `nquads12` when the complete lines of the first 4096 characters are
+   N-Quads statements and at least one names a graph.
+4. `trig12` when the text has a `{`.
+5. `turtle12` otherwise (it also reads N-Triples).
+
+Query warnings. A SELECT answer can carry a non-enumerable `warnings`
+array. A `FROM` or `FROM NAMED` IRI that names no graph of the dataset gives
+a warning of class `dataset-iri-not-found` with `class`, `clause` (`FROM` or
+`FROM NAMED`), `iri` and `message`. The rows do not change: the clause adds
+no graph. The native `l4factoidal query` command writes the same warning to
+standard error (https://github.com/danbri/factoidal/issues/1032, FROM IRI
+that names no graph). This needs a wasm module built after 0.15.0; with the
+0.15.0 wasm the answer has no `warnings` property.
+
+```js
+import { parse } from '@factoidal/core';
+const ds = await parse('<http://e/s> <http://e/p> "x" <http://e/g> .\n', { format: 'nquads' });
+const rows = await ds.query("SELECT * FROM <http://e/none> WHERE { ?s ?p ?o }");
+console.log(rows.length, rows.warnings?.[0]?.class); // 0 'dataset-iri-not-found'
+```
+
+## Matching literals by value
+
+`has`, `match` and `delete` of a Dataset compare terms by default (RDF 1.1
+Concepts section 3.6; SPARQL 1.1 section 18.3): `"01"^^xsd:integer` is not
+`"1"^^xsd:integer`. With `{match: 'value'}` as the last argument, a literal
+object matches every object literal that is the same term or has the same
+value under SPARQL 1.1 `=` (sections 17.3 and 17.4.1.7). The subject, the
+predicate, the graph and an object that is not a literal match by term. The
+engine decides the relation and keeps an index of the object literals by value
+(https://github.com/danbri/factoidal/issues/1052, value-based matching).
+
+`sameValue(a, b)` answers the relation for two terms: `true`, `false`, or
+`null` for incomparable (the type error of `=`: two different literals of a
+datatype with no value comparison, an ill-typed literal and another literal,
+`xsd:integer` and `xsd:boolean`). It is synchronous and needs the engine
+loaded (`await ready()` or any other call first). Two consequences of the
+SPARQL operator: `"NaN"^^xsd:double` is not the same value as itself (the
+value match still finds the same term), and the relation is not transitive
+across `xsd:float` and `xsd:decimal` (F&O 3.1 section 4.2 rounds the decimal
+to the float type first).
+
+`sameValue` is SPARQL `=`, not Jena's `Node.sameValueAs`. Where `=` is a type
+error, `sameValue` gives `null` and Jena gives `false`: for example an
+ill-typed `"x"^^xsd:integer` against `"1"^^xsd:integer`, or two literals of
+an unknown datatype with different lexical forms. A caller that needs a
+two-valued answer treats `null` as "not the same value". The tests are in
+`test/value-match-1052.test.mjs`; the Jena-style echo (leana) records the
+difference as a divergence.
+
+```js
+import { parse, ready, sameValue, dataFactory as f } from '@factoidal/core';
+await ready();
+const xsd = (l) => f.namedNode('http://www.w3.org/2001/XMLSchema#' + l);
+console.log(sameValue(f.literal('01', xsd('integer')), f.literal('1.0', xsd('decimal')))); // true
+console.log(sameValue('"a"^^<http://e/dt>', '"b"^^<http://e/dt>'));                      // null
+
+const ds = await parse('<http://e/s> <http://e/p> "01"^^<http://www.w3.org/2001/XMLSchema#integer> .\n',
+  { format: 'ntriples' });
+const q = f.quad(f.namedNode('http://e/s'), f.namedNode('http://e/p'), f.literal('1', xsd('int')));
+console.log(ds.has(q), ds.has(q, { match: 'value' }));                                   // false true
+console.log(ds.match(null, null, f.literal('1e0', xsd('double')), null, { match: 'value' }).size); // 1
+ds.delete(q, { match: 'value' });
+console.log(ds.size);                                                                     // 0
+```
+
+## Syntax names, IRIs and vocabularies
+
+These functions are synchronous and need the engine loaded (`await ready()` or
+any other call first). The engine decides each answer.
+
+`syntaxFor(fileNameOrIri)` or `syntaxFor({fileName, mediaType})` gives the
+syntax of a document, a `name` of `formats()`, or `null`
+(https://github.com/danbri/factoidal/issues/1053). The table is the W3C
+registrations: Turtle `text/turtle` `.ttl`, N-Triples `application/n-triples`
+`.nt`, N-Quads `application/n-quads` `.nq`, TriG `application/trig` `.trig`,
+RDF/XML `application/rdf+xml` `.rdf`, JSON-LD `application/ld+json` `.jsonld`.
+The media type wins when it is given, and its parameters and letter case do not
+change the answer. An unknown media type (`text/plain`) gives `null`; it does not
+fall back to the name. The query and the fragment of an IRI are ignored.
+`.owl` and `.xml` are not registered and give `null`. Each row of `formats()`
+has the same `mediaTypes` and `extensions`.
+
+This table is not the one the file readers use. When `factoidal pack` or
+another file-reading command gets no `--format`, it uses the extension table
+`RDF.formatOfExtension` (`formal/lean4/L4Factoidal/RDF/Format.lean`). That
+table also maps `.owl`, `.xml` and `.rdfxml` to RDF/XML, `.ntriples` to
+N-Triples, `.turtle` to Turtle, `.nquads` to N-Quads and `.json-ld` to JSON-LD.
+`syntaxFor` keeps to the registrations, so `syntaxFor('onto.owl')` is `null`.
+Jena's `RDFLanguages.filenameToLang('onto.owl')` gives RDF/XML. The tests are
+in `test/syntax-names-1053.test.mjs`.
+
+`splitIri(iri)` gives `{namespace, localName}`
+(https://github.com/danbri/factoidal/issues/1051 item 4). The local name is the
+longest suffix of the IRI that is an XML NCName (the name an RDF/XML QName can
+carry), and `''` when there is none; `namespace + localName` is the IRI.
+`isNCName(text)` is the check of a prefix label or a local name.
+
+`vocabularies()` gives the engine's vocabulary table, `[{prefix, namespace,
+terms}]` (issue 1051 item 5): `rdf`, `rdfs`, `xsd` and `owl` with their term
+local names (RDF 1.2 Schema, XSD 1.1 Part 2 built-in datatypes, OWL 2 reserved
+vocabulary), and `foaf`, `dcterms`, `dc`, `schema` as namespaces only (no
+terms). The prefixes are those of the Turtle writer. `memberIri(n)` gives the
+container membership property `rdf:_n` (n >= 1) and `memberOrdinal(iri)` its
+`n`, or `null`.
+
+```js
+import { ready, syntaxFor, splitIri, vocabularies, memberIri } from '@factoidal/core';
+await ready();
+syntaxFor('data.ttl');                                    // 'turtle'
+syntaxFor({ fileName: 'a.nt', mediaType: 'text/turtle' }); // 'turtle'
+splitIri('http://e/123abc');                               // { namespace: 'http://e/123', localName: 'abc' }
+const rdf = vocabularies().find((v) => v.prefix === 'rdf');
+rdf.namespace + 'type';                                    // rdf:type
+memberIri(2).value;                                        // '...22-rdf-syntax-ns#_2'
+```
+
+## RDF lists and containers
+
+A Dataset reads and builds RDF lists (`rdf:first` / `rdf:rest`, RDF 1.2 Schema
+section 5.2) and reads containers (`rdf:_1`, `rdf:_2`, ..., section 5.1)
+(https://github.com/danbri/factoidal/issues/1051 item 6). The engine walks the
+list through its indexes, one lookup per node. The last argument `graph` is the
+graph name; omitted, `null` or the DefaultGraph is the default graph.
+
+- `ds.listItems(head, graph?)` gives the items in order; `rdf:nil` gives `[]`.
+  A list that is not well formed is a FactoidalError with code `op.failed`; the
+  message names the reason (`no-first`, `no-rest`, `branch` for two
+  `rdf:first` or `rdf:rest`, `cycle`) and the node.
+- `ds.containerItems(node, graph?)` gives `{kind, items}`: `items` is
+  `[{ordinal, term}]` sorted by `n` (a gap in the numbers is kept), `kind` is
+  `rdf:Bag`, `rdf:Seq` or `rdf:Alt` from the `rdf:type` of the node, or `null`.
+- `ds.addList(items, graph?)` adds a new list on blank nodes that are fresh in
+  the Dataset and gives its head; no items give `rdf:nil` and add nothing.
+  A graph named by a blank node cannot be changed.
+
+```js
+import { parse, dataFactory as f } from '@factoidal/core';
+const ds = await parse('@prefix : <http://e/> . :s :p ( :a "b" ) .', { format: 'turtle' });
+const head = ds.match(null, null, null).toArray().find((q) => q.predicate.value === 'http://e/p').object;
+ds.listItems(head).map((t) => t.value);   // ['http://e/a', 'b']
+const h2 = ds.addList([f.literal('x'), f.literal('y')]);
+ds.listItems(h2).length;                  // 2
+```
 
 ## The persisted store
 
@@ -474,6 +722,7 @@ const rows = await store.query(`
     ?c <http://www.w3.org/2004/02/skos/core#prefLabel> ?l
     FILTER(CONTAINS(LCASE(STR(?l)), "video")) } LIMIT 5`);
 console.log(store.rows);                             // 15
+console.log(store.layout);                           // quad-ibk5-ptd2-lgi4-gbi1-merkle-v0
 await store.close();
 
 // One query: open only the blocks this query's plan names, query, close.
@@ -644,7 +893,7 @@ native `l4block-id-v3-query`.
 
 ```console
 $ factoidal serve ./mystore --port 3030
-serve: listening on http://127.0.0.1:3030 for ./mystore (layout predicate-ibk3-…, 6455 rows, delta batches replayed: 0, write scope default-graph)
+serve: listening on http://127.0.0.1:3030 for ./mystore (layout quad-ibk5-…, 6455 rows, delta batches replayed: 0, write scope all-graphs)
 serve: query http://127.0.0.1:3030/sparql, graph store http://127.0.0.1:3030/data
 http://127.0.0.1:3030
 $ curl -s 'http://127.0.0.1:3030/sparql?query=SELECT%20(COUNT(*)%20AS%20%3Fn)%20%7B%3Fs%20%3Fp%20%3Fo%7D'
@@ -659,10 +908,10 @@ $ curl -s 'http://127.0.0.1:3030/sparql?query=SELECT%20(COUNT(*)%20AS%20%3Fn)%20
 
 The engine decides the request framing, routing, status codes, negotiation
 and what an update stores; `bin/serve.mjs` moves bytes and appends the batch
-the engine hands it. An IBK3 store takes changes to the default graph only (a
-named-graph change answers 501), because its delta log is replayed and
-compacted for that graph only; a quad store (`--layout ibk4`, `ibk5`) takes
-every graph. Fold the log into a new generation with `l4block-shard-compact`,
+the engine hands it. A quad store (`--layout ibk5`, the default, or `ibk4`)
+takes changes to every graph. An IBK3 store (`--layout ibk3`) takes changes
+to the default graph only (a named-graph change answers 501), because its
+delta log is replayed and compacted for that graph only. Fold the log into a new generation with `l4block-shard-compact`,
 activate it and restart the server. W3C protocol, graph-store and
 service-description tests over a live socket: 50 pass, 0 fail (out of 50).
 Measured on 888,949 triples: about 7 s to open, 0.5 ms median for a
@@ -1114,6 +1363,114 @@ held at one instant. The Lean source theorem `lwsSource_query_sound`
 identifies at the snapshot instant. A TriG or N-Quads resource gives its
 default graph only.
 
+## An SBM11 store held in Linked Web Storage: `lwsSbm11Reader`
+
+`openSbm11` (the Shardborough store, https://github.com/danbri/factoidal/issues/1009)
+reads each file of a generation at an offset through a reader.
+`lwsSbm11Reader(url, opts)` is a reader of a generation held as
+[LWS 1.0](https://w3c.github.io/lws-protocol/lws10-core/) resources: one
+resource per file under the container `url`, and the `CURRENT` pointer of a
+collection root as one more resource (https://github.com/danbri/factoidal/issues/1010).
+Give it to `openSbm11` as `reader` (or to `registerSbm11Source`):
+
+```js browser
+// In a dedicated worker: the engine asks for bytes synchronously, and the
+// default transport there is a synchronous XMLHttpRequest.
+import { openSbm11, lwsSbm11Reader } from '@factoidal/core/browser'
+
+const storeUrl = 'https://storage.example/stores/tiny/'   // holds CURRENT and gen/...
+const accessToken = 'an LWS access token'
+const reader = lwsSbm11Reader(storeUrl, { auth: `Bearer ${accessToken}` })
+const store = await openSbm11(storeUrl, { reader })
+const answer = store.query('SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }')
+console.log(answer.json, store.evidence)   // evidence: [{ resource, etag, lastModified, requests, partial, bytes }]
+store.close()
+reader.close()
+```
+
+How it reads. Each read is a GET with `Range: bytes=a-b` (RFC 9110 §14).
+The answer is used as the range only when it is `206` with `Content-Range:
+bytes a-b/N`; any other successful answer is taken as the whole file, kept in
+memory, and later reads of that file are cut from it with no request. A
+changed `ETag` between two reads of one file refuses the read, so the bytes of
+two versions are never mixed. `factoidal lws-serve` answers `Range` with
+`206` (the decision is Lean: `LWS/Binding.lean` `parseRange`,
+`range_selection_exact`). The engine checks every byte against the manifest
+as for a directory (see "Integrity" below).
+
+Evidence. `store.evidence` lists each resource read with its `ETag` and
+`Last-Modified`, the number of requests, how many were answered `206`, and
+the bytes received, so an answer can say which bytes it came from.
+`store.evidence` is `undefined` for a reader that records none (a directory).
+
+Transport. The engine is inside WebAssembly and cannot wait for a promise, so
+the reader needs a synchronous GET. In Node the default is a `fetch` in a
+worker thread that this thread waits for (`Atomics.wait`), stopped by
+`reader.close()`; the server must then run in another process or worker,
+not on the thread that queries. In a browser worker the default is a
+synchronous `XMLHttpRequest`; a window thread has neither, so pass
+`opts.transport` (`(url, headers) => ({ status, header(name), bytes })`).
+`opts.auth` is sent as the `Authorization` header; `opts.headers` adds more.
+
+The storage medium. In Lean every reader is a `Medium`
+(`L4Factoidal/Storage/Medium.lean`: `readAt`, `size`, `writeObject`,
+`switchPointer`); the SBM11 session uses the two reads. Every host refuses
+the two writes today. What a store relies on from a medium is the named
+assumption `ReadsWritten`: the bytes read are the bytes written.
+
+Not yet: writes to an LWS storage (packing a generation, switching
+`CURRENT` with a conditional PUT), eviction of in-memory copies.
+
+Integrity. `openSbm11(source, { verify })` checks reads by default
+(`verify: 'merkle'`, Lean `Storage/Sbm11/HostVerify.lean`, as native
+`l4sbm11 query --verify merkle`). The open reads the `.merkle` sidecar of each
+file and refuses it unless its leaves rebuild the Merkle root in
+`manifest.sbm11`. Each read is then widened to its 65,536-byte chunks, and
+each chunk is checked by its Merkle proof before the engine decodes a byte of
+it; checked chunks are kept for later queries (at most 256 per file). A
+changed byte in a data file, a sidecar or a Merkle reference of the manifest
+refuses the open or the query, and the error names the file.
+`verify: 'none'` checks only the lengths against the manifest and hashes
+nothing. The manifest has no digest of its own; the full-file SHA-256 of each
+file is checked by `factoidal activate` (the op `sbm11Verify`).
+
+## Packing an SBM11 generation in memory: `packSbm11`, `mapReader`
+
+> `packSbm11` needs a wasm module built after 0.15.0 (the op
+> `sbm11PackFiles`). The 0.15.0 wasm does not have it: there `packSbm11`
+> rejects with `code: 'SBM11_NO_PACK_OP'`. `mapReader` works on any module
+> that has the SBM11 query ops.
+
+```js
+import { packSbm11, mapReader, openSbm11 } from "@factoidal/core";
+
+const files = await packSbm11(
+  "<http://e/s> <http://e/p> <http://e/o> .", { syntax: "nquads" });
+// files: Map from file name to Uint8Array (data files, .merkle sidecars,
+// manifest.sbm11; no CURRENT)
+const store = await openSbm11("mem", { reader: mapReader(files) });
+console.log(store.query("SELECT * WHERE { ?s ?p ?o }").json);
+store.close();
+```
+
+`packSbm11(text, { syntax, base? })`: `text` is a string or UTF-8 bytes;
+`syntax` is `turtle`, `trig`, `nquads`, `ntriples`, `rdfxml` or `jsonld`
+(required); `base` is the base IRI. It resolves to a `Map` from file name to
+bytes: the files of one SBM11 generation, byte for byte the files that the
+native `l4sbm11-pack` writes for the same quads (23 of 23 files for
+`test/fixtures/sbm11-tiny`; all files of 605 of 605 W3C SPARQL 1.0 and 1.1
+inputs). The engine names every file and computes every byte (Lean
+`Storage/Sbm11/PackBytes.lean`), with one engine call per file.
+
+`mapReader(files)` is a reader over files held in memory (a `Map` or a plain
+object from file name to `Uint8Array`). Give it to `openSbm11(source,
+{ reader })`. A read past the end of a file, or of a file that it does not
+hold, answers null, and the engine refuses the read with the file name.
+
+Limits: the whole document and every file are in memory at the same time.
+Not yet: `factoidal pack` for SBM11, and a pack that streams its input
+(https://github.com/danbri/factoidal/issues/1009, SBM11 in npm).
+
 ## Functional API (fn)
 
 `@factoidal/core/fn` is a functional variant of the API above. `FnDataset`
@@ -1210,13 +1567,16 @@ const r = await run(p, sources);
 for (const e of r.evidence) console.log(e.stage, e.status, e.contract);
 console.log(r.evidence[2].artefact.entailed); // true
 console.log(r.assumptions); // the union of the nodes' named assumptions
+console.log(p.wellTyped, p.check.conversions); // the engine's type check
 ```
 
 `stages()` answers the stage registry of the Lean library
 (`L4Factoidal.Dataflow.registry`, op `stageList`, full engine), one element
 per entry: `name` (the declaration, or the area when there is none),
 `declaration`, `kind` (the interface type: `Stage`, `RdfReader`,
-`SoundReasoner`, ...), `wireIn`, `wireOut`, `status` (`proved`, `tested`,
+`SoundReasoner`, ...), `wireIn`, `wireOut` (wire types of
+`formal/lean4/L4Factoidal/Dataflow/Wire.lean`), `params` (the inputs a node
+supplies when it is made), `status` (`proved`, `tested`,
 `assumed`, `missing`), `contract` (the contract declaration), `theorems`,
 `assumptions` (the named assumptions), `tests`, `runnable` (false for
 `missing`) and `bound` (this package has a function that runs it). The
@@ -1229,16 +1589,30 @@ graph), `shaclValidator` (`{shapes}`), `shippedEvaluator` (`{query}`; a
 CONSTRUCT or DESCRIBE answer replaces the graph), the N-Triples, N-Quads,
 Turtle, TriG and RDF/XML writers, `rdfcStage`, and `rdfsExplainGraphStage`
 (`{description}`). `pipe(...nodes)` composes nodes and pipelines left to
-right. `run(pipeline, input)` takes a wire value `{graph, evidence}` or the
+right, and asks the engine to check it (op `pipelineCheck`, full engine):
+`p.check` has `wellTyped` (each stage's output wire is the next stage's
+input wire, or converts to it: a dataset with prefixes to its dataset, a
+dataset to its default graph, a graph to the dataset with that default
+graph), `mismatch` (the first stage whose output does not feed the next),
+`conversions`, `assumptions` (the union of the stages' named assumptions),
+`contract` (the theorem `L4Factoidal.Dataflow.Pipeline.guarantee_sound` and
+each stage's contract) and `stages`. `p.assumptions` and `p.wellTyped` are
+its fields. The guarantee of a well-typed pipeline is that theorem: when
+every assumption of the union holds, a successful run satisfies the
+composition of the stages' contracts. With an engine built before the op,
+`p.check` and `p.wellTyped` are null and `p.assumptions` is the union of the
+nodes' fields. `run(pipeline, input)` takes a wire value `{graph, evidence}` or the
 graph itself, and answers `{graph, evidence, assumptions}`: `evidence` gets
 one record `{stage, status, contract, assumptions, checked, artefact}` per
 node (`artefact`: the explain result, the SHACL report, the written text,
-...), and `assumptions` is the union of the named assumptions of every node
-the value passed. `checked` is true exactly when the stage's status is
+...), and `assumptions` is the assumptions of the records on the input
+wire, then the engine's union for the pipeline. `wellTyped` is the engine's
+check (null without the op). `checked` is true exactly when the stage's status is
 `proved`. `proved` on the result is true exactly when every record is
-checked, and `uncheckedSteps` lists the stage names of the records that are
-not. A run with a node whose stage is `missing` (no contract, no suite) or
-not bound rejects with a `FactoidalError` before any node runs.
+checked and the pipeline is well typed, and `uncheckedSteps` lists the stage
+names of the records that are not checked. A run with a node whose stage is
+`missing` (no contract, no suite) or not bound, or of a pipeline that is not
+well typed, rejects with a `FactoidalError` before any node runs.
 
 `run(pipeline, input, { unchecked: true })` is the explicit opt-in to run
 stages that are not `proved` (`tested`, `assumed`) and `missing` stages that
@@ -1247,8 +1621,10 @@ one call site decides, and a pipeline built by other code cannot opt in on
 its own. A step that ran under the opt-in and is not checked has
 `unchecked: true` and a `reason` in its record (the status and the named
 assumptions, or `no contract`). A stage with no package function still
-rejects with `op.unknown`. The result's `proved` stays false whenever such a
-step ran: the path has no guarantee for it, and the result says so.
+rejects with `op.unknown`. The opt-in also runs a pipeline that is not well
+typed. The result's `proved` stays false whenever such a step ran or the
+pipeline is not well typed: the path has no guarantee for it, and the result
+says so.
 
 ```js
 import { node, pipe, run } from "@factoidal/core";
@@ -1263,20 +1639,66 @@ console.log(out.evidence[1].reason);
 
 Design: [issue 1002](https://github.com/danbri/factoidal/issues/1002).
 
+### Node settings, output wires and the CSVW stage (after 0.15.0)
+
+> These three need a wasm module built after 0.15.0 (the op
+> `pipelineCheckNodes`, the wire `table`, the CSVW stage bound in the
+> engine). With the 0.15.0 wasm: evidence records have no settings, the
+> evaluator's output wire is the registry's `Answer`, and the CSVW stage is
+> `missing` and not bound.
+
+Settings. The params of `node()` are the node's settings. Each evidence
+record carries `settings` (canonical form: keys sorted at every depth; the
+defaults of absent settings that narrow the contract, for example `lenient:
+false` and `entail: 'none'`; a Dataset value as `{nquadsSha256}`) and
+`settingsDigest` (`sha256:` and the hex SHA-256 of the canonical text). The
+node has the same fields, plus `outside`, `derived` and `settingsWire` (the
+settings as sent to the engine). A setting outside the proved domain of a
+proved stage (a lenient reader, an evaluator with `entail` other than
+`none` or with `output`, a key that the stage's settings table does not
+name) makes the node's status `unproved`. The record then has
+`registryStatus` and `outside` (each setting and the reason), and `run()`
+reports `proved: false`. A reader's `format` must name the stage's syntax
+(`ttl12` selects RDF 1.2 mode, reported as `derived.mode`); an evaluator's
+query must parse, else `node()` rejects. Design record:
+[2026-10-25-pipeline-settings-and-provenance.md](../../docs/designissues/2026-10-25-pipeline-settings-and-provenance.md).
+
+Output wire by query form. The output wire of a `shippedEvaluator` node
+follows its query form: SELECT gives `Table`, ASK gives `Answer`, CONSTRUCT
+and DESCRIBE give `Dataset` (`node.wireOut`; Lean `Dataflow.evalContract_wire`).
+So reader, CONSTRUCT, CONSTRUCT is well typed; reader, SELECT, CONSTRUCT is
+not (https://github.com/danbri/factoidal/issues/1026, CONSTRUCT wire).
+
+CSVW stage. `node('CSVW (tabular data to RDF)', { metadata, mode, base,
+url })` takes CSV text on its wire, runs `csvwToRdf` and gives a Dataset.
+Its evidence status is `tested` (the W3C csv2rdf suite; there is no Lean
+contract, so `checked` is false and `run()` needs `{ unchecked: true }`)
+(https://github.com/danbri/factoidal/issues/975, CSVW as a pipeline stage).
+`stages()` marks a stage `bound` only when the engine also reports it
+runnable.
+
 ## API
 
 | Function | Signature (informal) | Notes |
 |---|---|---|
-| `parse` | `(text, {format?, baseIRI?, lenient?, maxErrors?}) => Dataset` | `turtle`, `ntriples`, `nquads`, `trig`, `rdfxml`, `jsonld`, and `turtle12`, `ntriples12`, `nquads12`, `trig12`; no format: inferred and reported. One call is one document. Strict: a syntax error rejects with a `FactoidalError` (`parse.syntax`). `dataset.prefixes` is the declared map |
+| `parse` | `(text, {format?, baseIRI?, lenient?, maxErrors?, rdfstar?}) => Dataset` | `turtle`, `ntriples`, `nquads`, `trig`, `rdfxml`, `jsonld`, and `turtle12`, `ntriples12`, `nquads12`, `trig12`; no format: inferred and reported. One call is one document. Strict: a syntax error rejects with a `FactoidalError` (`parse.syntax`). `dataset.prefixes` is the declared map |
 | `query` | `(data, sparql, {format?, baseIRI?, entail?, sparql12?, version?, output?}) => Bindings[] \| boolean \| Dataset \| string` | SELECT → `Map<var, Term>[]`; ASK → boolean; CONSTRUCT and DESCRIBE → Dataset; with `output` the results document (`json`, `xml`, `csv`, `tsv`, `table`, `ntriples`). `data` is a Dataset, a string, `{text, format}`, or an array of those |
 | `update` | `(data, sparqlUpdate, {format?, baseIRI?}) => Dataset` | answers a NEW Dataset; `dataset.update()` changes one in place |
 | `openDataset` | `(data, {format?, baseIRI?}) => Dataset` | a Dataset argument is cloned |
 | `closure` | `(data, 'rdfs' \| 'owl-rl' \| 'rho-df' \| 'rdfs-plus') => Dataset` | the closure of the default graph |
-| `serialize` | `(data, {format, version?, prefixes?, literalShorthand?, useNativeTypes?, useRdfType?, rdfDirection?, inputFormat?, baseIRI?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle`, `trig`, `rdfxml`, `jsonld`, `rdfc`; see "Datasets" |
-| `formats` | `() => [{name, read11, read12, write11, write12, engine}]` | the engine's list |
+| `serialize` | `(data, {format, version?, prefixes?, literalShorthand?, useNativeTypes?, useRdfType?, rdfDirection?, rdfstar?, inputFormat?, baseIRI?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle`, `trig`, `rdfxml`, `jsonld`, `rdfc`; see "Datasets" |
+| `formats` | `() => [{name, read11, read12, write11, write12, engine, mediaTypes, extensions}]` | the engine's list; `mediaTypes` and `extensions` are the W3C registrations (issue 1053) |
+| `sameValue` | `(a, b) => boolean \| null` | SPARQL 1.1 `=` on two terms; `null` incomparable; synchronous after `ready()`; see "Matching literals by value" |
+| `syntaxFor` | `(name \| {fileName?, mediaType?}) => string \| null` | the syntax of a file name or media type; synchronous; see "Syntax names, IRIs and vocabularies" |
+| `splitIri` | `(iri) => {namespace, localName}` | the local name is the longest NCName suffix; synchronous |
+| `isNCName` | `(text) => boolean` | XML NCName check; synchronous |
+| `vocabularies` | `() => [{prefix, namespace, terms}]` | rdf, rdfs, xsd, owl terms; foaf, dcterms, dc, schema namespaces; synchronous |
+| `memberIri` | `(n) => NamedNode` | `rdf:_n`; synchronous |
+| `memberOrdinal` | `(iri) => number \| null` | the `n` of `rdf:_n`; synchronous |
 | `canonicalize` | `(data, {format?, baseIRI?}) => string` | RDFC-1.0 canonical N-Quads |
 | `graphs` | `(Dataset) => Array<[NamedNode \| BlankNode, Dataset]>` | named graphs, default graph excluded |
-| `canonicalHash` | `(Dataset) => string` | RDFC-1.0 canonical N-Quads of one graph |
+| `canonicalHash` | `(Dataset) => string` | SHA-256 (64 lowercase hex digits) of the RDFC-1.0 canonical N-Quads that `canonicalize` answers, graph names included (since 0.20.0; before, graph names were dropped) |
+| `asDefaultGraph` | `(Dataset) => Dataset` | the triples of every graph, all in the default graph; `canonicalHash(asDefaultGraph(g))` hashes a graph whatever its name |
 | `queryRaw` | `(dataText, sparql, {dataFormat?, entail?, output?}) => object \| string` | one call, serialized answer: `json` (parsed), `csv`, `tsv`, `xml`, `table`, `ntriples` |
 | `queryHdt` | `(hdtBytes, sparql) => Bindings[] \| boolean` | SELECT/ASK over an HDT file's bytes |
 | `openStore`, `queryStore`, `listStores` | see "The persisted store" | `Store`: `.query`, `.inspect`, `.close`, `.handle`/`.layout`/`.wireVersion`/`.rows`/`.bytes`/`.artifacts`/`.generation`/`.activated`/`.closed` |
@@ -1286,7 +1708,7 @@ Design: [issue 1002](https://github.com/danbri/factoidal/issues/1002).
 | `shexValidate` | `(data, schemaText, focus, shape?) => boolean` | ShExJ when the text starts with `{`, else ShExC; no `shape` = the schema's START; `focus`/`shape` are RDF/JS terms or N-Triples term strings (`'<http://…>'`, `'_:b'`) |
 | `owlClosure` | `(data, 'RDFS' \| 'OWL-RL') => Dataset` | input + derived triples, default graph |
 | `explain` | `(sources, description, {profile?, format?}) => {entailed, bundle, assumptions, rejection, entailedMeans}` | RDFS entailment of a graph with shared blank nodes, with evidence; see "Explaining an entailment" |
-| `stages`, `node`, `pipe`, `run` | `() => StageInfo[]`; `(name, params?) => Node`; `(...nodes) => Pipeline`; `(pipeline, input) => {graph, evidence, assumptions}` | registered Lean stages as nodes, evidence on the wires; see "Stages as nodes" |
+| `stages`, `node`, `pipe`, `run` | `() => StageInfo[]`; `(name, params?) => Node`; `(...nodes) => Pipeline`; `(pipeline, input, {unchecked?}) => {graph, evidence, assumptions, proved, uncheckedSteps, wellTyped}` | registered Lean stages as nodes, evidence on the wires; see "Stages as nodes" |
 | `coreRdfsClosure`/`rhoDfClosure`, `rdfsPlusClosure` | `(data) => Dataset` | ρdf closure, RDFS-Plus closure |
 | `coreRdfsCheck`/`rhoDfFragmentCheck` | `(data) => {ok, fragment}` | ρdf fragment check |
 | `tableauMaterialise` | `(data) => {dataset, addedCount, budgetHit}` | class-expression memberships; `budgetHit` true when the work budget ran out |
@@ -1294,13 +1716,17 @@ Design: [issue 1002](https://github.com/danbri/factoidal/issues/1002).
 | `owlIsConsistent`, `owlEntails` | `(data, {fuel?})`, `(premise, conclusion, {fuel?})` | contradiction/entailment search; indeterminate results use `null` and an explicit `reason` (see below) |
 | `rmlMap` | `(mapping, sourceText, 'json' \| 'csv') => Dataset` | one logical source |
 | `csvwToRdf` | `(csvText, metadataJson?, {mode?, base?, url?}) => Dataset` | CSV on the Web csv2rdf |
-| `jsonldToRdf`, `jsonldFromRdf` | | JSON-LD 1.1 to and from RDF; a remote `@context` is not fetched |
+| `jsonldToRdf`, `jsonldFromRdf` | | JSON-LD 1.1 to and from RDF; a remote `@context` is not fetched. Option `rdfstar`: JSON-LD-star (`@triple`, `@reifies`, `@annotation` as RDF 1.2 triple terms and reifiers; also `serialize` with `format: "jsonld"`) |
 | `rifEval` | `(data, rifXml) => Dataset` | RIF Core forward chaining |
 | `xmlWellformed`, `xpathEval`, `xsltTransform`, `schematronValidate`, `jsonSchemaValidate`, `xformsRecalc`, `mathmlEval` | | XML 1.0, XPath 1.0, XSLT 1.0, Schematron, JSON Schema draft-07, XForms recalculation, Content MathML |
 | `clParse`, `clSerialize`, `clAlphaNorm`, `clNormalize` | `(clifText) => {…}` | Common Logic (ISO/IEC 24707) and IKL; `clSerialize` reports `roundTripProved: false`, `clNormalize` reports `preserves: "satisfiability"` |
 | `toanSummation`, `toanProduct`, `toanSimplify`, `toanDiff`, `toanSubst` | | symbolic algebra over Content MathML |
 | `vcSha256Hex`, `vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical` | | VC Data Integrity `eddsa-rdfc-2022`; Ed25519 is HACL\*'s C code in the wasm module; no initialisation step |
+| `xmlDecrypt`, `xmlEncrypt` | `(document, {keys, allowCbc?})`, `(document, {recipient, algorithm?, keyTransport?, keyWrap?, content?, saml?}) => {document, canonical}` | XML Encryption 1.1. Allowlist: `aes128-gcm`, `aes256-gcm` (CBC only with `allowCbc`), `rsa-oaep-mgf1p`, `xmlenc11#rsa-oaep`, `kw-aes128`, `kw-aes256`, ECDH-ES (P-256, X25519); `rsa-1_5` and remote references refused. Keys are JWKs, `kid` is the `ds:KeyName`. Every failure after the structure check is one error, `XML decryption failed` |
+| `jweDecrypt`, `jweEncrypt` | `(token, {jwk}) => {header, plaintext: Uint8Array}`, `(plaintext, {alg, enc, jwk, header?}) => token` | JWE Compact Serialization (RFC 7516). `alg` RSA-OAEP, RSA-OAEP-256, ECDH-ES, ECDH-ES+A128KW, ECDH-ES+A256KW, A128KW, A256KW, dir; `enc` A128GCM, A256GCM, A128CBC-HS256, A256CBC-HS512. RSA, P-256 and X25519 run in the wasm (HACL\*); AES runs in the host's WebCrypto (`globalThis.crypto.subtle`), so these four functions are asynchronous on every host |
 | `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | | VCDM 2.0 checks; `did:key` (Ed25519) resolution |
+| `literalValue`, `isValidLiteral`, `canonicalLiteral` | `(Literal) => {datatype, recognized, valid, value?, canonical?}`, `=> boolean \| null`, `=> Literal \| null` | synchronous after `ready()`; see "Literal values" |
+| `literalFromValue` | `(boolean \| number \| bigint \| string \| Date, {datatype?}) => Literal` | synchronous after `ready()`; the engine table, or a named datatype; see "Literal values" |
 | `capabilities` | `() => {…}` | which ops the loaded wasm serves |
 | `loadEngine` | `() => engine` | the low-level handle, `call(op, args)`, for ops this layer does not wrap |
 | `Dataset`, `Store`, `FactoidalError`, `dataFactory`, `version`, `engine` | | `engine` is `'lean4-wasm'` |

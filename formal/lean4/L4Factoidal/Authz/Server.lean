@@ -92,16 +92,45 @@ structure AuthzConfig where
   the wasm handle turns on `echo` unless the configuration says
   `"cors": false` or lists origins. -/
   cors : L4Factoidal.HTTP.Cors.Policy := .off
+  /-- The token endpoint's path, relative to the issuer, beginning with a
+  slash. The draft fixes only the metadata path; the metadata names the
+  token endpoint, so a client finds it there. A server that shares its
+  issuer's path with a storage puts it under that storage's `.well-known/`
+  (`lws-serve --authz`: `/.well-known/lws-token`), where no storage
+  resource is. -/
+  tokenPath : String := "/token"
+  /-- The JWK Set's path, relative to the issuer, as `tokenPath`
+  (`lws-serve --authz`: `/.well-known/lws-jwks`). -/
+  jwksPath : String := "/jwks"
+  /-- The SAML 2.0 identity providers whose assertions are accepted as
+  subject tokens (lws10-authn-saml: trust is out of band). Empty: the
+  token type is refused and not advertised. -/
+  samlIdps : List L4Factoidal.SAML.Idp := []
+  /-- Private keys that decrypt `saml:EncryptedAssertion` and
+  `saml:EncryptedID` (https://github.com/danbri/factoidal/issues/1073);
+  none: encrypted SAML elements are refused. -/
+  samlKeys : L4Factoidal.XML.Enc.Keys := {}
+
+/-- The most AES answers kept: one exchange makes at most
+`CipherCall.maxRequests` requests. -/
+def maxCipherAnswers : Nat := 64
 
 structure AuthzState where
   keys : KeyStore := {}
   fetch : FetchState := {}
+  /-- The host's answers to AES requests (`Need.cipher`), newest first. -/
+  cipherAnswers : List (L4Factoidal.Crypto.CipherCall.Req × L4Factoidal.Crypto.CipherCall.Ans) := []
 
 def AuthzConfig.grace (cfg : AuthzConfig) : Nat := cfg.tokenLifetime + cfg.leeway
 
 /-- The context subject-token validation reads. -/
 def AuthzConfig.ctx (cfg : AuthzConfig) (C : Crypto) (st : AuthzState) (now : Nat) : Ctx :=
-  { C, issuer := cfg.issuer, now, leeway := cfg.leeway, policy := cfg.fetch, fs := st.fetch }
+  { C, issuer := cfg.issuer, now, leeway := cfg.leeway, policy := cfg.fetch, fs := st.fetch,
+    samlIdps := cfg.samlIdps, samlKeys := cfg.samlKeys, cipherAnswers := st.cipherAnswers }
+
+/-- The subject token types the token endpoint accepts. -/
+def AuthzConfig.tokenTypes (cfg : AuthzConfig) : List String :=
+  [tokenTypeJwt, tokenTypeIdToken] ++ (if cfg.samlIdps.isEmpty then [] else [tokenTypeSaml2])
 
 /-! ## Endpoints and metadata -/
 
@@ -120,26 +149,63 @@ def lwsConfigurationPath (issuer : String) : String :=
   "/.well-known/lws-configuration" ++ issuerPath issuer
 def oauthMetadataPath (issuer : String) : String :=
   "/.well-known/oauth-authorization-server" ++ issuerPath issuer
-def jwksPath (issuer : String) : String := issuerPath issuer ++ "/jwks"
-def tokenPath (issuer : String) : String := issuerPath issuer ++ "/token"
+def jwksPath (issuer : String) (rel : String := "/jwks") : String := issuerPath issuer ++ rel
+def tokenPath (issuer : String) (rel : String := "/token") : String := issuerPath issuer ++ rel
 
-def tokenEndpointUrl (issuer : String) : String := trimSlash issuer ++ "/token"
-def jwksUrl (issuer : String) : String := trimSlash issuer ++ "/jwks"
+def tokenEndpointUrl (issuer : String) (rel : String := "/token") : String := trimSlash issuer ++ rel
+def jwksUrl (issuer : String) (rel : String := "/jwks") : String := trimSlash issuer ++ rel
+
+/-- The three things this server answers. -/
+inductive Endpoint where
+  | metadata
+  | jwks
+  | token
+  deriving Repr, BEq, DecidableEq
+
+/-- Which endpoint a request path names; `none` for every other path.
+
+Two forms of each path are read, as for the storage's protected resource
+metadata (`L4Factoidal.LWS.resourceOfMetadataPath`):
+
+* the whole form: the path of the URL that the metadata gives
+  (`/.well-known/lws-configuration` + the issuer's path, RFC 8414 §3.1;
+  the issuer's path + `tokenPath` or `jwksPath`), as a client that reaches
+  this server directly sends it;
+* the issuer form: the same path with the issuer's path removed
+  (`/.well-known/lws-configuration`, `tokenPath`, `jwksPath`), as a reverse
+  proxy sends it that serves the issuer at a path prefix and removes the
+  prefix.
+
+For an issuer that is an origin the two forms are the same. A host that
+serves this server and something else on one port asks this function which
+requests are this server's (`owns`). -/
+def endpointOf? (cfg : AuthzConfig) (path : String) : Option Endpoint :=
+  let ip := issuerPath cfg.issuer
+  if path == lwsConfigurationPath cfg.issuer || path == oauthMetadataPath cfg.issuer
+      || path == "/.well-known/lws-configuration"
+      || path == "/.well-known/oauth-authorization-server" then some .metadata
+  else if path == ip ++ cfg.jwksPath || path == cfg.jwksPath then some .jwks
+  else if path == ip ++ cfg.tokenPath || path == cfg.tokenPath then some .token
+  else none
+
+/-- Whether a request path is one of this server's (the query is not read). -/
+def owns (cfg : AuthzConfig) (target : String) : Bool :=
+  (endpointOf? cfg ((target.splitOn "?").headD target)).isSome
 
 def strs (l : List String) : Json := .array (l.map Json.string)
 
 /-- The RFC 8414 §2 metadata, with the two LWS members. -/
 def metadataJson (cfg : AuthzConfig) : Json :=
   .object [ ("issuer", .string cfg.issuer)
-          , ("token_endpoint", .string (tokenEndpointUrl cfg.issuer))
-          , ("jwks_uri", .string (jwksUrl cfg.issuer))
+          , ("token_endpoint", .string (tokenEndpointUrl cfg.issuer cfg.tokenPath))
+          , ("jwks_uri", .string (jwksUrl cfg.issuer cfg.jwksPath))
           , ("grant_types_supported", strs [tokenExchangeGrant])
           -- RFC 8414 §2 lists the response types of the authorization
           -- endpoint. This server has none, so the list is empty.
           , ("response_types_supported", strs [])
           , ("token_endpoint_auth_methods_supported", strs ["none"])
           , ("claims_supported", strs ["sub", "iss", "client_id", "aud", "exp", "iat", "jti"])
-          , ("subject_token_types_supported", strs [tokenTypeJwt, tokenTypeIdToken])
+          , ("subject_token_types_supported", strs cfg.tokenTypes)
           , ("subject_identifier_types_supported", strs ["https", "did:key"]) ]
 
 /-! ## Responses -/
@@ -366,12 +432,10 @@ def maybeRotate (C : Crypto) (cfg : AuthzConfig) (st : AuthzState) (now : Nat) (
 def step (C : Crypto) (cfg : AuthzConfig) (st0 : AuthzState) (now : Nat) (rnd : ByteArray)
     (r : Request) : StepResult × AuthzState × Bool :=
   let (st, changed) := maybeRotate C cfg st0 now rnd
-  let path := r.path
-  if path == lwsConfigurationPath cfg.issuer || path == oauthMetadataPath cfg.issuer then
-    (.respond (getJson r (metadataJson cfg)), st, changed)
-  else if path == jwksPath cfg.issuer then
-    (.respond (getJson r (jwksJson st.keys now cfg.grace)), st, changed)
-  else if path == tokenPath cfg.issuer then
+  match endpointOf? cfg r.path with
+  | some .metadata => (.respond (getJson r (metadataJson cfg)), st, changed)
+  | some .jwks => (.respond (getJson r (jwksJson st.keys now cfg.grace)), st, changed)
+  | some .token =>
     if r.method != "POST" then (.respond (notAllowed "POST"), st, changed)
     else if !isFormContent r then
       (.respond (errorResponse "invalid_request"
@@ -380,7 +444,14 @@ def step (C : Crypto) (cfg : AuthzConfig) (st0 : AuthzState) (now : Nat) (rnd : 
       | .need n => (.need n, st, changed)
       | .refused resp => (.respond resp, st, changed)
       | .issued resp _ _ _ _ => (.respond resp, st, changed)
-  else (.respond notFound, st, changed)
+  | none => (.respond notFound, st, changed)
+
+/-- A path that `endpointOf?` does not name gets 404 and nothing else: so a
+host that sends `step` only the paths `owns` accepts loses no answer. -/
+theorem step_none (C : Crypto) (cfg : AuthzConfig) (st0 : AuthzState) (now : Nat)
+    (rnd : ByteArray) (r : Request) (h : endpointOf? cfg r.path = none) :
+    (step C cfg st0 now rnd r).1 = .respond notFound := by
+  simp [step, h]
 
 /-! ## CORS (https://github.com/danbri/factoidal/issues/923) -/
 
@@ -430,5 +501,11 @@ def recordFetched (cfg : AuthzConfig) (st : AuthzState) (url : String) (status :
 def recordResolved (cfg : AuthzConfig) (st : AuthzState) (host : String) (addresses : List String)
     (now : Nat) : AuthzState :=
   { st with fetch := recordHost cfg.fetch st.fetch host addresses now }
+
+/-- Record the host's answer to one AES request (`Need.cipher`). The list is
+bounded; an older answer for the same request is replaced. -/
+def AuthzState.recordCipher (st : AuthzState) (req : L4Factoidal.Crypto.CipherCall.Req)
+    (ans : L4Factoidal.Crypto.CipherCall.Ans) : AuthzState :=
+  { st with cipherAnswers := ((req, ans) :: st.cipherAnswers.filter (fun p => p.1 != req)).take maxCipherAnswers }
 
 end L4Factoidal.Authz

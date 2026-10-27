@@ -1819,6 +1819,46 @@ checkseq "lwsStep drives create, read, update and delete" "$TMP/lws-crud.json" \
    and rs[7]["ok"] is True
    and rs[8]["ok"] is False and "unknown LWS handle" in rs[8]["error"]'
 
+# --- WebDAV server (https://github.com/danbri/factoidal/issues/1066) ---
+# The handle reads mount files (webdavOpen, webdavLoad), then each request
+# is a program over storage operations: a local mount's operation comes out
+# as an `lws` request, answered with webdavResume. A malformed mount file is
+# refused with its name and line.
+python3 - "$TMP/webdav.json" <<'EOF'
+import json, sys, base64
+r = lambda **kw: json.dumps(kw)
+ent = base64.b64encode(bytes(range(32))).decode()
+seq = [
+  ["webdavOpen", [r(listing=["a.md", "README.md", "notes.txt"], entropy=ent)]],
+  ["webdavLoad", ["webdav1", r(files=[{"name": "a.md", "text": "# A\n- kind: local\n- path: st\n"}])]],
+  ["webdavLoad", ["webdav1", r(exists=[{"path": "st", "present": True}])]],
+  ["webdavStep", ["webdav1", r(method="OPTIONS", target="/a/")]],
+  ["webdavStep", ["webdav1", r(method="PROPFIND", target="/", headers=[["Depth", "1"]])]],
+  ["webdavStep", ["webdav1", r(method="GET", target="/a/x")]],
+  ["webdavResume", ["webdav1", r(status=404, headers=[])]],
+  ["webdavResume", ["webdav1", r(status=404, headers=[])]],
+  ["webdavClose", ["webdav1"]],
+  ["webdavStep", ["webdav1", r(method="OPTIONS", target="/")]],
+  ["webdavOpen", [r(listing=["bad.md"], entropy=ent)]],
+  ["webdavLoad", ["webdav2", r(files=[{"name": "bad.md", "text": "- kind: local\n- colour: red\n"}])]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+
+checkseq "webdav: mount files, OPTIONS, PROPFIND of the root, a GET carried as lws requests" "$TMP/webdav.json" \
+  'rs[0]["ok"] is True and rs[0]["need"]["read"] == ["a.md"]
+   and rs[1]["need"]["exists"] == ["st", "st/lws-state.json", "st/lws-files.json"]
+   and rs[2]["ready"]["local"][0]["config"]["storage"] == "snapshot"
+   and rs[3]["response"]["status"] == 200
+   and dict(rs[3]["response"]["headers"])["dav"] == "1, 2"
+   and rs[4]["response"]["status"] == 207 and "<D:href>/a/</D:href>" in rs[4]["response"]["body"]
+   and rs[5]["lws"]["request"] == {"method": "HEAD", "target": "/x", "headers": [], "body": ""}
+   and rs[6]["lws"]["request"]["target"] == "/x/"
+   and rs[7]["response"]["status"] == 404
+   and rs[8]["ok"] is True
+   and rs[9]["ok"] is False and "unknown WebDAV handle" in rs[9]["error"]
+   and rs[11]["ok"] is False and rs[11]["error"].startswith("bad.md:2: unknown key")'
+
 # Bodies are bytes (https://github.com/danbri/factoidal/issues/889). Through
 # the string entry a body that is not UTF-8 travels as `bodyBase64` both
 # ways; a byte range may end inside a UTF-8 sequence; Turtle whose bytes are
@@ -3206,6 +3246,25 @@ args "$TMP/dl-empty.json"
 check "ops reflection lists the delta-log ops" ops "$TMP/dl-empty.json" \
   'set(["deltaLogEncode","deltaLogDecode","deltaLogMerge"]) <= set(r["ops"])'
 
+# --- Literal values (https://github.com/danbri/factoidal/issues/1051) ----
+args "$TMP/lv-int.json" '{"type":"literal","value":"01","datatype":"http://www.w3.org/2001/XMLSchema#integer"}'
+check "literalValue \"01\"^^xsd:integer -> valid, value 1, canonical 1" literalValue "$TMP/lv-int.json" \
+  'r["ok"] is True and r["valid"] is True and r["canonical"] == "1" and r["value"]["number"] == 1'
+args "$TMP/lv-bad.json" '{"type":"literal","value":"2147483648","datatype":"http://www.w3.org/2001/XMLSchema#int"}'
+check "literalValue \"2147483648\"^^xsd:int -> ill-typed (recognized, not valid)" literalValue "$TMP/lv-bad.json" \
+  'r["ok"] is True and r["recognized"] is True and r["valid"] is False and "value" not in r'
+args "$TMP/lv-dbl.json" '{"type":"literal","value":"0.1","datatype":"http://www.w3.org/2001/XMLSchema#double"}'
+check "literalValue \"0.1\"^^xsd:double -> canonical 1.0E-1" literalValue "$TMP/lv-dbl.json" \
+  'r["ok"] is True and r["canonical"] == "1.0E-1" and r["value"]["number"] == 0.1'
+args "$TMP/lfv-int.json" '{"js":"number","v":"99"}' "int"
+check "literalFromValue 99 as int -> \"99\"^^xsd:int" literalFromValue "$TMP/lfv-int.json" \
+  'r["ok"] is True and r["value"] == "99" and r["datatype"].endswith("#int")'
+args "$TMP/lfv-bad.json" '{"js":"number","v":"300"}' "byte"
+check "literalFromValue 300 as byte -> literal.value error" literalFromValue "$TMP/lfv-bad.json" \
+  'r["ok"] is False and r["code"] == "literal.value"'
+check "ops reflection lists the literal-value ops" ops "$TMP/dl-empty.json" \
+  'set(["literalValue","literalFromValue"]) <= set(r["ops"])'
+
 # --- Dispatch reflection + unknown op ---------------------------------
 args "$TMP/empty.json"
 check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
@@ -3227,6 +3286,7 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "packBegin","packFeed","packEndPass",
             "packNext","packFinish","packClose",
             "lwsOpen","lwsStep","lwsClose",
+            "webdavOpen","webdavLoad","webdavStep","webdavResume","webdavClose",
             "solidOpen","solidStep","solidClose",
             "solidClientRequest","solidClientResponse",
             "aeadSeal","aeadOpen","hpkeSeal","hpkeOpen",
@@ -3243,7 +3303,128 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "tdb2ServeKeys","tdb2ServeOpen"]) <= set(r["ops"])
    and r["blobIoOps"] == ["blobEcho","packFeed","packNext",
                           "storeServeRequest","storeServeCommit","datasetQuadsBin",
-                          "lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead"]'
+                          "sbm11Query","sbm11PackFiles",
+                          "storeManifestInspectBytes","storeQueryPlanBytes","storeOpenBytes",
+                          "lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead",
+                          "webdavStep","webdavResume"]'
+
+# SBM11 over host positioned reads (https://github.com/danbri/factoidal/issues/1009).
+# Natively the host is a pread of source/file (ffi/l4_hostread.c). A bad
+# source answers an error envelope with a code, never a trap; the wasm trap of
+# 0.14.0 was an extern signature mismatch, which build-wasm.sh now refuses.
+SBM11_ROOT="$LEAN_DIR/../../npm/factoidal/test/fixtures/sbm11-tiny/root"
+args "$TMP/sbm11-empty.json" ""
+check "sbm11Open of an empty source -> coded error" sbm11Open "$TMP/sbm11-empty.json" \
+  'r["ok"] is False and isinstance(r.get("code"), str) and "manifest.sbm11" in r["error"]'
+args "$TMP/sbm11-none.json" "$TMP/no-such-directory"
+check "sbm11Open of a missing directory -> coded error" sbm11Open "$TMP/sbm11-none.json" \
+  'r["ok"] is False and isinstance(r.get("code"), str)'
+args "$TMP/sbm11-noargs.json"
+check "sbm11Open with no argument -> call.arity" sbm11Open "$TMP/sbm11-noargs.json" \
+  'r["ok"] is False and r.get("code") == "call.arity"'
+python3 - "$SBM11_ROOT" "$TMP/sbm11-seq.json" <<'EOF'
+import json, sys
+root, out = sys.argv[1], sys.argv[2]
+json.dump([["sbm11Open", [root]],
+           ["sbm11Query", ["sbm11-1", "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }"]],
+           ["sbm11Query", ["sbm11-1", "SELEC"]],
+           ["sbm11Close", ["sbm11-1"]],
+           ["sbm11Close", ["sbm11-1"]]], open(out, "w"))
+EOF
+SBM11_COUNT_FILE="$SBM11_ROOT/../expected/count.out"
+export SBM11_COUNT_FILE
+checkseq "sbm11 open (collection root), query, close: the bytes of l4sbm11 query" \
+  "$TMP/sbm11-seq.json" \
+  'rs[0]["ok"] is True and rs[0]["handle"] == "sbm11-1" and rs[0]["generation"] == "gen"
+   and int(rs[0]["terms"]) > 0
+   and rs[1]["ok"] is True and rs[1]["result"] == open(__import__("os").environ["SBM11_COUNT_FILE"]).read()
+   and rs[2]["ok"] is False and isinstance(rs[2].get("code"), str)
+   and rs[3]["ok"] is True and rs[4]["ok"] is False'
+
+# storeLayout and sbm11Verify (https://github.com/danbri/factoidal/issues/1009,
+# npm `factoidal activate`, `query`, `inspect` on an SBM11 store): the engine
+# says which store a directory holds, and checks every file of a generation
+# against its manifest; a changed byte is refused with the file name.
+args "$TMP/layout-root.json" "$SBM11_ROOT"
+check "storeLayout of an SBM11 collection root -> sbm11, the generation CURRENT names" storeLayout \
+  "$TMP/layout-root.json" 'r["ok"] is True and r["layout"] == "sbm11" and r["generation"] == "gen" and r["manifest"] == "manifest.sbm11"'
+args "$TMP/layout-gen.json" "$SBM11_ROOT/gen"
+check "storeLayout of an SBM11 generation directory -> sbm11, no CURRENT" storeLayout \
+  "$TMP/layout-gen.json" 'r["ok"] is True and r["layout"] == "sbm11" and r["generation"] == ""'
+mkdir -p "$TMP/layout-ibk" && : >"$TMP/layout-ibk/manifest.sbm2"
+args "$TMP/layout-ibk.json" "$TMP/layout-ibk"
+check "storeLayout of a directory with manifest.sbm2 -> ibk" storeLayout \
+  "$TMP/layout-ibk.json" 'r["ok"] is True and r["layout"] == "ibk" and r["manifest"] == "manifest.sbm2"'
+args "$TMP/layout-none.json" "$TMP/no-such-directory"
+check "storeLayout of a missing directory -> coded error" storeLayout \
+  "$TMP/layout-none.json" 'r["ok"] is False and isinstance(r.get("code"), str)'
+args "$TMP/verify-gen.json" "$SBM11_ROOT/gen"
+SBM11_GEN_FILES="$(ls "$SBM11_ROOT/gen" | wc -l | tr -d ' ')"
+export SBM11_GEN_FILES
+check "sbm11Verify of the fixture generation -> ok, every file checked" sbm11Verify \
+  "$TMP/verify-gen.json" 'r["ok"] is True and int(r["files"]) == int(__import__("os").environ["SBM11_GEN_FILES"]) and int(r["artifacts"]) > 0'
+cp -R "$SBM11_ROOT/gen" "$TMP/verify-bad"
+python3 - "$TMP/verify-bad/dict.gdv1" <<'EOF'
+import sys
+p = sys.argv[1]
+b = bytearray(open(p, "rb").read()); b[0] ^= 0xff
+open(p, "wb").write(b)
+EOF
+args "$TMP/verify-bad.json" "$TMP/verify-bad"
+check "sbm11Verify of a generation with a changed byte -> error naming the file" sbm11Verify \
+  "$TMP/verify-bad.json" 'r["ok"] is False and "dict.gdv1" in r["error"]'
+
+# The Merkle check of sbm11Open and sbm11Query (`verify`, default merkle;
+# Storage/Sbm11/HostVerify.lean, https://github.com/danbri/factoidal/issues/1009):
+# the same changed dict.gdv1 refuses the query with the file name, and is
+# read under {"verify":"none"}; a changed .merkle sidecar refuses the open.
+python3 - "$TMP/verify-bad" "$TMP/sbm11-verify-seq.json" <<'EOF'
+import json, sys
+gen, out = sys.argv[1], sys.argv[2]
+q = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }"
+json.dump([["sbm11Open", [gen]],
+           ["sbm11Query", ["sbm11-1", q]],
+           ["sbm11Open", [gen, json.dumps({"verify": "none"})]],
+           ["sbm11Open", [gen, json.dumps({"verify": "sha1"})]],
+           ["sbm11Close", ["sbm11-1"]],
+           ["sbm11Close", ["sbm11-2"]]], open(out, "w"))
+EOF
+checkseq "sbm11Open verify merkle (default) and none: a changed dict.gdv1 refuses the query by name" \
+  "$TMP/sbm11-verify-seq.json" \
+  'rs[0]["ok"] is True and rs[0]["verify"] == "merkle"
+   and rs[1]["ok"] is False and "dict.gdv1" in rs[1]["error"] and "Merkle root" in rs[1]["error"]
+   and rs[2]["ok"] is True and rs[2]["verify"] == "none"
+   and rs[3]["ok"] is False and "verify is merkle or none" in rs[3]["error"]'
+cp -R "$SBM11_ROOT/gen" "$TMP/verify-side"
+python3 - "$TMP/verify-side/spo.prb1.merkle" <<'EOF'
+import sys
+p = sys.argv[1]
+b = bytearray(open(p, "rb").read()); b[-1] ^= 1
+open(p, "wb").write(b)
+EOF
+args "$TMP/verify-side.json" "$TMP/verify-side"
+check "sbm11Open of a generation with a changed .merkle sidecar -> error naming the sidecar" sbm11Open \
+  "$TMP/verify-side.json" 'r["ok"] is False and "spo.prb1.merkle" in r["error"]'
+
+# SBM11 pack in memory (https://github.com/danbri/factoidal/issues/1009 stage 2):
+# the op through the string entry is refused by name; through the byte-region
+# entry (`l4factoidal sbm11-pack`, one call per file) it gives the files of
+# the fixture generation, which l4sbm11-pack wrote, byte for byte.
+args "$TMP/sbm11pack.json" nquads "" 0
+check "sbm11PackFiles through the string entry -> names the byte-region entry" sbm11PackFiles \
+  "$TMP/sbm11pack.json" 'r["ok"] is False and "l4_call_blob_io" in r["error"]'
+L4F="$LEAN_DIR/.lake/build/bin/l4factoidal"
+if [ -x "$L4F" ]; then
+  PRC=0
+  "$L4F" sbm11-pack "$SBM11_ROOT/../input.nq" "$TMP/sbm11-packed" >/dev/null 2>&1 || PRC=$?
+  if [ "$PRC" -eq 0 ] && diff -r "$TMP/sbm11-packed" "$SBM11_ROOT/gen" >/dev/null; then
+    echo "ok   sbm11PackFiles: every file of the fixture generation, byte for byte"; PASS=$((PASS + 1))
+  else
+    echo "FAIL sbm11PackFiles: exit $PRC or files differ from $SBM11_ROOT/gen"; FAIL=$((FAIL + 1))
+  fi
+else
+  echo "FAIL sbm11PackFiles: $L4F not built"; FAIL=$((FAIL + 1))
+fi
 
 check "unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
   'r["ok"] is False and "unknown op" in r["error"]'
@@ -3366,10 +3547,116 @@ corecheck "core: deltaLogMerge applies the log" deltaLogMerge "$TMP/dl-merge.jso
   'r["ok"] is True and "\"Eve\"" in r["nquads"] and "\"Frank\"" in r["nquads"]'
 corecheck "core: ops reflection lists the delta-log ops" ops "$TMP/empty.json" \
   'set(["deltaLogEncode","deltaLogDecode","deltaLogMerge"]) <= set(r["ops"])'
+corecheck "core: literalValue \"01\"^^xsd:integer -> canonical 1" literalValue "$TMP/lv-int.json" \
+  'r["ok"] is True and r["valid"] is True and r["canonical"] == "1"'
+corecheck "core: literalFromValue 99 as int" literalFromValue "$TMP/lfv-int.json" \
+  'r["ok"] is True and r["value"] == "99" and r["datatype"].endswith("#int")'
 corecheck "core: unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
   'r["ok"] is False and "unknown op" in r["error"] and "servedBy" not in r'
 check "full: ops reflection names the full engine" ops "$TMP/empty.json" \
   'r["ok"] is True and r["engine"] == "full"'
+
+# --- Value matching (https://github.com/danbri/factoidal/issues/1052) -----
+# sameValue: SPARQL 1.1 `=` on two terms, three-valued. The match ops take an
+# optional options object, {"match":"value"}; term matching is the default.
+XSDI='http://www.w3.org/2001/XMLSchema#integer'
+args "$TMP/sv-true.json" '{"type":"literal","value":"01","datatype":"'"$XSDI"'"}' \
+  '{"type":"literal","value":"1.0","datatype":"http://www.w3.org/2001/XMLSchema#decimal"}'
+check "sameValue 01^^integer 1.0^^decimal -> true" sameValue "$TMP/sv-true.json" \
+  'r == {"ok": True, "sameValue": "true"}'
+args "$TMP/sv-inc.json" '{"type":"nt","value":"\"a\"^^<http://e/dt>"}' '{"type":"nt","value":"\"b\"^^<http://e/dt>"}'
+check "sameValue of two literals of an unknown datatype -> incomparable" sameValue "$TMP/sv-inc.json" \
+  'r == {"ok": True, "sameValue": "incomparable"}'
+args "$TMP/sv-bad.json" '{}' '{"type":"uri","value":"http://e/a"}'
+check "sameValue of a non-term -> term.invalid" sameValue "$TMP/sv-bad.json" \
+  'r["ok"] is False and r["code"] == "term.invalid"'
+python3 - "$TMP/vm-seq.json" <<'EOF'
+import json, sys
+I = "http://www.w3.org/2001/XMLSchema#integer"
+NQ = ('<http://e/s> <http://e/p> "01"^^<%s> .\n'
+      '<http://e/s> <http://e/p> "1.0"^^<http://www.w3.org/2001/XMLSchema#decimal> <http://e/g> .\n'
+      '<http://e/s> <http://e/p> "2"^^<%s> .\n') % (I, I)
+one = json.dumps([None, None, {"type": "literal", "value": "1", "datatype": I}, None])
+q = json.dumps([[{"type": "uri", "value": "http://e/s"}, {"type": "uri", "value": "http://e/p"},
+                 {"type": "literal", "value": "1", "datatype": I}]])
+seq = [
+  ["datasetOpen", [NQ, "nquads", ""]],
+  ["datasetMatchCount", ["h1", one]],
+  ["datasetMatchCount", ["h1", one, '{"match":"value"}']],
+  ["datasetMatch", ["h1", one, '{"match":"value"}']],
+  ["datasetMatchCount", ["h1", one, '{"match":"values"}']],
+  ["datasetDeleteQuadsJson", ["h1", q, '{"match":"value"}']],
+  ["datasetMatchCount", ["h1", one, '{"match":"value"}']],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+checkseq "value match: count, match, a bad mode, delete by value" "$TMP/vm-seq.json" \
+  'rs[0]["ok"] is True and rs[0]["count"] == 3
+   and rs[1] == {"ok": True, "count": 0}
+   and rs[2] == {"ok": True, "count": 2}
+   and rs[3]["ok"] is True and rs[3]["count"] == 2
+   and rs[4]["ok"] is False and rs[4]["code"] == "option.invalid-value"
+   and rs[5] == {"ok": True, "count": 2}
+   and rs[6] == {"ok": True, "count": 1}'
+TERM_OPS='["sameValue","syntaxFor","splitIri","isNCName","vocabularies","memberIri","memberOrdinal","datasetListItems","datasetContainerItems","datasetAddList"]'
+check "ops reflection lists the term and collection ops (issues 1051-1053)" ops "$TMP/empty.json" \
+  "set($TERM_OPS) <= set(r[\"ops\"])"
+corecheck "core: ops reflection lists the term and collection ops" ops "$TMP/empty.json" \
+  "set($TERM_OPS) <= set(r[\"ops\"])"
+
+# --- Syntax names (https://github.com/danbri/factoidal/issues/1053) -------
+args "$TMP/sf-name.json" 'http://e/data.ttl?x=1' ''
+check "syntaxFor by the extension of an IRI path -> turtle" syntaxFor "$TMP/sf-name.json" \
+  'r == {"ok": True, "syntax": "turtle"}'
+args "$TMP/sf-mt.json" 'a.ttl' 'Application/N-Quads; charset=utf-8'
+check "syntaxFor: the media type wins -> nquads" syntaxFor "$TMP/sf-mt.json" \
+  'r == {"ok": True, "syntax": "nquads"}'
+args "$TMP/sf-none.json" 'a.unknown' ''
+check "syntaxFor of an unknown extension -> null" syntaxFor "$TMP/sf-none.json" \
+  'r == {"ok": True, "syntax": None}'
+corecheck "core: syntaxFor" syntaxFor "$TMP/sf-mt.json" 'r == {"ok": True, "syntax": "nquads"}'
+check "datasetFormats lists media types and extensions" datasetFormats "$TMP/empty.json" \
+  'any(x["name"] == "turtle" and x["mediaTypes"] == ["text/turtle"] and x["extensions"] == [".ttl"] for x in r["formats"])'
+
+# --- IRI split, vocabularies, rdf:_n (issue 1051 items 4-6) ------------------
+args "$TMP/split.json" 'http://e/123abc'
+check "splitIri: the longest NCName suffix" splitIri "$TMP/split.json" \
+  'r == {"ok": True, "namespace": "http://e/123", "localName": "abc"}'
+args "$TMP/ncname.json" '1a'
+check "isNCName 1a -> false" isNCName "$TMP/ncname.json" 'r == {"ok": True, "ncName": False}'
+check "vocabularies: rdf, rdfs, xsd, owl first" vocabularies "$TMP/empty.json" \
+  '[v["prefix"] for v in r["vocabularies"]][:4] == ["rdf","rdfs","xsd","owl"] and "type" in r["vocabularies"][0]["terms"]'
+args "$TMP/memberiri.json" '2'
+check "memberIri 2 -> rdf:_2" memberIri "$TMP/memberiri.json" \
+  'r == {"ok": True, "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#_2"}'
+args "$TMP/memberord.json" 'http://www.w3.org/1999/02/22-rdf-syntax-ns#_01'
+check "memberOrdinal rdf:_01 -> null" memberOrdinal "$TMP/memberord.json" 'r == {"ok": True, "ordinal": None}'
+
+# --- RDF lists and containers of a handle (issue 1051 item 6) ----------------
+python3 - "$TMP/coll-seq.json" <<'EOF2'
+import json, sys
+R = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+TTL = ('@prefix : <http://e/> . @prefix rdf: <%s> .\n'
+       ':s :p ( :a "b" ) .\n'
+       ':c a rdf:Seq ; rdf:_2 "two" ; rdf:_1 "one" .\n'
+       ':bad :p _:n . _:n rdf:first :x ; rdf:rest _:n .\n') % R
+iri = lambda v: json.dumps({"type": "uri", "value": v})
+seq = [
+  ["datasetOpen", [TTL, "turtle", ""]],
+  ["datasetAddList", ["h1", json.dumps([{"type": "uri", "value": "http://e/x"}, {"type": "literal", "value": "y"}]), ""]],
+  ["datasetContainerItems", ["h1", iri("http://e/c")]],
+  ["datasetListItems", ["h1", iri(R + "nil"), ""]],
+  ["datasetListItems", ["h1", iri("http://e/nothing")]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF2
+checkseq "lists and containers: add, container items, nil, refusal" "$TMP/coll-seq.json" \
+  'rs[0]["ok"] is True
+   and rs[1]["ok"] is True and rs[1]["head"]["type"] == "bnode" and rs[1]["count"] == rs[0]["count"] + 4
+   and rs[2]["ok"] is True and rs[2]["kind"]["value"].endswith("#Seq")
+   and [m["ordinal"] for m in rs[2]["items"]] == [1, 2]
+   and rs[3] == {"ok": True, "items": []}
+   and rs[4]["ok"] is False and rs[4]["reason"] == "no-first"'
 
 echo "=== native-smoke: $PASS pass, $FAIL fail, $XFAIL xfail (out of $((PASS + FAIL + XFAIL)))"
 [ "$FAIL" -eq 0 ]

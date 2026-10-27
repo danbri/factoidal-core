@@ -262,28 +262,31 @@ def totalBytesOf (entries : List Entry) : Nat :=
 def totalRowsOf (entries : List Entry) : Nat :=
   entries.foldl (fun total entry => total + entry.rows) 0
 
+/-- Decode the manifest BYTES. The byte ops (`storeManifestInspectBytes`,
+`storeQueryPlanBytes`, `storeOpenBytes`) receive these bytes as the blob
+region; the older ops receive them as hexadecimal and come here through
+`decodeManifest?`. -/
+def decodeManifestBytes? (op : String) (bytes : ByteArray) : Except String Manifest :=
+  match decode? bytes with
+  | none =>
+      /- A manifest whose layout names LGI1 or LGI2 was packed under the
+         ASCII-only literal-index fold. Say that, and say to re-pack. -/
+      match retiredLayoutNote? bytes with
+      | some note => .error s!"{op}: {note}"
+      | none => .error s!"{op}: bytes do not decode as an admitted SBM0 to SBM7 manifest"
+  | some manifest => .ok manifest
+
 def decodeManifest? (op manifestHex : String) : Except String Manifest :=
   match bytesOfHex? manifestHex with
   | none => .error s!"{op}: manifestHex must contain an even number of hexadecimal digits"
-  | some bytes =>
-      match decode? bytes with
-      | none =>
-          /- A manifest whose layout names LGI1 or LGI2 was packed under the
-             ASCII-only literal-index fold. Say that, and say to re-pack. -/
-          match retiredLayoutNote? bytes with
-          | some note => .error s!"{op}: {note}"
-          | none => .error s!"{op}: bytes do not decode as an admitted SBM0 to SBM7 manifest"
-      | some manifest => .ok manifest
+  | some bytes => decodeManifestBytes? op bytes
 
 /-- `storeManifestInspect(manifestHex)` — decode one Shardborough manifest and
 report what a host needs in order to fetch its artifacts: the wire version,
 the layout label, the blank-node publication profile, and one record per
 entry. Nothing is read from a block; every value here is committed by the
 manifest bytes themselves. -/
-def storeManifestInspect (manifestHex : String) : String :=
-  match decodeManifest? "storeManifestInspect" manifestHex with
-  | .error e => errJson e
-  | .ok manifest =>
+def manifestInspectEnvelope (manifest : Manifest) : String :=
       okWith
         ([ ("wireVersion", .number (toString manifest.version))
         , ("layout", .string manifest.layout)
@@ -295,6 +298,21 @@ def storeManifestInspect (manifestHex : String) : String :=
         , ("entries", .array (manifest.entries.map (entryJson manifest))) ] ++
         (if manifest.blobs.isEmpty then []
          else [("blobs", .array (manifest.blobs.map blobRefJson))]))
+
+def storeManifestInspect (manifestHex : String) : String :=
+  match decodeManifest? "storeManifestInspect" manifestHex with
+  | .error e => errJson e
+  | .ok manifest => manifestInspectEnvelope manifest
+
+/-- `storeManifestInspectBytes()` with the manifest bytes as the blob region:
+the envelope of `storeManifestInspect` over the hexadecimal of the same bytes,
+with no hexadecimal over the boundary. The IO entry decodes through the
+manifest memo (`Wasm/Ops/StoreHandles.lean`); this pure form is what the
+`#guard`s compare. -/
+def storeManifestInspectBytes (bytes : ByteArray) : String :=
+  match decodeManifestBytes? "storeManifestInspectBytes" bytes with
+  | .error e => errJson e
+  | .ok manifest => manifestInspectEnvelope manifest
 
 /-! ## Planning
 
@@ -411,11 +429,10 @@ def parseQuery (op sparql : String) : Except String Query :=
 fetch, in manifest order, with the open mode and the byte and row totals those
 artifacts declare. It reads no block and applies no cap: a host uses it to
 decide what to fetch, and `storeQuery` is where the caps are enforced. -/
-def storeQueryPlan (manifestHex sparql : String) : String :=
+def queryPlanEnvelope (op : String) (manifest : Manifest) (sparql : String) : String :=
   let outcome : Except String String := do
-    let manifest ← decodeManifest? "storeQueryPlan" manifestHex
-    let query ← parseQuery "storeQueryPlan" sparql
-    let plan ← planFor "storeQueryPlan" manifest query
+    let query ← parseQuery op sparql
+    let plan ← planFor op manifest query
     pure (okWith
       [ ("wireVersion", .number (toString manifest.version))
       , ("layout", .string manifest.layout)
@@ -430,6 +447,20 @@ def storeQueryPlan (manifestHex sparql : String) : String :=
   match outcome with
   | .error e => errJson e
   | .ok envelope => envelope
+
+def storeQueryPlan (manifestHex sparql : String) : String :=
+  match decodeManifest? "storeQueryPlan" manifestHex with
+  | .error e => errJson e
+  | .ok manifest => queryPlanEnvelope "storeQueryPlan" manifest sparql
+
+/-- `storeQueryPlanBytes(sparql)` with the manifest bytes as the blob region:
+the envelope of `storeQueryPlan` over the hexadecimal of the same bytes
+(https://github.com/danbri/factoidal/issues/1039). The IO entry decodes
+through the manifest memo; this pure form is what the `#guard`s compare. -/
+def storeQueryPlanBytes (sparql : String) (bytes : ByteArray) : String :=
+  match decodeManifestBytes? "storeQueryPlanBytes" bytes with
+  | .error e => errJson e
+  | .ok manifest => queryPlanEnvelope "storeQueryPlanBytes" manifest sparql
 
 /-! ## Reading the artifacts the host supplied -/
 
@@ -510,9 +541,15 @@ def supplied? (sources : List (String × ArtifactSource)) (key : String) :
 the bytes are where the descriptor says they are, their length is the declared
 extent, and their SHA-256 is the declared digest. Blocks and index sidecars go
 through this one function, so a sidecar is trusted on exactly the terms a
-block is. -/
+block is.
+
+`hasher` computes the digest. It is the pure `Crypto.sha256` unless the caller
+passes another: `storeOpen` passes HACL* (`storeOpenHasher`, issue 1039), and
+every `#guard` keeps the pure one, which is the only one the interpreter can
+evaluate. -/
 def admitRef (op : String) (ref : ArtifactRef) (sources : List (String × ArtifactSource))
-    (blob : ByteArray) : Except String ByteArray := do
+    (blob : ByteArray) (hasher : L4Factoidal.Storage.BlockMerkle.Hasher := L4Factoidal.Storage.BlockMerkle.pureHasher) :
+    Except String ByteArray := do
   let key := ref.key.value
   let source ← match supplied? sources key with
     | none => throw s!"{op}: no bytes were supplied for artifact '{key}'"
@@ -527,14 +564,14 @@ def admitRef (op : String) (ref : ArtifactRef) (sources : List (String × Artifa
   let bytes ← sourceBytes op key source blob
   if bytes.size != ref.bytes then
     throw s!"{op}: artifact '{key}' is {bytes.size} bytes, the manifest declares {ref.bytes}"
-  if !L4Factoidal.Storage.BlockArtifact.verify ref.sha256 bytes then
+  if !L4Factoidal.Storage.BlockArtifact.verifyWith hasher ref.sha256 bytes then
     throw s!"{op}: artifact '{key}' does not match the SHA-256 the manifest commits"
   pure bytes
 
 /-- Admit one supplied BLOCK against its manifest entry. -/
 def admitArtifact (op : String) (entry : Entry) (sources : List (String × ArtifactSource))
-    (blob : ByteArray) : Except String ByteArray :=
-  admitRef op entry.artifact sources blob
+    (blob : ByteArray) (hasher : L4Factoidal.Storage.BlockMerkle.Hasher := L4Factoidal.Storage.BlockMerkle.pureHasher) : Except String ByteArray :=
+  admitRef op entry.artifact sources blob (hasher := hasher)
 
 def ibk3TriplesOf (op : String) (entry : Entry) (bytes : ByteArray) :
     Except String (List Triple) := do
@@ -576,10 +613,10 @@ abbrev BlobBytes := List (List UInt8 × ByteArray)
 on: the declared byte extent and the manifest-committed SHA-256, through
 `admitRef`. A blob the host did not supply is refused by name. -/
 def admitBlobs (op : String) (refs : List ArtifactRef)
-    (sources : List (String × ArtifactSource)) (blob : ByteArray) :
-    Except String BlobBytes :=
+    (sources : List (String × ArtifactSource)) (blob : ByteArray)
+    (hasher : L4Factoidal.Storage.BlockMerkle.Hasher := L4Factoidal.Storage.BlockMerkle.pureHasher) : Except String BlobBytes :=
   refs.mapM fun ref => do
-    let bytes ← admitRef op ref sources blob
+    let bytes ← admitRef op ref sources blob (hasher := hasher)
     pure (ref.sha256.toList, bytes)
 
 def blobLookup (blobs : BlobBytes) : ByteArray → Option ByteArray :=
@@ -743,10 +780,10 @@ private def pinBlock : L4Factoidal.Storage.IndexedBlock.Block :=
     [{ s := .iri ⟨"http://example.org/s", by decide⟩
      , p := pinPredicate
      , o := .iri ⟨"http://example.org/o", by decide⟩ }]
-private def pinBytes : ByteArray :=
+def pinBytes : ByteArray :=
   (L4Factoidal.Storage.IndexedBlockWireV3.encode? pinBlock).getD ByteArray.empty
 private def pinChunkBytes : Nat := 65536
-private def pinManifest : Manifest :=
+def pinManifest : Manifest :=
   { version := 3
   , sourceIdentity := ByteArray.empty
   , termRegistryVersion := "pin"
@@ -768,7 +805,7 @@ private def pinManifest : Manifest :=
                   (ByteArray.mk #[0])) }
         , rows := 1
         , ordinal := 0 } ] }
-private def pinManifestHex : String :=
+def pinManifestHex : String :=
   hexOfBytes ((encode? pinManifest).getD ByteArray.empty)
 private def pinArtifactsJson : String :=
   (Json.array [.object [("key", .string "predicate-0.ibk3"),
@@ -777,7 +814,7 @@ private def pinTamperedJson : String :=
   (Json.array [.object [("key", .string "predicate-0.ibk3"),
                         ("bytes", .string (hexOfBytes (pinBytes.push 0)))]]).toString
 /-- The blob path: the whole region is this one artifact. -/
-private def pinWindowJson : String :=
+def pinWindowJson : String :=
   (Json.array [.object [("key", .string "predicate-0.ibk3"),
                         ("offset", .number "0"),
                         ("len", .number (toString pinBytes.size))]]).toString
@@ -870,5 +907,24 @@ private def pinOverrunJson : String :=
 #guard (storeQuery pinManifestHex "SELECT ?s WHERE { ?s <http://example.org/p> ?o }"
   "[{\"key\":\"predicate-0.ibk3\",\"offset\":0,\"len\":1,\"bytes\":\"00\"}]"
   pinBytes).contains "not both"
+
+-- The byte path answers exactly what the hexadecimal path answers
+-- (https://github.com/danbri/factoidal/issues/1039).
+def pinManifestBytes : ByteArray := (encode? pinManifest).getD ByteArray.empty
+#guard pinManifestBytes.size > 0
+#guard (decodeManifestBytes? "op" pinManifestBytes).toOption.isSome
+#guard storeManifestInspectBytes pinManifestBytes == storeManifestInspect pinManifestHex
+#guard [ "SELECT ?s WHERE { ?s <http://example.org/p> ?o }"
+       , "SELECT ?s WHERE { ?s ?p ?o }"
+       , "SELECT ?s WHERE { ?s <http://example.org/p> ?o } ORDER BY (EXISTS { ?s ?q ?r })"
+       , "DESCRIBE <http://example.org/s>"
+       , "ASK { ?s <http://example.org/q> ?o }" ].all fun q =>
+    storeQueryPlanBytes q pinManifestBytes == storeQueryPlan pinManifestHex q
+-- The refusals name the byte op.
+#guard (storeQueryPlanBytes "SELECT" pinManifestBytes).contains "storeQueryPlanBytes: SPARQL parse error"
+#guard (storeQueryPlanBytes "ASK {}" (ByteArray.mk #[0])).contains
+    "storeQueryPlanBytes: bytes do not decode"
+#guard (storeManifestInspectBytes ByteArray.empty).contains
+    "storeManifestInspectBytes: bytes do not decode"
 
 end L4Wasm.Ops

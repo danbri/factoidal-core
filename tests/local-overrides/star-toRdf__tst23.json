@@ -1,0 +1,14 @@
+{
+  "test_id": "#tst23",
+  "suite": "star-toRdf",
+  "issue": "https://github.com/json-ld/json-ld-star/issues/49",
+  "dispute_kind": "version",
+  "upstream_expectation": "an @annotation whose @id is an IRI is the error \"invalid annotation\" (json-ld-star PR 61, toRdf tst23)",
+  "our_expectation": "the @id of an @annotation names the reifier and may be an IRI or a blank node; the document is valid and the IRI is the reifier of the annotated triple",
+  "rationale": "RDF 1.2 Turtle allows any reifier on an annotation (s p o ~ <r> {| ... |}). Kellogg's own outline for PR 61 takes the reifier from the annotation's @id, and json-ld-star issue 49 agrees to allow @id in annotations to convey the reifier. tst23 keeps the rule of the 2021 RDF-star form. Owner, 2026-10-27, verbatim: \"decisions - do something sensible and record the choice. Go for whatever is closer to RDF 1.2 direction.\"",
+  "analysis_refs": [
+    "formal/lean4/L4Factoidal/JSONLD/Expand.lean (annotationItemsOk)",
+    "docs/designissues/2026-10-26-jsonld-star.md"
+  ],
+  "date": "2026-10-27"
+}

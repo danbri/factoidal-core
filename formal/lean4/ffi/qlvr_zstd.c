@@ -37,17 +37,14 @@ static int l4_zstd_load(void) {
   return l4_zstd_dec != NULL && l4_zstd_iserr != NULL;
 }
 
-LEAN_EXPORT lean_obj_res l4_zstd_available(lean_obj_arg world) {
-  (void)world;
+LEAN_EXPORT lean_obj_res l4_zstd_available(void) {
   return lean_io_result_mk_ok(lean_box(l4_zstd_load() ? 1 : 0));
 }
 
 /* Decompress `src` (one or more frames) into exactly `size` bytes. Any
  * failure (no libzstd, a libzstd error, a different output size) gives an
  * empty array; Lean compares the size and reports the failure. */
-LEAN_EXPORT lean_obj_res l4_zstd_decompress(b_lean_obj_arg src, uint64_t size,
-                                            lean_obj_arg world) {
-  (void)world;
+LEAN_EXPORT lean_obj_res l4_zstd_decompress(b_lean_obj_arg src, uint64_t size) {
   if (!l4_zstd_load() || size > (uint64_t)SIZE_MAX || size == 0)
     return lean_io_result_mk_ok(lean_alloc_sarray(1, 0, 0));
   lean_obj_res out = lean_alloc_sarray(1, (size_t)size, (size_t)size);

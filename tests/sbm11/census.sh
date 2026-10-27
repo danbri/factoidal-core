@@ -30,6 +30,14 @@
 # SBM11_PACKSPEC: when set, `l4sbm11 packspec-check` compares each packed
 # generation with the pure specification `PackSpec.packSpec` of its input,
 # file by file (issue 776, row L3c).
+# SBM11_PACKFILES: when set, `l4sbm11 packfiles-check` compares every file of
+# each packed generation (data files, `.merkle` sidecars, manifest) with the
+# in-memory packer `PackBytes.packText` of its input, byte for byte (the packer
+# of the wasm op `sbm11PackFiles`, issue 1009 stage 2).
+# SBM11_NPMPACK: when set, `factoidal pack --layout sbm11` (the npm command,
+# npm/factoidal/bin/factoidal.mjs, over the package wasm) packs each input
+# again, and every file must equal the file of `l4sbm11-pack` (`diff -r`;
+# issue 1009, the SBM11 store in npm). NODE: the node to run (default node).
 # SBM11_BIN: the `l4sbm11` to run (default: the one this tree builds), to
 # compare the census of two builds. SBM11_SIP: when set, the `--sip` mode
 # (auto, the CLI default; always: candidates into every join scan the shape
@@ -37,7 +45,11 @@
 # tests in which a scan with candidates ran; unset, no `--sip` is passed (a
 # build before issue 809 has no such option). `--explain` is always passed: the
 # summary counts the tests whose grouped aggregates ran on ids (issue 825). SBM11_THREADS: the
-# `--threads` count (1).
+# `--threads` count (1). SBM11_HOST: when set, each executed test is also
+# answered by the wasm ops sbm11Open / sbm11Query / sbm11Close through
+# `l4factoidal sbm11-query` (host positioned reads, ffi/l4_hostread.c; issue
+# https://github.com/danbri/factoidal/issues/1009 KR1), and its answer bytes and
+# path must equal those of `l4sbm11 query` (run with --threads 1).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -99,6 +111,9 @@ eligible=0; missing=0; rpack=0; rquery=0; executed=0; matched=0; differed=0; unc
 ids_exec=0; ids_match=0; ref_exec=0; ref_match=0; sip_tests=0; agg_tests=0
 mg_q=0; mg_eq=0; mg_diff=0; mg_ref=0; mg_fail=0
 ps_n=0; ps_same=0; ps_diff=0
+pf_n=0; pf_same=0; pf_diff=0
+np_n=0; np_same=0; np_diff=0
+host_same=0; host_diff=0
 MIS="$RUN/mismatches.txt"; : >"$MIS"
 n=0
 for t in "${order[@]}"; do
@@ -148,6 +163,16 @@ for t in "${order[@]}"; do
   # of shapes the id path does not run (issue 775)
   reason=""; [ $path = reference ] && reason="$(grep -o 'reason="[^"]*"' "$st/got.err" | head -1 | sed 's/^reason="//; s/"$//')"
   if [ $path = ids ]; then ids_exec=$((ids_exec + 1)); else ref_exec=$((ref_exec + 1)); fi
+  if [ -n "${SBM11_HOST:-}" ]; then
+    hrc=0
+    timeout 120 "$BIN/l4factoidal" sbm11-query "$st" --query "$qfile" --base "$qbase" >"$st/host" 2>"$st/host.err" || hrc=$?
+    hpath=ids; grep -q 'path=reference' "$st/host.err" && hpath=reference
+    if [ "$hrc" -eq 0 ] && [ "$hpath" = "$path" ] && cmp -s "$st/got" "$st/host"; then host_same=$((host_same + 1))
+    else host_diff=$((host_diff + 1))
+      printf '%s (host session): exit %s, path %s against %s, %s\n' "${t##*/}" "$hrc" "$hpath" "$path" \
+        "$(if cmp -s "$st/got" "$st/host"; then echo 'same bytes'; else echo 'bytes differ'; fi); $(tail -1 "$st/host.err" | head -c 200)" >>"$MIS"
+    fi
+  fi
   grep -q 'sideways' "$st/got.err" && sip_tests=$((sip_tests + 1))
   # a grouped SELECT whose aggregates ran on ids (issue 825)
   grep -q 'aggregated on ids' "$st/got.err" && agg_tests=$((agg_tests + 1))
@@ -171,6 +196,23 @@ for t in "${order[@]}"; do
     if [ "$prc" -eq 0 ]; then ps_same=$((ps_same + 1))
     else ps_diff=$((ps_diff + 1))
       printf '%s (packspec-check): exit %s: %s\n' "${t##*/}" "$prc" "$(tail -1 "$st/ps")" >>"$MIS"; fi
+  fi
+  if [ -n "${SBM11_NPMPACK:-}" ]; then
+    nrc=0
+    timeout 120 "${NODE:-node}" "$ROOT/npm/factoidal/bin/factoidal.mjs" pack "$input" "$st/npmgen" \
+      --layout sbm11 --syntax nquads --quiet >"$st/np" 2>&1 || nrc=$?
+    np_n=$((np_n + 1))
+    if [ "$nrc" -eq 0 ] && diff -r "$st/gen" "$st/npmgen" >>"$st/np" 2>&1; then np_same=$((np_same + 1))
+    else np_diff=$((np_diff + 1))
+      printf '%s (npm pack --layout sbm11): exit %s: %s\n' "${t##*/}" "$nrc" "$(tail -1 "$st/np")" >>"$MIS"; fi
+  fi
+  if [ -n "${SBM11_PACKFILES:-}" ]; then
+    frc=0
+    timeout 120 "$S11" packfiles-check "$input" "$st" >"$st/pf" 2>&1 || frc=$?
+    pf_n=$((pf_n + 1))
+    if [ "$frc" -eq 0 ]; then pf_same=$((pf_same + 1))
+    else pf_diff=$((pf_diff + 1))
+      printf '%s (packfiles-check): exit %s: %s\n' "${t##*/}" "$frc" "$(tail -1 "$st/pf")" >>"$MIS"; fi
   fi
   rrc=0
   timeout 120 "$BIN/l4factoidal" query "$input" --format nquads --base "file://$input" --query "$qfile" \
@@ -197,6 +239,15 @@ if [ -n "${SBM11_MEMGEN:-}" ]; then
 fi
 if [ -n "${SBM11_PACKSPEC:-}" ]; then
   echo "  packspec-check (issue 776, row L3c): $ps_n generations, $ps_same byte-identical to packSpec with check = true, $ps_diff differ"
+fi
+if [ -n "${SBM11_PACKFILES:-}" ]; then
+  echo "  packfiles-check (issue 1009 stage 2): $pf_n generations, $pf_same with every file byte-identical to PackBytes.packText, $pf_diff differ"
+fi
+if [ -n "${SBM11_NPMPACK:-}" ]; then
+  echo "  npm pack --layout sbm11 (issue 1009): $np_n generations, $np_same with every file byte-identical to l4sbm11-pack, $np_diff differ"
+fi
+if [ -n "${SBM11_HOST:-}" ]; then
+  echo "  host session (wasm ops over host reads, issue 1009 KR1): $host_same of the $executed executed tests gave the bytes and path of l4sbm11 query, $host_diff differ"
 fi
 if [ -n "${SBM11_SIP:-}" ]; then
   echo "  --sip $SBM11_SIP: a scan with candidates ran in $sip_tests of the $ids_exec id-path tests (issue 809)"

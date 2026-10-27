@@ -622,6 +622,7 @@ schemeBlind
 # "(c)" = the depth is bounded by a constant or by the height of a balanced
 # tree. Entries that were LENGTH-proportional over data were converted to
 # accumulator forms with csimp theorems instead (see the issue).
+JsonLdApiProbe_unorderedNorm  # (b) harness comparison; nesting of a json-ld-star fromRdf result or fixture; fuel-bounded by Json.size; arrays via List.map
 OwlProbe_showCe  # (b) harness printer; class-expression nesting; operand lists via List.map
 sortStrings  # (c) Array.qsort left-partition recursion in the xmlconf harness; input: test ids of one manifest (at most 2,184); median-of-three pivot, expected depth O(log n), worst case n
 L4Factoidal_Codec_ofHex_go  # (c) private fixture decoder; only the three hex literals of Codec/Archive.lean; longest 1,024 bytes
@@ -905,6 +906,11 @@ L4Factoidal_JSONLD_nmgNode  # (b) JSON-LD node map generation; fuel decreases at
 L4Factoidal_JSONLD_nmgProps  # (b) JSON-LD node map generation; fuel decreases at each call; depth is the nesting of the expanded document; the loop along a list passes fuel unchanged
 L4Factoidal_JSONLD_nmgReverseEntries  # (b) JSON-LD node map generation; fuel decreases at each call; depth is the nesting of the expanded document; the loop along a list passes fuel unchanged
 L4Factoidal_JSONLD_nmgReverseValues  # (b) JSON-LD node map generation; fuel decreases at each call; depth is the nesting of the expanded document; the loop along a list passes fuel unchanged
+L4Factoidal_JSONLD_nmgAnnotated  # (b) JSON-LD-star node map generation of annotations; fuel decreases at each call; depth is the nesting of the expanded document (annotations on annotations)
+L4Factoidal_JSONLD_nmgAnnotations  # (b) JSON-LD-star node map generation of annotations; loop over one @annotation array (tail call); one call into nmg for each annotation
+L4Factoidal_JSONLD_flRwJson  # (b) JSON-LD-star blank node renaming of the expanded document; depth is the nesting of the document
+L4Factoidal_JSONLD_flRwItems  # (b) loop over the items of one array (reversed accumulator, tail call); one call into flRwJson for each item
+L4Factoidal_JSONLD_flRwMembers  # (b) loop over the members of one object (reversed accumulator, tail call); one call into flRwJson for each member
 L4Factoidal_JSONLD_FState_removeEmbed_dropDependents  # (b) JSON-LD framing; fuel is arena.size + 4; depth is the chain of embedded dependents of one embed
 L4Factoidal_JSONLD_cleanupNull  # (b) JSON-LD framing; fuel decreases at each call; depth is the nesting of the framed output; members visited by List.map
 L4Factoidal_JSONLD_cleanupPreserve  # (b) JSON-LD framing; fuel decreases at each call; depth is the nesting of the framed output; members visited by List.map
@@ -1520,3 +1526,39 @@ L4Factoidal_Storage_Sbm11_PackStream_Cut_run  # (s) the output of the block writ
 L4Factoidal_SPARQL_scopeFromGraphs  # (b) one frame per FROM clause of a query (the FROM merge of issue 979, merged from main 2026-10-24 without an entry)
 L4Factoidal_Dataflow_PhaseETests_chainOf_go  # (s) test module only (Dataflow/PhaseETests, issue 975 phase E, merged from main 2026-10-24 without an entry); the depth is the premise chain of a test bundle, bounded by its fuel
 L4Factoidal_Dataflow_PhaseCTests_genDataset  # (s) (c) test module only (Dataflow/PhaseCTests, issue 975 phase C); the loop runs at most three times (named graphs of a seeded dataset)
+L4Factoidal_SPARQL_QueryPattern_expandIriAlternatives  # (b) one frame per nesting level of the WHERE pattern's BGP-level operators, as QueryPattern.lowerWith (issue 1008)
+L4Factoidal_SPARQL_iriAlternativeUnion  # (b) one frame per `|` of one property path in the query text (issue 1008)
+L4Factoidal_SPARQL_isUnionOfBgps  # (s) (b) test helper of PathAlternativeTheorems' #guards only; depth of a UNION tree built in the test (issue 1008)
+L4Factoidal_Dataflow_canonArr  # (b) the element loop is a tail call; the cycle is canonJson, one frame per nesting level of a node settings document (issue 975)
+L4Factoidal_Dataflow_canonJson  # (b) one frame per nesting level of a node settings document (issue 975)
+L4Factoidal_Dataflow_canonObj  # (b) the member loop is a tail call; the cycle is canonJson, one frame per nesting level of a node settings document (issue 975)
+# --- XML Signature profile for SAML (https://github.com/danbri/factoidal/issues/926):
+# the cycle is one frame per level of element nesting, and every sibling
+# step is a tail call; SAML.decodeToken refuses nesting above maxDepth (32)
+# before it parses.
+L4Factoidal_XML_DSig_countNode  # (c) element nesting, at most SAML.maxDepth on the SAML path
+L4Factoidal_XML_DSig_countNodesAcc  # (c) element nesting, at most SAML.maxDepth on the SAML path
+L4Factoidal_XML_DSig_plainNode  # (c) element nesting, at most SAML.maxDepth on the SAML path
+L4Factoidal_XML_DSig_plainNodes  # (c) element nesting, at most SAML.maxDepth on the SAML path
+L4Factoidal_XML_Enc_findKeysNode  # (c) element nesting of a document the caller bounded (SAML.maxDepth; xmlDecrypt 64); siblings are an accumulator tail call
+L4Factoidal_XML_Enc_findKeysNodes  # (c) element nesting of a document the caller bounded (SAML.maxDepth; xmlDecrypt 64); siblings are an accumulator tail call
+L4Factoidal_XML_Enc_serNode  # (c) element nesting of a document the caller bounded (SAML.maxDepth; xmlDecrypt 64); siblings are an accumulator tail call
+L4Factoidal_XML_Enc_serNodes  # (c) element nesting of a document the caller bounded (SAML.maxDepth; xmlDecrypt 64); siblings are an accumulator tail call
+L4Factoidal_XML_Enc_walkNode  # (c) element nesting of a document the caller bounded (SAML.maxDepth; xmlDecrypt 64); siblings are an accumulator tail call
+L4Factoidal_XML_Enc_walkNodes  # (c) element nesting of a document the caller bounded (SAML.maxDepth; xmlDecrypt 64); siblings are an accumulator tail call
+L4Factoidal_XML_ExcC14n_canonNode  # (b) element nesting of one document; (c) on the SAML path
+L4Factoidal_XML_ExcC14n_canonNodesAcc  # (b) element nesting of one document; (c) on the SAML path
+# --- Added 2026-10-27 by the WebDAV server of https://github.com/danbri/factoidal/issues/1066 ---
+L4Factoidal_WebDAV_Prog_bind  # (b) a bind of `.call` returns at once (the recursion is inside the continuation, run when the next storage answer arrives) and a bind of `.pure` applies its continuation; one frame per bind nested in the program text of L4Factoidal/WebDAV/Server.lean, and every loop body there asks the storage before it loops (copyTree, etagsOf)
+L4Factoidal_WebDAV_Prog_trace  # (s) the operations a program names in a model, for the theorem WebDAV.browse_no_write only: in the emitted C of 2026-10-27 only WebDAV/Backend.c names it; no executed path calls it
+L4Factoidal_WebDAV_copyTree  # (c) at most 64 levels (its fuel); each call asks the storage (get or put) before it recurses, so one host answer resumes one level and the member loop runs one frame deep per answer
+L4Factoidal_WebDAV_propfind  # (c) the member loop of a Depth 1 PROPFIND that asks for DAV:getetag: each iteration asks the storage (one HEAD) before the next, so one host answer resumes one iteration; with no tag asked there is no loop (a map)
+L4Factoidal_WebDAV_etagsOf  # (c) at most ifTagsMax + 1 = 17 resources: precheck refuses an If header that names more (#guard in WebDAV/Tests.lean)
+# --- Added 2026-10-27, ORDER BY with an aggregate in a grouped query
+#     (https://github.com/danbri/factoidal/issues/1050, PR 146). Both walk the
+#     ORDER BY conditions of one query, as compareOnConditions and orderFailure
+#     do; the cycle is the sub-SELECT nesting of the query (an EXISTS in a
+#     condition reaches selectPost through substituteExistentials). ---
+L4Factoidal_SPARQL_compareOnConditionsKeyed  # (b) ORDER BY conditions of one query; the list step is a self tail call (loop); cycle through selectPost for sub-SELECT nesting
+L4Factoidal_SPARQL_orderKeys  # (b) ORDER BY conditions of one query: one frame per condition; cycle through selectPost for sub-SELECT nesting
+L4Factoidal_RDF_LiteralValue_valueJsonFuel  # (c) fuel 4 from valueJson, its only caller: depth at most 4 (an XSD list value nests no list); PR 154

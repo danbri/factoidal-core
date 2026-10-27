@@ -390,8 +390,13 @@ HACL_DIR="$REPO_ROOT/third_party/hacl"
 # unit for every HMAC hash; no Lean code calls them, and leaving them out
 # fails the link. Every unit here is the PORTABLE scalar variant: the
 # Simd128/Simd256 and Vec128/Vec256 units need target intrinsics wasm32 does
-# not have. AES-GCM is absent on purpose — the pinned release has no portable
-# AES-GCM, see https://github.com/danbri/factoidal/issues/677 and
+# not have. AES-GCM: the pinned release has no portable AES-GCM, only Vale
+# x86-64 assembly, which cannot be compiled to wasm32. The native x86-64
+# build links it (lakefile.lean, `valeHost`); here NO EverCrypt unit and NO
+# .S file is compiled. ffi/hacl_aesgcm.c IS compiled below: on wasm32 it is
+# the stub that refuses (available = 0), so the extern symbols resolve. On
+# JavaScript hosts AES is WebCrypto (skills/crypto-policy, "AES through
+# WebCrypto"). https://github.com/danbri/factoidal/issues/677 and
 # third_party/hacl/PROVENANCE.md.
 for f in "$HACL_DIR/src/Hacl_Ed25519.c" "$HACL_DIR/src/Hacl_Curve25519_51.c" \
          "$HACL_DIR/src/Hacl_Hash_SHA2.c" "$HACL_DIR/src/Hacl_P256.c" \
@@ -410,6 +415,7 @@ emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_rsa.c" -o "$LIB_OBJ/l
 emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_chachapoly.c" -o "$LIB_OBJ/l4_hacl_chachapoly_shim.o"
 emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_kdf.c" -o "$LIB_OBJ/l4_hacl_kdf_shim.o"
 emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_hpke.c" -o "$LIB_OBJ/l4_hacl_hpke_shim.o"
+emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_aesgcm.c" -o "$LIB_OBJ/l4_hacl_aesgcm_shim.o"
 # The SPARQL 1.1 section 17.6 extension-function host call-out
 # (Wasm/ExtHost.lean's `@[extern "l4_ext_call"]`).  Under Emscripten the
 # body is an EM_JS thunk onto globalThis.__factoidalExtCall, which the
@@ -418,6 +424,12 @@ emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_hpke.c" -o "$LIB_OBJ/
 # answers the section 17.6 error.  Without this object the link fails on
 # l4_ext_call.
 emcc $CFLAGS -c "$LEAN_DIR/ffi/l4_ext.c" -o "$LIB_OBJ/l4_ext.o"
+# The positioned reads of a store whose bytes the host supplies
+# (Wasm/HostRead.lean: l4_host_read_at, l4_host_size; issue 1009).  EM_JS
+# thunks onto globalThis.__factoidalReadAt and __factoidalFileSize, which
+# npm/factoidal/lib/sbm11.mjs installs.  Without this object the link fails
+# on l4_host_read_at.
+emcc $CFLAGS -c "$LEAN_DIR/ffi/l4_hostread.c" -o "$LIB_OBJ/l4_hostread.o"
 echo "  library objects: $(ls "$LIB_OBJ"/*.o | wc -l | tr -d ' ')"
 
 # ---------------------------------------------------------------------
@@ -441,6 +453,7 @@ link_module() {
     case "$(basename "$o")" in "$skip_exports"|"$skip_shim") continue;; esac
     objs+=("$o")
   done
+  local link_rc=0
   em++ -O3 -DNDEBUG -fwasm-exceptions \
   "${objs[@]}" "$CORE_OBJ"/*.o "$RT_OBJ"/*.o \
   -o "$WORK/$name.mjs" \
@@ -451,7 +464,23 @@ link_module() {
   -sSTACK_SIZE=8MB \
   -sENVIRONMENT=web,worker,node \
   -sASSERTIONS=0 \
-  -Wl,--Map="$WORK/$name.map"
+  -Wl,--Map="$WORK/$name.map" 2> "$WORK/$name.link.stderr" || link_rc=$?
+  cat "$WORK/$name.link.stderr" >&2
+  [ "$link_rc" -eq 0 ] || { echo "error: the link of $name failed (exit $link_rc)" >&2; exit 1; }
+  # wasm-ld replaces a call whose signature differs from the callee's
+  # definition with an `unreachable` stub, and reports it only as a warning.
+  # Issue 1009: ffi/l4_hostread.c took an IO world argument that the Lean
+  # 4.33 code generator does not pass, and sbm11Open trapped on its first
+  # host call. The two Lean-runtime mismatches below are known and
+  # unreachable from the exported ABI (skills/lean4-wasm-export, trap 11);
+  # any other mismatch fails the build.
+  local mism
+  mism=$(grep -o 'function signature mismatch: [A-Za-z0-9_]*' "$WORK/$name.link.stderr" \
+         | sed 's/.*: //' | sort -u | grep -v -x -e lean_io_create_tempfile -e lean_io_create_tempdir) || mism=""
+  if [ -n "$mism" ]; then
+    echo "error: $name: wasm-ld function signature mismatch (each call traps): $mism" >&2
+    exit 1
+  fi
   python3 "$REPO_ROOT/tools/wasm-size-profile.py" "$WORK/$name.map" \
       --wasm "$WORK/$name.wasm" --top 60 > "$WORK/$name.size.md"
   python3 "$REPO_ROOT/tools/wasm-size-profile.py" "$WORK/$name.map" \

@@ -10,10 +10,8 @@ of lemma L4n of docs/designissues/2026-10-12-sbm11-end-to-end-theorem.md).
 * `evalIM_spec`: over a store of `BgpStore` (the four permutations in
   memory, each listing of the graph a permutation of `T`), for every path
   and every direction and restriction whose values are increasing, `evalIM`
-  answers, up to order, the pairs of `idEvalPath` (predicate ids by `cid`,
-  the literal test by `notLit`) that the restriction keeps, when the tag of
-  each node id of the graph tells whether its term is a literal
-  (`litTag`). Every form: one step, `^p`, `p1 / p2` (both directions of the
+  answers, up to order, the pairs of `idEvalPath` (predicate ids by `cid`)
+  that the restriction keeps. Every form: one step, `^p`, `p1 / p2` (both directions of the
   restriction), `p1 | p2`, `p?`, `p*`, `p+` (`IdPathClosureExec.closureM_spec`)
   and negated property sets.
 
@@ -30,113 +28,6 @@ open L4Factoidal.Storage.Sbm11.IdPath (IdTriple IdPairs Pairs idGraphNodes idEva
 open L4Factoidal.Storage.Sbm11.IdPathScanTheorems (Restr contains_iff)
 open L4Factoidal.Storage.Sbm11.IdPathClosureExec (RGood restr_some keyOf)
 open L4Factoidal.Storage.Sbm11.BgpTableTheorems (BgpStore)
-
-/-! ## The literal test by the id tag -/
-
-/-- What `isLitIdM` reads from the tag of an id: a literal for the literal,
-    integer and boolean tags, not a literal for the blank node, IRI and
-    triple term tags; `none` otherwise (the dictionary is read). -/
-def litTag (x : UInt64) : Option Bool :=
-  let t := tagOf x
-  if t == 3 || t == 4 || t == 5 then some true
-  else if t == 1 || t == 2 || t == 9 then some false
-  else none
-
-theorem isLitIdM_tag (st : Store Id) (x : UInt64) (v : Bool) (h : litTag x = some v) :
-    isLitIdM st x = pure v := by
-  unfold litTag at h
-  unfold isLitIdM
-  simp only [] at h ⊢
-  split
-  · rename_i h1
-    rw [if_pos h1] at h
-    cases h; rfl
-  · rename_i h1
-    rw [if_neg h1] at h
-    split
-    · rename_i h2
-      rw [if_pos h2] at h
-      cases h; rfl
-    · rename_i h2
-      rw [if_neg h2] at h
-      cases h
-
-/-! ## `^p` -/
-
-/-- The pairs `^p` keeps of a relation, swapped. -/
-def invF (notLit : UInt64 → Bool) (pr : UInt64 × UInt64) : Option (UInt64 × UInt64) :=
-  if notLit pr.2 then some (pr.2, pr.1) else none
-
-theorem invPairsM_eq (st : Store Id) (notLit : UInt64 → Bool) (r : Pairs)
-    (hr : ∀ p ∈ r.toList, litTag p.2 = some (!notLit p.2)) :
-    ∃ out, invPairsM st r = pure out ∧ out.toList = r.toList.filterMap (invF notLit) := by
-  unfold invPairsM
-  simp only [← Array.forIn_toList]
-  suffices ∀ (l : List (UInt64 × UInt64)), (∀ p ∈ l, litTag p.2 = some (!notLit p.2)) →
-      ∀ (out : Pairs) (memo : Std.HashMap UInt64 Bool), (∀ y v, memo.get? y = some v → v = !notLit y) →
-      ∃ s, (forIn l (out, memo) fun (x : UInt64 × UInt64) (__s : Pairs × Std.HashMap UInt64 Bool) =>
-            match __s.snd.get? x.snd with
-            | some v => do
-              let lit ← (pure v : ExceptT String Id Bool)
-              if (!lit) = true then pure (ForInStep.yield (Array.push __s.fst (x.snd, x.fst), __s.snd))
-                else pure (ForInStep.yield (__s.fst, __s.snd))
-            | none => do
-              let v ← isLitIdM st x.snd
-              let lit ← pure v
-              if (!lit) = true then pure (ForInStep.yield (Array.push __s.fst (x.snd, x.fst), __s.snd.insert x.snd v))
-                else pure (ForInStep.yield (__s.fst, __s.snd.insert x.snd v))) = pure s ∧
-        s.1.toList = out.toList ++ l.filterMap (invF notLit) by
-    obtain ⟨s, hs, ht⟩ := this r.toList hr (Array.mkEmpty r.size) {} (fun y v h => by simp at h)
-    refine ⟨s.1, ?_, by rw [ht]; simp⟩
-    exact (congrArg (fun z => z >>= fun (__s : Pairs × Std.HashMap UInt64 Bool) =>
-      (pure __s.fst : ExceptT String Id Pairs)) hs).trans rfl
-  intro l
-  induction l with
-  | nil => intro _ out memo _; exact ⟨(out, memo), rfl, by simp⟩
-  | cons x l ih =>
-    intro hl out memo hm
-    have hx := hl x List.mem_cons_self
-    have hl' : ∀ p ∈ l, litTag p.2 = some (!notLit p.2) := fun p hp => hl p (List.mem_cons_of_mem _ hp)
-    rw [List.forIn_cons]
-    cases hg : memo.get? x.2 with
-    | some v =>
-      have hv := hm x.2 v hg
-      subst hv
-      simp only [hg]
-      by_cases hn : notLit x.2 = true
-      · simp only [hn, Bool.not_not, pure_bind, if_true, Bool.not_true, Bool.false_eq_true]
-        obtain ⟨s, hs, ht⟩ := ih hl' (out.push (x.2, x.1)) memo hm
-        refine ⟨s, hs, ?_⟩
-        rw [ht]; simp [invF, hn]
-      · simp only [Bool.not_eq_true] at hn
-        simp only [hn, Bool.not_false, Bool.not_true, pure_bind, if_false, Bool.false_eq_true, if_true]
-        obtain ⟨s, hs, ht⟩ := ih hl' out memo hm
-        refine ⟨s, hs, ?_⟩
-        rw [ht]; simp [invF, hn]
-    | none =>
-      simp only [hg]
-      rw [isLitIdM_tag st x.2 _ hx]
-      have hm' : ∀ y v, (memo.insert x.2 (!notLit x.2)).get? y = some v → v = !notLit y := by
-        intro y v h
-        rw [Std.HashMap.get?_insert] at h
-        split at h
-        · rename_i he
-          cases h
-          have : x.2 = y := by simpa using he
-          rw [this]
-        · exact hm y v h
-      by_cases hn : notLit x.2 = true
-      · simp only [hn, Bool.not_true, Bool.not_false, pure_bind, if_true]
-        obtain ⟨s, hs, ht⟩ := ih hl' (out.push (x.2, x.1)) (memo.insert x.2 false) (by
-          have := hm'; simp only [hn, Bool.not_true] at this; exact this)
-        refine ⟨s, hs, ?_⟩
-        rw [ht]; simp [invF, hn]
-      · simp only [Bool.not_eq_true] at hn
-        simp only [hn, Bool.not_false, Bool.not_true, pure_bind, if_false, Bool.false_eq_true]
-        obtain ⟨s, hs, ht⟩ := ih hl' out (memo.insert x.2 true) (by
-          have := hm'; simp only [hn, Bool.not_false] at this; exact this)
-        refine ⟨s, hs, ?_⟩
-        rw [ht]; simp [invF, hn]
 
 /-! ## Resolved paths -/
 
@@ -335,28 +226,25 @@ theorem restr_inv (fwd : Bool) (R : Option (Array UInt64)) (a b : UInt64) :
     Restr fwd R (b, a) = Restr (R.isSome && !fwd) R (a, b) := by
   cases R <;> cases fwd <;> rfl
 
-theorem spec_inv (st : Store Id) (g : UInt64) (notLit : UInt64 → Bool) (iq : IPath) (L : IdPairs)
-    (hq : Spec st g iq L) (hlit : ∀ p ∈ L, litTag p.2 = some (!notLit p.2)) :
-    Spec st g (.inv iq) (L.filterMap (invF notLit)) := by
+theorem spec_inv (st : Store Id) (g : UInt64) (iq : IPath) (L : IdPairs)
+    (hq : Spec st g iq L) :
+    Spec st g (.inv iq) (L.map (fun pr => (pr.2, pr.1))) := by
   intro fwd R hR
   obtain ⟨r, s, he, hp⟩ := hq (R.isSome && !fwd) R hR
-  obtain ⟨out, ho, ht⟩ := invPairsM_eq st notLit r (fun p hp' => hlit p (List.mem_filter.mp (hp.mem_iff.mp hp')).1)
-  refine ⟨out, s, ?_, ?_⟩
+  refine ⟨IdPath.swap r, s, ?_, ?_⟩
   · show (do
       let (r, s) ← evalIM st (some g) (R.isSome && !fwd) iq R
-      return (← invPairsM st r, s) : ExceptT String Id _) = _
-    rw [he]; simp only [pure_bind]; rw [ho]; rfl
-  · rw [ht]
-    refine (hp.filterMap _).trans ?_
-    rw [List.filterMap_filter, List.filter_filterMap]
+      return (IdPath.swap r, s) : ExceptT String Id _) = _
+    rw [he]; rfl
+  · rw [IdPathClosureExec.swap_toList]
+    unfold IdPathClosureExec.swapL
+    refine (hp.map _).trans ?_
+    rw [List.filter_map]
     apply List.Perm.of_eq
-    congr 1
+    congr 2
     funext pr
-    unfold invF
-    by_cases hn : notLit pr.2 = true
-    · simp only [hn, if_true, Option.filter_some, restr_inv fwd R pr.1 pr.2]
-    · simp only [Bool.not_eq_true] at hn
-      simp [hn]
+    show _ = Restr fwd R (pr.2, pr.1)
+    rw [restr_inv fwd R pr.1 pr.2]
 
 /-! ## Sequences -/
 
@@ -533,28 +421,28 @@ theorem spec_opt (iq : IPath) (L : IdPairs) (hq : Spec st g iq L) :
       · exact .inl ⟨n, (hnm n).mpr ⟨hn, hr⟩, rfl⟩
       · exact .inr ⟨hx, hr⟩
 
-theorem spec_star (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (q : PropertyPath) (iq : IPath)
-    (hq : Spec st g iq (idEvalPath pid notLit q T)) :
-    Spec st g (.star iq) (idEvalPath pid notLit (.zeroOrMore q) T) := by
+theorem spec_star (pid : WfIri → Option UInt64) (q : PropertyPath) (iq : IPath)
+    (hq : Spec st g iq (idEvalPath pid q T)) :
+    Spec st g (.star iq) (idEvalPath pid (.zeroOrMore q) T) := by
   intro fwd R hR
-  obtain ⟨out, s, he, hnd, hm⟩ := IdPathClosureExec.closureM_spec st g T hst (idEvalPath pid notLit q T)
-    (IdPath.eval_nodes pid notLit T q) (fun f r => evalIM st (some g) f iq r) (fun f R hR => hq f R hR)
+  obtain ⟨out, s, he, hnd, hm⟩ := IdPathClosureExec.closureM_spec st g T hst (idEvalPath pid q T)
+    (IdPath.eval_nodes pid T q) (fun f r => evalIM st (some g) f iq r) (fun f R hR => hq f R hR)
     fwd R hR true
   refine ⟨out, s, he, ?_⟩
-  apply (List.perm_ext_iff_of_nodup hnd ((IdPath.star_nodup pid notLit T q).filter _)).mpr
+  apply (List.perm_ext_iff_of_nodup hnd ((IdPath.star_nodup pid T q).filter _)).mpr
   intro x
   rw [hm, List.mem_filter, IdPath.star_mem]
   rfl
 
-theorem spec_plus (pid : WfIri → Option UInt64) (notLit : UInt64 → Bool) (q : PropertyPath) (iq : IPath)
-    (hq : Spec st g iq (idEvalPath pid notLit q T)) :
-    Spec st g (.plus iq) (idEvalPath pid notLit (.oneOrMore q) T) := by
+theorem spec_plus (pid : WfIri → Option UInt64) (q : PropertyPath) (iq : IPath)
+    (hq : Spec st g iq (idEvalPath pid q T)) :
+    Spec st g (.plus iq) (idEvalPath pid (.oneOrMore q) T) := by
   intro fwd R hR
-  obtain ⟨out, s, he, hnd, hm⟩ := IdPathClosureExec.closureM_spec st g T hst (idEvalPath pid notLit q T)
-    (IdPath.eval_nodes pid notLit T q) (fun f r => evalIM st (some g) f iq r) (fun f R hR => hq f R hR)
+  obtain ⟨out, s, he, hnd, hm⟩ := IdPathClosureExec.closureM_spec st g T hst (idEvalPath pid q T)
+    (IdPath.eval_nodes pid T q) (fun f r => evalIM st (some g) f iq r) (fun f R hR => hq f R hR)
     fwd R hR false
   refine ⟨out, s, he, ?_⟩
-  apply (List.perm_ext_iff_of_nodup hnd ((IdPath.plus_nodup pid notLit T q).filter _)).mpr
+  apply (List.perm_ext_iff_of_nodup hnd ((IdPath.plus_nodup pid T q).filter _)).mpr
   intro x
   rw [hm, List.mem_filter, IdPath.plus_mem]
   rfl
@@ -617,9 +505,9 @@ section
 variable (st : Store Id) (g : UInt64) (T : List IdTriple) (hst : BgpStore st g T)
 include hst
 
-theorem spec_nps (cid : Term → Option UInt64) (notLit : UInt64 → Bool) (ps : List PropertyPath)
+theorem spec_nps (cid : Term → Option UInt64) (ps : List PropertyPath)
     (ds is : Array UInt64) (hd hi : Bool) (hok : IPathOk cid (.negatedSet ps) (.nps ds is hd hi)) :
-    Spec st g (.nps ds is hd hi) (idEvalPath (fun i => cid (.iri i)) notLit (.negatedSet ps) T) := by
+    Spec st g (.nps ds is hd hi) (idEvalPath (fun i => cid (.iri i)) (.negatedSet ps) T) := by
   obtain ⟨hD, hI, hhd, hhi⟩ := hok
   intro fwd R hR
   obtain ⟨t1, s1, he1, hnd1, hnu1, M1, hpw1, hp1⟩ :=
@@ -691,16 +579,12 @@ end
     `T`), for every path resolved by the dictionary lookup `cid`
     (`IPathOk`, what `resolvePathM` answers by `resolvePathM_ok`), every
     direction and every restriction whose values are increasing, `evalIM`
-    answers, up to order, the pairs of `idEvalPath` (predicate ids by `cid`,
-    literal test `notLit`) over `T` that the restriction keeps. Hypothesis
-    on the store besides `BgpStore`: the tag of each node id of the graph
-    tells whether its term is a literal (`litTag`, the test `isLitIdM`
-    reads). -/
+    answers, up to order, the pairs of `idEvalPath` (predicate ids by `cid`)
+    over `T` that the restriction keeps. -/
 theorem evalIM_spec (st : Store Id) (g : UInt64) (T : List IdTriple) (hst : BgpStore st g T)
-    (cid : Term → Option UInt64) (notLit : UInt64 → Bool)
-    (hlit : ∀ x ∈ idGraphNodes T, litTag x = some (!notLit x)) :
+    (cid : Term → Option UInt64) :
     ∀ (path : PropertyPath) (ip : IPath), IPathOk cid path ip →
-      Spec st g ip (idEvalPath (fun i => cid (.iri i)) notLit path T)
+      Spec st g ip (idEvalPath (fun i => cid (.iri i)) path T)
   | .iri i, ip, h => by
     cases ip <;> try exact (show False from h).elim
     rename_i x
@@ -710,34 +594,33 @@ theorem evalIM_spec (st : Store Id) (g : UInt64) (T : List IdTriple) (hst : BgpS
   | .inverse q, ip, h => by
     cases ip <;> try exact (show False from h).elim
     rename_i iq
-    exact spec_inv st g notLit iq _ (evalIM_spec st g T hst cid notLit hlit q iq h) (fun p hp =>
-      hlit p.2 (IdPath.eval_nodes (fun i => cid (.iri i)) notLit T q p hp).2)
+    exact spec_inv st g iq _ (evalIM_spec st g T hst cid q iq h)
   | .sequence a b, ip, h => by
     cases ip <;> try exact (show False from h).elim
     rename_i ia ib
-    exact spec_seq st g ia ib _ _ (evalIM_spec st g T hst cid notLit hlit a ia h.1)
-      (evalIM_spec st g T hst cid notLit hlit b ib h.2)
+    exact spec_seq st g ia ib _ _ (evalIM_spec st g T hst cid a ia h.1)
+      (evalIM_spec st g T hst cid b ib h.2)
   | .alternative a b, ip, h => by
     cases ip <;> try exact (show False from h).elim
     rename_i ia ib
-    exact spec_alt st g ia ib _ _ (evalIM_spec st g T hst cid notLit hlit a ia h.1)
-      (evalIM_spec st g T hst cid notLit hlit b ib h.2)
+    exact spec_alt st g ia ib _ _ (evalIM_spec st g T hst cid a ia h.1)
+      (evalIM_spec st g T hst cid b ib h.2)
   | .zeroOrMore q, ip, h => by
     cases ip <;> try exact (show False from h).elim
     rename_i iq
-    exact spec_star st g T hst _ notLit q iq (evalIM_spec st g T hst cid notLit hlit q iq h)
+    exact spec_star st g T hst _ q iq (evalIM_spec st g T hst cid q iq h)
   | .oneOrMore q, ip, h => by
     cases ip <;> try exact (show False from h).elim
     rename_i iq
-    exact spec_plus st g T hst _ notLit q iq (evalIM_spec st g T hst cid notLit hlit q iq h)
+    exact spec_plus st g T hst _ q iq (evalIM_spec st g T hst cid q iq h)
   | .zeroOrOne q, ip, h => by
     cases ip <;> try exact (show False from h).elim
     rename_i iq
-    exact spec_opt st g T hst iq _ (evalIM_spec st g T hst cid notLit hlit q iq h)
+    exact spec_opt st g T hst iq _ (evalIM_spec st g T hst cid q iq h)
   | .negatedSet ps, ip, h => by
     cases ip <;> try exact (show False from h).elim
     rename_i ds is hd hi
-    exact spec_nps st g T hst cid notLit ps ds is hd hi h
+    exact spec_nps st g T hst cid ps ds is hd hi h
 
 end L4Factoidal.Storage.Sbm11.IdPathEval
 

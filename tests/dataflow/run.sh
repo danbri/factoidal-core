@@ -12,9 +12,6 @@
 # 4b. The RUNNERS gate (issue 1002): its fixture tests (a key not in the
 #     registry, a function mapped to a different stage, an empty table must
 #     fail), then the gate on npm/factoidal/lib/nodes.mjs.
-python3 -I "$here/tests/foundation/test_runners_gate.py"
-python3 -I "$here/tools/runners-gate.py" --root "$here"
-
 # 5. The assumption gate (tools/assumption-gate.py, foundation/assumptions.txt).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -55,6 +52,11 @@ python3 -I "$here/tools/foundation-gate.py" --root "$here"
 #    checked current in step 2).
 python3 -I "$here/tests/foundation/test_entrypoint_gate.py"
 python3 -I "$here/tools/entrypoint-gate.py" --root "$here"
+
+# 4b. The RUNNERS gate (issue 1002): its fixture tests, then the gate on
+#     npm/factoidal/lib/nodes.mjs.
+python3 -I "$here/tests/foundation/test_runners_gate.py"
+python3 -I "$here/tools/runners-gate.py" --root "$here"
 
 # 5. The assumption gate (issue 975, item 4): its fixture tests (including the
 #    negative ones: an added assumption, a lost proof, an empty walk must fail),

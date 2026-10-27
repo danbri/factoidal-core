@@ -194,8 +194,11 @@ cannot reach an extern).
 | `Crypto/Ed25519.lean` | Ed25519 sign/verify | `ffi/hacl_ed25519.c` | `l4vc-probe` |
 | `Crypto/SHA2Native.lean` | SHA-256, and the block walk | `ffi/hacl_ed25519.c` | `l4vc-probe` |
 | `Crypto/P256Native.lean` | ECDSA P-256 (JWS ES256) | `ffi/hacl_p256.c` | `l4jose-probe` |
+| `Crypto/P256Native.lean` | ECDH P-256 (`p256Ecdh`, JWE and XML Encryption ECDH-ES) | `ffi/hacl_p256.c` | `l4crypto-probe` (`p256-ecdh`), `tests/crypto/ecdh-diff.mjs` |
 | `Crypto/RsaNative.lean` | the RSA public operation (RS256) | `ffi/hacl_rsa.c` | `l4jose-probe` |
+| `Crypto/RsaOaep.lean` | the RSA private operation (constant time) and RSAES-OAEP padding in pure Lean | `ffi/hacl_rsa.c` | `l4crypto-probe` section `rsa-oaep`, `tests/crypto/rsa-oaep-diff.mjs` |
 | `Crypto/ChaChaPoly.lean` | ChaCha20-Poly1305 AEAD | `ffi/hacl_chachapoly.c` | `l4crypto-probe` |
+| `Crypto/AesGcmNative.lean` | AES-128-GCM, AES-256-GCM (EverCrypt AEAD over Vale assembly; x86-64 Linux and macOS only, refusal elsewhere; `Crypto/Aead.lean` `AeadOps` is the parameter type) | `ffi/hacl_aesgcm.c` | `l4crypto-probe` section `aes-gcm` |
 | `Crypto/Hkdf.lean` | HMAC-SHA-256, HKDF-SHA-256 | `ffi/hacl_kdf.c` | `l4crypto-probe` |
 | `Crypto/X25519.lean` | X25519 | `ffi/hacl_kdf.c` | `l4crypto-probe` |
 | `Crypto/Hpke.lean` | HPKE base mode (RFC 9180) | `ffi/hacl_hpke.c` | `l4crypto-probe` |
@@ -214,24 +217,79 @@ No Lean theorem relates an extern to a pure Lean specification yet
 Options, sources and the recommended order:
 [`docs/designissues/2026-10-12-native-crypto-equivalence.md`](../../docs/designissues/2026-10-12-native-crypto-equivalence.md).
 
-🔴 **AES-GCM is NOT available and must not be hand-written or taken from
-the AES-NI path.** The pinned release ships no PORTABLE AES-GCM: every
-AES-GCM branch of `EverCrypt_AEAD.c` is behind `#if HACL_CAN_COMPILE_VALE`
-and calls Vale x86-64 assembly the C distribution does not include, and
-`Hacl_AES128.h` declares symbols the release never defines. The AES-NI
-variant fails the wasm gate below, so it was refused rather than smuggled
-in for one architecture. Tracked in
-<https://github.com/danbri/factoidal/issues/677>; it blocks OMEMO 0.8 and
-nothing else, because MLS ciphersuite 3 and HPKE both use
-ChaCha20-Poly1305. Close it with a newer HACL\* release or with the
-upstream bitsliced units — never by writing AES or GCM here.
+### AES through WebCrypto on JavaScript hosts (owner, 2026-10-27)
+
+Owner, 2026-10-27, verbatim: "Ok  yeah ofc sorry - assembly can’t be wasm’d.
+We discussed reverse engineering it to lean but that is perilously close to
+rolling yr own crypto. Why not just WebCrypto everywhere (browser/node or wasm
+fallback?)." and, to the question whether to amend this policy and record the
+decision, "Yes".
+
+This AMENDS the rule below for AES (AES-GCM, AES-CBC, AES Key Wrap):
+
+* On every JavaScript host (Node, Deno, browsers) AES is the host's WebCrypto
+  `SubtleCrypto` (Node: OpenSSL; Chromium: BoringSSL; Firefox: NSS; Safari:
+  Apple CoreCrypto). The wasm engine never contains AES code.
+* Lean makes every decision (algorithm allowlist, key and IV lengths, the
+  XML Encryption and JWE structure, one error for every failure); the host
+  runs only `encrypt`/`decrypt`/`wrapKey`/`unwrapKey` on bytes Lean names,
+  through the same request-and-resume step as the authorization server's
+  fetches. No crypto decision in JavaScript (iron rule 7).
+* Native Lean executables (no JavaScript host): owner, 2026-10-27,
+  verbatim: "Ok for now: “My proposal is HACL* Vale on x86-64 and a refusal on
+  other CPU”". Native x86-64 links HACL\* Vale AES-GCM (verified assembly, the
+  `aesgcm-x86_64-*.S` files of the HACL\* distribution, with a run-time check
+  for AES-NI, PCLMULQDQ, AVX, SSE and MOVBE); every other native CPU, and an x86-64 CPU without
+  those instructions, refuses AES with a message that names
+  https://github.com/danbri/factoidal/issues/677. "For now": revisit when
+  HACL\* ships a portable AES.
+* WebCrypto is not formally verified. The obligation that replaces the proof
+  is MEASURED: Wycheproof, NIST CAVP and RFC vectors, plus a random
+  differential run across every implementation available (Node/OpenSSL,
+  Chromium/BoringSSL, Firefox/NSS when installed, Vale on x86-64), where any
+  difference in output or in accept/refuse is a failure that is reported with
+  its input. Owner, verbatim: "For testing hammer both and flag differences if
+  that makes sense, seek trustworthy tests too".
+  The run: `node tests/crypto/aes-diff.mjs [N]` (host side
+  `npm/factoidal/lib/cipher-host.mjs`; Vale column needs `lake build
+  l4crypto-probe`, mode `--gcm-stdin`); score line "aes-diff: N agree, M
+  differ (out of T)", exit 1 on any difference or vector failure.
+* Every other primitive (RSA-OAEP over the HACL\* bignum, ECDH-ES over HACL\*
+  P-256 and Curve25519, SHA-2, HMAC, HKDF, Concat KDF) stays HACL\*; WebCrypto
+  is a second implementation in the same differential tests.
+* Tracking: https://github.com/danbri/factoidal/issues/1081 (XML Encryption
+  and JWE), https://github.com/danbri/factoidal/issues/677 (AES).
+* Design record (primitives per surface, the AES request-and-resume step,
+  the XML Encryption and JWE profiles):
+  `docs/designissues/2026-10-27-xml-encryption-and-jwe.md`.
+
+**AES-GCM status, 2026-10-27.** Native x86-64 Linux and macOS executables
+have AES-128-GCM and AES-256-GCM: `Crypto/AesGcmNative.lean` over
+`ffi/hacl_aesgcm.c`, EverCrypt's AEAD and the Vale `aesgcm-x86_64-*.S`
+assembly, all from the pinned commit (`third_party/hacl/PROVENANCE.md`,
+section "AES-GCM on x86-64"). The lakefile assembles the Vale files only
+when Lake runs on an x86-64 Linux or macOS host (`valeHost`). At run time
+the CPU must have AES-NI, PCLMULQDQ, AVX, SSE and MOVBE. Every other target
+(the wasm32 module, arm64, an x86-64 CPU without those features) compiles
+the shim to stubs: `available = false`, and `nativeOps` answers with a
+message that names https://github.com/danbri/factoidal/issues/677. Not
+offered: AES-192-GCM (EverCrypt has none), IVs other than 96 bits, tags
+shorter than 128 bits. Vectors: `lake exe l4crypto-probe`, section
+`aes-gcm` (McGrew–Viega cases 1–4 and 13–16, Wycheproof
+`aes_gcm_test.json`). Still not to be done: hand-written AES or GCM, or the
+AES-NI path in the wasm module. Before 2026-10-27 this paragraph said AES-GCM
+was not available on any target; the owner's decision quoted in the section
+above changed that for native x86-64.
 
 A derived construction is NOT a new primitive under this policy. HMAC
 (RFC 2104), PBKDF2 (RFC 8018 §5.2) and HKDF (RFC 5869 §2) are defined as
 calls to an unmodified hash, hold no internal state of their own, and may
 therefore exist in pure Lean beside the HACL\* binding — which is what
 `Crypto/Hmac.lean` and `Crypto/Hkdf.lean` do, so the RFC vectors can be
-build-time `#guard`s. When both exist, their agreement is an OBLIGATION
+build-time `#guard`s. The Concat KDF of SP 800-56A §5.8.1 (JWE ECDH-ES, XML
+Encryption 1.1 ConcatKDF) is the same kind of construction:
+`Crypto/ConcatKdf.lean`, pure Lean over a hash parameter, with the RFC 7518
+Appendix C vector as a `#guard`. When both exist, their agreement is an OBLIGATION
 that must be MEASURED in a probe, never assumed: one side is opaque, so it
 cannot be proved.
 

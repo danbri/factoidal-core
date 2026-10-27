@@ -279,7 +279,7 @@ class Dataset {
    * The dataset as a document.
    * @param {{format?: string, version?: '1.1'|'1.2', prefixes?: object,
    *   literalShorthand?: boolean, useNativeTypes?: boolean,
-   *   useRdfType?: boolean, rdfDirection?: string}} [options]
+   *   useRdfType?: boolean, rdfDirection?: string, rdfstar?: boolean}} [options]
    *   format: nquads (default), ntriples, turtle, trig, rdfxml, jsonld,
    *   rdfc (RDFC-1.0 canonical N-Quads).
    * @returns {Promise<string>}
@@ -315,6 +315,7 @@ class Dataset {
         ...(opts.useNativeTypes ? { useNativeTypes: true } : {}),
         ...(opts.useRdfType ? { useRdfType: true } : {}),
         ...(opts.rdfDirection ? { rdfDirection: String(opts.rdfDirection) } : {}),
+        ...(opts.rdfstar ? { rdfstar: true } : {}),
         ...(suffix ? { version: String(opts.version) } : {}),
       })), 'serialize');
       return r.jsonld;
@@ -404,22 +405,44 @@ class Dataset {
       termToJson(graph)]);
   }
 
-  /** RDF/JS DatasetCore.has: one indexed lookup in the engine. */
-  has(quad) {
+  // The options argument of has, match and delete: `{match: 'term'|'value'}`,
+  // checked by the engine (op apiCheck). '' for the term match, which every
+  // engine serves with the two-argument ops.
+  _matchMode(who, options) {
+    if (options === undefined || options === null) return '';
+    checkOptions(this._ctx.e, `Dataset.${who}`, options);
+    if (options.match === undefined || options.match === null) return '';
+    const mode = String(options.match).toLowerCase();
+    return mode === 'term' ? '' : JSON.stringify({ match: mode });
+  }
+
+  /**
+   * RDF/JS DatasetCore.has: one indexed lookup in the engine. With
+   * `{match: 'value'}` a literal object matches every object literal of the
+   * same value (sameValue(); https://github.com/danbri/factoidal/issues/1052).
+   */
+  has(quad, options) {
     this._open('has');
-    const r = envelope(this._ctx.e.datasetMatchCount(this._handle,
-      this._pattern(quad.subject, quad.predicate, quad.object, quad.graph || { termType: 'DefaultGraph' })), 'has');
+    const mode = this._matchMode('has', options);
+    const pattern = this._pattern(quad.subject, quad.predicate, quad.object, quad.graph || { termType: 'DefaultGraph' });
+    const r = envelope(mode
+      ? this._ctx.e.datasetMatchCount(this._handle, pattern, mode)
+      : this._ctx.e.datasetMatchCount(this._handle, pattern), 'has');
     return r.count > 0;
   }
 
   /**
    * RDF/JS DatasetCore.match: the matching quads as a new Dataset, found
-   * through the engine's indexes. `null`/`undefined` matches any term.
+   * through the engine's indexes. `null`/`undefined` matches any term. With
+   * `{match: 'value'}` a literal object matches by value (as has()).
    */
-  match(subject, predicate, object, graph) {
+  match(subject, predicate, object, graph, options) {
     this._open('match');
-    const r = envelope(this._ctx.e.datasetMatch(this._handle,
-      this._pattern(subject, predicate, object, graph)), 'match');
+    const mode = this._matchMode('match', options);
+    const pattern = this._pattern(subject, predicate, object, graph);
+    const r = envelope(mode
+      ? this._ctx.e.datasetMatch(this._handle, pattern, mode)
+      : this._ctx.e.datasetMatch(this._handle, pattern), 'match');
     return this._ctx.wrap(r, this._prefixes);
   }
 
@@ -437,13 +460,75 @@ class Dataset {
     return this;
   }
 
-  /** RDF/JS DatasetCore.delete: remove one quad. */
-  delete(quad) {
+  /**
+   * RDF/JS DatasetCore.delete: remove one quad. With `{match: 'value'}` a
+   * literal object removes every quad of the same subject, predicate and
+   * graph whose object has the same value (as has()).
+   */
+  delete(quad, options) {
     this._open('delete');
-    const r = envelope(this._ctx.e.datasetDeleteQuadsJson(this._handle,
-      JSON.stringify([quadToJson(quad)])), 'delete');
+    const mode = this._matchMode('delete', options);
+    const quads = JSON.stringify([quadToJson(quad)]);
+    const r = envelope(mode
+      ? this._ctx.e.datasetDeleteQuadsJson(this._handle, quads, mode)
+      : this._ctx.e.datasetDeleteQuadsJson(this._handle, quads), 'delete');
     this._changed(r.count);
     return this;
+  }
+
+  // RDF lists and containers (https://github.com/danbri/factoidal/issues/1051
+  // item 6). The engine walks and builds them (L4Factoidal.RDF.Collections).
+  // `graph`: null/undefined or the DefaultGraph for the default graph, else
+  // the graph name.
+  _collectionOp(op, who) {
+    this._open(who);
+    if (typeof this._ctx.e[op] !== 'function') {
+      throw new FactoidalError(`Dataset.${who}: the loaded engine has no op '${op}'; it is older than this package`,
+        { code: 'op.unknown' });
+    }
+    return this._ctx.e[op].bind(this._ctx.e);
+  }
+
+  _graphArg(graph) {
+    return graph === undefined || graph === null ? '' : JSON.stringify(termToJson(graph));
+  }
+
+  /**
+   * The items of the RDF list (rdf:first / rdf:rest) at `head`, in order.
+   * rdf:nil is the empty list. A list that is not well formed (a node with no
+   * or two rdf:first or rdf:rest, or a cycle) is a FactoidalError (op.failed)
+   * whose message names the reason and the node.
+   */
+  listItems(head, graph) {
+    const op = this._collectionOp('datasetListItems', 'listItems');
+    const r = envelope(op(this._handle, JSON.stringify(termToJson(head)), this._graphArg(graph)), 'listItems');
+    return r.items.map(termFromSrj);
+  }
+
+  /**
+   * The members rdf:_1, rdf:_2, ... of `node`, sorted by n, and its kind
+   * (rdf:Bag, rdf:Seq or rdf:Alt from its rdf:type, or null).
+   * @returns {{kind: NamedNode|null, items: Array<{ordinal: number, term: Term}>}}
+   */
+  containerItems(node, graph) {
+    const op = this._collectionOp('datasetContainerItems', 'containerItems');
+    const r = envelope(op(this._handle, JSON.stringify(termToJson(node)), this._graphArg(graph)), 'containerItems');
+    return {
+      kind: r.kind ? termFromSrj(r.kind) : null,
+      items: r.items.map((m) => ({ ordinal: m.ordinal, term: termFromSrj(m.term) })),
+    };
+  }
+
+  /**
+   * Add a new RDF list of `items` (new blank nodes, fresh in this Dataset)
+   * and answer its head; the empty list is rdf:nil and adds nothing.
+   */
+  addList(items, graph) {
+    const op = this._collectionOp('datasetAddList', 'addList');
+    const r = envelope(op(this._handle, JSON.stringify([...items].map((t) => termToJson(t))),
+      this._graphArg(graph)), 'addList');
+    this._changed(r.count);
+    return termFromSrj(r.head);
   }
 
   /** Release the engine copy. Idempotent. */

@@ -177,6 +177,15 @@ The red step also hid the steps after it. Fix: PR 74.
 The local alternative is `bash formal/lean4/Wasm/build-wasm.sh` and then
 `cd npm/factoidal && npm test`.
 
+Core PR CI also runs `.github/workflows/check-npm-dataflow.yml` (issue
+https://github.com/danbri/factoidal/issues/1038, P6): `tests/dataflow/run.sh`,
+and `npm test` on the newest web release of an ancestor of the PR head.
+That npm job is a gate only when the release's commit has the same
+`formal/lean4/` as the head; when it differs, the job passes with a warning,
+because a test of a new op correctly fails on the older wasm. So a green
+check does not replace the factoidal-builds run for a PR that changes Lean
+code; read the job's drift line.
+
 Cost of skipping it, 2026-10-24: PRs 44 to 52 of factoidal-core were merged
 after `lake build` and `tests/dataflow/run.sh` only. PR 51 (writers refuse an
 invalid language tag) made the RDF 1.2 writer refuse a tag that the RDF 1.1

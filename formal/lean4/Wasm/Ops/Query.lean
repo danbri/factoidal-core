@@ -50,6 +50,22 @@ open L4Factoidal.SPARQL
 open L4Factoidal.SPARQL.StoreDataset
 open L4Factoidal.JSON
 
+/-- One `dataset-iri-not-found` warning as a query envelope carries it
+(https://github.com/danbri/factoidal/issues/1032): the class, the clause
+(`FROM` or `FROM NAMED`), the IRI and a message. -/
+def datasetWarningJson (w : DatasetWarning) : Json :=
+  .object
+    [ ("class", .string w.cls)
+    , ("clause", .string w.clause)
+    , ("iri", .string w.iri)
+    , ("message", .string w.message) ]
+
+/-- The member `"warnings"` of a query envelope, present only when a dataset
+clause names no graph of the dataset (`datasetWarnings`), so every other
+envelope is as it was. -/
+def datasetWarningMembers (ws : List DatasetWarning) : List (String × Json) :=
+  if ws.isEmpty then [] else [("warnings", .array (ws.map datasetWarningJson))]
+
 /-- Evaluate over a dataset AND its indexed backend.  SELECT and ASK go
 through the optimized Lean physical-plan algorithm
 (`runSelectQueryBackendDataset` / `runAskQueryBackendDataset`, the same
@@ -107,6 +123,10 @@ def queryParsedDatasetWith (ds : Dataset) (dsb : Option L4Factoidal.Dataflow.Law
   match parseSparql sparql base version with
   | .error e => errJson s!"SPARQL parse error: {fmtParseError e}"
   | .ok q =>
+    -- §13.2: a FROM / FROM NAMED IRI with no graph in `ds` adds no graph;
+    -- the envelope says so in its `warnings` member (issue 1032). The rows
+    -- are not changed.
+    let extra := extra ++ datasetWarningMembers (datasetWarnings q.dataset ds)
     -- The query-facing WASM entry installs the same explicit GeoSPARQL
     -- extension table as the native evaluator.  The core evaluator remains
     -- pure: unknown function IRIs still fail through `none`, while the
@@ -348,6 +368,22 @@ theorem queryDatasetOfSet_eq (ds : Dataset) (h : ds.IsSet) (sparql : String)
   unfold queryDatasetOfSet queryDatasetOf
   rw [withOpsSetDataset_eq]
 
+/-- `queryDatasetOfSet` that keeps the named graphs with no triple, which the canonical
+N-Quads text cannot state (https://github.com/danbri/factoidal/issues/876). On a dataset
+without one it answers what `queryDatasetOfSet` answers. -/
+def queryDatasetOfSetKeepEmpty (ds : Dataset) (h : ds.IsSet) (sparql : String)
+    (base : Option String := none) (now : Option String := none) : String :=
+  withOpsSetDatasetKeepEmpty .rdf12 ds h (fun d => queryParsedDataset d sparql base now)
+
+theorem queryDatasetOfSetKeepEmpty_eq (ds : Dataset) (h : ds.IsSet)
+    (hne : ∀ ng ∈ ds.named, ng.graph.isEmpty = false) (sparql : String)
+    (base now : Option String) :
+    queryDatasetOfSetKeepEmpty ds h sparql base now = queryDatasetOfSet ds h sparql base now := by
+  unfold queryDatasetOfSetKeepEmpty queryDatasetOfSet withOpsSetDatasetKeepEmpty withOpsSetDataset
+  cases datasetForOpsSet .rdf12 ds h with
+  | error e => rfl
+  | ok d => simp only [keepEmptyNamed_of_noEmpty ds d hne]
+
 def updateDatasetOf (ds : Dataset) (updateText : String) (base : Option String := none)
     (now : Option String := none) (version : SparqlVersion := .v11) : String :=
   withOpsDataset .rdf12 ds (fun d => updateParsedDataset d updateText base now version)
@@ -503,7 +539,10 @@ private def tt12HasSub (s sub : String) : Bool := (s.splitOn sub).length > 1
 -- SPARQL 1.1 Federated Query §2.3
 -- (https://github.com/danbri/factoidal/issues/717): with no endpoint
 -- registered, a SERVICE call without SILENT is an error envelope, and
--- the same call with SILENT is one solution with no bindings.
+-- the same call with SILENT is one solution with no bindings. The header is
+-- the reference header, the variables in scope (section 18.2.1;
+-- https://github.com/danbri/factoidal/issues/1014; it was `[]`, read from the
+-- rows).
 private def svcData : String := "<http://e/x> <http://e/q> <http://e/y> ."
 #guard (queryDataset svcData
   "SELECT * WHERE { SERVICE <http://u.example/sparql> { ?s ?p ?o } }").startsWith
@@ -516,7 +555,7 @@ private def svcData : String := "<http://e/x> <http://e/q> <http://e/y> ."
 #guard (queryDataset svcData
   "SELECT * WHERE { SERVICE SILENT <http://u.example/sparql> { ?s ?p ?o } }") ==
   "{\"ok\":true,\"kind\":\"select\",\"srj\":" ++
-    QueryResult.toSrj (.bindings [] [Binding.empty]) ++ "}"
+    QueryResult.toSrj (.bindings ["s", "p", "o"] [Binding.empty]) ++ "}"
 #guard (queryDataset svcData
   "ASK { ?a ?b ?c SERVICE SILENT <http://u.example/sparql> { ?s ?p ?o } }") ==
   "{\"ok\":true,\"kind\":\"ask\",\"boolean\":true}"
@@ -600,5 +639,76 @@ private def geoQ (body : String) : String :=
   "\"value\""
 #guard hasText (geoQ "SELECT ?e WHERE { <http://e/L> <http://e/g> ?a BIND(geof:envelope(?a) AS ?e) }")
   "\"value\":\"POLYGON((-0.1278 51.5074, -0.1278 51.5074, -0.1278 51.5074, -0.1278 51.5074, -0.1278 51.5074))\""
+
+
+/-! ### FROM / FROM NAMED with an IRI not in the dataset (issue 1032)
+
+https://github.com/danbri/factoidal/issues/1032: the clause adds no graph (the
+rows are those of the graphs that are found) and the envelope carries a
+`dataset-iri-not-found` warning. -/
+
+private def fromData : String := "<http://e/s> <http://e/p> \"x\" <http://e/g1> .\n"
+
+#guard hasText (queryDataset fromData "SELECT ?o FROM <http://e/nope> WHERE { ?s ?p ?o }")
+  "\"warnings\":[{\"class\":\"dataset-iri-not-found\",\"clause\":\"FROM\",\"iri\":\"http://e/nope\""
+#guard hasText (queryDataset fromData "SELECT ?o FROM <http://e/nope> WHERE { ?s ?p ?o }")
+  "\"bindings\":[]"
+#guard !hasText (queryDataset fromData "SELECT ?o FROM <http://e/g1> WHERE { ?s ?p ?o }") "\"warnings\""
+#guard !hasText (queryDataset fromData "SELECT ?o WHERE { ?s ?p ?o }") "\"warnings\""
+#guard hasText (queryDataset fromData
+    "SELECT ?o FROM <http://e/g1> FROM NAMED <http://e/nope> WHERE { ?s ?p ?o }") "\"value\":\"x\""
+#guard hasText (queryDataset fromData
+    "SELECT ?o FROM <http://e/g1> FROM NAMED <http://e/nope> WHERE { ?s ?p ?o }")
+  "\"clause\":\"FROM NAMED\",\"iri\":\"http://e/nope\""
+#guard hasText (queryDataset fromData "ASK FROM <http://e/nope> { ?s ?p ?o }")
+  "\"boolean\":false"
+#guard hasText (queryDataset fromData "ASK FROM <http://e/nope> { ?s ?p ?o }")
+  "\"class\":\"dataset-iri-not-found\""
+
+/-! ### WKT literals built in a query (no engine change)
+
+`STRDT(CONCAT("POINT(", STR(?lon), " ", STR(?lat), ")"), geo:wktLiteral)`
+makes a GeoSPARQL `geo:wktLiteral` from two numbers: (a) in SELECT, (b) in a
+sub-SELECT whose result `geof:sfWithin` tests against a polygon, (c) stored by
+an INSERT and then tested by `geof:sfWithin`. -/
+
+private def wktPre : String :=
+  "PREFIX geo: <http://www.opengis.net/ont/geosparql#> " ++
+  "PREFIX geof: <http://www.opengis.net/def/function/geosparql/> " ++
+  "PREFIX ex: <http://e/> "
+
+private def lonLatData : String :=
+  "<http://e/L> <http://e/lon> \"-0.1278\"^^<http://www.w3.org/2001/XMLSchema#decimal> .\n" ++
+  "<http://e/L> <http://e/lat> \"51.5074\"^^<http://www.w3.org/2001/XMLSchema#decimal> .\n" ++
+  "<http://e/M> <http://e/lon> \"-2.2426\"^^<http://www.w3.org/2001/XMLSchema#decimal> .\n" ++
+  "<http://e/M> <http://e/lat> \"53.4808\"^^<http://www.w3.org/2001/XMLSchema#decimal> .\n"
+
+private def mkWkt : String :=
+  "STRDT(CONCAT(\"POINT(\", STR(?lon), \" \", STR(?lat), \")\"), geo:wktLiteral)"
+
+/-- A polygon round London (lon -1 to 1, lat 51 to 52). -/
+private def londonBox : String :=
+  "\"POLYGON((-1 51, 1 51, 1 52, -1 52, -1 51))\"^^geo:wktLiteral"
+
+-- (a) SELECT
+#guard hasText (queryDataset lonLatData (wktPre ++
+    "SELECT ?w WHERE { ex:L ex:lon ?lon ; ex:lat ?lat BIND(" ++ mkWkt ++ " AS ?w) }"))
+  "{\"type\":\"literal\",\"value\":\"POINT(-0.1278 51.5074)\",\"datatype\":\"http://www.opengis.net/ont/geosparql#wktLiteral\"}"
+-- (b) sub-SELECT feeding geof:sfWithin: London is in the box, Manchester is not.
+#guard (let r := queryDataset lonLatData (wktPre ++
+    "SELECT ?x WHERE { { SELECT ?x ?w WHERE { ?x ex:lon ?lon ; ex:lat ?lat BIND(" ++ mkWkt ++
+    " AS ?w) } } FILTER(geof:sfWithin(?w, " ++ londonBox ++ ")) }")
+  hasText r "\"value\":\"http://e/L\"" && !hasText r "http://e/M")
+-- (c) INSERT the literal, then geof:sfWithin over the stored value.
+#guard (match parseJson (updateDataset lonLatData (wktPre ++
+    "INSERT { ?x geo:asWKT ?w } WHERE { ?x ex:lon ?lon ; ex:lat ?lat BIND(" ++ mkWkt ++ " AS ?w) }")) with
+  | .ok j => match j.getString? "nquads" with
+    | some nq =>
+        let r := queryDataset nq (wktPre ++
+          "SELECT ?x WHERE { ?x geo:asWKT ?w FILTER(geof:sfWithin(?w, " ++ londonBox ++ ")) }")
+        hasText nq "\"POINT(-2.2426 53.4808)\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>" &&
+        hasText r "\"value\":\"http://e/L\"" && !hasText r "http://e/M"
+    | none => false
+  | .error _ => false)
 
 end L4Wasm.Ops

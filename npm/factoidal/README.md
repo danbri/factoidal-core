@@ -1,5 +1,13 @@
 # @factoidal/core
 
+> ⚠️ **EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.**
+>
+> This covers the whole core library and every command line tool, and in
+> particular all protocol, authentication and security code (the LWS, Solid,
+> SPARQL Protocol, WebDAV and XMPP servers and clients, the authorization
+> server, JOSE, XML Signature and SAML, the crypto bindings). Owner decision,
+> 2026-10-27.
+
 RDF, SPARQL, reasoning, validation and Linked Data servers in one package.
 Runs in Node 22.12+, Deno 2 and browsers. No dependencies.
 
@@ -8,14 +16,15 @@ npm install @factoidal/core
 ```
 
 ```js
-import { parse, csvwToRdf } from "@factoidal/core";
+import { parse, csvwToRdf, canonicalHash } from "@factoidal/core";
 
 const ds = await parse('<http://x/a> <http://x/n> "A" .', { format: "ntriples" });
 const rows = await ds.query("SELECT ?n WHERE { ?s <http://x/n> ?n }");
 console.log(rows[0].get("n").value);              // A
 console.log(ds.toString("turtle"));
 console.log(await ds.serialize({ format: "rdfxml" }));
-console.log(await ds.canonicalize());              // RDFC-1.0
+console.log(await ds.canonicalize());              // RDFC-1.0 canonical N-Quads
+console.log(await canonicalHash(ds));              // its SHA-256, 64 hex digits
 
 const table = await csvwToRdf("id,name\n1,a\n", "", { mode: "minimal", url: "http://x/t.csv" });
 console.log(table.size);                           // 2
@@ -29,10 +38,14 @@ every consumer accepts one, so a pipeline does not re-parse between steps.
 An unknown option key throws. With no `format`, the format is inferred and
 reported in `dataset.format`; an explicit `format` is never overridden.
 RDF 1.2 input uses `turtle12`, `ntriples12`, `nquads12` or `trig12`.
+RDF 1.2 in JSON-LD (JSON-LD-star: `@triple`, `@reifies`, `@annotation`,
+`@direction`) needs the option `rdfstar`: `jsonldToRdf(text, { rdfstar: true })`
+and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
 
 ## What it does
 
 - Syntaxes: N-Triples, N-Quads, Turtle, TriG, RDF/XML, JSON-LD; RDF 1.1 and 1.2
+  (RDF 1.2 in JSON-LD through the JSON-LD-star draft, option `rdfstar`)
 - SPARQL 1.1 and 1.2 query and update; GeoSPARQL functions, text search,
   JavaScript extension functions, SERVICE
 - Reasoning: RDFS, OWL 2 RL closure, restricted checked OWL consistency,
@@ -42,7 +55,17 @@ RDF 1.2 input uses `turtle12`, `ntriples12`, `nquads12` or `trig12`.
 - Canonicalization: RDFC-1.0; Verifiable Credentials Data Integrity (eddsa-rdfc-2022), did:key
 - XML: XML 1.0, XPath 1.0, XSLT 1.0, XForms
 - Servers: SPARQL 1.1 Protocol and Graph Store (Fuseki-compatible paths,
-  Jena TDB2 read only), Linked Web Storage 1.0, Solid
+  Jena TDB2 read only), Linked Web Storage 1.0, Solid, an OAuth 2.0
+  authorization server (token exchange for OpenID Connect ID tokens,
+  self-issued CID credentials and SAML 2.0 assertions)
+- Security: JWS/JWT (ES256, RS256, EdDSA), XML Signature verification in the
+  SAML Core profile (Exclusive XML Canonicalization 1.0, rsa-sha256), with
+  HACL\* primitives. XML Encryption 1.1 and JWE (RFC 7516), decryption and
+  encryption (`xmlDecrypt`, `xmlEncrypt`, `jweDecrypt`, `jweEncrypt`):
+  RSA-OAEP, P-256 and X25519 run in the wasm (HACL\*), AES runs in the host's
+  WebCrypto. The authorization server decrypts encrypted SAML assertions
+  with `--saml-decrypt-key`. Native AES on CPUs other than x86-64:
+  https://github.com/danbri/factoidal/issues/677
 - A persisted store with a delta log for updates (early stage)
 - Terms: a JavaScript extension function can answer with an exact term
   (`{value: "007", datatype: XSD + "integer"}`, an RDF/JS term, a triple
@@ -52,22 +75,70 @@ RDF 1.2 input uses `turtle12`, `ntriples12`, `nquads12` or `trig12`.
   "Terms given as strings".
 - RDF/JS DataFactory and DatasetCore (`/rdfjs`), a functional API (`/fn`)
 
+## Checked pipelines
+
+Each component kind has one interface type whose contract against the W3C
+specifications is part of the type: readers, stores, the SPARQL evaluator,
+writers, reasoners, validators and the proof checker. A contract that is not
+proved yet is a named assumption; CI fails when the list of assumptions grows
+without a stated reason. A theorem states that the SPARQL answer agrees with
+the SPARQL 1.1 semantics for data from any source (a parsed document, an
+edited Dataset, an update, a reasoner's output, a union of stores), given the
+listed assumptions. No new command-line verbs. Status:
+https://github.com/danbri/factoidal/issues/975.
+
+The same components are nodes you can compose. A value on a wire is
+`{graph, evidence}`; each node adds one evidence record; the result lists the
+union of the named assumptions of the nodes, so a pipeline says exactly what
+its answer depends on.
+`pipe()` and `run()` get the type check and that union from the engine
+(op `pipelineCheck`); the theorem `Pipeline.guarantee_sound` gives the
+guarantee of every well-typed pipeline, and `run()` refuses one that is not
+well typed unless `{ unchecked: true }`.
+
+```js
+import { stages, node, pipe, run } from "@factoidal/core";
+
+const sources = `@prefix ex: <http://example.org/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+ex:alice ex:worksFor ex:acme .
+ex:worksFor rdfs:domain ex:Employee .
+ex:Employee rdfs:subClassOf ex:Person .`;
+const description = `@prefix ex: <http://example.org/> .
+_:x a ex:Person . _:x ex:worksFor ex:acme .`;
+
+console.log((await stages()).length);  // registered components, each with status and contract
+const p = pipe(
+  await node("turtleDocumentReader"),
+  await node("rdfsReasoner"),
+  await node("rdfsExplainGraphStage", { description }),
+);
+const r = await run(p, sources);
+console.log(r.evidence.map((e) => e.stage)); // one record per node
+console.log(r.evidence[2].artefact.entailed); // true, with a checked derivation
+console.log(r.assumptions, r.proved);       // what the answer depends on
+```
+
+`run(p, input, { unchecked: true })` also runs components that are not proved,
+and marks those steps in the evidence. Details: API.md, "Stages as nodes" and
+"Explaining an entailment" (`explain()` is the same check as one call).
+
 Formats (generated from `formats()`):
 
 <!-- formats-table:start (generated by test/formats-table.test.mjs) -->
-| format | read RDF 1.1 | read RDF 1.2 | write RDF 1.1 | write RDF 1.2 | engine |
-|---|---|---|---|---|---|
-| nquads | yes | yes | yes | yes | core |
-| ntriples | yes | yes | yes | yes | core |
-| turtle | yes | yes | yes | yes | core |
-| trig | yes | yes | yes | yes | core |
-| rdfxml | yes | no | yes | no | core |
-| jsonld | yes | no | yes | no | full |
-| rdfc | no | no | yes | no | core |
-| sparql-results-json | no | no | yes | yes | core |
-| sparql-results-xml | no | no | yes | yes | core |
-| sparql-results-csv | no | no | yes | yes | core |
-| sparql-results-tsv | no | no | yes | yes | core |
+| format | read RDF 1.1 | read RDF 1.2 | write RDF 1.1 | write RDF 1.2 | engine | media type | extension |
+|---|---|---|---|---|---|---|---|
+| nquads | yes | yes | yes | yes | core | `application/n-quads` | `.nq` |
+| ntriples | yes | yes | yes | yes | core | `application/n-triples` | `.nt` |
+| turtle | yes | yes | yes | yes | core | `text/turtle` | `.ttl` |
+| trig | yes | yes | yes | yes | core | `application/trig` | `.trig` |
+| rdfxml | yes | no | yes | no | core | `application/rdf+xml` | `.rdf` |
+| jsonld | yes | no | yes | no | full | `application/ld+json` | `.jsonld` |
+| rdfc | no | no | yes | no | core |  |  |
+| sparql-results-json | no | no | yes | yes | core |  |  |
+| sparql-results-xml | no | no | yes | yes | core |  |  |
+| sparql-results-csv | no | no | yes | yes | core |  |  |
+| sparql-results-tsv | no | no | yes | yes | core |  |  |
 <!-- formats-table:end -->
 
 Missing writers (HDT, N3, RDFa): https://github.com/danbri/factoidal/issues/883.
@@ -97,6 +168,7 @@ Codes (generated from `engineTables().errorCodes`):
 | `term.invalid-iri` | <https://www.w3.org/TR/rdf12-concepts/#section-IRIs> | A term that must be an IRI is not one. |
 | `term.invalid-langtag` | <https://www.w3.org/TR/rdf12-concepts/#section-Graph-Literal> | A language tag is not well-formed (BCP 47). |
 | `term.invalid` | <https://www.w3.org/TR/sparql11-results-json/#select-encode-terms> | A term or quad given as JSON is not an RDF term or quad. |
+| `literal.value` | <https://www.w3.org/TR/xmlschema11-2/#value-space> | The value is not in the value space of the named datatype, or the datatype is not one the engine has. |
 | `query.syntax` | <https://www.w3.org/TR/sparql11-query/#grammar> | The SPARQL query does not match the SPARQL grammar. |
 | `query.failed` | <https://www.w3.org/TR/sparql11-query/#sparqlDefinition> | The SPARQL query parsed but its evaluation was refused. |
 | `update.syntax` | <https://www.w3.org/TR/sparql11-update/#grammar> | The SPARQL update does not match the SPARQL Update grammar. |
@@ -135,11 +207,12 @@ Changes: [CHANGELOG.md](CHANGELOG.md).
 ```console
 $ npx factoidal serve --file data.ttl /ds          # SPARQL endpoint at /ds/sparql
 $ npx factoidal serve --tdb2 DIR /ds               # serve a Jena TDB2 database
-$ npx factoidal pack data.ttl store/gen-1 && npx factoidal activate store gen-1
+$ npx factoidal pack data.ttl store/gen-1 && npx factoidal activate store gen-1   # IBK5 quad blocks
 $ npx factoidal query store 'SELECT * WHERE { ?s ?p ?o } LIMIT 5'
 $ npx factoidal query "$(npx factoidal sample-store)" 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }'
 $ npx factoidal lws-serve DIR --issuer IRI         # Linked Web Storage
 $ npx factoidal solid-serve DIR                    # Solid Protocol
+$ npx factoidal authz-serve DIR --resource IRI --saml-idp idp.json   # OAuth 2.0 authorization server
 ```
 
 `npx factoidal --help` lists every command. Replacing Apache Jena Fuseki:
@@ -175,6 +248,8 @@ and the [assurance record](https://github.com/danbri/factoidal-core/blob/main/do
 | JSON-LD 1.1 toRdf, expand, flatten | 910 / 0 / 910 |
 | JSON-LD 1.1 compact, fromRdf | 298 / 0 / 300 (2 not run) |
 | JSON-LD 1.1 Framing | 29 / 63 / 92 |
+| JSON-LD-star draft (RDF 1.2), option `rdfstar` | 168 / 1 / 171 (2 local override; 170 of 171 with them) [J] |
+| RDF 1.2 eval tests written as JSON-LD-star and read back | 140 / 0 / 140 [J] |
 | RDFC-1.0 | 86 / 0 / 86 |
 | OWL 2 RL | 126 / 0 / 126 |
 | OWL 2 DL type-inconsistency | 116 / 11 / 128 (1 other) |
@@ -198,6 +273,7 @@ and the [assurance record](https://github.com/danbri/factoidal-core/blob/main/do
 [L] 2026-10-22, https://github.com/danbri/factoidal-core/blob/2b9d2e39af53be31ed92463b58d3e132e65c4fe4/docs/designissues/2026-10-21-lws-touchstone-run.md (with server options, 220 of 221 pass in at least one configuration)
 [S] 2026-10-21, the current W3C manifest (29 active tests), https://github.com/danbri/factoidal-core/blob/2b9d2e39af53be31ed92463b58d3e132e65c4fe4/docs/claude-rules/current-state.md
 [C] 2026-10-21, validation test308, https://github.com/danbri/factoidal/issues/700
+[J] 2026-10-27, tests of https://github.com/json-ld/json-ld-star/pull/61; the fail is a defective fixture (fromRdf tst07), https://github.com/danbri/factoidal-core/blob/2a656d7bfb4af329d77669afb5e62eb00625bd15/docs/designissues/2026-10-26-jsonld-star.md
 
 ## Limits
 

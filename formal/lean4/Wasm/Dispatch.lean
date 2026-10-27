@@ -57,6 +57,7 @@ import Wasm.Ops.CL
 import Wasm.Ops.Proof
 import Wasm.Ops.Explain
 import Wasm.Ops.StageList
+import Wasm.Ops.PipelineNodes
 import Wasm.Ops.Handles
 import Wasm.Ops.DatasetFull
 import Wasm.Ops.Pack
@@ -64,12 +65,15 @@ import Wasm.Ops.ExtFns
 import Wasm.Ops.Lws
 import Wasm.Ops.Solid
 import Wasm.Ops.LwsClient
+import Wasm.Ops.WebDAV
 import Wasm.Ops.LwsDataset
 import Wasm.Ops.Authz
 import Wasm.Ops.Toan
 import Wasm.Ops.Xmpp
 import Wasm.Ops.XmppSession
 import Wasm.Ops.Crypto
+import Wasm.Ops.Jwe
+import Wasm.Ops.XmlEnc
 import Wasm.Ops.Formats
 import Wasm.Ops.Reasoning
 import Wasm.Ops.QueryExtras
@@ -80,6 +84,8 @@ import Wasm.Ops.Lenient
 import Wasm.Ops.Validate
 import Wasm.Ops.ShExValidate
 import Wasm.Ops.QueryHdt
+import Wasm.Ops.Sbm11
+import Wasm.Ops.Sbm11Pack
 
 namespace L4Wasm
 
@@ -123,6 +129,8 @@ def opNames : List String :=
   , "proofInspect"
   , "explainGraph"
   , "stageList"
+  , "pipelineCheck"
+  , "pipelineCheckNodes"
   , "toanSummation"
   , "toanProduct"
   , "toanSimplify"
@@ -137,6 +145,10 @@ def opNames : List String :=
   , "aeadOpen"
   , "hpkeSeal"
   , "hpkeOpen"
+  , "jweDecrypt"
+  , "jweEncrypt"
+  , "xmlDecrypt"
+  , "xmlEncrypt"
   , "xmppStanzaParse"
   , "ops" ]
 
@@ -175,8 +187,9 @@ because both are served by the one entry which carries a region in either
 direction. -/
 def blobIoOpNames : List String :=
   [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit",
-    "datasetQuadsBin" ] ++
-  Ops.lwsBlobIoOpNames
+    "datasetQuadsBin", "sbm11Query", "sbm11PackFiles",
+    "storeManifestInspectBytes", "storeQueryPlanBytes", "storeOpenBytes" ] ++
+  Ops.lwsBlobIoOpNames ++ Ops.webdavBlobIoOpNames
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
 this is refused by name rather than made into an allocation the module
@@ -244,6 +257,7 @@ def handleOpNames : List String :=
   , "datasetClose"
   , "datasetClone"
   , "datasetCanonicalize"
+  , "datasetCanonicalHash"
   , "datasetClosure"
   , "datasetShaclValidate"
   , "datasetQueryRaw"
@@ -272,7 +286,7 @@ def handleOpNames : List String :=
   , "datasetFromJsonLd"
   , "datasetToJsonLd"
   , "datasetShexValidate"
-  , "datasetRifEval" ]
+  , "datasetRifEval" ] ++ collectionOpNames
 
 /-- The store-handle op names (`Wasm/Ops/StoreHandles.lean`), served ONLY by
 `callIO` and `callBlobIO` — the pure `call` cannot reach the store-handle
@@ -282,6 +296,9 @@ carries none, it still answers, with an empty region, so the diagnostic
 through `Wasm/Main.lean`'s `callseq`. -/
 def storeHandleOpNames : List String :=
   [ "storeOpen"
+  , "storeOpenBytes"
+  , "storeManifestInspectBytes"
+  , "storeQueryPlanBytes"
   , "storeHandleQuery"
   , "storeHandleList"
   , "storeHandleClose" ]
@@ -351,6 +368,7 @@ def lwsSolidOpNames : List String :=
   , "solidClientResponse"
   , "lwsClientStart"
   , "lwsClientStep"
+  , "lwsClientNewKey"
   , "lwsViewPlan"
   , "lwsDatasetView" ]
 
@@ -404,7 +422,8 @@ They are stateless, so `call` serves them and `callIO` reaches them through its
 fall-through to `call`. The names are appended to every `ops` reflection by
 `opsReflectionFor`; the arms are in the fall-through case of `call`. -/
 def stage2OpNames : List String :=
-  mathsOpNames ++ vcOpNames ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames
+  mathsOpNames ++ vcOpNames ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames ++ termsOpNames
+    ++ literalOpNames
 
 /-- Serve a stage 2 op of the full table, or answer the unknown-op error.
 `serializeTurtleWith` and `parseDocument` (the lenient parse,
@@ -433,8 +452,8 @@ private def opsReflection : String := opsReflectionFor (opNames ++ formatOpNames
 /-- The `ops` reflection of `callIO`: every op of the full table. -/
 def opsReflectionIO : String :=
   opsReflectionFor
-    (opNames ++ handleOpNames ++ storeHandleOpNames ++ storeServeOpNames ++ packOpNames
-       ++ extOpNames ++ lwsSolidOpNames ++ Ops.authzOpNames ++ xmppSessionOpNamesList
+    (opNames ++ handleOpNames ++ storeHandleOpNames ++ Ops.sbm11OpNames ++ storeServeOpNames ++ packOpNames
+       ++ extOpNames ++ lwsSolidOpNames ++ Ops.authzOpNames ++ Ops.webdavOpNames ++ xmppSessionOpNamesList
        ++ formatOpNames ++ serviceOpNames
        ++ query12OpNames)
 
@@ -478,6 +497,8 @@ def callUncoded (op : String) (argsJson : String) : String :=
     | "stageList"            => (match args with
                                   | [] => stageList
                                   | _ => errJson s!"{op} expects 0 arguments, got {args.length}")
+    | "pipelineCheck"        => arity1 op pipelineCheck args
+    | "pipelineCheckNodes"   => arity1 op pipelineCheckNodes args
     | "toanSummation"        => arity4 op toanSummation args
     | "toanProduct"          => arity4 op toanProduct args
     | "toanSimplify"         => arity1 op toanSimplify args
@@ -492,6 +513,10 @@ def callUncoded (op : String) (argsJson : String) : String :=
     | "aeadOpen"             => arity1 op aeadOpen args
     | "hpkeSeal"             => arity1 op hpkeSeal args
     | "hpkeOpen"             => arity1 op hpkeOpen args
+    | "jweDecrypt"           => arity1 op jweDecrypt args
+    | "jweEncrypt"           => arity1 op jweEncrypt args
+    | "xmlDecrypt"           => arity1 op xmlDecrypt args
+    | "xmlEncrypt"           => arity1 op xmlEncrypt args
     | "xmppStanzaParse"      => arity1 op xmppStanzaParse args
     -- Format, transform and reasoning ops (`formatOpNames`).
     | "jsonldToRdf"          => arity2 op jsonldToRdf args
@@ -600,10 +625,28 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "packEndPass"      => withArgs (arityIO1 op Ops.packEndPass)
   | "packFinish"       => withArgs (arityIO1 op Ops.packFinish)
   | "packClose"        => withArgs (arityIO1 op Ops.packClose)
-  | "packFeed" | "packNext" =>
+  | "packFeed" | "packNext" | "storeOpenBytes" | "storeManifestInspectBytes"
+  | "storeQueryPlanBytes" =>
       pure (errJson s!"{op} carries a byte region; call it through l4_call_blob_io")
   | "storeOpen"        => withArgs (arityIO2 op (fun a b => Ops.storeOpen a b ByteArray.empty))
   | "storeHandleQuery" => withArgs (arityIO2 op Ops.storeHandleQuery)
+  -- SPARQL over an SBM11 generation through host positioned reads
+  -- (`Wasm/Ops/Sbm11.lean`, https://github.com/danbri/factoidal/issues/1009).
+  | "sbm11Open"        => withArgs (fun args =>
+      match args with
+      | [a]    => Ops.sbm11Open a ""
+      | [a, b] => Ops.sbm11Open a b
+      | args => pure (errJson s!"sbm11Open expects 1 or 2 arguments, got {args.length}"))
+  | "sbm11Query"       => withArgs (fun args =>
+      match args with
+      | [a, b]    => Ops.sbm11Query a b ""
+      | [a, b, c] => Ops.sbm11Query a b c
+      | args => pure (errJson s!"sbm11Query expects 2 or 3 arguments, got {args.length}"))
+  | "sbm11Close"       => withArgs (arityIO1 op Ops.sbm11Close)
+  | "sbm11Verify"      => withArgs (arityIO1 op Ops.sbm11Verify)
+  | "storeLayout"      => withArgs (arityIO1 op Ops.storeLayout)
+  | "sbm11PackFiles"   =>
+      pure (errJson s!"{op} carries a byte region; call it through l4_call_blob_io")
   -- The dataset-handle ops of the full engine (`Wasm/Ops/DatasetFull.lean`).
   | "datasetFromCsvw"  => withArgs (arityIO3 op Ops.datasetFromCsvw)
   | "datasetFromRml"   => withArgs (arityIO3 op Ops.datasetFromRml)
@@ -651,7 +694,14 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
       | [a, b] => Ops.authzKeys a b
       | args => pure (errJson s!"authzKeys expects 1 or 2 arguments, got {args.length}"))
   | "authzRotate"      => withArgs (arityIO2 op Ops.authzRotate)
+  | "authzOwns"        => withArgs (arityIO2 op Ops.authzOwns)
   | "authzClose"       => withArgs (arityIO1 op Ops.authzClose)
+  -- The WebDAV server (https://github.com/danbri/factoidal/issues/1066).
+  | "webdavOpen"       => withArgs (arityIO1 op Ops.webdavOpen)
+  | "webdavLoad"       => withArgs (arityIO2 op Ops.webdavLoad)
+  | "webdavStep"       => withArgs (arityIO2 op Ops.webdavStep)
+  | "webdavResume"     => withArgs (arityIO2 op Ops.webdavResume)
+  | "webdavClose"      => withArgs (arityIO1 op Ops.webdavClose)
   | "lwsOpen"          => withArgs (arityIO1 op Ops.lwsOpen)
   | "lwsStep"          => withArgs (arityIO2 op Ops.lwsStep)
   | "lwsClose"         => withArgs (arityIO1 op Ops.lwsClose)
@@ -701,6 +751,11 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
         match args with
         | [a, b] => pure (Ops.lwsClientStep a b)
         | args => pure (errJson s!"lwsClientStep expects 2 arguments, got {args.length}"))
+  | "lwsClientNewKey" =>
+      withArgs (fun args =>
+        match args with
+        | [a, b] => pure (Ops.lwsClientNewKey a b)
+        | args => pure (errJson s!"lwsClientNewKey expects 2 arguments, got {args.length}"))
   -- The LWS dataset view (https://github.com/danbri/factoidal/issues/1011).
   | "lwsViewPlan" =>
       withArgs (fun args =>
@@ -803,6 +858,22 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a]   => Ops.storeServeRequest a blob
       | .ok args  => pure (errJson s!"storeServeRequest expects 1 argument, got {args.length}",
                            ByteArray.empty)
+  | "sbm11Query" =>
+      match decodeArgs argsJson with
+      | .error e      => pure (errJson e, ByteArray.empty)
+      | .ok [a, b]    => Ops.sbm11QueryBlob a b ""
+      | .ok [a, b, c] => Ops.sbm11QueryBlob a b c
+      | .ok args      => pure (errJson s!"sbm11Query expects 2 or 3 arguments, got {args.length}",
+                               ByteArray.empty)
+  -- Pack an SBM11 generation in memory (`Wasm/Ops/Sbm11Pack.lean`,
+  -- https://github.com/danbri/factoidal/issues/1009 stage 2): the document is
+  -- the IN region, file `index` of the generation the OUT region.
+  | "sbm11PackFiles" =>
+      match decodeArgs argsJson with
+      | .error e      => pure (errJson e, ByteArray.empty)
+      | .ok [a, b, c] => Ops.sbm11PackFiles a b c blob
+      | .ok args      => pure (errJson s!"sbm11PackFiles expects 3 arguments, got {args.length}",
+                               ByteArray.empty)
   | "storeServeCommit" =>
       match decodeArgs argsJson with
       | .error e        => pure (errJson e, ByteArray.empty)
@@ -843,6 +914,21 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a, b] => Ops.lwsRead a b blob
       | .ok args   => pure (errJson s!"lwsRead expects 2 arguments, got {args.length}",
                             ByteArray.empty)
+  -- The WebDAV server (https://github.com/danbri/factoidal/issues/1066): the
+  -- IN region is the request content (or the answer's), the OUT region the
+  -- content of what the engine answers (a response, an LWS request, a fetch).
+  | "webdavStep" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.webdavStepWith a b (some blob)
+      | .ok args   => pure (errJson s!"webdavStep expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
+  | "webdavResume" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.webdavResumeWith a b (some blob)
+      | .ok args   => pure (errJson s!"webdavResume expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
   | "solidStep" =>
       match decodeArgs argsJson with
       | .error e   => pure (errJson e, ByteArray.empty)
@@ -855,6 +941,28 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a, b] => do pure (← Ops.storeOpen a b blob, ByteArray.empty)
       | .ok args   => pure (errJson s!"storeOpen expects 2 arguments, got {args.length}",
                             ByteArray.empty)
+  -- The byte forms of the manifest ops
+  -- (https://github.com/danbri/factoidal/issues/1039): the manifest is the IN
+  -- region (for `storeOpenBytes`, its first `manifestLen` bytes), decoded
+  -- through the manifest memo of `Wasm/Ops/StoreHandles.lean`.
+  | "storeOpenBytes" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => do pure (← Ops.storeOpenBytes a b blob, ByteArray.empty)
+      | .ok args   => pure (errJson s!"storeOpenBytes expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
+  | "storeQueryPlanBytes" =>
+      match decodeArgs argsJson with
+      | .error e => pure (errJson e, ByteArray.empty)
+      | .ok [a]  => do pure (← Ops.storeQueryPlanBytesIO a blob, ByteArray.empty)
+      | .ok args => pure (errJson s!"storeQueryPlanBytes expects 1 argument, got {args.length}",
+                          ByteArray.empty)
+  | "storeManifestInspectBytes" =>
+      match decodeArgs argsJson with
+      | .error e => pure (errJson e, ByteArray.empty)
+      | .ok []   => do pure (← Ops.storeManifestInspectBytesIO blob, ByteArray.empty)
+      | .ok args => pure (errJson s!"storeManifestInspectBytes expects 0 arguments, got {args.length}",
+                          ByteArray.empty)
   | _ =>
       if blobOpNames.contains op then
         pure (callBlobUncoded op argsJson blob, ByteArray.empty)
@@ -877,21 +985,21 @@ private def argsForCode (argsJson : String) : List String :=
 
 /-- The pure entry (`l4_call`). -/
 def call (op : String) (argsJson : String) : String :=
-  attachCode op (argsForCode argsJson) (callUncoded op argsJson)
+  attachCodeLazy op (fun _ => argsForCode argsJson) (callUncoded op argsJson)
 
 /-- The byte-region entry (`l4_call_blob`). -/
 def callBlob (op : String) (argsJson : String) (blob : ByteArray) : String :=
-  attachCode op (argsForCode argsJson) (callBlobUncoded op argsJson blob)
+  attachCodeLazy op (fun _ => argsForCode argsJson) (callBlobUncoded op argsJson blob)
 
 /-- The IO entry (`l4_call_io`, the wire entry and the native CLI). -/
 def callIO (op : String) (argsJson : String) : IO String := do
-  pure (attachCode op (argsForCode argsJson) (← callIOUncoded op argsJson))
+  pure (attachCodeLazy op (fun _ => argsForCode argsJson) (← callIOUncoded op argsJson))
 
 /-- The byte-region-in-and-out entry (`l4_call_blob_io`). -/
 def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
     IO (String × ByteArray) := do
   let (envelope, out) ← callBlobIOUncoded op argsJson blob
-  pure (attachCode op (argsForCode argsJson) envelope, out)
+  pure (attachCodeLazy op (fun _ => argsForCode argsJson) envelope, out)
 
 /-- Decode a `callseq` document — a JSON array of `[op, [arg, …]]`
 pairs — into each op paired with its args RE-SERIALISED as the JSON

@@ -266,6 +266,19 @@ defjob l4jsonld-api l4jsonld-api parse_jsonld_api jsonld \
   "JSON-LD" "" ""
 defjob l4jsonld-frame l4jsonld-frame parse_jsonld_frame jsonld_frame \
   "JSON-LD framing" "" ""
+# JSON-LD-star (RDF 1.2 triple terms, reifiers, annotations): the json-ld-star
+# PR 61 test suite (third_party/testing/json-ld-star-PROVENANCE.md).
+defjob l4jsonld-api-star l4jsonld-api parse_jsonld_star jsonld_frame \
+  "JSON-LD-star" "" "--star"
+# Every dataset of the W3C RDF 1.2 positive eval tests (N-Triples, N-Quads,
+# Turtle, TriG), and of the positive syntax tests, written as JSON-LD-star and
+# read back: isomorphic to the dataset read from the test (Harness/Sbm11W3c.lean).
+defjob l4sbm11-w3c-jsonld-star-eval l4sbm11-w3c parse_jsonld_star_rt none \
+  "JSON-LD-star round trip (W3C RDF 1.2 eval)" "" \
+  "jsonld-star-roundtrip $W3C/rdf/rdf12/rdf-n-triples/c14n/manifest.ttl $W3C/rdf/rdf12/rdf-n-quads/c14n/manifest.ttl $W3C/rdf/rdf12/rdf-turtle/eval/manifest.ttl $W3C/rdf/rdf12/rdf-trig/eval/manifest.ttl"
+defjob l4sbm11-w3c-jsonld-star-syntax l4sbm11-w3c parse_jsonld_star_rt none \
+  "JSON-LD-star round trip (W3C RDF 1.2 positive syntax)" "" \
+  "jsonld-star-roundtrip --syntax $W3C/rdf/rdf12/rdf-n-triples/syntax/manifest.ttl $W3C/rdf/rdf12/rdf-n-quads/syntax/manifest.ttl $W3C/rdf/rdf12/rdf-turtle/syntax/manifest.ttl $W3C/rdf/rdf12/rdf-trig/syntax/manifest.ttl"
 # --- RML ---------------------------------------------------------------------
 defjob l4rml l4rml parse_rml rml \
   "RML" "" ""
@@ -711,7 +724,7 @@ parse_shexc() {
 }
 
 parse_rif() {
-  local line nums u nr lo
+  local line nums u nr lo ex
   line="$(pick_line '^rif-core DECIDED: [0-9]+ pass' last)"
   if [ -z "$line" ]; then emit_status unparsed "$CUR_AREA" "" "no 'rif-core DECIDED:' line in the log"; return; fi
   if ! nums="$(scoreline_nums "$line")"; then emit_status unparsed "$CUR_AREA" "" "summary line does not follow the score-line grammar" "$line"; return; fi
@@ -721,9 +734,15 @@ parse_rif() {
   if [ -z "$u" ] || [ -z "$nr" ] || [ -z "$lo" ]; then
     emit_status unparsed "$CUR_AREA" "" "a count is missing (UNDECIDED, NOT READ, LOCAL OVERRIDE)" "$line"; return
   fi
+  # "; K excluded (defective test data)" follows the total: those cases are
+  # outside pass, fail and the total (skill test-suites, "Defective test data").
+  ex="$(printf '%s\n' "$line" | sed -nE 's/^.*; ([0-9]+) excluded \(defective test data\).*$/\1/p')"
+  if [ -z "$ex" ]; then
+    emit_status unparsed "$CUR_AREA" "" "no '; K excluded (defective test data)' after the total" "$line"; return
+  fi
   set -- $nums
   emit_ok "$CUR_AREA" "" "$1" "$2" $((u + nr + lo)) $(($1 + $2 + u + nr + lo)) \
-    "total derived: decided $(($1 + $2)) + undecided $u + not read $nr + local override $lo; the runner prints no total" "$line"
+    "total derived: decided $(($1 + $2)) + undecided $u + not read $nr + local override $lo; the runner prints no total; $ex excluded (defective test data), not in the total" "$line"
 }
 
 parse_csvw_rdf()      { row_sl "$CUR_AREA" "" '^csv2rdf TOTAL: [0-9]+ pass' last; }
@@ -848,6 +867,17 @@ parse_jsonld_api() {
   local k
   for k in expand compact flatten fromRdf html; do
     row_sl "JSON-LD $k" "" "^$k: [0-9]+ pass" last "other = local-override + unsupported"
+  done
+}
+
+parse_jsonld_star_rt() {
+  row_sl "$CUR_AREA" "" '^jsonld-star-roundtrip: [0-9]+ pass' last "other = unread (the source layer does not read the action)"
+}
+
+parse_jsonld_star() {
+  local k
+  for k in expand toRdf fromRdf compact flatten; do
+    row_sl "JSON-LD-star $k" "" "^star-$k: [0-9]+ pass" last "other = local-override + unsupported"
   done
 }
 

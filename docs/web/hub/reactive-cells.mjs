@@ -209,7 +209,12 @@ function collectLocals(masked) {
   while ((m = declRe.exec(masked)) !== null) add(m[1]);
   const fnRe = /\bfunction\b\s*([A-Za-z_$][\w$]*)?\s*\(([^)]*)\)/g;
   while ((m = fnRe.exec(masked)) !== null) { if (m[1]) locals.add(m[1]); add(m[2]); }
-  const arrowParenRe = /\(([^)]*)\)\s*=>/g;
+  // The innermost parenthesised group before `=>`: `[^()]` so that in
+  // `pretty(model.map((el) => el.x))` the group is `(el)`, never the
+  // call's argument list `(model.map((el)`, which hid `model` as a local
+  // (https://github.com/danbri/factoidal/issues/690). A parameter default
+  // that itself contains parentheses is not read as a parameter list.
+  const arrowParenRe = /\(([^()]*)\)\s*=>/g;
   while ((m = arrowParenRe.exec(masked)) !== null) add(m[1]);
   const arrowBareRe = /(?:^|[^.\w$])([A-Za-z_$][\w$]*)\s*=>/g;
   while ((m = arrowBareRe.exec(masked)) !== null) locals.add(m[1]);

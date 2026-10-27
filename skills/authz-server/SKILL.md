@@ -1,6 +1,6 @@
 ---
 name: authz-server
-description: Run, test and extend Factoidal's OAuth 2.0 authorization server component (factoidal authz-serve) - RFC 8414 metadata, the JWK Set, RFC 8693 token exchange for LWS access tokens, the subject-token suites (OpenID Connect, CID with https and did:key subjects; SAML refused), the private-address fetch guard, signing keys and rotation, the wasm ABI, the host tests and the Touchstone configuration that runs against it. Use when issuing tokens for lws-serve or another resource server, adding a credential suite, or reading a score from these suites.
+description: Run, test and extend Factoidal's OAuth 2.0 authorization server component (factoidal authz-serve) - RFC 8414 metadata, the JWK Set, RFC 8693 token exchange for LWS access tokens, the subject-token suites (OpenID Connect, CID with https and did:key subjects, SAML 2.0 from configured identity providers), the private-address fetch guard, signing keys and rotation, the wasm ABI, the host tests and the Touchstone configuration that runs against it. Use when issuing tokens for lws-serve or another resource server, adding a credential suite, or reading a score from these suites.
 ---
 
 # The authorization server component
@@ -16,6 +16,9 @@ verbatim: "Do auth server (as a component other servers might use too)."
 | `formal/lean4/L4Factoidal/Authz/Keys.lean` | `Crypto` record (HACL\* instance `hacl`), keys, RFC 7638 `kid`, JWK Set, rotation, key file |
 | `formal/lean4/L4Factoidal/Authz/Fetch.lean` | https/http rule, private-address guard, document and name cache |
 | `formal/lean4/L4Factoidal/Authz/SubjectToken.lean` | the credential suites |
+| `formal/lean4/L4Factoidal/SAML/Assertion.lean` | the SAML 2.0 assertion checks (issue 926) |
+| `formal/lean4/L4Factoidal/XML/DSig.lean`, `XML/ExcC14n.lean` | the XML Signature profile of SAML Core §5, exclusive canonicalization |
+| `formal/lean4/L4Factoidal/SAML/Tests.lean`, `Fixtures.lean`, `tests/saml/MakeFixtures.java` | `#guard`s over assertions made by the JDK's XML Signature API |
 | `formal/lean4/L4Factoidal/Authz/Server.lean` | metadata, token endpoint, issuing with the self-check, `step` |
 | `formal/lean4/L4Factoidal/Authz/Theorems.lean`, `Tests.lean` | theorems; `#guard`s with a stub signer |
 | `formal/lean4/Wasm/Ops/Authz.lean` | the `authz*` ops |
@@ -29,9 +32,13 @@ verbatim: "Do auth server (as a component other servers might use too)."
 factoidal authz-serve DIR --resource IRI[,IRI...] [--issuer IRI] [--port N] [--host ADDRESS]
                           [--alg ES256|EdDSA] [--token-lifetime SECONDS] [--rotate-after SECONDS]
                           [--allow-http] [--allow-private-fetch]
-                          [--cors-origin ORIGIN]... [--no-cors]
+                          [--cors-origin ORIGIN]... [--no-cors] [--saml-idp FILE]...
 factoidal authz-keys DIR [--private]
 ```
+
+`--saml-idp FILE` (repeatable; config member `samlIdps`) trusts one SAML 2.0
+identity provider: `{"entityId": "<saml:Issuer value>", "jwk": <RSA public
+JWK, 2048 bits or more, no private member>}`.
 
 With lws-serve (the storage IRI is the storage description):
 
@@ -51,6 +58,26 @@ import { listen, openAuthorizationServer } from '@factoidal/core/authz'
 const as = await listen({ dir: 'as-dir', port: 4000, resources: ['http://127.0.0.1:3000/.well-known/lws-storage'] })
 ```
 
+### On the storage's port: `lws-serve --authz`
+
+```
+factoidal lws-serve store-dir --authz as-dir --owner did:key:zDn... [--base IRI]
+```
+
+One process, one port. The issuer is the storage root without its trailing
+slash; the token endpoint and the JWK Set are at `BASE.well-known/lws-token`
+and `BASE.well-known/lws-jwks`, beside the storage's other services, so no
+name a client may give a storage resource is taken. The engine decides which
+request is whose (`authzOwns`, `L4Factoidal/Authz/Mount.lean`, theorem
+`endpointOf?_mem`: the authorization server takes only the paths of
+`endpointPaths`); the storage trusts the issuer with the JWK Set from
+`authzOpen`, so it never fetches its own URL. With `--rotate-after` the
+storage fetches the metadata again when it meets an unknown `kid`. Every
+well-known path is read in two forms, whole and with the base path removed,
+so a reverse proxy may serve the storage at a path prefix and strip it
+(`tests/authz/mounted.mjs` runs both). Docker target for third-party
+testing: `deploy/lws-target/`.
+
 ## What it decides (all in Lean)
 
 * Token endpoint (lws10-core "Token Exchange"): form parameters once each;
@@ -68,12 +95,47 @@ const as = await listen({ dir: 'as-dir', port: 4000, resources: ['http://127.0.0
   Ed25519 binding. Touchstone and Nimbus verify only ES256 and RS256.
 * Suites: OpenID Connect ID token (`sub` document names `iss` as an
   `lws#OpenIdProvider` service; discovery `issuer` equals `iss`; key by
-  `kid` from `jwks_uri`); CID suite, https subject (document `id` = `sub`;
-  method named by `authentication`, embedded or referenced; `controller` =
-  `sub`; not revoked or expired); CID suite, did:key subject (P-256
-  compressed via HACL\*, or Ed25519; `kid` = `did#z…` or `z…`). SAML 2.0:
-  refused and not advertised: no XML Signature verifier in the tree,
-  https://github.com/danbri/factoidal/issues/926.
+  `kid` from `jwks_uri`); CID suite, https subject: the CID 1.0 module
+  `L4Factoidal/CID/` (https://github.com/danbri/factoidal/issues/1100),
+  §2 data-model checks of the whole document, §3.3 Retrieve Verification
+  Method with `authentication` (document `id` = `sub`; method embedded or
+  referenced; `controller` = `sub`), then not revoked or expired (§2.2);
+  record `docs/designissues/2026-10-27-cid-1.0.md`; CID suite, did:key subject (P-256
+  compressed via HACL\*, or Ed25519; `kid` = `did#z…` or `z…`). SAML 2.0
+  (https://github.com/danbri/factoidal/issues/926): base64url
+  `saml:Assertion` from a configured provider; one enveloped signature,
+  exc-c14n, rsa-sha256, the reference `#` + the document element's `ID`,
+  verified under the CONFIGURED key (never `ds:KeyInfo`); no DTD, comment or
+  PI; nesting at most 32; `Conditions` times and every `AudienceRestriction`
+  naming this issuer; bearer confirmation with `Recipient` (the client) and
+  `NotOnOrAfter`; `NameID` is the subject. Advertised only when
+  `samlIdps` is not empty. Record:
+  `docs/designissues/2026-10-27-saml-xml-signature.md`.
+* SAML encrypted assertions (https://github.com/danbri/factoidal/issues/1073):
+  in Lean, `SAML.validateWith cipher prims rsa policy token` with
+  `Policy.decryptKeys` (an `XML.Enc.Keys`) decrypts a document element
+  `saml:EncryptedAssertion` (`XML.Enc.decryptWrapped`: the `EncryptedData`,
+  then optional `EncryptedKey` siblings) and sends the decrypted
+  `saml:Assertion` through the same issuer, signature, conditions and
+  subject checks; an encrypted assertion whose content is not signed is
+  refused. After the signature check, a `saml:EncryptedID` in `Subject` is
+  decrypted to its `NameID`. Theorem `SAML.validateWith_ok`: claims come
+  from the document `openToken` read (decrypted when encrypted), whose
+  signature verified under a trusted provider's key.
+  XML Encryption profile, keys and the AES call-out:
+  `docs/designissues/2026-10-27-xml-encryption-and-jwe.md`. In the server:
+  `authz-serve --saml-decrypt-key FILE` (repeatable, a private JWK; also
+  `lws-serve --authz`), config member `samlKeys`. `Authz.validateSaml`
+  calls `validateWith` over the replay cipher; an AES request is the
+  `Need.cipher`, which `authzStep` returns as `{cipher: {op, key, iv, aad,
+  data}}`; the Node host answers it with WebCrypto
+  (`answerCipherRequest`), passes `{request, answer}` to `authzFetched`
+  (`AuthzState.recordCipher`, at most `maxCipherAnswers` answers, one per
+  request) and steps again. Theorem `Authz.validateSaml_valid` covers the
+  encrypted case. `saml:EncryptedAttribute` stays refused
+  (the claims read no attribute); expected-failure guard there too. Native
+  run with real AES-GCM and RSA-OAEP: `lake exe l4xmlenc-probe` (SAML
+  section, Santuario fixtures from `tests/xmlenc/MakeFixtures.java`).
 * Fetches: `https` only unless `--allow-http`; every address of the host
   (literal, `localhost` name, or the host's resolution) must be outside
   loopback, unspecified, link-local, RFC 1918 and RFC 4193 unless
@@ -102,7 +164,8 @@ https://github.com/danbri/factoidal/issues/927.
 
 Structural: `tokenOutcome_issued`, `exchange_refused_no_token` (a subject
 token that fails validation never yields an access token),
-`validateSubject_valid_verified`, `didKey_valid_verified`,
+`validateSubject_valid_verified`, `didKey_valid_verified`, `validateSaml_valid`
+(with `SAML.validate_ok` and `XML.DSig.verifyEnveloped_ok`),
 `cid_valid_verified`, `cidKey_method`, `oidc_valid_named_provider`,
 `jwks_no_private_member`, `metadata_issuer_eq`, `rotate_keeps_previous`,
 `chooseAddress_refuses_private`, `lookup_http_refused`. Axioms: `propext`,
@@ -129,8 +192,19 @@ core/authorization_server 9 pass, 0 fail (out of 9), auth/oidc 6 pass,
 inapplicable (out of 3). Record:
 `docs/designissues/2026-10-21-lws-touchstone-run.md`.
 
-Expected failures: SAML (https://github.com/danbri/factoidal/issues/926) in
-`server.mjs`; solid-serve accepting these tokens
+Scores, 2026-10-27 (SAML landed): `tests/authz/server.mjs` 39 pass, 0 fail,
+0 xfail, 0 skipped (out of 39); `tests/authz/e2e.mjs` 7 pass, 0 fail,
+1 xfail, 0 skipped (out of 8); `tests/authz/mounted.mjs` 6 pass, 0 fail
+(out of 6). Touchstone `--config auth --authz factoidal`: 215 passed,
+0 failed, 6 inapplicable (out of 221); auth/saml 3 pass, 0 fail (out of 3);
+our server's 40 tests 40 pass, 0 fail (out of 40).
+
+SAML (https://github.com/danbri/factoidal/issues/926) since 2026-10-27:
+`L4Factoidal/SAML/Tests.lean` (`lake build`), the SAML checks in
+`server.mjs`, and Touchstone `auth/saml` with `SamlTrust` under
+`--authz factoidal` (the script makes the identity provider key).
+
+Expected failures: solid-serve accepting these tokens
 (https://github.com/danbri/factoidal/issues/928) in `e2e.mjs`. An unexpected
 pass turns the run red.
 

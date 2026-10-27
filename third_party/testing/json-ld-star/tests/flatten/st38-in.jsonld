@@ -1,0 +1,16 @@
+{
+  "@context": {
+    "@base": "http://example.org/",
+    "@vocab": "http://example.org/",
+    "claims": {"@type": "@id"}
+  },
+  "@id": "reif",
+  "@reifies": {
+    "@id": "bob",
+    "knows": {"@id": "alice"}
+  },
+  "certainty": {
+    "@value": 0.8,
+    "@annotation": {"claims": "ted"}
+  }
+}

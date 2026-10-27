@@ -5,9 +5,13 @@ logical source.
 Spec: RML-IO (https://w3id.org/rml/io/spec), "Reference formulations":
 `formats:SPARQL_Results_CSV`. The source is an RDF file, the iterator is a
 SPARQL SELECT query, each solution of the query is one logical iteration,
-and a reference expression names a variable. The values are the strings the
-CSV serialisation of results (SPARQL 1.1 Query Results CSV and TSV Formats)
-writes, so a literal's datatype is not part of the value.
+and a reference expression names a variable. The lexical form of a value is
+the string the CSV serialisation of results (SPARQL 1.1 Query Results CSV and
+TSV Formats) writes. A literal's datatype is the value's natural datatype
+(`RVal.natural`), as a JSON number's is: a reference to `"5"^^xsd:integer`
+gives `"5"^^xsd:integer` when the term map states no datatype
+(https://github.com/danbri/factoidal/issues/1034). A language tag is not
+kept, because `RVal` has no field for it.
 
 This module is the SPARQL engine a host hands to `RML.Open` through
 `FileAccess.sparql`. It is a module of its own, and `RML.Open` does not import
@@ -34,6 +38,19 @@ def solutionText : L4Factoidal.RDF.Term → String
   | .literal l => l.val.lexicalForm
   | .tripleTerm .. => "<<triple term>>"
 
+/-- The source value of a term in a SPARQL solution: the text of
+    `solutionText`, and for a literal its datatype as the natural datatype.
+    A simple literal (`xsd:string`) and a language-tagged literal have no
+    natural datatype, as in `constantRVal`
+    (https://github.com/danbri/factoidal/issues/1034). -/
+def solutionValue (t : L4Factoidal.RDF.Term) : RVal :=
+  match t with
+  | .literal l =>
+      { lexical := l.val.lexicalForm
+        natural := if l.val.langTag.isSome || l.val.datatype.val == xsdNs ++ "string"
+                   then none else some l.val.datatype.val }
+  | _ => { lexical := solutionText t }
+
 /-- The rows of a SPARQL SELECT query over an RDF file
     (`formats:SPARQL_Results_CSV`, RML-IO "Reference formulations"): the
     file is read as RDF in the syntax its name gives, the query is the
@@ -57,8 +74,8 @@ def sparqlRecords (path text query : String) : Except String (List Record) :=
           | .select _ =>
               let (vars, rows) := L4Factoidal.SPARQL.evalSelect { dataset := some data } data q
               .ok (rows.map (fun mu =>
-                Record.ofColumns vars (vars.filterMap (fun v =>
-                  (mu.lookup v).map (fun t => (v, solutionText t))))))
+                Record.table (vars.filterMap (fun v =>
+                  (mu.lookup v).map (fun t => (v, solutionValue t)))) vars))
           | _ => .error "the iterator is a SPARQL query that is not a SELECT query"
 
 /-- A file access with the SPARQL engine of this module. -/
@@ -90,6 +107,23 @@ private def selectAll : String :=
            (r0.values "a").1 == [{ lexical := "33" }] &&
            (r1.values "n").1 == [{ lexical := "Rachel" }] &&
            (r1.values "a").1.isEmpty && (r1.values "a").2.isEmpty
+       | _ => false
+-- a typed literal keeps its datatype as the natural datatype; a simple
+-- literal, a language-tagged literal and an IRI have none
+-- (https://github.com/danbri/factoidal/issues/1034)
+private def typedNt : String :=
+  "<http://example.org/0> <http://example.org/n> \"5\"^^<http://www.w3.org/2001/XMLSchema#integer> .\n" ++
+  "<http://example.org/0> <http://example.org/d> \"2026-10-26\"^^<http://www.w3.org/2001/XMLSchema#date> .\n" ++
+  "<http://example.org/0> <http://example.org/s> \"x\" .\n" ++
+  "<http://example.org/0> <http://example.org/l> \"chat\"@fr .\n"
+#guard match openRecords { sparqlLs "SELECT ?s ?n ?d ?x ?l WHERE { ?s <http://example.org/n> ?n ; <http://example.org/d> ?d ; <http://example.org/s> ?x ; <http://example.org/l> ?l }" with path := "Typed.nt" }
+         (files [("Typed.nt", typedNt)]) with
+       | .ok [r] =>
+           (r.values "n").1 == [{ lexical := "5", natural := some (xsdNs ++ "integer") }] &&
+           (r.values "d").1 == [{ lexical := "2026-10-26", natural := some (xsdNs ++ "date") }] &&
+           (r.values "x").1 == [{ lexical := "x" }] &&
+           (r.values "l").1 == [{ lexical := "chat" }] &&
+           (r.values "s").1 == [{ lexical := "http://example.org/0" }]
        | _ => false
 -- a variable the query does not name is not a column
 #guard match openRecords (sparqlLs selectAll) (files [("Friends.nt", friendsNt)]) with

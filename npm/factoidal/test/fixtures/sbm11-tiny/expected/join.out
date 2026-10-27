@@ -1,0 +1,1 @@
+{"head":{"vars":["a","n"]},"results":{"bindings":[{"a":{"type":"uri","value":"http://example.org/alice"},"n":{"type":"literal","value":"Bob","xml:lang":"en-gb"}},{"a":{"type":"uri","value":"http://example.org/alice"},"n":{"type":"literal","value":"Carol","xml:lang":"en"}}]}}

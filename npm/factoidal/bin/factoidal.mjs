@@ -35,6 +35,8 @@ import {
   STACK_REMEDY, StoreOperationError, inspectManifest, openStore, planQuery,
   queryStore, stackLimitAdvice, turtleOfNQuads
 } from './store.mjs'
+import { sbm11Api, setDefaultSbm11Reader } from '../lib/sbm11.mjs'
+import { nodeDefaultReaderFactory } from '../lib/sbm11-node.mjs'
 
 const EXIT_OK = 0
 const EXIT_FAILURE = 1
@@ -45,7 +47,12 @@ const EXIT_NOT_WIRED = 3
 // a time, so this is the window that catches one feed per report.
 const FEED_PROGRESS = 65536
 
-const PACK_LAYOUTS = ['ibk3', 'ibk4', 'ibk5']
+const PACK_LAYOUTS = ['ibk3', 'ibk4', 'ibk5', 'sbm11']
+// https://github.com/danbri/factoidal/issues/1009: an SBM11 generation is
+// packed by the wasm op sbm11PackFiles, verified by sbm11Verify and queried
+// by sbm11Open / sbm11Query (formal/lean4/Wasm/Ops/Sbm11*.lean). The op
+// storeLayout says which store a directory holds; this file does not decide
+// it from file names (iron rule 7).
 // The syntaxes the packer reads and the file-name suffixes of each are the
 // engine's tables (op engineTables: packSyntaxes, packSuffixes,
 // packUnsupportedSuffixes), https://github.com/danbri/factoidal/issues/894.
@@ -83,6 +90,15 @@ function err (line) { console.error(line) }
 
 // ---------------------------------------------------------------- usage
 
+// Owner, 2026-10-27: every protocol, authentication and security component,
+// the CLIs and the core library carry this notice. It is printed with every
+// help text and on standard error when a server, client or key command starts.
+const REVIEW_WARNING = 'EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.'
+
+/** The commands that serve, speak a protocol, or handle keys and tokens. */
+const WARNED_COMMANDS = new Set(['serve', 'lws-serve', 'solid-serve', 'solid-client', 'lws-client',
+  'authz-serve', 'authz-keys', 'xmpp-serve', 'webdav-serve'])
+
 const USAGE = `factoidal - the Factoidal persisted store, from Node or Deno
 
 usage: factoidal <command> [options]
@@ -106,6 +122,8 @@ commands:
                               (RFC 8414 metadata, JWK Set, RFC 8693 token exchange)
   authz-keys DIR              print the public JWK Set of an authorization server
   xmpp-serve DIR              serve XMPP (RFC 6120/6121) over TCP or direct TLS
+  webdav-serve CONFIGDIR      serve local and remote LWS storages to file
+                              browsers over WebDAV (RFC 4918)
 
 global options:
   -h, --help                  print this text, or a command's own help
@@ -224,10 +242,13 @@ INPUT is an RDF file. OUTPUT is the generation directory to create; it is
 normally STORE/gen-N. Packing does not activate: run activate next.
 
 options:
-  --layout LAYOUT    ibk3 (triples, default), ibk4 (quads, wire version 9)
-                     or ibk5 (quads, wire version 10: RDF 1.2 terms,
-                     out-of-line literals, zone maps)
-  --syntax SYNTAX    turtle, trig or nquads; default from the file extension
+  --layout LAYOUT    ibk5 (quads, wire version 10: RDF 1.2 terms,
+                     out-of-line literals, zone maps; default), ibk4
+                     (quads, wire version 9), ibk3 (triples) or sbm11
+                     (the files l4sbm11-pack writes; the document is read
+                     whole, in memory; serve does not read it yet)
+  --syntax SYNTAX    turtle, trig or nquads, and with sbm11 also rdfxml or
+                     jsonld; default from the file extension
   --chunk-bytes N    Merkle chunk size; default is the engine's
   --batch-bytes N    ibk4 only: source bytes between publication batches;
                      default is the engine's. Blocks are published during
@@ -248,7 +269,10 @@ usage: factoidal activate STORE GENERATION [--json]
 
 Verifies every artifact of GENERATION and every cross-artifact relation,
 then atomically replaces STORE/CURRENT. A generation that fails
-verification never becomes current.`,
+verification never becomes current. For an SBM11 generation the engine
+checks the length, SHA-256 and Merkle root of every file and every
+.merkle sidecar against the manifest (op sbm11Verify); it does not run
+the decoder checks of l4sbm11 activate.`,
 
   update: `factoidal update - apply a SPARQL Update through the delta log
 
@@ -319,7 +343,7 @@ activated generation's delta log as one batch before the response is sent,
 and is visible to the next request. An IBK3 (triples) generation accepts
 changes to the default graph only, because its delta log is replayed and
 compacted for that graph only; a change to a named graph answers 501. A
-quad generation (ibk4, ibk5) accepts every graph. Fold the log into a new
+quad generation (ibk4, ibk5, the default) accepts every graph. Fold the log into a new
 generation with l4block-shard-compact, activate it, and restart the server.
 
 The server makes no protocol decision: the request framing, routing,
@@ -340,6 +364,7 @@ usage: factoidal authz-serve DIR --resource IRI[,IRI...] [--issuer IRI]
                            [--token-lifetime SECONDS] [--rotate-after SECONDS]
                            [--allow-http] [--allow-private-fetch]
                            [--cors-origin ORIGIN]... [--no-cors]
+                           [--saml-idp FILE]... [--saml-decrypt-key FILE]...
 
 An authorization server as a component (https://github.com/danbri/factoidal/issues/916),
 for lws-serve and any resource server that reads RFC 8414 metadata:
@@ -348,8 +373,24 @@ for lws-serve and any resource server that reads RFC 8414 metadata:
   POST /token                         RFC 8693 token exchange for an RFC 9068
                                       access token whose aud is the resource
 Subject tokens: OpenID Connect ID tokens (lws10-authn-openid) and
-self-issued JWTs for https and did:key subjects (lws10-authn-ssi-cid). SAML
-2.0 is not accepted (https://github.com/danbri/factoidal/issues/926).
+self-issued JWTs for https and did:key subjects (lws10-authn-ssi-cid), and
+SAML 2.0 assertions (lws10-authn-saml) from the identity providers --saml-idp
+names (https://github.com/danbri/factoidal/issues/926).
+
+--saml-idp FILE (repeatable) trusts one SAML 2.0 identity provider. FILE is
+JSON: {"entityId": "<the saml:Issuer value>", "jwk": <its RSA public JWK>}.
+An assertion must carry one enveloped XML Signature (exclusive
+canonicalization, rsa-sha256) that verifies under that key, an audience that
+names the issuer of this server, and bearer subject confirmation; its NameID
+is the subject and its Recipient the client. Without --saml-idp the token
+type is refused and not advertised.
+
+--saml-decrypt-key FILE (repeatable) is one private JWK (RSA, EC P-256, OKP
+X25519 or oct) that decrypts saml:EncryptedAssertion and saml:EncryptedID
+(XML Encryption 1.1: RSA-OAEP, ECDH-ES with AES Key Wrap, or AES Key Wrap;
+content AES-GCM). AES runs through WebCrypto. The decrypted assertion must
+be signed as above. Without it, encrypted assertions are refused
+(https://github.com/danbri/factoidal/issues/1073).
 
 --resource names the resource IRIs (for lws-serve: BASE.well-known/lws-storage)
 tokens may be issued for; any other is refused with invalid_target.
@@ -379,8 +420,10 @@ private keys (with d): for a conformance harness that mints test tokens
 
   'lws-serve': `factoidal lws-serve - serve Linked Web Storage 1.0 over HTTP
 
-usage: factoidal lws-serve DIR (--issuer IRI | --auth-config FILE | --insecure-no-auth)
+usage: factoidal lws-serve DIR (--authz DIR | --issuer IRI | --auth-config FILE | --insecure-no-auth)
                          [--owner WEBID] [--root-acl FILE] [--audience IRI]
+                         [--alg ES256|EdDSA] [--token-lifetime SECONDS] [--rotate-after SECONDS]
+                         [--allow-http] [--allow-private-fetch]
                          [--port N] [--host ADDRESS] [--base IRI] [--page-size N]
                          [--paginate-always] [--moves all|data|off]
                          [--no-linkset-put] [--unstable-search-results] [--merkle]
@@ -494,8 +537,22 @@ It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lea
   --no-cors       send no CORS fields; a page on another origin cannot read
                   any answer
 
-Authorization (LWS editor's draft, section Authorization; one of the three
+Authorization (LWS editor's draft, section Authorization; one of the four
 is required):
+  --authz DIR           also serve an authorization server on this port, its
+                        issuer the storage root without the trailing slash
+                        (BASE less "/"): RFC 8414 metadata at
+                        /.well-known/lws-configuration, the token endpoint at
+                        BASE.well-known/lws-token, the JWK Set at
+                        BASE.well-known/lws-jwks, signing keys in DIR (as
+                        authz-serve; --alg, --token-lifetime, --rotate-after,
+                        --allow-http, --allow-private-fetch, --saml-idp and
+                        --saml-decrypt-key as there). The
+                        storage trusts it, and any --issuer too. Each request
+                        is the authorization server's when the engine says so
+                        (L4Factoidal/Authz/Mount.lean); every other is the
+                        storage's. A proxy may serve BASE at a path prefix and
+                        remove the prefix: both forms of every path are read.
   --issuer IRI          trust this authorization server; several may be
                         given separated by commas. Its metadata is read from
                         IRI/.well-known/lws-configuration and its keys from
@@ -615,6 +672,47 @@ MUC/MIX/GC3 rooms.
 
 Specifications: https://www.rfc-editor.org/rfc/rfc6120 and
 https://www.rfc-editor.org/rfc/rfc6121`,
+
+  'webdav-serve': `factoidal webdav-serve - serve LWS storages to file browsers over WebDAV
+
+usage: factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]
+
+Starts a WebDAV server (RFC 4918, classes 1 and 2) that macOS Finder,
+Windows Explorer, GNOME Files and KDE Dolphin can connect to. Its root
+collection holds one folder per mount; a mount is one Markdown file
+CONFIGDIR/NAME.md (README.md is not a mount):
+
+    # Display name
+    - kind: local | lws
+    - path: ./alice-storage        (local: an lws-serve storage directory)
+    - url: https://storage.example/alice/   (lws: the storage root)
+    - auth: none | did-key | bearer
+    - key-file: ./alice.jwk        (did-key: a P-256 private JWK; made when absent)
+    - token-file: ./alice.token    (bearer: an access token)
+    - writable: true | false       (default true for local, false for lws)
+    - storage: snapshot | files    (local: default what the directory holds)
+    - base: IRI                    (local: the storage root's IRI, default http://localhost/)
+
+Only the first "# " heading and the first "- key: value" list are read; the
+words in brackets above are notes, not part of a value. A malformed file
+stops the start with its name and line number.
+
+A local mount opens the directory with the operations lws-serve uses, as
+the storage's owner (do not serve the same directory with lws-serve at the
+same time). An lws mount reaches the storage through the LWS client.
+
+  --port N         the port to bind (default 8090; 0 takes an ephemeral one)
+  --host ADDRESS   the address to bind (default 127.0.0.1)
+
+Connect: macOS Finder, Go > Connect to Server, http://127.0.0.1:8090/ ;
+Windows, Map network drive, http://127.0.0.1:8090/ ; GNOME Files,
+dav://127.0.0.1:8090/ .
+
+The server makes no protocol decision: every method, status, property, lock
+and mapping is decided by formal/lean4/L4Factoidal/WebDAV/. A WebAssembly
+module built before the WebDAV operations landed makes this command exit 3
+and say so. Design: docs/designissues/2026-10-27-webdav.md
+(https://github.com/danbri/factoidal/issues/1066).`,
 
   'solid-client': `factoidal solid-client - run one Solid client operation
 
@@ -736,7 +834,7 @@ function parseArguments (args, valueOptions) {
 class UsageError extends Error {}
 
 /** Options that may be given more than once; their value is the list. */
-const REPEATABLE_OPTIONS = new Set(['cors-origin'])
+const REPEATABLE_OPTIONS = new Set(['cors-origin', 'saml-idp', 'saml-decrypt-key'])
 
 const VALUE_OPTIONS = {
   version: new Set([]),
@@ -750,7 +848,8 @@ const VALUE_OPTIONS = {
   serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2']),
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
     'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window',
-    'redirects-max', 'storage', 'cors-origin']),
+    'redirects-max', 'storage', 'cors-origin', 'authz', 'alg', 'token-lifetime', 'rotate-after',
+    'saml-idp', 'saml-decrypt-key']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret']),
   'lws-client': new Set(['body', 'file', 'content-type', 'slug', 'type', 'link', 'if-match',
@@ -758,9 +857,10 @@ const VALUE_OPTIONS = {
     'target', 'subject-token-file', 'subject-token-type', 'access-token', 'storage', 'root',
     'inbox']),
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
-    'cors-origin']),
+    'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key'])
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key']),
+  'webdav-serve': new Set(['port', 'host'])
 }
 
 // ------------------------------------------------------------- commands
@@ -931,14 +1031,154 @@ function printTable (headers, rows) {
   for (const row of rows) out(line(row))
 }
 
+// --------------------------------------------------------------- SBM11
+
+let sbm11 = null
+
+/** The SBM11 functions of lib/sbm11.mjs over this command's engine, with
+ *  the Node directory reader as the default reader (it moves bytes only). */
+function sbm11Functions () {
+  if (sbm11 === null) {
+    setDefaultSbm11Reader(nodeDefaultReaderFactory())
+    sbm11 = sbm11Api(loadEngine)
+  }
+  return sbm11
+}
+
+/**
+ * The engine's answer (op storeLayout) when `source` holds an SBM11
+ * generation, or names one through CURRENT: `{layout, generation,
+ * manifest}`. null for an IBK store, for a directory the op does not
+ * recognise, and for an engine built before the op; the IBK path then
+ * runs, and reports a missing store in its own words.
+ */
+function sbm11Layout (engine, source) {
+  sbm11Functions()
+  let answer
+  try {
+    answer = engine.call('storeLayout', [source])
+  } catch (_error) {
+    return null
+  }
+  return answer && answer.layout === 'sbm11' ? answer : null
+}
+
+/** The directory a command reads: STORE, or STORE/GENERATION when
+ *  --generation names one. */
+function storeSource (root, named) {
+  return named === null ? root : joinPath(root, named)
+}
+
+/** The engine's words of a refusal, without the loader's prefix. */
+function engineWords (error) {
+  const message = error && error.message ? String(error.message) : String(error)
+  return message.replace(/^l4factoidal:\s*/, '')
+}
+
+async function inspectSbm11 (root, named, layout, options) {
+  let store
+  try {
+    store = await sbm11Functions().openSbm11(storeSource(root, named))
+  } catch (error) {
+    err(`factoidal inspect: ${engineWords(error)}`)
+    return EXIT_FAILURE
+  }
+  const terms = store.terms
+  store.close()
+  const generation = named !== null ? named : layout.generation
+  const generationDir = named !== null || layout.generation === ''
+    ? storeSource(root, named)
+    : joinPath(root, layout.generation)
+  const files = listGeneration(generationDir)
+  let directoryBytes = 0
+  for (const file of files) directoryBytes += file.size
+  if (options.json) {
+    out(JSON.stringify({
+      ok: true,
+      layout: 'sbm11',
+      generation,
+      activated: named === null && layout.generation !== '',
+      manifest: layout.manifest,
+      terms,
+      files: files.length,
+      bytes: directoryBytes
+    }, null, 2))
+    return EXIT_OK
+  }
+  out(`store ${root}`)
+  if (named !== null) out(`generation ${generation} (named on the command line)`)
+  else if (layout.generation !== '') out(`generation ${generation} (activated through CURRENT)`)
+  else out('generation directory (no CURRENT)')
+  out(`manifest ${layout.manifest}`)
+  out('layout sbm11')
+  out(plural(terms, 'term'))
+  out(`generation directory holds ${files.length} files, ${directoryBytes} bytes`)
+  return EXIT_OK
+}
+
+/**
+ * Answer a query on an SBM11 store (ops sbm11Open / sbm11Query /
+ * sbm11Close) and print it as `query` prints an IBK answer. The engine
+ * answers SPARQL Query Results JSON for SELECT and ASK and N-Triples for
+ * CONSTRUCT and DESCRIBE; this only chooses which renderer prints it.
+ */
+async function querySbm11 (engine, root, named, sparql, format, limit, options) {
+  const quiet = options.quiet === true
+  if (options.explain === true) {
+    err('factoidal query: --explain prints the plan of an IBK store; there is ' +
+      'no plan operation for an SBM11 store yet ' +
+      '(https://github.com/danbri/factoidal/issues/1009)')
+    return EXIT_FAILURE
+  }
+  let answer
+  try {
+    const store = await sbm11Functions().openSbm11(storeSource(root, named))
+    try {
+      const got = store.query(sparql)
+      // read the bytes while the handle is open
+      answer = { path: got.path, format: got.format, reads: got.reads,
+        bytesRead: got.bytesRead, text: got.result }
+    } finally {
+      store.close()
+    }
+  } catch (error) {
+    err(`factoidal query: ${engineWords(error)}`)
+    if (isStackOverflow(error)) {
+      for (const line of stackLimitAdvice(STACK_REMEDY.query)) err(line)
+    }
+    return EXIT_FAILURE
+  }
+  if (!quiet) {
+    err(`${answer.path}, ${plural(answer.reads, 'read')}, ${answer.bytesRead} bytes read`)
+  }
+  let result
+  if (answer.format === 'srj') {
+    const document = JSON.parse(answer.text)
+    if (typeof document.boolean === 'boolean') {
+      if (format === 'json') {
+        out(JSON.stringify(document, null, 2))
+        return EXIT_OK
+      }
+      result = { kind: 'ask', boolean: document.boolean }
+    } else {
+      result = { kind: 'select', srj: document }
+    }
+  } else {
+    result = { kind: 'construct', nquads: answer.text }
+  }
+  return renderQueryResult(engine, result, format, limit, quiet)
+}
+
 // ------------------------------------------------------------- inspect
 
 async function commandInspect (positional, options) {
   if (positional.length !== 1) throw new UsageError('inspect needs exactly one STORE')
   const root = positional[0]
   const named = typeof options.generation === 'string' ? options.generation : null
-  const store = openStore(root, named)
   const engine = await loadEngine()
+  const layout = sbm11Layout(engine, storeSource(root, named))
+  if (layout !== null) return inspectSbm11(root, named, layout, options)
+  const store = openStore(root, named)
   const envelope = inspectManifest(engine, store)
 
   if (options.json) {
@@ -1102,8 +1342,11 @@ async function commandQuery (positional, options) {
   const quiet = options.quiet === true
 
   const named = typeof options.generation === 'string' ? options.generation : null
-  const store = openStore(root, named)
   const engine = await loadEngine()
+  if (sbm11Layout(engine, storeSource(root, named)) !== null) {
+    return querySbm11(engine, root, named, sparql, format, limit, options)
+  }
+  const store = openStore(root, named)
 
   if (options.explain === true) {
     let plan
@@ -1208,9 +1451,15 @@ function readHead (path, length) {
 /** The syntax tag for an input: --syntax when given, else the engine's
  *  suffix table (op engineTables), else the engine's content detection
  *  (op detectFormat) on the first 64 KiB of the file. */
-function packSyntax (engine, input, options) {
+function packSyntax (engine, input, options, layout) {
   const tables = engine.call('engineTables', []).tables
-  const syntaxes = tables.packSyntaxes
+  // The SBM11 pack reads the whole document (op sbm11PackFiles), so it also
+  // reads the syntaxes of packWholeSuffixes (RDF/XML, JSON-LD).
+  const whole = layout === 'sbm11' ? (tables.packWholeSuffixes ?? {}) : {}
+  const syntaxes = tables.packSyntaxes.slice()
+  for (const syntax of Object.values(whole)) {
+    if (syntaxes.indexOf(syntax) < 0) syntaxes.push(syntax)
+  }
   if (typeof options.syntax === 'string') {
     const syntax = options.syntax.toLowerCase()
     if (syntaxes.indexOf(syntax) >= 0) return syntax
@@ -1220,11 +1469,14 @@ function packSyntax (engine, input, options) {
   for (const [suffix, syntax] of Object.entries(tables.packSuffixes)) {
     if (lower.endsWith(suffix)) return syntax
   }
+  for (const [suffix, syntax] of Object.entries(whole)) {
+    if (lower.endsWith(suffix)) return syntax
+  }
   for (const [suffix, name] of Object.entries(tables.packUnsupportedSuffixes)) {
     if (lower.endsWith(suffix)) {
       throw new UsageError(
-        `pack does not read ${name}. The packer's streaming fold reads ` +
-        `${syntaxes.join(', ')} only. Convert the file first, for ` +
+        `pack does not read ${name}. The packer reads ` +
+        `${syntaxes.join(', ')} only${layout === 'sbm11' ? '' : ' (--layout sbm11 also reads rdfxml and jsonld)'}. Convert the file first, for ` +
         "example with: factoidal parse FILE --out nquads")
     }
   }
@@ -1253,8 +1505,11 @@ function packSyntax (engine, input, options) {
  * `--base ''` asks for no base, which turns a relative IRI into a parse
  * error rather than a silently different term.
  */
-function packBase (input, options) {
+function packBase (input, options, layout) {
   if (typeof options.base === 'string') return options.base
+  // `l4sbm11-pack` uses no base unless --base names one; the same default
+  // gives the same bytes.
+  if (layout === 'sbm11') return ''
   const absolute = input.startsWith('/') ? input : joinPath(currentDirectory(), input)
   return 'file://' + absolute
 }
@@ -1266,7 +1521,7 @@ function currentDirectory () {
 }
 
 function packLayout (options) {
-  if (typeof options.layout !== 'string') return 'ibk3'
+  if (typeof options.layout !== 'string') return 'ibk5'
   const layout = options.layout.toLowerCase()
   if (PACK_LAYOUTS.indexOf(layout) >= 0) return layout
   throw new UsageError(`--layout ${options.layout} is not one of ${PACK_LAYOUTS.join(', ')}`)
@@ -1275,8 +1530,8 @@ function packLayout (options) {
 async function commandPack (positional, options) {
   if (positional.length !== 2) throw new UsageError('pack needs INPUT and OUTPUT')
   const [input, output] = positional
-  const syntax = packSyntax(await loadEngine(), input, options)
   const layout = packLayout(options)
+  const syntax = packSyntax(await loadEngine(), input, options, layout)
   // The pack fold needs a bigger call stack than either runtime gives by
   // default (https://github.com/danbri/factoidal/issues/649). Under Node
   // the work runs on a worker thread with a raised stack; under Deno the
@@ -1291,8 +1546,10 @@ async function commandPack (positional, options) {
   let answer
   try {
     answer = await runPack(
-      { kind: 'pack', input, output, syntax, layout, base: packBase(input, options),
-        batchBytes: options['batch-bytes'] },
+      layout === 'sbm11'
+        ? { kind: 'packSbm11', input, output, syntax, base: packBase(input, options, layout) }
+        : { kind: 'pack', input, output, syntax, layout, base: packBase(input, options, layout),
+            batchBytes: options['batch-bytes'] },
       quiet
         ? undefined
         : (progress) => {
@@ -1331,7 +1588,7 @@ async function commandPack (positional, options) {
     return EXIT_OK
   }
   out(`packed ${report.bytesRead} bytes of ${syntax} into ${output}`)
-  out(`${report.written.length} artifacts, ${report.bytesWritten} bytes, layout ${layout}`)
+  out(`${report.written.length} ${layout === 'sbm11' ? 'files' : 'artifacts'}, ${report.bytesWritten} bytes, layout ${layout}`)
   if (typeof report.rows === 'number') out(`${plural(report.rows, 'row')}`)
   out(`activate it with: factoidal activate ${dirOf(output)} ${nameOf(output)}`)
   return EXIT_OK
@@ -1382,6 +1639,10 @@ async function commandActivate (positional, options) {
   const host = { worker: options['no-worker'] !== true }
   const reexec = await denoReexec(host)
   if (reexec !== null) return reexec
+  const engine = await loadEngine()
+  if (sbm11Layout(engine, joinPath(root, generation)) !== null) {
+    return activateSbm11(engine, root, generation, options)
+  }
   let answer
   try {
     answer = await runPack({ kind: 'activate', root, generation }, undefined, host)
@@ -1418,6 +1679,32 @@ async function commandActivate (positional, options) {
     return EXIT_OK
   }
   out(`activated ${generation}: ${verdict.artifacts} artifacts verified, ${verdict.bytes} bytes`)
+  if (!synced) {
+    err('CURRENT was replaced, but the directory entry was not synced; a ' +
+        'crash now could lose the pointer update.')
+  }
+  return EXIT_OK
+}
+
+/**
+ * Activate an SBM11 generation: the engine checks every file against the
+ * manifest (op sbm11Verify), and only after its "ok" does CURRENT move.
+ */
+function activateSbm11 (engine, root, generation, options) {
+  let verdict
+  try {
+    verdict = engine.call('sbm11Verify', [joinPath(root, generation)])
+  } catch (error) {
+    err(`factoidal activate: ${engineWords(error)}`)
+    err('The generation is NOT activated; CURRENT is unchanged.')
+    return EXIT_FAILURE
+  }
+  const synced = atomicReplace(joinPath(root, 'CURRENT'), new TextEncoder().encode(generation))
+  if (options.json === true) {
+    out(JSON.stringify({ ...verdict, layout: 'sbm11', generation, directorySynced: synced }, null, 2))
+    return EXIT_OK
+  }
+  out(`activated ${generation}: ${verdict.artifacts} artifacts verified (${verdict.files} files, ${verdict.bytes} bytes), layout sbm11`)
   if (!synced) {
     err('CURRENT was replaced, but the directory entry was not synced; a ' +
         'crash now could lose the pointer update.')
@@ -1485,6 +1772,21 @@ function corsConfig (options) {
   return {}
 }
 
+// --saml-idp FILE (repeatable): a SAML 2.0 identity provider whose signed
+// assertions the authorization server accepts, as the config member
+// `samlIdps`. FILE is JSON {"entityId": ID, "jwk": RSA public JWK}; passed
+// unread, the engine checks it (Wasm/Ops/Authz.lean, issue 926).
+// --saml-decrypt-key FILE (repeatable): one private JWK, as the config member
+// `samlKeys`; passed unread, the engine checks it (samlKeysOf?, issue 1073).
+function samlConfig (options) {
+  const out = {}
+  const files = options['saml-idp']
+  if (Array.isArray(files)) out.samlIdps = files.map((f) => readJsonFile(f))
+  const keys = options['saml-decrypt-key']
+  if (Array.isArray(keys)) out.samlKeys = keys.map((f) => readJsonFile(f))
+  return out
+}
+
 function serveHost (options) {
   if (options.host === undefined) return '127.0.0.1'
   if (typeof options.host !== 'string' || options.host.length === 0) {
@@ -1528,7 +1830,11 @@ async function commandServe (positional, options) {
     const { tmpdir } = await import('node:os')
     const { join } = await import('node:path')
     const root = mkdtempSync(join(tmpdir(), 'factoidal-serve-'))
-    const packOptions = { quiet: true, layout: typeof options.layout === 'string' ? options.layout : 'ibk5' }
+    const packOptions = { quiet: true, layout: packLayout(options) }
+    if (packOptions.layout === 'sbm11') {
+      throw new UsageError('serve --file packs a store that accepts updates; --layout sbm11 ' +
+        'packs a store that serve does not read yet. Use ibk3, ibk4 or ibk5.')
+    }
     let rc = await commandPack([options.file, join(root, 'gen-1')], packOptions)
     if (rc !== 0) return rc
     rc = await commandActivate([root, 'gen-1'], { quiet: true })
@@ -1549,6 +1855,12 @@ async function commandServe (positional, options) {
     options = { ...options, 'query-path': `${dsName}/sparql`, 'gsp-path': `${dsName}/data` }
   }
   if (positional.length !== 1) throw new UsageError('serve needs one STORE')
+  if (!tdb2 && sbm11Layout(await loadEngine(), positional[0]) !== null) {
+    err(`factoidal serve: ${positional[0]} is an SBM11 store, and serve reads IBK ` +
+      'stores only (the storeServe operations). Query it with: factoidal query ' +
+      `${positional[0]} QUERY (https://github.com/danbri/factoidal/issues/1009)`)
+    return EXIT_FAILURE
+  }
   const { listen, listenOnWorker, ServeHostError } = await import('./serve.mjs')
   const serveOptions = {
     port: servePort(options, 3030),
@@ -1590,12 +1902,26 @@ async function commandLwsServe (positional, options) {
   const insecure = options['insecure-no-auth'] === true
   const issuerOption = typeof options.issuer === 'string' ? options.issuer : null
   const authFile = typeof options['auth-config'] === 'string' ? options['auth-config'] : null
-  if (!insecure && issuerOption === null && authFile === null) {
-    throw new UsageError('lws-serve needs --issuer IRI or --auth-config FILE, ' +
+  const authzDir = typeof options.authz === 'string' ? options.authz : null
+  if (!insecure && issuerOption === null && authFile === null && authzDir === null) {
+    throw new UsageError('lws-serve needs --authz DIR, --issuer IRI or --auth-config FILE, ' +
       'or --insecure-no-auth for development')
   }
-  if (insecure && (issuerOption !== null || authFile !== null)) {
-    throw new UsageError('--insecure-no-auth cannot be combined with --issuer or --auth-config')
+  if (insecure && (issuerOption !== null || authFile !== null || authzDir !== null)) {
+    throw new UsageError('--insecure-no-auth cannot be combined with --authz, --issuer or --auth-config')
+  }
+  // --authz DIR: an authorization server on the same port, its issuer the
+  // storage root (L4Factoidal/Authz/Mount.lean). Its options are passed
+  // unread; the engine checks them (Wasm/Ops/Authz.lean).
+  const authz = authzDir === null ? undefined : {
+    dir: authzDir,
+    ...(typeof options.alg === 'string' ? { alg: options.alg } : {}),
+    ...(options['token-lifetime'] !== undefined ? { tokenLifetime: natOption('token-lifetime', options['token-lifetime']) } : {}),
+    ...(options['rotate-after'] !== undefined ? { rotateAfter: natOption('rotate-after', options['rotate-after']) } : {}),
+    ...(options['allow-http'] === true ? { allowHttp: true } : {}),
+    ...(options['allow-private-fetch'] === true ? { allowPrivateFetch: true } : {}),
+    ...corsConfig(options),
+    ...samlConfig(options)
   }
   let auth
   if (authFile !== null) {
@@ -1628,6 +1954,7 @@ async function commandLwsServe (positional, options) {
       ...(typeof options.storage === 'string' ? { storage: options.storage } : {}),
       ...corsConfig(options),
       ...(insecure ? { insecureNoAuth: true } : { auth }),
+      ...(authz !== undefined ? { authz } : {}),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       ...(typeof options['root-acl'] === 'string'
         ? { rootAcl: new TextDecoder('utf-8', { fatal: true }).decode(readWhole(options['root-acl'])) }
@@ -1651,6 +1978,9 @@ async function commandLwsServe (positional, options) {
   }
   if (!quiet) {
     err(`lws-serve: listening on ${running.origin} for ${positional[0]}`)
+    if (running.authz() !== null) err(`lws-serve: authorization server ${running.authz().issuer} (keys in ${authzDir})`)
+    if (options['allow-http'] === true) err('lws-serve: WARNING: --allow-http: http subject identifiers are accepted')
+    if (options['allow-private-fetch'] === true) err('lws-serve: WARNING: --allow-private-fetch: private addresses may be fetched')
     if (insecure) err('lws-serve: WARNING: --insecure-no-auth: every request is served without authorization')
   }
   out(running.origin)
@@ -1678,7 +2008,8 @@ async function commandAuthzServe (positional, options) {
       ...(options['rotate-after'] !== undefined ? { rotateAfter: natOption('rotate-after', options['rotate-after']) } : {}),
       ...(options['allow-http'] === true ? { allowHttp: true } : {}),
       ...(options['allow-private-fetch'] === true ? { allowPrivateFetch: true } : {}),
-      ...corsConfig(options)
+      ...corsConfig(options),
+      ...samlConfig(options)
     })
   } catch (error) {
     if (error !== null && typeof error === 'object' && error.envelope !== undefined) {
@@ -1780,6 +2111,34 @@ async function commandSolidServe (positional, options) {
   if (!quiet) {
     err(`solid-serve: listening on ${running.origin} for ${positional[0]}`)
     if (insecure) err('solid-serve: WARNING: --insecure-no-auth: every request is served without authentication')
+  }
+  out(running.origin)
+  return untilInterrupted(running, quiet)
+}
+
+// webdav-serve CONFIGDIR (https://github.com/danbri/factoidal/issues/1066):
+// the host carries sockets, files and fetches; the engine reads the mount
+// files and decides every answer (L4Factoidal/WebDAV/).
+async function commandWebdavServe (positional, options) {
+  if (positional.length !== 1) throw new UsageError('webdav-serve needs one CONFIGDIR')
+  const quiet = options.quiet === true
+  const { listen, WebdavHostError } = await import('../webdav/server.mjs')
+  let running
+  try {
+    running = await listen({ configDir: positional[0], port: servePort(options, 8090), host: serveHost(options) })
+  } catch (error) {
+    if (error instanceof WebdavHostError && error.unknownOp) return notWired('webdav-serve', error.message)
+    if (error instanceof WebdavHostError || (error !== null && typeof error === 'object' && error.code === 'ENOENT')) {
+      err(`factoidal webdav-serve: ${error.message}`)
+      return EXIT_FAILURE
+    }
+    throw error
+  }
+  if (!quiet) {
+    err(`webdav-serve: listening on ${running.origin} for ${positional[0]}`)
+    for (const m of running.mounts) {
+      err(`webdav-serve: ${running.origin}/${encodeURIComponent(m.name)}/ - ${m.title} (${m.kind}${m.writable ? '' : ', read-only'}${m.agent ? ', as ' + m.agent : ''})`)
+    }
   }
   out(running.origin)
   return untilInterrupted(running, quiet)
@@ -1965,19 +2324,22 @@ const COMMANDS = {
   'lws-client': commandLwsClient,
   'authz-serve': commandAuthzServe,
   'authz-keys': commandAuthzKeys,
-  'xmpp-serve': commandXmppServe
+  'xmpp-serve': commandXmppServe,
+  'webdav-serve': commandWebdavServe
 }
 
 // ----------------------------------------------------------------- main
 
 async function main () {
   if (argv.length === 0) {
+    out(REVIEW_WARNING + '\n')
     out(USAGE)
     return EXIT_USAGE
   }
   const command = argv[0]
   if (command === '--help' || command === '-h' || command === 'help') {
     const topic = argv[1]
+    out(REVIEW_WARNING + '\n')
     if (typeof topic === 'string' && Object.prototype.hasOwnProperty.call(COMMAND_USAGE, topic)) {
       out(COMMAND_USAGE[topic])
     } else {
@@ -2002,8 +2364,12 @@ async function main () {
     throw error
   }
   if (parsed.options.help) {
+    out(REVIEW_WARNING + '\n')
     out(COMMAND_USAGE[command])
     return EXIT_OK
+  }
+  if (WARNED_COMMANDS.has(command)) {
+    err(`factoidal ${command}: WARNING: ${REVIEW_WARNING}`)
   }
   try {
     return await COMMANDS[command](parsed.positional, parsed.options)

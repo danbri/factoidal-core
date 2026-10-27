@@ -197,14 +197,21 @@ private def refusedSources : List String := [
 #guard refusedSources.all (fun s => textMatches s)
 #guard refusedSources.all (fun s => match parseTurtle s with | .error _ => true | .ok _ => false)
 
--- Documents the walk alone refuses where `parseTurtle` succeeds: a
--- SPARQL-style directive split over two lines, and a statement whose subject
--- starts with `base:` and goes on to the next line (the scanner cuts both at
--- the line end). `parseTurtleText` falls back and agrees.
+-- A document the walk alone refuses where `parseTurtle` succeeds: a
+-- SPARQL-style directive split over two lines (the scanner cuts it at the
+-- line end). `parseTurtleText` falls back and agrees.
 private def splitDirective : String := "PREFIX ex:\n  <http://example.org/>\nex:s ex:p ex:o .\n"
-private def baseLike : String := "@prefix base: <http://b.example/> .\nbase:s base:p\n  base:o .\n"
 #guard walkNeedsFallback splitDirective
-#guard walkNeedsFallback baseLike
+-- A statement whose subject is a prefixed name with the prefix `base:` or
+-- `prefix:` and goes on to the next line: the walk reads it with no
+-- fallback, since `base:s` is not the keyword `BASE`
+-- (https://github.com/danbri/factoidal/issues/1028).
+private def baseLike : String := "@prefix base: <http://b.example/> .\nbase:s base:p\n  base:o .\n"
+private def prefixLike : String :=
+  "@prefix prefix: <http://p.example/> .\nprefix:Atto\n  a prefix:Prefix ;\n  prefix:v 1 .\n"
+#guard !walkNeedsFallback baseLike
+#guard !walkNeedsFallback prefixLike
+#guard textMatches prefixLike
 #guard textMatches splitDirective
 #guard textMatches baseLike
 
@@ -253,5 +260,11 @@ private def prefixSources : List String := [
 #guard samePrefixParse baseLike
 #guard acceptedSources.all (fun d => samePrefixParse d)
 #guard refusedSources.all (fun d => samePrefixParse d)
+
+-- https://github.com/danbri/factoidal/issues/1063: white space or a comment after
+-- `^^`, and a prefix named `true`, through the reader of the wasm ops.
+#guard (parseTurtleText "<http://e/a> <http://e/b> \"x\"^^ <http://e/d> .").toOption.map (·.length) == some 1
+#guard (parseTurtleText "<http://e/a> <http://e/b> \"x\"^^ # c\n <http://e/d> .").toOption.map (·.length) == some 1
+#guard (parseTurtleText "@prefix true: <http://example/c/> . <urn:s> <urn:p> true:o .").toOption.map (·.length) == some 1
 
 end L4Factoidal.Syntax

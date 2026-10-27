@@ -12,6 +12,17 @@ Since 2026-10-20 the hub has two parts:
   `docs/_data/hubStandards.js`; refresh it by running
   `tools/lean-scoreboard.sh --json` and committing the JSON and the
   printed table there.
+- Engine: every page of this directory loads the published npm release
+  named in `docs/_data/factoidalRelease.js` (one exact version; a release
+  bump is that one line) from `https://cdn.jsdelivr.net/npm/@factoidal/core@<version>/`,
+  wasm included. `hub.11tydata.json` sets `factoidalEngine: "release"`
+  for the directory; `hub.njk` then imports that `browser.js` and adds the
+  CDN host to `script-src` and `connect-src`. The Node tests run
+  `npm/factoidal/` of the checkout, so they check the page only while that
+  directory holds the released files;
+  `tests/hub/hub_checked-pipelines_test.mjs` fails when the two versions
+  differ. `fn.openStoreOverHttp` still imports `store-http/` same-origin
+  (the published package has no `store-http/`).
 - `docs/web/historical-fstar-notebooks/NN-*.md`: the posts written before
   2026-10-20, kept unchanged, with redirect pages at their old
   `/web/hub/NN-*/` URLs (`docs/web/hub-redirects.11ty.js`). Their tests
@@ -443,7 +454,17 @@ a percent sign immediately followed by a close-brace) in immediate
 succession, and confirming every match is a genuine, already-valid
 Nunjucks tag.
 
-### Trap: a function call wrapped directly around a dotted chain hides the chain's own name from the reactive-cell analyzer
+### Fixed trap (2026-10-25): a function call wrapped directly around a dotted chain hid the chain's own name from the reactive-cell analyzer
+
+Fixed by https://github.com/danbri/factoidal/issues/690: `collectLocals()` now takes
+the innermost parenthesised group before `=>` (`/\(([^()]*)\)\s*=>/`), and
+`tests/hub/reactive_cells_flags_test.mjs` asserts the case below. The text
+below is the record of the defect. It came back on 2026-10-25 in the cell
+`buildingsEvidence` of `canary-wharf-pipeline.md`: the page test passed
+because it never read that cell, and the headless browser run showed
+`ReferenceError: buildingsRun is not defined`. Rule: a page test reads
+every named cell of its page.
+
 
 `reactive-cells.mjs`'s `collectLocals()` finds an arrow function's own
 parameter list with a pattern that looks for "open paren, anything that

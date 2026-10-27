@@ -69,6 +69,8 @@ def errorCodeTable : List ErrorCodeInfo :=
       "A language tag is not well-formed (BCP 47)."⟩
   , ⟨"term.invalid", some "https://www.w3.org/TR/sparql11-results-json/#select-encode-terms",
       "A term or quad given as JSON is not an RDF term or quad."⟩
+  , ⟨"literal.value", some "https://www.w3.org/TR/xmlschema11-2/#value-space",
+      "The value is not in the value space of the named datatype, or the datatype is not one the engine has."⟩
   , ⟨"query.syntax", some "https://www.w3.org/TR/sparql11-query/#grammar",
       "The SPARQL query does not match the SPARQL grammar."⟩
   , ⟨"query.failed", some "https://www.w3.org/TR/sparql11-query/#sparqlDefinition",
@@ -205,7 +207,7 @@ def opTextArg (op : String) : Option Nat :=
   else if ["queryDataset", "queryDataset12", "updateDataset", "datasetQuery",
            "datasetQuery12", "datasetUpdate", "queryRaw", "datasetQueryRaw",
            "storeQuery", "storeQueryPlan"].contains op then some 1
-  else if op == "queryHdt" then some 0
+  else if op == "queryHdt" || op == "storeQueryPlanBytes" then some 0
   else none
 
 /-- The default code of an op family, for a refusal no message rule names. -/
@@ -233,6 +235,8 @@ def familyCode (op : String) : String :=
   else if p ["store", "activateVerify", "scanIBK", "queryIBK", "pack", "tdb2", "blob",
              "queryHdt"] then "store.failed"
   else if p ["ext", "registerService", "clearService"] then "registry.failed"
+  else if op == "literalFromValue" then "literal.value"
+  else if op == "literalValue" then "term.invalid"
   else if p ["dataset", "resolveIri"] then "term.invalid"
   else "op.failed"
 
@@ -271,7 +275,8 @@ def classify (op msg : String) (positioned : Bool) : String :=
 def uncodedOps : List String :=
   [ "lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush", "lwsLoad", "lwsPersist", "lwsRead", "solidOpen", "solidStep",
     "solidClose", "solidSnapshot", "solidFetched", "solidClientRequest", "solidClientResponse",
-    "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzClose" ]
+    "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzOwns", "authzClose",
+    "webdavOpen", "webdavLoad", "webdavStep", "webdavResume", "webdavClose" ]
 
 private def isErrorEnvelope (s : String) : Bool := s.startsWith "{\"ok\":false"
 
@@ -315,6 +320,21 @@ def attachCode (op : String) (args : List String) (envelope : String) : String :
             | none => []
           (Json.object (fields ++ [("code", .string code)] ++ spec ++ pos)).toString
     | _ => envelope
+
+/-- `attachCode` with the arguments read only when the answer is an error
+envelope that needs a code. The dispatch entries pass `argsForCode`, which
+decodes the whole argument envelope a second time; for a store manifest of
+1.5 million hexadecimal digits that was paid on every call, error or not
+(https://github.com/danbri/factoidal/issues/1039). -/
+def attachCodeLazy (op : String) (args : Unit → List String) (envelope : String) : String :=
+  if !isErrorEnvelope envelope || uncodedOps.contains op then envelope
+  else attachCode op (args ()) envelope
+
+/-- It is `attachCode`. -/
+theorem attachCodeLazy_eq (op : String) (args : List String) (envelope : String) :
+    attachCodeLazy op (fun _ => args) envelope = attachCode op args envelope := by
+  unfold attachCodeLazy attachCode
+  split <;> simp_all
 
 /-- The code an envelope carries, if any. -/
 def codeOf? (envelope : String) : Option String :=
