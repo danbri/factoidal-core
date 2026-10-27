@@ -71,6 +71,59 @@ This needs a WebAssembly operation from the Lean engine; see https://github.com/
 `factoidal serve STORE` does apply updates through the delta log; see the
 [servers page](../servers/).
 
+## The SBM11 layout: `--layout sbm11`
+
+Since 0.17.0, `factoidal pack --layout sbm11` writes an SBM11 generation
+(64-bit global term ids, a term dictionary and four sorted permutations,
+each file with a Merkle sidecar). The files are the same, byte for byte,
+as those of the native `l4sbm11-pack` (605 of 605 W3C census inputs).
+`activate` checks the length, SHA-256 and Merkle root of every file before
+it moves `CURRENT`; `inspect` and `query` read the store. IBK5 stays the
+default layout (https://github.com/danbri/factoidal-core/pull/131,
+https://github.com/danbri/factoidal/issues/1009). Run on 2026-10-27 with
+`@factoidal/core` 0.18.0, the same `data.ttl`:
+
+```
+$ factoidal pack data.ttl store/gen-1 --layout sbm11
+packed 187 bytes of turtle into store/gen-1
+21 files, 2372 bytes, layout sbm11
+activate it with: factoidal activate store gen-1
+
+$ factoidal activate store gen-1
+activated gen-1: 10 artifacts verified (21 files, 1218 bytes), layout sbm11
+
+$ factoidal query store 'SELECT ?name WHERE { ?p <http://xmlns.com/foaf/0.1/name> ?name } ORDER BY ?name'
+path=ids, 9 reads, 635 bytes read
+name
+"Alice"
+"Bob"
+2 rows
+
+$ factoidal inspect store
+store store
+generation gen-1 (activated through CURRENT)
+manifest manifest.sbm11
+layout sbm11
+8 terms
+generation directory holds 21 files, 2372 bytes
+```
+
+`factoidal serve` does not read an SBM11 store yet.
+
+### Opening a store from Node
+
+`openStoreHandle` opens a store for many queries. Times measured in the
+pull requests on the londat store (142,314 quads, 1,046 blocks, a 753 kB
+manifest; the 0.17.0 run: Apple M1, Node 22):
+
+| `openStoreHandle` | before | after | change |
+|---|---|---|---|
+| 0.16.0 → 0.17.0, median of 7 | 1,485 ms | 562 ms | manifest decoded over bytes, arguments read in place, HACL* SHA-256 in `storeOpen` (https://github.com/danbri/factoidal-core/pull/135) |
+| 0.17.0 → 0.18.0, scoped open, median of 9 | 305 ms | 198 ms | the manifest goes to the engine as bytes and is decoded once (https://github.com/danbri/factoidal-core/pull/141) |
+
+An SBM11 store opens in about 5 ms. Tracking:
+<https://github.com/danbri/factoidal/issues/1039>.
+
 ## Update through the delta log and compact: the native tools
 
 The full cycle on an IBK3 (triples) generation:
@@ -123,5 +176,6 @@ l4block-shard-compact failure: source child artifact is missing, changed, or mal
   in-memory evaluator: <https://github.com/danbri/factoidal/issues/776>.
 - A named graph with no triple is lost in IBK4 and IBK5 stores:
   <https://github.com/danbri/factoidal/issues/880>.
-- The next layout, SBM11 (64-bit global term ids, sorted permutations),
-  is in progress: <https://github.com/danbri/factoidal/issues/787>.
+- SBM11 (above) is in the npm commands `pack`, `activate`, `inspect` and
+  `query`, not yet in `serve`: <https://github.com/danbri/factoidal/issues/787>,
+  <https://github.com/danbri/factoidal/issues/1009>.

@@ -26,10 +26,54 @@ in your browser.
   <li><a href="./canary-wharf-pipeline/">A Canary Wharf pipeline</a> — Turtle and CSVW sources through checked nodes, merged into named graphs, one query across them, N-Quads for an SBM11 store, and the pipeline's record queried as RDF</li>
   <li><a href="./checked-pipelines/">Checked pipelines</a> — readers, reasoners, the SPARQL evaluator and writers as nodes; per-step status and contract, entailment explanations, and the list of what is proved and what is assumed</li>
   <li><a href="./validation/">SHACL and ShEx</a> — validation reports as RDF, SHACL-SPARQL, ShExC schemas</li>
-  <li><a href="./canonical-and-credentials/">Canonical form and credentials</a> — RDFC-1.0, graph hashes, eddsa-rdfc-2022 proofs, did:key</li>
-  <li><a href="./servers/">Servers</a> — SPARQL Protocol and Graph Store with Fuseki paths, read-only Jena TDB2, Linked Web Storage, Solid, XMPP (commands and recorded output)</li>
-  <li><a href="./shardborough/">Shardborough (early stage)</a> — the persisted store: pack, activate, query, update through a delta log, compact</li>
+  <li><a href="./canonical-and-credentials/">Canonical form and credentials</a> — RDFC-1.0, <code>canonicalHash</code> (SHA-256), eddsa-rdfc-2022 proofs, did:key</li>
+  <li><a href="./servers/">Servers</a> — SPARQL Protocol and Graph Store with Fuseki paths, read-only Jena TDB2, Linked Web Storage with its authorization server, WebDAV for file browsers, Solid, XMPP (commands and recorded output)</li>
+  <li><a href="./shardborough/">Shardborough (early stage)</a> — the persisted store: pack (IBK5 or SBM11), activate, query, update through a delta log, compact; store-open times</li>
 </ul>
+
+## What is new
+
+- **0.18.0** ([release](https://github.com/danbri/factoidal-core/releases/tag/v0.18.0)):
+  XSD constructor casts as XPath F&O 3.1 §19 says
+  ([SPARQL](./sparql/#string-functions-casts-and-base-direction));
+  base direction in the SPARQL string functions; JSON-LD-star with the
+  option `rdfstar`
+  ([JSON-LD-star and JSON-LD 1.3](https://danbri.github.io/factoidal/web/hub/jsonld-star/)); a WebDAV
+  server for file browsers and a larger LWS client ([servers](./servers/));
+  a faster store open ([Shardborough](./shardborough/#opening-a-store-from-node)).
+- **0.17.0** ([release](https://github.com/danbri/factoidal-core/releases/tag/v0.17.0)):
+  **breaking**, `canonicalHash` gives the SHA-256 of the canonical form
+  ([canonical form](./canonical-and-credentials/)); SPARQL string-function
+  argument types; `factoidal pack --layout sbm11`
+  ([Shardborough](./shardborough/#the-sbm11-layout-layout-sbm11)); store open
+  2.6 times faster on the londat store; `lws-serve --authz`, an authorization server on the
+  storage's port ([servers](./servers/#linked-web-storage-10)); release
+  checks (no test skips when the wasm lacks an op).
+
+All changes: [CHANGELOG](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/CHANGELOG.md),
+[releases](https://github.com/danbri/factoidal-core/releases).
+
+## Tested against other libraries' test suites
+
+[echochamber](https://github.com/danbri/echochamber) gives the API of four
+RDF libraries over `@factoidal/core` and ports each library's own tests.
+Where Factoidal and the library disagree, the specification decides: a
+Factoidal defect (an issue), a divergence of the library from the
+specification, or a gap in the echo. Counts on 0.18.0 (echochamber main 5760a33,
+https://github.com/danbri/echochamber/pull/8):
+
+| echo | in the style of | ported | pass | defect | divergence | gap |
+|---|---|---:|---:|---:|---:|---:|
+| leana | Apache Jena | 748 | 317 | 1 | 15 | 415 |
+| Hardylib | RDFLib | 1,438 | 511 | 8 | 919 | 0 |
+| Enthie | N3.js and RDF/JS | 1,460 | 1,071 | 29 | 124 | 236 |
+| MoonForge | Eclipse RDF4J | 2,801 | 2,201 | 300 | 300 | 0 |
+
+MoonForge passed 2,124 cases on 0.16.0, 2,150 on 0.17.0 and 2,201 on
+0.18.0 ([echochamber PR 5](https://github.com/danbri/echochamber/pull/5),
+[PR 6](https://github.com/danbri/echochamber/pull/6)). Fixes for 16 more
+defects that the echoes found are in the next release
+(https://github.com/danbri/factoidal-core/pull/148).
 
 ## The API in one cell
 

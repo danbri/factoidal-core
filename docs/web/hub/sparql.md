@@ -180,6 +180,34 @@ annotations = claims.query(`PREFIX ex: <http://example.org/>
 SELECT ?reifier ?source WHERE { ex:bob ex:likes ex:tea ~ ?reifier {| ex:source ?source |} }`, { sparql12: true })
 ```
 
+## String functions, casts and base direction
+
+The string functions take the argument types of SPARQL 1.1 §17.4.3: a
+number, a boolean or an IRI is a type error, so the variable is unbound.
+`SUBSTR` follows `fn:substring`: positions start at 1, so
+`SUBSTR("12345", 0, 3)` is `"12"` (0.17.0, https://github.com/danbri/factoidal-core/pull/126).
+The XSD constructor functions cast as XPath F&O 3.1 §19 says: a value out of
+range is an error, a dateTime casts to its date (0.18.0,
+https://github.com/danbri/factoidal-core/pull/142).
+
+```observable-js
+stringsAndCasts = places.query(`PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT (SUBSTR("12345", 0, 3) AS ?sub) (STRLEN(42) AS ?lengthOfNumber)
+       (xsd:byte("12") AS ?byte) (xsd:byte("300") AS ?byteOutOfRange)
+       (xsd:date("2026-10-27T10:00:00Z"^^xsd:dateTime) AS ?date) WHERE {}`)
+```
+
+In SPARQL 1.2, `STRSTARTS`, `STRENDS`, `CONTAINS`, `STRBEFORE` and
+`STRAFTER` also compare the base direction of a directional string
+(§17.4.3). `STRBEFORE` keeps the base direction of its first argument
+(0.18.0, https://github.com/danbri/factoidal-core/pull/136):
+
+```observable-js
+baseDirection = places.query(`SELECT (STRBEFORE("abc"@en--ltr, "b") AS ?before)
+       (CONTAINS("abc"@en--ltr, "a"@en) AS ?mixedDirections)
+       (CONTAINS("abc"@en--ltr, "a"@en--ltr) AS ?sameDirection) WHERE {}`, { sparql12: true })
+```
+
 ## Limits
 
 - `geof:distance` computes the Euclidean distance in the units of the

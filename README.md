@@ -153,6 +153,31 @@ backend still carries that glue until #118 completes.
 
 **[Live W3C test results](https://danbri.github.io/factoidal/test-results/)**
 
+## Releases
+
+The npm package `@factoidal/core` is released from this repository. Each
+version has a GitHub Release with its changelog section, the core commit it
+was built from and its publish run:
+https://github.com/danbri/factoidal-core/releases. Since 0.17.0
+(2026-10-27); older versions are on npm only. All versions:
+[`npm/factoidal/CHANGELOG.md`](npm/factoidal/CHANGELOG.md).
+
+- [0.18.0](https://github.com/danbri/factoidal-core/releases/tag/v0.18.0)
+  (2026-10-27): XSD constructor casts, base direction in the SPARQL string
+  functions, JSON-LD-star (option `rdfstar`), `factoidal webdav-serve`, a
+  larger LWS client, a faster store open.
+- [0.17.0](https://github.com/danbri/factoidal-core/releases/tag/v0.17.0)
+  (2026-10-27): **breaking**, `canonicalHash` gives the SHA-256 of the
+  canonical form; SPARQL string-function argument types; `factoidal pack
+  --layout sbm11`; `lws-serve --authz`; store open 2.6 times faster.
+- Next release: fixes for 16 defects that the
+  [echochamber](https://github.com/danbri/echochamber) test ports found
+  (https://github.com/danbri/factoidal-core/pull/148, not published yet).
+
+Release process: [`skills/npm-release/SKILL.md`](skills/npm-release/SKILL.md).
+Hub of live examples on the current release:
+https://danbri.github.io/factoidal/web/hub/.
+
 ## Orientation links
 
 This repository has a long F\* history and an actively evolving Lean 4

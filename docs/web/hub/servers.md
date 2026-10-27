@@ -1,17 +1,18 @@
 ---
 title: Servers
-description: The HTTP and XMPP servers of Factoidal — SPARQL Protocol and Graph Store with Fuseki paths, read-only Jena TDB2, Linked Web Storage, Solid and XMPP — with the exact commands and output recorded from real runs.
+description: The HTTP and XMPP servers of Factoidal — SPARQL Protocol and Graph Store with Fuseki paths, read-only Jena TDB2, Linked Web Storage, WebDAV, Solid and XMPP — with the exact commands and output recorded from real runs.
 layout: hub.njk
 tests: tests/hub/hub_servers_test.mjs
 ---
 
 # Servers
 
-[Hub](../) · SPARQL Protocol, Graph Store, Fuseki paths, TDB2, LWS, Solid, XMPP
+[Hub](../) · SPARQL Protocol, Graph Store, Fuseki paths, TDB2, LWS, WebDAV, Solid, XMPP
 
 A server cannot run in a browser page, so this page has no live cells.
 Each section gives the command, what the server does and does not do, and
-the output of a run made on 2026-10-20 with `@factoidal/core` 0.10.0 from
+the output of a run made on 2026-10-20 with `@factoidal/core` 0.10.0 (the
+LWS and WebDAV runs: 2026-10-27 with 0.18.0) from
 this repository (`node npm/factoidal/bin/factoidal.mjs`, shown below as
 `factoidal`) and the Lean native build. In each server, the protocol
 decisions (routing, status codes, content negotiation, evaluation) are
@@ -129,46 +130,110 @@ then factoidal serve STORE) to write.
 ## Linked Web Storage 1.0
 
 ```
-factoidal lws-serve DIR [--port N] [--base IRI]
+factoidal lws-serve DIR (--authz DIR | --issuer IRI | --auth-config FILE | --insecure-no-auth) [--port N] [--base IRI]
 ```
 
 What it does: answers every request through the engine's `lwsStep`
 operation, from the
 [LWS 1.0 core editor's draft](https://w3c.github.io/lws-protocol/lws10-core/):
 containers, create, read, update and delete, `Last-Modified`, auxiliary
-resource links, N3 Patch without blank nodes in insertions.
+resource links, N3 Patch. The storage is written to `DIR` after every
+change. One of the four authorization options is required. Since this page
+was first written, storage authorization
+(<https://github.com/danbri/factoidal/issues/886>), container pagination
+(<https://github.com/danbri/factoidal/issues/887>), client-managed metadata
+(<https://github.com/danbri/factoidal/issues/888>), binary bodies
+(<https://github.com/danbri/factoidal/issues/889>) and notifications
+(<https://github.com/danbri/factoidal/issues/890>) are closed;
+`factoidal lws-serve --help` lists their options. Touchstone result: the
+[package README](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/README.md#test-results).
 
-What it does not do: the resource tree is held in memory; `DIR` is not
-read or written yet. No storage-server authorization (401 challenge,
-token validation): <https://github.com/danbri/factoidal/issues/886>. No
-container pagination: <https://github.com/danbri/factoidal/issues/887>.
-No client-managed metadata:
-<https://github.com/danbri/factoidal/issues/888>. Resource bodies are
-UTF-8 strings, so binary content is not stored faithfully:
-<https://github.com/danbri/factoidal/issues/889>. No notifications or
-access grants: <https://github.com/danbri/factoidal/issues/890>.
+Since 0.17.0, `--authz DIR` also serves an authorization server on the same
+port. Its issuer is the storage root without the trailing slash; the token
+endpoint and the JWK Set are under the storage root's `.well-known/`; the
+engine decides which requests are the authorization server's (op
+`authzOwns`). Both forms of each well-known path are read, so a reverse
+proxy can serve the storage at a path prefix
+(https://github.com/danbri/factoidal-core/releases/tag/v0.17.0). Run on
+2026-10-27 with `@factoidal/core` 0.18.0:
 
 ```
-$ factoidal lws-serve ./lws-store --port 3040
+$ factoidal lws-serve ./lws-store --authz ./lws-authz --port 3040
+lws-serve: listening on http://127.0.0.1:3040 for ./lws-store
+lws-serve: authorization server http://127.0.0.1:3040 (keys in ./lws-authz)
 http://127.0.0.1:3040
 
-$ curl -si -X PUT http://127.0.0.1:3040/notes/a.ttl -H "Content-Type: text/turtle" \
-    --data '<#it> <http://purl.org/dc/terms/title> "A" .'
-HTTP/1.1 201 Created
-location: /notes/a.ttl
-last-modified: Tue, 20 Oct 2026 22:08:49 GMT
-
 $ curl -si http://127.0.0.1:3040/notes/a.ttl
-HTTP/1.1 200 OK
-content-type: text/turtle
-last-modified: Tue, 20 Oct 2026 22:08:49 GMT
-allow: GET, HEAD, OPTIONS, PUT, PATCH, DELETE
-accept-patch: text/n3
-link: <http://www.w3.org/ns/ldp#RDFSource>; rel="type", <http://www.w3.org/ns/ldp#Resource>; rel="type",
-  </notes/a.ttl.acl>; rel="acl", </notes/a.ttl.meta>; rel="describedby",
-  <http://127.0.0.1:3040/.well-known/solid>; rel="http://www.w3.org/ns/solid/terms#storageDescription"
+HTTP/1.1 401 Unauthorized
+content-type: application/problem+json
+www-authenticate: Bearer resource_metadata="http://127.0.0.1:3040/.well-known/oauth-protected-resource/notes/a.ttl"
+link: <http://127.0.0.1:3040/.well-known/lws-storage>; rel="https://www.w3.org/ns/lws#storage"
 
-<#it> <http://purl.org/dc/terms/title> "A" .
+{"type":"about:blank","title":"Unauthorized","status":401,"detail":"an access token is required","instance":"/notes/a.ttl"}
+
+$ curl -s http://127.0.0.1:3040/.well-known/lws-configuration
+{"issuer":"http://127.0.0.1:3040","token_endpoint":"http://127.0.0.1:3040/.well-known/lws-token",
+ "jwks_uri":"http://127.0.0.1:3040/.well-known/lws-jwks",
+ "grant_types_supported":["urn:ietf:params:oauth:grant-type:token-exchange"], ...}
+```
+
+Line breaks were added to the JSON for this page.
+
+The LWS client (`factoidal lws-client`)
+gained range and conditional reads, trusted storages for notifications,
+one-page search, linksets, Ed25519 session keys and bearer tokens in
+0.18.0 (https://github.com/danbri/factoidal/issues/1065).
+
+## WebDAV for file browsers
+
+```
+factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]
+```
+
+What it does (since 0.18.0, https://github.com/danbri/factoidal/issues/1066):
+serves LWS storages to file browsers over WebDAV, RFC 4918 classes 1 and
+2. The root collection holds one folder per mount. A mount is one Markdown
+file `CONFIGDIR/NAME.md`: `- kind: local` with `- path:` an `lws-serve`
+storage directory, or `- kind: lws` with `- url:` a remote storage, reached
+through the LWS client. Every method, status, property and lock is decided
+in `L4Factoidal/WebDAV/`. litmus 0.13: 208 pass, 0 fail (out of 208, on a
+local and a remote mount).
+
+What it does not do: dead properties and locks are lost when the server
+restarts: <https://github.com/danbri/factoidal/issues/1078>. It is not yet
+checked with the real file browsers:
+<https://github.com/danbri/factoidal/issues/1079>.
+
+Run on 2026-10-27 with `@factoidal/core` 0.18.0. `alice-storage` is an
+`lws-serve` storage that holds `/notes/a.ttl`:
+
+```
+$ cat dav/alice.md
+# Alice
+- kind: local
+- path: ../alice-storage
+
+$ factoidal webdav-serve ./dav --port 8090
+webdav-serve: listening on http://127.0.0.1:8090 for ./dav
+webdav-serve: http://127.0.0.1:8090/alice/ - Alice (local)
+http://127.0.0.1:8090
+
+$ curl -si -X OPTIONS http://127.0.0.1:8090/
+HTTP/1.1 200 OK
+dav: 1, 2
+allow: OPTIONS, GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, PROPPATCH, LOCK, UNLOCK
+
+$ curl -s -X PROPFIND -H 'Depth: 1' http://127.0.0.1:8090/alice/notes/
+<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+<D:response><D:href>/alice/notes/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype>
+  <D:displayname>notes</D:displayname> ...
+<D:response><D:href>/alice/notes/a.ttl</D:href><D:propstat><D:prop><D:resourcetype/><D:displayname>a.ttl</D:displayname>
+  <D:getcontenttype>text/turtle</D:getcontenttype><D:getcontentlength>44</D:getcontentlength> ...
+</D:multistatus>
+
+$ curl -s -o /dev/null -w '%{http_code}\n' -X PUT --data 'hello' http://127.0.0.1:8090/alice/notes/hello.txt
+201
 ```
 
 ## Solid Protocol, server and client
