@@ -11,6 +11,19 @@ over HTTP. The engine is specified in F\* and extracted to native
 OCaml, JavaScript, WebAssembly, and C, so the same logic runs on the
 command line, in Node, and in your browser with nothing on a server.
 
+> **Security warning.** Treat every security component as under-reviewed
+> and risky. This includes the servers (`serve`, `lws-serve` and its
+> authorization server, `webdav-serve`, `solid-serve`), authentication,
+> bearer tokens and session keys, Verifiable Credentials Data Integrity,
+> did:key, signatures and hashes. No independent security review has been
+> done. Some of these components use well-known primitives (HACL\*,
+> WebCrypto), but the code that combines and exposes those primitives is
+> new. A correct primitive does not make a protocol or a server safe. Do
+> not use these components to protect real data or real accounts, and do
+> not expose the servers to networks you do not trust. Report security
+> problems at https://github.com/danbri/factoidal/issues.
+
+
 **[Read the Shardborough storage specification &rarr;]({{ '/shardborough-storage-spec/' | url }})**
 for the current Lean 4 block, index, integrity, and update format family.
 The dated design notes behind it are listed, with their status, in the

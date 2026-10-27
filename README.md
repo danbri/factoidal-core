@@ -1,5 +1,18 @@
 # Factoidal
 
+> **Security warning.** Treat every security component as under-reviewed
+> and risky. This includes the servers (`serve`, `lws-serve` and its
+> authorization server, `webdav-serve`, `solid-serve`), authentication,
+> bearer tokens and session keys, Verifiable Credentials Data Integrity,
+> did:key, signatures and hashes. No independent security review has been
+> done. Some of these components use well-known primitives (HACL\*,
+> WebCrypto), but the code that combines and exposes those primitives is
+> new. A correct primitive does not make a protocol or a server safe. Do
+> not use these components to protect real data or real accounts, and do
+> not expose the servers to networks you do not trust. Report security
+> problems at https://github.com/danbri/factoidal/issues.
+
+
 **Current home: `factoidal-core`.** New Shardborough development is Lean 4
 first and test first. Shardborough's native pack, activation, disk query,
 update and compaction targets now live here with their Lean dependencies.

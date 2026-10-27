@@ -3,6 +3,19 @@
 RDF, SPARQL, reasoning, validation and Linked Data servers in one package.
 Runs in Node 22.12+, Deno 2 and browsers. No dependencies.
 
+> **Security warning.** Treat every security component as under-reviewed
+> and risky. This includes the servers (`serve`, `lws-serve` and its
+> authorization server, `webdav-serve`, `solid-serve`), authentication,
+> bearer tokens and session keys, Verifiable Credentials Data Integrity,
+> did:key, signatures and hashes. No independent security review has been
+> done. Some of these components use well-known primitives (HACL\*,
+> WebCrypto), but the code that combines and exposes those primitives is
+> new. A correct primitive does not make a protocol or a server safe. Do
+> not use these components to protect real data or real accounts, and do
+> not expose the servers to networks you do not trust. Report security
+> problems at https://github.com/danbri/factoidal/issues.
+
+
 ```bash
 npm install @factoidal/core
 ```
