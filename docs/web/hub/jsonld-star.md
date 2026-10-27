@@ -180,6 +180,8 @@ Record: [`docs/designissues/2026-10-26-jsonld-star.md`](https://github.com/danbr
 The one fail, fromRdf `tst07`, is a defect in the test data: its expected
 output has `"@type": "ex:Type"` as a string inside `@triple`, where expanded
 form needs an array (the suite's own expand `st07-out.jsonld` has the array).
+The harness counts a local override apart from a pass. The 0.18.0 changelog
+adds them: 168 pass + 2 local override = 170 of 171.
 The [standards table](../#standards-support) has the current numbers.
 
 ## Towards JSON-LD 1.3

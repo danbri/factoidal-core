@@ -228,7 +228,7 @@ and the [assurance record](https://github.com/danbri/factoidal-core/blob/main/do
 | JSON-LD 1.1 toRdf, expand, flatten | 910 / 0 / 910 |
 | JSON-LD 1.1 compact, fromRdf | 298 / 0 / 300 (2 not run) |
 | JSON-LD 1.1 Framing | 29 / 63 / 92 |
-| JSON-LD-star draft (RDF 1.2), option `rdfstar` | 168 / 1 / 171 (2 local override) [J] |
+| JSON-LD-star draft (RDF 1.2), option `rdfstar` | 168 / 1 / 171 (2 local override; 170 of 171 with them) [J] |
 | RDF 1.2 eval tests written as JSON-LD-star and read back | 140 / 0 / 140 [J] |
 | RDFC-1.0 | 86 / 0 / 86 |
 | OWL 2 RL | 126 / 0 / 126 |

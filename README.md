@@ -77,7 +77,8 @@ https://github.com/json-ld/json-ld-star/pull/61, which is expected to become
 the JSON-LD 1.3 tests.
 
 - JSON-LD-star draft tests: 168 pass, 1 fail (a defective fixture), 2 local
-  overrides, out of 171 (`l4jsonld-api --star`). W3C JSON-LD 1.1 API:
+  overrides, out of 171 (`l4jsonld-api --star`); the 0.18.0 changelog's
+  "170 of 171" adds the 2 overrides to the passes. W3C JSON-LD 1.1 API:
   unchanged, 791 pass, 0 fail, 2 local overrides, out of 793.
 - Every positive eval test of the W3C RDF 1.2 N-Triples, N-Quads, Turtle and
   TriG suites gives an isomorphic dataset after it is written as JSON-LD-star
