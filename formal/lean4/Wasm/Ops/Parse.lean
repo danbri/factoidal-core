@@ -191,23 +191,184 @@ def quadIris (g : Option Subject) (t : Triple) : List String :=
   | some (.iri i) => i.val :: tripleIris t
   | _ => tripleIris t
 
-/-- The first IRI of `ds` that is not an absolute IRI (`isAbsoluteIri`). -/
-def firstInvalidIri? (ds : Dataset) : Option String := Id.run do
-  let mut seen : Std.HashSet String := {}
-  for ng in ds.named do
-    match ng.name with
-    | .iri i => if !isAbsoluteIriFast i.val then return some i.val
-    | .bnode _ => pure ()
-  for t in ds.default do
-    for v in tripleIris t do
-      if !isPlainHttpIri v && !seen.contains v then
-        if isAbsoluteIri v then seen := seen.insert v else return some v
-  for ng in ds.named do
-    for t in ng.graph do
-      for v in tripleIris t do
-        if !isPlainHttpIri v && !seen.contains v then
-          if isAbsoluteIri v then seen := seen.insert v else return some v
-  return none
+/-- Every IRI of `t` is in the plain `http(s)` shape (`isPlainHttpIri`), so
+each is an absolute IRI. A triple term answers `false` and takes the full
+check. The specification of the test `firstInvalidIri?` makes. -/
+def tripleAllPlain (t : Triple) : Bool :=
+  (match t.s with | .iri i => isPlainHttpIri i.val | .bnode _ => true) &&
+  isPlainHttpIri t.p.val &&
+  (match t.o with
+   | .iri i => isPlainHttpIri i.val
+   | .bnode _ => true
+   | .literal l => isPlainHttpIri l.val.datatype.val
+   | .tripleTerm _ _ _ => false)
+
+/-- `tripleAllPlain` is sound: each IRI of such a triple is plain, so the full
+check would accept it, and `firstInvalidIri?` loses nothing when it skips it. -/
+theorem tripleAllPlain_sound (t : Triple) (h : tripleAllPlain t = true) :
+    ∀ v ∈ tripleIris t, isPlainHttpIri v = true := by
+  obtain ⟨s, p, o⟩ := t
+  cases s <;> cases o <;>
+    simp_all [tripleAllPlain, tripleIris, termIrisInto]
+
+/-- A string that `isPlainHttpIri` accepts. -/
+abbrev PlainIri := {v : String // isPlainHttpIri v = true}
+
+theorem isPlainHttpIri_http : isPlainHttpIri "http://" = true := by
+  have h7 : ¬ ((⟨7⟩ : String.Pos.Raw) < "http://".rawEndPos) := by
+    simp [String.Pos.Raw.lt_iff]; decide
+  rw [isPlainHttpIri, plainBytesFrom]
+  simp [byteAt, h7, String.Pos.Raw.lt_iff]
+  decide
+
+/-- The plain IRI a scan starts from. -/
+def PlainIri.start : PlainIri := ⟨"http://", isPlainHttpIri_http⟩
+
+/-- Plain IRIs seen before, one slot for each UTF-8 length modulo 64. The
+IRIs of real data repeat (a subject on many lines, a few predicates and
+datatypes, class IRIs as objects): a repeat costs one string comparison
+(the length, then the bytes) and not a scan. -/
+abbrev PlainCache := Array PlainIri
+
+/-- The slot of `v` in a `PlainCache`. -/
+@[inline] def plainSlot (v : String) : Nat := v.utf8ByteSize % 64
+
+/-- The empty cache: 64 slots, each `PlainIri.start`. -/
+def PlainCache.empty : PlainCache := Array.replicate 64 PlainIri.start
+
+/-- `some c'` when `v` is plain (`isPlainHttpIri`), with `v` in its slot of
+`c'`; `none` when it is not. A `v` equal to the IRI of its slot takes no
+scan. -/
+@[inline] def plainIn (c : PlainCache) (v : String) : Option PlainCache :=
+  let k := plainSlot v
+  match c[k]? with
+  | some x =>
+      if x.1 == v then some c
+      else if h : isPlainHttpIri v = true then some (c.set! k ⟨v, h⟩) else none
+  | none => if isPlainHttpIri v then some c else none
+
+/-- `plainIn` answers `some` exactly for a plain `v`. -/
+theorem plainIn_isSome (c : PlainCache) (v : String) :
+    (plainIn c v).isSome = isPlainHttpIri v := by
+  unfold plainIn
+  cases hk : c[plainSlot v]? with
+  | none => by_cases hv : isPlainHttpIri v = true <;> simp [hk, hv]
+  | some x =>
+    simp only [hk]
+    by_cases hx : (x.1 == v) = true
+    · have e : x.1 = v := beq_iff_eq.mp hx
+      rw [if_pos hx, ← e, x.2]; rfl
+    · rw [if_neg hx]
+      by_cases hv : isPlainHttpIri v = true <;> simp [hv]
+
+theorem plainIn_plain {c c' : PlainCache} {v : String} (h : plainIn c v = some c') :
+    isPlainHttpIri v = true := by
+  rw [← plainIn_isSome c]; simp [h]
+
+/-- The subject IRI of the triple before, or a new plain one; `none` when
+the subject is not plain. A blank-node subject keeps `last`. -/
+@[inline] def plainSubject (last : PlainIri) : Subject → Option PlainIri
+  | .bnode _ => some last
+  | .iri i =>
+      if i.val == last.1 then some last
+      else if h : isPlainHttpIri i.val = true then some ⟨i.val, h⟩ else none
+
+/-- `some` when every IRI of `t` is plain (the test of `tripleAllPlain`),
+with the new subject and cache. -/
+@[inline] def plainStep (last : PlainIri) (c : PlainCache) (t : Triple) :
+    Option (PlainIri × PlainCache) :=
+  match plainSubject last t.s with
+  | none => none
+  | some s' =>
+    match plainIn c t.p.val with
+    | none => none
+    | some c1 =>
+      match t.o with
+      | .iri oi => (plainIn c1 oi.val).map (s', ·)
+      | .bnode _ => some (s', c1)
+      | .literal l => (plainIn c1 l.val.datatype.val).map (s', ·)
+      | .tripleTerm _ _ _ => none
+
+theorem plainSubject_sound (last : PlainIri) (s : Subject) (x : PlainIri)
+    (h : plainSubject last s = some x) :
+    (match s with | .iri i => isPlainHttpIri i.val | .bnode _ => true) = true := by
+  cases s with
+  | bnode _ => rfl
+  | iri i =>
+    simp only [plainSubject] at h
+    by_cases he : (i.val == last.1) = true
+    · have : i.val = last.1 := beq_iff_eq.mp he
+      simp [this, last.2]
+    · by_cases hv : isPlainHttpIri i.val = true
+      · exact hv
+      · simp [he, hv] at h
+
+/-- `plainStep` is sound: when it answers `some`, `tripleAllPlain t`, so
+each IRI of `t` is plain (`tripleAllPlain_sound`) and an absolute IRI. -/
+theorem plainStep_sound (last : PlainIri) (c : PlainCache) (t : Triple) (r : PlainIri × PlainCache)
+    (h : plainStep last c t = some r) : tripleAllPlain t = true := by
+  obtain ⟨s, p, o⟩ := t
+  simp only [plainStep] at h
+  cases hs : plainSubject last s with
+  | none => simp [hs] at h
+  | some s' =>
+    have h1 := plainSubject_sound last s s' hs
+    cases hc : plainIn c p.val with
+    | none => simp [hs, hc] at h
+    | some c1 =>
+      have h2 := plainIn_plain hc
+      cases o with
+      | iri oi =>
+        cases ho : plainIn c1 oi.val with
+        | none => simp [hs, hc, ho] at h
+        | some _ =>
+          have h3 := plainIn_plain ho
+          cases s <;> simp_all [tripleAllPlain]
+      | bnode _ => cases s <;> simp_all [tripleAllPlain]
+      | literal l =>
+        cases ho : plainIn c1 l.val.datatype.val with
+        | none => simp [hs, hc, ho] at h
+        | some _ =>
+          have h3 := plainIn_plain ho
+          cases s <;> simp_all [tripleAllPlain]
+      | tripleTerm _ _ _ => simp [hs, hc] at h
+
+/-- The full check of the IRIs of `t` that are not plain, each distinct IRI
+once (`seen`): `.error v` names the first that is not an absolute IRI. -/
+def checkTripleIris (seen : Std.HashSet String) (t : Triple) :
+    Except String (Std.HashSet String) :=
+  (tripleIris t).foldlM (fun seen v =>
+    if isPlainHttpIri v || seen.contains v then .ok seen
+    else if isAbsoluteIri v then .ok (seen.insert v) else .error v) seen
+
+/-- The loop of `firstInvalidIri?` over the triples `ts` of a graph, then the
+graphs `gs`. A triple whose IRIs are all plain (`plainStep`, sound by
+`plainStep_sound`) takes no other test; any other triple takes
+`checkTripleIris`. The state is in the arguments, so the loop allocates
+nothing for a plain triple whose IRIs it has seen. -/
+def scanIris (seen : Std.HashSet String) (last : PlainIri) (c : PlainCache) :
+    List Triple → List Graph → Option String
+  | [], [] => none
+  | [], g :: gs => scanIris seen last c g gs
+  | t :: ts, gs =>
+    match plainStep last c t with
+    | some (s', c') => scanIris seen s' c' ts gs
+    | none =>
+      -- The cache starts again here: `c` is not used after `plainStep`, so
+      -- the compiled `plainIn` updates it in place and does not copy it.
+      match checkTripleIris seen t with
+      | .error v => some v
+      | .ok seen' => scanIris seen' last PlainCache.empty ts gs
+termination_by ts gs => (gs.length, ts.length)
+
+/-- The first IRI of `ds` that is not an absolute IRI (`isAbsoluteIri`): the
+graph names, then each triple (`scanIris`). -/
+def firstInvalidIri? (ds : Dataset) : Option String :=
+  match ds.named.find? (fun ng => match ng.name with
+      | .iri i => !isAbsoluteIriFast i.val | .bnode _ => false) with
+  | some ⟨.iri i, _⟩ => some i.val
+  | _ => scanIris {} PlainIri.start PlainCache.empty ds.default
+           (ds.named.map (·.graph))
 
 /-- The message for an IRI that is not one. `ErrorModel.classify` gives it the
 code `term.invalid-iri`. -/
@@ -532,6 +693,23 @@ theorem parseDocumentOutcomeBy_isSet (extra : ExtraReader) (text formatTag baseI
 #guard (parseTextToDatasetBy noExtraReader "<a_b:c> <http://a/p> <http://a/o> ." "turtle" "http://ex/").toOption.isNone
 #guard (parseTextToDatasetBy noExtraReader "<:foo> <http://a/p> <http://a/o> ." "turtle" "http://example.org/dir/doc").toOption.isNone
 #guard (parseTextToDatasetBy noExtraReader "<a/b:c> <http://a/p> <#o> ." "turtle" "http://ex/").toOption.isSome
+-- The scan of `firstInvalidIri?` (`scanIris`): a blank-node subject, a subject,
+-- predicate and datatype seen in the triple before, a second named graph, and
+-- valid IRIs that are not plain.
+#guard (parseTextToDatasetBy noExtraReader "_:b <a_b:c> <http://a/o> ." "ntriples" "").toOption.isNone
+#guard (parseTextToDatasetBy noExtraReader "_:b <http://a/p> _:c .\n_:c <http://a/p> \"x\" ." "ntriples" "").toOption.isSome
+#guard (parseTextToDatasetBy noExtraReader
+  "<http://a/s> <http://a/p> <http://a/o> .\n<http://a/s> <http://a/p> <a_b:c> ." "ntriples" "").toOption.isNone
+#guard (parseTextToDatasetBy noExtraReader
+  "<http://a/s> <http://a/p> \"x\" .\n<http://a/s> <http://a/p> \"y\"^^<a_b:c> ." "ntriples" "").toOption.isNone
+#guard (parseTextToDatasetBy noExtraReader
+  "<http://a/s> <http://a/p> <http://a/o> <http://a/g> .\n<http://a/s> <a_b:c> <http://a/o> <http://a/h> ." "nquads" "").toOption.isNone
+#guard (parseTextToDatasetBy noExtraReader
+  "<urn:x:y> <http://a/p?q=1> \"x\"^^<http://a/d%41> .\n<urn:x:y> <http://a:80/p> <http://a/%C3%A9> ." "ntriples" "").toOption.isSome
+#guard (match parseTextToDatasetReadBy noExtraReader
+    "<http://a/s> <http://a/p> \"x\" .\n<http://a/s> <http://a/p> \"y\"^^<http://a/b#c#d> ." "ntriples" "" with
+  | .ok ds => firstInvalidIri? ds == some "http://a/b#c#d"
+  | .error _ => false)
 #guard (match parseDocumentOutcomeBy noExtraReader "<http://a/s> <http://a/p> <http://a/o> .\n<a_b:c> <http://a/p> <http://a/o> ." "ntriples" "" with
         | .error f => f.position.map (fun (_, line, col) => (line, col)) == some (2, 1) &&
                       (f.message.splitOn "invalid IRI <a_b:c>").length == 2
