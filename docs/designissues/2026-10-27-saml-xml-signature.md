@@ -105,3 +105,12 @@ Tests: `L4Factoidal/SAML/Tests.lean` (built by `lake build`; RSA through a
 `node tests/authz/server.mjs` (the wasm module, HACL* RSA, assertions
 signed by node:crypto), `bash tools/lws-touchstone.sh --config auth --authz
 factoidal` (Touchstone `auth/saml`, 3 tests, with `SamlTrust`).
+
+Measured 2026-10-27 on this change (full `lake build` 2388 jobs green;
+`lean-unbuilt-modules`, `lean-tail-recursion-audit` and `lean-hygiene-audit`
+gates pass): `node tests/authz/server.mjs` 39 pass, 0 fail, 0 xfail,
+0 skipped (out of 39), of which 9 are SAML checks; Touchstone
+`--config auth --authz factoidal` 215 passed, 0 failed, 6 inapplicable (out
+of 221), auth/saml 3 pass, 0 fail (out of 3). Before this change the same
+run gave 212 passed, 0 failed, 9 inapplicable, with auth/saml 3
+inapplicable.

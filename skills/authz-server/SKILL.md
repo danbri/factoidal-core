@@ -165,6 +165,13 @@ core/authorization_server 9 pass, 0 fail (out of 9), auth/oidc 6 pass,
 inapplicable (out of 3). Record:
 `docs/designissues/2026-10-21-lws-touchstone-run.md`.
 
+Scores, 2026-10-27 (SAML landed): `tests/authz/server.mjs` 39 pass, 0 fail,
+0 xfail, 0 skipped (out of 39); `tests/authz/e2e.mjs` 7 pass, 0 fail,
+1 xfail, 0 skipped (out of 8); `tests/authz/mounted.mjs` 6 pass, 0 fail
+(out of 6). Touchstone `--config auth --authz factoidal`: 215 passed,
+0 failed, 6 inapplicable (out of 221); auth/saml 3 pass, 0 fail (out of 3);
+our server's 40 tests 40 pass, 0 fail (out of 40).
+
 SAML (https://github.com/danbri/factoidal/issues/926) since 2026-10-27:
 `L4Factoidal/SAML/Tests.lean` (`lake build`), the SAML checks in
 `server.mjs`, and Touchstone `auth/saml` with `SamlTrust` under
