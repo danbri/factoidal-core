@@ -493,6 +493,14 @@ value match still finds the same term), and the relation is not transitive
 across `xsd:float` and `xsd:decimal` (F&O 3.1 section 4.2 rounds the decimal
 to the float type first).
 
+`sameValue` is SPARQL `=`, not Jena's `Node.sameValueAs`. Where `=` is a type
+error, `sameValue` gives `null` and Jena gives `false`: for example an
+ill-typed `"x"^^xsd:integer` against `"1"^^xsd:integer`, or two literals of
+an unknown datatype with different lexical forms. A caller that needs a
+two-valued answer treats `null` as "not the same value". The tests are in
+`test/value-match-1052.test.mjs`; the Jena-style echo (leana) records the
+difference as a divergence.
+
 ```js
 import { parse, ready, sameValue, dataFactory as f } from '@factoidal/core';
 await ready();
@@ -525,6 +533,15 @@ change the answer. An unknown media type (`text/plain`) gives `null`; it does no
 fall back to the name. The query and the fragment of an IRI are ignored.
 `.owl` and `.xml` are not registered and give `null`. Each row of `formats()`
 has the same `mediaTypes` and `extensions`.
+
+This table is not the one the file readers use. When `factoidal pack` or
+another file-reading command gets no `--format`, it uses the extension table
+`RDF.formatOfExtension` (`formal/lean4/L4Factoidal/RDF/Format.lean`). That
+table also maps `.owl`, `.xml` and `.rdfxml` to RDF/XML, `.ntriples` to
+N-Triples, `.turtle` to Turtle, `.nquads` to N-Quads and `.json-ld` to JSON-LD.
+`syntaxFor` keeps to the registrations, so `syntaxFor('onto.owl')` is `null`.
+Jena's `RDFLanguages.filenameToLang('onto.owl')` gives RDF/XML. The tests are
+in `test/syntax-names-1053.test.mjs`.
 
 `splitIri(iri)` gives `{namespace, localName}`
 (https://github.com/danbri/factoidal/issues/1051 item 4). The local name is the
