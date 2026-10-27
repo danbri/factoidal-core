@@ -1767,21 +1767,29 @@ def inResults (v : EvalResult) : List EvalResult → EvalResult
       | some true => .bool true
       | _ => inResults v rest
 
-/-- §17.4.3.1.4 argument compatibility for STRSTARTS, STRENDS,
-CONTAINS, STRBEFORE and STRAFTER (both arguments already known to be
-string literals, see `stringLiteralInfo?`). The table lists exactly three compatible
-pairs: two simple/`xsd:string` literals; two language-tagged literals
-with the SAME tag; a language-tagged first argument with a
-simple/`xsd:string` second. A simple first argument with a tagged
-second is NOT compatible (W3C `strbefore02`: `STRBEFORE("abc",
-"b"@cy)` is a type error). -/
+/-- §17.4.3 argument compatibility for STRSTARTS, STRENDS, CONTAINS,
+STRBEFORE and STRAFTER (both arguments already known to be string
+literals, see `stringLiteralInfo?`). SPARQL 1.2 WD 2026-10-25 §17.4.3:
+"Two string literal arguments are argument compatible if: The arguments
+are literals with datatype xsd:string; The arguments are literals with
+datatype rdf:langString and have the same language tag; The arguments
+are literals with datatype rdf:dirLangString and have the same language
+tag and the same base direction; The first argument is a literal with
+datatype rdf:langString and the second argument is a literal with
+datatype xsd:string; The first argument is a literal with datatype
+rdf:dirLangString, and the second argument has datatype xsd:string."
+So two tagged arguments need the same tag AND the same base direction
+(no direction on both = two `rdf:langString`). A tagged second argument
+with an untagged first is NOT compatible (W3C `strbefore02`:
+`STRBEFORE("abc", "b"@cy)` is a type error). The base direction was
+ignored before (https://github.com/danbri/factoidal/issues/1042). -/
 def strBeforeAfterCompatible
-    (lang1 : Option String) (_dt1 : WfIri)
-    (lang2 : Option String) (_dt2 : WfIri) : Bool :=
+    (lang1 : Option String) (_dt1 : WfIri) (dir1 : Option TextDirection)
+    (lang2 : Option String) (_dt2 : WfIri) (dir2 : Option TextDirection) : Bool :=
   match lang1, lang2 with
   | none,    none    => true
   | some _,  none    => true
-  | some l1, some l2 => l1 == l2
+  | some l1, some l2 => l1 == l2 && dir1 == dir2
   | none,    some _  => false
 
 /-- §17.4.3.2 STRLEN over an evaluated argument: a string literal only. -/
@@ -1803,7 +1811,27 @@ arguments: two string literals that are argument-compatible
 def strTestResult (test : String → String → Bool) (v1 v2 : EvalResult) : EvalResult :=
   match v1.stringLiteralInfo?, v2.stringLiteralInfo? with
   | some (s, lang1, dt1), some (p, lang2, dt2) =>
-      if strBeforeAfterCompatible lang1 dt1 lang2 dt2 then .bool (test s p) else .error
+      if strBeforeAfterCompatible lang1 dt1 v1.direction? lang2 dt2 v2.direction?
+      then .bool (test s p) else .error
+  | _, _ => .error
+
+/-- §17.4.3.8 STRBEFORE / §17.4.3.9 STRAFTER over evaluated arguments.
+`part s arg` is the lexical form of the result when `arg` occurs in `s`
+(and when `arg` is empty: "this is considered to be a match").
+SPARQL 1.2 WD 2026-10-25 §17.4.3.8: "the function returns a literal of
+the same kind as the first argument arg1 (literal with datatype
+xsd:string, literal with the same language tag, or literal with the
+same language tag and base direction)". "If there is no such
+occurrence, an empty literal with datatype xsd:string is returned."
+The base direction of the first argument is kept
+(https://github.com/danbri/factoidal/issues/1042). -/
+def strPartResult (part : String → String → String) (v1 v2 : EvalResult) : EvalResult :=
+  match v1.stringLiteralInfo?, v2.stringLiteralInfo? with
+  | some (s, lang1, dt1), some (arg, lang2, dt2) =>
+      if !strBeforeAfterCompatible lang1 dt1 v1.direction? lang2 dt2 v2.direction? then .error
+      else if arg.length = 0 || strContains s arg then
+        erStringPreserve (part s arg) lang1 dt1 v1.direction?
+      else erString ""
   | _, _ => .error
 
 /-! ## §17.5 XSD constructor functions (casting)
@@ -2196,27 +2224,9 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
   | .contains e1 e2 =>
       strTestResult strContains (Expr.evalIn env mu e1) (Expr.evalIn env mu e2)
   | .strBefore e1 e2 =>
-      match (Expr.evalIn env mu e1).stringLiteralInfo?,
-            (Expr.evalIn env mu e2).stringLiteralInfo? with
-      | some (s, lang1, dt1), some (arg, lang2, dt2) =>
-          if !strBeforeAfterCompatible lang1 dt1 lang2 dt2 then .error
-          else if arg.length = 0 then erStringPreserve "" lang1 dt1
-          else
-            let result := strBeforeRaw s arg
-            if result.length = 0 && !strContains s arg then erString ""
-            else erStringPreserve result lang1 dt1
-      | _, _ => .error
+      strPartResult strBeforeRaw (Expr.evalIn env mu e1) (Expr.evalIn env mu e2)
   | .strAfter e1 e2 =>
-      match (Expr.evalIn env mu e1).stringLiteralInfo?,
-            (Expr.evalIn env mu e2).stringLiteralInfo? with
-      | some (s, lang1, dt1), some (arg, lang2, dt2) =>
-          if !strBeforeAfterCompatible lang1 dt1 lang2 dt2 then .error
-          else if arg.length = 0 then erStringPreserve s lang1 dt1
-          else
-            let result := strAfterRaw s arg
-            if result.length = 0 && !strContains s arg then erString ""
-            else erStringPreserve result lang1 dt1
-      | _, _ => .error
+      strPartResult strAfterRaw (Expr.evalIn env mu e1) (Expr.evalIn env mu e2)
   | .concat es => concatResults (Expr.evalArgs env mu es)
   | .encodeForUri e1 =>
       -- §17.4.3.11 ENCODE_FOR_URI takes a string literal and always
