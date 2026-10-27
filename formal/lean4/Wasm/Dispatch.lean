@@ -71,6 +71,7 @@ import Wasm.Ops.Toan
 import Wasm.Ops.Xmpp
 import Wasm.Ops.XmppSession
 import Wasm.Ops.Crypto
+import Wasm.Ops.Jwe
 import Wasm.Ops.Formats
 import Wasm.Ops.Reasoning
 import Wasm.Ops.QueryExtras
@@ -142,6 +143,8 @@ def opNames : List String :=
   , "aeadOpen"
   , "hpkeSeal"
   , "hpkeOpen"
+  , "jweDecrypt"
+  , "jweEncrypt"
   , "xmppStanzaParse"
   , "ops" ]
 
@@ -503,6 +506,8 @@ def callUncoded (op : String) (argsJson : String) : String :=
     | "aeadOpen"             => arity1 op aeadOpen args
     | "hpkeSeal"             => arity1 op hpkeSeal args
     | "hpkeOpen"             => arity1 op hpkeOpen args
+    | "jweDecrypt"           => arity1 op jweDecrypt args
+    | "jweEncrypt"           => arity1 op jweEncrypt args
     | "xmppStanzaParse"      => arity1 op xmppStanzaParse args
     -- Format, transform and reasoning ops (`formatOpNames`).
     | "jsonldToRdf"          => arity2 op jsonldToRdf args

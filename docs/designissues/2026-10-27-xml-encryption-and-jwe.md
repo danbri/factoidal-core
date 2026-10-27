@@ -102,6 +102,11 @@ the style of `JOSE/Jws.lean` `preKey`:
   `PBES2-*`, every other value;
 * `enc`: `A128GCM`, `A256GCM`, `A128CBC-HS256`, `A256CBC-HS512`;
 * refused: `zip` (compression oracle), any `crit`;
+* after the allowlist, every failure is one error with no reason; an
+  RSA-OAEP failure or a CEK of the wrong length continues with a substitute
+  CEK (an HMAC of `d` and the encrypted key), so it shows only at the tag
+  (RFC 7516 §11.5); CBC-HMAC checks the MAC in Lean, in constant time, before
+  the `aes-cbc-decrypt` request;
 * ECDH-ES: the `epk` point is checked by HACL\* (off-curve and invalid-curve
   points are refused; Wycheproof cases in `l4crypto-probe` section
   `p256-ecdh`);
@@ -132,3 +137,21 @@ the style of `JOSE/Jws.lean` `preKey`:
   acceptable, 316 not run (out of 3901); the 316 are AES-GCM.
 * `tests/crypto/rsa-oaep-diff.mjs`: 200 pass, 0 fail (out of 200).
   `tests/crypto/ecdh-diff.mjs 300`: 905 agree, 0 differ (out of 905).
+* JWE (https://github.com/danbri/factoidal/issues/1085; `JOSE/Jwe.lean`,
+  `JOSE/JweKey.lean`, wasm ops `jweDecrypt` and `jweEncrypt`):
+  `lake exe l4jwe-probe 20` (native, HACL\* Vale AES-GCM): vectors 9 pass,
+  0 fail, 3 NOT RUN (out of 12; RFC 7516 A.3 and RFC 7520 5.5 and 5.8 need
+  AES Key Wrap or AES-CBC, which the native cipher does not have, issue 677);
+  RFC 7518 Appendix C 5 pass, 0 fail (out of 5); random round trips and
+  one-bit changes 520 pass, 0 fail (out of 520). `tests/jose/jwe-wasm.mjs 3`
+  (wasm, WebCrypto answers every AES request): vectors 12 pass, 0 fail (out
+  of 12); RFC 7518 Appendix B AES-CBC half 4 pass, 0 fail (out of 4);
+  Appendix C 4 pass, 0 fail (out of 4); round trips 690 pass, 0 fail (out of
+  690). `tests/jose/jwe-diff.mjs 5` (the wasm against a JWE written from
+  WebCrypto calls in the test): 661 agree, 0 differ (out of 661). Structure
+  (allowlist refusals, one error after it, `.need` replay, the CBC-HMAC MAC
+  before the request, Appendix B HMAC half): 64 `#guard`s in
+  `JOSE/JweTests.lean` over a stub cipher. Theorems:
+  `decrypt_independent_of_key_before_key_stage`, `decrypt_refused_only_pre_key`,
+  `cbc_mac_failure_makes_no_request`, `keyAlg_refused`,
+  `epk_no_private_member`.

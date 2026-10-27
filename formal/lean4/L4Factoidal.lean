@@ -361,6 +361,9 @@ import L4Factoidal.JOSE.Jwk
 import L4Factoidal.JOSE.Jws
 import L4Factoidal.JOSE.Jwt
 import L4Factoidal.JOSE.DPoP
+import L4Factoidal.JOSE.JweKey
+import L4Factoidal.JOSE.Jwe
+import L4Factoidal.JOSE.JweTests
 import L4Factoidal.Solid.Server.AuthConfig
 import L4Factoidal.Solid.Server.Auth
 import L4Factoidal.Solid.Server.Oidc

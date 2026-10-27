@@ -300,7 +300,7 @@ extern_lib libl4hostread pkg := do
   roots := #[`Wasm.Abi, `Wasm.Exports, `Wasm.Dispatch,
              `Wasm.ExtHost, `Wasm.Ops.ExtFns, `Wasm.Ops.Clock,
              `Wasm.Ops.ErrorModel, `Wasm.ErrorModelTests,
-             `Wasm.Ops.Support, `Wasm.Ops.FromDataset, `Wasm.Ops.Parse, `Wasm.Ops.Query,
+             `Wasm.Ops.Support, `Wasm.Ops.Jwe, `Wasm.Ops.FromDataset, `Wasm.Ops.Parse, `Wasm.Ops.Query,
              `Wasm.Ops.Reason, `Wasm.Ops.Canon, `Wasm.Ops.CL,
              `Wasm.Ops.Block,
              `Wasm.Ops.Store,
@@ -674,6 +674,14 @@ lean_exe «l4dict-fold-bench» where
 -- split as the other probes: file I/O and printed scores, and the externs
 -- a `#guard` cannot reach. Run the built binary from the REPOSITORY ROOT.
 @[default_target] lean_exe «l4crypto-probe» where root := `Harness.CryptoProbe
+
+-- JWE probe (Harness/JweProbe.lean, L4Factoidal/JOSE/Jwe.lean, issue 1085):
+-- the RFC 7516 Appendix A and RFC 7520 section 5 compact serializations
+-- (tests/jose/jwe-vectors.json), the RFC 7518 Appendix C derivation and
+-- random round trips, with HACL* RSA, P-256, X25519 and Vale AES-GCM. Cases
+-- that need AES Key Wrap or AES-CBC are NOT RUN here (issue 677); the wasm
+-- test tests/jose/jwe-wasm.mjs runs them. Run from the REPOSITORY ROOT.
+@[default_target] lean_exe «l4jwe-probe» where root := `Harness.JweProbe
 
 -- SHACL Core probe over the W3C shacl test suite (Harness/ShaclProbe.lean).
 @[default_target] lean_exe «l4shacl» where root := `Harness.ShaclProbe
