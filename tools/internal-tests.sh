@@ -240,7 +240,8 @@ if command -v node >/dev/null 2>&1; then
   # by name rather than failing the run.
   for f in "$REPO_ROOT"/tests/lws/*.mjs "$REPO_ROOT"/tests/solid/server/*.mjs \
            "$REPO_ROOT"/tests/solid/client/against-own-server.mjs \
-           "$REPO_ROOT"/tests/lws/client/own-server.mjs; do
+           "$REPO_ROOT"/tests/lws/client/own-server.mjs \
+           "$REPO_ROOT"/tests/webdav/server.mjs "$REPO_ROOT"/tests/webdav/scaling.mjs; do
     [ -f "$f" ] || continue
     rel="${f#"$REPO_ROOT"/}"
     run_suite "node-${rel%.mjs}" "$FULL_BUDGET" node "$f" --no-deno

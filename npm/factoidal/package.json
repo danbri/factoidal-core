@@ -89,6 +89,9 @@
     "./lws": {
       "default": "./lws/server.mjs"
     },
+    "./webdav": {
+      "default": "./webdav/server.mjs"
+    },
     "./lws/client": {
       "default": "./lws/client.mjs"
     },
@@ -124,6 +127,7 @@
     "lib/",
     "bin/",
     "lws/",
+    "webdav/",
     "authz/",
     "solid/",
     "store-host/",
