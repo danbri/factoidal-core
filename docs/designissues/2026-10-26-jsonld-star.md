@@ -42,8 +42,9 @@ The F\* JSON-LD tree has no JSON-LD-star; it keeps refusing triple terms.
   are read with the RDF 1.2 N-Quads reader (`Mode.rdf12`).
 - Score: `formal/lean4/.lake/build/bin/l4jsonld-api --star`, run from the
   repository root; scoreboard job `l4jsonld-api-star`
-  (`tools/lean-scoreboard.sh`). 2026-10-27: 170 pass, 1 fail (out of 171):
-  expand 47/47, toRdf 47/47, fromRdf 20/21, compact 17/17, flatten 39/39.
+  (`tools/lean-scoreboard.sh`). 2026-10-27, after the decisions below: 168 pass, 1 fail, 2 local-override
+  (out of 171): expand 46 + 1 override, toRdf 46 + 1 override, fromRdf 20/21,
+  compact 17/17, flatten 39/39.
 
 ## Rules taken from the fixtures (2026-10-26/27)
 
@@ -62,8 +63,9 @@ Expansion (`Expand.lean`, `Context.lean`):
   The outline says "no more than one statement"; the fixtures say otherwise
   (tst12a, tst13a, tst14a make two triples and are valid; tst11a makes none and
   is "invalid reification").
-- `@annotation`: each value must be a node object whose `@id`, if present, is a
-  blank node (tst23, tst24, tst24a). It is valid only on a value object or node
+- `@annotation`: each value must be a node object (tst24, tst24a). Its `@id`,
+  if present, names the reifier and may be an IRI or a blank node (decision 1
+  below; tst23 expects an IRI `@id` to be an error and is a local override). It is valid only on a value object or node
   object that is a property value, forward or reverse (tst34, tst35). It is
   invalid at the top level (tst21), in `@graph` (tst22), in `@included` (tst27),
   on a `@list` item (tst26), inside `@triple` (tst27a) or a `@reifies` value,
@@ -96,11 +98,11 @@ Serialize RDF as JSON-LD (`FromRdf.lean`, `FromRdf.Options.rdfstar`):
   tail-recursive walk and a left fold (no stack growth with depth; `#guard` at
   depth 3,000).
 - `r rdf:reifies <<( t )>>` becomes a `@reifies` value of `r`.
-- Annotation folding: a reifier becomes `@annotation` on the asserted value
-  only when (1) it is a blank node, (2) it has exactly one `@reifies` value,
-  (3) the reified triple is asserted in the same graph, and (4) it is not
-  referenced anywhere else (not an object, not in a triple term, not a graph
-  name). The annotation keeps the reifier's `@id`.
+- Annotation folding (decision 2 below): a reifier becomes `@annotation` on
+  the asserted value when (1) it has exactly one `@reifies` value, (2) the
+  reified triple is asserted in the same graph, and (3) it does not occur in
+  a triple term and is not a graph name. IRI or blank node, referenced or not.
+  The annotation keeps the reifier's `@id`.
 - `RDF/SinkJsonLd.lean`: `withJsonLdStar` writes triple terms; the default
   `withJsonLd` still refuses them. The stream writer does not fold
   annotations (folding needs the whole graph).
@@ -123,14 +125,36 @@ Flattening (`Flatten.lean`, `generateNodeMap (rdfstar := …)`):
   generation (no fixture tests this).
 - `createAnnotations` folds a reifier back into `@annotation` on the matching
   value, as the outline says, even when another node references the reifier
-  (st35n). This is wider than the fromRdf folding rule above (which also
-  needs the reifier to be unreferenced). The two rules are different on
-  purpose for now: each follows its own fixtures. Record of the difference,
-  not a decision; revisit when the syntax settles.
+  (st35n). The fromRdf rule now agrees on that point (decision 2).
 
 Source and sink layers: `Source.withJsonLdStar` and `Sink.withJsonLdStar`
 read and write JSON-LD-star; `withJsonLd` stays JSON-LD 1.1 on both sides.
 The `#guard`s in `RDF/SinkJsonLd.lean` check the round trip.
+
+## Decisions (owner, 2026-10-27)
+
+Owner, verbatim: "decisions - do something sensible and record the choice. Go
+for whatever is closer to RDF 1.2 direction." The reference for "RDF 1.2
+direction" is RDF 1.2 Turtle, where an annotation `s p o ~ r {| ... |}` is
+syntax for one reifier `r` of an asserted triple; `r` may be an IRI or a blank
+node, and other triples may refer to it.
+
+1. `@annotation` may carry an IRI `@id` (the reifier). Also in Kellogg's
+   outline ("set reifier to the @id key from that annotation") and agreed in
+   https://github.com/json-ld/json-ld-star/issues/49. The fixtures expand
+   tst23 and toRdf tst23 keep the 2021 rule (error); they are local overrides
+   (`tests/local-overrides/star-expand__tst23.json`,
+   `star-toRdf__tst23.json`), counted apart, not as passes.
+2. fromRdf folds every reifier of an asserted triple into `@annotation`,
+   whether IRI or blank node, referenced or not; before, only an unreferenced
+   blank node. No fixture changes result. The rule now agrees with flatten
+   `createAnnotations` on referenced reifiers.
+3. Kept as built: star fromRdf and flatten are compared with arrays
+   unordered; the six tail-recursion allow-list rows stay (reasons in the
+   file); fromRdf tst07 stays failing as defective test data until reported.
+
+Scores after the decisions: 168 pass, 1 fail (fromRdf tst07), 2
+local-override (out of 171).
 
 Test harness (`Harness/JsonLdApiProbe.lean`):
 

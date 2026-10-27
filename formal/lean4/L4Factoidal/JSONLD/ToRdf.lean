@@ -1742,4 +1742,17 @@ ordered lists), and numbers compare by their RFC 8785 canonical value
 rather than by lexeme. -/
 def expandedEqual (a b : Json) : Bool := jcsDocument a == jcsDocument b
 
+/-! ### An annotation with an IRI reifier (JSON-LD-star, owner 2026-10-27) -/
+
+private def iriAnnDoc : String :=
+  "{\"@id\":\"http://e/s\",\"http://e/p\":{\"@id\":\"http://e/o\"," ++
+  "\"@annotation\":{\"@id\":\"http://e/r\",\"http://e/q\":{\"@id\":\"http://e/x\"}}}}"
+
+-- The IRI names the reifier: three triples, `<r> rdf:reifies <<( s p o )>>` among them.
+#guard (match parseJsonLd Loader.none iriAnnDoc none none none none true with
+        | .ok ds => ds.default.length == 3 &&
+            ds.default.any (fun t => t.s == .iri ⟨"http://e/r", rfl⟩ &&
+              t.p.val == "http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies")
+        | .error _ => false)
+
 end L4Factoidal.JSONLD

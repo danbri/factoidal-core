@@ -888,10 +888,13 @@ def reifiesItemsOk (items : List Json) : Bool :=
     | .object fs => starNodeObject fs && starTripleCount fs ≥ 1
     | _ => false)
 
-/-- Each value of `@annotation`: an expanded node object whose `@id`, if
-any, is a blank node identifier (expand tst23: an IRI `@id` is an
-"invalid annotation"; the fromRdf and flatten fixtures write blank-node
-`@id`s on annotations). -/
+/-- Each value of `@annotation`: an expanded node object. Its `@id`, if
+any, names the reifier and may be an IRI or a blank node identifier, as the
+reifier of an RDF 1.2 Turtle annotation may be (`s p o ~ <r> {| ... |}`).
+The json-ld-star fixture expand tst23 (and toRdf tst23) expects an IRI `@id`
+to be an "invalid annotation", a rule from the 2021 RDF-star form; it is a
+local override (`tests/local-overrides/star-expand__tst23.json`). Owner,
+2026-10-27: "Go for whatever is closer to RDF 1.2 direction". -/
 def annotationItemsOk (items : List Json) : Bool :=
   items.all (fun it =>
     match it with
@@ -899,7 +902,7 @@ def annotationItemsOk (items : List Json) : Bool :=
       starNodeObject fs &&
       (match fs.find? (fun kv => kv.1 == "@id") with
        | none => true
-       | some (_, .string s) => isBnodeShaped s
+       | some (_, .string _) => true
        | some _ => false)
     | _ => false)
 
