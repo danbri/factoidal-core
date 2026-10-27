@@ -418,14 +418,16 @@ theorem claimsOf_issuer {p : Policy} {a : El} {iss : String} {c : Claims}
         obtain ⟨_, _⟩ := x
         cases h; rfl
 
-/-- Claims from `validateWith`, encrypted or not, come from a document whose
+/-- Claims from `validateWith`, encrypted or not, come from the document that
+`openToken` read from the token (decrypted when encrypted), whose
 enveloped signature verified under the key of a trusted identity provider
 whose entity identifier is the claims' issuer, whatever the cipher, the
 primitives and the verifier are. -/
 theorem validateWith_ok {cipher : L4Factoidal.Crypto.CipherCall.Cipher}
     {prims : L4Factoidal.XML.Enc.Prims} {rsa : RsaVerify} {p : Policy} {token : String} {c : Claims}
     (h : validateWith cipher prims rsa p token = .ok c) :
-    ∃ d idp, idp ∈ p.idps ∧ idp.entityId = c.issuer ∧ verifyEnveloped rsa idp.n idp.e d = .ok () := by
+    ∃ d idp, openToken cipher prims p token = .ok d ∧ idp ∈ p.idps ∧ idp.entityId = c.issuer ∧
+      verifyEnveloped rsa idp.n idp.e d = .ok () := by
   unfold validateWith at h
   cases ho : openToken cipher prims p token with
   | error o => rw [ho] at h; cases h
@@ -456,6 +458,6 @@ theorem validateWith_ok {cipher : L4Factoidal.Crypto.CipherCall.Cipher}
               have heq : idp.entityId = iss := by
                 have := List.find?_some hf
                 simpa using this
-              exact ⟨d, idp, hmem, heq.trans (claimsOf_issuer hc).symm, hv⟩
+              exact ⟨d, idp, rfl, hmem, heq.trans (claimsOf_issuer hc).symm, hv⟩
 
 end L4Factoidal.SAML

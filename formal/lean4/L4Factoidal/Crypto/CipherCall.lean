@@ -78,10 +78,11 @@ structure Req where
   iv : ByteArray := ByteArray.empty
   aad : ByteArray := ByteArray.empty
   data : ByteArray
-  deriving Inhabited
+  deriving Inhabited, DecidableEq
 
-instance : BEq Req where
-  beq a b := a.op == b.op && a.key == b.key && a.iv == b.iv && a.aad == b.aad && a.data == b.data
+/-- Shows the operation and the lengths only: a key never reaches a log. -/
+instance : Repr Req where
+  reprPrec r _ := s!"Req({r.op.name}, key {r.key.size} B, iv {r.iv.size} B, aad {r.aad.size} B, data {r.data.size} B)"
 
 /-- An answer: the output bytes, or a refusal with no reason. -/
 inductive Ans where

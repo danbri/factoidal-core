@@ -100,6 +100,11 @@ structure Ctx where
   fs : FetchState := {}
   /-- The SAML identity providers this server trusts (out of band). -/
   samlIdps : List L4Factoidal.SAML.Idp := []
+  /-- Private keys for `saml:EncryptedAssertion` and `saml:EncryptedID`;
+  none: encrypted elements are refused. -/
+  samlKeys : L4Factoidal.XML.Enc.Keys := {}
+  /-- The host's answers to the AES requests made so far. -/
+  cipherAnswers : List (L4Factoidal.Crypto.CipherCall.Req × L4Factoidal.Crypto.CipherCall.Ans) := []
 
 inductive SubjectResult where
   /-- The subject token is valid: the agent and the client it names. -/
@@ -408,15 +413,24 @@ def validateIdToken (ctx : Ctx) (p : Parsed) : SubjectResult :=
   | .error w => .refused w
   | .ok (iss, sub, azp) => withKey ctx p (oidcKey ctx iss sub (p.header.getString? "kid")) sub azp
 
-/-- The SAML 2.0 suite. The audience is this server's issuer identifier. -/
+/-- The SAML policy of a context. -/
+def Ctx.samlPolicy (ctx : Ctx) : L4Factoidal.SAML.Policy :=
+  { idps := ctx.samlIdps, audience := ctx.issuer, now := ctx.now, leeway := ctx.leeway,
+    decryptKeys := ctx.samlKeys }
+
+/-- The SAML 2.0 suite. The audience is this server's issuer identifier. An
+encrypted assertion (when `samlKeys` holds a key) is decrypted with the
+replay cipher over `cipherAnswers`: a request the host has not answered is
+`.need (.cipher req)`. -/
 def validateSaml (ctx : Ctx) (token : String) : SubjectResult :=
   if ctx.samlIdps.isEmpty then
     .refused "SAML 2.0 assertions are not accepted: this server trusts no SAML identity provider"
   else
-    match L4Factoidal.SAML.validate ctx.C.verifiers.rs256
-        { idps := ctx.samlIdps, audience := ctx.issuer, now := ctx.now, leeway := ctx.leeway } token with
+    match L4Factoidal.SAML.validateWith (L4Factoidal.Crypto.CipherCall.replayCipher ctx.cipherAnswers)
+        L4Factoidal.XML.Enc.nativePrims ctx.C.verifiers.rs256 ctx.samlPolicy token with
     | .ok c => .valid c.nameId c.recipient
-    | .error w => .refused w
+    | .error (.need r) => .need (.cipher r)
+    | .error (.refused w) => .refused w
 
 /-- Validate a subject token of a token type. -/
 def validateSubject (ctx : Ctx) (tokenType token : String) : SubjectResult :=
@@ -445,14 +459,16 @@ theorem withKey_valid {ctx : Ctx} {p : Parsed} {kf : KeyFound} {s c s' c' : Stri
       exact ⟨k, rfl, hv, h.1.symm, h.2.symm⟩
     · simp at h
 
-/-- `validateSaml` gives `valid` only for an assertion whose signature
-verified under the key of a trusted identity provider of the context. -/
+/-- `validateSaml` gives `valid` only for an assertion (encrypted or not)
+whose signature verified under the key of a trusted identity provider of
+the context, whatever the host answered to the AES requests. -/
 theorem validateSaml_valid {ctx : Ctx} {token s c : String}
     (h : validateSaml ctx token = .valid s c) :
-    ∃ cl d idp, L4Factoidal.SAML.validate ctx.C.verifiers.rs256
-        { idps := ctx.samlIdps, audience := ctx.issuer, now := ctx.now, leeway := ctx.leeway } token = .ok cl ∧
+    ∃ cl d idp, L4Factoidal.SAML.validateWith (L4Factoidal.Crypto.CipherCall.replayCipher ctx.cipherAnswers)
+        L4Factoidal.XML.Enc.nativePrims ctx.C.verifiers.rs256 ctx.samlPolicy token = .ok cl ∧
       cl.nameId = s ∧ cl.recipient = c ∧ idp ∈ ctx.samlIdps ∧ idp.entityId = cl.issuer ∧
-      L4Factoidal.SAML.decodeToken token = .ok d ∧
+      L4Factoidal.SAML.openToken (L4Factoidal.Crypto.CipherCall.replayCipher ctx.cipherAnswers)
+        L4Factoidal.XML.Enc.nativePrims ctx.samlPolicy token = .ok d ∧
       L4Factoidal.XML.DSig.verifyEnveloped ctx.C.verifiers.rs256 idp.n idp.e d = .ok () := by
   unfold validateSaml at h
   split at h
@@ -460,8 +476,9 @@ theorem validateSaml_valid {ctx : Ctx} {token s c : String}
   · split at h
     · rename_i cl hv
       cases h
-      obtain ⟨d, idp, hd, hm, he, hver⟩ := L4Factoidal.SAML.validate_ok hv
+      obtain ⟨d, idp, hd, hm, he, hver⟩ := L4Factoidal.SAML.validateWith_ok hv
       exact ⟨cl, d, idp, hv, rfl, rfl, hm, he, hd, hver⟩
+    · cases h
     · cases h
 
 end L4Factoidal.Authz

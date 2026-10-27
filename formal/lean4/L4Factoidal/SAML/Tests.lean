@@ -258,17 +258,66 @@ def withEncryptedId : Option El :=
         | .error _ => false)
   | none => false
 
-/-! ### Expected failure: the authorization server has no decryption keys
+/-! ### The authorization server decrypts with `samlKeys` (issue 1073)
 
-XFAIL, https://github.com/danbri/factoidal/issues/1073: `Authz.validateSubject`
-calls `SAML.validate`, which takes no decryption key, so `authz-serve`
-refuses an encrypted SAML subject token. When the server is given
-decryption keys and a cipher (`validateWith`), this guard fails and becomes
-a positive check. -/
+`Authz.validateSaml` runs `validateWith` over the replay cipher: each AES
+request comes back as `.need (.cipher r)`, the host answers it, and the same
+token is checked again with the answer. Here the stub cipher answers, and the
+assertion is wrapped under a symmetric key (AES Key Wrap), so every step is a
+cipher request. RSA-OAEP and ECDH through the server: `tests/authz/server.mjs`. -/
 
+def kekSpec : L4Factoidal.XML.Enc.EncryptSpec :=
+  { recipient := .kek (some "kek128") L4Factoidal.XML.EncTests.kek16 }
+
+def ctxSamlKeys (answers : List (L4Factoidal.Crypto.CipherCall.Req × L4Factoidal.Crypto.CipherCall.Ans)) : L4Factoidal.Authz.Ctx :=
+  { ctxSaml [idp] with samlKeys := { sym := [{ kid := some "kek128", k := L4Factoidal.XML.EncTests.kek16 }] },
+                       cipherAnswers := answers }
+
+/-- Answer each request with the stub cipher until the result is not a
+cipher request, at most `fuel` times; a tail call per request. -/
+def runReplay (tok : String) :
+    Nat → List (L4Factoidal.Crypto.CipherCall.Req × L4Factoidal.Crypto.CipherCall.Ans) → L4Factoidal.Authz.SubjectResult × Nat
+  | 0, acc => (L4Factoidal.Authz.validateSubject (ctxSamlKeys acc) L4Factoidal.Authz.tokenTypeSaml2 tok, acc.length)
+  | fuel + 1, acc =>
+      match L4Factoidal.Authz.validateSubject (ctxSamlKeys acc) L4Factoidal.Authz.tokenTypeSaml2 tok with
+      | .need (.cipher r) =>
+          let a : L4Factoidal.Crypto.CipherCall.Ans := match stubCipher.call r with
+            | .ok b => .ok b
+            | .error _ => .refused
+          runReplay tok fuel (acc ++ [(r, a)])
+      | res => (res, acc.length)
+
+-- The first request is the key unwrap; after two answers (unwrap, GCM) the
+-- token is valid with the claims of the plain assertion.
+open L4Factoidal.Authz in
+#guard (match validateSubject (ctxSamlKeys []) tokenTypeSaml2 (encryptedToken valid kekSpec) with
+  | .need (.cipher r) => r.op == .kwUnwrap
+  | _ => false)
+#guard runReplay (encryptedToken valid kekSpec) 8 [] ==
+  (.valid "https://id.example/end-user" "https://app.example/SAML", 2)
+-- Decrypted, the signature checks still apply.
+#guard (match (runReplay (encryptedToken altered kekSpec) 8 []).1 with
+  | .refused w => (w.splitOn "digest").length ≥ 2
+  | _ => false)
+-- A refused answer is a refusal, with the one decryption error.
+open L4Factoidal.Authz in
+#guard (match validateSubject (ctxSamlKeys []) tokenTypeSaml2 (encryptedToken valid kekSpec) with
+  | .need (.cipher r) =>
+      (match validateSubject (ctxSamlKeys [(r, .refused)]) tokenTypeSaml2 (encryptedToken valid kekSpec) with
+        | .refused w => w == L4Factoidal.XML.Enc.decryptionError
+        | _ => false)
+  | _ => false)
+-- No samlKeys: still refused, naming the issue.
 open L4Factoidal.Authz in
 #guard (match validateSubject (ctxSaml [idp]) tokenTypeSaml2 (encryptedToken valid) with
   | .refused w => (w.splitOn encryptionIssue).length == 2
+  | _ => false)
+-- The server keeps one answer per request, at most `maxCipherAnswers`.
+open L4Factoidal.Authz in
+#guard (match validateSubject (ctxSamlKeys []) tokenTypeSaml2 (encryptedToken valid kekSpec) with
+  | .need (.cipher r) =>
+      let st := ((({} : AuthzState).recordCipher r .refused).recordCipher r (.ok ByteArray.empty))
+      st.cipherAnswers.length == 1
   | _ => false)
 
 /-! ### Expected failure: saml:EncryptedAttribute

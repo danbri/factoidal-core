@@ -90,7 +90,11 @@ After decryption the plaintext is parsed with the same limits as
 SAML (https://github.com/danbri/factoidal/issues/1073): an
 `EncryptedAssertion` is decrypted first, then the decrypted `saml:Assertion`
 must carry its own valid signature (`SAML.validate`). An encrypted assertion
-whose content is not signed is refused.
+whose content is not signed is refused. The authorization server takes the
+decryption keys as `samlKeys` (`authz-serve --saml-decrypt-key FILE`); its
+AES requests go to the host as `Need.cipher` in the same request and resume
+loop as fetches (`Authz/SubjectToken.lean` `validateSaml`,
+`Authz/Server.lean` `AuthzState.recordCipher`, `npm/factoidal/authz/server.mjs`).
 
 ## XML Encryption 1.1: as built (https://github.com/danbri/factoidal/issues/1084)
 
@@ -223,4 +227,7 @@ the style of `JOSE/Jws.lean` `preKey`:
   (ISO 10126 padding), W3C WRAP.1 and AGRMNT.1. Santuario decrypts Lean's
   output (`tests/xmlenc/CheckLeanOutput.java`): 5 pass, 0 fail (out of 5).
   `#guard`s: `XML/EncTests.lean` 54, `SAML/Tests.lean` 18 new (two of them
-  expected failures naming issue 1073).
+  expected failures naming issue 1073). The server wiring replaced the
+  first expected failure with 6 positive `#guard`s (the replay loop through
+  `validateSubject` with AES Key Wrap, a refused answer, `recordCipher`);
+  `saml:EncryptedAttribute` stays an expected failure.
