@@ -1777,17 +1777,31 @@ three-valued `||` fold of `=`: `true` when one comparison is true, `false`
 when every comparison is false, an error otherwise (`2 IN (3, 1/0)` is an
 error, `2 IN (1/0, 2)` is true). Until
 https://github.com/danbri/factoidal/issues/1049 an erroring comparison
-counted as "no match", as in the F* source. -/
-def inResults (v : EvalResult) : List EvalResult → EvalResult
-  | [] => .bool false
-  | w :: rest =>
-      match valueCompare v w .eq with
-      | some true => .bool true
-      | some false => inResults v rest
-      | none =>
-          match inResults v rest with
-          | .bool true => .bool true
-          | _ => .error
+counted as "no match", as in the F* source.
+
+The fold is a tail-recursive loop (`go`): `sawError` records that a
+comparison before this point was an error. A later true comparison still
+gives `true`; at the end of the list the result is an error when `sawError`
+is set, else `false` (the gate of https://github.com/danbri/factoidal/issues/746:
+no C stack frame for each item of the IN list). -/
+def inResults (v : EvalResult) (ws : List EvalResult) : EvalResult :=
+  go false ws
+where
+  go (sawError : Bool) : List EvalResult → EvalResult
+    | [] => if sawError then .error else .bool false
+    | w :: rest =>
+        match valueCompare v w .eq with
+        | some true => .bool true
+        | some false => go sawError rest
+        | none => go true rest
+
+-- §17.4.1.9: `2 IN (3, 1/0)` is an error, `2 IN (1/0, 2)` is true,
+-- `2 IN (3, 1)` is false, `2 IN ()` is false.
+#guard inResults (.num 2) [.num 3, .error] == .error
+#guard inResults (.num 2) [.error, .num 2] == .bool true
+#guard inResults (.num 2) [.num 3, .num 1] == .bool false
+#guard inResults (.num 2) [] == .bool false
+#guard inResults (.num 2) [.num 2, .error] == .bool true
 
 /-- §17.4.3 argument compatibility for STRSTARTS, STRENDS, CONTAINS,
 STRBEFORE and STRAFTER (both arguments already known to be string
