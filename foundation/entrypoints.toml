@@ -640,6 +640,20 @@ covers = "part"
 note = "Wasm/Ops/StoreHandles.lean storeOpen: the handle's record is backendOfRetained (LawfulDataset.ofDataset; for a quad layout only when every graph name is an IRI). Not covered: the manifest decode, the artifact checks and the block reads and decode (IBK3, IBK4, IBK5), the handle table."
 
 [[entry]]
+id = "wasm:storeOpenBytes"
+stages = ["LawfulDataset.ofDataset"]
+covers = "part"
+note = "Wasm/Ops/StoreHandles.lean storeOpenBytes: storeOpen with the manifest as the first bytes of the region, decoded through the manifest memo (resolveManifestBytes_fst: the memo answers decodeManifestBytes?); after the decode the same admission (buildOpenStoreOf) as storeOpen. Not covered: as wasm:storeOpen."
+
+[[nonstage]]
+id = "wasm:storeQueryPlanBytes"
+reason = "manifest only: the artifact keys a query needs, from the manifest bytes (the byte form of storeQueryPlan, Wasm/Ops/StoreHandles.lean), reads no RDF data"
+
+[[nonstage]]
+id = "wasm:storeManifestInspectBytes"
+reason = "manifest only: the decoded manifest entries (the byte form of storeManifestInspect, Wasm/Ops/StoreHandles.lean), reads no RDF data"
+
+[[entry]]
 id = "npm:.#openStore"
 stages = ["LawfulDataset.ofDataset"]
 covers = "part"

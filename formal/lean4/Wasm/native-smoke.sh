@@ -3284,7 +3284,9 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "tdb2ServeKeys","tdb2ServeOpen"]) <= set(r["ops"])
    and r["blobIoOps"] == ["blobEcho","packFeed","packNext",
                           "storeServeRequest","storeServeCommit","datasetQuadsBin",
-                          "sbm11Query","sbm11PackFiles","lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead",
+                          "sbm11Query","sbm11PackFiles",
+                          "storeManifestInspectBytes","storeQueryPlanBytes","storeOpenBytes",
+                          "lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead",
                           "webdavStep","webdavResume"]'
 
 # SBM11 over host positioned reads (https://github.com/danbri/factoidal/issues/1009).

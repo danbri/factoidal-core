@@ -583,11 +583,14 @@ obligation this module carries"); that agreement is measured, not proved. No
 `#guard` reaches this function: an extern does not evaluate at build time. -/
 def storeOpenHasher : L4Factoidal.Storage.BlockMerkle.Hasher := ⟨L4Factoidal.Crypto.sha256Hacl⟩
 
-/-- The admission of `storeOpen`, kept pure so the IO layer only inserts the
-result. `hasher` is `storeOpenHasher` there. -/
-private def buildOpenStore (hasher : L4Factoidal.Storage.BlockMerkle.Hasher) (held : Nat)
-    (manifestHex artifactsJson : String) (blob : ByteArray) : Except String OpenStore := do
-  let manifest ← decodeManifest? "storeOpen" manifestHex
+/-- The admission of `storeOpen` over a decoded manifest, kept pure so the IO
+layer only inserts the result. `hasher` is `storeOpenHasher` there. Both
+`storeOpen` (hexadecimal manifest) and `storeOpenBytes` (manifest bytes) come
+here, so after the manifest decode the two ops run the same steps and answer
+the same refusals. -/
+def buildOpenStoreOf (hasher : L4Factoidal.Storage.BlockMerkle.Hasher) (held : Nat)
+    (manifest : Manifest) (artifactsJson : String) (blob : ByteArray) :
+    Except String OpenStore := do
   let codec ← storeCodec? "storeOpen" manifest
   let sources ← artifactSources "storeOpen" artifactsJson
   checkSuppliedKeys "storeOpen" manifest sources
@@ -617,6 +620,124 @@ private def buildOpenStore (hasher : L4Factoidal.Storage.BlockMerkle.Hasher) (he
        , ds
        , backend := backendOfRetained quads ds }
 
+/-- The admission of `storeOpen`: the hexadecimal manifest decode, then
+`buildOpenStoreOf`. -/
+def buildOpenStore (hasher : L4Factoidal.Storage.BlockMerkle.Hasher) (held : Nat)
+    (manifestHex artifactsJson : String) (blob : ByteArray) : Except String OpenStore := do
+  let manifest ← decodeManifest? "storeOpen" manifestHex
+  buildOpenStoreOf hasher held manifest artifactsJson blob
+
+/-! ## The manifest memo
+
+The londat store's manifest is 753 kB and 1,046 entries. Before the byte ops,
+a scoped open sent it twice as 1.5 million hexadecimal digits inside the JSON
+arguments, once to `storeQueryPlan` and once to `storeOpen`, and each call
+decoded it again (https://github.com/danbri/factoidal/issues/1039). The byte
+ops take the manifest as the blob region, and decode it through this memo: the
+LAST manifest decoded, with the bytes it was decoded from. A call whose bytes
+are EQUAL to the memo's bytes (`ByteArray` decidable equality, one `memcmp`)
+uses the memo's manifest and does not decode again.
+
+The memo holds a proof that its manifest is `decode?` of its bytes, so a hit
+answers what a decode would answer (`resolveManifestBytes_fst`). It keys on
+the bytes, not on a digest: no hash collision argument is needed. -/
+
+/-- One decoded manifest and the bytes it came from. -/
+structure ManifestMemo where
+  bytes : ByteArray
+  manifest : Manifest
+  decoded : decode? bytes = some manifest
+
+/-- The memo's manifest when its bytes are `bytes`, else `none`. -/
+def ManifestMemo.lookup (memo : Option ManifestMemo) (bytes : ByteArray) : Option Manifest :=
+  match memo with
+  | some m => if m.bytes = bytes then some m.manifest else none
+  | none => none
+
+theorem ManifestMemo.lookup_sound {memo : Option ManifestMemo} {bytes : ByteArray}
+    {manifest : Manifest} (h : ManifestMemo.lookup memo bytes = some manifest) :
+    decode? bytes = some manifest := by
+  cases memo with
+  | none => simp [ManifestMemo.lookup] at h
+  | some m =>
+      simp only [ManifestMemo.lookup] at h
+      split at h
+      · rename_i heq
+        cases h
+        rw [← heq]
+        exact m.decoded
+      · cases h
+
+/-- Decode `bytes` through the memo: the answer, and the memo to keep. A hit
+keeps the memo; a decoded miss replaces it; a refusal keeps it. -/
+def resolveManifestBytes (memo : Option ManifestMemo) (op : String) (bytes : ByteArray) :
+    Except String Manifest × Option ManifestMemo :=
+  match ManifestMemo.lookup memo bytes with
+  | some manifest => (.ok manifest, memo)
+  | none =>
+      match h : decode? bytes with
+      | some manifest => (.ok manifest, some ⟨bytes, manifest, h⟩)
+      | none => (decodeManifestBytes? op bytes, memo)
+
+/-- The memo never changes an answer: through the memo, the decode answers
+exactly `decodeManifestBytes?`, hit or miss. -/
+theorem resolveManifestBytes_fst (memo : Option ManifestMemo) (op : String)
+    (bytes : ByteArray) :
+    (resolveManifestBytes memo op bytes).1 = decodeManifestBytes? op bytes := by
+  unfold resolveManifestBytes
+  split
+  · rename_i manifest hl
+    simp [decodeManifestBytes?, ManifestMemo.lookup_sound hl]
+  · split
+    · rename_i manifest hd
+      simp [decodeManifestBytes?, hd]
+    · rfl
+
+/-- The memo of the byte ops. One entry; a host that alternates two stores
+decodes on each switch, which is what it did before the memo. -/
+initialize storeManifestMemo : IO.Ref (Option ManifestMemo) ← IO.mkRef none
+
+/-- `decodeManifestBytes?` through `storeManifestMemo`. -/
+def decodeManifestBytesIO (op : String) (bytes : ByteArray) : IO (Except String Manifest) := do
+  let (answer, memo) := resolveManifestBytes (← storeManifestMemo.get) op bytes
+  storeManifestMemo.set memo
+  pure answer
+
+/-- `storeManifestInspectBytes()` through the memo: `storeManifestInspectBytes`
+(`Wasm/Ops/Store.lean`) by `resolveManifestBytes_fst`. -/
+def storeManifestInspectBytesIO (bytes : ByteArray) : IO String := do
+  match ← decodeManifestBytesIO "storeManifestInspectBytes" bytes with
+  | .error e => pure (errJson e)
+  | .ok manifest => pure (manifestInspectEnvelope manifest)
+
+/-- `storeQueryPlanBytes(sparql)` through the memo: `storeQueryPlanBytes`
+(`Wasm/Ops/Store.lean`) by `resolveManifestBytes_fst`. -/
+def storeQueryPlanBytesIO (sparql : String) (bytes : ByteArray) : IO String := do
+  match ← decodeManifestBytesIO "storeQueryPlanBytes" bytes with
+  | .error e => pure (errJson e)
+  | .ok manifest => pure (queryPlanEnvelope "storeQueryPlanBytes" manifest sparql)
+
+/-- The region of `storeOpenBytes`: the first `manifestLen` bytes are the
+manifest, the rest is the artifact region the windows of `artifactsJson`
+index, exactly as the region of `storeOpen`. -/
+def splitManifestRegion (op manifestLen : String) (blob : ByteArray) :
+    Except String (ByteArray × ByteArray) :=
+  match manifestLen.toNat? with
+  | none => .error s!"{op}: the manifest length '{manifestLen}' is not a decimal byte count"
+  | some n =>
+      if n > blob.size then
+        .error s!"{op}: the manifest length {n} is more than the {blob.size} bytes the call carried"
+      else
+        .ok (blob.extract 0 n, blob.extract n blob.size)
+
+/-- The pure admission of `storeOpenBytes`, with no memo: what the `#guard`s
+compare with `buildOpenStore`. -/
+def buildOpenStoreBytes (hasher : L4Factoidal.Storage.BlockMerkle.Hasher) (held : Nat)
+    (manifestLen artifactsJson : String) (blob : ByteArray) : Except String OpenStore := do
+  let (manifestBytes, region) ← splitManifestRegion "storeOpenBytes" manifestLen blob
+  let manifest ← decodeManifestBytes? "storeOpenBytes" manifestBytes
+  buildOpenStoreOf hasher held manifest artifactsJson region
+
 /-- How many of a handle's blocks retained a decoded literal index, and how many
 a geometry index. A handle opened without the sidecars, or over a manifest that
 declares none, reports zero and scans. The count is what lets a gate that
@@ -640,6 +761,26 @@ private def openStoreJson (handle : String) (store : OpenStore) : List (String �
   , ("literalIndexes", .number (toString (retainedLiteralIndexCount store)))
   , ("geoIndexes", .number (toString (retainedGeoIndexCount store))) ]
 
+/-- The handle-table step of `storeOpen` and `storeOpenBytes`: the handle
+count cap, then `admit` with the bytes the open handles hold, then insert. -/
+private def storeOpenWith (admit : Nat → IO (Except String OpenStore)) : IO String := do
+  let table ← storeHandleTable.get
+  if table.size ≥ maxStoreHandles then
+    pure (errJson s!"storeOpen: {table.size} store handles are open, the cap is {maxStoreHandles}")
+  else
+    let held := table.fold (fun total _ opened => total + opened.retainedBytes) 0
+    match ← admit held with
+    | .error e => pure (errJson e)
+    | .ok store => do
+        let n ← storeHandleCounter.modifyGet fun n => (n + 1, n + 1)
+        let handle := s!"s{n}"
+        let opened := { store with ordinal := n }
+        storeHandleTable.modify (·.insert handle opened)
+        -- The open envelope names how many out-of-line literals the handle
+        -- resolved. `storeHandleList` reports the same rows it always did.
+        pure (okWith (openStoreJson handle opened ++
+          [("blobs", .number (toString opened.retainedBlobs))]))
+
 /-- `storeOpen(manifestHex, artifactsJson)` over one blob region — verify
 every supplied artifact against the SHA-256 its manifest commits, decode each
 block once, index the retained rows once, and answer a handle.
@@ -655,23 +796,24 @@ Refuses, naming the cap and the value, when the process already holds
 bytes above `maxStoreHandleBytes`. The byte refusal is decided from the
 manifest's own declarations BEFORE any artifact is hashed or decoded, so it
 costs the manifest decode and nothing more. Nothing is evicted. -/
-def storeOpen (manifestHex artifactsJson : String) (blob : ByteArray) : IO String := do
-  let table ← storeHandleTable.get
-  if table.size ≥ maxStoreHandles then
-    pure (errJson s!"storeOpen: {table.size} store handles are open, the cap is {maxStoreHandles}")
-  else
-    let held := table.fold (fun total _ opened => total + opened.retainedBytes) 0
-    match buildOpenStore storeOpenHasher held manifestHex artifactsJson blob with
-    | .error e => pure (errJson e)
-    | .ok store => do
-        let n ← storeHandleCounter.modifyGet fun n => (n + 1, n + 1)
-        let handle := s!"s{n}"
-        let opened := { store with ordinal := n }
-        storeHandleTable.modify (·.insert handle opened)
-        -- The open envelope names how many out-of-line literals the handle
-        -- resolved. `storeHandleList` reports the same rows it always did.
-        pure (okWith (openStoreJson handle opened ++
-          [("blobs", .number (toString opened.retainedBlobs))]))
+def storeOpen (manifestHex artifactsJson : String) (blob : ByteArray) : IO String :=
+  storeOpenWith (fun held => pure (buildOpenStore storeOpenHasher held manifestHex artifactsJson blob))
+
+/-- `storeOpenBytes(manifestLen, artifactsJson)` over one blob region: the
+first `manifestLen` bytes are the manifest, the rest is the region of
+`storeOpen`. The manifest crosses as bytes, not as hexadecimal inside the
+JSON arguments, and is decoded through the manifest memo, so a host that
+called `storeQueryPlanBytes` on the same bytes does not decode it again
+(https://github.com/danbri/factoidal/issues/1039). After the decode it is
+`storeOpen`: the same admission (`buildOpenStoreOf`), caps and envelope. -/
+def storeOpenBytes (manifestLen artifactsJson : String) (blob : ByteArray) : IO String :=
+  storeOpenWith fun held => do
+    match splitManifestRegion "storeOpenBytes" manifestLen blob with
+    | .error e => pure (.error e)
+    | .ok (manifestBytes, region) =>
+        match ← decodeManifestBytesIO "storeOpenBytes" manifestBytes with
+        | .error e => pure (.error e)
+        | .ok manifest => pure (buildOpenStoreOf storeOpenHasher held manifest artifactsJson region)
 
 /-! ## The literal search path
 
@@ -980,5 +1122,57 @@ private def retiredSources (bytes : ByteArray) : List (String × ArtifactSource)
     (retiredSources retiredCurrent) ByteArray.empty [] ByteArray.empty).toOption.isSome
 -- A retired sidecar the host did NOT supply is not read at all.
 #guard (retainedIndexes? "storeOpen" (retiredEntry retiredBytes) [] ByteArray.empty [] ByteArray.empty).toOption.isSome
+
+/-! ## The byte path answers what the hexadecimal path answers
+
+`storeOpenBytes` and `storeOpen` over the same manifest and artifacts, with the
+pure hasher (an extern does not evaluate at build time), and the memo. -/
+
+private def bytesPinRegion : ByteArray := pinManifestBytes ++ pinBytes
+private def bytesPinLen : String := toString pinManifestBytes.size
+private def pureH : L4Factoidal.Storage.BlockMerkle.Hasher := L4Factoidal.Storage.BlockMerkle.pureHasher
+
+#guard match buildOpenStore pureH 0 pinManifestHex pinWindowJson pinBytes,
+             buildOpenStoreBytes pureH 0 bytesPinLen pinWindowJson bytesPinRegion with
+  | .ok a, .ok b =>
+      okWith (openStoreJson "s1" a) == okWith (openStoreJson "s1" b) && b.retainedRows == 1
+  | _, _ => false
+-- After the manifest decode the refusals are the same text.
+#guard [ "[]"
+       , "[{\"key\":\"predicate-0.ibk3\",\"offset\":1,\"len\":1}]"
+       , "[{\"key\":\"nothing.ibk3\",\"offset\":0,\"len\":1}]" ].all fun json =>
+  match buildOpenStore pureH 0 pinManifestHex json pinBytes,
+        buildOpenStoreBytes pureH 0 bytesPinLen json bytesPinRegion with
+  | .error a, .error b => a == b
+  | _, _ => false
+-- The cap refusal is decided from the manifest, as for `storeOpen`.
+#guard match buildOpenStore pureH maxStoreHandleBytes pinManifestHex pinWindowJson pinBytes,
+             buildOpenStoreBytes pureH maxStoreHandleBytes bytesPinLen pinWindowJson bytesPinRegion with
+  | .error a, .error b => a == b && a.contains "the cap is"
+  | _, _ => false
+-- The manifest length is checked against the region, never read past it.
+#guard match buildOpenStoreBytes pureH 0 "x" "[]" ByteArray.empty with
+  | .error e => e.contains "is not a decimal byte count"
+  | .ok _ => false
+#guard match buildOpenStoreBytes pureH 0 "9" "[]" ByteArray.empty with
+  | .error e => e.contains "more than the 0 bytes"
+  | .ok _ => false
+#guard match buildOpenStoreBytes pureH 0 "1" "[]" (ByteArray.mk #[0, 1]) with
+  | .error e => e.contains "storeOpenBytes: bytes do not decode"
+  | .ok _ => false
+-- The memo: a miss decodes and keeps the bytes; equal bytes hit; other
+-- bytes miss; a refusal keeps the memo it had.
+#guard match resolveManifestBytes none "op" pinManifestBytes with
+  | (.ok _, some m) =>
+      (ManifestMemo.lookup (some m) pinManifestBytes).isSome &&
+      (ManifestMemo.lookup (some m) (pinManifestBytes.push 0)).isNone &&
+      (match resolveManifestBytes (some m) "op" (ByteArray.mk #[0]) with
+       | (.error e, some m') => e.contains "op: bytes do not decode" &&
+           (ManifestMemo.lookup (some m') pinManifestBytes).isSome
+       | _ => false) &&
+      (match resolveManifestBytes (some m) "op" pinManifestBytes with
+       | (.ok manifest, _) => manifestInspectEnvelope manifest == storeManifestInspect pinManifestHex
+       | _ => false)
+  | _ => false
 
 end L4Wasm.Ops
