@@ -27,6 +27,7 @@ The contract is `docs/lws-solid-conformance.md` § "wasm ABI"; the host is
 import Wasm.Ops.Support
 import Wasm.Ops.Lws
 import L4Factoidal.LWS.Client.Machine
+import L4Factoidal.LWS.Client.Keys
 
 namespace L4Wasm.Ops
 
@@ -46,14 +47,19 @@ def lwsClientStart (opText sessionText : String) : String :=
     match opOfJson oj with
     | .error e => errJson s!"lwsClientStart: {e}"
     | .ok op =>
-      let ses : Except String Session :=
-        if sessionText.trimAscii.toString == "" then .ok {} else
+      let ses : Except String (Session × Bool) :=
+        if sessionText.trimAscii.toString == "" then .ok ({}, true) else
         match parseJson sessionText with
-        | .ok sj => .ok (sessionOfJson sj)
+        | .ok sj => .ok (sessionOfJson sj, sessionKeyOk sj)
         | .error _ => .error "lwsClientStart: the session is not JSON"
       match ses with
       | .error e => errJson e
-      | .ok ses => clientEnvelope (start L4Factoidal.Authz.hacl op ses)
+      | .ok (ses, keyOk) =>
+        -- A key that is neither a P-256 nor an Ed25519 private JWK ends the
+        -- operation before anything is sent.
+        if keyOk then clientEnvelope (start L4Factoidal.Authz.hacl op ses)
+        else clientEnvelope (failWith { op := op.normalize, session := ses } "badArguments"
+          [("reason", .string "the session key is not a P-256 or an Ed25519 private JWK of 32 bytes")])
 
 /-- `lwsClientStep(stateJson, eventJson)`: give the answer to the request
 the last action named. -/
@@ -66,6 +72,22 @@ def lwsClientStep (stateText eventText : String) : String :=
   | .error _, _ => errJson "lwsClientStep: the state is not JSON"
   | _, .error _ => errJson "lwsClientStep: the event is not JSON"
 
-def lwsClientOpNames : List String := ["lwsClientStart", "lwsClientStep"]
+/-- `lwsClientNewKey(algorithm, randomBase64)`: a new `did:key` agent from the
+host's random bytes (64 are enough for either algorithm). `algorithm` is
+`ES256` (a P-256 key) or `EdDSA` (an Ed25519 key). The answer is
+`{"ok":true,"key":{"agent","kid","selfIssued"}}`; `selfIssued` is the
+member the client's session takes (`Machine.selfIssuedJson`). -/
+def lwsClientNewKey (algorithm randomText : String) : String :=
+  match L4Factoidal.Authz.SigAlg.ofString? algorithm with
+  | none => errJson s!"lwsClientNewKey: unknown algorithm \"{algorithm}\" (ES256, EdDSA)"
+  | some alg =>
+    match L4Factoidal.LWS.Base64.decode? randomText with
+    | none => errJson "lwsClientNewKey: the random bytes are not base64"
+    | some random =>
+      match newAgent L4Factoidal.Authz.hacl alg random with
+      | some a => okWith [("key", newAgentJson a)]
+      | none => errJson "lwsClientNewKey: the random bytes do not make a key (64 bytes are needed)"
+
+def lwsClientOpNames : List String := ["lwsClientStart", "lwsClientStep", "lwsClientNewKey"]
 
 end L4Wasm.Ops

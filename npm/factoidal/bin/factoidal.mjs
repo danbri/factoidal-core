@@ -113,6 +113,8 @@ commands:
                               (RFC 8414 metadata, JWK Set, RFC 8693 token exchange)
   authz-keys DIR              print the public JWK Set of an authorization server
   xmpp-serve DIR              serve XMPP (RFC 6120/6121) over TCP or direct TLS
+  webdav-serve CONFIGDIR      serve local and remote LWS storages to file
+                              browsers over WebDAV (RFC 4918)
 
 global options:
   -h, --help                  print this text, or a command's own help
@@ -644,6 +646,47 @@ MUC/MIX/GC3 rooms.
 Specifications: https://www.rfc-editor.org/rfc/rfc6120 and
 https://www.rfc-editor.org/rfc/rfc6121`,
 
+  'webdav-serve': `factoidal webdav-serve - serve LWS storages to file browsers over WebDAV
+
+usage: factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]
+
+Starts a WebDAV server (RFC 4918, classes 1 and 2) that macOS Finder,
+Windows Explorer, GNOME Files and KDE Dolphin can connect to. Its root
+collection holds one folder per mount; a mount is one Markdown file
+CONFIGDIR/NAME.md (README.md is not a mount):
+
+    # Display name
+    - kind: local | lws
+    - path: ./alice-storage        (local: an lws-serve storage directory)
+    - url: https://storage.example/alice/   (lws: the storage root)
+    - auth: none | did-key | bearer
+    - key-file: ./alice.jwk        (did-key: a P-256 private JWK; made when absent)
+    - token-file: ./alice.token    (bearer: an access token)
+    - writable: true | false       (default true for local, false for lws)
+    - storage: snapshot | files    (local: default what the directory holds)
+    - base: IRI                    (local: the storage root's IRI, default http://localhost/)
+
+Only the first "# " heading and the first "- key: value" list are read; the
+words in brackets above are notes, not part of a value. A malformed file
+stops the start with its name and line number.
+
+A local mount opens the directory with the operations lws-serve uses, as
+the storage's owner (do not serve the same directory with lws-serve at the
+same time). An lws mount reaches the storage through the LWS client.
+
+  --port N         the port to bind (default 8090; 0 takes an ephemeral one)
+  --host ADDRESS   the address to bind (default 127.0.0.1)
+
+Connect: macOS Finder, Go > Connect to Server, http://127.0.0.1:8090/ ;
+Windows, Map network drive, http://127.0.0.1:8090/ ; GNOME Files,
+dav://127.0.0.1:8090/ .
+
+The server makes no protocol decision: every method, status, property, lock
+and mapping is decided by formal/lean4/L4Factoidal/WebDAV/. A WebAssembly
+module built before the WebDAV operations landed makes this command exit 3
+and say so. Design: docs/designissues/2026-10-27-webdav.md
+(https://github.com/danbri/factoidal/issues/1066).`,
+
   'solid-client': `factoidal solid-client - run one Solid client operation
 
 usage: factoidal solid-client <get|put|post|delete|discover> URL [options]
@@ -788,7 +831,8 @@ const VALUE_OPTIONS = {
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin']),
   'authz-keys': new Set([]),
-  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key'])
+  'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key']),
+  'webdav-serve': new Set(['port', 'host'])
 }
 
 // ------------------------------------------------------------- commands
@@ -2027,6 +2071,34 @@ async function commandSolidServe (positional, options) {
   return untilInterrupted(running, quiet)
 }
 
+// webdav-serve CONFIGDIR (https://github.com/danbri/factoidal/issues/1066):
+// the host carries sockets, files and fetches; the engine reads the mount
+// files and decides every answer (L4Factoidal/WebDAV/).
+async function commandWebdavServe (positional, options) {
+  if (positional.length !== 1) throw new UsageError('webdav-serve needs one CONFIGDIR')
+  const quiet = options.quiet === true
+  const { listen, WebdavHostError } = await import('../webdav/server.mjs')
+  let running
+  try {
+    running = await listen({ configDir: positional[0], port: servePort(options, 8090), host: serveHost(options) })
+  } catch (error) {
+    if (error instanceof WebdavHostError && error.unknownOp) return notWired('webdav-serve', error.message)
+    if (error instanceof WebdavHostError || (error !== null && typeof error === 'object' && error.code === 'ENOENT')) {
+      err(`factoidal webdav-serve: ${error.message}`)
+      return EXIT_FAILURE
+    }
+    throw error
+  }
+  if (!quiet) {
+    err(`webdav-serve: listening on ${running.origin} for ${positional[0]}`)
+    for (const m of running.mounts) {
+      err(`webdav-serve: ${running.origin}/${encodeURIComponent(m.name)}/ - ${m.title} (${m.kind}${m.writable ? '' : ', read-only'}${m.agent ? ', as ' + m.agent : ''})`)
+    }
+  }
+  out(running.origin)
+  return untilInterrupted(running, quiet)
+}
+
 async function commandXmppServe (positional, options) {
   if (positional.length !== 1) throw new UsageError('xmpp-serve needs one DIR')
   const quiet = options.quiet === true
@@ -2207,7 +2279,8 @@ const COMMANDS = {
   'lws-client': commandLwsClient,
   'authz-serve': commandAuthzServe,
   'authz-keys': commandAuthzKeys,
-  'xmpp-serve': commandXmppServe
+  'xmpp-serve': commandXmppServe,
+  'webdav-serve': commandWebdavServe
 }
 
 // ----------------------------------------------------------------- main
