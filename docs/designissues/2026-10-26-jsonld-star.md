@@ -43,6 +43,90 @@ The F\* JSON-LD tree has no JSON-LD-star; it keeps refusing triple terms.
 - Score: `formal/lean4/.lake/build/bin/l4jsonld-api --star`, run from the
   repository root.
 
+## Rules taken from the fixtures (2026-10-26/27)
+
+The outline below is incomplete and in one place contradicts the fixtures.
+Where they differ, the fixtures decide; each case is listed here.
+
+Expansion (`Expand.lean`, `Context.lean`):
+
+- `@triple`: the value expands with a null active property. It must give
+  exactly one node object with no `@reverse` and no `@triple`, and that node
+  must make exactly one triple. One triple is counted for each value of each
+  property, of `@type`, of `@reifies` and of each reverse property. The object
+  that holds `@triple` may have only `@triple` and `@annotation`. Error:
+  "invalid triple term" (tst11 to tst14).
+- `@reifies`: each value must be a node object that makes AT LEAST one triple.
+  The outline says "no more than one statement"; the fixtures say otherwise
+  (tst12a, tst13a, tst14a make two triples and are valid; tst11a makes none and
+  is "invalid reification").
+- `@annotation`: each value must be a node object whose `@id`, if present, is a
+  blank node (tst23, tst24, tst24a). It is valid only on a value object or node
+  object that is a property value, forward or reverse (tst34, tst35). It is
+  invalid at the top level (tst21), in `@graph` (tst22), in `@included` (tst27),
+  on a `@list` item (tst26), inside `@triple` (tst27a) or a `@reifies` value,
+  and directly inside another annotation; it is valid inside an annotation's
+  own property values (tst40). Error: "invalid annotation". On a list object
+  the existing 1.1 error "invalid set or list object" applies (tst25).
+- Aliases of the three keywords are terms whose definition is the keyword
+  (tst36, tst37), recognised only under `rdfstar`.
+- Two JSON-LD 1.1 corrections came with this work, both with the W3C suites
+  unchanged: a value object ignores a key that expands to a keyword lookalike
+  (API 5.1 step 13.2; json-ld-star tst03 with `rdfstar` false); and an embedded
+  node object with `@reverse` is no longer refused with "invalid reverse
+  property value" (that error is for value and list objects as reverse values;
+  json-ld-star compact tst35).
+
+Deserialize to RDF (`ToRdf.lean`, `RdfAcc.rdfstar`):
+
+- `{"@triple": n}` gives `Term.tripleTerm s p o` for the one triple of `n`;
+  the triple is not asserted.
+- `r` with `@reifies` values gives `r rdf:reifies <<( t )>>` for each triple of
+  each value; those triples are not asserted.
+- `@annotation` on value `o` of property `p` of subject `s` gives, for each
+  annotation node, reifier `r` (its `@id`, or a new blank node) with
+  `r rdf:reifies <<( s p o )>>` and the annotation's own triples. For a reverse
+  property the reified triple is the reversed one.
+
+Serialize RDF as JSON-LD (`FromRdf.lean`, `FromRdf.Options.rdfstar`):
+
+- A triple term becomes `{"@triple": node}`; nested triple terms are built by a
+  tail-recursive walk and a left fold (no stack growth with depth; `#guard` at
+  depth 3,000).
+- `r rdf:reifies <<( t )>>` becomes a `@reifies` value of `r`.
+- Annotation folding: a reifier becomes `@annotation` on the asserted value
+  only when (1) it is a blank node, (2) it has exactly one `@reifies` value,
+  (3) the reified triple is asserted in the same graph, and (4) it is not
+  referenced anywhere else (not an object, not in a triple term, not a graph
+  name). The annotation keeps the reifier's `@id`.
+- `RDF/SinkJsonLd.lean`: `withJsonLdStar` writes triple terms; the default
+  `withJsonLd` still refuses them. The stream writer does not fold
+  annotations (folding needs the whole graph).
+
+Compaction (`Compact.lean`): `@triple`, `@reifies` and `@annotation` values are
+compacted as node objects with a null active property and written under the
+keyword's alias; a value object with `@annotation` keeps its map form.
+
+Test harness (`Harness/JsonLdApiProbe.lean`):
+
+- `specVersion: "json-ld-star"` names the extension, not a processing mode;
+  those tests run as JSON-LD 1.1.
+- Star fixtures are read with the RDF 1.2 N-Quads reader. Before this, the
+  RDF 1.1 reader dropped every triple-term line, and empty-against-empty
+  comparisons gave 11 false passes.
+- Star fromRdf results are compared with arrays unordered, except `@list`. The
+  fixtures' top-level node order is neither sorted by `@id` (st15, st16, st29)
+  nor in input order (st19, st20), so no single output order passes them all.
+- Every star compact entry names its expected output as `context`. When that
+  document has no `@context`, the test compacts with an empty context. Only
+  that case is affected; the W3C suites never name the output as the context.
+
+Fixture defect: fromRdf `st07-out.jsonld` has `"@type": "ex:Type"` as a string
+inside `@triple`; expanded form requires an array, and the suite's own
+`expand/st07-out.jsonld` has `["ex:Type"]`. Our output is the array. This test
+stays failing until it is reported upstream and classified (CLAUDE.md,
+"Defective W3C test data is not our failure").
+
 ## Algorithm changes (Gregg Kellogg, json-ld-star PR 61 comment, 2025-05-19, verbatim)
 
 Synopsis of algorithm updates:
