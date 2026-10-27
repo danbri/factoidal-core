@@ -946,6 +946,7 @@ import L4Factoidal.Authz.Keys
 import L4Factoidal.Authz.Fetch
 import L4Factoidal.Authz.SubjectToken
 import L4Factoidal.Authz.Server
+import L4Factoidal.Authz.Mount
 import L4Factoidal.Authz.Theorems
 import L4Factoidal.Authz.Tests
 import L4Factoidal.Solid.Tests

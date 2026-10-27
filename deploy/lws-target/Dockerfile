@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# Factoidal's LWS server (factoidal lws-serve) with its authorization server
-# (factoidal authz-serve), as one container that keeps the target contract of
+# Factoidal's LWS server with its authorization server (factoidal lws-serve
+# --authz, one process), as one container that keeps the target contract of
 # Touchstone (https://github.com/ebremer/touchstone, targetservers/README.md,
 # "The contract"): plain HTTP on port 8080, public base URL from LWS_PUBLIC_URL,
 # the issuer at LWS_PUBLIC_URL, the storage given to LWS_OWNER, state in /data,
@@ -9,6 +9,8 @@
 # The source is the published package @factoidal/core at FACTOIDAL_VERSION,
 # checked against FACTOIDAL_INTEGRITY (the registry's dist.integrity). Every
 # protocol decision in it is made by Lean 4 code compiled to one wasm module.
+# `lws-serve --authz` is in releases after 0.16.0: until one is published,
+# build from a local checkout (below).
 # To build a local checkout instead (npm/factoidal after a wasm build):
 #   docker build --build-context source=../../npm/factoidal -t factoidal-lws .
 ARG FACTOIDAL_VERSION=0.16.0
@@ -33,7 +35,7 @@ COPY --from=fetch /src/ /
 # ---- runtime ----
 FROM node:24.21.0-trixie-slim
 COPY --from=source / /opt/factoidal/
-COPY front.mjs entrypoint.sh /opt/lws-target/
+COPY entrypoint.sh /opt/lws-target/
 RUN ln -s /opt/factoidal/bin/factoidal.mjs /usr/local/bin/factoidal \
  && chmod 0755 /opt/lws-target/entrypoint.sh \
  && mkdir /data && chown node:node /data

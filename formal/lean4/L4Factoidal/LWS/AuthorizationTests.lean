@@ -57,6 +57,24 @@ private def goodTok : String := tok (claimsWith issuerA "http://localhost/.well-
 #guard resourceOfMetadataPath "http://localhost/" "/.well-known/oauth-protected-resource" ==
   "http://localhost/"
 #guard issuerMetadataUrl "https://as.example/" == "https://as.example/.well-known/lws-configuration"
+-- A storage root with a path: the whole form (a direct client) and the
+-- storage form (a proxy that removed the prefix) name the same resource.
+#guard resourceOfMetadataPath "http://h/targets/f/" "/.well-known/oauth-protected-resource/targets/f/" ==
+  "http://h/targets/f/"
+#guard resourceOfMetadataPath "http://h/targets/f/" "/.well-known/oauth-protected-resource/targets/f/a/b" ==
+  "http://h/targets/f/a/b"
+#guard resourceOfMetadataPath "http://h/targets/f/" "/.well-known/oauth-protected-resource/" ==
+  "http://h/targets/f/"
+#guard resourceOfMetadataPath "http://h/targets/f/" "/.well-known/oauth-protected-resource" ==
+  "http://h/targets/f/"
+#guard resourceOfMetadataPath "http://h/targets/f/" "/.well-known/oauth-protected-resource/a/b" ==
+  "http://h/targets/f/a/b"
+-- "/targets/fx" does not begin with the root path and a slash: storage form.
+#guard resourceOfMetadataPath "http://h/targets/f/" "/.well-known/oauth-protected-resource/targets/fx" ==
+  "http://h/targets/f/targets/fx"
+-- Round trip of the whole form, for resources under a root with a path.
+#guard ["http://h/targets/f/", "http://h/targets/f/a", "http://h/targets/f/c/d/"].all fun r =>
+  resourceOfMetadataPath "http://h/targets/f/" (splitOrigin (metadataUrl r)).2 == r
 
 /-! ## Token validation, one check at a time -/
 

@@ -379,8 +379,10 @@ private keys (with d): for a conformance harness that mints test tokens
 
   'lws-serve': `factoidal lws-serve - serve Linked Web Storage 1.0 over HTTP
 
-usage: factoidal lws-serve DIR (--issuer IRI | --auth-config FILE | --insecure-no-auth)
+usage: factoidal lws-serve DIR (--authz DIR | --issuer IRI | --auth-config FILE | --insecure-no-auth)
                          [--owner WEBID] [--root-acl FILE] [--audience IRI]
+                         [--alg ES256|EdDSA] [--token-lifetime SECONDS] [--rotate-after SECONDS]
+                         [--allow-http] [--allow-private-fetch]
                          [--port N] [--host ADDRESS] [--base IRI] [--page-size N]
                          [--paginate-always] [--moves all|data|off]
                          [--no-linkset-put] [--unstable-search-results] [--merkle]
@@ -494,8 +496,21 @@ It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lea
   --no-cors       send no CORS fields; a page on another origin cannot read
                   any answer
 
-Authorization (LWS editor's draft, section Authorization; one of the three
+Authorization (LWS editor's draft, section Authorization; one of the four
 is required):
+  --authz DIR           also serve an authorization server on this port, its
+                        issuer the storage root without the trailing slash
+                        (BASE less "/"): RFC 8414 metadata at
+                        /.well-known/lws-configuration, the token endpoint at
+                        BASE.well-known/lws-token, the JWK Set at
+                        BASE.well-known/lws-jwks, signing keys in DIR (as
+                        authz-serve; --alg, --token-lifetime, --rotate-after,
+                        --allow-http and --allow-private-fetch as there). The
+                        storage trusts it, and any --issuer too. Each request
+                        is the authorization server's when the engine says so
+                        (L4Factoidal/Authz/Mount.lean); every other is the
+                        storage's. A proxy may serve BASE at a path prefix and
+                        remove the prefix: both forms of every path are read.
   --issuer IRI          trust this authorization server; several may be
                         given separated by commas. Its metadata is read from
                         IRI/.well-known/lws-configuration and its keys from
@@ -750,7 +765,7 @@ const VALUE_OPTIONS = {
   serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2']),
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
     'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window',
-    'redirects-max', 'storage', 'cors-origin']),
+    'redirects-max', 'storage', 'cors-origin', 'authz', 'alg', 'token-lifetime', 'rotate-after']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret']),
   'lws-client': new Set(['body', 'file', 'content-type', 'slug', 'type', 'link', 'if-match',
@@ -1590,12 +1605,25 @@ async function commandLwsServe (positional, options) {
   const insecure = options['insecure-no-auth'] === true
   const issuerOption = typeof options.issuer === 'string' ? options.issuer : null
   const authFile = typeof options['auth-config'] === 'string' ? options['auth-config'] : null
-  if (!insecure && issuerOption === null && authFile === null) {
-    throw new UsageError('lws-serve needs --issuer IRI or --auth-config FILE, ' +
+  const authzDir = typeof options.authz === 'string' ? options.authz : null
+  if (!insecure && issuerOption === null && authFile === null && authzDir === null) {
+    throw new UsageError('lws-serve needs --authz DIR, --issuer IRI or --auth-config FILE, ' +
       'or --insecure-no-auth for development')
   }
-  if (insecure && (issuerOption !== null || authFile !== null)) {
-    throw new UsageError('--insecure-no-auth cannot be combined with --issuer or --auth-config')
+  if (insecure && (issuerOption !== null || authFile !== null || authzDir !== null)) {
+    throw new UsageError('--insecure-no-auth cannot be combined with --authz, --issuer or --auth-config')
+  }
+  // --authz DIR: an authorization server on the same port, its issuer the
+  // storage root (L4Factoidal/Authz/Mount.lean). Its options are passed
+  // unread; the engine checks them (Wasm/Ops/Authz.lean).
+  const authz = authzDir === null ? undefined : {
+    dir: authzDir,
+    ...(typeof options.alg === 'string' ? { alg: options.alg } : {}),
+    ...(options['token-lifetime'] !== undefined ? { tokenLifetime: natOption('token-lifetime', options['token-lifetime']) } : {}),
+    ...(options['rotate-after'] !== undefined ? { rotateAfter: natOption('rotate-after', options['rotate-after']) } : {}),
+    ...(options['allow-http'] === true ? { allowHttp: true } : {}),
+    ...(options['allow-private-fetch'] === true ? { allowPrivateFetch: true } : {}),
+    ...corsConfig(options)
   }
   let auth
   if (authFile !== null) {
@@ -1628,6 +1656,7 @@ async function commandLwsServe (positional, options) {
       ...(typeof options.storage === 'string' ? { storage: options.storage } : {}),
       ...corsConfig(options),
       ...(insecure ? { insecureNoAuth: true } : { auth }),
+      ...(authz !== undefined ? { authz } : {}),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       ...(typeof options['root-acl'] === 'string'
         ? { rootAcl: new TextDecoder('utf-8', { fatal: true }).decode(readWhole(options['root-acl'])) }
@@ -1651,6 +1680,9 @@ async function commandLwsServe (positional, options) {
   }
   if (!quiet) {
     err(`lws-serve: listening on ${running.origin} for ${positional[0]}`)
+    if (running.authz() !== null) err(`lws-serve: authorization server ${running.authz().issuer} (keys in ${authzDir})`)
+    if (options['allow-http'] === true) err('lws-serve: WARNING: --allow-http: http subject identifiers are accepted')
+    if (options['allow-private-fetch'] === true) err('lws-serve: WARNING: --allow-private-fetch: private addresses may be fetched')
     if (insecure) err('lws-serve: WARNING: --insecure-no-auth: every request is served without authorization')
   }
   out(running.origin)

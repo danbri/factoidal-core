@@ -1,24 +1,27 @@
 # Factoidal LWS server as a Docker target
 
-One container with `factoidal lws-serve` (the W3C Linked Web Storage 1.0
-server) and `factoidal authz-serve` (its OAuth 2.0 authorization server),
+One container with `factoidal lws-serve --authz`: the W3C Linked Web Storage
+1.0 server and its OAuth 2.0 authorization server in one process on one port,
 made so that another party can test it with Docker alone. It keeps the
 target contract of Touchstone, the LWS conformance harness of
 https://github.com/ebremer/touchstone (`targetservers/README.md`, "The
 contract"). Owner, 2026-10-26: "Idea is we write dockerfiles for our lws server
 and they or someone hammer it in a docker based server".
 
-Every protocol decision is made by the Lean 4 code in the published package
-`@factoidal/core` (one wasm module). The files here only start the two
-servers and route by path.
+Every protocol decision is made by the Lean 4 code of `@factoidal/core` (one
+wasm module), including which requests are the authorization server's
+(`formal/lean4/L4Factoidal/Authz/Mount.lean`). The shell script only turns
+the settings into command-line options.
 
 | file | what it does |
 | --- | --- |
 | `Dockerfile` | fetches `@factoidal/core` at `FACTOIDAL_VERSION`, checks it against `FACTOIDAL_INTEGRITY` (the registry's `dist.integrity`), runs as user `node`, state in `/data` |
-| `entrypoint.sh` | starts `authz-serve` (port 8082) and `lws-serve` (port 8081) on loopback, and `front.mjs` on 8080 |
-| `front.mjs` | sends the authorization server paths to `authz-serve` and every other path to `lws-serve`, unchanged |
+| `entrypoint.sh` | `factoidal lws-serve /data/storage --authz /data/as --base LWS_PUBLIC_URL/ --port 8080 ...` |
 | `touchstone.env` | how Touchstone's `run-all.sh` tests this target |
 | `compose.service.yaml` | the service entry for Touchstone's `targetservers/compose.yaml` |
+
+`lws-serve --authz` is in the releases after 0.16.0. Until one is published,
+build from a local checkout (below).
 
 ## Settings
 
@@ -32,8 +35,12 @@ servers and route by path.
 | `LWS_INSECURE_NO_AUTH=1` | no authorization (development only) |
 | `FACTOIDAL_LWS_KEY` | seal the storage and the signing keys at rest |
 
-The storage trusts the issuer with the issuer's JWK Set given inline
-(`lws-serve --auth-config`), so the container never fetches its own public URL.
+The issuer is `LWS_PUBLIC_URL`. Its metadata is at
+`/.well-known/lws-configuration` + the issuer's path (RFC 8414 §3.1); the
+token endpoint and the JWK Set are at `LWS_PUBLIC_URL/.well-known/lws-token`
+and `LWS_PUBLIC_URL/.well-known/lws-jwks`. A proxy in front may remove the
+path of `LWS_PUBLIC_URL` from each request (Touchstone's router, `strip`
+mode): the server reads both forms of every path.
 
 ## Build and run
 
@@ -80,8 +87,6 @@ These are hand checks. Touchstone scores of the same server outside Docker
 
 ## Known limits
 
-- The 3 SAML tests are inapplicable: `authz-serve` has no XML Signature
-  verifier (https://github.com/danbri/factoidal/issues/926), so the target
-  does not declare `SamlTrust`.
-- A storage resource cannot be named `/token` or `/jwks` at the storage root:
-  those paths go to the authorization server.
+- The 3 SAML tests are inapplicable: the authorization server has no XML
+  Signature verifier (https://github.com/danbri/factoidal/issues/926), so the
+  target does not declare `SamlTrust`.

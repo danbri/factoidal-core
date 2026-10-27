@@ -271,7 +271,7 @@ def classify (op msg : String) (positioned : Bool) : String :=
 def uncodedOps : List String :=
   [ "lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush", "lwsLoad", "lwsPersist", "lwsRead", "solidOpen", "solidStep",
     "solidClose", "solidSnapshot", "solidFetched", "solidClientRequest", "solidClientResponse",
-    "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzClose" ]
+    "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzOwns", "authzClose" ]
 
 private def isErrorEnvelope (s : String) : Bool := s.startsWith "{\"ok\":false"
 
