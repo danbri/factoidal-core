@@ -372,6 +372,10 @@ import L4Factoidal.VC.Context
 import L4Factoidal.VC.DataIntegrity
 import L4Factoidal.VC.Tests
 import L4Factoidal.VC.Theorems
+import L4Factoidal.CID.Multiformats
+import L4Factoidal.CID.Document
+import L4Factoidal.CID.Retrieve
+import L4Factoidal.CID.Tests
 import L4Factoidal.Geo.Types
 import L4Factoidal.Geo.Order
 import L4Factoidal.Geo.BBox

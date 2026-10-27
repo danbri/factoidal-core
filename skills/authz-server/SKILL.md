@@ -95,9 +95,12 @@ testing: `deploy/lws-target/`.
   Ed25519 binding. Touchstone and Nimbus verify only ES256 and RS256.
 * Suites: OpenID Connect ID token (`sub` document names `iss` as an
   `lws#OpenIdProvider` service; discovery `issuer` equals `iss`; key by
-  `kid` from `jwks_uri`); CID suite, https subject (document `id` = `sub`;
-  method named by `authentication`, embedded or referenced; `controller` =
-  `sub`; not revoked or expired); CID suite, did:key subject (P-256
+  `kid` from `jwks_uri`); CID suite, https subject: the CID 1.0 module
+  `L4Factoidal/CID/` (https://github.com/danbri/factoidal/issues/1100),
+  §2 data-model checks of the whole document, §3.3 Retrieve Verification
+  Method with `authentication` (document `id` = `sub`; method embedded or
+  referenced; `controller` = `sub`), then not revoked or expired (§2.2);
+  record `docs/designissues/2026-10-27-cid-1.0.md`; CID suite, did:key subject (P-256
   compressed via HACL\*, or Ed25519; `kid` = `did#z…` or `z…`). SAML 2.0
   (https://github.com/danbri/factoidal/issues/926): base64url
   `saml:Assertion` from a configured provider; one enveloped signature,
