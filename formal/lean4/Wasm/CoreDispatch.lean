@@ -157,6 +157,7 @@ def fullOnlyOpNames : List String :=
   , "solidSnapshot"
   , "solidFetched"
   , "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzOwns", "authzClose"
+  , "webdavOpen", "webdavLoad", "webdavStep", "webdavResume", "webdavClose"
   , "solidClientRequest", "solidClientResponse"
   , "lwsClientStart", "lwsClientStep", "lwsClientNewKey"
   , "matrixDeterminant", "matrixScalarProduct", "matrixVectorProduct"

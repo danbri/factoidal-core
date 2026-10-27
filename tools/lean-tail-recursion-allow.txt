@@ -1532,3 +1532,9 @@ L4Factoidal_SPARQL_isUnionOfBgps  # (s) (b) test helper of PathAlternativeTheore
 L4Factoidal_Dataflow_canonArr  # (b) the element loop is a tail call; the cycle is canonJson, one frame per nesting level of a node settings document (issue 975)
 L4Factoidal_Dataflow_canonJson  # (b) one frame per nesting level of a node settings document (issue 975)
 L4Factoidal_Dataflow_canonObj  # (b) the member loop is a tail call; the cycle is canonJson, one frame per nesting level of a node settings document (issue 975)
+# --- Added 2026-10-27 by the WebDAV server of https://github.com/danbri/factoidal/issues/1066 ---
+L4Factoidal_WebDAV_Prog_bind  # (b) a bind of `.call` returns at once (the recursion is inside the continuation, run when the next storage answer arrives) and a bind of `.pure` applies its continuation; one frame per bind nested in the program text of L4Factoidal/WebDAV/Server.lean, and every loop body there asks the storage before it loops (copyTree, etagsOf)
+L4Factoidal_WebDAV_Prog_trace  # (s) the operations a program names in a model, for the theorem WebDAV.browse_no_write only: in the emitted C of 2026-10-27 only WebDAV/Backend.c names it; no executed path calls it
+L4Factoidal_WebDAV_copyTree  # (c) at most 64 levels (its fuel); each call asks the storage (get or put) before it recurses, so one host answer resumes one level and the member loop runs one frame deep per answer
+L4Factoidal_WebDAV_propfind  # (c) the member loop of a Depth 1 PROPFIND that asks for DAV:getetag: each iteration asks the storage (one HEAD) before the next, so one host answer resumes one iteration; with no tag asked there is no loop (a map)
+L4Factoidal_WebDAV_etagsOf  # (c) at most ifTagsMax + 1 = 17 resources: precheck refuses an If header that names more (#guard in WebDAV/Tests.lean)
