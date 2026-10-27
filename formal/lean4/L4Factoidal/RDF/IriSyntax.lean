@@ -187,6 +187,30 @@ def isAbsoluteIri (s : String) : Bool :=
   | (scheme, some hier) => schemeOk scheme && hierPartOk hier && queryOk' && fragOk
   | (_, none) => false
 
+/-- Is `s` an RFC 3987 `irelative-ref` (section 2.2)?
+
+    irelative-ref  = irelative-part [ "?" iquery ] [ "#" ifragment ]
+    irelative-part = "//" iauthority ipath-abempty / ipath-absolute
+                   / ipath-noscheme / ipath-empty
+    ipath-noscheme = isegment-nz-nc *( "/" isegment )
+
+    `isegment-nz-nc` has no `:`, so the first segment of a relative path holds
+    no colon: `a_b:c` (whose `a_b` is not a scheme, section 3.1 of RFC 3986) and
+    `:foo` are neither IRIs nor relative references
+    (https://github.com/danbri/factoidal/issues/1057). -/
+def isRelativeIriRef (s : String) : Bool :=
+  let cs := s.toList
+  let (beforeFrag, frag) := splitFirst '#' cs
+  let fragOk := match frag with | some f => fragmentOk f | none => true
+  let (beforeQuery, query) := splitFirst '?' beforeFrag
+  let queryOk' := match query with | some q => queryOk q | none => true
+  !((beforeQuery.takeWhile (· != '/')).contains ':') && hierPartOk beforeQuery && queryOk' && fragOk
+
+/-- RFC 3987 `IRI-reference = IRI / irelative-ref`: what a Turtle or TriG
+    IRIREF may hold before it is resolved against the base. -/
+def isIriReference (s : String) : Bool :=
+  isAbsoluteIri s || isRelativeIriRef s
+
 /-- Is `s` an absolute URI (RFC 3986 section 3)? An absolute URI is an
     absolute IRI with no character beyond ASCII. -/
 def isAbsoluteUri (s : String) : Bool :=
@@ -240,5 +264,30 @@ returned `true` for everything, or `false` for everything, fails here. -/
 -- Authority rules: a non-numeric port, an unbalanced bracket.
 #guard !isAbsoluteIri "http://example.com:80a/"
 #guard !isAbsoluteIri "http://[2001:db8::1/x"
+-- https://github.com/danbri/factoidal/issues/1057: a scheme with `_`, a port
+-- that is not digits, a leading colon, and an unclosed IP literal.
+#guard !isAbsoluteIri "a_b:c"
+#guard !isAbsoluteIri "entity.beeldbank_leiden_person:A.E._Stuur."
+#guard !isAbsoluteIri "http://www:example.org/"
+#guard !isAbsoluteIri "1a:foo"
+#guard !isAbsoluteIri "http://[::1/"
+#guard !isAbsoluteIri "http://a.org/d{|^}-e"
+#guard !isAbsoluteIri "http://a/abc##def"
+#guard isAbsoluteIri "http://a/abc#def"
+#guard isAbsoluteIri "scheme:!$%25&'()*+,-./0123456789:/@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz~?#"
+-- Relative references (RFC 3987 irelative-ref).
+#guard isRelativeIriRef ""
+#guard isRelativeIriRef "#frag"
+#guard isRelativeIriRef "?q=1"
+#guard isRelativeIriRef "a/b:c"
+#guard isRelativeIriRef "../up"
+#guard isRelativeIriRef "/a:b"
+#guard isRelativeIriRef "//example.org/a"
+#guard !isRelativeIriRef "a_b:c"
+#guard !isRelativeIriRef ":foo"
+#guard !isRelativeIriRef "a%zz"
+#guard !isRelativeIriRef "//www:x/"
+#guard !isRelativeIriRef "a b"
+#guard isIriReference "http://e.org/a" && isIriReference "a" && !isIriReference "a_b:c"
 
 end L4Factoidal.RDF

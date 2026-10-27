@@ -120,6 +120,7 @@ import L4Factoidal.RDF.Graph
 import L4Factoidal.Syntax.Lexing
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.Syntax.IriResolve
+import L4Factoidal.RDF.IriSyntax
 import L4Factoidal.NatBounds
 import Std.Data.TreeMap
 
@@ -539,8 +540,21 @@ def TurtleState.expandPrefixed (st : TurtleState) (pfx : String) (loc : List Cha
   | some ns => some (ns ++ String.ofList (unescapePnLocal loc))
   | none    => none
 
+/-- An IRIREF that holds neither an IRI nor a relative reference (RFC 3987
+section 2.2 `IRI-reference`; https://github.com/danbri/factoidal/issues/1057). -/
+def notIriReference (pos : Nat) (raw : String) : ParseError :=
+  ⟨s!"invalid IRI <{raw}>: not an IRI and not a relative reference (RFC 3987 section 2.2)", pos⟩
+
+/-- The IRI an `iri` production gives that is not an absolute IRI (Turtle
+section 7.2: "The resulting IRI MUST comply with the syntactic restrictions
+of generic IRI syntax", RFC 3987 section 2.2). -/
+def notAbsoluteIri (pos : Nat) (iri : String) : ParseError :=
+  ⟨s!"invalid IRI <{iri}>: not an absolute IRI (RFC 3987 section 2.2)", pos⟩
+
 /-- [135s] iri — an IRIREF (resolved against base) or a PrefixedName
-(expanded through the prefix map). Port of `parse_turtle_iri`. -/
+(expanded through the prefix map). Port of `parse_turtle_iri`. The IRIREF
+must hold an RFC 3987 `IRI-reference`, and the IRI the production gives
+must be an absolute IRI (`isAbsoluteIri`, the engine's one IRI check). -/
 def readTurtleIri (st : TurtleState) (pos : Nat) (cs : List Char) :
     Except ParseError (WfIri × Nat × List Char) :=
   match cs with
@@ -548,9 +562,11 @@ def readTurtleIri (st : TurtleState) (pos : Nat) (cs : List Char) :
       match readIriRef pos cs with
       | .error e => .error e
       | .ok (raw, pos', rest) =>
+          if !isIriReference raw then .error (notIriReference pos raw)
+          else
           match mkIri pos (st.resolve raw) with
           | .error _ => .error ⟨s!"relative IRI <{raw}> with no base to resolve against", pos⟩
-          | .ok wi   => .ok (wi, pos', rest)
+          | .ok wi   => if isAbsoluteIri wi.val then .ok (wi, pos', rest) else .error (notAbsoluteIri pos wi.val)
   | _ =>
       match readPrefixedName pos cs with
       | .error e => .error e
@@ -560,7 +576,7 @@ def readTurtleIri (st : TurtleState) (pos : Nat) (cs : List Char) :
           | some s =>
               match mkIri pos s with
               | .error e => .error e
-              | .ok wi   => .ok (wi, pos', rest)
+              | .ok wi   => if isAbsoluteIri wi.val then .ok (wi, pos', rest) else .error (notAbsoluteIri pos wi.val)
 
 /-! ## Blank nodes — [137s] `BlankNode ::= BLANK_NODE_LABEL | ANON`
 
@@ -2308,6 +2324,8 @@ def readPrefixDirective (st : TurtleState) (pos : Nat) (cs : List Char) :
         match readIriRef p3 r3 with
         | .error e => .error e
         | .ok (raw, p4, r4) =>
+          if !isIriReference raw then .error (notIriReference p3 raw)
+          else
             let iri := st.resolve raw
             if atForm then
               let (p5, r5) := tws p4 r4
@@ -2331,6 +2349,8 @@ def readBaseDirective (st : TurtleState) (pos : Nat) (cs : List Char) :
     match readIriRef p1 r1 with
     | .error e => .error e
     | .ok (raw, p2, r2) =>
+      if !isIriReference raw then .error (notIriReference p1 raw)
+      else
         let iri := st.resolve raw
         if atForm then
           let (p3, r3) := tws p2 r2

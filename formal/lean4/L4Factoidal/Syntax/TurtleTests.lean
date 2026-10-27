@@ -853,6 +853,26 @@ private def truePfx : String := "<urn:s> <urn:p> <http://example/c/o> .\n"
   "<urn:s> <urn:p> \"false\"^^<http://www.w3.org/2001/XMLSchema#boolean> .\n"
 #guard (parseTriG "@prefix true: <http://example/c/> . <urn:s> <urn:p> true:o ." none .rdf12).toOption.map (·.default.length) == some 1
 
+/-! ## https://github.com/danbri/factoidal/issues/1057 — an IRIREF holds an IRI reference
+
+Turtle section 7.2: "The resulting IRI MUST comply with the syntactic
+restrictions of generic IRI syntax" (RFC 3987 section 2.2). An IRIREF that is
+neither an IRI nor a relative reference (`a_b:c`, `:foo`) is refused, with a
+base or without one; so is an IRI with a port that is not digits. -/
+
+#guard ttlRejects "<a_b:c> <http://a/p> <http://a/o> ." (some "http://ex/")
+#guard ttlRejects "<a_b:c> <http://a/p> <http://a/o> ."
+#guard ttlRejects "<urn:s> <urn:p> <:foo> ." (some "http://example.org/dir/doc")
+#guard ttlRejects "<http://www:example.org/> <urn:foo> <urn:bar> ."
+#guard ttlRejects "<http://a/%zz> <urn:foo> <urn:bar> ."
+#guard ttlRejects "@base <a_b:c> . <s> <p> <o> ." (some "http://ex/")
+#guard ttlRejects "@prefix p: <a_b:c/> . p:s <http://a/p> <http://a/o> ." (some "http://ex/")
+#guard ttlRejects "@prefix p: <http://a#> . p:s\\#t <http://a/p> <http://a/o> ."
+#guard ttlToNT "<a/b:c> <http://a/p> <#o> ." (some "http://ex/x") ==
+  "<http://ex/a/b:c> <http://a/p> <http://ex/x#o> .\n"
+#guard ttlToNT "@prefix p: <http://a/> . p:s p:p <urn:x:y> ." ==
+  "<http://a/s> <http://a/p> <urn:x:y> .\n"
+
 #print axioms parseTurtle
 #print axioms parseTriG
 #print axioms resolveIri

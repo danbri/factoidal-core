@@ -85,6 +85,8 @@ import L4Factoidal.RDF.DatasetMerge
 import L4Factoidal.RDF.DocumentScope
 import Wasm.Ops.FromDataset
 import L4Factoidal.Syntax.LangTagWarnings
+import L4Factoidal.RDF.IriSyntax
+import Std.Data.HashSet
 
 namespace L4Wasm.Ops
 
@@ -143,7 +145,7 @@ tag outside the table go to `extra`. The dataset is a set of quads
 (`Source.parseDocument`; the answer of `extra` goes through `Dataset.toSet`;
 `parseTextToDatasetBy_isSet`).
 Not private: `Wasm/Ops/Handles.lean`'s `datasetOpenBy` is the same parse. -/
-def parseTextToDatasetBy (extra : ExtraReader) (text formatTag baseIRI : String) :
+def parseTextToDatasetReadBy (extra : ExtraReader) (text formatTag baseIRI : String) :
     Except String Dataset :=
   let base : Option String := if baseIRI == "" then none else some baseIRI
   let (mode, tag) := resolveModeAndTag formatTag
@@ -157,6 +159,76 @@ def parseTextToDatasetBy (extra : ExtraReader) (text formatTag baseIRI : String)
         | none, some refuse => .error (refuse tag)
         | none, none => unknown
       else ((readerOf extra fmt).dataset { text, mode, base }).mapError fmtParseError
+
+/-! ## Every IRI of a dataset is an IRI (https://github.com/danbri/factoidal/issues/1057)
+
+RDF 1.2 Concepts section 3.2: an IRI in an RDF graph is an absolute IRI that
+conforms to RFC 3987 section 2.2. The readers check the IRIREF characters; the
+N-Triples line loop checks only for a colon, and its round-trip proofs are about
+that check. The one engine check is `isAbsoluteIri`, applied to the dataset a
+document op reads (`parseTextToDatasetBy`, `parseDocumentOutcomeBy`), the quads a
+host supplies (`jsonQuadsLoop`), and the dataset a writer op writes
+(`datasetSerialize`), so no writer writes an IRI that no reader reads. Each
+distinct IRI is checked once. -/
+
+/-- The IRIs of a term (a literal's datatype IRI, the IRIs inside a triple
+term), in front of `acc`. -/
+def termIrisInto : Term → List String → List String
+  | .iri i, acc => i.val :: acc
+  | .bnode _, acc => acc
+  | .literal l, acc => l.val.datatype.val :: acc
+  | .tripleTerm s p o, acc =>
+      termIrisInto o (p.val :: (match s with | .iri i => i.val :: acc | .bnode _ => acc))
+
+/-- The IRIs of a triple. -/
+def tripleIris (t : Triple) : List String :=
+  termIrisInto t.o (t.p.val :: (match t.s with | .iri i => [i.val] | .bnode _ => []))
+
+/-- The IRIs of a quad: its triple's and its graph name's. -/
+def quadIris (g : Option Subject) (t : Triple) : List String :=
+  match g with
+  | some (.iri i) => i.val :: tripleIris t
+  | _ => tripleIris t
+
+/-- The first IRI of `ds` that is not an absolute IRI (`isAbsoluteIri`). -/
+def firstInvalidIri? (ds : Dataset) : Option String := Id.run do
+  let mut seen : Std.HashSet String := {}
+  for ng in ds.named do
+    match ng.name with
+    | .iri i => if !isAbsoluteIri i.val then return some i.val
+    | .bnode _ => pure ()
+  for t in ds.default do
+    for v in tripleIris t do
+      if !seen.contains v then
+        if isAbsoluteIri v then seen := seen.insert v else return some v
+  for ng in ds.named do
+    for t in ng.graph do
+      for v in tripleIris t do
+        if !seen.contains v then
+          if isAbsoluteIri v then seen := seen.insert v else return some v
+  return none
+
+/-- The message for an IRI that is not one. `ErrorModel.classify` gives it the
+code `term.invalid-iri`. -/
+def invalidIriMessage (v : String) : String :=
+  s!"invalid IRI <{v}>: not an absolute IRI (RFC 3987 section 2.2; RDF 1.2 Concepts section 3.2)"
+
+/-- The codepoint offset of `<v>` in `text`, when the document writes it so. -/
+def iriOffsetIn (text v : String) : Option Nat :=
+  match text.splitOn ("<" ++ v ++ ">") with
+  | first :: _ :: _ => some first.length
+  | _ => none
+
+/-- Parse `text` under `formatTag` into a `Dataset` (`parseTextToDatasetReadBy`),
+and refuse it when an IRI of it is not an absolute IRI. -/
+def parseTextToDatasetBy (extra : ExtraReader) (text formatTag baseIRI : String) :
+    Except String Dataset :=
+  match parseTextToDatasetReadBy extra text formatTag baseIRI with
+  | .error e => .error e
+  | .ok ds =>
+      match firstInvalidIri? ds with
+      | some v => .error (invalidIriMessage v)
+      | none => .ok ds
 
 /-- `parseToDatasetJson(text, formatTag, baseIRI)`, the pure entry's envelope
 (no prefixes, labels as written). -/
@@ -329,7 +401,7 @@ the document. The two share one dispatch table of formats; only the failure
 and the extra result differ. RDF/XML failures carry no position, as in the F*
 entry; so does a syntax read by `extra` (JSON-LD), which declares no
 prefixes. -/
-def parseDocumentOutcomeBy (extra : ExtraReader) (text formatTag baseIRI : String) :
+def parseDocumentOutcomeReadBy (extra : ExtraReader) (text formatTag baseIRI : String) :
     Except ParseFailure ParseOutcome :=
   let base : Option String := if baseIRI == "" then none else some baseIRI
   let (mode, tag) := resolveModeAndTag formatTag
@@ -351,6 +423,20 @@ def parseDocumentOutcomeBy (extra : ExtraReader) (text formatTag baseIRI : Strin
         | .error e => .error (if fmt == .rdfxml then noPosition e.msg else failureAt text e)
         | .ok (ds, ps) => .ok { ds := ds, prefixes := declarationOrderPrefixes ps, mode }
 
+/-- `parseDocumentOutcomeReadBy`, refused when an IRI of the dataset is not an
+absolute IRI; the failure has the position of `<v>` when the text writes it so. -/
+def parseDocumentOutcomeBy (extra : ExtraReader) (text formatTag baseIRI : String) :
+    Except ParseFailure ParseOutcome :=
+  match parseDocumentOutcomeReadBy extra text formatTag baseIRI with
+  | .error f => .error f
+  | .ok o =>
+      match firstInvalidIri? o.ds with
+      | some v =>
+          .error (match iriOffsetIn text v with
+            | some off => failureAt text ⟨invalidIriMessage v, off⟩
+            | none => { message := invalidIriMessage v })
+      | none => .ok o
+
 theorem readerDataset_mapError_isSet (r : L4Factoidal.Dataflow.RdfReader)
     (inp : L4Factoidal.Dataflow.ReaderInput) (f : ParseError → String) (ds : Dataset)
     (h : (r.dataset inp).mapError f = .ok ds) : ds.IsSet := by
@@ -366,10 +452,10 @@ theorem readerDataset_mapError_isSet (r : L4Factoidal.Dataflow.RdfReader)
 /-- The dataset of `parseTextToDatasetBy` is a set of quads (RDF 1.1 Concepts
 section 3: "An RDF graph is a set of RDF triples"): it is the dataset of an
 `RdfReader` (`RdfReader.isSet`). -/
-theorem parseTextToDatasetBy_isSet (extra : ExtraReader) (text formatTag baseIRI : String)
-    (ds : Dataset) (h : parseTextToDatasetBy extra text formatTag baseIRI = .ok ds) :
+theorem parseTextToDatasetReadBy_isSet (extra : ExtraReader) (text formatTag baseIRI : String)
+    (ds : Dataset) (h : parseTextToDatasetReadBy extra text formatTag baseIRI = .ok ds) :
     ds.IsSet := by
-  unfold parseTextToDatasetBy at h
+  unfold parseTextToDatasetReadBy at h
   simp only at h
   split at h
   · cases h
@@ -382,10 +468,10 @@ theorem parseTextToDatasetBy_isSet (extra : ExtraReader) (text formatTag baseIRI
 
 /-- The dataset of `parseDocumentOutcomeBy`, which `datasetOpen` stores, is a
 set of quads: it is the dataset of an `RdfReader`. -/
-theorem parseDocumentOutcomeBy_isSet (extra : ExtraReader) (text formatTag baseIRI : String)
-    (o : ParseOutcome) (h : parseDocumentOutcomeBy extra text formatTag baseIRI = .ok o) :
+theorem parseDocumentOutcomeReadBy_isSet (extra : ExtraReader) (text formatTag baseIRI : String)
+    (o : ParseOutcome) (h : parseDocumentOutcomeReadBy extra text formatTag baseIRI = .ok o) :
     o.ds.IsSet := by
-  unfold parseDocumentOutcomeBy at h
+  unfold parseDocumentOutcomeReadBy at h
   simp only at h
   split at h
   · cases h
@@ -406,8 +492,49 @@ theorem parseDocumentOutcomeBy_isSet (extra : ExtraReader) (text formatTag baseI
         subst h
         exact (readerOf extra _).isSet hr
 
+theorem parseTextToDatasetBy_isSet (extra : ExtraReader) (text formatTag baseIRI : String)
+    (ds : Dataset) (h : parseTextToDatasetBy extra text formatTag baseIRI = .ok ds) :
+    ds.IsSet := by
+  unfold parseTextToDatasetBy at h
+  split at h
+  · cases h
+  · next d hd =>
+    split at h
+    · cases h
+    · cases h
+      exact parseTextToDatasetReadBy_isSet extra text formatTag baseIRI _ hd
+
+theorem parseDocumentOutcomeBy_isSet (extra : ExtraReader) (text formatTag baseIRI : String)
+    (o : ParseOutcome) (h : parseDocumentOutcomeBy extra text formatTag baseIRI = .ok o) :
+    o.ds.IsSet := by
+  unfold parseDocumentOutcomeBy at h
+  split at h
+  · cases h
+  · next o0 h0 =>
+    split at h
+    · cases h
+    · cases h
+      exact parseDocumentOutcomeReadBy_isSet extra text formatTag baseIRI _ h0
+
 #print axioms parseTextToDatasetBy_isSet
 #print axioms parseDocumentOutcomeBy_isSet
+
+-- https://github.com/danbri/factoidal/issues/1057: one IRI check for every
+-- syntax. N-Triples keeps a colon-only check in its line loop; the op refuses.
+#guard (parseTextToDatasetBy noExtraReader "<a_b:c> <http://a/p> <http://a/o> ." "ntriples" "").toOption.isNone
+#guard (parseTextToDatasetBy noExtraReader "<http://www:example.org/> <http://a/p> <http://a/o> ." "nquads" "").toOption.isNone
+#guard (parseTextToDatasetBy noExtraReader "<http://a/%zz> <http://a/p> <http://a/o> ." "ntriples12" "").toOption.isNone
+#guard (parseTextToDatasetBy noExtraReader "<http://a/s> <http://a/p> \"x\"^^<a_b:c> ." "ntriples" "").toOption.isNone
+#guard (parseTextToDatasetBy noExtraReader "<http://a/s> <http://a/p> <http://a/o> <a_b:g> ." "nquads" "").toOption.isNone
+#guard (parseTextToDatasetBy noExtraReader "<http://a/s> <http://a/p> <<( <a_b:c> <http://a/p> <http://a/o> )>> ." "ntriples12" "").toOption.isNone
+#guard (parseTextToDatasetBy noExtraReader "<http://a/s> <http://a/p> <http://a/o> ." "ntriples" "").toOption.isSome
+#guard (parseTextToDatasetBy noExtraReader "<a_b:c> <http://a/p> <http://a/o> ." "turtle" "http://ex/").toOption.isNone
+#guard (parseTextToDatasetBy noExtraReader "<:foo> <http://a/p> <http://a/o> ." "turtle" "http://example.org/dir/doc").toOption.isNone
+#guard (parseTextToDatasetBy noExtraReader "<a/b:c> <http://a/p> <#o> ." "turtle" "http://ex/").toOption.isSome
+#guard (match parseDocumentOutcomeBy noExtraReader "<http://a/s> <http://a/p> <http://a/o> .\n<a_b:c> <http://a/p> <http://a/o> ." "ntriples" "" with
+        | .error f => f.position.map (fun (_, line, col) => (line, col)) == some (2, 1) &&
+                      (f.message.splitOn "invalid IRI <a_b:c>").length == 2
+        | .ok _ => false)
 
 /-- The display tag of an error envelope: the caller's own spelling,
 lower-cased, or `turtle` for the empty default. -/
