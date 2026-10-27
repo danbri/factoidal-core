@@ -55,12 +55,18 @@ def subjectKey : Subject → String
   | .iri i => i.val
   | .bnode b => "_:" ++ b
 
-/-- XML 1.0 character data escaping. -/
+/-- XML 1.0 character data escaping. A carriage return is written as the
+character reference `&#xD;`: XML 1.0 (Fifth Edition) section 2.11 says an XML
+processor changes a literal CR, and a CR LF pair, to one LF before the
+application sees the text, so a raw CR in a literal reads back as LF
+(https://github.com/danbri/factoidal/issues/1047). A character reference is not
+changed by that normalisation. -/
 private def esc (s : String) : String :=
   String.ofList (s.toList.flatMap (fun c =>
     if c == '&' then "&amp;".toList
     else if c == '<' then "&lt;".toList
     else if c == '>' then "&gt;".toList
+    else if c == '\r' then "&#xD;".toList
     else [c]))
 
 private def escAttr (s : String) : String :=
@@ -590,6 +596,16 @@ private def sample : Graph :=
 -- The refusals: a predicate with no XML name, a triple term, a control character.
 #guard (graphToRdfXml [{ s := .iri (iri! "http://ex/s"), p := iri! "http://ex/p/1x", o := .iri (iri! "http://ex/o") }]).toOption.isNone
 #guard (graphToRdfXml [{ s := .iri (iri! "http://ex/s"), p := iri! "urn:nopath", o := .iri (iri! "http://ex/o") }]).toOption.isNone
+-- https://github.com/danbri/factoidal/issues/1047: a carriage return in a literal
+-- is written `&#xD;` and reads back as a carriage return, not as a line feed.
+private def crGraph : Graph :=
+  [ { s := .iri (iri! "http://ex/s"), p := iri! "http://ex/p/q", o := .literal (Literal.string "a\rb\r\nc") } ]
+#guard match graphToRdfXml crGraph with
+       | .ok t => !(t.toList.contains '\r') && (t.splitOn "a&#xD;b&#xD;\nc").length == 2 &&
+                  (match RdfXml.parseRdfXml t with
+                   | .ok g => g.isomorphic? crGraph
+                   | .error _ => false)
+       | .error _ => false
 private def ctrlGraph : Graph :=
   [{ s := .iri (iri! "http://ex/s"), p := iri! "http://ex/p/q", o := .literal (Literal.string (String.singleton (Char.ofNat 1))) }]
 #guard (graphToRdfXml ctrlGraph).toOption.isNone
