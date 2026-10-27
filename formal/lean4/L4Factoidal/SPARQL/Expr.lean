@@ -42,8 +42,9 @@ ALSO IMPLEMENTED, each as a total function of explicit inputs:
   * §17.4.5.7/8 TIMEZONE and TZ (`dtTimezone`, `dtTz`, ports of the F*
     `dt_timezone`/`dt_tz`);
   * §17.5 XSD constructor functions `xsd:integer` / `decimal` / `float`
-    / `double` / `string` / `boolean` and, for any other XSD datatype
-    IRI, a typed literal (`evalXsdCast`, port of `eval_xsd_cast`);
+    / `double` / `string` / `boolean` / `dateTime` and, for any other XSD
+    datatype IRI, the XPath F&O 3.1 §19 cast or a type error
+    (`evalXsdCast`, `castFandO`);
   * §17.4.2.9/12/13 BNODE() / BNODE(str) / UUID() / STRUUID() — FRESH
     values derived deterministically from the (row, call-site) freshness
     context the caller injects (`Binding.withFreshnessCtx`, the F*
@@ -1976,9 +1977,43 @@ def castDateTime (v : EvalResult) : EvalResult :=
       else .error
   | _ => .error
 
-/-- §17.5: dispatch `xsd:<targetType>(v)`. Other XSD datatype IRIs retain
-the historical typed-literal fallback; their constructor semantics remain a
-coverage gap. Language-tagged datatypes are never constructible this way. -/
+/-- The XSD datatype of a cast argument, for `Fn.Cast.castFrom`: the
+promoted kinds name their datatype, a literal its datatype IRI. `none` for
+an IRI, a blank node, a triple term, a language-tagged string, or a datatype
+that is not an XSD built-in. -/
+def EvalResult.castSource? : EvalResult → Option XSD.Builtin
+  | .num _ => some .integer
+  | .dec _ => some .decimal
+  | .dbl _ => some .double
+  | .bool _ => some .boolean
+  | .term (.literal l) => XSD.builtinOfIri? l.val.datatype.val
+  | _ => none
+
+/-- §17.5 constructor `xsd:T(v)` for an XSD target outside the seven of the
+§17.5 table: the XPath F&O 3.1 §19 cast (`Fn.Cast.castFrom`, the F&O 2007
+§17 casting table, which F&O 3.1 §19.1 keeps). A source of type xs:string
+(a simple literal) gives `T` when its lexical form, after the whitespace
+facet of `T`, is in the lexical space of `T` (F&O 3.1 §19.2); other sources
+follow the casting table and the facets of `T` (§19.1, §19.3). A value
+outside the value space of `T` (FORG0001), a pair the table does not allow
+(XPTY0004) and a datatype the value-space layer does not implement (QName,
+NOTATION, precisionDecimal, a name that is not an XSD built-in) are all a
+type error. The result is the canonical lexical form of `T`; it is never an
+ill-typed literal (https://github.com/danbri/factoidal/issues/1041). -/
+def castFandO (target : XSD.Builtin) (fullIri : WfIri) (v : EvalResult) : EvalResult :=
+  match v.castSource?, v.castValue? with
+  | some source, some value =>
+      match Fn.Cast.castFrom .xsd10 source target value with
+      | some result =>
+          .term (.literal (mkTypedLiteral (Fn.Cast.lexical .xsd10 target result) fullIri))
+      | none => .error
+  | _, _ => .error
+
+/-- §17.5: dispatch `xsd:<targetType>(v)`. The seven types of the §17.5
+table keep their own casts. Every other XSD datatype IRI is the F&O cast
+`castFandO` (a type error when the cast is not defined); before
+https://github.com/danbri/factoidal/issues/1041 it relabelled the argument.
+Language-tagged datatypes are never constructible this way. -/
 def evalXsdCast (v : EvalResult) (targetType : String) (fullIri : WfIri) : EvalResult :=
   if targetType == "integer" then castNumeric .integer v else
   if targetType == "decimal" then castNumeric .decimal v else
@@ -1986,16 +2021,17 @@ def evalXsdCast (v : EvalResult) (targetType : String) (fullIri : WfIri) : EvalR
   if targetType == "float" then castNumeric .float v else
   if targetType == "dateTime" then castDateTime v else
   if targetType == "boolean" then castBoolean v else
+  if targetType != "string" then
+    -- Before promotion: a promoted literal loses its derived datatype
+    -- (xsd:byte) and the float/double distinction.
+    match XSD.builtinOfIri? fullIri.val with
+    | some target => castFandO target fullIri v
+    | none => .error
+  else
   let v := v.promoteLiteral
   match castLexical v with
   | none => .error
-  | some lex0 =>
-      let lex := if targetType == "string" || targetType == "boolean" then lex0
-                 else stripLeadingPlus lex0
-      if targetType == "string" then castString v lex
-      else if fullIri != rdfLangString && fullIri != rdfDirLangString then
-        .term (.literal (mkTypedLiteral lex fullIri))
-      else .error
+  | some lex => castString v lex
 
 /-! ## §17.4.2.9 / §17.4.2.12 / §17.4.2.13 — fresh values, purely
 
