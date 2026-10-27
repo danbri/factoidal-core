@@ -350,8 +350,18 @@ the negative fixtures js08/js09 expect. -/
 def literalToObject (opts : Options) (l : WfLiteral) : Option Ov :=
   let lex := l.val.lexicalForm
   let dt  := l.val.datatype.val
+  -- RDF 1.2 (`rdfDirection` "rdf-1.2", the default under `rdfstar`): the base
+  -- direction of an `rdf:dirLangString` is `@direction`. Otherwise it is not
+  -- written (JSON-LD 1.1 has no mapping of `rdf:dirLangString`;
+  -- https://github.com/danbri/factoidal/issues/984).
+  let dir12 := opts.rdfDirection == some "rdf-1.2" || (opts.rdfstar && opts.rdfDirection.isNone)
   match l.val.langTag with
-  | some tag => some (.val (.object [("@value", .string lex), ("@language", .string tag)]))
+  | some tag =>
+    match l.val.direction, dir12 with
+    | some d, true =>
+      some (.val (.object [("@value", .string lex), ("@language", .string tag),
+                           ("@direction", .string (match d with | .ltr => "ltr" | .rtl => "rtl"))]))
+    | _, _ => some (.val (.object [("@value", .string lex), ("@language", .string tag)]))
   | none =>
     if opts.rdfDirection == some "i18n-datatype" && dt.startsWith i18nPrefix then
       some (i18nValueObject lex dt)

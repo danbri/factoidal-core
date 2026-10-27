@@ -156,6 +156,26 @@ node, and other triples may refer to it.
 Scores after the decisions: 168 pass, 1 fail (fromRdf tst07), 2
 local-override (out of 171).
 
+Base direction (decision 4, 2026-10-27): `rdfDirection` has a fourth value,
+`rdf-1.2`, as proposed for JSON-LD 1.2 in
+https://github.com/w3c/json-ld-syntax/issues/488. toRdf: a value object with
+`@language` and `@direction` is an `rdf:dirLangString` literal (with no
+`@language` the direction is dropped: RDF 1.2 has no directional literal
+without a language tag). fromRdf: an `rdf:dirLangString` is a value object
+with `@language` and `@direction`. Under `rdfstar` with no `rdfDirection`
+given, `rdf-1.2` is the mode, so `Source.withJsonLdStar` and
+`Sink.withJsonLdStar` keep the direction. Without `rdfstar` nothing changes:
+the JSON-LD 1.1 writer still drops it
+(https://github.com/danbri/factoidal/issues/984).
+
+Round trip of the W3C RDF 1.2 tests (`l4sbm11-w3c jsonld-star-roundtrip`,
+scoreboard rows `l4sbm11-w3c-jsonld-star-eval` and `-syntax`): the dataset of
+each positive eval test of the N-Triples, N-Quads, Turtle and TriG 1.2
+manifests, written by `Sink.withJsonLdStar` and read back by
+`Source.withJsonLdStar`, is isomorphic to the dataset read from the test.
+2026-10-27: eval 140 of 140, positive syntax 79 of 79. Before decision 4,
+the 10 tests with a base direction failed.
+
 Test harness (`Harness/JsonLdApiProbe.lean`):
 
 - `specVersion: "json-ld-star"` names the extension, not a processing mode;

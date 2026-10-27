@@ -546,7 +546,51 @@ def usage : String :=
   "       | parse-ok SOURCE --format F --base IRI --mode rdf11|rdf12\n" ++
   "       | query-source SOURCE QUERY --format F --base IRI --mode rdf11|rdf12\n" ++
   "       | update-source SOURCE REQUEST OUT --format F --base IRI --mode rdf11|rdf12\n" ++
-  "       | list-update MANIFEST... | prepare-update MANIFEST ENTRY OUTDIR | run-update MANIFEST ENTRY"
+  "       | list-update MANIFEST... | prepare-update MANIFEST ENTRY OUTDIR | run-update MANIFEST ENTRY\n" ++
+  "       | jsonld-star-roundtrip [--syntax] MANIFEST..."
+
+/-! ## Round trip through JSON-LD-star -/
+
+/-- One row of `listRdf` through JSON-LD-star: the dataset of the action
+    (`parseSource`), written by `Sink.withJsonLdStar` and read back by
+    `Source.withJsonLdStar`, compared with the dataset of the action by
+    `compareDatasets` (`docs/designissues/2026-10-26-jsonld-star.md`). `none` is
+    a row whose action the source layer does not read (counted apart). -/
+def jsonLdStarRoundTrip (fields : List String) : IO (Option (Bool × String)) := do
+  match fields with
+  | _ :: _ :: _ :: action :: _ :: base :: modeL :: fmtL :: _ =>
+      match modeOfLabel? modeL, formatOfLabel fmtL with
+      | some mode, some fmt =>
+          match ← parseSource action fmt base mode with
+          | .error _ => pure none
+          | .ok ds =>
+              match Sink.serializeDataset Sink.withJsonLdStar .jsonld .rdf12 ds with
+              | .error e => pure (some (false, s!"fail the JSON-LD-star writer refused the dataset: {e}"))
+              | .ok txt =>
+                  match Source.parseDocument Source.withJsonLdStar .jsonld .rdf12 none txt with
+                  | .error e => pure (some (false, s!"fail the JSON-LD-star reader refused the written text: {e.msg}"))
+                  | .ok back => pure (some (compareDatasets back ds))
+      | _, _ => pure none
+  | _ => pure none
+
+/-- `jsonld-star-roundtrip [--syntax] MANIFEST...`: every row of `list-rdf` through
+    `jsonLdStarRoundTrip`. Prints each failure and one score line
+    `jsonld-star-roundtrip: P pass, F fail, S unread (out of T)`. -/
+def runJsonLdStarRoundTrip (withSyntax : Bool) (manifests : List String) : IO UInt32 := do
+  let mut pass := 0
+  let mut fail := 0
+  let mut unread := 0
+  for m in manifests do
+    for r in ← listRdf withSyntax m do
+      let fields := r.splitOn "\t"
+      match ← jsonLdStarRoundTrip fields with
+      | none => unread := unread + 1
+      | some (true, _) => pass := pass + 1
+      | some (false, why) =>
+          fail := fail + 1
+          IO.println s!"  {fields.headD "?"} {(fields.drop 1).headD "?"}: {why}"
+  IO.println s!"jsonld-star-roundtrip: {pass} pass, {fail} fail, {unread} unread (out of {pass + fail + unread})"
+  pure 0
 
 /-- `--flag value` pairs and positional arguments, each in the order given. A
     loop with two accumulators. -/
@@ -571,6 +615,8 @@ def main (args : List String) : IO UInt32 := do
         for m in rest.filter (· != "--syntax") do
           for r in ← listRdf withSyntax m do IO.println r
         pure 0
+    | "jsonld-star-roundtrip" :: rest =>
+        runJsonLdStarRoundTrip (rest.contains "--syntax") (rest.filter (· != "--syntax"))
     | "list-jsonld" :: rest =>
         let withSyntax := rest.contains "--syntax"
         match rest.filter (· != "--syntax") with

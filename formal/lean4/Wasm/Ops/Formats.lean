@@ -373,7 +373,8 @@ def jsonldDataset (text optsJson : String) : Except String Dataset :=
 
 /-- `jsonldToRdf(text, optsJson)`. `optsJson` is `""` or an object with
 the members `base`, `rdfDirection`, `expandContext`, `processingMode`
-(all strings) and `rdfstar` (boolean: JSON-LD-star, `@triple`, `@reifies`,
+(all strings; `rdfDirection` also takes `rdf-1.2`, a directional string as
+`rdf:dirLangString`) and `rdfstar` (boolean: JSON-LD-star, `@triple`, `@reifies`,
 `@annotation` as RDF 1.2 triple terms and reifiers;
 `docs/designissues/2026-10-26-jsonld-star.md`). No document loader is installed, so a remote `@context`
 is the JSON-LD error `loading remote context failed`, as it is in the F*

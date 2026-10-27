@@ -270,6 +270,15 @@ defjob l4jsonld-frame l4jsonld-frame parse_jsonld_frame jsonld_frame \
 # PR 61 test suite (third_party/testing/json-ld-star-PROVENANCE.md).
 defjob l4jsonld-api-star l4jsonld-api parse_jsonld_star jsonld_frame \
   "JSON-LD-star" "" "--star"
+# Every dataset of the W3C RDF 1.2 positive eval tests (N-Triples, N-Quads,
+# Turtle, TriG), and of the positive syntax tests, written as JSON-LD-star and
+# read back: isomorphic to the dataset read from the test (Harness/Sbm11W3c.lean).
+defjob l4sbm11-w3c-jsonld-star-eval l4sbm11-w3c parse_jsonld_star_rt none \
+  "JSON-LD-star round trip (W3C RDF 1.2 eval)" "" \
+  "jsonld-star-roundtrip $W3C/rdf/rdf12/rdf-n-triples/c14n/manifest.ttl $W3C/rdf/rdf12/rdf-n-quads/c14n/manifest.ttl $W3C/rdf/rdf12/rdf-turtle/eval/manifest.ttl $W3C/rdf/rdf12/rdf-trig/eval/manifest.ttl"
+defjob l4sbm11-w3c-jsonld-star-syntax l4sbm11-w3c parse_jsonld_star_rt none \
+  "JSON-LD-star round trip (W3C RDF 1.2 positive syntax)" "" \
+  "jsonld-star-roundtrip --syntax $W3C/rdf/rdf12/rdf-n-triples/syntax/manifest.ttl $W3C/rdf/rdf12/rdf-n-quads/syntax/manifest.ttl $W3C/rdf/rdf12/rdf-turtle/syntax/manifest.ttl $W3C/rdf/rdf12/rdf-trig/syntax/manifest.ttl"
 # --- RML ---------------------------------------------------------------------
 defjob l4rml l4rml parse_rml rml \
   "RML" "" ""
@@ -859,6 +868,10 @@ parse_jsonld_api() {
   for k in expand compact flatten fromRdf html; do
     row_sl "JSON-LD $k" "" "^$k: [0-9]+ pass" last "other = local-override + unsupported"
   done
+}
+
+parse_jsonld_star_rt() {
+  row_sl "$CUR_AREA" "" '^jsonld-star-roundtrip: [0-9]+ pass' last "other = unread (the source layer does not read the action)"
 }
 
 parse_jsonld_star() {
