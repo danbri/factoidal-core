@@ -22,6 +22,7 @@
 //   authzFetched [handle, { url, status, body, now } | { host, addresses, now }] -> { ok }
 //   authzKeys    [handle, { nonce?, private? }] -> { ok, keys } | { ok, jwks }
 //   authzRotate  [handle, { now, random }]  -> { ok, changed, kid }
+//   authzOwns    [handle, target]          -> { ok, owns }
 //   authzClose   [handle]                   -> { ok }
 //
 // FETCHES. `resolve` names a host: this host resolves it (`dns.lookup`, every
@@ -38,7 +39,7 @@ import { loadEngine } from '../bin/engine.mjs'
 import { storageKeyText } from '../lws/persist.mjs'
 
 /** The ops this host needs from the engine. */
-export const AUTHZ_OPS = ['authzOpen', 'authzStep', 'authzFetched', 'authzKeys', 'authzRotate', 'authzClose']
+export const AUTHZ_OPS = ['authzOpen', 'authzStep', 'authzFetched', 'authzKeys', 'authzRotate', 'authzOwns', 'authzClose']
 
 /** The key file in DIR. */
 export const KEY_FILE = 'authz-keys.json'
@@ -174,12 +175,16 @@ export async function openAuthorizationServer (options = {}) {
   const engine = options.engine !== undefined ? options.engine : await loadEngine()
   const dir = typeof options.dir === 'string' ? options.dir : null
   const config = {
-    issuer: options.issuer,
     resources: Array.isArray(options.resources) ? options.resources : [],
     now: nowSeconds(),
     entropy: randomBase64(64)
   }
-  for (const name of ['alg', 'tokenLifetime', 'leeway', 'rotateAfter', 'docTtl']) {
+  // `mountedOn` (an LWS storage root that shares this issuer) or `issuer`:
+  // passed unread; the engine derives the issuer, the resource and the
+  // endpoint paths from `mountedOn` (L4Factoidal/Authz/Mount.lean).
+  if (typeof options.mountedOn === 'string') config.mountedOn = options.mountedOn
+  else config.issuer = options.issuer
+  for (const name of ['alg', 'tokenLifetime', 'leeway', 'rotateAfter', 'docTtl', 'tokenPath', 'jwksPath', 'audience']) {
     if (options[name] !== undefined) config[name] = options[name]
   }
   if (options.allowHttp === true) config.allowHttp = true
@@ -208,6 +213,15 @@ export async function openAuthorizationServer (options = {}) {
     engine,
     handle,
     issuer: opened.issuer,
+    /** The resources tokens may be issued for, as the engine set them. */
+    resources: opened.resources,
+    /** The published JWK Set when the handle was opened. */
+    jwks: opened.jwks,
+    /** Whether a request target is this server's (the engine decides:
+     *  L4Factoidal.Authz.owns). */
+    owns (target) {
+      return engine.call('authzOwns', [handle, String(target)]).owns === true
+    },
     /**
      * One request.
      * @param {{method: string, target: string, headers: Array<[string, string]>, body: string}} request

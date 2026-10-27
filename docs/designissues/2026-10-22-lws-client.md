@@ -158,5 +158,5 @@ ordinary flows never reach the refusal of `enforce`.
   them the operation ends with `fail {code: "credential"}`.
 * OpenID sign-in (authorization code flow with PKCE) for
   `client-oidc-token-type-id-token`: the client takes an ID Token from the
-  caller, but has no sign-in of its own. Issue to open; until then the row
-  names https://github.com/danbri/factoidal/issues/917.
+  caller, but has no sign-in of its own:
+  https://github.com/danbri/factoidal/issues/1043 (LWS client OpenID sign-in).

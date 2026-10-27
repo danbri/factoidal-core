@@ -584,11 +584,33 @@ export async function createLwsServer (options = {}) {
   let settings = { ...options }
   let opening = null
   let opened = null
+  let authz = null
 
-  /** The storage handle, opened once. */
+  /** The storage handle, opened once. With `authz` (an object of
+   *  `openAuthorizationServer` options), an authorization server that shares
+   *  the storage's issuer is opened first, on `mountedOn: baseIri`; the
+   *  storage then trusts that issuer with the JWK Set the engine published
+   *  (L4Factoidal/Authz/Mount.lean). */
   function storage () {
     if (opening === null) {
-      opening = openLwsStorage(settings).then((value) => { opened = value; return value })
+      opening = (async () => {
+        let storageSettings = settings
+        if (settings.authz !== undefined && settings.authz !== null) {
+          if (typeof settings.baseIri !== 'string') throw new LwsHostError('authz needs baseIri')
+          const { openAuthorizationServer } = await import('../authz/server.mjs')
+          authz = await openAuthorizationServer({
+            ...settings.authz,
+            ...(settings.engine !== undefined ? { engine: settings.engine } : {}),
+            ...(settings.auth && typeof settings.auth.audience === 'string' ? { audience: settings.auth.audience } : {}),
+            mountedOn: settings.baseIri
+          })
+          const issuers = [{ issuer: authz.issuer, jwks: authz.jwks }]
+          const prior = settings.auth && Array.isArray(settings.auth.issuers) ? settings.auth.issuers : []
+          storageSettings = { ...settings, auth: { ...(settings.auth || {}), issuers: issuers.concat(prior) } }
+        }
+        opened = await openLwsStorage(storageSettings)
+        return opened
+      })()
     }
     return opening
   }
@@ -610,7 +632,13 @@ export async function createLwsServer (options = {}) {
     }
     let answer
     try {
-      answer = await (await storage()).step(record)
+      const store = await storage()
+      // One port for both servers: the engine names the authorization
+      // server's paths (L4Factoidal.Authz.owns); every other request is the
+      // storage's. The token request body is form text.
+      answer = authz !== null && authz.owns(record.target)
+        ? await authz.step({ ...record, body: new TextDecoder('utf-8').decode(record.body) })
+        : await store.step(record)
     } catch (error) {
       // A failure of this host or of the engine, not a protocol answer.
       // The engine's own words are kept; nothing is invented.
@@ -627,6 +655,8 @@ export async function createLwsServer (options = {}) {
   return {
     server,
     storage,
+    /** The authorization server sharing the storage's issuer, or null. */
+    authz () { return authz },
     /** Set the storage root's absolute IRI, before the first request. */
     setBaseIri (value) {
       if (opening !== null) {
@@ -646,6 +676,7 @@ export async function createLwsServer (options = {}) {
       return new Promise((resolve) => {
         server.close(() => {
           if (opened !== null) opened.close()
+          if (authz !== null) authz.close()
           resolve()
         })
       })

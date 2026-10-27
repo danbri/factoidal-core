@@ -58,6 +58,18 @@ triple or access decision found in a `.mjs` under `npm/factoidal/lws/` or
 `npm/factoidal/solid/` is a rule violation. The only status a host writes
 is `500`, for a failure of the host itself.
 
+## Docker target for other testers
+
+`deploy/lws-target/` (README there): `lws-serve` and `authz-serve` in one
+container that keeps the target contract of Touchstone's `targetservers/`, so
+that another party can test our server with Docker alone. Owner, 2026-10-26,
+verbatim: "Idea is we write dockerfiles for our lws server and they or someone
+hammer it in a docker based server". Our job is the container for OUR server.
+Do not build or run the other implementations in `targetservers/` unless the
+owner asks for that run. (2026-10-26: a pasted Touchstone README was read as a
+request to run `run-all.sh` against all six other servers; the owner
+corrected it. Cost: one turn and a Docker setup that was not needed.)
+
 ## Run the servers
 
 ```

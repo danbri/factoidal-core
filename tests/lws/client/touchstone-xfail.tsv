@@ -5,4 +5,4 @@
 # rule<TAB>issue<TAB>why
 # OpenID sign-in (authorization code flow with PKCE) is not built; the client
 # exchanges an ID Token it is given, but has no way to obtain one.
-client-oidc-token-type-id-token	https://github.com/danbri/factoidal/issues/917	no OpenID sign-in (code flow with PKCE); issue to open
+client-oidc-token-type-id-token	https://github.com/danbri/factoidal/issues/1043	no OpenID sign-in (code flow with PKCE)

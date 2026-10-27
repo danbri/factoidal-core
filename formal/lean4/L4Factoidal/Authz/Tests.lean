@@ -136,6 +136,37 @@ def run (ps : List (String × String)) (st : AuthzState := st0) (c : AuthzConfig
 #guard lwsConfigurationPath "https://as.example/tenant" == "/.well-known/lws-configuration/tenant"
 #guard tokenPath "https://as.example/tenant" == "/tenant/token"
 
+/-! ## Endpoint paths: configurable, two forms (whole and issuer-relative) -/
+
+-- An issuer that shares its path with a storage, its endpoints under the
+-- storage's `.well-known/`, as `lws-serve --authz` sets it.
+def cfgMounted : AuthzConfig :=
+  { cfg with issuer := "https://h.example/targets/f"
+             tokenPath := "/.well-known/lws-token", jwksPath := "/.well-known/lws-jwks" }
+#guard (metadataJson cfgMounted).getString? "token_endpoint" ==
+  some "https://h.example/targets/f/.well-known/lws-token"
+#guard (metadataJson cfgMounted).getString? "jwks_uri" ==
+  some "https://h.example/targets/f/.well-known/lws-jwks"
+-- whole form
+#guard endpointOf? cfgMounted "/.well-known/lws-configuration/targets/f" == some .metadata
+#guard endpointOf? cfgMounted "/.well-known/oauth-authorization-server/targets/f" == some .metadata
+#guard endpointOf? cfgMounted "/targets/f/.well-known/lws-token" == some .token
+#guard endpointOf? cfgMounted "/targets/f/.well-known/lws-jwks" == some .jwks
+-- issuer form (a proxy removed /targets/f)
+#guard endpointOf? cfgMounted "/.well-known/lws-configuration" == some .metadata
+#guard endpointOf? cfgMounted "/.well-known/lws-token" == some .token
+#guard endpointOf? cfgMounted "/.well-known/lws-jwks" == some .jwks
+-- storage paths are not this server's
+#guard endpointOf? cfgMounted "/token" == none
+#guard endpointOf? cfgMounted "/.well-known/lws-storage" == none
+#guard endpointOf? cfgMounted "/.well-known/oauth-protected-resource/x" == none
+#guard !owns cfgMounted "/notes/a.txt"
+#guard owns cfgMounted "/.well-known/lws-token?x=1"
+-- the default paths are unchanged
+#guard endpointOf? cfg "/token" == some .token
+#guard endpointOf? cfg "/jwks" == some .jwks
+#guard endpointOf? cfg "/.well-known/lws-configuration" == some .metadata
+
 /-! ## Keys and the JWK Set -/
 
 #guard keys0.current?.isSome

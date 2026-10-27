@@ -346,11 +346,12 @@ Design record: `docs/designissues/2026-10-22-authorization-server.md`; skill:
 
 | op | arguments | answer |
 | --- | --- | --- |
-| `authzOpen` | config JSON: `issuer`, `resources`, `alg`, `tokenLifetime`, `leeway`, `rotateAfter`, `allowHttp`, `allowPrivateFetch`, `docTtl`, `cors` (as `lwsOpen`; issue 923), `now`, `entropy` (base64, 64 bytes), `keys` (the key file), `storageKey` | `{ok, handle, issuer, kid, changed}` |
+| `authzOpen` | config JSON: `issuer` or `mountedOn` (the root IRI of an LWS storage that shares the issuer: sets the issuer, the resource or `audience`, and the endpoint paths, `L4Factoidal/Authz/Mount.lean`), `resources`, `alg`, `tokenLifetime`, `leeway`, `rotateAfter`, `allowHttp`, `allowPrivateFetch`, `docTtl`, `cors` (as `lwsOpen`; issue 923), `tokenPath`, `jwksPath` (relative to the issuer; default `/token`, `/jwks`), `now`, `entropy` (base64, 64 bytes), `keys` (the key file), `storageKey` | `{ok, handle, issuer, resources, jwks, kid, changed}` |
 | `authzStep` | handle, request JSON: `method`, `target`, `headers`, `body`, `now`, `random` (base64, 112 bytes) | `{ok, response, changed}`, `{ok, resolve: {host}, changed}` or `{ok, fetch: {url, accept, address}, changed}` |
 | `authzFetched` | handle, `{url, status, body, now}` or `{host, addresses, now}` | `{ok}` |
 | `authzKeys` | handle, `{nonce?, private?}` | `{ok, keys}` (the key file document, sealed with a storage key) or `{ok, jwks}` (private keys, for a test harness) |
 | `authzRotate` | handle, `{now, random}` | `{ok, changed, kid}` |
+| `authzOwns` | handle, request target | `{ok, owns}`: whether the target is one of this server's paths, in either form (whole, or with the issuer's path removed by a proxy). `lws-serve --authz` asks it for each request |
 | `authzClose` | handle | `{ok}` |
 
 `changed: true`: the keys changed and the host writes `authzKeys` to
