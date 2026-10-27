@@ -1737,17 +1737,29 @@ def replaceCore (t p r f : EvalResult) : EvalResult :=
       | .error _ => .error
   | _, _, _, _ => .error
 
+/-- §17.4.3.3: "The arguments startingLoc and length may be derived types of
+xsd:integer." The integer a SUBSTR position or length argument denotes: an
+`xsd:integer` value, or the value of a literal whose datatype is derived from
+`xsd:integer` (`xsd:int`, `xsd:long`, `xsd:positiveInteger`, ...), within the
+bounds of that type. Any other argument has none, and SUBSTR is then a type
+error (https://github.com/danbri/factoidal/issues/1060). -/
+def substrIntArg? (v : EvalResult) : Option Int :=
+  match v.promoteLiteral with
+  | .num n => some n
+  | .term (.literal l) => integerDerivedValue? l
+  | _ => none
+
 /-- §17.4.3.3 SUBSTR applied to arguments that are already evaluated.
 Split out of the evaluator so that each evaluator arm stays a plain
 structural match — which is what lets Lean generate the equation
 lemmas the proofs in `ExprTheorems` rewrite with. -/
 def substrResult (v1 v2 : EvalResult) (vlen : Option EvalResult) : EvalResult :=
-  match v1.stringLiteralInfo?, v2.promoteLiteral with
-  | some (s, tg, dt), .num start =>
-      match vlen.map EvalResult.promoteLiteral with
+  match v1.stringLiteralInfo?, substrIntArg? v2 with
+  | some (s, tg, dt), some start =>
+      match vlen.map substrIntArg? with
       | none => erStringPreserve (substrSpec s start none) tg dt v1.direction?
-      | some (.num n) => erStringPreserve (substrSpec s start (some n)) tg dt v1.direction?
-      | some _ => .error
+      | some (some n) => erStringPreserve (substrSpec s start (some n)) tg dt v1.direction?
+      | some none => .error
   | _, _ => .error
 
 /-- §17.4.1.3 COALESCE: the first argument that is not a type error. -/

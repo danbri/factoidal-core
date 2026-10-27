@@ -275,6 +275,30 @@ IRI is a type error, also when it has a lexical form. -/
 -- a length that is not an integer is a type error, not "no length"
 #guard (Expr.substr (.lit (litStr "12345")) (.numericLit 2) (some (.lit (litStr "3")))).eval []
   == .error
+-- §17.4.3.3: "The arguments startingLoc and length may be derived types of
+-- xsd:integer" (https://github.com/danbri/factoidal/issues/1060).
+private def litTyped (s : String) (dt : String) (h : isIri dt := by rfl) : Expr :=
+  .lit (mkTypedLiteral s ⟨dt, h⟩)
+#guard (Expr.substr (.lit (litStr "foobar")) (litTyped "4" "http://www.w3.org/2001/XMLSchema#int") none).eval []
+  == .term (.literal (litStr "bar"))
+#guard (Expr.substr (.lit (litStr "foobar")) (litTyped "4" "http://www.w3.org/2001/XMLSchema#long") none).eval []
+  == .term (.literal (litStr "bar"))
+#guard (Expr.substr (.lit (litStr "foobar")) (litTyped "4" "http://www.w3.org/2001/XMLSchema#positiveInteger") none).eval []
+  == .term (.literal (litStr "bar"))
+#guard (Expr.substr (.lit (litStr "foobar")) (.numericLit 4)
+    (some (litTyped "2" "http://www.w3.org/2001/XMLSchema#int"))).eval []
+  == .term (.literal (litStr "ba"))
+#guard (Expr.substr (.lit (litStr "foobar")) (litTyped "1" "http://www.w3.org/2001/XMLSchema#short")
+    (some (litTyped "3" "http://www.w3.org/2001/XMLSchema#unsignedByte"))).eval []
+  == .term (.literal (litStr "foo"))
+-- Negative: an ill-typed or out-of-bounds derived integer, and a decimal, are errors.
+#guard (Expr.substr (.lit (litStr "foobar")) (litTyped "0" "http://www.w3.org/2001/XMLSchema#positiveInteger") none).eval []
+  == .error
+#guard (Expr.substr (.lit (litStr "foobar")) (litTyped "x" "http://www.w3.org/2001/XMLSchema#int") none).eval []
+  == .error
+#guard (Expr.substr (.lit (litStr "foobar")) (.decimalLit "4.0") none).eval [] == .error
+#guard (Expr.substr (.lit (litStr "foobar")) (.numericLit 4)
+    (some (litTyped "2" "http://www.w3.org/2001/XMLSchema#string"))).eval [] == .error
 -- SUBSTR preserves a language tag.
 #guard (Expr.substr (.lit (litLang "foobar" "en")) (.numericLit 4) none).eval []
   == .term (.literal (litLang "bar" "en"))
