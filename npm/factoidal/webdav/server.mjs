@@ -1,0 +1,293 @@
+// A Node HTTP host for the Factoidal WebDAV server.
+// https://github.com/danbri/factoidal/issues/1066
+// Design record: docs/designissues/2026-10-27-webdav.md
+//
+// WHAT THIS FILE IS ALLOWED TO DO
+// Carry sockets, files and fetches for the engine, and nothing else:
+//
+// * at start, list CONFIGDIR and give the names to `webdavOpen`; read the
+//   files and test the paths the engine names (`need`) and give them to
+//   `webdavLoad` until it answers `ready`; write the files it names
+//   (`write`, a key file it made); open each local storage directory it
+//   names with the ops `lws-serve` uses (`openLwsStorage`, the config passed
+//   unread);
+// * per request, give the method, target, header fields and content to
+//   `webdavStep`, then carry what the engine answers: an `lws` request to
+//   the local storage it names (no socket: the storage handle's own step),
+//   a `fetch` to the URL it names, until it answers a `response`, which
+//   this file writes back.
+//
+// It makes NO protocol decision. Which files are mounts, what a mount file
+// says, every status code, header field, XML body, lock, property and path
+// mapping is decided in formal/lean4/L4Factoidal/WebDAV/ (iron rule 7 of
+// CLAUDE.md). The one status code written here is 500, for a failure of
+// this host itself. Requests are served one at a time (a queue), because
+// the engine keeps one request in flight per handle.
+//
+// THE WASM CONTRACT (formal/lean4/Wasm/Ops/WebDAV.lean)
+//   webdavOpen   [configJson]                 -> { ok, handle, need }
+//   webdavLoad   [handle, filesJson]          -> { ok, need } | { ok, ready }
+//   webdavStep   [handle, requestJson] + body -> { ok, response | lws | fetch } + body
+//   webdavResume [handle, answerJson]  + body -> { ok, response | lws | fetch } + body
+//   webdavClose  [handle]                     -> { ok }
+
+import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs'
+import { resolve as resolvePath } from 'node:path'
+import { loadEngine } from '../bin/engine.mjs'
+import { openLwsStorage } from '../lws/server.mjs'
+
+/** The ops this host needs from the engine. */
+export const WEBDAV_OPS = ['webdavOpen', 'webdavLoad', 'webdavStep', 'webdavResume', 'webdavClose']
+
+/** The most engine answers one request may take before this host gives up:
+ *  a bound against a defective module, not a protocol rule. */
+const MAX_HOPS = 100000
+
+/** The most rounds of `need` at start: the engine names two. */
+const MAX_LOADS = 8
+
+/** An error of this host, as opposed to one the engine reported. */
+export class WebdavHostError extends Error {
+  constructor (message, detail = {}) {
+    super(message)
+    this.name = 'WebdavHostError'
+    this.unknownOp = detail.unknownOp === true
+    this.envelope = detail.envelope
+  }
+}
+
+function isUnknownOp (error) {
+  const text = error && error.message ? String(error.message) : String(error)
+  return text.indexOf('unknown op') >= 0
+}
+
+/** Random bytes as base64. Pure I/O. */
+function randomBase64 (size) {
+  const bytes = new Uint8Array(size)
+  globalThis.crypto.getRandomValues(bytes)
+  return Buffer.from(bytes).toString('base64')
+}
+
+function nowSeconds () {
+  return Math.floor(Date.now() / 1000)
+}
+
+/** One engine call; an `ok: false` envelope is thrown with the engine's words. */
+function callEngine (engine, op, args) {
+  let envelope
+  try {
+    envelope = engine.call(op, args)
+  } catch (error) {
+    if (isUnknownOp(error)) {
+      throw new WebdavHostError(`the loaded l4factoidal WebAssembly module does not carry ${op}`, { unknownOp: true })
+    }
+    throw error
+  }
+  return envelope
+}
+
+function blobCall (engine, op, args, bytes) {
+  const got = engine.callBlobIO(op, args, bytes)
+  const envelope = got.envelope
+  if (envelope === null || typeof envelope !== 'object') throw new WebdavHostError(`${op} answered with no envelope`)
+  if (envelope.ok === false) throw new WebdavHostError(`${op}: ${envelope.error}`, { envelope })
+  return { envelope, bytes: got.bytes instanceof Uint8Array ? got.bytes : new Uint8Array(0) }
+}
+
+/** The files and paths the engine named, read and tested. Pure I/O. */
+function gather (configDir, need) {
+  const files = (need.read || []).map((name) => {
+    try {
+      return { name, text: readFileSync(resolvePath(configDir, name), 'utf8') }
+    } catch (_error) {
+      return { name, missing: true }
+    }
+  })
+  const exists = (need.exists || []).map((path) => ({ path, present: existsSync(resolvePath(configDir, path)) }))
+  return { files, exists }
+}
+
+/**
+ * Open a WebDAV server handle over the mount files of `configDir`.
+ *
+ * @param {object} options
+ * @param {string} options.configDir the directory of mount files
+ * @param {object} [options.engine] an engine handle to reuse
+ * @returns {Promise<{handle: string, mounts: object[], step: Function, close: Function}>}
+ */
+export async function openWebdav (options = {}) {
+  if (typeof options.configDir !== 'string') throw new WebdavHostError('openWebdav needs configDir')
+  const configDir = options.configDir
+  const engine = options.engine !== undefined ? options.engine : await loadEngine()
+  const listing = readdirSync(configDir)
+  let envelope = callEngine(engine, 'webdavOpen', [JSON.stringify({ listing, entropy: randomBase64(32) })])
+  if (envelope.ok === false) throw new WebdavHostError(envelope.error, { envelope })
+  const handle = envelope.handle
+  let loads = 0
+  while (envelope.need !== undefined) {
+    loads += 1
+    if (loads > MAX_LOADS) throw new WebdavHostError('webdavLoad asked for files more often than a start may')
+    envelope = callEngine(engine, 'webdavLoad', [handle, JSON.stringify(gather(configDir, envelope.need))])
+    if (envelope.ok === false) throw new WebdavHostError(envelope.error, { envelope })
+  }
+  const ready = envelope.ready
+  // A file the engine made (a new key): written once, never over a file.
+  for (const w of ready.write || []) {
+    writeFileSync(resolvePath(configDir, w.path), w.text, { mode: parseInt(w.mode, 8), flag: 'wx' })
+  }
+  // Each local storage, opened as lws-serve opens it; the config is the
+  // engine's, passed unread.
+  const storages = new Map()
+  for (const l of ready.local || []) {
+    const storage = await openLwsStorage({ engine, dir: resolvePath(configDir, l.dir), ...l.config, realClock: true })
+    storages.set(l.name, storage)
+  }
+
+  /** Carry one `fetch` the engine named. Pure I/O. */
+  async function exchange (request, bytes) {
+    const init = { method: request.method, headers: request.headers || [], redirect: 'manual' }
+    if (bytes.length > 0) init.body = bytes
+    let reply
+    try {
+      reply = await fetch(request.url, init)
+    } catch (error) {
+      return { answer: { error: error && error.message ? String(error.message) : String(error) }, bytes: new Uint8Array(0) }
+    }
+    const headers = []
+    reply.headers.forEach((value, name) => { headers.push([name, value]) })
+    const body = new Uint8Array(await reply.arrayBuffer())
+    return { answer: { status: reply.status, headers, now: nowSeconds(), randomBase64: randomBase64(48) }, bytes: body }
+  }
+
+  let queue = Promise.resolve()
+
+  /** One request, start to end. */
+  async function serve (request) {
+    const record = {
+      method: request.method,
+      target: request.target,
+      headers: request.headers,
+      now: nowSeconds(),
+      randomBase64: randomBase64(16)
+    }
+    let got = blobCall(engine, 'webdavStep', [handle, JSON.stringify(record)], request.body || new Uint8Array(0))
+    for (let hop = 0; hop < MAX_HOPS; hop += 1) {
+      const env = got.envelope
+      if (env.response !== undefined) {
+        return { status: env.response.status, headers: env.response.headers || [], body: got.bytes }
+      }
+      let answer
+      let bytes
+      if (env.lws !== undefined) {
+        const storage = storages.get(env.lws.mount)
+        if (storage === undefined) throw new WebdavHostError(`the engine named a storage that is not open: ${env.lws.mount}`)
+        const req = env.lws.request
+        const a = await storage.step({ method: req.method, target: req.target, headers: req.headers || [], body: got.bytes })
+        answer = { status: a.status, headers: a.headers }
+        bytes = a.body
+      } else if (env.fetch !== undefined) {
+        const x = await exchange(env.fetch, got.bytes)
+        answer = x.answer
+        bytes = x.bytes
+      } else {
+        throw new WebdavHostError('the engine answered neither response, lws nor fetch')
+      }
+      got = blobCall(engine, 'webdavResume', [handle, JSON.stringify(answer)], bytes)
+    }
+    throw new WebdavHostError('a request took more engine answers than this host allows')
+  }
+
+  return {
+    handle,
+    engine,
+    mounts: ready.mounts || [],
+    /**
+     * One request, served after the requests before it.
+     * @param {{method: string, target: string, headers: Array<[string, string]>, body: Uint8Array}} request
+     */
+    step (request) {
+      const run = queue.then(() => serve(request))
+      queue = run.catch(() => {})
+      return run
+    },
+    close () {
+      for (const s of storages.values()) s.close()
+      try { engine.call('webdavClose', [handle]) } catch (_error) { /* already gone */ }
+    }
+  }
+}
+
+function readBody (request) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    request.on('data', (chunk) => chunks.push(chunk))
+    request.on('error', reject)
+    request.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))))
+  })
+}
+
+function headerPairs (raw) {
+  const pairs = []
+  for (let index = 0; index + 1 < raw.length; index += 2) pairs.push([raw[index], raw[index + 1]])
+  return pairs
+}
+
+function writeHeaders (response, pairs) {
+  for (const pair of pairs) {
+    if (!Array.isArray(pair) || pair.length < 2) continue
+    const existing = response.getHeader(pair[0])
+    if (existing === undefined) response.setHeader(pair[0], String(pair[1]))
+    else if (Array.isArray(existing)) response.setHeader(pair[0], existing.concat([String(pair[1])]))
+    else response.setHeader(pair[0], [String(existing), String(pair[1])])
+  }
+}
+
+/**
+ * Start the server: open the handle, then listen.
+ *
+ * @param {object} options `configDir`, `port` (default 8090), `host`
+ *   (default 127.0.0.1), `engine`, `onError`
+ * @returns {Promise<{server: object, port: number, origin: string, mounts: object[], close: Function}>}
+ */
+export async function listen (options = {}) {
+  const http = await import('node:http')
+  const dav = await openWebdav(options)
+  const onError = typeof options.onError === 'function'
+    ? options.onError
+    : (error) => { console.error(`webdav-serve: ${error.message}`) }
+  const server = http.createServer(async (request, response) => {
+    let answer
+    try {
+      const body = await readBody(request)
+      answer = await dav.step({ method: request.method, target: request.url, headers: headerPairs(request.rawHeaders), body })
+    } catch (error) {
+      onError(error)
+      response.writeHead(500, { 'content-type': 'text/plain' })
+      response.end(`webdav-serve: ${error.message}\n`)
+      return
+    }
+    writeHeaders(response, answer.headers)
+    response.statusCode = answer.status
+    response.end(answer.body)
+  })
+  const port = typeof options.port === 'number' ? options.port : 8090
+  const host = typeof options.host === 'string' ? options.host : '127.0.0.1'
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(port, host, resolve)
+  })
+  const bound = server.address()
+  const origin = `http://${host.includes(':') ? `[${host}]` : host}:${bound.port}`
+  return {
+    server,
+    port: bound.port,
+    origin,
+    mounts: dav.mounts,
+    close () {
+      return new Promise((resolve) => {
+        server.close(() => { dav.close(); resolve() })
+        if (typeof server.closeAllConnections === 'function') server.closeAllConnections()
+      })
+    }
+  }
+}
