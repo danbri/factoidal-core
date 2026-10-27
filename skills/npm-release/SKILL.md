@@ -247,6 +247,23 @@ changes it.
 Cost: five to ten minutes with warm caches; about two hours with a cold
 `.checked` cache, because the tree re-verifies.
 
+### Before every publish: the npm README release row
+
+The npm page shows only `npm/factoidal/README.md`, so it is the only place
+where a reader of npmjs.com sees what changed. In the release PR, before the
+builds run of the release commit:
+
+1. Add one row at the top of the table in "Releases at a glance": the version
+   (linked to `https://github.com/danbri/factoidal-core/releases/tag/vX.Y.Z`),
+   the date, and the main changes in one to four short sentences, taken from
+   the CHANGELOG section. Put breaking changes first, in bold.
+2. Add the version's block at the top of "What is new" (3 to 6 bullets, each
+   with its PR or issue URL), and delete the block of the oldest version
+   there when there are more than three.
+3. Do not describe a version that is not yet published as published.
+
+Check: the first table row is the version in `package.json`.
+
 ### After every publish: the GitHub Release
 
 Every version on npm has a GitHub Release in `danbri/factoidal-core`, tag
