@@ -1526,3 +1526,13 @@ L4Factoidal_SPARQL_isUnionOfBgps  # (s) (b) test helper of PathAlternativeTheore
 L4Factoidal_Dataflow_canonArr  # (b) the element loop is a tail call; the cycle is canonJson, one frame per nesting level of a node settings document (issue 975)
 L4Factoidal_Dataflow_canonJson  # (b) one frame per nesting level of a node settings document (issue 975)
 L4Factoidal_Dataflow_canonObj  # (b) the member loop is a tail call; the cycle is canonJson, one frame per nesting level of a node settings document (issue 975)
+# --- XML Signature profile for SAML (https://github.com/danbri/factoidal/issues/926):
+# the cycle is one frame per level of element nesting, and every sibling
+# step is a tail call; SAML.decodeToken refuses nesting above maxDepth (32)
+# before it parses.
+L4Factoidal_XML_DSig_countNode  # (c) element nesting, at most SAML.maxDepth on the SAML path
+L4Factoidal_XML_DSig_countNodesAcc  # (c) element nesting, at most SAML.maxDepth on the SAML path
+L4Factoidal_XML_DSig_plainNode  # (c) element nesting, at most SAML.maxDepth on the SAML path
+L4Factoidal_XML_DSig_plainNodes  # (c) element nesting, at most SAML.maxDepth on the SAML path
+L4Factoidal_XML_ExcC14n_canonNode  # (b) element nesting of one document; (c) on the SAML path
+L4Factoidal_XML_ExcC14n_canonNodesAcc  # (b) element nesting of one document; (c) on the SAML path

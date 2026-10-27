@@ -87,6 +87,6 @@ the same server outside Docker (`tools/lws-touchstone.sh`) are in
 
 ## Known limits
 
-- The 3 SAML tests are inapplicable: the authorization server has no XML
-  Signature verifier (https://github.com/danbri/factoidal/issues/926), so the
-  target does not declare `SamlTrust`.
+- The 3 SAML tests are inapplicable: this target configures no SAML identity
+  provider (`--saml-idp`), so it does not declare `SamlTrust`
+  (https://github.com/danbri/factoidal/issues/926).

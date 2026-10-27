@@ -1012,10 +1012,10 @@ issuance (the LWS authorization server, `authz-serve`, issues LWS access
 tokens, which solid-serve does not accept yet:
 https://github.com/danbri/factoidal/issues/928), Access Control Policy, Solid Notifications channels on the Solid
 server (the LWS server has the webhook suite, above),
-and persistence into Shardborough. The LWS `authn-openid` and `authn-ssi`
-drafts are implemented by the authorization server (`skills/authz-server`);
-`authn-saml` is not (no XML Signature verifier:
-https://github.com/danbri/factoidal/issues/926).
+and persistence into Shardborough. The LWS `authn-openid`, `authn-ssi`
+and `authn-saml` drafts are implemented by the authorization server
+(`skills/authz-server`; SAML: https://github.com/danbri/factoidal/issues/926,
+record `docs/designissues/2026-10-27-saml-xml-signature.md`).
 
 **Authentication is decided in Lean.** The JOSE layer
 (`L4Factoidal/JOSE/`) verifies ES256, RS256 and EdDSA through the vendored

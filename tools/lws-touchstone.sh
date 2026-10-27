@@ -35,8 +35,11 @@
 #                  current private key as as.signingKey (`factoidal authz-keys
 #                  DIR --private`), so its storage tests mint tokens as with the
 #                  reference server, and the tests of core/authorization_server
-#                  and auth/* exercise OUR token endpoint. No SamlTrust: SAML is
-#                  not accepted (https://github.com/danbri/factoidal/issues/926).
+#                  and auth/* exercise OUR token endpoint. SamlTrust: the
+#                  script makes an RSA key for the harness identity provider
+#                  (entity FIXTURES/idp), gives the harness the private JWK as
+#                  saml.idpKey and our server the public one with --saml-idp
+#                  (https://github.com/danbri/factoidal/issues/926).
 #                  Target ids get the suffix "-fas".
 #
 #   Alternative configurations. Each runs with authorization on, as
@@ -463,8 +466,20 @@ start_factoidal_authz () {
   local adir="$WORK/$name-authz"
   rm -rf "$adir"; mkdir -p "$adir"
   rm -f "$WORK/as-$name.log" "$WORK/targets-$name.yaml"
+  # The harness SAML identity provider (SamlTrust): an RSA key made here;
+  # the private JWK goes to the harness, the public one to our server.
+  local idpkey
+  idpkey="$(node -e '
+    const { generateKeyPairSync } = require("node:crypto")
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 })
+    const priv = { ...privateKey.export({ format: "jwk" }), kid: "idp" }
+    const fs = require("node:fs")
+    fs.writeFileSync(process.argv[1], JSON.stringify({ entityId: process.argv[2] + "idp", jwk: publicKey.export({ format: "jwk" }) }))
+    process.stdout.write(JSON.stringify(priv))' "$WORK/$name-saml-idp.json" "$fixtures")"
+  [ -n "$idpkey" ] || cannot_run "cannot make the SAML identity provider key"
   FACTOIDAL_LWS_KEY= node "$SERVE" authz-serve "$adir" --port "$port" --host 127.0.0.1 \
     --issuer "http://127.0.0.1:$port" --resource "$base,${base}.well-known/lws-storage" \
+    --saml-idp "$WORK/$name-saml-idp.json" \
     --allow-http --allow-private-fetch > "$WORK/as-$name.log" 2>&1 &
   PIDS+=($!)
   wait_for "$WORK/as-$name.log" '^http://' 60 || { cat "$WORK/as-$name.log" >&2; cannot_run "authz-serve did not start"; }
@@ -473,8 +488,8 @@ start_factoidal_authz () {
     let t = ""; process.stdin.on("data", (c) => { t += c }); process.stdin.on("end", () => {
       const ks = JSON.parse(t).keys; process.stdout.write(JSON.stringify(ks[0])) })')"
   [ -n "$jwk" ] || cannot_run "authz-keys printed no key"
-  printf 'targets:\n  %s:\n    baseUrl: %s\n    adapter: env\n    capabilities: [Authentication, HarnessIssuedTokens, ReachableFixtures]\n    properties:\n      webid.alice: %s\n      webid.bob: %s\n      fixtures.baseUrl: %s\n      as.signingKey: %s\n' \
-    "$id" "$base" "'${fixtures}agents/alice'" "'${fixtures}agents/bob'" "'$fixtures'" "'$jwk'" > "$WORK/targets-$name.yaml"
+  printf 'targets:\n  %s:\n    baseUrl: %s\n    adapter: env\n    capabilities: [Authentication, HarnessIssuedTokens, ReachableFixtures, SamlTrust]\n    properties:\n      webid.alice: %s\n      webid.bob: %s\n      fixtures.baseUrl: %s\n      as.signingKey: %s\n      saml.idpKey: %s\n' \
+    "$id" "$base" "'${fixtures}agents/alice'" "'${fixtures}agents/bob'" "'$fixtures'" "'$jwk'" "'$idpkey'" > "$WORK/targets-$name.yaml"
 }
 
 # run_authorized NAME ID LWS-SERVE-FLAGS...: start Touchstone's reference
