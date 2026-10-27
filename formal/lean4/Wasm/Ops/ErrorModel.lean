@@ -316,6 +316,21 @@ def attachCode (op : String) (args : List String) (envelope : String) : String :
           (Json.object (fields ++ [("code", .string code)] ++ spec ++ pos)).toString
     | _ => envelope
 
+/-- `attachCode` with the arguments read only when the answer is an error
+envelope that needs a code. The dispatch entries pass `argsForCode`, which
+decodes the whole argument envelope a second time; for a store manifest of
+1.5 million hexadecimal digits that was paid on every call, error or not
+(https://github.com/danbri/factoidal/issues/1039). -/
+def attachCodeLazy (op : String) (args : Unit → List String) (envelope : String) : String :=
+  if !isErrorEnvelope envelope || uncodedOps.contains op then envelope
+  else attachCode op (args ()) envelope
+
+/-- It is `attachCode`. -/
+theorem attachCodeLazy_eq (op : String) (args : List String) (envelope : String) :
+    attachCodeLazy op (fun _ => args) envelope = attachCode op args envelope := by
+  unfold attachCodeLazy attachCode
+  split <;> simp_all
+
 /-- The code an envelope carries, if any. -/
 def codeOf? (envelope : String) : Option String :=
   (parseJson? envelope).bind (·.getString? "code")

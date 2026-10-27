@@ -350,18 +350,19 @@ def storeCodec? (op : String) (manifest : Manifest) : Except String StoreCodec :
 /-- The admitted bytes of one sidecar the manifest declared, or `none` when the
 host did not supply it or its bytes fail the manifest's commitment. -/
 private def sidecarBytes? (op : String) (ref? : Option ArtifactRef)
-    (sources : List (String × ArtifactSource)) (blob : ByteArray) : Option ByteArray := do
+    (sources : List (String × ArtifactSource)) (blob : ByteArray)
+    (hasher : L4Factoidal.Storage.BlockMerkle.Hasher := L4Factoidal.Storage.BlockMerkle.pureHasher) : Option ByteArray := do
   let ref ← ref?
   let _ ← supplied? sources ref.key.value
-  (admitRef op ref sources blob).toOption
+  (admitRef op ref sources blob (hasher := hasher)).toOption
 
 /-- One sidecar the manifest declared, decoded and checked against this block,
 or `none`. Every `none` is a FALLBACK, not an error: the handle then scans,
 which is what it did before the sidecar existed. -/
 private def retainedSidecar? {α : Type} (op : String) (ref? : Option ArtifactRef)
     (sources : List (String × ArtifactSource)) (blob : ByteArray)
-    (decode : ByteArray → Option α) : Option α := do
-  decode (← sidecarBytes? op ref? sources blob)
+    (decode : ByteArray → Option α) (hasher : L4Factoidal.Storage.BlockMerkle.Hasher := L4Factoidal.Storage.BlockMerkle.pureHasher) : Option α := do
+  decode (← sidecarBytes? op ref? sources blob (hasher := hasher))
 
 /-- A literal-index sidecar whose bytes start with the magic of LGI1 or LGI2
 refuses the open. `retainedSidecar?` turns every failure into a fallback to the
@@ -406,8 +407,8 @@ neither, neither decodes, or neither names this block. -/
 private def retainedIndexesOf? (op : String) (entry : Entry)
     (sources : List (String × ArtifactSource)) (blob : ByteArray)
     (literalBytes? : Option ByteArray)
-    (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow) (blockBytes : ByteArray) :
-    Option RetainedIndexes := do
+    (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow) (blockBytes : ByteArray)
+    (hasher : L4Factoidal.Storage.BlockMerkle.Hasher := L4Factoidal.Storage.BlockMerkle.pureHasher) : Option RetainedIndexes := do
   let literal? := literalBytes?.bind (fun bytes =>
     match L4Factoidal.Storage.LiteralGramIndexWire.decode? bytes with
     | some artifact =>
@@ -417,7 +418,7 @@ private def retainedIndexesOf? (op : String) (entry : Entry)
     match L4Factoidal.Storage.GeoBBoxIndexWire.decode? bytes with
     | some artifact =>
         if artifact.targetIBKSha256 == entry.artifact.sha256 then some artifact.index else none
-    | none => none)
+    | none => none) (hasher := hasher)
   if literal?.isNone && geo?.isNone then none else do
   let block ← L4Factoidal.Storage.IndexedBlockWireV4.decode blockBytes
   let rows := quads.toArray
@@ -438,11 +439,11 @@ private def retainedIndexesOf? (op : String) (entry : Entry)
 `Except` is the one place an index problem is an error and not a fallback. -/
 def retainedIndexes? (op : String) (entry : Entry)
     (sources : List (String × ArtifactSource)) (blob : ByteArray)
-    (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow) (blockBytes : ByteArray) :
-    Except String (Option RetainedIndexes) := do
-  let literalBytes? := sidecarBytes? op entry.literalIndex sources blob
+    (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow) (blockBytes : ByteArray)
+    (hasher : L4Factoidal.Storage.BlockMerkle.Hasher := L4Factoidal.Storage.BlockMerkle.pureHasher) : Except String (Option RetainedIndexes) := do
+  let literalBytes? := sidecarBytes? op entry.literalIndex sources blob (hasher := hasher)
   refuseRetiredLiteral op entry.literalIndex literalBytes?
-  pure (retainedIndexesOf? op entry sources blob literalBytes? quads blockBytes)
+  pure (retainedIndexesOf? op entry sources blob literalBytes? quads blockBytes (hasher := hasher))
 
 /-- The same, for an IBK5 block: LGI4 in the `literalIndex` role, GBI1
 unchanged in the `geoIndex` role, and the decoded block retained so both
@@ -453,8 +454,8 @@ private def retainedIndexesV5Of? (op : String) (entry : Entry)
     (sources : List (String × ArtifactSource)) (blob : ByteArray)
     (literalBytes? : Option ByteArray)
     (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow)
-    (block : L4Factoidal.Storage.IndexedBlockWireV5.QuadBlock) :
-    Option RetainedIndexes := do
+    (block : L4Factoidal.Storage.IndexedBlockWireV5.QuadBlock)
+    (hasher : L4Factoidal.Storage.BlockMerkle.Hasher := L4Factoidal.Storage.BlockMerkle.pureHasher) : Option RetainedIndexes := do
   let literal? := literalBytes?.bind (fun bytes =>
     match L4Factoidal.Storage.LiteralGramIndexWire.decode2? bytes with
     | some artifact =>
@@ -464,7 +465,7 @@ private def retainedIndexesV5Of? (op : String) (entry : Entry)
     match L4Factoidal.Storage.GeoBBoxIndexWire.decode? bytes with
     | some artifact =>
         if artifact.targetIBKSha256 == entry.artifact.sha256 then some artifact.index else none
-    | none => none)
+    | none => none) (hasher := hasher)
   if literal?.isNone && geo?.isNone then none else do
   let rows := quads.toArray
   if block.rows.size != rows.size then none else
@@ -484,21 +485,21 @@ private def retainedIndexesV5Of? (op : String) (entry : Entry)
 def retainedIndexesV5? (op : String) (entry : Entry)
     (sources : List (String × ArtifactSource)) (blob : ByteArray)
     (quads : List L4Factoidal.Storage.IndexedBlockWireV4.QuadRow)
-    (block : L4Factoidal.Storage.IndexedBlockWireV5.QuadBlock) :
-    Except String (Option RetainedIndexes) := do
-  let literalBytes? := sidecarBytes? op entry.literalIndex sources blob
+    (block : L4Factoidal.Storage.IndexedBlockWireV5.QuadBlock)
+    (hasher : L4Factoidal.Storage.BlockMerkle.Hasher := L4Factoidal.Storage.BlockMerkle.pureHasher) : Except String (Option RetainedIndexes) := do
+  let literalBytes? := sidecarBytes? op entry.literalIndex sources blob (hasher := hasher)
   refuseRetiredLiteral op entry.literalIndex literalBytes?
-  pure (retainedIndexesV5Of? op entry sources blob literalBytes? quads block)
+  pure (retainedIndexesV5Of? op entry sources blob literalBytes? quads block (hasher := hasher))
 
 /-- Admit and decode each selected entry, in manifest order. Every artifact
 goes through the same `admitArtifact` `storeQuery` uses, so the digest check
 is the same check in the same place in the sequence. -/
-def readRetained (op : String) (codec : StoreCodec) (blobs : BlobBytes)
-    (sources : List (String × ArtifactSource)) (blob : ByteArray) :
+def readRetained (hasher : L4Factoidal.Storage.BlockMerkle.Hasher) (op : String) (codec : StoreCodec)
+    (blobs : BlobBytes) (sources : List (String × ArtifactSource)) (blob : ByteArray) :
     List Entry → List RetainedArtifact → Except String (List RetainedArtifact)
   | [], acc => pure acc.reverse
   | entry :: rest, acc => do
-      let bytes ← admitArtifact op entry sources blob
+      let bytes ← admitArtifact op entry sources blob (hasher := hasher)
       let (payload, indexes) ← match codec with
         | .ibk5 =>
             (do
@@ -507,16 +508,16 @@ def readRetained (op : String) (codec : StoreCodec) (blobs : BlobBytes)
               let block ← ibk5BlockOf op entry bytes
               let quads ← resolveIbk5 op entry block blobs
               pure (RetainedRows.ibk5 quads,
-                    ← retainedIndexesV5? op entry sources blob quads block))
+                    ← retainedIndexesV5? op entry sources blob quads block (hasher := hasher)))
         | .ibk4 =>
             (do
               let quads ← ibk4QuadsOf op entry bytes
               pure (RetainedRows.ibk4 quads,
-                    ← retainedIndexes? op entry sources blob quads bytes))
+                    ← retainedIndexes? op entry sources blob quads bytes (hasher := hasher)))
         | .ibk3 =>
             (do let triples ← ibk3TriplesOf op entry bytes
                 pure (RetainedRows.ibk3 triples, none))
-      readRetained op codec blobs sources blob rest
+      readRetained hasher op codec blobs sources blob rest
         ({ key := entry.artifact.key.value
          , predicate := entry.predicate
          , bytes := entry.artifact.bytes
@@ -572,10 +573,20 @@ def checkHandleBytes (held : Nat) (entries : List Entry)
     throw s!"storeOpen: this open would retain {want} artifact bytes, the cap is {maxStoreHandleBytes}"
   pure ()
 
+/-- The SHA-256 `storeOpen` verifies every artifact with: HACL*
+(`Crypto.sha256Hacl`), which `Wasm/build-wasm.sh` links into the module, as
+`Wasm/Ops/Pack.lean` hashes with it when it packs. The pure `Crypto.sha256` ran
+at about 5 MB/s and was 14% of a londat store open
+(https://github.com/danbri/factoidal/issues/1039). The two agree on every input
+`lake exe l4vc-probe` checks (`L4Factoidal/Crypto/SHA2Native.lean`, "The
+obligation this module carries"); that agreement is measured, not proved. No
+`#guard` reaches this function: an extern does not evaluate at build time. -/
+def storeOpenHasher : L4Factoidal.Storage.BlockMerkle.Hasher := ⟨L4Factoidal.Crypto.sha256Hacl⟩
+
 /-- The admission of `storeOpen`, kept pure so the IO layer only inserts the
-result. -/
-private def buildOpenStore (held : Nat) (manifestHex artifactsJson : String)
-    (blob : ByteArray) : Except String OpenStore := do
+result. `hasher` is `storeOpenHasher` there. -/
+private def buildOpenStore (hasher : L4Factoidal.Storage.BlockMerkle.Hasher) (held : Nat)
+    (manifestHex artifactsJson : String) (blob : ByteArray) : Except String OpenStore := do
   let manifest ← decodeManifest? "storeOpen" manifestHex
   let codec ← storeCodec? "storeOpen" manifest
   let sources ← artifactSources "storeOpen" artifactsJson
@@ -589,8 +600,8 @@ private def buildOpenStore (held : Nat) (manifestHex artifactsJson : String)
   -- would answer a shorter literal than the block states.
   let blobRefs := planBlobRefs manifest entries
   checkHandleBytes held entries (blobBytesOf blobRefs)
-  let blobs ← admitBlobs "storeOpen" blobRefs sources blob
-  let artifacts ← readRetained "storeOpen" codec blobs sources blob entries []
+  let blobs ← admitBlobs "storeOpen" blobRefs sources blob (hasher := hasher)
+  let artifacts ← readRetained hasher "storeOpen" codec blobs sources blob entries []
   let quads := codec != .ibk3
   let ds := datasetOfRetained quads artifacts
   pure { ordinal := 0
@@ -650,7 +661,7 @@ def storeOpen (manifestHex artifactsJson : String) (blob : ByteArray) : IO Strin
     pure (errJson s!"storeOpen: {table.size} store handles are open, the cap is {maxStoreHandles}")
   else
     let held := table.fold (fun total _ opened => total + opened.retainedBytes) 0
-    match buildOpenStore held manifestHex artifactsJson blob with
+    match buildOpenStore storeOpenHasher held manifestHex artifactsJson blob with
     | .error e => pure (errJson e)
     | .ok store => do
         let n ← storeHandleCounter.modifyGet fun n => (n + 1, n + 1)

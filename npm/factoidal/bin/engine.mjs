@@ -120,13 +120,8 @@ export function loadEngine (name = 'l4factoidal') {
   return promise
 }
 
-const HEX = (() => {
-  const table = new Array(256)
-  for (let byte = 0; byte < 256; byte += 1) {
-    table[byte] = byte.toString(16).padStart(2, '0')
-  }
-  return table
-})()
+const HEX_DIGIT = Uint8Array.from('0123456789abcdef', (c) => c.charCodeAt(0))
+const HEX_DECODER = new TextDecoder()
 
 /**
  * Lowercase hexadecimal of a byte array. This is a transport encoding for
@@ -137,7 +132,14 @@ const HEX = (() => {
  * @returns {string}
  */
 export function hexOfBytes (bytes) {
-  const parts = new Array(bytes.length)
-  for (let index = 0; index < bytes.length; index += 1) parts[index] = HEX[bytes[index]]
-  return parts.join('')
+  // One byte buffer of ASCII digits, decoded once: about 20 times faster
+  // than joining one string per byte for a 753 kB store manifest
+  // (https://github.com/danbri/factoidal/issues/1039).
+  const out = new Uint8Array(bytes.length * 2)
+  for (let index = 0, at = 0; index < bytes.length; index += 1, at += 2) {
+    const byte = bytes[index]
+    out[at] = HEX_DIGIT[byte >> 4]
+    out[at + 1] = HEX_DIGIT[byte & 15]
+  }
+  return HEX_DECODER.decode(out)
 }

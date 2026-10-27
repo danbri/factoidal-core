@@ -409,11 +409,11 @@ private def argsForCode (argsJson : String) : List String :=
 
 /-- `callUncoded` with the error model of `Wasm/Ops/ErrorModel.lean`. -/
 def call (op : String) (argsJson : String) : String :=
-  attachCode op (argsForCode argsJson) (callUncoded op argsJson)
+  attachCodeLazy op (fun _ => argsForCode argsJson) (callUncoded op argsJson)
 
 /-- `callIOUncoded` with the error model of `Wasm/Ops/ErrorModel.lean`. -/
 def callIO (op : String) (argsJson : String) : IO String := do
-  pure (attachCode op (argsForCode argsJson) (← callIOUncoded op argsJson))
+  pure (attachCodeLazy op (fun _ => argsForCode argsJson) (← callIOUncoded op argsJson))
 
 /-- The byte-region entry (`l4_call_blob`). -/
 def callBlob (op : String) (argsJson : String) (_blob : ByteArray) : String :=
