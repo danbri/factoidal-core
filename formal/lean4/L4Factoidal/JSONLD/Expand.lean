@@ -115,6 +115,11 @@ def valueObjectKeysValid (ac : ActiveContext) (fields : List (String × Json)) :
     match expandIri ac kv.1 true with
     | some e => e == "@value" || e == "@language" || e == "@type"
                 || e == "@direction" || e == "@index"
+                -- §5.1 step 13.2: a key that expands to a keyword
+                -- lookalike is ignored, so it does not make the value
+                -- object invalid (json-ld-star expand tst03: `@annotation`
+                -- with `rdfstar` off).
+                || (keywordLookalike e && !keywordIn ac.rdfstar e)
     | none => false)
 
 /-- A bare ASCII space is never legal, unencoded, inside an IRI (RFC
@@ -844,6 +849,76 @@ Result shapes, matching the F* source:
     output fields (`@nest` merges its contents in as MULTIPLE fields).
 -/
 
+/-! ## JSON-LD-star checks on expanded objects
+
+The expansion outline of json-ld-star PR 61 counts the triples that the
+Object to RDF algorithm makes from a `@triple` or `@reifies` value. On an
+EXPANDED node object that count is: one triple for each value of each
+property, of `@type`, of `@reifies` (an `rdf:reifies` triple) and of each
+reverse property. A list value is one triple (its own list triples are
+separate). -/
+
+def starTripleCount (fields : List (String × Json)) : Nat :=
+  fields.foldl (fun n kv =>
+    if kv.1 == "@type" || kv.1 == "@reifies" || !isKeywordChar kv.1 then
+      n + (asArray kv.2).length
+    else if kv.1 == "@reverse" then
+      match kv.2 with
+      | .object rfs => rfs.foldl (fun m rkv => m + (asArray rkv.2).length) n
+      | _ => n
+    else n) 0
+
+/-- An expanded node object: not a value, list or triple-term object. -/
+def starNodeObject (fields : List (String × Json)) : Bool :=
+  !hasField "@value" fields && !hasField "@list" fields && !hasField "@triple" fields
+
+/-- The value of `@triple`: one expanded node object, without `@reverse`
+and `@triple`, that gives exactly one triple. -/
+def tripleTermItemsOk : List Json → Bool
+  | [.object fs] => starNodeObject fs && !hasField "@reverse" fs && starTripleCount fs == 1
+  | _ => false
+
+/-- Each value of `@reifies`: an expanded node object that gives at least
+one triple. The fixtures need "at least one", not "at most one" as the
+PR 61 outline says: expand tst12a, tst13a and tst14a (two triples) are
+valid, tst11a (no triple) is "invalid reification". -/
+def reifiesItemsOk (items : List Json) : Bool :=
+  items.all (fun it =>
+    match it with
+    | .object fs => starNodeObject fs && starTripleCount fs ≥ 1
+    | _ => false)
+
+/-- Each value of `@annotation`: an expanded node object whose `@id`, if
+any, is a blank node identifier (expand tst23: an IRI `@id` is an
+"invalid annotation"; the fromRdf and flatten fixtures write blank-node
+`@id`s on annotations). -/
+def annotationItemsOk (items : List Json) : Bool :=
+  items.all (fun it =>
+    match it with
+    | .object fs =>
+      starNodeObject fs &&
+      (match fs.find? (fun kv => kv.1 == "@id") with
+       | none => true
+       | some (_, .string s) => isBnodeShaped s
+       | some _ => false)
+    | _ => false)
+
+/-- PR 61: an object that holds `@triple` has no entries other than
+`@triple` and `@annotation`. -/
+def tripleHolderOk (rdfstar : Bool) (fields : List (String × Json)) : Bool :=
+  !rdfstar || !hasField "@triple" fields
+  || fields.all (fun kv => kv.1 == "@triple" || kv.1 == "@annotation")
+
+/-- The members of a value object that are (aliases of) `@annotation`,
+and the others. Only under `rdfstar`. -/
+def splitAnnotation (ac : ActiveContext) (fields : List (String × Json))
+    : List (String × Json) × List (String × Json) :=
+  if ac.rdfstar then
+    fields.partition (fun kv => match expandIri ac kv.1 true with
+                                | some e => e == "@annotation"
+                                | none => false)
+  else ([], fields)
+
 mutual
 
 /-- §5.1, the "element is a map" branch: a node object. -/
@@ -875,7 +950,8 @@ def expandNode (loader : Loader) (ac : ActiveContext) (v : Json) (fuel : Nat) : 
             match expandFieldsList loader acTyped ac0 (orderNodeFields acTyped fields1) fuel with
             | .error e => .error e
             | .ok outFields =>
-              .ok (.object (mergeDupFields outFields (Json.size (.object outFields) + 8)))
+              if !tripleHolderOk ac.rdfstar outFields then .error .invalidTripleTerm
+              else .ok (.object (mergeDupFields outFields (Json.size (.object outFields) + 8)))
     | _ => .error .invalidLocalContext
 termination_by fuel
 
@@ -905,7 +981,8 @@ def expandNodeFromMap (loader : Loader) (ac : ActiveContext) (v : Json) (fuel : 
             match expandFieldsList loader acTyped ac0 (orderNodeFields acTyped fields1) fuel with
             | .error e => .error e
             | .ok outFields =>
-              .ok (.object (mergeDupFields outFields (Json.size (.object outFields) + 8)))
+              if !tripleHolderOk ac.rdfstar outFields then .error .invalidTripleTerm
+              else .ok (.object (mergeDupFields outFields (Json.size (.object outFields) + 8)))
     | _ => .error .invalidLocalContext
 termination_by fuel
 
@@ -1040,6 +1117,35 @@ def expandOneField (loader : Loader) (ac ac0 : ActiveContext) (key : String) (va
       | .error e => .error e
       | .ok items => .ok (some [("@default", .array items)])
     else .ok (some [(key, .array (asArray value))])
+  -- JSON-LD-star keywords (json-ld-star PR 61), only under `rdfstar`.
+  -- `@triple` and `@reifies` values expand with a null active property:
+  -- as the items of a property without a term definition, checked
+  -- afterwards to be node objects.
+  else if ac.rdfstar && key == "@triple" then
+    match expandProperty loader ac none none none false (asArray value) fuel with
+    | .error e => .error e
+    | .ok [tt] =>
+      -- An annotation inside the triple term is not on a property value
+      -- (expand tst27a: "invalid annotation", checked before the count).
+      if (match tt with | .object fs => hasField "@annotation" fs | _ => false) then
+        .error .invalidAnnotation
+      else if tripleTermItemsOk [tt] then .ok (some [("@triple", tt)]) else .error .invalidTripleTerm
+    | .ok _ => .error .invalidTripleTerm
+  else if ac.rdfstar && key == "@reifies" then
+    match expandProperty loader ac none none none false (asArray value) fuel with
+    | .error e => .error e
+    | .ok items =>
+      if items.any (fun it => match it with
+                              | .object fs => hasField "@annotation" fs | _ => false) then
+        .error .invalidAnnotation
+      else if reifiesItemsOk items then .ok (some [("@reifies", .array items)])
+      else .error .invalidReification
+  else if ac.rdfstar && key == "@annotation" then
+    match expandProperty loader ac none none none false (asArray value) fuel with
+    | .error e => .error e
+    | .ok items =>
+      if annotationItemsOk items then .ok (some [("@annotation", .array items)])
+      else .error .invalidAnnotation
   else if actualKeyword key then .error .invalidLocalContext
   else if keywordLookalike key then .ok none
   else
@@ -1047,7 +1153,7 @@ def expandOneField (loader : Loader) (ac ac0 : ActiveContext) (key : String) (va
     | none => .ok none
     | some propIri =>
       let termOpt := findTerm ac.terms key
-      if actualKeyword propIri then
+      if keywordIn ac.rdfstar propIri then
         expandAliasedField loader ac ac0 termOpt propIri value fuel
       else if keywordForm propIri then
         -- A term whose mapping RESOLVED to a keyword lookalike (only via
@@ -1592,6 +1698,20 @@ def expandItem (loader : Loader) (ac : ActiveContext) (typeMap : Option String)
       -- spelling: a scoped context may rename any keyword, and that alias
       -- is only visible in THIS context.
       if hasAliasedField ac "@value" fields then
+        -- JSON-LD-star: an `@annotation` member of a value object is
+        -- expanded apart and added back to the expanded value object.
+        let (annFields, fields) := splitAnnotation ac fields
+        match (if annFields.isEmpty then .ok []
+               else expandProperty loader ac none none none false
+                      (annFields.flatMap (fun kv => asArray kv.2)) fuel) with
+        | .error e => .error e
+        | .ok annOut =>
+        if !annotationItemsOk annOut then .error .invalidAnnotation else
+        let addAnn (vo : Json) : Json :=
+          match annOut, vo with
+          | [], _ => vo
+          | _, .object vfs => .object (vfs ++ [("@annotation", .array annOut)])
+          | _, _ => vo
         -- `{"@value": null}` is syntactically a value object but carries
         -- no information: drop it silently, exactly like a bare JSON null
         -- item. EXCEPTION: under `"@type": "@json"` the JSON value null
@@ -1604,13 +1724,13 @@ def expandItem (loader : Loader) (ac : ActiveContext) (typeMap : Option String)
           if jsonTyped then
             match expandValueObject ac fields with
             | .error e => .error e
-            | .ok vo => .ok (some vo)
+            | .ok vo => .ok (some (addAnn vo))
           else if valueObjectKeysValid ac fields then .ok none
           else .error .invalidValueObject
         | _ =>
           match expandValueObject ac fields with
           | .error e => .error e
-          | .ok vo => .ok (some vo)
+          | .ok vo => .ok (some (addAnn vo))
       else if hasAliasedField ac "@list" fields then
         if !listObjectKeysValid ac fields then .error .invalidSetOrListObject
         else
@@ -1627,7 +1747,6 @@ def expandItem (loader : Loader) (ac : ActiveContext) (typeMap : Option String)
                                | some (_, .string ix) => [("@index", Json.string ix)]
                                | _ => []
               .ok (some (.object (("@list", .array items) :: idxFields)))
-      else if hasAliasedField ac "@reverse" fields then .error .invalidReversePropertyValue
       else if hasAliasedField ac "@language" fields then
         -- An object carrying `@language` but NO `@value` expands to a
         -- value object whose only member is `@language`, which §5.1 drops
@@ -1802,6 +1921,43 @@ termination_by fuel
 
 end
 
+/-! ## JSON-LD-star: where `@annotation` may occur
+
+`@annotation` is valid only on a value object or node object that is the
+value of a property (forward or reverse). Expand tst21 (top-level node),
+tst22 (`@graph`), tst26 (`@list` item), tst27 (`@included`) and tst27a
+(inside `@triple`) are "invalid annotation". The expanded tree records
+those positions exactly, so the check is one pass over it after
+expansion: a work list of (annotation allowed here, value), a tail call
+per step. Fuel is the tree size plus a margin; each step removes one
+value of the tree from the list. -/
+
+def annotationChildren (fields : List (String × Json)) : List (Bool × Json) :=
+  fields.flatMap (fun kv =>
+    if !isKeywordChar kv.1 || kv.1 == "@reverse" then [(true, kv.2)]
+    else if kv.1 == "@list" || kv.1 == "@set" || kv.1 == "@graph" || kv.1 == "@included"
+         || kv.1 == "@triple" || kv.1 == "@reifies" || kv.1 == "@annotation"
+    then [(false, kv.2)]
+    else [])
+
+def annotationPositionsOk : List (Bool × Json) → Nat → Bool
+  | [], _ => true
+  | _ :: _, 0 => false
+  | (ok, j) :: rest, fuel + 1 =>
+    match j with
+    | .array items => annotationPositionsOk (items.map (fun c => (ok, c)) ++ rest) fuel
+    | .object fs =>
+      if !ok && hasField "@annotation" fs then false
+      else annotationPositionsOk (annotationChildren fs ++ rest) fuel
+    | _ => annotationPositionsOk rest fuel
+
+/-- The expanded document `out` (a top-level array) has `@annotation`
+only where it may occur. Always true when `rdfstar` is off. -/
+def starAnnotationCheck (rdfstar : Bool) (out : Json) : Res Json :=
+  if !rdfstar then .ok out
+  else if annotationPositionsOk [(false, out)] (2 * Json.size out + 8) then .ok out
+  else .error .invalidAnnotation
+
 /-! ## Public API -/
 
 /-- §5.1 Expansion: expand a parsed document against an active context,
@@ -1829,7 +1985,7 @@ def expand (loader : Loader) (ac : ActiveContext) (doc : Json) : Res Json :=
     -- cannot carry `@context`, so no extraction is needed first).
     if !keepFree && (hasField "@value" fields0 || hasField "@list" fields0) then .ok (.array [])
     else
-      match expandNode loader ac doc fuel with
+      match expandNode loader ac doc fuel >>= starAnnotationCheck ac.rdfstar with
       | .error e => .error e
       | .ok (.object []) => .ok (.array (if keepFree then [.object []] else []))
       | .ok (.object fields1) =>
@@ -1844,7 +2000,10 @@ def expand (loader : Loader) (ac : ActiveContext) (doc : Json) : Res Json :=
   | .array items =>
     match expandTopItems loader ac items fuel with
     | .error e => .error e
-    | .ok outs => .ok (.array (dropFree outs))
+    | .ok outs =>
+      match starAnnotationCheck ac.rdfstar (.array outs) with
+      | .error e => .error e
+      | .ok _ => .ok (.array (dropFree outs))
   | _ => .error .notJsonLd
 
 end L4Factoidal.JSONLD

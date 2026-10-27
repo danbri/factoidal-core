@@ -9,8 +9,10 @@ JSON-LD (`l4sbm11 export`, `l4source-convert`) imports this module and passes
 
 The writer is JSON-LD 1.1 "Serialize RDF as JSON-LD" (JSON-LD 1.1 API section
 8.5) through `JSONLD.FromRdf.fromRdf` with its default options, in the canonical
-form of RFC 8785 (`jcsDocument`). The document is in expanded form. An RDF 1.2
-triple term has no JSON-LD form, and the writer says so. JSON-LD has no RDF 1.1 or
+form of RFC 8785 (`jcsDocument`). The document is in expanded form. With the default
+options an RDF 1.2 triple term has no JSON-LD form, and the writer says so;
+`withJsonLdStar` writes it in the JSON-LD-star form (`@triple`, `@reifies`,
+`@annotation`; `docs/designissues/2026-10-26-jsonld-star.md`). JSON-LD has no RDF 1.1 or
 RDF 1.2 mode, so the version argument is ignored.
 
 The stream writer (`jsonLdStream`, https://github.com/danbri/factoidal/issues/847)
@@ -37,22 +39,34 @@ namespace L4Factoidal.RDF.Sink
 
 open L4Factoidal.RDF
 
-/-- A dataset as expanded-form JSON-LD text. -/
-def jsonLdWriter : DatasetWriter := fun _version ds =>
-  match L4Factoidal.JSONLD.FromRdf.fromRdf ds {} with
+/-- A dataset as expanded-form JSON-LD text, with the fromRdf options `opts`. -/
+def jsonLdWriterWith (opts : L4Factoidal.JSONLD.FromRdf.Options) : DatasetWriter := fun _version ds =>
+  match L4Factoidal.JSONLD.FromRdf.fromRdf ds opts with
   | some doc => .ok (L4Factoidal.JSONLD.jcsDocument doc)
-  | none => .error "from_rdf returned none (an rdf:JSON literal that is not valid JSON, or a triple term)"
+  | none => .error (if opts.rdfstar then "from_rdf returned none (an rdf:JSON literal that is not valid JSON)"
+                    else "from_rdf returned none (an rdf:JSON literal that is not valid JSON, or a triple term)")
+
+/-- A dataset as expanded-form JSON-LD text (default options: a triple term is an
+    error). -/
+def jsonLdWriter : DatasetWriter := jsonLdWriterWith {}
 
 /-- The node object of subject `s` from its triples in one graph (every triple has
-    subject `s`): the node `fromRdf` builds for `s`, with no `@graph`. -/
-def subjectNode (s : Subject) (ts : List Triple) : Except String L4Factoidal.JSON.Json :=
+    subject `s`): the node `fromRdf` builds for `s` with the options `opts`, with no
+    `@graph`. With `rdfstar`, a triple term is `@triple` and `rdf:reifies` is
+    `@reifies`; the stream does not fold annotations (that needs the whole graph). -/
+def subjectNodeWith (opts : L4Factoidal.JSONLD.FromRdf.Options) (s : Subject) (ts : List Triple) :
+    Except String L4Factoidal.JSON.Json :=
   open L4Factoidal.JSONLD.FromRdf in
-  match buildNodemap {} [] ts with
+  match buildNodemap opts [] ts with
   | none => .error "from_rdf returned none (an rdf:JSON literal that is not valid JSON, or a triple term)"
   | some nm =>
       match findNode nm (subjId s) with
       | some n => .ok (nodeToJson n none)
       | none => .ok (.object [("@id", .string (subjId s))])
+
+/-- `subjectNodeWith` with the default options. -/
+def subjectNode (s : Subject) (ts : List Triple) : Except String L4Factoidal.JSON.Json :=
+  subjectNodeWith {} s ts
 
 /-- The triples of one subject's quads, by graph, in the order each graph first
     appears. A subject is in few graphs, so the groups are a list. -/
@@ -63,19 +77,25 @@ def byGraph (qs : List (Triple × Option Subject)) : List (Option Subject × Lis
     | none => acc.push (q.2, #[q.1])
   (qs.foldl step #[]).toList.map fun (g, ts) => (g, ts.toList)
 
-/-- The elements of one subject's quads, as JSON text. -/
-def subjectElems (qs : List (Triple × Option Subject)) : Except String (List String) := do
+/-- The elements of one subject's quads, as JSON text, with the fromRdf options
+    `opts`. -/
+def subjectElemsWith (opts : L4Factoidal.JSONLD.FromRdf.Options) (qs : List (Triple × Option Subject)) :
+    Except String (List String) := do
   match qs with
   | [] => pure []
   | (t, _) :: _ =>
       let mut out : Array String := #[]
       for (g, ts) in byGraph qs do
-        let node ← subjectNode t.s ts
+        let node ← subjectNodeWith opts t.s ts
         let elem := match g with
           | none => node
           | some name => .object [("@id", .string (L4Factoidal.JSONLD.FromRdf.subjId name)), ("@graph", .array [node])]
         out := out.push (L4Factoidal.JSONLD.jcsDocument elem)
       pure out.toList
+
+/-- The elements of one subject's quads, as JSON text (default options). -/
+def subjectElems (qs : List (Triple × Option Subject)) : Except String (List String) :=
+  subjectElemsWith {} qs
 
 /-- The element of a named graph with no triple. -/
 def emptyGraphElem (name : Subject) : String :=
@@ -88,6 +108,18 @@ def jsonLdStream : JsonLdStream := { subject := subjectElems, emptyGraph := empt
 /-- The writers a native tool links: JSON-LD, whole (`serializeDataset`) and by subject
     (`Writer`). -/
 def withJsonLd : Extra := { jsonld := some jsonLdWriter, jsonldStream := some jsonLdStream }
+
+/-- The JSON-LD stream writer with the fromRdf options `opts`. -/
+def jsonLdStreamWith (opts : L4Factoidal.JSONLD.FromRdf.Options) : JsonLdStream :=
+  { subject := subjectElemsWith opts, emptyGraph := emptyGraphElem }
+
+/-- The JSON-LD writers in JSON-LD-star mode (`rdfstar`): a triple term is written as
+    `@triple`, `rdf:reifies` as `@reifies`, and the whole-dataset writer folds a
+    blank-node reifier of an asserted triple into `@annotation`. Opt-in: `withJsonLd`
+    keeps refusing triple terms. -/
+def withJsonLdStar : Extra :=
+  { jsonld := some (jsonLdWriterWith { rdfstar := true }),
+    jsonldStream := some (jsonLdStreamWith { rdfstar := true }) }
 
 /-! ## Build-time checks -/
 
@@ -162,5 +194,46 @@ private def emptyGraphDs : Dataset :=
             | .ok ds => ds.named.length == 1 && ds.named.all (·.graph.isEmpty)
             | .error _ => false)
        | .error _ => false
+
+-- A triple term: the default writer refuses it; the JSON-LD-star writer writes `@triple`.
+private def ttDs : Dataset :=
+  { default := [⟨.iri ⟨"http://e/s", rfl⟩, ⟨"http://e/p", rfl⟩,
+                 .tripleTerm (.iri ⟨"http://e/a", rfl⟩) ⟨"http://e/q", rfl⟩ (.iri ⟨"http://e/b", rfl⟩)⟩],
+    named := [] }
+
+#guard (serializeDataset withJsonLd .jsonld .rdf12 ttDs).toOption.isNone
+#guard (serializeDataset withJsonLdStar .jsonld .rdf12 ttDs).toOption ==
+  some "[{\"@id\":\"http://e/s\",\"http://e/p\":[{\"@triple\":{\"@id\":\"http://e/a\",\"http://e/q\":[{\"@id\":\"http://e/b\"}]}}]}]"
+#guard (subjectNodeWith { rdfstar := true } (.iri ⟨"http://e/s", rfl⟩) ttDs.default).toOption.isSome
+#guard (subjectNode (.iri ⟨"http://e/s", rfl⟩) ttDs.default).toOption.isNone
+
+-- JSON-LD-star round trip: the star writer's text, read by the star reader
+-- (`Source.withJsonLdStar`), is the dataset. The JSON-LD 1.1 reader ignores the
+-- unknown keyword `@triple`, so the value is an empty node object: a blank node.
+#guard ((serializeDataset withJsonLdStar .jsonld .rdf12 ttDs).toOption.bind fun txt =>
+          (Source.parseDocument Source.withJsonLdStar .jsonld .rdf12 none txt).toOption) ==
+        some ttDs
+#guard ((serializeDataset withJsonLdStar .jsonld .rdf12 ttDs).toOption.bind fun txt =>
+          (Source.parseDocument Source.withJsonLd .jsonld .rdf12 none txt).toOption.map
+            (·.default.map (fun t => match t.o with | Term.bnode _ => true | _ => false))) == some [true]
+
+-- An annotated triple: `<s> <p> <o>` asserted, and a blank-node reifier with one
+-- property. The star writer folds the reifier into `@annotation`; the star reader
+-- gives the three triples back (the reifier label may differ).
+private def annDs : Dataset :=
+  let s : Subject := .iri ⟨"http://e/s", rfl⟩
+  let p : WfIri := ⟨"http://e/p", rfl⟩
+  let o : Term := .iri ⟨"http://e/o", rfl⟩
+  { default := [⟨s, p, o⟩,
+                ⟨.bnode "r", ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies", rfl⟩,
+                 .tripleTerm s p o⟩,
+                ⟨.bnode "r", ⟨"http://e/certainty", rfl⟩, .iri ⟨"http://e/high", rfl⟩⟩],
+    named := [] }
+
+#guard ((serializeDataset withJsonLdStar .jsonld .rdf12 annDs).toOption.map
+          (fun txt => (txt.splitOn "@annotation").length)) == some 2
+#guard ((serializeDataset withJsonLdStar .jsonld .rdf12 annDs).toOption.bind fun txt =>
+          (Source.parseDocument Source.withJsonLdStar .jsonld .rdf12 none txt).toOption.map
+            (·.default.length)) == some 3
 
 end L4Factoidal.RDF.Sink

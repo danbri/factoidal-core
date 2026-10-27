@@ -1,0 +1,9 @@
+[{
+  "@id": "ex:s",
+  "ex:p": [{
+    "@triple": {
+      "@id": "_:b0",
+      "ex:prop": [{"@value": "value"}]
+    }
+  }]
+}]

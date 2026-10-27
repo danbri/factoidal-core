@@ -266,6 +266,10 @@ defjob l4jsonld-api l4jsonld-api parse_jsonld_api jsonld \
   "JSON-LD" "" ""
 defjob l4jsonld-frame l4jsonld-frame parse_jsonld_frame jsonld_frame \
   "JSON-LD framing" "" ""
+# JSON-LD-star (RDF 1.2 triple terms, reifiers, annotations): the json-ld-star
+# PR 61 test suite (third_party/testing/json-ld-star-PROVENANCE.md).
+defjob l4jsonld-api-star l4jsonld-api parse_jsonld_star jsonld_frame \
+  "JSON-LD-star" "" "--star"
 # --- RML ---------------------------------------------------------------------
 defjob l4rml l4rml parse_rml rml \
   "RML" "" ""
@@ -854,6 +858,13 @@ parse_jsonld_api() {
   local k
   for k in expand compact flatten fromRdf html; do
     row_sl "JSON-LD $k" "" "^$k: [0-9]+ pass" last "other = local-override + unsupported"
+  done
+}
+
+parse_jsonld_star() {
+  local k
+  for k in expand toRdf fromRdf compact flatten; do
+    row_sl "JSON-LD-star $k" "" "^star-$k: [0-9]+ pass" last "other = local-override + unsupported"
   done
 }
 

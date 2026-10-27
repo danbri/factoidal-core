@@ -1,0 +1,17 @@
+[{
+  "@id": "_:b0",
+  "@reifies": [{"@id": "ex:rei", "ex:prop": [{"@value": "value3"}]}]
+}, {
+  "@id": "_:b1",
+  "@reifies": [{"@id": "_:b0", "ex:prop": [{"@value": "value"}]}],
+  "ex:prop": [{"@value": "value2"}]
+}, {
+  "@id": "_:b2",
+  "@reifies": [{"@id": "ex:rei", "ex:prop": [{"@value": "value3"}]}]
+}, {
+  "@id": "_:b3",
+  "@reifies": [{"@id": "_:b2", "ex:prop": [{"@value": "value"}]}]
+}, {
+  "@id": "ex:subj",
+  "ex:value": [{"@id": "_:b3"}]
+}]
