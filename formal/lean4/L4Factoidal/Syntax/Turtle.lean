@@ -562,7 +562,7 @@ def readTurtleIri (st : TurtleState) (pos : Nat) (cs : List Char) :
       match readIriRef pos cs with
       | .error e => .error e
       | .ok (raw, pos', rest) =>
-          if !isIriReference raw then .error (notIriReference pos raw)
+          if !isIriReferenceFast raw then .error (notIriReference pos raw)
           else
           match mkIri pos (st.resolve raw) with
           | .error _ => .error ⟨s!"relative IRI <{raw}> with no base to resolve against", pos⟩
@@ -2324,7 +2324,7 @@ def readPrefixDirective (st : TurtleState) (pos : Nat) (cs : List Char) :
         match readIriRef p3 r3 with
         | .error e => .error e
         | .ok (raw, p4, r4) =>
-          if !isIriReference raw then .error (notIriReference p3 raw)
+          if !isIriReferenceFast raw then .error (notIriReference p3 raw)
           else
             let iri := st.resolve raw
             if atForm then
@@ -2349,7 +2349,7 @@ def readBaseDirective (st : TurtleState) (pos : Nat) (cs : List Char) :
     match readIriRef p1 r1 with
     | .error e => .error e
     | .ok (raw, p2, r2) =>
-      if !isIriReference raw then .error (notIriReference p1 raw)
+      if !isIriReferenceFast raw then .error (notIriReference p1 raw)
       else
         let iri := st.resolve raw
         if atForm then

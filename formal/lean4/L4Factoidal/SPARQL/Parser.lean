@@ -1197,7 +1197,7 @@ def firstInvalidToken : TStream → Option ParseError
       -- must conform to the generic syntax of IRI references in section 2.2
       -- of RFC 3987" (https://github.com/danbri/factoidal/issues/1057):
       -- `<_:p>`, `<abc##def>` and `<a_b:c>` are not IRI references.
-      else if !isIriReference s then
+      else if !isIriReferenceFast s then
         some ⟨s!"invalid IRI <{s}>: not an IRI and not a relative reference (RFC 3987 section 2.2)", pt.pos⟩
       else firstInvalidToken rest
     | _          => firstInvalidToken rest
