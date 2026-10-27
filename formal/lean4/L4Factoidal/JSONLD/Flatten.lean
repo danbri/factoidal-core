@@ -43,6 +43,7 @@ group; every function in it carries an explicit fuel `Nat` derived from
 `Json.size`, exactly as the F* source does.
 -/
 import L4Factoidal.JSONLD.Compact
+import L4Factoidal.JSONLD.FromRdf
 import L4Factoidal.JSONLD.OrderedMap
 
 namespace L4Factoidal.JSONLD
@@ -329,6 +330,14 @@ def flRelabelTypes (st : NmState) (fields : List (String × Json))
     else (st, fields)
   | _ => (st, fields)
 
+/-- JSON-LD-star: the reified triple of a value (a value object or a
+triple term) of the active subject's active property, as a node object:
+`{"@id": subject, property: [value]}`. -/
+def flReification (asubj : Option Json) (aprop : Option String) (value : Json) : Option Json :=
+  match asubj, aprop with
+  | some (.string sid), some p => some (.object [("@id", .string sid), (p, .array [value])])
+  | _, _ => none
+
 /-! ## Node Map Generation — API §7.1
 
 `nmg`'s parameters mirror the spec's: the node map (inside `NmState`),
@@ -354,10 +363,27 @@ def nmg (st : NmState) (element : Json) (agraph : String) (asubj : Option Json)
       -- Step 3: relabel blank node identifiers among @type items.
       let (st, fields) := flRelabelTypes st fields0
       if hasField "@value" fields then
-        -- Step 4: value object.
-        match acc with
-        | none    => .ok (stAddValue st agraph asubj aprop (.object fields) true, none)
-        | some xs => .ok (st, some (.object fields :: xs))
+        -- Step 4: value object. JSON-LD-star: an `@annotation` entry is
+        -- removed and each annotation becomes a reifier node of the
+        -- triple (active subject, active property, value).
+        let value := Json.object (flRemove fields "@annotation")
+        match nmgAnnotated st fields agraph (flReification asubj aprop value) fuel with
+        | .error e => .error e
+        | .ok st =>
+          match acc with
+          | none    => .ok (stAddValue st agraph asubj aprop value true, none)
+          | some xs => .ok (st, some (value :: xs))
+      else if hasField "@triple" fields then
+        -- JSON-LD-star triple term: it stays embedded (its blank node
+        -- identifiers are the renamed ones of `flRenameBnodeIds`); only
+        -- its annotations go to the node map, as for a value object.
+        let value := Json.object (fields.filter (fun kv => kv.1 == "@triple"))
+        match nmgAnnotated st fields agraph (flReification asubj aprop value) fuel with
+        | .error e => .error e
+        | .ok st =>
+          match acc with
+          | none    => .ok (stAddValue st agraph asubj aprop value true, none)
+          | some xs => .ok (st, some (value :: xs))
       else if hasField "@list" fields then
         -- Step 5: list object — collect the nested items into a fresh
         -- accumulator, then attach {"@list": [...]} where the spec says.
@@ -438,6 +464,28 @@ def nmgNode (st : NmState) (fields : List (String × Json)) (agraph : String)
             match acc with
             | some xs => (st, some (reference :: xs))
             | none    => (stAddValue st agraph asubj (some p) reference true, none)
+      -- JSON-LD-star: the node's annotations reify the triple that links
+      -- it to the active subject (for a reverse property, the triple from
+      -- this node to the referencing node).
+      let reification : Option Json :=
+        match asubj, aprop with
+        | some (.object reffields), some p =>
+          some (.object [("@id", .string id), (p, .array [.object reffields])])
+        | some (.string sid), some p =>
+          some (.object [("@id", .string sid), (p, .array [.object [("@id", .string id)]])])
+        | _, _ => none
+      match nmgAnnotated st fields agraph reification fuel with
+      | .error e => .error e
+      | .ok st =>
+      let fields := flRemove fields "@annotation"
+      -- JSON-LD-star: the reified triples of a reifier stay embedded under
+      -- `@reifies` (duplicates skipped).
+      let st :=
+        match flLookup fields "@reifies" with
+        | some rv => stNodeUpdate st agraph id (fun n =>
+            (asArray rv).foldl (fun n r => nodeAppendProp n "@reifies" r true) n)
+        | none => st
+      let fields := flRemove fields "@reifies"
       -- Step 6.7: merge @type into the node.
       let st :=
         match flLookup fields "@type" with
@@ -535,6 +583,49 @@ def nmgReverseEntries (st : NmState) (entries : List (String × Json)) (agraph i
       | .ok st1  => nmgReverseEntries st1 tl agraph id fuel
 termination_by fuel
 
+/-- JSON-LD-star: the annotations of an element (its `@annotation`
+entry, if any). Each annotation is a node object that becomes the
+reifier of `reification`: its `@id`, else a new blank node, with
+`@reifies` set to `[reification]`; it then goes through node map
+generation like any node object, in the same graph, with no active
+subject. Two details follow the reference implementation (Ruby json-ld,
+which produced the fixtures, `create_node_map`): a new identifier is
+issued for EVERY annotation, also one with an `@id`
+(`a.fetch('@id', namer.get_name)` evaluates its default), and that new
+identifier is then relabelled like any blank node identifier of the
+input, so an annotation takes two labels (fixtures st18 `_:b1`, st20
+`_:b1` and `_:b3`). No reification (no active subject or property, which
+expansion does not allow) means no reifier. -/
+def nmgAnnotated (st : NmState) (fields : List (String × Json)) (agraph : String)
+    (reification : Option Json) (fuel : Nat) : Res NmState :=
+  match fuel with
+  | 0 => .error .contextOverflow
+  | fuel + 1 =>
+    match flLookup fields "@annotation", reification with
+    | some anns, some r => nmgAnnotations st (asArray anns) agraph r fuel
+    | _, _ => .ok st
+termination_by fuel
+
+def nmgAnnotations (st : NmState) (anns : List Json) (agraph : String) (reification : Json)
+    (fuel : Nat) : Res NmState :=
+  match fuel with
+  | 0 => .error .contextOverflow
+  | fuel + 1 =>
+    match anns with
+    | [] => .ok st
+    | .object afs :: tl =>
+      let (fresh, st) := issueFresh st
+      let reifier := match flLookup afs "@id" with
+                     | some (.string s) => s
+                     | _ => fresh
+      let ann := Json.object (flUpd (flUpd afs "@id" (.string reifier)) "@reifies"
+                                (.array [reification]))
+      match nmg st ann agraph none none none fuel with
+      | .error e     => .error e
+      | .ok (st1, _) => nmgAnnotations st1 tl agraph reification fuel
+    | _ :: tl => nmgAnnotations st tl agraph reification fuel
+termination_by fuel
+
 def nmgReverseValues (st : NmState) (vals : List Json) (p agraph id : String) (fuel : Nat)
     : Res NmState :=
   match fuel with
@@ -550,13 +641,211 @@ termination_by fuel
 
 end
 
+/-! ## JSON-LD-star: blank node identifiers of embedded triples
+
+Node map generation does not walk into a triple term (`@triple`) or a
+reified triple (`@reifies`): they stay embedded. Their blank node
+identifiers must still name the same blank nodes as the rest of the
+output. The reference implementation (Ruby json-ld, which produced the
+fixtures) does this with a pass before node map generation: it renames
+every `@id` blank node identifier of the expanded document, in document
+order, through the same issuer (`rename_bnodes`), and node map
+generation then relabels the identifiers it meets AGAIN. The fixtures pin
+the resulting labels (st28: `_:rei` becomes `_:b0`, then `_:b2`; `_:value`
+in `@reifies` keeps `_:b1`). `flRenameBnodeIds` is that first pass;
+`flRelabelEmbedded` then maps each embedded identifier that node map
+generation relabelled to its final label, so a blank node that occurs
+both in an embedded triple and as a node keeps one identifier (the
+reference implementation leaves the two apart; no fixture has the
+case). Both passes run only when `rdfstar` is set. -/
+
+mutual
+
+/-- Rewrite each blank node `@id` string in `j` through `step`, threading
+the state `s`. `inside` is false outside embedded triples: then only the
+contents of `@triple` and `@reifies` entries are rewritten. The contents
+of `@value` (a JSON literal) are never rewritten. -/
+def flRwJson {σ : Type} (step : σ → String → String × σ) (inside : Bool) (s : σ)
+    (j : Json) (fuel : Nat) : Res (Json × σ) :=
+  match fuel with
+  | 0 => .error .contextOverflow
+  | fuel + 1 =>
+    match j with
+    | .array items =>
+      match flRwItems step inside s items [] fuel with
+      | .error e      => .error e
+      | .ok (xs, s1)  => .ok (.array xs, s1)
+    | .object fs =>
+      match flRwMembers step inside s fs [] fuel with
+      | .error e      => .error e
+      | .ok (ms, s1)  => .ok (.object ms, s1)
+    | _ => .ok (j, s)
+termination_by fuel
+
+def flRwItems {σ : Type} (step : σ → String → String × σ) (inside : Bool) (s : σ)
+    (items acc : List Json) (fuel : Nat) : Res (List Json × σ) :=
+  match fuel with
+  | 0 => .error .contextOverflow
+  | fuel + 1 =>
+    match items with
+    | [] => .ok (acc.reverse, s)
+    | hd :: tl =>
+      match flRwJson step inside s hd fuel with
+      | .error e      => .error e
+      | .ok (hd', s1) => flRwItems step inside s1 tl (hd' :: acc) fuel
+termination_by fuel
+
+def flRwMembers {σ : Type} (step : σ → String → String × σ) (inside : Bool) (s : σ)
+    (ms acc : List (String × Json)) (fuel : Nat) : Res (List (String × Json) × σ) :=
+  match fuel with
+  | 0 => .error .contextOverflow
+  | fuel + 1 =>
+    match ms with
+    | [] => .ok (acc.reverse, s)
+    | (k, v) :: tl =>
+      if k == "@value" then flRwMembers step inside s tl ((k, v) :: acc) fuel
+      else
+        match k, v with
+        | "@id", .string x =>
+          if inside && isBnodeId x then
+            let (x', s1) := step s x
+            flRwMembers step inside s1 tl ((k, .string x') :: acc) fuel
+          else flRwMembers step inside s tl ((k, v) :: acc) fuel
+        | _, _ =>
+          let inside' := inside || k == "@triple" || k == "@reifies"
+          match flRwJson step inside' s v fuel with
+          | .error e     => .error e
+          | .ok (v', s1) => flRwMembers step inside s1 tl ((k, v') :: acc) fuel
+termination_by fuel
+
+end
+
+/-- The fuel of a rewrite of `j`: each item and member costs one step of
+the list loop and one of the value. -/
+def flRwFuel (j : Json) : Nat := 2 * Json.size j + 8
+
+/-- The first pass: rename every blank node `@id` of the expanded document
+through the issuer, in document order. -/
+def flRenameBnodeIds (st : NmState) (expanded : Json) : Res (Json × NmState) :=
+  flRwJson (fun st x => issueKeyed st x) true st expanded (flRwFuel expanded)
+
+/-- Map the blank node identifiers inside the embedded triples of every node
+(the contents of `@reifies` and `@triple` entries) through the labels that
+node map generation issued (`idmap`); an identifier node map generation did
+not meet stays as it is. -/
+def flRelabelEmbedded (st : NmState) : Res NmState :=
+  if st.idmap.isEmpty then .ok st else
+  let step : Unit → String → String × Unit := fun _ x => ((st.idmap.get? x).getD x, ())
+  let relabelVal : String → NmVal → Res NmVal := fun k v => match v with
+    | .one j  => .ok (.one j)
+    | .many a =>
+      let arr := Json.array a.toList
+      match flRwJson step (k == "@reifies") () arr (flRwFuel arr) with
+      | .ok (.array xs, _) => .ok (.many (DedupArr.ofList xs))
+      | .ok _              => .ok (.many a)
+      | .error e           => .error e
+  let relabelNode : NmNode → Res NmNode := fun n => n.toList.foldlM (init := n)
+    (fun m kv => match relabelVal kv.1 kv.2 with
+      | .ok v    => .ok (m.upsert kv.1 v)
+      | .error e => .error e)
+  let relabelGraph : NmGraph → Res NmGraph := fun gr => gr.foldlM (init := gr)
+    (fun g id n => match relabelNode n with
+      | .ok n'   => .ok (g.insert id n')
+      | .error e => .error e)
+  let gsRes : Res (Std.TreeMap String NmGraph) := st.graphs.foldlM (init := st.graphs)
+    (fun gs name gr => match relabelGraph gr with
+      | .ok gr'  => .ok (gs.insert name gr')
+      | .error e => .error e)
+  match gsRes with
+  | .ok gs    => .ok { st with graphs := gs }
+  | .error e  => .error e
+
 /-- API §7.1 Node Map Generation for a whole EXPANDED document: the
 entry point the flattening and framing algorithms share. The fuel is
-derived from the document size, as in `flattenExpanded`. -/
-def generateNodeMap (expanded : Json) : Res NmState :=
-  match nmg NmState.initial expanded "@default" none none none (16 * Json.size expanded + 128) with
-  | .error e => .error e
-  | .ok (st, _) => .ok st
+derived from the document size, as in `flattenExpanded`. With `rdfstar`
+the blank node identifiers of embedded triples are renamed first and
+relabelled after (see above). -/
+def generateNodeMap (expanded : Json) (rdfstar : Bool := false) : Res NmState :=
+  let fuel := 16 * Json.size expanded + 128
+  if rdfstar then
+    match flRenameBnodeIds NmState.initial expanded with
+    | .error e => .error e
+    | .ok (renamed, st0) =>
+      -- node map generation keeps the issuer's counter but starts a new
+      -- relabelling map: it relabels the renamed identifiers
+      match nmg { st0 with idmap := Std.TreeMap.empty } renamed "@default" none none none fuel with
+      | .error e => .error e
+      | .ok (st, _) => flRelabelEmbedded st
+  else
+    match nmg NmState.initial expanded "@default" none none none fuel with
+    | .error e => .error e
+    | .ok (st, _) => .ok st
+
+/-! ## JSON-LD-star: Create Annotations
+
+The design record's "Create Annotations" outline (Gregg Kellogg), as the
+reference implementation runs it (`create_annotations`): for each node
+with `@reifies` (in id order), and each reified triple
+`{"@id": s, p: [v]}` of it whose subject node `s` is in the same graph
+and has a value equal to `v` (ignoring `@annotation`) under `p`, add the
+node (its `@id` and every entry but `@reifies`) to that value's
+`@annotation` and drop the triple from `@reifies`; a node whose
+`@reifies` becomes empty is removed. Unlike the fold of `FromRdf`
+(`foldAllAnnotations`), this one does not require the reifier to be a
+blank node or unreferenced: fixture st35n folds `_:b1`, which `ex:sue`
+references. -/
+
+/-- The subject, property and single value of a reified triple. -/
+def flReifiedTriple : Json → Option (String × String × Json)
+  | .object fs =>
+    match flLookup fs "@id", fs.filter (fun kv => kv.1 != "@id") with
+    | some (.string s), [(p, .array [v])] => if p.startsWith "@" then none else some (s, p, v)
+    | _, _ => none
+  | _ => none
+
+/-- Add `ann` to every value of the reified triple `reif` in `gr`; `none`
+when there is no such value. -/
+def flAnnotateTriple (gr : NmGraph) (ann reif : Json) : Option NmGraph :=
+  match flReifiedTriple reif with
+  | none => none
+  | some (s, p, v) =>
+    match gr.get? s with
+    | none => none
+    | some target =>
+      match target.find? p with
+      | some (.many a) =>
+        let items := a.toList
+        if items.any (fun t => expandedEqual (FromRdf.stripAnnotation t) v) then
+          let items' := items.map (fun t =>
+            if expandedEqual (FromRdf.stripAnnotation t) v then FromRdf.addAnnotation ann t else t)
+          some (gr.insert s (target.upsert p (.many (DedupArr.ofList items'))))
+        else none
+      | _ => none
+
+/-- Fold the reifier node `rid` into annotations where its triples are
+found. -/
+def flFoldReifier (gr : NmGraph) (rid : String) : NmGraph :=
+  match gr.get? rid with
+  | none => gr
+  | some node =>
+    let reifs := ((node.find? "@reifies").map NmVal.items).getD []
+    let ann := Json.object (("@id", .string rid) ::
+      node.toFields.filter (fun kv => kv.1 != "@id" && kv.1 != "@reifies"))
+    let (gr, kept) := reifs.foldl (fun (acc : NmGraph × List Json) reif =>
+      match flAnnotateTriple acc.1 ann reif with
+      | some g => (g, acc.2)
+      | none   => (acc.1, reif :: acc.2)) (gr, [])
+    if kept.isEmpty then gr.erase rid
+    else if kept.length == reifs.length then gr
+    else
+      match gr.get? rid with
+      | some n => gr.insert rid (n.upsert "@reifies" (.many (DedupArr.ofList kept.reverse)))
+      | none   => gr
+
+/-- Create Annotations over one graph of the node map. -/
+def flCreateAnnotations (gr : NmGraph) : NmGraph :=
+  let rids := gr.foldr (fun id n acc => if n.contains "@reifies" then id :: acc else acc) []
+  rids.foldl flFoldReifier gr
 
 /-! ## The Flattening Algorithm — API §6.1 -/
 
@@ -580,10 +869,14 @@ def flFoldNamed : NmGraph → List (String × NmGraph) → NmGraph
 /-- Flatten an EXPANDED document (normally an array of node objects) to
 the ordered node array the flatten suite's context-free fixtures
 expect. -/
-def flattenExpanded (expanded : Json) : Res (List Json) :=
-  match generateNodeMap expanded with
+def flattenExpanded (expanded : Json) (rdfstar createAnnotations : Bool := false) :
+    Res (List Json) :=
+  match generateNodeMap expanded rdfstar with
   | .error e => .error e
   | .ok st =>
+    let st := if createAnnotations then
+                { st with graphs := st.graphs.map (fun _ gr => flCreateAnnotations gr) }
+              else st
     let dflt := stGraph st "@default"
     let named := (st.graphs.erase "@default").toList
     let dflt1 := flFoldNamed dflt named
@@ -605,11 +898,10 @@ def flattenExpanded (expanded : Json) : Res (List Json) :=
 def flattenDocument (loader : Loader) (input : String) (ctxDoc : Option String)
     (base ctxUrl : Option String) (compactArrays : Bool) (processingMode : Option String)
     (rdfstar : Bool := false) (createAnnotations : Bool := false) : Res Json :=
-  let _ := createAnnotations  -- JSON-LD-star flattening option; not used yet
   match expandDocument loader input base none processingMode (rdfstar := rdfstar) with
   | .error e => .error e
   | .ok expanded =>
-    match flattenExpanded expanded with
+    match flattenExpanded expanded rdfstar (rdfstar && createAnnotations) with
     | .error e => .error e
     | .ok flattened =>
       match ctxDoc with
