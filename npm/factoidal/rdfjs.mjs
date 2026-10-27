@@ -52,11 +52,20 @@ class BlankNode {
   }
 }
 
+// RDF/JS Data Model, interface Literal: "language the language as lowercase
+// [BCP47] string (examples: "en", "en-gb")". A BCP 47 tag is ASCII (RFC 5646
+// section 2.1), and the engine's readers lowercase its ASCII letters (Lean
+// String.toLower), so a factory term equals the same term read from text
+// (https://github.com/danbri/factoidal/issues/1054).
+function lowerAscii(s) {
+  return s.replace(/[A-Z]+/g, (m) => m.toLowerCase());
+}
+
 class Literal {
   constructor(value, language, datatype, direction) {
     this.termType = 'Literal';
     this.value = value;
-    this.language = language || '';
+    this.language = language ? lowerAscii(String(language)) : '';
     // RDF/JS Data Model DataFactory.literal: no datatype argument means
     // xsd:string, a language means rdf:langString, a language and a
     // direction mean rdf:dirLangString.

@@ -498,6 +498,13 @@ SELECT expressions, so its variables are in scope for §11.4 and
   "SELECT expression aliases variable already in scope"
 #guard errMsg "SELECT (1 AS ?x) { } VALUES ?x { 2 }" ==
   "SELECT expression aliases variable already in scope"
+-- §18.2.1: a variable used only inside MINUS is not in scope outside it, so
+-- the alias and the BIND are legal (https://github.com/danbri/factoidal/issues/1069).
+#guard parses "SELECT ?s (1 AS ?z) { ?s <urn:p> ?o MINUS { ?x <urn:q> ?z } }"
+#guard parses "SELECT * { ?s <urn:p> ?o MINUS { ?x <urn:q> ?z } BIND(1 AS ?z) }"
+-- A variable of the left side of MINUS stays in scope.
+#guard errMsg "SELECT ?s (1 AS ?o) { ?s <urn:p> ?o MINUS { ?x <urn:q> ?z } }" ==
+  "SELECT expression aliases variable already in scope"
 
 -- Placement: at a grouping level the rows travel in `postValues`; at
 -- any other level they are joined with the WHERE pattern.
@@ -597,5 +604,17 @@ sparql12 `codepoint-escapes`). -/
 -- A non-surrogate escape in an IRI decodes.
 #guard parses "SELECT * { ?s ?p <http://e/\\u0061\\U0001F47E> }" .v12
 #guard parses "SELECT * { ?s ?p <http://e/\\u0061> }"
+
+
+-- https://github.com/danbri/factoidal/issues/1057: SPARQL 1.1 Query §19.5, an
+-- IRIREF holds an RFC 3987 IRI reference.
+#guard (parseSparql "ASK { <http://a/abc##def> ?p ?o }").toOption.isNone
+#guard (parseSparql "ASK { <urn:s> <_:p> <urn:o> }").toOption.isNone
+#guard (parseSparql "BASE <_:base> ASK {}").toOption.isNone
+#guard (parseSparql "SELECT * FROM <_:g> {}").toOption.isNone
+#guard (parseSparql "SELECT ?b WHERE { VALUES ?b { <_:-123> } }").toOption.isNone
+#guard (parseSparql "ASK { <http://www:example.org/> ?p ?o }").toOption.isNone
+#guard (parseSparql "ASK { <http://a/abc#def> ?p <#o> }" (some "http://e/doc")).toOption.isSome
+#guard (parseSparql "ASK { <a/b:c> ?p <> }" (some "http://e/doc")).toOption.isSome
 
 end L4Factoidal.SPARQL

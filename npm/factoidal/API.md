@@ -456,6 +456,16 @@ unchanged. Text input takes `{format}`; with no format the engine infers one
 and reports it. An unknown option key rejects with a `FactoidalError` of
 code `option.unknown`; the engine checks the keys (op `apiCheck`).
 
+Format inference (op `detectFormat`; no W3C specification defines it, so
+name the format when you know it). The rules, in order:
+1. `jsonld` when the first non-space character is `{` or `[` and the whole
+   text is JSON. Turtle `[] <p> [] .` and TriG `{ <s> <p> <o> }` are not JSON.
+2. `rdfxml` when the text starts with `<?xml` or `<rdf:RDF`.
+3. `nquads12` when the complete lines of the first 4096 characters are
+   N-Quads statements and at least one names a graph.
+4. `trig12` when the text has a `{`.
+5. `turtle12` otherwise (it also reads N-Triples).
+
 Query warnings. A SELECT answer can carry a non-enumerable `warnings`
 array. A `FROM` or `FROM NAMED` IRI that names no graph of the dataset gives
 a warning of class `dataset-iri-not-found` with `class`, `clause` (`FROM` or
@@ -1514,7 +1524,7 @@ runnable.
 
 | Function | Signature (informal) | Notes |
 |---|---|---|
-| `parse` | `(text, {format?, baseIRI?, lenient?, maxErrors?}) => Dataset` | `turtle`, `ntriples`, `nquads`, `trig`, `rdfxml`, `jsonld`, and `turtle12`, `ntriples12`, `nquads12`, `trig12`; no format: inferred and reported. One call is one document. Strict: a syntax error rejects with a `FactoidalError` (`parse.syntax`). `dataset.prefixes` is the declared map |
+| `parse` | `(text, {format?, baseIRI?, lenient?, maxErrors?, rdfstar?}) => Dataset` | `turtle`, `ntriples`, `nquads`, `trig`, `rdfxml`, `jsonld`, and `turtle12`, `ntriples12`, `nquads12`, `trig12`; no format: inferred and reported. One call is one document. Strict: a syntax error rejects with a `FactoidalError` (`parse.syntax`). `dataset.prefixes` is the declared map |
 | `query` | `(data, sparql, {format?, baseIRI?, entail?, sparql12?, version?, output?}) => Bindings[] \| boolean \| Dataset \| string` | SELECT → `Map<var, Term>[]`; ASK → boolean; CONSTRUCT and DESCRIBE → Dataset; with `output` the results document (`json`, `xml`, `csv`, `tsv`, `table`, `ntriples`). `data` is a Dataset, a string, `{text, format}`, or an array of those |
 | `update` | `(data, sparqlUpdate, {format?, baseIRI?}) => Dataset` | answers a NEW Dataset; `dataset.update()` changes one in place |
 | `openDataset` | `(data, {format?, baseIRI?}) => Dataset` | a Dataset argument is cloned |

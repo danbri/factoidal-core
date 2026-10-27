@@ -735,16 +735,33 @@ function buildApi(driver) {
    * skipped statement in `dataset.diagnostics`
    * (https://github.com/danbri/factoidal/issues/716); `maxErrors: n` stops
    * after n diagnostics. With no `format` the engine infers one
-   * (`dataset.format`, `dataset.formatInferred`).
+   * (`dataset.format`, `dataset.formatInferred`). `{rdfstar:true}` reads
+   * JSON-LD as JSON-LD-star (`@triple`, `@reifies`, `@annotation`), as
+   * jsonldToRdf() does; it applies to format 'jsonld' only.
    * @param {string} text
    * @param {{format?: string, baseIRI?: string, lenient?: boolean,
-   *   maxErrors?: number}} [options]
+   *   maxErrors?: number, rdfstar?: boolean}} [options]
    * @returns {Promise<Dataset>}
    */
   async function parse(text, options) {
     if (typeof text !== 'string') throw new TypeError('parse: text must be a string');
     const opts = await checkedOptions('parse', optionsOf('parse', options));
     const c = await ctx();
+    if (opts.rdfstar) {
+      const { tag, inferred } = formatTagOf(c, text, opts.format, 'parse');
+      if (tag !== 'jsonld') {
+        throw new FactoidalError(
+          `parse: rdfstar applies to format 'jsonld' only (format '${tag}'${inferred ? ', inferred' : ''})`,
+          { code: 'option.conflict' });
+      }
+      requireEntryFn(c.e, 'datasetFromJsonLd', 'parse {rdfstar:true} (datasetFromJsonLd)');
+      const optionsJson = JSON.stringify({
+        ...(opts.baseIRI ? { base: opts.baseIRI } : {}),
+        rdfstar: true,
+      });
+      return c.wrap(entryResult(c.e.datasetFromJsonLd(text, optionsJson), 'parse'), {},
+        { format: tag, formatInferred: inferred });
+    }
     if (opts.lenient) {
       const { tag, inferred } = formatTagOf(c, text, opts.format, 'parse');
       requireEntryFn(c.e, 'parseDocument', 'parse {lenient:true} (parseDocument)');

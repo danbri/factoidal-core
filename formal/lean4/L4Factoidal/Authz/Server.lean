@@ -102,6 +102,10 @@ structure AuthzConfig where
   /-- The JWK Set's path, relative to the issuer, as `tokenPath`
   (`lws-serve --authz`: `/.well-known/lws-jwks`). -/
   jwksPath : String := "/jwks"
+  /-- The SAML 2.0 identity providers whose assertions are accepted as
+  subject tokens (lws10-authn-saml: trust is out of band). Empty: the
+  token type is refused and not advertised. -/
+  samlIdps : List L4Factoidal.SAML.Idp := []
 
 structure AuthzState where
   keys : KeyStore := {}
@@ -111,7 +115,12 @@ def AuthzConfig.grace (cfg : AuthzConfig) : Nat := cfg.tokenLifetime + cfg.leewa
 
 /-- The context subject-token validation reads. -/
 def AuthzConfig.ctx (cfg : AuthzConfig) (C : Crypto) (st : AuthzState) (now : Nat) : Ctx :=
-  { C, issuer := cfg.issuer, now, leeway := cfg.leeway, policy := cfg.fetch, fs := st.fetch }
+  { C, issuer := cfg.issuer, now, leeway := cfg.leeway, policy := cfg.fetch, fs := st.fetch,
+    samlIdps := cfg.samlIdps }
+
+/-- The subject token types the token endpoint accepts. -/
+def AuthzConfig.tokenTypes (cfg : AuthzConfig) : List String :=
+  [tokenTypeJwt, tokenTypeIdToken] ++ (if cfg.samlIdps.isEmpty then [] else [tokenTypeSaml2])
 
 /-! ## Endpoints and metadata -/
 
@@ -186,7 +195,7 @@ def metadataJson (cfg : AuthzConfig) : Json :=
           , ("response_types_supported", strs [])
           , ("token_endpoint_auth_methods_supported", strs ["none"])
           , ("claims_supported", strs ["sub", "iss", "client_id", "aud", "exp", "iat", "jti"])
-          , ("subject_token_types_supported", strs [tokenTypeJwt, tokenTypeIdToken])
+          , ("subject_token_types_supported", strs cfg.tokenTypes)
           , ("subject_identifier_types_supported", strs ["https", "did:key"]) ]
 
 /-! ## Responses -/

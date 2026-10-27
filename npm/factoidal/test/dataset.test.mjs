@@ -29,11 +29,33 @@ test('format inference only when the format is omitted, and it is reported', asy
   // An explicit format is never overridden: N-Triples refuses Turtle syntax.
   await assert.rejects(f.parse(TTL, { format: 'ntriples' }));
   // An inference that fails says so.
-  await assert.rejects(f.parse('<http://e/a> <http://e/p> "x" <http://e/g> .'),
+  await assert.rejects(f.parse('<http://e/a> <http://e/p> .'),
     (err) => err.code === 'parse.syntax' && err.format === 'turtle12' && err.formatInferred === true);
   const nq = await f.parse('<http://e/a> <http://e/p> "x" <http://e/g> .\n', { format: 'nquads' });
   assert.equal(nq.size, 1);
   nq.dispose();
+});
+
+// https://github.com/danbri/factoidal/issues/1058: JSON-LD only for text that is
+// JSON; N-Quads when a statement names a graph (rules in API.md).
+test('format inference: Turtle and TriG that start with [ or {, and N-Quads (issue 1058)', async () => {
+  const cases = [
+    ['[] <http://b> [] .', 'turtle12', 1],
+    ['[ <http://p> <http://o> ] .', 'turtle12', 1],
+    ['{ <http://a> <http://b> <http://c> }', 'trig12', 1],
+    ['[] { <http://a> <http://b> <http://c> }', 'trig12', 1],
+    ['<http://a> <http://b> <http://c> <http://g> .', 'nquads12', 1],
+    ['(<http://a>) <http://b> <http://c> .', 'turtle12', 3],
+    ['{"@id": "http://a", "http://p": "x"}', 'jsonld', 1],
+    ['[]', 'jsonld', 0],
+  ];
+  for (const [text, format, size] of cases) {
+    const ds = await f.parse(text);
+    assert.equal(ds.format, format, text);
+    assert.equal(ds.formatInferred, true, text);
+    assert.equal(ds.size, size, text);
+    ds.dispose();
+  }
 });
 
 test('Dataset methods: query, update in place, closure, validate, clone', async () => {

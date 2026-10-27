@@ -9,12 +9,11 @@
 # The source is the published package @factoidal/core at FACTOIDAL_VERSION,
 # checked against FACTOIDAL_INTEGRITY (the registry's dist.integrity). Every
 # protocol decision in it is made by Lean 4 code compiled to one wasm module.
-# `lws-serve --authz` is in releases after 0.16.0: until one is published,
-# build from a local checkout (below).
+# `lws-serve --authz` is in 0.18.0 and later.
 # To build a local checkout instead (npm/factoidal after a wasm build):
 #   docker build --build-context source=../../npm/factoidal -t factoidal-lws .
-ARG FACTOIDAL_VERSION=0.16.0
-ARG FACTOIDAL_INTEGRITY=sha512-5hYuxtlZ75LwPO0eqHSEHqnriBCtrn2k9fbZYPUjSlDY2mE+hqji+5YupArRk111iBlkxz5TvXabd08smUFhcQ==
+ARG FACTOIDAL_VERSION=0.18.0
+ARG FACTOIDAL_INTEGRITY=sha512-tlwc0FjgdyattSOGS9gsu5OjC0Cy9/op3J2BJMTpi+txMUHN+ej5Dda+J4SPKNKsE4YktD8r6Ie0HLq1NwRCpQ==
 
 # ---- source: the package, unpacked ----
 FROM node:24.21.0-trixie-slim AS fetch

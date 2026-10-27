@@ -20,8 +20,7 @@ the settings into command-line options.
 | `touchstone.env` | how Touchstone's `run-all.sh` tests this target |
 | `compose.service.yaml` | the service entry for Touchstone's `targetservers/compose.yaml` |
 
-`lws-serve --authz` is in the releases after 0.16.0. Until one is published,
-build from a local checkout (below).
+`lws-serve --authz` is in 0.18.0 and later; the Dockerfile pins 0.18.0.
 
 ## Settings
 
@@ -87,6 +86,6 @@ the same server outside Docker (`tools/lws-touchstone.sh`) are in
 
 ## Known limits
 
-- The 3 SAML tests are inapplicable: the authorization server has no XML
-  Signature verifier (https://github.com/danbri/factoidal/issues/926), so the
-  target does not declare `SamlTrust`.
+- The 3 SAML tests are inapplicable: this target configures no SAML identity
+  provider (`--saml-idp`), so it does not declare `SamlTrust`
+  (https://github.com/danbri/factoidal/issues/926).

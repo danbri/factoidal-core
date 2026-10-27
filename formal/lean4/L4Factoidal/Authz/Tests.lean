@@ -129,8 +129,10 @@ def run (ps : List (String × String)) (st : AuthzState := st0) (c : AuthzConfig
 #guard (metadataJson cfg).getArray? "grant_types_supported" == some [.string tokenExchangeGrant]
 #guard (metadataJson cfg).getArray? "subject_identifier_types_supported" ==
   some [.string "https", .string "did:key"]
--- SAML is not advertised: no XML Signature verifier (issue 926).
+-- SAML is advertised only when an identity provider is trusted (issue 926).
 #guard !((metadataJson cfg).getArray? "subject_token_types_supported").get!.contains (.string tokenTypeSaml2)
+#guard ((metadataJson { cfg with samlIdps := [{ entityId := "https://idp.example", n := zeros 256, e := zeros 3 }] }).getArray?
+  "subject_token_types_supported").get!.contains (.string tokenTypeSaml2)
 #guard issuerPath "https://as.example" == ""
 #guard issuerPath "https://as.example/tenant/" == "/tenant"
 #guard lwsConfigurationPath "https://as.example/tenant" == "/.well-known/lws-configuration/tenant"
@@ -255,9 +257,10 @@ def keys1 : KeyStore := rotateWith keys0 k2 (now + 10) 360
 #guard errorOf (run (baseForm (jwt (es256Header "zOther") (selfClaims did) subjKey))) == some "invalid_request"
 #guard errorOf (run (baseForm (jwt (es256Header didMb) (selfClaims did [] ["sub"]) subjKey))) == some "invalid_request"
 #guard errorOf (run (baseForm "not.a.jwt")) == some "invalid_request"
--- SAML 2.0: refused, the stated gap of issue 926.
+-- SAML 2.0 with no trusted identity provider: refused (issue 926). The
+-- suite itself: `L4Factoidal/SAML/Tests.lean`.
 #guard (match validateSubject ctx0 tokenTypeSaml2 "PHNhbWw+" with
-        | .refused w => (w.splitOn "issues/926").length == 2
+        | .refused w => (w.splitOn "trusts no SAML identity provider").length == 2
         | _ => false)
 #guard errorOf (run (baseForm "PHNhbWw+" tokenTypeSaml2)) == some "invalid_request"
 

@@ -11,8 +11,8 @@ through three new `@[extern]` wrappers over the vendored HACL\* P-256 code;
 theorems by checked construction (below); solid-serve in stage 2
 (https://github.com/danbri/factoidal/issues/928); `http` subjects only with
 `--allow-http`; a private-address guard on every fetch in stage 1; SAML as an
-expected failure (https://github.com/danbri/factoidal/issues/926); no token
-introspection.
+expected failure (https://github.com/danbri/factoidal/issues/926; landed
+2026-10-27, see `2026-10-27-saml-xml-signature.md`); no token introspection.
 
 ## What the drafts require
 
@@ -78,6 +78,11 @@ tree has NO XML Signature verifier (it has inclusive Canonical XML in
 RSA PKCS#1 v1.5 check in `JOSE/Pkcs1`, but no XML-DSig reference processing).
 So SAML is not accepted and not advertised; expected failures name
 https://github.com/danbri/factoidal/issues/926.
+
+Update, 2026-10-27: SAML is accepted from the identity providers the
+configuration names (`samlIdps`, `--saml-idp`), through exclusive
+canonicalization (`XML/ExcC14n.lean`) and the SAML Core §5 signature profile
+(`XML/DSig.lean`). Record: `2026-10-27-saml-xml-signature.md`.
 
 ## The component
 
