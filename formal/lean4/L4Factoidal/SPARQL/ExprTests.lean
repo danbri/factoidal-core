@@ -367,6 +367,21 @@ def langMatches (a b : Expr) : Expr := .functionCall langMatchesIri [a, b]
 #guard (Expr.inList (.numericLit 1) [.numericLit 2, .decimalLit "1.0"]).eval [] == .bool true
 #guard (Expr.inList (.numericLit 1) [.numericLit 2, .numericLit 3]).eval [] == .bool false
 #guard (Expr.notInList (.numericLit 1) [.numericLit 2, .numericLit 3]).eval [] == .bool true
+-- §17.4.1.9 / §17.4.1.10 (https://github.com/danbri/factoidal/issues/1049):
+-- an erroring comparison makes IN / NOT IN an error unless another element
+-- decides. The examples are the rows of the two tables in the specification.
+private def divZero : Expr := .arith .div (.numericLit 1) (.numericLit 0)
+#guard (Expr.inList (.numericLit 2) [.numericLit 3, divZero]).eval [] == .error
+#guard (Expr.notInList (.numericLit 2) [.numericLit 3, divZero]).eval [] == .error
+#guard (Expr.inList (.numericLit 2) [divZero, .numericLit 2]).eval [] == .bool true
+#guard (Expr.notInList (.numericLit 2) [divZero, .numericLit 2]).eval [] == .bool false
+#guard (Expr.inList (.numericLit 2) []).eval [] == .bool false
+#guard (Expr.notInList (.numericLit 2) []).eval [] == .bool true
+-- `"70" = 700` is a type error (§17.4.1.7 RDFterm-equal of two different
+-- literals), so `"70" IN (700)` is an error, as `"70" = 700` is.
+#guard (Expr.inList (.lit (litStr "70")) [.numericLit 700]).eval [] == .error
+#guard (Expr.inList (.lit (litStr "70")) [.numericLit 700]).eval [] ==
+  (Expr.compare .eq (.lit (litStr "70")) (.numericLit 700)).eval []
 
 #guard (Expr.sameTerm (.lit (litStr "x")) (.lit (litStr "x"))).eval [] == .bool true
 #guard (Expr.sameTerm (.lit (litStr "x")) (.lit (litLang "x" "en"))).eval [] == .bool false

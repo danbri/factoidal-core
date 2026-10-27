@@ -1756,16 +1756,25 @@ def coalesceResults : List EvalResult → EvalResult
   | .error :: rest => coalesceResults rest
   | v :: _ => v
 
-/-- §17.4.1.9 IN: `=` against each element in turn. Following the F*
-source, a comparison that ERRORS is treated as "no match" rather than
-poisoning the whole test, so `IN` answers `false` instead of erroring
-when nothing matches. -/
+/-- §17.4.1.9 IN: "The IN operator is equivalent to the SPARQL expression:
+(lhs = expression1) || (lhs = expression2) || ...", and "Errors in
+comparisons cause the IN expression to raise an error if the RDF term being
+tested is not found elsewhere in the list of terms." So this is the §17.2
+three-valued `||` fold of `=`: `true` when one comparison is true, `false`
+when every comparison is false, an error otherwise (`2 IN (3, 1/0)` is an
+error, `2 IN (1/0, 2)` is true). Until
+https://github.com/danbri/factoidal/issues/1049 an erroring comparison
+counted as "no match", as in the F* source. -/
 def inResults (v : EvalResult) : List EvalResult → EvalResult
   | [] => .bool false
   | w :: rest =>
       match valueCompare v w .eq with
       | some true => .bool true
-      | _ => inResults v rest
+      | some false => inResults v rest
+      | none =>
+          match inResults v rest with
+          | .bool true => .bool true
+          | _ => .error
 
 /-- §17.4.3.1.4 argument compatibility for STRSTARTS, STRENDS,
 CONTAINS, STRBEFORE and STRAFTER (both arguments already known to be
@@ -2177,6 +2186,8 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
       | none       => .error
   | .coalesce es => coalesceResults (Expr.evalArgs env mu es)
   | .inList e1 es => inResults (Expr.evalIn env mu e1) (Expr.evalArgs env mu es)
+  -- §17.4.1.10 NOT IN is `(lhs != e1) && (lhs != e2) && ...`; by the §17.2
+  -- truth tables that is the negation of the IN fold, errors included.
   | .notInList e1 es =>
       match inResults (Expr.evalIn env mu e1) (Expr.evalArgs env mu es) with
       | .bool b => .bool (!b)
