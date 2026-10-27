@@ -61,6 +61,12 @@ covers = "part"
 note = "closureStreamOf for regimes rdfs, owl-rl, rho-df; the rdfs-plus regime has no stage."
 
 [[entry]]
+id = "wasm:datasetSparqlRlInfer"
+stages = ["SPARQL 1.2 RL infer (SPARQLRL.RuleSet.infer; wasm datasetSparqlRlInfer)"]
+covers = "part"
+note = "Wasm/Ops/Handles.lean datasetSparqlRlInfer: SPARQLRL.inferText (parse, well-formedness, stratification, RuleSet.infer) on the default graph of the stored dataset, NOW() read once. Not covered: the new handle and its envelope."
+
+[[entry]]
 id = "wasm:shaclValidate"
 stages = ["shaclValidator"]
 covers = "part"
@@ -181,6 +187,12 @@ covers = "part"
 note = "lib/api.mjs calls the wasm op datasetShaclValidate."
 
 [[entry]]
+id = "npm:.#sparqlRlInfer"
+stages = ["SPARQL 1.2 RL infer (SPARQLRL.RuleSet.infer; wasm datasetSparqlRlInfer)"]
+covers = "part"
+note = "lib/api.mjs calls the wasm op datasetSparqlRlInfer. Not covered: the Dataset wrapper."
+
+[[entry]]
 id = "npm:.#closure"
 stages = ["rdfsReasoner", "owlRlReasoner", "rhoDfReasoner"]
 covers = "part"
@@ -275,6 +287,12 @@ id = "npm:./browser#shaclValidate"
 stages = ["shaclValidator"]
 covers = "part"
 note = "lib/api.mjs calls the wasm op datasetShaclValidate."
+
+[[entry]]
+id = "npm:./browser#sparqlRlInfer"
+stages = ["SPARQL 1.2 RL infer (SPARQLRL.RuleSet.infer; wasm datasetSparqlRlInfer)"]
+covers = "part"
+note = "lib/api.mjs calls the wasm op datasetSparqlRlInfer. Not covered: the Dataset wrapper."
 
 [[entry]]
 id = "npm:./browser#closure"

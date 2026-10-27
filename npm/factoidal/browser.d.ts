@@ -29,6 +29,7 @@ export {
   engineTables,
   openDataset,
   closure,
+  sparqlRlInfer,
   formats,
   queryRaw,
   queryHdt,

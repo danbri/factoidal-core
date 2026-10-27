@@ -1002,6 +1002,28 @@ function buildApi(driver) {
   }
 
   /**
+   * SPARQL 1.2 RL (SPARQL-RL) infer: apply a rule set to the default graph
+   * of `data` and answer the inference graph (the triples the rules derive,
+   * the rule set's DATA blocks included, that are not in `data`) as a new
+   * Dataset. The rule set is SPARQL-RL text (https://w3c.github.io/data-shapes/sparql12-rl/).
+   * A rule set that is not well-formed, not stratifiable, or has IMPORTS is
+   * refused. Engine op: datasetSparqlRlInfer.
+   * @param {Dataset|string|Array} data
+   * @param {string} rules
+   * @param {{format?: string, baseIRI?: string}} [options]
+   * @returns {Promise<Dataset>}
+   */
+  async function sparqlRlInfer(data, rules, options) {
+    const opts = await checkedOptions('sparqlRlInfer', optionsOf('sparqlRlInfer', options));
+    if (typeof rules !== 'string') throw new TypeError('sparqlRlInfer: rules must be a string');
+    return withDataset(data, opts, 'sparqlRlInfer(data)', (c, ds) => {
+      requireEntryFn(c.e, 'datasetSparqlRlInfer', 'sparqlRlInfer');
+      const r = entryResult(c.e.datasetSparqlRlInfer(ds.handle, rules), 'sparqlRlInfer');
+      return c.wrap(r, ds.prefixes);
+    });
+  }
+
+  /**
    * RDFS or OWL 2 RL closure of the default graph, as a new Dataset.
    * @param {Dataset|string|Array} data
    * @param {'RDFS'|'OWL-RL'} mode
@@ -2163,6 +2185,7 @@ function buildApi(driver) {
       // ops it actually has.
       shacl: has('shaclValidate'),
       shex: has('shexValidate'),
+      sparqlRl: has('datasetSparqlRlInfer'),
       owlClosure: has('owlClosure'),
       explain: has('explainGraph'),
       stages: has('stageList'),
@@ -2226,6 +2249,7 @@ function buildApi(driver) {
     canonicalHash,
     shaclValidate,
     shexValidate,
+    sparqlRlInfer,
     owlClosure,
     coreRdfsClosure,
     coreRdfsCheck,

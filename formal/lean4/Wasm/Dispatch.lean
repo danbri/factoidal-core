@@ -253,6 +253,7 @@ def handleOpNames : List String :=
   , "datasetCanonicalHash"
   , "datasetClosure"
   , "datasetShaclValidate"
+  , "datasetSparqlRlInfer"
   , "datasetQueryRaw"
   , "datasetFormats"
   , "detectFormat"

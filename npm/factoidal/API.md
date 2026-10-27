@@ -1391,6 +1391,7 @@ runnable.
 | `update` | `(data, sparqlUpdate, {format?, baseIRI?}) => Dataset` | answers a NEW Dataset; `dataset.update()` changes one in place |
 | `openDataset` | `(data, {format?, baseIRI?}) => Dataset` | a Dataset argument is cloned |
 | `closure` | `(data, 'rdfs' \| 'owl-rl' \| 'rho-df' \| 'rdfs-plus') => Dataset` | the closure of the default graph |
+| `sparqlRlInfer` | `(data, rulesText) => Dataset` | SPARQL 1.2 RL infer: the inference graph of the rule set over the default graph (no IMPORTS) |
 | `serialize` | `(data, {format, version?, prefixes?, literalShorthand?, useNativeTypes?, useRdfType?, rdfDirection?, rdfstar?, inputFormat?, baseIRI?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle`, `trig`, `rdfxml`, `jsonld`, `rdfc`; see "Datasets" |
 | `formats` | `() => [{name, read11, read12, write11, write12, engine}]` | the engine's list |
 | `canonicalize` | `(data, {format?, baseIRI?}) => string` | RDFC-1.0 canonical N-Quads |

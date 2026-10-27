@@ -40,6 +40,10 @@ host never moves N-Quads text between two steps.
        graph (`closureStreamOf`, the graph the closure ops write)
   datasetShaclValidate(dataHandle, shapesHandle)
     -> the `shaclValidate` envelope
+  datasetSparqlRlInfer(handle, rulesText)
+    -> the `datasetOpen` envelope of a new handle: the SPARQL 1.2 RL
+       inference graph of the rule set over the default graph
+       (`SPARQLRL.inferText`, https://github.com/danbri/factoidal/issues/1099)
 
 Any op naming a handle that is not in the store (never opened, or
 closed) answers {"ok":false,"error":"unknown dataset handle: …"}.
@@ -79,6 +83,7 @@ import L4Factoidal.RDF.QuadsBinTheorems
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.IriResolve
 import L4Factoidal.RDF.CertifiedDataset
+import L4Factoidal.SPARQLRL.Text
 
 namespace L4Wasm.Ops
 
@@ -473,6 +478,22 @@ def datasetShaclValidate (hData hShapes : String) : IO String :=
     | .error e, _ => pure (errJson s!"shaclValidate(data): {fmtParseError e}")
     | _, .error e => pure (errJson s!"shaclValidate(shapes): {fmtParseError e}")
     | .ok d, .ok s => pure (shaclValidateParsed d s)
+
+/-- `datasetSparqlRlInfer(handle, rulesText)` — SPARQL 1.2 RL `infer`: a new
+handle whose default graph is the inference graph (the triples the rule set
+derives, data-block triples included, that are not in the default graph of
+the stored dataset). The clock is read once, so every `NOW()` of the
+evaluation has one value. A rule set with `IMPORTS` is refused: this op has
+no document loader. -/
+def datasetSparqlRlInfer (h rules : String) : IO String := do
+  let now ← nowDateTime
+  withHandleDataset h fun ds prefixes =>
+    match datasetForOps .rdf12 ds with
+    | .error e => pure (errJson s!"sparqlRlInfer(data): {fmtParseError e}")
+    | .ok d =>
+      match L4Factoidal.SPARQLRL.inferText rules d.default none none { now := some now } with
+      | .error e => pure (errJson s!"sparqlRlInfer: {e}")
+      | .ok g => storeNewHandle { default := g, named := [] } prefixes
 
 /-- `datasetQueryRaw(handle, sparql, optsJson)` — `queryRaw` over the stored
 dataset: `optsJson` members `entail` (none | RDFS | OWL-RL | x-rdfscore |
@@ -1044,6 +1065,7 @@ def apiOptionTable : List (String × List (String × OptionDomain)) :=
   , ("openDataset", parseOpts), ("registerServiceEndpoint", parseOpts)
   , ("update", parseOpts), ("canonicalize", parseOpts), ("isomorphic", parseOpts)
   , ("shaclValidate", parseOpts), ("shexValidate", parseOpts), ("closure", parseOpts)
+  , ("sparqlRlInfer", parseOpts)
   , ("coreRdfsCheck", parseOpts), ("tableauMaterialise", parseOpts)
   , ("tableauDlInconsistent", parseOpts), ("rifEval", parseOpts)
   , ("rmlMap", parseOpts ++ [("sourceKind", .oneOf ["json", "csv"])])
