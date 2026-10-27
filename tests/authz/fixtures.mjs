@@ -8,7 +8,7 @@
 // formal/lean4/L4Factoidal/Authz/.
 
 import http from 'node:http'
-import { generateKeyPairSync, sign, verify, createPublicKey } from 'node:crypto'
+import { generateKeyPairSync, sign, verify, createPublicKey, createHash, randomBytes } from 'node:crypto'
 
 export const TOKEN_EXCHANGE = 'urn:ietf:params:oauth:grant-type:token-exchange'
 export const JWT_TYPE = 'urn:ietf:params:oauth:token-type:jwt'
@@ -125,4 +125,71 @@ export function hostProvider (documents, path, pair) {
   documents.put(`${path}/.well-known/openid-configuration`, { issuer: iss, jwks_uri: `${iss}/jwks` })
   documents.put(`${path}/jwks`, { keys: [{ ...pair.jwk, alg: 'ES256', use: 'sig' }] })
   return iss
+}
+
+// ------------------------------------------------------------ SAML 2.0
+//
+// A signed SAML 2.0 assertion for the SAML suite
+// (https://github.com/danbri/factoidal/issues/926). The XML is written here
+// already in its exclusive canonical form (Exclusive XML Canonicalization
+// 1.0: explicit end tags, attributes in order, the ds namespace declared on
+// ds:Signature and so rendered on ds:SignedInfo when it is the apex), so the
+// two octet strings the signature covers are known without an XML library:
+// the assertion without ds:Signature (digested), and ds:SignedInfo with
+// xmlns:ds (signed with RSA PKCS #1 v1.5 SHA-256 by node:crypto). The engine
+// computes both again from the parsed document.
+
+const SAML_NS = 'urn:oasis:names:tc:SAML:2.0:assertion'
+const DS_NS = 'http://www.w3.org/2000/09/xmldsig#'
+const EXC_C14N = 'http://www.w3.org/2001/10/xml-exc-c14n#'
+
+function isoSeconds (s) {
+  return new Date(s * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
+}
+
+/** An RSA 2048 key pair for a SAML identity provider: { privateKey, publicJwk }. */
+export function samlIdpKey () {
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  return { privateKey, publicJwk: publicKey.export({ format: 'jwk' }) }
+}
+
+/**
+ * A base64url SAML 2.0 assertion (RFC 8693 section 3).
+ * fault: undefined, 'altered' (NameID changed after signing), 'unsigned'.
+ */
+export function samlAssertion ({ issuer, nameId, recipient, audiences, key, fault, now = nowSeconds() }) {
+  const id = '_' + randomBytesHex(8)
+  const nb = isoSeconds(now - 5)
+  const na = isoSeconds(now + 300)
+  const body = (sub) =>
+    `<saml:Subject><saml:NameID>${sub}</saml:NameID>` +
+    '<saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">' +
+    `<saml:SubjectConfirmationData NotOnOrAfter="${na}" Recipient="${recipient}"></saml:SubjectConfirmationData>` +
+    '</saml:SubjectConfirmation></saml:Subject>' +
+    `<saml:Conditions NotBefore="${nb}" NotOnOrAfter="${na}"><saml:AudienceRestriction>` +
+    audiences.map((a) => `<saml:Audience>${a}</saml:Audience>`).join('') +
+    '</saml:AudienceRestriction></saml:Conditions>'
+  const open = `<saml:Assertion xmlns:saml="${SAML_NS}" ID="${id}" IssueInstant="${nb}" Version="2.0">` +
+    `<saml:Issuer>${issuer}</saml:Issuer>`
+  const close = '</saml:Assertion>'
+  const signedXml = open + body(nameId) + close
+  if (fault === 'unsigned') return Buffer.from(signedXml, 'utf8').toString('base64url')
+  const digest = createHash('sha256').update(signedXml, 'utf8').digest('base64')
+  const signedInfo = (decl) =>
+    `<ds:SignedInfo${decl}><ds:CanonicalizationMethod Algorithm="${EXC_C14N}"></ds:CanonicalizationMethod>` +
+    '<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"></ds:SignatureMethod>' +
+    `<ds:Reference URI="#${id}"><ds:Transforms>` +
+    '<ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></ds:Transform>' +
+    `<ds:Transform Algorithm="${EXC_C14N}"></ds:Transform></ds:Transforms>` +
+    '<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"></ds:DigestMethod>' +
+    `<ds:DigestValue>${digest}</ds:DigestValue></ds:Reference></ds:SignedInfo>`
+  const value = sign('sha256', Buffer.from(signedInfo(` xmlns:ds="${DS_NS}"`), 'utf8'), key).toString('base64')
+  const signature = `<ds:Signature xmlns:ds="${DS_NS}">${signedInfo('')}` +
+    `<ds:SignatureValue>${value}</ds:SignatureValue></ds:Signature>`
+  const sub = fault === 'altered' ? nameId + '/other' : nameId
+  return Buffer.from(open + signature + body(sub) + close, 'utf8').toString('base64url')
+}
+
+function randomBytesHex (n) {
+  return randomBytes(n).toString('hex')
 }
