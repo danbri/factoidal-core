@@ -109,12 +109,12 @@ export function buildNodes(deps) {
     // String × String: the canonical N-Quads text and its SHA-256 hex
     // (RdfcContract, Dataflow/PhaseE.lean). canonicalHash is the SHA-256 of
     // the text canonicalize answers (op datasetCanonicalHash).
+    // The input is a Dataset or text (a string or {text, format, baseIRI}:
+    // characters, not bytes; the settings `format` and `baseIRI` read it).
     rdfcStage: async (wire, params) => {
-      if (!(wire.graph instanceof Dataset)) {
-        throw new TypeError(`node rdfcStage: the stage takes a Dataset on its wire (got ${describe(wire.graph)})`);
-      }
+      const isDataset = wire.graph instanceof Dataset;
       const canonical = await canonicalize(wire.graph, params);
-      const sha256 = await canonicalHash(wire.graph);
+      const sha256 = await canonicalHash(wire.graph, isDataset && Object.keys(params).length === 0 ? undefined : params);
       return { graph: [canonical, sha256], artefact: { canonical, sha256 } };
     },
     'CSVW (tabular data to RDF)': async (wire, params) => {

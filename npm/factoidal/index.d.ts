@@ -574,9 +574,16 @@ export function graphs(dataset: Dataset): Array<[name: NamedNode | BlankNode, gr
  * differ only in their graph names got the same hash. To hash a graph
  * whatever its name (for example one entry of graphs()), use
  * canonicalHash(asDefaultGraph(g)). Rejects when the input holds an RDF 1.2
- * triple term or the section 4.4 call budget is exceeded.
+ * triple term or the section 4.4 call budget is exceeded. The input is what
+ * canonicalize() takes: a Dataset, or text with `format` and `baseIRI`.
+ * Text is a JavaScript string (characters, not bytes): decode bytes first;
+ * the RDF text syntaxes are UTF-8 (`new TextDecoder('utf-8', { fatal: true })`).
+ * A Uint8Array is refused.
  */
-export function canonicalHash(dataset: Dataset): Promise<string>;
+export function canonicalHash(
+  data: Dataset | string | { text: string; format?: DataFormat; baseIRI?: string },
+  options?: { format?: DataFormat; baseIRI?: string },
+): Promise<string>;
 
 /**
  * A new Dataset with the triples of every graph of `dataset`, all in the

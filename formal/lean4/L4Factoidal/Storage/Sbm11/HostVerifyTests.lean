@@ -112,8 +112,21 @@ private def refusedNaming (fs : Files) (file : String) : Bool :=
 -- one changed bit in the last Merkle root of the manifest (that of
 -- osp.prb1, which a query over ?s ?p ?o does not read)
 #guard refusedNaming (flip gen "manifest.sbm11" 3 true) "osp.prb1"
--- one changed bit in each of the last 40 bytes of the manifest (the chunk
--- size, chunk count and root of osp.prb1): refused
-#guard (List.range 40).all fun i => !(checkAll (flip gen "manifest.sbm11" i true)).toBool
+-- One changed bit in each of the last 40 bytes of the manifest (the chunk
+-- size, chunk count and root of osp.prb1). Since a reader admits any chunk
+-- size that agrees with the length and the count (owner decision 2026-10-27,
+-- D9 B), a changed chunk size that still describes the same chunks is
+-- admitted; then every chunk of every file was checked against the same
+-- roots (checkAll), so the bytes read are the packed bytes. Every other
+-- change is refused.
+private def dataOf (fs : Files) : Option (List (String × Nat × Nat × ByteArray)) := do
+  let mb ← fileOf? fs "manifest.sbm11"
+  let m ← decodeManifest mb.data.toList
+  some (m.artifacts.map fun a => (a.file, a.bytes, a.merkle.totalBytes, a.merkle.root))
+#guard (List.range 40).all fun i =>
+  let f := flip gen "manifest.sbm11" i true
+  !(checkAll f).toBool || (dataOf f).isSome && dataOf f == dataOf gen
+-- and most of those changes (every one in the root) are refused
+#guard ((List.range 32).filter fun i => (checkAll (flip gen "manifest.sbm11" i true)).toBool).isEmpty
 
 end L4Factoidal.Storage.Sbm11.HostVerifyTests

@@ -910,17 +910,28 @@ function buildApi(driver) {
    * name first, so datasets that differ only in their graph names got the
    * same hash. To hash a graph whatever its name, use
    * canonicalHash(asDefaultGraph(g)).
-   * @param {Dataset} dataset
+   *
+   * The input is what canonicalize() takes: a Dataset, or text (a string,
+   * or {text, format, baseIRI}), with the options {format, baseIRI}. Text is
+   * a JavaScript string: characters, not bytes. Decode bytes first (the RDF
+   * text syntaxes are UTF-8: `new TextDecoder('utf-8', { fatal: true })`);
+   * a Uint8Array is refused.
+   * @param {Dataset|string|{text: string, format?: string, baseIRI?: string}} data
+   * @param {{format?: string, baseIRI?: string}} [options]
    * @returns {Promise<string>}
    */
-  async function canonicalHash(dataset) {
-    if (!(dataset instanceof Dataset)) {
-      throw new TypeError('canonicalHash: expected a Dataset');
+  async function canonicalHash(data, options) {
+    const hashOf = (e, ds) => {
+      requireEntryFn(e, 'datasetCanonicalHash', 'canonicalHash');
+      return entryResult(e.datasetCanonicalHash(ds.handle), 'canonicalHash').hash;
+    };
+    if (data instanceof Dataset && options === undefined) {
+      data.size; // throws the disposed error
+      return hashOf(data._ctx.e, data);
     }
-    dataset.size; // throws the disposed error
-    const c = dataset._ctx;
-    requireEntryFn(c.e, 'datasetCanonicalHash', 'canonicalHash');
-    return entryResult(c.e.datasetCanonicalHash(dataset.handle), 'canonicalHash').hash;
+    // The options are canonicalize()'s, checked by the engine's table for it.
+    const opts = await checkedOptions('canonicalize', optionsOf('canonicalize', options));
+    return withDataset(data, opts, 'canonicalHash', (c, ds) => hashOf(c.e, ds));
   }
 
   /**
