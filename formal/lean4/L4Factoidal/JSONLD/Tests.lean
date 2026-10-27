@@ -659,4 +659,19 @@ private def graphDoc : String :=
 
 end Framing
 
+/-! ### https://github.com/danbri/factoidal/issues/1064 — a keyword-form key in a value object
+
+JSON-LD 1.1 API §5.2.2 step 2: a value of the form of a keyword that is not a
+keyword expands to null; §5.1.2 step 13.3 drops the key. The value object is
+then `{"@value": "x"}`, with a base IRI or without one. -/
+
+#guard toRdfNq r#"[{"@id":"_:a","http://p":[{"@value":"x","@foo":"y"}]}]"# (some "http://ex/") ==
+  toRdfNq r#"[{"@id":"_:a","http://p":[{"@value":"x"}]}]"# (some "http://ex/")
+#guard toRdfCount r#"[{"@id":"_:a","http://p":[{"@value":"x","@foo":"y"}]}]"# (some "http://ex/") == some 1
+#guard toRdfCount r#"[{"@id":"_:a","http://p":[{"@value":"x","@foo":"y"}]}]"# == some 1
+#guard toRdfCount r#"{"@context":{"@vocab":"http://v/"},"@id":"http://a","p":{"@value":"x","@foo":"y"}}"# == some 1
+-- A key that is not keyword-shaped and expands to an IRI is still an error.
+#guard expandErr r#"{"@context":{"@vocab":"http://v/"},"@id":"http://a","p":{"@value":"x","q":"y"}}"# ==
+  some "invalid value object"
+
 end L4Factoidal.JSONLD.Tests

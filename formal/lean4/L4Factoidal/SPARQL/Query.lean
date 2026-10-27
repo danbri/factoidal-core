@@ -1462,6 +1462,35 @@ def selectHasAggregates : SelectClause → Bool
       | .var _    => false
       | .expr e _ => exprHasAggregate e)
 
+/-- Does an ORDER BY condition contain an aggregate? -/
+def OrderCondition.hasAggregate : OrderCondition → Bool
+  | .asc e  => exprHasAggregate e
+  | .desc e => exprHasAggregate e
+
+/-- Does an ORDER BY list contain an aggregate? -/
+def orderHasAggregate (o : List OrderCondition) : Bool :=
+  o.any OrderCondition.hasAggregate
+
+/-- The variable that holds the value of ORDER BY condition number `i` of a
+grouped query when that condition contains an aggregate (§18.2.4.1: the
+aggregates of ORDER BY are computed in the Aggregation step and the condition
+is rewritten to read a new variable). `#` is not a character of [166]
+VARNAME, so no query can name this variable. -/
+def orderKeyVar (i : Nat) : VarName := "#order" ++ toString i
+
+/-- Bind key `i` to a value when the condition has an aggregate and the value
+is not an error (`orderKeys`). -/
+def orderKeyBind (i : Nat) (hasAgg : Bool) (v : EvalResult) (tail : Binding) : Binding :=
+  if hasAgg then
+    match v.toTerm? with
+    | some t => (orderKeyVar i, t) :: tail
+    | none   => tail
+  else tail
+
+/-- Remove the ORDER BY key variables from a row (before projection). -/
+def dropOrderKeys (mu : Binding) : Binding :=
+  mu.filter (fun b => !"#order".isPrefixOf b.1)
+
 /-- The variables a SELECT clause projects. -/
 def selectItemVars : List SelectItem → List VarName
   | []             => []
@@ -2457,6 +2486,23 @@ def compareOnConditions (env : EvalEnv) (active : Graph) :
       let r := compareOnCondition env active c mu1 mu2
       if r ≠ 0 then r else compareOnConditions env active rest mu1 mu2
 
+/-- `compareOnConditions` for a grouped query whose ORDER BY has an
+aggregate: condition number `i` that contains an aggregate compares the key
+`orderKeyVar i` that `orderKeys` bound; every other condition is compared as
+in `compareOnCondition`. -/
+def compareOnConditionsKeyed (env : EvalEnv) (active : Graph) :
+    List OrderCondition → Nat → Binding → Binding → Int
+  | [],        _, _,   _   => 0
+  | c :: rest, i, mu1, mu2 =>
+      let r := if c.hasAggregate then
+          match c with
+          | .asc _  => sparqlOrderValue (Expr.evalIn env mu1 (.var (orderKeyVar i)))
+                                        (Expr.evalIn env mu2 (.var (orderKeyVar i)))
+          | .desc _ => sparqlOrderValue (Expr.evalIn env mu2 (.var (orderKeyVar i)))
+                                        (Expr.evalIn env mu1 (.var (orderKeyVar i)))
+        else compareOnCondition env active c mu1 mu2
+      if r ≠ 0 then r else compareOnConditionsKeyed env active rest (i + 1) mu1 mu2
+
 /-- §18.5.1 / §18.5.4 HAVING on one group: every condition must have an
 effective boolean value of true (port of `having_filter`'s inner
 test). §18.6 runs first, against the group's representative row, so an
@@ -2519,6 +2565,26 @@ def evalSelectItemsRowFrom (env : EvalEnv) (active : Graph) (row : String) :
       -- §18.2.4.2: an expression error leaves the variable unbound.
       | none   => evalSelectItemsRowFrom env active row rest acc (i + 1)
 
+/-- §18.2.4.1 for ORDER BY in a grouped query: the value of each ORDER BY
+condition that contains an aggregate, computed over the group `g` as a SELECT
+expression is (`evalSelectItemGroup`), and bound to `orderKeyVar i`. `row` is
+the group's row after the SELECT expressions, so the condition can also read
+an alias. A condition whose value is an error leaves its key unbound.
+Before https://github.com/danbri/factoidal/issues/1050 the condition was
+evaluated on the row alone, where an aggregate is an error, so
+`ORDER BY DESC(COUNT(?s))` did not order. -/
+def orderKeys (env : EvalEnv) (active : Graph) (g : SolutionGroup) (row : Binding) :
+    List OrderCondition → Nat → Binding
+  | [],             _ => []
+  | .asc e :: rest,  i =>
+      orderKeyBind i (exprHasAggregate e) (Expr.evalIn env row
+          (rewriteAggregates env g (substituteExistentials env active row e)))
+        (orderKeys env active g row rest (i + 1))
+  | .desc e :: rest, i =>
+      orderKeyBind i (exprHasAggregate e) (Expr.evalIn env row
+          (rewriteAggregates env g (substituteExistentials env active row e)))
+        (orderKeys env active g row rest (i + 1))
+
 /-- The §18.2.4 pipeline itself. -/
 def selectPost (env : EvalEnv) (active : Graph) (q : Query)
     (omega0 : SolutionSeq) : SolutionSeq :=
@@ -2568,7 +2634,16 @@ def selectPost (env : EvalEnv) (active : Graph) (q : Query)
             | .all        => id
           match ob with
           | none => finishSelectRows none project dd rr oo ll omega'
-          | some o => finishSelectRows
+          | some o =>
+            if orderHasAggregate o then
+              -- 5b. §18.2.4.1: an aggregate in ORDER BY is computed per
+              -- group (`orderKeys`) and the condition reads its key
+              -- (`compareOnConditionsKeyed`); the keys go before projection.
+              let keyed := (rows.zip omega').map (fun p => orderKeys env active p.1.1 p.2 o 0 ++ p.2)
+              finishSelectRows
+                (some (fun mu1 mu2 => compareOnConditionsKeyed env active o 0 mu1 mu2))
+                (fun mu => project (dropOrderKeys mu)) dd rr oo ll keyed
+            else finishSelectRows
               (some (fun mu1 mu2 => compareOnConditions env active o mu1 mu2))
               project dd rr oo ll omega'
         else

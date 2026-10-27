@@ -116,6 +116,7 @@ import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.PathAlternative
 import L4Factoidal.SPARQL.Tokenizer
 import L4Factoidal.Syntax.IriResolve
+import L4Factoidal.RDF.IriSyntax
 import Std.Data.HashSet
 
 namespace L4Factoidal.SPARQL
@@ -754,8 +755,13 @@ mutual
 /-- `ggp_has_var`: is `v` in scope anywhere in this pattern? -/
 def ggpHasVar (v : VarName) : QueryPattern → Bool
   | .bgp b            => b.any (fun tp => tpHasVar v tp)
-  | .join a b | .union a b | .minus a b | .lateral a b =>
+  | .join a b | .union a b | .lateral a b =>
       ggpHasVar v a || ggpHasVar v b
+  -- §18.2.1: "use of a variable in FILTER, or in MINUS does not cause a
+  -- variable to be in-scope outside of those forms"; for `P1 MINUS P2`
+  -- the in-scope variables are those of P1
+  -- (https://github.com/danbri/factoidal/issues/1069).
+  | .minus a _        => ggpHasVar v a
   | .leftJoin a b _   => ggpHasVar v a || ggpHasVar v b
   | .filter _ p       => ggpHasVar v p
   | .graph _ p        => ggpHasVar v p
@@ -1192,6 +1198,12 @@ def firstInvalidToken : TStream → Option ParseError
     | .iri s =>
       if s.toList.contains '\\' then
         some ⟨"invalid IRI escape (surrogate or malformed)", pt.pos⟩
+      -- SPARQL 1.1 Query §19.5: "Text matched by the IRIREF production ...
+      -- must conform to the generic syntax of IRI references in section 2.2
+      -- of RFC 3987" (https://github.com/danbri/factoidal/issues/1057):
+      -- `<_:p>`, `<abc##def>` and `<a_b:c>` are not IRI references.
+      else if !isIriReferenceFast s then
+        some ⟨s!"invalid IRI <{s}>: not an IRI and not a relative reference (RFC 3987 section 2.2)", pt.pos⟩
       else firstInvalidToken rest
     | _          => firstInvalidToken rest
 

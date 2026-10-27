@@ -32,22 +32,27 @@ test('DatasetCore: set semantics by term equality', async () => {
   const named = f.quad(f.namedNode('http://e/a'), f.namedNode('http://e/p'), f.literal('x'),
     f.namedNode('http://e/g'));
   const ds = new DatasetCore([a, a2, lang, langUpper, iri, named]);
-  // a and a2 are equal; the literal with a language tag, the IRI and the
-  // quad in a named graph are not equal to a, nor to each other.
-  assert.equal(ds.size, 5);
+  // a and a2 are equal; "x"@en and "x"@EN are one term (the factory gives the
+  // tag in lowercase, RDF/JS Data Model, Literal.language; RDF 1.2 Concepts
+  // section 3.4; https://github.com/danbri/factoidal/issues/1054); the literal
+  // with a language tag, the IRI and the quad in a named graph are not equal to
+  // a, nor to each other.
+  assert.ok(lang.equals(langUpper));
+  assert.equal(ds.size, 4);
   assert.ok(ds.has(a2));
+  assert.ok(ds.has(langUpper));
   assert.ok(!ds.has(f.quad(f.namedNode('http://e/b'), f.namedNode('http://e/p'), f.literal('x'))));
   ds.delete(a2);
-  assert.equal(ds.size, 4);
+  assert.equal(ds.size, 3);
   assert.ok(!ds.has(a));
   ds.add(a);
-  assert.equal(ds.size, 5);
+  assert.equal(ds.size, 4);
   // match() answers a DatasetCore with the same set semantics.
   const m = ds.match(f.namedNode('http://e/a'));
-  assert.equal(m.size, 5);
+  assert.equal(m.size, 4);
   assert.ok(m.has(named));
   m.add(named);
-  assert.equal(m.size, 5);
+  assert.equal(m.size, 4);
 });
 
 test('DatasetCore: building 4n quads costs at most 9 times n quads', async () => {

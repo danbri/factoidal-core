@@ -1738,17 +1738,29 @@ def replaceCore (t p r f : EvalResult) : EvalResult :=
       | .error _ => .error
   | _, _, _, _ => .error
 
+/-- §17.4.3.3: "The arguments startingLoc and length may be derived types of
+xsd:integer." The integer a SUBSTR position or length argument denotes: an
+`xsd:integer` value, or the value of a literal whose datatype is derived from
+`xsd:integer` (`xsd:int`, `xsd:long`, `xsd:positiveInteger`, ...), within the
+bounds of that type. Any other argument has none, and SUBSTR is then a type
+error (https://github.com/danbri/factoidal/issues/1060). -/
+def substrIntArg? (v : EvalResult) : Option Int :=
+  match v.promoteLiteral with
+  | .num n => some n
+  | .term (.literal l) => integerDerivedValue? l
+  | _ => none
+
 /-- §17.4.3.3 SUBSTR applied to arguments that are already evaluated.
 Split out of the evaluator so that each evaluator arm stays a plain
 structural match — which is what lets Lean generate the equation
 lemmas the proofs in `ExprTheorems` rewrite with. -/
 def substrResult (v1 v2 : EvalResult) (vlen : Option EvalResult) : EvalResult :=
-  match v1.stringLiteralInfo?, v2.promoteLiteral with
-  | some (s, tg, dt), .num start =>
-      match vlen.map EvalResult.promoteLiteral with
+  match v1.stringLiteralInfo?, substrIntArg? v2 with
+  | some (s, tg, dt), some start =>
+      match vlen.map substrIntArg? with
       | none => erStringPreserve (substrSpec s start none) tg dt v1.direction?
-      | some (.num n) => erStringPreserve (substrSpec s start (some n)) tg dt v1.direction?
-      | some _ => .error
+      | some (some n) => erStringPreserve (substrSpec s start (some n)) tg dt v1.direction?
+      | some none => .error
   | _, _ => .error
 
 /-- §17.4.1.3 COALESCE: the first argument that is not a type error. -/
@@ -1757,16 +1769,39 @@ def coalesceResults : List EvalResult → EvalResult
   | .error :: rest => coalesceResults rest
   | v :: _ => v
 
-/-- §17.4.1.9 IN: `=` against each element in turn. Following the F*
-source, a comparison that ERRORS is treated as "no match" rather than
-poisoning the whole test, so `IN` answers `false` instead of erroring
-when nothing matches. -/
-def inResults (v : EvalResult) : List EvalResult → EvalResult
-  | [] => .bool false
-  | w :: rest =>
-      match valueCompare v w .eq with
-      | some true => .bool true
-      | _ => inResults v rest
+/-- §17.4.1.9 IN: "The IN operator is equivalent to the SPARQL expression:
+(lhs = expression1) || (lhs = expression2) || ...", and "Errors in
+comparisons cause the IN expression to raise an error if the RDF term being
+tested is not found elsewhere in the list of terms." So this is the §17.2
+three-valued `||` fold of `=`: `true` when one comparison is true, `false`
+when every comparison is false, an error otherwise (`2 IN (3, 1/0)` is an
+error, `2 IN (1/0, 2)` is true). Until
+https://github.com/danbri/factoidal/issues/1049 an erroring comparison
+counted as "no match", as in the F* source.
+
+The fold is a tail-recursive loop (`go`): `sawError` records that a
+comparison before this point was an error. A later true comparison still
+gives `true`; at the end of the list the result is an error when `sawError`
+is set, else `false` (the gate of https://github.com/danbri/factoidal/issues/746:
+no C stack frame for each item of the IN list). -/
+def inResults (v : EvalResult) (ws : List EvalResult) : EvalResult :=
+  go false ws
+where
+  go (sawError : Bool) : List EvalResult → EvalResult
+    | [] => if sawError then .error else .bool false
+    | w :: rest =>
+        match valueCompare v w .eq with
+        | some true => .bool true
+        | some false => go sawError rest
+        | none => go true rest
+
+-- §17.4.1.9: `2 IN (3, 1/0)` is an error, `2 IN (1/0, 2)` is true,
+-- `2 IN (3, 1)` is false, `2 IN ()` is false.
+#guard inResults (.num 2) [.num 3, .error] == .error
+#guard inResults (.num 2) [.error, .num 2] == .bool true
+#guard inResults (.num 2) [.num 3, .num 1] == .bool false
+#guard inResults (.num 2) [] == .bool false
+#guard inResults (.num 2) [.num 2, .error] == .bool true
 
 /-- §17.4.3 argument compatibility for STRSTARTS, STRENDS, CONTAINS,
 STRBEFORE and STRAFTER (both arguments already known to be string
@@ -2023,6 +2058,11 @@ def castDateTime (v : EvalResult) : EvalResult :=
       else .error
   | _ => .error
 
+/-- A language-tagged literal (with or without a base direction). -/
+def isLangTaggedResult : EvalResult → Bool
+  | .term (.literal l) => l.val.langTag.isSome
+  | _ => false
+
 /-- The XSD datatype of a cast argument, for `Fn.Cast.castFrom`: the
 promoted kinds name their datatype, a literal its datatype IRI. `none` for
 an IRI, a blank node, a triple term, a language-tagged string, or a datatype
@@ -2059,8 +2099,16 @@ def castFandO (target : XSD.Builtin) (fullIri : WfIri) (v : EvalResult) : EvalRe
 table keep their own casts. Every other XSD datatype IRI is the F&O cast
 `castFandO` (a type error when the cast is not defined); before
 https://github.com/danbri/factoidal/issues/1041 it relabelled the argument.
-Language-tagged datatypes are never constructible this way. -/
+Language-tagged datatypes are never constructible this way, and no cast
+from a language-tagged literal is defined, for any target
+(https://github.com/danbri/factoidal/issues/1062). -/
 def evalXsdCast (v : EvalResult) (targetType : String) (fullIri : WfIri) : EvalResult :=
+  -- §17.5: "XPath defines only the casts from one XML Schema datatype to
+  -- another"; rdf:langString and rdf:dirLangString are not XML Schema
+  -- datatypes, so no cast from a language-tagged literal is defined:
+  -- `xsd:string("foo"@en)` and `xsd:byte("1"@en)` are errors
+  -- (https://github.com/danbri/factoidal/issues/1062).
+  if isLangTaggedResult v then .error else
   if targetType == "integer" then castNumeric .integer v else
   if targetType == "decimal" then castNumeric .decimal v else
   if targetType == "double" then castNumeric .double v else
@@ -2241,6 +2289,8 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
       | none       => .error
   | .coalesce es => coalesceResults (Expr.evalArgs env mu es)
   | .inList e1 es => inResults (Expr.evalIn env mu e1) (Expr.evalArgs env mu es)
+  -- §17.4.1.10 NOT IN is `(lhs != e1) && (lhs != e2) && ...`; by the §17.2
+  -- truth tables that is the negation of the IN fold, errors included.
   | .notInList e1 es =>
       match inResults (Expr.evalIn env mu e1) (Expr.evalArgs env mu es) with
       | .bool b => .bool (!b)

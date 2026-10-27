@@ -187,6 +187,102 @@ def isAbsoluteIri (s : String) : Bool :=
   | (scheme, some hier) => schemeOk scheme && hierPartOk hier && queryOk' && fragOk
   | (_, none) => false
 
+/-- The rest of an `http://` or `https://` IRI in its common shape: RFC 3986
+`unreserved` characters and `/`, and at most one `#`. The specification of
+`plainBytesFrom`, character by character. -/
+def plainTailOk (r : Substring) : Bool :=
+  (r.foldl (fun (st : Bool × Bool) c =>
+     if !st.1 then st
+     else if isUnreservedAscii c || c == '/' then st
+     else if c == '#' && !st.2 then (true, true)
+     else (false, st.2)) (true, false)).1
+
+/-- `http://` or `https://`, then `plainTailOk`, character by character: the
+specification of `isPlainHttpIri`. -/
+def isPlainHttpIriChars (s : String) : Bool :=
+  if s.startsWith "https://" then plainTailOk (s.toSubstring.drop 8)
+  else if s.startsWith "http://" then plainTailOk (s.toSubstring.drop 7)
+  else false
+
+/-- A UTF-8 byte that is an RFC 3986 `unreserved` character or `/`. Each such
+character is one byte below 0x80, and no byte of a character beyond ASCII is
+below 0x80, so a test of the bytes is a test of the characters. -/
+@[inline] def isPlainByte (b : UInt8) : Bool :=
+  (97 ≤ b && b ≤ 122) || (65 ≤ b && b ≤ 90) || (48 ≤ b && b ≤ 57) ||
+  b == 45 || b == 46 || b == 95 || b == 126 || b == 47
+
+/-- `plainTailOk` on the UTF-8 bytes of `s` from byte `i`: one loop over the
+bytes, with no `Char` decode, no `Substring` and no allocation (each step of
+`plainTailOk` makes a pair; https://github.com/danbri/factoidal/issues/1057,
+cost). `hashSeen` is true after the one `#`. -/
+def plainBytesFrom (s : String) (i : Nat) (hashSeen : Bool) : Bool :=
+  if h : (⟨i⟩ : String.Pos.Raw) < s.rawEndPos then
+    let b := s.getUTF8Byte ⟨i⟩ h
+    if isPlainByte b then plainBytesFrom s (i + 1) hashSeen
+    else if b == 35 && !hashSeen then plainBytesFrom s (i + 1) true
+    else false
+  else true
+termination_by s.utf8ByteSize - i
+decreasing_by all_goals (simp [String.Pos.Raw.lt_iff] at h; omega)
+
+/-- The UTF-8 byte `i` of `s`, or 0 past its end. -/
+@[inline] def byteAt (s : String) (i : Nat) : UInt8 :=
+  if h : (⟨i⟩ : String.Pos.Raw) < s.rawEndPos then s.getUTF8Byte ⟨i⟩ h else 0
+
+/-- `http://` or `https://`, then only RFC 3986 `unreserved` characters and
+`/`, with at most one `#` (`isPlainHttpIriChars`, tested on the bytes). Every
+such string is an absolute IRI: the scheme is `http` or `https`, the authority
+is a reg-name of unreserved characters (or empty), the path holds segments of
+unreserved characters, and the fragment, after the one `#`, holds unreserved
+characters and `/` (RFC 3987 section 2.2). The prefix is tested byte by
+byte too (no `startsWith`). The `#guard`s below check it equal to
+`isPlainHttpIriChars`, and `isAbsoluteIri` true where it is true. -/
+def isPlainHttpIri (s : String) : Bool :=
+  if byteAt s 0 == 104 && byteAt s 1 == 116 && byteAt s 2 == 116 && byteAt s 3 == 112 then
+    -- "http" then "://" (7 bytes) or "s://" (8 bytes)
+    if byteAt s 4 == 58 && byteAt s 5 == 47 && byteAt s 6 == 47 then plainBytesFrom s 7 false
+    else if byteAt s 4 == 115 && byteAt s 5 == 58 && byteAt s 6 == 47 && byteAt s 7 == 47 then
+      plainBytesFrom s 8 false
+    else false
+  else false
+
+/-- `isAbsoluteIri`, with `isPlainHttpIri` first: the engine's one IRI check
+    on its hot paths (the readers and the dataset check of the ops). Most
+    IRIs of real data are in the plain shape and take one pass; the others
+    take the full check. -/
+def isAbsoluteIriFast (s : String) : Bool :=
+  isPlainHttpIri s || isAbsoluteIri s
+
+/-- Is `s` an RFC 3987 `irelative-ref` (section 2.2)?
+
+    irelative-ref  = irelative-part [ "?" iquery ] [ "#" ifragment ]
+    irelative-part = "//" iauthority ipath-abempty / ipath-absolute
+                   / ipath-noscheme / ipath-empty
+    ipath-noscheme = isegment-nz-nc *( "/" isegment )
+
+    `isegment-nz-nc` has no `:`, so the first segment of a relative path holds
+    no colon: `a_b:c` (whose `a_b` is not a scheme, section 3.1 of RFC 3986) and
+    `:foo` are neither IRIs nor relative references
+    (https://github.com/danbri/factoidal/issues/1057). -/
+def isRelativeIriRef (s : String) : Bool :=
+  let cs := s.toList
+  let (beforeFrag, frag) := splitFirst '#' cs
+  let fragOk := match frag with | some f => fragmentOk f | none => true
+  let (beforeQuery, query) := splitFirst '?' beforeFrag
+  let queryOk' := match query with | some q => queryOk q | none => true
+  !((beforeQuery.takeWhile (· != '/')).contains ':') && hierPartOk beforeQuery && queryOk' && fragOk
+
+/-- RFC 3987 `IRI-reference = IRI / irelative-ref`: what a Turtle or TriG
+    IRIREF may hold before it is resolved against the base. -/
+def isIriReference (s : String) : Bool :=
+  isAbsoluteIri s || isRelativeIriRef s
+
+/-- `isIriReference`, with `isPlainHttpIri` first: a plain IRI is an absolute
+IRI, so it is an IRI reference. The Turtle and TriG readers and the SPARQL
+parser check each IRIREF with it before they resolve it. -/
+def isIriReferenceFast (s : String) : Bool :=
+  isPlainHttpIri s || isIriReference s
+
 /-- Is `s` an absolute URI (RFC 3986 section 3)? An absolute URI is an
     absolute IRI with no character beyond ASCII. -/
 def isAbsoluteUri (s : String) : Bool :=
@@ -240,5 +336,65 @@ returned `true` for everything, or `false` for everything, fails here. -/
 -- Authority rules: a non-numeric port, an unbalanced bracket.
 #guard !isAbsoluteIri "http://example.com:80a/"
 #guard !isAbsoluteIri "http://[2001:db8::1/x"
+-- https://github.com/danbri/factoidal/issues/1057: a scheme with `_`, a port
+-- that is not digits, a leading colon, and an unclosed IP literal.
+#guard !isAbsoluteIri "a_b:c"
+#guard !isAbsoluteIri "entity.beeldbank_leiden_person:A.E._Stuur."
+#guard !isAbsoluteIri "http://www:example.org/"
+#guard !isAbsoluteIri "1a:foo"
+#guard !isAbsoluteIri "http://[::1/"
+#guard !isAbsoluteIri "http://a.org/d{|^}-e"
+#guard !isAbsoluteIri "http://a/abc##def"
+#guard isAbsoluteIri "http://a/abc#def"
+#guard isAbsoluteIri "scheme:!$%25&'()*+,-./0123456789:/@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz~?#"
+-- Relative references (RFC 3987 irelative-ref).
+#guard isRelativeIriRef ""
+#guard isRelativeIriRef "#frag"
+#guard isRelativeIriRef "?q=1"
+#guard isRelativeIriRef "a/b:c"
+#guard isRelativeIriRef "../up"
+#guard isRelativeIriRef "/a:b"
+#guard isRelativeIriRef "//example.org/a"
+#guard !isRelativeIriRef "a_b:c"
+#guard !isRelativeIriRef ":foo"
+#guard !isRelativeIriRef "a%zz"
+#guard !isRelativeIriRef "//www:x/"
+#guard !isRelativeIriRef "a b"
+#guard isIriReference "http://e.org/a" && isIriReference "a" && !isIriReference "a_b:c"
+-- The fast path: every plain http(s) IRI is an absolute IRI, and the fast check
+-- refuses what the full check refuses.
+private def plainSamples : List String :=
+  [ "http://example.org/", "https://example.org/a/b-c_d.e~f", "http://a/ns#name",
+    "http://a/ns#frag/x", "http://", "https:///x", "http://xmlns.com/foaf/0.1/name",
+    "http://www.w3.org/1999/02/22-rdf-syntax-ns#type" ]
+#guard plainSamples.all isPlainHttpIri
+#guard plainSamples.all isAbsoluteIri
+#guard !isPlainHttpIri "http://a/b#c#d" && !isPlainHttpIri "http://a:80/" && !isPlainHttpIri "urn:x"
+#guard !isPlainHttpIri "http://a/%41" && !isPlainHttpIri "http://a/b c" && !isPlainHttpIri "http://a/{x}"
+#guard isAbsoluteIriFast "http://a:80/" && isAbsoluteIriFast "urn:x:y" && isAbsoluteIriFast "http://a/%41"
+#guard !isAbsoluteIriFast "http://www:example.org/" && !isAbsoluteIriFast "a_b:c" && !isAbsoluteIriFast "http://a/b#c#d"
+#guard !isAbsoluteIriFast "http://a.org/d{|^}-e" && !isAbsoluteIriFast "http://a/%zz"
+
+-- The byte loop and the character loop agree, and the fast check agrees with
+-- the full check (`isAbsoluteIriFast s = isAbsoluteIri s`), on each prefix
+-- below followed by each codepoint of the table, alone, before `x`, and twice.
+-- The table holds every ASCII codepoint and codepoints of each UTF-8 length.
+private def diffPrefixes : List String :=
+  [ "", "h", "htt", "http", "http:", "http:/", "https", "https:", "https:/", "http://",
+    "https://", "hTtp://", "http://a", "http://a/", "https://e.org/p/",
+    "http://a/b#", "http://a/b#c", "http://a/b#c/", "http://a:", "http://a/b?" ]
+private def diffChars : List Char :=
+  (List.range 128).map Char.ofNat ++
+  [ Char.ofNat 0x80, Char.ofNat 0xA0, Char.ofNat 0xE9, Char.ofNat 0x7FF, Char.ofNat 0x800,
+    Char.ofNat 0xD7FF, Char.ofNat 0xE000, Char.ofNat 0xF8FF, Char.ofNat 0xFFFD,
+    Char.ofNat 0xFFFF, Char.ofNat 0x10000, Char.ofNat 0x10FFFF ]
+private def diffSamples : List String :=
+  diffPrefixes.flatMap fun p => diffChars.flatMap fun c =>
+    [p.push c, (p.push c).push 'x', (p.push c).push c]
+#guard diffSamples.length == diffPrefixes.length * 140 * 3
+#guard diffSamples.all fun s => isPlainHttpIri s == isPlainHttpIriChars s
+#guard diffSamples.all fun s => isAbsoluteIriFast s == isAbsoluteIri s
+#guard diffSamples.all fun s => isIriReferenceFast s == isIriReference s
+#guard (diffSamples.filter isPlainHttpIri).length > 12 * 66
 
 end L4Factoidal.RDF
