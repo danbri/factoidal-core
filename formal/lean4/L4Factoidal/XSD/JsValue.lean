@@ -18,6 +18,26 @@ to the binary64 value). This module chooses the datatype and the lexical form:
                   least one after, `E`, the exponent): `1e+21` -> `"1.0E21"`,
                   `0.1` -> `"1.0E-1"`, `-0` -> `"-0.0E0"`, `NaN` -> `"NaN"`,
                   `Infinity` -> `"INF"`.
+  * `date`     -> `xsd:dateTime`, the instant in UTC (`Z`), from
+                  `Date.prototype.getTime()` (milliseconds since
+                  1970-01-01T00:00:00Z, ECMAScript §21.4.1.1); `NaN` (an
+                  invalid Date) has no literal. The form is the §3.3.7.2
+                  canonical one: `0` -> `"1970-01-01T00:00:00Z"`,
+                  `1500` -> `"1970-01-01T00:00:01.5Z"`.
+
+Why this table (https://github.com/danbri/factoidal/issues/1051 item 1): each
+row maps a JavaScript value to the XSD 1.1 Part 2 datatype whose value space
+holds exactly that value, among the datatypes RDF 1.1 Concepts §5.1 lists as
+compatible with RDF. A `boolean` is one of the two values of `xsd:boolean`
+(§3.3.2); a `string` is a finite sequence of characters, `xsd:string`
+(§3.3.1); a `bigint` is an integer of any size, `xsd:integer` (§3.3.13, no
+bound); a `number` is an IEEE 754 binary64 value, the value space of
+`xsd:double` (§3.3.5), except that a safe integer is ALSO an exact integer
+and is given as `xsd:integer`, the type of an integer numeral in Turtle and
+SPARQL (RDF 1.1 Turtle §2.5.2, SPARQL 1.1 §4.1.2) and the choice of RDFLib
+(`Literal(12)`); a `Date` is an instant, a `dateTime` with a timezone
+(§3.3.7). A caller that wants another datatype names it
+(`RDF/LiteralValue.lean`, `literalOfJsValue`).
 
 Theorems:
   * `doubleLexical_inLexicalSpace` : the `xsd:double` lexical form is in the
@@ -30,6 +50,7 @@ Theorems:
 -/
 import L4Factoidal.XSD.IEEE754
 import L4Factoidal.XSD.Datatypes
+import L4Factoidal.Fn.DateTime
 
 namespace L4Factoidal.XSD.JsValue
 
@@ -505,6 +526,26 @@ theorem integerLexical_inLexicalSpace (i : Int) : parseIntegerLex (integerLexica
 /-- 2^53 − 1, `Number.MAX_SAFE_INTEGER`. -/
 def maxSafeInteger : Nat := 9007199254740991
 
+/-- ECMAScript §21.4.1.1: a time value is at most 8.64 × 10^15 milliseconds
+from the epoch. -/
+def maxTimeValue : Nat := 8640000000000000
+
+/-- The `xsd:dateTime` lexical form (UTC, XSD 1.1 Part 2 §3.3.7.2 canonical)
+of a JavaScript time value given as the decimal text of
+`Date.prototype.getTime()`. `none` for `NaN` and for a value outside the
+ECMAScript range. Calendar: the proleptic Gregorian calendar with year 0,
+which both ECMAScript (§21.4.1.3) and XSD 1.1 (§3.3.7) use. -/
+def epochMillisLexical (v : String) : Option String := do
+  let ms ← parseIntegerLex v
+  if ms.natAbs > maxTimeValue then none else
+  let day := ms / 86400000
+  let rem := (ms % 86400000).toNat
+  let (y, m, d) := L4Factoidal.Fn.DateTime.civilFromDays day
+  some (canonicalDateTime .dateTime
+    { year := some y, month := some m, day := some d,
+      hour := some (rem / 3600000), minute := some ((rem / 60000) % 60),
+      second := some (Dec.norm ⟨((rem % 60000 : Nat) : Int), 3⟩), tz := some 0 })
+
 /-- The datatype local name (`boolean`, `string`, `integer`, `double`) and
 the lexical form for a tagged JavaScript value; `none` when the tag or the
 text is not one this mapping reads. -/
@@ -532,6 +573,7 @@ def jsLiteral (tag v : String) : Option (String × String) :=
           if isIntText && n ≤ maxSafeInteger && !(d.neg && n == 0) then
             some ("integer", integerLexical (if d.neg then -(n : Int) else n))
           else some ("double", doubleLexical d)
+  else if tag == "date" then (epochMillisLexical v).map fun lex => ("dateTime", lex)
   else none
 
 
@@ -672,6 +714,23 @@ theorem jsLiteral_number_integer (v lex : String) (h : jsLiteral "number" v = so
 #guard jsLiteral "boolean" "yes" == none
 #guard jsLiteral "string" "a\"b" == some ("string", "a\"b")
 #guard jsLiteral "symbol" "x" == none
+#guard jsLiteral "date" "0" == some ("dateTime", "1970-01-01T00:00:00Z")
+#guard jsLiteral "date" "1500" == some ("dateTime", "1970-01-01T00:00:01.5Z")
+#guard jsLiteral "date" "-1" == some ("dateTime", "1969-12-31T23:59:59.999Z")
+#guard jsLiteral "date" "951782400000" == some ("dateTime", "2000-02-29T00:00:00Z")
+#guard jsLiteral "date" "1793102400123" == some ("dateTime", "2026-10-27T12:00:00.123Z")
+#guard jsLiteral "date" "-62135596800000" == some ("dateTime", "0001-01-01T00:00:00Z")
+#guard jsLiteral "date" "-62167219200000" == some ("dateTime", "0000-01-01T00:00:00Z")
+#guard jsLiteral "date" "8640000000000000" == some ("dateTime", "275760-09-13T00:00:00Z")
+#guard jsLiteral "date" "-8640000000000000" == some ("dateTime", "-271821-04-20T00:00:00Z")
+#guard jsLiteral "date" "8640000000000001" == none
+#guard jsLiteral "date" "NaN" == none
+#guard jsLiteral "date" "1.5" == none
+-- The dateTime form is in the lexical space and denotes the same instant.
+#guard (["0", "1500", "-1", "951782400000", "-62135596800000"].all fun v =>
+  match jsLiteral "date" v with
+  | some (_, lex) => (lexicalMap .dateTime lex).isSome
+  | none => false)
 -- the double denotes the JavaScript value (XSD lexical mapping, binary64)
 #guard doubleValueEq "1.0E21" "1e+21"
 #guard doubleValueEq "1.0E-1" "0.1"

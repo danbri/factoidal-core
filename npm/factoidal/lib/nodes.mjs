@@ -49,7 +49,7 @@ import { refusalFor, makeRecord, summarize, unionAssumptions, unionLists } from 
  */
 export function buildNodes(deps) {
   const { entry, entryResult, requireEntryFn, Dataset,
-    parse, closure, shaclValidate, query, serialize, canonicalize, explain, csvwToRdf } = deps;
+    parse, closure, shaclValidate, query, serialize, canonicalize, canonicalHash, explain, csvwToRdf } = deps;
 
   const reader = (format) => async (wire, params) => {
     if (typeof wire.graph !== 'string') {
@@ -62,13 +62,18 @@ export function buildNodes(deps) {
     graph: await closure(wire.graph, regime, params),
     artefact: { regime },
   });
-  const writer = (format) => async (wire, params) => ({
-    artefact: { format, text: await serialize(wire.graph, { ...params, format }) },
-  });
+  // A writer's output wire is String: the text goes on the wire, so the next
+  // node (a reader, say) reads it. Before 0.20.0 the input Dataset stayed on
+  // the wire and only the artefact held the text.
+  const writer = (format) => async (wire, params) => {
+    const text = await serialize(wire.graph, { ...params, format });
+    return { graph: text, artefact: { format, text } };
+  };
 
   // Stage name (stageList `name`) -> the package function that runs it.
-  // A runner answers `{ graph?, artefact }`; no `graph` passes the input
-  // graph on unchanged.
+  // A runner answers `{ graph, artefact }`: `graph` is the value of the
+  // node's output wire (FactoidalNode.wireOut, the engine's), which run()
+  // checks (wireHolds); `artefact` goes in the evidence record.
   const RUNNERS = {
     ntriplesDocumentReader: reader('ntriples'),
     nquadsDocumentReader: reader('nquads'),
@@ -83,23 +88,35 @@ export function buildNodes(deps) {
       const { shapes, ...opts } = params;
       if (shapes === undefined) throw new TypeError('node shaclValidator: params.shapes is required');
       const r = await shaclValidate(wire.graph, shapes, opts);
-      return { artefact: { conforms: r.conforms, report: r.report } };
+      const report = { conforms: r.conforms, report: r.report };
+      return { graph: report, artefact: report };
     },
+    // SELECT gives a Table (the rows), ASK an Answer (a boolean), CONSTRUCT
+    // and DESCRIBE a Dataset: the engine picks the wire from the query form
+    // (op pipelineCheckNodes), and the value here follows it.
     shippedEvaluator: async (wire, params) => {
       const { query: sparql, ...opts } = params;
       if (typeof sparql !== 'string') throw new TypeError('node shippedEvaluator: params.query must be a string');
       const answer = await query(wire.graph, sparql, opts);
       return answer instanceof Dataset ? { graph: answer, artefact: { form: 'graph' } }
-        : { artefact: { answer } };
+        : { graph: answer, artefact: { answer } };
     },
     ntriplesDocumentWriter: writer('ntriples'),
     nquadsDocumentWriter: writer('nquads'),
     turtleDocumentWriter: writer('turtle'),
     trigDocumentWriter: writer('trig'),
     rdfxmlDocumentWriter: writer('rdfxml'),
-    rdfcStage: async (wire, params) => ({
-      artefact: { canonical: await canonicalize(wire.graph, params) },
-    }),
+    // String × String: the canonical N-Quads text and its SHA-256 hex
+    // (RdfcContract, Dataflow/PhaseE.lean). canonicalHash is the SHA-256 of
+    // the text canonicalize answers (op datasetCanonicalHash).
+    rdfcStage: async (wire, params) => {
+      if (!(wire.graph instanceof Dataset)) {
+        throw new TypeError(`node rdfcStage: the stage takes a Dataset on its wire (got ${describe(wire.graph)})`);
+      }
+      const canonical = await canonicalize(wire.graph, params);
+      const sha256 = await canonicalHash(wire.graph);
+      return { graph: [canonical, sha256], artefact: { canonical, sha256 } };
+    },
     'CSVW (tabular data to RDF)': async (wire, params) => {
       if (typeof wire.graph !== 'string') {
         throw new TypeError(`node CSVW: the stage takes CSV text on its wire (got ${typeof wire.graph})`);
@@ -113,9 +130,29 @@ export function buildNodes(deps) {
       if (description === undefined) {
         throw new TypeError('node rdfsExplainGraphStage: params.description is required');
       }
-      return { artefact: await explain(wire.graph, description, { ...opts, profile: 'rdfs' }) };
+      const result = await explain(wire.graph, description, { ...opts, profile: 'rdfs' });
+      return { graph: result, artefact: result };
     },
   };
+
+  // Whether `value` represents the wire type `wire` (a wire name of the
+  // engine's registry, Dataflow/Wire.lean) in this package: a Dataset for the
+  // graph wires, text for String, and so on. A wire this table does not name
+  // needs a value that is not null or undefined.
+  function wireHolds(wire, value) {
+    switch (wire) {
+      case 'String': return typeof value === 'string';
+      case 'Dataset': case 'Graph': case 'Dataset × PrefixList': return value instanceof Dataset;
+      case 'Answer': return typeof value === 'boolean';
+      case 'Table': return Array.isArray(value);
+      case 'String × String':
+        return Array.isArray(value) && value.length === 2 && value.every((v) => typeof v === 'string');
+      default: return value !== undefined && value !== null;
+    }
+  }
+
+  const describe = (v) => (v instanceof Dataset ? 'a Dataset' : Array.isArray(v) ? 'an array'
+    : v === null ? 'null' : typeof v);
 
   let stageCache = null;
   let engine = null; // the entry stages() loaded; node() calls stages(), so pipe() has it
@@ -167,6 +204,33 @@ export function buildNodes(deps) {
     throw new TypeError(`node: setting ${path} must be a JSON value or a Dataset (got ${typeof v})`);
   }
 
+  // The node's own copy of its settings, taken when node() checks them: plain
+  // objects and arrays copied and frozen at every depth, a Dataset cloned. A
+  // later change to the caller's objects does not reach the node, so the
+  // settings that run are the ones the engine checked and digested.
+  function snapshot(v) {
+    if (v instanceof Dataset) return typeof v.clone === 'function' ? v.clone() : v;
+    if (Array.isArray(v)) return Object.freeze(v.map(snapshot));
+    if (v !== null && typeof v === 'object') {
+      const out = {};
+      for (const [k, x] of Object.entries(v)) if (x !== undefined) out[k] = snapshot(x);
+      return Object.freeze(out);
+    }
+    return v;
+  }
+
+  // A node's settings must still be the ones it was checked with: a Dataset
+  // in them (the clone node() made) can still be changed through
+  // node.params. run() refuses such a node instead of running settings that
+  // its evidence record would misdescribe.
+  function assertSettingsUnchanged(n) {
+    const now = JSON.stringify(marshal(n.params, 'params'));
+    if (now !== JSON.stringify(n.settingsWire)) {
+      throw new FactoidalError(`run: the settings of node ${n.stage} changed after node() checked them ` +
+        '(make a new node with node() for new settings)', { code: 'op.failed' });
+    }
+  }
+
   const hasNodeCheck = () => !!engine && typeof engine.pipelineCheckNodes === 'function';
 
   // The engine's check of nodes with settings (op pipelineCheckNodes).
@@ -193,7 +257,10 @@ export function buildNodes(deps) {
       throw new FactoidalError(`node: no registered stage named '${name}' (see stages())`,
         { code: 'option.invalid-value' });
     }
-    const settingsWire = marshal({ ...(params || {}) }, 'params');
+    // The copy first, then its wire form: the engine checks and digests
+    // exactly the settings the node keeps.
+    const own = snapshot({ ...(params || {}) });
+    const settingsWire = snapshot(marshal(own, 'params'));
     // The engine's reading of the settings, when it has the op.
     let s = null;
     if (hasNodeCheck()) s = nodeCheck([{ stage: info.name, settingsWire }]).stages[0];
@@ -209,7 +276,7 @@ export function buildNodes(deps) {
       wireOut: s ? s.wireOut : info.wireOut,
       runnable: info.runnable,
       bound: info.bound,
-      params: Object.freeze({ ...(params || {}) }),
+      params: own,
       settingsWire,
       settings: s ? s.settings : null,
       settingsDigest: s ? s.settingsDigest : null,
@@ -300,6 +367,7 @@ export function buildNodes(deps) {
     for (const n of nodes) {
       const why = refusalFor(n, unchecked, Object.prototype.hasOwnProperty.call(RUNNERS, n.stage));
       if (why) throw why;
+      assertSettingsUnchanged(n);
     }
     const c = check(nodes);
     if (c && !c.wellTyped && !unchecked) {
@@ -314,6 +382,16 @@ export function buildNodes(deps) {
     let owned = null; // a Dataset an earlier node of this run made
     for (const n of nodes) {
       const out = await RUNNERS[n.stage](wire, n.params);
+      // The value on the output wire must be one of the node's wireOut, the
+      // wire the engine's check typed: a well-typed pipeline then cannot fail
+      // between nodes for want of the value the next node reads. The output
+      // wires per setting are the engine's when it has op pipelineCheckNodes;
+      // with an older engine the registry wire is generic, so not checked.
+      const value = out.graph === undefined ? wire.graph : out.graph;
+      if (hasNodeCheck() && !wireHolds(n.wireOut, value)) {
+        throw new FactoidalError(`run: node ${n.stage} declares the output wire ${n.wireOut} ` +
+          `but its runner gave ${describe(value)}`, { code: 'op.failed' });
+      }
       const record = makeRecord(n, out.artefact, unchecked);
       let graph = wire.graph;
       if (out.graph !== undefined && out.graph !== wire.graph) {

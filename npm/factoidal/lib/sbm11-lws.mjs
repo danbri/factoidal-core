@@ -17,8 +17,10 @@
 // representation: it is kept in memory and every later read of that file is
 // cut from it, with no further request. A changed entity tag between two
 // reads of one file refuses the read (the bytes of two versions are never
-// mixed). Limits: no Merkle check here (the engine's Verify.none path), no
-// eviction of the in-memory copies, no retry.
+// mixed). The engine checks every byte it decodes against the manifest's
+// Merkle roots (openSbm11's default `verify: 'merkle'`), so it asks for whole
+// 65,536-byte chunks and the `.merkle` sidecars; this file does no check.
+// Limits: no eviction of the in-memory copies, no retry.
 //
 // EVIDENCE
 // `evidence()` lists each resource read: { resource, etag, lastModified,
