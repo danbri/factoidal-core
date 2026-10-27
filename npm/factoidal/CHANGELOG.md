@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `webdav-serve`: two `did-key` mounts that name one key file that does not exist yet get one key. Before, the engine made a key for each mount, the host wrote the first and the start stopped with `EEXIST` on the second (Lean `Wasm/Ops/WebDAV.lean`, `davKeyPathKey`; `alice.jwk` and `./alice.jwk` are one file).
+- Docs: hub page "WebDAV" (`docs/web/hub/webdav.md`): quick start, mount files, a remote LWS storage with did:key login, login and HTTPS options, Tailscale and SSH tunnels, the XMPP gap (https://github.com/danbri/factoidal/issues/1107), file browser steps; the listener has no login or TLS (https://github.com/danbri/factoidal/issues/1108).
+
 ## 0.20.0 (2026-10-27)
 
 - **Breaking:** in a checked pipeline (`node`, `pipe`, `run`), each node now puts a value of its output wire on the wire: text after a writer, the rows after SELECT, a boolean after ASK, the report after `shaclValidator`, `[canonical, sha256]` after `rdfcStage`, the result after `rdfsExplainGraphStage`. Before, such a node left its input Dataset on the wire, so a well-typed reader → writer → reader pipeline failed at run time. `run()` rejects a runner value that is not of the node's `wireOut`. `rdfcStage` as a node takes a Dataset only (https://github.com/danbri/factoidal-core/pull/155).
