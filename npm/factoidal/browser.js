@@ -85,6 +85,12 @@ export const graphs = api.graphs;
 export const canonicalHash = api.canonicalHash;
 export const isomorphic = api.isomorphic;
 export const fromQuads = api.fromQuads;
+// Literal values (https://github.com/danbri/factoidal/issues/1051): synchronous
+// after the engine is loaded.
+export const literalValue = api.literalValue;
+export const isValidLiteral = api.isValidLiteral;
+export const canonicalLiteral = api.canonicalLiteral;
+export const literalFromValue = api.literalFromValue;
 export const ready = api.ready;
 export const engineTables = api.engineTables;
 export const openDataset = api.openDataset;

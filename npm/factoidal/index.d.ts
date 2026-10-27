@@ -96,6 +96,7 @@ export type FactoidalErrorCode =
   | 'term.invalid-iri'
   | 'term.invalid-langtag'
   | 'term.invalid'
+  | 'literal.value'
   | 'query.syntax'
   | 'query.failed'
   | 'update.syntax'
@@ -557,6 +558,69 @@ export function fromQuads(quads: Iterable<Quad>): Promise<Dataset>;
 
 /** Load the engine. Afterwards the N-Quads text functions of `@factoidal/core/rdfjs` work. */
 export function ready(): Promise<void>;
+
+// ---------------------------------------------------------------------
+// Literal values (https://github.com/danbri/factoidal/issues/1051 items 1-3).
+// Synchronous after the engine is loaded (`await ready()` or any other call);
+// before that they throw a FactoidalError. The engine decides everything
+// (formal/lean4/L4Factoidal/RDF/LiteralValue.lean). API.md "Literal values".
+// ---------------------------------------------------------------------
+
+/**
+ * The value of a literal, as JSON-safe data. A number that a JavaScript
+ * number may not hold exactly is a decimal string; `number` is present only
+ * when the value is exactly a binary64 value. Integer components are numbers
+ * when |n| <= 2^53 - 1, else decimal strings.
+ */
+export type LiteralValueData =
+  | { kind: 'string' | 'anyURI'; string: string }
+  | { kind: 'boolean'; boolean: boolean }
+  | { kind: 'decimal'; decimal: string; integer: boolean; number?: number }
+  | { kind: 'float' | 'double'; decimal?: string; number: number;
+      negativeZero?: true; special?: 'NaN' | 'INF' | '-INF' }
+  | { kind: 'duration'; months: number | string; seconds: string }
+  | { kind: 'dateTime' | 'time' | 'date' | 'gYearMonth' | 'gYear' | 'gMonthDay' | 'gDay' | 'gMonth';
+      year?: number | string; month?: number; day?: number; hour?: number;
+      minute?: number; second?: string; timezoneOffset?: number }
+  | { kind: 'hexBinary' | 'base64Binary'; hex: string }
+  | { kind: 'QName' | 'NOTATION'; prefix: string; localName: string }
+  | { kind: 'list'; items: LiteralValueData[] }
+  | { kind: 'langString'; string: string; language: string; direction?: 'ltr' | 'rtl' };
+
+export interface LiteralValueResult {
+  /** The datatype IRI. */
+  datatype: string;
+  /** false: the engine has no lexical space for this datatype. */
+  recognized: boolean;
+  /** The lexical form is in the lexical space (null when not recognized). */
+  valid: boolean | null;
+  /** Present for a valid literal of a datatype with a value model. */
+  value?: LiteralValueData;
+  /** The canonical lexical form (XSD 1.1 Part 2 section 2.3.1), when known. */
+  canonical?: string;
+}
+
+/** The XSD lexical-to-value mapping of a literal (RDF 1.1 Semantics section 7: no whiteSpace processing). */
+export function literalValue(term: Literal): LiteralValueResult;
+
+/** Whether the lexical form is in the datatype's lexical space; null when the engine has no lexical space for the datatype. */
+export function isValidLiteral(term: Literal): boolean | null;
+
+/** The literal with the canonical form of its value; null when it is not valid or has no canonical mapping. */
+export function canonicalLiteral(term: Literal): Literal | null;
+
+/**
+ * The literal of a JavaScript value. With no datatype the engine's table
+ * chooses: boolean xsd:boolean, string xsd:string, bigint xsd:integer, a safe
+ * integer Number xsd:integer, any other Number xsd:double, Date xsd:dateTime
+ * (UTC). `datatype` (an IRI, a NamedNode, or an XSD local name such as 'int')
+ * names the datatype; the value must be in its value space, else a
+ * FactoidalError with code 'literal.value'.
+ */
+export function literalFromValue(
+  value: boolean | number | bigint | string | Date,
+  options?: { datatype?: string | NamedNode }
+): Literal;
 
 /** The engine's name tables: format names, entailment regimes, query outputs, pack syntaxes. */
 export function engineTables(): Promise<Record<string, unknown>>;
@@ -1676,6 +1740,8 @@ export function capabilities(): Promise<{
   store: boolean;
   /** The deltaLog* functions (deltaLogEncode, deltaLogDecode, deltaLogMerge). */
   deltaLog: boolean;
+  /** ops literalValue and literalFromValue (issue 1051). */
+  literalValues: boolean;
   /** 'full': the whole library is in the wasm module. */
   profile: 'full' | string;
   /** The dispatch ABI version string of the loaded wasm module. */
@@ -1818,6 +1884,10 @@ declare const _default: {
   FactoidalError: typeof FactoidalError;
   dataFactory: DataFactory;
   queryRaw: typeof queryRaw;
+  literalValue: typeof literalValue;
+  isValidLiteral: typeof isValidLiteral;
+  canonicalLiteral: typeof canonicalLiteral;
+  literalFromValue: typeof literalFromValue;
   version: string;
   engine: string;
 };

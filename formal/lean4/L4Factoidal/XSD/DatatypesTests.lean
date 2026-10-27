@@ -98,6 +98,43 @@ namespace L4Factoidal.XSD
 #guard canonicalMap .float (.flt ⟨false, .inf⟩) == "INF"
 #guard canonicalMap .double (.dbl ⟨true, .inf⟩) == "-INF"
 #guard canonicalMap .double (.dbl ⟨false, .nan⟩) == "NaN"
+-- §3.3.5.2 / §3.3.4.2 (algorithm §E.1): the fewest significant digits that
+-- map back to the value, in the scientific canonical form.
+private def canonD (s : String) : String := match lexicalMap .double s with
+  | some v => canonicalMap .double v | none => "?"
+private def canonF (s : String) : String := match lexicalMap .float s with
+  | some v => canonicalMap .float v | none => "?"
+#guard canonD "0.1" == "1.0E-1"
+#guard canonD "1e21" == "1.0E21"
+#guard canonD "100" == "1.0E2"
+#guard canonD "-2.5" == "-2.5E0"
+#guard canonD "123.456" == "1.23456E2"
+#guard canonD "0.3" == "3.0E-1"
+#guard canonD "0.30000000000000004" == "3.0000000000000004E-1"
+#guard canonD "1.7976931348623157E308" == "1.7976931348623157E308"
+#guard canonD "2.2250738585072014E-308" == "2.2250738585072014E-308"
+#guard canonD "5e-324" == "5.0E-324"
+#guard canonD "4.9E-324" == "5.0E-324"
+#guard canonD "9007199254740993" == "9.007199254740992E15"
+#guard canonD "-0" == "-0.0E0"
+#guard canonD "+0.0" == "0.0E0"
+#guard canonD "INF" == "INF"
+#guard canonF "0.1" == "1.0E-1"
+#guard canonF "16777217" == "1.6777216E7"
+#guard canonF "3.4028235E38" == "3.4028235E38"
+#guard canonF "1.4E-45" == "1.0E-45"
+#guard canonF "-1.5" == "-1.5E0"
+-- The search finds a candidate (the exact form is never the fallback here).
+#guard ["0.1", "1e21", "5e-324", "1.7976931348623157E308", "123.456", "0.30000000000000004"].all
+  (fun s => match lexicalMap .double s with
+    | some (.dbl f) => (floatingCanonical? true f).isSome | _ => false)
+#guard ["0.1", "1.4E-45", "3.4028235E38", "16777217"].all
+  (fun s => match lexicalMap .float s with
+    | some (.flt f) => (floatingCanonical? false f).isSome | _ => false)
+-- The canonical form maps back to the value.
+#guard ["0.1", "1e21", "5e-324", "1.7976931348623157E308", "-123.456", "6.02214076E23"].all
+  (fun s => match lexicalMap .double s with
+    | some v => (lexicalMap .double (canonicalMap .double v)) == some v | _ => false)
 
 /-! ## §3.3.6 `duration` — "P1Y2M3DT10H30M", "-P120D", "P1347Y" -/
 

@@ -3246,6 +3246,25 @@ args "$TMP/dl-empty.json"
 check "ops reflection lists the delta-log ops" ops "$TMP/dl-empty.json" \
   'set(["deltaLogEncode","deltaLogDecode","deltaLogMerge"]) <= set(r["ops"])'
 
+# --- Literal values (https://github.com/danbri/factoidal/issues/1051) ----
+args "$TMP/lv-int.json" '{"type":"literal","value":"01","datatype":"http://www.w3.org/2001/XMLSchema#integer"}'
+check "literalValue \"01\"^^xsd:integer -> valid, value 1, canonical 1" literalValue "$TMP/lv-int.json" \
+  'r["ok"] is True and r["valid"] is True and r["canonical"] == "1" and r["value"]["number"] == 1'
+args "$TMP/lv-bad.json" '{"type":"literal","value":"2147483648","datatype":"http://www.w3.org/2001/XMLSchema#int"}'
+check "literalValue \"2147483648\"^^xsd:int -> ill-typed (recognized, not valid)" literalValue "$TMP/lv-bad.json" \
+  'r["ok"] is True and r["recognized"] is True and r["valid"] is False and "value" not in r'
+args "$TMP/lv-dbl.json" '{"type":"literal","value":"0.1","datatype":"http://www.w3.org/2001/XMLSchema#double"}'
+check "literalValue \"0.1\"^^xsd:double -> canonical 1.0E-1" literalValue "$TMP/lv-dbl.json" \
+  'r["ok"] is True and r["canonical"] == "1.0E-1" and r["value"]["number"] == 0.1'
+args "$TMP/lfv-int.json" '{"js":"number","v":"99"}' "int"
+check "literalFromValue 99 as int -> \"99\"^^xsd:int" literalFromValue "$TMP/lfv-int.json" \
+  'r["ok"] is True and r["value"] == "99" and r["datatype"].endswith("#int")'
+args "$TMP/lfv-bad.json" '{"js":"number","v":"300"}' "byte"
+check "literalFromValue 300 as byte -> literal.value error" literalFromValue "$TMP/lfv-bad.json" \
+  'r["ok"] is False and r["code"] == "literal.value"'
+check "ops reflection lists the literal-value ops" ops "$TMP/dl-empty.json" \
+  'set(["literalValue","literalFromValue"]) <= set(r["ops"])'
+
 # --- Dispatch reflection + unknown op ---------------------------------
 args "$TMP/empty.json"
 check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
@@ -3496,6 +3515,10 @@ corecheck "core: deltaLogMerge applies the log" deltaLogMerge "$TMP/dl-merge.jso
   'r["ok"] is True and "\"Eve\"" in r["nquads"] and "\"Frank\"" in r["nquads"]'
 corecheck "core: ops reflection lists the delta-log ops" ops "$TMP/empty.json" \
   'set(["deltaLogEncode","deltaLogDecode","deltaLogMerge"]) <= set(r["ops"])'
+corecheck "core: literalValue \"01\"^^xsd:integer -> canonical 1" literalValue "$TMP/lv-int.json" \
+  'r["ok"] is True and r["valid"] is True and r["canonical"] == "1"'
+corecheck "core: literalFromValue 99 as int" literalFromValue "$TMP/lfv-int.json" \
+  'r["ok"] is True and r["value"] == "99" and r["datatype"].endswith("#int")'
 corecheck "core: unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
   'r["ok"] is False and "unknown op" in r["error"] and "servedBy" not in r'
 check "full: ops reflection names the full engine" ops "$TMP/empty.json" \
