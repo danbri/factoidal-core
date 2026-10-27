@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Value matching (https://github.com/danbri/factoidal/issues/1052): new `sameValue(a, b)` is SPARQL 1.1 `=` on two terms (sections 17.3, 17.4.1.7), decided by the engine (Lean `SPARQL/SameValue.lean`). It answers `true`, `false`, or `null` for incomparable (the type error of `=`). `Dataset.has`, `match` and `delete` take `{match: 'value'}`: a literal object then matches each object literal of the same value (`"1"^^xsd:int` finds `"01"^^xsd:integer` and `"1.0"^^xsd:decimal`), through an index of the literals by value. Term matching stays the default. New wasm op `sameValue`; `datasetMatch`, `datasetMatchCount` and `datasetDeleteQuadsJson` take an optional options argument.
+- Syntax names (https://github.com/danbri/factoidal/issues/1053): new `syntaxFor(fileName)` and `syntaxFor({fileName, mediaType})` give the syntax of a document from the W3C registrations (Lean `RDF/MediaType.lean`), or `null`. Each row of `formats()` has `mediaTypes` and `extensions` from the same table (README format table: two new columns). New wasm op `syntaxFor`.
 
 ## 0.18.0 (2026-10-27)
 

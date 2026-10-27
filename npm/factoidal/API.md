@@ -507,6 +507,30 @@ ds.delete(q, { match: 'value' });
 console.log(ds.size);                                                                     // 0
 ```
 
+## Syntax names
+
+These functions are synchronous and need the engine loaded (`await ready()` or
+any other call first). The engine decides each answer.
+
+`syntaxFor(fileNameOrIri)` or `syntaxFor({fileName, mediaType})` gives the
+syntax of a document, a `name` of `formats()`, or `null`
+(https://github.com/danbri/factoidal/issues/1053). The table is the W3C
+registrations: Turtle `text/turtle` `.ttl`, N-Triples `application/n-triples`
+`.nt`, N-Quads `application/n-quads` `.nq`, TriG `application/trig` `.trig`,
+RDF/XML `application/rdf+xml` `.rdf`, JSON-LD `application/ld+json` `.jsonld`.
+The media type wins when it is given, and its parameters and letter case do not
+change the answer. An unknown media type (`text/plain`) gives `null`; it does not
+fall back to the name. The query and the fragment of an IRI are ignored.
+`.owl` and `.xml` are not registered and give `null`. Each row of `formats()`
+has the same `mediaTypes` and `extensions`.
+
+```js
+import { ready, syntaxFor } from '@factoidal/core';
+await ready();
+syntaxFor('data.ttl');                                    // 'turtle'
+syntaxFor({ fileName: 'a.nt', mediaType: 'text/turtle' }); // 'turtle'
+```
+
 ## The persisted store
 
 A **Shardborough** store is the on-disk format the Lean packer writes:
@@ -1431,8 +1455,9 @@ runnable.
 | `openDataset` | `(data, {format?, baseIRI?}) => Dataset` | a Dataset argument is cloned |
 | `closure` | `(data, 'rdfs' \| 'owl-rl' \| 'rho-df' \| 'rdfs-plus') => Dataset` | the closure of the default graph |
 | `serialize` | `(data, {format, version?, prefixes?, literalShorthand?, useNativeTypes?, useRdfType?, rdfDirection?, rdfstar?, inputFormat?, baseIRI?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle`, `trig`, `rdfxml`, `jsonld`, `rdfc`; see "Datasets" |
-| `formats` | `() => [{name, read11, read12, write11, write12, engine}]` | the engine's list |
+| `formats` | `() => [{name, read11, read12, write11, write12, engine, mediaTypes, extensions}]` | the engine's list; `mediaTypes` and `extensions` are the W3C registrations (issue 1053) |
 | `sameValue` | `(a, b) => boolean \| null` | SPARQL 1.1 `=` on two terms; `null` incomparable; synchronous after `ready()`; see "Matching literals by value" |
+| `syntaxFor` | `(name \| {fileName?, mediaType?}) => string \| null` | the syntax of a file name or media type; synchronous; see "Syntax names" |
 | `canonicalize` | `(data, {format?, baseIRI?}) => string` | RDFC-1.0 canonical N-Quads |
 | `graphs` | `(Dataset) => Array<[NamedNode \| BlankNode, Dataset]>` | named graphs, default graph excluded |
 | `canonicalHash` | `(Dataset) => string` | SHA-256 (64 lowercase hex digits) of the RDFC-1.0 canonical N-Quads of one graph; graph names are dropped first. `canonicalize` answers the text |

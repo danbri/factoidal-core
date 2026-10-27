@@ -80,6 +80,7 @@ import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.IriResolve
 import L4Factoidal.RDF.CertifiedDataset
 import L4Factoidal.SPARQL.SameValue
+import L4Factoidal.RDF.MediaType
 
 namespace L4Wasm.Ops
 
@@ -351,11 +352,30 @@ def formatTable : List (String × Bool × Bool × Bool × Bool × String) :=
   , ("sparql-results-csv",  false, false, true, true, "core")
   , ("sparql-results-tsv",  false, false, true, true, "core") ]
 
-/-- `datasetFormats()` — `formatTable` as JSON. -/
+/-- The registered media types and file extensions of a row of `formatTable`
+(`L4Factoidal.RDF.mediaTypeOf`, `registeredExtensionOf`; the table that
+`syntaxFor` reads, https://github.com/danbri/factoidal/issues/1053). A row that
+is not an RDF syntax with a W3C registration has none. -/
+def formatRegistration (name : String) : List String × List String :=
+  match L4Factoidal.RDF.formatOfLabel name with
+  | some f => ([L4Factoidal.RDF.mediaTypeOf f], [L4Factoidal.RDF.registeredExtensionOf f])
+  | none => ([], [])
+
+/-- `datasetFormats()` — `formatTable` as JSON, each row with its
+`mediaTypes` and `extensions` (`formatRegistration`). -/
 def datasetFormats : IO String :=
   pure (okWith [("formats", .array (formatTable.map fun (n, r11, r12, w11, w12, eng) =>
+    let (mts, exts) := formatRegistration n
     Json.object [("name", .string n), ("read11", .bool r11), ("read12", .bool r12),
-                 ("write11", .bool w11), ("write12", .bool w12), ("engine", .string eng)]))])
+                 ("write11", .bool w11), ("write12", .bool w12), ("engine", .string eng),
+                 ("mediaTypes", .array (mts.map Json.string)),
+                 ("extensions", .array (exts.map Json.string))]))])
+
+#guard formatRegistration "turtle" == (["text/turtle"], [".ttl"])
+#guard formatRegistration "rdfc" == ([], [])
+-- Every RDF syntax of the registrations is a row of the table, under its label.
+#guard [L4Factoidal.RDF.RdfFormat.nt, .turtle, .nquads, .trig, .rdfxml, .jsonld].all fun f =>
+  formatTable.any (·.1 == L4Factoidal.RDF.formatLabel f)
 
 /-- The handle's own prefixes as the renderer's (namespace, `label:`) pairs. -/
 private def handlePrefixTable (od : OpenDataset) : PrefixTable :=

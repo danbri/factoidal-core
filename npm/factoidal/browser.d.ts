@@ -28,6 +28,7 @@ export {
   ready,
   engineTables,
   sameValue,
+  syntaxFor,
   openDataset,
   closure,
   formats,

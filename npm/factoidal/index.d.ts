@@ -233,6 +233,10 @@ export interface FormatCapability {
   write12: boolean;
   /** 'core' when both engines serve it; 'full' when only the full engine does. */
   engine: 'core' | 'full';
+  /** The registered media types (W3C registration; empty for a row with none). syntaxFor() reads the same table. */
+  mediaTypes: string[];
+  /** The registered file extensions, with the leading dot ('.ttl'). */
+  extensions: string[];
 }
 
 /**
@@ -588,6 +592,19 @@ export interface MatchOptions {
  * string. Synchronous: the engine must be loaded (`await ready()`).
  */
 export function sameValue(a: Term | string, b: Term | string): boolean | null;
+
+/**
+ * The syntax of a document by its file name (or IRI path; the query and the
+ * fragment are ignored) and its media type, from the engine's table of the
+ * W3C registrations (https://github.com/danbri/factoidal/issues/1053): Turtle
+ * `text/turtle` `.ttl`, N-Triples `application/n-triples` `.nt`, N-Quads
+ * `application/n-quads` `.nq`, TriG `application/trig` `.trig`, RDF/XML
+ * `application/rdf+xml` `.rdf`, JSON-LD `application/ld+json` `.jsonld`. The
+ * media type wins when it is given (its parameters are ignored); an unknown
+ * media type does not fall back to the name. Answers a `name` of formats(),
+ * or `null`. Synchronous: the engine must be loaded (`await ready()`).
+ */
+export function syntaxFor(what: string | { fileName?: string; mediaType?: string }): string | null;
 
 /** A SHACL validation-report term (see shaclValidate). */
 export interface ShaclValidateResult {
@@ -1792,6 +1809,7 @@ declare const _default: {
   ready: typeof ready;
   engineTables: typeof engineTables;
   sameValue: typeof sameValue;
+  syntaxFor: typeof syntaxFor;
   shaclValidate: typeof shaclValidate;
   shexValidate: typeof shexValidate;
   owlClosure: typeof owlClosure;

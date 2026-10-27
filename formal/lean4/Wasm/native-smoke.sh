@@ -3543,11 +3543,25 @@ checkseq "value match: count, match, a bad mode, delete by value" "$TMP/vm-seq.j
    and rs[4]["ok"] is False and rs[4]["code"] == "option.invalid-value"
    and rs[5] == {"ok": True, "count": 2}
    and rs[6] == {"ok": True, "count": 1}'
-TERM_OPS='["sameValue"]'
-check "ops reflection lists the term ops (issue 1052)" ops "$TMP/empty.json" \
+TERM_OPS='["sameValue","syntaxFor"]'
+check "ops reflection lists the term ops (issues 1052, 1053)" ops "$TMP/empty.json" \
   "set($TERM_OPS) <= set(r[\"ops\"])"
 corecheck "core: ops reflection lists the term ops" ops "$TMP/empty.json" \
   "set($TERM_OPS) <= set(r[\"ops\"])"
+
+# --- Syntax names (https://github.com/danbri/factoidal/issues/1053) -------
+args "$TMP/sf-name.json" 'http://e/data.ttl?x=1' ''
+check "syntaxFor by the extension of an IRI path -> turtle" syntaxFor "$TMP/sf-name.json" \
+  'r == {"ok": True, "syntax": "turtle"}'
+args "$TMP/sf-mt.json" 'a.ttl' 'Application/N-Quads; charset=utf-8'
+check "syntaxFor: the media type wins -> nquads" syntaxFor "$TMP/sf-mt.json" \
+  'r == {"ok": True, "syntax": "nquads"}'
+args "$TMP/sf-none.json" 'a.unknown' ''
+check "syntaxFor of an unknown extension -> null" syntaxFor "$TMP/sf-none.json" \
+  'r == {"ok": True, "syntax": None}'
+corecheck "core: syntaxFor" syntaxFor "$TMP/sf-mt.json" 'r == {"ok": True, "syntax": "nquads"}'
+check "datasetFormats lists media types and extensions" datasetFormats "$TMP/empty.json" \
+  'any(x["name"] == "turtle" and x["mediaTypes"] == ["text/turtle"] and x["extensions"] == [".ttl"] for x in r["formats"])'
 
 echo "=== native-smoke: $PASS pass, $FAIL fail, $XFAIL xfail (out of $((PASS + FAIL + XFAIL)))"
 [ "$FAIL" -eq 0 ]

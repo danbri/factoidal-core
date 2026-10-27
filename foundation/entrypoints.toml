@@ -132,20 +132,32 @@ stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
 covers = "part"
 note = "matchDataset as wasm:datasetMatch, then the quad count. Not covered: quadPatternOf."
 
-# Value matching (https://github.com/danbri/factoidal/issues/1052;
-# Wasm/Ops/Terms.lean).
+# Terms and syntax names (https://github.com/danbri/factoidal/issues/1052,
+# 1053; Wasm/Ops/Terms.lean).
 
 [[nonstage]]
 id = "wasm:sameValue"
 reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
 
 [[nonstage]]
+id = "wasm:syntaxFor"
+reason = "a name table: the syntax of a file name or media type (RDF/MediaType.lean syntaxOfNames), reads no RDF data"
+
+[[nonstage]]
 id = "npm:.#sameValue"
 reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
 
 [[nonstage]]
+id = "npm:.#syntaxFor"
+reason = "a name table: the syntax of a file name or media type (RDF/MediaType.lean syntaxOfNames), reads no RDF data"
+
+[[nonstage]]
 id = "npm:./browser#sameValue"
 reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#syntaxFor"
+reason = "a name table: the syntax of a file name or media type (RDF/MediaType.lean syntaxOfNames), reads no RDF data"
 
 [[entry]]
 id = "wasm:storeQuery"

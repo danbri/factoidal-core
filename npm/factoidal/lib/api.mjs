@@ -977,6 +977,23 @@ function buildApi(driver) {
     return r.sameValue === 'true' ? true : (r.sameValue === 'false' ? false : null);
   }
 
+  /**
+   * The syntax of a document by its file name (or IRI path) and its media
+   * type, from the engine's table of W3C registrations
+   * (L4Factoidal.RDF.syntaxOfNames; https://github.com/danbri/factoidal/issues/1053).
+   * The media type wins when it is given; an unknown media type does not fall
+   * back to the name.
+   * @param {string|{fileName?: string, mediaType?: string}} what a file name or IRI,
+   *   or both names
+   * @returns {string|null} a syntax name of formats(), or null
+   */
+  function syntaxFor(what) {
+    const c = loadedCtx('syntaxFor');
+    const o = (typeof what === 'string') ? { fileName: what } : (what || {});
+    const r = entryResult(c.e.syntaxFor(String(o.fileName ?? ''), String(o.mediaType ?? '')), 'syntaxFor');
+    return r.syntax ?? null;
+  }
+
   /** The engine's name tables (formats, regimes, query outputs, pack syntaxes). */
   async function engineTables() {
     return (await ctx()).tables();
@@ -2318,6 +2335,7 @@ function buildApi(driver) {
     ready,
     engineTables,
     sameValue,
+    syntaxFor,
     Dataset,
     Store,
     FactoidalError,
