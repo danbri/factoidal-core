@@ -156,7 +156,7 @@ def fullOnlyOpNames : List String :=
   , "lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush", "lwsLoad", "lwsPersist", "lwsRead", "solidOpen", "solidStep", "solidClose"
   , "solidSnapshot"
   , "solidFetched"
-  , "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzClose"
+  , "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzOwns", "authzClose"
   , "solidClientRequest", "solidClientResponse"
   , "lwsClientStart", "lwsClientStep"
   , "matrixDeterminant", "matrixScalarProduct", "matrixVectorProduct"

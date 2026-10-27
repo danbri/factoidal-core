@@ -135,12 +135,29 @@ def metadataUrl (resource : String) : String :=
   let (o, p) := splitOrigin resource
   o ++ wellKnownPrm ++ (if p == "/" then "" else p)
 
-/-- The resource a metadata path describes; the inverse of `metadataUrl`
-for a storage whose root is an origin. -/
+/-- The resource a metadata path describes. Two forms of the path reach the
+server, and both name the same resource:
+
+* the whole form, the path of `metadataUrl r`: the well-known segment, then
+  the resource's whole path, the storage root's path included. A client
+  that fetches the metadata URL from this server directly sends it.
+* the storage form: the well-known segment, then the resource's path
+  relative to the storage root. A reverse proxy that serves the storage at
+  a path prefix and removes that prefix from every request (Touchstone's
+  `targetservers` router in its default `strip` mode) sends it, because
+  for this server every request target is a path within the storage.
+
+The whole form is read first: a rest that is the root's path, or begins
+with it and a slash, is the whole path. For a root that is an origin the two
+forms are the same. -/
 def resourceOfMetadataPath (baseIri path : String) : String :=
-  let (o, _) := splitOrigin baseIri
+  let (o, p) := splitOrigin baseIri
+  let rootPath := if p.endsWith "/" then (p.dropEnd 1).toString else p
   let rest := (path.drop wellKnownPrm.length).toString
-  o ++ (if rest == "" then "/" else rest)
+  if rootPath == "" || rest == rootPath || rest.startsWith (rootPath ++ "/") then
+    o ++ (if rest == "" then "/" else rest)
+  else
+    o ++ rootPath ++ (if rest == "" then "/" else rest)
 
 /-- The storage IRI: the audience a token must name, and the target of the
 `lws#storage` link of a 401.

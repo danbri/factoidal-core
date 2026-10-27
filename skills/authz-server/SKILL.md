@@ -51,6 +51,26 @@ import { listen, openAuthorizationServer } from '@factoidal/core/authz'
 const as = await listen({ dir: 'as-dir', port: 4000, resources: ['http://127.0.0.1:3000/.well-known/lws-storage'] })
 ```
 
+### On the storage's port: `lws-serve --authz`
+
+```
+factoidal lws-serve store-dir --authz as-dir --owner did:key:zDn... [--base IRI]
+```
+
+One process, one port. The issuer is the storage root without its trailing
+slash; the token endpoint and the JWK Set are at `BASE.well-known/lws-token`
+and `BASE.well-known/lws-jwks`, beside the storage's other services, so no
+name a client may give a storage resource is taken. The engine decides which
+request is whose (`authzOwns`, `L4Factoidal/Authz/Mount.lean`, theorem
+`endpointOf?_mem`: the authorization server takes only the paths of
+`endpointPaths`); the storage trusts the issuer with the JWK Set from
+`authzOpen`, so it never fetches its own URL. With `--rotate-after` the
+storage fetches the metadata again when it meets an unknown `kid`. Every
+well-known path is read in two forms, whole and with the base path removed,
+so a reverse proxy may serve the storage at a path prefix and strip it
+(`tests/authz/mounted.mjs` runs both). Docker target for third-party
+testing: `deploy/lws-target/`.
+
 ## What it decides (all in Lean)
 
 * Token endpoint (lws10-core "Token Exchange"): form parameters once each;

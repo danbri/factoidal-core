@@ -669,6 +669,7 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
       | [a, b] => Ops.authzKeys a b
       | args => pure (errJson s!"authzKeys expects 1 or 2 arguments, got {args.length}"))
   | "authzRotate"      => withArgs (arityIO2 op Ops.authzRotate)
+  | "authzOwns"        => withArgs (arityIO2 op Ops.authzOwns)
   | "authzClose"       => withArgs (arityIO1 op Ops.authzClose)
   | "lwsOpen"          => withArgs (arityIO1 op Ops.lwsOpen)
   | "lwsStep"          => withArgs (arityIO2 op Ops.lwsStep)
