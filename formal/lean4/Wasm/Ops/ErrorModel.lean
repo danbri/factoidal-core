@@ -205,7 +205,7 @@ def opTextArg (op : String) : Option Nat :=
   else if ["queryDataset", "queryDataset12", "updateDataset", "datasetQuery",
            "datasetQuery12", "datasetUpdate", "queryRaw", "datasetQueryRaw",
            "storeQuery", "storeQueryPlan"].contains op then some 1
-  else if op == "queryHdt" then some 0
+  else if op == "queryHdt" || op == "storeQueryPlanBytes" then some 0
   else none
 
 /-- The default code of an op family, for a refusal no message rule names. -/
