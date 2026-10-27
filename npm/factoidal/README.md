@@ -54,7 +54,7 @@ and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
 ## Releases at a glance
 
 One line per release. Full notes: [GitHub Releases](https://github.com/danbri/factoidal-core/releases)
-(0.17.0 and later) and [CHANGELOG.md](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/CHANGELOG.md) (every release; it is also in the
+(0.13.0 and later) and [CHANGELOG.md](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/CHANGELOG.md) (every release; it is also in the
 package, for example https://unpkg.com/@factoidal/core@0.19.0/CHANGELOG.md).
 
 | Version | Date | Main changes |
