@@ -335,12 +335,25 @@ structure Opts where
   families : List String := []
   set : Option String := none
   listFails : Bool := false
+  trace : Bool := false
+  /-- Test cases not run because they do not finish in this
+      implementation; each counts as a FAIL. -/
+  hang : List String := []
+  /-- Run each test set in a child process, killed after this many
+      seconds; the tests it did not finish count as FAIL. -/
+  isolate : Option Nat := none
+  progress : Option String := none
+  childMode : Bool := false
 
 def parseArgs : List String → Opts → Opts
   | "--root" :: r :: rest, o => parseArgs rest { o with root := r }
   | "--family" :: f :: rest, o => parseArgs rest { o with families := o.families ++ [f] }
   | "--set" :: s :: rest, o => parseArgs rest { o with set := some s }
   | "--list-fails" :: rest, o => parseArgs rest { o with listFails := true }
+  | "--trace" :: rest, o => parseArgs rest { o with trace := true }
+  | "--isolate" :: n :: rest, o => parseArgs rest { o with isolate := n.toNat? }
+  | "--progress" :: f :: rest, o => parseArgs rest { o with progress := some f, childMode := true }
+  | "--hang" :: h :: rest, o => parseArgs rest { o with hang := o.hang ++ [h] }
   | _ :: rest, o => parseArgs rest o
   | [], o => o
 
@@ -395,6 +408,8 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
   let mut fails : List String := []
   for tc in kidsNamed ts "test-case" do
     let name := attrD tc "name"
+    if let some pf := o.progress then
+      IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} {name}\n"
     let deps := kidsNamed tc "dependency"
     let specGiven := deps.any (fun x => attrD x "type" == "spec")
     -- a test case's spec dependency replaces the set's
@@ -414,6 +429,11 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
     let src ← match attr testNode "file" with
       | some f => pure ((← readFileSafe (dir ++ "/" ++ f)).getD "")
       | none => pure testNode.textContent
+    if o.trace then IO.eprintln s!"  test {name}"
+    if o.hang.contains name then
+      t := { t with fail := t.fail + 1 }
+      if o.listFails then fails := fails ++ [s!"FAIL {setName}/{name}: not run (does not terminate in this implementation)"]
+      continue
     match ← buildEnv spec cache with
     | .error why =>
         t := { t with unsup := t.unsup + 1 }
@@ -430,7 +450,45 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
             t := { t with fail := t.fail + 1 }
             if o.listFails then fails := fails ++ [s!"FAIL {setName}/{name}: {why}"]
         | .unsupported _ => t := { t with unsup := t.unsup + 1 }
+  if let some pf := o.progress then
+    IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} DONE\n"
   return (setName, t, fails)
+
+/-- Run one test set in a child process with a time limit (an IO loop
+    that ends on an outside event: the child exiting, or the clock). -/
+def runIsolated (o : Opts) (secs : Nat) (fam setName file : String) : IO (Tally × String) := do
+  let pf := (← IO.getEnv "TMPDIR").getD "/tmp" ++ "/l4qt4-progress-" ++ setName
+  IO.FS.writeFile pf ""
+  let mut args : Array String := #["--root", o.root, "--family", fam, "--set", setName, "--progress", pf]
+  if o.listFails then args := args.push "--list-fails"
+  for h in o.hang do args := args ++ #["--hang", h]
+  let child ← IO.Process.spawn { cmd := (← IO.appPath).toString, args, stdin := .null, stdout := .inherit, stderr := .null }
+  let start ← IO.monoMsNow
+  let mut finished := false
+  repeat
+    match ← child.tryWait with
+    | some _ => finished := true; break
+    | none =>
+      if (← IO.monoMsNow) - start > secs * 1000 then break
+      IO.sleep 50
+  if !finished then
+    child.kill
+    let _ ← child.wait
+  let line := ((← readFileSafe pf).getD "").trimAscii.toString
+  let parts := line.splitOn " "
+  let num (i : Nat) : Nat := ((parts.getD i "0").toNat?).getD 0
+  let t : Tally := ⟨num 0, num 1, num 2⟩
+  let last := parts.getD 3 ""
+  if finished && last == "DONE" then return (t, "")
+  -- count the test cases of the set; those not reached are failures
+  let total ← match ← readFileSafe file with
+    | some txt => match parseXML txt with
+      | .ok d => pure (kidsNamed d.root "test-case").length
+      | .error _ => pure t.total
+    | none => pure t.total
+  let rest := total - t.total
+  return ({ t with fail := t.fail + rest },
+    s!" [TIMEOUT or crash at test {last}: {rest} tests not finished, counted as fail]")
 
 def main (args : List String) : IO UInt32 := do
   let o := parseArgs args {}
@@ -451,11 +509,20 @@ def main (args : List String) : IO UInt32 := do
     if !fams.contains fam then continue
     if let some want := o.set then
       if attrD s "name" != want then continue
-    let (nm, t, fails) ← runSet o catEnvs cache (o.root ++ "/" ++ file)
-    IO.println s!"{fam}/{nm}: {t.show}"
+    if o.listFails then IO.eprintln s!"running {file}"
+    let (nm, t, fails, note) ← match o.isolate with
+      | some secs =>
+        let (t, note) ← runIsolated o secs fam (attrD s "name") (o.root ++ "/" ++ file)
+        pure (attrD s "name", t, ([] : List String), note)
+      | none =>
+        let (nm, t, fails) ← runSet o catEnvs cache (o.root ++ "/" ++ file)
+        pure (nm, t, fails, "")
+    if !o.childMode then IO.println s!"{fam}/{nm}: {t.show}{note}"
     for f in fails do IO.println ("  " ++ f)
+    (← IO.getStdout).flush
     famT := famT.map (fun (f, x) => if f == fam then (f, x.add t) else (f, x))
     total := total.add t
+  if o.childMode then return 0
   IO.println "== families =="
   for (f, t) in famT do IO.println s!"{f}: {t.show}"
   IO.println s!"TOTAL: {total.show}"

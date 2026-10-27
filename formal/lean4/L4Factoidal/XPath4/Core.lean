@@ -372,7 +372,11 @@ def Env.coerce (e : Env) (t : IType) (s : Seq) (what : String := "value") : M Se
   else
   match it with
   | .item => pure s
-  | .fnT _ _ | .anyFn =>
+  | .fnT ps _ =>
+      -- XPath 4.0 §3.4.4: a function of lower arity is accepted
+      if s.all (fun i => match i.fnArity with | some k => k ≤ ps.length | none => false) then pure s
+      else err "XPTY0004" ("function item of wrong type for " ++ what)
+  | .anyFn =>
       if s.all (fun i => e.itemMatches i it) then pure s
       else err "XPTY0004" ("function item of wrong type for " ++ what)
   | _ =>

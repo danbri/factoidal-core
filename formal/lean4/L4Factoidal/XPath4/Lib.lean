@@ -22,6 +22,7 @@ documents the caller registers.
 import L4Factoidal.XPath4.Core
 import L4Factoidal.Fn.String
 import L4Factoidal.Regex.XPath
+import Std.Data.HashSet
 
 namespace L4Factoidal.XPath4
 
@@ -115,7 +116,21 @@ def regexErr {α} : Regex.RegexError → M α
   | .matchesEmptyString _ => err "FORX0003" "pattern matches the empty string"
   | .invalidReplacement r => err "FORX0004" ("invalid replacement " ++ r)
 
+/-- The largest number in a `{m,n}` quantifier of a pattern. -/
+def maxQuant (p : String) : Nat := Id.run do
+  let mut best := 0
+  let mut cur : Option Nat := none
+  for c in p.toList do
+    if c == '{' then cur := some 0
+    else if c.isDigit then
+      cur := cur.map (fun v => if v > 1000000 then v else v * 10 + (c.toNat - 48))
+    else
+      if let some v := cur then best := max best v
+      cur := if c == ',' then (if cur.isSome then some 0 else none) else none
+  pure best
+
 def compileRe (p f : String) : M Regex.Compiled :=
+  if maxQuant p > 1000 then err "FOER0000" "implementation limit: regex quantifier above 1000" else
   match Regex.compile p f with
   | .ok r => pure r
   | .error e => regexErr e
@@ -132,7 +147,9 @@ def isRegexMeta (c : Char) : Bool := "\\^$.|?*+()[]{}".toList.contains c
 def roundDec (d : Dec) (prec : Int) (halfEven : Bool) : Dec :=
   -- scale by 10^prec, round to integer, scale back
   let d := Dec.norm d
+  let intDigits : Int := (natDigits d.mantissa.natAbs : Int) - (d.scale : Int)
   if prec ≥ 0 && d.scale ≤ prec.toNat then d
+  else if prec < 0 && -prec > intDigits + 1 then Dec.zero
   else
     let num : Int := if prec ≥ 0 then d.mantissa * (10 : Int) ^ prec.toNat else d.mantissa
     let den : Int := if prec ≥ 0 then (10 : Int) ^ d.scale else (10 : Int) ^ d.scale * (10 : Int) ^ (-prec).toNat
@@ -360,10 +377,63 @@ def Env.nodeName (e : Env) (n : NodeRef) : Option QN :=
   | .namespace => if r.name.loc == "" then none else some { uri := "", loc := r.name.loc }
   | _ => none
 
-def distinctAtoms (as : List Atomic) : List Atomic :=
+/-- A string key with `k a = k b ↔ atomicEqual a b` (untyped read as
+    string), for the value kinds where one is cheap; `none` otherwise. -/
+def sameKey (a : Atomic) : Option String :=
+  match a.num? with
+  | some n =>
+    let f := n.toFloat
+    if n.rank ≥ 2 && f.isNaN then some "NaN"
+    else if n.rank ≥ 2 && f.isInf then some (if f > 0 then "INF" else "-INF")
+    else some ("n" ++ Dec.canonical n.toDec)
+  | none =>
+    match a.v with
+    | .str s => some ("s" ++ s)
+    | .bool b => some (if b then "bT" else "bF")
+    | .qn q => some ("q" ++ q.eqn)
+    | .x (.bin _ bs) => some ("x" ++ hexOfBytes bs)
+    | _ => none
+
+def distinctAtomsSlow (as : List Atomic) : List Atomic :=
   as.foldl (fun acc a =>
     let a' := if a.ty == .untyped then Atomic.ofStr a.str else a
     if acc.any (fun b => atomicEqual (if b.ty == .untyped then Atomic.ofStr b.str else b) a') then acc else acc ++ [a]) []
+
+def distinctAtoms (as : List Atomic) : List Atomic :=
+  if as.all (fun a => (sameKey a).isSome) then Id.run do
+    let mut seen : Std.HashSet String := {}
+    let mut out : Array Atomic := #[]
+    for a in as do
+      let k := (sameKey a).getD ""
+      if !seen.contains k then
+        seen := seen.insert k
+        out := out.push a
+    pure out.toList
+  else distinctAtomsSlow as
+
+/-- The values that occur more than once, first occurrence order of the
+    second occurrence. -/
+def duplicateAtoms (as : List Atomic) (eqf : Atomic → Atomic → Bool) : List Atomic :=
+  if as.all (fun a => (sameKey a).isSome) then Id.run do
+    let mut seen : Std.HashSet String := {}
+    let mut reported : Std.HashSet String := {}
+    let mut out : Array Atomic := #[]
+    for a in as do
+      let k := (sameKey a).getD ""
+      if seen.contains k then
+        if !reported.contains k then
+          reported := reported.insert k
+          out := out.push a
+      else seen := seen.insert k
+    pure out.toList
+  else
+    let rec go (xs : List Atomic) (seen : List Atomic) (out : List Atomic) : List Atomic :=
+      match xs with
+      | [] => out
+      | x :: r =>
+        if seen.any (fun s => eqf s x) && !out.any (fun s => eqf s x) then go r seen (out ++ [x])
+        else go r (seen ++ [x]) out
+    go as [] []
 
 def eqForIndexOf (a b : Atomic) : Bool :=
   let a := if a.ty == .untyped then Atomic.ofStr a.str else a
@@ -409,12 +479,12 @@ def fnTable : List (String × LibFn) := [
   ent "ends-with" (fun _ _ a => do collationOk (argN a 2); pure (sBool ((strOf (argN a 0)).endsWith (strOf (argN a 1))))),
   ent "translate" (fun _ _ a => pure (sStr (translateStr (strOf (argN a 0)) (strOf (argN a 1)) (strOf (argN a 2))))),
   ent "codepoints-to-string" (fun _ _ a => do
-    let mut out : List Char := []
+    let mut out : Array Char := #[]
     for i in argN a 0 do
       let n := intOf [i]
       if n < 0 || !isXmlCp n.toNat then err "FOCH0001" ("invalid codepoint " ++ toString n)
-      out := out ++ [Char.ofNat n.toNat]
-    pure (sStr (String.ofList out))),
+      out := out.push (Char.ofNat n.toNat)
+    pure (sStr (String.ofList out.toList))),
   ent "string-to-codepoints" (fun _ _ a => pure ((cps (strOf (argN a 0))).map (fun c => .atom (Atomic.ofInt c.toNat)))),
   ent "compare" (fun _ _ a => do
     collationOk (argN a 2)
@@ -521,11 +591,12 @@ def fnTable : List (String × LibFn) := [
       if p ≥ st && p < en then s[i]? else none))),
   ent "items-at" (fun _ _ a => do
     let s := argN a 0
-    let mut out : Seq := []
+    let sa := s.toArray
+    let mut out : Array Item := #[]
     for i in argN a 1 do
       let k := intOf [i]
-      if k ≥ 1 && k.toNat ≤ s.length then out := out ++ [s.getD (k.toNat - 1) default]
-    pure out),
+      if k ≥ 1 && k.toNat ≤ sa.size then out := out.push (sa.getD (k.toNat - 1) default)
+    pure out.toList),
   ent "slice" (fun _ _ a => do
     let s := argN a 0
     let n : Int := s.length
@@ -556,13 +627,7 @@ def fnTable : List (String × LibFn) := [
     pure (seqOfAtoms (distinctAtoms ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none))))),
   ent "duplicate-values" (fun _ _ a => do
     let as := (argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)
-    let rec go (xs : List Atomic) (seen : List Atomic) (out : List Atomic) : List Atomic :=
-      match xs with
-      | [] => out
-      | x :: r =>
-        if seen.any (fun s => eqForIndexOf s x) && !out.any (fun s => eqForIndexOf s x) then go r seen (out ++ [x])
-        else go r (seen ++ [x]) out
-    pure (seqOfAtoms (go as [] []))),
+    pure (seqOfAtoms (duplicateAtoms as eqForIndexOf))),
   ent "index-of" (fun _ _ a => do
     collationOk (argN a 2)
     match optAtom (argN a 1) with
@@ -791,7 +856,11 @@ def fnTable : List (String × LibFn) := [
   ent "sequence-join" (fun _ _ a => do
     let xs := argN a 0
     let sep := argN a 1
-    pure ((xs.zip (List.range xs.length)).foldl (fun acc (x, i) => if i == 0 then [x] else acc ++ sep ++ [x]) [])),
+    let mut out : Array Item := #[]
+    for (x, i) in xs.zip (List.range xs.length) do
+      if i > 0 then out := out ++ sep.toArray
+      out := out.push x
+    pure out.toList),
   ent "starts-with-subsequence" (fun h e a => do
     let xs := argN a 0
     let ys := argN a 1
@@ -1004,6 +1073,170 @@ def fnTable : List (String × LibFn) := [
     | _ => []))
 ]
 
+def htmlEntities : List (String × Nat) :=
+  [("amp", 38), ("lt", 60), ("gt", 62), ("quot", 34), ("apos", 39), ("nbsp", 160),
+   ("copy", 169), ("reg", 174), ("eacute", 233), ("egrave", 232), ("auml", 228), ("ouml", 246),
+   ("uuml", 252), ("szlig", 223), ("euro", 8364), ("pi", 960), ("Pi", 928), ("tab", 9),
+   ("NewLine", 10), ("deg", 176), ("micro", 181), ("para", 182), ("sect", 167), ("times", 215),
+   ("divide", 247), ("hellip", 8230), ("mdash", 8212), ("ndash", 8211), ("lsquo", 8216),
+   ("rsquo", 8217), ("ldquo", 8220), ("rdquo", 8221), ("bull", 8226), ("trade", 8482),
+   ("alpha", 945), ("beta", 946), ("gamma", 947), ("delta", 948), ("Alpha", 913), ("Beta", 914),
+   ("pound", 163), ("yen", 165), ("cent", 162), ("frac12", 189), ("frac14", 188), ("frac34", 190),
+   ("iexcl", 161), ("iquest", 191), ("laquo", 171), ("raquo", 187), ("middot", 183)]
+
+def daysInMonth (y : Int) (m : Nat) : Nat :=
+  match m with
+  | 2 => if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 then 29 else 28
+  | 4 | 6 | 9 | 11 => 30
+  | _ => 31
+
+def hexDigitVal? (c : Char) : Option Nat :=
+  if c.isDigit then some (c.toNat - 48)
+  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 87)
+  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55)
+  else none
+
+/-- UTF-8 decode, replacing invalid sequences with U+FFFD. -/
+def utf8Decode : Nat → List Nat → List Char
+  | 0, _ => []
+  | _, [] => []
+  | f + 1, b :: r =>
+    if b < 0x80 then Char.ofNat b :: utf8Decode f r
+    else
+      let n := if b ≥ 0xF0 && b < 0xF8 then 3 else if b ≥ 0xE0 then 2 else if b ≥ 0xC0 then 1 else 0
+      let cont := r.take n
+      if n == 0 || cont.length < n || !cont.all (fun x => x ≥ 0x80 && x < 0xC0) then
+        Char.ofNat 0xFFFD :: utf8Decode f r
+      else
+        let init := if n == 1 then b % 0x20 else if n == 2 then b % 0x10 else b % 0x08
+        let cp := cont.foldl (fun acc x => acc * 64 + (x % 64)) init
+        Char.ofNat cp :: utf8Decode f (r.drop n)
+
+def decodeUri (s : String) : String :=
+  let rec bytes (cs : List Char) (fuel : Nat) : List Nat :=
+    match fuel, cs with
+    | 0, _ => []
+    | _, [] => []
+    | f + 1, '%' :: a :: b :: rest =>
+        match hexDigitVal? a, hexDigitVal? b with
+        | some x, some y => (x * 16 + y) :: bytes rest f
+        | _, _ => 0xFFFFFF :: bytes (a :: b :: rest) f
+    | f + 1, '%' :: rest => 0xFFFFFF :: bytes rest f
+    | f + 1, '+' :: rest => 32 :: bytes rest f
+    | f + 1, c :: rest => (Fn.String.utf8Bytes c) ++ bytes rest f
+  let bs := bytes s.toList (s.length + 1)
+  String.ofList (utf8Decode (bs.length + 1) (bs.map (fun b => if b == 0xFFFFFF then 0xFF else b)))
+
+def fnTable2 : List (String × LibFn) := [
+  ent "char" (fun _ _ a => do
+    match optAtom (argN a 0) with
+    | some ⟨_, .int i⟩ =>
+        if i > 0 && isXmlCp i.toNat then pure (sStr (String.ofList [Char.ofNat i.toNat]))
+        else err "FOCH0005" ("invalid codepoint " ++ toString i)
+    | some x =>
+        let s := x.str
+        match s with
+        | "\\n" => pure (sStr "\n") | "\\t" => pure (sStr "\t") | "\\r" => pure (sStr "\r")
+        | _ => match htmlEntities.lookup s with
+          | some c => pure (sStr (String.ofList [Char.ofNat c]))
+          | none => err "FOCH0005" ("unknown character name " ++ s)
+    | none => err "XPTY0004" "fn:char"),
+  ent "contains-token" (fun _ _ a => do
+    collationOk (argN a 2)
+    let tok := trimWs (strOf (argN a 1))
+    if tok == "" then pure (sBool false)
+    else pure (sBool ((argN a 0).any (fun i => match i with
+      | .atom x => (normSpace x.str).splitOn " " |>.contains tok
+      | _ => false)))),
+  ent "atomic-equal" (fun _ _ a =>
+    match optAtom (argN a 0), optAtom (argN a 1) with
+    | some x, some y => pure (sBool (atomicEqual x y))
+    | _, _ => err "XPTY0004" "fn:atomic-equal"),
+  ent "function-lookup" (fun _ _ a => do
+    match optAtom (argN a 0) with
+    | some ⟨_, .qn q⟩ =>
+        let k := intOf (argN a 1)
+        if k < 0 then pure [] else
+        if q.uri == nsXS then
+          pure (if k == 1 && ((atypeOfName? q.loc).isSome || q.loc == "numeric") && q.loc != "anyAtomicType" && q.loc != "NOTATION" then [.fn (.builtin q 1)] else [])
+        else if q.uri == nsFN && q.loc == "concat" then pure (if k ≥ 2 then [.fn (.builtin q k.toNat)] else [])
+        else match findSig q k.toNat with
+          | some _ => pure [.fn (.builtin q k.toNat)]
+          | none => pure []
+    | _ => pure []),
+  ent "collation-available" (fun _ _ a =>
+    pure (sBool (strOf (argN a 0) == "http://www.w3.org/2005/xpath-functions/collation/codepoint"))),
+  ent "environment-variable" (fun _ _ _ => pure []),
+  ent "available-environment-variables" (fun _ _ _ => pure []),
+  ent "divide-decimals" (fun _ _ a => do
+    match optAtom (argN a 0), optAtom (argN a 1) with
+    | some x, some y =>
+      let p := if (argN a 2).isEmpty then 0 else intOf (argN a 2)
+      let dx := (x.num?.map Num.toDec).getD Dec.zero
+      let dy := (y.num?.map Num.toDec).getD Dec.zero
+      if dy.mantissa == 0 then err "FOAR0001" "division by zero" else
+      -- quotient truncated toward zero at `p` fractional digits
+      let sh : Nat := if p ≥ 0 then p.toNat else 0
+      let num : Int := dx.mantissa * (10 : Int) ^ (dy.scale + sh)
+      let den : Int := dy.mantissa * (10 : Int) ^ dx.scale
+      let q0 := Int.tdiv num den
+      let q : Dec := if p ≥ 0 then Dec.norm ⟨q0, sh⟩
+        else
+          let m := (10 : Int) ^ (-p).toNat
+          Dec.ofInt (Int.tdiv (Int.tdiv dx.mantissa ((10 : Int) ^ dx.scale) |> fun _ => Int.tdiv num den) m * m)
+      let r := Dec.norm (Dec.sub dx (Fn.Numeric.decMul q dy))
+      pure (mapItem [(Atomic.ofStr "quotient", single (Atomic.ofDec q)), (Atomic.ofStr "remainder", single (Atomic.ofDec r))])
+    | _, _ => err "XPTY0004" "fn:divide-decimals"),
+  ent "days-in-month" (fun _ _ a => pure (match optAtom (argN a 0) with
+    | some ⟨_, .x (.dt _ w)⟩ => match w.year, w.month with
+        | some y, some m => sInt (daysInMonth y m)
+        | _, _ => []
+    | _ => [])),
+  ent "dateTime" (fun _ _ a => do
+    match optAtom (argN a 0), optAtom (argN a 1) with
+    | some ⟨_, .x (.dt _ d)⟩, some ⟨_, .x (.dt _ t)⟩ =>
+        let tz ← match d.tz, t.tz with
+          | some x, some y => if x == y then pure (some x) else err "FORG0008" "different timezones"
+          | some x, none => pure (some x)
+          | none, y => pure y
+        let w : DTValue := { year := d.year, month := d.month, day := d.day, hour := t.hour, minute := t.minute, second := t.second, tz := tz }
+        pure (single ⟨.b .dateTime, .x (.dt .dateTime w)⟩)
+    | _, _ => pure []),
+  ent "seconds" (fun _ _ a => pure (match optAtom (argN a 0) with
+    | some x => single ⟨.b .dayTimeDuration, .x (.dur { months := 0, seconds := (x.num?.map Num.toDec).getD Dec.zero })⟩
+    | none => [])),
+  ent "parse-integer" (fun _ _ a => do
+    match optAtom (argN a 0) with
+    | none => pure []
+    | some x =>
+      let radix := if (argN a 1).isEmpty then 10 else intOf (argN a 1)
+      if radix < 2 || radix > 36 then err "FORG0011" "invalid radix"
+      let s := String.ofList ((x.str.toList.filter (fun c => !isWs c && c != '_')))
+      let (neg, ds) := match s.toList with
+        | '-' :: r => (true, r) | '+' :: r => (false, r) | r => (false, r)
+      if ds.isEmpty then err "FORG0012" "invalid digits"
+      let mut v : Int := 0
+      for c in ds do
+        let d : Int := if c.isDigit then c.toNat - 48 else if c.isAlpha then (c.toLower.toNat - 87 : Nat) else 99
+        if d ≥ radix then err "FORG0012" ("invalid digit " ++ String.ofList [c])
+        v := v * radix + d
+      pure (sInt (if neg then -v else v))),
+  ent "decode-from-uri" (fun _ _ a => pure (sStr (decodeUri (strOf (argN a 0))))),
+  ent "distinct-ordered-nodes" (fun _ _ a => do
+    match nodesOf (argN a 0) with
+    | some ns => pure ((sortNodes ns).map Item.node)
+    | none => err "XPTY0004" "expected nodes"),
+  ent "siblings" (fun _ e a => do
+    match ← nodeArg e (argN a 0) with
+    | some n =>
+      let r := e.nrec n
+      if r.kind == NKind.attribute || r.kind == NKind.namespace then pure [.node n] else
+      match r.parent with
+      | some p => pure (((e.doc n).get p).children.toList.map (fun c => .node ⟨n.doc, c⟩))
+      | none => pure [.node n]
+    | none => pure [])
+]
+
 def mathTable : List (String × LibFn) := [
   ent "pi" (fun _ _ _ => pure (single (Atomic.ofDbl 3.141592653589793))),
   ent "e" (fun _ _ _ => pure (single (Atomic.ofDbl 2.718281828459045))),
@@ -1194,13 +1427,13 @@ def arrayTable : List (String × LibFn) := [
       let sepMs ← asArr sep
       pure (arrItem ((arrs.zip (List.range arrs.length)).foldl (fun acc (m, i) => if i == 0 then m else acc ++ sepMs ++ m) []))),
   ent "flatten" (fun _ _ a => do
-    let rec go (fuel : Nat) (s : Seq) : Seq :=
+    let rec go (fuel : Nat) (s : Seq) (acc : Array Item) : Array Item :=
       match fuel with
-      | 0 => s
+      | 0 => acc ++ s.toArray
       | f + 1 => s.foldl (fun acc i => match i with
-          | .arr ms => acc ++ go f ms.flatten
-          | x => acc ++ [x]) []
-    pure (go 1000 (argN a 0))),
+          | .arr ms => go f ms.flatten acc
+          | x => acc.push x) acc
+    pure (go 1000 (argN a 0) #[]).toList),
   ent "members" (fun _ _ a => do pure ((← asArr (argN a 0)).map (fun m => .map [(Atomic.ofStr "value", m)]))),
   ent "of-members" (fun _ _ a => do
     let ms ← (argN a 0).mapM (fun i => do
@@ -1302,7 +1535,7 @@ def arrayTable : List (String × LibFn) := [
 
 /-- Look up the implementation of a built-in function. -/
 def libLookup (q : QN) : Option LibFn :=
-  let tbl := if q.uri == nsFN then fnTable
+  let tbl := if q.uri == nsFN then fnTable ++ fnTable2
     else if q.uri == nsMATH then mathTable
     else if q.uri == nsMAP then mapTable
     else if q.uri == nsARR then arrayTable
