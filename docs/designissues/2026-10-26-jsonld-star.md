@@ -30,6 +30,10 @@ Later syntax change is likely: the `@quote` proposal in
 https://github.com/json-ld/json-ld-star/issues/49 (2026-10-18), and a move of
 these tests to w3c/json-ld-api as JSON-LD 1.3.
 
+Public page: `docs/web/hub/jsonld-star.md`
+(https://danbri.github.io/factoidal/web/hub/jsonld-star/), with live cells on
+the npm release and the plan towards JSON-LD 1.3.
+
 ## Where it lives
 
 Lean 4 only (owner, 2026-10-21: test failures and scores are Lean 4 only).

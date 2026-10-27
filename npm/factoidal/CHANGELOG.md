@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Correction to 0.18.0: `parse` does not take the option `rdfstar`; `parse(text, { format: 'jsonld', rdfstar: true })` is refused with `option.unknown`. Read JSON-LD-star with `jsonldToRdf(text, { rdfstar: true })`. Expected-failure test: `tests/hub/hub_jsonld-star_test.mjs`.
+- Docs: hub page "JSON-LD-star and JSON-LD 1.3" (`docs/web/hub/jsonld-star.md`), with live cells on 0.18.0; the hub pages load 0.18.0 (were 0.16.0).
+
 ## 0.18.0 (2026-10-27)
 
 - XSD constructor functions for datatypes outside the SPARQL 1.1 §17.5 table (`xsd:byte`, `xsd:int`, `xsd:unsignedInt`, `xsd:date`, `xsd:time`, `xsd:gYear` and the other `xsd:g*` types, the duration types, `xsd:token`, …) now cast as XPath F&O 3.1 §19 says. Before, they changed only the datatype and gave ill-typed literals such as `"HaHa"^^xsd:byte`. An invalid value or a cast that F&O does not allow is now an error (the variable is unbound) (https://github.com/danbri/factoidal/issues/1041, https://github.com/danbri/factoidal-core/pull/142).

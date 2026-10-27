@@ -66,6 +66,30 @@ source, never by hand-writing implementations that mirror it.
 Status and open gaps: https://github.com/danbri/factoidal/issues/975 and
 https://github.com/danbri/factoidal/issues/1002.
 
+## RDF 1.2 in JSON-LD: JSON-LD-star (October 2026)
+
+Since `@factoidal/core` 0.18.0 the Lean JSON-LD processor reads and writes
+RDF 1.2 triple terms, reifiers, annotations and base direction with the
+JSON-LD-star keywords `@triple`, `@reifies` and `@annotation` (option
+`rdfstar`; without it the processor is JSON-LD 1.1 as before). There is no
+specification text yet: the target is the test suite of
+https://github.com/json-ld/json-ld-star/pull/61, which is expected to become
+the JSON-LD 1.3 tests.
+
+- JSON-LD-star draft tests: 168 pass, 1 fail (a defective fixture), 2 local
+  overrides, out of 171 (`l4jsonld-api --star`). W3C JSON-LD 1.1 API:
+  unchanged, 791 pass, 0 fail, 2 local overrides, out of 793.
+- Every positive eval test of the W3C RDF 1.2 N-Triples, N-Quads, Turtle and
+  TriG suites gives an isomorphic dataset after it is written as JSON-LD-star
+  and read back: 140 of 140 (`l4sbm11-w3c jsonld-star-roundtrip`).
+- Where the draft is silent or out of date, the choice is the one closer to
+  RDF 1.2: an `@annotation` may name its reifier with `@id`, and
+  `rdfDirection: "rdf-1.2"` (`rdf:dirLangString`) is the default.
+- Hub page, with live examples and the plan towards JSON-LD 1.3:
+  [JSON-LD-star and JSON-LD 1.3](https://danbri.github.io/factoidal/web/hub/jsonld-star/)
+  ([source](docs/web/hub/jsonld-star.md)). Design record:
+  [docs/designissues/2026-10-26-jsonld-star.md](docs/designissues/2026-10-26-jsonld-star.md).
+
 **Repositories.** This is `danbri/factoidal-core`, the source: the F\*
 tree (`formal/fstar`) and the Lean 4 tree (`formal/lean4`, the intended
 full-scope target) with their history, the tests and the tools. Compiled
@@ -611,7 +635,7 @@ unsupported of 1662 runnable tests. The one unsupported test needs
 (optional in RDF 1.1); it previously passed without being checked.
 The dashboard
 carries every scored suite (OWL, RDFC-1.0, SHACL, ShEx validation +
-ShEx negativeSyntax, JSON-LD, RML, RIF, VC, XSLT, XML conformance,
+ShEx negativeSyntax, JSON-LD (and the JSON-LD-star draft), RML, RIF, VC, XSLT, XML conformance,
 MathML, JSON Schema, Schematron, CSVW, DID, HDT parity, and the
 browser-bundle/npm JS suites — 30+ rows), each with labelled
 pass/fail/skip — prefer those live numbers to anything frozen in this
