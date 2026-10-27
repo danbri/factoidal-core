@@ -26,6 +26,7 @@
  *   l4_hacl_p256_sign_sha256(sk[32], msg, nonce[32]) -> sig[64] or empty
  *   l4_hacl_p256_secret_to_public(sk[32]) -> pubXY[64] or empty
  *   l4_hacl_p256_compressed_to_raw(pk[33]) -> pubXY[64] or empty
+ *   l4_hacl_p256_ecdh(theirXY[64], sk[32]) -> x||y of sk*Q [64] or empty
  * Every length refusal is 0 or an empty ByteArray, and so is every
  * refusal HACL* reports (a private key or nonce outside [1, n-1], a
  * compressed point that is not on the curve).  There is no "unknown"
@@ -112,5 +113,30 @@ LEAN_EXPORT lean_obj_res l4_hacl_p256_compressed_to_raw(b_lean_obj_arg pk) {
   if (!Hacl_P256_compressed_to_raw(lean_sarray_cptr(pk), raw)) return l4_p256_empty_bytes();
   lean_obj_res out = lean_alloc_sarray(1, 64, 64);
   memcpy(lean_sarray_cptr(out), raw, 64);
+  return out;
+}
+
+/* ECDH over P-256 (SP 800-56A section 5.7.1.2, the ECC CDH primitive):
+ * HACL* Hacl_P256_dh_responder.  Its header comment: "The function also
+ * checks whether `private_key` and `their_pubkey` are valid", that is, the
+ * private key is in [1, n-1] and the public key is on the curve and is not
+ * the point at infinity; on either refusal it returns false and this entry
+ * returns the empty array.  HACL* writes the 64-byte point x || y of
+ * private_key * their_pubkey.  The selection of the x coordinate (RFC 7518
+ * section 4.6.2, SP 800-56A Z) is made in Lean, P256Native.p256Ecdh.
+ * Added for https://github.com/danbri/factoidal/issues/1083. */
+LEAN_EXPORT lean_obj_res l4_hacl_p256_ecdh(b_lean_obj_arg their_xy,
+                                           b_lean_obj_arg sk) {
+  if (lean_sarray_size(their_xy) != 64) return l4_p256_empty_bytes();
+  if (lean_sarray_size(sk) != 32) return l4_p256_empty_bytes();
+  uint8_t shared[64];
+  if (!Hacl_P256_dh_responder(shared, lean_sarray_cptr(their_xy),
+                              lean_sarray_cptr(sk))) {
+    memset(shared, 0, sizeof shared);
+    return l4_p256_empty_bytes();
+  }
+  lean_obj_res out = lean_alloc_sarray(1, 64, 64);
+  memcpy(lean_sarray_cptr(out), shared, 64);
+  memset(shared, 0, sizeof shared);
   return out;
 }

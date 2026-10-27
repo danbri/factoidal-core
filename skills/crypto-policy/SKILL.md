@@ -194,6 +194,7 @@ cannot reach an extern).
 | `Crypto/Ed25519.lean` | Ed25519 sign/verify | `ffi/hacl_ed25519.c` | `l4vc-probe` |
 | `Crypto/SHA2Native.lean` | SHA-256, and the block walk | `ffi/hacl_ed25519.c` | `l4vc-probe` |
 | `Crypto/P256Native.lean` | ECDSA P-256 (JWS ES256) | `ffi/hacl_p256.c` | `l4jose-probe` |
+| `Crypto/P256Native.lean` | ECDH P-256 (`p256Ecdh`, JWE and XML Encryption ECDH-ES) | `ffi/hacl_p256.c` | `l4crypto-probe` (`p256-ecdh`), `tests/crypto/ecdh-diff.mjs` |
 | `Crypto/RsaNative.lean` | the RSA public operation (RS256) | `ffi/hacl_rsa.c` | `l4jose-probe` |
 | `Crypto/RsaOaep.lean` | the RSA private operation (constant time) and RSAES-OAEP padding in pure Lean | `ffi/hacl_rsa.c` | `l4crypto-probe` section `rsa-oaep`, `tests/crypto/rsa-oaep-diff.mjs` |
 | `Crypto/ChaChaPoly.lean` | ChaCha20-Poly1305 AEAD | `ffi/hacl_chachapoly.c` | `l4crypto-probe` |
@@ -271,7 +272,10 @@ A derived construction is NOT a new primitive under this policy. HMAC
 calls to an unmodified hash, hold no internal state of their own, and may
 therefore exist in pure Lean beside the HACL\* binding — which is what
 `Crypto/Hmac.lean` and `Crypto/Hkdf.lean` do, so the RFC vectors can be
-build-time `#guard`s. When both exist, their agreement is an OBLIGATION
+build-time `#guard`s. The Concat KDF of SP 800-56A §5.8.1 (JWE ECDH-ES, XML
+Encryption 1.1 ConcatKDF) is the same kind of construction:
+`Crypto/ConcatKdf.lean`, pure Lean over a hash parameter, with the RFC 7518
+Appendix C vector as a `#guard`. When both exist, their agreement is an OBLIGATION
 that must be MEASURED in a probe, never assumed: one side is opaque, so it
 cannot be proved.
 

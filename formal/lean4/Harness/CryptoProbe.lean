@@ -97,6 +97,21 @@ and decompresses with (https://github.com/danbri/factoidal/issues/916).
      vectors (`third_party/testing/rsa-oaep-vect/`), and four Wycheproof
      RSA-OAEP files (2048 bits SHA-1; 2048, 3072 and 4096 bits SHA-256).
      See the section's own comment for what each check compares.
+ 13. `p256-ecdh` — `P256.p256Ecdh` (HACL* `Hacl_P256_dh_responder`) and the
+     JWE Concat KDF (`Crypto/ConcatKdf.lean`), for
+     https://github.com/danbri/factoidal/issues/1083: every case of
+     Wycheproof `ecdh_secp256r1_ecpoint_test.json` (uncompressed points as
+     raw `x || y`; compressed points through `p256CompressedToRaw`; the
+     private scalar left-padded, or stripped of ASN.1 leading zero octets,
+     to 32 bytes) and of `ecdh_secp256r1_webcrypto_test.json` (JWK keys): a
+     `valid` case must give the expected shared secret, an `invalid` case
+     (invalid-curve, off-curve, wrong-curve, bad encoding) must be refused,
+     an `acceptable` case is counted apart; the 25 NIST CAVP ECC CDH P-256
+     cases (`third_party/nist-cavs-ecccdh/`), each also checking that
+     `dIUT` gives `QIUT`; RFC 7518 Appendix C end to end (both parties
+     reach the published Z, and the Concat KDF gives VqqN6vgjbSBcIijNcacQGg);
+     RFC 8037 Appendix A.6 (X25519 `dh?`); and the length and range
+     refusals.
 
 ## Section 7: the AES-GCM gap
 
@@ -120,10 +135,10 @@ a portable AES-GCM, this section must start running those vectors and
 the count must move.
 
 Usage:
-  lake exe l4crypto-probe        run every section
-  lake exe l4crypto-probe -- --oaep-batch
-                                 RSA-OAEP requests on standard input, for
-                                 tests/crypto/rsa-oaep-diff.mjs
+  lake exe l4crypto-probe                 run every section
+  lake exe l4crypto-probe -- --oaep-batch RSA-OAEP requests on standard input, for
+                                          tests/crypto/rsa-oaep-diff.mjs
+  lake exe l4crypto-probe --ecdh-stdin    P-256 ECDH per stdin line (tests/crypto/ecdh-diff.mjs)
 -/
 import L4Factoidal.Crypto.ChaChaPoly
 import L4Factoidal.Crypto.Hkdf
@@ -135,6 +150,7 @@ import L4Factoidal.Crypto.P256Native
 import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.Crypto.RsaOaep
 import L4Factoidal.Crypto.RsaOaepTests
+import L4Factoidal.Crypto.ConcatKdf
 
 namespace CryptoProbe
 
@@ -1150,8 +1166,184 @@ def oaepBatch : IO UInt32 := do
 
 /-! ## Entry point -/
 
+/-! ## Section 13: P-256 ECDH and the JWE Concat KDF -/
+
+/-- A Wycheproof or NIST private scalar as the 32 bytes HACL* takes: a
+shorter one is left-padded with zeros, a longer one (an ASN.1 INTEGER with
+leading zero octets) loses them; `none` when a dropped octet is not zero. -/
+def scalar32? (d : ByteArray) : Option ByteArray :=
+  if d.size ≤ 32 then some (zeros (32 - d.size) ++ d)
+  else if (d.extract 0 (d.size - 32)).data.all (· == 0) then some (d.extract (d.size - 32) d.size)
+  else none
+
+/-- A Wycheproof `ecpoint` public key as raw `x || y`: a 65-byte 0x04 point
+loses the prefix, a 33-byte compressed point goes through HACL*
+`Hacl_P256_compressed_to_raw`, anything else is `none` (refused). -/
+def ecpointRaw? (p : ByteArray) : Option ByteArray :=
+  if p.size == 65 && p.get! 0 == 4 then some (p.extract 1 65)
+  else if p.size == 33 then P256.p256CompressedToRaw p
+  else none
+
+/-- Judge one ECDH case: `valid` must give `shared`, `invalid` must be
+refused, `acceptable` is counted apart. -/
+def judgeEcdh (t : IO.Ref Tally) (name res : String) (got : Option ByteArray)
+    (shared : ByteArray) : IO Unit := do
+  if res == "valid" then
+    check t s!"{name}: valid key pair gives the shared secret" (got == some shared)
+      s!"got {(got.map hexOf).getD "refusal"}"
+  else if res == "invalid" then
+    check t s!"{name}: invalid public key refused" got.isNone
+      s!"accepted, gave {(got.map hexOf).getD ""}"
+  else
+    IO.println s!"  [acceptable] {name}: {if got.isSome then "accepted" else "refused"}"
+    t.modify fun s => { s with acceptable := s.acceptable + 1 }
+
+/-- One field of a CAVP case, decoded from hex. -/
+def cavsField? (fields : List (String × String)) (k : String) : Option ByteArray :=
+  (fields.find? (·.1 == k)).bind fun kv => hexToBytes? kv.2
+
+def runCavsCase (t : IO.Ref Tally) (fields : List (String × String)) : IO Unit := do
+  let count := ((fields.find? (·.1 == "COUNT")).map (·.2)).getD "?"
+  match cavsField? fields "QCAVSx", cavsField? fields "QCAVSy", cavsField? fields "dIUT",
+        cavsField? fields "QIUTx", cavsField? fields "QIUTy", cavsField? fields "ZIUT" with
+  | some qx, some qy, some d, some ux, some uy, some z =>
+      check t s!"nist cavp ecc cdh P-256 COUNT {count}: dIUT gives QIUT"
+        (P256.p256SecretToPublic d == some (ux ++ uy))
+      check t s!"nist cavp ecc cdh P-256 COUNT {count}: Z = x(dIUT * QCAVS)"
+        (P256.p256Ecdh (qx ++ qy) d == some z)
+  | _, _, _, _, _, _ =>
+      check t s!"nist cavp ecc cdh P-256 COUNT {count}: case readable" false
+
+/-- RFC 7518 Appendix C keys (base64url) and Z (hex of the JSON array). -/
+def rfc7518AliceD : String := "0_NxaRPUMQoAJt50Gz8YiTr8gRTwyEaCumd-MToTmIo"
+def rfc7518AliceX : String := "gI0GAILBdu7T53akrFmMyGcsF3n5dO7MmwNBHKW5SV0"
+def rfc7518AliceY : String := "SLW_xSffzlPWrHEVI30DHM_4egVwt3NQqeUD7nMFpps"
+def rfc7518BobD : String := "VEmDZpDXXK8p8N0Cndsxs924q6nS1RXFASRl6BfUqdw"
+def rfc7518BobX : String := "weNJy2HscCSM6AEDTDg04biOvhFhyyWvOHQfeF_PxMQ"
+def rfc7518BobY : String := "e8lnCO-AlStT-NJVX-crhB7QRYhiix03illJOVAOyck"
+def rfc7518Z : ByteArray := hx "9e56d91d817135d372834283bf84269cfb316ea3da806a48f6daa7798cfe90c4"
+
+def runP256Ecdh (ecpoint webcrypto cavs : System.FilePath) : IO Tally := do
+  let t ← IO.mkRef ({} : Tally)
+  IO.println "-- p256-ecdh"
+  let dec (s : String) : ByteArray := (L4Factoidal.JOSE.Base64Url.decode s).getD ByteArray.empty
+  let aliceD := dec rfc7518AliceD
+  let alicePub := dec rfc7518AliceX ++ dec rfc7518AliceY
+  let bobD := dec rfc7518BobD
+  let bobPub := dec rfc7518BobX ++ dec rfc7518BobY
+  check t "RFC 7518 Appendix C: Alice's d gives her x || y"
+    (P256.p256SecretToPublic aliceD == some alicePub)
+  check t "RFC 7518 Appendix C: Alice (ephemeral d, Bob's key) reaches Z"
+    (P256.p256Ecdh bobPub aliceD == some rfc7518Z)
+  check t "RFC 7518 Appendix C: Bob (his d, the epk) reaches Z"
+    (P256.p256Ecdh alicePub bobD == some rfc7518Z)
+  check t "RFC 7518 Appendix C: Concat KDF over the ECDH output gives VqqN6vgjbSBcIijNcacQGg"
+    (((P256.p256Ecdh alicePub bobD).bind fun z =>
+        ConcatKdf.jweDerive? z "A128GCM".toUTF8 "Alice".toUTF8 "Bob".toUTF8 128) ==
+      L4Factoidal.JOSE.Base64Url.decode "VqqN6vgjbSBcIijNcacQGg")
+  check t "a 63-byte public key is refused" (P256.p256Ecdh (alicePub.extract 0 63) bobD == none)
+  check t "a 65-byte (0x04-prefixed) public key is refused"
+    (P256.p256Ecdh (ByteArray.mk #[4] ++ alicePub) bobD == none)
+  check t "a 31-byte private key is refused" (P256.p256Ecdh alicePub (bobD.extract 0 31) == none)
+  check t "a private key of zero is refused" (P256.p256Ecdh alicePub (zeros 32) == none)
+  check t "a private key equal to the group order is refused"
+    (P256.p256Ecdh alicePub p256Order == none)
+  check t "the point (0, 0) is refused" (P256.p256Ecdh (zeros 64) bobD == none)
+  check t "a point with the low bit of y flipped (off the curve) is refused"
+    (P256.p256Ecdh (alicePub.set! 63 (alicePub.get! 63 ^^^ 1)) bobD == none)
+  -- RFC 8037 Appendix A.6: ECDH-ES with X25519, through the RFC 7748 6.1 check.
+  let a6Bob := hx "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"
+  let a6Eph := hx "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"
+  let a6EphPub := hx "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"
+  let a6Z := hx "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"
+  check t "RFC 8037 A.6: the ephemeral public key" (X25519.publicKey? a6Eph == some a6EphPub)
+  check t "RFC 8037 A.6: sender Z = X25519(ephkey, recv_pub)" (X25519.dh? a6Eph a6Bob == some a6Z)
+  check t "X25519 dh? refuses the all-zero shared secret of the point u = 0"
+    (X25519.dh? a6Eph (zeros 32)).isNone
+  -- Wycheproof, ecpoint encoding.
+  match ← readJsonFile ecpoint with
+  | none =>
+      IO.println s!"  [NOT RUN] {ecpoint} is not present"
+      t.modify fun s => { s with notRun := s.notRun + 1 }
+  | some j =>
+      for g in (j.getArray? "testGroups").getD [] do
+        for v in (g.getArray? "tests").getD [] do
+          let tc := (v.field? "tcId").map toStringCompact |>.getD "?"
+          let res := (v.getString? "result").getD ""
+          let flags := flagsOf v
+          let pub := ((v.getString? "public").bind hexToBytes?).getD ByteArray.empty
+          let priv := (v.getString? "private").bind hexToBytes?
+          let shared := ((v.getString? "shared").bind hexToBytes?).getD ByteArray.empty
+          let got := (ecpointRaw? pub).bind fun raw =>
+            (priv.bind scalar32?).bind (P256.p256Ecdh raw)
+          judgeEcdh t s!"wycheproof ecpoint tcId {tc} {flags}" res got shared
+  -- Wycheproof, webcrypto (JWK) encoding.
+  match ← readJsonFile webcrypto with
+  | none =>
+      IO.println s!"  [NOT RUN] {webcrypto} is not present"
+      t.modify fun s => { s with notRun := s.notRun + 1 }
+  | some j =>
+      for g in (j.getArray? "testGroups").getD [] do
+        for v in (g.getArray? "tests").getD [] do
+          let tc := (v.field? "tcId").map toStringCompact |>.getD "?"
+          let res := (v.getString? "result").getD ""
+          let flags := flagsOf v
+          let shared := ((v.getString? "shared").bind hexToBytes?).getD ByteArray.empty
+          -- A JWK whose crv is not P-256 never reaches the P-256 primitive
+          -- (the key-layer check); its point bytes are not judged here.
+          let got : Option ByteArray :=
+            match v.field? "public", v.field? "private" with
+            | some pj, some sj =>
+                if pj.getString? "crv" != some "P-256" then none
+                else match b64u pj "x", b64u pj "y", b64u sj "d" with
+                  | some x, some y, some d => (scalar32? d).bind (P256.p256Ecdh (x ++ y))
+                  | _, _, _ => none
+            | _, _ => none
+          judgeEcdh t s!"wycheproof webcrypto tcId {tc} {flags}" res got shared
+  -- NIST CAVP ECC CDH primitive, P-256.
+  match ← (IO.FS.readFile cavs).toBaseIO with
+  | .error _ =>
+      IO.println s!"  [NOT RUN] {cavs} is not present"
+      t.modify fun s => { s with notRun := s.notRun + 1 }
+  | .ok text =>
+      let mut cur : List (String × String) := []
+      for line in text.splitOn "\n" do
+        match line.trimAscii.toString.splitOn " = " with
+        | [k, v] =>
+            if k == "COUNT" && !cur.isEmpty then
+              runCavsCase t cur.reverse
+              cur := []
+            cur := (k, v) :: cur
+        | _ => pure ()
+      if !cur.isEmpty then runCavsCase t cur.reverse
+  t.get
+
+/-! ## Entry point -/
+
+/-- `l4crypto-probe --ecdh-stdin`: for each standard-input line
+`<theirXY hex> <sk hex>`, print the hex of `P256.p256Ecdh theirXY sk`, or
+`refused`. The input of `tests/crypto/ecdh-diff.mjs`, which compares it
+with node:crypto. Ends at end of input (an outside event, so a `repeat`
+loop per CLAUDE.md, 2026-10-23). -/
+def ecdhStdin : IO UInt32 := do
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  repeat
+    let line ← stdin.getLine
+    if line.isEmpty then break
+    match line.trimAscii.toString.splitOn " " with
+    | [p, d] =>
+        let out := match hexToBytes? p, hexToBytes? d with
+          | some pb, some db => ((P256.p256Ecdh pb db).map hexOf).getD "refused"
+          | _, _ => "refused"
+        stdout.putStrLn out
+    | _ => stdout.putStrLn "refused"
+    stdout.flush
+  pure 0
+
 def main (args : List String) : IO UInt32 := do
   if args == ["--oaep-batch"] then return (← oaepBatch)
+  if args == ["--ecdh-stdin"] then return (← ecdhStdin)
   let cwd ← IO.currentDir
   let root ← match ← findRepoRoot cwd with
     | some r => pure r
@@ -1180,6 +1372,9 @@ def main (args : List String) : IO UInt32 := do
                "wycheproof-rsa-oaep-3072-sha256" RsaOaep.oaepSha256
   let t12e ← runOaepWycheproof (wp / "rsa_oaep_4096_sha256_mgf1sha256_test.json")
                "wycheproof-rsa-oaep-4096-sha256" RsaOaep.oaepSha256
+  let t13 ← runP256Ecdh (wp / "ecdh_secp256r1_ecpoint_test.json")
+              (wp / "ecdh_secp256r1_webcrypto_test.json")
+              (root / "third_party" / "nist-cavs-ecccdh" / "KAS_ECC_CDH_PrimitiveTest_P-256.txt")
   IO.println "\n========================================"
   IO.println (scoreLine "rfc8439" t1)
   IO.println (scoreLine "wycheproof-chacha20-poly1305" t2)
@@ -1197,7 +1392,8 @@ def main (args : List String) : IO UInt32 := do
   IO.println (scoreLine "wycheproof-rsa-oaep-2048-sha256" t12c)
   IO.println (scoreLine "wycheproof-rsa-oaep-3072-sha256" t12d)
   IO.println (scoreLine "wycheproof-rsa-oaep-4096-sha256" t12e)
-  let ts := [t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12a, t12b, t12c, t12d, t12e]
+  IO.println (scoreLine "p256-ecdh" t13)
+  let ts := [t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12a, t12b, t12c, t12d, t12e, t13]
   let total : Tally :=
     { pass := (ts.map Tally.pass).foldl (· + ·) 0,
       fail := (ts.map Tally.fail).foldl (· + ·) 0,
