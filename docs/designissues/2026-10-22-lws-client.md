@@ -158,5 +158,36 @@ ordinary flows never reach the refusal of `enforce`.
   them the operation ends with `fail {code: "credential"}`.
 * OpenID sign-in (authorization code flow with PKCE) for
   `client-oidc-token-type-id-token`: the client takes an ID Token from the
-  caller, but has no sign-in of its own. Issue to open; until then the row
-  names https://github.com/danbri/factoidal/issues/917.
+  caller, but has no sign-in of its own:
+  https://github.com/danbri/factoidal/issues/1043 (LWS client OpenID sign-in).
+
+## The driver adapter and what it needed (2026-10-27)
+
+https://github.com/danbri/factoidal/issues/1065. The adapter of the
+lws-client driver (`deploy/lws-client-adapter/adapter.mjs`, protocol
+`lws-driver/1`) first scored `factoidal: 31 passed, 3 failed, 3 skipped`
+against the checker of ebremer/lws-client. Every failure and skip was a
+feature the Lean client did not have, and the adapter read responses in
+JavaScript (iron rule 7). Both are repaired in Lean:
+
+* Features: `read` with `Range`, `If-None-Match`, `Prefer` (304 as
+  `notModified`, 206 with `contentRange`); `trustedStorages` of
+  `verifyNotification`; `onePage` of `search`, `list` and `typeIndex`;
+  `queryFormats` (OPTIONS and `Accept-Query`); `expires` of `subscribe`;
+  EdDSA with Ed25519 keys for self-issued credentials; `bearer` with no realm
+  (`Session.anyToken`).
+* Readings: `Client/Report.lean` makes the Metadata, Item, Page, Storage and
+  Subscription shapes and the error kinds; `Client/Keys.lean` makes a
+  `did:key` agent from host random bytes; the client picks the linkset media
+  type (`putLinkset`) and the ID token type (`idToken`); the client takes
+  `linksetUrl`, `endpoint` and `storage` directly, so the adapter keeps no map.
+* Checks of arguments before anything is sent: a JSON Patch with an unknown
+  operation, a linkset document with no `linkset` array, a filter that is not
+  an `lws-query+json` document, an `expires` that is not RFC 3339, a range
+  that ends before it starts, a session key that is not P-256 or Ed25519.
+* Theorems: `step_start_verify_trusted`, `onPage_onePage_no_fetch`,
+  `attachToken_realm` (`Client/Theorems.lean`); `multikeyJwk?_p256` and
+  `multikeyJwk?_ed25519` (`Client/KeysTheorems.lean`; the P-256 one assumes
+  that the primitive's point decompression undoes the compression).
+* Host purity: `tools/host-purity-lint.sh` group 4 covers the adapter.
+* Scores: the checker of ebremer/lws-client against the adapter, `factoidal: 37 passed, 0 failed, 0 skipped` (was `31 passed, 3 failed, 3 skipped`); `node tests/lws/client/own-server.mjs` 22 pass, 0 fail, 0 skipped (out of 22; its did:key check now also runs engine-made P-256 and Ed25519 keys); `node tests/authz/mounted.mjs` 6 pass, 0 fail (out of 6); `node tests/lws/authorization.mjs` 29 pass, 0 fail (out of 29); `bash tools/host-purity-lint.sh` 50 pass, 0 fail (out of 50); `formal/lean4/Wasm/native-smoke.sh` 393 pass, 0 fail (out of 393).

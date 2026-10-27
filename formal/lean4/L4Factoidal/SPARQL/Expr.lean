@@ -599,9 +599,12 @@ a simple literal, an `xsd:string`, an `rdf:langString` or an
 `rdf:dirLangString`. §17.4.3.1 "Strings in SPARQL functions" defines
 the string functions over exactly these; a promoted number or boolean
 is NOT a string literal (W3C `concat02`, `strbefore01a`: `CONCAT(?x,
-7)` and `STRBEFORE(7, "b")` are type errors). CONCAT, STRBEFORE and
-STRAFTER use this; SUBSTR/UCASE/LCASE keep the wider `stringInfo?`
-as in the F* source. -/
+7)` and `STRBEFORE(7, "b")` are type errors). Every §17.4.3 function
+that takes a string literal uses this: STRLEN, SUBSTR, UCASE, LCASE,
+STRSTARTS, STRENDS, CONTAINS, STRBEFORE, STRAFTER, ENCODE_FOR_URI,
+CONCAT, REGEX and REPLACE. The wider `stringInfo?` (which also takes a
+promoted number or boolean) let `STRLEN(1)` and `UCASE(1)` answer
+(https://github.com/danbri/factoidal/issues/1036). -/
 def EvalResult.stringLiteralInfo? : EvalResult → Option (String × Option String × WfIri)
   | .term (.literal l) =>
       if l.val.datatype == xsdString || l.val.datatype == rdfLangString ||
@@ -734,20 +737,16 @@ def strBeforeRaw (s arg : String) : String := Fn.String.substringBefore s arg
 occurrence, or `""` when there is none. -/
 def strAfterRaw (s arg : String) : String := Fn.String.substringAfter s arg
 
-/-- §17.4.3.3 SUBSTR: 1-BASED start index, optional length; positions
-outside the string clamp rather than erroring. Port of
-`fn_substr_spec` ∘ `string_substring`. -/
-def substrSpec (s : String) (start : Nat) (len : Option Nat) : String :=
-  let idx := if start > 0 then start - 1 else 0
-  let cs := s.toList
-  let slen := cs.length
-  let start' := if idx ≥ slen then slen else idx
-  let actualLen :=
-    match len with
-    | some l => if start' + l > slen then slen - start' else l
-    | none   => slen - start'
-  if actualLen = 0 || start' ≥ slen then ""
-  else String.ofList ((cs.drop start').take actualLen)
+/-- §17.4.3.3 SUBSTR: "This function corresponds to the XPath
+`fn:substring` function" (F&O §5.4.4). The result keeps the characters
+at the 1-BASED positions `p` with `start <= p < start + length` (or
+`start <= p` with no length). A start below 1 is NOT clamped to 1:
+`SUBSTR("12345", 0, 3)` is `"12"`
+(https://github.com/danbri/factoidal/issues/1036). -/
+def substrSpec (s : String) (start : Int) (len : Option Int) : String :=
+  match len with
+  | some l => Fn.String.substringFromLen s start l
+  | none   => Fn.String.substringFrom s start
 
 /-! ### §17.4.3.15 ENCODE_FOR_URI -/
 
@@ -1743,15 +1742,12 @@ Split out of the evaluator so that each evaluator arm stays a plain
 structural match — which is what lets Lean generate the equation
 lemmas the proofs in `ExprTheorems` rewrite with. -/
 def substrResult (v1 v2 : EvalResult) (vlen : Option EvalResult) : EvalResult :=
-  match v1.stringInfo?, v2.promoteLiteral with
+  match v1.stringLiteralInfo?, v2.promoteLiteral with
   | some (s, tg, dt), .num start =>
-      if start < 0 then .error
-      else
-        let lenVal :=
-          match vlen.map EvalResult.promoteLiteral with
-          | some (.num n) => if n ≥ 0 then some n.toNat else none
-          | _ => none
-        erStringPreserve (substrSpec s start.toNat lenVal) tg dt
+      match vlen.map EvalResult.promoteLiteral with
+      | none => erStringPreserve (substrSpec s start none) tg dt v1.direction?
+      | some (.num n) => erStringPreserve (substrSpec s start (some n)) tg dt v1.direction?
+      | some _ => .error
   | _, _ => .error
 
 /-- §17.4.1.3 COALESCE: the first argument that is not a type error. -/
@@ -1771,9 +1767,9 @@ def inResults (v : EvalResult) : List EvalResult → EvalResult
       | some true => .bool true
       | _ => inResults v rest
 
-/-- §17.4.3.1 argument compatibility for STRBEFORE and STRAFTER (both
-arguments already known to be string literals, see
-`stringLiteralInfo?`). The table lists exactly three compatible
+/-- §17.4.3.1.4 argument compatibility for STRSTARTS, STRENDS,
+CONTAINS, STRBEFORE and STRAFTER (both arguments already known to be
+string literals, see `stringLiteralInfo?`). The table lists exactly three compatible
 pairs: two simple/`xsd:string` literals; two language-tagged literals
 with the SAME tag; a language-tagged first argument with a
 simple/`xsd:string` second. A simple first argument with a tagged
@@ -1787,6 +1783,28 @@ def strBeforeAfterCompatible
   | some _,  none    => true
   | some l1, some l2 => l1 == l2
   | none,    some _  => false
+
+/-- §17.4.3.2 STRLEN over an evaluated argument: a string literal only. -/
+def strLenResult (v : EvalResult) : EvalResult :=
+  match v.stringLiteralInfo? with
+  | some (s, _, _) => .num (s.length : Int)
+  | none => .error
+
+/-- §17.4.3.4-5 UCASE / LCASE over an evaluated argument: a string
+literal only; the language tag, datatype and base direction are kept. -/
+def caseMapResult (f : String → String) (v : EvalResult) : EvalResult :=
+  match v.stringLiteralInfo? with
+  | some (s, tg, dt) => erStringPreserve (f s) tg dt v.direction?
+  | none => .error
+
+/-- §17.4.3.6-8 STRSTARTS / STRENDS / CONTAINS over evaluated
+arguments: two string literals that are argument-compatible
+(§17.4.3.1.4); otherwise a type error. -/
+def strTestResult (test : String → String → Bool) (v1 v2 : EvalResult) : EvalResult :=
+  match v1.stringLiteralInfo?, v2.stringLiteralInfo? with
+  | some (s, lang1, dt1), some (p, lang2, dt2) =>
+      if strBeforeAfterCompatible lang1 dt1 lang2 dt2 then .bool (test s p) else .error
+  | _, _ => .error
 
 /-! ## §17.5 XSD constructor functions (casting)
 
@@ -2022,10 +2040,13 @@ def fxBnodeOfSeed (seed : String) : String :=
   "fxbn" ++ Crypto.hashHex .sha256 seed
 
 /-- Hash builtin body shared by MD5/SHA1/SHA256/SHA384/SHA512
-(§17.4.4.7–11): the string value of the argument, hashed, as a simple
-literal of lowercase hex; a non-string argument is a type error. -/
+(§17.4.6.1–5): the argument is a simple literal or an `xsd:string`;
+its UTF-8 bytes are hashed, and the result is a simple literal of
+lowercase hex. Any other argument (a number, a language-tagged
+literal, an IRI) is a type error
+(https://github.com/danbri/factoidal/issues/1036). -/
 def hashResult (digest : String → String) (v : EvalResult) : EvalResult :=
-  match v.toString? with
+  match v.simpleLiteral? with
   | some s => erString (digest s)
   | none => .error
 
@@ -2162,33 +2183,18 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
       | other => other
 
   -- §17.4.3 string functions.
-  | .strLen e1 =>
-      match (Expr.evalIn env mu e1).toString? with
-      | some s => .num (s.length : Int)
-      | none => .error
+  | .strLen e1 => strLenResult (Expr.evalIn env mu e1)
   | .substr e1 e2 lenOpt =>
       substrResult (Expr.evalIn env mu e1) (Expr.evalIn env mu e2)
         (Expr.evalOpt env mu lenOpt)
-  | .uCase e1 =>
-      match (Expr.evalIn env mu e1).stringInfo? with
-      | some (s, tg, dt) => erStringPreserve (Fn.String.upperCase s) tg dt
-      | none => .error
-  | .lCase e1 =>
-      match (Expr.evalIn env mu e1).stringInfo? with
-      | some (s, tg, dt) => erStringPreserve (Fn.String.lowerCase s) tg dt
-      | none => .error
+  | .uCase e1 => caseMapResult Fn.String.upperCase (Expr.evalIn env mu e1)
+  | .lCase e1 => caseMapResult Fn.String.lowerCase (Expr.evalIn env mu e1)
   | .strStarts e1 e2 =>
-      match (Expr.evalIn env mu e1).toString?, (Expr.evalIn env mu e2).toString? with
-      | some s, some p => .bool (strStartsWith s p)
-      | _, _ => .error
+      strTestResult strStartsWith (Expr.evalIn env mu e1) (Expr.evalIn env mu e2)
   | .strEnds e1 e2 =>
-      match (Expr.evalIn env mu e1).toString?, (Expr.evalIn env mu e2).toString? with
-      | some s, some p => .bool (strEndsWith s p)
-      | _, _ => .error
+      strTestResult strEndsWith (Expr.evalIn env mu e1) (Expr.evalIn env mu e2)
   | .contains e1 e2 =>
-      match (Expr.evalIn env mu e1).toString?, (Expr.evalIn env mu e2).toString? with
-      | some s, some p => .bool (strContains s p)
-      | _, _ => .error
+      strTestResult strContains (Expr.evalIn env mu e1) (Expr.evalIn env mu e2)
   | .strBefore e1 e2 =>
       match (Expr.evalIn env mu e1).stringLiteralInfo?,
             (Expr.evalIn env mu e2).stringLiteralInfo? with
@@ -2213,9 +2219,10 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
       | _, _ => .error
   | .concat es => concatResults (Expr.evalArgs env mu es)
   | .encodeForUri e1 =>
-      -- ENCODE_FOR_URI always returns xsd:string; no tag is preserved.
-      match (Expr.evalIn env mu e1).toString? with
-      | some s => erString (strEncodeUri s)
+      -- §17.4.3.11 ENCODE_FOR_URI takes a string literal and always
+      -- returns a simple literal; no tag is preserved.
+      match (Expr.evalIn env mu e1).stringLiteralInfo? with
+      | some (s, _, _) => erString (strEncodeUri s)
       | none => .error
   -- §17.4.3.14 REGEX / §17.4.3.15 REPLACE, over the pure XPath regex
   -- engine in `L4Factoidal.Regex` (F* `regex_match` / `regex_replace`,

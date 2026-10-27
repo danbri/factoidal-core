@@ -195,6 +195,20 @@ Prerequisites and how much they cost:
 | generated core C | ~32 MB | in the work dir |
 | core wasm objects | ~17 MB | in the work dir |
 
+### Trap: `tools/ensure-test-env.sh` after a local wasm build replaces it
+
+`tools/ensure-test-env.sh` calls `tools/fetch-builds.sh`, which installs the
+newest `danbri/factoidal-builds` release into `npm/factoidal/l4-assets/` and
+`docs/web/hub/assets/l4/`. Run after `build-wasm.sh`, it silently replaces the
+module you just built with the release's older one, and every Node test then
+runs the old engine. (2026-10-27: a new op worked, `ensure-test-env.sh` ran
+to fetch test fixtures, and the next run of `lws-serve --authz` failed with
+"member issuer is required" from the old wasm; the npm suite had already
+passed once more against the old module. Cost: one wasm rebuild, 8 minutes.)
+Rule: run `ensure-test-env.sh` BEFORE `build-wasm.sh`, and before a test run
+check that `sha256sum npm/factoidal/l4-assets/l4factoidal.wasm` equals the
+digest step 9 printed.
+
 ## What the build actually does
 
 0. `lake build l4wasm` — also writes our modules' C into `.lake/build/ir/`.

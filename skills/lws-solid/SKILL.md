@@ -58,6 +58,18 @@ triple or access decision found in a `.mjs` under `npm/factoidal/lws/` or
 `npm/factoidal/solid/` is a rule violation. The only status a host writes
 is `500`, for a failure of the host itself.
 
+## Docker target for other testers
+
+`deploy/lws-target/` (README there): `lws-serve` and `authz-serve` in one
+container that keeps the target contract of Touchstone's `targetservers/`, so
+that another party can test our server with Docker alone. Owner, 2026-10-26,
+verbatim: "Idea is we write dockerfiles for our lws server and they or someone
+hammer it in a docker based server". Our job is the container for OUR server.
+Do not build or run the other implementations in `targetservers/` unless the
+owner asks for that run. (2026-10-26: a pasted Touchstone README was read as a
+request to run `run-all.sh` against all six other servers; the owner
+corrected it. Cost: one turn and a Docker setup that was not needed.)
+
 ## Run the servers
 
 ```
@@ -913,6 +925,17 @@ https://github.com/danbri/factoidal/issues/916). Gap, an expected failure in
 `tests/lws/client/touchstone-xfail.tsv`: OpenID sign-in (code flow with
 PKCE) for `client-oidc-token-type-id-token` (issue to open; the row names
 https://github.com/danbri/factoidal/issues/917).
+
+The driver adapter (https://github.com/danbri/factoidal/issues/1065,
+`deploy/lws-client-adapter/`, check it with `driver/adapters/check.mjs` of
+ebremer/lws-client: 37 passed, 0 failed, 0 skipped) only translates JSON.
+Each `done` document has a `report` (the driver's Metadata, Item, Page, Storage
+and Subscription shapes, `Client/Report.lean`) and each `fail` a `report` with
+the error kind. A session key may be P-256 or Ed25519; `createDidKey({
+algorithm })` (wasm op `lwsClientNewKey`, `Client/Keys.lean`) makes a
+`did:key` agent. An operation can name its linkset (`linksetUrl`), service
+endpoint (`endpoint`) or storage description (`storage`) directly. Rule:
+the adapter reads no response; `tools/host-purity-lint.sh` group 4 checks it.
 
 ## Run the tests
 

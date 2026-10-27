@@ -3278,6 +3278,39 @@ checkseq "sbm11 open (collection root), query, close: the bytes of l4sbm11 query
    and rs[2]["ok"] is False and isinstance(rs[2].get("code"), str)
    and rs[3]["ok"] is True and rs[4]["ok"] is False'
 
+# storeLayout and sbm11Verify (https://github.com/danbri/factoidal/issues/1009,
+# npm `factoidal activate`, `query`, `inspect` on an SBM11 store): the engine
+# says which store a directory holds, and checks every file of a generation
+# against its manifest; a changed byte is refused with the file name.
+args "$TMP/layout-root.json" "$SBM11_ROOT"
+check "storeLayout of an SBM11 collection root -> sbm11, the generation CURRENT names" storeLayout \
+  "$TMP/layout-root.json" 'r["ok"] is True and r["layout"] == "sbm11" and r["generation"] == "gen" and r["manifest"] == "manifest.sbm11"'
+args "$TMP/layout-gen.json" "$SBM11_ROOT/gen"
+check "storeLayout of an SBM11 generation directory -> sbm11, no CURRENT" storeLayout \
+  "$TMP/layout-gen.json" 'r["ok"] is True and r["layout"] == "sbm11" and r["generation"] == ""'
+mkdir -p "$TMP/layout-ibk" && : >"$TMP/layout-ibk/manifest.sbm2"
+args "$TMP/layout-ibk.json" "$TMP/layout-ibk"
+check "storeLayout of a directory with manifest.sbm2 -> ibk" storeLayout \
+  "$TMP/layout-ibk.json" 'r["ok"] is True and r["layout"] == "ibk" and r["manifest"] == "manifest.sbm2"'
+args "$TMP/layout-none.json" "$TMP/no-such-directory"
+check "storeLayout of a missing directory -> coded error" storeLayout \
+  "$TMP/layout-none.json" 'r["ok"] is False and isinstance(r.get("code"), str)'
+args "$TMP/verify-gen.json" "$SBM11_ROOT/gen"
+SBM11_GEN_FILES="$(ls "$SBM11_ROOT/gen" | wc -l | tr -d ' ')"
+export SBM11_GEN_FILES
+check "sbm11Verify of the fixture generation -> ok, every file checked" sbm11Verify \
+  "$TMP/verify-gen.json" 'r["ok"] is True and int(r["files"]) == int(__import__("os").environ["SBM11_GEN_FILES"]) and int(r["artifacts"]) > 0'
+cp -R "$SBM11_ROOT/gen" "$TMP/verify-bad"
+python3 - "$TMP/verify-bad/dict.gdv1" <<'EOF'
+import sys
+p = sys.argv[1]
+b = bytearray(open(p, "rb").read()); b[0] ^= 0xff
+open(p, "wb").write(b)
+EOF
+args "$TMP/verify-bad.json" "$TMP/verify-bad"
+check "sbm11Verify of a generation with a changed byte -> error naming the file" sbm11Verify \
+  "$TMP/verify-bad.json" 'r["ok"] is False and "dict.gdv1" in r["error"]'
+
 # SBM11 pack in memory (https://github.com/danbri/factoidal/issues/1009 stage 2):
 # the op through the string entry is refused by name; through the byte-region
 # entry (`l4factoidal sbm11-pack`, one call per file) it gives the files of
