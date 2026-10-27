@@ -1,12 +1,13 @@
 // Pins every live cell of docs/web/hub/jsonld-star.md. The cells run
 // through the same reactive runtime the page uses, with `Factoidal` bound
 // to the npm package's Node entry. Needs a wasm with the option `rdfstar`
-// (0.18.0 or later).
+// (0.18.0 or later); the `parse` case needs `rdfstar` on `parse` (0.20.0 or
+// later, https://github.com/danbri/factoidal-core/pull/152).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { extractObservableCells, runReactivePost, pretty, xfail, HUB_PAGE_DIR } from './_helpers.mjs';
+import { extractObservableCells, runReactivePost, pretty, HUB_PAGE_DIR } from './_helpers.mjs';
 import * as Factoidal from '../../npm/factoidal/index.mjs';
 
 const cells = extractObservableCells('jsonld-star.md', HUB_PAGE_DIR);
@@ -57,7 +58,7 @@ test('jsonld-star: without rdfstar the keywords are ignored (JSON-LD 1.1)', asyn
   assert.ok(!nq.includes('22-rdf-syntax-ns#reifies'), nq);
 });
 
-xfail('jsonld-star: parse takes the option rdfstar for JSON-LD', 'https://github.com/danbri/factoidal/issues/984', async () => {
+test('jsonld-star: parse takes the option rdfstar for JSON-LD (issue 1091)', async () => {
   const starDoc = await post.value('starDoc');
   const ds = await Factoidal.parse(starDoc, { format: 'jsonld', rdfstar: true });
   assert.equal(ds.size, 6);
