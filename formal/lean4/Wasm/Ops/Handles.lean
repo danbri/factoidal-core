@@ -1040,7 +1040,7 @@ private def serializeOpts : List (String × OptionDomain) :=
 positional mode argument is checked as the option of its name (`mode`,
 `sourceKind`). -/
 def apiOptionTable : List (String × List (String × OptionDomain)) :=
-  [ ("parse", parseOpts ++ [("lenient", .any), ("maxErrors", .any)])
+  [ ("parse", parseOpts ++ [("lenient", .any), ("maxErrors", .any), ("rdfstar", .any)])
   , ("openDataset", parseOpts), ("registerServiceEndpoint", parseOpts)
   , ("update", parseOpts), ("canonicalize", parseOpts), ("isomorphic", parseOpts)
   , ("shaclValidate", parseOpts), ("shexValidate", parseOpts), ("closure", parseOpts)
@@ -1132,6 +1132,14 @@ def optionConflict (who : String) (fields : List (String × Json)) : Option Stri
       some (errCoded "option.conflict"
         s!"{who}: useNativeTypes, useRdfType, rdfDirection, rdfstar apply to format 'jsonld' only")
     else none
+  else if who == "parse" && present "rdfstar" then
+    -- JSON-LD-star has one reader, the JSON-LD one; no lenient mode
+    let fmt := (str "format").map (fun t => (parseFormatNames.lookup t.toLower).getD t.toLower)
+    if fmt.isSome && fmt != some "jsonld" then
+      some (errCoded "option.conflict" s!"{who}: rdfstar applies to format 'jsonld' only")
+    else if str "lenient" == some "true" then
+      some (errCoded "option.conflict" s!"{who}: rdfstar and lenient cannot be combined")
+    else none
   else none
 
 /-- `apiCheck(who, optionsJson)`: `optionsJson` is the options object the
@@ -1173,6 +1181,10 @@ def apiCheck (who optionsJson : String) : String :=
 #guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"nt\",\"prefixes\":{}}") == some "option.conflict"
 #guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"ttl\",\"prefixes\":{}}") == none
 #guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"nt\",\"prefixes\":null}") == none
+#guard codeOf? (apiCheck "parse" "{\"format\":\"json-ld\",\"rdfstar\":\"true\"}") == none
+#guard codeOf? (apiCheck "parse" "{\"rdfstar\":\"true\"}") == none
+#guard codeOf? (apiCheck "parse" "{\"format\":\"ttl\",\"rdfstar\":\"true\"}") == some "option.conflict"
+#guard codeOf? (apiCheck "parse" "{\"format\":\"jsonld\",\"rdfstar\":\"true\",\"lenient\":\"true\"}") == some "option.conflict"
 
 #guard (datasetOfQuads [(none, ⟨.bnode "a", ⟨"http://e/p", rfl⟩, .bnode "b"⟩),
                         (none, ⟨.bnode "a", ⟨"http://e/p", rfl⟩, .bnode "b"⟩)]).default.length == 1

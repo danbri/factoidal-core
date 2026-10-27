@@ -377,6 +377,12 @@ export interface ParseOptions {
    * with one diagnostic of class 'too-many-errors'. Default: no limit.
    */
   maxErrors?: number;
+  /**
+   * Read JSON-LD as JSON-LD-star (`@triple`, `@reifies`, `@annotation` as
+   * RDF 1.2 triple terms and reifiers), as `jsonldToRdf` does. Format
+   * 'jsonld' only (given or inferred); not with `lenient`. Default: false.
+   */
+  rdfstar?: boolean;
 }
 
 export interface QueryOptions extends DatasetQueryOptions {
