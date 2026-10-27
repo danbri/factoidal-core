@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.18.0 (2026-10-27)
+
+- XSD constructor functions for datatypes outside the SPARQL 1.1 §17.5 table (`xsd:byte`, `xsd:int`, `xsd:unsignedInt`, `xsd:date`, `xsd:time`, `xsd:gYear` and the other `xsd:g*` types, the duration types, `xsd:token`, …) now cast as XPath F&O 3.1 §19 says. Before, they changed only the datatype and gave ill-typed literals such as `"HaHa"^^xsd:byte`. An invalid value or a cast that F&O does not allow is now an error (the variable is unbound) (https://github.com/danbri/factoidal/issues/1041, https://github.com/danbri/factoidal-core/pull/142).
+- SPARQL: STRSTARTS, STRENDS, CONTAINS, STRBEFORE and STRAFTER compare the base direction of `rdf:dirLangString` arguments (SPARQL 1.2 §17.4.3: same language tag and same base direction). `CONTAINS("abc"@en--ltr, "a"@en)` is now an error. STRBEFORE and STRAFTER keep the base direction of the first argument: `STRBEFORE("abc"@en--ltr, "b")` is `"a"@en--ltr` (https://github.com/danbri/factoidal/issues/1042, https://github.com/danbri/factoidal-core/pull/136).
+- Store open sends the manifest to the engine as bytes, not as hexadecimal inside the JSON arguments, and decodes it once for the plan and the open (new ops `storeManifestInspectBytes`, `storeQueryPlanBytes`, `storeOpenBytes`; the hexadecimal ops stay). On the londat store (1,046 blocks, 753 kB manifest) a scoped `openStoreHandle` takes 198 ms, not 305 ms with 0.17.0 (median of 9) (https://github.com/danbri/factoidal/issues/1039, https://github.com/danbri/factoidal-core/pull/141).
+- Tests: the W3C manifest runner `l4w3c` reads `.n3` expected results when they are Turtle-compatible (else the test is unsupported, with the reason) and runs Jena's `mfx:TestQuery` as a query evaluation test; Jena ARQ manifests: 31 pass (was 13) of 308 (https://github.com/danbri/factoidal-core/pull/138). The Jena ARQ expression suite drops the 62 expected failures these fixes remove. `tools/split-read-differential.sh` runs on macOS and fails when it checks no file (https://github.com/danbri/factoidal-core/pull/133).
+
 ## 0.17.0 (2026-10-27)
 
 - **Breaking:** `canonicalHash(graph)` now returns the SHA-256 (64 lowercase hex digits) of the RDFC-1.0 canonical N-Quads, as the RDF Dataset Canonicalization specification uses it. Before, it returned the canonical text. Use `canonicalize()` for the text. The engine computes the digest in Lean (new op `datasetCanonicalHash`) (https://github.com/danbri/factoidal/issues/1040, https://github.com/danbri/factoidal-core/pull/127).
