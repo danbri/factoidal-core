@@ -879,6 +879,14 @@ against the old core library.
    undefined-symbol list growing; treat that as a design question per
    "the purity evidence" above.
 
+   A stale `.c` gives the same failure. Step 7 compiles every `.c` under
+   `.lake/build/ir`, including modules outside the `l4wasm` import
+   closure, which `lake build l4wasm` does not rebuild. 2026-10-27: the
+   C of `L4Factoidal.JSONLD.Tests` was from a build before
+   `parseJsonLd` took one more argument; the link stopped with
+   "signature mismatch ... parseJsonLd" and one build cycle (about 10
+   minutes) was lost. Step 0 now runs `lake build l4wasm L4Factoidal`.
+
    **Any OTHER signature mismatch is a trap, and the build now fails on
    it** (`link_module` in `Wasm/build-wasm.sh`). wasm-ld replaces a call
    whose signature differs from the definition with an `unreachable` stub

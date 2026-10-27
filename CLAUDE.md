@@ -396,11 +396,15 @@ root-level Lake failures.
     - [`docs/designissues/2026-05-07-query-planning-fstar-recovery.md`](docs/designissues/2026-05-07-query-planning-fstar-recovery.md)
     - [`docs/designissues/2026-05-07-io-verification-and-third-party.md`](docs/designissues/2026-05-07-io-verification-and-third-party.md)
 
-    **Until** the boundary audit completes and recovery Phase 9 lands,
-    the project carries the qualifier "**parser and algebra spec
-    verified in F\*; on-disk backend has unverified OCaml-side
-    optimization layers being migrated back to F\* (see fstar-purity-
-    unwind.md)**" on READMEs, demo pages, talks, and PR descriptions.
+    The F\* qualifier sentence ("parser and algebra spec verified in
+    F\*; on-disk backend has unverified OCaml-side optimization layers
+    ...") is no longer required on READMEs, demo pages, talks or PR
+    descriptions. Owner, 2026-10-27, verbatim: "Remove sentence" (after
+    "Urgent: we are Lean centric - - why is
+    https://github.com/danbri/factoidal-core/pull/166 concerned with the
+    f* primarily???"). Cost of the old rule: that PR changed no file under
+    `formal/fstar`, but the sentence was its second line, so the PR read
+    as F\* work.
 12. **Activate the F\* opam switch before any F\* work.**
     `eval $(opam env --switch=fstar)` — every shell, every time, before
     `make verify` / `build-ocaml.sh` / `fstar.exe`. If `fstar.exe` is

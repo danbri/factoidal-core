@@ -25,6 +25,7 @@ in your browser.
 <ul class="post-series">
   <li><a href="./rdf-syntaxes/">RDF syntaxes</a> — Turtle, N-Triples, N-Quads, TriG, RDF/XML, JSON-LD; RDF 1.2 triple terms, reifiers, annotations and base direction; error positions</li>
   <li><a href="./jsonld-star/">JSON-LD-star and JSON-LD 1.3</a> — RDF 1.2 triple terms, reifiers, annotations and base direction in JSON-LD (<code>@triple</code>, <code>@reifies</code>, <code>@annotation</code>, option <code>rdfstar</code>); the draft, the choices made, scores, and the plan towards JSON-LD 1.3</li>
+  <li><a href="./rdf12-jsonld-usecases/">RDF 1.2 use cases in JSON-LD-star</a> — provenance, facts with several occurrences, edge properties, claims that are not asserted, one reifier for several triples, annotations on annotations; SPARQL 1.2 annotation queries</li>
   <li><a href="./sparql/">SPARQL</a> — query and update, property paths, aggregates, GeoSPARQL functions, <code>text:query</code>, extension functions in JavaScript and WebAssembly, SERVICE, SPARQL 1.2 triple patterns</li>
   <li><a href="./importers/">Data importers and integration</a> — CSVW, RML, JSON-LD and a GRDDL-style XSLT step, four independent sources merged into one dataset, each in its own named graph, one query across them</li>
   <li><a href="./inference/">Inference</a> — RDFS and OWL 2 RL closure over pipeline output, derived triples in their own graph, OWL 2 DL consistency and entailment</li>
@@ -33,6 +34,7 @@ in your browser.
   <li><a href="./validation/">SHACL and ShEx</a> — validation reports as RDF, SHACL-SPARQL, ShExC schemas</li>
   <li><a href="./canonical-and-credentials/">Canonical form and credentials</a> — RDFC-1.0, graph hashes, eddsa-rdfc-2022 proofs, did:key</li>
   <li><a href="./servers/">Servers</a> — SPARQL Protocol and Graph Store with Fuseki paths, read-only Jena TDB2, Linked Web Storage, Solid, XMPP (commands and recorded output)</li>
+  <li><a href="./webdav/">WebDAV</a> — serve local and remote Linked Web Storage to Finder, Windows Explorer, GNOME Files and other WebDAV clients; did:key login to an LWS server, HTTPS through a proxy, Tailscale and SSH from behind NAT</li>
   <li><a href="./shardborough/">Shardborough (early stage)</a> — the persisted store: pack, activate, query, update through a delta log, compact</li>
 </ul>
 
