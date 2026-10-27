@@ -20,8 +20,7 @@ the settings into command-line options.
 | `touchstone.env` | how Touchstone's `run-all.sh` tests this target |
 | `compose.service.yaml` | the service entry for Touchstone's `targetservers/compose.yaml` |
 
-`lws-serve --authz` is in the releases after 0.16.0. Until one is published,
-build from a local checkout (below).
+`lws-serve --authz` is in 0.18.0 and later; the Dockerfile pins 0.18.0.
 
 ## Settings
 
