@@ -47,11 +47,17 @@ be signed."
    HACL\*) or `0xed` (Ed25519). The `kid` is `did:key:z…#z…` or `z…`.
    `didKeyJwk?`.
 4. SAML 2.0 assertion, `urn:ietf:params:oauth:token-type:saml2`
-   (lws10-authn-saml): REFUSED. "the signature of the credential MUST be
-   validated as described in SAML Core, section 5", and this tree has no
-   XML Signature verifier: https://github.com/danbri/factoidal/issues/926.
+   (lws10-authn-saml): "the signature of the credential MUST be validated
+   as described in SAML Core, section 5". `L4Factoidal.SAML.validate`:
+   base64url XML, `saml:Assertion` from an identity provider in
+   `Ctx.samlIdps` (trust is out of band), its enveloped XML Signature
+   (exclusive canonicalization, rsa-sha256) verified under that
+   provider's key, `saml:Conditions` times and `saml:Audience` (this
+   server's issuer), the subject `saml:NameID`, the client the bearer
+   `Recipient`. With no trusted provider the token type is refused and not
+   advertised. https://github.com/danbri/factoidal/issues/926.
 
-Every suite: `alg: none` and any algorithm outside ES256, RS256, EdDSA are
+Every JWT suite: `alg: none` and any algorithm outside ES256, RS256, EdDSA are
 refused by `JOSE.preKey` before a key is chosen; the signature is checked
 by `JOSE.verifyCompact`; `exp` (required), `iat` (required, not in the
 future), `nbf` (if present) are checked with `leeway` seconds of skew; and
@@ -62,6 +68,7 @@ import L4Factoidal.Authz.Fetch
 import L4Factoidal.JOSE.Jwt
 import L4Factoidal.VC.Multibase
 import L4Factoidal.LWS.AccessPolicy
+import L4Factoidal.SAML.Assertion
 
 namespace L4Factoidal.Authz
 
@@ -91,6 +98,8 @@ structure Ctx where
   leeway : Nat := 60
   policy : FetchPolicy := {}
   fs : FetchState := {}
+  /-- The SAML identity providers this server trusts (out of band). -/
+  samlIdps : List L4Factoidal.SAML.Idp := []
 
 inductive SubjectResult where
   /-- The subject token is valid: the agent and the client it names. -/
@@ -399,10 +408,19 @@ def validateIdToken (ctx : Ctx) (p : Parsed) : SubjectResult :=
   | .error w => .refused w
   | .ok (iss, sub, azp) => withKey ctx p (oidcKey ctx iss sub (p.header.getString? "kid")) sub azp
 
+/-- The SAML 2.0 suite. The audience is this server's issuer identifier. -/
+def validateSaml (ctx : Ctx) (token : String) : SubjectResult :=
+  if ctx.samlIdps.isEmpty then
+    .refused "SAML 2.0 assertions are not accepted: this server trusts no SAML identity provider"
+  else
+    match L4Factoidal.SAML.validate ctx.C.verifiers.rs256
+        { idps := ctx.samlIdps, audience := ctx.issuer, now := ctx.now, leeway := ctx.leeway } token with
+    | .ok c => .valid c.nameId c.recipient
+    | .error w => .refused w
+
 /-- Validate a subject token of a token type. -/
 def validateSubject (ctx : Ctx) (tokenType token : String) : SubjectResult :=
-  if tokenType == tokenTypeSaml2 then
-    .refused s!"SAML 2.0 assertions are not accepted: this server has no XML Signature verifier ({samlIssue})"
+  if tokenType == tokenTypeSaml2 then validateSaml ctx token
   else if tokenType == tokenTypeJwt || tokenType == tokenTypeIdToken then
     match parseJwt token with
     | .error w => .refused w
@@ -426,5 +444,24 @@ theorem withKey_valid {ctx : Ctx} {p : Parsed} {kf : KeyFound} {s c s' c' : Stri
       simp at h
       exact ⟨k, rfl, hv, h.1.symm, h.2.symm⟩
     · simp at h
+
+/-- `validateSaml` gives `valid` only for an assertion whose signature
+verified under the key of a trusted identity provider of the context. -/
+theorem validateSaml_valid {ctx : Ctx} {token s c : String}
+    (h : validateSaml ctx token = .valid s c) :
+    ∃ cl d idp, L4Factoidal.SAML.validate ctx.C.verifiers.rs256
+        { idps := ctx.samlIdps, audience := ctx.issuer, now := ctx.now, leeway := ctx.leeway } token = .ok cl ∧
+      cl.nameId = s ∧ cl.recipient = c ∧ idp ∈ ctx.samlIdps ∧ idp.entityId = cl.issuer ∧
+      L4Factoidal.SAML.decodeToken token = .ok d ∧
+      L4Factoidal.XML.DSig.verifyEnveloped ctx.C.verifiers.rs256 idp.n idp.e d = .ok () := by
+  unfold validateSaml at h
+  split at h
+  · cases h
+  · split at h
+    · rename_i cl hv
+      cases h
+      obtain ⟨d, idp, hd, hm, he, hver⟩ := L4Factoidal.SAML.validate_ok hv
+      exact ⟨cl, d, idp, hv, rfl, rfl, hm, he, hd, hver⟩
+    · cases h
 
 end L4Factoidal.Authz
