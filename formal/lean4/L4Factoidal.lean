@@ -616,7 +616,6 @@ import L4Factoidal.XPath.Data
 import L4Factoidal.XPath.Expr
 import L4Factoidal.XPath.Eval
 import L4Factoidal.XPath.ExprTests
-import L4Factoidal.XPath4.Eval
 import L4Factoidal.HTTP.Server
 import L4Factoidal.HTTP.Multipart
 import L4Factoidal.HTTP.Tests
