@@ -221,7 +221,7 @@ defjob l4shacl-sparql12 l4shacl parse_shacl shacl \
 defjob l4shacl-nodeexpr l4shacl-nodeexpr parse_shacl_nodeexpr w3c \
   "SHACL 1.2 node expressions" "" ""
 defjob l4shacl-rules l4shacl-rules parse_shacl_rules w3c \
-  "SHACL 1.2 rules" "" ""
+  "SPARQL 1.2 RL (was SHACL 1.2 rules)" "" ""
 # --- ShEx --------------------------------------------------------------------
 defjob l4shex l4shex parse_shex shex \
   "ShEx (ShExJ validation suite)" "" \

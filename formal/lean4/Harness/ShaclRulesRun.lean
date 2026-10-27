@@ -1,5 +1,14 @@
 /-
-Harness.ShaclRulesRun — the SHACL 1.2 `rules` suite runner (`l4shacl-rules`).
+Harness.ShaclRulesRun — the SPARQL 1.2 RL (formerly SHACL 1.2 Rules) suite
+runner (`l4shacl-rules`).
+
+Since 2026-10-27 the checks are `L4Factoidal.SPARQLRL` (through the four
+names of `SHACL/Rules.lean`), and the default suite is the SPARQL 1.2 RL suite
+vendored at `third_party/testing/sparql-rl/tests`
+(https://github.com/danbri/factoidal/issues/1099). The July copy
+`third_party/testing/shacl/shacl12-test-suite/tests/rules` is still readable
+by passing its path; three of its 88 tests use `BIND ( e AS ?v )`, which the
+current draft replaced by `SET ( ?v := e )`, so they fail by design.
 
 The Lean SHACL probe (`l4shacl`) does not recognise the `srt:` test
 types, and the rules manifests link their entries with `mf:entries`
@@ -27,7 +36,7 @@ Usage, from the repository root:
 
     lake exe l4shacl-rules [manifest-dir]
 
-defaulting to `third_party/testing/shacl/shacl12-test-suite/tests/rules`.
+defaulting to `third_party/testing/sparql-rl/tests`.
 -/
 import Harness.Manifest
 import L4Factoidal.SHACL.Rules
@@ -184,9 +193,8 @@ def runManifest (path : String) : IO Score := do
           return score
 
 def main (args : List String) : IO UInt32 := do
-  let root := args.head?.getD
-    "third_party/testing/shacl/shacl12-test-suite/tests/rules"
-  IO.println "SHACL 1.2 rules suite, Lean 4 (L4Factoidal.SHACL.Rules)"
+  let root := args.head?.getD "third_party/testing/sparql-rl/tests"
+  IO.println "SPARQL 1.2 RL / SHACL 1.2 rules suite, Lean 4 (L4Factoidal.SPARQLRL)"
   IO.println ""
   let mut total : Score := {}
   -- `eval2` and `examples` are in the SPARQL 1.2 RL suite only

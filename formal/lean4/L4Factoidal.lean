@@ -348,6 +348,10 @@ import L4Factoidal.SHACL.ShaclTests
 import L4Factoidal.SHACL.ShaclTheorems
 import L4Factoidal.SHACL.SparqlTheorems
 import L4Factoidal.SHACL.Rules
+import L4Factoidal.SPARQLRL.Syntax
+import L4Factoidal.SPARQLRL.Parser
+import L4Factoidal.SPARQLRL.Eval
+import L4Factoidal.SPARQLRL.Tests
 import L4Factoidal.SHACL.NodeExpr
 import L4Factoidal.SHACL.IdentityTests
 import L4Factoidal.SHACL.ComparisonTests
