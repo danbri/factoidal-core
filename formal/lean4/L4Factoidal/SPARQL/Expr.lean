@@ -42,8 +42,9 @@ ALSO IMPLEMENTED, each as a total function of explicit inputs:
   * §17.4.5.7/8 TIMEZONE and TZ (`dtTimezone`, `dtTz`, ports of the F*
     `dt_timezone`/`dt_tz`);
   * §17.5 XSD constructor functions `xsd:integer` / `decimal` / `float`
-    / `double` / `string` / `boolean` and, for any other XSD datatype
-    IRI, a typed literal (`evalXsdCast`, port of `eval_xsd_cast`);
+    / `double` / `string` / `boolean` / `dateTime` and, for any other XSD
+    datatype IRI, the XPath F&O 3.1 §19 cast or a type error
+    (`evalXsdCast`, `castFandO`);
   * §17.4.2.9/12/13 BNODE() / BNODE(str) / UUID() / STRUUID() — FRESH
     values derived deterministically from the (row, call-site) freshness
     context the caller injects (`Binding.withFreshnessCtx`, the F*
@@ -1737,17 +1738,29 @@ def replaceCore (t p r f : EvalResult) : EvalResult :=
       | .error _ => .error
   | _, _, _, _ => .error
 
+/-- §17.4.3.3: "The arguments startingLoc and length may be derived types of
+xsd:integer." The integer a SUBSTR position or length argument denotes: an
+`xsd:integer` value, or the value of a literal whose datatype is derived from
+`xsd:integer` (`xsd:int`, `xsd:long`, `xsd:positiveInteger`, ...), within the
+bounds of that type. Any other argument has none, and SUBSTR is then a type
+error (https://github.com/danbri/factoidal/issues/1060). -/
+def substrIntArg? (v : EvalResult) : Option Int :=
+  match v.promoteLiteral with
+  | .num n => some n
+  | .term (.literal l) => integerDerivedValue? l
+  | _ => none
+
 /-- §17.4.3.3 SUBSTR applied to arguments that are already evaluated.
 Split out of the evaluator so that each evaluator arm stays a plain
 structural match — which is what lets Lean generate the equation
 lemmas the proofs in `ExprTheorems` rewrite with. -/
 def substrResult (v1 v2 : EvalResult) (vlen : Option EvalResult) : EvalResult :=
-  match v1.stringLiteralInfo?, v2.promoteLiteral with
-  | some (s, tg, dt), .num start =>
-      match vlen.map EvalResult.promoteLiteral with
+  match v1.stringLiteralInfo?, substrIntArg? v2 with
+  | some (s, tg, dt), some start =>
+      match vlen.map substrIntArg? with
       | none => erStringPreserve (substrSpec s start none) tg dt v1.direction?
-      | some (.num n) => erStringPreserve (substrSpec s start (some n)) tg dt v1.direction?
-      | some _ => .error
+      | some (some n) => erStringPreserve (substrSpec s start (some n)) tg dt v1.direction?
+      | some none => .error
   | _, _ => .error
 
 /-- §17.4.1.3 COALESCE: the first argument that is not a type error. -/
@@ -1756,32 +1769,63 @@ def coalesceResults : List EvalResult → EvalResult
   | .error :: rest => coalesceResults rest
   | v :: _ => v
 
-/-- §17.4.1.9 IN: `=` against each element in turn. Following the F*
-source, a comparison that ERRORS is treated as "no match" rather than
-poisoning the whole test, so `IN` answers `false` instead of erroring
-when nothing matches. -/
-def inResults (v : EvalResult) : List EvalResult → EvalResult
-  | [] => .bool false
-  | w :: rest =>
-      match valueCompare v w .eq with
-      | some true => .bool true
-      | _ => inResults v rest
+/-- §17.4.1.9 IN: "The IN operator is equivalent to the SPARQL expression:
+(lhs = expression1) || (lhs = expression2) || ...", and "Errors in
+comparisons cause the IN expression to raise an error if the RDF term being
+tested is not found elsewhere in the list of terms." So this is the §17.2
+three-valued `||` fold of `=`: `true` when one comparison is true, `false`
+when every comparison is false, an error otherwise (`2 IN (3, 1/0)` is an
+error, `2 IN (1/0, 2)` is true). Until
+https://github.com/danbri/factoidal/issues/1049 an erroring comparison
+counted as "no match", as in the F* source.
 
-/-- §17.4.3.1.4 argument compatibility for STRSTARTS, STRENDS,
-CONTAINS, STRBEFORE and STRAFTER (both arguments already known to be
-string literals, see `stringLiteralInfo?`). The table lists exactly three compatible
-pairs: two simple/`xsd:string` literals; two language-tagged literals
-with the SAME tag; a language-tagged first argument with a
-simple/`xsd:string` second. A simple first argument with a tagged
-second is NOT compatible (W3C `strbefore02`: `STRBEFORE("abc",
-"b"@cy)` is a type error). -/
+The fold is a tail-recursive loop (`go`): `sawError` records that a
+comparison before this point was an error. A later true comparison still
+gives `true`; at the end of the list the result is an error when `sawError`
+is set, else `false` (the gate of https://github.com/danbri/factoidal/issues/746:
+no C stack frame for each item of the IN list). -/
+def inResults (v : EvalResult) (ws : List EvalResult) : EvalResult :=
+  go false ws
+where
+  go (sawError : Bool) : List EvalResult → EvalResult
+    | [] => if sawError then .error else .bool false
+    | w :: rest =>
+        match valueCompare v w .eq with
+        | some true => .bool true
+        | some false => go sawError rest
+        | none => go true rest
+
+-- §17.4.1.9: `2 IN (3, 1/0)` is an error, `2 IN (1/0, 2)` is true,
+-- `2 IN (3, 1)` is false, `2 IN ()` is false.
+#guard inResults (.num 2) [.num 3, .error] == .error
+#guard inResults (.num 2) [.error, .num 2] == .bool true
+#guard inResults (.num 2) [.num 3, .num 1] == .bool false
+#guard inResults (.num 2) [] == .bool false
+#guard inResults (.num 2) [.num 2, .error] == .bool true
+
+/-- §17.4.3 argument compatibility for STRSTARTS, STRENDS, CONTAINS,
+STRBEFORE and STRAFTER (both arguments already known to be string
+literals, see `stringLiteralInfo?`). SPARQL 1.2 WD 2026-10-25 §17.4.3:
+"Two string literal arguments are argument compatible if: The arguments
+are literals with datatype xsd:string; The arguments are literals with
+datatype rdf:langString and have the same language tag; The arguments
+are literals with datatype rdf:dirLangString and have the same language
+tag and the same base direction; The first argument is a literal with
+datatype rdf:langString and the second argument is a literal with
+datatype xsd:string; The first argument is a literal with datatype
+rdf:dirLangString, and the second argument has datatype xsd:string."
+So two tagged arguments need the same tag AND the same base direction
+(no direction on both = two `rdf:langString`). A tagged second argument
+with an untagged first is NOT compatible (W3C `strbefore02`:
+`STRBEFORE("abc", "b"@cy)` is a type error). The base direction was
+ignored before (https://github.com/danbri/factoidal/issues/1042). -/
 def strBeforeAfterCompatible
-    (lang1 : Option String) (_dt1 : WfIri)
-    (lang2 : Option String) (_dt2 : WfIri) : Bool :=
+    (lang1 : Option String) (_dt1 : WfIri) (dir1 : Option TextDirection)
+    (lang2 : Option String) (_dt2 : WfIri) (dir2 : Option TextDirection) : Bool :=
   match lang1, lang2 with
   | none,    none    => true
   | some _,  none    => true
-  | some l1, some l2 => l1 == l2
+  | some l1, some l2 => l1 == l2 && dir1 == dir2
   | none,    some _  => false
 
 /-- §17.4.3.2 STRLEN over an evaluated argument: a string literal only. -/
@@ -1803,7 +1847,27 @@ arguments: two string literals that are argument-compatible
 def strTestResult (test : String → String → Bool) (v1 v2 : EvalResult) : EvalResult :=
   match v1.stringLiteralInfo?, v2.stringLiteralInfo? with
   | some (s, lang1, dt1), some (p, lang2, dt2) =>
-      if strBeforeAfterCompatible lang1 dt1 lang2 dt2 then .bool (test s p) else .error
+      if strBeforeAfterCompatible lang1 dt1 v1.direction? lang2 dt2 v2.direction?
+      then .bool (test s p) else .error
+  | _, _ => .error
+
+/-- §17.4.3.8 STRBEFORE / §17.4.3.9 STRAFTER over evaluated arguments.
+`part s arg` is the lexical form of the result when `arg` occurs in `s`
+(and when `arg` is empty: "this is considered to be a match").
+SPARQL 1.2 WD 2026-10-25 §17.4.3.8: "the function returns a literal of
+the same kind as the first argument arg1 (literal with datatype
+xsd:string, literal with the same language tag, or literal with the
+same language tag and base direction)". "If there is no such
+occurrence, an empty literal with datatype xsd:string is returned."
+The base direction of the first argument is kept
+(https://github.com/danbri/factoidal/issues/1042). -/
+def strPartResult (part : String → String → String) (v1 v2 : EvalResult) : EvalResult :=
+  match v1.stringLiteralInfo?, v2.stringLiteralInfo? with
+  | some (s, lang1, dt1), some (arg, lang2, dt2) =>
+      if !strBeforeAfterCompatible lang1 dt1 v1.direction? lang2 dt2 v2.direction? then .error
+      else if arg.length = 0 || strContains s arg then
+        erStringPreserve (part s arg) lang1 dt1 v1.direction?
+      else erString ""
   | _, _ => .error
 
 /-! ## §17.5 XSD constructor functions (casting)
@@ -1994,26 +2058,74 @@ def castDateTime (v : EvalResult) : EvalResult :=
       else .error
   | _ => .error
 
-/-- §17.5: dispatch `xsd:<targetType>(v)`. Other XSD datatype IRIs retain
-the historical typed-literal fallback; their constructor semantics remain a
-coverage gap. Language-tagged datatypes are never constructible this way. -/
+/-- A language-tagged literal (with or without a base direction). -/
+def isLangTaggedResult : EvalResult → Bool
+  | .term (.literal l) => l.val.langTag.isSome
+  | _ => false
+
+/-- The XSD datatype of a cast argument, for `Fn.Cast.castFrom`: the
+promoted kinds name their datatype, a literal its datatype IRI. `none` for
+an IRI, a blank node, a triple term, a language-tagged string, or a datatype
+that is not an XSD built-in. -/
+def EvalResult.castSource? : EvalResult → Option XSD.Builtin
+  | .num _ => some .integer
+  | .dec _ => some .decimal
+  | .dbl _ => some .double
+  | .bool _ => some .boolean
+  | .term (.literal l) => XSD.builtinOfIri? l.val.datatype.val
+  | _ => none
+
+/-- §17.5 constructor `xsd:T(v)` for an XSD target outside the seven of the
+§17.5 table: the XPath F&O 3.1 §19 cast (`Fn.Cast.castFrom`, the F&O 2007
+§17 casting table, which F&O 3.1 §19.1 keeps). A source of type xs:string
+(a simple literal) gives `T` when its lexical form, after the whitespace
+facet of `T`, is in the lexical space of `T` (F&O 3.1 §19.2); other sources
+follow the casting table and the facets of `T` (§19.1, §19.3). A value
+outside the value space of `T` (FORG0001), a pair the table does not allow
+(XPTY0004) and a datatype the value-space layer does not implement (QName,
+NOTATION, precisionDecimal, a name that is not an XSD built-in) are all a
+type error. The result is the canonical lexical form of `T`; it is never an
+ill-typed literal (https://github.com/danbri/factoidal/issues/1041). -/
+def castFandO (target : XSD.Builtin) (fullIri : WfIri) (v : EvalResult) : EvalResult :=
+  match v.castSource?, v.castValue? with
+  | some source, some value =>
+      match Fn.Cast.castFrom .xsd10 source target value with
+      | some result =>
+          .term (.literal (mkTypedLiteral (Fn.Cast.lexical .xsd10 target result) fullIri))
+      | none => .error
+  | _, _ => .error
+
+/-- §17.5: dispatch `xsd:<targetType>(v)`. The seven types of the §17.5
+table keep their own casts. Every other XSD datatype IRI is the F&O cast
+`castFandO` (a type error when the cast is not defined); before
+https://github.com/danbri/factoidal/issues/1041 it relabelled the argument.
+Language-tagged datatypes are never constructible this way, and no cast
+from a language-tagged literal is defined, for any target
+(https://github.com/danbri/factoidal/issues/1062). -/
 def evalXsdCast (v : EvalResult) (targetType : String) (fullIri : WfIri) : EvalResult :=
+  -- §17.5: "XPath defines only the casts from one XML Schema datatype to
+  -- another"; rdf:langString and rdf:dirLangString are not XML Schema
+  -- datatypes, so no cast from a language-tagged literal is defined:
+  -- `xsd:string("foo"@en)` and `xsd:byte("1"@en)` are errors
+  -- (https://github.com/danbri/factoidal/issues/1062).
+  if isLangTaggedResult v then .error else
   if targetType == "integer" then castNumeric .integer v else
   if targetType == "decimal" then castNumeric .decimal v else
   if targetType == "double" then castNumeric .double v else
   if targetType == "float" then castNumeric .float v else
   if targetType == "dateTime" then castDateTime v else
   if targetType == "boolean" then castBoolean v else
+  if targetType != "string" then
+    -- Before promotion: a promoted literal loses its derived datatype
+    -- (xsd:byte) and the float/double distinction.
+    match XSD.builtinOfIri? fullIri.val with
+    | some target => castFandO target fullIri v
+    | none => .error
+  else
   let v := v.promoteLiteral
   match castLexical v with
   | none => .error
-  | some lex0 =>
-      let lex := if targetType == "string" || targetType == "boolean" then lex0
-                 else stripLeadingPlus lex0
-      if targetType == "string" then castString v lex
-      else if fullIri != rdfLangString && fullIri != rdfDirLangString then
-        .term (.literal (mkTypedLiteral lex fullIri))
-      else .error
+  | some lex => castString v lex
 
 /-! ## §17.4.2.9 / §17.4.2.12 / §17.4.2.13 — fresh values, purely
 
@@ -2177,6 +2289,8 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
       | none       => .error
   | .coalesce es => coalesceResults (Expr.evalArgs env mu es)
   | .inList e1 es => inResults (Expr.evalIn env mu e1) (Expr.evalArgs env mu es)
+  -- §17.4.1.10 NOT IN is `(lhs != e1) && (lhs != e2) && ...`; by the §17.2
+  -- truth tables that is the negation of the IN fold, errors included.
   | .notInList e1 es =>
       match inResults (Expr.evalIn env mu e1) (Expr.evalArgs env mu es) with
       | .bool b => .bool (!b)
@@ -2196,27 +2310,9 @@ def Expr.evalIn (env : EvalEnv) (mu : Binding) : Expr → EvalResult
   | .contains e1 e2 =>
       strTestResult strContains (Expr.evalIn env mu e1) (Expr.evalIn env mu e2)
   | .strBefore e1 e2 =>
-      match (Expr.evalIn env mu e1).stringLiteralInfo?,
-            (Expr.evalIn env mu e2).stringLiteralInfo? with
-      | some (s, lang1, dt1), some (arg, lang2, dt2) =>
-          if !strBeforeAfterCompatible lang1 dt1 lang2 dt2 then .error
-          else if arg.length = 0 then erStringPreserve "" lang1 dt1
-          else
-            let result := strBeforeRaw s arg
-            if result.length = 0 && !strContains s arg then erString ""
-            else erStringPreserve result lang1 dt1
-      | _, _ => .error
+      strPartResult strBeforeRaw (Expr.evalIn env mu e1) (Expr.evalIn env mu e2)
   | .strAfter e1 e2 =>
-      match (Expr.evalIn env mu e1).stringLiteralInfo?,
-            (Expr.evalIn env mu e2).stringLiteralInfo? with
-      | some (s, lang1, dt1), some (arg, lang2, dt2) =>
-          if !strBeforeAfterCompatible lang1 dt1 lang2 dt2 then .error
-          else if arg.length = 0 then erStringPreserve s lang1 dt1
-          else
-            let result := strAfterRaw s arg
-            if result.length = 0 && !strContains s arg then erString ""
-            else erStringPreserve result lang1 dt1
-      | _, _ => .error
+      strPartResult strAfterRaw (Expr.evalIn env mu e1) (Expr.evalIn env mu e2)
   | .concat es => concatResults (Expr.evalArgs env mu es)
   | .encodeForUri e1 =>
       -- §17.4.3.11 ENCODE_FOR_URI takes a string literal and always

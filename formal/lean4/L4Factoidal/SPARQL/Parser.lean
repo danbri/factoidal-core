@@ -755,8 +755,13 @@ mutual
 /-- `ggp_has_var`: is `v` in scope anywhere in this pattern? -/
 def ggpHasVar (v : VarName) : QueryPattern → Bool
   | .bgp b            => b.any (fun tp => tpHasVar v tp)
-  | .join a b | .union a b | .minus a b | .lateral a b =>
+  | .join a b | .union a b | .lateral a b =>
       ggpHasVar v a || ggpHasVar v b
+  -- §18.2.1: "use of a variable in FILTER, or in MINUS does not cause a
+  -- variable to be in-scope outside of those forms"; for `P1 MINUS P2`
+  -- the in-scope variables are those of P1
+  -- (https://github.com/danbri/factoidal/issues/1069).
+  | .minus a _        => ggpHasVar v a
   | .leftJoin a b _   => ggpHasVar v a || ggpHasVar v b
   | .filter _ p       => ggpHasVar v p
   | .graph _ p        => ggpHasVar v p

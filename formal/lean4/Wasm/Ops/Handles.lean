@@ -74,6 +74,7 @@ import Wasm.Ops.Canon
 import Wasm.Ops.FromDataset
 import L4Factoidal.RDF.Sink
 import L4Factoidal.RDF.Format
+import L4Factoidal.RDF.FormatOfContent
 import L4Factoidal.RDF.TermJson
 import L4Factoidal.RDF.QuadsBinTheorems
 import L4Factoidal.RDF.Isomorphism

@@ -180,7 +180,8 @@ because both are served by the one entry which carries a region in either
 direction. -/
 def blobIoOpNames : List String :=
   [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit",
-    "datasetQuadsBin", "sbm11Query", "sbm11PackFiles" ] ++
+    "datasetQuadsBin", "sbm11Query", "sbm11PackFiles",
+    "storeManifestInspectBytes", "storeQueryPlanBytes", "storeOpenBytes" ] ++
   Ops.lwsBlobIoOpNames ++ Ops.webdavBlobIoOpNames
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
@@ -288,6 +289,9 @@ carries none, it still answers, with an empty region, so the diagnostic
 through `Wasm/Main.lean`'s `callseq`. -/
 def storeHandleOpNames : List String :=
   [ "storeOpen"
+  , "storeOpenBytes"
+  , "storeManifestInspectBytes"
+  , "storeQueryPlanBytes"
   , "storeHandleQuery"
   , "storeHandleList"
   , "storeHandleClose" ]
@@ -607,7 +611,8 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "packEndPass"      => withArgs (arityIO1 op Ops.packEndPass)
   | "packFinish"       => withArgs (arityIO1 op Ops.packFinish)
   | "packClose"        => withArgs (arityIO1 op Ops.packClose)
-  | "packFeed" | "packNext" =>
+  | "packFeed" | "packNext" | "storeOpenBytes" | "storeManifestInspectBytes"
+  | "storeQueryPlanBytes" =>
       pure (errJson s!"{op} carries a byte region; call it through l4_call_blob_io")
   | "storeOpen"        => withArgs (arityIO2 op (fun a b => Ops.storeOpen a b ByteArray.empty))
   | "storeHandleQuery" => withArgs (arityIO2 op Ops.storeHandleQuery)
@@ -907,6 +912,28 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .ok [a, b] => do pure (← Ops.storeOpen a b blob, ByteArray.empty)
       | .ok args   => pure (errJson s!"storeOpen expects 2 arguments, got {args.length}",
                             ByteArray.empty)
+  -- The byte forms of the manifest ops
+  -- (https://github.com/danbri/factoidal/issues/1039): the manifest is the IN
+  -- region (for `storeOpenBytes`, its first `manifestLen` bytes), decoded
+  -- through the manifest memo of `Wasm/Ops/StoreHandles.lean`.
+  | "storeOpenBytes" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => do pure (← Ops.storeOpenBytes a b blob, ByteArray.empty)
+      | .ok args   => pure (errJson s!"storeOpenBytes expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
+  | "storeQueryPlanBytes" =>
+      match decodeArgs argsJson with
+      | .error e => pure (errJson e, ByteArray.empty)
+      | .ok [a]  => do pure (← Ops.storeQueryPlanBytesIO a blob, ByteArray.empty)
+      | .ok args => pure (errJson s!"storeQueryPlanBytes expects 1 argument, got {args.length}",
+                          ByteArray.empty)
+  | "storeManifestInspectBytes" =>
+      match decodeArgs argsJson with
+      | .error e => pure (errJson e, ByteArray.empty)
+      | .ok []   => do pure (← Ops.storeManifestInspectBytesIO blob, ByteArray.empty)
+      | .ok args => pure (errJson s!"storeManifestInspectBytes expects 0 arguments, got {args.length}",
+                          ByteArray.empty)
   | _ =>
       if blobOpNames.contains op then
         pure (callBlobUncoded op argsJson blob, ByteArray.empty)

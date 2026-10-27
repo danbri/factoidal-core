@@ -25,7 +25,9 @@ default, or `EdDSA`), `tokenLifetime` (1..300, default 300), `leeway`,
 `rotateAfter`, `allowHttp`, `allowPrivateFetch`, `docTtl`, `cors` (absent or
 `true`: echo the request Origin; `false`; or a list of origins: issue 923),
 `tokenPath` and `jwksPath` (relative to the issuer, default `/token` and
-`/jwks`), `mountedOn` (in place of `issuer`: the root IRI of the LWS storage
+`/jwks`), `samlIdps` (an array of `{"entityId", "jwk"}`: the SAML 2.0
+identity providers whose signed assertions are accepted, each with its RSA
+public JWK; issue 926), `mountedOn` (in place of `issuer`: the root IRI of the LWS storage
 that shares this issuer; sets the issuer, the resource (or `audience`) and
 the two paths, `L4Factoidal/Authz/Mount.lean`), `now`, `entropy`
 (base64, at least 64 bytes: two private key candidates for a new key
@@ -110,6 +112,21 @@ def endpointPathOf? (j : Json) (k dflt : String) : Except String String :=
       else .error s!"authz: {k} must be a path such as /token (no query, fragment, empty or dot segment)"
   | some _ => .error s!"authz: {k} must be a string"
 
+/-- `samlIdps`: an array of `{"entityId": ID, "jwk": RSA public JWK}`, the
+SAML identity providers whose assertions are accepted (issue 926). -/
+def samlIdpsOf? (j : Json) : Except String (List L4Factoidal.SAML.Idp) :=
+  match j.field? "samlIdps" with
+  | none => .ok []
+  | some (.array items) => items.mapM fun it => do
+      let id ← (it.getString? "entityId").elim (.error "authz: a samlIdps entry needs \"entityId\"") .ok
+      if id.isEmpty then throw "authz: a samlIdps entityId is empty"
+      match (it.field? "jwk").bind L4Factoidal.JOSE.parsePublicJwk? with
+      | some (.rsa n e) =>
+          if n.size < 256 then throw s!"authz: the SAML key of {id} is shorter than 2048 bits"
+          pure { entityId := id, n, e }
+      | _ => throw s!"authz: the SAML key of {id} must be a public RSA JWK (no private members)"
+  | some _ => .error "authz: samlIdps must be an array"
+
 /-- Read the configuration and open the key store. -/
 def openAuthzOfJson (text : String) : Except String (OpenAuthz × Bool) := do
   let j ← match parseJson text with
@@ -137,13 +154,14 @@ def openAuthzOfJson (text : String) : Except String (OpenAuthz × Bool) := do
   let tokenPath ← endpointPathOf? j "tokenPath" "/token"
   let jwksPath ← endpointPathOf? j "jwksPath" "/jwks"
   if tokenPath == jwksPath then throw "authz: tokenPath and jwksPath must differ"
+  let samlIdps ← samlIdpsOf? j
   let cfg : AuthzConfig :=
     { issuer, resources, alg, tokenLifetime := lifetime
       leeway := (natOf? j "leeway").getD 60
       rotateAfter := (natOf? j "rotateAfter").getD 0
       fetch := { allowHttp := flag "allowHttp", allowPrivateFetch := flag "allowPrivateFetch"
                  docTtl := (natOf? j "docTtl").getD 60 }
-      cors, tokenPath, jwksPath }
+      cors, tokenPath, jwksPath, samlIdps }
   let cfg := match mounted? with
     | some b =>
         let base := if b.endsWith "/" then b else b ++ "/"

@@ -103,6 +103,38 @@ theorem havingSatisfies_active :
     simp only [Expr.existsFreeList, Bool.and_eq_true] at h
     simp only [havingSatisfies, substituteExistentials_existsFree _ _ _ c h.1, havingSatisfies_active rest h.2 g]
 
+theorem compareOnConditionsKeyed_active :
+    ∀ (os : List OrderCondition), os.all OrderCondition.existsFree = true → ∀ (i : Nat) (mu1 mu2 : Binding),
+      compareOnConditionsKeyed env a1 os i mu1 mu2 = compareOnConditionsKeyed env a2 os i mu1 mu2
+  | [], _, _, _, _ => rfl
+  | c :: rest, h, i, mu1, mu2 => by
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    have hc : compareOnCondition env a1 c mu1 mu2 = compareOnCondition env a2 c mu1 mu2 := by
+      cases c with
+      | asc e =>
+        simp only [OrderCondition.existsFree] at h
+        simp only [compareOnCondition, substituteExistentials_existsFree _ _ _ e h.1]
+      | desc e =>
+        simp only [OrderCondition.existsFree] at h
+        simp only [compareOnCondition, substituteExistentials_existsFree _ _ _ e h.1]
+    simp only [compareOnConditionsKeyed, hc, compareOnConditionsKeyed_active rest h.2 (i + 1) mu1 mu2]
+
+theorem orderKeys_active (g : SolutionGroup) (row : Binding) :
+    ∀ (os : List OrderCondition), os.all OrderCondition.existsFree = true → ∀ (i : Nat),
+      orderKeys env a1 g row os i = orderKeys env a2 g row os i
+  | [], _, _ => rfl
+  | c :: rest, h, i => by
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    cases c with
+    | asc e =>
+      simp only [OrderCondition.existsFree] at h
+      simp only [orderKeys, substituteExistentials_existsFree _ _ _ e h.1,
+        orderKeys_active g row rest h.2 (i + 1)]
+    | desc e =>
+      simp only [OrderCondition.existsFree] at h
+      simp only [orderKeys, substituteExistentials_existsFree _ _ _ e h.1,
+        orderKeys_active g row rest h.2 (i + 1)]
+
 theorem evalSelectItemGroup_active (it : SelectItem) (h : it.existsFree = true) (g : SolutionGroup)
     (row : Binding) : evalSelectItemGroup env a1 it g row = evalSelectItemGroup env a2 it g row := by
   cases it with
@@ -152,6 +184,16 @@ theorem selectPost_active (q : Query) (h : q.expressionsOutsidePatternExistsFree
     intro o e mu1 mu2
     subst e
     exact compareOnConditions_active env a1 a2 o (by simpa using ho) mu1 mu2
+  have hK : ∀ o, ob = some o → ∀ i mu1 mu2,
+      compareOnConditionsKeyed env a1 o i mu1 mu2 = compareOnConditionsKeyed env a2 o i mu1 mu2 := by
+    intro o e i mu1 mu2
+    subst e
+    exact compareOnConditionsKeyed_active env a1 a2 o (by simpa using ho) i mu1 mu2
+  have hk : ∀ o, ob = some o → ∀ g row i,
+      orderKeys env a1 g row o i = orderKeys env a2 g row o i := by
+    intro o e g row i
+    subst e
+    exact orderKeys_active env a1 a2 g row o (by simpa using ho) i
   cases form with
   | select sel =>
     have hH := havingSatisfies_active env a1 a2 hv hh
@@ -165,13 +207,17 @@ theorem selectPost_active (q : Query) (h : q.expressionsOutsidePatternExistsFree
       | none => simp only [selectPost, hH, hG, hR]
       | some o =>
         have hO' := hO o rfl
-        simp only [selectPost, hH, hG, hR, hO']
+        have hK' := hK o rfl
+        have hk' := hk o rfl
+        simp only [selectPost, hH, hG, hR, hO', hK', hk']
     | all =>
       cases ob with
       | none => simp only [selectPost, hH]
       | some o =>
         have hO' := hO o rfl
-        simp only [selectPost, hH, hO']
+        have hK' := hK o rfl
+        have hk' := hk o rfl
+        simp only [selectPost, hH, hO', hK', hk']
   | construct _ => rfl
   | ask => rfl
   | describe _ => rfl
@@ -322,6 +368,39 @@ theorem compareOnConditions_agree :
         simp only [compareOnCondition, substituteExistentials_existsFree _ _ _ e h.1, evalIn_agree hA]
     simp only [compareOnConditions, hc, compareOnConditions_agree rest h.2 mu1 mu2]
 
+theorem compareOnConditionsKeyed_agree :
+    ∀ (os : List OrderCondition), os.all OrderCondition.existsFree = true → ∀ (i : Nat) (mu1 mu2 : Binding),
+      compareOnConditionsKeyed env1 a1 os i mu1 mu2 = compareOnConditionsKeyed env2 a2 os i mu1 mu2
+  | [], _, _, _, _ => rfl
+  | c :: rest, h, i, mu1, mu2 => by
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    have hc : compareOnCondition env1 a1 c mu1 mu2 = compareOnCondition env2 a2 c mu1 mu2 := by
+      cases c with
+      | asc e =>
+        simp only [OrderCondition.existsFree] at h
+        simp only [compareOnCondition, substituteExistentials_existsFree _ _ _ e h.1, evalIn_agree hA]
+      | desc e =>
+        simp only [OrderCondition.existsFree] at h
+        simp only [compareOnCondition, substituteExistentials_existsFree _ _ _ e h.1, evalIn_agree hA]
+    simp only [compareOnConditionsKeyed, hc, evalIn_agree hA,
+      compareOnConditionsKeyed_agree rest h.2 (i + 1) mu1 mu2]
+
+theorem orderKeys_agree (g : SolutionGroup) (row : Binding) :
+    ∀ (os : List OrderCondition), os.all OrderCondition.existsFree = true → ∀ (i : Nat),
+      orderKeys env1 a1 g row os i = orderKeys env2 a2 g row os i
+  | [], _, _ => rfl
+  | c :: rest, h, i => by
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    cases c with
+    | asc e =>
+      simp only [OrderCondition.existsFree] at h
+      simp only [orderKeys, substituteExistentials_existsFree _ _ _ e h.1, rewriteAggregates_agree hA,
+        evalIn_agree hA, orderKeys_agree g row rest h.2 (i + 1)]
+    | desc e =>
+      simp only [OrderCondition.existsFree] at h
+      simp only [orderKeys, substituteExistentials_existsFree _ _ _ e h.1, rewriteAggregates_agree hA,
+        evalIn_agree hA, orderKeys_agree g row rest h.2 (i + 1)]
+
 theorem havingSatisfies_agree :
     ∀ (hv : List Expr), Expr.existsFreeList hv = true → ∀ (g : SolutionGroup),
       havingSatisfies env1 a1 hv g = havingSatisfies env2 a2 hv g
@@ -381,6 +460,16 @@ theorem selectPost_agree (q : Query) (h : q.expressionsOutsidePatternExistsFree 
     intro o e mu1 mu2
     subst e
     exact compareOnConditions_agree hA a1 a2 o (by simpa using ho) mu1 mu2
+  have hK : ∀ o, ob = some o → ∀ i mu1 mu2,
+      compareOnConditionsKeyed env1 a1 o i mu1 mu2 = compareOnConditionsKeyed env2 a2 o i mu1 mu2 := by
+    intro o e i mu1 mu2
+    subst e
+    exact compareOnConditionsKeyed_agree hA a1 a2 o (by simpa using ho) i mu1 mu2
+  have hk : ∀ o, ob = some o → ∀ g row i,
+      orderKeys env1 a1 g row o i = orderKeys env2 a2 g row o i := by
+    intro o e g row i
+    subst e
+    exact orderKeys_agree hA a1 a2 g row o (by simpa using ho) i
   have hW := groupWhere_agree hA gb
   cases form with
   | select sel =>
@@ -395,13 +484,17 @@ theorem selectPost_agree (q : Query) (h : q.expressionsOutsidePatternExistsFree 
       | none => simp only [selectPost, hH, hG, hR, hW]
       | some o =>
         have hO' := hO o rfl
-        simp only [selectPost, hH, hG, hR, hO', hW]
+        have hK' := hK o rfl
+        have hk' := hk o rfl
+        simp only [selectPost, hH, hG, hR, hO', hK', hk', hW]
     | all =>
       cases ob with
       | none => simp only [selectPost, hH, hW]
       | some o =>
         have hO' := hO o rfl
-        simp only [selectPost, hH, hO', hW]
+        have hK' := hK o rfl
+        have hk' := hk o rfl
+        simp only [selectPost, hH, hO', hK', hk', hW]
   | construct _ => rfl
   | ask => rfl
   | describe _ => rfl
@@ -551,7 +644,10 @@ theorem selectPost_dom (env : EvalEnv) (a : Graph) (items : List SelectItem) (dc
     split at hmu
     · split at hmu
       · exact finishSelectRows_mem _ _ _ _ _ _ _ mu hmu
-      · exact finishSelectRows_mem _ _ _ _ _ _ _ mu hmu
+      · split at hmu
+        · obtain ⟨nu, e⟩ := finishSelectRows_mem _ _ _ _ _ _ _ mu hmu
+          exact ⟨dropOrderKeys nu, e⟩
+        · exact finishSelectRows_mem _ _ _ _ _ _ _ mu hmu
     · split at hmu
       · exact finishSelectRows_mem _ _ _ _ _ _ _ mu hmu
       · exact finishSelectRows_mem _ _ _ _ _ _ _ mu hmu

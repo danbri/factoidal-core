@@ -375,7 +375,7 @@ to `authzFetched` and steps the same request again.
 | "All invalid or unauthorized requests MUST result in an error response as described in Section 5.2" | implemented | `errorResponse` |
 | lws10-authn-openid "Authentication Credential Validation" | implemented | `oidcKey`, theorem `oidc_valid_named_provider` |
 | lws10-authn-ssi-cid "Authentication Credential Validation" (https and DID subjects) | implemented | `cidKey`, `didKeyJwk?`, theorems `cid_valid_verified`, `cidKey_method`, `didKey_valid_verified` |
-| lws10-authn-saml "Authentication Credential Validation" | NOT implemented: no XML Signature verifier; expected failure | https://github.com/danbri/factoidal/issues/926 |
+| lws10-authn-saml "Authentication Credential Validation" ("validated as described in SAML Core, section 5") | implemented for configured identity providers (`samlIdps`); encrypted assertions refused (https://github.com/danbri/factoidal/issues/1073); record `docs/designissues/2026-10-27-saml-xml-signature.md` | `validateSaml`, `SAML.validate`, `XML.DSig.verifyEnveloped`, theorems `validateSaml_valid`, `SAML.validate_ok`, `XML.DSig.verifyEnveloped_ok` (https://github.com/danbri/factoidal/issues/926) |
 
 ## LWS editor's draft 2026-10-19 audit
 

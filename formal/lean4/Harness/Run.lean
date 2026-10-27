@@ -251,6 +251,11 @@ def expectedOfGraph (g : Graph) : Except String Expected :=
         | none           => .error "rs:ResultSet typed but no result-set subject"
   else .ok (.graph g)
 
+/-- The start of the error text of an `.n3` result file that is not
+Turtle-compatible. `runQueryEvaluation` turns such an error into
+`unsupported` (the runner cannot read N3-only syntax), not into a fail. -/
+def n3RefusalPrefix : String := "N3 result file is not Turtle-compatible, refused: "
+
 /-- Decode the expected file by extension (the `.srx/.srj/.tsv/.csv`
 and `.ttl` branches of `run_query_eval_test`, plus `.nt` and RDF/XML
 `.rdf`). -/
@@ -281,6 +286,16 @@ def parseExpected (rf text : String) (mode : Mode := .rdf11) : Except String Exp
     match parseNTriples text mode with
     | .error e => .error s!"N-Triples: {fmtParseError e}"
     | .ok g    => .ok (.graph g)
+  else if rf.endsWith ".n3" then
+    -- Notation3 (Jena `ARQ/ValueTesting`). Turtle is a subset of N3
+    -- with the same meaning, so a file that parses as Turtle is read
+    -- as Turtle. A file with N3-only syntax (formulas `{ }`, `=>`,
+    -- `@forAll`, `?x` variables, an undeclared `:` prefix) does not
+    -- parse; `runQueryEvaluation` reports it as unsupported, with
+    -- this text as the reason (see `n3RefusalPrefix`).
+    match parseTurtle text (some ("file://" ++ rf)) mode with
+    | .error e => .error s!"{n3RefusalPrefix}{fmtParseError e}"
+    | .ok g    => expectedOfGraph g
   else .error s!"unknown result format: {basename rf}"
 
 /-- The FAIL text for a SELECT mismatch: counts plus the expected rows
@@ -519,7 +534,9 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
   let some rtext ← readOpt rf
     | return .ofOutcome (.skip s!"result file missing: {rf}")
   match parseExpected rf rtext mode with
-  | .error e => return .ofOutcome (.fail s!"expected-result parse error: {e}")
+  | .error e =>
+      if e.startsWith n3RefusalPrefix then return .ofOutcome (.unsupported e)
+      else return .ofOutcome (.fail s!"expected-result parse error: {e}")
   | .ok expected =>
   -- EXISTS needs no hook: `evalSelect` / `evalAsk` / `evalConstruct`
   -- install the query's dataset in the environment themselves.
@@ -1022,7 +1039,10 @@ def runTest (mode : Mode) (assumedBase : Option String) (manifestDir : String)
                  triplesCompared := quadCount ds }
 
   /- ### SPARQL 1.1 Query (sparql11 suites) — see the section above. -/
-  | "QueryEvaluationTest" | "CSVResultFormatTest" => runQueryEvaluation tc mode
+  -- `mfx:TestQuery` (Jena, `http://jena.hpl.hp.com/2005/05/test-manifest-extra#`)
+  -- has the shape of `mf:QueryEvaluationTest` (`qt:query`, `qt:data`,
+  -- `mf:result`) and is run as one.
+  | "QueryEvaluationTest" | "CSVResultFormatTest" | "TestQuery" => runQueryEvaluation tc mode
   | "PositiveSyntaxTest11" | "PositiveSyntaxTest" => runSyntaxTest true tc mode
   | "NegativeSyntaxTest11" | "NegativeSyntaxTest" => runSyntaxTest false tc mode
 
