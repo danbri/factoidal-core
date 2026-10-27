@@ -224,17 +224,26 @@ theorem readers_dataset (extra : Extra) (fmt : RdfFormat) (inp : ReaderInput) :
     (readers extra fmt).dataset inp = parseDocument extra fmt inp.mode inp.base inp.text :=
   parseDocumentWithPrefixes_map_fst extra fmt inp.mode inp.base inp.text
 
-/-- The N-Quads text of a dataset handle, read by the N-Quads reader of the
-table. -/
+/-- The N-Quads text of a dataset handle, read by `parseNQuadsFast`: the line
+loop of the N-Quads reader of the table. The engine writes that text, and it
+has no RDF 1.2 version directive, so the table reader's second read with the
+directive lines blanked (`parseNQuadsFastDocument`,
+https://github.com/danbri/factoidal/issues/1055) is not needed here; on every
+text that `parseNQuadsFast` reads, the two agree
+(`readNQuadsText_eq_reader_of_ok`). -/
 def readNQuadsText (mode : Syntax.Mode) (text : String) : Except ParseError Dataset :=
-  (readers {} .nquads).dataset { text, mode }
+  parseNQuadsFast text mode
 
 /-- It is `parseNQuadsFast`. -/
 theorem readNQuadsText_eq (mode : Syntax.Mode) (text : String) :
-    readNQuadsText mode text = parseNQuadsFast text mode := by
-  unfold readNQuadsText
+    readNQuadsText mode text = parseNQuadsFast text mode := rfl
+
+/-- What `readNQuadsText` reads, the N-Quads reader of the table reads the same. -/
+theorem readNQuadsText_eq_reader_of_ok {mode : Syntax.Mode} {text : String} {ds : Dataset}
+    (h : readNQuadsText mode text = .ok ds) :
+    (readers {} .nquads).dataset { text, mode } = .ok ds := by
   rw [readers_dataset]
-  rfl
+  exact parseNQuadsFastDocument_of_ok h
 
 /-- A run of a reader as a dataset that carries its set proof (the subtype
 `RDF.CertifiedDataset` abbreviates). -/
@@ -255,11 +264,16 @@ theorem RdfReader.certified_val (r : RdfReader) (inp : ReaderInput) :
 /-- The N-Quads text of a dataset handle, read with its set proof. -/
 def readNQuadsCertified (mode : Syntax.Mode) (text : String) :
     Except ParseError { ds : Dataset // ds.IsSet } :=
-  (readers {} .nquads).certified { text, mode }
+  match h : readNQuadsText mode text with
+  | .ok ds => .ok ⟨ds, parseNQuadsFast_isSet text mode ds h⟩
+  | .error e => .error e
 
 theorem readNQuadsCertified_val (mode : Syntax.Mode) (text : String) :
-    (readNQuadsCertified mode text).map Subtype.val = readNQuadsText mode text :=
-  RdfReader.certified_val _ _
+    (readNQuadsCertified mode text).map Subtype.val = readNQuadsText mode text := by
+  unfold readNQuadsCertified
+  split
+  · next ds h => simp [h, Except.map]
+  · next e h => simp [h, Except.map]
 
 /-! ### One named reader for each syntax (the registry names them) -/
 
