@@ -112,6 +112,33 @@ WHERE { GROUP BY ?s { ?s :v ?x } [ ?N := COUNT(*) ?S := SUM(?x) ?m := MIN(?x) ?M
 #guard run "RULE { ?x :sib ?y } WHERE { ?x :parent/^:parent ?y FILTER(?x != ?y) }"
   ":a :parent :p . :b :parent :p ." == expect ":a :sib :b . :b :sib :a ."
 
+-- a sequence of three: right-nested by the parser, the same triples in order
+#guard run "RULE { ?x :ggp ?z } WHERE { ?x :parent/:parent/:parent ?z }"
+  ":a :parent :b . :b :parent :c . :c :parent :d ." == expect ":a :ggp :d ."
+#guard run "RULE { ?x :r ?z } WHERE { ?x (:p/^:q)/:p ?z }"
+  ":a :p :m . :n :q :m . :n :p :z ." == expect ":a :r :z ."
+-- a path of 5,000 steps: the sequence is a loop, not a frame per step
+#guard validSyntax (pfx ++ "RULE { ?x :r ?z } WHERE { ?x :p" ++
+  String.join (List.replicate 4999 "/:p") ++ " ?z }")
+
+/-! ## Nesting bound (`maxNesting`, 64 levels of brackets) -/
+
+def nestedColl (n : Nat) : String :=
+  "DATA { :s :p " ++ String.join (List.replicate n "(") ++ ":o" ++
+  String.join (List.replicate n ")") ++ " }"
+
+#guard maxNesting == 64
+-- the brace and 63 parentheses: 64 levels, accepted
+#guard validSyntax (pfx ++ nestedColl 63)
+-- 65 levels: refused before the grammar runs, with the reason
+#guard !validSyntax (pfx ++ nestedColl 64)
+#guard (match parseRuleSet (pfx ++ nestedColl 64) with
+        | .error e => e.msg == "brackets nest more than 64 levels"
+        | .ok _ => false)
+-- nested triple terms count too
+#guard !validSyntax (pfx ++ "DATA { :s :p " ++ String.join (List.replicate 70 "<<( :a :b ") ++
+  ":o" ++ String.join (List.replicate 70 " )>>") ++ " }")
+
 /-! ## Triple terms and reification in heads -/
 
 -- a head triple term with a variable makes the rule run-once

@@ -148,9 +148,12 @@ def Elt.makesRunOnce : Elt → Bool
   | .group _ _ _ => true
   | .neg _ inner => Elt.listMakesRunOnce inner
   | _ => false
+/-- The step to the next element is a tail call; the cycle with
+`makesRunOnce` is one frame per level of element nesting (at most two from
+the parser: `NOT` and `GROUP` only at the top of a body). -/
 def Elt.listMakesRunOnce : List Elt → Bool
   | [] => false
-  | e :: es => e.makesRunOnce || Elt.listMakesRunOnce es
+  | e :: es => if e.makesRunOnce then true else Elt.listMakesRunOnce es
 end
 
 /-- Draft "Run-once rule": an assignment element, a group element, a blank
@@ -308,16 +311,25 @@ def mergeLabel : DepLabel → DepLabel → DepLabel
 
 mutual
 /-- The triple patterns a rule element contributes to dependencies, with the
-label they need (draft "Dependency Graph Algorithm"). -/
-def Elt.depPatterns (inClosed : Bool) : Elt → List (STriple × DepLabel)
-  | .triple t => [(t, if inClosed then .closedDep else .openDep)]
-  | .neg evaldata inner => if evaldata then Elt.listDepPatterns true inner else []
-  | .group _ pat _ => Elt.listDepPatterns true pat
-  | _ => []
-def Elt.listDepPatterns (inClosed : Bool) : List Elt → List (STriple × DepLabel)
-  | [] => []
-  | e :: es => e.depPatterns inClosed ++ Elt.listDepPatterns inClosed es
+label they need (draft "Dependency Graph Algorithm"), appended to `acc`. -/
+def Elt.depPatterns (inClosed : Bool) (acc : Array (STriple × DepLabel)) :
+    Elt → Array (STriple × DepLabel)
+  | .triple t => acc.push (t, if inClosed then .closedDep else .openDep)
+  | .neg evaldata inner => if evaldata then Elt.listDepPatternsAcc true acc inner else acc
+  | .group _ pat _ => Elt.listDepPatternsAcc true acc pat
+  | _ => acc
+/-- The patterns of a sequence of elements, appended to `acc`. The step to
+the next element is a tail call; the cycle with `depPatterns` is one frame
+per level of element nesting (at most two from the parser). -/
+def Elt.listDepPatternsAcc (inClosed : Bool) (acc : Array (STriple × DepLabel)) :
+    List Elt → Array (STriple × DepLabel)
+  | [] => acc
+  | e :: es => Elt.listDepPatternsAcc inClosed (e.depPatterns inClosed acc) es
 end
+
+/-- The patterns of a sequence of elements, in order. -/
+def Elt.listDepPatterns (inClosed : Bool) (es : List Elt) : List (STriple × DepLabel) :=
+  (Elt.listDepPatternsAcc inClosed #[] es).toList
 
 /-- A dependency edge from rule `src` to rule `dst` (rule indices). -/
 structure DepEdge where

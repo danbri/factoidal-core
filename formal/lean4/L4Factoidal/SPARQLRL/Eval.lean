@@ -264,9 +264,13 @@ def evalBody (cx : Ctx) (r : Rule) (ge : IGraph) (sel : Nat → Src) : List Bind
   if r.evaldata then (evalSeq cx ge sel 0 [[]] r.body).1
   else (evalSeq cx cx.g0 (fun _ => ⟨cx.g0, none⟩) 0 [[]] r.body).1
 
-def idxOfStr (x : String) : List String → Nat
-  | [] => 0
-  | y :: ys => if x == y then 0 else idxOfStr x ys + 1
+/-- The position of `x` in the list (the length when absent); `i` is the
+position of the list's head. A tail call per element. -/
+def idxOfStrFrom (x : String) (i : Nat) : List String → Nat
+  | [] => i
+  | y :: ys => if x == y then i else idxOfStrFrom x (i + 1) ys
+
+def idxOfStr (x : String) (ys : List String) : Nat := idxOfStrFrom x 0 ys
 
 /-- Draft `evalRule`'s head step: each solution instantiates the head, with
 each template blank node replaced by a fresh blank node. `ctr` numbers the
@@ -283,10 +287,16 @@ def instHead (r : Rule) (pfx : String) (ctr : Nat) (sols : List Binding) : Array
 
 /-! ## Blank-node labels -/
 
-def termBnodeIds : Term → List String
-  | .bnode b => [b]
-  | .tripleTerm s _ o => (match s with | .bnode b => [b] | _ => []) ++ termBnodeIds o
-  | _ => []
+/-- The blank-node labels of a term, in order, after `acc` (reversed). A
+triple term's subject is not a triple term, so the walk follows the object
+chain with a tail call per level of triple-term nesting in the data. -/
+def termBnodeIdsAcc (acc : List String) : Term → List String
+  | .bnode b => (b :: acc).reverse
+  | .tripleTerm s _ o =>
+      termBnodeIdsAcc (match s with | .bnode b => b :: acc | _ => acc) o
+  | _ => acc.reverse
+
+def termBnodeIds (t : Term) : List String := termBnodeIdsAcc [] t
 
 /-- The digits after `srl` and before `x`, if the label has that form. -/
 def srlIndex? (s : String) : Option Nat :=

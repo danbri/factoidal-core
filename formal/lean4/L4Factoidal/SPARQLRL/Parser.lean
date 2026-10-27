@@ -197,16 +197,29 @@ inductive SPath where
   | seq (a b : SPath)
   deriving Repr, Inhabited
 
-/-- Expand a path between two terms into triple patterns, with fresh
-variables for the intermediate nodes of a sequence. -/
-def expandPath (ps : PSt) : SPath → STerm → STerm → List STriple × PSt
-  | .pred p, s, o => ([⟨s, p, o⟩], ps)
-  | .inv q, s, o => expandPath ps q o s
+/-- Expand a path between two terms into triple patterns, appended to `acc`,
+with fresh variables for the intermediate nodes of a sequence. The parser
+builds a sequence `p1/p2/.../pn` right-nested (`pPathSeqRest`), so the walk
+along it is a tail call; only the first part of a `.seq` takes a frame, and
+that part is a sequence only inside parentheses, so the depth is the
+parenthesis nesting of the path (at most `maxNesting`). -/
+def expandPathAcc (ps : PSt) (acc : Array STriple) : SPath → STerm → STerm → Array STriple × PSt
+  | .pred p, s, o => (acc.push ⟨s, p, o⟩, ps)
+  | .inv q, s, o => expandPathAcc ps acc q o s
   | .seq a b, s, o =>
       let (v, ps1) := ps.fresh .pattern
-      let (xs, ps2) := expandPath ps1 a s v
-      let (ys, ps3) := expandPath ps2 b v o
-      (xs ++ ys, ps3)
+      let (acc2, ps2) := expandPathAcc ps1 acc a s v
+      expandPathAcc ps2 acc2 b v o
+
+def expandPath (ps : PSt) (q : SPath) (s o : STerm) : List STriple × PSt :=
+  let (ts, ps1) := expandPathAcc ps #[] q s o
+  (ts.toList, ps1)
+
+/-- The sequence of the parts `p1 ... pn` (given reversed, `pn` first),
+right-nested: `p1/(p2/(.../pn))`. A tail call per part. -/
+def seqOfRev : SPath → List SPath → SPath
+  | acc, [] => acc
+  | acc, p :: ps => seqOfRev (.seq p acc) ps
 
 mutual
 /-- [89] Path / [90] PathSequence. -/
@@ -215,17 +228,19 @@ def pPath (fuel : Nat) (ps : PSt) (ts : TStream) : Except ParseError (SPath × T
   | 0 => pErr "recursion limit" ts
   | f + 1 => do
     let (a, ts1) ← pPathEltOrInverse f ps ts
-    pPathSeqRest f ps a ts1
+    pPathSeqRest f ps a [] ts1
 
-def pPathSeqRest (fuel : Nat) (ps : PSt) (acc : SPath) (ts : TStream) :
+/-- `( '/' PathEltOrInverse )*`. `last` is the latest part, `prev` the parts
+before it (reversed). A tail call per `/`. -/
+def pPathSeqRest (fuel : Nat) (ps : PSt) (last : SPath) (prev : List SPath) (ts : TStream) :
     Except ParseError (SPath × TStream) :=
   match fuel with
   | 0 => pErr "recursion limit" ts
   | f + 1 =>
     if peekTok ts == .slash then do
       let (b, ts1) ← pPathEltOrInverse f ps (advTok ts)
-      pPathSeqRest f ps (.seq acc b) ts1
-    else .ok (acc, ts)
+      pPathSeqRest f ps b (last :: prev) ts1
+    else .ok (seqOfRev last prev, ts)
 
 /-- [91] PathEltOrInverse. -/
 def pPathEltOrInverse (fuel : Nat) (ps : PSt) (ts : TStream) :
@@ -772,6 +787,40 @@ def lastPos : TStream → Nat
   | [pt] => pt.pos
   | _ :: rest => lastPos rest
 
+/-! ## Nesting bound
+
+The grammar's recursion is one frame (a few) per level of bracket nesting:
+`[ ]` property lists, `( )` collections and path groups, `<<( )>>` triple
+terms, `<< >>` reified triples, `{| |}` annotation blocks, `{ }` blocks.
+`parseRuleSet` refuses a document whose brackets nest deeper than
+`maxNesting` before the grammar runs, so every recursion over the parsed
+terms, paths and rule elements has a constant depth bound (the triple-term
+depth of an `STerm` is at most `maxNesting + 1`). The count is over all
+bracket tokens, including those of expressions, so it can refuse, never
+accept, more than the grammar's own nesting. -/
+
+/-- The deepest bracket nesting a SPARQL-RL document may have. -/
+def maxNesting : Nat := 64
+
+def opensLevel : Token → Bool
+  | .lbracket | .lparen | .lbrace | .ttOpen | .ttBareOpen | .annotOpen => true
+  | _ => false
+
+def closesLevel : Token → Bool
+  | .rbracket | .rparen | .rbrace | .ttClose | .ttBareClose | .annotClose => true
+  | _ => false
+
+/-- The position of the first token that opens a level deeper than `limit`,
+starting at depth `d`; `none` when the nesting stays at most `limit`. A tail
+call per token. -/
+def nestingExcess (limit : Nat) (d : Nat) : TStream → Option Nat
+  | [] => none
+  | pt :: rest =>
+      if opensLevel pt.tok then
+        if d + 1 > limit then some pt.pos else nestingExcess limit (d + 1) rest
+      else if closesLevel pt.tok then nestingExcess limit (d - 1) rest
+      else nestingExcess limit d rest
+
 /-- Parse a SPARQL-RL document. `base` is the base IRI from outside the
 document (the retrieval URL), if any. -/
 def parseRuleSet (text : String) (base : Option String := none) :
@@ -781,7 +830,9 @@ def parseRuleSet (text : String) (base : Option String := none) :
   | some e => .error e
   | none =>
     if lastPos toks < text.length then .error ⟨"unexpected character", lastPos toks⟩
-    else
+    else match nestingExcess maxNesting 0 toks with
+    | some pos => .error ⟨s!"brackets nest more than {maxNesting} levels", pos⟩
+    | none =>
       let toks := resolveBases base toks
       pRuleSet (8 * toks.length + 64) {} {} toks
 
