@@ -34,6 +34,10 @@
 # each packed generation (data files, `.merkle` sidecars, manifest) with the
 # in-memory packer `PackBytes.packText` of its input, byte for byte (the packer
 # of the wasm op `sbm11PackFiles`, issue 1009 stage 2).
+# SBM11_NPMPACK: when set, `factoidal pack --layout sbm11` (the npm command,
+# npm/factoidal/bin/factoidal.mjs, over the package wasm) packs each input
+# again, and every file must equal the file of `l4sbm11-pack` (`diff -r`;
+# issue 1009, the SBM11 store in npm). NODE: the node to run (default node).
 # SBM11_BIN: the `l4sbm11` to run (default: the one this tree builds), to
 # compare the census of two builds. SBM11_SIP: when set, the `--sip` mode
 # (auto, the CLI default; always: candidates into every join scan the shape
@@ -108,6 +112,7 @@ ids_exec=0; ids_match=0; ref_exec=0; ref_match=0; sip_tests=0; agg_tests=0
 mg_q=0; mg_eq=0; mg_diff=0; mg_ref=0; mg_fail=0
 ps_n=0; ps_same=0; ps_diff=0
 pf_n=0; pf_same=0; pf_diff=0
+np_n=0; np_same=0; np_diff=0
 host_same=0; host_diff=0
 MIS="$RUN/mismatches.txt"; : >"$MIS"
 n=0
@@ -192,6 +197,15 @@ for t in "${order[@]}"; do
     else ps_diff=$((ps_diff + 1))
       printf '%s (packspec-check): exit %s: %s\n' "${t##*/}" "$prc" "$(tail -1 "$st/ps")" >>"$MIS"; fi
   fi
+  if [ -n "${SBM11_NPMPACK:-}" ]; then
+    nrc=0
+    timeout 120 "${NODE:-node}" "$ROOT/npm/factoidal/bin/factoidal.mjs" pack "$input" "$st/npmgen" \
+      --layout sbm11 --syntax nquads --quiet >"$st/np" 2>&1 || nrc=$?
+    np_n=$((np_n + 1))
+    if [ "$nrc" -eq 0 ] && diff -r "$st/gen" "$st/npmgen" >>"$st/np" 2>&1; then np_same=$((np_same + 1))
+    else np_diff=$((np_diff + 1))
+      printf '%s (npm pack --layout sbm11): exit %s: %s\n' "${t##*/}" "$nrc" "$(tail -1 "$st/np")" >>"$MIS"; fi
+  fi
   if [ -n "${SBM11_PACKFILES:-}" ]; then
     frc=0
     timeout 120 "$S11" packfiles-check "$input" "$st" >"$st/pf" 2>&1 || frc=$?
@@ -228,6 +242,9 @@ if [ -n "${SBM11_PACKSPEC:-}" ]; then
 fi
 if [ -n "${SBM11_PACKFILES:-}" ]; then
   echo "  packfiles-check (issue 1009 stage 2): $pf_n generations, $pf_same with every file byte-identical to PackBytes.packText, $pf_diff differ"
+fi
+if [ -n "${SBM11_NPMPACK:-}" ]; then
+  echo "  npm pack --layout sbm11 (issue 1009): $np_n generations, $np_same with every file byte-identical to l4sbm11-pack, $np_diff differ"
 fi
 if [ -n "${SBM11_HOST:-}" ]; then
   echo "  host session (wasm ops over host reads, issue 1009 KR1): $host_same of the $executed executed tests gave the bytes and path of l4sbm11 query, $host_diff differ"

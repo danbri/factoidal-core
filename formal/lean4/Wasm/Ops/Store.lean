@@ -510,9 +510,15 @@ def supplied? (sources : List (String × ArtifactSource)) (key : String) :
 the bytes are where the descriptor says they are, their length is the declared
 extent, and their SHA-256 is the declared digest. Blocks and index sidecars go
 through this one function, so a sidecar is trusted on exactly the terms a
-block is. -/
+block is.
+
+`hasher` computes the digest. It is the pure `Crypto.sha256` unless the caller
+passes another: `storeOpen` passes HACL* (`storeOpenHasher`, issue 1039), and
+every `#guard` keeps the pure one, which is the only one the interpreter can
+evaluate. -/
 def admitRef (op : String) (ref : ArtifactRef) (sources : List (String × ArtifactSource))
-    (blob : ByteArray) : Except String ByteArray := do
+    (blob : ByteArray) (hasher : L4Factoidal.Storage.BlockMerkle.Hasher := L4Factoidal.Storage.BlockMerkle.pureHasher) :
+    Except String ByteArray := do
   let key := ref.key.value
   let source ← match supplied? sources key with
     | none => throw s!"{op}: no bytes were supplied for artifact '{key}'"
@@ -527,14 +533,14 @@ def admitRef (op : String) (ref : ArtifactRef) (sources : List (String × Artifa
   let bytes ← sourceBytes op key source blob
   if bytes.size != ref.bytes then
     throw s!"{op}: artifact '{key}' is {bytes.size} bytes, the manifest declares {ref.bytes}"
-  if !L4Factoidal.Storage.BlockArtifact.verify ref.sha256 bytes then
+  if !L4Factoidal.Storage.BlockArtifact.verifyWith hasher ref.sha256 bytes then
     throw s!"{op}: artifact '{key}' does not match the SHA-256 the manifest commits"
   pure bytes
 
 /-- Admit one supplied BLOCK against its manifest entry. -/
 def admitArtifact (op : String) (entry : Entry) (sources : List (String × ArtifactSource))
-    (blob : ByteArray) : Except String ByteArray :=
-  admitRef op entry.artifact sources blob
+    (blob : ByteArray) (hasher : L4Factoidal.Storage.BlockMerkle.Hasher := L4Factoidal.Storage.BlockMerkle.pureHasher) : Except String ByteArray :=
+  admitRef op entry.artifact sources blob (hasher := hasher)
 
 def ibk3TriplesOf (op : String) (entry : Entry) (bytes : ByteArray) :
     Except String (List Triple) := do
@@ -576,10 +582,10 @@ abbrev BlobBytes := List (List UInt8 × ByteArray)
 on: the declared byte extent and the manifest-committed SHA-256, through
 `admitRef`. A blob the host did not supply is refused by name. -/
 def admitBlobs (op : String) (refs : List ArtifactRef)
-    (sources : List (String × ArtifactSource)) (blob : ByteArray) :
-    Except String BlobBytes :=
+    (sources : List (String × ArtifactSource)) (blob : ByteArray)
+    (hasher : L4Factoidal.Storage.BlockMerkle.Hasher := L4Factoidal.Storage.BlockMerkle.pureHasher) : Except String BlobBytes :=
   refs.mapM fun ref => do
-    let bytes ← admitRef op ref sources blob
+    let bytes ← admitRef op ref sources blob (hasher := hasher)
     pure (ref.sha256.toList, bytes)
 
 def blobLookup (blobs : BlobBytes) : ByteArray → Option ByteArray :=

@@ -248,6 +248,7 @@ def handleOpNames : List String :=
   , "datasetClose"
   , "datasetClone"
   , "datasetCanonicalize"
+  , "datasetCanonicalHash"
   , "datasetClosure"
   , "datasetShaclValidate"
   , "datasetQueryRaw"
@@ -617,6 +618,8 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
       | [a, b, c] => Ops.sbm11Query a b c
       | args => pure (errJson s!"sbm11Query expects 2 or 3 arguments, got {args.length}"))
   | "sbm11Close"       => withArgs (arityIO1 op Ops.sbm11Close)
+  | "sbm11Verify"      => withArgs (arityIO1 op Ops.sbm11Verify)
+  | "storeLayout"      => withArgs (arityIO1 op Ops.storeLayout)
   | "sbm11PackFiles"   =>
       pure (errJson s!"{op} carries a byte region; call it through l4_call_blob_io")
   -- The dataset-handle ops of the full engine (`Wasm/Ops/DatasetFull.lean`).
@@ -898,21 +901,21 @@ private def argsForCode (argsJson : String) : List String :=
 
 /-- The pure entry (`l4_call`). -/
 def call (op : String) (argsJson : String) : String :=
-  attachCode op (argsForCode argsJson) (callUncoded op argsJson)
+  attachCodeLazy op (fun _ => argsForCode argsJson) (callUncoded op argsJson)
 
 /-- The byte-region entry (`l4_call_blob`). -/
 def callBlob (op : String) (argsJson : String) (blob : ByteArray) : String :=
-  attachCode op (argsForCode argsJson) (callBlobUncoded op argsJson blob)
+  attachCodeLazy op (fun _ => argsForCode argsJson) (callBlobUncoded op argsJson blob)
 
 /-- The IO entry (`l4_call_io`, the wire entry and the native CLI). -/
 def callIO (op : String) (argsJson : String) : IO String := do
-  pure (attachCode op (argsForCode argsJson) (← callIOUncoded op argsJson))
+  pure (attachCodeLazy op (fun _ => argsForCode argsJson) (← callIOUncoded op argsJson))
 
 /-- The byte-region-in-and-out entry (`l4_call_blob_io`). -/
 def callBlobIO (op : String) (argsJson : String) (blob : ByteArray) :
     IO (String × ByteArray) := do
   let (envelope, out) ← callBlobIOUncoded op argsJson blob
-  pure (attachCode op (argsForCode argsJson) envelope, out)
+  pure (attachCodeLazy op (fun _ => argsForCode argsJson) envelope, out)
 
 /-- Decode a `callseq` document — a JSON array of `[op, [arg, …]]`
 pairs — into each op paired with its args RE-SERIALISED as the JSON
