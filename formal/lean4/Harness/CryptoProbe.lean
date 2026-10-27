@@ -52,7 +52,9 @@ Sections, each one score line:
      recover the plaintext; a flipped ciphertext bit, a flipped `enc`
      bit and a changed `info` must all fail.
 
-  7. `aes-gcm` — NOT RUN, and reported as such. See below.
+  7. `aes-gcm` — AES-128-GCM and AES-256-GCM through HACL* Vale
+     (`Crypto/AesGcmNative.lean`, https://github.com/danbri/factoidal/issues/677).
+     Runs on x86-64 with the CPU features; NOT RUN elsewhere. See below.
 
   8. `lws-snapshot-seal` — the sealed LWS snapshot of
      `L4Factoidal/LWS/SnapshotSeal.lean`
@@ -113,26 +115,26 @@ and decompresses with (https://github.com/danbri/factoidal/issues/916).
      RFC 8037 Appendix A.6 (X25519 `dh?`); and the length and range
      refusals.
 
-## Section 7: the AES-GCM gap
+## Section 7: AES-GCM
 
-OMEMO 0.8 uses AES-128-GCM, so AES-GCM was in scope for this work and is
-NOT implemented. The pinned HACL* release
-(cryspen/hacl-packages 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2) has no
-PORTABLE AES-GCM: its only AES-GCM is reached through
-`EverCrypt_AEAD.c`, whose every AES-GCM branch sits inside
-`#if HACL_CAN_COMPILE_VALE` and calls Vale x86-64 assembly the C
-distribution does not ship, so those entry points return
-`EverCrypt_Error_UnsupportedAlgorithm`; `Hacl_AES128.h` declares symbols
-the release never defines. Taking the AES-NI variant would fail the
-crypto policy's wasm compatibility gate, so it was refused rather than
-smuggled in.
+Native AES-GCM is HACL* Vale assembly on x86-64 only. Owner, 2026-10-27,
+verbatim: "Ok for now: “My proposal is HACL* Vale on x86-64 and a refusal
+on other CPU”". Tracking: https://github.com/danbri/factoidal/issues/677.
 
-Per the shortfall rule this section is an EXPECTED FAILURE, not a
-silence: it counts the vectors of `aes_gcm_test.json` that the tree
-CANNOT run, prints the issue that tracks the gap, and reports them in a
-`notRun` bucket that is never added to `pass`. If a future landing adds
-a portable AES-GCM, this section must start running those vectors and
-the count must move.
+When `AesGcmNative.available` is true, the section runs the McGrew–Viega
+GCM test cases with a 96-bit IV (1–4 for AES-128, 13–16 for AES-256) and
+every Wycheproof `aes_gcm_test.json` vector with a 96-bit IV, a 128- or
+256-bit key and a 128-bit tag. A `valid` vector is three checks: encrypt
+gives `ct || tag`, decrypt gives `msg`, and decrypt with one flipped tag bit
+is refused. An `invalid` vector is one check: decrypt is refused. The
+vectors with 192-bit keys (EverCrypt has no AES-192-GCM) and with IVs other
+than 96 bits (this binding takes 12-byte IVs only) are counted NOT RUN with
+the reason. Four length and shape checks run on every target.
+
+When `available` is false (another CPU, the wasm module, or an x86-64 CPU
+without AES-NI, PCLMULQDQ, AVX, SSE or MOVBE), every vector is counted in
+the `notRun` bucket, never in `pass`, and the issue is printed. This is the
+expected-failure form of the shortfall rule for those targets.
 
 Usage:
   lake exe l4crypto-probe                 run every section
@@ -151,13 +153,14 @@ import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.Crypto.RsaOaep
 import L4Factoidal.Crypto.RsaOaepTests
 import L4Factoidal.Crypto.ConcatKdf
+import L4Factoidal.Crypto.AesGcmNative
 
 namespace CryptoProbe
 
 open L4Factoidal.JSON
 open L4Factoidal.Crypto
 
-/-- The GitHub issue tracking the AES-GCM gap of section 7. -/
+/-- The GitHub issue of section 7: native AES-GCM is x86-64 only. -/
 def aesGcmIssue : String := "https://github.com/danbri/factoidal/issues/677"
 
 /-! ## Score plumbing (the `Harness/JoseProbe.lean` shape, plus `notRun`)
@@ -719,9 +722,7 @@ def runHpke : IO Tally := do
      are refused.
 
 The three P-256 sections check the externs the authorization server signs
-and decompresses with (https://github.com/danbri/factoidal/issues/916).
-
-## Section 7: the AES-GCM gap -/
+and decompresses with (https://github.com/danbri/factoidal/issues/916). -/
 
 /-! ## Section 8: the sealed LWS snapshot (issue 921) -/
 
@@ -799,32 +800,143 @@ def runLwsSeal : IO Tally := do
          | .ok _ => false)
   t.get
 
+/-! ## Section 7: AES-GCM (issue 677)
+
+Native AES-GCM is HACL* Vale on x86-64 only (owner, 2026-10-27, verbatim:
+"Ok for now: “My proposal is HACL* Vale on x86-64 and a refusal on other
+CPU”"). When `AesGcmNative.available` is true this section RUNS the vectors;
+when it is false (another CPU, or an x86-64 CPU without AES-NI, PCLMULQDQ,
+AVX, SSE or MOVBE) every vector is counted NOT RUN with the issue named.
+
+Pinned vectors: McGrew and Viega, "The Galois/Counter Mode of Operation
+(GCM)", revised 2005, Appendix B, the test cases with a 96-bit IV: 1–4
+(AES-128) and 13–16 (AES-256). Cases 5, 6, 11, 12, 17 and 18 use 64-bit and
+480-bit IVs and are not transcribed (no 96-bit IV, which is the only IV
+length this binding takes). Each transcription was checked against
+OpenSSL through `node:crypto` when it was added. -/
+
+open L4Factoidal.Crypto.AesGcmNative in
+/-- (case, key, iv, aad, plaintext, ciphertext, tag), all hex. -/
+def mvVectors : List (Nat × String × String × String × String × String × String) :=
+  let p64 := "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72" ++
+             "1c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255"
+  let p60 := "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72" ++
+             "1c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39"
+  let a := "feedfacedeadbeeffeedfacedeadbeefabaddad2"
+  let k := "feffe9928665731c6d6a8f9467308308"
+  let iv := "cafebabefacedbaddecaf888"
+  let z12 := "000000000000000000000000"
+  let z16 := "00000000000000000000000000000000"
+  let c3 := "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e" ++
+            "21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091473f5985"
+  let c4 := "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e" ++
+            "21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091"
+  let c15 := "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa" ++
+             "8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad"
+  let c16 := "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa" ++
+             "8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662"
+  [ (1, z16, z12, "", "", "", "58e2fccefa7e3061367f1d57a4e7455a")
+  , (2, z16, z12, "", z16, "0388dace60b6a392f328c2b971b2fe78", "ab6e47d42cec13bdf53a67b21257bddf")
+  , (3, k, iv, "", p64, c3, "4d5c2af327cd64a62cf35abd2ba6fab4")
+  , (4, k, iv, a, p60, c4, "5bc94fbc3221a5db94fae95ae7121a47")
+  , (13, z16 ++ z16, z12, "", "", "", "530f8afbc74536b9a963b4f1c4cb738b")
+  , (14, z16 ++ z16, z12, "", z16, "cea7403d4d606b6e074ec5d3baf39d18", "d0d1c8a799996bf0265b98b5d48ab919")
+  , (15, k ++ k, iv, "", p64, c15, "b094dac5d93471bdec1a502270e3cc6c")
+  , (16, k ++ k, iv, a, p60, c16, "76fc6ece0f4e1768cddf8853bb2d551b") ]
+
+open L4Factoidal.Crypto.AesGcmNative in
+/-- One authenticated vector: encrypt must give `ct || tag`, decrypt must
+give `msg`, and decrypt with one flipped tag bit must be refused. Three
+checks. -/
+def aesGcmValid (t : IO.Ref Tally) (name : String) (key iv aad msg ct tag : ByteArray) :
+    IO Unit := do
+  let ctTag := ct ++ tag
+  check t s!"{name} encrypt" (aesGcmEncrypt? key iv aad msg == some ctTag)
+    s!"got {(aesGcmEncrypt? key iv aad msg).map hexOf}"
+  check t s!"{name} decrypt" (aesGcmDecrypt? key iv aad ctTag == some msg)
+  check t s!"{name} flipped tag bit refused"
+    ((aesGcmDecrypt? key iv aad (flipBit ctTag ct.size)).isNone)
+
+open L4Factoidal.Crypto.AesGcmNative in
 def runAesGcm (path : System.FilePath) : IO Tally := do
   let t ← IO.mkRef ({} : Tally)
   IO.println "-- aes-gcm"
-  IO.println "  [NOT RUN] AES-128-GCM and AES-256-GCM are NOT IMPLEMENTED."
-  IO.println "  The pinned HACL* release (cryspen/hacl-packages"
-  IO.println "  05c3d8fb321ed65e3db3a6a8b853019e86fb40a2) ships no PORTABLE AES-GCM:"
-  IO.println "  every AES-GCM branch of EverCrypt_AEAD.c is behind"
-  IO.println "  #if HACL_CAN_COMPILE_VALE and calls Vale x86-64 assembly the C"
-  IO.println "  distribution does not include, so those entry points answer"
-  IO.println "  EverCrypt_Error_UnsupportedAlgorithm. Hacl_AES128.h declares symbols"
-  IO.println "  the release never defines. The AES-NI variant was refused because it"
-  IO.println "  does not build for wasm32 or for arm64 without intrinsics, which is"
-  IO.println "  the crypto policy's compatibility gate."
-  IO.println s!"  Tracking issue: {aesGcmIssue}"
-  IO.println "  OMEMO 0.8 needs AES-128-GCM, so this gap blocks OMEMO 0.8 and nothing"
-  IO.println "  else: MLS ciphersuite 3 and HPKE use ChaCha20-Poly1305, which IS here."
+  -- Length refusals and the instance shape: these hold on every target.
+  let k16 := hx "feffe9928665731c6d6a8f9467308308"
+  let iv12 := hx "cafebabefacedbaddecaf888"
+  check t "24-byte key (AES-192) refused"
+    ((aesGcmEncrypt? (k16 ++ hx "0001020304050607") iv12 .empty .empty).isNone)
+  check t "8-byte IV refused" ((aesGcmEncrypt? k16 (hx "cafebabefacedbad") .empty .empty).isNone)
+  check t "ciphertext shorter than the tag refused"
+    ((aesGcmDecrypt? k16 iv12 .empty (hx "00112233")).isNone)
+  check t "nativeOps.available = available" (nativeOps.available == available)
+  if !available then
+    IO.println "  [NOT RUN] AES-128-GCM and AES-256-GCM are NOT AVAILABLE in this executable."
+    IO.println "  Native AES-GCM is HACL* Vale assembly for x86-64 (Linux, macOS) only,"
+    IO.println "  and it needs a CPU with AES-NI, PCLMULQDQ, AVX, SSE and MOVBE."
+    IO.println "  Owner, 2026-10-27: \"HACL* Vale on x86-64 and a refusal on other CPU\"."
+    IO.println s!"  Tracking issue: {aesGcmIssue}"
+    check t "the refusal names the issue"
+      (match nativeOps.encrypt k16 iv12 .empty .empty with
+       | .error e => (e.splitOn aesGcmIssue).length > 1
+       | .ok _ => false)
+    t.modify fun s => { s with notRun := s.notRun + mvVectors.length }
+    match ← readJsonFile path with
+    | none =>
+        IO.println s!"  [NOT RUN] {path} is not present; the corpus size is unknown."
+        t.modify fun s => { s with notRun := s.notRun + 1 }
+    | some j =>
+        let mut n := 0
+        for g in (j.getArray? "testGroups").getD [] do
+          n := n + ((g.getArray? "tests").getD []).length
+        IO.println s!"  [NOT RUN] {mvVectors.length} McGrew-Viega vectors and {n} vectors of aes_gcm_test.json."
+        t.modify fun s => { s with notRun := s.notRun + n }
+    return (← t.get)
+  IO.println "  HACL* Vale AES-GCM is available (x86-64, CPU features present)."
+  -- McGrew–Viega, 96-bit IV cases.
+  for (n, k, iv, a, p, c, tg) in mvVectors do
+    aesGcmValid t s!"McGrew-Viega test case {n}" (hx k) (hx iv) (hx a) (hx p) (hx c) (hx tg)
+  -- Wycheproof.
   match ← readJsonFile path with
   | none =>
-      IO.println s!"  [NOT RUN] {path} is not present; the corpus size is unknown."
-      t.modify fun s => { s with notRun := s.notRun + 1 }
+      check t s!"{path} is present" false "the Wycheproof corpus is missing"
   | some j =>
-      let mut n := 0
+      let mut skip192 := 0
+      let mut skipIv := 0
+      let mut skipTag := 0
       for g in (j.getArray? "testGroups").getD [] do
-        n := n + ((g.getArray? "tests").getD []).length
-      IO.println s!"  [NOT RUN] {n} vectors of aes_gcm_test.json cannot be run."
-      t.modify fun s => { s with notRun := s.notRun + n }
+        let ks := (natField? g "keySize").getD 0
+        let is := (natField? g "ivSize").getD 0
+        let ts := (natField? g "tagSize").getD 0
+        let tests := (g.getArray? "tests").getD []
+        if ts != 128 then
+          skipTag := skipTag + tests.length
+        else if is != 96 then
+          skipIv := skipIv + tests.length
+        else if ks != 128 && ks != 256 then
+          skip192 := skip192 + tests.length
+        else
+          for tc in tests do
+            let name := s!"wycheproof aes-gcm tcId {tcIdOf tc}"
+            let get := fun (f : String) => (tc.getString? f).bind hexToBytes?
+            match get "key", get "iv", get "aad", get "msg", get "ct", get "tag",
+                (tc.getString? "result").bind expectOf? with
+            | some key, some iv, some aad, some msg, some ct, some tag, some e =>
+                match e with
+                | .valid => aesGcmValid t name key iv aad msg ct tag
+                | .invalid =>
+                    check t s!"{name} (invalid) refused"
+                      ((aesGcmDecrypt? key iv aad (ct ++ tag)).isNone)
+                | .acceptable =>
+                    t.modify fun s => { s with acceptable := s.acceptable + 1 }
+            | _, _, _, _, _, _, _ => check t name false "malformed vector"
+      if skip192 > 0 then
+        IO.println s!"  [NOT RUN] {skip192} vectors with 192-bit keys: EverCrypt has no AES-192-GCM ({aesGcmIssue})."
+      if skipIv > 0 then
+        IO.println s!"  [NOT RUN] {skipIv} vectors with an IV other than 96 bits: this binding takes 12-byte IVs only (XML Encryption 1.1, JWE)."
+      if skipTag > 0 then
+        IO.println s!"  [NOT RUN] {skipTag} vectors with a tag other than 128 bits."
+      t.modify fun s => { s with notRun := s.notRun + skip192 + skipIv + skipTag }
   t.get
 
 /-! ## P-256: signing, public keys, point decompression -/

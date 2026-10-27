@@ -198,6 +198,7 @@ cannot reach an extern).
 | `Crypto/RsaNative.lean` | the RSA public operation (RS256) | `ffi/hacl_rsa.c` | `l4jose-probe` |
 | `Crypto/RsaOaep.lean` | the RSA private operation (constant time) and RSAES-OAEP padding in pure Lean | `ffi/hacl_rsa.c` | `l4crypto-probe` section `rsa-oaep`, `tests/crypto/rsa-oaep-diff.mjs` |
 | `Crypto/ChaChaPoly.lean` | ChaCha20-Poly1305 AEAD | `ffi/hacl_chachapoly.c` | `l4crypto-probe` |
+| `Crypto/AesGcmNative.lean` | AES-128-GCM, AES-256-GCM (EverCrypt AEAD over Vale assembly; x86-64 Linux and macOS only, refusal elsewhere; `Crypto/Aead.lean` `AeadOps` is the parameter type) | `ffi/hacl_aesgcm.c` | `l4crypto-probe` section `aes-gcm` |
 | `Crypto/Hkdf.lean` | HMAC-SHA-256, HKDF-SHA-256 | `ffi/hacl_kdf.c` | `l4crypto-probe` |
 | `Crypto/X25519.lean` | X25519 | `ffi/hacl_kdf.c` | `l4crypto-probe` |
 | `Crypto/Hpke.lean` | HPKE base mode (RFC 9180) | `ffi/hacl_hpke.c` | `l4crypto-probe` |
@@ -238,7 +239,7 @@ This AMENDS the rule below for AES (AES-GCM, AES-CBC, AES Key Wrap):
   verbatim: "Ok for now: “My proposal is HACL* Vale on x86-64 and a refusal on
   other CPU”". Native x86-64 links HACL\* Vale AES-GCM (verified assembly, the
   `aesgcm-x86_64-*.S` files of the HACL\* distribution, with a run-time check
-  for AES-NI and PCLMULQDQ); every other native CPU, and an x86-64 CPU without
+  for AES-NI, PCLMULQDQ, AVX, SSE and MOVBE); every other native CPU, and an x86-64 CPU without
   those instructions, refuses AES with a message that names
   https://github.com/danbri/factoidal/issues/677. "For now": revisit when
   HACL\* ships a portable AES.
@@ -258,17 +259,23 @@ This AMENDS the rule below for AES (AES-GCM, AES-CBC, AES Key Wrap):
   the XML Encryption and JWE profiles):
   `docs/designissues/2026-10-27-xml-encryption-and-jwe.md`.
 
-🔴 **AES-GCM is NOT available and must not be hand-written or taken from
-the AES-NI path.** (Superseded for JavaScript hosts by the section above.) The pinned release ships no PORTABLE AES-GCM: every
-AES-GCM branch of `EverCrypt_AEAD.c` is behind `#if HACL_CAN_COMPILE_VALE`
-and calls Vale x86-64 assembly the C distribution does not include, and
-`Hacl_AES128.h` declares symbols the release never defines. The AES-NI
-variant fails the wasm gate below, so it was refused rather than smuggled
-in for one architecture. Tracked in
-<https://github.com/danbri/factoidal/issues/677>; it blocks OMEMO 0.8 and
-nothing else, because MLS ciphersuite 3 and HPKE both use
-ChaCha20-Poly1305. Close it with a newer HACL\* release or with the
-upstream bitsliced units — never by writing AES or GCM here.
+**AES-GCM status, 2026-10-27.** Native x86-64 Linux and macOS executables
+have AES-128-GCM and AES-256-GCM: `Crypto/AesGcmNative.lean` over
+`ffi/hacl_aesgcm.c`, EverCrypt's AEAD and the Vale `aesgcm-x86_64-*.S`
+assembly, all from the pinned commit (`third_party/hacl/PROVENANCE.md`,
+section "AES-GCM on x86-64"). The lakefile assembles the Vale files only
+when Lake runs on an x86-64 Linux or macOS host (`valeHost`). At run time
+the CPU must have AES-NI, PCLMULQDQ, AVX, SSE and MOVBE. Every other target
+(the wasm32 module, arm64, an x86-64 CPU without those features) compiles
+the shim to stubs: `available = false`, and `nativeOps` answers with a
+message that names https://github.com/danbri/factoidal/issues/677. Not
+offered: AES-192-GCM (EverCrypt has none), IVs other than 96 bits, tags
+shorter than 128 bits. Vectors: `lake exe l4crypto-probe`, section
+`aes-gcm` (McGrew–Viega cases 1–4 and 13–16, Wycheproof
+`aes_gcm_test.json`). Still not to be done: hand-written AES or GCM, or the
+AES-NI path in the wasm module. Before 2026-10-27 this paragraph said AES-GCM
+was not available on any target; the owner's decision quoted in the section
+above changed that for native x86-64.
 
 A derived construction is NOT a new primitive under this policy. HMAC
 (RFC 2104), PBKDF2 (RFC 8018 §5.2) and HKDF (RFC 5869 §2) are defined as

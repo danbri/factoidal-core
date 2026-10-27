@@ -117,7 +117,7 @@ now, as link-closure of HMAC, and no Lean code calls them.
 
 `Lib_Memzero0.c` realises the secret-erasure helper the BLAKE2 units call.
 
-#### AES-GCM: NOT VENDORED, and why
+#### AES-GCM: NOT VENDORED in this 2026-09-07 landing, and why (SUPERSEDED 2026-10-27, see the AES-GCM section below)
 
 OMEMO 0.8 uses AES-128-GCM, so AES-GCM was in scope for this landing. The
 pinned release has NO PORTABLE AES-GCM. Its only AES-GCM is reached through
@@ -171,6 +171,80 @@ Reproduce exactly as above: clone `cryspen/hacl-packages`, check out
 `05c3d8fb321ed65e3db3a6a8b853019e86fb40a2`, then `shasum -a 256` the same
 paths under `src/` and `include/`.
 
+### AES-GCM on x86-64, 2026-10-27 — EverCrypt AEAD over Vale assembly
+
+For https://github.com/danbri/factoidal/issues/677 (AES-GCM) and the XML
+Encryption 1.1 and JWE work of https://github.com/danbri/factoidal/issues/1081.
+Owner, 2026-10-27, verbatim: "Ok for now: “My proposal is HACL* Vale on x86-64
+and a refusal on other CPU”". This replaces the refusal of the AES-NI path in
+the 2026-09-07 section above for NATIVE x86-64 executables only. The wasm
+module and every other CPU still have no AES-GCM; on JavaScript hosts AES is
+WebCrypto (`skills/crypto-policy/SKILL.md`, "AES through WebCrypto").
+
+All files come from the SAME pinned commit
+`05c3d8fb321ed65e3db3a6a8b853019e86fb40a2`; there is no second pin. They are:
+
+- `src/EverCrypt_AEAD.c` — the only AES-GCM in the release. Every AES-GCM
+  branch is inside `#if HACL_CAN_COMPILE_VALE` and calls the Vale assembly.
+- `src/EverCrypt_AutoConfig2.c` — the CPU feature test (`check_*` from the
+  Vale `cpuid` assembly). `EverCrypt_AEAD_create_in` takes the Vale path only
+  when AES-NI, PCLMULQDQ, AVX, SSE and MOVBE are all present.
+- `src/EverCrypt_Chacha20Poly1305.c` — LINK CLOSURE of `EverCrypt_AEAD.c`,
+  whose ChaCha20-Poly1305 branch calls it. With `HACL_CAN_COMPILE_VEC128` and
+  `VEC256` undefined it calls only the portable `Hacl_AEAD_Chacha20Poly1305`
+  unit already vendored; no Lean code reaches it. Its header needs the four
+  Simd/Vec HEADERS below (declarations only); their `.c` units are not
+  vendored.
+- `vale/src/aesgcm-x86_64-linux.S`, `vale/src/aesgcm-x86_64-darwin.S` — Vale
+  AES-GCM (key expansion, GHASH key init, `gcm128/256_encrypt_opt`,
+  `gcm128/256_decrypt_opt`, `compute_iv_stdcall`).
+- `vale/src/cpuid-x86_64-linux.S`, `vale/src/cpuid-x86_64-darwin.S` — the
+  `check_*` CPU feature functions.
+- Headers: `EverCrypt_AEAD.h`, `EverCrypt_AutoConfig2.h`,
+  `EverCrypt_Chacha20Poly1305.h`, `EverCrypt_Error.h`, `Hacl_Spec.h`,
+  `internal/Hacl_Spec.h`, `internal/Vale.h`, `evercrypt_targetconfig.h`,
+  `Hacl_AEAD_Chacha20Poly1305_Simd128.h`, `Hacl_AEAD_Chacha20Poly1305_Simd256.h`,
+  `Hacl_Chacha20_Vec128.h`, `Hacl_Chacha20_Vec256.h`.
+
+Not vendored: the `-mingw.S`, `-msvc.asm` and `ppc64le.S` variants, and every
+other Vale routine (Curve25519, Poly1305, SHA-256 assembly).
+
+`config.h`: upstream generates it with CMake from `config/Config.h.in`. It is
+not a vendored file. `formal/lean4/ffi/hacl_vale_config/config.h` is that
+template filled in by hand: `HACL_CAN_COMPILE_VALE` 1 on x86-64 Linux and macOS
+only, `TARGET_ARCHITECTURE` X64 there, no VEC128/VEC256.
+
+The headers already vendored for the earlier sections were re-checked
+byte-identical to the pinned commit when these files were added (every
+`include/` and `src/` file present upstream compared with `cmp`).
+
+| Path | SHA-256 |
+|---|---|
+| `src/EverCrypt_AEAD.c` | `6e7a5b17c7d987d6365246f0a1a5a415311735ae4658bf6ef3d3ce7f11d85eab` |
+| `src/EverCrypt_AutoConfig2.c` | `2f784868ca0d61358759264a80c4639782627eeeb3a92116a8b59a415ff0c1b8` |
+| `src/EverCrypt_Chacha20Poly1305.c` | `5e928fa0c83d894d331685baabbc21db481662e6b59d2d3ee518fb58bd484992` |
+| `include/EverCrypt_AEAD.h` | `c76c6ab0fb833b893f3d0a888db62ca981b93c22d9f4eb8c265d9e5b4ba33101` |
+| `include/EverCrypt_AutoConfig2.h` | `4828c851a791e37516a5c873f1ecf6542f0321df2ad679bed2606e0905675b2a` |
+| `include/EverCrypt_Chacha20Poly1305.h` | `8f330a46f68b7c37e7e3b243de7a4794031855c227413261d65911192efd6c4e` |
+| `include/EverCrypt_Error.h` | `072448a64588451bb191f0f71d45a7cd4a89ae7f042d802cadd37a72841876b1` |
+| `include/Hacl_Spec.h` | `95c48b70eee64853adc266844f1da80829946f27c3b14aa450cff17371012b65` |
+| `include/internal/Hacl_Spec.h` | `f4fbdaed2c9cea8f173757c58a84f56940b32af3ff45107ee9e6f3b8b05e359a` |
+| `include/internal/Vale.h` | `74d410865e312042fe39f0b219928d64aa9d6b586d1b20dfa4c86ea50ffc59e0` |
+| `include/evercrypt_targetconfig.h` | `5e2e94e02f758d7a399d58c92cd825332f266576b994f25719fa7c32ef95791b` |
+| `include/Hacl_AEAD_Chacha20Poly1305_Simd128.h` | `e32d7e4c612fd65ff3970505b25d53abfcb849db72e63f384da85c22ffefecc2` |
+| `include/Hacl_AEAD_Chacha20Poly1305_Simd256.h` | `190b55c32fd2b553ef9944b9a46b4895b7a527d3e24e4252a59813d2508d053d` |
+| `include/Hacl_Chacha20_Vec128.h` | `b4a136eadc2f3009b3b95c8ac6317da156620c3aede9c9e8d1dc9d21ea104355` |
+| `include/Hacl_Chacha20_Vec256.h` | `4c739289bd2838efdd686d669ad7b8de2d2237104073b9b38038ef21f1061665` |
+| `vale/src/aesgcm-x86_64-linux.S` | `a378526daf7950127997c31a1c84fcfdf7e8efd990459a16594b4b54adb422ef` |
+| `vale/src/aesgcm-x86_64-darwin.S` | `08ca8c174eefa6bc4804b5c9b0664ecd4f426da67d0b651587959ed4b95a5094` |
+| `vale/src/cpuid-x86_64-linux.S` | `55c2b093ab90fc8385ccc63320f78c8832983f269fdff111c44c4263fd47c872` |
+| `vale/src/cpuid-x86_64-darwin.S` | `427ccb7142944dc2918017c6749d715da559d96f39822dba36f033fd3b7cf2a3` |
+
+Reproduce: clone `cryspen/hacl-packages`, check out
+`05c3d8fb321ed65e3db3a6a8b853019e86fb40a2`, then `sha256sum` the same paths
+(the `.S` files are under `vale/src/` upstream and here). `SHA256SUMS` in this
+directory lists them too (`sha256sum -c SHA256SUMS`).
+
 ## How it is wired in — Lean 4 tree (`formal/lean4/`)
 
 - `ffi/hacl_ed25519.c` — Ed25519 and SHA-256 (`@[extern]` of
@@ -183,6 +257,13 @@ paths under `src/` and `include/`.
   `L4Factoidal/JOSE/Pkcs1.lean` in pure Lean, with theorems.
 - `lakefile.lean`, `extern_lib libl4hacl` — compiles the six HACL\*
   translation units and the three shims into `libl4hacl.a`.
+- `ffi/hacl_aesgcm.c` — AES-128-GCM and AES-256-GCM (`Crypto/AesGcmNative.lean`)
+  through `EverCrypt_AEAD`. On an x86-64 Linux or macOS host the lakefile
+  (`valeHost`) also links the three EverCrypt units and assembles the Vale
+  `aesgcm` and `cpuid` `.S` files for the host OS. On every other host the
+  shim compiles to stubs that refuse.
+- `Wasm/build-wasm.sh` compiles the stub form of `ffi/hacl_aesgcm.c` only; it
+  assembles no `.S` file and compiles no EverCrypt unit.
 - `Wasm/build-wasm.sh` — the same six units and three shims, compiled for
   wasm32 by Emscripten. Crypto policy: every target links the same HACL\*.
 
