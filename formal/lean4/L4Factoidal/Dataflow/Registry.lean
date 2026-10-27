@@ -370,7 +370,7 @@ def registry : List Entry := [
     wireIn := .dataset, wireOut := .text, status := .tested
     theorems := [``writerProjection_dataset]
     tests := ["Dataflow/PhaseCTests.lean round trip #guards (30 seeded datasets, RDF 1.1 and 1.2)", "W3C JSON-LD 1.1 fromRdf (l4jsonld-api)"]
-    note := "domain: no triple term (refused), no directional language string (finding: direction dropped with no error, https://github.com/danbri/factoidal/issues/984)" },
+    note := "domain: no triple term (refused), no directional language string (written as @direction; the JSON-LD 1.1 reader with no rdfDirection drops it, https://github.com/danbri/factoidal/issues/984)" },
   { area := "RdfWriter: N-Triples (wasm dispatch)", dir := "Syntax"
     stage := ``ntriplesDocumentWriter, wireIn := .dataset, wireOut := .text, params := ["mode", "render options"]
     contract := ``RoundTripOn, status := .proved

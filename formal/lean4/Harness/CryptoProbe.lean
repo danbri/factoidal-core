@@ -52,7 +52,9 @@ Sections, each one score line:
      recover the plaintext; a flipped ciphertext bit, a flipped `enc`
      bit and a changed `info` must all fail.
 
-  7. `aes-gcm` — NOT RUN, and reported as such. See below.
+  7. `aes-gcm` — AES-128-GCM and AES-256-GCM through HACL* Vale
+     (`Crypto/AesGcmNative.lean`, https://github.com/danbri/factoidal/issues/677).
+     Runs on x86-64 with the CPU features; NOT RUN elsewhere. See below.
 
   8. `lws-snapshot-seal` — the sealed LWS snapshot of
      `L4Factoidal/LWS/SnapshotSeal.lean`
@@ -91,29 +93,55 @@ Sections, each one score line:
 The three P-256 sections check the externs the authorization server signs
 and decompresses with (https://github.com/danbri/factoidal/issues/916).
 
-## Section 7: the AES-GCM gap
+ 12. `rsa-oaep` — RSAES-OAEP (`Crypto/RsaOaep.lean`,
+     https://github.com/danbri/factoidal/issues/1082) with HACL*'s public
+     and private operations: the 60 RSA Laboratories `oaep-vect.txt`
+     vectors (`third_party/testing/rsa-oaep-vect/`), and four Wycheproof
+     RSA-OAEP files (2048 bits SHA-1; 2048, 3072 and 4096 bits SHA-256).
+     See the section's own comment for what each check compares.
+ 13. `p256-ecdh` — `P256.p256Ecdh` (HACL* `Hacl_P256_dh_responder`) and the
+     JWE Concat KDF (`Crypto/ConcatKdf.lean`), for
+     https://github.com/danbri/factoidal/issues/1083: every case of
+     Wycheproof `ecdh_secp256r1_ecpoint_test.json` (uncompressed points as
+     raw `x || y`; compressed points through `p256CompressedToRaw`; the
+     private scalar left-padded, or stripped of ASN.1 leading zero octets,
+     to 32 bytes) and of `ecdh_secp256r1_webcrypto_test.json` (JWK keys): a
+     `valid` case must give the expected shared secret, an `invalid` case
+     (invalid-curve, off-curve, wrong-curve, bad encoding) must be refused,
+     an `acceptable` case is counted apart; the 25 NIST CAVP ECC CDH P-256
+     cases (`third_party/nist-cavs-ecccdh/`), each also checking that
+     `dIUT` gives `QIUT`; RFC 7518 Appendix C end to end (both parties
+     reach the published Z, and the Concat KDF gives VqqN6vgjbSBcIijNcacQGg);
+     RFC 8037 Appendix A.6 (X25519 `dh?`); and the length and range
+     refusals.
 
-OMEMO 0.8 uses AES-128-GCM, so AES-GCM was in scope for this work and is
-NOT implemented. The pinned HACL* release
-(cryspen/hacl-packages 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2) has no
-PORTABLE AES-GCM: its only AES-GCM is reached through
-`EverCrypt_AEAD.c`, whose every AES-GCM branch sits inside
-`#if HACL_CAN_COMPILE_VALE` and calls Vale x86-64 assembly the C
-distribution does not ship, so those entry points return
-`EverCrypt_Error_UnsupportedAlgorithm`; `Hacl_AES128.h` declares symbols
-the release never defines. Taking the AES-NI variant would fail the
-crypto policy's wasm compatibility gate, so it was refused rather than
-smuggled in.
+## Section 7: AES-GCM
 
-Per the shortfall rule this section is an EXPECTED FAILURE, not a
-silence: it counts the vectors of `aes_gcm_test.json` that the tree
-CANNOT run, prints the issue that tracks the gap, and reports them in a
-`notRun` bucket that is never added to `pass`. If a future landing adds
-a portable AES-GCM, this section must start running those vectors and
-the count must move.
+Native AES-GCM is HACL* Vale assembly on x86-64 only. Owner, 2026-10-27,
+verbatim: "Ok for now: “My proposal is HACL* Vale on x86-64 and a refusal
+on other CPU”". Tracking: https://github.com/danbri/factoidal/issues/677.
+
+When `AesGcmNative.available` is true, the section runs the McGrew–Viega
+GCM test cases with a 96-bit IV (1–4 for AES-128, 13–16 for AES-256) and
+every Wycheproof `aes_gcm_test.json` vector with a 96-bit IV, a 128- or
+256-bit key and a 128-bit tag. A `valid` vector is three checks: encrypt
+gives `ct || tag`, decrypt gives `msg`, and decrypt with one flipped tag bit
+is refused. An `invalid` vector is one check: decrypt is refused. The
+vectors with 192-bit keys (EverCrypt has no AES-192-GCM) and with IVs other
+than 96 bits (this binding takes 12-byte IVs only) are counted NOT RUN with
+the reason. Four length and shape checks run on every target.
+
+When `available` is false (another CPU, the wasm module, or an x86-64 CPU
+without AES-NI, PCLMULQDQ, AVX, SSE or MOVBE), every vector is counted in
+the `notRun` bucket, never in `pass`, and the issue is printed. This is the
+expected-failure form of the shortfall rule for those targets.
 
 Usage:
-  lake exe l4crypto-probe        run every section
+  lake exe l4crypto-probe                 run every section
+  lake exe l4crypto-probe -- --oaep-batch RSA-OAEP requests on standard input, for
+                                          tests/crypto/rsa-oaep-diff.mjs
+  lake exe l4crypto-probe --ecdh-stdin    P-256 ECDH per stdin line (tests/crypto/ecdh-diff.mjs)
+  lake exe l4crypto-probe --gcm-stdin     AES-GCM (HACL* Vale) per stdin line (tests/crypto/aes-diff.mjs)
 -/
 import L4Factoidal.Crypto.ChaChaPoly
 import L4Factoidal.Crypto.Hkdf
@@ -123,13 +151,17 @@ import L4Factoidal.JSON.Parser
 import L4Factoidal.LWS.SnapshotSeal
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.JOSE.Base64Url
+import L4Factoidal.Crypto.RsaOaep
+import L4Factoidal.Crypto.RsaOaepTests
+import L4Factoidal.Crypto.ConcatKdf
+import L4Factoidal.Crypto.AesGcmNative
 
 namespace CryptoProbe
 
 open L4Factoidal.JSON
 open L4Factoidal.Crypto
 
-/-- The GitHub issue tracking the AES-GCM gap of section 7. -/
+/-- The GitHub issue of section 7: native AES-GCM is x86-64 only. -/
 def aesGcmIssue : String := "https://github.com/danbri/factoidal/issues/677"
 
 /-! ## Score plumbing (the `Harness/JoseProbe.lean` shape, plus `notRun`)
@@ -691,9 +723,7 @@ def runHpke : IO Tally := do
      are refused.
 
 The three P-256 sections check the externs the authorization server signs
-and decompresses with (https://github.com/danbri/factoidal/issues/916).
-
-## Section 7: the AES-GCM gap -/
+and decompresses with (https://github.com/danbri/factoidal/issues/916). -/
 
 /-! ## Section 8: the sealed LWS snapshot (issue 921) -/
 
@@ -771,32 +801,143 @@ def runLwsSeal : IO Tally := do
          | .ok _ => false)
   t.get
 
+/-! ## Section 7: AES-GCM (issue 677)
+
+Native AES-GCM is HACL* Vale on x86-64 only (owner, 2026-10-27, verbatim:
+"Ok for now: “My proposal is HACL* Vale on x86-64 and a refusal on other
+CPU”"). When `AesGcmNative.available` is true this section RUNS the vectors;
+when it is false (another CPU, or an x86-64 CPU without AES-NI, PCLMULQDQ,
+AVX, SSE or MOVBE) every vector is counted NOT RUN with the issue named.
+
+Pinned vectors: McGrew and Viega, "The Galois/Counter Mode of Operation
+(GCM)", revised 2005, Appendix B, the test cases with a 96-bit IV: 1–4
+(AES-128) and 13–16 (AES-256). Cases 5, 6, 11, 12, 17 and 18 use 64-bit and
+480-bit IVs and are not transcribed (no 96-bit IV, which is the only IV
+length this binding takes). Each transcription was checked against
+OpenSSL through `node:crypto` when it was added. -/
+
+open L4Factoidal.Crypto.AesGcmNative in
+/-- (case, key, iv, aad, plaintext, ciphertext, tag), all hex. -/
+def mvVectors : List (Nat × String × String × String × String × String × String) :=
+  let p64 := "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72" ++
+             "1c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255"
+  let p60 := "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72" ++
+             "1c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39"
+  let a := "feedfacedeadbeeffeedfacedeadbeefabaddad2"
+  let k := "feffe9928665731c6d6a8f9467308308"
+  let iv := "cafebabefacedbaddecaf888"
+  let z12 := "000000000000000000000000"
+  let z16 := "00000000000000000000000000000000"
+  let c3 := "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e" ++
+            "21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091473f5985"
+  let c4 := "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e" ++
+            "21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091"
+  let c15 := "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa" ++
+             "8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad"
+  let c16 := "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa" ++
+             "8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662"
+  [ (1, z16, z12, "", "", "", "58e2fccefa7e3061367f1d57a4e7455a")
+  , (2, z16, z12, "", z16, "0388dace60b6a392f328c2b971b2fe78", "ab6e47d42cec13bdf53a67b21257bddf")
+  , (3, k, iv, "", p64, c3, "4d5c2af327cd64a62cf35abd2ba6fab4")
+  , (4, k, iv, a, p60, c4, "5bc94fbc3221a5db94fae95ae7121a47")
+  , (13, z16 ++ z16, z12, "", "", "", "530f8afbc74536b9a963b4f1c4cb738b")
+  , (14, z16 ++ z16, z12, "", z16, "cea7403d4d606b6e074ec5d3baf39d18", "d0d1c8a799996bf0265b98b5d48ab919")
+  , (15, k ++ k, iv, "", p64, c15, "b094dac5d93471bdec1a502270e3cc6c")
+  , (16, k ++ k, iv, a, p60, c16, "76fc6ece0f4e1768cddf8853bb2d551b") ]
+
+open L4Factoidal.Crypto.AesGcmNative in
+/-- One authenticated vector: encrypt must give `ct || tag`, decrypt must
+give `msg`, and decrypt with one flipped tag bit must be refused. Three
+checks. -/
+def aesGcmValid (t : IO.Ref Tally) (name : String) (key iv aad msg ct tag : ByteArray) :
+    IO Unit := do
+  let ctTag := ct ++ tag
+  check t s!"{name} encrypt" (aesGcmEncrypt? key iv aad msg == some ctTag)
+    s!"got {(aesGcmEncrypt? key iv aad msg).map hexOf}"
+  check t s!"{name} decrypt" (aesGcmDecrypt? key iv aad ctTag == some msg)
+  check t s!"{name} flipped tag bit refused"
+    ((aesGcmDecrypt? key iv aad (flipBit ctTag ct.size)).isNone)
+
+open L4Factoidal.Crypto.AesGcmNative in
 def runAesGcm (path : System.FilePath) : IO Tally := do
   let t ← IO.mkRef ({} : Tally)
   IO.println "-- aes-gcm"
-  IO.println "  [NOT RUN] AES-128-GCM and AES-256-GCM are NOT IMPLEMENTED."
-  IO.println "  The pinned HACL* release (cryspen/hacl-packages"
-  IO.println "  05c3d8fb321ed65e3db3a6a8b853019e86fb40a2) ships no PORTABLE AES-GCM:"
-  IO.println "  every AES-GCM branch of EverCrypt_AEAD.c is behind"
-  IO.println "  #if HACL_CAN_COMPILE_VALE and calls Vale x86-64 assembly the C"
-  IO.println "  distribution does not include, so those entry points answer"
-  IO.println "  EverCrypt_Error_UnsupportedAlgorithm. Hacl_AES128.h declares symbols"
-  IO.println "  the release never defines. The AES-NI variant was refused because it"
-  IO.println "  does not build for wasm32 or for arm64 without intrinsics, which is"
-  IO.println "  the crypto policy's compatibility gate."
-  IO.println s!"  Tracking issue: {aesGcmIssue}"
-  IO.println "  OMEMO 0.8 needs AES-128-GCM, so this gap blocks OMEMO 0.8 and nothing"
-  IO.println "  else: MLS ciphersuite 3 and HPKE use ChaCha20-Poly1305, which IS here."
+  -- Length refusals and the instance shape: these hold on every target.
+  let k16 := hx "feffe9928665731c6d6a8f9467308308"
+  let iv12 := hx "cafebabefacedbaddecaf888"
+  check t "24-byte key (AES-192) refused"
+    ((aesGcmEncrypt? (k16 ++ hx "0001020304050607") iv12 .empty .empty).isNone)
+  check t "8-byte IV refused" ((aesGcmEncrypt? k16 (hx "cafebabefacedbad") .empty .empty).isNone)
+  check t "ciphertext shorter than the tag refused"
+    ((aesGcmDecrypt? k16 iv12 .empty (hx "00112233")).isNone)
+  check t "nativeOps.available = available" (nativeOps.available == available)
+  if !available then
+    IO.println "  [NOT RUN] AES-128-GCM and AES-256-GCM are NOT AVAILABLE in this executable."
+    IO.println "  Native AES-GCM is HACL* Vale assembly for x86-64 (Linux, macOS) only,"
+    IO.println "  and it needs a CPU with AES-NI, PCLMULQDQ, AVX, SSE and MOVBE."
+    IO.println "  Owner, 2026-10-27: \"HACL* Vale on x86-64 and a refusal on other CPU\"."
+    IO.println s!"  Tracking issue: {aesGcmIssue}"
+    check t "the refusal names the issue"
+      (match nativeOps.encrypt k16 iv12 .empty .empty with
+       | .error e => (e.splitOn aesGcmIssue).length > 1
+       | .ok _ => false)
+    t.modify fun s => { s with notRun := s.notRun + mvVectors.length }
+    match ← readJsonFile path with
+    | none =>
+        IO.println s!"  [NOT RUN] {path} is not present; the corpus size is unknown."
+        t.modify fun s => { s with notRun := s.notRun + 1 }
+    | some j =>
+        let mut n := 0
+        for g in (j.getArray? "testGroups").getD [] do
+          n := n + ((g.getArray? "tests").getD []).length
+        IO.println s!"  [NOT RUN] {mvVectors.length} McGrew-Viega vectors and {n} vectors of aes_gcm_test.json."
+        t.modify fun s => { s with notRun := s.notRun + n }
+    return (← t.get)
+  IO.println "  HACL* Vale AES-GCM is available (x86-64, CPU features present)."
+  -- McGrew–Viega, 96-bit IV cases.
+  for (n, k, iv, a, p, c, tg) in mvVectors do
+    aesGcmValid t s!"McGrew-Viega test case {n}" (hx k) (hx iv) (hx a) (hx p) (hx c) (hx tg)
+  -- Wycheproof.
   match ← readJsonFile path with
   | none =>
-      IO.println s!"  [NOT RUN] {path} is not present; the corpus size is unknown."
-      t.modify fun s => { s with notRun := s.notRun + 1 }
+      check t s!"{path} is present" false "the Wycheproof corpus is missing"
   | some j =>
-      let mut n := 0
+      let mut skip192 := 0
+      let mut skipIv := 0
+      let mut skipTag := 0
       for g in (j.getArray? "testGroups").getD [] do
-        n := n + ((g.getArray? "tests").getD []).length
-      IO.println s!"  [NOT RUN] {n} vectors of aes_gcm_test.json cannot be run."
-      t.modify fun s => { s with notRun := s.notRun + n }
+        let ks := (natField? g "keySize").getD 0
+        let is := (natField? g "ivSize").getD 0
+        let ts := (natField? g "tagSize").getD 0
+        let tests := (g.getArray? "tests").getD []
+        if ts != 128 then
+          skipTag := skipTag + tests.length
+        else if is != 96 then
+          skipIv := skipIv + tests.length
+        else if ks != 128 && ks != 256 then
+          skip192 := skip192 + tests.length
+        else
+          for tc in tests do
+            let name := s!"wycheproof aes-gcm tcId {tcIdOf tc}"
+            let get := fun (f : String) => (tc.getString? f).bind hexToBytes?
+            match get "key", get "iv", get "aad", get "msg", get "ct", get "tag",
+                (tc.getString? "result").bind expectOf? with
+            | some key, some iv, some aad, some msg, some ct, some tag, some e =>
+                match e with
+                | .valid => aesGcmValid t name key iv aad msg ct tag
+                | .invalid =>
+                    check t s!"{name} (invalid) refused"
+                      ((aesGcmDecrypt? key iv aad (ct ++ tag)).isNone)
+                | .acceptable =>
+                    t.modify fun s => { s with acceptable := s.acceptable + 1 }
+            | _, _, _, _, _, _, _ => check t name false "malformed vector"
+      if skip192 > 0 then
+        IO.println s!"  [NOT RUN] {skip192} vectors with 192-bit keys: EverCrypt has no AES-192-GCM ({aesGcmIssue})."
+      if skipIv > 0 then
+        IO.println s!"  [NOT RUN] {skipIv} vectors with an IV other than 96 bits: this binding takes 12-byte IVs only (XML Encryption 1.1, JWE)."
+      if skipTag > 0 then
+        IO.println s!"  [NOT RUN] {skipTag} vectors with a tag other than 128 bits."
+      t.modify fun s => { s with notRun := s.notRun + skip192 + skipIv + skipTag }
   t.get
 
 /-! ## P-256: signing, public keys, point decompression -/
@@ -920,9 +1061,435 @@ def runP256Compressed (path : System.FilePath) : IO Tally := do
               else pure ()
   t.get
 
+/-! ## Section 12: RSA-OAEP (https://github.com/danbri/factoidal/issues/1082)
+
+`Crypto/RsaOaep.lean` with the HACL* public and private operations.
+
+  * RSA Laboratories `oaep-vect.txt` (60 vectors, SHA-1, given seeds):
+    every vector is encrypted with its seed and decrypted through the
+    padding of `RsaOaep` over the `Nat` reference operation of
+    `Crypto/RsaOaepTests.lean` (keys of 1024 to 2048 bits). For the 2048-bit
+    key the same is done through HACL*. For the smaller keys HACL* must
+    refuse (the shim accepts 2048, 3072 and 4096 bits only).
+  * Wycheproof `rsa_oaep_{2048_sha1_mgf1sha1, 2048_sha256_mgf1sha256,
+    3072_sha256_mgf1sha256, 4096_sha256_mgf1sha256}_test.json`: every
+    vector decrypted through HACL*; `valid` must give the message,
+    `invalid` must give `none`, `acceptable` is counted apart. Each `valid`
+    vector is also encrypted again through HACL* with a fixed seed and
+    decrypted (round trip), and the raw HACL* private operation is compared
+    with the `Nat` reference on its ciphertext (the extern against a
+    specification: the obligation `Crypto/RsaOaep.lean` states for
+    `rsaPrivateOp`). -/
+
+/-- The labelled hex blocks of `oaep-vect.txt`, in file order: a line
+`# Label:` followed by hex lines up to a blank line. -/
+def oaepVectBlocks (text : String) : List (String × ByteArray) := Id.run do
+  let mut out : Array (String × ByteArray) := #[]
+  let mut label : Option String := none
+  let mut hex : String := ""
+  for raw in text.splitOn "\n" do
+    let line := raw.trimAscii.toString
+    if line.startsWith "#" then
+      match label with
+      | some l => if !hex.isEmpty then out := out.push (l, hx hex)
+      | none => pure ()
+      let body := (line.drop 1).trimAscii.toString
+      if body.endsWith ":" then
+        label := some (body.dropEnd 1).toString
+      else
+        label := none
+      hex := ""
+    else if line.isEmpty then
+      match label with
+      | some l => if !hex.isEmpty then out := out.push (l, hx hex)
+      | none => pure ()
+      label := none
+      hex := ""
+    else if label.isSome then
+      hex := hex ++ String.join (line.splitOn " ")
+  return out.toList
+
+structure OaepVect where
+  name : String
+  n : ByteArray
+  e : ByteArray
+  d : ByteArray
+  msg : ByteArray
+  seed : ByteArray
+  ct : ByteArray
+
+/-- The 60 vectors: `Modulus`, then `Exponent` (public key), then in the
+private key `Modulus`, `Public exponent`, `Exponent` (the private one). -/
+def oaepVects (blocks : List (String × ByteArray)) : List OaepVect := Id.run do
+  let mut out : Array OaepVect := #[]
+  let mut n := ByteArray.empty
+  let mut e := ByteArray.empty
+  let mut d := ByteArray.empty
+  let mut afterPub := false
+  let mut msg := ByteArray.empty
+  let mut seed := ByteArray.empty
+  for (l, v) in blocks do
+    if l == "Modulus" then n := v; afterPub := false
+    else if l == "Public exponent" then e := v; afterPub := true
+    else if l == "Exponent" then
+      if afterPub then d := v else e := v
+    else if l == "Message" then msg := v
+    else if l == "Seed" then seed := v
+    else if l == "Encryption" then
+      out := out.push { name := s!"oaep-vect #{out.size + 1} ({n.size * 8}-bit key)",
+                        n, e, d, msg, seed, ct := v }
+  return out.toList
+
+def haclSize (k : Nat) : Bool := k == 256 || k == 384 || k == 512
+
+def runOaepVect (path : System.FilePath) : IO Tally := do
+  let t ← IO.mkRef ({} : Tally)
+  IO.println "-- rsa-oaep: RSA Laboratories oaep-vect.txt"
+  if !(← path.pathExists) then
+    IO.println s!"  [FAIL] cannot read {path}"
+    t.modify fun s => { s with fail := s.fail + 1, failures := ["oaep-vect.txt"] }
+    return (← t.get)
+  let vs := oaepVects (oaepVectBlocks (← IO.FS.readFile path))
+  check t "oaep-vect.txt holds 60 vectors" (vs.length == 60) s!"read {vs.length}"
+  let ref := L4Factoidal.Crypto.RsaOaepTests.refOp
+  for v in vs do
+    check t s!"{v.name}: encryption with the given seed (reference RSA)"
+      (RsaOaep.oaepEncrypt RsaOaep.oaepSha1 ref v.n v.e v.msg ByteArray.empty v.seed == some v.ct)
+    check t s!"{v.name}: decryption (reference RSA)"
+      (RsaOaep.oaepDecrypt RsaOaep.oaepSha1 ref v.n v.d v.ct ByteArray.empty == some v.msg)
+    if haclSize v.n.size then
+      check t s!"{v.name}: encryption with the given seed (HACL*)"
+        (RsaOaep.rsaOaepSha1Encrypt v.n v.e v.msg ByteArray.empty v.seed == some v.ct)
+      check t s!"{v.name}: decryption (HACL*)"
+        (RsaOaep.rsaOaepSha1Decrypt v.n v.d v.ct ByteArray.empty == some v.msg)
+    else
+      check t s!"{v.name}: HACL* refuses a modulus below 2048 bits"
+        (RsaOaep.rsaPrivateOp v.n v.d v.ct).isNone
+  t.get
+
+def stripLeadingZeros (b : ByteArray) : ByteArray :=
+  ⟨(b.data.toList.dropWhile (· == 0)).toArray⟩
+
+def runOaepWycheproof (path : System.FilePath) (label : String) (H : RsaOaep.OaepHash) :
+    IO Tally := do
+  let t ← IO.mkRef ({} : Tally)
+  IO.println s!"-- {label}"
+  match ← readJsonFile path with
+  | none =>
+      IO.println s!"  [FAIL] {label}: cannot read {path}"
+      t.modify fun s => { s with fail := s.fail + 1, failures := [label] }
+      return (← t.get)
+  | some j =>
+      let groups := (j.getArray? "testGroups").getD []
+      if groups.isEmpty then
+        check t s!"{label}: testGroups present" false
+      for g in groups do
+        match g.field? "privateKey" with
+        | none => check t s!"{label}: privateKey present" false
+        | some pk =>
+            match (pk.getString? "modulus").bind hexToBytes?,
+                  (pk.getString? "privateExponent").bind hexToBytes?,
+                  (pk.getString? "publicExponent").bind hexToBytes? with
+            | some n0, some d, some e =>
+                let n := stripLeadingZeros n0
+                let seed := ByteArray.mk (Array.replicate H.hLen 0x5a)
+                for tc in (g.getArray? "tests").getD [] do
+                  let name := s!"{label} tcId={tcIdOf tc}"
+                  match expectOf? ((tc.getString? "result").getD ""),
+                        hexToBytes? ((tc.getString? "msg").getD ""),
+                        hexToBytes? ((tc.getString? "ct").getD ""),
+                        hexToBytes? ((tc.getString? "label").getD "") with
+                  | some ex, some msg, some ct, some lab =>
+                      let got := RsaOaep.oaepDecrypt H RsaOaep.rsaPrivateOp n d ct lab
+                      match ex with
+                      | .valid =>
+                          check t name (got == some msg)
+                            s!"expected the message, got {(got.map hexOf).getD "none"}"
+                          let rt := (RsaOaep.oaepEncrypt H Rsa.rsaPublicOp n e msg lab seed).bind
+                            fun c => RsaOaep.oaepDecrypt H RsaOaep.rsaPrivateOp n d c lab
+                          check t (name ++ " round trip (HACL* encrypt, decrypt)") (rt == some msg)
+                          check t (name ++ " HACL* private op equals the reference")
+                            (RsaOaep.rsaPrivateOp n d ct ==
+                              L4Factoidal.Crypto.RsaOaepTests.refOp n d ct)
+                      | .invalid =>
+                          check t name got.isNone "expected a refusal, got a message"
+                      | .acceptable =>
+                          IO.println s!"  [ACCEPTABLE] {name} — {if got.isSome then "decrypted" else "refused"}"
+                          t.modify fun s => { s with acceptable := s.acceptable + 1 }
+                  | _, _, _, _ => check t name false "unreadable vector"
+            | _, _, _ => check t s!"{label}: private key readable" false
+      t.get
+
+/-! ## `--oaep-batch`: the RSA-OAEP operations for a differential driver
+
+`tests/crypto/rsa-oaep-diff.mjs` runs `l4crypto-probe --oaep-batch` and
+writes one request per line on standard input:
+
+```
+dec <sha1|sha256> <n> <d> <c> <label>
+enc <sha1|sha256> <n> <e> <m> <label> <seed>
+```
+
+Every field is lower-case hex; `-` is the empty octet string. For each
+line the probe writes one line: the result in hex, `none` for a refusal,
+or `error` for a request it cannot read. The decisions are those of
+`Crypto/RsaOaep.lean` over the HACL* operations; this loop only parses and
+prints. The loop ends at end of input (an outside event, so a `repeat`
+loop per the 2026-10-23 rule). -/
+
+def oaepHex? (s : String) : Option ByteArray :=
+  if s == "-" then some ByteArray.empty else hexToBytes? s
+
+def oaepHash? (s : String) : Option RsaOaep.OaepHash :=
+  if s == "sha1" then some RsaOaep.oaepSha1
+  else if s == "sha256" then some RsaOaep.oaepSha256
+  else none
+
+def oaepAnswer (r : Option ByteArray) : String :=
+  match r with
+  | some b => if b.size == 0 then "-" else hexOf b
+  | none => "none"
+
+def oaepRequest (line : String) : String :=
+  match line.splitOn " " with
+  | ["dec", h, n, d, c, l] =>
+      match oaepHash? h, oaepHex? n, oaepHex? d, oaepHex? c, oaepHex? l with
+      | some H, some n, some d, some c, some l =>
+          oaepAnswer (RsaOaep.oaepDecrypt H RsaOaep.rsaPrivateOp n d c l)
+      | _, _, _, _, _ => "error"
+  | ["enc", h, n, e, m, l, s] =>
+      match oaepHash? h, oaepHex? n, oaepHex? e, oaepHex? m, oaepHex? l, oaepHex? s with
+      | some H, some n, some e, some m, some l, some s =>
+          oaepAnswer (RsaOaep.oaepEncrypt H Rsa.rsaPublicOp n e m l s)
+      | _, _, _, _, _, _ => "error"
+  | _ => "error"
+
+def oaepBatch : IO UInt32 := do
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  -- Ends when standard input is closed (an outside event).
+  repeat
+    let line ← stdin.getLine
+    if line.isEmpty then break
+    let req := line.trimAscii.toString
+    if !req.isEmpty then
+      stdout.putStrLn (oaepRequest req)
+      stdout.flush
+  return 0
+
 /-! ## Entry point -/
 
-def main (_args : List String) : IO UInt32 := do
+/-! ## Section 13: P-256 ECDH and the JWE Concat KDF -/
+
+/-- A Wycheproof or NIST private scalar as the 32 bytes HACL* takes: a
+shorter one is left-padded with zeros, a longer one (an ASN.1 INTEGER with
+leading zero octets) loses them; `none` when a dropped octet is not zero. -/
+def scalar32? (d : ByteArray) : Option ByteArray :=
+  if d.size ≤ 32 then some (zeros (32 - d.size) ++ d)
+  else if (d.extract 0 (d.size - 32)).data.all (· == 0) then some (d.extract (d.size - 32) d.size)
+  else none
+
+/-- A Wycheproof `ecpoint` public key as raw `x || y`: a 65-byte 0x04 point
+loses the prefix, a 33-byte compressed point goes through HACL*
+`Hacl_P256_compressed_to_raw`, anything else is `none` (refused). -/
+def ecpointRaw? (p : ByteArray) : Option ByteArray :=
+  if p.size == 65 && p.get! 0 == 4 then some (p.extract 1 65)
+  else if p.size == 33 then P256.p256CompressedToRaw p
+  else none
+
+/-- Judge one ECDH case: `valid` must give `shared`, `invalid` must be
+refused, `acceptable` is counted apart. -/
+def judgeEcdh (t : IO.Ref Tally) (name res : String) (got : Option ByteArray)
+    (shared : ByteArray) : IO Unit := do
+  if res == "valid" then
+    check t s!"{name}: valid key pair gives the shared secret" (got == some shared)
+      s!"got {(got.map hexOf).getD "refusal"}"
+  else if res == "invalid" then
+    check t s!"{name}: invalid public key refused" got.isNone
+      s!"accepted, gave {(got.map hexOf).getD ""}"
+  else
+    IO.println s!"  [acceptable] {name}: {if got.isSome then "accepted" else "refused"}"
+    t.modify fun s => { s with acceptable := s.acceptable + 1 }
+
+/-- One field of a CAVP case, decoded from hex. -/
+def cavsField? (fields : List (String × String)) (k : String) : Option ByteArray :=
+  (fields.find? (·.1 == k)).bind fun kv => hexToBytes? kv.2
+
+def runCavsCase (t : IO.Ref Tally) (fields : List (String × String)) : IO Unit := do
+  let count := ((fields.find? (·.1 == "COUNT")).map (·.2)).getD "?"
+  match cavsField? fields "QCAVSx", cavsField? fields "QCAVSy", cavsField? fields "dIUT",
+        cavsField? fields "QIUTx", cavsField? fields "QIUTy", cavsField? fields "ZIUT" with
+  | some qx, some qy, some d, some ux, some uy, some z =>
+      check t s!"nist cavp ecc cdh P-256 COUNT {count}: dIUT gives QIUT"
+        (P256.p256SecretToPublic d == some (ux ++ uy))
+      check t s!"nist cavp ecc cdh P-256 COUNT {count}: Z = x(dIUT * QCAVS)"
+        (P256.p256Ecdh (qx ++ qy) d == some z)
+  | _, _, _, _, _, _ =>
+      check t s!"nist cavp ecc cdh P-256 COUNT {count}: case readable" false
+
+/-- RFC 7518 Appendix C keys (base64url) and Z (hex of the JSON array). -/
+def rfc7518AliceD : String := "0_NxaRPUMQoAJt50Gz8YiTr8gRTwyEaCumd-MToTmIo"
+def rfc7518AliceX : String := "gI0GAILBdu7T53akrFmMyGcsF3n5dO7MmwNBHKW5SV0"
+def rfc7518AliceY : String := "SLW_xSffzlPWrHEVI30DHM_4egVwt3NQqeUD7nMFpps"
+def rfc7518BobD : String := "VEmDZpDXXK8p8N0Cndsxs924q6nS1RXFASRl6BfUqdw"
+def rfc7518BobX : String := "weNJy2HscCSM6AEDTDg04biOvhFhyyWvOHQfeF_PxMQ"
+def rfc7518BobY : String := "e8lnCO-AlStT-NJVX-crhB7QRYhiix03illJOVAOyck"
+def rfc7518Z : ByteArray := hx "9e56d91d817135d372834283bf84269cfb316ea3da806a48f6daa7798cfe90c4"
+
+def runP256Ecdh (ecpoint webcrypto cavs : System.FilePath) : IO Tally := do
+  let t ← IO.mkRef ({} : Tally)
+  IO.println "-- p256-ecdh"
+  let dec (s : String) : ByteArray := (L4Factoidal.JOSE.Base64Url.decode s).getD ByteArray.empty
+  let aliceD := dec rfc7518AliceD
+  let alicePub := dec rfc7518AliceX ++ dec rfc7518AliceY
+  let bobD := dec rfc7518BobD
+  let bobPub := dec rfc7518BobX ++ dec rfc7518BobY
+  check t "RFC 7518 Appendix C: Alice's d gives her x || y"
+    (P256.p256SecretToPublic aliceD == some alicePub)
+  check t "RFC 7518 Appendix C: Alice (ephemeral d, Bob's key) reaches Z"
+    (P256.p256Ecdh bobPub aliceD == some rfc7518Z)
+  check t "RFC 7518 Appendix C: Bob (his d, the epk) reaches Z"
+    (P256.p256Ecdh alicePub bobD == some rfc7518Z)
+  check t "RFC 7518 Appendix C: Concat KDF over the ECDH output gives VqqN6vgjbSBcIijNcacQGg"
+    (((P256.p256Ecdh alicePub bobD).bind fun z =>
+        ConcatKdf.jweDerive? z "A128GCM".toUTF8 "Alice".toUTF8 "Bob".toUTF8 128) ==
+      L4Factoidal.JOSE.Base64Url.decode "VqqN6vgjbSBcIijNcacQGg")
+  check t "a 63-byte public key is refused" (P256.p256Ecdh (alicePub.extract 0 63) bobD == none)
+  check t "a 65-byte (0x04-prefixed) public key is refused"
+    (P256.p256Ecdh (ByteArray.mk #[4] ++ alicePub) bobD == none)
+  check t "a 31-byte private key is refused" (P256.p256Ecdh alicePub (bobD.extract 0 31) == none)
+  check t "a private key of zero is refused" (P256.p256Ecdh alicePub (zeros 32) == none)
+  check t "a private key equal to the group order is refused"
+    (P256.p256Ecdh alicePub p256Order == none)
+  check t "the point (0, 0) is refused" (P256.p256Ecdh (zeros 64) bobD == none)
+  check t "a point with the low bit of y flipped (off the curve) is refused"
+    (P256.p256Ecdh (alicePub.set! 63 (alicePub.get! 63 ^^^ 1)) bobD == none)
+  -- RFC 8037 Appendix A.6: ECDH-ES with X25519, through the RFC 7748 6.1 check.
+  let a6Bob := hx "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"
+  let a6Eph := hx "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"
+  let a6EphPub := hx "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"
+  let a6Z := hx "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"
+  check t "RFC 8037 A.6: the ephemeral public key" (X25519.publicKey? a6Eph == some a6EphPub)
+  check t "RFC 8037 A.6: sender Z = X25519(ephkey, recv_pub)" (X25519.dh? a6Eph a6Bob == some a6Z)
+  check t "X25519 dh? refuses the all-zero shared secret of the point u = 0"
+    (X25519.dh? a6Eph (zeros 32)).isNone
+  -- Wycheproof, ecpoint encoding.
+  match ← readJsonFile ecpoint with
+  | none =>
+      IO.println s!"  [NOT RUN] {ecpoint} is not present"
+      t.modify fun s => { s with notRun := s.notRun + 1 }
+  | some j =>
+      for g in (j.getArray? "testGroups").getD [] do
+        for v in (g.getArray? "tests").getD [] do
+          let tc := (v.field? "tcId").map toStringCompact |>.getD "?"
+          let res := (v.getString? "result").getD ""
+          let flags := flagsOf v
+          let pub := ((v.getString? "public").bind hexToBytes?).getD ByteArray.empty
+          let priv := (v.getString? "private").bind hexToBytes?
+          let shared := ((v.getString? "shared").bind hexToBytes?).getD ByteArray.empty
+          let got := (ecpointRaw? pub).bind fun raw =>
+            (priv.bind scalar32?).bind (P256.p256Ecdh raw)
+          judgeEcdh t s!"wycheproof ecpoint tcId {tc} {flags}" res got shared
+  -- Wycheproof, webcrypto (JWK) encoding.
+  match ← readJsonFile webcrypto with
+  | none =>
+      IO.println s!"  [NOT RUN] {webcrypto} is not present"
+      t.modify fun s => { s with notRun := s.notRun + 1 }
+  | some j =>
+      for g in (j.getArray? "testGroups").getD [] do
+        for v in (g.getArray? "tests").getD [] do
+          let tc := (v.field? "tcId").map toStringCompact |>.getD "?"
+          let res := (v.getString? "result").getD ""
+          let flags := flagsOf v
+          let shared := ((v.getString? "shared").bind hexToBytes?).getD ByteArray.empty
+          -- A JWK whose crv is not P-256 never reaches the P-256 primitive
+          -- (the key-layer check); its point bytes are not judged here.
+          let got : Option ByteArray :=
+            match v.field? "public", v.field? "private" with
+            | some pj, some sj =>
+                if pj.getString? "crv" != some "P-256" then none
+                else match b64u pj "x", b64u pj "y", b64u sj "d" with
+                  | some x, some y, some d => (scalar32? d).bind (P256.p256Ecdh (x ++ y))
+                  | _, _, _ => none
+            | _, _ => none
+          judgeEcdh t s!"wycheproof webcrypto tcId {tc} {flags}" res got shared
+  -- NIST CAVP ECC CDH primitive, P-256.
+  match ← (IO.FS.readFile cavs).toBaseIO with
+  | .error _ =>
+      IO.println s!"  [NOT RUN] {cavs} is not present"
+      t.modify fun s => { s with notRun := s.notRun + 1 }
+  | .ok text =>
+      let mut cur : List (String × String) := []
+      for line in text.splitOn "\n" do
+        match line.trimAscii.toString.splitOn " = " with
+        | [k, v] =>
+            if k == "COUNT" && !cur.isEmpty then
+              runCavsCase t cur.reverse
+              cur := []
+            cur := (k, v) :: cur
+        | _ => pure ()
+      if !cur.isEmpty then runCavsCase t cur.reverse
+  t.get
+
+/-! ## Entry point -/
+
+/-- `l4crypto-probe --ecdh-stdin`: for each standard-input line
+`<theirXY hex> <sk hex>`, print the hex of `P256.p256Ecdh theirXY sk`, or
+`refused`. The input of `tests/crypto/ecdh-diff.mjs`, which compares it
+with node:crypto. Ends at end of input (an outside event, so a `repeat`
+loop per CLAUDE.md, 2026-10-23). -/
+def ecdhStdin : IO UInt32 := do
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  repeat
+    let line ← stdin.getLine
+    if line.isEmpty then break
+    match line.trimAscii.toString.splitOn " " with
+    | [p, d] =>
+        let out := match hexToBytes? p, hexToBytes? d with
+          | some pb, some db => ((P256.p256Ecdh pb db).map hexOf).getD "refused"
+          | _, _ => "refused"
+        stdout.putStrLn out
+    | _ => stdout.putStrLn "refused"
+    stdout.flush
+  pure 0
+
+/-- `l4crypto-probe --gcm-stdin`: for each standard-input line
+`<enc|dec> <key hex> <iv hex> <aad hex> <data hex>` (an empty field is
+written `-`), print the hex of `AesGcmNative.aesGcmEncrypt?` or
+`aesGcmDecrypt?` (ciphertext || 16-byte tag for `enc`), or `refused`; the
+first line of output is `available` or `unavailable`. The input of
+`tests/crypto/aes-diff.mjs`, which compares it with WebCrypto in Node,
+Chromium and Firefox (https://github.com/danbri/factoidal/issues/677). Ends
+at end of input (an outside event, so a `repeat` loop per CLAUDE.md,
+2026-10-23). -/
+def gcmStdin : IO UInt32 := do
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  stdout.putStrLn (if AesGcmNative.available then "available" else "unavailable")
+  stdout.flush
+  let field : String → Option ByteArray := fun f => if f == "-" then some ByteArray.empty else hexToBytes? f
+  repeat
+    let line ← stdin.getLine
+    if line.isEmpty then break
+    let out : Option ByteArray :=
+      match line.trimAscii.toString.splitOn " " with
+      | [op, k, iv, aad, d] =>
+          match field k, field iv, field aad, field d with
+          | some kb, some ivb, some ab, some db =>
+              if op == "enc" then AesGcmNative.aesGcmEncrypt? kb ivb ab db
+              else if op == "dec" then AesGcmNative.aesGcmDecrypt? kb ivb ab db
+              else none
+          | _, _, _, _ => none
+      | _ => none
+    stdout.putStrLn ((out.map hexOf).getD "refused")
+    stdout.flush
+  pure 0
+
+def main (args : List String) : IO UInt32 := do
+  if args == ["--oaep-batch"] then return (← oaepBatch)
+  if args == ["--ecdh-stdin"] then return (← ecdhStdin)
+  if args == ["--gcm-stdin"] then return (← gcmStdin)
   let cwd ← IO.currentDir
   let root ← match ← findRepoRoot cwd with
     | some r => pure r
@@ -942,6 +1509,18 @@ def main (_args : List String) : IO UInt32 := do
   let t9 ← runP256Sign
   let t10 ← runP256Public (wp / "ecdh_secp256r1_webcrypto_test.json")
   let t11 ← runP256Compressed (wp / "ecdh_secp256r1_ecpoint_test.json")
+  let t12a ← runOaepVect (root / "third_party" / "testing" / "rsa-oaep-vect" / "oaep-vect.txt")
+  let t12b ← runOaepWycheproof (wp / "rsa_oaep_2048_sha1_mgf1sha1_test.json")
+               "wycheproof-rsa-oaep-2048-sha1" RsaOaep.oaepSha1
+  let t12c ← runOaepWycheproof (wp / "rsa_oaep_2048_sha256_mgf1sha256_test.json")
+               "wycheproof-rsa-oaep-2048-sha256" RsaOaep.oaepSha256
+  let t12d ← runOaepWycheproof (wp / "rsa_oaep_3072_sha256_mgf1sha256_test.json")
+               "wycheproof-rsa-oaep-3072-sha256" RsaOaep.oaepSha256
+  let t12e ← runOaepWycheproof (wp / "rsa_oaep_4096_sha256_mgf1sha256_test.json")
+               "wycheproof-rsa-oaep-4096-sha256" RsaOaep.oaepSha256
+  let t13 ← runP256Ecdh (wp / "ecdh_secp256r1_ecpoint_test.json")
+              (wp / "ecdh_secp256r1_webcrypto_test.json")
+              (root / "third_party" / "nist-cavs-ecccdh" / "KAS_ECC_CDH_PrimitiveTest_P-256.txt")
   IO.println "\n========================================"
   IO.println (scoreLine "rfc8439" t1)
   IO.println (scoreLine "wycheproof-chacha20-poly1305" t2)
@@ -954,7 +1533,13 @@ def main (_args : List String) : IO UInt32 := do
   IO.println (scoreLine "p256-sign-rfc6979" t9)
   IO.println (scoreLine "p256-secret-to-public" t10)
   IO.println (scoreLine "p256-compressed" t11)
-  let ts := [t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11]
+  IO.println (scoreLine "rsa-oaep-vect" t12a)
+  IO.println (scoreLine "wycheproof-rsa-oaep-2048-sha1" t12b)
+  IO.println (scoreLine "wycheproof-rsa-oaep-2048-sha256" t12c)
+  IO.println (scoreLine "wycheproof-rsa-oaep-3072-sha256" t12d)
+  IO.println (scoreLine "wycheproof-rsa-oaep-4096-sha256" t12e)
+  IO.println (scoreLine "p256-ecdh" t13)
+  let ts := [t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12a, t12b, t12c, t12d, t12e, t13]
   let total : Tally :=
     { pass := (ts.map Tally.pass).foldl (· + ·) 0,
       fail := (ts.map Tally.fail).foldl (· + ·) 0,

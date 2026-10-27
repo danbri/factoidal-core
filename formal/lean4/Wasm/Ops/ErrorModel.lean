@@ -69,6 +69,8 @@ def errorCodeTable : List ErrorCodeInfo :=
       "A language tag is not well-formed (BCP 47)."⟩
   , ⟨"term.invalid", some "https://www.w3.org/TR/sparql11-results-json/#select-encode-terms",
       "A term or quad given as JSON is not an RDF term or quad."⟩
+  , ⟨"literal.value", some "https://www.w3.org/TR/xmlschema11-2/#value-space",
+      "The value is not in the value space of the named datatype, or the datatype is not one the engine has."⟩
   , ⟨"query.syntax", some "https://www.w3.org/TR/sparql11-query/#grammar",
       "The SPARQL query does not match the SPARQL grammar."⟩
   , ⟨"query.failed", some "https://www.w3.org/TR/sparql11-query/#sparqlDefinition",
@@ -233,6 +235,8 @@ def familyCode (op : String) : String :=
   else if p ["store", "activateVerify", "scanIBK", "queryIBK", "pack", "tdb2", "blob",
              "queryHdt"] then "store.failed"
   else if p ["ext", "registerService", "clearService"] then "registry.failed"
+  else if op == "literalFromValue" then "literal.value"
+  else if op == "literalValue" then "term.invalid"
   else if p ["dataset", "resolveIri"] then "term.invalid"
   else "op.failed"
 

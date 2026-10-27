@@ -99,6 +99,7 @@ export type FactoidalErrorCode =
   | 'term.invalid-iri'
   | 'term.invalid-langtag'
   | 'term.invalid'
+  | 'literal.value'
   | 'query.syntax'
   | 'query.failed'
   | 'update.syntax'
@@ -236,6 +237,10 @@ export interface FormatCapability {
   write12: boolean;
   /** 'core' when both engines serve it; 'full' when only the full engine does. */
   engine: 'core' | 'full';
+  /** The registered media types (W3C registration; empty for a row with none). syntaxFor() reads the same table. */
+  mediaTypes: string[];
+  /** The registered file extensions, with the leading dot ('.ttl'). */
+  extensions: string[];
 }
 
 /**
@@ -283,11 +288,31 @@ export class Dataset implements Iterable<Quad> {
   toString(formatOrOptions?: WriteFormat | WriteOptions): string;
   toNQuads(): string;
   clone(): Dataset;
-  /** RDF/JS DatasetCore (https://rdf.js.org/dataset-spec/); match and has use the engine indexes. */
-  has(quad: Quad): boolean;
+  /**
+   * RDF/JS DatasetCore (https://rdf.js.org/dataset-spec/); match and has use
+   * the engine indexes. `{match: 'value'}`: a literal object matches every
+   * object literal that is the same term or has the same value (sameValue());
+   * the other positions match by term.
+   */
+  has(quad: Quad, options?: MatchOptions): boolean;
   add(quad: Quad): this;
-  delete(quad: Quad): this;
-  match(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null): Dataset;
+  /** With `{match: 'value'}`: remove every quad of the same subject, predicate
+   *  and graph whose object has the same value as the quad's literal object. */
+  delete(quad: Quad, options?: MatchOptions): this;
+  match(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null,
+    options?: MatchOptions): Dataset;
+  /**
+   * The items of the RDF list (rdf:first/rdf:rest) at `head`, in order
+   * (https://github.com/danbri/factoidal/issues/1051 item 6). `rdf:nil` is
+   * the empty list. A list that is not well formed (a node with no or with two
+   * rdf:first or rdf:rest, or a cycle) is a FactoidalError, code `op.failed`.
+   * `graph`: omitted, null or the DefaultGraph for the default graph.
+   */
+  listItems(head: Term, graph?: Term | null): Term[];
+  /** The members rdf:_1, rdf:_2, ... of `node`, sorted by n, and its kind (rdf:Bag, rdf:Seq, rdf:Alt) from its rdf:type. */
+  containerItems(node: Term, graph?: Term | null): { kind: NamedNode | null; items: Array<{ ordinal: number; term: Term }> };
+  /** Add a new RDF list of `items` on fresh blank nodes; answers its head (rdf:nil for no items). */
+  addList(items: Iterable<Term>, graph?: Term | null): Term;
   toArray(): Quad[];
   [Symbol.iterator](): Iterator<Quad>;
   dispose(): void;
@@ -553,17 +578,24 @@ export function canonicalize(
 export function graphs(dataset: Dataset): Array<[name: NamedNode | BlankNode, graph: Dataset]>;
 
 /**
- * The RDFC-1.0 canonical hash of a single graph: the SHA-256 of its
- * canonical N-Quads document, as 64 lowercase hexadecimal digits (RDF
- * Dataset Canonicalization 1.0, section 4.4 note 2). The engine computes
- * the canonical form and the digest. Every quad's graph component is
- * dropped first, so isomorphic graphs (including under blank-node
- * relabeling) give the same hash whatever graph name they were extracted
- * from. Typically called with one entry of graphs()'s output. For the
- * canonical text, use canonicalize(). Rejects when the input holds an
- * RDF 1.2 triple term or the section 4.4 call budget is exceeded.
+ * The RDFC-1.0 canonical hash of a dataset: the SHA-256, as 64 lowercase
+ * hexadecimal digits, of the canonical N-Quads document that canonicalize()
+ * answers (RDF Dataset Canonicalization 1.0, section 4.4 note 2), graph names
+ * included. The engine computes the canonical form and the digest. Since
+ * 0.20.0; 0.17.0 to 0.19.x dropped every graph name first, so datasets that
+ * differ only in their graph names got the same hash. To hash a graph
+ * whatever its name (for example one entry of graphs()), use
+ * canonicalHash(asDefaultGraph(g)). Rejects when the input holds an RDF 1.2
+ * triple term or the section 4.4 call budget is exceeded.
  */
-export function canonicalHash(datasetOrGraph: Dataset): Promise<string>;
+export function canonicalHash(dataset: Dataset): Promise<string>;
+
+/**
+ * A new Dataset with the triples of every graph of `dataset`, all in the
+ * default graph (the engine's union of the graphs). With one entry of
+ * graphs(), it is that graph without its name. Dispose of it when done.
+ */
+export function asDefaultGraph(dataset: Dataset): Dataset;
 
 /**
  * Whether two datasets are isomorphic (RDF 1.1 Concepts 3.6 and 4; blank
@@ -579,8 +611,136 @@ export function fromQuads(quads: Iterable<Quad>): Promise<Dataset>;
 /** Load the engine. Afterwards the N-Quads text functions of `@factoidal/core/rdfjs` work. */
 export function ready(): Promise<void>;
 
+// ---------------------------------------------------------------------
+// Literal values (https://github.com/danbri/factoidal/issues/1051 items 1-3).
+// Synchronous after the engine is loaded (`await ready()` or any other call);
+// before that they throw a FactoidalError. The engine decides everything
+// (formal/lean4/L4Factoidal/RDF/LiteralValue.lean). API.md "Literal values".
+// ---------------------------------------------------------------------
+
+/**
+ * The value of a literal, as JSON-safe data. A number that a JavaScript
+ * number may not hold exactly is a decimal string; `number` is present only
+ * when the value is exactly a binary64 value. Integer components are numbers
+ * when |n| <= 2^53 - 1, else decimal strings.
+ */
+export type LiteralValueData =
+  | { kind: 'string' | 'anyURI'; string: string }
+  | { kind: 'boolean'; boolean: boolean }
+  | { kind: 'decimal'; decimal: string; integer: boolean; number?: number }
+  | { kind: 'float' | 'double'; decimal?: string; number: number;
+      negativeZero?: true; special?: 'NaN' | 'INF' | '-INF' }
+  | { kind: 'duration'; months: number | string; seconds: string }
+  | { kind: 'dateTime' | 'time' | 'date' | 'gYearMonth' | 'gYear' | 'gMonthDay' | 'gDay' | 'gMonth';
+      year?: number | string; month?: number; day?: number; hour?: number;
+      minute?: number; second?: string; timezoneOffset?: number }
+  | { kind: 'hexBinary' | 'base64Binary'; hex: string }
+  | { kind: 'QName' | 'NOTATION'; prefix: string; localName: string }
+  | { kind: 'list'; items: LiteralValueData[] }
+  | { kind: 'langString'; string: string; language: string; direction?: 'ltr' | 'rtl' };
+
+export interface LiteralValueResult {
+  /** The datatype IRI. */
+  datatype: string;
+  /** false: the engine has no lexical space for this datatype. */
+  recognized: boolean;
+  /** The lexical form is in the lexical space (null when not recognized). */
+  valid: boolean | null;
+  /** Present for a valid literal of a datatype with a value model. */
+  value?: LiteralValueData;
+  /** The canonical lexical form (XSD 1.1 Part 2 section 2.3.1), when known. */
+  canonical?: string;
+}
+
+/** The XSD lexical-to-value mapping of a literal (RDF 1.1 Semantics section 7: no whiteSpace processing). */
+export function literalValue(term: Literal): LiteralValueResult;
+
+/** Whether the lexical form is in the datatype's lexical space; null when the engine has no lexical space for the datatype. */
+export function isValidLiteral(term: Literal): boolean | null;
+
+/** The literal with the canonical form of its value; null when it is not valid or has no canonical mapping. */
+export function canonicalLiteral(term: Literal): Literal | null;
+
+/**
+ * The literal of a JavaScript value. With no datatype the engine's table
+ * chooses: boolean xsd:boolean, string xsd:string, bigint xsd:integer, a safe
+ * integer Number xsd:integer, any other Number xsd:double, Date xsd:dateTime
+ * (UTC). `datatype` (an IRI, a NamedNode, or an XSD local name such as 'int')
+ * names the datatype; the value must be in its value space, else a
+ * FactoidalError with code 'literal.value'.
+ */
+export function literalFromValue(
+  value: boolean | number | bigint | string | Date,
+  options?: { datatype?: string | NamedNode }
+): Literal;
+
 /** The engine's name tables: format names, entailment regimes, query outputs, pack syntaxes. */
 export function engineTables(): Promise<Record<string, unknown>>;
+
+/**
+ * How Dataset.has, match and delete compare the object position
+ * (https://github.com/danbri/factoidal/issues/1052). 'term' (the default):
+ * RDF term equality. 'value': a literal object matches by value (sameValue()).
+ */
+export interface MatchOptions {
+  match?: 'term' | 'value';
+}
+
+/**
+ * SPARQL 1.1 `=` on two RDF terms (sections 17.3 and 17.4.1.7), decided by the
+ * engine: `true` the same value (`"01"^^xsd:integer` and `"1.0"^^xsd:decimal`),
+ * `false` different values, `null` incomparable (the operator's type error:
+ * two different literals of an unknown datatype, an ill-typed literal and
+ * another literal, `xsd:integer` and `xsd:boolean`). `"NaN"^^xsd:double` is
+ * not the same value as itself. A term is an RDF/JS term or an N-Triples term
+ * string. Synchronous: the engine must be loaded (`await ready()`).
+ */
+export function sameValue(a: Term | string, b: Term | string): boolean | null;
+
+/**
+ * The syntax of a document by its file name (or IRI path; the query and the
+ * fragment are ignored) and its media type, from the engine's table of the
+ * W3C registrations (https://github.com/danbri/factoidal/issues/1053): Turtle
+ * `text/turtle` `.ttl`, N-Triples `application/n-triples` `.nt`, N-Quads
+ * `application/n-quads` `.nq`, TriG `application/trig` `.trig`, RDF/XML
+ * `application/rdf+xml` `.rdf`, JSON-LD `application/ld+json` `.jsonld`. The
+ * media type wins when it is given (its parameters are ignored); an unknown
+ * media type does not fall back to the name. Answers a `name` of formats(),
+ * or `null`. Synchronous: the engine must be loaded (`await ready()`).
+ */
+export function syntaxFor(what: string | { fileName?: string; mediaType?: string }): string | null;
+
+/**
+ * An IRI as a namespace and a local name: the local name is the longest
+ * suffix that is an XML NCName (what an RDF/XML QName can carry), `''` when
+ * there is none; `namespace + localName` is the IRI
+ * (https://github.com/danbri/factoidal/issues/1051 item 4). Synchronous.
+ */
+export function splitIri(iri: string | NamedNode): { namespace: string; localName: string };
+
+/** Is the text an XML NCName (Namespaces in XML 1.0, production [4])? A prefix label check. Synchronous. */
+export function isNCName(text: string): boolean;
+
+/** One row of the engine's vocabulary table. A term IRI is `namespace + term`. */
+export interface VocabularyRow {
+  prefix: string;
+  namespace: string;
+  /** Local names; empty for a namespace whose vocabulary is not in the engine table. */
+  terms: string[];
+}
+
+/**
+ * The engine's vocabulary table (https://github.com/danbri/factoidal/issues/1051
+ * item 5): rdf, rdfs, xsd and owl with their terms; foaf, dcterms, dc and
+ * schema as namespaces only. The prefixes are those of the Turtle writer. Synchronous.
+ */
+export function vocabularies(): VocabularyRow[];
+
+/** The container membership property `rdf:_n` (n >= 1). Synchronous. */
+export function memberIri(n: number): NamedNode;
+
+/** The `n` of `rdf:_n` (no leading zero, n >= 1), or `null` for any other IRI. Synchronous. */
+export function memberOrdinal(iri: string | NamedNode): number | null;
 
 /** A SHACL validation-report term (see shaclValidate). */
 export interface ShaclValidateResult {
@@ -776,7 +936,14 @@ export interface EvidenceRecord {
   outside?: OutsideSetting[];
 }
 
-/** The value on a wire. */
+/**
+ * The value on a wire. After a node, `graph` is a value of the node's
+ * `wireOut`: a Dataset for the graph wires, text for String (a writer), the
+ * rows for Table (SELECT), a boolean for Answer (ASK), `[canonical, sha256]`
+ * for String × String (rdfcStage), the report object for ValidationReport,
+ * the explain result for ExplainGraphResult. Since 0.20.0; before, a node
+ * whose output was not a Dataset left its input on the wire.
+ */
 export interface Wire<G = unknown> {
   graph: G;
   evidence: EvidenceRecord[];
@@ -801,7 +968,12 @@ export interface FactoidalNode {
   readonly wireOut: string;
   readonly runnable: boolean;
   readonly bound: boolean;
-  /** The settings as given (passed to the package function that runs the stage). */
+  /**
+   * The node's own copy of the settings as given (passed to the package
+   * function that runs the stage): frozen at every depth, a Dataset cloned,
+   * taken when node() checked them. A later change to the caller's objects
+   * does not reach the node; a change to a Dataset here makes run() refuse.
+   */
   readonly params: Readonly<Record<string, unknown>>;
   /** The settings as sent to the engine: JSON values, a Dataset as {$nquads}. */
   readonly settingsWire: Readonly<Record<string, unknown>>;
@@ -894,8 +1066,11 @@ export function pipe(...nodes: Array<FactoidalNode | Pipeline>): Pipeline;
  * Run a node or pipeline on `input` (a Wire, or the graph: text for a
  * reader, else a Dataset or data input). Rejects before any node runs when
  * a node's stage has status 'missing' (unless `options.unchecked`) or has
- * no package function, or when the engine's check finds the pipeline not
- * well typed (unless `options.unchecked`; then `proved` is false).
+ * no package function, when the engine's check finds the pipeline not
+ * well typed (unless `options.unchecked`; then `proved` is false), or when a
+ * node's settings changed after node() checked them. Rejects with code
+ * 'op.failed' when a node's runner gives a value that is not of the node's
+ * `wireOut` (see Wire).
  */
 export function run(pipeline: FactoidalNode | Pipeline, input: unknown, options?: RunOptions): Promise<RunResult>;
 
@@ -1209,6 +1384,8 @@ export interface Sbm11Store {
   /** the generation CURRENT names, or "" when the source is a generation */
   generation: string;
   terms: number;
+  /** how the engine checks reads; undefined from a wasm module built before the Merkle check */
+  verify: 'merkle' | 'none' | undefined;
   query(sparql: string, options?: { base?: string; sparql12?: boolean; reference?: boolean }): Sbm11Answer;
   /** the resources the reader read, when its reader records them (lwsSbm11Reader) */
   readonly evidence: Sbm11ReadEvidence[] | undefined;
@@ -1216,8 +1393,11 @@ export interface Sbm11Store {
 }
 
 /** Open an SBM11 generation (https://github.com/danbri/factoidal/issues/1009).
- * Node: `source` is a directory unless a reader is given or registered. */
-export function openSbm11(source: string, options?: { reader?: Sbm11Reader }): Promise<Sbm11Store>;
+ * Node: `source` is a directory unless a reader is given or registered.
+ * `verify` (default 'merkle'): the engine checks every byte it decodes against
+ * the manifest's Merkle roots and refuses a changed file with its name;
+ * 'none' checks lengths only. */
+export function openSbm11(source: string, options?: { reader?: Sbm11Reader; verify?: 'merkle' | 'none' }): Promise<Sbm11Store>;
 
 /** Serve `source` with `reader`; `null` removes it. */
 export function registerSbm11Source(source: string, reader: Sbm11Reader | null): void;
@@ -1582,6 +1762,45 @@ export function vcEd25519Verify(
 ): Promise<boolean>;
 
 /**
+ * Decrypt every xenc:EncryptedData of an XML document (XML Encryption 1.1).
+ * RSA-OAEP, ECDH-ES and X25519 run in the wasm (HACL*); AES runs in the
+ * host's WebCrypto. Every failure after the structure check is the one
+ * error "XML decryption failed".
+ */
+export function xmlDecrypt(
+  document: string,
+  options: { keys: object[]; allowCbc?: boolean }
+): Promise<{ document: string; canonical: string }>;
+
+/** Encrypt an XML document element, or its content, for one recipient. */
+export function xmlEncrypt(
+  document: string,
+  options: {
+    recipient: object;
+    algorithm?: 'aes128-gcm' | 'aes256-gcm';
+    keyTransport?: 'rsa-oaep-mgf1p' | 'rsa-oaep-sha256';
+    keyWrap?: 'kw-aes128' | 'kw-aes256';
+    content?: boolean;
+    saml?: boolean;
+  }
+): Promise<{ document: string; canonical: string }>;
+
+/**
+ * Decrypt a compact JWE (RFC 7516). Every failure after the allowlist is
+ * the one error "decryption failed".
+ */
+export function jweDecrypt(
+  token: string,
+  options: { jwk: object }
+): Promise<{ header: Record<string, unknown>; plaintext: Uint8Array }>;
+
+/** Encrypt to a compact JWE (RFC 7516). */
+export function jweEncrypt(
+  plaintext: Uint8Array | string,
+  options: { alg: string; enc: string; jwk: object; header?: Record<string, unknown> }
+): Promise<string>;
+
+/**
  * Create an eddsa-rdfc-2022 Data Integrity proofValue (multibase-z,
  * base58btc) over already-canonicalized inputs — RDFC-1.0 canonical
  * N-Quads of the document and of the proof config (see canonicalize()).
@@ -1699,6 +1918,8 @@ export function capabilities(): Promise<{
   store: boolean;
   /** The deltaLog* functions (deltaLogEncode, deltaLogDecode, deltaLogMerge). */
   deltaLog: boolean;
+  /** ops literalValue and literalFromValue (issue 1051). */
+  literalValues: boolean;
   /** 'full': the whole library is in the wasm module. */
   profile: 'full' | string;
   /** The dispatch ABI version string of the loaded wasm module. */
@@ -1783,10 +2004,18 @@ declare const _default: {
   canonicalize: typeof canonicalize;
   graphs: typeof graphs;
   canonicalHash: typeof canonicalHash;
+  asDefaultGraph: typeof asDefaultGraph;
   isomorphic: typeof isomorphic;
   fromQuads: typeof fromQuads;
   ready: typeof ready;
   engineTables: typeof engineTables;
+  sameValue: typeof sameValue;
+  syntaxFor: typeof syntaxFor;
+  splitIri: typeof splitIri;
+  isNCName: typeof isNCName;
+  vocabularies: typeof vocabularies;
+  memberIri: typeof memberIri;
+  memberOrdinal: typeof memberOrdinal;
   shaclValidate: typeof shaclValidate;
   shexValidate: typeof shexValidate;
   owlClosure: typeof owlClosure;
@@ -1830,6 +2059,10 @@ declare const _default: {
   vcEd25519SecretToPublic: typeof vcEd25519SecretToPublic;
   vcEd25519Sign: typeof vcEd25519Sign;
   vcEd25519Verify: typeof vcEd25519Verify;
+  xmlDecrypt: typeof xmlDecrypt;
+  xmlEncrypt: typeof xmlEncrypt;
+  jweDecrypt: typeof jweDecrypt;
+  jweEncrypt: typeof jweEncrypt;
   vcEddsaCreateFromCanonical: typeof vcEddsaCreateFromCanonical;
   vcEddsaVerifyFromCanonical: typeof vcEddsaVerifyFromCanonical;
   vcCheckCredential: typeof vcCheckCredential;
@@ -1842,6 +2075,10 @@ declare const _default: {
   FactoidalError: typeof FactoidalError;
   dataFactory: DataFactory;
   queryRaw: typeof queryRaw;
+  literalValue: typeof literalValue;
+  isValidLiteral: typeof isValidLiteral;
+  canonicalLiteral: typeof canonicalLiteral;
+  literalFromValue: typeof literalFromValue;
   version: string;
   engine: string;
 };

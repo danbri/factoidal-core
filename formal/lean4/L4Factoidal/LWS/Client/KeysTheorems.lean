@@ -19,14 +19,34 @@ namespace L4Factoidal.LWS.Client
 
 open L4Factoidal.VC.Multibase L4Factoidal.Authz
 
-theorem drop_z (s : String) : (("z" ++ s).drop 1).copy = s := by
-  apply String.toList_injective
-  simp [String.toList_copy_drop]
+theorem cid_multibaseDecode_z (bs : Bytes) :
+    L4Factoidal.CID.multibaseDecode? ("z" ++ base58Encode bs) = some (.base58btc, bs) := by
+  unfold L4Factoidal.CID.multibaseDecode?
+  have : ("z" ++ base58Encode bs).toList = 'z' :: (base58Encode bs).toList := by
+    simp [String.toList_append]
+  rw [this]
+  simp only
+  rw [String.ofList_toList, base58Decode?_base58Encode]
+  rfl
+
+/-- A Multikey of a CID 1.0 §2.2.2 header and the length of its type
+decodes to that type and key. -/
+theorem decodePublicMultikey_encode (kt : L4Factoidal.CID.KeyType) (key : Bytes)
+    (h : key.length = kt.publicLength) :
+    L4Factoidal.CID.decodePublicMultikey ("z" ++ base58Encode (kt.publicHeader ++ key)) = .ok (kt, key) := by
+  unfold L4Factoidal.CID.decodePublicMultikey
+  rw [cid_multibaseDecode_z]
+  cases kt <;>
+    simp [L4Factoidal.CID.header2?, L4Factoidal.CID.KeyType.publicHeader, L4Factoidal.CID.KeyType.all,
+      L4Factoidal.CID.KeyType.publicLength, h] at h ⊢
 
 theorem multikeyJwk?_ed25519 (C : Crypto) (pk : Bytes) (h : pk.length = 32) :
     multikeyJwk? C (ed25519PublicKeyToMultikey pk) = some (.okp ⟨pk.toArray⟩) := by
+  have := decodePublicMultikey_encode .ed25519 pk h
   unfold multikeyJwk? ed25519PublicKeyToMultikey multibaseEncodeBase58btc
-  simp [drop_z, base58Decode?_base58Encode, ed25519PubPrefix, h]
+  simp only [ed25519PubPrefix, L4Factoidal.CID.KeyType.publicHeader] at *
+  rw [this]
+  rfl
 
 theorem size_single (b : UInt8) : (ByteArray.mk #[b]).size = 1 := rfl
 
@@ -45,10 +65,12 @@ theorem multikeyJwk?_p256 (C : Crypto) (xy : ByteArray) (hsz : xy.size = 64)
     show (compressP256 xy).data.toList.length = 33
     rw [Array.length_toList]
     exact this
+  have hd := decodePublicMultikey_encode .p256 (ofByteArray (compressP256 xy)) hlen
   unfold multikeyJwk? p256PublicKeyToMultikey multibaseEncodeBase58btc
-  simp [drop_z, base58Decode?_base58Encode, p256PubPrefix]
-  refine ⟨hlen, xy, ?_, rfl, rfl⟩
-  rw [ofByteArray_toArray]
-  exact hdec
+  simp only [p256PubPrefix, L4Factoidal.CID.KeyType.publicHeader] at *
+  rw [hd]
+  simp only [materialJwk?]
+  rw [ofByteArray_toArray, hdec]
+  rfl
 
 end L4Factoidal.LWS.Client

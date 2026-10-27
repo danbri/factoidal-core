@@ -85,6 +85,8 @@ import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.IriResolve
 import L4Factoidal.RDF.CertifiedDataset
 import L4Factoidal.SPARQLRL.Text
+import L4Factoidal.SPARQL.SameValue
+import L4Factoidal.RDF.MediaType
 
 namespace L4Wasm.Ops
 
@@ -118,6 +120,11 @@ structure OpenDataset where
   the mode of the format tag, `resolveModeAndTag`); `.rdf12` for a handle made
   in any other way. The writers of the handle use it (`OpenDataset.writeMode`). -/
   readMode : L4Factoidal.Syntax.Mode := .rdf12
+  /-- The distinct object literals of the dataset, each filed under its
+  `L4Factoidal.SPARQL.storeKeys` (`valueIndexOf`). Built on the first match by
+  value, then kept until the next change
+  (https://github.com/danbri/factoidal/issues/1052). -/
+  valueIndex : Thunk (Std.HashMap String (Array WfLiteral))
 
 /-- The stored dataset. -/
 def OpenDataset.ds (od : OpenDataset) : Dataset := od.data.val
@@ -125,9 +132,27 @@ def OpenDataset.ds (od : OpenDataset) : Dataset := od.data.val
 /-- The stored dataset is a set of quads. -/
 theorem OpenDataset.isSet (od : OpenDataset) : od.ds.IsSet := od.data.property
 
+/-- File one object term of the dataset in the value index: a literal not seen
+before goes in the list of each of its keys. -/
+def valueIndexStep (st : Std.HashSet WfLiteral × Std.HashMap String (Array WfLiteral))
+    (t : Term) : Std.HashSet WfLiteral × Std.HashMap String (Array WfLiteral) :=
+  match t with
+  | .literal l =>
+      if st.1.contains l then st
+      else (st.1.insert l, (L4Factoidal.SPARQL.storeKeys l.val).foldl
+        (fun m k => m.insert k ((m.getD k #[]).push l)) st.2)
+  | _ => st
+
+/-- The value index of a dataset: every distinct object literal of the default
+graph and of each named graph, filed under `storeKeys`. -/
+def valueIndexOf (ds : Dataset) : Std.HashMap String (Array WfLiteral) :=
+  let st0 := ds.default.foldl (fun st t => valueIndexStep st t.o) (∅, ∅)
+  (ds.named.foldl (fun st ng => ng.graph.foldl (fun st t => valueIndexStep st t.o) st) st0).2
+
 private def openDataset (data : CertifiedDataset) (prefixes : List (String × String) := [])
     (readMode : L4Factoidal.Syntax.Mode := .rdf12) : OpenDataset :=
-  { data, backendThunk := Thunk.mk (fun _ => L4Factoidal.Dataflow.LawfulDataset.ofCertified data), prefixes, readMode }
+  { data, backendThunk := Thunk.mk (fun _ => L4Factoidal.Dataflow.LawfulDataset.ofCertified data), prefixes, readMode
+    valueIndex := Thunk.mk (fun _ => valueIndexOf data.val) }
 
 /-- The mode the writers of the handle use: the mode of its reader when that is
 RDF 1.1 and the dataset still has no RDF 1.2 term, else RDF 1.2. A document
@@ -333,11 +358,30 @@ def formatTable : List (String × Bool × Bool × Bool × Bool × String) :=
   , ("sparql-results-csv",  false, false, true, true, "core")
   , ("sparql-results-tsv",  false, false, true, true, "core") ]
 
-/-- `datasetFormats()` — `formatTable` as JSON. -/
+/-- The registered media types and file extensions of a row of `formatTable`
+(`L4Factoidal.RDF.mediaTypeOf`, `registeredExtensionOf`; the table that
+`syntaxFor` reads, https://github.com/danbri/factoidal/issues/1053). A row that
+is not an RDF syntax with a W3C registration has none. -/
+def formatRegistration (name : String) : List String × List String :=
+  match L4Factoidal.RDF.formatOfLabel name with
+  | some f => ([L4Factoidal.RDF.mediaTypeOf f], [L4Factoidal.RDF.registeredExtensionOf f])
+  | none => ([], [])
+
+/-- `datasetFormats()` — `formatTable` as JSON, each row with its
+`mediaTypes` and `extensions` (`formatRegistration`). -/
 def datasetFormats : IO String :=
   pure (okWith [("formats", .array (formatTable.map fun (n, r11, r12, w11, w12, eng) =>
+    let (mts, exts) := formatRegistration n
     Json.object [("name", .string n), ("read11", .bool r11), ("read12", .bool r12),
-                 ("write11", .bool w11), ("write12", .bool w12), ("engine", .string eng)]))])
+                 ("write11", .bool w11), ("write12", .bool w12), ("engine", .string eng),
+                 ("mediaTypes", .array (mts.map Json.string)),
+                 ("extensions", .array (exts.map Json.string))]))])
+
+#guard formatRegistration "turtle" == (["text/turtle"], [".ttl"])
+#guard formatRegistration "rdfc" == ([], [])
+-- Every RDF syntax of the registrations is a row of the table, under its label.
+#guard [L4Factoidal.RDF.RdfFormat.nt, .turtle, .nquads, .trig, .rdfxml, .jsonld].all fun f =>
+  formatTable.any (·.1 == L4Factoidal.RDF.formatLabel f)
 
 /-- The handle's own prefixes as the renderer's (namespace, `label:`) pairs. -/
 private def handlePrefixTable (od : OpenDataset) : PrefixTable :=
@@ -617,26 +661,99 @@ def matchDataset (od : OpenDataset) (pat : QuadPattern) : Dataset :=
       if ts.isEmpty then none else some { name := ng.name, graph := ts }
   { default := dflt, named }
 
-/-- `datasetMatch(handle, patternJson)` — the matching quads under a new handle. -/
-def datasetMatch (h patternJson : String) : IO String := do
-  let tbl ← handleTable.get
-  match tbl[h]? with
-  | none => missingHandle h
-  | some od =>
-    match quadPatternOf patternJson with
-    | none => pure (errJson s!"datasetMatch: not a quad pattern: {patternJson}")
-    | some pat => storeNewHandle (matchDataset od pat) od.prefixes
+/-! ### Match by value (https://github.com/danbri/factoidal/issues/1052)
 
-/-- `datasetMatchCount(handle, patternJson)` — `{"ok":true,"count":N}`, the
-number of matching quads, with no new handle. -/
-def datasetMatchCount (h patternJson : String) : IO String := do
+The ops `datasetMatch`, `datasetMatchCount` and `datasetDeleteQuadsJson` take
+an optional last argument, an options object. `{"match":"value"}` matches the
+object position by value: a literal in the pattern matches each object literal
+that is the same term or has the same value
+(`L4Factoidal.SPARQL.valueMatches`: SPARQL 1.1 `=`, sections 17.3 and
+17.4.1.7). Every other position, and an object that is not a literal, matches
+by term. `{"match":"term"}`, `{}` or no argument is the term match (RDF 1.1
+Concepts section 3.6, SPARQL 1.1 section 18.3): it does not change.
+
+The candidates come from the value index (`OpenDataset.valueIndex`): the
+literals filed under the probe keys of the pattern literal. Each kept
+candidate is one indexed term match, so the cost is the number of candidates,
+not the size of the dataset. -/
+
+/-- The match mode of an options argument: `true` for `{"match":"value"}`.
+An empty argument is the term match. -/
+def matchByValueOf (who optionsJson : String) : Except String Bool :=
+  if optionsJson.trimAscii.isEmpty then .ok false
+  else match parseJson? optionsJson with
+    | some (.object fields) =>
+        match fields.find? (fun (k, _) => k != "match") with
+        | some (k, _) => .error s!"{who}: unknown option '{k}'. Known options: match"
+        | none =>
+          match fields.lookup "match" with
+          | none | some .null => .ok false
+          | some (.string "term") => .ok false
+          | some (.string "value") => .ok true
+          | some v => .error s!"{who}: match must be 'term' or 'value' (got {v.toString})"
+    | _ => .error s!"{who}: options must be a JSON object"
+
+/-- The quads of two match results: the default graphs, and the named graphs
+merged by name. -/
+def unionMatches (a b : Dataset) : Dataset :=
+  let named := b.named.foldl (fun acc ng =>
+    if acc.any (·.name == ng.name) then
+      acc.map fun x => if x.name == ng.name then { x with graph := x.graph ++ ng.graph } else x
+    else acc ++ [ng]) a.named
+  { default := a.default ++ b.default, named }
+
+/-- The object literals of `od` that match the literal `q` by value, from the
+value index. A literal is filed under at most one of the probe keys of `q`
+(`L4Factoidal.SPARQL.storeKeys`), so no candidate comes twice. -/
+def valueCandidates (od : OpenDataset) (q : WfLiteral) : Array WfLiteral :=
+  let idx := od.valueIndex.get
+  let cands := (L4Factoidal.SPARQL.probeKeys q.val).foldl (fun acc k => acc ++ idx.getD k #[]) #[]
+  cands.filter (L4Factoidal.SPARQL.valueMatches · q)
+
+/-- The quads of `od` that match `pat`, the object by value when it is a literal. -/
+def valueMatchDataset (od : OpenDataset) (pat : QuadPattern) : Dataset :=
+  match pat.bound.o with
+  | some (.literal q) =>
+      (valueCandidates od q).foldl (fun acc c =>
+        unionMatches acc (matchDataset od { pat with bound := { pat.bound with o := some (.literal c) } }))
+        Dataset.empty
+  | _ => matchDataset od pat
+
+/-- `matchDataset`, or `valueMatchDataset` when `byValue`. -/
+def matchDatasetBy (byValue : Bool) (od : OpenDataset) (pat : QuadPattern) : Dataset :=
+  if byValue then valueMatchDataset od pat else matchDataset od pat
+
+/-- `datasetMatch(handle, patternJson[, optionsJson])` — the matching quads under
+a new handle. -/
+def datasetMatchWith (h patternJson optionsJson : String) : IO String := do
   let tbl ← handleTable.get
   match tbl[h]? with
   | none => missingHandle h
   | some od =>
-    match quadPatternOf patternJson with
-    | none => pure (errJson s!"datasetMatchCount: not a quad pattern: {patternJson}")
-    | some pat => pure (okWith [("count", .number (toString (datasetQuadCount (matchDataset od pat))))])
+    match matchByValueOf "datasetMatch" optionsJson with
+    | .error e => pure (errCoded "option.invalid-value" e)
+    | .ok byValue =>
+      match quadPatternOf patternJson with
+      | none => pure (errJson s!"datasetMatch: not a quad pattern: {patternJson}")
+      | some pat => storeNewHandle (matchDatasetBy byValue od pat) od.prefixes
+
+def datasetMatch (h patternJson : String) : IO String := datasetMatchWith h patternJson ""
+
+/-- `datasetMatchCount(handle, patternJson[, optionsJson])` — `{"ok":true,"count":N}`,
+the number of matching quads, with no new handle. -/
+def datasetMatchCountWith (h patternJson optionsJson : String) : IO String := do
+  let tbl ← handleTable.get
+  match tbl[h]? with
+  | none => missingHandle h
+  | some od =>
+    match matchByValueOf "datasetMatchCount" optionsJson with
+    | .error e => pure (errCoded "option.invalid-value" e)
+    | .ok byValue =>
+      match quadPatternOf patternJson with
+      | none => pure (errJson s!"datasetMatchCount: not a quad pattern: {patternJson}")
+      | some pat => pure (okWith [("count", .number (toString (datasetQuadCount (matchDatasetBy byValue od pat))))])
+
+def datasetMatchCount (h patternJson : String) : IO String := datasetMatchCountWith h patternJson ""
 
 /-- The quads of an N-Quads text as SPARQL Update quads. A graph named by a
 blank node has no Update quad form and is refused. -/
@@ -833,6 +950,50 @@ def datasetAddQuadsJson (h quadsJson : String) : IO String :=
 quads given as `TermJson` quads. -/
 def datasetDeleteQuadsJson (h quadsJson : String) : IO String :=
   changeHandleJson "datasetDeleteQuadsJson" h quadsJson CertifiedDataset.deleteQuads
+
+/-- The quads of `od` that a quad to delete names, by value: a quad whose
+object is a literal names each stored quad of the same subject, predicate and
+graph whose object matches it by value (`valueMatchDataset`); any other quad
+names itself. -/
+def valueDeleteQuads (od : OpenDataset) (qs : List (Option WfIri × Triple)) :
+    List (Option WfIri × Triple) :=
+  qs.flatMap fun (g, t) =>
+    match t.o with
+    | .literal _ =>
+        let pat : QuadPattern :=
+          { bound := { s := some t.s, p := some t.p, o := some t.o },
+            graph := some (g.map Subject.iri) }
+        let m := valueMatchDataset od pat
+        m.default.map (fun u => (g, u)) ++ m.named.flatMap (fun ng => ng.graph.map fun u => (g, u))
+    | _ => [(g, t)]
+
+/-- `datasetDeleteQuadsJson(handle, quadsJson, optionsJson)` — with
+`{"match":"value"}`, delete every stored quad that a given quad names by value
+(`valueDeleteQuads`); else the term delete. -/
+def datasetDeleteQuadsJsonWith (h quadsJson optionsJson : String) : IO String := do
+  match matchByValueOf "datasetDeleteQuadsJson" optionsJson with
+  | .error e => pure (errCoded "option.invalid-value" e)
+  | .ok false => datasetDeleteQuadsJson h quadsJson
+  | .ok true =>
+    match (← handleTable.get)[h]? with
+    | none => missingHandle h
+    | some od =>
+      match jsonQuadsOf quadsJson >>= (updateQuadsLoop · #[]) with
+      | .error e => pure (errJson s!"datasetDeleteQuadsJson: {e}")
+      | .ok qs =>
+        let next := openDataset (CertifiedDataset.deleteQuads od.data (valueDeleteQuads od qs))
+          od.prefixes od.readMode
+        handleTable.modify (·.insert h next)
+        pure (okWith [("count", .number (toString (datasetQuadCount next.ds)))])
+
+/-- Store `data` as the new state of the handle `h` (its prefixes and reader
+mode kept, the indexes and the value index built again on first use); the new
+state. For the ops of other modules that change a handle
+(`Wasm/Ops/Collections.lean`). -/
+def replaceHandleData (h : String) (od : OpenDataset) (data : CertifiedDataset) : IO OpenDataset := do
+  let next := openDataset data od.prefixes od.readMode
+  handleTable.modify (·.insert h next)
+  pure next
 
 /-- The dataset of a list of quads, each quad once, the graphs in the order of
 their first quad. -/
@@ -1106,7 +1267,11 @@ def apiOptionTable : List (String × List (String × OptionDomain)) :=
   , ("Dataset.validateShacl", parseOpts)
   , ("Dataset.validateShex", [("focus", .any), ("shape", .any)])
   , ("Dataset.serialize", serializeOpts)
-  , ("Dataset.toString", serializeOpts) ]
+  , ("Dataset.toString", serializeOpts)
+  -- https://github.com/danbri/factoidal/issues/1052: match the object by value.
+  , ("Dataset.match", [("match", .oneOf ["term", "value"])])
+  , ("Dataset.has", [("match", .oneOf ["term", "value"])])
+  , ("Dataset.delete", [("match", .oneOf ["term", "value"])]) ]
 
 private def queryOutputNames : List String := ["json", "csv", "tsv", "xml", "table", "ntriples"]
 
@@ -1221,6 +1386,13 @@ def apiCheck (who optionsJson : String) : String :=
 #guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"nt\",\"prefixes\":{}}") == some "option.conflict"
 #guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"ttl\",\"prefixes\":{}}") == none
 #guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"nt\",\"prefixes\":null}") == none
+#guard codeOf? (apiCheck "Dataset.match" "{\"match\":\"value\"}") == none
+#guard codeOf? (apiCheck "Dataset.has" "{\"match\":\"values\"}") == some "option.invalid-value"
+#guard matchByValueOf "m" "" == .ok false
+#guard matchByValueOf "m" "{\"match\":\"value\"}" == .ok true
+#guard matchByValueOf "m" "{\"match\":\"term\"}" == .ok false
+#guard (matchByValueOf "m" "{\"mode\":\"value\"}").toOption.isNone
+#guard (matchByValueOf "m" "[]").toOption.isNone
 #guard codeOf? (apiCheck "parse" "{\"format\":\"json-ld\",\"rdfstar\":\"true\"}") == none
 #guard codeOf? (apiCheck "parse" "{\"rdfstar\":\"true\"}") == none
 #guard codeOf? (apiCheck "parse" "{\"format\":\"ttl\",\"rdfstar\":\"true\"}") == some "option.conflict"

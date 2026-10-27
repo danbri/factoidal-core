@@ -63,7 +63,8 @@ def vendoredContextFiles : List (String × String) := [
   ("https://www.w3.org/ns/credentials/examples/v2", "credentials-examples-v2.jsonld"),
   (dataIntegrityV2ContextIri, "security-data-integrity-v2.jsonld"),
   ("https://w3id.org/security/multikey/v1", "security-multikey-v1.jsonld"),
-  ("https://www.w3.org/2018/credentials/v1", "credentials-v1.jsonld") ]
+  ("https://www.w3.org/2018/credentials/v1", "credentials-v1.jsonld"),
+  ("https://www.w3.org/ns/cid/v1", "cid-v1.jsonld") ]
 
 /-- A loader over an `(IRI, body)` table the caller has read from disk —
 `vendoredContextFiles` resolved, plus whatever the context cache holds. -/

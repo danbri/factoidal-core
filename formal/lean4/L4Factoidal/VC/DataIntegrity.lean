@@ -41,7 +41,15 @@ edge only. That also keeps the library free of any evaluation of an
 proof-options document (the proof minus `proofValue`, under the context
 `VC/Context.lean` prescribes), run JSON-LD toRdf on both (the loader is a
 parameter), and then the byte-level pipeline. Verification resolves
-`verificationMethod` through did:key only (as the shim does), requires
+`verificationMethod` (`resolveKey`) through an Ed25519 did:key, or through
+a controlled identifier document (CID 1.0 §3.3 Retrieve Verification
+Method, `L4Factoidal.CID`, https://github.com/danbri/factoidal/issues/1100):
+the relationship is the one `proofPurpose` names (Data Integrity §4.4: the
+method must be associated with the proof purpose), and the method must be
+an Ed25519 key (a `Multikey` or an OKP `JsonWebKey`), in force at `now`
+when the caller gives a time. The engine does no I/O: a document it does
+not have is the refusal `needDocument url`; the host fetches it and calls
+again with it in `cidDocs`. Verification requires
 `type = DataIntegrityProof`, `cryptosuite = eddsa-rdfc-2022`, and the
 expected `proofPurpose`, and refuses — never guesses — on anything else.
 A proof SET (array of proofs) verifies when every member verifies; proof
@@ -52,6 +60,8 @@ import L4Factoidal.JSONLD.ToRdf
 import L4Factoidal.VC.Multibase
 import L4Factoidal.VC.DidKey
 import L4Factoidal.VC.Context
+import L4Factoidal.CID.Retrieve
+import L4Factoidal.JOSE.Base64Url
 
 namespace L4Factoidal.VC.DataIntegrity
 
@@ -220,6 +230,17 @@ inductive VerifyError where
   | wrongPurpose (got expected : String)
   | missingField (name : String)
   | unresolvableVerificationMethod (vm : String)
+  /-- The controlled identifier document at this URL is needed (CID 1.0
+  §3.3 step 4): the host fetches it and verifies again with it. -/
+  | needDocument (url : String)
+  /-- CID 1.0 §3.3 refused the verification method (a §3.5 error). -/
+  | cid (vm : String) (e : L4Factoidal.CID.ProcessingError)
+  /-- The proof purpose names no verification relationship of CID 1.0 §2.3. -/
+  | unknownProofPurpose (purpose : String)
+  /-- The method is revoked or expired at the verification time (CID 1.0 §2.2). -/
+  | methodNotInForce (vm : String)
+  /-- The method is not an Ed25519 key, which eddsa-rdfc-2022 needs. -/
+  | notEd25519 (vm : String)
   | proofChainUnsupported
   | canonicalization (what msg : String)
   | signatureRejected
@@ -233,15 +254,63 @@ def VerifyError.describe : VerifyError → String
   | .wrongPurpose got expected => s!"proof.proofPurpose is \"{got}\", expected \"{expected}\""
   | .missingField n => s!"proof is missing required field \"{n}\""
   | .unresolvableVerificationMethod vm =>
-    s!"could not resolve verificationMethod \"{vm}\" (only Ed25519 did:key is supported)"
+    s!"could not resolve verificationMethod \"{vm}\" (the DID methods supported: Ed25519 did:key; other URLs are controlled identifier documents)"
+  | .needDocument u => s!"the controlled identifier document {u} is needed"
+  | .cid vm e => s!"verificationMethod \"{vm}\": {e.name}: {e.detail}"
+  | .unknownProofPurpose p => s!"proofPurpose \"{p}\" names no verification relationship"
+  | .methodNotInForce vm => s!"verificationMethod \"{vm}\" is revoked or expired"
+  | .notEd25519 vm => s!"verificationMethod \"{vm}\" is not an Ed25519 key"
   | .proofChainUnsupported => "proof chains (previousProof) are not supported"
   | .canonicalization what msg => s!"canonicalization of {what} failed: {msg}"
   | .signatureRejected => "signature did not verify"
 
+/-- The Ed25519 public key of a CID verification method: a `Multikey`
+with the Ed25519 header, or a `JsonWebKey` with `kty` OKP, `crv` Ed25519
+and a 32-byte `x`. -/
+def ed25519Key? (m : L4Factoidal.CID.Method) : Option ByteArray :=
+  match m.material with
+  | .multikey .ed25519 key => some (toByteArray key)
+  | .jwk j =>
+      if j.getString? "kty" == some "OKP" && j.getString? "crv" == some "Ed25519" then
+        match (j.getString? "x").bind L4Factoidal.JOSE.Base64Url.decode with
+        | some x => if x.size == 32 then some x else none
+        | none => none
+      else none
+  | _ => none
+
+/-- Is the method in force at the verification time, when there is one (CID
+1.0 §2.2)? -/
+def inForceAt (now : Option Int) (m : L4Factoidal.CID.Method) : Bool :=
+  match now with
+  | some t => L4Factoidal.CID.methodInForce t m
+  | none => true
+
+/-- The public key of `verificationMethod` for a proof with this purpose:
+an Ed25519 did:key, or CID 1.0 §3.3 over the documents the host fetched
+(`cidDocs`), with the relationship the purpose names. -/
+def resolveKey (cidDocs : List (String × String)) (now : Option Int) (vm purpose : String) :
+    Except VerifyError ByteArray :=
+  match publicKeyOfVerificationMethod? vm with
+  | some pk => .ok (toByteArray pk)
+  | none =>
+      if vm.startsWith "did:" then .error (.unresolvableVerificationMethod vm)
+      else match L4Factoidal.CID.Relationship.ofName? purpose with
+        | none => .error (.unknownProofPurpose purpose)
+        | some rel =>
+            match L4Factoidal.CID.retrieveWith cidDocs vm rel with
+            | .need u => .error (.needDocument u)
+            | .error e => .error (.cid vm e)
+            | .ok m =>
+                if !inForceAt now m then .error (.methodNotInForce vm)
+                else match ed25519Key? m with
+                  | some pk => .ok pk
+                  | none => .error (.notEd25519 vm)
+
 /-- Verify ONE proof object against the unsecured document's canonical
 form (§4.4 Verify Proof + §3.3.2). -/
 def verifyOneProof (loader : Loader) (verifyF : VerifyFn) (alg : HashAlgorithm)
-    (expectedPurpose : String) (doc : Json) (canonicalDoc : String) (proof : Json) :
+    (expectedPurpose : String) (doc : Json) (canonicalDoc : String) (proof : Json)
+    (cidDocs : List (String × String) := []) (now : Option Int := none) :
     Except VerifyError Unit := do
   let _ ← match fieldsOf? proof with | some fs => pure fs | none => throw .proofNotObject
   if (proof.field? "previousProof").isSome then throw .proofChainUnsupported
@@ -257,9 +326,7 @@ def verifyOneProof (loader : Loader) (verifyF : VerifyFn) (alg : HashAlgorithm)
   let purpose ← need "proofPurpose"
   if purpose != expectedPurpose then throw (.wrongPurpose purpose expectedPurpose)
   let pv ← need "proofValue"
-  let pk ← match publicKeyOfVerificationMethod? vm with
-    | some pk => pure (toByteArray pk)
-    | none => throw (.unresolvableVerificationMethod vm)
+  let pk ← resolveKey cidDocs now vm purpose
   let canonicalCfg ← match canonicalizeJsonLd loader (proofOptionsOf doc proof) with
     | .ok s => pure s
     | .error m => throw (.canonicalization "proof options" m)
@@ -269,7 +336,8 @@ def verifyOneProof (loader : Loader) (verifyF : VerifyFn) (alg : HashAlgorithm)
 /-- Verify a secured document (§4.4): its `proof` is one object or a
 proof set (array); every member must verify. -/
 def verifyDocument (loader : Loader) (verifyF : VerifyFn) (doc : Json)
-    (expectedPurpose : String := "assertionMethod") (alg : HashAlgorithm := .sha256) :
+    (expectedPurpose : String := "assertionMethod") (alg : HashAlgorithm := .sha256)
+    (cidDocs : List (String × String) := []) (now : Option Int := none) :
     Except VerifyError Unit := do
   let proofs ← match doc.field? "proof" with
     | none => throw .noProof
@@ -279,7 +347,7 @@ def verifyDocument (loader : Loader) (verifyF : VerifyFn) (doc : Json)
     | .ok s => pure s
     | .error m => throw (.canonicalization "document" m)
   for p in proofs do
-    verifyOneProof loader verifyF alg expectedPurpose doc canonicalDoc p
+    verifyOneProof loader verifyF alg expectedPurpose doc canonicalDoc p cidDocs now
 
 /-- Secure a document (§4.3 Add Proof + §3.3.1 Create Proof): build the
 proof configuration from the options, canonicalise document and
