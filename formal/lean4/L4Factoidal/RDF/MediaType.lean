@@ -115,6 +115,32 @@ def formatOfDocument (mediaType name : String) : Option RdfFormat :=
   if mediaTypeEssence mediaType = "" then formatOfRegisteredPath name
   else formatOfMediaType mediaType
 
+/-- A file name, a path or an IRI without its query and fragment: the text
+before the first `?` or `#` (RFC 3986 section 3), so that the extension of
+`http://e/data.ttl?x=1` is `.ttl`. -/
+def nameWithoutQuery (name : String) : String :=
+  String.ofList (name.toList.takeWhile (fun c => c != '?' && c != '#'))
+
+/-- **The syntax of a document by its names** (https://github.com/danbri/factoidal/issues/1053):
+`formatOfDocument` of the media type and of the name without its query and
+fragment. The media type wins when there is one; an unknown media type does not
+fall back to the name. -/
+def syntaxOfNames (mediaType name : String) : Option RdfFormat :=
+  formatOfDocument mediaType (nameWithoutQuery name)
+
+#guard syntaxOfNames "" "data.ttl" == some .turtle
+#guard syntaxOfNames "" "/tmp/x/DATA.NQ" == some .nquads
+#guard syntaxOfNames "" "http://e/a.trig?x=1#y" == some .trig
+#guard syntaxOfNames "" "http://e/a.rdf" == some .rdfxml
+#guard syntaxOfNames "" "a.jsonld" == some .jsonld
+#guard syntaxOfNames "" "a.nt" == some .nt
+#guard syntaxOfNames "" "data.unknown" == none
+#guard syntaxOfNames "" "data" == none
+#guard syntaxOfNames "" "a.owl" == none
+#guard syntaxOfNames "text/turtle; charset=utf-8" "a.nt" == some .turtle
+#guard syntaxOfNames "Application/N-Quads" "" == some .nquads
+#guard syntaxOfNames "text/plain" "a.ttl" == none
+
 /-! ## Theorems -/
 
 theorem formatOfEssence_empty : formatOfEssence "" = none := rfl

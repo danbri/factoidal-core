@@ -63,22 +63,40 @@ function failEnvelope(err) {
   return JSON.stringify({ ok: false, code: 'op.failed', error: String((err && err.message) || err) });
 }
 
+/**
+ * A JavaScript value tagged with its JavaScript type, {js, v}, for the engine
+ * (Wasm/Ops/ExtFns.lean, Wasm/Ops/LiteralValue.lean). This copies the value
+ * as text; the engine chooses the datatype and the lexical form
+ * (L4Factoidal.XSD.JsValue.jsLiteral, issue 894 item 3, issue 1051 item 1).
+ * A number is its Number::toString text ('-0' for negative zero); a Date is
+ * the text of getTime() ('NaN' for an invalid Date). Any other value: null.
+ * @param {unknown} value
+ * @returns {{js: string, v: string|boolean} | null}
+ */
+export function encodeJsValue(value) {
+  switch (typeof value) {
+    case 'boolean': return { js: 'boolean', v: value };
+    case 'number': return { js: 'number', v: Object.is(value, -0) ? '-0' : String(value) };
+    case 'bigint': return { js: 'bigint', v: value.toString() };
+    case 'string': return { js: 'string', v: value };
+    case 'object':
+      if (value instanceof Date) return { js: 'date', v: String(value.getTime()) };
+      return null;
+    default: return null;
+  }
+}
+
 // One answer for Wasm/Ops/ExtFns.lean: the JavaScript value tagged with its
-// JavaScript type ({js, v}; a number as its Number::toString text), or a term
-// object. The engine chooses the datatype and the lexical form
-// (L4Factoidal.XSD.JsValue.jsLiteral, issue 894 item 3). '' means "no
-// value" (the section 17.6 error).
+// JavaScript type (encodeJsValue), or a term object. '' means "no value" (the
+// section 17.6 error).
 function encodeExtAnswer(out) {
   if (out === null || out === undefined || out === EXT_PENDING_MARKER) return '';
-  switch (typeof out) {
-    case 'boolean': return JSON.stringify({ js: 'boolean', v: out });
-    case 'number': return JSON.stringify({ js: 'number', v: Object.is(out, -0) ? '-0' : String(out) });
-    case 'bigint': return JSON.stringify({ js: 'bigint', v: out.toString() });
-    case 'string': return JSON.stringify({ js: 'string', v: out });
-    case 'object':
-      try { return JSON.stringify(appTermToJson(out)); } catch (_error) { return ''; }
-    default: return '';
+  const tagged = encodeJsValue(out);
+  if (tagged) return JSON.stringify(tagged);
+  if (typeof out === 'object') {
+    try { return JSON.stringify(appTermToJson(out)); } catch (_error) { return ''; }
   }
+  return '';
 }
 
 // The Lean module asks its host through ONE global,

@@ -3,8 +3,9 @@ Wasm.Ops.Sbm11 — SPARQL over an SBM11 generation in the wasm module
 (https://github.com/danbri/factoidal/issues/1009 KR1; stage 1 of
 https://github.com/danbri/factoidal/issues/1007).
 
-  sbm11Open(source)
-    -> {"ok":true,"handle":"sbm11-1","generation":G,"terms":N,"artifacts":K,"bytesRead":B}
+  sbm11Open(source [, optionsJson])
+    -> {"ok":true,"handle":"sbm11-1","generation":G,"terms":N,"artifacts":K,
+        "verify":"merkle"|"none","bytesRead":B}
   sbm11Query(handle, sparql [, optionsJson])
     -> {"ok":true,"path":"path=ids"|"path=reference ...","rows":N,
         "format":"srj"|"ntriples","bytesRead":B,"reads":R,"result":"..."}
@@ -26,6 +27,16 @@ copied in whole. `optionsJson` is an object with the optional members `base`
 (the base IRI of the query), `sparql12` (the SPARQL 1.2 grammar) and
 `reference` (run the reference evaluator also for the id fragment, the oracle
 of the tests).
+
+The `optionsJson` of `sbm11Open` is an object with the optional member
+`verify`: `"merkle"` (the default) or `"none"` (`HostVerify.Verify`). Under
+`merkle` the open admits the `.merkle` sidecar of every file against the
+manifest's Merkle root, and every byte a query decodes is in a 65,536-byte
+chunk checked by its proof against that root, with HACL* SHA-256
+(`sbm11PackHasher`); a changed byte in any file, sidecar or Merkle reference
+of the manifest refuses the open or the query, and the error names the file
+(https://github.com/danbri/factoidal/issues/1009). `none` checks the lengths
+only, as `l4sbm11 query --verify none`.
 
 `result` is SPARQL 1.1 Query Results JSON for SELECT and ASK, and N-Triples
 lines for CONSTRUCT and DESCRIBE: the bytes `l4sbm11 query` writes for the
@@ -65,6 +76,7 @@ namespace L4Wasm.Ops
 open L4Factoidal.JSON
 open L4Factoidal.SPARQL
 open L4Factoidal.Storage.Sbm11.HostSession
+open L4Factoidal.Storage.Sbm11.HostVerify (Verify)
 
 /-- The most SBM11 handles open at once. -/
 def maxSbm11Handles : Nat := 8
@@ -74,14 +86,35 @@ initialize sbm11HandleTable : IO.Ref (Std.HashMap String Session) ← IO.mkRef �
 
 private def ioMessage (e : IO.Error) : String := toString e
 
-/-- `sbm11Open(source)`. -/
-def sbm11Open (source : String) : IO String := do
+/-- The `verify` member of the `optionsJson` of `sbm11Open` (module comment). -/
+def sbm11OpenVerify (optionsJson : String) : Except String Verify := do
+  if optionsJson.trimAscii.isEmpty then return .merkle
+  match parseJson optionsJson with
+  | .error e => throw s!"optionsJson: {toString e}"
+  | .ok (.object members) =>
+    let mut v : Verify := .merkle
+    for (k, x) in members do
+      match k, x with
+      | "verify", .string s =>
+        match Verify.ofString? s with
+        | some w => v := w
+        | none => throw s!"optionsJson: verify is merkle or none, not {s}"
+      | "verify", .null => pure ()
+      | k, _ => throw s!"optionsJson: member {k} is not verify (merkle or none)"
+    return v
+  | .ok _ => throw "optionsJson must be a JSON object"
+
+/-- `sbm11Open(source, optionsJson)`. -/
+def sbm11Open (source : String) (optionsJson : String := "") : IO String := do
   let table ← sbm11HandleTable.get
   if table.size ≥ maxSbm11Handles then
     return errJson s!"sbm11Open: {table.size} handles are open (at most {maxSbm11Handles}); close one with sbm11Close"
+  match sbm11OpenVerify optionsJson with
+  | .error e => return errJson s!"sbm11Open: {e}"
+  | .ok v =>
   try
     let (host, genName) ← resolveHost (hostOf source)
-    let ss ← openSession host
+    let ss ← openSession host v sbm11PackHasher
     let n ← sbm11HandleCounter.modifyGet fun c => (c + 1, c + 1)
     let h := s!"sbm11-{n}"
     sbm11HandleTable.modify (·.insert h ss)
@@ -90,6 +123,7 @@ def sbm11Open (source : String) : IO String := do
       , ("generation", .string genName)
       , ("terms", .number (toString ss.dictHdr.termCount))
       , ("artifacts", .number (toString ss.manifest.artifacts.length))
+      , ("verify", .string v.name)
       , ("bytesRead", .number (toString (← ss.bytesRead.get))) ]
   catch e => return errJson s!"sbm11Open: {ioMessage e}"
 
@@ -181,7 +215,7 @@ private def readWholeFile (host : Host) (file : String) (n : Nat) : IO ByteArray
 def sbm11Verify (source : String) : IO String := do
   try
     let host := hostOf source
-    let ss ← openSession host
+    let ss ← openSession host .merkle sbm11PackHasher
     let m := ss.manifest
     let mut bytes := 0
     let mut files := 1

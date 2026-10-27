@@ -1555,3 +1555,4 @@ L4Factoidal_WebDAV_etagsOf  # (c) at most ifTagsMax + 1 = 17 resources: precheck
 #     condition reaches selectPost through substituteExistentials). ---
 L4Factoidal_SPARQL_compareOnConditionsKeyed  # (b) ORDER BY conditions of one query; the list step is a self tail call (loop); cycle through selectPost for sub-SELECT nesting
 L4Factoidal_SPARQL_orderKeys  # (b) ORDER BY conditions of one query: one frame per condition; cycle through selectPost for sub-SELECT nesting
+L4Factoidal_RDF_LiteralValue_valueJsonFuel  # (c) fuel 4 from valueJson, its only caller: depth at most 4 (an XSD list value nests no list); PR 154

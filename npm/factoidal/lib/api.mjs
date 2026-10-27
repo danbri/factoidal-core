@@ -26,7 +26,7 @@ import { dataFactory, termFromSrj, termToJson, quadToJson, _setTextEngine } from
 import { Dataset, INTERNAL, checkOptions, makeRegistry, WRITER_TAGS } from './dataset.mjs';
 import { version as packageVersion } from './version.mjs';
 import { openGeneration, readRegion, manifestKeys, hexOfBytes } from './store.mjs';
-import { fullEngineMessage } from './lean-entry.mjs';
+import { fullEngineMessage, encodeJsValue } from './lean-entry.mjs';
 import { memoryDeltaLogStore } from './delta-log-hosts.mjs';
 import { FactoidalError, errorFromEnvelope, envelopeResult } from './errors.mjs';
 import { buildNodes } from './nodes.mjs';
@@ -902,30 +902,43 @@ function buildApi(driver) {
   }
 
   /**
-   * The RDFC-1.0 canonical hash of one graph: the SHA-256, as 64 lowercase
-   * hexadecimal digits, of the canonical N-Quads document (RDF Dataset
-   * Canonicalization 1.0, section 4.4 note 2). Every quad's graph name is
-   * dropped first (op datasetGraphAsDefault with the union of the graphs);
-   * then op datasetCanonicalHash computes the canonical form and the digest
-   * in Lean. canonicalize() answers the canonical text.
-   * @param {Dataset} datasetOrGraph
+   * The RDFC-1.0 canonical hash of a dataset: the SHA-256, as 64 lowercase
+   * hexadecimal digits, of the canonical N-Quads document that canonicalize()
+   * answers (RDF Dataset Canonicalization 1.0, section 4.4 note 2), graph
+   * names included. Op datasetCanonicalHash computes the canonical form and
+   * the digest in Lean. Since 0.20.0; 0.17.0 to 0.19.x dropped every graph
+   * name first, so datasets that differ only in their graph names got the
+   * same hash. To hash a graph whatever its name, use
+   * canonicalHash(asDefaultGraph(g)).
+   * @param {Dataset} dataset
    * @returns {Promise<string>}
    */
-  async function canonicalHash(datasetOrGraph) {
-    if (!(datasetOrGraph instanceof Dataset)) {
-      throw new TypeError('canonicalHash: expected a Dataset (e.g. one entry of graphs())');
+  async function canonicalHash(dataset) {
+    if (!(dataset instanceof Dataset)) {
+      throw new TypeError('canonicalHash: expected a Dataset');
     }
-    datasetOrGraph.size; // throws the disposed error
-    const c = datasetOrGraph._ctx;
-    requireEntryFn(c.e, 'datasetGraphAsDefault', 'canonicalHash');
+    dataset.size; // throws the disposed error
+    const c = dataset._ctx;
     requireEntryFn(c.e, 'datasetCanonicalHash', 'canonicalHash');
-    const merged = c.wrap(entryResult(c.e.datasetGraphAsDefault(datasetOrGraph.handle,
-      JSON.stringify({ type: 'union' })), 'canonicalHash'), {});
-    try {
-      return entryResult(c.e.datasetCanonicalHash(merged.handle), 'canonicalHash').hash;
-    } finally {
-      merged.dispose();
+    return entryResult(c.e.datasetCanonicalHash(dataset.handle), 'canonicalHash').hash;
+  }
+
+  /**
+   * A new Dataset that holds the triples of every graph of `dataset`, all in
+   * the default graph (op datasetGraphAsDefault with the union of the
+   * graphs). With one entry of graphs(), it is that graph without its name.
+   * @param {Dataset} dataset
+   * @returns {Dataset}
+   */
+  function asDefaultGraph(dataset) {
+    if (!(dataset instanceof Dataset)) {
+      throw new TypeError('asDefaultGraph: expected a Dataset');
     }
+    dataset.size; // throws the disposed error
+    const c = dataset._ctx;
+    requireEntryFn(c.e, 'datasetGraphAsDefault', 'asDefaultGraph');
+    return c.wrap(entryResult(c.e.datasetGraphAsDefault(dataset.handle,
+      JSON.stringify({ type: 'union' })), 'asDefaultGraph'), {});
   }
 
   /**
@@ -964,6 +977,95 @@ function buildApi(driver) {
   /** Load the engine; afterwards the N-Quads text functions of `@factoidal/core/rdfjs` work. */
   async function ready() {
     await ctx();
+  }
+
+  // The synchronous term functions (sameValue, syntaxFor, splitIri, ...) call
+  // the loaded engine: `await ready()`, or any other call, loads it first.
+  function loadedCtx(who, op = who) {
+    if (!ctxCache) {
+      throw new FactoidalError(
+        `${who}: the engine is not loaded yet. Await any @factoidal/core call first ` +
+        '(for example `await ready()`).', { code: 'op.unknown' });
+    }
+    requireEntryFn(ctxCache.e, op, who);
+    return ctxCache;
+  }
+
+  /**
+   * SPARQL 1.1 `=` on two RDF terms (sections 17.3 and 17.4.1.7), decided by
+   * the engine (L4Factoidal.SPARQL.sameValue;
+   * https://github.com/danbri/factoidal/issues/1052).
+   * @param {object|string} a an RDF/JS term or an N-Triples term string
+   * @param {object|string} b
+   * @returns {boolean|null} true: the same value; false: different values;
+   *   null: incomparable (the operator's type error)
+   */
+  function sameValue(a, b) {
+    const c = loadedCtx('sameValue');
+    const r = entryResult(c.e.sameValue(JSON.stringify(termToJson(a)),
+      JSON.stringify(termToJson(b))), 'sameValue');
+    return r.sameValue === 'true' ? true : (r.sameValue === 'false' ? false : null);
+  }
+
+  const iriText = (iri) => (typeof iri === 'string' ? iri : (iri && iri.value) || '');
+
+  /**
+   * The syntax of a document by its file name (or IRI path) and its media
+   * type, from the engine's table of W3C registrations
+   * (L4Factoidal.RDF.syntaxOfNames; https://github.com/danbri/factoidal/issues/1053).
+   * The media type wins when it is given; an unknown media type does not fall
+   * back to the name.
+   * @param {string|{fileName?: string, mediaType?: string}} what a file name or IRI,
+   *   or both names
+   * @returns {string|null} a syntax name of formats(), or null
+   */
+  function syntaxFor(what) {
+    const c = loadedCtx('syntaxFor');
+    const o = (typeof what === 'string') ? { fileName: what } : (what || {});
+    const r = entryResult(c.e.syntaxFor(String(o.fileName ?? ''), String(o.mediaType ?? '')), 'syntaxFor');
+    return r.syntax ?? null;
+  }
+
+  /**
+   * An IRI as a namespace and a local name: the local name is the longest
+   * suffix that is an XML NCName, '' when there is none
+   * (L4Factoidal.RDF.splitIriXml; https://github.com/danbri/factoidal/issues/1051 item 4).
+   * @param {string|{value: string}} iri
+   * @returns {{namespace: string, localName: string}}
+   */
+  function splitIri(iri) {
+    const c = loadedCtx('splitIri');
+    const r = entryResult(c.e.splitIri(iriText(iri)), 'splitIri');
+    return { namespace: r.namespace, localName: r.localName };
+  }
+
+  /** Is the text an XML NCName (Namespaces in XML 1.0, production [4])? */
+  function isNCName(text) {
+    const c = loadedCtx('isNCName');
+    return entryResult(c.e.isNCName(String(text)), 'isNCName').ncName === true;
+  }
+
+  /**
+   * The engine's vocabulary table: prefix, namespace and term local names of
+   * rdf, rdfs, xsd and owl, and the namespaces of foaf, dcterms, dc and schema
+   * (L4Factoidal.RDF.vocabularyTable; https://github.com/danbri/factoidal/issues/1051 item 5).
+   * @returns {Array<{prefix: string, namespace: string, terms: string[]}>}
+   */
+  function vocabularies() {
+    const c = loadedCtx('vocabularies');
+    return entryResult(c.e.vocabularies(), 'vocabularies').vocabularies;
+  }
+
+  /** The container membership property rdf:_n, n >= 1, as a NamedNode. */
+  function memberIri(n) {
+    const c = loadedCtx('memberIri');
+    return dataFactory.namedNode(entryResult(c.e.memberIri(String(n)), 'memberIri').iri);
+  }
+
+  /** The n of rdf:_n, or null for any other IRI. */
+  function memberOrdinal(iri) {
+    const c = loadedCtx('memberOrdinal');
+    return entryResult(c.e.memberOrdinal(iriText(iri)), 'memberOrdinal').ordinal ?? null;
   }
 
   /** The engine's name tables (formats, regimes, query outputs, pack syntaxes). */
@@ -2215,13 +2317,110 @@ function buildApi(driver) {
       turtlePrefixes: has('serializeTurtleWith'),
       store: has('storeOpen') && has('storeHandleQuery'),
       deltaLog: has('deltaLogEncode') && has('deltaLogDecode') && has('deltaLogMerge'),
+      literalValues: has('literalValue') && has('literalFromValue'),
     };
+  }
+
+  // ---------------------------------------------------------------
+  // Literal values (https://github.com/danbri/factoidal/issues/1051 items 1-3).
+  // The ops literalValue and literalFromValue (formal/lean4/Wasm/Ops/
+  // LiteralValue.lean, over L4Factoidal.RDF.LiteralValue) make every
+  // decision: the XSD lexical-to-value mapping, validity, the canonical form,
+  // the datatype of a JavaScript value. These functions are SYNCHRONOUS, so a
+  // library-style API can call them in a getter; the engine must be loaded
+  // first (await ready(), or any other call).
+  // ---------------------------------------------------------------
+  function loadedEntry(who) {
+    if (!ctxCache) {
+      throw new FactoidalError(
+        `${who}: the engine is not loaded yet. Await any @factoidal/core call ` +
+        'first (for example `await ready()`); after that this function is synchronous.',
+        { code: 'op.unknown' });
+    }
+    return ctxCache.e;
+  }
+
+  function literalAnswer(term, who) {
+    if (!term || typeof term !== 'object' || term.termType !== 'Literal') {
+      throw new TypeError(`${who}: expected an RDF/JS Literal term`);
+    }
+    const e = loadedEntry(who);
+    requireEntryFn(e, 'literalValue', who);
+    return entryResult(e.literalValue(JSON.stringify(termToJson(term))), who);
+  }
+
+  // NaN and the infinities have no JSON number; the engine names them in
+  // `special`, and this copies the matching JavaScript number in.
+  const SPECIAL_NUMBERS = { NaN: NaN, INF: Infinity, '-INF': -Infinity };
+  function valueOut(v) {
+    if (v && typeof v.special === 'string' && v.special in SPECIAL_NUMBERS) {
+      return { ...v, number: SPECIAL_NUMBERS[v.special] };
+    }
+    // A JSON text -0 may reach this layer as 0; negativeZero is the engine's
+    // statement of the sign.
+    if (v && v.negativeZero === true) return { ...v, number: -0 };
+    return v;
+  }
+
+  /**
+   * The value of a literal: {datatype, recognized, valid, value?, canonical?}.
+   * `recognized` false: the engine has no lexical space for the datatype, and
+   * `valid` is null. `value` and `canonical` are present for a valid literal
+   * of a datatype with a value model (the shapes are in API.md).
+   */
+  function literalValue(term) {
+    const r = literalAnswer(term, 'literalValue');
+    const out = { datatype: r.datatype, recognized: r.recognized,
+      valid: r.recognized ? r.valid : null };
+    if (r.value !== undefined) out.value = valueOut(r.value);
+    if (r.canonical !== undefined) out.canonical = r.canonical;
+    return out;
+  }
+
+  /** true or false: the lexical form is in the datatype's lexical space;
+   * null: the engine has no lexical space for the datatype. */
+  function isValidLiteral(term) {
+    const r = literalAnswer(term, 'isValidLiteral');
+    return r.recognized ? r.valid : null;
+  }
+
+  /** The literal with the canonical lexical form of its value (XSD 1.1 Part 2
+   * section 2.3.1), the same datatype and language; null when the literal is
+   * not valid or the engine has no canonical mapping for its datatype. */
+  function canonicalLiteral(term) {
+    const r = literalAnswer(term, 'canonicalLiteral');
+    if (r.canonical === undefined) return null;
+    if (term.language) return dataFactory.literal(r.canonical, term.direction
+      ? { language: term.language, direction: term.direction } : term.language);
+    return dataFactory.literal(r.canonical, dataFactory.namedNode(r.datatype));
+  }
+
+  /**
+   * The literal of a JavaScript value. The engine chooses the datatype (table
+   * in API.md) unless `options.datatype` names one (an IRI, a NamedNode, or
+   * an XSD built-in local name such as 'int'); the value must then be in that
+   * datatype's value space, else a FactoidalError with code literal.value.
+   */
+  function literalFromValue(value, options) {
+    const who = 'literalFromValue';
+    const tagged = encodeJsValue(value);
+    if (!tagged) {
+      throw new TypeError(`${who}: expected a boolean, number, bigint, string or Date`);
+    }
+    const dt = options && options.datatype;
+    const hint = dt === undefined || dt === null ? ''
+      : (typeof dt === 'string' ? dt : (dt && typeof dt.value === 'string' ? dt.value : null));
+    if (hint === null) throw new TypeError(`${who}: options.datatype must be a string or a NamedNode`);
+    const e = loadedEntry(who);
+    requireEntryFn(e, 'literalFromValue', who);
+    const r = entryResult(e.literalFromValue(JSON.stringify(tagged), hint), who);
+    return dataFactory.literal(r.value, dataFactory.namedNode(r.datatype));
   }
 
   // The node-composition API (lib/nodes.mjs, issue 1002 step 2).
   const nodeApi = buildNodes({
     entry, entryResult, requireEntryFn, Dataset,
-    parse, closure, shaclValidate, query, serialize, canonicalize, explain, csvwToRdf,
+    parse, closure, shaclValidate, query, serialize, canonicalize, canonicalHash, explain, csvwToRdf,
   });
 
   return {
@@ -2241,6 +2440,7 @@ function buildApi(driver) {
     canonicalize,
     graphs,
     canonicalHash,
+    asDefaultGraph,
     shaclValidate,
     shexValidate,
     owlClosure,
@@ -2304,8 +2504,19 @@ function buildApi(driver) {
     queryRaw,
     isomorphic,
     fromQuads,
+    literalValue,
+    isValidLiteral,
+    canonicalLiteral,
+    literalFromValue,
     ready,
     engineTables,
+    sameValue,
+    syntaxFor,
+    splitIri,
+    isNCName,
+    vocabularies,
+    memberIri,
+    memberOrdinal,
     Dataset,
     Store,
     FactoidalError,

@@ -1282,13 +1282,11 @@ def canonicalDuration (d : DurValue) : String :=
   let body := dPart ++ (if tPart == "" then "" else "T" ++ tPart)
   (if neg then "-" else "") ++ "P" ++ (if body == "" then "T0S" else body)
 
-/-- The canonical representation of a `float`/`double` value. The
-specification's §3.3.4.2 mapping emits the SHORTEST numeral that maps
-back to the same value; this emits the exact decimal expansion of the
-binary value in the same `d.dddE±e` shape. Both round-trip
-(`canonicalRoundTrips` in `DatatypesTheorems.lean`); only the digit
-count differs, and the difference is recorded as open in
-`docs/designissues/2026-09-07-xml-schema-datatypes.md`. -/
+/-- The EXACT scientific form of a `float`/`double` value: the exact
+decimal expansion of the binary value in the `d.dddE±e` shape. It is not
+the §3.3.4.2/§3.3.5.2 canonical mapping (that is `floatingCanonical`
+below, which `canonicalMap` uses); the SPARQL, RIF and F&O callers that
+format a computed value read this one directly. -/
 def canonicalFval (v : Fval) : String :=
   match v.cls with
   | .nan => "NaN"
@@ -1308,6 +1306,91 @@ def canonicalFval (v : Fval) : String :=
       (if v.neg then "-" else "") ++ head ++ "."
         ++ (if tail == "" then "0" else tail) ++ "E" ++ intToString exp
 
+/-! ### §3.3.4.2 `floatCanonicalMap` and §3.3.5.2 `doubleCanonicalMap`
+
+XSD 1.1 Part 2 §E.1: for a non-zero finite value `f`, let `c` be the
+smallest integer with `|f| = c × 10^e`; let `l` be the LARGEST
+non-negative integer for which `floatingPointRound(floatApprox(c, e, l))`
+is `f`, where `floatApprox(c, e, l) = round(c, l) × 10^e` and
+`round(n, k) = ((n / 10^k + 0.5) div 1) × 10^k`; the canonical
+representation is `scientificCanonicalMap(s × floatApprox(c, e, l))`.
+So it has the fewest significant digits that still map back to `f`.
+
+The test "maps back to `f`" is the lexical mapping of this module on the
+candidate text (`lexicalMap .double`/`.float`), so the round trip is
+decided by the same function every reader calls
+(`floatingCanonical_roundTrip` in `DatatypesTheorems.lean`).
+Until 2026-10-27 `canonicalMap` gave the exact expansion
+(`canonicalFval`) here: `"0.1"^^xsd:double` had the canonical form
+`1.000000000000000055511151231257827021181583404541015625E-1`, now
+`1.0E-1` (https://github.com/danbri/factoidal/issues/1051 item 3). -/
+
+/-- §E.1 `round(c, l)` on a natural number: `c` rounded half up to a
+multiple of `10^l`. -/
+def roundPow10 (c l : Nat) : Nat :=
+  if l == 0 then c else ((c + 5 * 10 ^ (l - 1)) / 10 ^ l) * 10 ^ l
+
+/-- Move the trailing zeros of `n` into the exponent: `n × 10^e` is
+unchanged. -/
+def stripTens : Nat → Nat → Int → Nat × Int
+  | 0, n, e => (n, e)
+  | fuel + 1, n, e =>
+      if n != 0 && n % 10 == 0 then stripTens fuel (n / 10) (e + 1) else (n, e)
+
+/-- §E.4 `scientificCanonicalMap` of `±n × 10^e`, `n > 0`: one non-zero
+digit, the point, the other digits with no trailing zero (at least one
+digit), `E`, the exponent. -/
+def sciCanonical (neg : Bool) (n : Nat) (e : Int) : String :=
+  let (c, e') := stripTens (natDigits n + 1) n e
+  let digits := natToString c
+  let exp : Int := e' + (digits.length : Int) - 1
+  let tail := (digits.drop 1).toString
+  (if neg then "-" else "") ++ (digits.take 1).toString ++ "."
+    ++ (if tail == "" then "0" else tail) ++ "E" ++ intToString exp
+
+/-- The exact value `m × 2^e` of a finite binary value as `n × 10^e'`. -/
+def fvalExact (m : Nat) (e : Int) : Nat × Int :=
+  if e ≥ 0 then (m * 2 ^ e.toNat, 0) else (m * 5 ^ (-e).toNat, e)
+
+/-- Try `l`, `l - 1`, …, `0` and answer the first candidate text that
+`ok` accepts: the largest `l` of §E.1. -/
+def canonicalSearch (ok : String → Bool) (neg : Bool) (c : Nat) (e : Int) : Nat → Option String
+  | 0 =>
+      let s := sciCanonical neg c e
+      if ok s then some s else none
+  | l + 1 =>
+      let r := roundPow10 c (l + 1)
+      let s := sciCanonical neg r e
+      if r != 0 && ok s then some s else canonicalSearch ok neg c e l
+
+/-- `true` when the lexical mapping of `s` under `double` (`isDouble`)
+or `float` is the value `v`. -/
+def mapsBackTo (isDouble : Bool) (v : Fval) (s : String) : Bool :=
+  match lexicalMap (if isDouble then .double else .float) s with
+  | some (.dbl g) => isDouble && g == v
+  | some (.flt g) => !isDouble && g == v
+  | _ => false
+
+/-- The search of `floatingCanonical` for a finite value, `none` when no
+candidate maps back. -/
+def floatingCanonical? (isDouble : Bool) (v : Fval) : Option String :=
+  match v.cls with
+  | .finite m e =>
+      let (n, e10) := fvalExact m e
+      let (c, e10) := stripTens (natDigits n + 1) n e10
+      canonicalSearch (mapsBackTo isDouble v) v.neg c e10 (natDigits c)
+  | _ => none
+
+/-- `floatCanonicalMap` (`isDouble` false) and `doubleCanonicalMap`
+(XSD 1.1 Part 2 §3.3.4.2, §3.3.5.2, algorithms in §E.1). The specials
+and the zeros are `canonicalFval`'s (`NaN`, `INF`, `-INF`, `0.0E0`,
+`-0.0E0`). For a finite value the answer is `canonicalFval` (the exact
+form) only if no candidate maps back; the `#guard`s in
+`DatatypesTests.lean` show that this does not occur for them, and
+`l = 0` is the exact value. -/
+def floatingCanonical (isDouble : Bool) (v : Fval) : String :=
+  (floatingCanonical? isDouble v).getD (canonicalFval v)
+
 /-- The canonical mapping of §3.3/§3.4, as a function of the datatype
 and the value. -/
 def canonicalMapFuel : Nat → Builtin → Val → String
@@ -1319,8 +1402,8 @@ def canonicalMapFuel : Nat → Builtin → Val → String
     | .bool x => if x then "true" else "false"
     | .dec d => if derivedFrom b .integer then intToString (Dec.norm d).mantissa
                 else Dec.canonical d
-    | .flt f => canonicalFval f
-    | .dbl f => canonicalFval f
+    | .flt f => floatingCanonical false f
+    | .dbl f => floatingCanonical true f
     | .dur d => canonicalDuration d
     | .dt k w => canonicalDateTime k w
     | .bin isHex bs => if isHex then hexOfBytes bs else base64OfBytes bs

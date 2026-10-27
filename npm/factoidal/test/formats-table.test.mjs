@@ -30,10 +30,13 @@ const table = await f.formats();
 
 function markdown(rows) {
   const yn = (b) => (b ? 'yes' : 'no');
-  const lines = ['| format | read RDF 1.1 | read RDF 1.2 | write RDF 1.1 | write RDF 1.2 | engine |',
-    '|---|---|---|---|---|---|'];
+  // The media types and extensions are the W3C registrations (issue 1053;
+  // syntaxFor() reads the same engine table).
+  const names = (xs) => (xs.length ? xs.map((x) => `\`${x}\``).join(', ') : '');
+  const lines = ['| format | read RDF 1.1 | read RDF 1.2 | write RDF 1.1 | write RDF 1.2 | engine | media type | extension |',
+    '|---|---|---|---|---|---|---|---|'];
   for (const r of rows) {
-    lines.push(`| ${r.name} | ${yn(r.read11)} | ${yn(r.read12)} | ${yn(r.write11)} | ${yn(r.write12)} | ${r.engine} |`);
+    lines.push(`| ${r.name} | ${yn(r.read11)} | ${yn(r.read12)} | ${yn(r.write11)} | ${yn(r.write12)} | ${r.engine} | ${names(r.mediaTypes)} | ${names(r.extensions)} |`);
   }
   return lines.join('\n');
 }
