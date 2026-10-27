@@ -50,8 +50,14 @@ protocol_files=(
   "$root/npm/factoidal/bin/serve-worker.mjs"
   # The authorization server host (issue 916): also in the authz group below.
   "$root/npm/factoidal/authz/server.mjs"
+  # The WebDAV server host (issue 1066): sockets, the files and paths the
+  # engine names, lws requests and fetches; every WebDAV decision is in
+  # formal/lean4/L4Factoidal/WebDAV/. Also in the store group: it reads and
+  # writes files.
+  "$root/npm/factoidal/webdav/server.mjs"
 )
 store_files=(
+  "$root/npm/factoidal/webdav/server.mjs"
   "$root/npm/factoidal/store-http/index.mjs"
   "$root/npm/factoidal/store-host/index.mjs"
   "$root/npm/factoidal/bin/store.mjs"
