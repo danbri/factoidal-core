@@ -65,7 +65,7 @@ def jsonLdOpsWith (rdfstar : Bool) : JsonLdChunkFold.Ops where
         prev := [] }
     let pfx := JsonLdChunkFold.streamPrefix
     let convert (ctr : Nat) (root : Json) : Except ParseError (Dataset × Nat) :=
-      match datasetOfJsonAt .drop pfx ctr root rdfstar with
+      match datasetOfJsonAt (if rdfstar then .rdf12 else .drop) pfx ctr root rdfstar with
       | some r => .ok r
       | none => .error (fail .notJsonLd)
     let viaExpand (wrap : Json → Json) : Except ParseError JsonLdChunkFold.ItemFn :=

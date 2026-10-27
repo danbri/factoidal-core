@@ -675,6 +675,12 @@ def numberCanonicalize (lexeme : String) (forceDouble : Bool) : String × Bool :
     bearing `rdf:value` / `rdf:direction` / `rdf:language` triples. -/
 inductive RdfDirectionMode where
   | drop | i18nDatatype | compoundLiteral
+  /-- `rdf-1.2`: a value object with `@language` and `@direction` is an RDF 1.2
+  directional language-tagged string (`rdf:dirLangString`, RDF 1.2 Concepts
+  §3.3). The value proposed for JSON-LD 1.2 in
+  https://github.com/w3c/json-ld-syntax/issues/488; the default under
+  `rdfstar` (`docs/designissues/2026-10-26-jsonld-star.md`). -/
+  | rdf12
   deriving DecidableEq, Repr
 
 /-- The manifest's raw `option.rdfDirection` string. Absent or
@@ -682,7 +688,15 @@ unrecognised means `drop`, §8.6's default. -/
 def rdfDirectionModeOf : Option String → RdfDirectionMode
   | some "i18n-datatype"    => .i18nDatatype
   | some "compound-literal" => .compoundLiteral
+  | some "rdf-1.2"          => .rdf12
   | _                       => .drop
+
+/-- The direction mode of the options: `rdfDirection` when it is given, else
+`rdf-1.2` under `rdfstar` (JSON-LD-star reads RDF 1.2) and `drop` otherwise. -/
+def rdfDirectionModeFor (rdfDirection : Option String) (rdfstar : Bool) : RdfDirectionMode :=
+  match rdfDirection with
+  | some _ => rdfDirectionModeOf rdfDirection
+  | none => if rdfstar then .rdf12 else .drop
 
 /-! ## Small helpers -/
 
@@ -808,6 +822,21 @@ def makeLiteral (lexical dt : String) (lang : Option String) : Option Term :=
       (Literal.toWf? lit).map Term.literal
   else none
 
+/-- An RDF 1.2 directional language-tagged string: datatype `rdf:dirLangString`,
+the language tag and the base direction (`ltr` or `rtl`; any other direction
+gives `none`). -/
+def makeDirLiteral (lexical lang dir : String) : Option Term :=
+  let d? : Option TextDirection :=
+    if dir == "ltr" then some .ltr else if dir == "rtl" then some .rtl else none
+  match d? with
+  | none => none
+  | some d =>
+    if langTagWf lang then
+      let lit : Literal := { lexicalForm := lexical, datatype := rdfDirLangString,
+                             langTag := some lang, direction := some d }
+      (Literal.toWf? lit).map Term.literal
+    else none
+
 /-- A bare JSON scalar in value position, wrapped as §5.2 Value
 Expansion would: string to `xsd:string`, boolean to `xsd:boolean`,
 number to `xsd:integer` or `xsd:double` per `numberCanonicalize`'s
@@ -862,6 +891,15 @@ def valueObjectToTerm (rdir : RdfDirectionMode) (obj : Json) : Option Term :=
       -- needs a fresh blank node plus three triples, which this
       -- single-term return shape cannot express.
       | .compoundLiteral => none
+      -- RDF 1.2: `rdf:dirLangString` when there is a language tag; with no
+      -- tag RDF 1.2 has no directional literal, so the direction is dropped.
+      | .rdf12 =>
+        match v with
+        | .string s =>
+          match lang with
+          | some lg => makeDirLiteral s lg d
+          | none    => makeLiteral s xsdString.val none
+        | _ => none
     | none, some d =>
       if d == "@json" then
         -- `JSONLD.Expand` keeps the ORIGINAL (unexpanded) value under
@@ -1642,7 +1680,7 @@ requires EXPANDED FORM input. -/
 def parseJsonLd (loader : Loader) (input : String) (base : Option String)
     (rdfDirection : Option String) (expandContext : Option String)
     (processingMode : Option String) (rdfstar : Bool := false) : Res Dataset :=
-  let rdir := rdfDirectionModeOf rdfDirection
+  let rdir := rdfDirectionModeFor rdfDirection rdfstar
   let mode10 := processingMode == some "json-ld-1.0"
   match parseJson input with
   | .error _ => .error .notJsonLd
@@ -1741,5 +1779,18 @@ array element order IS significant (expanded property-value arrays are
 ordered lists), and numbers compare by their RFC 8785 canonical value
 rather than by lexeme. -/
 def expandedEqual (a b : Json) : Bool := jcsDocument a == jcsDocument b
+
+/-! ### An annotation with an IRI reifier (JSON-LD-star, owner 2026-10-27) -/
+
+private def iriAnnDoc : String :=
+  "{\"@id\":\"http://e/s\",\"http://e/p\":{\"@id\":\"http://e/o\"," ++
+  "\"@annotation\":{\"@id\":\"http://e/r\",\"http://e/q\":{\"@id\":\"http://e/x\"}}}}"
+
+-- The IRI names the reifier: three triples, `<r> rdf:reifies <<( s p o )>>` among them.
+#guard (match parseJsonLd Loader.none iriAnnDoc none none none none true with
+        | .ok ds => ds.default.length == 3 &&
+            ds.default.any (fun t => t.s == .iri ⟨"http://e/r", rfl⟩ &&
+              t.p.val == "http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies")
+        | .error _ => false)
 
 end L4Factoidal.JSONLD

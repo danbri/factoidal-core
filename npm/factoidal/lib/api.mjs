@@ -841,7 +841,7 @@ function buildApi(driver) {
    * @param {Dataset|string|Array} data
    * @param {{format?: string, version?: '1.1'|'1.2', prefixes?: object,
    *   literalShorthand?: boolean, useNativeTypes?: boolean,
-   *   useRdfType?: boolean, rdfDirection?: string,
+   *   useRdfType?: boolean, rdfDirection?: string, rdfstar?: boolean,
    *   inputFormat?: string, baseIRI?: string}} [options]
    *   format: nquads (default), ntriples, turtle, trig, rdfxml, jsonld,
    *   rdfc. inputFormat and baseIRI read text `data`.
@@ -1210,7 +1210,9 @@ function buildApi(driver) {
    * A remote `@context` is not fetched.
    * @param {string} jsonldText
    * @param {{base?: string, rdfDirection?: string, expandContext?: string,
-   *   processingMode?: string}} [options]
+   *   processingMode?: string, rdfstar?: boolean}} [options]
+   *   rdfstar: JSON-LD-star (`@triple`, `@reifies`, `@annotation` as RDF 1.2
+   *   triple terms and reifiers).
    * @returns {Promise<Dataset>}
    */
   async function jsonldToRdf(jsonldText, options) {
@@ -1223,6 +1225,7 @@ function buildApi(driver) {
       ...(opts.rdfDirection ? { rdfDirection: opts.rdfDirection } : {}),
       ...(opts.expandContext ? { expandContext: opts.expandContext } : {}),
       ...(opts.processingMode ? { processingMode: opts.processingMode } : {}),
+      ...(opts.rdfstar ? { rdfstar: true } : {}),
     });
     return c.wrap(entryResult(c.e.datasetFromJsonLd(jsonldText, optionsJson), 'jsonldToRdf'), {},
       { format: 'jsonld', formatInferred: false });
@@ -1250,7 +1253,8 @@ function buildApi(driver) {
    * The text form is `serialize(data, {format: 'jsonld'})`.
    * @param {Dataset|string|Array} data
    * @param {{useNativeTypes?: boolean, useRdfType?: boolean,
-   *   rdfDirection?: string, format?: string, baseIRI?: string}} [options]
+   *   rdfDirection?: string, rdfstar?: boolean, format?: string,
+   *   baseIRI?: string}} [options]
    * @returns {Promise<any>}
    */
   async function jsonldFromRdf(data, options) {

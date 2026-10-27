@@ -350,8 +350,18 @@ the negative fixtures js08/js09 expect. -/
 def literalToObject (opts : Options) (l : WfLiteral) : Option Ov :=
   let lex := l.val.lexicalForm
   let dt  := l.val.datatype.val
+  -- RDF 1.2 (`rdfDirection` "rdf-1.2", the default under `rdfstar`): the base
+  -- direction of an `rdf:dirLangString` is `@direction`. Otherwise it is not
+  -- written (JSON-LD 1.1 has no mapping of `rdf:dirLangString`;
+  -- https://github.com/danbri/factoidal/issues/984).
+  let dir12 := opts.rdfDirection == some "rdf-1.2" || (opts.rdfstar && opts.rdfDirection.isNone)
   match l.val.langTag with
-  | some tag => some (.val (.object [("@value", .string lex), ("@language", .string tag)]))
+  | some tag =>
+    match l.val.direction, dir12 with
+    | some d, true =>
+      some (.val (.object [("@value", .string lex), ("@language", .string tag),
+                           ("@direction", .string (match d with | .ltr => "ltr" | .rtl => "rtl"))]))
+    | _, _ => some (.val (.object [("@value", .string lex), ("@language", .string tag)]))
   | none =>
     if opts.rdfDirection == some "i18n-datatype" && dt.startsWith i18nPrefix then
       some (i18nValueObject lex dt)
@@ -2395,38 +2405,40 @@ end FastEmit
 A reifier node is written as an `@annotation` on the value of the triple it
 reifies (folded) when all of these hold, in one graph:
 
-  1. the reifier is a blank node;
-  2. its node has exactly one `@reifies` value (one `rdf:reifies` statement);
-  3. that triple is asserted in the same graph: the node of its subject has
+  1. its node has exactly one `@reifies` value (one `rdf:reifies` statement);
+  2. that triple is asserted in the same graph: the node of its subject has
      the triple's value under the triple's predicate (a triple written as
      `@type`, or whose value became a `@list`, is not found and not folded);
-  4. the reifier is not the object of a triple in any graph, does not occur in
-     any triple term, and is not a graph name.
+  3. the reifier does not occur in any triple term and is not a graph name.
 
-Rule 4 keeps the writer from moving a node that something else points at, and it
-makes folding order-free: the subject of a reified triple occurs in a triple term,
-so a folded reifier is never the target of another fold. The annotation is the
-reifier's node object without `@reifies`; it keeps the reifier's `@id`, so the
-output reads back to the same quads. The fixtures fold blank-node reifiers only
-(st18, st19, st20, st20a, st28, st29, st34, st35, st38); they have no reifier
-that is an IRI, or that is referenced, of a triple that is asserted. -/
+The reifier may be an IRI or a blank node, and other triples may refer to it.
+This is the RDF 1.2 Turtle reading of an annotation, `s p o ~ r {| ... |}`:
+syntax for one reifier of an asserted triple, whatever the reifier is (owner,
+2026-10-27: "Go for whatever is closer to RDF 1.2 direction"; until then rule
+1 also required a blank node and rule 3 an unreferenced one). The annotation is
+the reifier's node object without `@reifies`; it keeps the reifier's `@id`, so
+the output reads back to the same quads, and a reference to the reifier stays a
+reference to that `@id`. Rule 3 makes folding order-free: the subject of a
+reified triple occurs in a triple term, so a folded reifier is never the target
+of another fold; and a graph name keeps its graph object. -/
 
 section Annotations
 
 open Std
 
-/-- The blank nodes (as `_:label`) that occur in a triple term, added to `acc`. -/
-def tripleTermBnodes (acc : HashSet String) : Term → HashSet String
+/-- The node ids (an IRI, or `_:label`) that occur in a triple term, added to `acc`. -/
+def tripleTermIds (acc : HashSet String) : Term → HashSet String
   | .tripleTerm s _ o =>
-    tripleTermBnodes (match s with | .bnode b => acc.insert ("_:" ++ b) | .iri _ => acc) o
+    tripleTermIds (match s with | .bnode b => acc.insert ("_:" ++ b) | .iri i => acc.insert i.val) o
   | .bnode b => acc.insert ("_:" ++ b)
+  | .iri i => acc.insert i.val
   | _ => acc
 
-/-- The blank nodes that occur in a triple term anywhere in the dataset. -/
-def datasetTripleTermBnodes (ds : Dataset) : HashSet String :=
+/-- The node ids that occur in a triple term anywhere in the dataset. -/
+def datasetTripleTermIds (ds : Dataset) : HashSet String :=
   let addG := fun (acc : HashSet String) (g : List Triple) =>
     g.foldl (fun a t => match t.o with
-      | .tripleTerm _ _ _ => tripleTermBnodes a t.o
+      | .tripleTerm _ _ _ => tripleTermIds a t.o
       | _ => a) acc
   ds.named.foldl (fun acc ng => addG acc ng.graph) (addG ∅ ds.default)
 
@@ -2460,10 +2472,10 @@ structure AnnFold where
   value   : Json
   ann     : Json
 
-/-- The fold of node `n` of graph `look`, when rules 1-4 hold. -/
+/-- The fold of node `n` of graph `look`, when rules 1-3 hold. -/
 def annFoldOf (look : HashMap String FrNode) (excluded : String → Bool) (n : FrNode) :
     Option AnnFold :=
-  if !n.blank || excluded n.id then none else
+  if excluded n.id then none else
   match findProp n.props "@reifies" with
   | some [.val tj] =>
     match tripleOfNode tj with
@@ -2508,10 +2520,9 @@ def foldAnnotations (excluded : String → Bool) (g : List FrNode) : List FrNode
 /-- Fold the reifiers of every graph. `dm` already carries the graph-name nodes. -/
 def foldAllAnnotations (ds : Dataset) (dm : List FrNode) (named : List NamedNm) :
     List FrNode × List NamedNm :=
-  let cm := countMap (mapsRefids (dm :: named.map NamedNm.map))
-  let inTt := datasetTripleTermBnodes ds
+  let inTt := datasetTripleTermIds ds
   let names := firstMap NamedNm.name named
-  let excluded := fun id => cm.getD id 0 != 0 || inTt.contains id || names.contains id
+  let excluded := fun id => inTt.contains id || names.contains id
   (foldAnnotations excluded dm, named.map fun ng => { ng with map := foldAnnotations excluded ng.map })
 
 end Annotations
@@ -2549,9 +2560,15 @@ private def jstr (o : Option Json) : String := (o.map jcsDocument).getD "none"
 -- A blank reifier of an asserted triple, referenced nowhere, is an `@annotation`.
 #guard jstr (fromRdf (starDs []) { rdfstar := true }) ==
   "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@annotation\":[{\"@id\":\"_:r\",\"http://e/q\":[{\"@id\":\"http://e/c\"}]}],\"@id\":\"http://e/b\"}]}]"
--- A referenced reifier stays a node object with `@reifies`.
+-- A referenced reifier is folded too; the reference keeps its `@id`.
 #guard jstr (fromRdf (starDs [⟨(Subject.iri ⟨"http://e/d", rfl⟩), (⟨"http://e/s", rfl⟩ : WfIri), .bnode "r"⟩]) { rdfstar := true }) ==
-  "[{\"@id\":\"_:r\",\"@reifies\":[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"}]}],\"http://e/q\":[{\"@id\":\"http://e/c\"}]},{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@id\":\"http://e/b\"}]},{\"@id\":\"http://e/d\",\"http://e/s\":[{\"@id\":\"_:r\"}]}]"
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@annotation\":[{\"@id\":\"_:r\",\"http://e/q\":[{\"@id\":\"http://e/c\"}]}],\"@id\":\"http://e/b\"}]},{\"@id\":\"http://e/d\",\"http://e/s\":[{\"@id\":\"_:r\"}]}]"
+-- An IRI reifier of an asserted triple is folded as well (RDF 1.2 Turtle `~ <r>`).
+#guard jstr (fromRdf
+    { default := [⟨(Subject.iri ⟨"http://e/a", rfl⟩), (⟨"http://e/p", rfl⟩ : WfIri), (Term.iri ⟨"http://e/b", rfl⟩)⟩,
+                  ⟨.iri ⟨"http://e/r", rfl⟩, reifiesP, .tripleTerm ((Subject.iri ⟨"http://e/a", rfl⟩)) ((⟨"http://e/p", rfl⟩ : WfIri)) ((Term.iri ⟨"http://e/b", rfl⟩))⟩],
+      named := [] } { rdfstar := true }) ==
+  "[{\"@id\":\"http://e/a\",\"http://e/p\":[{\"@annotation\":[{\"@id\":\"http://e/r\"}],\"@id\":\"http://e/b\"}]}]"
 -- A triple term nested 3,000 deep is written without a native frame per level.
 private def deepTt (n : Nat) : Term :=
   (List.range n).foldl (fun t _ =>
