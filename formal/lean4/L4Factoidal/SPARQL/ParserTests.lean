@@ -498,6 +498,13 @@ SELECT expressions, so its variables are in scope for §11.4 and
   "SELECT expression aliases variable already in scope"
 #guard errMsg "SELECT (1 AS ?x) { } VALUES ?x { 2 }" ==
   "SELECT expression aliases variable already in scope"
+-- §18.2.1: a variable used only inside MINUS is not in scope outside it, so
+-- the alias and the BIND are legal (https://github.com/danbri/factoidal/issues/1069).
+#guard parses "SELECT ?s (1 AS ?z) { ?s <urn:p> ?o MINUS { ?x <urn:q> ?z } }"
+#guard parses "SELECT * { ?s <urn:p> ?o MINUS { ?x <urn:q> ?z } BIND(1 AS ?z) }"
+-- A variable of the left side of MINUS stays in scope.
+#guard errMsg "SELECT ?s (1 AS ?o) { ?s <urn:p> ?o MINUS { ?x <urn:q> ?z } }" ==
+  "SELECT expression aliases variable already in scope"
 
 -- Placement: at a grouping level the rows travel in `postValues`; at
 -- any other level they are joined with the WHERE pattern.
