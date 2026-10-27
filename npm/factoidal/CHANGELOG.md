@@ -3,6 +3,7 @@
 ## Unreleased
 
 - `webdav-serve`: two `did-key` mounts that name one key file that does not exist yet get one key. Before, the engine made a key for each mount, the host wrote the first and the start stopped with `EEXIST` on the second (Lean `Wasm/Ops/WebDAV.lean`, `davKeyPathKey`; `alice.jwk` and `./alice.jwk` are one file).
+- Docs: hub page "RDF 1.2 use cases in JSON-LD-star" (`docs/web/hub/rdf12-jsonld-usecases.md`): annotation and reification use cases, each read from JSON-LD-star and queried with SPARQL 1.2; `entail` with `sparql12` is refused (https://github.com/danbri/factoidal/issues/1109).
 - Docs: hub page "WebDAV" (`docs/web/hub/webdav.md`): quick start, mount files, a remote LWS storage with did:key login, login and HTTPS options, Tailscale and SSH tunnels, the XMPP gap (https://github.com/danbri/factoidal/issues/1107), file browser steps; the listener has no login or TLS (https://github.com/danbri/factoidal/issues/1108).
 
 ## 0.20.0 (2026-10-27)

@@ -90,7 +90,12 @@ mkdir -p "$CORE_C" "$CORE_OBJ" "$RT_OBJ" "$LIB_OBJ" "$INC/lean"
 
 # ---------------------------------------------------------------------
 say "step 0 — build the Lean library natively (also emits its C)"
-( cd "$LEAN_DIR" && lake build l4wasm )
+# Step 7 compiles EVERY .c under .lake/build/ir, so every module there must
+# be current, not only the l4wasm import closure: a stale .c of a module
+# outside it (2026-10-27: L4Factoidal.JSONLD.Tests, built before a change to
+# parseJsonLd's arity) links with an old signature and the link stops on the
+# mismatch. Build the whole library too.
+( cd "$LEAN_DIR" && lake build l4wasm L4Factoidal )
 
 # ---------------------------------------------------------------------
 say "step 1 — fetch Lean's C++ runtime sources at $LEAN_TAG"
