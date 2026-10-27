@@ -1019,7 +1019,7 @@ private def parseOpts : List (String × OptionDomain) :=
 private def serializeOpts : List (String × OptionDomain) :=
   [ ("format", .writerFormat), ("version", .version), ("prefixes", .any)
   , ("literalShorthand", .any), ("useNativeTypes", .any), ("useRdfType", .any)
-  , ("rdfDirection", .any) ]
+  , ("rdfDirection", .any), ("rdfstar", .any) ]
 
 /-- The options each public function takes, with their value domains. A
 positional mode argument is checked as the option of its name (`mode`,
@@ -1040,9 +1040,9 @@ def apiOptionTable : List (String × List (String × OptionDomain)) :=
   , ("serialize", serializeOpts ++ [("inputFormat", .parseFormat), ("baseIRI", .any)])
   , ("csvwToRdf", [("mode", .any), ("base", .any), ("url", .any)])
   , ("jsonldToRdf", [("base", .any), ("rdfDirection", .any), ("expandContext", .any),
-                     ("processingMode", .any)])
+                     ("processingMode", .any), ("rdfstar", .any)])
   , ("jsonldFromRdf", [("useNativeTypes", .any), ("useRdfType", .any),
-                       ("rdfDirection", .any)] ++ parseOpts)
+                       ("rdfDirection", .any), ("rdfstar", .any)] ++ parseOpts)
   , ("queryRaw", [("dataFormat", .rawFormat), ("entail", .entail), ("output", .output)])
   , ("Dataset.query", [("sparql12", .any), ("version", .version), ("entail", .entail),
                        ("output", .output)])
@@ -1112,9 +1112,10 @@ def optionConflict (who : String) (fields : List (String × Json)) : Option Stri
       some (errCoded "option.conflict"
         s!"{who}: 'prefixes' and 'literalShorthand' apply to format 'turtle' only")
     else if writer != "jsonld" &&
-        (present "useNativeTypes" || present "useRdfType" || present "rdfDirection") then
+        (present "useNativeTypes" || present "useRdfType" || present "rdfDirection" ||
+         present "rdfstar") then
       some (errCoded "option.conflict"
-        s!"{who}: useNativeTypes, useRdfType, rdfDirection apply to format 'jsonld' only")
+        s!"{who}: useNativeTypes, useRdfType, rdfDirection, rdfstar apply to format 'jsonld' only")
     else none
   else none
 

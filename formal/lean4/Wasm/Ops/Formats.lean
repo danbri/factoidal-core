@@ -366,13 +366,16 @@ def jsonldDataset (text optsJson : String) : Except String Dataset :=
   let opts := readOptions optsJson
   match L4Factoidal.JSONLD.parseJsonLd L4Factoidal.JSONLD.Loader.none text
           (optString opts "base") (optString opts "rdfDirection")
-          (optString opts "expandContext") (optString opts "processingMode") with
+          (optString opts "expandContext") (optString opts "processingMode")
+          (optBool opts "rdfstar") with
   | .ok ds => .ok ds
   | .error e => .error ("invalid or unsupported JSON-LD (" ++ e.code ++ ")")
 
 /-- `jsonldToRdf(text, optsJson)`. `optsJson` is `""` or an object with
 the members `base`, `rdfDirection`, `expandContext`, `processingMode`
-(all strings). No document loader is installed, so a remote `@context`
+(all strings) and `rdfstar` (boolean: JSON-LD-star, `@triple`, `@reifies`,
+`@annotation` as RDF 1.2 triple terms and reifiers;
+`docs/designissues/2026-10-26-jsonld-star.md`). No document loader is installed, so a remote `@context`
 is the JSON-LD error `loading remote context failed`, as it is in the F*
 entry. -/
 def jsonldToRdf (text optsJson : String) : String :=
@@ -387,17 +390,21 @@ def jsonldFromRdfParsed (ds : Dataset) (optsJson : String) : String :=
     let o : L4Factoidal.JSONLD.FromRdf.Options :=
       { useNativeTypes := optBool opts "useNativeTypes"
         useRdfType := optBool opts "useRdfType"
-        rdfDirection := optString opts "rdfDirection" }
+        rdfDirection := optString opts "rdfDirection"
+        rdfstar := optBool opts "rdfstar" }
     match L4Factoidal.JSONLD.FromRdf.fromRdf ds o with
     | none =>
         errJson ("jsonldFromRdf: from_rdf returned none (an rdf:JSON typed "
-                 ++ "literal in the input is not valid JSON)")
+                 ++ "literal in the input is not valid JSON, or an RDF 1.2 triple term "
+                 ++ "without the option rdfstar)")
     | some doc => okWith [("jsonld", .string (L4Factoidal.JSONLD.jcsDocument doc))]
 
 /-- `jsonldFromRdf(nquads, optsJson)`: JSON-LD 1.1 API section 8,
 Serialize RDF as JSON-LD, to an expanded-form document written in
 RFC 8785 canonical form. `optsJson` members: `useNativeTypes`,
-`useRdfType` (booleans), `rdfDirection` (string). -/
+`useRdfType`, `rdfstar` (booleans), `rdfDirection` (string). With `rdfstar`
+a triple term is `@triple`, `rdf:reifies` is `@reifies`, and a reifier of an
+asserted triple is an `@annotation`. -/
 def jsonldFromRdf (nq optsJson : String) : String :=
   match readHandle "jsonldFromRdf" nq with
   | .error e => errJson e
@@ -641,5 +648,15 @@ private def nqLines (env : String) : Nat := (env.splitOn "<http://e/p>").length 
 #guard (match jsonldDataset
   "{\"@id\":\"http://e/s\",\"http://e/p\":[{\"@value\":\"x\"},{\"@value\":\"x\"}]}" "" with
   | .ok ds => ds.default.length | .error _ => 0) == 2
+
+-- JSON-LD-star through the npm ops: `rdfstar` reads `@triple` as a triple term
+-- and writes it back; without it the triple term is refused on output.
+private def starDoc : String :=
+  "{\"@id\":\"http://e/s\",\"http://e/p\":{\"@triple\":{\"@id\":\"http://e/a\",\"http://e/q\":{\"@id\":\"http://e/b\"}}}}"
+#guard ((jsonldToRdf starDoc "{\"rdfstar\":true}").splitOn "<<(").length == 2
+#guard (match jsonldDataset starDoc "{\"rdfstar\":true}" with
+        | .ok ds => (jsonldFromRdfParsed ds "{\"rdfstar\":true}").startsWith "{\"ok\":true" &&
+                    (jsonldFromRdfParsed ds "").startsWith "{\"ok\":false"
+        | .error _ => false)
 
 end L4Wasm.Ops

@@ -212,6 +212,9 @@ export interface WriteOptions {
   useRdfType?: boolean;
   /** 'jsonld' only. */
   rdfDirection?: string;
+  /** 'jsonld' only: write RDF 1.2 triple terms as JSON-LD-star (`@triple`,
+   *  `@reifies`, `@annotation`). Without it a triple term is refused. */
+  rdfstar?: boolean;
 }
 
 export type WriteFormat =
@@ -1010,6 +1013,9 @@ export interface JsonLdOptions {
   rdfDirection?: string;
   expandContext?: string;
   processingMode?: string;
+  /** JSON-LD-star: read `@triple`, `@reifies`, `@annotation` as RDF 1.2
+   *  triple terms and reifiers. */
+  rdfstar?: boolean;
 }
 
 /**
@@ -1026,6 +1032,9 @@ export function jsonldToRdf(
 export interface JsonLdFromRdfOptions {
   useNativeTypes?: boolean;
   useRdfType?: boolean;
+  /** JSON-LD-star: write RDF 1.2 triple terms (`@triple`, `@reifies`,
+   *  `@annotation`). Without it a triple term is refused. */
+  rdfstar?: boolean;
   format?: DataFormat;
 }
 

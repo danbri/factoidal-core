@@ -279,7 +279,7 @@ class Dataset {
    * The dataset as a document.
    * @param {{format?: string, version?: '1.1'|'1.2', prefixes?: object,
    *   literalShorthand?: boolean, useNativeTypes?: boolean,
-   *   useRdfType?: boolean, rdfDirection?: string}} [options]
+   *   useRdfType?: boolean, rdfDirection?: string, rdfstar?: boolean}} [options]
    *   format: nquads (default), ntriples, turtle, trig, rdfxml, jsonld,
    *   rdfc (RDFC-1.0 canonical N-Quads).
    * @returns {Promise<string>}
@@ -315,6 +315,7 @@ class Dataset {
         ...(opts.useNativeTypes ? { useNativeTypes: true } : {}),
         ...(opts.useRdfType ? { useRdfType: true } : {}),
         ...(opts.rdfDirection ? { rdfDirection: String(opts.rdfDirection) } : {}),
+        ...(opts.rdfstar ? { rdfstar: true } : {}),
         ...(suffix ? { version: String(opts.version) } : {}),
       })), 'serialize');
       return r.jsonld;
