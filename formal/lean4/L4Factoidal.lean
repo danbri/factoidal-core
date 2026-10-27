@@ -938,7 +938,10 @@ import L4Factoidal.LWS.FileLayoutTests
 import L4Factoidal.HTTP.Cors
 import L4Factoidal.LWS.Cors
 import L4Factoidal.LWS.Client.Wire
+import L4Factoidal.LWS.Client.Report
 import L4Factoidal.LWS.Client.Machine
+import L4Factoidal.LWS.Client.Keys
+import L4Factoidal.LWS.Client.KeysTheorems
 import L4Factoidal.LWS.Client.Theorems
 import L4Factoidal.LWS.Client.Tests
 -- The authorization server component (https://github.com/danbri/factoidal/issues/916).

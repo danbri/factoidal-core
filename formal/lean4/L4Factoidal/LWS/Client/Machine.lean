@@ -88,6 +88,7 @@ for every state and event; the `#guard`s of `Client/Tests.lean` show that
 the ordinary flows never reach the refusal.
 -/
 import L4Factoidal.LWS.Client.Wire
+import L4Factoidal.LWS.Client.Report
 import L4Factoidal.JOSE.Jws
 import L4Factoidal.Authz.Keys
 import L4Factoidal.Crypto.SHA2
@@ -105,9 +106,10 @@ def mediaJson : String := "application/json"
 
 /-- The kinds of operation. -/
 def opKinds : List String :=
-  [ "discover", "read", "head", "create", "update", "patch", "delete", "readLinkset"
-  , "updateLinkset", "move", "list", "typeIndex", "search", "subscribe", "unsubscribe"
-  , "requestAccess", "grantAccess", "getAccess", "revokeAccess", "verifyNotification" ]
+  [ "discover", "describe", "read", "readPage", "head", "create", "update", "patch", "delete"
+  , "findLinkset", "readLinkset", "updateLinkset", "putLinkset", "move", "list", "typeIndex"
+  , "search", "queryFormats", "subscribe", "getSubscription", "unsubscribe", "requestAccess"
+  , "grantAccess", "getAccess", "revokeAccess", "verifyNotification" ]
 
 /-- The kinds whose write takes a precondition. -/
 def conditionalKinds : List String := ["update", "patch", "delete", "updateLinkset", "move"]
@@ -150,6 +152,29 @@ structure Op where
   constraint : Json := .null
   /-- `move`: the destination container. -/
   destination : String := ""
+  /-- `read`: the bytes asked for, `Range: bytes=start-end` (RFC 9110 §14.2). -/
+  rangeStart : Option Nat := none
+  rangeEnd : Option Nat := none
+  /-- `read`: `If-None-Match` (RFC 9110 §13.1.2); a 304 is `notModified`. -/
+  ifNoneMatch : String := ""
+  /-- `read`: the `Prefer` field value (RFC 7240). -/
+  prefer : String := ""
+  /-- `list`, `search`, `typeIndex`: stop after the first page and report it. -/
+  onePage : Bool := false
+  /-- `subscribe`: when the subscription ends, an RFC 3339 date-time. -/
+  expires : String := ""
+  /-- `updateLinkset`, `putLinkset`: the linkset resource, when the caller
+  has it; the resource's `Link` field is not read. -/
+  linksetUrl : String := ""
+  /-- `typeIndex`, `search`: the service endpoint, when the caller has it;
+  the storage description is not read. -/
+  endpoint : String := ""
+  /-- A service kind: the storage's description URL, when the caller has it;
+  `url` is not asked for the storage link. -/
+  storage : String := ""
+  /-- `verifyNotification`: storages whose notifications are accepted; empty
+  accepts any storage whose description verifies the signature. -/
+  trustedStorages : List String := []
   /-- `verifyNotification`: the method and the header fields received. -/
   method : String := ""
   headers : List (String × String) := []
@@ -167,11 +192,15 @@ def defaultPrecondition (kind : String) : String :=
 /-- The operation with an empty precondition replaced by the default of its
 kind. -/
 def Op.normalize (op : Op) : Op :=
+  -- Two kinds are spellings of others: a replacement of a whole linkset
+  -- document is `updateLinkset` in the linkset media type (a PUT), and one
+  -- page of a listing is `list` that stops after the first page.
+  let op := if op.kind == "putLinkset" then { op with kind := "updateLinkset", mediaType := mediaLinkset } else op
+  let op := if op.kind == "readPage" then { op with kind := "list", onePage := true } else op
   if op.precondition == "" then { op with precondition := defaultPrecondition op.kind } else op
 
 def opJson (op : Op) : Json :=
-  .object
-    [ ("kind", .string op.kind), ("url", .string op.url)
+  .object ([ ("kind", .string op.kind), ("url", .string op.url)
     , ("bodyBase64", .string (Base64.encode op.body)), ("mediaType", .string op.mediaType)
     , ("slug", .string op.slug), ("container", .bool op.container)
     , ("types", strsJson op.types), ("links", strsJson op.links)
@@ -182,7 +211,17 @@ def opJson (op : Op) : Json :=
     , ("assignee", .string op.assignee), ("targets", strsJson op.targets)
     , ("constraint", op.constraint), ("destination", .string op.destination)
     , ("method", .string op.method), ("headers", headersJson op.headers)
-    , ("requestTarget", .string op.requestTarget) ]
+    , ("requestTarget", .string op.requestTarget), ("ifNoneMatch", .string op.ifNoneMatch)
+    , ("prefer", .string op.prefer), ("onePage", .bool op.onePage), ("expires", .string op.expires)
+    , ("linksetUrl", .string op.linksetUrl), ("endpoint", .string op.endpoint)
+    , ("storage", .string op.storage), ("trustedStorages", strsJson op.trustedStorages) ] ++
+    optMember "rangeStart" (op.rangeStart.map natJson) ++ optMember "rangeEnd" (op.rangeEnd.map natJson))
+
+/-- A link given as `{href, rel}`, as a `Link` field value (RFC 8288 §3). -/
+def linkValueOfJson (j : Json) : Option String :=
+  match j.getString? "href", j.getString? "rel" with
+  | some h, some r => some ("<" ++ h ++ ">; rel=\"" ++ r ++ "\"")
+  | _, _ => none
 
 /-- Read an operation document. `kind` is required. -/
 def opOfJson (j : Json) : Except String Op := do
@@ -194,14 +233,18 @@ def opOfJson (j : Json) : Except String Op := do
     .error ("op: unknown precondition \"" ++ precondition ++ "\"")
   .ok { kind, url := jStr j "url", body := jBody j, mediaType := jStr j "mediaType"
       , slug := jStr j "slug", container := jBool j "container", types := jStrs j "types"
-      , links := jStrs j "links", precondition, tag := jStr j "tag"
+      , links := jStrs j "links" ++ ((j.getArray? "linkObjects").getD []).filterMap linkValueOfJson, precondition, tag := jStr j "tag"
       , retry412 := jNat j "retry412", recursive := jBool j "recursive"
       , accept := jStr j "accept", query := (j.field? "query").getD (.object [])
       , topics := jStrs j "topics", inbox := jStr j "inbox", actions := jStrs j "actions"
       , assignee := jStr j "assignee", targets := jStrs j "targets"
       , constraint := jAny j "constraint", destination := jStr j "destination"
       , method := jStr j "method", headers := jHeaders j "headers"
-      , requestTarget := jStr j "requestTarget" }
+      , requestTarget := jStr j "requestTarget", rangeStart := jNat? j "rangeStart"
+      , rangeEnd := jNat? j "rangeEnd", ifNoneMatch := jStr j "ifNoneMatch", prefer := jStr j "prefer"
+      , onePage := jBool j "onePage", expires := jStr j "expires", linksetUrl := jStr j "linksetUrl"
+      , endpoint := jStr j "endpoint", storage := jStr j "storage"
+      , trustedStorages := jStrs j "trustedStorages" }
 
 /-! ## Session: tokens kept between operations -/
 
@@ -214,53 +257,87 @@ structure TokenEntry where
 
 /-- A key the client signs its own credentials with (lws10-authn-ssi-cid,
 "Self-issued credentials"): the agent's identifier, the verification method
-that names the key, and the P-256 private key (`d` of a JWK, RFC 7518
-§6.2.2.1). -/
+that names the key, the algorithm (ES256 with a P-256 key, RFC 7518
+§3.4; EdDSA with an Ed25519 key, RFC 8037 §3.1) and the private key (`d` of
+a JWK: RFC 7518 §6.2.2.1 for P-256, RFC 8037 §2 for Ed25519). -/
 structure SelfIssued where
   subject : String
   keyId : String
+  alg : L4Factoidal.Authz.SigAlg := .es256
   privateKey : ByteArray
 
 /-- What a client keeps between operations: its tokens, and the credential it
 exchanges for them: a subject token it was given, or a key it signs its own
-credential with. -/
+credential with. `anyToken` is a bearer token the caller gave with no realm
+(RFC 6750 §2.1): it goes to every request the client sends to a storage. A
+token with a realm is an entry of `tokens` whose root is the realm. -/
 structure Session where
   tokens : List TokenEntry := []
+  anyToken : String := ""
   subjectToken : String := ""
   subjectTokenType : String := ""
   selfIssued : Option SelfIssued := none
 
+/-- The token type of an OpenID Connect ID Token (RFC 8693 §3). -/
+def idTokenType : String := "urn:ietf:params:oauth:token-type:id_token"
+
 def selfIssuedJson (k : SelfIssued) : Json :=
   .object [ ("subject", .string k.subject), ("keyId", .string k.keyId)
-          , ("jwk", .object [ ("kty", .string "EC"), ("crv", .string "P-256")
-                            , ("d", .string (L4Factoidal.JOSE.Base64Url.encode k.privateKey)) ]) ]
+          , ("jwk", match k.alg with
+              | .es256 => .object [ ("kty", .string "EC"), ("crv", .string "P-256")
+                                  , ("d", .string (L4Factoidal.JOSE.Base64Url.encode k.privateKey)) ]
+              | .eddsa => .object [ ("kty", .string "OKP"), ("crv", .string "Ed25519")
+                                  , ("d", .string (L4Factoidal.JOSE.Base64Url.encode k.privateKey)) ]) ]
 
-/-- `{subject, keyId, jwk}`; the key is the `d` member of a P-256 JWK. -/
+/-- `{subject, keyId, jwk}`; the key is the `d` member of a P-256 or an
+Ed25519 JWK. -/
 def selfIssuedOfJson (j : Json) : Option SelfIssued := do
   let subject ← j.getString? "subject"
   let keyId ← j.getString? "keyId"
   let jwk ← j.field? "jwk"
-  if jwk.getString? "crv" != some "P-256" then none else
+  let alg ← match jwk.getString? "crv" with
+    | some "P-256" => some L4Factoidal.Authz.SigAlg.es256
+    | some "Ed25519" => some L4Factoidal.Authz.SigAlg.eddsa
+    | _ => none
   let d ← (jwk.getString? "d").bind L4Factoidal.JOSE.Base64Url.decode
   if d.size != 32 then none else
-  pure { subject, keyId, privateKey := d }
+  pure { subject, keyId, alg, privateKey := d }
 
 def sessionJson (s : Session) : Json :=
   .object ([ ("tokens", .array (s.tokens.map (fun t => .object
               [("storage", .string t.storage), ("root", .string t.root), ("token", .string t.token)])))
+          , ("anyToken", .string s.anyToken)
           , ("subjectToken", .string s.subjectToken)
           , ("subjectTokenType", .string s.subjectTokenType) ] ++
     (match s.selfIssued with
      | some k => [("selfIssued", selfIssuedJson k)]
      | none => []))
 
+/-- A session from a document. Besides the members `sessionJson` writes, it
+reads `bearer` (`{token, realm?}`: a token with a realm is sent only under
+it, one without goes to every request) and `idToken` (an OpenID Connect ID
+Token to exchange). -/
 def sessionOfJson (j : Json) : Session :=
+  let bearer := jAny j "bearer"
+  let bToken := jStr bearer "token"
+  let bRealm := jStr bearer "realm"
+  let idTok := jStr j "idToken"
   { tokens := ((j.getArray? "tokens").getD []).filterMap (fun t =>
       match t.getString? "storage", t.getString? "root", t.getString? "token" with
       | some s, some r, some k => some { storage := s, root := r, token := k }
-      | _, _, _ => none)
-    subjectToken := jStr j "subjectToken", subjectTokenType := jStr j "subjectTokenType"
+      | _, _, _ => none) ++
+      (if bToken != "" && bRealm != "" then [{ storage := bRealm, root := bRealm, token := bToken }] else [])
+    anyToken := if bToken != "" && bRealm == "" then bToken else jStr j "anyToken"
+    subjectToken := if idTok != "" then idTok else jStr j "subjectToken"
+    subjectTokenType := if idTok != "" then idTokenType else jStr j "subjectTokenType"
     selfIssued := (j.field? "selfIssued").bind selfIssuedOfJson }
+
+/-- Is the `selfIssued` member of a session document, if there is one, a
+usable key (a P-256 or an Ed25519 private JWK of 32 bytes)? -/
+def sessionKeyOk (j : Json) : Bool :=
+  match j.field? "selfIssued" with
+  | none | some .null => true
+  | some k => (selfIssuedOfJson k).isSome
 
 /-- Does the session hold a credential to exchange? -/
 def Session.hasCredential (s : Session) : Bool := s.subjectToken != "" || s.selfIssued.isSome
@@ -314,7 +391,7 @@ def authOfJson (j : Json) : AuthCtx :=
 
 inductive Phase where
   | init | main | tagRead | discoverHead | discoverDesc | linksetFind | linksetMeta
-  | linksetRecheck | paging | createCheck | inboxDesc
+  | linksetRecheck | paging | createCheck | inboxDesc | moveCheck
   | authMeta | authDesc | authAsMeta | authToken | finished
 deriving DecidableEq, Repr
 
@@ -323,13 +400,13 @@ def Phase.name : Phase → String
   | .discoverHead => "discoverHead" | .discoverDesc => "discoverDesc"
   | .linksetFind => "linksetFind" | .linksetMeta => "linksetMeta"
   | .linksetRecheck => "linksetRecheck" | .paging => "paging"
-  | .createCheck => "createCheck" | .inboxDesc => "inboxDesc"
+  | .createCheck => "createCheck" | .inboxDesc => "inboxDesc" | .moveCheck => "moveCheck"
   | .authMeta => "authMeta" | .authDesc => "authDesc" | .authAsMeta => "authAsMeta"
   | .authToken => "authToken" | .finished => "finished"
 
 def phases : List Phase :=
   [ .init, .main, .tagRead, .discoverHead, .discoverDesc, .linksetFind, .linksetMeta
-  , .linksetRecheck, .paging, .createCheck, .inboxDesc, .authMeta, .authDesc, .authAsMeta
+  , .linksetRecheck, .paging, .createCheck, .inboxDesc, .moveCheck, .authMeta, .authDesc, .authAsMeta
   , .authToken, .finished ]
 
 def phaseOfName (n : String) : Phase := (phases.find? (fun p => p.name == n)).getD .finished
@@ -364,6 +441,8 @@ structure ClientState where
   linksetDoc : Json := .null
   /-- A status kept for the result (the refused status, the lost create). -/
   note : Nat := 0
+  /-- A result kept until a closing request is answered (`move`). -/
+  carry : Json := .null
   /-- Steps left: every step spends one. -/
   fuel : Nat := 512
 
@@ -395,7 +474,9 @@ def attachToken (ses : Session) (r : Req) : Req :=
   if (r.header? "authorization").isSome then r else
   match ses.tokens.find? (fun t => t.root != "" && r.url.startsWith t.root) with
   | some t => { r with headers := r.headers ++ [("Authorization", "Bearer " ++ t.token)] }
-  | none => r
+  | none =>
+      if ses.anyToken == "" then r
+      else { r with headers := r.headers ++ [("Authorization", "Bearer " ++ ses.anyToken)] }
 
 /-- Send a request to the storage (with its token, if any). -/
 def send (s : ClientState) (ph : Phase) (r : Req) : ClientState × Action :=
@@ -518,13 +599,6 @@ def writeReq (op : Op) (current : String) : Req :=
 
 /-! ## The storage description (lws10-core §Discovery) -/
 
-/-- The `type` of a JSON object as a list (a string or an array). -/
-def typesOf (j : Json) : List String :=
-  match j.field? "type" with
-  | some (.string t) => [t]
-  | some (.array xs) => xs.filterMap Json.asString?
-  | _ => []
-
 /-- The service object of a type in a storage description. -/
 def service? (desc : Json) (ty : String) : Option Json :=
   ((desc.getArray? "service").getD []).find? (fun sv => (typesOf sv).contains ty)
@@ -571,9 +645,10 @@ def accessDoc (ty storage : String) (op : Op) : Json :=
 /-- A webhook subscription (lws10-core §Subscription Request,
 lws10-notifications-webhook §Webhook Subscription). -/
 def subscriptionDoc (op : Op) : Json :=
-  .object [ ("type", .string webhookSubscriptionType)
-          , ("topic", strsJson (if op.topics.isEmpty then [op.url] else op.topics))
-          , ("inbox", .string op.inbox) ]
+  .object ([ ("type", .string webhookSubscriptionType)
+           , ("topic", strsJson (if op.topics.isEmpty then [op.url] else op.topics))
+           , ("inbox", .string op.inbox) ] ++
+    (if op.expires == "" then [] else [("expires", .string op.expires)]))
 
 def jsonReq (method url : String) (doc : Json) : Req :=
   { method, url, headers := [("Content-Type", mediaLwsJson), ("Accept", mediaLwsJson)]
@@ -659,11 +734,38 @@ def inboxUrl (op : Op) : String :=
 def digestOf (body : ByteArray) : String :=
   "sha-256=:" ++ Base64.encode (L4Factoidal.Crypto.sha256 body) ++ ":"
 
-def accept (s : ClientState) : ClientState × Action :=
-  finish s (.done (.object [("accept", .bool true), ("status", natJson 204)]))
+/-- Is a storage one the caller accepts notifications from? An empty list
+accepts every storage whose description verifies the signature. -/
+def trustedOk (op : Op) (storage : String) : Bool :=
+  op.trustedStorages.isEmpty || op.trustedStorages.contains storage
+
+/-- One activity of a notification: `id`, `type`, and the `object`, which is
+an identifier or an object with `id` and `type`. -/
+def activityJson (a : Json) : Json :=
+  let obj := a.field? "object"
+  .object (optStr "id" (a.getString? "id") ++ [("types", strsJson (typesOf a))] ++
+    optStr "object" (match obj with
+      | some (.string o) => some o
+      | some o@(.object _) => o.getString? "id"
+      | _ => none) ++
+    [("objectTypes", strsJson (match obj with
+      | some o@(.object _) => typesOf o
+      | _ => []))])
+
+/-- What an accepted notification says: the storage, the key, the activities
+(`activity`, or `activities` when there is no `activity`) and the document. -/
+def notificationReport (storage keyid : String) (body : ByteArray) : Json :=
+  let raw := ((String.fromUTF8? body).bind parseJson?).getD (.object [])
+  let acts := if (raw.field? "activity").isSome then listAt raw "activity" else listAt raw "activities"
+  .object [ ("storage", .string storage), ("keyid", .string keyid)
+          , ("activities", .array (acts.map activityJson)), ("raw", raw) ]
+
+def accept (s : ClientState) (report : Json) : ClientState × Action :=
+  finish s (.done (.object [("accept", .bool true), ("status", natJson 204), ("report", report)]))
 
 def reject (s : ClientState) (reason : String) (status : Nat := 401) : ClientState × Action :=
-  finish s (.done (.object [("accept", .bool false), ("status", natJson status), ("reason", .string reason)]))
+  finish s (.done (.object [ ("accept", .bool false), ("status", natJson status)
+                           , ("reason", .string reason), ("report", signatureError reason) ]))
 
 /-- The first steps of the verification, before the storage description is
 read: a signature, a keyid with a fragment, the body's digest. -/
@@ -682,7 +784,9 @@ def verifyStart (s : ClientState) : ClientState × Action :=
         -- Step 1: "The keyid value MUST be a URL with a fragment component."
         if !keyid.contains '#' then reject s "the keyid is not a URL with a fragment" else
         let storage := String.ofList (keyid.toList.takeWhile (· != '#'))
-        if (headerIn op.headers "content-digest").map trimS != some (digestOf op.body) then
+        -- A storage the caller does not trust is never asked for its description.
+        if !trustedOk op storage then reject s "the storage is not one the caller trusts"
+        else if (headerIn op.headers "content-digest").map trimS != some (digestOf op.body) then
           reject s "the body does not have the Content-Digest the signature covers"
         else sendPublic s .inboxDesc (getReq storage mediaLwsCid)
 
@@ -720,7 +824,8 @@ def verifyFinish (V : L4Factoidal.Authz.Crypto) (s : ClientState) (r : Resp) :
             | .ec x y => (alg.isNone || alg == some "ecdsa-p256-sha256") && V.verifiers.es256 (x ++ y) base.toUTF8 sig
             | .okp x => (alg.isNone || alg == some "ed25519") && V.verifiers.eddsa x base.toUTF8 sig
             | _ => false
-          if ok then accept s else reject s "the signature does not verify"
+          if ok then accept s (notificationReport storage keyid op.body)
+          else reject s "the signature does not verify"
   | _, _ => reject s "the notification is not signed"
 
 /-! ## Paging (lws10-core §Pagination, lws10-index) -/
@@ -735,9 +840,19 @@ def pageItemsOf (r : Resp) : Option (List Json) := do
 
 def idsOf (items : List Json) : List String := items.filterMap (fun it => it.getString? "id")
 
+/-- The page a type index answered, as the driver reports it: the type
+identifiers and the page counts and links. -/
+def typeIndexPageJson (pg : Json) : Json :=
+  .object ([("types", strsJson (idsOf (listAt pg "items")))] ++
+    (["totalItems", "first", "next", "prev", "last"].flatMap fun k => optMember k (pg.field? k)))
+
 def pagingDone (s : ClientState) : ClientState × Action :=
+  let base := if s.endpoint != "" then s.endpoint else s.op.url
+  let report :=
+    if s.op.kind == "typeIndex" then Json.object [("types", strsJson (idsOf s.items))]
+    else Json.object [("items", .array (s.items.map (itemJson base)))]
   finish s (.done (.object [ ("items", strsJson (idsOf s.items)), ("members", .array s.items)
-                           , ("pages", natJson s.pages) ]))
+                           , ("pages", natJson s.pages), ("report", report) ]))
 
 /-- One page answered: collect its items, follow `next` (never a URL the
 client builds). -/
@@ -747,6 +862,15 @@ def onPage (s : ClientState) (r : Resp) : ClientState × Action :=
     | none => failWith s "malformedListing" (respSummary r)
     | some items =>
       let s := { s with items := s.items ++ items, pages := s.pages + 1 }
+      if s.op.onePage then
+        -- One page, and its own links: the caller follows `next` or not.
+        match pageJson (sentUrl s) r with
+        | some pg =>
+            finish s (.done (.object [ ("items", strsJson (idsOf s.items)), ("members", .array s.items)
+              , ("pages", natJson s.pages)
+              , ("report", if s.op.kind == "typeIndex" then typeIndexPageJson pg else pg) ]))
+        | none => failWith s "malformedListing" (respSummary r)
+      else
       match linkTarget? (sentUrl s) r "next" with
       | some u => send s .paging (getReq u mediaLwsJson)
       | none => pagingDone s
@@ -772,25 +896,27 @@ private def hexOf (b : ByteArray) : String :=
     let h := fun (n : Nat) => if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
     (acc.push (h (x.toNat / 16))).push (h (x.toNat % 16))) ""
 
-/-- A self-issued credential (lws10-authn-ssi-cid): an ES256 JWT whose `iss`,
-`sub` and `client_id` are the agent's identifier, whose `aud` is the
-authorization server the storage's metadata names, with `iat`, `exp` (five
-minutes) and `jti`, and whose header `kid` names the verification method.
-`now` and `random` (at least 48 bytes: 32 for the ECDSA nonce, 16 for `jti`)
-come from the host with the response that led here. `none` when the key
-does not sign. -/
+/-- A self-issued credential (lws10-authn-ssi-cid): a JWT signed with ES256
+or EdDSA (the key's algorithm) whose `iss`, `sub` and `client_id` are the
+agent's identifier, whose `aud` is the authorization server the storage's
+metadata names, with `iat`, `exp` (five minutes) and `jti`, and whose header
+`kid` names the verification method. `now` and `random` (at least 48 bytes: 32
+for the ECDSA nonce, 16 for `jti`) come from the host with the response that
+led here. `none` when the key does not sign. -/
 def selfIssuedJwt (C : L4Factoidal.Authz.Crypto) (k : SelfIssued) (audience : String)
     (now : Nat) (random : ByteArray) : Option String :=
   if random.size < 48 then none else
-  let header := Json.object [("alg", .string "ES256"), ("typ", .string "JWT"), ("kid", .string k.keyId)]
+  let header := Json.object [("alg", .string k.alg.name), ("typ", .string "JWT"), ("kid", .string k.keyId)]
   let claims := Json.object
     [ ("iss", .string k.subject), ("sub", .string k.subject), ("client_id", .string k.subject)
     , ("aud", .array [.string audience]), ("iat", natJson now), ("exp", natJson (now + 300))
     , ("jti", .string (hexOf (random.extract 32 48))) ]
   let input := L4Factoidal.JOSE.Base64Url.encode (toStringCompact header).toUTF8 ++ "." ++
     L4Factoidal.JOSE.Base64Url.encode (toStringCompact claims).toUTF8
-  (C.es256Sign k.privateKey input.toUTF8 (random.extract 0 32)).map (fun sig =>
-    input ++ "." ++ L4Factoidal.JOSE.Base64Url.encode sig)
+  let sig? : Option ByteArray := match k.alg with
+    | .es256 => C.es256Sign k.privateKey input.toUTF8 (random.extract 0 32)
+    | .eddsa => some (C.eddsaSign k.privateKey input.toUTF8)
+  sig?.map (fun sig => input ++ "." ++ L4Factoidal.JOSE.Base64Url.encode sig)
 
 /-- The subject token and its type: the token the caller gave, or a
 self-issued credential for the authorization server `audience`. -/
@@ -922,20 +1048,112 @@ def isAuthPhase : Phase → Bool
 
 /-! ## Beginning an operation -/
 
+/-- The RFC 6902 operation names. -/
+def patchOps : List String := ["add", "remove", "replace", "move", "copy", "test"]
+
+/-- Is a body a JSON Patch document (RFC 6902 §3): an array of objects whose
+`op` is one of the six operations? -/
+def jsonPatchOk (body : ByteArray) : Bool :=
+  match (String.fromUTF8? body).bind parseJson? with
+  | some (.array ops) => ops.all fun o =>
+      match o with
+      | .object _ => (o.getString? "op").any patchOps.contains
+      | _ => false
+  | _ => false
+
+/-- Is a body a linkset document (RFC 9264 §4.2): an object with a `linkset`
+array? -/
+def linksetDocOk (body : ByteArray) : Bool :=
+  match (String.fromUTF8? body).bind parseJson? with
+  | some j@(.object _) => (j.getArray? "linkset").isSome
+  | _ => false
+
+/-- Is a filter an `application/lws-query+json` document (lws10-index §Type
+Search): an object whose members are lists of groups, a group being an IRI
+or a list of IRIs? -/
+def queryOk (q : Json) : Bool :=
+  match q with
+  | .object fs => fs.all fun (_, groups) =>
+      match groups with
+      | .array gs => gs.all fun g =>
+          match g with
+          | .string _ => true
+          | .array xs => xs.all fun x => (Json.asString? x).isSome
+          | _ => false
+      | _ => false
+  | _ => false
+
+/-- What is wrong with the arguments of an operation, before anything is sent. -/
+def argProblem (op : Op) : Option String :=
+  if op.kind == "subscribe" && !isAbsoluteUri op.inbox then
+    some "a webhook subscription needs an inbox URL"
+  else if op.kind == "subscribe" && op.expires != "" && (Notifications.parseRfc3339? op.expires).isNone then
+    some "expires is not an RFC 3339 date-time"
+  else if (op.kind == "requestAccess" || op.kind == "grantAccess") && !accessArgsOk op then
+    some "an access document needs actions, an assignee URI and target URIs"
+  else if op.kind == "move" && !isAbsoluteUri op.destination then
+    some "a move needs a destination container URI"
+  else if (op.kind == "patch" || (op.kind == "updateLinkset" && op.mediaType.toLower != mediaLinkset)) &&
+      (op.mediaType == "" || op.mediaType.toLower == mediaJsonPatch) && !jsonPatchOk op.body then
+    some "the body is not a JSON Patch document (RFC 6902)"
+  else if op.kind == "updateLinkset" && op.mediaType.toLower == mediaLinkset && !linksetDocOk op.body then
+    some "the body is not a linkset document (RFC 9264)"
+  else if op.kind == "search" && op.mediaType == "" && !queryOk op.query then
+    some "the query is not an lws-query+json document"
+  else if op.kind == "read" &&
+      (match op.rangeStart, op.rangeEnd with | some a, some b => b < a | _, _ => false) then
+    some "rangeEnd is before rangeStart"
+  else none
+
+/-- The `Range` field value of a read (RFC 9110 §14.2): `bytes=first-last`,
+`last` omitted for the rest of the content. -/
+def rangeHeader (op : Op) : Option String :=
+  match op.rangeStart, op.rangeEnd with
+  | none, none => none
+  | a, b => some ("bytes=" ++ toString (a.getD 0) ++ "-" ++ (match b with | some e => toString e | none => ""))
+
+/-- The GET of a `read`: the media type asked for, the range, the condition
+(`If-None-Match`, RFC 9110 §13.1.2) and the preference (RFC 7240). -/
+def readReq (op : Op) : Req :=
+  { method := "GET", url := op.url
+    headers := (if op.accept != "" then [("Accept", op.accept)] else []) ++
+      (match rangeHeader op with | some v => [("Range", v)] | none => []) ++
+      (if op.ifNoneMatch != "" then [("If-None-Match", op.ifNoneMatch)] else []) ++
+      (if op.prefer != "" then [("Prefer", op.prefer)] else []) }
+
+/-- Index and search at a service endpoint: the listing of the type index,
+or the search QUERY. -/
+def startService (s : ClientState) (e : String) : ClientState × Action :=
+  let op := s.op
+  let s := { s with endpoint := e }
+  if op.kind == "typeIndex" then send s .paging (getReq e mediaLwsJson)
+  -- A query in another format first, when the caller gives one (its media
+  -- type and body); the baseline filter `query` after a 415.
+  else if op.mediaType != "" && op.mediaType.toLower != mediaLwsQuery then
+    send s .paging
+      { method := "QUERY", url := e, body := op.body
+        headers := [("Content-Type", op.mediaType), ("Accept", mediaLwsJson)] }
+  else send s .paging (queryReq e op.query)
+
 def begin (s : ClientState) : ClientState × Action :=
   let op := s.op
+  match argProblem op with
+  | some why => failWith s "badArguments" [("reason", .string why)]
+  | none =>
   match op.kind with
   | "verifyNotification" => verifyStart s
-  | "discover" | "typeIndex" | "search" | "subscribe" | "requestAccess" | "grantAccess" | "move" =>
-      if op.kind == "subscribe" && !isAbsoluteUri op.inbox then
-        failWith s "badArguments" [("reason", .string "a webhook subscription needs an inbox URI")]
-      else if (op.kind == "requestAccess" || op.kind == "grantAccess") && !accessArgsOk op then
-        failWith s "badArguments" [("reason", .string "an access document needs actions, an assignee URI and target URIs")]
-      else if op.kind == "move" && !isAbsoluteUri op.destination then
-        failWith s "badArguments" [("reason", .string "a move needs a destination container URI")]
+  | "typeIndex" | "search" =>
+      if op.endpoint != "" then startService s op.endpoint
+      else if op.storage != "" then send s .discoverDesc (getReq op.storage mediaLwsCid)
       else send s .discoverHead (headReq op.url)
-  | "read" | "getAccess" => send s .main (getReq op.url (if op.accept != "" then op.accept
-      else if op.kind == "getAccess" then mediaLwsJson else ""))
+  | "discover" | "subscribe" | "requestAccess" | "grantAccess" | "move" =>
+      if op.storage != "" then send s .discoverDesc (getReq op.storage mediaLwsCid)
+      else send s .discoverHead (headReq op.url)
+  | "describe" => send s .discoverDesc (getReq op.url mediaLwsCid)
+  | "queryFormats" => send s .main { method := "OPTIONS", url := op.url }
+  | "read" => send s .main (readReq op)
+  | "getAccess" | "getSubscription" =>
+      send s .main (getReq op.url (if op.accept != "" then op.accept else mediaLwsJson))
   | "head" => send s .main (headReq op.url)
   | "create" =>
       if !clientLinksOk op then
@@ -948,7 +1166,11 @@ def begin (s : ClientState) : ClientState × Action :=
       else if (op.precondition == "ifMatch" || op.precondition == "ifUnmodifiedSince") && op.tag == "" then
         failWith s "badArguments" [("reason", .string "the precondition needs a tag")]
       else send s .main (writeReq op "")
-  | "readLinkset" | "updateLinkset" => send s .linksetFind (headReq op.url)
+  | "updateLinkset" =>
+      if op.linksetUrl != "" then
+        send { s with linkset := op.linksetUrl } .linksetMeta (getReq op.linksetUrl mediaLinkset)
+      else send s .linksetFind (headReq op.url)
+  | "findLinkset" | "readLinkset" => send s .linksetFind (headReq op.url)
   | "list" => send s .paging (getReq op.url mediaLwsJson)
   | "unsubscribe" | "revokeAccess" => send s .main { method := "DELETE", url := op.url }
   | k => failWith s "badArguments" [("reason", .string ("unknown kind " ++ k))]
@@ -993,16 +1215,11 @@ def afterDiscovery (s : ClientState) (desc : Json) : ClientState × Action :=
     | some e => k e
     | none => failWith s "noService" [("service", .string ty)]
   match op.kind with
-  | "discover" => finish s (.done (.object [("storage", .string storageId), ("description", desc)]))
-  | "typeIndex" => need "TypeIndexService" (fun e => send { s with endpoint := e } .paging (getReq e mediaLwsJson))
-  | "search" => need "TypeSearchService" (fun e =>
-      -- A query in another format first, when the caller gives one (its
-      -- media type and body); the baseline filter `query` after a 415.
-      if op.mediaType != "" && op.mediaType.toLower != mediaLwsQuery then
-        send { s with endpoint := e } .paging
-          { method := "QUERY", url := e, body := op.body
-            headers := [("Content-Type", op.mediaType), ("Accept", mediaLwsJson)] }
-      else send { s with endpoint := e } .paging (queryReq e op.query))
+  | "discover" | "describe" =>
+      finish s (.done (.object [ ("storage", .string storageId), ("description", desc)
+                               , ("report", storageJson base desc) ]))
+  | "typeIndex" => need "TypeIndexService" (startService s)
+  | "search" => need "TypeSearchService" (startService s)
   | "subscribe" =>
       match service? desc "NotificationService" with
       | none => failWith s "noService" [("service", .string "NotificationService")]
@@ -1021,7 +1238,8 @@ def afterDiscovery (s : ClientState) (desc : Json) : ClientState × Action :=
       else send s .linksetFind (headReq op.url)
   | _ => failWith s "internal" [("reason", .string "not a service operation")]
 
-/-- The answer to the operation's own request. -/
+/-- The answer to the operation's own request. The `report` member of a
+`done` document is the result in the shapes of `Report.lean`. -/
 def onMain (s : ClientState) (r : Resp) : ClientState × Action :=
   let op := s.op
   let base := sentUrl s
@@ -1029,24 +1247,41 @@ def onMain (s : ClientState) (r : Resp) : ClientState × Action :=
   let withLoc := match location with
     | some l => [("location", .string l)]
     | none => []
+  let doneWith (report : Json) : ClientState × Action :=
+    finish s (.done (.object (withLoc ++ respSummary r ++ [("report", report)])))
+  let updated : Json :=
+    .object ([("status", natJson r.status)] ++ optStr "etag" (r.header? "etag") ++
+      [("metadata", metadataJson base r)])
   match op.kind with
   | "create" =>
-    if r.ok then finish s (.done (.object (withLoc ++ respSummary r)))
+    if r.ok then
+      doneWith (.object (optStr "location" location ++ [("metadata", metadataJson (location.getD op.url) r)]))
     else if 500 ≤ r.status then
       -- The create may have happened: read the container, never POST again.
       send { s with note := r.status } .createCheck (getReq op.url mediaLwsJson)
+    else statusFail s r
+  | "read" =>
+    if r.ok || (r.status == 304 && op.ifNoneMatch != "") then
+      doneWith (.object ([("metadata", metadataJson base r), ("notModified", .bool (r.status == 304))] ++
+        optStr "contentRange" (r.header? "content-range") ++
+        [("body", bodyJson (r.header? "content-type") r.body)]))
     else statusFail s r
   | "update" | "patch" | "delete" | "updateLinkset" | "move" =>
     if r.ok then
       let extra := match (r.header? "content-location").map (resolve base) with
         | some cl => [("contentLocation", .string cl)]
         | none => []
-      let moved := if op.kind == "move" then
-          match r.json? |>.bind (fun j => j.getArray? "linkset") |>.bind List.head? |>.bind (fun c => c.getString? "anchor") with
-          | some a => [("identifier", .string (resolve base a))]
-          | none => [("identifier", .string op.url)]
-        else []
-      finish s (.done (.object (extra ++ moved ++ respSummary r)))
+      if op.kind == "move" then
+        -- The move answers for the linkset; the resource at its new place
+        -- has its own metadata, read with a HEAD.
+        let identifier := match r.json? |>.bind (fun j => j.getArray? "linkset") |>.bind List.head? |>.bind (fun c => c.getString? "anchor") with
+          | some a => resolve base a
+          | none => op.url
+        send { s with carry := .object (extra ++ [("identifier", .string identifier)] ++ respSummary r) }
+          .moveCheck (headReq identifier)
+      else
+        finish s (.done (.object (extra ++ respSummary r ++
+          [("report", if op.kind == "delete" then Json.object [] else updated)])))
     else if r.status == 412 && s.retries > 0 &&
         (op.precondition == "ifMatch" || op.precondition == "ifMatchCurrent") then
       -- The caller allowed a retry: read the current tag again.
@@ -1063,14 +1298,28 @@ def onMain (s : ClientState) (r : Resp) : ClientState × Action :=
     if r.ok then
       finish s (.done (.object ([ ("linkset", (r.json?).getD .null), ("url", .string s.linkset)
                                 , ("etag", .string ((r.header? "etag").getD ""))
-                                , ("allow", strsJson (allowOf r)), ("acceptPatch", strsJson (acceptPatchOf r)) ])))
+                                , ("allow", strsJson (allowOf r)), ("acceptPatch", strsJson (acceptPatchOf r)) ] ++
+        [("report", .object ([("url", .string s.linkset)] ++ optStr "etag" (r.header? "etag") ++
+          [ ("linkset", (r.json?).getD .null), ("allow", strsJson (allowOf r))
+          , ("acceptPatch", strsJson (acceptPatchOf r)) ]))])))
     else statusFail s r
-  | "subscribe" | "requestAccess" | "grantAccess" =>
-    if r.ok then finish s (.done (.object (withLoc ++ respSummary r)))
+  | "subscribe" =>
+    if r.ok then doneWith (subscriptionJson (location.getD op.url) r)
+    else if 500 ≤ r.status then failWith s "outcomeUnknown" (respSummary r)
+    else statusFail s r
+  | "requestAccess" | "grantAccess" =>
+    if r.ok then doneWith (.object (optStr "location" location))
     else if 500 ≤ r.status then failWith s "outcomeUnknown" (respSummary r)
     else statusFail s r
   | _ =>
-    if r.ok then finish s (.done (.object (withLoc ++ respSummary r))) else statusFail s r
+    if r.ok then
+      doneWith (match op.kind with
+        | "head" => metadataJson base r
+        | "getSubscription" => subscriptionJson base r
+        | "getAccess" => .object [("document", (r.json?).getD .null)]
+        | "queryFormats" => .object [("formats", strsJson (acceptQueryOf r))]
+        | _ => .object [])
+    else statusFail s r
 
 /-- The answer to a request of the operation (not of the authorization
 flow). -/
@@ -1099,7 +1348,9 @@ def onResponse (V : L4Factoidal.Authz.Crypto) (s : ClientState) (r : Resp) : Cli
     | none => failWith s "noLinkset" (respSummary r)
     | some ls =>
       let s := { s with linkset := ls }
-      if op.kind == "readLinkset" then send s .main (getReq ls mediaLinkset)
+      if op.kind == "findLinkset" then
+        finish s (.done (.object [("linkset", .string ls), ("report", .object [("linkset", .string ls)])]))
+      else if op.kind == "readLinkset" then send s .main (getReq ls mediaLinkset)
       else send s .linksetMeta (getReq ls mediaLinkset)
   | .linksetMeta =>
     if !r.ok then statusFail s r else
@@ -1115,6 +1366,17 @@ def onResponse (V : L4Factoidal.Authz.Crypto) (s : ClientState) (r : Resp) : Cli
        (match pageItemsOf r with
         | some items => [("items", strsJson (idsOf items))]
         | none => []))
+  | .moveCheck =>
+    if !r.ok then statusFail s r else
+    let identifier := jStr s.carry "identifier"
+    let fields := match s.carry with
+      | .object fs => fs
+      | _ => []
+    finish s (.done (.object (fields ++
+      [("report", .object ([ ("status", natJson (jNat s.carry "status")), ("location", .string identifier) ] ++
+        optStr "linkset" (firstLink? (linksOf identifier r) "linkset") ++
+        [("identifierPreserved", .bool (identifier == op.url))] ++ optStr "etag" (r.header? "etag") ++
+        [("metadata", metadataJson identifier r)]))])))
   | .inboxDesc => verifyFinish V s r
   | _ => failWith s "internal" [("reason", .string ("no response expected in phase " ++ s.phase.name))]
 
@@ -1209,7 +1471,7 @@ def stateJson (s : ClientState) : Json :=
     , ("items", .array s.items), ("pages", natJson s.pages), ("restarted", .bool s.restarted)
     , ("storage", s.storage), ("endpoint", .string s.endpoint), ("linkset", .string s.linkset)
     , ("allow", strsJson s.allow), ("acceptPatch", strsJson s.acceptPatch)
-    , ("linksetDoc", s.linksetDoc), ("note", natJson s.note), ("fuel", natJson s.fuel) ]
+    , ("linksetDoc", s.linksetDoc), ("note", natJson s.note), ("carry", s.carry), ("fuel", natJson s.fuel) ]
 
 def stateOfJson (j : Json) : Except String ClientState := do
   let op ← opOfJson (jAny j "op")
@@ -1222,7 +1484,7 @@ def stateOfJson (j : Json) : Except String ClientState := do
          restarted := jBool j "restarted", storage := jAny j "storage"
          endpoint := jStr j "endpoint", linkset := jStr j "linkset", allow := jStrs j "allow"
          acceptPatch := jStrs j "acceptPatch", linksetDoc := jAny j "linksetDoc"
-         note := jNat j "note", fuel := jNat j "fuel" }
+         note := jNat j "note", carry := jAny j "carry", fuel := jNat j "fuel" }
 
 /-- An event document: `{status, headers, bodyBase64 | body}` for a
 response, `{error}` for a transport error. -/
@@ -1231,11 +1493,18 @@ def eventOfJson (j : Json) : Event :=
   | some m => .transportError m
   | none => .response (respOfJson j)
 
+/-- A failure document with the driver protocol's error (`Report.errorReport`)
+in its `report` member. -/
+def withErrorReport (err : Json) : Json :=
+  match err with
+  | .object fs => .object (fs ++ [("report", errorReport err)])
+  | j => j
+
 /-- An action document. `done` and `fail` carry the session, which the
 caller passes to the next operation. -/
 def actionJson (s : ClientState) : Action → Json
   | .fetch r => .object [("fetch", reqJson r)]
   | .done res => .object [("done", res), ("session", sessionJson s.session)]
-  | .fail err => .object [("fail", err), ("session", sessionJson s.session)]
+  | .fail err => .object [("fail", withErrorReport err), ("session", sessionJson s.session)]
 
 end L4Factoidal.LWS.Client

@@ -355,7 +355,8 @@ def lwsSolidOpNames : List String :=
   , "solidClientRequest"
   , "solidClientResponse"
   , "lwsClientStart"
-  , "lwsClientStep" ]
+  , "lwsClientStep"
+  , "lwsClientNewKey" ]
 
 /-- The XMPP server-handle op names (`Wasm/Ops/XmppSession.lean`), served
 ONLY by `callIO`: a server and its sessions live in handle tables the pure
@@ -720,6 +721,11 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
         match args with
         | [a, b] => pure (Ops.lwsClientStep a b)
         | args => pure (errJson s!"lwsClientStep expects 2 arguments, got {args.length}"))
+  | "lwsClientNewKey" =>
+      withArgs (fun args =>
+        match args with
+        | [a, b] => pure (Ops.lwsClientNewKey a b)
+        | args => pure (errJson s!"lwsClientNewKey expects 2 arguments, got {args.length}"))
   -- The XMPP server as handles (`Wasm/Ops/XmppSession.lean`).
   | "xmppOpen"           => withArgs (arityIO1 op Ops.xmppOpen)
   | "xmppClose"          => withArgs (arityIO1 op Ops.xmppClose)

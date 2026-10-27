@@ -158,7 +158,7 @@ def fullOnlyOpNames : List String :=
   , "solidFetched"
   , "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzOwns", "authzClose"
   , "solidClientRequest", "solidClientResponse"
-  , "lwsClientStart", "lwsClientStep"
+  , "lwsClientStart", "lwsClientStep", "lwsClientNewKey"
   , "matrixDeterminant", "matrixScalarProduct", "matrixVectorProduct"
   , "matrixOuterProduct", "sigmoidPoints", "sigmoidFormulaMathml"
   , "vcSha256Hex", "vcEd25519SecretToPublic", "vcEd25519Sign", "vcEd25519Verify"
