@@ -1112,8 +1112,8 @@ memory, and later reads of that file are cut from it with no request. A
 changed `ETag` between two reads of one file refuses the read, so the bytes of
 two versions are never mixed. `factoidal lws-serve` answers `Range` with
 `206` (the decision is Lean: `LWS/Binding.lean` `parseRange`,
-`range_selection_exact`). The engine checks every length against the manifest
-as for a directory.
+`range_selection_exact`). The engine checks every byte against the manifest
+as for a directory (see "Integrity" below).
 
 Evidence. `store.evidence` lists each resource read with its `ETag` and
 `Last-Modified`, the number of requests, how many were answered `206`, and
@@ -1136,8 +1136,20 @@ the two writes today. What a store relies on from a medium is the named
 assumption `ReadsWritten`: the bytes read are the bytes written.
 
 Not yet: writes to an LWS storage (packing a generation, switching
-`CURRENT` with a conditional PUT), the Merkle check of each read, eviction of
-in-memory copies.
+`CURRENT` with a conditional PUT), eviction of in-memory copies.
+
+Integrity. `openSbm11(source, { verify })` checks reads by default
+(`verify: 'merkle'`, Lean `Storage/Sbm11/HostVerify.lean`, as native
+`l4sbm11 query --verify merkle`). The open reads the `.merkle` sidecar of each
+file and refuses it unless its leaves rebuild the Merkle root in
+`manifest.sbm11`. Each read is then widened to its 65,536-byte chunks, and
+each chunk is checked by its Merkle proof before the engine decodes a byte of
+it; checked chunks are kept for later queries (at most 256 per file). A
+changed byte in a data file, a sidecar or a Merkle reference of the manifest
+refuses the open or the query, and the error names the file.
+`verify: 'none'` checks only the lengths against the manifest and hashes
+nothing. The manifest has no digest of its own; the full-file SHA-256 of each
+file is checked by `factoidal activate` (the op `sbm11Verify`).
 
 ## Packing an SBM11 generation in memory: `packSbm11`, `mapReader`
 
