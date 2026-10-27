@@ -532,17 +532,24 @@ export function canonicalize(
 export function graphs(dataset: Dataset): Array<[name: NamedNode | BlankNode, graph: Dataset]>;
 
 /**
- * The RDFC-1.0 canonical hash of a single graph: the SHA-256 of its
- * canonical N-Quads document, as 64 lowercase hexadecimal digits (RDF
- * Dataset Canonicalization 1.0, section 4.4 note 2). The engine computes
- * the canonical form and the digest. Every quad's graph component is
- * dropped first, so isomorphic graphs (including under blank-node
- * relabeling) give the same hash whatever graph name they were extracted
- * from. Typically called with one entry of graphs()'s output. For the
- * canonical text, use canonicalize(). Rejects when the input holds an
- * RDF 1.2 triple term or the section 4.4 call budget is exceeded.
+ * The RDFC-1.0 canonical hash of a dataset: the SHA-256, as 64 lowercase
+ * hexadecimal digits, of the canonical N-Quads document that canonicalize()
+ * answers (RDF Dataset Canonicalization 1.0, section 4.4 note 2), graph names
+ * included. The engine computes the canonical form and the digest. Since
+ * 0.20.0; 0.17.0 to 0.19.x dropped every graph name first, so datasets that
+ * differ only in their graph names got the same hash. To hash a graph
+ * whatever its name (for example one entry of graphs()), use
+ * canonicalHash(asDefaultGraph(g)). Rejects when the input holds an RDF 1.2
+ * triple term or the section 4.4 call budget is exceeded.
  */
-export function canonicalHash(datasetOrGraph: Dataset): Promise<string>;
+export function canonicalHash(dataset: Dataset): Promise<string>;
+
+/**
+ * A new Dataset with the triples of every graph of `dataset`, all in the
+ * default graph (the engine's union of the graphs). With one entry of
+ * graphs(), it is that graph without its name. Dispose of it when done.
+ */
+export function asDefaultGraph(dataset: Dataset): Dataset;
 
 /**
  * Whether two datasets are isomorphic (RDF 1.1 Concepts 3.6 and 4; blank
@@ -755,7 +762,14 @@ export interface EvidenceRecord {
   outside?: OutsideSetting[];
 }
 
-/** The value on a wire. */
+/**
+ * The value on a wire. After a node, `graph` is a value of the node's
+ * `wireOut`: a Dataset for the graph wires, text for String (a writer), the
+ * rows for Table (SELECT), a boolean for Answer (ASK), `[canonical, sha256]`
+ * for String × String (rdfcStage), the report object for ValidationReport,
+ * the explain result for ExplainGraphResult. Since 0.20.0; before, a node
+ * whose output was not a Dataset left its input on the wire.
+ */
 export interface Wire<G = unknown> {
   graph: G;
   evidence: EvidenceRecord[];
@@ -780,7 +794,12 @@ export interface FactoidalNode {
   readonly wireOut: string;
   readonly runnable: boolean;
   readonly bound: boolean;
-  /** The settings as given (passed to the package function that runs the stage). */
+  /**
+   * The node's own copy of the settings as given (passed to the package
+   * function that runs the stage): frozen at every depth, a Dataset cloned,
+   * taken when node() checked them. A later change to the caller's objects
+   * does not reach the node; a change to a Dataset here makes run() refuse.
+   */
   readonly params: Readonly<Record<string, unknown>>;
   /** The settings as sent to the engine: JSON values, a Dataset as {$nquads}. */
   readonly settingsWire: Readonly<Record<string, unknown>>;
@@ -873,8 +892,11 @@ export function pipe(...nodes: Array<FactoidalNode | Pipeline>): Pipeline;
  * Run a node or pipeline on `input` (a Wire, or the graph: text for a
  * reader, else a Dataset or data input). Rejects before any node runs when
  * a node's stage has status 'missing' (unless `options.unchecked`) or has
- * no package function, or when the engine's check finds the pipeline not
- * well typed (unless `options.unchecked`; then `proved` is false).
+ * no package function, when the engine's check finds the pipeline not
+ * well typed (unless `options.unchecked`; then `proved` is false), or when a
+ * node's settings changed after node() checked them. Rejects with code
+ * 'op.failed' when a node's runner gives a value that is not of the node's
+ * `wireOut` (see Wire).
  */
 export function run(pipeline: FactoidalNode | Pipeline, input: unknown, options?: RunOptions): Promise<RunResult>;
 
@@ -1759,6 +1781,7 @@ declare const _default: {
   canonicalize: typeof canonicalize;
   graphs: typeof graphs;
   canonicalHash: typeof canonicalHash;
+  asDefaultGraph: typeof asDefaultGraph;
   isomorphic: typeof isomorphic;
   fromQuads: typeof fromQuads;
   ready: typeof ready;

@@ -885,30 +885,43 @@ function buildApi(driver) {
   }
 
   /**
-   * The RDFC-1.0 canonical hash of one graph: the SHA-256, as 64 lowercase
-   * hexadecimal digits, of the canonical N-Quads document (RDF Dataset
-   * Canonicalization 1.0, section 4.4 note 2). Every quad's graph name is
-   * dropped first (op datasetGraphAsDefault with the union of the graphs);
-   * then op datasetCanonicalHash computes the canonical form and the digest
-   * in Lean. canonicalize() answers the canonical text.
-   * @param {Dataset} datasetOrGraph
+   * The RDFC-1.0 canonical hash of a dataset: the SHA-256, as 64 lowercase
+   * hexadecimal digits, of the canonical N-Quads document that canonicalize()
+   * answers (RDF Dataset Canonicalization 1.0, section 4.4 note 2), graph
+   * names included. Op datasetCanonicalHash computes the canonical form and
+   * the digest in Lean. Since 0.20.0; 0.17.0 to 0.19.x dropped every graph
+   * name first, so datasets that differ only in their graph names got the
+   * same hash. To hash a graph whatever its name, use
+   * canonicalHash(asDefaultGraph(g)).
+   * @param {Dataset} dataset
    * @returns {Promise<string>}
    */
-  async function canonicalHash(datasetOrGraph) {
-    if (!(datasetOrGraph instanceof Dataset)) {
-      throw new TypeError('canonicalHash: expected a Dataset (e.g. one entry of graphs())');
+  async function canonicalHash(dataset) {
+    if (!(dataset instanceof Dataset)) {
+      throw new TypeError('canonicalHash: expected a Dataset');
     }
-    datasetOrGraph.size; // throws the disposed error
-    const c = datasetOrGraph._ctx;
-    requireEntryFn(c.e, 'datasetGraphAsDefault', 'canonicalHash');
+    dataset.size; // throws the disposed error
+    const c = dataset._ctx;
     requireEntryFn(c.e, 'datasetCanonicalHash', 'canonicalHash');
-    const merged = c.wrap(entryResult(c.e.datasetGraphAsDefault(datasetOrGraph.handle,
-      JSON.stringify({ type: 'union' })), 'canonicalHash'), {});
-    try {
-      return entryResult(c.e.datasetCanonicalHash(merged.handle), 'canonicalHash').hash;
-    } finally {
-      merged.dispose();
+    return entryResult(c.e.datasetCanonicalHash(dataset.handle), 'canonicalHash').hash;
+  }
+
+  /**
+   * A new Dataset that holds the triples of every graph of `dataset`, all in
+   * the default graph (op datasetGraphAsDefault with the union of the
+   * graphs). With one entry of graphs(), it is that graph without its name.
+   * @param {Dataset} dataset
+   * @returns {Dataset}
+   */
+  function asDefaultGraph(dataset) {
+    if (!(dataset instanceof Dataset)) {
+      throw new TypeError('asDefaultGraph: expected a Dataset');
     }
+    dataset.size; // throws the disposed error
+    const c = dataset._ctx;
+    requireEntryFn(c.e, 'datasetGraphAsDefault', 'asDefaultGraph');
+    return c.wrap(entryResult(c.e.datasetGraphAsDefault(dataset.handle,
+      JSON.stringify({ type: 'union' })), 'asDefaultGraph'), {});
   }
 
   /**
@@ -2204,7 +2217,7 @@ function buildApi(driver) {
   // The node-composition API (lib/nodes.mjs, issue 1002 step 2).
   const nodeApi = buildNodes({
     entry, entryResult, requireEntryFn, Dataset,
-    parse, closure, shaclValidate, query, serialize, canonicalize, explain, csvwToRdf,
+    parse, closure, shaclValidate, query, serialize, canonicalize, canonicalHash, explain, csvwToRdf,
   });
 
   return {
@@ -2224,6 +2237,7 @@ function buildApi(driver) {
     canonicalize,
     graphs,
     canonicalHash,
+    asDefaultGraph,
     shaclValidate,
     shexValidate,
     owlClosure,

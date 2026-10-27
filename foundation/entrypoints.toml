@@ -735,13 +735,13 @@ note = "npm/factoidal/fn.js hash: canonicalize (see npm:./fn#canonicalize), then
 id = "npm:.#canonicalHash"
 stages = ["rdfcStage"]
 covers = "part"
-note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash): RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: datasetGraphAsDefault, the digest (Crypto.hashHex)."
+note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash) on the dataset, graph names kept: RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: the digest (Crypto.hashHex)."
 
 [[entry]]
 id = "npm:./browser#canonicalHash"
 stages = ["rdfcStage"]
 covers = "part"
-note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash): RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: datasetGraphAsDefault, the digest (Crypto.hashHex)."
+note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash) on the dataset, graph names kept: RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: the digest (Crypto.hashHex)."
 
 [[entry]]
 id = "npm:./fn#vcEddsaCreateFromCanonical"
@@ -948,10 +948,22 @@ id = "wasm:extList"
 reason = "reflection: the registered extension-function IRIs, reads no RDF data"
 
 [[entry]]
+id = "npm:.#asDefaultGraph"
+stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs asDefaultGraph: the wasm op datasetGraphAsDefault with the union of the graphs. Not covered: datasetGraphAsDefault, the JS Dataset wrapper."
+
+[[entry]]
 id = "npm:.#graphs"
 stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
 covers = "part"
 note = "npm/factoidal/lib/api.mjs graphs: the wasm op datasetGraphNames, then dataset.match(null, null, null, name) for each name (lib/dataset.mjs match, the wasm op datasetMatch; see wasm:datasetMatch). Not covered: datasetGraphNames, the JS Dataset wrappers."
+
+[[entry]]
+id = "npm:./browser#asDefaultGraph"
+stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs asDefaultGraph: the wasm op datasetGraphAsDefault with the union of the graphs. Not covered: datasetGraphAsDefault, the JS Dataset wrapper."
 
 [[entry]]
 id = "npm:./browser#graphs"

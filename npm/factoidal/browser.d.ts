@@ -23,6 +23,7 @@ export {
   canonicalize,
   graphs,
   canonicalHash,
+  asDefaultGraph,
   isomorphic,
   fromQuads,
   ready,

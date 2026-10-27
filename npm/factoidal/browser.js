@@ -83,6 +83,7 @@ export const serialize = api.serialize;
 export const canonicalize = api.canonicalize;
 export const graphs = api.graphs;
 export const canonicalHash = api.canonicalHash;
+export const asDefaultGraph = api.asDefaultGraph;
 export const isomorphic = api.isomorphic;
 export const fromQuads = api.fromQuads;
 export const ready = api.ready;
