@@ -81,6 +81,11 @@
    "class": "divergence",
    "spec": "SPARQL 1.1 §17.4.1.9 IN and §17.4.1.10 NOT IN (SPARQL 1.2 WD 2026-10-25, same sections): IN is (lhs = e1) || (lhs = e2) || ..., and \"Errors in comparisons cause the IN expression to raise an error if the RDF term being tested is not found elsewhere in the list of terms\"; 57 = '123' is a type error (§17.4.1.7 RDFterm-equal of two different literals)",
    "gloss": "Jena answers false where a comparison in the list is an error; the specification raises an error (https://github.com/danbri/factoidal/issues/1049)"
+  },
+  "bnode-iri-reference": {
+   "class": "divergence",
+   "spec": "SPARQL 1.1 Query §19.5: text matched by IRIREF must conform to RFC 3987 section 2.2 IRI-reference syntax; \"_:a\" is not one (no ALPHA scheme start, and a relative first segment has no ':'). https://github.com/danbri/factoidal/issues/1057",
+   "gloss": "Jena (ARQ) reads <_:a> as a reference to a blank node; the engine refuses the query"
   }
  },
  "cases": {
@@ -268,6 +273,8 @@
   "TestLeviathanFunctions.pow_21": "ext-function-iri",
   "TestLeviathanFunctions.pow_22": "ext-function-iri",
   "TestLeviathanFunctions.pow_23": "ext-function-iri",
+  "TestSPARQLKeywordFunctions.NotOneOf_01": "in-error-comparison",
+  "TestSPARQLKeywordFunctions.OneOf_01": "in-error-comparison",
   "TestSPARQLKeywordFunctions.abs_02": "lexical-form",
   "TestSPARQLKeywordFunctions.abs_03": "lexical-form",
   "TestSPARQLKeywordFunctions.ceil_02": "lexical-form",
@@ -322,6 +329,7 @@
   "TestSPARQLKeywordFunctions.round_12": "lexical-form",
   "TestSPARQLKeywordFunctions.round_13": "lexical-form",
   "TestSPARQLKeywordFunctions.round_14": "lexical-form",
+  "TestSPARQLKeywordFunctions.sameTerm_04": "bnode-iri-reference",
   "TestSPARQLKeywordFunctions.sameValue_01": "ext-syntax",
   "TestSPARQLKeywordFunctions.sameValue_02": "ext-syntax",
   "TestSPARQLKeywordFunctions.sameValue_03": "ext-syntax",
@@ -353,8 +361,6 @@
   "TestSPARQLKeywordFunctions.year_24": "datetime-accessors",
   "TestSPARQLKeywordFunctions.year_dur_01": "datetime-accessors",
   "TestStringArgCompatibility.arg_05": "iriref-digit-573",
-  "TestSPARQLKeywordFunctions.OneOf_01": "in-error-comparison",
-  "TestSPARQLKeywordFunctions.NotOneOf_01": "in-error-comparison",
   "TestXSDFuncOp.cast_gregorian_10": "cast-date-to-datetime"
  }
 }

@@ -120,6 +120,7 @@ import L4Factoidal.RDF.Graph
 import L4Factoidal.Syntax.Lexing
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.Syntax.IriResolve
+import L4Factoidal.RDF.IriSyntax
 import L4Factoidal.NatBounds
 import Std.Data.TreeMap
 
@@ -539,8 +540,21 @@ def TurtleState.expandPrefixed (st : TurtleState) (pfx : String) (loc : List Cha
   | some ns => some (ns ++ String.ofList (unescapePnLocal loc))
   | none    => none
 
+/-- An IRIREF that holds neither an IRI nor a relative reference (RFC 3987
+section 2.2 `IRI-reference`; https://github.com/danbri/factoidal/issues/1057). -/
+def notIriReference (pos : Nat) (raw : String) : ParseError :=
+  ⟨s!"invalid IRI <{raw}>: not an IRI and not a relative reference (RFC 3987 section 2.2)", pos⟩
+
+/-- The IRI an `iri` production gives that is not an absolute IRI (Turtle
+section 7.2: "The resulting IRI MUST comply with the syntactic restrictions
+of generic IRI syntax", RFC 3987 section 2.2). -/
+def notAbsoluteIri (pos : Nat) (iri : String) : ParseError :=
+  ⟨s!"invalid IRI <{iri}>: not an absolute IRI (RFC 3987 section 2.2)", pos⟩
+
 /-- [135s] iri — an IRIREF (resolved against base) or a PrefixedName
-(expanded through the prefix map). Port of `parse_turtle_iri`. -/
+(expanded through the prefix map). Port of `parse_turtle_iri`. The IRIREF
+must hold an RFC 3987 `IRI-reference`, and the IRI the production gives
+must be an absolute IRI (`isAbsoluteIri`, the engine's one IRI check). -/
 def readTurtleIri (st : TurtleState) (pos : Nat) (cs : List Char) :
     Except ParseError (WfIri × Nat × List Char) :=
   match cs with
@@ -548,9 +562,11 @@ def readTurtleIri (st : TurtleState) (pos : Nat) (cs : List Char) :
       match readIriRef pos cs with
       | .error e => .error e
       | .ok (raw, pos', rest) =>
+          if !isIriReference raw then .error (notIriReference pos raw)
+          else
           match mkIri pos (st.resolve raw) with
           | .error _ => .error ⟨s!"relative IRI <{raw}> with no base to resolve against", pos⟩
-          | .ok wi   => .ok (wi, pos', rest)
+          | .ok wi   => if isAbsoluteIriFast wi.val then .ok (wi, pos', rest) else .error (notAbsoluteIri pos wi.val)
   | _ =>
       match readPrefixedName pos cs with
       | .error e => .error e
@@ -560,7 +576,7 @@ def readTurtleIri (st : TurtleState) (pos : Nat) (cs : List Char) :
           | some s =>
               match mkIri pos s with
               | .error e => .error e
-              | .ok wi   => .ok (wi, pos', rest)
+              | .ok wi   => if isAbsoluteIriFast wi.val then .ok (wi, pos', rest) else .error (notAbsoluteIri pos wi.val)
 
 /-! ## Blank nodes — [137s] `BlankNode ::= BLANK_NODE_LABEL | ANON`
 
@@ -821,20 +837,49 @@ def pnCharsFollows : List Char → Bool
   | c :: _ => isPnChars c
   | []     => false
 
+/-- After a bare keyword that ends in a PN_CHARS character (`true`, `false`),
+the rest of a [139s] `PNAME_NS` follows: `:` at once, or `.` and then
+`(PN_CHARS | '.')*` ending in a PN_CHARS before `:` ([167s] `PN_PREFIX ::=
+PN_CHARS_BASE ((PN_CHARS | '.')* PN_CHARS)?`). Then the longest match is a
+prefixed name (`true:o`, `true.x:o`), not the keyword (Turtle section 6.5:
+"When tokenizing the input and choosing grammar rules, the longest match is
+chosen"; https://github.com/danbri/factoidal/issues/1063). -/
+def pnameNsFollows : List Char → Bool
+  | ':' :: _ => true
+  | '.' :: rest => go rest
+  | _ => false
+where
+  go : List Char → Bool
+    | [] => false
+    | c :: rest =>
+        if c == '.' then go rest
+        else if isPnChars c then (match rest with | ':' :: _ => true | _ => go rest)
+        else false
+
 /-- [133s] `BooleanLiteral ::= 'true' | 'false'`. Port of
-`parse_boolean_literal`. -/
+`parse_boolean_literal`. A keyword followed by more name characters, or by
+the rest of a prefix name and `:`, is not the keyword. -/
 def readBooleanLiteral (pos : Nat) (cs : List Char) :
     Except ParseError (Literal × Nat × List Char) :=
   let lit (s : String) : Literal :=
     { lexicalForm := s, datatype := xsdBoolean, langTag := none, direction := none }
   match cs with
   | 't' :: 'r' :: 'u' :: 'e' :: rest =>
-      if pnCharsFollows rest then .error ⟨"expected boolean literal", pos⟩
+      if pnCharsFollows rest || pnameNsFollows rest then .error ⟨"expected boolean literal", pos⟩
       else .ok (lit "true", pos + 4, rest)
   | 'f' :: 'a' :: 'l' :: 's' :: 'e' :: rest =>
-      if pnCharsFollows rest then .error ⟨"expected boolean literal", pos⟩
+      if pnCharsFollows rest || pnameNsFollows rest then .error ⟨"expected boolean literal", pos⟩
       else .ok (lit "false", pos + 5, rest)
   | _ => .error ⟨"expected boolean literal", pos⟩
+
+#guard pnameNsFollows ":o".toList
+#guard pnameNsFollows ".x:o".toList
+#guard pnameNsFollows ".x.y:o".toList
+#guard !pnameNsFollows ". <http://e/s>".toList
+#guard !pnameNsFollows ".\n".toList
+#guard !pnameNsFollows "..".toList
+#guard !pnameNsFollows ".x.:o".toList
+#guard !pnameNsFollows " ;".toList
 
 /-- `rdf:type` — what [9] verb's `a` abbreviates. -/
 def rdfType : WfIri := ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#type", rfl⟩
@@ -899,7 +944,11 @@ def readRdfLiteral (st : TurtleState) (pos : Nat) (cs : List Char) :
                    | .error e => .error e
                    | .ok wl   => .ok (wl, pos2, rest2))
       | '^' :: '^' :: rest2 =>
-          (match readTurtleIri st (pos1 + 2) rest2 with
+          -- `'^^'` and `iri` are two terminals of [128s] RDFLiteral, and white
+          -- space or a comment may separate terminals (Turtle section 6.2;
+          -- https://github.com/danbri/factoidal/issues/1063).
+          let (pos2, rest2') := tws (pos1 + 2) rest2
+          (match readTurtleIri st pos2 rest2' with
            | .error e => .error e
            | .ok (dt, pos2, rest3) =>
                match mkLiteral pos1
@@ -2275,6 +2324,8 @@ def readPrefixDirective (st : TurtleState) (pos : Nat) (cs : List Char) :
         match readIriRef p3 r3 with
         | .error e => .error e
         | .ok (raw, p4, r4) =>
+          if !isIriReference raw then .error (notIriReference p3 raw)
+          else
             let iri := st.resolve raw
             if atForm then
               let (p5, r5) := tws p4 r4
@@ -2298,6 +2349,8 @@ def readBaseDirective (st : TurtleState) (pos : Nat) (cs : List Char) :
     match readIriRef p1 r1 with
     | .error e => .error e
     | .ok (raw, p2, r2) =>
+      if !isIriReference raw then .error (notIriReference p1 raw)
+      else
         let iri := st.resolve raw
         if atForm then
           let (p3, r3) := tws p2 r2
