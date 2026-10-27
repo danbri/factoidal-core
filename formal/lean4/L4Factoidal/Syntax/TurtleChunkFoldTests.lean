@@ -261,4 +261,10 @@ private def prefixSources : List String := [
 #guard acceptedSources.all (fun d => samePrefixParse d)
 #guard refusedSources.all (fun d => samePrefixParse d)
 
+-- https://github.com/danbri/factoidal/issues/1063: white space or a comment after
+-- `^^`, and a prefix named `true`, through the reader of the wasm ops.
+#guard (parseTurtleText "<http://e/a> <http://e/b> \"x\"^^ <http://e/d> .").toOption.map (·.length) == some 1
+#guard (parseTurtleText "<http://e/a> <http://e/b> \"x\"^^ # c\n <http://e/d> .").toOption.map (·.length) == some 1
+#guard (parseTurtleText "@prefix true: <http://example/c/> . <urn:s> <urn:p> true:o .").toOption.map (·.length) == some 1
+
 end L4Factoidal.Syntax

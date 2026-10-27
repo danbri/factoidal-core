@@ -189,10 +189,10 @@ theorem nextToken_ask (pos : Nat) (rest : List Char)
   conv => lhs; unfold nextToken
   simp only [hskip, scanPnameOrKeyword, hscan]
   cases rest with
-  | nil => simp [isAlpha, isDigitC, keywordOfUpper, charsUpper, charUpper]
+  | nil => simp [isAlpha, isDigitC, keywordOfUpper, charsUpper, charUpper, trimTrailingDots, trimDotsRev]
   | cons r rs =>
       have hr : r ≠ ':' := hcolon r rfl
-      simp [isAlpha, isDigitC, keywordOfUpper, charsUpper, charUpper, hr]
+      simp [isAlpha, isDigitC, keywordOfUpper, charsUpper, charUpper, hr, trimTrailingDots, trimDotsRev]
 
 /-- Every printed term starts with `<` or `?`, and neither is a name
 character. That is what discharges the "next character ends the token"

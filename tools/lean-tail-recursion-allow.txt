@@ -1548,3 +1548,10 @@ L4Factoidal_WebDAV_Prog_trace  # (s) the operations a program names in a model, 
 L4Factoidal_WebDAV_copyTree  # (c) at most 64 levels (its fuel); each call asks the storage (get or put) before it recurses, so one host answer resumes one level and the member loop runs one frame deep per answer
 L4Factoidal_WebDAV_propfind  # (c) the member loop of a Depth 1 PROPFIND that asks for DAV:getetag: each iteration asks the storage (one HEAD) before the next, so one host answer resumes one iteration; with no tag asked there is no loop (a map)
 L4Factoidal_WebDAV_etagsOf  # (c) at most ifTagsMax + 1 = 17 resources: precheck refuses an If header that names more (#guard in WebDAV/Tests.lean)
+# --- Added 2026-10-27, ORDER BY with an aggregate in a grouped query
+#     (https://github.com/danbri/factoidal/issues/1050, PR 146). Both walk the
+#     ORDER BY conditions of one query, as compareOnConditions and orderFailure
+#     do; the cycle is the sub-SELECT nesting of the query (an EXISTS in a
+#     condition reaches selectPost through substituteExistentials). ---
+L4Factoidal_SPARQL_compareOnConditionsKeyed  # (b) ORDER BY conditions of one query; the list step is a self tail call (loop); cycle through selectPost for sub-SELECT nesting
+L4Factoidal_SPARQL_orderKeys  # (b) ORDER BY conditions of one query: one frame per condition; cycle through selectPost for sub-SELECT nesting

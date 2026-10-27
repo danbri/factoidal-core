@@ -224,7 +224,7 @@ Tracking the gaps that stay in JSON-LD 1.1: https://github.com/danbri/factoidal/
 ## Limits
 
 - `parse(text, { format: 'jsonld', rdfstar: true })` is refused
-  (`option.unknown`) in 0.18.0; use `jsonldToRdf(text, { rdfstar: true })`.
+  (`option.unknown`) in 0.18.0 and 0.19.0 (fixed for 0.20.0 by https://github.com/danbri/factoidal-core/pull/152); use `jsonldToRdf(text, { rdfstar: true })`.
   The 0.18.0 changelog says `parse` takes the option. Expected-failure
   test: `tests/hub/hub_jsonld-star_test.mjs`.
 - `formats()` lists JSON-LD as RDF 1.1 only (`read12`, `write12` false); it

@@ -109,7 +109,12 @@ def wrapScalar (typeMap : Option String) (v : Json) : Json :=
 
 /-- The five keys a value object may carry (JSON-LD 1.1 §9.5 / §5.1's
 "invalid value object" error), checked through their ALIAS-RESOLVED
-IRI. -/
+IRI. A key that has the form of a keyword and is not one (`"@foo"`), so
+that its expansion has that form, is not checked: JSON-LD 1.1 API §5.2.2 step 2
+says IRI expansion of such a value gives null (with a warning), and §5.1.2
+step 13.3 drops a key whose expanded property is null, so the key is not an
+entry of the result that step 15 checks
+(https://github.com/danbri/factoidal/issues/1064). -/
 def valueObjectKeysValid (ac : ActiveContext) (fields : List (String × Json)) : Bool :=
   fields.all (fun kv =>
     match expandIri ac kv.1 true with
