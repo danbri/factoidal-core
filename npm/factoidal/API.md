@@ -452,6 +452,16 @@ unchanged. Text input takes `{format}`; with no format the engine infers one
 and reports it. An unknown option key rejects with a `FactoidalError` of
 code `option.unknown`; the engine checks the keys (op `apiCheck`).
 
+Format inference (op `detectFormat`; no W3C specification defines it, so
+name the format when you know it). The rules, in order:
+1. `jsonld` when the first non-space character is `{` or `[` and the whole
+   text is JSON. Turtle `[] <p> [] .` and TriG `{ <s> <p> <o> }` are not JSON.
+2. `rdfxml` when the text starts with `<?xml` or `<rdf:RDF`.
+3. `nquads12` when the complete lines of the first 4096 characters are
+   N-Quads statements and at least one names a graph.
+4. `trig12` when the text has a `{`.
+5. `turtle12` otherwise (it also reads N-Triples).
+
 Query warnings. A SELECT answer can carry a non-enumerable `warnings`
 array. A `FROM` or `FROM NAMED` IRI that names no graph of the dataset gives
 a warning of class `dataset-iri-not-found` with `class`, `clause` (`FROM` or

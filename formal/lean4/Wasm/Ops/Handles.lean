@@ -486,13 +486,14 @@ def datasetQueryRaw (h sparql optsJson : String) : IO String := do
     pure (queryRawParsed ds sparql (field "entail" "none") (field "output" "json") (some now))
 
 /-- `detectFormat(text)` — `{"ok":true,"format":TAG}`, the parse tag of
-`formatOfContent`; Turtle and TriG are read in RDF 1.2 mode (`turtle12`,
-`trig12`), which also reads every RDF 1.1 document. -/
+`formatOfContent`; Turtle, TriG and N-Quads are read in RDF 1.2 mode
+(`turtle12`, `trig12`, `nquads12`), which also reads every RDF 1.1 document. -/
 def detectFormat (text : String) : IO String :=
   let tag := match L4Factoidal.RDF.formatOfContent text with
     | .jsonld => "jsonld"
     | .rdfxml => "rdfxml"
     | .trig => "trig12"
+    | .nquads => "nquads12"
     | _ => "turtle12"
   pure (okWith [("format", .string tag)])
 
