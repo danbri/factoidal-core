@@ -403,15 +403,21 @@ def numNeg : Num → Num
 
 /-- Numeric comparison; `none` when a NaN is involved. -/
 def numCmp (a b : Num) : Option Ordering :=
-  let r := max a.rank b.rank
-  match a.promote r, b.promote r with
+  match a, b with
   | .i x, .i y => some (compare x y)
   | .d x, .d y => some (Dec.cmp x y)
-  | x, y =>
-    let fx := x.toFloat
-    let fy := y.toFloat
-    if fx.isNaN || fy.isNaN then none
-    else if fx < fy then some .lt else if fx > fy then some .gt else some .eq
+  | _, _ =>
+    let fx := a.toFloat
+    let fy := b.toFloat
+    let fl (n : Num) : Bool := n.rank ≥ 2
+    if (fl a && fx.isNaN) || (fl b && fy.isNaN) then none
+    else if (fl a && fx.isInf) || (fl b && fy.isInf) then
+      let gx := if fl a then fx else 0
+      let gy := if fl b then fy else 0
+      if gx < gy then some .lt else if gx > gy then some .gt else some .eq
+    else
+      -- XPath 4.0 (PR 2218): numeric comparison is exact, on the decimal values
+      some (Dec.cmp a.toDec b.toDec)
 
 /-! ## Casting (F&O 4.0 §22) -/
 

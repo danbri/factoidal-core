@@ -215,6 +215,21 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
         match res with
         | .error e => ok? (code == "*" || code == e.code || ("err:" ++ e.code) == code || code.endsWith (":" ++ e.code)) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
         | .ok s => .fail ("expected error " ++ code ++ ", got " ++ (sh s 80))
+    | "any-of" =>
+        let rs := (kids a).map (fun c => checkAssert env res f c)
+        if rs.any (fun r => match r with | .pass => true | _ => false) then .pass
+        else .fail ("any-of: " ++ String.intercalate "; " (rs.map (fun r => match r with | .fail w => w | _ => "")))
+    | "all-of" =>
+        let rs := (kids a).map (fun c => checkAssert env res f c)
+        match rs.find? (fun r => match r with | .pass => false | _ => true) with
+        | some r => r
+        | none => .pass
+    | "not" =>
+        match (kids a).head? with
+        | some c => match checkAssert env res f c with
+          | .pass => .fail "not: inner assertion held"
+          | _ => .pass
+        | none => .fail "empty not"
     | tag =>
       match res with
       | .error e => .fail ("error " ++ e.code ++ ": " ++ e.msg)
@@ -273,21 +288,6 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
             -- the expected fragment as written (child markup included)
             let exp := if (kids a).isEmpty then exp else exp
             ok? (xmlEq env s txt || xmlEq env s exp) ("xml " ++ (cut (serSeq env s) 80))
-      | "any-of" =>
-          let rs := (kids a).map (fun c => checkAssert env res f c)
-          if rs.any (fun r => match r with | .pass => true | _ => false) then .pass
-          else .fail ("any-of: " ++ String.intercalate "; " (rs.map (fun r => match r with | .fail w => w | _ => "")))
-      | "all-of" =>
-          let rs := (kids a).map (fun c => checkAssert env res f c)
-          match rs.find? (fun r => match r with | .pass => false | _ => true) with
-          | some r => r
-          | none => .pass
-      | "not" =>
-          match (kids a).head? with
-          | some c => match checkAssert env res f c with
-            | .pass => .fail "not: inner assertion held"
-            | _ => .pass
-          | none => .fail "empty not"
       | other => .fail ("assertion " ++ other ++ " is not evaluated")
 
 /-- The assert-xml expected value is the element's inner markup; the

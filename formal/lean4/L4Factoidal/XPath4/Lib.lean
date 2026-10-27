@@ -107,9 +107,9 @@ def translateStr (s m t : String) : String :=
     | some i => tc[i]?
     | none => some c))
 
+/-- XML 1.1 `Char` (what XPath 4.0 strings may hold). -/
 def isXmlCp (n : Nat) : Bool :=
-  n == 0x9 || n == 0xA || n == 0xD || (0x20 ≤ n && n ≤ 0xD7FF) || (0xE000 ≤ n && n ≤ 0xFFFD) ||
-  (0x10000 ≤ n && n ≤ 0x10FFFF)
+  (0x1 ≤ n && n ≤ 0xD7FF) || (0xE000 ≤ n && n ≤ 0xFFFD) || (0x10000 ≤ n && n ≤ 0x10FFFF)
 
 def regexErr {α} : Regex.RegexError → M α
   | .invalidFlags f => err "FORX0001" ("invalid regex flags " ++ f)
@@ -532,12 +532,14 @@ def fnTable : List (String × LibFn) := [
       let p := strOf (argN a 1)
       let f := strOf (argN a 2)
       let _ ← compileRe p f
-      if p.toList.any isRegexMeta && !(f.toList.contains 'q') then
-        if p == "\\s+" then
-          pure (if s == "" then [] else (String.ofList (s.toList.map (fun c => if isWs c then ' ' else c))).splitOn " " |>.map (fun t => .atom (Atomic.ofStr t)))
-        else err "XPST0017" "fn:tokenize with a regular expression is not implemented"
-      else if f.toList.contains 'i' then err "XPST0017" "case-insensitive fn:tokenize is not implemented"
-      else pure ((tokenizeLiteral s p).map (fun t => .atom (Atomic.ofStr t)))),
+      if s == "" then pure [] else
+      -- every match becomes a separator character absent from the input
+      -- (fn:replace with a literal replacement), then the string is split
+      let sep : Char := (([0xE000, 0xE001, 0xE002, 0xF8FF, 0x10FFFD].map Char.ofNat).find? (fun c => !s.toList.contains c)).getD (Char.ofNat 0x10FFFC)
+      let r ← compileRe p f
+      match Regex.replace r s (String.ofList [sep]) with
+      | .ok out => pure ((out.splitOn (String.ofList [sep])).map (fun t => .atom (Atomic.ofStr t)))
+      | .error e => regexErr e),
   -- numerics
   ent "abs" (fun _ _ a => pure (match optAtom (argN a 0) with
     | some x => single (numUnary x (fun i => (i.natAbs : Int)) (fun d => if d.mantissa < 0 then Dec.neg d else d) Float.abs)
@@ -1432,6 +1434,23 @@ def fnTable3 : List (String × LibFn) := [
           | _ => err "XPTY0004" "transitive-closure step must return nodes"
         frontier := rest ++ newOnes
       pure ((sortNodes found).map Item.node)),
+  ent "type-of" (fun _ e a => do
+    let xs := argN a 0
+    if xs.isEmpty then return sStr "empty-sequence()"
+    let one (i : Item) : String := match i with
+      | .atom x => "xs:" ++ x.ty.name
+      | .node n => match (e.nrec n).kind with
+        | .document => "document-node()" | .element => "element()" | .attribute => "attribute()"
+        | .text => "text()" | .pi => "processing-instruction()" | .comment => "comment()"
+        | .namespace => "namespace-node()"
+      | .arr _ => "array(*)" | .map _ => "map(*)" | .fn _ => "fn(*)"
+    let ss := (xs.map one).eraseDups
+    let body := if ss.length == 1 then ss.headD "" else "(" ++ String.intercalate "|" ss ++ ")"
+    pure (sStr (body ++ (if xs.length > 1 then "+" else "")))),
+  ent "trim-space" (fun _ _ a => do
+    match argN a 1 with
+    | [] | [.map []] => pure (sStr (trimWs (strOf (argN a 0))))
+    | _ => err "XPST0017" "fn:trim-space options are not implemented"),
   ent "graphemes" (fun _ _ a => pure (match optAtom (argN a 0) with
     | some x => (Grapheme.graphemes x.str).map (fun g => .atom (Atomic.ofStr g))
     | none => [])),

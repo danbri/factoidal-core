@@ -257,15 +257,27 @@ def eval : Nat → Env → Expr → M Seq
       | some rs => pure ((sortNodes rs).map Item.node)
       | none => pure cur
   | .filter a p => do
-      let s ← eval n env a
-      filterSeq n env s p
+      match a, isNumericLit p with
+      | .seq es, some k =>
+        -- `(e1, e2, ...)[k]`: evaluate only as far as item k
+        let mut acc : Array Item := #[]
+        for x in es do
+          if acc.size ≥ k.toNat then break
+          for i in ← eval n env x do acc := acc.push i
+        pure (if k ≥ 1 && k.toNat ≤ acc.size then [acc.getD (k.toNat - 1) default] else [])
+      | _, _ =>
+        let s ← eval n env a
+        filterSeq n env s p
   | .call q args kw => do
       if isTmplMarker q then
         let s ← match args with | [some x] => eval n env x | _ => pure []
         let as ← env.atomize s
         pure (sStr (String.intercalate " " (as.map Atomic.str)))
       else if q.uri == nsXS then
-        match args with
+        if q.loc == "NOTATION" || q.loc == "anyAtomicType" || q.loc == "anySimpleType" then
+          err "XPST0017" ("no constructor function xs:" ++ q.loc)
+        else
+        match (if args.isEmpty then [some Expr.ctx] else args) with
         | [some x] =>
             let s ← eval n env x
             if s.length > 1 then err "XPTY0004" "constructor function argument has more than one item"
@@ -341,7 +353,7 @@ def eval : Nat → Env → Expr → M Seq
       | _ => err "XPTY0004" "dynamic call requires exactly one function item"
   | .fref q k => do
       if q.uri == nsXS then
-        if k == 1 && ((atypeOfName? q.loc).isSome || q.loc == "numeric") then pure [.fn (.builtin q 1)]
+        if k == 1 && ((atypeOfName? q.loc).isSome || q.loc == "numeric") && q.loc != "NOTATION" && q.loc != "anyAtomicType" then pure [.fn (.builtin q 1)]
         else err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
       else if q.uri == nsFN && q.loc == "concat" && k ≥ 2 then pure [.fn (.builtin q k)]
       else match findSig q k with

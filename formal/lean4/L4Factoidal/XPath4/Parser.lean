@@ -429,11 +429,11 @@ def pItemType : Nat → P IType
         | other => throw { code := "XPST0003", msg := "unsupported item type " ++ other ++ "()" }
       | _ =>
         match ← peekQName with
-        | some (p, u, l, e) => set e; atomicTypeOf (← resolve p u l nsXS)
+        | some (p, u, l, e) => set e; atomicTypeOf (← resolve p u l "")
         | none => synErr "expected an item type"
     | _ =>
       match ← peekQName with
-      | some (p, u, l, e) => set e; atomicTypeOf (← resolve p u l nsXS)
+      | some (p, u, l, e) => set e; atomicTypeOf (← resolve p u l "")
       | none => synErr "expected an item type"
 
 end

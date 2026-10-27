@@ -270,6 +270,67 @@ def Item.fnArity : Item → Option Nat
   | .arr _ => some 1
   | _ => none
 
+/-- Occurrence inclusion: every count allowed by `a` is allowed by `b`. -/
+def occLe (a b : Occ) : Bool :=
+  match a, b with
+  | _, .star => true
+  | .one, _ => true
+  | .opt, .opt => true
+  | .plus, .plus => true
+  | _, _ => false
+
+/-- Sequence-type subtyping (XPath 4.0 §3.3), approximated: atomic
+    derivation, node kinds, choices, and function/map/array types with
+    the usual variance. -/
+def subtypeF : Nat → IType → IType → Bool
+  | 0, _, _ => false
+  | f + 1, a, b =>
+    match a, b with
+    | .empty, .empty => true
+    | .empty, .seq _ o => o == .opt || o == .star
+    | _, .empty => false
+    | .seq t o, .seq u p => occLe o p && subtypeF f t u
+    | .seq t o, u => o == .one && subtypeF f t u
+    | t, .seq u p => occLe .one p && subtypeF f t u
+    | _, .item => true
+    | .choice ts, u => ts.all (fun t => subtypeF f t u)
+    | t, .choice us => us.any (fun u => subtypeF f t u)
+    | .atomic x, .atomic y => x.derives y
+    | .enum _, .atomic y => (AType.b .string).derives y
+    | .enum xs, .enum ys => xs.all (fun x => ys.contains x)
+    | .elem _, .anyNode | .attr _, .anyNode | .text, .anyNode | .comment, .anyNode
+    | .pi _, .anyNode | .doc _, .anyNode | .nsNode, .anyNode | .anyNode, .anyNode => true
+    | .elem none, .elem none | .attr none, .attr none | .text, .text | .comment, .comment
+    | .nsNode, .nsNode | .doc none, .doc none | .pi none, .pi none => true
+    | .elem (some _), .elem none | .attr (some _), .attr none | .pi (some _), .pi none
+    | .doc (some _), .doc none => true
+    | .fnT _ _, .anyFn | .anyMap, .anyFn | .mapT _ _, .anyFn | .anyArr, .anyFn | .arrT _, .anyFn
+    | .record _ _, .anyFn | .anyFn, .anyFn => true
+    | .fnT ps r, .fnT qs t =>
+        ps.length == qs.length && (qs.zip ps).all (fun (q, p) => subtypeF f q p) && subtypeF f r t
+    | .mapT _ _, .anyMap | .record _ _, .anyMap | .anyMap, .anyMap => true
+    | .mapT k v, .mapT k2 v2 => subtypeF f k k2 && subtypeF f v v2
+    | .anyArr, .anyArr | .arrT _, .anyArr => true
+    | .arrT m, .arrT m2 => subtypeF f m m2
+    | .mapT k v, .fnT [p] r => subtypeF f p k && subtypeF f (.seq v .opt) r
+    | .anyMap, .fnT [p] r => subtypeF f p (.atomic (.b .anyAtomicType)) && subtypeF f (.seq .item .star) r
+    | .arrT m, .fnT [p] r => subtypeF f p (.atomic (.b .integer)) && subtypeF f m r
+    | .anyArr, .fnT [p] r => subtypeF f p (.atomic (.b .integer)) && subtypeF f (.seq .item .star) r
+    | _, _ => false
+
+def subtype (a b : IType) : Bool := subtypeF 200 a b
+
+/-- The declared signature of a function item, when known. -/
+def fnSigOf : FnItem → Option (List IType × IType)
+  | .builtin q k =>
+    if q.uri == nsXS then
+      match atypeOfName? q.loc with
+      | some t => some ([.seq (.atomic (.b .anyAtomicType)) .opt], .seq (.atomic t) .opt)
+      | none => none
+    else (findSig q k).map (fun s => ((s.ps.take k).map (·.ty), s.ret))
+  | .inline ps ret _ focus _ => if focus then some ([.seq .item .star], ret) else some (ps.map (·.2), ret)
+  | .papp _ _ => none
+
 mutual
 def Env.itemMatchesF (e : Env) : Nat → Item → IType → Bool
   | 0, _, _ => false
@@ -279,7 +340,14 @@ def Env.itemMatchesF (e : Env) : Nat → Item → IType → Bool
   | .anyNode => i.isNode
   | .atomic t => match i with | .atom a => a.ty.derives t | _ => false
   | .anyFn => i.isFn
-  | .fnT ps _ => i.fnArity == some ps.length
+  | .fnT ps r => i.fnArity == some ps.length &&
+      (match i with
+       | .fn fi => match fnSigOf fi with
+          | some (fps, fr) => (ps.zip fps).all (fun (p, q) => subtype p q) && subtype fr r
+          | none => true
+       | .map _ => subtype (.anyMap) (.fnT ps r) || true
+       | .arr _ => true
+       | _ => false)
   | .anyMap => match i with | .map _ => true | _ => false
   | .mapT k v => match i with
       | .map kvs => kvs.all (fun (ka, vs) => e.itemMatchesF f (.atom ka) k && e.seqMatchesF f vs v)
@@ -354,7 +422,11 @@ def coerceAtom (ts : List AType) (a : Atomic) : M Atomic := do
 
 def IType.isEmptyT : IType → Bool | .empty => true | _ => false
 
-def Env.coerce (e : Env) (t : IType) (s : Seq) (what : String := "value") : M Seq := do
+/-- The coercion rules (XPath 4.0 §3.4.3), applied recursively to the
+    members of arrays and the entries of maps and records. -/
+def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
+  | 0, _, s, _ => pure s
+  | f + 1, t, s, what => do
   let (it, o) := splitST t
   if it.isEmptyT then
     if s.isEmpty then return [] else err "XPTY0004" ("expected empty sequence for " ++ what)
@@ -371,6 +443,22 @@ def Env.coerce (e : Env) (t : IType) (s : Seq) (what : String := "value") : M Se
   if !occOk o s.length then
     err "XPTY0004" ("wrong number of items for " ++ what ++ ": " ++ toString s.length)
   else
+  -- coerce inside maps, records and arrays
+  let s ← s.mapM (fun i => do
+    match it, i with
+    | .arrT m, .arr ms => pure (Item.arr (← ms.mapM (fun x => e.coerceF f m x what)))
+    | .mapT k v, .map kvs =>
+        pure (Item.map (← kvs.mapM (fun (ka, va) => do
+          let ka' ← match atomicTarget k with
+            | some ts => coerceAtom ts ka
+            | none => pure ka
+          pure (ka', ← e.coerceF f v va what))))
+    | .record fs _, .map kvs =>
+        pure (Item.map (← kvs.mapM (fun (ka, va) => do
+          match fs.find? (fun (nm, _, _) => ka.isStringLike && ka.str == nm) with
+          | some (_, _, ft) => pure (ka, ← e.coerceF f ft va what)
+          | none => pure (ka, va))))
+    | _, _ => pure i)
   match it with
   | .item => pure s
   | .fnT ps _ =>
@@ -384,6 +472,8 @@ def Env.coerce (e : Env) (t : IType) (s : Seq) (what : String := "value") : M Se
     if s.all (fun i => e.itemMatches i it) then pure s
     else err "XPTY0004" ("value of wrong type for " ++ what)
 
+def Env.coerce (e : Env) (t : IType) (s : Seq) (what : String := "value") : M Seq :=
+  e.coerceF 64 t s what
 
 /-- A string key with `k a = k b ↔ atomicEqual a b` (untyped read as
     string), for the value kinds where one is cheap; `none` otherwise. -/
