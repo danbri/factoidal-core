@@ -35,6 +35,16 @@ The machine (`Client.Machine.step`), for every state and every event:
 
 Two requests are the same when method, URL, content and the header fields
 other than `Authorization` agree (`Req.same`).
+
+The driver features (https://github.com/danbri/factoidal/issues/1065):
+
+* `step_start_verify_trusted`: the first step of verifying a notification
+  asks for a storage description only for a storage the caller trusts
+  (`trustedOk`: every storage when the list is empty).
+* `onPage_onePage_no_fetch`: an operation that asked for one page ends with
+  that page; the client does not request the `next` page.
+* `attachToken_realm`: with no any-token, a request is sent as it is or with
+  the token of an entry whose realm (root) its URL is under.
 -/
 import L4Factoidal.LWS.Client.Machine
 import L4Factoidal.LWS.Operations
@@ -253,5 +263,83 @@ theorem step_no_repeat_after_refusal (V : L4Factoidal.Authz.Crypto) (s : ClientS
   cases hsame : prev.same r
   · rfl
   · rcases hst with hst | hst <;> simp [hsame, hst] at h3
+
+
+section Driver
+
+open L4Factoidal.JSON
+
+theorem verifyStart_trusted (s : ClientState) (r : Req) (h : (verifyStart s).2 = .fetch r) :
+    trustedOk s.op r.url = true := by
+  unfold verifyStart at h
+  dsimp only at h
+  repeat' split at h
+  all_goals first
+    | (simp [reject, finish] at h; done)
+    | (simp [sendPublic, getReq] at h; subst h; simp_all)
+
+/-- The first step of a notification verification fetches a storage only when
+the caller trusts it. -/
+theorem begin_verify_trusted (s : ClientState) (r : Req) (hk : s.op.kind = "verifyNotification")
+    (h : (begin s).2 = .fetch r) : trustedOk s.op r.url = true := by
+  unfold begin at h
+  dsimp only at h
+  split at h
+  · simp [failWith, finish] at h
+  · simp [hk] at h
+    exact verifyStart_trusted s r h
+
+theorem core_start_verify_trusted (V : L4Factoidal.Authz.Crypto) (s s' : ClientState) (r : Req)
+    (hk : s.op.kind = "verifyNotification") (hp : s.phase = .init)
+    (h : core V s .start = (s', .fetch r)) : trustedOk s.op r.url = true := by
+  unfold core at h
+  have hp' : (s.phase == Phase.finished) = false := by simp [hp]
+  rw [if_neg (by simp [hp])] at h
+  split at h
+  · simp [failWith, finish] at h
+  · simp only [hp, beq_self_eq_true, if_true] at h
+    have key := begin_verify_trusted _ r (by exact hk) (congrArg Prod.snd h)
+    exact key
+
+/-- The first step of a notification verification (the operation's start
+event) requests a storage description only for a storage the caller trusts. -/
+theorem step_start_verify_trusted (V : L4Factoidal.Authz.Crypto) (s : ClientState) (r : Req)
+    (hk : s.op.kind = "verifyNotification") (hp : s.phase = .init)
+    (h : (step V s .start).2 = .fetch r) : trustedOk s.op r.url = true := by
+  unfold step at h
+  generalize hc : core V s .start = out at h
+  obtain ⟨s', a⟩ := out
+  obtain ⟨ha, _⟩ := enforce_fetch h
+  subst ha
+  exact core_start_verify_trusted V s s' r hk hp hc
+
+/-- A page of an operation that asked for one page ends the operation: the
+client does not request the page `next` names. -/
+theorem onPage_onePage_no_fetch (s : ClientState) (r : Resp) (items : List Json)
+    (hone : s.op.onePage = true) (hok : r.ok = true) (hitems : pageItemsOf r = some items) :
+    ∀ q, (onPage s r).2 ≠ .fetch q := by
+  intro q h
+  unfold onPage at h
+  simp [hok, hitems, hone] at h
+  split at h <;> simp [finish, failWith] at h
+
+/-- A bearer token the caller gave with a realm (an entry of `tokens`) is
+attached only to a request whose URL is under that realm; with no
+any-token, a request is sent as it is or with the token of such an entry. -/
+theorem attachToken_realm (ses : Session) (r : Req) (hany : ses.anyToken = "") :
+    attachToken ses r = r ∨ ∃ t ∈ ses.tokens, t.root ≠ "" ∧ r.url.startsWith t.root = true := by
+  unfold attachToken
+  split
+  · left; rfl
+  · split
+    · rename_i t ht
+      right
+      refine ⟨t, List.mem_of_find?_eq_some ht, ?_⟩
+      have := List.find?_some ht
+      simpa using this
+    · left; simp [hany]
+
+
+end Driver
 
 end L4Factoidal.LWS.Client

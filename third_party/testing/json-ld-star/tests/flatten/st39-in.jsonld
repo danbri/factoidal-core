@@ -1,0 +1,15 @@
+{
+  "@context": {
+    "@vocab": "ex:",
+    "p1": {"@type": "@id"}
+  },
+  "@id": "ex:s",
+  "p": {
+    "@id": "ex:o",
+    "@annotation": {
+      "r": {
+        "@reifies": {"@id": "ex:s1", "p1": "ex:o1"}
+      }
+    }
+  }
+}

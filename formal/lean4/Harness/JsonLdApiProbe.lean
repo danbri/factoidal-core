@@ -113,6 +113,10 @@ structure Entry where
   useRdfType        : Bool
   extractAllScripts : Bool
   processorFeature  : Option String
+  rdfstar           : Bool
+  createAnnotations : Bool
+  /-- The entry is from the json-ld-star suite (`specVersion: "json-ld-star"`). -/
+  starSuite         : Bool := false
   deriving Repr
 
 def typesOf (j : Json) : List String :=
@@ -145,9 +149,11 @@ def entryOf (dflt : Algo) (j : Json) : Option Entry :=
       (opt.bind (fun o => o.getBool? k)).getD d
     -- `option.processingMode` and `option.specVersion` are two manifest
     -- spellings of the same thing; `processingMode` wins if both appear.
+    -- The json-ld-star manifests set `specVersion: "json-ld-star"`, which
+    -- names the extension, not a processing mode; it runs as JSON-LD 1.1.
     let pm := match optStr "processingMode" with
               | some s => some s
-              | none   => optStr "specVersion"
+              | none   => (optStr "specVersion").filter (· != "json-ld-star")
     let types := typesOf j
     some { id := (j.getString? "@id").getD "?",
            name := (j.getString? "name").getD "",
@@ -166,7 +172,10 @@ def entryOf (dflt : Algo) (j : Json) : Option Entry :=
            useNativeTypes := optBool "useNativeTypes" false,
            useRdfType := optBool "useRdfType" false,
            extractAllScripts := optBool "extractAllScripts" false,
-           processorFeature := optStr "processorFeature" }
+           processorFeature := optStr "processorFeature",
+           rdfstar := optBool "rdfstar" false,
+           createAnnotations := optBool "createAnnotations" false,
+           starSuite := optStr "specVersion" == some "json-ld-star" }
 
 /-! ## File-system helpers -/
 
@@ -196,13 +205,15 @@ parse) while F*'s `Parser.NQuads.parse_nquads` skips a malformed line
 and continues; the fromRdf runner relies on that leniency. Parse line by
 line, drop what does not parse, and COUNT the drops so the leniency is
 visible rather than silent. -/
-def parseNQuadsLenient (txt : String) : Dataset × Nat := Id.run do
+/-- `mode` is `.rdf12` for the JSON-LD-star suite, whose fixtures carry
+RDF 1.2 triple terms `<<( ... )>>`; `.rdf11` otherwise. -/
+def parseNQuadsLenient (txt : String) (mode : Mode := .rdf11) : Dataset × Nat := Id.run do
   let mut ds : Dataset := Dataset.empty
   let mut dropped : Nat := 0
   for line in txt.splitOn "\n" do
     let t := line.trim
     if t.isEmpty || t.startsWith "#" then continue
-    match parseNQuads t .rdf11 with
+    match parseNQuads t mode with
     | .error _ => dropped := dropped + 1
     | .ok one =>
       ds := { default := ds.default ++ one.default,
@@ -230,6 +241,32 @@ structure RunResult where
   droppedLines : Nat := 0
   deriving Repr
 
+/-- A JSON tree with the elements of every array in a canonical order, except
+the array of a `@list`. `fuel` bounds the depth (`Json.size` is enough). -/
+def unorderedNorm : Nat → Bool → Json → Json
+  | 0, _, j => j
+  | f + 1, isList, .array xs =>
+    let ys := xs.map (unorderedNorm f false)
+    if isList then .array ys
+    else .array ((ys.map (fun y => (jcsDocument y, y))).mergeSort (fun a b => decide (a.1 ≤ b.1))
+                  |>.map (·.2))
+  | f + 1, _, .object fs => .object (fs.map (fun kv => (kv.1, unorderedNorm f (kv.1 == "@list") kv.2)))
+  | _, _, j => j
+
+/-- JSON-LD object comparison with arrays unordered except `@list` (the rule of
+the JSON-LD test suites, which the json-ld-star suite follows: "Tests are run
+broadly the same as those for the core JSON-LD test suite"). The json-ld-star
+fromRdf fixtures need it: their top-level node order is neither sorted by `@id`
+(st15, st16, st29) nor the order of the input (st19, st20). The json-ld-star
+flatten fixtures need it too: they are in the node-map insertion order of the
+Ruby json-ld implementation (run unordered), so some are sorted (st32, st33)
+and some are not (st19, st29r); 16 of 39 differ from our sorted output only in
+the order of top-level nodes. Used for the json-ld-star fromRdf and flatten
+manifests only; every other manifest keeps the F* rule. -/
+def unorderedEqual (a b : Json) : Bool :=
+  jcsDocument (unorderedNorm (Json.size a + 1) false a) ==
+    jcsDocument (unorderedNorm (Json.size b + 1) false b)
+
 def truncate (n : Nat) (s : String) : String :=
   if s.length ≤ n then s else String.ofList (s.toList.take n) ++ " …"
 
@@ -240,15 +277,16 @@ def runAlgo (loader : Loader) (baseIri : String) (dir : System.FilePath) (e : En
     (base : Option String) (content : String) : IO (Res Json × Nat) := do
   let expCtx := e.expandContext.map (fun rel => baseIri ++ rel)
   match e.algo with
-  | .expand => pure (expandDocument loader content base expCtx e.processingMode, 0)
+  | .expand => pure (expandDocument loader content base expCtx e.processingMode
+                      (rdfstar := e.rdfstar), 0)
   | .toRdf =>
     -- handled by `runToRdfEntry`; never reached through this path
     pure (.error .notJsonLd, 0)
   | .fromRdf =>
-    let (ds, dropped) := parseNQuadsLenient content
+    let (ds, dropped) := parseNQuadsLenient content (if e.rdfstar then .rdf12 else .rdf11)
     let opts : FromRdf.Options :=
       { useNativeTypes := e.useNativeTypes, useRdfType := e.useRdfType,
-        rdfDirection := e.rdfDirection }
+        rdfDirection := e.rdfDirection, rdfstar := e.rdfstar }
     match FromRdf.fromRdf ds opts with
     | some j => pure (.ok j, dropped)
     | none   => pure (.error .invalidJsonLiteral, dropped)
@@ -259,18 +297,34 @@ def runAlgo (loader : Loader) (baseIri : String) (dir : System.FilePath) (e : En
       match ← readFileOpt (dir / ctxRel) with
       | none => pure (.error .loadingDocumentFailed, 0)
       | some ctxTxt =>
+        -- Rule "context is the expected output": every json-ld-star compact
+        -- entry names its EXPECTED OUTPUT file as `context`; the intent is
+        -- "compact with the expected output's context". Some of those files
+        -- have no `@context` entry (compact/st04-out.jsonld). Read as a
+        -- context document, the whole body would be processed as a context
+        -- and fail ("keyword redefinition"). So: when `context` equals
+        -- `expect` and that document is an object without `@context`,
+        -- compact with an empty context. Only in that case: the W3C suites
+        -- never name the expected output as `context`, so they do not change.
+        let ctxTxt :=
+          if e.expect == some ctxRel then
+            match parseJson ctxTxt with
+            | .ok (.object fs) => if fs.any (·.1 == "@context") then ctxTxt else "{}"
+            | _ => ctxTxt
+          else ctxTxt
         pure (compactDocument loader content ctxTxt base (some (baseIri ++ ctxRel))
-                e.compactArrays e.compactToRelative e.processingMode, 0)
+                e.compactArrays e.compactToRelative e.processingMode e.rdfstar, 0)
   | .flatten =>
     match e.context with
     | none =>
-      pure (flattenDocument loader content none base none e.compactArrays e.processingMode, 0)
+      pure (flattenDocument loader content none base none e.compactArrays e.processingMode
+              e.rdfstar e.createAnnotations, 0)
     | some ctxRel =>
       match ← readFileOpt (dir / ctxRel) with
       | none => pure (.error .loadingDocumentFailed, 0)
       | some ctxTxt =>
         pure (flattenDocument loader content (some ctxTxt) base (some (baseIri ++ ctxRel))
-                e.compactArrays e.processingMode, 0)
+                e.compactArrays e.processingMode e.rdfstar e.createAnnotations, 0)
 
 /-- A `jld:ToRDFTest` entry (html manifest only): produce a dataset and
 compare it against the expected N-Quads, the way `Harness/JsonLdProbe`
@@ -279,7 +333,7 @@ where the bounded isomorphism search cannot decide. -/
 def runToRdfEntry (loader : Loader) (baseIri : String) (dir : System.FilePath) (e : Entry)
     (base : Option String) (content : String) : IO RunResult := do
   let expCtx := e.expandContext.map (fun rel => baseIri ++ rel)
-  let got := parseJsonLd loader content base none expCtx e.processingMode
+  let got := parseJsonLd loader content base none expCtx e.processingMode e.rdfstar
   match e.kind with
   | .negative =>
     match got with
@@ -297,7 +351,7 @@ def runToRdfEntry (loader : Loader) (baseIri : String) (dir : System.FilePath) (
         match got with
         | .error err => return { outcome := .fail s!"failed with \"{err.code}\" (expected a dataset)" }
         | .ok gotDs =>
-          let (expDs, dropped) := parseNQuadsLenient expectTxt
+          let (expDs, dropped) := parseNQuadsLenient expectTxt (if e.rdfstar then .rdf12 else .rdf11)
           if gotDs.isomorphic? expDs || gotDs.canonicalNQuads == expDs.canonicalNQuads then
             return { outcome := .pass, droppedLines := dropped }
           else
@@ -393,7 +447,9 @@ def runEntry (loader : Loader) (baseIri : String) (dir : System.FilePath) (e : E
               match parseJson expectTxt with
               | .error _ => return { outcome := .fail "expected file is not valid JSON" }
               | .ok expJson =>
-                if expandedEqual gotJson expJson then
+                if expandedEqual gotJson expJson ||
+                    (e.starSuite && (e.algo == .fromRdf || e.algo == .flatten) &&
+                      unorderedEqual gotJson expJson) then
                   return { outcome := .pass, droppedLines := dropped }
                 else
                   let g := truncate 600 (jcsDocument gotJson)
@@ -430,6 +486,7 @@ def loadLocalOverrides (root : System.FilePath) (suite : String) : IO (List Stri
 
 def defaultTestsDir : System.FilePath := "third_party/testing/json-ld/tests"
 def defaultCacheDir : System.FilePath := "third_party/jsonld-context-cache"
+def defaultStarTestsDir : System.FilePath := "third_party/testing/json-ld-star/tests"
 
 def buildLoader (dir cacheDir : System.FilePath) (baseIri : String) : IO Loader := do
   let rels ← walkDir 4 dir ""
@@ -545,15 +602,28 @@ def main (args : List String) : IO UInt32 := do
     return (← JsonLdScale.main args.tail)
   if args.head? == some "--dump-shapes" || args.head? == some "--once" then
     return (← JsonLdScale.main args)
+  -- `--star [dir]`: the JSON-LD-star suite (RDF 1.2 triple terms,
+  -- reifiers and annotations; third_party/testing/json-ld-star-PROVENANCE.md)
+  -- instead of the W3C json-ld-api manifests.
+  let star := args.head? == some "--star"
+  let args := if star then args.tail else args
   let dir : System.FilePath := match args with
     | d :: _ => d
-    | []     => defaultTestsDir
+    | []     => if star then defaultStarTestsDir else defaultTestsDir
   let cacheDir : System.FilePath := match args with
     | _ :: c :: _ => c
     | _           => defaultCacheDir
   let root : System.FilePath := "."
   let mut scores : List (String × Score) := []
-  for (mf, dflt, suite, fstar) in
+  let noFstar := "no F* implementation"
+  let manifests :=
+    if star then
+      [("expand-manifest.jsonld",  Algo.expand,  "star-expand",  noFstar),
+       ("toRdf-manifest.jsonld",   Algo.toRdf,   "star-toRdf",   noFstar),
+       ("fromRdf-manifest.jsonld", Algo.fromRdf, "star-fromRdf", noFstar),
+       ("compact-manifest.jsonld", Algo.compact, "star-compact", noFstar),
+       ("flatten-manifest.jsonld", Algo.flatten, "star-flatten", noFstar)]
+    else
       [("expand-manifest.jsonld",  Algo.expand,  "expand",
         "385 pass, 0 fail, 0 skip (out of 385)"),
        ("compact-manifest.jsonld", Algo.compact, "compact",
@@ -563,7 +633,8 @@ def main (args : List String) : IO UInt32 := do
        ("fromRdf-manifest.jsonld", Algo.fromRdf, "fromRdf",
         "53 pass, 0 fail, 1 local-override (out of 54)"),
        ("html-manifest.jsonld",    Algo.expand,  "html",
-        "50 pass, 0 fail, 0 skip (out of 50)")] do
+        "50 pass, 0 fail, 0 skip (out of 50)")]
+  for (mf, dflt, suite, fstar) in manifests do
     let sc ← runManifest dir cacheDir root mf dflt suite fstar
     scores := (suite, sc) :: scores
   let ordered := scores.reverse
