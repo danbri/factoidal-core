@@ -1074,3 +1074,7 @@ id = "npm:./fn#fromCsvw"
 stages = ["CSVW (tabular data to RDF)"]
 covers = "part"
 note = "fn.js fromCsvw: npm:.#csvwToRdf, the result wrapped as an FnDataset."
+
+[[nonstage]]
+id = "wasm:authzOwns"
+reason = "routing: whether a request target is one of the authorization server's paths (L4Factoidal.Authz.owns, theorem owns_mem), reads no data"
