@@ -38,10 +38,14 @@ open L4Factoidal.Syntax
 
 /-- JSON-LD 1.1 to a dataset. A JSON-LD failure becomes a `ParseError` that
     names the error code; the JSON-LD parser reports no position, so it is 0. -/
-def jsonLdParser : DocParser := fun _mode base text =>
-  match L4Factoidal.JSONLD.parseJsonLd L4Factoidal.JSONLD.Loader.none text base none none none with
+def jsonLdParserWith (rdfstar : Bool) : DocParser := fun _mode base text =>
+  match L4Factoidal.JSONLD.parseJsonLd L4Factoidal.JSONLD.Loader.none text base none none none
+          rdfstar with
   | .ok ds => .ok ds
   | .error e => .error ⟨s!"invalid or unsupported JSON-LD ({e.code})", 0⟩
+
+/-- JSON-LD 1.1 to a dataset (`@triple`, `@reifies`, `@annotation` are ignored). -/
+def jsonLdParser : DocParser := jsonLdParserWith false
 
 open L4Factoidal.JSONLD L4Factoidal.JSON in
 /-- The item reader. `begin mode base ctx` mirrors the branch of
@@ -52,15 +56,16 @@ open L4Factoidal.JSONLD L4Factoidal.JSON in
     document gives that node (the `@graph` of the object, free-floating
     values dropped). The generated prefix is `generatedPrefix` of a document
     that has no label beginning with `_jld_anon`, which `Prepass` checked. -/
-def jsonLdOps : JsonLdChunkFold.Ops where
+def jsonLdOpsWith (rdfstar : Bool) : JsonLdChunkFold.Ops where
   notJson := ⟨"invalid or unsupported JSON-LD (notJsonLd)", 0⟩
   begin := fun _ base ctx =>
     let fail (e : JsonLdError) : ParseError := ⟨s!"invalid or unsupported JSON-LD ({e.code})", 0⟩
     let acSeed : ActiveContext :=
-      { cur := { emptyContextCore with base := base, mode10 := false }, prev := [] }
+      { cur := { emptyContextCore with base := base, mode10 := false, rdfstar := rdfstar },
+        prev := [] }
     let pfx := JsonLdChunkFold.streamPrefix
     let convert (ctr : Nat) (root : Json) : Except ParseError (Dataset × Nat) :=
-      match datasetOfJsonAt .drop pfx ctr root with
+      match datasetOfJsonAt .drop pfx ctr root rdfstar with
       | some r => .ok r
       | none => .error (fail .notJsonLd)
     let viaExpand (wrap : Json → Json) : Except ParseError JsonLdChunkFold.ItemFn :=
@@ -80,8 +85,18 @@ def jsonLdOps : JsonLdChunkFold.Ops where
       if base.isSome then viaExpand (fun item => .array [item])
       else .ok fun ctr item => convert ctr (.array [item])
 
+/-- The item reader of JSON-LD 1.1. -/
+def jsonLdOps : JsonLdChunkFold.Ops := jsonLdOpsWith false
+
 /-- The readers a native tool links: JSON-LD, whole and item by item. -/
 def withJsonLd : Extra := { jsonld := some jsonLdParser, jsonldStream := some jsonLdOps }
+
+/-- The JSON-LD readers in JSON-LD-star mode (`rdfstar`): `@triple` is an RDF 1.2
+    triple term, `@reifies` is `rdf:reifies`, and `@annotation` makes a reifier of
+    the triple it is on (`docs/designissues/2026-10-26-jsonld-star.md`). Opt-in, like
+    `Sink.withJsonLdStar`: `withJsonLd` reads JSON-LD 1.1. -/
+def withJsonLdStar : Extra :=
+  { jsonld := some (jsonLdParserWith true), jsonldStream := some (jsonLdOpsWith true) }
 
 /-! ## Build-time checks -/
 

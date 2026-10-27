@@ -207,4 +207,33 @@ private def ttDs : Dataset :=
 #guard (subjectNodeWith { rdfstar := true } (.iri ⟨"http://e/s", rfl⟩) ttDs.default).toOption.isSome
 #guard (subjectNode (.iri ⟨"http://e/s", rfl⟩) ttDs.default).toOption.isNone
 
+-- JSON-LD-star round trip: the star writer's text, read by the star reader
+-- (`Source.withJsonLdStar`), is the dataset. The JSON-LD 1.1 reader ignores the
+-- unknown keyword `@triple`, so the value is an empty node object: a blank node.
+#guard ((serializeDataset withJsonLdStar .jsonld .rdf12 ttDs).toOption.bind fun txt =>
+          (Source.parseDocument Source.withJsonLdStar .jsonld .rdf12 none txt).toOption) ==
+        some ttDs
+#guard ((serializeDataset withJsonLdStar .jsonld .rdf12 ttDs).toOption.bind fun txt =>
+          (Source.parseDocument Source.withJsonLd .jsonld .rdf12 none txt).toOption.map
+            (·.default.map (fun t => match t.o with | Term.bnode _ => true | _ => false))) == some [true]
+
+-- An annotated triple: `<s> <p> <o>` asserted, and a blank-node reifier with one
+-- property. The star writer folds the reifier into `@annotation`; the star reader
+-- gives the three triples back (the reifier label may differ).
+private def annDs : Dataset :=
+  let s : Subject := .iri ⟨"http://e/s", rfl⟩
+  let p : WfIri := ⟨"http://e/p", rfl⟩
+  let o : Term := .iri ⟨"http://e/o", rfl⟩
+  { default := [⟨s, p, o⟩,
+                ⟨.bnode "r", ⟨"http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies", rfl⟩,
+                 .tripleTerm s p o⟩,
+                ⟨.bnode "r", ⟨"http://e/certainty", rfl⟩, .iri ⟨"http://e/high", rfl⟩⟩],
+    named := [] }
+
+#guard ((serializeDataset withJsonLdStar .jsonld .rdf12 annDs).toOption.map
+          (fun txt => (txt.splitOn "@annotation").length)) == some 2
+#guard ((serializeDataset withJsonLdStar .jsonld .rdf12 annDs).toOption.bind fun txt =>
+          (Source.parseDocument Source.withJsonLdStar .jsonld .rdf12 none txt).toOption.map
+            (·.default.length)) == some 3
+
 end L4Factoidal.RDF.Sink

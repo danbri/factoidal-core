@@ -257,8 +257,12 @@ def unorderedNorm : Nat → Bool → Json → Json
 the JSON-LD test suites, which the json-ld-star suite follows: "Tests are run
 broadly the same as those for the core JSON-LD test suite"). The json-ld-star
 fromRdf fixtures need it: their top-level node order is neither sorted by `@id`
-(st15, st16, st29) nor the order of the input (st19, st20). Used for the
-json-ld-star fromRdf manifest only; every other manifest keeps the F* rule. -/
+(st15, st16, st29) nor the order of the input (st19, st20). The json-ld-star
+flatten fixtures need it too: they are in the node-map insertion order of the
+Ruby json-ld implementation (run unordered), so some are sorted (st32, st33)
+and some are not (st19, st29r); 16 of 39 differ from our sorted output only in
+the order of top-level nodes. Used for the json-ld-star fromRdf and flatten
+manifests only; every other manifest keeps the F* rule. -/
 def unorderedEqual (a b : Json) : Bool :=
   jcsDocument (unorderedNorm (Json.size a + 1) false a) ==
     jcsDocument (unorderedNorm (Json.size b + 1) false b)
@@ -444,7 +448,8 @@ def runEntry (loader : Loader) (baseIri : String) (dir : System.FilePath) (e : E
               | .error _ => return { outcome := .fail "expected file is not valid JSON" }
               | .ok expJson =>
                 if expandedEqual gotJson expJson ||
-                    (e.starSuite && e.algo == .fromRdf && unorderedEqual gotJson expJson) then
+                    (e.starSuite && (e.algo == .fromRdf || e.algo == .flatten) &&
+                      unorderedEqual gotJson expJson) then
                   return { outcome := .pass, droppedLines := dropped }
                 else
                   let g := truncate 600 (jcsDocument gotJson)
