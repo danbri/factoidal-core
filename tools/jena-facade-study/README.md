@@ -10,8 +10,15 @@ They read a clone of Apache Jena (the study used commit
 - `count.sh <jena root> <module>`, `tcount.py`: count test classes and methods.
 - `api.py`: count public types and methods.
 - `classify.py`: group test methods by package path (coarse, a judgement).
-- `extract.py`, `run-expr.mjs`: convert the one-line ARQ expression tests to
-  SPARQL ASK queries and run them on `@factoidal/core`.
+- `extract.py`: convert every one-line ARQ expression test
+  (`jena-arq/src/test/java/org/apache/jena/sparql/expr`) to a SPARQL
+  expression and a check kind, into
+  `npm/factoidal/test/fixtures/jena-arq-expr/cases.json`
+  (`python3 -I extract.py <jena root> <out.json>`). The suite that runs them
+  is `npm/factoidal/test/jena-arq-expr.test.mjs` (stage 0; it replaces the
+  study's `run-expr.mjs`). Verdicts: `fixtures/jena-arq-expr/verdicts.json`.
+- `run-manifests.sh <jena root> [out dir]`: run Jena's `ARQ` and
+  `SPARQL-CDTs` manifests with `l4w3c` (stage 0b).
 - `ops.mjs`, `probe.mjs`: list the wasm ops and probe a few behaviours.
 - `sample-port.test.mjs`: 11 Jena test methods ported by hand against the
   hypothetical facade `@factoidal/echochamber`. It does not run (the facade
