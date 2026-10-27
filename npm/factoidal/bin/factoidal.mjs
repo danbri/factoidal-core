@@ -90,6 +90,15 @@ function err (line) { console.error(line) }
 
 // ---------------------------------------------------------------- usage
 
+// Owner, 2026-10-27: every protocol, authentication and security component,
+// the CLIs and the core library carry this notice. It is printed with every
+// help text and on standard error when a server, client or key command starts.
+const REVIEW_WARNING = 'EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.'
+
+/** The commands that serve, speak a protocol, or handle keys and tokens. */
+const WARNED_COMMANDS = new Set(['serve', 'lws-serve', 'solid-serve', 'solid-client', 'lws-client',
+  'authz-serve', 'authz-keys', 'xmpp-serve', 'webdav-serve'])
+
 const USAGE = `factoidal - the Factoidal persisted store, from Node or Deno
 
 usage: factoidal <command> [options]
@@ -2311,12 +2320,14 @@ const COMMANDS = {
 
 async function main () {
   if (argv.length === 0) {
+    out(REVIEW_WARNING + '\n')
     out(USAGE)
     return EXIT_USAGE
   }
   const command = argv[0]
   if (command === '--help' || command === '-h' || command === 'help') {
     const topic = argv[1]
+    out(REVIEW_WARNING + '\n')
     if (typeof topic === 'string' && Object.prototype.hasOwnProperty.call(COMMAND_USAGE, topic)) {
       out(COMMAND_USAGE[topic])
     } else {
@@ -2341,8 +2352,12 @@ async function main () {
     throw error
   }
   if (parsed.options.help) {
+    out(REVIEW_WARNING + '\n')
     out(COMMAND_USAGE[command])
     return EXIT_OK
+  }
+  if (WARNED_COMMANDS.has(command)) {
+    err(`factoidal ${command}: WARNING: ${REVIEW_WARNING}`)
   }
   try {
     return await COMMANDS[command](parsed.positional, parsed.options)

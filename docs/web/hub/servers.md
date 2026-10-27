@@ -7,6 +7,10 @@ tests: tests/hub/hub_servers_test.mjs
 
 # Servers
 
+<p class="warning"><strong>⚠️ EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.</strong> This covers the whole core
+library and every command line tool, and in particular all protocol,
+authentication and security code.</p>
+
 [Hub](../) · SPARQL Protocol, Graph Store, Fuseki paths, TDB2, LWS, authorization server (OIDC, CID, SAML), Solid, XMPP
 
 A server cannot run in a browser page, so this page has no live cells.

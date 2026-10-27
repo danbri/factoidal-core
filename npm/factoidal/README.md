@@ -1,5 +1,13 @@
 # @factoidal/core
 
+> ⚠️ **EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.**
+>
+> This covers the whole core library and every command line tool, and in
+> particular all protocol, authentication and security code (the LWS, Solid,
+> SPARQL Protocol, WebDAV and XMPP servers and clients, the authorization
+> server, JOSE, XML Signature and SAML, the crypto bindings). Owner decision,
+> 2026-10-27.
+
 RDF, SPARQL, reasoning, validation and Linked Data servers in one package.
 Runs in Node 22.12+, Deno 2 and browsers. No dependencies.
 
