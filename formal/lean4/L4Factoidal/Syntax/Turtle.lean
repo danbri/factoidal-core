@@ -566,7 +566,7 @@ def readTurtleIri (st : TurtleState) (pos : Nat) (cs : List Char) :
           else
           match mkIri pos (st.resolve raw) with
           | .error _ => .error ⟨s!"relative IRI <{raw}> with no base to resolve against", pos⟩
-          | .ok wi   => if isAbsoluteIri wi.val then .ok (wi, pos', rest) else .error (notAbsoluteIri pos wi.val)
+          | .ok wi   => if isAbsoluteIriFast wi.val then .ok (wi, pos', rest) else .error (notAbsoluteIri pos wi.val)
   | _ =>
       match readPrefixedName pos cs with
       | .error e => .error e
@@ -576,7 +576,7 @@ def readTurtleIri (st : TurtleState) (pos : Nat) (cs : List Char) :
           | some s =>
               match mkIri pos s with
               | .error e => .error e
-              | .ok wi   => if isAbsoluteIri wi.val then .ok (wi, pos', rest) else .error (notAbsoluteIri pos wi.val)
+              | .ok wi   => if isAbsoluteIriFast wi.val then .ok (wi, pos', rest) else .error (notAbsoluteIri pos wi.val)
 
 /-! ## Blank nodes — [137s] `BlankNode ::= BLANK_NODE_LABEL | ANON`
 

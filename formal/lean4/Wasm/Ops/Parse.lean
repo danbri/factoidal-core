@@ -169,7 +169,8 @@ that check. The one engine check is `isAbsoluteIri`, applied to the dataset a
 document op reads (`parseTextToDatasetBy`, `parseDocumentOutcomeBy`), the quads a
 host supplies (`jsonQuadsLoop`), and the dataset a writer op writes
 (`datasetSerialize`), so no writer writes an IRI that no reader reads. Each
-distinct IRI is checked once. -/
+distinct IRI is checked once; an IRI in the plain `http(s)` shape
+(`isPlainHttpIri`) takes one pass and no table entry. -/
 
 /-- The IRIs of a term (a literal's datatype IRI, the IRIs inside a triple
 term), in front of `acc`. -/
@@ -195,16 +196,16 @@ def firstInvalidIri? (ds : Dataset) : Option String := Id.run do
   let mut seen : Std.HashSet String := {}
   for ng in ds.named do
     match ng.name with
-    | .iri i => if !isAbsoluteIri i.val then return some i.val
+    | .iri i => if !isAbsoluteIriFast i.val then return some i.val
     | .bnode _ => pure ()
   for t in ds.default do
     for v in tripleIris t do
-      if !seen.contains v then
+      if !isPlainHttpIri v && !seen.contains v then
         if isAbsoluteIri v then seen := seen.insert v else return some v
   for ng in ds.named do
     for t in ng.graph do
       for v in tripleIris t do
-        if !seen.contains v then
+        if !isPlainHttpIri v && !seen.contains v then
           if isAbsoluteIri v then seen := seen.insert v else return some v
   return none
 

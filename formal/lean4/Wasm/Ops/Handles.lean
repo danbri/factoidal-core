@@ -701,7 +701,7 @@ def jsonQuadsLoop : List Json → Array TermJson.Quad → Except String (List Te
       match TermJson.decodeQuad x with
       | some q =>
           -- RDF 1.2 Concepts section 3.2 (https://github.com/danbri/factoidal/issues/1057).
-          match (quadIris q.1 q.2).find? (fun v => !isAbsoluteIri v) with
+          match (quadIris q.1 q.2).find? (fun v => !isAbsoluteIriFast v) with
           | some v => .error s!"{invalidIriMessage v} in quad: {x.toString}"
           | none => jsonQuadsLoop r (acc.push q)
       | none => .error (notAQuadMessage x)

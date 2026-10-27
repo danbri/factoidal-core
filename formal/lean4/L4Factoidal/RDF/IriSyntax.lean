@@ -187,6 +187,34 @@ def isAbsoluteIri (s : String) : Bool :=
   | (scheme, some hier) => schemeOk scheme && hierPartOk hier && queryOk' && fragOk
   | (_, none) => false
 
+/-- The rest of an `http://` or `https://` IRI in its common shape: RFC 3986
+    `unreserved` characters and `/`, and at most one `#`. One pass over the
+    string, no allocation. -/
+def plainTailOk (r : Substring) : Bool :=
+  (r.foldl (fun (st : Bool × Bool) c =>
+     if !st.1 then st
+     else if isUnreservedAscii c || c == '/' then st
+     else if c == '#' && !st.2 then (true, true)
+     else (false, st.2)) (true, false)).1
+
+/-- `http://` or `https://`, then `plainTailOk`. Every such string is an
+    absolute IRI: the scheme is `http` or `https`, the authority is a reg-name
+    of unreserved characters (or empty), the path holds segments of unreserved
+    characters, and the fragment, after the one `#`, holds unreserved
+    characters and `/` (RFC 3987 section 2.2). The `#guard`s below check
+    `isAbsoluteIri` on such strings. -/
+def isPlainHttpIri (s : String) : Bool :=
+  if s.startsWith "https://" then plainTailOk (s.toSubstring.drop 8)
+  else if s.startsWith "http://" then plainTailOk (s.toSubstring.drop 7)
+  else false
+
+/-- `isAbsoluteIri`, with `isPlainHttpIri` first: the engine's one IRI check
+    on its hot paths (the readers and the dataset check of the ops). Most
+    IRIs of real data are in the plain shape and take one pass; the others
+    take the full check. -/
+def isAbsoluteIriFast (s : String) : Bool :=
+  isPlainHttpIri s || isAbsoluteIri s
+
 /-- Is `s` an RFC 3987 `irelative-ref` (section 2.2)?
 
     irelative-ref  = irelative-part [ "?" iquery ] [ "#" ifragment ]
@@ -289,5 +317,18 @@ returned `true` for everything, or `false` for everything, fails here. -/
 #guard !isRelativeIriRef "//www:x/"
 #guard !isRelativeIriRef "a b"
 #guard isIriReference "http://e.org/a" && isIriReference "a" && !isIriReference "a_b:c"
+-- The fast path: every plain http(s) IRI is an absolute IRI, and the fast check
+-- refuses what the full check refuses.
+private def plainSamples : List String :=
+  [ "http://example.org/", "https://example.org/a/b-c_d.e~f", "http://a/ns#name",
+    "http://a/ns#frag/x", "http://", "https:///x", "http://xmlns.com/foaf/0.1/name",
+    "http://www.w3.org/1999/02/22-rdf-syntax-ns#type" ]
+#guard plainSamples.all isPlainHttpIri
+#guard plainSamples.all isAbsoluteIri
+#guard !isPlainHttpIri "http://a/b#c#d" && !isPlainHttpIri "http://a:80/" && !isPlainHttpIri "urn:x"
+#guard !isPlainHttpIri "http://a/%41" && !isPlainHttpIri "http://a/b c" && !isPlainHttpIri "http://a/{x}"
+#guard isAbsoluteIriFast "http://a:80/" && isAbsoluteIriFast "urn:x:y" && isAbsoluteIriFast "http://a/%41"
+#guard !isAbsoluteIriFast "http://www:example.org/" && !isAbsoluteIriFast "a_b:c" && !isAbsoluteIriFast "http://a/b#c#d"
+#guard !isAbsoluteIriFast "http://a.org/d{|^}-e" && !isAbsoluteIriFast "http://a/%zz"
 
 end L4Factoidal.RDF
