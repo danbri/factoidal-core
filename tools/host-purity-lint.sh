@@ -132,6 +132,22 @@ adapter_files=("$root/deploy/lws-client-adapter/adapter.mjs")
 adapter_pattern='\b(20[0-9]|30[0-9]|40[0-9]|41[0-9]|42[0-9]|50[1-9])\b|\b(Link|Allow|Accept-Patch|Accept-Post|Accept-Put|Last-Modified|ETag|If-Match|If-None-Match|Slug|Location|WAC-Allow|Access-Control-[A-Za-z-]+)\b|containment|describedby|\bacl\b|pim:|text/n3|\bldp:|\bsolid:|WebID|generateKeyPairSync|createPublicKey|createPrivateKey|base58|multicodec|did:key:|linkset\+json|id_token|token-type|lws#|\.well-known'
 for f in "${adapter_files[@]}"; do scan "$f" "$adapter_pattern" "s/^$//"; done
 
+# GROUP 5, the AES call-out host (https://github.com/danbri/factoidal/issues/1081):
+# npm/factoidal/lib/cipher-host.mjs runs the one WebCrypto operation the
+# engine names and answers bytes or a refusal with no reason. Lean checks every
+# length and chooses every algorithm (CipherCall.Req.wellFormed). This lint
+# fails when that file (comments stripped) contains
+#
+#   * a length comparison (`.length <`, `.byteLength ==`, `.size >`, ...):
+#     a host that checks a length has made a decision the engine owns;
+#   * an error message read or passed on (`.message`, `catch (e)`): every
+#     failure must be the same refusal (padding oracle, Jager and Somorovsky
+#     2011);
+#   * a key or tag size choice (`keySize`, `keyLength`, a `length:` member).
+cipher_files=("$root/npm/factoidal/lib/cipher-host.mjs")
+cipher_pattern='\.(length|byteLength|size) *(<|>|==|!=)|\.message\b|catch *\(|keySize|keyLength|\blength *:'
+for f in "${cipher_files[@]}"; do scan "$f" "$cipher_pattern" "s/^$//"; done
+
 # GROUP 3, the RDF/JS, dataset, CLI and hub JavaScript: no RDF SYNTAX, DATATYPE
 # or IRI decision (https://github.com/danbri/factoidal/issues/894; CLAUDE.md
 # anti-pattern 36). The engine parses, writes, escapes, chooses datatypes and

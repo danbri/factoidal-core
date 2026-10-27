@@ -250,6 +250,10 @@ This AMENDS the rule below for AES (AES-GCM, AES-CBC, AES Key Wrap):
   difference in output or in accept/refuse is a failure that is reported with
   its input. Owner, verbatim: "For testing hammer both and flag differences if
   that makes sense, seek trustworthy tests too".
+  The run: `node tests/crypto/aes-diff.mjs [N]` (host side
+  `npm/factoidal/lib/cipher-host.mjs`; Vale column needs `lake build
+  l4crypto-probe`, mode `--gcm-stdin`); score line "aes-diff: N agree, M
+  differ (out of T)", exit 1 on any difference or vector failure.
 * Every other primitive (RSA-OAEP over the HACL\* bignum, ECDH-ES over HACL\*
   P-256 and Curve25519, SHA-2, HMAC, HKDF, Concat KDF) stays HACL\*; WebCrypto
   is a second implementation in the same differential tests.

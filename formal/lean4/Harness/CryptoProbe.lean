@@ -141,6 +141,7 @@ Usage:
   lake exe l4crypto-probe -- --oaep-batch RSA-OAEP requests on standard input, for
                                           tests/crypto/rsa-oaep-diff.mjs
   lake exe l4crypto-probe --ecdh-stdin    P-256 ECDH per stdin line (tests/crypto/ecdh-diff.mjs)
+  lake exe l4crypto-probe --gcm-stdin     AES-GCM (HACL* Vale) per stdin line (tests/crypto/aes-diff.mjs)
 -/
 import L4Factoidal.Crypto.ChaChaPoly
 import L4Factoidal.Crypto.Hkdf
@@ -1453,9 +1454,42 @@ def ecdhStdin : IO UInt32 := do
     stdout.flush
   pure 0
 
+/-- `l4crypto-probe --gcm-stdin`: for each standard-input line
+`<enc|dec> <key hex> <iv hex> <aad hex> <data hex>` (an empty field is
+written `-`), print the hex of `AesGcmNative.aesGcmEncrypt?` or
+`aesGcmDecrypt?` (ciphertext || 16-byte tag for `enc`), or `refused`; the
+first line of output is `available` or `unavailable`. The input of
+`tests/crypto/aes-diff.mjs`, which compares it with WebCrypto in Node,
+Chromium and Firefox (https://github.com/danbri/factoidal/issues/677). Ends
+at end of input (an outside event, so a `repeat` loop per CLAUDE.md,
+2026-10-23). -/
+def gcmStdin : IO UInt32 := do
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  stdout.putStrLn (if AesGcmNative.available then "available" else "unavailable")
+  stdout.flush
+  let field : String → Option ByteArray := fun f => if f == "-" then some ByteArray.empty else hexToBytes? f
+  repeat
+    let line ← stdin.getLine
+    if line.isEmpty then break
+    let out : Option ByteArray :=
+      match line.trimAscii.toString.splitOn " " with
+      | [op, k, iv, aad, d] =>
+          match field k, field iv, field aad, field d with
+          | some kb, some ivb, some ab, some db =>
+              if op == "enc" then AesGcmNative.aesGcmEncrypt? kb ivb ab db
+              else if op == "dec" then AesGcmNative.aesGcmDecrypt? kb ivb ab db
+              else none
+          | _, _, _, _ => none
+      | _ => none
+    stdout.putStrLn ((out.map hexOf).getD "refused")
+    stdout.flush
+  pure 0
+
 def main (args : List String) : IO UInt32 := do
   if args == ["--oaep-batch"] then return (← oaepBatch)
   if args == ["--ecdh-stdin"] then return (← ecdhStdin)
+  if args == ["--gcm-stdin"] then return (← gcmStdin)
   let cwd ← IO.currentDir
   let root ← match ← findRepoRoot cwd with
     | some r => pure r

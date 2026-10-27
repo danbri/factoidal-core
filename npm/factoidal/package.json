@@ -71,6 +71,7 @@
     "./store-host/paths": "./store-host/paths.mjs",
     "./xmpp": "./xmpp/index.mjs",
     "./xmpp/server": "./xmpp/server.mjs",
+    "./cipher-host": "./lib/cipher-host.mjs",
     "./store": {
       "default": "./bin/store.mjs"
     },
