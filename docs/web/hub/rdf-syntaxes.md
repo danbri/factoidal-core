@@ -133,9 +133,11 @@ formatTable = Factoidal.formats()
 
 ## Limits
 
-- No HDT, N3 or RDFa writer, and no RDF 1.2 output in RDF/XML or JSON-LD:
+- No HDT, N3 or RDFa writer, and no RDF 1.2 output in RDF/XML:
   <https://github.com/danbri/factoidal/issues/883>. Expected-failure test:
-  `tests/hub/hub_rdf_syntaxes_test.mjs`.
+  `tests/hub/hub_rdf_syntaxes_test.mjs`. JSON-LD writes and reads RDF 1.2
+  with the option `rdfstar` (JSON-LD-star): see
+  [JSON-LD-star and JSON-LD 1.3](../jsonld-star/).
 - The npm package has no RDF/JS stream interfaces (parser and serializer
   streams); a document is read and written whole:
   <https://github.com/danbri/factoidal/issues/884>.

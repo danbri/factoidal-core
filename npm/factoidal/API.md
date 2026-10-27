@@ -1396,7 +1396,7 @@ runnable.
 
 | Function | Signature (informal) | Notes |
 |---|---|---|
-| `parse` | `(text, {format?, baseIRI?, lenient?, maxErrors?}) => Dataset` | `turtle`, `ntriples`, `nquads`, `trig`, `rdfxml`, `jsonld`, and `turtle12`, `ntriples12`, `nquads12`, `trig12`; no format: inferred and reported. One call is one document. Strict: a syntax error rejects with a `FactoidalError` (`parse.syntax`). `dataset.prefixes` is the declared map |
+| `parse` | `(text, {format?, baseIRI?, lenient?, maxErrors?, rdfstar?}) => Dataset` | `turtle`, `ntriples`, `nquads`, `trig`, `rdfxml`, `jsonld`, and `turtle12`, `ntriples12`, `nquads12`, `trig12`; no format: inferred and reported. One call is one document. Strict: a syntax error rejects with a `FactoidalError` (`parse.syntax`). `dataset.prefixes` is the declared map |
 | `query` | `(data, sparql, {format?, baseIRI?, entail?, sparql12?, version?, output?}) => Bindings[] \| boolean \| Dataset \| string` | SELECT → `Map<var, Term>[]`; ASK → boolean; CONSTRUCT and DESCRIBE → Dataset; with `output` the results document (`json`, `xml`, `csv`, `tsv`, `table`, `ntriples`). `data` is a Dataset, a string, `{text, format}`, or an array of those |
 | `update` | `(data, sparqlUpdate, {format?, baseIRI?}) => Dataset` | answers a NEW Dataset; `dataset.update()` changes one in place |
 | `openDataset` | `(data, {format?, baseIRI?}) => Dataset` | a Dataset argument is cloned |

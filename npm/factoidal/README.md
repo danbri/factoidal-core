@@ -38,10 +38,14 @@ every consumer accepts one, so a pipeline does not re-parse between steps.
 An unknown option key throws. With no `format`, the format is inferred and
 reported in `dataset.format`; an explicit `format` is never overridden.
 RDF 1.2 input uses `turtle12`, `ntriples12`, `nquads12` or `trig12`.
+RDF 1.2 in JSON-LD (JSON-LD-star: `@triple`, `@reifies`, `@annotation`,
+`@direction`) needs the option `rdfstar`: `jsonldToRdf(text, { rdfstar: true })`
+and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
 
 ## What it does
 
 - Syntaxes: N-Triples, N-Quads, Turtle, TriG, RDF/XML, JSON-LD; RDF 1.1 and 1.2
+  (RDF 1.2 in JSON-LD through the JSON-LD-star draft, option `rdfstar`)
 - SPARQL 1.1 and 1.2 query and update; GeoSPARQL functions, text search,
   JavaScript extension functions, SERVICE
 - Reasoning: RDFS, OWL 2 RL closure, restricted checked OWL consistency,
@@ -239,6 +243,8 @@ and the [assurance record](https://github.com/danbri/factoidal-core/blob/main/do
 | JSON-LD 1.1 toRdf, expand, flatten | 910 / 0 / 910 |
 | JSON-LD 1.1 compact, fromRdf | 298 / 0 / 300 (2 not run) |
 | JSON-LD 1.1 Framing | 29 / 63 / 92 |
+| JSON-LD-star draft (RDF 1.2), option `rdfstar` | 168 / 1 / 171 (2 local override; 170 of 171 with them) [J] |
+| RDF 1.2 eval tests written as JSON-LD-star and read back | 140 / 0 / 140 [J] |
 | RDFC-1.0 | 86 / 0 / 86 |
 | OWL 2 RL | 126 / 0 / 126 |
 | OWL 2 DL type-inconsistency | 116 / 11 / 128 (1 other) |
@@ -262,6 +268,7 @@ and the [assurance record](https://github.com/danbri/factoidal-core/blob/main/do
 [L] 2026-10-22, https://github.com/danbri/factoidal-core/blob/2b9d2e39af53be31ed92463b58d3e132e65c4fe4/docs/designissues/2026-10-21-lws-touchstone-run.md (with server options, 220 of 221 pass in at least one configuration)
 [S] 2026-10-21, the current W3C manifest (29 active tests), https://github.com/danbri/factoidal-core/blob/2b9d2e39af53be31ed92463b58d3e132e65c4fe4/docs/claude-rules/current-state.md
 [C] 2026-10-21, validation test308, https://github.com/danbri/factoidal/issues/700
+[J] 2026-10-27, tests of https://github.com/json-ld/json-ld-star/pull/61; the fail is a defective fixture (fromRdf tst07), https://github.com/danbri/factoidal-core/blob/2a656d7bfb4af329d77669afb5e62eb00625bd15/docs/designissues/2026-10-26-jsonld-star.md
 
 ## Limits
 
