@@ -13,10 +13,11 @@ Not a conformance claim: the W3C sparql11 update suites are scored by
 `lake exe l4w3c` over the real manifests (iron rule #6).
 -/
 import L4Factoidal.SPARQL.UpdateParser
+import L4Factoidal.Syntax.BlankNodeLabel
 
 namespace L4Factoidal.SPARQL.UpdateTests
 
-open L4Factoidal.RDF L4Factoidal.SPARQL
+open L4Factoidal.RDF L4Factoidal.SPARQL L4Factoidal.Syntax
 
 def iri! (s : String) (h : isIri s := by rfl) : WfIri := ⟨s, h⟩
 
@@ -283,5 +284,29 @@ is one solution with no bindings. `applyUpdate` has no endpoints. -/
 #guard !parses "INSERT DATA { <s> <p> <o> } extra"
 -- A property path is not ground data.
 #guard !parses "INSERT DATA { <s> <p>/<q> <o> }"
+
+/-! ## Fresh labels are N-Triples labels (https://github.com/danbri/factoidal/issues/1074)
+
+§3.1.1: a blank node in INSERT DATA is a fresh node of the graph store. RDF 1.2
+N-Triples [141s] BLANK_NODE_LABEL has no `:`, so a store label must not copy the
+parser's `_:bnode_<n>` name for `[ ]`. -/
+
+/-- Every blank-node label in the store after a request. -/
+def labelsAfter (ds : Dataset) (text : String) : Option (List BNodeId) :=
+  (run? ds text).map (·.bnodes)
+
+#guard (labelsAfter Dataset.empty "INSERT DATA { <http://e/a> <http://e/p> [] }").map
+  (fun ls => ls.length == 1 && ls.all isBlankNodeLabel) == some true
+#guard (labelsAfter Dataset.empty "INSERT DATA { <http://e/a> <http://e/p> ( 1 2 ) }").map
+  (fun ls => ls.length == 2 && ls.all isBlankNodeLabel) == some true
+#guard (labelsAfter Dataset.empty "INSERT { <http://e/a> <http://e/p> [ <http://e/q> 1 ] } WHERE {}").map
+  (fun ls => ls.length == 1 && ls.all isBlankNodeLabel) == some true
+-- A written label next to a generated one: two nodes.
+#guard (labelsAfter Dataset.empty "INSERT DATA { _:bnode_0 <http://e/p> [] }").map
+  (fun ls => ls.eraseDups.length == 2 && ls.all isBlankNodeLabel) == some true
+-- Negative: the label made before the fix is refused by the N-Triples production.
+#guard !isBlankNodeLabel ("b_d_" ++ "_:bnode_41")
+#guard freshDataBnode "b_" "_:bnode_41" == "b_d_g_bnode_41"
+#guard freshDataBnode "b_" "x" == "b_d__x"
 
 end L4Factoidal.SPARQL.UpdateTests
