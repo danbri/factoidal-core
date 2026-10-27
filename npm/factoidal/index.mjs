@@ -55,10 +55,24 @@ export const serialize = api.serialize;
 export const canonicalize = api.canonicalize;
 export const graphs = api.graphs;
 export const canonicalHash = api.canonicalHash;
+export const asDefaultGraph = api.asDefaultGraph;
 export const isomorphic = api.isomorphic;
 export const fromQuads = api.fromQuads;
+// Literal values (https://github.com/danbri/factoidal/issues/1051): synchronous
+// after the engine is loaded.
+export const literalValue = api.literalValue;
+export const isValidLiteral = api.isValidLiteral;
+export const canonicalLiteral = api.canonicalLiteral;
+export const literalFromValue = api.literalFromValue;
 export const ready = api.ready;
 export const engineTables = api.engineTables;
+export const sameValue = api.sameValue;
+export const syntaxFor = api.syntaxFor;
+export const splitIri = api.splitIri;
+export const isNCName = api.isNCName;
+export const vocabularies = api.vocabularies;
+export const memberIri = api.memberIri;
+export const memberOrdinal = api.memberOrdinal;
 export const openDataset = api.openDataset;
 export const closure = api.closure;
 export const formats = api.formats;
@@ -156,6 +170,12 @@ export const vcSha256Hex = api.vcSha256Hex;
 export const vcEd25519SecretToPublic = api.vcEd25519SecretToPublic;
 export const vcEd25519Sign = api.vcEd25519Sign;
 export const vcEd25519Verify = api.vcEd25519Verify;
+
+// XML Encryption 1.1 and JWE; AES through WebCrypto (lib/cipher-host.mjs)
+export const xmlDecrypt = api.xmlDecrypt;
+export const xmlEncrypt = api.xmlEncrypt;
+export const jweDecrypt = api.jweDecrypt;
+export const jweEncrypt = api.jweEncrypt;
 export const vcEddsaCreateFromCanonical = api.vcEddsaCreateFromCanonical;
 export const vcEddsaVerifyFromCanonical = api.vcEddsaVerifyFromCanonical;
 export const vcCheckCredential = api.vcCheckCredential;

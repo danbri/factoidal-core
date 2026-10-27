@@ -25,7 +25,11 @@ no code path that could be lenient, and `Pkcs1.rs256Verify_iff_template`
 states that as a theorem.
 
 There is no private operation, no key generation and no signing entry
-point here or in `ffi/hacl_rsa.c`, so no secret reaches this path.
+point in this module, so no secret reaches this path. The RSA PRIVATE
+operation for RSA-OAEP decryption (2026-10-27,
+https://github.com/danbri/factoidal/issues/1082) is a separate extern,
+`RsaOaep.rsaPrivateOp` in `Crypto/RsaOaep.lean`, in the same C file
+`ffi/hacl_rsa.c` over `Hacl_Bignum64_mod_exp_consttime`.
 
 ## Crypto policy
 
@@ -34,8 +38,8 @@ arithmetic is HACL*'s; we never write our own. Variable-time modular
 exponentiation (`Hacl_Bignum64_mod_exp_vartime`) is used deliberately:
 the exponent is the RSA PUBLIC exponent and the base is the published
 signature, so a timing observer learns only values already carried in the
-token. The constant-time variant is the one required if a private
-exponent is ever introduced, which this module forbids by construction.
+token. The private exponent of `Crypto/RsaOaep.lean` uses the
+constant-time variant.
 
 ## Trust statement
 

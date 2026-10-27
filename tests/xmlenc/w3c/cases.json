@@ -1,0 +1,17 @@
+{
+ "source": "https://www.w3.org/TR/xmlenc-core1-testcases/ (editor's draft https://www.w3.org/2008/xmlsec/Drafts/xmlenc-core-11/test-cases/), fetched 2026-10-27",
+ "keys": "keys.json",
+ "cases": [
+  {"id": "WRAP.1", "file": "cipherText__RSA-2048__aes128-gcm__rsa-oaep-mgf1p.xml", "outcome": "ok", "native": true, "expected": "plaintext.xml"},
+  {"id": "AGRMNT.1", "file": "cipherText__EC-P256__aes128-gcm__kw-aes128__ECDH-ES__ConcatKDF.xml", "outcome": "ok", "native": false, "expected": "plaintext.xml"},
+  {"id": "WRAP.2", "file": "cipherText__RSA-3072__aes192-gcm__rsa-oaep-mgf1p__Sha256.xml", "outcome": "refused", "reason": "AES-192"},
+  {"id": "WRAP.3", "file": "cipherText__RSA-3072__aes256-gcm__rsa-oaep__Sha384-MGF_Sha1.xml", "outcome": "refused", "reason": "xmlenc11#rsa-oaep is supported with"},
+  {"id": "WRAP.4", "file": "cipherText__RSA-4096__aes256-gcm__rsa-oaep__Sha512-MGF_Sha1_PSource.xml", "outcome": "refused", "reason": "xmlenc11#rsa-oaep is supported with"},
+  {"id": "AGRMNT.2", "file": "cipherText__EC-P384__aes192-gcm__kw-aes192__ECDH-ES__ConcatKDF.xml", "outcome": "refused", "reason": "AES-192"},
+  {"id": "AGRMNT.3", "file": "cipherText__EC-P521__aes256-gcm__kw-aes256__ECDH-ES__ConcatKDF.xml", "outcome": "refused", "reason": "not on P-256"},
+  {"id": "AGRMNT.7", "file": "cipherText__DH-1024__aes128-gcm__kw-aes128__dh-es__ConcatKDF.xml", "outcome": "refused", "reason": "key agreement algorithm"},
+  {"id": "AGRMNT (PBKDF2)", "file": "cipherText__EC-P256__aes128-gcm__kw-aes256__ECDH-ES__pbkdf2.xml", "outcome": "refused", "reason": "must be ConcatKDF"},
+  {"id": "SYM.1", "file": "microsoft-xenc11-example-AES128-GCM.xml", "outcome": "refused", "reason": "no Type"},
+  {"id": "DRV.1", "file": "microsoft-dkey-example-ConcatKDF-crypto.xml", "outcome": "refused", "reason": "no Type"}
+ ]
+}

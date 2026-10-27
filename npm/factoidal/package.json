@@ -1,6 +1,6 @@
 {
   "name": "@factoidal/core",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "EXPERIMENTAL UNDER-REVIEWED CODE: do not run public services on it without careful independent expert review. RDF parsing and writing (Turtle, TriG, N-Triples, N-Quads, RDF/XML, JSON-LD), SPARQL 1.1 and 1.2, RDFS and OWL reasoning, SHACL and ShEx validation, CSVW and RML mapping, RDFC-1.0, and SPARQL, LWS and Solid servers, for Node, Deno and browsers.",
   "keywords": [
     "sparql",
@@ -71,6 +71,7 @@
     "./store-host/paths": "./store-host/paths.mjs",
     "./xmpp": "./xmpp/index.mjs",
     "./xmpp/server": "./xmpp/server.mjs",
+    "./cipher-host": "./lib/cipher-host.mjs",
     "./store": {
       "default": "./bin/store.mjs"
     },

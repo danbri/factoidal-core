@@ -25,9 +25,22 @@ can give it a host over bytes in memory.
 What differs from `Harness/Sbm11Query.lean` (the native session):
 
 * one thread: no worker pool, no task views, no locks;
-* reads are checked as `Verify.none` is on the native path: every artifact's
-  size against the manifest at open, every read against the manifest's
-  length. The Merkle check (`Verify.merkle`) is not here yet;
+* reads are checked as `Verify.merkle` checks them on the native path, by
+  default (`HostVerify`, https://github.com/danbri/factoidal/issues/1009):
+  the open reads the `.merkle` sidecar of every file the manifest names and
+  admits its leaves only when they rebuild the manifest's root (so a changed
+  root, chunk count or length in the manifest refuses the open, whichever
+  file it names); each read is widened to its 65,536-byte chunks, and each
+  chunk is checked by its proof against the root before any byte of it is
+  decoded. Checked chunks are kept (`chunkLimit` per file, `insertEvict`), so
+  a query does not hash a chunk again. An error names the file and the chunk.
+  `Verify.none` (the caller's choice, as `l4sbm11 query --verify none`)
+  checks every artifact's size at open and every read against the
+  manifest's length, and hashes nothing;
+* the manifest has no digest of its own: the session reads no field of it
+  but the names, the lengths and the Merkle references, which the checks
+  above bind to the bytes. The full-file SHA-256 of each file is checked by
+  `sbm11Verify` (activation), as by native `l4sbm11 activate`;
 * a generation with a delta log (`deltas.dlog` with bytes) is refused at
   open: the replay is stage 3 of issue 1007.
 
@@ -52,6 +65,7 @@ import L4Factoidal.Storage.Sbm11.DictRange
 import L4Factoidal.Storage.Sbm11.MemoCache
 import L4Factoidal.Storage.Sbm11.GraphList
 import L4Factoidal.Storage.Sbm11.Manifest
+import L4Factoidal.Storage.Sbm11.HostVerify
 import L4Factoidal.Storage.ShardManifest
 import L4Factoidal.Storage.QuadDataset
 import L4Factoidal.Storage.SelectedDataset
@@ -70,6 +84,8 @@ open L4Factoidal.SPARQL
 open L4Factoidal.Storage.Sbm11
 open L4Factoidal.Storage.Sbm11.Block
 open L4Factoidal.Storage.Sbm11.Manifest
+open L4Factoidal.Storage.Sbm11.HostVerify (Verify Admitted admit checkChunk chunkSpan sliceLo sliceHi
+  sidecarName)
 
 /-- The positioned reads of one generation, supplied by the host: the
     storage medium of `Storage/Medium.lean` in `IO`
@@ -86,14 +102,12 @@ def logName : String := "deltas.dlog"
 /-- The permutation names in id order (`Sbm11Gen.permNamesArr`). -/
 def permNames : Array String := #["PSO", "POS", "SPO", "OSP"]
 
-/-- A permutation opened by the session: its two files, their lengths (from
-    the manifest), the PRM1 block count, and the answers of `rangeM` asked
+/-- A permutation opened by the session: its two files (their indexes in
+    `Session.arts`), the PRM1 block count, and the answers of `rangeM` asked
     so far (at most 256 keys). -/
 structure Perm where
-  prmFile : String
-  prmBytes : Nat
-  prbFile : String
-  prbBytes : Nat
+  prm : Nat
+  prb : Nat
   count : Nat
   ranges : IO.Ref (Std.HashMap (Array UInt64) (Array BlockMeta))
 
@@ -101,17 +115,29 @@ structure Perm where
 structure Session where
   host : Host
   manifest : Manifest
-  gdxFile : String
-  gdxBytes : Nat
-  gdvFile : String
-  gdvBytes : Nat
+  /-- the artifacts of the manifest, in its order; a file is named by its
+      index here -/
+  arts : Array Artifact
+  /-- how reads are checked -/
+  verify : Verify
+  /-- the hash of the Merkle check -/
+  hasher : L4Factoidal.Storage.BlockMerkle.Hasher
+  /-- under `merkle`: the admitted sidecar of each artifact, at its index in
+      `arts`; empty under `none` -/
+  admitted : Array Admitted
+  /-- under `merkle`: the checked chunks of each artifact (chunk number to
+      bytes), at its index in `arts` -/
+  chunks : IO.Ref (Array (Std.HashMap Nat ByteArray))
+  gdx : Nat
+  gdv : Nat
   dictHdr : Dict.GdxHeader
   perms : IO.Ref (Array (Option Perm))
   /-- decoded dictionary pages, packed (`Harness.Sbm11Query.Session.loadPage`) -/
   pages : IO.Ref (Std.HashMap Nat (ByteArray × Array Nat))
   idMemo : IO.Ref (Std.HashMap Term UInt64)
   baseNamedRef : IO.Ref (Option (Array Nat))
-  /-- bytes the host returned since the session opened -/
+  /-- bytes the host returned since the session opened (under `merkle`, the
+      whole chunks and the sidecars) -/
   bytesRead : IO.Ref Nat
   /-- host reads since the session opened -/
   reads : IO.Ref Nat
@@ -120,6 +146,11 @@ structure Session where
       and q21 need between 4,096 and 8,192 pages; at 4,096 they ran 2.2 to 2.6
       times as long as native `l4sbm11 query`. -/
   pageLimit : Nat := 8192
+  /-- the most checked chunks kept per file under `merkle` (65,536 bytes
+      each): 256 chunks, 16 MiB. A full map drops a sixteenth
+      (`MemoCache.insertEvict`); a dropped chunk is read and checked again
+      when it is needed. -/
+  chunkLimit : Nat := 256
 
 /-- A session for one query, with references of its own that hold the
     caches of `ss` (`keep` writes them back). A session in a global handle
@@ -138,6 +169,7 @@ def Session.localize (ss : Session) : IO Session := do
     | some p => return some { p with ranges := ← IO.mkRef (← p.ranges.get) }
     | none => return none
   return { ss with perms := ← IO.mkRef perms, pages := ← IO.mkRef (← ss.pages.get),
+                   chunks := ← IO.mkRef (← ss.chunks.get),
                    idMemo := ← IO.mkRef (← ss.idMemo.get),
                    baseNamedRef := ← IO.mkRef (← ss.baseNamedRef.get),
                    bytesRead := ← IO.mkRef (← ss.bytesRead.get), reads := ← IO.mkRef (← ss.reads.get) }
@@ -147,6 +179,7 @@ def Session.localize (ss : Session) : IO Session := do
 def Session.keep (ss q : Session) : IO Unit := do
   ss.perms.set (← q.perms.get)
   ss.pages.set (← q.pages.get)
+  ss.chunks.set (← q.chunks.get)
   ss.idMemo.set (← q.idMemo.get)
   ss.baseNamedRef.set (← q.baseNamedRef.get)
   ss.bytesRead.set (← q.bytesRead.get)
@@ -158,16 +191,14 @@ def okOr {α : Type} (what : String) : Except String α → IO α
   | .ok a => pure a
   | .error e => ioErr s!"{what}: {e}"
 
-def artifactNamed (m : Manifest) (role : String) : IO Artifact :=
-  match artifactOf? m role with
+/-- The artifact at index `fi` of `arts`. -/
+def Session.art (ss : Session) (fi : Nat) : IO Artifact :=
+  match ss.arts[fi]? with
   | some a => pure a
-  | none => ioErr s!"the manifest has no artifact {role}"
+  | none => ioErr s!"no artifact {fi} in the manifest"
 
-/-- A checked read: inside the file's manifest length, exactly `len` bytes. -/
-def Session.fetch (ss : Session) (file : String) (total off len : Nat) : IO ByteArray := do
-  if len == 0 then return ByteArray.empty
-  if off + len > total then
-    ioErr s!"{file}: read of {len} bytes at {off} past the manifest's length {total}"
+/-- A host read of exactly `len` bytes of `file`. -/
+def Session.hostRead (ss : Session) (file : String) (off len : Nat) : IO ByteArray := do
   let b ← try ss.host.readAt file off len
     catch e => ioErr s!"{file}: read of {len} bytes at {off}: {e}"
   if b.size != len then ioErr s!"{file}: the host returned {b.size} bytes for a read of {len}"
@@ -175,11 +206,47 @@ def Session.fetch (ss : Session) (file : String) (total off len : Nat) : IO Byte
   ss.reads.modify (· + 1)
   return b
 
+/-- Chunk `c` of the artifact `fi`, checked by its Merkle proof
+    (`HostVerify.checkChunk`), from the session's chunks when it is there. -/
+def Session.chunk (ss : Session) (fi c : Nat) : IO ByteArray := do
+  if let some m := (← ss.chunks.get)[fi]? then
+    if let some b := MemoCache.find? m c then return b
+  let some ad := ss.admitted[fi]? | ioErr s!"no admitted artifact {fi}"
+  let a := ad.art
+  let (some off, some len) := (ChunkedArtifact.offset? a.merkle c, ChunkedArtifact.expectedBytes? a.merkle c)
+    | ioErr s!"{a.file}: no chunk {c} (the manifest gives {a.merkle.chunkCount})"
+  let b ← ss.hostRead a.file off len
+  okOr "Merkle check" (checkChunk ss.hasher ad c b)
+  ss.chunks.modify fun cs => cs.modify fi fun m => MemoCache.insertEvict m ss.chunkLimit c b
+  return b
+
+/-- A checked read of the artifact `fi`: inside its manifest length, exactly
+    `len` bytes; under `merkle` cut from its checked chunks. -/
+def Session.fetch (ss : Session) (fi off len : Nat) : IO ByteArray := do
+  if len == 0 then return ByteArray.empty
+  let a ← ss.art fi
+  if off + len > a.bytes then
+    ioErr s!"{a.file}: read of {len} bytes at {off} past the manifest's length {a.bytes}"
+  match ss.verify with
+  | .none => ss.hostRead a.file off len
+  | .merkle =>
+    let cb := a.merkle.chunkBytes
+    let (first, last) := chunkSpan cb off len
+    if first == last then
+      let ch ← ss.chunk fi first
+      return ch.extract (sliceLo cb off first) (sliceHi cb off len first)
+    let mut out := ByteArray.emptyWithCapacity len
+    for c in [first:last + 1] do
+      let ch ← ss.chunk fi c
+      let lo := sliceLo cb off c
+      out := ch.copySlice lo out out.size (sliceHi cb off len c - lo)
+    return out
+
 def Session.gdxFetch (ss : Session) (off len : Nat) : IO ByteArray :=
-  ss.fetch ss.gdxFile ss.gdxBytes off len
+  ss.fetch ss.gdx off len
 
 def Session.gdvFetch (ss : Session) (off len : Nat) : IO ByteArray :=
-  ss.fetch ss.gdvFile ss.gdvBytes off len
+  ss.fetch ss.gdv off len
 
 /-- The file name of a collection root's pointer to its active generation
     (`Harness.GenerationPointer.currentName`). -/
@@ -209,11 +276,20 @@ def resolveHost (h : Host) : IO (Host × String) := do
     if (← g.size manifestName).isNone then ioErr s!"CURRENT names a generation with no {manifestName}: {name}"
     return (g, name)
 
+/-- The index in `arts` of the artifact of `role`. -/
+def roleIndex (arts : Array Artifact) (role : String) : IO Nat :=
+  match arts.findIdx? (·.role == role) with
+  | some i => pure i
+  | none => ioErr s!"the manifest has no artifact {role}"
+
 /-- Open a generation: read and decode its manifest, check that every
-    artifact has the manifest's size, refuse a delta log, read the GDX1
-    header. The host names a generation directory (`resolveHost` first for
-    a collection root). -/
-def openSession (host : Host) : IO Session := do
+    artifact has the manifest's size, refuse a delta log; under `merkle`
+    (`v`) admit the `.merkle` sidecar of every artifact against the
+    manifest's root (`HostVerify.admit`, hash `h`); read the GDX1 header.
+    The host names a generation directory (`resolveHost` first for a
+    collection root). -/
+def openSession (host : Host) (v : Verify) (h : L4Factoidal.Storage.BlockMerkle.Hasher) :
+    IO Session := do
   let some msize ← host.size manifestName
     | ioErr s!"{manifestName}: not found; the source is not an SBM11 generation directory"
   let mbytes ← host.readAt manifestName 0 msize
@@ -226,32 +302,46 @@ def openSession (host : Host) : IO Session := do
   if let some n ← host.size logName then
     if n > 0 then
       ioErr s!"{logName}: this generation has a delta log ({n} bytes); this session does not replay a log yet (stage 3 of https://github.com/danbri/factoidal/issues/1007)"
-  let gdvA ← artifactNamed m "GDV1"
-  let gdxA ← artifactNamed m "GDX1"
+  let arts := m.artifacts.toArray
+  let mut admitted : Array Admitted := #[]
+  let mut sideBytes := 0
+  if v == .merkle then
+    for a in arts do
+      let side := sidecarName a.file
+      let some n ← host.size side
+        | ioErr s!"{side}: named by the Merkle check of {a.file} and not found"
+      let b ← try host.readAt side 0 n
+        catch e => ioErr s!"{side}: read of {n} bytes: {e}"
+      if b.size != n then ioErr s!"{side}: the host returned {b.size} bytes for a read of {n}"
+      sideBytes := sideBytes + n
+      admitted := admitted.push (← okOr "Merkle check" (admit h a b))
+  let gdv ← roleIndex arts "GDV1"
+  let gdx ← roleIndex arts "GDX1"
   let ss0 : Session :=
-    { host, manifest := m, gdxFile := gdxA.file, gdxBytes := gdxA.bytes, gdvFile := gdvA.file,
-      gdvBytes := gdvA.bytes, dictHdr := { termCount := 0, pageCount := 0 },
+    { host, manifest := m, arts, verify := v, hasher := h, admitted,
+      chunks := ← IO.mkRef (if v == .merkle then Array.replicate arts.size {} else #[]),
+      gdx, gdv, dictHdr := { termCount := 0, pageCount := 0 },
       perms := ← IO.mkRef #[none, none, none, none], pages := ← IO.mkRef {}, idMemo := ← IO.mkRef {},
-      baseNamedRef := ← IO.mkRef none, bytesRead := ← IO.mkRef msize, reads := ← IO.mkRef 1 }
+      baseNamedRef := ← IO.mkRef none, bytesRead := ← IO.mkRef (msize + sideBytes),
+      reads := ← IO.mkRef (1 + admitted.size) }
   let hdr ← okOr "GDX1" (Dict.parseGdxHeader (← ss0.gdxFetch 0 Dict.gdxHeaderBytes))
   return { ss0 with dictHdr := hdr }
 
-def Session.prmReadAt (ss : Session) (file : String) (total : Nat) (off len : Nat) :
-    ExceptT String IO ByteArray :=
-  ExceptT.lift (ss.fetch file total off len)
+def Session.prmReadAt (ss : Session) (fi : Nat) (off len : Nat) : ExceptT String IO ByteArray :=
+  ExceptT.lift (ss.fetch fi off len)
 
 def Session.perm (ss : Session) (p : Nat) : IO Perm := do
   match (← ss.perms.get)[p]? with
   | some (some lp) => return lp
   | some none =>
     let nm := permNames[p]!
-    let prmA ← artifactNamed ss.manifest s!"PRM1-{nm}"
-    let prbA ← artifactNamed ss.manifest s!"PRB1-{nm}"
-    let count ← match ← (PrmRange.openM (ss.prmReadAt prmA.file prmA.bytes) prmA.bytes p).run with
+    let prm ← roleIndex ss.arts s!"PRM1-{nm}"
+    let prb ← roleIndex ss.arts s!"PRB1-{nm}"
+    let prmA ← ss.art prm
+    let count ← match ← (PrmRange.openM (ss.prmReadAt prm) prmA.bytes p).run with
       | .ok n => pure n
       | .error e => ioErr s!"{prmA.file}: {e}"
-    let lp : Perm := { prmFile := prmA.file, prmBytes := prmA.bytes, prbFile := prbA.file,
-                       prbBytes := prbA.bytes, count, ranges := ← IO.mkRef {} }
+    let lp : Perm := { prm, prb, count, ranges := ← IO.mkRef {} }
     ss.perms.modify (·.set! p (some lp))
     return lp
   | none => ioErr s!"no permutation {p}"
@@ -328,16 +418,16 @@ def Session.lowerBound (ss : Session) (k : ByteArray) : IO Nat := do
 def Session.rangeFor (ss : Session) (p : Nat) (key : Array UInt64) : IO (Array BlockMeta) := do
   let lp ← ss.perm p
   if let some r := MemoCache.find? (← lp.ranges.get) key then return r
-  let read := ss.prmReadAt lp.prmFile lp.prmBytes
+  let read := ss.prmReadAt lp.prm
   let r ← match ← (PrmRange.rangeM (PrmRange.bytesReader read lp.count) key).run with
     | .ok r => pure r
-    | .error e => ioErr s!"{lp.prmFile}: {e}"
+    | .error e => ioErr s!"{(← ss.art lp.prm).file}: {e}"
   lp.ranges.modify fun m => MemoCache.insertBounded 256 m key r
   return r
 
 def Session.prb (ss : Session) (p off len : Nat) : IO ByteArray := do
   let lp ← ss.perm p
-  ss.fetch lp.prbFile lp.prbBytes off len
+  ss.fetch lp.prb off len
 
 /-- An IO action in the store's monad. Its IO error is not caught here: it
     leaves `runPlanM` as an IO error, which the caller reports (as
@@ -379,9 +469,10 @@ def Session.namedGraphIds (ss : Session) : IO (Array Nat) := do
   match ← ss.baseNamedRef.get with
   | some xs => return xs
   | none =>
-    let xs ← match artifactOf? ss.manifest "GNL1" with
-      | some a =>
-        match GraphList.decodeAt (← ss.fetch a.file a.bytes 0 a.bytes) with
+    let xs ← match ss.arts.findIdx? (·.role == "GNL1") with
+      | some fi =>
+        let a ← ss.art fi
+        match GraphList.decodeAt (← ss.fetch fi 0 a.bytes) with
         | some ids => pure ids
         | none => ioErr s!"{a.file}: does not decode as a GNL1 graph list"
       | none => ss.graphIdsOfQuads

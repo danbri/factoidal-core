@@ -111,17 +111,24 @@ function envelope (raw) {
 export function sbm11Api (loadEngine) {
   /**
    * Open an SBM11 generation (a generation directory, or a collection root
-   * whose CURRENT file names one). Returns { generation, terms, query(sparql,
-   * options), close() }. `query` answers { path, rows, format, result, json }:
-   * `result` is the text `l4sbm11 query` writes (SPARQL JSON for SELECT and
-   * ASK, N-Triples for CONSTRUCT and DESCRIBE), `json` its parse for
-   * SELECT and ASK.
+   * whose CURRENT file names one). Returns { generation, terms, verify,
+   * query(sparql, options), close() }. `query` answers { path, rows, format,
+   * result, json }: `result` is the text `l4sbm11 query` writes (SPARQL JSON
+   * for SELECT and ASK, N-Triples for CONSTRUCT and DESCRIBE), `json` its
+   * parse for SELECT and ASK.
+   *
+   * `options.verify`: 'merkle' (the default: the engine checks every byte
+   * it decodes against the manifest's Merkle roots, and refuses a changed
+   * file with its name) or 'none' (lengths only). The engine decides; this
+   * file passes the string.
    */
   async function openSbm11 (source, options = {}) {
     installBridge()
     if (options.reader) registerSbm11Source(source, options.reader)
     const eng = await loadEngine()
-    const opened = envelope(eng.call('sbm11Open', [String(source)]))
+    const openArgs = [String(source)]
+    if (options.verify != null) openArgs.push(JSON.stringify({ verify: String(options.verify) }))
+    const opened = envelope(eng.call('sbm11Open', openArgs))
     const handle = opened.handle
     let open = true
     const reader = options.reader || readers.get(String(source))
@@ -135,6 +142,9 @@ export function sbm11Api (loadEngine) {
       },
       generation: opened.generation,
       terms: Number(opened.terms),
+      /** how the engine checks reads: 'merkle' or 'none' (undefined from a
+       *  wasm module built before the check) */
+      verify: opened.verify,
       query (sparql, qopts = {}) {
         if (!open) throw new Error('sbm11: the store is closed')
         const o = {}

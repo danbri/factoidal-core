@@ -132,6 +132,166 @@ stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
 covers = "part"
 note = "matchDataset as wasm:datasetMatch, then the quad count. Not covered: quadPatternOf."
 
+# Terms, IRIs, syntax names, vocabularies, lists and containers
+# (https://github.com/danbri/factoidal/issues/1051 items 4-6, 1052, 1053;
+# Wasm/Ops/Terms.lean, Wasm/Ops/Collections.lean).
+
+[[entry]]
+id = "wasm:datasetListItems"
+stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
+covers = "part"
+note = "Wasm/Ops/Collections.lean datasetListItems: one matchDataset lookup (as wasm:datasetMatch) for rdf:first and one for rdf:rest per node, walked by RDF.Collections.listItemsBy. Not covered: the list walk and its refusals (Lean #guards in RDF/Collections.lean), the term and graph JSON readers."
+
+[[entry]]
+id = "wasm:datasetContainerItems"
+stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
+covers = "part"
+note = "Wasm/Ops/Collections.lean datasetContainerItems: one matchDataset lookup (as wasm:datasetMatch) of the node as subject, then RDF.Collections.containerMembersOf and containerKindOf. Not covered: the rdf:_n ordering (Lean #guards), the term and graph JSON readers."
+
+[[nonstage]]
+id = "wasm:datasetAddList"
+reason = "term-level: builds the rdf:first/rdf:rest triples of given terms on fresh blank nodes (RDF/Collections.lean listTriples) and inserts them (CertifiedDataset.insertQuads); reads no document"
+
+[[nonstage]]
+id = "wasm:sameValue"
+reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
+
+[[nonstage]]
+id = "wasm:xmlDecrypt"
+reason = "XML Encryption 1.1 decryption of an XML document (XML/Enc.lean decryptDocument; RSA-OAEP, P-256, X25519 by HACL*, AES by the host through CipherCall.replayCipher), reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#xmlDecrypt"
+reason = "npm/factoidal/lib/api.mjs xmlDecrypt calls the wasm op xmlDecrypt through runWithCipher (see wasm:xmlDecrypt)"
+
+[[nonstage]]
+id = "npm:./browser#xmlDecrypt"
+reason = "npm/factoidal/lib/api.mjs xmlDecrypt calls the wasm op xmlDecrypt through runWithCipher (see wasm:xmlDecrypt)"
+
+[[nonstage]]
+id = "wasm:xmlEncrypt"
+reason = "XML Encryption 1.1 encryption of an XML document (XML/Enc.lean encryptDocument; AES by the host through CipherCall.replayCipher), reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#xmlEncrypt"
+reason = "npm/factoidal/lib/api.mjs xmlEncrypt calls the wasm op xmlEncrypt through runWithCipher (see wasm:xmlEncrypt)"
+
+[[nonstage]]
+id = "npm:./browser#xmlEncrypt"
+reason = "npm/factoidal/lib/api.mjs xmlEncrypt calls the wasm op xmlEncrypt through runWithCipher (see wasm:xmlEncrypt)"
+
+[[nonstage]]
+id = "wasm:jweDecrypt"
+reason = "JWE compact decryption (JOSE/Jwe.lean; AES by the host through CipherCall.replayCipher), reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#jweDecrypt"
+reason = "npm/factoidal/lib/api.mjs jweDecrypt calls the wasm op jweDecrypt through runWithCipher (see wasm:jweDecrypt)"
+
+[[nonstage]]
+id = "npm:./browser#jweDecrypt"
+reason = "npm/factoidal/lib/api.mjs jweDecrypt calls the wasm op jweDecrypt through runWithCipher (see wasm:jweDecrypt)"
+
+[[nonstage]]
+id = "wasm:jweEncrypt"
+reason = "JWE compact encryption (JOSE/Jwe.lean; AES by the host through CipherCall.replayCipher), reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#jweEncrypt"
+reason = "npm/factoidal/lib/api.mjs jweEncrypt calls the wasm op jweEncrypt through runWithCipher (see wasm:jweEncrypt)"
+
+[[nonstage]]
+id = "npm:./browser#jweEncrypt"
+reason = "npm/factoidal/lib/api.mjs jweEncrypt calls the wasm op jweEncrypt through runWithCipher (see wasm:jweEncrypt)"
+
+[[nonstage]]
+id = "npm:./cipher-host#answerCipherRequest"
+reason = "runs one WebCrypto AES operation that a Lean CipherCall.Req names; reads no RDF data and makes no decision"
+
+[[nonstage]]
+id = "npm:./cipher-host#runWithCipher"
+reason = "host loop: answers each CipherCall request of an op with answerCipherRequest and calls the op again; reads no RDF data"
+
+[[nonstage]]
+id = "wasm:syntaxFor"
+reason = "a name table: the syntax of a file name or media type (RDF/MediaType.lean syntaxOfNames), reads no RDF data"
+
+[[nonstage]]
+id = "wasm:splitIri"
+reason = "term-level: the namespace and NCName local name of one IRI (RDF/IriSplit.lean splitIriXml), reads no graph"
+
+[[nonstage]]
+id = "wasm:isNCName"
+reason = "term-level: the XML NCName check of one string (XML/Wellformedness.lean isValidNCName), reads no graph"
+
+[[nonstage]]
+id = "wasm:vocabularies"
+reason = "a constant table of namespaces and term names (RDF/VocabularyTable.lean vocabularyTable), reads no RDF data"
+
+[[nonstage]]
+id = "wasm:memberIri"
+reason = "term-level: the IRI rdf:_n of one number (RDF/VocabularyTable.lean memberIri), reads no graph"
+
+[[nonstage]]
+id = "wasm:memberOrdinal"
+reason = "term-level: the n of one rdf:_n IRI (RDF/VocabularyTable.lean memberOrdinal?), reads no graph"
+
+[[nonstage]]
+id = "npm:.#sameValue"
+reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
+
+[[nonstage]]
+id = "npm:.#syntaxFor"
+reason = "a name table: the syntax of a file name or media type (RDF/MediaType.lean syntaxOfNames), reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#splitIri"
+reason = "term-level: the namespace and NCName local name of one IRI (RDF/IriSplit.lean splitIriXml), reads no graph"
+
+[[nonstage]]
+id = "npm:.#isNCName"
+reason = "term-level: the XML NCName check of one string (XML/Wellformedness.lean isValidNCName), reads no graph"
+
+[[nonstage]]
+id = "npm:.#vocabularies"
+reason = "a constant table of namespaces and term names (RDF/VocabularyTable.lean vocabularyTable), reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#memberIri"
+reason = "term-level: the IRI rdf:_n of one number (RDF/VocabularyTable.lean memberIri), reads no graph"
+
+[[nonstage]]
+id = "npm:.#memberOrdinal"
+reason = "term-level: the n of one rdf:_n IRI (RDF/VocabularyTable.lean memberOrdinal?), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#sameValue"
+reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#syntaxFor"
+reason = "a name table: the syntax of a file name or media type (RDF/MediaType.lean syntaxOfNames), reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#splitIri"
+reason = "term-level: the namespace and NCName local name of one IRI (RDF/IriSplit.lean splitIriXml), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#isNCName"
+reason = "term-level: the XML NCName check of one string (XML/Wellformedness.lean isValidNCName), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#vocabularies"
+reason = "a constant table of namespaces and term names (RDF/VocabularyTable.lean vocabularyTable), reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#memberIri"
+reason = "term-level: the IRI rdf:_n of one number (RDF/VocabularyTable.lean memberIri), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#memberOrdinal"
+reason = "term-level: the n of one rdf:_n IRI (RDF/VocabularyTable.lean memberOrdinal?), reads no graph"
+
 [[entry]]
 id = "wasm:storeQuery"
 stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
@@ -735,13 +895,13 @@ note = "npm/factoidal/fn.js hash: canonicalize (see npm:./fn#canonicalize), then
 id = "npm:.#canonicalHash"
 stages = ["rdfcStage"]
 covers = "part"
-note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash): RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: datasetGraphAsDefault, the digest (Crypto.hashHex)."
+note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash) on the dataset, graph names kept: RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: the digest (Crypto.hashHex)."
 
 [[entry]]
 id = "npm:./browser#canonicalHash"
 stages = ["rdfcStage"]
 covers = "part"
-note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash): RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: datasetGraphAsDefault, the digest (Crypto.hashHex)."
+note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash) on the dataset, graph names kept: RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: the digest (Crypto.hashHex)."
 
 [[entry]]
 id = "npm:./fn#vcEddsaCreateFromCanonical"
@@ -948,10 +1108,22 @@ id = "wasm:extList"
 reason = "reflection: the registered extension-function IRIs, reads no RDF data"
 
 [[entry]]
+id = "npm:.#asDefaultGraph"
+stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs asDefaultGraph: the wasm op datasetGraphAsDefault with the union of the graphs. Not covered: datasetGraphAsDefault, the JS Dataset wrapper."
+
+[[entry]]
 id = "npm:.#graphs"
 stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
 covers = "part"
 note = "npm/factoidal/lib/api.mjs graphs: the wasm op datasetGraphNames, then dataset.match(null, null, null, name) for each name (lib/dataset.mjs match, the wasm op datasetMatch; see wasm:datasetMatch). Not covered: datasetGraphNames, the JS Dataset wrappers."
+
+[[entry]]
+id = "npm:./browser#asDefaultGraph"
+stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs asDefaultGraph: the wasm op datasetGraphAsDefault with the union of the graphs. Not covered: datasetGraphAsDefault, the JS Dataset wrapper."
 
 [[entry]]
 id = "npm:./browser#graphs"
@@ -1007,13 +1179,13 @@ note = "npm/factoidal/lib/api.mjs vcEd25519Verify (fn.js re-exports it) calls th
 id = "wasm:sbm11Open"
 stages = ["sbm11Disk"]
 covers = "part"
-note = "Wasm/Ops/Sbm11.lean sbm11Open: HostSession.resolveHost (CURRENT) and openSession over the host reads of Wasm/HostRead.lean (ffi/l4_hostread.c): the manifest decoded, each artifact's size checked against it, a delta log refused, the GDX1 header read. The reads are those of sbm11Disk, under its assumption ReadsWritten. Not covered: the Merkle check (Verify.merkle) is not done on this path."
+note = "Wasm/Ops/Sbm11.lean sbm11Open: HostSession.resolveHost (CURRENT) and openSession over the host reads of Wasm/HostRead.lean (ffi/l4_hostread.c): the manifest decoded, each artifact's size checked against it, a delta log refused, the GDX1 header read; under verify merkle (the default) every .merkle sidecar admitted against the manifest's root (HostVerify.admit) and every byte read through a 65,536-byte chunk checked by its proof (HostVerify.checkChunk, #guards in HostVerifyTests), verify none checks lengths only. The reads are those of sbm11Disk, under its assumption ReadsWritten; under merkle a changed byte is refused under the collision resistance of SHA-256, which is tested and not proved."
 
 [[entry]]
 id = "wasm:sbm11Query"
 stages = ["sbm11Disk", "sbm11WhereStage", "sbm11DecodeStage"]
 covers = "part"
-note = "Wasm/Ops/Sbm11.lean sbm11Query: HostSession.runOne, the engine of l4sbm11 query with one thread (IdQuery.translate; runPlanM, runPostM, IdGroup.runNestedM over HostSession.Session.store; else the reference evaluator over selectedDataset). sbm11WhereStage and sbm11DecodeStage are proved over the file store of MemGen.store_written; HostSession.store makes the same reads through the same functions (PrmRange.rangeM over bytesReader, Dict.pageM, Dict.lookupM, DictRange.lowerBoundM), which is tested and not proved: SBM11_HOST=1 tests/sbm11/census.sh, 605 of 605 W3C SPARQL 1.0 and 1.1 evaluation tests with the bytes and path of l4sbm11 query; npm test/sbm11-host.test.mjs. Not covered: the post-processing (runPostM, IdGroup), the reference fallback, the session caches."
+note = "Wasm/Ops/Sbm11.lean sbm11Query: HostSession.runOne, the engine of l4sbm11 query with one thread (IdQuery.translate; runPlanM, runPostM, IdGroup.runNestedM over HostSession.Session.store; else the reference evaluator over selectedDataset). sbm11WhereStage and sbm11DecodeStage are proved over the file store of MemGen.store_written; HostSession.store makes the same reads through the same functions (PrmRange.rangeM over bytesReader, Dict.pageM, Dict.lookupM, DictRange.lowerBoundM), which is tested and not proved: SBM11_HOST=1 tests/sbm11/census.sh, 605 of 605 W3C SPARQL 1.0 and 1.1 evaluation tests with the bytes and path of l4sbm11 query; npm test/sbm11-host.test.mjs. npm test/sbm11-verify.test.mjs (a changed byte in each kind of file refused by name). Not covered: the post-processing (runPostM, IdGroup), the reference fallback, the session caches."
 
 [[nonstage]]
 id = "wasm:sbm11Close"
@@ -1150,3 +1322,46 @@ reason = "host (webdav/server.mjs): a Node HTTP socket over openWebdav; reads no
 [[nonstage]]
 id = "cli:webdav-serve"
 reason = "host command: starts npm:./webdav#listen on a mount directory and prints the origin; reads no RDF data"
+
+# Literal values (https://github.com/danbri/factoidal/issues/1051): term-level
+# functions over one literal or one JavaScript value; no graph, no dataset.
+
+[[nonstage]]
+id = "npm:.#literalValue"
+reason = "term-level: the XSD lexical-to-value mapping of one literal (RDF/LiteralValue.lean analyze), reads no graph"
+
+[[nonstage]]
+id = "npm:.#isValidLiteral"
+reason = "term-level: the lexical-space check of one literal (wasm op literalValue), reads no graph"
+
+[[nonstage]]
+id = "npm:.#canonicalLiteral"
+reason = "term-level: the canonical form of one literal (wasm op literalValue), reads no graph"
+
+[[nonstage]]
+id = "npm:.#literalFromValue"
+reason = "term-level: the literal of one JavaScript value (RDF/LiteralValue.lean jsValueLiteral), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#literalValue"
+reason = "term-level: the XSD lexical-to-value mapping of one literal (RDF/LiteralValue.lean analyze), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#isValidLiteral"
+reason = "term-level: the lexical-space check of one literal (wasm op literalValue), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#canonicalLiteral"
+reason = "term-level: the canonical form of one literal (wasm op literalValue), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#literalFromValue"
+reason = "term-level: the literal of one JavaScript value (RDF/LiteralValue.lean jsValueLiteral), reads no graph"
+
+[[nonstage]]
+id = "wasm:literalValue"
+reason = "term-level: the XSD lexical-to-value mapping of one literal (RDF/LiteralValue.lean analyze), reads no graph"
+
+[[nonstage]]
+id = "wasm:literalFromValue"
+reason = "term-level: the literal of one JavaScript value (RDF/LiteralValue.lean jsValueLiteral), reads no graph"

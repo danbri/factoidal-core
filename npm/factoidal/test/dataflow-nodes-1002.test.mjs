@@ -80,7 +80,8 @@ test('parse Turtle -> RDFS closure -> explain: one record per node, statuses and
   const explained = r.evidence[2].artefact;
   assert.equal(explained.entailed, true);
   assert.ok(explained.bundle);
-  assert.ok(r.graph instanceof f.Dataset);
+  // The wire carries the node's output (ExplainGraphResult), the artefact.
+  assert.equal(r.graph, explained);
   const expected = union(names.map((n) => [...m.get(n).assumptions]));
   assert.deepEqual([...r.assumptions].sort(), expected);
   assert.deepEqual([...p.assumptions].sort(), expected);
@@ -100,13 +101,14 @@ test('an assumed writer adds its named assumption to the union', async () => {
   for (const a of w.assumptions) assert.ok(r.assumptions.includes(a));
 });
 
-test('a SHACL node keeps the graph and records the report', async () => {
+test('a SHACL node puts the report on its wire and records it', async () => {
   const shapes = `@prefix sh: <http://www.w3.org/ns/shacl#> . @prefix ex: <http://example.org/> .
     ex:S a sh:NodeShape ; sh:targetClass ex:Person ; sh:property [ sh:path ex:worksFor ; sh:minCount 1 ] .`;
   const r = await f.run(f.pipe(await f.node('turtleDocumentReader'), await f.node('rdfsReasoner'),
     await f.node('shaclValidator', { shapes })), SOURCES);
   assert.equal(r.evidence[2].stage, 'shaclValidator');
   assert.equal(r.evidence[2].artefact.conforms, true);
+  assert.equal(r.graph, r.evidence[2].artefact);
 });
 
 test('the evidence of the input wire is kept', async () => {

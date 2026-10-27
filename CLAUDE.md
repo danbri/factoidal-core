@@ -792,6 +792,8 @@ UNDEREEVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS
 WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.”"
 
 - Owner, 2026-10-27, later: "I do want 'under-reviewed' not 'unreviewed'".
+- Owner, 2026-10-27, answer "UNDER-REVIWED" to the question: should the notice
+  say "UNREVIEWED" or "UNDER-REVIEWED"? Settled: "UNDER-REVIEWED".
 - The notice, spelled `EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.`, is at the top of `README.md`,
   `npm/factoidal/README.md`, the hub index and the hub servers page, in the
   npm package description, in every `factoidal` help text, and on standard
@@ -802,8 +804,11 @@ WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.”"
   WebCrypto on every JavaScript host, decisions in Lean, measured by vectors
   and a differential run. Owner, verbatim: "Why not just WebCrypto everywhere
   (browser/node or wasm fallback?)"; then "Yes" to amending the crypto policy.
-  Native executables: not decided. Rule text: `skills/crypto-policy/SKILL.md`
-  § AES through WebCrypto.
+  Native executables: owner, 2026-10-27, verbatim: "Ok for now: “My proposal
+  is HACL* Vale on x86-64 and a refusal on other CPU”". So native x86-64 uses
+  HACL\* Vale AES-GCM; other native CPUs refuse AES with a message that names
+  https://github.com/danbri/factoidal/issues/677. Rule text:
+  `skills/crypto-policy/SKILL.md` § AES through WebCrypto.
 
 ### There are no users. Prefer the right structure to the compatible one
 
