@@ -30,6 +30,7 @@ import { fullEngineMessage, encodeJsValue } from './lean-entry.mjs';
 import { memoryDeltaLogStore } from './delta-log-hosts.mjs';
 import { FactoidalError, errorFromEnvelope, envelopeResult } from './errors.mjs';
 import { buildNodes } from './nodes.mjs';
+import { runWithCipher } from './cipher-host.mjs';
 
 // The format names, regimes and query outputs are the engine's tables (op
 // engineTables, formal/lean4/Wasm/Ops/Handles.lean), read once per engine:
@@ -1663,6 +1664,136 @@ function buildApi(driver) {
       e.vcEd25519Verify(publicKeyHex, messageHex, signatureHex), 'vcEd25519Verify').valid;
   }
 
+  // -----------------------------------------------------------------
+  // XML Encryption 1.1 and JWE (https://github.com/danbri/factoidal/issues/1084,
+  // https://github.com/danbri/factoidal/issues/1085). Every decision is in
+  // Lean (formal/lean4/Wasm/Ops/XmlEnc.lean, Wasm/Ops/Jwe.lean); RSA, P-256
+  // and X25519 run in the wasm (HACL*). AES runs in this host's WebCrypto:
+  // runWithCipher (lib/cipher-host.mjs) answers each request the engine
+  // makes and calls the op again. This code converts bytes to base64 and
+  // draws random bytes; it reads no document and chooses nothing.
+  // -----------------------------------------------------------------
+
+  // The most random octets any of these ops reads (Jwe.randomBytesNeeded is
+  // at most 112; xmlEncrypt reads at most 76).
+  const CIPHER_RANDOM_BYTES = 112;
+
+  function bytesToBase64(bytes) {
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(bin);
+  }
+
+  function base64ToBytes(text) {
+    const bin = atob(text);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function randomBase64(n) {
+    const b = new Uint8Array(n);
+    globalThis.crypto.getRandomValues(b);
+    return bytesToBase64(b);
+  }
+
+  // One op that may ask for AES: the engine's envelope after every request
+  // is answered; a refusal throws a FactoidalError.
+  async function cipherOp(fnName, what, args) {
+    const e = await entry();
+    requireEntryFn(e, fnName, what);
+    const res = await runWithCipher((a) => JSON.parse(e[fnName](JSON.stringify(a))), args);
+    return entryResult(JSON.stringify(res), fnName);
+  }
+
+  function checkKeys(fnName, keys) {
+    if (!Array.isArray(keys) || !keys.every((k) => k !== null && typeof k === 'object')) {
+      throw new TypeError(`${fnName}: keys must be an array of JWK objects`);
+    }
+  }
+
+  /**
+   * Decrypt every xenc:EncryptedData of an XML document (XML Encryption 1.1).
+   * Allowlist and key forms: API.md "XML Encryption and JWE".
+   * @param {string} document the XML document
+   * @param {{keys: object[], allowCbc?: boolean}} options private JWKs
+   *   (`kid` is the ds:KeyName); `allowCbc` admits aes128-cbc and aes256-cbc
+   * @returns {Promise<{document: string, canonical: string}>}
+   */
+  async function xmlDecrypt(document, options) {
+    if (typeof document !== 'string') throw new TypeError('xmlDecrypt: document must be a string');
+    const o = options || {};
+    checkKeys('xmlDecrypt', o.keys);
+    const r = await cipherOp('xmlDecrypt', 'XML decryption',
+      { document, keys: o.keys, allowCbc: o.allowCbc === true });
+    return { document: r.document, canonical: r.canonical };
+  }
+
+  /**
+   * Encrypt the document element (or, with `content`, its content) of an XML
+   * document for one recipient (XML Encryption 1.1, AES-GCM content).
+   * @param {string} document the XML document
+   * @param {{recipient: object, algorithm?: 'aes128-gcm'|'aes256-gcm',
+   *   keyTransport?: 'rsa-oaep-mgf1p'|'rsa-oaep-sha256', keyWrap?: 'kw-aes128'|'kw-aes256',
+   *   content?: boolean, saml?: boolean}} options `recipient` is a public JWK
+   *   (RSA, EC P-256, OKP X25519) or an `oct` key; `saml` wraps the result in
+   *   saml:EncryptedAssertion
+   * @returns {Promise<{document: string, canonical: string}>}
+   */
+  async function xmlEncrypt(document, options) {
+    if (typeof document !== 'string') throw new TypeError('xmlEncrypt: document must be a string');
+    const o = options || {};
+    if (o.recipient === null || typeof o.recipient !== 'object') {
+      throw new TypeError('xmlEncrypt: options.recipient must be a JWK object');
+    }
+    const args = { document, recipient: o.recipient, random: randomBase64(CIPHER_RANDOM_BYTES) };
+    for (const k of ['algorithm', 'keyTransport', 'keyWrap']) if (o[k] !== undefined) args[k] = o[k];
+    if (o.content === true) args.content = true;
+    if (o.saml === true) args.saml = true;
+    const r = await cipherOp('xmlEncrypt', 'XML encryption', args);
+    return { document: r.document, canonical: r.canonical };
+  }
+
+  /**
+   * Decrypt a JWE in the Compact Serialization (RFC 7516).
+   * @param {string} token the compact JWE
+   * @param {{jwk: object}} options the recipient's private JWK
+   * @returns {Promise<{header: object, plaintext: Uint8Array}>}
+   */
+  async function jweDecrypt(token, options) {
+    if (typeof token !== 'string') throw new TypeError('jweDecrypt: token must be a string');
+    const o = options || {};
+    if (o.jwk === null || typeof o.jwk !== 'object') throw new TypeError('jweDecrypt: options.jwk must be a JWK object');
+    const r = await cipherOp('jweDecrypt', 'JWE decryption', { token, jwk: o.jwk });
+    return { header: r.header, plaintext: base64ToBytes(r.plaintext) };
+  }
+
+  /**
+   * Encrypt to a JWE in the Compact Serialization (RFC 7516).
+   * @param {Uint8Array|string} plaintext bytes, or text written as UTF-8
+   * @param {{alg: string, enc: string, jwk: object, header?: object}} options
+   *   the recipient's public JWK (or the `oct` key for A128KW, A256KW, dir);
+   *   `header`: more protected header members
+   * @returns {Promise<string>} the compact JWE
+   */
+  async function jweEncrypt(plaintext, options) {
+    let bytes;
+    if (typeof plaintext === 'string') bytes = new TextEncoder().encode(plaintext);
+    else if (plaintext instanceof Uint8Array) bytes = plaintext;
+    else throw new TypeError('jweEncrypt: plaintext must be a Uint8Array or a string');
+    const o = options || {};
+    if (typeof o.alg !== 'string' || typeof o.enc !== 'string') {
+      throw new TypeError('jweEncrypt: options.alg and options.enc must be strings');
+    }
+    if (o.jwk === null || typeof o.jwk !== 'object') throw new TypeError('jweEncrypt: options.jwk must be a JWK object');
+    const args = { alg: o.alg, enc: o.enc, jwk: o.jwk, plaintext: bytesToBase64(bytes),
+      random: randomBase64(CIPHER_RANDOM_BYTES) };
+    if (o.header !== undefined) args.header = o.header;
+    return (await cipherOp('jweEncrypt', 'JWE encryption', args)).token;
+  }
+
   /**
    * Create an eddsa-rdfc-2022 Data Integrity proofValue over an
    * already-canonicalized document + proof config (entry_jsoo.ml's
@@ -2495,6 +2626,10 @@ function buildApi(driver) {
     vcEd25519SecretToPublic,
     vcEd25519Sign,
     vcEd25519Verify,
+    xmlDecrypt,
+    xmlEncrypt,
+    jweDecrypt,
+    jweEncrypt,
     vcEddsaCreateFromCanonical,
     vcEddsaVerifyFromCanonical,
     vcCheckCredential,

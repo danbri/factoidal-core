@@ -89,8 +89,8 @@ same vendored HACL* C. `Hacl_Hash_SHA1.c`, `Hacl_Hash_Blake2s.c`,
 `Hacl_Hash_Blake2b.c` and `Lib_Memzero0.c` are here as LINK CLOSURE of
 `Hacl_HMAC.c`, which is one translation unit covering every HMAC hash; no
 Lean code calls them. Portable scalar units only — see
-`third_party/hacl/PROVENANCE.md` for why the Simd/Vec variants and AES-GCM
-are not vendored. -/
+`third_party/hacl/PROVENANCE.md` for why the Simd/Vec variants are not
+vendored. AES-GCM is the x86-64-only section below. -/
 
 target hacl_chachapoly_shim.o pkg : FilePath :=
   buildHaclO pkg "hacl_chachapoly_shim" (pkg.dir / "ffi" / "hacl_chachapoly.c")
@@ -131,6 +131,58 @@ target Lib_Memzero0.o pkg : FilePath :=
 target Hacl_HPKE_Curve51_CP32_SHA256.o pkg : FilePath :=
   buildHaclO pkg "Hacl_HPKE_Curve51_CP32_SHA256" (haclDir pkg / "src" / "Hacl_HPKE_Curve51_CP32_SHA256.c")
 
+/-! AES-128-GCM and AES-256-GCM (2026-10-27,
+https://github.com/danbri/factoidal/issues/677). Owner, verbatim: "Ok for now:
+“My proposal is HACL* Vale on x86-64 and a refusal on other CPU”".
+
+`L4Factoidal/Crypto/AesGcmNative.lean` declares `@[extern "l4_hacl_aesgcm_*"]`
+opaques realised by `ffi/hacl_aesgcm.c`. The shim is compiled on EVERY host;
+off x86-64 it compiles to stubs that refuse and references nothing else. On
+an x86-64 Linux or macOS host only, the library also gets EverCrypt's AEAD
+layer, its CPU feature detection, `EverCrypt_Chacha20Poly1305.c` (link
+closure of `EverCrypt_AEAD.c`, which compiles to the portable
+`Hacl_AEAD_Chacha20Poly1305` calls already linked above), and the Vale
+verified assembly `aesgcm-x86_64-*.S` and `cpuid-x86_64-*.S` for the host
+OS. The EverCrypt units read `ffi/hacl_vale_config/config.h` (the CMake
+`config.h` of the HACL* build, filled in for this one configuration). -/
+
+/-- True when Lake runs on x86-64 Linux or macOS, the hosts the Vale
+assembly is assembled for. -/
+def valeHost : Bool :=
+  System.Platform.target.startsWith "x86_64-" &&
+    (System.Platform.isOSX || (System.Platform.target.splitOn "linux").length > 1)
+
+/-- Vale's assembly flavour for this host: `darwin` (Mach-O symbol names with
+a leading underscore) or `linux` (ELF). -/
+def valeFlavour : String := if System.Platform.isOSX then "darwin" else "linux"
+
+/-- `buildHaclO` plus the include directory of the HACL* `config.h`. -/
+def buildHaclValeO (pkg : Package) (oName : String) (src : FilePath) : SpawnM (Job FilePath) := do
+  let oFile := pkg.buildDir / "ffi" / (oName ++ ".o")
+  let srcJob ← inputTextFile src
+  let weakArgs := #["-I", (← getLeanIncludeDir).toString,
+                    "-I", (haclDir pkg / "include").toString,
+                    "-I", (pkg.dir / "ffi" / "hacl_vale_config").toString]
+  buildO oFile srcJob weakArgs #["-O2", "-fPIC"] "cc" getLeanTrace
+
+target hacl_aesgcm_shim.o pkg : FilePath :=
+  buildHaclO pkg "hacl_aesgcm_shim" (pkg.dir / "ffi" / "hacl_aesgcm.c")
+
+target EverCrypt_AEAD.o pkg : FilePath :=
+  buildHaclValeO pkg "EverCrypt_AEAD" (haclDir pkg / "src" / "EverCrypt_AEAD.c")
+
+target EverCrypt_AutoConfig2.o pkg : FilePath :=
+  buildHaclValeO pkg "EverCrypt_AutoConfig2" (haclDir pkg / "src" / "EverCrypt_AutoConfig2.c")
+
+target EverCrypt_Chacha20Poly1305.o pkg : FilePath :=
+  buildHaclValeO pkg "EverCrypt_Chacha20Poly1305" (haclDir pkg / "src" / "EverCrypt_Chacha20Poly1305.c")
+
+target vale_aesgcm.o pkg : FilePath :=
+  buildHaclValeO pkg "vale_aesgcm" (haclDir pkg / "vale" / "src" / s!"aesgcm-x86_64-{valeFlavour}.S")
+
+target vale_cpuid.o pkg : FilePath :=
+  buildHaclValeO pkg "vale_cpuid" (haclDir pkg / "vale" / "src" / s!"cpuid-x86_64-{valeFlavour}.S")
+
 extern_lib libl4hacl pkg := do
   let shim ← hacl_ed25519_shim.o.fetch
   let ed ← Hacl_Ed25519.o.fetch
@@ -154,11 +206,18 @@ extern_lib libl4hacl pkg := do
   let blake2b ← Hacl_Hash_Blake2b.o.fetch
   let memzero ← Lib_Memzero0.o.fetch
   let hpke ← Hacl_HPKE_Curve51_CP32_SHA256.o.fetch
+  let aesShim ← hacl_aesgcm_shim.o.fetch
+  let vale ← if valeHost then do
+      pure #[← EverCrypt_AEAD.o.fetch, ← EverCrypt_AutoConfig2.o.fetch,
+             ← EverCrypt_Chacha20Poly1305.o.fetch, ← vale_aesgcm.o.fetch,
+             ← vale_cpuid.o.fetch]
+    else pure #[]
   let name := nameToStaticLib "l4hacl"
   buildStaticLib (pkg.staticLibDir / name)
-    #[shim, ed, curve, sha2, p256Shim, rsaShim, p256, bn64, bn,
+    (#[shim, ed, curve, sha2, p256Shim, rsaShim, p256, bn64, bn,
       cpShim, kdfShim, hpkeShim,
-      aead, chacha, poly, hkdf, hmac, sha1, blake2s, blake2b, memzero, hpke]
+      aead, chacha, poly, hkdf, hmac, sha1, blake2s, blake2b, memzero, hpke,
+      aesShim] ++ vale)
 
 /-- Build the deliberately small POSIX `pread` host adapter used only by the
     native IBK2 range-read probe. The pure planner/decoder remains in Lean;
@@ -241,7 +300,7 @@ extern_lib libl4hostread pkg := do
   roots := #[`Wasm.Abi, `Wasm.Exports, `Wasm.Dispatch,
              `Wasm.ExtHost, `Wasm.Ops.ExtFns, `Wasm.Ops.Clock,
              `Wasm.Ops.ErrorModel, `Wasm.ErrorModelTests,
-             `Wasm.Ops.Support, `Wasm.Ops.FromDataset, `Wasm.Ops.Parse, `Wasm.Ops.Query,
+             `Wasm.Ops.Support, `Wasm.Ops.Jwe, `Wasm.Ops.FromDataset, `Wasm.Ops.Parse, `Wasm.Ops.Query,
              `Wasm.Ops.Reason, `Wasm.Ops.Canon, `Wasm.Ops.CL,
              `Wasm.Ops.Block,
              `Wasm.Ops.Store,
@@ -263,7 +322,7 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Toan,
              `Wasm.Ops.Xmpp,
              `Wasm.Ops.XmppSession,
-             `Wasm.Ops.Crypto,
+             `Wasm.Ops.Crypto, `Wasm.Ops.XmlEnc,
              `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests, `Wasm.GraphSetTests,
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
              `Wasm.Ops.Maths,
@@ -610,11 +669,24 @@ lean_exe «l4dict-fold-bench» where
 -- Real-corpus probe for the AEAD, KDF, X25519 and HPKE primitives
 -- (Harness/CryptoProbe.lean): RFC 8439 section 2.8.2, RFC 5869 Appendix A,
 -- RFC 7748 section 6.1, RFC 9180 Appendix A.2, and the Wycheproof
--- chacha20_poly1305, hkdf_sha256 and x25519 corpora. It also reports the
--- AES-GCM gap as NOT RUN rather than passing over it. Same spec/pragmatics
+-- chacha20_poly1305, hkdf_sha256 and x25519 corpora. Section aes-gcm runs
+-- AES-GCM (HACL* Vale) on x86-64 and counts it NOT RUN, naming issue 677,
+-- where it is not available. Same spec/pragmatics
 -- split as the other probes: file I/O and printed scores, and the externs
 -- a `#guard` cannot reach. Run the built binary from the REPOSITORY ROOT.
 @[default_target] lean_exe «l4crypto-probe» where root := `Harness.CryptoProbe
+
+-- JWE probe (Harness/JweProbe.lean, L4Factoidal/JOSE/Jwe.lean, issue 1085):
+-- the RFC 7516 Appendix A and RFC 7520 section 5 compact serializations
+-- (tests/jose/jwe-vectors.json), the RFC 7518 Appendix C derivation and
+-- random round trips, with HACL* RSA, P-256, X25519 and Vale AES-GCM. Cases
+-- that need AES Key Wrap or AES-CBC are NOT RUN here (issue 677); the wasm
+-- test tests/jose/jwe-wasm.mjs runs them. Run from the REPOSITORY ROOT.
+@[default_target] lean_exe «l4jwe-probe» where root := `Harness.JweProbe
+-- XML Encryption 1.1 and SAML encrypted assertions with HACL* RSA-OAEP,
+-- P-256, X25519 and Vale AES-GCM, against the Apache Santuario fixtures of
+-- tests/xmlenc/fixtures.json (Harness/XmlEncProbe.lean, issues 1084, 1073).
+@[default_target] lean_exe «l4xmlenc-probe» where root := `Harness.XmlEncProbe
 
 -- SHACL Core probe over the W3C shacl test suite (Harness/ShaclProbe.lean).
 @[default_target] lean_exe «l4shacl» where root := `Harness.ShaclProbe

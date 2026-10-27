@@ -230,10 +230,10 @@ private def annDs : Dataset :=
                 ⟨.bnode "r", ⟨"http://e/certainty", rfl⟩, .iri ⟨"http://e/high", rfl⟩⟩],
     named := [] }
 
--- An RDF 1.2 directional language string: the star writer writes `@direction`
--- (rdfDirection `rdf-1.2`, the default under `rdfstar`) and the star reader gives
--- `rdf:dirLangString` back. The JSON-LD 1.1 writer drops the direction
--- (https://github.com/danbri/factoidal/issues/984).
+-- An RDF 1.2 directional language string: both writers write `@direction`
+-- (https://github.com/danbri/factoidal/issues/984). The star reader gives
+-- `rdf:dirLangString` back; the JSON-LD 1.1 reader (no `rdfDirection`) reads a
+-- language-tagged string and drops the direction, as JSON-LD 1.1 section 8.4 says.
 private def dirDs : Dataset :=
   match Source.parseDocument {} .nt .rdf12 none
       "<http://e/s> <http://e/p> \"y\"@ar--rtl .\n" with
@@ -245,6 +245,8 @@ private def dirDs : Dataset :=
         some dirDs
 #guard ((serializeDataset withJsonLd .jsonld .rdf12 dirDs).toOption.bind fun txt =>
           (Source.parseDocument Source.withJsonLd .jsonld .rdf12 none txt).toOption) != some dirDs
+#guard ((serializeDataset withJsonLd .jsonld .rdf12 dirDs).toOption.map
+          (fun txt => (txt.splitOn "\"@direction\"").length)) == some 2
 
 #guard ((serializeDataset withJsonLdStar .jsonld .rdf12 annDs).toOption.map
           (fun txt => (txt.splitOn "@annotation").length)) == some 2

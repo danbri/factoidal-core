@@ -60,8 +60,12 @@ and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
   self-issued CID credentials and SAML 2.0 assertions)
 - Security: JWS/JWT (ES256, RS256, EdDSA), XML Signature verification in the
   SAML Core profile (Exclusive XML Canonicalization 1.0, rsa-sha256), with
-  HACL\* primitives. XML Encryption and JWE are not implemented yet:
-  https://github.com/danbri/factoidal/issues/1081
+  HACL\* primitives. XML Encryption 1.1 and JWE (RFC 7516), decryption and
+  encryption (`xmlDecrypt`, `xmlEncrypt`, `jweDecrypt`, `jweEncrypt`):
+  RSA-OAEP, P-256 and X25519 run in the wasm (HACL\*), AES runs in the host's
+  WebCrypto. The authorization server decrypts encrypted SAML assertions
+  with `--saml-decrypt-key`. Native AES on CPUs other than x86-64:
+  https://github.com/danbri/factoidal/issues/677
 - A persisted store with a delta log for updates (early stage)
 - Terms: a JavaScript extension function can answer with an exact term
   (`{value: "007", datatype: XSD + "integer"}`, an RDF/JS term, a triple

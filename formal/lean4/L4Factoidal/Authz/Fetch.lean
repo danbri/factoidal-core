@@ -35,6 +35,7 @@ Address parsing is `L4Factoidal.LWS.InboxGuard` (`addr?`, `authority?`,
 `localhostName`).
 -/
 import L4Factoidal.LWS.InboxGuard
+import L4Factoidal.Crypto.CipherCall
 
 namespace L4Factoidal.Authz
 
@@ -69,6 +70,11 @@ inductive Need where
   | resolve (host : String)
   /-- GET this URL with this `Accept`, connecting to this address. -/
   | fetch (url accept address : String)
+  /-- Run this one AES operation (WebCrypto on the host) and pass the bytes,
+  or a refusal with no reason, back: an encrypted SAML assertion
+  (https://github.com/danbri/factoidal/issues/1073,
+  `L4Factoidal/Crypto/CipherCall.lean`). -/
+  | cipher (req : L4Factoidal.Crypto.CipherCall.Req)
   deriving Repr, BEq, DecidableEq
 
 /-- What is known of a document. -/

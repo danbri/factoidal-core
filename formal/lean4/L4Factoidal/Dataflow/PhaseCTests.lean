@@ -10,9 +10,10 @@ during `lake build` (https://github.com/danbri/factoidal/issues/975, phase C).
    terms), every writer's output parses back to a dataset isomorphic to the
    writer's projection (`writerRoundTripB`, `streamRoundTripB`). RDF/XML and
    JSON-LD refuse a triple term with an error (outside `writerDomain`).
-   Finding: the JSON-LD writer drops the base direction of a directional
-   language string with no error (https://github.com/danbri/factoidal/issues/984);
-   that case is outside `writerDomain .jsonld` and a guard pins the loss.
+   A directional language string: the JSON-LD writer writes `@direction`, and
+   the JSON-LD 1.1 reader (no `rdfDirection`) drops it, as JSON-LD 1.1
+   section 8.4 says (https://github.com/danbri/factoidal/issues/984); that case
+   is outside `writerDomain .jsonld` and a guard pins the loss.
    The RDF/XML writer had the same loss; it is fixed in this phase.
 2. The projections: N-Quads drops an empty named graph; a triples-only writer
    writes the union of the graphs.
@@ -156,9 +157,11 @@ private def withTripleTerm : Dataset :=
 #guard writerRoundTripB .trig .rdf12 withTripleTerm == some true
 
 -- Directional language strings (RDF 1.2). RDF/XML keeps the base direction
--- (fixed in this phase). JSON-LD writes the literal WITHOUT its direction:
--- finding https://github.com/danbri/factoidal/issues/984. The case is outside
--- `writerDomain .jsonld`; this guard pins the loss and fails when it changes.
+-- (fixed in this phase). JSON-LD writes `@direction`; the JSON-LD 1.1 reader
+-- (no `rdfDirection`) reads a language-tagged string, so the round trip loses
+-- the direction (https://github.com/danbri/factoidal/issues/984; with
+-- `rdfstar` or rdfDirection `rdf-1.2` it is kept: `RDF/SinkJsonLd.lean`). The
+-- case is outside `writerDomain .jsonld`; this guard pins the loss.
 private def withDir : Dataset :=
   { default := [{ s := .iri (mkIri "s1"), p := mkIri "p", o := .literal (Literal.dirLangString "y" "ar" .rtl) }],
     named := [] }

@@ -670,6 +670,15 @@ loader method. Adding one is a `def` in an ops module plus two lines in
 four CL/IKL ops of https://github.com/danbri/factoidal/issues/623 were
 added that way on 2026-08-26 and touched no C at all.
 
+Every new op, and every new npm function that calls one, is an entry
+point: map it to a stage in `foundation/entrypoints.toml`, or add a
+`[[nonstage]]` entry there with a reason. Then run `bash
+tests/dataflow/run.sh` (elan's `lake` on `PATH`) before the push. Cost of
+skipping it: on 2026-10-27 the XML Encryption and JWE ops and their four npm
+functions went to https://github.com/danbri/factoidal-core/pull/159 with
+14 unregistered entry points, and the PR's "Dataflow gate" check was red
+until a second push.
+
 Reach for the steps below only for a genuinely new C-level entry point
 — a different calling convention, not a new operation. `l4_call_blob`
 (2026-09-03) is the one example so far: an op whose input is raw BYTES
@@ -869,6 +878,14 @@ against the old core library.
    this is noise, not a regression. What would NOT be noise is the
    undefined-symbol list growing; treat that as a design question per
    "the purity evidence" above.
+
+   A stale `.c` gives the same failure. Step 7 compiles every `.c` under
+   `.lake/build/ir`, including modules outside the `l4wasm` import
+   closure, which `lake build l4wasm` does not rebuild. 2026-10-27: the
+   C of `L4Factoidal.JSONLD.Tests` was from a build before
+   `parseJsonLd` took one more argument; the link stopped with
+   "signature mismatch ... parseJsonLd" and one build cycle (about 10
+   minutes) was lost. Step 0 now runs `lake build l4wasm L4Factoidal`.
 
    **Any OTHER signature mismatch is a trap, and the build now fails on
    it** (`link_module` in `Wasm/build-wasm.sh`). wasm-ld replaces a call

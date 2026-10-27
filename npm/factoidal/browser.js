@@ -177,6 +177,12 @@ export const vcSha256Hex = api.vcSha256Hex;
 export const vcEd25519SecretToPublic = api.vcEd25519SecretToPublic;
 export const vcEd25519Sign = api.vcEd25519Sign;
 export const vcEd25519Verify = api.vcEd25519Verify;
+
+// XML Encryption 1.1 and JWE; AES through WebCrypto (lib/cipher-host.mjs)
+export const xmlDecrypt = api.xmlDecrypt;
+export const xmlEncrypt = api.xmlEncrypt;
+export const jweDecrypt = api.jweDecrypt;
+export const jweEncrypt = api.jweEncrypt;
 export const vcEddsaCreateFromCanonical = api.vcEddsaCreateFromCanonical;
 export const vcEddsaVerifyFromCanonical = api.vcEddsaVerifyFromCanonical;
 export const vcCheckCredential = api.vcCheckCredential;

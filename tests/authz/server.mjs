@@ -21,7 +21,7 @@ import { join } from 'node:path'
 import {
   TOKEN_EXCHANGE, JWT_TYPE, ID_TOKEN_TYPE, SAML2_TYPE, OPENID_PROVIDER,
   keyPair, didKeyOf, signJwt, verifyJwt, selfIssued, exchangeForm, postForm,
-  startDocuments, hostProvider, nowSeconds, samlIdpKey, samlAssertion
+  startDocuments, hostProvider, nowSeconds, samlIdpKey, samlAssertion, samlEncrypted
 } from './fixtures.mjs'
 
 let passed = 0
@@ -283,6 +283,66 @@ async function main () {
         } catch (_e) { refusedPrivate = true }
         assert(refusedPrivate, 'a private JWK was accepted')
       })
+      // Encrypted assertions (issue 1073): this server has no decryption key.
+      const enc = generateKeyPairSync('rsa', { modulusLength: 2048 })
+      await check('SAML suite: an encrypted assertion is refused by a server with no decryption key', () =>
+        samlRefused(samlEncrypted(assertionFor(), enc.publicKey)))
+      // A third server with a decryption key (`samlKeys`): RSA-OAEP in Lean
+      // over HACL*, AES-GCM through WebCrypto on this host.
+      const samlDec = await listen({
+        engine, port: 0, resources: [STORAGE], storageKey: null,
+        samlIdps: [{ entityId: idpId, jwk: idp.publicJwk }],
+        samlKeys: [{ ...enc.privateKey.export({ format: 'jwk' }), kid: 'enc-1' }]
+      })
+      try {
+        const decExchange = (token) => postForm(`${samlDec.origin}/token`, exchangeForm({
+          grant_type: TOKEN_EXCHANGE, resource: STORAGE, subject_token: token, subject_token_type: SAML2_TYPE
+        }))
+        const decFor = (opts = {}) => samlAssertion({
+          issuer: idpId, nameId: 'https://id.example/end-user', recipient: 'https://app.example/SAML',
+          audiences: ['https://app.example/SAML', samlDec.issuer], key: idp.privateKey, ...opts
+        })
+        const decRefused = async (token) => {
+          const a = await decExchange(token)
+          assert(a.status === 400 && a.json.error === 'invalid_request', `${a.status} ${a.text}`)
+        }
+        const decAccepted = async (token) => {
+          const a = await decExchange(token)
+          assert(a.status === 200, `status ${a.status}: ${a.text}`)
+          const header = JSON.parse(Buffer.from(a.json.access_token.split('.')[0], 'base64url').toString('utf8'))
+          const key = (await (await fetch(`${samlDec.origin}/jwks`)).json()).keys.find((k) => k.kid === header.kid)
+          const v = verifyJwt(a.json.access_token, key)
+          assert(v.ok, 'the access token does not verify (node:crypto)')
+          assert(v.claims.sub === 'https://id.example/end-user', `sub ${v.claims.sub}`)
+          assert(v.claims.client_id === 'https://app.example/SAML', `client_id ${v.claims.client_id}`)
+        }
+        await check('SAML suite: an assertion encrypted by node:crypto (RSA-OAEP SHA-1, AES-128-GCM) is decrypted and exchanged', () =>
+          decAccepted(samlEncrypted(decFor(), enc.publicKey)))
+        await check('SAML suite: an assertion encrypted with xmlenc11 rsa-oaep SHA-256 is decrypted and exchanged', () =>
+          decAccepted(samlEncrypted(decFor(), enc.publicKey, { sha256: true })))
+        await check('SAML suite: a plain signed assertion is still exchanged by a server with a decryption key', () =>
+          decAccepted(decFor()))
+        await check('SAML suite: an encrypted assertion altered after signing is refused', () =>
+          decRefused(samlEncrypted(decFor({ fault: 'altered' }), enc.publicKey)))
+        await check('SAML suite: an encrypted unsigned assertion is refused', () =>
+          decRefused(samlEncrypted(decFor({ fault: 'unsigned' }), enc.publicKey)))
+        await check('SAML suite: an assertion encrypted to another key is refused', () =>
+          decRefused(samlEncrypted(decFor(), generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey)))
+        await check('SAML suite: an encrypted assertion with a changed GCM tag is refused', () =>
+          decRefused(samlEncrypted(decFor(), enc.publicKey, { tamper: true })))
+        await check('SAML suite: a public JWK is refused as a decryption key', async () => {
+          let refusedPublic = false
+          try {
+            await openAuthorizationServer({
+              engine, issuer: 'https://as.example', resources: [STORAGE], storageKey: null,
+              samlIdps: [{ entityId: idpId, jwk: idp.publicJwk }], samlKeys: [enc.publicKey.export({ format: 'jwk' })]
+            })
+          } catch (_e) { refusedPublic = true }
+          assert(refusedPublic, 'a public JWK was accepted as a decryption key')
+        })
+      } finally {
+        await samlDec.close()
+      }
     } finally {
       await saml.close()
     }

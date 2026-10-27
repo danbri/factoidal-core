@@ -10,7 +10,9 @@ Wasm.Ops.Authz — handles of the authorization server component
     -> {"ok":true,"response":{status,headers,body},"changed":B}
      | {"ok":true,"resolve":{"host":H},"changed":B}
      | {"ok":true,"fetch":{"url":U,"accept":A,"address":X},"changed":B}
-  authzFetched(handle, {"url","status","body","now"} | {"host","addresses","now"})
+     | {"ok":true,"cipher":{"op","key","iv","aad","data"},"changed":B}
+  authzFetched(handle, {"url","status","body","now"} | {"host","addresses","now"}
+                       | {"request":R,"answer":{"ok":base64}|{"refused":true}})
     -> {"ok":true}
   authzKeys(handle, {"nonce"?, "private"?})
     -> {"ok":true,"keys":DOC} | {"ok":true,"jwks":{"keys":[private JWKs]}}
@@ -27,7 +29,9 @@ default, or `EdDSA`), `tokenLifetime` (1..300, default 300), `leeway`,
 `tokenPath` and `jwksPath` (relative to the issuer, default `/token` and
 `/jwks`), `samlIdps` (an array of `{"entityId", "jwk"}`: the SAML 2.0
 identity providers whose signed assertions are accepted, each with its RSA
-public JWK; issue 926), `mountedOn` (in place of `issuer`: the root IRI of the LWS storage
+public JWK; issue 926), `samlKeys` (an array of private JWKs, RSA or EC
+P-256 or X25519: the keys that decrypt `EncryptedAssertion` and `EncryptedID`
+in a SAML subject token, XML Encryption 1.1; issue 1073), `mountedOn` (in place of `issuer`: the root IRI of the LWS storage
 that shares this issuer; sets the issuer, the resource (or `audience`) and
 the two paths, `L4Factoidal/Authz/Mount.lean`), `now`, `entropy`
 (base64, at least 64 bytes: two private key candidates for a new key
@@ -39,6 +43,11 @@ A request document is the LWS one (`requestOfJson`: method, target,
 headers, body) plus `now` and `random` (base64, at least 112 bytes from the
 host's random source). `changed: true` means the keys changed and the host
 writes `authzKeys` to the key file.
+
+A `cipher` member asks the host for one AES operation
+(`L4Factoidal.Crypto.CipherCall`): the host runs it with WebCrypto, gives the
+request and the answer to `authzFetched`, and sends the same request to
+`authzStep` again. The server keeps at most `maxCipherAnswers` answers.
 
 `authzOwns` answers whether a request target is one of this server's paths
 (`L4Factoidal.Authz.owns`): a host that serves this server and a storage on
@@ -52,6 +61,7 @@ interface never serves it (`jwks_no_private_member`).
 import Std.Data.HashMap
 import Wasm.Ops.Support
 import Wasm.Ops.Lws
+import Wasm.Ops.XmlEnc
 import L4Factoidal.Authz.Server
 import L4Factoidal.Authz.Mount
 import L4Factoidal.LWS.SnapshotSeal
@@ -127,6 +137,16 @@ def samlIdpsOf? (j : Json) : Except String (List L4Factoidal.SAML.Idp) :=
       | _ => throw s!"authz: the SAML key of {id} must be a public RSA JWK (no private members)"
   | some _ => .error "authz: samlIdps must be an array"
 
+/-- `samlKeys`: an array of private JWKs that decrypt XML Encryption in a SAML
+subject token (issue 1073). -/
+def samlKeysOf? (j : Json) : Except String L4Factoidal.XML.Enc.Keys :=
+  match j.field? "samlKeys" with
+  | none => .ok {}
+  | some (.array xs) => match xs.foldlM XmlEnc.addKey {} with
+    | .ok ks => .ok ks
+    | .error e => .error s!"authz: samlKeys: {e}"
+  | some _ => .error "authz: samlKeys must be an array of private JWKs"
+
 /-- Read the configuration and open the key store. -/
 def openAuthzOfJson (text : String) : Except String (OpenAuthz × Bool) := do
   let j ← match parseJson text with
@@ -155,13 +175,14 @@ def openAuthzOfJson (text : String) : Except String (OpenAuthz × Bool) := do
   let jwksPath ← endpointPathOf? j "jwksPath" "/jwks"
   if tokenPath == jwksPath then throw "authz: tokenPath and jwksPath must differ"
   let samlIdps ← samlIdpsOf? j
+  let samlKeys ← samlKeysOf? j
   let cfg : AuthzConfig :=
     { issuer, resources, alg, tokenLifetime := lifetime
       leeway := (natOf? j "leeway").getD 60
       rotateAfter := (natOf? j "rotateAfter").getD 0
       fetch := { allowHttp := flag "allowHttp", allowPrivateFetch := flag "allowPrivateFetch"
                  docTtl := (natOf? j "docTtl").getD 60 }
-      cors, tokenPath, jwksPath, samlIdps }
+      cors, tokenPath, jwksPath, samlIdps, samlKeys }
   let cfg := match mounted? with
     | some b =>
         let base := if b.endsWith "/" then b else b ++ "/"
@@ -202,6 +223,7 @@ def needJson : Need → List (String × Json)
   | .resolve host => [("resolve", .object [("host", .string host)])]
   | .fetch url accept address =>
       [("fetch", .object [("url", .string url), ("accept", .string accept), ("address", .string address)])]
+  | .cipher r => [("cipher", XmlEnc.reqJson r)]
 
 def authzStep (h requestJson : String) : IO String := do
   match (← authzTable.get)[h]? with
@@ -233,6 +255,15 @@ def authzFetched (h docJson : String) : IO String := do
       | .error e => pure (errJson s!"fetched: {toString e}")
       | .ok j =>
           let now := (natOf? j "now").getD oa.clock
+          match j.field? "request", j.field? "answer" with
+          | some rq, some an =>
+              match XmlEnc.reqOf rq, XmlEnc.ansOf an with
+              | .ok r, .ok x =>
+                  authzTable.modify (·.insert h { oa with st := oa.st.recordCipher r x })
+                  pure (okWith [])
+              | .error e, _ => pure (errJson s!"fetched: {e}")
+              | _, .error e => pure (errJson s!"fetched: {e}")
+          | _, _ =>
           match j.getString? "url", j.getString? "host" with
           | some url, _ =>
               let st := recordFetched oa.cfg oa.st url ((natOf? j "status").getD 0)
@@ -244,7 +275,7 @@ def authzFetched (h docJson : String) : IO String := do
               let st := recordResolved oa.cfg oa.st host addrs now
               authzTable.modify (·.insert h { oa with st })
               pure (okWith [])
-          | none, none => pure (errJson "fetched: member \"url\" or \"host\" is required")
+          | none, none => pure (errJson "fetched: member \"url\", \"host\" or \"request\" is required")
 
 def authzKeys (h optsJson : String) : IO String := do
   match (← authzTable.get)[h]? with
