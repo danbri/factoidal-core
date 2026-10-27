@@ -221,6 +221,12 @@ def jNat (j : Json) (k : String) (d : Nat := 0) : Nat :=
   | some (.number s) => s.toNat?.getD d
   | _ => d
 
+/-- A natural number member, if there is one. -/
+def jNat? (j : Json) (k : String) : Option Nat :=
+  match j.field? k with
+  | some (.number s) => s.toNat?
+  | _ => none
+
 /-- A Boolean member, or `d`. -/
 def jBool (j : Json) (k : String) (d : Bool := false) : Bool := (j.getBool? k).getD d
 

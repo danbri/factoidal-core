@@ -884,9 +884,12 @@ function buildApi(driver) {
   }
 
   /**
-   * RDFC-1.0 canonical N-Quads of one graph: every quad's graph name is
-   * dropped first (op datasetGraphAsDefault with the union of the graphs).
-   * Text, not a digest.
+   * The RDFC-1.0 canonical hash of one graph: the SHA-256, as 64 lowercase
+   * hexadecimal digits, of the canonical N-Quads document (RDF Dataset
+   * Canonicalization 1.0, section 4.4 note 2). Every quad's graph name is
+   * dropped first (op datasetGraphAsDefault with the union of the graphs);
+   * then op datasetCanonicalHash computes the canonical form and the digest
+   * in Lean. canonicalize() answers the canonical text.
    * @param {Dataset} datasetOrGraph
    * @returns {Promise<string>}
    */
@@ -897,10 +900,11 @@ function buildApi(driver) {
     datasetOrGraph.size; // throws the disposed error
     const c = datasetOrGraph._ctx;
     requireEntryFn(c.e, 'datasetGraphAsDefault', 'canonicalHash');
+    requireEntryFn(c.e, 'datasetCanonicalHash', 'canonicalHash');
     const merged = c.wrap(entryResult(c.e.datasetGraphAsDefault(datasetOrGraph.handle,
       JSON.stringify({ type: 'union' })), 'canonicalHash'), {});
     try {
-      return merged.toString('rdfc');
+      return entryResult(c.e.datasetCanonicalHash(merged.handle), 'canonicalHash').hash;
     } finally {
       merged.dispose();
     }

@@ -271,7 +271,28 @@ test('canonicalHash: isomorphic graphs get identical hash under bnode relabeling
     const hashA = await canonicalHash(gA);
     const hashB = await canonicalHash(gB);
     assert.equal(hashA, hashB);
-    assert.ok(/_:c14n/.test(hashA), 'hash is canonical c14n-labeled N-Quads');
+    assert.match(hashA, /^[0-9a-f]{64}$/, 'the hash is a SHA-256 hex digest, not the text');
+  });
+
+// https://github.com/danbri/factoidal/issues/1040: canonicalHash() is the
+// SHA-256 of the RDFC-1.0 canonical N-Quads, canonicalize() the text. The
+// W3C rdf-canon case test024c ("blank node - double circle of 3 (0-1-2)",
+// SHA-256, default graph only), read from the vendored suite (iron rule 6).
+test('canonicalHash: W3C rdf-canon test024c digest; canonicalize answers the text',
+  async () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const dir = path.join(__dirname, '..', '..', '..',
+      'third_party', 'testing', 'rdf-canon', 'tests', 'rdfc10');
+    const input = fs.readFileSync(path.join(dir, 'test024-in.nq'), 'utf8');
+    const expected = fs.readFileSync(path.join(dir, 'test024-rdfc10.nq'), 'utf8');
+    // `shasum -a 256 third_party/testing/rdf-canon/tests/rdfc10/test024-rdfc10.nq`
+    const digest = 'abde1007892ff8c38de13a9cbfde9ef6cb34de851492e1664be9940778abbe51';
+    assert.equal(require('node:crypto').createHash('sha256').update(expected).digest('hex'), digest);
+    const ds = await parse(input, { format: 'nquads' });
+    assert.equal(await canonicalize(ds), expected);
+    assert.equal(await canonicalHash(ds), digest);
+    ds.dispose();
   });
 
 test('query: CONSTRUCT returns a Dataset', async (t) => {

@@ -271,7 +271,7 @@ def classify (op msg : String) (positioned : Bool) : String :=
 def uncodedOps : List String :=
   [ "lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush", "lwsLoad", "lwsPersist", "lwsRead", "solidOpen", "solidStep",
     "solidClose", "solidSnapshot", "solidFetched", "solidClientRequest", "solidClientResponse",
-    "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzClose" ]
+    "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzOwns", "authzClose" ]
 
 private def isErrorEnvelope (s : String) : Bool := s.startsWith "{\"ok\":false"
 
@@ -315,6 +315,21 @@ def attachCode (op : String) (args : List String) (envelope : String) : String :
             | none => []
           (Json.object (fields ++ [("code", .string code)] ++ spec ++ pos)).toString
     | _ => envelope
+
+/-- `attachCode` with the arguments read only when the answer is an error
+envelope that needs a code. The dispatch entries pass `argsForCode`, which
+decodes the whole argument envelope a second time; for a store manifest of
+1.5 million hexadecimal digits that was paid on every call, error or not
+(https://github.com/danbri/factoidal/issues/1039). -/
+def attachCodeLazy (op : String) (args : Unit → List String) (envelope : String) : String :=
+  if !isErrorEnvelope envelope || uncodedOps.contains op then envelope
+  else attachCode op (args ()) envelope
+
+/-- It is `attachCode`. -/
+theorem attachCodeLazy_eq (op : String) (args : List String) (envelope : String) :
+    attachCodeLazy op (fun _ => args) envelope = attachCode op args envelope := by
+  unfold attachCodeLazy attachCode
+  split <;> simp_all
 
 /-- The code an envelope carries, if any. -/
 def codeOf? (envelope : String) : Option String :=

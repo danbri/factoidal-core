@@ -1,0 +1,20 @@
+# The service entry for Touchstone's targetservers/compose.yaml (it uses the
+# file's own &target anchor). Put this directory at targetservers/factoidal/.
+  factoidal:
+    <<: *target
+    build:
+      context: factoidal
+      args: [FACTOIDAL_VERSION, FACTOIDAL_INTEGRITY]
+    image: ${LWS_TARGETS_IMAGE_PREFIX:-lws-targets}/factoidal
+    environment:
+      LWS_PUBLIC_URL: ${LWS_ORIGIN:-http://localhost:8480}/${LWS_TARGETS_PATH:-targets}/factoidal
+      LWS_OWNER: ${FACTOIDAL_OWNER:-}
+    volumes: [factoidal-data:/data]
+
+# and, under compose.local.yaml's services (identity documents on the private
+# fixture host are fetched over http from a private address):
+#  factoidal:
+#    environment:
+#      LWS_ALLOW_PRIVATE_FETCH: "1"
+#
+# and factoidal-data under the top-level volumes.
