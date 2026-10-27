@@ -322,7 +322,7 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Toan,
              `Wasm.Ops.Xmpp,
              `Wasm.Ops.XmppSession,
-             `Wasm.Ops.Crypto,
+             `Wasm.Ops.Crypto, `Wasm.Ops.XmlEnc,
              `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests, `Wasm.GraphSetTests,
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
              `Wasm.Ops.Maths,
@@ -682,6 +682,10 @@ lean_exe «l4dict-fold-bench» where
 -- that need AES Key Wrap or AES-CBC are NOT RUN here (issue 677); the wasm
 -- test tests/jose/jwe-wasm.mjs runs them. Run from the REPOSITORY ROOT.
 @[default_target] lean_exe «l4jwe-probe» where root := `Harness.JweProbe
+-- XML Encryption 1.1 and SAML encrypted assertions with HACL* RSA-OAEP,
+-- P-256, X25519 and Vale AES-GCM, against the Apache Santuario fixtures of
+-- tests/xmlenc/fixtures.json (Harness/XmlEncProbe.lean, issues 1084, 1073).
+@[default_target] lean_exe «l4xmlenc-probe» where root := `Harness.XmlEncProbe
 
 -- SHACL Core probe over the W3C shacl test suite (Harness/ShaclProbe.lean).
 @[default_target] lean_exe «l4shacl» where root := `Harness.ShaclProbe

@@ -975,6 +975,8 @@ import L4Factoidal.Authz.Tests
 -- profile of SAML Core section 5 (https://github.com/danbri/factoidal/issues/926).
 import L4Factoidal.XML.ExcC14n
 import L4Factoidal.XML.DSig
+import L4Factoidal.XML.Enc
+import L4Factoidal.XML.EncTests
 import L4Factoidal.SAML.Assertion
 import L4Factoidal.SAML.Fixtures
 import L4Factoidal.SAML.Tests

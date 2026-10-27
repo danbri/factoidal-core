@@ -1540,6 +1540,12 @@ L4Factoidal_XML_DSig_countNode  # (c) element nesting, at most SAML.maxDepth on 
 L4Factoidal_XML_DSig_countNodesAcc  # (c) element nesting, at most SAML.maxDepth on the SAML path
 L4Factoidal_XML_DSig_plainNode  # (c) element nesting, at most SAML.maxDepth on the SAML path
 L4Factoidal_XML_DSig_plainNodes  # (c) element nesting, at most SAML.maxDepth on the SAML path
+L4Factoidal_XML_Enc_findKeysNode  # (c) element nesting of a document the caller bounded (SAML.maxDepth; xmlDecrypt 64); siblings are an accumulator tail call
+L4Factoidal_XML_Enc_findKeysNodes  # (c) element nesting of a document the caller bounded (SAML.maxDepth; xmlDecrypt 64); siblings are an accumulator tail call
+L4Factoidal_XML_Enc_serNode  # (c) element nesting of a document the caller bounded (SAML.maxDepth; xmlDecrypt 64); siblings are an accumulator tail call
+L4Factoidal_XML_Enc_serNodes  # (c) element nesting of a document the caller bounded (SAML.maxDepth; xmlDecrypt 64); siblings are an accumulator tail call
+L4Factoidal_XML_Enc_walkNode  # (c) element nesting of a document the caller bounded (SAML.maxDepth; xmlDecrypt 64); siblings are an accumulator tail call
+L4Factoidal_XML_Enc_walkNodes  # (c) element nesting of a document the caller bounded (SAML.maxDepth; xmlDecrypt 64); siblings are an accumulator tail call
 L4Factoidal_XML_ExcC14n_canonNode  # (b) element nesting of one document; (c) on the SAML path
 L4Factoidal_XML_ExcC14n_canonNodesAcc  # (b) element nesting of one document; (c) on the SAML path
 # --- Added 2026-10-27 by the WebDAV server of https://github.com/danbri/factoidal/issues/1066 ---

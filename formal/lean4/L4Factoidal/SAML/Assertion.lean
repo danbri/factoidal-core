@@ -37,16 +37,36 @@ SAML 2.0 assertion".
     `saml:SubjectConfirmationData` has `Recipient` (the client) and
     `NotOnOrAfter`, and no `NotBefore` (Profiles §4.1.4.2).
 
-## What is refused, with an open issue
+## Encrypted assertions (`validateWith`)
 
-XML Encryption (`saml:EncryptedAssertion`, `saml:EncryptedID`,
-`saml:EncryptedAttribute`): https://github.com/danbri/factoidal/issues/1073.
-A subject token is the assertion itself (RFC 8693 §3), which lws10-authn-
-saml does not encrypt; an encrypted element is refused, never skipped.
+SAML Core §2.3.4 `saml:EncryptedAssertion` and §2.2.4 `saml:EncryptedID`
+(https://github.com/danbri/factoidal/issues/1073), XML Encryption 1.1 in
+the profile of `L4Factoidal.XML.Enc`:
+
+  * When the policy has decryption keys (`Policy.decryptKeys`), a subject
+    token whose document element is `saml:EncryptedAssertion` is decrypted
+    (`Enc.decryptWrapped`), and the decrypted `saml:Assertion`, made the
+    document element with the namespace bindings it was parsed with, goes
+    through the same checks as an assertion that was not encrypted: the
+    issuer, the enveloped signature under that identity provider's key,
+    the conditions and the subject. An encrypted assertion whose content is
+    not signed is refused ("exactly one ds:Signature").
+  * After the signature is verified, a `saml:EncryptedID` child of
+    `saml:Subject` is decrypted to the `saml:NameID` it holds. The
+    signature covers the encrypted form, as SAML Core §2.2.4 makes it.
+  * With no decryption key both are refused, as before, naming the issue.
+  * `saml:EncryptedAttribute` is refused: the claims read no attribute, and
+    an encrypted element is never skipped. Expected-failure guard in
+    `SAML/Tests.lean`, https://github.com/danbri/factoidal/issues/1073.
+
+AES is a `CipherCall.Cipher`: `validateWith` answers `Outcome.need req` when
+the cipher needs the host (the wasm replay); `validate` takes no keys and
+refuses every encrypted element.
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.XML.DSig
+import L4Factoidal.XML.Enc
 import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.LWS.AccessPolicy
 
@@ -76,6 +96,9 @@ structure Policy where
   audience : String
   now : Nat
   leeway : Nat := 60
+  /-- Private keys for `saml:EncryptedAssertion` and `saml:EncryptedID`
+  (`validateWith`); none: every encrypted element is refused. -/
+  decryptKeys : L4Factoidal.XML.Enc.Keys := {}
 
 /-- What a valid assertion says. -/
 structure Claims where
@@ -96,14 +119,7 @@ before it is parsed: `<` not followed by `/`, `!` or `?` opens a level,
 `</` and `/>` close one. Markup inside a comment or CDATA section can only
 make the count larger, so the scan refuses, never accepts, too much. A
 tail call per character. -/
-def nestingOk : List Char → Nat → Bool
-  | [], _ => true
-  | '<' :: '/' :: rest, d => nestingOk rest (d - 1)
-  | '/' :: '>' :: rest, d => nestingOk rest (d - 1)
-  | '<' :: c :: rest, d =>
-      if c == '!' || c == '?' then nestingOk rest d
-      else if d + 1 > maxDepth then false else nestingOk rest (d + 1)
-  | _ :: rest, d => nestingOk rest d
+def nestingOk (cs : List Char) (d : Nat) : Bool := L4Factoidal.XML.Enc.nestingWithin maxDepth cs d
 
 def decodeToken (token : String) : Except String Document := do
   if token.length > maxTokenChars then throw "the SAML assertion is too large"
@@ -278,5 +294,168 @@ theorem validate_ok {rsa : RsaVerify} {p : Policy} {token : String} {c : Claims}
             have := List.find?_some hf
             simpa using this
           exact ⟨d, idp, rfl, hmem, heq.trans hiss.symm, hv⟩
+
+/-! ## Encrypted assertions -/
+
+open L4Factoidal.XML.Enc (Failure)
+
+/-- Why `validateWith` gives no claims: a refusal with its reason, or an AES
+request the host has to answer first. -/
+inductive Outcome where
+  | refused (msg : String)
+  | need (req : L4Factoidal.Crypto.CipherCall.Req)
+
+def Outcome.message : Outcome → String
+  | .refused m => m
+  | .need r => s!"an AES request ({r.op.name}) is not answered yet"
+
+def ofEnc : Failure → Outcome
+  | .refused m => .refused m
+  | .decryptFailed => .refused L4Factoidal.XML.Enc.decryptionError
+  | .need r => .need r
+
+def liftS {α : Type} : Except String α → Except Outcome α
+  | .ok a => .ok a
+  | .error w => .error (.refused w)
+
+def liftE {α : Type} : L4Factoidal.XML.Enc.M α → Except Outcome α
+  | .ok a => .ok a
+  | .error f => .error (ofEnc f)
+
+/-- Decryption limits: the nesting bound of `decodeToken`; no CBC. -/
+def encOpts : L4Factoidal.XML.Enc.Opts := { maxDepth := maxDepth }
+
+/-- `f` over a list, the results in order; a tail call per item. -/
+def mapAcc {α β ε : Type} (f : α → Except ε β) : List α → List β → Except ε (List β)
+  | [], acc => .ok acc.reverse
+  | x :: xs, acc =>
+      match f x with
+      | .ok y => mapAcc f xs (y :: acc)
+      | .error e => .error e
+
+/-- The assertion with each `saml:EncryptedID` child of `saml:Subject`
+replaced by the `saml:NameID` it holds. -/
+def decryptSubjectIds (cipher : L4Factoidal.Crypto.CipherCall.Cipher) (prims : L4Factoidal.XML.Enc.Prims)
+    (keys : L4Factoidal.XML.Enc.Keys) (a : El) : Except Outcome El := do
+  let inSubject (s : El) (n : Node) : Except Outcome Node :=
+    match elOf? s.scope n with
+    | some e =>
+        if e.is samlNs "EncryptedID" then do
+          let m ← liftE (L4Factoidal.XML.Enc.decryptWrapped cipher prims keys encOpts a.node e 3)
+          match elOf? e.scope m with
+          | some x => if x.is samlNs "NameID" then pure m else throw (.refused "saml:EncryptedID does not hold a saml:NameID")
+          | none => throw (.refused "saml:EncryptedID does not hold a saml:NameID")
+        else pure n
+    | none => pure n
+  let inAssertion (n : Node) : Except Outcome Node :=
+    match elOf? a.scope n, n with
+    | some s, .element t attrs kids =>
+        if s.is samlNs "Subject" then do
+          let kids' ← mapAcc (inSubject s) kids []
+          pure (.element t attrs kids')
+        else pure n
+    | _, _ => pure n
+  let kids' ← mapAcc inAssertion a.kids []
+  let node : Node := match a.node with
+    | .element t attrs _ => .element t attrs kids'
+    | n => n
+  match elOf? a.parent node with
+  | some a' => pure a'
+  | none => throw (.refused "no document element")
+
+/-- The document of a subject token: the token's own, or, for a
+`saml:EncryptedAssertion` when `p.decryptKeys` is not empty, the decrypted
+assertion made the document element. -/
+def openToken (cipher : L4Factoidal.Crypto.CipherCall.Cipher) (prims : L4Factoidal.XML.Enc.Prims)
+    (p : Policy) (token : String) : Except Outcome Document := do
+  let d0 ← liftS (decodeToken token)
+  let r ← liftS ((elOf? rootScope d0.root).elim (.error "no document element") .ok)
+  if r.is samlNs "EncryptedAssertion" && !p.decryptKeys.isEmpty then do
+    let n ← liftE (L4Factoidal.XML.Enc.decryptWrapped cipher prims p.decryptKeys encOpts d0.root r 1)
+    pure { d0 with root := L4Factoidal.XML.Enc.withScope r.scope n }
+  else pure d0
+
+/-- The checks of `validate` on an opened document, with `saml:EncryptedID`
+decrypted after the signature is verified. -/
+def checkDoc (cipher : L4Factoidal.Crypto.CipherCall.Cipher) (prims : L4Factoidal.XML.Enc.Prims)
+    (rsa : RsaVerify) (p : Policy) (d : Document) : Except Outcome Claims :=
+  match assertionIssuer d with
+  | .error w => .error (.refused w)
+  | .ok (a, iss) =>
+      match p.idps.find? (·.entityId == iss) with
+      | none => .error (.refused s!"the assertion's issuer {iss} is not a trusted identity provider")
+      | some idp =>
+          match verifyEnveloped rsa idp.n idp.e d with
+          | .error w => .error (.refused w)
+          | .ok () =>
+              match (if p.decryptKeys.isEmpty then .ok a else decryptSubjectIds cipher prims p.decryptKeys a) with
+              | .error o => .error o
+              | .ok a' =>
+                  match claimsOf p a' iss with
+                  | .error w => .error (.refused w)
+                  | .ok c => .ok c
+
+/-- `validate`, and also a `saml:EncryptedAssertion` subject token and a
+`saml:EncryptedID` subject when `p.decryptKeys` is not empty. -/
+def validateWith (cipher : L4Factoidal.Crypto.CipherCall.Cipher) (prims : L4Factoidal.XML.Enc.Prims)
+    (rsa : RsaVerify) (p : Policy) (token : String) : Except Outcome Claims :=
+  match openToken cipher prims p token with
+  | .error o => .error o
+  | .ok d => checkDoc cipher prims rsa p d
+
+/-- The issuer of the claims `claimsOf` returns is the issuer it was given. -/
+theorem claimsOf_issuer {p : Policy} {a : El} {iss : String} {c : Claims}
+    (h : claimsOf p a iss = .ok c) : c.issuer = iss := by
+  unfold claimsOf at h
+  simp only [bind, Except.bind] at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · split at h
+      · cases h
+      · rename_i x _
+        obtain ⟨_, _⟩ := x
+        cases h; rfl
+
+/-- Claims from `validateWith`, encrypted or not, come from a document whose
+enveloped signature verified under the key of a trusted identity provider
+whose entity identifier is the claims' issuer, whatever the cipher, the
+primitives and the verifier are. -/
+theorem validateWith_ok {cipher : L4Factoidal.Crypto.CipherCall.Cipher}
+    {prims : L4Factoidal.XML.Enc.Prims} {rsa : RsaVerify} {p : Policy} {token : String} {c : Claims}
+    (h : validateWith cipher prims rsa p token = .ok c) :
+    ∃ d idp, idp ∈ p.idps ∧ idp.entityId = c.issuer ∧ verifyEnveloped rsa idp.n idp.e d = .ok () := by
+  unfold validateWith at h
+  cases ho : openToken cipher prims p token with
+  | error o => rw [ho] at h; cases h
+  | ok d =>
+    rw [ho] at h; dsimp only at h
+    unfold checkDoc at h
+    cases ha : assertionIssuer d with
+    | error w => rw [ha] at h; cases h
+    | ok ai =>
+      obtain ⟨a, iss⟩ := ai
+      rw [ha] at h; dsimp only at h
+      cases hf : p.idps.find? (·.entityId == iss) with
+      | none => rw [hf] at h; cases h
+      | some idp =>
+        rw [hf] at h; dsimp only at h
+        cases hv : verifyEnveloped rsa idp.n idp.e d with
+        | error w => rw [hv] at h; cases h
+        | ok u =>
+          rw [hv] at h; dsimp only at h
+          split at h
+          · cases h
+          · rename_i a' _
+            cases hc : claimsOf p a' iss with
+            | error w => rw [hc] at h; cases h
+            | ok c' =>
+              rw [hc] at h; cases h
+              have hmem := List.mem_of_find?_eq_some hf
+              have heq : idp.entityId = iss := by
+                have := List.find?_some hf
+                simpa using this
+              exact ⟨d, idp, hmem, heq.trans (claimsOf_issuer hc).symm, hv⟩
 
 end L4Factoidal.SAML

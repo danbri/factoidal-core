@@ -92,6 +92,58 @@ SAML (https://github.com/danbri/factoidal/issues/1073): an
 must carry its own valid signature (`SAML.validate`). An encrypted assertion
 whose content is not signed is refused.
 
+## XML Encryption 1.1: as built (https://github.com/danbri/factoidal/issues/1084)
+
+Code: `formal/lean4/L4Factoidal/XML/Enc.lean` (decrypt, encrypt, the
+allowlist above), `XML/EncTests.lean` (`#guard`s over a stub cipher and stub
+public-key primitives), `SAML/Assertion.lean` (`validateWith`,
+`decryptSubjectIds`, theorem `validateWith_ok`), `Wasm/Ops/XmlEnc.lean`
+(ops `xmlDecrypt`, `xmlEncrypt`), `Harness/XmlEncProbe.lean`
+(`lake exe l4xmlenc-probe`, the native run), `tests/xmlenc/` (Santuario
+fixtures both ways, the W3C cases, the wasm run).
+
+Decisions made while building it (Claude-inferred defaults, not owner
+rulings):
+
+* Format code takes a `Cipher` (AES) and a `Prims` record (RSA, P-256,
+  X25519). Natively both are HACL\*; in the wasm the cipher is
+  `replayCipher answers` and the primitives are HACL\* in the wasm.
+* One failure value after the structure check, `decryptionError`
+  ("XML decryption failed"): a wrong or failed key unwrap, a failed GCM
+  tag, a wrong content key length, a CBC padding error, a plaintext that is
+  not UTF-8, not well-formed, deeper than the bound, or that holds another
+  `EncryptedData`. Structure and allowlist refusals keep their own message,
+  given before any key is used for that element.
+* The plaintext is parsed in the parent's context by wrapping it in one
+  element that declares the parent's in-scope bindings (§4.4 step 3.4).
+  A decrypted element made a document element (SAML) gets those bindings
+  as attributes (`Enc.withScope`), so exclusive canonicalization sees the
+  same names.
+* AES-CBC needs two requests: WebCrypto removes PKCS #7 padding only and
+  XML Encryption §5.2 pads with arbitrary octets (Santuario uses
+  `ISO10126Padding`). The first request encrypts the empty message under
+  the last ciphertext block as IV, which gives one block of PKCS #7 padding
+  chained to the ciphertext; the second decrypts the ciphertext with that
+  block appended; Lean removes the §5.2 padding. Checked against Santuario's
+  `aes128-cbc` in `tests/xmlenc/wasm.mjs`.
+* RSA-OAEP with the same hash for the digest and MGF1 only (SHA-1 or
+  SHA-256): `rsa-oaep-mgf1p` with a SHA-256 digest and the W3C cases
+  WRAP.3 and WRAP.4 (SHA-384 or SHA-512 with MGF1-SHA-1) are refused.
+* X25519 key agreement: `xmlenc11#ECDH-ES` with an X25519 originator key,
+  and `http://www.w3.org/2021/04/xmldsig-more#x25519` (RFC 9231), which
+  Santuario 4 writes; the originator key is a `dsig11:DEREncodedKeyValue`
+  (RFC 8410 SubjectPublicKeyInfo).
+* An empty `ConcatKDFParams` attribute value is the empty bit string, as
+  an absent one is (W3C AGRMNT.1 writes `AlgorithmID=""`). Lean writes
+  `AlgorithmID` only: Santuario 4.0.4 refuses the one-octet value `00`
+  ("ConcatKDF parameter is to short").
+* `ds:X509Data` and `ds:KeyValue` in an `EncryptedKey`'s `KeyInfo` are not
+  read: the key is the caller's key named by `ds:KeyName`, or the caller's
+  only key of that kind. W3C WRAP.1 and AGRMNT.1 name their keys only by
+  certificate.
+* `EncryptedData` without `Type` is refused (W3C SYM.1, DRV.1): the profile
+  decrypts XML only.
+
 ## JWE profile
 
 Compact serialization. A fixed allowlist decided before any key is read, in
@@ -155,3 +207,20 @@ the style of `JOSE/Jws.lean` `preKey`:
   `decrypt_independent_of_key_before_key_stage`, `decrypt_refused_only_pre_key`,
   `cbc_mac_failure_makes_no_request`, `keyAlg_refused`,
   `epk_no_private_member`.
+* XML Encryption 1.1 (https://github.com/danbri/factoidal/issues/1084) and
+  SAML encrypted assertions (https://github.com/danbri/factoidal/issues/1073):
+  `lake exe l4xmlenc-probe` (HACL\* RSA-OAEP, P-256, X25519, Vale AES-GCM)
+  25 pass, 0 fail, 6 host-only (out of 31): 5 Santuario `EncryptedData`
+  cases (RSA-OAEP mgf1p and SHA-256, Element and Content, RetrievalMethod)
+  plus an altered ciphertext, `rsa-1_5` and CBC refusals, 2 Lean encrypt
+  round trips, W3C WRAP.1 decrypted and 9 W3C cases refused by the
+  allowlist, 5 SAML checks (Santuario `EncryptedAssertion` and `EncryptedID`
+  with signatures verified, an unsigned inside refused, both refused with no
+  key); the 6 host-only cases need AES Key Wrap or CBC and must fail natively.
+  `node --test tests/xmlenc/wasm.mjs` (the wasm, WebCrypto answering through
+  `runWithCipher`) 30 pass, 0 fail (out of 30), including AES Key Wrap with
+  ECDH-ES P-256, X25519 and named keys, Santuario `aes128-cbc`
+  (ISO 10126 padding), W3C WRAP.1 and AGRMNT.1. Santuario decrypts Lean's
+  output (`tests/xmlenc/CheckLeanOutput.java`): 5 pass, 0 fail (out of 5).
+  `#guard`s: `XML/EncTests.lean` 54, `SAML/Tests.lean` 18 new (two of them
+  expected failures naming issue 1073).
