@@ -24,6 +24,19 @@ https://www.w3.org/TR/json-ld11-api/):
     the flattened array with `JSONLD.Compact`, keeping a top-level
     `@graph` (or its alias) and re-attaching the original context.
 
+JSON-LD-star (`rdfstar`, json-ld-star PR 61 tests; design record
+`docs/designissues/2026-10-26-jsonld-star.md`): node map generation turns
+each `@annotation` into a reifier node with `@reifies` (`nmgAnnotated`),
+keeps `@triple` values and `@reifies` values embedded, and renames the
+blank node identifiers of embedded triples (`flRenameBnodeIds`,
+`flRelabelEmbedded`); the `createAnnotations` option folds reifier nodes
+back into `@annotation` entries (`flCreateAnnotations`). Where the outline
+leaves a choice, the reference implementation (Ruby json-ld, which
+produced the fixtures) decides, and the doc comments say so. Output stays
+ordered by id; the json-ld-star fixtures list nodes in the reference
+implementation's insertion order, so 16 of them match only under an
+unordered comparison.
+
 All map lookups here are on EXPANDED-form JSON (literal `@id` / `@value`
 keys — expansion has already resolved aliases); aliases matter only for
 the OUTPUT `@graph` key of the compaction step.
