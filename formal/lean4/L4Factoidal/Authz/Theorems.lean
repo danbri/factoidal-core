@@ -279,16 +279,22 @@ theorem cid_valid_verified {ctx : Ctx} {p : Parsed} {s c : String}
   · rename_i kid hkid
     exact ⟨kid, k, hkid, hk, hv, rfl⟩
 
-/-- **What `cidKey` established** (CID 1.0 §3.3): the subject's document
-names the subject as its `id`, the method is one `authentication` names, its
-`controller` is the subject, it is in force, and the key is its key. -/
+/-- **What `cidKey` established** (CID 1.0 §3.3, through
+`L4Factoidal.CID.retrieveFromDocument_sound`): the subject's document is a
+conforming controlled identifier document whose `id` is the subject; the
+method the `kid` names is in it, its absolute `id` is that method URL, its
+absolute `controller` is the subject, `authentication` names it, it is in
+force (§2.2), and the key is the key of its material. -/
 theorem cidKey_method {ctx : Ctx} {sub kid : String} {k : Jwk}
     (h : cidKey ctx sub kid = .key k) :
-    ∃ text doc m, lookup ctx.policy ctx.fs ctx.now sub cidAccept = .doc text ∧
-      parseJson? text = some doc ∧ doc.getString? "id" = some sub ∧
-      m ∈ authenticationMethods doc sub ∧ idOf sub m = some (methodIdOf sub kid) ∧
-      (m.getString? "controller").map (resolveRef sub) = some sub ∧
-      methodInForce ctx.now m = true ∧ methodKey? ctx.C m = some k := by
+    ∃ text doc m d, lookup ctx.policy ctx.fs ctx.now sub cidAccept = .doc text ∧
+      parseJson? text = some doc ∧
+      L4Factoidal.CID.retrieveFromDocument (methodIdOf sub kid) .authentication doc = .ok m ∧
+      L4Factoidal.CID.parseDocument doc = .ok d ∧ d.id = sub ∧
+      L4Factoidal.CID.absolute d.id m.id = methodIdOf sub kid ∧
+      L4Factoidal.CID.absolute d.id m.controller = sub ∧
+      d.associated .authentication (methodIdOf sub kid) = true ∧
+      L4Factoidal.CID.methodInForce ctx.now m = true ∧ materialJwk? ctx.C m.material = some k := by
   unfold cidKey at h
   split at h
   · simp at h
@@ -304,28 +310,27 @@ theorem cidKey_method {ctx : Ctx} {sub kid : String} {k : Jwk}
         unfold selectMethod at hs
         split at hs
         · simp at hs
-        · rename_i hid
+        · rename_i hw
           split at hs
           · simp at hs
-          · rename_i m hm
-            have hmem := List.mem_of_find?_eq_some hm
-            have hid' : idOf sub m = some (methodIdOf sub kid) := by
-              simpa using List.find?_some hm
+          · rename_i m hr
             split at hs
             · simp at hs
-            · rename_i hctl
+            · rename_i hin
               split at hs
+              · rename_i k'' hk
+                simp only [Except.ok.injEq] at hs
+                subst hs
+                obtain ⟨docUrl, frag, d, hu, hd, hid, _, hmid, hctl, hassoc, _⟩ :=
+                  L4Factoidal.CID.retrieveFromDocument_sound hr
+                have hurl := L4Factoidal.CID.documentUrlOf_url hu
+                have hsub : L4Factoidal.CID.withoutFragment (methodIdOf sub kid) = sub := by
+                  simpa using hw
+                have hdu : docUrl = sub := hurl.trans hsub
+                subst hdu
+                refine ⟨text, doc, m, d, hl, hdoc, hr, hd, hid, hmid, hctl, hassoc, ?_, hk⟩
+                simpa using hin
               · simp at hs
-              · rename_i hin
-                split at hs
-                · rename_i k'' hk
-                  simp only [Except.ok.injEq] at hs
-                  subst hs
-                  refine ⟨text, doc, m, hl, hdoc, ?_, hmem, hid', ?_, ?_, hk⟩
-                  · simpa using hid
-                  · simpa using hctl
-                  · simpa using hin
-                · simp at hs
       · simp at h
 
 /-- **What `oidcKey` established** (lws10-authn-openid, "Authentication

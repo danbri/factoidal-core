@@ -122,3 +122,22 @@ this file's SHA-256 above — the file content is self-authenticating
 against the digests that reference it). NOT used by the JSON-LD
 context registry (parsing always uses the current
 `credentials-v2.jsonld`). Same licence terms as above.
+
+## `cid-v1.jsonld` — Controlled Identifiers v1.0 context
+
+- **Term IRI:** `https://www.w3.org/ns/cid/v1`
+- **Retrieved:** 2026-10-27 (`curl -sL -H 'Accept: application/ld+json' https://www.w3.org/ns/cid/v1`)
+- **SHA-256:** `ea216ecc1cb02cd39b693dba2250141e270ba0bf95890be107dd9a9e8e43de85`
+  (the digest that CID 1.0 §4.2 states; "Implementations that perform
+  JSON-LD processing MUST treat the following JSON-LD context URL as
+  already resolved, where the resolved document matches the corresponding
+  hash value")
+- **Bytes:** 3248
+
+The context of controlled identifier documents (CID 1.0, W3C
+Recommendation 2025-05-15, https://www.w3.org/TR/cid-1.0/). Used by
+`L4Factoidal/CID/` (https://github.com/danbri/factoidal/issues/1100) and by
+the VC loader (`VC/Context.lean` `vendoredContextFiles`), so a CID document
+is never fetched for its context at run time. The source of the context in
+the specification repository is `w3c/cid`, file `context/v1.jsonld`. Same
+licence terms as above.
