@@ -91,6 +91,13 @@ Sections, each one score line:
 The three P-256 sections check the externs the authorization server signs
 and decompresses with (https://github.com/danbri/factoidal/issues/916).
 
+ 12. `rsa-oaep` — RSAES-OAEP (`Crypto/RsaOaep.lean`,
+     https://github.com/danbri/factoidal/issues/1082) with HACL*'s public
+     and private operations: the 60 RSA Laboratories `oaep-vect.txt`
+     vectors (`third_party/testing/rsa-oaep-vect/`), and four Wycheproof
+     RSA-OAEP files (2048 bits SHA-1; 2048, 3072 and 4096 bits SHA-256).
+     See the section's own comment for what each check compares.
+
 ## Section 7: the AES-GCM gap
 
 OMEMO 0.8 uses AES-128-GCM, so AES-GCM was in scope for this work and is
@@ -114,6 +121,9 @@ the count must move.
 
 Usage:
   lake exe l4crypto-probe        run every section
+  lake exe l4crypto-probe -- --oaep-batch
+                                 RSA-OAEP requests on standard input, for
+                                 tests/crypto/rsa-oaep-diff.mjs
 -/
 import L4Factoidal.Crypto.ChaChaPoly
 import L4Factoidal.Crypto.Hkdf
@@ -123,6 +133,8 @@ import L4Factoidal.JSON.Parser
 import L4Factoidal.LWS.SnapshotSeal
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.JOSE.Base64Url
+import L4Factoidal.Crypto.RsaOaep
+import L4Factoidal.Crypto.RsaOaepTests
 
 namespace CryptoProbe
 
@@ -920,9 +932,226 @@ def runP256Compressed (path : System.FilePath) : IO Tally := do
               else pure ()
   t.get
 
+/-! ## Section 12: RSA-OAEP (https://github.com/danbri/factoidal/issues/1082)
+
+`Crypto/RsaOaep.lean` with the HACL* public and private operations.
+
+  * RSA Laboratories `oaep-vect.txt` (60 vectors, SHA-1, given seeds):
+    every vector is encrypted with its seed and decrypted through the
+    padding of `RsaOaep` over the `Nat` reference operation of
+    `Crypto/RsaOaepTests.lean` (keys of 1024 to 2048 bits). For the 2048-bit
+    key the same is done through HACL*. For the smaller keys HACL* must
+    refuse (the shim accepts 2048, 3072 and 4096 bits only).
+  * Wycheproof `rsa_oaep_{2048_sha1_mgf1sha1, 2048_sha256_mgf1sha256,
+    3072_sha256_mgf1sha256, 4096_sha256_mgf1sha256}_test.json`: every
+    vector decrypted through HACL*; `valid` must give the message,
+    `invalid` must give `none`, `acceptable` is counted apart. Each `valid`
+    vector is also encrypted again through HACL* with a fixed seed and
+    decrypted (round trip), and the raw HACL* private operation is compared
+    with the `Nat` reference on its ciphertext (the extern against a
+    specification: the obligation `Crypto/RsaOaep.lean` states for
+    `rsaPrivateOp`). -/
+
+/-- The labelled hex blocks of `oaep-vect.txt`, in file order: a line
+`# Label:` followed by hex lines up to a blank line. -/
+def oaepVectBlocks (text : String) : List (String × ByteArray) := Id.run do
+  let mut out : Array (String × ByteArray) := #[]
+  let mut label : Option String := none
+  let mut hex : String := ""
+  for raw in text.splitOn "\n" do
+    let line := raw.trimAscii.toString
+    if line.startsWith "#" then
+      match label with
+      | some l => if !hex.isEmpty then out := out.push (l, hx hex)
+      | none => pure ()
+      let body := (line.drop 1).trimAscii.toString
+      if body.endsWith ":" then
+        label := some (body.dropEnd 1).toString
+      else
+        label := none
+      hex := ""
+    else if line.isEmpty then
+      match label with
+      | some l => if !hex.isEmpty then out := out.push (l, hx hex)
+      | none => pure ()
+      label := none
+      hex := ""
+    else if label.isSome then
+      hex := hex ++ String.join (line.splitOn " ")
+  return out.toList
+
+structure OaepVect where
+  name : String
+  n : ByteArray
+  e : ByteArray
+  d : ByteArray
+  msg : ByteArray
+  seed : ByteArray
+  ct : ByteArray
+
+/-- The 60 vectors: `Modulus`, then `Exponent` (public key), then in the
+private key `Modulus`, `Public exponent`, `Exponent` (the private one). -/
+def oaepVects (blocks : List (String × ByteArray)) : List OaepVect := Id.run do
+  let mut out : Array OaepVect := #[]
+  let mut n := ByteArray.empty
+  let mut e := ByteArray.empty
+  let mut d := ByteArray.empty
+  let mut afterPub := false
+  let mut msg := ByteArray.empty
+  let mut seed := ByteArray.empty
+  for (l, v) in blocks do
+    if l == "Modulus" then n := v; afterPub := false
+    else if l == "Public exponent" then e := v; afterPub := true
+    else if l == "Exponent" then
+      if afterPub then d := v else e := v
+    else if l == "Message" then msg := v
+    else if l == "Seed" then seed := v
+    else if l == "Encryption" then
+      out := out.push { name := s!"oaep-vect #{out.size + 1} ({n.size * 8}-bit key)",
+                        n, e, d, msg, seed, ct := v }
+  return out.toList
+
+def haclSize (k : Nat) : Bool := k == 256 || k == 384 || k == 512
+
+def runOaepVect (path : System.FilePath) : IO Tally := do
+  let t ← IO.mkRef ({} : Tally)
+  IO.println "-- rsa-oaep: RSA Laboratories oaep-vect.txt"
+  if !(← path.pathExists) then
+    IO.println s!"  [FAIL] cannot read {path}"
+    t.modify fun s => { s with fail := s.fail + 1, failures := ["oaep-vect.txt"] }
+    return (← t.get)
+  let vs := oaepVects (oaepVectBlocks (← IO.FS.readFile path))
+  check t "oaep-vect.txt holds 60 vectors" (vs.length == 60) s!"read {vs.length}"
+  let ref := L4Factoidal.Crypto.RsaOaepTests.refOp
+  for v in vs do
+    check t s!"{v.name}: encryption with the given seed (reference RSA)"
+      (RsaOaep.oaepEncrypt RsaOaep.oaepSha1 ref v.n v.e v.msg ByteArray.empty v.seed == some v.ct)
+    check t s!"{v.name}: decryption (reference RSA)"
+      (RsaOaep.oaepDecrypt RsaOaep.oaepSha1 ref v.n v.d v.ct ByteArray.empty == some v.msg)
+    if haclSize v.n.size then
+      check t s!"{v.name}: encryption with the given seed (HACL*)"
+        (RsaOaep.rsaOaepSha1Encrypt v.n v.e v.msg ByteArray.empty v.seed == some v.ct)
+      check t s!"{v.name}: decryption (HACL*)"
+        (RsaOaep.rsaOaepSha1Decrypt v.n v.d v.ct ByteArray.empty == some v.msg)
+    else
+      check t s!"{v.name}: HACL* refuses a modulus below 2048 bits"
+        (RsaOaep.rsaPrivateOp v.n v.d v.ct).isNone
+  t.get
+
+def stripLeadingZeros (b : ByteArray) : ByteArray :=
+  ⟨(b.data.toList.dropWhile (· == 0)).toArray⟩
+
+def runOaepWycheproof (path : System.FilePath) (label : String) (H : RsaOaep.OaepHash) :
+    IO Tally := do
+  let t ← IO.mkRef ({} : Tally)
+  IO.println s!"-- {label}"
+  match ← readJsonFile path with
+  | none =>
+      IO.println s!"  [FAIL] {label}: cannot read {path}"
+      t.modify fun s => { s with fail := s.fail + 1, failures := [label] }
+      return (← t.get)
+  | some j =>
+      let groups := (j.getArray? "testGroups").getD []
+      if groups.isEmpty then
+        check t s!"{label}: testGroups present" false
+      for g in groups do
+        match g.field? "privateKey" with
+        | none => check t s!"{label}: privateKey present" false
+        | some pk =>
+            match (pk.getString? "modulus").bind hexToBytes?,
+                  (pk.getString? "privateExponent").bind hexToBytes?,
+                  (pk.getString? "publicExponent").bind hexToBytes? with
+            | some n0, some d, some e =>
+                let n := stripLeadingZeros n0
+                let seed := ByteArray.mk (Array.replicate H.hLen 0x5a)
+                for tc in (g.getArray? "tests").getD [] do
+                  let name := s!"{label} tcId={tcIdOf tc}"
+                  match expectOf? ((tc.getString? "result").getD ""),
+                        hexToBytes? ((tc.getString? "msg").getD ""),
+                        hexToBytes? ((tc.getString? "ct").getD ""),
+                        hexToBytes? ((tc.getString? "label").getD "") with
+                  | some ex, some msg, some ct, some lab =>
+                      let got := RsaOaep.oaepDecrypt H RsaOaep.rsaPrivateOp n d ct lab
+                      match ex with
+                      | .valid =>
+                          check t name (got == some msg)
+                            s!"expected the message, got {(got.map hexOf).getD "none"}"
+                          let rt := (RsaOaep.oaepEncrypt H Rsa.rsaPublicOp n e msg lab seed).bind
+                            fun c => RsaOaep.oaepDecrypt H RsaOaep.rsaPrivateOp n d c lab
+                          check t (name ++ " round trip (HACL* encrypt, decrypt)") (rt == some msg)
+                          check t (name ++ " HACL* private op equals the reference")
+                            (RsaOaep.rsaPrivateOp n d ct ==
+                              L4Factoidal.Crypto.RsaOaepTests.refOp n d ct)
+                      | .invalid =>
+                          check t name got.isNone "expected a refusal, got a message"
+                      | .acceptable =>
+                          IO.println s!"  [ACCEPTABLE] {name} — {if got.isSome then "decrypted" else "refused"}"
+                          t.modify fun s => { s with acceptable := s.acceptable + 1 }
+                  | _, _, _, _ => check t name false "unreadable vector"
+            | _, _, _ => check t s!"{label}: private key readable" false
+      t.get
+
+/-! ## `--oaep-batch`: the RSA-OAEP operations for a differential driver
+
+`tests/crypto/rsa-oaep-diff.mjs` runs `l4crypto-probe --oaep-batch` and
+writes one request per line on standard input:
+
+```
+dec <sha1|sha256> <n> <d> <c> <label>
+enc <sha1|sha256> <n> <e> <m> <label> <seed>
+```
+
+Every field is lower-case hex; `-` is the empty octet string. For each
+line the probe writes one line: the result in hex, `none` for a refusal,
+or `error` for a request it cannot read. The decisions are those of
+`Crypto/RsaOaep.lean` over the HACL* operations; this loop only parses and
+prints. The loop ends at end of input (an outside event, so a `repeat`
+loop per the 2026-10-23 rule). -/
+
+def oaepHex? (s : String) : Option ByteArray :=
+  if s == "-" then some ByteArray.empty else hexToBytes? s
+
+def oaepHash? (s : String) : Option RsaOaep.OaepHash :=
+  if s == "sha1" then some RsaOaep.oaepSha1
+  else if s == "sha256" then some RsaOaep.oaepSha256
+  else none
+
+def oaepAnswer (r : Option ByteArray) : String :=
+  match r with
+  | some b => if b.size == 0 then "-" else hexOf b
+  | none => "none"
+
+def oaepRequest (line : String) : String :=
+  match line.splitOn " " with
+  | ["dec", h, n, d, c, l] =>
+      match oaepHash? h, oaepHex? n, oaepHex? d, oaepHex? c, oaepHex? l with
+      | some H, some n, some d, some c, some l =>
+          oaepAnswer (RsaOaep.oaepDecrypt H RsaOaep.rsaPrivateOp n d c l)
+      | _, _, _, _, _ => "error"
+  | ["enc", h, n, e, m, l, s] =>
+      match oaepHash? h, oaepHex? n, oaepHex? e, oaepHex? m, oaepHex? l, oaepHex? s with
+      | some H, some n, some e, some m, some l, some s =>
+          oaepAnswer (RsaOaep.oaepEncrypt H Rsa.rsaPublicOp n e m l s)
+      | _, _, _, _, _, _ => "error"
+  | _ => "error"
+
+def oaepBatch : IO UInt32 := do
+  let stdin ← IO.getStdin
+  let stdout ← IO.getStdout
+  -- Ends when standard input is closed (an outside event).
+  repeat
+    let line ← stdin.getLine
+    if line.isEmpty then break
+    let req := line.trimAscii.toString
+    if !req.isEmpty then
+      stdout.putStrLn (oaepRequest req)
+      stdout.flush
+  return 0
+
 /-! ## Entry point -/
 
-def main (_args : List String) : IO UInt32 := do
+def main (args : List String) : IO UInt32 := do
+  if args == ["--oaep-batch"] then return (← oaepBatch)
   let cwd ← IO.currentDir
   let root ← match ← findRepoRoot cwd with
     | some r => pure r
@@ -942,6 +1171,15 @@ def main (_args : List String) : IO UInt32 := do
   let t9 ← runP256Sign
   let t10 ← runP256Public (wp / "ecdh_secp256r1_webcrypto_test.json")
   let t11 ← runP256Compressed (wp / "ecdh_secp256r1_ecpoint_test.json")
+  let t12a ← runOaepVect (root / "third_party" / "testing" / "rsa-oaep-vect" / "oaep-vect.txt")
+  let t12b ← runOaepWycheproof (wp / "rsa_oaep_2048_sha1_mgf1sha1_test.json")
+               "wycheproof-rsa-oaep-2048-sha1" RsaOaep.oaepSha1
+  let t12c ← runOaepWycheproof (wp / "rsa_oaep_2048_sha256_mgf1sha256_test.json")
+               "wycheproof-rsa-oaep-2048-sha256" RsaOaep.oaepSha256
+  let t12d ← runOaepWycheproof (wp / "rsa_oaep_3072_sha256_mgf1sha256_test.json")
+               "wycheproof-rsa-oaep-3072-sha256" RsaOaep.oaepSha256
+  let t12e ← runOaepWycheproof (wp / "rsa_oaep_4096_sha256_mgf1sha256_test.json")
+               "wycheproof-rsa-oaep-4096-sha256" RsaOaep.oaepSha256
   IO.println "\n========================================"
   IO.println (scoreLine "rfc8439" t1)
   IO.println (scoreLine "wycheproof-chacha20-poly1305" t2)
@@ -954,7 +1192,12 @@ def main (_args : List String) : IO UInt32 := do
   IO.println (scoreLine "p256-sign-rfc6979" t9)
   IO.println (scoreLine "p256-secret-to-public" t10)
   IO.println (scoreLine "p256-compressed" t11)
-  let ts := [t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11]
+  IO.println (scoreLine "rsa-oaep-vect" t12a)
+  IO.println (scoreLine "wycheproof-rsa-oaep-2048-sha1" t12b)
+  IO.println (scoreLine "wycheproof-rsa-oaep-2048-sha256" t12c)
+  IO.println (scoreLine "wycheproof-rsa-oaep-3072-sha256" t12d)
+  IO.println (scoreLine "wycheproof-rsa-oaep-4096-sha256" t12e)
+  let ts := [t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12a, t12b, t12c, t12d, t12e]
   let total : Tally :=
     { pass := (ts.map Tally.pass).foldl (· + ·) 0,
       fail := (ts.map Tally.fail).foldl (· + ·) 0,

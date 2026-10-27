@@ -195,6 +195,7 @@ cannot reach an extern).
 | `Crypto/SHA2Native.lean` | SHA-256, and the block walk | `ffi/hacl_ed25519.c` | `l4vc-probe` |
 | `Crypto/P256Native.lean` | ECDSA P-256 (JWS ES256) | `ffi/hacl_p256.c` | `l4jose-probe` |
 | `Crypto/RsaNative.lean` | the RSA public operation (RS256) | `ffi/hacl_rsa.c` | `l4jose-probe` |
+| `Crypto/RsaOaep.lean` | the RSA private operation (constant time) and RSAES-OAEP padding in pure Lean | `ffi/hacl_rsa.c` | `l4crypto-probe` section `rsa-oaep`, `tests/crypto/rsa-oaep-diff.mjs` |
 | `Crypto/ChaChaPoly.lean` | ChaCha20-Poly1305 AEAD | `ffi/hacl_chachapoly.c` | `l4crypto-probe` |
 | `Crypto/Hkdf.lean` | HMAC-SHA-256, HKDF-SHA-256 | `ffi/hacl_kdf.c` | `l4crypto-probe` |
 | `Crypto/X25519.lean` | X25519 | `ffi/hacl_kdf.c` | `l4crypto-probe` |

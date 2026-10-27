@@ -366,6 +366,8 @@ import L4Factoidal.Solid.Server.Auth
 import L4Factoidal.Solid.Server.Oidc
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.RsaNative
+import L4Factoidal.Crypto.RsaOaep
+import L4Factoidal.Crypto.RsaOaepTests
 import L4Factoidal.VC.Multibase
 import L4Factoidal.VC.DidKey
 import L4Factoidal.VC.Context
