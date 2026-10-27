@@ -116,6 +116,7 @@ import L4Factoidal.SPARQL.Query
 import L4Factoidal.SPARQL.PathAlternative
 import L4Factoidal.SPARQL.Tokenizer
 import L4Factoidal.Syntax.IriResolve
+import L4Factoidal.RDF.IriSyntax
 import Std.Data.HashSet
 
 namespace L4Factoidal.SPARQL
@@ -1192,6 +1193,12 @@ def firstInvalidToken : TStream → Option ParseError
     | .iri s =>
       if s.toList.contains '\\' then
         some ⟨"invalid IRI escape (surrogate or malformed)", pt.pos⟩
+      -- SPARQL 1.1 Query §19.5: "Text matched by the IRIREF production ...
+      -- must conform to the generic syntax of IRI references in section 2.2
+      -- of RFC 3987" (https://github.com/danbri/factoidal/issues/1057):
+      -- `<_:p>`, `<abc##def>` and `<a_b:c>` are not IRI references.
+      else if !isIriReference s then
+        some ⟨s!"invalid IRI <{s}>: not an IRI and not a relative reference (RFC 3987 section 2.2)", pt.pos⟩
       else firstInvalidToken rest
     | _          => firstInvalidToken rest
 

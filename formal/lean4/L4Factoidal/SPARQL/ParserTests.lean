@@ -598,4 +598,16 @@ sparql12 `codepoint-escapes`). -/
 #guard parses "SELECT * { ?s ?p <http://e/\\u0061\\U0001F47E> }" .v12
 #guard parses "SELECT * { ?s ?p <http://e/\\u0061> }"
 
+
+-- https://github.com/danbri/factoidal/issues/1057: SPARQL 1.1 Query §19.5, an
+-- IRIREF holds an RFC 3987 IRI reference.
+#guard (parseSparql "ASK { <http://a/abc##def> ?p ?o }").toOption.isNone
+#guard (parseSparql "ASK { <urn:s> <_:p> <urn:o> }").toOption.isNone
+#guard (parseSparql "BASE <_:base> ASK {}").toOption.isNone
+#guard (parseSparql "SELECT * FROM <_:g> {}").toOption.isNone
+#guard (parseSparql "SELECT ?b WHERE { VALUES ?b { <_:-123> } }").toOption.isNone
+#guard (parseSparql "ASK { <http://www:example.org/> ?p ?o }").toOption.isNone
+#guard (parseSparql "ASK { <http://a/abc#def> ?p <#o> }" (some "http://e/doc")).toOption.isSome
+#guard (parseSparql "ASK { <a/b:c> ?p <> }" (some "http://e/doc")).toOption.isSome
+
 end L4Factoidal.SPARQL
