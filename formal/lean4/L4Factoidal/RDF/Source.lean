@@ -195,6 +195,15 @@ structure Extra where
 def rdfXmlParser : DocParser := fun _ base text =>
   (RdfXml.parseRdfXml text base).map fun g => { default := g, named := [] }
 
+/-- The dataset of `parseNQuadsFastDocument` is a set of quads: it is the
+dataset of `parseNQuadsFast` on the document or on its blanked form
+(`parseNQuadsFastDocument_cases`, `parseNQuadsFast_isSet`). -/
+theorem parseNQuadsFastDocument_isSet (s : String) (mode : Mode) (ds : Dataset)
+    (h : parseNQuadsFastDocument s mode = .ok ds) : ds.IsSet := by
+  rcases parseNQuadsFastDocument_cases s mode with e | e
+  · rw [e] at h; exact parseNQuadsFast_isSet s mode ds h
+  · rw [e] at h; exact parseNQuadsFast_isSet _ mode ds h
+
 /-! ## The batch meaning -/
 
 /-- Parse a whole document into a dataset as the parser of the format lists
@@ -206,8 +215,8 @@ def rdfXmlParser : DocParser := fun _ base text =>
 def parseDocumentRaw (extra : Extra) (fmt : RdfFormat) (mode : Mode) (base : Option String)
     (text : String) : Except ParseError Dataset :=
   match fmt with
-  | .nt => (parseNTriples text mode).map fun g => { default := g, named := [] }
-  | .nquads => parseNQuadsFast text mode
+  | .nt => (parseNTriplesDocument text mode).map fun g => { default := g, named := [] }
+  | .nquads => parseNQuadsFastDocument text mode
   | .turtle => (parseTurtleText text base mode).map fun g => { default := g, named := [] }
   | .trig => parseTriG text base mode
   | .rdfxml => rdfXmlParser mode base text
@@ -258,7 +267,7 @@ theorem parseDocument_set (extra : Extra) (fmt : RdfFormat) (mode : Mode) (base 
   cases fmt with
   | nquads =>
     refine ⟨ds, h, setOf_self ?_⟩
-    exact parseNQuadsFast_isSet text mode ds h
+    exact parseNQuadsFastDocument_isSet text mode ds h
   | trig =>
     refine ⟨ds, h, setOf_self ?_⟩
     exact parseTriG_isSet text base mode ds h

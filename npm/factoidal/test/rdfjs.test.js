@@ -192,3 +192,21 @@ test('DatasetCore: toNQuads / fromNQuads round-trip', () => {
   assert.equal(back.size, 1);
   assert.ok([...back][0].equals([...ds][0]));
 });
+
+// https://github.com/danbri/factoidal/issues/1054: RDF/JS Data Model, interface
+// Literal, "language the language as lowercase [BCP47] string". A factory term
+// equals the same term read from text, where the reader lowercases the tag.
+test('dataFactory.literal: the language tag is lowercase (issue 1054)', async () => {
+  assert.equal(df.literal('x', 'EN-GB').language, 'en-gb');
+  const dir = df.literal('x', { language: 'AR', direction: 'rtl' });
+  assert.equal(dir.language, 'ar');
+  assert.equal(dir.direction, 'rtl');
+  assert.equal(df.literal('x').language, '');
+  assert.equal(df.literal('x').direction, '');
+  const api = require('../index.js');
+  const ds = await api.parse('<http://a> <http://b> "x"@EN-GB .', { format: 'turtle' });
+  const parsed = [...ds][0].object;
+  assert.equal(parsed.language, 'en-gb');
+  assert.ok(df.literal('x', 'EN-GB').equals(parsed));
+  ds.dispose();
+});

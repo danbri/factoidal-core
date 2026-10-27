@@ -285,7 +285,7 @@ def nquads11StreamStage : Stage String (List String) Dataset where
     · next fd hr =>
       injection h with h
       subst h
-      exact nquads11_readAll_eq_parseNQuadsFast chunks fd hr
+      exact parseNQuadsFastDocument_of_ok (nquads11_readAll_eq_parseNQuadsFast chunks fd hr)
     · cases h
 
 /-- **Streamed, then scoped, is the batch reader.** A successful streamed

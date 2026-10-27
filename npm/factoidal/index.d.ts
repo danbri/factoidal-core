@@ -27,8 +27,11 @@ export interface BlankNode {
 export interface Literal {
   termType: 'Literal';
   value: string;
-  /** Language tag ('' when none). */
+  /** Language tag, lowercase ('' when none). */
   language: string;
+  /** Base direction of a directional language-tagged string (RDF 1.2):
+   *  'ltr' or 'rtl'; '' when none. RDF/JS Data Model, Literal.direction. */
+  direction: '' | 'ltr' | 'rtl';
   /** Datatype IRI term (xsd:string for plain literals). */
   datatype: NamedNode;
   equals(other: Term | null | undefined): boolean;
