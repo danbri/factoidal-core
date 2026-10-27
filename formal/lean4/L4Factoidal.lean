@@ -950,6 +950,7 @@ import L4Factoidal.WebDAV.Server
 import L4Factoidal.WebDAV.Local
 import L4Factoidal.WebDAV.Remote
 import L4Factoidal.WebDAV.Tests
+import L4Factoidal.WebDAV.Theorems
 -- The authorization server component (https://github.com/danbri/factoidal/issues/916).
 import L4Factoidal.Authz.Keys
 import L4Factoidal.Authz.Fetch

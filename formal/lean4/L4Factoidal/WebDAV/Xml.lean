@@ -10,7 +10,7 @@ EXPANDED name (namespace name and local part), never by its prefix, as RFC
 that is not well-formed XML, or not namespace-well-formed, is refused (400,
 RFC 4918 §8.2: "the server MUST respond with a 400 (Bad Request)").
 
-Responses are written with the tree's serializer (`Node.serialize`), one
+Responses are written with the tree's serializer output (`Node.serialize`, produced from a work list by `serializeFlat`), one
 `DAV:response` at a time, joined in one loop, so a multistatus of any
 number of members is written in fixed stack.
 
@@ -67,8 +67,62 @@ def El.child? (e : El) (local_ : String) : Option El :=
 /-- The character content of an element, its children's included. -/
 def El.text (e : El) : String := e.raw.textContent
 
+/-- The deepest element nesting a request body may have. A body deeper than
+this is refused (400) before it is parsed: the parse tree and its
+serialization recurse once per nesting level, and a property value of
+100,000 levels overflowed the wasm stack (tests/webdav/scaling.mjs,
+2026-10-27). RFC 4918 sets no depth; a server may refuse a body it does
+not process (§8.2: 400 for a body it cannot read as the method requires). -/
+def maxBodyDepth : Nat := 256
+
+/-- Where the depth scan is: in text, just after `<`, in a start tag (and
+in which quote), in an end tag, in `<!…>` or `<?…>`. -/
+inductive ScanMode where
+  | text | afterLt | startTag | quoted (q : Char) | endTag | other
+deriving DecidableEq
+
+/-- The depth scan's state: depth now, deepest seen, mode, the character
+before. -/
+structure DepthScan where
+  depth : Nat := 0
+  deepest : Nat := 0
+  mode : ScanMode := .text
+  prev : Char := ' '
+
+/-- One character of the depth scan. A start tag opens a level, `</`
+closes one, `/>` at the end of a start tag closes one. A `/>` in text or
+in a quoted attribute value is not a tag end, so text cannot lower the
+count; a `<` inside a comment counts as an opening, so the count can be
+higher than the true depth, never lower. -/
+def depthStep (st : DepthScan) (c : Char) : DepthScan :=
+  let st' := match st.mode with
+    | .text => if c == '<' then { st with mode := .afterLt } else st
+    | .afterLt =>
+      if c == '/' then { st with mode := .endTag, depth := st.depth - 1 }
+      else if c == '!' || c == '?' then { st with mode := .other }
+      else { st with mode := .startTag, depth := st.depth + 1, deepest := max st.deepest (st.depth + 1) }
+    | .startTag =>
+      if c == '"' || c == '\'' then { st with mode := .quoted c }
+      else if c == '>' then
+        if st.prev == '/' then { st with mode := .text, depth := st.depth - 1 } else { st with mode := .text }
+      else st
+    | .quoted q => if c == q then { st with mode := .startTag } else st
+    | .endTag | .other => if c == '>' then { st with mode := .text } else st
+  { st' with prev := c }
+
+/-- The deepest nesting the scan sees: one fold over the characters. -/
+def nestingDepth (s : String) : Nat := (s.foldl depthStep {}).deepest
+
+#guard nestingDepth "<a><b/><c><d>x</d></c></a>" == 3
+#guard nestingDepth "<?xml version=\"1.0\"?><!-- c --><a/>" == 1
+#guard nestingDepth "<a x=\"/>\"><b>/></b><b>/></b></a>" == 2
+#guard nestingDepth "<x>/><x>/><x>/><x>" == 4
+
 /-- Read a request body: the root element. -/
 def parseBody (text : String) : Except String El :=
+  if nestingDepth text > maxBodyDepth then
+    .error s!"the body nests elements deeper than {maxBodyDepth} levels"
+  else
   match parseXML text with
   | .error e => .error s!"the body is not well-formed XML ({e.message})"
   | .ok d =>
@@ -166,10 +220,46 @@ def statusResponse (href : String) (status : Nat) (error : List Node := []) : No
 
 def xmlDecl : String := "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 
+/-- A piece of the serializer's work list: a node to write, or the end tag
+of an element whose children are written. -/
+inductive Piece where
+  | node (n : Node)
+  | close (tag : String)
+
+/-- The tree serializer's output (`Node.serialize`, with its escaping and
+its attribute writer) produced from a work list: one loop, so a response
+of any width or depth is written in fixed stack. `Node.serialize` recurses
+once per child and once per level; a PROPFIND answer with 20,000 property
+names overflowed the wasm stack through it (tests/webdav/scaling.mjs,
+2026-10-27). The `#guard`s below compare the two on trees with every kind
+of node. The fuel (2^30 pieces) is above any response this server can hold
+in memory. -/
+def serializeLoop : Nat → List Piece → String → String
+  | 0, _, acc => acc
+  | _, [], acc => acc
+  | n + 1, .close t :: rest, acc => serializeLoop n rest (acc ++ "</" ++ t ++ ">")
+  | n + 1, .node nd :: rest, acc =>
+    match nd with
+    | .element tag attrs [] => serializeLoop n rest (acc ++ "<" ++ tag ++ serializeAttrs attrs ++ "/>")
+    | .element tag attrs kids =>
+      serializeLoop n (kids.map Piece.node ++ (.close tag :: rest)) (acc ++ "<" ++ tag ++ serializeAttrs attrs ++ ">")
+    | leaf => serializeLoop n rest (acc ++ leaf.serialize)
+
+def serializeFlat (n : Node) : String := serializeLoop (2 ^ 30) [.node n] ""
+
+private def sampleTree : Node :=
+  .element "D:a" [{ name := "x", value := "1\"<" }]
+    [ .text "t&<>", .element "b" [] [], .cdata "c]]", .comment " k ", .pi "p" "d"
+    , .element "D:c" [] [.element "e" [{ name := "y", value := "\t" }] [.text "deep"]] ]
+
+#guard serializeFlat sampleTree == sampleTree.serialize
+#guard serializeFlat (.element "x" [] []) == (Node.element "x" [] []).serialize
+#guard serializeFlat (.text "a<b") == (Node.text "a<b").serialize
+
 /-- A 207 body: the responses, each serialized on its own, joined in one
 loop. -/
 def multistatus (rs : List Node) : String :=
-  let body := rs.foldl (fun acc r => acc ++ r.serialize ++ "\n") ""
+  let body := rs.foldl (fun acc r => acc ++ serializeFlat r ++ "\n") ""
   xmlDecl ++ "<D:multistatus xmlns:D=\"DAV:\">\n" ++ body ++ "</D:multistatus>\n"
 
 /-- A body holding one element in `DAV:` (an error body, RFC 4918 §16, or a
@@ -177,8 +267,8 @@ def multistatus (rs : List Node) : String :=
 def davDocument (n : Node) : String :=
   match n with
   | .element tag attrs kids =>
-    xmlDecl ++ (Node.element tag (attrs ++ [{ name := "xmlns:D", value := davNs }]) kids).serialize ++ "\n"
-  | other => xmlDecl ++ other.serialize
+    xmlDecl ++ serializeFlat (Node.element tag (attrs ++ [{ name := "xmlns:D", value := davNs }]) kids) ++ "\n"
+  | other => xmlDecl ++ serializeFlat other
 
 /-- An error body with one precondition element (RFC 4918 §16). -/
 def errorBody (condition : Node) : String := davDocument (dav "error" [condition])

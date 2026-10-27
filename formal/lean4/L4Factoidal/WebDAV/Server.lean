@@ -33,6 +33,7 @@ import L4Factoidal.WebDAV.Backend
 import L4Factoidal.WebDAV.Xml
 import L4Factoidal.WebDAV.If
 import L4Factoidal.Crypto.SHA2
+import Std.Data.HashSet
 
 namespace L4Factoidal.WebDAV
 
@@ -240,7 +241,11 @@ def propfindResponse (st : DavState) (now : Nat) (req : PropReq) (p : DavPath)
   match req with
   | .allprop _ => propResponse href [(200, live.map (·.2) ++ dead.map (·.value.node))]
   | .propname =>
-    propResponse href [(200, live.map (fun (n, _) => dav n) ++ dead.map (fun d => nameNode d.name))]
+    -- Every LWS resource has an entity tag, also when this metadata (a
+    -- listing's) does not carry it.
+    let names := live.map (·.1)
+    let names := if names.contains "getetag" || p.segs.isEmpty then names else names ++ ["getetag"]
+    propResponse href [(200, names.map (fun n => dav n) ++ dead.map (fun d => nameNode d.name))]
   | .prop names =>
     let found := names.filterMap (fun n =>
       if n.namespace_ == some davNs then (live.find? (·.1 == n.localPart)).map (·.2)
@@ -252,39 +257,55 @@ def propfindResponse (st : DavState) (now : Nat) (req : PropReq) (p : DavPath)
 
 /-! ## Reading the storage -/
 
+/-- What a lookup found: the resource, nothing (404 or 410), or a refusal
+of the storage (any other status, or no answer), which the request reports
+rather than reading as absence. -/
+inductive Look where
+  | found (m : Meta)
+  | absent
+  | failed (a : BAns)
+deriving Inhabited
+
+def Look.toOption : Look → Option Meta
+  | .found m => some m
+  | _ => none
+
+def rootMeta : Meta := { path := "/", isColl := true }
+
 /-- The parent collection's storage path of a path inside a mount. -/
 def parentStorage (segs : List String) : String := storagePath segs.dropLast true
 
 /-- The metadata of the resource at `segs` in the mount, as a collection
 (`coll`) or as a data resource. `withLength`: a data resource's length,
 from its parent's listing (an LWS `HEAD` carries no length). -/
-def statAs (segs : List String) (coll : Bool) (withLength : Bool) : Prog (Option Meta) := do
+def statAs (segs : List String) (coll : Bool) (withLength : Bool) : Prog Look := do
   let path := storagePath segs coll
   let a ← ask (.head path)
-  if !a.ok then return none
+  if a.status == 404 || a.status == 410 then return .absent
+  if !a.ok then return .failed a
   let m : Meta := (a.info.getD { path, isColl := coll })
   let m := { m with path, isColl := coll || segs.isEmpty }
-  if coll || !withLength || segs.isEmpty then return some m
+  if coll || !withLength || segs.isEmpty then return .found m
   let l ← ask (.list (parentStorage segs))
   match l.members.find? (·.path == path) with
-  | some e => return some { m with length := e.length,
-                                   contentType := m.contentType.orElse (fun _ => e.contentType),
-                                   modified := m.modified.orElse (fun _ => e.modified) }
-  | none => return some m
+  | some e => return .found { m with length := e.length,
+                                     contentType := m.contentType.orElse (fun _ => e.contentType),
+                                     modified := m.modified.orElse (fun _ => e.modified) }
+  | none => return .found m
 
 /-- The resource a path names: as written, and a path with no `/` at the end
 as a collection too (a client may name a collection either way). -/
-def resolve (segs : List String) (slash : Bool) (withLength : Bool := false) : Prog (Option Meta) := do
+def resolve (segs : List String) (slash : Bool) (withLength : Bool := false) : Prog Look := do
   if segs.isEmpty || slash then statAs segs true withLength
   else
     match ← statAs segs false withLength with
-    | some m => return some m
-    | none => statAs segs true withLength
+    | .absent => statAs segs true withLength
+    | other => return other
 
 /-- Does the parent collection of `segs` exist? -/
-def parentExists (segs : List String) : Prog Bool := do
-  if segs.length ≤ 1 then return true
-  return (← statAs segs.dropLast true false).isSome
+def parentExists (segs : List String) : Prog Look := do
+  if segs.length ≤ 1 then return .found rootMeta
+  statAs segs.dropLast true false
 
 /-! ## The `If` header -/
 
@@ -294,32 +315,50 @@ def tagPath (host : Option String) (tag : String) : Option DavPath :=
   | .ok p => some p
   | .error _ => none
 
+/-- The most resources one `If` header may name (with resource tags). A
+header naming more is refused (400) by `precheck`, so the entity tags
+`ifHolds` reads are at most this many storage operations. -/
+def ifTagsMax : Nat := 16
+
+/-- The resource a list applies to: its tag, or the request target. -/
+def listPath (target : DavPath) (host : Option String) (l : IfList) : Option DavPath :=
+  match l.tag with
+  | none => some target
+  | some t => tagPath host t
+
 /-- Does one list hold for its resource (RFC 4918 §10.4.2, §10.4.3,
-§10.4.4)? -/
-def listHolds (st : DavState) (target : DavPath) (host : Option String) (l : IfList) : Prog Bool := do
-  let p := match l.tag with
-    | none => some target
-    | some t => tagPath host t
-  match p with
-  | none => return false
+§10.4.4), given the entity tags read? -/
+def listHolds (st : DavState) (target : DavPath) (host : Option String)
+    (etags : List (DavPath × Option String)) (l : IfList) : Bool :=
+  match listPath target host l with
+  | none => false
   | some p =>
-    -- The entity tag of the resource, only when a condition names one.
-    let etag ← if l.conds.any (·.etag.isSome) && p.segs.length ≥ 1 then do
-        let m ← resolve (inner p) p.slash
-        pure (m.bind (·.etag))
-      else pure none
-    return l.conds.all (fun c =>
+    let etag := (etags.lookup p).getD none
+    l.conds.all (fun c =>
       let v := match c.token, c.etag with
         | some t, _ => st.locks.any (fun lk => lk.token == t && lk.covers p)
         | none, some e => (etag.map (etagMatches · e)).getD false
         | none, none => false
       if c.negated then !v else v)
 
+/-- The entity tags of the resources the conditions name, one lookup each:
+at most `ifTagsMax` (`precheck`), so the recursion is that deep at most. -/
+def etagsOf : List DavPath → Prog (List (DavPath × Option String))
+  | [] => return []
+  | p :: ps => do
+    let e ← if p.segs.length ≥ 1 then do
+        let m ← resolve (inner p) p.slash
+        pure (m.toOption.bind (·.etag))
+      else pure none
+    let rest ← etagsOf ps
+    return (p, e) :: rest
+
 /-- Is the `If` header true: does any list hold (§10.4.2)? -/
 def ifHolds (st : DavState) (target : DavPath) (host : Option String) (ls : List IfList) : Prog Bool := do
-  for l in ls do
-    if ← listHolds st target host l then return true
-  return false
+  let needs := (ls.filterMap (fun l =>
+    if l.conds.any (·.etag.isSome) then listPath target host l else none)).eraseDups
+  let etags ← etagsOf needs
+  return ls.any (listHolds st target host etags)
 
 /-! ## Copying a tree -/
 
@@ -386,8 +425,6 @@ def htmlIndex (title : String) (items : List (String × String)) : DavResponse :
              "</title></head><body><h1>" ++ escapeText title ++ "</h1><ul>\n" ++ li ++
              "</ul></body></html>\n").toUTF8 }
 
-def rootMeta : Meta := { path := "/", isColl := true }
-
 /-- PROPFIND (RFC 4918 §9.1). -/
 def propfind (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) : Prog DavResponse := do
   let depth := (r.header? "depth").map (fun d => (trimS d).toLower)
@@ -407,13 +444,32 @@ def propfind (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) : Prog Da
   | mount :: rest =>
     let title := if rest.isEmpty then (cx.mounts.find? (·.name == mount)).map (·.title) else none
     match ← resolve rest p.slash true with
-    | none => return textResp 404 "no resource at this path"
-    | some m =>
+    | .failed a => return storageRefusal a
+    | .absent => return textResp 404 "no resource at this path"
+    | .found m =>
       let self := propfindResponse st cx.now req p title m
       if !(depth1 && m.isColl) then return xmlResp 207 (multistatus [self])
       let l ← ask (.list (storagePath rest true))
       if !l.ok then return storageRefusal l
-      let kids := l.members.map (fun e =>
+      -- A listing carries no entity tags. DAV:getetag "MUST be defined on all
+      -- DAV-compliant resources that return the Etag header" (RFC 4918
+      -- §15.6), so when the request asks for it (allprop, or by name) each
+      -- member is read with one HEAD.
+      let wantTag := match req with
+        | .allprop _ => true
+        | .prop names => names.contains (davName "getetag")
+        | .propname => false
+      -- Every iteration of the loop asks the storage before the next, so the
+      -- loop runs one frame deep per answer; with no tag wanted there is no
+      -- loop (a loop of pure steps is one frame per member).
+      let members ← if wantTag then do
+          let mut acc : Array Meta := #[]
+          for e in l.members do
+            let h ← ask (.head e.path)
+            acc := acc.push { e with etag := if h.ok then h.info.bind (·.etag) else none }
+          pure acc.toList
+        else pure l.members
+      let kids := members.map (fun e =>
         propfindResponse st cx.now req { segs := p.segs ++ [lastName e.path], slash := e.isColl } none e)
       return xmlResp 207 (multistatus (self :: kids))
 
@@ -428,11 +484,15 @@ def proppatch (st : DavState) (r : DavRequest) (p : DavPath) (m : Meta) : DavRes
                      (424, (ops.filter (!isLive ·.1)).map (fun (n, _) => nameNode n))]
       (xmlResp 207 (multistatus [propResponse href groups]), st)
     else
-      let props := ops.foldl (fun (acc : List DeadProp) (n, v) =>
-        let rest := acc.filter (·.name != n)
-        match v with
-        | some value => rest ++ [{ name := n, value }]
-        | none => rest) (deadOf st p)
+      -- The last instruction for a name decides it (§9.2: in document
+      -- order). One pass backwards with a set of the names seen, so the
+      -- cost is linear in the instructions.
+      let key (n : ExpandedName) : String :=
+        (match n.namespace_ with | some u => "U" ++ u | none => "N") ++ "\n" ++ n.localPart
+      let (touched, last) := ops.reverse.foldl (fun (acc : Std.HashSet String × List PatchOp) (n, v) =>
+        if acc.1.contains (key n) then acc else (acc.1.insert (key n), (n, v) :: acc.2)) (∅, [])
+      let props := (deadOf st p).filter (fun d => !touched.contains (key d.name)) ++
+        last.filterMap (fun (n, v) => v.map (fun value => ({ name := n, value } : DeadProp)))
       let others := st.props.filter (·.1 != p.key)
       let st' := { st with props := if props.isEmpty then others else others ++ [(p.key, props)] }
       (xmlResp 207 (multistatus [propResponse href [(200, ops.map (fun (n, _) => nameNode n))]]), st')
@@ -470,12 +530,18 @@ def lock (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) (submitted : 
     return (errResp 423 (dav "no-conflicting-lock" [davText "href" (hrefOf l.root false)]), st)
   | none =>
   let rest := inner p
-  let existing ← resolve rest p.slash
+  let existing ← match ← resolve rest p.slash with
+    | .failed a => return (storageRefusal a, st)
+    | .absent => pure none
+    | .found m => pure (some m)
   let created ← match existing with
     | some _ => pure false
     | none => do
       -- A LOCK of an unmapped URL makes an empty resource (§9.10.4).
-      if !(← parentExists rest) then return (textResp 409 "the parent collection does not exist", st)
+      match ← parentExists rest with
+      | .failed a => return (storageRefusal a, st)
+      | .absent => return (textResp 409 "the parent collection does not exist", st)
+      | .found _ => pure ()
       let w ← ask (.put (storagePath rest false) "application/octet-stream" ByteArray.empty true)
       if !w.ok then return (storageRefusal w, st)
       pure true
@@ -514,8 +580,9 @@ def copyMove (st : DavState) (r : DavRequest) (p : DavPath) (isMove : Bool)
   let src := inner p
   let dstIn := inner dst
   match ← resolve src p.slash with
-  | none => return (textResp 404 "no resource at this path", st)
-  | some m =>
+  | .failed a => return (storageRefusal a, st)
+  | .absent => return (textResp 404 "no resource at this path", st)
+  | .found m =>
   if dst.asFile.within p.asFile || (isMove && p.asFile.within dst.asFile) then
     return (textResp 403 "the source and the destination overlap", st)
   let depth := (r.header? "depth").map (fun d => (trimS d).toLower)
@@ -524,8 +591,14 @@ def copyMove (st : DavState) (r : DavRequest) (p : DavPath) (isMove : Bool)
     | some "0", false => pure false
     | _, _ => return (textResp 400 "COPY takes Depth 0 or infinity; MOVE takes infinity", st)
   let overwrite := (r.header? "overwrite").map (fun o => (trimS o).toUpper) != some "F"
-  if !(← parentExists dstIn) then return (textResp 409 "the destination's parent collection does not exist", st)
-  let existing ← resolve dstIn dst.slash
+  match ← parentExists dstIn with
+  | .failed a => return (storageRefusal a, st)
+  | .absent => return (textResp 409 "the destination's parent collection does not exist", st)
+  | .found _ => pure ()
+  let existing ← match ← resolve dstIn dst.slash with
+    | .failed a => return (storageRefusal a, st)
+    | .absent => pure none
+    | .found e => pure (some e)
   if existing.isSome && !overwrite then
     return (textResp 412 "the destination exists and Overwrite is F", st)
   -- Locks: the destination is replaced or added; a moved source is removed.
@@ -562,6 +635,9 @@ def precheck (cx : Ctx) (r : DavRequest) : Option DavResponse :=
       some { (textResp 405 "the method is not supported") with headers := [("allow", allowed)] }
     else if (r.header? "if").any (fun v => (parseIf v).isNone) then
       some (textResp 400 "the If header is malformed (RFC 4918 §10.4)")
+    else if (r.header? "if").any (fun v => ((parseIf v).getD []).length > 0 &&
+        (((parseIf v).getD []).filterMap (·.tag)).eraseDups.length > ifTagsMax) then
+      some (textResp 400 s!"the If header names more than {ifTagsMax} resources")
     else match p.segs with
       | [] =>
         if r.method == "OPTIONS" || r.method == "GET" || r.method == "HEAD" || r.method == "PROPFIND" then none
@@ -576,6 +652,33 @@ def precheck (cx : Ctx) (r : DavRequest) : Option DavResponse :=
 /-- The mount a request's storage operations go to. -/
 def mountOf (r : DavRequest) : Option String :=
   (parseTarget r.target).bind (fun p => p.segs.head?)
+
+/-- GET and HEAD (RFC 9110 §9.3.1, §9.3.2; RFC 4918 §9.4): a data
+resource's content; a collection as a page of links. -/
+def getHead (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) : Prog (DavResponse × DavState) := do
+  let rest := inner p
+  match p.segs with
+  | [] =>
+    let resp := htmlIndex "Factoidal" (cx.mounts.map (fun mv => (hrefOf { segs := [mv.name] } true, mv.title)))
+    return ({ resp with body := if r.method == "HEAD" then ByteArray.empty else resp.body }, st)
+  | _ =>
+  match ← resolve rest p.slash with
+  | .failed a => return (storageRefusal a, st)
+  | .absent => return (textResp 404 "no resource at this path", st)
+  | .found m =>
+    if m.isColl then
+      let l ← ask (.list (storagePath rest true))
+      if !l.ok then return (storageRefusal l, st)
+      let resp := htmlIndex (lastName (storagePath rest true)) (l.members.map (fun e =>
+        (hrefOf { segs := p.segs ++ [lastName e.path] } e.isColl, lastName e.path)))
+      return ({ resp with body := if r.method == "HEAD" then ByteArray.empty else resp.body }, st)
+    let g ← ask (.get (storagePath rest false))
+    if !g.ok then return (storageRefusal g, st)
+    let hs := [("content-type", ((g.info.bind (·.contentType)).getD "application/octet-stream"))] ++
+      ((g.info.bind (·.etag)).map (fun e => [("etag", e)])).getD [] ++
+      ((g.info.bind (·.modified)).map (fun d => [("last-modified", d)])).getD [] ++
+      [("content-length", toString g.body.size)]
+    return ({ status := 200, headers := hs, body := if r.method == "HEAD" then ByteArray.empty else g.body }, st)
 
 /-- One request. -/
 def handle (cx : Ctx) (st0 : DavState) (r : DavRequest) : Prog (DavResponse × DavState) := do
@@ -594,33 +697,21 @@ def handle (cx : Ctx) (st0 : DavState) (r : DavRequest) : Prog (DavResponse × D
   match r.method with
   | "OPTIONS" => return (optionsResp, st)
   | "PROPFIND" => return (← propfind cx st r p, st)
-  | "GET" | "HEAD" =>
-    match p.segs with
-    | [] =>
-      let resp := htmlIndex "Factoidal" (cx.mounts.map (fun mv => (hrefOf { segs := [mv.name] } true, mv.title)))
-      return ({ resp with body := if r.method == "HEAD" then ByteArray.empty else resp.body }, st)
-    | _ =>
-    match ← resolve rest p.slash with
-    | none => return (textResp 404 "no resource at this path", st)
-    | some m =>
-      if m.isColl then
-        let l ← ask (.list (storagePath rest true))
-        if !l.ok then return (storageRefusal l, st)
-        let resp := htmlIndex (lastName (storagePath rest true)) (l.members.map (fun e =>
-          (hrefOf { segs := p.segs ++ [lastName e.path] } e.isColl, lastName e.path)))
-        return ({ resp with body := if r.method == "HEAD" then ByteArray.empty else resp.body }, st)
-      let g ← ask (.get (storagePath rest false))
-      if !g.ok then return (storageRefusal g, st)
-      let hs := [("content-type", ((g.info.bind (·.contentType)).getD "application/octet-stream"))] ++
-        ((g.info.bind (·.etag)).map (fun e => [("etag", e)])).getD [] ++
-        ((g.info.bind (·.modified)).map (fun d => [("last-modified", d)])).getD [] ++
-        [("content-length", toString g.body.size)]
-      return ({ status := 200, headers := hs, body := if r.method == "HEAD" then ByteArray.empty else g.body }, st)
+  | "GET" | "HEAD" => getHead cx st r p
   | "PUT" =>
     if rest.isEmpty || p.slash then return (textResp 405 "PUT does not write a collection", st)
-    if !(← parentExists rest) then return (textResp 409 "the parent collection does not exist", st)
-    if (← statAs rest true false).isSome then return (textResp 405 "a collection has this name", st)
-    let exists_ := (← statAs rest false false).isSome
+    match ← parentExists rest with
+    | .failed a => return (storageRefusal a, st)
+    | .absent => return (textResp 409 "the parent collection does not exist", st)
+    | .found _ => pure ()
+    match ← statAs rest true false with
+    | .failed a => return (storageRefusal a, st)
+    | .found _ => return (textResp 405 "a collection has this name", st)
+    | .absent => pure ()
+    let exists_ ← match ← statAs rest false false with
+      | .failed a => return (storageRefusal a, st)
+      | .found _ => pure true
+      | .absent => pure false
     match missingToken (neededLocks st p false (!exists_)) submitted with
     | some l => return (lockedResp l, st)
     | none =>
@@ -632,8 +723,9 @@ def handle (cx : Ctx) (st0 : DavState) (r : DavRequest) : Prog (DavResponse × D
   | "DELETE" =>
     if rest.isEmpty then return (textResp 403 "the root of a mount is not deleted", st)
     match ← resolve rest p.slash with
-    | none => return (textResp 404 "no resource at this path", st)
-    | some m =>
+    | .failed a => return (storageRefusal a, st)
+    | .absent => return (textResp 404 "no resource at this path", st)
+    | .found m =>
       if m.isColl && (r.header? "depth").any (fun d => (trimS d).toLower != "infinity") then
         return (textResp 400 "DELETE of a collection takes Depth infinity (RFC 4918 §9.6.1)", st)
       match missingToken (neededLocks st p true true) submitted with
@@ -645,8 +737,14 @@ def handle (cx : Ctx) (st0 : DavState) (r : DavRequest) : Prog (DavResponse × D
   | "MKCOL" =>
     if r.body.size > 0 then return (textResp 415 "MKCOL takes no body (RFC 4918 §9.3)", st)
     if rest.isEmpty then return (textResp 405 "the mount root exists", st)
-    if (← resolve rest false).isSome then return (textResp 405 "a resource has this name", st)
-    if !(← parentExists rest) then return (textResp 409 "the parent collection does not exist", st)
+    match ← resolve rest false with
+    | .failed a => return (storageRefusal a, st)
+    | .found _ => return (textResp 405 "a resource has this name", st)
+    | .absent => pure ()
+    match ← parentExists rest with
+    | .failed a => return (storageRefusal a, st)
+    | .absent => return (textResp 409 "the parent collection does not exist", st)
+    | .found _ => pure ()
     match missingToken (neededLocks st p false true) submitted with
     | some l => return (lockedResp l, st)
     | none =>
@@ -657,8 +755,9 @@ def handle (cx : Ctx) (st0 : DavState) (r : DavRequest) : Prog (DavResponse × D
   | "MOVE" => copyMove st r p true submitted writable
   | "PROPPATCH" =>
     match ← resolve rest p.slash with
-    | none => return (textResp 404 "no resource at this path", st)
-    | some m =>
+    | .failed a => return (storageRefusal a, st)
+    | .absent => return (textResp 404 "no resource at this path", st)
+    | .found m =>
       match missingToken (neededLocks st p false false) submitted with
       | some l => return (lockedResp l, st)
       | none => return proppatch st r p m

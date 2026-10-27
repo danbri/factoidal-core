@@ -133,6 +133,17 @@ def both (f : Runner → Bool) : Bool := f lwsRun && f remoteRun
 #guard both fun run => (go run [reqOf "GET" "/m/a/../b"]).last.status == 400
 #guard both fun run => (go run [reqOf "PATCH" "/m/a"]).last.status == 405
 
+/-- A storage that does not answer. -/
+def downRun : Runner := fun st _ => ({ status := 0, detail := "no answer" }, st)
+/-- A storage that refuses every request (a remote storage's 403). -/
+def refusingRun : Runner := fun st _ => ({ status := 403 }, st)
+
+-- A storage that does not answer is 502, never 404 (the resource may exist).
+#guard (go downRun [reqOf "GET" "/m/a"]).last.status == 502
+#guard (go downRun [pf "/m/" "0"]).last.status == 502
+#guard (go downRun [put "/m/a" "x"]).last.status == 502
+#guard (go refusingRun [reqOf "DELETE" "/m/a"]).last.status == 403
+
 /-! ## PUT, GET, HEAD, DELETE -/
 
 #guard both fun run => statuses run
@@ -168,6 +179,19 @@ def both (f : Runner → Bool) : Bool := f lwsRun && f remoteRun
   w.last.status == 207 && count w.last "<D:href>/m/a.txt</D:href>" == 1 &&
   count w.last "<D:href>/m/c/</D:href>" == 1 && count w.last "<D:href>/m/</D:href>" == 1 &&
   !has w.last "/m/c/b.txt" && has w.last "<D:collection/>"
+-- Depth 1 allprop gives every member its entity tag (RFC 4918 §15.6); a
+-- request that does not ask for it reads no tag.
+#guard both fun run =>
+  let w := go run [put "/m/a.txt" "hello", reqOf "MKCOL" "/m/c", pf "/m/" "1"]
+  count w.last "<D:getetag>" == 3
+#guard both fun run =>
+  let w := go run [put "/m/a.txt" "hello", reqOf "MKCOL" "/m/c",
+    pf "/m/" "1" "<D:propfind xmlns:D=\"DAV:\"><D:prop><D:getetag/></D:prop></D:propfind>"]
+  count w.last "<D:getetag>" == 3
+#guard both fun run =>
+  let w := go run [put "/m/a.txt" "hello", reqOf "MKCOL" "/m/c",
+    pf "/m/" "1" "<D:propfind xmlns:D=\"DAV:\"><D:prop><D:getcontentlength/></D:prop></D:propfind>"]
+  count w.last "<D:getetag>" == 0 && count w.last "<D:getcontentlength>5</D:getcontentlength>" == 1
 -- A collection named without `/`.
 #guard both fun run => (go run [reqOf "MKCOL" "/m/c", pf "/m/c" "0"]).last.status == 207
 #guard both fun run =>
@@ -205,6 +229,19 @@ def getProp : String :=
   let w := go run [put "/m/a.txt" "x", reqOf "PROPPATCH" "/m/a.txt" []
     "<D:propertyupdate xmlns:D=\"DAV:\"><D:set><D:prop><D:getetag>x</D:getetag><D:foo>y</D:foo></D:prop></D:set></D:propertyupdate>"]
   w.last.status == 207 && has w.last "403 Forbidden" && has w.last "424 Failed Dependency"
+-- A body nested deeper than `maxBodyDepth` is refused before it is parsed.
+#guard both fun run =>
+  let v := String.join (List.replicate 300 "<Z:n>") ++ String.join (List.replicate 300 "</Z:n>")
+  (go run [put "/m/a.txt" "x", reqOf "PROPPATCH" "/m/a.txt" [] (setProp v)]).last.status == 400
+#guard both fun run =>
+  let v := String.join (List.replicate 200 "<Z:n>") ++ String.join (List.replicate 200 "</Z:n>")
+  (go run [put "/m/a.txt" "x", reqOf "PROPPATCH" "/m/a.txt" [] (setProp v)]).last.status == 207
+-- The last instruction for a name decides it.
+#guard both fun run =>
+  let body := "<D:propertyupdate xmlns:D=\"DAV:\" xmlns:Z=\"http://z/\"><D:set><D:prop><Z:colour>a</Z:colour></D:prop></D:set>" ++
+    "<D:remove><D:prop><Z:colour/></D:prop></D:remove><D:set><D:prop><Z:colour>b</Z:colour></D:prop></D:set></D:propertyupdate>"
+  let w := go run [put "/m/a.txt" "x", reqOf "PROPPATCH" "/m/a.txt" [] body, pf "/m/a.txt" "0" getProp]
+  has w.last ">b</Z:colour>" && !has w.last ">a</Z:colour>"
 -- Dead properties move with MOVE and are copied by COPY.
 #guard both fun run =>
   let w := go run [put "/m/a.txt" "x", reqOf "PROPPATCH" "/m/a.txt" [] (setProp "blue"),
@@ -285,6 +322,17 @@ def tokenOf (r : DavResponse) : String :=
   (step run w0 (put "/m/a.txt" "y" [("if", "([" ++ e ++ "])")])).last.status == 204 &&
   (step run w0 (put "/m/a.txt" "y" [("if", "([\"nope\"])")])).last.status == 412
 #guard both fun run => (go run [put "/m/a.txt" "x" [("if", "(<urn:x>")]]).last.status == 400
+-- An If header naming more resources than `ifTagsMax` is refused before any
+-- storage operation.
+#guard both fun run =>
+  let tags := String.join ((List.range 17).map (fun i => s!"<http://localhost:8090/m/f{i}> (<urn:x>) "))
+  (go run [put "/m/a.txt" "x" [("if", tags)]]).last.status == 400
+-- A tagged list on another resource (RFC 4918 §10.4.3).
+#guard both fun run =>
+  let w0 := go run [put "/m/a.txt" "x", put "/m/b.txt" "y", reqOf "HEAD" "/m/b.txt"]
+  let e := (hdr w0.last "etag").getD ""
+  (step run w0 (put "/m/a.txt" "z" [("if", "<http://localhost:8090/m/b.txt> ([" ++ e ++ "])")])).last.status == 204 &&
+  (step run w0 (put "/m/a.txt" "z" [("if", "<http://localhost:8090/m/a.txt> ([" ++ e ++ "])")])).last.status == 412
 
 /-! ## GET of a collection -/
 
