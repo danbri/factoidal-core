@@ -146,6 +146,7 @@ Codes (generated from `engineTables().errorCodes`):
 | `term.invalid-iri` | <https://www.w3.org/TR/rdf12-concepts/#section-IRIs> | A term that must be an IRI is not one. |
 | `term.invalid-langtag` | <https://www.w3.org/TR/rdf12-concepts/#section-Graph-Literal> | A language tag is not well-formed (BCP 47). |
 | `term.invalid` | <https://www.w3.org/TR/sparql11-results-json/#select-encode-terms> | A term or quad given as JSON is not an RDF term or quad. |
+| `literal.value` | <https://www.w3.org/TR/xmlschema11-2/#value-space> | The value is not in the value space of the named datatype, or the datatype is not one the engine has. |
 | `query.syntax` | <https://www.w3.org/TR/sparql11-query/#grammar> | The SPARQL query does not match the SPARQL grammar. |
 | `query.failed` | <https://www.w3.org/TR/sparql11-query/#sparqlDefinition> | The SPARQL query parsed but its evaluation was refused. |
 | `update.syntax` | <https://www.w3.org/TR/sparql11-update/#grammar> | The SPARQL update does not match the SPARQL Update grammar. |

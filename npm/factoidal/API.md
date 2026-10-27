@@ -424,7 +424,8 @@ canonicalLiteral(df.literal('0.1', df.namedNode(XSD + 'double'))).value; // '1.0
 literalFromValue(99);                          // "99"^^xsd:integer
 literalFromValue(1.5);                         // "1.5E0"^^xsd:double
 literalFromValue(99, { datatype: 'int' });     // "99"^^xsd:int
-literalFromValue(300, { datatype: 'byte' });   // throws FactoidalError, code 'literal.value'
+try { literalFromValue(300, { datatype: 'byte' }); }
+catch (err) { err.code; }                      // 'literal.value' (300 is not an xsd:byte)
 ```
 
 `literalValue(term)` answers `{datatype, recognized, valid, value?, canonical?}`:

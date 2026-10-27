@@ -2237,6 +2237,9 @@ function buildApi(driver) {
     if (v && typeof v.special === 'string' && v.special in SPECIAL_NUMBERS) {
       return { ...v, number: SPECIAL_NUMBERS[v.special] };
     }
+    // A JSON text -0 may reach this layer as 0; negativeZero is the engine's
+    // statement of the sign.
+    if (v && v.negativeZero === true) return { ...v, number: -0 };
     return v;
   }
 
