@@ -734,6 +734,14 @@ def dtLit (s : String) : Expr := .lit (mkTypedLiteral s xsdDateTime)
 
 /-! ### §17.5 XSD constructor functions (the W3C `cast` suite's rules) -/
 
+-- §17.5: no cast from rdf:langString or rdf:dirLangString is defined
+-- (https://github.com/danbri/factoidal/issues/1062).
+#guard evalXsdCast (.term (.literal (litLang "foo" "en"))) "string" xsdString == .error
+#guard evalXsdCast (.term (.literal litDir)) "string" xsdString == .error
+#guard evalXsdCast (.term (.literal (litLang "2020-01-01" "en"))) "date" (iriE "http://www.w3.org/2001/XMLSchema#date") == .error
+#guard evalXsdCast (.term (.literal (litStr "foo"))) "string" xsdString == .term (.literal (litStr "foo"))
+#guard evalXsdCast (.term (.literal (litLang "1" "en"))) "integer" xsdInteger == .error
+
 def xsdFn (t : String) (e : Expr) (h : isIri (xsdNamespace ++ t) := by rfl) : Expr :=
   .functionCall ⟨xsdNamespace ++ t, h⟩ [e]
 

@@ -2015,6 +2015,11 @@ def castDateTime (v : EvalResult) : EvalResult :=
       else .error
   | _ => .error
 
+/-- A language-tagged literal (with or without a base direction). -/
+def isLangTaggedResult : EvalResult → Bool
+  | .term (.literal l) => l.val.langTag.isSome
+  | _ => false
+
 /-- §17.5: dispatch `xsd:<targetType>(v)`. Other XSD datatype IRIs retain
 the historical typed-literal fallback; their constructor semantics remain a
 coverage gap. Language-tagged datatypes are never constructible this way. -/
@@ -2026,6 +2031,12 @@ def evalXsdCast (v : EvalResult) (targetType : String) (fullIri : WfIri) : EvalR
   if targetType == "dateTime" then castDateTime v else
   if targetType == "boolean" then castBoolean v else
   let v := v.promoteLiteral
+  -- §17.5: "XPath defines only the casts from one XML Schema datatype to
+  -- another"; rdf:langString and rdf:dirLangString are not XML Schema
+  -- datatypes, so no cast from a language-tagged literal is defined and
+  -- `xsd:string("foo"@en)` is an error
+  -- (https://github.com/danbri/factoidal/issues/1062).
+  if isLangTaggedResult v then .error else
   match castLexical v with
   | none => .error
   | some lex0 =>
