@@ -90,11 +90,13 @@ open L4Factoidal.SPARQL
 /-- A generalized triple: any term in any position. -/
 abbrev T3 := Term × Term × Term
 
-/-- The evaluation graph: a set, an index on the predicate, and the triples in
-insertion order. -/
+/-- The evaluation graph: a set, an index on each position, and the triples
+in insertion order. -/
 structure IGraph where
   set : Std.HashSet T3 := {}
+  byS : Std.HashMap Term (Array T3) := {}
   byP : Std.HashMap Term (Array T3) := {}
+  byO : Std.HashMap Term (Array T3) := {}
   all : Array T3 := #[]
 
 instance : Inhabited IGraph := ⟨{}⟩
@@ -104,7 +106,9 @@ def IGraph.contains (g : IGraph) (t : T3) : Bool := g.set.contains t
 def IGraph.insert (g : IGraph) (t : T3) : IGraph :=
   if g.set.contains t then g
   else { set := g.set.insert t
+         byS := g.byS.insert t.1 ((g.byS.getD t.1 #[]).push t)
          byP := g.byP.insert t.2.1 ((g.byP.getD t.2.1 #[]).push t)
+         byO := g.byO.insert t.2.2 ((g.byO.getD t.2.2 #[]).push t)
          all := g.all.push t }
 
 def IGraph.insertAll (g : IGraph) (ts : Array T3) : IGraph := ts.foldl IGraph.insert g
@@ -125,10 +129,18 @@ structure Src where
   g : IGraph
   excl : Option IGraph := none
 
-def Src.candidates (src : Src) (p : Option Term) : Array T3 :=
-  let base := match p with
-    | some p => src.g.byP.getD p #[]
-    | none => src.g.all
+/-- The triples that can match a pattern whose positions are ground as given:
+the whole triple when all three are, else the shortest index entry. -/
+def Src.candidates (src : Src) (s p o : Option Term) : Array T3 :=
+  let g := src.g
+  let base := match s, p, o with
+    | some s, some p, some o => if g.contains (s, p, o) then #[(s, p, o)] else #[]
+    | _, _, _ =>
+      let opts := [s.map (fun k => g.byS.getD k #[]), p.map (fun k => g.byP.getD k #[]),
+                   o.map (fun k => g.byO.getD k #[])].filterMap id
+      match opts with
+      | [] => g.all
+      | a :: rest => rest.foldl (fun m x => if x.size < m.size then x else m) a
   match src.excl with
   | none => base
   | some ex => base.filter (fun t => !ex.contains t)
@@ -166,12 +178,12 @@ def inst (b : Binding) (bn : String → Term) : STerm → Option Term
       | some s', some (.iri p'), some o' => s'.toSubject?.map fun ss => .tripleTerm ss p' o'
       | _, _, _ => none
 
+/-- A pattern term with every variable bound, as a term. -/
+def ground? (b : Binding) (t : STerm) : Option Term :=
+  if !t.bnodes.isEmpty then none else inst b (fun x => .bnode x) t
+
 def matchTriple (src : Src) (b : Binding) (tp : STriple) : List Binding :=
-  let pKey := inst b (fun x => .bnode x) tp.p
-  let pKey := match tp.p with
-    | .bnode _ => none
-    | _ => pKey
-  ((src.candidates pKey).foldl (fun acc (s, p, o) =>
+  ((src.candidates (ground? b tp.s) (ground? b tp.p) (ground? b tp.o)).foldl (fun acc (s, p, o) =>
     match matchTerm b tp.s s with
     | none => acc
     | some b1 =>
