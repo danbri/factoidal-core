@@ -3501,5 +3501,53 @@ corecheck "core: unknown op -> error" definitelyNotAnOp "$TMP/empty.json" \
 check "full: ops reflection names the full engine" ops "$TMP/empty.json" \
   'r["ok"] is True and r["engine"] == "full"'
 
+# --- Value matching (https://github.com/danbri/factoidal/issues/1052) -----
+# sameValue: SPARQL 1.1 `=` on two terms, three-valued. The match ops take an
+# optional options object, {"match":"value"}; term matching is the default.
+XSDI='http://www.w3.org/2001/XMLSchema#integer'
+args "$TMP/sv-true.json" '{"type":"literal","value":"01","datatype":"'"$XSDI"'"}' \
+  '{"type":"literal","value":"1.0","datatype":"http://www.w3.org/2001/XMLSchema#decimal"}'
+check "sameValue 01^^integer 1.0^^decimal -> true" sameValue "$TMP/sv-true.json" \
+  'r == {"ok": True, "sameValue": "true"}'
+args "$TMP/sv-inc.json" '{"type":"nt","value":"\"a\"^^<http://e/dt>"}' '{"type":"nt","value":"\"b\"^^<http://e/dt>"}'
+check "sameValue of two literals of an unknown datatype -> incomparable" sameValue "$TMP/sv-inc.json" \
+  'r == {"ok": True, "sameValue": "incomparable"}'
+args "$TMP/sv-bad.json" '{}' '{"type":"uri","value":"http://e/a"}'
+check "sameValue of a non-term -> term.invalid" sameValue "$TMP/sv-bad.json" \
+  'r["ok"] is False and r["code"] == "term.invalid"'
+python3 - "$TMP/vm-seq.json" <<'EOF'
+import json, sys
+I = "http://www.w3.org/2001/XMLSchema#integer"
+NQ = ('<http://e/s> <http://e/p> "01"^^<%s> .\n'
+      '<http://e/s> <http://e/p> "1.0"^^<http://www.w3.org/2001/XMLSchema#decimal> <http://e/g> .\n'
+      '<http://e/s> <http://e/p> "2"^^<%s> .\n') % (I, I)
+one = json.dumps([None, None, {"type": "literal", "value": "1", "datatype": I}, None])
+q = json.dumps([[{"type": "uri", "value": "http://e/s"}, {"type": "uri", "value": "http://e/p"},
+                 {"type": "literal", "value": "1", "datatype": I}]])
+seq = [
+  ["datasetOpen", [NQ, "nquads", ""]],
+  ["datasetMatchCount", ["h1", one]],
+  ["datasetMatchCount", ["h1", one, '{"match":"value"}']],
+  ["datasetMatch", ["h1", one, '{"match":"value"}']],
+  ["datasetMatchCount", ["h1", one, '{"match":"values"}']],
+  ["datasetDeleteQuadsJson", ["h1", q, '{"match":"value"}']],
+  ["datasetMatchCount", ["h1", one, '{"match":"value"}']],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+checkseq "value match: count, match, a bad mode, delete by value" "$TMP/vm-seq.json" \
+  'rs[0]["ok"] is True and rs[0]["count"] == 3
+   and rs[1] == {"ok": True, "count": 0}
+   and rs[2] == {"ok": True, "count": 2}
+   and rs[3]["ok"] is True and rs[3]["count"] == 2
+   and rs[4]["ok"] is False and rs[4]["code"] == "option.invalid-value"
+   and rs[5] == {"ok": True, "count": 2}
+   and rs[6] == {"ok": True, "count": 1}'
+TERM_OPS='["sameValue"]'
+check "ops reflection lists the term ops (issue 1052)" ops "$TMP/empty.json" \
+  "set($TERM_OPS) <= set(r[\"ops\"])"
+corecheck "core: ops reflection lists the term ops" ops "$TMP/empty.json" \
+  "set($TERM_OPS) <= set(r[\"ops\"])"
+
 echo "=== native-smoke: $PASS pass, $FAIL fail, $XFAIL xfail (out of $((PASS + FAIL + XFAIL)))"
 [ "$FAIL" -eq 0 ]

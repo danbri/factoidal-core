@@ -59,6 +59,7 @@ export const isomorphic = api.isomorphic;
 export const fromQuads = api.fromQuads;
 export const ready = api.ready;
 export const engineTables = api.engineTables;
+export const sameValue = api.sameValue;
 export const openDataset = api.openDataset;
 export const closure = api.closure;
 export const formats = api.formats;

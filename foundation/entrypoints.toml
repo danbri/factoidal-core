@@ -132,6 +132,21 @@ stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
 covers = "part"
 note = "matchDataset as wasm:datasetMatch, then the quad count. Not covered: quadPatternOf."
 
+# Value matching (https://github.com/danbri/factoidal/issues/1052;
+# Wasm/Ops/Terms.lean).
+
+[[nonstage]]
+id = "wasm:sameValue"
+reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
+
+[[nonstage]]
+id = "npm:.#sameValue"
+reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#sameValue"
+reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
+
 [[entry]]
 id = "wasm:storeQuery"
 stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]

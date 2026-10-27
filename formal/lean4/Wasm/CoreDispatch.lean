@@ -50,6 +50,7 @@ import Wasm.Ops.QueryExtras
 import Wasm.Ops.Lenient
 import Wasm.Ops.Validate
 import Wasm.Ops.DeltaLog
+import Wasm.Ops.Terms
 
 namespace L4Wasm.Core
 
@@ -80,7 +81,7 @@ def coreOpNames : List String :=
   , "rhoDfFragmentCheck"
   , "rdfsPlusClosure"
   , "queryRaw"
-  , "shaclValidate" ] ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames
+  , "shaclValidate" ] ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames ++ termsOpNames
 
 /-- The op names of the core engine that hold state (an `IO.Ref`), served by
 `callIO` only: dataset handles, the §17.6 registry, the SERVICE registry, and
@@ -260,6 +261,14 @@ def arityIO3 (op : String) (f : String → String → String → IO String) :
   | [a, b, c] => f a b c
   | args => pure (errJson s!"{op} expects 3 arguments, got {args.length}")
 
+/-- Two required arguments and an optional third, the options object (an empty
+string when it is not given). -/
+def arityIO2Opt (op : String) (f : String → String → String → IO String) :
+    List String → IO String
+  | [a, b] => f a b ""
+  | [a, b, c] => f a b c
+  | args => pure (errJson s!"{op} expects 2 or 3 arguments, got {args.length}")
+
 /-- The stateless core ops, with `extra` the reader of the syntaxes outside
 `Wasm/Ops/Parse.lean`'s table; `none` for any other op (and for `ops`, whose
 answer each engine gives itself). -/
@@ -288,7 +297,11 @@ def callArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | _ =>
       match callParity op args with
       | some r => some r
-      | none => callLenientBy extra op args
+      | none =>
+        -- Terms, IRIs, syntax names and vocabularies (Wasm/Ops/Terms.lean).
+        match callTerms op args with
+        | some r => some r
+        | none => callLenientBy extra op args
 
 /-- The core ops that need `IO` (the stateful ones, and the IO forms of
 `queryDataset`, `parseToDatasetJson` and `parseDocument`); `none` for any other
@@ -327,13 +340,14 @@ def callIOArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "datasetQueryRaw"  => some (arityIO3 op Ops.datasetQueryRaw args)
   | "datasetFormats"   => some (arityIO0 op Ops.datasetFormats args)
   | "detectFormat"     => some (arityIO1 op Ops.detectFormat args)
-  | "datasetMatch"     => some (arityIO2 op Ops.datasetMatch args)
-  | "datasetMatchCount" => some (arityIO2 op Ops.datasetMatchCount args)
+  -- An optional options object: {"match":"value"} (issue 1052).
+  | "datasetMatch"     => some (arityIO2Opt op Ops.datasetMatchWith args)
+  | "datasetMatchCount" => some (arityIO2Opt op Ops.datasetMatchCountWith args)
   | "datasetAddQuads"  => some (arityIO2 op Ops.datasetAddQuads args)
   | "datasetDeleteQuads" => some (arityIO2 op Ops.datasetDeleteQuads args)
   | "datasetQuadsJson" => some (arityIO2 op Ops.datasetQuadsJson args)
   | "datasetAddQuadsJson" => some (arityIO2 op Ops.datasetAddQuadsJson args)
-  | "datasetDeleteQuadsJson" => some (arityIO2 op Ops.datasetDeleteQuadsJson args)
+  | "datasetDeleteQuadsJson" => some (arityIO2Opt op Ops.datasetDeleteQuadsJsonWith args)
   | "datasetFromQuadsJson" => some (arityIO1 op Ops.datasetFromQuadsJson args)
   | "datasetGraphNames" => some (arityIO1 op Ops.datasetGraphNames args)
   | "datasetGraphAsDefault" => some (arityIO2 op Ops.datasetGraphAsDefault args)

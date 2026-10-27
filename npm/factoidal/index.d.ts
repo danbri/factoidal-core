@@ -280,11 +280,19 @@ export class Dataset implements Iterable<Quad> {
   toString(formatOrOptions?: WriteFormat | WriteOptions): string;
   toNQuads(): string;
   clone(): Dataset;
-  /** RDF/JS DatasetCore (https://rdf.js.org/dataset-spec/); match and has use the engine indexes. */
-  has(quad: Quad): boolean;
+  /**
+   * RDF/JS DatasetCore (https://rdf.js.org/dataset-spec/); match and has use
+   * the engine indexes. `{match: 'value'}`: a literal object matches every
+   * object literal that is the same term or has the same value (sameValue());
+   * the other positions match by term.
+   */
+  has(quad: Quad, options?: MatchOptions): boolean;
   add(quad: Quad): this;
-  delete(quad: Quad): this;
-  match(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null): Dataset;
+  /** With `{match: 'value'}`: remove every quad of the same subject, predicate
+   *  and graph whose object has the same value as the quad's literal object. */
+  delete(quad: Quad, options?: MatchOptions): this;
+  match(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null,
+    options?: MatchOptions): Dataset;
   toArray(): Quad[];
   [Symbol.iterator](): Iterator<Quad>;
   dispose(): void;
@@ -560,6 +568,26 @@ export function ready(): Promise<void>;
 
 /** The engine's name tables: format names, entailment regimes, query outputs, pack syntaxes. */
 export function engineTables(): Promise<Record<string, unknown>>;
+
+/**
+ * How Dataset.has, match and delete compare the object position
+ * (https://github.com/danbri/factoidal/issues/1052). 'term' (the default):
+ * RDF term equality. 'value': a literal object matches by value (sameValue()).
+ */
+export interface MatchOptions {
+  match?: 'term' | 'value';
+}
+
+/**
+ * SPARQL 1.1 `=` on two RDF terms (sections 17.3 and 17.4.1.7), decided by the
+ * engine: `true` the same value (`"01"^^xsd:integer` and `"1.0"^^xsd:decimal`),
+ * `false` different values, `null` incomparable (the operator's type error:
+ * two different literals of an unknown datatype, an ill-typed literal and
+ * another literal, `xsd:integer` and `xsd:boolean`). `"NaN"^^xsd:double` is
+ * not the same value as itself. A term is an RDF/JS term or an N-Triples term
+ * string. Synchronous: the engine must be loaded (`await ready()`).
+ */
+export function sameValue(a: Term | string, b: Term | string): boolean | null;
 
 /** A SHACL validation-report term (see shaclValidate). */
 export interface ShaclValidateResult {
@@ -1763,6 +1791,7 @@ declare const _default: {
   fromQuads: typeof fromQuads;
   ready: typeof ready;
   engineTables: typeof engineTables;
+  sameValue: typeof sameValue;
   shaclValidate: typeof shaclValidate;
   shexValidate: typeof shexValidate;
   owlClosure: typeof owlClosure;

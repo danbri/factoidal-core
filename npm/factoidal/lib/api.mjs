@@ -949,6 +949,34 @@ function buildApi(driver) {
     await ctx();
   }
 
+  // The synchronous term functions (sameValue, syntaxFor, splitIri, ...) call
+  // the loaded engine: `await ready()`, or any other call, loads it first.
+  function loadedCtx(who, op = who) {
+    if (!ctxCache) {
+      throw new FactoidalError(
+        `${who}: the engine is not loaded yet. Await any @factoidal/core call first ` +
+        '(for example `await ready()`).', { code: 'op.unknown' });
+    }
+    requireEntryFn(ctxCache.e, op, who);
+    return ctxCache;
+  }
+
+  /**
+   * SPARQL 1.1 `=` on two RDF terms (sections 17.3 and 17.4.1.7), decided by
+   * the engine (L4Factoidal.SPARQL.sameValue;
+   * https://github.com/danbri/factoidal/issues/1052).
+   * @param {object|string} a an RDF/JS term or an N-Triples term string
+   * @param {object|string} b
+   * @returns {boolean|null} true: the same value; false: different values;
+   *   null: incomparable (the operator's type error)
+   */
+  function sameValue(a, b) {
+    const c = loadedCtx('sameValue');
+    const r = entryResult(c.e.sameValue(JSON.stringify(termToJson(a)),
+      JSON.stringify(termToJson(b))), 'sameValue');
+    return r.sameValue === 'true' ? true : (r.sameValue === 'false' ? false : null);
+  }
+
   /** The engine's name tables (formats, regimes, query outputs, pack syntaxes). */
   async function engineTables() {
     return (await ctx()).tables();
@@ -2289,6 +2317,7 @@ function buildApi(driver) {
     fromQuads,
     ready,
     engineTables,
+    sameValue,
     Dataset,
     Store,
     FactoidalError,

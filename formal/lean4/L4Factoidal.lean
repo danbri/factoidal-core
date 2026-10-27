@@ -132,6 +132,7 @@ import L4Factoidal.RDF.EntailmentRdfsSpec
 import L4Factoidal.RDF.EntailmentGeneralize
 import L4Factoidal.RDF.Semantics
 import L4Factoidal.SPARQL.Expr
+import L4Factoidal.SPARQL.SameValue
 import L4Factoidal.SPARQL.ExprTheorems
 import L4Factoidal.SPARQL.ExprRefinement
 import L4Factoidal.SPARQL.Query

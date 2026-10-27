@@ -405,22 +405,44 @@ class Dataset {
       termToJson(graph)]);
   }
 
-  /** RDF/JS DatasetCore.has: one indexed lookup in the engine. */
-  has(quad) {
+  // The options argument of has, match and delete: `{match: 'term'|'value'}`,
+  // checked by the engine (op apiCheck). '' for the term match, which every
+  // engine serves with the two-argument ops.
+  _matchMode(who, options) {
+    if (options === undefined || options === null) return '';
+    checkOptions(this._ctx.e, `Dataset.${who}`, options);
+    if (options.match === undefined || options.match === null) return '';
+    const mode = String(options.match).toLowerCase();
+    return mode === 'term' ? '' : JSON.stringify({ match: mode });
+  }
+
+  /**
+   * RDF/JS DatasetCore.has: one indexed lookup in the engine. With
+   * `{match: 'value'}` a literal object matches every object literal of the
+   * same value (sameValue(); https://github.com/danbri/factoidal/issues/1052).
+   */
+  has(quad, options) {
     this._open('has');
-    const r = envelope(this._ctx.e.datasetMatchCount(this._handle,
-      this._pattern(quad.subject, quad.predicate, quad.object, quad.graph || { termType: 'DefaultGraph' })), 'has');
+    const mode = this._matchMode('has', options);
+    const pattern = this._pattern(quad.subject, quad.predicate, quad.object, quad.graph || { termType: 'DefaultGraph' });
+    const r = envelope(mode
+      ? this._ctx.e.datasetMatchCount(this._handle, pattern, mode)
+      : this._ctx.e.datasetMatchCount(this._handle, pattern), 'has');
     return r.count > 0;
   }
 
   /**
    * RDF/JS DatasetCore.match: the matching quads as a new Dataset, found
-   * through the engine's indexes. `null`/`undefined` matches any term.
+   * through the engine's indexes. `null`/`undefined` matches any term. With
+   * `{match: 'value'}` a literal object matches by value (as has()).
    */
-  match(subject, predicate, object, graph) {
+  match(subject, predicate, object, graph, options) {
     this._open('match');
-    const r = envelope(this._ctx.e.datasetMatch(this._handle,
-      this._pattern(subject, predicate, object, graph)), 'match');
+    const mode = this._matchMode('match', options);
+    const pattern = this._pattern(subject, predicate, object, graph);
+    const r = envelope(mode
+      ? this._ctx.e.datasetMatch(this._handle, pattern, mode)
+      : this._ctx.e.datasetMatch(this._handle, pattern), 'match');
     return this._ctx.wrap(r, this._prefixes);
   }
 
@@ -438,11 +460,18 @@ class Dataset {
     return this;
   }
 
-  /** RDF/JS DatasetCore.delete: remove one quad. */
-  delete(quad) {
+  /**
+   * RDF/JS DatasetCore.delete: remove one quad. With `{match: 'value'}` a
+   * literal object removes every quad of the same subject, predicate and
+   * graph whose object has the same value (as has()).
+   */
+  delete(quad, options) {
     this._open('delete');
-    const r = envelope(this._ctx.e.datasetDeleteQuadsJson(this._handle,
-      JSON.stringify([quadToJson(quad)])), 'delete');
+    const mode = this._matchMode('delete', options);
+    const quads = JSON.stringify([quadToJson(quad)]);
+    const r = envelope(mode
+      ? this._ctx.e.datasetDeleteQuadsJson(this._handle, quads, mode)
+      : this._ctx.e.datasetDeleteQuadsJson(this._handle, quads), 'delete');
     this._changed(r.count);
     return this;
   }

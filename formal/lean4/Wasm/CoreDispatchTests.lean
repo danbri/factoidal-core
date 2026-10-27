@@ -78,6 +78,8 @@ def samePure (op : String) (args : List String) : Bool :=
 #guard samePure "noSuchOp" []
 #guard samePure "deltaLogEncode" ["INSERT DATA { <http://e/a> <http://e/p> \"v\" }", "0", "0"]
 #guard samePure "deltaLogEncode" ["DELETE WHERE { ?s ?p ?o }", "0", "0"]
+-- Terms, IRIs, syntax names and vocabularies (Wasm/Ops/Terms.lean; issues 1051-1053).
+#guard samePure "sameValue" ["{\"type\":\"uri\",\"value\":\"http://e/a\"}", "{}"]
 #guard samePure "deltaLogDecode" [""]
 #guard samePure "deltaLogDecode" ["zz"]
 #guard samePure "deltaLogMerge" [nt, ""]

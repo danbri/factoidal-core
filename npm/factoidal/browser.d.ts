@@ -27,6 +27,7 @@ export {
   fromQuads,
   ready,
   engineTables,
+  sameValue,
   openDataset,
   closure,
   formats,

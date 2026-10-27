@@ -436,8 +436,10 @@ Methods: `query(sparql, {sparql12?, version?, entail?, output?})`,
 `closure('rdfs' | 'owl-rl' | 'rho-df' | 'rdfs-plus')`, `canonicalize()`,
 `serialize({format, version?, prefixes?, literalShorthand?,
 useNativeTypes?, useRdfType?, rdfDirection?, rdfstar?})`, `toString(format)`
-(synchronous), `toNQuads()`, `clone()`, `has(quad)`, `match(s, p, o, g)`
-(a new Dataset), `toArray()`, iteration, `size`, `prefixes`,
+(synchronous), `toNQuads()`, `clone()`, `has(quad, {match?})`,
+`match(s, p, o, g, {match?})` (a new Dataset), `add(quad)`, `delete(quad,
+{match?})` (`match: 'value'` compares a literal object by value, see "Matching
+literals by value"), `toArray()`, iteration, `size`, `prefixes`,
 `diagnostics`, `warnings`, `format`, `formatInferred`, `dispose()` and
 `[Symbol.dispose]` (for `using` where the runtime has it). A Dataset that is
 garbage collected without `dispose()` is released by a
@@ -466,6 +468,43 @@ import { parse } from '@factoidal/core';
 const ds = await parse('<http://e/s> <http://e/p> "x" <http://e/g> .\n', { format: 'nquads' });
 const rows = await ds.query("SELECT * FROM <http://e/none> WHERE { ?s ?p ?o }");
 console.log(rows.length, rows.warnings?.[0]?.class); // 0 'dataset-iri-not-found'
+```
+
+## Matching literals by value
+
+`has`, `match` and `delete` of a Dataset compare terms by default (RDF 1.1
+Concepts section 3.6; SPARQL 1.1 section 18.3): `"01"^^xsd:integer` is not
+`"1"^^xsd:integer`. With `{match: 'value'}` as the last argument, a literal
+object matches every object literal that is the same term or has the same
+value under SPARQL 1.1 `=` (sections 17.3 and 17.4.1.7). The subject, the
+predicate, the graph and an object that is not a literal match by term. The
+engine decides the relation and keeps an index of the object literals by value
+(https://github.com/danbri/factoidal/issues/1052, value-based matching).
+
+`sameValue(a, b)` answers the relation for two terms: `true`, `false`, or
+`null` for incomparable (the type error of `=`: two different literals of a
+datatype with no value comparison, an ill-typed literal and another literal,
+`xsd:integer` and `xsd:boolean`). It is synchronous and needs the engine
+loaded (`await ready()` or any other call first). Two consequences of the
+SPARQL operator: `"NaN"^^xsd:double` is not the same value as itself (the
+value match still finds the same term), and the relation is not transitive
+across `xsd:float` and `xsd:decimal` (F&O 3.1 section 4.2 rounds the decimal
+to the float type first).
+
+```js
+import { parse, ready, sameValue, dataFactory as f } from '@factoidal/core';
+await ready();
+const xsd = (l) => f.namedNode('http://www.w3.org/2001/XMLSchema#' + l);
+console.log(sameValue(f.literal('01', xsd('integer')), f.literal('1.0', xsd('decimal')))); // true
+console.log(sameValue('"a"^^<http://e/dt>', '"b"^^<http://e/dt>'));                      // null
+
+const ds = await parse('<http://e/s> <http://e/p> "01"^^<http://www.w3.org/2001/XMLSchema#integer> .\n',
+  { format: 'ntriples' });
+const q = f.quad(f.namedNode('http://e/s'), f.namedNode('http://e/p'), f.literal('1', xsd('int')));
+console.log(ds.has(q), ds.has(q, { match: 'value' }));                                   // false true
+console.log(ds.match(null, null, f.literal('1e0', xsd('double')), null, { match: 'value' }).size); // 1
+ds.delete(q, { match: 'value' });
+console.log(ds.size);                                                                     // 0
 ```
 
 ## The persisted store
@@ -1393,6 +1432,7 @@ runnable.
 | `closure` | `(data, 'rdfs' \| 'owl-rl' \| 'rho-df' \| 'rdfs-plus') => Dataset` | the closure of the default graph |
 | `serialize` | `(data, {format, version?, prefixes?, literalShorthand?, useNativeTypes?, useRdfType?, rdfDirection?, rdfstar?, inputFormat?, baseIRI?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle`, `trig`, `rdfxml`, `jsonld`, `rdfc`; see "Datasets" |
 | `formats` | `() => [{name, read11, read12, write11, write12, engine}]` | the engine's list |
+| `sameValue` | `(a, b) => boolean \| null` | SPARQL 1.1 `=` on two terms; `null` incomparable; synchronous after `ready()`; see "Matching literals by value" |
 | `canonicalize` | `(data, {format?, baseIRI?}) => string` | RDFC-1.0 canonical N-Quads |
 | `graphs` | `(Dataset) => Array<[NamedNode \| BlankNode, Dataset]>` | named graphs, default graph excluded |
 | `canonicalHash` | `(Dataset) => string` | SHA-256 (64 lowercase hex digits) of the RDFC-1.0 canonical N-Quads of one graph; graph names are dropped first. `canonicalize` answers the text |
