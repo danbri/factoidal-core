@@ -686,6 +686,16 @@ blank-node matching, the SPARQL-parser admitted regions above) are
 catalogued in
 [`docs/claude-rules/current-state.md`](docs/claude-rules/current-state.md).
 
+Linked Web Storage 1.0: Touchstone (https://github.com/ebremer/touchstone,
+another implementer's harness, 221 tests) publishes its own runs of
+several LWS servers at https://ebremer.com/lws/conformance. Its run of
+`factoidal lws-serve` 0.18.0 (2026-10-27): 212 passed, 0 failed, 9
+inapplicable. Our LWS client is not on its client page
+(https://ebremer.com/lws/conformance/clients); in Touchstone's client lab,
+run here on 0.19.0 (2026-10-27, Touchstone 58db634), it passes 52 of 53
+rules, 0 fail, 1 untested (OpenID sign-in,
+https://github.com/danbri/factoidal/issues/1043).
+
 ## Jena differential-testing harness
 
 Our W3C suite scores above are graded against expectation files we

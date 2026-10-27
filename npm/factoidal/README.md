@@ -82,7 +82,8 @@ Releases before 0.13.0: see [CHANGELOG.md](https://github.com/danbri/factoidal-c
 - Canonicalization: RDFC-1.0; Verifiable Credentials Data Integrity (eddsa-rdfc-2022), did:key
 - XML: XML 1.0, XPath 1.0, XSLT 1.0, XForms
 - Servers: SPARQL 1.1 Protocol and Graph Store (Fuseki-compatible paths,
-  Jena TDB2 read only), Linked Web Storage 1.0, WebDAV for file
+  Jena TDB2 read only), Linked Web Storage 1.0 (independent results:
+  https://ebremer.com/lws/conformance), WebDAV for file
   browsers, Solid, an OAuth 2.0
   authorization server (token exchange for OpenID Connect ID tokens,
   self-issued CID credentials and SAML 2.0 assertions)
@@ -323,7 +324,7 @@ and the [assurance record](https://github.com/danbri/factoidal-core/blob/main/do
 | SPARQL 1.1 Query, Update, Protocol | 631 / 0 / 631 |
 | SPARQL 1.2 | 254 / 0 / 254 |
 | SPARQL Protocol, Graph Store, Service Description against `serve` | 50 / 0 / 50 [P] |
-| Linked Web Storage 1.0, Touchstone (another implementer's harness), `lws-serve` | 215 / 0 / 221 (6 not applicable) [L] |
+| Linked Web Storage 1.0, Touchstone (another implementer's harness), `lws-serve` | 215 / 0 / 221 (6 not applicable) [L]; Touchstone's own run of 0.18.0: 212 / 0 / 221 (9 inapplicable), https://ebremer.com/lws/conformance |
 | RDF 1.1 N-Triples, N-Quads, Turtle, TriG, RDF/XML | 992 / 0 / 992 |
 | RDF 1.2 syntax suites | all pass |
 | RDF 1.1 Semantics | 39 / 0 / 39 |
