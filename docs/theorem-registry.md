@@ -3261,7 +3261,7 @@ fewer.
 | `substringIndex_xpath` | `Fn/Theorems.lean` | XPath 1.0's substring index is `Fn.String.indexOfSub` | ✅ PROVED — `rfl` |
 | `langMatches_sparql` | `Fn/Theorems.lean` | SPARQL `langMatches` is RFC 4647 §3.3.1 basic filtering | ✅ PROVED — `rfl` |
 | `addDec_rif`, `subDec_rif`, `mulDec_rif`, `divDec_rif`, `listIndex_rif` | `Fn/Theorems.lean` | RIF-DTB 4.5 and 4.11 call `Fn.Numeric` and `Fn.List` | ✅ PROVED — `rfl` |
-| `substring_sparql_differs_from_fando` | `Fn/Theorems.lean` | SPARQL `SUBSTR` clamps a start below 1 where `fn:substring` keeps the window rule. Witness `("foobar", 0, 3)`: `"foo"` against `"fo"` | ✅ PROVED — a stated difference between two Recommendations, not a defect |
+| `substring_sparql_eq_fando` | `Fn/Theorems.lean` | SPARQL `SUBSTR` (`substrSpec`) is `fn:substring` (F&O §5.4.4) for every input; `("12345", 0, 3)` gives `"12"`. It replaces `substring_sparql_differs_from_fando`, which stated a clamp that SPARQL 1.1 §17.4.3.3 does not have (https://github.com/danbri/factoidal/issues/1036) | ✅ PROVED |
 | `substring2_rif_differs_from_fando` | `Fn/Theorems.lean` | the Approved `Builtins_String` fixture's 2-argument `substring` counts from 0; F&O counts from 1. Witness `("foobar", 3)`: `"bar"` against `"obar"` | ✅ PROVED |
 | `concat_nil` | `Fn/Theorems.lean` | `fn:concat` and SPARQL `CONCAT` are variadic including the empty list; XPath 1.0 `concat()` needs two arguments, which is a front-end arity rule | ✅ PROVED |
 | `divide_by_zero_has_no_value` | `Fn/Theorems.lean` | F&O's `FOAR0001` is `none` in the library; each front end maps it (RIF `unknown`, SPARQL error, XPath `NaN`) | ✅ PROVED |
