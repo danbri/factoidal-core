@@ -38,14 +38,15 @@ import { loadEngine } from '../bin/engine.mjs'
 import { FactoidalError } from '../lib/errors.mjs'
 
 /** The ops this host needs from the engine. */
-export const LWS_CLIENT_OPS = ['lwsClientStart', 'lwsClientStep']
+export const LWS_CLIENT_OPS = ['lwsClientStart', 'lwsClientStep', 'lwsClientNewKey']
 
 /** The operation kinds of the ABI. Listed so a caller can be checked
  *  against the contract; this host attaches no meaning to any of them. */
 export const LWS_CLIENT_KINDS = [
-  'discover', 'read', 'head', 'create', 'update', 'patch', 'delete', 'readLinkset',
-  'updateLinkset', 'move', 'list', 'typeIndex', 'search', 'subscribe', 'unsubscribe',
-  'requestAccess', 'grantAccess', 'getAccess', 'revokeAccess', 'verifyNotification'
+  'discover', 'describe', 'read', 'readPage', 'head', 'create', 'update', 'patch', 'delete',
+  'findLinkset', 'readLinkset', 'updateLinkset', 'putLinkset', 'move', 'list', 'typeIndex',
+  'search', 'queryFormats', 'subscribe', 'getSubscription', 'unsubscribe', 'requestAccess',
+  'grantAccess', 'getAccess', 'revokeAccess', 'verifyNotification'
 ]
 
 /** The error an operation ends with. `reason` is the engine's code
@@ -58,6 +59,9 @@ export class LwsClientError extends FactoidalError {
     this.name = 'LwsClientError'
     this.reason = reason
     this.detail = fail
+    // The engine's name for the failure in the lws-driver/1 adapter
+    // protocol ({ kind, message, ... }), as the engine wrote it.
+    this.report = fail && typeof fail.report === 'object' ? fail.report : undefined
     this.unknownOp = extra.unknownOp === true
   }
 }
@@ -138,8 +142,12 @@ export async function lwsClientOpsAvailable (engine) {
  * @param {string} [options.subjectToken] the authentication credential to
  *   exchange for access tokens (RFC 8693 subject_token)
  * @param {string} [options.subjectTokenType] its token type URI
- * @param {object} [options.selfIssued] `{ subject, keyId, jwk }`: a P-256 key
- *   to sign self-issued credentials with, instead of a subject token
+ * @param {object} [options.selfIssued] `{ subject, keyId, jwk }`: a P-256 or
+ *   Ed25519 key to sign self-issued credentials with, instead of a subject
+ *   token (`createDidKey` makes one)
+ * @param {string} [options.idToken] an OpenID Connect ID Token to exchange
+ * @param {object} [options.bearer] `{ token, realm? }`: an access token the
+ *   caller already has; with a realm it is sent only under it
  * @param {object} [options.session] a session from an earlier client
  * @param {number} [options.maxSteps] the loop cap of one operation
  * @returns {Promise<object>} the client
@@ -157,6 +165,9 @@ export async function createLwsClient (options = {}) {
   // `{ subject, keyId, jwk }`: a P-256 key the engine signs self-issued
   // credentials with (lws10-authn-ssi-cid), passed through unread.
   if (options.selfIssued !== undefined) session.selfIssued = options.selfIssued
+  // Read by the engine's session reader (`Machine.sessionOfJson`), unread here.
+  if (options.idToken !== undefined) session.idToken = options.idToken
+  if (options.bearer !== undefined) session.bearer = options.bearer
 
   function call (op, args) {
     try {
@@ -230,7 +241,10 @@ export async function createLwsClient (options = {}) {
     /** The session (access tokens and subject token), for a later client. */
     session: () => ({ ...session }),
     discover: with_('discover'),
+    describe: with_('describe'),
+    /** `read(url, { accept, rangeStart, rangeEnd, ifNoneMatch, prefer })` */
     read: with_('read'),
+    readPage: with_('readPage'),
     head: with_('head'),
     /** `create(containerUrl, { body, mediaType, slug, container, types, links })` */
     create: with_('create'),
@@ -239,24 +253,52 @@ export async function createLwsClient (options = {}) {
     patch: with_('patch'),
     /** `delete(url, { recursive, precondition, tag })` */
     delete: with_('delete'),
+    findLinkset: with_('findLinkset'),
     readLinkset: with_('readLinkset'),
+    /** `updateLinkset(resourceUrl, { body })`, or with `{ linksetUrl, body }`
+     *  when the caller has the linkset resource. */
     updateLinkset: with_('updateLinkset'),
+    putLinkset: with_('putLinkset'),
     /** `move(url, { destination })` */
     move: with_('move'),
     list: with_('list'),
     typeIndex: with_('typeIndex'),
-    /** `search(anyUrlInTheStorage, { query })` */
+    /** `search(anyUrlInTheStorage, { query })`, or `{ endpoint, query }` with
+     *  the service endpoint, `{ onePage: true }` for one page */
     search: with_('search'),
+    queryFormats: with_('queryFormats'),
+    /** `subscribe(url, { topics, inbox, expires })` */
     subscribe: with_('subscribe'),
+    getSubscription: with_('getSubscription'),
     unsubscribe: with_('unsubscribe'),
     requestAccess: with_('requestAccess'),
     grantAccess: with_('grantAccess'),
     getAccess: with_('getAccess'),
     revokeAccess: with_('revokeAccess'),
-    /** `verifyNotification(baseUrl, { requestTarget, method, headers, body })`:
+    /** `verifyNotification(baseUrl, { requestTarget, method, headers, body, trustedStorages })`:
      *  the engine's verdict `{ accept, status, reason? }`. */
     verifyNotification: with_('verifyNotification')
   }
+}
+
+/**
+ * A new `did:key` agent: the engine makes the key pair and the identifier from
+ * 64 random bytes of this host's random source. The host reads none of it.
+ *
+ * @param {object} [options]
+ * @param {object} [options.engine] an engine handle to reuse
+ * @param {string} [options.algorithm] the engine's name of the algorithm
+ *   (default `ES256`, a P-256 key; `EdDSA` makes an Ed25519 key)
+ * @returns {Promise<{agent: string, kid: string, selfIssued: object}>}
+ *   `selfIssued` is the `createLwsClient` option of that name
+ */
+export async function createDidKey (options = {}) {
+  const engine = options.engine !== undefined ? options.engine : await loadEngine()
+  const algorithm = typeof options.algorithm === 'string' ? options.algorithm : 'ES256'
+  const random = new Uint8Array(64)
+  globalThis.crypto.getRandomValues(random)
+  const answer = engine.call('lwsClientNewKey', [algorithm, base64OfBytes(random)])
+  return answer.key
 }
 
 /**

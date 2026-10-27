@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # host-purity-lint.sh — a host carries bytes and makes no decision the
-# specification reserves for the engine (CLAUDE.md iron rule 7). Three groups
-# of host files, three rules, one method (group 3 is at the end).
+# specification reserves for the engine (CLAUDE.md iron rule 7). Four groups
+# of host files, four rules, one method (group 3 is at the end).
 #
 # GROUP 1, the LWS, Solid and SPARQL endpoint hosts: no PROTOCOL decision. This lint fails
 # when one of those files contains
@@ -110,6 +110,22 @@ authz_pattern='invalid_(request|target|grant|client|token)|unsupported_grant_typ
 # The default bind address of the listening socket is not a fetch decision.
 for f in "${authz_files[@]}"; do scan "$f" "$authz_pattern" "s/'127\.0\.0\.1'//g"; done
 
+# GROUP 4, the lws-client adapter (https://github.com/danbri/factoidal/issues/1065):
+# it translates the lws-driver/1 protocol's JSON into calls of the Lean client
+# and returns the client's own `report`. It reads no response and decides
+# nothing about the wire. This lint fails when deploy/lws-client-adapter/adapter.mjs
+# (comments stripped) contains
+#
+#   * the patterns of group 1 (an HTTP status, a protocol header name,
+#     protocol vocabulary), except the word `inbox`, which is the name of an
+#     argument of the driver protocol (`subscribe`);
+#   * key or identifier construction (node:crypto key generation, base58, a
+#     multicodec, `did:key:`), a linkset media type, an ID token type URI, an
+#     LWS vocabulary IRI or a `.well-known` path: the client decides each.
+adapter_files=("$root/deploy/lws-client-adapter/adapter.mjs")
+adapter_pattern='\b(20[0-9]|30[0-9]|40[0-9]|41[0-9]|42[0-9]|50[1-9])\b|\b(Link|Allow|Accept-Patch|Accept-Post|Accept-Put|Last-Modified|ETag|If-Match|If-None-Match|Slug|Location|WAC-Allow|Access-Control-[A-Za-z-]+)\b|containment|describedby|\bacl\b|pim:|text/n3|\bldp:|\bsolid:|WebID|generateKeyPairSync|createPublicKey|createPrivateKey|base58|multicodec|did:key:|linkset\+json|id_token|token-type|lws#|\.well-known'
+for f in "${adapter_files[@]}"; do scan "$f" "$adapter_pattern" "s/^$//"; done
+
 # GROUP 3, the RDF/JS, dataset, CLI and hub JavaScript: no RDF SYNTAX, DATATYPE
 # or IRI decision (https://github.com/danbri/factoidal/issues/894; CLAUDE.md
 # anti-pattern 36). The engine parses, writes, escapes, chooses datatypes and
@@ -135,6 +151,7 @@ rdf_files=(
   "$root/npm/factoidal/fn.js"
   "$root/npm/factoidal/solid/client/index.mjs"
   "$root/npm/factoidal/lws/client.mjs"
+  "$root/deploy/lws-client-adapter/adapter.mjs"
 )
 for f in "$root"/npm/factoidal/lib/*.mjs "$root"/npm/factoidal/bin/*.mjs \
          "$root"/docs/web/hub/assets/*.mjs; do

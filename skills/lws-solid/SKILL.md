@@ -926,6 +926,17 @@ https://github.com/danbri/factoidal/issues/916). Gap, an expected failure in
 PKCE) for `client-oidc-token-type-id-token` (issue to open; the row names
 https://github.com/danbri/factoidal/issues/917).
 
+The driver adapter (https://github.com/danbri/factoidal/issues/1065,
+`deploy/lws-client-adapter/`, check it with `driver/adapters/check.mjs` of
+ebremer/lws-client: 37 passed, 0 failed, 0 skipped) only translates JSON.
+Each `done` document has a `report` (the driver's Metadata, Item, Page, Storage
+and Subscription shapes, `Client/Report.lean`) and each `fail` a `report` with
+the error kind. A session key may be P-256 or Ed25519; `createDidKey({
+algorithm })` (wasm op `lwsClientNewKey`, `Client/Keys.lean`) makes a
+`did:key` agent. An operation can name its linkset (`linksetUrl`), service
+endpoint (`endpoint`) or storage description (`storage`) directly. Rule:
+the adapter reads no response; `tools/host-purity-lint.sh` group 4 checks it.
+
 ## Run the tests
 
 ```

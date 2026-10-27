@@ -848,6 +848,14 @@ id = "npm:./lws#lwsOpsAvailable"
 reason = "reflection: whether the loaded engine has the ops (lwsOpen with probe:true, then lwsClose); reads no RDF data"
 
 [[nonstage]]
+id = "wasm:lwsClientNewKey"
+reason = "makes a did:key agent (P-256 or Ed25519 key pair and identifier) from random bytes the host gives; reads and writes no RDF data (https://github.com/danbri/factoidal/issues/1065)"
+
+[[nonstage]]
+id = "npm:./lws/client#createDidKey"
+reason = "draws 64 random bytes from the host and passes them to wasm:lwsClientNewKey; reads and writes no RDF data (https://github.com/danbri/factoidal/issues/1065)"
+
+[[nonstage]]
 id = "npm:./lws/client#lwsClientOpsAvailable"
 reason = "reflection: whether the loaded engine has the ops (lwsClientStart on a fixed HEAD request); reads no RDF data"
 

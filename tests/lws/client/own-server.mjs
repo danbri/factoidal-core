@@ -517,6 +517,23 @@ function startAuthz (dir, resource) {
 /** The CID check: our client signs a self-issued credential (ES256, HACL*
  *  in the engine) for a did:key agent and exchanges it at authz-serve. */
 async function cidCheck () {
+  await cidRound(async () => {
+    const agent = keyPair('ES256')
+    const did = didKeyOf(agent)
+    return { did, selfIssued: { subject: did, keyId: did.slice(8), jwk: agent.privateKey.export({ format: 'jwk' }) } }
+  })
+  // Keys the engine makes (https://github.com/danbri/factoidal/issues/1065):
+  // a P-256 and an Ed25519 did:key, signed with ES256 and EdDSA.
+  for (const algorithm of ['ES256', 'EdDSA']) {
+    await cidRound(async (engine) => {
+      const { createDidKey } = await import('../../../npm/factoidal/lws/client.mjs')
+      const key = await createDidKey({ engine, algorithm })
+      return { did: key.agent, selfIssued: key.selfIssued }
+    })
+  }
+}
+
+async function cidRound (makeAgent) {
   const { loadEngine } = await import('../../../npm/factoidal/bin/engine.mjs')
   const { listen } = await import('../../../npm/factoidal/lws/server.mjs')
   const { createLwsClient } = await import('../../../npm/factoidal/lws/client.mjs')
@@ -524,8 +541,7 @@ async function cidCheck () {
   const port = await freePort()
   const base = `http://127.0.0.1:${port}/`
   const storage = `${base}.well-known/lws-storage`
-  const agent = keyPair('ES256')
-  const did = didKeyOf(agent)
+  const { did, selfIssued } = await makeAgent(engine)
   const dir = mkdtempSync(join(tmpdir(), 'lws-client-authz-'))
   let authz = null
   let lws = null
@@ -534,8 +550,7 @@ async function cidCheck () {
     lws = await listen({ engine, port, owner: did, realClock: true,
       auth: { issuers: [{ issuer: authz.origin }], refreshInterval: 0 } })
     const rec = recording()
-    const c = await createLwsClient({ engine, fetch: rec.wire,
-      selfIssued: { subject: did, keyId: did.slice(8), jwk: agent.privateKey.export({ format: 'jwk' }) } })
+    const c = await createLwsClient({ engine, fetch: rec.wire, selfIssued })
     const made = await c.create(base, { slug: 'cid.txt', mediaType: 'text/plain', body: 'self-issued' })
     const back = await c.read(made.location)
     assert(back.body === 'self-issued', `read ${back.body}`)

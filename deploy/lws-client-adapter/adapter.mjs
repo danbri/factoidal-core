@@ -1,37 +1,32 @@
 #!/usr/bin/env node
 // An lws-driver/1 adapter for the Factoidal LWS client.
 // https://github.com/danbri/factoidal/issues/917 (the client)
+// https://github.com/danbri/factoidal/issues/1065 (the protocol reading moved into Lean)
 // Protocol: lws-client driver/PROTOCOL.md (https://github.com/ebremer/lws-client)
 //
 //   node adapter.mjs
 //   FACTOIDAL_CLIENT_MODULE=/opt/factoidal/lws/client.mjs node adapter.mjs
 //
 // WHAT THIS FILE IS ALLOWED TO DO (iron rule 7 of CLAUDE.md)
-// It is a host. It turns a protocol request into one call of the Factoidal
+// It translates JSON. A protocol request becomes one call of the Factoidal
 // client (npm `@factoidal/core/lws/client`, Lean
-// formal/lean4/L4Factoidal/LWS/Client/) and turns the client's answer into the
-// protocol's result shape. Every decision about the wire is the client's:
-// which request is sent, its headers, its media types, the authorization
-// flow, retries, paging. This file builds no URL, sends no request of its own
-// and retries nothing.
+// formal/lean4/L4Factoidal/LWS/Client/), and the `report` member of the
+// client's answer is the protocol's result. Every decision about the wire is
+// the client's: which request is sent, its headers, its media types, the
+// authorization flow, retries, paging. Every reading of a response is the
+// client's too: the result shapes (Metadata, Item, Page, Storage,
+// Subscription), the name of an error, the media type of a linkset, the type
+// of an ID token, the did:key of a new key. This file builds no URL, sends no
+// request of its own, reads no header, keeps no map of what it has seen and
+// retries nothing.
 //
-// Three things in this file are not a pure pass-through. Each is marked in
-// the text and listed in README.md:
-//   REPORTING   The protocol's result shapes (Metadata, Storage, Item) are
-//               keyed by Link relations and by members of the storage
-//               description. The client returns status, header pairs and the
-//               body. This file reads them to fill those shapes. Nothing it
-//               reads goes into a request.
-//   KEY SETUP   `configure` with `didKey` makes a key pair and a did:key with
-//               node:crypto. The client signs with it (the engine, HACL*).
-//   ERROR NAMES `error.kind` is the protocol's name for an HTTP status.
-//
-// An operation or option the client does not have answers `Unsupported`, and
-// the operation is left out of `hello.operations` when no use of it works.
+// The only things it does besides renaming members are the driver's own
+// conventions: the `limit` of a lazy sequence, the form of a request body
+// (text, base64 or json), and the check that an argument has the JSON type
+// the protocol names.
 
 import { createInterface } from 'node:readline'
 import { readFileSync } from 'node:fs'
-import { generateKeyPairSync } from 'node:crypto'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { dirname, join, isAbsolute, resolve as resolvePath } from 'node:path'
 
@@ -46,7 +41,7 @@ function clientModuleUrl () {
 }
 
 const moduleUrl = clientModuleUrl()
-const { createLwsClient, LwsClientError } = await import(moduleUrl.href)
+const { createLwsClient, createDidKey, LwsClientError } = await import(moduleUrl.href)
 
 function packageVersion () {
   try {
@@ -59,10 +54,18 @@ function packageVersion () {
 
 const LIBRARY = `factoidal-lws-client/${packageVersion()}`
 
+/** A failure of this file: an argument, or a feature the client lacks. */
 class AdapterError extends Error {
   constructor (kind, message) {
     super(message)
     this.kind = kind
+  }
+}
+/** An error the client already named (its `report`). */
+class Reported extends Error {
+  constructor (report) {
+    super(report.message)
+    this.report = report
   }
 }
 const invalid = (message) => new AdapterError('InvalidArguments', message)
@@ -91,10 +94,23 @@ function optional (args, name, type = 'string') {
   return value
 }
 
-/** A request target: an absolute http or https URL. */
+/** A non-negative integer argument. */
+function natural (args, name) {
+  const value = optional(args, name, 'number')
+  if (value !== undefined && !(Number.isInteger(value) && value >= 0)) throw invalid(`argument '${name}' must be a non-negative integer`)
+  return value
+}
+
+/** A request target: an absolute URL. */
 function targetOf (args, name) {
   const url = required(args, name)
-  if (!/^https?:\/\/[^/\s]/i.test(url) || !URL.canParse(url)) throw invalid(`argument '${name}' must be an absolute URL`)
+  let parsed
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw invalid(`argument '${name}' must be an absolute URL`)
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw invalid(`argument '${name}' must be an http or https URL`)
   return url
 }
 
@@ -113,37 +129,19 @@ function bodyOf (body, contentType) {
   throw invalid("argument 'body' must have text, base64 or json")
 }
 
-function limitOf (args) {
-  const limit = optional(args, 'limit', 'number') ?? 1000
-  if (!Number.isInteger(limit) || limit < 0) throw invalid("argument 'limit' must be a non-negative integer")
-  return limit
+/** The `limit` of a lazy sequence, and the cut it makes. */
+function limited (items, args) {
+  const limit = natural(args, 'limit') ?? 1000
+  return { items: items.slice(0, limit), truncated: items.length > limit }
 }
 
-const PATCH_OPERATIONS = ['add', 'remove', 'replace', 'move', 'copy', 'test']
-
-/** The RFC 6902 array is sent as it is: the client chooses the media type. */
+/** The client checks the operations of a patch; the array goes to it as it is. */
 function patchBody (patch) {
   if (!Array.isArray(patch)) throw invalid("argument 'patch' must be an array of operations")
-  for (const op of patch) {
-    if (op === null || typeof op !== 'object' || !PATCH_OPERATIONS.includes(op.op)) throw invalid('a patch operation must be an object with a known op')
-  }
   return new TextEncoder().encode(JSON.stringify(patch))
 }
 
-/** The `application/lws-query+json` document goes to the client as it is. */
-function queryOf (query) {
-  if (query === null || typeof query !== 'object' || Array.isArray(query)) throw invalid("argument 'query' must be an object")
-  for (const [key, groups] of Object.entries(query)) {
-    if (!Array.isArray(groups)) throw invalid(`query member '${key}' must be a list of groups`)
-    for (const group of groups) {
-      const ok = typeof group === 'string' || (Array.isArray(group) && group.every((x) => typeof x === 'string'))
-      if (!ok) throw invalid(`a group of query member '${key}' must be an IRI or a list of IRIs`)
-    }
-  }
-  return query
-}
-
-/** A write's precondition, as the client names it. */
+/** A write's precondition, in the names of the client's `precondition` member. */
 function preconditionOf (args) {
   const ifMatch = optional(args, 'ifMatch')
   const ifNoneMatch = optional(args, 'ifNoneMatch')
@@ -157,230 +155,12 @@ function preconditionOf (args) {
 }
 
 // ---------------------------------------------------------------------------
-// REPORTING: the client's answer in the protocol's shapes
-//
-// The client answers `{ status, headers: [[name, value]], body | bodyBase64, ... }`.
-// Nothing below feeds a request.
-
-const REL_TYPE = 'type'
-const REL_UP = 'up'
-const REL_LINKSET = 'linkset'
-const REL_STORAGE = 'https://www.w3.org/ns/lws#storage'
-
-function headerMap (pairs) {
-  const map = new Map()
-  for (const [name, value] of Array.isArray(pairs) ? pairs : []) {
-    const key = String(name).toLowerCase()
-    map.set(key, map.has(key) ? `${map.get(key)}, ${value}` : String(value))
-  }
-  return map
-}
-
-function absolute (base, ref) {
-  if (typeof ref !== 'string') return ref
-  if (/^[a-z][a-z0-9+.-]*:/i.test(ref)) return ref
-  try { return new URL(ref, base).href } catch { return ref }
-}
-
-/** RFC 8288 section 3 Link field value: the links, one per relation type. */
-function parseLinks (value, base) {
-  const links = []
-  if (!value) return links
-  let i = 0
-  const n = value.length
-  while (i < n) {
-    while (i < n && /[\s,]/.test(value[i])) i += 1
-    if (i >= n) break
-    if (value[i] !== '<') { while (i < n && value[i] !== ',') i += 1; continue }
-    const close = value.indexOf('>', i)
-    if (close < 0) break
-    const href = value.slice(i + 1, close)
-    i = close + 1
-    const params = {}
-    while (i < n) {
-      while (i < n && /\s/.test(value[i])) i += 1
-      if (value[i] !== ';') break
-      i += 1
-      while (i < n && /\s/.test(value[i])) i += 1
-      const start = i
-      while (i < n && !/[=;,\s]/.test(value[i])) i += 1
-      const name = value.slice(start, i).toLowerCase()
-      let val = ''
-      while (i < n && /\s/.test(value[i])) i += 1
-      if (value[i] === '=') {
-        i += 1
-        while (i < n && /\s/.test(value[i])) i += 1
-        if (value[i] === '"') {
-          i += 1
-          while (i < n && value[i] !== '"') { if (value[i] === '\\') i += 1; val += value[i] ?? ''; i += 1 }
-          i += 1
-        } else {
-          const s = i
-          while (i < n && !/[;,]/.test(value[i])) i += 1
-          val = value.slice(s, i).trim()
-        }
-      }
-      if (name) params[name] = val
-    }
-    const { rel, ...rest } = params
-    for (const r of (rel ?? '').split(/\s+/).filter(Boolean)) links.push({ href: absolute(base, href), rel: r, params: rest })
-  }
-  return links
-}
-
-const splitList = (value) => (value ? value.split(',').map((s) => s.trim()).filter(Boolean) : [])
-
-/** Metadata (PROTOCOL.md 3.1) from a response's status and header pairs. */
-function metadataOf (url, status, headerPairs) {
-  const h = headerMap(headerPairs)
-  const links = parseLinks(h.get('link'), url)
-  const first = (rel) => links.find((l) => l.rel === rel)?.href
-  const length = h.get('content-length')
-  return {
-    url,
-    status,
-    etag: h.get('etag'),
-    lastModified: h.get('last-modified'),
-    contentType: h.get('content-type'),
-    contentLength: length !== undefined && /^\d+$/.test(length) ? Number(length) : undefined,
-    links,
-    linkset: first(REL_LINKSET),
-    parent: first(REL_UP),
-    storage: first(REL_STORAGE),
-    types: links.filter((l) => l.rel === REL_TYPE).map((l) => l.href),
-    allow: splitList(h.get('allow')),
-    acceptPatch: splitList(h.get('accept-patch'))
-  }
-}
-
-// What the adapter has been told, kept to choose which URL it hands the client:
-// the resource a linkset URL belongs to, and a URL inside each origin's storage.
-const linksetOwners = new Map()
-const storageUrls = new Map()
-
-function remember (url, linkset) {
-  try { storageUrls.set(new URL(url).origin, url) } catch { /* not a URL */ }
-  if (typeof linkset === 'string') linksetOwners.set(linkset, url)
-}
-
-function metadataFrom (url, done) {
-  const m = metadataOf(url, done.status, done.headers)
-  if (done.status >= 200 && done.status < 300) remember(url, m.linkset)
-  return m
-}
-
-/** A URL inside the storage of `serviceUrl`, which the client's index and search
- *  operations take (a service endpoint does not answer with the storage link). */
-function insideStorage (serviceUrl) {
-  return storageUrls.get(new URL(serviceUrl).origin) ?? serviceUrl
-}
-
-const TEXTUAL = /^(text\/[^;]*|application\/(json|xml)|[^;]*\+(json|xml))\s*(;|$)/i
-
-/** The body bytes of a client answer. */
-function bytesOfDone (done) {
-  if (typeof done.bodyBase64 === 'string') return new Uint8Array(Buffer.from(done.bodyBase64, 'base64'))
-  if (typeof done.body === 'string') return new TextEncoder().encode(done.body)
-  return new Uint8Array(0)
-}
-
-function bodyResult (bytes, contentType) {
-  if (contentType && TEXTUAL.test(contentType.trim())) return { text: new TextDecoder().decode(bytes) }
-  return { base64: Buffer.from(bytes).toString('base64') }
-}
-
-function jsonOfDone (done) {
-  try { return JSON.parse(new TextDecoder().decode(bytesOfDone(done))) } catch { return undefined }
-}
-
-const asList = (v) => (v === undefined || v === null ? [] : [].concat(v))
-
-function itemOf (member, base) {
-  if (typeof member === 'string') return { id: absolute(base, member), types: [] }
-  return {
-    id: absolute(base, member.id),
-    types: asList(member.type),
-    format: member.format,
-    size: member.size,
-    modified: member.modified
-  }
-}
-
-const hasSuffix = (types, term) => types.some((t) => t === term || t.endsWith(`#${term}`) || t.endsWith(`:${term}`))
-
-function storageOf (desc) {
-  const services = asList(desc.service)
-  const root = services.find((sv) => hasSuffix(asList(sv.type), 'StorageRoot'))
-  const move = asList(desc.capability).find((c) => hasSuffix(asList(c.type), 'MoveResource'))
-  const result = {
-    id: desc.id,
-    types: asList(desc.type),
-    storageRoot: root?.serviceEndpoint,
-    services: services.map((sv) => ({
-      id: sv.id,
-      types: asList(sv.type),
-      serviceEndpoint: sv.serviceEndpoint,
-      subscriptionType: sv.subscriptionType === undefined ? undefined : asList(sv.subscriptionType)
-    })),
-    verificationMethods: asList(desc.verificationMethod).map((vm) => ({ id: vm.id, type: vm.type, controller: vm.controller })),
-    raw: desc
-  }
-  if (move) result.moveCapability = { appliesTo: move.appliesTo === undefined ? ['DataResource'] : asList(move.appliesTo), preservesIdentifier: move.preservesIdentifier }
-  return result
-}
-
-function subscriptionOf (url, done) {
-  const raw = jsonOfDone(done) ?? {}
-  return { subscription: raw.id ? absolute(url, raw.id) : url, types: asList(raw.type), expires: raw.expires, raw }
-}
-
-// ---------------------------------------------------------------------------
-// ERROR NAMES
-
-const STATUS_KINDS = {
-  400: 'BadRequestError', 401: 'UnauthorizedError', 403: 'ForbiddenError', 404: 'NotFoundError',
-  405: 'MethodNotAllowedError', 406: 'NotAcceptableError', 409: 'ConflictError', 410: 'GoneError',
-  412: 'PreconditionFailedError', 415: 'UnsupportedMediaTypeError', 422: 'UnprocessableContentError',
-  501: 'NotImplementedError', 507: 'InsufficientStorageError'
-}
-
-const AUTHENTICATION_CODES = new Set(['authorization', 'discoveryValidation', 'credential'])
-const PROTOCOL_CODES = new Set([
-  'malformedDescription', 'malformedLinkset', 'malformedListing', 'noEtag', 'noLinkset', 'noMoveCapability',
-  'noService', 'noStorageLink', 'noSubscriptionType', 'notAdvertised', 'methodRefused'
-])
-
-function errorOfFail (e) {
-  const detail = e.detail ?? {}
-  const status = typeof detail.status === 'number' ? detail.status : undefined
-  const message = `${e.reason}${status !== undefined ? ` (status ${status})` : ''}: ${JSON.stringify(detail).slice(0, 600)}`
-  if (e.reason === 'badArguments') return { kind: 'InvalidArguments', message }
-  if (e.reason === 'transport') return { kind: 'TransportError', message }
-  if (AUTHENTICATION_CODES.has(e.reason)) {
-    const error = { kind: 'AuthenticationError', message }
-    if (status !== undefined) error.status = status
-    if (typeof detail.error === 'string') error.oauthError = detail.error
-    if (typeof detail.errorDescription === 'string') error.oauthErrorDescription = detail.errorDescription
-    return error
-  }
-  if (status !== undefined) {
-    const error = { kind: STATUS_KINDS[status] ?? 'HttpError', status, message }
-    const h = headerMap(detail.headers)
-    const body = typeof detail.body === 'string' ? detail.body : undefined
-    if (body !== undefined && /json/i.test(h.get('content-type') ?? '')) {
-      try { error.problem = JSON.parse(body) } catch { /* not a problem document */ }
-    }
-    if (status === 405) error.allow = splitList(h.get('allow'))
-    if (status === 415) error.acceptPatch = splitList(h.get('accept-patch'))
-    return error
-  }
-  if (PROTOCOL_CODES.has(e.reason)) return { kind: 'ProtocolError', message }
-  return { kind: 'InternalError', message }
-}
+// Errors: the client names them
 
 function errorResult (e) {
   if (e instanceof AdapterError) return { kind: e.kind, message: e.message }
-  if (e instanceof LwsClientError || e?.name === 'LwsClientError') return errorOfFail(e)
+  if (e instanceof Reported) return e.report
+  if ((e instanceof LwsClientError || e?.name === 'LwsClientError') && e.report !== undefined) return e.report
   return { kind: 'InternalError', message: e?.stack ?? String(e) }
 }
 
@@ -388,7 +168,7 @@ function errorResult (e) {
 // The client
 
 let client = null
-let configured = { userAgent: undefined, timeoutSeconds: undefined, headers: undefined, session: undefined, selfIssued: undefined, subjectToken: undefined, subjectTokenType: undefined }
+let configured = { userAgent: undefined, timeoutSeconds: undefined, headers: undefined, options: {} }
 
 /** A `fetch` that adds only what `configure` asked for: a user agent, extra
  *  headers, a timeout. The request is otherwise the client's. */
@@ -405,45 +185,14 @@ function wireFetch () {
 }
 
 async function theClient () {
-  if (client === null) client = await createLwsClient({ fetch: wireFetch(), ...sessionOptions() })
+  if (client === null) client = await createLwsClient({ fetch: wireFetch(), ...configured.options })
   return client
 }
-
-function sessionOptions () {
-  const o = {}
-  if (configured.session !== undefined) o.session = configured.session
-  if (configured.selfIssued !== undefined) o.selfIssued = configured.selfIssued
-  if (configured.subjectToken !== undefined) { o.subjectToken = configured.subjectToken; o.subjectTokenType = configured.subjectTokenType }
-  return o
-}
-
-// ---------------------------------------------------------------------------
-// KEY SETUP (configure didKey)
-
-const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-function base58 (bytes) {
-  let n = 0n
-  for (const b of bytes) n = n * 256n + BigInt(b)
-  let out = ''
-  while (n > 0n) { out = B58[Number(n % 58n)] + out; n /= 58n }
-  for (const b of bytes) { if (b === 0) out = `1${out}`; else break }
-  return out
-}
-
-/** did:key of a P-256 key (multicodec 0x1200, compressed point). */
-function didKeyP256 (jwk) {
-  const x = Buffer.from(jwk.x, 'base64url')
-  const y = Buffer.from(jwk.y, 'base64url')
-  const point = Buffer.concat([Buffer.from([(y[y.length - 1] & 1) === 1 ? 3 : 2]), x])
-  return `did:key:z${base58(Buffer.concat([Buffer.from([0x80, 0x24]), point]))}`
-}
-
-const ID_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:id_token'
 
 async function configure (args) {
   const auth = args.auth ?? { type: 'none' }
   if (auth === null || typeof auth !== 'object' || Array.isArray(auth)) throw invalid("argument 'auth' must be an object")
-  const next = { userAgent: optional(args, 'userAgent'), timeoutSeconds: optional(args, 'timeoutSeconds', 'number'), headers: optional(args, 'headers', 'object') }
+  const next = { userAgent: optional(args, 'userAgent'), timeoutSeconds: optional(args, 'timeoutSeconds', 'number'), headers: optional(args, 'headers', 'object'), options: {} }
   if (next.timeoutSeconds !== undefined && !(Number.isInteger(next.timeoutSeconds) && next.timeoutSeconds > 0)) throw invalid("argument 'timeoutSeconds' must be a positive integer")
   if (optional(args, 'allowInsecureHttp', 'boolean') === false) throw unsupported('allowInsecureHttp false: the client does not refuse http')
   const result = { library: LIBRARY }
@@ -451,46 +200,36 @@ async function configure (args) {
     case 'none':
       break
     case 'bearer': {
-      const token = required(auth, 'token')
+      const bearer = { token: required(auth, 'token') }
       const realm = optional(auth, 'realm')
-      if (realm === undefined) throw unsupported('bearer without a realm: the client sends a token only to URLs under a storage root')
-      next.session = { tokens: [{ storage: realm, root: realm, token }] }
+      if (realm !== undefined) bearer.realm = realm
+      next.options.bearer = bearer
       break
     }
     case 'openid':
-      // The protocol passes an ID Token the caller already has. The client has no sign-in
-      // of its own (https://github.com/danbri/factoidal/issues/1043).
-      next.subjectToken = required(auth, 'idToken')
-      next.subjectTokenType = ID_TOKEN_TYPE
+      next.options.idToken = required(auth, 'idToken')
       break
     case 'selfSigned': {
       const agent = required(auth, 'agent')
       const jwk = required(auth, 'privateJwk', 'object')
       const kid = optional(auth, 'kid') ?? jwk.kid
       if (typeof kid !== 'string') throw invalid("selfSigned needs 'kid', or a 'kid' in the private JWK")
-      if (jwk.kty !== 'EC' || jwk.crv !== 'P-256') throw unsupported('selfSigned with a key other than EC P-256: the client signs ES256 only')
-      next.selfIssued = { subject: agent, keyId: kid, jwk }
+      next.options.selfIssued = { subject: agent, keyId: kid, jwk }
       result.agent = agent
       result.kid = kid
       break
     }
     case 'didKey': {
-      const algorithm = optional(auth, 'algorithm') ?? 'ES256'
-      if (algorithm === 'EdDSA') throw unsupported('didKey with EdDSA: the client signs ES256 only')
-      if (algorithm !== 'ES256') throw invalid(`unknown algorithm '${algorithm}'`)
-      const pair = generateKeyPairSync('ec', { namedCurve: 'P-256' })
-      const jwk = pair.privateKey.export({ format: 'jwk' })
-      const did = didKeyP256(jwk)
-      const kid = `${did}#${did.slice('did:key:'.length)}`
-      next.selfIssued = { subject: did, keyId: kid, jwk }
-      result.agent = did
-      result.kid = kid
+      const key = await createDidKey({ algorithm: optional(auth, 'algorithm') ?? 'ES256' })
+      next.options.selfIssued = key.selfIssued
+      result.agent = key.agent
+      result.kid = key.kid
       break
     }
     default:
       throw invalid(`unknown auth type '${auth.type}'`)
   }
-  configured = { ...configured, session: undefined, selfIssued: undefined, subjectToken: undefined, subjectTokenType: undefined, ...next }
+  configured = next
   client = null
   await theClient()
   return result
@@ -499,64 +238,70 @@ async function configure (args) {
 // ---------------------------------------------------------------------------
 // Operations
 
+/** One client operation; its answer. */
 async function run (kind, url, extra = {}) {
   return (await theClient()).run({ ...extra, kind, url })
+}
+
+/** One client operation; the result the protocol names. */
+async function report (kind, url, extra = {}) {
+  return (await run(kind, url, extra)).report
+}
+
+/** A listing, cut at `limit`. */
+async function listing (kind, url, args, extra = {}) {
+  const found = (await report(kind, url, extra)).items
+  return limited(found, args)
+}
+
+/** The members of an access document are the client's arguments: one policy. */
+async function accessWrite (kind, args, doc, type) {
+  const serviceUrl = targetOf(args, 'serviceUrl')
+  const policies = [].concat(doc.access ?? [])
+  if (policies.length !== 1) throw unsupported(`${type} with ${policies.length} policies: the client writes one policy`)
+  const policy = policies[0]
+  const target = policy.target
+  const targets = [].concat(target?.value ?? target ?? []).filter((t) => typeof t === 'string')
+  const extra = { actions: [].concat(policy.action ?? []), assignee: policy.assignee, targets }
+  if (policy.constraint !== undefined) extra.constraint = policy.constraint
+  if (typeof doc.inbox === 'string') extra.inbox = doc.inbox
+  return report(kind, serviceUrl, extra)
 }
 
 const operations = {
   configure,
 
   async discover_storage (args) {
-    const done = await run('discover', targetOf(args, 'url'))
-    return storageOf(done.description)
+    return report('discover', targetOf(args, 'url'))
   },
 
   async get_storage_description (args) {
-    const url = targetOf(args, 'url')
-    const done = await run('read', url)
-    const desc = jsonOfDone(done)
-    if (desc === undefined || typeof desc !== 'object') throw new AdapterError('ProtocolError', 'the storage description is not JSON')
-    return storageOf(desc)
+    return report('describe', targetOf(args, 'url'))
   },
 
   async head (args) {
-    const url = targetOf(args, 'url')
-    return metadataFrom(url, await run('head', url))
+    return report('head', targetOf(args, 'url'))
   },
 
   async read (args) {
-    const url = targetOf(args, 'url')
-    for (const name of ['rangeStart', 'rangeEnd', 'ifNoneMatch', 'prefer']) {
-      if (args[name] !== undefined && args[name] !== null) throw unsupported(`read option '${name}': the client's read has no such option`)
-    }
     const extra = {}
-    const accept = optional(args, 'accept')
-    if (accept !== undefined) extra.accept = accept
-    const done = await run('read', url, extra)
-    const metadata = metadataFrom(url, done)
-    return { metadata, notModified: done.status === 304, body: bodyResult(bytesOfDone(done), metadata.contentType) }
+    for (const name of ['accept', 'ifNoneMatch', 'prefer']) {
+      const value = optional(args, name)
+      if (value !== undefined) extra[name] = value
+    }
+    for (const name of ['rangeStart', 'rangeEnd']) {
+      const value = natural(args, name)
+      if (value !== undefined) extra[name] = value
+    }
+    return report('read', targetOf(args, 'url'), extra)
   },
 
   async read_container (args) {
-    const url = targetOf(args, 'url')
-    const done = await run('read', url)
-    const metadata = metadataFrom(url, done)
-    const doc = jsonOfDone(done)
-    if (doc === undefined || typeof doc !== 'object') throw new AdapterError('ProtocolError', 'the container page is not JSON')
-    const rel = (r) => metadata.links.find((l) => l.rel === r)?.href
-    return {
-      id: absolute(url, doc.id), types: asList(doc.type), totalItems: doc.totalItems,
-      items: asList(doc.items).map((m) => itemOf(m, url)),
-      first: rel('first'), next: rel('next'), prev: rel('prev'), last: rel('last'), metadata
-    }
+    return report('readPage', targetOf(args, 'url'))
   },
 
   async list_container (args) {
-    const url = targetOf(args, 'url')
-    const limit = limitOf(args)
-    const done = await run('list', url)
-    const members = asList(done.members)
-    return { items: members.slice(0, limit).map((m) => itemOf(m, url)), truncated: members.length > limit }
+    return listing('list', targetOf(args, 'url'), args)
   },
 
   async create (args) {
@@ -570,18 +315,15 @@ const operations = {
     const types = optional(args, 'types', 'array')
     if (types !== undefined) extra.types = types
     const links = optional(args, 'links', 'array')
-    if (links !== undefined) extra.links = links.map((l) => `<${l.href}>; rel="${l.rel}"`)
-    const done = await run('create', container, extra)
-    return { location: done.location, metadata: metadataFrom(done.location ?? container, done) }
+    if (links !== undefined) extra.linkObjects = links
+    return report('create', container, extra)
   },
 
   async create_container (args) {
-    const parent = targetOf(args, 'parent')
     const extra = { container: true }
     const slug = optional(args, 'slug')
     if (slug !== undefined) extra.slug = slug
-    const done = await run('create', parent, extra)
-    return { location: done.location, metadata: metadataFrom(done.location ?? parent, done) }
+    return report('create', targetOf(args, 'parent'), extra)
   },
 
   async update (args) {
@@ -590,100 +332,61 @@ const operations = {
     const { bytes, contentType } = bodyOf(args.body, optional(args, 'contentType'))
     const extra = { body: bytes, ...preconditionOf(args) }
     if (contentType !== undefined) extra.mediaType = contentType
-    const done = await run('update', url, extra)
-    const metadata = metadataFrom(url, done)
-    return { status: done.status, etag: metadata.etag, metadata }
+    return report('update', url, extra)
   },
 
   async patch (args) {
     const url = targetOf(args, 'url')
     if (args.ifNoneMatch !== undefined && args.ifNoneMatch !== null) throw unsupported('ifNoneMatch on patch')
-    const extra = { body: patchBody(args.patch), ...preconditionOf(args) }
-    const done = await run('patch', url, extra)
-    const metadata = metadataFrom(url, done)
-    return { status: done.status, etag: metadata.etag, metadata }
+    return report('patch', url, { body: patchBody(args.patch), ...preconditionOf(args) })
   },
 
   async delete (args) {
-    const url = targetOf(args, 'url')
     const extra = { ...preconditionOf(args) }
     if (optional(args, 'recursive', 'boolean')) extra.recursive = true
-    await run('delete', url, extra)
+    await run('delete', targetOf(args, 'url'), extra)
     return {}
   },
 
   async linkset_url (args) {
-    const url = targetOf(args, 'url')
-    const done = await run('readLinkset', url)
-    remember(url, done.url)
-    return { linkset: done.url }
+    return report('findLinkset', targetOf(args, 'url'))
   },
 
   async read_linkset (args) {
-    const url = targetOf(args, 'url')
-    const done = await run('readLinkset', url)
-    remember(url, done.url)
-    return {
-      url: done.url, etag: done.etag === '' ? undefined : done.etag, linkset: done.linkset,
-      allow: asList(done.allow), acceptPatch: asList(done.acceptPatch)
-    }
+    return report('readLinkset', targetOf(args, 'url'))
   },
 
   async update_linkset (args) {
     const linksetUrl = targetOf(args, 'linksetUrl')
     const doc = required(args, 'linkset', 'object')
-    if (!Array.isArray(doc.linkset)) throw invalid("argument 'linkset' must be a linkset document")
-    const resource = ownerOf(linksetUrl)
-    const extra = { body: new TextEncoder().encode(JSON.stringify(doc)), mediaType: 'application/linkset+json', ...preconditionOf({ ifMatch: args.ifMatch }) }
-    const done = await run('updateLinkset', resource, extra)
-    const metadata = metadataOf(linksetUrl, done.status, done.headers)
-    return { status: done.status, etag: metadata.etag, metadata }
+    const extra = { linksetUrl, body: new TextEncoder().encode(JSON.stringify(doc)), ...preconditionOf({ ifMatch: args.ifMatch }) }
+    return report('putLinkset', linksetUrl, extra)
   },
 
   async patch_linkset (args) {
     const linksetUrl = targetOf(args, 'linksetUrl')
-    const resource = ownerOf(linksetUrl)
-    const extra = { body: patchBody(args.patch), ...preconditionOf({ ifMatch: args.ifMatch }) }
-    const done = await run('updateLinkset', resource, extra)
-    const metadata = metadataOf(linksetUrl, done.status, done.headers)
-    return { status: done.status, etag: metadata.etag, metadata }
+    const extra = { linksetUrl, body: patchBody(args.patch), ...preconditionOf({ ifMatch: args.ifMatch }) }
+    return report('updateLinkset', linksetUrl, extra)
   },
 
   async move (args) {
-    const url = targetOf(args, 'url')
-    const destination = targetOf(args, 'destination')
-    const extra = { destination, ...preconditionOf({ ifMatch: args.ifMatch }) }
-    const done = await run('move', url, extra)
-    const location = done.identifier ?? url
-    // The move answers for the linkset; the resource's metadata is a head of its new place.
-    const head = await run('head', location)
-    const metadata = metadataFrom(location, head)
-    return {
-      status: done.status, location, linkset: metadata.linkset, identifierPreserved: location === url,
-      etag: metadata.etag, metadata
-    }
+    const extra = { destination: targetOf(args, 'destination'), ...preconditionOf({ ifMatch: args.ifMatch }) }
+    return report('move', targetOf(args, 'url'), extra)
   },
 
   async subscribe (args) {
-    const serviceUrl = targetOf(args, 'serviceUrl')
-    const topics = required(args, 'topics', 'array')
-    const inbox = required(args, 'inbox')
-    if (optional(args, 'expires') !== undefined) throw unsupported("subscribe option 'expires': the client's subscribe has no such option")
-    const done = await run('subscribe', serviceUrl, { topics, inbox })
-    return subscriptionOf(done.location ?? serviceUrl, done)
+    const extra = { topics: required(args, 'topics', 'array'), inbox: required(args, 'inbox') }
+    const expires = optional(args, 'expires')
+    if (expires !== undefined) extra.expires = expires
+    return report('subscribe', targetOf(args, 'serviceUrl'), extra)
   },
 
   async list_subscriptions (args) {
-    const serviceUrl = targetOf(args, 'serviceUrl')
-    const limit = limitOf(args)
-    const done = await run('list', serviceUrl)
-    const members = asList(done.members)
-    return { items: members.slice(0, limit).map((m) => itemOf(m, serviceUrl)), truncated: members.length > limit }
+    return listing('list', targetOf(args, 'serviceUrl'), args)
   },
 
   async get_subscription (args) {
-    const url = targetOf(args, 'url')
-    return subscriptionOf(url, await run('read', url))
+    return report('getSubscription', targetOf(args, 'url'))
   },
 
   async unsubscribe (args) {
@@ -693,37 +396,27 @@ const operations = {
 
   async verify_notification (args) {
     const url = targetOf(args, 'url')
-    const method = required(args, 'method')
     const headers = required(args, 'headers', 'object')
-    const body = base64Bytes(required(args, 'bodyBase64'), 'bodyBase64')
-    if (args.trustedStorages !== undefined && args.trustedStorages !== null) {
-      throw unsupported("verify_notification option 'trustedStorages': the client's receiver has no such option")
-    }
-    const pairs = []
-    for (const [name, value] of Object.entries(headers)) for (const v of asList(value)) pairs.push([name, String(v)])
-    const done = await run('verifyNotification', url, { method, headers: pairs, body })
-    if (done.accept !== true) throw new AdapterError('SignatureVerificationError', `${done.reason ?? 'the notification was refused'} (status ${done.status})`)
-    // REPORTING: what the accepted delivery says about itself.
-    const h = headerMap(pairs)
-    const keyid = /keyid="([^"]*)"/.exec(h.get('signature-input') ?? '')?.[1] ?? ''
-    let raw
-    try { raw = JSON.parse(new TextDecoder().decode(body)) } catch { raw = {} }
-    const one = (a) => ({ id: a.id, types: asList(a.type), object: typeof a.object === 'string' ? a.object : a.object?.id, objectTypes: asList(a.object?.type) })
-    return { storage: typeof raw.storage === 'string' ? raw.storage : keyid.split('#')[0], keyid, activities: asList(raw.activity ?? raw.activities).map(one), raw }
+    const extra = { method: required(args, 'method'), body: base64Bytes(required(args, 'bodyBase64'), 'bodyBase64') }
+    const trusted = optional(args, 'trustedStorages', 'array')
+    if (trusted !== undefined) extra.trustedStorages = trusted
+    extra.headers = []
+    for (const [name, value] of Object.entries(headers)) for (const v of [].concat(value)) extra.headers.push([name, String(v)])
+    const done = await run('verifyNotification', url, extra)
+    if (done.accept !== true) throw new Reported(done.report)
+    return done.report
   },
 
   async request_access (args) {
-    const request = required(args, 'request', 'object')
-    return accessWrite('requestAccess', args, request, 'AccessRequest')
+    return { location: (await accessWrite('requestAccess', args, required(args, 'request', 'object'), 'AccessRequest')).location }
   },
 
   async get_access_request (args) {
-    const done = await run('getAccess', targetOf(args, 'url'))
-    return { document: jsonOfDone(done) }
+    return report('getAccess', targetOf(args, 'url'))
   },
 
   async list_access_requests (args) {
-    return listService(args)
+    return listing('list', targetOf(args, 'serviceUrl'), args)
   },
 
   async cancel_access_request (args) {
@@ -732,17 +425,15 @@ const operations = {
   },
 
   async grant_access (args) {
-    const grant = required(args, 'grant', 'object')
-    return accessWrite('grantAccess', args, grant, 'AccessGrant')
+    return { location: (await accessWrite('grantAccess', args, required(args, 'grant', 'object'), 'AccessGrant')).location }
   },
 
   async get_access_grant (args) {
-    const done = await run('getAccess', targetOf(args, 'url'))
-    return { document: jsonOfDone(done) }
+    return report('getAccess', targetOf(args, 'url'))
   },
 
   async list_access_grants (args) {
-    return listService(args)
+    return listing('list', targetOf(args, 'serviceUrl'), args)
   },
 
   async revoke_access_grant (args) {
@@ -751,73 +442,34 @@ const operations = {
   },
 
   async read_type_index (args) {
-    const serviceUrl = targetOf(args, 'url')
-    const done = await run('typeIndex', insideStorage(serviceUrl))
-    return { types: asList(done.items) }
+    const endpoint = targetOf(args, 'url')
+    return report('typeIndex', endpoint, { endpoint, onePage: true })
   },
 
   async list_types (args) {
-    const serviceUrl = targetOf(args, 'serviceUrl')
-    const limit = limitOf(args)
-    const done = await run('typeIndex', insideStorage(serviceUrl))
-    const types = asList(done.items)
-    return { types: types.slice(0, limit), truncated: types.length > limit }
+    const endpoint = targetOf(args, 'serviceUrl')
+    const found = (await report('typeIndex', endpoint, { endpoint })).types
+    const { items, truncated } = limited(found, args)
+    return { types: items, truncated }
+  },
+
+  async search_types (args) {
+    const endpoint = targetOf(args, 'serviceUrl')
+    return report('search', endpoint, { endpoint, query: required(args, 'query', 'object'), onePage: true })
   },
 
   async search_all (args) {
-    const serviceUrl = targetOf(args, 'serviceUrl')
-    const query = queryOf(required(args, 'query', 'object'))
-    const limit = limitOf(args)
-    const done = await run('search', insideStorage(serviceUrl), { query })
-    const members = asList(done.members)
-    return { items: members.slice(0, limit).map((m) => itemOf(m, serviceUrl)), truncated: members.length > limit }
+    const endpoint = targetOf(args, 'serviceUrl')
+    return listing('search', endpoint, args, { endpoint, query: required(args, 'query', 'object') })
+  },
+
+  async accepted_query_formats (args) {
+    return report('queryFormats', targetOf(args, 'serviceUrl'))
   },
 
   async shutdown () {
     return {}
   }
-}
-
-/** The client's request and grant documents are made from an operation's
- *  members (actions, assignee, targets, constraint, inbox), not from a document. */
-async function accessWrite (kind, args, doc, type) {
-  const serviceUrl = targetOf(args, 'serviceUrl')
-  const policies = asList(doc.access)
-  if (policies.length !== 1) throw unsupported(`${type} with ${policies.length} policies: the client writes one policy`)
-  const policy = policies[0]
-  const target = policy.target
-  const targets = asList(target?.value ?? target).filter((t) => typeof t === 'string')
-  const extra = { actions: asList(policy.action), assignee: policy.assignee, targets }
-  if (policy.constraint !== undefined) extra.constraint = policy.constraint
-  if (typeof doc.inbox === 'string') extra.inbox = doc.inbox
-  const done = await run(kind, serviceUrl, extra)
-  return { location: done.location }
-}
-
-/** The resource whose linkset this is, as the client reported it earlier. */
-function ownerOf (linksetUrl) {
-  const owner = linksetOwners.get(linksetUrl)
-  if (owner === undefined) {
-    throw unsupported('the client addresses a linkset through its resource, and this adapter has not seen which resource has this linkset (head, read, linkset_url or read_linkset of the resource first)')
-  }
-  return owner
-}
-
-async function listService (args) {
-  const serviceUrl = targetOf(args, 'serviceUrl')
-  const limit = limitOf(args)
-  const done = await run('list', serviceUrl)
-  const members = asList(done.members)
-  return { items: members.slice(0, limit).map((m) => itemOf(m, serviceUrl)), truncated: members.length > limit }
-}
-
-// Operations of the protocol this client does not have (README.md, "Unsupported").
-const UNSUPPORTED = {
-  search_types: 'the client follows every result page and does not return one page',
-  accepted_query_formats: 'the client has no operation that reads the accepted query formats'
-}
-for (const [name, why] of Object.entries(UNSUPPORTED)) {
-  operations[name] = async () => { throw unsupported(why) }
 }
 
 // ---------------------------------------------------------------------------
@@ -833,7 +485,7 @@ console.log = console.info = console.debug = (...args) => console.error(...args)
 write({
   hello: {
     protocol: 'lws-driver/1', language: 'factoidal', library: LIBRARY,
-    operations: Object.keys(operations).filter((name) => !Object.hasOwn(UNSUPPORTED, name))
+    operations: Object.keys(operations)
   }
 })
 

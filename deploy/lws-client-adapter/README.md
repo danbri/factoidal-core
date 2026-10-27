@@ -31,96 +31,70 @@ Check it with the checker of the lws-client clone (Node 22 or later):
 node driver/adapters/check.mjs -- node /path/to/factoidal-core/deploy/lws-client-adapter/adapter.mjs
 ```
 
-Result on 2026-10-27, mock server of the clone, wasm sha256 `7a87bf45`:
+Result on 2026-10-27, mock server of the clone, branch of
+https://github.com/danbri/factoidal/issues/1065 (wasm sha256 56f6d898):
 
 ```
-factoidal: 31 passed, 3 failed, 3 skipped
+factoidal: 37 passed, 0 failed, 0 skipped
 ```
 
-The three failures and three skips are all from operations or options listed
-under "Unsupported" below; the next section says which.
+Before that issue (commit ec300a9): `factoidal: 31 passed, 3 failed, 3 skipped`.
+Every failure and skip came from a feature the Lean client did not have.
 
 ## What the adapter decides
 
-Nothing about the wire (iron rule 7 of `CLAUDE.md`). Every request, header,
-media type, retry, paging step and authorization step is the Lean client's.
-The adapter does these things only:
+Nothing about the wire and nothing about the reading of a response (iron
+rule 7 of `CLAUDE.md`). It translates JSON: a protocol request becomes one
+operation of the Lean client, and the `report` member of the client's answer
+is the protocol's result. `tools/host-purity-lint.sh` (group 4) fails when
+the file names an HTTP status, a protocol header, a key or identifier
+construction, a linkset media type, an ID token type URI or a `.well-known`
+path. The adapter does these things only:
 
-1. It translates a protocol request into one client operation and returns the
-   result in the protocol's shape.
-2. REPORTING. The protocol's `Metadata`, `Storage` and `Item` shapes are keyed
-   by Link relations (`type`, `up`, `linkset`, `lws#storage`, `first`, `next`,
-   `prev`, `last`) and by members of the storage description. The client
-   returns the status, the header pairs and the body. The adapter reads them
-   to fill those shapes (RFC 8288 Link field parsing, resolution of relative
-   references). Nothing it reads goes into a request. Open item: a Lean
-   function that returns these shapes would remove this code from the host.
-3. KEY SETUP. `configure` with `didKey` makes a P-256 key pair with
-   `node:crypto` and computes its `did:key` (multicodec 0x1200, base58btc).
-   The engine signs with the key. The same code exists in
-   `tests/authz/fixtures.mjs`. Open item: a Lean function for the `did:key` of
-   a P-256 key (`L4Factoidal/VC/DidKey.lean` has the Ed25519 one).
-4. ERROR NAMES. `error.kind` is the protocol's name for an HTTP status
-   (404 is `NotFoundError`). The engine's failure codes map to
-   `AuthenticationError`, `ProtocolError`, `TransportError`,
-   `InvalidArguments` or `InternalError`.
-5. The `fetch` given to the client adds only what `configure` asked for: the
-   `userAgent`, extra `headers`, and a `timeoutSeconds` abort.
-6. A few calls give the client a URL it can use. Index and search take a URL
-   inside the storage (a service endpoint does not answer with the storage
-   link), so the adapter hands the client the last URL it saw in that origin.
-   A linkset is reached through its resource, so the adapter remembers which
-   resource each linkset URL came from.
-7. Two media types are named: `application/linkset+json` for
-   `update_linkset` (the client picks PUT from it), and the OpenID ID Token
-   type `urn:ietf:params:oauth:token-type:id_token` for `configure` `openid`.
+1. It renames members and checks the JSON type of an argument.
+2. It applies the driver's own conventions: `limit` and `truncated` on a lazy
+   sequence, and the three forms of a request body (`text`, `base64`, `json`).
+3. It passes `configure` to the client's session: `bearer` (`token`, `realm`),
+   `openid` (`idToken`), `selfSigned` (the private JWK), `didKey` (a key the
+   client makes: `createDidKey` over the wasm op `lwsClientNewKey`, from 64
+   random bytes of the host's random source).
+4. It gives the client's `fetch` only what `configure` asked for: the
+   `userAgent`, extra `headers`, a `timeoutSeconds` abort.
+5. It gives an access request or grant to the client as its members (actions,
+   assignee, targets, constraint, inbox); the client writes the document.
+
+Four readings that the adapter made in JavaScript until commit ec300a9 are in
+Lean now (`formal/lean4/L4Factoidal/LWS/Client/`):
+
+| was in the adapter | now in Lean |
+|---|---|
+| the Metadata, Item, Page, Storage and Subscription shapes from the `Link` field (RFC 8288), the header fields and the storage description; the name of an error | `Report.lean` (`metadataJson`, `itemJson`, `pageJson`, `storageJson`, `subscriptionJson`, `bodyJson`, `errorReport`); each `done` document has a `report` member, each `fail` document a `report` with the error |
+| a new P-256 key and its `did:key` (and now Ed25519) | `Keys.lean` (`newAgent`), wasm op `lwsClientNewKey`; theorems `multikeyJwk?_p256`, `multikeyJwk?_ed25519` (`KeysTheorems.lean`) |
+| the media type `application/linkset+json` for `update_linkset`, and the ID token type URI | operation kind `putLinkset` (the client sends a PUT in the linkset media type), session member `idToken` |
+| the map from a linkset URL to its resource, and from a service to a URL inside its storage | operation members `linksetUrl`, `endpoint`, `storage`: the client takes the linkset, the service endpoint or the storage description directly |
 
 ## Operations
 
-36 operations in `PROTOCOL.md` section 4. 34 are in `hello.operations`.
+All 36 operations of `PROTOCOL.md` section 4 are in `hello.operations`. The
+protocol operations that need an OpenID sign-in are none: `configure` `openid`
+takes an ID Token the caller already has (`idToken`); the client has no
+sign-in of its own (authorization code flow with PKCE), so a caller cannot
+ask it to obtain an ID Token:
+https://github.com/danbri/factoidal/issues/1043 (LWS client OpenID sign-in).
 
-Supported (34): `configure`, `discover_storage`, `get_storage_description`,
-`head`, `read`, `read_container`, `list_container`, `create`,
-`create_container`, `update`, `patch`, `delete`, `linkset_url`,
-`read_linkset`, `update_linkset`, `patch_linkset`, `move`, `subscribe`,
-`list_subscriptions`, `get_subscription`, `unsubscribe`,
-`verify_notification`, `request_access`, `get_access_request`,
-`list_access_requests`, `cancel_access_request`, `grant_access`,
-`get_access_grant`, `list_access_grants`, `revoke_access_grant`,
-`read_type_index`, `list_types`, `search_all`, `shutdown`.
-
-Unsupported operations (2, answer `Unsupported`, not in `hello.operations`):
-
-| operation | reason |
-|---|---|
-| `search_types` | The client follows every result page and returns the whole result. The protocol returns one page, with the page `id`. |
-| `accepted_query_formats` | The client has no operation that reads the accepted query formats. |
-
-Unsupported options (the operation stays in the list and answers
-`Unsupported` when the option is given):
+Options that answer `Unsupported` (the operation stays in the list):
 
 | operation and option | reason |
 |---|---|
-| `read` `rangeStart`, `rangeEnd`, `ifNoneMatch`, `prefer` | The client's `read` takes only `accept`. The checker fails on these two checks (`ifNoneMatch`, range). |
-| `verify_notification` `trustedStorages` | The client's receiver has no trusted-storage list. The checker passes it in its one verify check, so that check fails. The driver leaves it out unless a test sets it. |
-| `subscribe` `expires` | The client's subscribe has no expiry option. |
 | `update` `ifNoneMatch` other than `*` | The client has `If-None-Match: *` only. |
+| `patch` `ifNoneMatch` | A conditional create-only patch is not a case of the drafts. |
+| `ifMatch` with `ifNoneMatch` | One precondition per write. |
 | `configure` `allowInsecureHttp: false` | The client does not refuse `http`. |
-| `configure` `bearer` without `realm` | The client sends a token only to URLs under a storage root. |
-| `configure` `selfSigned` or `didKey` with a key other than P-256 (`EdDSA`) | The engine signs ES256 only. |
 | `request_access`, `grant_access` with other than one policy | The client writes one policy per document. |
-| `update_linkset`, `patch_linkset` for a linkset the adapter has not seen | See item 6. Do `head`, `read`, `linkset_url` or `read_linkset` of the resource first. |
 
-Authentication types: `none`, `bearer` (with `realm`), `openid`, `selfSigned`
-(P-256), `didKey` (ES256). `openid` carries an ID Token the caller already has
-(`idToken`); the adapter gives it to the client as the RFC 8693 subject token.
-The client has no OpenID sign-in of its own (authorization code flow with
-PKCE), so a caller cannot ask it to obtain an ID Token:
-https://github.com/danbri/factoidal/issues/1043 (LWS client OpenID sign-in).
-
-Results the client cannot give are omitted, not invented: `read_type_index`
-has no `totalItems` or page links (the client reads every page);
-`contentRange` is not returned (no range option).
+A session key that is neither a P-256 nor an Ed25519 private JWK of 32 bytes
+ends the first operation with `InvalidArguments`. Results the client cannot
+give are omitted, not invented.
 
 ## Adding it to the lws-client driver and the Touchstone image
 
