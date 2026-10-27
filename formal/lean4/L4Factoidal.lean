@@ -368,6 +368,7 @@ import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.ConcatKdf
 import L4Factoidal.Crypto.Aead
 import L4Factoidal.Crypto.AesGcmNative
+import L4Factoidal.Crypto.CipherCall
 import L4Factoidal.Crypto.RsaNative
 import L4Factoidal.Crypto.RsaOaep
 import L4Factoidal.Crypto.RsaOaepTests
