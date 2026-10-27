@@ -1,0 +1,9 @@
+{
+  "@id": "ex:s",
+  "ex:prop": {
+    "@triple": {
+      "@id": "ex:rei",
+      "@type": ["ex:Type1", "ex:Type2"]
+    }
+  }
+}

@@ -212,6 +212,9 @@ export interface WriteOptions {
   useRdfType?: boolean;
   /** 'jsonld' only. */
   rdfDirection?: string;
+  /** 'jsonld' only: write RDF 1.2 triple terms as JSON-LD-star (`@triple`,
+   *  `@reifies`, `@annotation`). Without it a triple term is refused. */
+  rdfstar?: boolean;
 }
 
 export type WriteFormat =
@@ -529,14 +532,15 @@ export function canonicalize(
 export function graphs(dataset: Dataset): Array<[name: NamedNode | BlankNode, graph: Dataset]>;
 
 /**
- * RDFC-1.0 canonical form of a single graph -- the graph-scoped
- * sibling of canonicalize(). It returns the canonical N-Quads TEXT, not
- * a digest: hash the string yourself (for example `vcSha256Hex`) when a
- * fixed-length value is needed. Every quad's graph component is dropped
- * before canonicalizing, so isomorphic graphs (including under
- * blank-node relabeling) give the same string regardless of what
- * graph name they were extracted from. Typically called with one
- * entry of graphs()'s output.
+ * The RDFC-1.0 canonical hash of a single graph: the SHA-256 of its
+ * canonical N-Quads document, as 64 lowercase hexadecimal digits (RDF
+ * Dataset Canonicalization 1.0, section 4.4 note 2). The engine computes
+ * the canonical form and the digest. Every quad's graph component is
+ * dropped first, so isomorphic graphs (including under blank-node
+ * relabeling) give the same hash whatever graph name they were extracted
+ * from. Typically called with one entry of graphs()'s output. For the
+ * canonical text, use canonicalize(). Rejects when the input holds an
+ * RDF 1.2 triple term or the section 4.4 call budget is exceeded.
  */
 export function canonicalHash(datasetOrGraph: Dataset): Promise<string>;
 
@@ -1010,6 +1014,9 @@ export interface JsonLdOptions {
   rdfDirection?: string;
   expandContext?: string;
   processingMode?: string;
+  /** JSON-LD-star: read `@triple`, `@reifies`, `@annotation` as RDF 1.2
+   *  triple terms and reifiers. */
+  rdfstar?: boolean;
 }
 
 /**
@@ -1026,6 +1033,9 @@ export function jsonldToRdf(
 export interface JsonLdFromRdfOptions {
   useNativeTypes?: boolean;
   useRdfType?: boolean;
+  /** JSON-LD-star: write RDF 1.2 triple terms (`@triple`, `@reifies`,
+   *  `@annotation`). Without it a triple term is refused. */
+  rdfstar?: boolean;
   format?: DataFormat;
 }
 

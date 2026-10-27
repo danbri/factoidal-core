@@ -1819,6 +1819,46 @@ checkseq "lwsStep drives create, read, update and delete" "$TMP/lws-crud.json" \
    and rs[7]["ok"] is True
    and rs[8]["ok"] is False and "unknown LWS handle" in rs[8]["error"]'
 
+# --- WebDAV server (https://github.com/danbri/factoidal/issues/1066) ---
+# The handle reads mount files (webdavOpen, webdavLoad), then each request
+# is a program over storage operations: a local mount's operation comes out
+# as an `lws` request, answered with webdavResume. A malformed mount file is
+# refused with its name and line.
+python3 - "$TMP/webdav.json" <<'EOF'
+import json, sys, base64
+r = lambda **kw: json.dumps(kw)
+ent = base64.b64encode(bytes(range(32))).decode()
+seq = [
+  ["webdavOpen", [r(listing=["a.md", "README.md", "notes.txt"], entropy=ent)]],
+  ["webdavLoad", ["webdav1", r(files=[{"name": "a.md", "text": "# A\n- kind: local\n- path: st\n"}])]],
+  ["webdavLoad", ["webdav1", r(exists=[{"path": "st", "present": True}])]],
+  ["webdavStep", ["webdav1", r(method="OPTIONS", target="/a/")]],
+  ["webdavStep", ["webdav1", r(method="PROPFIND", target="/", headers=[["Depth", "1"]])]],
+  ["webdavStep", ["webdav1", r(method="GET", target="/a/x")]],
+  ["webdavResume", ["webdav1", r(status=404, headers=[])]],
+  ["webdavResume", ["webdav1", r(status=404, headers=[])]],
+  ["webdavClose", ["webdav1"]],
+  ["webdavStep", ["webdav1", r(method="OPTIONS", target="/")]],
+  ["webdavOpen", [r(listing=["bad.md"], entropy=ent)]],
+  ["webdavLoad", ["webdav2", r(files=[{"name": "bad.md", "text": "- kind: local\n- colour: red\n"}])]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+
+checkseq "webdav: mount files, OPTIONS, PROPFIND of the root, a GET carried as lws requests" "$TMP/webdav.json" \
+  'rs[0]["ok"] is True and rs[0]["need"]["read"] == ["a.md"]
+   and rs[1]["need"]["exists"] == ["st", "st/lws-state.json", "st/lws-files.json"]
+   and rs[2]["ready"]["local"][0]["config"]["storage"] == "snapshot"
+   and rs[3]["response"]["status"] == 200
+   and dict(rs[3]["response"]["headers"])["dav"] == "1, 2"
+   and rs[4]["response"]["status"] == 207 and "<D:href>/a/</D:href>" in rs[4]["response"]["body"]
+   and rs[5]["lws"]["request"] == {"method": "HEAD", "target": "/x", "headers": [], "body": ""}
+   and rs[6]["lws"]["request"]["target"] == "/x/"
+   and rs[7]["response"]["status"] == 404
+   and rs[8]["ok"] is True
+   and rs[9]["ok"] is False and "unknown WebDAV handle" in rs[9]["error"]
+   and rs[11]["ok"] is False and rs[11]["error"].startswith("bad.md:2: unknown key")'
+
 # Bodies are bytes (https://github.com/danbri/factoidal/issues/889). Through
 # the string entry a body that is not UTF-8 travels as `bodyBase64` both
 # ways; a byte range may end inside a UTF-8 sequence; Turtle whose bytes are
@@ -3227,6 +3267,7 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "packBegin","packFeed","packEndPass",
             "packNext","packFinish","packClose",
             "lwsOpen","lwsStep","lwsClose",
+            "webdavOpen","webdavLoad","webdavStep","webdavResume","webdavClose",
             "solidOpen","solidStep","solidClose",
             "solidClientRequest","solidClientResponse",
             "aeadSeal","aeadOpen","hpkeSeal","hpkeOpen",
@@ -3243,7 +3284,10 @@ check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
             "tdb2ServeKeys","tdb2ServeOpen"]) <= set(r["ops"])
    and r["blobIoOps"] == ["blobEcho","packFeed","packNext",
                           "storeServeRequest","storeServeCommit","datasetQuadsBin",
-                          "sbm11Query","sbm11PackFiles","lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead"]'
+                          "sbm11Query","sbm11PackFiles",
+                          "storeManifestInspectBytes","storeQueryPlanBytes","storeOpenBytes",
+                          "lwsStep","solidStep","lwsLoad","lwsPersist","lwsRead",
+                          "webdavStep","webdavResume"]'
 
 # SBM11 over host positioned reads (https://github.com/danbri/factoidal/issues/1009).
 # Natively the host is a pread of source/file (ffi/l4_hostread.c). A bad
@@ -3277,6 +3321,39 @@ checkseq "sbm11 open (collection root), query, close: the bytes of l4sbm11 query
    and rs[1]["ok"] is True and rs[1]["result"] == open(__import__("os").environ["SBM11_COUNT_FILE"]).read()
    and rs[2]["ok"] is False and isinstance(rs[2].get("code"), str)
    and rs[3]["ok"] is True and rs[4]["ok"] is False'
+
+# storeLayout and sbm11Verify (https://github.com/danbri/factoidal/issues/1009,
+# npm `factoidal activate`, `query`, `inspect` on an SBM11 store): the engine
+# says which store a directory holds, and checks every file of a generation
+# against its manifest; a changed byte is refused with the file name.
+args "$TMP/layout-root.json" "$SBM11_ROOT"
+check "storeLayout of an SBM11 collection root -> sbm11, the generation CURRENT names" storeLayout \
+  "$TMP/layout-root.json" 'r["ok"] is True and r["layout"] == "sbm11" and r["generation"] == "gen" and r["manifest"] == "manifest.sbm11"'
+args "$TMP/layout-gen.json" "$SBM11_ROOT/gen"
+check "storeLayout of an SBM11 generation directory -> sbm11, no CURRENT" storeLayout \
+  "$TMP/layout-gen.json" 'r["ok"] is True and r["layout"] == "sbm11" and r["generation"] == ""'
+mkdir -p "$TMP/layout-ibk" && : >"$TMP/layout-ibk/manifest.sbm2"
+args "$TMP/layout-ibk.json" "$TMP/layout-ibk"
+check "storeLayout of a directory with manifest.sbm2 -> ibk" storeLayout \
+  "$TMP/layout-ibk.json" 'r["ok"] is True and r["layout"] == "ibk" and r["manifest"] == "manifest.sbm2"'
+args "$TMP/layout-none.json" "$TMP/no-such-directory"
+check "storeLayout of a missing directory -> coded error" storeLayout \
+  "$TMP/layout-none.json" 'r["ok"] is False and isinstance(r.get("code"), str)'
+args "$TMP/verify-gen.json" "$SBM11_ROOT/gen"
+SBM11_GEN_FILES="$(ls "$SBM11_ROOT/gen" | wc -l | tr -d ' ')"
+export SBM11_GEN_FILES
+check "sbm11Verify of the fixture generation -> ok, every file checked" sbm11Verify \
+  "$TMP/verify-gen.json" 'r["ok"] is True and int(r["files"]) == int(__import__("os").environ["SBM11_GEN_FILES"]) and int(r["artifacts"]) > 0'
+cp -R "$SBM11_ROOT/gen" "$TMP/verify-bad"
+python3 - "$TMP/verify-bad/dict.gdv1" <<'EOF'
+import sys
+p = sys.argv[1]
+b = bytearray(open(p, "rb").read()); b[0] ^= 0xff
+open(p, "wb").write(b)
+EOF
+args "$TMP/verify-bad.json" "$TMP/verify-bad"
+check "sbm11Verify of a generation with a changed byte -> error naming the file" sbm11Verify \
+  "$TMP/verify-bad.json" 'r["ok"] is False and "dict.gdv1" in r["error"]'
 
 # SBM11 pack in memory (https://github.com/danbri/factoidal/issues/1009 stage 2):
 # the op through the string entry is refused by name; through the byte-region

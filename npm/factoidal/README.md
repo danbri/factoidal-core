@@ -8,14 +8,15 @@ npm install @factoidal/core
 ```
 
 ```js
-import { parse, csvwToRdf } from "@factoidal/core";
+import { parse, csvwToRdf, canonicalHash } from "@factoidal/core";
 
 const ds = await parse('<http://x/a> <http://x/n> "A" .', { format: "ntriples" });
 const rows = await ds.query("SELECT ?n WHERE { ?s <http://x/n> ?n }");
 console.log(rows[0].get("n").value);              // A
 console.log(ds.toString("turtle"));
 console.log(await ds.serialize({ format: "rdfxml" }));
-console.log(await ds.canonicalize());              // RDFC-1.0
+console.log(await ds.canonicalize());              // RDFC-1.0 canonical N-Quads
+console.log(await canonicalHash(ds));              // its SHA-256, 64 hex digits
 
 const table = await csvwToRdf("id,name\n1,a\n", "", { mode: "minimal", url: "http://x/t.csv" });
 console.log(table.size);                           // 2
@@ -42,7 +43,13 @@ RDF 1.2 input uses `turtle12`, `ntriples12`, `nquads12` or `trig12`.
 - Canonicalization: RDFC-1.0; Verifiable Credentials Data Integrity (eddsa-rdfc-2022), did:key
 - XML: XML 1.0, XPath 1.0, XSLT 1.0, XForms
 - Servers: SPARQL 1.1 Protocol and Graph Store (Fuseki-compatible paths,
-  Jena TDB2 read only), Linked Web Storage 1.0, Solid
+  Jena TDB2 read only), Linked Web Storage 1.0, Solid, an OAuth 2.0
+  authorization server (token exchange for OpenID Connect ID tokens,
+  self-issued CID credentials and SAML 2.0 assertions)
+- Security: JWS/JWT (ES256, RS256, EdDSA), XML Signature verification in the
+  SAML Core profile (Exclusive XML Canonicalization 1.0, rsa-sha256), with
+  HACL\* primitives. XML Encryption and JWE are not implemented yet:
+  https://github.com/danbri/factoidal/issues/1081
 - A persisted store with a delta log for updates (early stage)
 - Terms: a JavaScript extension function can answer with an exact term
   (`{value: "007", datatype: XSD + "integer"}`, an RDF/JS term, a triple
@@ -188,6 +195,7 @@ $ npx factoidal query store 'SELECT * WHERE { ?s ?p ?o } LIMIT 5'
 $ npx factoidal query "$(npx factoidal sample-store)" 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }'
 $ npx factoidal lws-serve DIR --issuer IRI         # Linked Web Storage
 $ npx factoidal solid-serve DIR                    # Solid Protocol
+$ npx factoidal authz-serve DIR --resource IRI --saml-idp idp.json   # OAuth 2.0 authorization server
 ```
 
 `npx factoidal --help` lists every command. Replacing Apache Jena Fuseki:

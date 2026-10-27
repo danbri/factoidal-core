@@ -427,6 +427,16 @@ def rsRdfXml : String :=
 #guard expectedShape (parseExpected "/r/g.rdf"
   ("<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" xmlns:e=\"http://e/\">" ++
    "<rdf:Description rdf:about=\"http://e/a\"><e:p>v</e:p></rdf:Description></rdf:RDF>")) == "graph 1"
+-- `.n3` (Jena `ARQ/ValueTesting`): a Turtle-compatible file is read as Turtle.
+#guard expectedShape (parseExpected "/r/x.n3" (rsBoolTurtle "true")) == "boolean true"
+#guard expectedShape (parseExpected "/r/x.n3" rsTurtle) == "rows 2 ordered true"
+#guard expectedShape (parseExpected "/r/g.n3" "<http://e/a> <http://e/p> \"v\" .") == "graph 1"
+-- N3-only syntax (a formula, `=>`) is refused with the N3 reason, which
+-- `runQueryEvaluation` reports as unsupported.
+#guard (match parseExpected "/r/rule.n3" "{ ?x <http://e/p> ?y } => { ?y <http://e/q> ?x } ." with
+        | .error e => e.startsWith n3RefusalPrefix | .ok _ => false)
+#guard (match parseExpected "/r/rule.ttl" "{ ?x <http://e/p> ?y } => { ?y <http://e/q> ?x } ." with
+        | .error e => !e.startsWith n3RefusalPrefix | .ok _ => false)
 
 end compare
 

@@ -37,6 +37,12 @@ covers = "part"
 note = "canonicalizeOf on the stored dataset, then the canonicalizeToNQuads path."
 
 [[entry]]
+id = "wasm:datasetCanonicalHash"
+stages = ["rdfcStage"]
+covers = "part"
+note = "Wasm/Ops/Canon.lean canonicalHashOf on the stored dataset: RDF.Canonical.canonicalize (rdfcStage's run), then Crypto.hashHex .sha256 of its canonical N-Quads (canonicalHashParsed_eq: Dataset.canonicalHash). Not covered: the digest (Crypto.hashHex), the RDF 1.2 refusal and the JSON envelope."
+
+[[entry]]
 id = "wasm:owlClosure"
 stages = ["rdfsReasoner", "owlRlReasoner"]
 covers = "part"
@@ -478,7 +484,7 @@ note = "Wasm/Ops/Pack.lean packEndPass: at the end of the ingest pass calls Pack
 id = "cli:pack"
 stages = ["packSetStage"]
 covers = "part"
-note = "npm/factoidal/bin/factoidal.mjs pack: bin/pack.mjs packFile drives packBegin, packFeed, packEndPass, packNext, packFinish, packClose. Covered: the rows written are a set (packSetStage, through packFeed and packEndPass). Not covered: reading the input file, writing the artifacts, the manifest, activation."
+note = "npm/factoidal/bin/factoidal.mjs pack: bin/pack.mjs packFile drives packBegin, packFeed, packEndPass, packNext, packFinish, packClose. Covered: the rows written are a set (packSetStage, through packFeed and packEndPass). Not covered: reading the input file, writing the artifacts, the manifest, activation. With --layout sbm11 the pack is the wasm op sbm11PackFiles (see wasm:sbm11PackFiles; https://github.com/danbri/factoidal/issues/1009), and packSetStage is not what it runs."
 
 [[entry]]
 id = "wasm:datasetSerialize"
@@ -634,6 +640,20 @@ covers = "part"
 note = "Wasm/Ops/StoreHandles.lean storeOpen: the handle's record is backendOfRetained (LawfulDataset.ofDataset; for a quad layout only when every graph name is an IRI). Not covered: the manifest decode, the artifact checks and the block reads and decode (IBK3, IBK4, IBK5), the handle table."
 
 [[entry]]
+id = "wasm:storeOpenBytes"
+stages = ["LawfulDataset.ofDataset"]
+covers = "part"
+note = "Wasm/Ops/StoreHandles.lean storeOpenBytes: storeOpen with the manifest as the first bytes of the region, decoded through the manifest memo (resolveManifestBytes_fst: the memo answers decodeManifestBytes?); after the decode the same admission (buildOpenStoreOf) as storeOpen. Not covered: as wasm:storeOpen."
+
+[[nonstage]]
+id = "wasm:storeQueryPlanBytes"
+reason = "manifest only: the artifact keys a query needs, from the manifest bytes (the byte form of storeQueryPlan, Wasm/Ops/StoreHandles.lean), reads no RDF data"
+
+[[nonstage]]
+id = "wasm:storeManifestInspectBytes"
+reason = "manifest only: the decoded manifest entries (the byte form of storeManifestInspect, Wasm/Ops/StoreHandles.lean), reads no RDF data"
+
+[[entry]]
 id = "npm:.#openStore"
 stages = ["LawfulDataset.ofDataset"]
 covers = "part"
@@ -691,7 +711,7 @@ note = "npm/factoidal/bin/store-worker-host.mjs queryStoreOnWorker: store.mjs qu
 id = "cli:query"
 stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "npm/factoidal/bin/factoidal.mjs commandQuery: planQuery (storeQueryPlan), then store.mjs queryStore (or queryStoreOnWorker on a stack overflow), the wasm op storeQuery (see wasm:storeQuery): Wasm/Ops/Store.lean decodes the planned blocks and runs queryParsedDatasetWith over LawfulDataset.ofDataset, ev.run of a LawfulEvaluator (default shippedEvaluator). Not covered: as npm:./store#queryStore, --explain, and the rendering of the answer (the table text; Turtle output by the wasm op serializeTurtle, which is not the Turtle RdfWriter)."
+note = "npm/factoidal/bin/factoidal.mjs commandQuery: planQuery (storeQueryPlan), then store.mjs queryStore (or queryStoreOnWorker on a stack overflow), the wasm op storeQuery (see wasm:storeQuery): Wasm/Ops/Store.lean decodes the planned blocks and runs queryParsedDatasetWith over LawfulDataset.ofDataset, ev.run of a LawfulEvaluator (default shippedEvaluator). Not covered: as npm:./store#queryStore, --explain, and the rendering of the answer (the table text; Turtle output by the wasm op serializeTurtle, which is not the Turtle RdfWriter). On an SBM11 store (op storeLayout) the query is the wasm op sbm11Query (see wasm:sbm11Query), not the stages above."
 
 [[entry]]
 id = "npm:./fn#query"
@@ -715,13 +735,13 @@ note = "npm/factoidal/fn.js hash: canonicalize (see npm:./fn#canonicalize), then
 id = "npm:.#canonicalHash"
 stages = ["rdfcStage"]
 covers = "part"
-note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then Dataset.toString('rdfc'): datasetSerialize with tag rdfc, canonicalizeOf (rdfcStage's run). Not covered: datasetGraphAsDefault."
+note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash): RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: datasetGraphAsDefault, the digest (Crypto.hashHex)."
 
 [[entry]]
 id = "npm:./browser#canonicalHash"
 stages = ["rdfcStage"]
 covers = "part"
-note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then Dataset.toString('rdfc'): datasetSerialize with tag rdfc, canonicalizeOf (rdfcStage's run). Not covered: datasetGraphAsDefault."
+note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash): RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: datasetGraphAsDefault, the digest (Crypto.hashHex)."
 
 [[entry]]
 id = "npm:./fn#vcEddsaCreateFromCanonical"
@@ -846,6 +866,14 @@ reason = "the empty FnDataset constant"
 [[nonstage]]
 id = "npm:./lws#lwsOpsAvailable"
 reason = "reflection: whether the loaded engine has the ops (lwsOpen with probe:true, then lwsClose); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:lwsClientNewKey"
+reason = "makes a did:key agent (P-256 or Ed25519 key pair and identifier) from random bytes the host gives; reads and writes no RDF data (https://github.com/danbri/factoidal/issues/1065)"
+
+[[nonstage]]
+id = "npm:./lws/client#createDidKey"
+reason = "draws 64 random bytes from the host and passes them to wasm:lwsClientNewKey; reads and writes no RDF data (https://github.com/danbri/factoidal/issues/1065)"
 
 [[nonstage]]
 id = "npm:./lws/client#lwsClientOpsAvailable"
@@ -991,6 +1019,14 @@ note = "Wasm/Ops/Sbm11.lean sbm11Query: HostSession.runOne, the engine of l4sbm1
 id = "wasm:sbm11Close"
 reason = "handle lifecycle: removes an SBM11 handle from the table, reads no RDF data"
 
+[[nonstage]]
+id = "wasm:sbm11Verify"
+reason = "integrity check of an SBM11 generation before activation (Wasm/Ops/Sbm11.lean): openSession, then for each file the manifest entry of its bytes (PackBytes.artifactOf: length, HACL* SHA-256, Merkle root) and its .merkle sidecar against the manifest; decodes no RDF data. The decoder checks of native l4sbm11 activate are not run"
+
+[[nonstage]]
+id = "wasm:storeLayout"
+reason = "store kind (Wasm/Ops/Sbm11.lean): resolves CURRENT and says whether manifest.sbm11, manifest.sbm2 or manifest.sbm1 is present; reads no RDF data"
+
 [[entry]]
 id = "npm:.#openSbm11"
 stages = ["sbm11Disk", "sbm11WhereStage", "sbm11DecodeStage"]
@@ -1078,3 +1114,39 @@ note = "fn.js fromCsvw: npm:.#csvwToRdf, the result wrapped as an FnDataset."
 [[nonstage]]
 id = "wasm:authzOwns"
 reason = "routing: whether a request target is one of the authorization server's paths (L4Factoidal.Authz.owns, theorem owns_mem), reads no data"
+
+# The WebDAV server (https://github.com/danbri/factoidal/issues/1066). It
+# moves resource bytes between a file browser and an LWS storage and reads
+# no RDF data: a local mount's operations go to lwsStep (unbound, its own
+# line) and a remote mount's to the LWS client machine.
+[[nonstage]]
+id = "wasm:webdavOpen"
+reason = "configuration: reads the names of the mount directory and decides which are mount files (WebDAV.Config.isMountFile); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:webdavLoad"
+reason = "configuration: reads the Markdown mount files (WebDAV.Config.mountOfMarkdown, theorem scan_known) and the key and token files of remote mounts; reads no RDF data"
+
+[[nonstage]]
+id = "wasm:webdavStep"
+reason = "protocol: one WebDAV request (RFC 4918) as a program over storage operations (WebDAV.Server.handle, theorems refused_keeps_state and browse_no_write); moves resource bytes, reads no RDF data"
+
+[[nonstage]]
+id = "wasm:webdavResume"
+reason = "protocol: the storage's answer to the operation in flight, given back to the program of webdavStep; moves resource bytes, reads no RDF data"
+
+[[nonstage]]
+id = "wasm:webdavClose"
+reason = "lifecycle: drops a WebDAV handle; reads no data"
+
+[[nonstage]]
+id = "npm:./webdav#openWebdav"
+reason = "host (webdav/server.mjs): lists the mount directory, reads and writes the files the engine names, opens local storages with openLwsStorage, carries lws requests and fetches; decides nothing (tools/host-purity-lint.sh); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./webdav#listen"
+reason = "host (webdav/server.mjs): a Node HTTP socket over openWebdav; reads no RDF data"
+
+[[nonstage]]
+id = "cli:webdav-serve"
+reason = "host command: starts npm:./webdav#listen on a mount directory and prints the origin; reads no RDF data"

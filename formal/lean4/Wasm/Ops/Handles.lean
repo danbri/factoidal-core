@@ -434,6 +434,13 @@ the envelope `canonicalizeToNQuads` answers on its canonical N-Quads. -/
 def datasetCanonicalize (h : String) : IO String :=
   withHandleDataset h fun ds _ => pure (canonicalizeOf ds)
 
+/-- `datasetCanonicalHash(handle)` — `canonicalHashOf` of the stored dataset:
+`{"ok":true,"hash":"<64 hex>","algorithm":"sha256"}`, the SHA-256 of the
+canonical N-Quads `datasetCanonicalize` answers
+(https://github.com/danbri/factoidal/issues/1040). -/
+def datasetCanonicalHash (h : String) : IO String :=
+  withHandleDataset h fun ds _ => pure (canonicalHashOf ds)
+
 /-- The regime names `datasetClosure` reads. -/
 def closureRegimes : List String := ["rdfs", "owl-rl", "rho-df", "rdfs-plus"]
 
@@ -966,6 +973,13 @@ def packUnsupportedSuffixes : List (String × String) :=
     (".json", "JSON-LD"), (".n3", "Notation3"), (".csv", "CSV"), (".tsv", "TSV"),
     (".hdt", "HDT") ]
 
+/-- The suffixes of the syntaxes that the pack which reads the whole document
+(`sbm11PackFiles`, `Wasm/Ops/Sbm11Pack.lean`) reads beyond `packSuffixes`,
+each with its `RDF.formatOfLabel` label. -/
+def packWholeSuffixes : List (String × String) :=
+  [ (".rdf", "rdfxml"), (".owl", "rdfxml"), (".xml", "rdfxml"), (".rdfxml", "rdfxml"),
+    (".jsonld", "jsonld"), (".json-ld", "jsonld"), (".json", "jsonld") ]
+
 /-- Every name table a host validates arguments against, so no host keeps its
 own copy (https://github.com/danbri/factoidal/issues/894 item 5). -/
 def engineTablesJson : Json :=
@@ -983,7 +997,8 @@ def engineTablesJson : Json :=
     , ("queryOutputs", .array (["json", "csv", "tsv", "xml", "table", "ntriples"].map Json.string))
     , ("packSyntaxes", .array (packSyntaxNames.map Json.string))
     , ("packSuffixes", strMap packSuffixes)
-    , ("packUnsupportedSuffixes", strMap packUnsupportedSuffixes) ]
+    , ("packUnsupportedSuffixes", strMap packUnsupportedSuffixes)
+    , ("packWholeSuffixes", strMap packWholeSuffixes) ]
 
 /-- `engineTables()` — `engineTablesJson`, plus `errorCodes`: each declared
 error code with its specification section and summary
@@ -1019,7 +1034,7 @@ private def parseOpts : List (String × OptionDomain) :=
 private def serializeOpts : List (String × OptionDomain) :=
   [ ("format", .writerFormat), ("version", .version), ("prefixes", .any)
   , ("literalShorthand", .any), ("useNativeTypes", .any), ("useRdfType", .any)
-  , ("rdfDirection", .any) ]
+  , ("rdfDirection", .any), ("rdfstar", .any) ]
 
 /-- The options each public function takes, with their value domains. A
 positional mode argument is checked as the option of its name (`mode`,
@@ -1040,9 +1055,9 @@ def apiOptionTable : List (String × List (String × OptionDomain)) :=
   , ("serialize", serializeOpts ++ [("inputFormat", .parseFormat), ("baseIRI", .any)])
   , ("csvwToRdf", [("mode", .any), ("base", .any), ("url", .any)])
   , ("jsonldToRdf", [("base", .any), ("rdfDirection", .any), ("expandContext", .any),
-                     ("processingMode", .any)])
+                     ("processingMode", .any), ("rdfstar", .any)])
   , ("jsonldFromRdf", [("useNativeTypes", .any), ("useRdfType", .any),
-                       ("rdfDirection", .any)] ++ parseOpts)
+                       ("rdfDirection", .any), ("rdfstar", .any)] ++ parseOpts)
   , ("queryRaw", [("dataFormat", .rawFormat), ("entail", .entail), ("output", .output)])
   , ("Dataset.query", [("sparql12", .any), ("version", .version), ("entail", .entail),
                        ("output", .output)])
@@ -1112,9 +1127,10 @@ def optionConflict (who : String) (fields : List (String × Json)) : Option Stri
       some (errCoded "option.conflict"
         s!"{who}: 'prefixes' and 'literalShorthand' apply to format 'turtle' only")
     else if writer != "jsonld" &&
-        (present "useNativeTypes" || present "useRdfType" || present "rdfDirection") then
+        (present "useNativeTypes" || present "useRdfType" || present "rdfDirection" ||
+         present "rdfstar") then
       some (errCoded "option.conflict"
-        s!"{who}: useNativeTypes, useRdfType, rdfDirection apply to format 'jsonld' only")
+        s!"{who}: useNativeTypes, useRdfType, rdfDirection, rdfstar apply to format 'jsonld' only")
     else none
   else none
 

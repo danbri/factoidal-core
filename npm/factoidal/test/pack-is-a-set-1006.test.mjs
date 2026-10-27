@@ -9,6 +9,8 @@
 // read only the count that the engine answers; no RDF logic is here. Since the
 // fix (Storage/PackSet.lean: every packer layout writes a set of rows; the
 // Lean checks are Storage/PackSetTests.lean) every layout is an assertion.
+// The SBM11 layout (https://github.com/danbri/factoidal/issues/1009) is in
+// the same loop.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -47,7 +49,7 @@ function packedCount (name, text, layout) {
 }
 
 for (const [name, [text, distinct]] of Object.entries(INPUTS)) {
-  for (const layout of [null, 'ibk3', 'ibk4', 'ibk5']) {
+  for (const layout of [null, 'ibk3', 'ibk4', 'ibk5', 'sbm11']) {
     test(`pack ${layout ? '--layout ' + layout : '(default layout, IBK5)'} ${name}: COUNT(*) is ${distinct} (${ISSUE})`, () => {
       assert.equal(packedCount(name, text, layout), distinct);
     });

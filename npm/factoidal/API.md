@@ -435,7 +435,7 @@ Methods: `query(sparql, {sparql12?, version?, entail?, output?})`,
 {format?, baseIRI?})`, `validateShex(schema, {focus, shape?})`,
 `closure('rdfs' | 'owl-rl' | 'rho-df' | 'rdfs-plus')`, `canonicalize()`,
 `serialize({format, version?, prefixes?, literalShorthand?,
-useNativeTypes?, useRdfType?, rdfDirection?})`, `toString(format)`
+useNativeTypes?, useRdfType?, rdfDirection?, rdfstar?})`, `toString(format)`
 (synchronous), `toNQuads()`, `clone()`, `has(quad)`, `match(s, p, o, g)`
 (a new Dataset), `toArray()`, iteration, `size`, `prefixes`,
 `diagnostics`, `warnings`, `format`, `formatInferred`, `dispose()` and
@@ -1391,11 +1391,11 @@ runnable.
 | `update` | `(data, sparqlUpdate, {format?, baseIRI?}) => Dataset` | answers a NEW Dataset; `dataset.update()` changes one in place |
 | `openDataset` | `(data, {format?, baseIRI?}) => Dataset` | a Dataset argument is cloned |
 | `closure` | `(data, 'rdfs' \| 'owl-rl' \| 'rho-df' \| 'rdfs-plus') => Dataset` | the closure of the default graph |
-| `serialize` | `(data, {format, version?, prefixes?, literalShorthand?, useNativeTypes?, useRdfType?, rdfDirection?, inputFormat?, baseIRI?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle`, `trig`, `rdfxml`, `jsonld`, `rdfc`; see "Datasets" |
+| `serialize` | `(data, {format, version?, prefixes?, literalShorthand?, useNativeTypes?, useRdfType?, rdfDirection?, rdfstar?, inputFormat?, baseIRI?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle`, `trig`, `rdfxml`, `jsonld`, `rdfc`; see "Datasets" |
 | `formats` | `() => [{name, read11, read12, write11, write12, engine}]` | the engine's list |
 | `canonicalize` | `(data, {format?, baseIRI?}) => string` | RDFC-1.0 canonical N-Quads |
 | `graphs` | `(Dataset) => Array<[NamedNode \| BlankNode, Dataset]>` | named graphs, default graph excluded |
-| `canonicalHash` | `(Dataset) => string` | RDFC-1.0 canonical N-Quads of one graph |
+| `canonicalHash` | `(Dataset) => string` | SHA-256 (64 lowercase hex digits) of the RDFC-1.0 canonical N-Quads of one graph; graph names are dropped first. `canonicalize` answers the text |
 | `queryRaw` | `(dataText, sparql, {dataFormat?, entail?, output?}) => object \| string` | one call, serialized answer: `json` (parsed), `csv`, `tsv`, `xml`, `table`, `ntriples` |
 | `queryHdt` | `(hdtBytes, sparql) => Bindings[] \| boolean` | SELECT/ASK over an HDT file's bytes |
 | `openStore`, `queryStore`, `listStores` | see "The persisted store" | `Store`: `.query`, `.inspect`, `.close`, `.handle`/`.layout`/`.wireVersion`/`.rows`/`.bytes`/`.artifacts`/`.generation`/`.activated`/`.closed` |
@@ -1413,7 +1413,7 @@ runnable.
 | `owlIsConsistent`, `owlEntails` | `(data, {fuel?})`, `(premise, conclusion, {fuel?})` | contradiction/entailment search; indeterminate results use `null` and an explicit `reason` (see below) |
 | `rmlMap` | `(mapping, sourceText, 'json' \| 'csv') => Dataset` | one logical source |
 | `csvwToRdf` | `(csvText, metadataJson?, {mode?, base?, url?}) => Dataset` | CSV on the Web csv2rdf |
-| `jsonldToRdf`, `jsonldFromRdf` | | JSON-LD 1.1 to and from RDF; a remote `@context` is not fetched |
+| `jsonldToRdf`, `jsonldFromRdf` | | JSON-LD 1.1 to and from RDF; a remote `@context` is not fetched. Option `rdfstar`: JSON-LD-star (`@triple`, `@reifies`, `@annotation` as RDF 1.2 triple terms and reifiers; also `serialize` with `format: "jsonld"`) |
 | `rifEval` | `(data, rifXml) => Dataset` | RIF Core forward chaining |
 | `xmlWellformed`, `xpathEval`, `xsltTransform`, `schematronValidate`, `jsonSchemaValidate`, `xformsRecalc`, `mathmlEval` | | XML 1.0, XPath 1.0, XSLT 1.0, Schematron, JSON Schema draft-07, XForms recalculation, Content MathML |
 | `clParse`, `clSerialize`, `clAlphaNorm`, `clNormalize` | `(clifText) => {…}` | Common Logic (ISO/IEC 24707) and IKL; `clSerialize` reports `roundTripProved: false`, `clNormalize` reports `preserves: "satisfiability"` |

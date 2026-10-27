@@ -938,9 +938,22 @@ import L4Factoidal.LWS.FileLayoutTests
 import L4Factoidal.HTTP.Cors
 import L4Factoidal.LWS.Cors
 import L4Factoidal.LWS.Client.Wire
+import L4Factoidal.LWS.Client.Report
 import L4Factoidal.LWS.Client.Machine
+import L4Factoidal.LWS.Client.Keys
+import L4Factoidal.LWS.Client.KeysTheorems
 import L4Factoidal.LWS.Client.Theorems
 import L4Factoidal.LWS.Client.Tests
+import L4Factoidal.WebDAV.Config
+import L4Factoidal.WebDAV.Path
+import L4Factoidal.WebDAV.Xml
+import L4Factoidal.WebDAV.If
+import L4Factoidal.WebDAV.Backend
+import L4Factoidal.WebDAV.Server
+import L4Factoidal.WebDAV.Local
+import L4Factoidal.WebDAV.Remote
+import L4Factoidal.WebDAV.Tests
+import L4Factoidal.WebDAV.Theorems
 -- The authorization server component (https://github.com/danbri/factoidal/issues/916).
 import L4Factoidal.Authz.Keys
 import L4Factoidal.Authz.Fetch

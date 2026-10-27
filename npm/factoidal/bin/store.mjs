@@ -123,7 +123,7 @@ export const STACK_REMEDY = {
 export function openStore (root, generationName = null) {
   if (typeof generationName !== 'string') {
     const opened = openCollection(root)
-    return { ...opened, manifestHex: hexOfBytes(opened.manifest), activated: true }
+    return withManifestHex({ ...opened, activated: true })
   }
   const generationDir = joinPath(root, generationName)
   for (const manifestName of MANIFEST_NAMES) {
@@ -133,23 +133,67 @@ export function openStore (root, generationName = null) {
     } catch (_error) {
       continue
     }
-    return {
+    return withManifestHex({
       root,
       generation: generationName,
       generationDir,
       manifestName,
       manifest,
-      manifestHex: hexOfBytes(manifest),
       activated: false
-    }
+    })
   }
   throw new StoreOperationError(
     `${generationDir} has none of ${MANIFEST_NAMES.join(', ')}`)
 }
 
+/**
+ * `store.manifestHex`, the hexadecimal the older manifest ops take, computed
+ * on first read. The byte ops (`hasManifestBytesOps`) do not read it, so a
+ * store opened for them never builds the 1.5 million digits of a large
+ * manifest (https://github.com/danbri/factoidal/issues/1039).
+ */
+function withManifestHex (store) {
+  let hex = null
+  return Object.defineProperty(store, 'manifestHex', {
+    enumerable: true,
+    get () {
+      if (hex === null) hex = hexOfBytes(store.manifest)
+      return hex
+    }
+  })
+}
+
+/** The byte forms of the manifest ops (formal/lean4/Wasm/Ops/StoreHandles.lean). */
+const MANIFEST_BYTES_OPS = ['storeManifestInspectBytes', 'storeQueryPlanBytes', 'storeOpenBytes']
+const manifestBytesSupport = new WeakMap()
+
+/**
+ * Whether the engine serves the byte forms of the manifest ops. They take
+ * the manifest as the byte region, not as hexadecimal inside the JSON
+ * arguments, and the engine decodes it once for a plan and the open that
+ * follows. An engine built before them has only the hexadecimal ops, and
+ * this host then uses those, as before.
+ */
+function hasManifestBytesOps (engine) {
+  let known = manifestBytesSupport.get(engine)
+  if (known === undefined) {
+    known = false
+    if (typeof engine.callBlobIO === 'function') {
+      const reflection = engine.call('ops', [])
+      const blobIoOps = Array.isArray(reflection && reflection.blobIoOps) ? reflection.blobIoOps : []
+      known = MANIFEST_BYTES_OPS.every((op) => blobIoOps.includes(op))
+    }
+    manifestBytesSupport.set(engine, known)
+  }
+  return known
+}
+
 /** `storeManifestInspect` — decode one manifest. */
 export function inspectManifest (engine, store) {
   try {
+    if (hasManifestBytesOps(engine)) {
+      return engine.callBlobIO('storeManifestInspectBytes', [], store.manifest).envelope
+    }
     return engine.call('storeManifestInspect', [store.manifestHex])
   } catch (error) {
     throw asStoreError(error)
@@ -159,6 +203,9 @@ export function inspectManifest (engine, store) {
 /** `storeQueryPlan` — the artifact keys this query needs, and the mode. */
 export function planQuery (engine, store, sparql) {
   try {
+    if (hasManifestBytesOps(engine)) {
+      return engine.callBlobIO('storeQueryPlanBytes', [sparql], store.manifest).envelope
+    }
     return engine.call('storeQueryPlan', [store.manifestHex, sparql])
   } catch (error) {
     throw asStoreError(error)
@@ -194,16 +241,20 @@ function capDecision (engine, store, sparql) {
   }
 }
 
-/** Read the named artifacts and concatenate them into one region. */
-function regionOf (store, keys) {
+/** Read the named artifacts and concatenate them into one region. With a
+ *  `prefix` (the manifest, for `storeOpenBytes`) the region starts with it,
+ *  and the windows still count from the first artifact byte. */
+function regionOf (store, keys, prefix = null) {
   const chunks = keys.map((key) => readWhole(joinPath(store.generationDir, key)))
+  const start = prefix ? prefix.length : 0
   let total = 0
   for (const chunk of chunks) total += chunk.length
-  const blob = new Uint8Array(total)
+  const blob = new Uint8Array(start + total)
+  if (prefix) blob.set(prefix, 0)
   const artifacts = []
   let offset = 0
   for (let index = 0; index < chunks.length; index += 1) {
-    blob.set(chunks[index], offset)
+    blob.set(chunks[index], start + offset)
     artifacts.push({ key: keys[index], offset, len: chunks[index].length })
     offset += chunks[index].length
   }
@@ -374,11 +425,16 @@ export function openStoreHandle (engine, store, options = {}) {
   } else {
     keys = manifestKeys(engine, store)
   }
-  const { blob, artifacts } = regionOf(store, keys)
+  const bytesOps = hasManifestBytesOps(engine)
+  // The byte op takes the manifest as the first bytes of the region.
+  const { blob, artifacts } = regionOf(store, keys, bytesOps ? store.manifest : null)
   let envelope
   try {
-    envelope = engine.callBlobIO('storeOpen',
-      [store.manifestHex, JSON.stringify(artifacts)], blob).envelope
+    envelope = bytesOps
+      ? engine.callBlobIO('storeOpenBytes',
+        [String(store.manifest.length), JSON.stringify(artifacts)], blob).envelope
+      : engine.callBlobIO('storeOpen',
+        [store.manifestHex, JSON.stringify(artifacts)], blob).envelope
   } catch (error) {
     throw asStoreError(error)
   }
