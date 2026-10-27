@@ -1219,6 +1219,8 @@ export interface Sbm11Store {
   /** the generation CURRENT names, or "" when the source is a generation */
   generation: string;
   terms: number;
+  /** how the engine checks reads; undefined from a wasm module built before the Merkle check */
+  verify: 'merkle' | 'none' | undefined;
   query(sparql: string, options?: { base?: string; sparql12?: boolean; reference?: boolean }): Sbm11Answer;
   /** the resources the reader read, when its reader records them (lwsSbm11Reader) */
   readonly evidence: Sbm11ReadEvidence[] | undefined;
@@ -1226,8 +1228,11 @@ export interface Sbm11Store {
 }
 
 /** Open an SBM11 generation (https://github.com/danbri/factoidal/issues/1009).
- * Node: `source` is a directory unless a reader is given or registered. */
-export function openSbm11(source: string, options?: { reader?: Sbm11Reader }): Promise<Sbm11Store>;
+ * Node: `source` is a directory unless a reader is given or registered.
+ * `verify` (default 'merkle'): the engine checks every byte it decodes against
+ * the manifest's Merkle roots and refuses a changed file with its name;
+ * 'none' checks lengths only. */
+export function openSbm11(source: string, options?: { reader?: Sbm11Reader; verify?: 'merkle' | 'none' }): Promise<Sbm11Store>;
 
 /** Serve `source` with `reader`; `null` removes it. */
 export function registerSbm11Source(source: string, reader: Sbm11Reader | null): void;

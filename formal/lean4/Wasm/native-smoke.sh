@@ -3355,6 +3355,38 @@ args "$TMP/verify-bad.json" "$TMP/verify-bad"
 check "sbm11Verify of a generation with a changed byte -> error naming the file" sbm11Verify \
   "$TMP/verify-bad.json" 'r["ok"] is False and "dict.gdv1" in r["error"]'
 
+# The Merkle check of sbm11Open and sbm11Query (`verify`, default merkle;
+# Storage/Sbm11/HostVerify.lean, https://github.com/danbri/factoidal/issues/1009):
+# the same changed dict.gdv1 refuses the query with the file name, and is
+# read under {"verify":"none"}; a changed .merkle sidecar refuses the open.
+python3 - "$TMP/verify-bad" "$TMP/sbm11-verify-seq.json" <<'EOF'
+import json, sys
+gen, out = sys.argv[1], sys.argv[2]
+q = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }"
+json.dump([["sbm11Open", [gen]],
+           ["sbm11Query", ["sbm11-1", q]],
+           ["sbm11Open", [gen, json.dumps({"verify": "none"})]],
+           ["sbm11Open", [gen, json.dumps({"verify": "sha1"})]],
+           ["sbm11Close", ["sbm11-1"]],
+           ["sbm11Close", ["sbm11-2"]]], open(out, "w"))
+EOF
+checkseq "sbm11Open verify merkle (default) and none: a changed dict.gdv1 refuses the query by name" \
+  "$TMP/sbm11-verify-seq.json" \
+  'rs[0]["ok"] is True and rs[0]["verify"] == "merkle"
+   and rs[1]["ok"] is False and "dict.gdv1" in rs[1]["error"] and "Merkle root" in rs[1]["error"]
+   and rs[2]["ok"] is True and rs[2]["verify"] == "none"
+   and rs[3]["ok"] is False and "verify is merkle or none" in rs[3]["error"]'
+cp -R "$SBM11_ROOT/gen" "$TMP/verify-side"
+python3 - "$TMP/verify-side/spo.prb1.merkle" <<'EOF'
+import sys
+p = sys.argv[1]
+b = bytearray(open(p, "rb").read()); b[-1] ^= 1
+open(p, "wb").write(b)
+EOF
+args "$TMP/verify-side.json" "$TMP/verify-side"
+check "sbm11Open of a generation with a changed .merkle sidecar -> error naming the sidecar" sbm11Open \
+  "$TMP/verify-side.json" 'r["ok"] is False and "spo.prb1.merkle" in r["error"]'
+
 # SBM11 pack in memory (https://github.com/danbri/factoidal/issues/1009 stage 2):
 # the op through the string entry is refused by name; through the byte-region
 # entry (`l4factoidal sbm11-pack`, one call per file) it gives the files of

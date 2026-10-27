@@ -1019,13 +1019,13 @@ note = "npm/factoidal/lib/api.mjs vcEd25519Verify (fn.js re-exports it) calls th
 id = "wasm:sbm11Open"
 stages = ["sbm11Disk"]
 covers = "part"
-note = "Wasm/Ops/Sbm11.lean sbm11Open: HostSession.resolveHost (CURRENT) and openSession over the host reads of Wasm/HostRead.lean (ffi/l4_hostread.c): the manifest decoded, each artifact's size checked against it, a delta log refused, the GDX1 header read. The reads are those of sbm11Disk, under its assumption ReadsWritten. Not covered: the Merkle check (Verify.merkle) is not done on this path."
+note = "Wasm/Ops/Sbm11.lean sbm11Open: HostSession.resolveHost (CURRENT) and openSession over the host reads of Wasm/HostRead.lean (ffi/l4_hostread.c): the manifest decoded, each artifact's size checked against it, a delta log refused, the GDX1 header read; under verify merkle (the default) every .merkle sidecar admitted against the manifest's root (HostVerify.admit) and every byte read through a 65,536-byte chunk checked by its proof (HostVerify.checkChunk, #guards in HostVerifyTests), verify none checks lengths only. The reads are those of sbm11Disk, under its assumption ReadsWritten; under merkle a changed byte is refused under the collision resistance of SHA-256, which is tested and not proved."
 
 [[entry]]
 id = "wasm:sbm11Query"
 stages = ["sbm11Disk", "sbm11WhereStage", "sbm11DecodeStage"]
 covers = "part"
-note = "Wasm/Ops/Sbm11.lean sbm11Query: HostSession.runOne, the engine of l4sbm11 query with one thread (IdQuery.translate; runPlanM, runPostM, IdGroup.runNestedM over HostSession.Session.store; else the reference evaluator over selectedDataset). sbm11WhereStage and sbm11DecodeStage are proved over the file store of MemGen.store_written; HostSession.store makes the same reads through the same functions (PrmRange.rangeM over bytesReader, Dict.pageM, Dict.lookupM, DictRange.lowerBoundM), which is tested and not proved: SBM11_HOST=1 tests/sbm11/census.sh, 605 of 605 W3C SPARQL 1.0 and 1.1 evaluation tests with the bytes and path of l4sbm11 query; npm test/sbm11-host.test.mjs. Not covered: the post-processing (runPostM, IdGroup), the reference fallback, the session caches."
+note = "Wasm/Ops/Sbm11.lean sbm11Query: HostSession.runOne, the engine of l4sbm11 query with one thread (IdQuery.translate; runPlanM, runPostM, IdGroup.runNestedM over HostSession.Session.store; else the reference evaluator over selectedDataset). sbm11WhereStage and sbm11DecodeStage are proved over the file store of MemGen.store_written; HostSession.store makes the same reads through the same functions (PrmRange.rangeM over bytesReader, Dict.pageM, Dict.lookupM, DictRange.lowerBoundM), which is tested and not proved: SBM11_HOST=1 tests/sbm11/census.sh, 605 of 605 W3C SPARQL 1.0 and 1.1 evaluation tests with the bytes and path of l4sbm11 query; npm test/sbm11-host.test.mjs. npm test/sbm11-verify.test.mjs (a changed byte in each kind of file refused by name). Not covered: the post-processing (runPostM, IdGroup), the reference fallback, the session caches."
 
 [[nonstage]]
 id = "wasm:sbm11Close"

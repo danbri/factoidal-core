@@ -618,7 +618,11 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "storeHandleQuery" => withArgs (arityIO2 op Ops.storeHandleQuery)
   -- SPARQL over an SBM11 generation through host positioned reads
   -- (`Wasm/Ops/Sbm11.lean`, https://github.com/danbri/factoidal/issues/1009).
-  | "sbm11Open"        => withArgs (arityIO1 op Ops.sbm11Open)
+  | "sbm11Open"        => withArgs (fun args =>
+      match args with
+      | [a]    => Ops.sbm11Open a ""
+      | [a, b] => Ops.sbm11Open a b
+      | args => pure (errJson s!"sbm11Open expects 1 or 2 arguments, got {args.length}"))
   | "sbm11Query"       => withArgs (fun args =>
       match args with
       | [a, b]    => Ops.sbm11Query a b ""

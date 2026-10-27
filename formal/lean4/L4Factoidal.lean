@@ -453,6 +453,8 @@ import L4Factoidal.Storage.Sbm11.PrmAt
 import L4Factoidal.Storage.Sbm11.PrmRange
 import L4Factoidal.Storage.Medium
 import L4Factoidal.Storage.Sbm11.HostSession
+import L4Factoidal.Storage.Sbm11.HostVerify
+import L4Factoidal.Storage.Sbm11.HostVerifyTests
 import L4Factoidal.Storage.Sbm11.DictRange
 import L4Factoidal.Storage.Sbm11.DictFinger
 import L4Factoidal.Storage.Sbm11.FrameWords
