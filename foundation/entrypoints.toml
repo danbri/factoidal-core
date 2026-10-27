@@ -37,6 +37,12 @@ covers = "part"
 note = "canonicalizeOf on the stored dataset, then the canonicalizeToNQuads path."
 
 [[entry]]
+id = "wasm:datasetCanonicalHash"
+stages = ["rdfcStage"]
+covers = "part"
+note = "Wasm/Ops/Canon.lean canonicalHashOf on the stored dataset: RDF.Canonical.canonicalize (rdfcStage's run), then Crypto.hashHex .sha256 of its canonical N-Quads (canonicalHashParsed_eq: Dataset.canonicalHash). Not covered: the digest (Crypto.hashHex), the RDF 1.2 refusal and the JSON envelope."
+
+[[entry]]
 id = "wasm:owlClosure"
 stages = ["rdfsReasoner", "owlRlReasoner"]
 covers = "part"
@@ -478,7 +484,7 @@ note = "Wasm/Ops/Pack.lean packEndPass: at the end of the ingest pass calls Pack
 id = "cli:pack"
 stages = ["packSetStage"]
 covers = "part"
-note = "npm/factoidal/bin/factoidal.mjs pack: bin/pack.mjs packFile drives packBegin, packFeed, packEndPass, packNext, packFinish, packClose. Covered: the rows written are a set (packSetStage, through packFeed and packEndPass). Not covered: reading the input file, writing the artifacts, the manifest, activation."
+note = "npm/factoidal/bin/factoidal.mjs pack: bin/pack.mjs packFile drives packBegin, packFeed, packEndPass, packNext, packFinish, packClose. Covered: the rows written are a set (packSetStage, through packFeed and packEndPass). Not covered: reading the input file, writing the artifacts, the manifest, activation. With --layout sbm11 the pack is the wasm op sbm11PackFiles (see wasm:sbm11PackFiles; https://github.com/danbri/factoidal/issues/1009), and packSetStage is not what it runs."
 
 [[entry]]
 id = "wasm:datasetSerialize"
@@ -691,7 +697,7 @@ note = "npm/factoidal/bin/store-worker-host.mjs queryStoreOnWorker: store.mjs qu
 id = "cli:query"
 stages = ["LawfulDataset.ofDataset", "lawfulWhereStage", "shippedEvaluator"]
 covers = "part"
-note = "npm/factoidal/bin/factoidal.mjs commandQuery: planQuery (storeQueryPlan), then store.mjs queryStore (or queryStoreOnWorker on a stack overflow), the wasm op storeQuery (see wasm:storeQuery): Wasm/Ops/Store.lean decodes the planned blocks and runs queryParsedDatasetWith over LawfulDataset.ofDataset, ev.run of a LawfulEvaluator (default shippedEvaluator). Not covered: as npm:./store#queryStore, --explain, and the rendering of the answer (the table text; Turtle output by the wasm op serializeTurtle, which is not the Turtle RdfWriter)."
+note = "npm/factoidal/bin/factoidal.mjs commandQuery: planQuery (storeQueryPlan), then store.mjs queryStore (or queryStoreOnWorker on a stack overflow), the wasm op storeQuery (see wasm:storeQuery): Wasm/Ops/Store.lean decodes the planned blocks and runs queryParsedDatasetWith over LawfulDataset.ofDataset, ev.run of a LawfulEvaluator (default shippedEvaluator). Not covered: as npm:./store#queryStore, --explain, and the rendering of the answer (the table text; Turtle output by the wasm op serializeTurtle, which is not the Turtle RdfWriter). On an SBM11 store (op storeLayout) the query is the wasm op sbm11Query (see wasm:sbm11Query), not the stages above."
 
 [[entry]]
 id = "npm:./fn#query"
@@ -715,13 +721,13 @@ note = "npm/factoidal/fn.js hash: canonicalize (see npm:./fn#canonicalize), then
 id = "npm:.#canonicalHash"
 stages = ["rdfcStage"]
 covers = "part"
-note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then Dataset.toString('rdfc'): datasetSerialize with tag rdfc, canonicalizeOf (rdfcStage's run). Not covered: datasetGraphAsDefault."
+note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash): RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: datasetGraphAsDefault, the digest (Crypto.hashHex)."
 
 [[entry]]
 id = "npm:./browser#canonicalHash"
 stages = ["rdfcStage"]
 covers = "part"
-note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then Dataset.toString('rdfc'): datasetSerialize with tag rdfc, canonicalizeOf (rdfcStage's run). Not covered: datasetGraphAsDefault."
+note = "npm/factoidal/lib/api.mjs canonicalHash: the wasm op datasetGraphAsDefault (union of the graphs as the default graph), then the wasm op datasetCanonicalHash (see wasm:datasetCanonicalHash): RDFC-1.0 (rdfcStage's run) and its SHA-256 in Lean. Not covered: datasetGraphAsDefault, the digest (Crypto.hashHex)."
 
 [[entry]]
 id = "npm:./fn#vcEddsaCreateFromCanonical"
@@ -998,6 +1004,14 @@ note = "Wasm/Ops/Sbm11.lean sbm11Query: HostSession.runOne, the engine of l4sbm1
 [[nonstage]]
 id = "wasm:sbm11Close"
 reason = "handle lifecycle: removes an SBM11 handle from the table, reads no RDF data"
+
+[[nonstage]]
+id = "wasm:sbm11Verify"
+reason = "integrity check of an SBM11 generation before activation (Wasm/Ops/Sbm11.lean): openSession, then for each file the manifest entry of its bytes (PackBytes.artifactOf: length, HACL* SHA-256, Merkle root) and its .merkle sidecar against the manifest; decodes no RDF data. The decoder checks of native l4sbm11 activate are not run"
+
+[[nonstage]]
+id = "wasm:storeLayout"
+reason = "store kind (Wasm/Ops/Sbm11.lean): resolves CURRENT and says whether manifest.sbm11, manifest.sbm2 or manifest.sbm1 is present; reads no RDF data"
 
 [[entry]]
 id = "npm:.#openSbm11"

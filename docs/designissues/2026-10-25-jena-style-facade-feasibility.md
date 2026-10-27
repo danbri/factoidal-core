@@ -3,6 +3,13 @@
 Date: 2026-10-25. Status: feasibility study, for owner review. No facade code exists.
 Tracking: https://github.com/danbri/factoidal/issues/1036 (SPARQL string-function defects found by this study).
 
+Update 2026-10-26: stages 0 and 0b are done. All 1,070 one-line expression
+tests (measured; 996 ported) run as `npm/factoidal/test/jena-arq-expr.test.mjs`;
+the `ARQ` and `SPARQL-CDTs` manifests run with `l4w3c`. Results and verdicts:
+`docs/20261026-jena-expr-port.md`. New issues:
+https://github.com/danbri/factoidal/issues/1041 (XSD constructor casts),
+https://github.com/danbri/factoidal/issues/1042 (directional language strings).
+
 Request (owner, 2026-10-25, verbatim): "Have a subagent assess feasibility of
 creating a js reflection of eg Jena's APIs and then ai-manually converting their
 test suite to see if we can create a Jena experience over WASM. The NPM ideally

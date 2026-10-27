@@ -12,6 +12,10 @@ https://github.com/danbri/factoidal/issues/1007).
     result bytes as the out region
   sbm11Close(handle)
     -> {"ok":true}
+  sbm11Verify(source)
+    -> {"ok":true,"artifacts":K,"files":F,"bytes":B,"quads":Q,"terms":T}
+  storeLayout(source)
+    -> {"ok":true,"layout":"sbm11"|"ibk","generation":G,"manifest":M}
 
 `source` is the string the host resolves (`Wasm/HostRead.lean`): a directory
 for Node and the native CLI, an OPFS directory name in a browser worker. It
@@ -29,12 +33,32 @@ same query on the same generation.
 
 The engine: `L4Factoidal.Storage.Sbm11.HostSession`. The handle table is the
 only state of this module (the rule of `Wasm/Ops/Handles.lean`).
+
+`sbm11Verify(source)` is the activation check of the generation directory
+`source` (it does not read `CURRENT`): `openSession` (the manifest decodes and
+is admitted, every artifact has the manifest's length, no delta log, the GDX1
+header decodes), then for every artifact the bytes of the whole file and of
+its `.merkle` sidecar: the manifest entry that `PackBytes.artifactOf` makes of
+the bytes (length, HACL* SHA-256, Merkle root of the 65,536-byte leaves) must
+equal the entry in the manifest, and the sidecar must equal those leaves. The
+host replaces `CURRENT` only after `"ok":true` (npm `factoidal activate`).
+Native `l4sbm11 activate` also runs the decoder checks and the exact
+permutation check (`Harness/Sbm11Cli.lean` `verifyGen`); this op does not.
+Each file is read whole, so a file must fit in the module's memory.
+
+`storeLayout(source)` says which store a directory holds, so that a host
+does not decide it from file names (iron rule 7): it resolves `CURRENT` as
+`resolveHost` does, then looks for `manifest.sbm11` (`"sbm11"`) and for the
+manifests of the IBK3, IBK4 and IBK5 generations, `manifest.sbm2` and
+`manifest.sbm1` (`"ibk"`; the store ops of `Wasm/Ops/Store.lean` then say
+which IBK layout). A directory with none of them is an error.
 -/
 import Std.Data.HashMap
 import Wasm.HostRead
 import Wasm.Ops.Support
 import Wasm.Ops.Clock
 import L4Factoidal.SPARQL.Parser
+import Wasm.Ops.Sbm11Pack
 
 namespace L4Wasm.Ops
 
@@ -145,7 +169,67 @@ def sbm11Close (h : String) : IO String := do
     return okWith []
   return errJson s!"sbm11Close: no open SBM11 handle {h}"
 
+/-- The bytes of the whole file `file` of `n` bytes, through the host. -/
+private def readWholeFile (host : Host) (file : String) (n : Nat) : IO ByteArray := do
+  if n == 0 then return ByteArray.empty
+  let b ← host.readAt file 0 n
+  if b.size != n then ioErr s!"{file}: the host returned {b.size} bytes for a read of {n}"
+  return b
+
+/-- `sbm11Verify(source)`: the activation check of the generation directory
+    `source` (module comment). -/
+def sbm11Verify (source : String) : IO String := do
+  try
+    let host := hostOf source
+    let ss ← openSession host
+    let m := ss.manifest
+    let mut bytes := 0
+    let mut files := 1
+    for a in m.artifacts do
+      let b ← readWholeFile host a.file a.bytes
+      let (entry, leaves) := L4Factoidal.Storage.Sbm11.PackBytes.artifactOf sbm11PackHasher a.role b
+      unless entry == a do
+        ioErr s!"{a.file}: the manifest entry of these bytes (length, SHA-256, Merkle root) is not the entry in {manifestName}"
+      let side := a.file ++ ".merkle"
+      let some n ← host.size side | ioErr s!"{side}: not found"
+      let sb ← readWholeFile host side n
+      unless sb == leaves do ioErr s!"{side}: not the Merkle leaves of {a.file}"
+      bytes := bytes + b.size + sb.size
+      files := files + 2
+    return okWith
+      [ ("artifacts", .number (toString m.artifacts.length))
+      , ("files", .number (toString files))
+      , ("bytes", .number (toString bytes))
+      , ("quads", .number (toString m.quads))
+      , ("terms", .number (toString m.terms)) ]
+  catch e => return errJson s!"sbm11Verify: {ioMessage e}"
+
+/-- The manifest names of the IBK3, IBK4 and IBK5 generations, in the order
+    `Harness.ShardMerklePread.readManifest` tries them. -/
+def ibkManifestNames : List String := ["manifest.sbm2", "manifest.sbm1"]
+
+/-- `storeLayout(source)` (module comment). -/
+def storeLayout (source : String) : IO String := do
+  try
+    let h := hostOf source
+    let (g, name) ← do
+      match ← h.size currentName with
+      | none => pure (h, "")
+      | some n =>
+        let b ← readWholeFile h currentName n
+        let some name := String.fromUTF8? b | ioErr "CURRENT is not valid UTF-8"
+        unless safeGenerationName name do ioErr "CURRENT does not name a safe generation directory"
+        pure (h.under name, name)
+    let answer (layout manifest : String) : String :=
+      okWith [("layout", .string layout), ("generation", .string name), ("manifest", .string manifest)]
+    if (← g.size manifestName).isSome then return answer "sbm11" manifestName
+    for f in ibkManifestNames do
+      if (← g.size f).isSome then return answer "ibk" f
+    let where_ := if name.isEmpty then source else s!"{source}/{name} (named by CURRENT)"
+    return errJson s!"storeLayout: {where_} holds no {manifestName}, {String.intercalate " or " ibkManifestNames}; it is not a generation directory or a collection root"
+  catch e => return errJson s!"storeLayout: {ioMessage e}"
+
 /-- The op names of this module, served by `callIO` only. -/
-def sbm11OpNames : List String := ["sbm11Open", "sbm11Query", "sbm11Close"]
+def sbm11OpNames : List String := ["sbm11Open", "sbm11Query", "sbm11Close", "sbm11Verify", "storeLayout"]
 
 end L4Wasm.Ops

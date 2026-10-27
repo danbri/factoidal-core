@@ -95,6 +95,7 @@ def coreIOOpNames : List String :=
   , "datasetClose"
   , "datasetClone"
   , "datasetCanonicalize"
+  , "datasetCanonicalHash"
   , "datasetClosure"
   , "datasetShaclValidate"
   , "datasetQueryRaw"
@@ -147,7 +148,7 @@ def fullOnlyOpNames : List String :=
   , "tableauMaterialise", "tableauDlInconsistent", "queryHdt", "shexValidate"
   , "datasetFromCsvw", "datasetFromRml", "datasetFromJsonLd", "datasetToJsonLd"
   , "datasetShexValidate", "datasetRifEval", "datasetQuadsBin"
-  , "sbm11Open", "sbm11Query", "sbm11Close", "sbm11PackFiles"
+  , "sbm11Open", "sbm11Query", "sbm11Close", "sbm11Verify", "storeLayout", "sbm11PackFiles"
   , "storeOpen", "storeHandleQuery", "storeHandleList", "storeHandleClose"
   , "storeServeKeys", "storeServeOpen", "storeServeRequest", "storeServeCommit"
   , "storeServeClose", "tdb2ServeKeys", "tdb2ServeOpen"
@@ -318,6 +319,7 @@ def callIOArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "datasetClose"     => some (arityIO1 op Ops.datasetClose args)
   | "datasetClone"     => some (arityIO1 op Ops.datasetClone args)
   | "datasetCanonicalize" => some (arityIO1 op Ops.datasetCanonicalize args)
+  | "datasetCanonicalHash" => some (arityIO1 op Ops.datasetCanonicalHash args)
   | "datasetClosure"   => some (arityIO2 op Ops.datasetClosure args)
   | "datasetShaclValidate" => some (arityIO2 op Ops.datasetShaclValidate args)
   | "datasetQueryRaw"  => some (arityIO3 op Ops.datasetQueryRaw args)
@@ -407,11 +409,11 @@ private def argsForCode (argsJson : String) : List String :=
 
 /-- `callUncoded` with the error model of `Wasm/Ops/ErrorModel.lean`. -/
 def call (op : String) (argsJson : String) : String :=
-  attachCode op (argsForCode argsJson) (callUncoded op argsJson)
+  attachCodeLazy op (fun _ => argsForCode argsJson) (callUncoded op argsJson)
 
 /-- `callIOUncoded` with the error model of `Wasm/Ops/ErrorModel.lean`. -/
 def callIO (op : String) (argsJson : String) : IO String := do
-  pure (attachCode op (argsForCode argsJson) (← callIOUncoded op argsJson))
+  pure (attachCodeLazy op (fun _ => argsForCode argsJson) (← callIOUncoded op argsJson))
 
 /-- The byte-region entry (`l4_call_blob`). -/
 def callBlob (op : String) (argsJson : String) (_blob : ByteArray) : String :=

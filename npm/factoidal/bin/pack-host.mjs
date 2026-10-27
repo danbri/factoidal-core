@@ -42,11 +42,12 @@
 // route rescues an in-page packer. See the closing section of
 // `docs/designissues/2026-09-03-npm-pack-in-wasm.md`.
 
-import { StoreHostError, listGeneration, readWhole } from '../store-host/index.mjs'
+import { StoreHostError, listGeneration, readWhole, writeNew } from '../store-host/index.mjs'
 import { fileUrlToPath, joinPath } from '../store-host/paths.mjs'
 import { loadEngine } from './engine.mjs'
 import { PackError, packFile, packSupported, verifyGeneration } from './pack.mjs'
 import { StoreOperationError, openStore } from './store.mjs'
+import { sbm11Api } from '../lib/sbm11.mjs'
 
 const isDeno = typeof globalThis.Deno !== 'undefined'
 
@@ -207,6 +208,7 @@ export function isStackOverflow (error) {
  */
 export async function packHere (task, onProgress) {
   const engine = await loadEngine()
+  if (task.kind === 'packSbm11') return await packSbm11Here(engine, task)
   if (!packSupported(engine)) return { notWired: true }
   if (task.kind === 'activate') {
     return { report: activateHere(engine, task) }
@@ -219,6 +221,34 @@ export async function packHere (task, onProgress) {
     onProgress
   })
   return { report }
+}
+
+/**
+ * Pack one document into the files of one SBM11 generation (op
+ * sbm11PackFiles, through lib/sbm11.mjs packSbm11) and write each file
+ * under the name the engine gave it. The document is read whole: the op
+ * takes the whole document, and refuses one above its limit.
+ *
+ * @returns {{notWired: true}|{report: object}}
+ */
+async function packSbm11Here (engine, task) {
+  const { packSbm11 } = sbm11Api(async () => engine)
+  const bytes = readWhole(task.input)
+  let files
+  try {
+    files = await packSbm11(bytes, { syntax: task.syntax, base: task.base })
+  } catch (error) {
+    if (error && error.code === 'SBM11_NO_PACK_OP') return { notWired: true }
+    throw error
+  }
+  const written = []
+  let bytesWritten = 0
+  for (const [name, fileBytes] of files) {
+    writeNew(joinPath(task.output, name), fileBytes)
+    written.push(name)
+    bytesWritten += fileBytes.length
+  }
+  return { report: { bytesRead: bytes.length, written, bytesWritten } }
 }
 
 /**
