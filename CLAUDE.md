@@ -724,6 +724,20 @@ The choices below are the coordinator's, under that delegation.
   cache misses, and a linear parse alone gives 2.1 to 2.2 on the same
   machine. No instruction-count harness is added for this row.
 
+### JSON-LD-star follows the RDF 1.2 direction (owner, 2026-10-26 and 2026-10-27)
+
+> "implement JSON-LD-star: JSON-LD-star is SOTA. It will likely change a bit,
+> but let's start there first."
+> "decisions - do something sensible and record the choice. Go for whatever is
+> closer to RDF 1.2 direction."
+
+- Target: the json-ld-star PR 61 tests (`third_party/testing/json-ld-star`),
+  Lean 4 only, opt-in option `rdfstar`; score `l4jsonld-api --star`.
+- Where the fixtures or the outline disagree with RDF 1.2 Turtle, follow RDF
+  1.2 and record a local override: an annotation's `@id` may be an IRI; fromRdf
+  folds any reifier of an asserted triple into `@annotation`.
+- Record: `docs/designissues/2026-10-26-jsonld-star.md` § Decisions.
+
 ### Freeform composition over checked components (owner, 2026-10-25)
 
 > "we want to enable and underwrite freeform composition as I sketch, using

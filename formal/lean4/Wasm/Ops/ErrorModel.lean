@@ -205,7 +205,7 @@ def opTextArg (op : String) : Option Nat :=
   else if ["queryDataset", "queryDataset12", "updateDataset", "datasetQuery",
            "datasetQuery12", "datasetUpdate", "queryRaw", "datasetQueryRaw",
            "storeQuery", "storeQueryPlan"].contains op then some 1
-  else if op == "queryHdt" then some 0
+  else if op == "queryHdt" || op == "storeQueryPlanBytes" then some 0
   else none
 
 /-- The default code of an op family, for a refusal no message rule names. -/
@@ -271,7 +271,8 @@ def classify (op msg : String) (positioned : Bool) : String :=
 def uncodedOps : List String :=
   [ "lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush", "lwsLoad", "lwsPersist", "lwsRead", "solidOpen", "solidStep",
     "solidClose", "solidSnapshot", "solidFetched", "solidClientRequest", "solidClientResponse",
-    "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzOwns", "authzClose" ]
+    "authzOpen", "authzStep", "authzFetched", "authzKeys", "authzRotate", "authzOwns", "authzClose",
+    "webdavOpen", "webdavLoad", "webdavStep", "webdavResume", "webdavClose" ]
 
 private def isErrorEnvelope (s : String) : Bool := s.startsWith "{\"ok\":false"
 

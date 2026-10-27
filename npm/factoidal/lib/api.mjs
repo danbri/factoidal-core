@@ -182,11 +182,10 @@ function utf16Diagnostics(text, diagnostics) {
 // is never one of a partial generation.
 // ---------------------------------------------------------------------
 class Store {
-  constructor(e, env, gen, manifestHex, fromNQuads, withExtensionRounds) {
+  constructor(e, env, gen, fromNQuads, withExtensionRounds) {
     this._e = e;
     this._env = env;
     this._gen = gen;
-    this._manifestHex = manifestHex;
     this._closed = false;
     this._fromNQuads = fromNQuads;
     this._withExtensionRounds = withExtensionRounds;
@@ -236,7 +235,9 @@ class Store {
 
   /** The manifest, decoded by the engine (op storeManifestInspect). */
   async inspect() {
-    const r = entryResult(this._e.storeManifestInspect(this._manifestHex), 'Store.inspect');
+    const r = entryResult(typeof this._e.storeManifestInspectBytes === 'function'
+      ? this._e.storeManifestInspectBytes(this._gen.manifest)
+      : this._e.storeManifestInspect(hexOfBytes(this._gen.manifest)), 'Store.inspect');
     const { ok: _ok, ...rest } = r;
     return rest;
   }
@@ -841,7 +842,7 @@ function buildApi(driver) {
    * @param {Dataset|string|Array} data
    * @param {{format?: string, version?: '1.1'|'1.2', prefixes?: object,
    *   literalShorthand?: boolean, useNativeTypes?: boolean,
-   *   useRdfType?: boolean, rdfDirection?: string,
+   *   useRdfType?: boolean, rdfDirection?: string, rdfstar?: boolean,
    *   inputFormat?: string, baseIRI?: string}} [options]
    *   format: nquads (default), ntriples, turtle, trig, rdfxml, jsonld,
    *   rdfc. inputFormat and baseIRI read text `data`.
@@ -1210,7 +1211,9 @@ function buildApi(driver) {
    * A remote `@context` is not fetched.
    * @param {string} jsonldText
    * @param {{base?: string, rdfDirection?: string, expandContext?: string,
-   *   processingMode?: string}} [options]
+   *   processingMode?: string, rdfstar?: boolean}} [options]
+   *   rdfstar: JSON-LD-star (`@triple`, `@reifies`, `@annotation` as RDF 1.2
+   *   triple terms and reifiers).
    * @returns {Promise<Dataset>}
    */
   async function jsonldToRdf(jsonldText, options) {
@@ -1223,6 +1226,7 @@ function buildApi(driver) {
       ...(opts.rdfDirection ? { rdfDirection: opts.rdfDirection } : {}),
       ...(opts.expandContext ? { expandContext: opts.expandContext } : {}),
       ...(opts.processingMode ? { processingMode: opts.processingMode } : {}),
+      ...(opts.rdfstar ? { rdfstar: true } : {}),
     });
     return c.wrap(entryResult(c.e.datasetFromJsonLd(jsonldText, optionsJson), 'jsonldToRdf'), {},
       { format: 'jsonld', formatInferred: false });
@@ -1250,7 +1254,8 @@ function buildApi(driver) {
    * The text form is `serialize(data, {format: 'jsonld'})`.
    * @param {Dataset|string|Array} data
    * @param {{useNativeTypes?: boolean, useRdfType?: boolean,
-   *   rdfDirection?: string, format?: string, baseIRI?: string}} [options]
+   *   rdfDirection?: string, rdfstar?: boolean, format?: string,
+   *   baseIRI?: string}} [options]
    * @returns {Promise<any>}
    */
   async function jsonldFromRdf(data, options) {
@@ -1907,20 +1912,30 @@ function buildApi(driver) {
     const e = await entry();
     requireEntryFn(e, 'storeOpen', 'openStore (storeOpen)');
     const gen = await openGeneration(reader, opts.generation);
-    const manifestHex = hexOfBytes(gen.manifest);
+    // The byte ops when the engine has them (issue 1039): the manifest
+    // crosses as bytes and is decoded once for the plan and the open. An
+    // older engine gets the hexadecimal ops, as before.
+    const bytesOps = typeof e.storeOpenBytes === 'function';
+    const manifestHex = bytesOps ? null : hexOfBytes(gen.manifest);
     let keys;
     if (Array.isArray(opts.keys)) {
       keys = opts.keys.map(String);
     } else if (typeof opts.sparql === 'string') {
-      const plan = entryResult(e.storeQueryPlan(manifestHex, opts.sparql), 'openStore(plan)');
+      const plan = entryResult(bytesOps
+        ? e.storeQueryPlanBytes(gen.manifest, opts.sparql)
+        : e.storeQueryPlan(manifestHex, opts.sparql), 'openStore(plan)');
       keys = plan.keys.concat(plan.sidecarKeys || [], plan.blobKeys || []);
     } else {
-      keys = manifestKeys(entryResult(e.storeManifestInspect(manifestHex), 'openStore(inspect)'));
+      keys = manifestKeys(entryResult(bytesOps
+        ? e.storeManifestInspectBytes(gen.manifest)
+        : e.storeManifestInspect(manifestHex), 'openStore(inspect)'));
     }
     const { blob, artifacts } = await readRegion(reader, gen.generation, keys);
-    const env = entryResult(e.storeOpen(manifestHex, JSON.stringify(artifacts), blob), 'openStore');
+    const env = entryResult(bytesOps
+      ? e.storeOpenBytes(gen.manifest, JSON.stringify(artifacts), blob)
+      : e.storeOpen(manifestHex, JSON.stringify(artifacts), blob), 'openStore');
     const c = await ctx();
-    return new Store(e, env, gen, manifestHex, (nq) => c.fromNQuads(nq, {}), withExtensionRounds);
+    return new Store(e, env, gen, (nq) => c.fromNQuads(nq, {}), withExtensionRounds);
   }
 
   /**

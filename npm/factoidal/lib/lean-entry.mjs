@@ -125,6 +125,9 @@ function installExtensionBridge(eng, entry) {
   };
 }
 
+/** The byte forms of the manifest ops (Wasm/Ops/StoreHandles.lean). */
+const MANIFEST_BYTES_OPS = ['storeManifestInspectBytes', 'storeQueryPlanBytes', 'storeOpenBytes'];
+
 /**
  * Build the entry object lib/api.mjs drives, from a loaded engine handle.
  *
@@ -199,9 +202,45 @@ export function entryFromEngine(eng) {
       }
     };
   }
+  const blobIoOps = Array.isArray(reflection.blobIoOps) ? reflection.blobIoOps : [];
+  // The byte forms of the manifest ops (https://github.com/danbri/factoidal/issues/1039):
+  // the manifest crosses as the byte region, not as hexadecimal inside the
+  // JSON arguments, and the engine decodes it once for a plan and the open
+  // that follows. An engine without them has only the hexadecimal ops; the
+  // methods are then absent and lib/api.mjs uses the hexadecimal ops.
+  if (typeof eng.callBlobIO === 'function' &&
+      MANIFEST_BYTES_OPS.every((op) => blobIoOps.includes(op))) {
+    entry.storeManifestInspectBytes = (manifestBytes) => {
+      try {
+        return JSON.stringify(eng.callBlobIO('storeManifestInspectBytes', [], manifestBytes).envelope);
+      } catch (err) {
+        return failEnvelope(err);
+      }
+    };
+    entry.storeQueryPlanBytes = (manifestBytes, sparql) => {
+      try {
+        return JSON.stringify(
+          eng.callBlobIO('storeQueryPlanBytes', [String(sparql)], manifestBytes).envelope);
+      } catch (err) {
+        return failEnvelope(err);
+      }
+    };
+    entry.storeOpenBytes = (manifestBytes, artifactsJson, bytes) => {
+      try {
+        const region = new Uint8Array(manifestBytes.length + bytes.length);
+        region.set(manifestBytes, 0);
+        region.set(bytes, manifestBytes.length);
+        return JSON.stringify(eng.callBlobIO('storeOpenBytes',
+          [String(manifestBytes.length), String(artifactsJson)], region).envelope);
+      } catch (err) {
+        return failEnvelope(err);
+      }
+    };
+  } else {
+    for (const op of MANIFEST_BYTES_OPS) delete entry[op];
+  }
   // datasetQuadsBin answers a byte region (formal/lean4/L4Factoidal/RDF/QuadsBin.lean):
   // this method answers {envelope, bytes} and throws on a refusal.
-  const blobIoOps = Array.isArray(reflection.blobIoOps) ? reflection.blobIoOps : [];
   if (typeof eng.callBlobIO === 'function' && blobIoOps.includes('datasetQuadsBin')) {
     entry.datasetQuadsBin = (handle, optsJson) => {
       try {

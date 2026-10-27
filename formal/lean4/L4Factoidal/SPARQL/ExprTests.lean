@@ -724,6 +724,45 @@ def dtLit (s : String) : Expr := .lit (mkTypedLiteral s xsdDateTime)
 #guard (Expr.strBefore (.lit (litLang "abc" "en")) (.lit (litStr "xyz"))).eval []
   == erString ""
 
+/-! ### §17.4.3 base direction in argument compatibility and in
+STRBEFORE / STRAFTER results (https://github.com/danbri/factoidal/issues/1042;
+the 13 cases of the Jena ARQ port, verdict group `dir-lang-string-functions`) -/
+
+def dirLit (s tag : String) (d : TextDirection) : Expr := .lit (mkDirLangLiteral s tag d)
+def dirRes (s tag : String) (d : TextDirection) : EvalResult :=
+  .term (.literal (mkDirLangLiteral s tag d))
+
+-- Same tag, different kind (`rdf:dirLangString` against `rdf:langString`):
+-- not compatible, in either order.
+#guard (Expr.contains (dirLit "abc" "en" .ltr) (.lit (litLang "a" "en"))).eval [] == .error
+#guard (Expr.contains (.lit (litLang "abc" "en")) (dirLit "a" "en" .ltr)).eval [] == .error
+#guard (Expr.strStarts (.lit (litLang "ab" "en")) (dirLit "z" "en" .rtl)).eval [] == .error
+#guard (Expr.strEnds (.lit (litLang "ab" "en")) (dirLit "z" "en" .rtl)).eval [] == .error
+#guard (Expr.strBefore (dirLit "abc" "en" .ltr) (.lit (litLang "a" "en"))).eval [] == .error
+#guard (Expr.strAfter (dirLit "abc" "en" .ltr) (.lit (litLang "a" "en"))).eval [] == .error
+#guard (Expr.strAfter (.lit (litLang "abc" "en")) (dirLit "a" "en" .ltr)).eval [] == .error
+-- Same tag, different base direction: not compatible.
+#guard (Expr.contains (dirLit "abc" "en" .ltr) (dirLit "a" "en" .rtl)).eval [] == .error
+-- Same tag and same base direction: compatible.
+#guard (Expr.contains (dirLit "abc" "en" .ltr) (dirLit "a" "en" .ltr)).eval [] == .bool true
+-- A simple second argument is compatible with a directional first…
+#guard (Expr.contains (dirLit "abc" "en" .ltr) (.lit (litStr "z"))).eval [] == .bool false
+-- …and not with a simple first (§17.4.3 table: `"abc"`, `"b"@en--ltr`: no).
+#guard (Expr.contains (.lit (litStr "abc")) (dirLit "b" "en" .ltr)).eval [] == .error
+-- STRBEFORE / STRAFTER keep the tag AND the base direction of arg1.
+#guard (Expr.strBefore (dirLit "abc" "en" .ltr) (.lit (litStr "b"))).eval [] == dirRes "a" "en" .ltr
+#guard (Expr.strBefore (dirLit "abc" "en" .ltr) (.lit (litStr "a"))).eval [] == dirRes "" "en" .ltr
+#guard (Expr.strBefore (dirLit "abc" "en" .ltr) (dirLit "a" "en" .ltr)).eval [] == dirRes "" "en" .ltr
+#guard (Expr.strAfter (dirLit "abc" "en" .ltr) (.lit (litStr "b"))).eval [] == dirRes "c" "en" .ltr
+#guard (Expr.strAfter (dirLit "abc" "en" .ltr) (.lit (litStr ""))).eval [] == dirRes "abc" "en" .ltr
+#guard (Expr.strAfter (dirLit "abc" "en" .rtl) (dirLit "a" "en" .rtl)).eval [] == dirRes "bc" "en" .rtl
+-- No occurrence: "an empty literal with datatype xsd:string".
+#guard (Expr.strBefore (dirLit "abc" "en" .ltr) (.lit (litStr "z"))).eval [] == erString ""
+#guard (Expr.strAfter (dirLit "abc" "en" .ltr) (dirLit "z" "en" .ltr)).eval [] == erString ""
+-- `rdf:langString` results are unchanged (no direction).
+#guard (Expr.strAfter (.lit (litLang "abc" "en")) (.lit (litStr ""))).eval []
+  == .term (.literal (litLang "abc" "en"))
+
 /-! ### §17.4.2.3 STRDT takes a simple literal only (W3C `strdt01`, `strdt03`) -/
 
 #guard (Expr.strDt (.lit (litLang "bar" "en")) (.iri xsdString)).eval [] == .error
@@ -744,6 +783,26 @@ def dtLit (s : String) : Expr := .lit (mkTypedLiteral s xsdDateTime)
 
 def xsdFn (t : String) (e : Expr) (h : isIri (xsdNamespace ++ t) := by rfl) : Expr :=
   .functionCall ⟨xsdNamespace ++ t, h⟩ [e]
+
+-- PR 142 (F&O §19 casts) with issue 1062 (no cast from a language-tagged
+-- literal) and issue 1060 (SUBSTR with a type derived from xsd:integer).
+private def xsdByteIri : WfIri := ⟨xsdNamespace ++ "byte", rfl⟩
+#guard (xsdFn "byte" (.lit (litLang "1" "en"))).eval [] == .error
+#guard (xsdFn "byte" (.lit litDir)).eval [] == .error
+#guard (xsdFn "string" (.lit (litLang "foo" "en"))).eval [] == .error
+#guard (xsdFn "boolean" (.lit (litLang "true" "en"))).eval [] == .error
+#guard (xsdFn "dateTime" (.lit (litLang "2020-01-01T00:00:00Z" "en"))).eval [] == .error
+#guard (xsdFn "double" (.lit (litLang "1" "en"))).eval [] == .error
+#guard (xsdFn "decimal" (.lit (litLang "1" "en"))).eval [] == .error
+#guard (xsdFn "float" (.lit (litLang "1" "en"))).eval [] == .error
+#guard (xsdFn "byte" (.lit (litStr "12"))).eval [] == .term (.literal (mkTypedLiteral "12" xsdByteIri))
+#guard (xsdFn "byte" (.lit (litStr "128"))).eval [] == .error
+-- SUBSTR takes the xsd:byte that the F&O cast gives (§17.4.3.3).
+#guard (Expr.substr (.lit (litStr "foobar")) (xsdFn "byte" (.lit (litStr "4"))) none).eval []
+  == .term (.literal (litStr "bar"))
+#guard (Expr.substr (.lit (litStr "foobar")) (xsdFn "byte" (.lit (litStr "2")))
+    (some (xsdFn "short" (.lit (litStr "3"))))).eval []
+  == .term (.literal (litStr "oob"))
 
 -- From a STRING: the lexical form must be in the target's lexical space.
 #guard (xsdFn "integer" (.lit (litStr "13"))).eval [] == .num 13

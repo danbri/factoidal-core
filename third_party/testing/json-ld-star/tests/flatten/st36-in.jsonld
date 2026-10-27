@@ -1,0 +1,8 @@
+{
+  "@context": {
+    "triple": "@triple"
+  },
+  "@id": "ex:subj",
+  "ex:reifies": {"triple": {"ex:prop": "value"}},
+  "ex:prop": "value2"
+}
