@@ -298,7 +298,7 @@ def innerXml : Nat → Node → String
     match n with
     | .element _ _ cs => String.join (cs.map (fun c => match c with
         | .text t => escText t
-        | .cdata t => escText t
+        | .cdata t => t
         | .comment b => "<!--" ++ b ++ "-->"
         | .pi t d => "<?" ++ t ++ " " ++ d ++ "?>"
         | .element tag ats _ =>
@@ -475,6 +475,7 @@ def runIsolated (o : Opts) (secs : Nat) (fam setName file : String) : IO (Tally 
     child.kill
     let _ ← child.wait
   let line := ((← readFileSafe pf).getD "").trimAscii.toString
+  try IO.FS.removeFile pf catch _ => pure ()
   let parts := line.splitOn " "
   let num (i : Nat) : Nat := ((parts.getD i "0").toNat?).getD 0
   let t : Tally := ⟨num 0, num 1, num 2⟩

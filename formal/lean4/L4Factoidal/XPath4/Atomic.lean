@@ -158,7 +158,16 @@ def floatParts (f : Float) : Bool × Nat × Nat :=
 def fvalToFloat (v : Fval) : Float := Float.ofBits (fvalToBits64 v)
 
 /-- Correctly rounded decimal-to-binary64 (through `XSD.IEEE754`). -/
-def floatOfParsed (p : Parsed) : Float := fvalToFloat (canonDouble p)
+def floatOfParsed (p : Parsed) : Float :=
+  match p with
+  | .num neg m e =>
+    -- a decimal exponent far outside the binary64 range is ±INF or ±0
+    -- without building 10^e
+    let digits : Int := (toString m).length
+    if m != 0 && e + digits > 400 then (if neg then -(1.0 / 0.0) else 1.0 / 0.0)
+    else if m == 0 || e + digits < -400 then (if neg then -0.0 else 0.0)
+    else fvalToFloat (canonDouble p)
+  | _ => fvalToFloat (canonDouble p)
 
 def floatOfLex? (s : String) : Option Float := (parseLexical s).map floatOfParsed
 
@@ -507,7 +516,9 @@ def castAtomic (a : Atomic) (t : AType) (nsResolve : String → Option String :=
   | .untyped => pure (Atomic.untypedOf a.str)
   | .b tb =>
   if tb == .anyAtomicType then pure a else
-  if a.isStringLike then
+  if a.is .anyURI && !(derivedFrom tb .string || tb == .anyURI) then
+    err "XPTY0004" ("cannot cast xs:anyURI to xs:" ++ t.name)
+  else if a.isStringLike then
     if tb == .qname || tb == .notation then
       if a.is .anyURI then err "XPTY0004" "cannot cast xs:anyURI to xs:QName"
       else castFromString a.str t nsResolve
@@ -583,6 +594,7 @@ def AType.prim : AType → String
     else if derivedFrom bt .string then "string"
     else if bt == .anyURI then "string"
     else if derivedFrom bt .duration then "duration"
+    else if bt == .hexBinary || bt == .base64Binary then "binary"
     else match (bt.primitive) with
       | some p => p.localName
       | none => bt.localName
@@ -610,12 +622,9 @@ def atomicCmp (a b : Atomic) (implicitTz : Int := 0) : M (Option Ordering) :=
   else if pa == "duration" && pb == "duration" then
     match a.v, b.v with
     | .x (.dur x), .x (.dur y) =>
-        if x.months == y.months && Dec.cmp x.seconds y.seconds == .eq then pure (some .eq)
-        else
-          -- order is defined only within yearMonth or dayTime durations
-          if x.months == y.months then pure (some (Dec.cmp x.seconds y.seconds))
-          else if decIsZero x.seconds && decIsZero y.seconds then pure (some (compare x.months y.months))
-          else pure (some .lt)  -- unequal; ordering checked by caller's type rules
+        -- XPath 4.0: durations are ordered by months, then by seconds
+        if x.months != y.months then pure (some (compare x.months y.months))
+        else pure (some (Dec.cmp x.seconds y.seconds))
     | _, _ => err "XPTY0004"
   else if pa == pb then
     match a.v, b.v with
@@ -629,8 +638,8 @@ def atomicCmp (a b : Atomic) (implicitTz : Int := 0) : M (Option Ordering) :=
 def AType.ordered (t : AType) : Bool :=
   match t.prim with
   | "boolean" | "numeric" | "string" | "untypedAtomic" | "date" | "time" | "dateTime"
-  | "hexBinary" | "base64Binary" => true
-  | "duration" => t.derives (.b .yearMonthDuration) || t.derives (.b .dayTimeDuration)
+  | "binary" => true
+  | "duration" => true
   | _ => false
 
 /-- `op:same-key` / `fn:atomic-equal` (F&O 4.0 §14.2.1 and §17): equality

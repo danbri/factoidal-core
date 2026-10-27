@@ -88,7 +88,11 @@ def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
       else if isDT a then
         let _ := factor
         pure (mkDur .dayTimeDuration 0 (factorExact x.seconds))
-      else err "XPTY0004" "cannot multiply xs:duration"
+      else if x.months == 0 then
+        pure (mkDur .duration 0 (factorExact x.seconds))
+      else if decIsZero x.seconds then
+        pure (mkDur .duration (Fn.Numeric.decRound (factorExact (Dec.ofInt x.months))) Dec.zero)
+      else err "XPTY0004" "cannot multiply an xs:duration with both month and second parts"
     | none => err "XPTY0004" "invalid duration arithmetic"
   | .x (.dt k1 x), .x (.dt k2 y), .sub =>
       if k1 == k2 && (k1 == .dateTime || k1 == .date || k1 == .time) then
@@ -115,8 +119,6 @@ def valueCmp (tz : Int) (op : BOp) (a b : Atomic) : M Bool := do
   | _ =>
     if !(a.ty.ordered && b.ty.ordered) then
       err "XPTY0004" ("xs:" ++ a.ty.name ++ " values have no order")
-    else if a.ty.prim == "duration" && !((a.is .yearMonthDuration && b.is .yearMonthDuration) || (a.is .dayTimeDuration && b.is .dayTimeDuration)) then
-      err "XPTY0004" "durations of different kinds are not ordered"
     else match op with
     | .vlt | .glt => pure (c == some .lt)
     | .vle | .gle => pure (c == some .lt || c == some .eq)
@@ -232,7 +234,7 @@ def eval : Nat → Env → Expr → M Seq
   | .slash a b => do
       let left ← eval n env a
       match nodesOf left with
-      | none => err "XPTY0019" "the left operand of '/' must be nodes"
+      | none => err "XPTY0004" "the left operand of '/' must be nodes"
       | some ns =>
         let ns := sortNodes ns
         let sz := ns.length
@@ -347,7 +349,7 @@ def eval : Nat → Env → Expr → M Seq
         | none => err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
   | .inline ps ret body focus => pure [.fn (.inline ps ret body focus env.vars)]
   | .mapC es => do
-      let mut acc : List (Atomic × Seq) := []
+      let mut acc : MB := {}
       for (k, v) in es do
         if isMergeMarker v then
           let ms ← eval n env k
@@ -355,17 +357,17 @@ def eval : Nat → Env → Expr → M Seq
             match m with
             | .map kvs =>
               for (kk, vv) in kvs do
-                if (mapGet acc kk).isSome then err "XQDY0137" "duplicate key in map constructor"
-                acc := acc ++ [(kk, vv)]
+                if (acc.get? kk).isSome then err "XQDY0137" "duplicate key in map constructor"
+                acc := acc.set kk vv
             | _ => err "XPTY0004" "map constructor entry is not a map"
         else
           let ks ← env.atomize (← eval n env k)
           match ks with
           | [kk] =>
-            if (mapGet acc kk).isSome then err "XQDY0137" ("duplicate key " ++ kk.str ++ " in map constructor")
-            acc := acc ++ [(kk, ← eval n env v)]
+            if (acc.get? kk).isSome then err "XQDY0137" ("duplicate key " ++ kk.str ++ " in map constructor")
+            acc := acc.set kk (← eval n env v)
           | _ => err "XPTY0004" "a map key must be a single atomic value"
-      pure [.map acc]
+      pure [.map acc.toList]
   | .arrS es => do
       let mut ms : Array Seq := #[]
       for x in es do ms := ms.push (← eval n env x)
@@ -508,11 +510,20 @@ def filterSeq : Nat → Env → Seq → Expr → M Seq
       let mut idx := 1
       for i in s do
         let r ← eval n (env.focus i idx sz) p
+        let isNum (x : Item) : Bool := match x with | .atom a => a.isNumeric | _ => false
         let keep ← match r with
           | [.atom a] => match a.num? with
             | some num => pure (match numCmp num (.i idx) with | some .eq => true | _ => false)
             | none => ebv r
-          | _ => ebv r
+          | _ =>
+            -- XPath 4.0: a sequence of numbers selects those positions
+            if r.length > 1 && r.all isNum then
+              pure (r.any (fun x => match x with
+                | .atom a => match a.num? with
+                  | some num => (match numCmp num (.i idx) with | some .eq => true | _ => false)
+                  | none => false
+                | _ => false))
+            else ebv r
         if keep then out := out.push i
         idx := idx + 1
       pure out.toList
@@ -523,7 +534,7 @@ def lookupIn : Nat → Env → Item → Option Expr → M Seq
     match i with
     | .map kvs => do
       match k with
-      | none => pure (kvs.foldl (fun acc (_, v) => acc ++ v) [])
+      | none => pure (kvs.flatMap (·.2))
       | some kx => do
         let ks ← env.atomize (← eval n env kx)
         let mut out : Array Item := #[]

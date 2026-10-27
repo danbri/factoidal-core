@@ -8,6 +8,7 @@ operations every part of the evaluator uses: atomization (XPath 4.0
 import L4Factoidal.XPath4.Parser
 import L4Factoidal.XPath4.Doc
 import L4Factoidal.XPath4.Catalog
+import Std.Data.HashMap
 
 namespace L4Factoidal.XPath4
 
@@ -384,6 +385,47 @@ def Env.coerce (e : Env) (t : IType) (s : Seq) (what : String := "value") : M Se
     else err "XPTY0004" ("value of wrong type for " ++ what)
 
 
+/-- A string key with `k a = k b ↔ atomicEqual a b` (untyped read as
+    string), for the value kinds where one is cheap; `none` otherwise. -/
+def sameKey (a : Atomic) : Option String :=
+  match a.num? with
+  | some n =>
+    let f := n.toFloat
+    if n.rank ≥ 2 && f.isNaN then some "NaN"
+    else if n.rank ≥ 2 && f.isInf then some (if f > 0 then "INF" else "-INF")
+    else some ("n" ++ Dec.canonical n.toDec)
+  | none =>
+    match a.v with
+    | .str s => some ("s" ++ s)
+    | .bool b => some (if b then "bT" else "bF")
+    | .qn q => some ("q" ++ q.eqn)
+    | .x (.bin _ bs) => some ("x" ++ hexOfBytes bs)
+    | _ => none
+
+/-- A map under construction: entries in insertion order, indexed by
+    `sameKey` where the key has one (linear search otherwise). -/
+structure MB where
+  entries : Array (Atomic × Seq) := #[]
+  index : Std.HashMap String Nat := {}
+
+def MB.find? (m : MB) (k : Atomic) : Option Nat :=
+  match sameKey k with
+  | some s => m.index.get? s
+  | none => m.entries.findIdx? (fun (k2, _) => atomicEqual k k2)
+
+def MB.get? (m : MB) (k : Atomic) : Option Seq :=
+  (m.find? k).map (fun i => (m.entries.getD i default).2)
+
+def MB.set (m : MB) (k : Atomic) (v : Seq) : MB :=
+  match m.find? k with
+  | some i => { m with entries := m.entries.set! i (k, v) }
+  | none =>
+    let i := m.entries.size
+    { entries := m.entries.push (k, v),
+      index := match sameKey k with | some s => m.index.insert s i | none => m.index }
+
+def MB.toList (m : MB) : List (Atomic × Seq) := m.entries.toList
+
 /-! ## deep-equal (default options) -/
 
 def Env.nodeDeepEq (e : Env) : Nat → NodeRef → NodeRef → Bool
@@ -433,6 +475,7 @@ def Env.deepEqFuel (e : Env) : Nat → Seq → Seq → Bool
             | some (_, v2) => e.deepEqFuel f v v2
             | none => false)
       | .arr ma, .arr mb => ma.length == mb.length && (ma.zip mb).all (fun (p, q) => e.deepEqFuel f p q)
+      | .fn (.builtin q1 k1), .fn (.builtin q2 k2) => q1 == q2 && k1 == k2
       | _, _ => false)
 
 def Env.deepEq (e : Env) (a b : Seq) : Bool := e.deepEqFuel 10000 a b

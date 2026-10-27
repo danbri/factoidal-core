@@ -566,8 +566,37 @@ def pLet : Nat → P Expr
       let c ← read
       let i ← get
       let j := skipWsF c.s (c.s.size + 1) 0 i
-      if chAt c.s j == '$' && (chAt c.s (j+1) == '(' || chAt c.s (j+1) == '[' || chAt c.s (j+1) == '{') then
-        synErr "destructuring let bindings are not implemented"
+      let open_ := chAt c.s (j+1)
+      if chAt c.s j == '$' && (open_ == '(' || open_ == '[' || open_ == '{') then
+        -- destructuring binding (XPath 4.0 §4.12.2): desugared to a
+        -- binding of a fresh variable and one binding per name
+        set (j + 2)
+        let close := if open_ == '(' then ")" else if open_ == '[' then "]" else "}"
+        let mut vs : List (QN × IType) := []
+        for _ in [0:1000] do
+          let v ← pVarName n
+          let vt ← pTypeDecl n
+          vs := vs ++ [(v, vt)]
+          if !(← eatS ",") then break
+        expectS close
+        let dflt : IType := if open_ == '(' then .seq .item .star else if open_ == '[' then .anyArr else .anyMap
+        let st ← if ← atKw "as" then pTypeDecl n else pure dflt
+        expectS ":="
+        let e ← pExprSingle n
+        let tmp : QN := { uri := "#let", loc := toString j }
+        binds := binds ++ [(tmp, st, e)]
+        let k := vs.length
+        for ((v, vt), idx) in vs.zip (List.range k) do
+          let pos : Expr := .lit (Atomic.ofInt (idx + 1))
+          let rhs : Expr :=
+            if open_ == '(' then
+              if idx + 1 == k then .call { uri := nsFN, loc := "subsequence" } [some (.var tmp), some pos] []
+              else .call { uri := nsFN, loc := "items-at" } [some (.var tmp), some pos] []
+            else if open_ == '[' then .call { uri := nsARR, loc := "get" } [some (.var tmp), some pos] []
+            else .lookup (.var tmp) (some (.lit (Atomic.ofStr v.loc)))
+          binds := binds ++ [(v, vt, rhs)]
+        if !(← eatS ",") then break
+        continue
       let v ← pVarName n
       let vt ← pTypeDecl n
       expectS ":="
