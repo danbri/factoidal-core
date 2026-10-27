@@ -88,6 +88,11 @@
    "class": "divergence",
    "spec": "SPARQL 1.1 §17.4.3.3 (SPARQL 1.2 WD 2026-10-25 §17.4.3.2): SUBSTR(string literal, xsd:integer, xsd:integer); another type is an error",
    "gloss": "Jena takes doubles and rounds them (F&O fn:substring). Note: Factoidal 0.16.0 gives \"12345\" for SUBSTR(\"12345\", 1, NaN); https://github.com/danbri/factoidal-core/pull/126 makes it an error"
+  },
+  "bnode-iri-reference": {
+   "class": "divergence",
+   "spec": "SPARQL 1.1 Query §19.5: text matched by IRIREF must conform to RFC 3987 section 2.2 IRI-reference syntax; \"_:a\" is not one (no ALPHA scheme start, and a relative first segment has no ':'). https://github.com/danbri/factoidal/issues/1057",
+   "gloss": "Jena (ARQ) reads <_:a> as a reference to a blank node; the engine refuses the query"
   }
  },
  "cases": {
@@ -422,6 +427,7 @@
   "TestXSDFuncOp.cast_gregorian_35": "xsd-constructor-relabels",
   "TestXSDFuncOp.cast_time_tz_01": "xsd-constructor-relabels",
   "TestXSDFuncOp.cast_time_tz_02": "xsd-constructor-relabels",
-  "TestXSDFuncOp.cast_time_tz_03": "xsd-constructor-relabels"
+  "TestXSDFuncOp.cast_time_tz_03": "xsd-constructor-relabels",
+  "TestSPARQLKeywordFunctions.sameTerm_04": "bnode-iri-reference"
  }
 }
