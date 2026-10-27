@@ -906,6 +906,11 @@ L4Factoidal_JSONLD_nmgNode  # (b) JSON-LD node map generation; fuel decreases at
 L4Factoidal_JSONLD_nmgProps  # (b) JSON-LD node map generation; fuel decreases at each call; depth is the nesting of the expanded document; the loop along a list passes fuel unchanged
 L4Factoidal_JSONLD_nmgReverseEntries  # (b) JSON-LD node map generation; fuel decreases at each call; depth is the nesting of the expanded document; the loop along a list passes fuel unchanged
 L4Factoidal_JSONLD_nmgReverseValues  # (b) JSON-LD node map generation; fuel decreases at each call; depth is the nesting of the expanded document; the loop along a list passes fuel unchanged
+L4Factoidal_JSONLD_nmgAnnotated  # (b) JSON-LD-star node map generation of annotations; fuel decreases at each call; depth is the nesting of the expanded document (annotations on annotations)
+L4Factoidal_JSONLD_nmgAnnotations  # (b) JSON-LD-star node map generation of annotations; loop over one @annotation array (tail call); one call into nmg for each annotation
+L4Factoidal_JSONLD_flRwJson  # (b) JSON-LD-star blank node renaming of the expanded document; depth is the nesting of the document
+L4Factoidal_JSONLD_flRwItems  # (b) loop over the items of one array (reversed accumulator, tail call); one call into flRwJson for each item
+L4Factoidal_JSONLD_flRwMembers  # (b) loop over the members of one object (reversed accumulator, tail call); one call into flRwJson for each member
 L4Factoidal_JSONLD_FState_removeEmbed_dropDependents  # (b) JSON-LD framing; fuel is arena.size + 4; depth is the chain of embedded dependents of one embed
 L4Factoidal_JSONLD_cleanupNull  # (b) JSON-LD framing; fuel decreases at each call; depth is the nesting of the framed output; members visited by List.map
 L4Factoidal_JSONLD_cleanupPreserve  # (b) JSON-LD framing; fuel decreases at each call; depth is the nesting of the framed output; members visited by List.map
