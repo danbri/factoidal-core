@@ -61,8 +61,8 @@ theorem endpointOf?_mem (cfg : AuthzConfig) (p : String) (e : Endpoint)
 theorem owns_mem (cfg : AuthzConfig) (target : String) (h : owns cfg target = true) :
     (target.splitOn "?").headD target ∈ endpointPaths cfg := by
   unfold owns at h
-  match hm : endpointOf? cfg ((target.splitOn "?").headD target) with
+  cases hm : endpointOf? cfg ((target.splitOn "?").headD target) with
   | some e => exact endpointOf?_mem cfg _ e hm
-  | none => simp [hm] at h
+  | none => rw [hm] at h; cases h
 
 end L4Factoidal.Authz
