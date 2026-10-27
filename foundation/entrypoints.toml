@@ -132,8 +132,25 @@ stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
 covers = "part"
 note = "matchDataset as wasm:datasetMatch, then the quad count. Not covered: quadPatternOf."
 
-# Terms and syntax names (https://github.com/danbri/factoidal/issues/1052,
-# 1053; Wasm/Ops/Terms.lean).
+# Terms, IRIs, syntax names, vocabularies, lists and containers
+# (https://github.com/danbri/factoidal/issues/1051 items 4-6, 1052, 1053;
+# Wasm/Ops/Terms.lean, Wasm/Ops/Collections.lean).
+
+[[entry]]
+id = "wasm:datasetListItems"
+stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
+covers = "part"
+note = "Wasm/Ops/Collections.lean datasetListItems: one matchDataset lookup (as wasm:datasetMatch) for rdf:first and one for rdf:rest per node, walked by RDF.Collections.listItemsBy. Not covered: the list walk and its refusals (Lean #guards in RDF/Collections.lean), the term and graph JSON readers."
+
+[[entry]]
+id = "wasm:datasetContainerItems"
+stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
+covers = "part"
+note = "Wasm/Ops/Collections.lean datasetContainerItems: one matchDataset lookup (as wasm:datasetMatch) of the node as subject, then RDF.Collections.containerMembersOf and containerKindOf. Not covered: the rdf:_n ordering (Lean #guards), the term and graph JSON readers."
+
+[[nonstage]]
+id = "wasm:datasetAddList"
+reason = "term-level: builds the rdf:first/rdf:rest triples of given terms on fresh blank nodes (RDF/Collections.lean listTriples) and inserts them (CertifiedDataset.insertQuads); reads no document"
 
 [[nonstage]]
 id = "wasm:sameValue"
@@ -144,6 +161,26 @@ id = "wasm:syntaxFor"
 reason = "a name table: the syntax of a file name or media type (RDF/MediaType.lean syntaxOfNames), reads no RDF data"
 
 [[nonstage]]
+id = "wasm:splitIri"
+reason = "term-level: the namespace and NCName local name of one IRI (RDF/IriSplit.lean splitIriXml), reads no graph"
+
+[[nonstage]]
+id = "wasm:isNCName"
+reason = "term-level: the XML NCName check of one string (XML/Wellformedness.lean isValidNCName), reads no graph"
+
+[[nonstage]]
+id = "wasm:vocabularies"
+reason = "a constant table of namespaces and term names (RDF/VocabularyTable.lean vocabularyTable), reads no RDF data"
+
+[[nonstage]]
+id = "wasm:memberIri"
+reason = "term-level: the IRI rdf:_n of one number (RDF/VocabularyTable.lean memberIri), reads no graph"
+
+[[nonstage]]
+id = "wasm:memberOrdinal"
+reason = "term-level: the n of one rdf:_n IRI (RDF/VocabularyTable.lean memberOrdinal?), reads no graph"
+
+[[nonstage]]
 id = "npm:.#sameValue"
 reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
 
@@ -152,12 +189,52 @@ id = "npm:.#syntaxFor"
 reason = "a name table: the syntax of a file name or media type (RDF/MediaType.lean syntaxOfNames), reads no RDF data"
 
 [[nonstage]]
+id = "npm:.#splitIri"
+reason = "term-level: the namespace and NCName local name of one IRI (RDF/IriSplit.lean splitIriXml), reads no graph"
+
+[[nonstage]]
+id = "npm:.#isNCName"
+reason = "term-level: the XML NCName check of one string (XML/Wellformedness.lean isValidNCName), reads no graph"
+
+[[nonstage]]
+id = "npm:.#vocabularies"
+reason = "a constant table of namespaces and term names (RDF/VocabularyTable.lean vocabularyTable), reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#memberIri"
+reason = "term-level: the IRI rdf:_n of one number (RDF/VocabularyTable.lean memberIri), reads no graph"
+
+[[nonstage]]
+id = "npm:.#memberOrdinal"
+reason = "term-level: the n of one rdf:_n IRI (RDF/VocabularyTable.lean memberOrdinal?), reads no graph"
+
+[[nonstage]]
 id = "npm:./browser#sameValue"
 reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
 
 [[nonstage]]
 id = "npm:./browser#syntaxFor"
 reason = "a name table: the syntax of a file name or media type (RDF/MediaType.lean syntaxOfNames), reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#splitIri"
+reason = "term-level: the namespace and NCName local name of one IRI (RDF/IriSplit.lean splitIriXml), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#isNCName"
+reason = "term-level: the XML NCName check of one string (XML/Wellformedness.lean isValidNCName), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#vocabularies"
+reason = "a constant table of namespaces and term names (RDF/VocabularyTable.lean vocabularyTable), reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#memberIri"
+reason = "term-level: the IRI rdf:_n of one number (RDF/VocabularyTable.lean memberIri), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#memberOrdinal"
+reason = "term-level: the n of one rdf:_n IRI (RDF/VocabularyTable.lean memberOrdinal?), reads no graph"
 
 [[entry]]
 id = "wasm:storeQuery"

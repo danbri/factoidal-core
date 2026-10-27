@@ -51,6 +51,7 @@ import Wasm.Ops.Lenient
 import Wasm.Ops.Validate
 import Wasm.Ops.DeltaLog
 import Wasm.Ops.Terms
+import Wasm.Ops.Collections
 
 namespace L4Wasm.Core
 
@@ -126,7 +127,7 @@ def coreIOOpNames : List String :=
   , "extList"
   , "registerServiceEndpoint"
   , "clearServiceEndpoints"
-  , "queryDataset12" ]
+  , "queryDataset12" ] ++ collectionOpNames
 
 /-- The op names the full engine serves and the core engine does not. A
 build-time check (`Wasm/CoreDispatchTests.lean`) keeps this list equal to the
@@ -364,7 +365,10 @@ def callIOArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "parseToDatasetJson" => some (arityIO3 op (Ops.parseToDatasetJsonScopedBy extra) args)
   | "registerServiceEndpoint" => some (arityIO2 op Ops.registerServiceEndpoint args)
   | "clearServiceEndpoints"   => some (arityIO0 op Ops.clearServiceEndpoints args)
-  | _ => callLenientIOBy extra op args
+  | _ =>
+      match callCollections op args with
+      | some r => some r
+      | none => callLenientIOBy extra op args
 
 /-- The refusal of an op the core engine does not serve. An op of
 `fullOnlyOpNames` names the full engine (`"servedBy":"full"`), so a host can

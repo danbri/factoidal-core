@@ -947,6 +947,15 @@ def datasetDeleteQuadsJsonWith (h quadsJson optionsJson : String) : IO String :=
         handleTable.modify (·.insert h next)
         pure (okWith [("count", .number (toString (datasetQuadCount next.ds)))])
 
+/-- Store `data` as the new state of the handle `h` (its prefixes and reader
+mode kept, the indexes and the value index built again on first use); the new
+state. For the ops of other modules that change a handle
+(`Wasm/Ops/Collections.lean`). -/
+def replaceHandleData (h : String) (od : OpenDataset) (data : CertifiedDataset) : IO OpenDataset := do
+  let next := openDataset data od.prefixes od.readMode
+  handleTable.modify (·.insert h next)
+  pure next
+
 /-- The dataset of a list of quads, each quad once, the graphs in the order of
 their first quad. -/
 def datasetOfQuads (qs : List TermJson.Quad) : Dataset :=

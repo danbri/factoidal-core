@@ -297,6 +297,18 @@ export class Dataset implements Iterable<Quad> {
   delete(quad: Quad, options?: MatchOptions): this;
   match(subject?: Term | null, predicate?: Term | null, object?: Term | null, graph?: Term | null,
     options?: MatchOptions): Dataset;
+  /**
+   * The items of the RDF list (rdf:first/rdf:rest) at `head`, in order
+   * (https://github.com/danbri/factoidal/issues/1051 item 6). `rdf:nil` is
+   * the empty list. A list that is not well formed (a node with no or with two
+   * rdf:first or rdf:rest, or a cycle) is a FactoidalError, code `op.failed`.
+   * `graph`: omitted, null or the DefaultGraph for the default graph.
+   */
+  listItems(head: Term, graph?: Term | null): Term[];
+  /** The members rdf:_1, rdf:_2, ... of `node`, sorted by n, and its kind (rdf:Bag, rdf:Seq, rdf:Alt) from its rdf:type. */
+  containerItems(node: Term, graph?: Term | null): { kind: NamedNode | null; items: Array<{ ordinal: number; term: Term }> };
+  /** Add a new RDF list of `items` on fresh blank nodes; answers its head (rdf:nil for no items). */
+  addList(items: Iterable<Term>, graph?: Term | null): Term;
   toArray(): Quad[];
   [Symbol.iterator](): Iterator<Quad>;
   dispose(): void;
@@ -605,6 +617,38 @@ export function sameValue(a: Term | string, b: Term | string): boolean | null;
  * or `null`. Synchronous: the engine must be loaded (`await ready()`).
  */
 export function syntaxFor(what: string | { fileName?: string; mediaType?: string }): string | null;
+
+/**
+ * An IRI as a namespace and a local name: the local name is the longest
+ * suffix that is an XML NCName (what an RDF/XML QName can carry), `''` when
+ * there is none; `namespace + localName` is the IRI
+ * (https://github.com/danbri/factoidal/issues/1051 item 4). Synchronous.
+ */
+export function splitIri(iri: string | NamedNode): { namespace: string; localName: string };
+
+/** Is the text an XML NCName (Namespaces in XML 1.0, production [4])? A prefix label check. Synchronous. */
+export function isNCName(text: string): boolean;
+
+/** One row of the engine's vocabulary table. A term IRI is `namespace + term`. */
+export interface VocabularyRow {
+  prefix: string;
+  namespace: string;
+  /** Local names; empty for a namespace whose vocabulary is not in the engine table. */
+  terms: string[];
+}
+
+/**
+ * The engine's vocabulary table (https://github.com/danbri/factoidal/issues/1051
+ * item 5): rdf, rdfs, xsd and owl with their terms; foaf, dcterms, dc and
+ * schema as namespaces only. The prefixes are those of the Turtle writer. Synchronous.
+ */
+export function vocabularies(): VocabularyRow[];
+
+/** The container membership property `rdf:_n` (n >= 1). Synchronous. */
+export function memberIri(n: number): NamedNode;
+
+/** The `n` of `rdf:_n` (no leading zero, n >= 1), or `null` for any other IRI. Synchronous. */
+export function memberOrdinal(iri: string | NamedNode): number | null;
 
 /** A SHACL validation-report term (see shaclValidate). */
 export interface ShaclValidateResult {
@@ -1810,6 +1854,11 @@ declare const _default: {
   engineTables: typeof engineTables;
   sameValue: typeof sameValue;
   syntaxFor: typeof syntaxFor;
+  splitIri: typeof splitIri;
+  isNCName: typeof isNCName;
+  vocabularies: typeof vocabularies;
+  memberIri: typeof memberIri;
+  memberOrdinal: typeof memberOrdinal;
   shaclValidate: typeof shaclValidate;
   shexValidate: typeof shexValidate;
   owlClosure: typeof owlClosure;

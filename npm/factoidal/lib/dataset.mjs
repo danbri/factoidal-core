@@ -476,6 +476,61 @@ class Dataset {
     return this;
   }
 
+  // RDF lists and containers (https://github.com/danbri/factoidal/issues/1051
+  // item 6). The engine walks and builds them (L4Factoidal.RDF.Collections).
+  // `graph`: null/undefined or the DefaultGraph for the default graph, else
+  // the graph name.
+  _collectionOp(op, who) {
+    this._open(who);
+    if (typeof this._ctx.e[op] !== 'function') {
+      throw new FactoidalError(`Dataset.${who}: the loaded engine has no op '${op}'; it is older than this package`,
+        { code: 'op.unknown' });
+    }
+    return this._ctx.e[op].bind(this._ctx.e);
+  }
+
+  _graphArg(graph) {
+    return graph === undefined || graph === null ? '' : JSON.stringify(termToJson(graph));
+  }
+
+  /**
+   * The items of the RDF list (rdf:first / rdf:rest) at `head`, in order.
+   * rdf:nil is the empty list. A list that is not well formed (a node with no
+   * or two rdf:first or rdf:rest, or a cycle) is a FactoidalError (op.failed)
+   * whose message names the reason and the node.
+   */
+  listItems(head, graph) {
+    const op = this._collectionOp('datasetListItems', 'listItems');
+    const r = envelope(op(this._handle, JSON.stringify(termToJson(head)), this._graphArg(graph)), 'listItems');
+    return r.items.map(termFromSrj);
+  }
+
+  /**
+   * The members rdf:_1, rdf:_2, ... of `node`, sorted by n, and its kind
+   * (rdf:Bag, rdf:Seq or rdf:Alt from its rdf:type, or null).
+   * @returns {{kind: NamedNode|null, items: Array<{ordinal: number, term: Term}>}}
+   */
+  containerItems(node, graph) {
+    const op = this._collectionOp('datasetContainerItems', 'containerItems');
+    const r = envelope(op(this._handle, JSON.stringify(termToJson(node)), this._graphArg(graph)), 'containerItems');
+    return {
+      kind: r.kind ? termFromSrj(r.kind) : null,
+      items: r.items.map((m) => ({ ordinal: m.ordinal, term: termFromSrj(m.term) })),
+    };
+  }
+
+  /**
+   * Add a new RDF list of `items` (new blank nodes, fresh in this Dataset)
+   * and answer its head; the empty list is rdf:nil and adds nothing.
+   */
+  addList(items, graph) {
+    const op = this._collectionOp('datasetAddList', 'addList');
+    const r = envelope(op(this._handle, JSON.stringify([...items].map((t) => termToJson(t))),
+      this._graphArg(graph)), 'addList');
+    this._changed(r.count);
+    return termFromSrj(r.head);
+  }
+
   /** Release the engine copy. Idempotent. */
   dispose() {
     if (this._disposed) return;

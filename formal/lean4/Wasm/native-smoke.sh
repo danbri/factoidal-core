@@ -3543,10 +3543,10 @@ checkseq "value match: count, match, a bad mode, delete by value" "$TMP/vm-seq.j
    and rs[4]["ok"] is False and rs[4]["code"] == "option.invalid-value"
    and rs[5] == {"ok": True, "count": 2}
    and rs[6] == {"ok": True, "count": 1}'
-TERM_OPS='["sameValue","syntaxFor"]'
-check "ops reflection lists the term ops (issues 1052, 1053)" ops "$TMP/empty.json" \
+TERM_OPS='["sameValue","syntaxFor","splitIri","isNCName","vocabularies","memberIri","memberOrdinal","datasetListItems","datasetContainerItems","datasetAddList"]'
+check "ops reflection lists the term and collection ops (issues 1051-1053)" ops "$TMP/empty.json" \
   "set($TERM_OPS) <= set(r[\"ops\"])"
-corecheck "core: ops reflection lists the term ops" ops "$TMP/empty.json" \
+corecheck "core: ops reflection lists the term and collection ops" ops "$TMP/empty.json" \
   "set($TERM_OPS) <= set(r[\"ops\"])"
 
 # --- Syntax names (https://github.com/danbri/factoidal/issues/1053) -------
@@ -3562,6 +3562,46 @@ check "syntaxFor of an unknown extension -> null" syntaxFor "$TMP/sf-none.json" 
 corecheck "core: syntaxFor" syntaxFor "$TMP/sf-mt.json" 'r == {"ok": True, "syntax": "nquads"}'
 check "datasetFormats lists media types and extensions" datasetFormats "$TMP/empty.json" \
   'any(x["name"] == "turtle" and x["mediaTypes"] == ["text/turtle"] and x["extensions"] == [".ttl"] for x in r["formats"])'
+
+# --- IRI split, vocabularies, rdf:_n (issue 1051 items 4-6) ------------------
+args "$TMP/split.json" 'http://e/123abc'
+check "splitIri: the longest NCName suffix" splitIri "$TMP/split.json" \
+  'r == {"ok": True, "namespace": "http://e/123", "localName": "abc"}'
+args "$TMP/ncname.json" '1a'
+check "isNCName 1a -> false" isNCName "$TMP/ncname.json" 'r == {"ok": True, "ncName": False}'
+check "vocabularies: rdf, rdfs, xsd, owl first" vocabularies "$TMP/empty.json" \
+  '[v["prefix"] for v in r["vocabularies"]][:4] == ["rdf","rdfs","xsd","owl"] and "type" in r["vocabularies"][0]["terms"]'
+args "$TMP/memberiri.json" '2'
+check "memberIri 2 -> rdf:_2" memberIri "$TMP/memberiri.json" \
+  'r == {"ok": True, "iri": "http://www.w3.org/1999/02/22-rdf-syntax-ns#_2"}'
+args "$TMP/memberord.json" 'http://www.w3.org/1999/02/22-rdf-syntax-ns#_01'
+check "memberOrdinal rdf:_01 -> null" memberOrdinal "$TMP/memberord.json" 'r == {"ok": True, "ordinal": None}'
+
+# --- RDF lists and containers of a handle (issue 1051 item 6) ----------------
+python3 - "$TMP/coll-seq.json" <<'EOF2'
+import json, sys
+R = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+TTL = ('@prefix : <http://e/> . @prefix rdf: <%s> .\n'
+       ':s :p ( :a "b" ) .\n'
+       ':c a rdf:Seq ; rdf:_2 "two" ; rdf:_1 "one" .\n'
+       ':bad :p _:n . _:n rdf:first :x ; rdf:rest _:n .\n') % R
+iri = lambda v: json.dumps({"type": "uri", "value": v})
+seq = [
+  ["datasetOpen", [TTL, "turtle", ""]],
+  ["datasetAddList", ["h1", json.dumps([{"type": "uri", "value": "http://e/x"}, {"type": "literal", "value": "y"}]), ""]],
+  ["datasetContainerItems", ["h1", iri("http://e/c")]],
+  ["datasetListItems", ["h1", iri(R + "nil"), ""]],
+  ["datasetListItems", ["h1", iri("http://e/nothing")]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF2
+checkseq "lists and containers: add, container items, nil, refusal" "$TMP/coll-seq.json" \
+  'rs[0]["ok"] is True
+   and rs[1]["ok"] is True and rs[1]["head"]["type"] == "bnode" and rs[1]["count"] == rs[0]["count"] + 4
+   and rs[2]["ok"] is True and rs[2]["kind"]["value"].endswith("#Seq")
+   and [m["ordinal"] for m in rs[2]["items"]] == [1, 2]
+   and rs[3] == {"ok": True, "items": []}
+   and rs[4]["ok"] is False and rs[4]["reason"] == "no-first"'
 
 echo "=== native-smoke: $PASS pass, $FAIL fail, $XFAIL xfail (out of $((PASS + FAIL + XFAIL)))"
 [ "$FAIL" -eq 0 ]

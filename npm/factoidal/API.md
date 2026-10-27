@@ -439,7 +439,9 @@ useNativeTypes?, useRdfType?, rdfDirection?, rdfstar?})`, `toString(format)`
 (synchronous), `toNQuads()`, `clone()`, `has(quad, {match?})`,
 `match(s, p, o, g, {match?})` (a new Dataset), `add(quad)`, `delete(quad,
 {match?})` (`match: 'value'` compares a literal object by value, see "Matching
-literals by value"), `toArray()`, iteration, `size`, `prefixes`,
+literals by value"), `listItems(head, graph?)`, `containerItems(node,
+graph?)`, `addList(items, graph?)` (see "RDF lists and containers"),
+`toArray()`, iteration, `size`, `prefixes`,
 `diagnostics`, `warnings`, `format`, `formatInferred`, `dispose()` and
 `[Symbol.dispose]` (for `using` where the runtime has it). A Dataset that is
 garbage collected without `dispose()` is released by a
@@ -507,7 +509,7 @@ ds.delete(q, { match: 'value' });
 console.log(ds.size);                                                                     // 0
 ```
 
-## Syntax names
+## Syntax names, IRIs and vocabularies
 
 These functions are synchronous and need the engine loaded (`await ready()` or
 any other call first). The engine decides each answer.
@@ -524,11 +526,57 @@ fall back to the name. The query and the fragment of an IRI are ignored.
 `.owl` and `.xml` are not registered and give `null`. Each row of `formats()`
 has the same `mediaTypes` and `extensions`.
 
+`splitIri(iri)` gives `{namespace, localName}`
+(https://github.com/danbri/factoidal/issues/1051 item 4). The local name is the
+longest suffix of the IRI that is an XML NCName (the name an RDF/XML QName can
+carry), and `''` when there is none; `namespace + localName` is the IRI.
+`isNCName(text)` is the check of a prefix label or a local name.
+
+`vocabularies()` gives the engine's vocabulary table, `[{prefix, namespace,
+terms}]` (issue 1051 item 5): `rdf`, `rdfs`, `xsd` and `owl` with their term
+local names (RDF 1.2 Schema, XSD 1.1 Part 2 built-in datatypes, OWL 2 reserved
+vocabulary), and `foaf`, `dcterms`, `dc`, `schema` as namespaces only (no
+terms). The prefixes are those of the Turtle writer. `memberIri(n)` gives the
+container membership property `rdf:_n` (n >= 1) and `memberOrdinal(iri)` its
+`n`, or `null`.
+
 ```js
-import { ready, syntaxFor } from '@factoidal/core';
+import { ready, syntaxFor, splitIri, vocabularies, memberIri } from '@factoidal/core';
 await ready();
 syntaxFor('data.ttl');                                    // 'turtle'
 syntaxFor({ fileName: 'a.nt', mediaType: 'text/turtle' }); // 'turtle'
+splitIri('http://e/123abc');                               // { namespace: 'http://e/123', localName: 'abc' }
+const rdf = vocabularies().find((v) => v.prefix === 'rdf');
+rdf.namespace + 'type';                                    // rdf:type
+memberIri(2).value;                                        // '...22-rdf-syntax-ns#_2'
+```
+
+## RDF lists and containers
+
+A Dataset reads and builds RDF lists (`rdf:first` / `rdf:rest`, RDF 1.2 Schema
+section 5.2) and reads containers (`rdf:_1`, `rdf:_2`, ..., section 5.1)
+(https://github.com/danbri/factoidal/issues/1051 item 6). The engine walks the
+list through its indexes, one lookup per node. The last argument `graph` is the
+graph name; omitted, `null` or the DefaultGraph is the default graph.
+
+- `ds.listItems(head, graph?)` gives the items in order; `rdf:nil` gives `[]`.
+  A list that is not well formed is a FactoidalError with code `op.failed`; the
+  message names the reason (`no-first`, `no-rest`, `branch` for two
+  `rdf:first` or `rdf:rest`, `cycle`) and the node.
+- `ds.containerItems(node, graph?)` gives `{kind, items}`: `items` is
+  `[{ordinal, term}]` sorted by `n` (a gap in the numbers is kept), `kind` is
+  `rdf:Bag`, `rdf:Seq` or `rdf:Alt` from the `rdf:type` of the node, or `null`.
+- `ds.addList(items, graph?)` adds a new list on blank nodes that are fresh in
+  the Dataset and gives its head; no items give `rdf:nil` and add nothing.
+  A graph named by a blank node cannot be changed.
+
+```js
+import { parse, dataFactory as f } from '@factoidal/core';
+const ds = await parse('@prefix : <http://e/> . :s :p ( :a "b" ) .', { format: 'turtle' });
+const head = ds.match(null, null, null).toArray().find((q) => q.predicate.value === 'http://e/p').object;
+ds.listItems(head).map((t) => t.value);   // ['http://e/a', 'b']
+const h2 = ds.addList([f.literal('x'), f.literal('y')]);
+ds.listItems(h2).length;                  // 2
 ```
 
 ## The persisted store
@@ -1457,7 +1505,12 @@ runnable.
 | `serialize` | `(data, {format, version?, prefixes?, literalShorthand?, useNativeTypes?, useRdfType?, rdfDirection?, rdfstar?, inputFormat?, baseIRI?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle`, `trig`, `rdfxml`, `jsonld`, `rdfc`; see "Datasets" |
 | `formats` | `() => [{name, read11, read12, write11, write12, engine, mediaTypes, extensions}]` | the engine's list; `mediaTypes` and `extensions` are the W3C registrations (issue 1053) |
 | `sameValue` | `(a, b) => boolean \| null` | SPARQL 1.1 `=` on two terms; `null` incomparable; synchronous after `ready()`; see "Matching literals by value" |
-| `syntaxFor` | `(name \| {fileName?, mediaType?}) => string \| null` | the syntax of a file name or media type; synchronous; see "Syntax names" |
+| `syntaxFor` | `(name \| {fileName?, mediaType?}) => string \| null` | the syntax of a file name or media type; synchronous; see "Syntax names, IRIs and vocabularies" |
+| `splitIri` | `(iri) => {namespace, localName}` | the local name is the longest NCName suffix; synchronous |
+| `isNCName` | `(text) => boolean` | XML NCName check; synchronous |
+| `vocabularies` | `() => [{prefix, namespace, terms}]` | rdf, rdfs, xsd, owl terms; foaf, dcterms, dc, schema namespaces; synchronous |
+| `memberIri` | `(n) => NamedNode` | `rdf:_n`; synchronous |
+| `memberOrdinal` | `(iri) => number \| null` | the `n` of `rdf:_n`; synchronous |
 | `canonicalize` | `(data, {format?, baseIRI?}) => string` | RDFC-1.0 canonical N-Quads |
 | `graphs` | `(Dataset) => Array<[NamedNode \| BlankNode, Dataset]>` | named graphs, default graph excluded |
 | `canonicalHash` | `(Dataset) => string` | SHA-256 (64 lowercase hex digits) of the RDFC-1.0 canonical N-Quads of one graph; graph names are dropped first. `canonicalize` answers the text |

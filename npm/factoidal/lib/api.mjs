@@ -977,6 +977,8 @@ function buildApi(driver) {
     return r.sameValue === 'true' ? true : (r.sameValue === 'false' ? false : null);
   }
 
+  const iriText = (iri) => (typeof iri === 'string' ? iri : (iri && iri.value) || '');
+
   /**
    * The syntax of a document by its file name (or IRI path) and its media
    * type, from the engine's table of W3C registrations
@@ -992,6 +994,48 @@ function buildApi(driver) {
     const o = (typeof what === 'string') ? { fileName: what } : (what || {});
     const r = entryResult(c.e.syntaxFor(String(o.fileName ?? ''), String(o.mediaType ?? '')), 'syntaxFor');
     return r.syntax ?? null;
+  }
+
+  /**
+   * An IRI as a namespace and a local name: the local name is the longest
+   * suffix that is an XML NCName, '' when there is none
+   * (L4Factoidal.RDF.splitIriXml; https://github.com/danbri/factoidal/issues/1051 item 4).
+   * @param {string|{value: string}} iri
+   * @returns {{namespace: string, localName: string}}
+   */
+  function splitIri(iri) {
+    const c = loadedCtx('splitIri');
+    const r = entryResult(c.e.splitIri(iriText(iri)), 'splitIri');
+    return { namespace: r.namespace, localName: r.localName };
+  }
+
+  /** Is the text an XML NCName (Namespaces in XML 1.0, production [4])? */
+  function isNCName(text) {
+    const c = loadedCtx('isNCName');
+    return entryResult(c.e.isNCName(String(text)), 'isNCName').ncName === true;
+  }
+
+  /**
+   * The engine's vocabulary table: prefix, namespace and term local names of
+   * rdf, rdfs, xsd and owl, and the namespaces of foaf, dcterms, dc and schema
+   * (L4Factoidal.RDF.vocabularyTable; https://github.com/danbri/factoidal/issues/1051 item 5).
+   * @returns {Array<{prefix: string, namespace: string, terms: string[]}>}
+   */
+  function vocabularies() {
+    const c = loadedCtx('vocabularies');
+    return entryResult(c.e.vocabularies(), 'vocabularies').vocabularies;
+  }
+
+  /** The container membership property rdf:_n, n >= 1, as a NamedNode. */
+  function memberIri(n) {
+    const c = loadedCtx('memberIri');
+    return dataFactory.namedNode(entryResult(c.e.memberIri(String(n)), 'memberIri').iri);
+  }
+
+  /** The n of rdf:_n, or null for any other IRI. */
+  function memberOrdinal(iri) {
+    const c = loadedCtx('memberOrdinal');
+    return entryResult(c.e.memberOrdinal(iriText(iri)), 'memberOrdinal').ordinal ?? null;
   }
 
   /** The engine's name tables (formats, regimes, query outputs, pack syntaxes). */
@@ -2336,6 +2380,11 @@ function buildApi(driver) {
     engineTables,
     sameValue,
     syntaxFor,
+    splitIri,
+    isNCName,
+    vocabularies,
+    memberIri,
+    memberOrdinal,
     Dataset,
     Store,
     FactoidalError,

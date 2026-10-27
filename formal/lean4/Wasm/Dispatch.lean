@@ -279,7 +279,7 @@ def handleOpNames : List String :=
   , "datasetFromJsonLd"
   , "datasetToJsonLd"
   , "datasetShexValidate"
-  , "datasetRifEval" ]
+  , "datasetRifEval" ] ++ collectionOpNames
 
 /-- The store-handle op names (`Wasm/Ops/StoreHandles.lean`), served ONLY by
 `callIO` and `callBlobIO` — the pure `call` cannot reach the store-handle

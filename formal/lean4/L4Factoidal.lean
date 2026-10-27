@@ -753,6 +753,9 @@ import L4Factoidal.RDF.DocumentScopeTests
 import L4Factoidal.RDF.Format
 import L4Factoidal.RDF.MediaType
 import L4Factoidal.RDF.MediaTypeTests
+import L4Factoidal.RDF.IriSplit
+import L4Factoidal.RDF.VocabularyTable
+import L4Factoidal.RDF.Collections
 import L4Factoidal.RDF.Source
 import L4Factoidal.RDF.SourceJsonLd
 import L4Factoidal.RDF.SourceTheorems

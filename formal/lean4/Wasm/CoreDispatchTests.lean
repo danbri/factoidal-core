@@ -81,6 +81,11 @@ def samePure (op : String) (args : List String) : Bool :=
 -- Terms, IRIs, syntax names and vocabularies (Wasm/Ops/Terms.lean; issues 1051-1053).
 #guard samePure "sameValue" ["{\"type\":\"uri\",\"value\":\"http://e/a\"}", "{}"]
 #guard samePure "syntaxFor" ["a.ttl", ""]
+#guard samePure "splitIri" ["http://e/ns#a"]
+#guard samePure "isNCName" ["a"]
+#guard samePure "vocabularies" []
+#guard samePure "memberIri" ["0"]
+#guard samePure "memberOrdinal" ["http://e/x"]
 #guard samePure "deltaLogDecode" [""]
 #guard samePure "deltaLogDecode" ["zz"]
 #guard samePure "deltaLogMerge" [nt, ""]
