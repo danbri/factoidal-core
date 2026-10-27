@@ -254,6 +254,9 @@ This AMENDS the rule below for AES (AES-GCM, AES-CBC, AES Key Wrap):
   is a second implementation in the same differential tests.
 * Tracking: https://github.com/danbri/factoidal/issues/1081 (XML Encryption
   and JWE), https://github.com/danbri/factoidal/issues/677 (AES).
+* Design record (primitives per surface, the AES request-and-resume step,
+  the XML Encryption and JWE profiles):
+  `docs/designissues/2026-10-27-xml-encryption-and-jwe.md`.
 
 🔴 **AES-GCM is NOT available and must not be hand-written or taken from
 the AES-NI path.** (Superseded for JavaScript hosts by the section above.) The pinned release ships no PORTABLE AES-GCM: every
