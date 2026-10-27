@@ -363,11 +363,20 @@ import L4Factoidal.JOSE.Jwk
 import L4Factoidal.JOSE.Jws
 import L4Factoidal.JOSE.Jwt
 import L4Factoidal.JOSE.DPoP
+import L4Factoidal.JOSE.JweKey
+import L4Factoidal.JOSE.Jwe
+import L4Factoidal.JOSE.JweTests
 import L4Factoidal.Solid.Server.AuthConfig
 import L4Factoidal.Solid.Server.Auth
 import L4Factoidal.Solid.Server.Oidc
 import L4Factoidal.Crypto.P256Native
+import L4Factoidal.Crypto.ConcatKdf
+import L4Factoidal.Crypto.Aead
+import L4Factoidal.Crypto.AesGcmNative
+import L4Factoidal.Crypto.CipherCall
 import L4Factoidal.Crypto.RsaNative
+import L4Factoidal.Crypto.RsaOaep
+import L4Factoidal.Crypto.RsaOaepTests
 import L4Factoidal.VC.Multibase
 import L4Factoidal.VC.DidKey
 import L4Factoidal.VC.Context
@@ -978,6 +987,8 @@ import L4Factoidal.Authz.Tests
 -- profile of SAML Core section 5 (https://github.com/danbri/factoidal/issues/926).
 import L4Factoidal.XML.ExcC14n
 import L4Factoidal.XML.DSig
+import L4Factoidal.XML.Enc
+import L4Factoidal.XML.EncTests
 import L4Factoidal.SAML.Assertion
 import L4Factoidal.SAML.Fixtures
 import L4Factoidal.SAML.Tests

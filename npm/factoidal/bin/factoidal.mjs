@@ -364,7 +364,7 @@ usage: factoidal authz-serve DIR --resource IRI[,IRI...] [--issuer IRI]
                            [--token-lifetime SECONDS] [--rotate-after SECONDS]
                            [--allow-http] [--allow-private-fetch]
                            [--cors-origin ORIGIN]... [--no-cors]
-                           [--saml-idp FILE]...
+                           [--saml-idp FILE]... [--saml-decrypt-key FILE]...
 
 An authorization server as a component (https://github.com/danbri/factoidal/issues/916),
 for lws-serve and any resource server that reads RFC 8414 metadata:
@@ -382,8 +382,15 @@ JSON: {"entityId": "<the saml:Issuer value>", "jwk": <its RSA public JWK>}.
 An assertion must carry one enveloped XML Signature (exclusive
 canonicalization, rsa-sha256) that verifies under that key, an audience that
 names the issuer of this server, and bearer subject confirmation; its NameID
-is the subject and its Recipient the client. Encrypted assertions are
-refused. Without --saml-idp the token type is refused and not advertised.
+is the subject and its Recipient the client. Without --saml-idp the token
+type is refused and not advertised.
+
+--saml-decrypt-key FILE (repeatable) is one private JWK (RSA, EC P-256, OKP
+X25519 or oct) that decrypts saml:EncryptedAssertion and saml:EncryptedID
+(XML Encryption 1.1: RSA-OAEP, ECDH-ES with AES Key Wrap, or AES Key Wrap;
+content AES-GCM). AES runs through WebCrypto. The decrypted assertion must
+be signed as above. Without it, encrypted assertions are refused
+(https://github.com/danbri/factoidal/issues/1073).
 
 --resource names the resource IRIs (for lws-serve: BASE.well-known/lws-storage)
 tokens may be issued for; any other is refused with invalid_target.
@@ -539,8 +546,8 @@ is required):
                         BASE.well-known/lws-token, the JWK Set at
                         BASE.well-known/lws-jwks, signing keys in DIR (as
                         authz-serve; --alg, --token-lifetime, --rotate-after,
-                        --allow-http, --allow-private-fetch and --saml-idp as
-                        there). The
+                        --allow-http, --allow-private-fetch, --saml-idp and
+                        --saml-decrypt-key as there). The
                         storage trusts it, and any --issuer too. Each request
                         is the authorization server's when the engine says so
                         (L4Factoidal/Authz/Mount.lean); every other is the
@@ -827,7 +834,7 @@ function parseArguments (args, valueOptions) {
 class UsageError extends Error {}
 
 /** Options that may be given more than once; their value is the list. */
-const REPEATABLE_OPTIONS = new Set(['cors-origin', 'saml-idp'])
+const REPEATABLE_OPTIONS = new Set(['cors-origin', 'saml-idp', 'saml-decrypt-key'])
 
 const VALUE_OPTIONS = {
   version: new Set([]),
@@ -842,7 +849,7 @@ const VALUE_OPTIONS = {
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
     'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window',
     'redirects-max', 'storage', 'cors-origin', 'authz', 'alg', 'token-lifetime', 'rotate-after',
-    'saml-idp']),
+    'saml-idp', 'saml-decrypt-key']),
   'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret']),
   'lws-client': new Set(['body', 'file', 'content-type', 'slug', 'type', 'link', 'if-match',
@@ -850,7 +857,7 @@ const VALUE_OPTIONS = {
     'target', 'subject-token-file', 'subject-token-type', 'access-token', 'storage', 'root',
     'inbox']),
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
-    'cors-origin', 'saml-idp']),
+    'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
   'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key']),
   'webdav-serve': new Set(['port', 'host'])
@@ -1769,10 +1776,15 @@ function corsConfig (options) {
 // assertions the authorization server accepts, as the config member
 // `samlIdps`. FILE is JSON {"entityId": ID, "jwk": RSA public JWK}; passed
 // unread, the engine checks it (Wasm/Ops/Authz.lean, issue 926).
+// --saml-decrypt-key FILE (repeatable): one private JWK, as the config member
+// `samlKeys`; passed unread, the engine checks it (samlKeysOf?, issue 1073).
 function samlConfig (options) {
+  const out = {}
   const files = options['saml-idp']
-  if (!Array.isArray(files)) return {}
-  return { samlIdps: files.map((f) => readJsonFile(f)) }
+  if (Array.isArray(files)) out.samlIdps = files.map((f) => readJsonFile(f))
+  const keys = options['saml-decrypt-key']
+  if (Array.isArray(keys)) out.samlKeys = keys.map((f) => readJsonFile(f))
+  return out
 }
 
 function serveHost (options) {

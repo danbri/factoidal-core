@@ -157,6 +157,62 @@ id = "wasm:sameValue"
 reason = "SPARQL 1.1 = on two terms (SPARQL/SameValue.lean sameValue), reads no graph"
 
 [[nonstage]]
+id = "wasm:xmlDecrypt"
+reason = "XML Encryption 1.1 decryption of an XML document (XML/Enc.lean decryptDocument; RSA-OAEP, P-256, X25519 by HACL*, AES by the host through CipherCall.replayCipher), reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#xmlDecrypt"
+reason = "npm/factoidal/lib/api.mjs xmlDecrypt calls the wasm op xmlDecrypt through runWithCipher (see wasm:xmlDecrypt)"
+
+[[nonstage]]
+id = "npm:./browser#xmlDecrypt"
+reason = "npm/factoidal/lib/api.mjs xmlDecrypt calls the wasm op xmlDecrypt through runWithCipher (see wasm:xmlDecrypt)"
+
+[[nonstage]]
+id = "wasm:xmlEncrypt"
+reason = "XML Encryption 1.1 encryption of an XML document (XML/Enc.lean encryptDocument; AES by the host through CipherCall.replayCipher), reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#xmlEncrypt"
+reason = "npm/factoidal/lib/api.mjs xmlEncrypt calls the wasm op xmlEncrypt through runWithCipher (see wasm:xmlEncrypt)"
+
+[[nonstage]]
+id = "npm:./browser#xmlEncrypt"
+reason = "npm/factoidal/lib/api.mjs xmlEncrypt calls the wasm op xmlEncrypt through runWithCipher (see wasm:xmlEncrypt)"
+
+[[nonstage]]
+id = "wasm:jweDecrypt"
+reason = "JWE compact decryption (JOSE/Jwe.lean; AES by the host through CipherCall.replayCipher), reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#jweDecrypt"
+reason = "npm/factoidal/lib/api.mjs jweDecrypt calls the wasm op jweDecrypt through runWithCipher (see wasm:jweDecrypt)"
+
+[[nonstage]]
+id = "npm:./browser#jweDecrypt"
+reason = "npm/factoidal/lib/api.mjs jweDecrypt calls the wasm op jweDecrypt through runWithCipher (see wasm:jweDecrypt)"
+
+[[nonstage]]
+id = "wasm:jweEncrypt"
+reason = "JWE compact encryption (JOSE/Jwe.lean; AES by the host through CipherCall.replayCipher), reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#jweEncrypt"
+reason = "npm/factoidal/lib/api.mjs jweEncrypt calls the wasm op jweEncrypt through runWithCipher (see wasm:jweEncrypt)"
+
+[[nonstage]]
+id = "npm:./browser#jweEncrypt"
+reason = "npm/factoidal/lib/api.mjs jweEncrypt calls the wasm op jweEncrypt through runWithCipher (see wasm:jweEncrypt)"
+
+[[nonstage]]
+id = "npm:./cipher-host#answerCipherRequest"
+reason = "runs one WebCrypto AES operation that a Lean CipherCall.Req names; reads no RDF data and makes no decision"
+
+[[nonstage]]
+id = "npm:./cipher-host#runWithCipher"
+reason = "host loop: answers each CipherCall request of an op with answerCipherRequest and calls the op again; reads no RDF data"
+
+[[nonstage]]
 id = "wasm:syntaxFor"
 reason = "a name table: the syntax of a file name or media type (RDF/MediaType.lean syntaxOfNames), reads no RDF data"
 

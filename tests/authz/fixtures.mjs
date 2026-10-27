@@ -8,7 +8,7 @@
 // formal/lean4/L4Factoidal/Authz/.
 
 import http from 'node:http'
-import { generateKeyPairSync, sign, verify, createPublicKey, createHash, randomBytes } from 'node:crypto'
+import { generateKeyPairSync, sign, verify, createPublicKey, createHash, randomBytes, createCipheriv, publicEncrypt, constants as cryptoConstants } from 'node:crypto'
 
 export const TOKEN_EXCHANGE = 'urn:ietf:params:oauth:grant-type:token-exchange'
 export const JWT_TYPE = 'urn:ietf:params:oauth:token-type:jwt'
@@ -192,4 +192,40 @@ export function samlAssertion ({ issuer, nameId, recipient, audiences, key, faul
 
 function randomBytesHex (n) {
   return randomBytes(n).toString('hex')
+}
+
+/**
+ * A SAML assertion token in a saml:EncryptedAssertion, made with node:crypto
+ * only (issue 1073): the assertion text encrypted with AES-128-GCM (XML
+ * Encryption 1.1 aes128-gcm: IV || ciphertext || tag), its key with RSA-OAEP
+ * under `publicKey` (rsa-oaep-mgf1p, SHA-1) or, with `sha256`, xmlenc11
+ * rsa-oaep with SHA-256 and MGF1 SHA-256.
+ */
+export function samlEncrypted (token, publicKey, { sha256 = false, tamper = false } = {}) {
+  const XENC = 'http://www.w3.org/2001/04/xmlenc#'
+  const xml = Buffer.from(token, 'base64url')
+  const cek = randomBytes(16)
+  const iv = randomBytes(12)
+  const gcm = createCipheriv('aes-128-gcm', cek, iv)
+  const ct = Buffer.concat([gcm.update(xml), gcm.final(), gcm.getAuthTag()])
+  if (tamper) ct[ct.length - 1] ^= 1
+  const wrapped = publicEncrypt({
+    key: publicKey, padding: cryptoConstants.RSA_PKCS1_OAEP_PADDING, oaepHash: sha256 ? 'sha256' : 'sha1'
+  }, cek)
+  const keyMethod = sha256
+    ? '<xenc:EncryptionMethod Algorithm="http://www.w3.org/2009/xmlenc11#rsa-oaep">' +
+      '<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>' +
+      '<xenc11:MGF xmlns:xenc11="http://www.w3.org/2009/xmlenc11#" Algorithm="http://www.w3.org/2009/xmlenc11#mgf1sha256"/>' +
+      '</xenc:EncryptionMethod>'
+    : `<xenc:EncryptionMethod Algorithm="${XENC}rsa-oaep-mgf1p">` +
+      '<ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/></xenc:EncryptionMethod>'
+  const doc = `<saml:EncryptedAssertion xmlns:saml="${SAML_NS}">` +
+    `<xenc:EncryptedData xmlns:xenc="${XENC}" Type="${XENC}Element">` +
+    '<xenc:EncryptionMethod Algorithm="http://www.w3.org/2009/xmlenc11#aes128-gcm"/>' +
+    `<ds:KeyInfo xmlns:ds="${DS_NS}"><xenc:EncryptedKey>${keyMethod}` +
+    `<xenc:CipherData><xenc:CipherValue>${wrapped.toString('base64')}</xenc:CipherValue></xenc:CipherData>` +
+    '</xenc:EncryptedKey></ds:KeyInfo>' +
+    `<xenc:CipherData><xenc:CipherValue>${Buffer.concat([iv, ct]).toString('base64')}</xenc:CipherValue></xenc:CipherData>` +
+    '</xenc:EncryptedData></saml:EncryptedAssertion>'
+  return Buffer.from(doc, 'utf8').toString('base64url')
 }

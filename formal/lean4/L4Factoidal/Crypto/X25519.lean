@@ -101,4 +101,12 @@ def publicKey? (scalar : ByteArray) : Option ByteArray :=
     let p := basePoint scalar
     if p.size = keyBytes then some p else none
 
+/-! The RFC 7748 §6.1 check is `isAllZero`, which is pure Lean, so its
+decision is a build-time `#guard`. `dh?` composes it with the extern; that
+composition runs in `lake exe l4crypto-probe` (section `wycheproof-x25519`,
+the `ZeroSharedSecret` vectors; section `p256-ecdh`, RFC 8037 Appendix A.6). -/
+#guard isAllZero ⟨Array.replicate 32 0⟩
+#guard !isAllZero ⟨(Array.replicate 31 0).push 1⟩
+#guard !isAllZero ⟨#[1] ++ Array.replicate 31 0⟩
+
 end L4Factoidal.Crypto.X25519

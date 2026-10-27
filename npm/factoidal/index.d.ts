@@ -1750,6 +1750,45 @@ export function vcEd25519Verify(
 ): Promise<boolean>;
 
 /**
+ * Decrypt every xenc:EncryptedData of an XML document (XML Encryption 1.1).
+ * RSA-OAEP, ECDH-ES and X25519 run in the wasm (HACL*); AES runs in the
+ * host's WebCrypto. Every failure after the structure check is the one
+ * error "XML decryption failed".
+ */
+export function xmlDecrypt(
+  document: string,
+  options: { keys: object[]; allowCbc?: boolean }
+): Promise<{ document: string; canonical: string }>;
+
+/** Encrypt an XML document element, or its content, for one recipient. */
+export function xmlEncrypt(
+  document: string,
+  options: {
+    recipient: object;
+    algorithm?: 'aes128-gcm' | 'aes256-gcm';
+    keyTransport?: 'rsa-oaep-mgf1p' | 'rsa-oaep-sha256';
+    keyWrap?: 'kw-aes128' | 'kw-aes256';
+    content?: boolean;
+    saml?: boolean;
+  }
+): Promise<{ document: string; canonical: string }>;
+
+/**
+ * Decrypt a compact JWE (RFC 7516). Every failure after the allowlist is
+ * the one error "decryption failed".
+ */
+export function jweDecrypt(
+  token: string,
+  options: { jwk: object }
+): Promise<{ header: Record<string, unknown>; plaintext: Uint8Array }>;
+
+/** Encrypt to a compact JWE (RFC 7516). */
+export function jweEncrypt(
+  plaintext: Uint8Array | string,
+  options: { alg: string; enc: string; jwk: object; header?: Record<string, unknown> }
+): Promise<string>;
+
+/**
  * Create an eddsa-rdfc-2022 Data Integrity proofValue (multibase-z,
  * base58btc) over already-canonicalized inputs — RDFC-1.0 canonical
  * N-Quads of the document and of the proof config (see canonicalize()).
@@ -2005,6 +2044,10 @@ declare const _default: {
   vcEd25519SecretToPublic: typeof vcEd25519SecretToPublic;
   vcEd25519Sign: typeof vcEd25519Sign;
   vcEd25519Verify: typeof vcEd25519Verify;
+  xmlDecrypt: typeof xmlDecrypt;
+  xmlEncrypt: typeof xmlEncrypt;
+  jweDecrypt: typeof jweDecrypt;
+  jweEncrypt: typeof jweEncrypt;
   vcEddsaCreateFromCanonical: typeof vcEddsaCreateFromCanonical;
   vcEddsaVerifyFromCanonical: typeof vcEddsaVerifyFromCanonical;
   vcCheckCredential: typeof vcCheckCredential;

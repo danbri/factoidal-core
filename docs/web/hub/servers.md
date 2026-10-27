@@ -202,8 +202,13 @@ authorization server and the storage on one port.
 `idp.json` is `{"entityId": "<the saml:Issuer value>", "jwk": <the RSA public
 JWK>}`.
 
-What it does not do: encrypted SAML assertions (XML Encryption) and JWE:
-<https://github.com/danbri/factoidal/issues/1081>.
+`--saml-decrypt-key key.json` (repeatable, a private JWK) lets the server
+decrypt a `saml:EncryptedAssertion` or `saml:EncryptedID` (XML Encryption 1.1:
+RSA-OAEP, ECDH-ES or AES Key Wrap for the key, AES-GCM for the content). The
+decrypted assertion must carry its own valid signature. RSA and ECDH run in
+the wasm (HACL\*); AES runs in the host's WebCrypto. Without the option,
+encrypted assertions are refused. `saml:EncryptedAttribute` is refused:
+<https://github.com/danbri/factoidal/issues/1073>.
 
 Touchstone, `--config auth --authz factoidal`, 2026-10-27: auth/saml 3 pass,
 0 fail (out of 3); auth/oidc 6 pass, 0 fail (out of 6); auth/cid 22 pass,

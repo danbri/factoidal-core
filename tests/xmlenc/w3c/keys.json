@@ -1,0 +1,17 @@
+[
+ {
+  "kty": "RSA",
+  "kid": "oracle-RSA-2048",
+  "n": "19DcKyKoMxb8nnXbtyM86Tad7oGbSUyfBXyAMyMKJLKxoW7tPRYJSIO2FRE4y3Yb8uAhVmmOaCzUZ34LLV6yFVaCcwT7a-lBsCyDK3dOyOrqHb0zTIsmivMu1Us2m-ijtiKa46fSmXRMY5VnVCkaFnubsT6HAOZu-MnT08YyYJeRrSwrttjRyX05wlusO8ISKQ02Dnu9Czj4YsDozF0V856_UIfPIcYltyxvD_PmsHYWbCpO3VqR7gzRAi3XQdexZCzA4bYPEZQkZoanH1YA6KuTd44zb0upoJ59MPHRCMNzXVUu7UyTTv_t2qqGr5B3hOPQw2ewC748NuvW1MQJ9w",
+  "e": "AQAB",
+  "d": "F2dT6O2aNeghPwHi8MpGebftiobNkzZW7F5i_KipGe-y6aHA4mX4Xb_CyCgU86N8Rmtd0iQiSFPMOOjnR2VEhKHcBaMdrMcf034QP29xwMIQ32a8IGnapSjYBFNiuaeR0VeRWmzBntiIzCfQi8TlSljfOmpgc42JrTsd2JJetjCmk_P_08H7aMC72J7Iuv6B2YKERVkG-XJSoYpUFbtQNApfxhpHG_FI4wSop8D-y5VY2eEMQFbYsRHRDUWcZUWDRi27eYEMEOZptnrmnM2VhajPhuGmkg4zWV9dPzctYC0mH2-cVR94gtcmYF-qm8VpIjdgFnahSPP4xIlkAEmsYQ"
+ },
+ {
+  "kty": "EC",
+  "crv": "P-256",
+  "kid": "oracle-EC-P256",
+  "x": "Pch7nesUwGDPU2re7gYTT3SRIkLL4Mxjk1vBg8j-3RI",
+  "y": "AQnZOOi3hx9RYrOFFyJFWUvkugoERrhF1feeq70mgG4",
+  "d": "GdV0K3KHNAiLynXpyXDnLF4Pqc-WufBjYsvhDGS0HOY"
+ }
+]

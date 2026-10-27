@@ -108,10 +108,34 @@ testing: `deploy/lws-target/`.
   verified under the CONFIGURED key (never `ds:KeyInfo`); no DTD, comment or
   PI; nesting at most 32; `Conditions` times and every `AudienceRestriction`
   naming this issuer; bearer confirmation with `Recipient` (the client) and
-  `NotOnOrAfter`; `NameID` is the subject. Encrypted elements are refused
-  (https://github.com/danbri/factoidal/issues/1073). Advertised only when
+  `NotOnOrAfter`; `NameID` is the subject. Advertised only when
   `samlIdps` is not empty. Record:
   `docs/designissues/2026-10-27-saml-xml-signature.md`.
+* SAML encrypted assertions (https://github.com/danbri/factoidal/issues/1073):
+  in Lean, `SAML.validateWith cipher prims rsa policy token` with
+  `Policy.decryptKeys` (an `XML.Enc.Keys`) decrypts a document element
+  `saml:EncryptedAssertion` (`XML.Enc.decryptWrapped`: the `EncryptedData`,
+  then optional `EncryptedKey` siblings) and sends the decrypted
+  `saml:Assertion` through the same issuer, signature, conditions and
+  subject checks; an encrypted assertion whose content is not signed is
+  refused. After the signature check, a `saml:EncryptedID` in `Subject` is
+  decrypted to its `NameID`. Theorem `SAML.validateWith_ok`: claims come
+  from the document `openToken` read (decrypted when encrypted), whose
+  signature verified under a trusted provider's key.
+  XML Encryption profile, keys and the AES call-out:
+  `docs/designissues/2026-10-27-xml-encryption-and-jwe.md`. In the server:
+  `authz-serve --saml-decrypt-key FILE` (repeatable, a private JWK; also
+  `lws-serve --authz`), config member `samlKeys`. `Authz.validateSaml`
+  calls `validateWith` over the replay cipher; an AES request is the
+  `Need.cipher`, which `authzStep` returns as `{cipher: {op, key, iv, aad,
+  data}}`; the Node host answers it with WebCrypto
+  (`answerCipherRequest`), passes `{request, answer}` to `authzFetched`
+  (`AuthzState.recordCipher`, at most `maxCipherAnswers` answers, one per
+  request) and steps again. Theorem `Authz.validateSaml_valid` covers the
+  encrypted case. `saml:EncryptedAttribute` stays refused
+  (the claims read no attribute); expected-failure guard there too. Native
+  run with real AES-GCM and RSA-OAEP: `lake exe l4xmlenc-probe` (SAML
+  section, Santuario fixtures from `tests/xmlenc/MakeFixtures.java`).
 * Fetches: `https` only unless `--allow-http`; every address of the host
   (literal, `localhost` name, or the host's resolution) must be outside
   loopback, unspecified, link-local, RFC 1918 and RFC 4193 unless
