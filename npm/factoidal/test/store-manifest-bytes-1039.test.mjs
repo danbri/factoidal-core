@@ -25,10 +25,10 @@ import factoidal from '../index.js'
 const BYTE_OPS = ['storeManifestInspectBytes', 'storeQueryPlanBytes', 'storeOpenBytes']
 
 const NQUADS_A = [
-  '<http://ex.org/a> <http://ex.org/name> "alpha" <http://ex.org/g> .',
-  '<http://ex.org/b> <http://ex.org/name> "beta" <http://ex.org/g> .',
-  '<http://ex.org/a> <http://ex.org/size> "3" <http://ex.org/g> .',
-  '<http://ex.org/a> <http://ex.org/other> <http://ex.org/c> .',
+  '<http://ex.org/a> <http://ex.org/name> "alpha" .',
+  '<http://ex.org/b> <http://ex.org/name> "beta" .',
+  '<http://ex.org/a> <http://ex.org/size> "3" .',
+  '<http://ex.org/a> <http://ex.org/other> <http://ex.org/c> <http://ex.org/g> .',
   ''
 ].join('\n')
 
@@ -41,7 +41,7 @@ const NQUADS_B = [
 const QUERIES = [
   'SELECT ?s ?o WHERE { ?s <http://ex.org/name> ?o } ORDER BY ?s',
   'SELECT * WHERE { GRAPH ?g { ?s ?p ?o } } ORDER BY ?s ?p',
-  'SELECT * WHERE { ?s <http://ex.org/other> ?o }',
+  'SELECT * WHERE { GRAPH ?g { ?s <http://ex.org/other> ?o } }',
   'ASK { ?s <http://ex.org/size> "3" }',
   'DESCRIBE <http://ex.org/a>'
 ]
@@ -161,7 +161,7 @@ test('issue 1039: the manifest memo answers for the bytes of each call', async (
     const planA = planQuery(engine, a, sparql)
     const hb = openStoreHandle(engine, b, { sparql })
     const planB = planQuery(engine, b, sparql)
-    assert.notDeepEqual(planA.keys, planB.keys, 'the two stores plan different keys')
+    assert.deepEqual([planA.rows, planB.rows], [2, 1], 'each plan counts the rows of its own store')
     const rows = hb.query(sparql).srj.results.bindings.map((row) => row.o.value)
     assert.deepEqual(rows, ['xi'])
     hb.close()
