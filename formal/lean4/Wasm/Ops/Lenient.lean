@@ -66,6 +66,16 @@ def parseDocumentOptionsOfJson (optionsJson : String) : ParseDocumentOptions :=
             | _ => none }
     | _ => {}
 
+/-- The text the lenient N-Triples and N-Quads readers read: under `.rdf12`, the
+version directive lines (RDF 1.2 N-Triples section 5.3 [3] `directive ::=
+versionDirective`) blanked by `blankVersionDirectives`, so that a directive is
+read as a statement and not reported as an error
+(https://github.com/danbri/factoidal/issues/1055). Offsets do not move. -/
+def lineText (mode : L4Factoidal.Syntax.Mode) (text : String) : String :=
+  match mode with
+  | .rdf11 => text
+  | .rdf12 => String.ofList (L4Factoidal.Syntax.blankVersionDirectives text.toList)
+
 /-- The lenient parse of `text` under `formatTag`: the outcome and the
 diagnostics. The dataset is a set of quads: the Turtle and N-Triples readers
 list a repeated triple two times, so their graph goes through `Dataset.toSet`
@@ -82,10 +92,10 @@ def lenientDocumentOutcomeBy (extra : ExtraReader) (text formatTag baseIRI : Str
       .ok ({ ds := Dataset.toSet { default := g, named := [] },
              prefixes := declarationOrderPrefixes ps }, ds)
   | "ntriples" | "nt" | "n-triples" =>
-      let (g, ds) := parseNTriplesLenient text mode opts
+      let (g, ds) := parseNTriplesLenient (lineText mode text) mode opts
       .ok ({ ds := Dataset.toSet { default := g, named := [] }, prefixes := [] }, ds)
   | "nquads" | "nq" | "n-quads" =>
-      let (d, ds) := parseNQuadsFastLenient text mode opts
+      let (d, ds) := parseNQuadsFastLenient (lineText mode text) mode opts
       .ok ({ ds := d, prefixes := [] }, ds)
   | "trig" =>
       let (d, ds, ps) := parseTriGLenientWithPrefixes text base mode opts
@@ -184,6 +194,22 @@ private def ttlDoc : String :=
           "nquads" "" "{\"lenient\":true}") with
         | .ok j => numberLexeme? j "count" == some "1" &&
                    emptyArray? j "diagnostics"
+        | .error _ => false)
+-- https://github.com/danbri/factoidal/issues/1055: an RDF 1.2 version directive
+-- is a statement for the lenient N-Triples and N-Quads readers too, and a bad
+-- line after it keeps its line number.
+#guard (match parseJson (parseDocumentBy noExtraReader
+          "VERSION \"1.2\"\n<http://x/a> <http://x/p> <http://x/o> .\n<http://x/b> <http://x/p> .\n"
+          "ntriples12" "" "{\"lenient\":true}") with
+        | .ok j => numberLexeme? j "count" == some "1" &&
+                   (match j.field? "diagnostics" with
+                    | some (.array [d]) => numberLexeme? d "line" == some "3"
+                    | _ => false)
+        | .error _ => false)
+#guard (match parseJson (parseDocumentBy noExtraReader
+          "VERSION \"1.2\"\n<http://x/a> <http://x/p> <http://x/o> <http://x/g> .\n"
+          "nquads12" "" "{\"lenient\":true}") with
+        | .ok j => numberLexeme? j "count" == some "1" && emptyArray? j "diagnostics"
         | .error _ => false)
 -- RDF/XML is strict even when lenient is asked for: success has no diagnostics.
 #guard (match parseJson (parseDocumentBy noExtraReader

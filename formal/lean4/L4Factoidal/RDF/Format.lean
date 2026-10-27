@@ -114,29 +114,7 @@ def formatOfPath (path : String) : Option RdfFormat :=
 def detectFormatOrDefault (ext : String) : RdfFormat :=
   (formatOfExtension ext).getD rdfFormatDefault
 
-/-- The format of a document read from its first characters, for a caller
-    that did not name one (https://github.com/danbri/factoidal/issues/882):
-    `{` or `[` first is JSON-LD; `<?xml` or `<rdf:RDF` first is RDF/XML; a `{`
-    anywhere else is TriG (a TriG reader also reads Turtle and N-Triples);
-    otherwise Turtle. N-Quads is never inferred: its graph term looks like an
-    object to the Turtle reader, so a caller with N-Quads names the format.
-    A caller reports the inferred format with the result. -/
-def formatOfContent (text : String) : RdfFormat :=
-  let head := (text.toList.take 4096).dropWhile Char.isWhitespace
-  let headStr := String.ofList head
-  match head with
-  | '{' :: _ | '[' :: _ => .jsonld
-  | _ =>
-    if headStr.startsWith "<?xml" || headStr.startsWith "<rdf:RDF" then .rdfxml
-    else if text.any (· == '{') then .trig
-    else .turtle
-
 /-! ## Build-time checks -/
-
-#guard formatOfContent "  {\"@id\": \"http://e/a\"}" == .jsonld
-#guard formatOfContent "<?xml version=\"1.0\"?><rdf:RDF/>" == .rdfxml
-#guard formatOfContent "<http://e/g> { <http://e/a> <http://e/p> 1 . }" == .trig
-#guard formatOfContent "<http://e/a> <http://e/p> 1 ." == .turtle
 
 #guard formatOfExtension ".ttl" == some .turtle
 #guard formatOfExtension ".TTL" == some .turtle
