@@ -65,6 +65,7 @@ import Wasm.Ops.ExtFns
 import Wasm.Ops.Lws
 import Wasm.Ops.Solid
 import Wasm.Ops.LwsClient
+import Wasm.Ops.WebDAV
 import Wasm.Ops.Authz
 import Wasm.Ops.Toan
 import Wasm.Ops.Xmpp
@@ -180,7 +181,7 @@ direction. -/
 def blobIoOpNames : List String :=
   [ "blobEcho", "packFeed", "packNext", "storeServeRequest", "storeServeCommit",
     "datasetQuadsBin", "sbm11Query", "sbm11PackFiles" ] ++
-  Ops.lwsBlobIoOpNames
+  Ops.lwsBlobIoOpNames ++ Ops.webdavBlobIoOpNames
 
 /-- Largest out region `blobEcho` builds: 67,108,864 bytes. A count above
 this is refused by name rather than made into an allocation the module
@@ -436,7 +437,7 @@ private def opsReflection : String := opsReflectionFor (opNames ++ formatOpNames
 def opsReflectionIO : String :=
   opsReflectionFor
     (opNames ++ handleOpNames ++ storeHandleOpNames ++ Ops.sbm11OpNames ++ storeServeOpNames ++ packOpNames
-       ++ extOpNames ++ lwsSolidOpNames ++ Ops.authzOpNames ++ xmppSessionOpNamesList
+       ++ extOpNames ++ lwsSolidOpNames ++ Ops.authzOpNames ++ Ops.webdavOpNames ++ xmppSessionOpNamesList
        ++ formatOpNames ++ serviceOpNames
        ++ query12OpNames)
 
@@ -668,6 +669,12 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "authzRotate"      => withArgs (arityIO2 op Ops.authzRotate)
   | "authzOwns"        => withArgs (arityIO2 op Ops.authzOwns)
   | "authzClose"       => withArgs (arityIO1 op Ops.authzClose)
+  -- The WebDAV server (https://github.com/danbri/factoidal/issues/1066).
+  | "webdavOpen"       => withArgs (arityIO1 op Ops.webdavOpen)
+  | "webdavLoad"       => withArgs (arityIO2 op Ops.webdavLoad)
+  | "webdavStep"       => withArgs (arityIO2 op Ops.webdavStep)
+  | "webdavResume"     => withArgs (arityIO2 op Ops.webdavResume)
+  | "webdavClose"      => withArgs (arityIO1 op Ops.webdavClose)
   | "lwsOpen"          => withArgs (arityIO1 op Ops.lwsOpen)
   | "lwsStep"          => withArgs (arityIO2 op Ops.lwsStep)
   | "lwsClose"         => withArgs (arityIO1 op Ops.lwsClose)
@@ -863,6 +870,21 @@ def callBlobIOUncoded (op : String) (argsJson : String) (blob : ByteArray) :
       | .error e   => pure (errJson e, ByteArray.empty)
       | .ok [a, b] => Ops.lwsRead a b blob
       | .ok args   => pure (errJson s!"lwsRead expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
+  -- The WebDAV server (https://github.com/danbri/factoidal/issues/1066): the
+  -- IN region is the request content (or the answer's), the OUT region the
+  -- content of what the engine answers (a response, an LWS request, a fetch).
+  | "webdavStep" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.webdavStepWith a b (some blob)
+      | .ok args   => pure (errJson s!"webdavStep expects 2 arguments, got {args.length}",
+                            ByteArray.empty)
+  | "webdavResume" =>
+      match decodeArgs argsJson with
+      | .error e   => pure (errJson e, ByteArray.empty)
+      | .ok [a, b] => Ops.webdavResumeWith a b (some blob)
+      | .ok args   => pure (errJson s!"webdavResume expects 2 arguments, got {args.length}",
                             ByteArray.empty)
   | "solidStep" =>
       match decodeArgs argsJson with

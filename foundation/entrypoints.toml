@@ -1078,3 +1078,39 @@ note = "fn.js fromCsvw: npm:.#csvwToRdf, the result wrapped as an FnDataset."
 [[nonstage]]
 id = "wasm:authzOwns"
 reason = "routing: whether a request target is one of the authorization server's paths (L4Factoidal.Authz.owns, theorem owns_mem), reads no data"
+
+# The WebDAV server (https://github.com/danbri/factoidal/issues/1066). It
+# moves resource bytes between a file browser and an LWS storage and reads
+# no RDF data: a local mount's operations go to lwsStep (unbound, its own
+# line) and a remote mount's to the LWS client machine.
+[[nonstage]]
+id = "wasm:webdavOpen"
+reason = "configuration: reads the names of the mount directory and decides which are mount files (WebDAV.Config.isMountFile); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:webdavLoad"
+reason = "configuration: reads the Markdown mount files (WebDAV.Config.mountOfMarkdown, theorem scan_known) and the key and token files of remote mounts; reads no RDF data"
+
+[[nonstage]]
+id = "wasm:webdavStep"
+reason = "protocol: one WebDAV request (RFC 4918) as a program over storage operations (WebDAV.Server.handle, theorems refused_keeps_state and browse_no_write); moves resource bytes, reads no RDF data"
+
+[[nonstage]]
+id = "wasm:webdavResume"
+reason = "protocol: the storage's answer to the operation in flight, given back to the program of webdavStep; moves resource bytes, reads no RDF data"
+
+[[nonstage]]
+id = "wasm:webdavClose"
+reason = "lifecycle: drops a WebDAV handle; reads no data"
+
+[[nonstage]]
+id = "npm:./webdav#openWebdav"
+reason = "host (webdav/server.mjs): lists the mount directory, reads and writes the files the engine names, opens local storages with openLwsStorage, carries lws requests and fetches; decides nothing (tools/host-purity-lint.sh); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./webdav#listen"
+reason = "host (webdav/server.mjs): a Node HTTP socket over openWebdav; reads no RDF data"
+
+[[nonstage]]
+id = "cli:webdav-serve"
+reason = "host command: starts npm:./webdav#listen on a mount directory and prints the origin; reads no RDF data"
