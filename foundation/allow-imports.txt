@@ -5,7 +5,7 @@
 # violation is missing here, when an entry is no longer a violation, or when
 # the entry count differs from max-entries. The list may only shrink: when you
 # remove an entry, lower max-entries in the same commit.
-# max-entries: 60
+# max-entries: 59
 L4Factoidal.CSVW.Conversion -> L4Factoidal.CSVW.Diagnostics  # impl: diagnostic messages of the CSVW pipeline; candidate support entry
 L4Factoidal.CSVW.Validate -> L4Factoidal.CSVW.Pipeline  # impl: the CSVW pipeline (implementation) imported by validation; invert the dependency
 L4Factoidal.Geo.Topology -> L4Factoidal.Geo.BBox  # impl: bounding-box prefilter inside the DE-9IM kernel; split
@@ -40,7 +40,6 @@ L4Factoidal.RML.Mapping -> L4Factoidal.RML.Error  # impl: error type of the RML 
 L4Factoidal.Regex.Profiles -> L4Factoidal.Regex.Ecma  # impl: regex engine used to decide pattern membership; the spec should state the XSD/F&O regex language, not the matcher
 L4Factoidal.Regex.XPath -> L4Factoidal.Regex.Exec  # impl: regex engine used to decide pattern membership; the spec should state the XSD/F&O regex language, not the matcher
 L4Factoidal.Regex.XPath -> L4Factoidal.Regex.XSDPattern  # impl: regex engine used to decide pattern membership; the spec should state the XSD/F&O regex language, not the matcher
-L4Factoidal.SHACL.Rules -> L4Factoidal.SPARQL.Parser  # level: SHACL-SPARQL parses SPARQL text with the level-2 grammar; take the parsed query as input
 L4Factoidal.SHACL.Sparql -> L4Factoidal.SPARQL.Parser  # level: SHACL-SPARQL parses SPARQL text with the level-2 grammar; take the parsed query as input
 L4Factoidal.SHACL.Validation -> L4Factoidal.NatBounds  # impl: pure Nat bound lemmas, no implementation; candidate support entry
 L4Factoidal.SHACL.Validation -> L4Factoidal.SHACL.DataIndex  # impl: SHACL validation uses the (subject, predicate) index; split the semantics from the index

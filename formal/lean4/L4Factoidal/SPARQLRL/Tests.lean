@@ -6,7 +6,7 @@ that suite does not test: group aggregation evaluation, the dependency graph
 and the strata of the draft's worked example, imports, generalized triples,
 paths and the parser's rejections.
 -/
-import L4Factoidal.SPARQLRL.Eval
+import L4Factoidal.SPARQLRL.Text
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.RDF.Canonical
 

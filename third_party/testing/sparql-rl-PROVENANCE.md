@@ -11,5 +11,6 @@
   The draft has open items: the translation to SPARQL has no algorithm,
   `evalAggregate` is not finished, and some text is `@@`.
 - The older copy of these tests, `shacl/shacl12-test-suite/tests/rules` (submodule
-  `third_party/testing/shacl` at 08adb377, 2026-07-02), stays for
-  `l4shacl-rules` until the new runner replaces it.
+  `third_party/testing/shacl` at 08adb377, 2026-07-02), is no longer the default of
+  `l4shacl-rules` (since 2026-10-27 the default is this suite); pass its path to
+  run it. Three of its tests use `BIND`, which the current draft replaced by `SET`.

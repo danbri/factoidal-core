@@ -19,7 +19,7 @@ The F\* module `SHACL.Rules.fst` stays as the record of the earlier form.
 | `srlStratifiable` | it parses, is well-formed, and meets the stratification condition |
 | `runRules` | the inference graph (`SPARQLRL.inferText`); empty on any error |
 -/
-import L4Factoidal.SPARQLRL.Eval
+import L4Factoidal.SPARQLRL.Text
 
 namespace L4Factoidal.SHACL
 
