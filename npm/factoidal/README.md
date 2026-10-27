@@ -1,5 +1,13 @@
 # @factoidal/core
 
+> ⚠️ **EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.**
+>
+> This covers the whole core library and every command line tool, and in
+> particular all protocol, authentication and security code (the LWS, Solid,
+> SPARQL Protocol, WebDAV and XMPP servers and clients, the authorization
+> server, JOSE, XML Signature and SAML, the crypto bindings). Owner decision,
+> 2026-10-27.
+
 RDF, SPARQL, reasoning, validation and Linked Data servers in one package.
 Runs in Node 22.12+, Deno 2 and browsers. No dependencies.
 
@@ -47,7 +55,13 @@ and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
 - Canonicalization: RDFC-1.0; Verifiable Credentials Data Integrity (eddsa-rdfc-2022), did:key
 - XML: XML 1.0, XPath 1.0, XSLT 1.0, XForms
 - Servers: SPARQL 1.1 Protocol and Graph Store (Fuseki-compatible paths,
-  Jena TDB2 read only), Linked Web Storage 1.0, Solid
+  Jena TDB2 read only), Linked Web Storage 1.0, Solid, an OAuth 2.0
+  authorization server (token exchange for OpenID Connect ID tokens,
+  self-issued CID credentials and SAML 2.0 assertions)
+- Security: JWS/JWT (ES256, RS256, EdDSA), XML Signature verification in the
+  SAML Core profile (Exclusive XML Canonicalization 1.0, rsa-sha256), with
+  HACL\* primitives. XML Encryption and JWE are not implemented yet:
+  https://github.com/danbri/factoidal/issues/1081
 - A persisted store with a delta log for updates (early stage)
 - Terms: a JavaScript extension function can answer with an exact term
   (`{value: "007", datatype: XSD + "integer"}`, an RDF/JS term, a triple
@@ -193,6 +207,7 @@ $ npx factoidal query store 'SELECT * WHERE { ?s ?p ?o } LIMIT 5'
 $ npx factoidal query "$(npx factoidal sample-store)" 'SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }'
 $ npx factoidal lws-serve DIR --issuer IRI         # Linked Web Storage
 $ npx factoidal solid-serve DIR                    # Solid Protocol
+$ npx factoidal authz-serve DIR --resource IRI --saml-idp idp.json   # OAuth 2.0 authorization server
 ```
 
 `npx factoidal --help` lists every command. Replacing Apache Jena Fuseki:

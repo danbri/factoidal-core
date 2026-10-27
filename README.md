@@ -1,5 +1,13 @@
 # Factoidal
 
+> ⚠️ **EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.**
+>
+> This covers the whole core library and every command line tool, and in
+> particular all protocol, authentication and security code (the LWS, Solid,
+> SPARQL Protocol, WebDAV and XMPP servers and clients, the authorization
+> server, JOSE, XML Signature and SAML, the crypto bindings). Owner decision,
+> 2026-10-27.
+
 **Current home: `factoidal-core`.** New Shardborough development is Lean 4
 first and test first. Shardborough's native pack, activation, disk query,
 update and compaction targets now live here with their Lean dependencies.

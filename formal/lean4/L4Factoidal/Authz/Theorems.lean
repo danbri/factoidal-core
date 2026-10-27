@@ -221,13 +221,17 @@ theorem validateIdToken_valid {ctx : Ctx} {p : Parsed} {s c : String}
     obtain ⟨k, hk, hv, rfl, rfl⟩ := withKey_valid h
     exact ⟨iss, k, hs, hk, hv⟩
 
-/-- **Every valid subject token verified under the key its suite chose.** -/
+/-- **Every valid subject token verified under the key its suite chose**: a
+SAML 2.0 assertion through `validateSaml` (see `validateSaml_valid`), any
+other token as a JWS. -/
 theorem validateSubject_valid_verified {ctx : Ctx} {tt tok s c : String}
     (h : validateSubject ctx tt tok = .valid s c) :
+    (tt = tokenTypeSaml2 ∧ validateSaml ctx tok = .valid s c) ∨
     ∃ p k, parseJwt tok = .ok p ∧ verifyCompact ctx.C.verifiers k tok = .verified := by
   unfold validateSubject at h
   split at h
-  · simp at h
+  · rename_i hc
+    exact Or.inl ⟨by simpa using hc, h⟩
   · split at h
     · split at h
       · simp at h
@@ -235,9 +239,9 @@ theorem validateSubject_valid_verified {ctx : Ctx} {tt tok s c : String}
         have ht := parseJwt_token hp
         split at h
         · obtain ⟨k, _, _, hv, _⟩ := validateSelfIssued_valid h
-          exact ⟨p, k, hp, ht ▸ hv⟩
+          exact Or.inr ⟨p, k, hp, ht ▸ hv⟩
         · obtain ⟨_, k, _, _, hv⟩ := validateIdToken_valid h
-          exact ⟨p, k, hp, ht ▸ hv⟩
+          exact Or.inr ⟨p, k, hp, ht ▸ hv⟩
     · simp at h
 
 /-- **did:key subject**: the key is the one the identifier encodes, the

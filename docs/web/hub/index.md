@@ -5,6 +5,10 @@ layout: hub.njk
 
 # Factoidal
 
+<p class="warning"><strong>⚠️ EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.</strong> This covers the whole core
+library and every command line tool, and in particular all protocol,
+authentication and security code.</p>
+
 Factoidal is an RDF engine written in Lean 4 and compiled to WebAssembly
 and to native code. It reads and writes the RDF 1.1 and RDF 1.2 syntaxes,
 answers SPARQL 1.1 and 1.2, reasons with RDFS and OWL 2, validates with
