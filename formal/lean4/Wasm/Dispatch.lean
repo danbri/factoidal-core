@@ -414,6 +414,7 @@ fall-through to `call`. The names are appended to every `ops` reflection by
 `opsReflectionFor`; the arms are in the fall-through case of `call`. -/
 def stage2OpNames : List String :=
   mathsOpNames ++ vcOpNames ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames ++ termsOpNames
+    ++ literalOpNames
 
 /-- Serve a stage 2 op of the full table, or answer the unknown-op error.
 `serializeTurtleWith` and `parseDocument` (the lenient parse,

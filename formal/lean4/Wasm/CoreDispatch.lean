@@ -52,6 +52,7 @@ import Wasm.Ops.Validate
 import Wasm.Ops.DeltaLog
 import Wasm.Ops.Terms
 import Wasm.Ops.Collections
+import Wasm.Ops.LiteralValue
 
 namespace L4Wasm.Core
 
@@ -83,6 +84,7 @@ def coreOpNames : List String :=
   , "rdfsPlusClosure"
   , "queryRaw"
   , "shaclValidate" ] ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames ++ termsOpNames
+    ++ literalOpNames
 
 /-- The op names of the core engine that hold state (an `IO.Ref`), served by
 `callIO` only: dataset handles, the §17.6 registry, the SERVICE registry, and
@@ -302,7 +304,11 @@ def callArgsBy (extra : ExtraReader) (op : String) (args : List String) :
         -- Terms, IRIs, syntax names and vocabularies (Wasm/Ops/Terms.lean).
         match callTerms op args with
         | some r => some r
-        | none => callLenientBy extra op args
+        | none =>
+          -- Literal values (Wasm/Ops/LiteralValue.lean).
+          match callLiteral op args with
+          | some r => some r
+          | none => callLenientBy extra op args
 
 /-- The core ops that need `IO` (the stateful ones, and the IO forms of
 `queryDataset`, `parseToDatasetJson` and `parseDocument`); `none` for any other

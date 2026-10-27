@@ -397,6 +397,100 @@ Breaking changes in 0.10.0:
   graph IRI `urn:g` and an RDF/JS blank node with the label `urn:g` gave the
   same string.
 
+## Literal values
+
+Four functions give the value of a literal and the literal of a JavaScript
+value (https://github.com/danbri/factoidal/issues/1051 items 1 to 3). The
+engine makes every decision (`formal/lean4/L4Factoidal/RDF/LiteralValue.lean`,
+over the XSD code that SPARQL casts use; wasm ops `literalValue` and
+`literalFromValue`). The functions are SYNCHRONOUS after the engine is
+loaded: call `await ready()` (or any other call) first, else they throw a
+`FactoidalError`.
+
+```js
+import { ready, dataFactory as df, literalValue, isValidLiteral,
+         canonicalLiteral, literalFromValue } from '@factoidal/core';
+await ready();
+const XSD = 'http://www.w3.org/2001/XMLSchema#';
+
+literalValue(df.literal('01', df.namedNode(XSD + 'integer')));
+// { datatype: XSD+'integer', recognized: true, valid: true,
+//   value: { kind: 'decimal', decimal: '1', integer: true, number: 1 },
+//   canonical: '1' }
+isValidLiteral(df.literal('2147483648', df.namedNode(XSD + 'int')));   // false (ill-typed)
+isValidLiteral(df.literal('x', df.namedNode('http://example.org/dt'))); // null (unknown datatype)
+canonicalLiteral(df.literal('0.1', df.namedNode(XSD + 'double'))).value; // '1.0E-1'
+
+literalFromValue(99);                          // "99"^^xsd:integer
+literalFromValue(1.5);                         // "1.5E0"^^xsd:double
+literalFromValue(99, { datatype: 'int' });     // "99"^^xsd:int
+try { literalFromValue(300, { datatype: 'byte' }); }
+catch (err) { err.code; }                      // 'literal.value' (300 is not an xsd:byte)
+```
+
+`literalValue(term)` answers `{datatype, recognized, valid, value?, canonical?}`:
+
+- `recognized: false`: the engine has no lexical space for the datatype;
+  `valid` is `null`. RDF 1.1 Concepts §5: the literal is still a literal.
+- `valid`: the lexical form is in the lexical space of the datatype (XSD 1.1
+  Part 2 §3). There is no whiteSpace processing (RDF 1.1 Semantics §7), so
+  `" 3 "^^xsd:int` is not valid. `valid: false` is the "ill-typed" result
+  (RDFLib `Literal.ill_typed`, Jena `DatatypeFormatException`).
+- `value`: the value as JSON-safe data, with a `kind`. A number that a
+  JavaScript number does not hold exactly is a decimal string, and `number`
+  is present only when the value is exactly a binary64 value.
+- `canonical`: the canonical lexical form (XSD 1.1 Part 2 §2.3.1; float and
+  double by §E.1: the fewest digits that map back to the value).
+
+| `kind` | members |
+|---|---|
+| `string`, `anyURI` | `string` (also every type derived from `string`) |
+| `boolean` | `boolean` |
+| `decimal` | `decimal` (canonical text), `integer` (true for an integer value), `number` when exact (also every integer type) |
+| `float`, `double` | `number`; finite: `decimal` (the exact value); `-0`: `negativeZero: true`; `NaN`, `INF`, `-INF`: `special` |
+| `duration` | `months`, `seconds` (decimal text) (also `yearMonthDuration`, `dayTimeDuration`) |
+| `dateTime`, `time`, `date`, `gYearMonth`, `gYear`, `gMonthDay`, `gDay`, `gMonth` | the properties the type has: `year`, `month`, `day`, `hour`, `minute`, `second` (decimal text), `timezoneOffset` (minutes) |
+| `hexBinary`, `base64Binary` | `hex` (upper-case) |
+| `QName`, `NOTATION` | `prefix`, `localName` |
+| `list` | `items` (`NMTOKENS`, `IDREFS`, `ENTITIES`) |
+| `langString` | `string`, `language` (lower case), `direction` for `rdf:dirLangString` |
+
+`rdf:XMLLiteral` and `rdf:JSON` have `valid` and no `value`.
+
+`isValidLiteral(term)` is `literalValue(term).valid`. `canonicalLiteral(term)`
+is the literal with the canonical form and the same datatype (or language);
+`null` when the literal is not valid or has no canonical mapping.
+
+`literalFromValue(value, {datatype?})` answers an RDF/JS Literal. With no
+`datatype` the engine table (`L4Factoidal.XSD.JsValue.jsLiteral`, the same
+table as the answers of extension functions) chooses:
+
+| JavaScript value | datatype | lexical form |
+|---|---|---|
+| `boolean` | `xsd:boolean` | `true`, `false` |
+| `string` | `xsd:string` | the string |
+| `bigint` | `xsd:integer` | the integer |
+| `number`, a safe integer (`Number.isSafeInteger`, not `-0`) | `xsd:integer` | `99` |
+| any other `number` | `xsd:double` | canonical: `1.5E0`, `-0.0E0`, `NaN`, `INF` |
+| `Date` | `xsd:dateTime` | the instant in UTC: `2026-10-27T12:00:00.123Z`; an invalid Date is an error |
+
+`datatype` (an IRI, a NamedNode, or an XSD local name such as `'int'`) names
+the datatype. The value must be in its value space, else a `FactoidalError`
+with code `literal.value`:
+
+- a `string` is a lexical form of the datatype; it must be valid and is kept
+  as given (`literalFromValue('01', {datatype: 'integer'})` is `"01"`);
+- a `number` or `bigint` with an integer type or `xsd:decimal`: the exact
+  value (`2 ** 60` is `1152921504606846976`), within the type's bounds;
+- a `number` or `bigint` with `xsd:float` or `xsd:double`: the value of the
+  literal `"<Number::toString text>"^^datatype` (it rounds to nearest); a
+  finite value that rounds to an infinity is an error;
+- a `boolean` only with `xsd:boolean`; a `Date` only with `xsd:dateTime` or
+  `xsd:dateTimeStamp`.
+
+The lexical form of a non-string value is the canonical form.
+`capabilities().literalValues` is true when the loaded wasm has the two ops.
+
 ## Datasets
 
 A `Dataset` is a handle into the engine: its quads are parsed and indexed
@@ -1578,6 +1672,8 @@ runnable.
 | `toanSummation`, `toanProduct`, `toanSimplify`, `toanDiff`, `toanSubst` | | symbolic algebra over Content MathML |
 | `vcSha256Hex`, `vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical` | | VC Data Integrity `eddsa-rdfc-2022`; Ed25519 is HACL\*'s C code in the wasm module; no initialisation step |
 | `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | | VCDM 2.0 checks; `did:key` (Ed25519) resolution |
+| `literalValue`, `isValidLiteral`, `canonicalLiteral` | `(Literal) => {datatype, recognized, valid, value?, canonical?}`, `=> boolean \| null`, `=> Literal \| null` | synchronous after `ready()`; see "Literal values" |
+| `literalFromValue` | `(boolean \| number \| bigint \| string \| Date, {datatype?}) => Literal` | synchronous after `ready()`; the engine table, or a named datatype; see "Literal values" |
 | `capabilities` | `() => {…}` | which ops the loaded wasm serves |
 | `loadEngine` | `() => engine` | the low-level handle, `call(op, args)`, for ops this layer does not wrap |
 | `Dataset`, `Store`, `FactoidalError`, `dataFactory`, `version`, `engine` | | `engine` is `'lean4-wasm'` |

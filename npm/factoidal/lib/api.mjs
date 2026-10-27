@@ -26,7 +26,7 @@ import { dataFactory, termFromSrj, termToJson, quadToJson, _setTextEngine } from
 import { Dataset, INTERNAL, checkOptions, makeRegistry, WRITER_TAGS } from './dataset.mjs';
 import { version as packageVersion } from './version.mjs';
 import { openGeneration, readRegion, manifestKeys, hexOfBytes } from './store.mjs';
-import { fullEngineMessage } from './lean-entry.mjs';
+import { fullEngineMessage, encodeJsValue } from './lean-entry.mjs';
 import { memoryDeltaLogStore } from './delta-log-hosts.mjs';
 import { FactoidalError, errorFromEnvelope, envelopeResult } from './errors.mjs';
 import { buildNodes } from './nodes.mjs';
@@ -2317,7 +2317,104 @@ function buildApi(driver) {
       turtlePrefixes: has('serializeTurtleWith'),
       store: has('storeOpen') && has('storeHandleQuery'),
       deltaLog: has('deltaLogEncode') && has('deltaLogDecode') && has('deltaLogMerge'),
+      literalValues: has('literalValue') && has('literalFromValue'),
     };
+  }
+
+  // ---------------------------------------------------------------
+  // Literal values (https://github.com/danbri/factoidal/issues/1051 items 1-3).
+  // The ops literalValue and literalFromValue (formal/lean4/Wasm/Ops/
+  // LiteralValue.lean, over L4Factoidal.RDF.LiteralValue) make every
+  // decision: the XSD lexical-to-value mapping, validity, the canonical form,
+  // the datatype of a JavaScript value. These functions are SYNCHRONOUS, so a
+  // library-style API can call them in a getter; the engine must be loaded
+  // first (await ready(), or any other call).
+  // ---------------------------------------------------------------
+  function loadedEntry(who) {
+    if (!ctxCache) {
+      throw new FactoidalError(
+        `${who}: the engine is not loaded yet. Await any @factoidal/core call ` +
+        'first (for example `await ready()`); after that this function is synchronous.',
+        { code: 'op.unknown' });
+    }
+    return ctxCache.e;
+  }
+
+  function literalAnswer(term, who) {
+    if (!term || typeof term !== 'object' || term.termType !== 'Literal') {
+      throw new TypeError(`${who}: expected an RDF/JS Literal term`);
+    }
+    const e = loadedEntry(who);
+    requireEntryFn(e, 'literalValue', who);
+    return entryResult(e.literalValue(JSON.stringify(termToJson(term))), who);
+  }
+
+  // NaN and the infinities have no JSON number; the engine names them in
+  // `special`, and this copies the matching JavaScript number in.
+  const SPECIAL_NUMBERS = { NaN: NaN, INF: Infinity, '-INF': -Infinity };
+  function valueOut(v) {
+    if (v && typeof v.special === 'string' && v.special in SPECIAL_NUMBERS) {
+      return { ...v, number: SPECIAL_NUMBERS[v.special] };
+    }
+    // A JSON text -0 may reach this layer as 0; negativeZero is the engine's
+    // statement of the sign.
+    if (v && v.negativeZero === true) return { ...v, number: -0 };
+    return v;
+  }
+
+  /**
+   * The value of a literal: {datatype, recognized, valid, value?, canonical?}.
+   * `recognized` false: the engine has no lexical space for the datatype, and
+   * `valid` is null. `value` and `canonical` are present for a valid literal
+   * of a datatype with a value model (the shapes are in API.md).
+   */
+  function literalValue(term) {
+    const r = literalAnswer(term, 'literalValue');
+    const out = { datatype: r.datatype, recognized: r.recognized,
+      valid: r.recognized ? r.valid : null };
+    if (r.value !== undefined) out.value = valueOut(r.value);
+    if (r.canonical !== undefined) out.canonical = r.canonical;
+    return out;
+  }
+
+  /** true or false: the lexical form is in the datatype's lexical space;
+   * null: the engine has no lexical space for the datatype. */
+  function isValidLiteral(term) {
+    const r = literalAnswer(term, 'isValidLiteral');
+    return r.recognized ? r.valid : null;
+  }
+
+  /** The literal with the canonical lexical form of its value (XSD 1.1 Part 2
+   * section 2.3.1), the same datatype and language; null when the literal is
+   * not valid or the engine has no canonical mapping for its datatype. */
+  function canonicalLiteral(term) {
+    const r = literalAnswer(term, 'canonicalLiteral');
+    if (r.canonical === undefined) return null;
+    if (term.language) return dataFactory.literal(r.canonical, term.direction
+      ? { language: term.language, direction: term.direction } : term.language);
+    return dataFactory.literal(r.canonical, dataFactory.namedNode(r.datatype));
+  }
+
+  /**
+   * The literal of a JavaScript value. The engine chooses the datatype (table
+   * in API.md) unless `options.datatype` names one (an IRI, a NamedNode, or
+   * an XSD built-in local name such as 'int'); the value must then be in that
+   * datatype's value space, else a FactoidalError with code literal.value.
+   */
+  function literalFromValue(value, options) {
+    const who = 'literalFromValue';
+    const tagged = encodeJsValue(value);
+    if (!tagged) {
+      throw new TypeError(`${who}: expected a boolean, number, bigint, string or Date`);
+    }
+    const dt = options && options.datatype;
+    const hint = dt === undefined || dt === null ? ''
+      : (typeof dt === 'string' ? dt : (dt && typeof dt.value === 'string' ? dt.value : null));
+    if (hint === null) throw new TypeError(`${who}: options.datatype must be a string or a NamedNode`);
+    const e = loadedEntry(who);
+    requireEntryFn(e, 'literalFromValue', who);
+    const r = entryResult(e.literalFromValue(JSON.stringify(tagged), hint), who);
+    return dataFactory.literal(r.value, dataFactory.namedNode(r.datatype));
   }
 
   // The node-composition API (lib/nodes.mjs, issue 1002 step 2).
@@ -2407,6 +2504,10 @@ function buildApi(driver) {
     queryRaw,
     isomorphic,
     fromQuads,
+    literalValue,
+    isValidLiteral,
+    canonicalLiteral,
+    literalFromValue,
     ready,
     engineTables,
     sameValue,

@@ -269,7 +269,7 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Maths,
              `Wasm.Ops.Vc,
              `Wasm.Ops.Lenient, `Wasm.Ops.Validate,
-             `Wasm.Ops.DeltaLog,
+             `Wasm.Ops.DeltaLog, `Wasm.Ops.LiteralValue,
              `Wasm.Ops.Terms, `Wasm.Ops.Collections,
              -- The core wasm (issue 713 stage 4): its dispatch, its C symbols,
              -- the op modules the split moved out of the core closure, and the

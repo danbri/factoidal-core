@@ -1266,3 +1266,46 @@ reason = "host (webdav/server.mjs): a Node HTTP socket over openWebdav; reads no
 [[nonstage]]
 id = "cli:webdav-serve"
 reason = "host command: starts npm:./webdav#listen on a mount directory and prints the origin; reads no RDF data"
+
+# Literal values (https://github.com/danbri/factoidal/issues/1051): term-level
+# functions over one literal or one JavaScript value; no graph, no dataset.
+
+[[nonstage]]
+id = "npm:.#literalValue"
+reason = "term-level: the XSD lexical-to-value mapping of one literal (RDF/LiteralValue.lean analyze), reads no graph"
+
+[[nonstage]]
+id = "npm:.#isValidLiteral"
+reason = "term-level: the lexical-space check of one literal (wasm op literalValue), reads no graph"
+
+[[nonstage]]
+id = "npm:.#canonicalLiteral"
+reason = "term-level: the canonical form of one literal (wasm op literalValue), reads no graph"
+
+[[nonstage]]
+id = "npm:.#literalFromValue"
+reason = "term-level: the literal of one JavaScript value (RDF/LiteralValue.lean jsValueLiteral), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#literalValue"
+reason = "term-level: the XSD lexical-to-value mapping of one literal (RDF/LiteralValue.lean analyze), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#isValidLiteral"
+reason = "term-level: the lexical-space check of one literal (wasm op literalValue), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#canonicalLiteral"
+reason = "term-level: the canonical form of one literal (wasm op literalValue), reads no graph"
+
+[[nonstage]]
+id = "npm:./browser#literalFromValue"
+reason = "term-level: the literal of one JavaScript value (RDF/LiteralValue.lean jsValueLiteral), reads no graph"
+
+[[nonstage]]
+id = "wasm:literalValue"
+reason = "term-level: the XSD lexical-to-value mapping of one literal (RDF/LiteralValue.lean analyze), reads no graph"
+
+[[nonstage]]
+id = "wasm:literalFromValue"
+reason = "term-level: the literal of one JavaScript value (RDF/LiteralValue.lean jsValueLiteral), reads no graph"

@@ -123,6 +123,9 @@ codeTest('term.invalid', 'a literal in subject position', async () => {
     f.dataFactory.literal('x'));
   check(await rejection(() => f.fromQuads([q])), 'term.invalid', undefined, null);
 });
+codeTest('literal.value', 'a JavaScript number outside the value space of xsd:byte', async () => {
+  check(await rejection(() => f.literalFromValue(300, { datatype: 'byte' })), 'literal.value', undefined, null);
+});
 codeTest('query.syntax', 'position counts into the query text', async () => {
   const err = await rejection(() => f.query(ds, 'SELECT *\nWHERE { ?s }'));
   check(err, 'query.syntax');

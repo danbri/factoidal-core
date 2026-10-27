@@ -12,6 +12,7 @@ export type {
   QueryOptions, SerializeOptions, StoreReader, OpenStoreOptions,
   DeltaLogHandle, DeltaLogInspection,
   Sbm11Reader, Sbm11Answer, Sbm11Store, Sbm11ReadEvidence, Sbm11Transport,
+  LiteralValueData, LiteralValueResult,
   ExplainResult, StageInfo, EvidenceRecord, Wire, FactoidalNode, Pipeline, RunResult, RunOptions,
 } from './index';
 
@@ -26,6 +27,10 @@ export {
   asDefaultGraph,
   isomorphic,
   fromQuads,
+  literalValue,
+  isValidLiteral,
+  canonicalLiteral,
+  literalFromValue,
   ready,
   engineTables,
   sameValue,

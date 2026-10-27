@@ -122,6 +122,7 @@ import L4Factoidal.Proof.Tests
 import L4Factoidal.Proof.RdfsProfile
 import L4Factoidal.RDFS.SchemaSplit
 import L4Factoidal.RDF.Datatypes
+import L4Factoidal.RDF.LiteralValue
 import L4Factoidal.RDF.Entailment
 import L4Factoidal.RDF.EntailmentTheorems
 import L4Factoidal.RDF.EntailmentSimpleRefinement
@@ -1038,6 +1039,7 @@ import L4Factoidal.RIF.BoundaryTests
 import L4Factoidal.RIF.BoundaryTheorems
 import L4Factoidal.XSD.IdentityTheorems
 import L4Factoidal.XSD.ValueSpaceTheorems
+import L4Factoidal.XSD.CanonicalTheorems
 import L4Factoidal.Encoding.InteropTests
 import L4Factoidal.SPARQL.IdentityTests
 import L4Factoidal.SPARQL.NumericTests
