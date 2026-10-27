@@ -576,6 +576,11 @@ lean_exe «l4dict-fold-bench» where
 -- and compared with the suite's own assert-xml file (Harness/XsltRun.lean).
 @[default_target] lean_exe «l4xslt» where root := `Harness.XsltRun
 
+-- qt4tests (QT4 CG XPath 4.0 / F&O 4.0) runner over L4Factoidal.XPath4
+-- (Harness/Qt4Run.lean). Reads third_party/testing/qt4tests; prints
+-- per-test-set and total pass / fail / unsupported counts.
+lean_exe «l4qt4» where root := `Harness.Qt4Run
+
 -- ShExC differential: every schemas/*.shex read by ShEx/Compact and
 -- compared with the ShExJ twin the same directory ships
 -- (Harness/ShExCRun.lean).
