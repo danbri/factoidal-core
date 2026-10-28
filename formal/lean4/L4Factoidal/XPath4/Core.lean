@@ -686,8 +686,15 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
         match i.fnArity with
         | some k =>
           if k > ps.length then err "XPTY0004" ("function item of wrong type for " ++ what)
-          else if k == ps.length && e.itemMatches i it then pure i
-          else pure (coercedFn i k ps r)
+          -- a map or an array that matches is kept as it is; a function
+          -- item is kept only when its signature is the required one
+          else match i with
+            | .map _ | .arr _ => if k == ps.length && e.itemMatches i it then pure i else pure (coercedFn i k ps r)
+            | .fn fi =>
+              match fnSigOf fi with
+              | some (fps, fr) => if k == ps.length && fps == ps && fr == r then pure i else pure (coercedFn i k ps r)
+              | none => pure (coercedFn i k ps r)
+            | _ => pure (coercedFn i k ps r)
         | none => err "XPTY0004" ("function item of wrong type for " ++ what))
   | .anyFn =>
       if s.all (fun i => e.itemMatches i it) then pure s

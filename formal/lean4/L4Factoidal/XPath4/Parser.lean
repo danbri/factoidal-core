@@ -832,6 +832,9 @@ def pLet : Nat → P Expr
         let e ← pExprSingle n
         let tmp : QN := { uri := "#let", loc := toString j }
         binds := binds ++ [(tmp, st, e)]
+        -- a map or array binding needs exactly one map or array
+        if open_ != '(' then
+          binds := binds ++ [({ uri := "#let", loc := toString j ++ "!" }, dflt, .var tmp)]
         let k := vs.length
         for ((v, vt), idx) in vs.zip (List.range k) do
           let pos : Expr := .lit (Atomic.ofInt (idx + 1))

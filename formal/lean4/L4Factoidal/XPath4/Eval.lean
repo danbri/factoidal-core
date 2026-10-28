@@ -267,6 +267,11 @@ def castToF (e : Env) : Nat → Seq → IType → Bool → M Seq
             match castAtomic a aty e.nsResolve with
             | .ok v => res := some v; break
             | .error _ => pure ()
+          -- an enumeration member: the string value must be one of its values
+          | .enum vs =>
+            match castAtomic a (.b .string) with
+            | .ok v => if vs.contains v.str then res := some v; break
+            | .error _ => pure ()
           | _ => pure ()
         match res with
         | some v => pure (single v)
