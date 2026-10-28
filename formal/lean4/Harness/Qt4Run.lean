@@ -126,6 +126,8 @@ def featureSupported (f : String) : Bool :=
   || f == "olson-timezone"
   -- fn:invisible-xml (`XPath4.Ixml`)
   || f == "fn-invisible-xml"
+  -- a collection may hold any items (`Env.collections`)
+  || f == "non_empty_sequence_collection"
 
 def depOk (d : Node) : Bool :=
   let ty := attrD d "type"
@@ -597,7 +599,11 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) : IO (Exce
   let mut env : Env := { ns := spec.ns, baseUri := if spec.baseUri == "#UNDEFINED" then "" else spec.baseUri,
                          resourceEncodings := spec.resourceEncodings }
   if let some c := spec.defaultCollation then env := { env with defaultCollation := c }
-  for (role, file, uri) in spec.sources do
+  for (role, file, uri0) in spec.sources do
+    -- a source without a uri gets its file URI as its document URI
+    -- (implementation-defined, F&O 4.0 §2.5)
+    let uri ← if uri0 != "" then pure uri0 else do
+      try pure ("file://" ++ (← IO.FS.realPath file).toString) catch _ => pure ""
     let doc ← match (← cache.get).lookup file with
       | some d => pure (some d)
       | none =>
@@ -620,7 +626,9 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) : IO (Exce
   for (curi, srcs, qs) in spec.collections do
     let mut items : Seq := []
     let mut uris : List String := []
-    for (file, uri) in srcs do
+    for (file, uri0) in srcs do
+      let uri ← if uri0 != "" then pure uri0 else do
+        try pure ("file://" ++ (← IO.FS.realPath file).toString) catch _ => pure ""
       let doc ← match (← cache.get).lookup file with
         | some d => pure (some d)
         | none =>
@@ -717,7 +725,8 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       let env ← if env.baseUri != "" || undefBase then pure env else do
         let abs ← try pure (← IO.FS.realPath dir).toString catch _ => pure dir
         pure { env with baseUri := "file://" ++ abs ++ "/" }
-      let (scanned, scannedBins) ← if undefBase then pure ([], []) else scanResources o.root dir src
+      let (scanned, scannedBins) ← if undefBase then pure ([], []) else
+        scanResources o.root dir (String.intercalate " " (src :: spec.params.map (·.2)))
       let env := { env with resources := env.resources ++ scanned,
                             resourceBytes := env.resourceBytes ++ scannedBins }
       let (res, env) ← match spec.sandpit with

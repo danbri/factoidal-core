@@ -367,6 +367,7 @@ def docFn (e : Env) (a : List Seq) : M Seq := do
   | none => pure []
   | some u =>
     if (u.str.splitOn "#").length > 1 then err "FODC0005" "a fragment identifier is not allowed"
+    if !iriRefOk u.str then err "FODC0005" ("not a valid URI reference: " ++ u.str)
     let o ← parseOpts e (argN a 1)
     match e.docUris.lookup u.str with
     | some d =>
