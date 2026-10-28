@@ -440,3 +440,51 @@ client 7 pass (out of 7); 0 fail in each.
   state that the step still holds copies them (linear in the store).
 - A PUT of the same bytes writes a new body file unless the old bytes were
   read for the step.
+
+## Summary: what the LWS server offers and assumes about its state (2026-10-28)
+
+Written after the owner asked, 2026-10-28, verbatim: "So our lws server
+implentation: what offerings/assumptions does it make about storage / keeping
+its state".
+
+Offers:
+
+- One abstract store (`LWS/Store.lean`: `lookup`, `put`, `remove`, `paths`,
+  clock) with laws (`StoreLaws`). `Operations.step` is written against it, so
+  every backend that satisfies the laws gives the same answers. The reference
+  instance is in memory (`MemStore`, `memStoreLaws`).
+- Two durable forms for `lws-serve DIR`:
+  - `snapshot` (default): all state in `DIR/lws-state.json`, written whole
+    after each changing request (temporary file, fsync, rename, fsync of
+    `DIR`). The cost of a write is linear in the storage size.
+  - `files` (`--storage files` or `FACTOIDAL_LWS_STORAGE=files`):
+    `lws-files.json` (metadata), `lws-journal` (one framed record per
+    changing request) and `bodies/XX/N` (one file per body version, written
+    once). The cost of a write does not grow with the storage size, and
+    bodies are not kept in memory. Replay is proved (`persist_replay`), and a
+    torn last journal frame is ignored (`decodeFrames_torn`).
+- The durable state includes the resources and also notification
+  subscriptions, access requests and grants, search results and move
+  redirects.
+- Encryption at rest is optional (`FACTOIDAL_LWS_KEY`, ChaCha20-Poly1305 from
+  HACL*). The file is authenticated before any of it is used.
+- Merkle data is optional and off by default.
+
+Assumes:
+
+- One process writes `DIR`. There is no lock on the directory, and a second
+  writer (another `lws-serve`, or a `webdav-serve` local mount of the same
+  directory) overwrites the first one's changes (row C11 of
+  `2026-10-28-feature-combination-safety.md`).
+- A request finishes (state in memory, then the files written) before its
+  answer goes out. One request changes state at a time.
+- The local file system honours fsync and rename. No replication, backup or
+  remote store is built in. A store on another system is reached only as an
+  LWS client (`webdav-serve` `kind: lws` mount).
+- The metadata of every resource stays in memory in both modes, and a start
+  reads all of it. Container listings, recursive DELETE and moves are linear
+  in the number of resources.
+- The clock comes from the host before each request. Within one request,
+  `tick` keeps `Last-Modified` values apart. Across requests, two values can
+  be the same (https://github.com/danbri/factoidal/issues/911).
+- `solid-serve` keeps the snapshot form only.
