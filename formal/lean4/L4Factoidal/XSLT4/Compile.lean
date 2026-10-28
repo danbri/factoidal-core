@@ -1204,7 +1204,9 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
             let ck ← c.enter m k kas
             let fi := kas.get "for-each-item"
             let fs := kas.get "for-each-source"
-            if fi.isSome && (fs.isSome || (kas.get "use-accumulators").isSome || (kas.get "streamable").isSome) then
+            -- (streamable="no" is read as absent, as the W3C tests do)
+            let streamYes := ((kas.get "streamable").bind parseBool).getD ((kas.get "streamable").isSome)
+            if fi.isSome && (fs.isSome || (kas.get "use-accumulators").isSome || streamYes) then
               cerr "XTSE3195" "xsl:merge-source with for-each-item cannot have for-each-source, use-accumulators or streamable"
             let sel ← parseC ck (← reqAttr kas "select" "merge-source")
             -- the name of a merge source is an NCName (XTSE0020)

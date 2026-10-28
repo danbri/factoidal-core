@@ -1889,7 +1889,9 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
                     if let (some a, some b) := (x.head?, y.head?) then
                       if !sortComparable tz a b then
                         xerr "XTTE2230" ("merge key values " ++ a.str ++ " and " ++ b.str ++ " are not comparable")
-                  if cmpKeys ks tz p kv == .gt then
+                  -- (checked with the codepoint collation only: the order
+                  -- of a language-specific collation is not fully defined)
+                  if ks.all (fun sp => sp.coll.isCodepoint && sp.caseOrder == "") && cmpKeys ks tz p kv == .gt then
                     xerr "XTDE2220" "an input of xsl:merge is not in merge key order"
                 prev := some kv
                 rows := rows.push (kv, name, it)
