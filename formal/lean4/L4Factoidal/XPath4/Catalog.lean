@@ -338,6 +338,8 @@ def catalogRaw : List (String × String × String × List (String × String × O
   ("fn", "load-xquery-module", "item()*", [("module-uri", "xs:string", none), ("options", "map(*)?", some "{}")]),
   ("fn", "transform", "map(*)", [("options", "map(*)", none)]),
   ("fn", "random-number-generator", "item()*", [("seed", "xs:anyAtomicType?", some "()")]),
+  -- internal (XPath4.Fn4): the function that fn:xsd-validator returns
+  ("fn", "xsd-validate#", "item()*", [("options", "map(*)", none), ("node", "item()*", none)]),
   -- internal (XPath4.Fn4): the functions of a random-number-generator record
   ("fn", "rng-record#", "map(xs:string, item())", [("state", "xs:integer", none)]),
   ("fn", "rng-permute#", "item()*", [("state", "xs:integer", none), ("input", "item()*", none)]),

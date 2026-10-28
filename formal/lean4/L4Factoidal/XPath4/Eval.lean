@@ -249,6 +249,21 @@ def castToF (e : Env) : Nat → Seq → IType → Bool → M Seq
   | [] => if opt then pure [] else err "XPTY0004" "empty sequence cannot be cast"
   | [a] =>
     match t with
+    | .atomic (.b lb) =>
+      match builtinListItem? lb with
+      | some it =>
+        -- a built-in list type: the tokens of the string, each cast to the item type
+        if !(a.isStringLike || a.ty == .untyped) then err "XPTY0004" "only a string can be cast to a list type"
+        else
+          let toks := ((applyWhiteSpace .collapse a.str).splitOn " ").filter (· != "")
+          if toks.isEmpty then err "FORG0001" "an empty string is not a list value"
+          else return (← toks.mapM (fun tk => castAtomic (Atomic.untypedOf tk) (.b it) e.nsResolve)).map Item.atom
+      | none =>
+        let aty := AType.b lb
+        if aty == .b .anyAtomicType || aty == .b .notation then err "XPST0080" "cast to an abstract type"
+        else if (aty == .b .qname) && !(a.isStringLike || a.is .qname) then
+          err "XPTY0004" "cannot cast to xs:QName"
+        else pure (single (← castAtomic a aty e.nsResolve))
     | .atomic aty =>
         if aty == .b .anyAtomicType || aty == .b .notation then err "XPST0080" "cast to an abstract type"
         -- a list type (xs:NMTOKENS, xs:IDREFS, xs:ENTITIES): the

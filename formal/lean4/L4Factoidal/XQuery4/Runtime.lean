@@ -307,6 +307,10 @@ def freshPrefix (used : List (String × String)) : String := Id.run do
     k := k + 1
   "ns" ++ toString k
 
+/-- Bound (to the empty sequence) when the module declares `construction
+    strip` (XQuery 4.0 §5.6). -/
+def constructionStripKey : QN := { uri := "#xq", loc := "construction-strip" }
+
 /-- Build an element node: name, namespace declarations, content. -/
 def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × String))
     (parts : List Seq) (preserve inherit : Bool := true) : M Seq := do
@@ -358,7 +362,11 @@ def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × Str
     atRecs := atRecs.push { r with name := an, parent := some 0 }
   if (scope.lookup "xml").isNone then scope := scope ++ [("xml", nsXML)]
   scope := scope.filter (fun (p, u) => !(p == "" && u == ""))
-  let mut out : Array NRec := #[{ kind := .element, name, inscope := scope }]
+  -- XQuery 4.0 §3.9.1.1: under construction mode preserve the new element
+  -- is annotated xs:anyType; under strip, xs:untyped (no annotation)
+  let strip := env.vars.any (fun (q, _) => q == constructionStripKey)
+  let mut out : Array NRec := #[{ kind := .element, name, inscope := scope,
+                                  tann := if strip then none else some anyTypeQN }]
   let mut aIdx : Array Nat := #[]
   for r in atRecs do
     let i := out.size
@@ -844,6 +852,26 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
     for e in es do last ← cb.eval env e
     pure last
   | "error" => err (ss.headD "XPST0003") (ss.getD 1 "")
+  | "validate" =>
+    -- XQuery 4.0 §3.21 (validate expressions), through the schema hook
+    match env.schema.validateIn with
+    | none => err "XQST0075" "validate needs an in-scope schema"
+    | some f =>
+      let v ← cb.eval env (es.headD (.seq []))
+      match v with
+      | [.node n] =>
+        let r := env.nrec n
+        if r.kind != .document && r.kind != .element then
+          err "XQTY0030" "the operand of validate is not a document or element node"
+        else
+          let d := env.doc n
+          match f (ss.headD "strict") d n.idx d.uri with
+          | .ok nd =>
+            let id := n.doc + (2 : Nat) ^ 41
+            if r.kind == .document then pure [.node { doc := id, idx := 0, rt := some nd }]
+            else pure [.node { doc := id, idx := 1, rt := some nd }]
+          | .error x => err (if x.code == "FODC0007" then "XQDY0027" else x.code) x.msg
+      | _ => err "XQTY0030" "the operand of validate is not one document or element node"
   | _ => err "XPST0003" ("unknown XQuery construct " ++ tag)
 
 end L4Factoidal.XQuery4
