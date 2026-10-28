@@ -25,6 +25,7 @@ table to `XML.Node` and loop invariants over `Runtime.buildElement`
 (https://github.com/danbri/factoidal/issues/1101).
 -/
 import L4Factoidal.XQuery4.Module
+import L4Factoidal.XSD11.Load
 
 namespace L4Factoidal.XQuery4
 
@@ -101,5 +102,53 @@ theorem evalModule_emptyProlog (fuel : Nat) (env : Env) (m : Module) (e : Expr)
     fun env' seen => loadImports_nil env' 49 seen m hi
   simp only [evalModule, h50, hs]
   simp [hb, hl, bindModules_empty _ _ _ hd]
+
+/-! ## More FLWOR clauses as XPath 4.0 expressions -/
+
+/-- `for key $k value $v in E return R` is the XPath 4.0 entry `for`
+    (§4.13.2), with the declared type of the value checked by a `let`. -/
+theorem flwor_forKeyValue (k v : QN) (kt vt : IType) (src ret : Expr)
+    (hk : isNoName k = false) (hv : isNoName v = false) :
+    mkFlwor [.forKV k v noName kt vt src] ret =
+      .forE .entry k (some v) none kt src (.letE v vt (.var v) ret) := by
+  simp [mkFlwor, flworToXPath, Clause.simple, hk, hv, show isNoName noName = true from rfl]
+
+/-- `for member $m in E return R` is the XPath 4.0 member `for`. -/
+theorem flwor_forMember (v : QN) (vt : IType) (src ret : Expr) :
+    mkFlwor [.forI "member" v vt noName false src] ret = .forE .member v none none vt src ret := by
+  simp [mkFlwor, flworToXPath, Clause.simple, isNoName, noName]
+
+/-- Evaluation: `for key $k value $v` gives what the XPath expression gives. -/
+theorem eval_flwor_forKeyValue (n : Nat) (env : Env) (k v : QN) (kt vt : IType) (src ret : Expr)
+    (hk : isNoName k = false) (hv : isNoName v = false) :
+    eval n env (mkFlwor [.forKV k v noName kt vt src] ret) =
+      eval n env (.forE .entry k (some v) none kt src (.letE v vt (.var v) ret)) := by
+  rw [flwor_forKeyValue k v kt vt src ret hk hv]
+
+/-! ## `validate` and XML Schema 1.1
+
+`validate` (XQuery 4.0 §4.25) is the XSD11 validator of the in-scope
+schema: with the schema hook of an XSD11 schema `s`, validating an element
+gives the document that `XSD11.validateNodeIn s` builds, and a validation
+error is the error of XSD11 (FODC0007 is reported as XQDY0027). -/
+
+theorem schemaHookOf_validateIn (s : L4Factoidal.XSD11.Schema) :
+    (L4Factoidal.XSD11.schemaHookOf s).validateIn = some (L4Factoidal.XSD11.validateNodeIn s) := rfl
+
+theorem validate_xsd11 (cb : XCb) (env : Env) (s : L4Factoidal.XSD11.Schema)
+    (hs : env.schema = L4Factoidal.XSD11.schemaHookOf s) (e : Expr) (mode : String) (n : NodeRef)
+    (he : cb.eval env e = .ok [.node n]) (hk : (env.nrec n).kind = .element) (nd : Doc)
+    (hv : L4Factoidal.XSD11.validateNodeIn s mode (env.doc n) n.idx (env.doc n).uri = .ok nd) :
+    evalExt cb env "validate" [e] [] [] [mode] =
+      .ok [.node { doc := n.doc + (2 : Nat) ^ 41, idx := 1, rt := some nd }] := by
+  simp [evalExt, hs, schemaHookOf_validateIn, he, hk, hv, bind, Except.bind, pure, Except.pure]
+
+theorem validate_xsd11_error (cb : XCb) (env : Env) (s : L4Factoidal.XSD11.Schema)
+    (hs : env.schema = L4Factoidal.XSD11.schemaHookOf s) (e : Expr) (mode : String) (n : NodeRef)
+    (he : cb.eval env e = .ok [.node n]) (hk : (env.nrec n).kind = .element) (x : Err)
+    (hv : L4Factoidal.XSD11.validateNodeIn s mode (env.doc n) n.idx (env.doc n).uri = .error x) :
+    evalExt cb env "validate" [e] [] [] [mode] =
+      .error { code := if x.code == "FODC0007" then "XQDY0027" else x.code, msg := x.msg } := by
+  simp [evalExt, hs, schemaHookOf_validateIn, he, hk, hv, bind, Except.bind, err]
 
 end L4Factoidal.XQuery4

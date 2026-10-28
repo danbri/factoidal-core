@@ -20,6 +20,11 @@ open L4Factoidal.XPath4
 structure SCtx where
   vars : List QN
   knownFn : QN → Nat → Bool
+  /-- Is a type name among the in-scope schema types (§2.2.5, XPST0008)? -/
+  typeKnown : QN → Bool := fun _ => true
+  /-- The in-scope element and attribute declarations. -/
+  elemKnown : QN → Bool := fun _ => true
+  attrKnown : QN → Bool := fun _ => true
 
 def SCtx.add (c : SCtx) (qs : List QN) : SCtx :=
   { c with vars := qs.filter (fun q => !isNoName q) ++ c.vars }
@@ -27,6 +32,33 @@ def SCtx.add (c : SCtx) (qs : List QN) : SCtx :=
 def errVarNames : List QN :=
   ["code", "description", "value", "module", "line-number", "column-number", "additional",
    "stack-trace", "map"].map (fun l => { uri := nsERR, loc := l })
+
+/-- A type or declaration name of a sequence type that is not in the
+    in-scope schema definitions is XPST0008 (§2.2.5.1). -/
+def typeStaticErr (c : SCtx) : Nat → IType → Option Err
+  | 0, _ => none
+  | f + 1, t =>
+    match t with
+    | .elemT _ ty _ | .attrT _ ty =>
+      if c.typeKnown ty then none
+      else some { code := "XPST0008", msg := "unknown schema type " ++ ty.show }
+    | .schemaElem q =>
+      if c.elemKnown q then none
+      else some { code := "XPST0008", msg := "no element declaration " ++ q.show }
+    | .schemaAttr q =>
+      if c.attrKnown q then none
+      else some { code := "XPST0008", msg := "no attribute declaration " ++ q.show }
+    | .doc (some t') => typeStaticErr c f t'
+    | .seq t' _ => typeStaticErr c f t'
+    | _ => none
+
+def nodeTestStaticErr (c : SCtx) : Nat → NodeTest → Option Err
+  | 0, _ => none
+  | f + 1, nt =>
+    match nt with
+    | .kind t => typeStaticErr c 8 t
+    | .union ts => ts.foldl (fun acc x => acc <|> nodeTestStaticErr c f x) none
+    | _ => none
 
 /-- The first static error in `e`, if any. -/
 def staticErr : Nat → SCtx → Expr → Option Err
@@ -42,7 +74,7 @@ def staticErr : Nat → SCtx → Expr → Option Err
       else some { code := "XPST0008", msg := "undeclared variable $" ++ q.show }
     | .seq es => all es c
     | .slash a b => go c a <|> go c b
-    | .step _ _ ps => all ps c
+    | .step _ nt ps => nodeTestStaticErr c 8 nt <|> all ps c
     | .dstep _ e ps => go c e <|> all ps c
     | .filter a p => go c a <|> go c p
     | .call q args kw =>
@@ -66,7 +98,8 @@ def staticErr : Nat → SCtx → Expr → Option Err
       go c src <|> go (c.add ([v] ++ v2.toList ++ pv.toList)) body
     | .letE v _ e body => go c e <|> go (c.add [v]) body
     | .quant _ v _ src sat => go c src <|> go (c.add [v]) sat
-    | .instOf e _ | .treat e _ | .cast e _ _ | .castable e _ _ => go c e
+    | .instOf e t | .treat e t => typeStaticErr c 8 t <|> go c e
+    | .cast e _ _ | .castable e _ _ => go c e
     | .smap a b | .pipe a b => go c a <|> go c b
     | .mapArrow a g args => go c a <|> go c g <|> all (args.filterMap id) c
     | .tmpl ps => all ps c

@@ -421,8 +421,12 @@ def nameOf (env : Env) (s : Seq) (sns : List (String × String)) (isAttr : Bool)
       let lex := lex.trimAscii.toString
       if lex.startsWith "Q{" then
         match lex.splitOn "}" with
-        -- the URI is whitespace-collapsed, as an xs:anyURI value
-        | [u, l] => if isNCName l then pure { uri := normSpace (u.drop 2).toString, loc := l } else err "XQDY0074" ("invalid name " ++ lex)
+        | [u, l] =>
+          -- a braced URI holds no brace (EQName, XQDY0074); its whitespace is collapsed
+          let uri := String.intercalate " " (((u.drop 2).toString.map (fun ch =>
+            if ch == '\t' || ch == '\n' || ch == '\r' then ' ' else ch)).splitOn " " |>.filter (· != ""))
+          if isNCName l && !uri.any (· == '{') then pure { uri, loc := l }
+          else err "XQDY0074" ("invalid name " ++ lex)
         | _ => err "XQDY0074" ("invalid name " ++ lex)
       else
       match parseQNameLex lex with
@@ -431,6 +435,7 @@ def nameOf (env : Env) (s : Seq) (sns : List (String × String)) (isAttr : Bool)
         else if p == "xml" then pure { uri := nsXML, loc := l, pfx := p }
         else if p == "xmlns" then pure { uri := "http://www.w3.org/2000/xmlns/", loc := l, pfx := p }
         else match sns.lookup p with
+          | some "" => err "XQDY0074" ("undeclared prefix " ++ p)
           | some u => pure { uri := u, loc := l, pfx := p }
           | none => match defaultNs.lookup p with
             | some u => pure { uri := u, loc := l, pfx := p }
@@ -775,9 +780,9 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
     | nm :: parts =>
       let name ← nameOf env (← cb.eval env nm) (sNs qs) true
       let name := if name.uri == nsXML && name.pfx == "" then { name with pfx := "xml" } else name
-      -- a namespace URI with no prefix gets an implementation-dependent
-      -- prefix (XQuery 4.0 §5.7.3.2)
-      let name := if name.uri != "" && name.pfx == "" then { name with pfx := freshPrefix [] } else name
+      -- an attribute in a namespace needs a prefix: an implementation-dependent
+      -- one when it has none (XQuery 4.0 §5.7.3.2)
+      let name := if name.uri != "" && name.uri != nsXML && name.pfx == "" then { name with pfx := freshPrefix [] } else name
       if isXmlnsName name then err (if ss.headD "" == "d" then "XQST0071" else "XQDY0044") "an attribute named xmlns"
       if name.pfx == "xml" && name.uri != nsXML then err "XQDY0044" "prefix xml bound to another namespace"
       if name.uri == nsXML && name.pfx != "xml" then err "XQDY0044" "the xml namespace with another prefix"

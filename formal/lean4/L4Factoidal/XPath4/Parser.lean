@@ -65,6 +65,8 @@ structure PCtx where
   /-- Read an unknown type name as `item()` (the first pass over an
       XQuery prolog, which collects the named types). -/
   lenientTypes : Bool := false
+  /-- Set by the XQuery grammar's own parsers: a braced URI reads references. -/
+  xqRefs : Bool := false
 
 abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 
@@ -153,6 +155,42 @@ def ncnameAt (s : Array Char) (i : Nat) : Option (String × Nat) :=
     -- a trailing '.' or '-' is part of the name per XML rules; keep it
     some (String.ofList ((List.range (j - i)).map (fun k => chAt s (i + k))), j)
 
+/-- Expand `&lt; &gt; &amp; &quot; &apos;` and numeric character
+    references in the text of a braced URI literal. -/
+def expandUriRefs (t : String) : String := Id.run do
+  let cs := t.toList.toArray
+  let mut out : Array Char := #[]
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    if cs[i]! == '&' then
+      let mut j := i + 1
+      for _ in [0:cs.size + 1] do
+        if j < cs.size && cs[j]! != ';' then j := j + 1 else break
+      if j < cs.size then
+        let body := String.ofList ((cs.extract (i + 1) j).toList)
+        let r : Option Char :=
+          if body == "lt" then some '<' else if body == "gt" then some '>'
+          else if body == "amp" then some '&' else if body == "quot" then some '"'
+          else if body == "apos" then some '\''
+          else if body.startsWith "#x" then
+            (body.drop 2).toString.foldl (fun (a : Option Nat) ch =>
+              a.bind (fun v => if ch.isDigit then some (v * 16 + (ch.toNat - 48))
+                else if 'a' ≤ ch && ch ≤ 'f' then some (v * 16 + (ch.toNat - 87))
+                else if 'A' ≤ ch && ch ≤ 'F' then some (v * 16 + (ch.toNat - 55)) else none)) (some 0)
+              |>.map Char.ofNat
+          else if body.startsWith "#" then
+            (body.drop 1).toString.foldl (fun (a : Option Nat) ch =>
+              a.bind (fun v => if ch.isDigit then some (v * 10 + (ch.toNat - 48)) else none)) (some 0)
+              |>.map Char.ofNat
+          else none
+        match r with
+        | some ch => out := out.push ch; i := j + 1; continue
+        | none => pure ()
+    out := out.push cs[i]!
+    i := i + 1
+  String.ofList out.toList
+
 /-- Peek a lexical QName (or `Q{uri}local`) at the current position.
     Returns `(prefix?, uri?, local, end)`; the local may be `*` for
     `p:*`, the prefix may be `*` for `*:l`. -/
@@ -171,6 +209,8 @@ def peekQName : P (Option (Option String × Option String × String × Nat)) := 
     let raw := String.ofList ((List.range (j - i - 2)).map (fun k => chAt s (i + 2 + k)))
     -- BracedURILiteral ::= "Q" "{" [^{}]* "}"
     if raw.any (· == '{') then synErr "a braced URI literal must not contain '{'"
+    -- XQuery reads character and entity references in a braced URI (§4.1, BracedURILiteral)
+    let raw := if c.ext.isSome || c.xqRefs then expandUriRefs raw else raw
     let uri := String.intercalate " " ((raw.splitOn " ").filter (· != "") |>.flatMap (fun w =>
       (w.split (fun c => c == '\n' || c == '\t' || c == '\r')).toList.map (·.toString) |>.filter (· != "")))
     if chAt s (j+1) == '*' then pure (some (none, some uri, "*", j + 2))
@@ -204,9 +244,10 @@ def peekQName : P (Option (Option String × Option String × String × Nat)) := 
 def lookupNs (p : String) : P String := do
   let c ← read
   match c.ns.lookup p with
-  -- `declare namespace p = ""` undeclares the prefix (XQuery 4.0 §5.13)
-  | some "" => throw { code := "XPST0081", msg := "undeclared namespace prefix " ++ p }
-  | some u => pure u
+  | some u =>
+    if u == "" && p != "" then
+      throw { code := "XPST0081", msg := "the namespace prefix " ++ p ++ " is undeclared" }
+    pure u
   | none => match defaultNs.lookup p with
     | some u => pure u
     | none => throw { code := "XPST0081", msg := "undeclared namespace prefix " ++ p }
@@ -331,6 +372,8 @@ def pStringLit : P String := do
   let i ← get
   let s := c.s
   let q := chAt s i
+  -- a string literal is quoted with " or ' (a backtick string is a template)
+  if q != '"' && q != '\'' then synErr "expected a string literal"
   let rec go (j : Nat) (acc : List Char) (fuel : Nat) : Option (List Char × Nat) :=
     match fuel with
     | 0 => none
@@ -553,8 +596,8 @@ def pItemType : Nat → P IType
             else
               let t ← if (← peekAt 0) == '"' || (← peekAt 0) == '\'' then pStringLit
                       else match ← peekQName with
-                        | some (_, _, l, e) => set e; pure l
-                        | none => synErr "bad processing-instruction() test"
+                        | some (none, none, l, e) => set e; pure l
+                        | _ => synErr "bad processing-instruction() test"
               expectS ")"; pure (.pi (some t))
         | "element" | "attribute" =>
             if ← eatS ")" then pure (if nm == "element" then .elem none else .attr none)
@@ -1190,6 +1233,13 @@ def pPath : Nat → P Expr
         -- `/*` is a wildcard step (xgc: leading-lone-slash)
         let r ← pRel n
         pure (.slash .root r)
+      else if ch == '<' && c.ext.isSome && isNameStart (chAt c.s (j+1)) then
+        -- XQuery: '/' then a direct constructor is a path; when the text is no
+        -- constructor, '/' is alone and '<' is the comparison (xgc: leading-lone-slash)
+        try
+          let r ← pRel n
+          pure (.slash .root r)
+        catch _ => pure .root
       else if (← canStartRel) && !(ch == '<' || ch == '=' || ch == '!') then
         -- names that are operators after a lone slash still start a path
         let r ← pRel n
@@ -1278,6 +1328,8 @@ def pStep : Nat → P Expr
     | some (nm, ':', ':') =>
       match axisOfName? nm with
       | some ax =>
+          -- the namespace axis is not recognized in XQuery
+          if nm == "namespace" && c0.ext.isSome then synErr "the namespace axis is not recognized in XQuery"
           let _ ← peekQName
           adv nm.length; ws; expectS "::"
           ws
@@ -1295,7 +1347,7 @@ def pStep : Nat → P Expr
       if kindTestNames.contains nm then
         let t ← pNodeTest n .child
         let ax := match t with
-          | .kind (.attr _) => Axis.attribute
+          | .kind (.attr _) | .kind (.attrT ..) | .kind (.schemaAttr _) => Axis.attribute
           | .kind .nsNode => Axis.namespace
           | _ => Axis.child
         let ps ← pPreds n
