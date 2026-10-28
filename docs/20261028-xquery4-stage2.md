@@ -19,19 +19,26 @@ one test set.
 
 ## Results
 
-Last full measurement (commit `d7ee4f24e`, before the `fn` schemas, the
-`fn:id` change and the namespace work; a newer run follows in the PR):
+Measured on commit `0e40c976` (qt4tests `b1616b79`). The `ser` family was
+measured again after the last serializer fix; the other families come
+from the full run on the commit before it, which differs only in
+`XPath4/Serialize.lean`.
 
 | Mode | Pass | Fail | Unsupported | Total |
 | --- | ---: | ---: | ---: | ---: |
 | XQuery, start of stage 2 | 45040 | 1187 | 1397 | 47624 |
-| XQuery, `d7ee4f24e` | 45690 | 786 | 1148 | 47624 |
+| XQuery, now | 45855 | 619 | 1150 | 47624 |
 | XPath, start of stage 2 | 32928 | 106 | 14587 | 47621 |
-| XPath, `d7ee4f24e` | 32955 | 105 | 14561 | 47621 |
+| XPath, now | 32982 | 78 | 14561 | 47621 |
 
-25 tests are excluded in XQuery mode (defective test data). One set,
-`fn-system-properties`, has one pass fewer: with the feature `infoset-dtd`
-its case for processors without that feature is not applicable.
+XQuery mode by family (pass, fail, unsupported): prod 14099, 408, 441;
+fn 17313, 139, 410; op 4671, 20, 98; misc 4120, 16, 96; app 3017, 18, 21;
+array 533, 1, 3; map 358, 0, 3; math 181, 0, 0; bin 647, 0, 2 (23
+excluded); file 270, 0, 0; xs 217, 3, 12; ser 429, 14, 64 (1 excluded).
+
+One set, `fn-system-properties`, has one pass fewer than at the start:
+with the feature `infoset-dtd` its case for processors without that
+feature is not applicable. No other set has fewer passes.
 
 ## What changed
 
@@ -135,3 +142,5 @@ constructed tree (https://github.com/danbri/factoidal/issues/1146).
   https://github.com/danbri/factoidal/issues/1145.
 - UCA tailorings (`orderBy69`, `group-025`):
   https://github.com/danbri/factoidal/issues/1144.
+- The other open items, each with failing tests:
+  https://github.com/danbri/factoidal/issues/1180.
