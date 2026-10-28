@@ -400,7 +400,8 @@ def ipMatch (env : Env) : Nat → IPat → Item → Bool
 /-- Pattern matching with errors masked (§6.5). -/
 def Pattern.matches (p : Pattern) (env : Env) (it : Item) : Bool :=
   -- `current()` in a pattern is the item being matched (§20.4.1)
-  let env := { env with vars := (vCurrent, [it]) :: env.vars }
+  -- and the current captured groups are empty in a pattern (§17.2.1)
+  let env := { env with vars := (vCurrent, [it]) :: (vRegex, [.map []]) :: env.vars }
   match p.ip with
   | some (ip, _) => ipMatch env 200 ip it
   | none =>
@@ -590,6 +591,43 @@ def groupDigits (s : String) (sep : String) (size : Nat) : String :=
     | c :: r, k, acc => go r (k + 1) (if k > 0 && k % size == 0 then c :: (sep.toList.reverse ++ acc) else c :: acc)
   String.ofList (go cs 0 [])
 
+
+def lookupVar (vs : List (QN × Seq)) (q : QN) : Option Seq :=
+  (vs.find? (fun (v, _) => v == q)).map (·.2)
+
+/-! ## Regular expressions (§17) -/
+
+/-- A segment of the input of `xsl:analyze-string`: matching or not, its
+    string, and (for a matching segment) its captured groups, group zero
+    first (§17.2.1). -/
+structure ASPart where
+  isMatch : Bool
+  str : String
+  groups : List (Atomic × Seq) := []
+
+/-- The matching segment `sg` of `input` as a part: its string, and its
+    captured groups with group zero first. -/
+def matchPart (input : List Nat) (re : Re4) (sg : Seg) : ASPart :=
+  let whole := cpsStr (Regex.slice input sg.start sg.stop)
+  let g0 : Atomic × Seq := (Atomic.ofInt 0, [.map [(Atomic.ofStr "value", sStr whole),
+    (Atomic.ofStr "position", sInt (sg.start + 1)), (Atomic.ofStr "nr", sInt 0), (Atomic.ofStr "name", [])]])
+  { isMatch := true, str := whole, groups := g0 :: groupRecords input re sg.caps }
+
+/-- The parts from offset `cur`: each matching segment, after the
+    non-matching segment before it, and the rest of the input. -/
+def partsFrom (input : List Nat) (re : Re4) : Nat → List Seg → List ASPart
+  | cur, [] =>
+    if input.length > cur then [{ isMatch := false, str := cpsStr (Regex.slice input cur input.length) }] else []
+  | cur, sg :: rest =>
+    (if sg.start > cur then [{ isMatch := false, str := cpsStr (Regex.slice input cur sg.start) }] else []) ++
+    matchPart input re sg :: partsFrom input re (max cur sg.stop) rest
+
+/-- The segments that `xsl:analyze-string` processes (§17.1): the
+    matching segments of `fn:matching-segments` (`XPath4.segments`), with
+    the non-matching segments between them. -/
+def analyzeParts (s : String) (re : Re4) : List ASPart :=
+  let input := s.toList.map Char.toNat
+  partsFrom input re 0 (segments re.r input)
 
 /-! ## Helpers of the instructions -/
 
@@ -1326,7 +1364,13 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             | some e2 => do pure (Out.ofSeq (← evalX ecx e2))
             | none => run n S ecx cbody
     | .analyzeString sel rx fl ms ns =>
-        let s ← atomStr cx (← evalX cx sel)
+        -- the input is coerced to xs:string; () is "" (§17.1)
+        let s ← match ← liftX (env.atomize (← evalX cx sel)) with
+          | [] => pure ""
+          | [a] =>
+            if a.isStringLike || a.ty == .untyped then pure a.str
+            else xerr "XPTY0004" ("xsl:analyze-string needs a string, not xs:" ++ a.ty.name)
+          | _ => xerr "XPTY0004" "xsl:analyze-string needs a single string"
         let pat ← avtStr cx rx
         let flags ← avtStr cx fl
         -- invalid flags are XTDE1145, an invalid pattern XTDE1140 (§17.1)
@@ -1335,27 +1379,15 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | .ok _ => false
         if badFlags then xerr "XTDE1145" ("invalid regular expression flags '" ++ flags ++ "'")
         let re ← orErr (compileRe4 pat flags) "XTDE1140" ("invalid regular expression '" ++ pat ++ "'")
-        if Regex.isMatch re.r "" then xerr "XTDE1150" "the regular expression matches a zero-length string"
-        let input := s.toList.map Char.toNat
-        let segs := segments re.r input
-        let mut parts : Array (Bool × String × List String) := #[]
-        let mut cur := 0
-        for sg in segs do
-          if sg.start > cur then parts := parts.push (false, cpsStr (Regex.slice input cur sg.start), [])
-          let groups := (List.range re.groups).map (fun i =>
-            match Regex.findCap sg.caps (i + 1) with
-            | some (a, b) => cpsStr (Regex.slice input a b)
-            | none => "")
-          parts := parts.push (true, cpsStr (Regex.slice input sg.start sg.stop), groups)
-          cur := sg.stop
-        if input.length > cur then parts := parts.push (false, cpsStr (Regex.slice input cur input.length), [])
-        let sz := parts.size
+        -- the disjoint matching segments of F&O 4.0 (fn:matching-segments)
+        -- with the non-matching segments between them
+        let parts := analyzeParts s re
+        let sz := parts.length
         let mut out : Array Out := #[]
         let mut k := 1
-        for (isM, str, gs) in parts.toList do
-          let rcx := (cx.focus (.atom (Atomic.ofStr str)) k sz).bind vRegex
-            [.arr ((str :: gs).map (fun g => sStr g))]
-          let b := if isM then ms else ns
+        for p in parts do
+          let rcx := (cx.focus (.atom (Atomic.ofStr p.str)) k sz).bind vRegex [.map p.groups]
+          let b := if p.isMatch then ms else ns
           match b with
           | some body => for o in ← run n S { rcx with rule := none } body do out := out.push o
           | none => pure ()
@@ -1704,6 +1736,10 @@ def invoke : Nat → Sheet → Ctx → Tmpl → List (QN × Seq) → List (QN ×
     -- the template body sees the global variables and its parameters,
     -- not the caller's local variables
     let globals := cx.env.vars.dropWhile (fun (q, _) => !(q == xv "globals"))
+    -- the current captured groups are kept through template calls (§17.2.1)
+    let globals := match lookupVar cx.env.vars vRegex with
+      | some g => (vRegex, g) :: globals
+      | none => globals
     let mut tcx : Ctx := { cx with env := { cx.env with vars := globals }, rule := if t.pat.isSome then some t else cx.rule, tunnel := tun, inFn := false }
     if t.pat.isNone then tcx := { tcx with rule := cx.rule }
     for p in t.params do

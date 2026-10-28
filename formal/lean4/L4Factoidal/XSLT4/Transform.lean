@@ -356,14 +356,22 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         match lookupV c.vars vMergeKey with
         | some v => pure [.arr (v.map (fun i => [i]))]
         | none => err "XTDE3510" "there is no current merge key"
-    | "regex-group", 1 => some fun c a => do
-        let i : Int := match a.getD 0 [] with
-          | [.atom ⟨_, .int i⟩] => i
-          | _ => -1
+    | "regex-groups", 0 => some fun c _ =>
+        -- fn:regex-groups (§17.2.1): the current captured groups
         match lookupV c.vars vRegex with
-        | some [.arr gs] =>
-            if i < 0 then pure (sStr "") else
-            pure ((gs.getD i.toNat []).take 1 |>.map id |> fun x => if x.isEmpty then sStr "" else x)
+        | some v => pure v
+        | none => pure [.map []]
+    | "regex-group", 1 => some fun c a => do
+        -- fn:regex-group(G) is regex-groups()?G?value otherwise "" (§17.2.2)
+        let key ← match a.getD 0 [] with
+          | [.atom k] => pure k
+          | _ => err "XPTY0004" "regex-group() needs an integer or a string"
+        let key := if key.ty == .untyped then Atomic.ofStr key.str else key
+        match lookupV c.vars vRegex with
+        | some [.map gs] =>
+          match gs.find? (fun (k0, _) => atomicEqual k0 key) with
+          | some (_, [.map rec]) => pure ((rec.find? (fun (k1, _) => k1.str == "value")).map (·.2) |>.getD (sStr ""))
+          | _ => pure (sStr "")
         | _ => pure (sStr "")
     | "current-output-uri", 0 => some fun c _ =>
         match lookupV c.vars vOutUri with

@@ -956,12 +956,38 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         pure (.tryI sel b catches)
     | "analyze-string" =>
         let sel ← parseC c (← reqAttr as "select" l)
-        let rx ← liftM (c.avt (← reqAttr as "regex" l))
-        let fl ← liftM (c.avt ((as.get "flags").getD ""))
-        let ms ← match ekids.find? (m.isXsl · "matching-substring") with
-          | some k => some <$> compileNodes f c m (m.kids k) | none => pure none
-        let ns ← match ekids.find? (m.isXsl · "non-matching-substring") with
-          | some k => some <$> compileNodes f c m (m.kids k) | none => pure none
+        -- regex and flags, or compiled-regex (4.0, XTSE1132)
+        let (rx, fl) ← match as.get "compiled-regex" with
+          | some v =>
+            if (as.get "regex").isSome || (as.get "flags").isSome then
+              cerr "XTSE1132" "xsl:analyze-string has compiled-regex and regex or flags"
+            let e ← parseC c v
+            let field (k : String) : Avt := [.expr (.lookup e (some (.lit (Atomic.ofStr k))))]
+            pure (field "pattern", field "flags")
+          | none => do
+            let some r := as.get "regex" | cerr "XTSE1132" "xsl:analyze-string needs regex or compiled-regex"
+            pure (← liftM (c.avt r), ← liftM (c.avt ((as.get "flags").getD "")))
+        -- the content: (matching-substring?, non-matching-substring?,
+        -- fallback*) (XTSE0010); select or content (XTSE3185)
+        let sub (k : Nat) : CM (List Instr) := do
+          let kas ← effAttrs c m k
+          let ck ← c.enter m k kas
+          let ssel ← optExpr ck kas "select"
+          let b ← compileNodes f ck m (m.kids k)
+          if ssel.isSome && !b.isEmpty then cerr "XTSE3185" ("xsl:" ++ (m.name k).loc ++ " has both select and content")
+          pure (match ssel with | some e => [Instr.seq (some e) [] none] | none => b)
+        let mut ms : Option (List Instr) := none
+        let mut ns : Option (List Instr) := none
+        let mut seenFb := false
+        for k in ekids do
+          if m.isXsl k "matching-substring" then
+            if ms.isSome || ns.isSome || seenFb then cerr "XTSE0010" "misplaced xsl:matching-substring"
+            ms := some (← sub k)
+          else if m.isXsl k "non-matching-substring" then
+            if ns.isSome || seenFb then cerr "XTSE0010" "misplaced xsl:non-matching-substring"
+            ns := some (← sub k)
+          else if m.isXsl k "fallback" then seenFb := true
+          else cerr "XTSE0010" ("xsl:" ++ (m.name k).loc ++ " is not allowed in xsl:analyze-string")
         if ms.isNone && ns.isNone then cerr "XTSE1130" "xsl:analyze-string needs matching or non-matching content"
         pure (.analyzeString sel rx fl ms ns)
     | "map" => pure (.mapI (← optExpr c as "select") (← body) (← optExpr c as "duplicates"))
@@ -1918,7 +1944,7 @@ def checkSheet : CM Unit := do
           | .call q as kw => (q, as.length + kw.length)
           | .fref q k => (q, k)
           | _ => ({ uri := nsXSL, loc := "" }, 0)
-        if q.uri == nsXSL || q.uri == nsXS || s.types.any (·.1 == q) then continue
+        if q.uri == nsXSL || q.uri == nsXS || q.loc.startsWith "#" || s.types.any (·.1 == q) then continue
         -- an unprefixed call finds a function in no namespace first (4.0)
         let q := if q.uri == nsFN && q.pfx == "" && fns.any (fun g => g.name.uri == "" && g.name.loc == q.loc &&
             g.params.length ≥ k && (g.params.filter (·.required)).length ≤ k)
