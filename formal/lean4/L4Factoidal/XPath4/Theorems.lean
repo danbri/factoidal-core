@@ -52,6 +52,7 @@ import L4Factoidal.XPath4.CastTheorems
 import L4Factoidal.XPath.Eval
 import L4Factoidal.JSON.Parser
 import L4Factoidal.XPath4.DocTheorems2
+import L4Factoidal.XPath4.PathTheorems
 
 namespace L4Factoidal.XPath4
 
