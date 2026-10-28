@@ -101,4 +101,13 @@ private def jl : String := "{\"@id\":\"http://e/a\",\"http://e/p\":\"v\"}"
 #guard (L4Wasm.call "xmlWellformed" (argsOf ["<a/>"])).startsWith "{\"ok\":true"
 #guard ((Core.call "xmlWellformed" (argsOf ["<a/>"])).splitOn "\"servedBy\":\"full\"").length > 1
 
+-- LWS storages (owner requirement for 0.21.0, `L4Factoidal.LWS.AccessTheorems`):
+-- every op of the dispatch table whose name says LWS storage is an op of
+-- `Wasm/Ops/Lws.lean` (the only file that can name the private handle table)
+-- with a role (`Ops.lwsOpRole`), and `lwsStep` is the only one that serves.
+#guard (fullNames.filter (fun n => n.startsWith "lws" && !n.startsWith "lwsClient")).all
+  (fun n => Ops.lwsOpNames.contains n && (Ops.lwsOpRole n).isSome)
+#guard Ops.lwsOpNames.all (fun n => fullNames.contains n)
+#guard (fullNames.filter (fun n => Ops.lwsOpRole n == some .serve)).eraseDups == ["lwsStep"]
+
 end L4Wasm.CoreDispatchTests

@@ -563,6 +563,45 @@ def unauthorized : DavResponse :=
   textResp 401 "webdav: this server needs a user name and password (HTTP Basic, RFC 7617)"
     [("www-authenticate", challenge)]
 
+/-! ## Who a request acts as (emergency mode, issue 1147)
+
+https://github.com/danbri/factoidal/issues/1147: every request acts as one
+named user, and a mount names the users who may use it (`users:`).
+
+* No `Authorization` field: the guest user (`--guest NAME`), or 401 when
+  the listener has no guest.
+* An `Authorization` field (any scheme, also a malformed one): a login
+  through the users file (`gate`, then `finish`); with no users file, 401,
+  because there is no one to log in as. A failed login counts toward the
+  failed-login limit, as before.
+
+The guest name is a user name (`validName`) that is not also a user of the
+users file: else a request with no credentials would act as that user. -/
+
+/-- The guest setting at start: the name, refused when it is not a user name
+or when the users file holds a user of that name. -/
+def guestCheck (guest : String) (users : List User) : Except String String :=
+  if !validName guest || guest.contains ',' then
+    .error s!"--guest: the user name \"{guest}\" is empty or holds `:`, `,` or a control character"
+  else if users.any (·.name == guest) then
+    .error s!"--guest: \"{guest}\" is a user of the users file; a request with no credentials would act as that user (https://github.com/danbri/factoidal/issues/1147)"
+  else .ok guest
+
+/-- The first decision of a request: `.allow user` (the guest, or a user the
+cache knows), `.refuse` (401), `.limited` (429), or one derivation. `s` is
+the login of the listener (`none`: no users file). -/
+def admit (hash : ByteArray → ByteArray) (s : Option Settings) (guest : Option String) (c : Cache)
+    (now : Nat) (address : String) (authorization : Option String) : Gate × Cache :=
+  match authorization with
+  | none =>
+    match guest with
+    | some g => (.allow g, c)
+    | none => (.refuse, c)
+  | some a =>
+    match s with
+    | none => (.refuse, c)
+    | some s => gate hash s c now address (some a)
+
 /-! ## `webdav-user`: one line added or replaced -/
 
 /-- The password `webdav-user` read: the input without one final line end
@@ -887,6 +926,80 @@ def bob : User := { alice with name := "bob" }
   ("# x\n" ++ alice.line ++ "\n" ++ bob.line ++ "\n", true)
 #guard (parseUsers "u" (withUser (withUser "" alice).1 bob).1).toOption.map (·.map (·.name)) == some ["alice", "bob"]
 
+-- Issue 1147: who a request acts as.
+#guard (match (admit H (some sA) (some "guest") {} 100 "127.0.0.1" none).1 with | .allow u => u == "guest" | _ => false)
+#guard (match (admit H none (some "guest") {} 100 "127.0.0.1" none).1 with | .allow u => u == "guest" | _ => false)
+#guard (match (admit H (some sA) none {} 100 "127.0.0.1" none).1 with | .refuse => true | _ => false)
+#guard (match (admit H none none {} 100 "127.0.0.1" none).1 with | .refuse => true | _ => false)
+-- Credentials with no users file: 401, also with a guest.
+#guard (match (admit H none (some "guest") {} 100 "127.0.0.1" (authA "pw")).1 with | .refuse => true | _ => false)
+-- Credentials that are not Basic: 401, never the guest.
+#guard (match (admit H (some sA) (some "guest") {} 100 "127.0.0.1" (some "Digest x")).1 with | .refuse => true | _ => false)
+#guard (match (admit H (some sA) (some "guest") {} 100 "127.0.0.1" (some "")).1 with | .refuse => true | _ => false)
+-- Credentials with a users file: the login.
+#guard (match (admit H (some sA) (some "guest") {} 100 "127.0.0.1" (authA "pw")).1 with
+  | .derive d => d.known && d.user == "alice" | _ => false)
+#guard (match (admit H (some sA) none cA 150 "127.0.0.1" (authA "pw")).1 with | .allow u => u == "alice" | _ => false)
+-- A failed login still counts toward the limit.
+#guard (match (admit H (some { sA with limits := { maxFailures := 1 } }) (some "guest") (cA.fail { sA with limits := { maxFailures := 1 } } 100 dA) 101
+  "127.0.0.1" (authA "pw")).1 with | .limited _ => true | _ => false)
+#guard (guestCheck "guest" [alice]).toOption == some "guest"
+#guard (guestCheck "alice" [alice]).toOption.isNone
+#guard (guestCheck "" []).toOption.isNone
+#guard (guestCheck "a:b" []).toOption.isNone
+#guard (guestCheck "a,b" []).toOption.isNone
+
 end Checks
+
+/-- With no credentials, a request acts as the guest, or is refused when
+there is no guest. -/
+theorem admit_none (hash : ByteArray → ByteArray) (s : Option Settings) (guest : Option String)
+    (c : Cache) (now : Nat) (address : String) :
+    (admit hash s guest c now address none).1 = (match guest with | some g => .allow g | none => .refuse) := by
+  cases guest <;> rfl
+
+/-- With credentials and no users file, a request is refused (401). -/
+theorem admit_no_users (hash : ByteArray → ByteArray) (guest : Option String) (c : Cache) (now : Nat)
+    (address a : String) : (admit hash none guest c now address (some a)).1 = .refuse := rfl
+
+/-- The credentials step allows only a user of the users file. -/
+theorem gateCredentials_allow (hash : ByteArray → ByteArray) (s : Settings) (c : Cache) (cr : Credentials)
+    (keys : List String) (u : String) (h : gateCredentials hash s c cr keys = .allow u) :
+    ∃ x ∈ s.users, x.name = u := by
+  unfold gateCredentials at h
+  split at h
+  · cases h
+  · rename_i x hx
+    dsimp only at h
+    split at h
+    · cases h; exact ⟨x, List.mem_of_find?_eq_some hx, rfl⟩
+    · cases h
+
+/-- With credentials, `admit` allows only a user of the users file (never
+the guest by a fall back). -/
+theorem admit_some_allow (hash : ByteArray → ByteArray) (s : Option Settings) (guest : Option String)
+    (c : Cache) (now : Nat) (address a u : String)
+    (h : (admit hash s guest c now address (some a)).1 = .allow u) :
+    ∃ s' x, s = some s' ∧ x ∈ s'.users ∧ x.name = u := by
+  cases s with
+  | none => cases h
+  | some s' =>
+    simp only [admit, gate] at h
+    split at h
+    · cases h
+    · rename_i cr _
+      split at h
+      · cases h
+      · exact (gateCredentials_allow hash s' _ cr _ u h).elim (fun x hx => ⟨s', x, rfl, hx.1, hx.2⟩)
+
+/-- A login that `finish` allows is a user of the users file. -/
+theorem finish_allow_known (hash : ByteArray → ByteArray) (s : Settings) (c : Cache) (now : Nat) (d : Derive)
+    (got : Option ByteArray) (h : (finish hash s c now d got).1 = true) : d.known = true := by
+  unfold finish at h
+  split at h
+  · split at h
+    · rename_i hk; simp only [Bool.and_eq_true] at hk; exact hk.1
+    · cases h
+  · cases h
 
 end L4Factoidal.WebDAV.Login

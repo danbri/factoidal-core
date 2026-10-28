@@ -21,6 +21,12 @@
 // formal/lean4/L4Factoidal/XMPP/ (ClientStream, HttpOverXmpp, HttpRequester).
 //
 // A client program that is not installed is reported "skip", never a pass.
+// Emergency mode (https://github.com/danbri/factoidal/issues/1147): the
+// mount is an lws mount of an `lws-serve --authz` storage started here and
+// filled through the LWS client as its owner; webdav-serve is read only and
+// every request over XMPP acts as the --guest user. litmus writes, so it is
+// skipped; rclone and cadaver read.
+//
 // Score line: "N pass, M fail, X xfail, S skip (out of T)".
 
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
@@ -30,6 +36,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { TestClient } from './xmpp-client.mjs'
+import { keyPair, didKeyOf } from '../authz/fixtures.mjs'
 
 const CLI = fileURLToPath(new URL('../../npm/factoidal/bin/factoidal.mjs', import.meta.url))
 const DOMAIN = 'example.org'
@@ -129,9 +136,21 @@ function has (program) {
 async function main () {
   const dir = mkdtempSync(join(process.env.WEBDAV_TEST_TMP || tmpdir(), 'webdav-xmpp-proxy-'))
   try {
-    mkdirSync(join(dir, 'dav', 'notes'), { recursive: true })
+    mkdirSync(join(dir, 'dav'), { recursive: true })
     mkdirSync(join(dir, 'xmpp'))
-    writeFileSync(join(dir, 'dav', 'notes.md'), '# Notes\n- kind: local\n- path: ./notes\n')
+    // The storage, filled as its owner through the LWS client (issue 1147).
+    const owner = keyPair('ES256')
+    const did = didKeyOf(owner)
+    const ownerJwk = owner.privateKey.export({ format: 'jwk' })
+    writeFileSync(join(dir, 'dav', 'owner.jwk'), JSON.stringify(ownerJwk), { mode: 0o600 })
+    const lws = await start(['lws-serve', 'lws', '--port', '0', '--authz', 'lws-as', '--owner', did, '--quiet'],
+      /^(http:\/\/127\.0\.0\.1:\d+)$/m, dir)
+    const lwsOrigin = lws.match[1]
+    const { createLwsClient } = await import('../../npm/factoidal/lws/client.mjs')
+    const ownerClient = await createLwsClient({ selfIssued: { subject: did, keyId: `${did}#${did.slice(8)}`, jwk: ownerJwk } })
+    await ownerClient.update(`${lwsOrigin}/hello.txt`, { body: 'hello\r\nthrough the proxy\n', mediaType: 'text/plain', precondition: 'none' })
+    writeFileSync(join(dir, 'dav', 'notes.md'),
+      `# Notes\n- kind: lws\n- url: ${lwsOrigin}/\n- auth: did-key\n- key-file: owner.jwk\n- users: guest\n`)
     writeFileSync(join(dir, 'accounts'), 'alice:alice-pw\nbob:bob-pw\ncarol:carol-pw\n')
     writeFileSync(join(dir, 'alice.password'), 'alice-pw\n')
     writeFileSync(join(dir, 'bob.password'), 'bob-pw\n')
@@ -167,7 +186,7 @@ async function main () {
     })
 
     await start(['webdav-serve', 'dav', '--xmpp', `bob@${DOMAIN}`, '--xmpp-password-file', 'bob.password',
-      '--xmpp-allow', `alice@${DOMAIN}`, ...tlsArgs, '--dangerously-allow-writable-without-login'], /^xmpp:(\S+)$/m, dir)
+      '--xmpp-allow', `alice@${DOMAIN}`, ...tlsArgs, '--guest', 'guest'], /^xmpp:(\S+)$/m, dir)
 
     let proxy = null
     await check('xmpp-http-proxy as alice: binds, listens on 127.0.0.1, prints its origin', async () => {
@@ -184,25 +203,27 @@ async function main () {
       const t = await r.text()
       assert(r.status === 207 && t.includes('/notes/'), `status ${r.status}: ${t.slice(0, 300)}`)
     })
-    await check('PUT then GET a text file through the proxy (201, 200, same bytes)', async () => {
-      const p = await fetch(`${base}notes/hello.txt`, { method: 'PUT', headers: { 'Content-Type': 'text/plain' }, body: 'hello\r\nthrough the proxy\n' })
-      assert(p.status === 201, `PUT ${p.status}`)
+    await check('PUT is 403 (read only, issue 1147); GET a text file through the proxy (200, same bytes)', async () => {
+      const p = await fetch(`${base}notes/hello.txt`, { method: 'PUT', headers: { 'Content-Type': 'text/plain' }, body: 'overwritten' })
+      assert(p.status === 403, `PUT ${p.status}`)
       const g = await fetch(`${base}notes/hello.txt`)
       const t = await g.text()
       assert(g.status === 200 && t === 'hello\r\nthrough the proxy\n', `GET ${g.status}: ${JSON.stringify(t)}`)
     })
-    await check('MKCOL then PROPFIND Depth 1 lists the new collection', async () => {
+    await check('MKCOL is 403; PROPFIND Depth 1 lists the storage', async () => {
       const m = await fetch(`${base}notes/docs/`, { method: 'MKCOL' })
-      assert(m.status === 201, `MKCOL ${m.status}`)
+      assert(m.status === 403, `MKCOL ${m.status}`)
       const p = await fetch(`${base}notes/`, { method: 'PROPFIND', headers: { Depth: '1' } })
       const t = await p.text()
-      assert(p.status === 207 && t.includes('/notes/docs/') && t.includes('/notes/hello.txt'), t.slice(0, 500))
+      assert(p.status === 207 && !t.includes('/notes/docs/') && t.includes('/notes/hello.txt'), t.slice(0, 500))
     })
     const big = Buffer.alloc(100000)
     for (let i = 0; i < big.length; i += 1) big[i] = (i * 7) % 251
-    await check('a 100,000-byte body: PUT (chunked request) and GET (chunked response) give the same bytes', async () => {
+    await check('a 100,000-byte body: PUT (chunked request) is 403; GET (chunked response) of a file written over LWS gives the same bytes', async () => {
       const p = await fetch(`${base}notes/big.bin`, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: big })
-      assert(p.status === 201, `PUT ${p.status}`)
+      assert(p.status === 403, `PUT ${p.status}`)
+      const w = await ownerClient.update(`${lwsOrigin}/big.bin`, { body: new Uint8Array(big), mediaType: 'application/octet-stream', precondition: 'none' })
+      assert(w.status === 201 || w.status === 204, `LWS update ${w.status}`)
       const g = await fetch(`${base}notes/big.bin`)
       const b = Buffer.from(await g.arrayBuffer())
       assert(g.status === 200 && b.equals(big), `GET ${g.status}, ${b.length} bytes`)
@@ -264,29 +285,13 @@ async function main () {
       }
     })
 
-    // litmus, the WebDAV conformance suite, through the proxy.
-    if (!has('litmus')) {
-      skip('litmus through the proxy', 'litmus is not installed (apt-get install litmus)')
-    } else {
-      await check('litmus (basic, copymove, props, locks, http) through the proxy: every test passes', async () => {
-        const work = join(dir, 'litmus-work')
-        mkdirSync(work)
-        const r = spawnSync('litmus', [`${base}notes/`], { cwd: work, encoding: 'utf8', timeout: 600000 })
-        const text = (r.stdout || '') + (r.stderr || '')
-        const sums = text.split('\n').filter((l) => l.startsWith('<- summary'))
-        for (const s of sums) console.log(`        ${s}`)
-        const bad = text.split('\n').filter((l) => /\.\s+(FAIL|WARNING)/.test(l))
-        assert(sums.length === 5, `litmus ran ${sums.length} of 5 suites: ${text.slice(-600)}`)
-        assert(bad.length === 0, bad.join('\n'))
-      })
-    }
+    // litmus, the WebDAV conformance suite, writes in every suite: with
+    // webdav-serve read only (issue 1147) it is not run here.
+    skip('litmus through the proxy', 'webdav-serve is read only (https://github.com/danbri/factoidal/issues/1147); litmus writes')
 
     if (!has('rclone')) {
       skip('rclone through the proxy', 'rclone is not installed')
     } else {
-      mkdirSync(join(dir, 'src', 'sub'), { recursive: true })
-      writeFileSync(join(dir, 'src', 'a.txt'), 'hello\n')
-      writeFileSync(join(dir, 'src', 'sub', 'b.txt'), 'world\n')
       writeFileSync(join(dir, 'rclone.conf'), '')
       const env = { ...process.env, RCLONE_CONFIG: join(dir, 'rclone.conf'),
         RCLONE_CONFIG_F_TYPE: 'webdav', RCLONE_CONFIG_F_URL: base, RCLONE_CONFIG_F_VENDOR: 'other' }
@@ -295,29 +300,26 @@ async function main () {
         if (r.status !== 0) throw new Error(`rclone ${args.join(' ')}: exit ${r.status}: ${r.stderr}`)
         return r.stdout
       }
-      await check('rclone through the proxy: copy a tree, list it, check the bytes, move, purge', async () => {
-        rc('copy', 'src', 'f:notes/proj')
-        const ls = rc('lsf', '-R', 'f:notes/proj').split('\n').filter(Boolean).sort()
-        assert(JSON.stringify(ls) === JSON.stringify(['a.txt', 'sub/', 'sub/b.txt']), `listing ${JSON.stringify(ls)}`)
-        rc('check', 'src', 'f:notes/proj')
-        rc('moveto', 'f:notes/proj/a.txt', 'f:notes/proj/renamed.txt')
-        assert(rc('cat', 'f:notes/proj/renamed.txt') === 'hello\n', 'content after move')
-        rc('purge', 'f:notes/proj')
+      await check('rclone through the proxy: list and read (read only, issue 1147); a copy in is refused', async () => {
+        const ls = rc('lsf', 'f:notes').split('\n').filter(Boolean).sort()
+        assert(ls.includes('hello.txt'), `listing ${JSON.stringify(ls)}`)
+        assert(rc('cat', 'f:notes/hello.txt') === 'hello\r\nthrough the proxy\n', 'content')
+        writeFileSync(join(dir, 'up.txt'), 'x\n')
+        let refused = false
+        try { rc('copyto', 'up.txt', 'f:notes/up.txt') } catch (_error) { refused = true }
+        assert(refused, 'rclone copied a file in')
       })
     }
 
     if (!has('cadaver')) {
       skip('cadaver through the proxy', 'cadaver is not installed')
     } else {
-      writeFileSync(join(dir, 'up.txt'), 'hi\n')
-      await check('cadaver through the proxy: MKCOL, PUT, PROPPATCH, LOCK, COPY, MOVE, DELETE', async () => {
-        const script = ['cd notes', 'mkcol d1', 'put up.txt d1/up.txt', 'propset d1/up.txt color blue',
-          'propget d1/up.txt color', 'lock d1/up.txt', 'unlock d1/up.txt', 'copy d1/up.txt d1/copy.txt',
-          'move d1/copy.txt d1/moved.txt', 'cat d1/moved.txt', 'rm d1/moved.txt', 'rm d1/up.txt', 'rmcol d1', 'quit', ''].join('\n')
+      await check('cadaver through the proxy: ls and cat work; mkcol fails (read only, issue 1147)', async () => {
+        const script = ['cd notes', 'ls', 'cat hello.txt', 'mkcol d1', 'quit', ''].join('\n')
         const r = spawnSync('cadaver', [base], { input: script, encoding: 'utf8', cwd: dir, timeout: 120000 })
         const out = `${r.stdout}${r.stderr}`
-        assert(/Value of color is: blue/.test(out) && /cat d1\/moved\.txt\nhi\n/.test(out), out)
-        assert(!/failed/i.test(out), `a command failed:\n${out}`)
+        assert(/hello\.txt/.test(out) && /through the proxy/.test(out), out)
+        assert(/mkcol[\s\S]*(failed|403)/i.test(out), `mkcol did not fail:\n${out}`)
       })
     }
   } finally {

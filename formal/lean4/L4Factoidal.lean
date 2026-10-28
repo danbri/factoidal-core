@@ -399,6 +399,8 @@ import L4Factoidal.VC.Theorems
 import L4Factoidal.CID.Multiformats
 import L4Factoidal.CID.Document
 import L4Factoidal.CID.Retrieve
+import L4Factoidal.CID.Validate
+import L4Factoidal.CID.Fetch
 import L4Factoidal.CID.Tests
 import L4Factoidal.Geo.Types
 import L4Factoidal.Geo.Order
@@ -973,6 +975,8 @@ import L4Factoidal.LWS.FileLayoutTests
 import L4Factoidal.HTTP.Cors
 import L4Factoidal.HTTP.LocalGuard
 import L4Factoidal.LWS.Cors
+import L4Factoidal.LWS.Handler
+import L4Factoidal.LWS.AccessTheorems
 import L4Factoidal.LWS.Client.Wire
 import L4Factoidal.LWS.Client.Report
 import L4Factoidal.LWS.Client.Machine
@@ -990,6 +994,7 @@ import L4Factoidal.WebDAV.Server
 import L4Factoidal.WebDAV.State
 import L4Factoidal.WebDAV.Login
 import L4Factoidal.WebDAV.Local
+import L4Factoidal.WebDAV.Route
 import L4Factoidal.WebDAV.Remote
 import L4Factoidal.WebDAV.Tests
 import L4Factoidal.WebDAV.Theorems

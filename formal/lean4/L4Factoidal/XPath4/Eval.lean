@@ -538,6 +538,13 @@ def eval : Nat → Env → Expr → M Seq
         | _ => err "XPST0017" ("constructor function xs:" ++ q.loc ++ " takes one argument")
       else
       let total := args.length + kw.length
+      -- host hook: a function of the host language (XSLT 4.0)
+      match (if kw.isEmpty then env.host q total else none) with
+      | some h =>
+          let vs ← evalArgs n env args
+          if args.any Option.isNone then pure [.fn (.papp (.fn (.builtin q args.length)) vs)]
+          else h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns } (vs.map (·.getD []))
+      | none =>
       -- fn:concat is sequence-variadic (F&O 4.0 §5.4.1): any arity
       let sig? := if q.uri == nsFN && q.loc == "concat" then some (default : Sig) else findSig q total
       match sig? with
@@ -641,6 +648,11 @@ def eval : Nat → Env → Expr → M Seq
       -- fn:position#0 and fn:last#0 capture the focus (F&O 4.0 §1.5.2)
       else if q.uri == nsFN && k == 0 && (q.loc == "position" || q.loc == "last") && env.ctx.isSome then
         pure [focusFn q.loc env.pos env.size]
+      else if (env.host q k).isSome then
+        -- a host function item closes over the bindings of the reference
+        -- (XSLT `current-group#0` keeps the group of its creation)
+        let ps : List (QN × IType) := (List.range k).map (fun i => ({ uri := "#host", loc := "a" ++ toString i }, .seq .item .star))
+        pure [.fn (.inline ps (.seq .item .star) (.call q (ps.map (fun (v, _) => some (.var v))) []) false env.vars)]
       else match findSig q k with
         | some sig =>
           -- a reference to a context-dependent function whose omitted
@@ -1021,6 +1033,9 @@ def apply : Nat → Env → Item → List Seq → M Seq
         | none => err "XPTY0004" "array index must be a single integer"
     | .fn (.builtin q k) => do
         if args.length != k then err "XPTY0004" ("function " ++ q.show ++ " expects " ++ toString k ++ " arguments")
+        if let some h := env.host q k then
+          h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns } args
+        else
         if q.uri == nsXS then
           if k == 0 then err "XPDY0002" "the context value is absent"
           match xsCtorType? q.loc with

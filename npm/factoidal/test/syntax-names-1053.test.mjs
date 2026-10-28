@@ -29,8 +29,11 @@ test('syntaxFor: an unknown or missing extension is null', async () => {
   assert.equal(syntaxFor('data.unknown'), null);
   assert.equal(syntaxFor('data'), null);
   assert.equal(syntaxFor(''), null);
-  // .owl and .xml are not registered for RDF/XML.
-  assert.equal(syntaxFor('a.owl'), null);
+  // .xml is not registered for RDF/XML; .owl is not either, but gives
+  // RDF/XML as Jena does (owner decision 2026-10-27).
+  assert.equal(syntaxFor('a.xml'), null);
+  assert.equal(syntaxFor('a.owl'), 'rdfxml');
+  assert.equal(syntaxFor({ fileName: 'a.owl', mediaType: 'text/plain' }), null);
 });
 
 test('syntaxFor: the media type wins; its parameters and case do not matter', async () => {

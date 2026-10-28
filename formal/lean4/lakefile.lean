@@ -328,7 +328,7 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests, `Wasm.GraphSetTests,
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
              `Wasm.Ops.Maths,
-             `Wasm.Ops.Vc,
+             `Wasm.Ops.Vc, `Wasm.Ops.Cid,
              `Wasm.Ops.Lenient, `Wasm.Ops.Validate,
              `Wasm.Ops.DeltaLog, `Wasm.Ops.LiteralValue,
              `Wasm.Ops.Terms, `Wasm.Ops.Collections,
@@ -642,6 +642,11 @@ lean_exe «l4dict-fold-bench» where
 -- (Harness/Qt4Run.lean). Reads third_party/testing/qt4tests; prints
 -- per-test-set and total pass / fail / unsupported counts.
 lean_exe «l4qt4» where root := `Harness.Qt4Run
+
+-- xslt40-test (QT4 CG XSLT 4.0) runner over L4Factoidal.XSLT4
+-- (Harness/Xslt4Run.lean). Reads third_party/testing/xslt40-test; prints
+-- per-test-set and total pass / fail / unsupported counts.
+lean_exe «l4xslt4» where root := `Harness.Xslt4Run
 
 -- ShExC differential: every schemas/*.shex read by ShEx/Compact and
 -- compared with the ShExJ twin the same directory ships

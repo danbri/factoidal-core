@@ -128,30 +128,33 @@ test('lws-serve CLI: --insecure-no-auth prints why no CORS is sent', async () =>
 
 // ---------------------------------------------------------- webdav-serve
 
+// A mount of an LWS server that is not running (port 9): the root collection
+// is the server's own and asks no storage. Local mounts are refused and every
+// request acts as a named user (https://github.com/danbri/factoidal/issues/1147).
+const DAV_MOUNT = '# Notes\n- kind: lws\n- url: http://127.0.0.1:9/\n- users: guest\n'
+
 test('webdav-serve without --users: Host evil.example is 421; a foreign-origin write is 403; PROPFIND works', async () => {
   const conf = mkdtempSync(join(tmpdir(), 'guard1124-dav-'))
-  mkdirSync(join(conf, 'store'))
-  writeFileSync(join(conf, 'notes.md'), '# Notes\n- kind: local\n- path: ./store\n')
-  const s = await webdavListen({ configDir: conf, port: 0, onError: () => {} })
+  writeFileSync(join(conf, 'notes.md'), DAV_MOUNT)
+  const s = await webdavListen({ configDir: conf, port: 0, guest: 'guest', onError: () => {} })
   try {
     const rebound = await raw(s.origin, 'PROPFIND', '/', { host: `evil.example:${s.port}`, depth: '1' })
     assert.equal(rebound.status, 421)
     const form = await raw(s.origin, 'PUT', '/notes/a.txt', { origin: EVIL, 'content-type': 'text/plain' }, 'x')
     assert.equal(form.status, 403)
-    const list = await raw(s.origin, 'PROPFIND', '/', { depth: '1' })
+    const list = await raw(s.origin, 'PROPFIND', '/', { depth: '1', host: `localhost:${s.port}` })
     assert.equal(list.status, 207)
+    assert.match(list.body, /<D:href>\/notes\/<\/D:href>/)
     const put = await raw(s.origin, 'PUT', '/notes/a.txt', { 'content-type': 'text/plain' }, 'hello')
-    assert.ok(put.status === 201 || put.status === 204, `PUT ${put.status}`)
-    const get = await raw(s.origin, 'GET', '/notes/a.txt', { host: `localhost:${s.port}` })
-    assert.equal(get.body, 'hello')
+    assert.equal(put.status, 403)
+    assert.match(put.body, /read only \(emergency mode/)
   } finally { await s.close() }
 })
 
 test('webdav-serve: --allow-host adds a name', async () => {
   const conf = mkdtempSync(join(tmpdir(), 'guard1124-dav2-'))
-  mkdirSync(join(conf, 'store'))
-  writeFileSync(join(conf, 'notes.md'), '# Notes\n- kind: local\n- path: ./store\n')
-  const s = await webdavListen({ configDir: conf, port: 0, allowHosts: ['nas.example'], onError: () => {} })
+  writeFileSync(join(conf, 'notes.md'), DAV_MOUNT)
+  const s = await webdavListen({ configDir: conf, port: 0, guest: 'guest', allowHosts: ['nas.example'], onError: () => {} })
   try {
     const r = await raw(s.origin, 'PROPFIND', '/', { host: 'nas.example', depth: '0' })
     assert.equal(r.status, 207)

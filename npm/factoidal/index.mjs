@@ -25,6 +25,7 @@ import { sbm11Api, registerSbm11Source, setDefaultSbm11Reader, mapReader } from 
 import { nodeDefaultReaderFactory } from './lib/sbm11-node.mjs';
 import { lwsSbm11Reader as lwsSbm11ReaderWith } from './lib/sbm11-lws.mjs';
 import { nodeSyncTransport } from './lib/sync-http-node.mjs';
+import { nodeCidHost } from './lib/cid-node.mjs';
 
 /**
  * The loaded Lean engine handle: `call(op, args)`, `callBlob`,
@@ -45,6 +46,8 @@ const api = buildApi({
   engineName: 'lean4-wasm',
   loadEntry: async () => entryFromEngine(await loadEngine()),
   storeReaderFor: (root) => (path) => readFileSync(join(root, path)),
+  // Name resolution and a GET pinned to one address (issue 1100 item 9).
+  cidHost: nodeCidHost,
 });
 
 // RDF and SPARQL
@@ -185,6 +188,9 @@ export const vcCheckCredential = api.vcCheckCredential;
 export const vcCheckCredentialSubject = api.vcCheckCredentialSubject;
 export const vcCheckNoDataLoss = api.vcCheckNoDataLoss;
 export const vcCheckRelatedResourceDigests = api.vcCheckRelatedResourceDigests;
+// Controlled Identifiers v1.0 (https://github.com/danbri/factoidal/issues/1100).
+export const cidValidate = api.cidValidate;
+export const cidRetrieveVerificationMethod = api.cidRetrieveVerificationMethod;
 export const didKeyResolve = api.didKeyResolve;
 
 // Types, probes and metadata

@@ -114,6 +114,26 @@ def Prog.trace {σ α : Type} (run : σ → BOp → BAns × σ) : Nat → Prog �
     let (r, s') := run s op
     op :: Prog.trace run n (k r) s'
 
+/-- The program run with no storage: every operation is answered "no
+answer" (status 0) without being asked. The result names no operation
+(`Prog.offline_pure`). `webdav-serve` runs a request this way when its
+target is not in a mount its user may use (issue 1147). One loop. -/
+def Prog.offline {α : Type} : Prog α → Prog α
+  | .pure a => .pure a
+  | .call _ k => Prog.offline (k { status := 0, detail := "no storage for this request" })
+
+theorem Prog.offline_pure {α : Type} : ∀ (p : Prog α), ∃ a, p.offline = .pure a
+  | .pure a => ⟨a, rfl⟩
+  | .call _ k => by
+    simp only [Prog.offline]
+    exact Prog.offline_pure _
+
+theorem Prog.trace_offline {σ α : Type} (run : σ → BOp → BAns × σ) (n : Nat) (p : Prog α) (s : σ) :
+    Prog.trace run n p.offline s = [] := by
+  obtain ⟨a, h⟩ := Prog.offline_pure p
+  rw [h]
+  cases n <;> rfl
+
 /-- Is an operation a write? -/
 def BOp.isWrite : BOp → Bool
   | .put .. | .delete _ => true

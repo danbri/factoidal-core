@@ -121,6 +121,8 @@ export {
   vcCheckCredentialSubject,
   vcCheckNoDataLoss,
   vcCheckRelatedResourceDigests,
+  cidValidate,
+  cidRetrieveVerificationMethod,
   didKeyResolve,
   capabilities,
   Dataset,

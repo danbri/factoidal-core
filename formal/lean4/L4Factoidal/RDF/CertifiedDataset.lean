@@ -358,6 +358,60 @@ def CertifiedDataset.insertQuads (c : CertifiedDataset) (qs : List Quad) : Certi
 def CertifiedDataset.deleteQuads (c : CertifiedDataset) (qs : List Quad) : CertifiedDataset :=
   ⟨c.val.deleteQuads qs, Dataset.deleteQuads_isSet qs c.property⟩
 
+/-! ## Quads in a graph named by a blank node
+
+RDF 1.1 Concepts §4: a graph name is an IRI or a blank node. A SPARQL Update
+quad (`Quad`) names an IRI only, so the RDF/JS `DatasetCore.add` and `delete`
+of the npm `Dataset` took no quad in a graph named by a blank node, although a
+parsed dataset holds such quads (https://github.com/danbri/factoidal/issues/1094).
+`AnyQuad` names any graph. A quad in the default graph or in a graph named by
+an IRI goes through `insertQuads` / `deleteQuads` as before; a quad in a graph
+named by a blank node changes that graph, and the result is admitted by
+`Dataset.certify`, so it is a set. -/
+
+/-- A quad with its graph name: `none` for the default graph. -/
+abbrev AnyQuad := Option Subject × Triple
+
+/-- The quads that are SPARQL Update quads (default graph or IRI name). -/
+def AnyQuad.updateQuads (qs : List AnyQuad) : List Quad :=
+  qs.filterMap fun
+    | (none, t) => some (none, t)
+    | (some (.iri i), t) => some (some i, t)
+    | (some (.bnode _), _) => none
+
+/-- The quads in a graph named by a blank node, with that label. -/
+def AnyQuad.bnodeQuads (qs : List AnyQuad) : List (BNodeId × Triple) :=
+  qs.filterMap fun
+    | (some (.bnode b), t) => some (b, t)
+    | _ => none
+
+/-- Add the quads (set semantics). -/
+def CertifiedDataset.insertAnyQuads (c : CertifiedDataset) (qs : List AnyQuad) : CertifiedDataset :=
+  let c1 := c.insertQuads (AnyQuad.updateQuads qs)
+  match AnyQuad.bnodeQuads qs with
+  | [] => c1
+  | bs =>
+    -- `Dataset.certify` joins a graph name that occurs two times into one
+    -- graph and keeps each triple once (`Dataset.certify_memQuad`).
+    Dataset.certify { c1.val with
+      named := c1.val.named ++ bs.map fun (b, t) => { name := .bnode b, graph := [t] } }
+
+/-- A named graph without the triples that `bs` gives for its blank-node name. -/
+def removeInBnodeGraph (bs : List (BNodeId × Triple)) (ng : NamedGraph) : NamedGraph :=
+  match ng.name with
+  | .bnode b =>
+      { ng with graph := bs.foldl (fun g q => if q.1 == b then g.remove q.2 else g) ng.graph }
+  | .iri _ => ng
+
+/-- Remove the quads. A graph keeps its slot when it becomes empty, as
+`Dataset.deleteQuad` keeps the slot of a graph named by an IRI. -/
+def CertifiedDataset.deleteAnyQuads (c : CertifiedDataset) (qs : List AnyQuad) : CertifiedDataset :=
+  let c1 := c.deleteQuads (AnyQuad.updateQuads qs)
+  match AnyQuad.bnodeQuads qs with
+  | [] => c1
+  | bs =>
+    Dataset.certify { c1.val with named := c1.val.named.map (removeInBnodeGraph bs) }
+
 /-! ## Checks -/
 
 private def px : WfIri := ⟨"urn:p", by decide⟩
@@ -377,6 +431,22 @@ private def tb : Triple := ⟨.bnode "b", px, .bnode "c"⟩
 -- The scope prefix renames blank nodes only.
 #guard ((Dataset.certify { default := [tb, tx], named := [] }).renameBnodes "d0_").val.default ==
   [⟨.bnode "d0_b", px, .bnode "d0_c"⟩, tx]
+
+-- A quad in a graph named by a blank node is added and deleted (issue 1094);
+-- a quad in another graph named by a blank node is not deleted.
+#guard ((Dataset.certify Dataset.empty).insertAnyQuads
+  [(some (.bnode "g"), tx), (some (.bnode "g"), tx), (none, tb)]).val ==
+  { default := [tb], named := [⟨.bnode "g", [tx]⟩] }
+#guard ((Dataset.certify { default := [], named := [⟨.bnode "g", [tx]⟩] }).insertAnyQuads
+  [(some (.bnode "g"), tb)]).val == { default := [], named := [⟨.bnode "g", [tx, tb]⟩] }
+#guard ((Dataset.certify { default := [], named := [⟨.bnode "g", [tx, tb]⟩] }).deleteAnyQuads
+  [(some (.bnode "g"), tx), (some (.bnode "h"), tb)]).val ==
+  { default := [], named := [⟨.bnode "g", [tb]⟩] }
+-- Quads of the default graph and of an IRI graph: as `insertQuads` / `deleteQuads`.
+#guard ((Dataset.certify Dataset.empty).insertAnyQuads [(some (.iri gx), tx)]).val ==
+  ((Dataset.certify Dataset.empty).insertQuads [(some gx, tx)]).val
+#guard ((Dataset.certify { default := [tx], named := [] }).deleteAnyQuads [(none, tx)]).val ==
+  { default := [], named := [] }
 
 #print axioms Dataset.certify
 #print axioms renameDatasetBnodes_isSet
