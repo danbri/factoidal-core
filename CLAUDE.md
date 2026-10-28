@@ -895,6 +895,19 @@ to its `main`, or runs `npm-publish.yml`; other sessions comment on the
 release issue (first instance: https://github.com/danbri/factoidal/issues/1140).
 Reason and cost: `skills/npm-release/SKILL.md` § One owner per release.
 
+### Pipelines after XProc 3.1 (owner, 2026-10-28)
+
+Owner, 2026-10-28, verbatim: "Merged
+https://github.com/danbri/factoidal-core/pull/185 - do it!" and "Also we add a
+lot more xml stuff soon". The five proposals of
+`docs/designissues/2026-10-28-dataflow-and-xproc.md` are approved, in their
+order: (1) an acyclic graph of stages with named, typed ports, (2) sequence
+ports and for-each, (3) choose and try/catch, (4) a pipeline document, (5) an
+XProc 3.1 subset read in Lean. Epic: https://github.com/danbri/factoidal/issues/1129;
+stages https://github.com/danbri/factoidal/issues/1130 to
+https://github.com/danbri/factoidal/issues/1134. More XML support (XPath 2.0
+and later) widens stage 5.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where
