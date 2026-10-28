@@ -369,6 +369,8 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       -- Full Text 3.0 §2.4 FTOptionDecl: the match options of the static
       -- context, kept under the pseudo-prefix `#ftopt` for the
       -- `contains text` parser (one entry per declaration, in order)
+      -- a Setter: before every variable and context value declaration
+      if !varNames.isEmpty || ctxSeen then synErr "declare ft-option after a variable declaration"
       let os ← withXq cfg ns (L4Factoidal.FullText.pMatchOptions expandRefs)
       expectS ";"
       let prev := (ns.lookup "#ftopt").getD ""

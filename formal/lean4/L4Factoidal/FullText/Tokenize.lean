@@ -8,7 +8,9 @@ The rules of this implementation:
 * a token is a maximal run of word characters: Unicode General Category
   L (letters), M (marks) or N (numbers), from the tables of the shared
   regular-expression engine (`Regex.XPath40.categoryRanges`); every other
-  character separates tokens;
+  character separates tokens. A Han ideograph, a Hiragana or a Katakana
+  character is a token by itself (these scripts write no spaces between
+  words), so a query for a Chinese word is a phrase of its characters;
 * each token has one position; positions are consecutive from 1, so a
   phrase is a run of consecutive positions;
 * a sentence ends after a token that is followed (before the next token)
@@ -16,13 +18,16 @@ The rules of this implementation:
 * a paragraph ends at an element boundary: the text of a node is given as
   segments (the text nodes, in document order), and each segment after
   the first starts a new paragraph, and so a new sentence (§4.1: "taking
-  any structural information of the item into account"). Paragraphs are
+  any structural information of the item into account"; the qt4tests
+  feature `fullText-units`: "element boundaries … treated as Full Text
+  sentence and paragraph boundaries"). A boundary inside a token (a word
+  character on both sides, as in `<b>p</b>rototypes`) does not split the
+  token, because tokens come from the string value (§4.1). Paragraphs are
   numbered from 1.
 
 Query strings are tokenized with the same word rule (`queryTokens`); when
-the wildcard option is on, the wildcard characters `.?*+{},` and an
-escaped character `\c` are word characters too (`queryTokensWild`), so a
-wildcard expression is one token.
+the wildcard option is on, a `.` with its indicator and an escaped word
+character are kept in the token (`queryTokensWild`).
 -/
 import L4Factoidal.Regex.XPath40
 import L4Factoidal.Text.CaseMap
@@ -96,9 +101,17 @@ def TokState.flush (s : TokState) : TokState :=
     { s with out := s.out.push { word := String.ofList s.cur.toList, pos := s.pos + 1, sent, para },
              cur := #[], pos := s.pos + 1, sent, para, sentEnd := false, paraEnd := false }
 
+/-- Han ideographs, Hiragana and Katakana: each is a token of its own
+    (these scripts do not separate words by spaces). -/
+def isIdeo (c : Char) : Bool :=
+  let n := c.toNat
+  (0x3040 ≤ n && n ≤ 0x30FF) || (0x3400 ≤ n && n ≤ 0x4DBF) || (0x4E00 ≤ n && n ≤ 0x9FFF) ||
+  (0xF900 ≤ n && n ≤ 0xFAFF) || (0x20000 ≤ n && n ≤ 0x3134F)
+
 /-- One character. -/
 def TokState.step (s : TokState) (c : Char) : TokState :=
-  if isWordChar c then { s with cur := s.cur.push c }
+  if isIdeo c then { s.flush with cur := #[c] }.flush
+  else if isWordChar c then { s with cur := s.cur.push c }
   else
     let s := s.flush
     if isSentenceEnd c then { s with sentEnd := true } else s
@@ -109,8 +122,14 @@ def tokenizeSegments (segs : List String) : Array DocTok := Id.run do
   let mut st : TokState := {}
   let mut first := true
   for seg in segs do
-    st := st.flush
-    if !first then st := { st with paraEnd := true }
+    -- an element boundary inside a token does not split it (the string
+    -- value joins the text nodes); between tokens it ends the paragraph
+    let joins := !st.cur.isEmpty && (match seg.toList.head? with
+      | some c => isWordChar c
+      | none => false)
+    if !joins then
+      st := st.flush
+      if !first then st := { st with paraEnd := true }
     first := false
     for c in seg.toList do
       st := st.step c
@@ -126,22 +145,55 @@ def words (s : String) : List String := (tokenizeString s).toList.map (·.word)
 /-- Tokenize a query string (§3.2): the words, without positions. -/
 def queryTokens (s : String) : List String := words s
 
-/-- Characters of a wildcard expression (§3.4.6) kept inside a token. -/
-def isWildChar (c : Char) : Bool := c == '.' || c == '?' || c == '*' || c == '+' || c == '{' || c == '}' || c == ','
-
-/-- Tokenize a query string with the wildcard option on: word characters,
-    the wildcard characters and escaped characters form tokens. -/
+/-- Tokenize a query string with the wildcard option on (§3.4.6): a `.`
+    is a word character, with the indicator after it (`?`, `*`, `+`, or
+    `{` up to the next `}`); `\c` is kept for a word character `c`
+    and is a separator otherwise. Every other character follows the word
+    rule, so a `?`, `*`, `+`, `{` or `}` that follows no `.` separates
+    tokens. -/
 def queryTokensWild (s : String) : List String := Id.run do
+  let cs := s.toList.toArray
   let mut out : Array String := #[]
   let mut cur : Array Char := #[]
-  let mut esc := false
-  for c in s.toList do
-    if esc then cur := cur.push c; esc := false
-    else if c == '\\' then cur := cur.push c; esc := true
-    else if isWordChar c || isWildChar c then cur := cur.push c
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    let c := cs.getD i ' '
+    if c == '\\' then
+      let d := cs.getD (i + 1) ' '
+      if i + 1 < cs.size && isWordChar d then
+        cur := (cur.push c).push d
+      else if i + 1 ≥ cs.size then
+        cur := cur.push c
+      else
+        if !cur.isEmpty then out := out.push (String.ofList cur.toList)
+        cur := #[]
+      i := i + 2
+    else if c == '.' then
+      cur := cur.push c
+      let n := cs.getD (i + 1) ' '
+      if i + 1 < cs.size && (n == '?' || n == '*' || n == '+') then
+        cur := cur.push n; i := i + 2
+      else if i + 1 < cs.size && n == '{' then
+        let mut j := i + 1
+        for _ in [0:cs.size] do
+          if j ≥ cs.size then break
+          let x := cs.getD j ' '
+          cur := cur.push x
+          j := j + 1
+          if x == '}' then break
+        i := j
+      else i := i + 1
+    else if isIdeo c then
+      if !cur.isEmpty then out := out.push (String.ofList cur.toList)
+      out := out.push c.toString
+      cur := #[]
+      i := i + 1
+    else if isWordChar c then cur := cur.push c; i := i + 1
     else
       if !cur.isEmpty then out := out.push (String.ofList cur.toList)
       cur := #[]
+      i := i + 1
   if !cur.isEmpty then out := out.push (String.ofList cur.toList)
   return out.toList
 

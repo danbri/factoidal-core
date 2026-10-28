@@ -240,27 +240,33 @@ def pSelection (lit : String → Except Err String) (sp : SubParsers) : Nat → 
   | 0 => synErr "full-text selection too deeply nested"
   | n + 1 => do
     let mut s ← pOr lit sp n
+    -- §3.6: in a group of positional filters, FTOrder is applied first,
+    -- then the others from left to right
+    let mut ordered := false
+    let mut fs : Array (Expr → Expr) := #[]
     for _ in [0:100000] do
-      if ← eatKw "ordered" then s := .ext "ft.order" [s] [] [] []
+      if ← eatKw "ordered" then ordered := true
       else if ← eatKw "window" then
         let k ← subP sp.additive
         let u ← pUnit
-        s := .ext "ft.window" [s, k] [] [] [u]
+        fs := fs.push (fun x => .ext "ft.window" [x, k] [] [] [u])
       else if ← eatKw "distance" then
         let (rk, rs) ← pRange sp
         let u ← pUnit
-        s := .ext "ft.distance" (s :: rs) [] [] [u, rk]
+        fs := fs.push (fun x => .ext "ft.distance" (x :: rs) [] [] [u, rk])
       else if ← atKw "same" <||> atKw "different" then
         let same ← eatKw "same"
         if !same then let _ ← eatKw "different"
         let u ← if ← eatKw "sentence" then pure "sentence"
           else if ← eatKw "paragraph" then pure "paragraph"
           else synErr "expected sentence or paragraph"
-        s := .ext "ft.scope" [s] [] [] [if same then "same" else "different", u]
-      else if ← eatKw2 "at" "start" then s := .ext "ft.content" [s] [] [] ["start"]
-      else if ← eatKw2 "at" "end" then s := .ext "ft.content" [s] [] [] ["end"]
-      else if ← eatKw2 "entire" "content" then s := .ext "ft.content" [s] [] [] ["entire"]
+        fs := fs.push (fun x => .ext "ft.scope" [x] [] [] [if same then "same" else "different", u])
+      else if ← eatKw2 "at" "start" then fs := fs.push (fun x => .ext "ft.content" [x] [] [] ["start"])
+      else if ← eatKw2 "at" "end" then fs := fs.push (fun x => .ext "ft.content" [x] [] [] ["end"])
+      else if ← eatKw2 "entire" "content" then fs := fs.push (fun x => .ext "ft.content" [x] [] [] ["entire"])
       else break
+    if ordered then s := .ext "ft.order" [s] [] [] []
+    for f in fs do s := f s
     pure s
 
 /-- FTOr ::= FTAnd ( "ftor" FTAnd )* -/
@@ -320,7 +326,9 @@ def pPrimary (lit : String → Except Err String) (sp : SubParsers) : Nat → P 
       for _ in [0:100000] do
         if ← atS "(#" then names := names.push (← pPragma) else break
       expectS "{"
-      if ← eatS "}" then return .ext "ft.extsel" [] [] [] names.toList
+      -- no pragma is recognized, so an empty selection is err:XQST0079
+      if ← eatS "}" then
+        throw { code := "XQST0079", msg := "an extension selection with no recognized pragma and no selection" }
       let s ← pSelection lit sp n
       expectS "}"
       return .ext "ft.extsel" [s] [] [] names.toList

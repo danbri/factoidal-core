@@ -218,6 +218,7 @@ def kwThenKw (k k2 : String) : P Bool := do
 def isFlworStart : P Bool := do
   if ← kwThen "for" '$' then return true
   if ← kwThen "let" '$' then return true
+  if ← kwThenKw "let" "score" then return true
   for k2 in ["member", "key", "value", "tumbling", "sliding"] do
     if ← kwThenKw "for" k2 then return true
   pure false

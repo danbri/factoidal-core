@@ -61,8 +61,11 @@ def stopListOf (env : Env) (uri : String) : M (List String) :=
   | none => err "FTST0008" ("stop word list not found: " ++ uri)
 
 /-- The implementation-defined default stop word list (§3.4.7
-    `stop words default`): empty. -/
-def defaultStopWords : List String := []
+    `stop words default`): the default list of the W3C XQuery and XPath
+    Full Text test suite (XQFTTS, `StopWordList.xml`; the qt4tests feature
+    `fullText-defaults` requires it). -/
+def defaultStopWords : List String :=
+  ["and", "the", "then", "it", "of", "in", "not", "been", "numerous"]
 
 /-- The local name of an XML tag. -/
 def localOf (t : String) : String :=
@@ -78,23 +81,60 @@ def childText (n : L4Factoidal.XML.Node) (l : String) : String :=
   | c :: _ => c.textContent.trim
   | [] => ""
 
+/-- The relations of a `synonym` element and of the `synonym` elements
+    nested in it (a nested synonym is one level further from the term of
+    its parent). -/
+def synEdges : Nat → String → L4Factoidal.XML.Node → List (String × List (String × String))
+  | 0, _, _ => []
+  | f + 1, from_, s =>
+    let t := childText s "term"
+    (from_, [(t, childText s "relationship")]) ::
+      (childNamed s "synonym").flatMap (fun n => synEdges f t n)
+
 /-- A thesaurus document (the XQFTTS thesaurus format: `entry` elements
-    with a `term` and `synonym` elements, each with a `term` and a
-    `relationship`). -/
+    with a `term` and `synonym` elements, each with a `term`, a
+    `relationship` and nested `synonym` elements). -/
+def parseThesaurus (t : String) : Option Thesaurus :=
+  match L4Factoidal.XML.parseXML t with
+  | .error _ => none
+  | .ok d =>
+    let roots := d.children.filter (fun n => n.elementTag.isSome)
+    some (roots.flatMap (fun r => (childNamed r "entry").flatMap (fun e =>
+      (childNamed e "synonym").flatMap (fun s => synEdges 64 (childText e "term") s))))
+
 def thesaurusOf (env : Env) (uri : String) : M Thesaurus :=
   match resourceText env uri with
   | none => err "FTST0018" ("thesaurus not found: " ++ uri)
-  | some t =>
-    match L4Factoidal.XML.parseXML t with
-    | .error _ => err "FTST0018" ("thesaurus not readable: " ++ uri)
-    | .ok d =>
-      let roots := d.children.filter (fun n => n.elementTag.isSome)
-      pure (roots.flatMap (fun r => (childNamed r "entry").map (fun e =>
-        (childText e "term", (childNamed e "synonym").map (fun s =>
-          (childText s "term", childText s "relationship"))))))
+  | some t => match parseThesaurus t with
+    | some th => pure th
+    | none => err "FTST0018" ("thesaurus not readable: " ++ uri)
 
-/-- The default thesaurus (§3.4.3 `thesaurus default`): empty. -/
-def defaultThesaurus : Thesaurus := []
+/-- The default thesaurus (§3.4.3 `thesaurus default`): the default
+    thesaurus of the W3C Full Text test suite (XQFTTS,
+    `UsabilityThesaurus.xml`; the qt4tests feature `fullText-defaults`
+    requires it). -/
+def defaultThesaurus : Thesaurus :=
+  [("duties", [("tasks", "UF")]), ("duty", [("task", "UF")]), ("people", [("users", "NT")]),
+   ("web site components", [("navigation", "NT")]), ("web site components", [("layout", "NT")]),
+   ("web site components", [("terminology", "NT")]),
+   ("web site components", [("navigation", "narrower terms")]),
+   ("web site components", [("layout", "narrower terms")]),
+   ("web site components", [("terminology", "narrower terms")]),
+   ("quote", [("remarked", "UF")]), ("quote", [("remarked", "synonyms")]),
+   ("letters", [("correspondence", "BT")]), ("sucessfull", [("successful", "misspelling-of")]),
+   ("AIDS", [("Hepatitis", "disease in this category")]),
+   ("AIDS", [("Tuberculosis", "disease in this category")]),
+   ("program", [("software", "UF")]), ("infrastructure", [("networks", "NT")]),
+   ("networks", [("Web", "NT")])]
+
+/-- The languages of the language option (§3.4.1, err:FTST0009): a
+    language tag (`xs:language`) whose primary subtag has two or three
+    letters (an ISO 639 code). Only English has a stemmer. -/
+def languageSupported (v : String) : Bool :=
+  let parts := v.splitOn "-"
+  let prim := parts.headD ""
+  (prim.length == 2 || prim.length == 3) && prim.toList.all Char.isAlpha &&
+  parts.tail.all (fun p => 1 ≤ p.length && p.length ≤ 8 && p.toList.all Char.isAlphanum)
 
 /-! ## Decoding the match options -/
 
@@ -120,7 +160,9 @@ def decodeOpts (env : Env) (enc : List String) : M POpts := do
     | ["diac", v] => p := { p with diacriticsSensitive := some (v == "sensitive") }
     | ["stem", v] => p := { p with stem := some (v == "1") }
     | ["wild", v] => p := { p with wild := some (v == "1") }
-    | ["lang", v] => p := { p with lang := some v }
+    | ["lang", v] =>
+      if !languageSupported v then err "FTST0009" ("language not supported: " ++ v)
+      p := { p with lang := some v }
     | ["thes", "none"] => p := { p with thes := some [] }
     | ["thes", "use"] => thesUse := true
     | "tid" :: "#default" :: _ => thes := thes ++ [{ data := defaultThesaurus }]
@@ -176,7 +218,8 @@ def resolve (env : Env) (cb : FtCb) : Nat → Expr → M RSel
   | n + 1, e =>
     match e with
     | .ext "ft.words" [v] _ _ ss => do
-      let s ← cb.eval env v
+      -- the FTWordsValue has the expected type xs:string* (§3.2)
+      let s ← env.coerce (parseTy "xs:string*") (← cb.eval env v) "FTWordsValue"
       let as ← env.atomize s
       pure (.words (as.map Atomic.str) (wmodeOf (ss.headD "any")))
     | .ext "ft.times" (s :: rs) _ _ ss => do
@@ -230,8 +273,8 @@ def segmentsOf (d : Doc) (i : Nat) (ignored : List Nat) : List String := Id.run 
       if j > r.last then break
       let x := d.get j
       if ignored.contains j then
-        if cur != "" then out := out.push cur; cur := ""
-        lastParent := none
+        -- the reconstructed node has no boundary there (`fts:reconstruct`
+        -- merges the adjacent text)
         j := (if x.last > j then x.last else j) + 1
       else
         match x.kind with
