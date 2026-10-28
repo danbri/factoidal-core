@@ -139,6 +139,21 @@ def pFieldName : P String := do
   let ch ← peekAt 0
   if ch == '"' || ch == '\'' then pStringLit else pNCName
 
+/-- The static checks of a decimal format declaration (XQuery 4.0 §5.7):
+    a known property (XPST0003), a valid value (XQST0097) and distinct
+    characters (XQST0098). -/
+def checkDecimalFormat (props : List (String × String)) : P Unit := do
+  let known := ["decimal-separator", "grouping-separator", "exponent-separator", "percent",
+    "per-mille", "infinity", "minus-sign", "NaN", "zero-digit", "digit", "pattern-separator"]
+  for (k, _) in props do
+    if !known.contains k then synErr ("unknown decimal format property " ++ k)
+  match props.foldlM (fun f (kv : String × String) => f.set kv.1 kv.2) ({} : DecFormat) with
+  | .error e => qerr "XQST0097" e.msg
+  | .ok f =>
+    match f.check with
+    | .error e => qerr "XQST0098" e.msg
+    | .ok _ => pure ()
+
 /-- Is the item type a generalized atomic type (an atomic type, an
     enumeration or a union of those)? -/
 def isGenAtomic : IType → Bool
@@ -373,6 +388,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
           if props.any (·.1 == pn) then qerr "XQST0114" ("decimal format property " ++ pn ++ " twice")
           props := props ++ [(pn, pv)]
         expectS ";"
+        checkDecimalFormat props
         if m.decimalFormats.any (·.1 == "") then qerr "XQST0111" "two default decimal formats"
         m := { m with decimalFormats := m.decimalFormats ++ [("", props)] }
       else synErr "bad default declaration"
@@ -423,6 +439,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
         if props.any (·.1 == pn) then qerr "XQST0114" ("decimal format property " ++ pn ++ " twice")
         props := props ++ [(pn, pv)]
       expectS ";"
+      checkDecimalFormat props
       if m.decimalFormats.any (·.1 == key) then qerr "XQST0111" "two decimal formats with one name"
       m := { m with decimalFormats := m.decimalFormats ++ [(key, props)] }
     | "option" =>
@@ -447,8 +464,11 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
       if !(← eatKw "item") then expectKw "value"
       if ctxSeen then qerr "XQST0099" "two context item declarations"
       ctxSeen := true
-      let ty ← if ← eatKw "as" then withXq cfg ns (pSeqType 1000) else pure (.seq .item .star)
+      -- §5.17: the type is an item type, with no occurrence indicator
+      let ty ← if ← eatKw "as" then withXq cfg ns (pItemType 1000) else pure .item
+      let ty : IType := .seq ty .one
       if ← eatS ":=" then
+        if m.libNs.isSome then qerr "XQST0113" "a context value declaration with a value in a library module"
         let e ← withXq cfg ns (pExprSingle 100000)
         expectS ";"
         m := { m with decls := m.decls ++ [.ctx ty (some e) false] }
@@ -456,6 +476,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
         expectKw "external"
         let d ← if ← eatS ":=" then pure (some (← withXq cfg ns (pExprSingle 100000))) else pure none
         expectS ";"
+        if d.isSome && m.libNs.isSome then qerr "XQST0113" "a context value declaration with a value in a library module"
         m := { m with decls := m.decls ++ [.ctx ty d true] }
     | "variable" =>
       checkVisibility annots "XQST0116"
@@ -777,19 +798,39 @@ def bindOne (fuel : Nat) (globals : List QN) (env : Env) : Decl → M (Option En
     | .error e =>
       if e.code == "XPST0008" && globals.any (fun g => e.msg.endsWith ("$" ++ g.show)) then
         pure (none, some e)
+      -- the context value may be declared later (§5.17)
+      else if e.code == "XPDY0002" && env.ctx.isNone then pure (none, some e)
       else throw e
   | .ctx ty init external => do
     let env1 := markStatic env
-    let val ← if external then
+    -- an initializer that reads a global not bound yet is tried again later
+    let evalInit (e : Expr) : M (Option Seq × Option Err) := do
+      match eval fuel env1 e with
+      | .ok v => pure (some v, none)
+      | .error ex =>
+        if ex.code == "XPST0008" && globals.any (fun g => ex.msg.endsWith ("$" ++ g.show)) then
+          pure (none, some ex)
+        else throw ex
+    let (val, postponed, given) ← if external then
         match env.ctx with
-        | some s => pure s
+        | some s => pure (some s, none, true)
         | none => match init with
-          | some e => eval fuel env1 e
-          | none => pure []
-      else eval fuel env1 (init.getD (.seq []))
+          | some e => do let (v, pe) ← evalInit e; pure (v, pe, false)
+          | none => pure (some [], none, false)
+      else do let (v, pe) ← evalInit (init.getD (.seq [])); pure (v, pe, false)
+    match val with
+    | none => pure (none, postponed)
+    | some val =>
     if !val.isEmpty || !external then
-      if !(env.seqMatches val ty) then err "XPTY0004" "the context value does not match its declared type"
-      pure (some { env with ctx := some val, pos := 1, size := 1 }, none)
+      -- §5.17: exactly one item; a value from the host must match the
+      -- type, an initializer is converted by the function conversion rules
+      if val.length != 1 then err "XPTY0004" "the context value is not a single item"
+      if given then
+        if !(env.seqMatches val ty) then err "XPTY0004" "the context value does not match its declared type"
+        pure (some { env with ctx := some val, pos := 1, size := 1 }, none)
+      else
+        let val ← env.coerce ty val "the context value"
+        pure (some { env with ctx := some val, pos := 1, size := 1 }, none)
     else pure (some env, none)
   | .fn _ => pure (some env, none)
 
@@ -814,12 +855,16 @@ def bindRounds (fuel : Nat) (globals : List QN) : Nat → Env → List Decl → 
     let (env', later, lastErr) ← bindRound fuel globals env pending
     if later.length == pending.length then
       match lastErr with
-      | some e => throw { e with code := "XQDY0054", msg := "circular variable dependency: " ++ e.msg }
+      | some e => if e.code == "XPDY0002" then throw e
+                  else throw { e with code := "XQDY0054", msg := "circular variable dependency: " ++ e.msg }
       | none => pure env'
     else bindRounds fuel globals k env' later
 
 def bindModules (fuel : Nat) (env : Env) (ms : List Module) : M Env :=
-  let pending := ms.flatMap (fun m => m.decls.filter (fun d => match d with | .fn _ => false | _ => true))
+  let pending0 := ms.flatMap (fun m => m.decls.filter (fun d => match d with | .fn _ => false | _ => true))
+  -- the context value first: variables may use it (forward reference, §5.17)
+  let pending := pending0.filter (fun d => match d with | .ctx .. => true | _ => false) ++
+    pending0.filter (fun d => match d with | .ctx .. => false | _ => true)
   bindRounds fuel (ms.flatMap Module.globals) (pending.length + 1) (bindFns env ms) pending
 
 /-- The dynamic context of a module before its declarations are bound:
