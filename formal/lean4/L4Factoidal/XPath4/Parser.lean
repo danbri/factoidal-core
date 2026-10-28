@@ -1340,7 +1340,11 @@ def pKeySpec : Nat → P (Option Expr)
       let c ← read
       let i ← get
       match ncnameAt c.s i with
-      | some (nm, e) => set e; pure (some (.lit (Atomic.ofStr nm)))
+      | some (nm, e) =>
+        -- the longest token is a QName (XPath 4.0 A.3.1), which is not a key
+        if chAt c.s e == ':' && isNameStart (chAt c.s (e + 1)) then
+          synErr ("a lookup key must be an NCName, not the QName " ++ nm ++ ":...")
+        set e; pure (some (.lit (Atomic.ofStr nm)))
       | none => synErr "bad lookup key"
 
 def pPostfix : Nat → P Expr
