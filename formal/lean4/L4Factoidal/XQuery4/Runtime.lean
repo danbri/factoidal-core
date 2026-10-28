@@ -108,8 +108,10 @@ def metaEntries (cl : List (QN × Seq)) : List (QN × Seq) :=
     decimal formats (XQuery 4.0 §5.5, §5.6; each module has its own). -/
 def modCtxKey : QN := { uri := "#xqm", loc := "ctx" }
 
-def encodeModCtx (base coll : String) (df : List (String × List (String × String))) : Seq :=
-  [.map [(Atomic.ofStr "base", [.atom (Atomic.ofStr base)]),
+def encodeModCtx (base coll : String) (df : List (String × List (String × String)))
+    (ns : List (String × String)) : Seq :=
+  [.map [(Atomic.ofStr "ns", [.map (ns.map (fun (p, u) => (Atomic.ofStr p, [.atom (Atomic.ofStr u)])))]),
+         (Atomic.ofStr "base", [.atom (Atomic.ofStr base)]),
          (Atomic.ofStr "coll", [.atom (Atomic.ofStr coll)]),
          (Atomic.ofStr "df", [.map (df.map (fun (n, props) =>
             (Atomic.ofStr n, [.map (props.map (fun (k, v) => (Atomic.ofStr k, [.atom (Atomic.ofStr v)])))])))])]]
@@ -133,7 +135,11 @@ def withModCtx (cl : List (QN × Seq)) (e : Env) : Env :=
                 | [.atom x] => some (k.str, x.str) | _ => none))
             | _ => none)
         | _ => e.decimalFormats
-      { e with baseUri := (str "base").getD e.baseUri, defaultCollation := (str "coll").getD e.defaultCollation,
+      let ns : List (String × String) := match kvs.find? (fun (a, _) => a.str == "ns") with
+        | some (_, [.map ps]) => ps.filterMap (fun (a, v) => match v with
+            | [.atom x] => some (a.str, x.str) | _ => none)
+        | _ => e.ns
+      { e with ns, baseUri := (str "base").getD e.baseUri, defaultCollation := (str "coll").getD e.defaultCollation,
                decimalFormats := df }
     else e
   | _ => e

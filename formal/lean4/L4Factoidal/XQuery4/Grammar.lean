@@ -1093,6 +1093,9 @@ where
   if ch == '%' then
     -- annotations on an inline function (kept for fn:function-annotations)
     let anns ← pAnnotations
+    -- XQuery 4.0 §4.5.5.2: an inline function is neither public nor private
+    if anns.any (fun (q, _) => q.uri == "http://www.w3.org/2012/xquery" && (q.loc == "public" || q.loc == "private")) then
+      throw { code := "XQST0125", msg := "an inline function cannot be %public or %private" }
     if !((← kwThen "function" '(') || (← kwThen "fn" '(') || (← kwThen "function" '{') || (← kwThen "fn" '{')) then
       synErr "annotations must be followed by a function"
     let f ← subE sp.exprSingle

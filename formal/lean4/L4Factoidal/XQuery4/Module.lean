@@ -324,7 +324,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
       expectS ";"
       if pfx == "xml" || pfx == "xmlns" then qerr "XQST0070" "import prefix xml or xmlns"
       if m.imports.any (fun (_, u', _) => u' == u) then qerr "XQST0047" "the same module imported twice"
-      if (m.libNs.map (·.2)) == some u then qerr "XQST0047" "a module imports itself"
+      -- a module that imports itself is no error: cycles are resolved (§5.12)
       if pfx != "" then
         if seenNs.contains pfx then qerr "XQST0033" ("prefix " ++ pfx ++ " declared twice")
         seenNs := pfx :: seenNs
@@ -823,7 +823,7 @@ def bindFns (env : Env) (ms : List Module) : Env :=
   ms.foldl (fun e m => m.decls.foldl (fun e d => match d with
     | .fn fd =>
       let me := moduleEnv env m
-      match fnBinding (encodeModCtx me.baseUri me.defaultCollation me.decimalFormats) fd with
+      match fnBinding (encodeModCtx me.baseUri me.defaultCollation me.decimalFormats me.ns) fd with
       | some b => { e with vars := b :: e.vars }
       | none => e
     | _ => e) e) env
