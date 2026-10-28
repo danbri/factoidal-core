@@ -181,7 +181,28 @@ cache) is in `formal/lean4/L4Factoidal/WebDAV/Login.lean`. Run
 reads the file at start. A malformed line stops the start with the file name
 and line number. A login is remembered for 300 seconds in the server's
 memory, so a client that sends the password with each request does not pay
-for a derivation each time. This login has had no expert review:
+for a derivation each time.
+
+Failed logins are limited by default
+(<https://github.com/danbri/factoidal/issues/1119>). After 5 failed logins
+in 60 seconds for one user name (a name in the file or not) or from one
+client address (an IPv6 client by its /64 prefix), a request with a user
+name and password gets `429 Too Many Requests` with `Retry-After: SECONDS`.
+The server then checks no password, also the right one, until that window
+ends. A request with no credentials is a 401 and does not count. A
+successful login does not reset the count. Change the numbers with
+`--login-limit N` (1 to 1,000) and `--login-window SECONDS` (1 to 86,400):
+
+```
+factoidal webdav-serve dav --users users.txt --login-limit 10 --login-window 300
+```
+
+`--dangerously-disable-ratelimits` removes the limit: any client that
+reaches the port can then try passwords as fast as the server runs PBKDF2.
+The server prints a warning on standard error at start. Use it only for a
+test on 127.0.0.1.
+
+This login has had no expert review:
 <https://github.com/danbri/factoidal/issues/1117> lists what a reviewer
 should check, including what an attacker who has the users file can do.
 
@@ -405,10 +426,10 @@ Other WebDAV clients:
 ## Limits
 
 * The login of the listener (`--users`) has had no expert review:
-  <https://github.com/danbri/factoidal/issues/1117>. No rate limit: each
-  request with a wrong password costs the server one PBKDF2 derivation
-  (<https://github.com/danbri/factoidal/issues/1119>, an expected failure in
-  `tests/webdav/server.mjs`).
+  <https://github.com/danbri/factoidal/issues/1117>.
+* Anyone can block a user name for one window (default 60 seconds) by
+  sending wrong passwords for it: the failed-login limit (above) answers 429
+  for that name, also to the real user.
 * One request at a time. PROPFIND with `Depth: infinity` answers 403
   (`DAV:propfind-finite-depth`); clients then list one level at a time.
 * COPY and MOVE between two mounts answer 502 (RFC 4918 §9.9.4); copy with

@@ -30,6 +30,16 @@ listener that is not on a loopback address. Each request then passes
 runs (`need`), whose answer `Login.finish` compares with the stored hash. The
 login cache (`Login.Cache`) and its secret stay in this handle.
 
+The failed-login limit (https://github.com/danbri/factoidal/issues/1119):
+`login` may also hold `limit` and `window` (the text of `--login-limit` and
+`--login-window`, unread) and `disableRateLimits: true`
+(`--dangerously-disable-ratelimits`); `Login.limitsOf` reads them, and a bad
+value stops the start. `ready` carries `warnings: [TEXT, …]` for the host to
+print at start (`Login.limitsWarnings`). A request document carries
+`remoteAddress`, the client's address as the socket gives it; `Login.gate`
+counts failures under it and the user name, and answers 429 with
+`Retry-After` with no derivation when either is over its limit.
+
 `webdavUser` (`factoidal webdav-user FILE NAME`): `{name, file, text|null,
 passwordBase64, saltBase64, iterations?, answers: [{request, answer}]}` →
 the one derivation as `need` (as `runWithCipher` in cipher-host.mjs expects),
@@ -56,7 +66,8 @@ configuration to open it with (`local: [{name, dir, config}]`); the host
 opens it with the ops `lws-serve` uses and carries each `lws` request to it.
 `write: [{path, text, mode}]` is a key file this engine made.
 
-A request document is `{method, target, headers, now, randomBase64}`; the
+A request document is `{method, target, headers, now, randomBase64,
+remoteAddress}`; the
 content is the region (`webdavStep` through `l4_call_blob_io`) or
 `body`/`bodyBase64` (the string entry). An answer to `lws` is `{status,
 headers}` and the response content; an answer to `fetch` is `{status,
@@ -118,6 +129,8 @@ structure DavHandle where
   load : DavLoad
   /-- The users file named at `webdavOpen`, read at the first load. -/
   usersFile : Option String := none
+  /-- The failed-login limit, from the options at `webdavOpen`. -/
+  limits : Login.Limits := {}
   login : Option DavLogin := none
   entropy : ByteArray := ByteArray.empty
   mounts : List Mount := []
@@ -168,9 +181,13 @@ def webdavOpen (configJson : String) : IO String := do
     let host := (login.getString? "host").getD "127.0.0.1"
     if usersFile.isSome && !Login.transportAllowsBasic tls host then
       return errJson (Login.transportRefusal host)
+    let limits ← match Login.limitsOf usersFile.isSome (login.getString? "limit") (login.getString? "window")
+        (login.field? "disableRateLimits" == some (.bool true)) with
+      | .ok l => pure l
+      | .error e => return errJson e
     let n ← davCounter.modifyGet (fun c => (c + 1, c + 1))
     let h := s!"webdav{n}"
-    davTable.modify (·.insert h { load := .mountFiles files, entropy, now, usersFile })
+    davTable.modify (·.insert h { load := .mountFiles files, entropy, now, usersFile, limits })
     pure (okWith [("handle", .string h), ("need", davNeedJson (files ++ [stateFileName] ++ usersFile.toList) [])])
 
 /-- A file the host read: its text, or `none` when it does not exist. -/
@@ -273,7 +290,8 @@ def davFinishLoad (hd : DavHandle) (ms : List Mount) (j : Json) : Except String 
             sessions := sessions ++ [(m.name, ← sessionOf m davCrypto (some d) none)]
   let mountsJ := ms.map (fun m => davMountJson m (sessions.lookup m.name))
   pure ({ hd with load := .ready, mounts := ms, sessions },
-        .object [("mounts", .array mountsJ), ("local", .array locals), ("write", .array writes)])
+        .object [("mounts", .array mountsJ), ("local", .array locals), ("write", .array writes)
+                , ("warnings", .array ((Login.limitsWarnings hd.limits).map Json.string))])
 
 /-- The hash of the login cache: SHA-256 through HACL\* (crypto policy: a
 password goes through HACL\*, never the pure-Lean specification hash). -/
@@ -315,7 +333,7 @@ def webdavLoad (h filesJson : String) : IO String := do
             match davFileOf j uf with
             | some (some t) =>
               (Login.usersForServer uf t).map (fun us =>
-                some { settings := { users := us, secret := davLoginSecret hd.entropy } })
+                some { settings := { users := us, secret := davLoginSecret hd.entropy, limits := hd.limits } })
             | _ => .error s!"{uf}: the users file could not be read"
         match parsed, state, login with
         | .error e, _, _ => fail e
@@ -473,8 +491,11 @@ def webdavStepWith (h requestJson : String) (blob : Option ByteArray) : IO (Stri
             let (hd', o) := davServe hd r now random
             davFinishOut h hd' o blobOut
           | some lg =>
-            match Login.gate davLoginHash lg.settings lg.cache now (r.header? "authorization") with
+            let address := (j.getString? "remoteAddress").getD ""
+            match Login.gate davLoginHash lg.settings lg.cache now address (r.header? "authorization") with
             | (.refuse, c) => davFinishOut h { hd with login := some { lg with cache := c } } (.response Login.unauthorized) blobOut
+            | (.limited seconds, c) =>
+              davFinishOut h { hd with login := some { lg with cache := c } } (.response (Login.tooManyFailures seconds)) blobOut
             | (.allow _, c) =>
               let (hd', o) := davServe { hd with login := some { lg with cache := c } } r now random
               davFinishOut h hd' o blobOut

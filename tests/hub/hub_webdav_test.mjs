@@ -162,6 +162,27 @@ test('webdav: --users gives HTTP Basic login on the listener', async () => {
   assert.match(r.stderr, /0\.0\.0\.0 is not a loopback address/);
 });
 
+test('webdav: failed logins are limited (--login-limit, --login-window); --dangerously-disable-ratelimits warns', async () => {
+  // https://github.com/danbri/factoidal/issues/1119; the page's command.
+  const dir = emptyConfig('limit');
+  addUser(dir, 'users.txt', 'alice', 'correct horse');
+  const s = await start(['webdav-serve', 'dav', '--port', '0', '--users', 'users.txt', '--login-limit', '10', '--login-window', '300'], dir);
+  const statuses = [];
+  for (let i = 0; i < 11; i++) {
+    statuses.push((await req(s.origin, 'PROPFIND', '/', { depth: '0', authorization: basic('alice', `wrong-${i}`) })).status);
+  }
+  assert.deepEqual(statuses, [...Array(10).fill(401), 429]);
+  const right = await req(s.origin, 'PROPFIND', '/', { depth: '0', authorization: basic('alice', 'correct horse') });
+  assert.equal(right.status, 429);
+  assert.match(right.headers['retry-after'], /^[0-9]+$/);
+  assert.ok(Number(right.headers['retry-after']) <= 300);
+  assert.equal((await req(s.origin, 'PROPFIND', '/', { depth: '0' })).status, 401);
+  const off = await start(['webdav-serve', 'dav', '--port', '0', '--users', 'users.txt', '--dangerously-disable-ratelimits'], dir);
+  // Standard error and standard output are two pipes: wait for the warning.
+  for (let i = 0; i < 50 && !off.out().includes('WARNING: --dangerously'); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.match(off.out(), /WARNING: --dangerously-disable-ratelimits: failed logins are NOT limited/);
+});
+
 const OPENSSL = spawnSync('openssl', ['version'], { encoding: 'utf8' }).status === 0;
 
 test('webdav: --cert and --key serve HTTPS', { skip: OPENSSL ? false : 'openssl is not installed: no certificate can be made for the test' }, async () => {

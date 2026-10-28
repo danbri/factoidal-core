@@ -679,6 +679,8 @@ https://www.rfc-editor.org/rfc/rfc6121`,
 
 usage: factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]
                               [--users FILE] [--cert FILE --key FILE]
+                              [--login-limit N] [--login-window SECONDS]
+                              [--dangerously-disable-ratelimits]
        factoidal webdav-serve CONFIGDIR --xmpp JID --xmpp-password-file FILE
                  --xmpp-allow JID[,JID...] [--xmpp-host H] [--xmpp-port P] [--xmpp-tls]
 
@@ -714,6 +716,14 @@ same time). An lws mount reaches the storage through the LWS client.
                    because Basic sends the password in clear text
   --cert FILE      a PEM certificate chain: serve HTTPS (TLS)
   --key FILE       the PEM private key of --cert
+  --login-limit N  with --users: failed logins allowed per user name and per
+                   client address in one window (default 5, 1 to 1000)
+  --login-window SECONDS
+                   with --users: the window of --login-limit (default 60,
+                   1 to 86400)
+  --dangerously-disable-ratelimits
+                   with --users: no failed-login limit (a warning is printed
+                   at start); any client can then try passwords without end
 
 Without --users the listener has no login: anyone who can reach the port can
 read and write every writable mount. Keep it on 127.0.0.1, or give --users
@@ -721,6 +731,13 @@ and --cert/--key. A users file holds PBKDF2-HMAC-SHA256 password hashes, one
 user per line, NAME:pbkdf2-sha256:ITERATIONS:SALT_B64:HASH_B64; a malformed
 line stops the start with the file name and line number. Expert review of the
 login: https://github.com/danbri/factoidal/issues/1117
+
+Failed logins are limited by default
+(https://github.com/danbri/factoidal/issues/1119): after 5 failed logins in 60
+seconds for one user name (known or not) or from one client address (an IPv6
+client by its /64), a request with credentials gets 429 Too Many Requests
+with Retry-After, and no password is checked, also the right one, until that
+window ends. A request with no credentials is a 401 and does not count.
 
 HTTP over XMPP (XEP-0332; https://github.com/danbri/factoidal/issues/1107):
 with --xmpp the server opens NO port. It connects OUT to an XMPP server as
@@ -945,8 +962,8 @@ const VALUE_OPTIONS = {
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
   'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key']),
-  'webdav-serve': new Set(['port', 'host', 'users', 'cert', 'key', 'xmpp', 'xmpp-password-file', 'xmpp-host', 'xmpp-port',
-    'xmpp-allow', 'xmpp-resource', 'xmpp-ca']),
+  'webdav-serve': new Set(['port', 'host', 'users', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
+    'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca']),
   'webdav-user': new Set(['iterations'])
 }
 
@@ -2221,6 +2238,13 @@ async function commandWebdavServe (positional, options) {
   // The users file is named relative to the working directory here, and
   // given to the engine as an absolute path.
   if (typeof options.users === 'string') settings.users = resolvePath(options.users)
+  // The failed-login limit (https://github.com/danbri/factoidal/issues/1119):
+  // the values go to the engine unread; it checks them.
+  if (options['login-limit'] !== undefined) settings.loginLimit = String(options['login-limit'])
+  if (options['login-window'] !== undefined) settings.loginWindow = String(options['login-window'])
+  if (options['dangerously-disable-ratelimits'] !== undefined) {
+    settings.disableRateLimits = options['dangerously-disable-ratelimits'] === true
+  }
   let running
   try {
     if (useTls) {
@@ -2236,6 +2260,9 @@ async function commandWebdavServe (positional, options) {
     }
     throw error
   }
+  // The engine's start warnings (--dangerously-disable-ratelimits), printed
+  // also with --quiet.
+  for (const w of running.warnings || []) err(`factoidal webdav-serve: WARNING: ${w}`)
   if (!quiet) {
     err(`webdav-serve: listening on ${running.origin} for ${positional[0]}` +
         (settings.users !== undefined ? `, login from ${options.users}` : ', NO LOGIN on this listener') +
@@ -2259,8 +2286,8 @@ async function webdavOverXmpp (configDir, options, quiet) {
   if (typeof options['xmpp-allow'] !== 'string') throw new UsageError('--xmpp needs --xmpp-allow JID[,JID...]')
   // No login on the XMPP path yet: refuse --users rather than ignore it
   // (https://github.com/danbri/factoidal/issues/1125).
-  if (options.users !== undefined || options.cert !== undefined || options.key !== undefined) {
-    throw new UsageError('--users, --cert and --key do not apply with --xmpp yet (https://github.com/danbri/factoidal/issues/1125)')
+  if (['users', 'cert', 'key', 'login-limit', 'login-window', 'dangerously-disable-ratelimits'].some((k) => options[k] !== undefined)) {
+    throw new UsageError('--users, --cert, --key and the login-limit options do not apply with --xmpp yet (https://github.com/danbri/factoidal/issues/1125)')
   }
   const fs = await import('node:fs/promises')
   const password = (await fs.readFile(options['xmpp-password-file'], 'utf8')).split(/\r?\n/)[0]
