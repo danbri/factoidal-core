@@ -27,6 +27,7 @@ the request `xsl:is-schema-aware` true. `trusted`, `cache`,
 are accepted with no effect.
 -/
 import L4Factoidal.XSLT4.Transform
+import L4Factoidal.XSLT4.Streaming.Check
 
 namespace L4Factoidal.XSLT4.Qt
 
@@ -141,6 +142,14 @@ def fnTransform (env : Env) (applyF : Item → List Seq → M Seq) (args : List 
   let texts : List (String × String) := (pUri, pText) ::
     env.resources.flatMap (fun (k, v) => if k.startsWith "#" then [] else [(resolveUri pUri k, v), (k, v)])
   let S ← compileStylesheet pUri texts (qnameBindings (get "static-params"))
+  -- a request for a streaming processor: the streamability analysis of
+  -- the principal module (XSLT Streaming 4.0 §3.1, XTSE3430)
+  let wantsStreaming := (qnameBindings (get "requested-properties")).any (fun (q, v) =>
+    q.uri == nsXSL && q.loc == "supports-streaming" &&
+      ["yes", "true", "1"].contains (propString env v).trimAscii.toString.toLower)
+  if wantsStreaming then
+    if let some e := Streaming.analyzeModules [(pUri, pText)] (qnameBindings (get "static-params")) then
+      throw e
   -- the invocation
   let srcNode : Option Item ← match get "source-node", str? "source-location" with
     | some [i@(.node _)], _ => pure (some i)
