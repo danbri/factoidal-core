@@ -127,7 +127,10 @@ and test cases that time out at 30 s on the large documents
 
 qt4tests (`l4qt4 --isolate 60`, XPath mode) after the parser fix: 27982
 pass, 675 fail, 10002 unsupported (out of 38659), the same for every test
-set as the build without the fix.
+set as the build without the fix. XQuery mode (`--lang xquery`): 41384
+pass, 1290 fail, 3272 unsupported (out of 45946); without the fix 41383
+pass (prod/prod-LetClause gains one). XSLT 1.0 corpora (`l4xslt4
+--xslt10`): xslt 84 of 88, xslt1-xalan 1455 of 1686, as on `main`.
 
 ## Not done
 
