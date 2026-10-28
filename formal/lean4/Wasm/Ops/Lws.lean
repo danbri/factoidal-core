@@ -65,6 +65,8 @@ import L4Factoidal.LWS.MerkleHttp
 import L4Factoidal.LWS.MoveRedirect
 import L4Factoidal.LWS.FileLayout
 import L4Factoidal.LWS.Cors
+import L4Factoidal.HTTP.LocalGuard
+import L4Factoidal.LWS.DirLock
 import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.RsaNative
@@ -213,6 +215,10 @@ structure OpenConfig where
   passes them to `lwsLoad`, and calls `lwsPersist` after a change. -/
   files : Bool := false
   redirectsMax : Nat := 256
+  /-- The `Host` and `Origin` guard of a storage with no authorization
+  (`insecureNoAuth`, https://github.com/danbri/factoidal/issues/1124);
+  `none` under authorization. -/
+  guard : Option L4Factoidal.HTTP.LocalGuard.LocalGuard := none
 deriving Inhabited
 
 /-- The other state of a storage, besides its resources: what the snapshot
@@ -272,6 +278,28 @@ def boolOfJson (key : String) (dflt : Bool) : Option Json → Except String Bool
   | none => .ok dflt
   | some (.bool b) => .ok b
   | some _ => .error s!"config: \"{key}\" is true or false"
+
+/-- The `Host` and `Origin` guard of a storage (`OpenConfig.guard`). -/
+def guardOfConfig (insecure : Bool) (j : Json) (baseIri : String) (listenAddress : Option String)
+    (localAddresses : List String) (cors : L4Factoidal.HTTP.Cors.Policy) :
+    Except String (Option L4Factoidal.HTTP.LocalGuard.LocalGuard) :=
+  let given := (j.field? "allowHosts").isSome || (j.field? "allowOrigins").isSome
+  if !insecure then
+    if given then .error ("config: \"allowHosts\" and \"allowOrigins\" are options of a storage " ++
+      "with no authorization (\"insecureNoAuth\"); under authorization the token decides")
+    else .ok none
+  else
+    let bindHost := (j.field? "listen").bind (fun lj => lj.getString? "host")
+    let addrs := listenAddress.toList ++ localAddresses
+    let gj : Json := .object ((bindHost.map (fun h => [("host", Json.string h)])).getD [] ++
+      [("addresses", .array (addrs.map Json.string))] ++
+      ((j.field? "allowHosts").map (fun v => [("allowHosts", v)])).getD [] ++
+      ((j.field? "allowOrigins").map (fun v => [("allowOrigins", v)])).getD [])
+    let corsOrigins := match cors with
+      | .allow os => os
+      | _ => []
+    (L4Factoidal.HTTP.LocalGuard.ofJson gj (L4Factoidal.HTTP.LocalGuard.iriHost? baseIri).toList
+      corsOrigins).map some
 
 def openConfigOfJson (text : String) : Except String OpenConfig :=
   if text.trim == "" then .ok {}
@@ -346,7 +374,9 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
         let deliveryWindow := natOr "deliveryWindow" 60
         -- CORS (issue 923): absent or true echoes the request Origin, false
         -- turns it off, a list names the origins (`Cors.policyOfJson`).
-        let cors ← Cors.policyOfJson (j.field? "cors")
+        -- With `insecureNoAuth`, absent is off and echo is refused
+        -- (`Cors.policyFor`, `Cors.insecure_no_echo`, issue 1124).
+        let cors ← Cors.policyFor insecure (j.field? "cors")
         -- What the host bound (issue 915): `listen: {address, port, addresses}`.
         let (listenAddress, listenPort, localAddresses) := match j.field? "listen" with
           | some lj =>
@@ -358,6 +388,12 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
                  | .string t => some t
                  | _ => none))
           | none => (none, none, [])
+        -- The `Host` and `Origin` guard (issue 1124): on every storage with
+        -- no authorization. Its names: the loopback names, what the host
+        -- bound (`listen.host`, `listen.address`, `listen.addresses`), the
+        -- host of `baseIri`, and `allowHosts`; its origins: `allowOrigins`
+        -- and the CORS list. Under authorization the two members are refused.
+        let guard ← guardOfConfig insecure j baseIri listenAddress localAddresses cors
         -- The storage controller's inbox (issue 920).
         let controllerInbox ← match j.field? "controllerInbox" with
           | none | some .null => .ok none
@@ -384,7 +420,7 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
               now, rootAcl, snapshot, authz,
               notifications, moves, typeIndex, accessGrants, entropy, notif, signingKey,
               searchResults, searchResultsTtl, searchResultsMax, results, storageKey, merkle,
-              files, redirectsMax }
+              files, redirectsMax, guard }
 
 /-- The JWS verifiers over the vendored HACL* primitives (P-256 ECDSA,
 RSA PKCS#1 v1.5, Ed25519): `skills/crypto-policy`. -/
@@ -423,6 +459,8 @@ structure OpenStorage where
   /-- The body files the last `lwsStep` answer named (`read`), with the
   paths and stubs they belong to (`Bodies.bodiesNeeded`). -/
   reads : List (String × BodyStub) := []
+  /-- The `Host` and `Origin` guard (`OpenConfig.guard`). -/
+  guard : Option L4Factoidal.HTTP.LocalGuard.LocalGuard := none
 
 /-- The signer of a storage: Ed25519 (RFC 8032) through the vendored HACL*
 code, under the verification method its storage description publishes. -/
@@ -467,7 +505,8 @@ def buildStorage (oc : OpenConfig) (ms : MemState) : OpenStorage :=
   let run := ((seeded "lws-activity-run:").map (fun d =>
     L4Factoidal.Crypto.bytesToHex (d.extract 0 8))).getD ""
   let notif := { (oc.notif.getD {}) with run }
-  { cfg := { oc.cfg with notifications := oc.notifications, notificationKeyX := keyX,
+  { guard := oc.guard,
+    cfg := { oc.cfg with notifications := oc.notifications, notificationKeyX := keyX,
                           moves := oc.moves, typeIndex := oc.typeIndex,
                           accessGrants := oc.accessGrants,
                           searchResults := oc.searchResults,
@@ -671,11 +710,11 @@ def lwsPersist (h optsJson : String) : IO (String × ByteArray) := do
   -- branch is alive during the call).
   match ← lwsTable.modifyGet (fun t => (t[h]?, t.erase h)) with
   | none => pure (noBytes (unknownLwsHandle h))
-  | some ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, files, hydrated, reads⟩ =>
+  | some ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, files, hydrated, reads, guard⟩ =>
       match files with
       | none =>
           lwsTable.modify (·.insert h
-            ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, none, hydrated, reads⟩)
+            ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, none, hydrated, reads, guard⟩)
           pure (noBytes (errJson "lwsPersist: this storage is not kept in files (\"storage\": \"files\")"))
       | some fs =>
           let side := sideMembersOf cfg.baseIri notif signingKey authz results moved
@@ -687,7 +726,7 @@ def lwsPersist (h optsJson : String) : IO (String × ByteArray) := do
               pure (noBytes (errJson s!"{e}; the storage is closed"))
           | .ok (fs', pl, mem') =>
               lwsTable.modify (·.insert h
-                ⟨cfg, mem', authz, notif, signingKey, results, storageKey, moved, some fs', hydrated, reads⟩)
+                ⟨cfg, mem', authz, notif, signingKey, results, storageKey, moved, some fs', hydrated, reads, guard⟩)
               pure (planAnswer [] pl)
 
 /-- A delivery request as the host receives it: POST `body` to `url` with
@@ -730,6 +769,14 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
           match requestOfJson j blob with
           | .error e => pure (noBytes (errJson e))
           | .ok (r, now?, agent?) => do
+              -- A storage with no authorization answers only its own names,
+              -- and no write from another origin (issue 1124,
+              -- `L4Factoidal.HTTP.LocalGuard`): before every other decision.
+              match open_.guard.bind (fun g => L4Factoidal.HTTP.LocalGuard.admit g r) with
+              | some resp =>
+                  return (okWith [ ("response", jsonOfResponse resp blobOut), ("changed", .bool false) ],
+                          if blobOut then resp.content else ByteArray.empty)
+              | none =>
               -- A CORS-preflight request (issue 923) is answered before any
               -- other decision: no body read, no redirect, no
               -- authentication, no access control (`L4Factoidal.LWS.Cors`).
@@ -984,10 +1031,85 @@ def lwsSnapshot (h : String) (optsJson : String := "") : IO String := do
         | other => other
       pure (snapshotAnswer open_.storageKey optsJson snap)
 
+/-! ## One writing process per storage directory; the encryption notice
+
+Issue https://github.com/danbri/factoidal/issues/1135. Pure ops: the host
+carries the exclusive create, the liveness probe and the removal; the
+decision is `L4Factoidal.LWS.DirLock.decide`. -/
+
+/-- The holder of a lock request document: `pid`, `command`, `started`,
+`host`, `token`. -/
+def lockHolderOfJson (j : Json) : Except String DirLock.Holder := do
+  let pid ← match j.field? "pid" with
+    | some (.number s) => (s.toNat?).elim (.error "lwsDirLock: \"pid\" is a natural number") .ok
+    | _ => .error "lwsDirLock: \"pid\" is a natural number"
+  let str (k : String) : Except String String :=
+    (j.getString? k).elim (.error s!"lwsDirLock: \"{k}\" is a string") .ok
+  let command ← str "command"
+  let started ← str "started"
+  let host ← str "host"
+  let token ← str "token"
+  if token.length < 16 then .error "lwsDirLock: \"token\" has at least 16 characters (random text of the process)"
+  else pure { pid, command, started, host, token }
+
+/-- `lwsDirLock({dir, pid, command, started, host, token, present?, alive?})`:
+what a start does with the lock file of its storage directory.
+
+    {"ok":true,"action":"create","file":F,"contents":C}
+    {"ok":true,"action":"probe","pid":N}
+    {"ok":true,"action":"refuse","message":M}
+    {"ok":true,"action":"replace","file":F,"contents":C,"warning":W}
+
+`present` is the text of the lock file when the exclusive create found one;
+`alive` the result of the liveness probe of the `probe` answer. -/
+def lwsDirLock (requestJson : String) : String :=
+  match parseJson requestJson with
+  | .error e => errJson s!"lwsDirLock: {toString e}"
+  | .ok j =>
+      match lockHolderOfJson j with
+      | .error e => errJson e
+      | .ok self =>
+          let req : DirLock.Request :=
+            { dir := (j.getString? "dir").getD ".", self
+              present := j.getString? "present", alive := j.getBool? "alive" }
+          match DirLock.decide req with
+          | .create f c => okWith [("action", .string "create"), ("file", .string f), ("contents", .string c)]
+          | .probe pid => okWith [("action", .string "probe"), ("pid", .number (toString pid))]
+          | .refuse m => okWith [("action", .string "refuse"), ("message", .string m)]
+          | .replace f c w => okWith [("action", .string "replace"), ("file", .string f),
+                                      ("contents", .string c), ("warning", .string w)]
+
+/-- `lwsAtRestNotice({dir, storageKey?})`: the start notice about encryption
+at rest, `{"ok":true,"sealed":B,"keyId"?:K,"notice":N}`. A key text that is
+not a storage key is refused with the same message as `lwsOpen`. -/
+def lwsAtRestNotice (requestJson : String) : String :=
+  match parseJson requestJson with
+  | .error e => errJson s!"lwsAtRestNotice: {toString e}"
+  | .ok j =>
+      match DirLock.noticeOf ((j.getString? "dir").getD ".") (j.getString? "storageKey") with
+      | .error e => errJson e
+      | .ok (notice, kid?) =>
+          okWith ([("sealed", .bool kid?.isSome)] ++
+                  (kid?.map (fun k => [("keyId", Json.string k)])).getD [] ++
+                  [("notice", .string notice)])
+
+/-- `lwsStorageKeyNew({random})`: a new storage key from 32 random bytes of
+the host (base64), `{"ok":true,"key":HEX64,"keyId":K}`. -/
+def lwsStorageKeyNew (requestJson : String) : String :=
+  match parseJson requestJson with
+  | .error e => errJson s!"lwsStorageKeyNew: {toString e}"
+  | .ok j =>
+      match (j.getString? "random").bind L4Factoidal.LWS.Base64.decode? with
+      | none => errJson "lwsStorageKeyNew: \"random\" is base64 of 32 random bytes"
+      | some random =>
+          match DirLock.newStorageKey random with
+          | .error e => errJson e
+          | .ok (key, kid) => okWith [("key", .string key), ("keyId", .string kid)]
+
 /-- The op names this module serves. -/
 def lwsOpNames : List String :=
   ["lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush",
-   "lwsLoad", "lwsPersist", "lwsRead"]
+   "lwsLoad", "lwsPersist", "lwsRead", "lwsDirLock", "lwsAtRestNotice", "lwsStorageKeyNew"]
 
 /-- The LWS and Solid ops that also take and give a byte region: the
 request content in, the response content out. -/

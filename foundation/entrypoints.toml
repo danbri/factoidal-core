@@ -1383,6 +1383,22 @@ reason = "host command: a 127.0.0.1 HTTP listener whose requests go over XMPP (X
 id = "cli:webdav-user"
 reason = "host command: reads a password from standard input, runs the PBKDF2 derivation wasm:webdavUser names (WebCrypto) and writes the users file the engine gives; reads no RDF data"
 
+[[nonstage]]
+id = "wasm:lwsDirLock"
+reason = "decides the lock file of an LWS or Solid storage directory (create, probe, refuse, take over) from the host's results; reads no RDF data (https://github.com/danbri/factoidal/issues/1135)"
+
+[[nonstage]]
+id = "wasm:lwsAtRestNotice"
+reason = "words the start notice about encryption at rest (clear text, or sealed and the key id) from the storage key text; reads no RDF data (https://github.com/danbri/factoidal/issues/1135)"
+
+[[nonstage]]
+id = "wasm:lwsStorageKeyNew"
+reason = "makes the text and key id of a storage key from 32 random bytes the host gives; reads no RDF data (https://github.com/danbri/factoidal/issues/1135)"
+
+[[nonstage]]
+id = "cli:lws-keygen"
+reason = "host command: draws 32 random bytes and prints the key wasm:lwsStorageKeyNew gives; reads no RDF data"
+
 # Literal values (https://github.com/danbri/factoidal/issues/1051): term-level
 # functions over one literal or one JavaScript value; no graph, no dataset.
 

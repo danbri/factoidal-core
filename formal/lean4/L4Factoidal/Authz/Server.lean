@@ -465,6 +465,10 @@ def corsProfile : L4Factoidal.HTTP.Cors.Profile :=
     requestHeaders := ["Accept", "Authorization", "Content-Type", "DPoP"]
     exposedHeaders := ["Allow", "WWW-Authenticate"] }
 
+/-- The authorization server sends no `Access-Control-Allow-Credentials`
+(invariant I7, https://github.com/danbri/factoidal/issues/1124). -/
+theorem corsProfile_no_credentials : corsProfile.credentials = false := rfl
+
 /-- One HTTP request with CORS: a CORS-preflight request is answered first,
 with no key rotation and no other decision; every other answer of `step` gets
 the CORS fields. -/

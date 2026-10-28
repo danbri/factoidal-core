@@ -111,6 +111,33 @@ paths; request paths with dot segments or encoded traversal get 400
 `lws-serve --storage files` keeps `DIR` as one file per body and a journal
 instead (section "Storage on disk" below).
 
+### One writing process per storage directory; the encryption notice (https://github.com/danbri/factoidal/issues/1135)
+
+`openLwsStorage({dir})` (so `lws-serve DIR` and every `webdav-serve` local
+mount) and `openSolidStorage({dir})` take the lock `DIR/lws.lock` before they
+read DIR, and release it in `close()` and at process exit. Lean decides the
+file, its JSON (format `lws-lock-1`: pid, command, started, host, token) and
+the action (`L4Factoidal/LWS/DirLock.lean`, `decide`; pure op `lwsDirLock`:
+`create`, `probe`, `refuse`, `replace`). The host (`lws/persist.mjs`,
+`acquireDirLock`) does the `wx` create, `process.kill(pid, 0)` and the
+unlink. `token` is random per process, so a lock with this pid and another
+token (a restarted container) is stale. A refusal is a `StorageLockedError`
+with `envelope`, which the CLIs print and exit 1. Two opens of one DIR in one
+process are refused too: a test that restarts a storage in-process must
+`close()` the first one. Theorems: `decide_alive_refuses`,
+`decide_otherHost_refuses`, `decide_sameInstance_refuses`,
+`decide_replace_dead`, `decide_create_absent`. Test:
+`node tests/lws/dir-lock.mjs`.
+
+The same open also gives `notices` (pure op `lwsAtRestNotice`,
+`DirLock.atRestNotice`): a stale-lock warning, and "encryption at rest is
+OFF ... `factoidal lws-keygen` ..." or "... is ON ... key id K". The CLIs
+print them on standard error, also with `--quiet`. `factoidal lws-keygen`
+calls the pure op `lwsStorageKeyNew` with 32 random bytes. Owner, 2026-10-28:
+"For our lws encourage attention to encryption at rest also"; it stays off
+by default. No re-key yet: https://github.com/danbri/factoidal/issues/1136
+(xfail in `tests/lws/encryption.mjs`).
+
 ### Storage on disk, stages 1 and 2 (https://github.com/danbri/factoidal/issues/918)
 
 Design record: `docs/designissues/2026-10-22-lws-storage-on-disk.md`. Off by
@@ -741,9 +768,15 @@ field value.
   (theorem `around_preflight`). Every other answer goes through
   `Cors.decorate` (status and content unchanged, `decorate_status`). A new
   answer path in `lwsStepWith` must call `Cors.decorate` too.
-* Default: echo a valid request `Origin` (Solid §8.1), never `null`, no
-  `Access-Control-Allow-Credentials` (the token is in `Authorization`), and
-  `Vary: Origin` on every answer, merged into the answer's own `Vary`.
+* Default under authorization: echo a valid request `Origin` (Solid §8.1),
+  never `null`, no `Access-Control-Allow-Credentials` (the token is in
+  `Authorization`; theorems `LWS.Cors.decorate_no_credentials`,
+  `preflight_no_credentials`), and `Vary: Origin` on every answer, merged
+  into the answer's own `Vary`. Default with `insecureNoAuth`: NO CORS field,
+  and `cors: true` stops the start (`LWS.Cors.policyFor`, theorem
+  `insecure_no_echo`, https://github.com/danbri/factoidal/issues/1124): an
+  echo there let any web page read and write the storage. A test that needs
+  CORS on an open storage passes `cors: [PAGE]`.
   Config `cors`: `false` (`--no-cors`) or a list (`--cors-origin ORIGIN`,
   repeatable); a malformed origin stops the start.
 * `authz-serve` has the same config and flags (`Authz.stepCors`, its own
@@ -758,6 +791,35 @@ Tests: `#guard`s in `HTTP/Cors.lean`, `LWS/Cors.lean`, `Authz/Tests.lean`,
 `Solid/Tests.lean`; `node tests/lws/cors.mjs`; `node tests/lws/cors-browser.mjs`
 (Chromium through Playwright, `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`,
 never `playwright install`; exit 2 when it cannot run).
+
+### Host and Origin guard of listeners without authentication (https://github.com/danbri/factoidal/issues/1124)
+
+Row C7 and invariant I7 of
+`docs/designissues/2026-10-28-feature-combination-safety.md`.
+
+* Lean: `L4Factoidal/HTTP/LocalGuard.lean`. `admit g r`: 421 when `Host`
+  names no name of the listener (`localGuard_foreign_host`); 403 when the
+  method is not GET, HEAD or OPTIONS and `Origin` is neither the listener's
+  own origin (`host[:port]` equal to `Host`) nor on the list
+  (`localGuard_cross_origin_write`); otherwise `none`. No `Host` (no browser)
+  and no `Origin` (curl) are admitted.
+* Names: `localhost`, `127.0.0.1`, `[::1]`, the `--host` address, the
+  interface addresses, the host of `baseIri`, and `--allow-host NAME`
+  (config `allowHosts`). Origins: `--allow-origin ORIGIN` (`allowOrigins`),
+  and for LWS every `--cors-origin`. The name check ignores the port.
+* Where: `lwsStepWith` and `solidStepWith` with `insecureNoAuth` (first, before
+  the preflight); `StoreEndpoint.handle` of `factoidal serve` (config
+  `localGuard`, always; `handle_guard_refused`); `webdavStepWith` (config
+  `localGuard`, always, also with `--users`, before the login; not over
+  XMPP). Hosts pass `listen: {host, address, port, addresses}` (LWS, Solid) or
+  `localGuard: {host, addresses, allowHosts, allowOrigins}` (serve, WebDAV),
+  unread. Under authorization, `allowHosts`/`allowOrigins` are refused.
+* A host test or harness that reaches a listener by another name passes
+  `--allow-host` (the Solid conformance harness: `host.docker.internal`).
+* Still open (expected failures in
+  `npm/factoidal/test/local-guard-1124.test.mjs`): `solid-serve` echoes any
+  `Origin` and sends `Access-Control-Allow-Credentials: true`
+  (`Solid/Server/Cors.lean`).
 
 ### LWS authorization (https://github.com/danbri/factoidal/issues/886)
 
