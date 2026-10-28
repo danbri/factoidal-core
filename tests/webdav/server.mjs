@@ -290,9 +290,44 @@ async function main () {
       const r = await dav(web.origin, 'GET', '/local/greeting.txt')
       assert(r.status === 200 && r.text === 'free', `after restart ${r.status} ${r.text}`)
     })
-    await xfail('local: a dead property survives a restart', 'https://github.com/danbri/factoidal/issues/1078', async () => {
+    // https://github.com/danbri/factoidal/issues/1078: dead properties and
+    // locks are kept in CONFIGDIR/.webdav-state.json.
+    await check('local: a dead property survives a restart', async () => {
       const r = await dav(web.origin, 'PROPFIND', '/local/greeting.txt', { headers: { depth: '0' }, body: PROPGET })
-      assert(r.status === 207 && r.text.includes('>green</Z:colour>'), 'the dead property set before the restart is gone')
+      assert(r.status === 207 && r.text.includes('>green</Z:colour>'), `the dead property set before the restart is gone: ${r.status} ${r.text}`)
+    })
+    await check('local: a lock survives a restart; its token still unlocks; the state file has mode 0600', async () => {
+      const lockBody = '<?xml version="1.0"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope>' +
+        '<D:locktype><D:write/></D:locktype><D:owner>tester</D:owner></D:lockinfo>'
+      const l = await dav(web.origin, 'LOCK', '/local/greeting.txt', { headers: { timeout: 'Second-600' }, body: lockBody })
+      assert(l.status === 200, `LOCK ${l.status} ${l.text}`)
+      const token = l.headers.get('lock-token')
+      assert(token && token.startsWith('<urn:uuid:'), `Lock-Token ${token}`)
+      const file = join(conf, '.webdav-state.json')
+      assert(existsSync(file), 'no .webdav-state.json')
+      assert((statSync(file).mode & 0o777) === 0o600, `mode ${(statSync(file).mode & 0o777).toString(8)}`)
+      await stop(web)
+      web = await start(['webdav-serve', conf, '--port', '0'])
+      let r = await dav(web.origin, 'PUT', '/local/greeting.txt', { body: 'changed' })
+      assert(r.status === 423, `PUT without the token after the restart ${r.status}`)
+      r = await dav(web.origin, 'PROPFIND', '/local/greeting.txt', { headers: { depth: '0' } , body: '<D:propfind xmlns:D="DAV:"><D:prop><D:lockdiscovery/></D:prop></D:propfind>' })
+      assert(r.status === 207 && r.text.includes(token.slice(1, -1)), `lockdiscovery after the restart ${r.status} ${r.text}`)
+      r = await dav(web.origin, 'UNLOCK', '/local/greeting.txt', { headers: { 'lock-token': token } })
+      assert(r.status === 204, `UNLOCK after the restart ${r.status} ${r.text}`)
+      r = await dav(web.origin, 'GET', '/local/greeting.txt')
+      assert(r.status === 200 && r.text === 'free', `GET ${r.status} ${r.text}`)
+    })
+    await check('start: a malformed state file stops the start with its name (exit 1)', async () => {
+      const bad = join(dir, 'badstate')
+      mkdirSync(bad)
+      mkdirSync(join(bad, 'store'))
+      writeFileSync(join(bad, 's.md'), '- kind: local\n- path: ./store\n')
+      writeFileSync(join(bad, '.webdav-state.json'), '{"format":"factoidal-webdav-state","version":1,')
+      let r = await run(['webdav-serve', bad, '--port', '0'])
+      assert(r.code === 1 && r.errText.includes('.webdav-state.json: not JSON'), `exit ${r.code} ${r.errText}`)
+      writeFileSync(join(bad, '.webdav-state.json'), '{"format":"factoidal-webdav-state","version":9,"serial":0,"props":[],"locks":[]}')
+      r = await run(['webdav-serve', bad, '--port', '0'])
+      assert(r.code === 1 && r.errText.includes('.webdav-state.json: format version 9 is not known'), `exit ${r.code} ${r.errText}`)
     })
     await check('start: a malformed mount file stops the start with its name and line (exit 1)', async () => {
       const bad = join(dir, 'bad')

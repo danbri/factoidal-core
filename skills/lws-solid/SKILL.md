@@ -998,14 +998,16 @@ CONFIGDIR holds one Markdown file per mount (`README.md` is not one):
 | `formal/lean4/L4Factoidal/WebDAV/Server.lean` | every method as a program over six storage operations (`Backend.Prog`); theorem `refused_keeps_state` |
 | `formal/lean4/L4Factoidal/WebDAV/Local.lean`, `Remote.lean` | an operation as one LWS request; as one LWS client operation (the one module that uses the client API) |
 | `formal/lean4/L4Factoidal/WebDAV/Xml.lean`, `If.lean`, `Path.lean` | XML bodies (depth limit 256, work-list serializer), the `If` header, targets |
+| `formal/lean4/L4Factoidal/WebDAV/State.lean` | `DavState` (dead properties, locks) as the JSON text of `CONFIGDIR/.webdav-state.json`, and back; refuses an unknown format or version |
 | `formal/lean4/L4Factoidal/WebDAV/Tests.lean`, `Theorems.lean` | `#guard`s of every method against `LWS.step MemStore`, directly and through the client; `browse_no_write` |
 | `formal/lean4/Wasm/Ops/WebDAV.lean` | `webdavOpen`, `webdavLoad`, `webdavStep`, `webdavResume`, `webdavClose` |
 | `npm/factoidal/webdav/server.mjs` | the host: sockets, the files the engine names, `lws` requests to the storage handle, `fetch`es |
 
 Tests: `node tests/webdav/server.mjs` (every method through a local and a
-remote mount on `lws-serve --authz`; one expected failure,
-https://github.com/danbri/factoidal/issues/1078: dead properties and locks are
-lost at a restart), `node tests/webdav/litmus.mjs` (needs `apt-get install
+remote mount on `lws-serve --authz`; dead properties and locks survive a
+restart: the engine reads and names writes of `CONFIGDIR/.webdav-state.json`,
+form in `L4Factoidal/WebDAV/State.lean`,
+https://github.com/danbri/factoidal/issues/1078), `node tests/webdav/litmus.mjs` (needs `apt-get install
 litmus`; expected failures in `tests/webdav/litmus-xfail.tsv`; 2026-10-27:
 208 pass, 0 fail, 0 xfail (out of 208)), `node tests/webdav/scaling.mjs`
 (the decoders at n, 2n, 4n through the wasm module).

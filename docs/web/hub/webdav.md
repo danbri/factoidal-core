@@ -79,6 +79,12 @@ The first `# ` heading is the display name. The first `- key: value` list is
 the settings; other text in the file is ignored. `README.md` is not a mount.
 A malformed file stops the start with its name and line number.
 
+The server keeps dead properties (PROPPATCH) and locks in
+`CONFIGDIR/.webdav-state.json` (mode 0600), so they survive a restart. A
+name that starts with `.` is not a mount. A state file the server cannot
+read stops the start with the file's name; remove it to start with no
+properties and no locks.
+
 | Key | Values | Applies to | Default |
 | --- | --- | --- | --- |
 | `kind` | `local`, `lws` | all | required |
@@ -313,8 +319,6 @@ Other WebDAV clients:
 
 * No login and no TLS on the listener:
   <https://github.com/danbri/factoidal/issues/1108>.
-* Dead properties and locks are kept in memory and lost on restart:
-  <https://github.com/danbri/factoidal/issues/1078>.
 * One request at a time. PROPFIND with `Depth: infinity` answers 403
   (`DAV:propfind-finite-depth`); clients then list one level at a time.
 * COPY and MOVE between two mounts answer 502 (RFC 4918 §9.9.4); copy with

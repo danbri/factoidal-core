@@ -2,7 +2,7 @@
 Wasm.Ops.WebDAV — the WebDAV server handle (https://github.com/danbri/factoidal/issues/1066).
 
   webdavOpen(configJson)
-    -> {"ok":true,"handle":"webdav1","need":{"read":[NAME,…],"exists":[]}}
+    -> {"ok":true,"handle":"webdav1","need":{"read":[NAME,…,".webdav-state.json"],"exists":[]}}
   webdavLoad(handle, filesJson)
     -> {"ok":true,"need":{"read":[PATH,…],"exists":[PATH,…]}}
      | {"ok":true,"ready":{"mounts":[…],"local":[…],"write":[…]}}
@@ -10,14 +10,25 @@ Wasm.Ops.WebDAV — the WebDAV server handle (https://github.com/danbri/factoida
   webdavStep(handle, requestJson)          (+ the request content as a region)
   webdavResume(handle, answerJson)         (+ the answer content as a region)
     -> {"ok":true,"response":{status,headers,bodyBytes}}  (the response)
+       with "write":{"path":".webdav-state.json","text":…,"mode":"0600"}
+       when the request changed the dead properties or locks
      | {"ok":true,"lws":{"mount":M,"request":{method,target,headers,bodyBytes}}}
      | {"ok":true,"fetch":{method,url,headers,bodyBytes}}
   webdavClose(handle) -> {"ok":true}
 
-The configuration of `webdavOpen` is `{listing: [NAME, …], entropy}`: the
-names in CONFIGDIR (the host lists the directory; `Config.isMountFile`
-decides which are mount files) and at least 32 random bytes (base64, the
-seed of a key file this engine makes). `webdavLoad` takes `{files: [{name,
+The configuration of `webdavOpen` is `{listing: [NAME, …], entropy, now}`:
+the names in CONFIGDIR (the host lists the directory; `Config.isMountFile`
+decides which are mount files), at least 32 random bytes (base64, the seed
+of a key file this engine makes) and the host's clock (seconds since the
+Unix epoch; locks that expired before it are not loaded).
+
+The dead properties and locks are kept in `CONFIGDIR/.webdav-state.json`
+(`State.stateFileName`, form in `L4Factoidal/WebDAV/State.lean`,
+https://github.com/danbri/factoidal/issues/1078). The first `need` names it;
+a missing file is an empty state, and a text that `stateOfText` refuses
+stops the start with the file's name. A response whose request changed the
+state carries `write`: the host replaces the file with that text (a new file
+in the same directory, then a rename) before it sends the response. `webdavLoad` takes `{files: [{name,
 text} | {name, missing: true}], exists: [{path, present}]}`: the files and
 existence checks the last answer named, paths relative to CONFIGDIR.
 
@@ -43,6 +54,7 @@ remote mount, the client's state).
 import Std.Data.HashMap
 import Wasm.Ops.Support
 import L4Factoidal.WebDAV.Server
+import L4Factoidal.WebDAV.State
 import L4Factoidal.WebDAV.Local
 import L4Factoidal.WebDAV.Remote
 import L4Factoidal.Authz.Keys
@@ -74,6 +86,10 @@ structure DavHandle where
   mounts : List Mount := []
   sessions : List (String × L4Factoidal.LWS.Client.Session) := []
   dav : DavState := {}
+  /-- The host's clock at `webdavOpen`. -/
+  now : Nat := 0
+  /-- The state text last read from or written to the state file. -/
+  saved : String := ""
   pending : Option DavPending := none
 
 initialize davCounter : IO.Ref Nat ← IO.mkRef 0
@@ -101,13 +117,16 @@ def webdavOpen (configJson : String) : IO String := do
     let entropy := ((j.getString? "entropy").bind davUnb64).getD ByteArray.empty
     if entropy.size < 32 then
       return errJson "webdavOpen: \"entropy\" holds fewer than 32 bytes (base64)"
+    let now := match j.field? "now" with
+      | some (.number s) => s.toNat?.getD 0
+      | _ => 0
     let files := (listing.filter isMountFile).mergeSort (· ≤ ·)
     if files.isEmpty then
       return errJson "webdavOpen: the configuration directory holds no mount file (NAME.md)"
     let n ← davCounter.modifyGet (fun c => (c + 1, c + 1))
     let h := s!"webdav{n}"
-    davTable.modify (·.insert h { load := .mountFiles files, entropy })
-    pure (okWith [("handle", .string h), ("need", davNeedJson files [])])
+    davTable.modify (·.insert h { load := .mountFiles files, entropy, now })
+    pure (okWith [("handle", .string h), ("need", davNeedJson (files ++ [stateFileName]) [])])
 
 /-- A file the host read: its text, or `none` when it does not exist. -/
 def davFileOf (j : Json) (name : String) : Option (Option String) :=
@@ -229,11 +248,19 @@ def webdavLoad (h filesJson : String) : IO String := do
           match davFileOf j f with
           | some (some t) => mountOfMarkdown f t
           | _ => .error s!"{f}: the file could not be read")
-        match parsed with
-        | .error e => fail e
-        | .ok ms =>
+        -- The state file: absent is an empty state; a text the engine does
+        -- not read stops the start.
+        let state : Except String DavState :=
+          match davFileOf j stateFileName with
+          | some (some t) => (stateOfText t).mapError (fun e => s!"{stateFileName}: {e}")
+          | _ => .ok {}
+        match parsed, state with
+        | .error e, _ => fail e
+        | _, .error e => fail e
+        | .ok ms, .ok st0 =>
+          let st := stateAtStart st0 hd.now
           let (read, ex) := davCredentialNeeds ms
-          davTable.modify (·.insert h { hd with load := .credentials ms })
+          davTable.modify (·.insert h { hd with load := .credentials ms, dav := st, saved := stateText st })
           pure (okWith [("need", davNeedJson read ex)])
       | .credentials ms =>
         match davFinishLoad hd ms j with
@@ -246,7 +273,9 @@ def webdavLoad (h filesJson : String) : IO String := do
 
 /-- The answer of one step: what the host does next. -/
 inductive DavOut where
-  | response (r : DavResponse)
+  /-- The response, and the state file's new text when the request changed
+  the state. -/
+  | response (r : DavResponse) (write : Option String := none)
   | lws (mount : String) (q : LwsReq)
   | fetch (r : L4Factoidal.LWS.Client.Req)
 
@@ -262,9 +291,12 @@ def davContentMembers (body : ByteArray) (blobOut : Bool) : List (String × Json
 def davOutEnvelope (o : DavOut) (blobOut : Bool) : String × ByteArray :=
   let region (b : ByteArray) := if blobOut then b else ByteArray.empty
   match o with
-  | .response r =>
-    (okWith [("response", .object ([("status", .number (toString r.status)), ("headers", davHeadersJ r.headers)] ++
-      davContentMembers r.body blobOut))], region r.body)
+  | .response r write =>
+    (okWith ([("response", .object ([("status", .number (toString r.status)), ("headers", davHeadersJ r.headers)] ++
+      davContentMembers r.body blobOut))] ++
+      (match write with
+       | some t => [("write", .object [("path", .string stateFileName), ("text", .string t), ("mode", .string "0600")])]
+       | none => [])), region r.body)
   | .lws m q =>
     (okWith [("lws", .object [("mount", .string m), ("request", .object ([("method", .string q.method),
       ("target", .string q.target), ("headers", davHeadersJ q.headers)] ++ davContentMembers q.body blobOut))])],
@@ -285,7 +317,13 @@ def davClientDone (m : Mount) (op : BOp) : L4Factoidal.LWS.Client.Action → Opt
 operations that need no host (a client operation refused before any
 request). -/
 def davDrive (hd : DavHandle) (mount? : Option Mount) : Nat → Prog (DavResponse × DavState) → DavHandle × DavOut
-  | _, .pure (resp, st) => ({ hd with dav := st, pending := none }, .response resp)
+  | _, .pure (resp, st) =>
+    -- The state file is written when its text changes: after PROPPATCH,
+    -- LOCK (new or refreshed), UNLOCK, a COPY, MOVE or DELETE that moved or
+    -- removed properties or locks, and a request that found a lock expired.
+    let t := stateText st
+    if t == hd.saved then ({ hd with dav := st, pending := none }, .response resp)
+    else ({ hd with dav := st, saved := t, pending := none }, .response resp (some t))
   | 0, .call _ _ => ({ hd with pending := none }, .response (davInternalError "webdav: operation limit"))
   | n + 1, .call op k =>
     match mount? with
