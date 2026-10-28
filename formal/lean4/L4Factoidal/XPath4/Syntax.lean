@@ -1,0 +1,192 @@
+/-
+L4Factoidal.XPath4.Syntax — the abstract syntax of XPath 4.0 and the
+XDM 4.0 item model.
+
+Spec: XPath 4.0 editor's draft (https://qt4cg.org/specifications/xquery-40/xpath-40.html,
+qtspecs commit b4723ff52fd9d4fabf2b4cd33bd44f21939c512c), Appendix A
+(grammar); XDM 4.0 §2 (items: atomic values, nodes, function items,
+maps, arrays).
+
+Names in the tree are already RESOLVED to expanded QNames by the
+parser, which knows the static namespace bindings; the evaluator never
+sees a prefix that it must look up, except in a string it casts to
+`xs:QName`.
+
+A NODE is a reference `(document, index)` into a document table
+(`XPath4.Doc`); identity is the reference, document order is the pair
+in lexicographic order.
+-/
+import L4Factoidal.XPath4.Atomic
+
+namespace L4Factoidal.XPath4
+
+/-! ## Axes and node tests -/
+
+inductive Axis where
+  | child | descendant | attribute | self | descendantOrSelf
+  | followingSibling | following | namespace
+  | parent | ancestor | precedingSibling | preceding | ancestorOrSelf
+  | followingOrSelf | followingSiblingOrSelf | precedingOrSelf | precedingSiblingOrSelf
+deriving DecidableEq, Repr, Inhabited
+
+def Axis.reverse : Axis → Bool
+  | .parent | .ancestor | .precedingSibling | .preceding | .ancestorOrSelf
+  | .precedingOrSelf | .precedingSiblingOrSelf => true
+  | _ => false
+
+def axisOfName? : String → Option Axis
+  | "child" => some .child | "descendant" => some .descendant
+  | "attribute" => some .attribute | "self" => some .self
+  | "descendant-or-self" => some .descendantOrSelf
+  | "following-sibling" => some .followingSibling | "following" => some .following
+  | "namespace" => some .namespace | "parent" => some .parent
+  | "ancestor" => some .ancestor | "preceding-sibling" => some .precedingSibling
+  | "preceding" => some .preceding | "ancestor-or-self" => some .ancestorOrSelf
+  | "following-or-self" => some .followingOrSelf
+  | "following-sibling-or-self" => some .followingSiblingOrSelf
+  | "preceding-or-self" => some .precedingOrSelf
+  | "preceding-sibling-or-self" => some .precedingSiblingOrSelf
+  | _ => none
+
+/-- `NameTest`: `*`, `prefix:*`, `*:local`, `Q{uri}*`, or a QName. -/
+inductive NameTest where
+  | any
+  | ns (uri : String)
+  | loc (l : String)
+  | name (q : QN)
+deriving Repr, Inhabited
+
+inductive Occ where
+  | one | opt | star | plus
+deriving DecidableEq, Repr, Inhabited
+
+/-- Item types and sequence types (one inductive: `.seq t o` is a
+    sequence type, `.empty` is `empty-sequence()`; a bare item type
+    means exactly one). -/
+inductive IType where
+  | item
+  | anyNode
+  | atomic (t : AType)
+  | elem (n : Option NameTest)
+  | attr (n : Option NameTest)
+  | text | comment | nsNode
+  | pi (target : Option String)
+  | doc (inner : Option IType)
+  | anyFn
+  | fnT (args : List IType) (ret : IType)
+  | anyMap
+  | mapT (k : IType) (v : IType)
+  | anyArr
+  | arrT (m : IType)
+  | record (fields : List (String × Bool × IType)) (ext : Bool)
+  | choice (ts : List IType)
+  | enum (vals : List String)
+  | seq (t : IType) (o : Occ)
+  | empty
+deriving Repr, Inhabited
+
+/-- A node test in a step. -/
+inductive NodeTest where
+  | name (t : NameTest)
+  | kind (t : IType)
+  | union (ts : List NodeTest)
+deriving Repr, Inhabited
+
+/-! ## Operators -/
+
+inductive BOp where
+  | or | and
+  | geq | gne | glt | gle | ggt | gge
+  | veq | vne | vlt | vle | vgt | vge
+  | is | isNot | precedes | follows | precedesOrIs | followsOrIs
+  | to | add | sub | mul | div | idiv | mod
+  | union | intersect | except
+  | concat | otherwise
+deriving DecidableEq, Repr, Inhabited
+
+inductive ForKind where
+  | item | member | entry
+deriving DecidableEq, Repr, Inhabited
+
+/-! ## Expressions -/
+
+inductive Expr where
+  | lit (a : Atomic)
+  | seq (es : List Expr)
+  | var (q : QN)
+  | ctx
+  | root
+  /-- `a / b`. -/
+  | slash (a b : Expr)
+  /-- An axis step with its predicates. -/
+  | step (ax : Axis) (t : NodeTest) (preds : List Expr)
+  /-- A filter expression `e[p]`. -/
+  | filter (e p : Expr)
+  /-- A static function call. `none` in an argument is `?`. -/
+  | call (q : QN) (args : List (Option Expr)) (kw : List (String × Option Expr))
+  | dyn (f : Expr) (args : List (Option Expr))
+  | fref (q : QN) (arity : Nat)
+  /-- An inline function. `focus` is a focus function `fn { ... }`. -/
+  | inline (ps : List (QN × IType)) (ret : IType) (body : Expr) (focus : Bool)
+  | mapC (es : List (Expr × Expr))
+  | arrS (es : List Expr)
+  | arrC (e : Expr)
+  /-- `e ? k`; `k` is `none` for the wildcard `*`. -/
+  | lookup (e : Expr) (k : Option Expr)
+  | ulookup (k : Option Expr)
+  | bin (op : BOp) (a b : Expr)
+  | neg (e : Expr)
+  | plus (e : Expr)
+  | ifE (c t e : Expr)
+  | forE (kind : ForKind) (v : QN) (v2 : Option QN) (posv : Option QN) (vt : IType) (src body : Expr)
+  | letE (v : QN) (vt : IType) (e body : Expr)
+  | quant (every : Bool) (v : QN) (vt : IType) (src sat : Expr)
+  | instOf (e : Expr) (t : IType)
+  | treat (e : Expr) (t : IType)
+  | cast (e : Expr) (t : IType) (opt : Bool)
+  | castable (e : Expr) (t : IType) (opt : Bool)
+  /-- `a ! b`. -/
+  | smap (a b : Expr)
+  /-- `a -> b`. -/
+  | pipe (a b : Expr)
+  /-- `=!>`: apply the target to each item. `f` is applied with the
+      item prepended to `args`. -/
+  | mapArrow (a : Expr) (f : Expr) (args : List (Option Expr))
+  | tmpl (parts : List Expr)
+deriving Inhabited
+
+/-! ## Items (XDM 4.0 §2) -/
+
+/-- A node reference: document number and node index. -/
+structure NodeRef where
+  doc : Nat
+  idx : Nat
+deriving DecidableEq, Repr, Inhabited
+
+mutual
+inductive Item where
+  | atom (a : Atomic)
+  | node (n : NodeRef)
+  /-- A map: entries in insertion order (XDM 4.0 maps are ordered). -/
+  | map (kvs : List (Atomic × List Item))
+  | arr (ms : List (List Item))
+  | fn (f : FnItem)
+inductive FnItem where
+  | builtin (q : QN) (arity : Nat)
+  | inline (ps : List (QN × IType)) (ret : IType) (body : Expr) (focus : Bool)
+           (closure : List (QN × List Item))
+  /-- A partial application: the function and the fixed arguments
+      (`none` = still open). -/
+  | papp (f : Item) (args : List (Option (List Item)))
+end
+
+instance : Inhabited Item := ⟨.atom default⟩
+
+abbrev Seq := List Item
+
+def FnItem.arity : FnItem → Nat
+  | .builtin _ n => n
+  | .inline ps _ _ focus _ => if focus then 1 else ps.length
+  | .papp _ args => (args.filter Option.isNone).length
+
+end L4Factoidal.XPath4

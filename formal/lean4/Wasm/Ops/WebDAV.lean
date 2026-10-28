@@ -159,12 +159,23 @@ def davMountJson (m : Mount) (ses : Option L4Factoidal.LWS.Client.Session) : Jso
      | some s => [("agent", .string s)]
      | none => []))
 
+/-- A key file's path with its `.` segments and empty segments removed, so
+`alice.jwk` and `./alice.jwk` name one file. Two `did-key` mounts that name
+one absent key file get one key: the first mount makes it, the next ones use
+it, and the host writes it once. -/
+def davKeyPathKey (p : String) : String :=
+  "/".intercalate ((p.splitOn "/").filter (fun s => s != "." && s != ""))
+
+#guard davKeyPathKey "./alice.jwk" == davKeyPathKey "alice.jwk"
+#guard davKeyPathKey "keys//./a.jwk" == "keys/a.jwk"
+
 /-- The second load: credentials and storage formats. -/
 def davFinishLoad (hd : DavHandle) (ms : List Mount) (j : Json) : Except String (DavHandle × Json) := do
   let toPublic := davCrypto.es256Public
   let mut sessions : List (String × L4Factoidal.LWS.Client.Session) := []
   let mut writes : List Json := []
   let mut locals : List Json := []
+  let mut made : List (String × ByteArray) := []
   for m in ms do
     match m.kind with
     | .localStore =>
@@ -185,12 +196,16 @@ def davFinishLoad (hd : DavHandle) (ms : List Mount) (j : Json) : Except String 
           let d ← (secretOfJwk t).mapError (fun e => s!"{m.name}.md: {m.keyFile}: {e}")
           sessions := sessions ++ [(m.name, ← sessionOf m toPublic (some d) none)]
         | _ =>
+          match made.lookup (davKeyPathKey m.keyFile) with
+          | some d => sessions := sessions ++ [(m.name, ← sessionOf m toPublic (some d) none)]
+          | none =>
           -- No key file: a new key, written for the host to keep.
           let seed := hd.entropy ++ m.name.toUTF8
           match newKey L4Factoidal.Crypto.sha256 toPublic seed with
           | none => throw s!"{m.name}.md: no P-256 key could be made"
           | some (d, xy) =>
             writes := writes ++ [.object [("path", .string m.keyFile), ("text", .string (jwkText d xy)), ("mode", .string "0600")]]
+            made := made ++ [(davKeyPathKey m.keyFile, d)]
             sessions := sessions ++ [(m.name, ← sessionOf m toPublic (some d) none)]
   let mountsJ := ms.map (fun m => davMountJson m (sessions.lookup m.name))
   pure ({ hd with load := .ready, mounts := ms, sessions },
