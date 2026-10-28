@@ -117,11 +117,15 @@ fi
 RULES_PROBE="formal/lean4/.lake/build/bin/l4shacl-rules"
 echo ""
 if [ -x "$RULES_PROBE" ]; then
-  run_row "shacl 1.2 rules" 88 88 "$RULES_PROBE"
+  # The F* number is for the July 2026 copy of the rules suite. The Lean
+  # runner's default is now the SPARQL 1.2 RL suite (third_party/testing/
+  # sparql-rl/tests), which has no F* number; it is printed after this row.
+  # Three July tests use `BIND`, which the current draft replaced by `SET`
+  # (https://github.com/danbri/factoidal/issues/1099).
+  run_row "shacl 1.2 rules" 88 88 "$RULES_PROBE" "$S12/rules"
   echo ""
-  echo "The rules gap is the SPARQL 1.2 reifying-triple and annotation"
-  echo "syntax the Lean parser does not accept, measured in"
-  echo "https://github.com/danbri/factoidal/issues/556 — not a SHACL Rules gap."
+  echo "SPARQL 1.2 RL (no F* number):"
+  "$RULES_PROBE" 2>&1 | grep "TOTAL" | tail -1
 else
   UNREAD=$((UNREAD + 1))
   printf '%-22s | %-28s | %s\n' "shacl 1.2 rules" "MISSING l4shacl-rules" "88 pass (out of 88)"

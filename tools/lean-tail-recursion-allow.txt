@@ -1562,3 +1562,49 @@ L4Factoidal_WebDAV_etagsOf  # (c) at most ifTagsMax + 1 = 17 resources: precheck
 L4Factoidal_SPARQL_compareOnConditionsKeyed  # (b) ORDER BY conditions of one query; the list step is a self tail call (loop); cycle through selectPost for sub-SELECT nesting
 L4Factoidal_SPARQL_orderKeys  # (b) ORDER BY conditions of one query: one frame per condition; cycle through selectPost for sub-SELECT nesting
 L4Factoidal_RDF_LiteralValue_valueJsonFuel  # (c) fuel 4 from valueJson, its only caller: depth at most 4 (an XSD list value nests no list); PR 154
+# --- SPARQL 1.2 RL (https://github.com/danbri/factoidal/issues/1099):
+#     SPARQLRL.parseRuleSet refuses a document whose brackets ([ ] ( ) { }
+#     <<( )>> << >> {| |}) nest deeper than SPARQLRL.maxNesting (64) before
+#     the grammar runs (nestingExcess, a tail call per token). Every step to a
+#     next sibling (object, property, collection member, annotation, path
+#     part, rule element, rule, import) is a self tail call, compiled to
+#     `goto _start` (checked in the emitted C of 2026-10-27); the cycles
+#     below are one frame (a few) per nesting level. An STerm from the parser
+#     has triple-term depth at most maxNesting + 1; a rule element nests at
+#     most two levels (NOT and GROUP only at the top of a body). ---
+L4Factoidal_SPARQLRL_pGraphNode  # (c) bracket nesting of the rule text, at most SPARQLRL.maxNesting (64)
+L4Factoidal_SPARQLRL_pCollection  # (c) bracket nesting, at most SPARQLRL.maxNesting (64); the member step is a self tail call
+L4Factoidal_SPARQLRL_pPLNE  # (c) bracket nesting ([ ] and {| |}), at most SPARQLRL.maxNesting (64)
+L4Factoidal_SPARQLRL_pPLRest  # (c) bracket nesting, at most SPARQLRL.maxNesting (64); the `;` step is a self tail call
+L4Factoidal_SPARQLRL_pObjectList  # (c) bracket nesting, at most SPARQLRL.maxNesting (64); the `,` step is a self tail call
+L4Factoidal_SPARQLRL_pAnnotation  # (c) {| |} nesting, at most SPARQLRL.maxNesting (64); the step to the next reifier or block is a self tail call
+L4Factoidal_SPARQLRL_pReified  # (c) << >> nesting, at most SPARQLRL.maxNesting (64)
+L4Factoidal_SPARQLRL_pRTComp  # (c) << >> and <<( )>> nesting, at most SPARQLRL.maxNesting (64)
+L4Factoidal_SPARQLRL_pTripleTerm  # (c) <<( )>> nesting, at most SPARQLRL.maxNesting (64)
+L4Factoidal_SPARQLRL_pTTComp  # (c) <<( )>> nesting, at most SPARQLRL.maxNesting (64)
+L4Factoidal_SPARQLRL_pPath  # (c) path parenthesis nesting, at most SPARQLRL.maxNesting (64)
+L4Factoidal_SPARQLRL_pPathElt  # (c) path parenthesis nesting, at most SPARQLRL.maxNesting (64)
+L4Factoidal_SPARQLRL_pPathEltOrInverse  # (c) path parenthesis nesting, at most SPARQLRL.maxNesting (64)
+L4Factoidal_SPARQLRL_pPathSeqRest  # (c) path parenthesis nesting, at most SPARQLRL.maxNesting (64); the `/` step is a self tail call
+L4Factoidal_SPARQLRL_pEltSeq  # (c) at most two levels (NOT and GROUP only at the top of a body); the element step is a self tail call
+L4Factoidal_SPARQLRL_expandPathAcc  # (c) path parenthesis nesting, at most SPARQLRL.maxNesting (64); a sequence is right-nested, its walk a self tail call
+L4Factoidal_SPARQLRL_trTerm  # (s) the translation of a SPARQL-RL pattern term to a SPARQL pattern term, for the theorems of SPARQLRL/BgpAgreement.lean only: no function of the emitted C outside BgpAgreement.c names it (checked 2026-10-28); its depth is the triple-term nesting of one pattern, at most SPARQLRL.maxNesting + 1
+L4Factoidal_SPARQLRL_Elt_makesRunOnce  # (c) rule element nesting, at most two levels from the parser
+L4Factoidal_SPARQLRL_Elt_listMakesRunOnce  # (c) rule element nesting, at most two levels; the element step is a self tail call
+L4Factoidal_SPARQLRL_Elt_depPatterns  # (c) rule element nesting, at most two levels from the parser
+L4Factoidal_SPARQLRL_Elt_listDepPatternsAcc  # (c) rule element nesting, at most two levels; the element step is an accumulator tail call
+L4Factoidal_SPARQLRL_wfElt  # (c) rule element nesting, at most two levels from the parser
+L4Factoidal_SPARQLRL_wfSeq  # (c) rule element nesting, at most two levels; the element step is a self tail call
+L4Factoidal_SPARQLRL_evalElt  # (c) rule element nesting, at most two levels from the parser
+L4Factoidal_SPARQLRL_evalSeq  # (c) rule element nesting, at most two levels; the element step is a self tail call
+L4Factoidal_SPARQLRL_STerm_vars  # (c) triple-term depth of a parsed term, at most SPARQLRL.maxNesting + 1
+L4Factoidal_SPARQLRL_STerm_bnodes  # (c) triple-term depth of a parsed term, at most SPARQLRL.maxNesting + 1
+L4Factoidal_SPARQLRL_STerm_depth  # (c) triple-term depth of a parsed term, at most SPARQLRL.maxNesting + 1
+L4Factoidal_SPARQLRL_STerm_rename  # (c) triple-term depth of a parsed term, at most SPARQLRL.maxNesting + 1
+L4Factoidal_SPARQLRL_STerm_tagBnodes  # (c) triple-term depth of a parsed term, at most SPARQLRL.maxNesting + 1
+L4Factoidal_SPARQLRL_instDecidableEqSTerm_decEq  # (b) derived DecidableEq: one frame per level of STerm triple-term depth (at most SPARQLRL.maxNesting + 1 from the parser)
+L4Factoidal_SPARQLRL_matchTerm  # (c) triple-term depth of the pattern term, at most SPARQLRL.maxNesting + 1
+L4Factoidal_SPARQLRL_inst  # (c) triple-term depth of the template term, at most SPARQLRL.maxNesting + 1
+L4Factoidal_SPARQLRL_occurs  # (c) depth of a term after substitution, at most the summed depth of two parsed triples (6 * (maxNesting + 1)); also fuel-bounded
+L4Factoidal_SPARQLRL_unify  # (c) depth of a term after substitution, at most 6 * (SPARQLRL.maxNesting + 1); also fuel-bounded (patternMatchesTemplate)
+L4Factoidal_SPARQLRL_resolveImportsAux  # (c) import nesting, at most 64 (the fuel of RuleSet.resolveImports); the import step is a List.foldl

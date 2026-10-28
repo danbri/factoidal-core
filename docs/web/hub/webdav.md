@@ -79,6 +79,12 @@ The first `# ` heading is the display name. The first `- key: value` list is
 the settings; other text in the file is ignored. `README.md` is not a mount.
 A malformed file stops the start with its name and line number.
 
+The server keeps dead properties (PROPPATCH) and locks in
+`CONFIGDIR/.webdav-state.json` (mode 0600), so they survive a restart. A
+name that starts with `.` is not a mount. A state file the server cannot
+read stops the start with the file's name; remove it to start with no
+properties and no locks.
+
 | Key | Values | Applies to | Default |
 | --- | --- | --- | --- |
 | `kind` | `local`, `lws` | all | required |
@@ -272,10 +278,10 @@ failure in `tests/hub/hub_webdav_test.mjs`.
 ## Connect a file browser
 
 Below, `URL` is `http://127.0.0.1:8090/`, `https://MACHINE.TAILNET.ts.net/`
-or `https://dav.example.org/`. Only litmus and curl ran against
-`webdav-serve` in this repository; the steps below are the clients' own
-documented steps, not test results
-(<https://github.com/danbri/factoidal/issues/1079>).
+or `https://dav.example.org/`. Against `webdav-serve` this repository runs
+litmus, curl, rclone and cadaver (`node tests/webdav/clients.mjs`). The
+desktop file browser steps below are the clients' own documented steps, not
+test results (<https://github.com/danbri/factoidal/issues/1079>).
 
 * **macOS Finder**: Go > Connect to Server (⌘K), type `URL`, Connect. With
   no login in front, choose Guest; behind a Basic login, Registered User.
@@ -302,9 +308,10 @@ Other WebDAV clients:
   new connection, type WebDAV (HTTP) or WebDAV (HTTPS).
 * WinSCP (Windows): File protocol WebDAV.
 * Transmit (macOS): protocol WebDAV.
-* rclone (all systems, command line): `rclone config` (type `webdav`, vendor
-  `other`), then `rclone ls`, `rclone sync` or `rclone mount NAME: DIR`.
-* cadaver (command line): `cadaver http://127.0.0.1:8090/`.
+* rclone (all systems, command line; tested): `rclone config` (type `webdav`,
+  vendor `other`), then `rclone ls`, `rclone sync` or `rclone mount NAME: DIR`.
+* cadaver (command line; tested, including locks and dead properties):
+  `cadaver http://127.0.0.1:8090/`.
 * Applications that sync to a WebDAV folder: Joplin (WebDAV sync target),
   Zotero (WebDAV file sync), Obsidian (Remotely Save plugin),
   Keepass2Android.
@@ -313,8 +320,6 @@ Other WebDAV clients:
 
 * No login and no TLS on the listener:
   <https://github.com/danbri/factoidal/issues/1108>.
-* Dead properties and locks are kept in memory and lost on restart:
-  <https://github.com/danbri/factoidal/issues/1078>.
 * One request at a time. PROPFIND with `Depth: infinity` answers 403
   (`DAV:propfind-finite-depth`); clients then list one level at a time.
 * COPY and MOVE between two mounts answer 502 (RFC 4918 §9.9.4); copy with

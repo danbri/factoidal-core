@@ -58,6 +58,18 @@ def script (op : Op) (resps : List Resp) (ses : Session := {}) : List Req × Act
   let (s, a) := Client.start Vt op ses
   go s a [] resps
 
+/-- The session at the end of an operation against canned responses. -/
+def scriptSession (op : Op) (resps : List Resp) (ses : Session := {}) : Session :=
+  let rec go (s : ClientState) (a : Action) : List Resp → Session
+    | [] => s.session
+    | x :: xs => match a with
+      | .fetch _ =>
+        let (s', a') := Client.step Vt s (.response x)
+        go s' a' xs
+      | _ => s.session
+  let (s, a) := Client.start Vt op ses
+  go s a resps
+
 def failCode : Action → String
   | .fail e => (e.getString? "code").getD ""
   | _ => ""
@@ -315,6 +327,82 @@ def cidToken : String := ((formPairs (sentAt cid.1 4).body).lookup "subject_toke
   [ challenge "https://s.example/.well-known/oauth-protected-resource/a" "https://s.example/st"
   , prm "https://s.example/a", descRoot "https://s.example/", asMeta ] cidSes).2 == "credential"
 #guard (sessionOfJson (sessionJson cidSes)).selfIssued.map (·.privateKey.data) == some (Array.replicate 32 1)
+
+/-! ### Interop defects (https://github.com/danbri/factoidal/issues/1115) -/
+
+-- 1. The challenge of the drafts before 2026-10-19, `Bearer as_uri, realm`,
+-- with no resource_metadata and no storage link (css, sparq-lws). Opt-in.
+def legacy401 (asUri realm : String) : Resp :=
+  rsp 401 [("WWW-Authenticate", "Bearer as_uri=\"" ++ asUri ++ "\", realm=\"" ++ realm ++ "\"")]
+def legacySes : Session := { ses with legacyChallenge := true }
+def legacyRun := script { kind := "read", url := B ++ "a" }
+  [ legacy401 "https://as.example/t" B, asMeta, tokenResp, rsp 200 [] "hello" ] legacySes
+-- No protected resource metadata, no storage description: the authorization
+-- server metadata, the token, the request again.
+#guard legacyRun.1.map (·.url) ==
+  [ B ++ "a", "https://as.example/.well-known/lws-configuration/t", "https://as.example/t/token", B ++ "a" ]
+-- The token's resource is the realm.
+#guard (formPairs (sentAt legacyRun.1 2).body).lookup "resource" == some B
+#guard (sentAt legacyRun.1 3).header? "authorization" == some "Bearer AT1"
+#guard (doneJson legacyRun.2).getString? "body" == some "hello"
+-- The token is kept for the realm, and goes under it only.
+#guard (scriptSession { kind := "read", url := B ++ "a" }
+  [ legacy401 "https://as.example/t" B, asMeta, tokenResp, rsp 200 [] "hello" ] legacySes).tokens.map
+  (fun t => (t.storage, t.root)) == [(B, B)]
+-- Off by default: the same 401 is the answer, and nothing more is sent.
+def legacyOff := script { kind := "read", url := B ++ "a" } [legacy401 "https://as.example/t" B] ses
+#guard failCode legacyOff.2 == "unauthorized"
+#guard legacyOff.1.length == 1
+-- A realm on another origin: no token request.
+def legacyEvil := script { kind := "read", url := B ++ "a" }
+  [legacy401 "https://as.example/t" "https://evil.example/"] legacySes
+#guard failCode legacyEvil.2 == "discoveryValidation"
+#guard legacyEvil.1.all (fun r => !isTokenExchange r)
+-- A realm that does not contain the requested URL: no token request.
+#guard failCode (script { kind := "read", url := B ++ "a" }
+  [legacy401 "https://as.example/t" (B ++ "other/")] legacySes).2 == "discoveryValidation"
+-- A 401 with resource_metadata still takes the full checks with the option on.
+#guard failCode (script { kind := "read", url := B ++ "decoy" }
+  [ challenge "https://s.example/.well-known/oauth-protected-resource/decoy" "https://s.example/other"
+  , prm "https://s.example/decoy", descRoot "https://evil.example/" ] legacySes).2 == "discoveryValidation"
+-- The option goes through the session document.
+#guard (sessionOfJson (sessionJson legacySes)).legacyChallenge
+#guard !(sessionOfJson (sessionJson ses)).legacyChallenge
+#guard (sessionOfJson (.object [("legacyChallenge", .bool true)])).legacyChallenge
+
+-- 2. The token also goes to the service endpoints of the storage description
+-- on the requested URI's origin (lws-drupal's type index is outside its
+-- StorageRoot path), never to another origin.
+def descServices : Resp := rsp 200 [] ("{\"id\":\"https://s.example/st\",\"service\":[" ++
+  "{\"type\":\"StorageRoot\",\"serviceEndpoint\":\"https://s.example/root/\"}," ++
+  "{\"type\":\"TypeIndexService\",\"serviceEndpoint\":\"/types\"}," ++
+  "{\"type\":\"NotificationService\",\"serviceEndpoint\":\"https://other.example/n\"}]}")
+def epSession : Session := scriptSession { kind := "read", url := "https://s.example/root/a" }
+  [ challenge "https://s.example/.well-known/oauth-protected-resource/root/a" "https://s.example/st"
+  , prm "https://s.example/root/a", descServices, asMeta, tokenResp, rsp 200 [] "x" ] ses
+#guard epSession.tokens.map (·.endpoints) == [["https://s.example/types"]]
+#guard (sentAt (script { kind := "typeIndex", url := "https://s.example/types", endpoint := "https://s.example/types" }
+  [] epSession).1 0).header? "authorization" == some "Bearer AT1"
+#guard ((sentAt (script { kind := "typeIndex", url := "https://other.example/n", endpoint := "https://other.example/n" }
+  [] epSession).1 0).header? "authorization").isNone
+#guard ((sentAt (script { kind := "read", url := "https://s.example/elsewhere" } [] epSession).1 0).header?
+  "authorization").isNone
+-- The endpoints go through the session document; a document without them reads as none.
+#guard (sessionOfJson (sessionJson epSession)).tokens.map (·.endpoints) == [["https://s.example/types"]]
+#guard (sessionOfJson (sessionJson ses)).tokens.isEmpty
+
+-- 3. A subscription to a notification endpoint the caller names: POST to it,
+-- with no HEAD for a storage link (lwsd's endpoint sends none).
+def subDirect := script { kind := "subscribe", url := B ++ "a", endpoint := "https://s.example/subs"
+                        , inbox := "https://in.example/1" } [rsp 201 [("Location", "/subs/1")]]
+#guard subDirect.1.map (fun r => (r.method, r.url)) == [("POST", "https://s.example/subs")]
+#guard (String.fromUTF8? (sentAt subDirect.1 0).body) ==
+  some "{\"type\":\"WebhookSubscription\",\"topic\":[\"https://s.example/a\"],\"inbox\":\"https://in.example/1\"}"
+#guard ((doneJson subDirect.2).field? "report" |>.bind (·.getString? "subscription")) == some "https://s.example/subs/1"
+-- Without a named endpoint the client still finds it, and a HEAD with no
+-- storage link stops it.
+#guard failCode (script { kind := "subscribe", url := B ++ "a", inbox := "https://in.example/1" } [rsp 200]).2 ==
+  "noStorageLink"
 
 /-! ### Verifying a notification (lws10-notifications-webhook §5.2) -/
 

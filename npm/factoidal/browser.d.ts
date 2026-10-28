@@ -42,6 +42,7 @@ export {
   memberOrdinal,
   openDataset,
   closure,
+  sparqlRlInfer,
   formats,
   queryRaw,
   queryHdt,

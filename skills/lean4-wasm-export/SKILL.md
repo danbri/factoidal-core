@@ -887,6 +887,17 @@ against the old core library.
    "signature mismatch ... parseJsonLd" and one build cycle (about 10
    minutes) was lost. Step 0 now runs `lake build l4wasm L4Factoidal`.
 
+   A shared work directory gives a wasm with the wrong code and no error.
+   The default work dir `/tmp/l4wasm-build` is one directory for every
+   checkout and worktree on the machine. 2026-10-28: a worktree agent built
+   from an older base; its objects were newer than this checkout's `.c`
+   files, step 6 kept them by modification time, and the wasm refused a
+   query with a message the source had dropped the day before (three npm
+   tests failed; one rebuild lost). Step 6 now keeps the SHA-256 of each
+   `.c` next to its object (`$o.sha`) and recompiles when it differs. Give
+   each worktree its own work dir anyway (`L4_WASM_WORK=$PWD/.wasm-work`, or
+   the first argument): concurrent builds in one directory also race.
+
    **Any OTHER signature mismatch is a trap, and the build now fails on
    it** (`link_module` in `Wasm/build-wasm.sh`). wasm-ld replaces a call
    whose signature differs from the definition with an `unreachable` stub

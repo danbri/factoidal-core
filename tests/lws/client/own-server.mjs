@@ -79,6 +79,9 @@ const CHECKS = [
   'Authorization: a 401 whose storage puts its root on another origin gives no token request',
   'Authorization: a refused token is dropped and exchanged again',
   'Authorization: with no subject token the 401 is the result',
+  'Authorization (drafts before 2026-10-19): the as_uri/realm challenge is followed only with legacyChallenge (and the CLI --legacy-challenge)',
+  'Authorization: the token goes to a service endpoint of the storage description outside the StorageRoot path',
+  'Notifications: subscribe to a named endpoint POSTs to it with no storage-link discovery',
   'Authorization (lws10-authn-ssi-cid): a self-issued did:key credential, signed by the engine, exchanged at factoidal authz-serve'
 ]
 
@@ -175,6 +178,73 @@ async function startDecoy (issuerOrigin) {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   origin = `http://127.0.0.1:${server.address().port}`
   return { origin, close: () => new Promise((resolve) => server.close(resolve)) }
+}
+
+/** A stub server for https://github.com/danbri/factoidal/issues/1115:
+ *  `/legacy/…` answers the 401 of the drafts before 2026-10-19 (`as_uri`,
+ *  `realm`, nothing else); `/root/…` answers the current 401; the storage
+ *  description names a type index at `/types` (outside the StorageRoot
+ *  `/root/`, which answers an empty index to an anonymous request, as
+ *  lws-drupal does) and a notification endpoint at `/subs` (whose HEAD sends
+ *  no storage link, as lwsd's does). */
+async function startInteropStub (issuerOrigin) {
+  let origin = ''
+  const subscriptions = []
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url, 'http://x')
+    const path = url.pathname
+    const authed = (req.headers.authorization || '').startsWith('Bearer ')
+    const json = (doc, status = 200, type = 'application/json') => {
+      res.statusCode = status
+      res.setHeader('content-type', type)
+      res.end(JSON.stringify(doc))
+    }
+    if (path.startsWith('/legacy/')) {
+      if (!authed) {
+        res.statusCode = 401
+        res.setHeader('www-authenticate', `Bearer as_uri="${issuerOrigin}", realm="${origin}/legacy/"`)
+        res.end()
+      } else {
+        res.setHeader('content-type', 'text/plain')
+        res.end('legacy')
+      }
+    } else if (path.startsWith('/.well-known/oauth-protected-resource')) {
+      json({ resource: `${origin}${path.slice('/.well-known/oauth-protected-resource'.length)}`,
+        authorization_servers: [issuerOrigin] })
+    } else if (path === '/storage') {
+      json({ id: `${origin}/storage`, type: 'Storage', service: [
+        { type: 'StorageRoot', serviceEndpoint: `${origin}/root/` },
+        { type: 'TypeIndexService', serviceEndpoint: '/types' },
+        { type: 'NotificationService', serviceEndpoint: `${origin}/subs`, subscriptionType: ['WebhookSubscription'] }
+      ] }, 200, 'application/lws+cid')
+    } else if (path === '/types') {
+      json({ items: authed ? [{ id: 'https://e.example/Recipe' }] : [] }, 200, 'application/lws+json')
+    } else if (path === '/subs') {
+      if (req.method === 'POST') {
+        subscriptions.push(JSON.parse(await readBody(req)))
+        res.setHeader('location', `/subs/${subscriptions.length}`)
+        json({ id: `${origin}/subs/${subscriptions.length}`, type: 'WebhookSubscription' }, 201, 'application/lws+json')
+      } else {
+        res.end()
+      }
+    } else if (path.startsWith('/root/')) {
+      if (!authed) {
+        res.statusCode = 401
+        res.setHeader('www-authenticate', `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource${path}"`)
+        res.setHeader('link', `<${origin}/storage>; rel="https://www.w3.org/ns/lws#storage"`)
+        res.end()
+      } else {
+        res.setHeader('content-type', 'text/plain')
+        res.end('root')
+      }
+    } else {
+      res.statusCode = 404
+      res.end()
+    }
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  origin = `http://127.0.0.1:${server.address().port}`
+  return { origin, subscriptions, close: () => new Promise((resolve) => server.close(resolve)) }
 }
 
 async function rejects (promise, reason) {
@@ -484,6 +554,69 @@ async function main () {
       const c = await createLwsClient({ engine })
       await rejects(c.read(`${so}/p.txt`), 'unauthorized')
     })
+
+    const stub = await startInteropStub(issuer.origin)
+    try {
+      await check(CHECKS[21], async () => {
+        const target = `${stub.origin}/legacy/a.txt`
+        const off = await createLwsClient({ engine, subjectToken: CREDENTIAL, subjectTokenType: SAML2 })
+        await rejects(off.read(target), 'unauthorized')
+        const before = issuer.tokenRequests.length
+        const on = await createLwsClient({ engine, subjectToken: CREDENTIAL, subjectTokenType: SAML2, legacyChallenge: true })
+        const g = await on.read(target)
+        assert(g.body === 'legacy', g.body)
+        assert(issuer.tokenRequests.length === before + 1, 'no token exchange')
+        const resource = issuer.tokenRequests[issuer.tokenRequests.length - 1].form.get('resource')
+        assert(resource === `${stub.origin}/legacy/`, `resource ${resource}`)
+        // The CLI flag.
+        const dir = mkdtempSync(join(tmpdir(), 'lws-client-legacy-'))
+        try {
+          const file = join(dir, 'credential')
+          ;(await import('node:fs')).writeFileSync(file, CREDENTIAL)
+          const cli = fileURLToPath(new URL('../../../npm/factoidal/bin/factoidal.mjs', import.meta.url))
+          const run = (args) => new Promise((resolve) => {
+            const child = spawn(process.execPath, [cli, ...args])
+            let stdout = ''
+            child.stdout.on('data', (d) => { stdout += d })
+            child.on('close', (status) => resolve({ status, stdout }))
+          })
+          const common = ['lws-client', 'read', target, '--subject-token-file', file, '--subject-token-type', SAML2]
+          const cliOff = await run(common)
+          assert(cliOff.status === 1 && JSON.parse(cliOff.stdout).fail.code === 'unauthorized', cliOff.stdout)
+          const cliOn = await run([...common, '--legacy-challenge'])
+          assert(cliOn.status === 0 && JSON.parse(cliOn.stdout).body === 'legacy', cliOn.stdout)
+        } finally {
+          rmSync(dir, { recursive: true, force: true })
+        }
+      })
+
+      await check(CHECKS[22], async () => {
+        const r = recording()
+        const c = await createLwsClient({ engine, fetch: r.wire, subjectToken: CREDENTIAL, subjectTokenType: SAML2 })
+        assert((await c.read(`${stub.origin}/root/a`)).body === 'root', 'no read')
+        const ix = await c.typeIndex(`${stub.origin}/types`, { endpoint: `${stub.origin}/types` })
+        assert(JSON.stringify(ix.items) === '["https://e.example/Recipe"]', JSON.stringify(ix.items))
+        const get = r.log.find((x) => x.url === `${stub.origin}/types`)
+        assert((get.headers.get('authorization') || '').startsWith('Bearer '), 'the type index request had no token')
+        assert(r.log.every((x) => x.url.startsWith(stub.origin) || x.url.startsWith(issuer.origin) ||
+          x.headers.get('authorization') === null), 'a token went to another origin')
+      })
+
+      await check(CHECKS[23], async () => {
+        const r = recording()
+        const c = await createLwsClient({ engine, fetch: r.wire })
+        const sub = await c.subscribe(`${stub.origin}/root/a`, { endpoint: `${stub.origin}/subs`, inbox: 'https://in.example/1' })
+        assert(sub.location === `${stub.origin}/subs/1`, JSON.stringify(sub))
+        assert(r.log.map((x) => `${x.method} ${x.url}`).join(',') === `POST ${stub.origin}/subs`,
+          r.log.map((x) => `${x.method} ${x.url}`).join(','))
+        assert(JSON.stringify(stub.subscriptions[0].topic) === JSON.stringify([`${stub.origin}/root/a`]),
+          JSON.stringify(stub.subscriptions[0]))
+        // With no endpoint, the client looks for the storage link and stops.
+        await rejects(c.subscribe(`${stub.origin}/subs`, { inbox: 'https://in.example/1' }), 'noStorageLink')
+      })
+    } finally {
+      await stub.close()
+    }
   } finally {
     await secured.close()
     await issuer.close()

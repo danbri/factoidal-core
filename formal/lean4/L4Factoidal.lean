@@ -351,6 +351,16 @@ import L4Factoidal.SHACL.ShaclTests
 import L4Factoidal.SHACL.ShaclTheorems
 import L4Factoidal.SHACL.SparqlTheorems
 import L4Factoidal.SHACL.Rules
+import L4Factoidal.SPARQLRL.Syntax
+import L4Factoidal.SPARQLRL.Parser
+import L4Factoidal.SPARQLRL.Eval
+import L4Factoidal.SPARQLRL.BgpAgreement
+import L4Factoidal.SPARQLRL.SemiNaiveTheorems
+import L4Factoidal.SPARQLRL.Text
+import L4Factoidal.SPARQLRL.Tests
+import L4Factoidal.SPARQLRL.OwlRl
+import L4Factoidal.SPARQLRL.OwlRlDiff
+import L4Factoidal.SPARQLRL.OwlRlTests
 import L4Factoidal.SHACL.NodeExpr
 import L4Factoidal.SHACL.IdentityTests
 import L4Factoidal.SHACL.ComparisonTests
@@ -975,6 +985,7 @@ import L4Factoidal.WebDAV.Xml
 import L4Factoidal.WebDAV.If
 import L4Factoidal.WebDAV.Backend
 import L4Factoidal.WebDAV.Server
+import L4Factoidal.WebDAV.State
 import L4Factoidal.WebDAV.Local
 import L4Factoidal.WebDAV.Remote
 import L4Factoidal.WebDAV.Tests

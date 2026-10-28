@@ -57,11 +57,19 @@ path. The adapter does these things only:
 3. It passes `configure` to the client's session: `bearer` (`token`, `realm`),
    `openid` (`idToken`), `selfSigned` (the private JWK), `didKey` (a key the
    client makes: `createDidKey` over the wasm op `lwsClientNewKey`, from 64
-   random bytes of the host's random source).
+   random bytes of the host's random source). It always sets the session
+   member `legacyChallenge`: the driver protocol has no option for the 401
+   challenge `Bearer as_uri="…", realm="…"` of the drafts before 2026-10-19,
+   and the driver's Java and JS clients always follow it (css and sparq-lws
+   send only that form: https://github.com/danbri/factoidal/issues/1115).
+   The library's default stays off.
 4. It gives the client's `fetch` only what `configure` asked for: the
    `userAgent`, extra `headers`, a `timeoutSeconds` abort.
 5. It gives an access request or grant to the client as its members (actions,
    assignee, targets, constraint, inbox); the client writes the document.
+6. It gives `subscribe` its `serviceUrl` as the operation's `endpoint`, so the
+   client POSTs the subscription to it with no discovery (lwsd's notification
+   endpoint sends no storage link).
 
 Four readings that the adapter made in JavaScript until commit ec300a9 are in
 Lean now (`formal/lean4/L4Factoidal/LWS/Client/`):

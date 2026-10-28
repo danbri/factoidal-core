@@ -39,7 +39,14 @@ lws10-core §Authorization
 * Presentation: "A client MUST present an access token to a storage server
   using the Authorization header with an authentication scheme as defined
   in [RFC6750]." — `attachToken`. A token goes only to URLs under the
-  StorageRoot endpoint of the storage it was issued for.
+  StorageRoot endpoint of the storage it was issued for, or under a
+  `serviceEndpoint` of that storage's description that has the scheme and
+  authority of the requested URI (check 3's origin rule;
+  https://github.com/danbri/factoidal/issues/1115: lws-drupal's type index is
+  outside its StorageRoot path).
+* The challenge of the drafts before 2026-10-19, `Bearer as_uri="…",
+  realm="…"`: followed only when the session asks for it
+  (`Session.legacyChallenge`, off by default) — `on401`, `legacyChallenge?`.
 
 lws10-core §Operations
 * Create: "To create a Container, the client MUST include a Link header
@@ -166,8 +173,8 @@ structure Op where
   /-- `updateLinkset`, `putLinkset`: the linkset resource, when the caller
   has it; the resource's `Link` field is not read. -/
   linksetUrl : String := ""
-  /-- `typeIndex`, `search`: the service endpoint, when the caller has it;
-  the storage description is not read. -/
+  /-- `typeIndex`, `search`, `subscribe`: the service endpoint, when the
+  caller has it; the storage description is not read. -/
   endpoint : String := ""
   /-- A service kind: the storage's description URL, when the caller has it;
   `url` is not asked for the storage link. -/
@@ -249,11 +256,14 @@ def opOfJson (j : Json) : Except String Op := do
 /-! ## Session: tokens kept between operations -/
 
 /-- An access token and the storage it was issued for. `root` is the
-StorageRoot endpoint: the token goes only to URLs under it. -/
+StorageRoot endpoint: the token goes to URLs under it. `endpoints` are the
+service endpoints of the storage description that have the origin of the
+requested URI: the token goes to URLs under them too. -/
 structure TokenEntry where
   storage : String
   root : String
   token : String
+  endpoints : List String := []
 
 /-- A key the client signs its own credentials with (lws10-authn-ssi-cid,
 "Self-issued credentials"): the agent's identifier, the verification method
@@ -277,6 +287,11 @@ structure Session where
   subjectToken : String := ""
   subjectTokenType : String := ""
   selfIssued : Option SelfIssued := none
+  /-- Follow the `Bearer as_uri="…", realm="…"` challenge of the drafts
+  before 2026-10-19 when a 401 has no `resource_metadata`. Off by default:
+  that path skips checks 1 and 2 of lws10-core §Discovery Validation by a
+  Client (`on401`). -/
+  legacyChallenge : Bool := false
 
 /-- The token type of an OpenID Connect ID Token (RFC 8693 §3). -/
 def idTokenType : String := "urn:ietf:params:oauth:token-type:id_token"
@@ -305,10 +320,12 @@ def selfIssuedOfJson (j : Json) : Option SelfIssued := do
 
 def sessionJson (s : Session) : Json :=
   .object ([ ("tokens", .array (s.tokens.map (fun t => .object
-              [("storage", .string t.storage), ("root", .string t.root), ("token", .string t.token)])))
+              ([("storage", .string t.storage), ("root", .string t.root), ("token", .string t.token)] ++
+               (if t.endpoints.isEmpty then [] else [("endpoints", strsJson t.endpoints)])))))
           , ("anyToken", .string s.anyToken)
           , ("subjectToken", .string s.subjectToken)
           , ("subjectTokenType", .string s.subjectTokenType) ] ++
+    (if s.legacyChallenge then [("legacyChallenge", .bool true)] else []) ++
     (match s.selfIssued with
      | some k => [("selfIssued", selfIssuedJson k)]
      | none => []))
@@ -324,13 +341,14 @@ def sessionOfJson (j : Json) : Session :=
   let idTok := jStr j "idToken"
   { tokens := ((j.getArray? "tokens").getD []).filterMap (fun t =>
       match t.getString? "storage", t.getString? "root", t.getString? "token" with
-      | some s, some r, some k => some { storage := s, root := r, token := k }
+      | some s, some r, some k => some { storage := s, root := r, token := k, endpoints := jStrs t "endpoints" }
       | _, _, _ => none) ++
       (if bToken != "" && bRealm != "" then [{ storage := bRealm, root := bRealm, token := bToken }] else [])
     anyToken := if bToken != "" && bRealm == "" then bToken else jStr j "anyToken"
     subjectToken := if idTok != "" then idTok else jStr j "subjectToken"
     subjectTokenType := if idTok != "" then idTokenType else jStr j "subjectTokenType"
-    selfIssued := (j.field? "selfIssued").bind selfIssuedOfJson }
+    selfIssued := (j.field? "selfIssued").bind selfIssuedOfJson
+    legacyChallenge := jBool j "legacyChallenge" }
 
 /-- Is the `selfIssued` member of a session document, if there is one, a
 usable key (a P-256 or an Ed25519 private JWK of 32 bytes)? -/
@@ -360,32 +378,53 @@ structure AuthCtx where
   description. -/
   rootEndpoint : String := ""
   tokenEndpoint : String := ""
+  /-- The other service endpoints of the storage description that have the
+  scheme and authority of the requested URI: the token goes to them too. -/
+  endpoints : List String := []
+  /-- The record comes from the `as_uri`/`realm` challenge of the drafts
+  before 2026-10-19: `asIssuer` is `as_uri`, `storage` and `rootEndpoint`
+  are the realm, and no metadata was read. -/
+  legacy : Bool := false
 
-/-- The three checks, over the recorded values. -/
+/-- What the challenge of the drafts before 2026-10-19 lets the client check:
+the realm has the scheme and authority of the requested URI and contains it,
+and it is the storage and the root of the record. -/
+def legacyValidated (c : AuthCtx) : Bool :=
+  sameOrigin c.storage c.requestUri && c.requestUri.startsWith c.storage &&
+  c.rootEndpoint == c.storage
+
+/-- The three checks, over the recorded values; for a record of the earlier
+challenge, `legacyValidated`. -/
 def validated (c : AuthCtx) : Bool :=
+  if c.legacy then legacyValidated c else
   sameOrigin c.metadataUrl c.requestUri && c.metadataResource == c.requestUri &&
   sameOrigin c.rootEndpoint c.requestUri
 
-/-- The three checks as a proposition. -/
+/-- The three checks as a proposition, or, for a record of the earlier
+challenge, the realm checks. -/
 def Validated (c : AuthCtx) : Prop :=
-  sameOrigin c.metadataUrl c.requestUri = true ∧ c.metadataResource = c.requestUri ∧
-  sameOrigin c.rootEndpoint c.requestUri = true
+  (c.legacy = false ∧ sameOrigin c.metadataUrl c.requestUri = true ∧
+    c.metadataResource = c.requestUri ∧ sameOrigin c.rootEndpoint c.requestUri = true) ∨
+  (c.legacy = true ∧ sameOrigin c.storage c.requestUri = true ∧
+    c.requestUri.startsWith c.storage = true ∧ c.rootEndpoint = c.storage)
 
 theorem validated_iff (c : AuthCtx) : validated c = true ↔ Validated c := by
-  unfold validated Validated
-  simp [Bool.and_eq_true, beq_iff_eq, and_assoc]
+  unfold validated Validated legacyValidated
+  cases h : c.legacy <;> simp [Bool.and_eq_true, beq_iff_eq, and_assoc]
 
 def authJson (c : AuthCtx) : Json :=
   .object [ ("requestUri", .string c.requestUri), ("metadataUrl", .string c.metadataUrl)
           , ("storage", .string c.storage), ("metadataResource", .string c.metadataResource)
           , ("asIssuer", .string c.asIssuer), ("rootEndpoint", .string c.rootEndpoint)
-          , ("tokenEndpoint", .string c.tokenEndpoint) ]
+          , ("tokenEndpoint", .string c.tokenEndpoint), ("endpoints", strsJson c.endpoints)
+          , ("legacy", .bool c.legacy) ]
 
 def authOfJson (j : Json) : AuthCtx :=
   { requestUri := jStr j "requestUri", metadataUrl := jStr j "metadataUrl"
     storage := jStr j "storage", metadataResource := jStr j "metadataResource"
     asIssuer := jStr j "asIssuer", rootEndpoint := jStr j "rootEndpoint"
-    tokenEndpoint := jStr j "tokenEndpoint" }
+    tokenEndpoint := jStr j "tokenEndpoint", endpoints := jStrs j "endpoints"
+    legacy := jBool j "legacy" }
 
 /-! ## State, events, actions -/
 
@@ -468,11 +507,17 @@ def failWith (s : ClientState) (code : String) (extra : List (String × Json) :=
     ClientState × Action :=
   finish s (.fail (errJ code extra))
 
-/-- Attach the access token of the storage whose root the URL is under
-(lws10-core §Presentation: the `Authorization` header, RFC 6750 §2.1). -/
+/-- Is a URL in the scope of a token entry: under its root, or under one of
+its service endpoints? -/
+def TokenEntry.covers (t : TokenEntry) (url : String) : Bool :=
+  (t.root != "" && url.startsWith t.root) || t.endpoints.any (fun e => e != "" && url.startsWith e)
+
+/-- Attach the access token of the storage whose root, or one of whose
+service endpoints, the URL is under (lws10-core §Presentation: the
+`Authorization` header, RFC 6750 §2.1). -/
 def attachToken (ses : Session) (r : Req) : Req :=
   if (r.header? "authorization").isSome then r else
-  match ses.tokens.find? (fun t => t.root != "" && r.url.startsWith t.root) with
+  match ses.tokens.find? (fun t => t.covers r.url) with
   | some t => { r with headers := r.headers ++ [("Authorization", "Bearer " ++ t.token)] }
   | none =>
       if ses.anyToken == "" then r
@@ -942,7 +987,27 @@ def isTokenExchange (r : Req) : Bool :=
 /-- The `resource` a token request asks for. -/
 def tokenResource? (r : Req) : Option String := (formPairs r.body).lookup "resource"
 
-/-- A 401 from the storage: check, then ask for a token. -/
+/-- The `as_uri` and `realm` of a Bearer challenge of the drafts before
+2026-10-19 (`Bearer as_uri="…", realm="…"`). -/
+def legacyChallenge? (r : Resp) : Option (String × String) := do
+  let ps ← (r.header? "www-authenticate").bind bearerParams
+  let asUri ← ps.lookup "as_uri"
+  let realm ← ps.lookup "realm"
+  pure (asUri, realm)
+
+/-- A 401 from the storage: check, then ask for a token.
+
+With `Session.legacyChallenge` (off by default), a 401 with no
+`resource_metadata` and a challenge `Bearer as_uri="…", realm="…"` (the
+drafts before 2026-10-19, still answered by css and sparq-lws:
+https://github.com/danbri/factoidal/issues/1115) is followed as the Java and
+JS clients follow it: `as_uri` is the authorization server, the realm is the
+storage and the root, and the flow continues at the authorization server
+metadata. This skips checks 1 and 2 of lws10-core §Discovery Validation by a
+Client (there is no protected resource metadata to check) and the storage
+description read of check 3; what is left is that the realm has the scheme
+and authority of the requested URI and contains it (`legacyValidated`).
+That is why the option is off by default. -/
 def on401 (s : ClientState) (r : Resp) : ClientState × Action :=
   match s.sent with
   | none => statusFail s r
@@ -966,8 +1031,23 @@ def on401 (s : ClientState) (r : Resp) : ClientState × Action :=
                           , auth := some { requestUri := sent.url, metadataUrl := rmeta, storage }
                           , exchanges := s.exchanges - 1 }
           .authMeta (getReq rmeta mediaJson)
-    | _, _ => failWith s "unauthorized"
-        ([("reason", .string "the 401 has no resource_metadata or no storage link")] ++ respSummary r)
+    | _, _ =>
+      match (if s.session.legacyChallenge then legacyChallenge? r else none) with
+      | some (asUri, realm) =>
+        if !sameOrigin realm sent.url then
+          failWith s "discoveryValidation" [("check", .string "realmOrigin"), ("challenge", .string challenge)]
+        else if !sent.url.startsWith realm then
+          failWith s "discoveryValidation" [("check", .string "realmContains"), ("challenge", .string challenge)]
+        else
+          let ses := { s.session with tokens := s.session.tokens.filter (fun t => t.storage != realm) }
+          let pending : Req := { sent with headers := sent.headers.filter (fun (n, _) => n.toLower != "authorization") }
+          sendPublic { s with session := ses, pending := some pending, pendingPhase := s.phase
+                            , auth := some { requestUri := sent.url, metadataUrl := "", storage := realm
+                                           , asIssuer := asUri, rootEndpoint := realm, legacy := true }
+                            , exchanges := s.exchanges - 1 }
+            .authAsMeta (getReq (asMetadataUrl asUri) mediaJson)
+      | none => failWith s "unauthorized"
+          ([("reason", .string "the 401 has no resource_metadata or no storage link")] ++ respSummary r)
 
 /-- The next request of the flow, after each answer. -/
 def authStep (C : L4Factoidal.Authz.Crypto) (s : ClientState) (c : AuthCtx) (r : Resp) :
@@ -1002,7 +1082,12 @@ def authStep (C : L4Factoidal.Authz.Crypto) (s : ClientState) (c : AuthCtx) (r :
         if !sameOrigin root c.requestUri then
           failWith s "discoveryValidation" [("check", .string "storageRootOrigin"), ("root", .string root)]
         else
-          sendPublic { s with auth := some { c with rootEndpoint := root } }
+          -- The other service endpoints the token may go to: only those with
+          -- the scheme and authority of the requested URI (check 3's rule).
+          let eps := ((desc.getArray? "service").getD []).filterMap (fun sv =>
+            (sv.getString? "serviceEndpoint").map (resolve c.storage)) |>.filter (fun e =>
+              e != root && sameOrigin e c.requestUri)
+          sendPublic { s with auth := some { c with rootEndpoint := root, endpoints := eps.eraseDups } }
             .authAsMeta (getReq (asMetadataUrl c.asIssuer) mediaJson)
   | .authAsMeta =>
     match r.json? with
@@ -1030,7 +1115,8 @@ def authStep (C : L4Factoidal.Authz.Crypto) (s : ClientState) (c : AuthCtx) (r :
         if (jStr j "token_type").toLower != "bearer" then
           failWith s "authorization" [("phase", .string "authToken"), ("reason", .string "token_type is not Bearer")]
         else
-        let entry : TokenEntry := { storage := c.storage, root := c.rootEndpoint, token := tok }
+        let entry : TokenEntry := { storage := c.storage, root := c.rootEndpoint, token := tok
+                                    , endpoints := c.endpoints }
         let kept := s.session.tokens.filter (fun t => t.storage != c.storage)
         let ses : Session := { s.session with tokens := entry :: kept }
         let s := { s with session := ses, auth := none }
@@ -1146,7 +1232,15 @@ def begin (s : ClientState) : ClientState × Action :=
       if op.endpoint != "" then startService s op.endpoint
       else if op.storage != "" then send s .discoverDesc (getReq op.storage mediaLwsCid)
       else send s .discoverHead (headReq op.url)
-  | "discover" | "subscribe" | "requestAccess" | "grantAccess" | "move" =>
+  | "subscribe" =>
+      -- The caller names the notification service endpoint: POST the
+      -- subscription to it, with no storage link to find first (lwsd's
+      -- endpoint sends none: https://github.com/danbri/factoidal/issues/1115).
+      if op.endpoint != "" then
+        send { s with endpoint := op.endpoint } .main (jsonReq "POST" op.endpoint (subscriptionDoc op))
+      else if op.storage != "" then send s .discoverDesc (getReq op.storage mediaLwsCid)
+      else send s .discoverHead (headReq op.url)
+  | "discover" | "requestAccess" | "grantAccess" | "move" =>
       if op.storage != "" then send s .discoverDesc (getReq op.storage mediaLwsCid)
       else send s .discoverHead (headReq op.url)
   | "describe" => send s .discoverDesc (getReq op.url mediaLwsCid)
@@ -1425,7 +1519,7 @@ def repeatsRefused (s : ClientState) (e : Event) (r : Req) : Bool :=
 hold, for the storage it asks for? -/
 def tokenBacked (s : ClientState) (r : Req) : Bool :=
   match s.auth with
-  | some c => validated c && tokenResource? r == some c.storage
+  | some c => validated c && (!c.legacy || s.session.legacyChallenge) && tokenResource? r == some c.storage
   | none => false
 
 /-- The last word of `step`: an action that breaks one of the properties

@@ -17,6 +17,7 @@ Every method and every status the server writes is reached at least once.
 import L4Factoidal.WebDAV.Server
 import L4Factoidal.WebDAV.Local
 import L4Factoidal.WebDAV.Remote
+import L4Factoidal.WebDAV.State
 
 namespace L4Factoidal.WebDAV.Tests
 
@@ -339,6 +340,46 @@ def tokenOf (r : DavResponse) : String :=
 #guard both fun run =>
   let w := go run [put "/m/a b.txt" "x", reqOf "GET" "/m/"]
   w.last.status == 200 && has w.last "href=\"/m/a%20b.txt\""
+
+/-! ## State across a restart (https://github.com/danbri/factoidal/issues/1078) -/
+
+/-- A restart: the state written to the state file, read back, with the
+locks expired at `now` dropped; the storage stays. -/
+def restart (w : W) (now : Nat := 2000000000) : Option W :=
+  match stateOfText (stateText w.st) with
+  | .ok st => some { w with st := stateAtStart st now }
+  | .error _ => none
+
+-- The state the server makes (dead properties with namespaces and nested
+-- content, a lock with an owner, a lock on a collection) reads back equal.
+#guard both fun run =>
+  let w := go run [put "/m/a.txt" "x", reqOf "PROPPATCH" "/m/a.txt" [] (setProp "<Z:i a=\"1\">gr&amp;een</Z:i><![CDATA[<x>]]>"),
+                   reqOf "MKCOL" "/m/c", reqOf "LOCK" "/m/c/" [] (lockBody false),
+                   reqOf "LOCK" "/m/a.txt" [("timeout", "Second-600")] (lockBody)]
+  w.st.locks.length == 2 && w.st.props.length == 1 && roundTrips w.st
+-- After a restart, a dead property is still there and a lock token still
+-- unlocks.
+#guard both fun run =>
+  let w0 := go run [put "/m/a.txt" "x", reqOf "PROPPATCH" "/m/a.txt" [] (setProp "green"),
+                    reqOf "LOCK" "/m/a.txt" [] (lockBody)]
+  let t := ((hdr w0.last "lock-token").getD "")
+  match restart w0 with
+  | none => false
+  | some w1 =>
+    has (step run w1 (pf "/m/a.txt" "0" getProp)).last ">green</Z:colour>" &&
+    (step run w1 (put "/m/a.txt" "y")).last.status == 423 &&
+    (step run w1 (reqOf "UNLOCK" "/m/a.txt" [("lock-token", t)])).last.status == 204
+-- A lock that expired before the restart is not loaded.
+#guard both fun run =>
+  let w0 := go run [put "/m/a.txt" "x", reqOf "LOCK" "/m/a.txt" [("timeout", "Second-60")] (lockBody)]
+  match restart w0 (2000000000 + 61) with
+  | some w1 => w1.st.locks.isEmpty
+  | none => false
+-- A property value 5,000 elements deep is written and read in fixed stack.
+#guard
+  let deep := (List.range 5000).foldl (fun n _ => L4Factoidal.XML.Node.element "Z:n" [] [n]) (.text "x")
+  roundTrips { props := [("/m/a.txt", [{ name := { namespace_ := some "http://z/", localPart := "colour" },
+                                          value := { raw := deep } }])] }
 
 /-! ## Theorems -/
 

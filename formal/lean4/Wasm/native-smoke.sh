@@ -1678,6 +1678,30 @@ checkseq "dataset handle lifecycle (open/query/update/serialize/close)" "$TMP/ha
    and rs[6] == {"ok": True}
    and rs[7]["ok"] is False and rs[7]["code"] == "handle.disposed"'
 
+# SPARQL 1.2 RL infer on a handle (https://github.com/danbri/factoidal/issues/1099):
+# a new handle holds the inference graph; a rule set that is not stratifiable,
+# or has IMPORTS, is refused with a code.
+python3 - "$TMP/srl-handles.json" <<'EOF'
+import json, sys
+P = 'PREFIX : <http://e/>\n'
+seq = [
+  ["datasetOpen",          ["<http://e/a> <http://e/link> <http://e/b> .\n<http://e/b> <http://e/link> <http://e/c> .", "ntriples", ""]],
+  ["datasetSparqlRlInfer", ["h1", P + "RULE { ?x :reach ?y } WHERE { ?x :link ?y }\nRULE { ?x :reach ?y } WHERE { ?x :reach ?z . ?z :reach ?y }"]],
+  ["datasetSerialize",     ["h2", "nquads"]],
+  ["datasetSparqlRlInfer", ["h1", P + "RULE { ?s :p :c } WHERE { ?s :link ?o NOT { ?s :p :c } }"]],
+  ["datasetSparqlRlInfer", ["h1", "IMPORTS <http://e/lib.srl>"]],
+  ["datasetSparqlRlInfer", ["h9", ""]],
+]
+json.dump(seq, open(sys.argv[1], "w"))
+EOF
+checkseq "datasetSparqlRlInfer: inference graph on a new handle; refusals coded" "$TMP/srl-handles.json" \
+  'rs[0]["ok"] is True and rs[1]["ok"] is True and rs[1]["handle"] == "h2" and rs[1]["count"] == 3
+   and "<http://e/a> <http://e/reach> <http://e/c>" in rs[2]["nquads"]
+   and "<http://e/link>" not in rs[2]["nquads"]
+   and rs[3]["ok"] is False and rs[3]["code"] == "reason.failed" and "stratification" in rs[3]["error"]
+   and rs[4]["ok"] is False and "IMPORTS" in rs[4]["error"]
+   and rs[5]["ok"] is False and rs[5]["code"] == "handle.unknown"'
+
 # Two handles are independent: an update through h2 must not leak into
 # h1, and closing h2 must leave h1 open. Also the per-family errors:
 # an unknown serialize format, and closing an unknown handle.
