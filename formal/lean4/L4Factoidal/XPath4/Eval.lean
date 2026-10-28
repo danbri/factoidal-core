@@ -176,6 +176,14 @@ def BOp.arOp? : BOp → Option ArOp
 
 def maxRange : Int := 20000000
 
+/-- Give the runtime documents of a result a new identity from `salt`
+    (the call's source offset and the dynamic bindings); nodes of one
+    document keep one identity. -/
+def rekeyTrees (salt : String) (r : Seq) : Seq :=
+  r.map (fun i => match i with
+    | .node nr => if nr.rt.isSome then .node { nr with doc := runtimeDocId "tree" (toString nr.doc ++ "\x00" ++ salt) } else i
+    | other => other)
+
 /-- The static error for a type that is not a cast target (XPath 4.0
     §4.19.2): XPST0080 for a function type or a choice with a member that
     is not atomic, XPST0051 for any other type that is not a generalized
@@ -496,7 +504,13 @@ def eval : Nat → Env → Expr → M Seq
       | _, _ =>
         let s ← eval n env a
         filterSeq n env s p
-  | .call q args kw => do
+  | .call q args kw0 => do
+      -- the source offset of a call that builds a new tree (`newTreeFns`)
+      let at? := kw0.find? (·.1 == "#at")
+      let kw := kw0.filter (·.1 != "#at")
+      if let some (_, some (.lit offs)) := at? then
+        let r ← eval n env (.call q args kw)
+        return rekeyTrees (offs.str ++ "|" ++ XQuery4.envSalt env) r
       if q.uri == nsFN && kw.isEmpty && (q.loc == "count" || q.loc == "head" || q.loc == "starts-with-subsequence" || q.loc == "ends-with-subsequence"
           || q.loc == "subsequence" || q.loc == "codepoints-to-string") then
         if let some r ← rangeShortcut n env (.call q args kw) then return r

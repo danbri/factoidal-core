@@ -427,7 +427,7 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
             | _ => .fail ("assert gave " ++ (sh r 60) ++ " for result " ++ (sh s 60))
           | .error e => .fail ("assert raised " ++ e.code ++ " " ++ e.msg)
       | "assert-type" =>
-          match parseSeqType txt with
+          match parseSeqTypeNs txt env.ns with
           | .ok t => ok? (env.seqMatches s t) ("type mismatch: got " ++ (sh s 60))
           | .error e => .fail ("bad type in assert-type: " ++ e.msg)
       | "serialization-matches" =>

@@ -75,6 +75,13 @@ def defaultNs : List (String × String) :=
 
 def synErr {α} (msg : String) : P α := throw { code := "XPST0003", msg }
 
+/-- The `fn:` functions whose result nodes are new trees: two calls, or
+    one call evaluated with other bindings, give nodes of distinct
+    identity (XDM 4.0 §2.1.1; https://github.com/danbri/factoidal/issues/1145). -/
+def newTreeFns : List String :=
+  ["parse-xml", "parse-xml-fragment", "parse-html", "json-to-xml", "csv-to-xml",
+   "map-to-element", "analyze-string", "update"]
+
 /-- The variable that carries a prolog namespace binding of prefix `p`
     to the evaluator (`Env.nsResolve`). -/
 def nsBindingVar (p : String) : QN := { uri := "#ns", loc := p }
@@ -1528,6 +1535,9 @@ def pCallAfterName : Nat → P Expr
         set e
         let q ← resolve p u l (← dfltFnNs)
         let (args, kw) ← pArgs n
+        -- a call that builds a new tree carries its source offset, from
+        -- which the identity of the new nodes is made (`newTreeFns`)
+        let kw := if q.uri == nsFN && newTreeFns.contains q.loc then kw ++ [("#at", some (.lit (Atomic.ofInt e)))] else kw
         pure (.call q args kw)
     | none => synErr "expected a function name"
 
@@ -1585,6 +1595,12 @@ def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option
     pure e
   match (p.run { s := src.toList.toArray, ns, ext }).run 0 with
   | .ok (e, _) => .ok e
+  | .error e => .error e
+
+/-- Parse a sequence type with namespace bindings. -/
+def parseSeqTypeNs (src : String) (ns : List (String × String)) : M IType :=
+  match ((do let t ← pSeqType 1000; ws; pure t : P IType).run { s := src.toList.toArray, ns }).run 0 with
+  | .ok (t, _) => .ok t
   | .error e => .error e
 
 /-- Parse a sequence type on its own (function signatures, tests). -/
