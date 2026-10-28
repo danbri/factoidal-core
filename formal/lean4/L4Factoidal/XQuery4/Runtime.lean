@@ -716,6 +716,8 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
     | nm :: parts =>
       let name ← nameOf env (← cb.eval env nm) (sNs qs) true
       let name := if name.uri == nsXML && name.pfx == "" then { name with pfx := "xml" } else name
+      -- an attribute in a namespace needs a prefix (§4.12.3.2)
+      let name := if name.uri != "" && name.uri != nsXML && name.pfx == "" then { name with pfx := "ns0" } else name
       if isXmlnsName name then err (if ss.headD "" == "d" then "XQST0071" else "XQDY0044") "an attribute named xmlns"
       if name.pfx == "xml" && name.uri != nsXML then err "XQDY0044" "prefix xml bound to another namespace"
       if name.uri == nsXML && name.pfx != "xml" then err "XQDY0044" "the xml namespace with another prefix"

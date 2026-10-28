@@ -231,7 +231,11 @@ def dfltElemNs : P String := do
 /-- Resolve a lexical name; `dflt` is the namespace of an unprefixed name. -/
 def resolve (pfx : Option String) (uri : Option String) (l : String) (dflt : String) : P QN := do
   match uri with
-  | some u => pure { uri := u, loc := l }
+  | some u =>
+    -- the namespace of xmlns may not be used in an EQName (XQST0070)
+    if u == "http://www.w3.org/2000/xmlns/" then
+      throw { code := "XQST0070", msg := "the xmlns namespace in an EQName" }
+    pure { uri := u, loc := l }
   | none => match pfx with
     | some p => pure { uri := ← lookupNs p, loc := l, pfx := p }
     | none => pure { uri := dflt, loc := l }
@@ -546,8 +550,8 @@ def pItemType : Nat → P IType
             else
               let t ← if (← peekAt 0) == '"' || (← peekAt 0) == '\'' then pStringLit
                       else match ← peekQName with
-                        | some (_, _, l, e) => set e; pure l
-                        | none => synErr "bad processing-instruction() test"
+                        | some (none, none, l, e) => set e; pure l
+                        | _ => synErr "bad processing-instruction() test"
               expectS ")"; pure (.pi (some t))
         | "element" | "attribute" =>
             if ← eatS ")" then pure (if nm == "element" then .elem none else .attr none)
