@@ -463,12 +463,19 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
         if m.outputDecls.any (·.1 == oq.loc) then qerr "XQST0110" ("output:" ++ oq.loc ++ " declared twice")
         m := { m with outputDecls := m.outputDecls ++ [(oq.loc, ov)] }
     | "context" =>
-      if !(← eatKw "item") then expectKw "value"
+      let isItem ← eatKw "item"
+      if !isItem then expectKw "value"
       if ctxSeen then qerr "XQST0099" "two context item declarations"
       ctxSeen := true
-      -- §5.17: the type is an item type, with no occurrence indicator
-      let ty ← if ← eatKw "as" then withXq cfg ns (pItemType 1000) else pure .item
-      let ty : IType := .seq ty .one
+      -- §5.17: `context item` takes an item type (no occurrence
+      -- indicator); `context value` a sequence type
+      let hasAs ← eatKw "as"
+      let mut ty : IType := .seq .item .star
+      if isItem then
+        let t ← if hasAs then withXq cfg ns (pItemType 1000) else pure .item
+        ty := .seq t .one
+      else if hasAs then
+        ty ← withXq cfg ns (pSeqType 1000)
       if ← eatS ":=" then
         if m.libNs.isSome then qerr "XQST0113" "a context value declaration with a value in a library module"
         let e ← withXq cfg ns (pExprSingle 100000)
@@ -826,7 +833,6 @@ def bindOne (fuel : Nat) (globals : List QN) (env : Env) : Decl → M (Option En
     if !val.isEmpty || !external then
       -- §5.17: exactly one item; a value from the host must match the
       -- type, an initializer is converted by the function conversion rules
-      if val.length != 1 then err "XPTY0004" "the context value is not a single item"
       if given then
         if !(env.seqMatches val ty) then err "XPTY0004" "the context value does not match its declared type"
         pure (some { env with ctx := some val, pos := 1, size := 1 }, none)
