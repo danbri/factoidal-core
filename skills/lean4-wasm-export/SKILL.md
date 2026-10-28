@@ -611,6 +611,21 @@ which reads the HDT file as the byte region and is therefore in
 included), and the JavaScript side (`npm/factoidal/l4-core.js`'s `OPS`
 list and exports, `l4-core.d.ts`).
 
+A change to the envelope of an existing op (a new member, a longer `need`
+list) changes its `Wasm/native-smoke.sh` case in the same commit. Core CI
+does not run `native-smoke.sh`; only `danbri/factoidal-builds` runs it
+("Dispatch ABI and CLI smoke"), after the change is on `main`. So run it
+before you land: `export PATH=$HOME/.elan/bin:$PATH`, then
+`bash formal/lean4/Wasm/native-smoke.sh` (it builds `l4wasm-cli` first).
+Cost of not doing this: commit `ba8d733f` (2026-10-28, WebDAV dead
+properties and locks, https://github.com/danbri/factoidal/issues/1078)
+added `.webdav-state.json` to the `need.read` list of `webdavOpen`, and
+the smoke case still expected `["a.md"]`. Core CI stayed green. Builds run
+https://github.com/danbri/factoidal-builds/actions/runs/40644490534 failed
+that step on both Lean jobs (427 pass, 1 fail (out of 428)), so the wasm
+job, the web gates (with the packed-package OWL checks) and the release
+did not run.
+
 The three ops of the browser update log (`deltaLogEncode`, `deltaLogDecode`,
 `deltaLogMerge`, `Wasm/Ops/DeltaLog.lean`, 2026-10-13,
 https://github.com/danbri/factoidal/issues/728) are core-table ops: a name in
