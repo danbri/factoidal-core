@@ -115,7 +115,7 @@ def loadXQueryModule : Nat → Nat → Env → List Seq → M Seq
   if texts.isEmpty then err "FOQM0002" ("no library module with the namespace " ++ uri)
   let mut mods : List Module := []
   for t in texts do
-    match parseModule t with
+    match parseModule t [] (typeLoader env 8 [uri]) with
     | .error ex =>
       if isStaticCode ex.code then err "FOQM0003" ("a static error in the module: " ++ ex.code ++ " " ++ ex.msg)
       else throw ex

@@ -1025,11 +1025,22 @@ def fnTable : List (String × LibFn) := [
     | some k => sInt k | none => [])),
   ent "function-name" (fun _ _ a => pure (match argN a 0 with
     | [.fn (.builtin q _)] => single (Atomic.ofQN q)
-    -- a function declared in an XQuery prolog keeps its name in its closure
-    | [.fn (.inline _ _ _ _ cl)] => match cl.find? (fun (v, _) => v.uri == "#fname") with
-      | some (_, [x]) => [x]
-      | _ => []
+    | [.fn (.inline _ _ _ _ cl)] =>
+      -- a declared function keeps its name in its closure (XQuery prolog)
+      match cl.find? (fun (k, _) => k.uri == "#xqn") with
+      | some (k, _) => single (Atomic.ofQN { uri := k.pfx, loc := k.loc })
+      | none => []
     | _ => [])),
+  ent "function-annotations" (fun _ _ a =>
+    let rec go : Nat → Item → Seq
+      | 0, _ => []
+      | f + 1, .fn (.papp g _) => go f g
+      | _, .fn (.inline _ _ _ _ cl) =>
+        match cl.find? (fun (k, _) => k.uri == "#xqa") with
+        | some (_, s) => s
+        | none => []
+      | _, _ => []
+    pure (go 10000 ((argN a 0).headD default))),
   -- F&O 4.0 §17.1.4: an XPath function item has no annotations
   ent "function-annotations" (fun _ _ a => match argN a 0 with
     | [_] => pure []

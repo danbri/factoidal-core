@@ -68,6 +68,24 @@ def staticVars (vs : List (QN × Seq)) : List (QN × Seq) :=
   | [] => vs
   | r => r
 
+/-- The arguments of a default-value function: the focus of the call
+    (context value, position, size), or none when the focus is absent. -/
+def focusArgs (e : Env) : List Seq :=
+  match e.ctx with
+  | some c => [c, [.atom (Atomic.ofInt e.pos)], [.atom (Atomic.ofInt e.size)]]
+  | none => []
+
+/-- The closure entry that keeps the annotations of a function item
+    (a sequence of maps, `fn:function-annotations`). -/
+def annKey : QN := { uri := "#xqa", loc := "annotations" }
+
+/-- The closure entry that keeps the name of a declared function. -/
+def nameKey (q : QN) : QN := { uri := "#xqn", loc := q.loc, pfx := q.uri }
+
+/-- The closure entries of a function item that are not variables. -/
+def metaEntries (cl : List (QN × Seq)) : List (QN × Seq) :=
+  cl.filter (fun (k, _) => k.uri == "#xqa" || k.uri == "#xqn")
+
 /-- Is any declaration of `q` there (for the error code)? -/
 def userAny (e : Env) (q : QN) : Bool :=
   e.vars.any (fun (v, _) => v.uri == "#xqf" && v.loc.startsWith (q.eqn ++ "#"))
@@ -89,34 +107,20 @@ def userDecl? (e : Env) (q0 : QN) (k : Nat) : Option (Item × Nat × List Item) 
      | [some lo, some hi] => lo ≤ k && k ≤ hi
      | _ => false))
   match hit with
-  | some (v, .fn (.inline ps r b f _) :: dflts) =>
+  | some (v, .fn (.inline ps r b f cl0) :: dflts) =>
     let lo := match ((v.loc.drop pre.length).toString.splitOn "-").map String.toNat? with
       | [some lo, _] => lo | _ => ps.length
     let sv := staticVars e.vars
     let withCl (d : Item) : Item := match d with
       | .fn (.inline ps' r' b' f' _) => .fn (.inline ps' r' b' f' sv)
       | x => x
-    -- the function's name, for fn:function-name (a closure entry that no
-    -- variable reference can name)
-    let nm : QN × List Item := ({ uri := "#fname", loc := "" }, [.atom (Atomic.ofQN q)])
-    some (.fn (.inline ps r b f (nm :: sv)), lo, dflts.map withCl)
+    some (.fn (.inline ps r b f (sv ++ metaEntries cl0)), lo, dflts.map withCl)
   | _ => none
 
 /-- The callbacks into the evaluator for a user function call. -/
 structure CallCb where
   eval : Expr → M Seq
   apply : Item → List Seq → M Seq
-  /-- Evaluation in another dynamic context (a parameter default, in the
-      focus of the call: context value, position and size). -/
-  evalIn : Env → Expr → M Seq := fun _ _ => pure []
-
-/-- The value of a parameter default `d` in the focus of `e` (XQuery 4.0
-    §5.18.1: the default is evaluated in the dynamic context of the
-    caller, with the function's static context). -/
-def defaultIn (evalIn : Env → Expr → M Seq) (applyF : Item → List Seq → M Seq) (e : Env) (d : Item) : M Seq :=
-  match d with
-  | .fn (.inline [] _ body true cl) => evalIn { e with vars := cl ++ e.vars } body
-  | _ => applyF d [e.ctx.getD []]
 
 /-- A static call `q(args, kw)` of a function declared in the prolog
     (XQuery 4.0 §4.5.1): positional arguments, then keyword arguments
@@ -134,7 +138,7 @@ def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
     for (a, i) in args.zip (List.range args.length) do
       slots := slots.set! i (some a)
     for (nm, a) in kw do
-      match ps.findIdx? (fun (v, _) => v.loc == nm) with
+      match ps.findIdx? (fun (v, _) => if nm.startsWith "Q{" then v.eqn == nm else (v.uri == "" && v.loc == nm)) with
       | some i =>
         if (slots.getD i none).isSome then err "XPST0017" ("argument " ++ nm ++ " given twice")
         slots := slots.set! i (some a)
@@ -148,7 +152,7 @@ def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
       | none =>
         if i < lo then err "XPST0017" ("missing argument $" ++ ((ps.getD i default).1.show) ++ " of " ++ q.show)
         match dflts[i - lo]? with
-        | some d => fixed := fixed.push (some (← defaultIn cb.evalIn cb.apply e d))
+        | some d => fixed := fixed.push (some (← cb.apply d (focusArgs e)))
         | none => err "XPST0017" ("missing argument of " ++ q.show)
     if isPartial then pure [.fn (.papp fi fixed.toList)]
     else cb.apply fi (fixed.toList.map (·.getD []))
@@ -165,7 +169,7 @@ def refUser? (applyF : Item → List Seq → M Seq) (e : Env) (q : QN) (k : Nat)
     let mut fixed : List (Option Seq) := List.replicate k none
     for i in [k:m] do
       match dflts[i - lo]? with
-      | some d => fixed := fixed ++ [some (← applyF d [e.ctx.getD []])]
+      | some d => fixed := fixed ++ [some (← applyF d (focusArgs e))]
       | none => err "XPST0017" ("missing argument of " ++ q.show)
     pure [.fn (.papp fi fixed)]
 
@@ -759,6 +763,17 @@ def errVars (e : Err) : List (QN × Seq) :=
 def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IType)
     (qs : List QN) (ss : List String) : M Seq := do
   match tag with
+  | "annotated" =>
+    -- an inline function with annotations (XQuery 4.0 §4.19.1)
+    match es with
+    | f :: maps =>
+      let fv ← cb.eval env f
+      let mut mv : Seq := []
+      for mp in maps do mv := mv ++ (← cb.eval env mp)
+      match fv with
+      | [.fn (.inline ps r b fo cl)] => pure [.fn (.inline ps r b fo (cl ++ [(annKey, mv)]))]
+      | other => pure other
+    | [] => pure []
   | "elem" =>
     match es with
     | nm :: parts =>

@@ -84,7 +84,10 @@ def staticErr : Nat → SCtx → Expr → Option Err
         else some { code := "XPST0017", msg := "unknown function " ++ q.show ++ "#" ++ toString k }
       here <|> all (args.filterMap id) c <|> all (kw.filterMap (·.2)) c
     | .dyn g args => go c g <|> all (args.filterMap id) c
-    | .fref _ _ => none
+    | .fref q k =>
+      -- a named function reference names a function in scope (XPST0017)
+      if q.uri == nsXS || q.uri.startsWith "#" || c.knownFn q k then none
+      else some { code := "XPST0017", msg := "unknown function " ++ q.show ++ "#" ++ toString k }
     | .inline ps _ body _ => go (c.add (ps.map (·.1))) body
     | .mapC es => all (es.flatMap (fun (a, b) => [a, b])) c
     | .arrS es => all es c

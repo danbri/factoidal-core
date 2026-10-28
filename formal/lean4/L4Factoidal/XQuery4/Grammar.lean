@@ -403,6 +403,7 @@ def pFlwor (sp : SubParsers) : P Expr := do
       expectKw "count"
       cs := cs.push (.countC (← pVar))
     else if (← kwThenKw "order" "by") || (← kwThenKw "stable" "order") then
+      let c0 ← read
       let _ ← eatKw "stable"
       expectKw "order"; expectKw "by"
       let mut keys : Array Expr := #[]
@@ -418,7 +419,7 @@ def pFlwor (sp : SubParsers) : P Expr := do
         specs := specs.push ((if desc then "d" else "a") ++ emp ++ coll)
         if !(← eatS ",") then break
       -- "?" (no empty modifier) takes the prolog default: the runtime reads specs[0]
-      cs := cs.push (.orderC keys.toList ("l" :: specs.toList.map (fun s => s.replace "?" "")))
+      cs := cs.push (.orderC keys.toList (((c0.ns.lookup "#order").getD "l") :: specs.toList.map (fun s => s.replace "?" "")))
     else if ← kwThenKw "group" "by" then
       expectKw "group"; expectKw "by"
       -- a grouping spec with an initializing expression is a let clause
@@ -1010,6 +1011,64 @@ def pExtensionExpr (sp : SubParsers) : P Expr := do
     expectS "}"
     pure e
 
+/-- Annotations `%name` or `%name(literals)` (XQuery 4.0 §5.18, [32]): the
+    expanded name and the values. An unprefixed name is in the
+    `http://www.w3.org/2012/xquery` namespace (the `xq` prefix); a name in
+    a reserved namespace is XQST0045. -/
+def pAnnotations : P (List (QN × List Atomic)) := do
+  let mut out : List (QN × List Atomic) := []
+  for _ in [0:1000] do
+    ws
+    if (← peekAt 0) != '%' then break
+    adv 1
+    match ← peekQName with
+    | some (p, u, l, e) =>
+      set e
+      let q ← resolve p u l "http://www.w3.org/2012/xquery"
+      if q.uri == "http://www.w3.org/2012/xquery" && !(["public", "private", "constructor"].contains l) then
+        throw { code := "XQST0045", msg := ("reserved annotation %" ++ l) }
+      if [nsFN, nsXS, nsMATH, nsMAP, nsARR, "http://www.w3.org/XML/1998/namespace",
+          "http://www.w3.org/2001/XMLSchema-instance"].contains q.uri then
+        throw { code := "XQST0045", msg := ("annotation in a reserved namespace " ++ l) }
+      let mut vals : List Atomic := []
+      if ← eatS "(" then
+        -- AnnotationValue: a string literal, a numeric literal with an
+        -- optional minus, a QName literal `#name`, `true()` or `false()`
+        for _ in [0:1000] do
+          ws
+          let ch ← peekAt 0
+          if ch == '"' || ch == '\'' then vals := vals ++ [Atomic.ofStr (← pStringLit)]
+          else if ch == '#' then
+            adv 1
+            match ← peekQName with
+            | some (p2, u2, l2, e2) =>
+              set e2
+              vals := vals ++ [Atomic.ofQN (← resolve p2 u2 l2 "")]
+            | none => synErr "bad QName literal"
+          else if ch == '-' || ch == '+' || ch.isDigit || ch == '.' then
+            let neg ← eatS "-"
+            if !neg then let _ ← eatS "+"
+            ws
+            let ch2 ← peekAt 0
+            if !(ch2.isDigit || ch2 == '.') then synErr "an annotation value must be a literal"
+            match ← pNumber with
+            | .lit a =>
+              vals := vals ++ [if !neg then a else
+                match a.num? with
+                | some v => (numNeg v).atomic
+                | none => a]
+            | _ => synErr "an annotation value must be a literal"
+          else if (← kwThen "true" '(') || (← kwThen "false" '(') then
+            let some (n, e3) := ncnameAt (← read).s (← get) | synErr "bad annotation value"
+            set e3; expectS "("; expectS ")"
+            vals := vals ++ [Atomic.ofBool (n == "true")]
+          else synErr "an annotation value must be a literal"
+          if !(← eatS ",") then break
+        expectS ")"
+      out := out ++ [(q, vals)]
+    | none => synErr "bad annotation"
+  pure out
+
 def primaryP (cfg : Cfg) (sp : SubParsers) : P (Option Expr) := do
   ws
   let i0 ← get
@@ -1032,33 +1091,15 @@ where
   -- a pragma needs a closing '#)'; otherwise '(' opens a parenthesized expression ('(#name, #name)')
   if ch == '(' && chAt s (i+1) == '#' && (readUntil s (i+2) "#)").isSome then return some (← pExtensionExpr sp)
   if ch == '%' then
-    -- annotations on an inline function (ignored), then the function
-    for _ in [0:100] do
-      ws
-      if (← curCh) != '%' then break
-      adv 1
-      match ← peekQName with
-      | some (p, _, _, e) =>
-        if let some pp := p then let _ ← lookupNs pp
-        set e
-      | none => synErr "bad annotation"
-      if ← eatS "(" then
-        for _ in [0:100] do
-          ws
-          let c2 ← curCh
-          if c2 == '"' || c2 == '\'' then let _ ← pStringLit
-          else if c2 == '-' || c2.isDigit || c2 == '.' then
-            let _ ← eatS "-"
-            let _ ← pNumber
-          else if (← kwThen "true" '(') || (← kwThen "false" '(') then
-            let some (_, e2) := ncnameAt (← read).s (← get) | synErr "bad annotation value"
-            set e2; expectS "("; expectS ")"
-          else synErr "an annotation value must be a literal"
-          if !(← eatS ",") then break
-        expectS ")"
+    -- annotations on an inline function (kept for fn:function-annotations)
+    let anns ← pAnnotations
     if !((← kwThen "function" '(') || (← kwThen "fn" '(') || (← kwThen "function" '{') || (← kwThen "fn" '{')) then
       synErr "annotations must be followed by a function"
-    return some (← subE sp.exprSingle)
+    let f ← subE sp.exprSingle
+    -- one map per annotation: its name and its values
+    let maps : List Expr := anns.map (fun (q, vs) =>
+      .mapC [(.lit (Atomic.ofQN q), .seq (vs.map (fun v => Expr.lit v)))])
+    return some (.ext "annotated" (f :: maps) [] [] [])
   if !startsComputed s i then return none
   let some (kw, _) := ncnameAt s i | return none
   adv kw.length

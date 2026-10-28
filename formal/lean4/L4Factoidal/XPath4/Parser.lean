@@ -73,7 +73,7 @@ abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 def defaultNs : List (String × String) :=
   [("xs", nsXS), ("fn", nsFN), ("math", nsMATH), ("map", nsMAP), ("array", nsARR),
    ("err", nsERR), ("xml", nsXML), ("local", "http://www.w3.org/2005/xquery-local-functions"),
-   ("xsi", "http://www.w3.org/2001/XMLSchema-instance"),
+   ("xsi", "http://www.w3.org/2001/XMLSchema-instance"), ("xq", "http://www.w3.org/2012/xquery"),
    ("output", "http://www.w3.org/2010/xslt-xquery-serialization")]
 
 def synErr {α} (msg : String) : P α := throw { code := "XPST0003", msg }
@@ -399,6 +399,13 @@ def pStringLit : P String := do
     XQuery prolog declared another (binding `#fn`). -/
 def dfltFnNs : P String := do pure (((← read).ns.lookup "#fn").getD nsFN)
 
+/-- Resolve a function name. A name written `Q{fn-uri}local` gets the
+    prefix marker `#Q`, so that the call is not taken for an unprefixed
+    name (which finds a no-namespace function first, XQuery 4.0 §5.18.1). -/
+def resolveFn (p : Option String) (u : Option String) (l : String) : P QN := do
+  let q ← resolve p u l (← dfltFnNs)
+  pure (if u.isSome && q.uri == nsFN then { q with pfx := "#Q" } else q)
+
 /-- Run a parser at an offset with other namespace bindings (for the
     extension grammar's sub-parsers). -/
 def runAt {α} (c : PCtx) (p : P α) (ns : List (String × String)) (i : Nat) : Except Err (α × Nat) :=
@@ -550,14 +557,24 @@ def pItemType : Nat → P IType
         if (← peekAt 0) != '%' then break
         adv 1
         match ← peekQName with
-        | some (_, _, _, e) => set e
+        | some (p, u, l, e) =>
+          set e
+          -- XQuery 4.0 §3.2.8: an annotation in a reserved namespace is XQST0045
+          let q ← resolve p u l "http://www.w3.org/2012/xquery"
+          if [nsFN, nsXS, nsMATH, nsMAP, nsARR, nsXML, "http://www.w3.org/2001/XMLSchema-instance"].contains q.uri then
+            throw { code := "XQST0045", msg := "annotation in a reserved namespace " ++ l }
         | none => synErr "bad annotation"
         if ← eatS "(" then
           for _ in [0:100] do
             ws
             let ch ← peekAt 0
             if ch == '"' || ch == '\'' then let _ ← pStringLit
-            else if ch.isDigit || ch == '-' then let _ ← pNumber
+            else if ch == '#' then
+              adv 1
+              match ← peekQName with
+              | some (_, _, _, e2) => set e2
+              | none => synErr "bad QName literal"
+            else if ch.isDigit || ch == '-' || ch == '.' then let _ ← eatS "-"; let _ ← pNumber
             else if ← atKw "true" then adv 4; expectS "("; expectS ")"
             else if ← atKw "false" then adv 5; expectS "("; expectS ")"
             if !(← eatS ",") then break
@@ -679,6 +696,15 @@ def pItemType : Nat → P IType
             if ← eatS "*" then expectS ")"; pure .anyMap
             else
               let k ← pItemType n
+              -- XPath 4.0 §3.2.9: the key type is a generalized atomic type
+              -- (XPST0152); `item()` stands for a type not known yet
+              let keyOk1 : IType → Bool := fun t => match t with
+                | .atomic _ | .enum _ | .item => true
+                | _ => false
+              let keyOk : Bool := match k with
+                | .choice ts => ts.all keyOk1
+                | t => keyOk1 t
+              if !keyOk then throw { code := "XPST0152", msg := "a map key type must be atomic" }
               expectS ","
               let v ← pSeqType n
               expectS ")"; pure (.mapT k v)
@@ -708,6 +734,8 @@ def pItemType : Nat → P IType
                   let opt ← eatS "?"
                   if opt && !internal then synErr "a record field has no optional marker ?"
                   let ft ← if ← eatKw "as" then pSeqType n else pure (.seq .item .star)
+                  if fs.any (·.1 == fname) then
+                    throw { code := "XPST0021", msg := "record field " ++ fname ++ " twice" }
                   fs := fs ++ [(fname, opt, ft)]
                   if !(← eatS ",") then break
                 expectS ")"
@@ -1162,7 +1190,7 @@ def pArrowTarget : Nat → P (Sum (QN) Expr × List (Option Expr) × List (Strin
             if p.isNone && u.isNone && reservedFnNames.contains l then
               synErr ("reserved function name " ++ l)
             set e
-            let q ← resolve p u l (← dfltFnNs)
+            let q ← resolveFn p u l
             let (args, kw) ← pArgs n
             pure (.inl q, args, kw)
         | none => synErr "expected an arrow target"
@@ -1376,18 +1404,24 @@ def pArgs : Nat → P (List (Option Expr) × List (String × Option Expr))
       let mut kws : List (String × Option Expr) := []
       for _ in [0:100000] do
         -- keyword argument `name := value`
+        -- (XQuery 4.0 §4.5.2: the keyword is an EQName; a name in a
+        -- namespace is kept as `Q{uri}local`)
+        ws
         let c ← read
         let i ← get
-        let j := skipWsF c.s (c.s.size + 1) 0 i
-        let kwName : Option String :=
-          match ncnameAt c.s j with
-          | some (nm, e) =>
+        let j := i
+        let kwName : Option (String × Nat) ←
+          match ← peekQName with
+          | some (p, u, l, e) =>
               let k := skipWsF c.s (c.s.size + 1) 0 e
-              if chAt c.s k == ':' && chAt c.s (k+1) == '=' then some nm else none
-          | none => none
+              if chAt c.s k == ':' && chAt c.s (k+1) == '=' && l != "*" then
+                let q ← resolve p u l ""
+                pure (some ((if q.uri == "" then q.loc else q.eqn), e))
+              else pure none
+          | none => pure none
         match kwName with
-        | some nm =>
-            set j; adv nm.length; expectS ":="
+        | some (nm, e) =>
+            set e; expectS ":="
             if ← atPlaceholder then expectS "?"; kws := kws ++ [(nm, none)]
             else kws := kws ++ [(nm, some (← pExprSingle n))]
         | none =>
@@ -1605,7 +1639,7 @@ def pPrimary : Nat → P Expr
             if p.isNone && u.isNone && reservedFnNames.contains l then
               synErr ("reserved function name " ++ l)
             set e
-            let q ← resolve p u l (← dfltFnNs)
+            let q ← resolveFn p u l
             expectS "#"
             ws
             let c ← read
@@ -1629,7 +1663,7 @@ def pCallAfterName : Nat → P Expr
     match ← peekQName with
     | some (p, u, l, e) =>
         set e
-        let q ← resolve p u l (← dfltFnNs)
+        let q ← resolveFn p u l
         let (args, kw) ← pArgs n
         -- a call that builds a new tree carries its source offset, from
         -- which the identity of the new nodes is made (`newTreeFns`)
