@@ -1905,13 +1905,21 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
     | .staticErr code msg => xerr code msg
     | .withColl u body => run n S { cx with env := { cx.env with defaultCollation := u } } body
     | .withCompat on body => run n S { cx with backCompat := on } body
-    | .doe body =>
-        -- ignored in temporary output state (§26.1.8); otherwise the text
-        -- is marked by the processing instructions the serializer reads
+    | .doe cdata body =>
+        -- ignored in temporary output state (§26.1.8, §11.4.3); otherwise
+        -- the text is marked by the processing instructions the
+        -- serializer reads
         if cx.tempOut then run n S cx body
         else do
           let os ← run n S cx body
-          pure ([Out.pi piDisableEscaping ""] ++ os ++ [Out.pi piEnableEscaping ""])
+          match cdata with
+          | some a =>
+            let v := (← avtStr cx a).trimAscii.toString
+            match parseBool v with
+            | some true => pure ([Out.pi piCdataStart ""] ++ os ++ [Out.pi piCdataEnd ""])
+            | some false => pure os
+            | none => xerr "XTDE0030" ("invalid cdata value '" ++ v ++ "'")
+          | none => pure ([Out.pi piDisableEscaping ""] ++ os ++ [Out.pi piEnableEscaping ""])
     | .withBase u body => run n S { cx with env := { cx.env with baseUri := u } } body
     | .extCall q ats fbs =>
         let cands := S.templates.toList.filter (fun t => t.name == some q)

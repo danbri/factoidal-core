@@ -170,8 +170,10 @@ inductive Instr where
       (§3.9): XPath 1.0 compatibility mode for its expressions. -/
   | withCompat (on : Bool) (body : List Instr)
   /-- `disable-output-escaping="yes"` (§26.1.8): the text nodes of the
-      body are written without escaping when the result is serialized. -/
-  | doe (body : List Instr)
+      body are written without escaping when the result is serialized;
+      with `cdata`, `cdata="yes"` (§11.4.3): they are written as CDATA
+      sections. -/
+  | doe (cdata : Option Avt) (body : List Instr)
   /-- A sequence constructor under an `xml:base` attribute (§5.8, XML
       Base 1.0), or the body of a component of another stylesheet module:
       the static base URI of its expressions and of the nodes it
@@ -370,7 +372,7 @@ def Instr.bodies : Instr → List (List Instr)
   | .comment _ b | .pi _ _ b | .nsI _ _ b | .docI b | .var _ _ _ b | .copy _ _ _ _ b
   | .message _ b _ _ | .assertI _ _ b _ | .breakI _ b | .mapI _ b _ | .mapEntry _ _ b
   | .arrayI _ _ b | .arrayMember _ b | .wherePopulated b | .onEmpty _ b | .onNonEmpty _ b
-  | .sourceDoc _ b _ | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b | .withCompat _ b | .doe b
+  | .sourceDoc _ b _ | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b | .withCompat _ b | .doe _ b
   | .withBase _ b => [b]
   | .applyT _ _ ss ps _ => ss.map SortK.body ++ ps.map WParam.body
   | .callT _ ps | .applyImports ps _ | .nextMatch ps _ | .nextIteration ps => ps.map WParam.body

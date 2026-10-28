@@ -537,6 +537,18 @@ def Env.escapeMarker (e : Env) (n : NodeRef) : Option Bool :=
   else if r.name.loc == piDisableEscaping then some true
   else if r.name.loc == piEnableEscaping then some false
   else none
+
+/-- The processing instructions that mark text written as CDATA sections
+    (XSLT 4.0 §11.4.3, `cdata="yes"`); the serializer writes neither. -/
+def piCdataStart : String := "xslt4-cdata-start"
+def piCdataEnd : String := "xslt4-cdata-end"
+
+def Env.cdataMarker (e : Env) (n : NodeRef) : Option Bool :=
+  let r := e.nrec n
+  if r.kind != .pi then none
+  else if r.name.loc == piCdataStart then some true
+  else if r.name.loc == piCdataEnd then some false
+  else none
 def serNsMathMl : String := "http://www.w3.org/1998/Math/MathML"
 
 def htmlBoolAttrs : List String :=
@@ -677,6 +689,14 @@ def hasScheme (u : String) : Bool :=
       | _ => false)
   | [] => false
 
+/-- A text value as CDATA sections: a character the encoding cannot hold
+    ends the section and is written as a character reference (§5.1.5). -/
+def XCtx.cdataText (x : XCtx) (v : String) : String :=
+  let inner := (x.p.norm v).replace "]]>" "]]]]><![CDATA[>"
+  let body := inner.toList.foldl (fun acc c =>
+    acc ++ (if x.p.encodable c then String.singleton c else "]]>" ++ charRef c ++ "<![CDATA[")) ""
+  ("<![CDATA[" ++ body ++ "]]>").replace "<![CDATA[]]>" ""
+
 def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × String) → Nat → Bool → Option QN → W Unit
   | 0, _, _, _, _, _ => pure ()
   | f + 1, n, scope, depth, ind, parent => do
@@ -693,18 +713,12 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
       let raw := match parent with
         | some q => x.m == "html" && x.isHtmlElem q && ["script", "style"].contains (lower q.loc)
         | none => false
-      if inCdata && !x.p.canonical then
-        -- a character the encoding cannot hold ends the CDATA section
-        -- and is written as a character reference (§5.1.5)
-        let inner := (x.p.norm r.value).replace "]]>" "]]]]><![CDATA[>"
-        let body := inner.toList.foldl (fun acc c =>
-          acc ++ (if x.p.encodable c then String.singleton c else "]]>" ++ charRef c ++ "<![CDATA[")) ""
-        emit (("<![CDATA[" ++ body ++ "]]>").replace "<![CDATA[]]>" "")
+      if inCdata && !x.p.canonical then emit (x.cdataText r.value)
       else if raw then emit (x.p.rawText r.value)
       else emit (x.p.escText r.value)
     | .comment => emit ("<!--" ++ r.value ++ "-->")
     | .pi =>
-      if (e.escapeMarker n).isSome then return
+      if (e.escapeMarker n).isSome || (e.cdataMarker n).isSome then return
       if x.m == "html" && r.value.contains '>' then
         err "SERE0015" "a processing instruction that contains '>' cannot be written by the html method"
       if x.m == "html" then emit ("<?" ++ r.name.loc ++ (if r.value == "" then "" else " " ++ r.value) ++ ">")
@@ -763,9 +777,17 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
           if indentHere then emit (x.nl (depth + 1))
           emit (metaTag x)
         let mut noEsc := false
+        let mut asCdata := false
         for c in kids do
           if let some b := e.escapeMarker c then
             noEsc := b
+            continue
+          if let some b := e.cdataMarker c then
+            asCdata := b
+            continue
+          if asCdata && (e.nrec c).kind == .text && !x.p.canonical &&
+              (x.m == "xml" || x.m == "xhtml") then
+            emit (x.cdataText (e.nrec c).value)
             continue
           if noEsc && (e.nrec c).kind == .text then
             emit ({ x.p with charMap := [] }.rawText (e.nrec c).value)

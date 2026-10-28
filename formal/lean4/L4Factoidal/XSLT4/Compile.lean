@@ -497,8 +497,11 @@ def serAttrOk (k v : String) : Bool :=
 
 /-- `disable-output-escaping="yes"` on `xsl:text` and `xsl:value-of`
     (§26.1.8); ignored when a `cdata` attribute is present (§11.4.3). -/
-def withDoe (as : Attrs) (r : Instr) : Instr :=
-  if ((as.get "disable-output-escaping").bind parseBool) == some true && (as.get "cdata").isNone then .doe [r] else r
+def withDoe (c : SCx) (as : Attrs) (r : Instr) : CM Instr := do
+  if let some v := as.get "cdata" then
+    return .doe (some (← liftM (c.avt v))) [r]
+  if ((as.get "disable-output-escaping").bind parseBool) == some true then return .doe none [r]
+  return r
 
 def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
   for (q, v) in as do
@@ -841,13 +844,13 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
               let b ← compileNodes f { c with preserveWs := true } m kids
               pure (.valueOf none (← optAvt c as "separator") b false)
             else if c.expandText then pure (.tvt (← liftM (c.avt t))) else pure (.lit t)
-        pure (withDoe as r)
+        withDoe c as r
     | "value-of" =>
         let sel ← optExpr c as "select"
         let b ← body
         if sel.isSome && !b.isEmpty then cerr "XTSE0870" "xsl:value-of has both select and content"
         let sep ← optAvt c as "separator"
-        pure (withDoe as (.valueOf sel sep b (c.backCompat && sep.isNone)))
+        withDoe c as (.valueOf sel sep b (c.backCompat && sep.isNone))
     | "sequence" =>
         let sel ← optExpr c as "select"
         let b ← body (notTag ["fallback"])
