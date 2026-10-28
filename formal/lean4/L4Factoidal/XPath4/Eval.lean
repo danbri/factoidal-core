@@ -663,7 +663,10 @@ def eval : Nat → Env → Expr → M Seq
           for (sl, p) in slots.toList.zip sig.ps do
             match sl with
             | some none => fixed := fixed ++ [none]; arity := arity + 1
-            | some (some x) => fixed := fixed ++ [some (← eval n env x)]
+            | some (some x) =>
+              -- the supplied argument is converted to the parameter type
+              -- now (XPath 4.0 §4.5.1.2, XPTY0004)
+              fixed := fixed ++ [some (← env.coerce p.ty (← eval n env x) ("$" ++ p.name ++ " of " ++ q.show))]
             | none =>
               match p.dflt with
               | some d => fixed := fixed ++ [some (← eval n env d)]
