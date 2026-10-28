@@ -676,15 +676,18 @@ function buildApi(driver) {
       requireEntryFn(e, 'datasetQueryRaw', `query {entail/output}`);
       if (opts.output === undefined) {
         // An entailment regime with the default answer shape.
-        const r = entryResult(e.datasetQueryRaw(ds.handle, sparql, JSON.stringify({
-          entail, output: graphForm ? 'ntriples' : 'json' })), 'query', sparql);
+        // withExtensionRounds: a registered async extension function
+        // (SPARQL 1.1 §17.6) is resolved here as in datasetQuery
+        // (https://github.com/danbri/factoidal/issues/1090).
+        const r = await withExtensionRounds(() => entryResult(e.datasetQueryRaw(ds.handle, sparql,
+          JSON.stringify({ entail, output: graphForm ? 'ntriples' : 'json' })), 'query', sparql));
         if (graphForm) return c.fromNQuads(r.text, ds.prefixes);
         const srj = JSON.parse(r.text);
         if (typeof srj.boolean === 'boolean') return srj.boolean;
         return bindingsFromSrj(srj);
       }
-      const r = entryResult(e.datasetQueryRaw(ds.handle, sparql,
-        JSON.stringify({ entail, output })), 'query', sparql);
+      const r = await withExtensionRounds(() => entryResult(e.datasetQueryRaw(ds.handle, sparql,
+        JSON.stringify({ entail, output })), 'query', sparql));
       return output === 'json' && !graphForm ? JSON.parse(r.text) : r.text;
     }
     const fn = sparql12 ? e.datasetQuery12 : e.datasetQuery;
