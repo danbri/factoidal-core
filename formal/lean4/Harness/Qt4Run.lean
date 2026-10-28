@@ -40,6 +40,7 @@ import L4Factoidal.XPath4.Theorems
 import L4Factoidal.XQuery4.Module
 import L4Factoidal.XQuery4.Theorems
 import L4Factoidal.XQueryUpdate.Query
+import L4Factoidal.XQueryUpdate.Theorems
 import L4Factoidal.XPath4.SerializeTheorems
 import L4Factoidal.EXPath.File.IOHost
 import L4Factoidal.EXPath.File.Theorems
@@ -74,7 +75,13 @@ def defective : List (String × String) :=
     "bin-from-octets4", "bin-from-octets5",
     "EXPath-binary-pad-left-003", "EXPath-binary-pad-left-004", "bin-pad-left5",
     "EXPath-binary-pad-right-003", "EXPath-binary-pad-right-004", "bin-pad-right5"
-  ].map (fun n => (n, i1141))
+  ].map (fun n => (n, i1141)) ++
+  -- XQuery Update: the expected XML is indented, the query (with
+  -- boundary-space preserve) writes single spaces; assert-xml compares
+  -- byte for byte after canonicalization (catalog-schema.xsd)
+  (["propagateNamespaces01", "propagateNamespaces02", "propagateNamespaces03",
+    "propagateNamespaces04", "propagateNamespaces05", "propagateNamespaces06"].map
+    (fun n => (n, "https://github.com/danbri/factoidal/issues/1176")))
 
 end Harness.Qt4Defective
 
@@ -145,9 +152,20 @@ def depOk (xq : Bool) (d : Node) : Bool :=
   | "xsd-version" => if sat then v == "1.1" else v != "1.1"
   | "default-language" | "language" => if sat then v == "en" else v != "en"
   -- XQuery Update Facility: the revalidation modes this processor
-  -- supports (all three, `XQueryUpdate.Revalidate`)
-  | "revalidation" => if sat then ["strict", "lax", "skip"].contains v else !(["strict", "lax", "skip"].contains v)
+  -- supports are a setting (all three by default, `XQueryUpdate.Revalidate`);
+  -- `configureUpd` turns a mode off for a test that needs it unsupported
+  | "revalidation" => ["strict", "lax", "skip"].contains v
   | _ => !sat
+
+/-- XQuery Update Facility 3.0 §3.1: the revalidation modes are an
+    implementation-defined setting; a test whose dependency says a mode is
+    not supported runs with that mode refused (XUST0026). -/
+def configureUpd (deps : List Node) (env : Env) : Env :=
+  let off := deps.filterMap (fun d =>
+    if attrD d "type" == "revalidation" && attrD d "satisfied" "true" == "false" then some (attrD d "value") else none)
+  if off.isEmpty then env
+  else env.bind L4Factoidal.XQueryUpdate.revalSupportedKey
+    ((["strict", "lax", "skip"].filter (fun m => !off.contains m)).map (fun m => Item.atom (Atomic.ofStr m)))
 
 /-! ## Environments -/
 
@@ -737,6 +755,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
     | .ok env =>
+      let env := configureUpd (setDeps ++ deps) env
       let (scanned, scannedBins) ← scanResources o.root dir src
       let env := { env with resources := env.resources ++ scanned,
                             resourceBytes := env.resourceBytes ++ scannedBins }

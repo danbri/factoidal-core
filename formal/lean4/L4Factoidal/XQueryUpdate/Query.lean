@@ -44,6 +44,10 @@ def evalUpdModule (fuel : Nat) (env : Env) (m : Module) (v10 : Bool := true) : M
       err "XQST0059" ("no schema for the imported namespace " ++ u)
   let menv := moduleEnv env m
   let (libs, _) ← loadImports menv 50 ((m.libNs.map (·.2)).toList) m
+  -- §3.1, §4.1: a revalidation mode this processor does not support
+  for md in libs ++ [m] do
+    if let some r := md.revalidation then
+      if !revalSupported env r then err "XUST0026" ("the revalidation mode " ++ r ++ " is not supported")
   checkModules menv (libs ++ [m])
   checkCategories v10 (libs ++ [m])
   let menv ← bindModules fuel menv (libs ++ [m])
@@ -93,5 +97,13 @@ def testEnv : Env :=
   | .ok (s, _) => showSeq s | .error e => e.code) == "1"
 #guard evalUpdShow "insert node <c/> before /r/b" "name(/r/*[2])" testEnv == "c"
 #guard evalUpdShow "insert node <c/> as first into /r" "name(/r/*[1])" testEnv == "c"
+-- transform with (§5.7) and invoke updating (§5.5)
+#guard (match evalUpdQuery "count((<a><b/><b/></a> transform with { delete node b[1] })/b)" with
+  | .ok (s, _) => showSeq s | .error e => e.code) == "1"
+#guard (match evalUpdQuery "(<a/> transform with { insert node <b/> into . }) ! name(*)" with
+  | .ok (s, _) => showSeq s | .error e => e.code) == "b"
+#guard evalUpdShow "let $f := %updating function($n) { delete node $n } return invoke updating $f(/r/a)" "count(/r/*)" testEnv == "1"
+#guard evalUpdShow "let $f := %updating function($n) { delete node $n } return $f(/r/a)" "1" testEnv == "error XUDY0038"
+#guard evalUpdShow "invoke updating fn:put#2(/r, 'urn:x')" "string(doc('urn:x')/r/a)" testEnv == "1"
 
 end L4Factoidal.XQueryUpdate

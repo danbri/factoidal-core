@@ -24,9 +24,10 @@ copy clauses (each value an `upd-copy`) around an `upd-modify` that
 names the copy variables, so the XQuery 4.0 static checks see the
 variable scopes of §5.6.
 
-Not here: `TransformWithExpr` (§5.7), a postfix of UnaryExpr inside the
-XPath 4.0 operator grammar (no `upd/` test uses it,
-https://github.com/danbri/factoidal/issues/1101).
+`TransformWithExpr` (§5.7), a postfix in the operator grammar, is read
+by `XPath4.Parser.pCast` when a grammar extension is present: `N
+transform with { U }` is the copy modify `copy $v := N modify $v!(U)
+return $v`.
 -/
 import L4Factoidal.XQuery4.Grammar
 

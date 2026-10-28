@@ -55,6 +55,16 @@ def markUpdating : Item → Item
 /-- The binding that holds the revalidation mode of the module (§3.1). -/
 def revalKey : QN := { uri := "#upd", loc := "revalidation" }
 
+/-- The binding that lists the revalidation modes this processor supports
+    (§3.1: "Support for each of the three revalidation modes is
+    implementation-defined"); all three when absent. -/
+def revalSupportedKey : QN := { uri := "#upd", loc := "revalidation-modes" }
+
+def revalSupported (env : Env) (mode : String) : Bool :=
+  match env.vars.lookup revalSupportedKey with
+  | some ms => ms.any (fun i => match i with | .atom a => a.str == mode | _ => false)
+  | none => true
+
 /-- The revalidation mode (§3.1). Its default is implementation-defined
     ("Overwritable"); here it is `skip`, so a module without `declare
     revalidation` does not validate. -/

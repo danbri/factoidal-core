@@ -400,7 +400,11 @@ def rebuild (d : Doc) (o : Ops) (typeGone : Std.HashSet Nat) : Nat → Nat → M
     also has the bindings of its parent for the prefixes it does not bind;
     with no-inherit it keeps its own in-scope namespaces only. -/
 def flatU (inherit : Bool) : Nat → Option Nat → List (String × String) → XT → B Unit
-  | 0, _, _, _ => pure ()
+  -- out of fuel: an empty text record, so that the parent's child list
+  -- names a record (`Theorems.flatU_spec`)
+  | 0, par, _, _ => do
+    let i ← pushRec { kind := .text, parent := par }
+    setRec i (fun x => { x with last := i })
   | f + 1, par, psc, t =>
     match t with
     | .lf r => do
