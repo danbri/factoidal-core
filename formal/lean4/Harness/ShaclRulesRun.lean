@@ -1,5 +1,14 @@
 /-
-Harness.ShaclRulesRun — the SHACL 1.2 `rules` suite runner (`l4shacl-rules`).
+Harness.ShaclRulesRun — the SPARQL 1.2 RL (formerly SHACL 1.2 Rules) suite
+runner (`l4shacl-rules`).
+
+Since 2026-10-27 the checks are `L4Factoidal.SPARQLRL` (through the four
+names of `SHACL/Rules.lean`), and the default suite is the SPARQL 1.2 RL suite
+vendored at `third_party/testing/sparql-rl/tests`
+(https://github.com/danbri/factoidal/issues/1099). The July copy
+`third_party/testing/shacl/shacl12-test-suite/tests/rules` is still readable
+by passing its path; three of its 88 tests use `BIND ( e AS ?v )`, which the
+current draft replaced by `SET ( ?v := e )`, so they fail by design.
 
 The Lean SHACL probe (`l4shacl`) does not recognise the `srt:` test
 types, and the rules manifests link their entries with `mf:entries`
@@ -27,7 +36,7 @@ Usage, from the repository root:
 
     lake exe l4shacl-rules [manifest-dir]
 
-defaulting to `third_party/testing/shacl/shacl12-test-suite/tests/rules`.
+defaulting to `third_party/testing/sparql-rl/tests`.
 -/
 import Harness.Manifest
 import L4Factoidal.SHACL.Rules
@@ -42,19 +51,32 @@ namespace Harness.ShaclRules
 
 def srtNs : String := "http://www.w3.org/ns/shacl-rules-test#"
 
+/-- The namespace of the SPARQL 1.2 RL tests (`srlt:`), which replaced `srtNs`
+    when the suite moved to `tests/sparql-rl` (https://github.com/danbri/factoidal/issues/1099). -/
+def srltNs : String := "http://www.w3.org/ns/sparql-rl-tests#"
+
+/-- The local name of a test-vocabulary IRI in either namespace. -/
+def testLocal? (iri : String) : Option String :=
+  [srtNs, srltNs].findSome? fun ns =>
+    if iri.startsWith ns then some (String.ofList (iri.toList.drop ns.length)) else none
+
+/-- The object of `s`'s test-vocabulary property `name`, in either namespace. -/
+def findTestObject? (g : Graph) (s : Subject) (name : String) : Option Term :=
+  (findObject? g s (srltNs ++ name)).orElse fun _ => findObject? g s (srtNs ++ name)
+
 /-- Which checker a syntax-family type calls, and what it should say. -/
 structure SyntaxKind where
-  typeIri : String
+  typeLocal : String
   expect  : Bool
   check   : String → Bool
 
 def syntaxKinds : List SyntaxKind :=
-  [ { typeIri := srtNs ++ "RulesPositiveSyntaxTest", expect := true,  check := srlValidSyntax }
-  , { typeIri := srtNs ++ "RulesNegativeSyntaxTest", expect := false, check := srlValidSyntax }
-  , { typeIri := srtNs ++ "RulesPositiveWellFormednessTest", expect := true,  check := srlWellFormed }
-  , { typeIri := srtNs ++ "RulesNegativeWellFormednessTest", expect := false, check := srlWellFormed }
-  , { typeIri := srtNs ++ "RulesPositiveStratificationTest", expect := true,  check := srlStratifiable }
-  , { typeIri := srtNs ++ "RulesNegativeStratificationTest", expect := false, check := srlStratifiable } ]
+  [ { typeLocal := "RulesPositiveSyntaxTest", expect := true,  check := srlValidSyntax }
+  , { typeLocal := "RulesNegativeSyntaxTest", expect := false, check := srlValidSyntax }
+  , { typeLocal := "RulesPositiveWellFormednessTest", expect := true,  check := srlWellFormed }
+  , { typeLocal := "RulesNegativeWellFormednessTest", expect := false, check := srlWellFormed }
+  , { typeLocal := "RulesPositiveStratificationTest", expect := true,  check := srlStratifiable }
+  , { typeLocal := "RulesNegativeStratificationTest", expect := false, check := srlStratifiable } ]
 
 /-- The canonical N-Quads of a graph, which is what two graphs are
     compared by — the same comparison `bin/shacl-runner` makes with
@@ -88,8 +110,8 @@ def evalPaths (dir : String) (g : Graph) (s : Subject) :
     Option (String × String × String) := do
   let act ← findObject? g s (mfNs ++ "action")
   let actS ← subjectOfTerm act
-  let rs ← findObject? g actS (srtNs ++ "ruleset")
-  let da ← findObject? g actS (srtNs ++ "data")
+  let rs ← findTestObject? g actS "ruleset"
+  let da ← findTestObject? g actS "data"
   let re ← findObject? g s (mfNs ++ "result")
   match rs, da, re with
   | .iri r, .iri d, .iri x =>
@@ -139,10 +161,10 @@ def runOne (dir : String) (g : Graph) (entry : Term) : IO (String × Outcome) :=
       match typeOf g s with
       | none => return (name, .skip "entry has no rdf:type")
       | some ty =>
-          if ty == srtNs ++ "RulesEvalTest" then
+          if testLocal? ty == some "RulesEvalTest" then
             return (name, ← runEvalTest dir g s)
           else
-            match syntaxKinds.find? (fun k => k.typeIri == ty) with
+            match syntaxKinds.find? (fun k => testLocal? ty == some k.typeLocal) with
             | some k => return (name, ← runSyntaxTest dir g s k)
             | none => return (name, .unsupported s!"unrecognised test type {ty}")
 
@@ -171,13 +193,15 @@ def runManifest (path : String) : IO Score := do
           return score
 
 def main (args : List String) : IO UInt32 := do
-  let root := args.head?.getD
-    "third_party/testing/shacl/shacl12-test-suite/tests/rules"
-  IO.println "SHACL 1.2 rules suite, Lean 4 (L4Factoidal.SHACL.Rules)"
+  let root := args.head?.getD "third_party/testing/sparql-rl/tests"
+  IO.println "SPARQL 1.2 RL / SHACL 1.2 rules suite, Lean 4 (L4Factoidal.SPARQLRL)"
   IO.println ""
   let mut total : Score := {}
-  for sub in ["syntax", "wellformed", "stratification", "eval"] do
+  -- `eval2` and `examples` are in the SPARQL 1.2 RL suite only
+  for sub in ["syntax", "wellformed", "stratification", "eval", "eval2", "examples"] do
     let m := root ++ "/" ++ sub ++ "/manifest.ttl"
+    if sub == "eval2" || sub == "examples" then
+      if !(← System.FilePath.pathExists m) then continue
     total := total.add (← runManifest m)
   IO.println ""
   IO.println (Score.line "shacl 1.2 rules TOTAL" total)

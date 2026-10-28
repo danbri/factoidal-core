@@ -398,3 +398,25 @@ Rules:
    worktree's history. Check that `bin/<platform>/<name>` exists in the
    worktree after Step 0 before the brief promises it; otherwise the
    brief tells the agent to build it.
+
+## Parallel agents in one Lean namespace: build the combined tree before landing (2026-10-28)
+
+Two agents that each add a file under the same Lean namespace can each
+build green alone and still fail together: the umbrella import refuses a
+name that both files declare. On 2026-10-28 the SPARQL-RL proof agents
+(`SPARQLRL/BgpAgreement.lean`, `SPARQLRL/SemiNaiveTheorems.lean`, for
+https://github.com/danbri/factoidal-core/pull/163) both declared
+`L4Factoidal.SPARQLRL.matchTerm_ext`; the merged branch failed `lake build`
+at `L4Factoidal.lean` ("environment already contains"), and the landing
+cost one more full build cycle.
+
+Rules:
+1. A brief that runs agents in parallel in one namespace gives each a name
+   prefix for helper lemmas, or a sub-namespace (`SPARQLRL.Bgp`,
+   `SPARQLRL.SemiNaive`).
+2. The coordinator merges all agent branches, then runs the full
+   `lake build` once on the merged tree before any push. A green build of
+   each branch alone is not evidence about the merge.
+3. A worktree that copies `.lake` from another checkout carries C files of
+   modules that branch may not have; the tail-recursion gate then reports
+   them. Delete IR whose `.lean` source is absent before the gate.

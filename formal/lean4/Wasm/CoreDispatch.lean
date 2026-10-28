@@ -102,6 +102,7 @@ def coreIOOpNames : List String :=
   , "datasetCanonicalHash"
   , "datasetClosure"
   , "datasetShaclValidate"
+  , "datasetSparqlRlInfer"
   , "datasetQueryRaw"
   , "datasetFormats"
   , "detectFormat"
@@ -344,6 +345,7 @@ def callIOArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "datasetCanonicalHash" => some (arityIO1 op Ops.datasetCanonicalHash args)
   | "datasetClosure"   => some (arityIO2 op Ops.datasetClosure args)
   | "datasetShaclValidate" => some (arityIO2 op Ops.datasetShaclValidate args)
+  | "datasetSparqlRlInfer" => some (arityIO2 op Ops.datasetSparqlRlInfer args)
   | "datasetQueryRaw"  => some (arityIO3 op Ops.datasetQueryRaw args)
   | "datasetFormats"   => some (arityIO0 op Ops.datasetFormats args)
   | "detectFormat"     => some (arityIO1 op Ops.detectFormat args)
