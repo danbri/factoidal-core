@@ -394,16 +394,35 @@ def intOf? (t : N3Term) : Option Int :=
 are given the same result type. -/
 def toInteger (e : SPARQL.Expr) : SPARQL.Expr := .functionCall xsdInteger [e]
 
-/-- The largest integer exponent `math:exponentiation` computes. -/
-def maxExponent : Nat := 4096
+/-- The longest lexical form an intermediate value of `math:exponentiation`
+may have; a longer one gives no solution (issue 1175). -/
+def maxPowerDigits : Nat := 100000
 
-/-- `x` to the power `n` by repeated multiplication with the SPARQL
-evaluator: exact for integers and decimals. -/
+def mulLit? (a b : WfLiteral) : Option WfLiteral :=
+  match evalExpr (.arith .mul (litE a) (litE b)) with
+  | some (.lit l) => if l.val.lexicalForm.length > maxPowerDigits then none else some l
+  | _ => none
+
+/-- `x` to the power `n` by repeated squaring with the SPARQL evaluator: exact
+for integers and decimals, about `2 log₂ n` multiplications, a tail call per
+bit of `n`. -/
 def powerOf (x : WfLiteral) (n : Nat) : Option N3Term :=
-  (List.replicate n x).foldl (fun (acc : Option N3Term) b =>
-    match acc.bind numeric? with
-    | some a => evalExpr (.arith .mul (litE a) (litE b))
-    | none => none) (some (intLit 1))
+  let one : WfLiteral := SPARQL.mkTypedLiteral "1" xsdInteger
+  let rec go (fuel : Nat) (base acc : WfLiteral) (k : Nat) : Option WfLiteral :=
+    match fuel with
+    | 0 => none
+    | f + 1 =>
+      if k == 0 then some acc
+      else
+        let acc' := if k % 2 == 1 then mulLit? acc base else some acc
+        match acc' with
+        | none => none
+        | some a =>
+            if k / 2 == 0 then some a
+            else match mulLit? base base with
+              | none => none
+              | some b => go f b a (k / 2)
+  (go 64 x one n).map .lit
 
 /-- The math, string and list built-ins with a ground-argument rule
 (Builtins §§ "math", "string", "list"). `log:` built-ins that need the
@@ -423,8 +442,6 @@ def evalBuiltin (bv : BVars) (p : String) (s o : N3Term) (σ : Subst) : BResult 
     | "exponentiation" => listFn bv (fun xs => match xs with
         | [a, b] => match numeric? a, intOf? b with
           | some x, some n =>
-              -- The exponent is bounded: a larger one gives no solution (issue 1175).
-              if n.natAbs > maxExponent then none else
               let pow := powerOf x n.natAbs
               if n ≥ 0 then pow
               else pow.bind fun d => (numeric? d).bind fun dl =>
