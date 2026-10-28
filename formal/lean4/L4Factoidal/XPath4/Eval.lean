@@ -454,6 +454,7 @@ def eval : Nat → Env → Expr → M Seq
         for i in cur do out := out.push i
       pure (sortGNodes out.toList)
   | .filter a p => do
+      if let some r ← rangeShortcut n env (.filter a p) then return r
       match a, isNumericLit p with
       | .seq es, some k =>
         -- `(e1, e2, ...)[k]`: evaluate only as far as item k
@@ -466,6 +467,8 @@ def eval : Nat → Env → Expr → M Seq
         let s ← eval n env a
         filterSeq n env s p
   | .call q args kw => do
+      if q.uri == nsFN && kw.isEmpty && (q.loc == "count" || q.loc == "head" || q.loc == "starts-with-subsequence" || q.loc == "ends-with-subsequence") then
+        if let some r ← rangeShortcut n env (.call q args kw) then return r
       if isTmplMarker q then
         let s ← match args with | [some x] => eval n env x | _ => pure []
         let as ← env.atomize s
@@ -635,7 +638,10 @@ def eval : Nat → Env → Expr → M Seq
       | some [i] => lookupIn n env i k
       | some _ => err "XPTY0004" "unary lookup needs a single context item"
       | none => err "XPDY0002" "the context item is absent"
-  | .bin op a b => evalBin n env op a b
+  | .bin op a b => do
+      if op.isGeneral then
+        if let some r ← rangeShortcut n env (.bin op a b) then return r
+      evalBin n env op a b
   | .neg a => do
       match ← env.atomizeOpt (← eval n env a) with
       | none => pure []
@@ -1000,6 +1006,122 @@ def callFn : Nat → Env → QN → List Seq → M Seq
       | [.atom a@⟨_, .x (.dt ..)⟩] => pure [.atom (← checkLimits a)]
       | _ => pure r
     | none => err "XPST0017" ("function " ++ q.show ++ " is not implemented")
+
+/-- A range expression `a to b` (possibly parenthesised, possibly under
+    `fn:reverse`) whose bounds are integers and whose length is above
+    `maxRange`: `(lo, hi, reversed)`. Such a range is not materialized;
+    `rangeShortcut` answers the expressions over it that need only its
+    bounds (XPath 4.0 §4.8.1: the value is the same). -/
+def largeRangeOf? : Nat → Env → Expr → M (Option (Int × Int × Bool))
+  | 0, _, _ => pure none
+  | n + 1, env, e =>
+    match e with
+    | .seq [x] => largeRangeOf? n env x
+    | .bin .to a b => do
+        let x ← env.atomizeOpt (← eval n env a)
+        let y ← env.atomizeOpt (← eval n env b)
+        match x, y with
+        | some x, some y =>
+          let x ← coerceAtom [.b .integer] x
+          let y ← coerceAtom [.b .integer] y
+          match x.v, y.v with
+          | .int lo, .int hi => pure (if hi - lo > maxRange then some (lo, hi, false) else none)
+          | _, _ => pure none
+        | _, _ => pure none
+    | .call q [some x] [] =>
+        if q.uri == nsFN && q.loc == "reverse" then do
+          pure ((← largeRangeOf? n env x).map (fun (lo, hi, r) => (lo, hi, !r)))
+        else pure none
+    | _ => pure none
+
+/-- The `k`-th item (1-based) of a range. -/
+def rangeAt (lo hi : Int) (rev : Bool) (k : Int) : Seq :=
+  if k < 1 || k > hi - lo + 1 then [] else sInt (if rev then hi - k + 1 else lo + k - 1)
+
+/-- The items of a range from position `i` (1-based), `len` of them. -/
+def rangeSlice (lo hi : Int) (rev : Bool) (i len : Nat) : Seq :=
+  (List.range len).filterMap (fun (j : Nat) => match rangeAt lo hi rev (i + j) with
+    | [x] => some x
+    | _ => none)
+
+/-- Expressions over a large range that need only its bounds: `count`,
+    a numeric predicate, a general comparison with one integer,
+    `starts-with-subsequence`, `ends-with-subsequence`, and
+    `head(drop-while(...))`. `none`: evaluate as usual. -/
+def rangeShortcut : Nat → Env → Expr → M (Option Seq)
+  | 0, _, _ => pure none
+  | n + 1, env, e =>
+    match e with
+    | .call q [some x] [] =>
+      if q.uri != nsFN then pure none
+      else if q.loc == "count" then do
+        match ← largeRangeOf? n env x with
+        | some (lo, hi, _) => pure (some (sInt (hi - lo + 1)))
+        | none => pure none
+      else if q.loc == "head" then do
+        match x with
+        | .call q2 [some r, some f] [] =>
+          if q2.uri == nsFN && q2.loc == "drop-while" then
+            match ← largeRangeOf? n env r with
+            | some (lo, hi, rev) =>
+              let fs ← eval n env f
+              let some fi := fs.head? | pure none
+              let size := (hi - lo + 1).toNat
+              let mut res : Seq := []
+              for j in [0:size] do
+                let v := rangeAt lo hi rev (j + 1)
+                let keep ← ebv (← apply n env fi (if fi.fnArity == some 1 then [v] else [v, sInt (j + 1)]))
+                if !keep then res := v; break
+              pure (some res)
+            | none => pure none
+          else pure none
+        | _ => pure none
+      else pure none
+    | .call q (some r :: some s :: rest) [] =>
+      if q.uri == nsFN && (q.loc == "starts-with-subsequence" || q.loc == "ends-with-subsequence") then do
+        match ← largeRangeOf? n env r with
+        | some (lo, hi, rev) =>
+          let sv ← eval n env s
+          let size := (hi - lo + 1).toNat
+          let k := min sv.length size
+          let part := if q.loc == "starts-with-subsequence" then rangeSlice lo hi rev 1 k
+            else rangeSlice lo hi rev (size - k + 1) k
+          let restV ← rest.mapM (fun a => match a with | some y => eval n env y | none => pure [])
+          pure (some (← callFn n env q (part :: sv :: restV)))
+        | none => pure none
+      else pure none
+    | .filter r p =>
+      match isNumericLit p with
+      | some k => do
+        match ← largeRangeOf? n env r with
+        | some (lo, hi, rev) => pure (some (rangeAt lo hi rev k))
+        | none => pure none
+      | none => pure none
+    | .bin op a b =>
+      if !op.isGeneral then pure none else do
+      -- one side a large range, the other one integer
+      let (rangeSide, other, flipped) ← match ← largeRangeOf? n env a with
+        | some rg => pure (some rg, b, true)
+        | none => pure ((← largeRangeOf? n env b), a, false)
+      match rangeSide with
+      | none => pure none
+      | some (lo, hi, _) =>
+        match ← env.atomize (← eval n env other) with
+        | [⟨_, .int x⟩] =>
+          -- `x op v` for some v in lo..hi (the operands in source order)
+          let op' := if flipped then (match op with
+            | .glt => .ggt | .gle => .gge | .ggt => .glt | .gge => .gle | o => o) else op
+          let r := match op' with
+            | .geq => lo ≤ x && x ≤ hi
+            | .gne => hi > lo || x != lo
+            | .glt => x < hi
+            | .gle => x ≤ hi
+            | .ggt => x > lo
+            | .gge => x ≥ lo
+            | _ => false
+          pure (some (sBool r))
+        | _ => pure none
+    | _ => pure none
 
 end
 
