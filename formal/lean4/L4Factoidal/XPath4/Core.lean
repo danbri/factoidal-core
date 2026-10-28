@@ -141,6 +141,9 @@ structure Env where
       available (F&O 4.0 §14.6.1); when a host turns it off, the option
       raises FODC0013 and `fn:system-properties` reports false. -/
   dtdValidation : Bool := true
+  /-- The `xinclude` option of `fn:doc` and `fn:parse-xml` is available
+      (`XPath4.XInclude`); off, the option raises FODC0013. -/
+  xinclude : Bool := true
 deriving Inhabited
 
 def Env.doc (e : Env) (n : NodeRef) : Doc :=

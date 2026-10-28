@@ -143,12 +143,12 @@ def featureSupportedIn (xq : Bool) (f : String) : Bool :=
   featureSupported f || f == "non_unicode_codepoint_collation" || f == "arbitraryPrecisionDecimal"
     -- the dtd-validation option is a setting (`Env.dtdValidation`):
     -- `configureFor` turns it off for a test that needs it absent
-    || f == "dtd-validation-option"
+    || f == "dtd-validation-option" || f == "xinclude-option"
     || (!xq && (f == "namespace-axis" || f == "xpath-1.0-compatibility"))
 
 /-- The dynamic context settings that a test case's dependencies select:
     XPath 1.0 compatibility mode, the default language, the XML version,
-    and whether the `dtd-validation` option is available. -/
+    and whether the `dtd-validation` and `xinclude` options are available. -/
 def configureFor (deps : List Node) (env : Env) : Env :=
   deps.foldl (fun env d =>
     let sat := attrD d "satisfied" "true" != "false"
@@ -156,7 +156,8 @@ def configureFor (deps : List Node) (env : Env) : Env :=
     | "feature" =>
         let fs := (attrD d "value").splitOn " "
         let env := if sat && fs.contains "xpath-1.0-compatibility" then { env with compat10 := true } else env
-        if !sat && fs.contains "dtd-validation-option" then { env with dtdValidation := false } else env
+        let env := if !sat && fs.contains "dtd-validation-option" then { env with dtdValidation := false } else env
+        if !sat && fs.contains "xinclude-option" then { env with xinclude := false } else env
     | "default-language" => if sat then { env with defaultLanguage := attrD d "value" } else env
     | "xml-version" =>
         if sat && ((attrD d "value").splitOn " ").all (· == "1.1") then { env with xml11 := true } else env
@@ -173,7 +174,7 @@ def depOk (xq : Bool) (d : Node) : Bool :=
       -- a feature that is a setting (`dtd-validation-option`) can also be
       -- absent: `configureFor` turns it off
       if sat then fs.all (featureSupportedIn xq)
-      else !(fs.all (featureSupportedIn xq)) || fs.all (· == "dtd-validation-option")
+      else !(fs.all (featureSupportedIn xq)) || fs.all (fun f => f == "dtd-validation-option" || f == "xinclude-option")
   -- The version of XML and XML Names is a setting of this processor
   -- (XPath 4.0 §A.2, constraint xml-version): `configureFor` sets
   -- `Env.xml11` for a test that names only XML 1.1. Strings hold every
@@ -621,20 +622,21 @@ def parseArgs : List String → Opts → Opts
   | [], o => o
 
 
-/-- The quoted system identifiers of an XML text (`SYSTEM "x"`,
-    `PUBLIC "p" "x"`): the last quoted literal after each `SYSTEM` or
-    `PUBLIC` keyword, up to the next `>`. -/
+/-- The files an XML text names: its system identifiers (`SYSTEM "x"`,
+    `PUBLIC "p" "x"`: the last quoted literal after each `SYSTEM` or
+    `PUBLIC` keyword, up to the next `>`) and the `href` of its XInclude
+    elements. -/
 def xmlSystemIds (txt : String) : List String :=
-  let parts := (txt.splitOn "SYSTEM").drop 1 ++ (txt.splitOn "PUBLIC").drop 1
-  parts.filterMap (fun p =>
-    let upto := (p.splitOn ">").headD ""
-    let qs := (upto.splitOn "\"").toArray
-    let qs2 := (upto.splitOn "'").toArray
-    let lit (a : Array String) : Option String :=
-      if a.size ≥ 3 then some a[a.size - 2]! else none
-    match lit qs with
-    | some s => some s
-    | none => lit qs2)
+  let quoted (upto : String) : Array String :=
+    let a := (upto.splitOn "\"").toArray
+    if a.size ≥ 3 then a else (upto.splitOn "'").toArray
+  let sys := ((txt.splitOn "SYSTEM").drop 1 ++ (txt.splitOn "PUBLIC").drop 1).filterMap (fun p =>
+    let a := quoted ((p.splitOn ">").headD "")
+    if a.size ≥ 3 then some a[a.size - 2]! else none)
+  let hrefs := ((txt.splitOn "href=").drop 1).filterMap (fun p =>
+    let a := quoted ((p.splitOn ">").headD "")
+    if a.size ≥ 3 then some a[1]! else none)
+  sys ++ hrefs
 
 /-- The files a test names by a relative reference in its text (for
     `fn:unparsed-text`, `fn:json-doc`, `fn:doc`, and external entities

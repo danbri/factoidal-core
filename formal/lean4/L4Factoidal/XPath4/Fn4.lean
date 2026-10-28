@@ -446,7 +446,7 @@ def systemPropertiesFn : LibFn := fun _ e _ =>
     (q "product-version", [.atom (Atomic.ofStr "0.21")]),
     (q "schema-aware", [.atom (Atomic.ofBool true)]),
     (q "accepts-typed-data", [.atom (Atomic.ofBool true)]),
-    (q "supports-xinclude", [.atom (Atomic.ofBool false)]),
+    (q "supports-xinclude", [.atom (Atomic.ofBool e.xinclude)]),
     -- `XML.validate` against the DTD (`XmlParse.parseDocument`), and ID
     -- and IDREF attributes of the DTD (`Doc.ofDocument`)
     (q "supports-dtd-validation", [.atom (Atomic.ofBool e.dtdValidation)]),

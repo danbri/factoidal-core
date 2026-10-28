@@ -21,9 +21,9 @@ args = [a for a in sys.argv[1:]]
 feats = {"higherOrderFunctions", "serialization", "simple-uca-fallback",
          "advanced-uca-fallback", "binary", "expath-file", "schemaImport",
          "schemaValidation", "typedData", "non_unicode_codepoint_collation",
-         "arbitraryPrecisionDecimal", "dtd-validation-option"}
+         "arbitraryPrecisionDecimal", "dtd-validation-option", "xinclude-option"}
 xp_only = {"namespace-axis", "xpath-1.0-compatibility"}
-settings = {"dtd-validation-option"}  # may also be absent (configureFor)
+settings = {"dtd-validation-option", "xinclude-option"}  # may also be absent (configureFor)
 if "--features" in args:
     i = args.index("--features"); feats = set(args[i + 1].split(",")); del args[i:i + 2]
 root = args[0] if args else "third_party/testing/qt4tests"

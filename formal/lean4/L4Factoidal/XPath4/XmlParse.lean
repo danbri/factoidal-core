@@ -21,7 +21,8 @@ The evaluator does no I/O. An external DTD or entity, and the text of
 
 Options of `fn:parse-xml`: `base-uri`, `dtd-validation`, `strip-space`
 (`all`, `none`, `conditional` = `none`), `trust-external`, `xinclude`
-(`true` is `FODC0013`: there is no XInclude processor), `xsd-validation`
+(XInclude 1.1, `XPath4.XInclude`; `FODC0013` when the host turns it
+off, `Env.xinclude`), `xsd-validation`
 (anything but `skip` is `FODC0009`: not schema-aware), `use-xsi-schema-location`,
 `line-numbers` (ignored, as the spec allows).
 -/
@@ -29,6 +30,7 @@ import L4Factoidal.XPath4.Lib
 import L4Factoidal.XML.Encoding
 import L4Factoidal.XML.Namespaces
 import L4Factoidal.XML.Validity
+import L4Factoidal.XPath4.XInclude
 
 namespace L4Factoidal.XPath4
 
@@ -70,6 +72,25 @@ def stripWs : Nat → Bool → Node → Node
         | .text t => keep || !isXmlWs t
         | _ => true)
       .element tag attrs (kids.map (stripWs f keep))
+    | other => other
+
+/-- After DTD validation, whitespace text in element content (an element
+    whose declaration has a `[47] children` content model) is not part of
+    the data model (XDM 4.0 §7.6.3, element content whitespace). -/
+def stripElemContentWs (decls : List ElementDecl) : Nat → Node → Node
+  | 0, n => n
+  | f + 1, n =>
+    match n with
+    | .element tag attrs kids =>
+      let elemOnly := match decls.find? (·.name == tag) with
+        | some ed => match parseContentSpecText ed.spec with
+          | some (.children _) => true
+          | _ => false
+        | none => false
+      let kids := if elemOnly then kids.filter (fun k => match k with
+          | .text t => !isXmlWs t
+          | _ => true) else kids
+      .element tag attrs (kids.map (stripElemContentWs decls f))
     | other => other
 
 /-! ## Options -/
@@ -120,6 +141,8 @@ structure ParseOpts where
   trustExternal : Bool := false
   /-- `xsd-validation`: `skip`, or a mode for `SchemaHook.validate`. -/
   xsd : String := "skip"
+  /-- `xinclude`: process XInclude 1.1 elements. -/
+  xinclude : Bool := false
 
 def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
   checkOptionKeys opts parseXmlOptionNames
@@ -133,10 +156,12 @@ def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
   if !["all", "none", "conditional"].contains strip then
     err "XPTY0004" ("strip-space must be all, none or conditional, not " ++ strip)
   let trust ← optBool opts "trust-external" false
-  if ← optBool opts "xinclude" false then
-    err "FODC0013" "no XInclude processor is available"
+  let xi ← optBool opts "xinclude" false
+  if xi && !e.xinclude then
+    err "FODC0013" "this processor is configured without XInclude"
   let xsd := optionStr opts "xsd-validation" "skip"
-  pure { baseUri := base, dtdValidation := dtd, stripAll := strip == "all", trustExternal := trust, xsd }
+  pure { baseUri := base, dtdValidation := dtd, stripAll := strip == "all", trustExternal := trust, xsd,
+         xinclude := xi }
 
 /-- The document of `kids`, validated when `xsd-validation` asks for it. -/
 def docOfKids (e : Env) (o : ParseOpts) (kids : List Node) (uri : String) : M Doc :=
@@ -181,7 +206,24 @@ def parseDocument (e : Env) (o : ParseOpts) (src : Atomic) (docUri : String := "
     if o.dtdValidation then
       if d.doctype.isNone then err "FODC0007" "DTD validation requested, and there is no DOCTYPE"
       if !(validate d).isEmpty then err "FODC0007" "the document is not valid against its DTD"
-    pure d
+    let d := if o.dtdValidation then
+        match d.doctype with
+        | some dt => { d with root := stripElemContentWs dt.elementDecls 100000 d.root }
+        | none => d
+      else d
+    if o.xinclude then
+      -- an included resource is an external resource (`trust-external`)
+      let fetch : String → Option String := fun h => if o.trustExternal then e.resource h else none
+      let parseRoot (t : String) : Except String Node :=
+        match parseDecodedXMLWith resolve t with
+        | .ok d2 => if d2.namespaceWellFormed then .ok d2.root else .error "not namespace-well-formed"
+        | .error x => .error x.message
+      let base := if docUri != "" then docUri else o.baseUri
+      match XInclude.expand fetch parseRoot 64 [base] base [] d.root with
+      | .ok [r] => pure { d with root := r }
+      | .ok _ => err "FODC0002" "XInclude: the document element is not one element after inclusion"
+      | .error x => err "FODC0002" ("XInclude: " ++ x.msg)
+    else pure d
 
 def parseXmlFn : LibFn := fun _ e a => do
   match optAtom (argN a 0) with
@@ -406,7 +448,10 @@ def docFn (e : Env) (a : List Seq) : M Seq := do
         let doc ← match docOfKids e o kids uri with
           | .ok d => pure d
           | .error x => err "FODC0002" x.msg
-        pure [doc.rootItem (runtimeDocId "doc" uri)]
+        -- the same URI with other parsing options is another document
+        -- (F&O 4.0 §14.6.1, option `stable`)
+        let optKey := s!"{o.stripAll} {o.dtdValidation} {o.xinclude} {o.xsd}"
+        pure [doc.rootItem (runtimeDocId "doc" (if optKey == "false false false skip" then uri else uri ++ "\x00" ++ optKey))]
       | none => err "FODC0002" ("document not available: " ++ u.str)
 
 def xmlParseTable : List (String × LibFn) := [
