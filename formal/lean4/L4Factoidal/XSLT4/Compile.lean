@@ -1413,6 +1413,12 @@ def compileTemplate (prec : Nat) (d : Decl) (as : Attrs) (inMode : Option String
     | some k => do
         let kas ← effAttrs c m k
         let u := ((kas.get "use").getD "optional").trimAscii.toString
+        -- xsl:context-item comes first (XTSE0010); use="absent" takes no
+        -- type (XTSE3088) and is not for template rules (XTSE0020)
+        if ekids.head? != some k then cerr "XTSE0010" "xsl:context-item must be the first child of xsl:template"
+        if u == "absent" && (kas.get "as").isSome then cerr "XTSE3088" "xsl:context-item with use=\"absent\" cannot have an as attribute"
+        if u == "absent" && (as.get "match").isSome then cerr "XTSE0020" "a template rule cannot have xsl:context-item use=\"absent\""
+        checkAttrs c "context-item" kas
         pure (u == "absent", ← optType c kas, u)
     | none => pure (false, none, "optional")
   let vis := ((as.get "visibility").getD "").trimAscii.toString

@@ -2024,6 +2024,8 @@ def invoke : Nat → Sheet → Ctx → Tmpl → List (QN × Seq) → List (QN ×
               xerr "XTDE0700" ("no value for the implicitly mandatory parameter $" ++ p.name.show)
             else bindValue n S tcx p.sel p.body p.ty ("$" ++ p.name.show) "XTTE0600"
       tcx := tcx.bind p.name v
+    if t.ctxUse == "required" && cx.env.ctx.isNone then
+      xerr "XTTE3090" "the template requires a context item, and there is none"
     if let some cty := t.ctxAs then
       match cx.env.ctx with
       | some c => if !(cx.env.seqMatches c cty) then xerr "XTTE0590" "the context item does not match the template's xsl:context-item type"
