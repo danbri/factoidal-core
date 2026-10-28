@@ -48,7 +48,8 @@ each issue of each node: `unknownInput` (no graph input `k`), `forwardRef`
 (the node itself or a later node), `portCount` (sources and ports differ in
 number), `wireMismatch` (the source's wire neither equals nor converts to the
 port's wire). It reads signatures only, so the wasm op can call it on registry
-entries.
+entries. `sigAssumptions` is the union of the named assumptions of the
+signatures; `Graph.assumptions_eq_sigs`: it is `Graph.assumptions`.
 
 `Graph.run_stage_error_only`: when `graphIssues` is empty and the inputs are
 on the wires `inW`, a run that fails, fails in a stage's own run: never on a
@@ -166,6 +167,11 @@ def graphIssues (conv : W → W → Bool) (inW : List W) (g : List (PortSig W N 
 /-- The output wire of a graph: that of its last node. -/
 def graphOutWire (g : List (PortSig W N × List Src)) : Option W :=
   g.getLast?.map (·.1.outW)
+
+/-- The union of the named assumptions of the signatures, first-seen order:
+`Graph.assumptions` read from the signatures (`Graph.assumptions_eq_sigs`). -/
+def sigAssumptions [DecidableEq N] (g : List (PortSig W N × List Src)) : List N :=
+  (g.flatMap (·.1.assumptions)).eraseDups
 
 end Check
 
@@ -315,6 +321,12 @@ theorem runAux_sound (inputs : List (Packed S)) :
           (fun m hm => hA m (List.mem_cons_of_mem n hm)) h⟩
     · cases h
 
+/-- The assumptions of a graph are those of its signatures, so a check that
+reads signatures only (the wasm op `graphCheckNodes`) reports the premises of
+`Graph.guarantee_sound`. -/
+theorem Graph.assumptions_eq_sigs (g : Graph S A) : g.assumptions = sigAssumptions g.sigs := by
+  simp only [Graph.assumptions, sigAssumptions, Graph.sigs, List.flatMap_map]
+
 theorem Graph.mem_assumptions {g : Graph S A} {m : N} :
     m ∈ g.assumptions ↔ ∃ n ∈ g.nodes, m ∈ n.comp.sig.assumptions := by
   unfold Graph.assumptions
@@ -409,5 +421,6 @@ end Run
 
 #print axioms Graph.guarantee_sound
 #print axioms Graph.run_stage_error_only
+#print axioms Graph.assumptions_eq_sigs
 
 end L4Factoidal.Dataflow

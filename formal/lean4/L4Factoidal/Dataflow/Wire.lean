@@ -137,8 +137,16 @@ theorem Wire.conv_cases {a b : Wire} (h : Wire.conv a b = true) :
     (a = .dataset ∧ b = .graph) ∨ (a = .graph ∧ b = .dataset) := by
   cases a <;> cases b <;> simp_all [Wire.conv]
 
+/-- The wire whose label is `s` (`Wire.label`), or none. The wasm op
+`graphCheckNodes` reads the wires of a graph's inputs with it. -/
+def Wire.ofLabel? (s : String) : Option Wire := Wire.all.find? (·.label == s)
+
 -- labels are distinct, so a label names one wire
 #guard (Wire.all.map Wire.label).eraseDups.length == Wire.all.length
+-- `ofLabel?` reads back every label, and nothing else
+#guard Wire.all.all fun w => Wire.ofLabel? w.label == some w
+#guard Wire.ofLabel? "Datasets" == none
+#guard Wire.ofLabel? "dataset" == none
 #guard Wire.all.length == 48
 #guard (Wire.all.filter fun a => (Wire.all.filter fun b => Wire.conv a b).length > 0).length == 3
 
