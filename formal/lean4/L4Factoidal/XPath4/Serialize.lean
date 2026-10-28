@@ -20,13 +20,15 @@ written `(anonymous-function)#N` by the adaptive method; the parameter
 defaults of the element form are those of the map form; the supported
 encodings are UTF-8, UTF-16, UTF-32, US-ASCII and ISO-8859-1.
 
-Not implemented: `normalization-form` other than `none` and `NFC` (NFC
-is applied by `XPath4.Unicode` when that module provides it; until then
-the text is written as it is), `byte-order-mark` (the result is a
-string), the `record` rule of the JSON method (the item model has no
+`normalization-form` (NFC, NFD, NFKC, NFKD by `XPath4.Unicode`) is
+applied to the text and attribute values before escaping; characters a
+character map replaces are not normalized.
+
+Not implemented: `byte-order-mark` (the result is a string), the `record` rule of the JSON method (the item model has no
 record annotation).
 -/
 import L4Factoidal.XPath4.Json
+import L4Factoidal.XPath4.Unicode
 
 namespace L4Factoidal.XPath4
 
@@ -381,11 +383,16 @@ def SerParams.escAttrChar (p : SerParams) (html : Bool) (next : Option Char) (c 
       if !p.canonical && ((0x7F ≤ n && n ≤ 0x9F) || n == 0x2028 || n < 0x20) then charRef c
       else if p.encodable c then String.singleton c else charRef c
 
+/-- Unicode normalization of a string by `normalization-form`. -/
+def SerParams.norm (p : SerParams) (s : String) : String :=
+  let f := p.normForm.toUpper
+  if f == "NONE" then s else (Unicode.normalize f s).getD s
+
 def SerParams.escText (p : SerParams) (s : String) : String :=
-  s.toList.foldl (fun acc c => acc ++ p.escTextChar c) ""
+  (p.norm s).toList.foldl (fun acc c => acc ++ p.escTextChar c) ""
 
 def SerParams.escAttr (p : SerParams) (html : Bool) (s : String) : String := Id.run do
-  let cs := s.toList.toArray
+  let cs := (p.norm s).toList.toArray
   let mut out := ""
   for i in [0:cs.size] do
     out := out ++ p.escAttrChar html cs[i + 1]? (cs.getD i ' ')
@@ -394,7 +401,7 @@ def SerParams.escAttr (p : SerParams) (html : Bool) (s : String) : String := Id.
 /-- Text where markup is not recognised (HTML `script`, `style`): only
     the character map and the encoding apply. -/
 def SerParams.rawText (p : SerParams) (s : String) : String :=
-  s.toList.foldl (fun acc c => acc ++ match p.mapped c with
+  (p.norm s).toList.foldl (fun acc c => acc ++ match p.mapped c with
     | some r => r
     | none => if p.encodable c then String.singleton c else charRef c) ""
 
@@ -782,7 +789,7 @@ def SerParams.jsonEscChar (p : SerParams) (c : Char) : String :=
         else "\\u" ++ hex4u n
 
 def SerParams.jsonString (p : SerParams) (s : String) : String :=
-  "\"" ++ s.toList.foldl (fun acc c => acc ++ p.jsonEscChar c) "" ++ "\""
+  "\"" ++ (p.norm s).toList.foldl (fun acc c => acc ++ p.jsonEscChar c) "" ++ "\""
 
 /-- The UTF-16 code units of a string (RFC 8785 §3.2.3 key order). -/
 def utf16Units (s : String) : List Nat :=
@@ -1023,6 +1030,17 @@ def serializeFn : LibFn := fun _ e a => do
   let p ← serParamsOf e (argN a 1)
   pure (sStr (← e.serializeWith p (argN a 0)))
 
-def serializeTable : List (String × LibFn) := [("serialize", serializeFn)]
+/-! ## `fn:normalize-unicode` (F&O 4.0 §5.4.9) -/
+
+def normalizeUnicodeFn : LibFn := fun _ _ a => do
+  let s := strOf (argN a 0)
+  let f := if (argN a 1).isEmpty then "NFC" else (trimWs (strOf (argN a 1))).toUpper
+  if f == "" then pure (sStr s)
+  else match Unicode.normalize f s with
+    | some r => pure (sStr r)
+    | none => err "FOCH0003" ("unsupported normalization form " ++ f)
+
+def serializeTable : List (String × LibFn) :=
+  [("serialize", serializeFn), ("normalize-unicode", normalizeUnicodeFn)]
 
 end L4Factoidal.XPath4
