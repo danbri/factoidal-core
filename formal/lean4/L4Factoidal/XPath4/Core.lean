@@ -193,7 +193,20 @@ def Env.kindMatches (e : Env) (n : NodeRef) : IType → Bool
           match els with
           | [c] => (t.map (nameTestMatches · (e.nrec (n.at (c))).name)).getD true
           | _ => false
+       | some (.choice ts) =>
+          -- document-node(element(A|B)) (XPath 4.0 §3.2.7.1)
+          let els := (e.nrec n).children.toList.filter (fun c => (e.nrec (n.at (c))).kind == .element)
+          match els with
+          | [c] => ts.any (fun t => match t with
+              | .elem x => (x.map (nameTestMatches · (e.nrec (n.at (c))).name)).getD true
+              | _ => false)
+          | _ => false
        | some _ => true)
+  -- a NameTestUnion inside element() or attribute() (XPath 4.0 §3.2.7.2)
+  | .choice ts => ts.any (fun t => match t with
+      | .elem x => (e.nrec n).kind == .element && (x.map (nameTestMatches · (e.nrec n).name)).getD true
+      | .attr x => (e.nrec n).kind == .attribute && (x.map (nameTestMatches · (e.nrec n).name)).getD true
+      | _ => false)
   | _ => false
 
 def Env.testMatches1 (e : Env) (ax : Axis) (n : NodeRef) : NodeTest → Bool
