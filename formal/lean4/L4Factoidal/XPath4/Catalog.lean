@@ -340,6 +340,8 @@ def catalogRaw : List (String × String × String × List (String × String × O
   ("fn", "random-number-generator", "item()*", [("seed", "xs:anyAtomicType?", some "()")]),
   -- internal (XPath4.Fn4): the function that fn:xsd-validator returns
   ("fn", "xsd-validate#", "item()*", [("options", "map(*)", none), ("node", "item()*", none)]),
+  -- internal (XPath4.SchemaType): the constructor of a type of the in-scope schema
+  ("fn", "schema-type-cast#", "xs:anyAtomicType*", [("type", "xs:QName", none), ("value", "xs:anyAtomicType?", none)]),
   -- internal (XPath4.Fn4): the functions of a random-number-generator record
   ("fn", "rng-record#", "map(xs:string, item())", [("state", "xs:integer", none)]),
   ("fn", "rng-permute#", "item()*", [("state", "xs:integer", none), ("input", "item()*", none)]),

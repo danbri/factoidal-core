@@ -28,11 +28,36 @@ type derives from `xs:anyType`; `xs:untyped` and the simple types from it;
 `xs:untypedAtomic` and the atomic built-ins from `xs:anyAtomicType`. -/
 def builtinTypeDerives (t u : QN) : Bool :=
   t == u || u == anyTypeQN ||
+  -- xs:numeric is the union of xs:double, xs:float and xs:decimal: a type
+  -- derives from it when it derives from a member (XPath 4.0 §3.3.1.1)
+  (u.uri == nsXS && u.loc == "numeric" && t.uri == nsXS &&
+    (match builtinOfName? t.loc with
+     | some a => derivedFrom a .double || derivedFrom a .float || derivedFrom a .decimal
+     | none => false)) ||
   (t.uri == nsXS && u.uri == nsXS &&
     (if t.loc == "untypedAtomic" then u.loc == "anyAtomicType" || u.loc == "anySimpleType"
      else match builtinOfName? t.loc, builtinOfName? u.loc with
        | some a, some b => derivedFrom a b || b == .anySimpleType
        | _, _ => false))
+
+/-- A type definition of the in-scope schema that is not a built-in type
+(`fn:schema-type`, `fn:node-type-annotation`, F&O 4.0 §20.1). -/
+structure SchemaTypeInfo where
+  /-- The type name; `none` for an anonymous type. -/
+  name : Option QN
+  simple : Bool
+  /-- The annotation name of the base type (a built-in type, or one that
+      `SchemaHook.typeInfo` knows). -/
+  base : QN
+  /-- The primitive type of an atomic type. -/
+  primitive : Option QN := none
+  /-- `atomic`, `list`, `union`, or for a complex type the content type
+      variety: `empty`, `simple`, `element-only`, `mixed`. -/
+  variety : String
+  /-- The typed value of a lexical form validated against the type;
+      `none` when the form is not valid. Absent for a complex type. -/
+  cast : Option (String → Option (List Atomic)) := none
+deriving Inhabited
 
 /-- Hook for schema-aware processing (`L4Factoidal.XSD11` supplies one
 from a schema): type derivation by type name, the global element and
@@ -64,7 +89,22 @@ structure SchemaHook where
       and the error messages. -/
   validateWith : Option (String → List (Doc × Nat) → Doc → Nat → String →
       Except Err (Option Doc × List String)) := none
+  /-- Validate the XML result of an F&O 4.0 function in the `fn` namespace
+      (`fn:json-to-xml` with `validate`, `fn:analyze-string`) against the
+      F&O 4.0 result schemas (`XSD11.FnSchemas`): the document element and
+      the document URI; the typed document or the error. `none`: this
+      processor is not schema-aware. -/
+  validateFnNs : Option (L4Factoidal.XML.Node → String → Except Err Doc) := none
+  /-- The type definitions of the in-scope schema by annotation name
+      (`NRec.tann`); `none` for a built-in type or an unknown name. -/
+  typeInfo : QN → Option SchemaTypeInfo := fun _ => none
 deriving Inhabited
+
+/-- The in-scope element (`true`) or attribute (`false`) declaration test
+    for the parser (`PCtx.schemaDecl`, XPST0008 of `schema-element()` and
+    `schema-attribute()`). -/
+def SchemaHook.declared (h : SchemaHook) (isElem : Bool) (q : QN) : Bool :=
+  if isElem then (h.elemDecl q).isSome else (h.attrDecl q).isSome
 
 /-- The part of the dynamic context that a host function sees
     (`Env.host`): the variable bindings and the focus at the call. -/
@@ -274,7 +314,10 @@ def nameTestMatches (t : NameTest) (q : QN) : Bool :=
   | .loc l => q.loc == l
   | .name n => n.uri == q.uri && n.loc == q.loc
 
-def Env.kindMatches (e : Env) (n : NodeRef) : IType → Bool
+/-- A kind test that is not a union and not `document-node(..)`: the node
+    kind, the name test and, for a test with a type name, the type
+    annotation (XPath 4.0 §3.2.7). -/
+def Env.kindMatches1 (e : Env) (n : NodeRef) : IType → Bool
   | .item | .anyNode => true
   | .elem t => (e.nrec n).kind == .element && (t.map (nameTestMatches · (e.nrec n).name)).getD true
   | .attr t => (e.nrec n).kind == .attribute && (t.map (nameTestMatches · (e.nrec n).name)).getD true
@@ -302,30 +345,29 @@ def Env.kindMatches (e : Env) (n : NodeRef) : IType → Bool
   | .comment => (e.nrec n).kind == .comment
   | .nsNode => (e.nrec n).kind == .namespace
   | .pi t => (e.nrec n).kind == .pi && (t.map (· == (e.nrec n).name.loc)).getD true
+  | _ => false
+
+/-- An element test, or a NameTestUnion of element tests (XPath 4.0
+    §3.2.7.2), on one node. -/
+def Env.kindMatchesU (e : Env) (n : NodeRef) : IType → Bool
+  | .choice ts => ts.any (e.kindMatches1 n)
+  | t => e.kindMatches1 n t
+
+def Env.kindMatches (e : Env) (n : NodeRef) : IType → Bool
   | .doc inner =>
       (e.nrec n).kind == .document &&
       (match inner with
        | none => true
-       | some (.elem t) =>
+       | some t =>
+          -- document-node(E): exactly one element child, and it matches E
+          -- (XPath 4.0 §3.2.7.1)
           let els := (e.nrec n).children.toList.filter (fun c => (e.nrec (n.at (c))).kind == .element)
           match els with
-          | [c] => (t.map (nameTestMatches · (e.nrec (n.at (c))).name)).getD true
-          | _ => false
-       | some (.choice ts) =>
-          -- document-node(element(A|B)) (XPath 4.0 §3.2.7.1)
-          let els := (e.nrec n).children.toList.filter (fun c => (e.nrec (n.at (c))).kind == .element)
-          match els with
-          | [c] => ts.any (fun t => match t with
-              | .elem x => (x.map (nameTestMatches · (e.nrec (n.at (c))).name)).getD true
-              | _ => false)
-          | _ => false
-       | some _ => true)
+          | [c] => e.kindMatchesU (n.at c) t
+          | _ => false)
   -- a NameTestUnion inside element() or attribute() (XPath 4.0 §3.2.7.2)
-  | .choice ts => ts.any (fun t => match t with
-      | .elem x => (e.nrec n).kind == .element && (x.map (nameTestMatches · (e.nrec n).name)).getD true
-      | .attr x => (e.nrec n).kind == .attribute && (x.map (nameTestMatches · (e.nrec n).name)).getD true
-      | _ => false)
-  | _ => false
+  | .choice ts => ts.any (e.kindMatches1 n)
+  | t => e.kindMatches1 n t
 
 def Env.testMatches1 (e : Env) (ax : Axis) (n : NodeRef) : NodeTest → Bool
   | .name t =>

@@ -524,13 +524,14 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
 
 /-- Parse an XQuery 4.0 module, with the namespace bindings of the
     environment. -/
-def parseModule (src : String) (ns : List (String × String) := []) : M Module :=
+def parseModule (src : String) (ns : List (String × String) := [])
+    (schemaDecl : Bool → QN → Bool := fun _ _ => false) : M Module :=
   let s := src.toList.toArray
   -- first pass: the named types, with forward references read as item()
-  let types0 := match ((pModule [] true).run { s, ns }).run 0 with
+  let types0 := match ((pModule [] true).run { s, ns, schemaDecl }).run 0 with
     | .ok (m, _) => m.types
     | .error _ => []
-  match ((pModule types0 false).run { s, ns }).run 0 with
+  match ((pModule types0 false).run { s, ns, schemaDecl }).run 0 with
   | .ok (m, _) => .ok m
   | .error e => .error e
 
@@ -570,7 +571,7 @@ def loadImports (env : Env) : Nat → List String → Module → M (List Module 
       let texts := moduleTexts env u
       if texts.isEmpty then err "XQST0059" ("no module found for namespace " ++ u)
       for t in texts do
-        let lm ← parseModule t
+        let lm ← parseModule t [] env.schema.declared
         if (lm.libNs.map (·.2)) != some u then err "XQST0059" ("the module text is not a module for " ++ u)
         let (sub, seen') ← loadImports env d seen lm
         seen := seen'
@@ -727,7 +728,7 @@ def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
 
 /-- Parse and evaluate an XQuery 4.0 main module. -/
 def evalQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) : M Seq := do
-  let m ← parseModule src env.ns
+  let m ← parseModule src env.ns env.schema.declared
   evalModule fuel env m
 
 def evalQShow (src : String) : String :=

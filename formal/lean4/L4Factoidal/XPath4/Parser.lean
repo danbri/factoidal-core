@@ -65,6 +65,10 @@ structure PCtx where
   /-- Read an unknown type name as `item()` (the first pass over an
       XQuery prolog, which collects the named types). -/
   lenientTypes : Bool := false
+  /-- The in-scope element (`true`) and attribute (`false`) declarations of
+      the static context (`XPath4.SchemaHook.declared`): whether the name has
+      a global declaration. None by default (no schema in scope). -/
+  schemaDecl : Bool → QN → Bool := fun _ _ => false
 
 abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 
@@ -572,6 +576,8 @@ def pItemType : Nat → P IType
                     set e
                     let q ← resolve p u l ""
                     let nil ← eatS "?"
+                    -- attribute(N, T): no `?` (XPath 4.0 §3.2.7.3.1, AttributeTest)
+                    if nil && nm == "attribute" then synErr "attribute(N, T) takes no '?'"
                     pure (some (q, nil))
                   | none => synErr "expected a type name"
                 else pure none
@@ -584,14 +590,21 @@ def pItemType : Nat → P IType
                 | some (q, nil) => if nm == "element" then .elemT (opt x) q nil else .attrT (opt x) q
               pure (if more.isEmpty then mk t else .choice ((t :: more).map mk))
         | "schema-element" | "schema-attribute" =>
+            -- the name must resolve (XPST0081) and have a declaration in
+            -- the in-scope schema definitions (XPath 4.0 §3.2.7.3.2,
+            -- XPST0008); with no schema in scope there is none
             ws
             match ← peekQName with
             | some (p, u, l, e) =>
+              if p == some "*" || l == "*" then synErr (nm ++ "() takes a QName, not a wildcard")
               set e
               let den ← dfltElemNs
-              let q ← resolve p u l (if nm == "schema-element" then den else "")
+              let isElem := nm == "schema-element"
+              let q ← resolve p u l (if isElem then den else "")
               expectS ")"
-              pure (if nm == "schema-element" then .schemaElem q else .schemaAttr q)
+              if !((← read).schemaDecl isElem q) then
+                throw { code := "XPST0008", msg := nm ++ "(" ++ q.show ++ "): no such declaration in the in-scope schema definitions" }
+              pure (if isElem then .schemaElem q else .schemaAttr q)
             | none => synErr ("expected a name in " ++ nm ++ "()")
         | "document-node" =>
             if ← eatS ")" then pure (.doc none)
@@ -1292,9 +1305,15 @@ def pStep : Nat → P Expr
     | some (nm, '(', _) =>
       if kindTestNames.contains nm then
         let t ← pNodeTest n .child
+        -- the default axis of an attribute test (with a NameTestUnion or a
+        -- type name) or a schema attribute test is attribute (XPath 4.0 §4.7.6)
+        let isAttrT (t : IType) : Bool := match t with
+          | .attr _ | .attrT .. | .schemaAttr _ => true
+          | _ => false
         let ax := match t with
-          | .kind (.attr _) => Axis.attribute
           | .kind .nsNode => Axis.namespace
+          | .kind (.choice ts) => if !ts.isEmpty && ts.all isAttrT then Axis.attribute else Axis.child
+          | .kind k => if isAttrT k then Axis.attribute else Axis.child
           | _ => Axis.child
         let ps ← pPreds n
         pure (.step ax t ps)
@@ -1587,7 +1606,8 @@ end
 
 /-- Parse a complete XPath 4.0 expression, with optional namespace
     declarations prolog. -/
-def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option ExtGrammar := none) : M Expr :=
+def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option ExtGrammar := none)
+    (schemaDecl : Bool → QN → Bool := fun _ _ => false) : M Expr :=
   let p : P Expr := do
     -- prolog (XPath 4.0 §2.1): DefaultElementNamespaceDecl? NamespaceDecl*
     let mut extra : List (String × String) := []
@@ -1635,7 +1655,7 @@ def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option
     if i < c.s.size then synErr ("unexpected text at offset " ++ toString i ++ ": '" ++
        String.ofList ((List.range (min 20 (c.s.size - i))).map (fun k => chAt c.s (i + k))) ++ "'")
     pure e
-  match (p.run { s := src.toList.toArray, ns, ext }).run 0 with
+  match (p.run { s := src.toList.toArray, ns, ext, schemaDecl }).run 0 with
   | .ok (e, _) => .ok e
   | .error e => .error e
 

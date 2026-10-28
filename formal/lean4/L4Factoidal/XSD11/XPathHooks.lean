@@ -66,23 +66,43 @@ def Schema.typeQN (s : Schema) (t : Nat) : QN :=
 
 /-! ## The XDM document of a PSVI -/
 
+/-- Whether a validated element has element-only content (its type is a
+complex type whose content is elements, not mixed). -/
+def elemOnlyInfo (s : Schema) (i : PInfo) : Bool :=
+  match i.typ with
+  | some t => match s.type t with
+    | .complex c => match c.content with
+      | .elems _ false => true
+      | _ => false
+    | _ => false
+  | none => false
+
+def isWsText : PNode → Bool
+  | .text t => t.all (fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r')
+  | _ => false
+
 mutual
 /-- The tree XDM is constructed from: the input with the defaulted
-attributes and the default text added. -/
-def PNode.toXdm : PNode → XML.Node
-  | .elem tag attrs kids _ _ defs dt =>
+attributes and the default text added, and without the whitespace text
+nodes of element-only content (XDM 4.0, construction from a PSVI:
+those text nodes are not part of the data model). `eo` tells whether a
+validated element has element-only content. -/
+def PNode.toXdm (eo : PInfo → Bool) : PNode → XML.Node
+  | .elem tag attrs kids _ info defs dt =>
     .element tag (attrs.map (·.attr) ++ defs.map (·.attr))
       (match dt with
        | some t => [.text t]
-       | none => PNode.toXdmList kids)
+       | none => PNode.toXdmList eo (eo info) kids)
   | .text s => .text s
   | .cdata s => .cdata s
   | .comment s => .comment s
   | .pi t d => .pi t d
 
-def PNode.toXdmList : List PNode → List XML.Node
+def PNode.toXdmList (eo : PInfo → Bool) (strip : Bool) : List PNode → List XML.Node
   | [] => []
-  | p :: ps => p.toXdm :: PNode.toXdmList ps
+  | p :: ps =>
+    if strip && isWsText p then PNode.toXdmList eo strip ps
+    else p.toXdm eo :: PNode.toXdmList eo strip ps
 end
 
 def isElemP : PNode → Bool
@@ -97,14 +117,8 @@ def annotRec (s : Schema) (r : NRec) (i : PInfo) : NRec :=
     let tval := match i.normalized with
       | some norm => if i.nilled then some [] else atomsOf s nsr t norm
       | none => if i.nilled then some [] else none
-    let elemOnly : Bool := match s.type t with
-      | .complex c => match c.content with
-        | .elems _ false => true
-        | .empty => false
-        | _ => false
-      | _ => false
     { r with tann := some (s.typeQN t), tval, nilled := i.nilled,
-             noTypedValue := elemOnly && r.kind == .element }
+             noTypedValue := elemOnlyInfo s i && r.kind == .element }
 
 /-- Copy the PSVI annotations onto the node records of `d`, starting at
 record `idx` for the PSVI node `p`. -/
@@ -129,7 +143,7 @@ def annotate (s : Schema) : Nat → Array NRec → Nat → PNode → Array NRec
 /-- The XDM 4.0 document of a PSVI tree, with type annotations and typed
 values. Record 1 is the element (record 0 is the document node). -/
 def psviDoc (s : Schema) (p : PNode) (uri : String := "") : Doc :=
-  let d := Doc.ofNodes [p.toXdm] uri
+  let d := Doc.ofNodes [p.toXdm (elemOnlyInfo s)] uri
   { d with nodes := annotate s 100000 d.nodes 1 p }
 
 /-! ## The hooks -/

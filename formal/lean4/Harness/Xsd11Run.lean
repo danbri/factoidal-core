@@ -27,6 +27,7 @@ Usage (from `formal/lean4/`):
       [--verbose] [--group NAME]
 -/
 import L4Factoidal.XSD11.Load
+import L4Factoidal.XSD11.XPathBridge
 import L4Factoidal.XSD11.ShaclBridge
 
 open L4Factoidal.XML

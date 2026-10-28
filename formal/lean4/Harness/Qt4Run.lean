@@ -36,6 +36,7 @@ anything but XPath expressions in this evaluator.
 -/
 import L4Factoidal.XPath4.Eval
 import L4Factoidal.XSD11.Load
+import L4Factoidal.XSD11.XPathBridge
 import L4Factoidal.XPath4.Theorems
 import L4Factoidal.XQuery4.Module
 import L4Factoidal.XQuery4.LoadModule
@@ -228,7 +229,13 @@ def parseEnv (dir : String) (e : Node) (xq : Bool := false) : EnvSpec := Id.run 
           s := { s with params := s.params ++ [(attrD c "name", attrD c "select" "()")] }
     | "namespace" => s := { s with ns := s.ns ++ [(attrD c "prefix", attrD c "uri")] }
     | "context-item" => s := { s with ctxSelect := attr c "select" }
-    | "schema" => s := { s with schemas := s.schemas ++ [(attrD c "uri", dir ++ "/" ++ attrD c "file")] }
+    | "schema" =>
+        -- a schema with no file: the F&O 4.0 result schemas for the `fn`
+        -- namespace (the catalog asks the driver to know that URI)
+        if attrD c "file" == "" then
+          if attrD c "uri" == nsFN then s := { s with schemas := s.schemas ++ [(nsFN, L4Factoidal.XSD11.fnSchemaFile)] }
+          else s := { s with unsupported := some "schema with no file" }
+        else s := { s with schemas := s.schemas ++ [(attrD c "uri", dir ++ "/" ++ attrD c "file")] }
     | "collection" =>
         let srcs := (kidsNamed c "source").map (fun x => (dir ++ "/" ++ attrD x "file", attrD x "uri"))
         let qs := (kidsNamed c "query").map (fun x => x.textContent)
@@ -341,7 +348,7 @@ def isXqEnv (env : Env) : Bool := env.vars.any (fun (q, _) => q == xqMode)
 
 def evalIn (env : Env) (src : String) : M Seq := do
   if isXqEnv env then L4Factoidal.XQuery4.evalQuery src env 20000 else
-  let e ← parseXPath4 src env.ns
+  let e ← parseXPath4 src env.ns env.schema.declared
   match env.fileSys with
   -- EXPath File 4.0: an assertion may also call a writing `file:` function
   | some fs => (·.1) <$> L4Factoidal.EXPath.File.evalMem env fs e
@@ -367,7 +374,7 @@ def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
     declarations of its prolog (`XPath4.declParams`); none in XPath. -/
 def queryParams (env : Env) (src : String) : M SerParams :=
   if isXqEnv env then do
-    let m ← L4Factoidal.XQuery4.parseModule src env.ns
+    let m ← L4Factoidal.XQuery4.parseModule src env.ns env.schema.declared
     -- `output:parameter-document`: the document first, then the other
     -- output declarations over it
     let init ← match m.outputDecls.lookup "parameter-document" with

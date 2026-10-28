@@ -252,8 +252,10 @@ def castToF (e : Env) : Nat → Seq → IType → Bool → M Seq
     | .atomic (.b lb) =>
       match builtinListItem? lb with
       | some it =>
-        -- a built-in list type: the tokens of the string, each cast to the item type
-        if !(a.isStringLike || a.ty == .untyped) then err "XPTY0004" "only a string can be cast to a list type"
+        -- a built-in list type (xs:NMTOKENS, xs:IDREFS, xs:ENTITIES, XPath
+        -- 4.0 §4.19.2): the tokens of a string or untyped value (not of an
+        -- xs:anyURI), each cast to the item type
+        if !(a.is .string || a.ty == .untyped) then err "XPTY0004" "only a string can be cast to a list type"
         else
           let toks := ((applyWhiteSpace .collapse a.str).splitOn " ").filter (· != "")
           if toks.isEmpty then err "FORG0001" "an empty string is not a list value"
@@ -266,14 +268,6 @@ def castToF (e : Env) : Nat → Seq → IType → Bool → M Seq
         else pure (single (← castAtomic a aty e.nsResolve))
     | .atomic aty =>
         if aty == .b .anyAtomicType || aty == .b .notation then err "XPST0080" "cast to an abstract type"
-        -- a list type (xs:NMTOKENS, xs:IDREFS, xs:ENTITIES): the
-        -- whitespace-separated tokens, each cast to the item type
-        -- (XPath 4.0 §4.19.2.2)
-        else if let some item := (match aty with | .b b => XSD.builtinListItem? b | _ => none) then
-          if !(a.isStringLike || a.ty == .untyped) then err "XPTY0004" "a list type is cast from a string"
-          let toks := (a.str.split (fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r')).toList.map (·.toString) |>.filter (· != "")
-          if toks.isEmpty then err "FORG0001" ("an empty value for the list type xs:" ++ aty.name)
-          pure (← toks.mapM (fun tk => do pure (Item.atom (← castAtomic (Atomic.ofStr tk) (.b item)))))
         else if (aty == .b .qname) && !(a.isStringLike || a.is .qname) then
           err "XPTY0004" "cannot cast to xs:QName"
         else pure (single (← castAtomic a aty e.nsResolve))
@@ -859,8 +853,10 @@ def eval : Nat → Env → Expr → M Seq
       | .anyArr | .anyMap | .arrT _ | .mapT _ _ | .record _ _ =>
         return sBool (match castTo env s t opt with | .ok _ => true | .error _ => false)
       | t => if let some c := castTargetError t then err c "castable target is not an atomic, array, map or record type"
+      -- XPath 4.0 (PR 2899): when atomization fails (a map, an array of
+      -- maps, a function), the value is not castable: false, not FOTY0013
       match env.atomize s with
-      | .error e => if e.code == "FOTY0013" then throw e else pure (sBool false)
+      | .error _ => pure (sBool false)
       | .ok _ =>
         match castTo env s t opt with
         | .ok _ => pure (sBool true)
@@ -1426,8 +1422,9 @@ end
 
 /-- Parse an XPath 4.0 expression with the computed node constructors
     (XPath 4.0 §4.12, `XQuery4.xpathGrammar`). -/
-def parseXPath4 (src : String) (ns : List (String × String) := []) : M Expr := do
-  let e ← parseXPath src ns (some L4Factoidal.XQuery4.xpathGrammar)
+def parseXPath4 (src : String) (ns : List (String × String) := [])
+    (schemaDecl : Bool → QN → Bool := fun _ _ => false) : M Expr := do
+  let e ← parseXPath src ns (some L4Factoidal.XQuery4.xpathGrammar) schemaDecl
   -- static check (XPath 4.0 §2.4.1, XPST0017): a call of a function in
   -- the fn, math, map or array namespace needs a signature of its arity
   for (q, k) in Expr.callsF 100000 e do
@@ -1438,7 +1435,7 @@ def parseXPath4 (src : String) (ns : List (String × String) := []) : M Expr := 
 
 /-- Evaluate an XPath 4.0 expression string. -/
 def evalString (src : String) (env : Env := {}) : M Seq := do
-  let e ← parseXPath4 src env.ns
+  let e ← parseXPath4 src env.ns env.schema.declared
   eval 100000 env e
 
 def showSeq (s : Seq) : String :=

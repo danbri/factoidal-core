@@ -22,7 +22,8 @@ The evaluator does no I/O. An external DTD or entity, and the text of
 Options of `fn:parse-xml`: `base-uri`, `dtd-validation`, `strip-space`
 (`all`, `none`, `conditional` = `none`), `trust-external`, `xinclude`
 (`true` is `FODC0013`: there is no XInclude processor), `xsd-validation`
-(anything but `skip` is `FODC0009`: not schema-aware), `use-xsi-schema-location`,
+(`strict`, `lax` and `type T` validate through the schema hook
+`Env.schema`, `SchemaHook.validate`; another value is XPTY0004), `use-xsi-schema-location`,
 `line-numbers` (ignored, as the spec allows).
 -/
 import L4Factoidal.XPath4.Lib
@@ -153,12 +154,21 @@ def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
   if ← optBool opts "xinclude" false then
     err "FODC0013" "no XInclude processor is available"
   let xsd := optionStr opts "xsd-validation" "skip"
+  if !(["skip", "strict", "lax"].contains xsd || xsd.startsWith "type ") then
+    err "XPTY0004" ("xsd-validation must be strict, lax, skip or type T, not " ++ xsd)
   pure { baseUri := base, dtdValidation := dtd, stripAll := strip == "all", trustExternal := trust, xsd }
 
-/-- The document of `kids`, validated when `xsd-validation` asks for it. -/
+/-- An element node of a parsed tree (the document element is the first). -/
+def isElemKid (k : Node) : Bool :=
+  match k with
+  | .element .. => true
+  | _ => false
+
+/-- The document of `kids`, validated when `xsd-validation` asks for it
+    (`XSD11.XPathBridge.docOfKids_validate`: through the schema hook only). -/
 def docOfKids (e : Env) (o : ParseOpts) (kids : List Node) (uri : String) : M Doc :=
   if o.xsd == "skip" then pure (Doc.ofNodes kids uri)
-  else match e.schema.validate, kids.find? (fun k => match k with | .element .. => true | _ => false) with
+  else match e.schema.validate, kids.find? isElemKid with
     | some f, some root => match f o.xsd root uri with
       | .ok d => pure d
       | .error x => throw x

@@ -11,6 +11,7 @@ The schema reading and validation themselves are pure
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.XSD11.XPathHooks
+import L4Factoidal.XSD11.FnSchemas
 
 namespace L4Factoidal.XSD11
 
@@ -53,11 +54,22 @@ def loadClosure (roots : List String) : IO (List LoadedDoc × Bool) := do
         if ← System.FilePath.pathExists l then allRead := false
   return (loaded.reverse, allRead)
 
-/-- A schema from schema document files (component constraints checked). -/
+/-- The name in a list of schema files that stands for the F&O 4.0 result
+schemas (`fnSchemaDocs`): a test environment that imports the namespace
+`http://www.w3.org/2005/xpath-functions` with no file. -/
+def fnSchemaFile : String := "#fn"
+
+/-- A schema from schema document files (component constraints checked);
+`fnSchemaFile` adds the F&O 4.0 result schemas. -/
 def loadSchema (files : List String) : IO Schema := do
-  let files := files.map pathNormalize
+  let withFn := files.contains fnSchemaFile
+  let files := (files.filter (· != fnSchemaFile)).map pathNormalize
   let (docs, _) ← loadClosure files
-  return buildSchema none xpathHooks docs files
+  let extra := if withFn then fnSchemaDocs else []
+  return buildSchema none xpathHooks (docs ++ extra) (files ++ extra.map (·.loc))
+
+/-- The schema of the F&O 4.0 result schemas alone. -/
+def fnSchema : Schema := buildSchema none xpathHooks fnSchemaDocs (fnSchemaDocs.map (·.loc))
 
 /-- Schemas already read in this process, by their document files. -/
 initialize schemaCache : IO.Ref (List (List String × Schema)) ← IO.mkRef []
@@ -78,30 +90,37 @@ def Schema.typeOfQN? (s : Schema) (q : XPath4.QN) : Option Nat :=
   if q.uri == "" && q.loc.startsWith "#anonymous-" then (q.loc.drop 11).toString.toNat?
   else s.typeIdx? (qnXName q)
 
-/-- Validate a document element for `xsd-validation` (F&O 4.0 `fn:parse-xml`):
-`strict` needs a global declaration (or `xsi:type`) and validity; `lax`
-validates what has declarations; `type Q{uri}local` validates against
-that type. -/
+/-- How `xsd-validation` validates a document element: `strict` needs a
+global declaration (or `xsi:type`); `lax` validates what has declarations;
+`type Q{uri}local` validates against that type. -/
+def howFor (s : Schema) (mode : String) (root : Node) : Option How :=
+  if mode == "strict" then rootHow s root []
+  else if mode == "lax" then some (.wild .lax)
+  else if mode.startsWith "type Q{" then
+    let rest := (mode.drop 7).toString
+    match rest.splitOn "}" with
+    | [u, l] => (s.typeIdx? ⟨u, l⟩).map How.typ
+    | _ => none
+  else none
+
+/-- Validate a document element in one way (`howFor`): the XDM document of
+the PSVI when it is valid (`lax`: not invalid) and its identity
+constraints hold. -/
+def validateHow (s : Schema) (mode : String) (how : How) (root : Node) (uri : String) :
+    Except XPath4.Err XPath4.Doc :=
+  let r := validateElement s xpathHooks 10000 [] how root {}
+  let idcErrs := checkIdcs s r.1
+  let v := (r.1.info?.map (·.validity)).getD .notKnown
+  if (mode != "lax" && v != .valid) || v == .invalid || !idcErrs.isEmpty then
+    .error { code := "FODC0007", msg := s!"the document is not valid: {(r.2.errors ++ idcErrs).take 2}" }
+  else .ok (psviDoc s r.1 uri)
+
+/-- Validate a document element for `xsd-validation` (F&O 4.0 `fn:parse-xml`). -/
 def validateFor (s : Schema) (mode : String) (root : Node) (uri : String) : Except XPath4.Err XPath4.Doc :=
-  let how? : Option How :=
-    if mode == "strict" then rootHow s root []
-    else if mode == "lax" then some (.wild .lax)
-    else if mode.startsWith "type Q{" then
-      let rest := (mode.drop 7).toString
-      match rest.splitOn "}" with
-      | [u, l] => (s.typeIdx? ⟨u, l⟩).map How.typ
-      | _ => none
-    else none
-  match how? with
+  match howFor s mode root with
   | none => .error { code := if mode == "strict" then "XQDY0084" else "FODC0007",
                      msg := s!"xsd-validation {mode}: no declaration or type to validate against" }
-  | some how =>
-    let r := validateElement s xpathHooks 10000 [] how root {}
-    let idcErrs := checkIdcs s r.1
-    let v := (r.1.info?.map (·.validity)).getD .notKnown
-    if (mode != "lax" && v != .valid) || v == .invalid || !idcErrs.isEmpty then
-      .error { code := "FODC0007", msg := s!"the document is not valid: {(r.2.errors ++ idcErrs).take 2}" }
-    else .ok (psviDoc s r.1 uri)
+  | some how => validateHow s mode how root uri
 
 /-- The XML tree of a node of an XDM document (element names with their
 prefixes, and the in-scope namespaces declared on every element, so the
@@ -150,6 +169,30 @@ def validateWithFor (s : Schema) (mode : String) (extra : List (XPath4.Doc × Na
   | .ok nd => .ok (some nd, [])
   | .error x => if x.code == "FODC0007" || x.code == "XQDY0061" || x.code == "XQDY0084" then .ok (none, [x.msg]) else .error x
 
+/-- The description of a type definition that is not a built-in type, for
+`fn:schema-type` and `fn:node-type-annotation` (F&O 4.0 §20.1). -/
+def typeInfoOf (s : Schema) (q : XPath4.QN) : Option XPath4.SchemaTypeInfo :=
+  if q.uri == xsNS then none else
+  (s.typeOfQN? q).map (fun t =>
+    let name := if q.uri == "" && q.loc.startsWith "#anonymous-" then none else some q
+    match s.type t with
+    | .simple sd =>
+      { name, simple := true, base := s.typeQN sd.base,
+        primitive := sd.builtin.map (fun b => { uri := xsNS, loc := (b.primitive.getD b).localName }),
+        variety := match sd.variety with
+          | .atomic => "atomic"
+          | .list => "list"
+          | .union => "union",
+        cast := some (fun lex => atomsOf s (fun _ => none) t
+          (XSD.applyWhiteSpace .collapse lex)) }
+    | .complex c =>
+      { name, simple := false, base := s.typeQN c.base,
+        variety := match c.content with
+          | .empty => "empty"
+          | .simple _ => "simple"
+          | .elems _ false => "element-only"
+          | .elems _ true => "mixed" })
+
 /-- The in-scope schema definitions of `s` for XPath 4.0. -/
 def schemaHookOf (s : Schema) : XPath4.SchemaHook :=
   { derives := fun t u =>
@@ -167,7 +210,9 @@ def schemaHookOf (s : Schema) : XPath4.SchemaHook :=
       (fun u => u != xsNS && u != xsiNS) |>.eraseDups,
     validate := some (validateFor s),
     validateIn := some (validateNodeIn s),
-    validateWith := some (validateWithFor s) }
+    validateWith := some (validateWithFor s),
+    validateFnNs := some (validateFor fnSchema "strict"),
+    typeInfo := typeInfoOf s }
 
 /-- Validate a document (§5.2, strict) and give its XDM 4.0 document with
 the PSVI type annotations. -/

@@ -157,7 +157,15 @@ def analyzeString (e : Env) (s : String) (re : Re4) : Seq :=
     (out, sg.stop)) (#[], 0)
   let nodes := if input.length > cur then nodes.push (fnEl "non-match" [] [.text (cpsStr (Regex.slice input cur input.length))]) else nodes
   let root : Node := .element "analyze-string-result" [{ name := "xmlns", value := nsFN }] nodes.toList
-  let doc := { Doc.ofNodes [root] with baseUri := e.baseUri }
+  -- a schema-aware processor gives the result the type annotations of the
+  -- F&O 4.0 schema for it (`SchemaHook.validateFnNs`); a result that is not
+  -- valid is left untyped
+  let typed : Doc := match e.schema.validateFnNs with
+    | some f => match f root "" with
+      | .ok d => d
+      | .error _ => Doc.ofNodes [root]
+    | none => Doc.ofNodes [root]
+  let doc := { typed with baseUri := e.baseUri }
   -- the element, not the document node
   [.node { doc := runtimeDocId "analyze-string" (s ++ "\x00" ++ toString re.groups), idx := 1, rt := some doc }]
 

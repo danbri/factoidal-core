@@ -12,9 +12,13 @@ The result is an `fn:schema-type-record`. Its `base-type`,
 Hook for schema-aware processing (`L4Factoidal/XSD11/`): a type name
 that is not a built-in type gives `none` from `builtinSchemaType?`; a
 schema-aware host replaces `schemaTypeFn` with one that also looks up the
-in-scope schema types. Nodes have no type annotations in this tree, so
-`fn:node-type-annotation` gives `xs:untyped` for elements and documents
-and `xs:untypedAtomic` for attributes.
+in-scope schema types. `fn:node-type-annotation` gives the record of a
+node's type annotation (`NRec.tann`, set by schema validation): a built-in
+type, or a type of the in-scope schema (`SchemaHook.typeInfo`); else
+`xs:untyped` for elements and documents and `xs:untypedAtomic` for
+attributes. Atomic values carry built-in types only, so
+`fn:atomic-type-annotation` never names a user-defined type:
+https://github.com/danbri/factoidal/issues/1101.
 -/
 import L4Factoidal.XPath4.Lib
 
@@ -26,8 +30,10 @@ def xsQ (l : String) : QN := { uri := nsXS, loc := l, pfx := "xs" }
 
 /-- `fn:schema-type#1` with the argument fixed: a function of arity 0
     that gives the record of the named type. -/
-def schemaTypeThunk (l : String) : Item :=
-  .fn (.papp (.fn (.builtin { uri := nsFN, loc := "schema-type" } 1)) [some [.atom (Atomic.ofQN (xsQ l))]])
+def schemaTypeThunkQ (q : QN) : Item :=
+  .fn (.papp (.fn (.builtin { uri := nsFN, loc := "schema-type" } 1)) [some [.atom (Atomic.ofQN q)]])
+
+def schemaTypeThunk (l : String) : Item := schemaTypeThunkQ (xsQ l)
 
 /-- A function of arity 0 that gives the empty sequence. -/
 def emptyThunk : Item := .fn (.inline [] (.seq .item .star) (.seq []) false [])
@@ -108,15 +114,52 @@ def builtinSchemaType? (l : String) : Option Seq :=
           (some (.atomic (.b b))) (b != .notation && b != .qname))
     | none => none
 
+/-- The record of a type of the in-scope schema (`SchemaHook.typeInfo`).
+No atomic value of this tree carries a user-defined type, so `matches`
+gives false; `constructor` validates the lexical form against the type
+(`fn:schema-type-cast#`). -/
+def userTypeRecord (q : QN) (i : SchemaTypeInfo) : Seq :=
+  let kv (k : String) (v : Seq) : Atomic × Seq := (Atomic.ofStr k, v)
+  [.map ((match i.name with | some n => [kv "name" [.atom (Atomic.ofQN n)]] | none => []) ++
+         [kv "is-simple" [.atom (Atomic.ofBool i.simple)], kv "base-type" [schemaTypeThunkQ i.base]] ++
+         (match i.primitive with | some p => [kv "primitive-type" [schemaTypeThunkQ p]] | none => []) ++
+         [kv "variety" (str i.variety)] ++
+         (if i.simple then [kv "matches" [matchesFn (.choice [])]] else []) ++
+         (if i.cast.isSome && i.variety == "atomic" then
+            [kv "constructor" [.fn (.papp (.fn (.builtin { uri := nsFN, loc := "schema-type-cast#" } 2))
+              [some [.atom (Atomic.ofQN q)], none])]]
+          else []) ++
+         [kv "validate" [validateFn], kv "valid" [validFn none]])]
+
+/-- The record of a type name: a built-in type, or a type of the in-scope
+schema. -/
+def typeRecordOf (e : Env) (q : QN) : Seq :=
+  if q.uri == nsXS then (builtinSchemaType? q.loc).getD []
+  else match e.schema.typeInfo q with
+    | some i => userTypeRecord q i
+    | none => []
+
 /-- `fn:schema-type($name as xs:QName) as schema-type-record?`. -/
-def schemaTypeFn : LibFn := fun _ _ a =>
+def schemaTypeFn : LibFn := fun _ e a =>
   match optAtom (argN a 0) with
-  | some ⟨_, .qn q⟩ =>
-    if q.uri == nsXS then pure ((builtinSchemaType? q.loc).getD []) else pure []
+  | some ⟨_, .qn q⟩ => pure (typeRecordOf e q)
   | _ => pure []
 
+/-- The `constructor` of a type of the in-scope schema: the typed value of
+the string value, validated against the type (FORG0001 when not valid). -/
+def schemaTypeCastFn : LibFn := fun _ e a => do
+  match optAtom (argN a 0), optAtom (argN a 1) with
+  | some ⟨_, .qn q⟩, some v =>
+    match (e.schema.typeInfo q).bind (·.cast) with
+    | some f => match f v.str with
+      | some vs => pure (vs.map Item.atom)
+      | none => err "FORG0001" ("the value " ++ v.str ++ " is not valid for the type " ++ q.eqn)
+    | none => err "XPST0051" ("no such type " ++ q.eqn)
+  | _, none => pure []
+  | _, _ => err "XPTY0004" "schema-type-cast# expects a type name"
+
 def schemaTypeTable : List (String × LibFn) := [
-  ("schema-type", schemaTypeFn),
+  ("schema-type", schemaTypeFn), ("schema-type-cast#", schemaTypeCastFn),
   ("atomic-type-annotation", fun _ _ a =>
     match optAtom (argN a 0) with
     | some x => pure ((builtinSchemaType? x.ty.name).getD [])
@@ -125,7 +168,17 @@ def schemaTypeTable : List (String × LibFn) := [
     match argN a 0 with
     | [.node n] =>
       let k := (e.nrec n).kind
-      if k == .attribute then pure ((builtinSchemaType? "untypedAtomic").getD [])
+      -- the type annotation of a validated node (`NRec.tann`, from the
+      -- schema hook) when it names a built-in type
+      let ann := match (e.nrec n).tann with
+        | some q => match typeRecordOf e q with
+          | [] => none
+          | r => some r
+        | none => none
+      if let some r := ann then
+        if k == .attribute || k == .element then pure r
+        else err "XPTY0004" "fn:node-type-annotation expects an element, attribute or document node"
+      else if k == .attribute then pure ((builtinSchemaType? "untypedAtomic").getD [])
       else if k == .element || k == .document then pure ((builtinSchemaType? "untyped").getD [])
       else err "XPTY0004" "fn:node-type-annotation expects an element, attribute or document node"
     | _ => err "XPTY0004" "fn:node-type-annotation expects a node")

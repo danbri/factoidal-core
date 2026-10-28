@@ -184,9 +184,12 @@ def xsdValidateFn : LibFn := fun _ e a => do
       | .error x => throw x
       | .ok (res, errs) =>
         let id := n.doc + (2 : Nat) ^ 42
+        -- the typed node of an element is a new parentless element
+        -- (record 1 of the validated document, its document node cut off)
         let typed : List Item := match res with
           | some nd => if r.kind == .document then [.node { doc := id, idx := 0, rt := some nd }]
-                       else [.node { doc := id, idx := 1, rt := some nd }]
+                       else [.node { doc := id, idx := 1,
+                                     rt := some { nd with nodes := nd.nodes.modify 1 (fun x => { x with parent := none }) } }]
           | none => []
         let entries : List (Atomic × Seq) :=
           [(Atomic.ofStr "is-valid", [.atom (Atomic.ofBool res.isSome)])] ++
