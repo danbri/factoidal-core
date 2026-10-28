@@ -373,7 +373,7 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
               else out == txt || xmlEq env s txt
             ok? ok ("serialization '" ++ cut out 120 ++ "'")
       | "assert-xml" =>
-          ok? (xmlEq env s txt) ("xml " ++ (cut (serSeq env s) 160))
+          ok? (xmlEq env s txt) ("xml " ++ (cut (serSeq env s) 600))
       | other => .fail ("assertion " ++ other ++ " is not evaluated")
 
 /-- The assert-xml expected value is the element's inner markup. -/

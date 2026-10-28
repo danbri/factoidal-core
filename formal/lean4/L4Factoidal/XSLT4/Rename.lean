@@ -39,7 +39,24 @@ structure Ren where
       arguments (the abstract variables of a top-level package: the
       function raises XTDE3052 when it is called, §3.4.5.2). -/
   varCalls : List (QN × QN) := []
+  /-- Keys and accumulators (local to a package, §3.4.8). -/
+  keys : List (QN × QN) := []
+  accs : List (QN × QN) := []
 deriving Inhabited
+
+/-- The new name of a key or accumulator named by the string `s` (an
+    unprefixed name or an EQName), as an EQName; `s` when it is not
+    renamed. -/
+def Ren.keyName (_ : Ren) (tbl : List (QN × QN)) (s : String) : String :=
+  let t := s.trimAscii.toString
+  let q : QN := if t.startsWith "Q{" then
+      match (t.drop 2).toString.splitOn "}" with
+      | [u, l] => { uri := u, loc := l }
+      | _ => { uri := "", loc := t }
+    else { uri := "", loc := t }
+  match tbl.find? (·.1 == q) with
+  | some (_, q') => q'.eqn
+  | none => s
 
 def Ren.fn (r : Ren) (q : QN) (k : Nat) : QN :=
   match r.fns.find? (fun (n, lo, hi, _) => n == q && lo ≤ k && k ≤ hi) with
@@ -87,6 +104,14 @@ def renE (r : Ren) : Nat → List QN → Expr → RM Expr
         let k := as.length + kw.length
         note 'f' (q.eqn ++ "#" ++ toString k)
         let as' ← as.mapM goO
+        -- keys and accumulators are local to their package (§3.4.8): a
+        -- name given as a string literal follows the renaming
+        let as' := match q.uri == nsFN, q.loc, as' with
+          | true, "key", some (.lit a) :: rest =>
+            (some (.lit (Atomic.ofStr (r.keyName r.keys a.str)))) :: rest
+          | true, "accumulator-before", [some (.lit a)] | true, "accumulator-after", [some (.lit a)] =>
+            [some (.lit (Atomic.ofStr (r.keyName r.accs a.str)))]
+          | _, _, xs => xs
         let kw' ← kw.mapM (fun (n, v) => do pure (n, ← goO v))
         pure (.call (r.fn q k) as' kw')
     | .fref q k => do
@@ -303,12 +328,14 @@ def renAttrSet (r : Ren) (a : AttrSet) : RM AttrSet := do
   pure { a with name := r.set a.name, useSets := ← renSets r a.useSets, body := ← renBody r [] a.body }
 
 def renKey (r : Ren) (k : KeyDef) : RM KeyDef := do
-  pure { k with pat := ← renPattern r k.pat, use := ← renEO r [] k.use, body := ← renBody r [] k.body }
+  let name := ((r.keys.find? (·.1 == k.name)).map (·.2)).getD k.name
+  pure { k with name, pat := ← renPattern r k.pat, use := ← renEO r [] k.use, body := ← renBody r [] k.body }
 
 def renAcc (r : Ren) (a : Accumulator) : RM Accumulator := do
   let rules ← a.rules.mapM (fun ru => do
     pure { ru with pat := ← renPattern r ru.pat, sel := ← renEO r [] ru.sel, body := ← renBody r [] ru.body })
-  pure { a with init := ← renE r 100000 [] a.init, rules }
+  let name := ((r.accs.find? (·.1 == a.name)).map (·.2)).getD a.name
+  pure { a with name, init := ← renE r 100000 [] a.init, rules }
 
 /-- Apply a renaming to the components of a sheet (declarations and
     references). -/

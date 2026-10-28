@@ -107,6 +107,8 @@ structure CSt where
   /-- The components accepted from used packages, with their visibility
       here (hidden ones are left out). -/
   acq : List Comp := []
+  /-- The modes declared (`xsl:mode`) in this package: key, visibility. -/
+  declModes : List (String × String) := []
 deriving Inhabited
 
 abbrev CM := StateT CSt M
@@ -1105,6 +1107,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       if vis == "abstract" then cerr "XTSE0020" "a mode cannot be abstract"
       let md : ModeDef := { name := key, onNoMatch := onm, onMultiple := (as.get "on-multiple-match").getD "use-last", typed := (as.get "typed").getD "unspecified", ty := mty, copyNs := mcn, vis }
       upd (fun sh => { sh with modes := (sh.modes.filter (·.name != key)) ++ [md] })
+      modify (fun s => { s with declModes := s.declModes ++ [(key, vis)] })
       -- 4.0 enclosing modes (§6.9.6): templates inside xsl:mode
       for k in ekids do
         if m.isXsl k "template" then
@@ -1316,6 +1319,7 @@ def compileOverride (prec : Nat) (recs : List OvRec) (pmods : List (String × St
     | none => cerr "XTSE3058" ("xsl:override: " ++ k ++ " " ++ q.show ++ " is not a component of the used package")
   let mut ren : Ren := {}
   let mut abstractOrig := false
+  let mut bad : Option String := none
   let mut comps : List (String × QN × Nat × String) := []
   -- template rules: only in modes the used package makes public (§3.4.6)
   for t in newT do
@@ -1335,7 +1339,7 @@ def compileOverride (prec : Nat) (recs : List OvRec) (pmods : List (String × St
     ren := { ren with tmpls := [(qnOriginal, r.orig)] }
     abstractOrig := r.vis == "abstract"
     match s1.sheet.templates.toList.find? (fun x => x.name == some r.orig) with
-    | some o => if !tmplCompatible o t then cerr "XTSE3070" ("the override of template " ++ nm.show ++ " has an incompatible signature")
+    | some o => if !tmplCompatible o t then bad := some ("the override of template " ++ nm.show ++ " has an incompatible signature")
     | none => pure ()
     comps := comps ++ [("template", nm, 0, if t.vis == "" then "private" else t.vis)]
   | none => pure ()
@@ -1344,7 +1348,7 @@ def compileOverride (prec : Nat) (recs : List OvRec) (pmods : List (String × St
     ren := { ren with fns := [(qnOriginal, 0, 100000, r.orig)] }
     abstractOrig := r.vis == "abstract"
     match s1.sheet.functions.find? (fun x => x.name == r.orig) with
-    | some o => if !fnCompatible o g then cerr "XTSE3070" ("the override of function " ++ g.name.show ++ " has an incompatible signature")
+    | some o => if !fnCompatible o g then bad := some ("the override of function " ++ g.name.show ++ " has an incompatible signature")
     | none => pure ()
     comps := comps ++ [("function", g.name, g.params.length, if g.vis == "" then "private" else g.vis)]
   for g in newG do
@@ -1353,7 +1357,7 @@ def compileOverride (prec : Nat) (recs : List OvRec) (pmods : List (String × St
     abstractOrig := r.vis == "abstract"
     match s1.sheet.globals.find? (fun x => x.name == r.orig) with
     | some o => if !tyIdentical o.declType g.declType then
-        cerr "XTSE3070" ("the override of variable $" ++ g.name.show ++ " has a different type")
+        bad := some ("the override of variable $" ++ g.name.show ++ " has a different type")
     | none => pure ()
     comps := comps ++ [("variable", g.name, 0, if g.isParam then "public" else if g.vis == "" then "private" else g.vis)]
   for a in newA do
@@ -1376,6 +1380,7 @@ def compileOverride (prec : Nat) (recs : List OvRec) (pmods : List (String × St
     else if newT.any (·.name.isSome) then 't' else 'a'
   for (k, _) in origRefs do
     if k != myKind then origMisuse k
+  if let some msg := bad then cerr "XTSE3070" msg
   modify (fun s => { s with sheet := { s.sheet with templates := ts, functions := fs, globals := gs, attrSets := ats },
                             ovComps := s.ovComps ++ comps })
 
@@ -1535,6 +1540,7 @@ def checkSheet : CM Unit := do
         cerr "XTSE0660" ("two templates named " ++ n.show)
     let sets := s.sheet.attrSets
     for a in sets do
+      if a.name.uri.startsWith "#pkg" then continue
       let mut seen : List QN := []
       let mut todo : List QN := a.useSets
       for _ in [0:1000] do

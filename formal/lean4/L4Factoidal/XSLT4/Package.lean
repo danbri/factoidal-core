@@ -336,14 +336,17 @@ def ownComps (s : CSt) (implicitModes : Bool) : List Comp :=
   let ac := (as.map (·.name)).eraseDups.map (fun q =>
     let vs := (as.filter (·.name == q)).map (·.vis) |>.filter (· != "")
     ({ kind := "attribute-set", name := q, declared := vs.getLastD "" } : Comp))
-  let declModes := (sh.modes.drop bM).filter (·.name != "#unnamed")
-  let mc := declModes.map (fun md => ({ kind := "mode", name := qnOfKey md.name, declared := md.vis } : Comp))
+  let _ := bM
+  let declKeys := (s.declModes.map (·.1)).eraseDups.filter (· != "#unnamed")
+  let mc := declKeys.map (fun k =>
+    let vs := (s.declModes.filter (·.1 == k)).map (·.2) |>.filter (· != "")
+    ({ kind := "mode", name := qnOfKey k, declared := vs.getLastD "" } : Comp))
   -- modes used and not declared (allowed when declared-modes is no)
   let acqModes := s.acq.filter (·.kind == "mode") |>.map (·.name.eqn)
   let own : Sheet := { templates := (sh.templates.toList.drop bT).filter (fun t => !s.ovTids.contains t.id) |>.toArray }
   let used := if implicitModes then
       ((sheetModes own).filter (fun k => !k.startsWith "#" && !isMangledMode k && !acqModes.contains k &&
-        !declModes.any (·.name == k))).map (fun k => ({ kind := "mode", name := qnOfKey k } : Comp))
+        !declKeys.contains k)).map (fun k => ({ kind := "mode", name := qnOfKey k } : Comp))
     else []
   tc ++ fc ++ gc ++ ac ++ mc ++ used
 
@@ -400,13 +403,14 @@ def mergeUsed (d : Decl) (n : Nat) (q : PkgOut) : CM Unit := do
     let ov := ovs.find? (fun (k, nm, h) => k == c.kind && nm == c.name && (k != "function" || h == c.hi))
     match ov with
     | some _ =>
-      if c.vis != "public" && c.vis != "abstract" then
+      -- stylesheet parameters of a used package are public there (§3.4.5.2)
+      if c.vis != "public" && c.vis != "abstract" && !c.isParam then
         cerr "XTSE3060" ("the " ++ c.kind ++ " " ++ c.name.show ++ " of the used package is " ++ c.vis ++ " and cannot be overridden")
       let o := mangle n c.name
       recs := recs ++ [{ kind := c.kind, name := c.name, hi := c.hi, orig := o, vis := c.vis }]
       renDecl := renDecl ++ [(c.kind, c.name, c.hi, o)]
     | none =>
-      let vis ← if c.isParam then pure "hidden" else do
+      let vis ← if c.isParam then pure "public" else do
         let byName := rules.filter (fun r => r.matchRank c == 3)
         match byName.getLast? with
         | some r =>
@@ -438,7 +442,11 @@ def mergeUsed (d : Decl) (n : Nat) (q : PkgOut) : CM Unit := do
   let qModes := (sheetModes q.sheet ++ ["#unnamed"]).filter (fun k => k != "#all" && k != "#current" && !isMangledMode k) |>.eraseDups
   let modeMap := qModes.map (fun k => (k, if visModes.contains k then k else mangleMode n k))
   ren := { ren with modes := modeMap.map (fun (k, k') => (k, [k'])) ++ [("#all", modeMap.map (·.2))] }
-  -- parameters keep their names only when visible (never)
+  -- keys and accumulators are local to the used package (§3.4.8); a
+  -- prefixed name is left alone, since its string form has the prefix
+  let localNames (qs : List QN) := (qs.filter (·.uri == "")).eraseDups.map (fun x => (x, mangle n x))
+  ren := { ren with keys := localNames (q.sheet.keys.map (·.name)),
+                    accs := localNames (q.sheet.accumulators.map (·.name)) }
   let params := q.params.map (fun (p, st) => (p, ren.var p, st))
   let (sh, _) : Sheet × Refs := Id.run ((renSheet ren q.sheet).run #[])
   -- the declarations of overridden components get the fresh name
@@ -563,7 +571,7 @@ def finishPackage (principal : String) (top : Bool) : CM (List Comp) := do
     if nm == qnOriginal.eqn || nm.startsWith (qnOriginal.eqn ++ "#") then origMisuse k
   -- XTSE3085: declared modes (§3.4.6.1)
   if declaredModes then
-    let declared := (s.sheet.modes.map (·.name)) ++ accModes
+    let declared := (s.declModes.map (·.1)) ++ accModes
     for k in sheetModes ownSheet do
       if k != "#all" && k != "#current" && !isMangledMode k && !declared.contains k then
         cerr "XTSE3085" ("the mode " ++ k ++ " is used but not declared (declared-modes is yes)")
@@ -604,9 +612,11 @@ def finishPackage (principal : String) (top : Bool) : CM (List Comp) := do
     let s ← get
     let priv := (comps.filter (fun x => x.kind == "template" && x.vis != "public" && x.vis != "final")).map (·.name)
     let pubModes := (comps.filter (fun x => x.kind == "mode" && (x.vis == "public" || x.vis == "final"))).map (·.name.eqn)
+    -- modes that are used and not declared are eligible unless an
+    -- xsl:expose names them (§2.3.3)
     let implicitM := if explicit && !declaredModes then
-        (sheetModes { templates := (s.sheet.templates.toList.drop bT).toArray }).filter (fun k =>
-          !s.sheet.modes.any (·.name == k))
+        (own'.filter (fun x => x.kind == "mode" && !s.declModes.any (·.1 == x.name.eqn) &&
+          rules.all (fun r => r.matchRank x == 0))).map (·.name.eqn)
       else []
     let initModes := ["#unnamed", s.sheet.defaultMode] ++ pubModes ++ implicitM
     -- an implicit package makes every mode public unless it is declared
@@ -615,6 +625,22 @@ def finishPackage (principal : String) (top : Bool) : CM (List Comp) := do
     let im := if restrict then some initModes else none
     modify (fun s => { s with sheet := { s.sheet with privTemplates := priv, isPackage := explicit, initModes := im } })
   pure comps
+
+/-- The name and version that the principal module of a package
+    declares (they win over those of the catalog entry). -/
+def pkgHeader (texts : List (String × String)) (e : PkgEntry) : PkgEntry :=
+  match texts.lookup e.uri with
+  | none => e
+  | some txt => match Doc.ofString txt e.uri with
+    | .error _ => e
+    | .ok d =>
+      let m : Mod := { d, uri := e.uri }
+      match m.rootElem with
+      | none => e
+      | some r =>
+        let as := m.rawAttrs r
+        { e with name := ((Attrs.get as "name").map (·.trimAscii.toString)).getD e.name,
+                 version := ((Attrs.get as "package-version").map (·.trimAscii.toString)).getD e.version }
 
 /-- Compile the package whose principal module is `uri` (with the given
     static parameter values), and the packages it uses, from the catalog
@@ -631,15 +657,42 @@ def compilePkg (lib : List PkgEntry) (texts : List (String × String)) :
       let name := name.trimAscii.toString
       let rs := (as.get "package-version").getD "*"
       let some rng := parseRange rs | cerr "XTSE0020" ("invalid package version range '" ++ rs ++ "'")
-      let cands := lib.filter (fun e => e.name == name && match parseVersion e.version with
+      let entryOk (e : PkgEntry) : Bool := e.name == name && match parseVersion e.version with
         | some v => rng.any (·.matches v)
-        | none => false)
+        | none => false
+      let cands := lib.filter entryOk
+      -- xsl:package-location (§3.4.3): high-priority locations, then the
+      -- catalog, then low-priority locations; archives are not read
+      let mut hiLoc : List String := []
+      let mut loLoc : List String := []
+      for k in d.m.elemKids d.i do
+        if !d.m.isXsl k "package-location" then continue
+        let kas ← effAttrs d.c d.m k
+        let ck ← d.c.enter d.m k kas
+        if !(← useWhenOk ck d.m k kas) then continue
+        if let some atype := kas.get "archive-type" then
+          if (kas.get "path-in-archive").isNone || atype.trimAscii.toString != "zip" then
+            cerr "XTSE3004" "archive-type needs path-in-archive and the value zip"
+        if (kas.get "path-in-archive").isSome then continue
+        if ((kas.get "format").getD "xslt").trimAscii.toString != "xslt" then continue
+        let some h := kas.get "href" | cerr "XTSE0010" "xsl:package-location requires href"
+        let u := resolveHref d.m.uri h
+        if ← kas.bool "is-priority" true then hiLoc := hiLoc ++ [u] else loLoc := loLoc ++ [u]
+      let atLoc (u : String) : CM PkgEntry := do
+        let e := pkgHeader texts { name := "", uri := u }
+        if entryOk e then pure e
+        else cerr "XTSE3003" ("the package at " ++ u ++ " is not " ++ name ++ " with a version in '" ++ rs ++ "'")
       let best := cands.foldl (fun (b : Option PkgEntry) e => match b with
         | none => some e
         | some x => match parseVersion e.version, parseVersion x.version with
           | some v, some w => if cmpVersion v w == .gt then some e else some x
           | _, _ => some x) none
-      let some e := best | cerr "XTSE3000" ("no package " ++ name ++ " with a version in '" ++ rs ++ "'")
+      let found (u : String) : Bool := (texts.lookup u).isSome
+      let e ← match hiLoc.find? found, best, loLoc.find? found with
+        | some u, _, _ => atLoc u
+        | none, some e, _ => pure e
+        | none, none, some u => atLoc u
+        | none, none, none => cerr "XTSE3000" ("no package " ++ name ++ " with a version in '" ++ rs ++ "'")
       if stack.contains name then cerr "XTSE3005" ("the package " ++ name ++ " depends on itself")
       -- static parameter values (§3.4.4)
       let mut wst : List (QN × Seq) := []
@@ -683,19 +736,7 @@ def compilePkg (lib : List PkgEntry) (texts : List (String × String)) :
 def compileStylesheet (principal : String) (texts : List (String × String))
     (staticParams : List (QN × Seq) := []) (lib : List PkgEntry := []) : M Sheet := do
   -- the name and version a package declares win over the catalog's
-  let lib := lib.map (fun e =>
-    match texts.lookup e.uri with
-    | none => e
-    | some txt => match Doc.ofString txt e.uri with
-      | .error _ => e
-      | .ok d =>
-        let m : Mod := { d, uri := e.uri }
-        match m.rootElem with
-        | none => e
-        | some r =>
-          let as := m.rawAttrs r
-          { e with name := ((Attrs.get as "name").map (·.trimAscii.toString)).getD e.name,
-                   version := ((Attrs.get as "package-version").map (·.trimAscii.toString)).getD e.version })
+  let lib := lib.map (pkgHeader texts)
   let r ← compilePkg lib texts 30 principal staticParams [] 0 true
   pure r.sheet
 
