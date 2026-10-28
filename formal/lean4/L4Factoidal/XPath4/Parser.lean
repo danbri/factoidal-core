@@ -50,7 +50,8 @@ def skipWsF (s : Array Char) : Nat → Nat → Nat → Nat
   | 0, _, i => i
   | f + 1, depth, i =>
     let c := chAt s i
-    if i ≥ s.size then i
+    -- an unterminated comment ends after the text (`ws` reports it)
+    if i ≥ s.size then (if depth > 0 then s.size + 1 else i)
     else if c == '(' && chAt s (i+1) == ':' then skipWsF s f (depth + 1) (i + 2)
     else if depth > 0 && c == ':' && chAt s (i+1) == ')' then skipWsF s f (depth - 1) (i + 2)
     else if depth > 0 then skipWsF s f depth (i + 1)
@@ -60,7 +61,9 @@ def skipWsF (s : Array Char) : Nat → Nat → Nat → Nat
 def ws : P Unit := do
   let c ← read
   let i ← get
-  set (skipWsF c.s (c.s.size + 1) 0 i)
+  let j := skipWsF c.s (c.s.size + 1) 0 i
+  if j > c.s.size then synErr "unterminated comment"
+  set j
 
 def pos : P Nat := get
 
@@ -114,7 +117,10 @@ def peekQName : P (Option (Option String × Option String × String × Nat)) := 
       | 0 => j
       | f + 1 => if j ≥ s.size || chAt s j == '}' then j else findClose (j + 1) f
     let j := findClose (i + 2) s.size
-    let uri := String.ofList ((List.range (j - i - 2)).map (fun k => chAt s (i + 2 + k)))
+    -- the braced URI is whitespace-collapsed (as xs:anyURI)
+    let raw := String.ofList ((List.range (j - i - 2)).map (fun k => chAt s (i + 2 + k)))
+    let uri := String.intercalate " " ((raw.splitOn " ").filter (· != "") |>.flatMap (fun w =>
+      (w.split (fun c => c == '\n' || c == '\t' || c == '\r')).toList.map (·.toString) |>.filter (· != "")))
     if chAt s (j+1) == '*' then pure (some (none, some uri, "*", j + 2))
     else match ncnameAt s (j + 1) with
       | some (l, e) => pure (some (none, some uri, l, e))
@@ -137,6 +143,8 @@ def peekQName : P (Option (Option String × Option String × String × Nat)) := 
 def lookupNs (p : String) : P String := do
   let c ← read
   match c.ns.lookup p with
+  -- `declare namespace p = ""` undeclares the prefix (XQuery 4.0 §5.13)
+  | some "" => throw { code := "XPST0081", msg := "undeclared namespace prefix " ++ p }
   | some u => pure u
   | none => match defaultNs.lookup p with
     | some u => pure u
@@ -145,7 +153,10 @@ def lookupNs (p : String) : P String := do
 /-- Resolve a lexical name; `dflt` is the namespace of an unprefixed name. -/
 def resolve (pfx : Option String) (uri : Option String) (l : String) (dflt : String) : P QN := do
   match uri with
-  | some u => pure { uri := u, loc := l }
+  | some u =>
+    if u == "http://www.w3.org/2000/xmlns/" then
+      throw { code := "XQST0070", msg := "the namespace " ++ u ++ " cannot be used in a name" }
+    pure { uri := u, loc := l }
   | none => match pfx with
     | some p => pure { uri := ← lookupNs p, loc := l, pfx := p }
     | none => pure { uri := dflt, loc := l }
@@ -181,6 +192,10 @@ def afterName : P (Option (String × Char × Char)) := do
 
 /-! ## Literals -/
 
+def underscoresEnd (s : Array Char) (j : Nat) : Nat → Nat
+  | 0 => j
+  | f + 1 => if chAt s j == '_' then underscoresEnd s (j + 1) f else j
+
 def digitsUs (s : Array Char) (i : Nat) (ok : Char → Bool) : List Char × Nat :=
   let rec go (j : Nat) (acc : List Char) (fuel : Nat) : List Char × Nat :=
     match fuel with
@@ -188,7 +203,10 @@ def digitsUs (s : Array Char) (i : Nat) (ok : Char → Bool) : List Char × Nat 
     | f + 1 =>
       let c := chAt s j
       if ok c then go (j + 1) (c :: acc) f
-      else if c == '_' && ok (chAt s (j+1)) && !acc.isEmpty then go (j + 1) acc f
+      -- Digits ::= DecDigit ((DecDigit | "_")* DecDigit)? (XPath 4.0 A.2.1)
+      else if c == '_' && !acc.isEmpty then
+        let k := underscoresEnd s j s.size
+        if ok (chAt s k) then go k acc f else (acc.reverse, j)
       else (acc.reverse, j)
   go i [] s.size
 
@@ -260,6 +278,12 @@ def pStringLit : P String := do
   | some (cs, e) => set e; pure (String.ofList cs)
   | none => synErr "unterminated string literal"
 
+/-- The namespace of an unprefixed element name in a name test: the
+    default element namespace (binding `""`, from the static context or
+    `declare default element namespace`, XPath 4.0 §2.2.1.1). -/
+def dfltElemNs : P String := do
+  pure (((← read).ns.lookup "").getD "")
+
 /-! ## The grammar -/
 
 def kindTestNames : List String :=
@@ -267,9 +291,12 @@ def kindTestNames : List String :=
    "processing-instruction", "namespace-node", "schema-element", "schema-attribute",
    "xnode", "jnode"]
 
+/-- XPath 4.0 A.3 (Reserved Function Names). -/
 def reservedFnNames : List String :=
-  kindTestNames ++ ["array", "empty-sequence", "fn", "function", "if", "item", "map",
-   "record", "switch", "typeswitch", "enum"]
+  ["attribute", "comment", "document-node", "element", "namespace-node", "node",
+   "processing-instruction", "schema-attribute", "schema-element", "text", "xnode",
+   "array", "enum", "fn", "function", "if", "item", "jnode", "map", "record", "switch",
+   "type", "typeswitch"]
 
 def atomicTypeOf (q : QN) : P IType := do
   if q.uri == nsXS then
@@ -369,6 +396,7 @@ def pItemType : Nat → P IType
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
     ws
+    let dE ← dfltElemNs
     if ← eatS "(" then
       let t ← pItemType n
       let mut ts := [t]
@@ -408,20 +436,46 @@ def pItemType : Nat → P IType
         | "element" | "attribute" =>
             if ← eatS ")" then pure (if nm == "element" then .elem none else .attr none)
             else
-              let t ← pNameTest ""
-              -- union of names, then optional type name (ignored: no schema types)
+              let t ← pNameTest (if nm == "element" then dE else "")
+              -- NameTestUnion (XPath 4.0 §3.2.7.2), then an optional type
+              -- name (ignored: no schema types)
+              let mut more : List NameTest := []
               for _ in [0:100] do
-                if ← eatS "|" then let _ ← pNameTest "" else break
+                if ← eatS "|" then more := more ++ [← pNameTest (if nm == "element" then dE else "")] else break
               if ← eatS "," then
                 let _ ← pNameTest nsXS
                 let _ ← eatS "?"
               expectS ")"
-              pure (if nm == "element" then .elem (some t) else .attr (some t))
+              let mk (x : NameTest) : IType := if nm == "element" then .elem (some x) else .attr (some x)
+              pure (if more.isEmpty then mk t else .choice ((t :: more).map mk))
         | "document-node" =>
             if ← eatS ")" then pure (.doc none)
             else
-              let t ← pItemType n
-              expectS ")"; pure (.doc (some t))
+              -- document-node(NameTestUnion) abbreviates
+              -- document-node(element(NameTestUnion)) (XPath 4.0 §3.2.7.1)
+              let inner ← match ← afterName with
+                | some ("element", '(', _) | some ("schema-element", '(', _) => pItemType n
+                | _ =>
+                  if (← peekAt 0) == '*' || isNameStart (← peekAt 0) || (← peekAt 0) == 'Q' then
+                    let t ← pNameTest dE
+                    let mut more : List NameTest := []
+                    for _ in [0:100] do
+                      if ← eatS "|" then more := more ++ [← pNameTest dE] else break
+                    pure (if more.isEmpty then .elem (some t) else .choice ((t :: more).map (fun x => .elem (some x))))
+                  else synErr "document-node() takes an element test"
+              expectS ")"; pure (.doc (some inner))
+        | "schema-element" | "schema-attribute" =>
+            -- no schema is imported, so the in-scope element and attribute
+            -- declarations are empty (XPath 4.0 §3.2.7.3.2): the name must
+            -- resolve (XPST0081) and then is not declared (XPST0008).
+            -- Schema-aware processing (agent qt4-H, `L4Factoidal/XSD11/`)
+            -- replaces this branch.
+            match ← peekQName with
+            | some (p, u, l, e) =>
+                set e
+                let q ← resolve p u l (if nm == "schema-element" then dE else "")
+                throw { code := "XPST0008", msg := nm ++ "(" ++ q.show ++ "): no such declaration in the in-scope schema definitions" }
+            | none => synErr ("bad " ++ nm ++ "() test")
         | "function" | "fn" =>
             if ← eatS "*" then expectS ")"; pure .anyFn
             else
@@ -693,16 +747,10 @@ def pExprSingle : Nat → P Expr
         expectKw "if"; expectS "("
         let c ← pExpr n
         expectS ")"
+        -- BracedAction (XPath 4.0 §4.16): `if (C) { A }` has no else
         if ← atS "{" then
           let t ← pEnclosed n
-          if ← eatKw "else" then
-            if ← atKw "if" then
-              let e ← pExprSingle n
-              pure (.ifE c t e)
-            else
-              let e ← pEnclosed n
-              pure (.ifE c t e)
-          else pure (.ifE c t (.seq []))
+          pure (.ifE c t (.seq []))
         else
           expectKw "then"
           let t ← pExprSingle n
@@ -995,6 +1043,7 @@ def pNodeTest : Nat → Axis → P NodeTest
   | 0, _ => synErr "expression too deeply nested"
   | n + 1, ax => do
     ws
+    let dE ← dfltElemNs
     if ← eatS "(" then
       let mut ts := [← pNodeTest n ax]
       for _ in [0:1000] do
@@ -1011,7 +1060,7 @@ def pNodeTest : Nat → Axis → P NodeTest
       match ← peekQName with
       | some (none, none, l, _) =>
         if star || l == "*" then pure (.name (← pNameTest ""))
-        else pure (.ncname (← pNameTest "") l)
+        else pure (.ncname (← pNameTest (if ax == .attribute || ax == .namespace then "" else dE)) l)
       | _ => pure (.name (← pNameTest (if ax == .attribute then "" else "")))
 
 def pStep : Nat → P Expr
@@ -1297,6 +1346,8 @@ def pPrimary : Nat → P Expr
     | some (_, '#', _) =>
         match ← peekQName with
         | some (p, u, l, e) =>
+            if p.isNone && u.isNone && reservedFnNames.contains l then
+              synErr ("reserved function name " ++ l)
             set e
             let q ← resolve p u l nsFN
             expectS "#"
@@ -1333,9 +1384,10 @@ end
     declarations prolog. -/
 def parseXPath (src : String) (ns : List (String × String) := []) : M Expr :=
   let p : P Expr := do
-    -- prolog: declare namespace p = "uri";
+    -- prolog (XPath 4.0 §2.1): DefaultElementNamespaceDecl? NamespaceDecl*
     let mut extra : List (String × String) := []
-    for _ in [0:100] do
+    let mut declared : List String := []
+    for _ in [0:1000] do
       if ← atKw "declare" then
         let save ← get
         adv 7
@@ -1348,8 +1400,22 @@ def parseXPath (src : String) (ns : List (String × String) := []) : M Expr :=
               set e; expectS "="
               let u ← pStringLit
               expectS ";"
-              extra := extra ++ [(pf, u)]
+              if declared.contains pf then
+                throw { code := "XQST0033", msg := "two namespace declarations bind the prefix " ++ pf }
+              if pf == "xml" || pf == "xmlns" || u == nsXML || u == "http://www.w3.org/2000/xmlns/" then
+                throw { code := "XQST0070", msg := "a namespace declaration cannot bind " ++ pf ++ " to " ++ u }
+              declared := pf :: declared
+              extra := (pf, u) :: extra
           | none => synErr "bad namespace declaration"
+        else if ← eatKw "default" then
+          if !(declared.isEmpty && (extra.lookup "").isNone) then
+            synErr "the default element namespace declaration must come first"
+          expectKw "element"; expectKw "namespace"
+          let u ← pStringLit
+          expectS ";"
+          if u == nsXML || u == "http://www.w3.org/2000/xmlns/" then
+            throw { code := "XQST0070", msg := "the default element namespace cannot be " ++ u }
+          extra := ("", u) :: extra
         else set save; break
       else break
     let e ← withReader (fun c => { c with ns := extra ++ c.ns }) (pExpr 100000)
