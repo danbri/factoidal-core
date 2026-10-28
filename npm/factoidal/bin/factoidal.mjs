@@ -656,7 +656,9 @@ handle and written to DIR/lws-state.json after every request that
 changed it (temporary file, fsync, rename), and read back on the next
 start. The engine decides the snapshot format and refuses a snapshot
 path with a dot segment or other traversal form
-(formal/lean4/L4Factoidal/LWS/Snapshot.lean).
+(formal/lean4/L4Factoidal/LWS/Snapshot.lean). A DIR that holds a Linked
+Web Storage storage (written by lws-serve) is refused: only lws-serve
+serves it, through LWS authorization (Wasm/Ops/Solid.lean, solidRefusesLws).
 
 Encryption at rest (off by default): when the environment variable
 FACTOIDAL_LWS_KEY holds a 32-byte key (64 hex digits, or 43 characters of

@@ -55,6 +55,7 @@
 // loader, by the design record's rule that the two conformance classes
 // stay distinct.
 
+import { existsSync, readdirSync } from 'node:fs'
 import { loadEngine } from '../../bin/engine.mjs'
 import { readSnapshot, persistIfChanged, storageKeyText, acquireDirLock, atRestNotice } from '../../lws/persist.mjs'
 
@@ -223,6 +224,10 @@ export async function openSolidStorage (options = {}) {
     if (dir !== null) {
       const snapshot = readSnapshot(dir)
       if (snapshot !== null) config.snapshot = snapshot
+      // The names in DIR, unread: the engine refuses a storage that LWS
+      // keeps there (`solidRefusesLws`, Wasm/Ops/Solid.lean); only lws-serve
+      // serves an LWS storage.
+      config.dirFiles = existsSync(dir) ? readdirSync(dir) : []
     }
     try {
       opened = engine.call('solidOpen', [JSON.stringify(config)])

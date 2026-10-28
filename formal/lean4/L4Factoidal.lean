@@ -970,6 +970,8 @@ import L4Factoidal.LWS.FileLayoutTests
 import L4Factoidal.HTTP.Cors
 import L4Factoidal.HTTP.LocalGuard
 import L4Factoidal.LWS.Cors
+import L4Factoidal.LWS.Handler
+import L4Factoidal.LWS.AccessTheorems
 import L4Factoidal.LWS.Client.Wire
 import L4Factoidal.LWS.Client.Report
 import L4Factoidal.LWS.Client.Machine
