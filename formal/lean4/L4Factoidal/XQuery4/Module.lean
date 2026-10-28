@@ -13,7 +13,7 @@ variable` (with `external` and a default), `declare context item`/
 `value`, `declare function` (with annotations, default parameter values
 of 4.0, and `external` refused with XPST0017 at the call), `import
 module` (from the module texts the caller gives in `Env.resources`
-under `#module <uri>`). `import schema` raises `XQST0009` (no schema
+under `#module <uri>`). `import schema` binds its prefix; the schema itself is the host's (no schema
 support); `declare type` and `declare record` raise `XPST0003`.
 
 A main module is evaluated as follows: the functions are bound
@@ -198,7 +198,31 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
     let some kw ← atDecl | break
     if kw == "import" then
       expectKw "import"
-      if ← eatKw "schema" then qerr "XQST0009" "schema import is not supported"
+      if ← eatKw "schema" then
+        -- XQuery 4.0 §5.11: the in-scope schema definitions come from the
+        -- host (`XPath4.SchemaHook`); the import binds the prefix
+        let mut pfx : Option String := none
+        if ← eatKw "namespace" then
+          pfx := some (← pNCName)
+          expectS "="
+        else if ← eatKw "fixed" then
+          expectKw "default"; expectKw "element"; expectKw "namespace"; pfx := some ""
+        else if ← eatKw "default" then
+          expectKw "element"; expectKw "namespace"; pfx := some ""
+        let u ← pUriLit
+        if ← eatKw "at" then
+          for _ in [0:1000] do
+            let _ ← pUriLit
+            if !(← eatS ",") then break
+        expectS ";"
+        match pfx with
+        | some "xml" | some "xmlns" => qerr "XQST0070" "import prefix xml or xmlns"
+        | some p =>
+          if p != "" && seenNs.contains p then qerr "XQST0033" ("prefix " ++ p ++ " declared twice")
+          if p != "" then seenNs := p :: seenNs
+          ns := (p, u) :: ns.filter (·.1 != p)
+        | none => pure ()
+        continue
       expectKw "module"
       let mut pfx := ""
       if ← eatKw "namespace" then

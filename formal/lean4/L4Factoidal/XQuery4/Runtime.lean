@@ -835,6 +835,26 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
     for e in es do last ← cb.eval env e
     pure last
   | "error" => err (ss.headD "XPST0003") (ss.getD 1 "")
+  | "validate" =>
+    -- XQuery 4.0 §3.21 (validate expressions), through the schema hook
+    match env.schema.validateIn with
+    | none => err "XQST0075" "validate needs an in-scope schema"
+    | some f =>
+      let v ← cb.eval env (es.headD (.seq []))
+      match v with
+      | [.node n] =>
+        let r := env.nrec n
+        if r.kind != .document && r.kind != .element then
+          err "XQTY0030" "the operand of validate is not a document or element node"
+        else
+          let d := env.doc n
+          match f (ss.headD "strict") d n.idx d.uri with
+          | .ok nd =>
+            let id := n.doc + (2 : Nat) ^ 41
+            if r.kind == .document then pure [.node { doc := id, idx := 0, rt := some nd }]
+            else pure [.node { doc := id, idx := 1, rt := some nd }]
+          | .error x => err (if x.code == "FODC0007" then "XQDY0027" else x.code) x.msg
+      | _ => err "XQTY0030" "the operand of validate is not one document or element node"
   | _ => err "XPST0003" ("unknown XQuery construct " ++ tag)
 
 end L4Factoidal.XQuery4

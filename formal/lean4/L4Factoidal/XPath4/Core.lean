@@ -51,6 +51,9 @@ structure SchemaHook where
       `type Q{uri}local`), the element, the document URI; the typed document
       or the error. `none`: this processor has no schema to validate with. -/
   validate : Option (String → L4Factoidal.XML.Node → String → Except Err Doc) := none
+  /-- The same for a node of a document already built (XQuery `validate`):
+      the mode, the document, the node's index, the document URI. -/
+  validateIn : Option (String → Doc → Nat → String → Except Err Doc) := none
 deriving Inhabited
 
 structure Env where

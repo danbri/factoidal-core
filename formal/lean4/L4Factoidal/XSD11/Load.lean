@@ -102,6 +102,37 @@ def validateFor (s : Schema) (mode : String) (root : Node) (uri : String) : Exce
       .error { code := "FODC0007", msg := s!"the document is not valid: {(r.2.errors ++ idcErrs).take 2}" }
     else .ok (psviDoc s r.1 uri)
 
+/-- The XML tree of a node of an XDM document (element names with their
+prefixes, and the in-scope namespaces declared on every element, so the
+tree can be validated on its own). -/
+def nodeTree (d : XPath4.Doc) : Nat → Nat → Node
+  | 0, _ => .text ""
+  | f + 1, i =>
+    let r := d.get i
+    match r.kind with
+    | .element =>
+      let qn (q : XPath4.QN) := if q.pfx == "" then q.loc else q.pfx ++ ":" ++ q.loc
+      let nsAttrs := (r.inscope.filter (fun b => b.1 != "xml")).eraseDups.reverse.map (fun (p, u) =>
+        ({ name := if p == "" then "xmlns" else "xmlns:" ++ p, value := u } : Attribute))
+      let nsAttrs := nsAttrs.foldl (fun acc a => if acc.any (·.name == a.name) then acc else acc ++ [a]) []
+      let ats := r.attrs.toList.map (fun j => let a := d.get j; ({ name := qn a.name, value := a.value } : Attribute))
+      .element (qn r.name) (nsAttrs ++ ats) (r.children.toList.map (nodeTree d f))
+    | .text => .text r.value
+    | .comment => .comment r.value
+    | .pi => .pi r.name.loc r.value
+    | _ => .text ""
+
+/-- `validateFor` on a node of an XDM document: an element, or the document
+element of a document node. -/
+def validateNodeIn (s : Schema) (mode : String) (d : XPath4.Doc) (i : Nat) (uri : String) : Except XPath4.Err XPath4.Doc :=
+  let r := d.get i
+  let elemIdx := if r.kind == .document then
+      r.children.toList.find? (fun j => (d.get j).kind == .element)
+    else some i
+  match elemIdx with
+  | none => .error { code := "XQDY0061", msg := "the document node has no element child" }
+  | some j => validateFor s mode (nodeTree d 100000 j) uri
+
 /-- The in-scope schema definitions of `s` for XPath 4.0. -/
 def schemaHookOf (s : Schema) : XPath4.SchemaHook :=
   { derives := fun t u =>
@@ -115,7 +146,8 @@ def schemaHookOf (s : Schema) : XPath4.SchemaHook :=
       match s.elemIdx? (qnXName n), s.elemIdx? (qnXName h) with
       | some ni, some hi => s.substOk hi ni
       | _, _ => false,
-    validate := some (validateFor s) }
+    validate := some (validateFor s),
+    validateIn := some (validateNodeIn s) }
 
 /-- Validate a document (§5.2, strict) and give its XDM 4.0 document with
 the PSVI type annotations. -/
