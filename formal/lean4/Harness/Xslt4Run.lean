@@ -501,10 +501,13 @@ def defective : List (String × String) :=
   -- default priorities of 4.0 patterns (§6.4.4, §6.4.6, §6.4.7); a
   -- function result type error; a non-public initial template in a
   -- package (§2.3.4); Saxon's code for a recursive item type (XTSE4035);
-  -- a static error in xsl:evaluate (XTDE3160)
+  -- a static error in xsl:evaluate (XTDE3160); format-number with a
+  -- string argument in XPath 1.0 compatibility mode (XPath 4.0 §3.4.1
+  -- converts with fn:number only for xs:double; $value is xs:numeric?)
   [ "priority-124", "priority-141", "priority-160", "priority-162", "priority-163",
     "function-40-012", "accumulator-038", "type-alias-003", "type-alias-004",
-    "evaluate-042" ].map (·, i1163)
+    "evaluate-042", "format-number-014", "format-number-035", "format-number-038",
+    "format-number-039", "format-number-040", "format-number-041" ].map (·, i1163)
 
 structure Tally where
   pass : Nat := 0

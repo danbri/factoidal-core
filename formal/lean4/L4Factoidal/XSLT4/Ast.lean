@@ -166,6 +166,10 @@ inductive Instr where
   /-- A sequence constructor under a `[xsl:]default-collation`
       attribute (§3.7.2): the default collation of its expressions. -/
   | withColl (uri : String) (body : List Instr)
+  /-- The namespace bindings of the stylesheet elements in scope, for
+      the functions that resolve a lexical QName at run time
+      (`format-number`, `key`, `function-available`, ...; §5.1.1). -/
+  | withNs (ns : List (String × String)) (body : List Instr)
   /-- A sequence constructor in (or out of) backwards-compatible mode
       (§3.9): XPath 1.0 compatibility mode for its expressions. -/
   | withCompat (on : Bool) (body : List Instr)
@@ -372,7 +376,7 @@ def Instr.bodies : Instr → List (List Instr)
   | .comment _ b | .pi _ _ b | .nsI _ _ b | .docI b | .var _ _ _ b | .copy _ _ _ _ b
   | .message _ b _ _ | .assertI _ _ b _ | .breakI _ b | .mapI _ b _ | .mapEntry _ _ b
   | .arrayI _ _ b | .arrayMember _ b | .wherePopulated b | .onEmpty _ b | .onNonEmpty _ b
-  | .sourceDoc _ b _ | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b | .withCompat _ b | .doe _ b
+  | .sourceDoc _ b _ | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b | .withNs _ b | .withCompat _ b | .doe _ b
   | .withBase _ b => [b]
   | .applyT _ _ ss ps _ => ss.map SortK.body ++ ps.map WParam.body
   | .callT _ ps | .applyImports ps _ | .nextMatch ps _ | .nextIteration ps => ps.map WParam.body

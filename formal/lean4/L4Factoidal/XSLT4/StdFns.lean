@@ -116,18 +116,25 @@ def builtinAvailable (q : QN) (k : Option Nat) : Bool :=
   let impl := (libLookupAll q).isSome || q.uri == nsXS
   xsl || (cat && impl) || xs
 
+/-- A name argument: an `xs:QName`, or a string holding an EQName or a
+    lexical QName (resolved in `ns`). -/
+def qnArg (ns : List (String × String)) (v : Seq) (useDefault : Bool) (code : String) : M QN :=
+  match v with
+  | [.atom ⟨_, .qn q⟩] => pure q
+  | _ => lexQName ns (strArg v) useDefault code
+
 /-- The host functions of this module. `userFn q k` says whether the
     stylesheet declares `q#k` (`none` arity: any). -/
 def stdHost (userFn : QN → Option Nat → Bool) (q : QN) (k : Nat) : Option HostFn :=
   if q.uri != nsFN then none else
   match q.loc, k with
   | "system-property", 1 => some fun c a => do
-      let n ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE1390"
+      let n ← qnArg c.ns (a.getD 0 []) false "XTDE1390"
       if n.uri == nsXSL then pure (sStr (systemProperty n.loc)) else pure (sStr "")
   | "available-system-properties", 0 => some fun _ _ =>
       pure (systemPropertyNames.map (fun l => Item.atom ⟨.b .qname, .qn { uri := nsXSL, loc := l, pfx := "xsl" }⟩))
   | "function-available", 1 | "function-available", 2 => some fun c a => do
-      let n ← lexQName c.ns (strArg (a.getD 0 [])) true "XTDE1400"
+      let n ← qnArg c.ns (a.getD 0 []) true "XTDE1400"
       let ar : Option Nat := match a.getD 1 [] with
         | [.atom x] => x.str.toNat?
         | _ => none
@@ -146,7 +153,7 @@ def stdHost (userFn : QN → Option Nat → Bool) (q : QN) (k : Nat) : Option Ho
       -- any XSLT element this processor implements (§24.3.2)
       pure (sBool (n.uri == nsXSL && (xslInstructions.contains n.loc || xslOtherElements.contains n.loc)))
   | "type-available", 1 => some fun c a => do
-      let n ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE1428"
+      let n ← qnArg c.ns (a.getD 0 []) false "XTDE1428"
       pure (sBool (n.uri == nsXS && (atypeOfName? n.loc).isSome))
   | _, _ => none
 

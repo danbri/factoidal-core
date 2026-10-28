@@ -1917,6 +1917,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             pure out.toList
     | .staticErr code msg => xerr code msg
     | .withColl u body => run n S { cx with env := { cx.env with defaultCollation := u } } body
+    | .withNs ns body => run n S { cx with env := { cx.env with ns } } body
     | .withCompat on body => run n S { cx with backCompat := on } body
     | .doe cdata body =>
         -- ignored in temporary output state (§26.1.8, §11.4.3); otherwise
