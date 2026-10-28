@@ -566,9 +566,16 @@ def instTriple (fresh : String → BNodeId) (mu : Binding) (tp : TriplePattern) 
           | some o => some { s := s, p := p, o := o }
 
 /-- The quads one template yields under one solution. `GRAPH ?g { … }`
-in a template targets the graph `?g` is bound to; an unbound or
-non-IRI graph slot falls back to the enclosing scope, as the F*
-`instantiate_ggp_quads` does. -/
+in a template targets the graph `?g` is bound to. When `?g` is unbound or
+bound to a term that is not an IRI (a literal; RDF 1.1 Concepts §4: a graph
+name is an IRI or a blank node, and a SPARQL Update quad names an IRI), the
+quads of that block are not included: SPARQL 1.1 Update §3.1.3, "If any
+solution produces a triple containing an unbound variable or an illegal RDF
+construct ... then that triple is not included when processing the
+operation: INSERT will not instantiate new data in the output graph, and
+DELETE will not remove anything". Until 2026-10-28 such a block fell back to
+the enclosing scope (the default graph), as the F* `instantiate_ggp_quads`
+does (https://github.com/danbri/factoidal/issues/1096). -/
 def instQuads (fresh : String → BNodeId) (mu : Binding) (outer : Option WfIri) :
     QueryPattern → List Quad
   | .empty   => []
@@ -577,7 +584,7 @@ def instQuads (fresh : String → BNodeId) (mu : Binding) (outer : Option WfIri)
   | .graph name inner =>
       match constructPredicate name mu with
       | some g => instQuads fresh mu (some g) inner
-      | none   => instQuads fresh mu outer inner
+      | none   => []
   | _ => []
 
 /-- Evaluate a WHERE pattern against a Graph Store view, with the

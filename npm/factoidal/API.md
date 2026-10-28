@@ -644,7 +644,8 @@ RDF/XML `application/rdf+xml` `.rdf`, JSON-LD `application/ld+json` `.jsonld`.
 The media type wins when it is given, and its parameters and letter case do not
 change the answer. An unknown media type (`text/plain`) gives `null`; it does not
 fall back to the name. The query and the fragment of an IRI are ignored.
-`.owl` and `.xml` are not registered and give `null`. Each row of `formats()`
+`.xml` is not registered and gives `null`. `.owl` is not registered either, but
+gives RDF/XML when no media type is given, as Jena does (since 0.20.0). Each row of `formats()`
 has the same `mediaTypes` and `extensions`.
 
 This table is not the one the file readers use. When `factoidal pack` or
@@ -652,8 +653,8 @@ another file-reading command gets no `--format`, it uses the extension table
 `RDF.formatOfExtension` (`formal/lean4/L4Factoidal/RDF/Format.lean`). That
 table also maps `.owl`, `.xml` and `.rdfxml` to RDF/XML, `.ntriples` to
 N-Triples, `.turtle` to Turtle, `.nquads` to N-Quads and `.json-ld` to JSON-LD.
-`syntaxFor` keeps to the registrations, so `syntaxFor('onto.owl')` is `null`.
-Jena's `RDFLanguages.filenameToLang('onto.owl')` gives RDF/XML. The tests are
+`syntaxFor` keeps to the registrations, except `.owl`: `syntaxFor('onto.owl')` is
+`'rdfxml'`, as Jena's `RDFLanguages.filenameToLang('onto.owl')`. The tests are
 in `test/syntax-names-1053.test.mjs`.
 
 `splitIri(iri)` gives `{namespace, localName}`
@@ -1321,6 +1322,87 @@ Details: `lws/README.md`, `solid/server/README.md`,
 [`docs/lws-solid-conformance.md`](https://github.com/danbri/factoidal/blob/main/docs/lws-solid-conformance.md).
 
 
+## Controlled identifier documents (CID 1.0)
+
+[Controlled Identifiers v1.0](https://www.w3.org/TR/cid-1.0/) (W3C
+Recommendation, 15 May 2025). Two functions, in Node, Deno and the browser
+(https://github.com/danbri/factoidal/issues/1100). The Lean engine
+(`L4Factoidal/CID/`) makes every decision; the package moves bytes.
+
+```js
+import { cidValidate, cidRetrieveVerificationMethod } from '@factoidal/core'
+
+const doc = {
+  id: 'https://controller.example/123',
+  verificationMethod: [{
+    id: 'https://controller.example/123#key-456', type: 'Multikey',
+    controller: 'https://controller.example/123',
+    publicKeyMultibase: 'z6MkmM42vxfqZQsv4ehtTjFFxQ4sQKS2w6WR7emozFAn5cxu' }],
+  assertionMethod: ['#key-456'],
+}
+console.log(await cidValidate(doc))                  // { valid: true, errors: [] }
+console.log((await cidValidate({ id: 'x' })).errors) // [{ code: 'idNotUrl', message: …, path: '/id' }]
+
+// Here the host name and the GET are answered locally; by default the
+// package resolves the name and GETs the document itself.
+const r = await cidRetrieveVerificationMethod(
+  'https://controller.example/123#key-456', 'assertionMethod', {
+    now: new Date(),
+    resolve: async () => ['203.0.113.7'],
+    fetch: async () => new Response(JSON.stringify(doc), { headers: { 'content-type': 'application/cid' } }),
+  })
+if (r.ok) console.log(r.verificationMethod.type)     // 'Multikey'
+else console.log(r.code, r.problem)                  // RFC 9457 { type, title, detail }
+```
+
+**`cidValidate(doc)`** checks every MUST of §2. `valid` is the answer of
+the engine's document parser; `errors` lists each failed MUST it finds, with
+the engine's name (`code`), a message, and an RFC 6901 JSON Pointer (`path`;
+`''` is the whole document). A controlled identifier document is public, so
+`secretKeyMultibase`, `secretKeyJwk` and a private JWK member are errors.
+
+**`cidRetrieveVerificationMethod(url, relationship, options)`** is §3.3
+Retrieve Verification Method. `relationship` is one of `authentication`,
+`assertionMethod`, `keyAgreement`, `capabilityInvocation`,
+`capabilityDelegation`. The engine names each request; the package does it:
+
+1. The document URL is `https` (`http` only with `allowHttp: true`).
+2. The host name is resolved (`options.resolve`, default the system
+   resolver under Node and Deno). The fetch is refused (`FETCH_REFUSED`) when
+   any address is loopback, unspecified, link-local or private (RFC 1918,
+   RFC 4193), or the name is a `localhost` name, unless
+   `allowPrivateFetch: true`. This is the guard of `authz-serve`.
+3. The document is fetched from the address the engine chose, with
+   `Accept: application/cid, application/cid+json, application/ld+json, application/json`.
+   No redirect is followed.
+4. The answer must have status 200 (`FETCH_FAILED`) and one of those four
+   media types as its `Content-Type` (`UNSUPPORTED_MEDIA_TYPE`).
+5. §3.3 steps 5–12; a failure is a §3.5 processing error:
+   `INVALID_VERIFICATION_METHOD_URL`, `INVALID_CONTROLLED_IDENTIFIER_DOCUMENT`,
+   `INVALID_CONTROLLED_IDENTIFIER_DOCUMENT_ID`, `INVALID_VERIFICATION_METHOD`,
+   `INVALID_RELATIONSHIP_FOR_VERIFICATION_METHOD`, with `problem.type`
+   `https://w3id.org/security#<code>`.
+6. With `now` (a `Date`, or seconds since the epoch), a method at or after
+   its `expires` or `revoked` time is `VERIFICATION_METHOD_NOT_IN_FORCE`.
+
+The four codes that are not §3.5 errors have a `problem.type` of
+`tag:danbri.github.io,2026:factoidal/cid#<code>`. A failed retrieval does not
+reject; an unknown relationship rejects with a `FactoidalError`.
+
+`options.fetch(url, init)` replaces the GET. It gets `init.headers.accept`,
+`init.redirect: 'manual'` and, when the engine chose one, `init.address`
+(connect there; a replacement that ignores it loses the guard against a
+second DNS answer). It answers a `Response`, or
+`{ status, headers: { get(name) }, text() }`.
+
+**In a browser** a page cannot resolve names, so the guard covers IP
+literals and `localhost` names only; the browser chooses the address of a
+name. The default fetch there is the page's `fetch` with
+`redirect: 'manual'` and `credentials: 'omit'`, under the page's CORS rules.
+
+The design record: `docs/designissues/2026-10-27-cid-1.0.md`.
+
+
 ## An SBM11 store held in Linked Web Storage: `lwsSbm11Reader`
 
 `openSbm11` (the Shardborough store, https://github.com/danbri/factoidal/issues/1009)
@@ -1383,14 +1465,44 @@ Integrity. `openSbm11(source, { verify })` checks reads by default
 (`verify: 'merkle'`, Lean `Storage/Sbm11/HostVerify.lean`, as native
 `l4sbm11 query --verify merkle`). The open reads the `.merkle` sidecar of each
 file and refuses it unless its leaves rebuild the Merkle root in
-`manifest.sbm11`. Each read is then widened to its 65,536-byte chunks, and
-each chunk is checked by its Merkle proof before the engine decodes a byte of
-it; checked chunks are kept for later queries (at most 256 per file). A
+`manifest.sbm11`. Each read is then widened to its chunks (65,536 bytes as
+every packer writes them; any chunk size of 1 to 16 MiB that agrees with the
+file's length and chunk count is admitted), and each chunk is checked by its
+Merkle proof before the engine decodes a byte of it; checked chunks are kept
+for later queries (16 MiB per file). A
 changed byte in a data file, a sidecar or a Merkle reference of the manifest
 refuses the open or the query, and the error names the file.
 `verify: 'none'` checks only the lengths against the manifest and hashes
-nothing. The manifest has no digest of its own; the full-file SHA-256 of each
-file is checked by `factoidal activate` (the op `sbm11Verify`).
+nothing but the manifest. Every open also checks the term count of the
+manifest against the dictionary header (`dict.gdx1`).
+
+Trust anchor (https://github.com/danbri/factoidal/issues/1105). The manifest
+has no digest of its own, so the Merkle check does not bind the manifest
+fields that no read uses: the SHA-256 of each file, the length and SHA-256 of
+the source, the quad count. Give the SHA-256 of the bytes of `manifest.sbm11`
+as `manifestSha256` (64 hex digits; from a signed release, a CID document, or
+a value your application pins):
+
+```js
+import { packSbm11, mapReader, openSbm11 } from "@factoidal/core";
+
+const files = await packSbm11('<http://e/s> <http://e/p> "x" .\n', { syntax: "ntriples" });
+// first open: no anchor; pin the digest the engine computed
+const first = await openSbm11("pinned", { reader: mapReader(files) });
+const pinned = first.manifestSha256;   // 64 lowercase hex digits
+first.close();
+// later opens: the engine refuses a manifest with another digest
+const store = await openSbm11("pinned", { manifestSha256: pinned });
+console.log(store.manifestSha256 === pinned);   // true
+store.close();
+```
+
+The engine computes the digest (HACL* SHA-256) and refuses the open when it
+is not the anchor; the error names `manifest.sbm11` and both digests. With no
+anchor the open is as before, and `store.manifestSha256` gives the digest to
+pin. The open reads no file whole: the full-file SHA-256 of each file is
+checked by `factoidal activate` (the op `sbm11Verify`, whose answer also
+gives `manifestSha256`).
 
 ## Packing an SBM11 generation in memory: `packSbm11`, `mapReader`
 
@@ -1746,7 +1858,7 @@ section "Stage 1" of
 | `memberOrdinal` | `(iri) => number \| null` | the `n` of `rdf:_n`; synchronous |
 | `canonicalize` | `(data, {format?, baseIRI?}) => string` | RDFC-1.0 canonical N-Quads |
 | `graphs` | `(Dataset) => Array<[NamedNode \| BlankNode, Dataset]>` | named graphs, default graph excluded |
-| `canonicalHash` | `(Dataset) => string` | SHA-256 (64 lowercase hex digits) of the RDFC-1.0 canonical N-Quads that `canonicalize` answers, graph names included (since 0.20.0; before, graph names were dropped) |
+| `canonicalHash` | `(data, {format?, baseIRI?}) => string` | SHA-256 (64 lowercase hex digits) of the RDFC-1.0 canonical N-Quads that `canonicalize` answers, graph names included (since 0.20.0; before, graph names were dropped). `data` as for `canonicalize`: a Dataset or text; text is a string of characters, so decode bytes first (UTF-8) |
 | `asDefaultGraph` | `(Dataset) => Dataset` | the triples of every graph, all in the default graph; `canonicalHash(asDefaultGraph(g))` hashes a graph whatever its name |
 | `queryRaw` | `(dataText, sparql, {dataFormat?, entail?, output?}) => object \| string` | one call, serialized answer: `json` (parsed), `csv`, `tsv`, `xml`, `table`, `ntriples` |
 | `queryHdt` | `(hdtBytes, sparql) => Bindings[] \| boolean` | SELECT/ASK over an HDT file's bytes |
@@ -1776,6 +1888,7 @@ section "Stage 1" of
 | `xmlDecrypt`, `xmlEncrypt` | `(document, {keys, allowCbc?})`, `(document, {recipient, algorithm?, keyTransport?, keyWrap?, content?, saml?}) => {document, canonical}` | XML Encryption 1.1. Allowlist: `aes128-gcm`, `aes256-gcm` (CBC only with `allowCbc`), `rsa-oaep-mgf1p`, `xmlenc11#rsa-oaep`, `kw-aes128`, `kw-aes256`, ECDH-ES (P-256, X25519); `rsa-1_5` and remote references refused. Keys are JWKs, `kid` is the `ds:KeyName`. Every failure after the structure check is one error, `XML decryption failed` |
 | `jweDecrypt`, `jweEncrypt` | `(token, {jwk}) => {header, plaintext: Uint8Array}`, `(plaintext, {alg, enc, jwk, header?}) => token` | JWE Compact Serialization (RFC 7516). `alg` RSA-OAEP, RSA-OAEP-256, ECDH-ES, ECDH-ES+A128KW, ECDH-ES+A256KW, A128KW, A256KW, dir; `enc` A128GCM, A256GCM, A128CBC-HS256, A256CBC-HS512. RSA, P-256 and X25519 run in the wasm (HACL\*); AES runs in the host's WebCrypto (`globalThis.crypto.subtle`), so these four functions are asynchronous on every host |
 | `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | | VCDM 2.0 checks; `did:key` (Ed25519) resolution |
+| `cidValidate`, `cidRetrieveVerificationMethod` | `(doc) => {valid, errors}`, `(url, relationship, {fetch?, resolve?, now?, allowHttp?, allowPrivateFetch?}) => {ok, …}` | Controlled Identifiers v1.0 §2 and §3.3; see "Controlled identifier documents" |
 | `literalValue`, `isValidLiteral`, `canonicalLiteral` | `(Literal) => {datatype, recognized, valid, value?, canonical?}`, `=> boolean \| null`, `=> Literal \| null` | synchronous after `ready()`; see "Literal values" |
 | `literalFromValue` | `(boolean \| number \| bigint \| string \| Date, {datatype?}) => Literal` | synchronous after `ready()`; the engine table, or a named datatype; see "Literal values" |
 | `capabilities` | `() => {…}` | which ops the loaded wasm serves |

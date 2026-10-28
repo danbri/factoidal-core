@@ -65,6 +65,26 @@ initialize solidTable : IO.Ref (Std.HashMap String OpenSolid) ← IO.mkRef ∅
 def unknownSolidHandle (h : String) : String :=
   errJson s!"unknown Solid handle: {h}"
 
+/-- **A Solid handle refuses a storage that LWS wrote** (owner requirement
+for 0.21.0: only the LWS request handler reads or changes the data of an LWS
+storage, `L4Factoidal.LWS.AccessTheorems`). `snapshotLws`: the snapshot
+document is one `lwsSnapshot` wrote (`lwsWrittenDoc`); `listed`: the names in
+the storage directory the host listed (configuration member `dirFiles`),
+which name the files of a storage LWS keeps in files (`lwsFilesListed`). -/
+def solidRefusesLws (snapshotLws : Bool) (listed : List String) : Option String :=
+  if snapshotLws || lwsFilesListed listed then
+    some ("config: this directory holds a Linked Web Storage storage (written by lws-serve); " ++
+      "only lws-serve serves it, through LWS authorization")
+  else none
+
+theorem solidRefusesLws_snapshot (listed : List String) :
+    (solidRefusesLws true listed).isSome := by
+  simp [solidRefusesLws]
+
+theorem solidRefusesLws_files (snapshotLws : Bool) (listed : List String)
+    (h : lwsFilesListed listed = true) : (solidRefusesLws snapshotLws listed).isSome := by
+  simp [solidRefusesLws, h]
+
 /-- `enforceWac` is read from the configuration, defaulting to false — the
 first slice serves public resources (see `L4Factoidal/Solid/README.md`). -/
 def serverConfigOfJson (text : String) :
@@ -78,6 +98,14 @@ def serverConfigOfJson (text : String) :
         else match parseJson text with
           | .ok j => some j
           | .error _ => none
+      let listed : List String := match j? with
+        | some j => ((j.getArray? "dirFiles").getD []).filterMap (fun (v : Json) => match v with
+            | .string t => some t
+            | _ => none)
+        | none => []
+      match solidRefusesLws oc.snapshotLws listed with
+      | some e => .error e
+      | none =>
       -- `auth` turns Solid-OIDC on (and Web Access Control with it, unless
       -- the configuration says otherwise); `insecureNoAuth` is the
       -- explicit development mode. `openConfigOfJson` has already refused

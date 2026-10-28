@@ -28,7 +28,10 @@
 //   (https://github.com/danbri/factoidal/issues/1119); pass the limit
 //   options unread and print the `warnings` of `ready`;
 // * with `--cert` and `--key`, listen with Node `https` (TLS) instead of
-//   `http`.
+//   `http`;
+// * with `--guest NAME` (https://github.com/danbri/factoidal/issues/1147),
+//   pass the name unread: the engine decides that a request with no
+//   credentials acts as that user, and which mounts each user reaches.
 //
 // Expert review of the login: https://github.com/danbri/factoidal/issues/1117
 //
@@ -164,6 +167,8 @@ function replaceFile (configDir, write) {
  * @param {string} [options.loginLimit] `--login-limit`, passed unread
  * @param {string} [options.loginWindow] `--login-window`, passed unread
  * @param {boolean} [options.disableRateLimits] `--dangerously-disable-ratelimits`
+ * @param {string} [options.guest] `--guest NAME`: the user a request with no
+ *   credentials acts as (passed unread)
  * @returns {Promise<{handle: string, mounts: object[], step: Function, close: Function}>}
  */
 export async function openWebdav (options = {}) {
@@ -179,6 +184,8 @@ export async function openWebdav (options = {}) {
     window: typeof options.loginWindow === 'string' ? options.loginWindow : null,
     disableRateLimits: options.disableRateLimits === true
   }
+  // The guest user (issue 1147), passed unread; the engine checks it.
+  if (typeof options.guest === 'string') login.guest = options.guest
   const config = { listing, entropy: randomBase64(32), now: nowSeconds(), login }
   // The Host and Origin guard of the HTTP listener (issue 1124): the bound
   // address and the operator's names and origins, passed unread

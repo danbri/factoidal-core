@@ -31,6 +31,7 @@ import { memoryDeltaLogStore } from './delta-log-hosts.mjs';
 import { FactoidalError, errorFromEnvelope, envelopeResult } from './errors.mjs';
 import { buildNodes } from './nodes.mjs';
 import { runWithCipher } from './cipher-host.mjs';
+import { cidFunctions } from './cid.mjs';
 
 // The format names, regimes and query outputs are the engine's tables (op
 // engineTables, formal/lean4/Wasm/Ops/Handles.lean), read once per engine:
@@ -266,6 +267,10 @@ class Store {
  *        Where the deltaLog* functions keep their records
  *        (lib/delta-log-hosts.mjs): IndexedDB in the browser entries. The
  *        default keeps them in the memory of this process.
+ * @param {object} [driver.cidHost]
+ *        Name resolution and the GET of cidRetrieveVerificationMethod
+ *        (lib/cid-node.mjs under Node and Deno). The default is the browser
+ *        host of lib/cid.mjs: the page's fetch, no name resolution.
  */
 function buildApi(driver) {
   let entryPromise; // memoized; a failed load is retried on the next call
@@ -676,15 +681,18 @@ function buildApi(driver) {
       requireEntryFn(e, 'datasetQueryRaw', `query {entail/output}`);
       if (opts.output === undefined) {
         // An entailment regime with the default answer shape.
-        const r = entryResult(e.datasetQueryRaw(ds.handle, sparql, JSON.stringify({
-          entail, output: graphForm ? 'ntriples' : 'json' })), 'query', sparql);
+        // withExtensionRounds: a registered async extension function
+        // (SPARQL 1.1 §17.6) is resolved here as in datasetQuery
+        // (https://github.com/danbri/factoidal/issues/1090).
+        const r = await withExtensionRounds(() => entryResult(e.datasetQueryRaw(ds.handle, sparql,
+          JSON.stringify({ entail, output: graphForm ? 'ntriples' : 'json' })), 'query', sparql));
         if (graphForm) return c.fromNQuads(r.text, ds.prefixes);
         const srj = JSON.parse(r.text);
         if (typeof srj.boolean === 'boolean') return srj.boolean;
         return bindingsFromSrj(srj);
       }
-      const r = entryResult(e.datasetQueryRaw(ds.handle, sparql,
-        JSON.stringify({ entail, output })), 'query', sparql);
+      const r = await withExtensionRounds(() => entryResult(e.datasetQueryRaw(ds.handle, sparql,
+        JSON.stringify({ entail, output })), 'query', sparql));
       return output === 'json' && !graphForm ? JSON.parse(r.text) : r.text;
     }
     const fn = sparql12 ? e.datasetQuery12 : e.datasetQuery;
@@ -922,17 +930,28 @@ function buildApi(driver) {
    * name first, so datasets that differ only in their graph names got the
    * same hash. To hash a graph whatever its name, use
    * canonicalHash(asDefaultGraph(g)).
-   * @param {Dataset} dataset
+   *
+   * The input is what canonicalize() takes: a Dataset, or text (a string,
+   * or {text, format, baseIRI}), with the options {format, baseIRI}. Text is
+   * a JavaScript string: characters, not bytes. Decode bytes first (the RDF
+   * text syntaxes are UTF-8: `new TextDecoder('utf-8', { fatal: true })`);
+   * a Uint8Array is refused.
+   * @param {Dataset|string|{text: string, format?: string, baseIRI?: string}} data
+   * @param {{format?: string, baseIRI?: string}} [options]
    * @returns {Promise<string>}
    */
-  async function canonicalHash(dataset) {
-    if (!(dataset instanceof Dataset)) {
-      throw new TypeError('canonicalHash: expected a Dataset');
+  async function canonicalHash(data, options) {
+    const hashOf = (e, ds) => {
+      requireEntryFn(e, 'datasetCanonicalHash', 'canonicalHash');
+      return entryResult(e.datasetCanonicalHash(ds.handle), 'canonicalHash').hash;
+    };
+    if (data instanceof Dataset && options === undefined) {
+      data.size; // throws the disposed error
+      return hashOf(data._ctx.e, data);
     }
-    dataset.size; // throws the disposed error
-    const c = dataset._ctx;
-    requireEntryFn(c.e, 'datasetCanonicalHash', 'canonicalHash');
-    return entryResult(c.e.datasetCanonicalHash(dataset.handle), 'canonicalHash').hash;
+    // The options are canonicalize()'s, checked by the engine's table for it.
+    const opts = await checkedOptions('canonicalize', optionsOf('canonicalize', options));
+    return withDataset(data, opts, 'canonicalHash', (c, ds) => hashOf(c.e, ds));
   }
 
   /**
@@ -2509,6 +2528,7 @@ function buildApi(driver) {
       store: has('storeOpen') && has('storeHandleQuery'),
       deltaLog: has('deltaLogEncode') && has('deltaLogDecode') && has('deltaLogMerge'),
       literalValues: has('literalValue') && has('literalFromValue'),
+      cid: has('cidValidate') && has('cidRetrieve'),
     };
   }
 
@@ -2615,6 +2635,9 @@ function buildApi(driver) {
     datasetMerge,
   });
 
+  // Controlled Identifiers v1.0 (lib/cid.mjs, issue 1100 items 7 and 9).
+  const cid = cidFunctions({ entry, entryResult, requireEntryFn, host: driver.cidHost });
+
   return {
     parse,
     query,
@@ -2688,6 +2711,8 @@ function buildApi(driver) {
     vcCheckCredentialSubject,
     vcCheckNoDataLoss,
     vcCheckRelatedResourceDigests,
+    cidValidate: cid.cidValidate,
+    cidRetrieveVerificationMethod: cid.cidRetrieveVerificationMethod,
     capabilities,
     openStore,
     queryStore,

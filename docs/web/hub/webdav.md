@@ -1,6 +1,6 @@
 ---
 title: WebDAV
-description: Serve local and remote Linked Web Storage to file browsers over WebDAV with the factoidal CLI — mount files, did:key login to an LWS server, HTTPS through a reverse proxy, Tailscale and SSH tunnels from behind NAT, and the steps to connect from macOS, Windows, Linux and other WebDAV apps.
+description: Serve Linked Web Storage to file browsers over WebDAV, read only, with the factoidal CLI — mount files with named users, a guest user, did:key login to an LWS server, HTTPS through a reverse proxy, Tailscale and SSH tunnels from behind NAT, and the steps to connect from macOS, Windows, Linux and other WebDAV apps.
 layout: hub.njk
 tests: tests/hub/hub_webdav_test.mjs
 ---
@@ -11,63 +11,132 @@ tests: tests/hub/hub_webdav_test.mjs
 library and every command line tool, and in particular all protocol,
 authentication and security code.</p>
 
-[Hub](../) · [Servers](../servers/) · quick start, mount files, a remote LWS storage, login, HTTPS, Tailscale, SSH, XMPP, file browsers
+[Hub](../) · [Servers](../servers/) · read only, quick start, mount files, users and guest, login, HTTPS, Tailscale, SSH, XMPP, file browsers
 
-`factoidal webdav-serve` serves WebDAV (RFC 4918, classes 1 and 2), so that
-macOS Finder, Windows File Explorer, GNOME Files, KDE Dolphin and other
-WebDAV clients can show and change the contents of Linked Web Storage (LWS)
-storages. A storage can be a directory on the same machine or an LWS server
-anywhere on the network. Every WebDAV decision (methods, statuses,
-properties, locks, the mapping to LWS) is made by the Lean 4 code in
+`factoidal webdav-serve` serves WebDAV (RFC 4918, class 1), so that macOS
+Finder, Windows File Explorer, GNOME Files, KDE Dolphin and other WebDAV
+clients can show the contents of Linked Web Storage (LWS) storages on an LWS
+server. Every WebDAV decision (methods, statuses, properties, who a request
+acts as, the mapping to LWS) is made by the Lean 4 code in
 `formal/lean4/L4Factoidal/WebDAV/`; the Node host only moves bytes. Design
 record: `docs/designissues/2026-10-27-webdav.md`
 (<https://github.com/danbri/factoidal/issues/1066>).
 
+## Read only, named users (issue 1147)
+
+<p class="warning"><strong>Security fix, 0.21.0</strong>
+(<a href="https://github.com/danbri/factoidal/issues/1147">issue 1147</a>):
+before 0.21.0, whoever reached the listener acted as a mount's LWS agent,
+and a <code>kind: local</code> mount opened a storage with no access
+control. <code>webdav-serve</code> now works as below.</p>
+
+* **Read only.** Every write method (PUT, DELETE, MKCOL, COPY, MOVE,
+  PROPPATCH, LOCK, UNLOCK) answers 403 on every mount. `writable:` in a
+  mount file is read and ignored. OPTIONS answers `DAV: 1` and
+  `Allow: OPTIONS, GET, HEAD, PROPFIND`. The start prints
+  `read only (emergency mode, issue 1147)`.
+* **Every request acts as one named user.** A request with no credentials
+  acts as the guest user named by `--guest NAME`; with no `--guest` it gets
+  401 (`WWW-Authenticate: Basic`). A request with credentials must log in
+  through the `--users` file; a failed login is 401 and counts toward the
+  failed-login limit; with no `--users` file such a request gets 401.
+* **Each mount names its users.** The key `users:` is required
+  (`- users: alice, guest`). Another user gets 404 for that mount, the same
+  answer as for a mount that does not exist, and the root folder does not
+  list it.
+* **No local mounts.** A `kind: local` mount is refused at start with its
+  file and line. Use `kind: lws` with an agent key (`auth: did-key`): the
+  LWS server then decides each request with its own access control. Local
+  mounts come back when the server can tell from a storage's own data that
+  it has no access control (item 3 of issue 1147, a follow-up).
+* **No credentials from outside the installation.** `auth: bearer` with a
+  `token-file` is refused at start unless the mount file says
+  `allow-external-token: true`; the start then prints a warning.
+
+What is proved in Lean (`formal/lean4/L4Factoidal/WebDAV/Theorems.lean`,
+no `sorry`, no new axiom):
+
+* `handle_no_write`: for every request, every storage operation the server
+  names is a read (`head`, `list` or `get`), whatever the storage answers.
+* `hidden_mount_trace`: a request whose user is not in the target mount's
+  `users:` names no storage operation.
+* `load_no_unauthorized_storage`: every mount the start accepts is
+  `kind: lws`, so no storage is opened with no authorization.
+* `webdav_within_lws`: every storage operation goes to an `lws` mount whose
+  `users:` name the request's user, and leaves the server only as an LWS
+  client operation (`head`, `list` or `read`) with that mount's key or
+  token. So through WebDAV a user can do nothing that the LWS agent of a
+  mount listed for that user could not do over LWS directly, and only
+  reads.
+
+The gap that remains: which LWS agent a WebDAV user acts as is set by the
+configuration (the `users:` of a mount and that mount's key), not derived
+from LWS. Every user listed for a mount acts as that mount's agent. Mapping
+each WebDAV user to an agent of its own is the next stage of issue 1147.
+
 A server cannot run in a browser page, so this page has no live cells. The
-commands below were run on 2026-10-27 with `@factoidal/core` from this
+commands below were run on 2026-10-28 with `@factoidal/core` from this
 repository (`node npm/factoidal/bin/factoidal.mjs`, shown as `factoidal`);
 `tests/hub/hub_webdav_test.mjs` runs them again on every test run.
-`webdav-serve` is in `@factoidal/core` 0.18.0 and later.
+`webdav-serve` is in `@factoidal/core` 0.18.0 and later; the rules above are
+in 0.21.0 and later.
 
 ## Quick start
 
-```
-npm install -g @factoidal/core      # or: npx -y @factoidal/core webdav-serve ...
-mkdir -p dav/notes
-printf '# My notes\n- kind: local\n- path: ./notes\n' > dav/notes.md
-factoidal webdav-serve dav
-```
+A mount is an LWS storage on an LWS server, reached as one LWS agent. Here
+the LWS server is `factoidal lws-serve --authz` on the same machine, and the
+agent is a `did:key` that `webdav-serve` makes.
 
-```
-factoidal webdav-serve: WARNING: EXPERIMENTAL UNREVIEWED CODE - ...
-webdav-serve: listening on http://127.0.0.1:8090 for dav
-webdav-serve: http://127.0.0.1:8090/notes/ - My notes (local)
-http://127.0.0.1:8090
-```
+1. Write the mount file and start `webdav-serve` once. When the key file
+   does not exist, it makes a new P-256 key, writes it with mode 0600, and
+   prints the key's `did:key`:
+
+   ```
+   $ mkdir dav
+   $ printf '# Alice on the LWS server\n- kind: lws\n- url: http://127.0.0.1:8080/\n- auth: did-key\n- key-file: alice.jwk\n- users: guest\n' > dav/alice.md
+   $ factoidal webdav-serve dav --guest guest
+   factoidal webdav-serve: WARNING: read only (emergency mode, issue 1147): every write method (PUT, DELETE, MKCOL, COPY, MOVE, PROPPATCH, LOCK, UNLOCK) answers 403; `writable:` in a mount file is ignored; https://github.com/danbri/factoidal/issues/1147
+   factoidal webdav-serve: WARNING: a request with no credentials acts as the guest user "guest" (--guest)
+   webdav-serve: listening on http://127.0.0.1:8090 for dav, no --users: credentials get 401, guest guest
+   webdav-serve: http://127.0.0.1:8090/alice/ - Alice on the LWS server (lws, read-only, as did:key:zDnaeTTXneUgXnqySJ9oDvS7LLpHW3uL5Qt7EpQFHvB6H298K, users: guest)
+   http://127.0.0.1:8090
+   ```
+
+2. Start the LWS server with that agent as the owner of the new storage, and
+   write files into it with an LWS client that holds the key (for example
+   `createLwsClient({ selfIssued })` of the npm package; the WebDAV server
+   does not write):
+
+   ```
+   $ factoidal lws-serve alice-storage --port 8080 --authz alice-as \
+       --owner did:key:zDnaeTTXneUgXnqySJ9oDvS7LLpHW3uL5Qt7EpQFHvB6H298K
+   lws-serve: listening on http://127.0.0.1:8080 for alice-storage
+   lws-serve: authorization server http://127.0.0.1:8080 (keys in alice-as)
+   http://127.0.0.1:8080
+   ```
+
+3. Anonymous requests to the LWS server get 401; requests through the WebDAV
+   mount carry Alice's token, and only read:
+
+   ```
+   $ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/
+   401
+   $ curl -si -X OPTIONS http://127.0.0.1:8090/ | grep -i -E '^(dav|ms-author-via|allow):'
+   dav: 1
+   ms-author-via: DAV
+   allow: OPTIONS, GET, HEAD, PROPFIND
+   $ curl -s http://127.0.0.1:8090/alice/note.txt
+   from an LWS client
+   $ curl -s -X PROPFIND -H 'Depth: 1' http://127.0.0.1:8090/alice/ | grep -o '<D:href>[^<]*'
+   <D:href>/alice/
+   <D:href>/alice/note.txt
+   $ curl -s -X PUT --data-binary x http://127.0.0.1:8090/alice/note.txt -w '%{http_code}\n'
+   this server is read only (emergency mode, https://github.com/danbri/factoidal/issues/1147)
+   403
+   ```
 
 Open `http://127.0.0.1:8090/` in a file browser ([steps below](#connect-a-file-browser)).
-The root folder holds one folder per mount. With curl:
-
-```
-$ curl -si -X OPTIONS http://127.0.0.1:8090/ | grep -i -E '^(dav|ms-author-via|allow):'
-dav: 1, 2
-ms-author-via: DAV
-allow: OPTIONS, GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, PROPPATCH, LOCK, UNLOCK
-$ curl -s -X PUT -H 'content-type: text/plain' --data-binary hello http://127.0.0.1:8090/notes/hello.txt -w '%{http_code}\n'
-201
-$ curl -s -X MKCOL http://127.0.0.1:8090/notes/docs/ -w '%{http_code}\n'
-201
-$ curl -s -X PROPFIND -H 'Depth: 1' http://127.0.0.1:8090/notes/ | grep -o '<D:href>[^<]*'
-<D:href>/notes/
-<D:href>/notes/docs/
-<D:href>/notes/hello.txt
-```
-
-A `local` mount directory is an LWS storage in the format `lws-serve` uses.
-It is not a copy of the folder tree: an empty directory becomes a storage
-held in one file (`lws-state.json`); with `- storage: files` the content is
-kept in `bodies/` and a journal. Do not put other files in it, and do not
-serve one directory with `lws-serve` and `webdav-serve` at the same time.
+The root folder holds one folder per mount that the user may use.
 
 Options: `--port N` (default 8090; 0 takes a free port) and `--host ADDRESS`
 (default 127.0.0.1).
@@ -87,84 +156,54 @@ properties and no locks.
 
 | Key | Values | Applies to | Default |
 | --- | --- | --- | --- |
-| `kind` | `local`, `lws` | all | required |
-| `path` | a directory, relative to CONFIGDIR | local | required |
-| `storage` | `snapshot`, `files` | local | what the directory holds |
-| `base` | the storage root's IRI, ending in `/` | local | `http://localhost/` |
+| `kind` | `lws` (`local` is refused at start, issue 1147) | all | required |
+| `users` | user names, separated by commas | all | required |
 | `url` | the storage root URL of an LWS server | lws | required |
 | `auth` | `none`, `did-key`, `bearer` | lws | `none` |
 | `key-file` | a P-256 private JWK, relative to CONFIGDIR | lws, `did-key` | required with `did-key` |
 | `token-file` | a file that holds an access token | lws, `bearer` | required with `bearer` |
-| `writable` | `true`, `false` | all | `true` for local, `false` for lws |
+| `allow-external-token` | `true`, `false` | lws, `bearer` | `false`; `bearer` is refused without `true` |
+| `writable` | `true`, `false` (ignored: read only) | all | |
+| `path`, `storage`, `base` | (the keys of a local mount) | local | |
 
-## A remote LWS storage
+A mount file with no `users:`, or a `kind: local` mount, stops the start with
+the file name and line number:
+
+```
+$ factoidal webdav-serve dav --guest guest
+factoidal webdav-serve: l.md:2: a `kind: local` mount opens its storage with no authorization and is refused (emergency mode, https://github.com/danbri/factoidal/issues/1147); use kind: lws with an agent key (`auth: did-key`, `key-file`) and the storage's own access control
+```
+
+## How an lws mount signs in
 
 An `lws` mount reaches an LWS server through the Lean LWS client. With
 `auth: did-key` the mount signs in as a `did:key`: the client reads the
 server's 401, finds the authorization server in the protected resource
 metadata (RFC 9728), and exchanges a self-signed credential for an access
-token (RFC 8693). Here the LWS server is `factoidal lws-serve --authz`, which
-serves the storage and its authorization server on one port.
-
-1. Write the mount file and start `webdav-serve` once. When the key file
-   does not exist, it makes a new P-256 key, writes it with mode 0600, and
-   prints the key's `did:key`:
-
-   ```
-   $ cat dav/alice.md
-   # Alice on the LWS server
-   - kind: lws
-   - url: http://127.0.0.1:8080/
-   - auth: did-key
-   - key-file: alice.jwk
-   - writable: true
-   $ factoidal webdav-serve dav
-   webdav-serve: listening on http://127.0.0.1:8090 for dav
-   webdav-serve: http://127.0.0.1:8090/alice/ - Alice on the LWS server (lws, as did:key:zDnaeTTXneUgXnqySJ9oDvS7LLpHW3uL5Qt7EpQFHvB6H298K)
-   http://127.0.0.1:8090
-   ```
-
-2. Start the LWS server with that agent as the owner of the new storage:
-
-   ```
-   $ factoidal lws-serve alice-storage --port 8080 --authz alice-as \
-       --owner did:key:zDnaeTTXneUgXnqySJ9oDvS7LLpHW3uL5Qt7EpQFHvB6H298K
-   lws-serve: listening on http://127.0.0.1:8080 for alice-storage
-   lws-serve: authorization server http://127.0.0.1:8080 (keys in alice-as)
-   http://127.0.0.1:8080
-   ```
-
-3. Anonymous requests to the LWS server get 401; requests through the WebDAV
-   mount carry Alice's token:
-
-   ```
-   $ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/
-   401
-   $ curl -s -X PUT -H 'content-type: text/plain' --data-binary 'from Finder' \
-       http://127.0.0.1:8090/alice/note.txt -w '%{http_code}\n'
-   201
-   $ curl -s http://127.0.0.1:8090/alice/note.txt
-   from Finder
-   ```
-
-A second mount file can name the same storage and key without
-`writable: true`; that folder is read only and answers 403 to every write.
-Two mounts may name one key file that does not exist yet; they get one key.
+token (RFC 8693). The LWS server decides what the agent may read: a mount
+whose agent has no access gets the storage's refusal (403). Two mounts may
+name one key file that does not exist yet; they get one key.
 
 ## Advanced: login
 
 Logins exist at two points.
 
-**Between the file browser and the WebDAV server.** By default the listener
-has no login: anyone who can open a connection to its port can read and
-change every writable mount. For this reason it binds 127.0.0.1 by default.
-Give it a users file with `--users` and every request needs a user name and
-password (HTTP Basic, RFC 7617):
+**Between the file browser and the WebDAV server.** Every request acts as
+one named user. With `--guest NAME`, a request with no credentials acts as
+`NAME`; anyone who can open a connection to the port reads the mounts whose
+`users:` name it. For this reason the listener binds 127.0.0.1 by default.
+Give it a users file with `--users` and a request with a user name and
+password (HTTP Basic, RFC 7617) acts as that user:
 
 ```
 factoidal webdav-user users.txt alice      # asks for the password, no echo
-factoidal webdav-serve dav --users users.txt
+factoidal webdav-serve dav --users users.txt                 # no credentials: 401
+factoidal webdav-serve dav --users users.txt --guest guest   # no credentials: guest
 ```
+
+The guest name may not be a user of the users file (the start stops), and a
+request with credentials never falls back to the guest: a wrong password, an
+unknown name, a `Bearer` token or a malformed `Authorization` value is 401.
 
 `webdav-user` writes one line per user, with mode 0600:
 
@@ -209,7 +248,7 @@ should check, including what an attacker who has the users file can do.
 Basic sends the password in clear text. Without TLS, `--users` is accepted
 only on a loopback address (127.0.0.1, ::1, localhost); on any other address
 the start stops. With `--cert` and `--key` (below) it is accepted on any
-address. Every user in the file reaches every mount.
+address. A user reaches only the mounts whose `users:` name it.
 
 Other ways to put a login in front of the listener, which also work:
 
@@ -224,6 +263,8 @@ Other ways to put a login in front of the listener, which also work:
 **Between the WebDAV server and an LWS server** (the mount file):
 `auth: did-key` (above) or `auth: bearer` with `token-file`, a token got in
 some other way, sent as `Authorization: Bearer` to every URL under `url`.
+A token file is a credential from outside this installation, so `bearer`
+needs `allow-external-token: true` in the mount file (issue 1147).
 The LWS server decides what the agent may do: with `lws-serve --authz`, the
 `--owner` has full control of a new storage, and other agents get access
 through access grants (`factoidal lws-client grantAccess`). The key file is
@@ -275,9 +316,9 @@ Rules for any proxy:
   (`localhost`, `127.0.0.1`, `[::1]`, the `--host` address and the
   addresses of the machine) and gives 421 Misdirected Request to a request
   whose `Host` is another name. This stops a web page from reaching the
-  server through DNS rebinding. A request that changes a file (PUT, DELETE,
-  MKCOL, MOVE, COPY, PROPPATCH, LOCK) from a web page of another origin gets
-  403; `--allow-origin ORIGIN` admits one
+  server through DNS rebinding. A request with a method other than GET,
+  HEAD and OPTIONS from a web page of another origin gets 403;
+  `--allow-origin ORIGIN` admits one
   (https://github.com/danbri/factoidal/issues/1124).
 
 For `lws-serve` behind a proxy, give the public URL with `--base`
@@ -315,9 +356,9 @@ To expose an LWS server the same way, start it with the public URL:
 --owner DID`, then `tailscale serve --bg 8080`. A WebDAV mount on another
 tailnet machine then uses `- url: https://MACHINE.TAILNET.ts.net/`.
 
-Do not use `tailscale funnel` for `webdav-serve` without `--users`: Funnel
-makes the port public on the Internet, and without a users file the listener
-has no login.
+Do not use `tailscale funnel` for `webdav-serve` with `--guest`: Funnel
+makes the port public on the Internet, and every visitor then reads the
+mounts that list the guest.
 
 ### SSH tunnels
 
@@ -362,8 +403,7 @@ factoidal xmpp-serve xmpp-state --domain example.org --accounts accounts
 # on the server machine, behind NAT: no port is opened
 echo bob-password > bob.password
 factoidal webdav-serve dav --xmpp bob@example.org --xmpp-password-file bob.password \
-  --xmpp-allow alice@example.org --xmpp-host 127.0.0.1 --xmpp-port 5222 \
-  --dangerously-allow-writable-without-login
+  --xmpp-allow alice@example.org --xmpp-host 127.0.0.1 --xmpp-port 5222 --guest guest
 # prints: xmpp:bob@example.org/dav
 ```
 
@@ -374,18 +414,17 @@ accepted. To any other host the connection must be direct TLS (XEP-0368):
 `xmpp-serve --cert --key` serves; plain TCP to a host that is not loopback
 stops the start. STARTTLS is not implemented. There is no DNS SRV lookup.
 
-Access on this path is the allow list only: every allowed JID acts as the
-owner of a local mount, and there is no login on the XMPP path yet
+There is no login on the XMPP path yet
 (<https://github.com/danbri/factoidal/issues/1125>; the per-JID login limit:
-<https://github.com/danbri/factoidal/issues/1128>). So the start is refused
-when a local mount is writable, unless you give
-`--dangerously-allow-writable-without-login` (the server then prints a
-warning), and `--xmpp-allow` must name bare JIDs.
+<https://github.com/danbri/factoidal/issues/1128>), so `--users` is refused
+with `--xmpp`. Every request from an allowed JID acts as the `--guest` user
+(with no `--guest`, every request gets 401), reads only, and reaches only
+the mounts that list the guest. `--xmpp-allow` must name bare JIDs.
 
 What works now (`node tests/webdav/xmpp.mjs`): `alice@example.org` sends
-XEP-0332 `req` stanzas to `bob@example.org/dav` and gets PROPFIND 207, PUT
-201, GET 200, MKCOL 201; a body above 65,536 bytes comes back in
-`chunkedBase64` chunks; `carol@example.org` gets `forbidden`.
+XEP-0332 `req` stanzas to `bob@example.org/dav` and gets PROPFIND 207, GET
+200 and PUT 403; a body above 65,536 bytes comes back in `chunkedBase64`
+chunks; `carol@example.org` gets `forbidden`.
 
 A file browser does not speak XEP-0332, so the reader runs a local proxy,
 `factoidal xmpp-http-proxy`. It connects to the XMPP server as an allowed JID
@@ -434,9 +473,10 @@ litmus, curl, rclone and cadaver (`node tests/webdav/clients.mjs`). The
 desktop file browser steps below are the clients' own documented steps, not
 test results (<https://github.com/danbri/factoidal/issues/1079>).
 
-* **macOS Finder**: Go > Connect to Server (⌘K), type `URL`, Connect. With
-  no login in front, choose Guest; behind a Basic login, Registered User.
-  The volume appears under Locations.
+* **macOS Finder**: Go > Connect to Server (⌘K), type `URL`, Connect.
+  Choose Guest to act as the `--guest` user; choose Registered User to log
+  in with a user of `--users`. The volume appears under Locations, read
+  only (the server answers `DAV: 1`, so Finder does not offer to write).
 * **Windows File Explorer**: This PC > Map network drive, Folder `URL`, or
   in a terminal `net use Z: http://127.0.0.1:8090/`. The WebClient service
   must run (`sc start WebClient`). By default WebClient sends a Basic
@@ -469,6 +509,12 @@ Other WebDAV clients:
 
 ## Limits
 
+* Read only (issue 1147): no file browser can write, lock or set a
+  property; write through an LWS client.
+* Every user listed for a mount acts as that mount's LWS agent; the storage
+  cannot tell those users apart (issue 1147, next stage).
+* No `kind: local` mounts until access control can be detected from a
+  storage's own data (issue 1147, item 3).
 * The login of the listener (`--users`) has had no expert review:
   <https://github.com/danbri/factoidal/issues/1117>.
 * Anyone can block a user name for one window (default 60 seconds) by
@@ -480,5 +526,6 @@ Other WebDAV clients:
   the file browser instead (it reads and writes).
 * LWS keeps no creation time, so `DAV:creationdate` is not given.
 
-Measured on 2026-10-27 (design record): litmus 0.13, 208 pass, 0 fail (out
-of 208), on a local mount and on a remote mount.
+Before 0.21.0 (2026-10-27, design record): litmus 0.13, 208 pass, 0 fail
+(out of 208), on a local mount and on a remote mount. With the server read
+only, the litmus tests that write fail by design.

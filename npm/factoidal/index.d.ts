@@ -586,9 +586,16 @@ export function graphs(dataset: Dataset): Array<[name: NamedNode | BlankNode, gr
  * differ only in their graph names got the same hash. To hash a graph
  * whatever its name (for example one entry of graphs()), use
  * canonicalHash(asDefaultGraph(g)). Rejects when the input holds an RDF 1.2
- * triple term or the section 4.4 call budget is exceeded.
+ * triple term or the section 4.4 call budget is exceeded. The input is what
+ * canonicalize() takes: a Dataset, or text with `format` and `baseIRI`.
+ * Text is a JavaScript string (characters, not bytes): decode bytes first;
+ * the RDF text syntaxes are UTF-8 (`new TextDecoder('utf-8', { fatal: true })`).
+ * A Uint8Array is refused.
  */
-export function canonicalHash(dataset: Dataset): Promise<string>;
+export function canonicalHash(
+  data: Dataset | string | { text: string; format?: DataFormat; baseIRI?: string },
+  options?: { format?: DataFormat; baseIRI?: string },
+): Promise<string>;
 
 /**
  * A new Dataset with the triples of every graph of `dataset`, all in the
@@ -1479,6 +1486,10 @@ export interface Sbm11Store {
   terms: number;
   /** how the engine checks reads; undefined from a wasm module built before the Merkle check */
   verify: 'merkle' | 'none' | undefined;
+  /** the SHA-256 of the bytes of manifest.sbm11, 64 lowercase hex digits, as
+   * the engine computed it at open (pin it, then give it as
+   * `manifestSha256`); undefined from a wasm module built before issue 1105 */
+  manifestSha256: string | undefined;
   query(sparql: string, options?: { base?: string; sparql12?: boolean; reference?: boolean }): Sbm11Answer;
   /** the resources the reader read, when its reader records them (lwsSbm11Reader) */
   readonly evidence: Sbm11ReadEvidence[] | undefined;
@@ -1489,8 +1500,13 @@ export interface Sbm11Store {
  * Node: `source` is a directory unless a reader is given or registered.
  * `verify` (default 'merkle'): the engine checks every byte it decodes against
  * the manifest's Merkle roots and refuses a changed file with its name;
- * 'none' checks lengths only. */
-export function openSbm11(source: string, options?: { reader?: Sbm11Reader; verify?: 'merkle' | 'none' }): Promise<Sbm11Store>;
+ * 'none' checks lengths only.
+ * `manifestSha256`: the trust anchor, the SHA-256 of the bytes of
+ * manifest.sbm11 as 64 hex digits (https://github.com/danbri/factoidal/issues/1105);
+ * the engine refuses the open when the manifest has another digest. */
+export function openSbm11(source: string, options?: {
+  reader?: Sbm11Reader; verify?: 'merkle' | 'none'; manifestSha256?: string
+}): Promise<Sbm11Store>;
 
 /** Serve `source` with `reader`; `null` removes it. */
 export function registerSbm11Source(source: string, reader: Sbm11Reader | null): void;
@@ -1961,6 +1977,70 @@ export function vcCheckRelatedResourceDigests(
   credentialJson: string
 ): Promise<{ valid: boolean; reason?: string }>;
 
+/** One failed MUST of CID 1.0 §2 (cidValidate). */
+export interface CidValidationError {
+  /** The engine's name of the failed MUST, e.g. 'idNotUrl', 'jwkPrivateMember'. */
+  code: string;
+  message: string;
+  /** RFC 6901 JSON Pointer to the member, e.g. '/verificationMethod/1/publicKeyJwk/d'; '' is the whole document. */
+  path: string;
+}
+
+/**
+ * Controlled Identifiers v1.0 §2 (https://www.w3.org/TR/cid-1.0/): check a
+ * controlled identifier document. `valid` is the engine's answer
+ * (L4Factoidal.CID.parseDocument); `errors` lists every failed MUST it found,
+ * empty when valid. Issue 1100 item 9.
+ */
+export function cidValidate(doc: string | object): Promise<{ valid: boolean; errors: CidValidationError[] }>;
+
+/** An RFC 9457 problem details object. */
+export interface CidProblem {
+  /** https://w3id.org/security#<NAME> for a §3.5 error; a tag: URI for the others. */
+  type: string;
+  title: string;
+  detail: string;
+}
+
+export interface CidRetrieveOptions {
+  /**
+   * GET the URL the engine names. Called as fetch(url, init) with
+   * init.headers.accept, init.redirect 'manual' and, when the engine chose
+   * one, init.address (the address to connect to). Answers a Response, or
+   * { status, headers: { get(name) }, text() }. Default: Node and Deno
+   * connect to init.address; a browser uses the page's fetch.
+   */
+  fetch?: (url: string, init: { method: 'GET'; headers: { accept: string }; redirect: 'manual'; address?: string }) =>
+    Promise<{ status: number; headers: { get(name: string): string | null }; text(): Promise<string> }>;
+  /** Every address of a host name. Default: the system resolver (Node, Deno); none in a browser. null: none. */
+  resolve?: ((host: string) => Promise<string[]>) | null;
+  /** Refuse a method that has expired or been revoked at this time (a Date, or seconds since the epoch). */
+  now?: Date | number;
+  /** Allow an http document URL (default: https only). */
+  allowHttp?: boolean;
+  /** Allow loopback, link-local, private and localhost addresses (default: refused). */
+  allowPrivateFetch?: boolean;
+}
+
+/**
+ * Controlled Identifiers v1.0 §3.3 Retrieve Verification Method. The engine
+ * names each fetch and decides each answer (the private-address guard of the
+ * authorization server, the status, the Content-Type: application/cid,
+ * application/cid+json, application/ld+json or application/json, then §3.3);
+ * this function does the fetch. Never rejects for a failed retrieval: it
+ * answers `ok: false` with the §3.5 name (or FETCH_REFUSED, FETCH_FAILED,
+ * UNSUPPORTED_MEDIA_TYPE, VERIFICATION_METHOD_NOT_IN_FORCE) and an RFC 9457
+ * object. Issue 1100 items 7 and 9.
+ */
+export function cidRetrieveVerificationMethod(
+  url: string,
+  relationship: 'authentication' | 'assertionMethod' | 'keyAgreement' | 'capabilityInvocation' | 'capabilityDelegation',
+  options?: CidRetrieveOptions
+): Promise<
+  | { ok: true; verificationMethod: Record<string, unknown>; controllerDocument: string }
+  | { ok: false; code: string; problem: CidProblem }
+>;
+
 /**
  * Feature probe: which ops the loaded wasm module serves. A module older
  * than this package can lack some; an operation whose op is missing
@@ -2017,6 +2097,8 @@ export function capabilities(): Promise<{
   deltaLog: boolean;
   /** ops literalValue and literalFromValue (issue 1051). */
   literalValues: boolean;
+  /** ops cidValidate and cidRetrieve (issue 1100). */
+  cid: boolean;
   /** 'full': the whole library is in the wasm module. */
   profile: 'full' | string;
   /** The dispatch ABI version string of the loaded wasm module. */
@@ -2166,6 +2248,8 @@ declare const _default: {
   vcCheckCredentialSubject: typeof vcCheckCredentialSubject;
   vcCheckNoDataLoss: typeof vcCheckNoDataLoss;
   vcCheckRelatedResourceDigests: typeof vcCheckRelatedResourceDigests;
+  cidValidate: typeof cidValidate;
+  cidRetrieveVerificationMethod: typeof cidRetrieveVerificationMethod;
   capabilities: typeof capabilities;
   Dataset: typeof Dataset;
   Store: typeof Store;

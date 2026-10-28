@@ -81,6 +81,7 @@ import Wasm.Ops.QueryExtras
 import Wasm.Ops.ServiceReg
 import Wasm.Ops.Maths
 import Wasm.Ops.Vc
+import Wasm.Ops.Cid
 import Wasm.Ops.Lenient
 import Wasm.Ops.Validate
 import Wasm.Ops.ShExValidate
@@ -423,13 +424,14 @@ def serviceOpNames : List String :=
   , "clearServiceEndpoints" ]
 
 /-- Stage 2 of https://github.com/danbri/factoidal/issues/713: the matrix and
-sigmoid ops (`Wasm/Ops/Maths.lean`) and the VC and DID ops (`Wasm/Ops/Vc.lean`).
+sigmoid ops (`Wasm/Ops/Maths.lean`), the VC and DID ops (`Wasm/Ops/Vc.lean`) and
+the Controlled Identifiers ops (`Wasm/Ops/Cid.lean`, issue 1100).
 They are stateless, so `call` serves them and `callIO` reaches them through its
 fall-through to `call`. The names are appended to every `ops` reflection by
 `opsReflectionFor`; the arms are in the fall-through case of `call`. -/
 def stage2OpNames : List String :=
   mathsOpNames ++ vcOpNames ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames ++ termsOpNames
-    ++ literalOpNames
+    ++ literalOpNames ++ cidOpNames
 
 /-- Serve a stage 2 op of the full table, or answer the unknown-op error.
 `serializeTurtleWith` and `parseDocument` (the lenient parse,
@@ -441,7 +443,11 @@ private def callStage2 (op : String) (args : List String) : String :=
   | none =>
     match callVc op args with
     | some r => r
-    | none => errJson s!"unknown op '{op}'"
+    | none =>
+      -- Controlled Identifiers v1.0 (Wasm/Ops/Cid.lean, issue 1100).
+      match callCid op args with
+      | some r => r
+      | none => errJson s!"unknown op '{op}'"
 
 /-- `{"ok":true,"abiVersion":"…","ops":[…],"blobOps":[…],"blobIoOps":[…]}`. -/
 private def opsReflectionFor (names : List String) : String :=

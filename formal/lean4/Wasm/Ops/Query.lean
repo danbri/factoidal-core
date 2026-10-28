@@ -309,7 +309,12 @@ def applyUpdateText (ds : Dataset) (updateText : String)
   match parseSparqlUpdate updateText base version with
   | .error e => .error s!"SPARQL update parse error: {fmtParseError e}"
   | .ok u =>
-  match applyUpdateIn { now := now } ds u with
+  -- SPARQL 1.1 Query §17.4.2.8 IRI(): a relative IRI is resolved against the
+  -- base IRI; an Update request has the same Prologue (Update §3, grammar
+  -- rule [29] Update), so the WHERE clauses see its BASE, as a query sees
+  -- `q.base` (https://github.com/danbri/factoidal/issues/1095). `u.base` is
+  -- the base in effect at the end of the request.
+  match applyUpdateIn { base := u.base, now := now } ds u with
   | .error e  => .error (toString e)
   | .ok ds'   => .ok ds'
 
@@ -424,6 +429,14 @@ private def relSelect : String := "SELECT ?x WHERE { BIND(<rel> AS ?x) }"
   "\"value\":\"http://e/b/rel\""
 #guard hasText (updateDatasetOf Dataset.empty "INSERT DATA { <s> <p> <o> }" (some "http://e/b/"))
   "<http://e/b/s>"
+-- IRI() in the WHERE clause of an Update resolves against the BASE of the
+-- request (Query §17.4.2.8; https://github.com/danbri/factoidal/issues/1095),
+-- and against the caller's base when the text has no BASE.
+private def iriInsert : String := "INSERT { ?s ?s ?s } WHERE { BIND(IRI('s') AS ?s) }"
+#guard hasText (updateDataset "" ("BASE <http://www.example.org/> " ++ iriInsert))
+  "<http://www.example.org/s> <http://www.example.org/s> <http://www.example.org/s> ."
+#guard hasText (updateDataset "" iriInsert (some "http://e/b/"))
+  "<http://e/b/s> <http://e/b/s> <http://e/b/s> ."
 
 /-! ### NOW() (https://github.com/danbri/factoidal/issues/743)
 

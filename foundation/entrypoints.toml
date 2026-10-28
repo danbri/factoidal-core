@@ -1233,7 +1233,7 @@ note = "npm/factoidal/lib/api.mjs vcEd25519Verify (fn.js re-exports it) calls th
 id = "wasm:sbm11Open"
 stages = ["sbm11Disk"]
 covers = "part"
-note = "Wasm/Ops/Sbm11.lean sbm11Open: HostSession.resolveHost (CURRENT) and openSession over the host reads of Wasm/HostRead.lean (ffi/l4_hostread.c): the manifest decoded, each artifact's size checked against it, a delta log refused, the GDX1 header read; under verify merkle (the default) every .merkle sidecar admitted against the manifest's root (HostVerify.admit) and every byte read through a 65,536-byte chunk checked by its proof (HostVerify.checkChunk, #guards in HostVerifyTests), verify none checks lengths only. The reads are those of sbm11Disk, under its assumption ReadsWritten; under merkle a changed byte is refused under the collision resistance of SHA-256, which is tested and not proved."
+note = "Wasm/Ops/Sbm11.lean sbm11Open: HostSession.resolveHost (CURRENT) and openSession over the host reads of Wasm/HostRead.lean (ffi/l4_hostread.c): the manifest decoded, each artifact's size checked against it, a delta log refused, the GDX1 header read; under verify merkle (the default) every .merkle sidecar admitted against the manifest's root (HostVerify.admit) and every byte read through a 65,536-byte chunk checked by its proof (HostVerify.checkChunk, #guards in HostVerifyTests), verify none checks lengths only. With the option manifestSha256 (the trust anchor, https://github.com/danbri/factoidal/issues/1105) the SHA-256 of the manifest bytes must be the anchor (HostVerify.checkAnchor, HACL* SHA-256), checked before the manifest is decoded; every open checks the manifest's term count against the GDX1 header (HostVerify.checkTerms); the answer gives manifestSha256, the digest. #guards in HostVerifyTests: a changed manifest refused with the anchor of the old one, the untampered generation opened with its anchor, a wrong anchor refused. The open reads no file whole (the full-file SHA-256 is wasm:sbm11Verify). The reads are those of sbm11Disk, under its assumption ReadsWritten; under merkle a changed byte is refused under the collision resistance of SHA-256, which is tested and not proved."
 
 [[entry]]
 id = "wasm:sbm11Query"
@@ -1247,7 +1247,7 @@ reason = "handle lifecycle: removes an SBM11 handle from the table, reads no RDF
 
 [[nonstage]]
 id = "wasm:sbm11Verify"
-reason = "integrity check of an SBM11 generation before activation (Wasm/Ops/Sbm11.lean): openSession, then for each file the manifest entry of its bytes (PackBytes.artifactOf: length, HACL* SHA-256, Merkle root) and its .merkle sidecar against the manifest; decodes no RDF data. The decoder checks of native l4sbm11 activate are not run"
+reason = "integrity check of an SBM11 generation before activation (Wasm/Ops/Sbm11.lean): openSession, then for each file the manifest entry of its bytes (PackBytes.artifactOf: length, HACL* SHA-256, Merkle root) and its .merkle sidecar against the manifest; decodes no RDF data; the answer gives manifestSha256, the SHA-256 of the manifest bytes, to pin as the trust anchor of openSbm11 (https://github.com/danbri/factoidal/issues/1105). The decoder checks of native l4sbm11 activate are not run"
 
 [[nonstage]]
 id = "wasm:storeLayout"
@@ -1257,7 +1257,7 @@ reason = "store kind (Wasm/Ops/Sbm11.lean): resolves CURRENT and says whether ma
 id = "npm:.#openSbm11"
 stages = ["sbm11Disk", "sbm11WhereStage", "sbm11DecodeStage"]
 covers = "part"
-note = "npm/factoidal/lib/sbm11.mjs openSbm11: the wasm op sbm11Open, and Sbm11Store.query, the wasm op sbm11Query (see wasm:sbm11Open, wasm:sbm11Query); the Node reader lib/sbm11-node.mjs moves bytes only. Not covered: as wasm:sbm11Open and wasm:sbm11Query."
+note = "npm/factoidal/lib/sbm11.mjs openSbm11: the wasm op sbm11Open, and Sbm11Store.query, the wasm op sbm11Query (see wasm:sbm11Open, wasm:sbm11Query); the Node reader lib/sbm11-node.mjs moves bytes only. options.manifestSha256 (the trust anchor, issue 1105) is passed as a string; the engine reads and checks it (see wasm:sbm11Open), and store.manifestSha256 is the digest the engine gives. npm test/sbm11-verify.test.mjs. Not covered: as wasm:sbm11Open and wasm:sbm11Query."
 
 [[entry]]
 id = "npm:./browser#openSbm11"
@@ -1471,3 +1471,30 @@ reason = "term-level: the XSD lexical-to-value mapping of one literal (RDF/Liter
 [[nonstage]]
 id = "wasm:literalFromValue"
 reason = "term-level: the literal of one JavaScript value (RDF/LiteralValue.lean jsValueLiteral), reads no graph"
+
+# Controlled Identifiers v1.0 (https://github.com/danbri/factoidal/issues/1100,
+# items 7 and 9): JSON documents and one host fetch; no RDF data, no stage.
+
+[[nonstage]]
+id = "wasm:cidValidate"
+reason = "JSON document check: CID 1.0 §2 (L4Factoidal/CID/Validate.lean check over CID.parseDocument); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:cidRetrieve"
+reason = "one step of CID 1.0 §3.3 with the host (L4Factoidal/CID/Fetch.lean step: the private-address guard, status and Content-Type, then CID.retrieveFromText); reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#cidValidate"
+reason = "JSON document check over wasm:cidValidate (lib/cid.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#cidRetrieveVerificationMethod"
+reason = "host loop over wasm:cidRetrieve (lib/cid.mjs): resolves and fetches what the engine names (lib/cid-node.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#cidValidate"
+reason = "JSON document check over wasm:cidValidate (lib/cid.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#cidRetrieveVerificationMethod"
+reason = "host loop over wasm:cidRetrieve (lib/cid.mjs) with the page's fetch; reads no RDF data"

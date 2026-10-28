@@ -328,7 +328,7 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests, `Wasm.GraphSetTests,
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
              `Wasm.Ops.Maths,
-             `Wasm.Ops.Vc,
+             `Wasm.Ops.Vc, `Wasm.Ops.Cid,
              `Wasm.Ops.Lenient, `Wasm.Ops.Validate,
              `Wasm.Ops.DeltaLog, `Wasm.Ops.LiteralValue,
              `Wasm.Ops.Terms, `Wasm.Ops.Collections,
