@@ -453,6 +453,12 @@ def Coll.isCodepoint : Coll → Bool
   | .codepoint => true
   | _ => false
 
+/-- The default collation of the static context, as a collation (the
+    codepoint collation if its URI is not known). -/
+def Env.defaultColl (e : Env) : Coll :=
+  if e.defaultCollation == codepointCollation then .codepoint
+  else (collationOf e.baseUri e.defaultCollation).toOption.getD .codepoint
+
 def codepointKey (s : String) : List Nat :=
   s.toList.foldr (fun c acc => let n := c.toNat; (n >>> 16) :: ((n >>> 8) &&& 0xFF) :: (n &&& 0xFF) :: acc) []
 
