@@ -746,10 +746,24 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
       emit ("xmlns" ++ (if r.name.loc == "" then "" else ":" ++ r.name.loc) ++ "=\"" ++ x.p.escAttr false r.value ++ "\"")
     | .element =>
       let isH := x.isHtmlElem r.name
-      let nm := if r.name.pfx == "" then r.name.loc else r.name.pfx ++ ":" ++ r.name.loc
+      -- §7.1 prefix normalization (XHTML method, HTML5): an element in the
+      -- XHTML, SVG or MathML namespace loses its prefix and gets a default
+      -- namespace; prefixes bound to those namespaces are dropped unless an
+      -- attribute of the element uses them
+      let normNs := ["http://www.w3.org/1999/xhtml", "http://www.w3.org/2000/svg",
+        "http://www.w3.org/1998/Math/MathML"]
+      let pnorm := x.m == "xhtml" && x.html5 && normNs.contains r.name.uri
+      let nm := if r.name.pfx == "" || pnorm then r.name.loc else r.name.pfx ++ ":" ++ r.name.loc
       let decls := if x.m == "html" && isH && r.name.uri == "" then
           (e.nsDecls x n scope).filter (fun (pf, _) => pf != "")
         else e.nsDecls x n scope
+      let decls := if !(x.m == "xhtml" && x.html5) then decls else
+        let attrPfx := (e.attrNodes n).map (fun a => (e.nrec a).name.pfx)
+        let kept := decls.filter (fun (pf, u) => pf == "" || !normNs.contains u || attrPfx.contains pf)
+        if pnorm then
+          let kept := kept.filter (fun (pf, _) => pf != "")
+          if scope.lookup "" == some r.name.uri then kept else ("", r.name.uri) :: kept
+        else kept
       if x.p.canonical && decls.any (fun (_, u) => u != "" && !hasScheme u) then
         err "SERE0024" "canonical serialization: a namespace URI is not absolute"
       for a in e.attrNodes n do x.checkChars (e.nrec a).value
@@ -814,7 +828,12 @@ def Env.writeMarkup (e : Env) (p : SerParams) (s : Seq) : M String := do
         | some sys, some pub => emit ("<!DOCTYPE " ++ root ++ " PUBLIC \"" ++ pub ++ "\" \"" ++ sys ++ "\">")
         | some sys, none => emit ("<!DOCTYPE " ++ root ++ " SYSTEM \"" ++ sys ++ "\">")
         | none, some pub =>
-            if m != "xml" then emit ("<!DOCTYPE " ++ root ++ " PUBLIC \"" ++ pub ++ "\">")
+            -- XHTML method, HTML5, no doctype-system: <!DOCTYPE html> (§7.1);
+            -- the HTML method keeps the public identifier
+            if m == "xhtml" && html5 && lower r.name.loc == "html" && x.isHtmlElem r.name then
+              emit "<!DOCTYPE html>"
+              if p.indent then emit "\n"
+            else if m != "xml" then emit ("<!DOCTYPE " ++ root ++ " PUBLIC \"" ++ pub ++ "\">")
         | none, none =>
             if m != "xml" && html5 && lower r.name.loc == "html" && x.isHtmlElem r.name then
               emit "<!DOCTYPE html>"
