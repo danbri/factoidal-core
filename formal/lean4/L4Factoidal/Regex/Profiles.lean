@@ -2,8 +2,11 @@
    XSD 1.0 Part 2 (2004), Appendix F: whole-string membership.
    XPath F&O 2.0 (2010), §7.6: substring matching with i/s/m/x flags.
    ECMA-262 11th ed. (2020), §21.2: conservative BMP subset for JSON Schema.
+   XPath F&O 4.0 (2026 draft), §6.1: the complete 4.0 dialect, a separate
+   parser (`Regex.XPath40`); only `.xpath40` reaches it.
    Unsupported syntax/Unicode behaviour is not a negative match. -/
 import L4Factoidal.Regex.XPath
+import L4Factoidal.Regex.XPath40
 import L4Factoidal.Regex.Ecma
 
 namespace L4Factoidal.Regex.Profiles
@@ -14,7 +17,7 @@ inductive Error where
 deriving DecidableEq, Repr, Inhabited
 
 inductive Dialect where
-  | xsd10 | xpath20 | xpath30 | ecma2020
+  | xsd10 | xpath20 | xpath30 | xpath40 | ecma2020
 deriving DecidableEq, Repr
 
 /-- Check escape meanings before calling the legacy parser. That parser
@@ -24,7 +27,7 @@ def escapesSupported (dialect : Dialect) : List Char → Bool
   | '\\' :: c :: rest =>
       let letters := match dialect with
         | .ecma2020 => "nrtfvdDwWsS" -- Unicode escapes still need a fuller adapter.
-        | .xpath20 | .xpath30 => "nrtsSdD"
+        | .xpath20 | .xpath30 | .xpath40 => "nrtsSdD"
         | .xsd10 => "nrtsS" -- XSD digit/word classes need Unicode category tables.
       (letters.contains c || "\\.-/^$()[]{}|*+?".contains c) && escapesSupported dialect rest
   | '\\' :: [] => false
@@ -102,6 +105,8 @@ def anchorBudgetSupported : List Char → Bool → Bool → Bool → Nat → Boo
     facets use `compileXsd10` instead. -/
 def compileSearch (dialect : Dialect) (pattern flags text : String) : Except Error Compiled :=
   if dialect == .xsd10 then .error (.unsupported "XSD uses whole-string facet compilation")
+  else if dialect == .xpath40 then
+    (XPath40.compile pattern flags).mapError (fun e => .invalid (reprStr e))
   else if dialect == .xpath30 && flags.contains 'q' then
     if flags.contains 'i' && (text.toList.any (fun c => c.toNat > 127) ||
         pattern.toList.any (fun c => c.toNat > 127)) then
@@ -147,5 +152,10 @@ def matchSparql (pattern flags text : String) : Except Error Bool :=
 def replaceSparql (pattern flags text replacement : String) : Except Error String := do
   let r ← compileSearch (if flags.contains 'q' then .xpath30 else .xpath20) pattern flags text
   (replace r text replacement).mapError (fun e => .invalid (reprStr e))
+
+/-- The XPath F&O 4.0 dialect with the F&O error codes kept (err:FORX0001,
+    err:FORX0002), for the XPath 4.0 function library. -/
+def compileXPath40 (pattern flags : String) : Except RegexError Compiled :=
+  XPath40.compile pattern flags
 
 end L4Factoidal.Regex.Profiles

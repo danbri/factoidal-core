@@ -79,6 +79,7 @@ def nodeTestDefault (d : String) (ax : Axis) : NodeTest → NodeTest
       | .name n => if ax == .attribute || ax == .namespace then .name n else .name (ntDefault d n)
       | .kind k => .kind (itDefault d 50 k)
       | u => u))
+  | t => t
 
 /-- Apply `xpath-default-namespace` throughout an expression. -/
 def exprDefault (d : String) : Nat → Expr → Expr
@@ -288,6 +289,7 @@ def defaultPriority (e : Expr) : Float :=
     | .kind (.doc (some _)) => -0.25
     | .kind _ => -0.5
     | .union _ => -0.5
+    | _ => 0.5
   let _ := ofTest
   match e with
   | .step ax t [] => if isPatternAxis ax then ofTest ax t else 0.5

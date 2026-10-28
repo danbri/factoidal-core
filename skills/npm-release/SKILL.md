@@ -187,6 +187,49 @@ must print the new version twice. No test checks it: 0.11.0 was published
 with `package-lock.json` still at 0.10.0, found and corrected at the 0.12.0
 bump (2026-10-22).
 
+## One owner per release (owner, 2026-10-28)
+
+Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" (to
+the LWS-compatibility session) and "Yes, re one owner" (to the proposal to
+record this rule here).
+
+From the first build of the release commit until the version is on npm:
+
+1. One session is the release manager. A release issue names it and lists
+   the steps (first instance: https://github.com/danbri/factoidal/issues/1140,
+   0.20.0).
+2. Only the release manager dispatches, cancels or re-runs a build in
+   `danbri/factoidal-builds`, pushes to its `main`, or runs
+   `npm-publish.yml`. Another session that needs a build step comments on
+   the release issue.
+3. Other sessions can merge to `danbri/factoidal-core` `main` as usual: the
+   release is built from a fixed core commit.
+4. The release manager runs `npm-publish.yml` when the release
+   `build-<12 hex>-web` of the release commit exists.
+
+Why: `build.yml` has the concurrency group `build-factoidal` with
+`cancel-in-progress: false`. It keeps one running run and one waiting run.
+A newer waiting run cancels the run that waited before it. A waiting run
+comes from a dispatch, from the hourly schedule (minute 23), or from a push
+to `factoidal-builds` `main` that changes `.github/workflows/build.yml`,
+`scripts/` or `requests/`. The queue does not cancel a running run.
+
+A gate added to `factoidal-builds` also runs on the release commit, which is
+usually older than core `main`. Before you merge a new gate, check that it
+passes on the commit that is being released.
+
+Cost of not having these rules, 2026-10-28: run 218, the first build of the
+0.20.0 commit `0c9a222b` (05:36 UTC), made no web release because a TLS error
+stopped the Lean toolchain download. Then two sessions dispatched, pushed and
+cancelled builds in the same hours, and the 0.20.0 build was cancelled four
+times. Builds PR 1 had added OWL package steps that run the tools of the
+built commit; the tools in `0c9a222b` stop before any case, so a rebuild
+would have failed too
+(https://github.com/danbri/factoidal-builds/pull/8 is the fix). The web
+release came from run 228
+(https://github.com/danbri/factoidal-builds/actions/runs/40662145237), and
+0.20.0 reached npm at 09:57 UTC, 4 hours 21 minutes after run 218 started.
+
 ## How publishing works
 
 **Status 2026-10-13: the publish workflow is `.github/workflows/npm-publish.yml` in `danbri/factoidal-builds`** (`gh workflow run npm-publish.yml --repo danbri/factoidal-builds -f core_ref=<sha> -f dist_tag=latest -f confirm=<version>`). It publishes from the `web` release of a core commit and needs the owner's Trusted Publisher entry on npmjs.com to name `factoidal-builds`. The history below is the 2026-10-09 state: no active publish workflow existed for

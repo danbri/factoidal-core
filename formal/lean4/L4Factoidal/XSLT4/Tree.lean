@@ -106,6 +106,11 @@ def normItem (env : Env) : Nat → Norm → Item → M Norm
         for m in ms do
           for x in m do nm ← normItem env f nm x
         pure nm
+    | .jnode _ _ v _ => do
+        -- a JNode stands for its ·jvalue·
+        let mut nm := nm
+        for x in v do nm ← normItem env f nm x
+        pure nm
     | .map _ => err "XTDE0450" "a map cannot be added to the content of a node"
     | .fn _ => err "XTDE0450" "a function item cannot be added to the content of a node"
 

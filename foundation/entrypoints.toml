@@ -388,6 +388,16 @@ reason = "reflection: one row of the stage registry with its parameters, runs no
 id = "npm:.#pipe"
 reason = "composition of nodes into a list, runs nothing"
 
+[[nonstage]]
+id = "npm:.#graph"
+reason = "composition of nodes into an acyclic graph with named ports, runs nothing; the check is the wasm op graphCheckNodes (reflection) (issue 1130)"
+
+[[entry]]
+id = "npm:.#datasetMerge"
+stages = ["scopeStage"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs datasetMerge: the wasm op datasetMerge (see wasm:datasetMerge) on the two datasets. Covers scopeStage's run on each input. Not covered: Dataset.combine of the two scoped datasets, which no registry stage covers (the port stage datasetMerge of Wasm/Ops/GraphNodes.lean portStages, theorem mergeDatasets_isMerge), and the prefixes (mergePrefixes) (issue 1130)."
+
 [[entry]]
 id = "npm:.#explain"
 stages = ["rdfsExplainGraphStage"]
@@ -490,6 +500,16 @@ reason = "reflection: one row of the stage registry with its parameters, runs no
 id = "npm:./browser#pipe"
 reason = "composition of nodes into a list, runs nothing"
 
+[[nonstage]]
+id = "npm:./browser#graph"
+reason = "composition of nodes into an acyclic graph with named ports, runs nothing; the check is the wasm op graphCheckNodes (reflection) (issue 1130)"
+
+[[entry]]
+id = "npm:./browser#datasetMerge"
+stages = ["scopeStage"]
+covers = "part"
+note = "npm/factoidal/lib/api.mjs datasetMerge: the wasm op datasetMerge (see wasm:datasetMerge) on the two datasets. Covers scopeStage's run on each input. Not covered: Dataset.combine of the two scoped datasets, which no registry stage covers (the port stage datasetMerge of Wasm/Ops/GraphNodes.lean portStages, theorem mergeDatasets_isMerge), and the prefixes (mergePrefixes) (issue 1130)."
+
 [[entry]]
 id = "npm:./browser#explain"
 stages = ["rdfsExplainGraphStage"]
@@ -543,6 +563,16 @@ reason = "reflection: the stage registry (L4Factoidal.Dataflow.registry, Wasm/Op
 [[nonstage]]
 id = "wasm:pipelineCheck"
 reason = "reflection: the type check and the guarantee data (pipelineReport) of a list of registry stages (Wasm/Ops/StageList.lean), reads no data"
+
+[[nonstage]]
+id = "wasm:graphCheckNodes"
+reason = "reflection: the static check graphIssues of a graph of nodes with named ports (registry stages with Entry.nodeSig and settings, and the port stages of portStages), its output wire and the assumption union sigAssumptions (Wasm/Ops/GraphNodes.lean, Dataflow/Graph.lean); parses an evaluator node's query to read its form, reads no data (issue 1130)"
+
+[[entry]]
+id = "wasm:datasetMerge"
+stages = ["scopeStage"]
+covers = "part"
+note = "Wasm/Ops/GraphNodes.lean datasetMergeOp: mergeDatasets n = datasetMergeAt n (n + 1), scopeStage's run (Dataset.scopeDocument) on each stored dataset with two scope numbers from documentScopeCounter, then Dataset.combine. Not covered: the combine, which no registry stage covers (the port stage datasetMerge, theorem mergeDatasets_isMerge: the result denotes an RDF 1.1 Semantics 5.2 merge), the counter (IO), and the prefixes (mergePrefixes) (issue 1130)."
 
 [[nonstage]]
 id = "wasm:pipelineCheckNodes"

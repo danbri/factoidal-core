@@ -376,6 +376,16 @@ level = 1
 spec = "XML Schema 1.1 Part 2 Appendix G (regular expressions); F&O 3.1 §5.6.1"
 
 [[module]]
+name = "L4Factoidal.Regex.XPath40"
+level = 1
+spec = "XPath and XQuery Functions and Operators 4.0 §6.1 (regular expression syntax)"
+
+[[module]]
+name = "L4Factoidal.Regex.UnicodeProps"
+level = 1
+spec = "Unicode Character Database 16.0.0 (General_Category, Blocks), for F&O 4.0 §6.1 category and block escapes"
+
+[[module]]
 name = "L4Factoidal.Text.CaseMap"
 level = 1
 spec = "Unicode 15 §3.13 (default case conversion), for fn:upper-case and fn:lower-case"
