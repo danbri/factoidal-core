@@ -1105,6 +1105,15 @@ def pKeySpec : Nat → P (Option Expr)
     else if ch == '"' || ch == '\'' then pure (some (.lit (Atomic.ofStr (← pStringLit))))
     else if ch.isDigit then pure (some (← pNumber))
     else if ch == '.' then adv 1; pure (some .ctx)
+    else if ch == '#' then
+      -- a QName literal as the key (XPath 4.0 KeySpecifier)
+      adv 1
+      match ← peekQName with
+      | some (p, u, l, e) =>
+          set e
+          let q ← resolve p u l ""
+          pure (some (.lit (Atomic.ofQN q)))
+      | none => synErr "bad QName literal"
     else
       let c ← read
       let i ← get

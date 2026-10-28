@@ -293,10 +293,98 @@ def roundModeFn : LibFn := fun _ _ a => do
         pure [.atom (mk (if r == 0 && f < 0 then -0.0 else r))]
     | none => pure [.atom x]
 
+/-! ## `fn:unix-dateTime`, `fn:pad-string`, `fn:trim-space`, `fn:system-properties` -/
+
+/-- The civil date of a day count from 1970-01-01 (the proleptic
+    Gregorian calendar; H. Hinnant's `civil_from_days`). -/
+def civilFromDays (z : Int) : Int × Nat × Nat :=
+  let z := z + 719468
+  let era := Int.fdiv z 146097
+  let doe := z - era * 146097
+  let yoe := (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let y := yoe + era * 400
+  let doy := doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp := (5 * doy + 2) / 153
+  let d := doy - (153 * mp + 2) / 5 + 1
+  let m := if mp < 10 then mp + 3 else mp - 9
+  ((if m ≤ 2 then y + 1 else y), m.toNat, d.toNat)
+
+def unixDateTimeFn : LibFn := fun _ _ a => do
+  let ms := if (argN a 0).isEmpty then 0 else intOf (argN a 0)
+  let days := Int.fdiv ms 86400000
+  let rest := ms - days * 86400000
+  let (y, m, d) := civilFromDays days
+  let secMs := rest % 60000
+  let v : DTValue := DTValue.mk (some y) (some m) (some d) (some (rest / 3600000).toNat)
+    (some ((rest % 3600000) / 60000).toNat) (some (Dec.norm ⟨secMs, 3⟩)) (some 0)
+  pure [.atom ⟨.b .dateTimeStamp, .x (.dt .dateTime v)⟩]
+
+def enumOpt (e : Env) (opts : Seq) (key dflt : String) (allowed : List String) : M String := do
+  match optLookup opts key with
+  | none | some [] => pure dflt
+  | some v =>
+    match ← e.coerce (parseTy "xs:string") v key with
+    | [.atom x] => if allowed.contains x.str then pure x.str else err "XPTY0004" (key ++ ": not an allowed value: " ++ x.str)
+    | _ => err "XPTY0004" (key ++ " must be xs:string")
+
+def padRun (pad : List Char) (n : Nat) : String :=
+  String.ofList ((List.range n).map (fun i => pad.getD (i % pad.length) ' '))
+
+def padStringFn : LibFn := fun _ e a => do
+  let s := match optAtom (argN a 0) with
+    | some x => x.str
+    | none => ""
+  let len := intOf (argN a 1)
+  let opts := argN a 2
+  let pad ← match optLookup opts "padding" with
+    | none | some [] => pure " "
+    | some v => match ← e.coerce (parseTy "xs:string") v "padding" with
+      | [.atom x] => pure x.str
+      | _ => err "XPTY0004" "padding must be xs:string"
+  if pad == "" then err "FORG0001" "padding must not be a zero-length string"
+  let side ← enumOpt e opts "side" "end" ["start", "end", "both"]
+  let n : Nat := s.length
+  if len ≤ Int.ofNat n then return sStr s
+  let k : Nat := len.toNat - n
+  let pc := pad.toList
+  match side with
+  | "start" => pure (sStr (padRun pc k ++ s))
+  | "both" => pure (sStr (padRun pc (k / 2) ++ s ++ padRun pc (k - k / 2)))
+  | _ => pure (sStr (s ++ padRun pc k))
+
+def trimSpaceFn : LibFn := fun _ e a => do
+  let s := match optAtom (argN a 0) with
+    | some x => x.str
+    | none => ""
+  let side ← enumOpt e (argN a 1) "side" "both" ["start", "end", "both"]
+  let cs := s.toList
+  let cs := if side != "end" then cs.dropWhile isWs else cs
+  let cs := if side != "start" then (cs.reverse.dropWhile isWs).reverse else cs
+  pure (sStr (String.ofList cs))
+
+def systemPropertiesFn : LibFn := fun _ _ _ =>
+  let q (l : String) : Atomic := Atomic.ofQN { uri := "", loc := l }
+  pure [.map [
+    (q "xpath-version", [.atom (Atomic.ofDec ⟨40, 1⟩)]),
+    (q "xsd-version", [.atom (Atomic.ofDec ⟨11, 1⟩)]),
+    (q "product-name", [.atom (Atomic.ofStr "Factoidal")]),
+    (q "product-version", [.atom (Atomic.ofStr "0.21")]),
+    (q "schema-aware", [.atom (Atomic.ofBool false)]),
+    (q "accepts-typed-data", [.atom (Atomic.ofBool false)]),
+    (q "supports-xinclude", [.atom (Atomic.ofBool false)]),
+    (q "supports-dtd-validation", [.atom (Atomic.ofBool false)]),
+    (q "supports-dtd-attribute-typing", [.atom (Atomic.ofBool false)]),
+    (q "supports-invisible-xml", [.atom (Atomic.ofBool false)]),
+    (q "supports-dynamic-xquery", [.atom (Atomic.ofBool false)]),
+    (q "supports-dynamic-xslt", [.atom (Atomic.ofBool false)]),
+    (q "supports-binary-library", [.atom (Atomic.ofBool false)]),
+    (q "supports-file-library", [.atom (Atomic.ofBool false)])]]
+
 def fn4Table : List (String × LibFn) :=
   [("hash", hashFn), ("random-number-generator", rngFn), ("rng-record#", rngRecordFn),
    ("rng-permute#", rngPermuteFn), ("rng-take#", rngTakeFn),
    ("parts-of-dateTime", partsOfDateTimeFn), ("build-dateTime", buildDateTimeFn),
-   ("round", roundModeFn)]
+   ("round", roundModeFn), ("unix-dateTime", unixDateTimeFn), ("pad-string", padStringFn),
+   ("trim-space", trimSpaceFn), ("system-properties", systemPropertiesFn)]
 
 end L4Factoidal.XPath4
