@@ -3,16 +3,17 @@
 // cells (a server cannot run in a browser page), so this file keeps its
 // transcripts and claims true.
 //
-// The expected failures name the gaps the page states:
-// https://github.com/danbri/factoidal/issues/1108 (no login, no TLS on the
-// WebDAV listener) and https://github.com/danbri/factoidal/issues/1107 (no
-// local proxy for HTTP over XMPP yet, so no file browser reaches it).
+// The login and HTTPS of the listener (https://github.com/danbri/factoidal/issues/1108)
+// are checked as the page shows them. The expected failure names the gap the
+// page states: https://github.com/danbri/factoidal/issues/1107 (no local proxy
+// for HTTP over XMPP yet, so no file browser reaches it).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +23,6 @@ import { TestClient, request as xreq } from '../webdav/xmpp-client.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CLI = path.join(ROOT, 'npm', 'factoidal', 'bin', 'factoidal.mjs');
-const LOGIN_ISSUE = 'https://github.com/danbri/factoidal/issues/1108';
 const XMPP_ISSUE = 'https://github.com/danbri/factoidal/issues/1107';
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-webdav-'));
@@ -52,11 +52,13 @@ function start(args, cwd) {
   });
 }
 
-/** One request with full control of the headers (fetch cannot set Host). */
-function req(origin, method, p, headers = {}, body = undefined) {
+/** One request with full control of the headers (fetch cannot set Host).
+ *  `ca`: the certificate an https origin is checked against. */
+function req(origin, method, p, headers = {}, body = undefined, ca = undefined) {
   const u = new URL(p, origin);
   return new Promise((resolve, reject) => {
-    const r = http.request({ host: u.hostname, port: u.port, method, path: u.pathname, headers }, (res) => {
+    const lib = u.protocol === 'https:' ? https : http;
+    const r = lib.request({ host: u.hostname, port: u.port, method, path: u.pathname, headers, ca }, (res) => {
       let text = '';
       res.setEncoding('utf8');
       res.on('data', (c) => { text += c; });
@@ -134,16 +136,48 @@ function emptyConfig(name) {
   return dir;
 }
 
-xfail('webdav: --users gives HTTP Basic login on the listener', LOGIN_ISSUE, async () => {
+/** `factoidal webdav-user FILE NAME` with the password on standard input. */
+function addUser(cwd, file, name, password) {
+  const r = spawnSync(process.execPath, [CLI, 'webdav-user', file, name, '--iterations', '100000'], { cwd, input: password + '\n', encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stderr;
+}
+
+const basic = (user, password) => 'Basic ' + Buffer.from(`${user}:${password}`).toString('base64');
+
+test('webdav: --users gives HTTP Basic login on the listener', async () => {
   const dir = emptyConfig('users');
-  fs.writeFileSync(path.join(dir, 'users.txt'), 'alice:placeholder\n');
+  assert.match(addUser(dir, 'users.txt', 'alice', 'correct horse'), /added alice in users\.txt/);
+  assert.match(fs.readFileSync(path.join(dir, 'users.txt'), 'utf8'), /^alice:pbkdf2-sha256:100000:[^:]+:[^:]+\n$/);
+  assert.equal(fs.statSync(path.join(dir, 'users.txt')).mode & 0o777, 0o600);
   const s = await start(['webdav-serve', 'dav', '--port', '0', '--users', 'users.txt'], dir);
-  assert.equal((await req(s.origin, 'PROPFIND', '/', { depth: '1' })).status, 401);
+  const no = await req(s.origin, 'PROPFIND', '/', { depth: '1' });
+  assert.equal(no.status, 401);
+  assert.equal(no.headers['www-authenticate'], 'Basic realm="factoidal webdav", charset="UTF-8"');
+  assert.equal((await req(s.origin, 'PROPFIND', '/', { depth: '1', authorization: basic('alice', 'wrong') })).status, 401);
+  assert.equal((await req(s.origin, 'PROPFIND', '/', { depth: '1', authorization: basic('alice', 'correct horse') })).status, 207);
+  // The page: without TLS, --users is refused on an address that is not loopback.
+  const r = spawnSync(process.execPath, [CLI, 'webdav-serve', 'dav', '--port', '0', '--host', '0.0.0.0', '--users', 'users.txt'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /0\.0\.0\.0 is not a loopback address/);
 });
 
-xfail('webdav: --cert and --key serve HTTPS', LOGIN_ISSUE, async () => {
+const OPENSSL = spawnSync('openssl', ['version'], { encoding: 'utf8' }).status === 0;
+
+test('webdav: --cert and --key serve HTTPS', { skip: OPENSSL ? false : 'openssl is not installed: no certificate can be made for the test' }, async () => {
   const dir = emptyConfig('tls');
-  await start(['webdav-serve', 'dav', '--port', '0', '--cert', 'cert.pem', '--key', 'key.pem'], dir);
+  const made = spawnSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes',
+    '-keyout', 'key.pem', '-out', 'cert.pem', '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=IP:127.0.0.1'],
+  { cwd: dir, encoding: 'utf8' });
+  assert.equal(made.status, 0, made.stderr);
+  addUser(dir, 'users.txt', 'alice', 'correct horse');
+  const s = await start(['webdav-serve', 'dav', '--port', '0', '--cert', 'cert.pem', '--key', 'key.pem', '--users', 'users.txt'], dir);
+  assert.match(s.origin, /^https:/);
+  const ca = fs.readFileSync(path.join(dir, 'cert.pem'));
+  assert.equal((await req(s.origin, 'OPTIONS', '/', {}, undefined, ca)).status, 401);
+  const o = await req(s.origin, 'OPTIONS', '/', { authorization: basic('alice', 'correct horse') }, undefined, ca);
+  assert.equal(o.status, 200);
+  assert.equal(o.headers.dav, '1, 2');
 });
 
 /** Start a CLI command; resolve once a stdout line matches `pattern`. */

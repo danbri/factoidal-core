@@ -702,6 +702,7 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "webdavStep"       => withArgs (arityIO2 op Ops.webdavStep)
   | "webdavResume"     => withArgs (arityIO2 op Ops.webdavResume)
   | "webdavClose"      => withArgs (arityIO1 op Ops.webdavClose)
+  | "webdavUser"       => withArgs (arityIO1 op Ops.webdavUser)
   | "lwsOpen"          => withArgs (arityIO1 op Ops.lwsOpen)
   | "lwsStep"          => withArgs (arityIO2 op Ops.lwsStep)
   | "lwsClose"         => withArgs (arityIO1 op Ops.lwsClose)

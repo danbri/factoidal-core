@@ -986,7 +986,21 @@ the WebDAV and LWS mapping, statuses, limits, what each client needs).
 
 ```
 factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]   # default 127.0.0.1:8090
+                       [--users FILE] [--cert FILE --key FILE]
+factoidal webdav-user FILE NAME [--iterations N]              # password on standard input
 ```
+
+Login and HTTPS (https://github.com/danbri/factoidal/issues/1108; expert
+review requested, https://github.com/danbri/factoidal/issues/1117): with
+`--users`, every request needs HTTP Basic against a users file of
+`NAME:pbkdf2-sha256:ITERATIONS:SALT_B64:HASH_B64` lines (PBKDF2-HMAC-SHA256,
+16-byte salt, 600,000 iterations by default, at least 100,000). PBKDF2 runs
+in WebCrypto: the engine answers `{need: {op: 'pbkdf2-hmac-sha256', ...}}`
+and the host gives `answerCipherRequest`'s answer to `webdavResume` (as AES,
+`lib/cipher-host.mjs`). A login is cached for 300 s in the handle. Without
+`--cert`/`--key` the start stops unless the address is loopback. Every
+decision: `L4Factoidal/WebDAV/Login.lean`; design record § "Login and
+HTTPS".
 
 CONFIGDIR holds one Markdown file per mount (`README.md` is not one):
 
@@ -1031,10 +1045,11 @@ CONFIGDIR holds one Markdown file per mount (`README.md` is not one):
 | `formal/lean4/L4Factoidal/WebDAV/Server.lean` | every method as a program over six storage operations (`Backend.Prog`); theorem `refused_keeps_state` |
 | `formal/lean4/L4Factoidal/WebDAV/Local.lean`, `Remote.lean` | an operation as one LWS request; as one LWS client operation (the one module that uses the client API) |
 | `formal/lean4/L4Factoidal/WebDAV/Xml.lean`, `If.lean`, `Path.lean` | XML bodies (depth limit 256, work-list serializer), the `If` header, targets |
+| `formal/lean4/L4Factoidal/WebDAV/Login.lean` | the users file, HTTP Basic, the PBKDF2 request, `ctEq`, the login cache, the loopback rule, `webdav-user`'s line edit; theorems `gate_none`, `finish_unknown` |
 | `formal/lean4/L4Factoidal/WebDAV/State.lean` | `DavState` (dead properties, locks) as the JSON text of `CONFIGDIR/.webdav-state.json`, and back; refuses an unknown format or version |
 | `formal/lean4/L4Factoidal/WebDAV/Tests.lean`, `Theorems.lean` | `#guard`s of every method against `LWS.step MemStore`, directly and through the client; `browse_no_write` |
-| `formal/lean4/Wasm/Ops/WebDAV.lean` | `webdavOpen`, `webdavLoad`, `webdavStep`, `webdavResume`, `webdavClose` |
-| `npm/factoidal/webdav/server.mjs` | the host: sockets, the files the engine names, `lws` requests to the storage handle, `fetch`es |
+| `formal/lean4/Wasm/Ops/WebDAV.lean` | `webdavOpen`, `webdavLoad`, `webdavStep`, `webdavResume`, `webdavClose`, `webdavUser` |
+| `npm/factoidal/webdav/server.mjs` | the host: sockets (`http`, or `https` with `--cert`/`--key`), the files the engine names, `lws` requests to the storage handle, `fetch`es, the PBKDF2 `need` of a login |
 
 Tests: `node tests/webdav/server.mjs` (every method through a local and a
 remote mount on `lws-serve --authz`; dead properties and locks survive a
@@ -1043,7 +1058,10 @@ form in `L4Factoidal/WebDAV/State.lean`,
 https://github.com/danbri/factoidal/issues/1078), `node tests/webdav/litmus.mjs` (needs `apt-get install
 litmus`; expected failures in `tests/webdav/litmus-xfail.tsv`; 2026-10-27:
 208 pass, 0 fail, 0 xfail (out of 208)), `node tests/webdav/scaling.mjs`
-(the decoders at n, 2n, 4n through the wasm module).
+(the decoders at n, 2n, 4n through the wasm module). The login: `tests/webdav/server.mjs`
+§ login (`webdav-user`, 401 and 207, the cache counted in derivations, the
+refusals at start) and `node --test tests/hub/hub_webdav_test.mjs` (HTTPS with
+an `openssl req -x509` certificate).
 
 ### WebDAV over XMPP (https://github.com/danbri/factoidal/issues/1107)
 

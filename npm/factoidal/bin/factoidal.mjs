@@ -97,7 +97,7 @@ const REVIEW_WARNING = 'EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CR
 
 /** The commands that serve, speak a protocol, or handle keys and tokens. */
 const WARNED_COMMANDS = new Set(['serve', 'lws-serve', 'solid-serve', 'solid-client', 'lws-client',
-  'authz-serve', 'authz-keys', 'xmpp-serve', 'webdav-serve'])
+  'authz-serve', 'authz-keys', 'xmpp-serve', 'webdav-serve', 'webdav-user'])
 
 const USAGE = `factoidal - the Factoidal persisted store, from Node or Deno
 
@@ -124,6 +124,8 @@ commands:
   xmpp-serve DIR              serve XMPP (RFC 6120/6121) over TCP or direct TLS
   webdav-serve CONFIGDIR      serve local and remote LWS storages to file
                               browsers over WebDAV (RFC 4918)
+  webdav-user FILE NAME       add or replace a user in a webdav-serve users
+                              file (the password is read from standard input)
 
 global options:
   -h, --help                  print this text, or a command's own help
@@ -676,6 +678,7 @@ https://www.rfc-editor.org/rfc/rfc6121`,
   'webdav-serve': `factoidal webdav-serve - serve LWS storages to file browsers over WebDAV
 
 usage: factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]
+                              [--users FILE] [--cert FILE --key FILE]
        factoidal webdav-serve CONFIGDIR --xmpp JID --xmpp-password-file FILE
                  --xmpp-allow JID[,JID...] [--xmpp-host H] [--xmpp-port P] [--xmpp-tls]
 
@@ -705,6 +708,19 @@ same time). An lws mount reaches the storage through the LWS client.
 
   --port N         the port to bind (default 8090; 0 takes an ephemeral one)
   --host ADDRESS   the address to bind (default 127.0.0.1)
+  --users FILE     every request needs a user name and password (HTTP Basic,
+                   RFC 7617) from FILE, made with "factoidal webdav-user";
+                   without TLS only on a loopback address (127.0.0.1, ::1),
+                   because Basic sends the password in clear text
+  --cert FILE      a PEM certificate chain: serve HTTPS (TLS)
+  --key FILE       the PEM private key of --cert
+
+Without --users the listener has no login: anyone who can reach the port can
+read and write every writable mount. Keep it on 127.0.0.1, or give --users
+and --cert/--key. A users file holds PBKDF2-HMAC-SHA256 password hashes, one
+user per line, NAME:pbkdf2-sha256:ITERATIONS:SALT_B64:HASH_B64; a malformed
+line stops the start with the file name and line number. Expert review of the
+login: https://github.com/danbri/factoidal/issues/1117
 
 HTTP over XMPP (XEP-0332; https://github.com/danbri/factoidal/issues/1107):
 with --xmpp the server opens NO port. It connects OUT to an XMPP server as
@@ -744,6 +760,26 @@ and mapping is decided by formal/lean4/L4Factoidal/WebDAV/. A WebAssembly
 module built before the WebDAV operations landed makes this command exit 3
 and say so. Design: docs/designissues/2026-10-27-webdav.md
 (https://github.com/danbri/factoidal/issues/1066).`,
+
+  'webdav-user': `factoidal webdav-user - add or replace a user in a webdav-serve users file
+
+usage: factoidal webdav-user FILE NAME [--iterations N]
+
+Reads the password from standard input (on a terminal it asks, and does not
+show what you type; else it reads all of standard input, without one final
+line end). Makes a 16-byte salt from the host's random source, derives
+PBKDF2-HMAC-SHA256 with WebCrypto, and writes the line
+NAME:pbkdf2-sha256:ITERATIONS:SALT_B64:HASH_B64 in FILE: in place of NAME's
+line, or at the end. FILE is made when it does not exist, and is always
+written with mode 0600 (a new file renamed over the old one).
+
+  --iterations N   the PBKDF2 iteration count (default 600000, the OWASP
+                   Password Storage Cheat Sheet figure of 2023 for
+                   PBKDF2-HMAC-SHA256; at least 100000)
+
+Every decision (the name rules, the password rules, the count, the line) is
+in formal/lean4/L4Factoidal/WebDAV/Login.lean. Expert review:
+https://github.com/danbri/factoidal/issues/1117 (https://github.com/danbri/factoidal/issues/1108).`,
 
   'solid-client': `factoidal solid-client - run one Solid client operation
 
@@ -909,8 +945,9 @@ const VALUE_OPTIONS = {
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
   'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key']),
-  'webdav-serve': new Set(['port', 'host', 'xmpp', 'xmpp-password-file', 'xmpp-host', 'xmpp-port', 'xmpp-allow',
-    'xmpp-resource', 'xmpp-ca'])
+  'webdav-serve': new Set(['port', 'host', 'users', 'cert', 'key', 'xmpp', 'xmpp-password-file', 'xmpp-host', 'xmpp-port',
+    'xmpp-allow', 'xmpp-resource', 'xmpp-ca']),
+  'webdav-user': new Set(['iterations'])
 }
 
 // ------------------------------------------------------------- commands
@@ -2174,9 +2211,23 @@ async function commandWebdavServe (positional, options) {
   const quiet = options.quiet === true
   if (options.xmpp !== undefined) return webdavOverXmpp(positional[0], options, quiet)
   const { listen, WebdavHostError } = await import('../webdav/server.mjs')
+  const fs = await import('node:fs/promises')
+  const { resolve: resolvePath } = await import('node:path')
+  const useTls = options.cert !== undefined || options.key !== undefined
+  if (useTls && (typeof options.cert !== 'string' || typeof options.key !== 'string')) {
+    throw new UsageError('--cert and --key go together')
+  }
+  const settings = { configDir: positional[0], port: servePort(options, 8090), host: serveHost(options) }
+  // The users file is named relative to the working directory here, and
+  // given to the engine as an absolute path.
+  if (typeof options.users === 'string') settings.users = resolvePath(options.users)
   let running
   try {
-    running = await listen({ configDir: positional[0], port: servePort(options, 8090), host: serveHost(options) })
+    if (useTls) {
+      settings.cert = await fs.readFile(options.cert)
+      settings.key = await fs.readFile(options.key)
+    }
+    running = await listen(settings)
   } catch (error) {
     if (error instanceof WebdavHostError && error.unknownOp) return notWired('webdav-serve', error.message)
     if (error instanceof WebdavHostError || (error !== null && typeof error === 'object' && error.code === 'ENOENT')) {
@@ -2186,7 +2237,9 @@ async function commandWebdavServe (positional, options) {
     throw error
   }
   if (!quiet) {
-    err(`webdav-serve: listening on ${running.origin} for ${positional[0]}`)
+    err(`webdav-serve: listening on ${running.origin} for ${positional[0]}` +
+        (settings.users !== undefined ? `, login from ${options.users}` : ', NO LOGIN on this listener') +
+        (useTls ? ', TLS' : ''))
     for (const m of running.mounts) {
       err(`webdav-serve: ${running.origin}/${encodeURIComponent(m.name)}/ - ${m.title} (${m.kind}${m.writable ? '' : ', read-only'}${m.agent ? ', as ' + m.agent : ''})`)
     }
@@ -2204,6 +2257,11 @@ async function webdavOverXmpp (configDir, options, quiet) {
   if (typeof options.xmpp !== 'string') throw new UsageError('--xmpp needs a JID')
   if (typeof options['xmpp-password-file'] !== 'string') throw new UsageError('--xmpp needs --xmpp-password-file FILE')
   if (typeof options['xmpp-allow'] !== 'string') throw new UsageError('--xmpp needs --xmpp-allow JID[,JID...]')
+  // No login on the XMPP path yet: refuse --users rather than ignore it
+  // (https://github.com/danbri/factoidal/issues/1125).
+  if (options.users !== undefined || options.cert !== undefined || options.key !== undefined) {
+    throw new UsageError('--users, --cert and --key do not apply with --xmpp yet (https://github.com/danbri/factoidal/issues/1125)')
+  }
   const fs = await import('node:fs/promises')
   const password = (await fs.readFile(options['xmpp-password-file'], 'utf8')).split(/\r?\n/)[0]
   const allow = options['xmpp-allow'].split(',').map((x) => x.trim()).filter((x) => x.length > 0)
@@ -2268,6 +2326,90 @@ async function webdavOverXmpp (configDir, options, quiet) {
     return EXIT_FAILURE
   })
   return Promise.race([untilInterrupted(running, quiet), ended])
+}
+
+/** A password from standard input: on a terminal, asked for with no echo;
+ *  else all of standard input. The bytes go to the engine unread. Pure I/O. */
+async function readPasswordInput () {
+  const stdin = process.stdin
+  if (!stdin.isTTY) {
+    const chunks = []
+    for await (const chunk of stdin) chunks.push(chunk)
+    return new Uint8Array(Buffer.concat(chunks))
+  }
+  process.stderr.write('Password: ')
+  stdin.setRawMode(true)
+  stdin.resume()
+  const typed = []
+  try {
+    for await (const chunk of stdin) {
+      for (const b of chunk) {
+        if (b === 0x0d || b === 0x0a || b === 0x04) return new Uint8Array(typed)
+        if (b === 0x03) throw new UsageError('interrupted')
+        if (b === 0x7f || b === 0x08) typed.pop()
+        else typed.push(b)
+      }
+    }
+    return new Uint8Array(typed)
+  } finally {
+    stdin.setRawMode(false)
+    stdin.pause()
+    err('')
+  }
+}
+
+// webdav-user FILE NAME (https://github.com/danbri/factoidal/issues/1108):
+// the engine checks the name, the password and the file, names the PBKDF2
+// derivation, and gives the new text; this host reads the password, runs
+// the derivation with WebCrypto (lib/cipher-host.mjs) and writes the file.
+async function commandWebdavUser (positional, options) {
+  if (positional.length !== 2) throw new UsageError('webdav-user needs FILE and NAME')
+  const [file, name] = positional
+  const fs = await import('node:fs')
+  const { dirname, basename, join } = await import('node:path')
+  const { runWithCipher } = await import('../lib/cipher-host.mjs')
+  let text = null
+  try {
+    text = fs.readFileSync(file, 'utf8')
+  } catch (error) {
+    if (error === null || typeof error !== 'object' || error.code !== 'ENOENT') throw error
+  }
+  const input = await readPasswordInput()
+  const salt = new Uint8Array(16)
+  globalThis.crypto.getRandomValues(salt)
+  const engine = await loadEngine()
+  const args = {
+    name,
+    file,
+    text,
+    passwordBase64: Buffer.from(input).toString('base64'),
+    saltBase64: Buffer.from(salt).toString('base64')
+  }
+  if (options.iterations !== undefined) args.iterations = String(options.iterations)
+  let res
+  try {
+    res = await runWithCipher((a) => engine.call('webdavUser', [JSON.stringify(a)]), args)
+  } catch (error) {
+    const message = error && error.message ? String(error.message) : String(error)
+    if (message.indexOf('unknown op') >= 0) return notWired('webdav-user', message)
+    throw error
+  }
+  if (res.ok === false) {
+    err(`factoidal webdav-user: ${res.error}`)
+    return EXIT_FAILURE
+  }
+  // A new file in the same directory, mode 0600, flushed, renamed over FILE.
+  const temp = join(dirname(file), `.${basename(file)}.${process.pid}.tmp`)
+  const fd = fs.openSync(temp, 'wx', 0o600)
+  try {
+    fs.writeSync(fd, res.text)
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
+  fs.renameSync(temp, file)
+  err(`webdav-user: ${res.replaced ? 'replaced' : 'added'} ${name} in ${file}`)
+  return EXIT_OK
 }
 
 async function commandXmppServe (positional, options) {
@@ -2460,7 +2602,8 @@ const COMMANDS = {
   'authz-serve': commandAuthzServe,
   'authz-keys': commandAuthzKeys,
   'xmpp-serve': commandXmppServe,
-  'webdav-serve': commandWebdavServe
+  'webdav-serve': commandWebdavServe,
+  'webdav-user': commandWebdavUser
 }
 
 // ----------------------------------------------------------------- main
