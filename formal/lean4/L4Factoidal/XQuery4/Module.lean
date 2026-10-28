@@ -59,6 +59,8 @@ structure Module where
   types : List (QN × IType) := []
   /-- `import schema`: the target namespaces (XQuery 4.0 §5.11). -/
   schemaImports : List String := []
+  /-- `declare construction strip` (§5.6); the default is `preserve`. -/
+  constructionStrip : Bool := false
   /-- Variables and functions declared `%private` (§5.15): not seen
       by an importing module. -/
   privates : List QN := []
@@ -327,10 +329,11 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       seen := "base" :: seen
       m := { m with baseUri := some u }
     | "construction" =>
-      if !(← eatKw "strip") then expectKw "preserve"
+      let strip ← if ← eatKw "strip" then pure true else expectKw "preserve"; pure false
       expectS ";"
       if seen.contains "constr" then qerr "XQST0067" "two construction declarations"
       seen := "constr" :: seen
+      m := { m with constructionStrip := strip }
     | "ordering" =>
       if !(← eatKw "ordered") then expectKw "unordered"
       expectS ";"
@@ -691,7 +694,8 @@ def moduleEnv (env : Env) (m : Module) : Env :=
   let env := { env with ns := m.ns }
   let env := match m.defaultCollation with | some c => { env with defaultCollation := c } | none => env
   let env := match m.baseUri with | some b => { env with baseUri := b } | none => env
-  { env with decimalFormats := m.decimalFormats ++ env.decimalFormats }
+  let env := { env with decimalFormats := m.decimalFormats ++ env.decimalFormats }
+  if m.constructionStrip then env.bind constructionStripKey [] else env
 
 /-- Evaluate a main module. -/
 def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
