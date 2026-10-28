@@ -215,6 +215,38 @@ $ npx factoidal solid-serve DIR                    # Solid Protocol
 $ npx factoidal authz-serve DIR --resource IRI --saml-idp idp.json   # OAuth 2.0 authorization server
 ```
 
+### Storage directories of `lws-serve`, `solid-serve` and `webdav-serve`
+
+One process writes a storage directory
+(https://github.com/danbri/factoidal/issues/1135). The server holds
+`DIR/lws.lock` while it runs; a second server on the same directory is
+refused, with a message that names the lock file and the process that holds
+it. A lock left by a process that does not run (after a crash) is taken over
+with a warning.
+
+#### Encryption at rest
+
+Off by default. Without a key the storage is written to disk in clear text,
+and the server says so at start. To turn it on:
+
+```console
+$ export FACTOIDAL_LWS_KEY="$(npx factoidal lws-keygen)"   # keep a copy of the key
+$ npx factoidal lws-serve DIR --issuer IRI
+lws-serve: encryption at rest is ON: the storage in DIR is sealed with ChaCha20-Poly1305 under key id ...
+```
+
+- Sealed (ChaCha20-Poly1305, HACL*): the snapshot `DIR/lws-state.json`; with
+  `--storage files`, every body file, the journal and `lws-files.json`.
+- Not protected: file names, file sizes and write times; the lock file; the
+  storage in the memory of the running server; the key in its environment.
+- A lost key is lost data. A wrong key, a changed file, a clear storage with
+  a key and a sealed storage without the key each stop the start.
+- Start on an empty directory: a key change, and sealing an existing clear
+  storage, are not possible yet
+  (https://github.com/danbri/factoidal/issues/1136).
+
+Details: https://danbri.github.io/factoidal/web/hub/servers/#encryption-at-rest
+
 `npx factoidal --help` lists every command. Replacing Apache Jena Fuseki:
 [docs/fuseki-replacement.md](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/docs/fuseki-replacement.md).
 

@@ -965,7 +965,17 @@ https://github.com/danbri/factoidal/issues/914 (moving resources).
   option, off by default. Build on `L4Factoidal/Storage/BlockMerkle.lean`
   (hash as a parameter; pure Lean SHA-256 as the specification instance).
 - Encryption at rest of the LWS storage: key from an environment variable,
-  off by default. Crypto per `skills/crypto-policy`.
+  off by default. Crypto per `skills/crypto-policy`. Owner, 2026-10-28,
+  verbatim: "For our lws encourage attention to encryption at rest also".
+  Rule: it stays off by default; every server that keeps a storage in a
+  directory (`lws-serve`, `solid-serve`, `webdav-serve` local mounts) says
+  at start, on standard error after the experimental code notice, whether
+  the storage is sealed (with the key id) or written in clear text, and how
+  to make a key (`factoidal lws-keygen`). The engine words the notice
+  (`LWS/DirLock.lean`, `atRestNotice`). Docs: the hub servers page and the
+  npm README, section "Encryption at rest". No re-key or seal-in-place yet:
+  https://github.com/danbri/factoidal/issues/1136 (expected failure in
+  `tests/lws/encryption.mjs`).
 - Confidential computing (SEV-SNP, TDX, Nitro, SGX, TPM measured boot): a
   research note only.
 - Type search `Content-Location` results resource: an anticipatory

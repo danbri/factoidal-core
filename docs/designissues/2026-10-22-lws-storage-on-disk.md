@@ -466,16 +466,36 @@ Offers:
 - The durable state includes the resources and also notification
   subscriptions, access requests and grants, search results and move
   redirects.
-- Encryption at rest is optional (`FACTOIDAL_LWS_KEY`, ChaCha20-Poly1305 from
-  HACL*). The file is authenticated before any of it is used.
+- Encryption at rest is optional and off by default (`FACTOIDAL_LWS_KEY`,
+  ChaCha20-Poly1305 from HACL*; a key from `factoidal lws-keygen`). The file
+  is authenticated before any of it is used. Every start says on standard
+  error whether the storage is sealed (and the key id) or clear text (owner,
+  2026-10-28: "For our lws encourage attention to encryption at rest also").
+  No re-key and no seal-in-place of a clear storage:
+  https://github.com/danbri/factoidal/issues/1136.
 - Merkle data is optional and off by default.
 
 Assumes:
 
-- One process writes `DIR`. There is no lock on the directory, and a second
-  writer (another `lws-serve`, or a `webdav-serve` local mount of the same
-  directory) overwrites the first one's changes (row C11 of
-  `2026-10-28-feature-combination-safety.md`).
+- One process writes `DIR`. Since 2026-10-28 this is enforced for the
+  servers of this package: `lws-serve`, `solid-serve` and every
+  `webdav-serve` local mount hold the lock file `DIR/lws.lock` (format
+  `lws-lock-1`: process id, command, start time, host name and a random
+  token of the process) while they run and remove it at a clean exit. A
+  start refuses a `DIR` whose lock names a process that runs on this host,
+  a lock of another host, and a file that is not a lock; a lock whose process
+  does not run (after a crash) is taken over with a warning. The engine
+  decides the file, its contents and every refusal (`LWS/DirLock.lean`,
+  wasm op `lwsDirLock`; theorems `decide_alive_refuses`,
+  `decide_otherHost_refuses`, `decide_sameInstance_refuses`,
+  `decide_replace_dead`, `decide_create_absent`); the host does the
+  exclusive create (`O_EXCL`), the liveness probe (`kill(pid, 0)`) and the
+  removal (https://github.com/danbri/factoidal/issues/1135, row C11 of
+  `2026-10-28-feature-combination-safety.md`, test `tests/lws/dir-lock.mjs`).
+  Still assumed: a program that does not take the lock (another tool, an
+  older Factoidal build) does not write `DIR`; the remove-then-create of a
+  take-over is not atomic, so two starts that take over the same stale lock
+  at the same moment are not excluded.
 - A request finishes (state in memory, then the files written) before its
   answer goes out. One request changes state at a time.
 - The local file system honours fsync and rename. No replication, backup or

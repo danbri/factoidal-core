@@ -593,8 +593,9 @@ theorem record_no_secret (req : Req) (resp : Resp) (s : String) (hs : s ∈ secr
 
 Path. The WebDAV design record says "do not serve one directory with
 `lws-serve` and `webdav-serve` at once" (`docs/designissues/2026-10-27-webdav.md`,
-line 62). Nothing enforces it (no lock on the storage directory was found in
-`webdav/server.mjs`, `lws/server.mjs`, `lws/persist.mjs`). Then the LWS
+line 62). Until 2026-10-28 nothing enforced it (no lock on the storage
+directory was found in `webdav/server.mjs`, `lws/server.mjs`,
+`lws/persist.mjs`); the lock below now does. Then the LWS
 access policy of `lws-serve --authz` does not apply to WebDAV, or to XMPP
 through `webdav-serve --xmpp`, because a local mount is the owner. Two writers
 also overwrite each other's snapshot.
@@ -603,11 +604,24 @@ Invariant I11. A storage directory has one writing process. A local mount is
 not exposed through a surface whose access check is weaker than that of the
 storage's own server, unless the operator opts in.
 
-Enforced today. Not enforced.
+Enforced today (2026-10-28, first part of I11): one writing process per
+storage directory. `lws-serve DIR`, `solid-serve DIR` and every
+`webdav-serve` local mount hold `DIR/lws.lock` while they run. A second
+start on the same directory is refused with a message that names the lock
+file and the holder (process id, command, start time, host). A lock whose
+process does not run is taken over with a warning; a lock of another host is
+refused. Lean decides (`L4Factoidal/LWS/DirLock.lean`, op `lwsDirLock`);
+theorems `decide_alive_refuses`, `decide_otherHost_refuses`,
+`decide_sameInstance_refuses`, `decide_replace_dead`, `decide_create_absent`.
+Test: `node tests/lws/dir-lock.mjs` (a second `lws-serve`, `solid-serve` and
+a `webdav-serve` local mount of a held directory are refused; a stale lock is
+taken over with a warning; SIGINT and SIGTERM remove the lock). Issue:
+https://github.com/danbri/factoidal/issues/1135.
 
-Proposed check: a test. Start `lws-serve DIR`, then `webdav-serve` with a
-local mount of `DIR`. The second start is refused, with a message that names
-the lock file.
+Not enforced: the second part of I11. A local mount still answers through
+WebDAV (and XMPP) as the storage's owner, so a directory served by
+`webdav-serve` alone is not under the access policy that `lws-serve --authz`
+would apply to it. A program that does not take the lock is not excluded.
 
 ### C12. Remote mounts with `did-key` or `bearer`, shared by many users and JIDs
 
@@ -754,7 +768,9 @@ that names it.
 - I8, C8: authority and default deny for MCP tools (into issue 1121).
 - I9, C9: JID verification for XMPP notifications.
 - I10, C10: token exchange bodies in the redaction list (into issue 1035).
-- I11, C11: a lock on the storage directory.
+- I11, C11: a lock on the storage directory (landed 2026-10-28,
+  https://github.com/danbri/factoidal/issues/1135); principals or an access
+  check for local mounts.
 - I12, C12: principals per mount.
 - I13, C13: per-sender limits and a time limit for waiting chunked requests.
 

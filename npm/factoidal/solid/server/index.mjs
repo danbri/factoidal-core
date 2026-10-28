@@ -56,7 +56,7 @@
 // stay distinct.
 
 import { loadEngine } from '../../bin/engine.mjs'
-import { readSnapshot, persistIfChanged, storageKeyText } from '../../lws/persist.mjs'
+import { readSnapshot, persistIfChanged, storageKeyText, acquireDirLock, atRestNotice } from '../../lws/persist.mjs'
 
 /** The ops this host needs from the engine. */
 export const SOLID_SERVER_OPS = ['solidOpen', 'solidStep', 'solidClose', 'solidSnapshot',
@@ -200,28 +200,61 @@ export async function openSolidStorage (options = {}) {
   // `dir` names the storage directory. The snapshot found there, if any,
   // is the storage to continue from; the engine checks it.
   const dir = typeof options.dir === 'string' ? options.dir : null
+  // One writing process per storage directory
+  // (https://github.com/danbri/factoidal/issues/1135), as the LWS host: the
+  // engine decides; the lock is taken before DIR is read.
+  let lock = null
   if (dir !== null) {
-    const snapshot = readSnapshot(dir)
-    if (snapshot !== null) config.snapshot = snapshot
+    try {
+      lock = acquireDirLock(engine, dir, 'solid-serve')
+    } catch (error) {
+      if (isUnknownOp(error)) {
+        throw new SolidServerHostError(
+          'the loaded l4factoidal WebAssembly module does not carry lwsDirLock',
+          { unknownOp: true })
+      }
+      throw error
+    }
   }
   let opened
+  let handle
+  const notices = []
   try {
-    opened = engine.call('solidOpen', [JSON.stringify(config)])
-  } catch (error) {
-    if (isUnknownOp(error)) {
-      throw new SolidServerHostError(
-        'the loaded l4factoidal WebAssembly module does not carry solidOpen',
-        { unknownOp: true })
+    if (dir !== null) {
+      const snapshot = readSnapshot(dir)
+      if (snapshot !== null) config.snapshot = snapshot
     }
+    try {
+      opened = engine.call('solidOpen', [JSON.stringify(config)])
+    } catch (error) {
+      if (isUnknownOp(error)) {
+        throw new SolidServerHostError(
+          'the loaded l4factoidal WebAssembly module does not carry solidOpen',
+          { unknownOp: true })
+      }
+      throw error
+    }
+    handle = handleOf(opened)
+    if (handle === null) {
+      throw new SolidServerHostError('solidOpen answered with no handle')
+    }
+    // The start notices: a take-over of a stale lock, and whether the
+    // storage on disk is sealed (encryption at rest).
+    if (dir !== null) {
+      if (lock.warning !== null) notices.push(`WARNING: ${lock.warning}`)
+      notices.push(atRestNotice(engine, dir, storageKey).notice)
+    }
+  } catch (error) {
+    if (lock !== null) lock.release()
     throw error
-  }
-  const handle = handleOf(opened)
-  if (handle === null) {
-    throw new SolidServerHostError('solidOpen answered with no handle')
   }
   return {
     engine,
     handle,
+    /** The lock file of the storage directory, or null with no DIR. */
+    lockFile: lock !== null ? lock.file : null,
+    /** The start notices, for the server to print on standard error. */
+    notices,
     storageIri: typeof opened.storage === 'string' ? opened.storage : null,
     /**
      * One protocol step.
@@ -263,6 +296,7 @@ export async function openSolidStorage (options = {}) {
     },
     close () {
       try { engine.call('solidClose', [handle]) } catch (_error) { /* already gone */ }
+      if (lock !== null) lock.release()
     }
   }
 }

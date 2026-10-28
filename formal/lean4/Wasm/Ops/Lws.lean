@@ -66,6 +66,7 @@ import L4Factoidal.LWS.MoveRedirect
 import L4Factoidal.LWS.FileLayout
 import L4Factoidal.LWS.Cors
 import L4Factoidal.HTTP.LocalGuard
+import L4Factoidal.LWS.DirLock
 import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.RsaNative
@@ -1030,10 +1031,85 @@ def lwsSnapshot (h : String) (optsJson : String := "") : IO String := do
         | other => other
       pure (snapshotAnswer open_.storageKey optsJson snap)
 
+/-! ## One writing process per storage directory; the encryption notice
+
+Issue https://github.com/danbri/factoidal/issues/1135. Pure ops: the host
+carries the exclusive create, the liveness probe and the removal; the
+decision is `L4Factoidal.LWS.DirLock.decide`. -/
+
+/-- The holder of a lock request document: `pid`, `command`, `started`,
+`host`, `token`. -/
+def lockHolderOfJson (j : Json) : Except String DirLock.Holder := do
+  let pid ← match j.field? "pid" with
+    | some (.number s) => (s.toNat?).elim (.error "lwsDirLock: \"pid\" is a natural number") .ok
+    | _ => .error "lwsDirLock: \"pid\" is a natural number"
+  let str (k : String) : Except String String :=
+    (j.getString? k).elim (.error s!"lwsDirLock: \"{k}\" is a string") .ok
+  let command ← str "command"
+  let started ← str "started"
+  let host ← str "host"
+  let token ← str "token"
+  if token.length < 16 then .error "lwsDirLock: \"token\" has at least 16 characters (random text of the process)"
+  else pure { pid, command, started, host, token }
+
+/-- `lwsDirLock({dir, pid, command, started, host, token, present?, alive?})`:
+what a start does with the lock file of its storage directory.
+
+    {"ok":true,"action":"create","file":F,"contents":C}
+    {"ok":true,"action":"probe","pid":N}
+    {"ok":true,"action":"refuse","message":M}
+    {"ok":true,"action":"replace","file":F,"contents":C,"warning":W}
+
+`present` is the text of the lock file when the exclusive create found one;
+`alive` the result of the liveness probe of the `probe` answer. -/
+def lwsDirLock (requestJson : String) : String :=
+  match parseJson requestJson with
+  | .error e => errJson s!"lwsDirLock: {toString e}"
+  | .ok j =>
+      match lockHolderOfJson j with
+      | .error e => errJson e
+      | .ok self =>
+          let req : DirLock.Request :=
+            { dir := (j.getString? "dir").getD ".", self
+              present := j.getString? "present", alive := j.getBool? "alive" }
+          match DirLock.decide req with
+          | .create f c => okWith [("action", .string "create"), ("file", .string f), ("contents", .string c)]
+          | .probe pid => okWith [("action", .string "probe"), ("pid", .number (toString pid))]
+          | .refuse m => okWith [("action", .string "refuse"), ("message", .string m)]
+          | .replace f c w => okWith [("action", .string "replace"), ("file", .string f),
+                                      ("contents", .string c), ("warning", .string w)]
+
+/-- `lwsAtRestNotice({dir, storageKey?})`: the start notice about encryption
+at rest, `{"ok":true,"sealed":B,"keyId"?:K,"notice":N}`. A key text that is
+not a storage key is refused with the same message as `lwsOpen`. -/
+def lwsAtRestNotice (requestJson : String) : String :=
+  match parseJson requestJson with
+  | .error e => errJson s!"lwsAtRestNotice: {toString e}"
+  | .ok j =>
+      match DirLock.noticeOf ((j.getString? "dir").getD ".") (j.getString? "storageKey") with
+      | .error e => errJson e
+      | .ok (notice, kid?) =>
+          okWith ([("sealed", .bool kid?.isSome)] ++
+                  (kid?.map (fun k => [("keyId", Json.string k)])).getD [] ++
+                  [("notice", .string notice)])
+
+/-- `lwsStorageKeyNew({random})`: a new storage key from 32 random bytes of
+the host (base64), `{"ok":true,"key":HEX64,"keyId":K}`. -/
+def lwsStorageKeyNew (requestJson : String) : String :=
+  match parseJson requestJson with
+  | .error e => errJson s!"lwsStorageKeyNew: {toString e}"
+  | .ok j =>
+      match (j.getString? "random").bind L4Factoidal.LWS.Base64.decode? with
+      | none => errJson "lwsStorageKeyNew: \"random\" is base64 of 32 random bytes"
+      | some random =>
+          match DirLock.newStorageKey random with
+          | .error e => errJson e
+          | .ok (key, kid) => okWith [("key", .string key), ("keyId", .string kid)]
+
 /-- The op names this module serves. -/
 def lwsOpNames : List String :=
   ["lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush",
-   "lwsLoad", "lwsPersist", "lwsRead"]
+   "lwsLoad", "lwsPersist", "lwsRead", "lwsDirLock", "lwsAtRestNotice", "lwsStorageKeyNew"]
 
 /-- The LWS and Solid ops that also take and give a byte region: the
 request content in, the response content out. -/

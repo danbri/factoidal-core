@@ -20,7 +20,9 @@
 // open with their own message; with no key a clear-text storage behaves as
 // before. Then the CLI with the environment variable.
 //
-// Score line: "N pass, M fail, S skipped (out of T)".
+// Score line: "N pass, M fail, X xfail, S skipped (out of T)". An xfail is a
+// case that fails today and names its open issue; if it passes, it counts as
+// a failure (stale expectation), so the issue closure is not forgotten.
 
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -42,7 +44,21 @@ const CLI = join(ROOT, 'npm/factoidal/bin/factoidal.mjs')
 let passed = 0
 let failed = 0
 let skipped = 0
+let xfailed = 0
 const failures = []
+
+async function xfail (name, issue, body) {
+  try {
+    await body()
+  } catch (error) {
+    xfailed += 1
+    console.log(`  xfail ${name} (${issue}): ${error && error.message ? error.message : error}`)
+    return
+  }
+  failed += 1
+  failures.push(`${name}: passes, but is marked as an expected failure of ${issue}; make it a check and close the issue`)
+  console.log(`  FAIL  ${name} (unexpected pass)`)
+}
 
 async function check (name, body) {
   try {
@@ -422,11 +438,41 @@ async function main () {
   for (const s of SERVERS) await runServer(s, engine)
   await runResults(engine)
   await runCli()
+  await runRekey()
+}
+
+// A key change of a sealed storage is not possible yet
+// (https://github.com/danbri/factoidal/issues/1136): the case states what
+// it should do (`factoidal lws-rekey DIR` with the old key in
+// FACTOIDAL_LWS_KEY_OLD and the new key in FACTOIDAL_LWS_KEY), and fails
+// today because there is no such command.
+async function runRekey () {
+  await xfail('re-key: a storage sealed under one key opens under a new key after a re-key',
+    'https://github.com/danbri/factoidal/issues/1136', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'lws1136-rekey-'))
+      try {
+        const { listen } = await import('../../npm/factoidal/lws/server.mjs')
+        const s = await listen({ port: 0, insecureNoAuth: true, dir, storageKey: KEY_HEX })
+        try {
+          await request(s.origin, 'PUT', '/x.txt', { 'content-type': 'text/plain' }, SECRET_TEXT)
+        } finally { await s.close() }
+        const { spawnSync } = await import('node:child_process')
+        const r = spawnSync(process.execPath, [CLI, 'lws-rekey', dir], {
+          env: { ...process.env, FACTOIDAL_LWS_KEY_OLD: KEY_HEX, FACTOIDAL_LWS_KEY: OTHER_HEX }, encoding: 'utf8'
+        })
+        assert(r.status === 0, `lws-rekey exit ${r.status}: ${(r.stderr || '').split('\n').find((l) => l.includes('unknown command')) || r.stderr}`)
+        const t = await listen({ port: 0, insecureNoAuth: true, dir, storageKey: OTHER_HEX })
+        try {
+          const get = await request(t.origin, 'GET', '/x.txt')
+          assert(get.status === 200 && get.body === SECRET_TEXT, `GET answered ${get.status}`)
+        } finally { await t.close() }
+      } finally { rmSync(dir, { recursive: true, force: true }) }
+    })
 }
 
 await main()
 
 for (const failure of failures) console.log(`  FAIL ${failure}`)
-const total = passed + failed + skipped
-console.log(`lws-encryption node: ${passed} pass, ${failed} fail, ${skipped} skipped (out of ${total})`)
+const total = passed + failed + xfailed + skipped
+console.log(`lws-encryption node: ${passed} pass, ${failed} fail, ${xfailed} xfail, ${skipped} skipped (out of ${total})`)
 process.exitCode = failed === 0 ? 0 : 1

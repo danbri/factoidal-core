@@ -111,6 +111,33 @@ paths; request paths with dot segments or encoded traversal get 400
 `lws-serve --storage files` keeps `DIR` as one file per body and a journal
 instead (section "Storage on disk" below).
 
+### One writing process per storage directory; the encryption notice (https://github.com/danbri/factoidal/issues/1135)
+
+`openLwsStorage({dir})` (so `lws-serve DIR` and every `webdav-serve` local
+mount) and `openSolidStorage({dir})` take the lock `DIR/lws.lock` before they
+read DIR, and release it in `close()` and at process exit. Lean decides the
+file, its JSON (format `lws-lock-1`: pid, command, started, host, token) and
+the action (`L4Factoidal/LWS/DirLock.lean`, `decide`; pure op `lwsDirLock`:
+`create`, `probe`, `refuse`, `replace`). The host (`lws/persist.mjs`,
+`acquireDirLock`) does the `wx` create, `process.kill(pid, 0)` and the
+unlink. `token` is random per process, so a lock with this pid and another
+token (a restarted container) is stale. A refusal is a `StorageLockedError`
+with `envelope`, which the CLIs print and exit 1. Two opens of one DIR in one
+process are refused too: a test that restarts a storage in-process must
+`close()` the first one. Theorems: `decide_alive_refuses`,
+`decide_otherHost_refuses`, `decide_sameInstance_refuses`,
+`decide_replace_dead`, `decide_create_absent`. Test:
+`node tests/lws/dir-lock.mjs`.
+
+The same open also gives `notices` (pure op `lwsAtRestNotice`,
+`DirLock.atRestNotice`): a stale-lock warning, and "encryption at rest is
+OFF ... `factoidal lws-keygen` ..." or "... is ON ... key id K". The CLIs
+print them on standard error, also with `--quiet`. `factoidal lws-keygen`
+calls the pure op `lwsStorageKeyNew` with 32 random bytes. Owner, 2026-10-28:
+"For our lws encourage attention to encryption at rest also"; it stays off
+by default. No re-key yet: https://github.com/danbri/factoidal/issues/1136
+(xfail in `tests/lws/encryption.mjs`).
+
 ### Storage on disk, stages 1 and 2 (https://github.com/danbri/factoidal/issues/918)
 
 Design record: `docs/designissues/2026-10-22-lws-storage-on-disk.md`. Off by

@@ -97,7 +97,7 @@ const REVIEW_WARNING = 'EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CR
 
 /** The commands that serve, speak a protocol, or handle keys and tokens. */
 const WARNED_COMMANDS = new Set(['serve', 'lws-serve', 'solid-serve', 'solid-client', 'lws-client',
-  'authz-serve', 'authz-keys', 'xmpp-serve', 'webdav-serve', 'webdav-user', 'xmpp-http-proxy'])
+  'authz-serve', 'authz-keys', 'xmpp-serve', 'webdav-serve', 'webdav-user', 'xmpp-http-proxy', 'lws-keygen'])
 
 const USAGE = `factoidal - the Factoidal persisted store, from Node or Deno
 
@@ -116,6 +116,9 @@ commands:
                               Service Description over HTTP
   lws-serve DIR               serve Linked Web Storage 1.0 over HTTP
   solid-serve DIR             serve the Solid Protocol over HTTP
+  lws-keygen                  print a new storage key for encryption at rest
+                              (FACTOIDAL_LWS_KEY of lws-serve, solid-serve and
+                              webdav-serve local mounts)
   solid-client OP URL         run one Solid client operation
   lws-client OP URL           run one Linked Web Storage client operation
   authz-serve DIR             serve an OAuth 2.0 authorization server for LWS
@@ -483,6 +486,17 @@ new random nonce for every write, and authenticated when the storage is
 opened. A wrong key, a changed or truncated file, a clear-text file with the
 variable set, or a sealed file without it stops the start with a message.
 It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lean).
+Make a key with \`factoidal lws-keygen\`; keep a copy, a lost key is lost data.
+At start the server says on standard error whether the storage is sealed
+(and the key id) or written in clear text.
+
+One process writes DIR (https://github.com/danbri/factoidal/issues/1135):
+the server holds the lock file DIR/lws.lock while it runs and removes it at
+a clean exit. A start refuses a DIR whose lock names a process that runs
+(another lws-serve, solid-serve or webdav-serve local mount). A lock left by
+a process that does not run (after a crash) is taken over with a warning.
+The engine decides the file, its contents and every refusal
+(formal/lean4/L4Factoidal/LWS/DirLock.lean).
 
   --port N        the port to bind; 0 takes an ephemeral one (default 3000)
   --host ADDRESS  the address to bind (default 127.0.0.1)
@@ -651,6 +665,17 @@ new random nonce for every write, and authenticated when the storage is
 opened. A wrong key, a changed or truncated file, a clear-text file with the
 variable set, or a sealed file without it stops the start with a message.
 It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lean).
+Make a key with \`factoidal lws-keygen\`; keep a copy, a lost key is lost data.
+At start the server says on standard error whether the storage is sealed
+(and the key id) or written in clear text.
+
+One process writes DIR (https://github.com/danbri/factoidal/issues/1135):
+the server holds the lock file DIR/lws.lock while it runs and removes it at
+a clean exit. A start refuses a DIR whose lock names a process that runs
+(another lws-serve, solid-serve or webdav-serve local mount). A lock left by
+a process that does not run (after a crash) is taken over with a warning.
+The engine decides the file, its contents and every refusal
+(formal/lean4/L4Factoidal/LWS/DirLock.lean).
 
   --port N        the port to bind; 0 takes an ephemeral one (default 3000)
   --host ADDRESS  the address to bind (default 127.0.0.1)
@@ -815,8 +840,13 @@ words in brackets above are notes, not part of a value. A malformed file
 stops the start with its name and line number.
 
 A local mount opens the directory with the operations lws-serve uses, as
-the storage's owner (do not serve the same directory with lws-serve at the
-same time). An lws mount reaches the storage through the LWS client.
+the storage's owner. It takes the lock DIR/lws.lock as lws-serve does
+(https://github.com/danbri/factoidal/issues/1135): a directory that
+lws-serve, solid-serve or another webdav-serve holds stops the start with a
+message that names the lock file and the process. At start each local mount
+says whether its storage is sealed (FACTOIDAL_LWS_KEY, see lws-serve --help
+and factoidal lws-keygen) or written in clear text. An lws mount reaches the
+storage through the LWS client.
 
   --port N         the port to bind (default 8090; 0 takes an ephemeral one)
   --host ADDRESS   the address to bind (default 127.0.0.1)
@@ -901,6 +931,27 @@ and mapping is decided by formal/lean4/L4Factoidal/WebDAV/. A WebAssembly
 module built before the WebDAV operations landed makes this command exit 3
 and say so. Design: docs/designissues/2026-10-27-webdav.md
 (https://github.com/danbri/factoidal/issues/1066).`,
+
+  'lws-keygen': `factoidal lws-keygen - print a new storage key for encryption at rest
+
+usage: factoidal lws-keygen [--json]
+
+Prints a new 32-byte storage key as 64 hex digits on standard output, and its
+key id (the first 8 bytes of SHA-256 of the key) on standard error. Set the
+environment variable FACTOIDAL_LWS_KEY to it before lws-serve DIR,
+solid-serve DIR or webdav-serve with a local mount, on an empty storage
+directory:
+
+  export FACTOIDAL_LWS_KEY="$(factoidal lws-keygen)"
+
+Keep a copy of the key in a safe place. Without the key the storage cannot be
+read: there is no recovery. Changing the key of an existing storage is not
+possible (https://github.com/danbri/factoidal/issues/1136).
+--json prints {"key": ..., "keyId": ...}.
+
+The random bytes come from the host (WebCrypto getRandomValues); the engine
+makes the key text and the key id (formal/lean4/L4Factoidal/LWS/DirLock.lean,
+newStorageKey).`,
 
   'webdav-user': `factoidal webdav-user - add or replace a user in a webdav-serve users file
 
@@ -1090,7 +1141,8 @@ const VALUE_OPTIONS = {
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
   'xmpp-http-proxy': new Set(['port', 'host', 'xmpp', 'xmpp-password-file', 'target', 'xmpp-host', 'xmpp-port',
-    'xmpp-resource', 'xmpp-ca', 'timeout'])
+    'xmpp-resource', 'xmpp-ca', 'timeout']),
+  'lws-keygen': new Set([])
 }
 
 // ------------------------------------------------------------- commands
@@ -2226,6 +2278,9 @@ async function commandLwsServe (positional, options) {
     }
     throw error
   }
+  // The engine's start notices (a stale lock taken over; encryption at rest
+  // on or off), printed also with --quiet.
+  for (const n of (await running.storage()).notices || []) err(`lws-serve: ${n}`)
   if (!quiet) {
     err(`lws-serve: listening on ${running.origin} for ${positional[0]}`)
     if (running.authz() !== null) err(`lws-serve: authorization server ${running.authz().issuer} (keys in ${authzDir})`)
@@ -2288,6 +2343,39 @@ async function commandAuthzServe (positional, options) {
   }
   out(running.origin)
   return untilInterrupted(running, quiet)
+}
+
+// lws-keygen (https://github.com/danbri/factoidal/issues/1135): 32 random
+// bytes from the host's random source go to the engine (`lwsStorageKeyNew`),
+// which gives the key text and its key id. The key goes to standard output
+// only; nothing is written to a file.
+async function commandLwsKeygen (positional, options) {
+  if (positional.length !== 0) throw new UsageError('lws-keygen takes no argument')
+  const random = new Uint8Array(32)
+  globalThis.crypto.getRandomValues(random)
+  const engine = await loadEngine()
+  let res
+  try {
+    res = engine.call('lwsStorageKeyNew', [JSON.stringify({ random: Buffer.from(random).toString('base64') })])
+  } catch (error) {
+    const message = error && error.message ? String(error.message) : String(error)
+    if (message.indexOf('unknown op') >= 0) return notWired('lws-keygen', message)
+    throw error
+  }
+  if (res.ok === false) {
+    err(`factoidal lws-keygen: ${res.error}`)
+    return EXIT_FAILURE
+  }
+  if (options.json === true) {
+    out(JSON.stringify({ key: res.key, keyId: res.keyId }))
+  } else {
+    out(res.key)
+    if (options.quiet !== true) {
+      err(`lws-keygen: key id ${res.keyId}. Keep a copy of the key in a safe place: without it the storage cannot be read.`)
+      err('lws-keygen: start the server with FACTOIDAL_LWS_KEY set to it, on an empty storage directory.')
+    }
+  }
+  return EXIT_OK
 }
 
 async function commandAuthzKeys (positional, options) {
@@ -2371,6 +2459,9 @@ async function commandSolidServe (positional, options) {
     }
     throw error
   }
+  // The engine's start notices (a stale lock taken over; encryption at rest
+  // on or off), printed also with --quiet.
+  for (const n of (await running.storage()).notices || []) err(`solid-serve: ${n}`)
   if (!quiet) {
     err(`solid-serve: listening on ${running.origin} for ${positional[0]}`)
     if (insecure) {
@@ -2432,6 +2523,9 @@ async function commandWebdavServe (positional, options) {
   // The engine's start warnings (--dangerously-disable-ratelimits), printed
   // also with --quiet.
   for (const w of running.warnings || []) err(`factoidal webdav-serve: WARNING: ${w}`)
+  // The start notices of the local mounts (a stale lock taken over;
+  // encryption at rest on or off), printed also with --quiet.
+  for (const n of running.storageNotices || []) err(`webdav-serve: ${n}`)
   if (!quiet) {
     err(`webdav-serve: listening on ${running.origin} for ${positional[0]}` +
         (settings.users !== undefined ? `, login from ${options.users}` : ', NO LOGIN on this listener') +
@@ -2474,6 +2568,7 @@ async function webdavOverXmpp (configDir, options, quiet) {
     }
     throw error
   }
+  for (const n of dav.storageNotices || []) err(`webdav-serve: ${n}`)
   const settings = {
     engine: dav.engine,
     jid: options.xmpp,
@@ -2862,7 +2957,8 @@ const COMMANDS = {
   'xmpp-serve': commandXmppServe,
   'webdav-serve': commandWebdavServe,
   'webdav-user': commandWebdavUser,
-  'xmpp-http-proxy': commandXmppHttpProxy
+  'xmpp-http-proxy': commandXmppHttpProxy,
+  'lws-keygen': commandLwsKeygen
 }
 
 // ----------------------------------------------------------------- main

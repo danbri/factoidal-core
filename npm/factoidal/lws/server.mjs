@@ -84,11 +84,11 @@
 // produced and this code keeps working unchanged.
 
 import { loadEngine } from '../bin/engine.mjs'
-import { readSnapshot, persistIfChanged, storageKeyText, storageModeText, loadFiles, persistFilesIfChanged, readStepBodies } from './persist.mjs'
+import { readSnapshot, persistIfChanged, storageKeyText, storageModeText, loadFiles, persistFilesIfChanged, readStepBodies, acquireDirLock, atRestNotice } from './persist.mjs'
 
 /** The ops this host needs from the engine. */
 export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFetched', 'lwsDelivered',
-  'lwsLoad', 'lwsPersist', 'lwsRead']
+  'lwsLoad', 'lwsPersist', 'lwsRead', 'lwsDirLock', 'lwsAtRestNotice']
 
 /** How long this host waits for the answer to one delivery request before
  *  it reports "no answer" (status 0) to the engine. */
@@ -254,8 +254,11 @@ function contentBytes (request) {
  *   file) or "files" (one file per body and a journal, issue 918); passed unread
  * @param {boolean|string[]} [options.cors] CORS (issue 923): false for none, a list of
  *   origins to answer; default: echo any valid request Origin. Passed unread
+ * @param {string} [options.lockCommand] the command named in the lock file of DIR
+ *   (default "lws-serve"; https://github.com/danbri/factoidal/issues/1135)
  * @param {object} [options.engine] an engine handle to reuse
- * @returns {Promise<{step: Function, close: Function, handle: string, engine: object}>}
+ * @returns {Promise<{step: Function, close: Function, handle: string, engine: object,
+ *                    lockFile: string|null, notices: string[]}>}
  */
 export async function openLwsStorage (options = {}) {
   const engine = options.engine !== undefined ? options.engine : await loadEngine()
@@ -341,35 +344,68 @@ export async function openLwsStorage (options = {}) {
   const dir = typeof options.dir === 'string' ? options.dir : null
   const storage = dir !== null ? storageModeText(options.storage) : options.storage
   if (typeof storage === 'string') config.storage = storage
-  // `dir` names the storage directory. The snapshot found there, if any,
-  // is the storage to continue from; the engine checks it.
-  if (dir !== null && storage !== 'files') {
-    const snapshot = readSnapshot(dir)
-    if (snapshot !== null) config.snapshot = snapshot
+  // One writing process per storage directory
+  // (https://github.com/danbri/factoidal/issues/1135): the lock is taken
+  // before anything in DIR is read, and released by `close` and at process
+  // exit. The engine decides the file, its contents and every refusal
+  // (L4Factoidal/LWS/DirLock.lean); a refusal is thrown with its message.
+  let lock = null
+  if (dir !== null) {
+    try {
+      lock = acquireDirLock(engine, dir, typeof options.lockCommand === 'string' ? options.lockCommand : 'lws-serve')
+    } catch (error) {
+      if (isUnknownOp(error)) {
+        throw new LwsHostError(
+          'the loaded l4factoidal WebAssembly module does not carry lwsDirLock',
+          { unknownOp: true })
+      }
+      throw error
+    }
   }
   let opened
+  let handle
+  let filesMode
+  let notices = []
   try {
-    opened = engine.call('lwsOpen', [JSON.stringify(config)])
-  } catch (error) {
-    if (isUnknownOp(error)) {
-      throw new LwsHostError(
-        'the loaded l4factoidal WebAssembly module does not carry lwsOpen',
-        { unknownOp: true })
+    // `dir` names the storage directory. The snapshot found there, if any,
+    // is the storage to continue from; the engine checks it.
+    if (dir !== null && storage !== 'files') {
+      const snapshot = readSnapshot(dir)
+      if (snapshot !== null) config.snapshot = snapshot
     }
+    try {
+      opened = engine.call('lwsOpen', [JSON.stringify(config)])
+    } catch (error) {
+      if (isUnknownOp(error)) {
+        throw new LwsHostError(
+          'the loaded l4factoidal WebAssembly module does not carry lwsOpen',
+          { unknownOp: true })
+      }
+      throw error
+    }
+    handle = handleOf(opened)
+    if (handle === null) {
+      throw new LwsHostError('lwsOpen answered with no handle')
+    }
+    // A storage kept in files: read the files the engine names until it is
+    // ready, and perform the plan of the start. Without a DIR, there are no
+    // files: the engine is told none is present.
+    filesMode = opened !== null && typeof opened === 'object' &&
+      opened.load !== undefined && opened.load !== null
+    if (filesMode) {
+      if (dir === null) throw new LwsHostError('a storage kept in files needs a storage directory (dir)')
+      loadFiles(engine, handle, opened, dir)
+    }
+    // What a server prints at start, after the experimental code notice:
+    // a take-over of a stale lock, and whether the storage on disk is
+    // sealed (encryption at rest; the engine words both).
+    if (dir !== null) {
+      if (lock.warning !== null) notices.push(`WARNING: ${lock.warning}`)
+      notices.push(atRestNotice(engine, dir, storageKey).notice)
+    }
+  } catch (error) {
+    if (lock !== null) lock.release()
     throw error
-  }
-  const handle = handleOf(opened)
-  if (handle === null) {
-    throw new LwsHostError('lwsOpen answered with no handle')
-  }
-  // A storage kept in files: read the files the engine names until it is
-  // ready, and perform the plan of the start. Without a DIR, there are no
-  // files: the engine is told none is present.
-  const filesMode = opened !== null && typeof opened === 'object' &&
-    opened.load !== undefined && opened.load !== null
-  if (filesMode) {
-    if (dir === null) throw new LwsHostError('a storage kept in files needs a storage directory (dir)')
-    loadFiles(engine, handle, opened, dir)
   }
   /** After a call whose envelope may say `changed`: write what the engine
    *  gives (the snapshot, or the plan of a storage kept in files). */
@@ -454,6 +490,10 @@ export async function openLwsStorage (options = {}) {
   return {
     engine,
     handle,
+    /** The lock file of the storage directory, or null with no DIR. */
+    lockFile: lock !== null ? lock.file : null,
+    /** The start notices, for the server to print on standard error. */
+    notices,
     /**
      * One protocol step.
      * @param {{method: string, target: string,
@@ -544,6 +584,7 @@ export async function openLwsStorage (options = {}) {
       closed = true
       if (flushTimer !== null) clearTimeout(flushTimer)
       try { engine.call('lwsClose', [handle]) } catch (_error) { /* already gone */ }
+      if (lock !== null) lock.release()
     }
   }
 }
