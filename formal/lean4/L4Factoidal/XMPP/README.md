@@ -431,3 +431,24 @@ with the SCRAM exchange computed independently in `node:crypto`.
 
 The BEAM host of the "Runtime" section above is now the third option,
 after socat-per-process and Node-per-socket, not the second.
+
+### 2026-10-28: HTTP over XMPP (XEP-0332), stage 1
+
+https://github.com/danbri/factoidal/issues/1107 (a WebDAV server behind NAT
+reached through an XMPP account). Plan and choices:
+`docs/designissues/2026-10-28-http-over-xmpp.md`.
+
+- `HttpOverXmpp.lean` — the XEP-0332 (v0.5.1, Deferred) `req`/`resp` codec in
+  `urn:xmpp:http`, XEP-0131 headers, bodies `text`, `xml`, `base64` and
+  `chunkedBase64` (`chunk` messages with `streamId`, `nr`, `last`; `close`);
+  the mapping to and from the `WebDAV.DavRequest` / `DavResponse` records of
+  `webdav-serve`; the access decision (sender's bare JID in an allow list; no
+  roster logic yet); and `step`, one stanza in, stanzas out, as a
+  `WebDAV.Prog`. Methods: the XEP's eight plus the RFC 4918 methods
+  (implementer choice; the target is `webdav-serve`); CONNECT refused.
+- `HttpOverXmppTests.lean` — end-to-end `#guard`s: XEP-0332 stanza text
+  through `step` and `WebDAV.handle` against the reference LWS server over a
+  model storage (PROPFIND gives 207, chunked bodies both ways, `forbidden`
+  for a JID not in the list).
+- Lean only: no wasm op, no network surface. Stage 2 adds the outgoing
+  client stream, the local proxy and the op.
