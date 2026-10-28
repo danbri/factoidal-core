@@ -250,6 +250,7 @@ def handleOpNames : List String :=
   [ "datasetOpen"
   , "datasetQuery"
   , "datasetQuery12"
+  , "datasetQuery12Entail"
   , "datasetUpdate"
   , "datasetSerialize"
   , "datasetSerializeWith"

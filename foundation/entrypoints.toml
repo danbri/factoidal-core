@@ -127,6 +127,12 @@ covers = "part"
 note = "Wasm/Ops/Handles.lean datasetQuery12: datasetQuery with the SPARQL 1.2 grammar. Not covered: as wasm:queryDataset12. The evaluation is ev.run of a LawfulEvaluator (default shippedEvaluator, Dataflow/Evaluator.lean) over the backend of the LawfulDataset."
 
 [[entry]]
+id = "wasm:datasetQuery12Entail"
+stages = ["rdfsReasoner", "owlRlReasoner", "rhoDfReasoner", "shippedEvaluator"]
+covers = "part"
+note = "Wasm/Ops/Handles.lean datasetQuery12Entail: closeDefaultGraph (the SoundReasoner values, as wasm:datasetQueryRaw) over the stored dataset, then queryParsedDatasetWith with the SPARQL 1.2 grammar and no backend (shippedEvaluator). Not covered: x-rdfsplus (no stage)."
+
+[[entry]]
 id = "wasm:datasetMatch"
 stages = ["LawfulDataset.ofCertified", "LawfulStore.ofIndexed"]
 covers = "part"
