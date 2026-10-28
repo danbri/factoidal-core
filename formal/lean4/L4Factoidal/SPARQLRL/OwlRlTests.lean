@@ -20,6 +20,7 @@ namespace L4Factoidal.SPARQLRL.OwlRlTests
 open L4Factoidal.RDF
 open L4Factoidal.SPARQLRL
 open L4Factoidal.SPARQLRL.OwlRl
+open L4Factoidal.OWL.RL (indexedClosureSN closureFuelBound)
 
 def pfx : String := "PREFIX : <http://example/>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
@@ -178,20 +179,35 @@ def maxqc4 : String := ":R owl:maxQualifiedCardinality \"1\"^^xsd:nonNegativeInt
 #guard entails owlRl maxqc4 ":c owl:sameAs :b ."
 #guard !entails owlRlCommon maxqc3 ":b owl:sameAs :c ."
 
+/-- The library closure (`indexedClosureSN`) entails the one triple of `t`. -/
+def libraryEntails (body t : String) : Bool :=
+  let g := ttl body
+  match ttl t with
+  | [x] => (indexedClosureSN g (closureFuelBound g)).contains x
+  | _ => false
+
+-- xfail https://github.com/danbri/factoidal/issues/1113: the Lean OWL 2 RL
+-- closure has no cls-maxqc3 or cls-maxqc4, so it does not entail these. When
+-- a guard fails, the rows are in: change both to the positive form and close
+-- the issue.
+#guard !libraryEntails maxqc3 ":b owl:sameAs :c ."
+#guard !libraryEntails maxqc4 ":c owl:sameAs :b ."
+
 /-! ## Expected failures: chains and keys longer than `unrollMax`
 
 prp-spo2 and prp-key are unrolled to 8 members (`OwlRl.lean` decision 2).
 With 9 members the Lean closure derives the triple and the rule set does
-not, so the two differ. Expected failure, ISSUE-TBD. When one of these two
+not, so the two differ. Expected failure,
+https://github.com/danbri/factoidal/issues/1112. When one of these two
 guards fails, the shortfall is repaired: change it to the positive form and
 close the issue. -/
 
 def chain9 : String := ":p owl:propertyChainAxiom ( :q :q :q :q :q :q :q :q :q ) . :a0 :q :a1 . :a1 :q :a2 . :a2 :q :a3 . :a3 :q :a4 . :a4 :q :a5 . :a5 :q :a6 . :a6 :q :a7 . :a7 :q :a8 . :a8 :q :a9 ."
 def key9 : String := ":C owl:hasKey ( :k1 :k2 :k3 :k4 :k5 :k6 :k7 :k8 :k9 ) . :a a :C ; :k1 1 ; :k2 2 ; :k3 3 ; :k4 4 ; :k5 5 ; :k6 6 ; :k7 7 ; :k8 8 ; :k9 9 . :b a :C ; :k1 1 ; :k2 2 ; :k3 3 ; :k4 4 ; :k5 5 ; :k6 6 ; :k7 7 ; :k8 8 ; :k9 9 ."
 
--- xfail ISSUE-TBD: prp-spo2 with a chain of 9 members
+-- xfail https://github.com/danbri/factoidal/issues/1112: prp-spo2 with a chain of 9 members
 #guard !agreesTable (ttl chain9)
--- xfail ISSUE-TBD: prp-key with a key of 9 members
+-- xfail https://github.com/danbri/factoidal/issues/1112: prp-key with a key of 9 members
 #guard !agreesTable (ttl key9)
 
 end L4Factoidal.SPARQLRL.OwlRlTests

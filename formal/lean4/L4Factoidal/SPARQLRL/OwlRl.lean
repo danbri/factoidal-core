@@ -44,7 +44,8 @@ Each rule carries its table id in a `#` comment. `OwlRlDiff.lean` compares
    those make a rule run-once (draft "Run-once rule"), so it cannot recurse.
    These two rows are therefore unrolled, one rule per list length from 1 to
    `unrollMax` (8). A chain or a key of more members is not handled: this
-   is a stated shortfall (`OwlRlTests.lean`, an expected failure).
+   is a stated shortfall: https://github.com/danbri/factoidal/issues/1112 and an expected failure in
+   `OwlRlTests.lean`.
 3. **Clash rows** (no consequent). SPARQL-RL has no way to report a
    contradiction, so each clash row is a rule that adds the marker triple
    `h:result h:clash "<table id>"`. `owlRlClashes` reads the markers.
