@@ -88,17 +88,18 @@ theorem loadImports_nil (env : Env) (d : Nat) (seen : List String) (m : Module) 
   simp [loadImports, h]
 
 /-- **An XPath expression as an XQuery main module.** A main module
-    with an empty prolog (no declarations, no imports) is the static
+    with an empty prolog (no declarations, no imports, no schema imports) is the static
     check of its body, then `XPath4.eval` of the body, with only the
     marker binding added (which `lookupVar_markStatic` shows hides no
     variable). -/
 theorem evalModule_emptyProlog (fuel : Nat) (env : Env) (m : Module) (e : Expr)
-    (hd : m.decls = []) (hi : m.imports = []) (hb : m.body = some e) (hl : m.libNs = none) :
+    (hd : m.decls = []) (hi : m.imports = []) (hs : m.schemaImports = []) (hb : m.body = some e)
+    (hl : m.libNs = none) :
     evalModule fuel env m =
       (do checkModules (moduleEnv env m) [m]; eval fuel (markStatic (moduleEnv env m)) e) := by
   have h50 : ∀ (env' : Env) (seen : List String), loadImports env' 50 seen m = pure ([], seen) :=
     fun env' seen => loadImports_nil env' 49 seen m hi
-  simp only [evalModule, h50]
+  simp only [evalModule, h50, hs]
   simp [hb, hl, bindModules_empty _ _ _ hd]
 
 end L4Factoidal.XQuery4

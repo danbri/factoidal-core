@@ -85,6 +85,17 @@ inductive IType where
   | atomic (t : AType)
   | elem (n : Option NameTest)
   | attr (n : Option NameTest)
+  /-- `element(N, T)` / `element(N, T?)` (XPath 4.0 §3.2.8.2): the type
+      annotation must be `T` or derived from it (`Env.schema`); `nillable`
+      is the `?`. -/
+  | elemT (n : Option NameTest) (ty : QN) (nillable : Bool)
+  /-- `attribute(N, T)` (XPath 4.0 §3.2.8.3). -/
+  | attrT (n : Option NameTest) (ty : QN)
+  /-- `schema-element(N)` (XPath 4.0 §3.2.8.4): needs the in-scope element
+      declaration of `N` (`Env.schema`). -/
+  | schemaElem (n : QN)
+  /-- `schema-attribute(N)` (XPath 4.0 §3.2.8.5). -/
+  | schemaAttr (n : QN)
   | text | comment | nsNode
   | pi (target : Option String)
   | doc (inner : Option IType)
@@ -199,6 +210,18 @@ structure NRec where
   attrs : Array Nat := #[]
   inscope : List (String × String) := []
   last : Nat := 0
+  /-- Hook for schema validation (`L4Factoidal.XSD11`): the type
+      annotation of an element or attribute (XDM 4.0 §2.7, `dm:type-name`);
+      `none` is `xs:untyped` (element) or `xs:untypedAtomic` (attribute). -/
+  tann : Option QN := none
+  /-- Hook for schema validation: the typed value (`dm:typed-value`);
+      `none` means the string value as `xs:untypedAtomic`. -/
+  tval : Option (List Atomic) := none
+  /-- Hook for schema validation: `dm:nilled`. -/
+  nilled : Bool := false
+  /-- Hook for schema validation: the element has element-only content,
+      so `dm:typed-value` is absent and atomization fails (FOTY0012). -/
+  noTypedValue : Bool := false
 deriving Inhabited
 
 structure Doc where

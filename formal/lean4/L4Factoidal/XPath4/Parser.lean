@@ -176,6 +176,13 @@ def lookupNs (p : String) : P String := do
     | some u => pure u
     | none => throw { code := "XPST0081", msg := "undeclared namespace prefix " ++ p }
 
+/-- The namespace of an unprefixed element name in a name test (XPath 4.0
+§2.1.1, static context; XQuery 4.0 `declare default element namespace`):
+the binding of the empty prefix in the static namespaces, when the host or
+the prolog gives one; else no namespace. -/
+def dfltElemNs : P String := do
+  return ((← read).ns.lookup "").getD ""
+
 /-- Resolve a lexical name; `dflt` is the namespace of an unprefixed name. -/
 def resolve (pfx : Option String) (uri : Option String) (l : String) (dflt : String) : P QN := do
   match uri with
@@ -307,13 +314,6 @@ def dfltFnNs : P String := do pure (((← read).ns.lookup "#fn").getD nsFN)
 /-- The namespace of an unprefixed type name: none, unless the host
     language binds `#type` (XSLT `xpath-default-namespace`). -/
 def dfltTypeNs : P String := do pure (((← read).ns.lookup "#type").getD "")
-
-/-- The namespace of an unprefixed element name in a name test: none
-    in XPath 4.0 here; the default element namespace (binding `""`) in
-    XQuery 4.0. -/
-def dfltElemNs : P String := do
-  let c ← read
-  pure (if c.ext.isSome then (c.ns.lookup "").getD "" else "")
 
 /-- Run a parser at an offset with other namespace bindings (for the
     extension grammar's sub-parsers). -/
@@ -509,16 +509,39 @@ def pItemType : Nat → P IType
         | "element" | "attribute" =>
             if ← eatS ")" then pure (if nm == "element" then .elem none else .attr none)
             else
-              let en ← dfltElemNs
-              let t ← pNameTest (if nm == "element" then en else "")
-              -- union of names, then optional type name (ignored: no schema types)
+              let den ← dfltElemNs
+              let t ← pNameTest (if nm == "element" then den else "")
+              -- union of names, then an optional type name
               for _ in [0:100] do
                 if ← eatS "|" then let _ ← pNameTest "" else break
-              if ← eatS "," then
-                let _ ← pNameTest nsXS
-                let _ ← eatS "?"
+              let ty ← if ← eatS "," then
+                  ws
+                  match ← peekQName with
+                  | some (p, u, l, e) =>
+                    set e
+                    let q ← resolve p u l ""
+                    let nil ← eatS "?"
+                    pure (some (q, nil))
+                  | none => synErr "expected a type name"
+                else pure none
               expectS ")"
-              pure (if nm == "element" then .elem (some t) else .attr (some t))
+              let t' : Option NameTest := match t with
+                | .any => none
+                | other => some other
+              match ty with
+              | none => pure (if nm == "element" then .elem (some t) else .attr (some t))
+              | some (q, nil) =>
+                pure (if nm == "element" then .elemT t' q nil else .attrT t' q)
+        | "schema-element" | "schema-attribute" =>
+            ws
+            match ← peekQName with
+            | some (p, u, l, e) =>
+              set e
+              let den ← dfltElemNs
+              let q ← resolve p u l (if nm == "schema-element" then den else "")
+              expectS ")"
+              pure (if nm == "schema-element" then .schemaElem q else .schemaAttr q)
+            | none => synErr ("expected a name in " ++ nm ++ "()")
         | "document-node" =>
             if ← eatS ")" then pure (.doc none)
             else
@@ -920,7 +943,27 @@ def pTreat : Nat → P Expr
 def pCastTarget : Nat → P (IType × Bool)
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
-    let t ← pItemType n
+    -- XPath 4.0 §4.19.2: a cast target may also be one of the built-in list
+    -- types xs:NMTOKENS, xs:IDREFS, xs:ENTITIES (not an item type)
+    ws
+    let st ← get
+    let c0 ← read
+    let listT ← match ← peekQName with
+      | some (p, u, l, e) =>
+        let uri : Option String := match u, p with
+          | some uu, _ => some uu
+          | none, some pf => (c0.ns.lookup pf).orElse (fun _ => defaultNs.lookup pf)
+          | none, none => none
+        if uri == some nsXS && (l == "NMTOKENS" || l == "IDREFS" || l == "ENTITIES") &&
+           chAt c0.s e != '(' then
+          set e
+          pure (atypeOfName? l |>.map IType.atomic)
+        else pure none
+      | none => pure none
+    if listT.isNone then set st
+    let t ← match listT with
+      | some t => pure t
+      | none => pItemType n
     let c ← read
     let i ← get
     let j := skipWsF c.s (c.s.size + 1) 0 i
@@ -1111,14 +1154,14 @@ def pNodeTest : Nat → Axis → P NodeTest
       if kindTestNames.contains nm then pure (.kind (← pItemType n))
       else synErr ("unexpected function call in a step: " ++ nm)
     | _ =>
-      let en ← dfltElemNs
-      let dn := if ax == .attribute then "" else en
       let star := (← peekAt 0) == '*'
+      let den ← dfltElemNs
+      let dflt := if ax == .attribute then "" else den
       match ← peekQName with
       | some (none, none, l, _) =>
         if star || l == "*" then pure (.name (← pNameTest ""))
-        else pure (.ncname (← pNameTest dn) l)
-      | _ => pure (.name (← pNameTest dn))
+        else pure (.ncname (← pNameTest dflt) l)
+      | _ => pure (.name (← pNameTest dflt))
 
 def pStep : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
