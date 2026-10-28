@@ -455,9 +455,6 @@ def typeRef (c : Ctx) (qn : String) : RM Nat := do
   | none => addErr s!"cannot resolve type QName {qn}"; pure anyTypeIdx
   | some n =>
     let n := c.renamed "type" n
-    if n == xs "anyAtomicType" then
-      addErr "xs:anyAtomicType may not be named in a schema document"; pure anyTypeIdx
-    else
     match (← get).sch.typeIdx? n with
     | some i => pure i
     | none => addErr s!"unresolved type {n.show}"; pure anyTypeIdx
@@ -508,6 +505,21 @@ def facetTags : List String :=
   ["length", "minLength", "maxLength", "pattern", "enumeration", "whiteSpace",
    "maxInclusive", "maxExclusive", "minInclusive", "minExclusive",
    "totalDigits", "fractionDigits", "assertion", "explicitTimezone"]
+
+/-- §3.10.2 Schema Representation Constraints on `any` / `anyAttribute`:
+the `##` keywords allowed in `namespace`, `notNamespace` and `notQName`,
+and `namespace` with `notNamespace` not both given. -/
+def wildReprErrors (n : Node) : List String :=
+  let ns := (attrOf "namespace" n).map XSD.qnameList |>.getD []
+  let nn := (attrOf "notNamespace" n).map XSD.qnameList |>.getD []
+  let nq := (attrOf "notQName" n).map XSD.qnameList |>.getD []
+  let badKw (allowed : List String) (l : List String) :=
+    l.filter (fun t => t.startsWith "##" && !allowed.contains t)
+  (if (attrOf "namespace" n).isSome && (attrOf "notNamespace" n).isSome then ["wildcard with both namespace and notNamespace"] else []) ++
+  (badKw ["##any", "##other", "##targetNamespace", "##local"] ns).map (fun t => s!"wildcard namespace {t} is not allowed") ++
+  (if (ns.contains "##any" || ns.contains "##other") && ns.length > 1 then ["##any or ##other with other namespaces"] else []) ++
+  (badKw ["##targetNamespace", "##local"] nn).map (fun t => s!"wildcard notNamespace {t} is not allowed") ++
+  (badKw ["##defined", "##definedSibling"] nq).map (fun t => s!"wildcard notQName {t} is not allowed")
 
 /-- §3.10.6.4 (attribute) wildcard intersection, for the namespace
 constraints; the other properties come from the first. -/
@@ -604,6 +616,12 @@ def readSimpleType (fuel : Nat) (c : Ctx) (n : Node) (name : Option XName) : RM 
         | .complex _ => (Variety.atomic, none, [], none)
       if !bt.isSimple then addErr "simple type restricts a complex type"
       if baseIdx == anySimpleTypeIdx then addErr "simple type may not restrict xs:anySimpleType directly"
+      if baseIdx == builtinIdx .anyAtomicType then addErr "simple type may not restrict xs:anyAtomicType (Part 2 §3.2.2)"
+      -- §4.3: a facet other than pattern, enumeration and assertion appears at most once
+      let fnames := (xsKids b).filterMap (fun k =>
+        let l := localOf (tagOf k)
+        if facetTags.contains l && l != "pattern" && l != "enumeration" && l != "assertion" then some l else none)
+      if fnames.length != fnames.eraseDups.length then addErr "a facet is given twice in one restriction"
       pure { name, base := baseIdx, variety, item, members, builtin, facets, fixedFacets, final,
              asserts := assertsOf bc "assertion" b }
     else if isXs b "list" then
@@ -650,6 +668,7 @@ def readParticle (fuel : Nat) (c : Ctx) (n : Node) : RM (Option Particle) := do
       let i ← readElement f c n false
       pure (some (.elem mn mx i))
   else if tag == "any" then
+    wildReprErrors n |>.forM addErr
     pure (some (.wild mn mx (readWildcard c n)))
   else if tag == "group" then
     match attrOf "ref" n with
@@ -889,6 +908,7 @@ def readAttrs (fuel : Nat) (c : Ctx) (kids : List Node)
             if let some w := w then groupWilds := groupWilds.push w
     else if isXs k "anyAttribute" then
       if wild.isSome then addErr "more than one anyAttribute"
+      wildReprErrors k |>.forM addErr
       wild := some (readWildcard (c.enter k) k)
     else if isXs k "assert" || isXs k "openContent" then
       pure ()

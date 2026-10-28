@@ -29,21 +29,29 @@ open L4Factoidal.Regex
 
 /-- Rewrite an XSD pattern for the F&O 4.0 parser: `none` when it uses
 syntax that F&O 4.0 adds to XSD; `^` and `$` outside a class escaped. -/
-def xsdForXPath40 : List Char → Nat → List Char → Option (List Char)
-  | [], _, acc => some acc.reverse
-  | '\\' :: c :: rest, d, acc =>
+def xsdForXPath40 : List Char → Nat → Bool → List Char → Option (List Char)
+  | [], _, _, acc => some acc.reverse
+  -- inside the braces of `\p{...}`: copied up to the closing brace
+  | c :: rest, d, true, acc => xsdForXPath40 rest d (c != '}') (c :: acc)
+  | '\\' :: c :: rest, d, false, acc =>
     if c.isDigit || c == 'b' || c == 'B' || c == 'k' || c == '$' || c == '#' then none
-    else xsdForXPath40 rest d (c :: '\\' :: acc)
-  | '[' :: rest, d, acc => xsdForXPath40 rest (d + 1) ('[' :: acc)
-  | ']' :: rest, d, acc => xsdForXPath40 rest (d - 1) (']' :: acc)
-  | '(' :: '?' :: _, 0, _ => none
-  | '(' :: '*' :: _, 0, _ => none
-  | '^' :: rest, 0, acc => xsdForXPath40 rest 0 ('^' :: '\\' :: acc)
-  | '$' :: rest, 0, acc => xsdForXPath40 rest 0 ('$' :: '\\' :: acc)
-  | q :: '?' :: rest, 0, acc =>
+    else match hr : rest with
+      | '{' :: rest' =>
+        if c == 'p' || c == 'P' then xsdForXPath40 rest' d true ('{' :: c :: '\\' :: acc)
+        else xsdForXPath40 rest d false (c :: '\\' :: acc)
+      | _ => xsdForXPath40 rest d false (c :: '\\' :: acc)
+  | '[' :: rest, d, false, acc => xsdForXPath40 rest (d + 1) false ('[' :: acc)
+  | ']' :: rest, d, false, acc => xsdForXPath40 rest (d - 1) false (']' :: acc)
+  | '(' :: '?' :: _, 0, false, _ => none
+  | '(' :: '*' :: _, 0, false, _ => none
+  | '^' :: rest, 0, false, acc => xsdForXPath40 rest 0 false ('^' :: '\\' :: acc)
+  | '$' :: rest, 0, false, acc => xsdForXPath40 rest 0 false ('$' :: '\\' :: acc)
+  | q :: '?' :: rest, 0, false, acc =>
     if q == '*' || q == '+' || q == '?' || q == '}' then none
-    else xsdForXPath40 ('?' :: rest) 0 (q :: acc)
-  | c :: rest, d, acc => xsdForXPath40 rest d (c :: acc)
+    else xsdForXPath40 ('?' :: rest) 0 false (q :: acc)
+  | c :: rest, d, false, acc => xsdForXPath40 rest d false (c :: acc)
+termination_by cs => cs.length
+decreasing_by all_goals (simp_all; try omega)
 
 /-- The derivative regex of an XSD 1.1 pattern, or `none` when it is not
 a valid pattern. -/
@@ -51,7 +59,7 @@ def xsdPatternRe (p : String) : Option Re :=
   match Profiles.compileXsd11 p with
   | .ok r => some r
   | .error _ =>
-    match xsdForXPath40 p.toList 0 [] with
+    match xsdForXPath40 p.toList 0 false [] with
     | none => none
     | some cs =>
       match XPath40.parse false (cs.map Char.toNat) with

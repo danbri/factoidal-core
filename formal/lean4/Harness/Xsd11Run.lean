@@ -26,7 +26,8 @@ Usage (from `formal/lean4/`):
   lake build l4xsd11 && .lake/build/bin/l4xsd11 [suite-dir] [--set NAME]
       [--verbose] [--group NAME]
 -/
-import L4Factoidal.XSD11.XPathHooks
+import L4Factoidal.XSD11.Load
+import L4Factoidal.XSD11.ShaclBridge
 
 open L4Factoidal.XML
 open L4Factoidal.XSD11
@@ -69,38 +70,7 @@ def expectedOf (test : Node) : Option String :=
   let pick := pick.orElse (fun _ => exps.find? (fun e => (attrOf "version" e).isNone))
   pick.bind (attrOf "validity")
 
-def readDoc (path : String) : IO (Option Document) := do
-  if !(← System.FilePath.pathExists path) then return none
-  if ← System.FilePath.isDir path then return none
-  let bytes ← try IO.FS.readBinFile path catch _ => return none
-  match String.fromUTF8? bytes with
-  | none => return none
-  | some src =>
-    match parseXML src with
-    | .ok d => return some d
-    | .error _ => return none
-
-/-- Load the schema documents named by `roots` and everything they reach. -/
-def loadClosure (roots : List String) : IO (List LoadedDoc × Bool) := do
-  let mut loaded : List LoadedDoc := []
-  let mut todo := roots
-  let mut seen : List String := []
-  let mut allRead := true
-  for _ in [0:500] do
-    match todo with
-    | [] => break
-    | l :: rest =>
-      todo := rest
-      if seen.contains l then continue
-      seen := l :: seen
-      if (l.splitOn "://").length > 1 then continue
-      match ← readDoc l with
-      | some d =>
-        loaded := { loc := l, doc := d } :: loaded
-        todo := todo ++ refsOf l d
-      | none =>
-        if ← System.FilePath.pathExists l then allRead := false
-  return (loaded.reverse, allRead)
+def readDoc (path : String) : IO (Option Document) := readDocFile path
 
 def outcome (valid : Bool) : String := if valid then "valid" else "invalid"
 

@@ -1630,3 +1630,42 @@ L4Factoidal_EXPath_Binary_packBE  # (s) specification only: no emitted C outside
 # --- 2026-10-28, graph pipelines (https://github.com/danbri/factoidal/issues/1130)
 L4Factoidal_Dataflow_gather  # (c) one frame per input port of one stage; the ports come from the Lean signature tables (at most 2 today); recursion stops at the last port
 L4Factoidal_Dataflow_srcIssues  # (c) one frame per input port of one stage, as gather; extra sources stop at the last port with one portCount issue
+# --- Added 2026-10-28, XML Schema 1.1 structures (L4Factoidal/XSD11/) ---
+L4Factoidal_XSD11_PNode_erase  # (s) specification only: used by XSD11/Theorems.lean
+L4Factoidal_XSD11_PNode_eraseList  # (s) specification only: used by XSD11/Theorems.lean
+L4Factoidal_XSD11_PNode_ofNode  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_PNode_ofNodeList  # (a) PENDING https://github.com/danbri/factoidal/issues/1151 one frame per child or list item
+L4Factoidal_XSD11_PNode_toXdm  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_PNode_toXdmList  # (a) PENDING https://github.com/danbri/factoidal/issues/1151 one frame per child or list item
+L4Factoidal_XSD11_Particle_decls  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_Particle_elemNames  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_Particle_wilds  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_RE_derivP  # (a) PENDING https://github.com/danbri/factoidal/issues/1151 one frame per child or list item
+L4Factoidal_XSD11_RE_nullable  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_RE_ofParticleM  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_RE_subsumes  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_Schema_ancestry  # (c) a type-derivation or substitution-group chain; bounded by a fuel constant (64, 32 or 16)
+L4Factoidal_XSD11_Schema_chainUpTo  # (c) a type-derivation or substitution-group chain; bounded by a fuel constant (64, 32 or 16)
+L4Factoidal_XSD11_Schema_derivesFromF  # (c) a type-derivation or substitution-group chain; bounded by a fuel constant (64, 32 or 16)
+L4Factoidal_XSD11_Schema_methodsUpTo  # (c) a type-derivation or substitution-group chain; bounded by a fuel constant (64, 32 or 16)
+L4Factoidal_XSD11_Schema_simpleAsserts  # (c) a type-derivation or substitution-group chain; bounded by a fuel constant (64, 32 or 16)
+L4Factoidal_XSD11_Schema_substOk_reaches  # (c) a type-derivation or substitution-group chain; bounded by a fuel constant (64, 32 or 16)
+L4Factoidal_XSD11_allNested  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_annotate  # (a) PENDING https://github.com/danbri/factoidal/issues/1151 one frame per child or list item
+L4Factoidal_XSD11_atomsOfBody  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_bodyOf  # (c) a type-derivation or substitution-group chain; bounded by a fuel constant (64, 32 or 16)
+L4Factoidal_XSD11_bodyOf_go  # (c) a type-derivation or substitution-group chain; bounded by a fuel constant (64, 32 or 16)
+L4Factoidal_XSD11_bodyPatternsOk  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_collectDoc  # (b) depth is the include/import nesting of schema documents; fuel 32
+L4Factoidal_XSD11_descendantsOrSelf  # (a) PENDING https://github.com/danbri/factoidal/issues/1151 one frame per child or list item
+L4Factoidal_XSD11_effComplex  # (c) a type-derivation or substitution-group chain; bounded by a fuel constant (64, 32 or 16)
+L4Factoidal_XSD11_instBEqRE_beq  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_mkPAttrs  # (a) PENDING https://github.com/danbri/factoidal/issues/1151 one frame per child or list item
+L4Factoidal_XSD11_readAttrs  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_readComplexType  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_readElement  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_readParticle  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_readSchemaDocs_go  # (c) duplicate-name check over the global names of one schema
+L4Factoidal_XSD11_readSimpleType  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
+L4Factoidal_XSD11_schemaHints_pairs  # (a) PENDING https://github.com/danbri/factoidal/issues/1151 one frame per child or list item
+L4Factoidal_XSD11_validateElement  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call

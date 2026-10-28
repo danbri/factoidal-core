@@ -393,13 +393,17 @@ def Schema.ancestry (s : Schema) : Nat → Nat → List Nat
 
 /-- `d` is `b` or is derived from it, in any number of steps
 (§3.4.6.5 / §3.16.6.3, without the blocking keywords). -/
-def Schema.derivesFrom (s : Schema) (d b : Nat) : Bool :=
-  d == b || b == anyTypeIdx || (s.ancestry 64 d).contains b ||
-  -- §3.16.6.3 clause 2.2.4: a member of a union is validly derived from
-  -- the union when the union has no facets of its own.
-  (match s.type b with
-   | .simple sb => sb.variety == .union && sb.members.contains d
-   | _ => false)
+def Schema.derivesFromF (s : Schema) : Nat → Nat → Nat → Bool
+  | 0, _, _ => false
+  | f + 1, d, b =>
+    d == b || b == anyTypeIdx || (s.ancestry 64 d).contains b ||
+    -- §3.16.6.3 clause 2.2.4: a type derived from a member of a union is
+    -- validly derived from the union when the union has no facets of its own.
+    (match s.type b with
+     | .simple sb => sb.variety == .union && sb.members.any (fun m => s.derivesFromF f d m)
+     | _ => false)
+
+def Schema.derivesFrom (s : Schema) (d b : Nat) : Bool := s.derivesFromF 16 d b
 
 /-- The derivation methods used on the chain from `d` up to (and not
 including) `b`, for the blocking checks of §3.4.6.5 clause 2.3.2 and
