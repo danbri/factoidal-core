@@ -99,7 +99,14 @@ Rejected, with reasons:
   is why it is recorded here rather than left for someone to rediscover.
   Setting `isModule: true` (Init uses Lean's new module system — the
   sources begin with `module`) did not change the output.
-- **WASI (`wasi-sdk` / `clang --target=wasm32-wasi`) and `zig cc`.** Not
+- **WASI (`wasi-sdk` / `clang --target=wasm32-wasi`) and `zig cc`.**
+  *Update 2026-10-29:* the WASI route was built and measured as an
+  experiment (`experiments/wasm-components/`, results in its `RESULTS.md`,
+  record `docs/designissues/2026-10-29-wasm-components.md`, issue
+  https://github.com/danbri/factoidal/issues/1167). It needs wasi-sdk 34 or
+  later (earlier releases have no libunwind), 14 runtime accommodations,
+  and gives a real WIT component with the same throughput as Emscripten; the
+  shipped build stays on Emscripten for now. The original note follows. Not
   attempted after Emscripten linked, per the brief's instruction to take
   the route that links first and document the rest. The blocking risk to
   check first if this is revisited: Lean's runtime throws C++ exceptions

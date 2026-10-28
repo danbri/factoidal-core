@@ -19,6 +19,7 @@ namespace `#xsl`, so an inline function item captures it with the
 rest of its closure.
 -/
 import L4Factoidal.XSLT4.Compile
+import L4Factoidal.XSLT4.Strip
 
 namespace L4Factoidal.XSLT4
 
@@ -1968,6 +1969,10 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
     | .sourceDoc href body accs =>
         let h ← avtStr cx href
         let d ← liftX (callFn 100000 env { uri := nsFN, loc := "doc" } [sStr h])
+        -- §4.3: whitespace stripping applies to the document read here too
+        let d := match d with
+          | [.node r] => [Item.node { r with rt := r.rt.map (stripDoc S) }]
+          | d => d
         match d with
         | [i] =>
           -- §18.1: the document is validated when the instruction asks for it
