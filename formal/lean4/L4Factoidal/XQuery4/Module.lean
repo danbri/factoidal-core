@@ -408,8 +408,10 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
         expectS ";"
         if seen.contains "coll" then qerr "XQST0038" "two default collation declarations"
         seen := "coll" :: seen
-        if u != "http://www.w3.org/2005/xpath-functions/collation/codepoint" then
-          qerr "XQST0038" ("unknown collation " ++ u)
+        -- §5.5: any collation the processor provides (XQST0038 otherwise)
+        match collationOf (m.baseUri.getD "") u with
+        | .ok _ => pure ()
+        | .error _ => qerr "XQST0038" ("unknown collation " ++ u)
         m := { m with defaultCollation := some u }
       else if ← eatKw "order" then
         expectKw "empty"
@@ -876,8 +878,11 @@ def bindModules (fuel : Nat) (env : Env) (ms : List Module) : M Env :=
     the prolog's namespaces, collation, base URI and decimal formats. -/
 def moduleEnv (env : Env) (m : Module) : Env :=
   let env := { env with ns := m.ns }
-  let env := match m.defaultCollation with | some c => { env with defaultCollation := c } | none => env
   let env := match m.baseUri with | some b => { env with baseUri := b } | none => env
+  -- the declared collation URI is resolved against the base URI (§5.5)
+  let env := match m.defaultCollation with
+    | some c => { env with defaultCollation := (match resolveCollationUri env.baseUri c with | .ok u => u | .error _ => c) }
+    | none => env
   let env := { env with decimalFormats := m.decimalFormats ++ env.decimalFormats }
   if m.constructionStrip then env.bind constructionStripKey [] else env
 
