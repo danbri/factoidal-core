@@ -18,9 +18,7 @@ states the agreement with the XSD value (`atomsOf_valid`).
 
 Known differences, each a qt4tests or xsdtests case that does not pass:
 an assertion's context element has a document node as parent (Part 1
-§3.13.4.1 asks for a parentless element), and `xpathDefaultNamespace`
-is not applied to unprefixed names (the XPath 4.0 parser has no default
-element namespace).
+§3.13.4.1 asks for a parentless element).
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
@@ -129,8 +127,11 @@ def psviDoc (s : Schema) (p : PNode) (uri : String := "") : Doc :=
 
 /-! ## The hooks -/
 
-def nsForXPath (bs : NsBindings) : List (String × String) :=
-  (bs.filter (fun b => b.1 != "")).eraseDups
+/-- The static namespaces of an XPath test: the in-scope prefixes of the
+schema document, and `xpathDefaultNamespace` as the default element
+namespace (§3.13.2, §3.12.2). -/
+def nsForXPath (bs : NsBindings) (xdn : String := "") : List (String × String) :=
+  (if xdn == "" then [] else [("", xdn)]) ++ (bs.filter (fun b => b.1 != "")).eraseDups
 
 def evalTest (env : Env) (expr : String) : Option Bool :=
   match L4Factoidal.XPath4.evalString expr env with
@@ -143,7 +144,7 @@ def evalTest (env : Env) (expr : String) : Option Bool :=
     if e.code.startsWith "XPST" then none else some false
 
 def xpathHooks : Hooks :=
-  { test := fun s expr bs _xdn p =>
+  { test := fun s expr bs xdn p =>
       let d := psviDoc s p
       let value : List Item := match p.info? with
         | some i => match i.typ, i.normalized with
@@ -151,11 +152,11 @@ def xpathHooks : Hooks :=
           | _, _ => []
         | none => []
       let env : Env := { docs := #[d], ctx := some [.node ⟨0, 1, none⟩], pos := 1, size := 1,
-                         ns := nsForXPath bs, vars := [({ uri := "", loc := "value" }, value)] }
+                         ns := nsForXPath bs xdn, vars := [({ uri := "", loc := "value" }, value)] }
       evalTest env expr,
-    testValue := fun s expr bs _xdn t norm =>
+    testValue := fun s expr bs xdn t norm =>
       let value : List Item := ((atomsOf s (fun pr => lookupNs bs pr) t norm).getD []).map Item.atom
-      let env : Env := { ns := nsForXPath bs, vars := [({ uri := "", loc := "value" }, value)] }
+      let env : Env := { ns := nsForXPath bs xdn, vars := [({ uri := "", loc := "value" }, value)] }
       evalTest env expr }
 
 end L4Factoidal.XSD11
