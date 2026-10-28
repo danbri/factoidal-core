@@ -1514,7 +1514,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | none => ((S.outputs.lookup f).bind (·.lookup "item-separator"))
         let v ← if !buildTree then materializeAll env os else match os with
           | [] => pure []
-          | _ => do pure [← liftX (materialize env id (.doc (← liftX (Out.normalizeTop sep os)) ""))]
+          | _ => do pure [← liftX (materialize env id (.doc (← liftX (Out.normalizeTop sep os)) h))]
         let st ← get
         if st.results.any (fun (x, _, _, _) => x == h) then
           xerr "XTDE1490" ("two result documents with the URI '" ++ h ++ "'")
