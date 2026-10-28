@@ -613,7 +613,15 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
       fnsM.any (fun (q2, lo, hi) => (q2 == q || (q.uri == nsFN && q.pfx == "" && q2 == { q with uri := "" }))
         && lo ≤ k && k ≤ hi)
     let _ := known
-    let base : SCtx := { vars := env.vars.map (·.1) ++ globalsM, knownFn := knownM }
+    -- schema names: the built-in types, else what the in-scope schema holds
+    let hasSchema := !env.schema.targetNamespaces.isEmpty
+    let tyKnown (q : QN) : Bool :=
+      if q.uri == nsXS then
+        (atypeOfName? q.loc).isSome || ["anyType", "untyped", "anySimpleType", "untypedAtomic"].contains q.loc
+      else hasSchema
+    let base0 : SCtx := { vars := env.vars.map (·.1) ++ globalsM, knownFn := knownM }
+    let base : SCtx := { base0 with typeKnown := tyKnown, elemKnown := fun q => (env.schema.elemDecl q).isSome,
+                                    attrKnown := fun q => (env.schema.attrDecl q).isSome }
     for d in m.decls do
       let r := match d with
         | .var _ _ (some e) _ => staticErr 100000 base e

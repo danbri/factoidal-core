@@ -971,7 +971,8 @@ where
     if isNameStart ch1 then return some (← pDirElem cfg sp 10000)
     return none
   if ch == '`' && chAt s (i+1) == '`' && chAt s (i+2) == '[' then return some (← pStringConstructor sp)
-  if ch == '(' && chAt s (i+1) == '#' then return some (← pExtensionExpr sp)
+  -- a pragma needs a closing '#)'; otherwise '(' opens a parenthesized expression ('(#name, #name)')
+  if ch == '(' && chAt s (i+1) == '#' && (readUntil s (i+2) "#)").isSome then return some (← pExtensionExpr sp)
   if ch == '%' then
     -- annotations on an inline function (ignored), then the function
     for _ in [0:100] do

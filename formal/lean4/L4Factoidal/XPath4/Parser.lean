@@ -1248,7 +1248,7 @@ def pStep : Nat → P Expr
       if kindTestNames.contains nm then
         let t ← pNodeTest n .child
         let ax := match t with
-          | .kind (.attr _) => Axis.attribute
+          | .kind (.attr _) | .kind (.attrT ..) | .kind (.schemaAttr _) => Axis.attribute
           | .kind .nsNode => Axis.namespace
           | _ => Axis.child
         let ps ← pPreds n
