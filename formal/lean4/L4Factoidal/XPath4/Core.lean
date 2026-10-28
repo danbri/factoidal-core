@@ -328,6 +328,16 @@ def subtypeF : Nat → IType → IType → Bool
         ps.length == qs.length && (qs.zip ps).all (fun (q, p) => subtypeF f q p) && subtypeF f r t
     | .mapT _ _, .anyMap | .record _ _, .anyMap | .anyMap, .anyMap => true
     | .mapT k v, .mapT k2 v2 => subtypeF f k k2 && subtypeF f v v2
+    -- XPath 4.0 §3.3.2.5: a record type is a subtype of a map type whose key
+    -- type admits xs:string and whose value type admits every field
+    | .record fs ext, .mapT k v =>
+        subtypeF f (.atomic (.b .string)) k &&
+        (if ext then subtypeF f (.seq .item .star) v else fs.all (fun (_, _, t) => subtypeF f t v))
+    | .record fs e1, .record gs e2 =>
+        gs.all (fun (n, opt, t) => match fs.find? (·.1 == n) with
+          | some (_, o1, t1) => (opt || !o1) && subtypeF f t1 t
+          | none => opt && !e1) &&
+        (e2 || (!e1 && fs.all (fun (n, _, _) => gs.any (·.1 == n))))
     | .anyArr, .anyArr | .arrT _, .anyArr => true
     | .arrT m, .arrT m2 => subtypeF f m m2
     | .mapT k v, .fnT [p] r => subtypeF f p k && subtypeF f (.seq v .opt) r
