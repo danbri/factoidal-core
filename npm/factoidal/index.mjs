@@ -75,6 +75,7 @@ export const memberIri = api.memberIri;
 export const memberOrdinal = api.memberOrdinal;
 export const openDataset = api.openDataset;
 export const closure = api.closure;
+export const sparqlRlInfer = api.sparqlRlInfer;
 export const formats = api.formats;
 export const queryRaw = api.queryRaw;
 export const queryHdt = api.queryHdt;

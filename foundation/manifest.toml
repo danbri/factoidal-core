@@ -521,9 +521,14 @@ level = 1
 spec = "SHACL Advanced Features §6 (node expressions)"
 
 [[module]]
-name = "L4Factoidal.SHACL.Rules"
+name = "L4Factoidal.SPARQLRL.Syntax"
 level = 1
-spec = "SHACL Advanced Features §8 (SHACL rules)"
+spec = "SPARQL 1.2 RL editor's draft, \"SPARQL-RL Abstract Syntax\" (well-formedness, rule dependency, stratification); SHACL.Rules is now a wrapper of it (issue 1099)"
+
+[[module]]
+name = "L4Factoidal.SPARQLRL.Eval"
+level = 1
+spec = "SPARQL 1.2 RL editor's draft, \"Rule Set Evaluation\" (infer)"
 
 [[module]]
 name = "L4Factoidal.ShEx.Schema"
@@ -686,6 +691,11 @@ spec = "RDF 1.1 JSON Alternate Serialization (RDF/JSON) §2 (W3C Working Group N
 name = "L4Factoidal.SPARQL.Parser"
 level = 2
 spec = "SPARQL 1.1 Query §19 (grammar); SPARQL 1.2 Query §19"
+
+[[module]]
+name = "L4Factoidal.SPARQLRL.Parser"
+level = 2
+spec = "SPARQL 1.2 RL editor's draft, \"SPARQL-RL Grammar\" (sparql-rl-grammar.bnf)"
 
 [[module]]
 name = "L4Factoidal.SPARQL.UpdateParser"
