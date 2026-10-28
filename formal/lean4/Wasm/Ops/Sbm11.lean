@@ -5,7 +5,7 @@ https://github.com/danbri/factoidal/issues/1007).
 
   sbm11Open(source [, optionsJson])
     -> {"ok":true,"handle":"sbm11-1","generation":G,"terms":N,"artifacts":K,
-        "verify":"merkle"|"none","bytesRead":B}
+        "verify":"merkle"|"none","manifestSha256":H,"bytesRead":B}
   sbm11Query(handle, sparql [, optionsJson])
     -> {"ok":true,"path":"path=ids"|"path=reference ...","rows":N,
         "format":"srj"|"ntriples","bytesRead":B,"reads":R,"result":"..."}
@@ -14,7 +14,8 @@ https://github.com/danbri/factoidal/issues/1007).
   sbm11Close(handle)
     -> {"ok":true}
   sbm11Verify(source)
-    -> {"ok":true,"artifacts":K,"files":F,"bytes":B,"quads":Q,"terms":T}
+    -> {"ok":true,"artifacts":K,"files":F,"bytes":B,"quads":Q,"terms":T,
+        "manifestSha256":H}
   storeLayout(source)
     -> {"ok":true,"layout":"sbm11"|"ibk","generation":G,"manifest":M}
 
@@ -37,6 +38,18 @@ chunk checked by its proof against that root, with HACL* SHA-256
 of the manifest refuses the open or the query, and the error names the file
 (https://github.com/danbri/factoidal/issues/1009). `none` checks the lengths
 only, as `l4sbm11 query --verify none`.
+
+The optional member `manifestSha256` of the `optionsJson` of `sbm11Open` is
+the trust anchor of the manifest (https://github.com/danbri/factoidal/issues/1105):
+the SHA-256 of the bytes of `manifest.sbm11`, as 64 hex digits (either case).
+The open computes that digest with HACL* SHA-256 and refuses the open when it
+is not the anchor; the error names `manifest.sbm11` and both digests
+(`HostVerify.checkAnchor`). The anchor binds the fields of the manifest that
+no read binds (the SHA-256 of each file, the source length and SHA-256, the
+quad count). With no anchor the open is as before. `H` in the answers of
+`sbm11Open` and `sbm11Verify` is the digest, as 64 lowercase hex digits, so
+that a caller can pin it. Every open also checks the term count of the
+manifest against the GDX1 header (`HostVerify.checkTerms`).
 
 `result` is SPARQL 1.1 Query Results JSON for SELECT and ASK, and N-Triples
 lines for CONSTRUCT and DESCRIBE: the bytes `l4sbm11 query` writes for the
@@ -86,22 +99,34 @@ initialize sbm11HandleTable : IO.Ref (Std.HashMap String Session) ← IO.mkRef �
 
 private def ioMessage (e : IO.Error) : String := toString e
 
-/-- The `verify` member of the `optionsJson` of `sbm11Open` (module comment). -/
-def sbm11OpenVerify (optionsJson : String) : Except String Verify := do
-  if optionsJson.trimAscii.isEmpty then return .merkle
+/-- The options of `sbm11Open` (module comment). -/
+structure Sbm11OpenOpts where
+  verify : Verify := .merkle
+  /-- the trust anchor: the SHA-256 of the manifest bytes -/
+  manifestSha256 : Option ByteArray := none
+
+/-- The `optionsJson` of `sbm11Open`: the members `verify` and
+    `manifestSha256` (module comment). -/
+def sbm11OpenOpts (optionsJson : String) : Except String Sbm11OpenOpts := do
+  if optionsJson.trimAscii.isEmpty then return {}
   match parseJson optionsJson with
   | .error e => throw s!"optionsJson: {toString e}"
   | .ok (.object members) =>
-    let mut v : Verify := .merkle
+    let mut o : Sbm11OpenOpts := {}
     for (k, x) in members do
       match k, x with
       | "verify", .string s =>
         match Verify.ofString? s with
-        | some w => v := w
+        | some w => o := { o with verify := w }
         | none => throw s!"optionsJson: verify is merkle or none, not {s}"
       | "verify", .null => pure ()
-      | k, _ => throw s!"optionsJson: member {k} is not verify (merkle or none)"
-    return v
+      | "manifestSha256", .string s =>
+        match L4Factoidal.Storage.Sbm11.HostVerify.sha256OfHex? s with
+        | some d => o := { o with manifestSha256 := some d }
+        | none => throw s!"optionsJson: manifestSha256 is the SHA-256 of {manifestName} as 64 hex digits, not {s}"
+      | "manifestSha256", .null => pure ()
+      | k, _ => throw s!"optionsJson: member {k} is not verify (merkle or none) or manifestSha256"
+    return o
   | .ok _ => throw "optionsJson must be a JSON object"
 
 /-- `sbm11Open(source, optionsJson)`. -/
@@ -109,12 +134,13 @@ def sbm11Open (source : String) (optionsJson : String := "") : IO String := do
   let table ← sbm11HandleTable.get
   if table.size ≥ maxSbm11Handles then
     return errJson s!"sbm11Open: {table.size} handles are open (at most {maxSbm11Handles}); close one with sbm11Close"
-  match sbm11OpenVerify optionsJson with
+  match sbm11OpenOpts optionsJson with
   | .error e => return errJson s!"sbm11Open: {e}"
-  | .ok v =>
+  | .ok o =>
+  let v := o.verify
   try
     let (host, genName) ← resolveHost (hostOf source)
-    let ss ← openSession host v sbm11PackHasher
+    let ss ← openSession host v sbm11PackHasher o.manifestSha256
     let n ← sbm11HandleCounter.modifyGet fun c => (c + 1, c + 1)
     let h := s!"sbm11-{n}"
     sbm11HandleTable.modify (·.insert h ss)
@@ -124,6 +150,7 @@ def sbm11Open (source : String) (optionsJson : String := "") : IO String := do
       , ("terms", .number (toString ss.dictHdr.termCount))
       , ("artifacts", .number (toString ss.manifest.artifacts.length))
       , ("verify", .string v.name)
+      , ("manifestSha256", .string (L4Factoidal.Storage.Sbm11.HostVerify.hexOf ss.manifestSha256))
       , ("bytesRead", .number (toString (← ss.bytesRead.get))) ]
   catch e => return errJson s!"sbm11Open: {ioMessage e}"
 
@@ -235,7 +262,8 @@ def sbm11Verify (source : String) : IO String := do
       , ("files", .number (toString files))
       , ("bytes", .number (toString bytes))
       , ("quads", .number (toString m.quads))
-      , ("terms", .number (toString m.terms)) ]
+      , ("terms", .number (toString m.terms))
+      , ("manifestSha256", .string (L4Factoidal.Storage.Sbm11.HostVerify.hexOf ss.manifestSha256)) ]
   catch e => return errJson s!"sbm11Verify: {ioMessage e}"
 
 /-- The manifest names of the IBK3, IBK4 and IBK5 generations, in the order

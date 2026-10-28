@@ -13,6 +13,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { packSbm11, mapReader, openSbm11 } from '../index.mjs'
 
 const DOC = '<http://e/s> <http://e/p> "hello" .\n<http://e/s> <http://e/p> "world" .\n'
@@ -135,4 +136,61 @@ test('a store of more than one chunk: a changed byte in the last chunk is refuse
   const bad = await run(changed(big, 'dict.gdv1', flipAt(10)), q)
   assert.equal(bad.result, undefined)
   assert.match(bad.error, /dict\.gdv1: chunk [1-9]/)
+})
+
+// The trust anchor of the manifest (openSbm11 `manifestSha256`; Lean
+// HostVerify.checkAnchor; https://github.com/danbri/factoidal/issues/1105).
+// The SHA-256 here is node:crypto, used only to make the expected value of
+// the test; the engine computes its own digest.
+
+
+const sha256Hex = (b) => createHash('sha256').update(b).digest('hex')
+const anchor = sha256Hex(files.get('manifest.sbm11'))
+
+/** The byte offset of the quad count in manifest.sbm11: magic and version
+ *  (5), layout string (u32 length + bytes), source length (8), source SHA-256
+ *  (32). Read from the bytes, as the engine writes them. */
+function quadCountOffset (m) {
+  const len = new DataView(m.buffer, m.byteOffset).getUint32(5, true)
+  return 5 + 4 + len + 8 + 32
+}
+
+test('store.manifestSha256 is the SHA-256 of manifest.sbm11, with and without an anchor', async () => {
+  const st = await openSbm11(`mem:verify-${++sourceCount}`, { reader: mapReader(files) })
+  assert.equal(st.manifestSha256, anchor, 'this wasm has no manifestSha256 in sbm11Open')
+  st.close()
+  const r = await run(files, Q, { manifestSha256: anchor })
+  assert.equal(r.error, undefined)
+  assert.equal(r.result, WANT)
+  // either case
+  assert.equal((await run(files, Q, { manifestSha256: anchor.toUpperCase() })).result, WANT)
+})
+
+test('a changed quad count in the manifest: read with no anchor, refused with the old anchor', async () => {
+  // the quad count is bound to no read, so the Merkle check does not see it
+  const fs = changed(files, 'manifest.sbm11', (b) => { b[quadCountOffset(b)] ^= 1 })
+  assert.notEqual(sha256Hex(fs.get('manifest.sbm11')), anchor)
+  assert.equal((await run(fs, Q)).result, WANT)
+  const r = await run(fs, Q, { manifestSha256: anchor })
+  assert.equal(r.result, undefined, 'the changed manifest opened under its old anchor')
+  assert.match(r.error, /manifest\.sbm11/)
+  assert.ok(r.error.includes(anchor), r.error)
+  assert.ok(r.error.includes(sha256Hex(fs.get('manifest.sbm11'))), r.error)
+})
+
+test('a wrong anchor refuses the unchanged store; a malformed anchor is refused', async () => {
+  const wrong = anchor.slice(0, 63) + (anchor[63] === '0' ? '1' : '0')
+  const r = await run(files, Q, { manifestSha256: wrong })
+  assert.equal(r.result, undefined)
+  assert.match(r.error, /manifest\.sbm11/)
+  assert.ok(r.error.includes(wrong) && r.error.includes(anchor), r.error)
+  const bad = await run(files, Q, { manifestSha256: 'sha256-not-hex' })
+  assert.match(bad.error, /manifestSha256/)
+})
+
+test('the anchor holds under verify: none too', async () => {
+  const fs = changed(files, 'manifest.sbm11', (b) => { b[quadCountOffset(b)] ^= 1 })
+  const r = await run(fs, Q, { verify: 'none', manifestSha256: anchor })
+  assert.match(r.error, /manifest\.sbm11/)
+  assert.equal((await run(files, Q, { verify: 'none', manifestSha256: anchor })).result, WANT)
 })
