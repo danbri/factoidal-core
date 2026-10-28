@@ -407,7 +407,17 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         let plain : Env := { env with host := fun _ _ => none }
         let fq : QN := { uri := nsFN, loc := q.loc }
         let b := if c.baseUri != "" then c.baseUri else S.baseUri
-        match a.getD 0 [] with
+        -- §4.3: xsl:strip-space applies to the documents that fn:doc reads
+        -- (unless the call gives its own strip-space option)
+        let own := match a.getD 1 [] with
+          | [.map kvs] => kvs.any (fun (k, _) => k.str == "strip-space")
+          | _ => false
+        let strip (v : Seq) : Seq := if own then v else v.map (fun it => match it with
+          | .node nd => match nd.rt with
+            | some d => .node { nd with rt := some (stripDoc S d) }
+            | none => it
+          | _ => it)
+        strip <$> match a.getD 0 [] with
         | [.atom x] =>
           let u := x.str
           if (u.splitOn "#").length > 1 || uriHasScheme u || b == "" then callFn 100000 plain fq a
@@ -469,6 +479,12 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
                 match callFn 100000 plain { uri := nsFN, loc := "doc" } ([sStr u] ++ opts) with
                 | .ok [.node d] => pure (some d)
                 | _ => throw e
+          let own := match opts with
+            | [[.map kvs]] => kvs.any (fun (k, _) => k.str == "strip-space")
+            | _ => false
+          let d := if own then d else d.map (fun nd => match nd.rt with
+            | some x => { nd with rt := some (stripDoc S x) }
+            | none => nd)
           let d := match d, opts with
             | some nd, [o] => if nd.rt.isSome then
                 some { nd with doc := (2 : Nat) ^ 44 + (hash (abs ++ "|" ++ showSeq o)).toNat % 1000000000000 }

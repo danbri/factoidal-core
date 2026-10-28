@@ -511,6 +511,23 @@ def loadModules (principal : String) : IO (List (String × String)) := do
           if !done.any (·.1 == r) then todo := todo ++ [r]
   return done
 
+/-- The files `sub/t` for the subdirectories `sub` of `dir`, to `depth`
+    levels (a reference resolved against the base URI of a node of a
+    document in a subdirectory). -/
+def filesBelow : Nat → String → String → IO (List String)
+  | 0, _, _ => pure []
+  | d + 1, dir, t => do
+    let entries ← try System.FilePath.readDir dir catch _ => pure #[]
+    if entries.size > 300 then return []
+    let mut out : List String := []
+    for e in entries do
+      let p := e.path.toString
+      if ← System.FilePath.isDir p then
+        let f := normPath (p ++ "/" ++ t)
+        if ← System.FilePath.pathExists f then out := f :: out
+        out := out ++ (← filesBelow d p t)
+    return out
+
 /-- The files that a text names by a relative reference (for `doc`,
     `document`, `unparsed-text`, `json-doc`), read in advance: every run
     of path characters that names a file under the suite root. -/
@@ -545,6 +562,14 @@ def scanResources (root dir src : String) : IO (List (String × String)) := do
         if ← System.FilePath.pathExists p then
           path := p
           break
+    -- a reference with a directory part that names a file below this
+    -- directory (resolved against the base URI of a document there)
+    if !(← System.FilePath.pathExists path) && t.contains '/' && !t.startsWith "." then
+      for f in ← filesBelow 3 dir t do
+        if f.startsWith absRoot then
+          match ← readFileSafe f with
+          | some txt => out := (fileUri f, txt) :: out
+          | none => pure ()
     if !path.startsWith absRoot then continue
     if path.endsWith ".xsl" then continue
     if ← System.FilePath.pathExists path then
