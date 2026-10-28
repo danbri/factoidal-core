@@ -678,7 +678,7 @@ def checkContent (c : SCx) (m : Mod) (i : Nat) : CM Unit := do
   let mut seenOtherwise := false
   let mut whens := 0
   for k in m.kids i do
-    if m.isElem k then
+    if m.isElem k && !m.isXsl k "note" then
       if !(ok.any (m.isXsl k ·)) then
         cerr "XTSE0010" ("xsl:" ++ l ++ " cannot contain the element " ++ (m.name k).loc)
       if l == "choose" then
@@ -1403,9 +1403,10 @@ def expandModule : Nat → Mod → Nat → SCx → CM (List Decl)
       let ci ← c.enter m i as
       -- declarations that are always empty (XTSE0260)
       if ["include", "import", "strip-space", "preserve-space", "output", "decimal-format",
-          "namespace-alias", "mode", "global-context-item", "accept"].any (m.isXsl i ·) then
+          "namespace-alias", "global-context-item", "accept"].any (m.isXsl i ·) then
         let pres := (m.rawAttrs i).any (fun (q, v) => q.uri == nsXML && q.loc == "space" && v.trimAscii.toString == "preserve")
-        if (m.kids i).any (fun k => m.isElem k ||
+        -- (4.0: xsl:note may appear in any XSLT element)
+        if (m.kids i).any (fun k => (m.isElem k && !m.isXsl k "note") ||
             ((m.r k).kind == .text && (pres || !((m.r k).value.toList.all Char.isWhitespace)))) then
           cerr "XTSE0260" ("xsl:" ++ (m.name i).loc ++ " must be empty")
       if !(← useWhenOk ci m i as) then continue
