@@ -780,6 +780,8 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       if o.listFails then
         let setDeps' := if specGiven then setDeps.filter (fun x => attrD x "type" != "spec") else setDeps
         let bad := (setDeps' ++ deps).filter (fun x => !depOk xq x)
+        -- a spec dependency first: the case is for another specification
+        let bad := bad.filter (fun x => attrD x "type" == "spec") ++ bad.filter (fun x => attrD x "type" != "spec")
         let why := match bad.head? with
           | some x => (if attrD x "satisfied" "true" == "false" then "!" else "") ++
               attrD x "type" ++ "=" ++ attrD x "value"
