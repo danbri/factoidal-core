@@ -103,7 +103,7 @@ def specOk (v : String) : Bool :=
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
   ["higher_order_functions", "serialization", "backwards_compatibility", "dynamic_evaluation", "disabling_output_escaping",
-   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types", "dtd", "XML_1.1"].contains f
+   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types", "dtd", "XML_1.1", "namespace_axis"].contains f
 
 def depOk (d : Node) : Bool :=
   let ty := localTag d
@@ -221,11 +221,13 @@ def serNode (env : Env) : Nat → NodeRef → String
       let nm := r.name.show
       let decl := " xmlns" ++ (if r.name.pfx == "" then "" else ":" ++ r.name.pfx) ++ "=\"" ++ escAttr r.name.uri ++ "\""
       let decl := if r.name.uri == "" && r.name.pfx != "" then "" else decl
-      let ats := r.attrs.toList.map (fun a =>
+      -- each prefix is declared once on the element
+      let (ats, _) := r.attrs.toList.foldl (fun (acc, seen) a =>
         let ra := env.nrec (n.at (a))
-        let d := if ra.name.uri != "" && ra.name.pfx != "" && ra.name.pfx != "xml" then
-          " xmlns:" ++ ra.name.pfx ++ "=\"" ++ escAttr ra.name.uri ++ "\"" else ""
-        d ++ " " ++ ra.name.show ++ "=\"" ++ escAttr ra.value ++ "\"")
+        let need := ra.name.uri != "" && ra.name.pfx != "" && ra.name.pfx != "xml" && !seen.contains ra.name.pfx
+        let d := if need then " xmlns:" ++ ra.name.pfx ++ "=\"" ++ escAttr ra.name.uri ++ "\"" else ""
+        (acc ++ [d ++ " " ++ ra.name.show ++ "=\"" ++ escAttr ra.value ++ "\""],
+         if need then ra.name.pfx :: seen else seen)) (([] : List String), [r.name.pfx])
       let body := String.join (r.children.toList.map (fun c => serNode env f (n.at (c))))
       "<" ++ nm ++ decl ++ String.join ats ++ (if body == "" then "/>" else ">" ++ body ++ "</" ++ nm ++ ">")
 
@@ -558,6 +560,23 @@ def loadModules (principal : String) : IO (List (String × String)) := do
           if !done.any (·.1 == r) then todo := todo ++ [r]
   return done
 
+/-- The files `sub/t` for the subdirectories `sub` of `dir`, to `depth`
+    levels (a reference resolved against the base URI of a node of a
+    document in a subdirectory). -/
+def filesBelow : Nat → String → String → IO (List String)
+  | 0, _, _ => pure []
+  | d + 1, dir, t => do
+    let entries ← try System.FilePath.readDir dir catch _ => pure #[]
+    if entries.size > 300 then return []
+    let mut out : List String := []
+    for e in entries do
+      let p := e.path.toString
+      if ← System.FilePath.isDir p then
+        let f := normPath (p ++ "/" ++ t)
+        if ← System.FilePath.pathExists f then out := f :: out
+        out := out ++ (← filesBelow d p t)
+    return out
+
 /-- The files that a text names by a relative reference (for `doc`,
     `document`, `unparsed-text`, `json-doc`), read in advance: every run
     of path characters that names a file under the suite root. -/
@@ -571,15 +590,42 @@ def scanResources (root dir src : String) : IO (List (String × String)) := do
       if cur.length > 2 && cur.length < 200 && (cur.splitOn ".").length > 1 && !toks.contains cur then
         toks := cur :: toks
       cur := ""
+  -- a quoted reference with spaces in it (`'dir with space/a.xml'`)
+  for q in ['\'', '"'] do
+    let parts := src.splitOn (String.singleton q)
+    for (p, i) in parts.zipIdx do
+      if i % 2 == 1 && p.contains ' ' && p.length < 200 && (p.splitOn ".").length > 1 &&
+          !p.contains '<' && !p.contains '\n' && !toks.contains p then
+        toks := p :: toks
   let absRoot := normPath root
   let mut out : List (String × String) := []
   for t in toks do
-    let path := normPath (dir ++ "/" ++ t)
+    let path0 := normPath (dir ++ "/" ++ t)
+    -- a reference that `xml:base` makes relative to a directory above
+    -- (`xml:base="../../"`): the first one up to two levels above that
+    -- names a file
+    let mut path := path0
+    if !(← System.FilePath.pathExists path0) then
+      for up in ["/..", "/../.."] do
+        let p := normPath (dir ++ up ++ "/" ++ t)
+        if ← System.FilePath.pathExists p then
+          path := p
+          break
+    -- a reference with a directory part that names a file below this
+    -- directory (resolved against the base URI of a document there)
+    if !(← System.FilePath.pathExists path) && t.contains '/' && !t.startsWith "." then
+      for f in ← filesBelow 3 dir t do
+        if f.startsWith absRoot then
+          match ← readFileSafe f with
+          | some txt => out := (fileUri f, txt) :: out
+          | none => pure ()
     if !path.startsWith absRoot then continue
     if ← System.FilePath.pathExists path then
       if (← System.FilePath.isDir path) then continue
       match ← readFileSafe path with
-      | some txt => out := (t, txt) :: (fileUri path, txt) :: out
+      | some txt =>
+        -- the reference as written names only a file of this directory
+        out := (if path == path0 then [(t, txt)] else []) ++ (fileUri path, txt) :: out
       | none => pure ()
   return out
 
@@ -673,6 +719,9 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
         let some txt := txt | return .fail ("cannot read source " ++ file)
         let duri := if file != "" then fileUri file else if uri != "" then resolveUri pUri uri else ""
         let some d := loadDoc txt duri | return .fail ("source not well-formed: " ++ file)
+        -- inline content has the base URI of the test set (the driver's
+        -- reading), and no document URI
+        let d := if duri == "" then { d with baseUri := fileUri dir ++ "/" } else d
         let idx := env.docs.size
         env := { env with docs := env.docs.push d }
         if duri != "" then env := { env with docUris := (duri, idx) :: env.docUris }

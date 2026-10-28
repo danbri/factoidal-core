@@ -169,6 +169,24 @@ def materializeAll (env : Env) (os : List Out) : XM Seq := do
       out := out.push (← liftX (materialize env id o))
   pure out.toList
 
+/-- A sequence with each JNode replaced by its jvalue, recursively. -/
+def dejnode : Nat → Seq → Seq
+  | 0, s => s
+  | f + 1, s => s.flatMap (fun i => match i with
+    | .jnode _ _ v _ => dejnode f v
+    | x => [x])
+
+/-- §9.4: the disqualifying elements (xsl:map, xsl:map-entry, xsl:array,
+    xsl:array-member, xsl:select) among the instructions of a sequence
+    constructor (through the wrappers that the compiler adds). -/
+def hasDisqualifying : Nat → List Instr → Bool
+  | 0, _ => false
+  | f + 1, is => is.any (fun i => match i with
+    | .mapI .. | .mapEntry .. | .arrayI .. | .arrayMember .. => true
+    | .seq (some _) [.lit "xsl:select"] _ => true
+    | .withBase _ b | .withColl _ b | .withCompat _ b => hasDisqualifying f b
+    | _ => false)
+
 /-- The string value of an `Out` that is a node. -/
 def outString (env : Env) : Nat → Out → String
   | 0, _ => ""
@@ -784,7 +802,7 @@ def resolveName (name : String) (ns : Option Avt) (scope : List (String × Strin
     (cx : Ctx) (badName undeclared : String) : XM QN := do
   let (p, l) ← match name.splitOn ":" with
     | [l] => pure ("", l)
-    | [p, l] => pure (p, l)
+    | [p, l] => if p == "" then xerr badName ("invalid name '" ++ name ++ "'") else pure (p, l)
     | _ => xerr badName ("invalid name '" ++ name ++ "'")
   if !isNCName l || (p != "" && !isNCName p) then
     if name.startsWith "Q{" && name.contains '}' then
@@ -795,7 +813,8 @@ def resolveName (name : String) (ns : Option Avt) (scope : List (String × Strin
   match ns with
   | some a =>
       let u ← avtStr cx a
-      if !isElem && u == "" then return { uri := "", loc := l }
+      -- a name in no namespace has no prefix (§11.2, §11.3)
+      if u == "" then return { uri := "", loc := l }
       let p := if !isElem && p == "" && u != "" then "" else p
       pure { uri := u, loc := l, pfx := if p == "xmlns" then "" else p }
   | none =>
@@ -989,6 +1008,11 @@ def run : Nat → Sheet → Ctx → List Instr → XM (List Out)
       | .var q ty sel body =>
           let v ← bindValue n S cx sel body ty ("$" ++ q.show) "XTTE0570"
           cx := cx.bind q v
+      | .withBase u [.var q ty sel body] =>
+          -- a variable with an `xml:base` attribute still binds the
+          -- following siblings
+          let v ← bindValue n S { cx with env := { cx.env with baseUri := u } } sel body ty ("$" ++ q.show) "XTTE0570"
+          cx := cx.bind q v
       | .onEmpty _ _ => pending := pending ++ [(out.size, true, cx, ins)]; out := out.push none
       | .onNonEmpty _ _ => pending := pending ++ [(out.size, false, cx, ins)]; out := out.push none
       | _ => out := out.push (some (← run1 n S cx ins))
@@ -1026,6 +1050,9 @@ def bindValue : Nat → Sheet → Ctx → Option Expr → List Instr → Option 
           let os ← run n S { cx with tempOut := true } body
           match ty with
           | none => do
+              -- §9.4: no document node when the content has a
+              -- disqualifying element
+              if hasDisqualifying 64 body then materializeAll cx.env os else
               let id ← freshId
               pure [← liftX (materialize cx.env id (.doc os ""))]
           | some _ => materializeAll cx.env os
@@ -1097,6 +1124,8 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let name ← avtStr cx nm
         let name := name.trimAscii.toString
         let q ← resolveName name ns scope true cx "XTDE0820" "XTDE0830"
+        if q.uri == "http://www.w3.org/2000/xmlns/" then
+          xerr "XTDE0835" "an element cannot be in the xmlns namespace"
         let mut content : Array Out := #[]
         for o in ← attrSetOuts n S cx useSets do content := content.push o
         for o in ← run n S cx body do content := content.push o
@@ -1255,7 +1284,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         | some b => run n S cx b
         | none => pure []
     | .var _ _ _ _ => pure []
-    | .copy sel copyNs _ useSets body =>
+    | .copy sel copyNs inheritNs useSets body =>
         let it? ← match sel with
           | some e => do
               let s ← evalX cx e
@@ -1277,16 +1306,61 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             let r := env.nrec nd
             match r.kind with
             | .element =>
-                let mut content : Array Out := #[]
+                -- §11.9.1: the base URI of the element is copied (an
+                -- `xml:base` of it is resolved against the static base URI)
+                let base := match env.xmlBaseOf nd with
+                  | some v => resolveRef env.baseUri v.trimAscii.toString
+                  | none => (env.baseUriOf nd).getD ""
+                let mut content : Array Out := #[.attr baseMarkQ base]
+                if !inheritNs then content := content.push (.attr noInheritQ "")
                 for o in ← attrSetOuts n S cx' useSets do content := content.push o
                 for o in ← run n S cx' body do content := content.push o
                 pure [.elem r.name (if copyNs then env.elemDecls nd else []) content.toList]
-            | .document => pure [.doc (← run n S cx' body) (env.doc nd).uri]
+            | .document =>
+                let cs ← run n S cx' body
+                -- §5.7.1: no attribute or namespace node in a document
+                if cs.any (fun o => match o with
+                    | .attr .. | .nsN .. => true
+                    | .item (.node m) => let k := (env.nrec m).kind; k == .attribute || k == .namespace
+                    | _ => false) then
+                  xerr "XTDE0420" "an attribute or namespace node cannot be a child of a document node"
+                pure [.doc cs (env.doc nd).uri]
             | .text => pure [.text r.value]
             | .attribute => pure [.attr r.name r.value]
             | .comment => pure [.comment r.value]
             | .pi => pure [.pi r.name.loc r.value]
             | .namespace => pure [.nsN r.name.loc r.value]
+          | .jnode _ _ v _ =>
+            -- §11.9.1.2: a copy of a JNode; an array or map value is made
+            -- from the sequence constructor (as xsl:array, and as xsl:map
+            -- with duplicates use-last); a sequence value is copied item by
+            -- item, and xsl:copy of an atomic item, map or array is that
+            -- item, so the value stays; another value is kept. The copy is
+            -- a root JNode (this model has no parentless JNode with a key).
+            let build (cxv : Ctx) (x : Item) : XM Item := do
+              match x with
+              | .arr _ =>
+                let s ← materializeAll env (← run n S cxv body)
+                pure (.arr (s.map (fun m => match m with
+                  | .jnode _ _ mv _ => mv
+                  | .map [(k, mv)] => if deepAtomEq k memberKey then mv else [m]
+                  | y => [y])))
+              | .map _ =>
+                let s ← materializeAll env (← run n S cxv body)
+                let mut acc : MB := {}
+                for m in s do
+                  let kvs ← match m with
+                    | .map kvs => pure kvs
+                    | .jnode _ _ [.map kvs] _ => pure kvs
+                    | _ => xerr "XTTE3375" "the content of xsl:copy of a map JNode must be maps"
+                  for (k, y) in kvs do acc := acc.set k y
+                pure (.map acc.toList)
+              | y => pure y
+            let v1 ← match v with
+              | [x] => do pure [← build cx' x]
+              | _ => pure v
+            let id ← freshId
+            pure [.item (mkJRoot id.toUInt64 v1)]
           | other => pure [.item other]
     | .copyOf sel copyNs copyAcc =>
         let s ← evalX cx sel
@@ -1294,11 +1368,14 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         for it in s do
           match it with
           | .node nd =>
-            -- a copy, with a new identity, when the result is a sequence
-            -- (a variable or a function result); in a tree under
-            -- construction the node is copied when it is attached
-            let k := (env.nrec nd).kind
-            if (!copyNs && k == .element) || (cx.tempOut && (k == .element || k == .document)) then
+            -- a copy is made where it can differ from the node: other
+            -- namespaces, another base URI (§11.9.2: an `xml:base` is
+            -- resolved against the static base URI), or a value that a
+            -- variable or function returns (its identity is new); with
+            -- copy-accumulators="yes" the copy keeps the accumulator values
+            -- of the node (§18.2.3)
+            let isElem := (env.nrec nd).kind == .element
+            if (isElem && (!copyNs || (env.xmlBaseOf nd).isSome)) || cx.tempOut then
               let id ← freshId
               let cp ← liftX (copyAsTree env id nd copyNs)
               out := out.push (.item (if copyAcc then withOrigin env nd cp else cp))
@@ -1540,8 +1617,10 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | none => do materializeAll env (← run n S cx body)
         pure [.item (.map [(k, v)])]
     | .arrayI fe sel body =>
+        -- a JNode stands for its jvalue (§22.2)
         let unwrap (s : Seq) : List Seq := s.map (fun it => match it with
           | .map [(k, v)] => if deepAtomEq k memberKey then v else [it]
+          | .jnode _ _ v _ => v
           | _ => [it])
         match fe with
         | none =>
@@ -1568,7 +1647,8 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let s ← match sel with
           | some e => evalX cx e
           | none => do materializeAll env (← run n S cx body)
-        pure [.item (.map [(memberKey, s)])]
+        -- §22.2: a JNode in the value is replaced by its jvalue, recursively
+        pure [.item (.map [(memberKey, dejnode 64 s)])]
     | .evaluate xp ctxE wp nsE ty params scope baseUri =>
         let src ← atomStr cx (← evalX cx xp)
         -- with namespace-context, the namespaces of that node, and its
@@ -1684,7 +1764,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         pure (os.filter (fun o => match o with
           | .elem _ _ cs => cs.any (fun c => match c with | .attr .. | .nsN .. => false | _ => true)
           | .doc cs _ => !cs.isEmpty
-          | .text "" => false
+          | .text "" | .comment "" | .pi _ "" | .attr _ "" => false
           | .item (.node nd) => nodeNonEmpty env nd
           | _ => true))
     | .onEmpty _ _ | .onNonEmpty _ _ => pure []
@@ -1768,6 +1848,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         else do
           let os ← run n S cx body
           pure ([Out.pi piDisableEscaping ""] ++ os ++ [Out.pi piEnableEscaping ""])
+    | .withBase u body => run n S { cx with env := { cx.env with baseUri := u } } body
     | .extCall q ats fbs =>
         let cands := S.templates.toList.filter (fun t => t.name == some q)
         match cands.foldl (fun (b : Option Tmpl) t => match b with
@@ -1935,7 +2016,14 @@ def builtin : Nat → Sheet → Ctx → Item → String → List (QN × Seq) →
         | .document => pure [.doc (← applyT n S cx kids mode ps tun none) (env.doc nd).uri]
         | .element =>
             let content := (← applyT n S cx ats mode ps tun none) ++ (← applyT n S cx kids mode ps tun none)
-            pure [.elem r.name (if md.copyNs then env.elemDecls nd else []) content]
+            -- the copy keeps the base URI of the element (§6.8.1, as xsl:copy)
+            -- (its xml:base attribute, copied too, applies on top)
+            let inh := if (env.xmlBaseOf nd).isNone then env.baseUriOf nd else
+              match r.parent with
+              | some p => env.baseUriOf (nd.at p)
+              | none => some (env.treeBaseUri nd)
+            let mark := Out.attr baseMarkQ (inh.getD "")
+            pure [.elem r.name (if md.copyNs then env.elemDecls nd else []) (mark :: content)]
         | _ => pure [.item it]
       | .arr ms => applyT n S cx ms.flatten mode ps tun none
       | _ => pure [.item it]

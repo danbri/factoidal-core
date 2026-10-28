@@ -308,6 +308,10 @@ def SCx.enter (c : SCx) (m : Mod) (i : Nat) (as : Attrs) : CM SCx := do
     match pick with
     | some u => c := { c with defaultCollation := (resolveCollationUri c.baseUri u).toOption.getD u }
     | none => cerr "XTSE0125" ("no collation of default-collation '" ++ v ++ "' is available")
+  -- §5.8: `xml:base` sets the base URI of the element, and so the static
+  -- base URI of the expressions inside it
+  if let some v := (as.find? (fun (q, _) => q.uri == nsXML && q.loc == "base")).map (·.2) then
+    c := { c with baseUri := resolveRef c.baseUri v.trimAscii.toString }
   match (as.find? (fun (q, _) => q.uri == nsXML && q.loc == "space")).map (·.2) with
   | some "preserve" => c := { c with preserveWs := true }
   | some "default" => c := { c with preserveWs := false }
@@ -684,7 +688,8 @@ def compileElem : Nat → SCx → Mod → Nat → CM (List Instr)
     if !(← useWhenOk c m i as) then return []
     let wrap : List Instr → List Instr := fun is =>
       let is := if c.backCompat != c0.backCompat then [.withCompat c.backCompat is] else is
-      if c.defaultCollation != c0.defaultCollation then [.withColl c.defaultCollation is] else is
+      let is := if c.defaultCollation != c0.defaultCollation then [.withColl c.defaultCollation is] else is
+      if c.baseUri != c0.baseUri then [.withBase c.baseUri is] else is
     let q := m.name i
     if q.uri == nsXSL then
       return wrap [← compileXsl f c m i as]
@@ -807,14 +812,20 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         pure (.seq sel b (← optType c as))
     | "select" =>
         let src := m.text i
+        -- the body `[.lit "xsl:select"]` is never run (there is a select);
+        -- it marks the instruction as a disqualifying element (§9.4)
         if src.trimAscii.toString == "" then pure (.seq none [] (← optType c as))
-        else pure (.seq (some (← parseC c src)) [] (← optType c as))
+        else pure (.seq (some (← parseC c src)) [.lit "xsl:select"] (← optType c as))
     | "element" =>
         let nm ← liftM (c.avt (← reqAttr as "name" l))
         let useSets ← match as.get "use-attribute-sets" with
           | some v => (tokens v).mapM (fun t => liftM (c.qname t (syn := "XTSE0710")))
           | none => pure []
-        pure (.elem nm (← optAvt c as "namespace") c.ns useSets (← body))
+        -- inherit-namespaces="no" (§11.2): an internal content attribute
+        -- that `buildElem` reads and drops
+        let mark : List Instr := if ← as.bool "inherit-namespaces" true then [] else
+          [.attr [.lit noInheritQ.loc] (some [.lit noInheritQ.uri]) [] none none []]
+        pure (.elem nm (← optAvt c as "namespace") c.ns useSets (mark ++ (← body)))
     | "attribute" =>
         let nm ← liftM (c.avt (← reqAttr as "name" l))
         let sel ← optExpr c as "select"
@@ -921,7 +932,11 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         pure (.copy (← optExpr c as "select") (← as.bool "copy-namespaces" true)
           (← as.bool "inherit-namespaces" true) useSets (← body))
     | "copy-of" =>
-        pure (.copyOf (← parseC c (← reqAttr as "select" l)) (← as.bool "copy-namespaces" true) (← as.bool "copy-accumulators" false))
+        -- §11.9.2: the content of xsl:copy-of is empty
+        if (m.kids i).any (fun k => m.isElem k || !(m.text k).trimAscii.isEmpty) then
+          cerr "XTSE0260" "xsl:copy-of must be empty"
+        pure (.copyOf (← parseC c (← reqAttr as "select" l)) (← as.bool "copy-namespaces" true)
+          (← as.bool "copy-accumulators" false))
     | "message" =>
         -- a fixed terminate value must be a boolean (XTSE0020)
         if let some v := as.get "terminate" then
@@ -1360,6 +1375,7 @@ def compileTemplate (prec : Nat) (d : Decl) (as : Attrs) (inMode : Option String
     else [Instr.seq none body none]
   let body := if c.defaultCollation != "" then [Instr.withColl c.defaultCollation body] else body
   let body := [Instr.withCompat c.backCompat body]
+  let body := if c.baseUri != "" then [Instr.withBase c.baseUri body] else body
   let as' ← optType c as
   let tid ← nextTid
   let order ← nextOrder
@@ -1433,6 +1449,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let body ← compileNodes 100000 c m bodyIds
       let body := if c.defaultCollation != "" then [Instr.withColl c.defaultCollation body] else body
       let body := [Instr.withCompat c.backCompat body]
+      let body := if c.baseUri != "" then [Instr.withBase c.baseUri body] else body
       let s ← get
       -- two functions of one name and precedence whose arity ranges
       -- overlap (XTSE0770, §10.3.2)
@@ -1461,7 +1478,8 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let vis := ((as.get "visibility").getD "").trimAscii.toString
       if vis == "abstract" && (sel.isSome || !body.isEmpty) then
         cerr "XTSE0010" "an abstract variable must have no select attribute and no content"
-      let g : Global := { name := nm, isParam := q.loc == "param", sel, body, ty := gty, required := req, isStatic, prec, vis }
+      let g : Global := { name := nm, isParam := q.loc == "param", sel, body, ty := gty, required := req, isStatic, prec, vis,
+                          base := c.baseUri }
       upd (fun sh => { sh with globals := sh.globals ++ [g] })
   | "key" =>
       let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:key requires a name"

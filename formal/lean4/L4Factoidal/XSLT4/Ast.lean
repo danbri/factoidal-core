@@ -115,6 +115,7 @@ inductive Instr where
   /-- A local `xsl:variable` (§9.1): it binds the following siblings. -/
   | var (name : QN) (as : Option IType) (sel : Option Expr) (body : List Instr)
   | copy (sel : Option Expr) (copyNs inheritNs : Bool) (useSets : List QN) (body : List Instr)
+  /-- `xsl:copy-of`: select, copy-namespaces, copy-accumulators. -/
   | copyOf (sel : Expr) (copyNs : Bool) (copyAcc : Bool := false)
   | message (sel : Option Expr) (body : List Instr) (terminate : Avt) (code : Option Avt)
   | assertI (test : Expr) (sel : Option Expr) (body : List Instr) (code : Option Avt)
@@ -169,6 +170,11 @@ inductive Instr where
   /-- `disable-output-escaping="yes"` (§26.1.8): the text nodes of the
       body are written without escaping when the result is serialized. -/
   | doe (body : List Instr)
+  /-- A sequence constructor under an `xml:base` attribute (§5.8, XML
+      Base 1.0), or the body of a component of another stylesheet module:
+      the static base URI of its expressions and of the nodes it
+      constructs. -/
+  | withBase (uri : String) (body : List Instr)
 
 /-- An `xsl:sort` (§13.1): select (or body), order, lang, data-type,
     case-order, collation, stable. -/
@@ -270,6 +276,8 @@ structure Global where
   /-- Declared in a library package: the global context item is absent
       when it is evaluated (§2.3.2). -/
   noCtx : Bool := false
+  /-- The static base URI of the declaration (§5.8). -/
+  base : String := ""
 deriving Inhabited
 
 structure AttrSet where
@@ -355,7 +363,8 @@ def Instr.bodies : Instr → List (List Instr)
   | .comment _ b | .pi _ _ b | .nsI _ _ b | .docI b | .var _ _ _ b | .copy _ _ _ _ b
   | .message _ b _ _ | .assertI _ _ b _ | .breakI _ b | .mapI _ b _ | .mapEntry _ _ b
   | .arrayI _ _ b | .arrayMember _ b | .wherePopulated b | .onEmpty _ b | .onNonEmpty _ b
-  | .sourceDoc _ b | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b | .withCompat _ b | .doe b => [b]
+  | .sourceDoc _ b | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b | .withCompat _ b | .doe b
+  | .withBase _ b => [b]
   | .applyT _ _ ss ps _ => ss.map SortK.body ++ ps.map WParam.body
   | .callT _ ps | .applyImports ps | .nextMatch ps | .nextIteration ps => ps.map WParam.body
   | .forEach _ ss b _ | .forEachGroup _ _ _ _ _ _ ss b | .performSort _ ss b => b :: ss.map SortK.body

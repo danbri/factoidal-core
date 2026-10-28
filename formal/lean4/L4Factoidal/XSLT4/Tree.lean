@@ -17,6 +17,7 @@ parent's node table once. A constructed node is a new runtime document
 then its children, in document order.
 -/
 import L4Factoidal.XPath4.Eval
+import L4Factoidal.XPath4.BaseUri
 
 namespace L4Factoidal.XSLT4
 
@@ -39,6 +40,17 @@ inductive Out where
 deriving Inhabited
 
 def Out.ofSeq (s : Seq) : List Out := s.map Out.item
+
+/-- The name of a content attribute that is not an attribute: the first
+    item of the content of an `Out.elem` that keeps the base URI of the
+    node it copies (`xsl:copy`, §11.9.1). `buildElem` drops it; it sets
+    the base URI of the tree when the element is the root. -/
+def baseMarkQ : QN := { uri := "urn:x-factoidal:internal", loc := "base-uri" }
+
+/-- The name of a content attribute that is not an attribute: the
+    children of the element do not inherit the namespaces it declares
+    (`inherit-namespaces="no"`, §11.9.1). `buildElem` drops it. -/
+def noInheritQ : QN := { uri := "urn:x-factoidal:internal", loc := "no-inherit" }
 
 /-! ## Normalised content (§5.7.1) -/
 
@@ -169,6 +181,9 @@ def copyTree (env : Env) (src : NodeRef) (par : Option Nat) (pscope : List (Stri
     let par' := if i == lo then par else x.parent.map shift
     let sc := if x.kind == .element then
         (if copyNs then x.inscope ++ pscope else neededNs d x ++ pscope) else []
+    -- namespace fixup (§5.7.3): an element in no namespace does not
+    -- inherit a default namespace from its new parent
+    let sc := if x.kind == .element && x.name.uri == "" && (sc.lookup "").getD "" != "" then ("", "") :: sc else sc
     let newPar := par'
     let rec' : NRec := { x with parent := newPar, children := x.children.map shift, attrs := x.attrs.map shift, last := shift (max x.last i), inscope := sc }
     let _ ← tPush rec'
@@ -219,7 +234,21 @@ def buildElem (env : Env) : Nat → Option Nat → List (String × String) → Q
   | 0, _, _, _, _, _ => throw { code := "FOER0000", msg := "result tree too deep" }
   | f + 1, par, pscope, name, decls, content => do
     let nm ← normContent env content
+    let noInherit := nm.attrs.any (fun (q, _) => q == noInheritQ)
+    let nm := { nm with attrs := nm.attrs.filter (fun (q, _) => !(q == baseMarkQ) && !(q == noInheritQ)) }
+    -- §5.7.1: two namespace nodes that bind one prefix to two URIs
+    for (p, u) in nm.nss do
+      match decls.lookup p with
+      | some u' => if u' != u then
+          throw { code := "XTDE0430", msg := "two namespace nodes bind prefix '" ++ p ++ "' to different URIs" }
+      | none => pure ()
     let scope0 := (decls ++ nm.nss).reverse ++ pscope
+    -- a namespace node of the element that binds the prefix of its name
+    -- to another URI: the element gets another prefix (§5.7.3)
+    let name := match nm.nss.lookup name.pfx with
+      | some u => if u != name.uri && name.uri != "" && name.pfx != "xml" then
+          { name with pfx := freePrefix scope0 name.uri "" } else name
+      | none => name
     let (name, scope1) := fixElemName name scope0
     let mut scope := scope1
     let mut ats : Array (QN × String) := #[]
@@ -228,6 +257,10 @@ def buildElem (env : Env) : Nat → Option Nat → List (String × String) → Q
       scope := sc'
       ats := ats.push (q', v)
     let i ← tPush { kind := .element, name, parent := par, inscope := scope }
+    -- the scope the children start from: with inherit-namespaces="no"
+    -- they do not get the bindings of this element, only those that it
+    -- inherits itself (as when the element is copied into its parent)
+    let kscope := if noInherit then pscope else scope
     let mut aIdx : Array Nat := #[]
     for (q, v) in ats.toList do
       let j ← tPush { kind := .attribute, name := q, value := v, parent := some i }
@@ -240,9 +273,9 @@ def buildElem (env : Env) : Nat → Option Nat → List (String × String) → Q
           let j ← tPush { kind := .text, value := s, parent := some i }
           tSet j (fun r => { r with last := j })
           cs := cs.push j
-      | .node n => cs := cs.push (← copyTree env n (some i) scope true)
+      | .node n => cs := cs.push (← copyTree env n (some i) kscope true)
       | .out o =>
-          match ← buildKid env f (some i) scope o with
+          match ← buildKid env f (some i) kscope o with
           | some j => cs := cs.push j
           | none => pure ()
     let sz := (← get).size
@@ -295,12 +328,18 @@ def buildDoc (env : Env) (cs : List Out) : TB Unit := do
 /-- The XDM item for one `Out`, as a new tree with document number
     `id` when it is a node that is being built. -/
 def materialize (env : Env) (id : Nat) (o : Out) : M Item := do
-  let mkItem (act : TB Unit) (uri : String := "") : M Item := do
+  -- the base URI of a new tree is the static base URI where it is made
+  -- (§5.7.1, §9.4), unless the node keeps that of the node it copies
+  let mkItem (act : TB Unit) (uri : String := "") (base : String := env.baseUri) : M Item := do
     let ((), a) ← act.run #[]
-    pure (.node { doc := id, idx := 0, rt := some { nodes := a, uri } })
+    pure (.node { doc := id, idx := 0, rt := some { nodes := a, uri, baseUri := (if uri != "" then "" else base) } })
   match o with
   | .item i => pure i
-  | .elem q ds cs => mkItem (do let _ ← buildElem env 100000 none [("xml", nsXML)] q ds cs)
+  | .elem q ds cs =>
+      let base := match cs with
+        | .attr bq v :: _ => if bq == baseMarkQ then v else env.baseUri
+        | _ => env.baseUri
+      mkItem (do let _ ← buildElem env 100000 none [("xml", nsXML)] q ds cs) "" base
   | .doc cs uri => mkItem (buildDoc env cs) uri
   | .attr q v =>
       let (q', _) := fixAttrName q []
@@ -320,7 +359,58 @@ def copyAsTree (env : Env) (id : Nat) (n : NodeRef) (copyNs : Bool := true) : M 
   let act : TB Unit := do let _ ← copyTree env n none [("xml", nsXML)] copyNs
   let ((), a) ← act.run #[]
   let d := env.doc n
-  pure (.node { doc := id, idx := 0, rt := some { nodes := a, uri := if n.idx == 0 then d.uri else "" } })
+  -- §11.9.2: the copy has the base URI of the node, except that its
+  -- `xml:base` attribute (copied with it) is resolved against the
+  -- static base URI
+  let base := if (env.xmlBaseOf n).isSome && env.baseUri != "" then env.baseUri
+    else (env.baseUriOf n).getD ""
+  let uri := if n.idx == 0 then d.uri else ""
+  pure (.node { doc := id, idx := 0, rt := some { nodes := a, uri, baseUri := base } })
+
+/-- `fn:snapshot` (XSLT 4.0 §20.6.2): a deep copy of `n` in a new tree
+    that also holds copies of its ancestors, each with its attributes
+    and namespaces but with no other children. The result is the copy
+    of `n` (the root of the new tree is a copy of the root of the old
+    one, a document node or not). -/
+def snapshotAsTree (env : Env) (id : Nat) (n : NodeRef) : M Item := do
+  let d := env.doc n
+  let r := d.get n.idx
+  let anc := (env.ancestors n).reverse
+  let act : TB Nat := do
+    let mut par : Option Nat := none
+    let mut scope : List (String × String) := [("xml", nsXML)]
+    let mut target : Option Nat := none
+    let mut made : Array Nat := #[]
+    for a in anc do
+      let ra := d.get a.idx
+      let i ← tPush { ra with parent := par, children := #[], attrs := #[], last := 0 }
+      made := made.push i
+      let mut ats : Array Nat := #[]
+      for x in ra.attrs.toList do
+        let j ← tPush { d.get x with parent := some i, children := #[], attrs := #[] }
+        tSet j (fun y => { y with last := j })
+        ats := ats.push j
+        if x == n.idx then target := some j
+      tSet i (fun y => { y with attrs := ats })
+      if let some p := par then tSet p (fun y => { y with children := y.children.push i })
+      par := some i
+      if ra.kind == .element then scope := ra.inscope ++ scope
+    -- the node itself: an attribute is copied with its parent; a
+    -- namespace node is one of the namespace nodes of the copied parent
+    let tgt ← match target, r.kind, par with
+      | some j, _, _ => pure j
+      | none, .namespace, some p => pure (nsNodeIdx p ((n.idx - nsBase) % nsSlot))
+      | none, _, _ => do
+          let j ← copyTree env n par scope true
+          if let some p := par then tSet p (fun y => { y with children := y.children.push j })
+          pure j
+    let sz := (← get).size
+    for i in made do tSet i (fun y => { y with last := sz - 1 })
+    pure tgt
+  let (tgt, a) ← act.run #[]
+  let root := (anc.head?).getD n
+  let base := env.treeBaseUri root
+  pure (.node { doc := id, idx := tgt, rt := some { nodes := a, baseUri := base } })
 
 /-- The top level of a raw result before it becomes a result tree
     (XSLT 4.0 §26.1, Serialization 4.0 §2 steps 1 to 4): arrays are

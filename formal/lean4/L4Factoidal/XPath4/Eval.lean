@@ -592,7 +592,7 @@ def eval : Nat → Env → Expr → M Seq
       | some h =>
           let vs ← evalArgs n env args
           if args.any Option.isNone then pure [.fn (.papp (.fn (.builtin q args.length)) vs)]
-          else h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns } (vs.map (·.getD []))
+          else h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns, baseUri := env.baseUri } (vs.map (·.getD []))
       | none =>
       let sig? := if q.uri == nsFN && q.loc == "concat" then
           (if total ≥ 2 then some (default : Sig) else none) else findSig q total
@@ -1042,7 +1042,7 @@ def apply : Nat → Env → Item → List Seq → M Seq
     | .fn (.builtin q k) => do
         if args.length != k then err "XPTY0004" ("function " ++ q.show ++ " expects " ++ toString k ++ " arguments")
         if let some h := env.host q k then
-          h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns } args
+          h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns, baseUri := env.baseUri } args
         else
         if q.uri == nsXS then
           match atypeOfName? q.loc with
