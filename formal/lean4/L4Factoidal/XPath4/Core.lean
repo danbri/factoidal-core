@@ -251,7 +251,10 @@ structure Sig where
 deriving Inhabited
 
 def pfxUri : String → String
-  | "fn" => nsFN | "math" => nsMATH | "map" => nsMAP | "array" => nsARR | "op" => nsOP | _ => ""
+  | "fn" => nsFN | "math" => nsMATH | "map" => nsMAP | "array" => nsARR | "op" => nsOP
+  -- EXPath hook (`L4Factoidal.EXPath.Catalog`)
+  | "bin" => "http://expath.org/ns/binary" | "file" => "http://expath.org/ns/file"
+  | _ => ""
 
 def parseTy (t : String) : IType :=
   match parseSeqType t with
@@ -264,7 +267,7 @@ def mkParam (y : String × String × Option String) : Param :=
 def mkSig (x : String × String × String × List (String × String × Option String)) : Sig :=
   Sig.mk (pfxUri x.1) x.2.1 (parseTy x.2.2.1) (x.2.2.2.map mkParam)
 
-def sigs : Array Sig := (catalogRaw.map mkSig).toArray
+def sigs : Array Sig := ((catalogRaw ++ catalogExt).map mkSig).toArray
 
 def Sig.minArity (s : Sig) : Nat := (s.ps.filter (·.dflt.isNone)).length
 def Sig.maxArity (s : Sig) : Nat := s.ps.length

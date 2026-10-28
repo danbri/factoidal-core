@@ -73,6 +73,8 @@ def specOk (v : String) : Bool :=
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
   f == "higherOrderFunctions"
+  -- EXPath Binary 4.0 and File 4.0 (`L4Factoidal.EXPath`)
+  || f == "binary" || f == "expath-file"
 
 def depOk (d : Node) : Bool :=
   let ty := attrD d "type"
@@ -236,7 +238,8 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
     | "error" =>
         let code := attrD a "code"
         match res with
-        | .error e => ok? (code == "*" || code == e.code || ("err:" ++ e.code) == code || code.endsWith (":" ++ e.code)) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
+        | .error e => ok? (code == "*" || code == e.code || ("err:" ++ e.code) == code || code.endsWith (":" ++ e.code)
+              || code == "Q{http://www.w3.org/2005/xqt-errors}" ++ e.code) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
         | .ok s => .fail ("expected error " ++ code ++ ", got " ++ (sh s 80))
     | "any-of" =>
         let rs := (kids a).map (fun c => checkAssert env res f c)
