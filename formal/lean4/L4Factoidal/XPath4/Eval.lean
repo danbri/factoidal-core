@@ -206,6 +206,39 @@ def Env.ctxNode (e : Env) : M NodeRef :=
   | some [_] => err "XPTY0020" "the context item is not a node"
   | some _ => err "XPTY0020" "the context value is not a single node"
 
+/-- A navigational expression (XPath 4.0 §4.7.3): one that keeps the
+    focus as the right operand of `/` on a JNode; any other right operand
+    is a selector of children by key (the selector interpretation). -/
+def isNavF : Nat → Expr → Bool
+  | 0, _ => false
+  | f + 1, ex =>
+    match ex with
+    | .ctx | .root | .step .. | .dstep .. => true
+    | .slash a b => isNavF f a && isNavF f b
+    | .bin op a b =>
+        (op == .union || op == .intersect || op == .except || op == .otherwise) &&
+        isNavF f a && isNavF f b
+    | .seq es => !es.isEmpty && es.all (isNavF f)
+    | .filter a _ => isNavF f a
+    | .forE _ _ _ _ _ _ body => isNavF f body
+    | .letE _ _ _ body => isNavF f body
+    | .ifE _ t e => isNavF f t && (isNavF f e || (match e with | .seq [] => true | _ => false))
+    | _ => false
+
+def isNavigational (e : Expr) : Bool := isNavF 1000 e
+
+/-- The context value of an axis step as GNodes: maps and arrays become
+    root JNodes (the implicit `fn:jtree`); any other item is an error. -/
+def Env.stepOrigins (e : Env) : M (List Item) :=
+  match e.ctx with
+  | none => err "XPDY0002" "the context item is absent"
+  | some s =>
+    let s := (s.zip (List.range s.length)).map (fun (i, k) => jwrap (k + 1).toUInt64 i)
+    if s.all Item.isGNode then pure s
+    else match s with
+      | [_] => err "XPTY0004" "the context item is not a node"
+      | _ => err "XPTY0004" "the context value is not a sequence of nodes"
+
 def isNumericLit : Expr → Option Int
   | .lit ⟨_, .int i⟩ => some i
   | _ => none
@@ -227,6 +260,10 @@ def eval : Nat → Env → Expr → M Seq
       | some s => pure s
       | none => err "XPDY0002" "the context value is absent"
   | .root => do
+      match env.ctx with
+      | some [j@(.jnode ..)] => return [jrootOf j]
+      | some [i@(.map _)] | some [i@(.arr _)] => return [jwrap 1 i]
+      | _ => pure ()
       let c ← env.ctxNode
       let r := env.treeRoot c
       if (env.nrec r).kind != .document then err "XPDY0050" "the root of the tree is not a document node"
@@ -234,7 +271,6 @@ def eval : Nat → Env → Expr → M Seq
   | .slash a b => do
       let left ← eval n env a
       match nodesOf left with
-      | none => err "XPTY0004" "the left operand of '/' must be nodes"
       | some ns =>
         let ns := sortNodes ns
         let sz := ns.length
@@ -246,16 +282,87 @@ def eval : Nat → Env → Expr → M Seq
         let res := out.toList
         match nodesOf res with
         | some rs => pure ((sortNodes rs).map Item.node)
-        | none => if res.any Item.isNode then err "XPTY0018" "a path step returned both nodes and non-nodes" else pure res
+        | none =>
+          if res.all Item.isGNode then pure (sortGNodes res)
+          else if res.any Item.isGNode then err "XPTY0018" "a path step returned both nodes and non-nodes" else pure res
+      | none =>
+        -- XPath 4.0 §4.7.3: maps and arrays become root JNodes; a JNode
+        -- with a non-navigational right operand selects children by key
+        let s1 := (left.zip (List.range left.length)).map (fun (i, k) => jwrap (k + 1).toUInt64 i)
+        if !(s1.all Item.isGNode) then err "XPTY0004" "the left operand of '/' must be nodes"
+        let ns := sortGNodes s1
+        let sz := ns.length
+        let nav := isNavigational b
+        let mut keys : Option (List Atomic) := none
+        let mut out : Array Item := #[]
+        let mut idx := 1
+        for nd in ns do
+          if nd.isJNode && !nav then
+            let ks ← match keys with
+              | some ks => pure ks
+              | none => do
+                let ks ← env.atomize (← eval n { env with ctx := none, pos := 0, size := 0 } b)
+                pure ks
+            keys := some ks
+            for i in jselect nd ks do out := out.push i
+          else
+            for i in ← eval n (env.focus nd idx sz) b do out := out.push i
+          idx := idx + 1
+        let res := out.toList
+        if res.all Item.isGNode then pure (sortGNodes res)
+        else if res.any Item.isGNode then err "XPTY0018" "a path step returned both nodes and non-nodes"
+        else pure res
   | .step ax t preds => do
-      let c ← env.ctxNode
-      let ns := (env.axis ax c).filter (fun m => env.testMatches ax m t)
-      let mut cur : Seq := ns.map Item.node
-      for p in preds do
-        cur ← filterSeq n env cur p
-      match nodesOf cur with
-      | some rs => pure ((sortNodes rs).map Item.node)
-      | none => pure cur
+      match env.ctx with
+      | some [.node c] =>
+        if ax == .item then err "XPTY0004" "the item axis is defined only for JNodes"
+        let ns := (env.axis ax c).filter (fun m => env.testMatches ax m t)
+        let mut cur : Seq := ns.map Item.node
+        for p in preds do
+          cur ← filterSeq n env cur p
+        match nodesOf cur with
+        | some rs => pure ((sortNodes rs).map Item.node)
+        | none => pure cur
+      | _ =>
+        let os ← env.stepOrigins
+        let mut out : Array Item := #[]
+        for o in os do
+          let cands ← match o with
+            | .node c =>
+              if ax == .item then err "XPTY0004" "the item axis is defined only for JNodes"
+              pure (((env.axis ax c).filter (fun m => env.testMatches ax m t)).map Item.node)
+            | j =>
+              if ax == .attribute || ax == .namespace then
+                err "XPTY0004" "the attribute and namespace axes are not defined for JNodes"
+              pure ((jaxis ax j).filter (fun m => env.jtestMatches m t))
+          let mut cur : Seq := cands
+          for p in preds do
+            cur ← filterSeq n env cur p
+          for i in cur do out := out.push i
+        pure (sortGNodes out.toList)
+  | .dstep ax ke preds => do
+      -- the dynamic node test (XPath 4.0 §4.7.5.3, §4.7.5.4): the key
+      -- expression is evaluated with an absent focus
+      let ks ← env.atomize (← eval n { env with ctx := none, pos := 0, size := 0 } ke)
+      let os ← env.stepOrigins
+      let mut out : Array Item := #[]
+      for o in os do
+        let cands ← match o with
+          | .node c =>
+            if ax == .item then err "XPTY0004" "the item axis is defined only for JNodes"
+            pure (((env.axis ax c).filter (fun m =>
+              env.testMatches ax m (.name .any) &&
+              (let q := (env.nrec m).name
+               ks.any (fun a => atomicEqual a (Atomic.ofQN q) || atomicEqual a (Atomic.ofStr q.loc))))).map Item.node)
+          | j =>
+            if ax == .attribute || ax == .namespace then
+              err "XPTY0004" "the attribute and namespace axes are not defined for JNodes"
+            pure ((jaxis ax j).filter (jkeyIn ks))
+        let mut cur : Seq := cands
+        for p in preds do
+          cur ← filterSeq n env cur p
+        for i in cur do out := out.push i
+      pure (sortGNodes out.toList)
   | .filter a p => do
       match a, isNumericLit p with
       | .seq es, some k =>
@@ -342,6 +449,7 @@ def eval : Nat → Env → Expr → M Seq
           callFn n env q vals
   | .dyn f args => do
       let fs ← eval n env f
+      let fs := env.unwrapJ 64 .anyFn fs
       match fs with
       | [fi] =>
           if !fi.isFn then err "XPTY0004" "dynamic call of a value that is not a function"
@@ -567,6 +675,14 @@ def lookupIn : Nat → Env → Item → Option Expr → M Seq
           | .int j => for x in ← arrIdx ms j do out := out.push x
           | _ => err "XPTY0004" "array lookup key must be an integer"
         pure out.toList
+    | .jnode _ _ v _ => do
+      -- XPath 4.0 §4.13.3: the ·jvalue· of a JNode is looked up
+      let mut out : Array Item := #[]
+      for x in v do
+        match x with
+        | .map _ | .arr _ => for r in ← lookupIn n env x k do out := out.push r
+        | _ => err "XPTY0004" "lookup on a JNode whose value is not a map or array"
+      pure out.toList
     | _ => err "XPTY0004" "lookup on a value that is not a map or array"
 
 def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
@@ -608,7 +724,15 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
             | .intersect => xs.filter (fun m => ys.contains m)
             | _ => xs.filter (fun m => !ys.contains m)
           pure ((sortNodes r).map Item.node)
-        | _, _ => err "XPTY0004" "union/intersect/except operands must be nodes"
+        | _, _ =>
+          match gnodesOf x, gnodesOf y with
+          | some xs, some ys =>
+            let r := match op with
+              | .union => xs ++ ys
+              | .intersect => xs.filter (fun m => ys.any (gnodeEq m))
+              | _ => xs.filter (fun m => !ys.any (gnodeEq m))
+            pure (sortGNodes r)
+          | _, _ => err "XPTY0004" "union/intersect/except operands must be nodes"
     | _ =>
       if op.isGeneral then do
         let xs ← env.atomize (← eval n env a)
@@ -637,6 +761,13 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
             | .precedes => nodeLt p q | .follows => nodeLt q p
             | .precedesOrIs => p == q || nodeLt p q
             | _ => p == q || nodeLt q p))
+        | [p], [q] =>
+          if !(p.isGNode && q.isGNode) then err "XPTY0004" "node comparison operands must be single nodes"
+          else pure (sBool (match op with
+            | .is => gnodeEq p q | .isNot => !gnodeEq p q
+            | .precedes => gnodeLt p q | .follows => gnodeLt q p
+            | .precedesOrIs => gnodeEq p q || gnodeLt p q
+            | _ => gnodeEq p q || gnodeLt q p))
         | _, _ => err "XPTY0004" "node comparison operands must be single nodes"
       else match op.arOp? with
         | some ar => do
@@ -740,7 +871,8 @@ def showSeq (s : Seq) : String :=
     | .node _ => "<node>"
     | .map _ => "map{...}"
     | .arr _ => "[...]"
-    | .fn _ => "function"))
+    | .fn _ => "function"
+    | .jnode .. => "<jnode>"))
 
 def evalShow (src : String) : String :=
   match evalString src with

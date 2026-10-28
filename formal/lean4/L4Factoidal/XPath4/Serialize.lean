@@ -840,6 +840,7 @@ def Env.jsonItem (e : Env) (p : SerParams) : Nat → Nat → Item → W Unit
         else { method := p.jsonNodeMethod, omitDecl := true }
       let s ← (if sub.method == "text" then e.writeText sub [.node n] else e.writeMarkup sub [.node n])
       emit (p.jsonString s)
+    | .jnode _ _ v _ => e.jsonSeq p f depth v
     | .arr ms =>
       emit "["
       let mut first := true
@@ -941,6 +942,7 @@ def Env.adaptiveItem (e : Env) (p : SerParams) : Nat → Item → W Unit
       else
         let s ← (e.writeMarkup { p with method := "xml", itemSep := none, omitDecl := true } [.node n] : M String)
         emit s
+    | .jnode _ _ v _ => e.adaptiveMember p f v
     | .arr ms =>
       emit "["
       let mut first := true
