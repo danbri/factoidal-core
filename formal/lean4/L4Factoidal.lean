@@ -357,6 +357,9 @@ import L4Factoidal.SPARQLRL.BgpAgreement
 import L4Factoidal.SPARQLRL.SemiNaiveTheorems
 import L4Factoidal.SPARQLRL.Text
 import L4Factoidal.SPARQLRL.Tests
+import L4Factoidal.SPARQLRL.OwlRl
+import L4Factoidal.SPARQLRL.OwlRlDiff
+import L4Factoidal.SPARQLRL.OwlRlTests
 import L4Factoidal.SHACL.NodeExpr
 import L4Factoidal.SHACL.IdentityTests
 import L4Factoidal.SHACL.ComparisonTests
