@@ -8,6 +8,7 @@ operations every part of the evaluator uses: atomization (XPath 4.0
 import L4Factoidal.XPath4.Parser
 import L4Factoidal.XPath4.Doc
 import L4Factoidal.XPath4.Catalog
+import L4Factoidal.XPath4.JNode
 import L4Factoidal.EXPath.File.FS
 import Std.Data.HashMap
 
@@ -41,6 +42,11 @@ structure Env where
   decimalFormats : List (String × List (String × String)) := []
   defaultCollation : String := "http://www.w3.org/2005/xpath-functions/collation/codepoint"
   baseUri : String := ""
+  /-- The octets of resources the caller read in advance (URI or relative
+      reference as written, then the octets), for `fn:unparsed-text` and
+      the other text readers, which decode them by the encoding rules of
+      F&O 4.0 §17.1.5. A resource here takes precedence over `resources`. -/
+  resourceBytes : List (String × ByteArray) := []
   /-- EXPath hook: the in-memory file system that the `file:` functions
       read (`L4Factoidal.EXPath.File`); `none` when there is none. -/
   fileSys : Option L4Factoidal.EXPath.File.FS := none
@@ -71,6 +77,35 @@ def sortNodes (ns : List NodeRef) : List NodeRef :=
     | l => l
   dedup s
 
+/-- Document order over GNodes (XPath 4.0 §2.7.1): XNodes by document and
+    index, JNodes by root and path (`XPath4.JNode`); every XNode tree
+    before every JTree. -/
+def gnodeLt (a b : Item) : Bool :=
+  match a, b with
+  | .node x, .node y => nodeLt x y
+  | .node _, .jnode .. => true
+  | .jnode .., .jnode .. => jbefore a b
+  | _, _ => false
+
+/-- GNode identity. -/
+def gnodeEq (a b : Item) : Bool :=
+  match a, b with
+  | .node x, .node y => x == y
+  | .jnode .., .jnode .. => jsame a b
+  | _, _ => false
+
+/-- GNodes in document order, without duplicates. -/
+def sortGNodes (ns : List Item) : List Item :=
+  let s := ns.mergeSort (fun a b => !(gnodeLt b a))
+  let rec dedup : List Item → List Item
+    | a :: b :: r => if gnodeEq a b then dedup (b :: r) else a :: dedup (b :: r)
+    | l => l
+  dedup s
+
+/-- The items of `s` when every one is a GNode. -/
+def gnodesOf (s : Seq) : Option (List Item) :=
+  if s.all Item.isGNode then some s else none
+
 def nodesOf (s : Seq) : Option (List NodeRef) :=
   s.foldr (fun i acc => match i, acc with
     | .node n, some l => some (n :: l)
@@ -96,6 +131,8 @@ def Env.atomizeFuel (e : Env) : Nat → Seq → M (List Atomic)
       | .arr ms =>
           for m in ms do
             for a in ← e.atomizeFuel f m do out := out.push a
+      | .jnode _ _ v _ =>
+          for a in ← e.atomizeFuel f v do out := out.push a
       | .map _ => err "FOTY0013" "cannot atomize a map"
       | .fn _ => err "FOTY0013" "cannot atomize a function item"
     pure out.toList
@@ -113,6 +150,7 @@ def ebv (s : Seq) : M Bool :=
   match s with
   | [] => pure false
   | .node _ :: _ => pure true
+  | .jnode .. :: _ => pure true
   | [.atom a] =>
     match a.v with
     | .bool b => pure b
@@ -160,6 +198,12 @@ def Env.kindMatches (e : Env) (n : NodeRef) : IType → Bool
 
 def Env.testMatches1 (e : Env) (ax : Axis) (n : NodeRef) : NodeTest → Bool
   | .name t =>
+      let r := e.nrec n
+      let principal := if ax == .attribute then r.kind == .attribute
+                       else if ax == .namespace then r.kind == .namespace
+                       else r.kind == .element
+      principal && nameTestMatches t r.name
+  | .ncname t _ =>
       let r := e.nrec n
       let principal := if ax == .attribute then r.kind == .attribute
                        else if ax == .namespace then r.kind == .namespace
@@ -230,6 +274,7 @@ def Env.axis (e : Env) (ax : Axis) (n : NodeRef) : List NodeRef :=
       let anc := e.ancestors n
       n :: ((e.rangeNodes d 0 (n.idx - 1)).filter (fun m => n.idx > 0 && !anc.contains m)).reverse
   | .namespace => []
+  | .item => []
 
 /-! ## Sequence types -/
 
@@ -320,6 +365,11 @@ def subtypeF : Nat → IType → IType → Bool
     | .enum xs, .enum ys => xs.all (fun x => ys.contains x)
     | .elem _, .anyNode | .attr _, .anyNode | .text, .anyNode | .comment, .anyNode
     | .pi _, .anyNode | .doc _, .anyNode | .nsNode, .anyNode | .anyNode, .anyNode => true
+    | .xnode, .anyNode | .xnode, .xnode | .jnodeT _ _, .anyNode => true
+    | .elem _, .xnode | .attr _, .xnode | .text, .xnode | .comment, .xnode
+    | .pi _, .xnode | .doc _, .xnode | .nsNode, .xnode => true
+    | .jnodeT _ _, .jnodeT .any none => true
+    | .jnodeT _ (some t), .jnodeT .any (some u) => subtypeF f t u
     | .elem none, .elem none | .attr none, .attr none | .text, .text | .comment, .comment
     | .nsNode, .nsNode | .doc none, .doc none | .pi none, .pi none => true
     | .elem (some _), .elem none | .attr (some _), .attr none | .pi (some _), .pi none
@@ -367,7 +417,19 @@ def Env.itemMatchesF (e : Env) : Nat → Item → IType → Bool
   | f + 1, i, t =>
   match t with
   | .item => true
-  | .anyNode => i.isNode
+  | .anyNode => i.isGNode
+  | .xnode => i.isNode
+  | .jnodeT k vt => match i with
+      | .jnode _ st v _ =>
+        (match k, st with
+         | .any, _ => true
+         | .root, [] => true
+         | .key a, s :: _ => atomicEqual a s.key
+         | _, _ => false) &&
+        (match vt with
+         | some t => e.seqMatchesF f v t
+         | none => true)
+      | _ => false
   | .atomic t => match i with | .atom a => a.ty.derives t | _ => false
   | .anyFn => i.isFn
   | .fnT ps r => i.fnArity == some ps.length &&
@@ -414,6 +476,24 @@ end
 def Env.itemMatches (e : Env) (i : Item) (t : IType) : Bool := e.itemMatchesF 1000 i t
 def Env.seqMatches (e : Env) (s : Seq) (t : IType) : Bool := e.seqMatchesF 1000 s t
 
+/-- A node test on a JNode (XPath 4.0 §4.7.5.4 and §4.7.5.5): `*`
+    matches every JNode; an NCName a string-like key equal to it; another
+    name test or wildcard a QName key; a type test the JNode itself. -/
+def Env.jtestMatches1 (e : Env) (j : Item) : NodeTest → Bool
+  | .name .any => true
+  | .name t => match jkeyOf j with
+      | some ⟨_, .qn q⟩ => nameTestMatches t q
+      | _ => false
+  | .ncname _ l => match jkeyOf j with
+      | some k => k.isStringLike && k.str == l
+      | none => false
+  | .kind t => e.itemMatches j t
+  | .union _ => false
+
+def Env.jtestMatches (e : Env) (j : Item) : NodeTest → Bool
+  | .union ts => ts.any (fun t => e.jtestMatches1 j t)
+  | t => e.jtestMatches1 j t
+
 /-- The atomic target of an atomic(-ish) item type, for coercion. -/
 def atomicTarget : IType → Option (List AType)
   | .atomic t => some [t]
@@ -435,22 +515,39 @@ def coerceAtom (ts : List AType) (a : Atomic) : M Atomic := do
     return ← castAtomic a t
   for t in ts do
     match t with
+    -- XPath 4.0 §3.4.2, the implicit casting table
     | .b .double => if a.isNumeric then return ← castAtomic a t
-    | .b .float => if a.is .decimal || a.is .float then return ← castAtomic a t
+    | .b .float => if a.isNumeric then return ← castAtomic a t
+    | .b .decimal => if a.is .float || a.is .double then return ← castAtomic a t
     | .b .string => if a.is .anyURI then return Atomic.ofStr a.str
+    | .b .anyURI => if a.is .string then return ← castAtomic a t
+    | .b .hexBinary => if a.is .base64Binary then return ← castAtomic a t
+    | .b .base64Binary => if a.is .hexBinary then return ← castAtomic a t
     | .b b =>
         if derivedFrom b .integer && a.is .integer then
           match a.v with
           | .int i => if inIntBounds b i then return ⟨t, .int i⟩
           | _ => pure ()
-        else if derivedFrom b .decimal && a.is .decimal then
-          -- relabel only integer subtypes of decimals that are integers
-          pure ()
+        else if b.primitive.isSome && !(derivedFrom b .decimal) &&
+            (match a.ty with | .b ab => ab.primitive == b.primitive | .untyped => false) then
+          -- relabeling: the datum of `a` is in the value space of the
+          -- derived type (the cast keeps the lexical form)
+          match castAtomic a t with
+          | .ok r => if r.str == a.str then return r
+          | .error _ => pure ()
         else pure ()
     | _ => pure ()
   err "XPTY0004" ("cannot convert xs:" ++ a.ty.name ++ " value '" ++ a.str ++ "' to the required type")
 
 def IType.isEmptyT : IType → Bool | .empty => true | _ => false
+
+/-- XPath 4.0 §3.4.3: a JNode that does not match the required item type
+    is replaced by its ·jvalue·, whose items are coerced in turn. -/
+def Env.unwrapJ (e : Env) : Nat → IType → Seq → Seq
+  | 0, _, s => s
+  | f + 1, it, s => s.flatMap (fun i => match i with
+      | .jnode _ _ v _ => if e.itemMatches i it then [i] else e.unwrapJ f it v
+      | _ => [i])
 
 /-- The coercion rules (XPath 4.0 §3.4.3), applied recursively to the
     members of arrays and the entries of maps and records. -/
@@ -469,7 +566,7 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
         | .enum vs => if cs.all (fun a => vs.contains a.str) then pure (seqOfAtoms cs)
                       else err "XPTY0004" "value not in enumeration"
         | _ => pure (seqOfAtoms cs)
-    | none => pure s
+    | none => pure (e.unwrapJ 64 it s)
   if !occOk o s.length then
     err "XPTY0004" ("wrong number of items for " ++ what ++ ": " ++ toString s.length)
   else
@@ -618,6 +715,13 @@ def Env.deepEqFuel (e : Env) : Nat → Seq → Seq → Bool
             | none => false)
       | .arr ma, .arr mb => ma.length == mb.length && (ma.zip mb).all (fun (p, q) => e.deepEqFuel f p q)
       | .fn (.builtin q1 k1), .fn (.builtin q2 k2) => q1 == q2 && k1 == k2
+      | .jnode _ _ v1 _, .jnode _ _ v2 _ => e.deepEqFuel f v1 v2
+      | .fn (.papp (.fn (.builtin q1 k1)) a1), .fn (.papp (.fn (.builtin q2 k2)) a2) =>
+          q1 == q2 && k1 == k2 && a1.length == a2.length &&
+          (a1.zip a2).all (fun (x, y) => match x, y with
+            | none, none => true
+            | some u, some w => e.deepEqFuel f u w
+            | _, _ => false)
       | _, _ => false)
 
 def Env.deepEq (e : Env) (a b : Seq) : Bool := e.deepEqFuel 10000 a b

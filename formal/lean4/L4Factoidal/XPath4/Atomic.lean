@@ -640,7 +640,10 @@ def atomicCmp (a b : Atomic) (implicitTz : Int := 0) : M (Option Ordering) :=
     match a.v, b.v with
     | .x (.dt _ x), .x (.dt _ y) => pure (Fn.DateTime.compare implicitTz x y)
     | .x (.bin _ x), .x (.bin _ y) => pure (some (compare x y))
-    | .qn x, .qn y => pure (if x == y then some .eq else some .lt)
+    | .qn x, .qn y =>
+        -- XPath 4.0: QNames are ordered by namespace URI, then local name
+        if x.uri != y.uri then pure (some (compare x.uri y.uri))
+        else pure (some (compare x.loc y.loc))
     | _, _ => pure (some (if a.str == b.str then .eq else if a.str < b.str then .lt else .gt))
   else err "XPTY0004" ("cannot compare xs:" ++ a.ty.name ++ " with xs:" ++ b.ty.name)
 
@@ -649,6 +652,8 @@ def AType.ordered (t : AType) : Bool :=
   match t.prim with
   | "boolean" | "numeric" | "string" | "untypedAtomic" | "date" | "time" | "dateTime"
   | "binary" => true
+  -- XPath 4.0 (PR 2256): the Gregorian types and QNames are ordered too
+  | "gYear" | "gYearMonth" | "gMonth" | "gMonthDay" | "gDay" | "QName" | "NOTATION" => true
   | "duration" => true
   | _ => false
 

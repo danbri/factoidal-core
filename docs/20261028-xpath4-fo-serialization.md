@@ -91,12 +91,41 @@ six inputs against the reference implementation.
 Open: the round trip `parse-xml(serialize($d))` = `$d`, and the preorder of
 `Doc.ofNodes`: https://github.com/danbri/factoidal/issues/1143.
 
+## Second part (branch `claude/qt4-fo-2`)
+
+| Area | Files |
+| --- | --- |
+| JNodes: `fn:jtree`, `jkey`, `jvalue`, `jnode(...)` types, paths and axes over maps and arrays, document order and identity | `XPath4/JNode.lean`, `Syntax`, `Core`, `Parser`, `Eval` |
+| Collations: codepoint, html-ascii-case-insensitive, unicode-case-insensitive, UCA (DUCET of UCA 16.0.0, parameters strength, alternate, maxVariable, backwards, caseFirst, caseLevel, numeric, fallback); `fn:collation`, `collation-key`, `collation-available`; the collation-aware functions | `XPath4/Collation.lean`, `XPath4/UcaData.lean` (`tools/xpath4/gen-uca-data.py`) |
+| `fn:deep-equal` options | `XPath4/DeepEqual.lean` |
+| `fn:parse-html`, `fn:html-doc`: an HTML parser after WHATWG §13.2 (tokenizer, tree construction with the insertion modes, adoption agency, foster parenting, foreign content), the full named character reference table | `HTML/` (`tools/html/gen-entities.py`), `XPath4/Html.lean` |
+| `fn:round` modes, `fn:compare`/`min`/`max` total order, `fn:path` options, `fn:slice`/`array:slice`, `fn:scan`, `fn:partition`, `fn:unix-dateTime`, `fn:pad-string`, `fn:trim-space` options, `fn:system-properties`, `fn:in-scope-namespaces`, `fn:decode-from-uri`, `fn:unparsed-binary`, `fn:char` names, `fn:id`/`idref`/`element-with-id` | `XPath4/Fn4.lean`, `Lib.lean` |
+| Resources as octets: encoding inference and decoding for `unparsed-text*`, `csv-doc`, `json-doc` | `XmlParse.lean`, `Core.Env.resourceBytes`, runner |
+| XPath 4.0: casts to array, map and record types; method calls `=?>`; dynamic calls on a sequence of functions; `but with`; the implicit casting table and relabeling in coercion; ordered Gregorian types and QNames | `Eval`, `Parser`, `Core`, `Atomic` |
+| `fn:update` for XNodes and JNodes | `XPath4/Update.lean` |
+| Theorems: `Doc.ofNodes_parent_lt`, `ofNodes_root`, `ofNodes_children`, `ofNodes_attrs`, `ofNodes_last`; `hash_*_shared`, `normalize_low`, `sliceList_pos` | `XPath4/DocTheorems.lean`, `XPath4/SerializeTheorems.lean` |
+
+Measured (same command, after `main` with EXPath was merged in): 27285 pass,
+1372 fail, 10002 unsupported (out of 38659); 95.2% of the tests that apply.
+By family: prod 8382 pass, 381 fail; op 3760, 27; fn 14136, 942; map 342,
+11; array 484, 11; math 181, 0. EXPath families (`--family bin`,
+`--family file`): bin 647 pass, 0 fail, 2 unsupported; file 267 pass, 0 fail,
+3 unsupported. No test moved from pass to fail between any two runs of the
+branch. fn-update: 218 pass, 4 fail, 243 unsupported (was 5 pass).
+
 ## Not implemented
 
-JNodes (`fn:jtree`, `jnode()` types, paths over maps and arrays: work in
-progress on another branch), `fn:parse-html` and `fn:html-doc`, UCA
-collations (`fn:collation`, `collation-key`), the options of
-`fn:deep-equal`, the `byte-order-mark` parameter, the JSON `record` rule
-(an empty record field is written as `null`), `FULLY-NORMALIZED`. Each is
-a failing qt4tests case today; tracking:
+The regular expression features of F&O 4.0 that the engine lacks (class
+subtraction, Unicode block escapes, back-references) and `fn:regex`: done on branch `claude/qt4-regex`, a separate PR because
+`L4Factoidal/Regex` is shared with SPARQL, SHACL and the npm build. The
+identity of nodes built at run time comes from their content
+(https://github.com/danbri/factoidal/issues/1145). `fn:invisible-xml`,
+`fn:civil-timezone` (IANA time zone data), schema types
+(`fn:schema-type`, type annotations, typed data), UCA tailorings
+(https://github.com/danbri/factoidal/issues/1144), the record type
+annotation that `but with` checks, the `byte-order-mark` parameter, the
+JSON `record` rule (an empty record field is written as `null`),
+`FULLY-NORMALIZED`, full subtree contiguity of `Doc.ofNodes` and the
+serialize/parse-xml round trip (https://github.com/danbri/factoidal/issues/1143).
+Each is a failing or unsupported qt4tests case today; tracking:
 https://github.com/danbri/factoidal/issues/1101.

@@ -176,7 +176,7 @@ def itemSig (i : Item) : String :=
   match i with
   | .atom a => a.str
   | .node n => toString n.doc ++ ":" ++ toString n.idx
-  | .map _ => "m" | .arr _ => "a" | .fn _ => "f"
+  | .map _ => "m" | .arr _ => "a" | .fn _ => "f" | .jnode .. => "j"
 
 def envSalt (e : Env) : String :=
   let vs := (e.vars.take 12).map (fun (q, s) => q.loc ++ "=" ++ String.intercalate "," ((s.take 4).map itemSig))
@@ -245,6 +245,7 @@ def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool) :
       | .arr _ => err "XQTY0105" "an array in element content"
       | .map _ => err "XQTY0105" "a map in element content"
       | .fn _ => err "XQTY0105" "a function item in element content"
+      | .jnode .. => err "XQTY0105" "a JNode in element content"
       | .node n =>
         if let some s := atoms then
           ps := ps.push (.text s); seenOther := true; atoms := none

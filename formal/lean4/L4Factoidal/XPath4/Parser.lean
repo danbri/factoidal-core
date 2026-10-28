@@ -13,7 +13,7 @@ every nested call (no `partial def`); running out of fuel is the
 static error `XPST0003` with a message saying so, never a wrong parse.
 
 Implemented: every production of the XPath 4.0 expression grammar
-EXCEPT `but with`, `=?>` method calls, `jnode()` types, destructuring
+EXCEPT `jnode()` types, destructuring
 `let $( )`/`$[ ]`/`${ }` bindings, computed node constructors, the
 `declare default element namespace` prolog and schema-element /
 schema-attribute types. Those raise `XPST0003` naming the construct.
@@ -337,7 +337,7 @@ def tryExt (pick : ExtGrammar → Array Char → List (String × String) → Sub
 def kindTestNames : List String :=
   ["node", "text", "comment", "element", "attribute", "document-node",
    "processing-instruction", "namespace-node", "schema-element", "schema-attribute",
-   "gnode", "xnode", "jnode"]
+   "xnode", "jnode"]
 
 def reservedFnNames : List String :=
   kindTestNames ++ ["array", "empty-sequence", "fn", "function", "if", "item", "map",
@@ -382,6 +382,42 @@ def pNameTest (dflt : String) : P NameTest := do
           | none => pure (.ns (← lookupNs (p.getD "")))
         else pure (.name (← resolve p u l dflt))
     | none => synErr "expected a name test"
+
+/-- The first argument of `jnode(...)` (XPath 4.0 §3.2.12). -/
+def pJKeyTest : P JKeyTest := do
+  ws
+  let ch ← peekAt 0
+  if ← eatS "*" then pure .any
+  else if ch == '(' then
+    adv 1; expectS ")"; pure .root
+  else if ch == '"' || ch == '\'' then pure (.key (Atomic.ofStr (← pStringLit)))
+  else if ch == '#' then
+    adv 1
+    match ← peekQName with
+    | some (p, u, l, e) =>
+        set e
+        pure (.key (Atomic.ofQN (← resolve p u l "")))
+    | none => synErr "bad QName literal"
+  else if ch.isDigit || ch == '.' || ch == '-' then
+    let neg ← eatS "-"
+    match ← pNumber with
+    | .lit a =>
+      if !neg then pure (.key a) else
+      match a.num? with
+      | some v => pure (.key (numNeg v).atomic)
+      | none => synErr "bad numeric constant"
+    | _ => synErr "bad numeric constant"
+  else
+    match ← afterName with
+    | some (nm, '(', _) =>
+      if nm == "true" || nm == "false" then
+        adv nm.length; expectS "("; expectS ")"
+        pure (.key (Atomic.ofBool (nm == "true")))
+      else synErr "bad jnode() key"
+    | _ =>
+      match ← peekQName with
+      | some (none, none, l, e) => set e; pure (.key (Atomic.ofStr l))
+      | _ => synErr "bad jnode() key"
 
 def pOcc (t : IType) : P IType := do
   -- occurrence indicator directly follows the item type
@@ -445,7 +481,16 @@ def pItemType : Nat → P IType
         set e; expectS "("
         match nm with
         | "item" => expectS ")"; pure .item
-        | "node" | "gnode" | "xnode" => expectS ")"; pure .anyNode
+        | "node" => expectS ")"; pure .anyNode
+        | "xnode" => expectS ")"; pure .xnode
+        | "jnode" =>
+            -- XPath 4.0 §3.2.12: jnode((* | () | NCName | Constant) (, SequenceType)?)
+            if ← eatS ")" then pure (.jnodeT .any none)
+            else
+              let k ← pJKeyTest
+              let vt ← if ← eatS "," then pure (some (← pSeqType n)) else pure none
+              expectS ")"
+              pure (.jnodeT k vt)
         | "text" => expectS ")"; pure .text
         | "comment" => expectS ")"; pure .comment
         | "namespace-node" => expectS ")"; pure .nsNode
@@ -590,6 +635,7 @@ def pVarName : Nat → P QN
   | 0 => synErr "expression too deeply nested"
   | _ + 1 => do
     expectS "$"
+    ws
     match ← peekQName with
     | some (p, u, l, e) => set e; resolve p u l ""
     | none => synErr "expected a variable name"
@@ -679,11 +725,12 @@ def pLet : Nat → P Expr
       let c ← read
       let i ← get
       let j := skipWsF c.s (c.s.size + 1) 0 i
-      let open_ := chAt c.s (j+1)
+      let k := skipWsF c.s (c.s.size + 1) 0 (j + 1)
+      let open_ := chAt c.s k
       if chAt c.s j == '$' && (open_ == '(' || open_ == '[' || open_ == '{') then
         -- destructuring binding (XPath 4.0 §4.12.2): desugared to a
         -- binding of a fresh variable and one binding per name
-        set (j + 2)
+        set (k + 1)
         let close := if open_ == '(' then ")" else if open_ == '[' then "]" else "}"
         let mut vs : List (QN × IType) := []
         for _ in [0:1000] do
@@ -838,11 +885,24 @@ def opAt (lvl : Nat) : P (Option (BOp × Nat)) := do
 def pInstance : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
-    let e ← pTreat n
-    if ← atKw "instance" then
-      adv 8; expectKw "of"
-      pure (.instOf e (← pSeqType n))
-    else pure e
+    let one : P Expr := do
+      let e ← pTreat n
+      if ← atKw "instance" then
+        adv 8; expectKw "of"
+        pure (.instOf e (← pSeqType n))
+      else pure e
+    let mut e ← one
+    -- XPath 4.0 §4.15.4 `A but with B`: `map:merge((A, B), {'duplicates':'use-last'})`
+    -- (no value here carries a record type annotation, so the result is
+    -- not checked against the record type of A)
+    for _ in [0:10000] do
+      if ← atKw "but" then
+        adv 3; expectKw "with"
+        let b ← one
+        e := .call { uri := nsMAP, loc := "merge" }
+          [some (.seq [e, b]), some (.mapC [(.lit (Atomic.ofStr "duplicates"), .lit (Atomic.ofStr "use-last"))])] []
+      else break
+    pure e
 
 def pTreat : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
@@ -1048,7 +1108,13 @@ def pNodeTest : Nat → Axis → P NodeTest
       else synErr ("unexpected function call in a step: " ++ nm)
     | _ =>
       let en ← dfltElemNs
-      pure (.name (← pNameTest (if ax == .attribute then "" else en)))
+      let dn := if ax == .attribute then "" else en
+      let star := (← peekAt 0) == '*'
+      match ← peekQName with
+      | some (none, none, l, _) =>
+        if star || l == "*" then pure (.name (← pNameTest ""))
+        else pure (.ncname (← pNameTest dn) l)
+      | _ => pure (.name (← pNameTest dn))
 
 def pStep : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
@@ -1080,6 +1146,13 @@ def pStep : Nat → P Expr
       | some ax =>
           let _ ← peekQName
           adv nm.length; ws; expectS "::"
+          ws
+          if (← peekAt 0) == '{' then
+            -- a dynamic node test (XPath 4.0 §4.7.5.2)
+            let e ← pEnclosed n
+            let ps ← pPreds n
+            pure (.dstep ax e ps)
+          else
           let t ← pNodeTest n ax
           let ps ← pPreds n
           pure (.step ax t ps)
@@ -1097,7 +1170,7 @@ def pStep : Nat → P Expr
     | some (nm, c1, c2) =>
       -- a name: a step unless it is a primary-expression keyword
       let isPrimaryKw :=
-        (c1 == '#' && (c2.isDigit)) ||
+        (c1 == '#' && (c2.isDigit || c2 == ' ' || c2 == '\t' || c2 == '\n' || c2 == '\r' || c2 == '(')) ||
         ((nm == "map" || nm == "array") && c1 == '{') ||
         ((nm == "fn" || nm == "function") && (c1 == '{' || c1 == '('))
       if isPrimaryKw then pPostfix n
@@ -1155,6 +1228,15 @@ def pKeySpec : Nat → P (Option Expr)
     else if ch == '"' || ch == '\'' then pure (some (.lit (Atomic.ofStr (← pStringLit))))
     else if ch.isDigit then pure (some (← pNumber))
     else if ch == '.' then adv 1; pure (some .ctx)
+    else if ch == '#' then
+      -- a QName literal as the key (XPath 4.0 KeySpecifier)
+      adv 1
+      match ← peekQName with
+      | some (p, u, l, e) =>
+          set e
+          let q ← resolve p u l ""
+          pure (some (.lit (Atomic.ofQN q)))
+      | none => synErr "bad QName literal"
     else
       let c ← read
       let i ← get
@@ -1182,7 +1264,20 @@ def pPostfix : Nat → P Expr
         let k ← pKeySpec n
         a := .lookup a k
       else if ch == '=' && (← peekAt 1) == '?' && (← peekAt 2) == '>' then
-        synErr "method calls (=?>) are not implemented"
+        -- XPath 4.0 §4.15.5 method call `M =?> N(args)`: for each map $m
+        -- in M, `$m?N($m, args)` (a variable name no source text can bind)
+        adv 3
+        ws
+        let c ← read
+        let i ← get
+        let some (nm, e) := ncnameAt c.s i | synErr "expected a method name after =?>"
+        set e
+        let (args, kw) ← pArgs n
+        if !kw.isEmpty || args.any Option.isNone then
+          synErr "a method call cannot have keyword arguments or placeholders"
+        let v : QN := { uri := "", loc := "#method-target" }
+        a := .forE .item v none none (.seq .item .star) a
+          (.dyn (.lookup (.var v) (some (.lit (Atomic.ofStr nm)))) (some (.var v) :: args))
       else break
     pure a
 
@@ -1320,9 +1415,11 @@ def pPrimary : Nat → P Expr
             set e
             let q ← resolve p u l (← dfltFnNs)
             expectS "#"
+            ws
             let c ← read
             let i ← get
             let (ds, j) := digitsUs c.s i Char.isDigit
+            if ds.isEmpty then synErr "expected the arity after #"
             set j
             pure (.fref q (ds.foldl (fun a d => a * 10 + (d.toNat - 48)) 0))
         | none => synErr "bad named function reference"

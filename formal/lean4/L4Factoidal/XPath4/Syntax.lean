@@ -27,6 +27,8 @@ inductive Axis where
   | followingSibling | following | namespace
   | parent | ancestor | precedingSibling | preceding | ancestorOrSelf
   | followingOrSelf | followingSiblingOrSelf | precedingOrSelf | precedingSiblingOrSelf
+  /-- The item axis (XPath 4.0 §4.7.5.1), defined only for JNodes. -/
+  | item
 deriving DecidableEq, Repr, Inhabited
 
 def Axis.reverse : Axis → Bool
@@ -46,6 +48,7 @@ def axisOfName? : String → Option Axis
   | "following-sibling-or-self" => some .followingSiblingOrSelf
   | "preceding-or-self" => some .precedingOrSelf
   | "preceding-sibling-or-self" => some .precedingSiblingOrSelf
+  | "item" => some .item
   | _ => none
 
 /-- `NameTest`: `*`, `prefix:*`, `*:local`, `Q{uri}*`, or a QName. -/
@@ -54,6 +57,15 @@ inductive NameTest where
   | ns (uri : String)
   | loc (l : String)
   | name (q : QN)
+deriving Repr, Inhabited
+
+/-- The key constraint of a `jnode(...)` type (XPath 4.0 §3.2.12): `*`
+    (any key, or none), `()` (a root JNode), or a constant matched with
+    `fn:atomic-equal`. -/
+inductive JKeyTest where
+  | any
+  | root
+  | key (a : Atomic)
 deriving Repr, Inhabited
 
 inductive Occ where
@@ -66,6 +78,10 @@ deriving DecidableEq, Repr, Inhabited
 inductive IType where
   | item
   | anyNode
+  /-- `xnode()`: an XNode (a node of an XML tree), not a JNode. -/
+  | xnode
+  /-- `jnode(K, T)` (XPath 4.0 §3.2.12); `none` for an absent `T`. -/
+  | jnodeT (k : JKeyTest) (vt : Option IType)
   | atomic (t : AType)
   | elem (n : Option NameTest)
   | attr (n : Option NameTest)
@@ -88,6 +104,10 @@ deriving Repr, Inhabited
 /-- A node test in a step. -/
 inductive NodeTest where
   | name (t : NameTest)
+  /-- A name test written as an unprefixed NCName `l`: for an XNode it is
+      the name test `t`; for a JNode it matches a string-like key equal
+      to `l` (XPath 4.0 §4.7.5.4). -/
+  | ncname (t : NameTest) (l : String)
   | kind (t : IType)
   | union (ts : List NodeTest)
 deriving Repr, Inhabited
@@ -120,6 +140,8 @@ inductive Expr where
   | slash (a b : Expr)
   /-- An axis step with its predicates. -/
   | step (ax : Axis) (t : NodeTest) (preds : List Expr)
+  /-- An axis step with a dynamic node test `ax::{e}` (XPath 4.0 §4.7.5.2). -/
+  | dstep (ax : Axis) (e : Expr) (preds : List Expr)
   /-- A filter expression `e[p]`. -/
   | filter (e p : Expr)
   /-- A static function call. `none` in an argument is `?`. -/
@@ -186,6 +208,10 @@ structure Doc where
   /-- The base URI of the document node when it differs from `uri`
       (`fn:parse-xml` with the `base-uri` option). -/
   baseUri : String := ""
+  /-- `(element, attribute)` names (as written) that the DTD declares
+      `ID`, and those it declares `IDREF` or `IDREFS` (`fn:id`, `fn:idref`). -/
+  idAttrs : List (String × String) := []
+  idrefAttrs : List (String × String) := []
 deriving Inhabited
 
 /-- A node reference: document number and node index. A document built
@@ -208,6 +234,15 @@ def NodeRef.at (n : NodeRef) (i : Nat) : NodeRef := { n with idx := i }
 
 def NodeRef.mk' (d i : Nat) : NodeRef := { doc := d, idx := i }
 
+/-- One step of a JNode's path from its parent (XDM 4.0 §8.5): the
+    ·jkey· and the 1-based position among the parent's j-children.
+    Position 0 marks the JNode that the item axis makes for a singleton
+    value: its parent is the origin, but it is not a child. -/
+structure JStep where
+  key : Atomic
+  pos : Nat
+deriving Inhabited
+
 mutual
 inductive Item where
   | atom (a : Atomic)
@@ -216,6 +251,12 @@ inductive Item where
   | map (kvs : List (Atomic × List Item))
   | arr (ms : List (List Item))
   | fn (f : FnItem)
+  /-- A JNode (XDM 4.0 §8.5), kept as a zipper: `root` is the identity of
+      the root JNode, `steps` the path from this JNode up to the root
+      (nearest step first), `val` the ·jvalue·, and `up` the ·jvalue·s
+      of the ancestors (nearest first; as long as `steps`). Identity is
+      `root` with the step positions; ·jparent· drops the first step. -/
+  | jnode (root : UInt64) (steps : List JStep) (val : List Item) (up : List (List Item))
 inductive FnItem where
   | builtin (q : QN) (arity : Nat)
   | inline (ps : List (QN × IType)) (ret : IType) (body : Expr) (focus : Bool)

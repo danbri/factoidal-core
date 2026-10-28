@@ -98,6 +98,9 @@ def dirOf (p : String) : String :=
 def readFileSafe (p : String) : IO (Option String) := do
   try pure (some (← IO.FS.readFile p)) catch _ => pure none
 
+def readBytesSafe (p : String) : IO (Option ByteArray) := do
+  try pure (some (← IO.FS.readBinFile p)) catch _ => pure none
+
 /-! ## Dependencies -/
 
 def specOk (v : String) (xq : Bool := false) : Bool :=
@@ -114,6 +117,9 @@ def specOk (v : String) (xq : Bool := false) : Bool :=
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
   f == "higherOrderFunctions" || f == "serialization"
+    -- UCA collations: unknown parameters are ignored with fallback=yes,
+    -- and the parameters of `XPath4.Collation` are implemented
+    || f == "simple-uca-fallback" || f == "advanced-uca-fallback"
   -- EXPath Binary 4.0 and File 4.0 (`L4Factoidal.EXPath`)
   || f == "binary" || f == "expath-file"
 
@@ -142,6 +148,8 @@ structure EnvSpec where
   ctxSelect : Option String := none
   unsupported : Option String := none
   baseUri : String := ""
+  /-- A `collation` element with `default="true"`. -/
+  defaultCollation : Option String := none
   /-- `resource` elements: (uri, file). -/
   resources : List (String × String) := []
   decimalFormats : List (String × List (String × String)) := []
@@ -179,7 +187,11 @@ def parseEnv (dir : String) (e : Node) (xq : Bool := false) : EnvSpec := Id.run 
             | _ => "Q{}" ++ n
         let props := (ats.filter (fun a => a.name != "name" && !a.name.startsWith "xmlns")).map (fun a => (a.name, a.value))
         s := { s with decimalFormats := s.decimalFormats ++ [(key, props)] }
-    | "collation" => s := { s with unsupported := some "collation" }
+    | "collation" =>
+        let u := attrD c "uri"
+        match collationOf "" u with
+        | .ok _ => if attrD c "default" == "true" then s := { s with defaultCollation := some u }
+        | .error _ => s := { s with unsupported := some ("collation " ++ u) }
     | "static-base-uri" => s := { s with baseUri := attrD c "uri" }
     | "function-library" => s := { s with unsupported := some "function-library" }
     | "sandpit" => s := { s with sandpit := some (dir ++ "/" ++ attrD c "path") }
@@ -342,6 +354,12 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
       | "assert-eq" =>
           match evalIn env txt with
           | .ok exp =>
+            -- a single node (XNode or JNode) is compared by its typed value
+            let s : Seq := match s with
+              | [.node _] | [.jnode ..] => match env.atomize s with
+                | .ok [x] => [Item.atom x]
+                | _ => s
+              | _ => s
             match s, exp with
             | [.atom x], [.atom y] =>
               let nan (z : Atomic) := (z.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
@@ -365,7 +383,7 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
           match evalIn envR txt with
           | .ok [.atom ⟨_, .bool true⟩] => .pass
           | .ok r =>
-            -- the effective boolean value of the assertion
+            -- QT3 catalog: `assert` holds when the effective boolean value is true
             match ebv r with
             | .ok true => .pass
             | _ => .fail ("assert gave " ++ (sh r 60) ++ " for result " ++ (sh s 60))
@@ -541,7 +559,7 @@ def parseArgs : List String → Opts → Opts
     file under the test suite root, resolved against the test set's
     directory. Read in advance, as text, because the evaluator does no
     I/O. Only files under the suite root are read. -/
-def scanResources (root dir src : String) : IO (List (String × String)) := do
+def scanResources (root dir src : String) : IO (List (String × String) × List (String × ByteArray)) := do
   let isPathChar (c : Char) := c.isAlphanum || c == '_' || c == '.' || c == '/' || c == '-'
   let mut toks : List String := []
   let mut cur : String := ""
@@ -553,6 +571,7 @@ def scanResources (root dir src : String) : IO (List (String × String)) := do
       cur := ""
   let rel := if dir.startsWith (root ++ "/") then (dir.drop (root.length + 1)).toString else dir
   let mut out : List (String × String) := []
+  let mut bins : List (String × ByteArray) := []
   for t in toks do
     let t' := if t.startsWith "file:///" then none else some t
     let some t := t' | continue
@@ -563,7 +582,10 @@ def scanResources (root dir src : String) : IO (List (String × String)) := do
       match ← readFileSafe path with
       | some txt => out := (t, txt) :: out
       | none => pure ()
-  return out
+      match ← readBytesSafe path with
+      | some bs => bins := (t, bs) :: bins
+      | none => pure ()
+  return (out, bins)
 
 /-- Build the dynamic context for an environment; `none` with a reason
     when it cannot be built. -/
@@ -571,6 +593,7 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool
   if let some why := spec.unsupported then return .error why
   let mut env : Env := { ns := spec.ns, baseUri := spec.baseUri }
   if xq then env := env.bind xqMode []
+  if let some c := spec.defaultCollation then env := { env with defaultCollation := c }
   for (role, file, uri) in spec.sources do
     let doc ← match (← cache.get).lookup file with
       | some d => pure (some d)
@@ -592,8 +615,11 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool
         env := env.bind { uri := "", loc := (role.drop 1).toString } [.node (NodeRef.mk' idx 0)]
   env := { env with decimalFormats := spec.decimalFormats }
   for (uri, file) in spec.resources do
-    match ← readFileSafe file with
-    | some txt => env := { env with resources := (uri, txt) :: env.resources }
+    match ← readBytesSafe file with
+    | some bs =>
+      env := { env with resourceBytes := (uri, bs) :: env.resourceBytes }
+      if let some txt := String.fromUTF8? bs then
+        env := { env with resources := (uri, txt) :: env.resources }
     | none => return .error ("resource not readable: " ++ file)
   for (name, sel) in spec.params do
     match evalIn env sel with
@@ -654,7 +680,9 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
     | .ok env =>
-      let env := { env with resources := env.resources ++ (← scanResources o.root dir src) }
+      let (scanned, scannedBins) ← scanResources o.root dir src
+      let env := { env with resources := env.resources ++ scanned,
+                            resourceBytes := env.resourceBytes ++ scannedBins }
       -- XQuery library modules named by the test case (`import module`)
       let mut mods : List (String × String) := []
       for md in kidsNamed tc "module" do

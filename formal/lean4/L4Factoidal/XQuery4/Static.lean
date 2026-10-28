@@ -43,6 +43,7 @@ def staticErr : Nat → SCtx → Expr → Option Err
     | .seq es => all es c
     | .slash a b => go c a <|> go c b
     | .step _ _ ps => all ps c
+    | .dstep _ e ps => go c e <|> all ps c
     | .filter a p => go c a <|> go c p
     | .call q args kw =>
       let k := args.length + kw.length
