@@ -647,16 +647,28 @@ def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN)
 
 def errUri (e : Err) : String := if e.uri == "" then nsERR else e.uri
 
+/-- The expanded name of an error: a code written `Q{uri}local` (as
+    the EXPath modules write theirs) is split; otherwise the code is a
+    local name in `errUri e`. -/
+def errName (e : Err) : String × String :=
+  if e.code.startsWith "Q{" then
+    match (e.code.drop 2).toString.splitOn "}" with
+    | [u, l] => (u, l)
+    | _ => (errUri e, e.code)
+  else (errUri e, e.code)
+
 /-- Does a catch name test (`*`, `Q{u}*`, `*:l`, `Q{u}l`) match? -/
 def catchMatches (t : String) (e : Err) : Bool :=
+  let (u, l) := errName e
   t == "*" ||
-  (t.startsWith "*:" && (t.drop 2).toString == e.code) ||
-  (t.endsWith "}*" && t == "Q{" ++ errUri e ++ "}*") ||
-  t == "Q{" ++ errUri e ++ "}" ++ e.code
+  (t.startsWith "*:" && (t.drop 2).toString == l) ||
+  (t.endsWith "}*" && t == "Q{" ++ u ++ "}*") ||
+  t == "Q{" ++ u ++ "}" ++ l
 
 def errVars (e : Err) : List (QN × Seq) :=
   let n (l : String) : QN := { uri := nsERR, loc := l, pfx := "err" }
-  let code : Seq := single (Atomic.ofQN { uri := errUri e, loc := e.code, pfx := if e.uri == "" then "err" else "" })
+  let (eu, el) := errName e
+  let code : Seq := single (Atomic.ofQN { uri := eu, loc := el, pfx := if eu == nsERR then "err" else "" })
   [(n "code", code), (n "description", sStr e.msg), (n "value", []), (n "module", []),
    (n "line-number", []), (n "column-number", []), (n "additional", []),
    (n "stack-trace", []),
