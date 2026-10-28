@@ -22,10 +22,35 @@ import L4Factoidal.XPath4.Syntax
 
 namespace L4Factoidal.XPath4
 
+/-- The sub-parsers an extension grammar may call (XQuery 4.0 hook):
+    each runs at an offset, with the namespace bindings given, and
+    returns its result and the end offset. -/
+structure SubParsers where
+  expr : List (String × String) → Nat → Except Err (Expr × Nat)
+  exprSingle : List (String × String) → Nat → Except Err (Expr × Nat)
+  seqType : List (String × String) → Nat → Except Err (IType × Nat)
+
+/-- An extension of the expression grammar (XQuery 4.0 hook,
+    `L4Factoidal.XQuery4.Grammar`). The XPath 4.0 parser has none. -/
+structure ExtGrammar where
+  /-- Tried first at every ExprSingle; `none` when no extension
+      expression starts at the offset. -/
+  exprSingle : Array Char → List (String × String) → SubParsers → Nat → Except Err (Option (Expr × Nat))
+  /-- Tried first at every PrimaryExpr. -/
+  primary : Array Char → List (String × String) → SubParsers → Nat → Except Err (Option (Expr × Nat))
+  /-- Does an extension primary expression start at the offset, where
+      the step grammar would read a name test? -/
+  startsPrimary : Array Char → Nat → Bool
+  /-- The value of a string literal's characters (XQuery expands
+      entity and character references). -/
+  stringLit : String → Except Err String
+
 structure PCtx where
   s : Array Char
   /-- Namespace bindings for prefixes (static context). -/
   ns : List (String × String)
+  /-- The XQuery 4.0 grammar extension; `none` for XPath 4.0. -/
+  ext : Option ExtGrammar := none
 
 abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 
@@ -256,8 +281,35 @@ def pStringLit : P String := do
           else some (acc.reverse, j + 1)
         else go (j + 1) (ch :: acc) f
   match go (i + 1) [] (s.size + 1) with
-  | some (cs, e) => set e; pure (String.ofList cs)
+  | some (cs, e) =>
+    set e
+    match c.ext with
+    | some g => match g.stringLit (String.ofList cs) with
+      | .ok v => pure v
+      | .error er => throw er
+    | none => pure (String.ofList cs)
   | none => synErr "unterminated string literal"
+
+/-- Run a parser at an offset with other namespace bindings (for the
+    extension grammar's sub-parsers). -/
+def runAt {α} (c : PCtx) (p : P α) (ns : List (String × String)) (i : Nat) : Except Err (α × Nat) :=
+  (p.run { c with ns }).run i
+
+def mkSub (c : PCtx) (pe pes : P Expr) (pst : P IType) : SubParsers :=
+  { expr := runAt c pe, exprSingle := runAt c pes, seqType := runAt c pst }
+
+/-- Try an extension production at the current offset. -/
+def tryExt (pick : ExtGrammar → Array Char → List (String × String) → SubParsers → Nat → Except Err (Option (Expr × Nat)))
+    (pe pes : P Expr) (pst : P IType) : P (Option Expr) := do
+  let c ← read
+  match c.ext with
+  | none => pure none
+  | some g =>
+    let i ← get
+    match pick g c.s c.ns (mkSub c pe pes pst) i with
+    | .ok (some (e, j)) => set j; pure (some e)
+    | .ok none => pure none
+    | .error er => throw er
 
 /-! ## The grammar -/
 
@@ -609,6 +661,8 @@ def pLet : Nat → P Expr
 def pExprSingle : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
+    -- XQuery 4.0 hook (FLWOR, switch, typeswitch, try)
+    if let some e ← tryExt ExtGrammar.exprSingle (pExpr n) (pExprSingle n) (pSeqType n) then return e
     if ← isForStart then pFor n
     else if ← isLetStart then pLet n
     else
@@ -937,6 +991,10 @@ def pStep : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
     ws
+    -- XQuery 4.0 hook: a constructor keyword is a primary, not a name test
+    let c0 ← read
+    let i0 ← get
+    if (c0.ext.map (fun g => g.startsPrimary c0.s i0)).getD false then pPostfix n else
     let ch ← peekAt 0
     let ch1 ← peekAt 1
     if ch == '.' && ch1 == '.' then
@@ -1137,6 +1195,8 @@ def pPrimary : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
     ws
+    -- XQuery 4.0 hook (node constructors, extension expressions, ...)
+    if let some e ← tryExt ExtGrammar.primary (pExpr n) (pExprSingle n) (pSeqType n) then return e
     let ch ← peekAt 0
     let ch1 ← peekAt 1
     if ch.isDigit || (ch == '.' && ch1.isDigit) then pNumber
