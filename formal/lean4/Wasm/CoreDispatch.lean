@@ -175,7 +175,7 @@ def fullOnlyOpNames : List String :=
   , "vcSha256Hex", "vcEd25519SecretToPublic", "vcEd25519Sign", "vcEd25519Verify"
   , "vcEddsaCreateFromCanonical", "vcEddsaVerifyFromCanonical"
   , "vcCheckCredential", "vcCheckCredentialSubject", "vcCheckNoDataLoss"
-  , "vcCheckRelatedResourceDigests", "didKeyResolve"
+  , "vcCheckRelatedResourceDigests", "didKeyResolve", "vcDiKey", "vcDiSecure", "vcDiVerify"
   , "cidValidate", "cidRetrieve"
   , "blobEcho" ]
 

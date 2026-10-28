@@ -3088,6 +3088,26 @@ check "vcEddsaVerifyFromCanonical REJECTS a proofValue with no multibase prefix"
   vcEddsaVerifyFromCanonical "$TMP/dix-verify-nomb.json" \
   'r["ok"] is True and r["verified"] is False'
 
+# Data Integrity cryptosuite table (VC/Cryptosuite.lean): ECDSA P-256 through HACL*,
+# over the vectors of Data Integrity ECDSA Cryptosuites v1.0.
+ECV="$REPO_ROOT/third_party/testing/vc-di-ecdsa-vectors"
+stage2args "$TMP/di-key.json" "P-256" "aaea1e57183e1f453fbc274fbba491c6a2e6beb3baeac30437bb60b50e2cd947"
+check "vcDiKey derives a P-256 did:key (zDna...)" vcDiKey "$TMP/di-key.json" \
+  'r["ok"] is True and r["verificationMethod"].startswith("did:key:zDna")'
+stage2args "$TMP/di-jcs256.json" "assertionMethod" "{}" "$ECV/ecdsa-jcs-2019-p256/signedJCSECDSAP256.json"
+check "vcDiVerify accepts the published ecdsa-jcs-2019 P-256 proof" vcDiVerify "$TMP/di-jcs256.json" \
+  'r["ok"] is True and r["verified"] is True'
+stage2args "$TMP/di-jcs384.json" "assertionMethod" "{}" "$ECV/ecdsa-jcs-2019-p384/signedJCSECDSAP384.json"
+check "vcDiVerify refuses P-384 (expected failure, issue 1166)" vcDiVerify "$TMP/di-jcs384.json" \
+  'r["ok"] is True and r["verified"] is False and "1166" in r["reason"]'
+stage2args "$TMP/di-secure.json" "ecdsa-jcs-2019" "P-256" \
+  "aaea1e57183e1f453fbc274fbba491c6a2e6beb3baeac30437bb60b50e2cd947" \
+  "7d1b5b7d0c3e5f4a9a1d2c3b4e5f60718293a4b5c6d7e8f90112233445566778" \
+  "assertionMethod" "2026-10-28T00:00:00Z" "{}" "$ECV/unsigned.json"
+check "vcDiSecure gives an ecdsa-jcs-2019 proof" vcDiSecure "$TMP/di-secure.json" \
+  'r["ok"] is True and r["document"]["proof"]["cryptosuite"] == "ecdsa-jcs-2019"
+   and r["document"]["proof"]["proofValue"].startswith("z")'
+
 # did:key
 args "$TMP/did.json" "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
 check "didKeyResolve returns the DID document as N-Triples" didKeyResolve "$TMP/did.json" \

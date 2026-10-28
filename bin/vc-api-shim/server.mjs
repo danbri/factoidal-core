@@ -732,6 +732,102 @@ async function handleVerifyPresentation(body) {
   return verifySecuredDocument(vp);
 }
 
+// ---------------------------------------------------------------------
+// The Data Integrity cryptosuite table of the Lean engine
+// (formal/lean4/L4Factoidal/VC/Cryptosuite.lean, ops vcDiKey, vcDiSecure,
+// vcDiVerify of Wasm/Ops/Vc.lean): eddsa-rdfc-2022, ecdsa-rdfc-2019 and
+// ecdsa-jcs-2019, one route pair per suite,
+//   POST /<cryptosuite>/credentials/issue
+//   POST /<cryptosuite>/credentials/verify
+// The engine does every Data Integrity step: the transformation (RDFC-1.0
+// or RFC 8785), the hash data, the proof configuration and context rule,
+// did:key resolution on all three curves, and the verdict. The key stays
+// in the engine's signer (`diSigner`); this shim passes the test key once
+// per call and a fresh 32-byte ECDSA nonce from node:crypto. It passes the
+// vendored context documents as text (the engine does no I/O).
+// ---------------------------------------------------------------------
+
+const DI_SUITES = new Map([
+  ['eddsa-rdfc-2022', 'Ed25519'],
+  ['ecdsa-rdfc-2019', 'P-256'],
+  ['ecdsa-jcs-2019', 'P-256'],
+]);
+const DI_ROUTE = /^\/([a-z0-9-]+)\/credentials\/(issue|verify)$/;
+
+let l4Engine;
+async function l4() {
+  if (!l4Engine) {
+    const mod = await import(path.join(REPO_ROOT, 'npm', 'factoidal', 'index.mjs'));
+    l4Engine = await mod.loadEngine();
+  }
+  return l4Engine;
+}
+
+let contextsJsonText;
+function contextsJson() {
+  if (!contextsJsonText) {
+    const table = {};
+    for (const iri of CONTEXT_REGISTRY.keys()) {
+      table[iri] = fs.readFileSync(path.join(CONTEXTS_DIR, CONTEXT_REGISTRY.get(iri)), 'utf8');
+    }
+    contextsJsonText = JSON.stringify(table);
+  }
+  return contextsJsonText;
+}
+
+async function diKeys(seedFile) {
+  const fixture = JSON.parse(fs.readFileSync(seedFile, 'utf8'));
+  const eng = await l4();
+  const keys = new Map();
+  for (const [curve, skHex] of [['Ed25519', fixture.secretKeyHex], ['P-256', fixture.p256SecretKeyHex]]) {
+    const k = eng.call('vcDiKey', [curve, skHex]);
+    keys.set(curve, { skHex, verificationMethod: k.verificationMethod, did: k.verificationMethod.split('#')[0] });
+  }
+  return keys;
+}
+
+async function handleDiIssue(keys, suite, body) {
+  const credential = body && body.credential;
+  if (!credential || typeof credential !== 'object') {
+    return [400, { errors: [{ message: 'request body must have a "credential" object' }] }];
+  }
+  const structural = await checkStructural(credential);
+  if (!structural.valid) {
+    return [400, { errors: [{ message: `structural validation failed: ${structural.reason}` }] }];
+  }
+  const curve = DI_SUITES.get(suite);
+  const key = keys.get(curve);
+  const proofPurpose = (body.options && body.options.proofPurpose) || 'assertionMethod';
+  try {
+    const out = (await l4()).call('vcDiSecure', [suite, curve, key.skHex,
+      crypto.randomBytes(32).toString('hex'), proofPurpose, new Date().toISOString(),
+      contextsJson(), JSON.stringify(credential)]);
+    const vc = out.document;
+    return [201, { ...vc, verifiableCredential: vc }];
+  } catch (e) {
+    return [400, { errors: [{ message: e.message }] }];
+  }
+}
+
+async function handleDiVerify(body) {
+  const doc = body && (body.verifiableCredential || body.verifiablePresentation);
+  if (!doc || typeof doc !== 'object') {
+    return [400, { verified: false, errors: [{ message: 'request body must have a "verifiableCredential" object' }] }];
+  }
+  const structural = await checkStructural(doc);
+  if (!structural.valid) {
+    return [400, { verified: false, errors: [{ message: `structural validation failed: ${structural.reason}` }] }];
+  }
+  const purpose = (body.options && body.options.expectedProofPurpose) || 'assertionMethod';
+  try {
+    const r = (await l4()).call('vcDiVerify', [purpose, contextsJson(), JSON.stringify(doc)]);
+    return r.verified ? [200, { verified: true }]
+      : [400, { verified: false, errors: [{ message: r.reason }] }];
+  } catch (e) {
+    return [400, { verified: false, errors: [{ message: e.message }] }];
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   let port = 40443;
@@ -742,11 +838,19 @@ async function main() {
   }
 
   const issuer = await buildIssuer(seedFile);
+  const keys = await diKeys(seedFile);
 
   const server = http.createServer(async (req, res) => {
     try {
       if (req.method === 'GET' && req.url === '/') {
         return sendJson(res, 200, { name: 'factoidal-vc-api-shim', issuer: issuer.did });
+      }
+      const di = req.method === 'POST' && DI_ROUTE.exec(req.url);
+      if (di && DI_SUITES.has(di[1])) {
+        const body = await readJsonBody(req);
+        const [status, out] = di[2] === 'issue'
+          ? await handleDiIssue(keys, di[1], body) : await handleDiVerify(body);
+        return sendJson(res, status, out);
       }
       if (req.method === 'POST' && req.url === '/credentials/issue') {
         const body = await readJsonBody(req);
@@ -772,7 +876,8 @@ async function main() {
   server.listen(port, () => {
     // Deterministic startup log line (grepped by tests/vc-api-shim/run.sh
     // and the suite run.sh scripts to know the shim is ready).
-    console.log(`vc-api-shim listening on http://localhost:${port} issuer=${issuer.did}`);
+    console.log(`vc-api-shim listening on http://localhost:${port} issuer=${issuer.did}` +
+      ` issuer-p256=${keys.get('P-256').did}`);
   });
 
   process.on('SIGTERM', () => server.close(() => process.exit(0)));

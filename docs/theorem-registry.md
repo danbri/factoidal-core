@@ -3138,6 +3138,21 @@ audit in `Planner/ExecTests.lean` (`propext`, `Classical.choice`,
 | `wantProbe_iff`, `wantProbe_iff_saving`, `wantProbe_no_scenarios` — the probe decision is `c * |scenarios| + Σ costWith < Σ costWithout`, that is `c * |scenarios| < expSaving` | ✅ PROVED (2026-10-22, KR 4.3) | none |
 | `probeStep_cases`, `probeAll_reachable`, `chooseStart_reachable`, `runProbed_reachable`, `runProbed_final`, `runProbed_spec` — the driver with probes takes `Next` steps, probes only when `wantProbe` holds, ends `done` or `stopped`, keeps I1, I2 (calls and tuples) and the probe records, and a `done` output is the `Plan.run` of a member of `search` | ✅ PROVED (2026-10-22, KR 4.3) | `ExactSourcesSound` for the I1 part |
 
+## Data Integrity cryptosuites (Lean 4, 2026-10-28)
+
+VC family of [#1165](https://github.com/danbri/factoidal/issues/1165). Design
+record: [`designissues/2026-10-28-vc-di-cryptosuites.md`](designissues/2026-10-28-vc-di-cryptosuites.md).
+Module `formal/lean4/L4Factoidal/VC/CryptosuiteTheorems.lean`; `#print axioms`
+in the same file (`propext`, `Classical.choice`, `Quot.sound` only).
+
+| Theorem | Status | Hypotheses |
+|---|---|---|
+| `vcDiEcdsa10_ecdsaRdfc2019_p256_shares_eddsaRdfc2022` — VC DI ECDSA 1.0 ecdsa-rdfc-2019 with P-256 and VC DI EdDSA 1.0 eddsa-rdfc-2022 have the same transform and hash | ✅ PROVED (2026-10-28) | none |
+| `verifyDataset_eddsaRdfc2022`, `verifyDataset_ecdsaRdfc2019_p256` — both table rows are `DataIntegrity.verifyProofValue` at SHA-256 | ✅ PROVED (2026-10-28) | none |
+| `transform_rdfc10_sha256` — the table's RDFC-1.0 transform at SHA-256 is `DataIntegrity.canonicalizeJsonLd` | ✅ PROVED (2026-10-28) | none |
+| `verifyDataset_canonical_only`, `verifyJcs_canonical_only` — verification reads a credential only through its RDFC-1.0 or RFC 8785 canonical form | ✅ PROVED (2026-10-28) | none |
+| `vcDi10_rdfc10_isomorphic_verify_alike` — RDF-isomorphic credentials verify alike | ✅ PROVED as a reduction (2026-10-28) | `RDF.Canonical.RelabellingInvariance` (RDFC-1.0, STATED, NOT PROVED) |
+
 ## 10. JOSE, DPoP and Solid-OIDC over HACL\* — Lean tree
 
 Landed 2026-09-06. Design record:

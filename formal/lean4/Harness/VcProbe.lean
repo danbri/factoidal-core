@@ -5,7 +5,7 @@ fixtures the F* tree's runners read, plus the W3C specification test
 vectors, and print score lines in the `bin/*-runner` grammar.
 
 This is a HARNESS, not part of the verified library: it does file I/O,
-calls the HACL* externs, and prints. Five sections, each one score line:
+calls the HACL* externs, and prints. Seven sections, each one score line:
 
   1. `ed25519-rfc8032` — RFC 8032 §7.1 TEST 1, 2, 3, 1024 through the
      three `@[extern]` bindings. `#guard` cannot evaluate an extern, so
@@ -50,6 +50,17 @@ calls the HACL* externs, and prints. Five sections, each one score line:
      unsound, w3c/vc-data-model-2.0-test-suite@52b25a8) are excluded from the
      scorable set. The F* runner scores 117 pass, 0 fail (out of 117).
 
+  7. `vc-di-ecdsa-spec-vectors` — the test vectors of Data Integrity ECDSA
+     Cryptosuites v1.0 (`third_party/testing/vc-di-ecdsa-vectors/`) through
+     `VC/Cryptosuite.lean` and the HACL* primitives of
+     `VC/CryptosuiteNative.lean`: the transform of `unsigned.json` against
+     each published canonical document (RDFC-1.0 with SHA-384 for P-384),
+     the published P-256 proofs (ecdsa-rdfc-2019, ecdsa-jcs-2019) verify and
+     a changed credential does not, the P-384 proofs are refused as expected
+     failures (https://github.com/danbri/factoidal/issues/1166), and
+     credentials secured by `diSigner` (P-256 from the published key,
+     Ed25519 under eddsa-rdfc-2022) verify.
+
 Usage: `lake exe l4vc-probe` from `formal/lean4`, or the built binary
 from anywhere — the repository root is found by walking up from the
 working directory to the directory holding `CLAUDE.md`, as the F*
@@ -64,6 +75,7 @@ import L4Factoidal.Syntax.NQuads
 import L4Factoidal.Syntax.NTriples
 import L4Factoidal.JSON.Parser
 import L4Factoidal.VC.Credential
+import L4Factoidal.VC.CryptosuiteNative
 -- `parseNQuads_eq_fast` (@[csimp]): the calls of `parseNQuads` here run `parseNQuadsFast`
 -- (https://github.com/danbri/factoidal/issues/868; `tools/lean-csimp-reach.py`, not-imported).
 import L4Factoidal.Syntax.NQuadsFastTheorems
@@ -632,6 +644,112 @@ def runDataModel (root : System.FilePath) : IO Tally := do
   IO.println s!"  withdrawn upstream, excluded from the scorable set: {withdrawn}; unclassified: {unclassified}"
   t.get
 
+/-! ## VC DI ECDSA 1.0 spec vectors (`third_party/testing/vc-di-ecdsa-vectors/`)
+
+For each published signed credential: the RDFC-1.0 (or RFC 8785) transform
+of `unsigned.json` against the published canonical document (RDFC-1.0 with
+SHA-384 for P-384), and verification of the published proof through HACL*.
+P-256 must verify. P-384 is an EXPECTED FAILURE: HACL* has no P-384, so the
+verifier must refuse with `curveUnavailable "P-384"`
+(https://github.com/danbri/factoidal/issues/1166); a P-384 vector that
+verifies is a FAIL here (a stale expected failure). Then: a changed credential
+does not verify, and a P-256 credential secured by `diSigner` with the
+published key verifies under both suites and names the published did:key. -/
+
+namespace Ecdsa
+open L4Factoidal.VC.Cryptosuite
+
+structure Case where
+  dir : String
+  suffix : String
+  curve : Curve
+  suite : Suite
+
+def cases : List Case := [
+  ⟨"ecdsa-rdfc-2019-p256", "ECDSAP256", .p256, ecdsaRdfc2019⟩,
+  ⟨"ecdsa-jcs-2019-p256", "JCSECDSAP256", .p256, ecdsaJcs2019⟩,
+  ⟨"ecdsa-rdfc-2019-p384", "ECDSAP384", .p384, ecdsaRdfc2019⟩,
+  ⟨"ecdsa-jcs-2019-p384", "JCSECDSAP384", .p384, ecdsaJcs2019⟩ ]
+
+/-- The 32 secret bytes of a P-256 `secretKeyMultibase` (header 0x8626). -/
+def p256Secret? (mb : String) : Option ByteArray :=
+  match multibaseDecode? mb with
+  | some bs => if bs.take 2 == [0x86, 0x26] && bs.length == 34 then some (toByteArray (bs.drop 2)) else none
+  | none => none
+
+def run (root : System.FilePath) (loader : Loader) : IO Tally := do
+  let t ← IO.mkRef ({} : Tally)
+  let dir := root / "third_party" / "testing" / "vc-di-ecdsa-vectors"
+  let some unsignedTxt ← readOpt (dir / "unsigned.json")
+    | check t "vectors present" false s!"{dir} missing"; t.get
+  let unsigned := (parseJson? unsignedTxt).getD .null
+  for c in cases do
+    let base := dir / c.dir
+    let canonFile := base / s!"canonDoc{c.suffix}.txt"
+    match ← readOpt canonFile with
+    | none => check t s!"{c.dir}: canonical document" false "file missing"
+    | some want =>
+        let got := transform loader c.suite.transform c.curve.hashAlg (unsecuredOf unsigned)
+        let wantT := if c.suite.transform == .jcs then want.trimRight else want
+        check t s!"{c.dir}: transform of unsigned.json = published canonical document"
+          (got == .ok wantT) (match got with | .ok g => firstDiff g wantT | .error e => e)
+    match ← readOpt (base / s!"signed{c.suffix}.json") with
+    | none => check t s!"{c.dir}: signed credential" false "file missing"
+    | some signedTxt =>
+        let doc := (parseJson? signedTxt).getD .null
+        let r := L4Factoidal.VC.Cryptosuite.verifyDocument loader diPrimitives doc
+        if c.curve == .p384 then
+          check t s!"{c.dir}: refused, expected failure (issue 1166)"
+            (r == .error (.curveUnavailable "P-384"))
+            (match r with | .ok () => "STALE: P-384 verified; turn this into a pass and close issue 1166"
+                          | .error e => e.describe)
+        else
+          check t s!"{c.dir}: published proof verifies (HACL* P-256)" (r == .ok ())
+            (match r with | .ok () => "" | .error e => e.describe)
+          let changed := setField "name" (.string "Alumni Credential!") doc
+          let r2 := L4Factoidal.VC.Cryptosuite.verifyDocument loader diPrimitives changed
+          check t s!"{c.dir}: changed credential is rejected" (r2 == .error (.di .signatureRejected))
+  -- create with the published P-256 key, then verify
+  match ← readOpt (dir / "p256KeyPair.json") with
+  | none => check t "p256KeyPair.json" false "file missing"
+  | some kp =>
+      let kj := (parseJson? kp).getD .null
+      match (kj.getString? "secretKeyMultibase").bind p256Secret?, kj.getString? "publicKeyMultibase" with
+      | some sk, some pkMb =>
+          let nonce := hexBytes! "7d1b5b7d0c3e5f4a9a1d2c3b4e5f60718293a4b5c6d7e8f90112233445566778"
+          match diSigner .p256 sk nonce with
+          | none => check t "diSigner P-256 from the published key" false "refused"
+          | some sg =>
+              check t "diSigner names the published did:key"
+                (sg.verificationMethod == s!"did:key:{pkMb}#{pkMb}") sg.verificationMethod
+              for suite in [ecdsaRdfc2019, ecdsaJcs2019] do
+                match secureDocument loader sg suite "assertionMethod" "2023-02-24T23:36:38Z" unsigned with
+                | .error e => check t s!"{suite.name}: secure" false e
+                | .ok out =>
+                    let r := L4Factoidal.VC.Cryptosuite.verifyDocument loader diPrimitives out
+                    check t s!"{suite.name}: secure then verify (P-256)" (r == .ok ())
+                      (match r with | .ok () => "" | .error e => e.describe)
+      | _, _ => check t "p256KeyPair.json keys decode" false ""
+  -- Ed25519 through the same table: eddsa-rdfc-2022 secure then verify
+  match multikeyToEd25519SecretKey? specSkMultikey with
+  | some sk =>
+      match diSigner .ed25519 (toByteArray sk) ByteArray.empty with
+      | none => check t "diSigner Ed25519" false "refused"
+      | some sg =>
+          match secureDocument loader sg eddsaRdfc2022 "assertionMethod" "2023-02-24T23:36:38Z" unsigned with
+          | .error e => check t "eddsa-rdfc-2022: secure" false e
+          | .ok out =>
+              let r := L4Factoidal.VC.Cryptosuite.verifyDocument loader diPrimitives out
+              check t "eddsa-rdfc-2022: secure then verify (Ed25519, shared table)" (r == .ok ())
+                (match r with | .ok () => "" | .error e => e.describe)
+              -- the same document verifies through the existing eddsa-rdfc-2022 path
+              check t "eddsa-rdfc-2022: the DataIntegrity verifier agrees"
+                (L4Factoidal.VC.DataIntegrity.verifyDocument loader L4Factoidal.Crypto.Ed25519.verify out == .ok ())
+  | _ => check t "spec Ed25519 secret key decodes" false specSkMultikey
+  t.get
+
+end Ecdsa
+
 /-! ## Main -/
 
 def main (_ : List String) : IO UInt32 := do
@@ -645,6 +763,7 @@ def main (_ : List String) : IO UInt32 := do
   let t4 ← runSpecVectors root
   let t5 ← runSha256Native
   let t6 ← runDataModel root
+  let t7 ← Ecdsa.run root (← buildLoader root)
   IO.println "\n========================================"
   IO.println (scoreLine "ed25519-rfc8032" t1)
   IO.println (scoreLine "did:key" t2)
@@ -652,9 +771,10 @@ def main (_ : List String) : IO UInt32 := do
   IO.println (scoreLine "vc-di-eddsa-spec-vectors" t4)
   IO.println (scoreLine "sha256 differential" t5)
   IO.println (scoreLine "vc-credential-structural" t6)
-  let total := { pass := t1.pass + t2.pass + t3.pass + t4.pass + t5.pass + t6.pass,
-                 fail := t1.fail + t2.fail + t3.fail + t4.fail + t5.fail + t6.fail,
-                 failures := t1.failures ++ t2.failures ++ t3.failures ++ t4.failures ++ t5.failures ++ t6.failures : Tally }
+  IO.println (scoreLine "vc-di-ecdsa-spec-vectors" t7)
+  let total := { pass := t1.pass + t2.pass + t3.pass + t4.pass + t5.pass + t6.pass + t7.pass,
+                 fail := t1.fail + t2.fail + t3.fail + t4.fail + t5.fail + t6.fail + t7.fail,
+                 failures := t1.failures ++ t2.failures ++ t3.failures ++ t4.failures ++ t5.failures ++ t6.failures ++ t7.failures : Tally }
   IO.println (scoreLine "TOTAL" total)
   IO.println "========================================"
   pure (if total.fail == 0 then 0 else 1)

@@ -1,0 +1,22 @@
+{
+  "group": "vc",
+  "specStatus": "base",
+  "shortName": "vc-di-ecdsa-test-suite",
+  "subtitle": "Interoperability test suite for ECDSA Data Integrity cryptosuites.",
+  "github": "https://github.com/w3c/vc-di-ecdsa-test-suite",
+  "edDraftURI": "https://w3c.github.io/vc-di-ecdsa-test-suite",
+  "doJsonLd": true,
+  "includePermalinks": false,
+  "authors": [
+    { "name": "Andrew Jones", "url": "https://github.com/aljones15",
+      "company": "Digital Bazaar, Inc.", "companyURL": "https://digitalbazaar.com/" },
+    { "name": "Tashi D. Gyeltshen", "url": "https://github.com/jsAssassin",
+      "company": "Digital Bazaar, Inc.", "companyURL": "https://digitalbazaar.com/" },
+    { "name": "Patrick St. Louis", "url": "https://github.com/PatStLouis",
+      "company": "OpSecId", "companyURL": "https://github.com/OpSecId" },
+    { "name": "Greg Bernstein", "url": "https://github.com/wind4greg",
+      "company": "Grotto Networking", "companyURL": "https://www.grotto-networking.com/"},
+    { "name": "Tyler Minard", "url": "https://github.com/tminard",
+      "company": "Digital Bazaar, Inc.", "companyURL": "https://digitalbazaar.com/" }
+  ]
+}
