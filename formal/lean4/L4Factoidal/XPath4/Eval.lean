@@ -843,6 +843,12 @@ def lookupIn : Nat → Env → Item → Option Expr → M Seq
         let mut out : Array Item := #[]
         for key in ks do
           let key ← if key.ty == .untyped then castAtomic key (.b .integer) else pure key
+          -- a numeric key equal to an integer selects that member
+          -- (XPath 4.0 §4.13.3, the key is coerced to xs:integer)
+          let key := match key.v with
+            | .dec d => if (Dec.norm d).scale == 0 then Atomic.ofInt (Dec.norm d).mantissa else key
+            | .dbl f => if f.floor == f && f.abs < 1.0e15 then Atomic.ofInt f.toInt64.toInt else key
+            | _ => key
           match key.v with
           | .int j => for x in ← arrIdx ms j do out := out.push x
           | _ => err "XPTY0004" "array lookup key must be an integer"

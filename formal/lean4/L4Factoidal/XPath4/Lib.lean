@@ -122,6 +122,49 @@ def collProxy (c : Coll) (a : Atomic) : Atomic :=
 
 def cps (s : String) : List Char := s.toList
 
+/-- An integer, or an infinity, or NaN: `fn:round` of an xs:numeric value
+    for the position arithmetic of `fn:substring` and `fn:subsequence`
+    (F&O 4.0 §5.4.3, §14.1.10), exact for xs:integer and xs:decimal. -/
+inductive XInt where
+  | fin (i : Int) | posInf | negInf | nan
+
+def XInt.add : XInt → XInt → XInt
+  | .nan, _ | _, .nan => .nan
+  | .posInf, .negInf | .negInf, .posInf => .nan
+  | .posInf, _ | _, .posInf => .posInf
+  | .negInf, _ | _, .negInf => .negInf
+  | .fin a, .fin b => .fin (a + b)
+
+/-- `lo ≤ p < hi` for a position `p`. -/
+def XInt.window (lo hi : XInt) (p : Int) : Bool :=
+  (match lo with | .fin a => a ≤ p | .negInf => true | _ => false) &&
+  (match hi with | .fin b => p < b | .posInf => true | _ => false)
+
+def floatRoundX (f : Float) : XInt :=
+  if f.isNaN then .nan
+  else
+    let r := (f + 0.5).floor
+    if r > 4.0e18 then .posInf else if r < -4.0e18 then .negInf
+    else .fin r.toInt64.toInt
+
+/-- `fn:round` (half towards positive infinity) of a numeric item. -/
+def roundX (s : Seq) : XInt :=
+  match optAtom s with
+  | none => .nan
+  | some a => match a.num? with
+    | some (.i i) => .fin i
+    | some (.d d) =>
+      let d2 := Dec.add d ⟨5, 1⟩
+      .fin (Int.fdiv d2.mantissa ((10 : Int) ^ d2.scale))
+    | some (.f f) | some (.g f) => floatRoundX f
+    | none => .nan
+
+def substrX (s : String) (start : XInt) (len : Option XInt) : String :=
+  let cs := cps s
+  let en := match len with | some l => start.add l | none => .posInf
+  String.ofList ((List.range cs.length).filterMap (fun (i : Nat) =>
+    if XInt.window start en ((i : Int) + 1) then cs[i]? else none))
+
 def substr (s : String) (start : Float) (len : Option Float) : String :=
   -- F&O 4.0 §5.4.3: characters at positions p with round(start) ≤ p < round(start)+round(len)
   let cs := cps s
@@ -339,8 +382,14 @@ def msortM {α} (lt : α → α → M Bool) : Nat → List α → M (List α)
         | [], [] => pure ()
       pure out.toList
 
+/-- `fn:highest` and `fn:lowest` (F&O 4.0 §14.4.4): an untyped key value
+    is cast to xs:double (FORG0001 when it cannot be). -/
+def untypedToDoubleKey (k : Atomic) : M Atomic :=
+  if k.ty == .untyped then castAtomic k (.b .double) else pure k
+
 /-- Compare two atomic values for sorting (F&O 4.0 §15.2.4): NaN is
     least, values compare by `lt`; incomparable is XPTY0004. -/
+
 def sortCmpAtom (a b : Atomic) : M Ordering := do
   let a := if a.ty == .untyped then Atomic.ofStr a.str else a
   let b := if b.ty == .untyped then Atomic.ofStr b.str else b
@@ -602,8 +651,8 @@ def fnTable : List (String × LibFn) := [
     pure (sStr out)),
   ent "string-join" (fun _ _ a => pure (sStr (String.intercalate (strOf (argN a 1)) ((argN a 0).map (fun i => match i with | .atom x => x.str | _ => ""))))),
   ent "substring" (fun _ _ a =>
-    let len := match argN a 2 with | [] => none | s => some (numFloat s)
-    pure (sStr (substr (strOf (argN a 0)) (numFloat (argN a 1)) len))),
+    let len := match argN a 2 with | [] => none | s => some (roundX s)
+    pure (sStr (substrX (strOf (argN a 0)) (roundX (argN a 1)) len))),
   ent "substring-before" (fun _ e a => do
     let c ← e.collation (argN a 2)
     let q := strOf (argN a 0); let p := strOf (argN a 1)
@@ -733,13 +782,10 @@ def fnTable : List (String × LibFn) := [
     pure ((List.range s.length).filterMap (fun (i : Nat) => if ps.contains ((i : Int) + 1) then none else s[i]?))),
   ent "subsequence" (fun _ _ a =>
     let s := argN a 0
-    let len := match argN a 2 with | [] => none | l => some (numFloat l)
-    let rnd (f : Float) : Float := (f + 0.5).floor
-    let st := rnd (numFloat (argN a 1))
-    let en : Float := match len with | some l => st + rnd l | none => (1.0 / 0.0)
+    let st := roundX (argN a 1)
+    let en := match argN a 2 with | [] => XInt.posInf | l => st.add (roundX l)
     pure ((List.range s.length).filterMap (fun (i : Nat) =>
-      let p := (i + 1).toFloat
-      if p ≥ st && p < en then s[i]? else none))),
+      if XInt.window st en ((i : Int) + 1) then s[i]? else none))),
   ent "items-at" (fun _ _ a => do
     let s := argN a 0
     let sa := s.toArray
@@ -902,8 +948,8 @@ def fnTable : List (String × LibFn) := [
     let xs := argN a 0
     let keyOf (x : Item) : M (List Atomic) := do
       match argN a 2 with
-      | [] => pure ((← e.atomize [x]).map (collProxy c))
-      | f :: _ => pure ((← e.atomize (← h.callN f [[x]])).map (collProxy c))
+      | [] => ((← e.atomize [x]).mapM (fun k => untypedToDoubleKey k)).map (·.map (collProxy c))
+      | f :: _ => ((← e.atomize (← h.callN f [[x]])).mapM (fun k => untypedToDoubleKey k)).map (·.map (collProxy c))
     let ks ← xs.mapM keyOf
     let mut best : List (Item × List Atomic) := []
     for (x, k) in xs.zip ks do
@@ -920,8 +966,8 @@ def fnTable : List (String × LibFn) := [
     let xs := argN a 0
     let keyOf (x : Item) : M (List Atomic) := do
       match argN a 2 with
-      | [] => pure ((← e.atomize [x]).map (collProxy c))
-      | f :: _ => pure ((← e.atomize (← h.callN f [[x]])).map (collProxy c))
+      | [] => ((← e.atomize [x]).mapM (fun k => untypedToDoubleKey k)).map (·.map (collProxy c))
+      | f :: _ => ((← e.atomize (← h.callN f [[x]])).mapM (fun k => untypedToDoubleKey k)).map (·.map (collProxy c))
     let ks ← xs.mapM keyOf
     let mut best : List (Item × List Atomic) := []
     for (x, k) in xs.zip ks do
@@ -1822,9 +1868,8 @@ def mapTable : List (String × LibFn) := [
     match optAtom (argN a 1) with
     | some k => match mapGet m k with
       | some v => pure v
-      | none => match argN a 2 with
-        | [] => pure []
-        | f :: _ => h.callN f [[.atom k]]
+      -- F&O 4.0 §18.4.11: the default value is returned as it is
+      | none => pure (argN a 2)
     | none => pure []),
   ent "put" (fun _ _ a => do
     let m ← asMap (argN a 0)
@@ -1844,10 +1889,27 @@ def mapTable : List (String × LibFn) := [
     | some k => pure (mapItem [(Atomic.ofStr "key", [.atom k]), (Atomic.ofStr "value", argN a 1)])
     | none => err "XPTY0004" "map:pair key"),
   ent "empty" (fun _ _ a => do pure (sBool (← asMap (argN a 0)).isEmpty)),
-  ent "merge" (fun _ _ a => do
+  ent "merge" (fun h _ a => do
     let maps ← (argN a 0).mapM (fun i => asMap [i])
-    let dup := optionStr (argN a 1) "duplicates" "use-first"
-    pure (mapItem (← mergeMaps maps dup))),
+    -- F&O 4.0 §18.4.17: `duplicates` is a keyword or a function
+    -- fn(item()*, item()*) as item()* that combines the two values
+    let combineFn : Option Item := match argN a 1 with
+      | [.map kvs] => match mapGet kvs (Atomic.ofStr "duplicates") with
+        | some [f] => if f.isFn then some f else none
+        | _ => none
+      | _ => none
+    match combineFn with
+    | none =>
+      let dup := optionStr (argN a 1) "duplicates" "use-first"
+      pure (mapItem (← mergeMaps maps dup))
+    | some f =>
+      let mut acc : MB := {}
+      for m in maps do
+        for (k, v) in m do
+          match acc.get? k with
+          | none => acc := acc.set k v
+          | some old => acc := acc.set k (← h.callN f [old, v])
+      pure (mapItem acc.toList)),
   ent "of-pairs" (fun _ _ a => do
     let mut acc : MB := {}
     for p in argN a 0 do
@@ -1936,9 +1998,9 @@ def arrayTable : List (String × LibFn) := [
     let ms ← asArr (argN a 0)
     let i := intOf (argN a 1)
     if i ≥ 1 && i.toNat ≤ ms.length then pure (ms.getD (i.toNat - 1) [])
-    else match argN a 2 with
-      | [] => err "FOAY0001" ("array index " ++ toString i ++ " out of bounds")
-      | f :: _ => h.callN f [sInt i]),
+    -- F&O 4.0 §19.2.12: with $default, an index out of bounds gives it
+    else if a.length ≥ 3 then pure (argN a 2)
+    else err "FOAY0001" ("array index " ++ toString i ++ " out of bounds")),
   ent "put" (fun _ _ a => do
     let ms ← asArr (argN a 0)
     let i := intOf (argN a 1)
