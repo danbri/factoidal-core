@@ -152,4 +152,63 @@ theorem validate_xsd11_error (cb : XCb) (env : Env) (s : L4Factoidal.XSD11.Schem
       .error { code := if x.code == "FODC0007" then "XQDY0027" else x.code, msg := x.msg } := by
   simp [evalExt, hs, schemaHookOf_validateIn, he, hk, hv, bind, Except.bind, err]
 
+/-! ## Names of constructed nodes are XML names
+
+A computed element or attribute name given as a string (`element { "p:a" }
+{}`, `attribute { "Q{u}a" } {}`) gets a local part that is an NCName of
+Namespaces in XML 1.0 [4]. The name check of `XSD.parseQNameLex` (XSD
+§3.3.18) and the XML module's NCName agree (`isNCName_xsd_xml`). -/
+
+
+theorem isNCName_xsd_xml (s : String) (h : L4Factoidal.XSD.isNCName s = true) : L4Factoidal.XML.isValidNCName s = true := by
+  unfold L4Factoidal.XSD.isNCName at h
+  unfold L4Factoidal.XML.isValidNCName
+  split at h
+  · simp at h
+  · rename_i c rest heq
+    rw [heq]
+    simp only [Bool.and_eq_true, bne_iff_ne, ne_eq, List.all_eq_true] at h ⊢
+    obtain ⟨⟨h1, h2⟩, h3⟩ := h
+    refine ⟨?_, ?_⟩
+    · simp [L4Factoidal.XML.isNCNameStartChar, h1, h2]
+    · intro x hx
+      have := h3 x hx
+      simp [L4Factoidal.XML.isNCNameChar, this.1, this.2]
+
+theorem parseQNameLex_local (s p l : String) (h : L4Factoidal.XSD.parseQNameLex s = some (p, l)) :
+    L4Factoidal.XSD.isNCName l = true := by
+  unfold L4Factoidal.XSD.parseQNameLex at h
+  split at h
+  · split at h <;> simp_all
+  · split at h
+    · rename_i hc; simp at h; obtain ⟨rfl, rfl⟩ := h; simp_all
+    · simp at h
+  · simp at h
+
+theorem nameOf_ncname (env : Env) (s : Seq) (sns : List (String × String)) (isAttr : Bool)
+    (a : Atomic) (lex : String) (ha : env.atomize s = .ok [a]) (hv : a.v = .str lex) (q : QN)
+    (h : nameOf env s sns isAttr = .ok q) : L4Factoidal.XML.isValidNCName q.loc = true := by
+  unfold nameOf at h
+  simp only [ha, hv, bind, Except.bind] at h
+  split at h
+  · simp [err] at h
+  ·
+    split at h
+    · -- Q{uri}local
+      split at h
+      · rename_i u l _
+        split at h
+        · rename_i hc
+          simp [pure, Except.pure] at h
+          subst h
+          simp only [Bool.and_eq_true] at hc
+          exact isNCName_xsd_xml l hc.1
+        · simp [err, throw, throwThe, MonadExceptOf.throw] at h
+      · simp [err, throw, throwThe, MonadExceptOf.throw] at h
+    · split at h
+      · rename_i p l hp
+        have hl := isNCName_xsd_xml l (parseQNameLex_local _ p l hp)
+        repeat' (first | (split at h) | (simp [pure, Except.pure] at h; subst h; exact hl) | (simp [err, throw, throwThe, MonadExceptOf.throw] at h))
+      · simp [err, throw, throwThe, MonadExceptOf.throw] at h
+
 end L4Factoidal.XQuery4
