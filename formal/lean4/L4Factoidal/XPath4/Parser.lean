@@ -535,6 +535,7 @@ def pVarName : Nat → P QN
   | 0 => synErr "expression too deeply nested"
   | _ + 1 => do
     expectS "$"
+    ws
     match ← peekQName with
     | some (p, u, l, e) => set e; resolve p u l ""
     | none => synErr "expected a variable name"
@@ -624,11 +625,12 @@ def pLet : Nat → P Expr
       let c ← read
       let i ← get
       let j := skipWsF c.s (c.s.size + 1) 0 i
-      let open_ := chAt c.s (j+1)
+      let k := skipWsF c.s (c.s.size + 1) 0 (j + 1)
+      let open_ := chAt c.s k
       if chAt c.s j == '$' && (open_ == '(' || open_ == '[' || open_ == '{') then
         -- destructuring binding (XPath 4.0 §4.12.2): desugared to a
         -- binding of a fresh variable and one binding per name
-        set (j + 2)
+        set (k + 1)
         let close := if open_ == '(' then ")" else if open_ == '[' then "]" else "}"
         let mut vs : List (QN × IType) := []
         for _ in [0:1000] do
@@ -1060,7 +1062,7 @@ def pStep : Nat → P Expr
     | some (nm, c1, c2) =>
       -- a name: a step unless it is a primary-expression keyword
       let isPrimaryKw :=
-        (c1 == '#' && (c2.isDigit)) ||
+        (c1 == '#' && (c2.isDigit || c2 == ' ' || c2 == '\t' || c2 == '\n' || c2 == '\r' || c2 == '(')) ||
         ((nm == "map" || nm == "array") && c1 == '{') ||
         ((nm == "fn" || nm == "function") && (c1 == '{' || c1 == '('))
       if isPrimaryKw then pPostfix n
@@ -1296,9 +1298,11 @@ def pPrimary : Nat → P Expr
             set e
             let q ← resolve p u l nsFN
             expectS "#"
+            ws
             let c ← read
             let i ← get
             let (ds, j) := digitsUs c.s i Char.isDigit
+            if ds.isEmpty then synErr "expected the arity after #"
             set j
             pure (.fref q (ds.foldl (fun a d => a * 10 + (d.toNat - 48)) 0))
         | none => synErr "bad named function reference"
