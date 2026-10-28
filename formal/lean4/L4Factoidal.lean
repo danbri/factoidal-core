@@ -623,6 +623,11 @@ import L4Factoidal.RML.SparqlSource
 import L4Factoidal.RML.Functions
 import L4Factoidal.RML.FunctionTests
 import L4Factoidal.RML.VirtualSource
+import L4Factoidal.DataCube.Vocabulary
+import L4Factoidal.DataCube.Queries
+import L4Factoidal.DataCube.Normalize
+import L4Factoidal.DataCube.NormalizeTheorems
+import L4Factoidal.DataCube.Constraints
 import L4Factoidal.RIF.Syntax
 import L4Factoidal.RIF.Ps
 import L4Factoidal.RIF.Builtins

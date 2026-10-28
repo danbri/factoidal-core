@@ -137,3 +137,9 @@ jobs:
       - name: HACL* extern probe (Ed25519 vectors + sha256 differential)
         working-directory: formal/lean4
         run: lake exe l4vc-probe
+
+      # RDF Data Cube 2014: normalization and IC-0 to IC-21, each checked by the
+      # Recommendation's SPARQL texts and by the direct Lean functions, which
+      # must agree on every fixture (https://github.com/danbri/factoidal/issues/1165).
+      - name: RDF Data Cube integrity constraints (tests/datacube/run.sh)
+        run: bash tests/datacube/run.sh
