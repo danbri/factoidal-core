@@ -102,7 +102,7 @@ def specOk (v : String) : Bool :=
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
   ["higher_order_functions", "serialization", "backwards_compatibility", "dynamic_evaluation",
-   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types"].contains f
+   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types", "dtd", "XML_1.1"].contains f
 
 def depOk (d : Node) : Bool :=
   let ty := localTag d
@@ -117,6 +117,17 @@ def depOk (d : Node) : Bool :=
   | "default_html_version" => if sat then v == "5" else v != "5"
   -- xsl:use-package picks the highest version that matches (§3.4.2)
   | "package_version_resolution" => if sat then v == "highest_version" else v != "highest_version"
+  -- xsl:assert is always evaluated
+  | "enable_assertions" => sat
+  -- dates are 64-bit: negative years, year zero (XSD 1.1) and years
+  -- above 9999
+  | "year_component_values" => sat
+  -- the numbering sequences of `XSLT4.numberingSequences`, in range
+  | "combinations_for_numbering" =>
+    let hi := ((((attrD d "range").splitOn "to").getD 1 "").trimAscii.toString.toNat?).getD 0
+    let ok := (L4Factoidal.XSLT4.numberingSequences.find? (·.1 == v)).any (fun (_, _, rs) =>
+      rs.any (fun (_, top, _) => hi ≤ top))
+    if sat then ok else !ok
   | _ => !sat
 
 /-! ## Environments -/
@@ -255,7 +266,12 @@ def errCode (e : Err) : String :=
 
 def codeMatches (expected got : String) : Bool :=
   expected == "*" || expected == got || ("err:" ++ got) == expected || expected.endsWith (":" ++ got) ||
-  expected == "Q{http://www.w3.org/2005/xqt-errors}" ++ got || got.endsWith ("}" ++ expected)
+  expected == "Q{http://www.w3.org/2005/xqt-errors}" ++ got || got.endsWith ("}" ++ expected) ||
+  -- a code given as a prefixed QName (the catalog's prefix is not read):
+  -- the local names agree and the error has a namespace
+  (match expected.splitOn ":", got.startsWith "Q{" && !got.startsWith "Q{}" with
+    | [_, l], true => got.endsWith ("}" ++ l)
+    | _, _ => false)
 
 /-- What an assertion sees: the delivered result, the raw result, the
     secondary results, and the serializer of the stylesheet. -/

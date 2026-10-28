@@ -629,13 +629,55 @@ def analyzeParts (s : String) (re : Re4) : List ASPart :=
   let input := s.toList.map Char.toNat
   partsFrom input re 0 (segments re.r input)
 
+/-- The numbering sequences of single characters that `xsl:number`
+    knows beyond `fn:format-integer` (§12.4: implementation-defined
+    sequences): name, the character for zero if Unicode has one, and the
+    ranges of consecutive code points (first number, last number, code
+    point of the first). -/
+def numberingSequences : List (String × Option Nat × List (Nat × Nat × Nat)) := [
+  ("CIRCLED DIGIT ONE", some 0x24EA, [(1, 20, 0x2460), (21, 35, 0x3251), (36, 50, 0x32B1)]),
+  ("PARENTHESIZED DIGIT ONE", none, [(1, 20, 0x2474)]),
+  ("DIGIT ONE FULL STOP", some 0x1F100, [(1, 20, 0x2488)]),
+  ("DINGBAT NEGATIVE CIRCLED DIGIT ONE", some 0x24FF, [(1, 10, 0x2776), (11, 20, 0x24EB)]),
+  ("DINGBAT CIRCLED SANS-SERIF DIGIT ONE", some 0x1F10B, [(1, 10, 0x2780)]),
+  ("DINGBAT NEGATIVE CIRCLED SANS-SERIF DIGIT ONE", some 0x1F10C, [(1, 10, 0x278A)]),
+  ("DOUBLE CIRCLED DIGIT ONE", none, [(1, 10, 0x24F5)]),
+  ("DIGIT ONE COMMA", some 0x1F101, [(1, 9, 0x1F102)]),
+  ("PARENTHESIZED IDEOGRAPH ONE", none, [(1, 10, 0x3220)]),
+  ("CIRCLED IDEOGRAPH ONE", none, [(1, 10, 0x3280)]),
+  ("SINHALA ARCHAIC DIGIT ONE", none, [(1, 10, 0x111E1)]),
+  ("RUMI DIGIT ONE", none, [(1, 10, 0x10E60)]),
+  ("COPTIC EPACT DIGIT ONE", none, [(1, 10, 0x102E1)]),
+  ("BRAHMI NUMBER ONE", none, [(1, 10, 0x11052)]),
+  ("AEGEAN NUMBER ONE", none, [(1, 10, 0x10107)]),
+  ("MENDE KIKAKUI DIGIT ONE", none, [(1, 9, 0x1E8C7)]),
+  ("COUNTING ROD UNIT DIGIT ONE", none, [(1, 9, 0x1D360)])]
+
+/-- A number in a sequence of `numberingSequences` whose first character
+    is `tok`; `none` if `tok` starts no such sequence. A number outside
+    the sequence is written in decimal digits (§12.4). -/
+def seqNumber (tok : String) (x : Int) : Option String :=
+  match tok.toList with
+  | [c] =>
+    (numberingSequences.find? (fun (_, _, rs) => rs.head?.any (fun (lo, _, cp) => lo == 1 && cp == c.toNat))).map
+      (fun (_, zero, rs) =>
+        let n := x.toNat
+        if x == 0 then match zero with
+          | some z => String.singleton (Char.ofNat z)
+          | none => "0"
+        else match rs.find? (fun (lo, hi, _) => lo ≤ n && n ≤ hi) with
+          | some (lo, _, cp) => String.singleton (Char.ofNat (cp + (n - lo)))
+          | none => toString x)
+  | _ => none
+
 /-- One number of `xsl:number` in the format token `tok` (§12.4): the
     F&O 4.0 function `fn:format-integer`, with `;o` for an ordinal. -/
 def formatOne (env : Env) (x : Int) (tok : String) (ordS lng : Option String) : M String := do
   let pic := match ordS with
     | some o => if o == "" || o == "no" then tok else tok ++ ";o"
     | none => tok
-  if x < 0 then pure "NaN" else do
+  if x < 0 then pure "NaN" else
+  if let some t := (if ordS.isNone then seqNumber tok x else none) then pure t else do
     let r ← callFn 100000 env { uri := nsFN, loc := "format-integer" }
       [sInt x, sStr pic, match lng with | some l => sStr l | none => []]
     pure (match r with | [.atom a] => a.str | _ => toString x)
