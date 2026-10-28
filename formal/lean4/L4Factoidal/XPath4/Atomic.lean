@@ -515,7 +515,7 @@ def isIntegerTy (b : Builtin) : Bool := derivedFrom b .integer
 /-- `cast as` between atomic types (§22.1). The source is never
     `xs:untypedAtomic`/`xs:string` here unless the caller wants the
     lexical route; both go through `castFromString`. -/
-def castAtomic (a : Atomic) (t : AType) (nsResolve : String → Option String := fun _ => none) : M Atomic :=
+def castAtomic0 (a : Atomic) (t : AType) (nsResolve : String → Option String := fun _ => none) : M Atomic :=
   if a.ty == t then pure a
   else
   match t with
@@ -591,6 +591,36 @@ def castAtomic (a : Atomic) (t : AType) (nsResolve : String → Option String :=
     | _, _ => err "XPTY0004" ("cannot cast xs:" ++ a.ty.name ++ " to xs:" ++ t.name)
 
 /-! ## Equality and ordering of atomic values -/
+
+/-- The implementation limits of this processor for dates and durations
+    (XPath 4.0 §5.3, implementation-defined): a date's day number from
+    0001-01-01 and a duration's month count and day count are 64-bit
+    signed integers. Beyond them a cast raises FODT0001 (dates) or
+    FODT0002 (durations), as F&O 4.0 §9.1.2 says for overflow. -/
+def limit63 : Int := 9223372036854775808
+
+def dtWithinLimits (v : XSD.DTValue) : Bool :=
+  match v.year with
+  | none => true
+  | some y =>
+    let d := XSD.daysFromCivil y (v.month.getD 1) (v.day.getD 1) + 719162
+    d ≥ -limit63 && d < limit63
+
+def durWithinLimits (d : XSD.DurValue) : Bool :=
+  let secs := d.seconds
+  let days : Int := Int.tdiv secs.mantissa ((10 : Int) ^ secs.scale * 86400)
+  d.months > -limit63 && d.months < limit63 && days > -limit63 && days < limit63
+
+/-- Raise the overflow error when a date or duration value is beyond
+    the limits. -/
+def checkLimits (a : Atomic) : M Atomic :=
+  match a.v with
+  | .x (.dt _ v) => if dtWithinLimits v then pure a else err "FODT0001" "date/time value out of the supported range"
+  | .x (.dur d) => if durWithinLimits d then pure a else err "FODT0002" "duration value out of the supported range"
+  | _ => pure a
+
+def castAtomic (a : Atomic) (t : AType) (nsResolve : String → Option String := fun _ => none) : M Atomic := do
+  checkLimits (← castAtomic0 a t nsResolve)
 
 /-- The primitive type, for comparability. -/
 def AType.prim : AType → String

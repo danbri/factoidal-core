@@ -223,7 +223,7 @@ def fCeil (f : Float) : Float := let r := f.ceil; if r == 0 && f < 0 then -0.0 e
 def untypedToDouble (a : Atomic) : M Atomic :=
   if a.ty == .untyped then castAtomic a (.b .double) else pure a
 
-def addAtoms (a b : Atomic) : M Atomic := do
+def addAtoms0 (a b : Atomic) : M Atomic := do
   match a.num?, b.num? with
   | some x, some y => pure (← numArith .add x y).atomic
   | _, _ =>
@@ -235,6 +235,9 @@ def addAtoms (a b : Atomic) : M Atomic := do
           pure ⟨.b .dayTimeDuration, .x (.dur { months := 0, seconds := Dec.norm (Dec.add x.seconds y.seconds) })⟩
         else err "FORG0006" "cannot add these durations"
     | _, _ => err "FORG0006" "invalid argument to fn:sum/fn:avg"
+
+/-- `addAtoms0` with the duration limits (`checkLimits`). -/
+def addAtoms (a b : Atomic) : M Atomic := do checkLimits (← addAtoms0 a b)
 
 def sumAtoms (as : List Atomic) (zero : Seq) : M Seq := do
   match as with

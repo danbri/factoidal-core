@@ -36,7 +36,7 @@ def mkDur (ty : Builtin) (months : Int) (secs : Dec) : Atomic :=
 
 /-- Arithmetic on two atomic values (§3.5.1 and the F&O 4.0 §9 tables
     for durations, dates and times). -/
-def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
+def arith0 (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
   let a0 ← if a.ty == .untyped then castAtomic a (.b .double) else pure a
   let b0 ← if b.ty == .untyped then castAtomic b (.b .double) else pure b
   -- commute `number * duration` and `duration + date`
@@ -72,7 +72,6 @@ def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
     match b.num? with
     | some n =>
       let f := n.toFloat
-      if op == .div && f == 0 && n.rank < 2 then err "FOAR0001" "division of a duration by zero" else
       if f.isNaN then err "FOCA0005" "NaN in duration arithmetic" else
       if f.isInf && op == .mul then err "FODT0002" "duration overflow" else
       if op == .div && f == 0 then err "FODT0002" "duration overflow" else
@@ -92,7 +91,9 @@ def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
         pure (mkDur .duration 0 (factorExact x.seconds))
       else if decIsZero x.seconds then
         pure (mkDur .duration (Fn.Numeric.decRound (factorExact (Dec.ofInt x.months))) Dec.zero)
-      else err "XPTY0004" "cannot multiply an xs:duration with both month and second parts"
+      -- XPath 4.0 / F&O 4.0 §8.4.4: an xs:duration with both parts is
+      -- scaled part by part, the month count rounded
+      else pure (mkDur .duration (Fn.Numeric.decRound (factorExact (Dec.ofInt x.months))) (factorExact x.seconds))
     | none => err "XPTY0004" "invalid duration arithmetic"
   | .x (.dt k1 x), .x (.dt k2 y), .sub =>
       if k1 == k2 && (k1 == .dateTime || k1 == .date || k1 == .time) then
@@ -107,6 +108,19 @@ def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
         pure ⟨a.ty, .x (.dt k (dtProject k r))⟩
       else err "XPTY0004" "invalid date/duration arithmetic"
   | _, _, _ => err "XPTY0004" ("invalid arithmetic on xs:" ++ a.ty.name ++ " and xs:" ++ b.ty.name)
+
+/-- Arithmetic with the date and duration limits (`checkLimits`): an
+    overflowing result of date arithmetic is FODT0001, of duration
+    arithmetic FODT0002. -/
+def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
+  let r ← arith0 tz op a b
+  match r.v with
+  | .x (.dur d) =>
+    if durWithinLimits d then pure r
+    else if (match a.v, b.v with | .x (.dt ..), _ | _, .x (.dt ..) => true | _, _ => false) then
+      err "FODT0001" "date/time arithmetic overflows"
+    else err "FODT0002" "duration arithmetic overflows"
+  | _ => checkLimits r
 
 /-- Value comparison of two atomic values (§3.7.2). -/
 def valueCmp (tz : Int) (op : BOp) (a b : Atomic) : M Bool := do
@@ -688,7 +702,7 @@ def eval : Nat → Env → Expr → M Seq
       | .jnodeT .. | .xnode => err "XPST0080" "castable target is not an atomic, array or map type"
       | .anyArr | .anyMap | .arrT _ | .mapT _ _ | .record _ _ =>
         return sBool (match castTo env s t opt with | .ok _ => true | .error _ => false)
-      | _ => pure ()
+      | t => if !isCastTarget t then err "XPST0051" "castable target is not an atomic, array, map or record type"
       match env.atomize s with
       | .error e => if e.code == "FOTY0013" then throw e else pure (sBool false)
       | .ok _ =>
@@ -973,7 +987,12 @@ def callFn : Nat → Env → QN → List Seq → M Seq
         | some sig => (args.zip sig.ps).mapM (fun (a, p) => env.coerce p.ty a ("$" ++ p.name ++ " of " ++ q.show))
         | none => pure args
     match libLookupAll q with
-    | some impl => impl { call := fun f as => apply n env f as } env args
+    | some impl => do
+      let r ← impl { call := fun f as => apply n env f as } env args
+      -- date results stay within the limits (`checkLimits`)
+      match r with
+      | [.atom a@⟨_, .x (.dt ..)⟩] => pure [.atom (← checkLimits a)]
+      | _ => pure r
     | none => err "XPST0017" ("function " ++ q.show ++ " is not implemented")
 
 end
