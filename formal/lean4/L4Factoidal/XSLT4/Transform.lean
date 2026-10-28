@@ -400,6 +400,28 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
               if k == 3 && (i < rootN.idx || i > (env.nrec rootN).last) then continue
               hits := hits.push nd
         pure ((sortNodes hits.toList).map Item.node)
+    | "doc", _ | "doc-available", _ => if k != 1 && k != 2 then none else some fun c a => do
+        -- a relative reference is resolved against the static base URI of
+        -- the call (F&O 4.0 §14.6.1), which differs between stylesheet
+        -- modules and under `xml:base`
+        let plain : Env := { env with host := fun _ _ => none }
+        let fq : QN := { uri := nsFN, loc := q.loc }
+        let b := if c.baseUri != "" then c.baseUri else S.baseUri
+        match a.getD 0 [] with
+        | [.atom x] =>
+          let u := x.str
+          if (u.splitOn "#").length > 1 || uriHasScheme u || b == "" then callFn 100000 plain fq a
+          else
+            match callFn 100000 plain fq ([sStr (resolveRef b u)] ++ a.drop 1) with
+            | .ok v =>
+                let no := match v with
+                  | [.atom y] => (match y.v with | .bool false => true | _ => false)
+                  | _ => false
+                if no then callFn 100000 plain fq a else pure v
+            | .error e => match callFn 100000 plain fq a with
+              | .ok v => pure v
+              | .error _ => throw e
+        | _ => callFn 100000 plain fq a
     | "document", _ => if k != 1 && k != 2 then none else some fun c a => do
         -- §20.1: the base URI is that of the second argument (a node, or
         -- the `base-uri` option), else the base URI of a node item, else
@@ -434,13 +456,24 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
             | p :: f :: _ => (p, some f)
             | _ => (abs, none)
           let abs := removeDots abs
-          let d ← match callFn 100000 env { uri := nsFN, loc := "doc" } [sStr abs] with
+          -- the options of the call go to fn:doc; a document read with
+          -- options is another document than one read without them
+          let opts : List Seq := match a.getD 1 [] with
+            | [.map kvs] => [[.map kvs]]
+            | _ => []
+          let plain : Env := { env with host := fun _ _ => none }
+          let d ← match callFn 100000 plain { uri := nsFN, loc := "doc" } ([sStr abs] ++ opts) with
             | .ok [.node d] => pure (some d)
             | .ok _ => pure none
             | .error e =>
-                match callFn 100000 env { uri := nsFN, loc := "doc" } [sStr u] with
+                match callFn 100000 plain { uri := nsFN, loc := "doc" } ([sStr u] ++ opts) with
                 | .ok [.node d] => pure (some d)
                 | _ => throw e
+          let d := match d, opts with
+            | some nd, [o] => if nd.rt.isSome then
+                some { nd with doc := (2 : Nat) ^ 44 + (hash (abs ++ "|" ++ showSeq o)).toNat % 1000000000000 }
+              else some nd
+            | _, _ => d
           match d, frag with
           | some d, none => out := out.push d
           | some d, some f =>

@@ -17,6 +17,7 @@ parent's node table once. A constructed node is a new runtime document
 then its children, in document order.
 -/
 import L4Factoidal.XPath4.Eval
+import L4Factoidal.XPath4.BaseUri
 
 namespace L4Factoidal.XSLT4
 

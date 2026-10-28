@@ -522,6 +522,13 @@ def scanResources (root dir src : String) : IO (List (String × String)) := do
       if cur.length > 2 && cur.length < 200 && (cur.splitOn ".").length > 1 && !toks.contains cur then
         toks := cur :: toks
       cur := ""
+  -- a quoted reference with spaces in it (`'dir with space/a.xml'`)
+  for q in ['\'', '"'] do
+    let parts := src.splitOn (String.singleton q)
+    for (p, i) in parts.zipIdx do
+      if i % 2 == 1 && p.contains ' ' && p.length < 200 && (p.splitOn ".").length > 1 &&
+          !p.contains '<' && !p.contains '\n' && !toks.contains p then
+        toks := p :: toks
   let absRoot := normPath root
   let mut out : List (String × String) := []
   for t in toks do
@@ -623,6 +630,9 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
         let some txt := txt | return .fail ("cannot read source " ++ file)
         let duri := if file != "" then fileUri file else if uri != "" then resolveUri pUri uri else ""
         let some d := loadDoc txt duri | return .fail ("source not well-formed: " ++ file)
+        -- inline content has the base URI of the test set (the driver's
+        -- reading), and no document URI
+        let d := if duri == "" then { d with baseUri := fileUri dir ++ "/" } else d
         let idx := env.docs.size
         env := { env with docs := env.docs.push d }
         if duri != "" then env := { env with docUris := (duri, idx) :: env.docUris }

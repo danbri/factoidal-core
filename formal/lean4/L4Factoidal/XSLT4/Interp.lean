@@ -1152,9 +1152,12 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         for it in s do
           match it with
           | .node nd =>
-            if !copyNs && (env.nrec nd).kind == .element then
+            -- a copy is made only where it differs from the node: other
+            -- namespaces, or another base URI (§11.9.2: an `xml:base` is
+            -- resolved against the static base URI)
+            if (!copyNs || (env.xmlBaseOf nd).isSome) && (env.nrec nd).kind == .element then
               let id ← freshId
-              out := out.push (.item (← liftX (copyAsTree env id nd false)))
+              out := out.push (.item (← liftX (copyAsTree env id nd copyNs)))
             else out := out.push (.item it)
           | _ => out := out.push (.item it)
         pure out.toList

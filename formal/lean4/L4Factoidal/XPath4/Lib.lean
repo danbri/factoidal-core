@@ -21,7 +21,6 @@ input that is already NFC, and `fn:doc`/`fn:collection` beyond the
 documents the caller registers.
 -/
 import L4Factoidal.XPath4.Core
-import L4Factoidal.XPath4.BaseUri
 import L4Factoidal.Fn.String
 import L4Factoidal.Regex.XPath
 import L4Factoidal.Regex.Profiles
@@ -1006,7 +1005,7 @@ def fnTable : List (String × LibFn) := [
   -- errors and diagnostics
   ent "error" (fun _ _ a => do
     let (code, uri) := match optAtom (argN a 0) with
-      | some ⟨_, .qn q⟩ => (q.loc, if q.uri == nsERR then "" else q.uri)
+      | some ⟨_, .qn q⟩ => (q.loc, if q.uri == nsERR then "" else if q.uri == "" then "#none" else q.uri)
       | _ => ("FOER0000", "")
     throw { code, msg := strOf (argN a 1), uri }),
   ent "trace" (fun _ _ a => pure (argN a 0)),
@@ -1088,9 +1087,7 @@ def fnTable : List (String × LibFn) := [
     | none => pure []),
   ent "base-uri" (fun _ e a => do
     match ← nodeArg e (argN a 0) with
-    | some n => pure (match e.baseUriOf n with
-        | some u => single (Atomic.ofUri u)
-        | none => [])
+    | some n => pure (if (e.doc n).uri != "" then single (Atomic.ofUri (e.doc n).uri) else [])
     | none => pure []),
   ent "innermost" (fun _ e a => do
     match nodesOf (argN a 0) with
