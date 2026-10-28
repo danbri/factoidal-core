@@ -841,6 +841,11 @@ def run : Nat → Sheet → Ctx → List Instr → XM (List Out)
       | .var q ty sel body =>
           let v ← bindValue n S cx sel body ty ("$" ++ q.show) "XTTE0570"
           cx := cx.bind q v
+      | .withBase u [.var q ty sel body] =>
+          -- a variable with an `xml:base` attribute still binds the
+          -- following siblings
+          let v ← bindValue n S { cx with env := { cx.env with baseUri := u } } sel body ty ("$" ++ q.show) "XTTE0570"
+          cx := cx.bind q v
       | .onEmpty _ _ => pending := pending ++ [(out.size, true, cx, ins)]; out := out.push none
       | .onNonEmpty _ _ => pending := pending ++ [(out.size, false, cx, ins)]; out := out.push none
       | _ => out := out.push (some (← run1 n S cx ins))
@@ -1125,7 +1130,12 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             let r := env.nrec nd
             match r.kind with
             | .element =>
-                let mut content : Array Out := #[]
+                -- §11.9.1: the base URI of the element is copied (an
+                -- `xml:base` of it is resolved against the static base URI)
+                let base := match env.xmlBaseOf nd with
+                  | some v => resolveRef env.baseUri v.trimAscii.toString
+                  | none => (env.baseUriOf nd).getD ""
+                let mut content : Array Out := #[.attr baseMarkQ base]
                 for o in ← attrSetOuts n S cx' useSets do content := content.push o
                 for o in ← run n S cx' body do content := content.push o
                 pure [.elem r.name (if copyNs then env.elemDecls nd else []) content.toList]
@@ -1570,6 +1580,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
     | .staticErr code msg => xerr code msg
     | .withColl u body => run n S { cx with env := { cx.env with defaultCollation := u } } body
     | .withCompat on body => run n S { cx with backCompat := on } body
+    | .withBase u body => run n S { cx with env := { cx.env with baseUri := u } } body
     | .extCall q ats fbs =>
         let cands := S.templates.toList.filter (fun t => t.name == some q)
         match cands.foldl (fun (b : Option Tmpl) t => match b with

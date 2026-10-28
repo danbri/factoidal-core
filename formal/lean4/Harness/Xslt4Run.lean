@@ -102,7 +102,7 @@ def specOk (v : String) : Bool :=
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
   ["higher_order_functions", "serialization", "backwards_compatibility", "dynamic_evaluation",
-   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types"].contains f
+   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types", "namespace_axis"].contains f
 
 def depOk (d : Node) : Bool :=
   let ty := localTag d

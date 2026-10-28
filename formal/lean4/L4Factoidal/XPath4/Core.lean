@@ -27,6 +27,8 @@ structure HostCall where
   size : Nat := 0
   /-- The static namespace bindings in force (`Env.ns`). -/
   ns : List (String × String) := []
+  /-- The static base URI at the call (`Env.baseUri`). -/
+  baseUri : String := ""
 
 /-- A host function: called with the dynamic context of the call and
     the argument values. -/
@@ -90,7 +92,9 @@ def Env.nsResolve (e : Env) (p : String) : Option String :=
 def Item.isNode : Item → Bool | .node _ => true | _ => false
 def Item.isFn : Item → Bool | .fn _ | .map _ | .arr _ => true | _ => false
 
-def nodeLt (a b : NodeRef) : Bool := a.doc < b.doc || (a.doc == b.doc && a.idx < b.idx)
+def nodeLt (a b : NodeRef) : Bool :=
+  a.doc < b.doc || (a.doc == b.doc &&
+    (ordKey a.idx < ordKey b.idx || (ordKey a.idx == ordKey b.idx && a.idx < b.idx)))
 
 def sortNodes (ns : List NodeRef) : List NodeRef :=
   let s := ns.mergeSort (fun a b => !(nodeLt b a))
@@ -295,7 +299,7 @@ def Env.axis (e : Env) (ax : Axis) (n : NodeRef) : List NodeRef :=
   | .precedingOrSelf =>
       let anc := e.ancestors n
       n :: ((e.rangeNodes d 0 (n.idx - 1)).filter (fun m => n.idx > 0 && !anc.contains m)).reverse
-  | .namespace => []
+  | .namespace => (List.range (nsNodesOf r).length).map (fun k => d.at (nsNodeIdx n.idx k))
   | .item => []
 
 /-! ## Sequence types -/

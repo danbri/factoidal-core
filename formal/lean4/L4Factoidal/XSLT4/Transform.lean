@@ -163,7 +163,14 @@ def buildKeyIndex (S : Sheet) (env : Env) (kd : KeyDef) (root : NodeRef) : M Key
   let mut idx : KeyIndex := {}
   let lo := root.idx
   let hi := (d.get root.idx).last
+  -- namespace nodes are visited only for a pattern that can match them
+  let withNs := (kd.pat.src.splitOn "namespace").length > 1
+  let mut ids : Array Nat := #[]
   for i in [lo:hi+1] do
+    ids := ids.push i
+    if withNs then
+      for k in [0:(nsNodesOf (d.get i)).length] do ids := ids.push (nsNodeIdx i k)
+  for i in ids do
     let nd := root.at i
     if !(kd.pat.matches env (.node nd)) then continue
     let cx : Ctx := { env := env.focus (.node nd) 1 1 }
@@ -358,7 +365,8 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
           match it with
           | .node nd =>
             let id := (2 : Nat) ^ 43 + (hash (toString (seedOf c) ++ ":" ++ toString j)).toNat % 1000000000000
-            out := out.push (← copyAsTree env id nd)
+            let cenv := if c.baseUri != "" then { env with baseUri := c.baseUri } else env
+            out := out.push (← if q.loc == "snapshot" then snapshotAsTree cenv id nd else copyAsTree cenv id nd)
           | other => out := out.push other
           j := j + 1
         pure out.toList
@@ -393,33 +401,59 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
               hits := hits.push nd
         pure ((sortNodes hits.toList).map Item.node)
     | "document", _ => if k != 1 && k != 2 then none else some fun c a => do
-        let base := match a.getD 1 [] with
-          | [.node b] =>
-              let d := env.doc b
-              if d.baseUri != "" then d.baseUri else d.uri
-          | _ => ""
-        let mut out : Array NodeRef := #[]
+        -- §20.1: the base URI is that of the second argument (a node, or
+        -- the `base-uri` option), else the base URI of a node item, else
+        -- the static base URI of the call
+        let staticBase := if c.baseUri != "" then c.baseUri else S.baseUri
+        let base? : Option (Option String) ← match a.getD 1 [] with
+          | [.node b] => pure (some (env.baseUriOf b))
+          | [.map kvs] => pure ((kvs.find? (fun (k, _) => k.str == "base-uri")).map (fun (_, v) =>
+              match v with
+              | [.atom x] => some x.str
+              | _ => none))
+          | [] => pure none
+          | _ => err "XPTY0004" "the second argument of document() must be a node or a map"
+        let mut refs : Array (String × Option String) := #[]
         for it in a.getD 0 [] do
-          let (u, b) := match it with
-            | .node nd =>
-                let d := env.doc nd
-                (env.nodeString nd, if base != "" then base else (if d.baseUri != "" then d.baseUri else d.uri))
-            | .atom x => (x.str, if base != "" then base else S.baseUri)
-            | _ => ("", S.baseUri)
-          let b := if b == "" then S.baseUri else b
-          let abs := if u == "" then b else resolveUri b u
-          let abs := match abs.splitOn "#" with
-            | p :: _ => p
-            | [] => abs
+          match it with
+          | .node nd =>
+              for x in ← env.atomize [.node nd] do
+                refs := refs.push (x.str, base?.getD (env.baseUriOf nd))
+          | .atom x =>
+              if !(x.isStringLike || x.is .anyURI) then
+                err "XPTY0004" "document() expects strings, URIs or nodes"
+              refs := refs.push (x.str, base?.getD (if staticBase == "" then none else some staticBase))
+          | _ => err "XPTY0004" "document() expects strings, URIs or nodes"
+        let mut out : Array NodeRef := #[]
+        for (u0, b?) in refs do
+          let u := u0.trimAscii.toString
+          let abs ← if uriHasScheme u then pure u else match b? with
+            | some b => pure (resolveRef b u)
+            | none => err "XTDE1162" ("no base URI to resolve the relative reference '" ++ u ++ "'")
+          let (abs, frag) := match abs.splitOn "#" with
+            | p :: f :: _ => (p, some f)
+            | _ => (abs, none)
           let abs := removeDots abs
-          match callFn 100000 env { uri := nsFN, loc := "doc" } [sStr abs] with
-          | .ok [.node d] => out := out.push d
-          | .ok _ => pure ()
-          | .error e =>
-              match callFn 100000 env { uri := nsFN, loc := "doc" } [sStr u] with
-              | .ok [.node d] => out := out.push d
-              | _ => throw { e with code := if e.code == "FODC0002" then "FODC0002" else e.code }
-        let _ := c
+          let d ← match callFn 100000 env { uri := nsFN, loc := "doc" } [sStr abs] with
+            | .ok [.node d] => pure (some d)
+            | .ok _ => pure none
+            | .error e =>
+                match callFn 100000 env { uri := nsFN, loc := "doc" } [sStr u] with
+                | .ok [.node d] => pure (some d)
+                | _ => throw e
+          match d, frag with
+          | some d, none => out := out.push d
+          | some d, some f =>
+              -- a shorthand pointer (XPointer Framework §3.2): the element
+              -- with that ID
+              if !isNCName f then err "XTDE1160" ("fragment identifier '" ++ f ++ "' is not recognized")
+              match callFn 100000 env { uri := nsFN, loc := "id" } [sStr f, [.node d]] with
+              | .ok ns => for x in ns do
+                  match x with
+                  | .node m => out := out.push m
+                  | _ => pure ()
+              | .error e => throw e
+          | none, _ => pure ()
         pure ((sortNodes out.toList).map Item.node)
     | "accumulator-before", 1 | "accumulator-after", 1 => some fun c a => do
         let nm ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE3340"
@@ -462,7 +496,8 @@ def evalGlobals (S : Sheet) (o : TOpts) (env0 : Env) : M Env := do
       let host := mkHost S env [] [] 100000
       let gctx := if g.noCtx then none else o.globalCtx
       let one := if gctx.isSome then 1 else 0
-      let genv : Env := { env with host, ctx := gctx.map (fun i => [i]), pos := one, size := one }
+      let gbase := if g.base != "" then g.base else env.baseUri
+      let genv : Env := { env with host, ctx := gctx.map (fun i => [i]), pos := one, size := one, baseUri := gbase }
       let supplied := if g.isParam then lookupV o.params g.name else none
       let act : XM Seq := match supplied with
         | some v => match g.ty with
