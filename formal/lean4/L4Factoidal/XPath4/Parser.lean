@@ -13,7 +13,7 @@ every nested call (no `partial def`); running out of fuel is the
 static error `XPST0003` with a message saying so, never a wrong parse.
 
 Implemented: every production of the XPath 4.0 expression grammar
-EXCEPT `but with`, `jnode()` types, destructuring
+EXCEPT `jnode()` types, destructuring
 `let $( )`/`$[ ]`/`${ }` bindings, computed node constructors, the
 `declare default element namespace` prolog and schema-element /
 schema-attribute types. Those raise `XPST0003` naming the construct.
@@ -781,11 +781,24 @@ def opAt (lvl : Nat) : P (Option (BOp × Nat)) := do
 def pInstance : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
-    let e ← pTreat n
-    if ← atKw "instance" then
-      adv 8; expectKw "of"
-      pure (.instOf e (← pSeqType n))
-    else pure e
+    let one : P Expr := do
+      let e ← pTreat n
+      if ← atKw "instance" then
+        adv 8; expectKw "of"
+        pure (.instOf e (← pSeqType n))
+      else pure e
+    let mut e ← one
+    -- XPath 4.0 §4.15.4 `A but with B`: `map:merge((A, B), {'duplicates':'use-last'})`
+    -- (no value here carries a record type annotation, so the result is
+    -- not checked against the record type of A)
+    for _ in [0:10000] do
+      if ← atKw "but" then
+        adv 3; expectKw "with"
+        let b ← one
+        e := .call { uri := nsMAP, loc := "merge" }
+          [some (.seq [e, b]), some (.mapC [(.lit (Atomic.ofStr "duplicates"), .lit (Atomic.ofStr "use-last"))])] []
+      else break
+    pure e
 
 def pTreat : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
