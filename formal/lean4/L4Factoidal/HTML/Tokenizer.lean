@@ -208,8 +208,8 @@ def charRef (inp : Array Char) (p : Nat) (inAttr : Bool) : String × Nat × List
       let e := alnumEndGo inp (inp.size - p) p
       let run := String.ofList (inp.extract p e).toList
       let semi := inp[e]? == some ';'
-      match (if semi then namedTable.lookup run else none) with
-      | some cp => (cpStr cp, e + 1, [])
+      match (if semi then namedRef? run else none) with
+      | some str => (str, e + 1, [])
       | none =>
         match legacyPrefix run with
         | some k =>

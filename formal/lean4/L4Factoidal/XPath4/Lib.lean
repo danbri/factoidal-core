@@ -25,6 +25,7 @@ import L4Factoidal.Fn.String
 import L4Factoidal.Regex.XPath
 import Std.Data.HashSet
 import L4Factoidal.XPath4.Grapheme
+import L4Factoidal.HTML.Entities
 import L4Factoidal.XPath4.Collation
 
 namespace L4Factoidal.XPath4
@@ -1196,17 +1197,6 @@ def fnTable : List (String × LibFn) := [
     | _ => []))
 ]
 
-def htmlEntities : List (String × Nat) :=
-  [("amp", 38), ("lt", 60), ("gt", 62), ("quot", 34), ("apos", 39), ("nbsp", 160),
-   ("copy", 169), ("reg", 174), ("eacute", 233), ("egrave", 232), ("auml", 228), ("ouml", 246),
-   ("uuml", 252), ("szlig", 223), ("euro", 8364), ("pi", 960), ("Pi", 928), ("tab", 9),
-   ("NewLine", 10), ("deg", 176), ("micro", 181), ("para", 182), ("sect", 167), ("times", 215),
-   ("divide", 247), ("hellip", 8230), ("mdash", 8212), ("ndash", 8211), ("lsquo", 8216),
-   ("rsquo", 8217), ("ldquo", 8220), ("rdquo", 8221), ("bull", 8226), ("trade", 8482),
-   ("alpha", 945), ("beta", 946), ("gamma", 947), ("delta", 948), ("Alpha", 913), ("Beta", 914),
-   ("pound", 163), ("yen", 165), ("cent", 162), ("frac12", 189), ("frac14", 188), ("frac34", 190),
-   ("iexcl", 161), ("iquest", 191), ("laquo", 171), ("raquo", 187), ("middot", 183)]
-
 def daysInMonth (y : Int) (m : Nat) : Nat :=
   match m with
   | 2 => if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 then 29 else 28
@@ -1260,8 +1250,9 @@ def fnTable2 : List (String × LibFn) := [
         let s := x.str
         match s with
         | "\\n" => pure (sStr "\n") | "\\t" => pure (sStr "\t") | "\\r" => pure (sStr "\r")
-        | _ => match htmlEntities.lookup s with
-          | some c => pure (sStr (String.ofList [Char.ofNat c]))
+        | "\\b" => pure (sStr "\x08") | "\\f" => pure (sStr "\x0C")
+        | _ => match HTML.namedRef? s with
+          | some c => pure (sStr c)
           | none => err "FOCH0005" ("unknown character name " ++ s)
     | none => err "XPTY0004" "fn:char"),
   ent "contains-token" (fun _ e a => do
