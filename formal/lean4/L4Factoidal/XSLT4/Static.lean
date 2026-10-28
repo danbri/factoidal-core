@@ -404,6 +404,15 @@ def defaultPriority (e : Expr) : Float :=
     | .kind (.elem (some (.ns _))) | .kind (.attr (some (.ns _))) => -0.25
     | .kind (.elem (some (.loc _))) | .kind (.attr (some (.loc _))) => -0.25
     | .kind (.pi (some _)) => 0
+    -- the typed tests of §6.6.1 (schema awareness)
+    | .kind (.elemT none _ _) | .kind (.attrT none _) => 0
+    | .kind (.elemT (some (.name _)) _ _) | .kind (.attrT (some (.name _)) _) => 0.25
+    | .kind (.elemT (some _) _ _) | .kind (.attrT (some _) _) => 0.125
+    | .kind (.schemaElem _) | .kind (.schemaAttr _) => 0.25
+    | .kind (.doc (some (.elemT none _ _))) => 0
+    | .kind (.doc (some (.elemT (some (.name _)) _ _))) => 0.25
+    | .kind (.doc (some (.elemT (some _) _ _))) => 0.125
+    | .kind (.doc (some (.schemaElem _))) => 0.25
     | .kind (.doc (some (.elem (some (.name _))))) => 0
     | .kind (.doc (some _)) => -0.25
     | .kind _ => -0.5
