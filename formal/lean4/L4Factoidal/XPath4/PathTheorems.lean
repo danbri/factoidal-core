@@ -178,7 +178,7 @@ theorem Env.testMatches_child_any (e : Env) (m : NodeRef) :
     was built from the XML node `n = ns[i]` that entry `t` of the XPath 1.0
     list holds at address `[i]`. -/
 theorem child_star_agree (ns : List Node) (uri : String) (hfit : ∀ n ∈ ns, Fits 100000 n)
-    (nsctx : List (String × String)) :
+    (nsctx : List (String × String)) (hsz : (Doc.ofNodes ns uri).nodes.size ≤ nsBase) :
     ListRel (fun (m : NodeRef) (it : XPath.Full.Item) =>
         m.doc = 0 ∧ m.rt = none ∧ ∃ i n e, it = .tree { path := [i], doc := 0 } n ∧ ns[i]? = some n ∧
           BuiltA (Doc.ofNodes ns uri).nodes [("xml", nsXML)] (some 0) m.idx e n)
@@ -190,7 +190,7 @@ theorem child_star_agree (ns : List Node) (uri : String) (hfit : ∀ n ∈ ns, F
   have hax : ({ docs := #[Doc.ofNodes ns uri] } : Env).axis .child (NodeRef.mk' 0 0) =
       cs.toList.map (fun c => (NodeRef.mk' 0 0).at c) := by
     show ((Doc.ofNodes ns uri).get 0).children.toList.map _ = _
-    simp only [Doc.get, getD_of_get? h0]
+    rw [Doc.get_of_lt _ (by unfold nsBase; omega), getD_of_get? h0]
   have h1 : (XPath.Full.axisItems ns .child (.doc ns 0)) =
       (ns.zipIdx 0).map (fun (x : Node × Nat) => (XPath.Full.Item.tree { path := [x.2], doc := 0 } x.1 : XPath.Full.Item)) := by
     show List.map _ _ = _
@@ -199,6 +199,17 @@ theorem child_star_agree (ns : List Node) (uri : String) (hfit : ∀ n ∈ ns, F
     rfl
   rw [hax, h1, matchesTest_anyName, List.filter_map]
   simp only [Function.comp_def, Env.testMatches_child_any]
+  -- the children are below the node table size, so below `nsBase`
+  have hlt := (hb.sorted).2
+  have hf : cs.toList.filter (fun c => (({ docs := #[Doc.ofNodes ns uri] } : Env).nrec
+        ((NodeRef.mk' 0 0).at c)).kind == .element) =
+      cs.toList.filter (fun c => ((Doc.ofNodes ns uri).nodes.getD c default).kind == .element) := by
+    apply List.filter_congr
+    intro c hc
+    have := (hlt c hc).2
+    show (((Doc.ofNodes ns uri).get c).kind == NKind.element) = _
+    rw [Doc.get_of_lt _ (Nat.lt_of_lt_of_le this hsz)]
+  rw [hf]
   have hr := (hb.filter_elem).comp (by rw [mergeText_filter_elem]; exact xp1_children_elem ns 0)
   refine ListRel.map_left _ (hr.mono (fun c it ⟨n, ⟨e, hbe⟩, ⟨i, hit, hn⟩⟩ => ⟨rfl, rfl, i, n, e, ?_, hn, hbe⟩))
   · rw [hit, Nat.zero_add]

@@ -25,7 +25,8 @@ Proved (no `sorry`, no new axioms):
   built from `mergeText ns`, in order, with consecutive subtrees that
   cover the indices `1 .. size - 1`.
 * `Doc.ofNodes_child_kinds` — the kinds of the records listed as children
-  of the document record are `(mergeText ns).map nodeKind`.
+  of the document record are `(mergeText ns).map nodeKind`, for a node
+  table below `nsBase` (`Doc.get` makes namespace nodes above it).
 * `BuiltList.sorted` — a child list is strictly increasing and inside its
   interval.
 
@@ -595,18 +596,25 @@ theorem Doc.ofNodes_built (ns : List Node) (uri : String) (hfit : ∀ n ∈ ns, 
         (Doc.ofNodes ns uri).nodes.size :=
   DocProof.ofNodes_built ns uri hfit
 
-/-- The kinds of the children of the document record are the kinds of the
-    nodes of `mergeText ns`, in order. -/
-theorem Doc.ofNodes_child_kinds (ns : List Node) (uri : String) (hfit : ∀ n ∈ ns, Fits 100000 n) :
+/-- Below `nsBase`, `Doc.get` reads the node table (above it are the
+    namespace nodes that `Doc.get` makes from their element). -/
+theorem Doc.get_of_lt (d : Doc) {i : Nat} (h : i < nsBase) : d.get i = d.nodes.getD i default := by
+  simp [Doc.get, h]
+
+/-- The kinds of the children of the document node are the kinds of the
+    top-level nodes (for a node table smaller than `nsBase`, 2^40). -/
+theorem Doc.ofNodes_child_kinds (ns : List Node) (uri : String) (hfit : ∀ n ∈ ns, Fits 100000 n)
+    (hsz : (Doc.ofNodes ns uri).nodes.size ≤ nsBase) :
     ((Doc.ofNodes ns uri).get 0).children.toList.map (fun c => ((Doc.ofNodes ns uri).get c).kind) =
       (mergeText ns).map nodeKind := by
   obtain ⟨cs, h0, hb⟩ := DocProof.ofNodes_built ns uri hfit
   have hk := hb.kinds
-  simp only [Doc.get, getD_of_get? h0]
+  have h0lt : 0 < nsBase := by unfold nsBase; omega
+  rw [Doc.get_of_lt _ h0lt, getD_of_get? h0]
   have : ∀ (l : List Nat), l.map (fun c => (Doc.ofNodes ns uri).nodes[c]?.map NRec.kind) =
       (mergeText ns).map (fun k => some (nodeKind k)) →
       ∀ ks : List Node, ks = mergeText ns →
-      l.map (fun c => ((Doc.ofNodes ns uri).nodes.getD c default).kind) = ks.map nodeKind := by
+      l.map (fun c => ((Doc.ofNodes ns uri).get c).kind) = ks.map nodeKind := by
     intro l hl ks hks
     subst hks
     have hlen : l.length = (mergeText ns).length := by
@@ -622,7 +630,10 @@ theorem Doc.ofNodes_child_kinds (ns : List Node) (uri : String) (hfit : ∀ n �
     | some r =>
       rw [hc] at this
       simp only [Option.map_some, Option.some.injEq] at this
-      rw [getD_of_get? hc]; exact this
+      have hlt : l[t]'(by simpa using h1) < (Doc.ofNodes ns uri).nodes.size := by
+        rcases Array.getElem?_eq_some_iff.mp hc with ⟨hh, _⟩
+        exact hh
+      rw [Doc.get_of_lt _ (Nat.lt_of_lt_of_le hlt hsz), getD_of_get? hc]; exact this
   exact this _ hk _ rfl
 
 end L4Factoidal.XPath4
