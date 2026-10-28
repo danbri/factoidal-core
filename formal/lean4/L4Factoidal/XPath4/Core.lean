@@ -506,17 +506,26 @@ def coerceAtom (ts : List AType) (a : Atomic) : M Atomic := do
     return ← castAtomic a t
   for t in ts do
     match t with
+    -- XPath 4.0 §3.4.2, the implicit casting table
     | .b .double => if a.isNumeric then return ← castAtomic a t
-    | .b .float => if a.is .decimal || a.is .float then return ← castAtomic a t
+    | .b .float => if a.isNumeric then return ← castAtomic a t
+    | .b .decimal => if a.is .float || a.is .double then return ← castAtomic a t
     | .b .string => if a.is .anyURI then return Atomic.ofStr a.str
+    | .b .anyURI => if a.is .string then return ← castAtomic a t
+    | .b .hexBinary => if a.is .base64Binary then return ← castAtomic a t
+    | .b .base64Binary => if a.is .hexBinary then return ← castAtomic a t
     | .b b =>
         if derivedFrom b .integer && a.is .integer then
           match a.v with
           | .int i => if inIntBounds b i then return ⟨t, .int i⟩
           | _ => pure ()
-        else if derivedFrom b .decimal && a.is .decimal then
-          -- relabel only integer subtypes of decimals that are integers
-          pure ()
+        else if b.primitive.isSome && !(derivedFrom b .decimal) &&
+            (match a.ty with | .b ab => ab.primitive == b.primitive | .untyped => false) then
+          -- relabeling: the datum of `a` is in the value space of the
+          -- derived type (the cast keeps the lexical form)
+          match castAtomic a t with
+          | .ok r => if r.str == a.str then return r
+          | .error _ => pure ()
         else pure ()
     | _ => pure ()
   err "XPTY0004" ("cannot convert xs:" ++ a.ty.name ++ " value '" ++ a.str ++ "' to the required type")
