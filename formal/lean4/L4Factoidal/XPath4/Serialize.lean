@@ -362,7 +362,9 @@ def declParams (scope : List (String × String)) (decls : List (String × String
         pure (PVal.qs (← toks.mapM lexQN))
       | .method =>
         let x := trimWs v
-        if x.contains ':' then pure (PVal.s (← lexQN x).eqn)
+        -- Q{}local is a name in no namespace: a method of this specification
+        let x := if x.startsWith "Q{}" then (x.drop 3).toString else x
+        if x.contains ':' || x.startsWith "Q{" then pure (PVal.s (← lexQN x).eqn)
         else if serMethods.contains x then pure (PVal.s x)
         else sepm ("unknown method " ++ x)
       | .charmap => err "XQST0109" "use-character-maps is not an output declaration"
@@ -595,6 +597,21 @@ def effectiveScope (sc : List (String × String)) : List (String × String) :=
 def cdataSection (s : String) : String :=
   "<![CDATA[" ++ s.replace "]]>" "]]]]><![CDATA[>" ++ "]]>"
 
+/-- A CDATA section in an encoding: a character that the encoding cannot
+    represent ends the section and is written as a character reference
+    (Serialization 4.0 §5.1.4, `cdata-section-elements`). -/
+def SerParams.cdataIn (p : SerParams) (s : String) : String := Id.run do
+  let mut out := ""
+  let mut cur := ""
+  for c in s.toList do
+    if p.encodable c then cur := cur.push c
+    else
+      if cur != "" then out := out ++ cdataSection cur
+      cur := ""
+      out := out ++ charRef c
+  if cur != "" || out == "" then out := out ++ cdataSection cur
+  out
+
 def XCtx.nl (x : XCtx) (depth : Nat) : String :=
   "\n" ++ String.join (List.replicate depth x.p.indentUnit)
 
@@ -716,7 +733,7 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
       let raw := (match parent with
         | some q => x.m == "html" && x.isHtmlElem q && ["script", "style"].contains (lower q.loc)
         | none => false) || e.inRawHtml x n
-      if inCdata && !x.p.canonical then emit (cdataSection r.value)
+      if inCdata && !x.p.canonical then emit (x.p.cdataIn r.value)
       else if raw then emit (x.p.rawText r.value)
       else emit (x.p.escText r.value)
     | .comment => emit ("<!--" ++ r.value ++ "-->")
