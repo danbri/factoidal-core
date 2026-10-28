@@ -751,13 +751,22 @@ def compilePkg (lib : List PkgEntry) (texts : List (String × String)) :
       mergeUsed d n out
     let act : CM PkgOut := do
       modify (fun s => { s with types := texts.flatMap (fun (u, t) => typeDecls u t), pkgCounter := counter })
+      -- the in-scope schema (§3.15), before any declaration is compiled
+      let xsd ← liftM (stylesheetSchema texts (texts.flatMap (fun (u, t) => schemaImportsOf u t)))
+      modify (fun s => { s with xsd })
       let m ← openModule uri
       modify (fun s => { s with stack := [uri] })
       processModule onUse 50 m
       let comps ← finishPackage uri top
       let s ← get
       let params := (s.sheet.globals.drop s.ownStart.2.2.1).filter (·.isParam) |>.map (fun g => (g.name, g.isStatic))
-      pure { sheet := { s.sheet with statics := s.statics, baseUri := uri }, comps, counter := s.pkgCounter, params }
+      let xsd := s.xsd
+      let sheet : Sheet := { s.sheet with statics := s.statics, baseUri := uri }
+      let sheet : Sheet := { sheet with schema := XSD11.schemaHookOf xsd }
+      let sheet : Sheet := { sheet with validateNode := (fun how d i => validateTree xsd how d i) }
+      let sheet : Sheet := { sheet with validateAttr := (fun how q v sc => validateAttrValue xsd how q v sc) }
+      let sheet : Sheet := { sheet with typeKnown := (fun q => schemaHasType xsd q) }
+      pure { sheet, comps, counter := s.pkgCounter, params }
     let (r, _) ← act.run { texts, staticParams := statics }
     pure r
 

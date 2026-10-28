@@ -103,7 +103,7 @@ def specOk (v : String) : Bool :=
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
   ["higher_order_functions", "serialization", "backwards_compatibility", "dynamic_evaluation", "disabling_output_escaping",
-   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types", "dtd", "XML_1.1", "namespace_axis"].contains f
+   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types", "dtd", "XML_1.1", "namespace_axis", "schema_aware"].contains f
 
 def depOk (d : Node) : Bool :=
   let ty := localTag d
@@ -142,6 +142,10 @@ structure EnvSpec where
   params : List (String × String × Bool) := []   -- name, select, static
   unsupported : Option String := none
   serialize : Bool := false
+  /-- `<schema>`: the schema document files (§3.15; any role). -/
+  schemas : List String := []
+  /-- The `validation` of each source, in the order of `sources`. -/
+  srcModes : List String := []
 deriving Inhabited
 
 def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
@@ -149,8 +153,7 @@ def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
   for c in kids e do
     match localTag c with
     | "source" =>
-        if attrD c "validation" == "strict" || attrD c "validation" == "lax" then
-          s := { s with unsupported := some "schema-validated source" }
+        s := { s with srcModes := s.srcModes ++ [attrD c "validation"] }
         let content := match (kidsNamed c "content").head? with
           | some k => some k.textContent
           | none => none
@@ -162,7 +165,10 @@ def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
     | "param" =>
         let st := ["yes", "true", "1"].contains (attrD c "static")
         s := { s with params := s.params ++ [(attrD c "name", attrD c "select" "()", st)] }
-    | "schema" => s := { s with unsupported := some "schema" }
+    | "schema" =>
+        match attr c "file" with
+        | some f => s := { s with schemas := s.schemas ++ [normPath (dir ++ "/" ++ f)] }
+        | none => pure ()
     | "collection" => s := { s with unsupported := some "collection" }
     | "package" =>
         s := { s with packages := s.packages ++ [(normPath (dir ++ "/" ++ attrD c "file"), attrD c "role",
@@ -678,6 +684,27 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
     if r == "principal" then none else some { name := u, version := v, uri := fileUri f })
   for e in lib do
     mods := mods ++ (← loadModules e.uri).filter (fun (x, _) => !mods.any (·.1 == x))
+  -- the schema documents (§3.15): those of the environment and those that
+  -- xsl:import-schema names, with the documents they include or import
+  let mut xsdRoots : List String := spec.schemas ++ tspec.schemas
+  for (u, t) in mods do
+    for im in schemaImportsOf u t do
+      if let some l := im.loc then xsdRoots := xsdRoots ++ [L4Factoidal.XSD11.pathNormalize (uriPath l)]
+  let mut xsdSeen : List String := []
+  for _ in [0:300] do
+    match xsdRoots with
+    | [] => break
+    | l :: rest =>
+      xsdRoots := rest
+      if xsdSeen.contains l then continue
+      xsdSeen := l :: xsdSeen
+      match ← readFileSafe l with
+      | none => pure ()
+      | some txt =>
+        if !mods.any (·.1 == fileUri l) then mods := mods ++ [(fileUri l, txt)]
+        match parseXML txt with
+        | .ok xd => xsdRoots := xsdRoots ++ L4Factoidal.XSD11.refsOf l xd
+        | .error _ => pure ()
   -- static parameters
   let mut statics : List (QN × Seq) := []
   for (nm, sel, st) in tspec.params ++ spec.params do
@@ -712,13 +739,23 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
       -- the dynamic context: source documents and resources
       let mut env : Env := { baseUri := pUri }
       let mut globalCtx : Option Item := none
-      for (role, file, uri, content) in spec.sources ++ tspec.sources do
+      let modes := spec.srcModes ++ tspec.srcModes
+      let envSchemas := spec.schemas ++ tspec.schemas
+      for ((role, file, uri, content), k) in (spec.sources ++ tspec.sources).zipIdx do
         let txt ← match content with
           | some c => pure (some c)
           | none => readFileSafe file
         let some txt := txt | return .fail ("cannot read source " ++ file)
         let duri := if file != "" then fileUri file else if uri != "" then resolveUri pUri uri else ""
         let some d := loadDoc txt duri | return .fail ("source not well-formed: " ++ file)
+        -- a source validated against the schema of the environment (§18.1)
+        let mode := modes.getD k ""
+        let d ← if mode != "strict" && mode != "lax" then pure d else do
+          let s ← L4Factoidal.XSD11.loadSchemaCached envSchemas
+          if !s.errors.isEmpty then return .fail ("schema of the environment not valid: " ++ toString (s.errors.take 2))
+          match L4Factoidal.XSD11.validateNodeIn s mode d 0 duri with
+          | .ok vd => pure { vd with baseUri := d.baseUri }
+          | .error e => return .fail ("source not valid: " ++ e.msg)
         -- inline content has the base URI of the test set (the driver's
         -- reading), and no document URI
         let d := if duri == "" then { d with baseUri := fileUri dir ++ "/" } else d

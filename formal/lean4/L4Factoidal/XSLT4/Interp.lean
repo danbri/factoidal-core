@@ -102,6 +102,9 @@ structure Ctx where
   /-- Temporary output state (§25.2): in a variable, parameter or
       function body, `xsl:result-document` is an error. -/
   tempOut : Bool := false
+  /-- `xsl:copy-of validation="preserve"` (§25.1.1): its copies keep
+      their type annotations; otherwise they are untyped. -/
+  keepCopies : Bool := false
 deriving Inhabited
 
 def Ctx.focus (cx : Ctx) (i : Item) (p sz : Nat) : Ctx := { cx with env := cx.env.focus i p sz }
@@ -168,6 +171,54 @@ def materializeAll (env : Env) (os : List Out) : XM Seq := do
       let id ← freshId
       out := out.push (← liftX (materialize env id o))
   pure out.toList
+
+/-- The validation of one item of the result of a constructing
+    instruction (§25.1, §25.2): `how` is `preserve`, `strict`, `lax` or
+    `type Q{uri}local`. A node that is built becomes a new tree first. -/
+def validateOut (S : Sheet) (env : Env) (how : String) (o : Out) : XM Out := do
+  let anyTypeQN : QN := { uri := nsXS, loc := "anyType" }
+  match o with
+  | .attr q v =>
+    if how == "preserve" then return o
+    match ← liftX (S.validateAttr how q v env.ns) with
+    | none => pure o
+    | some (t, tv) =>
+      let id ← freshId
+      let (q', _) := fixAttrName q []
+      let r : NRec := { kind := .attribute, name := q', value := v, tann := some t, tval := tv }
+      pure (.item (.node { doc := id, idx := 0, rt := some { nodes := #[r] } }))
+  | .elem .. | .doc .. | .item (.node _) =>
+    let id ← freshId
+    let it ← match o with
+      | .item i => pure i
+      | _ => liftX (materializeK (how == "preserve") env id o)
+    let .node nd := it | pure o
+    let d := env.doc nd
+    let r := d.get nd.idx
+    if how == "preserve" then
+      -- a new element is an xs:anyType (§25.1.1); copies keep theirs
+      match o with
+      | .elem .. =>
+        let d' := { d with nodes := d.nodes.modify nd.idx (fun x => { x with tann := some anyTypeQN }) }
+        return .item (.node { nd with rt := some d' })
+      | _ => return .item it
+    -- validation against xs:untyped is validation="strip" (§25.1.2)
+    if how == "type Q{" ++ nsXS ++ "}untyped" then return o
+    match r.kind with
+    | .element =>
+      let d' ← liftX (S.validateNode how d nd.idx)
+      let id2 ← freshId
+      pure (.item (← liftX (copyAsTree env id2 { doc := id2, idx := 1, rt := some d' } true true)))
+    | .document =>
+      -- §25.2: exactly one element child and no text node (XTTE1550)
+      let kids := r.children.toList.map (fun j => (d.get j).kind)
+      if (kids.filter (· == .element)).length != 1 || kids.any (· == .text) then
+        xerr "XTTE1550" "a validated document node must have one element child and no text node"
+      let d' ← liftX (S.validateNode how d nd.idx)
+      let id2 ← freshId
+      pure (.item (.node { doc := id2, idx := 0, rt := some { d' with uri := d.uri } }))
+    | _ => pure o
+  | _ => pure o
 
 /-- A sequence with each JNode replaced by its jvalue, recursively. -/
 def dejnode : Nat → Seq → Seq
@@ -1054,7 +1105,9 @@ def bindValue : Nat → Sheet → Ctx → Option Expr → List Instr → Option 
               -- disqualifying element
               if hasDisqualifying 64 body then materializeAll cx.env os else
               let id ← freshId
-              pure [← liftX (materialize cx.env id (.doc os ""))]
+              -- the implicit document node keeps the annotations of the
+              -- nodes in it (validation="preserve", §25.2)
+              pure [← liftX (materializeK true cx.env id (.doc os ""))]
           | some _ => materializeAll cx.env os
     match ty with
     | some t => liftX (typeErrAs code (cx.env.coerce t v what))
@@ -1377,7 +1430,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             let isElem := (env.nrec nd).kind == .element
             if (isElem && (!copyNs || (env.xmlBaseOf nd).isSome)) || cx.tempOut then
               let id ← freshId
-              let cp ← liftX (copyAsTree env id nd copyNs)
+              let cp ← liftX (copyAsTree env id nd copyNs cx.keepCopies)
               out := out.push (.item (if copyAcc then withOrigin env nd cp else cp))
             else out := out.push (.item it)
           | _ => out := out.push (.item it)
@@ -1849,6 +1902,16 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           let os ← run n S cx body
           pure ([Out.pi piDisableEscaping ""] ++ os ++ [Out.pi piEnableEscaping ""])
     | .withBase u body => run n S { cx with env := { cx.env with baseUri := u } } body
+    | .valid how body =>
+        -- §25: the copies of xsl:copy-of keep their annotations under
+        -- preserve; every item the instruction gives is then validated
+        let cx' := match body with
+          | [.copyOf ..] => { cx with keepCopies := how == "preserve" }
+          | _ => { cx with keepCopies := false }
+        let os ← run n S cx' body
+        let mut out : Array Out := #[]
+        for o in os do out := out.push (← validateOut S env how o)
+        pure out.toList
     | .extCall q ats fbs =>
         let cands := S.templates.toList.filter (fun t => t.name == some q)
         match cands.foldl (fun (b : Option Tmpl) t => match b with

@@ -18,11 +18,13 @@ package; `XSLT4.Package` compiles the used packages and merges their
 components. `compileUsePackage` compiles the `xsl:override` and
 `xsl:with-param` children of an `xsl:use-package` declaration.
 
-Not implemented: schema import. It raises a static error that names the
-construct.
+Schema awareness (§3.15, §25): the schema documents of `xsl:import-schema`
+are texts the caller supplies with the module texts (by file URI);
+`XSLT4.Schema` builds the in-scope schema from them.
 -/
 import L4Factoidal.XSLT4.StdFns
 import L4Factoidal.XSLT4.Rename
+import L4Factoidal.XSLT4.Schema
 
 namespace L4Factoidal.XSLT4
 
@@ -132,6 +134,9 @@ structure CSt where
   acq : List Comp := []
   /-- The modes declared (`xsl:mode`) in this package: key, visibility. -/
   declModes : List (String × String) := []
+  /-- The in-scope schema (§3.15): built-in types, and the components
+      of the `xsl:import-schema` declarations of all modules. -/
+  xsd : XSD11.Schema := XSD11.Schema.builtins
 deriving Inhabited
 
 abbrev CM := StateT CSt M
@@ -312,6 +317,9 @@ def SCx.enter (c : SCx) (m : Mod) (i : Nat) (as : Attrs) : CM SCx := do
   -- base URI of the expressions inside it
   if let some v := (as.find? (fun (q, _) => q.uri == nsXML && q.loc == "base")).map (·.2) then
     c := { c with baseUri := resolveRef c.baseUri v.trimAscii.toString }
+  if let some v := g "default-validation" then
+    let v := v.trimAscii.toString
+    if v == "strip" || v == "preserve" then c := { c with defaultValidation := v }
   match (as.find? (fun (q, _) => q.uri == nsXML && q.loc == "space")).map (·.2) with
   | some "preserve" => c := { c with preserveWs := true }
   | some "default" => c := { c with preserveWs := false }
@@ -504,11 +512,7 @@ def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
   for (q, v) in as do
     if q.uri == nsXSL && !(l == "record" && (standardAttrs ++ ["duplicates"]).contains q.loc) then
       cerr "XTSE0090" ("an XSLT element cannot have the attribute xsl:" ++ q.loc)
-    -- a processor that is not schema-aware (§3.14)
-    if q.uri == "" && q.loc == "type" && l != "output" then
-      cerr "XTSE1660" "the type attribute needs a schema-aware processor"
-    if q.uri == "" && (q.loc == "validation" || q.loc == "default-validation") && v.trimAscii.toString == "strict" then
-      cerr "XTSE1660" "validation=\"strict\" needs a schema-aware processor"
+    let _ := v
   if c.forwardsCompat then return
   match allowedAttrs.lookup l with
   | none => pure ()
@@ -528,6 +532,36 @@ def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
         -- that is not an attribute value template
         if (l == "output" || (l == "result-document" && !v.contains '{')) && !serAttrOk q.loc v then
           cerr "XTSE0020" ("invalid value '" ++ v ++ "' for attribute " ++ q.loc ++ " of xsl:" ++ l)
+
+/-- The validation of a constructing instruction (§25): its `type` (as
+    `type Q{uri}local`; an unprefixed name is in the default namespace
+    for types) or `validation` attribute, else the `default-validation`
+    in force. `xsl` reads the attributes of a literal result element
+    (`xsl:type`, `xsl:validation`). XTSE1505: both; XTSE1520: not a type
+    of the in-scope schema; XTSE1530: a complex type for an attribute. -/
+def validationOf (c : SCx) (as : Attrs) (xsl : Bool) (inst : String) (dflt : String) : CM String := do
+  let g := fun (l : String) => if xsl then as.xsl l else as.get l
+  match g "type", g "validation" with
+  | some _, some _ => cerr "XTSE1505" ("both type and validation on " ++ inst)
+  | some t, none =>
+    let t := t.trimAscii.toString
+    let q ← if !t.startsWith "Q{" && !t.contains ':' then
+        if t == "" then cerr "XTSE1520" "an empty type name" else
+        pure ({ uri := c.xpathNs, loc := t } : QN)
+      else liftM (c.qname t false "XTSE1520")
+    let s := (← get).xsd
+    let untyped := q.uri == nsXS && (q.loc == "untyped" || q.loc == "untypedAtomic")
+    if !untyped && !schemaHasType s q then
+      cerr "XTSE1520" ("the type " ++ q.show ++ " is not a type of the in-scope schema")
+    if inst == "attribute" && (schemaComplexType s q || (q.uri == nsXS && q.loc == "untyped")) then
+      cerr "XTSE1530" ("xsl:attribute with the complex type " ++ q.show)
+    pure ("type Q{" ++ q.uri ++ "}" ++ q.loc)
+  | none, some v => pure v.trimAscii.toString
+  | none, none => pure dflt
+
+/-- Wrap a constructing instruction in its validation (`Instr.valid`). -/
+def withValidation (how : String) (i : Instr) : Instr :=
+  if how == "strip" then i else .valid how [i]
 
 /-- The namespace bindings a literal result element copies (§11.1.3):
     all in scope except the XSLT namespace, excluded and extension
@@ -692,7 +726,12 @@ def compileElem : Nat → SCx → Mod → Nat → CM (List Instr)
       if c.baseUri != c0.baseUri then [.withBase c.baseUri is] else is
     let q := m.name i
     if q.uri == nsXSL then
-      return wrap [← compileXsl f c m i as]
+      let ins ← compileXsl f c m i as
+      -- §25: the validation of the node an instruction constructs
+      if ["element", "attribute", "copy", "copy-of", "document"].contains q.loc then
+        let how ← validationOf c as false q.loc c0.defaultValidation
+        return wrap [withValidation how ins]
+      return wrap [ins]
     if c.ext.contains q.uri then
       -- an extension instruction: this processor has none (§24.2)
       let fbs ← (m.elemKids i).filterM (fun k => pure (m.isXsl k "fallback"))
@@ -701,8 +740,7 @@ def compileElem : Nat → SCx → Mod → Nat → CM (List Instr)
       let ats := ats.map (fun (aq, v) => (aq, (c.avt v).toOption, (c.parse v).toOption))
       return wrap [.extCall q ats bodies]
     -- a literal result element (§11.1)
-    if (as.xsl "type").isSome || (as.xsl "validation") == some "strict" then
-      cerr "XTSE1660" "xsl:type and xsl:validation=\"strict\" need a schema-aware processor"
+    let how ← validationOf c as true "a literal result element" c0.defaultValidation
     let mut ats : List (QN × Avt) := []
     for (aq, v) in m.rawAttrs i do
       if aq.uri == nsXSL then
@@ -717,7 +755,7 @@ def compileElem : Nat → SCx → Mod → Nat → CM (List Instr)
       | some v => (tokens v).mapM (fun t => liftM (c.qname t (syn := "XTSE0710")))
       | none => pure []
     let body ← compileNodes f c m (m.kids i)
-    pure (wrap [.lre q (lreDecls c) ats useSets body])
+    pure (wrap [withValidation how (.lre q (lreDecls c) ats useSets body)])
 
 def compileSorts : Nat → SCx → Mod → List Nat → CM (List SortK)
   | 0, _, _, _ => pure []
@@ -1706,7 +1744,8 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       upd (fun sh => { sh with globalCtxUse := use, globalCtxAs := t })
   | "import" => pure ()
   | "include" => pure ()
-  | "import-schema" => cerr "XTSE1650" "xsl:import-schema: this processor is not schema-aware"
+  -- the schema is built before the declarations (`schemaImportsOf`)
+  | "import-schema" => pure ()
   | "use-package" => pure ()  -- `compileUsePackage`
   | "item-type" => pure ()
   | "record-type" =>
@@ -1984,10 +2023,30 @@ def processModule (onUse : Decl → CM Unit) : Nat → Mod → CM Unit
     if m.uri == (← get).stack.getLast?.getD m.uri then
       modify (fun s => { s with sheet := { s.sheet with
         version := (ras.get "version").getD "4.0", defaultMode := c.defaultMode, ns := c.ns,
+        finalValidation := c.defaultValidation,
+        inputTypeAnn := (ras.get "input-type-annotations").getD "unspecified",
         defaultCollation := c.defaultCollation } })
     for d in decls do
       if d.m.isXsl d.i "use-package" then compileUsePackage prec d
       else if !d.m.isXsl d.i "import" then compileDecl prec d
+
+/-- The `xsl:import-schema` declarations of a module text (§3.15). -/
+def schemaImportsOf (uri txt : String) : List SchemaImport :=
+  match Doc.ofString txt uri with
+  | .error _ => []
+  | .ok d =>
+    let m : Mod := { d, uri }
+    match m.rootElem with
+    | none => []
+    | some r =>
+      if !(m.isXsl r "stylesheet" || m.isXsl r "transform" || m.isXsl r "package") then [] else
+      (m.elemKids r).filterMap (fun i =>
+        if !m.isXsl i "import-schema" then none else
+        let as := m.rawAttrs i
+        let inline := (m.elemKids i).find? (fun k =>
+          (m.name k).uri == XSD11.xsNS && (m.name k).loc == "schema")
+        some { ns := Attrs.get as "namespace", loc := (Attrs.get as "schema-location").map (fun h => resolveHref uri h.trimAscii.toString),
+               inline := inline.map (fun k => XSD11.nodeTree d 100000 k), base := uri })
 
 /-- The named item types declared in a module text (`xsl:item-type`,
     `xsl:record-type` children of the root): expanded name, item type. -/

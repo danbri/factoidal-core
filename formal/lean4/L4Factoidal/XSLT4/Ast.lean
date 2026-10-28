@@ -175,6 +175,10 @@ inductive Instr where
       the static base URI of its expressions and of the nodes it
       constructs. -/
   | withBase (uri : String) (body : List Instr)
+  /-- The `[xsl:]validation` or `[xsl:]type` of the instruction in the
+      body (§25): `preserve`, `strict`, `lax` or `type Q{uri}local`
+      (`strip`, the default, needs no wrapper). -/
+  | valid (how : String) (body : List Instr)
 
 /-- An `xsl:sort` (§13.1): select (or body), order, lang, data-type,
     case-order, collation, stable. -/
@@ -351,6 +355,23 @@ structure Sheet where
   initModes : Option (List String) := none
   /-- The principal module is an `xsl:package`. -/
   isPackage : Bool := false
+  /-- Schema awareness (§3.15, §25). The in-scope schema definitions
+      (built-in types only when there is no `xsl:import-schema`). -/
+  schema : SchemaHook := {}
+  /-- Validate node `i` of a tree (`strict`, `lax`, `type Q{uri}local`):
+      the typed tree, record 1 the element (`XSLT4.validateTree`). -/
+  validateNode : String → Doc → Nat → M Doc := fun _ _ _ => err "XTSE1650" "no schema"
+  /-- Validate an attribute value (`XSLT4.validateAttrValue`). -/
+  validateAttr : String → QN → String → List (String × String) → M (Option (QN × Option (List Atomic))) :=
+    fun _ _ _ _ => pure none
+  /-- Is a name the name of a type of the in-scope schema (`fn:type-available`)? -/
+  typeKnown : QN → Bool := fun _ => false
+  /-- `input-type-annotations` of the stylesheet modules (§3.15):
+      `strip` removes the type annotations of the source documents. -/
+  inputTypeAnn : String := "unspecified"
+  /-- The `default-validation` of the principal module: the validation of
+      the final result tree (§25). -/
+  finalValidation : String := "strip"
 deriving Inhabited
 
 def SortK.body : SortK → List Instr | .mk _ b .. => b
@@ -365,6 +386,7 @@ def Instr.bodies : Instr → List (List Instr)
   | .arrayI _ _ b | .arrayMember _ b | .wherePopulated b | .onEmpty _ b | .onNonEmpty _ b
   | .sourceDoc _ b | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b | .withCompat _ b | .doe b
   | .withBase _ b => [b]
+  | .valid _ b => [b]
   | .applyT _ _ ss ps _ => ss.map SortK.body ++ ps.map WParam.body
   | .callT _ ps | .applyImports ps | .nextMatch ps | .nextIteration ps => ps.map WParam.body
   | .forEach _ ss b _ | .forEachGroup _ _ _ _ _ _ ss b | .performSort _ ss b => b :: ss.map SortK.body

@@ -41,6 +41,8 @@ structure SCx where
   /-- Inside the body of an `xsl:iterate` (where `xsl:break` and
       `xsl:next-iteration` may appear). -/
   inIter : Bool := false
+  /-- `[xsl:]default-validation` (§25): `strip` or `preserve`. -/
+  defaultValidation : String := "strip"
 deriving Inhabited
 
 /-- The value of a `version` attribute, in thousandths (a decimal,
