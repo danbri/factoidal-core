@@ -332,11 +332,16 @@ def textResourceWith (e : Env) (href : String) (cand : Option String) (fallback 
 def textResource (e : Env) (href : String) : M String := textResourceWith e href none false
 
 /-- The options of `fn:unparsed-text` and its relatives: a string (the
-    encoding) or a map (`encoding`, `normalize-newlines`, `fallback`). -/
-def unparsedOpts (e : Env) (o : Seq) : M (Option String × Bool × Bool) := do
+    encoding) or a map (`encoding`, `normalize-newlines`, `fallback`;
+    `fn:unparsed-text-lines` has no `normalize-newlines`). Another key is
+    XPTY0004 (the option parameter conventions, F&O 4.0 §1.7.4). -/
+def unparsedOpts (e : Env) (o : Seq)
+    (keys : List String := ["encoding", "normalize-newlines", "fallback"]) :
+    M (Option String × Bool × Bool) := do
   match o with
   | [] => pure (none, false, false)
   | [.map _] =>
+    checkOptionKeys o keys
     let enc ← match optLookup o "encoding" with
       | none | some [] => pure none
       | some v => match ← e.coerce (parseTy "xs:string") v "encoding" with
@@ -348,8 +353,9 @@ def unparsedOpts (e : Env) (o : Seq) : M (Option String × Bool × Bool) := do
   | [.atom x] => pure (some x.str, false, false)
   | _ => err "XPTY0004" "the options must be a string or a map"
 
-def readUnparsed (e : Env) (href : String) (o : Seq) : M String := do
-  let (enc, nl, fb) ← unparsedOpts e o
+def readUnparsed (e : Env) (href : String) (o : Seq)
+    (keys : List String := ["encoding", "normalize-newlines", "fallback"]) : M String := do
+  let (enc, nl, fb) ← unparsedOpts e o keys
   let t ← textResourceWith e href enc fb
   pure (if nl then (t.replace "\r\n" "\n").replace "\r" "\n" else t)
 
@@ -394,7 +400,7 @@ def xmlParseTable : List (String × LibFn) := [
   ent "unparsed-text-lines" (fun _ e a => do
     match optAtom (argN a 0) with
     | none => pure []
-    | some h => pure ((textLines (← readUnparsed e h.str (argN a 1))).map (fun l => .atom (Atomic.ofStr l)))),
+    | some h => pure ((textLines (← readUnparsed e h.str (argN a 1) ["encoding", "fallback"])).map (fun l => .atom (Atomic.ofStr l)))),
   ent "unparsed-text-available" (fun _ e a => do
     match optAtom (argN a 0) with
     | none => pure (sBool false)

@@ -525,12 +525,23 @@ def Env.nodeName (e : Env) (n : NodeRef) : Option QN :=
   | .namespace => if r.name.loc == "" then none else some { uri := "", loc := r.name.loc }
   | _ => none
 
-def distinctAtomsSlow (as : List Atomic) : List Atomic :=
+/-- Equality for `fn:distinct-values`: `atomicEqual`, except that a date
+    or time with no timezone has the implicit timezone `tz` (minutes), when
+    one is given (F&O 4.0 §14.1.2). -/
+def atomicEqualTz (tz : Option Int) (a b : Atomic) : Bool :=
+  match tz, a.v, b.v with
+  | some z, .x (.dt _ _), .x (.dt _ _) =>
+    match atomicCmp a b z with
+    | .ok (some .eq) => true
+    | _ => false
+  | _, _, _ => atomicEqual a b
+
+def distinctAtomsSlow (as : List Atomic) (tz : Option Int := none) : List Atomic :=
   as.foldl (fun acc a =>
     let a' := if a.ty == .untyped then Atomic.ofStr a.str else a
-    if acc.any (fun b => atomicEqual (if b.ty == .untyped then Atomic.ofStr b.str else b) a') then acc else acc ++ [a]) []
+    if acc.any (fun b => atomicEqualTz tz (if b.ty == .untyped then Atomic.ofStr b.str else b) a') then acc else acc ++ [a]) []
 
-def distinctAtoms (as : List Atomic) : List Atomic :=
+def distinctAtoms (as : List Atomic) (tz : Option Int := none) : List Atomic :=
   if as.all (fun a => (sameKey a).isSome) then Id.run do
     let mut seen : Std.HashSet String := {}
     let mut out : Array Atomic := #[]
@@ -540,11 +551,11 @@ def distinctAtoms (as : List Atomic) : List Atomic :=
         seen := seen.insert k
         out := out.push a
     pure out.toList
-  else distinctAtomsSlow as
+  else distinctAtomsSlow as tz
 
 /-- `fn:distinct-values` under a collation: the first item of each class
     of values equal under `c`. -/
-def distinctAtomsC (c : Coll) (as : List Atomic) : List Atomic :=
+def distinctAtomsC (c : Coll) (as : List Atomic) (tz : Option Int := none) : List Atomic :=
   let ps := as.map (collProxy c)
   if ps.all (fun a => (sameKey a).isSome) then Id.run do
     let mut seen : Std.HashSet String := {}
@@ -558,7 +569,7 @@ def distinctAtomsC (c : Coll) (as : List Atomic) : List Atomic :=
   else
     let norm (b : Atomic) : Atomic := if b.ty == .untyped then Atomic.ofStr b.str else b
     ((as.zip ps).foldl (fun acc (a, p) =>
-      if acc.any (fun (_, q) => atomicEqual (norm q) (norm p)) then acc else acc ++ [(a, p)]) []).map (·.1)
+      if acc.any (fun (_, q) => atomicEqualTz tz (norm q) (norm p)) then acc else acc ++ [(a, p)]) []).map (·.1)
 
 /-- The values that occur more than once, first occurrence order of the
     second occurrence. -/
@@ -804,8 +815,8 @@ def fnTable : List (String × LibFn) := [
   ent "distinct-values" (fun _ e a => do
     let c ← e.collation (argN a 1)
     let as := (argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)
-    if c.isCodepoint then pure (seqOfAtoms (distinctAtoms as))
-    else pure (seqOfAtoms (distinctAtomsC c as))),
+    if c.isCodepoint then pure (seqOfAtoms (distinctAtoms as (some e.tz)))
+    else pure (seqOfAtoms (distinctAtomsC c as (some e.tz)))),
   ent "duplicate-values" (fun _ e a => do
     let c ← e.collation (argN a 1)
     let as := (argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)

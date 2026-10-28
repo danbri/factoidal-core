@@ -306,4 +306,20 @@ def deepEqualFn : LibFn := fun h e a => do
 
 def deepEqualTable : List (String × LibFn) := [("deep-equal", deepEqualFn)]
 
+/-- `array:index-of` (F&O 4.0 §18.2): a member is compared with the
+    target by the rules of `fn:deep-equal` with the collation. -/
+def arrayIndexOfFn : LibFn := fun h e a => do
+  let ms ← asArr (argN a 0)
+  let o ← parseDEOpts e (argN a 2)
+  let t := argN a 1
+  let mut out : Array Item := #[]
+  let mut i := 1
+  for m in ms do
+    if ← e.deSeq h o 100000 m t true then out := out.push (.atom (Atomic.ofInt i))
+    i := i + 1
+  pure out.toList
+
+/-- The functions in the array namespace that this module gives. -/
+def deepEqualArrayTable : List (String × LibFn) := [("index-of", arrayIndexOfFn)]
+
 end L4Factoidal.XPath4

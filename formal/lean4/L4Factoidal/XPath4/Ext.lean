@@ -33,6 +33,10 @@ def libLookupAll (q : QN) : Option LibFn :=
     match extTable.lookup q.loc with
     | some f => some f
     | none => libLookup q
+  else if q.uri == nsARR then
+    match deepEqualArrayTable.lookup q.loc with
+    | some f => some f
+    | none => libLookup q
   else match L4Factoidal.EXPath.expathLookup q with  -- EXPath hook
     | some f => some f
     | none => libLookup q

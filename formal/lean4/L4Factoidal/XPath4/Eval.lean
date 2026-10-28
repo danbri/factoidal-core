@@ -814,18 +814,18 @@ def eval : Nat → Env → Expr → M Seq
       eval n { env with ctx := some s, pos := 1, size := 1 } b
   | .mapArrow a f args => do
       let s ← eval n env a
+      -- the target may be a sequence of functions (XPath 4.0 §4.20.2,
+      -- PR 1975): each item is given to each function in turn
       let fs ← eval n env f
-      match fs with
-      | [fi] =>
-        let rest ← evalArgs n env args
-        let mut out : Array Item := #[]
-        for i in s do
+      let rest ← evalArgs n env args
+      let mut out : Array Item := #[]
+      for i in s do
+        for fi in fs do
           -- a placeholder makes a partial application for each item
           if rest.any Option.isNone then out := out.push (.fn (.papp fi (some [i] :: rest)))
           else
           for r in ← apply n env fi ([i] :: rest.map (·.getD [])) do out := out.push r
-        pure out.toList
-      | _ => err "XPTY0004" "=!> target must be a single function"
+      pure out.toList
   | .tmpl parts => do
       let mut out := ""
       for p in parts do
