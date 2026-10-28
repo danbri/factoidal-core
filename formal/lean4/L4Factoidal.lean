@@ -982,6 +982,7 @@ import L4Factoidal.WebDAV.If
 import L4Factoidal.WebDAV.Backend
 import L4Factoidal.WebDAV.Server
 import L4Factoidal.WebDAV.State
+import L4Factoidal.WebDAV.Login
 import L4Factoidal.WebDAV.Local
 import L4Factoidal.WebDAV.Remote
 import L4Factoidal.WebDAV.Tests
@@ -1019,6 +1020,7 @@ import L4Factoidal.XMPP.Server
 import L4Factoidal.XMPP.Gc3
 import L4Factoidal.XMPP.HttpOverXmpp
 import L4Factoidal.XMPP.HttpOverXmppTests
+import L4Factoidal.XMPP.ClientStream
 import L4Factoidal.Fn.Theorems
 import L4Factoidal.Planner.Requirement
 import L4Factoidal.Planner.Capability

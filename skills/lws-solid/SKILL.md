@@ -986,7 +986,36 @@ the WebDAV and LWS mapping, statuses, limits, what each client needs).
 
 ```
 factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]   # default 127.0.0.1:8090
+                       [--users FILE] [--cert FILE --key FILE]
+                       [--login-limit N] [--login-window SECONDS]
+                       [--dangerously-disable-ratelimits]
+factoidal webdav-user FILE NAME [--iterations N]              # password on standard input
 ```
+
+Login and HTTPS (https://github.com/danbri/factoidal/issues/1108; expert
+review requested, https://github.com/danbri/factoidal/issues/1117): with
+`--users`, every request needs HTTP Basic against a users file of
+`NAME:pbkdf2-sha256:ITERATIONS:SALT_B64:HASH_B64` lines (PBKDF2-HMAC-SHA256,
+16-byte salt, 600,000 iterations by default, at least 100,000). PBKDF2 runs
+in WebCrypto: the engine answers `{need: {op: 'pbkdf2-hmac-sha256', ...}}`
+and the host gives `answerCipherRequest`'s answer to `webdavResume` (as AES,
+`lib/cipher-host.mjs`). A login is cached for 300 s in the handle. Without
+`--cert`/`--key` the start stops unless the address is loopback. Every
+decision: `L4Factoidal/WebDAV/Login.lean`; design record § "Login and
+HTTPS".
+
+Failed-login limit (https://github.com/danbri/factoidal/issues/1119), on by
+default with `--users` (owner, 2026-10-28: "default to protection but have a
+—dangerously-disable-ratelimits option"): 5 failures per 60 s per user name
+as sent and per client address (IPv6 by /64), fixed window from the first
+failure. Over the limit: 429 with `Retry-After`, before the cache and with
+no derivation (the right password too). A success resets nothing. At most
+10,000 counters; a blocked one is never evicted; a full table answers 429.
+The host passes `remoteAddress` with each request and prints
+`ready.warnings` (the `--dangerously-disable-ratelimits` warning) at start;
+`Login.limitsOf` checks the options. Theorem `gate_no_derive_of_blocked`.
+Any new login surface follows the same rule: limit on by default, off only
+by an option whose name starts with `--dangerously-`, with a start warning.
 
 CONFIGDIR holds one Markdown file per mount (`README.md` is not one):
 
@@ -1031,10 +1060,11 @@ CONFIGDIR holds one Markdown file per mount (`README.md` is not one):
 | `formal/lean4/L4Factoidal/WebDAV/Server.lean` | every method as a program over six storage operations (`Backend.Prog`); theorem `refused_keeps_state` |
 | `formal/lean4/L4Factoidal/WebDAV/Local.lean`, `Remote.lean` | an operation as one LWS request; as one LWS client operation (the one module that uses the client API) |
 | `formal/lean4/L4Factoidal/WebDAV/Xml.lean`, `If.lean`, `Path.lean` | XML bodies (depth limit 256, work-list serializer), the `If` header, targets |
+| `formal/lean4/L4Factoidal/WebDAV/Login.lean` | the users file, HTTP Basic, the PBKDF2 request, `ctEq`, the login cache, the failed-login limit (`Failures`, `limitsOf`), the loopback rule, `webdav-user`'s line edit; theorems `gate_none`, `finish_unknown`, `gate_no_derive_of_blocked` |
 | `formal/lean4/L4Factoidal/WebDAV/State.lean` | `DavState` (dead properties, locks) as the JSON text of `CONFIGDIR/.webdav-state.json`, and back; refuses an unknown format or version |
 | `formal/lean4/L4Factoidal/WebDAV/Tests.lean`, `Theorems.lean` | `#guard`s of every method against `LWS.step MemStore`, directly and through the client; `browse_no_write` |
-| `formal/lean4/Wasm/Ops/WebDAV.lean` | `webdavOpen`, `webdavLoad`, `webdavStep`, `webdavResume`, `webdavClose` |
-| `npm/factoidal/webdav/server.mjs` | the host: sockets, the files the engine names, `lws` requests to the storage handle, `fetch`es |
+| `formal/lean4/Wasm/Ops/WebDAV.lean` | `webdavOpen`, `webdavLoad`, `webdavStep`, `webdavResume`, `webdavClose`, `webdavUser` |
+| `npm/factoidal/webdav/server.mjs` | the host: sockets (`http`, or `https` with `--cert`/`--key`), the files the engine names, `lws` requests to the storage handle, `fetch`es, the PBKDF2 `need` of a login |
 
 Tests: `node tests/webdav/server.mjs` (every method through a local and a
 remote mount on `lws-serve --authz`; dead properties and locks survive a
@@ -1043,7 +1073,39 @@ form in `L4Factoidal/WebDAV/State.lean`,
 https://github.com/danbri/factoidal/issues/1078), `node tests/webdav/litmus.mjs` (needs `apt-get install
 litmus`; expected failures in `tests/webdav/litmus-xfail.tsv`; 2026-10-27:
 208 pass, 0 fail, 0 xfail (out of 208)), `node tests/webdav/scaling.mjs`
-(the decoders at n, 2n, 4n through the wasm module).
+(the decoders at n, 2n, 4n through the wasm module). The login: `tests/webdav/server.mjs`
+§ login (`webdav-user`, 401 and 207, 429 with `Retry-After` after
+failures, the window end, `--dangerously-disable-ratelimits` and its warning,
+the cache counted in derivations, the refusals at start) and `node --test tests/hub/hub_webdav_test.mjs` (HTTPS with
+an `openssl req -x509` certificate).
+
+### WebDAV over XMPP (https://github.com/danbri/factoidal/issues/1107)
+
+```
+factoidal webdav-serve CONFIGDIR --xmpp bob@example.org --xmpp-password-file bob.password \
+  --xmpp-allow alice@example.org --xmpp-tls [--xmpp-ca FILE] [--xmpp-host H] [--xmpp-port P] \
+  [--dangerously-allow-writable-without-login]
+```
+
+The allow list is the only access control on this path (local mounts act as
+the owner). Lean refuses the start (`xcStartRefusal`) with an empty list, a
+JID with a resource, plain TCP to a host that is not loopback, or a writable
+local mount without the `--dangerously-` opt-in
+(https://github.com/danbri/factoidal/issues/1125). No login and no per-JID
+login limit yet (https://github.com/danbri/factoidal/issues/1125,
+https://github.com/danbri/factoidal/issues/1128): expected failures in the
+test.
+
+No port opens: the process connects out to an XMPP server, logs in with
+SCRAM-SHA-256, binds `bob@example.org/dav` (printed as `xmpp:JID`) and serves
+HTTP over XMPP (XEP-0332) requests from the allowed bare JIDs through the same
+WebDAV handle as the HTTP listener. Lean: `L4Factoidal/XMPP/ClientStream.lean`
+(the RFC 6120 client), `HttpOverXmpp.lean` (`plan`, `finish`); ops
+`xmppClientOpen`/`Feed`/`Answer`/`Close` (`Wasm/Ops/XmppClient.lean`); host
+`npm/factoidal/xmpp/client.mjs`. Test: `node tests/webdav/xmpp.mjs` (starts
+`xmpp-serve`; the test client is `tests/webdav/xmpp-client.mjs`). No file
+browser reaches it until the local proxy (step 2 of
+`docs/designissues/2026-10-28-http-over-xmpp.md`) exists.
 
 ## Run the tests
 

@@ -530,56 +530,84 @@ structure StepOut where
   /-- `false`: the stanza is not HTTP over XMPP; the host passes it on. -/
   handled : Bool := true
 
-/-- Serve one complete request against `webdav-serve`. -/
-def serve (cfg : Config) (cx : Ctx) (dav : DavState) (st : State) (env : Envelope) (r : Req) (body : ByteArray) :
-    Prog StepOut := do
-  let (d, dav') ← L4Factoidal.WebDAV.handle cx dav (r.toDavWith body)
-  let d := if r.method == "HEAD" then { d with body := ByteArray.empty } else d
-  let sid := "fhx" ++ toString st.serial
-  let (resp, chunks) := respOfDav cfg r d sid
-  let st' := if chunks.isEmpty then st else { st with serial := st.serial + 1 }
-  return { out := renderRespIq env resp :: renderChunkMessages env.to env.from_ chunks, dav := dav', st := st' }
+/-- What one incoming stanza asks for, decided before any storage
+operation. `step` is `plan`, then `WebDAV.handle` for `serve`, then
+`finish`. A host that runs the WebDAV request through its own handle (the
+client stream of `factoidal webdav-serve --xmpp`, `Wasm/Ops/XmppClient.lean`)
+calls `plan` and `finish` and carries the request between them; the
+decisions are the same functions. -/
+inductive Plan where
+  /-- Stanzas to send now (a refusal; none while a chunked body waits),
+  and the new state. -/
+  | answer (out : List String) (st : State)
+  /-- A complete request to serve against `webdav-serve`. -/
+  | serve (st : State) (env : Envelope) (r : Req) (body : ByteArray)
+  /-- Not HTTP over XMPP: the host passes the stanza on. -/
+  | skip
 
-/-- One incoming stanza. A request from a sender not in `cfg.allow` is
-refused with `forbidden` before its `req` is read further. -/
-def step (cfg : Config) (cx : Ctx) (dav : DavState) (st : State) (stanza : String) : Prog StepOut := do
-  let skip : StepOut := { out := [], dav, st, handled := false }
+/-- One incoming stanza, up to the WebDAV request. A request from a sender
+not in `cfg.allow` is refused with `forbidden` before its `req` is read
+further. -/
+def plan (cfg : Config) (st : State) (stanza : String) : Plan :=
   match L4Factoidal.XMPP.Wire.parseElement stanza with
-  | none => return skip
+  | none => .skip
   | some n =>
   match reqElement? n with
   | some (env, rn) =>
-    if !allowed cfg.allow env.from_ then
-      return { out := [renderRefusal env .forbidden], dav, st }
+    if !allowed cfg.allow env.from_ then .answer [renderRefusal env .forbidden] st
+    else
     match parseReq rn with
-    | .error why => return { out := [renderRefusal env why], dav, st }
+    | .error why => .answer [renderRefusal env why] st
     | .ok r =>
       match r.body with
       | .chunked sid =>
         if st.pending.length ≥ cfg.maxPending then
-          return { out := [renderRefusal env (.resourceConstraint "too many requests wait for chunks")], dav, st }
-        else return { out := [], dav, st := { st with pending := st.pending ++ [{ env, req := r, streamId := sid }] } }
-      | b => serve cfg cx dav st env r (b.bytes?.getD ByteArray.empty)
+          .answer [renderRefusal env (.resourceConstraint "too many requests wait for chunks")] st
+        else .answer [] { st with pending := st.pending ++ [{ env, req := r, streamId := sid }] }
+      | b => .serve st env r (b.bytes?.getD ByteArray.empty)
   | none =>
-  if elemName n != some "message" then return skip
+  if elemName n != some "message" then .skip
+  else
   let sender := attr n "from"
   let same (p : Pending) (sid : String) : Bool := p.streamId == sid && p.env.from_ == sender
   match (kid? n "chunk" (some nsHttp)).bind chunkOf?, (kid? n "close" (some nsHttp)).bind (attr · "streamId") with
   | some c, _ =>
     match st.pending.find? (same · c.streamId) with
-    | none => return { out := [], dav, st }
+    | none => .answer [] st
     | some p =>
       let rest := st.pending.filter (fun q => !same q c.streamId)
       let p := { p with chunks := c :: p.chunks.filter (·.nr != c.nr), bytes := p.bytes + c.data.size }
       if p.bytes > cfg.maxBodyBytes then
-        return { out := [renderRefusal p.env (.resourceConstraint "the chunked body is too large")], dav,
-                 st := { st with pending := rest } }
+        .answer [renderRefusal p.env (.resourceConstraint "the chunked body is too large")] { st with pending := rest }
+      else
       match assembleChunks p.chunks with
-      | none => return { out := [], dav, st := { st with pending := rest ++ [p] } }
-      | some body => serve cfg cx dav { st with pending := rest } p.env p.req body
-  | none, some sid =>
-    return { out := [], dav, st := { st with pending := st.pending.filter (fun q => !same q sid) } }
-  | none, none => return skip
+      | none => .answer [] { st with pending := rest ++ [p] }
+      | some body => .serve { st with pending := rest } p.env p.req body
+  | none, some sid => .answer [] { st with pending := st.pending.filter (fun q => !same q sid) }
+  | none, none => .skip
+
+/-- The WebDAV response to a planned request, as the stanzas to send: the
+`resp` iq, then any `chunk` messages. A HEAD response has no body. -/
+def finish (cfg : Config) (st : State) (env : Envelope) (r : Req) (d : DavResponse) : List String × State :=
+  let d := if r.method == "HEAD" then { d with body := ByteArray.empty } else d
+  let sid := "fhx" ++ toString st.serial
+  let (resp, chunks) := respOfDav cfg r d sid
+  let st' := if chunks.isEmpty then st else { st with serial := st.serial + 1 }
+  (renderRespIq env resp :: renderChunkMessages env.to env.from_ chunks, st')
+
+/-- Serve one complete request against `webdav-serve`. -/
+def serve (cfg : Config) (cx : Ctx) (dav : DavState) (st : State) (env : Envelope) (r : Req) (body : ByteArray) :
+    Prog StepOut := do
+  let (d, dav') ← L4Factoidal.WebDAV.handle cx dav (r.toDavWith body)
+  let (out, st') := finish cfg st env r d
+  return { out, dav := dav', st := st' }
+
+/-- One incoming stanza: `plan`, then `WebDAV.handle` and `finish`. -/
+def step (cfg : Config) (cx : Ctx) (dav : DavState) (st : State) (stanza : String) : Prog StepOut :=
+  match plan cfg st stanza with
+  | .answer out st' => pure { out, dav, st := st' }
+  | .serve st' env r body => serve cfg cx dav st' env r body
+  | .skip => pure { out := [], dav, st, handled := false }
 
 /-! ## `#guard`s: the codec -/
 

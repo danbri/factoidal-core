@@ -452,3 +452,25 @@ reached through an XMPP account). Plan and choices:
   for a JID not in the list).
 - Lean only: no wasm op, no network surface. Stage 2 adds the outgoing
   client stream, the local proxy and the op.
+
+### 2026-10-28: the client stream, and WebDAV over XMPP (step 1)
+
+https://github.com/danbri/factoidal/issues/1107, step 1 of the order the
+owner approved on 2026-10-28 ("Ordering: whatever is fastest and safest to
+implement", "Do it"). Record: `docs/designissues/2026-10-28-http-over-xmpp.md`
+§ Step 1.
+
+- `ClientStream.lean` — the CLIENT half of RFC 6120 as one total state
+  machine: stream open, SASL SCRAM-SHA-256 (RFC 5802/7677 client arithmetic
+  over `Crypto/Hmac.lean`; the server signature is checked; the nonce must
+  extend ours; iteration count 4,096 to 1,000,000), the stream restart,
+  resource binding, initial presence, stream errors, and RFC 6120 §8.4
+  `service-unavailable` for an IQ that is not HTTP. No STARTTLS: the host
+  does direct TLS (XEP-0368) or plain TCP. `#guard`s run it against
+  `Server.step`.
+- `HttpOverXmpp.step` = `plan`, `WebDAV.handle`, `finish`, so a host can run
+  the WebDAV request through its own handle.
+- `Wasm/Ops/XmppClient.lean` — ops `xmppClientOpen`, `xmppClientFeed`,
+  `xmppClientAnswer`, `xmppClientClose`; host `npm/factoidal/xmpp/client.mjs`;
+  command `factoidal webdav-serve CONFIGDIR --xmpp JID`. Test
+  `node tests/webdav/xmpp.mjs`.

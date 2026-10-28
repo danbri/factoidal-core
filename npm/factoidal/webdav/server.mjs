@@ -17,11 +17,26 @@
 //   a `fetch` to the URL it names, until it answers a `response`, which
 //   this file writes back; when the response carries `write` (the state
 //   file `.webdav-state.json`: dead properties and locks), replace that file
-//   first (a new file in the same directory, mode 0600, then a rename).
+//   first (a new file in the same directory, mode 0600, then a rename);
+// * with a users file (`--users`, https://github.com/danbri/factoidal/issues/1108),
+//   give its path to `webdavOpen` and the bytes the engine names; when the
+//   engine answers `need` (a login: one PBKDF2-HMAC-SHA256 derivation), run
+//   exactly that WebCrypto call (`answerCipherRequest`, lib/cipher-host.mjs)
+//   and give the answer to `webdavResume`; give each request's client
+//   address (the socket's `remoteAddress`) to `webdavStep`, for the
+//   failed-login limit the engine keeps
+//   (https://github.com/danbri/factoidal/issues/1119); pass the limit
+//   options unread and print the `warnings` of `ready`;
+// * with `--cert` and `--key`, listen with Node `https` (TLS) instead of
+//   `http`.
+//
+// Expert review of the login: https://github.com/danbri/factoidal/issues/1117
 //
 // It makes NO protocol decision. Which files are mounts, what a mount file
 // says, every status code, header field, XML body, lock, property and path
-// mapping is decided in formal/lean4/L4Factoidal/WebDAV/ (iron rule 7 of
+// mapping, every login decision (which users file lines count, whether a
+// password matches, the login cache, whether Basic may run on this address)
+// is decided in formal/lean4/L4Factoidal/WebDAV/ (iron rule 7 of
 // CLAUDE.md). The one status code written here is 500, for a failure of
 // this host itself. Requests are served one at a time (a queue), because
 // the engine keeps one request in flight per handle.
@@ -29,8 +44,8 @@
 // THE WASM CONTRACT (formal/lean4/Wasm/Ops/WebDAV.lean)
 //   webdavOpen   [configJson]                 -> { ok, handle, need }
 //   webdavLoad   [handle, filesJson]          -> { ok, need } | { ok, ready }
-//   webdavStep   [handle, requestJson] + body -> { ok, response [+ write] | lws | fetch } + body
-//   webdavResume [handle, answerJson]  + body -> { ok, response | lws | fetch } + body
+//   webdavStep   [handle, requestJson] + body -> { ok, response [+ write] | lws | fetch | need } + body
+//   webdavResume [handle, answerJson]  + body -> { ok, response | lws | fetch | need } + body
 //   webdavClose  [handle]                     -> { ok }
 
 import {
@@ -39,6 +54,7 @@ import {
 import { resolve as resolvePath, dirname, basename, join } from 'node:path'
 import { loadEngine } from '../bin/engine.mjs'
 import { openLwsStorage } from '../lws/server.mjs'
+import { answerCipherRequest } from '../lib/cipher-host.mjs'
 
 /** The ops this host needs from the engine. */
 export const WEBDAV_OPS = ['webdavOpen', 'webdavLoad', 'webdavStep', 'webdavResume', 'webdavClose']
@@ -141,6 +157,13 @@ function replaceFile (configDir, write) {
  * @param {object} options
  * @param {string} options.configDir the directory of mount files
  * @param {object} [options.engine] an engine handle to reuse
+ * @param {string} [options.users] the users file (an absolute path, or one
+ *   relative to configDir): the listener then needs a login
+ * @param {boolean} [options.tls] the listener uses TLS
+ * @param {string} [options.host] the address the listener binds
+ * @param {string} [options.loginLimit] `--login-limit`, passed unread
+ * @param {string} [options.loginWindow] `--login-window`, passed unread
+ * @param {boolean} [options.disableRateLimits] `--dangerously-disable-ratelimits`
  * @returns {Promise<{handle: string, mounts: object[], step: Function, close: Function}>}
  */
 export async function openWebdav (options = {}) {
@@ -148,7 +171,15 @@ export async function openWebdav (options = {}) {
   const configDir = options.configDir
   const engine = options.engine !== undefined ? options.engine : await loadEngine()
   const listing = readdirSync(configDir)
-  let envelope = callEngine(engine, 'webdavOpen', [JSON.stringify({ listing, entropy: randomBase64(32), now: nowSeconds() })])
+  const login = {
+    users: typeof options.users === 'string' ? options.users : null,
+    tls: options.tls === true,
+    host: typeof options.host === 'string' ? options.host : '127.0.0.1',
+    limit: typeof options.loginLimit === 'string' ? options.loginLimit : null,
+    window: typeof options.loginWindow === 'string' ? options.loginWindow : null,
+    disableRateLimits: options.disableRateLimits === true
+  }
+  let envelope = callEngine(engine, 'webdavOpen', [JSON.stringify({ listing, entropy: randomBase64(32), now: nowSeconds(), login })])
   if (envelope.ok === false) throw new WebdavHostError(envelope.error, { envelope })
   const handle = envelope.handle
   let loads = 0
@@ -196,7 +227,8 @@ export async function openWebdav (options = {}) {
       target: request.target,
       headers: request.headers,
       now: nowSeconds(),
-      randomBase64: randomBase64(16)
+      randomBase64: randomBase64(16),
+      remoteAddress: typeof request.remoteAddress === 'string' ? request.remoteAddress : ''
     }
     let got = blobCall(engine, 'webdavStep', [handle, JSON.stringify(record)], request.body || new Uint8Array(0))
     for (let hop = 0; hop < MAX_HOPS; hop += 1) {
@@ -218,8 +250,12 @@ export async function openWebdav (options = {}) {
         const x = await exchange(env.fetch, got.bytes)
         answer = x.answer
         bytes = x.bytes
+      } else if (env.need !== undefined) {
+        // A login: the one WebCrypto derivation the engine named.
+        answer = await answerCipherRequest(env.need)
+        bytes = new Uint8Array(0)
       } else {
-        throw new WebdavHostError('the engine answered neither response, lws nor fetch')
+        throw new WebdavHostError('the engine answered neither response, lws, fetch nor need')
       }
       got = blobCall(engine, 'webdavResume', [handle, JSON.stringify(answer)], bytes)
     }
@@ -230,9 +266,10 @@ export async function openWebdav (options = {}) {
     handle,
     engine,
     mounts: ready.mounts || [],
+    warnings: ready.warnings || [],
     /**
      * One request, served after the requests before it.
-     * @param {{method: string, target: string, headers: Array<[string, string]>, body: Uint8Array}} request
+     * @param {{method: string, target: string, headers: Array<[string, string]>, body: Uint8Array, remoteAddress?: string}} request
      */
     step (request) {
       const run = queue.then(() => serve(request))
@@ -275,20 +312,30 @@ function writeHeaders (response, pairs) {
  * Start the server: open the handle, then listen.
  *
  * @param {object} options `configDir`, `port` (default 8090), `host`
- *   (default 127.0.0.1), `engine`, `onError`
+ *   (default 127.0.0.1), `engine`, `onError`, `users` (a users file),
+ *   `cert` and `key` (PEM bytes: listen with TLS), `loginLimit`,
+ *   `loginWindow`, `disableRateLimits` (the failed-login limit)
  * @returns {Promise<{server: object, port: number, origin: string, mounts: object[], close: Function}>}
  */
 export async function listen (options = {}) {
-  const http = await import('node:http')
-  const dav = await openWebdav(options)
+  const tls = options.cert !== undefined && options.key !== undefined
+  const http = tls ? await import('node:https') : await import('node:http')
+  const host = typeof options.host === 'string' ? options.host : '127.0.0.1'
+  const dav = await openWebdav({ ...options, tls, host })
   const onError = typeof options.onError === 'function'
     ? options.onError
     : (error) => { console.error(`webdav-serve: ${error.message}`) }
-  const server = http.createServer(async (request, response) => {
+  const handler = async (request, response) => {
     let answer
     try {
       const body = await readBody(request)
-      answer = await dav.step({ method: request.method, target: request.url, headers: headerPairs(request.rawHeaders), body })
+      answer = await dav.step({
+        method: request.method,
+        target: request.url,
+        headers: headerPairs(request.rawHeaders),
+        body,
+        remoteAddress: request.socket.remoteAddress
+      })
     } catch (error) {
       onError(error)
       response.writeHead(500, { 'content-type': 'text/plain' })
@@ -298,20 +345,21 @@ export async function listen (options = {}) {
     writeHeaders(response, answer.headers)
     response.statusCode = answer.status
     response.end(answer.body)
-  })
+  }
+  const server = tls ? http.createServer({ cert: options.cert, key: options.key }, handler) : http.createServer(handler)
   const port = typeof options.port === 'number' ? options.port : 8090
-  const host = typeof options.host === 'string' ? options.host : '127.0.0.1'
   await new Promise((resolve, reject) => {
     server.once('error', reject)
     server.listen(port, host, resolve)
   })
   const bound = server.address()
-  const origin = `http://${host.includes(':') ? `[${host}]` : host}:${bound.port}`
+  const origin = `${tls ? 'https' : 'http'}://${host.includes(':') ? `[${host}]` : host}:${bound.port}`
   return {
     server,
     port: bound.port,
     origin,
     mounts: dav.mounts,
+    warnings: dav.warnings,
     close () {
       return new Promise((resolve) => {
         server.close(() => { dav.close(); resolve() })

@@ -70,6 +70,7 @@ import Wasm.Ops.Authz
 import Wasm.Ops.Toan
 import Wasm.Ops.Xmpp
 import Wasm.Ops.XmppSession
+import Wasm.Ops.XmppClient
 import Wasm.Ops.Crypto
 import Wasm.Ops.Jwe
 import Wasm.Ops.XmlEnc
@@ -452,7 +453,7 @@ private def opsReflection : String := opsReflectionFor (opNames ++ formatOpNames
 def opsReflectionIO : String :=
   opsReflectionFor
     (opNames ++ handleOpNames ++ storeHandleOpNames ++ Ops.sbm11OpNames ++ storeServeOpNames ++ packOpNames
-       ++ extOpNames ++ lwsSolidOpNames ++ Ops.authzOpNames ++ Ops.webdavOpNames ++ xmppSessionOpNamesList
+       ++ extOpNames ++ lwsSolidOpNames ++ Ops.authzOpNames ++ Ops.webdavOpNames ++ xmppSessionOpNamesList ++ Ops.xmppClientOpNames
        ++ formatOpNames ++ serviceOpNames
        ++ query12OpNames)
 
@@ -701,6 +702,7 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "webdavStep"       => withArgs (arityIO2 op Ops.webdavStep)
   | "webdavResume"     => withArgs (arityIO2 op Ops.webdavResume)
   | "webdavClose"      => withArgs (arityIO1 op Ops.webdavClose)
+  | "webdavUser"       => withArgs (arityIO1 op Ops.webdavUser)
   | "lwsOpen"          => withArgs (arityIO1 op Ops.lwsOpen)
   | "lwsStep"          => withArgs (arityIO2 op Ops.lwsStep)
   | "lwsClose"         => withArgs (arityIO1 op Ops.lwsClose)
@@ -764,6 +766,11 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "xmppSessionClose"   => withArgs (arityIO1 op Ops.xmppSessionClose)
   | "xmppRosterGet"      => withArgs (arityIO2 op Ops.xmppRosterGet)
   | "xmppRosterSet"      => withArgs (arityIO3 op Ops.xmppRosterSet)
+  -- The outgoing XMPP client stream with HTTP over XMPP (`Wasm/Ops/XmppClient.lean`).
+  | "xmppClientOpen"     => withArgs (arityIO1 op Ops.xmppClientOpen)
+  | "xmppClientFeed"     => withArgs (arityIO2 op Ops.xmppClientFeed)
+  | "xmppClientAnswer"   => withArgs (arityIO3 op Ops.xmppClientAnswer)
+  | "xmppClientClose"    => withArgs (arityIO1 op Ops.xmppClientClose)
   | "storeHandleList" =>
       withArgs (fun args =>
         match args with

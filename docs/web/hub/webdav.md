@@ -153,35 +153,99 @@ Two mounts may name one key file that does not exist yet; they get one key.
 
 ## Advanced: login
 
-The WebDAV listener itself has no login and no TLS: anyone who can open a
-connection to its port can read and change every writable mount
-(<https://github.com/danbri/factoidal/issues/1108>, an expected failure in
-`tests/hub/hub_webdav_test.mjs`). For this reason it binds 127.0.0.1 by
-default. Logins exist at two other points:
+Logins exist at two points.
 
-* **Between the WebDAV server and an LWS server** (the mount file):
-  `auth: did-key` (above) or `auth: bearer` with `token-file`, a token got
-  in some other way, sent as `Authorization: Bearer` to every URL under
-  `url`. The LWS server decides what the agent may do: with `lws-serve
-  --authz`, the `--owner` has full control of a new storage, and other
-  agents get access through access grants (`factoidal lws-client
-  grantAccess`). The key file is a private key: keep it out of shared
-  folders and backups that others can read.
-* **Between the file browser and the WebDAV server**: give this to the
-  layer in front of the listener. Choose one:
-  * keep the default bind and use the machine's own users (only local
-    processes reach 127.0.0.1);
-  * an SSH tunnel: the SSH login and key are the login ([below](#ssh-tunnels));
-  * Tailscale: the tailnet identity and its access rules are the login
-    ([below](#tailscale));
-  * a reverse proxy with HTTP Basic authentication over HTTPS
-    ([below](#advanced-https)).
+**Between the file browser and the WebDAV server.** By default the listener
+has no login: anyone who can open a connection to its port can read and
+change every writable mount. For this reason it binds 127.0.0.1 by default.
+Give it a users file with `--users` and every request needs a user name and
+password (HTTP Basic, RFC 7617):
+
+```
+factoidal webdav-user users.txt alice      # asks for the password, no echo
+factoidal webdav-serve dav --users users.txt
+```
+
+`webdav-user` writes one line per user, with mode 0600:
+
+```
+alice:pbkdf2-sha256:600000:SALT_BASE64:HASH_BASE64
+```
+
+The hash is PBKDF2-HMAC-SHA256 with a 16-byte random salt and 600,000
+iterations (the OWASP Password Storage Cheat Sheet figure of 2023; give
+`--iterations N`, at least 100,000, for another count). The derivation runs
+in WebCrypto; every decision (the file format, the comparison, the login
+cache) is in `formal/lean4/L4Factoidal/WebDAV/Login.lean`. Run
+`webdav-user` again with the same name to change a password; the server
+reads the file at start. A malformed line stops the start with the file name
+and line number. A login is remembered for 300 seconds in the server's
+memory, so a client that sends the password with each request does not pay
+for a derivation each time.
+
+Failed logins are limited by default
+(<https://github.com/danbri/factoidal/issues/1119>). After 5 failed logins
+in 60 seconds for one user name (a name in the file or not) or from one
+client address (an IPv6 client by its /64 prefix), a request with a user
+name and password gets `429 Too Many Requests` with `Retry-After: SECONDS`.
+The server then checks no password, also the right one, until that window
+ends. A request with no credentials is a 401 and does not count. A
+successful login does not reset the count. Change the numbers with
+`--login-limit N` (1 to 1,000) and `--login-window SECONDS` (1 to 86,400):
+
+```
+factoidal webdav-serve dav --users users.txt --login-limit 10 --login-window 300
+```
+
+`--dangerously-disable-ratelimits` removes the limit: any client that
+reaches the port can then try passwords as fast as the server runs PBKDF2.
+The server prints a warning on standard error at start. Use it only for a
+test on 127.0.0.1.
+
+This login has had no expert review:
+<https://github.com/danbri/factoidal/issues/1117> lists what a reviewer
+should check, including what an attacker who has the users file can do.
+
+Basic sends the password in clear text. Without TLS, `--users` is accepted
+only on a loopback address (127.0.0.1, ::1, localhost); on any other address
+the start stops. With `--cert` and `--key` (below) it is accepted on any
+address. Every user in the file reaches every mount.
+
+Other ways to put a login in front of the listener, which also work:
+
+* keep the default bind and use the machine's own users (only local
+  processes reach 127.0.0.1);
+* an SSH tunnel: the SSH login and key are the login ([below](#ssh-tunnels));
+* Tailscale: the tailnet identity and its access rules are the login
+  ([below](#tailscale));
+* a reverse proxy with HTTP Basic authentication over HTTPS
+  ([below](#advanced-https)).
+
+**Between the WebDAV server and an LWS server** (the mount file):
+`auth: did-key` (above) or `auth: bearer` with `token-file`, a token got in
+some other way, sent as `Authorization: Bearer` to every URL under `url`.
+The LWS server decides what the agent may do: with `lws-serve --authz`, the
+`--owner` has full control of a new storage, and other agents get access
+through access grants (`factoidal lws-client grantAccess`). The key file is
+a private key: keep it out of shared folders and backups that others can
+read.
 
 ## Advanced: HTTPS
 
-`webdav-serve` speaks plain HTTP. For HTTPS, put a TLS reverse proxy in
-front of it, or use Tailscale (next section), which gets the certificate
-for you.
+`webdav-serve --cert cert.pem --key key.pem` serves HTTPS (Node `https`,
+PEM files; the origin it prints starts with `https://`). With a users file
+this is the way to offer the login on an address that is not loopback:
+
+```
+factoidal webdav-serve dav --host 0.0.0.0 --port 8443 \
+  --cert /etc/ssl/dav.pem --key /etc/ssl/dav-key.pem --users users.txt
+```
+
+Windows WebClient sends a Basic password only over HTTPS by default, so a
+Windows client needs this (or a proxy that gives HTTPS) to log in.
+
+A TLS reverse proxy in front of the plain-HTTP listener, or Tailscale (next
+section), which gets the certificate for you, still work.
 
 Caddy gets a certificate from Let's Encrypt for a public name and adds HTTP
 Basic authentication. `caddy hash-password` prints the hash:
@@ -238,8 +302,9 @@ To expose an LWS server the same way, start it with the public URL:
 --owner DID`, then `tailscale serve --bg 8080`. A WebDAV mount on another
 tailnet machine then uses `- url: https://MACHINE.TAILNET.ts.net/`.
 
-Do not use `tailscale funnel` for `webdav-serve`: Funnel makes the port
-public on the Internet, and the listener has no login.
+Do not use `tailscale funnel` for `webdav-serve` without `--users`: Funnel
+makes the port public on the Internet, and without a users file the listener
+has no login.
 
 ### SSH tunnels
 
@@ -269,11 +334,53 @@ macOS and Windows accept that address without TLS.
 
 ### XMPP
 
-Not possible today. `factoidal xmpp-serve` serves XMPP (RFC 6120/6121) over
-TCP or direct TLS (see [Servers](../servers/#xmpp)), but no part of
-Factoidal carries HTTP over XMPP (XEP-0332), and no file browser speaks it.
-Tracking: <https://github.com/danbri/factoidal/issues/1107>, an expected
-failure in `tests/hub/hub_webdav_test.mjs`.
+`webdav-serve --xmpp JID` opens no port. It connects out to an XMPP server
+as an account (SASL SCRAM-SHA-256), binds a resource, and answers HTTP over
+XMPP requests (XEP-0332) from the bare JIDs in `--xmpp-allow`. Other JIDs get
+`forbidden`. A server behind NAT is reached this way with no inbound port.
+Every decision (the stream, SASL, binding, the allow list, the request and
+response stanzas) is in Lean, `L4Factoidal/XMPP/ClientStream.lean` and
+`HttpOverXmpp.lean`.
+
+```
+# an XMPP server (here our own, on a machine both sides can reach)
+printf 'alice:alice-password\nbob:bob-password\ncarol:carol-password\n' > accounts
+factoidal xmpp-serve xmpp-state --domain example.org --accounts accounts
+# on the server machine, behind NAT: no port is opened
+echo bob-password > bob.password
+factoidal webdav-serve dav --xmpp bob@example.org --xmpp-password-file bob.password \
+  --xmpp-allow alice@example.org --xmpp-host 127.0.0.1 --xmpp-port 5222 \
+  --dangerously-allow-writable-without-login
+# prints: xmpp:bob@example.org/dav
+```
+
+The XMPP server above is on the same machine (127.0.0.1), so plain TCP is
+accepted. To any other host the connection must be direct TLS (XEP-0368):
+`--xmpp-tls --xmpp-host xmpp.example.org --xmpp-port 5223` (with
+`--xmpp-ca FILE` for a certificate your system does not trust), as
+`xmpp-serve --cert --key` serves; plain TCP to a host that is not loopback
+stops the start. STARTTLS is not implemented. There is no DNS SRV lookup.
+
+Access on this path is the allow list only: every allowed JID acts as the
+owner of a local mount, and there is no login on the XMPP path yet
+(<https://github.com/danbri/factoidal/issues/1125>; the per-JID login limit:
+<https://github.com/danbri/factoidal/issues/1128>). So the start is refused
+when a local mount is writable, unless you give
+`--dangerously-allow-writable-without-login` (the server then prints a
+warning), and `--xmpp-allow` must name bare JIDs.
+
+What works now (`node tests/webdav/xmpp.mjs`): `alice@example.org` sends
+XEP-0332 `req` stanzas to `bob@example.org/dav` and gets PROPFIND 207, PUT
+201, GET 200, MKCOL 201; a body above 65,536 bytes comes back in
+`chunkedBase64` chunks; `carol@example.org` gets `forbidden`.
+
+What does not work yet: no file browser speaks XEP-0332, and the local proxy
+that would turn `http://127.0.0.1:8090/` into XEP-0332 requests is not built
+(step 2 of `docs/designissues/2026-10-28-http-over-xmpp.md`). Tracking:
+<https://github.com/danbri/factoidal/issues/1107>, an expected failure in
+`tests/hub/hub_webdav_test.mjs`. XEP-0332 is Deferred; until another
+implementation is tested, this is our client talking to our server. Tailscale
+or SSH stay the routes for a file browser.
 
 ## Connect a file browser
 
@@ -318,8 +425,11 @@ Other WebDAV clients:
 
 ## Limits
 
-* No login and no TLS on the listener:
-  <https://github.com/danbri/factoidal/issues/1108>.
+* The login of the listener (`--users`) has had no expert review:
+  <https://github.com/danbri/factoidal/issues/1117>.
+* Anyone can block a user name for one window (default 60 seconds) by
+  sending wrong passwords for it: the failed-login limit (above) answers 429
+  for that name, also to the real user.
 * One request at a time. PROPFIND with `Depth: infinity` answers 403
   (`DAV:propfind-finite-depth`); clients then list one level at a time.
 * COPY and MOVE between two mounts answer 502 (RFC 4918 §9.9.4); copy with

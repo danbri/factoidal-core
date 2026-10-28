@@ -9,7 +9,10 @@
 //   other.md   kind lws, the same storage, auth did-key with a key file that
 //              does not exist (the engine makes it), read-only; that agent is
 //              not the owner, so the storage refuses it
-// plus README.md, which is not a mount. Every WebDAV method runs through the
+// plus README.md, which is not a mount. Then the login of the listener
+// (https://github.com/danbri/factoidal/issues/1108): `webdav-user` writes a
+// users file, `webdav-serve --users` needs HTTP Basic, the login cache, and
+// the refusals at start. Every WebDAV method runs through the
 // local and the remote mount, through the CLI and the socket. Every decision
 // is formal/lean4/L4Factoidal/WebDAV/; this file plays the file browser.
 //
@@ -86,6 +89,195 @@ function run (args) {
     child.stdout.on('data', (c) => { out += c })
     child.stderr.on('data', (c) => { errText += c })
     child.on('exit', (code) => resolve({ code, out, errText }))
+  })
+}
+
+/** Run the CLI with `input` on standard input (not a terminal). */
+function runWithInput (args, input) {
+  const child = spawn(process.execPath, [CLI, ...args], { stdio: ['pipe', 'pipe', 'pipe'] })
+  child.stdin.end(input)
+  return new Promise((resolve) => {
+    let out = ''
+    let errText = ''
+    child.stdout.on('data', (c) => { out += c })
+    child.stderr.on('data', (c) => { errText += c })
+    child.on('exit', (code) => resolve({ code, out, errText }))
+  })
+}
+
+function basic (user, password) {
+  return 'Basic ' + Buffer.from(`${user}:${password}`, 'utf8').toString('base64')
+}
+
+/** The login of the listener (issue 1108). */
+async function login (dir) {
+  const conf = join(dir, 'login')
+  mkdirSync(join(conf, 'store'), { recursive: true })
+  writeFileSync(join(conf, 'notes.md'), '# Notes\n- kind: local\n- path: ./store\n')
+  const users = join(dir, 'users.txt')
+  await check('webdav-user: writes NAME:pbkdf2-sha256:ITERATIONS:SALT:HASH with mode 0600; a second name is added', async () => {
+    let r = await runWithInput(['webdav-user', users, 'alice', '--iterations', '100000'], 'open sesame\n')
+    assert(r.code === 0, `exit ${r.code} ${r.errText}`)
+    r = await runWithInput(['webdav-user', users, 'bob'], 'hunter2')
+    assert(r.code === 0, `exit ${r.code} ${r.errText}`)
+    const lines = readFileSync(users, 'utf8').split('\n').filter((l) => l !== '')
+    assert(lines.length === 2, `lines ${lines.length}`)
+    assert(/^alice:pbkdf2-sha256:100000:[A-Za-z0-9+/]{22}==:[A-Za-z0-9+/]{43}=$/.test(lines[0]), lines[0])
+    assert(/^bob:pbkdf2-sha256:600000:/.test(lines[1]), lines[1])
+    assert((statSync(users).mode & 0o777) === 0o600, `mode ${(statSync(users).mode & 0o777).toString(8)}`)
+  })
+  await check('webdav-user: replaces a line in place; refuses an empty password, a name with ":" and 99999 iterations (exit 1)', async () => {
+    const before = readFileSync(users, 'utf8').split('\n')
+    let r = await runWithInput(['webdav-user', users, 'alice', '--iterations', '100000'], 'open sesame\n')
+    assert(r.code === 0 && r.errText.includes('replaced alice'), `exit ${r.code} ${r.errText}`)
+    const after = readFileSync(users, 'utf8').split('\n')
+    assert(after.length === before.length && after[1] === before[1] && after[0] !== before[0], 'not replaced in place')
+    r = await runWithInput(['webdav-user', users, 'carol'], '\n')
+    assert(r.code === 1 && r.errText.includes('the password is empty'), `empty ${r.code} ${r.errText}`)
+    r = await runWithInput(['webdav-user', users, 'a:b'], 'x\n')
+    assert(r.code === 1 && r.errText.includes('holds ":"'), `colon ${r.code} ${r.errText}`)
+    r = await runWithInput(['webdav-user', users, 'carol', '--iterations', '99999'], 'x\n')
+    assert(r.code === 1 && r.errText.includes('outside 100000'), `iterations ${r.code} ${r.errText}`)
+  })
+  let web = null
+  try {
+    web = await start(['webdav-serve', conf, '--port', '0', '--users', users])
+    const origin = web.origin
+    await check('login: no credentials is 401 with WWW-Authenticate: Basic realm, charset UTF-8', async () => {
+      const r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '1' } })
+      assert(r.status === 401, `status ${r.status}`)
+      assert(r.headers.get('www-authenticate') === 'Basic realm="factoidal webdav", charset="UTF-8"', `${r.headers.get('www-authenticate')}`)
+      const o = await dav(origin, 'OPTIONS', '/')
+      assert(o.status === 401, `OPTIONS ${o.status}`)
+    })
+    await check('login: a wrong password, an unknown user and a Bearer token are 401', async () => {
+      for (const a of [basic('alice', 'wrong'), basic('mallory', 'open sesame'), 'Bearer x']) {
+        const r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '1', authorization: a } })
+        assert(r.status === 401, `${a}: ${r.status}`)
+      }
+    })
+    await check('login: the right password is 207; PUT and GET work for both users', async () => {
+      let r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '1', authorization: basic('alice', 'open sesame') } })
+      assert(r.status === 207 && r.text.includes('<D:href>/notes/</D:href>'), `PROPFIND ${r.status} ${r.text}`)
+      r = await dav(origin, 'PUT', '/notes/a.txt', { headers: { authorization: basic('bob', 'hunter2') }, body: 'from bob' })
+      assert(r.status === 201, `PUT ${r.status} ${r.text}`)
+      r = await dav(origin, 'GET', '/notes/a.txt', { headers: { authorization: basic('alice', 'open sesame') } })
+      assert(r.status === 200 && r.text === 'from bob', `GET ${r.status} ${r.text}`)
+      r = await dav(origin, 'GET', '/notes/a.txt')
+      assert(r.status === 401, `GET without credentials ${r.status}`)
+    })
+    // The failed-login limit (https://github.com/danbri/factoidal/issues/1119):
+    // 5 failures per 60 s per name and per address. The checks above made 2
+    // failures from this address (alice, mallory); the Bearer 401 is not one.
+    await check('login: repeated wrong passwords get 429 (limit 5 per 60 s, per name and per address)', async () => {
+      const statuses = []
+      for (let i = 0; i < 8; i++) {
+        const r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '0', authorization: basic('alice', `wrong-${i}`) } })
+        statuses.push(r.status)
+      }
+      assert(statuses.join(' ') === '401 401 401 429 429 429 429 429', `statuses ${statuses.join(' ')}`)
+    })
+    await check('login: a 429 carries Retry-After (1 to 60 s); the right password and another name from this address get 429 too', async () => {
+      for (const a of [basic('alice', 'open sesame'), basic('bob', 'hunter2'), basic('mallory', 'x')]) {
+        const r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '0', authorization: a } })
+        const ra = r.headers.get('retry-after')
+        assert(r.status === 429, `${a}: ${r.status}`)
+        assert(/^[0-9]+$/.test(ra || '') && Number(ra) >= 1 && Number(ra) <= 60, `Retry-After ${ra}`)
+      }
+      const n = await dav(origin, 'PROPFIND', '/', { headers: { depth: '0' } })
+      assert(n.status === 401, `no credentials while blocked: ${n.status}`)
+    })
+  } finally {
+    await stop(web)
+  }
+  web = null
+  try {
+    web = await start(['webdav-serve', conf, '--port', '0', '--users', users, '--login-limit', '2', '--login-window', '2'])
+    const origin = web.origin
+    await check('login: --login-limit 2 --login-window 2: the right password gets 429 until the window ends, then 207', async () => {
+      const statuses = []
+      for (const pw of ['w1', 'w2', 'open sesame']) {
+        const r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '0', authorization: basic('alice', pw) } })
+        statuses.push(r.status)
+      }
+      assert(statuses.join(' ') === '401 401 429', `statuses ${statuses.join(' ')}`)
+      await new Promise((resolve) => setTimeout(resolve, 3200))
+      const r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '0', authorization: basic('alice', 'open sesame') } })
+      assert(r.status === 207, `after the window ${r.status}`)
+    })
+  } finally {
+    await stop(web)
+  }
+  web = null
+  try {
+    web = await start(['webdav-serve', conf, '--port', '0', '--users', users, '--dangerously-disable-ratelimits'])
+    const origin = web.origin
+    await check('login: --dangerously-disable-ratelimits prints a warning at start and gives 401, not 429, after 8 failures', async () => {
+      // Standard error and standard output are two pipes: wait for the warning.
+      for (let i = 0; i < 50 && !web.errText().includes('WARNING: --dangerously'); i++) await new Promise((resolve) => setTimeout(resolve, 100))
+      assert(web.errText().includes('WARNING: --dangerously-disable-ratelimits: failed logins are NOT limited'), web.errText())
+      assert(web.errText().includes('EXPERIMENTAL UNREVIEWED CODE'), web.errText())
+      const statuses = []
+      for (let i = 0; i < 9; i++) {
+        const r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '0', authorization: basic('alice', `wrong-${i}`) } })
+        statuses.push(r.status)
+      }
+      assert(statuses.every((x) => x === 401), `statuses ${statuses.join(' ')}`)
+      const r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '0', authorization: basic('alice', 'open sesame') } })
+      assert(r.status === 207, `right password ${r.status}`)
+    })
+  } finally {
+    await stop(web)
+  }
+  await check('start: bad limit options stop the start (exit 1): --login-limit 0, --login-window x, the dangerous option with --login-limit or without --users', async () => {
+    let r = await run(['webdav-serve', conf, '--port', '0', '--users', users, '--login-limit', '0'])
+    assert(r.code === 1 && r.errText.includes('--login-limit 0: give a whole number from 1 to 1000'), `limit ${r.code} ${r.errText}`)
+    r = await run(['webdav-serve', conf, '--port', '0', '--users', users, '--login-window', 'x'])
+    assert(r.code === 1 && r.errText.includes('--login-window x: give a whole number of seconds'), `window ${r.code} ${r.errText}`)
+    r = await run(['webdav-serve', conf, '--port', '0', '--users', users, '--login-limit', '3', '--dangerously-disable-ratelimits'])
+    assert(r.code === 1 && r.errText.includes('cannot go with it'), `both ${r.code} ${r.errText}`)
+    r = await run(['webdav-serve', conf, '--port', '0', '--dangerously-disable-ratelimits'])
+    assert(r.code === 1 && r.errText.includes('need --users'), `no users ${r.code} ${r.errText}`)
+  })
+  await check('login cache: one PBKDF2 derivation for the first request, none for the next, one for a wrong password', async () => {
+    const { openWebdav } = await import('../../npm/factoidal/webdav/server.mjs')
+    const { loadEngine } = await import('../../npm/factoidal/bin/engine.mjs')
+    const engine = await loadEngine()
+    let derivations = 0
+    const counting = {
+      call: (op, args) => engine.call(op, args),
+      callBlobIO: (op, args, bytes) => {
+        const got = engine.callBlobIO(op, args, bytes)
+        if (got.envelope && got.envelope.need !== undefined) derivations += 1
+        return got
+      }
+    }
+    const h = await openWebdav({ configDir: conf, users: users, engine: counting })
+    try {
+      const ask = (a) => h.step({ method: 'PROPFIND', target: '/', headers: [['Depth', '0'], ['Authorization', a]], body: new Uint8Array(0) })
+      let r = await ask(basic('alice', 'open sesame'))
+      assert(r.status === 207 && derivations === 1, `first ${r.status}, ${derivations} derivations`)
+      r = await ask(basic('alice', 'open sesame'))
+      assert(r.status === 207 && derivations === 1, `second ${r.status}, ${derivations} derivations`)
+      r = await ask(basic('alice', 'wrong'))
+      assert(r.status === 401 && derivations === 2, `wrong ${r.status}, ${derivations} derivations`)
+      r = await ask(basic('alice', 'open sesame'))
+      assert(r.status === 207 && derivations === 2, `after a wrong one ${r.status}, ${derivations} derivations`)
+    } finally {
+      h.close()
+    }
+  })
+  await check('start: --users on a non-loopback address without TLS stops the start (exit 1)', async () => {
+    const r = await run(['webdav-serve', conf, '--port', '0', '--host', '0.0.0.0', '--users', users])
+    assert(r.code === 1 && r.errText.includes('0.0.0.0 is not a loopback address'), `exit ${r.code} ${r.errText}`)
+  })
+  await check('start: a malformed users file stops the start with its name and line (exit 1); so does a missing one', async () => {
+    const bad = join(dir, 'bad-users.txt')
+    writeFileSync(bad, '# users\nalice:placeholder\n')
+    let r = await run(['webdav-serve', conf, '--port', '0', '--users', bad])
+    assert(r.code === 1 && r.errText.includes('bad-users.txt:2: a line has 5 fields'), `exit ${r.code} ${r.errText}`)
+    r = await run(['webdav-serve', conf, '--port', '0', '--users', join(dir, 'absent.txt')])
+    assert(r.code === 1 && r.errText.includes('absent.txt: the users file could not be read'), `exit ${r.code} ${r.errText}`)
   })
 }
 
@@ -344,6 +536,7 @@ async function main () {
       const r = await run(['webdav-serve', bad, '--port', '0'])
       assert(r.code === 1 && r.errText.includes('does not exist'), `exit ${r.code} ${r.errText}`)
     })
+    await login(dir)
   } finally {
     await stop(web)
     await stop(lws)

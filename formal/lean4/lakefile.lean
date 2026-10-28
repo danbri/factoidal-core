@@ -322,6 +322,7 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Toan,
              `Wasm.Ops.Xmpp,
              `Wasm.Ops.XmppSession,
+             `Wasm.Ops.XmppClient,
              `Wasm.Ops.Crypto, `Wasm.Ops.XmlEnc,
              `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests, `Wasm.GraphSetTests,
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,

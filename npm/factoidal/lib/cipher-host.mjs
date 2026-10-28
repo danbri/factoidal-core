@@ -17,6 +17,14 @@
 // Only `globalThis.crypto.subtle` is used, so the same code runs in Node 22,
 // Deno and browsers (Node: OpenSSL; Chromium: BoringSSL; Firefox: NSS).
 //
+// PBKDF2 (https://github.com/danbri/factoidal/issues/1108, the login of
+// `factoidal webdav-serve` and `factoidal webdav-user`; owner, 2026-10-28:
+// PBKDF2-HMAC-SHA256 from WebCrypto, as AES): the engine answers
+// `{need: {op: 'pbkdf2-hmac-sha256', key, data, iterations, bits}}` with the
+// password as `key` and the salt as `data`. This module runs exactly that
+// `deriveBits` call; Lean chose the salt, the count and the output size
+// (formal/lean4/L4Factoidal/WebDAV/Login.lean) and compares the result.
+//
 // Key Wrap: WebCrypto wraps a CryptoKey, not bytes. The bytes to wrap are
 // imported as an extractable raw HMAC key (any byte length), wrapped with
 // `wrapKey('raw', ...)`; an unwrap gives an HMAC key whose raw export is the
@@ -73,18 +81,22 @@ const OPS = {
     const key = await subtle().importKey('raw', k, 'AES-CBC', false, ['decrypt']);
     return subtle().decrypt({ name: 'AES-CBC', iv }, key, d);
   },
+  'pbkdf2-hmac-sha256': async (k, _iv, _aad, d, req) => {
+    const key = await subtle().importKey('raw', k, 'PBKDF2', false, ['deriveBits']);
+    return subtle().deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: d, iterations: req.iterations }, key, req.bits);
+  },
 };
 
 /**
- * Answer one cipher request of the engine.
- * @param {{op: string, key: string, iv?: string, aad?: string, data: string}} req  bytes as base64
+ * Answer one cipher request of the engine (AES, or the PBKDF2 of a login).
+ * @param {{op: string, key: string, iv?: string, aad?: string, data: string, iterations?: number, bits?: number}} req  bytes as base64
  * @returns {Promise<{ok: string} | {refused: true}>}
  */
 export async function answerCipherRequest(req) {
   try {
     const run = Object.prototype.hasOwnProperty.call(OPS, req?.op) ? OPS[req.op] : null;
     if (!run) return { refused: true };
-    const out = await run(fromBase64(req.key), fromBase64(req.iv), fromBase64(req.aad), fromBase64(req.data));
+    const out = await run(fromBase64(req.key), fromBase64(req.iv), fromBase64(req.aad), fromBase64(req.data), req);
     return { ok: toBase64(out) };
   } catch {
     return { refused: true };

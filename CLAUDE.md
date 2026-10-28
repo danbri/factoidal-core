@@ -823,11 +823,23 @@ risk file issue to flag for expert review", to these questions:
    (`docs/index.md`, `docs/web/how-it-works.md`, the three conformance
    pages): yes.
 3. WebDAV listener login (https://github.com/danbri/factoidal/issues/1108):
-   PBKDF2-HMAC-SHA256 over the vendored HACL\* HMAC, yes. If the choice is
-   disputed or carries risk, open an issue that asks for expert review and
-   link it from the code and the docs.
+   PBKDF2-HMAC-SHA256, yes. The question named "the vendored HACL\* HMAC" as
+   the source; the coordinator then chose WebCrypto PBKDF2 (`deriveBits`)
+   through the host instead, as for AES above (`webdav-serve` runs only on
+   Node; no PBKDF2 composed in Lean). That source choice is the coordinator's,
+   not the owner's, and is named in the expert-review issue
+   https://github.com/danbri/factoidal/issues/1117, as the owner asked: "if
+   controversial or risk file issue to flag for expert review".
 4. HTTP over XMPP (https://github.com/danbri/factoidal/issues/1107): start
    stage 1 of `docs/designissues/2026-10-28-http-over-xmpp.md`.
+
+Owner, 2026-10-28, verbatim, on the WebDAV login: "Does “no rate limit”
+expose our server passwords to automated hacking tools? In which case default
+to protection but have a —dangerously-disable-ratelimits option ?" Rule: a
+login surface limits failed logins by default; turning the limit off needs an
+option whose name starts with `--dangerously-`, and the server warns at start
+when it is used. First instance: `webdav-serve --users`
+(https://github.com/danbri/factoidal/issues/1119).
 
 ### Feature-combination safety; MCP over XMPP (owner, 2026-10-28)
 
