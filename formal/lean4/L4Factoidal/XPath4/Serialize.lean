@@ -1207,6 +1207,7 @@ def normalizeUnicodeFn : LibFn := fun _ _ a => do
   let s := strOf (argN a 0)
   let f := if (argN a 1).isEmpty then "NFC" else (trimWs (strOf (argN a 1))).toUpper
   if f == "" then pure (sStr s)
+  else if f == "FULLY-NORMALIZED" then pure (sStr (Unicode.fullyNormalize s))
   else match Unicode.normalize f s with
     | some r => pure (sStr r)
     | none => err "FOCH0003" ("unsupported normalization form " ++ f)

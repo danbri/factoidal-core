@@ -189,6 +189,11 @@ def depOk (xq : Bool) (d : Node) : Bool :=
   | "default-language" => if sat then true else v != "en"
   -- `big_integer`: `xs:integer` is Lean's `Int` (no bound);
   -- `year_lt_0`: years before 1 are dates (`XPath4.Atomic`)
+  -- `XPath4.Unicode`: UAX #15 NFC, NFD, NFKC, NFKD, and FULLY-NORMALIZED
+  -- of F&O 4.0 §5.4.9
+  | "unicode-normalization-form" =>
+      let has := ["NFC", "NFD", "NFKC", "NFKD", "FULLY-NORMALIZED"].contains v
+      if sat then has else !has
   | "limits" => if sat then v == "big_integer" || v == "year_lt_0" else !(v == "big_integer" || v == "year_lt_0")
   | _ => !sat
 

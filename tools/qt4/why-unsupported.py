@@ -7,7 +7,7 @@
 ROOT is the vendored qt4tests (default third_party/testing/qt4tests).
 Only test cases whose `spec` dependency admits the mode are counted (an
 XQuery-only case is scored in XQuery mode).  The rules copy `depOk` and
-`featureSupported` of formal/lean4/Harness/Qt4Run.lean; pass
+`featureSupportedIn` of formal/lean4/Harness/Qt4Run.lean; pass
 `--features` to name the features the runner supports, if they differ.
 A case with more than one failing dependency is counted under each one
 (column "all") and under the first one in document order (column
@@ -20,7 +20,10 @@ NS = "{http://www.w3.org/2010/09/qt-fots-catalog}"
 args = [a for a in sys.argv[1:]]
 feats = {"higherOrderFunctions", "serialization", "simple-uca-fallback",
          "advanced-uca-fallback", "binary", "expath-file", "schemaImport",
-         "schemaValidation", "typedData"}
+         "schemaValidation", "typedData", "non_unicode_codepoint_collation",
+         "arbitraryPrecisionDecimal", "dtd-validation-option"}
+xp_only = {"namespace-axis", "xpath-1.0-compatibility"}
+settings = {"dtd-validation-option"}  # may also be absent (configureFor)
 if "--features" in args:
     i = args.index("--features"); feats = set(args[i + 1].split(",")); del args[i:i + 2]
 root = args[0] if args else "third_party/testing/qt4tests"
@@ -34,15 +37,23 @@ def spec_ok(v, xq):
             if k == 40 or (plus and k <= 40): return True
     return False
 
-def dep_ok(d):
+def dep_ok(d, xq):
     ty, v = d.get("type"), d.get("value", "")
     sat = d.get("satisfied", "true") != "false"
     if ty == "feature":
-        a = all(f in feats for f in v.split()); return a if sat else not a
+        has = lambda f: f in feats or (not xq and f in xp_only)
+        a = all(has(f) for f in v.split())
+        return a if sat else (not a or all(f in settings for f in v.split()))
     if ty == "xml-version":
-        has = any(x == "1.0" or x.startswith("1.0") for x in v.split()); return has if sat else not has
+        has = any(x == "1.1" or (x.startswith("1.0") and x != "1.0:4-") for x in v.split())
+        return has if sat else not has
     if ty == "xsd-version": return (v == "1.1") if sat else (v != "1.1")
-    if ty in ("default-language", "language"): return (v == "en") if sat else (v != "en")
+    if ty == "language": return (v == "en") if sat else (v != "en")
+    if ty == "default-language": return True if sat else v != "en"
+    if ty == "unicode-normalization-form":
+        ok = v in ("NFC", "NFD", "NFKC", "NFKD", "FULLY-NORMALIZED"); return ok if sat else not ok
+    if ty == "limits":
+        ok = v in ("big_integer", "year_lt_0"); return ok if sat else not ok
     return not sat
 
 def label(d):
@@ -74,7 +85,7 @@ for mode, xq in (("xpath", False), ("xquery", True)):
             specs = [d for d in deps if d.get("type") == "spec"] or [d for d in sdeps if d.get("type") == "spec"]
             if specs and not any(spec_ok(d.get("value", ""), xq) for d in specs): continue
             applicable += 1
-            bad = [label(d) for d in sdeps + deps if d.get("type") != "spec" and not dep_ok(d)]
+            bad = [label(d) for d in sdeps + deps if d.get("type") != "spec" and not dep_ok(d, xq)]
             env = tc.find(NS + "environment")
             if env is not None:
                 r = env.get("ref")
