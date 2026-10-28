@@ -35,6 +35,10 @@ def vSeed : QN := xv "seed"
 def vMergeGroup : QN := xv "merge-group"
 def vMergeKey : QN := xv "merge-key"
 def vOutUri : QN := xv "output-uri"
+/-- The current mode, for `fn:apply-templates` with `#current`. -/
+def vMode : QN := xv "mode"
+/-- The tunnel parameters in force, for `fn:apply-templates`. -/
+def vTunnel : QN := xv "tunnel"
 
 /-- The key of the map that stands for an `xsl:array-member` parcel. -/
 def memberKey : Atomic := Atomic.ofQN (xv "array-member")
@@ -108,6 +112,9 @@ def evalX (cx : Ctx) (e : Expr) : XM Seq := do
   let vars := match cx.env.ctx with
     | some c => (vCurrent, c) :: vars
     | none => vars
+  let vars := (vMode, [.atom (Atomic.ofStr cx.mode)]) :: vars
+  let vars := if cx.tunnel.isEmpty then vars
+    else (vTunnel, [.map (cx.tunnel.map (fun (q, v) => (Atomic.ofQN q, v)))]) :: vars
   match eval 100000 { cx.env with vars, compat10 := cx.backCompat } e with
   | .ok v => pure v
   | .error er =>
@@ -669,8 +676,15 @@ def resolveName (name : String) (ns : Option Avt) (scope : List (String × Strin
 /-- The evaluated attributes of `xsl:sort`s. -/
 def sortSpecs (cx : Ctx) (sorts : List SortK) : XM (List SortSpec) :=
   sorts.mapM (fun k => match k with
-    | .mk _ _ order _ dt co coll _ => do
+    | .mk _ _ order lang dt co coll st => do
       let o ← optAvtStr cx order
+      -- the value of lang must be a language code (XTDE0030)
+      if let some lg ← optAvtStr cx lang then
+        if !(lg == "" || lg.toList.all (fun ch => ch.isAlphanum || ch == '-')) then
+          xerr "XTDE0030" ("invalid language '" ++ lg ++ "' in xsl:sort")
+      if let some sv ← optAvtStr cx st then
+        if !(["yes", "no", "true", "false", "1", "0"].contains sv.trimAscii.toString) then
+          xerr "XTDE0030" ("invalid stable value '" ++ sv ++ "' in xsl:sort")
       let d ← optAvtStr cx dt
       let c ← optAvtStr cx co
       let cl ← optAvtStr cx coll
@@ -1292,10 +1306,11 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               match (code.drop 2).toString.splitOn "}" with
               | [u, l] => (u, l)
               | _ => (nsERR, code)
+            else if e.uri == "#none" then ("", code)
+            else if e.uri != "" then (e.uri, code)
             else (nsERR, code)
           let hit := catches.find? (fun (errs, _, _) => errs.any (fun t =>
-            t == "*" || t == "*:" ++ el || t == "Q{" ++ eu ++ "}*" || t == "Q{" ++ eu ++ "}" ++ el
-            || (eu == nsERR && t.endsWith ("}" ++ el))))
+            t == "*" || t == "*:" ++ el || t == "Q{" ++ eu ++ "}*" || t == "Q{" ++ eu ++ "}" ++ el))
           match hit with
           | none => throw e
           | some (_, csel, cbody) =>

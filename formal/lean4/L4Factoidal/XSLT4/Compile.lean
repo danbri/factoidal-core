@@ -525,12 +525,13 @@ def errCodeAvt (c : SCx) (as : Attrs) : CM (Option Avt) := do
   match as.get "error-code" with
   | none => pure none
   | some v =>
-    let v := v.trimAscii.toString
+    let a ← liftM (c.avt v.trimAscii.toString)
     -- a value template: the namespaces of the instruction go after a NUL,
     -- for the expansion when it is evaluated (`validCode`)
-    if v.contains '{' && !v.startsWith "Q{" then
+    let some v := a.const? | do
       let nsTxt := String.intercalate "\x01" (c.ns.map (fun (p, u) => p ++ "=" ++ u))
-      return some ((← liftM (c.avt v)) ++ [.lit ("\x00" ++ nsTxt)])
+      return some (a ++ [.lit ("\x00" ++ nsTxt)])
+    let v := v.trimAscii.toString
     if v.startsWith "Q{" then return some [.lit v]
     match v.splitOn ":" with
     | [l] =>
@@ -544,6 +545,23 @@ def errCodeAvt (c : SCx) (as : Attrs) : CM (Option Avt) := do
       | some u => pure (some [.lit (if u == nsERR then l else "Q{" ++ u ++ "}" ++ l)])
       | none => pure (some [.lit v])
     | _ => pure (some [.lit v])
+
+/-- XTSE0010: `xsl:param` children come before the other content of
+    `xsl:template`, `xsl:function` and `xsl:iterate`; `xsl:sort` children
+    come first in the sorting instructions. -/
+def checkOrder (m : Mod) (i : Nat) : CM Unit := do
+  let l := (m.name i).loc
+  let sig := (m.kids i).filter (fun k => m.isElem k ||
+    ((m.r k).kind == .text && !((m.r k).value.toList.all Char.isWhitespace)))
+  let firstOnly (tag : String) (skip : List String) : CM Unit := do
+    let mut seenOther := false
+    for k in sig do
+      if m.isXsl k tag then
+        if seenOther then cerr "XTSE0010" ("xsl:" ++ tag ++ " must come before the other content of xsl:" ++ l)
+      else if !(skip.any (m.isXsl k ·)) then seenOther := true
+  if ["template", "function", "iterate"].contains l then firstOnly "param" ["context-item"]
+  if ["perform-sort", "for-each", "for-each-group"].contains l then
+    firstOnly "sort" []
 
 def nextTid : CM Nat := do
   let s ← get
@@ -596,6 +614,13 @@ def compileElem : Nat → SCx → Mod → Nat → CM (List Instr)
   | f + 1, c0, m, i => do
     let as ← effAttrs c0 m i
     let c ← c0.enter m i as
+    -- the content order of XSLT elements (XTSE0010): xsl:param first
+    -- (after xsl:context-item), xsl:sort first in the instructions that
+    -- sort
+    if (m.name i).uri == nsXSL then checkOrder m i
+    -- a template, function or nested element is not inside the body of
+    -- an iteration unless it is the iteration's own content
+    let c := if m.isXsl i "iterate" then { c with inIter := false } else c
     if !(← useWhenOk c m i as) then return []
     let wrap : List Instr → List Instr := fun is =>
       let is := if c.backCompat != c0.backCompat then [.withCompat c.backCompat is] else is
@@ -641,6 +666,20 @@ def compileSorts : Nat → SCx → Mod → List Nat → CM (List SortK)
       if !m.isXsl k "sort" && !m.isXsl k "merge-key" then return none
       let as ← effAttrs c m k
       let c' ← c.enter m k as
+      -- fixed values of the value-template attributes (XTSE0020)
+      let fixed (a : String) : Option String := match as.get a with
+        | some v => if v.contains '{' then none else some v.trimAscii.toString
+        | none => none
+      let okIn (a : String) (vs : List String) : CM Unit :=
+        match fixed a with
+        | some v => if vs.contains v then pure () else cerr "XTSE0020" ("invalid value '" ++ v ++ "' for attribute " ++ a ++ " of xsl:sort")
+        | none => pure ()
+      okIn "stable" ["yes", "no", "true", "false", "1", "0"]
+      okIn "order" ["ascending", "descending"]
+      okIn "case-order" ["upper-first", "lower-first"]
+      if let some lg := fixed "lang" then
+        if !(lg == "" || lg.toList.all (fun ch => ch.isAlphanum || ch == '-')) then
+          cerr "XTSE0020" ("invalid language '" ++ lg ++ "' for xsl:sort")
       let sel ← optExpr c' as "select"
       let body ← compileNodes f c' m (m.kids k)
       if sel.isSome && !body.isEmpty then cerr "XTSE1015" "xsl:sort has both a select attribute and content"
@@ -777,7 +816,7 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         let test ← parseC c (← reqAttr as "test" l)
         let th ← optExpr c as "then"
         let b ← body
-        if th.isSome && !b.isEmpty then cerr "XTSE3185" "xsl:if has both a then attribute and content"
+        if th.isSome && !b.isEmpty then cerr "XTSE0010" "xsl:if has both a then attribute and content"
         pure (.ifI test th (← optExpr c as "else") b)
     | "choose" | "switch" =>
         let mut whens : List (Expr × List Instr) := []
@@ -791,12 +830,14 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
             let t ← parseC ck (← reqAttr kas "test" "when")
             let sel ← optExpr ck kas "select"
             let b ← compileNodes f ck m (m.kids k)
+            if sel.isSome && !b.isEmpty then cerr "XTSE0010" "xsl:when has both a select attribute and content"
             let b := match sel with | some e => [Instr.seq (some e) [] none] | none => b
             whens := whens ++ [(t, b)]
           else if m.isXsl k "otherwise" then
             if other.isSome then cerr "XTSE0010" "two xsl:otherwise elements"
             let sel ← optExpr ck kas "select"
             let b ← compileNodes f ck m (m.kids k)
+            if sel.isSome && !b.isEmpty then cerr "XTSE0010" "xsl:otherwise has both a select attribute and content"
             other := some (match sel with | some e => [Instr.seq (some e) [] none] | none => b)
           else if m.isXsl k "fallback" then pure ()
           else cerr "XTSE0010" ("xsl:" ++ l ++ " may contain only xsl:when and xsl:otherwise")
@@ -863,7 +904,7 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
             | some _ => false
           if p.required || (p.sel.isNone && p.body.isEmpty && !emptyOk) then
             cerr "XTSE3520" ("the parameter $" ++ p.name.show ++ " of xsl:iterate is mandatory")
-        let ib ← body (notTag ["param", "on-completion"])
+        let ib ← compileNodes f { c with inIter := true } m (notTag ["param", "on-completion"])
         -- xsl:break and xsl:next-iteration only in a tail position
         -- (XTSE3120); next-iteration names only parameters of the
         -- iteration (XTSE3130)
@@ -875,11 +916,14 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
                 cerr "XTSE3130" ("xsl:next-iteration sets $" ++ w.name.show ++ ", which is not a parameter of xsl:iterate")
         pure (.iterate sel ps oc ib)
     | "break" =>
+        if !c.inIter then cerr "XTSE0010" "xsl:break is allowed only inside xsl:iterate"
         let sel ← optExpr c as "select"
         let b ← body
         if sel.isSome && !b.isEmpty then cerr "XTSE3125" "xsl:break has both select and content"
         pure (.breakI sel b)
-    | "next-iteration" => pure (.nextIteration (← compileParams f c m ekids "with-param"))
+    | "next-iteration" =>
+        if !c.inIter then cerr "XTSE0010" "xsl:next-iteration is allowed only inside xsl:iterate"
+        pure (.nextIteration (← compileParams f c m ekids "with-param"))
     | "try" =>
         let sel ← optExpr c as "select"
         let mut catches : List (List String × Option Expr × List Instr) := []

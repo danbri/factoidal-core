@@ -157,6 +157,31 @@ def keyStrOf (env : Env) (coll : String) (a : Atomic) : String :=
     else groupKeyStr a
   | none => groupKeyStr a
 
+/-- The entries of a key over the subtree at `root` (for
+    `fn:map-for-key`): each distinct key value (by its index string),
+    one representative value, and the node indexes in document order. -/
+def keyEntries (S : Sheet) (env : Env) (kd : KeyDef) (root : NodeRef) : M (List (String × Atomic × Array Nat)) := do
+  let d := env.doc root
+  let mut keys : Array (String × Atomic) := #[]
+  let mut idx : Std.HashMap String (Array Nat) := {}
+  for i in [root.idx:(d.get root.idx).last+1] do
+    let nd := root.at i
+    if !(kd.pat.matches env (.node nd)) then continue
+    let cx : Ctx := { env := env.focus (.node nd) 1 1 }
+    let v ← match kd.use with
+      | some e => (·.1) <$> (evalX cx e).run {}
+      | none => do
+        let (os, _) ← (run 100000 S cx kd.body).run {}
+        let (v, _) ← (materializeAll env os).run {}
+        pure v
+    let as ← env.atomize v
+    for a in as do
+      let k := groupKeyStr a
+      match idx.get? k with
+      | some ns => if ns.back? != some i then idx := idx.insert k (ns.push i)
+      | none => keys := keys.push (k, a); idx := idx.insert k #[i]
+  pure (keys.toList.map (fun (k, a) => (k, a, idx.getD k #[])))
+
 /-- The key index of `kd` over document `doc` (number `di`). -/
 def buildKeyIndex (S : Sheet) (env : Env) (kd : KeyDef) (root : NodeRef) : M KeyIndex := do
   let d := env.doc root
@@ -347,6 +372,48 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
     | "unparsed-entity-uri", _ => some fun _ _ => pure (sStr "")
     | "unparsed-entity-public-id", _ => some fun _ _ => pure (sStr "")
     | "stream-available", 1 => some fun _ _ => pure (sBool false)
+    | "apply-templates", _ => if k != 1 && k != 2 then none else some fun c a => do
+        -- fn:apply-templates (§6.9.3.1): the effect of xsl:apply-templates
+        let opts := match a.getD 1 [] with
+          | [.map kvs] => kvs
+          | _ => []
+        let opt (key : String) : Option Seq := (opts.find? (fun (k0, _) => k0.str == key)).map (·.2)
+        let qmap (key : String) : M (List (QN × Seq)) :=
+          match opt key with
+          | some [.map kvs] => kvs.mapM (fun (k0, v) => (match k0.v with
+              | .qn q => pure (q, v)
+              | _ => err "XPTY0004" ("the keys of " ++ key ++ " must be QNames")))
+          | some [] | none => pure []
+          | _ => err "XPTY0004" (key ++ " must be a map")
+        let ps ← qmap "params"
+        let tps ← qmap "tunnel-params"
+        let cur := match lookupV c.vars vMode with
+          | some [.atom m] => m.str
+          | _ => "#unnamed"
+        let named (q : QN) : M String :=
+          -- a named mode must be declared and not private (XTDE0565)
+          match S.modes.find? (·.name == q.eqn) with
+          | some md => if md.vis == "private" then err "XTDE0565" ("mode " ++ q.show ++ " is private") else pure q.eqn
+          | none => err "XTDE0565" ("mode " ++ q.show ++ " is not declared")
+        let mode ← match opt "mode" with
+          | none | some [] => pure "#unnamed"
+          | some [.atom m] =>
+            (match m.v with
+            | .qn q => named q
+            | _ => if m.str == "#current" then pure cur else if m.str == "#unnamed" then pure "#unnamed"
+              else err "XPTY0004" ("invalid mode " ++ m.str))
+          | _ => err "XPTY0004" "invalid mode option"
+        runFresh c "apply-templates" a (do
+          let cx : Ctx := { env := { env with ctx := c.ctx, pos := c.pos, size := c.size, ns := c.ns, vars := env.vars } }
+          -- the tunnel parameters in force are passed on (§10.1.3)
+          let inForce : List (QN × Seq) := match lookupV c.vars vTunnel with
+            | some [.map kvs] => kvs.filterMap (fun (k0, v) => match k0.v with
+                | .qn q => some (q, v)
+                | _ => none)
+            | _ => []
+          let tun := tps ++ inForce.filter (fun (q, _) => !tps.any (·.1 == q))
+          let os ← applyT 100000 S cx (a.getD 0 []) mode ps tun none
+          materializeAll env os)
     | "copy-of", _ | "snapshot", _ => some fun c a => do
         let s ← match k, c.ctx with
           | 0, some s => pure s
@@ -362,6 +429,33 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
           | other => out := out.push other
           j := j + 1
         pure out.toList
+    | "map-for-key", _ => if k != 1 && k != 2 then none else some fun c a => do
+        -- fn:map-for-key (§20.2.3)
+        let nm ← match a.getD 0 [] with
+          | [.atom x] => match x.v with
+            | .qn q => pure q
+            | _ => lexQName c.ns x.str false "XTDE1260"
+          | _ => err "XPTY0004" "the key name must be a string or a QName"
+        let kds := S.keys.filter (fun kd => kd.name == nm)
+        if kds.isEmpty then err "XTDE1260" ("no key named " ++ nm.show)
+        if kds.any (fun kd => kd.composite || !(kd.collation == "" || kd.collation == codepointCollation)) then
+          err "XTDE1262" ("the key " ++ nm.show ++ " is composite or has a collation other than the codepoint collation")
+        let root ← match a.getD 1 [] with
+          | [.node t] => pure t
+          | [] => do pure (env.treeRoot (← ctxNode c "map-for-key()"))
+          | _ => err "XPTY0004" "the second argument of map-for-key() must be a node"
+        if (env.nrec (env.treeRoot root)).kind != .document then
+          err "XTDE1270" "map-for-key() needs a node in a tree whose root is a document node"
+        let mut order : Array String := #[]
+        let mut vals : Std.HashMap String (Atomic × Array Nat) := {}
+        for kd in kds do
+          for (ks, av, ns) in ← keyEntries S env kd root do
+            match vals.get? ks with
+            | some (a0, old) => vals := vals.insert ks (a0, (old ++ ns))
+            | none => order := order.push ks; vals := vals.insert ks (av, ns)
+        let entries := order.toList.filterMap (fun ks => (vals.get? ks).map (fun (av, ns) =>
+          (av, (sortNodes (ns.toList.eraseDups.map root.at)).map Item.node)))
+        pure [.map entries]
     | "key", _ => if k != 2 && k != 3 then none else some fun c a => do
         let nm ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE1260"
         let kds := S.keys.filter (fun kd => kd.name == nm)

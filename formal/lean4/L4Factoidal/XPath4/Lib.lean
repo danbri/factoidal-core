@@ -1005,7 +1005,7 @@ def fnTable : List (String × LibFn) := [
   -- errors and diagnostics
   ent "error" (fun _ _ a => do
     let (code, uri) := match optAtom (argN a 0) with
-      | some ⟨_, .qn q⟩ => (q.loc, if q.uri == nsERR then "" else q.uri)
+      | some ⟨_, .qn q⟩ => (q.loc, if q.uri == nsERR then "" else if q.uri == "" then "#none" else q.uri)
       | _ => ("FOER0000", "")
     throw { code, msg := strOf (argN a 1), uri }),
   ent "trace" (fun _ _ a => pure (argN a 0)),

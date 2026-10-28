@@ -32,7 +32,7 @@ def xslFunctions : List (String × List Nat) :=
    ("key", [2, 3]), ("regex-group", [1]), ("stream-available", [1]), ("system-property", [1]),
    ("type-available", [1]), ("unparsed-entity-public-id", [1, 2]), ("unparsed-entity-uri", [1, 2]),
    ("accumulator-before", [1]), ("accumulator-after", [1]), ("copy-of", [0, 1]), ("snapshot", [0, 1]),
-   ("available-system-properties", [0]), ("apply-templates", [1, 2])]
+   ("available-system-properties", [0]), ("apply-templates", [1, 2]), ("map-for-key", [1, 2])]
 
 def systemProperty (l : String) : String :=
   match l with

@@ -248,6 +248,11 @@ def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
   -- the fragment the assertion gives
   xmlEq1 env got expected.trimAscii.toString true
 
+/-- The error code of an error, with its namespace when it is not the
+    `err` namespace (`fn:error` with a QName). -/
+def errCode (e : Err) : String :=
+  if e.uri == "" then e.code else if e.uri == "#none" then "Q{}" ++ e.code else "Q{" ++ e.uri ++ "}" ++ e.code
+
 def codeMatches (expected got : String) : Bool :=
   expected == "*" || expected == got || ("err:" ++ got) == expected || expected.endsWith (":" ++ got) ||
   expected == "Q{http://www.w3.org/2005/xqt-errors}" ++ got || got.endsWith ("}" ++ expected)
@@ -271,7 +276,7 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
     | "error" =>
         let code := attrD a "code"
         match res with
-        | .error e => ok? (codeMatches code e.code) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ "): " ++ cut e.msg 100)
+        | .error e => ok? (codeMatches code (errCode e)) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ "): " ++ cut e.msg 100)
         | .ok s => .fail ("expected error " ++ code ++ ", got " ++ (sh s 80))
     | "any-of" =>
         let rs := (kids a).map (fun c => checkAssert rc f c)
@@ -292,10 +297,10 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
     | "assert-serialization-error" =>
         let code := attrD a "code"
         match res with
-        | .error e => ok? (codeMatches code e.code) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
+        | .error e => ok? (codeMatches code (errCode e)) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
         | .ok s =>
           match rc.ser s with
-          | .error e => ok? (codeMatches code e.code) ("wrong serialization error " ++ e.code ++ " (expected " ++ code ++ ")")
+          | .error e => ok? (codeMatches code (errCode e)) ("wrong serialization error " ++ e.code ++ " (expected " ++ code ++ ")")
           | .ok out => .fail ("expected serialization error " ++ code ++ ", got " ++ cut out 80)
     | "assert-result-document" =>
         let u := attrD a "uri"
