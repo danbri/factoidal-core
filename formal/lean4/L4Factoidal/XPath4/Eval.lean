@@ -523,7 +523,19 @@ def eval : Nat → Env → Expr → M Seq
           else
             let vs ← evalArgs n env args
             apply n env fi (vs.map (·.getD []))
-      | _ => err "XPTY0004" "dynamic call requires exactly one function item"
+      | _ =>
+        -- XPath 4.0 (PR 1975): a sequence of function items is called item by
+        -- item and the results are concatenated; the empty sequence gives ()
+        if !fs.all Item.isFn then err "XPTY0004" "dynamic call of a value that is not a function"
+        if args.any Option.isNone then
+          let fixed ← evalArgs n env args
+          pure (fs.map (fun fi => .fn (.papp fi fixed)))
+        else
+          let vs ← evalArgs n env args
+          let mut out : Seq := []
+          for fi in fs do
+            out := out ++ (← apply n env fi (vs.map (·.getD [])))
+          pure out
   | .fref q k => do
       if q.uri == nsXS then
         if k == 1 && ((atypeOfName? q.loc).isSome || q.loc == "numeric") && q.loc != "NOTATION" && q.loc != "anyAtomicType" then pure [.fn (.builtin q 1)]

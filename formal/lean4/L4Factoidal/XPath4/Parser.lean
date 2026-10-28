@@ -13,7 +13,7 @@ every nested call (no `partial def`); running out of fuel is the
 static error `XPST0003` with a message saying so, never a wrong parse.
 
 Implemented: every production of the XPath 4.0 expression grammar
-EXCEPT `but with`, `=?>` method calls, `jnode()` types, destructuring
+EXCEPT `but with`, `jnode()` types, destructuring
 `let $( )`/`$[ ]`/`${ }` bindings, computed node constructors, the
 `declare default element namespace` prolog and schema-element /
 schema-attribute types. Those raise `XPST0003` naming the construct.
@@ -1141,7 +1141,20 @@ def pPostfix : Nat → P Expr
         let k ← pKeySpec n
         a := .lookup a k
       else if ch == '=' && (← peekAt 1) == '?' && (← peekAt 2) == '>' then
-        synErr "method calls (=?>) are not implemented"
+        -- XPath 4.0 §4.15.5 method call `M =?> N(args)`: for each map $m
+        -- in M, `$m?N($m, args)` (a variable name no source text can bind)
+        adv 3
+        ws
+        let c ← read
+        let i ← get
+        let some (nm, e) := ncnameAt c.s i | synErr "expected a method name after =?>"
+        set e
+        let (args, kw) ← pArgs n
+        if !kw.isEmpty || args.any Option.isNone then
+          synErr "a method call cannot have keyword arguments or placeholders"
+        let v : QN := { uri := "", loc := "#method-target" }
+        a := .forE .item v none none (.seq .item .star) a
+          (.dyn (.lookup (.var v) (some (.lit (Atomic.ofStr nm)))) (some (.var v) :: args))
       else break
     pure a
 
