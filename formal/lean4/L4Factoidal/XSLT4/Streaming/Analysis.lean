@@ -592,6 +592,9 @@ def exStep : Nat → Ctx → Expr → SR
       | none => SR.gm (cx.varType q)
     | .ctx => { p := cx.post, s := .motionless, t := cx.ct }
     | .root => rootOf f cx { p := cx.post, s := .motionless, t := cx.ct }
+    | .slash a (.slash b c) =>
+      -- `/` is associative; the rules of §12.8.9 read `a/b/c` as `(a/b)/c`
+      ex f cx (.slash (.slash a b) c)
     | .slash a b =>
       let ra := ex f cx a
       let rb := ex f (cx.focus ra.p ra.t) b
