@@ -418,7 +418,8 @@ def docFn (e : Env) (a : List Seq) : M Seq := do
     if (u.str.splitOn "#").length > 1 then err "FODC0005" "a fragment identifier is not allowed"
     if !iriRefOk u.str then err "FODC0005" ("not a valid URI reference: " ++ u.str)
     let o ← parseOpts e (argN a 1)
-    match e.docUris.lookup u.str with
+    -- a relative reference is resolved against the static base URI
+    match e.docUris.lookup u.str |>.orElse (fun _ => e.docUris.lookup (resolveUri e.baseUri u.str)) with
     | some d =>
       if o.dtdValidation then err "FODC0007" "DTD validation of a registered document" else
       pure [.node (NodeRef.mk' d 0)]

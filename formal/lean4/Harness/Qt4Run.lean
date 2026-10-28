@@ -842,7 +842,14 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         match ← readFileSafe (dir ++ "/" ++ attrD md "file") with
         | some txt => mods := mods ++ [("#module " ++ attrD md "uri", txt)]
         | none => pure ()
-      let env := { env with resources := env.resources ++ mods }
+      -- the files that a module names (fn:doc in a loaded module)
+      let mut fromMods : List (String × String) := []
+      for md in kidsNamed tc "module" do
+        let f := dir ++ "/" ++ attrD md "file"
+        if let some txt ← readFileSafe f then
+          let (found, _) ← scanResources o.root (dirOf f) txt
+          fromMods := fromMods ++ found.filter (fun (k, _) => !(env.resources.any (·.1 == k)))
+      let env := { env with resources := env.resources ++ mods ++ fromMods }
       -- fn:load-xquery-module through the XQuery 4.0 processor
       let env := { env with host := L4Factoidal.XQuery4.loadModuleHost env env.host }
       -- fn:transform through the XSLT 4.0 processor
