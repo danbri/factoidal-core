@@ -1770,3 +1770,8 @@ L4Factoidal_XSLT4_Streaming_evCount  # (s) specification only: the measure of th
 L4Factoidal_XSLT4_Streaming_evCountList  # (s) specification only: the measure of the work-list loop eventsLoop (termination proof) and the work list's meaning in eventsLoop_eq; no compiled function calls it (XSLT Streaming 4.0, issue 1101)
 L4Factoidal_XSLT4_Streaming_flat  # (s) specification only: the measure of the work-list loop eventsLoop (termination proof) and the work list's meaning in eventsLoop_eq; no compiled function calls it (XSLT Streaming 4.0, issue 1101)
 L4Factoidal_XSLT4_Streaming_workCount  # (s) specification only: the measure of the work-list loop eventsLoop (termination proof) and the work list's meaning in eventsLoop_eq; no compiled function calls it (XSLT Streaming 4.0, issue 1101)
+L4Factoidal_XPath4_genSrc?  # (b) the depth is the nesting of lookups and simple maps over one fn:generate call in a parsed expression (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_genPull  # (b) in the mutual block of XPath4.eval: the depth is the nesting of the parsed expression; fuel decreases at each call; the generated items are an Array loop (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_genShortcut  # (b) as genPull: one call per fn:generate consumer in the parsed expression; fuel decreases (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_largeRangeOf?  # (b) the depth is the nesting of the parsed range expression; fuel decreases at each call (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_rangeShortcut  # (b) as largeRangeOf?: one call per range consumer in the parsed expression; fuel decreases (XPath 4.0, issue 1101)
