@@ -683,6 +683,12 @@ def Env.deepEqFuel (e : Env) : Nat → Seq → Seq → Bool
       | .arr ma, .arr mb => ma.length == mb.length && (ma.zip mb).all (fun (p, q) => e.deepEqFuel f p q)
       | .fn (.builtin q1 k1), .fn (.builtin q2 k2) => q1 == q2 && k1 == k2
       | .jnode _ _ v1 _, .jnode _ _ v2 _ => e.deepEqFuel f v1 v2
+      | .fn (.papp (.fn (.builtin q1 k1)) a1), .fn (.papp (.fn (.builtin q2 k2)) a2) =>
+          q1 == q2 && k1 == k2 && a1.length == a2.length &&
+          (a1.zip a2).all (fun (x, y) => match x, y with
+            | none, none => true
+            | some u, some w => e.deepEqFuel f u w
+            | _, _ => false)
       | _, _ => false)
 
 def Env.deepEq (e : Env) (a b : Seq) : Bool := e.deepEqFuel 10000 a b
