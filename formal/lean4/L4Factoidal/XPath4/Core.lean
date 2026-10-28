@@ -24,6 +24,8 @@ structure HostCall where
   ctx : Option Seq := none
   pos : Nat := 0
   size : Nat := 0
+  /-- The static namespace bindings in force (`Env.ns`). -/
+  ns : List (String × String) := []
 
 /-- A host function: called with the dynamic context of the call and
     the argument values. -/

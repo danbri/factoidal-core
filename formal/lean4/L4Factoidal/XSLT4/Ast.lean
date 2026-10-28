@@ -158,7 +158,7 @@ instance : Inhabited WParam := ⟨.mk default none [] none false false⟩
 def WParam.name : WParam → QN | .mk n .. => n
 def WParam.sel : WParam → Option Expr | .mk _ s .. => s
 def WParam.body : WParam → List Instr | .mk _ _ b .. => b
-def WParam.as : WParam → Option IType | .mk _ _ _ a .. => a
+def WParam.ty : WParam → Option IType | .mk _ _ _ a .. => a
 def WParam.tunnel : WParam → Bool | .mk _ _ _ _ t _ => t
 def WParam.required : WParam → Bool | .mk _ _ _ _ _ r => r
 
@@ -175,7 +175,7 @@ structure Tmpl where
   /-- Declaration order (later wins among equals). -/
   order : Nat := 0
   params : List WParam := []
-  as : Option IType := none
+  ty : Option IType := none
   body : List Instr := []
   /-- `xsl:context-item use="absent"` or `as` type. -/
   ctxAbsent : Bool := false
@@ -185,7 +185,7 @@ deriving Inhabited
 structure XFunction where
   name : QN
   params : List WParam
-  as : Option IType := none
+  ty : Option IType := none
   body : List Instr := []
   prec : Nat := 0
 deriving Inhabited
@@ -203,7 +203,7 @@ structure ModeDef where
   onNoMatch : NoMatch := .textOnlyCopy
   onMultiple : String := "use-last"
   typed : String := "unspecified"
-  as : Option IType := none
+  ty : Option IType := none
   copyNs : Bool := true
 deriving Inhabited
 
@@ -212,7 +212,7 @@ structure Global where
   isParam : Bool := false
   sel : Option Expr := none
   body : List Instr := []
-  as : Option IType := none
+  ty : Option IType := none
   required : Bool := false
   isStatic : Bool := false
   prec : Nat := 0
@@ -234,7 +234,7 @@ deriving Inhabited
 structure Accumulator where
   name : QN
   init : Expr
-  as : Option IType := none
+  ty : Option IType := none
   rules : List AccRule := []
 deriving Inhabited
 
