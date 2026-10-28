@@ -8,11 +8,12 @@ import L4Factoidal.XPath4.Format
 import L4Factoidal.XPath4.Json
 import L4Factoidal.XPath4.Regex4
 import L4Factoidal.XPath4.Serialize
+import L4Factoidal.XPath4.ElemMap
 
 namespace L4Factoidal.XPath4
 
 def extTable : List (String × LibFn) :=
-  xmlParseTable ++ formatTable ++ jsonTable ++ regexTable ++ serializeTable
+  xmlParseTable ++ formatTable ++ jsonTable ++ regexTable ++ serializeTable ++ elemMapTable
 
 /-- Look up a built-in function: the Stage 2 tables first. -/
 def libLookupAll (q : QN) : Option LibFn :=
