@@ -110,6 +110,10 @@ deriving Inhabited
 structure TResult where
   /-- The raw principal result. -/
   raw : Seq
+  /-- The output definition of the principal result and the
+      serialization attributes of the `xsl:result-document` that wrote
+      it (none: the unnamed output definition). -/
+  principalFormat : String × List (String × String) := ("", [])
   /-- Secondary results: absolute href, value, output definition, the
       instruction's serialization attributes. -/
   secondary : List (String × Seq × String × List (String × String))
@@ -503,7 +507,16 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
   let (os, st) ← act.run { base := 1 }
   let (raw, st) ← (materializeAll env os).run st
   let abs (h : String) : String := if o.outUri == "" then h else resolveUri o.outUri h
-  pure { raw, secondary := st.results.toList.map (fun (h, v, f, sp) => (abs h, v, f, sp)), msgs := st.msgs.toList }
+  -- §25.1: a result document with no href (or the base output URI) is
+  -- the principal result
+  let isPrincipal (h : String) : Bool := h == "" || (o.outUri != "" && abs h == o.outUri)
+  let (raw, pf) ← match st.results.toList.find? (fun (h, _, _, _) => isPrincipal h) with
+    | some (_, v, f, sp) =>
+        if !raw.isEmpty then err "XTDE1490" "the principal result is written twice"
+        else pure (v, (f, sp))
+    | none => pure (raw, ("", []))
+  let secs := st.results.toList.filter (fun (h, _, _, _) => !isPrincipal h)
+  pure { raw, principalFormat := pf, secondary := secs.map (fun (h, v, f, sp) => (abs h, v, f, sp)), msgs := st.msgs.toList }
 
 /-! ## Serialization (§26) -/
 
@@ -514,6 +527,18 @@ def serKinds : List String :=
    "indent-unit", "item-separator", "json-lines", "json-node-output-method", "line-ending", "media-type",
    "method", "normalization-form", "omit-xml-declaration", "standalone", "suppress-indentation",
    "undeclare-prefixes", "use-character-maps", "version"]
+
+/-- The characters a named character map maps, with the maps it uses
+    first (§26.1). -/
+def Sheet.charMapOf (S : Sheet) : Nat → String → M (List (Char × String))
+  | 0, _ => err "XTSE1600" "character maps use each other in a cycle"
+  | f + 1, key => do
+    match S.charMaps.find? (·.1 == key) with
+    | none => err "XTSE1590" ("unknown character map " ++ key)
+    | some (_, uses, own) =>
+      let mut out : List (Char × String) := []
+      for u in uses do out := out ++ (← S.charMapOf f u)
+      pure (out ++ own)
 
 /-- Serialization parameters from `xsl:output` properties. -/
 def serParamsOfProps (S : Sheet) (props : List (String × String)) : M SerParams := do
@@ -527,9 +552,7 @@ def serParamsOfProps (S : Sheet) (props : List (String × String)) : M SerParams
         let key ← match lexQName S.ns t false "XTSE1590" with
           | .ok q => pure q.eqn
           | .error _ => pure t
-        match S.charMaps.lookup key with
-        | some xs => cm := cm ++ xs
-        | none => err "XTSE1590" ("unknown character map " ++ t)
+        cm := cm ++ (← S.charMapOf 20 key)
       p ← p.set "use-character-maps" (.cm cm)
       continue
     let some kind := paramKinds.lookup name | continue
@@ -592,6 +615,10 @@ def serializeResult (S : Sheet) (env : Env) (props : List (String × String)) (s
   let props := if (m == "xml" || m == "xhtml") && !(props.any (·.1 == "omit-xml-declaration")) then
       props ++ [("omit-xml-declaration", "no")] else props
   let p ← serParamsOfProps S props
-  env.serializeWith p s
+  let out ← env.serializeWith p s
+  let bom := match props.lookup "byte-order-mark" with
+    | some v => ["yes", "true", "1"].contains v.trimAscii.toString
+    | none => false
+  pure (if bom then "\uFEFF" ++ out else out)
 
 end L4Factoidal.XSLT4

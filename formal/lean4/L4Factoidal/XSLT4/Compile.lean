@@ -354,8 +354,9 @@ def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
         cerr "XTSE0090" ("attribute " ++ q.loc ++ " is not allowed on xsl:" ++ l)
       if q.uri == "" then
         let v' := v.trimAscii.toString
+        let applies := q.loc != "use" || l == "context-item" || l == "global-context-item"
         if let some vals := enumAttrs.lookup q.loc then
-          if !vals.contains v' && !(q.loc == "typed") then
+          if applies && !vals.contains v' then
             cerr "XTSE0020" ("invalid value '" ++ v ++ "' for attribute " ++ q.loc ++ " of xsl:" ++ l)
         if boolAttrs.contains q.loc && (parseBool v').isNone then
           cerr "XTSE0020" ("invalid boolean '" ++ v ++ "' for attribute " ++ q.loc ++ " of xsl:" ++ l)
@@ -1052,16 +1053,13 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
           match ch.toList with
           | [x] => cs := cs ++ [(x, (Attrs.get kas "string").getD "")]
           | _ => cerr "XTSE0020" "xsl:output-character needs a single character"
-      -- use-character-maps: other maps first
-      let mut base : List (Char × String) := []
+      -- use-character-maps: resolved when the map is used, since the
+      -- other maps may be declared later
+      let mut uses : List String := []
       if let some v := as.get "use-character-maps" then
-        let s ← get
         for t in tokens v do
-          let n ← liftM (c.qname t)
-          match s.sheet.charMaps.lookup n.eqn with
-          | some xs => base := base ++ xs
-          | none => cerr "XTSE1590" ("unknown character map " ++ t)
-      upd (fun sh => { sh with charMaps := sh.charMaps ++ [(nm.eqn, base ++ cs)] })
+          uses := uses ++ [(← liftM (c.qname t)).eqn]
+      upd (fun sh => { sh with charMaps := sh.charMaps ++ [(nm.eqn, uses, cs)] })
   | "accumulator" =>
       let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:accumulator requires a name"
       let init ← liftM (c.parse (← reqAttr as "initial-value" "accumulator"))

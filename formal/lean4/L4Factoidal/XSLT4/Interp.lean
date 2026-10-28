@@ -200,14 +200,16 @@ def stepMatches (env : Env) (ax : Axis) (t : NodeTest) (preds : List Expr) (n : 
   let axOk := match ax with
     | .attribute => r.kind == .attribute
     | .namespace => r.kind == .namespace
-    | .child | .descendant => r.kind != .attribute && r.kind != .namespace && r.kind != .document
+    | .child | .descendant =>
+        r.kind != .attribute && r.kind != .namespace &&
+        (r.kind != .document || (match t with | .kind (.doc _) => true | _ => false))
     | _ => true
   if !axOk then return false
   let ax' := if ax == .self || ax == .descendantOrSelf then
       (if r.kind == .attribute then Axis.attribute else Axis.child) else ax
   if !(env.testMatches ax' n t) then return false
   if preds.isEmpty then return true
-  match env.parentOf n with
+  match (if r.kind == .document then none else env.parentOf n) with
   | some p =>
       let ax2 := if ax' == .attribute then Axis.attribute else if ax' == .namespace then .namespace else .child
       let res ← eval 100000 (env.focus (.node p) 1 1) (.step ax2 t preds)
@@ -226,6 +228,7 @@ def patMatch (env : Env) : Nat → Expr → Item → M Bool
   | 0, _, _ => pure false
   | f + 1, p, it =>
     match p with
+    | .seq [a] => patMatch env f a it
     | .bin .union a b => do
         if ← patMatch env f a it then pure true else patMatch env f b it
     | .bin .intersect a b => do
@@ -254,7 +257,32 @@ def pathMatch (env : Env) : Nat → List Expr → NodeRef → M Bool
     match steps with
     | [] => pure true
     | [s] => headMatch env f s n
-    | s :: rest => do
+    | (.seq [u]) :: rest => pathMatch env f (u :: rest) n
+    | (.bin .union a b) :: rest => do
+        -- `x/(a|b)` is `x/a | x/b`
+        if !rest.isEmpty then
+          if ← pathMatch env f (a :: rest) n then pure true else pathMatch env f (b :: rest) n
+        else patMatch env f (.bin .union a b) (.node n)
+    | (.step ax t preds) :: rest =>
+      if ax == .descendant || ax == .descendantOrSelf then do
+        -- the context of the step is an ancestor (or self) that matches
+        -- the rest of the pattern, and from it the step selects `n`
+        let r := env.nrec n
+        if r.kind == .attribute || r.kind == .namespace then return false
+        let cands := if ax == .descendantOrSelf then n :: env.ancestors n else env.ancestors n
+        for a in cands do
+          if ← pathMatch env f rest a then
+            let res ← eval 100000 (env.focus (.node a) 1 1) (.step ax t preds)
+            if res.any (fun i => match i with | .node m => m == n | _ => false) then return true
+        pure false
+      else pathMatchStep env f (.step ax t preds) rest n
+    | s :: rest => pathMatchStep env f s rest n
+
+/-- Match the last step `s` against `n`, then the rest against its
+    parent (or, after `//`, an ancestor). -/
+def pathMatchStep (env : Env) : Nat → Expr → List Expr → NodeRef → M Bool
+  | 0, _, _, _ => pure false
+  | f + 1, s, rest, n => do
       if !(← headMatch env f s n) then return false
       match env.parentOf n with
       | none => pure false
@@ -276,6 +304,7 @@ def headMatch (env : Env) : Nat → Expr → NodeRef → M Bool
   | f + 1, s, n =>
     match s with
     | .step ax t preds => stepMatches env ax t preds n
+    | .seq [a] => headMatch env f a n
     | .root => pure ((env.nrec n).kind == .document)
     | .bin .union _ _ | .bin .intersect _ _ | .bin .except _ _ | .filter _ _ => patMatch env f s (.node n)
     | e => do
@@ -288,6 +317,8 @@ end
 
 /-- Pattern matching with errors masked (§6.5). -/
 def Pattern.matches (p : Pattern) (env : Env) (it : Item) : Bool :=
+  -- `current()` in a pattern is the item being matched (§20.4.1)
+  let env := { env with vars := (vCurrent, [it]) :: env.vars }
   match patMatch env 200 p.e it with
   | .ok b => b
   | .error _ => false
@@ -1279,7 +1310,13 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         for (k, a) in ser do sp := sp ++ [(k, ← avtStr cx a)]
         let os ← run n S cx body
         let id ← freshId
-        let v ← match os with
+        let meth := match sp.lookup "method" with
+          | some m => m
+          | none => ((S.outputs.lookup f).bind (·.lookup "method")).getD ""
+        let buildTree := match sp.lookup "build-tree" with
+          | some b => parseBool b != some false
+          | none => meth != "json" && meth != "adaptive"
+        let v ← if !buildTree then materializeAll env os else match os with
           | [] => pure []
           | _ => do pure [← liftX (materialize env id (.doc os ""))]
         let st ← get

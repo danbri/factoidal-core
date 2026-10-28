@@ -235,7 +235,7 @@ def codeMatches (expected got : String) : Bool :=
 structure RCtx where
   env : Env
   res : M Seq
-  secondary : List (String × Seq)
+  secondary : List (String × Seq × (Seq → M String))
   ser : Seq → M String
 
 def checkAssert (rc : RCtx) : Nat → Node → Outcome
@@ -282,8 +282,8 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
         | .ok _ =>
           match rc.secondary.find? (fun (h, _) => h == u || h.endsWith ("/" ++ u)) with
           | none => .fail ("no result document " ++ u ++ " (have: " ++ String.intercalate ", " (rc.secondary.map (·.1)) ++ ")")
-          | some (_, v) =>
-            let rc' := { rc with res := .ok v }
+          | some (_, v, sr) =>
+            let rc' := { rc with res := .ok v, ser := sr }
             let rs := (kids a).map (fun c => checkAssert rc' f c)
             match rs.find? (fun r => match r with | .pass => false | _ => true) with
             | some r => r
@@ -612,14 +612,17 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
   let res : M Seq := do
     let (r, S) ← outcome
     deliver S r.raw
-  let secondary : List (String × Seq) := match outcome with
-    | .ok (r, S) => r.secondary.map (fun (h, v, _, _) => (h, (deliver S v).toOption.getD v))
-    | .error _ => []
-  let ser : Seq → M String := fun s => match outcome with
+  let serWith (fmt : String) (sp : List (String × String)) : Seq → M String := fun s => match outcome with
     | .ok (_, S) => do
-        let props ← S.outputProps ""
+        let props ← S.outputProps fmt sp
         serializeResult S env props s
     | .error e => throw e
+  let secondary : List (String × Seq × (Seq → M String)) := match outcome with
+    | .ok (r, S) => r.secondary.map (fun (h, v, f, sp) => (h, (if (sp.lookup "method").isSome || f != "" then pure v else deliver S v).toOption.getD v, serWith f sp))
+    | .error _ => []
+  let ser : Seq → M String := match outcome with
+    | .ok (r, _) => serWith r.principalFormat.1 r.principalFormat.2
+    | .error e => fun _ => throw e
   let env := match outcome with
     | .ok (r, _) => { env with docs := env.docs } |>.bind { uri := "", loc := "l4msgs" } (r.msgs.map (fun m => .atom (Atomic.ofStr m)))
     | .error _ => env

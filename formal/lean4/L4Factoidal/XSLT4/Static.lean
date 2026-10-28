@@ -267,6 +267,12 @@ def typePriority : Nat → IType → Float
           ps.foldl max (-1) else 0
     | _ => 0.25
 
+/-- Is this `.` under a chain of predicates? -/
+def filterBase : Expr → Bool
+  | .ctx => true
+  | .filter a _ => filterBase a
+  | _ => false
+
 /-- The default priority of one pattern alternative (§6.4). -/
 def defaultPriority (e : Expr) : Float :=
   let ofTest (ax : Axis) (t : NodeTest) : Float :=
@@ -287,9 +293,41 @@ def defaultPriority (e : Expr) : Float :=
   | .step ax t [] => if isPatternAxis ax then ofTest ax t else 0.5
   | .root => -0.5
   | .ctx => -1
-  | .filter .ctx _ => 1
+  | .filter a _ => if filterBase a then 1 else 0.5
   | .instOf .ctx ty => typePriority 50 ty
   | _ => 0.5
+
+/-- A pattern argument: a variable reference or a literal (§6.3.2). -/
+def patArgOk : Option Expr → Bool
+  | some (.var _) | some (.lit _) => true
+  | some (.neg (.lit _)) => true
+  | _ => false
+
+/-- The functions a pattern may call (§6.3.2). -/
+def patFnOk (q : QN) (k : Nat) : Bool :=
+  q.uri == nsFN && (match q.loc with
+    | "doc" => k == 1 | "id" | "element-with-id" => k == 1 || k == 2
+    | "key" => k == 2 || k == 3 | "root" => k == 0
+    | _ => false)
+
+/-- Static check of the forms XSLT allows in an XNode pattern (§6.3.2). -/
+def patternOk : Nat → Bool → Expr → Bool
+  | 0, _, _ => false
+  | f + 1, top, e =>
+    match e with
+    | .bin .union a b | .bin .intersect a b | .bin .except a b => patternOk f top a && patternOk f top b
+    | .seq [a] => patternOk f top a
+    | .root => true
+    | .ctx => top
+    | .instOf .ctx _ => top
+    | .filter a _ => patternOk f top a
+    | .step ax _ _ => isPatternAxis ax
+    | .var _ => true
+    | .call q args kw => kw.isEmpty && patFnOk q args.length && args.all (fun a => patArgOk a)
+    | .slash a b => patternOk f false a && patternOk f false b && (match b with
+        | .var _ | .root => false
+        | _ => true)
+    | _ => false
 
 /-- Parse a pattern. `~T` and `type(T)` (with predicates) are type
     patterns of the 4.0 draft that the test suite uses; `.` with
@@ -329,21 +367,8 @@ def SCx.pattern (c : SCx) (src : String) : M Pattern := do
     | .error er => err "XTSE0340" ("invalid pattern '" ++ t ++ "': " ++ er.msg)
   | none =>
   match c.parse t with
-  | .ok e => pure { e, src := t }
+  | .ok e => if patternOk 1000 true e then pure { e, src := t }
+             else err "XTSE0340" ("'" ++ t ++ "' is not a pattern")
   | .error er => err "XTSE0340" ("invalid pattern '" ++ t ++ "': " ++ er.msg)
-
-/-- Static check of the forms XSLT allows in an XNode pattern (§6.3.2). -/
-def patternOk : Nat → Expr → Bool
-  | 0, _ => false
-  | f + 1, e =>
-    match e with
-    | .bin .union a b | .bin .intersect a b | .bin .except a b => patternOk f a && patternOk f b
-    | .root | .ctx => true
-    | .filter a _ => patternOk f a
-    | .step ax _ _ => isPatternAxis ax
-    | .var _ => true
-    | .call _ _ _ => true
-    | .slash a b => patternOk f a && patternOk f b
-    | _ => false
 
 end L4Factoidal.XSLT4

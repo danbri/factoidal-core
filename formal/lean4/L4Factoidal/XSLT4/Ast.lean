@@ -258,8 +258,9 @@ structure Sheet where
   space : List (NameTest × Bool × Nat) := []
   /-- `xsl:namespace-alias`: stylesheet URI to result (prefix, URI). -/
   nsAliases : List (String × String × String) := []
-  /-- `xsl:character-map`s: name and the mapped characters. -/
-  charMaps : List (String × List (Char × String)) := []
+  /-- `xsl:character-map`s: name, the maps it uses (`Q{uri}local`), and
+      its own mapped characters. -/
+  charMaps : List (String × List String × List (Char × String)) := []
   defaultMode : String := "#unnamed"
   /-- The `version` attribute of the principal module. -/
   version : String := "4.0"
