@@ -841,7 +841,12 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
             let e ← if chAt s (j+1) == '!' then pDirComment
               else if chAt s (j+1) == '?' then pDirPI
               else pDirElem cfg sp f
-            ps := ps.push (.bound (tagAt j e))
+            -- a nested direct element inherits only the declared namespaces
+            -- of its parent (§4.12.1.3), marked "#nested"
+            let e := match tagAt j e with
+              | .ext "elem" es ts qs ss => .ext "elem" es ts qs (ss ++ ["#nested"])
+              | x => x
+            ps := ps.push (.bound e)
         else if ch == '{' && chAt s (j+1) == '{' then buf := buf.push '{'; adv 2
         else if ch == '}' && chAt s (j+1) == '}' then buf := buf.push '}'; adv 2
         else if ch == '}' then synErr "unescaped '}' in element content"

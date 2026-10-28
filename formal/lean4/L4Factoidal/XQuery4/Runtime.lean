@@ -208,6 +208,9 @@ def newDocId (tag : String) (e : Env) (content : String) (ss : List String := []
 inductive Piece where
   | text (s : String)
   | node (n : NodeRef)
+  /-- A node from a nested direct element constructor: it inherits only
+      the namespace declarations of its parent (§4.12.1.3). -/
+  | dnode (n : NodeRef)
 
 /-- Copy the subtree of `src` (in `env`) to the end of `out`, with
     parent `par`. A subtree is the index range `[src.idx, last]`, so
@@ -235,6 +238,9 @@ def copyInto (env : Env) (src : NodeRef) (par : Option Nat) (inh : List (String 
     let inscope := if r.kind == .element && !inh.isEmpty then
         own ++ inh.filter (fun (p, _) => (own.lookup p).isNone)
       else own
+    -- an element in no namespace undeclares an inherited default namespace
+    let inscope := if r.kind == .element && r.name.uri == "" && r.name.pfx == "" &&
+        (inscope.lookup "").any (· != "") then ("", "") :: inscope else inscope
     o := o.push { r with parent, inscope,
                          children := r.children.map shift, attrs := r.attrs.map shift,
                          last := shift (if r.kind == .element || r.kind == .document then r.last else i) }
@@ -245,12 +251,15 @@ def copyInto (env : Env) (src : NodeRef) (par : Option Nat) (inh : List (String 
     one part, adjacent atomic values are joined by a space. Arrays are
     flattened; a map or function is `XQTY0105`; a document node gives
     its children. Attribute nodes come first, in `attrs`. -/
-def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool) :
-    M (List NodeRef × List Piece) := do
+def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool)
+    (direct : List Bool := []) : M (List NodeRef × List Piece) := do
   let mut attrs : Array NodeRef := #[]
   let mut ps : Array Piece := #[]
   let mut seenOther := false
+  let mut pidx := 0
   for part in parts do
+    let isDirect := direct.getD pidx false
+    pidx := pidx + 1
     let mut atoms : Option String := none
     let flat : Seq := part.flatMap (fun i => match i with
       | .arr ms => ms.flatten
@@ -283,7 +292,7 @@ def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool) :
               else ps := ps.push (.node (n.at c))
             seenOther := true
         | .text => ps := ps.push (.text r.value); seenOther := true
-        | _ => ps := ps.push (.node n); seenOther := true
+        | _ => ps := ps.push (if isDirect then .dnode n else .node n); seenOther := true
     if let some s := atoms then
       ps := ps.push (.text s); seenOther := true
   -- merge adjacent text, drop empty text
@@ -298,7 +307,7 @@ def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool) :
 /-- Push the children pieces under `par`; returns the new array and the
     child indices. -/
 def pushPieces (env : Env) (par : Nat) (inh : List (String × String)) (ps : List Piece)
-    (out : Array NRec) (preserve : Bool := true) : Array NRec × Array Nat := Id.run do
+    (out : Array NRec) (preserve : Bool := true) (inhDirect : List (String × String) := []) : Array NRec × Array Nat := Id.run do
   let mut o := out
   let mut cs : Array Nat := #[]
   for p in ps do
@@ -309,6 +318,10 @@ def pushPieces (env : Env) (par : Nat) (inh : List (String × String)) (ps : Lis
         cs := cs.push i
     | .node n =>
         let (o', i) := copyInto env n (some par) inh o preserve
+        o := o'
+        cs := cs.push i
+    | .dnode n =>
+        let (o', i) := copyInto env n (some par) inhDirect o preserve
         o := o'
         cs := cs.push i
   (o, cs)
@@ -330,11 +343,11 @@ def constructionStripKey : QN := { uri := "#xq", loc := "construction-strip" }
 
 /-- Build an element node: name, namespace declarations, content. -/
 def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × String))
-    (parts : List Seq) (preserve inherit : Bool := true) : M Seq := do
+    (parts : List Seq) (preserve inherit : Bool := true) (direct : List Bool := []) : M Seq := do
   if isXmlnsName name then err "XQDY0096" "the element name is in the xmlns namespace"
   if name.pfx == "xml" && name.uri != nsXML then err "XQDY0096" "prefix xml bound to another namespace"
   if name.uri == nsXML && name.pfx != "xml" && name.pfx != "" then err "XQDY0096" "the xml namespace with another prefix"
-  let (ats, ps) ← contentPieces env parts false
+  let (ats, ps) ← contentPieces env parts false direct
   -- in-scope namespaces: declarations, the element name, the attribute names
   let mut scope : List (String × String) := decls
   let mut name := name
@@ -378,7 +391,7 @@ def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × Str
       else if (scope.lookup an.pfx).isNone then scope := (an.pfx, an.uri) :: scope
     atRecs := atRecs.push { r with name := an, parent := some 0 }
   if (scope.lookup "xml").isNone then scope := scope ++ [("xml", nsXML)]
-  scope := scope.filter (fun (p, u) => !(p == "" && u == ""))
+  -- a ("", "") binding stays: it undeclares the default namespace (§4.12.1.2)
   -- XQuery 4.0 §3.9.1.1: under construction mode preserve the new element
   -- is annotated xs:anyType; under strip, xs:untyped (no annotation)
   let strip := env.vars.any (fun (q, _) => q == constructionStripKey)
@@ -390,7 +403,8 @@ def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × Str
     out := out.push { r with last := i }
     aIdx := aIdx.push i
   let inh := if inherit then scope.filter (fun (p, _) => p != "xml") else []
-  let (o2, cs) := pushPieces env 0 inh ps out preserve
+  let inhD := if inherit then decls.filter (fun (p, _) => p != "xml") else []
+  let (o2, cs) := pushPieces env 0 inh ps out preserve inhD
   let o3 := o2.set! 0 { (o2.getD 0 default) with children := cs, attrs := aIdx, last := o2.size - 1 }
   let doc : Doc := { nodes := o3, baseUri := env.baseUri }
   pure [.node { doc := id, idx := 0, rt := some doc }]
@@ -789,6 +803,7 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
       let id := newDocId "elem" env (name.eqn ++ "|" ++ ss.headD "" ++ "|" ++
         String.intercalate "," (vals.toList.map (fun s => String.intercalate "," (s.map itemSig)))) ss
       buildElement env id name decls vals.toList (!ss.contains "#no-preserve") (!ss.contains "#no-inherit")
+        (parts.map (fun p => match p with | .ext "elem" _ _ _ s => s.contains "#nested" | _ => false))
     | [] => err "XPST0003" "element constructor without name"
   | "attr" =>
     match es with

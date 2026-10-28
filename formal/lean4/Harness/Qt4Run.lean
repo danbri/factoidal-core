@@ -309,7 +309,13 @@ def serNode (env : Env) : Nat → NodeRef → String
     | .namespace => ""
     | .element =>
       let nm := r.name.show
-      let decl := if r.name.uri == "" then (if r.name.pfx == "" then "" else "")
+      -- an element in no namespace under an unprefixed element in a namespace
+      -- undeclares the default namespace (XQuery 4.0 §4.12.1.2)
+      let underDefault := match r.parent with
+        | some p => let pr := env.nrec (n.at p)
+                    pr.kind == .element && pr.name.pfx == "" && pr.name.uri != ""
+        | none => false
+      let decl := if r.name.uri == "" then (if r.name.pfx == "" && underDefault then " xmlns=\"\"" else "")
         else " xmlns" ++ (if r.name.pfx == "" then "" else ":" ++ r.name.pfx) ++ "=\"" ++ escAttr r.name.uri ++ "\""
       -- one declaration per prefix the attributes need (and not the
       -- element's own prefix again)
