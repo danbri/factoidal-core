@@ -293,6 +293,10 @@ structure RCtx where
 def checkAssert (rc : RCtx) : Nat → Node → Outcome
   | 0, _ => .fail "assertion nesting"
   | f + 1, a =>
+    -- the namespaces an assertion element (or an enclosing one) declares
+    let decl := a.elementAttrs.filterMap (fun at_ =>
+      if at_.name.startsWith "xmlns:" then some ((at_.name.drop 6).toString, at_.value) else none)
+    let rc := if decl.isEmpty then rc else { rc with env := { rc.env with ns := decl ++ rc.env.ns } }
     let env := rc.env
     let res := rc.res
     let txt := a.textContent
@@ -751,7 +755,9 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
         -- a source validated against the schema of the environment (§18.1)
         let mode := modes.getD k ""
         let d ← if mode != "strict" && mode != "lax" then pure d else do
-          let s ← L4Factoidal.XSD11.loadSchemaCached envSchemas
+          -- the schema texts were read with the stylesheet modules (any encoding)
+          let s := L4Factoidal.XSD11.buildSchema none L4Factoidal.XSD11.xpathHooks
+            (schemaDocsFrom mods [] envSchemas) envSchemas
           if !s.errors.isEmpty then return .fail ("schema of the environment not valid: " ++ toString (s.errors.take 2))
           match L4Factoidal.XSD11.validateNodeIn s mode d 0 duri with
           | .ok vd => pure { vd with baseUri := d.baseUri }
