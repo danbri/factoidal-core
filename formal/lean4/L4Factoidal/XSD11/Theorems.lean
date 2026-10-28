@@ -114,15 +114,20 @@ theorem assessRoot_erase (s : Schema) (h : Hooks) (root : Node) (bs : NsBindings
 
 /-- A string the XSD 1.1 validator accepts for a simple type is valid for
 the type's Part 2 body under `XSD.validate` (`L4Factoidal.XSD`), and
-satisfies the type's pattern facets at every level. -/
+satisfies the type's pattern facets at every level. (`checkBody` is the
+body, without the enumeration of a QName or NOTATION type, whose values
+are compared as expanded names; for every other type it is the body.) -/
+theorem checkBody_of_not_qEnum (sd : SimpleDef) (h : sd.qEnum = false) : sd.checkBody = sd.body := by
+  simp [SimpleDef.checkBody, h]
+
 theorem validateSimple_ok (s : Schema) (h : Hooks) (bs : NsBindings) (t : Nat) (lit : String)
     (u : List String) (sd : SimpleDef) (hsd : s.simpleOf? t = some sd)
     (r : String × XSD.Val) (hr : (validateSimple s h bs t lit u).1 = .ok r) :
-    XSD.validate sd.body lit = true ∧ bodyPatternsOk 16 sd.body lit = true := by
+    XSD.validate sd.checkBody lit = true ∧ bodyPatternsOk 16 sd.body lit = true := by
   unfold validateSimple at hr
   rw [hsd] at hr
   simp only at hr
-  cases hv : XSD.valueOf sd.body lit with
+  cases hv : XSD.valueOf sd.checkBody lit with
   | none => simp [hv, Option.filter] at hr
   | some v =>
     cases hp : bodyPatternsOk 16 sd.body lit with

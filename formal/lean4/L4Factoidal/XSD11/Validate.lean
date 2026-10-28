@@ -207,6 +207,19 @@ def clearEnum : XSD.SimpleType → XSD.SimpleType
   | .atomic b f => .atomic b { f with enumeration := none }
   | other => other
 
+/-- A QName or NOTATION type with an enumeration: its values are compared
+as expanded names, outside `XSD.valueOf` (Part 2 §3.3.18). -/
+def SimpleDef.qEnum (sd : SimpleDef) : Bool :=
+  match sd.body with
+  | .atomic b f => (b.primitive == some .qname || b.primitive == some .notation) && f.enumeration.isSome
+  | _ => false
+
+/-- The Part 2 type `XSD.valueOf` decides a literal with: the type's body,
+without the enumeration of a QName or NOTATION type (checked by expanded
+name in `validateSimple`). -/
+def SimpleDef.checkBody (sd : SimpleDef) : XSD.SimpleType :=
+  if sd.qEnum then clearEnum sd.body else sd.body
+
 /-- §3.16.4 String Valid: the literal against simple type `t`. Returns
 the schema-normalized value and the typed value, or the error. -/
 def validateSimple (s : Schema) (h : Hooks) (bs : NsBindings) (t : Nat) (lit : String)
@@ -217,11 +230,8 @@ def validateSimple (s : Schema) (h : Hooks) (bs : NsBindings) (t : Nat) (lit : S
     let norm := XSD.applyWhiteSpace sd.body.whiteSpaceOf lit
     -- QName and NOTATION enumerations compare expanded names (Part 2
     -- §3.3.18): the facet values with the schema's bindings, below
-    let qEnum : Bool := match sd.body with
-      | .atomic b f => (b.primitive == some .qname || b.primitive == some .notation) && f.enumeration.isSome
-      | _ => false
-    let body := if qEnum then clearEnum sd.body else sd.body
-    match (XSD.valueOf body lit).filter (fun _ => bodyPatternsOk 16 sd.body lit) with
+    let qEnum := sd.qEnum
+    match (XSD.valueOf sd.checkBody lit).filter (fun _ => bodyPatternsOk 16 sd.body lit) with
     | none => (.error s!"'{lit}' is not valid for {(sd.name.map XName.show).getD "an anonymous type"}", unsup)
     | some v =>
       -- QName and NOTATION values need their prefixes declared.
