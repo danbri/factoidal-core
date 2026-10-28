@@ -345,11 +345,20 @@ def filterBase : Expr → Bool
 
 /-- The default priority of one pattern alternative (§6.4). -/
 def defaultPriority (e : Expr) : Float :=
+  let ofKind (k : IType) : Float :=
+    match k with
+    | .elem (some (.name _)) | .attr (some (.name _)) => 0
+    | .elem (some (.ns _)) | .attr (some (.ns _)) => -0.25
+    | .elem (some (.loc _)) | .attr (some (.loc _)) => -0.25
+    | _ => -0.5
   let ofTest (ax : Axis) (t : NodeTest) : Float :=
     let t := match t with
       | .ncname n _ => NodeTest.name n
       | t => t
     match t with
+    -- element(A|B) / attribute(A|B) (a NameTestUnion, XPath 4.0 §3.2.7.2):
+    -- the priority of its most specific name test
+    | .kind (.choice ts@(_ :: _)) => (ts.map ofKind).foldl max (-0.5)
     | .name (.name _) => 0
     | .name (.ns _) | .name (.loc _) => -0.25
     | .name .any => -0.5
