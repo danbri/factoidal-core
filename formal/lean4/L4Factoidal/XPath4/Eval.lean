@@ -600,6 +600,15 @@ def eval : Nat → Env → Expr → M Seq
           if args.any Option.isNone then pure [.fn (.papp (.fn (.builtin q args.length)) vs)]
           else h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns, untrusted := env.untrusted } (vs.map (·.getD []))
       | none =>
+      -- XQuery 4.0 §5.18.1: an unprefixed name finds a function in no
+      -- namespace (a record constructor, a named item type) before the
+      -- default function namespace
+      let noNsUser := if q.uri == nsFN && q.pfx == "" && XQuery4.userAny env { q with uri := "" } then
+          XQuery4.callUser? { eval := fun x => eval n env x, apply := fun f as => apply n env f as } env q args kw
+        else none
+      match noNsUser with
+      | some r => r
+      | none =>
       -- fn:concat is sequence-variadic (F&O 4.0 §5.4.1): any arity
       let sig? := if q.uri == nsFN && q.loc == "concat" then some (default : Sig) else findSig q total
       match sig? with

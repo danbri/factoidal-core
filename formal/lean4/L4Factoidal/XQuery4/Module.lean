@@ -34,6 +34,8 @@ structure FnDecl where
   params : List (QN × IType × Option Expr)
   ret : IType
   body : Option Expr
+  /-- The annotations (`fn:function-annotations`). -/
+  annots : List (QN × List Atomic) := []
 deriving Inhabited
 
 inductive Decl where
@@ -55,8 +57,11 @@ structure Module where
   defaultCollation : Option String := none
   baseUri : Option String := none
   emptyGreatest : Bool := false
-  /-- Named item types (`declare type`, `declare record`). -/
+  /-- Named item types (`declare type`, `declare record`) in scope after
+      the prolog: this module's and the public ones it imports. -/
   types : List (QN × IType) := []
+  /-- The item types this module declares, with `true` for `%private`. -/
+  ownTypes : List (QN × IType × Bool) := []
   /-- `import schema`: the target namespaces (XQuery 4.0 §5.11). -/
   schemaImports : List String := []
   /-- `declare construction strip` (§5.6); the default is `preserve`. -/
@@ -117,9 +122,12 @@ def pUriLit : P String := do
   let u ← pStringLit
   expandRefs u |> fun r => match r with | .ok v => pure (normSpace v) | .error e => throw e
 
-/-- Skip annotations `%name` or `%name(literals)`. -/
-def pAnnotations : P (List String) := do
-  let mut out : List String := []
+/-- Annotations `%name` or `%name(literals)` (XQuery 4.0 §5.18, [32]): the
+    expanded name and the values. An unprefixed name is in the
+    `http://www.w3.org/2012/xquery` namespace (the `xq` prefix); a name in
+    a reserved namespace is XQST0045. -/
+def pAnnotations : P (List (QN × List Atomic)) := do
+  let mut out : List (QN × List Atomic) := []
   for _ in [0:1000] do
     ws
     if (← peekAt 0) != '%' then break
@@ -133,27 +141,54 @@ def pAnnotations : P (List String) := do
       if [nsFN, nsXS, nsMATH, nsMAP, nsARR, "http://www.w3.org/XML/1998/namespace",
           "http://www.w3.org/2001/XMLSchema-instance"].contains q.uri then
         qerr "XQST0045" ("annotation in a reserved namespace " ++ l)
-      out := out ++ [l]
+      let mut vals : List Atomic := []
       if ← eatS "(" then
         -- AnnotationValue: a string literal, a numeric literal with an
-        -- optional minus, `true()` or `false()` (XQuery 4.0 [32])
+        -- optional minus, a QName literal `#name`, `true()` or `false()`
         for _ in [0:1000] do
           ws
           let ch ← peekAt 0
-          if ch == '"' || ch == '\'' then let _ ← pStringLit
-          else if ch == '-' || ch.isDigit || ch == '.' then
-            let _ ← eatS "-"
+          if ch == '"' || ch == '\'' then vals := vals ++ [Atomic.ofStr (← pStringLit)]
+          else if ch == '#' then
+            adv 1
+            match ← peekQName with
+            | some (p2, u2, l2, e2) =>
+              set e2
+              vals := vals ++ [Atomic.ofQN (← resolve p2 u2 l2 "")]
+            | none => synErr "bad QName literal"
+          else if ch == '-' || ch == '+' || ch.isDigit || ch == '.' then
+            let neg ← eatS "-"
+            if !neg then let _ ← eatS "+"
             ws
             let ch2 ← peekAt 0
             if !(ch2.isDigit || ch2 == '.') then synErr "an annotation value must be a literal"
-            let _ ← pNumber
+            match ← pNumber with
+            | .lit a =>
+              vals := vals ++ [if !neg then a else
+                match a.num? with
+                | some v => (numNeg v).atomic
+                | none => a]
+            | _ => synErr "an annotation value must be a literal"
           else if (← kwThen "true" '(') || (← kwThen "false" '(') then
-            let _ ← pNCName; expectS "("; expectS ")"
+            let n ← pNCName; expectS "("; expectS ")"
+            vals := vals ++ [Atomic.ofBool (n == "true")]
           else synErr "an annotation value must be a literal"
           if !(← eatS ",") then break
         expectS ")"
+      out := out ++ [(q, vals)]
     | none => synErr "bad annotation"
   pure out
+
+/-- Does the annotation list hold `%public` or `%private` more than once
+    or both (XQuery 4.0 §5.15, §5.18; `code` is XQST0106 or XQST0116)? -/
+def checkVisibility (annots : List (QN × List Atomic)) (code : String) : P Unit := do
+  let nPub := (annots.filter (fun (q, _) => q.uri == "http://www.w3.org/2012/xquery" && q.loc == "public")).length
+  let nPriv := (annots.filter (fun (q, _) => q.uri == "http://www.w3.org/2012/xquery" && q.loc == "private")).length
+  if nPub > 1 || nPriv > 1 || (nPub > 0 && nPriv > 0) then
+    qerr code "both %public and %private, or one of them twice"
+
+def isPrivateAnn (annots : List (QN × List Atomic)) : Bool :=
+  annots.any (fun (q, _) => q.uri == "http://www.w3.org/2012/xquery" && q.loc == "private")
 
 /-- A record field name: an NCName or a string literal. -/
 def pFieldName : P String := do
@@ -161,9 +196,75 @@ def pFieldName : P String := do
   let ch ← peekAt 0
   if ch == '"' || ch == '\'' then pStringLit else pNCName
 
+/-- Is the item type a generalized atomic type (an atomic type, an
+    enumeration or a union of those)? -/
+def isGenAtomic : IType → Bool
+  | .atomic _ => true
+  | .enum _ => true
+  | .choice ts => !ts.isEmpty && ts.all (fun t => match t with | .atomic _ => true | .enum _ => true | _ => false)
+  | _ => false
+
+/-- Checks on the name of a declared item type (§5.19, §5.20): a public
+    type of a library module is in the module namespace (XQST0048); any
+    other name is not in a reserved namespace (XQST0045). -/
+def checkTypeName (lib : Option (String × String)) (annots : List (QN × List Atomic)) (q : QN) : P Unit := do
+  match lib with
+  | some (_, u) =>
+    if !isPrivateAnn annots then
+      if q.uri != u then qerr "XQST0048" ("public type " ++ q.show ++ " outside the module namespace")
+    else if reservedFnNs.contains q.uri then qerr "XQST0045" ("type " ++ q.show ++ " in a reserved namespace")
+  | none =>
+    if reservedFnNs.contains q.uri then qerr "XQST0045" ("type " ++ q.show ++ " in a reserved namespace")
+
+/-- The names in the source text `s[st, en)` of an item type that may
+    refer to a named item type (used for the cycle check of §5.19): QNames
+    not followed by `(`, with prefixes resolved by `ns`; string literals
+    are skipped. -/
+def typeRefs (s : Array Char) (st en : Nat) (ns : List (String × String)) : List QN := Id.run do
+  let mut out : List QN := []
+  let mut i := st
+  for _ in [0:en - st + 1] do
+    if i ≥ en then break
+    let ch := chAt s i
+    if ch == '\'' || ch == '"' then
+      let mut j := i + 1
+      for _ in [0:en - i + 1] do
+        if j ≥ en || chAt s j == ch then break
+        j := j + 1
+      i := j + 1
+    else if ch == 'Q' && chAt s (i + 1) == '{' then
+      let mut j := i + 2
+      for _ in [0:en - i + 1] do
+        if j ≥ en || chAt s j == '}' then break
+        j := j + 1
+      let uri := String.ofList ((List.range (j - i - 2)).map (fun k => chAt s (i + 2 + k)))
+      match ncnameAt s (j + 1) with
+      | some (l, e) =>
+        if chAt s e != '(' then out := { uri, loc := l } :: out
+        i := e
+      | none => i := j + 1
+    else
+      match ncnameAt s i with
+      | some (n, e) =>
+        if chAt s e == ':' then
+          match ncnameAt s (e + 1) with
+          | some (l, e2) =>
+            if chAt s e2 != '(' then
+              match (ns.lookup n).orElse (fun _ => defaultNs.lookup n) with
+              | some u => out := { uri := u, loc := l, pfx := n } :: out
+              | none => pure ()
+            i := e2
+          | none => i := e
+        else
+          if chAt s e != '(' then out := { uri := (ns.lookup "").getD "", loc := n } :: out
+          i := e
+      | none => i := i + 1
+  return out
+
 /-- Parse a module (main or library). `types0` are named types from a
     first pass; `lenient` makes that first pass. -/
-def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Module := do
+def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
+    (loader : String → Except Err (List (QN × IType)) := fun _ => .ok []) : P Module := do
   let mut m : Module := {}
   let mut cfg : Cfg := { types := types0, lenient }
   let c0 ← read
@@ -204,6 +305,10 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
   let mut fnSigs : List (QN × Nat × Nat) := []
   let mut varNames : List QN := []
   let mut ctxSeen := false
+  -- the item types declared in this module, and the imported ones
+  let mut declared : List QN := []
+  let mut importedTy : List QN := []
+  let mut typeDeps : List (QN × List QN) := []
   for _ in [0:100000] do
     let some kw ← atDecl | break
     if kw == "import" then
@@ -257,6 +362,13 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
         seenNs := pfx :: seenNs
         ns := (pfx, u) :: ns.filter (·.1 != pfx)
       m := { m with imports := m.imports ++ [(pfx, u, locs)] }
+      -- the public item types of the imported module (§5.19)
+      match loader u with
+      | .error e => throw e
+      | .ok tys =>
+        for (tq, tt) in tys do
+          importedTy := tq :: importedTy
+          cfg := { cfg with types := (tq, tt) :: cfg.types.filter (fun (n, _) => !(n == tq)) }
       continue
     expectKw "declare"
     let annots ← withXq cfg ns pAnnotations
@@ -401,25 +513,26 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
         expectS ";"
         m := { m with decls := m.decls ++ [.ctx ty d true] }
     | "variable" =>
+      checkVisibility annots "XQST0116"
       let v ← withXq cfg ns pVar
       if varNames.any (· == v) then qerr "XQST0049" ("variable $" ++ v.show ++ " declared twice")
       varNames := v :: varNames
       if let some (_, u) := m.libNs then
-        if v.uri != u && !annots.contains "private" then qerr "XQST0048" "a library module variable outside the module namespace"
+        if v.uri != u && !isPrivateAnn annots then qerr "XQST0048" "a library module variable outside the module namespace"
       let ty ← if ← eatKw "as" then withXq cfg ns (pSeqType 1000) else pure (.seq .item .star)
       if ← eatS ":=" then
         let e ← withXq cfg ns (pExprSingle 100000)
         expectS ";"
         m := { m with decls := m.decls ++ [.var v ty (some e) false] }
-        if annots.contains "private" then m := { m with privates := v :: m.privates }
+        if isPrivateAnn annots then m := { m with privates := v :: m.privates }
       else
         expectKw "external"
         let d ← if ← eatS ":=" then pure (some (← withXq cfg ns (pExprSingle 100000))) else pure none
         expectS ";"
         m := { m with decls := m.decls ++ [.var v ty d true] }
-        if annots.contains "private" then m := { m with privates := v :: m.privates }
+        if isPrivateAnn annots then m := { m with privates := v :: m.privates }
     | "function" =>
-      let _ := annots
+      checkVisibility annots "XQST0106"
       let q ← match ← peekQName with
         | some (p, u, l, e) =>
           if p.isNone && u.isNone && reservedFnNames.contains l then
@@ -432,7 +545,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
         | none => synErr "expected a function name"
       if reservedFnNs.contains q.uri then qerr "XQST0045" ("function " ++ q.show ++ " in a reserved namespace")
       if let some (_, u) := m.libNs then
-        if q.uri != u && !annots.contains "private" then qerr "XQST0048" "a library module function outside the module namespace"
+        if q.uri != u && !isPrivateAnn annots then qerr "XQST0048" "a library module function outside the module namespace"
       expectS "("
       let mut ps : Array (QN × IType × Option Expr) := #[]
       if !(← eatS ")") then
@@ -453,22 +566,43 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       if fnSigs.any (fun (q2, lo, hi) => q2 == q && !(hi < minA || maxA < lo)) then
         qerr "XQST0034" ("function " ++ q.show ++ " declared twice")
       fnSigs := (q, minA, maxA) :: fnSigs
-      m := { m with decls := m.decls ++ [.fn { name := q, params := ps.toList, ret, body }] }
-      if annots.contains "private" then m := { m with privates := q :: m.privates }
+      m := { m with decls := m.decls ++ [.fn { name := q, params := ps.toList, ret, body, annots }] }
+      if isPrivateAnn annots then m := { m with privates := q :: m.privates }
     | "type" =>
+      checkVisibility annots "XQST0106"
       let q ← match ← peekQName with
         | some (p, u, l, e) => set e; withXq cfg ns (resolve p u l ((ns.lookup "").getD ""))
         | none => synErr "expected a type name"
+      checkTypeName m.libNs annots q
       expectKw "as"
+      let st ← get
       let t ← withXq cfg ns (pItemType 1000)
+      let en ← get
       expectS ";"
-      if !lenient && types0.all (fun (n, _) => !(n == q)) && cfg.types.any (fun (n, _) => n == q) then
+      if !lenient && (declared.contains q || importedTy.contains q) then
         qerr "XQST0146" ("type " ++ q.show ++ " declared twice")
+      declared := q :: declared
+      typeDeps := typeDeps ++ [(q, typeRefs (← read).s st en ns)]
+      m := { m with ownTypes := m.ownTypes ++ [(q, t, isPrivateAnn annots)] }
       cfg := { cfg with types := (q, t) :: cfg.types.filter (fun (n, _) => !(n == q)) }
+      -- the constructor function of a generalized atomic type (§5.19,
+      -- §4.21.5): `$arg cast as T?`
+      if isGenAtomic t then
+        let a : QN := { uri := "", loc := "arg" }
+        let body : Expr := .cast (.var a) t true
+        let pt : IType := .seq (.atomic (.b .anyAtomicType)) .opt
+        if fnSigs.any (fun (q2, lo, hi) => q2 == q && !(hi < 1 || 1 < lo)) then
+          qerr "XQST0034" ("function " ++ q.show ++ " declared twice")
+        fnSigs := (q, 1, 1) :: fnSigs
+        m := { m with decls := m.decls ++ [.fn { name := q, params := [(a, pt, none)], ret := .seq t .opt,
+                                                 body := some body, annots }] }
+        if isPrivateAnn annots then m := { m with privates := q :: m.privates }
     | "record" =>
+      checkVisibility annots "XQST0106"
       let q ← match ← peekQName with
         | some (p, u, l, e) => set e; withXq cfg ns (resolve p u l ((ns.lookup "").getD ""))
         | none => synErr "expected a record type name"
+      checkTypeName m.libNs annots q
       expectS "("
       let mut fs : Array (String × Bool × IType × Option Expr) := #[]
       let mut ext := false
@@ -477,18 +611,26 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
           if ← eatS "*" then
             if fs.isEmpty then synErr "a record type with only '*'"
             ext := true; break
+          ws
+          let quoted := (← peekAt 0) == '"' || (← peekAt 0) == '\''
           let f ← pFieldName
+          -- §5.20.2: the field names are NCNames, not string literals
+          if quoted then synErr "a record field name written as a string literal"
           let opt ← eatS "?"
           let ft ← if ← eatKw "as" then withXq cfg ns (pSeqType 1000) else pure (.seq .item .star)
           let d ← if ← eatS ":=" then pure (some (← withXq cfg ns (pExprSingle 100000))) else pure none
-          if fs.any (·.1 == f) then qerr "XQST0021" ("record field " ++ f ++ " twice")
+          if fs.any (·.1 == f) then qerr "XPST0021" ("record field " ++ f ++ " twice")
           fs := fs.push (f, opt, ft, d)
           if !(← eatS ",") then break
         expectS ")"
       expectS ";"
+      if !lenient && (declared.contains q || importedTy.contains q) then
+        qerr "XQST0146" ("type " ++ q.show ++ " declared twice")
+      declared := q :: declared
       let rt : IType := .record (fs.toList.map (fun (f, o, t, _) => (f, o, t))) ext
+      m := { m with ownTypes := m.ownTypes ++ [(q, rt, isPrivateAnn annots)] }
       cfg := { cfg with types := (q, rt) :: cfg.types.filter (fun (n, _) => !(n == q)) }
-      -- the record constructor function (§5.19.3): one parameter per
+      -- the record constructor function (§5.20.2): one parameter per
       -- field; an optional field defaults to the empty sequence and an
       -- empty optional field gives no entry
       let pv (f : String) : QN := { uri := "", loc := f }
@@ -501,12 +643,24 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
         [some (.seq (fs.toList.map (fun (f, o, _, _) => entry f o)))] []
       let lo := (params.takeWhile (fun (_, _, x) => x.isNone)).length
       if params.drop lo |>.any (fun (_, _, x) => x.isNone) then
-        qerr "XPST0003" "a required record field after an optional one"
-      if fs.toList.all (fun (f, _, _, _) => L4Factoidal.XSD.isNCName f) then
-        m := { m with decls := m.decls ++ [.fn { name := q, params, ret := rt, body := some body }] }
+        qerr "XQST0148" "a required record field after an optional one"
+      if fnSigs.any (fun (q2, lo2, hi2) => q2 == q && !(hi2 < lo || params.length < lo2)) then
+        qerr "XQST0034" ("function " ++ q.show ++ " declared twice")
+      fnSigs := (q, lo, params.length) :: fnSigs
+      m := { m with decls := m.decls ++ [.fn { name := q, params, ret := rt, body := some body, annots }] }
+      if isPrivateAnn annots then m := { m with privates := q :: m.privates }
     | "revalidation" => qerr "XQST0075" "revalidation is not supported"
     | "updating" => qerr "XUST0001" "updating functions are not supported"
     | _ => synErr ("unknown declaration " ++ w)
+  -- §5.19: a cyclic or self-referential `declare type` is XQST0140
+  if !lenient then
+    let names := typeDeps.map (·.1)
+    for (q, ds) in typeDeps do
+      let mut reach : List QN := ds.filter (names.contains ·)
+      for _ in [0:names.length + 1] do
+        reach := reach ++ (reach.flatMap (fun r => (typeDeps.find? (·.1 == r)).map (·.2) |>.getD []))
+        reach := (reach.filter (names.contains ·)).eraseDups
+      if reach.contains q then qerr "XQST0140" ("item type " ++ q.show ++ " refers to itself")
   m := { m with ns, types := cfg.types }
   if m.libNs.isNone then
     ws
@@ -524,13 +678,14 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
 
 /-- Parse an XQuery 4.0 module, with the namespace bindings of the
     environment. -/
-def parseModule (src : String) (ns : List (String × String) := []) : M Module :=
+def parseModule (src : String) (ns : List (String × String) := [])
+    (loader : String → Except Err (List (QN × IType)) := fun _ => .ok []) : M Module :=
   let s := src.toList.toArray
   -- first pass: the named types, with forward references read as item()
-  let types0 := match ((pModule [] true).run { s, ns }).run 0 with
+  let types0 := match ((pModule [] true loader).run { s, ns }).run 0 with
     | .ok (m, _) => m.types
     | .error _ => []
-  match ((pModule types0 false).run { s, ns }).run 0 with
+  match ((pModule types0 false loader).run { s, ns }).run 0 with
   | .ok (m, _) => .ok m
   | .error e => .error e
 
@@ -556,6 +711,18 @@ def fnBinding (d : FnDecl) : Option (QN × Seq) :=
 def moduleTexts (env : Env) (uri : String) : List String :=
   env.resources.filterMap (fun (k, v) => if k == "#module " ++ uri then some v else none)
 
+/-- The public item types of the library modules for namespace `uri`
+    (§5.19: public types are visible after `import module`); `seen` ends
+    cyclic imports and `d` bounds the nesting. -/
+def typeLoader (env : Env) : Nat → List String → String → Except Err (List (QN × IType))
+  | 0, _, _ => .ok []
+  | d + 1, seen, uri =>
+    if seen.contains uri then .ok [] else
+    (moduleTexts env uri).foldlM (fun acc t => do
+      let lm ← parseModule t [] (typeLoader env d (uri :: seen))
+      if (lm.libNs.map (·.2)) != some uri then pure acc
+      else pure (acc ++ lm.ownTypes.filterMap (fun (q, ty, priv) => if priv then none else some (q, ty)))) []
+
 /-- The library modules a module imports, transitively (imported
     modules first), to depth `d`; a namespace already loaded (`seen`)
     is not loaded again, so cyclic imports end (XQuery 4.0 §5.12). -/
@@ -570,7 +737,7 @@ def loadImports (env : Env) : Nat → List String → Module → M (List Module 
       let texts := moduleTexts env u
       if texts.isEmpty then err "XQST0059" ("no module found for namespace " ++ u)
       for t in texts do
-        let lm ← parseModule t
+        let lm ← parseModule t [] (typeLoader env 8 seen)
         if (lm.libNs.map (·.2)) != some u then err "XQST0059" ("the module text is not a module for " ++ u)
         let (sub, seen') ← loadImports env d seen lm
         seen := seen'
@@ -603,7 +770,11 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
       err "XQST0034" ("function " ++ q.show ++ " declared twice")
   for m in ms do
     -- a module sees its own declarations and the public ones of the others
-    let vis (m2 : Module) (q : QN) : Bool := m2.libNs == m.libNs || !m2.privates.any (· == q)
+    -- (XQuery 4.0 §5.12: only the modules it imports directly, not
+    -- those they import)
+    let vis (m2 : Module) (q : QN) : Bool :=
+      m2.libNs == m.libNs ||
+      (m.imports.any (fun (_, u, _) => some u == m2.libNs.map (·.2)) && !m2.privates.any (· == q))
     let globalsM := ms.flatMap (fun m2 => m2.globals.filter (vis m2))
     let fnsM := ms.flatMap (fun m2 => m2.fnArities.filter (fun (q, _, _) => vis m2 q))
     let knownM (q : QN) (k : Nat) : Bool :=
@@ -727,7 +898,7 @@ def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
 
 /-- Parse and evaluate an XQuery 4.0 main module. -/
 def evalQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) : M Seq := do
-  let m ← parseModule src env.ns
+  let m ← parseModule src env.ns (typeLoader env 8 [])
   evalModule fuel env m
 
 def evalQShow (src : String) : String :=

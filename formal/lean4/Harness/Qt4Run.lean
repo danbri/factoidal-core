@@ -116,8 +116,21 @@ def dirOf (p : String) : String :=
   | [] => "."
   | ps => String.intercalate "/" ps
 
+/-- Read a file; when its directory is not there, try a directory of the
+    same name in another letter case (the catalog writes
+    `recordTypeDecl/module1.xq` for the directory `RecordTypeDecl`). -/
 def readFileSafe (p : String) : IO (Option String) := do
-  try pure (some (← IO.FS.readFile p)) catch _ => pure none
+  try pure (some (← IO.FS.readFile p)) catch _ =>
+    try
+      match p.splitOn "/" |>.reverse with
+      | file :: dir :: up =>
+        let parent := "/".intercalate up.reverse
+        let ents ← System.FilePath.readDir (if parent == "" then "." else parent)
+        match ents.find? (fun e => e.fileName.toLower == dir.toLower) with
+        | some e => pure (some (← IO.FS.readFile (e.path.toString ++ "/" ++ file)))
+        | none => pure none
+      | _ => pure none
+    catch _ => pure none
 
 def readBytesSafe (p : String) : IO (Option ByteArray) := do
   try pure (some (← IO.FS.readBinFile p)) catch _ => pure none
@@ -367,7 +380,7 @@ def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
     declarations of its prolog (`XPath4.declParams`); none in XPath. -/
 def queryParams (env : Env) (src : String) : M SerParams :=
   if isXqEnv env then do
-    let m ← L4Factoidal.XQuery4.parseModule src env.ns
+    let m ← L4Factoidal.XQuery4.parseModule src env.ns (L4Factoidal.XQuery4.typeLoader env 8 [])
     -- `output:parameter-document`: the document first, then the other
     -- output declarations over it
     let init ← match m.outputDecls.lookup "parameter-document" with
