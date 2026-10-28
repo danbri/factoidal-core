@@ -176,7 +176,10 @@ def cat : Nat → CCtx → Expr → Except Err Cat
       else if t == "upd-modify" then
         match es with
         | [m, r] =>
-          let cm ← go m
+          -- `N transform with { U }` is the modify clause `$v!(U)` (§5.7)
+          let cm ← match m with
+            | .smap a u => do simpleOp a "a simple map"; go u
+            | _ => go m
           if c.v10 && cm == .simple then
             xust "XUST0002" "the modify clause of a copy modify expression is not updating or vacuous"
           -- the return clause may be updating (3.0 §5.6; qt4tests

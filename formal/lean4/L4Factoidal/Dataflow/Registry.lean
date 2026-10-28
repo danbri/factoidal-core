@@ -839,7 +839,7 @@ def registry : List Entry := [
     note := "XSLT4 is not in the library root; the streamability analysis (XTSE3430) and the theorems of XSLT4/Streaming (build_docEvents, parse_events_rebuild, streamAcc_events, maxOpen_eventsList, streamSelect_docEvents) are checked by lake build l4xslt4; results of accepted stylesheets come from the non-streaming XSLT 4.0 evaluator (docs/20261028-xslt-streaming.md)" },
   { area := "XQuery Update Facility 3.0 (updating expressions, copy modify, fn:put)", dir := "XQueryUpdate"
     wireIn := .xml, wireOut := .xml, params := ["query"], status := .tested
-    tests := ["qt4tests b39c4bc0 upd (lake exe l4qt4 --isolate 60 --lang xquery --family upd): 792 pass, 6 fail, 27 unsupported of 825"]
+    tests := ["qt4tests b39c4bc0 upd (lake exe l4qt4 --isolate 60 --lang xquery --family upd): 792 pass, 0 fail, 27 unsupported of 819; 6 excluded (defective test data, https://github.com/danbri/factoidal/issues/1176)"]
     note := "XQueryUpdate is not in the library root; its theorems (XQueryUpdate/Theorems.lean: docOfXT_wf, applyDoc_wf, applyUpdates_nil, flatU_true_eq_flatXT, agreement of copy modify and fn:update on examples) are checked by lake build l4qt4 (docs/designissues/2026-10-28-xquery-update.md)" },
   { area := "Schematron validation", dir := "Schematron"
     wireIn := .xml, wireOut := .report, params := ["schema"], status := .missing },
