@@ -629,12 +629,14 @@ def eval : Nat → Env → Expr → M Seq
       let s ← eval n env src
       let items : List (Seq × Option Seq) ← match kind with
         | .item => pure (s.map (fun i => ([i], none)))
-        | .member => match s with
-            | [.arr ms] => pure (ms.map (fun m => (m, none)))
-            | _ => err "XPTY0004" "for member requires a single array"
-        | .entry => match s with
-            | [.map kvs] => pure (kvs.map (fun (k, vv) => ([.atom k], some vv)))
-            | _ => err "XPTY0004" "for key/value requires a single map"
+        -- a sequence of arrays or maps is iterated in turn (XPath 4.0
+        -- §4.13.2, PR 2715)
+        | .member => s.flatMapM (fun i => match i with
+            | .arr ms => pure (ms.map (fun m => (m, none)))
+            | _ => err "XPTY0004" "for member requires arrays")
+        | .entry => s.flatMapM (fun i => match i with
+            | .map kvs => pure (kvs.map (fun (k, vv) => ([.atom k], some vv)))
+            | _ => err "XPTY0004" "for key/value requires maps")
       let mut out : Array Item := #[]
       let mut idx := 1
       for (x, y) in items do

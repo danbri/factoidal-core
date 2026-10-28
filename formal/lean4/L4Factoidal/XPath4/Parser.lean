@@ -472,6 +472,7 @@ def pItemType : Nat → P IType
             -- replaces this branch.
             match ← peekQName with
             | some (p, u, l, e) =>
+                if p == some "*" || l == "*" then synErr (nm ++ "() takes a QName, not a wildcard")
                 set e
                 let q ← resolve p u l (if nm == "schema-element" then dE else "")
                 throw { code := "XPST0008", msg := nm ++ "(" ++ q.show ++ "): no such declaration in the in-scope schema definitions" }
@@ -635,10 +636,11 @@ def pFor : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
     expectKw "for"
-    let mut binds : List (ForKind × QN × Option QN × Option QN × IType × Expr) := []
+    let mut binds : List (ForKind × QN × Option QN × Option QN × IType × Option IType × Expr) := []
     for _ in [0:1000] do
       let mut kind := ForKind.item
       let mut v2 : Option QN := none
+      let mut vt2 : Option IType := none
       let mut v : QN := default
       let mut vt : IType := .seq .item .star
       if ← eatKw "member" then
@@ -648,18 +650,21 @@ def pFor : Nat → P Expr
         kind := .entry
         v ← pVarName n; vt ← pTypeDecl n
         if ← eatKw "value" then
-          v2 := some (← pVarName n); let _ ← pTypeDecl n
+          v2 := some (← pVarName n); vt2 := some (← pTypeDecl n)
       else if ← eatKw "value" then
         kind := .entry
         -- value only: bind the value; key unnamed
         v := { uri := "#none", loc := "#key" }
-        v2 := some (← pVarName n); let _ ← pTypeDecl n
+        v2 := some (← pVarName n); vt2 := some (← pTypeDecl n)
       else
         v ← pVarName n; vt ← pTypeDecl n
       let posv ← if ← eatKw "at" then pure (some (← pVarName n)) else pure none
+      -- the variables of one binding are distinct (XQuery 4.0 §4.12.2)
+      if v2 == some v || (posv.isSome && (posv == some v || posv == v2)) then
+        throw { code := "XQST0089", msg := "a for binding uses one variable name twice" }
       expectKw "in"
       let src ← pExprSingle n
-      binds := binds ++ [(kind, v, v2, posv, vt, src)]
+      binds := binds ++ [(kind, v, v2, posv, vt, vt2, src)]
       if !(← atS ",") then break
       -- a comma continues the clause only if a binding follows
       let c ← read
@@ -670,7 +675,12 @@ def pFor : Nat → P Expr
         adv 1
       else break
     let body ← pForLetReturn n
-    pure (binds.foldr (fun (k, v, v2, pv, vt, src) acc => .forE k v v2 pv vt src acc) body)
+    -- the declared type of a value variable is checked by a let binding
+    pure (binds.foldr (fun (k, v, v2, pv, vt, vt2, src) acc =>
+      let acc := match v2, vt2 with
+        | some q2, some t2 => .letE q2 t2 (.var q2) acc
+        | _, _ => acc
+      .forE k v v2 pv vt src acc) body)
 
 def pLet : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
@@ -920,7 +930,9 @@ def pArrowTarget : Nat → P (Sum (QN) Expr × List (Option Expr) × List (Strin
       pure (.inr e, args, [])
     else
       match ← afterName with
-      | some ("function", _, _) | some ("fn", _, _) | some ("map", '{', _) | some ("array", '{', _) =>
+      | some ("function", _, _) | some ("fn", _, _) | some ("map", '{', _) | some ("array", '{', _)
+      | some (_, '#', _) =>
+          -- RestrictedDynamicCall over a FunctionItemExpr (XPath 4.0 §4.23.2)
           let f ← pPrimary n
           let (args, _) ← pArgs n
           pure (.inr f, args, [])

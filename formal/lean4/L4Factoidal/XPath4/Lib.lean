@@ -1411,7 +1411,6 @@ def opOfString : String → Option (Expr → Expr → Expr)
   | "||" => some (.bin .concat) | "|" => some (.bin .union) | "union" => some (.bin .union)
   | "except" => some (.bin .except) | "intersect" => some (.bin .intersect)
   | "to" => some (.bin .to) | "otherwise" => some (.bin .otherwise)
-  | "!" => some .smap | "/" => some .slash
   | "×" => some (.bin .mul) | "÷" => some (.bin .div)
   | _ => none
 
