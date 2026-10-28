@@ -390,6 +390,7 @@ def pFlwor (sp : SubParsers) : P Expr := do
       expectKw "count"
       cs := cs.push (.countC (← pVar))
     else if (← kwThenKw "order" "by") || (← kwThenKw "stable" "order") then
+      let c0 ← read
       let _ ← eatKw "stable"
       expectKw "order"; expectKw "by"
       let mut keys : Array Expr := #[]
@@ -405,7 +406,7 @@ def pFlwor (sp : SubParsers) : P Expr := do
         specs := specs.push ((if desc then "d" else "a") ++ emp ++ coll)
         if !(← eatS ",") then break
       -- "?" (no empty modifier) takes the prolog default: the runtime reads specs[0]
-      cs := cs.push (.orderC keys.toList ("l" :: specs.toList.map (fun s => s.replace "?" "")))
+      cs := cs.push (.orderC keys.toList (((c0.ns.lookup "#order").getD "l") :: specs.toList.map (fun s => s.replace "?" "")))
     else if ← kwThenKw "group" "by" then
       expectKw "group"; expectKw "by"
       -- a grouping spec with an initializing expression is a let clause

@@ -378,6 +378,8 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
         if seen.contains "order" then qerr "XQST0069" "two empty order declarations"
         seen := "order" :: seen
         m := { m with emptyGreatest := g }
+        -- the order by clauses of the module read the default from the namespace list
+        if g then ns := ("#order", "g") :: ns
       else if ← eatKw "decimal-format" then
         let mut props : List (String × String) := []
         for _ in [0:100] do
