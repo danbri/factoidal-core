@@ -295,14 +295,8 @@ def eval : Nat → Env → Expr → M Seq
       match sig? with
       | none =>
           -- XQuery 4.0 hook: a function declared in the prolog
-          match XQuery4.userFn? env q total with
-          | some fi =>
-            if !kw.isEmpty then err "XPST0017" ("keyword arguments to " ++ q.show)
-            else if args.any Option.isNone then
-              pure [.fn (.papp fi (← evalArgs n env args))]
-            else
-              let vs ← evalArgs n env args
-              apply n env fi (vs.map (·.getD []))
+          match XQuery4.callUser? { eval := fun x => eval n env x, apply := fun f as => apply n env f as } env q args kw with
+          | some r => r
           | none =>
           if (findSigAny q).isSome then err "XPST0017" ("wrong number of arguments for " ++ q.show)
           else err "XPST0017" ("unknown function " ++ q.show)
@@ -371,8 +365,8 @@ def eval : Nat → Env → Expr → M Seq
         | some _ => pure [.fn (.builtin q k)]
         | none =>
           -- XQuery 4.0 hook: a function declared in the prolog
-          match XQuery4.userFn? env q k with
-          | some fi => pure [fi]
+          match XQuery4.refUser? (fun f as => apply n env f as) env q k with
+          | some r => r
           | none => err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
   | .inline ps ret body focus => pure [.fn (.inline ps ret body focus env.vars)]
   | .mapC es => do

@@ -32,6 +32,7 @@ anything but XPath expressions in this evaluator.
 import L4Factoidal.XPath4.Eval
 import L4Factoidal.XPath4.Theorems
 import L4Factoidal.XQuery4.Module
+import L4Factoidal.XQuery4.Theorems
 
 open L4Factoidal.XPath4
 open L4Factoidal.XML

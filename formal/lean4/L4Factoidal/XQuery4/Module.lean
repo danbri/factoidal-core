@@ -55,12 +55,17 @@ structure Module where
   defaultCollation : Option String := none
   baseUri : Option String := none
   emptyGreatest : Bool := false
+  /-- Named item types (`declare type`, `declare record`). -/
+  types : List (QN × IType) := []
+  /-- Decimal formats (`declare decimal-format`), as `Env.decimalFormats`. -/
+  decimalFormats : List (String × List (String × String)) := []
 deriving Inhabited
 
 def qerr {α} (code msg : String) : P α := throw { code, msg }
 
 def withXq {α} (cfg : Cfg) (ns : List (String × String)) (p : P α) : P α :=
-  withReader (fun c => { c with ns, ext := some (grammar cfg) }) p
+  withReader (fun c => { c with ns, ext := some (grammar cfg), types := cfg.types,
+                                lenientTypes := cfg.lenient }) p
 
 def reservedFnNs : List String :=
   [nsFN, nsXS, nsMATH, nsMAP, nsARR, "http://www.w3.org/XML/1998/namespace",
@@ -113,7 +118,7 @@ def pAnnotations : P (List String) := do
     | some (p, u, l, e) =>
       set e
       let q ← resolve p u l "http://www.w3.org/2012/xquery"
-      if q.uri == "http://www.w3.org/2012/xquery" && !(l == "public" || l == "private") then
+      if q.uri == "http://www.w3.org/2012/xquery" && !(["public", "private", "constructor"].contains l) then
         qerr "XQST0045" ("reserved annotation %" ++ l)
       if [nsFN, nsXS, nsMATH, nsMAP, nsARR, "http://www.w3.org/XML/1998/namespace",
           "http://www.w3.org/2001/XMLSchema-instance"].contains q.uri then
@@ -131,10 +136,17 @@ def pAnnotations : P (List String) := do
     | none => synErr "bad annotation"
   pure out
 
-/-- Parse a module (main or library). -/
-def pModule : P Module := do
+/-- A record field name: an NCName or a string literal. -/
+def pFieldName : P String := do
+  ws
+  let ch ← peekAt 0
+  if ch == '"' || ch == '\'' then pStringLit else pNCName
+
+/-- Parse a module (main or library). `types0` are named types from a
+    first pass; `lenient` makes that first pass. -/
+def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Module := do
   let mut m : Module := {}
-  let mut cfg : Cfg := {}
+  let mut cfg : Cfg := { types := types0, lenient }
   let c0 ← read
   let mut ns : List (String × String) := c0.ns
   -- the version declaration
@@ -247,11 +259,17 @@ def pModule : P Module := do
         seen := "order" :: seen
         m := { m with emptyGreatest := g }
       else if ← eatKw "decimal-format" then
+        let mut props : List (String × String) := []
         for _ in [0:100] do
           ws
           if (← peekAt 0) == ';' then break
-          let _ ← pNCName; expectS "="; let _ ← pStringLit
+          let pn ← pNCName; expectS "="
+          let pv ← pStringLit
+          if props.any (·.1 == pn) then qerr "XQST0114" ("decimal format property " ++ pn ++ " twice")
+          props := props ++ [(pn, pv)]
         expectS ";"
+        if m.decimalFormats.any (·.1 == "") then qerr "XQST0111" "two default decimal formats"
+        m := { m with decimalFormats := m.decimalFormats ++ [("", props)] }
       else synErr "bad default declaration"
     | "boundary-space" =>
       let pres ← if ← eatKw "preserve" then pure true else expectKw "strip"; pure false
@@ -283,12 +301,23 @@ def pModule : P Module := do
       if seen.contains "copyns" then qerr "XQST0055" "two copy-namespaces declarations"
       seen := "copyns" :: seen
     | "decimal-format" =>
-      let _ ← peekQName >>= fun r => match r with | some (_, _, _, e) => set e | none => pure ()
+      let key ← match ← peekQName with
+        | some (p, u, l, e) =>
+          set e
+          let q ← withXq cfg ns (resolve p u l "")
+          pure q.eqn
+        | none => synErr "expected a decimal format name"
+      let mut props : List (String × String) := []
       for _ in [0:100] do
         ws
         if (← peekAt 0) == ';' then break
-        let _ ← pNCName; expectS "="; let _ ← pStringLit
+        let pn ← pNCName; expectS "="
+        let pv ← pStringLit
+        if props.any (·.1 == pn) then qerr "XQST0114" ("decimal format property " ++ pn ++ " twice")
+        props := props ++ [(pn, pv)]
       expectS ";"
+      if m.decimalFormats.any (·.1 == key) then qerr "XQST0111" "two decimal formats with one name"
+      m := { m with decimalFormats := m.decimalFormats ++ [(key, props)] }
     | "option" =>
       match ← peekQName with
       | some (p, u, l, e) =>
@@ -359,11 +388,59 @@ def pModule : P Module := do
         qerr "XQST0034" ("function " ++ q.show ++ " declared twice")
       fnSigs := (q, minA, maxA) :: fnSigs
       m := { m with decls := m.decls ++ [.fn { name := q, params := ps.toList, ret, body }] }
-    | "record" | "type" => synErr ("declare " ++ w ++ " is not implemented")
+    | "type" =>
+      let q ← match ← peekQName with
+        | some (p, u, l, e) => set e; withXq cfg ns (resolve p u l ((ns.lookup "").getD ""))
+        | none => synErr "expected a type name"
+      expectKw "as"
+      let t ← withXq cfg ns (pItemType 1000)
+      expectS ";"
+      if !lenient && types0.all (fun (n, _) => !(n == q)) && cfg.types.any (fun (n, _) => n == q) then
+        qerr "XQST0146" ("type " ++ q.show ++ " declared twice")
+      cfg := { cfg with types := (q, t) :: cfg.types.filter (fun (n, _) => !(n == q)) }
+    | "record" =>
+      let q ← match ← peekQName with
+        | some (p, u, l, e) => set e; withXq cfg ns (resolve p u l ((ns.lookup "").getD ""))
+        | none => synErr "expected a record type name"
+      expectS "("
+      let mut fs : Array (String × Bool × IType × Option Expr) := #[]
+      let mut ext := false
+      if !(← eatS ")") then
+        for _ in [0:10000] do
+          if ← eatS "*" then
+            if fs.isEmpty then synErr "a record type with only '*'"
+            ext := true; break
+          let f ← pFieldName
+          let opt ← eatS "?"
+          let ft ← if ← eatKw "as" then withXq cfg ns (pSeqType 1000) else pure (.seq .item .star)
+          let d ← if ← eatS ":=" then pure (some (← withXq cfg ns (pExprSingle 100000))) else pure none
+          if fs.any (·.1 == f) then qerr "XQST0021" ("record field " ++ f ++ " twice")
+          fs := fs.push (f, opt, ft, d)
+          if !(← eatS ",") then break
+        expectS ")"
+      expectS ";"
+      let rt : IType := .record (fs.toList.map (fun (f, o, t, _) => (f, o, t))) ext
+      cfg := { cfg with types := (q, rt) :: cfg.types.filter (fun (n, _) => !(n == q)) }
+      -- the record constructor function (§5.19.3): one parameter per
+      -- field; an optional field defaults to the empty sequence and an
+      -- empty optional field gives no entry
+      let pv (f : String) : QN := { uri := "", loc := f }
+      let params := fs.toList.map (fun (f, o, t, d) =>
+        (pv f, t, if d.isSome then d else if o then some (Expr.seq []) else none))
+      let entry (f : String) (o : Bool) : Expr :=
+        let e : Expr := .call { uri := nsMAP, loc := "entry" } [some (.lit (Atomic.ofStr f)), some (.var (pv f))] []
+        if o then .ifE (.call { uri := nsFN, loc := "empty" } [some (.var (pv f))] []) (.seq []) e else e
+      let body : Expr := .call { uri := nsMAP, loc := "merge" }
+        [some (.seq (fs.toList.map (fun (f, o, _, _) => entry f o)))] []
+      let lo := (params.takeWhile (fun (_, _, x) => x.isNone)).length
+      if params.drop lo |>.any (fun (_, _, x) => x.isNone) then
+        qerr "XPST0003" "a required record field after an optional one"
+      if fs.toList.all (fun (f, _, _, _) => L4Factoidal.XSD.isNCName f) then
+        m := { m with decls := m.decls ++ [.fn { name := q, params, ret := rt, body := some body }] }
     | "revalidation" => qerr "XQST0075" "revalidation is not supported"
     | "updating" => qerr "XUST0001" "updating functions are not supported"
     | _ => synErr ("unknown declaration " ++ w)
-  m := { m with ns }
+  m := { m with ns, types := cfg.types }
   if m.libNs.isNone then
     ws
     let c ← read
@@ -381,7 +458,12 @@ def pModule : P Module := do
 /-- Parse an XQuery 4.0 module, with the namespace bindings of the
     environment. -/
 def parseModule (src : String) (ns : List (String × String) := []) : M Module :=
-  match (pModule.run { s := src.toList.toArray, ns }).run 0 with
+  let s := src.toList.toArray
+  -- first pass: the named types, with forward references read as item()
+  let types0 := match ((pModule [] true).run { s, ns }).run 0 with
+    | .ok (m, _) => m.types
+    | .error _ => []
+  match ((pModule types0 false).run { s, ns }).run 0 with
   | .ok (m, _) => .ok m
   | .error e => .error e
 
@@ -389,40 +471,44 @@ def parseModule (src : String) (ns : List (String × String) := []) : M Module :
 
 def markStatic (e : Env) : Env := e.bind staticKey []
 
-/-- The function items of a declaration: one per arity it accepts
-    (4.0 default parameter values), the defaults bound by `let`. -/
-def fnBindings (d : FnDecl) : List (QN × Seq) :=
+/-- The binding of a declaration: the function item of the full arity
+    and, for each optional parameter, a focus function computing its
+    default value in the focus of the call (XQuery 4.0 §5.18.2). -/
+def fnBinding (d : FnDecl) : Option (QN × Seq) :=
   match d.body with
-  | none => []
+  | none => none
   | some body =>
     let ps := d.params
-    let minA := (ps.takeWhile (fun (_, _, x) => x.isNone)).length
-    (List.range (ps.length + 1 - minA)).map (fun j =>
-      let k := minA + j
-      let given := ps.take k
-      let rest := ps.drop k
-      let body' := rest.foldr (fun (v, t, x) acc => Expr.letE v t (x.getD (.seq [])) acc) body
-      (fnKey d.name k, [.fn (.inline (given.map (fun (v, t, _) => (v, t))) d.ret body' false [])]))
+    let lo := (ps.takeWhile (fun (_, _, x) => x.isNone)).length
+    let full : Item := .fn (.inline (ps.map (fun (v, t, _) => (v, t))) d.ret body false [])
+    let dflts : List Item := (ps.drop lo).map (fun (_, t, x) =>
+      .fn (.inline [] t (x.getD (.seq [])) true []))
+    some (fnKey d.name lo ps.length, full :: dflts)
 
 /-- The module texts the caller gave for a namespace. -/
 def moduleTexts (env : Env) (uri : String) : List String :=
   env.resources.filterMap (fun (k, v) => if k == "#module " ++ uri then some v else none)
 
 /-- The library modules a module imports, transitively (imported
-    modules first), to depth `d`. -/
-def loadImports (env : Env) : Nat → Module → M (List Module)
-  | 0, _ => err "XQST0093" "module imports nested too deeply"
-  | d + 1, m => do
+    modules first), to depth `d`; a namespace already loaded (`seen`)
+    is not loaded again, so cyclic imports end (XQuery 4.0 §5.12). -/
+def loadImports (env : Env) : Nat → List String → Module → M (List Module × List String)
+  | 0, _, _ => err "XQST0093" "module imports nested too deeply"
+  | d + 1, seen, m => do
     let mut out : List Module := []
+    let mut seen := seen
     for (_, u, _) in m.imports do
+      if seen.contains u then continue
+      seen := u :: seen
       let texts := moduleTexts env u
       if texts.isEmpty then err "XQST0059" ("no module found for namespace " ++ u)
       for t in texts do
         let lm ← parseModule t
         if (lm.libNs.map (·.2)) != some u then err "XQST0059" ("the module text is not a module for " ++ u)
-        let sub ← loadImports env d lm
+        let (sub, seen') ← loadImports env d seen lm
+        seen := seen'
         out := out ++ sub ++ [lm]
-    pure out
+    pure (out, seen)
 
 def Module.globals (m : Module) : List QN :=
   m.decls.filterMap (fun d => match d with | .var v .. => some v | _ => none)
@@ -442,6 +528,11 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
   let known (q : QN) (k : Nat) : Bool :=
     (findSigAny q).isSome || (q.uri == nsFN && q.loc == "concat") ||
     fns.any (fun (q2, lo, hi) => q2 == q && lo ≤ k && k ≤ hi)
+  if globals.length != globals.eraseDups.length then
+    err "XQST0049" "a global variable declared in two modules"
+  for (q, lo, hi) in fns do
+    if (fns.filter (fun (q2, lo2, hi2) => q2 == q && !(hi < lo2 || hi2 < lo))).length > 1 then
+      err "XQST0034" ("function " ++ q.show ++ " declared twice")
   let base : SCtx := { vars := env.vars.map (·.1) ++ globals, knownFn := known }
   for m in ms do
     for d in m.decls do
@@ -462,63 +553,89 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
     context value. A variable whose initializer reads a global that is
     not bound yet is tried again after the others (XQuery 4.0 §5.16:
     order by dependency); a round with no progress is `XQDY0054`. -/
-def bindModules (fuel : Nat) (env : Env) (ms : List Module) : M Env := do
-  let mut env := env
-  for m in ms do
-    for dcl in m.decls do
-      if let .fn fd := dcl then
-        for b in fnBindings fd do env := { env with vars := b :: env.vars }
-  let globals := ms.flatMap Module.globals
-  let mut pending : List Decl := ms.flatMap (fun m => m.decls.filter (fun d => match d with | .fn _ => false | _ => true))
-  for _ in [0:pending.length + 1] do
-    if pending.isEmpty then break
-    let mut later : List Decl := []
-    let mut lastErr : Option Err := none
-    for dcl in pending do
-      match dcl with
-      | .var v ty init external =>
-        let env1 := markStatic env
-        let r : M Seq := if external then
-            match env.vars.find? (fun (q, _) => q == v) with
-            | some (_, s) => pure s
-            | none => match init with
-              | some e => eval fuel env1 e
-              | none => err "XPDY0002" ("no value for the external variable $" ++ v.show)
-          else eval fuel env1 (init.getD (.seq []))
-        match r with
-        | .ok val =>
-          let val ← env.coerce ty val ("$" ++ v.show)
-          env := env.bind v val
-        | .error e =>
-          if e.code == "XPST0008" && globals.any (fun g => e.msg.endsWith ("$" ++ g.show)) then
-            later := later ++ [dcl]; lastErr := some e
-          else throw e
-      | .ctx ty init external =>
-        let env1 := markStatic env
-        let val ← if external then
-            match env.ctx with
-            | some s => pure s
-            | none => match init with
-              | some e => eval fuel env1 e
-              | none => pure []
-          else eval fuel env1 (init.getD (.seq []))
-        if !val.isEmpty || !external then
-          if !(env.seqMatches val ty) then err "XPTY0004" "the context value does not match its declared type"
-          env := { env with ctx := some val, pos := 1, size := 1 }
-      | .fn _ => pure ()
+def bindFns (env : Env) (ms : List Module) : Env :=
+  ms.foldl (fun e m => m.decls.foldl (fun e d => match d with
+    | .fn fd => match fnBinding fd with
+      | some b => { e with vars := b :: e.vars }
+      | none => e
+    | _ => e) e) env
+
+/-- Bind one global variable or the context value; `none` when the
+    initializer reads a global not bound yet (try again later). -/
+def bindOne (fuel : Nat) (globals : List QN) (env : Env) : Decl → M (Option Env × Option Err)
+  | .var v ty init external => do
+    let env1 := markStatic env
+    let r : M Seq := if external then
+        match env.vars.find? (fun (q, _) => q == v) with
+        | some (_, s) => pure s
+        | none => match init with
+          | some e => eval fuel env1 e
+          | none => err "XPDY0002" ("no value for the external variable $" ++ v.show)
+      else eval fuel env1 (init.getD (.seq []))
+    match r with
+    | .ok val =>
+      let val ← env.coerce ty val ("$" ++ v.show)
+      pure (some (env.bind v val), none)
+    | .error e =>
+      if e.code == "XPST0008" && globals.any (fun g => e.msg.endsWith ("$" ++ g.show)) then
+        pure (none, some e)
+      else throw e
+  | .ctx ty init external => do
+    let env1 := markStatic env
+    let val ← if external then
+        match env.ctx with
+        | some s => pure s
+        | none => match init with
+          | some e => eval fuel env1 e
+          | none => pure []
+      else eval fuel env1 (init.getD (.seq []))
+    if !val.isEmpty || !external then
+      if !(env.seqMatches val ty) then err "XPTY0004" "the context value does not match its declared type"
+      pure (some { env with ctx := some val, pos := 1, size := 1 }, none)
+    else pure (some env, none)
+  | .fn _ => pure (some env, none)
+
+/-- One round over the pending declarations: the bound environment,
+    the declarations to try again, the last postponement. -/
+def bindRound (fuel : Nat) (globals : List QN) : Env → List Decl → M (Env × List Decl × Option Err)
+  | env, [] => pure (env, [], none)
+  | env, d :: ds => do
+    match ← bindOne fuel globals env d with
+    | (some env', _) => bindRound fuel globals env' ds
+    | (none, e) =>
+      let (env', later, e') ← bindRound fuel globals env ds
+      pure (env', d :: later, e'.orElse (fun _ => e))
+
+/-- Rounds until every declaration is bound; a round with no progress
+    is `XQDY0054` (XQuery 4.0 §5.16: variables bound in dependency
+    order, a cycle is an error). -/
+def bindRounds (fuel : Nat) (globals : List QN) : Nat → Env → List Decl → M Env
+  | _, env, [] => pure env
+  | 0, env, _ => pure env
+  | k + 1, env, pending@(_ :: _) => do
+    let (env', later, lastErr) ← bindRound fuel globals env pending
     if later.length == pending.length then
       match lastErr with
       | some e => throw { e with code := "XQDY0054", msg := "circular variable dependency: " ++ e.msg }
-      | none => break
-    pending := later
-  pure env
+      | none => pure env'
+    else bindRounds fuel globals k env' later
 
-/-- Evaluate a main module. -/
-def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
+def bindModules (fuel : Nat) (env : Env) (ms : List Module) : M Env :=
+  let pending := ms.flatMap (fun m => m.decls.filter (fun d => match d with | .fn _ => false | _ => true))
+  bindRounds fuel (ms.flatMap Module.globals) (pending.length + 1) (bindFns env ms) pending
+
+/-- The dynamic context of a module before its declarations are bound:
+    the prolog's namespaces, collation, base URI and decimal formats. -/
+def moduleEnv (env : Env) (m : Module) : Env :=
   let env := { env with ns := m.ns }
   let env := match m.defaultCollation with | some c => { env with defaultCollation := c } | none => env
   let env := match m.baseUri with | some b => { env with baseUri := b } | none => env
-  let libs ← loadImports env 20 m
+  { env with decimalFormats := m.decimalFormats ++ env.decimalFormats }
+
+/-- Evaluate a main module. -/
+def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
+  let env := moduleEnv env m
+  let (libs, _) ← loadImports env 50 ((m.libNs.map (·.2)).toList) m
   checkModules env (libs ++ [m])
   let env ← bindModules fuel env (libs ++ [m])
   match m.body with

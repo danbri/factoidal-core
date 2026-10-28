@@ -27,7 +27,7 @@ Implemented here:
 * `try`/`catch` with the `err:` variables, and `finally` (§4.20);
 * `typeswitch` (§4.19.2) and `switch` (§4.19.1);
 * user-defined functions of the prolog (§5.18): the evaluator asks
-  `userFn?` when a static call names no built-in function.
+  `callUser?` when a static call names no built-in function.
 
 Not implemented: node identity is derived from the content and the
 bindings in scope, so two constructions with equal content in the
@@ -53,9 +53,11 @@ structure XCb where
     from the prolog's global variables and functions (behind it). -/
 def staticKey : QN := { uri := "#xq", loc := "static" }
 
-/-- The binding name under which the prolog keeps function `q` of
-    arity `k`. -/
-def fnKey (q : QN) (k : Nat) : QN := { uri := "#xqf", loc := q.eqn ++ "#" ++ toString k }
+/-- The binding name under which the prolog keeps a declaration of
+    function `q` that accepts `lo` to `hi` arguments (4.0 default
+    parameter values). -/
+def fnKey (q : QN) (lo hi : Nat) : QN :=
+  { uri := "#xqf", loc := q.eqn ++ "#" ++ toString lo ++ "-" ++ toString hi }
 
 /-- The bindings a function body sees: everything from the first
     marker on (the globals and the functions); all bindings when there
@@ -65,13 +67,90 @@ def staticVars (vs : List (QN × Seq)) : List (QN × Seq) :=
   | [] => vs
   | r => r
 
-/-- A user-defined function of arity `k`, as a function item whose
-    closure is the static bindings of `e` (so the body sees the
-    globals and every function, itself included). -/
-def userFn? (e : Env) (q : QN) (k : Nat) : Option Item :=
-  match e.vars.find? (fun (v, _) => v == fnKey q k) with
-  | some (_, [.fn (.inline ps r b f _)]) => some (.fn (.inline ps r b f (staticVars e.vars)))
+/-- The declaration of `q` that accepts `k` arguments: its function
+    item (of the full arity, closure = the static bindings of `e`, so
+    the body sees the globals and every function, itself included),
+    the number of required parameters, and one focus function per
+    optional parameter, which computes the default value in the focus
+    of the call. -/
+def userDecl? (e : Env) (q : QN) (k : Nat) : Option (Item × Nat × List Item) :=
+  let pre := q.eqn ++ "#"
+  let hit := e.vars.find? (fun (v, _) =>
+    v.uri == "#xqf" && v.loc.startsWith pre &&
+    (match ((v.loc.drop pre.length).toString.splitOn "-").map String.toNat? with
+     | [some lo, some hi] => lo ≤ k && k ≤ hi
+     | _ => false))
+  match hit with
+  | some (v, .fn (.inline ps r b f _) :: dflts) =>
+    let lo := match ((v.loc.drop pre.length).toString.splitOn "-").map String.toNat? with
+      | [some lo, _] => lo | _ => ps.length
+    let sv := staticVars e.vars
+    let withCl (d : Item) : Item := match d with
+      | .fn (.inline ps' r' b' f' _) => .fn (.inline ps' r' b' f' sv)
+      | x => x
+    some (.fn (.inline ps r b f sv), lo, dflts.map withCl)
   | _ => none
+
+/-- Is any declaration of `q` there (for the error code)? -/
+def userAny (e : Env) (q : QN) : Bool :=
+  e.vars.any (fun (v, _) => v.uri == "#xqf" && v.loc.startsWith (q.eqn ++ "#"))
+
+/-- The callbacks into the evaluator for a user function call. -/
+structure CallCb where
+  eval : Expr → M Seq
+  apply : Item → List Seq → M Seq
+
+/-- A static call `q(args, kw)` of a function declared in the prolog
+    (XQuery 4.0 §4.5.1): positional arguments, then keyword arguments
+    by parameter name, then defaults in the focus of the call; a
+    placeholder `?` makes a partial application. `none` when no
+    declaration accepts the call. -/
+def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
+    (kw : List (String × Option Expr)) : Option (M Seq) :=
+  match userDecl? e q (args.length + kw.length) with
+  | none => none
+  | some (fi, lo, dflts) => some do
+    let ps := match fi with | .fn (.inline ps _ _ _ _) => ps | _ => []
+    let m := ps.length
+    let mut slots : Array (Option (Option Expr)) := Array.replicate m none
+    for (a, i) in args.zip (List.range args.length) do
+      slots := slots.set! i (some a)
+    for (nm, a) in kw do
+      match ps.findIdx? (fun (v, _) => v.loc == nm) with
+      | some i =>
+        if (slots.getD i none).isSome then err "XPST0017" ("argument " ++ nm ++ " given twice")
+        slots := slots.set! i (some a)
+      | none => err "XPST0017" ("no parameter named " ++ nm ++ " in " ++ q.show)
+    let ctxArg : Seq := e.ctx.getD []
+    let mut fixed : Array (Option Seq) := #[]
+    let mut isPartial := false
+    for (sl, i) in slots.toList.zip (List.range m) do
+      match sl with
+      | some (some x) => fixed := fixed.push (some (← cb.eval x))
+      | some none => fixed := fixed.push none; isPartial := true
+      | none =>
+        if i < lo then err "XPST0017" ("missing argument $" ++ ((ps.getD i default).1.show) ++ " of " ++ q.show)
+        match dflts[i - lo]? with
+        | some d => fixed := fixed.push (some (← cb.apply d [ctxArg]))
+        | none => err "XPST0017" ("missing argument of " ++ q.show)
+    if isPartial then pure [.fn (.papp fi fixed.toList)]
+    else cb.apply fi (fixed.toList.map (·.getD []))
+
+/-- A named function reference `q#k` to a declared function: the
+    defaults of the omitted parameters are computed now, in the focus
+    of the reference. -/
+def refUser? (applyF : Item → List Seq → M Seq) (e : Env) (q : QN) (k : Nat) : Option (M Seq) :=
+  match userDecl? e q k with
+  | none => none
+  | some (fi, lo, dflts) => some do
+    let m := match fi with | .fn (.inline ps _ _ _ _) => ps.length | _ => k
+    if k == m then return [fi]
+    let mut fixed : List (Option Seq) := List.replicate k none
+    for i in [k:m] do
+      match dflts[i - lo]? with
+      | some d => fixed := fixed ++ [some (← applyF d [e.ctx.getD []])]
+      | none => err "XPST0017" ("missing argument of " ++ q.show)
+    pure [.fn (.papp fi fixed)]
 
 /-! ## Encodings of names in `ext` nodes -/
 

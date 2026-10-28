@@ -51,6 +51,12 @@ structure PCtx where
   ns : List (String × String)
   /-- The XQuery 4.0 grammar extension; `none` for XPath 4.0. -/
   ext : Option ExtGrammar := none
+  /-- Named item types of an XQuery 4.0 prolog (`declare type`,
+      `declare record`); empty for XPath 4.0. -/
+  types : List (QN × IType) := []
+  /-- Read an unknown type name as `item()` (the first pass over an
+      XQuery prolog, which collects the named types). -/
+  lenientTypes : Bool := false
 
 abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 
@@ -327,6 +333,12 @@ def reservedFnNames : List String :=
    "record", "switch", "typeswitch", "enum"]
 
 def atomicTypeOf (q : QN) : P IType := do
+  -- XQuery 4.0 hook: a named item type of the prolog
+  let c ← read
+  match c.types.find? (fun (n, _) => n == q) with
+  | some (_, t) => return t
+  | none => pure ()
+  if c.lenientTypes && q.uri != nsXS then return .item
   if q.uri == nsXS then
     if q.loc == "numeric" then
       pure (.choice [.atomic (.b .double), .atomic (.b .float), .atomic (.b .decimal)])
@@ -386,6 +398,27 @@ def pItemType : Nat → P IType
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
     ws
+    -- XQuery: annotations before a function test (`%a function(*)`) do
+    -- not change the type here (their meaning is implementation-defined)
+    if (← read).ext.isSome && (← peekAt 0) == '%' then
+      for _ in [0:100] do
+        ws
+        if (← peekAt 0) != '%' then break
+        adv 1
+        match ← peekQName with
+        | some (_, _, _, e) => set e
+        | none => synErr "bad annotation"
+        if ← eatS "(" then
+          for _ in [0:100] do
+            ws
+            let ch ← peekAt 0
+            if ch == '"' || ch == '\'' then let _ ← pStringLit
+            else if ch.isDigit || ch == '-' then let _ ← pNumber
+            else if ← atKw "true" then adv 4; expectS "("; expectS ")"
+            else if ← atKw "false" then adv 5; expectS "("; expectS ")"
+            if !(← eatS ",") then break
+          expectS ")"
+      ws
     if ← eatS "(" then
       let t ← pItemType n
       let mut ts := [t]
@@ -1256,6 +1289,8 @@ def pPrimary : Nat → P Expr
     | some (_, '#', _) =>
         match ← peekQName with
         | some (p, u, l, e) =>
+            if p.isNone && u.isNone && reservedFnNames.contains l then
+              synErr ("reserved function name " ++ l)
             set e
             let q ← resolve p u l (← dfltFnNs)
             expectS "#"

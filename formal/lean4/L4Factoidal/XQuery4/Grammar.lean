@@ -41,6 +41,10 @@ open L4Factoidal.XPath4
 /-- The prolog settings the expression grammar needs. -/
 structure Cfg where
   boundaryPreserve : Bool := false
+  /-- Named item types of the prolog. -/
+  types : List (QN × IType) := []
+  /-- The first pass over a prolog: unknown type names are `item()`. -/
+  lenient : Bool := false
 deriving Inhabited
 
 /-! ## Helpers -/
@@ -209,14 +213,7 @@ def kwThenKw (k k2 : String) : P Bool := do
 
 def isFlworStart : P Bool := do
   if ← kwThen "for" '$' then return true
-  if ← kwThen "let" '$' then
-    -- `let $(`/`$[`/`${` (destructuring) is left to the XPath parser
-    let c ← read
-    let i ← get
-    let j := skipWsF c.s (c.s.size + 1) 0 i
-    let k := skipWsF c.s (c.s.size + 1) 0 (j + 3)
-    let o := chAt c.s (k + 1)
-    return !(o == '(' || o == '[' || o == '{')
+  if ← kwThen "let" '$' then return true
   for k2 in ["member", "key", "value", "tumbling", "sliding"] do
     if ← kwThenKw "for" k2 then return true
   pure false
@@ -282,9 +279,15 @@ def pWindow (sp : SubParsers) : P Clause := do
     let e ← pWindowVars
     expectKw "when"
     let ec ← subE sp.exprSingle
+    let names := (v :: s ++ e).filter (fun q => !isNoName q)
+    if names.length != names.eraseDups.length then
+      throw { code := "XQST0103", msg := "two window variables with one name" }
     pure (.window sliding v vt src s sc e (some ec) only)
   else
     if sliding then synErr "a sliding window needs an end condition"
+    let names := (v :: s).filter (fun q => !isNoName q)
+    if names.length != names.eraseDups.length then
+      throw { code := "XQST0103", msg := "two window variables with one name" }
     pure (.window sliding v vt src s sc [noName, noName, noName, noName] none false)
 
 def pFlwor (sp : SubParsers) : P Expr := do
@@ -300,10 +303,43 @@ def pFlwor (sp : SubParsers) : P Expr := do
           if !(← eatS ",") then break
     else if ← eatKw "let" then
       for _ in [0:10000] do
-        let v ← pVar
-        let vt ← pOptType sp
-        expectS ":="
-        cs := cs.push (.letC v vt (← subE sp.exprSingle))
+        ws
+        let c ← read
+        let j ← get
+        let open_ := chAt c.s (j+1)
+        if chAt c.s j == '$' && (open_ == '(' || open_ == '[' || open_ == '{') then
+          -- destructuring (XPath 4.0 §4.12.2), as the XPath parser
+          -- desugars it: a fresh variable, then one binding per name
+          set (j + 2)
+          let close := if open_ == '(' then ")" else if open_ == '[' then "]" else "}"
+          let mut vs : Array (QN × IType) := #[]
+          for _ in [0:1000] do
+            let v ← pVar
+            let vt ← pOptType sp
+            vs := vs.push (v, vt)
+            if !(← eatS ",") then break
+          expectS close
+          let dflt : IType := if open_ == '(' then .seq .item .star else if open_ == '[' then .anyArr else .anyMap
+          let st ← if ← atKw "as" then pOptType sp else pure dflt
+          expectS ":="
+          let e ← subE sp.exprSingle
+          let tmp : QN := { uri := "#let", loc := toString j }
+          cs := cs.push (.letC tmp st e)
+          let k := vs.size
+          for ((v, vt), idx) in vs.toList.zip (List.range k) do
+            let pos : Expr := .lit (Atomic.ofInt (idx + 1))
+            let rhs : Expr :=
+              if open_ == '(' then
+                if idx + 1 == k then .call { uri := nsFN, loc := "subsequence" } [some (.var tmp), some pos] []
+                else .call { uri := nsFN, loc := "items-at" } [some (.var tmp), some pos] []
+              else if open_ == '[' then .call { uri := nsARR, loc := "get" } [some (.var tmp), some pos] []
+              else .lookup (.var tmp) (some (.lit (Atomic.ofStr v.loc)))
+            cs := cs.push (.letC v vt rhs)
+        else
+          let v ← pVar
+          let vt ← pOptType sp
+          expectS ":="
+          cs := cs.push (.letC v vt (← subE sp.exprSingle))
         if !(← eatS ",") then break
     else if ← eatKw "where" then cs := cs.push (.whereC (← subE sp.exprSingle))
     else if ← atKw "while" then
@@ -752,7 +788,10 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
 def pCompName (sp : SubParsers) (kind : String) : P Expr := do
   ws
   if (← curCh) == '{' then pBraced sp
-  else match ← peekQName with
+  else
+  -- 4.0: a QName literal `#name`
+  if (← curCh) == '#' then adv 1
+  match ← peekQName with
     | some (p, u, l, e) =>
       set e
       if kind == "pi" || kind == "ns" then
@@ -791,7 +830,9 @@ def startsComputed (s : Array Char) (i : Nat) : Bool :=
       | some (m, _) => m == "lax" || m == "strict" || m == "as" || m == "type"
       | none => false
     else if n == "element" || n == "attribute" || n == "processing-instruction" || n == "namespace" then
-      -- a name then '{'
+      -- a name (or a QName literal `#name`) then '{'
+      let j := if c == '#' then j + 1 else j
+      let c := chAt s j
       match qnameAt s j with
       | some (_, _, e2) => chAt s (skipWsF s (s.size + 1) 0 e2) == '{'
       | none =>
