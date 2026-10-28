@@ -741,16 +741,28 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       -- the earlier queries of an XQuery Update test case; an error ends the chain
       let mut chainEnv := env
       let mut chainErr : Option Err := none
-      for b in before do
+      -- the later queries of an update test case read the first source
+      -- document (the mutable one) as the context value
+      let ctx0 := env.ctx.isNone && env.docs.size > 0
+      for (b, k) in before.zipIdx do
         if chainErr.isSome then break
-        match L4Factoidal.XQueryUpdate.evalUpdQuery b chainEnv 20000 with
-        | .ok (_, e') => chainEnv := e'
+        let e0 := if k > 0 && ctx0 then { chainEnv with ctx := some [.node (NodeRef.mk' 0 0)], pos := 1, size := 1 } else chainEnv
+        match L4Factoidal.XQueryUpdate.evalUpdQuery b e0 20000 with
+        | .ok (_, e') => chainEnv := { e' with ctx := chainEnv.ctx, pos := chainEnv.pos, size := chainEnv.size }
         | .error e => chainErr := some e
+      if !before.isEmpty && ctx0 then
+        chainEnv := { chainEnv with ctx := some [.node (NodeRef.mk' 0 0)], pos := 1, size := 1 }
       let env := chainEnv
       let (res, env) ← match chainErr, spec.sandpit with
         | some e, _ => pure (.error e, env)
         | none, some sp => L4Factoidal.EXPath.File.evalSandpit (o.fileHost == "io") sp env src
-        | none, none => pure (evalIn env src, env)
+        | none, none =>
+          if isXqEnv env then
+            -- XQuery: the assertions see the documents after the updates (fn:put)
+            match L4Factoidal.XQueryUpdate.evalUpdQuery src env 20000 with
+            | .ok (s, e') => pure (.ok s, { e' with ctx := env.ctx, pos := env.pos, size := env.size })
+            | .error e => pure (.error e, env)
+          else pure (evalIn env src, env)
       let some r := (kidsNamed tc "result").head? | do t := { t with fail := t.fail + 1 }; continue
       let r ← resolveXmlFiles o.root dir 100 r
       match (kids r).head? with

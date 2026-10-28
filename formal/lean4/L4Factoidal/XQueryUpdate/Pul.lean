@@ -364,9 +364,37 @@ def rebuild (d : Doc) (o : Ops) (typeGone : Std.HashSet Nat) : Nat → Nat → M
       pure [.el { r with inscope := sc } ats.toList ks.toList]
     | _ => pure [.lf r]
 
+/-- Flatten an `XT` into a document table, as `XPath4.flatXT`, with the
+    namespace inheritance of the snapshot: with `inherit` (copy-namespaces
+    inherit, §8.2.3 rule 5 and §8.2.7 `upd:propagateNamespace`) an element
+    also has the bindings of its parent for the prefixes it does not bind;
+    with no-inherit it keeps its own in-scope namespaces only. -/
+def flatU (inherit : Bool) : Nat → Option Nat → List (String × String) → XT → B Unit
+  | 0, _, _, _ => pure ()
+  | f + 1, par, psc, t =>
+    match t with
+    | .lf r => do
+        let i ← pushRec { r with parent := par, children := #[], attrs := #[] }
+        setRec i (fun x => { x with last := i })
+    | .el r ats kids => do
+        let sc := if r.kind == .element then (if inherit then scopeMerge r psc else r.inscope) else r.inscope
+        let i ← pushRec { r with parent := par, inscope := sc, children := #[], attrs := #[] }
+        let mut aidx : Array Nat := #[]
+        for a in ats do
+          let j ← pushRec { a with parent := some i, children := #[], attrs := #[] }
+          setRec j (fun x => { x with last := j })
+          aidx := aidx.push j
+        let mut cidx : Array Nat := #[]
+        for k in mergeKids kids do
+          let j := (← get).size
+          flatU inherit f (some i) sc k
+          cidx := cidx.push j
+        let sz := (← get).size
+        setRec i (fun x => { x with children := cidx, attrs := aidx, last := sz - 1 })
+
 /-- A document rebuilt from an `XT` whose root is at index 0. -/
-def docOfXT (base : Doc) (t : XT) : Doc :=
-  let ((), arr) := (flatXT 100000 none [] t).run #[]
+def docOfXT (base : Doc) (t : XT) (inherit : Bool := true) : Doc :=
+  let ((), arr) := (flatU inherit 100000 none [] t).run #[]
   { base with nodes := arr, origin := none }
 
 /-- Apply the primitives of one document (all with the same document
@@ -374,8 +402,12 @@ def docOfXT (base : Doc) (t : XT) : Doc :=
 def applyDoc (env : Env) (d : Doc) (ps : List Prim) : M Doc := do
   let o := collectOps env d ps
   let typeGone := withAncestors d o.touched
+  -- the copy-namespaces inherit mode of the expressions (`Prim.str`)
+  let inherit := !ps.any (fun p => p.str == "noinherit" &&
+    [PKind.insertBefore, .insertAfter, .insertInto, .insertIntoAsFirst, .insertIntoAsLast,
+     .insertAttributes, .replaceNode, .rename].contains p.kind)
   match ← rebuild d o typeGone 100000 0 with
-  | [t] => pure (docOfXT d t)
+  | [t] => pure (docOfXT d t inherit)
   | _ => err "XUDY0021" "the root of a document was removed"
 
 /-! ## upd:applyUpdates (§8.2.3) -/

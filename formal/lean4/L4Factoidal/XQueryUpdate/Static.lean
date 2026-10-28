@@ -17,10 +17,12 @@ Two rule sets:
   XUST0002 and XUST0028 exist only in 1.0): the operands of insert,
   delete, replace, rename and copy are simple, the branches of a comma,
   `if` or `typeswitch` expression are all updating or vacuous when one
-  is updating, the modify clause is updating or vacuous (XUST0002), the
-  return clause is simple, an updating function has no return type
+  is updating, the modify clause is updating or vacuous (XUST0002), an
+  updating function has no return type
   (XUST0028) and its body is updating or vacuous (XUST0002), and the
-  arguments of a function call are simple.
+  arguments of a function call are simple. The return clause of copy
+  modify follows 3.0 (it may be updating): the test set changed that
+  case to 3.0 on 2026-09-26 (`id-transform-expr-014`).
 
 A vacuous expression (1.0 §2.2) is `()`, a call of `fn:error`, or a
 parenthesized, comma, `if`, `typeswitch` or FLWOR expression whose
@@ -177,8 +179,9 @@ def cat : Nat → CCtx → Expr → Except Err Cat
           let cm ← go m
           if c.v10 && cm == .simple then
             xust "XUST0002" "the modify clause of a copy modify expression is not updating or vacuous"
+          -- the return clause may be updating (3.0 §5.6; qt4tests
+          -- id-transform-expr-014 follows 3.0 here since 2026-09-26)
           let cr ← go r
-          if c.v10 && cr == .updating then xust "XUST0001" "an updating expression in the return clause of copy modify"
           pure (if cr == .updating then .updating else .simple)
         | _ => pure .simple
       else if t == "upd-fn" then

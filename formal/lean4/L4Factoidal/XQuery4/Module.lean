@@ -617,6 +617,8 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
     let fnsM := ms.flatMap (fun m2 => m2.fnArities.filter (fun (q, _, _) => vis m2 q))
     let knownM (q : QN) (k : Nat) : Bool :=
       (findSigAny q).isSome || (q.uri == nsFN && q.loc == "concat") ||
+      -- XQuery Update Facility 3.0 §6.1
+      (q.uri == nsFN && q.loc == "put" && (k == 2 || k == 3)) ||
       fnsM.any (fun (q2, lo, hi) => (q2 == q || (q.uri == nsFN && q.pfx == "" && q2 == { q with uri := "" }))
         && lo ≤ k && k ≤ hi)
     let _ := known

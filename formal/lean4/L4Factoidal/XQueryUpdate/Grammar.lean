@@ -35,11 +35,15 @@ namespace L4Factoidal.XQueryUpdate
 open L4Factoidal.XPath4
 open L4Factoidal.XQuery4
 
+/-- The copy-namespaces inherit mode of the static context (XQuery 3.0
+    §4.9), carried by each update expression: `inherit` or `noinherit`. -/
+def inheritFlag (cfg : Cfg) : String := if cfg.copyInherit then "inherit" else "noinherit"
+
 /-- `node` or `nodes`. -/
 def pNodeKw : P Unit := do
   if ← eatKw "nodes" then pure () else expectKw "node"
 
-def pInsert (sp : SubParsers) : P Expr := do
+def pInsert (cfg : Cfg) (sp : SubParsers) : P Expr := do
   expectKw "insert"; pNodeKw
   let src ← subE sp.exprSingle
   let mode ← if ← eatKw "as" then
@@ -52,13 +56,13 @@ def pInsert (sp : SubParsers) : P Expr := do
     else if ← eatKw "before" then pure "before"
     else synErr "expected 'into', 'after' or 'before'"
   let tgt ← subE sp.exprSingle
-  pure (.ext "upd-insert" [src, tgt] [] [] [mode])
+  pure (.ext "upd-insert" [src, tgt] [] [] [mode, inheritFlag cfg])
 
 def pDelete (sp : SubParsers) : P Expr := do
   expectKw "delete"; pNodeKw
   pure (.ext "upd-delete" [← subE sp.exprSingle] [] [] [])
 
-def pReplace (sp : SubParsers) : P Expr := do
+def pReplace (cfg : Cfg) (sp : SubParsers) : P Expr := do
   expectKw "replace"
   let value ← eatKw "value"
   if value then expectKw "of"
@@ -66,17 +70,17 @@ def pReplace (sp : SubParsers) : P Expr := do
   let tgt ← subE sp.exprSingle
   expectKw "with"
   let w ← subE sp.exprSingle
-  pure (.ext (if value then "upd-replace-value" else "upd-replace") [tgt, w] [] [] [])
+  pure (.ext (if value then "upd-replace-value" else "upd-replace") [tgt, w] [] [] [inheritFlag cfg])
 
-def pRename (sp : SubParsers) : P Expr := do
+def pRename (cfg : Cfg) (sp : SubParsers) : P Expr := do
   expectKw "rename"; expectKw "node"
   let tgt ← subE sp.exprSingle
   expectKw "as"
   let nm ← subE sp.exprSingle
-  pure (.ext "upd-rename" [tgt, nm] [] (← staticNs) [])
+  pure (.ext "upd-rename" [tgt, nm] [] (← staticNs) [inheritFlag cfg])
 
 /-- Copy modify (§5.6) as nested `let` clauses. -/
-def pCopy (sp : SubParsers) : P Expr := do
+def pCopy (cfg : Cfg) (sp : SubParsers) : P Expr := do
   let i0 ← get
   expectKw "copy"
   let mut bs : Array (QN × Expr) := #[]
@@ -91,9 +95,10 @@ def pCopy (sp : SubParsers) : P Expr := do
   expectKw "return"
   let r ← subE sp.exprSingle
   let vs := bs.toList.map (·.1)
-  let body : Expr := .ext "upd-modify" [m, r] [] vs []
+  let body : Expr := .ext "upd-modify" [m, r] [] vs [inheritFlag cfg]
   pure (bs.toList.zipIdx.foldr (fun ((v, e), k) acc =>
-    .letE v (.seq .item .star) (.ext "upd-copy" [e] [] [] [toString i0 ++ "." ++ toString k]) acc) body)
+    .letE v (.seq .item .star) (.ext "upd-copy" [e] [] []
+      [toString i0 ++ "." ++ toString k, if cfg.copyPreserve then "preserve" else "no-preserve"]) acc) body)
 
 /-- `invoke updating PrimaryExpr ( args )` (§5.5): the primary is a
     variable reference, a parenthesized expression or a named function
@@ -131,12 +136,12 @@ def pInvoke (sp : SubParsers) : P Expr := do
     expectS ")"
   pure (.ext "upd-invoke" (f :: args.toList) [] [] [])
 
-def exprSingleU (sp : SubParsers) : P (Option Expr) := do
-  if (← kwThenKw "insert" "node") || (← kwThenKw "insert" "nodes") then return some (← pInsert sp)
+def exprSingleU (cfg : Cfg) (sp : SubParsers) : P (Option Expr) := do
+  if (← kwThenKw "insert" "node") || (← kwThenKw "insert" "nodes") then return some (← pInsert cfg sp)
   if (← kwThenKw "delete" "node") || (← kwThenKw "delete" "nodes") then return some (← pDelete sp)
-  if (← kwThenKw "replace" "node") || (← kwThenKw "replace" "value") then return some (← pReplace sp)
-  if ← kwThenKw "rename" "node" then return some (← pRename sp)
-  if ← kwThen "copy" '$' then return some (← pCopy sp)
+  if (← kwThenKw "replace" "node") || (← kwThenKw "replace" "value") then return some (← pReplace cfg sp)
+  if ← kwThenKw "rename" "node" then return some (← pRename cfg sp)
+  if ← kwThen "copy" '$' then return some (← pCopy cfg sp)
   if ← kwThenKw "invoke" "updating" then return some (← pInvoke sp)
   pure none
 
@@ -170,7 +175,7 @@ def grammarU (cfg : Cfg) : ExtGrammar :=
   let base := grammar cfg
   { base with
     exprSingle := fun s ns sp i =>
-      match liftOpt (runP (exprSingleU sp) s ns i) with
+      match liftOpt (runP (exprSingleU cfg sp) s ns i) with
       | .ok (some r) => .ok (some r)
       | .ok none => base.exprSingle s ns sp i
       | .error e => .error e

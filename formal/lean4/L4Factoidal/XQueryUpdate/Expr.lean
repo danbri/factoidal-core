@@ -127,7 +127,7 @@ def oneNode? (s : Seq) : Option (Option NodeRef) :=
 /-! ## The expressions -/
 
 /-- `insert node(s) S (as first|as last)? into|after|before T` (§5.1). -/
-def evalInsert (cb : UCb) (env : Env) (src tgt : Expr) (mode : String) : M Seq := do
+def evalInsert (cb : UCb) (env : Env) (src tgt : Expr) (mode : String) (inh : String := "inherit") : M Seq := do
   let (sv, p1) := splitPul (← cb.eval env src)
   let (alist, clist) ← insertionSeq env sv
   let (tv, p2) := splitPul (← cb.eval env tgt)
@@ -149,14 +149,14 @@ def evalInsert (cb : UCb) (env : Env) (src tgt : Expr) (mode : String) : M Seq :
     if into then
       if r.kind != .element then err "XUTY0022" "attributes inserted into a document node"
       checkAttrNs env r.inscope alist
-      prims := prims ++ [{ kind := .insertAttributes, target, content := alist }]
+      prims := prims ++ [{ kind := .insertAttributes, target, content := alist, str := inh }]
     else
       match parent? with
       | some par =>
         let pr := env.nrec par
         if pr.kind != .element then err "XUDY0030" "attributes inserted before or after a child of a document node"
         checkAttrNs env pr.inscope alist
-        prims := prims ++ [{ kind := .insertAttributes, target := par, content := alist }]
+        prims := prims ++ [{ kind := .insertAttributes, target := par, content := alist, str := inh }]
       | none => pure ()
   if !clist.isEmpty then
     let k : PKind := match mode with
@@ -165,7 +165,7 @@ def evalInsert (cb : UCb) (env : Env) (src tgt : Expr) (mode : String) : M Seq :
       | "before" => .insertBefore
       | "after" => .insertAfter
       | _ => .insertInto
-    prims := prims ++ [{ kind := k, target, content := clist }]
+    prims := prims ++ [{ kind := k, target, content := clist, str := inh }]
   pure ((p1 ++ p2 ++ prims).map Prim.toItem)
 
 /-- `delete node(s) T` (§5.2). -/
@@ -189,7 +189,7 @@ def replaceTarget (env : Env) (tv : Seq) : M NodeRef :=
   | none => err "XUTY0008" "the target of a replace expression is not a single node"
 
 /-- `replace node T with E` (§5.3.1). -/
-def evalReplace (cb : UCb) (env : Env) (tgt wth : Expr) : M Seq := do
+def evalReplace (cb : UCb) (env : Env) (tgt wth : Expr) (inh : String := "inherit") : M Seq := do
   let (wv, p1) := splitPul (← cb.eval env wth)
   let (tv, p2) := splitPul (← cb.eval env tgt)
   let target ← replaceTarget env tv
@@ -200,7 +200,7 @@ def evalReplace (cb : UCb) (env : Env) (tgt wth : Expr) : M Seq := do
     if !clist.isEmpty then err "XUTY0011" "an attribute is replaced by a node that is not an attribute"
     checkAttrNs env (env.nrec (target.at par)).inscope alist
   else if !alist.isEmpty then err "XUTY0010" "a node is replaced by an attribute node"
-  pure ((p1 ++ p2 ++ [({ kind := .replaceNode, target, content := alist ++ clist } : Prim)]).map Prim.toItem)
+  pure ((p1 ++ p2 ++ [({ kind := .replaceNode, target, content := alist ++ clist, str := inh } : Prim)]).map Prim.toItem)
 
 /-- `replace value of node T with E` (§5.3.2). -/
 def evalReplaceValue (cb : UCb) (env : Env) (tgt wth : Expr) : M Seq := do
@@ -225,7 +225,7 @@ def evalReplaceValue (cb : UCb) (env : Env) (tgt wth : Expr) : M Seq := do
   pure ((p1 ++ p2 ++ [prim]).map Prim.toItem)
 
 /-- `rename node T as N` (§5.4); `sns` are the static namespaces. -/
-def evalRename (cb : UCb) (env : Env) (tgt nm : Expr) (sns : List (String × String)) : M Seq := do
+def evalRename (cb : UCb) (env : Env) (tgt nm : Expr) (sns : List (String × String)) (inh : String := "inherit") : M Seq := do
   let (tv, p1) := splitPul (← cb.eval env tgt)
   let target ← match oneNode? tv with
     | some (some n) =>
@@ -270,23 +270,36 @@ def evalRename (cb : UCb) (env : Env) (tgt nm : Expr) (sns : List (String × Str
         if s.toLower == "xml" then err "XQDY0064" "a processing-instruction name xml"
         pure { uri := "", loc := s }
       | _ => err "XPTY0004" "a processing-instruction name must be one string"
-  pure ((p1 ++ p2 ++ [({ kind := .rename, target, name := q } : Prim)]).map Prim.toItem)
+  pure ((p1 ++ p2 ++ [({ kind := .rename, target, name := q, str := inh } : Prim)]).map Prim.toItem)
+
+/-- copy-namespaces no-preserve (XQuery 3.0 §4.9): an element keeps only
+    the namespace bindings its name and its attributes' names use. -/
+def noPreserveXT : Nat → XT → XT
+  | 0, t => t
+  | f + 1, .el r ats ks =>
+    let r := if r.kind != .element then r else
+      let used := (if r.name.uri != "" || r.name.pfx == "" then [(r.name.pfx, r.name.uri)] else []) ++
+        ats.filterMap (fun a => if a.name.uri != "" && a.name.pfx != "" then some (a.name.pfx, a.name.uri) else none)
+      { r with inscope := used.eraseDups ++ [("xml", nsXML)] }
+    .el r ats (ks.map (noPreserveXT f))
+  | _, .lf r => .lf r
 
 /-- The copy of a node for copy modify (§5.6 step 1): a new tree with a
     new identity; types removed (`xs:untyped`, `xs:untypedAtomic`), and
     no document URI. -/
-def copyNode (cb : UCb) (env : Env) (n : NodeRef) (salt : String) : Item :=
+def copyNode (cb : UCb) (env : Env) (n : NodeRef) (salt : String) (preserve : Bool := true) : Item :=
   let t := untypeXT 100000 (env.readXT 100000 n)
+  let t := if preserve then t else noPreserveXT 100000 t
   let ((), arr) := (flatXT 100000 none [] t).run #[]
   let d : Doc := { nodes := arr }
   let id := cb.newId "upd-copy" env (salt ++ "/" ++ toString n.doc ++ "/" ++ toString n.idx)
   .node { doc := id, idx := 0, rt := some d }
 
 /-- `upd-copy`: one copy clause of copy modify (XUTY0013). -/
-def evalCopy (cb : UCb) (env : Env) (src : Expr) (salt : String) : M Seq := do
+def evalCopy (cb : UCb) (env : Env) (src : Expr) (salt : String) (preserve : Bool := true) : M Seq := do
   let (sv, p1) := splitPul (← cb.eval env src)
   match sv with
-  | [.node n] => pure (copyNode cb env n salt :: p1.map Prim.toItem)
+  | [.node n] => pure (copyNode cb env n salt preserve :: p1.map Prim.toItem)
   | _ => err "XUTY0013" "a copy clause does not give a single node"
 
 /-- The revalidation hook: applied to every document `applyUpdates`
@@ -360,12 +373,12 @@ def evalPut (env : Env) (args : List Seq) : M Seq := do
 def evalUpd (cb : UCb) (reval : RevalFn) (env : Env) (tag : String) (es : List Expr) (_ts : List IType)
     (qs : List QN) (ss : List String) : M Seq := do
   match tag, es with
-  | "upd-insert", [s, t] => evalInsert cb env s t (ss.headD "into")
+  | "upd-insert", [s, t] => evalInsert cb env s t (ss.headD "into") (ss.getD 1 "inherit")
   | "upd-delete", [t] => evalDelete cb env t
-  | "upd-replace", [t, w] => evalReplace cb env t w
+  | "upd-replace", [t, w] => evalReplace cb env t w (ss.headD "inherit")
   | "upd-replace-value", [t, w] => evalReplaceValue cb env t w
-  | "upd-rename", [t, n] => evalRename cb env t n (qs.map (fun q => (q.pfx, q.uri)))
-  | "upd-copy", [s] => evalCopy cb env s (ss.headD "")
+  | "upd-rename", [t, n] => evalRename cb env t n (qs.map (fun q => (q.pfx, q.uri))) (ss.headD "inherit")
+  | "upd-copy", [s] => evalCopy cb env s (ss.headD "") (ss.getD 1 "preserve" != "no-preserve")
   | "upd-modify", [m, r] => evalModify cb reval env m r qs
   | "upd-invoke", f :: args => evalInvoke cb env f args
   | "upd-fn", [e] =>
