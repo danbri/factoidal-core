@@ -35,6 +35,7 @@ in your browser.
   <li><a href="./canonical-and-credentials/">Canonical form and credentials</a> — RDFC-1.0, graph hashes, eddsa-rdfc-2022 proofs, did:key</li>
   <li><a href="./servers/">Servers</a> — SPARQL Protocol and Graph Store with Fuseki paths, read-only Jena TDB2, Linked Web Storage, Solid, XMPP (commands and recorded output)</li>
   <li><a href="./webdav/">WebDAV</a> — serve local and remote Linked Web Storage to Finder, Windows Explorer, GNOME Files and other WebDAV clients; did:key login to an LWS server, HTTPS through a proxy, Tailscale and SSH from behind NAT</li>
+  <li><a href="./webdav-lws-design/">WebDAV, LWS and custodians</a> — design note: what the 0.21.0 WebDAV and LWS theorems say and do not say, one custodian per privileged resource, careful read-write LWS mounts, and read-only projections of SPARQL, SKOS, feeds and public pods</li>
   <li><a href="./shardborough/">Shardborough (early stage)</a> — the persisted store: pack, activate, query, update through a delta log, compact</li>
 </ul>
 
