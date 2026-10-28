@@ -341,6 +341,24 @@ options:
   --no-worker        serve on this thread instead of a worker thread with a
                      raised call stack (large collections need the worker)
   --quiet            print the origin only
+  --allow-host NAME
+                     also answer requests whose Host field names NAME (a reverse
+                     proxy or a Tailscale name); give it once per name, with no
+                     port. Without it the listener answers only localhost,
+                     127.0.0.1, [::1], the --host address and the addresses of
+                     its interfaces, and gives 421 Misdirected Request to any
+                     other Host (DNS rebinding)
+  --allow-origin ORIGIN
+                     also accept a request that changes state (any method but
+                     GET, HEAD and OPTIONS) from this origin, written
+                     scheme://host[:port]; give it once per origin. Without it
+                     such a request with an Origin field of another origin gets
+                     403 (a cross-site form POST)
+                     https://github.com/danbri/factoidal/issues/1124
+
+serve has no authentication: anyone who reaches the port can query and
+update the store. The Host and Origin checks above stop a web page in the
+user's browser from doing so (formal/lean4/L4Factoidal/HTTP/LocalGuard.lean).
 
 An update, or a Graph Store PUT, POST or DELETE, is appended to the
 activated generation's delta log as one batch before the response is sent,
@@ -531,9 +549,13 @@ It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lea
   --cors-origin ORIGIN
                   answer CORS (Fetch Standard) only for this origin, written
                   scheme://host[:port] (for example https://danbri.github.io);
-                  give it once per origin. Default: echo any valid request
-                  Origin, as the Solid Protocol section 8.1 requires of Solid
-                  servers. Never Access-Control-Allow-Credentials: the token
+                  give it once per origin. Default under authorization: echo
+                  any valid request Origin, as the Solid Protocol section 8.1
+                  requires of Solid servers. Default with --insecure-no-auth:
+                  no CORS fields, because every request is served there and an
+                  echo would let any web page read and write the storage
+                  (https://github.com/danbri/factoidal/issues/1124). Never
+                  Access-Control-Allow-Credentials: the token
                   travels in Authorization. A preflight (OPTIONS with
                   Access-Control-Request-Method) is answered 204 before any
                   authorization decision.
@@ -566,7 +588,25 @@ is required):
                          "audience":IRI?, "leeway":SECONDS?,
                          "refreshInterval":SECONDS?}
   --insecure-no-auth    development only: no authorization at all; every
-                        request is served. Never the default.
+                        request is served. Never the default. The storage
+                        then answers only its own host names and refuses
+                        writes from other origins (see --allow-host and
+                        --allow-origin), and sends no CORS fields unless
+                        --cors-origin names an origin.
+  --allow-host NAME     with --insecure-no-auth:
+                        also answer requests whose Host field names NAME (a reverse
+                        proxy or a Tailscale name); give it once per name, with no
+                        port. Without it the listener answers only localhost,
+                        127.0.0.1, [::1], the --host address and the addresses of
+                        its interfaces, and gives 421 Misdirected Request to any
+                        other Host (DNS rebinding)
+  --allow-origin ORIGIN with --insecure-no-auth:
+                        also accept a request that changes state (any method but
+                        GET, HEAD and OPTIONS) from this origin, written
+                        scheme://host[:port]; give it once per origin. Without it
+                        such a request with an Origin field of another origin gets
+                        403 (a cross-site form POST)
+                        https://github.com/danbri/factoidal/issues/1124
   --owner WEBID         the storage owner: a new storage gets a root ACL
                         that gives this agent Read, Write and Control
   --root-acl FILE       a Turtle root ACL for a new storage instead
@@ -630,7 +670,22 @@ It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lea
                   "jwks":{...}?}], "leeway"?, "iatWindow"?,
                   "refreshInterval"?, "checkProfileIssuer"?}
   --insecure-no-auth  development only: no authentication; Web Access
-                  Control is not enforced
+                  Control is not enforced. The server then answers only its
+                  own host names and refuses writes from other origins.
+  --allow-host NAME   with --insecure-no-auth:
+                  also answer requests whose Host field names NAME (a reverse
+                  proxy or a Tailscale name); give it once per name, with no
+                  port. Without it the listener answers only localhost,
+                  127.0.0.1, [::1], the --host address and the addresses of
+                  its interfaces, and gives 421 Misdirected Request to any
+                  other Host (DNS rebinding)
+  --allow-origin ORIGIN  with --insecure-no-auth:
+                  also accept a request that changes state (any method but
+                  GET, HEAD and OPTIONS) from this origin, written
+                  scheme://host[:port]; give it once per origin. Without it
+                  such a request with an Origin field of another origin gets
+                  403 (a cross-site form POST)
+                  https://github.com/danbri/factoidal/issues/1124
 
 The server makes no protocol decision. Storage discovery, containment
 triples, slash semantics, the Allow and Accept-* headers, the PUT/POST/
@@ -733,6 +788,7 @@ docs/designissues/2026-10-28-http-over-xmpp.md
 
 usage: factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]
                               [--users FILE] [--cert FILE --key FILE]
+                              [--allow-host NAME]... [--allow-origin ORIGIN]...
                               [--login-limit N] [--login-window SECONDS]
                               [--dangerously-disable-ratelimits]
        factoidal webdav-serve CONFIGDIR --xmpp JID --xmpp-password-file FILE
@@ -778,6 +834,20 @@ same time). An lws mount reaches the storage through the LWS client.
   --dangerously-disable-ratelimits
                    with --users: no failed-login limit (a warning is printed
                    at start); any client can then try passwords without end
+  --allow-host NAME
+                   also answer requests whose Host field names NAME (a reverse
+                   proxy or a Tailscale name); give it once per name, with no
+                   port. Without it the listener answers only localhost,
+                   127.0.0.1, [::1], the --host address and the addresses of
+                   its interfaces, and gives 421 Misdirected Request to any
+                   other Host (DNS rebinding)
+  --allow-origin ORIGIN
+                   also accept a request that changes state (any method but
+                   GET, HEAD and OPTIONS) from this origin, written
+                   scheme://host[:port]; give it once per origin. Without it
+                   such a request with an Origin field of another origin gets
+                   403 (a cross-site form POST)
+                   https://github.com/danbri/factoidal/issues/1124
 
 Without --users the listener has no login: anyone who can reach the port can
 read and write every writable mount. Keep it on 127.0.0.1, or give --users
@@ -990,7 +1060,7 @@ function parseArguments (args, valueOptions) {
 class UsageError extends Error {}
 
 /** Options that may be given more than once; their value is the list. */
-const REPEATABLE_OPTIONS = new Set(['cors-origin', 'saml-idp', 'saml-decrypt-key'])
+const REPEATABLE_OPTIONS = new Set(['cors-origin', 'saml-idp', 'saml-decrypt-key', 'allow-host', 'allow-origin'])
 
 const VALUE_OPTIONS = {
   version: new Set([]),
@@ -1001,12 +1071,12 @@ const VALUE_OPTIONS = {
   activate: new Set([]),
   update: new Set(['update', 'file']),
   compact: new Set([]),
-  serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2']),
+  serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2', 'allow-host', 'allow-origin']),
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
     'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window',
     'redirects-max', 'storage', 'cors-origin', 'authz', 'alg', 'token-lifetime', 'rotate-after',
-    'saml-idp', 'saml-decrypt-key']),
-  'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
+    'saml-idp', 'saml-decrypt-key', 'allow-host', 'allow-origin']),
+  'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config', 'allow-host', 'allow-origin']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret']),
   'lws-client': new Set(['body', 'file', 'content-type', 'slug', 'type', 'link', 'if-match',
     'if-unmodified-since', 'retry-412', 'destination', 'query', 'topic', 'action', 'assignee',
@@ -1017,7 +1087,7 @@ const VALUE_OPTIONS = {
   'authz-keys': new Set([]),
   'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key']),
   'webdav-serve': new Set(['port', 'host', 'users', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
-    'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca']),
+    'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
   'xmpp-http-proxy': new Set(['port', 'host', 'xmpp', 'xmpp-password-file', 'target', 'xmpp-host', 'xmpp-port',
     'xmpp-resource', 'xmpp-ca', 'timeout'])
@@ -1932,6 +2002,22 @@ function corsConfig (options) {
   return {}
 }
 
+// --allow-host NAME and --allow-origin ORIGIN (repeatable), as the config
+// members `allowHosts` and `allowOrigins` of the Host and Origin guard of a
+// listener without authentication. Passed unread; the engine checks each
+// value and decides (L4Factoidal/HTTP/LocalGuard.lean,
+// https://github.com/danbri/factoidal/issues/1124).
+function localGuardConfig (options) {
+  const out = {}
+  if (Array.isArray(options['allow-host'])) out.allowHosts = options['allow-host']
+  if (Array.isArray(options['allow-origin'])) out.allowOrigins = options['allow-origin']
+  return out
+}
+
+function hasLocalGuardOptions (options) {
+  return options['allow-host'] !== undefined || options['allow-origin'] !== undefined
+}
+
 // --saml-idp FILE (repeatable): a SAML 2.0 identity provider whose signed
 // assertions the authorization server accepts, as the config member
 // `samlIdps`. FILE is JSON {"entityId": ID, "jwk": RSA public JWK}; passed
@@ -2027,7 +2113,8 @@ async function commandServe (positional, options) {
     host: serveHost(options),
     ...(tdb2 ? { tdb2: true } : {}),
     ...(typeof options['query-path'] === 'string' ? { queryPath: options['query-path'] } : {}),
-    ...(typeof options['gsp-path'] === 'string' ? { gspPath: options['gsp-path'] } : {})
+    ...(typeof options['gsp-path'] === 'string' ? { gspPath: options['gsp-path'] } : {}),
+    ...localGuardConfig(options)
   }
   const onWorker = options['no-worker'] !== true && workerRouteAvailable()
   let running
@@ -2069,6 +2156,9 @@ async function commandLwsServe (positional, options) {
   }
   if (insecure && (issuerOption !== null || authFile !== null || authzDir !== null)) {
     throw new UsageError('--insecure-no-auth cannot be combined with --authz, --issuer or --auth-config')
+  }
+  if (!insecure && hasLocalGuardOptions(options)) {
+    throw new UsageError('--allow-host and --allow-origin go with --insecure-no-auth; under authorization the token decides')
   }
   // --authz DIR: an authorization server on the same port, its issuer the
   // storage root (L4Factoidal/Authz/Mount.lean). Its options are passed
@@ -2113,7 +2203,7 @@ async function commandLwsServe (positional, options) {
       ...(options['redirects-max'] !== undefined ? { redirectsMax: natOption('redirects-max', options['redirects-max']) } : {}),
       ...(typeof options.storage === 'string' ? { storage: options.storage } : {}),
       ...corsConfig(options),
-      ...(insecure ? { insecureNoAuth: true } : { auth }),
+      ...(insecure ? { insecureNoAuth: true, ...localGuardConfig(options) } : { auth }),
       ...(authz !== undefined ? { authz } : {}),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       ...(typeof options['root-acl'] === 'string'
@@ -2141,7 +2231,17 @@ async function commandLwsServe (positional, options) {
     if (running.authz() !== null) err(`lws-serve: authorization server ${running.authz().issuer} (keys in ${authzDir})`)
     if (options['allow-http'] === true) err('lws-serve: WARNING: --allow-http: http subject identifiers are accepted')
     if (options['allow-private-fetch'] === true) err('lws-serve: WARNING: --allow-private-fetch: private addresses may be fetched')
-    if (insecure) err('lws-serve: WARNING: --insecure-no-auth: every request is served without authorization')
+    if (insecure) {
+      err('lws-serve: WARNING: --insecure-no-auth: every request is served without authorization')
+      err('lws-serve: --insecure-no-auth: only the Host names of this listener are answered, and a ' +
+        'request that changes state from another origin is refused (issue 1124; add names with ' +
+        '--allow-host, origins with --allow-origin)')
+      if (options['cors-origin'] === undefined) {
+        err('lws-serve: --insecure-no-auth: no CORS fields are sent, because with no authorization ' +
+          'an echoed Origin would let any web page read and write this storage; give --cors-origin ' +
+          'ORIGIN for each page that may use it (https://github.com/danbri/factoidal/issues/1124)')
+      }
+    }
   }
   out(running.origin)
   return untilInterrupted(running, quiet)
@@ -2236,6 +2336,9 @@ async function commandSolidServe (positional, options) {
   if (insecure && (issuerOption !== null || authFile !== null)) {
     throw new UsageError('--insecure-no-auth cannot be combined with --issuer or --auth-config')
   }
+  if (!insecure && hasLocalGuardOptions(options)) {
+    throw new UsageError('--allow-host and --allow-origin go with --insecure-no-auth; under authentication the token decides')
+  }
   let auth
   if (authFile !== null) {
     auth = readJsonFile(authFile)
@@ -2249,7 +2352,7 @@ async function commandSolidServe (positional, options) {
       port: servePort(options, 3000),
       host: serveHost(options),
       ...(typeof options.base === 'string' ? { baseIri: options.base } : {}),
-      ...(insecure ? { insecureNoAuth: true } : { auth }),
+      ...(insecure ? { insecureNoAuth: true, ...localGuardConfig(options) } : { auth }),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       realClock: true,
       dir: positional[0]
@@ -2270,7 +2373,14 @@ async function commandSolidServe (positional, options) {
   }
   if (!quiet) {
     err(`solid-serve: listening on ${running.origin} for ${positional[0]}`)
-    if (insecure) err('solid-serve: WARNING: --insecure-no-auth: every request is served without authentication')
+    if (insecure) {
+      err('solid-serve: WARNING: --insecure-no-auth: every request is served without authentication')
+      err('solid-serve: --insecure-no-auth: only the Host names of this listener are answered, and a ' +
+        'request that changes state from another origin is refused (issue 1124; add names with ' +
+        '--allow-host, origins with --allow-origin). CORS still echoes the request Origin (Solid ' +
+        'Protocol section 8.1), so a page on another origin can read this storage ' +
+        '(https://github.com/danbri/factoidal/issues/1124)')
+    }
   }
   out(running.origin)
   return untilInterrupted(running, quiet)
@@ -2294,6 +2404,9 @@ async function commandWebdavServe (positional, options) {
   // The users file is named relative to the working directory here, and
   // given to the engine as an absolute path.
   if (typeof options.users === 'string') settings.users = resolvePath(options.users)
+  // The Host and Origin guard (https://github.com/danbri/factoidal/issues/1124):
+  // the values go to the engine unread; it checks them.
+  Object.assign(settings, localGuardConfig(options))
   // The failed-login limit (https://github.com/danbri/factoidal/issues/1119):
   // the values go to the engine unread; it checks them.
   if (options['login-limit'] !== undefined) settings.loginLimit = String(options['login-limit'])

@@ -294,7 +294,7 @@ def reasonPhrase : Nat → String
   | 401 => "Unauthorized" | 403 => "Forbidden" | 404 => "Not Found"
   | 405 => "Method Not Allowed" | 406 => "Not Acceptable" | 409 => "Conflict"
   | 411 => "Length Required" | 413 => "Content Too Large" | 414 => "URI Too Long"
-  | 415 => "Unsupported Media Type" | 422 => "Unprocessable Content"
+  | 415 => "Unsupported Media Type" | 421 => "Misdirected Request" | 422 => "Unprocessable Content"
   | 431 => "Request Header Fields Too Large" | 500 => "Internal Server Error"
   | 501 => "Not Implemented" | 503 => "Service Unavailable"
   | 505 => "HTTP Version Not Supported"

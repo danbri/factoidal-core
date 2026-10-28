@@ -187,6 +187,11 @@ export async function openSolidStorage (options = {}) {
   if (options.auth !== undefined && options.auth !== null) config.auth = options.auth
   if (options.insecureNoAuth === true) config.insecureNoAuth = true
   if (typeof options.enforceWac === 'boolean') config.enforceWac = options.enforceWac
+  // The Host and Origin guard with insecureNoAuth (issue 1124): what the
+  // socket bound and the operator's names and origins, passed unread.
+  if (options.listen !== undefined && options.listen !== null) config.listen = options.listen
+  if (Array.isArray(options.allowHosts)) config.allowHosts = options.allowHosts
+  if (Array.isArray(options.allowOrigins)) config.allowOrigins = options.allowOrigins
   if (typeof options.rootAcl === 'string') config.rootAcl = options.rootAcl
   // Encryption at rest (issue 921), as the LWS host: the key text from
   // `storageKey` or FACTOIDAL_LWS_KEY, passed unread; the engine decides.
@@ -302,6 +307,10 @@ export async function createSolidServer (options = {}) {
 
   function storage () {
     if (opening === null) {
+      const bound = server.address()
+      if (settings.listen === undefined && bound !== null && typeof bound === 'object') {
+        settings = { ...settings, listen: { address: bound.address, port: bound.port, addresses: [] } }
+      }
       opening = openSolidStorage(settings).then((value) => { opened = value; return value })
     }
     return opening
@@ -345,6 +354,13 @@ export async function createSolidServer (options = {}) {
       }
       settings = { ...settings, baseIri: value }
     },
+    /** Pass what the socket bound, before the first request (issue 1124). */
+    setListen (value) {
+      if (opening !== null) {
+        throw new SolidServerHostError('the storage is already open; set listen first')
+      }
+      settings = { ...settings, listen: value }
+    },
     close () {
       return new Promise((resolve) => {
         server.close(() => {
@@ -380,6 +396,16 @@ function writeHeaders (response, pairs) {
  * @returns {Promise<{server: object, storage: Function, port: number,
  *                    origin: string, close: Function}>}
  */
+/** The addresses of this machine's interfaces. Pure I/O. */
+async function interfaceAddresses () {
+  try {
+    const os = await import('node:os')
+    return Object.values(os.networkInterfaces()).flat().filter(Boolean).map((i) => i.address)
+  } catch (_error) {
+    return []
+  }
+}
+
 export async function listen (options = {}) {
   const port = typeof options.port === 'number' ? options.port : 0
   const host = typeof options.host === 'string' ? options.host : '127.0.0.1'
@@ -391,6 +417,7 @@ export async function listen (options = {}) {
   const bound = created.server.address()
   const origin = `http://${host}:${bound.port}`
   if (typeof options.baseIri !== 'string') created.setBaseIri(`${origin}/`)
+  created.setListen({ host, address: bound.address, port: bound.port, addresses: await interfaceAddresses() })
   try {
     await created.storage()
   } catch (error) {

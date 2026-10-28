@@ -69,7 +69,7 @@ const CHECKS = [
   'LWS container listing: Vary lists Accept and Origin in one field',
   'LWS request without Origin: Vary: Origin and no other CORS field',
   'LWS OPTIONS without Access-Control-Request-Method: the resource answer as before, with the CORS fields',
-  'LWS echo: Origin null and a malformed Origin are not echoed',
+  'LWS cors list: Origin null and a malformed Origin are not echoed',
   'LWS cors list: a listed origin is echoed, another is not; a preflight from another gets no Allow-Origin',
   'LWS cors false: no CORS field; a preflight is the ordinary OPTIONS answer',
   'LWS a cors list with a path or a slash is refused at open',
@@ -81,7 +81,8 @@ const CHECKS = [
   'lws-serve --cors-origin with a path: the start is refused',
   'authz-serve host: preflight to /token is 204 with POST allowed; GET /jwks with Origin has Allow-Origin',
   'authz-serve host with cors false: no CORS field',
-  'solid-serve host, Web Access Control on: a preflight is 204 with Allow-Origin, while GET is refused'
+  'solid-serve host, Web Access Control on: a preflight is 204 with Allow-Origin, while GET is refused',
+  'LWS insecureNoAuth with no cors member: no CORS field (issue 1124); cors true is refused at open'
 ]
 
 /** One request with node:http, so that any header (Origin included) is sent as given. */
@@ -181,8 +182,10 @@ async function main () {
     return
   }
   // A module built before issue 923 sends no CORS field.
+  // With insecureNoAuth the default is no CORS (issue 1124), so the open
+  // storage of checks 0 to 6 names the page in its list.
   {
-    const s = await listen({ engine, port: 0, insecureNoAuth: true })
+    const s = await listen({ engine, port: 0, insecureNoAuth: true, cors: [PAGE] })
     try {
       const r = await raw(s.origin, 'GET', '/', { origin: PAGE })
       if (r.headers['access-control-allow-origin'] === undefined) {
@@ -192,7 +195,7 @@ async function main () {
     } finally { await s.close() }
   }
 
-  const open = await listen({ engine, port: 0, insecureNoAuth: true })
+  const open = await listen({ engine, port: 0, insecureNoAuth: true, cors: [PAGE] })
   const o = open.origin
   try {
     await raw(o, 'PUT', '/notes/a.txt', { 'content-type': 'text/plain' }, 'hello')
@@ -437,6 +440,26 @@ async function main () {
         rmSync(dir, { recursive: true, force: true })
       }
     }
+  }
+
+  // With insecureNoAuth and no cors member: no CORS field, because every
+  // request is served (https://github.com/danbri/factoidal/issues/1124).
+  {
+    const s = await listen({ engine, port: 0, insecureNoAuth: true })
+    try {
+      await check(CHECKS[19], async () => {
+        const a = await raw(s.origin, 'GET', '/', { origin: PAGE })
+        assert(!Object.keys(a.headers).some((n) => n.startsWith('access-control-')), `fields ${Object.keys(a.headers)}`)
+        const p = await raw(s.origin, 'OPTIONS', '/', preflightHeaders(PAGE))
+        assert(p.headers['access-control-allow-origin'] === undefined, 'preflight answered')
+        let refused = null
+        try {
+          const st = await openLwsStorage({ engine, insecureNoAuth: true, cors: true })
+          st.close()
+        } catch (error) { refused = error }
+        assert(refused !== null, 'opened with cors true and insecureNoAuth')
+      })
+    } finally { await s.close() }
   }
 
   // The Solid server: Web Access Control on, nobody authenticated.

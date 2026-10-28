@@ -55,6 +55,9 @@ structure OpenSolid where
   /-- The storage key (issue 921): `solidSnapshot` seals the snapshot under
   it, exactly as `lwsSnapshot` does. -/
   storageKey : Option ByteArray := none
+  /-- The `Host` and `Origin` guard of a server with no authentication
+  (`insecureNoAuth`, https://github.com/danbri/factoidal/issues/1124). -/
+  guard : Option L4Factoidal.HTTP.LocalGuard.LocalGuard := none
 
 initialize solidCounter : IO.Ref Nat ← IO.mkRef 0
 initialize solidTable : IO.Ref (Std.HashMap String OpenSolid) ← IO.mkRef ∅
@@ -66,7 +69,7 @@ def unknownSolidHandle (h : String) : String :=
 first slice serves public resources (see `L4Factoidal/Solid/README.md`). -/
 def serverConfigOfJson (text : String) :
     Except String (ServerConfig × Nat × Option String × Option MemState ×
-      Option Oidc.OidcConfig × Option ByteArray) :=
+      Option Oidc.OidcConfig × Option ByteArray × Option L4Factoidal.HTTP.LocalGuard.LocalGuard) :=
   match openConfigOfJson text with
   | .error e => .error e
   | .ok oc =>
@@ -97,12 +100,12 @@ def serverConfigOfJson (text : String) :
             | some j => (j.getBool? "enforceWac").getD wacDefault
             | none => false
           .ok ({ lws := oc.cfg, enforceWac := enforce }, oc.now, oc.rootAcl, oc.snapshot, oidc,
-               oc.storageKey)
+               oc.storageKey, oc.guard)
 
 def solidOpen (configJson : String) : IO String := do
   match serverConfigOfJson configJson with
   | .error e => pure (errJson e)
-  | .ok (cfg, now, rootAcl, snapshot, oidc, storageKey) =>
+  | .ok (cfg, now, rootAcl, snapshot, oidc, storageKey, guard) =>
       let n ← solidCounter.modifyGet fun n => (n + 1, n + 1)
       let h := s!"solid{n}"
       -- The storage root advertises an LDN inbox (Solid Protocol §6, LDN
@@ -110,7 +113,7 @@ def solidOpen (configJson : String) : IO String := do
       -- its inbox with 201, and a container with no representation answers
       -- 404 (Solid Protocol §5.3).
       let mem := snapshot.getD (memPut (initialStorage now rootAcl) (inboxEntry now))
-      solidTable.modify (·.insert h { cfg, mem, oidc, storageKey })
+      solidTable.modify (·.insert h { cfg, mem, oidc, storageKey, guard })
       pure (okWith [ ("handle", .string h)
                    , ("root", .string rootPath)
                    , ("storage", .string cfg.lws.baseIri) ])
@@ -128,6 +131,13 @@ def solidStepWith (h requestJson : String) (blob : Option ByteArray) :
           match requestOfJson j blob with
           | .error e => pure (noBytes (errJson e))
           | .ok (r, now?, agent?) => do
+              -- A server with no authentication answers only its own names,
+              -- and no write from another origin (issue 1124): first.
+              match open_.guard.bind (fun g => L4Factoidal.HTTP.LocalGuard.admit g r) with
+              | some resp =>
+                  return (okWith [ ("response", jsonOfResponse resp blob.isSome), ("changed", .bool false) ],
+                          if blob.isSome then resp.content else ByteArray.empty)
+              | none =>
               let mem := match now? with
                 | some t => { open_.mem with clock := t }
                 | none   => open_.mem

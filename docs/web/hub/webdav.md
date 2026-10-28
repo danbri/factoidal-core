@@ -270,6 +270,15 @@ Rules for any proxy:
   `https://` at the proxy and `http://` behind it is correct.
 * Do not buffer request bodies to a size limit lower than your largest file.
 * Keep `webdav-serve` on 127.0.0.1 so that the proxy is the only way in.
+* Give the public name with `--allow-host` (here
+  `--allow-host dav.example.org`). The server answers only its own names
+  (`localhost`, `127.0.0.1`, `[::1]`, the `--host` address and the
+  addresses of the machine) and gives 421 Misdirected Request to a request
+  whose `Host` is another name. This stops a web page from reaching the
+  server through DNS rebinding. A request that changes a file (PUT, DELETE,
+  MKCOL, MOVE, COPY, PROPPATCH, LOCK) from a web page of another origin gets
+  403; `--allow-origin ORIGIN` admits one
+  (https://github.com/danbri/factoidal/issues/1124).
 
 For `lws-serve` behind a proxy, give the public URL with `--base`
 (for example `--base https://dav.example.org/lws/`), so that the storage
@@ -286,10 +295,14 @@ your tailnet; no port is opened on the router. On the machine that runs the
 server (Tailscale 1.52 or later):
 
 ```
-factoidal webdav-serve dav                 # stays on 127.0.0.1:8090
+factoidal webdav-serve dav --allow-host MACHINE.TAILNET.ts.net   # stays on 127.0.0.1:8090
 tailscale serve --bg 8090                  # https://MACHINE.TAILNET.ts.net/ -> 127.0.0.1:8090
 tailscale serve status
 ```
+
+`tailscale serve` passes the tailnet name in `Host`, so the server needs
+`--allow-host` with that name; without it every request gets 421
+(https://github.com/danbri/factoidal/issues/1124).
 
 `tailscale serve` terminates TLS with a certificate for
 `MACHINE.TAILNET.ts.net` (turn on MagicDNS and HTTPS certificates in the

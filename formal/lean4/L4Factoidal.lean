@@ -967,6 +967,7 @@ import L4Factoidal.LWS.Journal
 import L4Factoidal.LWS.FileLayout
 import L4Factoidal.LWS.FileLayoutTests
 import L4Factoidal.HTTP.Cors
+import L4Factoidal.HTTP.LocalGuard
 import L4Factoidal.LWS.Cors
 import L4Factoidal.LWS.Client.Wire
 import L4Factoidal.LWS.Client.Report

@@ -23,6 +23,22 @@ made by Lean code; the Node host only moves bytes.
 
 ActivityStreams: the tree has no ActivityStreams or ActivityPub server.
 
+## Requests from web pages
+
+`factoidal serve`, `webdav-serve`, and `lws-serve` and `solid-serve` with
+`--insecure-no-auth` answer only their own host names: `localhost`,
+`127.0.0.1`, `[::1]`, the `--host` address and the addresses of the
+machine. Another `Host` gets 421 Misdirected Request, so a web page cannot
+reach them through DNS rebinding. A request with a method other than GET,
+HEAD and OPTIONS whose `Origin` is another origin gets 403, so a form on
+another site cannot POST `update=DROP ALL`. `lws-serve --insecure-no-auth`
+sends no CORS fields unless `--cors-origin ORIGIN` names a page. Add a name
+with `--allow-host NAME` (a reverse proxy, Tailscale) and an origin with
+`--allow-origin ORIGIN`. curl and other clients that send no `Origin` work as
+before. Record: https://github.com/danbri/factoidal/issues/1124. Open:
+`solid-serve --insecure-no-auth` still echoes any `Origin` (Solid Protocol
+§8.1), so a page on another origin can read it.
+
 ## SPARQL 1.1 Protocol and Graph Store, Fuseki paths
 
 ```

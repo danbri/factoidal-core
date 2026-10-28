@@ -179,7 +179,12 @@ export async function openWebdav (options = {}) {
     window: typeof options.loginWindow === 'string' ? options.loginWindow : null,
     disableRateLimits: options.disableRateLimits === true
   }
-  let envelope = callEngine(engine, 'webdavOpen', [JSON.stringify({ listing, entropy: randomBase64(32), now: nowSeconds(), login })])
+  const config = { listing, entropy: randomBase64(32), now: nowSeconds(), login }
+  // The Host and Origin guard of the HTTP listener (issue 1124): the bound
+  // address and the operator's names and origins, passed unread
+  // (L4Factoidal/HTTP/LocalGuard.lean decides).
+  if (options.localGuard !== undefined && options.localGuard !== null) config.localGuard = options.localGuard
+  let envelope = callEngine(engine, 'webdavOpen', [JSON.stringify(config)])
   if (envelope.ok === false) throw new WebdavHostError(envelope.error, { envelope })
   const handle = envelope.handle
   let loads = 0
@@ -283,6 +288,16 @@ export async function openWebdav (options = {}) {
   }
 }
 
+/** The addresses of this machine's interfaces. Pure I/O. */
+async function interfaceAddresses () {
+  try {
+    const os = await import('node:os')
+    return Object.values(os.networkInterfaces()).flat().filter(Boolean).map((i) => i.address)
+  } catch (_error) {
+    return []
+  }
+}
+
 function readBody (request) {
   return new Promise((resolve, reject) => {
     const chunks = []
@@ -321,7 +336,13 @@ export async function listen (options = {}) {
   const tls = options.cert !== undefined && options.key !== undefined
   const http = tls ? await import('node:https') : await import('node:http')
   const host = typeof options.host === 'string' ? options.host : '127.0.0.1'
-  const dav = await openWebdav({ ...options, tls, host })
+  const localGuard = {
+    host,
+    addresses: await interfaceAddresses(),
+    ...(Array.isArray(options.allowHosts) ? { allowHosts: options.allowHosts } : {}),
+    ...(Array.isArray(options.allowOrigins) ? { allowOrigins: options.allowOrigins } : {})
+  }
+  const dav = await openWebdav({ ...options, tls, host, localGuard })
   const onError = typeof options.onError === 'function'
     ? options.onError
     : (error) => { console.error(`webdav-serve: ${error.message}`) }

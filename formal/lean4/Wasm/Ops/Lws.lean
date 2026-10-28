@@ -65,6 +65,7 @@ import L4Factoidal.LWS.MerkleHttp
 import L4Factoidal.LWS.MoveRedirect
 import L4Factoidal.LWS.FileLayout
 import L4Factoidal.LWS.Cors
+import L4Factoidal.HTTP.LocalGuard
 import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.RsaNative
@@ -213,6 +214,10 @@ structure OpenConfig where
   passes them to `lwsLoad`, and calls `lwsPersist` after a change. -/
   files : Bool := false
   redirectsMax : Nat := 256
+  /-- The `Host` and `Origin` guard of a storage with no authorization
+  (`insecureNoAuth`, https://github.com/danbri/factoidal/issues/1124);
+  `none` under authorization. -/
+  guard : Option L4Factoidal.HTTP.LocalGuard.LocalGuard := none
 deriving Inhabited
 
 /-- The other state of a storage, besides its resources: what the snapshot
@@ -272,6 +277,28 @@ def boolOfJson (key : String) (dflt : Bool) : Option Json → Except String Bool
   | none => .ok dflt
   | some (.bool b) => .ok b
   | some _ => .error s!"config: \"{key}\" is true or false"
+
+/-- The `Host` and `Origin` guard of a storage (`OpenConfig.guard`). -/
+def guardOfConfig (insecure : Bool) (j : Json) (baseIri : String) (listenAddress : Option String)
+    (localAddresses : List String) (cors : L4Factoidal.HTTP.Cors.Policy) :
+    Except String (Option L4Factoidal.HTTP.LocalGuard.LocalGuard) :=
+  let given := (j.field? "allowHosts").isSome || (j.field? "allowOrigins").isSome
+  if !insecure then
+    if given then .error ("config: \"allowHosts\" and \"allowOrigins\" are options of a storage " ++
+      "with no authorization (\"insecureNoAuth\"); under authorization the token decides")
+    else .ok none
+  else
+    let bindHost := (j.field? "listen").bind (fun lj => lj.getString? "host")
+    let addrs := listenAddress.toList ++ localAddresses
+    let gj : Json := .object ((bindHost.map (fun h => [("host", Json.string h)])).getD [] ++
+      [("addresses", .array (addrs.map Json.string))] ++
+      ((j.field? "allowHosts").map (fun v => [("allowHosts", v)])).getD [] ++
+      ((j.field? "allowOrigins").map (fun v => [("allowOrigins", v)])).getD [])
+    let corsOrigins := match cors with
+      | .allow os => os
+      | _ => []
+    (L4Factoidal.HTTP.LocalGuard.ofJson gj (L4Factoidal.HTTP.LocalGuard.iriHost? baseIri).toList
+      corsOrigins).map some
 
 def openConfigOfJson (text : String) : Except String OpenConfig :=
   if text.trim == "" then .ok {}
@@ -346,7 +373,9 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
         let deliveryWindow := natOr "deliveryWindow" 60
         -- CORS (issue 923): absent or true echoes the request Origin, false
         -- turns it off, a list names the origins (`Cors.policyOfJson`).
-        let cors ← Cors.policyOfJson (j.field? "cors")
+        -- With `insecureNoAuth`, absent is off and echo is refused
+        -- (`Cors.policyFor`, `Cors.insecure_no_echo`, issue 1124).
+        let cors ← Cors.policyFor insecure (j.field? "cors")
         -- What the host bound (issue 915): `listen: {address, port, addresses}`.
         let (listenAddress, listenPort, localAddresses) := match j.field? "listen" with
           | some lj =>
@@ -358,6 +387,12 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
                  | .string t => some t
                  | _ => none))
           | none => (none, none, [])
+        -- The `Host` and `Origin` guard (issue 1124): on every storage with
+        -- no authorization. Its names: the loopback names, what the host
+        -- bound (`listen.host`, `listen.address`, `listen.addresses`), the
+        -- host of `baseIri`, and `allowHosts`; its origins: `allowOrigins`
+        -- and the CORS list. Under authorization the two members are refused.
+        let guard ← guardOfConfig insecure j baseIri listenAddress localAddresses cors
         -- The storage controller's inbox (issue 920).
         let controllerInbox ← match j.field? "controllerInbox" with
           | none | some .null => .ok none
@@ -384,7 +419,7 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
               now, rootAcl, snapshot, authz,
               notifications, moves, typeIndex, accessGrants, entropy, notif, signingKey,
               searchResults, searchResultsTtl, searchResultsMax, results, storageKey, merkle,
-              files, redirectsMax }
+              files, redirectsMax, guard }
 
 /-- The JWS verifiers over the vendored HACL* primitives (P-256 ECDSA,
 RSA PKCS#1 v1.5, Ed25519): `skills/crypto-policy`. -/
@@ -423,6 +458,8 @@ structure OpenStorage where
   /-- The body files the last `lwsStep` answer named (`read`), with the
   paths and stubs they belong to (`Bodies.bodiesNeeded`). -/
   reads : List (String × BodyStub) := []
+  /-- The `Host` and `Origin` guard (`OpenConfig.guard`). -/
+  guard : Option L4Factoidal.HTTP.LocalGuard.LocalGuard := none
 
 /-- The signer of a storage: Ed25519 (RFC 8032) through the vendored HACL*
 code, under the verification method its storage description publishes. -/
@@ -467,7 +504,8 @@ def buildStorage (oc : OpenConfig) (ms : MemState) : OpenStorage :=
   let run := ((seeded "lws-activity-run:").map (fun d =>
     L4Factoidal.Crypto.bytesToHex (d.extract 0 8))).getD ""
   let notif := { (oc.notif.getD {}) with run }
-  { cfg := { oc.cfg with notifications := oc.notifications, notificationKeyX := keyX,
+  { guard := oc.guard,
+    cfg := { oc.cfg with notifications := oc.notifications, notificationKeyX := keyX,
                           moves := oc.moves, typeIndex := oc.typeIndex,
                           accessGrants := oc.accessGrants,
                           searchResults := oc.searchResults,
@@ -671,11 +709,11 @@ def lwsPersist (h optsJson : String) : IO (String × ByteArray) := do
   -- branch is alive during the call).
   match ← lwsTable.modifyGet (fun t => (t[h]?, t.erase h)) with
   | none => pure (noBytes (unknownLwsHandle h))
-  | some ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, files, hydrated, reads⟩ =>
+  | some ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, files, hydrated, reads, guard⟩ =>
       match files with
       | none =>
           lwsTable.modify (·.insert h
-            ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, none, hydrated, reads⟩)
+            ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, none, hydrated, reads, guard⟩)
           pure (noBytes (errJson "lwsPersist: this storage is not kept in files (\"storage\": \"files\")"))
       | some fs =>
           let side := sideMembersOf cfg.baseIri notif signingKey authz results moved
@@ -687,7 +725,7 @@ def lwsPersist (h optsJson : String) : IO (String × ByteArray) := do
               pure (noBytes (errJson s!"{e}; the storage is closed"))
           | .ok (fs', pl, mem') =>
               lwsTable.modify (·.insert h
-                ⟨cfg, mem', authz, notif, signingKey, results, storageKey, moved, some fs', hydrated, reads⟩)
+                ⟨cfg, mem', authz, notif, signingKey, results, storageKey, moved, some fs', hydrated, reads, guard⟩)
               pure (planAnswer [] pl)
 
 /-- A delivery request as the host receives it: POST `body` to `url` with
@@ -730,6 +768,14 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
           match requestOfJson j blob with
           | .error e => pure (noBytes (errJson e))
           | .ok (r, now?, agent?) => do
+              -- A storage with no authorization answers only its own names,
+              -- and no write from another origin (issue 1124,
+              -- `L4Factoidal.HTTP.LocalGuard`): before every other decision.
+              match open_.guard.bind (fun g => L4Factoidal.HTTP.LocalGuard.admit g r) with
+              | some resp =>
+                  return (okWith [ ("response", jsonOfResponse resp blobOut), ("changed", .bool false) ],
+                          if blobOut then resp.content else ByteArray.empty)
+              | none =>
               -- A CORS-preflight request (issue 923) is answered before any
               -- other decision: no body read, no redirect, no
               -- authentication, no access control (`L4Factoidal.LWS.Cors`).

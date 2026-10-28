@@ -315,8 +315,14 @@ export async function openLwsStorage (options = {}) {
   if (typeof options.controllerInbox === 'string') config.controllerInbox = options.controllerInbox
   // CORS (https://github.com/danbri/factoidal/issues/923): `cors` is false or
   // a list of origins, passed unread; absent, the engine echoes the request
-  // Origin. L4Factoidal/LWS/Cors.lean decides every CORS field.
+  // Origin under authorization and sends no CORS field with insecureNoAuth
+  // (issue 1124). L4Factoidal/LWS/Cors.lean decides every CORS field.
   if (options.cors !== undefined) config.cors = options.cors
+  // The Host and Origin guard of a storage with insecureNoAuth
+  // (https://github.com/danbri/factoidal/issues/1124): extra host names and
+  // origins, passed unread; L4Factoidal/HTTP/LocalGuard.lean decides.
+  if (Array.isArray(options.allowHosts)) config.allowHosts = options.allowHosts
+  if (Array.isArray(options.allowOrigins)) config.allowOrigins = options.allowOrigins
   // What this host bound: data for the engine's inbox check (issue 915).
   if (options.listen !== undefined && options.listen !== null) config.listen = options.listen
   config.entropy = entropyBase64()
@@ -593,6 +599,12 @@ export async function createLwsServer (options = {}) {
    *  (L4Factoidal/Authz/Mount.lean). */
   function storage () {
     if (opening === null) {
+      // What the socket bound, when the caller listened itself and did not
+      // say (data for the engine's Host check, issue 1124).
+      const bound = server.address()
+      if (settings.listen === undefined && bound !== null && typeof bound === 'object') {
+        settings = { ...settings, listen: { address: bound.address, port: bound.port, addresses: [] } }
+      }
       opening = (async () => {
         let storageSettings = settings
         if (settings.authz !== undefined && settings.authz !== null) {
@@ -720,7 +732,7 @@ export async function listen (options = {}) {
   const bound = created.server.address()
   const origin = `http://${host}:${bound.port}`
   if (typeof options.baseIri !== 'string') created.setBaseIri(`${origin}/`)
-  created.setListen({ address: bound.address, port: bound.port, addresses: await interfaceAddresses() })
+  created.setListen({ host, address: bound.address, port: bound.port, addresses: await interfaceAddresses() })
   try {
     await created.storage()
   } catch (error) {
