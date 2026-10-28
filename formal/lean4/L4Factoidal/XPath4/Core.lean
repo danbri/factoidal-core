@@ -19,6 +19,53 @@ open L4Factoidal.XSD
 
 /-! ## The dynamic context -/
 
+def untypedQN : QN := { uri := nsXS, loc := "untyped" }
+def untypedAtomicQN : QN := { uri := nsXS, loc := "untypedAtomic" }
+def anyTypeQN : QN := { uri := nsXS, loc := "anyType" }
+
+/-- Type derivation between built-in type names (XDM 4.0 §2.7.4): every
+type derives from `xs:anyType`; `xs:untyped` and the simple types from it;
+`xs:untypedAtomic` and the atomic built-ins from `xs:anyAtomicType`. -/
+def builtinTypeDerives (t u : QN) : Bool :=
+  t == u || u == anyTypeQN ||
+  (t.uri == nsXS && u.uri == nsXS &&
+    (if t.loc == "untypedAtomic" then u.loc == "anyAtomicType" || u.loc == "anySimpleType"
+     else match builtinOfName? t.loc, builtinOfName? u.loc with
+       | some a, some b => derivedFrom a b || b == .anySimpleType
+       | _, _ => false))
+
+/-- Hook for schema-aware processing (`L4Factoidal.XSD11` supplies one
+from a schema): type derivation by type name, the global element and
+attribute declarations, and substitution groups. The default knows the
+built-in types only and has no declarations. -/
+structure SchemaHook where
+  /-- `derives t u`: type `t` is `u` or derived from it. -/
+  derives : QN → QN → Bool := builtinTypeDerives
+  /-- The type and `nillable` of the global element declaration of a name. -/
+  elemDecl : QN → Option (QN × Bool) := fun _ => none
+  /-- The type of the global attribute declaration of a name. -/
+  attrDecl : QN → Option QN := fun _ => none
+  /-- `substitutes n h`: an element named `n` may stand for head `h`. -/
+  substitutes : QN → QN → Bool := fun _ _ => false
+  /-- The target namespaces the schema has components for (XQuery
+      `import schema`, XQST0059). -/
+  targetNamespaces : List String := []
+  /-- Validate a document element against the in-scope schema (`xsd-validation`
+      of `fn:parse-xml` and `fn:doc`): the mode (`strict`, `lax` or
+      `type Q{uri}local`), the element, the document URI; the typed document
+      or the error. `none`: this processor has no schema to validate with. -/
+  validate : Option (String → L4Factoidal.XML.Node → String → Except Err Doc) := none
+  /-- The same for a node of a document already built (XQuery `validate`):
+      the mode, the document, the node's index, the document URI. -/
+  validateIn : Option (String → Doc → Nat → String → Except Err Doc) := none
+  /-- `fn:xsd-validator`: the mode, schema documents given in the options
+      (document or element nodes; none means the in-scope schema), the
+      document, the node's index, the URI; the typed document when valid,
+      and the error messages. -/
+  validateWith : Option (String → List (Doc × Nat) → Doc → Nat → String →
+      Except Err (Option Doc × List String)) := none
+deriving Inhabited
+
 /-- The part of the dynamic context that a host function sees
     (`Env.host`): the variable bindings and the focus at the call. -/
 structure HostCall where
@@ -80,6 +127,9 @@ structure Env where
   /-- External encoding information of resources (as an HTTP charset
       would give, F&O 4.0 §17.1.5): the reference and the encoding name. -/
   resourceEncodings : List (String × String) := []
+  /-- Schema hook: the in-scope schema definitions (`SchemaHook`). -/
+  schema : SchemaHook := {}
+
   /-- Host hook (XSLT 4.0, `L4Factoidal.XSLT4`): the functions of the
       host language by name and arity (`xsl:function`, `fn:current`,
       `fn:key`, ...). Consulted before the built-in library; empty for
@@ -158,6 +208,13 @@ def Env.typedValue (e : Env) (n : NodeRef) : Atomic :=
   | .comment | .pi | .namespace => Atomic.ofStr (e.nodeString n)
   | _ => Atomic.untypedOf (e.nodeString n)
 
+/-- The typed value of a node as a sequence: the one a schema validation
+    recorded (`NRec.tval`, `L4Factoidal.XSD11`), else `Env.typedValue`. -/
+def Env.typedValues (e : Env) (n : NodeRef) : List Atomic :=
+  match (e.nrec n).tval with
+  | some vs => vs
+  | none => [e.typedValue n]
+
 /-- Atomization (§2.5.3). -/
 def Env.atomizeFuel (e : Env) : Nat → Seq → M (List Atomic)
   | 0, _ => err "FOER0000" "atomization too deep"
@@ -166,7 +223,9 @@ def Env.atomizeFuel (e : Env) : Nat → Seq → M (List Atomic)
     for i in s do
       match i with
       | .atom a => out := out.push a
-      | .node n => out := out.push (e.typedValue n)
+      | .node n =>
+        if (e.nrec n).noTypedValue then err "FOTY0012" "the node has element-only content, so no typed value"
+        out := out ++ (e.typedValues n).toArray
       | .arr ms =>
           for m in ms do
             for a in ← e.atomizeFuel f m do out := out.push a
@@ -219,6 +278,26 @@ def Env.kindMatches (e : Env) (n : NodeRef) : IType → Bool
   | .item | .anyNode => true
   | .elem t => (e.nrec n).kind == .element && (t.map (nameTestMatches · (e.nrec n).name)).getD true
   | .attr t => (e.nrec n).kind == .attribute && (t.map (nameTestMatches · (e.nrec n).name)).getD true
+  | .elemT t ty nil =>
+      let r := e.nrec n
+      r.kind == .element && (t.map (nameTestMatches · r.name)).getD true &&
+      e.schema.derives (r.tann.getD untypedQN) ty && (!r.nilled || nil)
+  | .attrT t ty =>
+      let r := e.nrec n
+      r.kind == .attribute && (t.map (nameTestMatches · r.name)).getD true &&
+      e.schema.derives (r.tann.getD untypedAtomicQN) ty
+  | .schemaElem q =>
+      let r := e.nrec n
+      r.kind == .element && (r.name == q || e.schema.substitutes r.name q) &&
+      (match e.schema.elemDecl q with
+       | some (ty, nil) => e.schema.derives (r.tann.getD untypedQN) ty && (!r.nilled || nil)
+       | none => false)
+  | .schemaAttr q =>
+      let r := e.nrec n
+      r.kind == .attribute && r.name == q &&
+      (match e.schema.attrDecl q with
+       | some ty => e.schema.derives (r.tann.getD untypedAtomicQN) ty
+       | none => false)
   | .text => (e.nrec n).kind == .text
   | .comment => (e.nrec n).kind == .comment
   | .nsNode => (e.nrec n).kind == .namespace
@@ -427,6 +506,10 @@ def subtypeF : Nat → IType → IType → Bool
     | .jnodeT _ (some t), .jnodeT .any (some u) => subtypeF f t u
     | .elem none, .elem none | .attr none, .attr none | .text, .text | .comment, .comment
     | .nsNode, .nsNode | .doc none, .doc none | .pi none, .pi none => true
+    | .elemT .., .anyNode | .attrT .., .anyNode | .schemaElem _, .anyNode | .schemaAttr _, .anyNode
+    | .elemT .., .xnode | .attrT .., .xnode | .schemaElem _, .xnode | .schemaAttr _, .xnode
+    | .elemT .., .elem none | .attrT .., .attr none | .schemaElem _, .elem none
+    | .schemaAttr _, .attr none => true
     | .elem (some _), .elem none | .attr (some _), .attr none | .pi (some _), .pi none
     | .doc (some _), .doc none => true
     | .fnT _ _, .anyFn | .anyMap, .anyFn | .mapT _ _, .anyFn | .anyArr, .anyFn | .arrT _, .anyFn

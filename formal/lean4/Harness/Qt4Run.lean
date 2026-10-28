@@ -35,6 +35,7 @@ The test data is untrusted input: it is parsed, never executed as
 anything but XPath expressions in this evaluator.
 -/
 import L4Factoidal.XPath4.Eval
+import L4Factoidal.XSD11.Load
 import L4Factoidal.XPath4.Theorems
 import L4Factoidal.XQuery4.Module
 import L4Factoidal.XQuery4.LoadModule
@@ -152,6 +153,9 @@ def featureSupported (f : String) : Bool :=
   || f == "fn-invisible-xml"
   -- a collection may hold any items (`Env.collections`)
   || f == "non_empty_sequence_collection"
+  -- XML Schema 1.1 (`L4Factoidal.XSD11`): in-scope schema definitions from
+  -- the environment's `schema`, validated sources, typed data
+  || f == "schemaImport" || f == "schemaValidation" || f == "typedData"
 
 def depOk (xq : Bool) (d : Node) : Bool :=
   let ty := attrD d "type"
@@ -205,6 +209,10 @@ structure EnvSpec where
   /-- `collection` elements: the URI (`""` for the default collection),
       the sources (file resolved, uri) and the `query` texts. -/
   collections : List (String × List (String × String) × List String) := []
+  /-- XSD11: `schema` elements (target namespace, file) and the sources to
+      validate (file, `strict` or `lax`). -/
+  schemas : List (String × String) := []
+  validated : List (String × String) := []
 deriving Inhabited
 
 def parseEnv (dir : String) (e : Node) (xq : Bool := false) : EnvSpec := Id.run do
@@ -213,14 +221,14 @@ def parseEnv (dir : String) (e : Node) (xq : Bool := false) : EnvSpec := Id.run 
     match localTag c with
     | "source" =>
         if attrD c "validation" == "strict" || attrD c "validation" == "lax" then
-          s := { s with unsupported := some "schema-validated source" }
+          s := { s with validated := s.validated ++ [(dir ++ "/" ++ attrD c "file", attrD c "validation")] }
         s := { s with sources := s.sources ++ [(attrD c "role", dir ++ "/" ++ attrD c "file", attrD c "uri")] }
     | "param" =>
         if xq || attrD c "declared" != "true" then
           s := { s with params := s.params ++ [(attrD c "name", attrD c "select" "()")] }
     | "namespace" => s := { s with ns := s.ns ++ [(attrD c "prefix", attrD c "uri")] }
     | "context-item" => s := { s with ctxSelect := attr c "select" }
-    | "schema" => s := { s with unsupported := some "schema" }
+    | "schema" => s := { s with schemas := s.schemas ++ [(attrD c "uri", dir ++ "/" ++ attrD c "file")] }
     | "collection" =>
         let srcs := (kidsNamed c "source").map (fun x => (dir ++ "/" ++ attrD x "file", attrD x "uri"))
         let qs := (kidsNamed c "query").map (fun x => x.textContent)
@@ -696,12 +704,33 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool
                          resourceEncodings := spec.resourceEncodings }
   if xq then env := env.bind xqMode []
   if let some c := spec.defaultCollation then env := { env with defaultCollation := c }
+  -- XSD11: the in-scope schema definitions and the validated sources
+  let sch ← if spec.schemas.isEmpty then pure none
+    else pure (some (← L4Factoidal.XSD11.loadSchemaCached (spec.schemas.map (·.2))))
+  match sch with
+  | some s =>
+    if !s.errors.isEmpty then return .error ("schema not valid: " ++ toString (s.errors.take 2))
+    env := { env with schema := L4Factoidal.XSD11.schemaHookOf s }
+  | none =>
+    -- no schema in the environment: the built-in types only (lax validation,
+    -- xsi:type with built-in types, fn:xsd-validator with a schema option)
+    env := { env with schema := L4Factoidal.XSD11.schemaHookOf L4Factoidal.XSD11.Schema.builtins }
   for (role, file, uri0) in spec.sources do
     -- a source without a uri gets its file URI as its document URI
     -- (implementation-defined, F&O 4.0 §2.5)
     let uri ← if uri0 != "" then pure uri0 else do
       try pure ("file://" ++ (← IO.FS.realPath file).toString) catch _ => pure ""
-    let doc ← match (← cache.get).lookup file with
+    let doc ← match spec.validated.lookup file, sch with
+      | some mode, some s =>
+        match ← L4Factoidal.XSD11.readDocFile file with
+        | none => pure none
+        | some xd =>
+          let (d, a) := L4Factoidal.XSD11.validatedDoc s xd uri
+          if mode == "strict" && !a.valid then return .error ("source not valid: " ++ toString (a.errors.take 2))
+          pure (some d)
+      | some _, none => return .error "validated source without a schema"
+      | none, _ =>
+      match (← cache.get).lookup file with
       | some d => pure (some d)
       | none =>
         match ← readFileSafe file with

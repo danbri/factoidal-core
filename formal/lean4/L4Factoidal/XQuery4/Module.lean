@@ -13,7 +13,7 @@ variable` (with `external` and a default), `declare context item`/
 `value`, `declare function` (with annotations, default parameter values
 of 4.0, and `external` refused with XPST0017 at the call), `import
 module` (from the module texts the caller gives in `Env.resources`
-under `#module <uri>`). `import schema` raises `XQST0009` (no schema
+under `#module <uri>`). `import schema` binds its prefix; the schema itself is the host's (no schema
 support); `declare type` and `declare record` raise `XPST0003`.
 
 A main module is evaluated as follows: the functions are bound
@@ -57,6 +57,10 @@ structure Module where
   emptyGreatest : Bool := false
   /-- Named item types (`declare type`, `declare record`). -/
   types : List (QN × IType) := []
+  /-- `import schema`: the target namespaces (XQuery 4.0 §5.11). -/
+  schemaImports : List String := []
+  /-- `declare construction strip` (§5.6); the default is `preserve`. -/
+  constructionStrip : Bool := false
   /-- Variables and functions declared `%private` (§5.15): not seen
       by an importing module. -/
   privates : List QN := []
@@ -204,7 +208,34 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
     let some kw ← atDecl | break
     if kw == "import" then
       expectKw "import"
-      if ← eatKw "schema" then qerr "XQST0009" "schema import is not supported"
+      if ← eatKw "schema" then
+        -- XQuery 4.0 §5.11: the in-scope schema definitions come from the
+        -- host (`XPath4.SchemaHook`); the import binds the prefix
+        let mut pfx : Option String := none
+        if ← eatKw "namespace" then
+          pfx := some (← pNCName)
+          expectS "="
+        else if ← eatKw "fixed" then
+          expectKw "default"; expectKw "element"; expectKw "namespace"; pfx := some ""
+        else if ← eatKw "default" then
+          expectKw "element"; expectKw "namespace"; pfx := some ""
+        let u ← pUriLit
+        if ← eatKw "at" then
+          for _ in [0:1000] do
+            let _ ← pUriLit
+            if !(← eatS ",") then break
+        expectS ";"
+        if u == "" && (pfx.map (· != "")).getD false then qerr "XQST0057" "a schema import with a prefix and an empty namespace"
+        if m.schemaImports.contains u then qerr "XQST0058" "the same schema namespace imported twice"
+        m := { m with schemaImports := m.schemaImports ++ [u] }
+        match pfx with
+        | some "xml" | some "xmlns" => qerr "XQST0070" "import prefix xml or xmlns"
+        | some p =>
+          if p != "" && seenNs.contains p then qerr "XQST0033" ("prefix " ++ p ++ " declared twice")
+          if p != "" then seenNs := p :: seenNs
+          ns := (p, u) :: ns.filter (·.1 != p)
+        | none => pure ()
+        continue
       expectKw "module"
       let mut pfx := ""
       if ← eatKw "namespace" then
@@ -301,10 +332,11 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       seen := "base" :: seen
       m := { m with baseUri := some u }
     | "construction" =>
-      if !(← eatKw "strip") then expectKw "preserve"
+      let strip ← if ← eatKw "strip" then pure true else expectKw "preserve"; pure false
       expectS ";"
       if seen.contains "constr" then qerr "XQST0067" "two construction declarations"
       seen := "constr" :: seen
+      m := { m with constructionStrip := strip }
     | "ordering" =>
       if !(← eatKw "ordered") then expectKw "unordered"
       expectS ";"
@@ -675,10 +707,16 @@ def moduleEnv (env : Env) (m : Module) : Env :=
   let env := { env with ns := m.ns }
   let env := match m.defaultCollation with | some c => { env with defaultCollation := c } | none => env
   let env := match m.baseUri with | some b => { env with baseUri := b } | none => env
-  { env with decimalFormats := m.decimalFormats ++ env.decimalFormats }
+  let env := { env with decimalFormats := m.decimalFormats ++ env.decimalFormats }
+  if m.constructionStrip then env.bind constructionStripKey [] else env
 
 /-- Evaluate a main module. -/
 def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
+  -- XQuery 4.0 §5.11: an imported schema namespace must be one the in-scope
+  -- schema definitions (`XPath4.SchemaHook`) have components for
+  for u in m.schemaImports do
+    if !env.schema.targetNamespaces.contains u then
+      err "XQST0059" ("no schema for the imported namespace " ++ u)
   let env := moduleEnv env m
   let (libs, _) ← loadImports env 50 ((m.libNs.map (·.2)).toList) m
   checkModules env (libs ++ [m])
