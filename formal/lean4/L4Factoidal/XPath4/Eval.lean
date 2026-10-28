@@ -369,6 +369,15 @@ def isNumericLit : Expr → Option Int
   | .lit ⟨_, .int i⟩ => some i
   | _ => none
 
+/-- The functions that read external resources (documents, text and
+    binary resources, collections, files): under `Env.untrusted` they
+    raise FODC0016 (F&O 4.0 §17.4.1, the `trusted` option). -/
+def isExternalFn (q : QN) : Bool :=
+  (q.uri == nsFN && ["doc", "doc-available", "unparsed-text", "unparsed-text-lines",
+     "unparsed-text-available", "unparsed-binary", "json-doc", "collection", "uri-collection",
+     "load-xquery-module", "transform"].contains q.loc)
+  || q.uri == "http://expath.org/ns/file"
+
 /-- A step applied to each item of a `fn:generate` sequence before its
     consumer: a lookup `?k` or a simple map `! e`. -/
 inductive GenStage where
@@ -863,6 +872,8 @@ def eval : Nat → Env → Expr → M Seq
         let s ← eval n env p
         for x in ← env.atomize s do out := out ++ x.str
       pure (sStr out)
+  -- the body of a function of an untrusted module (`XQuery4.LoadModule`)
+  | .ext "untrusted" [b] _ _ _ => eval n { env with untrusted := true } b
   -- XQuery 4.0 hook: the constructs of `XQuery4.Runtime`
   | .ext tag es ts qs ss =>
       XQuery4.evalExt { eval := fun e x => eval n e x, apply := fun e f as => apply n e f as }
@@ -1118,6 +1129,8 @@ def apply : Nat → Env → Item → List Seq → M Seq
 def callFn : Nat → Env → QN → List Seq → M Seq
   | 0, _, _, _ => fuelErr
   | n + 1, env, q, args => do
+    if env.untrusted && isExternalFn q then
+      err "FODC0016" ("untrusted code may not read external resources (" ++ q.show ++ ")")
     let args ← if q.uri == nsFN && q.loc == "concat" then
         args.mapM (fun a => do pure (seqOfAtoms (← env.atomize a)))
       else match findSig q args.length with

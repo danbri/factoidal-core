@@ -65,6 +65,10 @@ structure Env where
   /-- EXPath hook: the in-memory file system that the `file:` functions
       read (`L4Factoidal.EXPath.File`); `none` when there is none. -/
   fileSys : Option L4Factoidal.EXPath.File.FS := none
+  /-- Code of a module loaded by `fn:load-xquery-module` with `trusted`
+      false (F&O 4.0 §17.4.1): the functions that read external resources
+      raise FODC0016 (`Env.externalFns`). -/
+  untrusted : Bool := false
   /-- The available collections (F&O 4.0 §1.7.2, `fn:collection`): an
       absolute URI, or `""` for the default collection, and its items. -/
   collections : List (String × Seq) := []

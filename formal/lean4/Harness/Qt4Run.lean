@@ -37,6 +37,7 @@ anything but XPath expressions in this evaluator.
 import L4Factoidal.XPath4.Eval
 import L4Factoidal.XPath4.Theorems
 import L4Factoidal.XQuery4.Module
+import L4Factoidal.XQuery4.LoadModule
 import L4Factoidal.XQuery4.Theorems
 import L4Factoidal.XPath4.SerializeTheorems
 import L4Factoidal.EXPath.File.IOHost
@@ -140,6 +141,8 @@ def featureSupported (f : String) : Bool :=
     || f == "simple-uca-fallback" || f == "advanced-uca-fallback"
   -- EXPath Binary 4.0 and File 4.0 (`L4Factoidal.EXPath`)
   || f == "binary" || f == "expath-file"
+  -- `XQuery4.LoadModule` through the host hook
+  || f == "fn-load-xquery-module"
   -- IANA zone names (`XPath4.Tz`)
   || f == "olson-timezone"
   -- fn:invisible-xml (`XPath4.Ixml`)
@@ -828,6 +831,8 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         | some txt => mods := mods ++ [("#module " ++ attrD md "uri", txt)]
         | none => pure ()
       let env := { env with resources := env.resources ++ mods }
+      -- fn:load-xquery-module through the XQuery 4.0 processor
+      let env := { env with host := L4Factoidal.XQuery4.loadModuleHost env env.host }
       let (res, env) ← match spec.sandpit with
         | some sp => L4Factoidal.EXPath.File.evalSandpit (o.fileHost == "io") sp env src
         | none => pure (evalIn env src, env)
