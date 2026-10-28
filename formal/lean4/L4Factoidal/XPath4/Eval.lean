@@ -1160,7 +1160,7 @@ def apply : Nat → Env → Item → List Seq → M Seq
         else
           if args.length != ps.length then
             err "XPTY0004" ("inline function expects " ++ toString ps.length ++ " arguments, got " ++ toString args.length)
-          let mut vars := cl
+          let mut vars := XQuery4.lateClosure cl env.vars
           for ((v, t), a) in ps.zip args do
             vars := (v, ← env.coerce t a ("$" ++ v.show)) :: vars
           let env' := { env with vars, ctx := none, pos := 0, size := 0, untrusted := false }

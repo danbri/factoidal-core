@@ -68,6 +68,23 @@ def staticVars (vs : List (QN × Seq)) : List (QN × Seq) :=
   | [] => vs
   | r => r
 
+/-- The closure of a function item at a call (XQuery 4.0 §5.15): a
+    global variable bound after the item was made is visible to its
+    body (`declare variable $f := fn() { $f }`, a reference to a function
+    that reads a later variable). The caller's static part has the
+    item's static part as a suffix, so the newer bindings are the
+    leading entries. -/
+def lateClosure (cl env : List (QN × Seq)) : List (QN × Seq) :=
+  if !cl.any (fun (q, _) => q == staticKey) then cl else
+  -- the static parts start with a marker; the rest is the bindings
+  -- (the closure may end with entries that are not variables)
+  let es := (staticVars env).drop 1
+  let st := staticVars cl
+  let n := (st.filter (fun (q, _) => !(q.uri == "#xqa" || q.uri == "#xqn"))).length - 1
+  if es.length ≤ n then cl else
+  -- the local variables stay in front of the marker, the new globals follow it
+  cl.takeWhile (fun (q, _) => !(q == staticKey)) ++ st.take 1 ++ es.take (es.length - n) ++ st.drop 1
+
 /-- The arguments of a default-value function: the focus of the call
     (context value, position, size), or none when the focus is absent. -/
 def focusArgs (e : Env) : List Seq :=
