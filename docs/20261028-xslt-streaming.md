@@ -65,8 +65,15 @@ Proved, no `sorry`; `#print axioms`: `propext`, `Classical.choice`,
   the depth of the tree, so the stack of the stream processors is bounded
   by the depth.
 * `streamSelect_eventsList`, `streamSelect_docEvents`: the streamed
-  selection of a path of child steps (with burst-mode subtrees) gives the
-  nodes of the tree selection `selList`, in document order.
+  selection of a core path (child steps, optionally a last descendant
+  step, motionless attribute predicates `[@a]` and `[@a = 'v']`; with
+  burst-mode subtrees) gives the nodes of the tree selection `selList`,
+  in document order. For a last descendant step, the matches inside a
+  selected subtree are taken from the buffered subtree, after it.
+* `streamSelect_ctl_le_depth`: at every point of the event stream the
+  streamed selection keeps at most one status per open element, so its
+  stack is bounded by the depth of the document (the burst buffer holds
+  one selected subtree).
 * `streamCount_docEvents`, `streamStrings_docEvents`: the same for
   `count(P)` and the string values of `P`.
 * `eventsList_eq_loop`, `strValue_eq_loop`, `strValueList_eq_loop`
@@ -117,7 +124,7 @@ analysis can read alone (492, a script over the catalog), it agrees with
 the expected result for all except 3 (https://github.com/danbri/factoidal/issues/1162,
 item 4).
 
-`--stream-diff`: 237 (document, path) pairs, 237 agree, 0 differ.
+`--stream-diff`: 275 (document, core path) pairs, 275 agree, 0 differ.
 
 The largest groups of streaming fails are in the non-streaming evaluator:
 the namespace axis (https://github.com/danbri/factoidal/issues/1154),

@@ -28,23 +28,66 @@ namespace L4Factoidal.XSLT4.Streaming.StreamDiff
 open L4Factoidal.XPath4
 open L4Factoidal.XSLT4.Streaming
 
-/-- The names of a path of child steps with name tests in no namespace:
-    rooted (`/a/b`), from the context item (`./a/b`) or relative
-    (`a/b`). Inside `xsl:source-document` the context item is the
-    document node, so the three select the same nodes. -/
-def childPath? : Nat → Expr → Option (List String)
+/-- The motionless predicates of the core: `[@a]` and `[@a = 'v']`. -/
+def apred? : Expr → Option APred
+  | .step .attribute (.name (.name q)) [] => if q.uri == "" then some (.has q.loc) else none
+  | .bin .geq (.step .attribute (.name (.name q)) []) (.lit v) =>
+    if q.uri == "" && v.isStringLike then some (.eq q.loc v.str) else none
+  | _ => none
+
+/-- A step of the core: a child or descendant step with a name test in no
+    namespace (or `*`) and core predicates. -/
+def sstep? (ax : SAxis) : Expr → Option SStep
+  | .step a t ps =>
+    let axOk := match a, ax with
+      | .child, .child => true
+      | .descendant, .descendant => true
+      | _, _ => false
+    let nm : Option String := match t with
+      | .name (.name q) => if q.uri == "" then some q.loc else none
+      | .name .any => some "*"
+      | _ => none
+    if !axOk then none else
+    match nm, ps.mapM apred? with
+    | some n, some preds => some { axis := ax, name := n, preds }
+    | _, _ => none
+  | _ => none
+
+/-- The core path of an expression: child steps from `/`, from `.` or
+    relative (inside `xsl:source-document` the context item is the
+    document node, so the three select the same nodes), then optionally a
+    last step `//x` or `descendant::x`. -/
+def corePath? : Nat → Expr → Option SPath
   | 0, _ => none
   | f + 1, e =>
-    let step? : Expr → Option String := fun s => match s with
-      | .step .child (.name (.name q)) [] => if q.uri == "" then some q.loc else none
-      | .step .child (.name .any) [] => some "*"
-      | _ => none
+    let one (s : Expr) : Option SPath :=
+      match sstep? .child s, sstep? .descendant s with
+      | some x, _ => some [x]
+      | none, some x => some [x]
+      | none, none => none
     match e with
-    | .slash .root s | .slash .ctx s => (step? s).map (fun n => [n])
-    | .slash a s => match childPath? f a, step? s with
-      | some p, some n => some (p ++ [n])
+    | .slash (.slash a (.step .descendantOrSelf (.kind .anyNode) [])) s =>
+      let base : Option SPath := match a with
+        | .root | .ctx => some []
+        | _ => corePath? f a
+      match base, sstep? .child s with
+      | some p, some x =>
+        if p.any (·.axis == .descendant) then none else some (p ++ [{ x with axis := .descendant }])
       | _, _ => none
-    | s => (step? s).map (fun n => [n])
+    | .slash .root s | .slash .ctx s => one s
+    | .slash a s => match corePath? f a, sstep? .child s, sstep? .descendant s with
+      | some p, some x, _ => if p.any (·.axis == .descendant) then none else some (p ++ [x])
+      | some p, none, some x => if p.any (·.axis == .descendant) then none else some (p ++ [x])
+      | _, _, _ => none
+    | s => one s
+
+/-- The XPath text of a core path, rooted. -/
+def showPath (p : SPath) : String :=
+  String.join (p.map (fun s =>
+    (if s.axis == .descendant then "/descendant::" else "/") ++ s.name ++
+      String.join (s.preds.map (fun q => match q with
+        | .has a => "[@" ++ a ++ "]"
+        | .eq a v => "[@" ++ a ++ " = '" ++ v ++ "']"))))
 
 /-- Sub-expressions (a shallow walk over the common forms). -/
 def subExprs : Nat → Expr → List Expr
@@ -87,13 +130,13 @@ def run (root : String) : IO UInt32 := do
     let p : System.FilePath := root ++ "/" ++ d
     if ← p.pathExists then files := files ++ (← walkDir p)
   let sheets := files.filter (fun f => f.toString.endsWith ".xsl")
-  let mut pairs : List (String × List String) := []
+  let mut pairs : List (String × SPath) := []
   for sf in sheets do
     let some txt ← readFileSafe sf.toString | continue
     let .ok d := Doc.ofString txt | continue
     let dir := (sf.parent.map (·.toString)).getD "."
     let mut hrefs : List String := []
-    let mut paths : List (List String) := []
+    let mut paths : List SPath := []
     for i in [0:d.nodes.size] do
       let r := d.get i
       if r.kind != .element then continue
@@ -103,12 +146,12 @@ def run (root : String) : IO UInt32 := do
           hrefs := hrefs ++ [dir ++ "/" ++ ar.value]
         match parseXPath ar.value (r.inscope.filter (·.1 != "")) with
         | .ok e => for s in subExprs 30 e do
-            if let some p := childPath? 20 s then
-              if !paths.contains p then paths := paths ++ [p]
+            if let some p := corePath? 20 s then
+              if !paths.any (fun q => showPath q == showPath p) then paths := paths ++ [p]
         | .error _ => pure ()
     for h in hrefs do
       for p in paths do
-        if !pairs.contains (h, p) then pairs := pairs ++ [(h, p)]
+        if !pairs.any (fun (h', p') => h' == h && showPath p' == showPath p) then pairs := pairs ++ [(h, p)]
   let mut checked := 0
   let mut agree := 0
   let mut docs : List (String × Option (L4Factoidal.XML.Document × Doc)) := []
@@ -126,7 +169,7 @@ def run (root : String) : IO UInt32 := do
         pure x
     let some (xd, dd) := parsed | continue
     let env : Env := { docs := #[dd], ctx := some [.node (NodeRef.mk' 0 0)], pos := 1, size := 1 }
-    let src := String.join (p.map (fun n => "/" ++ n))
+    let src := showPath p
     let some e := (parseXPath src).toOption | continue
     let some sel := (eval 20000 env e).toOption | continue
     checked := checked + 1

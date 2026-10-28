@@ -98,7 +98,8 @@ def code (body : String) : String :=
 
 /-! ### The streamed selection core -/
 
-def doc1 : String := "<a><b><c>1</c><c>2</c></b><b><c>3</c><d><c>no</c></d></b><x/></a>"
+def doc1 : String :=
+  "<a><b k='1'><c>1</c><c>2</c></b><b><c>3</c><d><c x='y'>no<c>in</c></c></d></b><x/></a>"
 
 def rebuilt : Bool :=
   match L4Factoidal.XML.parseXML doc1 with
@@ -107,14 +108,26 @@ def rebuilt : Bool :=
 
 #guard rebuilt
 
-def strs (p : List String) : Option (List String) :=
+def ch (n : String) (ps : List APred := []) : SStep := { name := n, preds := ps }
+def de (n : String) (ps : List APred := []) : SStep := { axis := .descendant, name := n, preds := ps }
+
+def strs (p : SPath) : Option (List String) :=
   match L4Factoidal.XML.parseXML doc1 with
   | .ok d => streamStrings p (docEvents d)
   | .error _ => none
 
-#guard strs ["a", "b", "c"] == some ["1", "2", "3"]
-#guard strs ["a", "*"] == some ["12", "3no", ""]
-#guard strs ["a", "b", "d", "c"] == some ["no"]
-#guard strs ["b"] == some []
+#guard strs [ch "a", ch "b", ch "c"] == some ["1", "2", "3"]
+#guard strs [ch "a", ch "*"] == some ["12", "3noin", ""]
+#guard strs [ch "a", ch "b", ch "d", ch "c"] == some ["noin"]
+#guard strs [ch "b"] == some []
+-- `/a/b[@k]/c` and `/a/b[@k = '1']`
+#guard strs [ch "a", ch "b" [.has "k"], ch "c"] == some ["1", "2"]
+#guard strs [ch "a", ch "b" [.eq "k" "2"]] == some []
+-- `//c`: nested matches come in document order, the outer one first
+#guard strs [de "c"] == some ["1", "2", "3", "noin", "in"]
+#guard strs [ch "a", ch "b", de "c" [.has "x"]] == some ["noin"]
+#guard (match L4Factoidal.XML.parseXML doc1 with
+  | .ok d => streamCount [de "*"] (docEvents d)
+  | .error _ => none) == some 10
 
 end L4Factoidal.XSLT4.Streaming.Tests

@@ -36,25 +36,62 @@ namespace L4Factoidal.XSLT4.Streaming
 
 open L4Factoidal.XML
 
-/-- A name test of a child step: a name, or `*`. -/
+/-- A name test: a name, or `*`. -/
 def nameMatch (t tag : String) : Bool := t == "*" || t == tag
+
+/-- The axis of a step of the core: `child` (striding) or `descendant`
+    (crawling; read by scanning, §12.8.9). -/
+inductive SAxis where
+  | child | descendant
+deriving DecidableEq, Repr, Inhabited
+
+/-- A motionless predicate (§12.10): it reads only the attributes that the
+    start tag shows. `has a` is `[@a]`; `eq a v` is `[@a = 'v']`. -/
+inductive APred where
+  | has (a : String)
+  | eq (a v : String)
+deriving DecidableEq, Repr, Inhabited
+
+def APred.holds (attrs : List Attribute) : APred → Bool
+  | .has a => attrs.any (·.name == a)
+  | .eq a v => attrs.any (fun x => x.name == a && x.value == v)
+
+/-- A step of the core: axis, name test, predicates. -/
+structure SStep where
+  axis : SAxis := .child
+  name : String
+  preds : List APred := []
+deriving Repr, Inhabited
+
+def SStep.matches (s : SStep) (t : String) (a : List Attribute) : Bool :=
+  nameMatch s.name t && s.preds.all (·.holds a)
+
+/-- A path of the core. A descendant step that is not the last one selects,
+    on each branch, the outermost elements it matches (the paths of the
+    suite have a descendant step only at the end, where this is the XPath
+    reading). -/
+abbrev SPath := List SStep
 
 /-! ## The tree evaluation -/
 
 mutual
 /-- The nodes that the path `p`, from step `k` on, selects at node `n`
-    (the steps before `k` matched the ancestors of `n`). -/
-def selNode (p : List String) (k : Nat) : Node → List Node
+    (the steps before `k` matched the ancestors of `n`). When the last step
+    is a descendant step, a selected element is followed by the matches in
+    its subtree, so the result is in document order. -/
+def selNode (p : SPath) (k : Nat) : Node → List Node
   | .element t a cs =>
     match p[k]? with
-    | some nt =>
-      if nameMatch nt t then
-        if k + 1 = p.length then [.element t a cs] else selList p (k + 1) cs
-      else []
+    | some s =>
+      if s.matches t a then
+        if k + 1 = p.length then
+          .element t a cs :: (if s.axis = .descendant then selList p k cs else [])
+        else selList p (k + 1) cs
+      else if s.axis = .descendant then selList p k cs else []
     | none => []
   | _ => []
 
-def selList (p : List String) (k : Nat) : List Node → List Node
+def selList (p : SPath) (k : Nat) : List Node → List Node
   | [] => []
   | n :: ns => selNode p k n ++ selList p k ns
 end
@@ -64,8 +101,10 @@ end
 inductive Mode where
   | normal
   /-- Inside a selected element: the number of its open elements
-      (itself included) and the builder of its subtree. -/
-  | burst (d : Nat) (b : BSt)
+      (itself included), the builder of its subtree, and, when the last
+      step is a descendant step `k`, that step (the matches inside the
+      subtree are taken from the built subtree). -/
+  | burst (d : Nat) (b : BSt) (inner : Option Nat)
 deriving Inhabited
 
 structure SSt where
@@ -82,7 +121,12 @@ deriving Inhabited
     steps). -/
 def SSt.cur (st : SSt) : Option Nat := st.ctl.head?.getD (some 0)
 
-def SSt.step (p : List String) (st : SSt) (e : Event) : Option SSt :=
+/-- The matches of descendant step `k` inside a built subtree. -/
+def innerMatches (p : SPath) : Option Nat → Node → List Node
+  | some k, .element _ _ cs => selList p k cs
+  | _, _ => []
+
+def SSt.step (p : SPath) (st : SSt) (e : Event) : Option SSt :=
   match st.mode with
   | .normal =>
     match e with
@@ -90,11 +134,13 @@ def SSt.step (p : List String) (st : SSt) (e : Event) : Option SSt :=
       match st.cur with
       | some k =>
         match p[k]? with
-        | some nt =>
-          if nameMatch nt t then
+        | some s =>
+          if s.matches t a then
             if k + 1 = p.length then
-              some { st with mode := .burst 1 { stack := [{ tag := t, attrs := a, kids := [] }], top := [] } }
+              some { st with mode := .burst 1 { stack := [{ tag := t, attrs := a, kids := [] }], top := [] }
+                                  (if s.axis = .descendant then some k else none) }
             else some { st with ctl := some (k + 1) :: st.ctl }
+          else if s.axis = .descendant then some { st with ctl := some k :: st.ctl }
           else some { st with ctl := none :: st.ctl }
         | none => some { st with ctl := none :: st.ctl }
       | none => some { st with ctl := none :: st.ctl }
@@ -102,26 +148,27 @@ def SSt.step (p : List String) (st : SSt) (e : Event) : Option SSt :=
       | _ :: cs => some { st with ctl := cs }
       | [] => none
     | _ => some st
-  | .burst d b =>
+  | .burst d b inner =>
     match e with
-    | .start _ _ => (b.step e).map (fun b' => { st with mode := .burst (d + 1) b' })
+    | .start _ _ => (b.step e).map (fun b' => { st with mode := .burst (d + 1) b' inner })
     | .stop =>
       if d = 1 then
         match b.step e with
-        | some { stack := [], top := [n] } => some { st with mode := .normal, out := n :: st.out }
+        | some { stack := [], top := [n] } =>
+          some { st with mode := .normal, out := (innerMatches p inner n).reverse ++ n :: st.out }
         | _ => none
-      else (b.step e).map (fun b' => { st with mode := .burst (d - 1) b' })
-    | _ => (b.step e).map (fun b' => { st with mode := .burst d b' })
+      else (b.step e).map (fun b' => { st with mode := .burst (d - 1) b' inner })
+    | _ => (b.step e).map (fun b' => { st with mode := .burst d b' inner })
 
-def SSt.run (p : List String) : List Event → SSt → Option SSt
+def SSt.run (p : SPath) : List Event → SSt → Option SSt
   | [], st => some st
   | e :: es, st => (st.step p e).bind (SSt.run p es)
 
 /-- The streamed evaluation of `copy-of(P)` over an event stream. -/
-def streamSelect (p : List String) (es : List Event) : Option (List Node) :=
+def streamSelect (p : SPath) (es : List Event) : Option (List Node) :=
   (SSt.run p es { ctl := [], mode := .normal, out := [] }).map (fun st => st.out.reverse)
 
-theorem SSt.run_append (p : List String) (xs ys : List Event) (st : SSt) :
+theorem SSt.run_append (p : SPath) (xs ys : List Event) (st : SSt) :
     SSt.run p (xs ++ ys) st = (SSt.run p xs st).bind (SSt.run p ys) := by
   induction xs generalizing st with
   | nil => simp [SSt.run]
@@ -134,14 +181,14 @@ theorem SSt.run_append (p : List String) (xs ys : List Event) (st : SSt) :
 /-! ### Burst mode is the tree builder -/
 
 mutual
-theorem burst_events (p : List String) (n : Node) (st : SSt) (d : Nat) (b : BSt) :
-    SSt.run p (events n) { st with mode := .burst (d + 1) b } =
-      some { st with mode := .burst (d + 1) (b.add n) } := by
+theorem burst_events (p : SPath) (n : Node) (st : SSt) (d : Nat) (b : BSt) (inner : Option Nat) :
+    SSt.run p (events n) { st with mode := .burst (d + 1) b inner } =
+      some { st with mode := .burst (d + 1) (b.add n) inner } := by
   match n with
   | .element t a cs =>
     simp only [events, SSt.run, SSt.step, BSt.step, Option.map_some, Option.bind_some]
     rw [SSt.run_append]
-    have h := burst_eventsList p cs st (d + 1) { b with stack := { tag := t, attrs := a, kids := [] } :: b.stack }
+    have h := burst_eventsList p cs st (d + 1) { b with stack := { tag := t, attrs := a, kids := [] } :: b.stack } inner
     rw [h]
     simp only [Option.bind_some]
     rw [foldl_add_frame]
@@ -151,16 +198,16 @@ theorem burst_events (p : List String) (n : Node) (st : SSt) (d : Nat) (b : BSt)
   | .cdata s => simp [events, SSt.run, SSt.step, BSt.step]
   | .pi t x => simp [events, SSt.run, SSt.step, BSt.step]
 
-theorem burst_eventsList (p : List String) (ns : List Node) (st : SSt) (d : Nat) (b : BSt) :
-    SSt.run p (eventsList ns) { st with mode := .burst (d + 1) b } =
-      some { st with mode := .burst (d + 1) (ns.foldl BSt.add b) } := by
+theorem burst_eventsList (p : SPath) (ns : List Node) (st : SSt) (d : Nat) (b : BSt) (inner : Option Nat) :
+    SSt.run p (eventsList ns) { st with mode := .burst (d + 1) b inner } =
+      some { st with mode := .burst (d + 1) (ns.foldl BSt.add b) inner } := by
   match ns with
   | [] => simp [eventsList, SSt.run]
   | n :: rest =>
     simp only [eventsList]
     rw [SSt.run_append, burst_events]
     simp only [Option.bind_some]
-    have h := burst_eventsList p rest { st with mode := .burst (d + 1) (b.add n) } d (b.add n)
+    have h := burst_eventsList p rest { st with mode := .burst (d + 1) (b.add n) inner } d (b.add n) inner
     simp only at h
     rw [h]
     simp
@@ -169,81 +216,103 @@ end
 /-! ### Normal mode is the tree selection -/
 
 /-- The selection below a status: nothing below a dead branch. -/
-def selAt (p : List String) : Option Nat → Node → List Node
+def selAt (p : SPath) : Option Nat → Node → List Node
   | some k, n => selNode p k n
   | none, _ => []
 
-def selAtList (p : List String) : Option Nat → List Node → List Node
+def selAtList (p : SPath) : Option Nat → List Node → List Node
   | some k, ns => selList p k ns
   | none, _ => []
 
-theorem selAtList_cons (p : List String) (s : Option Nat) (n : Node) (ns : List Node) :
+theorem selAtList_cons (p : SPath) (s : Option Nat) (n : Node) (ns : List Node) :
     selAtList p s (n :: ns) = selAt p s n ++ selAtList p s ns := by
   cases s <;> simp [selAtList, selAt, selList]
 
+/-- The events of an element's children, then its end tag, from normal
+    mode with the status `s` pushed. -/
+theorem normal_children (p : SPath) (s : Option Nat) (cs : List Node) (ctl : List (Option Nat))
+    (out : List Node) (rest : List Event)
+    (ih : SSt.run p (eventsList cs) { ctl := s :: ctl, mode := .normal, out } =
+      some { ctl := s :: ctl, mode := .normal, out := (selAtList p s cs).reverse ++ out }) :
+    SSt.run p (eventsList cs ++ [Event.stop] ++ rest) { ctl := s :: ctl, mode := .normal, out } =
+      SSt.run p rest { ctl, mode := .normal, out := (selAtList p s cs).reverse ++ out } := by
+  rw [List.append_assoc, SSt.run_append, ih]
+  simp [SSt.run, SSt.step]
+
 mutual
-theorem normal_events (p : List String) (n : Node) (ctl : List (Option Nat)) (out : List Node) :
+theorem normal_events (p : SPath) (n : Node) (ctl : List (Option Nat)) (out : List Node) :
     SSt.run p (events n) { ctl, mode := .normal, out } =
       some { ctl, mode := .normal, out := (selAt p (SSt.cur { ctl, mode := .normal, out }) n).reverse ++ out } := by
   match n with
   | .element t a cs =>
     simp only [events, SSt.run]
     generalize hk : SSt.cur { ctl, mode := .normal, out } = k
+    -- the cases that push a status and read the children in normal mode
+    have push : ∀ (s : Option Nat), SSt.step p { ctl, mode := .normal, out } (.start t a) =
+        some { ctl := s :: ctl, mode := .normal, out } →
+        (SSt.run p (eventsList cs ++ [Event.stop]) { ctl := s :: ctl, mode := .normal, out }) =
+          some { ctl, mode := .normal, out := (selAtList p s cs).reverse ++ out } := by
+      intro s _
+      have h := normal_children p s cs ctl out [] (by
+        rw [normal_eventsList]; cases s <;> simp [SSt.cur, selAtList])
+      simpa [SSt.run] using h
     cases k with
     | none =>
       have hs : SSt.step p { ctl, mode := .normal, out } (.start t a) =
           some { ctl := none :: ctl, mode := .normal, out } := by
         simp [SSt.step, hk]
-      rw [hs]
-      simp only [Option.bind_some]
-      rw [SSt.run_append, normal_eventsList]
-      simp [SSt.cur, selAtList, selAt, SSt.run, SSt.step]
+      rw [hs]; simp only [Option.bind_some]; rw [push none hs]
+      simp [selAtList, selAt]
     | some k =>
       cases hp : p[k]? with
       | none =>
         have hs : SSt.step p { ctl, mode := .normal, out } (.start t a) =
             some { ctl := none :: ctl, mode := .normal, out } := by
           simp [SSt.step, hk, hp]
-        rw [hs]
-        simp only [Option.bind_some]
-        rw [SSt.run_append, normal_eventsList]
-        simp [SSt.cur, selAtList, selAt, selNode, hp, SSt.run, SSt.step]
-      | some nt =>
-        by_cases hm : nameMatch nt t = true
+        rw [hs]; simp only [Option.bind_some]; rw [push none hs]
+        simp [selAtList, selAt, selNode, hp]
+      | some s =>
+        by_cases hm : s.matches t a = true
         · by_cases hl : k + 1 = p.length
           · have hs : SSt.step p { ctl, mode := .normal, out } (.start t a) =
-                some { ctl, mode := .burst 1 { stack := [{ tag := t, attrs := a, kids := [] }], top := [] }, out } := by
+                some { ctl, mode := .burst 1 { stack := [{ tag := t, attrs := a, kids := [] }], top := [] }
+                         (if s.axis = .descendant then some k else none), out } := by
               simp [SSt.step, hk, hp, hm, hl]
             rw [hs]
             simp only [Option.bind_some]
             rw [SSt.run_append]
             have h := burst_eventsList p cs { ctl, mode := .normal, out } 0
               { stack := [{ tag := t, attrs := a, kids := [] }], top := [] }
+              (if s.axis = .descendant then some k else none)
             simp only at h
             rw [h]
             simp only [Option.bind_some]
             rw [foldl_add_frame]
-            simp [SSt.run, SSt.step, BSt.step, BSt.add, selAt, selNode, hp, hm, hl]
+            by_cases hax : s.axis = .descendant
+            · simp [SSt.run, SSt.step, BSt.step, BSt.add, selAt, selNode, hp, hm, hl, hax, innerMatches]
+            · simp [SSt.run, SSt.step, BSt.step, BSt.add, selAt, selNode, hp, hm, hl, hax, innerMatches]
           · have hs : SSt.step p { ctl, mode := .normal, out } (.start t a) =
                 some { ctl := some (k + 1) :: ctl, mode := .normal, out } := by
               simp [SSt.step, hk, hp, hm, hl]
-            rw [hs]
-            simp only [Option.bind_some]
-            rw [SSt.run_append, normal_eventsList]
-            simp [SSt.cur, selAtList, selAt, selNode, hp, hm, hl, SSt.run, SSt.step]
-        · have hs : SSt.step p { ctl, mode := .normal, out } (.start t a) =
-              some { ctl := none :: ctl, mode := .normal, out } := by
-            simp [SSt.step, hk, hp, hm]
-          rw [hs]
-          simp only [Option.bind_some]
-          rw [SSt.run_append, normal_eventsList]
-          simp [SSt.cur, selAtList, selAt, selNode, hp, hm, SSt.run, SSt.step]
+            rw [hs]; simp only [Option.bind_some]; rw [push (some (k + 1)) hs]
+            simp [selAtList, selAt, selNode, hp, hm, hl]
+        · by_cases hax : s.axis = .descendant
+          · have hs : SSt.step p { ctl, mode := .normal, out } (.start t a) =
+                some { ctl := some k :: ctl, mode := .normal, out } := by
+              simp [SSt.step, hk, hp, hm, hax]
+            rw [hs]; simp only [Option.bind_some]; rw [push (some k) hs]
+            simp [selAtList, selAt, selNode, hp, hm, hax]
+          · have hs : SSt.step p { ctl, mode := .normal, out } (.start t a) =
+                some { ctl := none :: ctl, mode := .normal, out } := by
+              simp [SSt.step, hk, hp, hm, hax]
+            rw [hs]; simp only [Option.bind_some]; rw [push none hs]
+            simp [selAtList, selAt, selNode, hp, hm, hax]
   | .text s => cases h : SSt.cur { ctl, mode := .normal, out } <;> simp [events, SSt.run, SSt.step, selAt, selNode, h]
   | .comment s => cases h : SSt.cur { ctl, mode := .normal, out } <;> simp [events, SSt.run, SSt.step, selAt, selNode, h]
   | .cdata s => cases h : SSt.cur { ctl, mode := .normal, out } <;> simp [events, SSt.run, SSt.step, selAt, selNode, h]
   | .pi x y => cases h : SSt.cur { ctl, mode := .normal, out } <;> simp [events, SSt.run, SSt.step, selAt, selNode, h]
 
-theorem normal_eventsList (p : List String) (ns : List Node) (ctl : List (Option Nat)) (out : List Node) :
+theorem normal_eventsList (p : SPath) (ns : List Node) (ctl : List (Option Nat)) (out : List Node) :
     SSt.run p (eventsList ns) { ctl, mode := .normal, out } =
       some { ctl, mode := .normal, out := (selAtList p (SSt.cur { ctl, mode := .normal, out }) ns).reverse ++ out } := by
   match ns with
@@ -257,14 +326,159 @@ theorem normal_eventsList (p : List String) (ns : List Node) (ctl : List (Option
 end
 
 /-- **Streamed evaluation equals tree evaluation** for downward selection
+    (child steps, a final descendant step, motionless attribute predicates)
     with burst-mode copies. -/
-theorem streamSelect_eventsList (p : List String) (ns : List Node) :
+theorem streamSelect_eventsList (p : SPath) (ns : List Node) :
     streamSelect p (eventsList ns) = some (selList p 0 ns) := by
   simp [streamSelect, normal_eventsList, SSt.cur, selAtList]
 
-theorem streamSelect_docEvents (p : List String) (d : Document) :
+theorem streamSelect_docEvents (p : SPath) (d : Document) :
     streamSelect p (docEvents d) = some (selList p 0 d.children) :=
   streamSelect_eventsList p d.children
+
+/-! ### Memory: one status per open element
+
+At every point of the stream, the selection processor keeps at most one
+status per open element outside the copied subtree (`SSt.ctl`), so the
+stack it keeps is bounded by the depth of the document, not by its size
+(`streamSelect_ctl_le_depth`). The burst buffer holds one selected
+subtree. -/
+
+/-- The number of open elements after a list of events, from `k`. -/
+def openAfter : List Event → Nat → Nat
+  | [], k => k
+  | .start _ _ :: es, k => openAfter es (k + 1)
+  | .stop :: es, k => openAfter es (k - 1)
+  | _ :: es, k => openAfter es k
+
+theorem le_maxOpen (es : List Event) (k : Nat) : k ≤ maxOpen es k := by
+  cases es with
+  | nil => simp [maxOpen]
+  | cons e es => cases e <;> simp only [maxOpen] <;> exact Nat.le_max_left _ _
+
+theorem openAfter_take_le (es : List Event) (k n : Nat) : openAfter (es.take n) k ≤ maxOpen es k := by
+  induction es generalizing k n with
+  | nil => simp [openAfter, maxOpen]
+  | cons e es ih =>
+    cases n with
+    | zero => simp [openAfter, le_maxOpen]
+    | succ n =>
+      cases e <;> simp only [List.take_succ_cons, openAfter, maxOpen] <;>
+        exact Nat.le_trans (ih _ n) (Nat.le_max_right _ _)
+
+/-- The invariant: outside a burst at most one status per open element;
+    in a burst, the open elements of the burst come on top of them. -/
+def SSt.inv (st : SSt) (o : Nat) : Prop :=
+  match st.mode with
+  | .normal => st.ctl.length ≤ o
+  | .burst d _ _ => st.ctl.length + d ≤ o
+
+/-- In a burst, `d` is at least 1. -/
+def SSt.burstOk (st : SSt) : Prop :=
+  match st.mode with
+  | .normal => True
+  | .burst d _ _ => 1 ≤ d
+
+theorem SSt.step_inv (p : SPath) (st st' : SSt) (e : Event) (o : Nat)
+    (h : st.step p e = some st') (hi : st.inv o) (hb : st.burstOk) :
+    st'.inv (openAfter [e] o) ∧ st'.burstOk := by
+  obtain ⟨ctl, mode, out⟩ := st
+  cases mode with
+  | normal =>
+    simp only [SSt.inv] at hi
+    cases e with
+    | start t a =>
+      simp only [SSt.step] at h
+      split at h
+      · split at h
+        · split at h
+          · split at h
+            · simp at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+            · simp at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+          · split at h <;> (simp at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega)
+        · simp at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+      · simp at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+    | stop =>
+      simp only [SSt.step] at h
+      cases ctl with
+      | nil => simp at h
+      | cons c cs =>
+        simp at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter] at hi ⊢; omega
+    | text _ => simp [SSt.step] at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+    | comment _ => simp [SSt.step] at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+    | cdata _ => simp [SSt.step] at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+    | pi _ _ => simp [SSt.step] at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+  | burst d b inner =>
+    simp only [SSt.inv] at hi
+    simp only [SSt.burstOk] at hb
+    cases e with
+    | start t a =>
+      simp only [SSt.step] at h
+      cases hb' : b.step (.start t a) with
+      | none => simp [hb'] at h
+      | some b' => simp [hb'] at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+    | stop =>
+      simp only [SSt.step] at h
+      split at h
+      · split at h
+        · simp at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+        · simp at h
+      · cases hb' : b.step .stop with
+        | none => simp [hb'] at h
+        | some b' => simp [hb'] at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+    | text x =>
+      simp only [SSt.step] at h
+      cases hb' : b.step (.text x) with
+      | none => simp [hb'] at h
+      | some b' => simp [hb'] at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+    | comment x =>
+      simp only [SSt.step] at h
+      cases hb' : b.step (.comment x) with
+      | none => simp [hb'] at h
+      | some b' => simp [hb'] at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+    | cdata x =>
+      simp only [SSt.step] at h
+      cases hb' : b.step (.cdata x) with
+      | none => simp [hb'] at h
+      | some b' => simp [hb'] at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+    | pi x y =>
+      simp only [SSt.step] at h
+      cases hb' : b.step (.pi x y) with
+      | none => simp [hb'] at h
+      | some b' => simp [hb'] at h; subst h; simp [SSt.inv, SSt.burstOk, openAfter]; omega
+
+theorem openAfter_cons (e : Event) (es : List Event) (o : Nat) :
+    openAfter (e :: es) o = openAfter es (openAfter [e] o) := by
+  cases e <;> simp [openAfter]
+
+theorem SSt.run_inv (p : SPath) (es : List Event) (st st' : SSt) (o : Nat)
+    (h : SSt.run p es st = some st') (hi : st.inv o) (hb : st.burstOk) :
+    st'.inv (openAfter es o) ∧ st'.burstOk := by
+  induction es generalizing st o with
+  | nil => simp [SSt.run] at h; subst h; exact ⟨by simpa [openAfter] using hi, hb⟩
+  | cons e es ih =>
+    simp only [SSt.run] at h
+    cases hs : st.step p e with
+    | none => simp [hs] at h
+    | some s1 =>
+      simp [hs] at h
+      have ⟨hi1, hb1⟩ := SSt.step_inv p st s1 e o hs hi hb
+      rw [openAfter_cons]
+      exact ih s1 (openAfter [e] o) h hi1 hb1
+
+/-- **Bounded memory.** At every point of the event stream of a list of
+    nodes, the streamed selection keeps at most `depthList ns` statuses
+    (one per open element), whatever the number of nodes. -/
+theorem streamSelect_ctl_le_depth (p : SPath) (ns : List Node) (n : Nat) (st : SSt)
+    (h : SSt.run p ((eventsList ns).take n) { ctl := [], mode := .normal, out := [] } = some st) :
+    st.ctl.length ≤ depthList ns := by
+  have ⟨hi, _⟩ := SSt.run_inv p _ _ st 0 h (by simp [SSt.inv]) (by simp [SSt.burstOk])
+  have h1 := openAfter_take_le (eventsList ns) 0 n
+  have h2 := maxOpen_eventsList ns
+  have hl : st.ctl.length ≤ openAfter ((eventsList ns).take n) 0 := by
+    unfold SSt.inv at hi
+    split at hi <;> omega
+  omega
 
 /-! ## Grounded results -/
 
@@ -339,19 +553,19 @@ def strValueListLoop (ns : List Node) : String := textAcc "" (eventsListLoop ns)
   simp
 
 /-- `count(P)`, streamed. -/
-def streamCount (p : List String) (es : List Event) : Option Nat :=
+def streamCount (p : SPath) (es : List Event) : Option Nat :=
   (streamSelect p es).map List.length
 
 /-- The string values of `P` (what `xsl:value-of select="P"` joins),
     streamed. -/
-def streamStrings (p : List String) (es : List Event) : Option (List String) :=
+def streamStrings (p : SPath) (es : List Event) : Option (List String) :=
   (streamSelect p es).map (List.map strValue)
 
-theorem streamCount_docEvents (p : List String) (d : Document) :
+theorem streamCount_docEvents (p : SPath) (d : Document) :
     streamCount p (docEvents d) = some (selList p 0 d.children).length := by
   simp [streamCount, streamSelect_docEvents]
 
-theorem streamStrings_docEvents (p : List String) (d : Document) :
+theorem streamStrings_docEvents (p : SPath) (d : Document) :
     streamStrings p (docEvents d) = some ((selList p 0 d.children).map strValue) := by
   simp [streamStrings, streamSelect_docEvents]
 
