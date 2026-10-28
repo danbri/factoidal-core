@@ -589,6 +589,7 @@ def pItemType : Nat → P IType
             ws
             match ← peekQName with
             | some (p, u, l, e) =>
+              if p == some "*" || l == "*" then synErr (nm ++ "() takes a QName, not a wildcard")
               set e
               let den ← dfltElemNs
               let q ← resolve p u l (if nm == "schema-element" then den else "")
@@ -611,19 +612,6 @@ def pItemType : Nat → P IType
                     pure (if more.isEmpty then .elem (some t) else .choice ((t :: more).map (fun x => .elem (some x))))
                   else synErr "document-node() takes an element test"
               expectS ")"; pure (.doc (some inner))
-        | "schema-element" | "schema-attribute" =>
-            -- no schema is imported, so the in-scope element and attribute
-            -- declarations are empty (XPath 4.0 §3.2.7.3.2): the name must
-            -- resolve (XPST0081) and then is not declared (XPST0008).
-            -- Schema-aware processing (agent qt4-H, `L4Factoidal/XSD11/`)
-            -- replaces this branch.
-            match ← peekQName with
-            | some (p, u, l, e) =>
-                if p == some "*" || l == "*" then synErr (nm ++ "() takes a QName, not a wildcard")
-                set e
-                let q ← resolve p u l (if nm == "schema-element" then dE else "")
-                throw { code := "XPST0008", msg := nm ++ "(" ++ q.show ++ "): no such declaration in the in-scope schema definitions" }
-            | none => synErr ("bad " ++ nm ++ "() test")
         | "function" | "fn" =>
             if ← eatS "*" then expectS ")"; pure .anyFn
             else
