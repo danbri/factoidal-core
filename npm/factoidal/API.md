@@ -1386,8 +1386,11 @@ await xslt4Transform(
   next call). Measured in Node 2026-10-28: a document of 6,000 sibling elements
   is read and one of 8,000 is not; a user function recursion 400 calls deep
   runs and one 600 deep does not; an expression nested 200 parentheses deep
-  parses and one 400 deep does not. The cases are expected failures in
-  `test/qt4.test.mjs`. `xpathEval` (XPath 1.0) reads a document of 10,000
+  parses and one 400 deep does not. The limits depend on the host's stack
+  size: with a larger stack (the CI runners' Node) a deep recursion reaches the
+  engine's own bound first and fails with FOER0000. The document and nesting
+  cases are expected failures in `test/qt4.test.mjs`; the recursion case accepts
+  either outcome. `xpathEval` (XPath 1.0) reads a document of 10,000
   sibling elements.
 - `fn:current-dateTime()` is a fixed instant of the engine
   (`2026-10-27T12:00:00Z`), not the clock.
