@@ -52,7 +52,7 @@ def pathDir (p : String) : String :=
 def pathNormalize (p : String) : String :=
   let segs := p.splitOn "/"
   let out := segs.foldl (fun acc s =>
-    if s == ".." then (match acc with | _ :: rest => rest | [] => [])
+    if s == ".." then (match acc with | ".." :: _ => ".." :: acc | _ :: rest => rest | [] => if p.startsWith "/" then [] else [".."])
     else if s == "." || s == "" then acc
     else s :: acc) []
   (if p.startsWith "/" then "/" else "") ++ String.intercalate "/" out.reverse
@@ -110,6 +110,15 @@ def Ctx.resolve? (c : Ctx) (qn : String) : Option XName :=
   | [p, l] => (lookupNs c.bs p).map (fun u => ⟨u, l⟩)
   | [l] => some ⟨(lookupNs c.bs "").getD "", l⟩
   | _ => none
+
+/-- §3.11.2 / §3.12.2 / §3.13.2 `xpathDefaultNamespace`: the namespace
+an unprefixed element name in an XPath expression stands for. -/
+def Ctx.xdnOf (c : Ctx) (raw : String) : String :=
+  match raw with
+  | "##defaultNamespace" => (lookupNs c.bs "").getD ""
+  | "##targetNamespace" => c.tns
+  | "##local" => ""
+  | u => u
 
 def Ctx.renamed (c : Ctx) (kind : String) (n : XName) : XName :=
   match c.renames.find? (fun r => r.1 == kind && r.2.1 == n) with
@@ -222,7 +231,8 @@ def schemaCtx (loc : String) (root : Node) (tnsOverride : Option String) : Ctx :
     afdQualified := attrOf "attributeFormDefault" root == some "qualified",
     blockDefault := derivKwsOf ((attrOf "blockDefault" root).getD ""),
     finalDefault := derivKwsOf ((attrOf "finalDefault" root).getD ""),
-    xpathDefaultNs := (attrOf "xpathDefaultNamespace" root).getD "" }
+    xpathDefaultNs := "" }
+  let c := { c with xpathDefaultNs := c.xdnOf ((attrOf "xpathDefaultNamespace" root).getD "##local") }
   let c := { c with defaultAttrs := (attrOf "defaultAttributes" root).bind c.resolve? }
   let dOpen := (xsKids root).find? (fun k => isXs k "defaultOpenContent")
   let c := match dOpen with
@@ -241,6 +251,27 @@ def schemaCtx (loc : String) (root : Node) (tnsOverride : Option String) : Ctx :
     then { c with bs := ("", t) :: c.bs } else c
   | none => c
 
+/-- The schema document for the XML namespace (`xml:lang`, `xml:space`,
+`xml:base`, `xml:id` and the attribute group `xml:specialAttrs`), as the
+W3C publishes it at `http://www.w3.org/2001/xml.xsd`, reduced to its
+components. It is used when a schema imports the XML namespace and the
+document named by `schemaLocation` is not available (no I/O here). -/
+def xmlNsSchemaText : String :=
+  "<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema' targetNamespace='http://www.w3.org/XML/1998/namespace' xmlns:xml='http://www.w3.org/XML/1998/namespace'>" ++
+  "<xs:attribute name='lang'><xs:simpleType><xs:union memberTypes='xs:language'><xs:simpleType><xs:restriction base='xs:string'><xs:enumeration value=''/></xs:restriction></xs:simpleType></xs:union></xs:simpleType></xs:attribute>" ++
+  "<xs:attribute name='space'><xs:simpleType><xs:restriction base='xs:NCName'><xs:enumeration value='default'/><xs:enumeration value='preserve'/></xs:restriction></xs:simpleType></xs:attribute>" ++
+  "<xs:attribute name='base' type='xs:anyURI'/>" ++
+  "<xs:attribute name='id' type='xs:ID'/>" ++
+  "<xs:attributeGroup name='specialAttrs'><xs:attribute ref='xml:base'/><xs:attribute ref='xml:lang'/><xs:attribute ref='xml:space'/><xs:attribute ref='xml:id'/></xs:attributeGroup>" ++
+  "</xs:schema>"
+
+def xmlNsSchemaLoc : String := "\u0000builtin:xml.xsd"
+
+def xmlNsDoc? : Option LoadedDoc :=
+  match parseXML xmlNsSchemaText with
+  | .ok d => some { loc := xmlNsSchemaLoc, doc := d }
+  | .error _ => none
+
 /-- The locations a schema document names (for the harness's loader). -/
 def refsOf (loc : String) (d : Document) : List String :=
   (xsKids (conditionalInclusion d.root)).filterMap (fun k =>
@@ -249,7 +280,9 @@ def refsOf (loc : String) (d : Document) : List String :=
     else none)
 
 def findDoc (docs : List LoadedDoc) (loc : String) : Option Document :=
-  (docs.find? (fun d => d.loc == loc)).map (·.doc)
+  match (docs.find? (fun d => d.loc == loc)).map (·.doc) with
+  | some d => some d
+  | none => if loc == xmlNsSchemaLoc then xmlNsDoc?.map (·.doc) else none
 
 /-- Collect the top-level components of one schema document and of the
 documents it reaches. `overrides` lists the `(space, name)` pairs that an
@@ -291,9 +324,12 @@ def collectDoc (docs : List LoadedDoc) : Nat → String → Option String →
           if ins == some ctx.tns || (ins.isNone && ctx.tns == "") then
             { st with errors := s!"{loc}: import of its own target namespace" :: st.errors }
           else
-          match attrOf "schemaLocation" k with
+          let sl? := match attrOf "schemaLocation" k with
+            | some sl => if (findDoc docs (resolveLoc loc sl)).isNone && ins == some xmlNS then some xmlNsSchemaLoc else some sl
+            | none => if ins == some xmlNS then some xmlNsSchemaLoc else none
+          match sl? with
           | some sl =>
-            let l := resolveLoc loc sl
+            let l := if sl == xmlNsSchemaLoc then sl else resolveLoc loc sl
             match findDoc docs l with
             | some imp =>
               let itns := (attrOf "targetNamespace" (conditionalInclusion imp.root)).getD ""
@@ -457,7 +493,7 @@ def assertsOf (c : Ctx) (tag : String) (n : Node) : List Assertion :=
     let kc := c.enter k
     (attrOf "test" k).map (fun t =>
       { test := t, ns := kc.bs,
-        xpathDefaultNs := (attrOf "xpathDefaultNamespace" k).getD c.xpathDefaultNs,
+        xpathDefaultNs := ((attrOf "xpathDefaultNamespace" k).map (c.enter k).xdnOf).getD c.xpathDefaultNs,
         baseUri := c.loc }))
 
 /-- The facets of a `restriction` step, and the names of those declared
@@ -735,7 +771,7 @@ def readElement (fuel : Nat) (c : Ctx) (n : Node) (global : Bool) (gIdx : Option
     let sel := ((xsKid? k "selector").bind (attrOf "xpath")).getD ""
     let fields := ((xsKids k).filter (fun x => isXs x "field")).map (fun x => (attrOf "xpath" x).getD "")
     if (xsKid? k "selector").isNone || fields.isEmpty then addErr s!"identity constraint {iname.show} needs a selector and a field"
-    let xdn := (attrOf "xpathDefaultNamespace" k).getD c.xpathDefaultNs
+    let xdn := ((attrOf "xpathDefaultNamespace" k).map (c.enter k).xdnOf).getD c.xpathDefaultNs
     let refer := if kind == .keyref then (attrOf "refer" k).bind kc.resolve? else none
     if kind == .keyref && refer.isNone then addErr "keyref without refer"
     if (← get).sch.gIdcs.lookup iname |>.isSome then addErr s!"duplicate identity constraint {iname.show}"
@@ -758,7 +794,7 @@ def readElement (fuel : Nat) (c : Ctx) (n : Node) (global : Bool) (gIdx : Option
       | none, none, none => do addErr "alternative without a type"; pure anyTypeIdx
       | _, _, _ => do addErr "alternative with more than one type"; pure anyTypeIdx
     alts := alts.push { test := attrOf "test" k, typ := ty, ns := kc.bs,
-                        xpathDefaultNs := (attrOf "xpathDefaultNamespace" k).getD c.xpathDefaultNs }
+                        xpathDefaultNs := ((attrOf "xpathDefaultNamespace" k).map (c.enter k).xdnOf).getD c.xpathDefaultNs }
   let decl := { decl with idcs := idcIdx.toList, alts := alts.toList }
   setElem idx decl
   pure idx
@@ -1093,7 +1129,9 @@ def readSchemaDocs (docs : List LoadedDoc) (roots : List String) : Schema :=
   let base := Schema.builtins
   let tops := col.tops
   -- pass 2: indices
-  let typeTops := tops.toList.filter (·.kind.isType)
+  -- The schema for schema documents defines `xs:anyType` and may define
+  -- other built-ins again; the built-in components are kept (§3.4.7).
+  let typeTops := tops.toList.filter (fun t => t.kind.isType && !(t.name.ns == xsNS && (base.gTypes.lookup t.name).isSome))
   let elemTops := tops.toList.filter (·.kind == .element)
   let attrTops := tops.toList.filter (·.kind == .attribute)
   let t0 := base.types.size

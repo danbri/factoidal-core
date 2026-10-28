@@ -194,6 +194,15 @@ structure NRec where
   attrs : Array Nat := #[]
   inscope : List (String × String) := []
   last : Nat := 0
+  /-- Hook for schema validation (`L4Factoidal.XSD11`): the type
+      annotation of an element or attribute (XDM 4.0 §2.7, `dm:type-name`);
+      `none` is `xs:untyped` (element) or `xs:untypedAtomic` (attribute). -/
+  tann : Option QN := none
+  /-- Hook for schema validation: the typed value (`dm:typed-value`);
+      `none` means the string value as `xs:untypedAtomic`. -/
+  tval : Option (List Atomic) := none
+  /-- Hook for schema validation: `dm:nilled`. -/
+  nilled : Bool := false
 deriving Inhabited
 
 structure Doc where

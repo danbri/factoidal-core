@@ -119,6 +119,13 @@ def Env.typedValue (e : Env) (n : NodeRef) : Atomic :=
   | .comment | .pi | .namespace => Atomic.ofStr (e.nodeString n)
   | _ => Atomic.untypedOf (e.nodeString n)
 
+/-- The typed value of a node as a sequence: the one a schema validation
+    recorded (`NRec.tval`, `L4Factoidal.XSD11`), else `Env.typedValue`. -/
+def Env.typedValues (e : Env) (n : NodeRef) : List Atomic :=
+  match (e.nrec n).tval with
+  | some vs => vs
+  | none => [e.typedValue n]
+
 /-- Atomization (§2.5.3). -/
 def Env.atomizeFuel (e : Env) : Nat → Seq → M (List Atomic)
   | 0, _ => err "FOER0000" "atomization too deep"
@@ -127,7 +134,7 @@ def Env.atomizeFuel (e : Env) : Nat → Seq → M (List Atomic)
     for i in s do
       match i with
       | .atom a => out := out.push a
-      | .node n => out := out.push (e.typedValue n)
+      | .node n => out := out ++ (e.typedValues n).toArray
       | .arr ms =>
           for m in ms do
             for a in ← e.atomizeFuel f m do out := out.push a

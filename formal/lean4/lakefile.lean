@@ -642,6 +642,11 @@ lean_exe «l4dict-fold-bench» where
 -- per-test-set and total pass / fail / unsupported counts.
 lean_exe «l4qt4» where root := `Harness.Qt4Run
 
+-- W3C XML Schema Test Suite (third_party/testing/xsd) over
+-- L4Factoidal.XSD11, XML Schema 1.1 Structures (Harness/Xsd11Run.lean).
+-- Prints per-test-set and total pass / fail / unsupported counts.
+lean_exe «l4xsd11» where root := `Harness.Xsd11Run
+
 -- ShExC differential: every schemas/*.shex read by ShEx/Compact and
 -- compared with the ShExJ twin the same directory ships
 -- (Harness/ShExCRun.lean).
