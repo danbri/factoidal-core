@@ -396,7 +396,8 @@ def ipMatch (env : Env) : Nat → IPat → Item → Bool
 /-- Pattern matching with errors masked (§6.5). -/
 def Pattern.matches (p : Pattern) (env : Env) (it : Item) : Bool :=
   -- `current()` in a pattern is the item being matched (§20.4.1)
-  let env := { env with vars := (vCurrent, [it]) :: env.vars }
+  -- and current-output-uri() is absent there (§25.4)
+  let env := { env with vars := (vCurrent, [it]) :: (vOutUri, []) :: env.vars }
   match p.ip with
   | some (ip, _) => ipMatch env 200 ip it
   | none =>
@@ -907,8 +908,9 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             let v ← evalX cx e
             let v := if first then v.take 1 else v
             let sp ← match sep with | some a => avtStr cx a | none => pure " "
-            let as ← liftX (env.atomize v)
-            pure [.text (String.intercalate sp (as.map Atomic.str))]
+            -- adjacent text nodes are merged and empty ones dropped before
+            -- the separator is inserted (§5.7.2)
+            pure [.text (← simpleContent env (Out.ofSeq v) sp)]
         | none =>
             let os ← run n S cx body
             let sp ← match sep with | some a => avtStr cx a | none => pure ""
@@ -1483,7 +1485,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | some [.atom a] => a.str
           | _ => ""
         let h := if h == "" then base else if base == "" then h else resolveUri base h
-        let cxR := cx.bind vOutUri (if h == "" then [] else [.atom (Atomic.ofUri h)])
+        let cxR := if href.isNone then cx else cx.bind vOutUri (if h == "" then [] else [.atom (Atomic.ofUri h)])
         -- writing a resource that the transformation reads (§25.2)
         if h.startsWith "file:" && (env.docUris.any (·.1 == h) || env.resources.any (·.1 == h)) then
           xerr "XTDE1500" ("the result document " ++ h ++ " is also read by the transformation")
@@ -1589,6 +1591,13 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
     | .staticErr code msg => xerr code msg
     | .withColl u body => run n S { cx with env := { cx.env with defaultCollation := u } } body
     | .withCompat on body => run n S { cx with backCompat := on } body
+    | .doe body =>
+        -- ignored in temporary output state (§26.1.8); otherwise the text
+        -- is marked by the processing instructions the serializer reads
+        if cx.tempOut then run n S cx body
+        else do
+          let os ← run n S cx body
+          pure ([Out.pi piDisableEscaping ""] ++ os ++ [Out.pi piEnableEscaping ""])
     | .extCall q ats fbs =>
         let cands := S.templates.toList.filter (fun t => t.name == some q)
         match cands.foldl (fun (b : Option Tmpl) t => match b with

@@ -455,7 +455,7 @@ def boolAttrs : List String :=
   ["copy-namespaces", "inherit-namespaces", "tunnel", "required", "static", "composite", "streamable",
    "cache", "override", "override-extension-function", "declared-modes", "copy-accumulators",
    "rollback-output", "sort-before-merge", "capture", "warning-on-no-match", "warning-on-multiple-match",
-   "expand-text"]
+   "expand-text", "disable-output-escaping"]
 
 /-- The standard attributes every XSLT element may have (§3.5). -/
 def standardAttrs : List String :=
@@ -486,6 +486,11 @@ def serAttrOk (k v : String) : Bool :=
   else if k == "doctype-public" then
     v.all (fun ch => ch == ' ' || ch == '\r' || ch == '\n' || ch.isAlphanum || "-'()+,./:=?;!*#@$_%".contains ch)
   else true
+
+/-- `disable-output-escaping="yes"` on `xsl:text` and `xsl:value-of`
+    (§26.1.8). -/
+def withDoe (as : Attrs) (r : Instr) : Instr :=
+  if ((as.get "disable-output-escaping").bind parseBool) == some true then .doe [r] else r
 
 def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
   for (q, v) in as do
@@ -603,6 +608,7 @@ def compileNodes : Nat → SCx → Mod → List Nat → CM (List Instr)
     -- text nodes around them are merged (§4.2)
     let mut pending : Option String := none
     let mut lastText := 0
+    let mut afterCatch := false
     for oi in ids.map some ++ [none] do
       if let some i := oi then
         let r := m.r i
@@ -619,7 +625,14 @@ def compileNodes : Nat → SCx → Mod → List Nat → CM (List Instr)
           continue
       if let some t := pending then
         pending := none
-        if !(t.toList.all (fun ch => ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') && !c.preserveWs) then
+        let ws := t.toList.all (fun ch => ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r')
+        -- whitespace before xsl:param, xsl:sort, xsl:context-item or
+        -- xsl:on-completion, and after xsl:catch, is removed regardless
+        -- of xml:space (§4.3)
+        let beforeDecl := match oi with
+          | some i => ["param", "sort", "context-item", "on-completion"].any (m.isXsl i ·)
+          | none => false
+        if !(ws && (!c.preserveWs || beforeDecl || afterCatch)) then
           if c.expandText then out := out.push (.tvt (← liftM (c.avt t)))
           else out := out.push (.lit t)
       if let some i := oi then
@@ -628,6 +641,7 @@ def compileNodes : Nat → SCx → Mod → List Nat → CM (List Instr)
           pending := some r.value
           lastText := i
         else
+          afterCatch := m.isXsl i "catch"
           for x in ← compileElem f c m i do out := out.push x
     pure out.toList
 
@@ -727,20 +741,21 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
     match l with
     | "text" =>
         let t := m.text i
-        match ← optExpr c as "select" with
-        | some e => pure (.valueOf (some e) (← optAvt c as "separator") [] false)
-        | none =>
-          if !ekids.isEmpty then
-            -- 4.0: the content is a sequence constructor (§11.4.2)
-            let b ← compileNodes f { c with preserveWs := true } m kids
-            pure (.valueOf none (← optAvt c as "separator") b false)
-          else if c.expandText then pure (.tvt (← liftM (c.avt t))) else pure (.lit t)
+        let r ← match ← optExpr c as "select" with
+          | some e => pure (.valueOf (some e) (← optAvt c as "separator") [] false)
+          | none =>
+            if !ekids.isEmpty then
+              -- 4.0: the content is a sequence constructor (§11.4.2)
+              let b ← compileNodes f { c with preserveWs := true } m kids
+              pure (.valueOf none (← optAvt c as "separator") b false)
+            else if c.expandText then pure (.tvt (← liftM (c.avt t))) else pure (.lit t)
+        pure (withDoe as r)
     | "value-of" =>
         let sel ← optExpr c as "select"
         let b ← body
         if sel.isSome && !b.isEmpty then cerr "XTSE0870" "xsl:value-of has both select and content"
         let sep ← optAvt c as "separator"
-        pure (.valueOf sel sep b (c.backCompat && sep.isNone))
+        pure (withDoe as (.valueOf sel sep b (c.backCompat && sep.isNone)))
     | "sequence" =>
         let sel ← optExpr c as "select"
         let b ← body (notTag ["fallback"])
@@ -1425,7 +1440,9 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
         | none => pure []
       for k in ekids do
         if !m.isXsl k "attribute" then cerr "XTSE0010" "xsl:attribute-set may contain only xsl:attribute"
-      let body ← compileNodes 100000 c m (m.kids i)
+      -- whitespace text in xsl:attribute-set is removed regardless of
+      -- xml:space (§4.3)
+      let body ← compileNodes 100000 { c with preserveWs := false } m (m.kids i)
       let vis := ((as.get "visibility").getD "").trimAscii.toString
       let body := if vis == "abstract" then [abstractErr "attribute set" nm] else body
       upd (fun sh => { sh with attrSets := sh.attrSets ++ [{ name := nm, useSets, body, vis }] })

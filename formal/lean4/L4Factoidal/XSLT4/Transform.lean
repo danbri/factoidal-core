@@ -270,7 +270,8 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         | some x => if g.prec > x.prec then some g else some x) none with
     | some fn => some fun c args => runFresh c fn.name.eqn args (do
         if let [.staticErr "XTDE3052" msg] := fn.body then xerr "XTDE3052" msg
-        let mut cx : Ctx := { env := { env with ctx := none, pos := 0, size := 0, ns := c.ns, vars := env.vars }, inFn := true, tempOut := true }
+        -- current-output-uri() is absent in a function body (§25.4)
+        let mut cx : Ctx := { env := { env with ctx := none, pos := 0, size := 0, ns := c.ns, vars := (vOutUri, []) :: env.vars }, inFn := true, tempOut := true }
         let mut i := 0
         for p in fn.params do
           let v ← match args[i]? with
@@ -596,7 +597,7 @@ def serParamsOfProps (S : Sheet) (env : Env) (props : List (String × String)) :
   let mut p : SerParams := {}
   for (name0, v) in props do
     let name := if name0 == "output-version" then "version" else name0
-    if name == "build-tree" || name == "indent-attributes" then continue
+    if name == "build-tree" then continue
     -- §26.1.5: the parameters of a serialization parameter document; a
     -- document that cannot be found is ignored
     if name == "parameter-document" then

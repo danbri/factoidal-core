@@ -101,7 +101,7 @@ def specOk (v : String) : Bool :=
 
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
-  ["higher_order_functions", "serialization", "backwards_compatibility", "dynamic_evaluation",
+  ["higher_order_functions", "serialization", "backwards_compatibility", "dynamic_evaluation", "disabling_output_escaping",
    "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types"].contains f
 
 def depOk (d : Node) : Bool :=
@@ -367,7 +367,7 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
             let envM := (((({} : Env).bind q (sStr out)).bind pq (sStr txt)).bind fq (sStr (attrD a "flags")))
             match evalIn envM "matches($l4ser, $l4pat, $l4flags)" with
             | .ok [.atom ⟨_, .bool true⟩] => .pass
-            | .ok _ => .fail ("serialization '" ++ cut out 120 ++ "' does not match " ++ cut txt 60)
+            | .ok _ => .fail ("serialization '" ++ cut out 300 ++ "' does not match " ++ cut txt 60)
             | .error e => .fail ("serialization-matches raised " ++ e.code)
       | "assert-serialization" =>
           match rc.ser s with
@@ -375,7 +375,7 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
           | .ok out =>
             let ok := if attrD a "normalize-space" == "true" then normSp out == normSp txt
               else out == txt || xmlEq env s txt
-            ok? ok ("serialization '" ++ cut out 120 ++ "'")
+            ok? ok ("serialization '" ++ cut out 300 ++ "'")
       | "assert-xml" =>
           ok? (xmlEq env s txt) ("xml " ++ (cut (serSeq env s) 600))
       | other => .fail ("assertion " ++ other ++ " is not evaluated")
