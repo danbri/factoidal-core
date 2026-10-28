@@ -363,6 +363,11 @@ export async function denoReexec (options) {
     return null
   }
   if (granted.indexOf('run') < 0 || granted.indexOf('read') < 0) return null
+  // A `deno compile` executable is not the deno command: given `run ...` it
+  // reads `run` as a factoidal command (found 2026-10-28, building the
+  // single-file executables of docs/designissues/2026-10-28-single-file-app.md).
+  // It packs in process instead.
+  if (!/^deno(\.exe)?$/i.test(Deno.execPath().split(/[\\/]/).pop())) return null
   const main = Deno.mainModule.startsWith('file://')
     ? fileUrlToPath(Deno.mainModule)
     : Deno.mainModule

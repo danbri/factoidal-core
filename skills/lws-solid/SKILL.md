@@ -1059,6 +1059,7 @@ CONFIGDIR holds one Markdown file per mount (`README.md` is not one):
 | `formal/lean4/L4Factoidal/WebDAV/Config.lean` | mount files (one loop; theorem `scan_known`) |
 | `formal/lean4/L4Factoidal/WebDAV/Server.lean` | every method as a program over six storage operations (`Backend.Prog`); theorem `refused_keeps_state` |
 | `formal/lean4/L4Factoidal/WebDAV/Local.lean`, `Remote.lean` | an operation as one LWS request; as one LWS client operation (the one module that uses the client API) |
+| `formal/lean4/L4Factoidal/WebDAV/MediaType.lean` | the media type of a PUT or LOCK with no Content-Type, from the name's extension (https://github.com/danbri/factoidal/issues/1122) |
 | `formal/lean4/L4Factoidal/WebDAV/Xml.lean`, `If.lean`, `Path.lean` | XML bodies (depth limit 256, work-list serializer), the `If` header, targets |
 | `formal/lean4/L4Factoidal/WebDAV/Login.lean` | the users file, HTTP Basic, the PBKDF2 request, `ctEq`, the login cache, the failed-login limit (`Failures`, `limitsOf`), the loopback rule, `webdav-user`'s line edit; theorems `gate_none`, `finish_unknown`, `gate_no_derive_of_blocked` |
 | `formal/lean4/L4Factoidal/WebDAV/State.lean` | `DavState` (dead properties, locks) as the JSON text of `CONFIGDIR/.webdav-state.json`, and back; refuses an unknown format or version |
