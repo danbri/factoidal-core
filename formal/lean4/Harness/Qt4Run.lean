@@ -80,6 +80,8 @@ def defective : List (String × String) :=
   -- F&O 4.0: fn:duration-to-seconds takes xs:dayTimeDuration?, so an
   -- xs:yearMonthDuration argument is XPTY0004
   ++ [ ("duration-to-seconds-016", "https://github.com/danbri/factoidal/issues/1158") ]
+  -- Serialization 4.0 §11: the adaptive method names the primitive type
+  ++ [ ("Serialization-adaptive-37a", "https://github.com/danbri/factoidal/issues/1160") ]
 
 /-- Defective in XPath mode only: the expected result reads an XQuery
     predefined entity reference or a character reference in a string

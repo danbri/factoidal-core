@@ -1002,7 +1002,11 @@ def Env.adaptiveItem (e : Env) (p : SerParams) : Nat → Item → W Unit
       else
         let s ← (e.writeMarkup { p with method := "xml", itemSep := none, omitDecl := true } [.node n] : M String)
         emit s
-    | .jnode _ _ v _ => e.adaptiveMember p f v
+    -- Serialization 4.0 §11: jtree(V) for a parentless JNode, else jnode(K:V)
+    | .jnode _ steps v _ =>
+      match steps with
+      | [] => emit "jtree(" *> e.adaptiveMember p f v *> emit ")"
+      | st :: _ => emit ("jnode(" ++ p.adaptiveAtom st.key ++ ":") *> e.adaptiveMember p f v *> emit ")"
     | .arr ms =>
       emit "["
       let mut first := true
