@@ -164,8 +164,12 @@ def depOk (xq : Bool) (d : Node) : Bool :=
   match ty with
   | "spec" => specOk v xq
   | "feature" =>
+      -- XQuery: the Module Feature (XQuery 4.0 §5.2, `XQuery4.Module`); the
+      -- DTD information of the infoset (attribute defaults, ID and IDREF
+      -- attributes, `XML.Parser` with `XPath4.docKids`)
+      let has (f : String) : Bool := featureSupported f || (xq && f == "moduleImport") || f == "infoset-dtd"
       let fs := v.splitOn " "
-      if sat then fs.all featureSupported else !(fs.all featureSupported)
+      if sat then fs.all has else !(fs.all has)
   | "xml-version" =>
       let has := (v.splitOn " ").any (fun x => x == "1.0" || x == "1.0:4-" || x.startsWith "1.0")
       if sat then has else !has
