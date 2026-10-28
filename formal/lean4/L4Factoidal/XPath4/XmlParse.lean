@@ -137,6 +137,8 @@ structure ParseOpts where
   dtdValidation : Bool := false
   stripAll : Bool := false
   trustExternal : Bool := false
+  /-- `xsd-validation`: `skip`, or a mode for `SchemaHook.validate`. -/
+  xsd : String := "skip"
 
 def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
   checkOptionKeys opts parseXmlOptionNames
@@ -151,8 +153,16 @@ def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
   if ← optBool opts "xinclude" false then
     err "FODC0013" "no XInclude processor is available"
   let xsd := optionStr opts "xsd-validation" "skip"
-  if xsd != "skip" then err "FODC0009" "this processor is not schema-aware"
-  pure { baseUri := base, dtdValidation := dtd, stripAll := strip == "all", trustExternal := trust }
+  pure { baseUri := base, dtdValidation := dtd, stripAll := strip == "all", trustExternal := trust, xsd }
+
+/-- The document of `kids`, validated when `xsd-validation` asks for it. -/
+def docOfKids (e : Env) (o : ParseOpts) (kids : List Node) (uri : String) : M Doc :=
+  if o.xsd == "skip" then pure (Doc.ofNodes kids uri)
+  else match e.schema.validate, kids.find? (fun k => match k with | .element .. => true | _ => false) with
+    | some f, some root => match f o.xsd root uri with
+      | .ok d => pure d
+      | .error x => throw x
+    | _, _ => err "FODC0009" "no schema to validate with"
 
 /-- The children of a parsed document after the whitespace rules of the
     options (`strip-space`, and ignorable whitespace under DTD
@@ -208,7 +218,7 @@ def parseXmlFn : LibFn := fun _ e a => do
     let o ← parseOpts e (argN a 1)
     let d ← parseDocument e o src
     let kids := docKids o d
-    let doc := { Doc.ofNodes kids with baseUri := o.baseUri }
+    let doc := { (← docOfKids e o kids "") with baseUri := o.baseUri }
     pure [doc.rootItem (runtimeDocId "parse-xml" src.str)]
 
 /-! ## fn:parse-xml-fragment -/
@@ -249,7 +259,7 @@ def parseFragmentFn : LibFn := fun _ e a => do
         | _ => []
       let kids := if o.stripAll then (kids.filter (fun k => match k with
           | .text t => !isXmlWs t | _ => true)).map (stripWs 100000 false) else kids
-      let doc := { Doc.ofNodes kids with baseUri := o.baseUri }
+      let doc := { (← docOfKids e o kids "") with baseUri := o.baseUri }
       pure [doc.rootItem (runtimeDocId "parse-xml-fragment" src.str)]
 
 /-! ## Text resources -/
@@ -432,8 +442,12 @@ def docFn (e : Env) (a : List Seq) : M Seq := do
         let uri := resolveUri e.baseUri u.str
         let kids := docKids o d
         -- documents read with different options are different documents
-        let oSig := toString o.stripAll ++ toString o.dtdValidation ++ toString o.trustExternal
-        pure [(Doc.ofNodes kids uri).rootItem (runtimeDocId "doc" (uri ++ "|" ++ oSig))]
+        let oSig := toString o.stripAll ++ toString o.dtdValidation ++ toString o.trustExternal ++ o.xsd
+        -- fn:doc: a document that cannot be validated is not available (FODC0002)
+        let doc ← match docOfKids e o kids uri with
+          | .ok d => pure d
+          | .error x => err "FODC0002" x.msg
+        pure [doc.rootItem (runtimeDocId "doc" (uri ++ "|" ++ oSig))]
       | none => err "FODC0002" ("document not available: " ++ u.str)
 
 def xmlParseTable : List (String × LibFn) := [
