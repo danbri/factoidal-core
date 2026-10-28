@@ -530,7 +530,7 @@ def jsonTable : List (String × LibFn) := [
     match optAtom (argN a 0) with
     | none => pure []
     | some u =>
-      let txt ← textResource e u.str
+      let txt ← textResourceWith e u.str none false (xmlChars := false)
       parseJsonFn h e txt (argN a 1)),
   ent "json-to-xml" (fun h e a => do
     match optAtom (argN a 0) with

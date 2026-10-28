@@ -658,7 +658,7 @@ def systemIds (txt : String) : List String :=
     directory. Read in advance, as text, because the evaluator does no
     I/O. Only files under the suite root are read. -/
 def scanResources (root dir src : String) : IO (List (String × String) × List (String × ByteArray)) := do
-  let isPathChar (c : Char) := c.isAlphanum || c == '_' || c == '.' || c == '/' || c == '-'
+  let isPathChar (c : Char) := c.isAlphanum || c == '_' || c == '.' || c == '/' || c == '-' || c == '+'
   let mut toks : List String := []
   let mut cur : String := ""
   for c in src.toList ++ [' '] do

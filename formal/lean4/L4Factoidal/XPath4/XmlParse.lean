@@ -340,7 +340,7 @@ def utf8Lossy (bs : ByteArray) : String := Id.run do
     an encoding was given; FOUT1200 when none was given and the inferred
     one cannot decode them. With `fallback`, a character that cannot be
     decoded or is not permitted becomes U+FFFD. -/
-def decodeResource (bs : ByteArray) (cand : Option String) (fallback : Bool) : M String := do
+def decodeResource (bs : ByteArray) (cand : Option String) (fallback : Bool) (xmlChars : Bool := true) : M String := do
   if let some c := cand then
     if !supportedEncodings.contains c.toUpper then err "FOUT1190" ("unsupported encoding " ++ c)
   let (enc, off) := inferEncoding bs cand
@@ -359,25 +359,27 @@ def decodeResource (bs : ByteArray) (cand : Option String) (fallback : Bool) : M
       else if fallback then pure (String.ofList (body.toList.map (fun x => if x < 128 then Char.ofNat x.toNat else '\uFFFD')))
       else fail
     | _ => pure (String.ofList (body.toList.map (fun x => Char.ofNat x.toNat)))
-  if text.toList.any (fun c => !isXmlCp c.toNat) then
+  if xmlChars && text.toList.any (fun c => !isXmlCp c.toNat) then
     if fallback then pure (String.ofList (text.toList.map (fun c => if isXmlCp c.toNat then c else '\uFFFD')))
     else err "FOUT1190" "the resource contains a character that is not allowed in XML"
   else pure text
 
-def textResourceWith (e : Env) (href : String) (cand : Option String) (fallback : Bool) : M String := do
+/-- `xmlChars := false` reads a resource whose characters need not be
+    XML characters (`fn:json-doc`: the JSON parser reports them). -/
+def textResourceWith (e : Env) (href : String) (cand : Option String) (fallback : Bool) (xmlChars : Bool := true) : M String := do
   if (href.splitOn "#").length > 1 then err "FOUT1170" "a fragment identifier is not allowed"
   match e.resourceBin href with
   | some bs =>
     -- with no $encoding, external encoding information is used first
     let ext := (e.resourceEncodings.lookup href).orElse (fun _ => e.resourceEncodings.lookup (resolveUri e.baseUri href))
-    decodeResource bs (cand.orElse (fun _ => ext)) fallback
+    decodeResource bs (cand.orElse (fun _ => ext)) fallback xmlChars
   | none =>
   match e.resource href with
   | some t =>
     if let some c := cand then
       if !supportedEncodings.contains c.toUpper then err "FOUT1190" ("unsupported encoding " ++ c)
     let bad : Bool := t.toList.any (fun c => !isXmlCp c.toNat)
-    if bad && !fallback then err "FOUT1190" "the resource contains a character that is not allowed in XML"
+    if xmlChars && bad && !fallback then err "FOUT1190" "the resource contains a character that is not allowed in XML"
     let t' : String := if t.startsWith "\uFEFF" then (t.drop 1).toString else t
     pure t'
   | none => err "FOUT1170" ("resource not available: " ++ href)
