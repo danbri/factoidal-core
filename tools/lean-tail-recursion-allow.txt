@@ -748,7 +748,7 @@ L4Factoidal_Regex_CRe_dotAll  # (b) nesting of one regular expression
 L4Factoidal_Regex_CRe_repeatExact  # (b) the count of one {n} quantifier in the pattern (query or schema text)
 L4Factoidal_Regex_CRe_size  # (b) nesting of one regular expression
 L4Factoidal_Regex_absorbMarkers  # (b) nesting of one regular expression
-L4Factoidal_Regex_cmatch  # (a) PENDING https://github.com/danbri/factoidal/issues/816 the star case recurses once per repetition over the matched text (data), and every level maps all outcomes of the level below (quadratic memory); expected failure: tests/stack case regex-replace-groups, 5,000 repetitions overflow at 512 KB (split from issue 752)
+L4Factoidal_Regex_cmatchE  # (a) PENDING https://github.com/danbri/factoidal/issues/816 the star case recurses once per repetition over the matched text (data), and each repetition nests one more continuation (was `cmatch` until the F&O 4.0 dialect made `cmatch` a wrapper that passes no captures); expected failure: tests/stack case regex-replace-groups, 5,000 repetitions overflow at 512 KB (split from issue 752)
 L4Factoidal_Regex_cparseAlt  # (b) branches of one alternation in one regex pattern (query text); fuel-bounded
 L4Factoidal_Regex_cparseSeq  # (b) atoms of one sequence in one regex pattern (query text); fuel-bounded
 L4Factoidal_Regex_dotAll  # (b) nesting of one regular expression
@@ -1608,7 +1608,25 @@ L4Factoidal_SPARQLRL_inst  # (c) triple-term depth of the template term, at most
 L4Factoidal_SPARQLRL_occurs  # (c) depth of a term after substitution, at most the summed depth of two parsed triples (6 * (maxNesting + 1)); also fuel-bounded
 L4Factoidal_SPARQLRL_unify  # (c) depth of a term after substitution, at most 6 * (SPARQLRL.maxNesting + 1); also fuel-bounded (patternMatchesTemplate)
 L4Factoidal_SPARQLRL_resolveImportsAux  # (c) import nesting, at most 64 (the fuel of RuleSet.resolveImports); the import step is a List.foldl
+# --- Added 2026-10-28, the F&O 4.0 regex dialect (Regex/XPath40.lean) ---
+L4Factoidal_Regex_XPath40_pAlt  # (b) regular expression parser; fuel decreases at each call; depth is the parenthesis nesting and the sequence length of one pattern (query text), as XSDPattern.parseAlt
+L4Factoidal_Regex_XPath40_pSeq  # (b) regular expression parser; fuel decreases at each call; atoms of one sequence in one pattern (query text), as XSDPattern.parseSeq
+L4Factoidal_Regex_XPath40_pPiece  # (b) regular expression parser; fuel decreases at each call; depth is the parenthesis nesting of the pattern
+L4Factoidal_Regex_XPath40_pAtom  # (b) regular expression parser; fuel decreases at each call; depth is the parenthesis nesting of the pattern
+L4Factoidal_Regex_XPath40_pGroup  # (b) regular expression parser; fuel decreases at each call; depth is the parenthesis nesting of the pattern
+L4Factoidal_Regex_XPath40_classExpr  # (b) nesting of character class subtractions in one pattern (query text); fuel-bounded
+L4Factoidal_Regex_XPath40_toCRe  # (b) nesting of one parsed regular expression
+L4Factoidal_Regex_XPath40_toRe  # (b) nesting of one parsed regular expression
+L4Factoidal_Regex_XPath40_sentinelAnchors  # (b) nesting of one parsed regular expression
+L4Factoidal_Regex_XPath40_lookbehindsSimple  # (b) nesting of one parsed regular expression
+L4Factoidal_Regex_XPath40_simpleAlts  # (b) alternatives of one lookbehind body in one pattern (query text)
+L4Factoidal_Regex_XPath40_simpleAlts_simpleSeq  # (b) atoms of one lookbehind alternative in one pattern (query text)
+L4Factoidal_Regex_XPath40_behindCRe  # (b) alternatives of one lookbehind body in one pattern (query text)
+L4Factoidal_XPath4_lookaheadGroups  # (b) nesting of one parsed regular expression
 # --- Added 2026-10-28, EXPath File 4.0 evaluator (https://github.com/danbri/factoidal/issues/1101) ---
 L4Factoidal_EXPath_File_exec  # (b) the depth is the nesting of the XPath expression (EXPath File 4.0 evaluator, issue 1101)
 L4Factoidal_EXPath_File_hasWrite  # (b) the depth is the nesting of the XPath expression (EXPath File 4.0, issue 1101)
 L4Factoidal_EXPath_Binary_packBE  # (s) specification only: no emitted C outside Binary/Octets.lean and Binary/Theorems.lean calls it; bin:pack-* call the loop packBEAcc (packBE_eq_packBEAcc)
+# --- 2026-10-28, graph pipelines (https://github.com/danbri/factoidal/issues/1130)
+L4Factoidal_Dataflow_gather  # (c) one frame per input port of one stage; the ports come from the Lean signature tables (at most 2 today); recursion stops at the last port
+L4Factoidal_Dataflow_srcIssues  # (c) one frame per input port of one stage, as gather; extra sources stop at the last port with one portCount issue

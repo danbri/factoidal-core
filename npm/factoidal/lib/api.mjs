@@ -992,6 +992,30 @@ function buildApi(driver) {
   }
 
   /**
+   * The RDF merge of two datasets (RDF 1.1 Semantics section 5.2): a new
+   * Dataset that holds the quads of both, with the blank nodes of each input
+   * kept apart, so `_:b` in `a` and `_:b` in `b` are two blank nodes. The
+   * engine computes it (op datasetMerge, formal/lean4/Wasm/Ops/GraphNodes.lean,
+   * theorem mergeDatasets_isMerge); the prefixes are those of `a`, then those
+   * of `b` whose label `a` does not declare. A text argument is read as by
+   * parse() (`options.format`, `options.baseIRI`), in its own blank-node
+   * scope. Since 0.21.0 (https://github.com/danbri/factoidal/issues/1130).
+   * @param {Dataset|string|Array} a
+   * @param {Dataset|string|Array} b
+   * @param {{format?: string, baseIRI?: string}} [options] read text arguments
+   * @returns {Promise<Dataset>}
+   */
+  async function datasetMerge(a, b, options) {
+    // An engine built before the op refuses with op.unknown before the
+    // options are read (its option table has no row for this function).
+    requireEntryFn((await ctx()).e, 'datasetMerge', 'datasetMerge');
+    const opts = await checkedOptions('datasetMerge', optionsOf('datasetMerge', options));
+    return withDataset(a, opts, 'datasetMerge', (c, da) =>
+      withDataset(b, opts, 'datasetMerge', (_c, db) =>
+        c.wrap(entryResult(c.e.datasetMerge(da.handle, db.handle), 'datasetMerge'))));
+  }
+
+  /**
    * A Dataset holding RDF/JS quads (op datasetFromQuadsJson). Each term is
    * sent as its components; the engine reads no text.
    * @param {Iterable<object>} quads
@@ -2471,6 +2495,8 @@ function buildApi(driver) {
       stages: has('stageList'),
       pipelineCheck: has('pipelineCheck'),
       pipelineCheckNodes: has('pipelineCheckNodes'),
+      graphCheck: has('graphCheckNodes'),
+      datasetMerge: has('datasetMerge'),
       entailment: has('queryRaw'),
       tableau: has('tableauMaterialise') && has('tableauDlInconsistent'),
       rml: has('rmlMap'),
@@ -2606,6 +2632,7 @@ function buildApi(driver) {
   const nodeApi = buildNodes({
     entry, entryResult, requireEntryFn, Dataset,
     parse, closure, shaclValidate, query, serialize, canonicalize, canonicalHash, explain, csvwToRdf,
+    datasetMerge,
   });
 
   // Controlled Identifiers v1.0 (lib/cid.mjs, issue 1100 items 7 and 9).
@@ -2639,6 +2666,7 @@ function buildApi(driver) {
     stages: nodeApi.stages,
     node: nodeApi.node,
     pipe: nodeApi.pipe,
+    graph: nodeApi.graph,
     run: nodeApi.run,
     rdfsPlusClosure,
     rhoDfClosure,
@@ -2698,6 +2726,7 @@ function buildApi(driver) {
     _deltaLogCorruptLastForTest,
     queryRaw,
     isomorphic,
+    datasetMerge,
     fromQuads,
     literalValue,
     isValidLiteral,

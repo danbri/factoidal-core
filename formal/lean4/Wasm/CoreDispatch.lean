@@ -142,6 +142,7 @@ def fullOnlyOpNames : List String :=
   , "owlIsConsistent", "owlEntails"
   , "clParse", "clSerialize", "clAlphaNorm", "clNormalize", "clFiniteSat"
   , "proofCheck", "proofInspect", "explainGraph", "stageList", "pipelineCheck", "pipelineCheckNodes"
+  , "graphCheckNodes", "datasetMerge"
   , "toanSummation", "toanProduct", "toanSimplify", "toanDiff", "toanSubst"
   , "xmppJidParse", "xmppJidRender", "xmppStreamHeaderParse"
   , "xmppStreamHeaderRender", "xmppFeaturesFor", "xmppStanzaParse"

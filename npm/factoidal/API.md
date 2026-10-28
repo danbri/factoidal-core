@@ -1747,6 +1747,96 @@ contract, so `checked` is false and `run()` needs `{ unchecked: true }`)
 `stages()` marks a stage `bound` only when the engine also reports it
 runnable.
 
+### Graphs: nodes with named ports, `graph`, `datasetMerge` (after 0.20.0)
+
+> These need a wasm module built after 0.20.0 (the ops `graphCheckNodes` and
+> `datasetMerge`). With an older module `graph()` throws a `FactoidalError`
+> with code `op.unknown`, and `node('datasetMerge')` rejects as an unknown
+> stage. `capabilities()` reports `graphCheck` and `datasetMerge`.
+
+```js
+import { node, graph, run, datasetMerge, parse } from "@factoidal/core";
+
+const doc = "_:b <http://example.org/p> <http://example.org/o> .\n";
+const reader = await node("nquadsDocumentReader");
+const g = graph({
+  inputs: ["String", "String"],            // the wire of each graph input
+  nodes: [
+    { node: reader, from: [{ input: 0 }] },                       // node 0
+    { node: reader, from: [{ input: 1 }] },                       // node 1
+    { node: await node("datasetMerge"), from: [{ node: 0 }, { node: 1 }] },
+    { node: await node("shippedEvaluator", { query: "SELECT ?s WHERE { ?s ?p ?o }" }),
+      from: [{ node: 2 }] },
+  ],
+});
+const r = await run(g, [doc, doc]);
+console.log(r.graph.length);   // 2: one blank node from each document
+console.log(r.values[2].size); // 2 quads in the merge
+console.log(r.assumptions, r.proved); // [] true
+
+const m = await datasetMerge(await parse(doc, "nquads"), await parse(doc, "nquads"));
+console.log(m.size); // 2
+```
+
+A node has input ports: `node.ports` is a list of `{name, wire}`. A
+registry stage has one port, `in`, on its `wireIn`. A port stage has more
+than one port; today there is one, `datasetMerge`, with ports `left` and
+`right` on `Dataset` and output `Dataset`. Its contract is the Lean predicate
+`DatasetDen.IsMerge`: the output denotes an RDF merge of the two inputs (RDF
+1.1 Semantics section 5.2), so the blank nodes of the two inputs are kept
+apart. Its status is `proved` and it has no named assumption. A port stage
+is not in `stages()`: the registry has one input wire per stage.
+`node('datasetMerge')` reads it from the op `graphCheckNodes`. A setting on
+it is outside its proved domain, and the node is then `unproved`.
+
+`graph({ inputs, nodes })` makes a graph. `inputs` is the wire of each graph
+input (a wire label of `stages()`: `String` for text, `Dataset`, ...).
+`nodes` lists the nodes in order; each is `{ node, from }`, where `from` has
+one source per input port, in port order: `{ input: k }` (graph input `k`) or
+`{ node: j }` (the output of node `j`). One output can feed many nodes. The
+last node's output is the graph's output. The engine checks the graph (op
+`graphCheckNodes`, Lean `graphIssues` of
+`formal/lean4/L4Factoidal/Dataflow/Graph.lean`), and `graph()` throws a
+`FactoidalError` with code `op.failed` when the check finds an issue;
+`err.issues` is the engine's list:
+
+| `kind` | Meaning | Fields |
+|---|---|---|
+| `unknownInput` | a port reads a graph input that does not exist | `node`, `port`, `portName`, `input` |
+| `forwardRef` | a port reads the node itself or a later node (a cycle; XProc 3.1 static error XS0001) | `node`, `port`, `portName`, `ref` |
+| `portCount` | the number of sources is not the number of ports | `node`, `ports`, `sources` |
+| `wireMismatch` | the source's wire neither equals the port's wire nor converts to it | `node`, `port`, `portName`, `source`, `portWire` |
+
+A graph with no issue has `g.check`: `wireOut` (the last node's output
+wire), `assumptions` (the union of the nodes' named assumptions), `contract`
+(`theorem`: `L4Factoidal.Dataflow.Graph.guarantee_sound`; `staticCheck`:
+`L4Factoidal.Dataflow.Graph.run_stage_error_only`) and `nodes` (per node the
+fields of `pipelineCheckNodes`, plus `kind`, `theorems`, `ports` and
+`wireOut`). The two theorems: when every assumption of the union holds, a
+successful run satisfies every node's contract on the values of its
+sources; and a run of a checked graph on inputs of the declared wires fails
+only in a stage's own run, never on a source, a port count or a wire.
+
+`run(g, inputs, options)` takes an array, one value per graph input (a value,
+or a wire value `{graph, evidence}`, whose records are kept). Each node runs
+on the values of its sources; a node with more than one port gets them in
+port order. The answer is `{graph, values, evidence, assumptions, proved,
+uncheckedSteps, wellTyped, issues}`: `graph` is the last node's value,
+`values` the value of every node, and `evidence` one record per node with
+`node` (its index) and `from` (its sources). The rules of the list `run()`
+apply: a stage that is not `proved` runs only with `{ unchecked: true }`, and
+`proved` is then false. `pipe()` refuses a node with more than one port.
+
+`datasetMerge(a, b, {format?, baseIRI?})` is the merge as a function: a new
+Dataset with the quads of both, the blank nodes of each input in their own
+scope (op `datasetMerge`, Lean theorem `mergeDatasets_isMerge`). The
+prefixes are those of `a`, then those of `b` whose label `a` does not
+declare. The inputs do not change.
+
+Design: [issue 1130](https://github.com/danbri/factoidal/issues/1130) and
+section "Stage 1" of
+[2026-10-28-dataflow-and-xproc.md](../../docs/designissues/2026-10-28-dataflow-and-xproc.md).
+
 ## API
 
 | Function | Signature (informal) | Notes |
@@ -1780,6 +1870,8 @@ runnable.
 | `owlClosure` | `(data, 'RDFS' \| 'OWL-RL') => Dataset` | input + derived triples, default graph |
 | `explain` | `(sources, description, {profile?, format?}) => {entailed, bundle, assumptions, rejection, entailedMeans}` | RDFS entailment of a graph with shared blank nodes, with evidence; see "Explaining an entailment" |
 | `stages`, `node`, `pipe`, `run` | `() => StageInfo[]`; `(name, params?) => Node`; `(...nodes) => Pipeline`; `(pipeline, input, {unchecked?}) => {graph, evidence, assumptions, proved, uncheckedSteps, wellTyped}` | registered Lean stages as nodes, evidence on the wires; see "Stages as nodes" |
+| `graph` | `({inputs, nodes: [{node, from}]}) => Graph`; `run(graph, inputs[], {unchecked?}) => {graph, values, evidence, assumptions, proved, …}` | nodes with named ports in an acyclic graph, checked by the engine (op `graphCheckNodes`); see "Graphs" |
+| `datasetMerge` | `(a, b, {format?, baseIRI?}) => Dataset` | the RDF merge of two datasets: blank nodes of each input kept apart (op `datasetMerge`) |
 | `coreRdfsClosure`/`rhoDfClosure`, `rdfsPlusClosure` | `(data) => Dataset` | ρdf closure, RDFS-Plus closure |
 | `coreRdfsCheck`/`rhoDfFragmentCheck` | `(data) => {ok, fragment}` | ρdf fragment check |
 | `tableauMaterialise` | `(data) => {dataset, addedCount, budgetHit}` | class-expression memberships; `budgetHit` true when the work budget ran out |

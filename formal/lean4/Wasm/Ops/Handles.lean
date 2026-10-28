@@ -1262,6 +1262,7 @@ def apiOptionTable : List (String × List (String × OptionDomain)) :=
   [ ("parse", parseOpts ++ [("lenient", .any), ("maxErrors", .any), ("rdfstar", .any)])
   , ("openDataset", parseOpts), ("registerServiceEndpoint", parseOpts)
   , ("update", parseOpts), ("canonicalize", parseOpts), ("isomorphic", parseOpts)
+  , ("datasetMerge", parseOpts)
   , ("shaclValidate", parseOpts), ("shexValidate", parseOpts), ("closure", parseOpts)
   , ("sparqlRlInfer", parseOpts)
   , ("coreRdfsCheck", parseOpts), ("tableauMaterialise", parseOpts)

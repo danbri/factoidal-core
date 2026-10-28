@@ -612,6 +612,15 @@ export function asDefaultGraph(dataset: Dataset): Dataset;
  */
 export function isomorphic(a: DataInput, b: DataInput, options?: { format?: string; baseIRI?: string }): Promise<boolean>;
 
+/**
+ * The RDF merge of two datasets (RDF 1.1 Semantics 5.2): the quads of both,
+ * with the blank nodes of each input kept apart (`_:b` in `a` and `_:b` in
+ * `b` are two blank nodes). The engine computes it (op datasetMerge, Lean
+ * theorem mergeDatasets_isMerge). Prefixes: those of `a`, then those of `b`
+ * whose label `a` does not declare. Since 0.21.0.
+ */
+export function datasetMerge(a: DataInput, b: DataInput, options?: { format?: string; baseIRI?: string }): Promise<Dataset>;
+
 /** A Dataset holding RDF/JS quads; each term is sent to the engine as its components. */
 export function fromQuads(quads: Iterable<Quad>): Promise<Dataset>;
 
@@ -956,17 +965,30 @@ export interface Wire<G = unknown> {
   evidence: EvidenceRecord[];
 }
 
+/** An input port of a node: its name and its wire. */
+export interface NodePort {
+  readonly name: string;
+  readonly wire: string;
+}
+
 /** A node: a registered stage with its parameters. */
 export interface FactoidalNode {
   readonly stage: string;
   readonly kind: string | null;
   /** The engine's status of this node with its settings (see NodeStatus). */
   readonly status: NodeStatus;
-  /** The registry status of the stage. */
-  readonly registryStatus: StageInfo['status'];
+  /** The registry status of the stage; null for a stage with more than one port (not a registry entry). */
+  readonly registryStatus: StageInfo['status'] | null;
   readonly contract: string | null;
   readonly assumptions: readonly string[];
-  readonly wireIn: string;
+  /**
+   * The input ports: one port 'in' for a registry stage; for a stage with
+   * more than one port (datasetMerge: 'left', 'right'), the engine's list
+   * (op graphCheckNodes). Such a node runs only in graph().
+   */
+  readonly ports: readonly NodePort[];
+  /** The input wire of a one-port stage; null for a stage with more than one port. */
+  readonly wireIn: string | null;
   /**
    * The output wire with these settings: for shippedEvaluator, 'Table' for
    * SELECT, 'Answer' for ASK, 'Dataset' for CONSTRUCT and DESCRIBE (Lean
@@ -1066,8 +1088,73 @@ export function stages(): Promise<StageInfo[]>;
  */
 export function node(name: string, params?: Record<string, unknown>): Promise<FactoidalNode>;
 
-/** Compose nodes and pipelines left to right. */
+/** Compose nodes and pipelines left to right. A node with more than one input port throws a TypeError (use graph()). */
 export function pipe(...nodes: Array<FactoidalNode | Pipeline>): Pipeline;
+
+/** Where a port's value comes from: graph input `input`, or the output of node `node` (an earlier node). */
+export type GraphSource = { readonly input: number } | { readonly node: number };
+
+/** The request of graph(). */
+export interface GraphSpec {
+  /** The wire of each graph input: a wire label of stages() (e.g. 'String', 'Dataset'). */
+  inputs?: string[];
+  /** The nodes in order; `from` has one source per input port of the node. */
+  nodes: Array<{ node: FactoidalNode; from: GraphSource[] }>;
+}
+
+/** An issue of the engine's static check of a graph (op graphCheckNodes, Lean graphIssues). */
+export type GraphIssue =
+  | { readonly kind: 'unknownInput'; readonly node: number; readonly port: number; readonly portName: string; readonly input: number }
+  | { readonly kind: 'forwardRef'; readonly node: number; readonly port: number; readonly portName: string; readonly ref: number }
+  | { readonly kind: 'portCount'; readonly node: number; readonly ports: number; readonly sources: number }
+  | { readonly kind: 'wireMismatch'; readonly node: number; readonly port: number; readonly portName: string; readonly source: string; readonly portWire: string };
+
+/** The engine's check of a graph with no issue (op graphCheckNodes). */
+export interface GraphCheck {
+  readonly issues: readonly GraphIssue[];
+  /** The output wire of the last node. */
+  readonly wireOut: string | null;
+  /** The union of the nodes' named assumptions: the premises of Graph.guarantee_sound. */
+  readonly assumptions: readonly string[];
+  readonly contract: { readonly theorem: string; readonly staticCheck: string };
+  readonly nodes: readonly {
+    readonly name: string; readonly kind: string | null; readonly status: NodeStatus;
+    /** null for a stage with more than one port (not a registry entry). */
+    readonly registryStatus: StageInfo['status'] | null;
+    readonly checked: boolean; readonly contract: string | null;
+    readonly theorems: readonly string[]; readonly assumptions: readonly string[];
+    readonly ports: readonly NodePort[]; readonly wireOut: string;
+    readonly settings: Record<string, unknown>; readonly settingsDigest: string;
+    readonly roles: Readonly<Record<string, string>>;
+    readonly outside: readonly OutsideSetting[];
+    readonly derived: Readonly<Record<string, string>>;
+  }[];
+}
+
+/** A graph from graph(): checked by the engine, with no issue. */
+export interface FactoidalGraph {
+  readonly inputs: readonly string[];
+  readonly nodes: readonly { readonly node: FactoidalNode; readonly from: readonly GraphSource[] }[];
+  readonly wireOut: string | null;
+  readonly assumptions: readonly string[];
+  readonly check: GraphCheck;
+}
+
+/** The result of run() on a graph. */
+export interface GraphRunResult<G = unknown> extends RunResult<G> {
+  /** The output of each node, in order; `graph` is the last one. */
+  values: unknown[];
+  issues: GraphIssue[];
+}
+
+/**
+ * A pipeline that is an acyclic graph of nodes with named input ports
+ * (https://github.com/danbri/factoidal/issues/1130). The engine's op
+ * graphCheckNodes checks it: a graph with an issue throws a FactoidalError
+ * (code 'op.failed') whose `issues` is the engine's list; an engine without
+ * the op throws code 'op.unknown'. Since 0.21.0.
+ */
+export function graph(spec: GraphSpec): FactoidalGraph;
 
 /**
  * Run a node or pipeline on `input` (a Wire, or the graph: text for a
@@ -1080,6 +1167,12 @@ export function pipe(...nodes: Array<FactoidalNode | Pipeline>): Pipeline;
  * `wireOut` (see Wire).
  */
 export function run(pipeline: FactoidalNode | Pipeline, input: unknown, options?: RunOptions): Promise<RunResult>;
+/**
+ * Run a graph on `inputs`, one value per graph input. Each node runs on the
+ * values of its sources (a node with more than one port gets them in port
+ * order); one evidence record per node, with `node` (its index) and `from`.
+ */
+export function run(graph: FactoidalGraph, inputs: unknown[], options?: RunOptions): Promise<GraphRunResult>;
 
 /** Literature-name alias for coreRdfsClosure (ρdf). */
 export function rhoDfClosure(
@@ -1971,6 +2064,10 @@ export function capabilities(): Promise<{
   pipelineCheck: boolean;
   /** The op pipelineCheckNodes: node settings in evidence, and the evaluator's output wire from the query form. */
   pipelineCheckNodes: boolean;
+  /** The op graphCheckNodes: graph() and run() of a graph, and node('datasetMerge'). */
+  graphCheck: boolean;
+  /** The op datasetMerge: datasetMerge(). */
+  datasetMerge: boolean;
   tableau: boolean;
   rml: boolean;
   csvw: boolean;
