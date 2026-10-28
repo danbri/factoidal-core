@@ -35,6 +35,10 @@ def vSeed : QN := xv "seed"
 def vMergeGroup : QN := xv "merge-group"
 def vMergeKey : QN := xv "merge-key"
 def vOutUri : QN := xv "output-uri"
+/-- The current mode, for `fn:apply-templates` with `#current`. -/
+def vMode : QN := xv "mode"
+/-- The tunnel parameters in force, for `fn:apply-templates`. -/
+def vTunnel : QN := xv "tunnel"
 
 /-- The key of the map that stands for an `xsl:array-member` parcel. -/
 def memberKey : Atomic := Atomic.ofQN (xv "array-member")
@@ -50,6 +54,8 @@ structure XSt where
   base : Nat := 0
   counter : Nat := 0
   msgs : Array String := #[]
+  /-- The messages as document nodes (§23.1). -/
+  msgDocs : Array Item := #[]
   /-- Secondary results: href, value, output definition key, and the
       serialization parameters of the instruction. -/
   results : Array (String × Seq × String × List (String × String)) := #[]
@@ -108,6 +114,9 @@ def evalX (cx : Ctx) (e : Expr) : XM Seq := do
   let vars := match cx.env.ctx with
     | some c => (vCurrent, c) :: vars
     | none => vars
+  let vars := (vMode, [.atom (Atomic.ofStr cx.mode)]) :: vars
+  let vars := if cx.tunnel.isEmpty then vars
+    else (vTunnel, [.map (cx.tunnel.map (fun (q, v) => (Atomic.ofQN q, v)))]) :: vars
   match eval 100000 { cx.env with vars, compat10 := cx.backCompat } e with
   | .ok v => pure v
   | .error er =>
@@ -411,7 +420,8 @@ def ipMatch (env : Env) : Nat → IPat → Item → Bool
 /-- Pattern matching with errors masked (§6.5). -/
 def Pattern.matches (p : Pattern) (env : Env) (it : Item) : Bool :=
   -- `current()` in a pattern is the item being matched (§20.4.1)
-  let env := { env with vars := (vCurrent, [it]) :: env.vars }
+  -- and the current captured groups are empty in a pattern (§17.2.1)
+  let env := { env with vars := (vCurrent, [it]) :: (vRegex, [.map []]) :: env.vars }
   match p.ip with
   | some (ip, _) => ipMatch env 200 ip it
   | none =>
@@ -602,6 +612,116 @@ def groupDigits (s : String) (sep : String) (size : Nat) : String :=
   String.ofList (go cs 0 [])
 
 
+def lookupVar (vs : List (QN × Seq)) (q : QN) : Option Seq :=
+  (vs.find? (fun (v, _) => v == q)).map (·.2)
+
+/-! ## Regular expressions (§17) -/
+
+/-- A segment of the input of `xsl:analyze-string`: matching or not, its
+    string, and (for a matching segment) its captured groups, group zero
+    first (§17.2.1). -/
+structure ASPart where
+  isMatch : Bool
+  str : String
+  groups : List (Atomic × Seq) := []
+
+/-- The matching segment `sg` of `input` as a part: its string, and its
+    captured groups with group zero first. -/
+def matchPart (input : List Nat) (re : Re4) (sg : Seg) : ASPart :=
+  let whole := cpsStr (Regex.slice input sg.start sg.stop)
+  let g0 : Atomic × Seq := (Atomic.ofInt 0, [.map [(Atomic.ofStr "value", sStr whole),
+    (Atomic.ofStr "position", sInt (sg.start + 1)), (Atomic.ofStr "nr", sInt 0), (Atomic.ofStr "name", [])]])
+  { isMatch := true, str := whole, groups := g0 :: groupRecords input re sg.caps }
+
+/-- The parts from offset `cur`: each matching segment, after the
+    non-matching segment before it, and the rest of the input. -/
+def partsFrom (input : List Nat) (re : Re4) : Nat → List Seg → List ASPart
+  | cur, [] =>
+    if input.length > cur then [{ isMatch := false, str := cpsStr (Regex.slice input cur input.length) }] else []
+  | cur, sg :: rest =>
+    (if sg.start > cur then [{ isMatch := false, str := cpsStr (Regex.slice input cur sg.start) }] else []) ++
+    matchPart input re sg :: partsFrom input re (max cur sg.stop) rest
+
+/-- The segments that `xsl:analyze-string` processes (§17.1): the
+    matching segments of `fn:matching-segments` (`XPath4.segments`), with
+    the non-matching segments between them. -/
+def analyzeParts (s : String) (re : Re4) : List ASPart :=
+  let input := s.toList.map Char.toNat
+  partsFrom input re 0 (segments re.r input)
+
+/-- The numbering sequences of single characters that `xsl:number`
+    knows beyond `fn:format-integer` (§12.4: implementation-defined
+    sequences): name, the character for zero if Unicode has one, and the
+    ranges of consecutive code points (first number, last number, code
+    point of the first). -/
+def numberingSequences : List (String × Option Nat × List (Nat × Nat × Nat)) := [
+  ("CIRCLED DIGIT ONE", some 0x24EA, [(1, 20, 0x2460), (21, 35, 0x3251), (36, 50, 0x32B1)]),
+  ("PARENTHESIZED DIGIT ONE", none, [(1, 20, 0x2474)]),
+  ("DIGIT ONE FULL STOP", some 0x1F100, [(1, 20, 0x2488)]),
+  ("DINGBAT NEGATIVE CIRCLED DIGIT ONE", some 0x24FF, [(1, 10, 0x2776), (11, 20, 0x24EB)]),
+  ("DINGBAT CIRCLED SANS-SERIF DIGIT ONE", some 0x1F10B, [(1, 10, 0x2780)]),
+  ("DINGBAT NEGATIVE CIRCLED SANS-SERIF DIGIT ONE", some 0x1F10C, [(1, 10, 0x278A)]),
+  ("DOUBLE CIRCLED DIGIT ONE", none, [(1, 10, 0x24F5)]),
+  ("DIGIT ONE COMMA", some 0x1F101, [(1, 9, 0x1F102)]),
+  ("PARENTHESIZED IDEOGRAPH ONE", none, [(1, 10, 0x3220)]),
+  ("CIRCLED IDEOGRAPH ONE", none, [(1, 10, 0x3280)]),
+  ("SINHALA ARCHAIC DIGIT ONE", none, [(1, 10, 0x111E1)]),
+  ("RUMI DIGIT ONE", none, [(1, 10, 0x10E60)]),
+  ("COPTIC EPACT DIGIT ONE", none, [(1, 10, 0x102E1)]),
+  ("BRAHMI NUMBER ONE", none, [(1, 10, 0x11052)]),
+  ("AEGEAN NUMBER ONE", none, [(1, 10, 0x10107)]),
+  ("MENDE KIKAKUI DIGIT ONE", none, [(1, 9, 0x1E8C7)]),
+  ("COUNTING ROD UNIT DIGIT ONE", none, [(1, 9, 0x1D360)])]
+
+/-- A number in a sequence of `numberingSequences` whose first character
+    is `tok`; `none` if `tok` starts no such sequence. A number outside
+    the sequence is written in decimal digits (§12.4). -/
+def seqNumber (tok : String) (x : Int) : Option String :=
+  match tok.toList with
+  | [c] =>
+    (numberingSequences.find? (fun (_, _, rs) => rs.head?.any (fun (lo, _, cp) => lo == 1 && cp == c.toNat))).map
+      (fun (_, zero, rs) =>
+        let n := x.toNat
+        if x == 0 then match zero with
+          | some z => String.singleton (Char.ofNat z)
+          | none => "0"
+        else match rs.find? (fun (lo, hi, _) => lo ≤ n && n ≤ hi) with
+          | some (lo, _, cp) => String.singleton (Char.ofNat (cp + (n - lo)))
+          | none => toString x)
+  | _ => none
+
+/-- One number of `xsl:number` in the format token `tok` (§12.4): the
+    F&O 4.0 function `fn:format-integer`, with `;o` for an ordinal. -/
+def formatOne (env : Env) (x : Int) (tok : String) (ordS lng : Option String) : M String := do
+  let pic := match ordS with
+    | some o => if o == "" || o == "no" then tok else tok ++ ";o"
+    | none => tok
+  if x < 0 then pure "NaN" else
+  if let some t := (if ordS.isNone then seqNumber tok x else none) then pure t else do
+    let r ← callFn 100000 env { uri := nsFN, loc := "format-integer" }
+      [sInt x, sStr pic, match lng with | some l => sStr l | none => []]
+    pure (match r with | [.atom a] => a.str | _ => toString x)
+
+/-- The text of `xsl:number` (§12.4): the format string split into a
+    prefix, format tokens with their separators, and a suffix; each
+    number formatted by `formatOne`, then grouped. -/
+def numberText (env : Env) (nums : List Int) (fs : String) (gs gz ordS lng : Option String) : M String := do
+  let (pre, toks, suf) := numberFormatParts fs
+  let mut out := pre
+  let mut i := 0
+  for x in nums do
+    let (sep, tok) := toks.getD i (toks.getLast?.getD (".", "1"))
+    let sep := if i == 0 then "" else (if i < toks.length then (if sep == "" then "." else sep) else (match toks.reverse with
+      | (s, _) :: _ => if s == "" then "." else s
+      | [] => "."))
+    let fmtd ← formatOne env x tok ordS lng
+    let fmtd := match gs, gz with
+      | some g, some z => groupDigits fmtd g ((z.toNat?).getD 0)
+      | _, _ => fmtd
+    out := out ++ sep ++ fmtd
+    i := i + 1
+  pure (out ++ suf)
+
 /-! ## Helpers of the instructions -/
 
 /-- Not "deemed empty" (§8.5.1). -/
@@ -688,8 +808,15 @@ def resolveName (name : String) (ns : Option Avt) (scope : List (String × Strin
 /-- The evaluated attributes of `xsl:sort`s. -/
 def sortSpecs (cx : Ctx) (sorts : List SortK) : XM (List SortSpec) :=
   sorts.mapM (fun k => match k with
-    | .mk _ _ order _ dt co coll _ => do
+    | .mk _ _ order lang dt co coll st => do
       let o ← optAvtStr cx order
+      -- the value of lang must be a language code (XTDE0030)
+      if let some lg ← optAvtStr cx lang then
+        if !(lg == "" || lg.toList.all (fun ch => ch.isAlphanum || ch == '-')) then
+          xerr "XTDE0030" ("invalid language '" ++ lg ++ "' in xsl:sort")
+      if let some sv ← optAvtStr cx st then
+        if !(["yes", "no", "true", "false", "1", "0"].contains sv.trimAscii.toString) then
+          xerr "XTDE0030" ("invalid stable value '" ++ sv ++ "' in xsl:sort")
       let d ← optAvtStr cx dt
       let c ← optAvtStr cx co
       let cl ← optAvtStr cx coll
@@ -1230,11 +1357,17 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | _ => out := out.push (.item it)
         pure out.toList
     | .message sel body term code =>
-        let os ← match sel with
+        -- the message: the select value followed by the content (§23.1)
+        let os1 ← match sel with
           | some e => do pure (Out.ofSeq (← evalX cx e))
-          | none => run n S cx body
+          | none => pure []
+        let os := os1 ++ (← run n S cx body)
         let txt ← simpleContent env os ""
-        modify (fun s => { s with msgs := s.msgs.push txt })
+        let id ← freshId
+        let mdoc ← match materialize env id (.doc os "") with
+          | .ok d => pure [d]
+          | .error _ => pure []
+        modify (fun s => { s with msgs := s.msgs.push txt, msgDocs := s.msgDocs ++ mdoc.toArray })
         let t := (← avtStr cx term).trimAscii.toString
         match parseBool t with
         | some true =>
@@ -1284,31 +1417,11 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | none => pure [1]
         let nums := nums.zipIdx.map (fun (x, i) => if x < 0 then x else x + (start.getD i (start.getLast?.getD 1)) - 1)
         let fs ← avtStr cx fmt
-        let (pre, toks, suf) := numberFormatParts fs
         let gs ← optAvtStr cx gsep
         let gz ← optAvtStr cx gsize
         let ordS ← optAvtStr cx ord
         let lng ← optAvtStr cx lang
-        let mut out := pre
-        let mut i := 0
-        for x in nums do
-          let (sep, tok) := toks.getD i (toks.getLast?.getD (".", "1"))
-          let sep := if i == 0 then "" else (if i < toks.length then (if sep == "" then "." else sep) else (match toks.reverse with
-            | (s, _) :: _ => if s == "" then "." else s
-            | [] => "."))
-          let pic := match ordS with
-            | some o => if o == "" || o == "no" then tok else tok ++ ";o"
-            | none => tok
-          let fmtd ← if x < 0 then pure "NaN" else do
-            let r ← liftX (callFn 100000 env { uri := nsFN, loc := "format-integer" }
-              [sInt x, sStr pic, match lng with | some l => sStr l | none => []])
-            pure (match r with | [.atom a] => a.str | _ => toString x)
-          let fmtd := match gs, gz with
-            | some g, some z => groupDigits fmtd g ((z.toNat?).getD 0)
-            | _, _ => fmtd
-          out := out ++ sep ++ fmtd
-          i := i + 1
-        pure [.text (out ++ suf)]
+        pure [.text (← liftX (numberText env nums fs gs gz ordS lng))]
     | .iterate sel params onComp body =>
         let s ← evalX cx sel
         -- initial parameter values
@@ -1373,10 +1486,11 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               match (code.drop 2).toString.splitOn "}" with
               | [u, l] => (u, l)
               | _ => (nsERR, code)
+            else if e.uri == "#none" then ("", code)
+            else if e.uri != "" then (e.uri, code)
             else (nsERR, code)
           let hit := catches.find? (fun (errs, _, _) => errs.any (fun t =>
-            t == "*" || t == "*:" ++ el || t == "Q{" ++ eu ++ "}*" || t == "Q{" ++ eu ++ "}" ++ el
-            || (eu == nsERR && t.endsWith ("}" ++ el))))
+            t == "*" || t == "*:" ++ el || t == "Q{" ++ eu ++ "}*" || t == "Q{" ++ eu ++ "}" ++ el))
           match hit with
           | none => throw e
           | some (_, csel, cbody) =>
@@ -1392,7 +1506,13 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             | some e2 => do pure (Out.ofSeq (← evalX ecx e2))
             | none => run n S ecx cbody
     | .analyzeString sel rx fl ms ns =>
-        let s ← atomStr cx (← evalX cx sel)
+        -- the input is coerced to xs:string; () is "" (§17.1)
+        let s ← match ← liftX (env.atomize (← evalX cx sel)) with
+          | [] => pure ""
+          | [a] =>
+            if a.isStringLike || a.ty == .untyped then pure a.str
+            else xerr "XPTY0004" ("xsl:analyze-string needs a string, not xs:" ++ a.ty.name)
+          | _ => xerr "XPTY0004" "xsl:analyze-string needs a single string"
         let pat ← avtStr cx rx
         let flags ← avtStr cx fl
         -- invalid flags are XTDE1145, an invalid pattern XTDE1140 (§17.1)
@@ -1401,27 +1521,15 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | .ok _ => false
         if badFlags then xerr "XTDE1145" ("invalid regular expression flags '" ++ flags ++ "'")
         let re ← orErr (compileRe4 pat flags) "XTDE1140" ("invalid regular expression '" ++ pat ++ "'")
-        if Regex.isMatch re.r "" then xerr "XTDE1150" "the regular expression matches a zero-length string"
-        let input := s.toList.map Char.toNat
-        let segs := segments re.r input
-        let mut parts : Array (Bool × String × List String) := #[]
-        let mut cur := 0
-        for sg in segs do
-          if sg.start > cur then parts := parts.push (false, cpsStr (Regex.slice input cur sg.start), [])
-          let groups := (List.range re.groups).map (fun i =>
-            match Regex.findCap sg.caps (i + 1) with
-            | some (a, b) => cpsStr (Regex.slice input a b)
-            | none => "")
-          parts := parts.push (true, cpsStr (Regex.slice input sg.start sg.stop), groups)
-          cur := sg.stop
-        if input.length > cur then parts := parts.push (false, cpsStr (Regex.slice input cur input.length), [])
-        let sz := parts.size
+        -- the disjoint matching segments of F&O 4.0 (fn:matching-segments)
+        -- with the non-matching segments between them
+        let parts := analyzeParts s re
+        let sz := parts.length
         let mut out : Array Out := #[]
         let mut k := 1
-        for (isM, str, gs) in parts.toList do
-          let rcx := (cx.focus (.atom (Atomic.ofStr str)) k sz).bind vRegex
-            [.arr ((str :: gs).map (fun g => sStr g))]
-          let b := if isM then ms else ns
+        for p in parts do
+          let rcx := (cx.focus (.atom (Atomic.ofStr p.str)) k sz).bind vRegex [.map p.groups]
+          let b := if p.isMatch then ms else ns
           match b with
           | some body => for o in ← run n S { rcx with rule := none } body do out := out.push o
           | none => pure ()
@@ -1436,13 +1544,29 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | none => pure none
         let mut acc : MB := {}
         for it in v do
+          -- a JNode whose value is a map stands for that map (4.0)
+          let it := match it with
+            | .jnode _ _ [m@(.map _)] _ => m
+            | other => other
           match it with
           | .map kvs =>
             for (k, x) in kvs do
               match acc.get? k with
               | some old =>
+                -- 4.0 duplicates: a function of the old and new values (a
+                -- function of one argument gets the old value only), or
+                -- one of the map:merge policies (§21.1.2)
                 match dupF with
-                | some [f] => acc := acc.set k (← liftX (apply 100000 env f [old, x]))
+                | some [.atom pol] =>
+                  match pol.str with
+                  | "use-first" | "use-any" => pure ()
+                  | "use-last" => acc := acc.set k x
+                  | "combine" => acc := acc.set k (old ++ x)
+                  | "reject" => xerr "XTDE3365" ("duplicate key " ++ k.str ++ " in xsl:map")
+                  | other => xerr "XTDE3366" ("invalid duplicates value '" ++ other ++ "'")
+                | some [f] =>
+                  let args := if f.fnArity == some 1 then [old] else [old, x]
+                  acc := acc.set k (← liftX (apply 100000 env f args))
                 | _ => xerr "XTDE3365" ("duplicate key " ++ k.str ++ " in xsl:map")
               | none => acc := acc.set k x
           | _ => xerr "XTTE3375" "the content of xsl:map must be maps"
@@ -1758,6 +1882,10 @@ def invoke : Nat → Sheet → Ctx → Tmpl → List (QN × Seq) → List (QN ×
     -- the template body sees the global variables and its parameters,
     -- not the caller's local variables
     let globals := cx.env.vars.dropWhile (fun (q, _) => !(q == xv "globals"))
+    -- the current captured groups are kept through template calls (§17.2.1)
+    let globals := match lookupVar cx.env.vars vRegex with
+      | some g => (vRegex, g) :: globals
+      | none => globals
     let mut tcx : Ctx := { cx with env := { cx.env with vars := globals }, rule := if t.pat.isSome then some t else cx.rule, tunnel := tun, inFn := false }
     if t.pat.isNone then tcx := { tcx with rule := cx.rule }
     for p in t.params do

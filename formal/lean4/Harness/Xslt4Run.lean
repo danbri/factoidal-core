@@ -33,6 +33,7 @@ processor, with no I/O except the reading of files under the suite
 root before the run.
 -/
 import L4Factoidal.XSLT4.Transform
+import L4Factoidal.XSLT4.FnTransform
 import L4Factoidal.XSLT4.Theorems
 import L4Factoidal.XSLT.Transform
 import L4Factoidal.XML.Canonical
@@ -102,7 +103,7 @@ def specOk (v : String) : Bool :=
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
   ["higher_order_functions", "serialization", "backwards_compatibility", "dynamic_evaluation",
-   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types", "namespace_axis"].contains f
+   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types", "dtd", "XML_1.1", "namespace_axis"].contains f
 
 def depOk (d : Node) : Bool :=
   let ty := localTag d
@@ -117,6 +118,17 @@ def depOk (d : Node) : Bool :=
   | "default_html_version" => if sat then v == "5" else v != "5"
   -- xsl:use-package picks the highest version that matches (§3.4.2)
   | "package_version_resolution" => if sat then v == "highest_version" else v != "highest_version"
+  -- xsl:assert is always evaluated
+  | "enable_assertions" => sat
+  -- dates are 64-bit: negative years, year zero (XSD 1.1) and years
+  -- above 9999
+  | "year_component_values" => sat
+  -- the numbering sequences of `XSLT4.numberingSequences`, in range
+  | "combinations_for_numbering" =>
+    let hi := ((((attrD d "range").splitOn "to").getD 1 "").trimAscii.toString.toNat?).getD 0
+    let ok := (L4Factoidal.XSLT4.numberingSequences.find? (·.1 == v)).any (fun (_, _, rs) =>
+      rs.any (fun (_, top, _) => hi ≤ top))
+    if sat then ok else !ok
   | _ => !sat
 
 /-! ## Environments -/
@@ -250,9 +262,19 @@ def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
   -- the fragment the assertion gives
   xmlEq1 env got expected.trimAscii.toString true
 
+/-- The error code of an error, with its namespace when it is not the
+    `err` namespace (`fn:error` with a QName). -/
+def errCode (e : Err) : String :=
+  if e.uri == "" then e.code else if e.uri == "#none" then "Q{}" ++ e.code else "Q{" ++ e.uri ++ "}" ++ e.code
+
 def codeMatches (expected got : String) : Bool :=
   expected == "*" || expected == got || ("err:" ++ got) == expected || expected.endsWith (":" ++ got) ||
-  expected == "Q{http://www.w3.org/2005/xqt-errors}" ++ got || got.endsWith ("}" ++ expected)
+  expected == "Q{http://www.w3.org/2005/xqt-errors}" ++ got || got.endsWith ("}" ++ expected) ||
+  -- a code given as a prefixed QName (the catalog's prefix is not read):
+  -- the local names agree and the error has a namespace
+  (match expected.splitOn ":", got.startsWith "Q{" && !got.startsWith "Q{}" with
+    | [_, l], true => got.endsWith ("}" ++ l)
+    | _, _ => false)
 
 /-- What an assertion sees: the delivered result, the raw result, the
     secondary results, and the serializer of the stylesheet. -/
@@ -273,7 +295,7 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
     | "error" =>
         let code := attrD a "code"
         match res with
-        | .error e => ok? (codeMatches code e.code) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ "): " ++ cut e.msg 100)
+        | .error e => ok? (codeMatches code (errCode e)) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ "): " ++ cut e.msg 100)
         | .ok s => .fail ("expected error " ++ code ++ ", got " ++ (sh s 80))
     | "any-of" =>
         let rs := (kids a).map (fun c => checkAssert rc f c)
@@ -290,14 +312,26 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
           | .pass => .fail "not: inner assertion held"
           | _ => .pass
         | none => .fail "empty not"
-    | "assert-message" | "assert-warning" => .pass
+    | "assert-message" =>
+        -- the contained assertion holds for one of the messages, each
+        -- delivered as a document node with its text
+        let msgs := (env.vars.find? (fun (q, _) => q == { uri := "", loc := "l4msgs" })).map (·.2) |>.getD []
+        match (kids a).head? with
+        | none => .pass
+        | some inner =>
+          let one (m : Item) : Bool :=
+            match checkAssert { rc with res := pure [m] } f inner with
+            | .pass => true
+            | _ => false
+          if msgs.any one then .pass else .fail ("assert-message: no message satisfies the assertion")
+    | "assert-warning" => .pass
     | "assert-serialization-error" =>
         let code := attrD a "code"
         match res with
-        | .error e => ok? (codeMatches code e.code) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
+        | .error e => ok? (codeMatches code (errCode e)) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
         | .ok s =>
           match rc.ser s with
-          | .error e => ok? (codeMatches code e.code) ("wrong serialization error " ++ e.code ++ " (expected " ++ code ++ ")")
+          | .error e => ok? (codeMatches code (errCode e)) ("wrong serialization error " ++ e.code ++ " (expected " ++ code ++ ")")
           | .ok out => .fail ("expected serialization error " ++ code ++ ", got " ++ cut out 80)
     | "assert-result-document" =>
         let u := attrD a "uri"
@@ -571,7 +605,6 @@ def scanResources (root dir src : String) : IO (List (String × String)) := do
           | some txt => out := (fileUri f, txt) :: out
           | none => pure ()
     if !path.startsWith absRoot then continue
-    if path.endsWith ".xsl" then continue
     if ← System.FilePath.pathExists path then
       if (← System.FilePath.isDir path) then continue
       match ← readFileSafe path with
@@ -659,6 +692,8 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
   let (env, outcome) ← match sheet with
     | .error e => pure (({} : Env), (.error e : M (TResult × Sheet)))
     | .ok S => do
+      -- fn:transform, with three levels of nesting
+      let S := { S with extraHost := fnTransformHost 3 lib }
       -- the dynamic context: source documents and resources
       let mut env : Env := { baseUri := pUri }
       let mut globalCtx : Option Item := none
@@ -686,6 +721,12 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
       -- the small data files of the test set's directory (for URIs that
       -- the stylesheet computes)
       res := res ++ (← dirResources dir).filter (fun (u, _) => !res.any (·.1 == u))
+      -- the modules of stylesheets that are read as resources
+      -- (fn:transform), one level down
+      for (u, t) in res do
+        if u.startsWith "file://" && u.endsWith ".xsl" && !mods.any (·.1 == u) then
+          for r in ← scanResources o.root (dirOf (uriPath u)) t do
+            if !res.any (·.1 == r.1) then res := res ++ [r]
       env := { env with resources := res }
       -- stylesheet parameters
       let mut params : List (QN × Seq) := []
@@ -759,7 +800,7 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
     | .ok (r, _) => serWith r.principalFormat.1 r.principalFormat.2
     | .error e => fun _ => throw e
   let env := match outcome with
-    | .ok (r, _) => { env with docs := env.docs } |>.bind { uri := "", loc := "l4msgs" } (r.msgs.map (fun m => .atom (Atomic.ofStr m)))
+    | .ok (r, _) => { env with docs := env.docs } |>.bind { uri := "", loc := "l4msgs" } r.msgDocs
     | .error _ => env
   pure (checkAssert { env, res, secondary, ser } 100 a)
 

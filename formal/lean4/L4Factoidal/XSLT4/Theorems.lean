@@ -255,4 +255,75 @@ def inRange (r v : String) : Bool := match parseRange r, parseVersion v with
 #guard ["1.1", "5.0"].all (inRange "1 to 5") && !inRange "1 to 5" "5.1" && inRange "1 to 5.*" "5.7.2"
 #guard inRange "9.5.0.8, 9.6+" "9.7" && !inRange "9.5.0.8, 9.6+" "9.5.1"
 
+/-! ## `xsl:analyze-string` is `fn:matching-segments` (shared `Regex`)
+
+The matching segments that `xsl:analyze-string` processes are the
+records of F&O 4.0 `fn:matching-segments` (`XPath4.matchingSegments`),
+in order: the same substrings and the same captured groups, both from
+`XPath4.segments` over the shared `L4Factoidal.Regex` engine (§17.1,
+§17.2.1). -/
+
+theorem partsFrom_matches (input : List Nat) (re : Re4) :
+    (cur : Nat) → (segs : List Seg) →
+    (partsFrom input re cur segs).filter (·.isMatch) = segs.map (matchPart input re)
+  | cur, [] => by
+    simp only [partsFrom]
+    split <;> simp
+  | cur, sg :: rest => by
+    simp only [partsFrom, List.map_cons]
+    have ih := partsFrom_matches input re (max cur sg.stop) rest
+    split <;> simp [List.filter_append, ih, matchPart]
+
+/-- The `substring` of a `fn:matching-segments` record (its first entry). -/
+def segSubstring : Item → Seq
+  | .map ((_, v) :: _) => v
+  | _ => []
+
+/-- The `groups` of a `fn:matching-segments` record (its third entry). -/
+def segGroups : Item → List (Atomic × Seq)
+  | .map [_, _, (_, [.map gs])] => gs
+  | _ => []
+
+theorem analyzeParts_substrings (s : String) (re : Re4) :
+    ((analyzeParts s re).filter (·.isMatch)).map (fun p => sStr p.str) =
+    (matchingSegments s re).map segSubstring := by
+  simp only [analyzeParts, matchingSegments, partsFrom_matches, List.map_map]
+  rfl
+
+theorem analyzeParts_groups (s : String) (re : Re4) :
+    ((analyzeParts s re).filter (·.isMatch)).map (fun p => p.groups.drop 1) =
+    (matchingSegments s re).map segGroups := by
+  simp only [analyzeParts, matchingSegments, partsFrom_matches, List.map_map]
+  rfl
+
+#print axioms analyzeParts_substrings
+#print axioms analyzeParts_groups
+
+/-! ## `xsl:number` formats with `fn:format-integer`
+
+With a format of one token and no prefix or suffix, no grouping and no
+ordinal, the text of `xsl:number` for one non-negative number is the
+result of F&O 4.0 `fn:format-integer` with that token as the picture
+(§12.4; F&O 4.0 §4.6.1), unless the token starts one of the numbering
+sequences of `numberingSequences`. -/
+
+theorem numberText_single (env : Env) (x : Int) (fs tok : String) (lng : Option String)
+    (hf : numberFormatParts fs = ("", [("", tok)], "")) :
+    numberText env [x] fs none none none lng = formatOne env x tok none lng := by
+  simp only [numberText, hf]
+  cases h : formatOne env x tok none lng <;> simp [h, bind, Except.bind, pure, Except.pure, forIn, ForIn.forIn,
+    List.forIn', List.getD, String.append_empty, String.empty_append] <;> rfl
+
+theorem formatOne_eq (env : Env) (x : Int) (tok : String) (lng : Option String) (hx : ¬ x < 0)
+    (hs : seqNumber tok x = none) :
+    formatOne env x tok none lng = (fun r => match r with | [.atom a] => a.str | _ => toString x) <$>
+      callFn 100000 env { uri := nsFN, loc := "format-integer" }
+        [sInt x, sStr tok, match lng with | some l => sStr l | none => []] := by
+  simp only [formatOne, hx, if_false, hs]
+  cases callFn 100000 env { uri := nsFN, loc := "format-integer" } [sInt x, sStr tok,
+    match lng with | some l => sStr l | none => []] <;> rfl
+
+#print axioms numberText_single
+#print axioms formatOne_eq
+
 end L4Factoidal.XSLT4
