@@ -58,6 +58,8 @@ structure PCtx where
   /-- Read an unknown type name as `item()` (the first pass over an
       XQuery prolog, which collects the named types). -/
   lenientTypes : Bool := false
+  /-- Set by the XQuery grammar's own parsers: a braced URI reads references. -/
+  xqRefs : Bool := false
 
 abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 
@@ -183,8 +185,10 @@ def peekQName : P (Option (Option String × Option String × String × Nat)) := 
     let j := findClose (i + 2) s.size
     -- the braced URI is whitespace-collapsed (as xs:anyURI)
     let raw := String.ofList ((List.range (j - i - 2)).map (fun k => chAt s (i + 2 + k)))
+    -- a literal '{' in a braced URI is a syntax error (EQName, BracedURILiteral)
+    if raw.any (· == '{') then return none
     -- XQuery reads character and entity references in a braced URI (§4.1, BracedURILiteral)
-    let raw := if c.ext.isSome then expandUriRefs raw else raw
+    let raw := if c.ext.isSome || c.xqRefs then expandUriRefs raw else raw
     let uri := String.intercalate " " ((raw.splitOn " ").filter (· != "") |>.flatMap (fun w =>
       (w.split (fun c => c == '\n' || c == '\t' || c == '\r')).toList.map (·.toString) |>.filter (· != "")))
     if chAt s (j+1) == '*' then pure (some (none, some uri, "*", j + 2))

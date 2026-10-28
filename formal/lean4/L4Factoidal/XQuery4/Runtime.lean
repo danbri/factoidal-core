@@ -406,8 +406,10 @@ def nameOf (env : Env) (s : Seq) (sns : List (String × String)) (isAttr : Bool)
       if lex.startsWith "Q{" then
         match lex.splitOn "}" with
         | [u, l] =>
-          -- a braced URI holds no brace (EQName, XQDY0074)
-          if isNCName l && !(u.drop 2).toString.any (· == '{') then pure { uri := (u.drop 2).toString, loc := l }
+          -- a braced URI holds no brace (EQName, XQDY0074); its whitespace is collapsed
+          let uri := String.intercalate " " (((u.drop 2).toString.map (fun ch =>
+            if ch == '\t' || ch == '\n' || ch == '\r' then ' ' else ch)).splitOn " " |>.filter (· != ""))
+          if isNCName l && !uri.any (· == '{') then pure { uri, loc := l }
           else err "XQDY0074" ("invalid name " ++ lex)
         | _ => err "XQDY0074" ("invalid name " ++ lex)
       else

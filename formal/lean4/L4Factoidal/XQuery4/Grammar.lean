@@ -854,6 +854,13 @@ def compKeywords : List String :=
   ["element", "attribute", "text", "comment", "document", "processing-instruction", "namespace",
    "ordered", "unordered", "validate"]
 
+/-- The reserved operator names of XQuery 4.0 that are not a constructor
+    name without `#` (§4.12.3). -/
+def reservedOpNames : List String :=
+  ["and", "case", "div", "else", "eq", "except", "follows", "follows-or-is", "for", "ge", "gt", "idiv",
+   "intersect", "is", "is-not", "le", "let", "lt", "mod", "ne", "or", "otherwise", "precedes",
+   "precedes-or-is", "return", "satisfies", "to", "union", "where", "while"]
+
 /-- Does a computed constructor start at `i`? -/
 def startsComputed (s : Array Char) (i : Nat) : Bool :=
   match ncnameAt s i with
@@ -872,10 +879,14 @@ def startsComputed (s : Array Char) (i : Nat) : Bool :=
       | none => false
     else if n == "element" || n == "attribute" || n == "processing-instruction" || n == "namespace" then
       -- a name (or a QName literal `#name`) then '{'
-      let j := if c == '#' then j + 1 else j
+      let hash := c == '#'
+      let j := if hash then skipXmlWs s (j + 1) else j
       let c := chAt s j
       match qnameAt s j with
-      | some (_, _, e2) => chAt s (skipWsF s (s.size + 1) 0 e2) == '{'
+      | some (pf, nl, e2) =>
+        -- 4.0: an operator keyword after the keyword makes a path expression (`element div {}`)
+        !(!hash && pf == "" && reservedOpNames.contains nl) &&
+        chAt s (skipWsF s (s.size + 1) 0 e2) == '{'
       | none =>
         -- Q{uri}local
         if c == 'Q' && chAt s (j+1) == '{' then true else false
@@ -1059,7 +1070,7 @@ def exprSingleP (sp : SubParsers) : P (Option Expr) := do
 
 def runP {α} (p : P α) (s : Array Char) (ns : List (String × String)) (i : Nat) :
     Except Err (α × Nat) :=
-  (p.run { s, ns }).run i
+  (p.run { s, ns, xqRefs := true }).run i
 
 def liftOpt (r : Except Err (Option Expr × Nat)) : Except Err (Option (Expr × Nat)) :=
   match r with
