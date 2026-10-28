@@ -347,7 +347,22 @@ def xmlEq1 (env : Env) (got : Seq) (expected : String) : Bool :=
 def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
   xmlEq1 env got expected || xmlEq1 env got expected.trimAscii.toString
 
-def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
+/-- The serialization parameters of a query: the XQuery output
+    declarations of its prolog (`XPath4.declParams`); none in XPath. -/
+def queryParams (env : Env) (src : String) : M SerParams :=
+  if isXqEnv env then do
+    let m ← L4Factoidal.XQuery4.parseModule src env.ns
+    -- `output:parameter-document`: the document first, then the other
+    -- output declarations over it
+    let init ← match m.outputDecls.lookup "parameter-document" with
+      | some u => match env.resource u with
+        | some txt => paramDocParams env txt
+        | none => err "XQST0119" ("parameter document not available: " ++ u)
+      | none => pure {}
+    declParams m.ns m.outputDecls init
+  else pure {}
+
+def checkAssert (env : Env) (res : M Seq) (sp : SerParams) : Nat → Node → Outcome
   | 0, _ => .fail "assertion nesting"
   | f + 1, a =>
     let txt := a.textContent
@@ -365,17 +380,17 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
           ok? ok ("wrong error code " ++ (if e.uri == "" then e.code else eqn) ++ " (expected " ++ code ++ ")")
         | .ok s => .fail ("expected error " ++ code ++ ", got " ++ (sh s 80))
     | "any-of" =>
-        let rs := (kids a).map (fun c => checkAssert env res f c)
+        let rs := (kids a).map (fun c => checkAssert env res sp f c)
         if rs.any (fun r => match r with | .pass => true | _ => false) then .pass
         else .fail ("any-of: " ++ String.intercalate "; " (rs.map (fun r => match r with | .fail w => w | _ => "")))
     | "all-of" =>
-        let rs := (kids a).map (fun c => checkAssert env res f c)
+        let rs := (kids a).map (fun c => checkAssert env res sp f c)
         match rs.find? (fun r => match r with | .pass => false | _ => true) with
         | some r => r
         | none => .pass
     | "not" =>
         match (kids a).head? with
-        | some c => match checkAssert env res f c with
+        | some c => match checkAssert env res sp f c with
           | .pass => .fail "not: inner assertion held"
           | _ => .pass
         | none => .fail "empty not"
@@ -385,7 +400,7 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
         match res with
         | .error e => ok? (codeOk e.code) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
         | .ok s =>
-          match env.serializeWith {} s with
+          match env.serializeWith sp s with
           | .error e => ok? (codeOk e.code) ("wrong serialization error " ++ e.code ++ " (expected " ++ code ++ ")")
           | .ok out => .fail ("expected serialization error " ++ code ++ ", got " ++ cut out 80)
     | tag =>
@@ -453,7 +468,7 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
           | .ok t => ok? (env.seqMatches s t) ("type mismatch: got " ++ (sh s 60))
           | .error e => .fail ("bad type in assert-type: " ++ e.msg)
       | "serialization-matches" =>
-          match env.serializeWith {} s with
+          match env.serializeWith sp s with
           | .error e => .fail ("serialization raised " ++ e.code ++ " " ++ e.msg)
           | .ok out =>
             let q : QN := { uri := "", loc := "l4ser" }
@@ -465,7 +480,7 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
             | .ok _ => .fail ("serialization '" ++ cut out 80 ++ "' does not match")
             | .error e => .fail ("serialization-matches raised " ++ e.code)
       | "assert-serialization" =>
-          match env.serializeWith {} s with
+          match env.serializeWith sp s with
           | .error e => .fail ("serialization raised " ++ e.code ++ " " ++ e.msg)
           | .ok out =>
             let ok := if attrD a "normalize-space" == "true" then normSp out == normSp txt else out == txt || xmlEq env s txt
@@ -822,7 +837,12 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         let bad := match Harness.Qt4Defective.defective.lookup name with
           | some i => some i
           | none => if xq then none else Harness.Qt4Defective.defectiveXPath.lookup name
-        match checkAssert env res 100 a, bad with
+        -- the query's output declarations; a value error there is the
+        -- query's error (SEPM0016)
+        let (sp, res) := match queryParams env src with
+          | .ok p => (p, res)
+          | .error ex => ({}, (match res with | .error e0 => .error e0 | .ok _ => .error ex))
+        match checkAssert env res sp 100 a, bad with
         | .pass, none => t := { t with pass := t.pass + 1 }
         | .pass, some iss =>
             t := { t with fail := t.fail + 1 }

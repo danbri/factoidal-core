@@ -154,6 +154,10 @@ def SerParams.check (p : SerParams) : M SerParams := do
     err "SESU0007" ("unsupported encoding " ++ p.encoding)
   if p.method == "csv" && p.csvSep == p.csvQuote then
     err "SEPM0016" "csv-separator and csv-quote-character must differ"
+  -- Serialization 4.0 §11.2, §11.3: one character, not U+000A or U+000D
+  for (nm, v) in [("csv-separator", p.csvSep), ("csv-quote-character", p.csvQuote)] do
+    if v.length != 1 || v == "\n" || v == "\r" then
+      err "SEPM0016" (nm ++ " must be one character other than U+000A and U+000D")
   if (p.method == "xml" || p.method == "xhtml") && p.omitDecl &&
       (p.standalone.isSome || (p.version.getD "1.0" != "1.0" && p.doctypeSystem.isSome)) then
     err "SEPM0009" "omit-xml-declaration is inconsistent with standalone, or with version and doctype-system"
@@ -324,6 +328,60 @@ def elemParams (e : Env) (root : NodeRef) : M SerParams := do
       | _ => pure (PVal.s v)
     p ← p.set name pv
   p.check
+
+/-- The serialization parameters of XQuery output declarations
+    (`declare option output:name "value";`, XQuery 4.0 §5.20.2): local
+    name and string value, in order. The values have the lexical forms of
+    the parameter document (Serialization 4.0 §3.1); a value that is not
+    valid for its parameter is SEPM0016. `scope` resolves the QName values
+    (`method`, `cdata-section-elements`, `suppress-indentation`). -/
+def declParams (scope : List (String × String)) (decls : List (String × String))
+    (init : SerParams := {}) : M SerParams := do
+  let sepm {α} (m : String) : M α := err "SEPM0016" m
+  let yesNo (name v : String) : M Bool :=
+    match trimWs v with
+    | "yes" | "true" | "1" => pure true
+    | "no" | "false" | "0" => pure false
+    | x => sepm (name ++ ": '" ++ x ++ "' is not yes or no")
+  let lexQN (v : String) : M QN :=
+    match resolveLexQN scope v with
+    | .ok q => pure q
+    | .error ex => sepm ex.msg
+  let mut p : SerParams := init
+  for (name, v) in decls do
+    if name == "parameter-document" then continue
+    let some kind := paramKinds.lookup name | err "XQST0109" ("unknown serialization parameter " ++ name)
+    let pv ← match kind with
+      | .bool => pure (PVal.b (← yesNo name v))
+      | .boolOpt =>
+        match trimWs v with
+        | "omit" => pure (PVal.ob none)
+        | x => pure (PVal.ob (some (← yesNo name x)))
+      | .qnames =>
+        let toks := (trimWs v).splitOn " " |>.filter (· != "")
+        pure (PVal.qs (← toks.mapM lexQN))
+      | .method =>
+        let x := trimWs v
+        if x.contains ':' then pure (PVal.s (← lexQN x).eqn)
+        else if serMethods.contains x then pure (PVal.s x)
+        else sepm ("unknown method " ++ x)
+      | .charmap => err "XQST0109" "use-character-maps is not an output declaration"
+      | _ => pure (PVal.s v)
+    p ← p.set name pv
+  p.check
+
+/-- The parameters of an `output:parameter-document` (XQuery 4.0
+    §5.20.2): the text of a serialization parameter document. A document
+    that does not parse is XQST0119; its parameter errors are those of the
+    parameter document (SEPM0017, SEPM0018, SEPM0019). -/
+def paramDocParams (e : Env) (txt : String) : M SerParams := do
+  match Doc.ofString txt with
+  | .error m => err "XQST0119" ("the parameter document does not parse: " ++ m)
+  | .ok d =>
+    let n0 : NodeRef := { doc := 0, idx := 0, rt := some d }
+    let some root := ((e.nrec n0).children.toList.map n0.at).find? (fun c => (e.nrec c).kind == .element)
+      | err "XQST0119" "the parameter document has no element"
+    elemParams e root
 
 def serParamsOf (e : Env) (opts : Seq) : M SerParams :=
   match opts with

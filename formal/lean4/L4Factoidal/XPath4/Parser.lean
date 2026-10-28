@@ -71,7 +71,8 @@ abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 def defaultNs : List (String × String) :=
   [("xs", nsXS), ("fn", nsFN), ("math", nsMATH), ("map", nsMAP), ("array", nsARR),
    ("err", nsERR), ("xml", nsXML), ("local", "http://www.w3.org/2005/xquery-local-functions"),
-   ("xsi", "http://www.w3.org/2001/XMLSchema-instance")]
+   ("xsi", "http://www.w3.org/2001/XMLSchema-instance"),
+   ("output", "http://www.w3.org/2010/xslt-xquery-serialization")]
 
 def synErr {α} (msg : String) : P α := throw { code := "XPST0003", msg }
 

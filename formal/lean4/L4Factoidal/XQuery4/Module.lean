@@ -62,6 +62,9 @@ structure Module where
   privates : List QN := []
   /-- Decimal formats (`declare decimal-format`), as `Env.decimalFormats`. -/
   decimalFormats : List (String × List (String × String)) := []
+  /-- Output declarations (`declare option output:name "value"`, §5.20.2):
+      local name and value, in order (`XPath4.declParams` reads them). -/
+  outputDecls : List (String × String) := []
 deriving Inhabited
 
 def qerr {α} (code msg : String) : P α := throw { code, msg }
@@ -334,13 +337,23 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       if m.decimalFormats.any (·.1 == key) then qerr "XQST0111" "two decimal formats with one name"
       m := { m with decimalFormats := m.decimalFormats ++ [(key, props)] }
     | "option" =>
-      match ← peekQName with
+      let oq ← match ← peekQName with
       | some (p, u, l, e) =>
         set e
-        let _ ← withXq cfg ns (resolve p u l "http://www.w3.org/2012/xquery")
+        withXq cfg ns (resolve p u l "http://www.w3.org/2012/xquery")
       | none => synErr "bad option name"
-      let _ ← pStringLit
+      -- an XQuery string literal: references expanded (§4.2.1)
+      let ov ← match expandRefs (← pStringLit) with
+        | .ok t => pure t
+        | .error ex => throw ex
       expectS ";"
+      -- output declarations (§5.20.2): XQST0108, XQST0109, XQST0110
+      if oq.uri == nsOUTPUT then
+        if m.libNs.isSome then qerr "XQST0108" "an output declaration in a library module"
+        if ((paramKinds.lookup oq.loc).isNone && oq.loc != "parameter-document") || oq.loc == "use-character-maps" then
+          qerr "XQST0109" ("unknown serialization parameter output:" ++ oq.loc)
+        if m.outputDecls.any (·.1 == oq.loc) then qerr "XQST0110" ("output:" ++ oq.loc ++ " declared twice")
+        m := { m with outputDecls := m.outputDecls ++ [(oq.loc, ov)] }
     | "context" =>
       if !(← eatKw "item") then expectKw "value"
       if ctxSeen then qerr "XQST0099" "two context item declarations"
