@@ -826,6 +826,29 @@ https://github.com/danbri/factoidal/issues/1115:
 3. lwsd's notification endpoint sends no `Link rel=lws#storage`; our client
    needs one before it subscribes.
 
+### Rerun after the fixes, 2026-10-28 03:12 UTC
+
+The same run, with our client from this repository at the commit of
+https://github.com/danbri/factoidal-core/pull/170 (the three fixes; the
+adapter sets `legacyChallenge` and passes the notification `serviceUrl` as
+the subscribe endpoint):
+
+| Server | java | js | factoidal |
+| --- | --- | --- | --- |
+| Community Solid Server | 7 of 10 | 7 of 10 | 7 of 10 |
+| Halcyon | 11 of 11 | 11 of 11 | 11 of 11 |
+| lws-drupal | 11 of 11 | 11 of 11 | 11 of 11 |
+| lws-server | 11 of 11 | 11 of 11 | 11 of 11 |
+| lwsd | 11 of 11 | 11 of 11 | 11 of 11 |
+| sparq-lws | 11 of 11 | 11 of 11 | 11 of 11 |
+
+No step fails for our client alone. On Community Solid Server all three
+clients fail the same three steps, which are the server's: JSON Patch (415;
+it accepts N3 Patch, SPARQL Update and merge-patch only), linkset (not
+advertised; our client refuses with `notAdvertised`, Java and JS get 415
+then 405), and notifications (the token exchange answers 400
+`invalid_target` for `.notifications/`).
+
 ## Run details
 
 * Host: Linux, OpenJDK 21.0.12, Maven 3.9.11, Node 22.22.0. No Docker
