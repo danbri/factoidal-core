@@ -103,6 +103,11 @@ def scKids (m : Mod) (i : Nat) : List Nat :=
       "non-matching-substring", "merge-source", "merge-action", "merge-key",
       "when", "otherwise"].contains (m.r k).name.loc))
 
+/-- A boolean attribute (§3.5.1: whitespace and, in 4.0, case do not
+    matter). -/
+def boolA (m : Mod) (i : Nat) (l : String) : Option Bool :=
+  (attrS m i l).bind (fun v => parseBool v.trimAscii.toString.toLower)
+
 /-- Is the element excluded by a `use-when` that is false (§3.13.1)? -/
 def useWhenFalse (m : Mod) (i : Nat) : Bool :=
   match stdAttr m i "use-when" with
@@ -318,7 +323,7 @@ def ins : Nat → Ctx → Mod → Nat → SR
         let isBy := (attrS m i "group-by").isSome
         let pats := (patA m i "group-starting-with").toList ++ (patA m i "group-ending-with").toList
         if rs.p == .grounded then
-          let c := { cx.focus .grounded rs.t with accAfter := some false }
+          let c := { cx.focus .grounded rs.t with accAfter := some false, feg := some (SR.gm rs.t) }
           let rb := sc f c m body
           general rb.t ([{ r := rs, u := .inspection }, { r := rb, u := .transmission, ho := true }] ++
             (key.toList.map (fun e => ({ r := ex f (cx.focus .grounded rs.t) e, u := .absorption, ho := true } : Opd))) ++
@@ -373,13 +378,21 @@ def ins : Nat → Ctx → Mod → Nat → SR
     | "apply-imports" | "next-match" =>
       general UT.all ([{ r := ex f cx.top .ctx, u := .absorption }] ++ withParams f cx m i [])
     | "copy" =>
-      let selE := exprA m i "select"
-      let rsel := ex f cx.top (selE.getD .ctx)
-      let c := match selE with
-        | some _ => { cx.focus rsel.p rsel.t with accAfter := some false }
-        | none => cx
-      general rsel.t ([{ r := rsel, u := .inspection }, bodyO .absorption c (ho := selE.isSome)] ++
-        setsOpd (setsOk cx m i (attrS m i "use-attribute-sets")))
+      let sets := setsOpd (setsOk cx m i (attrS m i "use-attribute-sets"))
+      match exprA m i "select" with
+      | none =>
+        general cx.ct ([{ r := ex f cx.top .ctx, u := .inspection }, bodyO .absorption] ++ sets)
+      | some sel =>
+        -- §12.6.12 makes the body a higher-order operand; the analysis
+        -- reads `xsl:copy select="S"` as `xsl:for-each select="S"` around
+        -- an `xsl:copy` of the context item, as streaming processors do
+        -- (§3.1 permits a more liberal analysis)
+        let rs := ex f cx.top sel
+        let c := { cx.focus rs.p rs.t (ho := false) with accAfter := some false }
+        let inner := general rs.t ([{ r := ex f c.top .ctx, u := .inspection }, bodyO .absorption c] ++ sets)
+        if rs.p == .grounded then general rs.t [{ r := rs, u := .inspection }, { r := inner, u := .transmission, ho := true }]
+        else if rs.p == .crawling && inner.s == .consuming then SR.roam
+        else SR.norm { p := inner.p, s := rs.s.wider inner.s, t := rs.t }
     | "fork" =>
       let ks := (m.elemKids i).filter (fun k => !(isXslEl m k && (m.r k).name.loc == "fallback"))
       match ks.find? (fun k => isXslEl m k && (m.r k).name.loc == "for-each-group") with
@@ -389,8 +402,14 @@ def ins : Nat → Ctx → Mod → Nat → SR
         if seqs.isEmpty then SR.gm
         else
           let rs := seqs.map (fun k => ins f { cx with accAfter := some (cx.accAfter == some true) } m k)
-          if rs.any (·.p != .grounded) then SR.roam
-          else { p := .grounded, s := rs.foldl (fun s x => s.wider x.s) .motionless, t := UT.all }
+          if rs.all (·.p == .grounded) then
+            { p := .grounded, s := rs.foldl (fun s x => s.wider x.s) .motionless, t := UT.all }
+          else
+            -- §12.6.20 requires grounded branches; the analysis accepts
+            -- branches that the general rules accept as a choice group
+            -- (one pass reads each branch's nodes in document order), as
+            -- streaming processors do (§3.1)
+            general UT.all (rs.map (fun r => ({ r, u := .transmission, grp := some 0 } : Opd)))
     | "map" | "record" =>
       let ks := (m.elemKids i).filter (fun k => !(isXslEl m k && (m.r k).name.loc == "fallback"))
       if r.name.loc == "record" then
@@ -483,13 +502,13 @@ def collectInfo (ms : List Mod) : Info := Id.run do
         | none => false
       match (m.r i).name.loc with
       | "mode" =>
-        if (attrS m i "streamable").bind parseBool == some true then
+        if boolA m i "streamable" == some true then
           let k := match qnA m i "name" with
             | some q => q.eqn
             | none => "#unnamed"
           info := { info with smodes := k :: info.smodes }
       | "attribute-set" =>
-        if (attrS m i "streamable").bind parseBool == some true then
+        if boolA m i "streamable" == some true then
           if let some q := qnA m i "name" then info := { info with ssets := q.eqn :: info.ssets }
       | "function" =>
         if let some q := qnA m i "name" then
@@ -519,11 +538,18 @@ def collectInfo (ms : List Mod) : Info := Id.run do
 def notStreamable (what : String) : Option Err :=
   some { code := "XTSE3430", msg := what ++ " is declared streamable but is not guaranteed streamable" }
 
+def ancestorNamed : Nat → Mod → Nat → String → Option Nat
+  | 0, _, _, _ => none
+  | f + 1, m, i, l =>
+    match (m.r i).parent with
+    | some p => if isXslEl m p && (m.r p).name.loc == l then some p else ancestorNamed f m p l
+    | none => none
+
 /-- The checks of one declared-streamable construct (element `i`). -/
 def checkElem (info : Info) (m : Mod) (i : Nat) : Option Err :=
   let fuel := 400
   let base : Ctx := { info }
-  let yes (l : String) : Bool := (attrS m i l).bind parseBool == some true
+  let yes (l : String) : Bool := boolA m i l == some true
   match (m.r i).name.loc with
   | "template" =>
     match attrS m i "match" with
@@ -546,7 +572,15 @@ def checkElem (info : Info) (m : Mod) (i : Nat) : Option Err :=
           else notStreamable s!"the template rule for '{(attrS m i "match").getD ""}'"
   | "source-document" =>
     if !yes "streamable" then none else
-    let cx : Ctx := { base with post := .striding, ct := UT.doc, outer := .striding, accAfter := some false }
+    -- inside an `xsl:for-each-group` whose select is grounded (a group of
+    -- copies), `current-group()` is grounded and motionless
+    let groupFeg : Option SR := match ancestorNamed 64 m i "for-each-group" with
+      | some g => match exprA m g "select" with
+        | some e => if (ex fuel { base with post := .striding } e).p == .grounded then some SR.gm else none
+        | none => none
+      | none => none
+    let cx : Ctx := { base with post := .striding, ct := UT.doc, outer := .striding, accAfter := some false,
+                                feg := groupFeg }
     let rb := sc fuel cx m (scKids m i)
     if rb.p == .grounded && rb.s != .freeRanging then none
     else notStreamable "xsl:source-document"
@@ -577,9 +611,9 @@ def checkElem (info : Info) (m : Mod) (i : Nat) : Option Err :=
         let ok : Bool := match cat with
           | "absorbing" => ta.p == .grounded && ta.s != .freeRanging
           | "inspection" => ta.p == .grounded && ta.s == .motionless
-          | "filter" => (ta.p == .striding || ta.p == .grounded) && ta.s == .motionless
-          | "shallow-descent" => (ta.p == .striding || ta.p == .grounded) && ta.s != .freeRanging
-          | "deep-descent" => ta.p != .roaming && ta.p != .climbing && ta.s != .freeRanging
+          | "filter" => ta.p == .striding && ta.s == .motionless
+          | "shallow-descent" => ta.p == .striding && ta.s != .freeRanging
+          | "deep-descent" => (ta.p == .crawling || ta.p == .striding) && ta.s != .freeRanging
           | _ => (ta.p == .climbing || ta.p == .grounded) && ta.s == .motionless
         if ok then none else notStreamable s!"the {cat} function"
   | "accumulator" =>
@@ -616,16 +650,83 @@ def checkElem (info : Info) (m : Mod) (i : Nat) : Option Err :=
       else notStreamable "xsl:merge-source"
   | _ => none
 
+/-- The `name` or `match` of the nearest declaration that contains `i`,
+    for messages. -/
+def ownerOf : Nat → Mod → Nat → String
+  | 0, _, _ => ""
+  | f + 1, m, i =>
+    let here := match attrS m i "name", attrS m i "match" with
+      | some n, _ => if isXslEl m i then n else ""
+      | none, some p => if isXslEl m i then p else ""
+      | none, none => ""
+    if here != "" then here else
+    match (m.r i).parent with
+    | some p => ownerOf f m p
+    | none => ""
+
+/-- The static parameters and variables (§9.7) of the modules, in
+    document order, after the values the caller gives. -/
+def staticsOf (ms : List Mod) (given : List (QN × Seq)) : List (QN × Seq) := Id.run do
+  let mut st := given
+  for m in ms do
+    for i in [0:m.d.nodes.size] do
+      if !isXslEl m i then continue
+      let l := (m.r i).name.loc
+      if (l == "variable" || l == "param") && boolA m i "static" == some true then
+        match qnA m i "name" with
+        | some q =>
+          if st.any (·.1 == q) then continue
+          match attrS m i "select" with
+          | some src =>
+            match (staticEval (scxAt m i) src).run { statics := st } with
+            | .ok (v, _) => st := st ++ [(q, v)]
+            | .error _ => pure ()
+          | none => pure ()
+        | none => pure ()
+  return st
+
+/-- Apply the static context to a module (§3.13): a shadow attribute
+    `_l` replaces attribute `l` with the value of its value template, and
+    `use-when` is replaced by its value (`true()` or `false()`). -/
+def prepMod (st : List (QN × Seq)) (m : Mod) : Mod := Id.run do
+  let mut nodes := m.d.nodes
+  let cst : CSt := { statics := st }
+  for i in [0:nodes.size] do
+    let r := m.r i
+    if r.kind != .attribute then continue
+    let some p := r.parent | continue
+    let isX := isXslEl m p
+    if r.name.uri == "" && r.name.loc.startsWith "_" && isX then
+      let l := (r.name.loc.drop 1).toString
+      match (staticAvt (scxAt m p) r.value).run cst with
+      | .ok (v, _) =>
+        for a in (m.r p).attrs.toList do
+          if (m.r a).name.uri == "" && (m.r a).name.loc == l then
+            nodes := nodes.modify a (fun x => { x with name := { x.name with loc := "#shadowed-" ++ l } })
+        nodes := nodes.modify i (fun x => { x with name := { x.name with loc := l }, value := v })
+      | .error _ => pure ()
+    else if (isX && r.name.uri == "" && r.name.loc == "use-when") ||
+        (!isX && r.name.uri == nsXSL && r.name.loc == "use-when") then
+      match (staticBool (scxAt m p) r.value).run cst with
+      | .ok (b, _) => nodes := nodes.modify i (fun x => { x with value := if b then "true()" else "false()" })
+      | .error _ => pure ()
+  return { m with d := { m.d with nodes } }
+
 /-- The streamability check of a stylesheet: its modules by absolute URI
-    and text. The first declared-streamable construct that is not
-    guaranteed streamable gives XTSE3430. -/
-def analyzeModules (mods : List (String × String)) : Option Err :=
-  let ms : List Mod := mods.filterMap (fun (u, t) =>
+    and text, and the values given for static parameters. The first
+    declared-streamable construct that is not guaranteed streamable gives
+    XTSE3430. -/
+def analyzeModules (mods : List (String × String)) (given : List (QN × Seq) := []) : Option Err :=
+  let ms0 : List Mod := mods.filterMap (fun (u, t) =>
     (Doc.ofString t u).toOption.map (fun d => ({ d, uri := u } : Mod)))
+  let st := staticsOf ms0 given
+  let ms := ms0.map (prepMod st)
   let info := collectInfo ms
   ms.findSome? (fun m =>
     (List.range m.d.nodes.size).findSome? (fun i =>
-      if isXslEl m i && !excluded 64 m i then checkElem info m i else none))
+      if isXslEl m i && !excluded 64 m i then
+        (checkElem info m i).map (fun e => { e with msg := e.msg ++ " (in '" ++ ownerOf 64 m i ++ "')" })
+      else none))
 
 /-- The posture and sweep of the body of the first
     `xsl:source-document` with `streamable="yes"`, for diagnostics. -/

@@ -591,7 +591,7 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
   -- streaming feature: a non-streaming processor does not raise it)
   if streaming then
     if let .ok _ := sheet then
-      if let some e := L4Factoidal.XSLT4.Streaming.analyzeModules mods then
+      if let some e := L4Factoidal.XSLT4.Streaming.analyzeModules mods statics then
         sheet := .error e
   let (env, outcome) ← match sheet with
     | .error e => pure (({} : Env), (.error e : M (TResult × Sheet)))

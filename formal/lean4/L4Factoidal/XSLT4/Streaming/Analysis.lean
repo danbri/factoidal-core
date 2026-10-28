@@ -293,6 +293,9 @@ structure Ctx where
       `some false` for phase `end`. -/
   accPhase : Option Bool := none
   inFork : Bool := false
+  /-- Inside a higher-order operand: a reference to the streaming
+      parameter is not singular (§12.6.18 note, §8.1). -/
+  nonSingular : Bool := false
   info : Info := {}
 deriving Inhabited
 
@@ -306,7 +309,11 @@ def Ctx.varType (cx : Ctx) (q : QN) : UT :=
 /-- The context for an operand with a new focus: the predicate of a step
     or filter, the right operand of `/` or `!`. -/
 def Ctx.focus (cx : Ctx) (p : Posture) (t : UT) (ho : Bool := true) : Ctx :=
-  { cx with post := p, ct := t, feg := none, accAfter := none, ho := cx.ho || ho }
+  -- a grounded group (a group of copies) stays available below a new focus
+  let feg := match cx.feg with
+    | some r => if r.p == .grounded && r.s == .motionless then some r else none
+    | none => none
+  { cx with post := p, ct := t, feg, accAfter := none, ho := cx.ho || ho, nonSingular := true }
 
 /-! ## Axis steps (§12.8.10) -/
 
@@ -556,6 +563,40 @@ def patType : Nat → Expr → UT
     | .slash _ b => patType f b
     | _ => UT.all
 
+/-- Replace the leftmost `.` of a path by `/`. -/
+def leadCtxToRoot : Nat → Expr → Expr
+  | 0, e => e
+  | f + 1, e =>
+    match e with
+    | .slash .ctx b => .slash .root b
+    | .slash a b => .slash (leadCtxToRoot f a) b
+    | e => e
+
+/-- Replace references to variable `v` by `.` (for the rewrite of a
+    quantified expression into a filter). Stops where `v` is bound
+    again. -/
+def substVarCtx : Nat → QN → Expr → Expr
+  | 0, _, e => e
+  | f + 1, v, e =>
+    let g := substVarCtx f v
+    let go (o : Option Expr) : Option Expr := o.map g
+    match e with
+    | .var q => if q == v then .ctx else e
+    | .slash a b => .slash (g a) b
+    | .filter a b => .filter (g a) b
+    | .smap a b => .smap (g a) b
+    | .bin op a b => .bin op (g a) (g b)
+    | .neg a => .neg (g a)
+    | .plus a => .plus (g a)
+    | .seq es => .seq (es.map g)
+    | .call q args kw => .call q (args.map go) (kw.map (fun (k, a) => (k, go a)))
+    | .ifE c t x => .ifE (g c) (g t) (g x)
+    | .cast a t o => .cast (g a) t o
+    | .castable a t o => .castable (g a) t o
+    | .instOf a t => .instOf (g a) t
+    | .treat a t => .treat (g a) t
+    | e => e
+
 /-- A union, intersect or except expression (§12.8.4). -/
 def unionSR (a b : SR) : SR :=
   let t := a.t ||| b.t
@@ -588,7 +629,7 @@ def exStep : Nat → Ctx → Expr → SR
       general (os.foldl (fun u o => u ||| o.r.t) 0) os
     | .var q =>
       match cx.sparam with
-      | some (p, r) => if p == q then r else SR.gm (cx.varType q)
+      | some (p, r) => if p == q then (if cx.nonSingular then SR.roam r.t else r) else SR.gm (cx.varType q)
       | none => SR.gm (cx.varType q)
     | .ctx => { p := cx.post, s := .motionless, t := cx.ct }
     | .root => rootOf f cx { p := cx.post, s := .motionless, t := cx.ct }
@@ -669,7 +710,16 @@ def exStep : Nat → Ctx → Expr → SR
       | .or | .and => general UT.atom [opd cx a .inspection, opd cx b .inspection]
       | .is | .isNot | .precedes | .follows | .precedesOrIs | .followsOrIs =>
         general UT.atom [opd cx a .inspection, opd cx b .inspection]
-      | .union | .intersect | .except => unionSR (ex f cx a) (ex f cx b)
+      | .union => unionSR (ex f cx a) (ex f cx b)
+      | .intersect | .except =>
+        -- the result is a subset of the left operand, in its order: when
+        -- the right operand is motionless the posture of the left one
+        -- holds (§12.8.4 gives crawling; §3.1 permits the narrower result)
+        let ra := ex f cx a
+        let rb := ex f cx b
+        if rb.s == .motionless && rb.p != .roaming && (ra.p == .striding || ra.p == .crawling) then
+          { ra with s := ra.s.wider rb.s }
+        else unionSR ra rb
       | .otherwise =>
         let oa := opd cx a .transmission
         let ob := opd cx b .transmission
@@ -687,7 +737,7 @@ def exStep : Nat → Ctx → Expr → SR
       if rs.p != .grounded then SR.roam
       else
         let cx' := { cx with vars := (v, rs.t) :: (match posv with
-          | some pv => [(pv, UT.num)] | none => []) ++ cx.vars, ho := true }
+          | some pv => [(pv, UT.num)] | none => []) ++ cx.vars, ho := true, nonSingular := true }
         let ob := opd cx' body .transmission (ho := true)
         general ob.r.t [{ r := rs, u := .navigation }, ob]
     | .letE v _ a body =>
@@ -695,9 +745,18 @@ def exStep : Nat → Ctx → Expr → SR
       let cx' := { cx with vars := (v, oa.r.t) :: cx.vars }
       let ob := opd cx' body .transmission
       general ob.r.t [oa, ob]
-    | .quant _ v _ src sat =>
+    | .quant every v _ src sat =>
+      -- `some $v in S satisfies C`, with `C` free of the outer focus, is
+      -- `exists(S[C'])` (`every`: `empty(S[not(C')])`) where `C'` reads
+      -- `$v` as `.`; streaming processors analyze that form (§12.8.2
+      -- suggests the rewrite; §3.1 permits it)
+      if focusFree 50 sat then
+        let pred := substVarCtx 200 v sat
+        let filt := Expr.filter src (if every then .call ⟨nsFN, "not", "fn"⟩ [some pred] [] else pred)
+        ex f cx (.call ⟨nsFN, if every then "empty" else "exists", "fn"⟩ [some filt] [])
+      else
       let os := opd cx src .navigation
-      let cx' := { cx with vars := (v, os.r.t) :: cx.vars, ho := true }
+      let cx' := { cx with vars := (v, os.r.t) :: cx.vars, ho := true, nonSingular := true }
       general UT.atom [os, opd cx' sat .inspection (ho := true)]
     | .instOf a t =>
       general UT.atom [opd cx a (if docElemTest t then .absorption else .inspection)]
@@ -763,7 +822,11 @@ def stepSR : Nat → Ctx → Axis → NodeTest → List Expr → SR
     pattern? -/
 def isScanning : Nat → Ctx → Expr → Bool
   | 0, _, _ => false
-  | f + 1, cx, e => patternOk 200 false e && patMotionless f cx e
+  | f + 1, cx, e =>
+    -- a path from the context item (`./descendant::a/b`) is scanned in the
+    -- same way as the rooted path; streaming processors accept it (§3.1)
+    let e := leadCtxToRoot 200 e
+    patternOk 200 false e && patMotionless f cx e
 
 /-- Is the pattern motionless (§12.10)? -/
 def patMotionless : Nat → Ctx → Expr → Bool

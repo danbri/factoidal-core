@@ -40,8 +40,12 @@ def ps (src : String) (ct : UT := UT.elem) : Option (Posture × Sweep) :=
 #guard ps "copy-of(.)//a/following-sibling::*" == some (.grounded, .consuming)
 -- a scanning expression (a motionless pattern) is crawling
 #guard ps "//section/head" UT.doc == some (.crawling, .consuming)
--- the note of §12.8.9: `.//section/head` is not a scanning expression
-#guard ps ".//section/head" UT.doc == some (.roaming, .freeRanging)
+-- the note of §12.8.9 says `.//section/head` is not a scanning
+-- expression; this analysis scans it as `/descendant::section/head`, as the
+-- xslt40-test cases expect (streamable-037: `sum(.//section/page-count)`)
+#guard ps ".//section/head" UT.doc == some (.crawling, .consuming)
+-- §12.8.2: a quantified expression over streamed nodes is read as a filter
+#guard ps "some $t in transaction satisfies xs:decimal($t/@value) lt 0" == some (.grounded, .consuming)
 #guard ps "section//head[1]" == some (.roaming, .freeRanging)
 
 /-! ### §3.10 and §12.9 -/
