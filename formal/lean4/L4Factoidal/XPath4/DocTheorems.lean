@@ -26,7 +26,9 @@ returns an index at the old size whose parent is the given one.
 `ofNodes_spec` applies it to the loop of `Doc.ofNodes`. `Doc.lean` is not
 changed.
 
-Open (not proved here):
+Open (not proved here; `DocTheorems2.lean` proves the preorder layout and
+the record-to-node correspondence, `Doc.ofNodes_built`, under a depth
+hypothesis):
 
 * Subtree contiguity in full: that every index in `(i, last i]` has `i` as
   an ancestor, and that `last c ≤ last i` for a child `c` of `i`. The
