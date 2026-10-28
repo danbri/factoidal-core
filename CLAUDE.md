@@ -829,6 +829,24 @@ risk file issue to flag for expert review", to these questions:
 4. HTTP over XMPP (https://github.com/danbri/factoidal/issues/1107): start
    stage 1 of `docs/designissues/2026-10-28-http-over-xmpp.md`.
 
+### Feature-combination safety; MCP over XMPP (owner, 2026-10-28)
+
+Owner, verbatim: "Thanks for your care re open proxy. We will need careful
+documentation and theorems to ensure that subtle combinations of these
+features are not disasterous." Tracking:
+https://github.com/danbri/factoidal/issues/1120. A PR that adds a server
+target, a transport, a client option or a tool states the invariants of that
+issue it touches, and the theorem or test for each.
+
+Owner, verbatim: "there is value in implementing both sides of mcp-over-xmpp
+(“xmpcp”?), please progress that - issues, subagent, lit review", then "maybe
+i meant xmpp+mcp as “xmcpp”; needs a bacronym" and "Note also we will want mcp
+controls for factoidal CLIs too; or subsets. And webmcp options for our
+browser-visible servers." Tracking:
+https://github.com/danbri/factoidal/issues/1121; review and order:
+`docs/designissues/2026-10-28-mcp-over-xmpp.md`. The name's expansion is the
+owner's to choose.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where
