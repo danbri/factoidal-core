@@ -168,6 +168,8 @@ def peekQName : P (Option (Option String × Option String × String × Nat)) := 
     let j := findClose (i + 2) s.size
     -- the braced URI is whitespace-collapsed (as xs:anyURI)
     let raw := String.ofList ((List.range (j - i - 2)).map (fun k => chAt s (i + 2 + k)))
+    -- BracedURILiteral ::= "Q" "{" [^{}]* "}"
+    if raw.any (· == '{') then synErr "a braced URI literal must not contain '{'"
     let uri := String.intercalate " " ((raw.splitOn " ").filter (· != "") |>.flatMap (fun w =>
       (w.split (fun c => c == '\n' || c == '\t' || c == '\r')).toList.map (·.toString) |>.filter (· != "")))
     if chAt s (j+1) == '*' then pure (some (none, some uri, "*", j + 2))
@@ -176,7 +178,10 @@ def peekQName : P (Option (Option String × Option String × String × Nat)) := 
         -- URIQualifiedName may carry a prefix: Q{uri}prefix:local (XPath 4.0 A.2.1)
         if chAt s e == ':' && isNameStart (chAt s (e+1)) then
           match ncnameAt s (e + 1) with
-          | some (l2, e2) => pure (some (some l, some uri, l2, e2))
+          | some (l2, e2) =>
+            -- a prefix with an absent namespace URI (XPath 4.0 §2.1.2.1)
+            if uri == "" then throw { code := "XPST0154", msg := "Q{}" ++ l ++ ":" ++ l2 ++ " has a prefix but no namespace URI" }
+            pure (some (some l, some uri, l2, e2))
           | none => pure (some (none, some uri, l, e))
         else pure (some (none, some uri, l, e))
       | none => pure none

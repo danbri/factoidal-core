@@ -335,6 +335,9 @@ def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × Str
     let r := env.nrec a
     if r.kind == .namespace then
       let p := r.name.loc
+      -- an element in no namespace cannot have a default namespace
+      if p == "" && r.value != "" && name.uri == "" && name.pfx == "" then
+        err "XQDY0102" "a default namespace on an element in no namespace"
       match scope.lookup p with
       | some u => if u != r.value then err "XQDY0102" ("namespace prefix " ++ p ++ " bound twice")
       | none => scope := (p, r.value) :: scope
@@ -397,7 +400,8 @@ def nameOf (env : Env) (s : Seq) (sns : List (String × String)) (isAttr : Bool)
       let lex := lex.trimAscii.toString
       if lex.startsWith "Q{" then
         match lex.splitOn "}" with
-        | [u, l] => if isNCName l then pure { uri := (u.drop 2).toString, loc := l } else err "XQDY0074" ("invalid name " ++ lex)
+        -- the URI is whitespace-collapsed, as an xs:anyURI value
+        | [u, l] => if isNCName l then pure { uri := normSpace (u.drop 2).toString, loc := l } else err "XQDY0074" ("invalid name " ++ lex)
         | _ => err "XQDY0074" ("invalid name " ++ lex)
       else
       match parseQNameLex lex with
@@ -702,6 +706,9 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
     | nm :: parts =>
       let name ← nameOf env (← cb.eval env nm) (sNs qs) true
       let name := if name.uri == nsXML && name.pfx == "" then { name with pfx := "xml" } else name
+      -- a namespace URI with no prefix gets an implementation-dependent
+      -- prefix (XQuery 4.0 §5.7.3.2)
+      let name := if name.uri != "" && name.pfx == "" then { name with pfx := freshPrefix [] } else name
       if isXmlnsName name then err (if ss.headD "" == "d" then "XQST0071" else "XQDY0044") "an attribute named xmlns"
       if name.pfx == "xml" && name.uri != nsXML then err "XQDY0044" "prefix xml bound to another namespace"
       if name.uri == nsXML && name.pfx != "xml" then err "XQDY0044" "the xml namespace with another prefix"
