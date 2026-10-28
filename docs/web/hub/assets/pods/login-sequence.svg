@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 500" width="860" height="500" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13">
+  <title>How a bot's WebDAV read reaches the pod (0.21.0)</title>
+  <defs>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker>
+  </defs>
+  <rect width="860" height="500" fill="#ffffff"/>
+  <g font-weight="700" text-anchor="middle">
+    <rect x="40" y="16" width="150" height="36" rx="6" fill="#f4f6f8" stroke="#8a96a3"/><text x="115" y="39">Finder (bot2 login)</text>
+    <rect x="260" y="16" width="150" height="36" rx="6" fill="#eef5ff" stroke="#4a7bd0"/><text x="335" y="39">webdav-serve</text>
+    <rect x="480" y="16" width="150" height="36" rx="6" fill="#eefaf0" stroke="#3f9a55"/><text x="555" y="39">pod (lws-serve)</text>
+    <rect x="680" y="16" width="160" height="36" rx="6" fill="#eefaf0" stroke="#3f9a55"/><text x="760" y="39">authorization server</text>
+  </g>
+  <g stroke="#bbb" stroke-dasharray="4 4">
+    <line x1="115" y1="52" x2="115" y2="480"/><line x1="335" y1="52" x2="335" y2="480"/>
+    <line x1="555" y1="52" x2="555" y2="480"/><line x1="760" y1="52" x2="760" y2="480"/>
+  </g>
+  <g stroke="#333" stroke-width="1.4" fill="none">
+    <line x1="115" y1="80" x2="331" y2="80" marker-end="url(#b)"/>
+    <line x1="335" y1="142" x2="551" y2="142" marker-end="url(#b)"/>
+    <line x1="555" y1="174" x2="339" y2="174" marker-end="url(#b)"/>
+    <line x1="335" y1="226" x2="756" y2="226" marker-end="url(#b)"/>
+    <line x1="760" y1="280" x2="339" y2="280" marker-end="url(#b)"/>
+    <line x1="335" y1="330" x2="551" y2="330" marker-end="url(#b)"/>
+    <line x1="555" y1="382" x2="339" y2="382" marker-end="url(#b)"/>
+    <line x1="335" y1="430" x2="119" y2="430" marker-end="url(#b)"/>
+  </g>
+  <g>
+    <text x="125" y="74">1. GET /danbri1_bot2/hello.txt (Basic login)</text>
+    <text x="345" y="96" fill="#2c4f8c" font-size="12">checks the login and users: danbri1_bot2</text>
+    <text x="345" y="110" fill="#2c4f8c" font-size="12">(another user: 404; any write method: 403 here,</text>
+    <text x="345" y="124" fill="#2c4f8c" font-size="12">nothing is sent to the pod)</text>
+    <text x="345" y="138">2. GET /hello.txt (no token yet)</text>
+    <text x="345" y="168">3. 401 + resource_metadata (RFC 9728)</text>
+    <text x="345" y="206">4. JWT signed with danbri1_bot2.jwk</text>
+    <text x="345" y="220" fill="#555" font-size="12">sub = iss = did:key:zDnaeTsj…, aud = the server</text>
+    <text x="345" y="260">5. access token for this pod</text>
+    <text x="345" y="274" fill="#555" font-size="12">(RFC 8693 token exchange; cached until it expires)</text>
+    <text x="345" y="324">6. GET /hello.txt, Authorization: Bearer …</text>
+    <text x="345" y="360">7. ACL: bot2 has Read → 200</text>
+    <text x="345" y="376" fill="#555" font-size="12">(an agent with no Read would get 403)</text>
+    <text x="125" y="424">8. 200 → the file</text>
+  </g>
+  <text x="430" y="470" text-anchor="middle" fill="#555" font-size="12">Steps 2–5 happen once per key; later requests go straight to step 6 with the cached token.</text>
+</svg>
