@@ -14,6 +14,7 @@ export type {
   Sbm11Reader, Sbm11Answer, Sbm11Store, Sbm11ReadEvidence, Sbm11Transport,
   LiteralValueData, LiteralValueResult,
   ExplainResult, StageInfo, EvidenceRecord, Wire, FactoidalNode, Pipeline, RunResult, RunOptions,
+  NodePort, GraphSource, GraphSpec, GraphIssue, GraphCheck, FactoidalGraph, GraphRunResult,
 } from './index';
 
 export {
@@ -26,6 +27,7 @@ export {
   canonicalHash,
   asDefaultGraph,
   isomorphic,
+  datasetMerge,
   fromQuads,
   literalValue,
   isValidLiteral,
@@ -75,6 +77,7 @@ export {
   stages,
   node,
   pipe,
+  graph,
   run,
   rdfsPlusClosure,
   rhoDfClosure,
