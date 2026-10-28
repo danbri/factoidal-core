@@ -690,7 +690,9 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
         | some f => fileUri (dir ++ "/" ++ f)
         | none => fileUri (dir ++ "/results/" ++ attrD tc "name" ++ ".xml")
       let topts : TOpts := { initialTemplate := it, initialMode := imName, initialSelect := imSel, initialFunction := ifn, globalCtx, params, env, outUri := ou }
-      pure (env, (do let r ← transform S topts; pure (r, S) : M (TResult × Sheet)))
+      -- the result refers to the source documents as the transformation
+      -- saw them: with whitespace stripped (§4.3)
+      pure ({ env with docs := env.docs.map (stripDoc S) }, (do let r ← transform S topts; pure (r, S) : M (TResult × Sheet)))
   -- delivery (the catalog driver's default format is a document node)
   -- delivery format raw: `output tree="no"` in the test, or an output
   -- definition with build-tree="no" or method json or adaptive (§26.1)

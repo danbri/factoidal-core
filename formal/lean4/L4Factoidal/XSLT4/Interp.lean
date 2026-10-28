@@ -1425,6 +1425,13 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let e ← match parseXPath src ns with
           | .ok e => pure (if dflt == "" then e else exprDefault dflt 100000 e)
           | .error er => xerr "XTDE3160" ("xsl:evaluate: " ++ er.code ++ " " ++ er.msg)
+        -- the XSLT function current-output-uri is not among the function
+        -- signatures of the target expression (§20.1.1)
+        if (exprAll 10000 [e]).any (fun x => match x with
+            | .call q _ _ => q.uri == nsFN && q.loc == "current-output-uri"
+            | .fref q _ => q.uri == nsFN && q.loc == "current-output-uri"
+            | _ => false) then
+          xerr "XTDE3160" "xsl:evaluate: current-output-uri is not available in the target expression"
         let mut vars : List (QN × Seq) := []
         match wp with
         | some w =>

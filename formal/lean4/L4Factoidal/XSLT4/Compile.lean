@@ -488,9 +488,9 @@ def serAttrOk (k v : String) : Bool :=
   else true
 
 /-- `disable-output-escaping="yes"` on `xsl:text` and `xsl:value-of`
-    (§26.1.8). -/
+    (§26.1.8); ignored when a `cdata` attribute is present (§11.4.3). -/
 def withDoe (as : Attrs) (r : Instr) : Instr :=
-  if ((as.get "disable-output-escaping").bind parseBool) == some true then .doe [r] else r
+  if ((as.get "disable-output-escaping").bind parseBool) == some true && (as.get "cdata").isNone then .doe [r] else r
 
 def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
   for (q, v) in as do
@@ -629,9 +629,9 @@ def compileNodes : Nat → SCx → Mod → List Nat → CM (List Instr)
         -- whitespace before xsl:param, xsl:sort, xsl:context-item or
         -- xsl:on-completion, and after xsl:catch, is removed regardless
         -- of xml:space (§4.3)
-        let beforeDecl := match oi with
-          | some i => ["param", "sort", "context-item", "on-completion"].any (m.isXsl i ·)
-          | none => false
+        let nx := lastText + 1
+        let beforeDecl := nx < m.d.nodes.size && (m.r nx).parent == (m.r lastText).parent &&
+          ["param", "sort", "context-item", "on-completion"].any (m.isXsl nx ·)
         if !(ws && (!c.preserveWs || beforeDecl || afterCatch)) then
           if c.expandText then out := out.push (.tvt (← liftM (c.avt t)))
           else out := out.push (.lit t)
