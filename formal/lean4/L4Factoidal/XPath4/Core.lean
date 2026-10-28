@@ -65,6 +65,20 @@ structure SchemaHook where
       Except Err (Option Doc × List String)) := none
 deriving Inhabited
 
+/-- The part of the dynamic context that a host function sees
+    (`Env.host`): the variable bindings and the focus at the call. -/
+structure HostCall where
+  vars : List (QN × Seq) := []
+  ctx : Option Seq := none
+  pos : Nat := 0
+  size : Nat := 0
+  /-- The static namespace bindings in force (`Env.ns`). -/
+  ns : List (String × String) := []
+
+/-- A host function: called with the dynamic context of the call and
+    the argument values. -/
+abbrev HostFn := HostCall → List Seq → M Seq
+
 structure Env where
   docs : Array Doc := #[]
   vars : List (QN × Seq) := []
@@ -99,6 +113,12 @@ structure Env where
   fileSys : Option L4Factoidal.EXPath.File.FS := none
   /-- Schema hook: the in-scope schema definitions (`SchemaHook`). -/
   schema : SchemaHook := {}
+
+  /-- Host hook (XSLT 4.0, `L4Factoidal.XSLT4`): the functions of the
+      host language by name and arity (`xsl:function`, `fn:current`,
+      `fn:key`, ...). Consulted before the built-in library; empty for
+      XPath. -/
+  host : QN → Nat → Option HostFn := fun _ _ => none
 deriving Inhabited
 
 def Env.doc (e : Env) (n : NodeRef) : Doc :=

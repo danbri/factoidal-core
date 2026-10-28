@@ -23,6 +23,18 @@ are `urn:uuid:` URIs from the host's random bytes (§6.5). The `If` header
 the lock token in it (§7.4, §7.5), else 423 with
 `DAV:lock-token-submitted` (§16).
 
+Emergency mode (https://github.com/danbri/factoidal/issues/1147): the
+server is read only and every request acts as one named user.
+`handle` refuses every write method (PUT, DELETE, MKCOL, COPY, MOVE,
+PROPPATCH, LOCK, UNLOCK) with 403 on every mount, whatever the mount file's
+`writable` says, before `handleRW` (the whole RFC 4918 server, kept and
+tested for the next release) sees the request; so `handle` names no storage
+write for any request (theorem `handle_readsOnly_all`, `Theorems.lean`). `OPTIONS` answers `DAV: 1` and an
+`Allow` of the read methods only; `DAV:supportedlock` is empty. `Ctx.user` is
+the request's user (`Login.admit`); a mount whose `users` does not hold it is
+answered 404, as a mount that does not exist, and is not in the root
+collection (theorem `hidden_mount_no_op`).
+
 Clients (design record § "What each client needs"): macOS Finder writes
 only to a server that answers LOCK (class 2); Windows Explorer needs
 `MS-Author-Via: DAV` on OPTIONS; GNOME Files (gvfs) and KDE Dolphin need
@@ -83,15 +95,22 @@ structure MountView where
   name : String
   title : String
   writable : Bool
+  /-- The users who may use this mount (`users:` of its file). -/
+  users : List String := []
 deriving Inhabited
 
 structure Ctx where
   mounts : List MountView
+  /-- The request's user (`Login.admit`): the logged-in user or the guest. -/
+  user : String := ""
   /-- Seconds since the Unix epoch, from the host's clock. -/
   now : Nat := 0
   /-- Random bytes from the host (at least 16 make a lock token). -/
   random : ByteArray := ByteArray.empty
 deriving Inhabited
+
+/-- The mounts the request's user may use: those whose `users` hold it. -/
+def Ctx.visible (cx : Ctx) : List MountView := cx.mounts.filter (fun mv => mv.users.contains cx.user)
 
 /-! ## Small helpers -/
 
@@ -227,7 +246,8 @@ def liveProps (st : DavState) (now : Nat) (p : DavPath) (title : Option String) 
    | some d => [("getlastmodified", davText "getlastmodified" d)] | none => []) ++
   (match m.etag with
    | some e => [("getetag", davText "getetag" e)] | none => []) ++
-  [ ("supportedlock", dav "supportedlock" [lockEntry true, lockEntry false])
+  -- Emergency mode (issue 1147): LOCK is refused, so no lock is offered.
+  [ ("supportedlock", dav "supportedlock" [])
   , ("lockdiscovery", dav "lockdiscovery" ((st.locks.filter (·.covers p)).map (activeLock · now))) ]
 
 def deadOf (st : DavState) (p : DavPath) : List DeadProp :=
@@ -411,10 +431,23 @@ def forget (st : DavState) (p : DavPath) (locks : Bool) : DavState :=
 
 /-! ## The methods -/
 
-def allowed : String := "OPTIONS, GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, PROPPATCH, LOCK, UNLOCK"
+/-- The methods the server answers (emergency mode, issue 1147: the read
+methods only). -/
+def readMethods : List String := ["OPTIONS", "GET", "HEAD", "PROPFIND"]
 
+/-- The methods `handleRW` implements. -/
+def allMethods : List String :=
+  ["OPTIONS", "GET", "HEAD", "PUT", "DELETE", "MKCOL", "COPY", "MOVE", "PROPFIND", "PROPPATCH", "LOCK", "UNLOCK"]
+
+/-- The `Allow` value: the read methods (issue 1147). -/
+def allowed : String := ", ".intercalate readMethods
+
+#guard allowed == "OPTIONS, GET, HEAD, PROPFIND"
+
+/-- Class 1 only: LOCK is refused in emergency mode (issue 1147), so the
+server does not claim class 2. -/
 def optionsResp : DavResponse :=
-  { status := 200, headers := [("dav", "1, 2"), ("ms-author-via", "DAV"), ("allow", allowed),
+  { status := 200, headers := [("dav", "1"), ("ms-author-via", "DAV"), ("allow", allowed),
                                ("content-length", "0")] }
 
 /-- A collection as a page of links, for a web browser. -/
@@ -439,11 +472,11 @@ def propfind (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) : Prog Da
   match p.segs with
   | [] =>
     let self := propfindResponse st cx.now req { segs := [], slash := true } (some "Factoidal") rootMeta
-    let kids := if depth1 then cx.mounts.map (fun mv =>
+    let kids := if depth1 then cx.visible.map (fun mv =>
         propfindResponse st cx.now req { segs := [mv.name], slash := true } (some mv.title) rootMeta) else []
     return xmlResp 207 (multistatus (self :: kids))
   | mount :: rest =>
-    let title := if rest.isEmpty then (cx.mounts.find? (·.name == mount)).map (·.title) else none
+    let title := if rest.isEmpty then (cx.visible.find? (·.name == mount)).map (·.title) else none
     match ← resolve rest p.slash true with
     | .failed a => return storageRefusal a
     | .absent => return textResp 404 "no resource at this path"
@@ -625,14 +658,19 @@ def copyMove (st : DavState) (r : DavRequest) (p : DavPath) (isMove : Bool)
 /-- Methods that change a mount. -/
 def writeMethods : List String := ["PUT", "DELETE", "MKCOL", "COPY", "MOVE", "PROPPATCH", "LOCK", "UNLOCK"]
 
+/-- The 403 of a write method (emergency mode, issue 1147). -/
+def readOnlyResp : DavResponse :=
+  textResp 403 "this server is read only (emergency mode, https://github.com/danbri/factoidal/issues/1147)"
+    [("allow", allowed)]
+
 /-- The checks made before any storage operation: the method, the target,
-the mount, read-only mounts, a malformed `If` header. `some r`: the
-request is refused with `r` and changes nothing. -/
+the mount and its users (issue 1147), read-only mounts, a malformed `If`
+header. `some r`: the request is refused with `r` and changes nothing. -/
 def precheck (cx : Ctx) (r : DavRequest) : Option DavResponse :=
   match parseTarget r.target with
   | none => some (textResp 400 "the request target is not a path this server reads")
   | some p =>
-    if !(allowed.splitOn ", ").contains r.method then
+    if !allMethods.contains r.method then
       some { (textResp 405 "the method is not supported") with headers := [("allow", allowed)] }
     else if (r.header? "if").any (fun v => (parseIf v).isNone) then
       some (textResp 400 "the If header is malformed (RFC 4918 §10.4)")
@@ -644,7 +682,9 @@ def precheck (cx : Ctx) (r : DavRequest) : Option DavResponse :=
         if r.method == "OPTIONS" || r.method == "GET" || r.method == "HEAD" || r.method == "PROPFIND" then none
         else some (textResp 403 "the root collection holds the mounts and is not changed")
       | m :: _ =>
-        match cx.mounts.find? (·.name == m) with
+        -- A mount the user may not use is answered as one that does not
+        -- exist (issue 1147).
+        match cx.visible.find? (·.name == m) with
         | none => some (textResp 404 "no mount of this name")
         | some mv =>
           if !mv.writable && writeMethods.contains r.method then some (textResp 403 "this mount is read-only")
@@ -660,7 +700,7 @@ def getHead (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) : Prog (Da
   let rest := inner p
   match p.segs with
   | [] =>
-    let resp := htmlIndex "Factoidal" (cx.mounts.map (fun mv => (hrefOf { segs := [mv.name] } true, mv.title)))
+    let resp := htmlIndex "Factoidal" (cx.visible.map (fun mv => (hrefOf { segs := [mv.name] } true, mv.title)))
     return ({ resp with body := if r.method == "HEAD" then ByteArray.empty else resp.body }, st)
   | _ =>
   match ← resolve rest p.slash with
@@ -681,8 +721,9 @@ def getHead (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) : Prog (Da
       [("content-length", toString g.body.size)]
     return ({ status := 200, headers := hs, body := if r.method == "HEAD" then ByteArray.empty else g.body }, st)
 
-/-- One request. -/
-def handle (cx : Ctx) (st0 : DavState) (r : DavRequest) : Prog (DavResponse × DavState) := do
+/-- One request, with every method of RFC 4918 classes 1 and 2. Not served
+in emergency mode (issue 1147): `handle` passes it the read methods only. -/
+def handleRW (cx : Ctx) (st0 : DavState) (r : DavRequest) : Prog (DavResponse × DavState) := do
   if let some resp := precheck cx r then return (resp, st0)
   -- Expired locks are gone (§6.6).
   let st := { st0 with locks := st0.locks.filter (·.expires > cx.now) }
@@ -770,12 +811,50 @@ def handle (cx : Ctx) (st0 : DavState) (r : DavRequest) : Prog (DavResponse × D
   | "UNLOCK" => return unlock st r p
   | _ => return ({ (textResp 405 "the method is not supported") with headers := [("allow", allowed)] }, st)
 
+/-- One request, as `webdav-serve` serves it (emergency mode,
+https://github.com/danbri/factoidal/issues/1147): a write method is 403 and
+names no operation; a method that is not a read method is 405; a read
+method goes to `handleRW`. -/
+def handle (cx : Ctx) (st : DavState) (r : DavRequest) : Prog (DavResponse × DavState) :=
+  if writeMethods.contains r.method then .pure (readOnlyResp, st)
+  else if !readMethods.contains r.method then
+    .pure ({ (textResp 405 "the method is not supported") with headers := [("allow", allowed)] }, st)
+  else
+    -- Only a target in a mount the user may use reaches a storage; any
+    -- other request runs with no storage (the root collection needs none;
+    -- `precheck` answers 404 for a mount the user may not use).
+    match mountOf r with
+    | some m => if cx.visible.any (·.name == m) then handleRW cx st r else (handleRW cx st r).offline
+    | none => (handleRW cx st r).offline
+
 /-- A request refused before any storage operation keeps the state it was
 given, and names no operation. -/
-theorem refused_keeps_state (cx : Ctx) (st : DavState) (r : DavRequest) (resp : DavResponse)
-    (h : precheck cx r = some resp) : handle cx st r = .pure (resp, st) := by
-  unfold handle
+theorem refused_keeps_state_rw (cx : Ctx) (st : DavState) (r : DavRequest) (resp : DavResponse)
+    (h : precheck cx r = some resp) : handleRW cx st r = .pure (resp, st) := by
+  unfold handleRW
   simp only [h]
   rfl
+
+/-- `handle` keeps the state and names no operation for a request the
+precheck refuses. -/
+theorem refused_keeps_state (cx : Ctx) (st : DavState) (r : DavRequest) (resp : DavResponse)
+    (h : precheck cx r = some resp) : ∃ resp', handle cx st r = .pure (resp', st) := by
+  have hrw := refused_keeps_state_rw cx st r resp h
+  unfold handle
+  split
+  · exact ⟨_, rfl⟩
+  · split
+    · exact ⟨_, rfl⟩
+    · split
+      · split
+        · exact ⟨resp, hrw⟩
+        · exact ⟨resp, by rw [hrw]; rfl⟩
+      · exact ⟨resp, by rw [hrw]; rfl⟩
+
+/-- A write method is 403 and names no operation (issue 1147). -/
+theorem write_refused (cx : Ctx) (st : DavState) (r : DavRequest)
+    (h : writeMethods.contains r.method = true) : handle cx st r = .pure (readOnlyResp, st) := by
+  unfold handle
+  rw [if_pos h]
 
 end L4Factoidal.WebDAV

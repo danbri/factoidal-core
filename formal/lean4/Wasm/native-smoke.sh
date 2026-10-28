@@ -1845,45 +1845,66 @@ checkseq "lwsStep drives create, read, update and delete" "$TMP/lws-crud.json" \
 
 # --- WebDAV server (https://github.com/danbri/factoidal/issues/1066) ---
 # The handle reads mount files (webdavOpen, webdavLoad), then each request
-# is a program over storage operations: a local mount's operation comes out
-# as an `lws` request, answered with webdavResume. A malformed mount file is
-# refused with its name and line. webdavOpen also asks for the state file
-# `.webdav-state.json` (dead properties and locks,
-# https://github.com/danbri/factoidal/issues/1078).
+# is a program over storage operations: an lws mount's operation comes out
+# as a `fetch` of the LWS client. A malformed mount file is refused with its
+# name and line. webdavOpen also asks for the state file `.webdav-state.json`
+# (dead properties and locks, https://github.com/danbri/factoidal/issues/1078).
+# Emergency mode (https://github.com/danbri/factoidal/issues/1147): read
+# only (PUT 403, DAV 1), a request with no credentials acts as the guest
+# (`login.guest`), with no guest it is 401; a mount whose `users:` do not
+# name the user is 404 and not listed; a local mount and a mount with no
+# `users:` are refused at start.
 python3 - "$TMP/webdav.json" <<'EOF'
 import json, sys, base64
 r = lambda **kw: json.dumps(kw)
 ent = base64.b64encode(bytes(range(32))).decode()
+lws = "# A\n- kind: lws\n- url: http://127.0.0.1:9/st/\n- users: guest\n"
+hid = "- kind: lws\n- url: http://127.0.0.1:9/h/\n- users: alice\n"
 seq = [
-  ["webdavOpen", [r(listing=["a.md", "README.md", "notes.txt"], entropy=ent)]],
-  ["webdavLoad", ["webdav1", r(files=[{"name": "a.md", "text": "# A\n- kind: local\n- path: st\n"}])]],
-  ["webdavLoad", ["webdav1", r(exists=[{"path": "st", "present": True}])]],
+  ["webdavOpen", [r(listing=["a.md", "h.md", "README.md", "notes.txt"], entropy=ent, login={"guest": "guest"})]],
+  ["webdavLoad", ["webdav1", r(files=[{"name": "a.md", "text": lws}, {"name": "h.md", "text": hid}])]],
+  ["webdavLoad", ["webdav1", r(files=[], exists=[])]],
   ["webdavStep", ["webdav1", r(method="OPTIONS", target="/a/")]],
   ["webdavStep", ["webdav1", r(method="PROPFIND", target="/", headers=[["Depth", "1"]])]],
+  ["webdavStep", ["webdav1", r(method="PUT", target="/a/x", body="x")]],
+  ["webdavStep", ["webdav1", r(method="GET", target="/h/x")]],
   ["webdavStep", ["webdav1", r(method="GET", target="/a/x")]],
-  ["webdavResume", ["webdav1", r(status=404, headers=[])]],
-  ["webdavResume", ["webdav1", r(status=404, headers=[])]],
   ["webdavClose", ["webdav1"]],
   ["webdavStep", ["webdav1", r(method="OPTIONS", target="/")]],
   ["webdavOpen", [r(listing=["bad.md"], entropy=ent)]],
   ["webdavLoad", ["webdav2", r(files=[{"name": "bad.md", "text": "- kind: local\n- colour: red\n"}])]],
+  ["webdavOpen", [r(listing=["l.md"], entropy=ent)]],
+  ["webdavLoad", ["webdav3", r(files=[{"name": "l.md", "text": "- kind: local\n- path: st\n- users: guest\n"}])]],
+  ["webdavOpen", [r(listing=["n.md"], entropy=ent)]],
+  ["webdavLoad", ["webdav4", r(files=[{"name": "n.md", "text": "- kind: lws\n- url: http://h/\n"}])]],
+  ["webdavOpen", [r(listing=["a.md"], entropy=ent)]],
+  ["webdavLoad", ["webdav5", r(files=[{"name": "a.md", "text": lws}])]],
+  ["webdavLoad", ["webdav5", r(files=[], exists=[])]],
+  ["webdavStep", ["webdav5", r(method="GET", target="/a/x")]],
 ]
 json.dump(seq, open(sys.argv[1], "w"))
 EOF
 
-checkseq "webdav: mount files, OPTIONS, PROPFIND of the root, a GET carried as lws requests" "$TMP/webdav.json" \
-  'rs[0]["ok"] is True and rs[0]["need"]["read"] == ["a.md", ".webdav-state.json"]
-   and rs[1]["need"]["exists"] == ["st", "st/lws-state.json", "st/lws-files.json"]
-   and rs[2]["ready"]["local"][0]["config"]["storage"] == "snapshot"
+checkseq "webdav: mount files, read only, guest, users, refused local mounts" "$TMP/webdav.json" \
+  'rs[0]["ok"] is True and rs[0]["need"]["read"] == ["a.md", "h.md", ".webdav-state.json"]
+   and rs[2]["ready"]["local"] == []
+   and rs[2]["ready"]["warnings"][0].startswith("read only (emergency mode, issue 1147)")
+   and rs[2]["ready"]["mounts"][0]["users"] == ["guest"] and rs[2]["ready"]["mounts"][0]["writable"] is False
    and rs[3]["response"]["status"] == 200
-   and dict(rs[3]["response"]["headers"])["dav"] == "1, 2"
+   and dict(rs[3]["response"]["headers"])["dav"] == "1"
+   and dict(rs[3]["response"]["headers"])["allow"] == "OPTIONS, GET, HEAD, PROPFIND"
    and rs[4]["response"]["status"] == 207 and "<D:href>/a/</D:href>" in rs[4]["response"]["body"]
-   and rs[5]["lws"]["request"] == {"method": "HEAD", "target": "/x", "headers": [], "body": ""}
-   and rs[6]["lws"]["request"]["target"] == "/x/"
-   and rs[7]["response"]["status"] == 404
+   and "<D:href>/h/</D:href>" not in rs[4]["response"]["body"]
+   and rs[5]["response"]["status"] == 403
+   and rs[6]["response"]["status"] == 404
+   and rs[7]["fetch"]["method"] == "HEAD" and rs[7]["fetch"]["url"] == "http://127.0.0.1:9/st/x"
    and rs[8]["ok"] is True
    and rs[9]["ok"] is False and "unknown WebDAV handle" in rs[9]["error"]
-   and rs[11]["ok"] is False and rs[11]["error"].startswith("bad.md:2: unknown key")'
+   and rs[11]["ok"] is False and rs[11]["error"].startswith("bad.md:2: unknown key")
+   and rs[13]["ok"] is False and rs[13]["error"].startswith("l.md:1: a `kind: local` mount opens its storage with no authorization")
+   and rs[15]["ok"] is False and rs[15]["error"].startswith("n.md:1: the settings list has no `users`")
+   and rs[19]["response"]["status"] == 401
+   and dict(rs[19]["response"]["headers"])["www-authenticate"].startswith("Basic")'
 
 # Bodies are bytes (https://github.com/danbri/factoidal/issues/889). Through
 # the string entry a body that is not UTF-8 travels as `bodyBase64` both
@@ -3291,6 +3312,50 @@ check "literalFromValue 300 as byte -> literal.value error" literalFromValue "$T
 check "ops reflection lists the literal-value ops" ops "$TMP/dl-empty.json" \
   'set(["literalValue","literalFromValue"]) <= set(r["ops"])'
 
+# --- Controlled Identifiers v1.0 (https://github.com/danbri/factoidal/issues/1100) ---
+args "$TMP/cid-ok.json" '{"id":"https://c.example/d","authentication":[{"id":"#k","type":"Multikey","controller":"https://c.example/d","publicKeyMultibase":"z6MkmM42vxfqZQsv4ehtTjFFxQ4sQKS2w6WR7emozFAn5cxu"}]}'
+check "cidValidate accepts a conforming document" cidValidate "$TMP/cid-ok.json" \
+  'r == {"ok": True, "valid": True, "errors": []}'
+args "$TMP/cid-bad.json" '{"id":"x","verificationMethod":[{"id":"#k","type":"JsonWebKey","controller":"https://c.example","publicKeyJwk":{"kty":"OKP","d":"s"}}]}'
+check "cidValidate lists each failed MUST with its JSON Pointer" cidValidate "$TMP/cid-bad.json" \
+  'r["ok"] is True and r["valid"] is False
+   and [(e["code"], e["path"]) for e in r["errors"]] == [("idNotUrl", "/id"), ("jwkPrivateMember", "/verificationMethod/0/publicKeyJwk/d")]'
+args "$TMP/cid-r1.json" '{"vm":"https://c.example/d#k","relationship":"authentication"}'
+check "cidRetrieve names the host to resolve" cidRetrieve "$TMP/cid-r1.json" \
+  'r == {"ok": True, "step": "resolve", "host": "c.example"}'
+args "$TMP/cid-r2.json" '{"vm":"https://c.example/d#k","relationship":"authentication","resolved":[{"host":"c.example","addresses":["203.0.113.7"]}]}'
+check "cidRetrieve names the fetch, its Accept and its address" cidRetrieve "$TMP/cid-r2.json" \
+  'r["step"] == "fetch" and r["url"] == "https://c.example/d" and r["address"] == "203.0.113.7"
+   and r["accept"] == "application/cid, application/cid+json, application/ld+json, application/json"'
+args "$TMP/cid-r3.json" '{"vm":"https://c.example/d#k","relationship":"authentication","resolved":[{"host":"c.example","addresses":["10.0.0.1"]}]}'
+check "cidRetrieve refuses a private address" cidRetrieve "$TMP/cid-r3.json" \
+  'r["step"] == "error" and r["code"] == "FETCH_REFUSED"'
+# cidreq <file> <contentType>: a request with the document fetched.
+cidreq() {
+  python3 - "$1" "$2" <<'PYEOF'
+import json, sys
+doc = {"id": "https://c.example/d", "authentication": [{"id": "#k", "type": "Multikey",
+       "controller": "https://c.example/d",
+       "publicKeyMultibase": "z6MkmM42vxfqZQsv4ehtTjFFxQ4sQKS2w6WR7emozFAn5cxu"}]}
+req = {"vm": "https://c.example/d#k", "relationship": "authentication",
+       "resolved": [{"host": "c.example", "addresses": ["203.0.113.7"]}],
+       "fetched": [{"url": "https://c.example/d", "status": 200, "contentType": sys.argv[2],
+                    "body": json.dumps(doc)}]}
+json.dump([json.dumps(req)], open(sys.argv[1], "w"))
+PYEOF
+}
+cidreq "$TMP/cid-r4.json" "application/cid"
+check "cidRetrieve returns the method (CID 1.0 3.3)" cidRetrieve "$TMP/cid-r4.json" \
+  'r["step"] == "method" and r["verificationMethod"]["id"] == "#k" and r["controllerDocument"] == "https://c.example/d"'
+cidreq "$TMP/cid-r5.json" "text/html"
+check "cidRetrieve refuses a Content-Type that is not a CID media type" cidRetrieve "$TMP/cid-r5.json" \
+  'r["step"] == "error" and r["code"] == "UNSUPPORTED_MEDIA_TYPE"'
+args "$TMP/cid-r6.json" '{"vm":"https://c.example/d#k","relationship":"proofOfWork"}'
+check "cidRetrieve refuses an unknown relationship" cidRetrieve "$TMP/cid-r6.json" \
+  'r["ok"] is False and "proofOfWork" in r["error"]'
+check "ops reflection lists the CID ops" ops "$TMP/dl-empty.json" \
+  'set(["cidValidate","cidRetrieve"]) <= set(r["ops"])'
+
 # --- Dispatch reflection + unknown op ---------------------------------
 args "$TMP/empty.json"
 check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
@@ -3432,6 +3497,33 @@ args "$TMP/verify-side.json" "$TMP/verify-side"
 check "sbm11Open of a generation with a changed .merkle sidecar -> error naming the sidecar" sbm11Open \
   "$TMP/verify-side.json" 'r["ok"] is False and "spo.prb1.merkle" in r["error"]'
 
+# The trust anchor of sbm11Open (`manifestSha256`, the SHA-256 of the manifest
+# bytes; HostVerify.checkAnchor, https://github.com/danbri/factoidal/issues/1105):
+# the anchor of the fixture generation opens it and is the digest the answer
+# gives; one changed hex digit refuses it, naming the manifest and both
+# digests; a value that is not 64 hex digits is refused; sbm11Verify gives
+# the same digest.
+python3 - "$SBM11_ROOT/gen" "$TMP/sbm11-anchor-seq.json" "$TMP/sbm11-anchor.txt" <<'EOF'
+import hashlib, json, sys
+gen, out, txt = sys.argv[1], sys.argv[2], sys.argv[3]
+d = hashlib.sha256(open(gen + "/manifest.sbm11", "rb").read()).hexdigest()
+wrong = d[:63] + ("1" if d[63] == "0" else "0")
+open(txt, "w").write(d + " " + wrong + "\n")
+json.dump([["sbm11Open", [gen, json.dumps({"manifestSha256": d})]],
+           ["sbm11Open", [gen, json.dumps({"manifestSha256": wrong})]],
+           ["sbm11Open", [gen, json.dumps({"manifestSha256": "abc"})]],
+           ["sbm11Verify", [gen]],
+           ["sbm11Close", ["sbm11-1"]]], open(out, "w"))
+EOF
+read -r SBM11_ANCHOR SBM11_WRONG < "$TMP/sbm11-anchor.txt"
+checkseq "sbm11Open manifestSha256: the anchor opens, a wrong anchor and a malformed one are refused" \
+  "$TMP/sbm11-anchor-seq.json" \
+  'rs[0]["ok"] is True and rs[0]["manifestSha256"] == "'"$SBM11_ANCHOR"'"
+   and rs[1]["ok"] is False and "manifest.sbm11" in rs[1]["error"]
+   and "'"$SBM11_ANCHOR"'" in rs[1]["error"] and "'"$SBM11_WRONG"'" in rs[1]["error"]
+   and rs[2]["ok"] is False and "manifestSha256" in rs[2]["error"]
+   and rs[3]["ok"] is True and rs[3]["manifestSha256"] == "'"$SBM11_ANCHOR"'"'
+
 # SBM11 pack in memory (https://github.com/danbri/factoidal/issues/1009 stage 2):
 # the op through the string entry is refused by name; through the byte-region
 # entry (`l4factoidal sbm11-pack`, one call per file) it gives the files of
@@ -3549,6 +3641,7 @@ corecheck "core: ops reflection names the engine and the full-only ops" ops "$TM
   'r["ok"] is True and r["engine"] == "core" and "datasetOpen" in r["ops"]
    and "shaclValidate" in r["ops"] and "xpathEval" not in r["ops"]
    and "xpathEval" in r["fullOnlyOps"] and r["blobOps"] == [] and r["blobIoOps"] == []
+   and "cidValidate" in r["fullOnlyOps"] and "cidRetrieve" in r["fullOnlyOps"]
    and r["fullOnlyFormats"] == ["jsonld", "json-ld", "application/ld+json"]'
 corecheck "core: parseToDatasetJson turtle" parseToDatasetJson "$TMP/parse.json" \
   'r["ok"] is True and r["count"] == 1 and "example.org/alice" in r["nquads"]'

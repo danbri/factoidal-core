@@ -10,6 +10,11 @@ the program runs against the reference LWS server over a model storage
 stanzas are read back with the client-side codec.
 
 No network: stage 2 adds the outgoing XMPP client stream and the local proxy.
+
+Emergency mode (https://github.com/danbri/factoidal/issues/1147): `handle`
+is read only, so the storage is filled through `WebDAV.handleRW` (as an LWS
+client would fill it) and the requests over XMPP read it; a PUT over XMPP is
+403. The requests act as the user `u` (`Ctx.user`).
 -/
 import L4Factoidal.XMPP.HttpOverXmpp
 import L4Factoidal.WebDAV.Tests
@@ -25,7 +30,15 @@ def cfg : Config := { allow := ["alice@example.org"], inlineLimit := 4096, chunk
 
 /-- 5,000 bytes: above the inline limit of `cfg`. -/
 def big : ByteArray := ByteArray.mk ((List.range 5000).map (fun i => UInt8.ofNat (i * 7 % 256))).toArray
-def cx : Ctx := { mounts, now := 2000000000, random := ByteArray.mk (Array.replicate 16 7) }
+def cx : Ctx := { mounts, now := 2000000000, random := ByteArray.mk (Array.replicate 16 7), user := "u" }
+
+/-- A storage with the files `fs` (path, content type, bytes), written
+through `handleRW`. -/
+def seeded (fs : List (String × String × ByteArray)) : MemState :=
+  (fs.foldl (fun (w : L4Factoidal.WebDAV.Tests.W) (p, ct, b) =>
+    L4Factoidal.WebDAV.Tests.step lwsRun w
+      { method := "PUT", target := p, headers := [("host", "localhost:8090"), ("content-type", ct)], body := b })
+    {}).store
 
 structure W where
   dav : DavState := {}
@@ -39,7 +52,7 @@ def feed (w : W) (stanza : String) : W :=
   | some (o, store) => { dav := o.dav, st := o.st, store, out := o.out, handled := o.handled }
   | none => { w with out := [], handled := false }
 
-def run (stanzas : List String) : W := stanzas.foldl feed {}
+def run (stanzas : List String) (store : MemState := emptyStorage) : W := stanzas.foldl feed { store }
 
 def iq (from_ id method resource : String) (headers : List (String × String) := []) (body : Body := .empty)
     (mcs : Option Nat := none) : String :=
@@ -67,39 +80,45 @@ def has (s sub : String) : Bool := (s.splitOn sub).length > 1
   | some (e, _) => e.to == some alice && e.from_ == some "dav@example.net/box" && e.id == "p1"
   | none => false
 
--- PUT as text, then GET: 201, then 200 with the text body.
+-- PUT is 403 (read only, issue 1147) and the storage does not change.
 #guard
   let w0 := run [iq alice "a" "PUT" "/m/a.txt" [("Content-Type", "text/plain")] (.text "hello")]
-  let w1 := feed w0 (iq alice "b" "GET" "/m/a.txt")
-  status w0 == 201 && status w1 == 200 && ((resp? w1).map (·.body)) == some (.text "hello")
+  status w0 == 403 && w0.store.entries.length == emptyStorage.entries.length
 
--- PUT as base64 (binary), GET answers base64 with the same bytes.
+-- GET of a text file: 200 with the text body.
 #guard
-  let w0 := run [iq alice "a" "PUT" "/m/b.bin" [("Content-Type", "application/octet-stream")] (.base64 binBytes)]
-  let w1 := feed w0 (iq alice "b" "GET" "/m/b.bin")
-  status w0 == 201 && ((resp? w1).map (·.body)) == some (.base64 binBytes)
+  let w1 := run [iq alice "b" "GET" "/m/a.txt"] (seeded [("/m/a.txt", "text/plain", "hello".toUTF8)])
+  status w1 == 200 && ((resp? w1).map (·.body)) == some (.text "hello")
+
+-- GET of a binary file answers base64 with the same bytes.
+#guard
+  let w1 := run [iq alice "b" "GET" "/m/b.bin"] (seeded [("/m/b.bin", "application/octet-stream", binBytes)])
+  status w1 == 200 && ((resp? w1).map (·.body)) == some (.base64 binBytes)
+
+-- A mount the user may not use is 404 over XMPP too.
+#guard status (run [iq alice "s" "GET" "/secret/"]) == 404
 
 -- A body above the inline limit goes back as chunkedBase64, in chunks of at
 -- most maxChunkSize bytes, which reassemble to the stored bytes.
 #guard
-  let w0 := run [iq alice "a" "PUT" "/m/big.bin" [("Content-Type", "application/octet-stream")] (.base64 big)]
-  let w1 := feed w0 (iq alice "b" "GET" "/m/big.bin" (mcs := some 300))
+  let w1 := run [iq alice "b" "GET" "/m/big.bin" (mcs := some 300)]
+    (seeded [("/m/big.bin", "application/octet-stream", big)])
   let chunks := (w1.out.drop 1).filterMap parseChunk |>.map (·.2)
   status w1 == 200 && chunks.length == 20 && chunks.all (·.data.size ≤ 256) &&
   (match (resp? w1).map (·.body) with | some (Body.chunked sid) => chunks.all (·.streamId == sid) | _ => false) &&
   (assembleChunks chunks).map (·.toList) == some big.toList
 
 -- A chunked request body: nothing is served until the last chunk; chunks may
--- arrive out of order.
+-- arrive out of order. The request is then a PUT, so 403 (issue 1147), and
+-- the storage does not change.
 #guard
   let cs := splitChunks "up1" big 256
   let msgs := renderChunkMessages (some alice) (some "dav@example.net/box") cs
   let w0 := run [iq alice "u" "PUT" "/m/up.bin" [("Content-Type", "application/octet-stream")] (.chunked "up1")]
   let w1 := feed w0 (msgs.getLastD "")
   let w2 := (msgs.dropLast.reverse).foldl feed w1
-  let w3 := feed w2 (iq alice "g" "GET" "/m/up.bin" (mcs := some 256))
-  cs.length == 20 && w0.out.isEmpty && w1.out.isEmpty && status w2 == 201 &&
-  (assembleChunks ((w3.out.drop 1).filterMap parseChunk |>.map (·.2))).map (·.toList) == some big.toList
+  cs.length == 20 && w0.out.isEmpty && w1.out.isEmpty && status w2 == 403 &&
+  w2.store.entries.length == emptyStorage.entries.length
 
 -- A `close` from the requester drops a waiting request.
 #guard

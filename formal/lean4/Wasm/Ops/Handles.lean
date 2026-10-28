@@ -575,13 +575,17 @@ def datasetSparqlRlInfer (h rules : String) : IO String := do
 /-- `datasetQueryRaw(handle, sparql, optsJson)` — `queryRaw` over the stored
 dataset: `optsJson` members `entail` (none | RDFS | OWL-RL | x-rdfscore |
 x-rdfsplus) and `output` (json | xml | csv | tsv | table | ntriples). The
-clock is read once per call. -/
+clock and the extension registry are read once per call; a registered
+extension function (SPARQL 1.1 §17.6) answers here as in `datasetQuery`
+(https://github.com/danbri/factoidal/issues/1090). -/
 def datasetQueryRaw (h sparql optsJson : String) : IO String := do
   let now ← nowDateTime
+  let extIris ← extSnapshot
   let opts : Option Json := if optsJson == "" then none else parseJson? optsJson
   let field (k d : String) : String := ((opts.bind (fun j => j.getString? k))).getD d
   withHandleDataset h fun ds _ =>
-    pure (queryRawParsed ds sparql (field "entail" "none") (field "output" "json") (some now))
+    pure (queryRawParsed ds sparql (field "entail" "none") (field "output" "json") (some now)
+      (extFnsWith extIris))
 
 /-- `detectFormat(text)` — `{"ok":true,"format":TAG}`, the parse tag of
 `formatOfContent`; Turtle, TriG and N-Quads are read in RDF 1.2 mode
@@ -775,19 +779,17 @@ def datasetMatchCountWith (h patternJson optionsJson : String) : IO String := do
 
 def datasetMatchCount (h patternJson : String) : IO String := datasetMatchCountWith h patternJson ""
 
-/-- The quads of an N-Quads text as SPARQL Update quads. A graph named by a
-blank node has no Update quad form and is refused. -/
-def updateQuadsOf (nq : String) : Except String (List (Option WfIri × Triple)) := do
+/-- The quads of an N-Quads text, with their graph names. A graph named by a
+blank node is a graph name (RDF 1.1 Concepts §4), so its quads are kept
+(https://github.com/danbri/factoidal/issues/1094). -/
+def updateQuadsOf (nq : String) : Except String (List AnyQuad) := do
   let ds ← (L4Factoidal.Dataflow.readNQuadsText .rdf12 nq).mapError fmtParseError
-  let named ← ds.named.mapM fun ng =>
-    match ng.name with
-    | .iri i => .ok (ng.graph.map fun t => ((some i : Option WfIri), t))
-    | .bnode _ => .error "a quad in a graph named by a blank node cannot be added or deleted here"
-  pure (ds.default.map (fun t => ((none : Option WfIri), t)) ++ named.flatten)
+  pure (ds.default.map (fun t => ((none : Option Subject), t)) ++
+    ds.named.flatMap fun ng => ng.graph.map fun t => (some ng.name, t))
 
 /-- Replace the stored dataset of `h` with `f` of it; answers the new count. -/
 private def changeHandle (who h nq : String)
-    (f : CertifiedDataset → List (Option WfIri × Triple) → CertifiedDataset) : IO String := do
+    (f : CertifiedDataset → List AnyQuad → CertifiedDataset) : IO String := do
   let tbl ← handleTable.get
   match tbl[h]? with
   | none => missingHandle h
@@ -803,12 +805,12 @@ private def changeHandle (who h nq : String)
 INSERT DATA does (`Dataset.insertQuads`). Blank-node labels are kept as
 written, so a label the dataset holds names the same node. -/
 def datasetAddQuads (h nq : String) : IO String :=
-  changeHandle "datasetAddQuads" h nq CertifiedDataset.insertQuads
+  changeHandle "datasetAddQuads" h nq CertifiedDataset.insertAnyQuads
 
 /-- `datasetDeleteQuads(handle, nquads)` — remove the quads
 (`Dataset.deleteQuads`). -/
 def datasetDeleteQuads (h nq : String) : IO String :=
-  changeHandle "datasetDeleteQuads" h nq CertifiedDataset.deleteQuads
+  changeHandle "datasetDeleteQuads" h nq CertifiedDataset.deleteAnyQuads
 
 /-! ## Terms as JSON values: the RDF/JS host reads and writes no RDF syntax
 
@@ -816,13 +818,11 @@ https://github.com/danbri/factoidal/issues/894. A host builds its term
 objects from `TermJson.encodeTerm` members and sends term objects back; the
 engine does every escape, every parse and every datatype decision. -/
 
-/-- A quad of `TermJson` in the form `Dataset.insertQuads` takes; a graph named
-by a blank node has no SPARQL Update quad form and is refused. -/
-def updateQuadOfJsonQuad : TermJson.Quad → Except String (Option WfIri × Triple)
-  | (none, t) => .ok (none, t)
-  | (some (.iri i), t) => .ok (some i, t)
-  | (some (.bnode _), _) =>
-      .error "a quad in a graph named by a blank node cannot be added or deleted here"
+/-- A quad of `TermJson` in the form `CertifiedDataset.insertAnyQuads` takes;
+a graph named by a blank node is kept (RDF 1.1 Concepts §4,
+https://github.com/danbri/factoidal/issues/1094). -/
+def updateQuadOfJsonQuad : TermJson.Quad → Except String AnyQuad
+  | (g, t) => .ok (g, t)
 
 /-- The first `{"type":"uri","value":v}` member in the worklist whose `v` is
 not an IRI (RDF 1.2 Concepts §3.2), visiting at most `fuel` JSON values. One
@@ -866,8 +866,8 @@ def jsonQuadsLoop : List Json → Array TermJson.Quad → Except String (List Te
       | none => .error (notAQuadMessage x)
 
 /-- Each quad as an Update quad, one frame for any number of quads. -/
-def updateQuadsLoop : List TermJson.Quad → Array (Option WfIri × Triple) →
-    Except String (List (Option WfIri × Triple))
+def updateQuadsLoop : List TermJson.Quad → Array AnyQuad →
+    Except String (List AnyQuad)
   | [], acc => .ok acc.toList
   | q :: r, acc =>
       match updateQuadOfJsonQuad q with
@@ -950,7 +950,7 @@ def datasetQuadsBin (h optsJson : String) : IO (String × ByteArray) := do
         ByteArray.empty)
 
 private def changeHandleJson (who h text : String)
-    (f : CertifiedDataset → List (Option WfIri × Triple) → CertifiedDataset) : IO String := do
+    (f : CertifiedDataset → List AnyQuad → CertifiedDataset) : IO String := do
   match (← handleTable.get)[h]? with
   | none => missingHandle h
   | some od =>
@@ -964,25 +964,24 @@ private def changeHandleJson (who h text : String)
 /-- `datasetAddQuadsJson(handle, quadsJson)` — `datasetAddQuads` with the quads
 given as `TermJson` quads. -/
 def datasetAddQuadsJson (h quadsJson : String) : IO String :=
-  changeHandleJson "datasetAddQuadsJson" h quadsJson CertifiedDataset.insertQuads
+  changeHandleJson "datasetAddQuadsJson" h quadsJson CertifiedDataset.insertAnyQuads
 
 /-- `datasetDeleteQuadsJson(handle, quadsJson)` — `datasetDeleteQuads` with the
 quads given as `TermJson` quads. -/
 def datasetDeleteQuadsJson (h quadsJson : String) : IO String :=
-  changeHandleJson "datasetDeleteQuadsJson" h quadsJson CertifiedDataset.deleteQuads
+  changeHandleJson "datasetDeleteQuadsJson" h quadsJson CertifiedDataset.deleteAnyQuads
 
 /-- The quads of `od` that a quad to delete names, by value: a quad whose
 object is a literal names each stored quad of the same subject, predicate and
 graph whose object matches it by value (`valueMatchDataset`); any other quad
 names itself. -/
-def valueDeleteQuads (od : OpenDataset) (qs : List (Option WfIri × Triple)) :
-    List (Option WfIri × Triple) :=
+def valueDeleteQuads (od : OpenDataset) (qs : List AnyQuad) : List AnyQuad :=
   qs.flatMap fun (g, t) =>
     match t.o with
     | .literal _ =>
         let pat : QuadPattern :=
           { bound := { s := some t.s, p := some t.p, o := some t.o },
-            graph := some (g.map Subject.iri) }
+            graph := some g }
         let m := valueMatchDataset od pat
         m.default.map (fun u => (g, u)) ++ m.named.flatMap (fun ng => ng.graph.map fun u => (g, u))
     | _ => [(g, t)]
@@ -1001,7 +1000,7 @@ def datasetDeleteQuadsJsonWith (h quadsJson optionsJson : String) : IO String :=
       match jsonQuadsOf quadsJson >>= (updateQuadsLoop · #[]) with
       | .error e => pure (errJson s!"datasetDeleteQuadsJson: {e}")
       | .ok qs =>
-        let next := openDataset (CertifiedDataset.deleteQuads od.data (valueDeleteQuads od qs))
+        let next := openDataset (CertifiedDataset.deleteAnyQuads od.data (valueDeleteQuads od qs))
           od.prefixes od.readMode
         handleTable.modify (·.insert h next)
         pure (okWith [("count", .number (toString (datasetQuadCount next.ds)))])
@@ -1442,7 +1441,7 @@ def apiCheck (who optionsJson : String) : String :=
 #guard match updateQuadsOf "<http://e/a> <http://e/p> \"x\" <http://e/g> .\n" with
   | .ok [(some _, _)] => true | _ => false
 #guard match updateQuadsOf "<http://e/a> <http://e/p> \"x\" _:g .\n" with
-  | .error _ => true | _ => false
+  | .ok [(some (.bnode _), _)] => true | _ => false
 
 private def tt12 : Dataset :=
   match parseNQuadsFast "<http://e/a> <http://e/p> <<( <http://e/s> <http://e/p> <http://e/o> )>> .\n" .rdf12 with

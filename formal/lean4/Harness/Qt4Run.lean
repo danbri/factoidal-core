@@ -239,11 +239,17 @@ def serNode (env : Env) : Nat → NodeRef → String
       let nm := r.name.show
       let decl := if r.name.uri == "" then (if r.name.pfx == "" then "" else "")
         else " xmlns" ++ (if r.name.pfx == "" then "" else ":" ++ r.name.pfx) ++ "=\"" ++ escAttr r.name.uri ++ "\""
-      let ats := r.attrs.toList.map (fun a =>
+      -- one declaration per prefix the attributes need (and not the
+      -- element's own prefix again)
+      let attrDecls := (r.attrs.toList.filterMap (fun a =>
         let ra := env.nrec (n.at (a))
-        let d := if ra.name.uri != "" && ra.name.pfx != "" && ra.name.pfx != "xml" then
-          " xmlns:" ++ ra.name.pfx ++ "=\"" ++ escAttr ra.name.uri ++ "\"" else ""
-        d ++ " " ++ ra.name.show ++ "=\"" ++ escAttr ra.value ++ "\"")
+        if ra.name.uri != "" && ra.name.pfx != "" && ra.name.pfx != "xml" &&
+           !(ra.name.pfx == r.name.pfx && ra.name.uri == r.name.uri) then
+          some (ra.name.pfx, ra.name.uri) else none)).eraseDups
+      let ats := attrDecls.map (fun (p, u) => " xmlns:" ++ p ++ "=\"" ++ escAttr u ++ "\"") ++
+        r.attrs.toList.map (fun a =>
+        let ra := env.nrec (n.at (a))
+        " " ++ ra.name.show ++ "=\"" ++ escAttr ra.value ++ "\"")
       let body := String.join (r.children.toList.map (fun c => serNode env f (n.at (c))))
       "<" ++ nm ++ decl ++ String.join ats ++ (if body == "" then "/>" else ">" ++ body ++ "</" ++ nm ++ ">")
 
