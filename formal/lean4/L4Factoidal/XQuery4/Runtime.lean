@@ -75,6 +75,17 @@ def focusArgs (e : Env) : List Seq :=
   | some c => [c, [.atom (Atomic.ofInt e.pos)], [.atom (Atomic.ofInt e.size)]]
   | none => []
 
+/-- The closure entry that keeps the annotations of a function item
+    (a sequence of maps, `fn:function-annotations`). -/
+def annKey : QN := { uri := "#xqa", loc := "annotations" }
+
+/-- The closure entry that keeps the name of a declared function. -/
+def nameKey (q : QN) : QN := { uri := "#xqn", loc := q.loc, pfx := q.uri }
+
+/-- The closure entries of a function item that are not variables. -/
+def metaEntries (cl : List (QN × Seq)) : List (QN × Seq) :=
+  cl.filter (fun (k, _) => k.uri == "#xqa" || k.uri == "#xqn")
+
 /-- Is any declaration of `q` there (for the error code)? -/
 def userAny (e : Env) (q : QN) : Bool :=
   e.vars.any (fun (v, _) => v.uri == "#xqf" && v.loc.startsWith (q.eqn ++ "#"))
@@ -96,14 +107,14 @@ def userDecl? (e : Env) (q0 : QN) (k : Nat) : Option (Item × Nat × List Item) 
      | [some lo, some hi] => lo ≤ k && k ≤ hi
      | _ => false))
   match hit with
-  | some (v, .fn (.inline ps r b f _) :: dflts) =>
+  | some (v, .fn (.inline ps r b f cl0) :: dflts) =>
     let lo := match ((v.loc.drop pre.length).toString.splitOn "-").map String.toNat? with
       | [some lo, _] => lo | _ => ps.length
     let sv := staticVars e.vars
     let withCl (d : Item) : Item := match d with
       | .fn (.inline ps' r' b' f' _) => .fn (.inline ps' r' b' f' sv)
       | x => x
-    some (.fn (.inline ps r b f sv), lo, dflts.map withCl)
+    some (.fn (.inline ps r b f (sv ++ metaEntries cl0)), lo, dflts.map withCl)
   | _ => none
 
 /-- The callbacks into the evaluator for a user function call. -/
@@ -742,6 +753,17 @@ def errVars (e : Err) : List (QN × Seq) :=
 def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IType)
     (qs : List QN) (ss : List String) : M Seq := do
   match tag with
+  | "annotated" =>
+    -- an inline function with annotations (XQuery 4.0 §4.19.1)
+    match es with
+    | f :: maps =>
+      let fv ← cb.eval env f
+      let mut mv : Seq := []
+      for mp in maps do mv := mv ++ (← cb.eval env mp)
+      match fv with
+      | [.fn (.inline ps r b fo cl)] => pure [.fn (.inline ps r b fo (cl ++ [(annKey, mv)]))]
+      | other => pure other
+    | [] => pure []
   | "elem" =>
     match es with
     | nm :: parts =>

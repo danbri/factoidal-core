@@ -122,63 +122,6 @@ def pUriLit : P String := do
   let u ← pStringLit
   expandRefs u |> fun r => match r with | .ok v => pure (normSpace v) | .error e => throw e
 
-/-- Annotations `%name` or `%name(literals)` (XQuery 4.0 §5.18, [32]): the
-    expanded name and the values. An unprefixed name is in the
-    `http://www.w3.org/2012/xquery` namespace (the `xq` prefix); a name in
-    a reserved namespace is XQST0045. -/
-def pAnnotations : P (List (QN × List Atomic)) := do
-  let mut out : List (QN × List Atomic) := []
-  for _ in [0:1000] do
-    ws
-    if (← peekAt 0) != '%' then break
-    adv 1
-    match ← peekQName with
-    | some (p, u, l, e) =>
-      set e
-      let q ← resolve p u l "http://www.w3.org/2012/xquery"
-      if q.uri == "http://www.w3.org/2012/xquery" && !(["public", "private", "constructor"].contains l) then
-        qerr "XQST0045" ("reserved annotation %" ++ l)
-      if [nsFN, nsXS, nsMATH, nsMAP, nsARR, "http://www.w3.org/XML/1998/namespace",
-          "http://www.w3.org/2001/XMLSchema-instance"].contains q.uri then
-        qerr "XQST0045" ("annotation in a reserved namespace " ++ l)
-      let mut vals : List Atomic := []
-      if ← eatS "(" then
-        -- AnnotationValue: a string literal, a numeric literal with an
-        -- optional minus, a QName literal `#name`, `true()` or `false()`
-        for _ in [0:1000] do
-          ws
-          let ch ← peekAt 0
-          if ch == '"' || ch == '\'' then vals := vals ++ [Atomic.ofStr (← pStringLit)]
-          else if ch == '#' then
-            adv 1
-            match ← peekQName with
-            | some (p2, u2, l2, e2) =>
-              set e2
-              vals := vals ++ [Atomic.ofQN (← resolve p2 u2 l2 "")]
-            | none => synErr "bad QName literal"
-          else if ch == '-' || ch == '+' || ch.isDigit || ch == '.' then
-            let neg ← eatS "-"
-            if !neg then let _ ← eatS "+"
-            ws
-            let ch2 ← peekAt 0
-            if !(ch2.isDigit || ch2 == '.') then synErr "an annotation value must be a literal"
-            match ← pNumber with
-            | .lit a =>
-              vals := vals ++ [if !neg then a else
-                match a.num? with
-                | some v => (numNeg v).atomic
-                | none => a]
-            | _ => synErr "an annotation value must be a literal"
-          else if (← kwThen "true" '(') || (← kwThen "false" '(') then
-            let n ← pNCName; expectS "("; expectS ")"
-            vals := vals ++ [Atomic.ofBool (n == "true")]
-          else synErr "an annotation value must be a literal"
-          if !(← eatS ",") then break
-        expectS ")"
-      out := out ++ [(q, vals)]
-    | none => synErr "bad annotation"
-  pure out
-
 /-- Does the annotation list hold `%public` or `%private` more than once
     or both (XQuery 4.0 §5.15, §5.18; `code` is XQST0106 or XQST0116)? -/
 def checkVisibility (annots : List (QN × List Atomic)) (code : String) : P Unit := do
@@ -707,7 +650,9 @@ def fnBinding (d : FnDecl) : Option (QN × Seq) :=
   | some body =>
     let ps := d.params
     let lo := (ps.takeWhile (fun (_, _, x) => x.isNone)).length
-    let full : Item := .fn (.inline (ps.map (fun (v, t, _) => (v, t))) d.ret body false [])
+    let anns : Seq := d.annots.map (fun (q, vs) => Item.map [(Atomic.ofQN q, vs.map Item.atom)])
+    let full : Item := .fn (.inline (ps.map (fun (v, t, _) => (v, t))) d.ret body false
+      [(annKey, anns), (nameKey d.name, [])])
     let dflts : List Item := (ps.drop lo).map (fun (_, t, x) =>
       .fn (.inline [] t (x.getD (.seq [])) true []))
     some (fnKey d.name lo ps.length, full :: dflts)
