@@ -24,26 +24,6 @@ namespace L4Factoidal.XPath4
 
 open L4Factoidal.XML
 
-inductive NKind where
-  | document | element | attribute | text | comment | pi | namespace
-deriving DecidableEq, Repr, Inhabited
-
-structure NRec where
-  kind : NKind
-  name : QN := default
-  value : String := ""
-  parent : Option Nat := none
-  children : Array Nat := #[]
-  attrs : Array Nat := #[]
-  inscope : List (String × String) := []
-  last : Nat := 0
-deriving Inhabited
-
-structure Doc where
-  nodes : Array NRec
-  uri : String := ""
-deriving Inhabited
-
 def splitName (n : String) : String × String :=
   match n.splitOn ":" with
   | [p, l] => (p, l)
@@ -116,11 +96,13 @@ def buildNode : Nat → Option Nat → List (String × String) → Node → B (O
         setRec i (fun r => { r with children := cs, attrs := ats, last := sz - 1 })
         pure (some i)
 
-def Doc.ofDocument (d : Document) (uri : String := "") : Doc :=
+/-- A document node whose children are `ns` (a document's prolog, element
+    and epilog, or the content of a parsed fragment). -/
+def Doc.ofNodes (ns : List Node) (uri : String := "") : Doc :=
   let act : B Unit := do
     let i ← pushRec { kind := .document }
     let mut cs : Array Nat := #[]
-    for k in mergeText d.children do
+    for k in mergeText ns do
       match ← buildNode 100000 (some i) [("xml", nsXML)] k with
       | some j => cs := cs.push j
       | none => pure ()
@@ -128,6 +110,9 @@ def Doc.ofDocument (d : Document) (uri : String := "") : Doc :=
     setRec i (fun r => { r with children := cs, last := sz - 1 })
   let ((), a) := act.run #[]
   { nodes := a, uri }
+
+def Doc.ofDocument (d : Document) (uri : String := "") : Doc :=
+  Doc.ofNodes d.children uri
 
 def Doc.ofString (s : String) (uri : String := "") : Except String Doc :=
   match parseXML s with

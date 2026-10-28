@@ -17,7 +17,7 @@ references, partial application, dynamic calls, keyword arguments,
 `instance of`, `treat as`, `cast as`, `castable as`, string templates.
 Static calls are coerced to the F&O 4.0 signature first (§3.4.3).
 -/
-import L4Factoidal.XPath4.Lib
+import L4Factoidal.XPath4.Ext
 
 namespace L4Factoidal.XPath4
 
@@ -723,7 +723,7 @@ def callFn : Nat → Env → QN → List Seq → M Seq
       else match findSig q args.length with
         | some sig => (args.zip sig.ps).mapM (fun (a, p) => env.coerce p.ty a ("$" ++ p.name ++ " of " ++ q.show))
         | none => pure args
-    match libLookup q with
+    match libLookupAll q with
     | some impl => impl { call := fun f as => apply n env f as } env args
     | none => err "XPST0017" ("function " ++ q.show ++ " is not implemented")
 

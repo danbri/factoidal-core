@@ -993,7 +993,7 @@ def fnTable : List (String × LibFn) := [
         let chain := n :: e.ancestors n
         let lang := chain.findSome? (fun m =>
           (e.nrec m).attrs.toList.findSome? (fun x =>
-            let r := e.nrec ⟨m.doc, x⟩
+            let r := e.nrec (m.at (x))
             if r.name.uri == nsXML && r.name.loc == "lang" then some r.value else none))
         let t := (strOf (argN a 0)).toLower
         pure (sBool (match lang with
@@ -1003,7 +1003,7 @@ def fnTable : List (String × LibFn) := [
   ent "doc" (fun _ e a => do
     let u := strOf (argN a 0)
     match e.docUris.lookup u with
-    | some d => pure [.node ⟨d, 0⟩]
+    | some d => pure [.node (NodeRef.mk' d 0)]
     | none => err "FODC0002" ("document not available: " ++ u)),
   ent "doc-available" (fun _ e a => pure (sBool (e.docUris.lookup (strOf (argN a 0))).isSome)),
   -- date/time component accessors
@@ -1220,7 +1220,7 @@ def fnTable2 : List (String × LibFn) := [
       let r := e.nrec n
       if r.kind == NKind.attribute || r.kind == NKind.namespace then pure [.node n] else
       match r.parent with
-      | some p => pure (((e.doc n).get p).children.toList.map (fun c => .node ⟨n.doc, c⟩))
+      | some p => pure (((e.doc n).get p).children.toList.map (fun c => .node (n.at (c))))
       | none => pure [.node n]
     | none => pure [])
 ]
@@ -1282,7 +1282,7 @@ def Env.pathOf (e : Env) (n : NodeRef) : String :=
   let step (m : NodeRef) : String :=
     let r := e.nrec m
     let sameKind (c : Nat) : Bool :=
-      let rc := e.nrec ⟨m.doc, c⟩
+      let rc := e.nrec (m.at (c))
       rc.kind == r.kind && (r.kind != .element || rc.name == r.name) && (r.kind != .pi || rc.name.loc == r.name.loc)
     let pos : Nat := match r.parent with
       | some p => (((e.doc m).get p).children.toList.filter (fun c => c ≤ m.idx && sameKind c)).length
