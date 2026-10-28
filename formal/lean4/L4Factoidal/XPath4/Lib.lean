@@ -964,7 +964,8 @@ def fnTable : List (String × LibFn) := [
         out := out ++ [cur]; cur := [x]
       else cur := cur ++ [x]
     if !cur.isEmpty then out := out ++ [cur]
-    pure (out.map (fun s => .arr [s]))),
+    -- each partition is an array whose members are the items
+    pure (out.map (fun s => .arr (s.map (fun x => [x]))))),
   ent "sequence-join" (fun _ _ a => do
     let xs := argN a 0
     let sep := argN a 1
