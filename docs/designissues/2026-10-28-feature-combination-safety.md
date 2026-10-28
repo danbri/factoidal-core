@@ -727,3 +727,15 @@ that names it.
 - I11, C11: a lock on the storage directory.
 - I12, C12: principals per mount.
 - I13, C13: per-sender limits and a time limit for waiting chunked requests.
+
+## 7. Surfaces added after this record
+
+- 2026-10-28, `factoidal xmpp-http-proxy` (issue 1107 step 2): a listener
+  (127.0.0.1 only) and an XMPP requester. Rows C1, C3, C4, C6 (no `httpx`
+  token flow yet), C7, C13. The invariants, the theorems
+  (`send_to_target`, `receive_to_target`, `tick_to_target`,
+  `receiveNode_other_sender`, `forwardHeaders_sublist`,
+  `forwardHeaders_keeps_authorization`) and the tests are in
+  `docs/designissues/2026-10-28-http-over-xmpp.md`, "Step 2: invariants and
+  their checks". Not met: the `Host`/`Origin` check of I7 on this listener,
+  an expected failure that names https://github.com/danbri/factoidal/issues/1124.

@@ -4,7 +4,8 @@ Date: 2026-10-28. Issue: https://github.com/danbri/factoidal/issues/1107.
 Status: stage 1 landed 2026-10-28 (the Lean codec, the mapping to
 `webdav-serve`, the access decision). Step 1 of the owner's order of
 2026-10-28 (the outgoing client stream plus the WebDAV target) landed the same
-day; see "Step 1" at the end. Steps 2 to 5 are open. The owner's
+day; see "Step 1" below. Step 2 (the local proxy, `xmpp-http-proxy`) landed
+the same day; see "Step 2" at the end. Steps 3 to 5 are open. The owner's
 answer to the 🧭 question at the end, 2026-10-28, verbatim: "4. Y" (start
 stage 1).
 
@@ -229,7 +230,7 @@ handle over XEP-0332. It opens no port.
   "SASL failure: not-authorized". The hub test "webdav: reach the server
   through XMPP (XEP-0332)" is now a plain test; a new expected failure
   records that no file browser reaches the server until the local proxy of
-  step 2 exists.
+  step 2 exists (step 2 made it a plain test).
 
 Choices (implementer), also in the module header of `ClientStream.lean`:
 
@@ -300,3 +301,116 @@ call the way they call `webdavStep`. The order:
 3. `SERVICE <httpx://JID/sparql>` through the native transport of step 3.
 4. Forwarding to third-party SPARQL endpoints last: allow-listed per
    endpoint, off by default.
+
+## Step 2: the local proxy (2026-10-28)
+
+`factoidal xmpp-http-proxy --xmpp JID --xmpp-password-file FILE --target
+JID/RESOURCE [--port N] [--host 127.0.0.1] [--xmpp-host H] [--xmpp-port P]
+[--xmpp-tls] [--xmpp-ca FILE] [--xmpp-resource R] [--timeout SECONDS]`
+connects out to an XMPP server as JID (the client stream of step 1), listens
+on 127.0.0.1, and sends each HTTP request as a XEP-0332 `req` to the target.
+A file browser, rclone, cadaver, litmus or curl then uses
+`http://127.0.0.1:PORT/` to reach `webdav-serve --xmpp`.
+
+* `formal/lean4/L4Factoidal/XMPP/HttpRequester.lean`: the requester side as
+  one total state machine. `send` (an HTTP request record to the stanzas for
+  the target, or a refusal made here), `receive` (a `resp`, a stanza error or
+  a `chunk` to an HTTP response record), `tick` (the host's clock; 504 past
+  the deadline), `abortAll` (the stream ended; 502). The codec is that of
+  stage 1 (`reqNode`, `chunkNode`, `respOfIq?`, `splitChunks`,
+  `assembleChunks`); `parseRespIq` now reads through `respOfIq?`.
+* Wasm: `xmppClientOpen` takes `proxyTarget` (requester mode), and the new
+  ops `xmppClientRequest(handle, nowMs, requestJson)` and
+  `xmppClientTick(handle, nowMs)`; `xmppClientFeed` and `xmppClientClose`
+  give `responses`. The start rule is `xcProxyRefusal`
+  (`Wasm/Ops/XmppClient.lean`).
+* Host: `npm/factoidal/xmpp/client.mjs` (`connectHttpRequester`; the socket
+  code is now shared with `connectHttpTarget`) and
+  `npm/factoidal/xmpp/proxy.mjs` (`startHttpProxy`: the HTTP listener). The
+  host reads the request, gives the clock every 500 ms, and writes the
+  answer. It decides no status, header or address.
+* Test: `node tests/webdav/xmpp-proxy.mjs` (xmpp-serve on direct TLS,
+  `webdav-serve --xmpp`, three proxies). Measured 2026-10-28: 16 pass, 0
+  fail, 1 xfail, 0 skip (out of 17), with litmus 104 of 104 tests (basic 16,
+  copymove 13, props 30, locks 41, http 4), rclone and cadaver through the
+  proxy. The hub test "webdav: a file browser reaches the server through XMPP
+  (local proxy)" is now a plain test.
+
+Choices (implementer), also in the module header of `HttpRequester.lean`:
+
+1. Request bodies are `base64` up to 65,536 bytes, else `chunkedBase64`
+   in chunks of 65,536 bytes; never `text` or `xml`, so the bytes arrive
+   unchanged (an XML reader normalises line ends).
+2. Only origin-form request targets (`/path`, and `*` for OPTIONS) are sent.
+   An absolute-form target gets 400 and CONNECT 405, here and not at the
+   target.
+3. Stanza errors to statuses: `forbidden` and `not-authorized` 403,
+   `not-allowed` 405, `bad-request` 400, `feature-not-implemented` 501,
+   `resource-constraint` 503, `remote-server-timeout` 504, other 502.
+4. Response headers lose `content-length` and the hop-by-hop headers; the
+   host frames the body.
+5. The sender of an answer must be the target (full JID, domain part in
+   lower case; PRECIS not applied,
+   https://github.com/danbri/factoidal/issues/676).
+6. Limits: request body 16 MiB (413), response body 64 MiB (502 and a
+   `close` for its stream), 16 waiting requests (503), `--timeout` 1 to
+   3,600 seconds, default 60 (504).
+
+### Step 2: invariants and their checks
+
+Rows of `docs/designissues/2026-10-28-feature-combination-safety.md` that
+this step touches: C1, C3, C4, C6, C13, and C7 (a new listener).
+
+1. **The listener is on loopback only** (C7, I7). `xcProxyRefusal` refuses
+   any `listenHost` other than `127.0.0.1`, and the host binds the address
+   the engine accepted. Checks: the `#guard`s on `xcProxyRefusal`; "start
+   refused: --host other than 127.0.0.1 (exit 1)" in
+   `tests/webdav/xmpp-proxy.mjs` and the hub test. Not met: the `Host` and
+   `Origin` check against DNS rebinding and cross-site requests from a web
+   page in a local browser. Expected failure "a request with a foreign Host
+   header is refused (DNS rebinding guard)" names
+   https://github.com/danbri/factoidal/issues/1124 (the parallel work for
+   that issue had not landed on `origin/main` when this step was written).
+2. **The client stream rules of step 1 hold** (C4, I4). The requester mode
+   uses the same `ClientStream`: TLS, or plain TCP to a literal loopback
+   address; SCRAM-SHA-256 only. Checks: the `ClientStream` `#guard`s; "start
+   refused: plain TCP to a host that is not loopback" in the proxy test.
+3. **No open proxy** (C5 forwarding, C6). Every stanza the requester makes
+   is addressed to `Config.target` and to no other JID: theorems
+   `send_to_target`, `receive_to_target`, `tick_to_target`
+   (`HttpRequester.lean`), over `Addressed.render`, which writes the `to`
+   field as the `to` attribute; the `#guard`s parse each rendered stanza
+   and read `to`. The target is a full JID (`xcProxyRefusal`). An answer from
+   another JID changes nothing: theorem `receiveNode_other_sender`; test
+   "a forged answer from another JID is dropped; 504 after --timeout".
+4. **Credentials** (C3, I3). The headers sent are a sublist of the client's
+   (`forwardHeaders_sublist`): the proxy adds no header and no credential of
+   its own. `Authorization` passes unchanged
+   (`forwardHeaders_keeps_authorization`, `reqOf_headers`); it goes to the
+   target JID only, by invariant 3. `Proxy-Authorization` and the
+   hop-by-hop headers are not forwarded. Test: the proxy test reads the
+   `req` that a test client at the target receives.
+5. **Limits** (C13, I13). Body, response and pending limits and the
+   timeout, choice 6; `#guard`s for 413, 503, 504 and 502; tests for 504 and
+   for 100,000-byte bodies both ways. The limits are per proxy process, which
+   has one requester (its own JID); the per-sender limits of the serving side
+   stay https://github.com/danbri/factoidal/issues/1128.
+6. **Access at the target** (C1, I1). Unchanged by this step: the serving
+   side's allow list decides; a proxy whose JID is not on it gets 403 for
+   every request (test "carol's proxy ... 403, the file does not change"). The
+   listener has no login of its own, so every local process acts as the
+   proxy's JID; `--help` and the start message say so.
+
+### Remaining stages (no code in this step)
+
+* Native `httpx://` transport in the LWS client and the WebDAV `lws`
+  mounts (step 3 of the owner's order): the client sends the request as a
+  stanza on its own client stream, with no local port. It must keep C3 path
+  7 closed (no token flow over `httpx` by a string rule) and give I6 its
+  `peerOf?`.
+* Raw LWS over XMPP with a fixed base IRI (step 4), then LWS notifications as
+  XMPP messages (step 5).
+* SPARQL `serve --xmpp`: the order in "SPARQL over XMPP: the plan" above.
+* The `Host`/`Origin` guard on this listener when
+  https://github.com/danbri/factoidal/issues/1124 lands (the expected failure
+  above turns red then).
