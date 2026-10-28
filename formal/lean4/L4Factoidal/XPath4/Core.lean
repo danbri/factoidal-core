@@ -46,6 +46,11 @@ structure SchemaHook where
   attrDecl : QN → Option QN := fun _ => none
   /-- `substitutes n h`: an element named `n` may stand for head `h`. -/
   substitutes : QN → QN → Bool := fun _ _ => false
+  /-- Validate a document element against the in-scope schema (`xsd-validation`
+      of `fn:parse-xml` and `fn:doc`): the mode (`strict`, `lax` or
+      `type Q{uri}local`), the element, the document URI; the typed document
+      or the error. `none`: this processor has no schema to validate with. -/
+  validate : Option (String → L4Factoidal.XML.Node → String → Except Err Doc) := none
 deriving Inhabited
 
 structure Env where

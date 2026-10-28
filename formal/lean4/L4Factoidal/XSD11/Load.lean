@@ -78,6 +78,30 @@ def Schema.typeOfQN? (s : Schema) (q : XPath4.QN) : Option Nat :=
   if q.uri == "" && q.loc.startsWith "#anonymous-" then (q.loc.drop 11).toString.toNat?
   else s.typeIdx? (qnXName q)
 
+/-- Validate a document element for `xsd-validation` (F&O 4.0 `fn:parse-xml`):
+`strict` needs a global declaration (or `xsi:type`) and validity; `lax`
+validates what has declarations; `type Q{uri}local` validates against
+that type. -/
+def validateFor (s : Schema) (mode : String) (root : Node) (uri : String) : Except XPath4.Err XPath4.Doc :=
+  let how? : Option How :=
+    if mode == "strict" then rootHow s root []
+    else if mode == "lax" then some (.wild .lax)
+    else if mode.startsWith "type Q{" then
+      let rest := (mode.drop 7).toString
+      match rest.splitOn "}" with
+      | [u, l] => (s.typeIdx? ⟨u, l⟩).map How.typ
+      | _ => none
+    else none
+  match how? with
+  | none => .error { code := "FODC0007", msg := s!"xsd-validation {mode}: no declaration or type to validate against" }
+  | some how =>
+    let r := validateElement s xpathHooks 10000 [] how root {}
+    let idcErrs := checkIdcs s r.1
+    let v := (r.1.info?.map (·.validity)).getD .notKnown
+    if (mode != "lax" && v != .valid) || v == .invalid || !idcErrs.isEmpty then
+      .error { code := "FODC0007", msg := s!"the document is not valid: {(r.2.errors ++ idcErrs).take 2}" }
+    else .ok (psviDoc s r.1 uri)
+
 /-- The in-scope schema definitions of `s` for XPath 4.0. -/
 def schemaHookOf (s : Schema) : XPath4.SchemaHook :=
   { derives := fun t u =>
@@ -90,7 +114,8 @@ def schemaHookOf (s : Schema) : XPath4.SchemaHook :=
     substitutes := fun n h =>
       match s.elemIdx? (qnXName n), s.elemIdx? (qnXName h) with
       | some ni, some hi => s.substOk hi ni
-      | _, _ => false }
+      | _, _ => false,
+    validate := some (validateFor s) }
 
 /-- Validate a document (§5.2, strict) and give its XDM 4.0 document with
 the PSVI type annotations. -/
