@@ -34,6 +34,9 @@ root before the run.
 -/
 import L4Factoidal.XSLT4.Transform
 import L4Factoidal.XSLT4.Theorems
+import L4Factoidal.XSLT4.Streaming.Check
+import L4Factoidal.XSLT4.Streaming.Tests
+import L4Factoidal.XSLT4.Streaming.StreamDiff
 import L4Factoidal.XSLT.Transform
 import L4Factoidal.XML.Canonical
 import Lean.Data.Json
@@ -102,7 +105,10 @@ def specOk (v : String) : Bool :=
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
   ["higher_order_functions", "serialization", "backwards_compatibility", "dynamic_evaluation",
-   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types"].contains f
+   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types",
+   -- XSLT Streaming 4.0: the streamability analysis of
+   -- `XSLT4.Streaming.Check` (off with `--no-streaming`)
+   "streaming"].contains f
 
 def depOk (d : Node) : Bool :=
   let ty := localTag d
@@ -444,12 +450,19 @@ structure Opts where
   /-- Compare with the XSLT 1.0 engine on the corpus in this directory
       (`manifest.json` of `third_party/testing/xslt` form). -/
   xslt10 : Option String := none
+  /-- Count the tests that need the `streaming` feature as unsupported
+      (the scoring before XSLT Streaming 4.0). -/
+  noStreaming : Bool := false
+  /-- Run `XSLT4.Streaming.StreamDiff` instead of the test cases. -/
+  streamDiff : Bool := false
 
 def parseArgs : List String → Opts → Opts
   | "--root" :: r :: rest, o => parseArgs rest { o with root := r }
   | "--set" :: s :: rest, o => parseArgs rest { o with sets := o.sets ++ [s] }
   | "--dir" :: s :: rest, o => parseArgs rest { o with dirs := o.dirs ++ [s] }
   | "--list-fails" :: rest, o => parseArgs rest { o with listFails := true }
+  | "--no-streaming" :: rest, o => parseArgs rest { o with noStreaming := true }
+  | "--stream-diff" :: rest, o => parseArgs rest { o with streamDiff := true }
   | "--isolate" :: n :: rest, o => parseArgs rest { o with isolate := n.toNat? }
   | "--progress" :: f :: rest, o => parseArgs rest { o with progress := some f, childMode := true }
   | "--test" :: t :: rest, o => parseArgs rest { o with only := some t }
@@ -528,7 +541,8 @@ def loadDoc (txt uri : String) : Option Doc :=
   | .ok d => some d
   | .error _ => none
 
-def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc : Node) : IO Outcome := do
+def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc : Node)
+    (streaming : Bool := false) : IO Outcome := do
   let envSpec : Option EnvSpec :=
     match (kidsNamed tc "environment").head? with
     | none => some {}
@@ -572,6 +586,13 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
         | none => break
       else break
     | .ok _ => break
+  -- XSLT Streaming 4.0 §3.1: a construct declared streamable that is not
+  -- guaranteed streamable is XTSE3430 (only for the tests that need the
+  -- streaming feature: a non-streaming processor does not raise it)
+  if streaming then
+    if let .ok _ := sheet then
+      if let some e := L4Factoidal.XSLT4.Streaming.analyzeModules mods statics then
+        sheet := .error e
   let (env, outcome) ← match sheet with
     | .error e => pure (({} : Env), (.error e : M (TResult × Sheet)))
     | .ok S => do
@@ -705,7 +726,13 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
     if !(setOk && deps.all depOk) then
       t := { t with unsup := t.unsup + 1 }
       continue
-    match ← runCase o dir localEnvs tc with
+    let needsStreaming := (setDeps ++ deps).any (fun x =>
+      localTag x == "feature" && ((attrD x "value").splitOn " ").contains "streaming" &&
+        attrD x "satisfied" "true" != "false")
+    if needsStreaming && o.noStreaming then
+      t := { t with unsup := t.unsup + 1 }
+      continue
+    match ← runCase o dir localEnvs tc needsStreaming with
     | .pass => t := { t with pass := t.pass + 1 }
     | .fail why =>
         t := { t with fail := t.fail + 1 }
@@ -730,6 +757,7 @@ def runIsolated (o : Opts) (secs : Nat) (setName file : String) : IO (Tally × S
     IO.FS.writeFile pf ""
     let mut args : Array String := #["--root", o.root, "--set", setName, "--progress", pf]
     if o.listFails then args := args.push "--list-fails"
+    if o.noStreaming then args := args.push "--no-streaming"
     if let some a := after then args := args ++ #["--after", a]
     let child ← IO.Process.spawn { cmd := (← IO.appPath).toString, args, stdin := .null, stdout := .inherit, stderr := .null }
     let mut lastName := ""
@@ -887,6 +915,7 @@ def main (args : List String) : IO UInt32 := do
     return ← agree10 (normPath (if d.startsWith "/" then d else cwd.toString ++ "/" ++ d))
   let cwd ← IO.currentDir
   let o := { o with root := normPath (if o.root.startsWith "/" then o.root else cwd.toString ++ "/" ++ o.root) }
+  if o.streamDiff then return ← L4Factoidal.XSLT4.Streaming.StreamDiff.run o.root
   let some ctxt ← readFileSafe (o.root ++ "/catalog.xml")
     | IO.eprintln s!"cannot read {o.root}/catalog.xml"; return 2
   let cat ← match parseXML ctxt with
