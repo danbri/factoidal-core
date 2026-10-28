@@ -166,6 +166,14 @@ async function login (dir) {
       r = await dav(origin, 'GET', '/notes/a.txt')
       assert(r.status === 401, `GET without credentials ${r.status}`)
     })
+    await xfail('login: repeated wrong passwords get 429', 'https://github.com/danbri/factoidal/issues/1119', async () => {
+      const statuses = []
+      for (let i = 0; i < 8; i++) {
+        const r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '0', authorization: basic('alice', `wrong-${i}`) } })
+        statuses.push(r.status)
+      }
+      assert(statuses.includes(429), `no 429 after 8 wrong passwords: ${statuses.join(' ')}`)
+    })
   } finally {
     await stop(web)
   }

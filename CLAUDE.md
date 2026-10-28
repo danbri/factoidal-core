@@ -823,9 +823,13 @@ risk file issue to flag for expert review", to these questions:
    (`docs/index.md`, `docs/web/how-it-works.md`, the three conformance
    pages): yes.
 3. WebDAV listener login (https://github.com/danbri/factoidal/issues/1108):
-   PBKDF2-HMAC-SHA256 over the vendored HACL\* HMAC, yes. If the choice is
-   disputed or carries risk, open an issue that asks for expert review and
-   link it from the code and the docs.
+   PBKDF2-HMAC-SHA256, yes. The question named "the vendored HACL\* HMAC" as
+   the source; the coordinator then chose WebCrypto PBKDF2 (`deriveBits`)
+   through the host instead, as for AES above (`webdav-serve` runs only on
+   Node; no PBKDF2 composed in Lean). That source choice is the coordinator's,
+   not the owner's, and is named in the expert-review issue
+   https://github.com/danbri/factoidal/issues/1117, as the owner asked: "if
+   controversial or risk file issue to flag for expert review".
 4. HTTP over XMPP (https://github.com/danbri/factoidal/issues/1107): start
    stage 1 of `docs/designissues/2026-10-28-http-over-xmpp.md`.
 

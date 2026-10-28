@@ -406,7 +406,9 @@ Other WebDAV clients:
 
 * The login of the listener (`--users`) has had no expert review:
   <https://github.com/danbri/factoidal/issues/1117>. No rate limit: each
-  request with a wrong password costs the server one PBKDF2 derivation.
+  request with a wrong password costs the server one PBKDF2 derivation
+  (<https://github.com/danbri/factoidal/issues/1119>, an expected failure in
+  `tests/webdav/server.mjs`).
 * One request at a time. PROPFIND with `Depth: infinity` answers 403
   (`DAV:propfind-finite-depth`); clients then list one level at a time.
 * COPY and MOVE between two mounts answer 502 (RFC 4918 §9.9.4); copy with
