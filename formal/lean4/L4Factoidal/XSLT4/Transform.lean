@@ -123,6 +123,20 @@ deriving Inhabited
 
 /-! ## The host functions -/
 
+/-- The characters a named character map maps, with the maps it uses
+    first (§26.1). -/
+def Sheet.charMapOf (S : Sheet) : Nat → String → M (List (Char × String))
+  | 0, _ => err "XTSE1600" "character maps use each other in a cycle"
+  | f + 1, key => do
+    -- the declaration with the highest import precedence (the last)
+    match S.charMaps.reverse.find? (·.1 == key) with
+    | none => err "XTSE1590" ("unknown character map " ++ key)
+    | some (_, uses, own) =>
+      let mut out : List (Char × String) := []
+      for u in uses do out := out ++ (← S.charMapOf f u)
+      pure (out ++ own)
+
+
 def XFunction.minArity (f : XFunction) : Nat :=
   (f.params.filter (fun p => p.required)).length
 
@@ -341,6 +355,16 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
             if i < 0 then pure (sStr "") else
             pure ((gs.getD i.toNat []).take 1 |>.map id |> fun x => if x.isEmpty then sStr "" else x)
         | _ => pure (sStr "")
+    -- fn:character-map (§26.1.7.1): the mappings of a character map,
+    -- with the maps it uses first, a later mapping of a character winning
+    | "character-map", 1 => some fun _ a => do
+        match a.getD 0 [] with
+        | [.atom ⟨_, .qn q⟩] =>
+          if !(S.charMaps.any (·.1 == q.eqn)) then pure [] else
+          let cm ← S.charMapOf 20 q.eqn
+          let cm := cm.foldl (fun acc (ch, r) => (acc.filter (·.1 != ch)) ++ [(ch, r)]) []
+          pure [.map (cm.map (fun (ch, r) => (Atomic.ofStr (String.singleton ch), [Item.atom (Atomic.ofStr r)])))]
+        | _ => err "XPTY0004" "character-map needs an xs:QName"
     | "current-output-uri", 0 => some fun c _ =>
         match lookupV c.vars vOutUri with
         | some v => pure v
@@ -578,19 +602,6 @@ def serKinds : List String :=
    "indent-unit", "item-separator", "json-lines", "json-node-output-method", "line-ending", "media-type",
    "method", "normalization-form", "omit-xml-declaration", "standalone", "suppress-indentation",
    "undeclare-prefixes", "use-character-maps", "version"]
-
-/-- The characters a named character map maps, with the maps it uses
-    first (§26.1). -/
-def Sheet.charMapOf (S : Sheet) : Nat → String → M (List (Char × String))
-  | 0, _ => err "XTSE1600" "character maps use each other in a cycle"
-  | f + 1, key => do
-    -- the declaration with the highest import precedence (the last)
-    match S.charMaps.reverse.find? (·.1 == key) with
-    | none => err "XTSE1590" ("unknown character map " ++ key)
-    | some (_, uses, own) =>
-      let mut out : List (Char × String) := []
-      for u in uses do out := out ++ (← S.charMapOf f u)
-      pure (out ++ own)
 
 /-- Serialization parameters from `xsl:output` properties. -/
 def serParamsOfProps (S : Sheet) (env : Env) (props : List (String × String)) : M SerParams := do

@@ -622,7 +622,7 @@ def Env.nsDecls (e : Env) (x : XCtx) (n : NodeRef) (scope : List (String × Stri
 
 def Env.writeAttr (e : Env) (x : XCtx) (elemHtml : Bool) (a : NodeRef) : W Unit := do
   let ar := e.nrec a
-  let nm := if ar.name.pfx == "" then ar.name.loc else ar.name.pfx ++ ":" ++ ar.name.loc
+  let nm := x.p.norm (if ar.name.pfx == "" then ar.name.loc else ar.name.pfx ++ ":" ++ ar.name.loc)
   let v := ar.value
   if elemHtml && x.m == "html" && ar.name.uri == "" && htmlBoolAttrs.contains (lower nm) && lower v == lower nm then
     emit (" " ++ nm)
@@ -716,7 +716,7 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
     | .element =>
       let isH := x.isHtmlElem r.name
       let pn := x.prefixNorm r.name
-      let nm := if r.name.pfx == "" || pn then r.name.loc else r.name.pfx ++ ":" ++ r.name.loc
+      let nm := x.p.norm (if r.name.pfx == "" || pn then r.name.loc else r.name.pfx ++ ":" ++ r.name.loc)
       let decls := if x.m == "html" && isH && r.name.uri == "" then
           (e.nsDecls x n scope).filter (fun (pf, _) => pf != "")
         else e.nsDecls x n scope
@@ -1082,7 +1082,9 @@ def Env.adaptiveItem (e : Env) (p : SerParams) : Nat → Item → W Unit
       if k == .attribute || k == .namespace then
         e.writeNode { p, m := "xml", html5 := true } 10 n [] 0 false none
       else
-        let s ← (e.writeMarkup { p with method := "xml", itemSep := none, omitDecl := true } [.node n] : M String)
+        -- a document node is written by the XML method with the
+        -- parameters given (the XML declaration among them)
+        let s ← (e.writeMarkup { p with method := "xml", itemSep := none, omitDecl := p.omitDecl || k != .document } [.node n] : M String)
         emit s
     | .jnode _ _ v _ => e.adaptiveMember p f v
     | .arr ms =>

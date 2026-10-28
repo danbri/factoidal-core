@@ -272,7 +272,12 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
         let code := attrD a "code"
         match res with
         | .error e => ok? (codeMatches code e.code) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ "): " ++ cut e.msg 100)
-        | .ok s => .fail ("expected error " ++ code ++ ", got " ++ (sh s 80))
+        | .ok s =>
+          -- a serialization error of the result is an error of the test
+          -- (the catalog driver serializes the result)
+          match rc.ser s with
+          | .error e => ok? (codeMatches code e.code) ("wrong serialization error " ++ e.code ++ " (expected " ++ code ++ "): " ++ cut e.msg 100)
+          | .ok _ => .fail ("expected error " ++ code ++ ", got " ++ (sh s 80))
     | "any-of" =>
         let rs := (kids a).map (fun c => checkAssert rc f c)
         if rs.any (fun r => match r with | .pass => true | _ => false) then .pass
@@ -695,7 +700,7 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
     treeNo || (match od.lookup "build-tree" with
       | some b => parseBool b == some false
       | none => match od.lookup "method" with
-        | some m => m == "json" || m == "adaptive"
+        | some m => m == "json" || m == "adaptive" || m == "csv"
         | none => false)
   let initialFn := !(kidsNamed testNode "initial-function").isEmpty
   -- the principal result tree: sequence normalization with the
@@ -709,7 +714,10 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
     | _ => do pure [← materialize env (2 ^ 45) (.doc (← Out.normalizeTop sep (Out.ofSeq raw)) "")]
   let res : M Seq := do
     let (r, S) ← outcome
-    deliver S r.raw
+    -- a principal result written by xsl:result-document is delivered as
+    -- that instruction built it
+    if r.principalFormat.1 != "" || !r.principalFormat.2.isEmpty then pure r.raw
+    else deliver S r.raw
   let serWith (fmt : String) (sp : List (String × String)) : Seq → M String := fun s => match outcome with
     | .ok (_, S) => do
         let props ← S.outputProps fmt sp

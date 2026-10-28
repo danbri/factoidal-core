@@ -1020,7 +1020,17 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         let b := match sel with
           | some e => [Instr.seq (some e) [] none]
           | none => b
-        pure (.resultDoc (← optAvt c as "href") (← optAvt c as "format") ser b)
+        -- a fixed format name is expanded with the namespaces of the
+        -- instruction
+        let fixedFmt : Option String := match as.get "format" with
+          | some v => if v.contains '{' || !v.contains ':' then none else some v.trimAscii.toString
+          | none => none
+        let fmt ← match fixedFmt with
+          | some v => do
+            let q ← liftM (c.qname v false "XTDE1460")
+            pure (some [AvtPart.lit q.eqn])
+          | none => optAvt c as "format"
+        pure (.resultDoc (← optAvt c as "href") fmt ser b)
     | "where-populated" => pure (.wherePopulated (← body))
     | "on-empty" => pure (.onEmpty (← optExpr c as "select") (← body))
     | "on-non-empty" => pure (.onNonEmpty (← optExpr c as "select") (← body))
@@ -1552,7 +1562,10 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       for k in ekids do
         if m.isXsl k "output-character" then
           let kas := m.rawAttrs k
-          let ch := (Attrs.get kas "character").getD ""
+          checkAttrs c "output-character" kas
+          let some ch := Attrs.get kas "character"
+            | cerr "XTSE0010" "xsl:output-character requires a character attribute"
+          if (Attrs.get kas "string").isNone then cerr "XTSE0010" "xsl:output-character requires a string attribute"
           match ch.toList with
           | [x] => cs := cs ++ [(x, (Attrs.get kas "string").getD "")]
           | _ => cerr "XTSE0020" "xsl:output-character needs a single character"

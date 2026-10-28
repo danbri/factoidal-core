@@ -1478,7 +1478,11 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               pure q.eqn
           | none => pure ""
         let mut sp : List (String × String) := []
-        for (k, a) in ser do sp := sp ++ [(k, ← avtStr cx a)]
+        for (k, a) in ser do
+          let v ← avtStr cx a
+          -- a parameter document is resolved against the static base URI
+          let v := if k == "parameter-document" then resolveUri cx.env.baseUri v.trimAscii.toString else v
+          sp := sp ++ [(k, v)]
         -- the href is resolved against the base output URI (§25.1), and
         -- the result is the current output URI of its content
         let base := match (cx.env.vars.find? (·.1 == vBaseOut)).map (·.2) with
@@ -1494,9 +1498,9 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let meth := match sp.lookup "method" with
           | some m => m
           | none => ((S.outputs.lookup f).bind (·.lookup "method")).getD ""
-        let buildTree := match sp.lookup "build-tree" with
+        let buildTree := match (sp.lookup "build-tree").orElse (fun _ => (S.outputs.lookup f).bind (·.lookup "build-tree")) with
           | some b => parseBool b != some false
-          | none => meth != "json" && meth != "adaptive"
+          | none => meth != "json" && meth != "adaptive" && meth != "csv"
         let sep := match sp.lookup "item-separator" with
           | some "#absent" => none
           | some x => some x
