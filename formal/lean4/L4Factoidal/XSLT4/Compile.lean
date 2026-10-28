@@ -667,7 +667,9 @@ def onlyChildren : List (String × List String) :=
    ("analyze-string", ["matching-substring", "non-matching-substring", "fallback"]),
    ("merge-source", ["merge-key"]), ("evaluate", ["with-param", "fallback"]),
    ("merge", ["merge-source", "merge-action", "fallback"]),
-   ("character-map", ["output-character"]), ("accumulator", ["accumulator-rule"])]
+   ("character-map", ["output-character"]), ("accumulator", ["accumulator-rule"]),
+   -- 4.0: an enclosing mode contains its template rules (§6.7.2)
+   ("mode", ["template"])]
 
 /-- The content of an XSLT element with a fixed content model (XTSE0010);
     not checked in forwards-compatible mode. -/
