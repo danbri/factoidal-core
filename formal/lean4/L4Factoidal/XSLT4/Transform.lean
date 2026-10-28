@@ -373,7 +373,7 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
     match S.extraHost env q k with
     | some h => some h
     | none =>
-    match stdHost (userFnAvail S) q k with
+    match stdHostT S.typeKnown (userFnAvail S) q k with
     | some h => some h
     | none =>
     match q.loc, k with
@@ -765,11 +765,14 @@ def evalGlobals (S : Sheet) (o : TOpts) (env0 : Env) : M Env := do
 
 /-- Run a stylesheet. -/
 def transform (S : Sheet) (o : TOpts) : M TResult := do
-  let docs := o.env.docs.map (stripDoc S)
+  -- input-type-annotations="strip" (§3.15): the source documents are untyped
+  let docs := o.env.docs.map (fun d => if S.inputTypeAnn == "strip" then { d with nodes := d.nodes.map NRec.untyped } else d)
+  let docs := docs.map (stripDoc S)
   let dfs := S.decimalFormats ++ o.env.decimalFormats
   let ns0 := S.ns.filter (·.1 != "")
   let vars0 := [(xslGlobals, [])] ++ S.statics.reverse
   let env0 : Env := { o.env with docs, decimalFormats := dfs, baseUri := S.baseUri, ns := ns0, vars := vars0 }
+  let env0 : Env := { env0 with schema := S.schema }
   let env0 := if S.defaultCollation != "" then { env0 with defaultCollation := S.defaultCollation } else env0
   if S.globalCtxUse == "required" && o.globalCtx.isNone then
     err "XTDE3086" "the stylesheet requires a global context item"

@@ -70,6 +70,9 @@ structure Norm where
   /-- The last thing added was an atomic value (for the space between
       adjacent atomic values). -/
   lastAtom : Bool := false
+  /-- The type annotations of attributes added as nodes (§25.1.1): the
+      record of the attribute node, by name. -/
+  attrAnn : List (QN × NRec) := []
 deriving Inhabited
 
 def Norm.pushText (nm : Norm) (s : String) : Norm :=
@@ -109,7 +112,10 @@ def normItem (env : Env) : Nat → Norm → Item → M Norm
           for c in r.children.toList do
             nm ← normItem env f nm (.node (n.at c))
           pure nm
-      | .attribute => nm.addAttr r.name r.value
+      | .attribute => do
+          let nm' ← nm.addAttr r.name r.value
+          let ann := nm'.attrAnn.filter (fun (q, _) => !(q == r.name))
+          pure { nm' with attrAnn := if r.tann.isSome then (r.name, r) :: ann else ann }
       | .namespace => nm.addNs r.name.loc r.value
       | .text => pure { (nm.pushText r.value) with lastAtom := false }
       | _ => pure { nm with kids := nm.kids.push (.node n), lastAtom := false }
@@ -165,11 +171,19 @@ def neededNs (d : Doc) (r : NRec) : List (String × String) :=
     let ar := d.get a
     if ar.name.uri != "" && ar.name.pfx != "" then some (ar.name.pfx, ar.name.uri) else none)
 
+/-- The record of a node without its schema type annotation
+    (`validation="strip"`, §25.1.1): `xs:untyped` or `xs:untypedAtomic`,
+    the typed value is the string value, not nilled. -/
+def _root_.L4Factoidal.XPath4.NRec.untyped (r : NRec) : NRec :=
+  { r with tann := none, tval := none, nilled := false, noTypedValue := false }
+
 /-- Copy the subtree of `src` (one loop over its index range) under
     `par`; `pscope` is the namespace scope of the new parent. Returns
-    the index of the copy. -/
+    the index of the copy. `keep`: the copies keep their type
+    annotations (`validation="preserve"`); otherwise they are untyped
+    (`validation="strip"`, §25.1.1). -/
 def copyTree (env : Env) (src : NodeRef) (par : Option Nat) (pscope : List (String × String))
-    (copyNs : Bool) : TB Nat := do
+    (copyNs : Bool) (keep : Bool := true) : TB Nat := do
   let d := env.doc src
   let r := d.get src.idx
   let lo := src.idx
@@ -186,7 +200,7 @@ def copyTree (env : Env) (src : NodeRef) (par : Option Nat) (pscope : List (Stri
     let sc := if x.kind == .element && x.name.uri == "" && (sc.lookup "").getD "" != "" then ("", "") :: sc else sc
     let newPar := par'
     let rec' : NRec := { x with parent := newPar, children := x.children.map shift, attrs := x.attrs.map shift, last := shift (max x.last i), inscope := sc }
-    let _ ← tPush rec'
+    let _ ← tPush (if keep then rec' else rec'.untyped)
   pure base
 
 /-- A prefix for namespace `uri` that is free in `scope` (`ns0`,
@@ -228,8 +242,10 @@ def fixAttrName (q : QN) (scope : List (String × String)) : QN × List (String 
     if scope.lookup p == some q.uri then (q', scope) else (q', (p, q.uri) :: scope)
 
 mutual
-/-- Build an element under `par`. -/
-def buildElem (env : Env) : Nat → Option Nat → List (String × String) → QN →
+/-- Build an element under `par`. `keep`: the nodes copied into it keep
+    their type annotations (`validation="preserve"`, §25.1.1); the
+    elements built inside it are built with `keep` false. -/
+def buildElem (env : Env) (keep : Bool) : Nat → Option Nat → List (String × String) → QN →
     List (String × String) → List Out → TB Nat
   | 0, _, _, _, _, _ => throw { code := "FOER0000", msg := "result tree too deep" }
   | f + 1, par, pscope, name, decls, content => do
@@ -265,6 +281,9 @@ def buildElem (env : Env) : Nat → Option Nat → List (String × String) → Q
     for (q, v) in ats.toList do
       let j ← tPush { kind := .attribute, name := q, value := v, parent := some i }
       tSet j (fun r => { r with last := j })
+      if keep then
+        if let some (_, ar) := nm.attrAnn.find? (fun (x, _) => x == q) then
+          tSet j (fun r => { r with tann := ar.tann, tval := ar.tval })
       aIdx := aIdx.push j
     let mut cs : Array Nat := #[]
     for k in nm.kids.toList do
@@ -273,7 +292,7 @@ def buildElem (env : Env) : Nat → Option Nat → List (String × String) → Q
           let j ← tPush { kind := .text, value := s, parent := some i }
           tSet j (fun r => { r with last := j })
           cs := cs.push j
-      | .node n => cs := cs.push (← copyTree env n (some i) kscope true)
+      | .node n => cs := cs.push (← copyTree env n (some i) kscope true keep)
       | .out o =>
           match ← buildKid env f (some i) kscope o with
           | some j => cs := cs.push j
@@ -287,7 +306,7 @@ def buildKid (env : Env) : Nat → Option Nat → List (String × String) → Ou
   | 0, _, _, _ => throw { code := "FOER0000", msg := "result tree too deep" }
   | f + 1, par, scope, o =>
     match o with
-    | .elem q ds cs => some <$> buildElem env f par scope q ds cs
+    | .elem q ds cs => some <$> buildElem env false f par scope q ds cs
     | .comment s => do
         let j ← tPush { kind := .comment, value := s, parent := par }
         tSet j (fun r => { r with last := j }); pure (some j)
@@ -301,8 +320,8 @@ def buildKid (env : Env) : Nat → Option Nat → List (String × String) → Ou
     | _ => pure none
 end
 
-/-- Build a document node with content `cs`. -/
-def buildDoc (env : Env) (cs : List Out) : TB Unit := do
+/-- Build a document node with content `cs` (`keep` as for `buildElem`). -/
+def buildDoc (env : Env) (cs : List Out) (keep : Bool := false) : TB Unit := do
   let nm ← normContent env cs
   if !nm.attrs.isEmpty then
     throw { code := "XTDE0420", msg := "an attribute node cannot be a child of a document node" }
@@ -317,7 +336,7 @@ def buildDoc (env : Env) (cs : List Out) : TB Unit := do
         let j ← tPush { kind := .text, value := s, parent := some i }
         tSet j (fun r => { r with last := j })
         kids := kids.push j
-    | .node n => kids := kids.push (← copyTree env n (some i) scope true)
+    | .node n => kids := kids.push (← copyTree env n (some i) scope true keep)
     | .out o =>
         match ← buildKid env 100000 (some i) scope o with
         | some j => kids := kids.push j
@@ -326,8 +345,9 @@ def buildDoc (env : Env) (cs : List Out) : TB Unit := do
   tSet i (fun r => { r with children := kids, last := sz - 1 })
 
 /-- The XDM item for one `Out`, as a new tree with document number
-    `id` when it is a node that is being built. -/
-def materialize (env : Env) (id : Nat) (o : Out) : M Item := do
+    `id` when it is a node that is being built. `keep`: the nodes copied
+    into the new node keep their type annotations (§25.1.1). -/
+def materializeK (keep : Bool) (env : Env) (id : Nat) (o : Out) : M Item := do
   -- the base URI of a new tree is the static base URI where it is made
   -- (§5.7.1, §9.4), unless the node keeps that of the node it copies
   let mkItem (act : TB Unit) (uri : String := "") (base : String := env.baseUri) : M Item := do
@@ -339,8 +359,8 @@ def materialize (env : Env) (id : Nat) (o : Out) : M Item := do
       let base := match cs with
         | .attr bq v :: _ => if bq == baseMarkQ then v else env.baseUri
         | _ => env.baseUri
-      mkItem (do let _ ← buildElem env 100000 none [("xml", nsXML)] q ds cs) "" base
-  | .doc cs uri => mkItem (buildDoc env cs) uri
+      mkItem (do let _ ← buildElem env keep 100000 none [("xml", nsXML)] q ds cs) "" base
+  | .doc cs uri => mkItem (buildDoc env cs keep) uri
   | .attr q v =>
       let (q', _) := fixAttrName q []
       mkItem (do let j ← tPush { kind := .attribute, name := q', value := v }; tSet j (fun r => { r with last := j }))
@@ -353,10 +373,14 @@ def materialize (env : Env) (id : Nat) (o : Out) : M Item := do
       let j ← tPush { kind := .namespace, name := { uri := "", loc := p }, value := u }
       tSet j (fun r => { r with last := j }))
 
+/-- `materializeK`: the nodes copied into a new node are untyped
+    (`validation="strip"`, the default). -/
+def materialize (env : Env) (id : Nat) (o : Out) : M Item := materializeK false env id o
+
 /-- A deep copy of an existing node as a new tree (`xsl:copy-of`,
-    `fn:copy-of`). -/
-def copyAsTree (env : Env) (id : Nat) (n : NodeRef) (copyNs : Bool := true) : M Item := do
-  let act : TB Unit := do let _ ← copyTree env n none [("xml", nsXML)] copyNs
+    `fn:copy-of`); `keep` false: the copy is untyped. -/
+def copyAsTree (env : Env) (id : Nat) (n : NodeRef) (copyNs : Bool := true) (keep : Bool := true) : M Item := do
+  let act : TB Unit := do let _ ← copyTree env n none [("xml", nsXML)] copyNs keep
   let ((), a) ← act.run #[]
   let d := env.doc n
   -- §11.9.2: the copy has the base URI of the node, except that its

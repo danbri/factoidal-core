@@ -52,7 +52,7 @@ def systemProperty (l : String) : String :=
   | "vendor-url" => "https://github.com/danbri/factoidal-core"
   | "product-name" => "Factoidal"
   | "product-version" => "0.21"
-  | "is-schema-aware" => "no"
+  | "is-schema-aware" => "yes"
   | "supports-serialization" => "yes"
   | "supports-backwards-compatibility" => "yes"
   | "supports-namespace-axis" => "yes"
@@ -125,7 +125,7 @@ def qnArg (ns : List (String × String)) (v : Seq) (useDefault : Bool) (code : S
 
 /-- The host functions of this module. `userFn q k` says whether the
     stylesheet declares `q#k` (`none` arity: any). -/
-def stdHost (userFn : QN → Option Nat → Bool) (q : QN) (k : Nat) : Option HostFn :=
+def stdHostT (typeKnown : QN → Bool) (userFn : QN → Option Nat → Bool) (q : QN) (k : Nat) : Option HostFn :=
   if q.uri != nsFN then none else
   match q.loc, k with
   | "system-property", 1 => some fun c a => do
@@ -154,7 +154,16 @@ def stdHost (userFn : QN → Option Nat → Bool) (q : QN) (k : Nat) : Option Ho
       pure (sBool (n.uri == nsXSL && (xslInstructions.contains n.loc || xslOtherElements.contains n.loc)))
   | "type-available", 1 => some fun c a => do
       let n ← qnArg c.ns (a.getD 0 []) false "XTDE1428"
-      pure (sBool (n.uri == nsXS && (atypeOfName? n.loc).isSome))
+      -- a built-in type, or a type of the in-scope schema (§3.15)
+      let s := (strArg (a.getD 0 [])).trimAscii.toString
+      let n := if n.uri == "" && !s.contains ':' && !s.startsWith "Q{" then
+          { n with uri := (c.ns.lookup "#type").getD ((c.ns.lookup "").getD "") } else n
+      pure (sBool ((n.uri == nsXS && ((atypeOfName? n.loc).isSome ||
+        ["anyType", "untyped", "anySimpleType", "untypedAtomic"].contains n.loc)) || typeKnown n))
   | _, _ => none
+
+/-- `stdHostT` with no schema types beyond the built-in ones. -/
+def stdHost (userFn : QN → Option Nat → Bool) (q : QN) (k : Nat) : Option HostFn :=
+  stdHostT (fun _ => false) userFn q k
 
 end L4Factoidal.XSLT4

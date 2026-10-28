@@ -41,6 +41,8 @@ structure SCx where
   /-- Inside the body of an `xsl:iterate` (where `xsl:break` and
       `xsl:next-iteration` may appear). -/
   inIter : Bool := false
+  /-- `[xsl:]default-validation` (§25): `strip` or `preserve`. -/
+  defaultValidation : String := "strip"
 deriving Inhabited
 
 /-- The value of a `version` attribute, in thousandths (a decimal,
@@ -90,6 +92,12 @@ def itDefault (d : String) : Nat → IType → IType
   | f + 1, t =>
     match t with
     | .elem (some n) => .elem (some (ntDefault d n))
+    -- schema-element(E), element(E, T), attribute(A, T): unprefixed
+    -- element and type names (§5.1.2)
+    | .schemaElem q => .schemaElem (if q.uri == "" && q.pfx == "" then { q with uri := d } else q)
+    | .elemT n ty nil =>
+      .elemT (n.map (ntDefault d)) (if ty.uri == "" && ty.pfx == "" then { ty with uri := d } else ty) nil
+    | .attrT n ty => .attrT n (if ty.uri == "" && ty.pfx == "" then { ty with uri := d } else ty)
     | .doc (some i) => .doc (some (itDefault d f i))
     | .seq i o => .seq (itDefault d f i) o
     | .choice ts => .choice (ts.map (itDefault d f))
@@ -409,6 +417,11 @@ def defaultPriority (e : Expr) : Float :=
     | .kind (.elemT (some _) _ _) | .kind (.attrT (some _) _) => 0.125
     | .kind (.schemaElem _) | .kind (.schemaAttr _) => 0.25
     | .kind (.pi (some _)) => 0
+    -- document-node() with a typed element test (§6.5)
+    | .kind (.doc (some (.elemT none _ _))) => 0
+    | .kind (.doc (some (.elemT (some (.name _)) _ _))) => 0.25
+    | .kind (.doc (some (.elemT (some _) _ _))) => 0.125
+    | .kind (.doc (some (.schemaElem _))) => 0.25
     | .kind (.doc (some (.elem (some (.name _))))) => 0
     | .kind (.doc (some _)) => -0.25
     | .kind _ => -0.5

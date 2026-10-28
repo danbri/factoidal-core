@@ -295,6 +295,7 @@ def renI (r : Ren) : Nat → List QN → Instr → RM Instr
     | .withNs ns body => .withNs ns <$> b body
     | .withCompat on body => .withCompat on <$> b body
     | .withBase u body => .withBase u <$> b body
+    | .valid how body => .valid how <$> b body
 
 def renSorts (r : Ren) : Nat → List QN → List SortK → RM (List SortK)
   | 0, _, ss => pure ss
