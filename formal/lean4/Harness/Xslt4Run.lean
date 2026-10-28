@@ -33,6 +33,10 @@ processor, with no I/O except the reading of files under the suite
 root before the run.
 -/
 import L4Factoidal.XSLT4.Transform
+import L4Factoidal.XSLT4.Theorems
+import L4Factoidal.XSLT.Transform
+import L4Factoidal.XML.Canonical
+import Lean.Data.Json
 
 open L4Factoidal.XPath4
 open L4Factoidal.XSLT4
@@ -427,6 +431,9 @@ structure Opts where
   only : Option String := none
   /-- Skip the test cases up to and including this one. -/
   after : Option String := none
+  /-- Compare with the XSLT 1.0 engine on the corpus in this directory
+      (`manifest.json` of `third_party/testing/xslt` form). -/
+  xslt10 : Option String := none
 
 def parseArgs : List String → Opts → Opts
   | "--root" :: r :: rest, o => parseArgs rest { o with root := r }
@@ -437,6 +444,7 @@ def parseArgs : List String → Opts → Opts
   | "--progress" :: f :: rest, o => parseArgs rest { o with progress := some f, childMode := true }
   | "--test" :: t :: rest, o => parseArgs rest { o with only := some t }
   | "--after" :: t :: rest, o => parseArgs rest { o with after := some t }
+  | "--xslt10" :: d :: rest, o => parseArgs rest { o with xslt10 := some d }
   | _ :: rest, o => parseArgs rest o
   | [], o => o
 
@@ -715,8 +723,119 @@ def runIsolated (o : Opts) (secs : Nat) (setName : String) : IO (Tally × String
   try IO.FS.removeFile pf catch _ => pure ()
   return (total, if notes.isEmpty then "" else s!" [{notes.length} test(s) did not finish in {secs} s, counted as fail: {String.intercalate ", " notes}]")
 
+/-! ## Agreement with the XSLT 1.0 engine
+
+`--xslt10 DIR` runs each case of an XSLT 1.0 corpus (`manifest.json` with
+`stylesheet`, `source`, `expected`) through both `L4Factoidal.XSLT` (the
+XSLT 1.0 engine) and `L4Factoidal.XSLT4`, and compares the two results
+with each other and with the expected output: the same comparison as
+`l4xslt` (exact text, else Canonical XML 1.0 of the wrapped fragments,
+else whitespace-collapsed text). -/
+
+def normalizeEol (s : String) : String :=
+  String.ofList (s.toList.foldr (fun c acc =>
+    match c, acc with
+    | '\r', '\n' :: r => '\n' :: r
+    | '\r', r => '\n' :: r
+    | _, r => c :: acc) [])
+
+def stripDecl (s : String) : String :=
+  let t := s.trimAscii.toString
+  if t.startsWith "<?xml" then
+    match (t.toList.drop 5).findIdx? (· == '>') with
+    | some i => (String.ofList (t.toList.drop (5 + i + 1))).trimAscii.toString
+    | none => t
+  else t
+
+def looseForm (s : String) : String :=
+  let isW (c : Char) := c == ' ' || c == '\t' || c == '\n' || c == '\r'
+  let collapsed := s.toList.foldr (fun c acc =>
+    if isW c then (match acc with | ' ' :: _ => acc | _ => ' ' :: acc) else c :: acc) []
+  let dropped := collapsed.foldr (fun c acc =>
+    match c, acc with
+    | '>', ' ' :: '<' :: r => '>' :: '<' :: r
+    | _, r => c :: r) []
+  (String.ofList dropped).trimAscii.toString
+
+/-- Do two serialized results agree (the `l4xslt` comparison)? -/
+def sameResult (a b : String) : Bool :=
+  let a := stripDecl (normalizeEol a)
+  let b := stripDecl (normalizeEol b)
+  if a == b then true else
+  match L4Factoidal.XML.Canonical.canonicalFragment? a, L4Factoidal.XML.Canonical.canonicalFragment? b with
+  | some x, some y => x == y || looseForm x == looseForm y
+  | _, _ => looseForm a == looseForm b
+
+/-- Run a stylesheet text on a source text with XSLT4, serialized. -/
+def runXslt4 (styleUri : String) (mods : List (String × String)) (srcUri srcTxt : String)
+    (res : List (String × String)) : M String := do
+  let S ← compileStylesheet styleUri mods
+  let some d := loadDoc srcTxt srcUri | throw { code := "FODC0002", msg := "source not well-formed" }
+  let env : Env := { docs := #[d], docUris := [(srcUri, 0)], resources := res }
+  let r ← transform S { globalCtx := some (.node (NodeRef.mk' 0 0)), env }
+  let props ← S.outputProps r.principalFormat.1 r.principalFormat.2
+  let raw := if r.raw.isEmpty then [] else r.raw
+  -- the result tree of an XSLT 1.0 transform is a document node
+  let v ← match raw with
+    | [.node n] => if (env.nrec n).kind == .document then pure raw else
+        do pure [← materialize env (2 ^ 45) (.doc (Out.ofSeq raw) "")]
+    | _ => do pure [← materialize env (2 ^ 45) (.doc (Out.ofSeq raw) "")]
+  serializeResult S env props v
+
+def agree10 (dir : String) : IO UInt32 := do
+  let some mtxt ← readFileSafe (dir ++ "/manifest.json") | IO.eprintln s!"cannot read {dir}/manifest.json"; return 2
+  let .ok j := Lean.Json.parse mtxt | IO.eprintln "bad manifest"; return 2
+  let .ok arr := j.getArr? | IO.eprintln "manifest is not an array"; return 2
+  let mut n := 0
+  let mut p10 := 0
+  let mut p4 := 0
+  let mut both := 0
+  let mut agreeN := 0
+  let mut only10 : List String := []
+  for c in arr do
+    let get (k : String) : String := ((c.getObjVal? k).bind Lean.Json.getStr?).toOption.getD ""
+    let name := get "name"
+    let sp := normPath (dir ++ "/" ++ get "stylesheet")
+    let srcp := normPath (dir ++ "/" ++ get "source")
+    let ep := normPath (dir ++ "/" ++ get "expected")
+    let some st ← readFileSafe sp | continue
+    let some src ← readFileSafe srcp | continue
+    let some exp ← readFileSafe ep | continue
+    n := n + 1
+    -- XSLT 1.0 engine
+    let r10 : Option String := match parseXML st, parseXML src with
+      | .ok s1, .ok s2 => match L4Factoidal.XSLT.transform s1 s2 with
+        | .produced t => some t
+        | .refused _ => none
+      | _, _ => none
+    -- XSLT 4.0 engine
+    let mods ← loadModules (fileUri sp)
+    let res ← scanResources dir (dirOf sp) st
+    let r4 : Option String := match runXslt4 (fileUri sp) mods (fileUri srcp) src res with
+      | .ok t => some t
+      | .error _ => none
+    let ok10 := match r10 with | some t => sameResult t exp | none => false
+    let ok4 := match r4 with | some t => sameResult t exp | none => false
+    if ok10 then p10 := p10 + 1
+    if ok4 then p4 := p4 + 1
+    if ok10 && ok4 then both := both + 1
+    if ok10 && !ok4 then only10 := only10 ++ [name]
+    match r10, r4 with
+    | some a, some b => if sameResult a b then agreeN := agreeN + 1
+    | _, _ => pure ()
+  IO.println s!"XSLT 1.0 corpus {dir}: {n} cases"
+  IO.println s!"  XSLT 1.0 engine (L4Factoidal.XSLT): {p10} pass"
+  IO.println s!"  XSLT 4.0 engine (L4Factoidal.XSLT4): {p4} pass"
+  IO.println s!"  both pass: {both}; the two results agree: {agreeN}"
+  IO.println s!"  pass with XSLT 1.0 only: {only10.length}"
+  for x in only10 do IO.println s!"    {x}"
+  return 0
+
 def main (args : List String) : IO UInt32 := do
   let o := parseArgs args {}
+  if let some d := o.xslt10 then
+    let cwd ← IO.currentDir
+    return ← agree10 (normPath (if d.startsWith "/" then d else cwd.toString ++ "/" ++ d))
   let cwd ← IO.currentDir
   let o := { o with root := normPath (if o.root.startsWith "/" then o.root else cwd.toString ++ "/" ++ o.root) }
   let some ctxt ← readFileSafe (o.root ++ "/catalog.xml")
