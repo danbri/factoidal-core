@@ -507,7 +507,10 @@ def defective : List (String × String) :=
   [ "priority-124", "priority-141", "priority-160", "priority-162", "priority-163",
     "function-40-012", "accumulator-038", "type-alias-003", "type-alias-004",
     "evaluate-042", "format-number-014", "format-number-035", "format-number-038",
-    "format-number-039", "format-number-040", "format-number-041" ].map (·, i1163)
+    "format-number-039", "format-number-040", "format-number-041",
+    -- XPTY0020 and XPTY0019 are replaced by XPTY0004 (XPath 4.0 §4.7.3,
+    -- §4.7.5, PR 2627)
+    "analyze-string-085", "error-XPTY0019a" ].map (·, i1163)
 
 structure Tally where
   pass : Nat := 0

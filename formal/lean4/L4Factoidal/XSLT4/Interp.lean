@@ -192,7 +192,7 @@ def hasDisqualifying : Nat → List Instr → Bool
   | f + 1, is => is.any (fun i => match i with
     | .mapI .. | .mapEntry .. | .arrayI .. | .arrayMember .. => true
     | .seq (some _) [.lit "xsl:select"] _ => true
-    | .withBase _ b | .withColl _ b | .withCompat _ b => hasDisqualifying f b
+    | .withBase _ b | .withColl _ b | .withNs _ b | .withCompat _ b => hasDisqualifying f b
     | _ => false)
 
 /-- The string value of an `Out` that is a node. -/
@@ -1037,6 +1037,19 @@ def numberNodes (env : Env) (n : NodeRef) (level : String) (cnt frm : Option Pat
 
 mutual
 
+/-- A variable under the wrappers of its element's attributes
+    (`xml:base`, namespaces, `default-collation`, `version`): the variable
+    and the context its value is evaluated in. -/
+def peelVar (cx : Ctx) : Nat → Instr → Option (Ctx × Instr)
+  | 0, _ => none
+  | f + 1, ins => match ins with
+    | .var .. => some (cx, ins)
+    | .withBase u [i] => peelVar { cx with env := { cx.env with baseUri := u } } f i
+    | .withNs ns [i] => peelVar { cx with env := { cx.env with ns } } f i
+    | .withColl u [i] => peelVar { cx with env := { cx.env with defaultCollation := u } } f i
+    | .withCompat on [i] => peelVar { cx with backCompat := on } f i
+    | _ => none
+
 /-- Evaluate a sequence constructor. -/
 def run : Nat → Sheet → Ctx → List Instr → XM (List Out)
   | 0, _, _, _ => xerr "FOER0000" "XSLT evaluation too deep (fuel exhausted)"
@@ -1050,11 +1063,14 @@ def run : Nat → Sheet → Ctx → List Instr → XM (List Out)
       | .var q ty sel body =>
           let v ← bindValue n S cx sel body ty ("$" ++ q.show) "XTTE0570"
           cx := cx.bind q v
-      | .withBase u [.var q ty sel body] =>
-          -- a variable with an `xml:base` attribute still binds the
-          -- following siblings
-          let v ← bindValue n S { cx with env := { cx.env with baseUri := u } } sel body ty ("$" ++ q.show) "XTTE0570"
-          cx := cx.bind q v
+      | .withBase .. | .withNs .. | .withColl .. | .withCompat .. =>
+          -- a variable with an `xml:base`, namespace, `default-collation`
+          -- or `version` attribute still binds the following siblings
+          match peelVar cx 8 ins with
+          | some (vcx, .var q ty sel body) =>
+              let v ← bindValue n S vcx sel body ty ("$" ++ q.show) "XTTE0570"
+              cx := cx.bind q v
+          | _ => out := out.push (some (← run1 n S cx ins))
       | .onEmpty _ _ => pending := pending ++ [(out.size, true, cx, ins)]; out := out.push none
       | .onNonEmpty _ _ => pending := pending ++ [(out.size, false, cx, ins)]; out := out.push none
       | _ => out := out.push (some (← run1 n S cx ins))
