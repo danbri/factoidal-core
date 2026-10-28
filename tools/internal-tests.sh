@@ -241,7 +241,8 @@ if command -v node >/dev/null 2>&1; then
   for f in "$REPO_ROOT"/tests/lws/*.mjs "$REPO_ROOT"/tests/solid/server/*.mjs \
            "$REPO_ROOT"/tests/solid/client/against-own-server.mjs \
            "$REPO_ROOT"/tests/lws/client/own-server.mjs \
-           "$REPO_ROOT"/tests/webdav/server.mjs "$REPO_ROOT"/tests/webdav/scaling.mjs; do
+           "$REPO_ROOT"/tests/webdav/server.mjs "$REPO_ROOT"/tests/webdav/scaling.mjs \
+           "$REPO_ROOT"/tests/webdav-desktop/selftest.mjs; do
     [ -f "$f" ] || continue
     rel="${f#"$REPO_ROOT"/}"
     run_suite "node-${rel%.mjs}" "$FULL_BUDGET" node "$f" --no-deno

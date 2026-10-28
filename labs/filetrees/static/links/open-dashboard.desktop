@@ -1,0 +1,6 @@
+[Desktop Entry]
+Version=1.0
+Type=Link
+Name=Factoidal labs dashboard
+URL={{ORIGIN}}/{{MOUNT}}/dashboard.html
+Icon=text-html

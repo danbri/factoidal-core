@@ -1,0 +1,5 @@
+@prefix schema: <https://schema.org/> .
+
+<https://example.org/ada> a schema:Person ;
+  schema:name "Ada Lovelace" ;
+  schema:birthDate "1815-12-10" .
