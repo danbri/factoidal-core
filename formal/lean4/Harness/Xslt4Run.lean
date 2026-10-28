@@ -35,6 +35,7 @@ root before the run.
 import L4Factoidal.XSLT4.Transform
 import L4Factoidal.XSLT4.Theorems
 import L4Factoidal.XSLT4.Streaming.Check
+import L4Factoidal.XSLT4.Streaming.Tests
 import L4Factoidal.XSLT4.Streaming.StreamDiff
 import L4Factoidal.XSLT.Transform
 import L4Factoidal.XML.Canonical
