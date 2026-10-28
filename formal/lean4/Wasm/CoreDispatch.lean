@@ -174,6 +174,7 @@ def fullOnlyOpNames : List String :=
   , "vcEddsaCreateFromCanonical", "vcEddsaVerifyFromCanonical"
   , "vcCheckCredential", "vcCheckCredentialSubject", "vcCheckNoDataLoss"
   , "vcCheckRelatedResourceDigests", "didKeyResolve"
+  , "cidValidate", "cidRetrieve"
   , "blobEcho" ]
 
 def arity1 (op : String) (f : String → String) : List String → String

@@ -190,6 +190,9 @@ export const vcCheckCredential = api.vcCheckCredential;
 export const vcCheckCredentialSubject = api.vcCheckCredentialSubject;
 export const vcCheckNoDataLoss = api.vcCheckNoDataLoss;
 export const vcCheckRelatedResourceDigests = api.vcCheckRelatedResourceDigests;
+// Controlled Identifiers v1.0 (https://github.com/danbri/factoidal/issues/1100).
+export const cidValidate = api.cidValidate;
+export const cidRetrieveVerificationMethod = api.cidRetrieveVerificationMethod;
 export const didKeyResolve = api.didKeyResolve;
 
 // Types, probes and metadata
