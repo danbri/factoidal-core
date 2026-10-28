@@ -27,7 +27,8 @@ left fold (one frame for any length). -/
 def beValue (bs : List Nat) : Nat := bs.foldl (fun acc b => acc * 256 + b) 0
 
 /-- The `n` low-order octets of `v`, most significant first: the
-big-endian representation of `v mod 256^n`. -/
+big-endian representation of `v mod 256^n`. Specification only: the
+functions call the loop `packBEAcc` (`packBE_eq_packBEAcc`). -/
 def packBE : Nat → Nat → List Nat
   | 0, _ => []
   | n + 1, v => packBE n (v / 256) ++ [v % 256]
@@ -43,13 +44,6 @@ theorem packBE_eq_packBEAcc (n v : Nat) (acc : List Nat) :
   induction n generalizing v acc with
   | zero => simp [packBEAcc, packBE]
   | succ n ih => simp [packBEAcc, packBE, ih]
-
-/-- `packBEAcc` from an empty accumulator. -/
-def packBELoop (n v : Nat) : List Nat := packBEAcc n v []
-
-/-- The compiled code of `packBE` is the loop `packBEAcc`. -/
-@[csimp] theorem packBE_csimp : @packBE = @packBELoop := by
-  funext n v; rw [packBELoop, packBE_eq_packBEAcc, List.append_nil]
 
 /-- Two's complement of an integer in `n` octets: `v mod 256^n`. -/
 def twosComplement (n : Nat) (v : Int) : Nat := (v % ((256 : Int) ^ n)).toNat

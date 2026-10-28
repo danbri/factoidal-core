@@ -3,9 +3,8 @@ L4Factoidal.EXPath.Binary.Theorems — properties of the EXPath Binary
 4.0 octet functions (`EXPath.Binary.Octets`), bound to the existing
 code they reuse or agree with.
 
-* `packBE_eq_packBEAcc` (in `Octets`, with `@[csimp]`): the
-  accumulator form that runs is the recursive form the other theorems
-  are about.
+* `packBE_eq_packBEAcc` (in `Octets`): the accumulator form that
+  runs is the recursive form the other theorems are about.
 * `beValue_packBE`: unpacking `n` packed octets gives the value modulo
   `256^n` (bin:unpack-unsigned-integer after bin:pack-integer).
 * `packBE_beValue`: packing the value of `n` octets gives the octets

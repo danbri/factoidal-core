@@ -1611,3 +1611,4 @@ L4Factoidal_SPARQLRL_resolveImportsAux  # (c) import nesting, at most 64 (the fu
 # --- Added 2026-10-28, EXPath File 4.0 evaluator (https://github.com/danbri/factoidal/issues/1101) ---
 L4Factoidal_EXPath_File_exec  # (b) the depth is the nesting of the XPath expression (EXPath File 4.0 evaluator, issue 1101)
 L4Factoidal_EXPath_File_hasWrite  # (b) the depth is the nesting of the XPath expression (EXPath File 4.0, issue 1101)
+L4Factoidal_EXPath_Binary_packBE  # (s) specification only: no emitted C outside Binary/Octets.lean and Binary/Theorems.lean calls it; bin:pack-* call the loop packBEAcc (packBE_eq_packBEAcc)

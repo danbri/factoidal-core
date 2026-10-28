@@ -121,7 +121,7 @@ the real clock and the real modification times, and removes the directory.
 
 `Binary/Theorems.lean`: pack and unpack are inverse (`beValue_packBE`,
 `packBE_beValue`, `unpack_pack_unsigned`, `signedOf_twosComplement` for the
-signed range); the loop `packBEAcc` is `packBE` (`@[csimp]`); octet order is an
+signed range); the loop `packBEAcc` is `packBE` (`packBE_eq_packBEAcc`); octet order is an
 involution; `bin:hex` reads `XSD.hexOfBytes` back (`ofHex_hexOfBytes`);
 `bin:from-base64url` inverts `bin:to-base64url` through the proved codec
 `JOSE.Base64Url.decode_encode` (`fromBase64url_toBase64url`); bit `not` and
