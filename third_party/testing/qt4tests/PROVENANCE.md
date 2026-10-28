@@ -12,8 +12,11 @@ What was copied (and nothing else):
   Stage 1 of https://github.com/danbri/factoidal/issues/1101 scores)
 - `docs/` (the source documents and schemas that the catalog environments
   refer to)
+- `bin/` and `file/` (the EXPath Binary 4.0 and EXPath File 4.0 test sets,
+  with the `file/sandpit` directory), copied 2026-10-28 from the same commit
+  for https://github.com/danbri/factoidal/issues/1101 (EXPath stage)
 
-Not copied: `app/`, `bin/`, `file/`, `ft/`, `misc/`, `ser/`, `upd/`, `xs/`,
+Not copied: `app/`, `ft/`, `misc/`, `ser/`, `upd/`, `xs/`,
 the drivers, tools, viewer and guide. A catalog test set whose file is not
 present is not run by `lake exe l4qt4` unless its family is selected.
 
