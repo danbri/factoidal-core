@@ -30,7 +30,7 @@ Productions:
   `comment`, `processing-instruction`, `document`, `namespace`;
 * `ordered`/`unordered` (no effect), extension expressions `(# #)`,
   string constructors ``` ``[ … `{ }` … ]`` ```;
-* `validate` is parsed and raises `XQST0075` (no schema support).
+* `validate` uses the in-scope schema (`XPath4.SchemaHook.validateIn`); without one it raises `XQST0075`.
 -/
 import L4Factoidal.XQuery4.Runtime
 
@@ -990,19 +990,25 @@ where
   | "document" => pure (some (.ext "doc" [← pBraced sp] [] [] []))
   | "ordered" | "unordered" => pure (some (← pBraced sp))
   | "validate" =>
-    if ← eatKw "type" then let _ ← peekQName
-    else if ← eatKw "as" then let _ ← peekQName
-    else
-      let _ ← eatKw "lax"
-      let _ ← eatKw "strict"
-    -- skip a type name if any, then the braces
+    -- XQuery 4.0 §3.21: validate (lax | strict | type T | as T)? { Expr }
+    let mode ← if ← eatKw "lax" then pure "lax"
+      else if ← eatKw "strict" then pure "strict"
+      else if (← eatKw "type") || (← eatKw "as") then
+        ws
+        match ← peekQName with
+        | some (p, u, l, e) =>
+          set e
+          let q ← resolve p u l ""
+          pure ("type Q{" ++ q.uri ++ "}" ++ q.loc)
+        | none => synErr "expected a type name after validate type"
+      else pure "strict"
     ws
-    if (← curCh) != '{' then
-      match ← peekQName with
-      | some (_, _, _, e) => set e
-      | none => pure ()
-    let _ ← pBraced sp
-    pure (some (.ext "error" [] [] [] ["XQST0075", "validate is not supported (no schema support)"]))
+    expectS "{"
+    -- the braces of a validate expression hold an Expr (not empty)
+    if ← eatS "}" then synErr "validate needs an expression"
+    let body ← subE sp.expr
+    expectS "}"
+    pure (some (.ext "validate" [body] [] [] [mode]))
   | _ => pure none
 
 def exprSingleP (sp : SubParsers) : P (Option Expr) := do

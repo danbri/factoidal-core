@@ -1079,7 +1079,7 @@ def fnTable : List (String × LibFn) := [
     | none => pure (sBool false)),
   ent "nilled" (fun _ e a => do
     match ← nodeArg e (argN a 0) with
-    | some n => pure (if (e.nrec n).kind == .element then sBool false else [])
+    | some n => pure (if (e.nrec n).kind == .element then sBool (e.nrec n).nilled else [])
     | none => pure []),
   ent "document-uri" (fun _ e a => do
     match ← nodeArg e (argN a 0) with

@@ -122,6 +122,81 @@ def rngTakeFn : LibFn := fun _ _ a => do
     s := rngNext s
   pure out.toList
 
+/-! ## `fn:xsd-validator` (F&O 4.0 §21, schema validation)
+
+The validator is a function item that calls `xsd-validate#` with the
+options; the validation itself is the host's schema hook
+(`SchemaHook.validateWith`, supplied by `L4Factoidal.XSD11`). -/
+
+def xsdQ (l : String) : QN := { uri := nsFN, loc := l }
+
+def xsdValidatorFn : LibFn := fun _ _ a => do
+  let opts : Item := match argN a 0 with
+    | [m@(.map _)] => m
+    | _ => .map []
+  let vOpt : QN := { uri := "#xsd", loc := "options" }
+  let vNode : QN := { uri := "#xsd", loc := "node" }
+  pure [.fn (.inline [(vNode, parseTy "item()*")] (parseTy "item()*")
+    (.call (xsdQ "xsd-validate#") [some (.var vOpt), some (.var vNode)] []) false [(vOpt, [opts])])]
+
+def optEntry (opts : Seq) (k : String) : Option Seq :=
+  match opts with
+  | [.map kvs] => (kvs.find? (fun (key, _) => key.isStringLike && key.str == k)).map (·.2)
+  | _ => none
+
+def xsdValidateFn : LibFn := fun _ e a => do
+  let opts := argN a 0
+  let mode := match optEntry opts "validation-mode" with
+    | some [.atom m] => m.str
+    | _ => "strict"
+  let mode ← if mode == "by-type" then
+      match optEntry opts "type" with
+      | some [.atom t] => match t.v with
+        | .qn q => pure ("type Q{" ++ q.uri ++ "}" ++ q.loc)
+        | _ => err "XPTY0004" "the type option must be an xs:QName"
+      | _ => err "XPTY0004" "validation-mode by-type needs the type option"
+    else if mode == "strict" || mode == "lax" then pure mode
+    else err "XPTY0004" ("unknown validation-mode " ++ mode)
+  let retNode := match optEntry opts "return-typed-node" with
+    | some [.atom b] => b.str != "false"
+    | _ => true
+  let retErrs := match optEntry opts "return-error-details" with
+    | some [.atom b] => b.str == "true"
+    | _ => false
+  let schemaNodes : List (Doc × Nat) := match optEntry opts "schema" with
+    | some s => s.filterMap (fun i => match i with
+      | .node n => some (e.doc n, n.idx)
+      | _ => none)
+    | none => []
+  match argN a 1 with
+  | [] => pure []
+  | [.node n] =>
+    let r := e.nrec n
+    if r.kind != .document && r.kind != .element then err "XPTY0004" "xsd-validator needs a document or element node"
+    if r.kind == .document &&
+       (r.children.toList.filter (fun c => (e.nrec (n.at c)).kind == .element)).length != 1 then
+      err "XPTY0004" "the document node must have exactly one element child"
+    match e.schema.validateWith with
+    | none => err "FODC0009" "no schema processor is available"
+    | some f =>
+      let d := e.doc n
+      match f mode schemaNodes d n.idx d.uri with
+      | .error x => throw x
+      | .ok (res, errs) =>
+        let id := n.doc + (2 : Nat) ^ 42
+        let typed : List Item := match res with
+          | some nd => if r.kind == .document then [.node { doc := id, idx := 0, rt := some nd }]
+                       else [.node { doc := id, idx := 1, rt := some nd }]
+          | none => []
+        let entries : List (Atomic × Seq) :=
+          [(Atomic.ofStr "is-valid", [.atom (Atomic.ofBool res.isSome)])] ++
+          (if retNode && res.isSome then [(Atomic.ofStr "typed-node", typed)] else []) ++
+          (if retErrs && res.isNone then
+             [(Atomic.ofStr "error-details", errs.map (fun m => Item.map [(Atomic.ofStr "message", [.atom (Atomic.ofStr m)])]))]
+           else [])
+        pure [.map entries]
+  | _ => err "XPTY0004" "xsd-validator needs one document or element node"
+
 /-! ## `fn:parts-of-dateTime` and `fn:build-dateTime` (§9.5)
 
 A value of one of the eight date/time types has the seven components of
@@ -369,8 +444,8 @@ def systemPropertiesFn : LibFn := fun _ _ _ =>
     (q "xsd-version", [.atom (Atomic.ofDec ⟨11, 1⟩)]),
     (q "product-name", [.atom (Atomic.ofStr "Factoidal")]),
     (q "product-version", [.atom (Atomic.ofStr "0.21")]),
-    (q "schema-aware", [.atom (Atomic.ofBool false)]),
-    (q "accepts-typed-data", [.atom (Atomic.ofBool false)]),
+    (q "schema-aware", [.atom (Atomic.ofBool true)]),
+    (q "accepts-typed-data", [.atom (Atomic.ofBool true)]),
     (q "supports-xinclude", [.atom (Atomic.ofBool false)]),
     (q "supports-dtd-validation", [.atom (Atomic.ofBool false)]),
     (q "supports-dtd-attribute-typing", [.atom (Atomic.ofBool false)]),
@@ -759,6 +834,7 @@ def idrefFn : LibFn := fun _ e a => do
 
 def fn4Table : List (String × LibFn) :=
   [("hash", hashFn), ("random-number-generator", rngFn), ("rng-record#", rngRecordFn),
+   ("xsd-validator", xsdValidatorFn), ("xsd-validate#", xsdValidateFn),
    ("rng-permute#", rngPermuteFn), ("rng-take#", rngTakeFn),
    ("parts-of-dateTime", partsOfDateTimeFn), ("build-dateTime", buildDateTimeFn),
    ("round", roundModeFn), ("unix-dateTime", unixDateTimeFn), ("pad-string", padStringFn),
