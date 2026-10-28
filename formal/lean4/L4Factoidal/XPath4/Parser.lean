@@ -584,6 +584,7 @@ def pItemType : Nat → P IType
             ws
             match ← peekQName with
             | some (p, u, l, e) =>
+              if p == some "*" || l == "*" then synErr ("a wildcard is not allowed in " ++ nm ++ "()")
               set e
               let den ← dfltElemNs
               let q ← resolve p u l (if nm == "schema-element" then den else "")
@@ -594,6 +595,10 @@ def pItemType : Nat → P IType
             if ← eatS ")" then pure (.doc none)
             else
               let t ← pItemType n
+              -- DocumentTest: an element test or a schema-element test only
+              match t with
+              | .elem _ | .elemT .. | .schemaElem _ => pure ()
+              | _ => synErr "document-node() takes an element test"
               expectS ")"; pure (.doc (some t))
         | "function" | "fn" =>
             if ← eatS "*" then expectS ")"; pure .anyFn
@@ -1151,6 +1156,13 @@ def pPath : Nat → P Expr
         -- `/*` is a wildcard step (xgc: leading-lone-slash)
         let r ← pRel n
         pure (.slash .root r)
+      else if ch == '<' && c.ext.isSome && isNameStart (chAt c.s (j+1)) then
+        -- XQuery: '/' then a direct constructor is a path; when the text is no
+        -- constructor, '/' is alone and '<' is the comparison (xgc: leading-lone-slash)
+        try
+          let r ← pRel n
+          pure (.slash .root r)
+        catch _ => pure .root
       else if (← canStartRel) && !(ch == '<' || ch == '=' || ch == '!') then
         -- names that are operators after a lone slash still start a path
         let r ← pRel n
@@ -1239,6 +1251,8 @@ def pStep : Nat → P Expr
     | some (nm, ':', ':') =>
       match axisOfName? nm with
       | some ax =>
+          -- the namespace axis is not recognized in XQuery
+          if nm == "namespace" && c0.ext.isSome then synErr "the namespace axis is not recognized in XQuery"
           let _ ← peekQName
           adv nm.length; ws; expectS "::"
           ws
