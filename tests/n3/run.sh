@@ -44,4 +44,44 @@ run "${W3C}/rdf11/rdf-turtle/manifest.ttl"
 run --rdf12 "${W3C}/rdf12/rdf-turtle/syntax/manifest.ttl"
 run --rdf12 "${W3C}/rdf12/rdf-turtle/eval/manifest.ttl"
 
+# Stack cases (Lean tail-recursion rule, CLAUDE.md): each sequence of the
+# grammar 200,000 long, read, written, read again, compared, converted to RDF
+# and checked against the Turtle reader, with a 512 KB stack. The depth of the
+# N3 functions follows the nesting of a document only
+# (tools/lean-tail-recursion-allow.txt, the N3 lines).
+STACK="$(mktemp -d "${TMPDIR:-/tmp}/n3-stack-XXXXXX")"
+trap 'rm -rf "${STACK}"' EXIT
+python3 - "${STACK}" <<'PY'
+import sys, os
+d = sys.argv[1]; n = 200000
+docs = {
+  'formula': ':a :b {\n' + ''.join(f':s{i} :p :o .\n' for i in range(n)) + '} .\n',
+  'list': ':a :b (' + ' '.join(f':x{i}' for i in range(n)) + ') .\n',
+  'pol': ':a ' + ' ;\n'.join(f':p{i} :o' for i in range(n)) + ' .\n',
+  'objs': ':a :p ' + ', '.join(f':o{i}' for i in range(n)) + ' .\n',
+  'path': ':a' + ''.join(f'!:p{i}' for i in range(n)) + ' :q :r .\n',
+  'doc': ''.join(f':s{i} :p _:b{i} .\n' for i in range(n)),
+}
+entries = []
+for k, body in docs.items():
+  text = '@prefix : <http://ex/> .\n' + body
+  for suffix in ('', '-r'):
+    open(os.path.join(d, k + suffix + '.n3'), 'w').write(text)
+  entries.append(f'<#{k}e> a test:TestN3Eval ; mf:name "{k}-eval" ; mf:action <{k}.n3> ; mf:result <{k}-r.n3> .\n'
+                 f'<#{k}s> a test:TestN3PositiveSyntax ; mf:name "{k}-syntax" ; mf:action <{k}.n3> .\n'
+                 f'<#{k}t> a rdft:TestTurtlePositiveSyntax ; mf:name "{k}-turtle" ; mf:action <{k}.n3> .\n')
+names = ' '.join(f'<#{k}e> <#{k}s> <#{k}t>' for k in docs)
+open(os.path.join(d, 'manifest.ttl'), 'w').write(
+  '@prefix mf: <http://www.w3.org/2001/sw/DataAccess/tests/test-manifest#> .\n'
+  '@prefix test: <https://w3c.github.io/N3/tests/test.n3#> .\n'
+  '@prefix rdft: <http://www.w3.org/ns/rdftest#> .\n'
+  f'<> mf:entries ( {names} ) .\n' + ''.join(entries))
+PY
+rc=0
+( ulimit -s 512; timeout 900 "${BIN}" --quiet "${STACK}/manifest.ttl" ) || rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "FAILED (exit ${rc}): stack cases with a 512 KB stack"
+  status=1
+fi
+
 exit "${status}"

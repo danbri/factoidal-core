@@ -52,6 +52,7 @@ import Harness.Manifest
 import L4Factoidal.N3.Compare
 import L4Factoidal.N3.Rdf
 import L4Factoidal.Syntax.NQuads
+import L4Factoidal.Syntax.NQuadsFastTheorems
 import L4Factoidal.Syntax.NTriples
 
 open L4Factoidal.RDF
@@ -241,7 +242,7 @@ def runManifest (mode : Mode) (quiet : Bool) (path : String) : IO (Option Tally)
               | _, _ => o0
             if rej then t := { t with rejected := t.rejected.bump o }
             else t := { t with current := t.current.bump o }
-            if !quiet || o.isFail then
+            if !quiet || (o.isFail && !rej) then
               IO.println ((if rej then "[rejected] " else "") ++ o.line tc.name)
         (← IO.getStdout).flush
         match ag with
