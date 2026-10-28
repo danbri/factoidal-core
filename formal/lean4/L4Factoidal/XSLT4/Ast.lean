@@ -317,6 +317,9 @@ structure Sheet where
   defaultMode : String := "#unnamed"
   /-- The default collation of the principal module (§3.7.2). -/
   defaultCollation : String := ""
+  /-- Host functions that the caller adds (`fn:transform`, which needs
+      the compiler): given the dynamic context. -/
+  extraHost : Env → QN → Nat → Option HostFn := fun _ _ _ => none
   /-- The `version` attribute of the principal module. -/
   version : String := "4.0"
   /-- `xsl:global-context-item`: `use` and type. -/

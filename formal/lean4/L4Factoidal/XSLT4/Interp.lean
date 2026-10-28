@@ -54,6 +54,8 @@ structure XSt where
   base : Nat := 0
   counter : Nat := 0
   msgs : Array String := #[]
+  /-- The messages as document nodes (§23.1). -/
+  msgDocs : Array Item := #[]
   /-- Secondary results: href, value, output definition key, and the
       serialization parameters of the instruction. -/
   results : Array (String × Seq × String × List (String × String)) := #[]
@@ -1274,11 +1276,17 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | _ => out := out.push (.item it)
         pure out.toList
     | .message sel body term code =>
-        let os ← match sel with
+        -- the message: the select value followed by the content (§23.1)
+        let os1 ← match sel with
           | some e => do pure (Out.ofSeq (← evalX cx e))
-          | none => run n S cx body
+          | none => pure []
+        let os := os1 ++ (← run n S cx body)
         let txt ← simpleContent env os ""
-        modify (fun s => { s with msgs := s.msgs.push txt })
+        let id ← freshId
+        let mdoc ← match materialize env id (.doc os "") with
+          | .ok d => pure [d]
+          | .error _ => pure []
+        modify (fun s => { s with msgs := s.msgs.push txt, msgDocs := s.msgDocs ++ mdoc.toArray })
         let t := (← avtStr cx term).trimAscii.toString
         match parseBool t with
         | some true =>

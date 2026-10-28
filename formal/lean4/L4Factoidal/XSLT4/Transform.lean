@@ -106,6 +106,9 @@ structure TOpts where
   env : Env := {}
   /-- The base output URI (`current-output-uri`, relative `href`s). -/
   outUri : String := ""
+  /-- Parameters of the initial template (non-tunnel and tunnel). -/
+  templateParams : List (QN × Seq) := []
+  tunnelParams : List (QN × Seq) := []
 deriving Inhabited
 
 structure TResult where
@@ -119,6 +122,8 @@ structure TResult where
       instruction's serialization attributes. -/
   secondary : List (String × Seq × String × List (String × String))
   msgs : List String
+  /-- The messages as document nodes. -/
+  msgDocs : List Item := []
 deriving Inhabited
 
 /-! ## The host functions -/
@@ -321,6 +326,9 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         | none => pure v)
     | none =>
     if q.uri != nsFN then none else
+    match S.extraHost env q k with
+    | some h => some h
+    | none =>
     match stdHost (userFnAvail S) q k with
     | some h => some h
     | none =>
@@ -369,7 +377,11 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         let key := if key.ty == .untyped then Atomic.ofStr key.str else key
         match lookupV c.vars vRegex with
         | some [.map gs] =>
-          match gs.find? (fun (k0, _) => atomicEqual k0 key) with
+          -- a named group is keyed by its name; its number is in `nr`
+          let byNr := gs.find? (fun (_, r) => match r with
+            | [.map rec] => rec.any (fun (k1, v) => k1.str == "nr" && (match v with | [.atom a] => atomicEqual a key | _ => false))
+            | _ => false)
+          match gs.find? (fun (k0, _) => atomicEqual k0 key) |>.orElse (fun _ => byNr) with
           | some (_, [.map rec]) => pure ((rec.find? (fun (k1, _) => k1.str == "value")).map (·.2) |>.getD (sStr ""))
           | _ => pure (sStr "")
         | _ => pure (sStr "")
@@ -636,10 +648,10 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
         if S.privTemplates.contains tn then
           xerr "XTDE0040" ("the template " ++ tn.show ++ " is not public, so it cannot be the initial template")
         for p in t.params do
-          if p.required && !p.tunnel then
+          if p.required && !p.tunnel && !o.templateParams.any (·.1 == p.name) then
             xerr "XTDE0700" ("no value for the required parameter $" ++ p.name.show ++ " of the initial template")
         let cx' := if t.ctxAbsent then cx.noFocus else cx
-        invoke 1000000 S cx' t [] []
+        invoke 1000000 S cx' t o.templateParams o.tunnelParams
     | none =>
       let mode := o.initialMode.getD S.defaultMode
       let mode := if mode == "#default" then S.defaultMode else mode
@@ -654,7 +666,7 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
       let sel := match o.initialSelect with
         | some s => s
         | none => match o.globalCtx with | some i => [i] | none => []
-      applyT 1000000 S { cx with mode } sel mode [] [] none
+      applyT 1000000 S { cx with mode } sel mode o.templateParams o.tunnelParams none
   let (os, st) ← act.run { base := 1 }
   let (raw, st) ← (materializeAll env os).run st
   let abs (h : String) : String := if o.outUri == "" then h else resolveUri o.outUri h
@@ -667,7 +679,7 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
         else pure (v, (f, sp))
     | none => pure (raw, ("", []))
   let secs := st.results.toList.filter (fun (h, _, _, _) => !isPrincipal h)
-  pure { raw, principalFormat := pf, secondary := secs.map (fun (h, v, f, sp) => (abs h, v, f, sp)), msgs := st.msgs.toList }
+  pure { raw, principalFormat := pf, secondary := secs.map (fun (h, v, f, sp) => (abs h, v, f, sp)), msgs := st.msgs.toList, msgDocs := st.msgDocs.toList }
 
 /-! ## Serialization (§26) -/
 

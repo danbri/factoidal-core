@@ -33,6 +33,7 @@ processor, with no I/O except the reading of files under the suite
 root before the run.
 -/
 import L4Factoidal.XSLT4.Transform
+import L4Factoidal.XSLT4.FnTransform
 import L4Factoidal.XSLT4.Theorems
 import L4Factoidal.XSLT.Transform
 import L4Factoidal.XML.Canonical
@@ -309,7 +310,19 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
           | .pass => .fail "not: inner assertion held"
           | _ => .pass
         | none => .fail "empty not"
-    | "assert-message" | "assert-warning" => .pass
+    | "assert-message" =>
+        -- the contained assertion holds for one of the messages, each
+        -- delivered as a document node with its text
+        let msgs := (env.vars.find? (fun (q, _) => q == { uri := "", loc := "l4msgs" })).map (·.2) |>.getD []
+        match (kids a).head? with
+        | none => .pass
+        | some inner =>
+          let one (m : Item) : Bool :=
+            match checkAssert { rc with res := pure [m] } f inner with
+            | .pass => true
+            | _ => false
+          if msgs.any one then .pass else .fail ("assert-message: no message satisfies the assertion")
+    | "assert-warning" => .pass
     | "assert-serialization-error" =>
         let code := attrD a "code"
         match res with
@@ -548,7 +561,6 @@ def scanResources (root dir src : String) : IO (List (String × String)) := do
   for t in toks do
     let path := normPath (dir ++ "/" ++ t)
     if !path.startsWith absRoot then continue
-    if path.endsWith ".xsl" then continue
     if ← System.FilePath.pathExists path then
       if (← System.FilePath.isDir path) then continue
       match ← readFileSafe path with
@@ -634,6 +646,8 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
   let (env, outcome) ← match sheet with
     | .error e => pure (({} : Env), (.error e : M (TResult × Sheet)))
     | .ok S => do
+      -- fn:transform, with three levels of nesting
+      let S := { S with extraHost := fnTransformHost 3 lib }
       -- the dynamic context: source documents and resources
       let mut env : Env := { baseUri := pUri }
       let mut globalCtx : Option Item := none
@@ -658,6 +672,12 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
       -- the small data files of the test set's directory (for URIs that
       -- the stylesheet computes)
       res := res ++ (← dirResources dir).filter (fun (u, _) => !res.any (·.1 == u))
+      -- the modules of stylesheets that are read as resources
+      -- (fn:transform), one level down
+      for (u, t) in res do
+        if u.startsWith "file://" && u.endsWith ".xsl" && !mods.any (·.1 == u) then
+          for r in ← scanResources o.root (dirOf (uriPath u)) t do
+            if !res.any (·.1 == r.1) then res := res ++ [r]
       env := { env with resources := res }
       -- stylesheet parameters
       let mut params : List (QN × Seq) := []
@@ -731,7 +751,7 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
     | .ok (r, _) => serWith r.principalFormat.1 r.principalFormat.2
     | .error e => fun _ => throw e
   let env := match outcome with
-    | .ok (r, _) => { env with docs := env.docs } |>.bind { uri := "", loc := "l4msgs" } (r.msgs.map (fun m => .atom (Atomic.ofStr m)))
+    | .ok (r, _) => { env with docs := env.docs } |>.bind { uri := "", loc := "l4msgs" } r.msgDocs
     | .error _ => env
   pure (checkAssert { env, res, secondary, ser } 100 a)
 
