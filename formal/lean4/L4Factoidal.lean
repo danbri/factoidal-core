@@ -354,6 +354,7 @@ import L4Factoidal.SPARQLRL.Syntax
 import L4Factoidal.SPARQLRL.Parser
 import L4Factoidal.SPARQLRL.Eval
 import L4Factoidal.SPARQLRL.BgpAgreement
+import L4Factoidal.SPARQLRL.SemiNaiveTheorems
 import L4Factoidal.SPARQLRL.Text
 import L4Factoidal.SPARQLRL.Tests
 import L4Factoidal.SHACL.NodeExpr
