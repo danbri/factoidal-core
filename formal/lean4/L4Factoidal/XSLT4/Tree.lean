@@ -177,6 +177,31 @@ def neededNs (d : Doc) (r : NRec) : List (String × String) :=
 def _root_.L4Factoidal.XPath4.NRec.untyped (r : NRec) : NRec :=
   { r with tann := none, tval := none, nilled := false, noTypedValue := false }
 
+/-- The last index of the subtree of `src` (the node itself when it has
+    no children). -/
+def copyHi (env : Env) (src : NodeRef) : Nat :=
+  let r := (env.doc src).get src.idx
+  if r.kind == .element || r.kind == .document then max r.last src.idx else src.idx
+
+/-- The record that `copyTree` writes for the source node `i` when the
+    copy starts at index `base`: the source record with its parent,
+    children, attributes and last descendant moved to the copy's indices
+    and its namespace scope under `pscope`. -/
+def copyRecOf (env : Env) (src : NodeRef) (par : Option Nat) (pscope : List (String × String))
+    (copyNs keep : Bool) (base i : Nat) : NRec :=
+  let d := env.doc src
+  let lo := src.idx
+  let shift (j : Nat) : Nat := j - lo + base
+  let x := d.get i
+  let par' := if i == lo then par else x.parent.map shift
+  let sc := if x.kind == .element then
+      (if copyNs then x.inscope ++ pscope else neededNs d x ++ pscope) else []
+  -- namespace fixup (§5.7.3): an element in no namespace does not
+  -- inherit a default namespace from its new parent
+  let sc := if x.kind == .element && x.name.uri == "" && (sc.lookup "").getD "" != "" then ("", "") :: sc else sc
+  let rec' : NRec := { x with parent := par', children := x.children.map shift, attrs := x.attrs.map shift, last := shift (max x.last i), inscope := sc }
+  if keep then rec' else rec'.untyped
+
 /-- Copy the subtree of `src` (one loop over its index range) under
     `par`; `pscope` is the namespace scope of the new parent. Returns
     the index of the copy. `keep`: the copies keep their type
@@ -184,23 +209,9 @@ def _root_.L4Factoidal.XPath4.NRec.untyped (r : NRec) : NRec :=
     (`validation="strip"`, §25.1.1). -/
 def copyTree (env : Env) (src : NodeRef) (par : Option Nat) (pscope : List (String × String))
     (copyNs : Bool) (keep : Bool := true) : TB Nat := do
-  let d := env.doc src
-  let r := d.get src.idx
-  let lo := src.idx
-  let hi := if r.kind == .element || r.kind == .document then max r.last lo else lo
   let base := (← get).size
-  let shift (j : Nat) : Nat := j - lo + base
-  for i in [lo:hi+1] do
-    let x := d.get i
-    let par' := if i == lo then par else x.parent.map shift
-    let sc := if x.kind == .element then
-        (if copyNs then x.inscope ++ pscope else neededNs d x ++ pscope) else []
-    -- namespace fixup (§5.7.3): an element in no namespace does not
-    -- inherit a default namespace from its new parent
-    let sc := if x.kind == .element && x.name.uri == "" && (sc.lookup "").getD "" != "" then ("", "") :: sc else sc
-    let newPar := par'
-    let rec' : NRec := { x with parent := newPar, children := x.children.map shift, attrs := x.attrs.map shift, last := shift (max x.last i), inscope := sc }
-    let _ ← tPush (if keep then rec' else rec'.untyped)
+  for i in [src.idx:copyHi env src+1] do
+    let _ ← tPush (copyRecOf env src par pscope copyNs keep base i)
   pure base
 
 /-- A prefix for namespace `uri` that is free in `scope` (`ns0`,
