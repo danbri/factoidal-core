@@ -30,6 +30,7 @@ The test data is untrusted input: it is parsed, never executed as
 anything but XPath expressions in this evaluator.
 -/
 import L4Factoidal.XPath4.Eval
+import L4Factoidal.XPath4.Theorems
 
 open L4Factoidal.XPath4
 open L4Factoidal.XML

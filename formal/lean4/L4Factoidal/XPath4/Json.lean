@@ -6,9 +6,11 @@ Spec: F&O 4.0 editor's draft, qtspecs commit
 b4723ff52fd9d4fabf2b4cd33bd44f21939c512c (`function-catalog.xml`,
 `xpath-functions.xml` §17.5 "XML representation of JSON").
 
-The JSON text is parsed by RFC 8259 (`liberal: true` accepts the same
-grammar: the spec lets an implementation decide which deviations it
-accepts). A string is kept as a list of PIECES: a character, or a
+The JSON text is parsed by the project's RFC 8259 parser
+`L4Factoidal.JSON.Parser` (`liberal: true` accepts the same grammar: the
+spec lets an implementation decide which deviations it accepts), after
+unpaired surrogate escapes are marked (see "The parser" below). A string
+is kept as a list of PIECES: a character, or a
 codepoint that is not a permitted character (`U+0000`, an unpaired
 surrogate, `U+FFFE`, `U+FFFF`) with the escape sequence that wrote it.
 The permitted characters are those of XML 1.1 (`U+0001` to `U+D7FF`,
@@ -19,6 +21,8 @@ pieces are then rendered by the `escape` and `fallback` options.
 (`Env.resources`); the evaluator does no I/O.
 -/
 import L4Factoidal.XPath4.XmlParse
+import L4Factoidal.JSON.Parser
+import L4Factoidal.JSON.Serialize
 
 namespace L4Factoidal.XPath4
 
@@ -43,156 +47,116 @@ deriving Inhabited
 
 def jsErr {α} (msg : String) : M α := err "FOJS0001" msg
 
-/-! ## The parser -/
+/-! ## The parser: `L4Factoidal.JSON.Parser`
+
+The JSON text is parsed by the project's RFC 8259 parser
+(`JSON.parseJson`, the port of `Parser.JSON.fst`). XPath needs one thing
+that parser refuses: an unpaired surrogate escape (`\uDEAD`), which
+`fn:parse-json` passes to the `fallback` function. `markLoneSurrogates`
+rewrites each such escape to the escape of a MARKER codepoint (U+10FF00
+and up, in plane 16) before parsing, and remembers the original escape;
+`JV.ofJson` turns a marker back into a `bad` piece. The rewrite is done
+only when the text has no marker codepoint and no `DBFF` (the high
+surrogate of plane-16 escapes) already, so no marker can be confused with
+input; otherwise the text goes to the parser unchanged (and an unpaired
+surrogate is then a syntax error, `FOJS0001`). -/
 
 def isJsonWs (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
-def skipJWs (cs : Array Char) (i : Nat) : Nat := Id.run do
-  let mut j := i
-  for _ in [0:cs.size] do
-    if j < cs.size && isJsonWs cs[j]! then j := j + 1 else break
-  return j
-
-def hexVal? (c : Char) : Option Nat :=
-  if '0' ≤ c && c ≤ '9' then some (c.toNat - 48)
-  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 87)
-  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55)
-  else none
-
-def hex4 (cs : Array Char) (i : Nat) : Option Nat := do
-  if i + 4 > cs.size then none
-  let a ← hexVal? cs[i]!
-  let b ← hexVal? cs[i+1]!
-  let c ← hexVal? cs[i+2]!
-  let d ← hexVal? cs[i+3]!
-  pure (((a * 16 + b) * 16 + c) * 16 + d)
+def hex4 (cs : Array Char) (i : Nat) : Option Nat := JSON.readHex4 cs i
 
 def permittedCp (n : Nat) : Bool :=
   (1 ≤ n && n ≤ 0xD7FF) || (0xE000 ≤ n && n ≤ 0xFFFD) || (0x10000 ≤ n && n ≤ 0x10FFFF)
 
-/-- A JSON string body from `i` (after the opening quote). -/
-def parseJStr (cs : Array Char) (i : Nat) : M (List JPiece × Nat) := do
-  let mut out : Array JPiece := #[]
-  let mut j := i
-  for _ in [0:cs.size + 1] do
-    if j ≥ cs.size then jsErr "unterminated string"
-    let c := cs[j]!
-    if c == '"' then return (out.toList, j + 1)
-    if c.toNat < 0x20 then jsErr "an unescaped control character in a string"
-    if c != '\\' then
-      out := out.push (.ch c); j := j + 1
-    else
-      if j + 1 ≥ cs.size then jsErr "unterminated escape"
-      let e := cs[j+1]!
-      match e with
-      | '"' => out := out.push (.ch '"'); j := j + 2
-      | '\\' => out := out.push (.ch '\\'); j := j + 2
-      | '/' => out := out.push (.ch '/'); j := j + 2
-      | 'b' => out := out.push (.ch (Char.ofNat 8)); j := j + 2
-      | 'f' => out := out.push (.ch (Char.ofNat 12)); j := j + 2
-      | 'n' => out := out.push (.ch '\n'); j := j + 2
-      | 'r' => out := out.push (.ch '\r'); j := j + 2
-      | 't' => out := out.push (.ch '\t'); j := j + 2
-      | 'u' =>
-        match hex4 cs (j + 2) with
-        | none => jsErr "bad \\u escape"
-        | some u =>
-          let esc := String.ofList ((cs.extract j (j + 6)).toList)
-          if 0xD800 ≤ u && u ≤ 0xDBFF then
-            -- a high surrogate: paired with a following low surrogate?
-            let lo := if j + 7 < cs.size && cs[j+6]! == '\\' && cs[j+7]! == 'u' then hex4 cs (j + 8) else none
-            match lo with
-            | some l =>
-              if 0xDC00 ≤ l && l ≤ 0xDFFF then
-                out := out.push (.ch (Char.ofNat (0x10000 + (u - 0xD800) * 0x400 + (l - 0xDC00))))
-                j := j + 12
-              else out := out.push (.bad u esc); j := j + 6
-            | none => out := out.push (.bad u esc); j := j + 6
-          else if permittedCp u then out := out.push (.ch (Char.ofNat u)); j := j + 6
-          else out := out.push (.bad u esc); j := j + 6
-      | _ => jsErr ("invalid escape \\" ++ String.singleton e)
-  jsErr "unterminated string"
-
-def parseJNum (cs : Array Char) (i : Nat) : M (String × Nat) := do
-  let mut j := i
-  let chAt (k : Nat) : Char := if k < cs.size then cs[k]! else ' '
-  if chAt j == '-' then j := j + 1
-  if chAt j == '0' then j := j + 1
-  else if chAt j ≥ '1' && chAt j ≤ '9' then
-    for _ in [0:cs.size] do
-      if chAt j ≥ '0' && chAt j ≤ '9' then j := j + 1 else break
-  else jsErr "bad number"
-  if chAt j == '.' then
-    j := j + 1
-    if !(chAt j ≥ '0' && chAt j ≤ '9') then jsErr "bad number: no digit after the point"
-    for _ in [0:cs.size] do
-      if chAt j ≥ '0' && chAt j ≤ '9' then j := j + 1 else break
-  if chAt j == 'e' || chAt j == 'E' then
-    j := j + 1
-    if chAt j == '+' || chAt j == '-' then j := j + 1
-    if !(chAt j ≥ '0' && chAt j ≤ '9') then jsErr "bad number: no digit in the exponent"
-    for _ in [0:cs.size] do
-      if chAt j ≥ '0' && chAt j ≤ '9' then j := j + 1 else break
-  pure (String.ofList ((cs.extract i j).toList), j)
-
-def litAt (cs : Array Char) (i : Nat) (s : String) : Bool :=
-  s.toList.zipIdx.all (fun (c, k) => i + k < cs.size && cs[i + k]! == c)
-
-def parseJV : Nat → Array Char → Nat → M (JV × Nat)
-  | 0, _, _ => jsErr "JSON nested too deeply"
-  | f + 1, cs, i => do
-    let i := skipJWs cs i
-    if i ≥ cs.size then jsErr "unexpected end of input"
-    match cs[i]! with
-    | '{' =>
-      let mut j := skipJWs cs (i + 1)
-      let mut kvs : Array (List JPiece × JV) := #[]
-      if j < cs.size && cs[j]! == '}' then return (.obj [], j + 1)
-      for _ in [0:cs.size] do
-        j := skipJWs cs j
-        if j ≥ cs.size || cs[j]! != '"' then jsErr "expected a string key"
-        let (k, j2) ← parseJStr cs (j + 1)
-        let j3 := skipJWs cs j2
-        if j3 ≥ cs.size || cs[j3]! != ':' then jsErr "expected ':'"
-        let (v, j4) ← parseJV f cs (j3 + 1)
-        kvs := kvs.push (k, v)
-        let j5 := skipJWs cs j4
-        if j5 < cs.size && cs[j5]! == ',' then j := j5 + 1
-        else if j5 < cs.size && cs[j5]! == '}' then return (.obj kvs.toList, j5 + 1)
-        else jsErr "expected ',' or '}'"
-      jsErr "unterminated object"
-    | '[' =>
-      let mut j := skipJWs cs (i + 1)
-      let mut xs : Array JV := #[]
-      if j < cs.size && cs[j]! == ']' then return (.arr [], j + 1)
-      for _ in [0:cs.size] do
-        let (v, j2) ← parseJV f cs j
-        xs := xs.push v
-        let j3 := skipJWs cs j2
-        if j3 < cs.size && cs[j3]! == ',' then j := j3 + 1
-        else if j3 < cs.size && cs[j3]! == ']' then return (.arr xs.toList, j3 + 1)
-        else jsErr "expected ',' or ']'"
-      jsErr "unterminated array"
-    | '"' => let (s, j) ← parseJStr cs (i + 1); pure (.str s, j)
-    | 't' => if litAt cs i "true" then pure (.bool true, i + 4) else jsErr "bad literal"
-    | 'f' => if litAt cs i "false" then pure (.bool false, i + 5) else jsErr "bad literal"
-    | 'n' => if litAt cs i "null" then pure (.null, i + 4) else jsErr "bad literal"
-    | c =>
-      if c == '-' || c.isDigit then let (n, j) ← parseJNum cs i; pure (.num n, j)
-      else jsErr ("unexpected character " ++ String.singleton c)
-
-def parseJsonText (s : String) : M JV := do
-  let s := if s.startsWith "﻿" then (s.drop 1).toString else s
-  let cs := s.toList.toArray
-  let (v, j) ← parseJV 10000 cs 0
-  if skipJWs cs j < cs.size then jsErr "text after the JSON value"
-  pure v
-
-/-! ## Options and rendering of strings -/
+def markerBase : Nat := 0x10FF00
 
 def hexUpper4 (n : Nat) : String :=
   let ds := "0123456789ABCDEF".toList
   String.ofList ((List.range 4).reverse.map (fun k => ds.getD ((n / 16 ^ k) % 16) '0'))
+
+/-- The escape of a marker codepoint, as a UTF-16 surrogate pair. -/
+def markerEscape (k : Nat) : String :=
+  let v := markerBase + k - 0x10000
+  "\\u" ++ hexUpper4 (0xD800 + v / 0x400) ++ "\\u" ++ hexUpper4 (0xDC00 + v % 0x400)
+
+/-- Rewrite unpaired surrogate escapes to marker escapes; the list gives
+    each marker's original escape. -/
+def markLoneSurrogates (s : String) : String × List (Char × String) := Id.run do
+  let cs := s.toList.toArray
+  let safe := (s.toUpper.splitOn "DBFF").length == 1 &&
+    s.toList.all (fun c => c.toNat < markerBase)
+  if !safe then return (s, [])
+  let mut out : String := ""
+  let mut marks : List (Char × String) := []
+  let mut i := 0
+  let mut inStr := false
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    let c := cs[i]!
+    if c == '"' then inStr := !inStr; out := out.push c; i := i + 1
+    else if c == '\\' && inStr && i + 1 < cs.size then
+      if cs[i+1]! == 'u' then
+        match hex4 cs (i + 2) with
+        | some u =>
+          let esc := String.ofList ((cs.extract i (i + 6)).toList)
+          let paired := 0xD800 ≤ u && u ≤ 0xDBFF && i + 7 < cs.size && cs[i+6]! == '\\' && cs[i+7]! == 'u' &&
+            (match hex4 cs (i + 8) with | some l => 0xDC00 ≤ l && l ≤ 0xDFFF | none => false)
+          if paired then
+            out := out ++ String.ofList ((cs.extract i (i + 12)).toList); i := i + 12
+          else if 0xD800 ≤ u && u ≤ 0xDFFF && marks.length < 256 then
+            let k := marks.length
+            marks := marks ++ [(Char.ofNat (markerBase + k), esc)]
+            out := out ++ markerEscape k; i := i + 6
+          else out := out ++ esc; i := i + 6
+        | none => out := out.push c; i := i + 1
+      else out := out.push c |>.push cs[i+1]!; i := i + 2
+    else out := out.push c; i := i + 1
+  return (out, marks)
+
+/-- The XPath view of a JSON string: markers and non-permitted
+    codepoints become `bad` pieces. -/
+def piecesOf (marks : List (Char × String)) (s : String) : List JPiece :=
+  s.toList.map (fun c =>
+    match marks.lookup c with
+    | some esc => .bad (match hex4 (esc.toList.toArray) 2 with | some u => u | none => 0xFFFD) esc
+    | none => if permittedCp c.toNat then .ch c else .bad c.toNat ("\\u" ++ hexUpper4 c.toNat))
+
+mutual
+/-- `JSON.Json` to the XPath view (`marks` from `markLoneSurrogates`). -/
+def JV.ofJson (marks : List (Char × String)) : JSON.Json → JV
+  | .null => .null
+  | .bool b => .bool b
+  | .number n => .num n
+  | .string s => .str (piecesOf marks s)
+  | .array xs => .arr (JV.ofJsonList marks xs)
+  | .object kvs => .obj (JV.ofJsonFields marks kvs)
+def JV.ofJsonList (marks : List (Char × String)) : List JSON.Json → List JV
+  | [] => []
+  | x :: r => JV.ofJson marks x :: JV.ofJsonList marks r
+def JV.ofJsonFields (marks : List (Char × String)) : List (String × JSON.Json) → List (List JPiece × JV)
+  | [] => []
+  | (k, v) :: r => (piecesOf marks k, JV.ofJson marks v) :: JV.ofJsonFields marks r
+end
+
+def stripBom (s : String) : String := if s.startsWith "﻿" then (s.drop 1).toString else s
+
+/-- Parse a JSON text: `JSON.parseJson` on the marked text. -/
+def parseJsonText (s : String) : M JV :=
+  let (t, marks) := markLoneSurrogates (stripBom s)
+  match JSON.parseJson t with
+  | .ok j => pure (JV.ofJson marks j)
+  | .error e => jsErr e.msg
+
+/-- The defining equation: on a text with no surrogate escape to mark,
+    `fn:parse-json`'s tree is exactly `JSON.parseJson`'s. -/
+theorem parseJsonText_eq (s : String) (h : markLoneSurrogates (stripBom s) = (stripBom s, [])) :
+    parseJsonText s = (match JSON.parseJson (stripBom s) with
+      | .ok j => pure (JV.ofJson [] j)
+      | .error e => jsErr e.msg) := by
+  simp only [parseJsonText, h]
+
+/-! ## Options and rendering of strings -/
+
 
 /-- The escaped form of a special character (§17.4.4 `escape: true`). -/
 def escChar (c : Char) : String :=
@@ -383,14 +347,33 @@ def jsonToXmlFn (h : Hooks) (e : Env) (src : String) (opts : Seq) : M Seq := do
 
 def x2jErr {α} (msg : String) : M α := err "FOJS0006" msg
 
+/-- One character of a plain (`escaped` absent) string in `fn:xml-to-json`
+    (F&O 4.0 §17.5.?? "Strings are escaped as follows"). Outside the
+    characters the XPath rules treat specially (`/` with `escape-solidus`,
+    the C0 controls without a two-character escape, U+007F to U+009F),
+    this IS the project serializer's `JSON.escapeChar`: see
+    `x2jEscChar_eq_escapeChar`. -/
+def x2jEscChar (solidus : Bool) (c : Char) : String :=
+  let n := c.toNat
+  if solidus && c == '/' then "\\/"
+  else if (1 ≤ n && n < 0x20 && n != 8 && n != 9 && n != 10 && n != 12 && n != 13) ||
+          (0x7F ≤ n && n ≤ 0x9F) then "\\u" ++ hexUpper4 n
+  else JSON.escapeChar c
+
+theorem x2jEscChar_eq_escapeChar (solidus : Bool) (c : Char)
+    (hs : solidus = false ∨ c ≠ '/') (hlo : 0x20 ≤ c.toNat) (hc1 : c.toNat < 0x7F ∨ 0x9F < c.toNat) :
+    x2jEscChar solidus c = JSON.escapeChar c := by
+  unfold x2jEscChar
+  have h1 : ¬ ((solidus && c == '/') = true) := by
+    rcases hs with h | h <;> simp_all
+  have h2 : ¬ (((1 ≤ c.toNat && c.toNat < 0x20 && c.toNat != 8 && c.toNat != 9 && c.toNat != 10 &&
+      c.toNat != 12 && c.toNat != 13) || (0x7F ≤ c.toNat && c.toNat ≤ 0x9F)) = true) := by
+    simp only [Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq, bne_iff_ne, ne_eq]
+    omega
+  simp only [h1, h2, if_false, Bool.false_eq_true, ite_false]
+
 def jsonEscPlain (solidus : Bool) (s : String) : String :=
-  String.join (s.toList.map (fun c =>
-    let n := c.toNat
-    if c == '\\' then "\\\\" else if c == '"' then "\\\"" else if n == 8 then "\\b"
-    else if n == 12 then "\\f" else if n == 10 then "\\n" else if n == 13 then "\\r"
-    else if n == 9 then "\\t" else if c == '/' && solidus then "\\/"
-    else if (1 ≤ n && n ≤ 31) || (127 ≤ n && n ≤ 159) then "\\u" ++ hexUpper4 n
-    else String.singleton c))
+  String.join (s.toList.map (x2jEscChar solidus))
 
 /-- A string already escaped (`escaped="true"`): check the escapes, escape
     the rest. -/
