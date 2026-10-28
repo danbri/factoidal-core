@@ -71,7 +71,8 @@ def expectedOf (test : Node) : Option String :=
 
 def readDoc (path : String) : IO (Option Document) := do
   if !(← System.FilePath.pathExists path) then return none
-  let bytes ← IO.FS.readBinFile path
+  if ← System.FilePath.isDir path then return none
+  let bytes ← try IO.FS.readBinFile path catch _ => return none
   match String.fromUTF8? bytes with
   | none => return none
   | some src =>

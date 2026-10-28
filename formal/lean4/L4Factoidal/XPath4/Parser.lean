@@ -407,14 +407,36 @@ def pItemType : Nat → P IType
             if ← eatS ")" then pure (if nm == "element" then .elem none else .attr none)
             else
               let t ← pNameTest ""
-              -- union of names, then optional type name (ignored: no schema types)
+              -- union of names, then an optional type name
               for _ in [0:100] do
                 if ← eatS "|" then let _ ← pNameTest "" else break
-              if ← eatS "," then
-                let _ ← pNameTest nsXS
-                let _ ← eatS "?"
+              let ty ← if ← eatS "," then
+                  ws
+                  match ← peekQName with
+                  | some (p, u, l, e) =>
+                    set e
+                    let q ← resolve p u l ""
+                    let nil ← eatS "?"
+                    pure (some (q, nil))
+                  | none => synErr "expected a type name"
+                else pure none
               expectS ")"
-              pure (if nm == "element" then .elem (some t) else .attr (some t))
+              let t' : Option NameTest := match t with
+                | .any => none
+                | other => some other
+              match ty with
+              | none => pure (if nm == "element" then .elem (some t) else .attr (some t))
+              | some (q, nil) =>
+                pure (if nm == "element" then .elemT t' q nil else .attrT t' q)
+        | "schema-element" | "schema-attribute" =>
+            ws
+            match ← peekQName with
+            | some (p, u, l, e) =>
+              set e
+              let q ← resolve p u l ""
+              expectS ")"
+              pure (if nm == "schema-element" then .schemaElem q else .schemaAttr q)
+            | none => synErr ("expected a name in " ++ nm ++ "()")
         | "document-node" =>
             if ← eatS ")" then pure (.doc none)
             else

@@ -85,6 +85,17 @@ inductive IType where
   | atomic (t : AType)
   | elem (n : Option NameTest)
   | attr (n : Option NameTest)
+  /-- `element(N, T)` / `element(N, T?)` (XPath 4.0 §3.2.8.2): the type
+      annotation must be `T` or derived from it (`Env.schema`); `nillable`
+      is the `?`. -/
+  | elemT (n : Option NameTest) (ty : QN) (nillable : Bool)
+  /-- `attribute(N, T)` (XPath 4.0 §3.2.8.3). -/
+  | attrT (n : Option NameTest) (ty : QN)
+  /-- `schema-element(N)` (XPath 4.0 §3.2.8.4): needs the in-scope element
+      declaration of `N` (`Env.schema`). -/
+  | schemaElem (n : QN)
+  /-- `schema-attribute(N)` (XPath 4.0 §3.2.8.5). -/
+  | schemaAttr (n : QN)
   | text | comment | nsNode
   | pi (target : Option String)
   | doc (inner : Option IType)

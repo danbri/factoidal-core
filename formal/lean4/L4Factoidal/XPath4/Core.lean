@@ -18,6 +18,36 @@ open L4Factoidal.XSD
 
 /-! ## The dynamic context -/
 
+def untypedQN : QN := { uri := nsXS, loc := "untyped" }
+def untypedAtomicQN : QN := { uri := nsXS, loc := "untypedAtomic" }
+def anyTypeQN : QN := { uri := nsXS, loc := "anyType" }
+
+/-- Type derivation between built-in type names (XDM 4.0 §2.7.4): every
+type derives from `xs:anyType`; `xs:untyped` and the simple types from it;
+`xs:untypedAtomic` and the atomic built-ins from `xs:anyAtomicType`. -/
+def builtinTypeDerives (t u : QN) : Bool :=
+  t == u || u == anyTypeQN ||
+  (t.uri == nsXS && u.uri == nsXS &&
+    (if t.loc == "untypedAtomic" then u.loc == "anyAtomicType" || u.loc == "anySimpleType"
+     else match builtinOfName? t.loc, builtinOfName? u.loc with
+       | some a, some b => derivedFrom a b || b == .anySimpleType
+       | _, _ => false))
+
+/-- Hook for schema-aware processing (`L4Factoidal.XSD11` supplies one
+from a schema): type derivation by type name, the global element and
+attribute declarations, and substitution groups. The default knows the
+built-in types only and has no declarations. -/
+structure SchemaHook where
+  /-- `derives t u`: type `t` is `u` or derived from it. -/
+  derives : QN → QN → Bool := builtinTypeDerives
+  /-- The type and `nillable` of the global element declaration of a name. -/
+  elemDecl : QN → Option (QN × Bool) := fun _ => none
+  /-- The type of the global attribute declaration of a name. -/
+  attrDecl : QN → Option QN := fun _ => none
+  /-- `substitutes n h`: an element named `n` may stand for head `h`. -/
+  substitutes : QN → QN → Bool := fun _ _ => false
+deriving Inhabited
+
 structure Env where
   docs : Array Doc := #[]
   vars : List (QN × Seq) := []
@@ -50,6 +80,8 @@ structure Env where
   /-- EXPath hook: the in-memory file system that the `file:` functions
       read (`L4Factoidal.EXPath.File`); `none` when there is none. -/
   fileSys : Option L4Factoidal.EXPath.File.FS := none
+  /-- Schema hook: the in-scope schema definitions (`SchemaHook`). -/
+  schema : SchemaHook := {}
 deriving Inhabited
 
 def Env.doc (e : Env) (n : NodeRef) : Doc :=
@@ -187,6 +219,26 @@ def Env.kindMatches (e : Env) (n : NodeRef) : IType → Bool
   | .item | .anyNode => true
   | .elem t => (e.nrec n).kind == .element && (t.map (nameTestMatches · (e.nrec n).name)).getD true
   | .attr t => (e.nrec n).kind == .attribute && (t.map (nameTestMatches · (e.nrec n).name)).getD true
+  | .elemT t ty nil =>
+      let r := e.nrec n
+      r.kind == .element && (t.map (nameTestMatches · r.name)).getD true &&
+      e.schema.derives (r.tann.getD untypedQN) ty && (!r.nilled || nil)
+  | .attrT t ty =>
+      let r := e.nrec n
+      r.kind == .attribute && (t.map (nameTestMatches · r.name)).getD true &&
+      e.schema.derives (r.tann.getD untypedAtomicQN) ty
+  | .schemaElem q =>
+      let r := e.nrec n
+      r.kind == .element && (r.name == q || e.schema.substitutes r.name q) &&
+      (match e.schema.elemDecl q with
+       | some (ty, nil) => e.schema.derives (r.tann.getD untypedQN) ty && (!r.nilled || nil)
+       | none => false)
+  | .schemaAttr q =>
+      let r := e.nrec n
+      r.kind == .attribute && r.name == q &&
+      (match e.schema.attrDecl q with
+       | some ty => e.schema.derives (r.tann.getD untypedAtomicQN) ty
+       | none => false)
   | .text => (e.nrec n).kind == .text
   | .comment => (e.nrec n).kind == .comment
   | .nsNode => (e.nrec n).kind == .namespace
@@ -377,6 +429,10 @@ def subtypeF : Nat → IType → IType → Bool
     | .jnodeT _ (some t), .jnodeT .any (some u) => subtypeF f t u
     | .elem none, .elem none | .attr none, .attr none | .text, .text | .comment, .comment
     | .nsNode, .nsNode | .doc none, .doc none | .pi none, .pi none => true
+    | .elemT .., .anyNode | .attrT .., .anyNode | .schemaElem _, .anyNode | .schemaAttr _, .anyNode
+    | .elemT .., .xnode | .attrT .., .xnode | .schemaElem _, .xnode | .schemaAttr _, .xnode
+    | .elemT .., .elem none | .attrT .., .attr none | .schemaElem _, .elem none
+    | .schemaAttr _, .attr none => true
     | .elem (some _), .elem none | .attr (some _), .attr none | .pi (some _), .pi none
     | .doc (some _), .doc none => true
     | .fnT _ _, .anyFn | .anyMap, .anyFn | .mapT _ _, .anyFn | .anyArr, .anyFn | .arrT _, .anyFn

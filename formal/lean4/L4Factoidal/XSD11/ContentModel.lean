@@ -53,11 +53,25 @@ def mkAlt (l : List RE) : RE :=
   | [x] => x
   | xs => .alt xs
 
+/-- Counted repetition, with `(x{a,b}){n,k} = x{n·a, b·k}` when `a ≤ 1`:
+with `a = 0` every count up to `b·k` is reachable, and with `a = 1` every
+count `c` in `[n, b·k]` is reached by `max n ⌈c/b⌉ ≤ k` iterations. This
+keeps nested counters (`(c{0,100}){1,40}`) to one counter. -/
 def mkRep (e : RE) (mn : Nat) (mx : Option Nat) : RE :=
-  match mx with
-  | some 0 => .eps
-  | some 1 => if mn == 0 then mkAlt [e, .eps] else e
-  | _ => if e == .eps then .eps else if e == .fail then (if mn == 0 then .eps else .fail) else .rep e mn mx
+  match e, mx with
+  | .rep x a b, _ =>
+    if a ≤ 1 && mx != some 0 && mx != some 1 then
+      .rep x (mn * a) (match b, mx with
+        | some b, some k => some (b * k)
+        | _, _ => none)
+    else mkRep1 e mn mx
+  | _, _ => mkRep1 e mn mx
+where
+  mkRep1 (e : RE) (mn : Nat) (mx : Option Nat) : RE :=
+    match mx with
+    | some 0 => .eps
+    | some 1 => if mn == 0 then mkAlt [e, .eps] else e
+    | _ => if e == .eps then .eps else if e == .fail then (if mn == 0 then .eps else .fail) else .rep e mn mx
 
 /-- Compile a particle. Each element and wildcard term gets the position
 `pos` of its particle (in document order), so two matches can be told
@@ -131,6 +145,28 @@ def RE.derivP (m : MatchCtx) (n : XName) : Nat → RE → List (RE × Matched ×
 def RE.deriv (m : MatchCtx) (n : XName) (f : Nat) (e : RE) : List (RE × Matched) :=
   (RE.derivP m n f e).map (fun (r, t, _) => (r, t))
 
+/-- `a` accepts every sequence `b` accepts, by shape: equal, or the same
+repetition with a wider count range, or sequences that agree position by
+position. Sound (each case is a language inclusion), not complete. -/
+def RE.subsumes : Nat → RE → RE → Bool
+  | 0, a, b => a == b
+  | f + 1, a, b =>
+    a == b ||
+    match a, b with
+    | .rep x m1 n1, .rep y m2 n2 =>
+      m1 ≤ m2 && (match n1, n2 with
+        | none, _ => true
+        | some _, none => false
+        | some k1, some k2 => k2 ≤ k1) && RE.subsumes f x y && RE.subsumes f y x
+    | .seq xs, .seq ys => xs.length == ys.length && (xs.zip ys).all (fun (x, y) => RE.subsumes f x y)
+    | _, _ => false
+
+/-- Drop the residuals another residual subsumes (keeps the first of two
+equal ones). -/
+def pruneRes (rs : List RE) : List RE :=
+  let rs := rs.eraseDups
+  rs.filter (fun r => !rs.any (fun r' => r' != r && RE.subsumes 32 r' r))
+
 /-- The state of matching: the residuals still possible, and whether
 open content in `suffix` mode has started. -/
 structure CMState where
@@ -155,7 +191,7 @@ def CMState.step (m : MatchCtx) (oc : Option (OpenMode × Wildcard)) (s : CMStat
   -- wildcard, so the wildcard paths are dropped when one matches.
   let ds := if ds.any isDecl then ds.filter isDecl else ds
   match ds.head? with
-  | some (_, t) => some ({ s with res := (ds.map (·.1)).eraseDups }, t)
+  | some (_, t) => some ({ s with res := pruneRes (ds.map (·.1)) }, t)
   | none =>
     match oc with
     | some (.interleave, w) => if m.wildOk w n then some (s, .wild w) else none
