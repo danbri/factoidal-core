@@ -41,6 +41,11 @@ structure Env where
   decimalFormats : List (String × List (String × String)) := []
   defaultCollation : String := "http://www.w3.org/2005/xpath-functions/collation/codepoint"
   baseUri : String := ""
+  /-- The octets of resources the caller read in advance (URI or relative
+      reference as written, then the octets), for `fn:unparsed-text` and
+      the other text readers, which decode them by the encoding rules of
+      F&O 4.0 §17.1.5. A resource here takes precedence over `resources`. -/
+  resourceBytes : List (String × ByteArray) := []
 deriving Inhabited
 
 def Env.doc (e : Env) (n : NodeRef) : Doc :=

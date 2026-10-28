@@ -61,6 +61,9 @@ def dirOf (p : String) : String :=
 def readFileSafe (p : String) : IO (Option String) := do
   try pure (some (← IO.FS.readFile p)) catch _ => pure none
 
+def readBytesSafe (p : String) : IO (Option ByteArray) := do
+  try pure (some (← IO.FS.readBinFile p)) catch _ => pure none
+
 /-! ## Dependencies -/
 
 def specOk (v : String) : Bool :=
@@ -468,7 +471,7 @@ def parseArgs : List String → Opts → Opts
     file under the test suite root, resolved against the test set's
     directory. Read in advance, as text, because the evaluator does no
     I/O. Only files under the suite root are read. -/
-def scanResources (root dir src : String) : IO (List (String × String)) := do
+def scanResources (root dir src : String) : IO (List (String × String) × List (String × ByteArray)) := do
   let isPathChar (c : Char) := c.isAlphanum || c == '_' || c == '.' || c == '/' || c == '-'
   let mut toks : List String := []
   let mut cur : String := ""
@@ -480,6 +483,7 @@ def scanResources (root dir src : String) : IO (List (String × String)) := do
       cur := ""
   let rel := if dir.startsWith (root ++ "/") then (dir.drop (root.length + 1)).toString else dir
   let mut out : List (String × String) := []
+  let mut bins : List (String × ByteArray) := []
   for t in toks do
     let t' := if t.startsWith "file:///" then none else some t
     let some t := t' | continue
@@ -490,7 +494,10 @@ def scanResources (root dir src : String) : IO (List (String × String)) := do
       match ← readFileSafe path with
       | some txt => out := (t, txt) :: out
       | none => pure ()
-  return out
+      match ← readBytesSafe path with
+      | some bs => bins := (t, bs) :: bins
+      | none => pure ()
+  return (out, bins)
 
 /-- Build the dynamic context for an environment; `none` with a reason
     when it cannot be built. -/
@@ -518,8 +525,11 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) : IO (Exce
         env := env.bind { uri := "", loc := (role.drop 1).toString } [.node (NodeRef.mk' idx 0)]
   env := { env with decimalFormats := spec.decimalFormats }
   for (uri, file) in spec.resources do
-    match ← readFileSafe file with
-    | some txt => env := { env with resources := (uri, txt) :: env.resources }
+    match ← readBytesSafe file with
+    | some bs =>
+      env := { env with resourceBytes := (uri, bs) :: env.resourceBytes }
+      if let some txt := String.fromUTF8? bs then
+        env := { env with resources := (uri, txt) :: env.resources }
     | none => return .error ("resource not readable: " ++ file)
   for (name, sel) in spec.params do
     match evalIn env sel with
@@ -579,7 +589,9 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
     | .ok env =>
-      let env := { env with resources := env.resources ++ (← scanResources o.root dir src) }
+      let (scanned, scannedBins) ← scanResources o.root dir src
+      let env := { env with resources := env.resources ++ scanned,
+                            resourceBytes := env.resourceBytes ++ scannedBins }
       let res := evalIn env src
       let some r := (kidsNamed tc "result").head? | do t := { t with fail := t.fail + 1 }; continue
       let r ← resolveXmlFiles o.root dir 100 r
