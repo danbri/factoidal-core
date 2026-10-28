@@ -102,8 +102,10 @@ inductive Instr where
   | applyT (sel : Option Expr) (mode : String) (sorts : List SortK) (params : List WParam)
            (sep : Option Avt)
   | callT (name : QN) (params : List WParam)
-  | applyImports (params : List WParam)
-  | nextMatch (params : List WParam)
+  /-- `v4`: the effective version is 4.0 or more, so the parameters of
+      the current template rule are passed on (§6.8). -/
+  | applyImports (params : List WParam) (v4 : Bool)
+  | nextMatch (params : List WParam) (v4 : Bool)
   | forEach (sel : Expr) (sorts : List SortK) (body : List Instr) (sep : Option Avt)
   | forEachGroup (sel : Expr) (kind : GroupKind) (key : Option Expr) (pat : Option Pattern)
                  (composite : Bool) (collation : Option Avt) (sorts : List SortK) (body : List Instr)
@@ -215,6 +217,9 @@ structure Tmpl where
   modes : List String := ["#unnamed"]
   prio : Float := 0
   prec : Nat := 0
+  /-- The lowest precedence of the modules that the template's module
+      imports, directly or indirectly (`xsl:apply-imports`, §6.8). -/
+  precLo : Nat := 0
   /-- Declaration order (later wins among equals). -/
   order : Nat := 0
   params : List WParam := []
@@ -366,7 +371,7 @@ def Instr.bodies : Instr → List (List Instr)
   | .sourceDoc _ b | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b | .withCompat _ b | .doe b
   | .withBase _ b => [b]
   | .applyT _ _ ss ps _ => ss.map SortK.body ++ ps.map WParam.body
-  | .callT _ ps | .applyImports ps | .nextMatch ps | .nextIteration ps => ps.map WParam.body
+  | .callT _ ps | .applyImports ps _ | .nextMatch ps _ | .nextIteration ps => ps.map WParam.body
   | .forEach _ ss b _ | .forEachGroup _ _ _ _ _ _ ss b | .performSort _ ss b => b :: ss.map SortK.body
   | .choose ws o | .switch _ ws o => ws.map (·.2) ++ o.toList
   | .iterate _ ps oc b => b :: ps.map WParam.body ++ (oc.map (·.2)).toList

@@ -95,6 +95,8 @@ structure Ctx where
   env : Env
   mode : String := "#unnamed"
   rule : Option Tmpl := none
+  /-- The non-tunnel parameters supplied to the current template rule. -/
+  supplied : List (QN × Seq) := []
   tunnel : List (QN × Seq) := []
   /-- In a stylesheet function (no current template rule, §10.3). -/
   inFn : Bool := false
@@ -1208,14 +1210,16 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               xerr "XTSE0680" ("template " ++ name.show ++ " has no parameter $" ++ p.name.show)
           let cx' := if t.ctxAbsent then cx.noFocus else cx
           invoke n S cx' t ps tun
-    | .applyImports params | .nextMatch params =>
+    | .applyImports params v4 | .nextMatch params v4 =>
         match cx.rule, env.ctx with
         | some r, some [it] =>
-          let isNext := match ins with | .nextMatch _ => true | _ => false
+          let isNext := match ins with | .nextMatch _ _ => true | _ => false
           let ok : Tmpl → Bool := if isNext
             then fun t => t.id != r.id && ruleBetter r t
-            else fun t => t.prec < r.prec
+            else fun t => t.prec < r.prec && t.prec ≥ r.precLo
           let (ps, tps) ← evalParams n S cx params
+          -- 4.0: the parameters of the current rule are passed on (§6.8)
+          let ps := if v4 then ps ++ cx.supplied.filter (fun (q, _) => !ps.any (·.1 == q)) else ps
           let tun := tps ++ cx.tunnel.filter (fun (q, _) => !tps.any (·.1 == q))
           match ← liftX (findRule S env cx.mode it ok) with
           | some t => invoke n S cx t ps tun
@@ -1968,7 +1972,8 @@ def invoke : Nat → Sheet → Ctx → Tmpl → List (QN × Seq) → List (QN ×
     let globals := match lookupVar cx.env.vars vRegex with
       | some g => (vRegex, g) :: globals
       | none => globals
-    let mut tcx : Ctx := { cx with env := { cx.env with vars := globals }, rule := if t.pat.isSome then some t else cx.rule, tunnel := tun, inFn := false }
+    let supplied := if t.pat.isSome then ps else cx.supplied
+    let mut tcx : Ctx := { cx with env := { cx.env with vars := globals }, supplied, rule := if t.pat.isSome then some t else cx.rule, tunnel := tun, inFn := false }
     if t.pat.isNone then tcx := { tcx with rule := cx.rule }
     for p in t.params do
       let given := if p.tunnel then tun.find? (·.1 == p.name) else ps.find? (·.1 == p.name)

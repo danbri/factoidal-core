@@ -215,8 +215,8 @@ def renI (r : Ren) : Nat → List QN → Instr → RM Instr
     | .callT n ps => do
         note 't' n.eqn
         pure (.callT (r.tmpl n) (← renPs r f bd ps))
-    | .applyImports ps => .applyImports <$> renPs r f bd ps
-    | .nextMatch ps => .nextMatch <$> renPs r f bd ps
+    | .applyImports ps v => (.applyImports · v) <$> renPs r f bd ps
+    | .nextMatch ps v => (.nextMatch · v) <$> renPs r f bd ps
     | .forEach sel sorts body sep => do pure (.forEach (← e sel) (← renSorts r f bd sorts) (← b body) (← avo sep))
     | .forEachGroup sel k key pat comp col sorts body => do
         let pat' ← match pat with

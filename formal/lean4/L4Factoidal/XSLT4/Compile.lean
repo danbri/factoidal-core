@@ -895,8 +895,8 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
     | "call-template" =>
         let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:call-template requires a name"
         pure (.callT nm (← compileParams f c m ekids "with-param"))
-    | "apply-imports" => pure (.applyImports (← compileParams f c m ekids "with-param"))
-    | "next-match" => pure (.nextMatch (← compileParams f c m ekids "with-param"))
+    | "apply-imports" => pure (.applyImports (← compileParams f c m ekids "with-param") ((versionMilli c.version).getD 4000 ≥ 4000))
+    | "next-match" => pure (.nextMatch (← compileParams f c m ekids "with-param") ((versionMilli c.version).getD 4000 ≥ 4000))
     | "for-each" =>
         let sel ← parseC c (← reqAttr as "select" l)
         pure (.forEach sel (← compileSorts f c m ekids) (← body (notTag ["sort"])) (← optAvt c as "separator"))
@@ -2001,7 +2001,9 @@ def processModule (onUse : Decl → CM Unit) : Nat → Mod → CM Unit
         sh.attrSets.length, sh.modes.length) })
     else if decls.any (fun d => d.m.isXsl d.i "use-package") then
       cerr "XTSE3008" "xsl:use-package in a module that is not at the level of the principal module"
-    -- imports, in order, before this module's precedence is fixed
+    -- imports, in order, before this module's precedence is fixed; they
+    -- take the precedences from `lo` up to this module's
+    let lo := (← get).prec
     let mut seenOther := false
     for d in decls do
       if d.m.isXsl d.i "import" then
@@ -2023,6 +2025,8 @@ def processModule (onUse : Decl → CM Unit) : Nat → Mod → CM Unit
     for d in decls do
       if d.m.isXsl d.i "use-package" then compileUsePackage prec d
       else if !d.m.isXsl d.i "import" then compileDecl prec d
+    modify (fun s => { s with sheet := { s.sheet with templates := s.sheet.templates.map (fun t =>
+      if t.prec == prec then { t with precLo := lo } else t) } })
 
 /-- The named item types declared in a module text (`xsl:item-type`,
     `xsl:record-type` children of the root): expanded name, item type. -/
