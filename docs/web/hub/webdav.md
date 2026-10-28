@@ -278,10 +278,10 @@ failure in `tests/hub/hub_webdav_test.mjs`.
 ## Connect a file browser
 
 Below, `URL` is `http://127.0.0.1:8090/`, `https://MACHINE.TAILNET.ts.net/`
-or `https://dav.example.org/`. Only litmus and curl ran against
-`webdav-serve` in this repository; the steps below are the clients' own
-documented steps, not test results
-(<https://github.com/danbri/factoidal/issues/1079>).
+or `https://dav.example.org/`. Against `webdav-serve` this repository runs
+litmus, curl, rclone and cadaver (`node tests/webdav/clients.mjs`). The
+desktop file browser steps below are the clients' own documented steps, not
+test results (<https://github.com/danbri/factoidal/issues/1079>).
 
 * **macOS Finder**: Go > Connect to Server (⌘K), type `URL`, Connect. With
   no login in front, choose Guest; behind a Basic login, Registered User.
@@ -308,9 +308,10 @@ Other WebDAV clients:
   new connection, type WebDAV (HTTP) or WebDAV (HTTPS).
 * WinSCP (Windows): File protocol WebDAV.
 * Transmit (macOS): protocol WebDAV.
-* rclone (all systems, command line): `rclone config` (type `webdav`, vendor
-  `other`), then `rclone ls`, `rclone sync` or `rclone mount NAME: DIR`.
-* cadaver (command line): `cadaver http://127.0.0.1:8090/`.
+* rclone (all systems, command line; tested): `rclone config` (type `webdav`,
+  vendor `other`), then `rclone ls`, `rclone sync` or `rclone mount NAME: DIR`.
+* cadaver (command line; tested, including locks and dead properties):
+  `cadaver http://127.0.0.1:8090/`.
 * Applications that sync to a WebDAV folder: Joplin (WebDAV sync target),
   Zotero (WebDAV file sync), Obsidian (Remotely Save plugin),
   Keepass2Android.
