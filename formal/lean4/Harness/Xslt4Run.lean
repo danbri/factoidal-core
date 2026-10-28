@@ -33,6 +33,7 @@ processor, with no I/O except the reading of files under the suite
 root before the run.
 -/
 import L4Factoidal.XSLT4.Transform
+import L4Factoidal.XSLT4.FnTransform
 import L4Factoidal.XSLT4.Theorems
 import L4Factoidal.XSLT4.Streaming.Check
 import L4Factoidal.XSLT4.Streaming.Tests
@@ -104,11 +105,11 @@ def specOk (v : String) : Bool :=
 
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
-  ["higher_order_functions", "serialization", "backwards_compatibility", "dynamic_evaluation",
-   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types",
+  ["higher_order_functions", "serialization", "backwards_compatibility", "dynamic_evaluation", "disabling_output_escaping",
+   "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types", "dtd", "XML_1.1", "namespace_axis",
    -- XSLT Streaming 4.0: the streamability analysis of
    -- `XSLT4.Streaming.Check` (off with `--no-streaming`)
-   "streaming"].contains f
+   "streaming", "schema_aware"].contains f
 
 def depOk (d : Node) : Bool :=
   let ty := localTag d
@@ -121,6 +122,19 @@ def depOk (d : Node) : Bool :=
       if sat then fs.all featureSupported else !(fs.all featureSupported)
   | "on-multiple-match" => if sat then v == "use-last" else v != "use-last"
   | "default_html_version" => if sat then v == "5" else v != "5"
+  -- xsl:use-package picks the highest version that matches (§3.4.2)
+  | "package_version_resolution" => if sat then v == "highest_version" else v != "highest_version"
+  -- xsl:assert is always evaluated
+  | "enable_assertions" => sat
+  -- dates are 64-bit: negative years, year zero (XSD 1.1) and years
+  -- above 9999
+  | "year_component_values" => sat
+  -- the numbering sequences of `XSLT4.numberingSequences`, in range
+  | "combinations_for_numbering" =>
+    let hi := ((((attrD d "range").splitOn "to").getD 1 "").trimAscii.toString.toNat?).getD 0
+    let ok := (L4Factoidal.XSLT4.numberingSequences.find? (·.1 == v)).any (fun (_, _, rs) =>
+      rs.any (fun (_, top, _) => hi ≤ top))
+    if sat then ok else !ok
   | _ => !sat
 
 /-! ## Environments -/
@@ -129,9 +143,15 @@ structure EnvSpec where
   /-- (role, file path, uri, inline content) -/
   sources : List (String × String × String × Option String) := []
   stylesheets : List (String × String) := []    -- file, role
+  /-- `<package>`: file, role, name (`uri`), version. -/
+  packages : List (String × String × String × String) := []
   params : List (String × String × Bool) := []   -- name, select, static
   unsupported : Option String := none
   serialize : Bool := false
+  /-- `<schema>`: the schema document files (§3.15; any role). -/
+  schemas : List String := []
+  /-- The `validation` of each source, in the order of `sources`. -/
+  srcModes : List String := []
 deriving Inhabited
 
 def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
@@ -139,8 +159,7 @@ def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
   for c in kids e do
     match localTag c with
     | "source" =>
-        if attrD c "validation" == "strict" || attrD c "validation" == "lax" then
-          s := { s with unsupported := some "schema-validated source" }
+        s := { s with srcModes := s.srcModes ++ [attrD c "validation"] }
         let content := match (kidsNamed c "content").head? with
           | some k => some k.textContent
           | none => none
@@ -152,9 +171,14 @@ def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
     | "param" =>
         let st := ["yes", "true", "1"].contains (attrD c "static")
         s := { s with params := s.params ++ [(attrD c "name", attrD c "select" "()", st)] }
-    | "schema" => s := { s with unsupported := some "schema" }
+    | "schema" =>
+        match attr c "file" with
+        | some f => s := { s with schemas := s.schemas ++ [normPath (dir ++ "/" ++ f)] }
+        | none => pure ()
     | "collection" => s := { s with unsupported := some "collection" }
-    | "package" => s := { s with unsupported := some "package" }
+    | "package" =>
+        s := { s with packages := s.packages ++ [(normPath (dir ++ "/" ++ attrD c "file"), attrD c "role",
+          (attrD c "uri").trimAscii.toString, (attrD c "package-version" "1").trimAscii.toString)] }
     | "output" => if attrD c "serialize" == "yes" then s := { s with serialize := true }
     | _ => pure ()
   pure s
@@ -209,11 +233,13 @@ def serNode (env : Env) : Nat → NodeRef → String
       let nm := r.name.show
       let decl := " xmlns" ++ (if r.name.pfx == "" then "" else ":" ++ r.name.pfx) ++ "=\"" ++ escAttr r.name.uri ++ "\""
       let decl := if r.name.uri == "" && r.name.pfx != "" then "" else decl
-      let ats := r.attrs.toList.map (fun a =>
+      -- each prefix is declared once on the element
+      let (ats, _) := r.attrs.toList.foldl (fun (acc, seen) a =>
         let ra := env.nrec (n.at (a))
-        let d := if ra.name.uri != "" && ra.name.pfx != "" && ra.name.pfx != "xml" then
-          " xmlns:" ++ ra.name.pfx ++ "=\"" ++ escAttr ra.name.uri ++ "\"" else ""
-        d ++ " " ++ ra.name.show ++ "=\"" ++ escAttr ra.value ++ "\"")
+        let need := ra.name.uri != "" && ra.name.pfx != "" && ra.name.pfx != "xml" && !seen.contains ra.name.pfx
+        let d := if need then " xmlns:" ++ ra.name.pfx ++ "=\"" ++ escAttr ra.name.uri ++ "\"" else ""
+        (acc ++ [d ++ " " ++ ra.name.show ++ "=\"" ++ escAttr ra.value ++ "\""],
+         if need then ra.name.pfx :: seen else seen)) (([] : List String), [r.name.pfx])
       let body := String.join (r.children.toList.map (fun c => serNode env f (n.at (c))))
       "<" ++ nm ++ decl ++ String.join ats ++ (if body == "" then "/>" else ">" ++ body ++ "</" ++ nm ++ ">")
 
@@ -229,8 +255,9 @@ def serSeq (env : Env) (s : Seq) : String := Id.run do
     | _ => out := out ++ "?"; prevAtom := false
   pure out
 
-def xmlEq1 (env : Env) (got : Seq) (expected : String) : Bool :=
+def xmlEq1 (env : Env) (got : Seq) (expected : String) (trim : Bool := false) : Bool :=
   let gs := serSeq env got
+  let gs := if trim then gs.trimAscii.toString else gs
   match Doc.ofString ("<w>" ++ gs ++ "</w>"), Doc.ofString ("<w>" ++ expected ++ "</w>") with
   | .ok d1, .ok d2 =>
     let e2 : Env := { docs := #[d1, d2] }
@@ -242,11 +269,24 @@ def xmlEq1 (env : Env) (got : Seq) (expected : String) : Bool :=
 /-- `assert-xml`: also with the whitespace around the expected XML
     removed. -/
 def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
-  xmlEq1 env got expected || xmlEq1 env got expected.trimAscii.toString
+  xmlEq1 env got expected || xmlEq1 env got expected.trimAscii.toString ||
+  -- whitespace around the top-level nodes of the result is not part of
+  -- the fragment the assertion gives
+  xmlEq1 env got expected.trimAscii.toString true
+
+/-- The error code of an error, with its namespace when it is not the
+    `err` namespace (`fn:error` with a QName). -/
+def errCode (e : Err) : String :=
+  if e.uri == "" then e.code else if e.uri == "#none" then "Q{}" ++ e.code else "Q{" ++ e.uri ++ "}" ++ e.code
 
 def codeMatches (expected got : String) : Bool :=
   expected == "*" || expected == got || ("err:" ++ got) == expected || expected.endsWith (":" ++ got) ||
-  expected == "Q{http://www.w3.org/2005/xqt-errors}" ++ got || got.endsWith ("}" ++ expected)
+  expected == "Q{http://www.w3.org/2005/xqt-errors}" ++ got || got.endsWith ("}" ++ expected) ||
+  -- a code given as a prefixed QName (the catalog's prefix is not read):
+  -- the local names agree and the error has a namespace
+  (match expected.splitOn ":", got.startsWith "Q{" && !got.startsWith "Q{}" with
+    | [_, l], true => got.endsWith ("}" ++ l)
+    | _, _ => false)
 
 /-- What an assertion sees: the delivered result, the raw result, the
     secondary results, and the serializer of the stylesheet. -/
@@ -259,6 +299,10 @@ structure RCtx where
 def checkAssert (rc : RCtx) : Nat → Node → Outcome
   | 0, _ => .fail "assertion nesting"
   | f + 1, a =>
+    -- the namespaces an assertion element (or an enclosing one) declares
+    let decl := a.elementAttrs.filterMap (fun at_ =>
+      if at_.name.startsWith "xmlns:" then some ((at_.name.drop 6).toString, at_.value) else none)
+    let rc := if decl.isEmpty then rc else { rc with env := { rc.env with ns := decl ++ rc.env.ns } }
     let env := rc.env
     let res := rc.res
     let txt := a.textContent
@@ -267,8 +311,13 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
     | "error" =>
         let code := attrD a "code"
         match res with
-        | .error e => ok? (codeMatches code e.code) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ "): " ++ cut e.msg 100)
-        | .ok s => .fail ("expected error " ++ code ++ ", got " ++ (sh s 80))
+        | .error e => ok? (codeMatches code (errCode e)) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ "): " ++ cut e.msg 100)
+        | .ok s =>
+          -- a serialization error of the result is an error of the test
+          -- (the catalog driver serializes the result)
+          match rc.ser s with
+          | .error e => ok? (codeMatches code (errCode e)) ("wrong serialization error " ++ e.code ++ " (expected " ++ code ++ "): " ++ cut e.msg 100)
+          | .ok _ => .fail ("expected error " ++ code ++ ", got " ++ (sh s 80))
     | "any-of" =>
         let rs := (kids a).map (fun c => checkAssert rc f c)
         if rs.any (fun r => match r with | .pass => true | _ => false) then .pass
@@ -284,14 +333,36 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
           | .pass => .fail "not: inner assertion held"
           | _ => .pass
         | none => .fail "empty not"
-    | "assert-message" | "assert-warning" => .pass
+    | "assert-message" =>
+        -- the contained assertion holds for one of the messages, each
+        -- delivered as a document node with its text
+        let msgs := (env.vars.find? (fun (q, _) => q == { uri := "", loc := "l4msgs" })).map (·.2) |>.getD []
+        match (kids a).head? with
+        | none => .pass
+        | some inner =>
+          -- a message is a document node; assert-eq compares its
+          -- string value
+          let one (m : Item) : Bool :=
+            let sv : Item := match m with
+              | .node n => .atom (Atomic.ofStr (env.nodeString n))
+              | i => i
+            [m, sv].any (fun x => match checkAssert { rc with res := pure [x] } f inner with
+              | .pass => true
+              | _ => false)
+          if msgs.any one then .pass else
+          match msgs.head? with
+          | some m => match checkAssert { rc with res := pure [m] } f inner with
+            | .fail x => .fail ("assert-message: no message satisfies the assertion; the first: " ++ x)
+            | _ => .fail "assert-message: no message satisfies the assertion"
+          | none => .fail "assert-message: there is no message"
+    | "assert-warning" => .pass
     | "assert-serialization-error" =>
         let code := attrD a "code"
         match res with
-        | .error e => ok? (codeMatches code e.code) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
+        | .error e => ok? (codeMatches code (errCode e)) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
         | .ok s =>
           match rc.ser s with
-          | .error e => ok? (codeMatches code e.code) ("wrong serialization error " ++ e.code ++ " (expected " ++ code ++ ")")
+          | .error e => ok? (codeMatches code (errCode e)) ("wrong serialization error " ++ e.code ++ " (expected " ++ code ++ ")")
           | .ok out => .fail ("expected serialization error " ++ code ++ ", got " ++ cut out 80)
     | "assert-result-document" =>
         let u := attrD a "uri"
@@ -347,8 +418,8 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
           | .ok r =>
             match ebv r with
             | .ok true => .pass
-            | _ => .fail ("assert {" ++ cut txt 80 ++ "} gave " ++ (sh r 60) ++ " for result " ++ cut (serSeq env s) 100)
-          | .error e => .fail ("assert {" ++ cut txt 60 ++ "} raised " ++ e.code ++ " " ++ cut e.msg 80 ++ " for result " ++ cut (serSeq env s) 100)
+            | _ => .fail ("assert {" ++ cut txt 80 ++ "} gave " ++ (sh r 60) ++ " for result " ++ cut (serSeq env s) 400)
+          | .error e => .fail ("assert {" ++ cut txt 60 ++ "} raised " ++ e.code ++ " " ++ cut e.msg 80 ++ " for result " ++ cut (serSeq env s) 400)
       | "assert-type" =>
           match parseSeqType txt with
           | .ok t => ok? (env.seqMatches s t) ("type mismatch: got " ++ (sh s 60))
@@ -363,7 +434,7 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
             let envM := (((({} : Env).bind q (sStr out)).bind pq (sStr txt)).bind fq (sStr (attrD a "flags")))
             match evalIn envM "matches($l4ser, $l4pat, $l4flags)" with
             | .ok [.atom ⟨_, .bool true⟩] => .pass
-            | .ok _ => .fail ("serialization '" ++ cut out 120 ++ "' does not match " ++ cut txt 60)
+            | .ok _ => .fail ("serialization '" ++ cut out 300 ++ "' does not match " ++ cut txt 60)
             | .error e => .fail ("serialization-matches raised " ++ e.code)
       | "assert-serialization" =>
           match rc.ser s with
@@ -371,9 +442,9 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
           | .ok out =>
             let ok := if attrD a "normalize-space" == "true" then normSp out == normSp txt
               else out == txt || xmlEq env s txt
-            ok? ok ("serialization '" ++ cut out 120 ++ "'")
+            ok? ok ("serialization '" ++ cut out 300 ++ "'")
       | "assert-xml" =>
-          ok? (xmlEq env s txt) ("xml " ++ (cut (serSeq env s) 160))
+          ok? (xmlEq env s txt) ("xml " ++ (cut (serSeq env s) 600))
       | other => .fail ("assertion " ++ other ++ " is not evaluated")
 
 /-- The assert-xml expected value is the element's inner markup. -/
@@ -425,16 +496,42 @@ def resolveXmlFiles (dir : String) : Nat → Node → IO Node
 
 /-! ## Running -/
 
+/-! ## Defective test data
+
+xslt40-test cases whose expected result contradicts the normative text
+of XSLT 4.0 (defective test data, `skills/test-suites/SKILL.md`
+§ Defective test data). They are reported apart as "excluded (defective
+test data)", not in pass, fail or the total; a case on this list that
+PASSES counts as a FAIL, so the exclusion cannot outlive a corrected
+test. -/
+
+/-- `(test-case name, issue URL)`. -/
+def defective : List (String × String) :=
+  let i1163 := "https://github.com/danbri/factoidal/issues/1163"
+  -- default priorities of 4.0 patterns (§6.4.4, §6.4.6, §6.4.7); a
+  -- function result type error; a non-public initial template in a
+  -- package (§2.3.4); Saxon's code for a recursive item type (XTSE4035);
+  -- a static error in xsl:evaluate (XTDE3160); format-number with a
+  -- string argument in XPath 1.0 compatibility mode (XPath 4.0 §3.4.1
+  -- converts with fn:number only for xs:double; $value is xs:numeric?)
+  [ "priority-124", "priority-141", "priority-160", "priority-162", "priority-163",
+    "function-40-012", "accumulator-038", "type-alias-003", "type-alias-004",
+    "evaluate-042", "format-number-014", "format-number-035", "format-number-038",
+    "format-number-039", "format-number-040", "format-number-041" ].map (·, i1163)
+
 structure Tally where
   pass : Nat := 0
   fail : Nat := 0
   unsup : Nat := 0
+  /-- Defective test data (`defective`): not in the total. -/
+  excl : Nat := 0
 deriving Inhabited
 
-def Tally.add (a b : Tally) : Tally := ⟨a.pass + b.pass, a.fail + b.fail, a.unsup + b.unsup⟩
+def Tally.add (a b : Tally) : Tally := ⟨a.pass + b.pass, a.fail + b.fail, a.unsup + b.unsup, a.excl + b.excl⟩
 def Tally.total (t : Tally) : Nat := t.pass + t.fail + t.unsup
 def Tally.show (t : Tally) : String :=
   s!"{t.pass} pass, {t.fail} fail, {t.unsup} unsupported (out of {t.total})"
+    ++ (if t.excl > 0 then s!"; {t.excl} excluded (defective test data)" else "")
 
 structure Opts where
   root : String := "../../third_party/testing/xslt40-test"
@@ -485,9 +582,26 @@ def loadModules (principal : String) : IO (List (String × String)) := do
       | none => pure ()
       | some txt =>
         done := done ++ [(u, txt)]
-        for r in moduleRefs u txt do
+        for r in moduleRefs u txt ++ packageRefs u txt do
           if !done.any (·.1 == r) then todo := todo ++ [r]
   return done
+
+/-- The files `sub/t` for the subdirectories `sub` of `dir`, to `depth`
+    levels (a reference resolved against the base URI of a node of a
+    document in a subdirectory). -/
+def filesBelow : Nat → String → String → IO (List String)
+  | 0, _, _ => pure []
+  | d + 1, dir, t => do
+    let entries ← try System.FilePath.readDir dir catch _ => pure #[]
+    if entries.size > 300 then return []
+    let mut out : List String := []
+    for e in entries do
+      let p := e.path.toString
+      if ← System.FilePath.isDir p then
+        let f := normPath (p ++ "/" ++ t)
+        if ← System.FilePath.pathExists f then out := f :: out
+        out := out ++ (← filesBelow d p t)
+    return out
 
 /-- The files that a text names by a relative reference (for `doc`,
     `document`, `unparsed-text`, `json-doc`), read in advance: every run
@@ -502,16 +616,42 @@ def scanResources (root dir src : String) : IO (List (String × String)) := do
       if cur.length > 2 && cur.length < 200 && (cur.splitOn ".").length > 1 && !toks.contains cur then
         toks := cur :: toks
       cur := ""
+  -- a quoted reference with spaces in it (`'dir with space/a.xml'`)
+  for q in ['\'', '"'] do
+    let parts := src.splitOn (String.singleton q)
+    for (p, i) in parts.zipIdx do
+      if i % 2 == 1 && p.contains ' ' && p.length < 200 && (p.splitOn ".").length > 1 &&
+          !p.contains '<' && !p.contains '\n' && !toks.contains p then
+        toks := p :: toks
   let absRoot := normPath root
   let mut out : List (String × String) := []
   for t in toks do
-    let path := normPath (dir ++ "/" ++ t)
+    let path0 := normPath (dir ++ "/" ++ t)
+    -- a reference that `xml:base` makes relative to a directory above
+    -- (`xml:base="../../"`): the first one up to two levels above that
+    -- names a file
+    let mut path := path0
+    if !(← System.FilePath.pathExists path0) then
+      for up in ["/..", "/../.."] do
+        let p := normPath (dir ++ up ++ "/" ++ t)
+        if ← System.FilePath.pathExists p then
+          path := p
+          break
+    -- a reference with a directory part that names a file below this
+    -- directory (resolved against the base URI of a document there)
+    if !(← System.FilePath.pathExists path) && t.contains '/' && !t.startsWith "." then
+      for f in ← filesBelow 3 dir t do
+        if f.startsWith absRoot then
+          match ← readFileSafe f with
+          | some txt => out := (fileUri f, txt) :: out
+          | none => pure ()
     if !path.startsWith absRoot then continue
-    if path.endsWith ".xsl" then continue
     if ← System.FilePath.pathExists path then
       if (← System.FilePath.isDir path) then continue
       match ← readFileSafe path with
-      | some txt => out := (t, txt) :: (fileUri path, txt) :: out
+      | some txt =>
+        -- the reference as written names only a file of this directory
+        out := (if path == path0 then [(t, txt)] else []) ++ (fileUri path, txt) :: out
       | none => pure ()
   return out
 
@@ -555,10 +695,37 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
   let some testNode := (kidsNamed tc "test").head? | return .fail "no test element"
   let tspec := parseEnv dir testNode
   if let some why := tspec.unsupported then return .unsupported why
-  let sheets := tspec.stylesheets ++ spec.stylesheets
+  let sheets := tspec.stylesheets ++ spec.stylesheets ++
+    (tspec.packages ++ spec.packages).filterMap (fun (f, r, _, _) => if r == "principal" then some (f, r) else none)
   let some (principal, _) := sheets.find? (fun (_, r) => r != "secondary") | return .unsupported "no stylesheet"
   let pUri := fileUri principal
-  let mods ← loadModules pUri
+  let mut mods ← loadModules pUri
+  -- the packages that xsl:use-package can name (§3.4.3)
+  let lib : List PkgEntry := (tspec.packages ++ spec.packages).filterMap (fun (f, r, u, v) =>
+    if r == "principal" then none else some { name := u, version := v, uri := fileUri f })
+  for e in lib do
+    mods := mods ++ (← loadModules e.uri).filter (fun (x, _) => !mods.any (·.1 == x))
+  -- the schema documents (§3.15): those of the environment and those that
+  -- xsl:import-schema names, with the documents they include or import
+  let mut xsdRoots : List String := spec.schemas ++ tspec.schemas
+  for (u, t) in mods do
+    for im in schemaImportsOf u t do
+      if let some l := im.loc then xsdRoots := xsdRoots ++ [L4Factoidal.XSD11.pathNormalize (uriPath l)]
+  let mut xsdSeen : List String := []
+  for _ in [0:300] do
+    match xsdRoots with
+    | [] => break
+    | l :: rest =>
+      xsdRoots := rest
+      if xsdSeen.contains l then continue
+      xsdSeen := l :: xsdSeen
+      match ← readFileSafe l with
+      | none => pure ()
+      | some txt =>
+        if !mods.any (·.1 == fileUri l) then mods := mods ++ [(fileUri l, txt)]
+        match parseXML txt with
+        | .ok xd => xsdRoots := xsdRoots ++ L4Factoidal.XSD11.refsOf l xd
+        | .error _ => pure ()
   -- static parameters
   let mut statics : List (QN × Seq) := []
   for (nm, sel, st) in tspec.params ++ spec.params do
@@ -570,8 +737,7 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
   let some a := (kids r).head? | return .fail "no assertion"
   -- modules named only through static values (shadow attributes):
   -- read the one the compiler asks for, and compile again
-  let mut mods := mods
-  let mut sheet := compileStylesheet pUri mods statics
+  let mut sheet := compileStylesheet pUri mods statics lib
   for _ in [0:20] do
     match sheet with
     | .error e =>
@@ -582,7 +748,7 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
         | some txt =>
           mods := mods ++ (← loadModules u).filter (fun (x, _) => !mods.any (·.1 == x))
           let _ := txt
-          sheet := compileStylesheet pUri mods statics
+          sheet := compileStylesheet pUri mods statics lib
         | none => break
       else break
     | .ok _ => break
@@ -596,16 +762,33 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
   let (env, outcome) ← match sheet with
     | .error e => pure (({} : Env), (.error e : M (TResult × Sheet)))
     | .ok S => do
+      -- fn:transform, with three levels of nesting
+      let S := { S with extraHost := fnTransformHost 3 lib }
       -- the dynamic context: source documents and resources
       let mut env : Env := { baseUri := pUri }
       let mut globalCtx : Option Item := none
-      for (role, file, uri, content) in spec.sources ++ tspec.sources do
+      let modes := spec.srcModes ++ tspec.srcModes
+      let envSchemas := spec.schemas ++ tspec.schemas
+      for ((role, file, uri, content), k) in (spec.sources ++ tspec.sources).zipIdx do
         let txt ← match content with
           | some c => pure (some c)
           | none => readFileSafe file
         let some txt := txt | return .fail ("cannot read source " ++ file)
         let duri := if file != "" then fileUri file else if uri != "" then resolveUri pUri uri else ""
         let some d := loadDoc txt duri | return .fail ("source not well-formed: " ++ file)
+        -- a source validated against the schema of the environment (§18.1)
+        let mode := modes.getD k ""
+        let d ← if mode != "strict" && mode != "lax" then pure d else do
+          -- the schema texts were read with the stylesheet modules (any encoding)
+          let s := L4Factoidal.XSD11.buildSchema none L4Factoidal.XSD11.xpathHooks
+            (schemaDocsFrom mods [] envSchemas) envSchemas
+          if !s.errors.isEmpty then return .fail ("schema of the environment not valid: " ++ toString (s.errors.take 2))
+          match L4Factoidal.XSD11.validateNodeIn s mode d 0 duri with
+          | .ok vd => pure { vd with baseUri := d.baseUri }
+          | .error e => return .fail ("source not valid: " ++ e.msg)
+        -- inline content has the base URI of the test set (the driver's
+        -- reading), and no document URI
+        let d := if duri == "" then { d with baseUri := fileUri dir ++ "/" } else d
         let idx := env.docs.size
         env := { env with docs := env.docs.push d }
         if duri != "" then env := { env with docUris := (duri, idx) :: env.docUris }
@@ -620,6 +803,12 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
       -- the small data files of the test set's directory (for URIs that
       -- the stylesheet computes)
       res := res ++ (← dirResources dir).filter (fun (u, _) => !res.any (·.1 == u))
+      -- the modules of stylesheets that are read as resources
+      -- (fn:transform), one level down
+      for (u, t) in res do
+        if u.startsWith "file://" && u.endsWith ".xsl" && !mods.any (·.1 == u) then
+          for r in ← scanResources o.root (dirOf (uriPath u)) t do
+            if !res.any (·.1 == r.1) then res := res ++ [r]
       env := { env with resources := res }
       -- stylesheet parameters
       let mut params : List (QN × Seq) := []
@@ -657,9 +846,20 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
             | .error e => return .fail ("cannot evaluate function param: " ++ e.code)
           pure (some (nsOf n (attrD n "name"), args))
         | none => pure none
-      let ou := fileUri ("/out/" ++ attrD tc "name" ++ "/principal.xml")
+      -- the base output URI: the test's `<output file="..."/>` against
+      -- the test set's directory (`#absent`: none); with no file, the
+      -- `results/<test>.xml` of that directory, as the tests that name
+      -- a file do
+      let ofile := ((kidsNamed testNode "output").findSome? (fun n => attr n "file"))
+      let ou := match ofile with
+        | some "#absent" => ""
+        | some "" => fileUri (dir ++ "/")
+        | some f => fileUri (dir ++ "/" ++ f)
+        | none => fileUri (dir ++ "/results/" ++ attrD tc "name" ++ ".xml")
       let topts : TOpts := { initialTemplate := it, initialMode := imName, initialSelect := imSel, initialFunction := ifn, globalCtx, params, env, outUri := ou }
-      pure (env, (do let r ← transform S topts; pure (r, S) : M (TResult × Sheet)))
+      -- the result refers to the source documents as the transformation
+      -- saw them: with whitespace stripped (§4.3)
+      pure ({ env with docs := env.docs.map (stripDoc S) }, (do let r ← transform S topts; pure (r, S) : M (TResult × Sheet)))
   -- delivery (the catalog driver's default format is a document node)
   -- delivery format raw: `output tree="no"` in the test, or an output
   -- definition with build-tree="no" or method json or adaptive (§26.1)
@@ -669,18 +869,24 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
     treeNo || (match od.lookup "build-tree" with
       | some b => parseBool b == some false
       | none => match od.lookup "method" with
-        | some m => m == "json" || m == "adaptive"
+        | some m => m == "json" || m == "adaptive" || m == "csv"
         | none => false)
   let initialFn := !(kidsNamed testNode "initial-function").isEmpty
+  -- the principal result tree: sequence normalization with the
+  -- item-separator of the unnamed output definition (§26.1)
   let deliver (S : Sheet) (raw : Seq) : M Seq :=
     if rawMethod S || initialFn then pure raw else
+    let sep := ((S.outputs.lookup "").getD []).lookup "item-separator"
     match raw with
     | [.node n] => if (env.nrec n).kind == .document then pure raw else
-        do pure [← materialize env (2 ^ 45) (.doc (Out.ofSeq raw) "")]
-    | _ => do pure [← materialize env (2 ^ 45) (.doc (Out.ofSeq raw) "")]
+        do pure [← materializeK (S.finalValidation == "preserve") env (2 ^ 45) (.doc (← Out.normalizeTop sep (Out.ofSeq raw)) "")]
+    | _ => do pure [← materializeK (S.finalValidation == "preserve") env (2 ^ 45) (.doc (← Out.normalizeTop sep (Out.ofSeq raw)) "")]
   let res : M Seq := do
     let (r, S) ← outcome
-    deliver S r.raw
+    -- a principal result written by xsl:result-document is delivered as
+    -- that instruction built it
+    if r.principalFormat.1 != "" || !r.principalFormat.2.isEmpty then pure r.raw
+    else deliver S r.raw
   let serWith (fmt : String) (sp : List (String × String)) : Seq → M String := fun s => match outcome with
     | .ok (_, S) => do
         let props ← S.outputProps fmt sp
@@ -693,7 +899,7 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
     | .ok (r, _) => serWith r.principalFormat.1 r.principalFormat.2
     | .error e => fun _ => throw e
   let env := match outcome with
-    | .ok (r, _) => { env with docs := env.docs } |>.bind { uri := "", loc := "l4msgs" } (r.msgs.map (fun m => .atom (Atomic.ofStr m)))
+    | .ok (r, _) => { env with docs := env.docs } |>.bind { uri := "", loc := "l4msgs" } r.msgDocs
     | .error _ => env
   pure (checkAssert { env, res, secondary, ser } 100 a)
 
@@ -719,12 +925,22 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
     if let some only := o.only then
       if name != only then continue
     if let some pf := o.progress then
-      IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} {name}\n"
+      -- a child prints its lines as it goes: a child that is stopped
+      -- for time loses none
+      for f in fails do IO.println ("  " ++ f)
+      (← IO.getStdout).flush
+      fails := []
+      IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} {name} {t.excl}\n"
     let deps := (kidsNamed tc "dependencies").flatMap kids
     let specGiven := deps.any (fun x => localTag x == "spec")
     let setOk := if specGiven then (setDeps.filter (fun x => localTag x != "spec")).all depOk else setDeps.all depOk
     if !(setOk && deps.all depOk) then
       t := { t with unsup := t.unsup + 1 }
+      if o.listFails then
+        let bad := (setDeps.filter (fun x => !depOk x && !(specGiven && localTag x == "spec"))) ++ deps.filter (fun x => !depOk x)
+        let why := String.intercalate " " (bad.map (fun x => localTag x ++ "=" ++ attrD x "value" ++
+          (if attrD x "satisfied" "true" == "false" then "(not)" else "")))
+        fails := fails ++ [s!"UNSUP {setName}/{name}: dep {why}"]
       continue
     let needsStreaming := (setDeps ++ deps).any (fun x =>
       localTag x == "feature" && ((attrD x "value").splitOn " ").contains "streaming" &&
@@ -732,7 +948,17 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
     if needsStreaming && o.noStreaming then
       t := { t with unsup := t.unsup + 1 }
       continue
-    match ← runCase o dir localEnvs tc needsStreaming with
+    let outcome ← runCase o dir localEnvs tc needsStreaming
+    if let some iss := defective.lookup name then
+      match outcome with
+      | .pass =>
+        t := { t with fail := t.fail + 1 }
+        fails := fails ++ [s!"FAIL {setName}/{name}: STALE exclusion: the test passes; remove it from `defective` in Harness/Xslt4Run.lean ({iss})"]
+      | _ =>
+        t := { t with excl := t.excl + 1 }
+        if o.listFails then fails := fails ++ [s!"EXCLUDED {setName}/{name}: defective test data, {iss}"]
+      continue
+    match outcome with
     | .pass => t := { t with pass := t.pass + 1 }
     | .fail why =>
         t := { t with fail := t.fail + 1 }
@@ -741,7 +967,7 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
   if let some pf := o.progress then
-    IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} DONE\n"
+    IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} DONE {t.excl}\n"
   return (setName, t, fails)
 
 /-- Run one test set in child processes, with a time limit per test case
@@ -749,7 +975,7 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
     clock). A test case that does not finish counts as FAIL, and a new
     child continues after it. -/
 def runIsolated (o : Opts) (secs : Nat) (setName file : String) : IO (Tally × String) := do
-  let pf := (← IO.getEnv "TMPDIR").getD "/tmp" ++ "/l4xslt4-progress-" ++ setName
+  let pf := (← IO.getEnv "TMPDIR").getD "/tmp" ++ "/l4xslt4-progress-" ++ toString (← IO.Process.getPID) ++ "-" ++ setName
   let mut total : Tally := {}
   let mut after : Option String := none
   let mut notes : List String := []
@@ -778,7 +1004,7 @@ def runIsolated (o : Opts) (secs : Nat) (setName file : String) : IO (Tally × S
     let line := ((← readFileSafe pf).getD "").trimAscii.toString
     let parts := line.splitOn " "
     let num (i : Nat) : Nat := ((parts.getD i "0").toNat?).getD 0
-    let t : Tally := ⟨num 0, num 1, num 2⟩
+    let t : Tally := ⟨num 0, num 1, num 2, num 4⟩
     let last := parts.getD 3 ""
     total := total.add t
     if finished && last == "DONE" then break
@@ -795,7 +1021,7 @@ def runIsolated (o : Opts) (secs : Nat) (setName file : String) : IO (Tally × S
       | .ok d => pure (kidsNamed d.root "test-case").length
       | .error _ => pure total.total
     | none => pure total.total
-  let missing := count - total.total
+  let missing := count - total.total - total.excl
   let res := { total with fail := total.fail + missing }
   let ns := if missing > 0 then notes ++ [s!"{missing} not reported"] else notes
   return (res, if ns.isEmpty then "" else s!" [{ns.length} test(s) did not finish in {secs} s, counted as fail: {String.intercalate ", " ns}]")

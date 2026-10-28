@@ -149,3 +149,9 @@ jobs:
 
       - name: N3 reader and writer (W3C N3 CG suite, Turtle suites)
         run: tests/n3/run.sh
+
+      # RDF Data Cube 2014: normalization and IC-0 to IC-21, each checked by the
+      # Recommendation's SPARQL texts and by the direct Lean functions, which
+      # must agree on every fixture (https://github.com/danbri/factoidal/issues/1165).
+      - name: RDF Data Cube integrity constraints (tests/datacube/run.sh)
+        run: bash tests/datacube/run.sh
