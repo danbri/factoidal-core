@@ -243,6 +243,26 @@ async function main () {
       }
     })
 
+    // RFC 6120 section 10.5.4: an IQ to a full JID of a local account goes to
+    // that resource, also when the sender is another resource of the same
+    // account. Today xmpp-serve answers service-unavailable itself, so a proxy
+    // (xmpp-http-proxy) and its target cannot share one account.
+    await xfail('xmpp-serve routes an IQ from alice/u to alice/t (two resources of one account)',
+      'https://github.com/danbri/factoidal/issues/1139', async () => {
+        const t = new TestClient(Number(xport), DOMAIN, ca)
+        const u = new TestClient(Number(xport), DOMAIN, ca)
+        try {
+          await t.login('alice', 'alice-pw', 't')
+          await u.login('alice', 'alice-pw', 'u')
+          u.send(`<iq type='get' id='same1' to='alice@${DOMAIN}/t'><query xmlns='jabber:iq:version'/></iq>`)
+          const m = await t.wait(/<iq[^>]*id="same1"[\s\S]*?(?:\/>|<\/iq>)/, 5000)
+          assert(/from="alice@example\.org\/u"/.test(m[0]), m[0])
+        } finally {
+          t.close()
+          u.close()
+        }
+      })
+
     // Not met by step 1; each names its issue and turns the run red when it
     // starts to pass.
     await xfail('webdav-serve --xmpp --users: allowed JIDs must still log in (login gate on the XMPP path)',

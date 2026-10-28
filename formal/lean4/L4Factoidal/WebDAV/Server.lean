@@ -32,6 +32,7 @@ Depth 1 PROPFIND with `getlastmodified`, `getcontentlength` and
 import L4Factoidal.WebDAV.Backend
 import L4Factoidal.WebDAV.Xml
 import L4Factoidal.WebDAV.If
+import L4Factoidal.WebDAV.MediaType
 import L4Factoidal.Crypto.SHA2
 import Std.Data.HashSet
 
@@ -542,7 +543,7 @@ def lock (cx : Ctx) (st : DavState) (r : DavRequest) (p : DavPath) (submitted : 
       | .failed a => return (storageRefusal a, st)
       | .absent => return (textResp 409 "the parent collection does not exist", st)
       | .found _ => pure ()
-      let w ← ask (.put (storagePath rest false) "application/octet-stream" ByteArray.empty true)
+      let w ← ask (.put (storagePath rest false) (mediaTypeForSegs rest) ByteArray.empty true)
       if !w.ok then return (storageRefusal w, st)
       pure true
   let token := lockToken cx.random st.serial
@@ -715,7 +716,9 @@ def handle (cx : Ctx) (st0 : DavState) (r : DavRequest) : Prog (DavResponse × D
     match missingToken (neededLocks st p false (!exists_)) submitted with
     | some l => return (lockedResp l, st)
     | none =>
-    let ct := ((r.header? "content-type").filter (· != "")).getD "application/octet-stream"
+    -- No Content-Type (gvfs sends none): the type of the name
+    -- (`MediaType.lean`, https://github.com/danbri/factoidal/issues/1122).
+    let ct := ((r.header? "content-type").filter (· != "")).getD (mediaTypeForSegs rest)
     let w ← ask (.put (storagePath rest false) ct r.body false)
     if !w.ok then return (storageRefusal w, st)
     let hs := ((w.info.bind (·.etag)).map (fun e => [("etag", e)])).getD []

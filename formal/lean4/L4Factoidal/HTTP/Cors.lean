@@ -342,4 +342,75 @@ theorem around_step {σ : Type} (pf : Profile) (p : Policy) (r : Request)
     around pf p r f st = (decorate pf p r (f r st).1, (f r st).2) := by
   simp [around, h]
 
+/-! ## No credentials unless the profile says so (invariant I7)
+
+`Access-Control-Allow-Credentials: true` together with an echoed origin
+would let a page read answers to requests that carry cookies or cached HTTP
+credentials (Fetch §3.2.5). A profile with `credentials := false` never adds
+the field: every field of an answer that names it was in the answer before
+`decorate` (https://github.com/danbri/factoidal/issues/1124). -/
+
+theorem mergeVary_mem (hs : List (String × String)) (x : String × String)
+    (h : x ∈ mergeVary hs) : x ∈ hs ∨ x.1 = "vary" := by
+  simp only [mergeVary] at h
+  split at h
+  · exact Or.inl h
+  · simp only [List.mem_append, List.mem_filter, List.mem_singleton] at h
+    rcases h with ⟨hm, _⟩ | h
+    · exact Or.inl hm
+    · exact Or.inr (by rw [h])
+
+theorem originFields_no_credentials (pf : Profile) (hc : pf.credentials = false) (o : String) :
+    ∀ x ∈ originFields pf o, x.1 ≠ "access-control-allow-credentials" := by
+  intro x hx
+  simp [originFields, credentialsField, hc] at hx
+  rcases hx with h | h <;> (rw [h]; simp)
+
+theorem preflightAnswer_no_credentials (pf : Profile) (hc : pf.credentials = false) (o : String) :
+    ∀ x ∈ (preflightAnswer pf o).headers, x.1 ≠ "access-control-allow-credentials" := by
+  intro x hx
+  simp [preflightAnswer, credentialsField, hc] at hx
+  rcases hx with h | h | h | h | h <;> (rw [h]; simp)
+
+/-- `decorate` under a profile without credentials adds no
+`Access-Control-Allow-Credentials` field: any such field of the answer was
+in the server's own answer. -/
+theorem decorate_no_credentials (pf : Profile) (hc : pf.credentials = false) (p : Policy)
+    (r : Request) (resp : Response) (x : String × String)
+    (hx : x ∈ (decorate pf p r resp).headers)
+    (hk : x.1 = "access-control-allow-credentials") : x ∈ resp.headers := by
+  cases p with
+  | off => simpa [decorate] using hx
+  | echo | allow os =>
+      simp only [decorate] at hx
+      rcases mergeVary_mem _ x hx with h | h
+      · simp only [List.mem_append] at h
+        rcases h with (h | h) | h
+        · exact h
+        · split at h
+          · split at h
+            · exact absurd hk (originFields_no_credentials pf hc _ x h)
+            · simp at h
+          · simp at h
+        · simp at h; rw [h] at hk; simp at hk
+      · rw [h] at hk; simp at hk
+
+/-- `preflight?` under a profile without credentials never sends
+`Access-Control-Allow-Credentials`. -/
+theorem preflight?_no_credentials (pf : Profile) (hc : pf.credentials = false) (p : Policy)
+    (r : Request) (resp : Response) (h : preflight? pf p r = some resp) :
+    ∀ x ∈ resp.headers, x.1 ≠ "access-control-allow-credentials" := by
+  unfold preflight? at h
+  split at h
+  · simp at h
+  · split at h
+    · split at h
+      · simp only [Option.some.injEq] at h
+        subst h
+        split
+        · exact preflightAnswer_no_credentials pf hc _
+        · intro x hx; simp [preflightRefused] at hx; rw [hx]; simp
+      · simp at h
+    · simp at h
+
 end L4Factoidal.HTTP.Cors

@@ -1349,7 +1349,15 @@ reason = "protocol: the WebDAV response to a planned XEP-0332 request as stanzas
 
 [[nonstage]]
 id = "wasm:xmppClientClose"
-reason = "lifecycle: ends an XMPP client stream and drops its handle; reads no data"
+reason = "lifecycle: ends an XMPP client stream and drops its handle (in requester mode, 502 for every waiting request: XMPP.HttpRequester.abortAll); reads no data"
+
+[[nonstage]]
+id = "wasm:xmppClientRequest"
+reason = "protocol: an HTTP request from the xmpp-http-proxy loopback listener as XEP-0332 stanzas to the one target JID (XMPP.HttpRequester.send, https://github.com/danbri/factoidal/issues/1107 step 2); moves resource bytes, reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppClientTick"
+reason = "protocol: the host clock for the XEP-0332 requester; requests past their deadline get 504 (XMPP.HttpRequester.tick); reads no data"
 
 [[nonstage]]
 id = "wasm:webdavUser"
@@ -1368,8 +1376,28 @@ id = "cli:webdav-serve"
 reason = "host command: starts npm:./webdav#listen on a mount directory and prints the origin; reads no RDF data"
 
 [[nonstage]]
+id = "cli:xmpp-http-proxy"
+reason = "host command: a 127.0.0.1 HTTP listener whose requests go over XMPP (XEP-0332) to one target JID (XMPP.HttpRequester, https://github.com/danbri/factoidal/issues/1107 step 2); moves resource bytes, reads no RDF data"
+
+[[nonstage]]
 id = "cli:webdav-user"
 reason = "host command: reads a password from standard input, runs the PBKDF2 derivation wasm:webdavUser names (WebCrypto) and writes the users file the engine gives; reads no RDF data"
+
+[[nonstage]]
+id = "wasm:lwsDirLock"
+reason = "decides the lock file of an LWS or Solid storage directory (create, probe, refuse, take over) from the host's results; reads no RDF data (https://github.com/danbri/factoidal/issues/1135)"
+
+[[nonstage]]
+id = "wasm:lwsAtRestNotice"
+reason = "words the start notice about encryption at rest (clear text, or sealed and the key id) from the storage key text; reads no RDF data (https://github.com/danbri/factoidal/issues/1135)"
+
+[[nonstage]]
+id = "wasm:lwsStorageKeyNew"
+reason = "makes the text and key id of a storage key from 32 random bytes the host gives; reads no RDF data (https://github.com/danbri/factoidal/issues/1135)"
+
+[[nonstage]]
+id = "cli:lws-keygen"
+reason = "host command: draws 32 random bytes and prints the key wasm:lwsStorageKeyNew gives; reads no RDF data"
 
 # Literal values (https://github.com/danbri/factoidal/issues/1051): term-level
 # functions over one literal or one JavaScript value; no graph, no dataset.

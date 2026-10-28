@@ -147,6 +147,8 @@ export async function openServedStore (root, options = {}) {
   const config = {}
   if (typeof options.queryPath === 'string') config.queryPath = options.queryPath
   if (typeof options.gspPath === 'string') config.gspPath = options.gspPath
+  // The Host and Origin guard (issue 1124): passed unread; the engine decides.
+  if (options.localGuard !== undefined && options.localGuard !== null) config.localGuard = options.localGuard
   const info = engine.callBlobIO('storeServeOpen',
     [manifestHex, JSON.stringify(artifacts), JSON.stringify(state), JSON.stringify(config)],
     concatenate(chunks)).envelope
@@ -233,6 +235,8 @@ export async function openServedTdb2 (root, options = {}) {
   const config = {}
   if (typeof options.queryPath === 'string') config.queryPath = options.queryPath
   if (typeof options.gspPath === 'string') config.gspPath = options.gspPath
+  // The Host and Origin guard (issue 1124): passed unread; the engine decides.
+  if (options.localGuard !== undefined && options.localGuard !== null) config.localGuard = options.localGuard
   const info = engine.callBlobIO('tdb2ServeOpen',
     [JSON.stringify(files), JSON.stringify(config)], concatenate(chunks)).envelope
   const handle = info.handle
@@ -343,9 +347,22 @@ function serveConnection (served, socket, onError) {
  */
 export async function listen (root, options = {}) {
   const net = await import('node:net')
+  const host = typeof options.host === 'string' ? options.host : '127.0.0.1'
+  // `factoidal serve` has no authentication: the engine answers only the
+  // listener's own names and refuses writes from another origin
+  // (https://github.com/danbri/factoidal/issues/1124). Data for its check.
+  const os = await import('node:os')
+  let addresses = []
+  try { addresses = Object.values(os.networkInterfaces()).flat().filter(Boolean).map((i) => i.address) } catch (_error) { addresses = [] }
+  const localGuard = {
+    host,
+    addresses,
+    ...(Array.isArray(options.allowHosts) ? { allowHosts: options.allowHosts } : {}),
+    ...(Array.isArray(options.allowOrigins) ? { allowOrigins: options.allowOrigins } : {})
+  }
   const served = options.tdb2 === true
-    ? await openServedTdb2(root, options)
-    : await openServedStore(root, options)
+    ? await openServedTdb2(root, { ...options, localGuard })
+    : await openServedStore(root, { ...options, localGuard })
   const onError = typeof options.onError === 'function'
     ? options.onError
     : (error) => { console.error(`factoidal serve: ${error && error.message ? error.message : error}`) }
@@ -356,7 +373,6 @@ export async function listen (root, options = {}) {
     serveConnection(served, socket, onError)
   })
   const port = typeof options.port === 'number' ? options.port : 0
-  const host = typeof options.host === 'string' ? options.host : '127.0.0.1'
   await new Promise((resolve, reject) => {
     server.once('error', reject)
     server.listen(port, host, resolve)

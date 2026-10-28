@@ -143,9 +143,18 @@ def serveConfigOf (scope : WriteScope) (configJson : String) : Except String Con
     | none => pure dflt
     | some p => if p.startsWith "/" && !p.endsWith "/" then pure p
                 else throw s!"storeServeOpen: {name} must start with / and not end with /"
+  -- The `Host` and `Origin` guard (issue 1124): `localGuard: {host,
+  -- addresses, allowHosts, allowOrigins}`. `factoidal serve` has no
+  -- authentication, so the host always passes it; absent, there is no check.
+  let guard ← match members.find? (·.1 == "localGuard") with
+    | none => pure none
+    | some (_, gj) => match L4Factoidal.HTTP.LocalGuard.ofJson gj with
+      | .ok g => pure (some g)
+      | .error e => throw s!"storeServeOpen: {e}"
   pure { base with queryPath := ← path "queryPath" base.queryPath
                  , gspPath := ← path "gspPath" base.gspPath
-                 , authority := (stringMember members "authority").getD base.authority }
+                 , authority := (stringMember members "authority").getD base.authority
+                 , guard }
 
 /-- The two state files, from their windows. A key outside `serveStateKeys`
 is a host fault. -/

@@ -88,6 +88,7 @@ import L4Factoidal.WebDAV.State
 import L4Factoidal.WebDAV.Local
 import L4Factoidal.WebDAV.Remote
 import L4Factoidal.WebDAV.Login
+import L4Factoidal.HTTP.LocalGuard
 import L4Factoidal.Crypto.SHA2Native
 import L4Factoidal.Authz.Keys
 import L4Factoidal.Crypto.SHA2
@@ -141,6 +142,11 @@ structure DavHandle where
   /-- The state text last read from or written to the state file. -/
   saved : String := ""
   pending : Option DavPending := none
+  /-- The `Host` and `Origin` guard of the HTTP listener
+  (https://github.com/danbri/factoidal/issues/1124): configuration member
+  `localGuard`, which the HTTP host always passes; the XMPP transport passes
+  none. -/
+  guard : Option L4Factoidal.HTTP.LocalGuard.LocalGuard := none
 
 initialize davCounter : IO.Ref Nat ← IO.mkRef 0
 initialize davTable : IO.Ref (Std.HashMap String DavHandle) ← IO.mkRef ∅
@@ -185,9 +191,17 @@ def webdavOpen (configJson : String) : IO String := do
         (login.field? "disableRateLimits" == some (.bool true)) with
       | .ok l => pure l
       | .error e => return errJson e
+    -- The `Host` and `Origin` guard (issue 1124). It is checked on every
+    -- request, also with `--users`: a browser sends cached Basic
+    -- credentials with a cross-site form POST.
+    let guard ← match j.field? "localGuard" with
+      | none => pure none
+      | some gj => match L4Factoidal.HTTP.LocalGuard.ofJson gj with
+        | .ok g => pure (some g)
+        | .error e => return errJson s!"webdavOpen: {e}"
     let n ← davCounter.modifyGet (fun c => (c + 1, c + 1))
     let h := s!"webdav{n}"
-    davTable.modify (·.insert h { load := .mountFiles files, entropy, now, usersFile, limits })
+    davTable.modify (·.insert h { load := .mountFiles files, entropy, now, usersFile, limits, guard })
     pure (okWith [("handle", .string h), ("need", davNeedJson (files ++ [stateFileName] ++ usersFile.toList) [])])
 
 /-- A file the host read: its text, or `none` when it does not exist. -/
@@ -455,6 +469,26 @@ def davRequestOf (j : Json) (blob : Option ByteArray) : Except String (DavReques
   let random := ((j.getString? "randomBase64").bind davUnb64).getD ByteArray.empty
   pure ({ method, target, headers, body }, now, random)
 
+/-- The guard's answer to a WebDAV request, or `none` when it may go on
+(`L4Factoidal.HTTP.LocalGuard.admit` over the same method and fields). -/
+def davGuard (g : Option L4Factoidal.HTTP.LocalGuard.LocalGuard) (r : DavRequest) : Option DavResponse :=
+  match g with
+  | none => none
+  | some g =>
+      let hr : L4Factoidal.HTTP.Request :=
+        { method := r.method, path := r.target, queryStr := "", headers := r.headers }
+      (L4Factoidal.HTTP.LocalGuard.admit g hr).map (fun resp =>
+        { status := resp.status, headers := resp.headers, body := resp.body.toUTF8 })
+
+private def davReq (m t : String) (hs : List (String × String)) : DavRequest :=
+  { method := m, target := t, headers := hs }
+
+#guard ((davGuard (some default) (davReq "PUT" "/m/a.txt" [("host", "evil.example:8090")])).map
+  (·.status)) == some 421
+#guard ((davGuard (some default) (davReq "MKCOL" "/m/d/"
+  [("host", "127.0.0.1:8090"), ("origin", "https://evil.example")])).map (·.status)) == some 403
+#guard (davGuard (some default) (davReq "PROPFIND" "/" [("host", "127.0.0.1:8090")])).isNone
+
 def davViewsOf (hd : DavHandle) : List MountView :=
   hd.mounts.map (fun m => { name := m.name, title := m.title, writable := m.writable })
 
@@ -486,6 +520,11 @@ def webdavStepWith (h requestJson : String) (blob : Option ByteArray) : IO (Stri
         match davRequestOf j blob with
         | .error e => pure (noBytes (errJson e))
         | .ok (r, now, random) =>
+          -- The `Host` and `Origin` guard (issue 1124): before the login and
+          -- before any mount sees the request.
+          match davGuard hd.guard r with
+          | some resp => davFinishOut h hd (.response resp) blobOut
+          | none =>
           match hd.login with
           | none =>
             let (hd', o) := davServe hd r now random

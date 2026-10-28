@@ -55,7 +55,7 @@ export class TestClient {
     this.send(`<?xml version='1.0'?><stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' to='${this.domain}' version='1.0'>`)
   }
 
-  async login (user, password) {
+  async login (user, password, resource = 't') {
     this.header()
     await this.wait(/<\/stream:features>/)
     const plain = Buffer.from(`\u0000${user}\u0000${password}`).toString('base64')
@@ -64,7 +64,7 @@ export class TestClient {
     this.buffer = ''
     this.header()
     await this.wait(/<\/stream:features>/)
-    this.send(`<iq type='set' id='b1'><bind xmlns='${NS_BIND}'><resource>t</resource></bind></iq>`)
+    this.send(`<iq type='set' id='b1'><bind xmlns='${NS_BIND}'><resource>${resource}</resource></bind></iq>`)
     await this.wait(/<iq[^>]*id="b1"[\s\S]*?<\/iq>/)
   }
 

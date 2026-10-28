@@ -474,3 +474,23 @@ implement", "Do it"). Record: `docs/designissues/2026-10-28-http-over-xmpp.md`
   `xmppClientAnswer`, `xmppClientClose`; host `npm/factoidal/xmpp/client.mjs`;
   command `factoidal webdav-serve CONFIGDIR --xmpp JID`. Test
   `node tests/webdav/xmpp.mjs`.
+
+### 2026-10-28: the requester side, and the local proxy (step 2)
+
+https://github.com/danbri/factoidal/issues/1107, step 2. Record:
+`docs/designissues/2026-10-28-http-over-xmpp.md` § Step 2.
+
+- `HttpRequester.lean` — the XEP-0332 requester as one total state machine:
+  `send` (an HTTP request to a `req` iq and `chunk` messages for one target
+  JID, or a refusal: 400 absolute-form target, 405 CONNECT, 413 body above
+  16 MiB, 503 more than 16 waiting), `receive` (a `resp`, a stanza error, a
+  `chunk` from the target only), `tick` (504 past the deadline), `abortAll`
+  (502). Theorems: every stanza goes to the target (`send_to_target`,
+  `receive_to_target`, `tick_to_target`); a stanza from another JID changes
+  nothing (`receiveNode_other_sender`); the forwarded headers are a sublist
+  of the client's and keep `Authorization` (`forwardHeaders_sublist`,
+  `forwardHeaders_keeps_authorization`).
+- `Wasm/Ops/XmppClient.lean` — requester mode of `xmppClientOpen`
+  (`proxyTarget`, start rule `xcProxyRefusal`), ops `xmppClientRequest`,
+  `xmppClientTick`; host `npm/factoidal/xmpp/proxy.mjs`; command
+  `factoidal xmpp-http-proxy`. Test `node tests/webdav/xmpp-proxy.mjs`.

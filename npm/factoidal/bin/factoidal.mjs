@@ -97,7 +97,7 @@ const REVIEW_WARNING = 'EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CR
 
 /** The commands that serve, speak a protocol, or handle keys and tokens. */
 const WARNED_COMMANDS = new Set(['serve', 'lws-serve', 'solid-serve', 'solid-client', 'lws-client',
-  'authz-serve', 'authz-keys', 'xmpp-serve', 'webdav-serve', 'webdav-user'])
+  'authz-serve', 'authz-keys', 'xmpp-serve', 'webdav-serve', 'webdav-user', 'xmpp-http-proxy', 'lws-keygen'])
 
 const USAGE = `factoidal - the Factoidal persisted store, from Node or Deno
 
@@ -116,6 +116,9 @@ commands:
                               Service Description over HTTP
   lws-serve DIR               serve Linked Web Storage 1.0 over HTTP
   solid-serve DIR             serve the Solid Protocol over HTTP
+  lws-keygen                  print a new storage key for encryption at rest
+                              (FACTOIDAL_LWS_KEY of lws-serve, solid-serve and
+                              webdav-serve local mounts)
   solid-client OP URL         run one Solid client operation
   lws-client OP URL           run one Linked Web Storage client operation
   authz-serve DIR             serve an OAuth 2.0 authorization server for LWS
@@ -126,6 +129,8 @@ commands:
                               browsers over WebDAV (RFC 4918)
   webdav-user FILE NAME       add or replace a user in a webdav-serve users
                               file (the password is read from standard input)
+  xmpp-http-proxy             a local HTTP listener (127.0.0.1) whose requests
+                              go over XMPP (XEP-0332) to one target JID
 
 global options:
   -h, --help                  print this text, or a command's own help
@@ -339,6 +344,24 @@ options:
   --no-worker        serve on this thread instead of a worker thread with a
                      raised call stack (large collections need the worker)
   --quiet            print the origin only
+  --allow-host NAME
+                     also answer requests whose Host field names NAME (a reverse
+                     proxy or a Tailscale name); give it once per name, with no
+                     port. Without it the listener answers only localhost,
+                     127.0.0.1, [::1], the --host address and the addresses of
+                     its interfaces, and gives 421 Misdirected Request to any
+                     other Host (DNS rebinding)
+  --allow-origin ORIGIN
+                     also accept a request that changes state (any method but
+                     GET, HEAD and OPTIONS) from this origin, written
+                     scheme://host[:port]; give it once per origin. Without it
+                     such a request with an Origin field of another origin gets
+                     403 (a cross-site form POST)
+                     https://github.com/danbri/factoidal/issues/1124
+
+serve has no authentication: anyone who reaches the port can query and
+update the store. The Host and Origin checks above stop a web page in the
+user's browser from doing so (formal/lean4/L4Factoidal/HTTP/LocalGuard.lean).
 
 An update, or a Graph Store PUT, POST or DELETE, is appended to the
 activated generation's delta log as one batch before the response is sent,
@@ -463,6 +486,17 @@ new random nonce for every write, and authenticated when the storage is
 opened. A wrong key, a changed or truncated file, a clear-text file with the
 variable set, or a sealed file without it stops the start with a message.
 It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lean).
+Make a key with \`factoidal lws-keygen\`; keep a copy, a lost key is lost data.
+At start the server says on standard error whether the storage is sealed
+(and the key id) or written in clear text.
+
+One process writes DIR (https://github.com/danbri/factoidal/issues/1135):
+the server holds the lock file DIR/lws.lock while it runs and removes it at
+a clean exit. A start refuses a DIR whose lock names a process that runs
+(another lws-serve, solid-serve or webdav-serve local mount). A lock left by
+a process that does not run (after a crash) is taken over with a warning.
+The engine decides the file, its contents and every refusal
+(formal/lean4/L4Factoidal/LWS/DirLock.lean).
 
   --port N        the port to bind; 0 takes an ephemeral one (default 3000)
   --host ADDRESS  the address to bind (default 127.0.0.1)
@@ -529,9 +563,13 @@ It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lea
   --cors-origin ORIGIN
                   answer CORS (Fetch Standard) only for this origin, written
                   scheme://host[:port] (for example https://danbri.github.io);
-                  give it once per origin. Default: echo any valid request
-                  Origin, as the Solid Protocol section 8.1 requires of Solid
-                  servers. Never Access-Control-Allow-Credentials: the token
+                  give it once per origin. Default under authorization: echo
+                  any valid request Origin, as the Solid Protocol section 8.1
+                  requires of Solid servers. Default with --insecure-no-auth:
+                  no CORS fields, because every request is served there and an
+                  echo would let any web page read and write the storage
+                  (https://github.com/danbri/factoidal/issues/1124). Never
+                  Access-Control-Allow-Credentials: the token
                   travels in Authorization. A preflight (OPTIONS with
                   Access-Control-Request-Method) is answered 204 before any
                   authorization decision.
@@ -564,7 +602,25 @@ is required):
                          "audience":IRI?, "leeway":SECONDS?,
                          "refreshInterval":SECONDS?}
   --insecure-no-auth    development only: no authorization at all; every
-                        request is served. Never the default.
+                        request is served. Never the default. The storage
+                        then answers only its own host names and refuses
+                        writes from other origins (see --allow-host and
+                        --allow-origin), and sends no CORS fields unless
+                        --cors-origin names an origin.
+  --allow-host NAME     with --insecure-no-auth:
+                        also answer requests whose Host field names NAME (a reverse
+                        proxy or a Tailscale name); give it once per name, with no
+                        port. Without it the listener answers only localhost,
+                        127.0.0.1, [::1], the --host address and the addresses of
+                        its interfaces, and gives 421 Misdirected Request to any
+                        other Host (DNS rebinding)
+  --allow-origin ORIGIN with --insecure-no-auth:
+                        also accept a request that changes state (any method but
+                        GET, HEAD and OPTIONS) from this origin, written
+                        scheme://host[:port]; give it once per origin. Without it
+                        such a request with an Origin field of another origin gets
+                        403 (a cross-site form POST)
+                        https://github.com/danbri/factoidal/issues/1124
   --owner WEBID         the storage owner: a new storage gets a root ACL
                         that gives this agent Read, Write and Control
   --root-acl FILE       a Turtle root ACL for a new storage instead
@@ -609,6 +665,17 @@ new random nonce for every write, and authenticated when the storage is
 opened. A wrong key, a changed or truncated file, a clear-text file with the
 variable set, or a sealed file without it stops the start with a message.
 It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lean).
+Make a key with \`factoidal lws-keygen\`; keep a copy, a lost key is lost data.
+At start the server says on standard error whether the storage is sealed
+(and the key id) or written in clear text.
+
+One process writes DIR (https://github.com/danbri/factoidal/issues/1135):
+the server holds the lock file DIR/lws.lock while it runs and removes it at
+a clean exit. A start refuses a DIR whose lock names a process that runs
+(another lws-serve, solid-serve or webdav-serve local mount). A lock left by
+a process that does not run (after a crash) is taken over with a warning.
+The engine decides the file, its contents and every refusal
+(formal/lean4/L4Factoidal/LWS/DirLock.lean).
 
   --port N        the port to bind; 0 takes an ephemeral one (default 3000)
   --host ADDRESS  the address to bind (default 127.0.0.1)
@@ -628,7 +695,22 @@ It protects the file on disk only (formal/lean4/L4Factoidal/LWS/SnapshotSeal.lea
                   "jwks":{...}?}], "leeway"?, "iatWindow"?,
                   "refreshInterval"?, "checkProfileIssuer"?}
   --insecure-no-auth  development only: no authentication; Web Access
-                  Control is not enforced
+                  Control is not enforced. The server then answers only its
+                  own host names and refuses writes from other origins.
+  --allow-host NAME   with --insecure-no-auth:
+                  also answer requests whose Host field names NAME (a reverse
+                  proxy or a Tailscale name); give it once per name, with no
+                  port. Without it the listener answers only localhost,
+                  127.0.0.1, [::1], the --host address and the addresses of
+                  its interfaces, and gives 421 Misdirected Request to any
+                  other Host (DNS rebinding)
+  --allow-origin ORIGIN  with --insecure-no-auth:
+                  also accept a request that changes state (any method but
+                  GET, HEAD and OPTIONS) from this origin, written
+                  scheme://host[:port]; give it once per origin. Without it
+                  such a request with an Origin field of another origin gets
+                  403 (a cross-site form POST)
+                  https://github.com/danbri/factoidal/issues/1124
 
 The server makes no protocol decision. Storage discovery, containment
 triples, slash semantics, the Allow and Accept-* headers, the PUT/POST/
@@ -675,10 +757,63 @@ MUC/MIX/GC3 rooms.
 Specifications: https://www.rfc-editor.org/rfc/rfc6120 and
 https://www.rfc-editor.org/rfc/rfc6121`,
 
+  'xmpp-http-proxy': `factoidal xmpp-http-proxy - reach an HTTP server over XMPP (XEP-0332) from 127.0.0.1
+
+usage: factoidal xmpp-http-proxy --xmpp JID --xmpp-password-file FILE
+                 --target JID/RESOURCE [--port N] [--host 127.0.0.1]
+                 [--xmpp-host H] [--xmpp-port P] [--xmpp-tls] [--xmpp-ca FILE]
+                 [--xmpp-resource R] [--timeout SECONDS]
+
+Connects OUT to an XMPP server as JID (SASL SCRAM-SHA-256), binds a resource,
+and opens an HTTP listener on 127.0.0.1. Every HTTP request to that listener
+is sent as a XEP-0332 request to --target, and the answer is written back.
+So a file browser, rclone, curl or "factoidal lws-client" uses
+http://127.0.0.1:PORT/ to reach "factoidal webdav-serve CONFIGDIR --xmpp"
+behind NAT. JID must be in that server's --xmpp-allow list, or every
+request gets 403.
+
+  --xmpp JID                 the account (user@domain[/resource])
+  --xmpp-password-file FILE  the account's password (first line)
+  --target JID/RESOURCE      the full JID of the server (as webdav-serve
+                             --xmpp prints it). Requests go to this JID and
+                             to no other: this is not an open proxy.
+  --port N                   the port to listen on (default 8091; 0 takes an
+                             ephemeral one)
+  --host ADDRESS             the address to listen on: 127.0.0.1 only. Any
+                             other address is refused (exit 1).
+  --xmpp-host H              the XMPP server's address (default: the JID's
+                             domain; no DNS SRV lookup)
+  --xmpp-port P              default 5222, or 5223 with --xmpp-tls
+  --xmpp-tls                 direct TLS (XEP-0368). Without it, only a
+                             loopback --xmpp-host (127.0.0.0/8, ::1) is
+                             accepted.
+  --xmpp-ca FILE             PEM certificates to trust for --xmpp-tls
+  --xmpp-resource R          the resource to bind (default proxy)
+  --timeout SECONDS          how long a request waits for its answer
+                             (default 60, 1 to 3600); then 504
+
+It prints the listener's origin (http://127.0.0.1:PORT/) on standard output.
+
+The listener has no login of its own. Every process on this computer that
+can open a connection to 127.0.0.1 acts as JID, and a web page in a browser
+on this computer can send requests to it (the Host and Origin check of
+https://github.com/danbri/factoidal/issues/1124 is not in this command yet).
+Authorization headers pass to the target unchanged; the proxy adds no
+credential. Proxy-Authorization and the other hop-by-hop headers (RFC 9110
+section 7.6.1) are not forwarded. A request body above 16 MiB gets 413, more
+than 16 waiting requests 503, an absolute-form request target (a forward
+proxy request) 400, CONNECT 405.
+
+Every decision is in formal/lean4/L4Factoidal/XMPP/HttpRequester.lean and
+formal/lean4/Wasm/Ops/XmppClient.lean. Design:
+docs/designissues/2026-10-28-http-over-xmpp.md
+(https://github.com/danbri/factoidal/issues/1107).`,
+
   'webdav-serve': `factoidal webdav-serve - serve LWS storages to file browsers over WebDAV
 
 usage: factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]
                               [--users FILE] [--cert FILE --key FILE]
+                              [--allow-host NAME]... [--allow-origin ORIGIN]...
                               [--login-limit N] [--login-window SECONDS]
                               [--dangerously-disable-ratelimits]
        factoidal webdav-serve CONFIGDIR --xmpp JID --xmpp-password-file FILE
@@ -705,8 +840,13 @@ words in brackets above are notes, not part of a value. A malformed file
 stops the start with its name and line number.
 
 A local mount opens the directory with the operations lws-serve uses, as
-the storage's owner (do not serve the same directory with lws-serve at the
-same time). An lws mount reaches the storage through the LWS client.
+the storage's owner. It takes the lock DIR/lws.lock as lws-serve does
+(https://github.com/danbri/factoidal/issues/1135): a directory that
+lws-serve, solid-serve or another webdav-serve holds stops the start with a
+message that names the lock file and the process. At start each local mount
+says whether its storage is sealed (FACTOIDAL_LWS_KEY, see lws-serve --help
+and factoidal lws-keygen) or written in clear text. An lws mount reaches the
+storage through the LWS client.
 
   --port N         the port to bind (default 8090; 0 takes an ephemeral one)
   --host ADDRESS   the address to bind (default 127.0.0.1)
@@ -724,6 +864,20 @@ same time). An lws mount reaches the storage through the LWS client.
   --dangerously-disable-ratelimits
                    with --users: no failed-login limit (a warning is printed
                    at start); any client can then try passwords without end
+  --allow-host NAME
+                   also answer requests whose Host field names NAME (a reverse
+                   proxy or a Tailscale name); give it once per name, with no
+                   port. Without it the listener answers only localhost,
+                   127.0.0.1, [::1], the --host address and the addresses of
+                   its interfaces, and gives 421 Misdirected Request to any
+                   other Host (DNS rebinding)
+  --allow-origin ORIGIN
+                   also accept a request that changes state (any method but
+                   GET, HEAD and OPTIONS) from this origin, written
+                   scheme://host[:port]; give it once per origin. Without it
+                   such a request with an Origin field of another origin gets
+                   403 (a cross-site form POST)
+                   https://github.com/danbri/factoidal/issues/1124
 
 Without --users the listener has no login: anyone who can reach the port can
 read and write every writable mount. Keep it on 127.0.0.1, or give --users
@@ -764,9 +918,9 @@ NAT is reached this way with no inbound port.
   --xmpp-resource R          the resource to bind (default dav)
 
 It prints the bound JID (xmpp:user@domain/resource) on standard output.
-XEP-0332 is Deferred, and no WebDAV client speaks it yet: the local proxy
-(step 2 of the design record) is not built, so today a reader is our own
-code or another XEP-0332 client.
+XEP-0332 is Deferred, and no WebDAV client speaks it: a reader runs
+"factoidal xmpp-http-proxy --target JID/RESOURCE" (as an allowed JID) and
+points the file browser at the http://127.0.0.1:PORT/ that it prints.
 
 Connect: macOS Finder, Go > Connect to Server, http://127.0.0.1:8090/ ;
 Windows, Map network drive, http://127.0.0.1:8090/ ; GNOME Files,
@@ -777,6 +931,27 @@ and mapping is decided by formal/lean4/L4Factoidal/WebDAV/. A WebAssembly
 module built before the WebDAV operations landed makes this command exit 3
 and say so. Design: docs/designissues/2026-10-27-webdav.md
 (https://github.com/danbri/factoidal/issues/1066).`,
+
+  'lws-keygen': `factoidal lws-keygen - print a new storage key for encryption at rest
+
+usage: factoidal lws-keygen [--json]
+
+Prints a new 32-byte storage key as 64 hex digits on standard output, and its
+key id (the first 8 bytes of SHA-256 of the key) on standard error. Set the
+environment variable FACTOIDAL_LWS_KEY to it before lws-serve DIR,
+solid-serve DIR or webdav-serve with a local mount, on an empty storage
+directory:
+
+  export FACTOIDAL_LWS_KEY="$(factoidal lws-keygen)"
+
+Keep a copy of the key in a safe place. Without the key the storage cannot be
+read: there is no recovery. Changing the key of an existing storage is not
+possible (https://github.com/danbri/factoidal/issues/1136).
+--json prints {"key": ..., "keyId": ...}.
+
+The random bytes come from the host (WebCrypto getRandomValues); the engine
+makes the key text and the key id (formal/lean4/L4Factoidal/LWS/DirLock.lean,
+newStorageKey).`,
 
   'webdav-user': `factoidal webdav-user - add or replace a user in a webdav-serve users file
 
@@ -936,7 +1111,7 @@ function parseArguments (args, valueOptions) {
 class UsageError extends Error {}
 
 /** Options that may be given more than once; their value is the list. */
-const REPEATABLE_OPTIONS = new Set(['cors-origin', 'saml-idp', 'saml-decrypt-key'])
+const REPEATABLE_OPTIONS = new Set(['cors-origin', 'saml-idp', 'saml-decrypt-key', 'allow-host', 'allow-origin'])
 
 const VALUE_OPTIONS = {
   version: new Set([]),
@@ -947,12 +1122,12 @@ const VALUE_OPTIONS = {
   activate: new Set([]),
   update: new Set(['update', 'file']),
   compact: new Set([]),
-  serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2']),
+  serve: new Set(['port', 'host', 'query-path', 'gsp-path', 'file', 'layout', 'tdb2', 'allow-host', 'allow-origin']),
   'lws-serve': new Set(['port', 'host', 'base', 'issuer', 'auth-config', 'owner', 'root-acl',
     'audience', 'page-size', 'moves', 'controller-inbox', 'delivery-limit', 'delivery-window',
     'redirects-max', 'storage', 'cors-origin', 'authz', 'alg', 'token-lifetime', 'rotate-after',
-    'saml-idp', 'saml-decrypt-key']),
-  'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config']),
+    'saml-idp', 'saml-decrypt-key', 'allow-host', 'allow-origin']),
+  'solid-serve': new Set(['port', 'host', 'base', 'owner', 'issuer', 'auth-config', 'allow-host', 'allow-origin']),
   'solid-client': new Set(['body', 'file', 'content-type', 'interpret']),
   'lws-client': new Set(['body', 'file', 'content-type', 'slug', 'type', 'link', 'if-match',
     'if-unmodified-since', 'retry-412', 'destination', 'query', 'topic', 'action', 'assignee',
@@ -963,8 +1138,11 @@ const VALUE_OPTIONS = {
   'authz-keys': new Set([]),
   'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key']),
   'webdav-serve': new Set(['port', 'host', 'users', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
-    'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca']),
-  'webdav-user': new Set(['iterations'])
+    'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
+  'webdav-user': new Set(['iterations']),
+  'xmpp-http-proxy': new Set(['port', 'host', 'xmpp', 'xmpp-password-file', 'target', 'xmpp-host', 'xmpp-port',
+    'xmpp-resource', 'xmpp-ca', 'timeout']),
+  'lws-keygen': new Set([])
 }
 
 // ------------------------------------------------------------- commands
@@ -1876,6 +2054,22 @@ function corsConfig (options) {
   return {}
 }
 
+// --allow-host NAME and --allow-origin ORIGIN (repeatable), as the config
+// members `allowHosts` and `allowOrigins` of the Host and Origin guard of a
+// listener without authentication. Passed unread; the engine checks each
+// value and decides (L4Factoidal/HTTP/LocalGuard.lean,
+// https://github.com/danbri/factoidal/issues/1124).
+function localGuardConfig (options) {
+  const out = {}
+  if (Array.isArray(options['allow-host'])) out.allowHosts = options['allow-host']
+  if (Array.isArray(options['allow-origin'])) out.allowOrigins = options['allow-origin']
+  return out
+}
+
+function hasLocalGuardOptions (options) {
+  return options['allow-host'] !== undefined || options['allow-origin'] !== undefined
+}
+
 // --saml-idp FILE (repeatable): a SAML 2.0 identity provider whose signed
 // assertions the authorization server accepts, as the config member
 // `samlIdps`. FILE is JSON {"entityId": ID, "jwk": RSA public JWK}; passed
@@ -1971,7 +2165,8 @@ async function commandServe (positional, options) {
     host: serveHost(options),
     ...(tdb2 ? { tdb2: true } : {}),
     ...(typeof options['query-path'] === 'string' ? { queryPath: options['query-path'] } : {}),
-    ...(typeof options['gsp-path'] === 'string' ? { gspPath: options['gsp-path'] } : {})
+    ...(typeof options['gsp-path'] === 'string' ? { gspPath: options['gsp-path'] } : {}),
+    ...localGuardConfig(options)
   }
   const onWorker = options['no-worker'] !== true && workerRouteAvailable()
   let running
@@ -2013,6 +2208,9 @@ async function commandLwsServe (positional, options) {
   }
   if (insecure && (issuerOption !== null || authFile !== null || authzDir !== null)) {
     throw new UsageError('--insecure-no-auth cannot be combined with --authz, --issuer or --auth-config')
+  }
+  if (!insecure && hasLocalGuardOptions(options)) {
+    throw new UsageError('--allow-host and --allow-origin go with --insecure-no-auth; under authorization the token decides')
   }
   // --authz DIR: an authorization server on the same port, its issuer the
   // storage root (L4Factoidal/Authz/Mount.lean). Its options are passed
@@ -2057,7 +2255,7 @@ async function commandLwsServe (positional, options) {
       ...(options['redirects-max'] !== undefined ? { redirectsMax: natOption('redirects-max', options['redirects-max']) } : {}),
       ...(typeof options.storage === 'string' ? { storage: options.storage } : {}),
       ...corsConfig(options),
-      ...(insecure ? { insecureNoAuth: true } : { auth }),
+      ...(insecure ? { insecureNoAuth: true, ...localGuardConfig(options) } : { auth }),
       ...(authz !== undefined ? { authz } : {}),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       ...(typeof options['root-acl'] === 'string'
@@ -2080,12 +2278,25 @@ async function commandLwsServe (positional, options) {
     }
     throw error
   }
+  // The engine's start notices (a stale lock taken over; encryption at rest
+  // on or off), printed also with --quiet.
+  for (const n of (await running.storage()).notices || []) err(`lws-serve: ${n}`)
   if (!quiet) {
     err(`lws-serve: listening on ${running.origin} for ${positional[0]}`)
     if (running.authz() !== null) err(`lws-serve: authorization server ${running.authz().issuer} (keys in ${authzDir})`)
     if (options['allow-http'] === true) err('lws-serve: WARNING: --allow-http: http subject identifiers are accepted')
     if (options['allow-private-fetch'] === true) err('lws-serve: WARNING: --allow-private-fetch: private addresses may be fetched')
-    if (insecure) err('lws-serve: WARNING: --insecure-no-auth: every request is served without authorization')
+    if (insecure) {
+      err('lws-serve: WARNING: --insecure-no-auth: every request is served without authorization')
+      err('lws-serve: --insecure-no-auth: only the Host names of this listener are answered, and a ' +
+        'request that changes state from another origin is refused (issue 1124; add names with ' +
+        '--allow-host, origins with --allow-origin)')
+      if (options['cors-origin'] === undefined) {
+        err('lws-serve: --insecure-no-auth: no CORS fields are sent, because with no authorization ' +
+          'an echoed Origin would let any web page read and write this storage; give --cors-origin ' +
+          'ORIGIN for each page that may use it (https://github.com/danbri/factoidal/issues/1124)')
+      }
+    }
   }
   out(running.origin)
   return untilInterrupted(running, quiet)
@@ -2134,6 +2345,39 @@ async function commandAuthzServe (positional, options) {
   return untilInterrupted(running, quiet)
 }
 
+// lws-keygen (https://github.com/danbri/factoidal/issues/1135): 32 random
+// bytes from the host's random source go to the engine (`lwsStorageKeyNew`),
+// which gives the key text and its key id. The key goes to standard output
+// only; nothing is written to a file.
+async function commandLwsKeygen (positional, options) {
+  if (positional.length !== 0) throw new UsageError('lws-keygen takes no argument')
+  const random = new Uint8Array(32)
+  globalThis.crypto.getRandomValues(random)
+  const engine = await loadEngine()
+  let res
+  try {
+    res = engine.call('lwsStorageKeyNew', [JSON.stringify({ random: Buffer.from(random).toString('base64') })])
+  } catch (error) {
+    const message = error && error.message ? String(error.message) : String(error)
+    if (message.indexOf('unknown op') >= 0) return notWired('lws-keygen', message)
+    throw error
+  }
+  if (res.ok === false) {
+    err(`factoidal lws-keygen: ${res.error}`)
+    return EXIT_FAILURE
+  }
+  if (options.json === true) {
+    out(JSON.stringify({ key: res.key, keyId: res.keyId }))
+  } else {
+    out(res.key)
+    if (options.quiet !== true) {
+      err(`lws-keygen: key id ${res.keyId}. Keep a copy of the key in a safe place: without it the storage cannot be read.`)
+      err('lws-keygen: start the server with FACTOIDAL_LWS_KEY set to it, on an empty storage directory.')
+    }
+  }
+  return EXIT_OK
+}
+
 async function commandAuthzKeys (positional, options) {
   if (positional.length !== 1) throw new UsageError('authz-keys needs one DIR')
   const { openAuthorizationServer, readKeyFile } = await import('../authz/server.mjs')
@@ -2180,6 +2424,9 @@ async function commandSolidServe (positional, options) {
   if (insecure && (issuerOption !== null || authFile !== null)) {
     throw new UsageError('--insecure-no-auth cannot be combined with --issuer or --auth-config')
   }
+  if (!insecure && hasLocalGuardOptions(options)) {
+    throw new UsageError('--allow-host and --allow-origin go with --insecure-no-auth; under authentication the token decides')
+  }
   let auth
   if (authFile !== null) {
     auth = readJsonFile(authFile)
@@ -2193,7 +2440,7 @@ async function commandSolidServe (positional, options) {
       port: servePort(options, 3000),
       host: serveHost(options),
       ...(typeof options.base === 'string' ? { baseIri: options.base } : {}),
-      ...(insecure ? { insecureNoAuth: true } : { auth }),
+      ...(insecure ? { insecureNoAuth: true, ...localGuardConfig(options) } : { auth }),
       ...(typeof options.owner === 'string' ? { owner: options.owner } : {}),
       realClock: true,
       dir: positional[0]
@@ -2212,9 +2459,19 @@ async function commandSolidServe (positional, options) {
     }
     throw error
   }
+  // The engine's start notices (a stale lock taken over; encryption at rest
+  // on or off), printed also with --quiet.
+  for (const n of (await running.storage()).notices || []) err(`solid-serve: ${n}`)
   if (!quiet) {
     err(`solid-serve: listening on ${running.origin} for ${positional[0]}`)
-    if (insecure) err('solid-serve: WARNING: --insecure-no-auth: every request is served without authentication')
+    if (insecure) {
+      err('solid-serve: WARNING: --insecure-no-auth: every request is served without authentication')
+      err('solid-serve: --insecure-no-auth: only the Host names of this listener are answered, and a ' +
+        'request that changes state from another origin is refused (issue 1124; add names with ' +
+        '--allow-host, origins with --allow-origin). CORS still echoes the request Origin (Solid ' +
+        'Protocol section 8.1), so a page on another origin can read this storage ' +
+        '(https://github.com/danbri/factoidal/issues/1124)')
+    }
   }
   out(running.origin)
   return untilInterrupted(running, quiet)
@@ -2238,6 +2495,9 @@ async function commandWebdavServe (positional, options) {
   // The users file is named relative to the working directory here, and
   // given to the engine as an absolute path.
   if (typeof options.users === 'string') settings.users = resolvePath(options.users)
+  // The Host and Origin guard (https://github.com/danbri/factoidal/issues/1124):
+  // the values go to the engine unread; it checks them.
+  Object.assign(settings, localGuardConfig(options))
   // The failed-login limit (https://github.com/danbri/factoidal/issues/1119):
   // the values go to the engine unread; it checks them.
   if (options['login-limit'] !== undefined) settings.loginLimit = String(options['login-limit'])
@@ -2263,6 +2523,9 @@ async function commandWebdavServe (positional, options) {
   // The engine's start warnings (--dangerously-disable-ratelimits), printed
   // also with --quiet.
   for (const w of running.warnings || []) err(`factoidal webdav-serve: WARNING: ${w}`)
+  // The start notices of the local mounts (a stale lock taken over;
+  // encryption at rest on or off), printed also with --quiet.
+  for (const n of running.storageNotices || []) err(`webdav-serve: ${n}`)
   if (!quiet) {
     err(`webdav-serve: listening on ${running.origin} for ${positional[0]}` +
         (settings.users !== undefined ? `, login from ${options.users}` : ', NO LOGIN on this listener') +
@@ -2305,6 +2568,7 @@ async function webdavOverXmpp (configDir, options, quiet) {
     }
     throw error
   }
+  for (const n of dav.storageNotices || []) err(`webdav-serve: ${n}`)
   const settings = {
     engine: dav.engine,
     jid: options.xmpp,
@@ -2350,6 +2614,68 @@ async function webdavOverXmpp (configDir, options, quiet) {
   const ended = conn.closed.then((reason) => {
     if (!quiet && reason) err(`webdav-serve: xmpp: connection closed: ${reason}`)
     dav.close()
+    return EXIT_FAILURE
+  })
+  return Promise.race([untilInterrupted(running, quiet), ended])
+}
+
+// xmpp-http-proxy (https://github.com/danbri/factoidal/issues/1107, step 2):
+// a loopback HTTP listener whose requests go over XMPP (XEP-0332) to one
+// target JID. The host moves bytes; the target, the listener address, the
+// headers forwarded, the limits, timeouts and every status are decided in
+// L4Factoidal/XMPP/HttpRequester.lean and Wasm/Ops/XmppClient.lean.
+async function commandXmppHttpProxy (positional, options) {
+  if (positional.length !== 0) throw new UsageError('xmpp-http-proxy takes no positional argument')
+  const quiet = options.quiet === true
+  if (typeof options.xmpp !== 'string') throw new UsageError('xmpp-http-proxy needs --xmpp JID')
+  if (typeof options['xmpp-password-file'] !== 'string') throw new UsageError('xmpp-http-proxy needs --xmpp-password-file FILE')
+  if (typeof options.target !== 'string') throw new UsageError('xmpp-http-proxy needs --target JID/RESOURCE')
+  const fs = await import('node:fs/promises')
+  const password = (await fs.readFile(options['xmpp-password-file'], 'utf8')).split(/\r?\n/)[0]
+  const { startHttpProxy } = await import('../xmpp/proxy.mjs')
+  const { XmppClientError } = await import('../xmpp/client.mjs')
+  const settings = {
+    jid: options.xmpp,
+    password,
+    target: options.target,
+    resource: typeof options['xmpp-resource'] === 'string' ? options['xmpp-resource'] : 'proxy',
+    tls: options['xmpp-tls'] === true,
+    // The address goes to the engine unread; it accepts 127.0.0.1 only.
+    listenHost: typeof options.host === 'string' ? options.host : '127.0.0.1',
+    listenPort: servePort(options, 8091),
+    onError: (error) => { if (!quiet) err(`xmpp-http-proxy: ${error.message}`) }
+  }
+  if (options.timeout !== undefined) {
+    const t = Number(options.timeout)
+    if (!Number.isInteger(t) || t < 0) throw new UsageError('--timeout needs a whole number of seconds')
+    settings.timeoutSeconds = t
+  }
+  if (typeof options['xmpp-host'] === 'string') settings.host = options['xmpp-host']
+  if (typeof options['xmpp-ca'] === 'string') settings.tlsOptions = { ca: await fs.readFile(options['xmpp-ca']) }
+  if (options['xmpp-port'] !== undefined) {
+    const port = Number(options['xmpp-port'])
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new UsageError('--xmpp-port needs a port number')
+    settings.port = port
+  }
+  let running
+  try {
+    running = await startHttpProxy(settings)
+  } catch (error) {
+    if (error instanceof XmppClientError && error.unknownOp) return notWired('xmpp-http-proxy', error.message)
+    if (error instanceof XmppClientError || (error !== null && typeof error === 'object' && typeof error.code === 'string')) {
+      err(`factoidal xmpp-http-proxy: ${error.message}`)
+      return EXIT_FAILURE
+    }
+    throw error
+  }
+  if (!quiet) {
+    err(`xmpp-http-proxy: connected to XMPP as ${running.jid}; requests to ${running.origin} go to ${running.target} only`)
+    err('xmpp-http-proxy: the listener has no login: every local process (and any web page in a local browser) acts as ' +
+        `${running.jid} (https://github.com/danbri/factoidal/issues/1124)`)
+  }
+  out(running.origin)
+  const ended = running.closed.then((reason) => {
+    if (!quiet && reason) err(`xmpp-http-proxy: xmpp: connection closed: ${reason}`)
     return EXIT_FAILURE
   })
   return Promise.race([untilInterrupted(running, quiet), ended])
@@ -2630,7 +2956,9 @@ const COMMANDS = {
   'authz-keys': commandAuthzKeys,
   'xmpp-serve': commandXmppServe,
   'webdav-serve': commandWebdavServe,
-  'webdav-user': commandWebdavUser
+  'webdav-user': commandWebdavUser,
+  'xmpp-http-proxy': commandXmppHttpProxy,
+  'lws-keygen': commandLwsKeygen
 }
 
 // ----------------------------------------------------------------- main

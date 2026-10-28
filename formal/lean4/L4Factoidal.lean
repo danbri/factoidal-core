@@ -957,6 +957,7 @@ import L4Factoidal.LWS.SearchResults
 import L4Factoidal.LWS.SearchResultsTests
 import L4Factoidal.LWS.SnapshotSeal
 import L4Factoidal.LWS.SnapshotSealTests
+import L4Factoidal.LWS.DirLock
 import L4Factoidal.LWS.AccessPolicy
 import L4Factoidal.LWS.AccessGrants
 import L4Factoidal.LWS.AccessGrantsTests
@@ -967,6 +968,7 @@ import L4Factoidal.LWS.Journal
 import L4Factoidal.LWS.FileLayout
 import L4Factoidal.LWS.FileLayoutTests
 import L4Factoidal.HTTP.Cors
+import L4Factoidal.HTTP.LocalGuard
 import L4Factoidal.LWS.Cors
 import L4Factoidal.LWS.Client.Wire
 import L4Factoidal.LWS.Client.Report
@@ -979,6 +981,7 @@ import L4Factoidal.WebDAV.Config
 import L4Factoidal.WebDAV.Path
 import L4Factoidal.WebDAV.Xml
 import L4Factoidal.WebDAV.If
+import L4Factoidal.WebDAV.MediaType
 import L4Factoidal.WebDAV.Backend
 import L4Factoidal.WebDAV.Server
 import L4Factoidal.WebDAV.State
@@ -1021,6 +1024,7 @@ import L4Factoidal.XMPP.Gc3
 import L4Factoidal.XMPP.HttpOverXmpp
 import L4Factoidal.XMPP.HttpOverXmppTests
 import L4Factoidal.XMPP.ClientStream
+import L4Factoidal.XMPP.HttpRequester
 import L4Factoidal.Fn.Theorems
 import L4Factoidal.Planner.Requirement
 import L4Factoidal.Planner.Capability

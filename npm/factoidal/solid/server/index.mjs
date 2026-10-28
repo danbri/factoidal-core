@@ -56,7 +56,7 @@
 // stay distinct.
 
 import { loadEngine } from '../../bin/engine.mjs'
-import { readSnapshot, persistIfChanged, storageKeyText } from '../../lws/persist.mjs'
+import { readSnapshot, persistIfChanged, storageKeyText, acquireDirLock, atRestNotice } from '../../lws/persist.mjs'
 
 /** The ops this host needs from the engine. */
 export const SOLID_SERVER_OPS = ['solidOpen', 'solidStep', 'solidClose', 'solidSnapshot',
@@ -187,6 +187,11 @@ export async function openSolidStorage (options = {}) {
   if (options.auth !== undefined && options.auth !== null) config.auth = options.auth
   if (options.insecureNoAuth === true) config.insecureNoAuth = true
   if (typeof options.enforceWac === 'boolean') config.enforceWac = options.enforceWac
+  // The Host and Origin guard with insecureNoAuth (issue 1124): what the
+  // socket bound and the operator's names and origins, passed unread.
+  if (options.listen !== undefined && options.listen !== null) config.listen = options.listen
+  if (Array.isArray(options.allowHosts)) config.allowHosts = options.allowHosts
+  if (Array.isArray(options.allowOrigins)) config.allowOrigins = options.allowOrigins
   if (typeof options.rootAcl === 'string') config.rootAcl = options.rootAcl
   // Encryption at rest (issue 921), as the LWS host: the key text from
   // `storageKey` or FACTOIDAL_LWS_KEY, passed unread; the engine decides.
@@ -195,28 +200,61 @@ export async function openSolidStorage (options = {}) {
   // `dir` names the storage directory. The snapshot found there, if any,
   // is the storage to continue from; the engine checks it.
   const dir = typeof options.dir === 'string' ? options.dir : null
+  // One writing process per storage directory
+  // (https://github.com/danbri/factoidal/issues/1135), as the LWS host: the
+  // engine decides; the lock is taken before DIR is read.
+  let lock = null
   if (dir !== null) {
-    const snapshot = readSnapshot(dir)
-    if (snapshot !== null) config.snapshot = snapshot
+    try {
+      lock = acquireDirLock(engine, dir, 'solid-serve')
+    } catch (error) {
+      if (isUnknownOp(error)) {
+        throw new SolidServerHostError(
+          'the loaded l4factoidal WebAssembly module does not carry lwsDirLock',
+          { unknownOp: true })
+      }
+      throw error
+    }
   }
   let opened
+  let handle
+  const notices = []
   try {
-    opened = engine.call('solidOpen', [JSON.stringify(config)])
-  } catch (error) {
-    if (isUnknownOp(error)) {
-      throw new SolidServerHostError(
-        'the loaded l4factoidal WebAssembly module does not carry solidOpen',
-        { unknownOp: true })
+    if (dir !== null) {
+      const snapshot = readSnapshot(dir)
+      if (snapshot !== null) config.snapshot = snapshot
     }
+    try {
+      opened = engine.call('solidOpen', [JSON.stringify(config)])
+    } catch (error) {
+      if (isUnknownOp(error)) {
+        throw new SolidServerHostError(
+          'the loaded l4factoidal WebAssembly module does not carry solidOpen',
+          { unknownOp: true })
+      }
+      throw error
+    }
+    handle = handleOf(opened)
+    if (handle === null) {
+      throw new SolidServerHostError('solidOpen answered with no handle')
+    }
+    // The start notices: a take-over of a stale lock, and whether the
+    // storage on disk is sealed (encryption at rest).
+    if (dir !== null) {
+      if (lock.warning !== null) notices.push(`WARNING: ${lock.warning}`)
+      notices.push(atRestNotice(engine, dir, storageKey).notice)
+    }
+  } catch (error) {
+    if (lock !== null) lock.release()
     throw error
-  }
-  const handle = handleOf(opened)
-  if (handle === null) {
-    throw new SolidServerHostError('solidOpen answered with no handle')
   }
   return {
     engine,
     handle,
+    /** The lock file of the storage directory, or null with no DIR. */
+    lockFile: lock !== null ? lock.file : null,
+    /** The start notices, for the server to print on standard error. */
+    notices,
     storageIri: typeof opened.storage === 'string' ? opened.storage : null,
     /**
      * One protocol step.
@@ -258,6 +296,7 @@ export async function openSolidStorage (options = {}) {
     },
     close () {
       try { engine.call('solidClose', [handle]) } catch (_error) { /* already gone */ }
+      if (lock !== null) lock.release()
     }
   }
 }
@@ -302,6 +341,10 @@ export async function createSolidServer (options = {}) {
 
   function storage () {
     if (opening === null) {
+      const bound = server.address()
+      if (settings.listen === undefined && bound !== null && typeof bound === 'object') {
+        settings = { ...settings, listen: { address: bound.address, port: bound.port, addresses: [] } }
+      }
       opening = openSolidStorage(settings).then((value) => { opened = value; return value })
     }
     return opening
@@ -345,6 +388,13 @@ export async function createSolidServer (options = {}) {
       }
       settings = { ...settings, baseIri: value }
     },
+    /** Pass what the socket bound, before the first request (issue 1124). */
+    setListen (value) {
+      if (opening !== null) {
+        throw new SolidServerHostError('the storage is already open; set listen first')
+      }
+      settings = { ...settings, listen: value }
+    },
     close () {
       return new Promise((resolve) => {
         server.close(() => {
@@ -380,6 +430,16 @@ function writeHeaders (response, pairs) {
  * @returns {Promise<{server: object, storage: Function, port: number,
  *                    origin: string, close: Function}>}
  */
+/** The addresses of this machine's interfaces. Pure I/O. */
+async function interfaceAddresses () {
+  try {
+    const os = await import('node:os')
+    return Object.values(os.networkInterfaces()).flat().filter(Boolean).map((i) => i.address)
+  } catch (_error) {
+    return []
+  }
+}
+
 export async function listen (options = {}) {
   const port = typeof options.port === 'number' ? options.port : 0
   const host = typeof options.host === 'string' ? options.host : '127.0.0.1'
@@ -391,6 +451,7 @@ export async function listen (options = {}) {
   const bound = created.server.address()
   const origin = `http://${host}:${bound.port}`
   if (typeof options.baseIri !== 'string') created.setBaseIri(`${origin}/`)
+  created.setListen({ host, address: bound.address, port: bound.port, addresses: await interfaceAddresses() })
   try {
     await created.storage()
   } catch (error) {

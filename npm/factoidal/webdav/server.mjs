@@ -179,7 +179,12 @@ export async function openWebdav (options = {}) {
     window: typeof options.loginWindow === 'string' ? options.loginWindow : null,
     disableRateLimits: options.disableRateLimits === true
   }
-  let envelope = callEngine(engine, 'webdavOpen', [JSON.stringify({ listing, entropy: randomBase64(32), now: nowSeconds(), login })])
+  const config = { listing, entropy: randomBase64(32), now: nowSeconds(), login }
+  // The Host and Origin guard of the HTTP listener (issue 1124): the bound
+  // address and the operator's names and origins, passed unread
+  // (L4Factoidal/HTTP/LocalGuard.lean decides).
+  if (options.localGuard !== undefined && options.localGuard !== null) config.localGuard = options.localGuard
+  let envelope = callEngine(engine, 'webdavOpen', [JSON.stringify(config)])
   if (envelope.ok === false) throw new WebdavHostError(envelope.error, { envelope })
   const handle = envelope.handle
   let loads = 0
@@ -196,10 +201,25 @@ export async function openWebdav (options = {}) {
   }
   // Each local storage, opened as lws-serve opens it; the config is the
   // engine's, passed unread.
+  // Each takes the lock of its directory (one writing process per storage
+  // directory, https://github.com/danbri/factoidal/issues/1135): a directory
+  // that lws-serve or another webdav-serve holds stops the start, and the
+  // locks of the mounts opened before it are released.
   const storages = new Map()
-  for (const l of ready.local || []) {
-    const storage = await openLwsStorage({ engine, dir: resolvePath(configDir, l.dir), ...l.config, realClock: true })
-    storages.set(l.name, storage)
+  const storageNotices = []
+  try {
+    for (const l of ready.local || []) {
+      const storage = await openLwsStorage({ engine, dir: resolvePath(configDir, l.dir), ...l.config, realClock: true, lockCommand: 'webdav-serve' })
+      storages.set(l.name, storage)
+      for (const n of storage.notices || []) storageNotices.push(`mount ${l.name}: ${n}`)
+    }
+  } catch (error) {
+    for (const s of storages.values()) s.close()
+    try { engine.call('webdavClose', [handle]) } catch (_error) { /* already gone */ }
+    if (error !== null && typeof error === 'object' && error.envelope !== undefined && !(error instanceof WebdavHostError)) {
+      throw new WebdavHostError(error.envelope.error, { envelope: error.envelope })
+    }
+    throw error
   }
 
   /** Carry one `fetch` the engine named. Pure I/O. */
@@ -267,6 +287,9 @@ export async function openWebdav (options = {}) {
     engine,
     mounts: ready.mounts || [],
     warnings: ready.warnings || [],
+    /** The start notices of the local mounts (a stale lock taken over,
+     *  encryption at rest on or off), for standard error. */
+    storageNotices,
     /**
      * One request, served after the requests before it.
      * @param {{method: string, target: string, headers: Array<[string, string]>, body: Uint8Array, remoteAddress?: string}} request
@@ -280,6 +303,16 @@ export async function openWebdav (options = {}) {
       for (const s of storages.values()) s.close()
       try { engine.call('webdavClose', [handle]) } catch (_error) { /* already gone */ }
     }
+  }
+}
+
+/** The addresses of this machine's interfaces. Pure I/O. */
+async function interfaceAddresses () {
+  try {
+    const os = await import('node:os')
+    return Object.values(os.networkInterfaces()).flat().filter(Boolean).map((i) => i.address)
+  } catch (_error) {
+    return []
   }
 }
 
@@ -321,7 +354,13 @@ export async function listen (options = {}) {
   const tls = options.cert !== undefined && options.key !== undefined
   const http = tls ? await import('node:https') : await import('node:http')
   const host = typeof options.host === 'string' ? options.host : '127.0.0.1'
-  const dav = await openWebdav({ ...options, tls, host })
+  const localGuard = {
+    host,
+    addresses: await interfaceAddresses(),
+    ...(Array.isArray(options.allowHosts) ? { allowHosts: options.allowHosts } : {}),
+    ...(Array.isArray(options.allowOrigins) ? { allowOrigins: options.allowOrigins } : {})
+  }
+  const dav = await openWebdav({ ...options, tls, host, localGuard })
   const onError = typeof options.onError === 'function'
     ? options.onError
     : (error) => { console.error(`webdav-serve: ${error.message}`) }
@@ -348,10 +387,15 @@ export async function listen (options = {}) {
   }
   const server = tls ? http.createServer({ cert: options.cert, key: options.key }, handler) : http.createServer(handler)
   const port = typeof options.port === 'number' ? options.port : 8090
-  await new Promise((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(port, host, resolve)
-  })
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(port, host, resolve)
+    })
+  } catch (error) {
+    dav.close()
+    throw error
+  }
   const bound = server.address()
   const origin = `${tls ? 'https' : 'http'}://${host.includes(':') ? `[${host}]` : host}:${bound.port}`
   return {
@@ -360,6 +404,7 @@ export async function listen (options = {}) {
     origin,
     mounts: dav.mounts,
     warnings: dav.warnings,
+    storageNotices: dav.storageNotices,
     close () {
       return new Promise((resolve) => {
         server.close(() => { dav.close(); resolve() })

@@ -21,7 +21,23 @@ webdav-serve CONFIGDIR --xmpp JID`).
   xmppClientAnswer(handle, requestId, responseJson)
     responseJson: {"status":N,"headers":[[name,value],…],"bodyBase64":"…"}
     -> {"ok":true,"send":[…]}
-  xmppClientClose(handle) -> {"ok":true,"send":[…]}
+  xmppClientClose(handle) -> {"ok":true,"send":[…],"responses":[…]}
+
+The REQUESTER mode (step 2, `factoidal xmpp-http-proxy`): `xmppClientOpen`
+with `"proxyTarget":"bob@example.org/dav"` (a full JID), no `allow` and no
+`mounts`, `"listenHost":"127.0.0.1"` (the only listener address accepted),
+`"timeoutSeconds"?:N` (1 to 3600, default 60). The handle then serves no
+request (an IQ get or set gets `service-unavailable`) and sends requests:
+
+  xmppClientRequest(handle, nowMs, requestJson)
+    requestJson: {"method","target","headers":[[name,value],…],"bodyBase64"}
+    -> {"ok":true,"id":"fxp1","send":[…],"responses":[…]}
+  xmppClientTick(handle, nowMs) -> {"ok":true,"send":[…],"responses":[…]}
+
+`responses` (also in `xmppClientFeed` and `xmppClientClose`) are
+`{"id","status","headers":[[name,value],…],"bodyBase64"}`: the host writes
+each to the HTTP request with that id. Every decision of this mode is
+`L4Factoidal.XMPP.HttpRequester` (`send`, `receive`, `tick`, `abortAll`).
 
 Every decision is in Lean: the stream negotiation, SASL SCRAM-SHA-256 and
 binding (`L4Factoidal.XMPP.ClientStream`); which stanza is an HTTP request,
@@ -43,6 +59,7 @@ import Std.Data.HashMap
 import Wasm.Ops.Support
 import L4Factoidal.XMPP.ClientStream
 import L4Factoidal.XMPP.HttpOverXmpp
+import L4Factoidal.XMPP.HttpRequester
 import L4Factoidal.XML.Enc
 
 namespace L4Wasm.Ops
@@ -63,6 +80,9 @@ structure XcHandle where
   pending : List (Nat × XcPending) := []
   serial : Nat := 0
   boundJid : Option String := none
+  /-- Requester mode (`xmpp-http-proxy`): the requester's configuration and
+  state. `none`: the handle serves HTTP (`webdav-serve --xmpp`). -/
+  proxy : Option (HttpRequester.Config × HttpRequester.State) := none
 
 initialize xcCounter : IO.Ref Nat ← IO.mkRef 0
 initialize xcTable : IO.Ref (Std.HashMap String XcHandle) ← IO.mkRef ∅
@@ -120,6 +140,76 @@ def xcStartRefusal (allow : List String) (tls : Bool) (host : String)
 #guard (xcStartRefusal ["alice@example.org"] true "xmpp.example.org" ["notes"] false).isSome
 #guard (xcStartRefusal ["alice@example.org"] true "xmpp.example.org" ["notes"] true).isNone
 
+/-- Why the requester (`xmpp-http-proxy`) may not start, or `none`
+(https://github.com/danbri/factoidal/issues/1107 step 2;
+https://github.com/danbri/factoidal/issues/1120):
+
+* the target is a full JID (`user@domain/resource`): requests go to that one
+  entity and to no other;
+* the handle serves nothing, so it takes no allow list and no mounts;
+* the HTTP listener binds 127.0.0.1 only (this step; the `Host`/`Origin`
+  guard of https://github.com/danbri/factoidal/issues/1124 is not in it);
+* the XMPP transport is TLS, or plain TCP to a literal loopback address;
+* the timeout is 1 to 3600 seconds. -/
+def xcProxyRefusal (target : String) (allow : List String) (hasMounts : Bool)
+    (listenHost : String) (tls : Bool) (host : String) (timeoutSeconds : Nat) : Option String :=
+  match Jid.parse target with
+  | none => some s!"--target is not a JID: {target}"
+  | some j =>
+  if j.localpart.isNone || j.resourcepart.isNone then
+    some s!"--target must be a full JID (user@domain/resource): {target}"
+  else if !allow.isEmpty then some "the proxy serves no requests: an allow list does not apply"
+  else if hasMounts then some "the proxy serves no requests: mounts do not apply"
+  else if listenHost != "127.0.0.1" then
+    some s!"the proxy listens on 127.0.0.1 only, not {listenHost} (https://github.com/danbri/factoidal/issues/1124)"
+  else if !tls && !ClientStream.isLoopbackHost host then
+    some s!"plain TCP to {host} is refused: use --xmpp-tls (direct TLS), or a loopback address"
+  else if timeoutSeconds < 1 || timeoutSeconds > 3600 then
+    some s!"the timeout is 1 to 3600 seconds, not {timeoutSeconds}"
+  else none
+
+#guard (xcProxyRefusal "bob@example.org/dav" [] false "127.0.0.1" true "x.example" 60).isNone
+#guard (xcProxyRefusal "bob@example.org" [] false "127.0.0.1" true "x.example" 60).isSome
+#guard (xcProxyRefusal "example.org/dav" [] false "127.0.0.1" true "x.example" 60).isSome
+#guard (xcProxyRefusal "bob@example.org/dav" ["a@b"] false "127.0.0.1" true "x.example" 60).isSome
+#guard (xcProxyRefusal "bob@example.org/dav" [] false "0.0.0.0" true "x.example" 60).isSome
+#guard (xcProxyRefusal "bob@example.org/dav" [] false "::1" true "x.example" 60).isSome
+#guard (xcProxyRefusal "bob@example.org/dav" [] false "127.0.0.1" false "x.example" 60).isSome
+#guard (xcProxyRefusal "bob@example.org/dav" [] false "127.0.0.1" false "127.0.0.1" 60).isNone
+#guard (xcProxyRefusal "bob@example.org/dav" [] false "127.0.0.1" true "x.example" 0).isSome
+
+def xcResponseJ (d : HttpRequester.Done) : Json :=
+  .object [ ("id", .string d.id), ("status", .number (toString d.response.status))
+          , ("headers", xcHeadersJ d.response.headers)
+          , ("bodyBase64", .string (L4Factoidal.XML.Enc.base64 d.response.body)) ]
+
+/-- The requester-mode start (`proxyTarget` given). -/
+def xmppClientOpenProxy (j : Json) (jid : Jid) (user password nonce target : String) : IO String := do
+  let resource := (j.getString? "resource").getD (jid.resourcepart.getD "proxy")
+  let allow := ((j.getArray? "allow").getD []).filterMap Json.asString?
+  let hasMounts := !((j.getArray? "mounts").getD []).isEmpty
+  let tls := (j.getBool? "tls").getD false
+  let host := (j.getString? "host").getD jid.domainpart
+  let listenHost := (j.getString? "listenHost").getD ""
+  let timeoutSeconds := (xcNat? j "timeoutSeconds").getD 60
+  if let some why := xcProxyRefusal target allow hasMounts listenHost tls host timeoutSeconds then
+    return errJson s!"xmppClientOpen: {why}"
+  let base : ClientStream.Config :=
+    { user, domain := jid.domainpart, resource, password, clientNonce := nonce
+      secureTransport := tls || ClientStream.isLoopbackHost host }
+  let cfg := match xcNat? j "minIterations" with
+    | some m => { base with minIterations := m }
+    | none => base
+  let rq : HttpRequester.Config := { target, timeoutMs := timeoutSeconds * 1000 }
+  let (st, outs) := ClientStream.start cfg
+  let n ← xcCounter.modifyGet (fun c => (c + 1, c + 1))
+  let h := s!"xmppc{n}"
+  xcTable.modify (·.insert h { cfg, http := { allow := [] }, st, proxy := some (rq, {}) })
+  pure (okWith [("handle", .string h), ("domain", .string jid.domainpart), ("host", .string host),
+                ("tls", .bool tls), ("target", .string target), ("listenHost", .string listenHost),
+                ("maxBodyBytes", .number (toString rq.maxBodyBytes)),
+                ("send", xcStrs (xcSends outs))])
+
 /-- `xmppClientOpen(configJson)`. -/
 def xmppClientOpen (configJson : String) : IO String := do
   match parseJson configJson with
@@ -137,6 +227,8 @@ def xmppClientOpen (configJson : String) : IO String := do
     if password.isEmpty then return errJson "xmppClientOpen: \"password\" is required"
     if nonce.length < 16 || nonce.contains ',' then
       return errJson "xmppClientOpen: \"clientNonce\" must be at least 16 characters with no comma"
+    if let some target := j.getString? "proxyTarget" then
+      return (← xmppClientOpenProxy j jid user password nonce target)
     let resource := (j.getString? "resource").getD (jid.resourcepart.getD "factoidal")
     let allow := ((j.getArray? "allow").getD []).filterMap Json.asString?
     let tls := (j.getBool? "tls").getD false
@@ -165,6 +257,15 @@ def xmppClientOpen (configJson : String) : IO String := do
     pure (okWith [("handle", .string h), ("domain", .string jid.domainpart), ("host", .string host),
                   ("tls", .bool tls), ("writableWithoutLogin", xcStrs (if optIn then writableLocal else [])),
                   ("send", xcStrs (xcSends outs))])
+
+/-- One incoming stanza after binding, in requester mode: responses for the
+host, `close` messages to the target, `service-unavailable` for an IQ get or
+set (the proxy serves nothing). -/
+private def xcProxyStanza (hd : XcHandle) (rq : HttpRequester.Config) (rs : HttpRequester.State)
+    (text : String) : XcHandle × List String × List HttpRequester.Done :=
+  let step := HttpRequester.receive rq rs text
+  let out := step.send.map (·.render) ++ ClientStream.answerUnserved text
+  ({ hd with proxy := some (rq, step.st) }, out.flatMap (fun t => xcSends (ClientStream.outgoing hd.st t)), step.done)
 
 /-- One incoming stanza after binding: an HTTP request for the host, the
 stanzas to send now, or `service-unavailable`. -/
@@ -200,18 +301,27 @@ def xmppClientFeed (h text : String) : IO String := do
     let mut sends : List String := []
     let mut reqs : List Json := []
     let mut closeReason : Option String := none
+    let mut done : List HttpRequester.Done := []
     for o in outs do
       match o with
       | .send t => sends := sends ++ [t]
       | .bound j => hd := { hd with boundJid := some j }
       | .close r => closeReason := some r
       | .stanza t =>
-        let (hd', s', r') := xcStanza hd t sends reqs
-        hd := hd'
-        sends := s'
-        reqs := r'
+        match hd.proxy with
+        | some (rq, rs) =>
+          let (hd', s', d') := xcProxyStanza hd rq rs t
+          hd := hd'
+          sends := sends ++ s'
+          done := done ++ d'
+        | none =>
+          let (hd', s', r') := xcStanza hd t sends reqs
+          hd := hd'
+          sends := s'
+          reqs := r'
     xcTable.modify (·.insert h hd)
     pure (okWith [ ("send", xcStrs sends), ("requests", .array reqs)
+                 , ("responses", .array (done.map xcResponseJ))
                  , ("bound", hd.boundJid.elim .null .string)
                  , ("close", .bool closeReason.isSome)
                  , ("reason", closeReason.elim .null .string)
@@ -242,16 +352,64 @@ def xmppClientAnswer (h idText responseJson : String) : IO String := do
       xcTable.modify (·.insert h hd)
       pure (okWith [("send", xcStrs (out.flatMap (fun t => xcSends (ClientStream.outgoing hd.st t))))])
 
-/-- `xmppClientClose(handle)`. -/
+/-- `xmppClientClose(handle)`. In requester mode every waiting request gets
+502 (`HttpRequester.abortAll`). -/
 def xmppClientClose (h : String) : IO String := do
   match (← xcTable.get)[h]? with
   | none => pure (unknownXc h)
   | some hd =>
     let (_, outs) := ClientStream.close hd.st
+    let done := match hd.proxy with
+      | some (rq, rs) => (HttpRequester.abortAll rq rs "the client closed it").done
+      | none => []
     xcTable.modify (·.erase h)
-    pure (okWith [("send", xcStrs (xcSends outs))])
+    pure (okWith [("send", xcStrs (xcSends outs)), ("responses", .array (done.map xcResponseJ))])
+
+/-- `xmppClientRequest(handle, nowMs, requestJson)`: requester mode only. -/
+def xmppClientRequest (h nowText requestJson : String) : IO String := do
+  match (← xcTable.get)[h]? with
+  | none => pure (unknownXc h)
+  | some hd =>
+    match hd.proxy with
+    | none => pure (errJson "xmppClientRequest: this handle serves HTTP; it sends no requests")
+    | some (rq, rs) =>
+    match nowText.toNat?, parseJson requestJson with
+    | none, _ => pure (errJson s!"xmppClientRequest: the time is not a number: {nowText}")
+    | _, .error e => pure (errJson s!"xmppClientRequest: not JSON: {toString e}")
+    | some now, .ok j =>
+      let body := match j.getString? "bodyBase64" with
+        | some t => (L4Factoidal.XML.Enc.base64Decode? t).getD ByteArray.empty
+        | none => ByteArray.empty
+      let r : HttpRequester.HttpRequest :=
+        { method := (j.getString? "method").getD "", target := (j.getString? "target").getD ""
+          headers := xcHeadersOf j, body }
+      if hd.boundJid.isNone then
+        let d : HttpRequester.Done := ⟨"fxp0", HttpRequester.plain 503 "the XMPP stream is not bound yet"⟩
+        return okWith [("id", .string d.id), ("send", xcStrs []), ("responses", .array [xcResponseJ d])]
+      let (id, step) := HttpRequester.send rq rs now r
+      let hd := { hd with proxy := some (rq, step.st) }
+      xcTable.modify (·.insert h hd)
+      let sends := step.send.flatMap (fun a => xcSends (ClientStream.outgoing hd.st a.render))
+      pure (okWith [("id", .string id), ("send", xcStrs sends), ("responses", .array (step.done.map xcResponseJ))])
+
+/-- `xmppClientTick(handle, nowMs)`: requester mode; requests past their
+deadline get 504. -/
+def xmppClientTick (h nowText : String) : IO String := do
+  match (← xcTable.get)[h]? with
+  | none => pure (unknownXc h)
+  | some hd =>
+    match hd.proxy, nowText.toNat? with
+    | none, _ => pure (okWith [("send", xcStrs []), ("responses", .array [])])
+    | _, none => pure (errJson s!"xmppClientTick: the time is not a number: {nowText}")
+    | some (rq, rs), some now =>
+      let step := HttpRequester.tick rq rs now
+      let hd := { hd with proxy := some (rq, step.st) }
+      xcTable.modify (·.insert h hd)
+      let sends := step.send.flatMap (fun a => xcSends (ClientStream.outgoing hd.st a.render))
+      pure (okWith [("send", xcStrs sends), ("responses", .array (step.done.map xcResponseJ))])
 
 def xmppClientOpNames : List String :=
-  ["xmppClientOpen", "xmppClientFeed", "xmppClientAnswer", "xmppClientClose"]
+  ["xmppClientOpen", "xmppClientFeed", "xmppClientAnswer", "xmppClientClose",
+   "xmppClientRequest", "xmppClientTick"]
 
 end L4Wasm.Ops

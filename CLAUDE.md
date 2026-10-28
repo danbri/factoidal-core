@@ -867,6 +867,24 @@ deployments?" Rule: the Lean MCP core is 2026-07-28 stateless only; the
 2025-11-25 `initialize`/session flow is a separate compatibility layer over
 it, for stdio and HTTP only. Record: section 7a of the design record above.
 
+### WebDAV media types; single-file executables (owner, 2026-10-28)
+
+Owner, 2026-10-28, verbatim: "Decisions / 1 y / 2y", to these questions
+(https://github.com/danbri/factoidal-core/pull/179, desktop WebDAV labs):
+
+1. https://github.com/danbri/factoidal/issues/1122 (PUT with no
+   Content-Type): yes. A PUT with no Content-Type, and a LOCK that makes an
+   empty resource, get the media type of the name's extension from a fixed
+   table in Lean (`formal/lean4/L4Factoidal/WebDAV/MediaType.lean`); a name
+   with no known extension stays `application/octet-stream`; a client's
+   Content-Type is kept.
+2. Single-file executables, stage 1 of
+   `docs/designissues/2026-10-28-single-file-app.md`: yes. `deno compile` of
+   the CLI with the wasm included, for six targets (`tools/build-exe.sh`,
+   checked by `tools/check-exe.sh`), built and released by
+   `danbri/factoidal-builds` (`exe.yml`, set `exe`). Stages 2 to 4 (the
+   local web GUI, the Cosmopolitan study, signing) still need a decision.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where
@@ -965,7 +983,17 @@ https://github.com/danbri/factoidal/issues/914 (moving resources).
   option, off by default. Build on `L4Factoidal/Storage/BlockMerkle.lean`
   (hash as a parameter; pure Lean SHA-256 as the specification instance).
 - Encryption at rest of the LWS storage: key from an environment variable,
-  off by default. Crypto per `skills/crypto-policy`.
+  off by default. Crypto per `skills/crypto-policy`. Owner, 2026-10-28,
+  verbatim: "For our lws encourage attention to encryption at rest also".
+  Rule: it stays off by default; every server that keeps a storage in a
+  directory (`lws-serve`, `solid-serve`, `webdav-serve` local mounts) says
+  at start, on standard error after the experimental code notice, whether
+  the storage is sealed (with the key id) or written in clear text, and how
+  to make a key (`factoidal lws-keygen`). The engine words the notice
+  (`LWS/DirLock.lean`, `atRestNotice`). Docs: the hub servers page and the
+  npm README, section "Encryption at rest". No re-key or seal-in-place yet:
+  https://github.com/danbri/factoidal/issues/1136 (expected failure in
+  `tests/lws/encryption.mjs`).
 - Confidential computing (SEV-SNP, TDX, Nitro, SGX, TPM measured boot): a
   research note only.
 - Type search `Content-Location` results resource: an anticipatory

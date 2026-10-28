@@ -63,7 +63,9 @@ export function parseArgs (argv) {
 /** The command that runs `factoidal`: [executable, ...leading args]. */
 export function factoidalCommand (cli) {
   const chosen = cli || process.env.FACTOIDAL_CLI || null
-  if (chosen) return [process.execPath, chosen]
+  // A .mjs or .js file runs under this Node; anything else is an executable
+  // (for example a `deno compile` build of the CLI).
+  if (chosen) return /\.(mjs|cjs|js)$/.test(chosen) ? [process.execPath, chosen] : [chosen]
   const repoCli = join(REPO, 'npm/factoidal/bin/factoidal.mjs')
   const assets = [join(REPO, 'npm/factoidal/l4-assets/l4factoidal.wasm'), join(REPO, 'docs/web/hub/assets/l4/l4factoidal.wasm')]
   if (existsSync(repoCli) && (assets.some(existsSync) || process.env.FACTOIDAL_L4_ASSETS)) return [process.execPath, repoCli]

@@ -114,11 +114,13 @@ GUI). `probe-linux.sh`: 21 ok, 0 FAIL, 11 info (out of 32 lines). Files:
    served as `text/plain` is not a launcher; the seeder now sends the
    shared-mime-info types (`application/x-desktop`, `application/x-mswinurl`,
    `application/x-webloc`).
-4. gvfs sends PUT with no `Content-Type`. The server then stores
-   `application/octet-stream`, so a file that a GNOME user saves shows as
-   binary afterwards: https://github.com/danbri/factoidal/issues/1122
-   (proposal: a type from the extension, decided in Lean; xfail in
-   `selftest.mjs`).
+4. gvfs sends PUT with no `Content-Type`. The server then stored
+   `application/octet-stream`, so a file that a GNOME user saved showed as
+   binary afterwards: https://github.com/danbri/factoidal/issues/1122.
+   Owner, 2026-10-28: "1 y" to the proposal. The type now comes from the
+   name's extension (`formal/lean4/L4Factoidal/WebDAV/MediaType.lean`); the
+   `selftest.mjs` check is a plain check (an engine older than the fix
+   fails it).
 5. gvfs saves a file with one PUT to the file (no temporary file and MOVE),
    tests that a name is free with PROPFIND Depth 0 (a 404), and sends a
    rename as MOVE with `Overwrite: F`. 35 of 44 PROPFINDs were Depth 0; the
@@ -158,3 +160,4 @@ GUI). `probe-linux.sh`: 21 ok, 0 FAIL, 11 info (out of 32 lines). Files:
 | Request bodies kept in the log: first 4 KiB of XML and text | implementer | `results/.gitignore` keeps `*.jsonl` out of git |
 | Engine: `--cli`, `$FACTOIDAL_CLI`, this checkout with fetched assets, else `npx -p @factoidal/core` | implementer | the selftest skips (does not use npx) unless `--allow-npx` |
 | PUT with no Content-Type: open an issue with a proposal, no server change in this landing | implementer | CLAUDE.md, "Reading owner steers", rule 4 |
+| PUT with no Content-Type: the type of the name's extension, fixed table in Lean; `._*` names `application/applefile` | owner ("1 y", 2026-10-28), implementer (table, AppleDouble rule) | https://github.com/danbri/factoidal/issues/1122 |

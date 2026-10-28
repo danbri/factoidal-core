@@ -23,6 +23,22 @@ made by Lean code; the Node host only moves bytes.
 
 ActivityStreams: the tree has no ActivityStreams or ActivityPub server.
 
+## Requests from web pages
+
+`factoidal serve`, `webdav-serve`, and `lws-serve` and `solid-serve` with
+`--insecure-no-auth` answer only their own host names: `localhost`,
+`127.0.0.1`, `[::1]`, the `--host` address and the addresses of the
+machine. Another `Host` gets 421 Misdirected Request, so a web page cannot
+reach them through DNS rebinding. A request with a method other than GET,
+HEAD and OPTIONS whose `Origin` is another origin gets 403, so a form on
+another site cannot POST `update=DROP ALL`. `lws-serve --insecure-no-auth`
+sends no CORS fields unless `--cors-origin ORIGIN` names a page. Add a name
+with `--allow-host NAME` (a reverse proxy, Tailscale) and an origin with
+`--allow-origin ORIGIN`. curl and other clients that send no `Origin` work as
+before. Record: https://github.com/danbri/factoidal/issues/1124. Open:
+`solid-serve --insecure-no-auth` still echoes any `Origin` (Solid Protocol
+§8.1), so a page on another origin can read it.
+
 ## SPARQL 1.1 Protocol and Graph Store, Fuseki paths
 
 ```
@@ -142,8 +158,13 @@ operation, from the
 containers, create, read, update and delete, `Last-Modified`, auxiliary
 resource links, N3 Patch without blank nodes in insertions.
 
-What it does not do: the resource tree is held in memory; `DIR` is not
-read or written yet. No storage-server authorization (401 challenge,
+`DIR` keeps the storage: one snapshot file `DIR/lws-state.json` (the
+default), or with `--storage files` one file per body, a journal and a
+metadata file. Design record:
+[2026-10-22-lws-storage-on-disk.md](https://github.com/danbri/factoidal-core/blob/main/docs/designissues/2026-10-22-lws-storage-on-disk.md).
+
+What it does not do (this list is from 2026-10-20 and some of its issues are
+closed; see each issue): no storage-server authorization (401 challenge,
 token validation): <https://github.com/danbri/factoidal/issues/886>. No
 container pagination: <https://github.com/danbri/factoidal/issues/887>.
 No client-managed metadata:
@@ -174,6 +195,103 @@ link: <http://www.w3.org/ns/ldp#RDFSource>; rel="type", <http://www.w3.org/ns/ld
 
 <#it> <http://purl.org/dc/terms/title> "A" .
 ```
+
+### One process per storage directory
+
+One process writes a storage directory
+(<https://github.com/danbri/factoidal/issues/1135>). `lws-serve DIR`,
+`solid-serve DIR` and each `webdav-serve` local mount hold the lock file
+`DIR/lws.lock` while they run. The file holds the process id, the command,
+the start time, the host name and a random token of the process. A clean
+exit (Ctrl-C, SIGTERM, the end of the process) removes it.
+
+- A start on a directory whose lock names a process that runs is refused.
+  The message names the lock file and that process. Stop that process first:
+
+  ```
+  factoidal lws-serve: the storage directory /home/me/clear-store is in use: /home/me/clear-store/lws.lock
+    names process 27083 (lws-serve, started 2026-10-28T08:48:29.823Z) on host vm, and that process runs.
+    One process writes a storage directory (https://github.com/danbri/factoidal/issues/1135).
+    Stop that process first.
+  ```
+- A lock of a process that does not run (for example after a crash) is
+  taken over. The server prints a warning.
+- A lock of another host is refused: this host cannot tell if that process
+  runs. Remove the file only if it does not.
+- A program that does not take the lock (another tool, an older Factoidal)
+  is not stopped by it.
+
+The engine decides the file, its contents and every refusal
+([`LWS/DirLock.lean`](https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/LWS/DirLock.lean));
+the server only creates the file (`O_EXCL`), asks the system if a process
+runs, and removes the file.
+
+### Encryption at rest
+
+Encryption at rest is off by default. Without a key, the storage is written
+to disk in clear text, and every start says so on standard error:
+
+```
+lws-serve: encryption at rest is OFF: the storage in /home/me/clear-store is written to disk in clear text.
+  To seal it, make a key with `factoidal lws-keygen`, keep a copy of the key in a safe place (a lost key
+  is lost data), and start with FACTOIDAL_LWS_KEY set to it on an empty storage directory.
+  See https://danbri.github.io/factoidal/web/hub/servers/#encryption-at-rest
+```
+
+To turn it on:
+
+1. Make a key. `factoidal lws-keygen` prints 32 random bytes as 64 hex
+   digits, and the key id on standard error.
+2. Keep a copy of the key in a safe place. **If you lose the key, you lose
+   the data.** There is no recovery.
+3. Set `FACTOIDAL_LWS_KEY` to the key and start the server on an empty
+   storage directory:
+
+```
+$ export FACTOIDAL_LWS_KEY="$(factoidal lws-keygen)"
+factoidal lws-keygen: WARNING: EXPERIMENTAL UNREVIEWED CODE - ...
+lws-keygen: key id fc5e47ded8ec8264. Keep a copy of the key in a safe place: without it the storage cannot be read.
+lws-keygen: start the server with FACTOIDAL_LWS_KEY set to it, on an empty storage directory.
+$ factoidal lws-serve ./lws-store --issuer https://issuer.example
+factoidal lws-serve: WARNING: EXPERIMENTAL UNREVIEWED CODE - ...
+lws-serve: encryption at rest is ON: the storage in /home/me/lws-store is sealed with ChaCha20-Poly1305
+  under key id fc5e47ded8ec8264.
+```
+
+(Recorded 2026-10-28; the lines are wrapped here, and the directory
+names are shortened.)
+
+The same variable applies to `solid-serve DIR` and to `webdav-serve` local
+mounts.
+
+What is sealed (ChaCha20-Poly1305 from HACL\*, a new random nonce for every
+write, authenticated before any byte is used):
+
+- the snapshot `DIR/lws-state.json` (default mode): the whole storage;
+- with `--storage files`: every body file `DIR/bodies/XX/N`, every journal
+  record of `DIR/lws-journal`, and the metadata file `DIR/lws-files.json`.
+
+What is not protected:
+
+- the names of the files, their sizes and the times of the writes. In files
+  mode a body file name is a number and holds no part of the resource path,
+  but the number of body files and the size of each are visible;
+- the lock file `DIR/lws.lock` (process id, command, start time, host name);
+- the storage while the server runs: it is in the server's memory in clear
+  text, and the answers go out as the protocol says;
+- the key itself, in the environment of the server process.
+
+Rules the engine applies at start: a wrong key, a changed or truncated file,
+a clear-text storage with a key set, and a sealed storage without the key
+each stop the start with a message.
+
+Not possible yet (<https://github.com/danbri/factoidal/issues/1136>): to
+change the key of a sealed storage, and to seal an existing clear-text
+storage. Turn encryption on for a new, empty storage directory.
+
+Design: [`LWS/SnapshotSeal.lean`](https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/LWS/SnapshotSeal.lean),
+[`LWS/FileLayout.lean`](https://github.com/danbri/factoidal-core/blob/main/formal/lean4/L4Factoidal/LWS/FileLayout.lean),
+<https://github.com/danbri/factoidal/issues/921>.
 
 ## Authorization server (OAuth 2.0 token exchange)
 

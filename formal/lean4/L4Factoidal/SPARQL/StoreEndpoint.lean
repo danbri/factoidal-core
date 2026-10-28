@@ -52,6 +52,7 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import Std.Data.HashSet
 import L4Factoidal.HTTP.Server
+import L4Factoidal.HTTP.LocalGuard
 import L4Factoidal.SPARQL.ProtocolService
 import L4Factoidal.SPARQL.GraphStoreService
 import L4Factoidal.SPARQL.ServiceDescription
@@ -107,6 +108,12 @@ structure Config where
   /-- The URI authority when a request carries no `Host` field. -/
   authority : String := "localhost"
   scope : WriteScope := .allGraphs
+  /-- The `Host` and `Origin` guard (https://github.com/danbri/factoidal/issues/1124):
+  `factoidal serve` has no authentication, so it answers only its own names
+  and refuses an update or a Graph Store write from another origin, for
+  example a cross-site form POST of `update=DROP ALL`. `none` turns the
+  check off (a caller with no socket). -/
+  guard : Option HTTP.LocalGuard.LocalGuard := none
   deriving Repr
 
 /-- The dataset a generation and its replayed delta log denote, and the
@@ -786,7 +793,7 @@ def adminSub? (path : String) : Option String :=
 
 /-- One request against the served view. `info` is what the administration
 API reports. -/
-def handle (cfg : Config) (env : EvalEnv) (view : View) (req : HTTP.Request)
+def handleOpen (cfg : Config) (env : EvalEnv) (view : View) (req : HTTP.Request)
     (info : ServerInfo := {}) : Outcome :=
   match adminSub? req.path with
   | some sub => adminOutcome cfg env info req sub
@@ -818,6 +825,36 @@ def handle (cfg : Config) (env : EvalEnv) (view : View) (req : HTTP.Request)
       serviceDescriptionOutcome req serviceIri
     else protocolOutcome cfg.scope env view req serviceIri
   else text 404 s!"no endpoint at {req.path}; the query endpoint is {cfg.queryPath} and the graph store is {cfg.gspPath}"
+
+/-- One request: the `Host` and `Origin` guard first (issue 1124), then
+`handleOpen`. -/
+def handle (cfg : Config) (env : EvalEnv) (view : View) (req : HTTP.Request)
+    (info : ServerInfo := {}) : Outcome :=
+  match cfg.guard.bind (fun g => HTTP.LocalGuard.admit g req) with
+  | some resp => { response := resp }
+  | none => handleOpen cfg env view req info
+
+/-- A request the guard refuses changes nothing: no delta-log entry, no new
+dataset (invariant I7). -/
+theorem handle_guard_refused (cfg : Config) (env : EvalEnv) (view : View) (req : HTTP.Request)
+    (info : ServerInfo) (g : HTTP.LocalGuard.LocalGuard) (resp : HTTP.Response)
+    (hg : cfg.guard = some g) (h : HTTP.LocalGuard.admit g req = some resp) :
+    handle cfg env view req info = { response := resp } ∧
+      (handle cfg env view req info).commit = none := by
+  simp [handle, hg, h]
+
+/-- A cross-site update: an unsafe method with a foreign `Origin` changes
+nothing, whatever its body. -/
+theorem handle_cross_origin_update (cfg : Config) (env : EvalEnv) (view : View)
+    (req : HTTP.Request) (info : ServerInfo) (g : HTTP.LocalGuard.LocalGuard) (o : String)
+    (hg : cfg.guard = some g)
+    (hh : (req.header? "host").all g.hostAllowed = true)
+    (hw : HTTP.LocalGuard.isSafe req.method = false) (ho : req.header? "origin" = some o)
+    (hs : HTTP.LocalGuard.sameOrigin o (req.header? "host") = false)
+    (hn : g.origins.contains o = false) :
+    (handle cfg env view req info).commit = none :=
+  (handle_guard_refused cfg env view req info g _ hg
+    (HTTP.LocalGuard.localGuard_cross_origin_write g req o hh hw ho hs hn)).2
 
 /-! ## Checks -/
 

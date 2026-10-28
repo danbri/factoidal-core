@@ -361,6 +361,9 @@ def lwsSolidOpNames : List String :=
   , "lwsLoad"
   , "lwsPersist"
   , "lwsRead"
+  , "lwsDirLock"
+  , "lwsAtRestNotice"
+  , "lwsStorageKeyNew"
   , "solidOpen"
   , "solidStep"
   , "solidClose"
@@ -716,6 +719,20 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "lwsFetched"       => withArgs (arityIO2 op Ops.lwsFetched)
   | "lwsDelivered"     => withArgs (arityIO2 op Ops.lwsDelivered)
   | "lwsFlush"         => withArgs (arityIO2 op Ops.lwsFlush)
+  -- One writing process per storage directory and the encryption-at-rest
+  -- notice (https://github.com/danbri/factoidal/issues/1135): pure.
+  | "lwsDirLock"       => withArgs (fun args =>
+      match args with
+      | [a] => pure (Ops.lwsDirLock a)
+      | args => pure (errJson s!"lwsDirLock expects 1 argument, got {args.length}"))
+  | "lwsAtRestNotice"  => withArgs (fun args =>
+      match args with
+      | [a] => pure (Ops.lwsAtRestNotice a)
+      | args => pure (errJson s!"lwsAtRestNotice expects 1 argument, got {args.length}"))
+  | "lwsStorageKeyNew" => withArgs (fun args =>
+      match args with
+      | [a] => pure (Ops.lwsStorageKeyNew a)
+      | args => pure (errJson s!"lwsStorageKeyNew expects 1 argument, got {args.length}"))
   -- A storage kept in files (https://github.com/danbri/factoidal/issues/918):
   -- both carry file bytes, in and out.
   | "lwsLoad" | "lwsPersist" | "lwsRead" =>
@@ -771,6 +788,8 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "xmppClientFeed"     => withArgs (arityIO2 op Ops.xmppClientFeed)
   | "xmppClientAnswer"   => withArgs (arityIO3 op Ops.xmppClientAnswer)
   | "xmppClientClose"    => withArgs (arityIO1 op Ops.xmppClientClose)
+  | "xmppClientRequest"  => withArgs (arityIO3 op Ops.xmppClientRequest)
+  | "xmppClientTick"     => withArgs (arityIO2 op Ops.xmppClientTick)
   | "storeHandleList" =>
       withArgs (fun args =>
         match args with

@@ -4,9 +4,9 @@
 // transcripts and claims true.
 //
 // The login and HTTPS of the listener (https://github.com/danbri/factoidal/issues/1108)
-// are checked as the page shows them. The expected failure names the gap the
-// page states: https://github.com/danbri/factoidal/issues/1107 (no local proxy
-// for HTTP over XMPP yet, so no file browser reaches it).
+// are checked as the page shows them. HTTP over XMPP
+// (https://github.com/danbri/factoidal/issues/1107) is checked through the
+// local proxy `xmpp-http-proxy`, as the page shows it.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,12 +18,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { xfail } from './_helpers.mjs';
 import { TestClient, request as xreq } from '../webdav/xmpp-client.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CLI = path.join(ROOT, 'npm', 'factoidal', 'bin', 'factoidal.mjs');
-const XMPP_ISSUE = 'https://github.com/danbri/factoidal/issues/1107';
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-webdav-'));
 const children = [];
@@ -177,6 +175,10 @@ test('webdav: failed logins are limited (--login-limit, --login-window); --dange
   assert.match(right.headers['retry-after'], /^[0-9]+$/);
   assert.ok(Number(right.headers['retry-after']) <= 300);
   assert.equal((await req(s.origin, 'PROPFIND', '/', { depth: '0' })).status, 401);
+  // One process writes a storage directory (https://github.com/danbri/factoidal/issues/1135):
+  // stop the first server before the second opens the same mount.
+  s.child.kill('SIGTERM');
+  await new Promise((r) => (s.child.exitCode !== null ? r() : s.child.on('close', r)));
   const off = await start(['webdav-serve', 'dav', '--port', '0', '--users', 'users.txt', '--dangerously-disable-ratelimits'], dir);
   // Standard error and standard output are two pipes: wait for the warning.
   for (let i = 0; i < 50 && !off.out().includes('WARNING: --dangerously'); i++) await new Promise((r) => setTimeout(r, 100));
@@ -256,9 +258,34 @@ test('webdav: reach the server through XMPP (XEP-0332)', async () => {
   }
 });
 
-// The page: no file browser speaks XEP-0332, so a file browser needs the
-// local proxy of step 2 (https://github.com/danbri/factoidal/issues/1107).
-xfail('webdav: a file browser reaches the server through XMPP (local proxy)', XMPP_ISSUE, async () => {
+// The page: a file browser reaches the server through the local proxy of
+// step 2 (`xmpp-http-proxy`, https://github.com/danbri/factoidal/issues/1107).
+// The full test, with litmus, rclone and cadaver, is tests/webdav/xmpp-proxy.mjs.
+test('webdav: a file browser reaches the server through XMPP (local proxy)', async () => {
   const dir = emptyConfig('xmpp-proxy');
-  await start(['xmpp-http-proxy', 'bob@example.org/dav', '--port', '0'], dir);
+  fs.mkdirSync(path.join(dir, 'xmpp-state'));
+  fs.writeFileSync(path.join(dir, 'accounts'), 'alice:alice-password\nbob:bob-password\ncarol:carol-password\n');
+  fs.writeFileSync(path.join(dir, 'bob.password'), 'bob-password\n');
+  fs.writeFileSync(path.join(dir, 'alice.password'), 'alice-password\n');
+  const xs = await startUntil(['xmpp-serve', 'xmpp-state', '--port', '0', '--domain', 'example.org', '--accounts', 'accounts'],
+    dir, /^xmpp:\/\/127\.0\.0\.1:(\d+)$/m);
+  const port = xs[1];
+  await startUntil(['webdav-serve', 'dav', '--xmpp', 'bob@example.org', '--xmpp-password-file', 'bob.password',
+    '--xmpp-allow', 'alice@example.org', '--xmpp-host', '127.0.0.1', '--xmpp-port', port,
+    '--dangerously-allow-writable-without-login'], dir, /^xmpp:(\S+)$/m);
+  const proxy = await startUntil(['xmpp-http-proxy', '--xmpp', 'alice@example.org', '--xmpp-password-file', 'alice.password',
+    '--target', 'bob@example.org/dav', '--xmpp-host', '127.0.0.1', '--xmpp-port', port, '--port', '0'],
+  dir, /^(http:\/\/127\.0\.0\.1:\d+)\/$/m);
+  const origin = proxy[1];
+  const pf = await req(origin, 'PROPFIND', '/', { depth: '1' });
+  assert.equal(pf.status, 207);
+  assert.match(pf.text, /\/notes\//);
+  assert.equal((await req(origin, 'PUT', '/notes/b.txt', { 'content-type': 'text/plain' }, 'via the proxy')).status, 201);
+  assert.equal((await req(origin, 'GET', '/notes/b.txt')).text, 'via the proxy');
+  // The page: --host other than 127.0.0.1 is refused.
+  const refused = spawnSync(process.execPath, [CLI, 'xmpp-http-proxy', '--xmpp', 'alice@example.org',
+    '--xmpp-password-file', 'alice.password', '--target', 'bob@example.org/dav', '--xmpp-host', '127.0.0.1',
+    '--xmpp-port', port, '--host', '0.0.0.0'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /127\.0\.0\.1 only/);
 });

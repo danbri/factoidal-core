@@ -453,31 +453,58 @@ no state-changing request whose `Origin` is another origin. CORS echo is never
 the default when authorization is off. No CORS profile sends
 `Access-Control-Allow-Credentials: true` together with echo.
 
-Enforced today. Path 4: `#guard`. Paths 1 to 3: not enforced.
+Enforced today (https://github.com/danbri/factoidal/issues/1124, 2026-10-28).
 
-Proposed check.
+* Paths 1 and 2, the `Host` check. `L4Factoidal/HTTP/LocalGuard.lean`:
+  `admit g r` answers 421 Misdirected Request when `Host` names no name of
+  the listener (theorem `localGuard_foreign_host`). The names: `localhost`,
+  `127.0.0.1`, `[::1]`, the `--host` address, the addresses of the
+  interfaces, the host of the base IRI (LWS, Solid), and `--allow-host NAME`
+  (repeatable; a reverse proxy or Tailscale). The check is on the name only:
+  a rebinding attack needs a name of the attacker. A request with no `Host`
+  (no browser) is admitted.
+* Path 3 and the writes of path 1, the `Origin` check. A method other than
+  GET, HEAD and OPTIONS with an `Origin` that is not the listener's own
+  origin (scheme http or https and `host[:port]` equal to `Host`) and not on
+  the list (`--allow-origin ORIGIN`; for `lws-serve` also every
+  `--cors-origin`) gets 403 (theorem `localGuard_cross_origin_write`). A
+  request with no `Origin` is admitted (`localGuard_admits_no_origin`), and so
+  is a safe method (`localGuard_admits_safe`). `factoidal serve`:
+  `StoreEndpoint.handle` checks first; `handle_guard_refused` and
+  `handle_cross_origin_update` prove that a refused request has no
+  delta-log commit.
+* Where the guard runs: `lws-serve --insecure-no-auth` and `solid-serve
+  --insecure-no-auth` (`Wasm/Ops/Lws.lean` and `Wasm/Ops/Solid.lean`, before
+  the CORS preflight and every other decision), `factoidal serve` (always; it
+  has no authentication), and `webdav-serve` (always, also with `--users`,
+  because a browser sends cached Basic credentials with a cross-site form
+  POST; not on the `--xmpp` transport). Under authorization `lws-serve` and
+  `solid-serve` do not run it, and `allowHosts` / `allowOrigins` (the
+  options `--allow-host` / `--allow-origin`) are refused there.
+* Path 1, the CORS default. With `insecureNoAuth`, a storage with no `cors`
+  member sends no CORS field, and `cors: true` (echo) stops the start
+  (`LWS.Cors.policyFor`, theorem `insecure_no_echo`). `lws-serve
+  --insecure-no-auth` says why at start.
+* Path 4. `HTTP.Cors.decorate_no_credentials` and
+  `preflight?_no_credentials`: a profile with `credentials := false` adds no
+  `Access-Control-Allow-Credentials`; `LWS.Cors.decorate_no_credentials`,
+  `LWS.Cors.profile_no_credentials` and
+  `Authz.corsProfile_no_credentials` instantiate them.
 
-```lean
-theorem localGuard_foreign_host (g : LocalGuard) (r : Request)
-    (h : (r.header? "host").all (fun v => !g.names.contains (hostPart v))) :
-    LocalGuard.admit g r = some (misdirected421)
+Not enforced, expected failures of
+`npm/factoidal/test/local-guard-1124.test.mjs` under
+https://github.com/danbri/factoidal/issues/1124:
 
-theorem localGuard_cross_origin_write (g : LocalGuard) (r : Request) (o : String)
-    (hw : isUnsafe r.method) (ho : r.header? "origin" = some o) (hn : !g.origins.contains o) :
-    LocalGuard.admit g r = some forbidden403
+* `solid-serve --insecure-no-auth` still echoes any `Origin` (Solid Protocol
+  §8.1 requires the echo), so a page on another origin can READ the storage;
+  writes from it get 403.
+* The Solid profile (`Solid/Server/Cors.lean`) sends
+  `Access-Control-Allow-Credentials: true` with the echo.
 
-theorem insecure_no_echo (j : Json) (c : OpenConfig) (h : openConfigOfJson j = .ok c)
-    (hi : c.authz.insecureNoAuth = true) : c.cors ≠ .echo
-
-theorem decorate_no_credentials (p : Policy) (r : Request) (resp : Response) :
-    ((Cors.decorate LWS.Cors.profile p r resp).header? "access-control-allow-credentials") = none
-```
-
-Tests (expected failures now): a request to `lws-serve --insecure-no-auth`
-with `Origin: https://evil.example` gets no `Access-Control-Allow-Origin`; a
-request with `Host: evil.example` to `webdav-serve` without `--users` gets 421;
-a urlencoded update POST to `factoidal serve` with a foreign `Origin` gets 403
-and the store does not change.
+Tests: `npm/factoidal/test/local-guard-1124.test.mjs` (the three cases of
+this record and the positive cases); `tests/lws/cors.mjs` check 20;
+`tests/lws/cors-browser.mjs` checks 7 and 8 (Chromium: the page cannot read an
+open storage, and a cross-site `no-cors` POST creates nothing).
 
 ### C8. Write tools over MCP (planned, issue 1121)
 
@@ -566,8 +593,9 @@ theorem record_no_secret (req : Req) (resp : Resp) (s : String) (hs : s ∈ secr
 
 Path. The WebDAV design record says "do not serve one directory with
 `lws-serve` and `webdav-serve` at once" (`docs/designissues/2026-10-27-webdav.md`,
-line 62). Nothing enforces it (no lock on the storage directory was found in
-`webdav/server.mjs`, `lws/server.mjs`, `lws/persist.mjs`). Then the LWS
+line 62). Until 2026-10-28 nothing enforced it (no lock on the storage
+directory was found in `webdav/server.mjs`, `lws/server.mjs`,
+`lws/persist.mjs`); the lock below now does. Then the LWS
 access policy of `lws-serve --authz` does not apply to WebDAV, or to XMPP
 through `webdav-serve --xmpp`, because a local mount is the owner. Two writers
 also overwrite each other's snapshot.
@@ -576,11 +604,24 @@ Invariant I11. A storage directory has one writing process. A local mount is
 not exposed through a surface whose access check is weaker than that of the
 storage's own server, unless the operator opts in.
 
-Enforced today. Not enforced.
+Enforced today (2026-10-28, first part of I11): one writing process per
+storage directory. `lws-serve DIR`, `solid-serve DIR` and every
+`webdav-serve` local mount hold `DIR/lws.lock` while they run. A second
+start on the same directory is refused with a message that names the lock
+file and the holder (process id, command, start time, host). A lock whose
+process does not run is taken over with a warning; a lock of another host is
+refused. Lean decides (`L4Factoidal/LWS/DirLock.lean`, op `lwsDirLock`);
+theorems `decide_alive_refuses`, `decide_otherHost_refuses`,
+`decide_sameInstance_refuses`, `decide_replace_dead`, `decide_create_absent`.
+Test: `node tests/lws/dir-lock.mjs` (a second `lws-serve`, `solid-serve` and
+a `webdav-serve` local mount of a held directory are refused; a stale lock is
+taken over with a warning; SIGINT and SIGTERM remove the lock). Issue:
+https://github.com/danbri/factoidal/issues/1135.
 
-Proposed check: a test. Start `lws-serve DIR`, then `webdav-serve` with a
-local mount of `DIR`. The second start is refused, with a message that names
-the lock file.
+Not enforced: the second part of I11. A local mount still answers through
+WebDAV (and XMPP) as the storage's owner, so a directory served by
+`webdav-serve` alone is not under the access policy that `lws-serve --authz`
+would apply to it. A program that does not take the lock is not excluded.
 
 ### C12. Remote mounts with `did-key` or `bearer`, shared by many users and JIDs
 
@@ -636,11 +677,12 @@ The order is by: present in the code today or about to land, default settings,
 reach (any web page, any network peer), and effect (writes as the owner,
 credential loss).
 
-1. **C7: browser reach to listeners without authentication.** It is present
-   today, with default settings. `lws-serve --insecure-no-auth` echoes any
-   `Origin`, so any web page can read and write the storage. `factoidal serve`
-   accepts a cross-site form POST of SPARQL Update. No listener checks `Host`,
-   so DNS rebinding reaches `webdav-serve` local mounts as the owner.
+1. **C7: browser reach to listeners without authentication.** It was present
+   with default settings until 2026-10-28: `lws-serve --insecure-no-auth`
+   echoed any `Origin`, `factoidal serve` accepted a cross-site form POST of
+   SPARQL Update, and no listener checked `Host`. The `Host` and `Origin`
+   guard and the CORS default of row C7 close these paths; the Solid echo stays
+   open under https://github.com/danbri/factoidal/issues/1124.
 2. **C1 + C4: owner mounts over XMPP.** It is about to land (step 1).
    `HttpOverXmpp.step` on `main` bypasses `--users`. Without `--users`, every
    allowed JID is the owner. The allow list trusts `from` on a client stream
@@ -719,11 +761,27 @@ that names it.
 - I5, C5: `Net/Egress.lean` (IANA special-purpose ranges, address pinning
   for deliveries, a per-destination limit); checks for access-request inboxes.
 - I6, C6: one storage IRI across transports; `peerOf?` for `httpx`.
-- I7, C7: the `Host` and `Origin` guard for listeners without authentication;
-  no CORS echo with `--insecure-no-auth`; `decorate_no_credentials`.
+- I7, C7: landed 2026-10-28 under https://github.com/danbri/factoidal/issues/1124
+  (`HTTP/LocalGuard.lean`, `LWS.Cors.policyFor`, `decorate_no_credentials`);
+  the Solid echo and credentials remain, as expected failures under the same
+  issue.
 - I8, C8: authority and default deny for MCP tools (into issue 1121).
 - I9, C9: JID verification for XMPP notifications.
 - I10, C10: token exchange bodies in the redaction list (into issue 1035).
-- I11, C11: a lock on the storage directory.
+- I11, C11: a lock on the storage directory (landed 2026-10-28,
+  https://github.com/danbri/factoidal/issues/1135); principals or an access
+  check for local mounts.
 - I12, C12: principals per mount.
 - I13, C13: per-sender limits and a time limit for waiting chunked requests.
+
+## 7. Surfaces added after this record
+
+- 2026-10-28, `factoidal xmpp-http-proxy` (issue 1107 step 2): a listener
+  (127.0.0.1 only) and an XMPP requester. Rows C1, C3, C4, C6 (no `httpx`
+  token flow yet), C7, C13. The invariants, the theorems
+  (`send_to_target`, `receive_to_target`, `tick_to_target`,
+  `receiveNode_other_sender`, `forwardHeaders_sublist`,
+  `forwardHeaders_keeps_authorization`) and the tests are in
+  `docs/designissues/2026-10-28-http-over-xmpp.md`, "Step 2: invariants and
+  their checks". Not met: the `Host`/`Origin` check of I7 on this listener,
+  an expected failure that names https://github.com/danbri/factoidal/issues/1124.
