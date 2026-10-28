@@ -230,12 +230,12 @@ def escAttr (s : String) : String :=
   String.join (s.toList.map (fun c => match c with
     | '&' => "&amp;" | '<' => "&lt;" | '"' => "&quot;" | '\n' => "&#xA;" | '\t' => "&#x9;" | '\r' => "&#xD;" | c => String.ofList [c]))
 
-def serNode (env : Env) : Nat → NodeRef → String
+def serNode (env : Env) (dflt : String := "") : Nat → NodeRef → String
   | 0, _ => ""
   | f + 1, n =>
     let r := env.nrec n
     match r.kind with
-    | .document => String.join (r.children.toList.map (fun c => serNode env f (n.at (c))))
+    | .document => String.join (r.children.toList.map (fun c => serNode env dflt f (n.at (c))))
     | .text => escText r.value
     | .comment => "<!--" ++ r.value ++ "-->"
     | .pi => "<?" ++ r.name.loc ++ (if r.value == "" then "" else " " ++ r.value) ++ "?>"
@@ -243,8 +243,11 @@ def serNode (env : Env) : Nat → NodeRef → String
     | .namespace => ""
     | .element =>
       let nm := r.name.show
-      let decl := if r.name.uri == "" then (if r.name.pfx == "" then "" else "")
+      -- an unprefixed name in no namespace under a default namespace
+      -- needs the undeclaration xmlns=""
+      let decl := if r.name.uri == "" then (if r.name.pfx == "" && dflt != "" then " xmlns=\"\"" else "")
         else " xmlns" ++ (if r.name.pfx == "" then "" else ":" ++ r.name.pfx) ++ "=\"" ++ escAttr r.name.uri ++ "\""
+      let dflt' := if r.name.pfx == "" then r.name.uri else dflt
       -- one declaration per prefix the attributes need (and not the
       -- element's own prefix again)
       let attrDecls := (r.attrs.toList.filterMap (fun a =>
@@ -256,7 +259,7 @@ def serNode (env : Env) : Nat → NodeRef → String
         r.attrs.toList.map (fun a =>
         let ra := env.nrec (n.at (a))
         " " ++ ra.name.show ++ "=\"" ++ escAttr ra.value ++ "\"")
-      let body := String.join (r.children.toList.map (fun c => serNode env f (n.at (c))))
+      let body := String.join (r.children.toList.map (fun c => serNode env dflt' f (n.at (c))))
       "<" ++ nm ++ decl ++ String.join ats ++ (if body == "" then "/>" else ">" ++ body ++ "</" ++ nm ++ ">")
 
 def serSeq (env : Env) (s : Seq) : String := Id.run do
@@ -267,7 +270,7 @@ def serSeq (env : Env) (s : Seq) : String := Id.run do
     | .atom a =>
         out := out ++ (if prevAtom then " " else "") ++ escText a.str
         prevAtom := true
-    | .node n => out := out ++ serNode env 100000 n; prevAtom := false
+    | .node n => out := out ++ serNode env "" 100000 n; prevAtom := false
     | _ => out := out ++ "?"; prevAtom := false
   pure out
 
@@ -639,7 +642,13 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool
       match (← cache.get).lookup file with
       | some d => pure (some d)
       | none =>
-        match ← readFileSafe file with
+        -- the encoding of the source by its XML declaration (ISO-8859-1 sources)
+        let txt? ← match ← readBytesSafe file with
+          | some bs => pure (match L4Factoidal.XML.decodeXmlBytesE bs with
+            | .ok s => some s
+            | .error _ => none)
+          | none => pure none
+        match txt? with
         | none => pure none
         | some txt =>
           match Doc.ofString txt uri with

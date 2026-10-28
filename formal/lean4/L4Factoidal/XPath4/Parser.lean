@@ -525,7 +525,9 @@ def pItemType : Nat → P IType
                   match ← peekQName with
                   | some (p, u, l, e) =>
                     set e
-                    let q ← resolve p u l ""
+                    -- an unprefixed type name is in the default namespace for
+                    -- elements and types (XQuery 3.1 §2.1.1, XQuery 4.0 §2.1.1)
+                    let q ← resolve p u l den
                     let nil ← eatS "?"
                     pure (some (q, nil))
                   | none => synErr "expected a type name"
