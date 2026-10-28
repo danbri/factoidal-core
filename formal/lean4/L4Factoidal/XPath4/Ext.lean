@@ -15,6 +15,7 @@ import L4Factoidal.XPath4.Csv
 import L4Factoidal.XPath4.DeepEqual
 import L4Factoidal.XPath4.Html
 import L4Factoidal.XPath4.Update
+import L4Factoidal.EXPath.Hook
 
 namespace L4Factoidal.XPath4
 
@@ -28,6 +29,8 @@ def libLookupAll (q : QN) : Option LibFn :=
     match extTable.lookup q.loc with
     | some f => some f
     | none => libLookup q
-  else libLookup q
+  else match L4Factoidal.EXPath.expathLookup q with  -- EXPath hook
+    | some f => some f
+    | none => libLookup q
 
 end L4Factoidal.XPath4

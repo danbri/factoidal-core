@@ -377,8 +377,8 @@ def systemPropertiesFn : LibFn := fun _ _ _ =>
     (q "supports-invisible-xml", [.atom (Atomic.ofBool false)]),
     (q "supports-dynamic-xquery", [.atom (Atomic.ofBool false)]),
     (q "supports-dynamic-xslt", [.atom (Atomic.ofBool false)]),
-    (q "supports-binary-library", [.atom (Atomic.ofBool false)]),
-    (q "supports-file-library", [.atom (Atomic.ofBool false)])]]
+    (q "supports-binary-library", [.atom (Atomic.ofBool true)]),
+    (q "supports-file-library", [.atom (Atomic.ofBool true)])]]
 
 /-! ## `fn:scan` -/
 

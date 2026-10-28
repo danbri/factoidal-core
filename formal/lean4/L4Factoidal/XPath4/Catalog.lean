@@ -12,6 +12,8 @@ every static call. Which functions are IMPLEMENTED is decided by
 `XPath4.Lib`, not by this table: a function listed here and not
 implemented raises `XPST0017` with a message saying so.
 -/
+import L4Factoidal.EXPath.Catalog
+
 namespace L4Factoidal.XPath4
 
 /-- `(prefix, name, return type, [(param, type, default?)])`. -/
@@ -363,5 +365,9 @@ def catalogRaw : List (String × String × String × List (String × String × O
   ("fn", "jkey", "xs:anyAtomicType?", [("input", "jnode()?", some ".")]),
   ("fn", "jvalue", "item()*", [("input", "jnode()?", some ".")])
 ]
+
+/-- EXPath hook: the signatures of the EXPath Binary and File 4.0
+    functions (`L4Factoidal.EXPath.Catalog`), added to the table above. -/
+def catalogExt := L4Factoidal.EXPath.catalogRaw
 
 end L4Factoidal.XPath4
