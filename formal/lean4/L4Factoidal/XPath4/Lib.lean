@@ -1116,7 +1116,7 @@ def fnTable : List (String × LibFn) := [
   -- errors and diagnostics
   ent "error" (fun _ e a => do
     let (code, uri, pfx, noNs) := match optAtom (argN a 0) with
-      | some ⟨_, .qn q⟩ => (q.loc, (if q.uri == nsERR then "" else q.uri), q.pfx, q.uri == "")
+      | some ⟨_, .qn q⟩ => (q.loc, (if q.uri == nsERR then "" else if q.uri == "" then "#none" else q.uri), q.pfx, q.uri == "")
       | _ => ("FOER0000", "", "err", false)
     -- the error value: atomic items as they are, other items atomized
     let value := (argN a 2).flatMap (fun i => match i with

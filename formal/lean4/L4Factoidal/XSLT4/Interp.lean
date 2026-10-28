@@ -34,10 +34,27 @@ def vRegex : QN := xv "regex"
 def vSeed : QN := xv "seed"
 def vMergeGroup : QN := xv "merge-group"
 def vMergeKey : QN := xv "merge-key"
+/-- The names of the merge sources of the current `xsl:merge`. -/
+def vMergeNames : QN := xv "merge-names"
+/-- The accumulators applicable to the principal and `xsl:source-document`
+    documents (§19.2): arrays of the document number and the names. -/
+def vAccRules : QN := xv "accumulator-rules"
+
 def vOutUri : QN := xv "output-uri"
+/-- The current mode, for `fn:apply-templates` with `#current`. -/
+def vMode : QN := xv "mode"
+/-- The tunnel parameters in force, for `fn:apply-templates`. -/
+def vTunnel : QN := xv "tunnel"
+/-- The base output URI (§25.1): what a result document's href is
+    resolved against. -/
+def vBaseOut : QN := xv "base-output-uri"
 
 /-- The key of the map that stands for an `xsl:array-member` parcel. -/
 def memberKey : Atomic := Atomic.ofQN (xv "array-member")
+
+/-- The value bound to the grouping key when the current group has no
+    grouping key. -/
+def noGroupKey : Seq := [.atom (Atomic.ofQN (xv "no-group-key"))]
 
 /-! ## State -/
 
@@ -46,6 +63,8 @@ structure XSt where
   base : Nat := 0
   counter : Nat := 0
   msgs : Array String := #[]
+  /-- The messages as document nodes (§23.1). -/
+  msgDocs : Array Item := #[]
   /-- Secondary results: href, value, output definition key, and the
       serialization parameters of the instruction. -/
   results : Array (String × Seq × String × List (String × String)) := #[]
@@ -82,6 +101,8 @@ structure Ctx where
   env : Env
   mode : String := "#unnamed"
   rule : Option Tmpl := none
+  /-- The non-tunnel parameters supplied to the current template rule. -/
+  supplied : List (QN × Seq) := []
   tunnel : List (QN × Seq) := []
   /-- In a stylesheet function (no current template rule, §10.3). -/
   inFn : Bool := false
@@ -89,6 +110,12 @@ structure Ctx where
   /-- Temporary output state (§25.2): in a variable, parameter or
       function body, `xsl:result-document` is an error. -/
   tempOut : Bool := false
+  /-- `xsl:copy-of validation="preserve"` (§25.1.1): its copies keep
+      their type annotations; otherwise they are untyped. -/
+  keepCopies : Bool := false
+  /-- The validation of the document that `xsl:result-document` or
+      `xsl:source-document` makes (§25.2); `""` for none. -/
+  docValidation : String := ""
 deriving Inhabited
 
 def Ctx.focus (cx : Ctx) (i : Item) (p sz : Nat) : Ctx := { cx with env := cx.env.focus i p sz }
@@ -104,7 +131,15 @@ def evalX (cx : Ctx) (e : Expr) : XM Seq := do
   let vars := match cx.env.ctx with
     | some c => (vCurrent, c) :: vars
     | none => vars
-  liftX (eval 100000 { cx.env with vars } e)
+  let vars := (vMode, [.atom (Atomic.ofStr cx.mode)]) :: vars
+  let vars := if cx.tunnel.isEmpty then vars
+    else (vTunnel, [.map (cx.tunnel.map (fun (q, v) => (Atomic.ofQN q, v)))]) :: vars
+  match eval 100000 { cx.env with vars, compat10 := cx.backCompat } e with
+  | .ok v => pure v
+  | .error er =>
+    -- in backwards-compatible mode a call of an unknown function is the
+    -- dynamic error XTDE1425 (§3.9)
+    if cx.backCompat && er.code == "XPST0017" then xerr "XTDE1425" er.msg else throw er
 
 def evalBool (cx : Ctx) (e : Expr) : XM Bool := do
   liftX (ebv (← evalX cx e))
@@ -127,6 +162,14 @@ def optAvtStr (cx : Ctx) (a : Option Avt) : XM (Option String) :=
   | none => pure none
   | some x => some <$> avtStr cx x
 
+/-- A type error of a conversion to a declared type, reported with the
+    XSLT code of the construct (§9.4: XTTE0570 for variables, XTTE0590
+    for parameters, XTTE0780 for function results). -/
+def typeErrAs {α} (code : String) (x : M α) : M α :=
+  match x with
+  | .error e => if code != "" && (e.code == "XPTY0004" || e.code == "FORG0001") then .error { e with code } else .error e
+  | ok => ok
+
 /-! ## Values of sequence constructors -/
 
 /-- The items of a list of `Out` (new trees get new document numbers). -/
@@ -139,6 +182,72 @@ def materializeAll (env : Env) (os : List Out) : XM Seq := do
       let id ← freshId
       out := out.push (← liftX (materialize env id o))
   pure out.toList
+
+/-- The validation of one item of the result of a constructing
+    instruction (§25.1, §25.2): `how` is `preserve`, `strict`, `lax` or
+    `type Q{uri}local`. A node that is built becomes a new tree first. -/
+def validateOut (S : Sheet) (env : Env) (how : String) (o : Out) : XM Out := do
+  let anyTypeQN : QN := { uri := nsXS, loc := "anyType" }
+  match o with
+  | .attr q v =>
+    if how == "preserve" then return o
+    match ← liftX (S.validateAttr how q v env.ns) with
+    | none => pure o
+    | some (t, tv) =>
+      let id ← freshId
+      let (q', _) := fixAttrName q []
+      let r : NRec := { kind := .attribute, name := q', value := v, tann := some t, tval := tv }
+      pure (.item (.node { doc := id, idx := 0, rt := some { nodes := #[r] } }))
+  | .elem .. | .doc .. | .item (.node _) =>
+    let id ← freshId
+    let it ← match o with
+      | .item i => pure i
+      | _ => liftX (materializeK (how == "preserve") env id o)
+    let .node nd := it | pure o
+    let d := env.doc nd
+    let r := d.get nd.idx
+    if how == "preserve" then
+      -- a new element is an xs:anyType (§25.1.1); copies keep theirs
+      match o with
+      | .elem .. =>
+        let d' := { d with nodes := d.nodes.modify nd.idx (fun x => { x with tann := some anyTypeQN }) }
+        return .item (.node { nd with rt := some d' })
+      | _ => return .item it
+    -- validation against xs:untyped is validation="strip" (§25.1.2)
+    if how == "type Q{" ++ nsXS ++ "}untyped" then return o
+    match r.kind with
+    | .element =>
+      let d' ← liftX (S.validateNode how d nd.idx)
+      let id2 ← freshId
+      pure (.item (← liftX (copyAsTree env id2 { doc := id2, idx := 1, rt := some d' } true true)))
+    | .document =>
+      -- §25.2: exactly one element child and no text node (XTTE1550)
+      let kids := r.children.toList.map (fun j => (d.get j).kind)
+      if (kids.filter (· == .element)).length != 1 || kids.any (· == .text) then
+        xerr "XTTE1550" "a validated document node must have one element child and no text node"
+      let d' ← liftX (S.validateNode how d nd.idx)
+      let id2 ← freshId
+      pure (.item (.node { doc := id2, idx := 0, rt := some { d' with uri := d.uri } }))
+    | _ => pure o
+  | _ => pure o
+
+/-- A sequence with each JNode replaced by its jvalue, recursively. -/
+def dejnode : Nat → Seq → Seq
+  | 0, s => s
+  | f + 1, s => s.flatMap (fun i => match i with
+    | .jnode _ _ v _ => dejnode f v
+    | x => [x])
+
+/-- §9.4: the disqualifying elements (xsl:map, xsl:map-entry, xsl:array,
+    xsl:array-member, xsl:select) among the instructions of a sequence
+    constructor (through the wrappers that the compiler adds). -/
+def hasDisqualifying : Nat → List Instr → Bool
+  | 0, _ => false
+  | f + 1, is => is.any (fun i => match i with
+    | .mapI .. | .mapEntry .. | .arrayI .. | .arrayMember .. => true
+    | .seq (some _) [.lit "xsl:select"] _ => true
+    | .withBase _ b | .withColl _ b | .withCompat _ b => hasDisqualifying f b
+    | _ => false)
 
 /-- The string value of an `Out` that is a node. -/
 def outString (env : Env) : Nat → Out → String
@@ -240,8 +349,21 @@ def patMatch (env : Env) : Nat → Expr → Item → M Bool
     | .filter .ctx pr => do
         let r ← eval 100000 (env.focus it 1 1) (.filter .ctx pr)
         pure !r.isEmpty
+    | .filter (.seq [a]) pr => do
+        -- a predicate on a parenthesized XNode pattern (§6.3.2.2): the
+        -- node is in `root(.)//((a)[pr])`, or `((a)[pr])` evaluated at
+        -- the root when `a` is rooted
+        let .node n := it | return false
+        let rt := env.treeRoot n
+        let rooted := match (exprFlat 1000 a).head? with
+          | some .root | some (.call ..) | some (.var _) => true
+          | _ => false
+        let whole : Expr := .filter (.seq [a]) pr
+        let e := if rooted then whole else .slash (.step .descendantOrSelf (.kind .anyNode) []) whole
+        let r ← eval 100000 (env.focus (.node rt) 1 1) e
+        pure (r.any (fun i => match i with | .node m => m == n | _ => false))
     | .filter a pr => do
-        -- a predicate on a parenthesized pattern or function call
+        -- a predicate on a function call
         if !(← patMatch env f a it) then return false
         let r ← eval 100000 (env.focus it 1 1) (.filter .ctx pr)
         pure !r.isEmpty
@@ -315,10 +437,60 @@ def headMatch (env : Env) : Nat → Expr → NodeRef → M Bool
       pure (r.any (fun i => match i with | .node m => m == n | _ => false))
 end
 
+/-- Does an item match a 4.0 item pattern (§6.3.3 to §6.3.9)? An error
+    in a predicate makes the pattern not match (§6.5). -/
+def ipMatch (env : Env) : Nat → IPat → Item → Bool
+  | 0, _, _ => false
+  | f + 1, ip, it =>
+    -- does a value match a sequence pattern (§6.3.5)?
+    let seqOk (m : Option IPat) (o : Occ) (v : Seq) : Bool :=
+      match m with
+      | none => v.isEmpty
+      | some q =>
+        let n := v.length
+        (match o with | .one => n == 1 | .opt => n ≤ 1 | .star => true | .plus => n ≥ 1) &&
+        v.all (fun x => ipMatch env f q x)
+    match ip with
+    | .xnode e => (patMatch env 200 e it).toOption.getD false
+    | .any => true
+    | .types t => env.itemMatches it t
+    | .mapP es open_ =>
+      match it with
+      | .map kvs =>
+        es.all (fun (k, sp) => match kvs.find? (fun (ka, _) => atomicEqual ka k) with
+          | none => false
+          | some (_, v) => match sp with
+            | none => true
+            | some (m, o) => seqOk m o v) &&
+        (open_ || kvs.all (fun (ka, _) => es.any (fun (k, _) => atomicEqual ka k)))
+      | _ => false
+    | .arrayP m o =>
+      match it with
+      | .arr ms => ms.all (seqOk m o)
+      | _ => false
+    | .jnodeP k m o =>
+      match it with
+      | .jnode .. =>
+        (match k with
+          | none => true
+          | some ka => (jkeyOf it).any (atomicEqual · ka)) &&
+        seqOk m o (jvalOf it)
+      | _ => false
+    | .filtered q preds =>
+      ipMatch env f q it && preds.all (fun pr =>
+        match eval 100000 (env.focus it 1 1) (.filter .ctx pr) with
+        | .ok r => !r.isEmpty
+        | .error _ => false)
+
 /-- Pattern matching with errors masked (§6.5). -/
 def Pattern.matches (p : Pattern) (env : Env) (it : Item) : Bool :=
   -- `current()` in a pattern is the item being matched (§20.4.1)
-  let env := { env with vars := (vCurrent, [it]) :: env.vars }
+  -- and the current captured groups are empty in a pattern (§17.2.1),
+  -- and current-output-uri() is absent there (§25.4)
+  let env := { env with vars := (vCurrent, [it]) :: (vRegex, [.map []]) :: (vOutUri, []) :: env.vars }
+  match p.ip with
+  | some (ip, _) => ipMatch env 200 ip it
+  | none =>
   match patMatch env 200 p.e it with
   | .ok b => b
   | .error _ => false
@@ -384,29 +556,40 @@ structure SortSpec where
   dataType : String := ""
   caseOrder : String := ""
   collation : String := ""
+  /-- The collation of string comparisons. -/
+  coll : Coll := .codepoint
 deriving Inhabited
 
-def cmpAtom (tz : Int) (x y : Atomic) : Ordering :=
+def cmpAtom (coll : Coll) (tz : Int) (x y : Atomic) : Ordering :=
   let nanX := (x.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
   let nanY := (y.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
   if nanX && nanY then .eq else if nanX then .lt else if nanY then .gt else
+  let strLike (a : Atomic) := a.isStringLike || a.ty == .untyped
+  if strLike x && strLike y && !coll.isCodepoint then coll.compare x.str y.str else
   match atomicCmp x y tz with
   | .ok (some c) => c
   | _ => compare x.str y.str
 
+/-- Can two sort key values be compared (§13.1.2, XTDE1030)? -/
+def sortComparable (tz : Int) (x y : Atomic) : Bool :=
+  let nan (a : Atomic) := (a.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
+  nan x || nan y || (match atomicCmp x y tz with
+    | .ok (some _) => true
+    | _ => false)
+
 /-- Compare two sort key values; 4.0 (§13.1.2): a key value is a
     sequence, compared item by item, a shorter prefix first. -/
-def cmpSeqKey (tz : Int) : List Atomic → List Atomic → Ordering
+def cmpSeqKey (coll : Coll) (tz : Int) : List Atomic → List Atomic → Ordering
   | [], [] => .eq
   | [], _ :: _ => .lt
   | _ :: _, [] => .gt
   | x :: xs, y :: ys =>
-    match cmpAtom tz x y with
-    | .eq => cmpSeqKey tz xs ys
+    match cmpAtom coll tz x y with
+    | .eq => cmpSeqKey coll tz xs ys
     | o => o
 
 def cmpKey (sp : SortSpec) (tz : Int) (a b : List Atomic) : Ordering :=
-  let o := cmpSeqKey tz a b
+  let o := cmpSeqKey sp.coll tz a b
   if sp.desc then o.swap else o
 
 def cmpKeys (sps : List SortSpec) (tz : Int) : List (List Atomic) → List (List Atomic) → Ordering
@@ -495,6 +678,116 @@ def groupDigits (s : String) (sep : String) (size : Nat) : String :=
   String.ofList (go cs 0 [])
 
 
+def lookupVar (vs : List (QN × Seq)) (q : QN) : Option Seq :=
+  (vs.find? (fun (v, _) => v == q)).map (·.2)
+
+/-! ## Regular expressions (§17) -/
+
+/-- A segment of the input of `xsl:analyze-string`: matching or not, its
+    string, and (for a matching segment) its captured groups, group zero
+    first (§17.2.1). -/
+structure ASPart where
+  isMatch : Bool
+  str : String
+  groups : List (Atomic × Seq) := []
+
+/-- The matching segment `sg` of `input` as a part: its string, and its
+    captured groups with group zero first. -/
+def matchPart (input : List Nat) (re : Re4) (sg : Seg) : ASPart :=
+  let whole := cpsStr (Regex.slice input sg.start sg.stop)
+  let g0 : Atomic × Seq := (Atomic.ofInt 0, [.map [(Atomic.ofStr "value", sStr whole),
+    (Atomic.ofStr "position", sInt (sg.start + 1)), (Atomic.ofStr "nr", sInt 0), (Atomic.ofStr "name", [])]])
+  { isMatch := true, str := whole, groups := g0 :: groupRecords input re sg.caps }
+
+/-- The parts from offset `cur`: each matching segment, after the
+    non-matching segment before it, and the rest of the input. -/
+def partsFrom (input : List Nat) (re : Re4) : Nat → List Seg → List ASPart
+  | cur, [] =>
+    if input.length > cur then [{ isMatch := false, str := cpsStr (Regex.slice input cur input.length) }] else []
+  | cur, sg :: rest =>
+    (if sg.start > cur then [{ isMatch := false, str := cpsStr (Regex.slice input cur sg.start) }] else []) ++
+    matchPart input re sg :: partsFrom input re (max cur sg.stop) rest
+
+/-- The segments that `xsl:analyze-string` processes (§17.1): the
+    matching segments of `fn:matching-segments` (`XPath4.segments`), with
+    the non-matching segments between them. -/
+def analyzeParts (s : String) (re : Re4) : List ASPart :=
+  let input := s.toList.map Char.toNat
+  partsFrom input re 0 (segments re.r input)
+
+/-- The numbering sequences of single characters that `xsl:number`
+    knows beyond `fn:format-integer` (§12.4: implementation-defined
+    sequences): name, the character for zero if Unicode has one, and the
+    ranges of consecutive code points (first number, last number, code
+    point of the first). -/
+def numberingSequences : List (String × Option Nat × List (Nat × Nat × Nat)) := [
+  ("CIRCLED DIGIT ONE", some 0x24EA, [(1, 20, 0x2460), (21, 35, 0x3251), (36, 50, 0x32B1)]),
+  ("PARENTHESIZED DIGIT ONE", none, [(1, 20, 0x2474)]),
+  ("DIGIT ONE FULL STOP", some 0x1F100, [(1, 20, 0x2488)]),
+  ("DINGBAT NEGATIVE CIRCLED DIGIT ONE", some 0x24FF, [(1, 10, 0x2776), (11, 20, 0x24EB)]),
+  ("DINGBAT CIRCLED SANS-SERIF DIGIT ONE", some 0x1F10B, [(1, 10, 0x2780)]),
+  ("DINGBAT NEGATIVE CIRCLED SANS-SERIF DIGIT ONE", some 0x1F10C, [(1, 10, 0x278A)]),
+  ("DOUBLE CIRCLED DIGIT ONE", none, [(1, 10, 0x24F5)]),
+  ("DIGIT ONE COMMA", some 0x1F101, [(1, 9, 0x1F102)]),
+  ("PARENTHESIZED IDEOGRAPH ONE", none, [(1, 10, 0x3220)]),
+  ("CIRCLED IDEOGRAPH ONE", none, [(1, 10, 0x3280)]),
+  ("SINHALA ARCHAIC DIGIT ONE", none, [(1, 10, 0x111E1)]),
+  ("RUMI DIGIT ONE", none, [(1, 10, 0x10E60)]),
+  ("COPTIC EPACT DIGIT ONE", none, [(1, 10, 0x102E1)]),
+  ("BRAHMI NUMBER ONE", none, [(1, 10, 0x11052)]),
+  ("AEGEAN NUMBER ONE", none, [(1, 10, 0x10107)]),
+  ("MENDE KIKAKUI DIGIT ONE", none, [(1, 9, 0x1E8C7)]),
+  ("COUNTING ROD UNIT DIGIT ONE", none, [(1, 9, 0x1D360)])]
+
+/-- A number in a sequence of `numberingSequences` whose first character
+    is `tok`; `none` if `tok` starts no such sequence. A number outside
+    the sequence is written in decimal digits (§12.4). -/
+def seqNumber (tok : String) (x : Int) : Option String :=
+  match tok.toList with
+  | [c] =>
+    (numberingSequences.find? (fun (_, _, rs) => rs.head?.any (fun (lo, _, cp) => lo == 1 && cp == c.toNat))).map
+      (fun (_, zero, rs) =>
+        let n := x.toNat
+        if x == 0 then match zero with
+          | some z => String.singleton (Char.ofNat z)
+          | none => "0"
+        else match rs.find? (fun (lo, hi, _) => lo ≤ n && n ≤ hi) with
+          | some (lo, _, cp) => String.singleton (Char.ofNat (cp + (n - lo)))
+          | none => toString x)
+  | _ => none
+
+/-- One number of `xsl:number` in the format token `tok` (§12.4): the
+    F&O 4.0 function `fn:format-integer`, with `;o` for an ordinal. -/
+def formatOne (env : Env) (x : Int) (tok : String) (ordS lng : Option String) : M String := do
+  let pic := match ordS with
+    | some o => if o == "" || o == "no" then tok else tok ++ ";o"
+    | none => tok
+  if x < 0 then pure "NaN" else
+  if let some t := (if ordS.isNone then seqNumber tok x else none) then pure t else do
+    let r ← callFn 100000 env { uri := nsFN, loc := "format-integer" }
+      [sInt x, sStr pic, match lng with | some l => sStr l | none => []]
+    pure (match r with | [.atom a] => a.str | _ => toString x)
+
+/-- The text of `xsl:number` (§12.4): the format string split into a
+    prefix, format tokens with their separators, and a suffix; each
+    number formatted by `formatOne`, then grouped. -/
+def numberText (env : Env) (nums : List Int) (fs : String) (gs gz ordS lng : Option String) : M String := do
+  let (pre, toks, suf) := numberFormatParts fs
+  let mut out := pre
+  let mut i := 0
+  for x in nums do
+    let (sep, tok) := toks.getD i (toks.getLast?.getD (".", "1"))
+    let sep := if i == 0 then "" else (if i < toks.length then (if sep == "" then "." else sep) else (match toks.reverse with
+      | (s, _) :: _ => if s == "" then "." else s
+      | [] => "."))
+    let fmtd ← formatOne env x tok ordS lng
+    let fmtd := match gs, gz with
+      | some g, some z => groupDigits fmtd g ((z.toNat?).getD 0)
+      | _, _ => fmtd
+    out := out ++ sep ++ fmtd
+    i := i + 1
+  pure (out ++ suf)
+
 /-! ## Helpers of the instructions -/
 
 /-- Not "deemed empty" (§8.5.1). -/
@@ -505,6 +798,47 @@ def nodeNonEmpty (env : Env) (nd : NodeRef) : Bool :=
   | .text | .comment | .pi | .attribute => r.value != ""
   | _ => true
 
+/-- A copy `cp` of the node `nd` that keeps the accumulator values of
+    `nd` (§18.2.3), when the copy's nodes correspond one to one with the
+    subtree of `nd`. -/
+def withOrigin (env : Env) (nd : NodeRef) (cp : Item) : Item :=
+  let r := env.nrec nd
+  match cp with
+  | .node cn => match cn.rt with
+    | some d =>
+      let sz := r.last + 1 - nd.idx
+      let csz := (d.nodes.getD cn.idx default).last + 1 - cn.idx
+      if r.kind == .attribute || r.kind == .namespace || sz != csz || cn.idx + sz > d.nodes.size then cp else
+      -- the subtree of the copied node, then (fn:snapshot) its ancestors
+      let m := (List.range sz).foldl (fun a i => a.set! (cn.idx + i) (nd.idx + i)) (Array.replicate d.nodes.size 0)
+      let m := (List.range cn.idx).foldl (fun (acc : Array Nat × Option Nat × Option NodeRef) _ =>
+          match acc.2.1, acc.2.2 with
+          | some ci, some o =>
+            let cp' := (d.nodes.getD ci default).parent
+            let op' := env.parentOf o
+            match cp', op' with
+            | some c1, some o1 => (acc.1.set! c1 o1.idx, some c1, some o1)
+            | _, _ => (acc.1, none, none)
+          | _, _ => acc) (m, some cn.idx, some nd) |>.1
+      let o := match (env.doc nd).origin with
+        | some (d0, m0, ns0) => (d0, m.map (fun i => m0.getD i 0), ns0)
+        | none => (nd.doc, m, nd.rt.map (·.nodes))
+      .node { cn with rt := some { d with origin := some o } }
+    | none => cp
+  | other => other
+
+/-- An item that `xsl:where-populated` deems empty (§8.4): a node with no
+    content, an atomic item whose string is zero-length, an empty map,
+    or an array whose flattened members are all deemed empty. -/
+def itemDeemedEmpty (env : Env) : Nat → Item → Bool
+  | 0, _ => false
+  | f + 1, it => match it with
+    | .node nd => !nodeNonEmpty env nd
+    | .atom a => a.str == ""
+    | .map kvs => kvs.isEmpty
+    | .arr ms => ms.all (fun m => m.all (itemDeemedEmpty env f))
+    | _ => false
+
 def isNCName (x : String) : Bool :=
   match x.toList with
   | c :: cs => isNameStart c && cs.all (fun d => isNameCh d && d != ':')
@@ -512,6 +846,16 @@ def isNCName (x : String) : Bool :=
 
 def Ctx.bindAll (cx : Ctx) (vs : List (QN × Seq)) : Ctx :=
   vs.foldl (fun c (q, v) => c.bind q v) cx
+
+/-- Bind the accumulators applicable to the documents of `items`; the
+    binding goes after the global variables, so template calls keep it. -/
+def withAccRules (cx : Ctx) (items : Seq) (names : List String) : Ctx :=
+  let docs := (items.filterMap (fun i => match i with
+    | .node nd => if nd.rt.isNone then some nd.doc else none
+    | _ => none)).eraseDups
+  let old := (cx.env.vars.find? (·.1 == vAccRules)).map (·.2) |>.getD []
+  let new : Seq := docs.map (fun d => .arr ([.atom (Atomic.ofInt d)] :: names.map (fun s => [.atom (Atomic.ofStr s)])))
+  { cx with env := { cx.env with vars := cx.env.vars.filter (·.1 != vAccRules) ++ [(vAccRules, new ++ old)] } }
 
 /-- The local name of an error code given as an EQName or QName (the
     error codes of `XPath4.Err` carry no namespace). -/
@@ -525,6 +869,28 @@ def errLocal (c : String) : String :=
     | [_, l] => l
     | _ => c
 
+/-- The error code of `xsl:message` and `xsl:assert`: the given code
+    when it is an EQName or a lexical QName, else the default (§23.1). -/
+def validCode (c dflt : String) : String :=
+  -- a code from a value template carries the namespaces after a NUL
+  let (c, ns) : String × Option (List (String × String)) := match c.splitOn "\x00" with
+    | [a, b] => (a, some ((b.splitOn "\x01").filterMap (fun (kv : String) => match kv.splitOn "=" with
+        | p :: rest => some (p, String.intercalate "=" rest)
+        | [] => none)))
+    | _ => (c, none)
+  let c := c.trimAscii.toString
+  if c.startsWith "Q{" && c.contains '}' then errLocal c
+  else match c.splitOn ":", ns with
+    | [l], some _ => if isNCName l then "Q{}" ++ l else dflt
+    | [l], none => if isNCName l then l else dflt
+    | [p, l], some ns =>
+      if !(isNCName p && isNCName l) then dflt else
+      match ns.lookup p with
+      | some u => if u == nsERR then l else "Q{" ++ u ++ "}" ++ l
+      | none => dflt
+    | [p, l], none => if isNCName p && isNCName l then errLocal c else dflt
+    | _, _ => dflt
+
 /-- The expanded name of `xsl:element` or `xsl:attribute` (§11.2.2,
     §11.3): from the lexical name, the namespace attribute, and the
     namespace bindings of the instruction. -/
@@ -532,7 +898,7 @@ def resolveName (name : String) (ns : Option Avt) (scope : List (String × Strin
     (cx : Ctx) (badName undeclared : String) : XM QN := do
   let (p, l) ← match name.splitOn ":" with
     | [l] => pure ("", l)
-    | [p, l] => pure (p, l)
+    | [p, l] => if p == "" then xerr badName ("invalid name '" ++ name ++ "'") else pure (p, l)
     | _ => xerr badName ("invalid name '" ++ name ++ "'")
   if !isNCName l || (p != "" && !isNCName p) then
     if name.startsWith "Q{" && name.contains '}' then
@@ -543,7 +909,8 @@ def resolveName (name : String) (ns : Option Avt) (scope : List (String × Strin
   match ns with
   | some a =>
       let u ← avtStr cx a
-      if !isElem && u == "" then return { uri := "", loc := l }
+      -- a name in no namespace has no prefix (§11.2, §11.3)
+      if u == "" then return { uri := "", loc := l }
       let p := if !isElem && p == "" && u != "" then "" else p
       pure { uri := u, loc := l, pfx := if p == "xmlns" then "" else p }
   | none =>
@@ -558,21 +925,44 @@ def resolveName (name : String) (ns : Option Avt) (scope : List (String × Strin
 /-- The evaluated attributes of `xsl:sort`s. -/
 def sortSpecs (cx : Ctx) (sorts : List SortK) : XM (List SortSpec) :=
   sorts.mapM (fun k => match k with
-    | .mk _ _ order _ dt co coll _ => do
+    | .mk _ _ order lang dt co coll st => do
       let o ← optAvtStr cx order
+      -- the value of lang must be a language code (XTDE0030)
+      if let some lg ← optAvtStr cx lang then
+        if !(lg == "" || lg.toList.all (fun ch => ch.isAlphanum || ch == '-')) then
+          xerr "XTDE0030" ("invalid language '" ++ lg ++ "' in xsl:sort")
+      if let some sv ← optAvtStr cx st then
+        if !(["yes", "no", "true", "false", "1", "0"].contains sv.trimAscii.toString) then
+          xerr "XTDE0030" ("invalid stable value '" ++ sv ++ "' in xsl:sort")
       let d ← optAvtStr cx dt
       let c ← optAvtStr cx co
       let cl ← optAvtStr cx coll
       match o with
       | some v => if v != "ascending" && v != "descending" then xerr "XTDE0030" ("invalid sort order '" ++ v ++ "'")
       | none => pure ()
-      pure { desc := o == some "descending", dataType := d.getD "", caseOrder := c.getD "", collation := cl.getD "" })
+      -- the collation: the attribute, else the default collation; with
+      -- case-order and no collation, the UCA with that case order
+      let curi := cl.getD cx.env.defaultCollation
+      let coll ← match collationOf cx.env.baseUri curi with
+        | .ok k => pure k
+        | .error _ => xerr "XTDE1035" ("unknown collation " ++ curi ++ " in xsl:sort")
+      let coll := match cl, c with
+        | none, some "upper-first" => Coll.uca { upperFirst := true }
+        | none, some "lower-first" => Coll.uca {}
+        | _, _ => coll
+      pure { desc := o == some "descending", dataType := d.getD "", caseOrder := c.getD "",
+             collation := cl.getD "", coll })
 
 /-- The groups of `xsl:for-each-group` (§14): (key, items), in order of
     first appearance. -/
 def makeGroups (cx : Ctx) (s : Seq) (kind : GroupKind) (key : Option Expr) (pat : Option Pattern)
-    (composite : Bool) : XM (List (Seq × Seq)) := do
+    (composite : Bool) (coll : Coll := .codepoint) : XM (List (Seq × Seq)) := do
   let env := cx.env
+  -- string keys are equal when their collation keys are equal
+  let groupKeyStr (a : Atomic) : String :=
+    if (a.ty == .untyped || a.isStringLike) && !coll.isCodepoint then
+      "s:" ++ String.intercalate "," ((coll.key a.str).map toString)
+    else groupKeyStr a
   let sz := s.length
   match kind with
   | .by =>
@@ -712,7 +1102,12 @@ def run : Nat → Sheet → Ctx → List Instr → XM (List Out)
       if (← get).iterSignal.isSome then break
       match ins with
       | .var q ty sel body =>
-          let v ← bindValue n S cx sel body ty ("$" ++ q.show)
+          let v ← bindValue n S cx sel body ty ("$" ++ q.show) "XTTE0570"
+          cx := cx.bind q v
+      | .withBase u [.var q ty sel body] =>
+          -- a variable with an `xml:base` attribute still binds the
+          -- following siblings
+          let v ← bindValue n S { cx with env := { cx.env with baseUri := u } } sel body ty ("$" ++ q.show) "XTTE0570"
           cx := cx.bind q v
       | .onEmpty _ _ => pending := pending ++ [(out.size, true, cx, ins)]; out := out.push none
       | .onNonEmpty _ _ => pending := pending ++ [(out.size, false, cx, ins)]; out := out.push none
@@ -739,9 +1134,9 @@ def run : Nat → Sheet → Ctx → List Instr → XM (List Out)
     return res.toList.flatten
 
 /-- The value of a variable, parameter or with-param (§9.3). -/
-def bindValue : Nat → Sheet → Ctx → Option Expr → List Instr → Option IType → String → XM Seq
-  | 0, _, _, _, _, _, _ => xerr "FOER0000" "XSLT evaluation too deep (fuel exhausted)"
-  | n + 1, S, cx, sel, body, ty, what => do
+def bindValue : Nat → Sheet → Ctx → Option Expr → List Instr → Option IType → String → String → XM Seq
+  | 0, _, _, _, _, _, _, _ => xerr "FOER0000" "XSLT evaluation too deep (fuel exhausted)"
+  | n + 1, S, cx, sel, body, ty, what, code => do
     let v ← match sel with
       | some e => evalX cx e
       | none =>
@@ -751,11 +1146,16 @@ def bindValue : Nat → Sheet → Ctx → Option Expr → List Instr → Option 
           let os ← run n S { cx with tempOut := true } body
           match ty with
           | none => do
+              -- §9.4: no document node when the content has a
+              -- disqualifying element
+              if hasDisqualifying 64 body then materializeAll cx.env os else
               let id ← freshId
-              pure [← liftX (materialize cx.env id (.doc os ""))]
+              -- the implicit document node keeps the annotations of the
+              -- nodes in it (validation="preserve", §25.2)
+              pure [← liftX (materializeK true cx.env id (.doc os ""))]
           | some _ => materializeAll cx.env os
     match ty with
-    | some t => liftX (cx.env.coerce t v what)
+    | some t => liftX (typeErrAs code (cx.env.coerce t v what))
     | none => pure v
 
 def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
@@ -769,7 +1169,9 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         for p in parts do
           match p with
           | .lit t => s := s ++ t
-          | .expr e => s := s ++ (← atomStr cx (← evalX cx e))
+          -- as simple content (§5.6.2, §5.7.2): adjacent text nodes are
+          -- merged before the values are joined with spaces
+          | .expr e => s := s ++ (← simpleContent env (Out.ofSeq (← evalX cx e)) " ")
         pure [.text s]
     | .valueOf sel sep body first =>
         match sel with
@@ -777,8 +1179,12 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             let v ← evalX cx e
             let v := if first then v.take 1 else v
             let sp ← match sep with | some a => avtStr cx a | none => pure " "
-            let as ← liftX (env.atomize v)
-            pure [.text (String.intercalate sp (as.map Atomic.str))]
+            -- constructing simple content (§5.7.2): zero-length text
+            -- nodes are removed and adjacent text nodes merged
+            if first then
+              let as ← liftX (env.atomize v)
+              pure [.text (String.intercalate sp (as.map Atomic.str))]
+            else pure [.text (← simpleContent env (Out.ofSeq v) sp)]
         | none =>
             let os ← run n S cx body
             let sp ← match sep with | some a => avtStr cx a | none => pure ""
@@ -818,6 +1224,8 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let name ← avtStr cx nm
         let name := name.trimAscii.toString
         let q ← resolveName name ns scope true cx "XTDE0820" "XTDE0830"
+        if q.uri == "http://www.w3.org/2000/xmlns/" then
+          xerr "XTDE0835" "an element cannot be in the xmlns namespace"
         let mut content : Array Out := #[]
         for o in ← attrSetOuts n S cx useSets do content := content.push o
         for o in ← run n S cx body do content := content.push o
@@ -888,14 +1296,16 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               xerr "XTSE0680" ("template " ++ name.show ++ " has no parameter $" ++ p.name.show)
           let cx' := if t.ctxAbsent then cx.noFocus else cx
           invoke n S cx' t ps tun
-    | .applyImports params | .nextMatch params =>
+    | .applyImports params v4 | .nextMatch params v4 =>
         match cx.rule, env.ctx with
         | some r, some [it] =>
-          let isNext := match ins with | .nextMatch _ => true | _ => false
+          let isNext := match ins with | .nextMatch _ _ => true | _ => false
           let ok : Tmpl → Bool := if isNext
             then fun t => t.id != r.id && ruleBetter r t
-            else fun t => t.prec < r.prec
+            else fun t => t.prec < r.prec && t.prec ≥ r.precLo
           let (ps, tps) ← evalParams n S cx params
+          -- 4.0: the parameters of the current rule are passed on (§6.8)
+          let ps := if v4 then ps ++ cx.supplied.filter (fun (q, _) => !ps.any (·.1 == q)) else ps
           let tun := tps ++ cx.tunnel.filter (fun (q, _) => !tps.any (·.1 == q))
           match ← liftX (findRule S env cx.mode it ok) with
           | some t => invoke n S cx t ps tun
@@ -914,9 +1324,14 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           for o in ← run n S ({ cx.focus it k sz with rule := none }) body do out := out.push o
           k := k + 1
         pure out.toList
-    | .forEachGroup sel kind key pat composite _ sorts body =>
+    | .forEachGroup sel kind key pat composite collA sorts body =>
         let s ← evalX cx sel
-        let groups ← makeGroups cx s kind key pat composite
+        -- the collation of string keys (§14.4; XTDE1110 if unknown)
+        let curi := (← optAvtStr cx collA).getD cx.env.defaultCollation
+        let coll ← match collationOf cx.env.baseUri curi with
+          | .ok k => pure k
+          | .error _ => xerr "XTDE1110" ("unknown collation " ++ curi ++ " in xsl:for-each-group")
+        let groups ← makeGroups cx s kind key pat composite coll
         -- sort the groups: the sort keys see the group as current-group
         let groups ← if sorts.isEmpty then pure groups else do
           let mut keyed : Array (List (List Atomic) × (Seq × Seq)) := #[]
@@ -924,7 +1339,8 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           let gsz := groups.length
           let mut gi := 1
           for (k, g) in groups do
-            let gcx := ((cx.focus (g.headD default) gi gsz).bind vGroup g).bind vGroupKey k
+            let gcx := ((cx.focus (g.headD default) gi gsz).bind vGroup g).bind vGroupKey
+              (if kind == .by || kind == .adjacent then k else noGroupKey)
             keyed := keyed.push ((← sortKeysOf n S gcx sorts specs), (k, g))
             gi := gi + 1
           let tz := env.tz
@@ -932,8 +1348,11 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let gsz := groups.length
         let mut out : Array Out := #[]
         let mut gi := 1
+        -- with group-starting-with, group-ending-with, split-when and
+        -- merge-when there is no grouping key (XTDE1071)
+        let keyed := kind == .by || kind == .adjacent
         for (k, g) in groups do
-          let gcx := ((cx.focus (g.headD default) gi gsz).bind vGroup g).bind vGroupKey k
+          let gcx := ((cx.focus (g.headD default) gi gsz).bind vGroup g).bind vGroupKey (if keyed then k else noGroupKey)
           for o in ← run n S { gcx with rule := none } body do out := out.push o
           gi := gi + 1
         pure out.toList
@@ -967,7 +1386,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         | some b => run n S cx b
         | none => pure []
     | .var _ _ _ _ => pure []
-    | .copy sel copyNs _ useSets body =>
+    | .copy sel copyNs inheritNs useSets body =>
         let it? ← match sel with
           | some e => do
               let s ← evalX cx e
@@ -989,42 +1408,111 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             let r := env.nrec nd
             match r.kind with
             | .element =>
-                let mut content : Array Out := #[]
+                -- §11.9.1: the base URI of the element is copied (an
+                -- `xml:base` of it is resolved against the static base URI)
+                let base := match env.xmlBaseOf nd with
+                  | some v => resolveRef env.baseUri v.trimAscii.toString
+                  | none => (env.baseUriOf nd).getD ""
+                let mut content : Array Out := #[.attr baseMarkQ base]
+                if !inheritNs then content := content.push (.attr noInheritQ "")
                 for o in ← attrSetOuts n S cx' useSets do content := content.push o
                 for o in ← run n S cx' body do content := content.push o
                 pure [.elem r.name (if copyNs then env.elemDecls nd else []) content.toList]
-            | .document => pure [.doc (← run n S cx' body) (env.doc nd).uri]
+            | .document =>
+                let cs ← run n S cx' body
+                -- §5.7.1: no attribute or namespace node in a document
+                if cs.any (fun o => match o with
+                    | .attr .. | .nsN .. => true
+                    | .item (.node m) => let k := (env.nrec m).kind; k == .attribute || k == .namespace
+                    | _ => false) then
+                  xerr "XTDE0420" "an attribute or namespace node cannot be a child of a document node"
+                pure [.doc cs (env.doc nd).uri]
             | .text => pure [.text r.value]
             | .attribute => pure [.attr r.name r.value]
             | .comment => pure [.comment r.value]
             | .pi => pure [.pi r.name.loc r.value]
             | .namespace => pure [.nsN r.name.loc r.value]
+          | .jnode _ _ v _ =>
+            -- §11.9.1.2: a copy of a JNode; an array or map value is made
+            -- from the sequence constructor (as xsl:array, and as xsl:map
+            -- with duplicates use-last); a sequence value is copied item by
+            -- item, and xsl:copy of an atomic item, map or array is that
+            -- item, so the value stays; another value is kept. The copy is
+            -- a root JNode (this model has no parentless JNode with a key).
+            let build (cxv : Ctx) (x : Item) : XM Item := do
+              match x with
+              | .arr _ =>
+                let s ← materializeAll env (← run n S cxv body)
+                pure (.arr (s.map (fun m => match m with
+                  | .jnode _ _ mv _ => mv
+                  | .map [(k, mv)] => if deepAtomEq k memberKey then mv else [m]
+                  | y => [y])))
+              | .map _ =>
+                let s ← materializeAll env (← run n S cxv body)
+                let mut acc : MB := {}
+                for m in s do
+                  let kvs ← match m with
+                    | .map kvs => pure kvs
+                    | .jnode _ _ [.map kvs] _ => pure kvs
+                    | _ => xerr "XTTE3375" "the content of xsl:copy of a map JNode must be maps"
+                  for (k, y) in kvs do acc := acc.set k y
+                pure (.map acc.toList)
+              | y => pure y
+            let v1 ← match v with
+              | [x] => do pure [← build cx' x]
+              | _ => pure v
+            let id ← freshId
+            pure [.item (mkJRoot id.toUInt64 v1)]
           | other => pure [.item other]
-    | .copyOf sel copyNs =>
+    | .copyOf sel copyNs copyAcc =>
         let s ← evalX cx sel
         let mut out : Array Out := #[]
         for it in s do
           match it with
           | .node nd =>
-            if !copyNs && (env.nrec nd).kind == .element then
+            -- a copy is made where it can differ from the node: other
+            -- namespaces, another base URI (§11.9.2: an `xml:base` is
+            -- resolved against the static base URI), or a value that a
+            -- variable or function returns (its identity is new); with
+            -- copy-accumulators="yes" the copy keeps the accumulator values
+            -- of the node (§18.2.3)
+            let isElem := (env.nrec nd).kind == .element
+            if (isElem && (!copyNs || (env.xmlBaseOf nd).isSome)) || cx.tempOut then
               let id ← freshId
-              out := out.push (.item (← liftX (copyAsTree env id nd false)))
+              let cp ← liftX (copyAsTree env id nd copyNs cx.keepCopies)
+              out := out.push (.item (if copyAcc then withOrigin env nd cp else cp))
             else out := out.push (.item it)
           | _ => out := out.push (.item it)
         pure out.toList
     | .message sel body term code =>
-        let os ← match sel with
-          | some e => do pure (Out.ofSeq (← evalX cx e))
-          | none => run n S cx body
-        let txt ← simpleContent env os ""
-        modify (fun s => { s with msgs := s.msgs.push txt })
+        -- the message: the select value followed by the content (§23.1)
         let t := (← avtStr cx term).trimAscii.toString
+        let content : XM (String × List Item) := do
+          let os1 ← match sel with
+            | some e => do pure (Out.ofSeq (← evalX cx e))
+            | none => pure []
+          let os := os1 ++ (← run n S cx body)
+          let txt ← simpleContent env os ""
+          let id ← freshId
+          let mdoc ← match materialize env id (.doc os "") with
+            | .ok d => pure [d]
+            | .error _ => pure []
+          pure (txt, mdoc)
+        -- a dynamic error in the content does not make the transformation
+        -- fail; the message then reports the error (§23.1)
+        let st0 ← get
+        let (txt, mdoc) ← match content.run st0 with
+          | .ok (r, st1) => do set st1; pure r
+          | .error e =>
+            if parseBool t == some true then throw e
+            else pure ("error " ++ e.code ++ ": " ++ e.msg, [])
+        modify (fun s => { s with msgs := s.msgs.push txt, msgDocs := s.msgDocs ++ mdoc.toArray })
         match parseBool t with
         | some true =>
             let c ← match code with
               | some a => avtStr cx a
               | none => pure "XTMM9000"
-            xerr (errLocal c) txt
+            xerr (validCode c "XTMM9000") txt
         | some false => pure []
         | none => xerr "XTDE0030" ("invalid terminate value '" ++ t ++ "'")
     | .assertI test sel body code =>
@@ -1037,7 +1525,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           let c ← match code with
             | some a => avtStr cx a
             | none => pure "XTMM9001"
-          xerr (errLocal c) txt
+          xerr (validCode c "XTMM9001") txt
     | .number value sel level cnt frm fmt lang ord startAt gsep gsize =>
         let nums ← match value with
           | some e => do
@@ -1067,37 +1555,17 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | none => pure [1]
         let nums := nums.zipIdx.map (fun (x, i) => if x < 0 then x else x + (start.getD i (start.getLast?.getD 1)) - 1)
         let fs ← avtStr cx fmt
-        let (pre, toks, suf) := numberFormatParts fs
         let gs ← optAvtStr cx gsep
         let gz ← optAvtStr cx gsize
         let ordS ← optAvtStr cx ord
         let lng ← optAvtStr cx lang
-        let mut out := pre
-        let mut i := 0
-        for x in nums do
-          let (sep, tok) := toks.getD i (toks.getLast?.getD (".", "1"))
-          let sep := if i == 0 then "" else (if i < toks.length then (if sep == "" then "." else sep) else (match toks.reverse with
-            | (s, _) :: _ => if s == "" then "." else s
-            | [] => "."))
-          let pic := match ordS with
-            | some o => if o == "" || o == "no" then tok else tok ++ ";o"
-            | none => tok
-          let fmtd ← if x < 0 then pure "NaN" else do
-            let r ← liftX (callFn 100000 env { uri := nsFN, loc := "format-integer" }
-              [sInt x, sStr pic, match lng with | some l => sStr l | none => []])
-            pure (match r with | [.atom a] => a.str | _ => toString x)
-          let fmtd := match gs, gz with
-            | some g, some z => groupDigits fmtd g ((z.toNat?).getD 0)
-            | _, _ => fmtd
-          out := out ++ sep ++ fmtd
-          i := i + 1
-        pure [.text (out ++ suf)]
+        pure [.text (← liftX (numberText env nums fs gs gz ordS lng))]
     | .iterate sel params onComp body =>
         let s ← evalX cx sel
         -- initial parameter values
         let mut pv : List (QN × Seq) := []
         for p in params do
-          let v ← bindValue n S (cx.bindAll pv) p.sel p.body p.ty ("$" ++ p.name.show)
+          let v ← bindValue n S (cx.bindAll pv) p.sel p.body p.ty ("$" ++ p.name.show) "XTTE0590"
           pv := pv ++ [(p.name, v)]
         let sz := s.length
         let mut out : Array Out := #[]
@@ -1156,10 +1624,11 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               match (code.drop 2).toString.splitOn "}" with
               | [u, l] => (u, l)
               | _ => (nsERR, code)
+            else if e.uri == "#none" then ("", code)
+            else if e.uri != "" then (e.uri, code)
             else (nsERR, code)
           let hit := catches.find? (fun (errs, _, _) => errs.any (fun t =>
-            t == "*" || t == "*:" ++ el || t == "Q{" ++ eu ++ "}*" || t == "Q{" ++ eu ++ "}" ++ el
-            || (eu == nsERR && t.endsWith ("}" ++ el))))
+            t == "*" || t == "*:" ++ el || t == "Q{" ++ eu ++ "}*" || t == "Q{" ++ eu ++ "}" ++ el))
           match hit with
           | none => throw e
           | some (_, csel, cbody) =>
@@ -1175,31 +1644,30 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             | some e2 => do pure (Out.ofSeq (← evalX ecx e2))
             | none => run n S ecx cbody
     | .analyzeString sel rx fl ms ns =>
-        let s ← atomStr cx (← evalX cx sel)
+        -- the input is coerced to xs:string; () is "" (§17.1)
+        let s ← match ← liftX (env.atomize (← evalX cx sel)) with
+          | [] => pure ""
+          | [a] =>
+            if a.isStringLike || a.ty == .untyped then pure a.str
+            else xerr "XPTY0004" ("xsl:analyze-string needs a string, not xs:" ++ a.ty.name)
+          | _ => xerr "XPTY0004" "xsl:analyze-string needs a single string"
         let pat ← avtStr cx rx
         let flags ← avtStr cx fl
+        -- invalid flags are XTDE1145, an invalid pattern XTDE1140 (§17.1)
+        let badFlags := match compileRe4 pat flags with
+          | .error er => er.code == "FORX0001"
+          | .ok _ => false
+        if badFlags then xerr "XTDE1145" ("invalid regular expression flags '" ++ flags ++ "'")
         let re ← orErr (compileRe4 pat flags) "XTDE1140" ("invalid regular expression '" ++ pat ++ "'")
-        if Regex.isMatch re.r "" then xerr "XTDE1150" "the regular expression matches a zero-length string"
-        let input := s.toList.map Char.toNat
-        let segs := segments re.r input
-        let mut parts : Array (Bool × String × List String) := #[]
-        let mut cur := 0
-        for sg in segs do
-          if sg.start > cur then parts := parts.push (false, cpsStr (Regex.slice input cur sg.start), [])
-          let groups := (List.range re.groups).map (fun i =>
-            match Regex.findCap sg.caps (i + 1) with
-            | some (a, b) => cpsStr (Regex.slice input a b)
-            | none => "")
-          parts := parts.push (true, cpsStr (Regex.slice input sg.start sg.stop), groups)
-          cur := sg.stop
-        if input.length > cur then parts := parts.push (false, cpsStr (Regex.slice input cur input.length), [])
-        let sz := parts.size
+        -- the disjoint matching segments of F&O 4.0 (fn:matching-segments)
+        -- with the non-matching segments between them
+        let parts := analyzeParts s re
+        let sz := parts.length
         let mut out : Array Out := #[]
         let mut k := 1
-        for (isM, str, gs) in parts.toList do
-          let rcx := (cx.focus (.atom (Atomic.ofStr str)) k sz).bind vRegex
-            [.arr ((str :: gs).map (fun g => sStr g))]
-          let b := if isM then ms else ns
+        for p in parts do
+          let rcx := (cx.focus (.atom (Atomic.ofStr p.str)) k sz).bind vRegex [.map p.groups]
+          let b := if p.isMatch then ms else ns
           match b with
           | some body => for o in ← run n S { rcx with rule := none } body do out := out.push o
           | none => pure ()
@@ -1214,13 +1682,29 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | none => pure none
         let mut acc : MB := {}
         for it in v do
+          -- a JNode whose value is a map stands for that map (4.0)
+          let it := match it with
+            | .jnode _ _ [m@(.map _)] _ => m
+            | other => other
           match it with
           | .map kvs =>
             for (k, x) in kvs do
               match acc.get? k with
               | some old =>
+                -- 4.0 duplicates: a function of the old and new values (a
+                -- function of one argument gets the old value only), or
+                -- one of the map:merge policies (§21.1.2)
                 match dupF with
-                | some [f] => acc := acc.set k (← liftX (apply 100000 env f [old, x]))
+                | some [.atom pol] =>
+                  match pol.str with
+                  | "use-first" | "use-any" => pure ()
+                  | "use-last" => acc := acc.set k x
+                  | "combine" => acc := acc.set k (old ++ x)
+                  | "reject" => xerr "XTDE3365" ("duplicate key " ++ k.str ++ " in xsl:map")
+                  | other => xerr "XTDE3366" ("invalid duplicates value '" ++ other ++ "'")
+                | some [f] =>
+                  let args := if f.fnArity == some 1 then [old] else [old, x]
+                  acc := acc.set k (← liftX (apply 100000 env f args))
                 | _ => xerr "XTDE3365" ("duplicate key " ++ k.str ++ " in xsl:map")
               | none => acc := acc.set k x
           | _ => xerr "XTTE3375" "the content of xsl:map must be maps"
@@ -1235,8 +1719,10 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | none => do materializeAll env (← run n S cx body)
         pure [.item (.map [(k, v)])]
     | .arrayI fe sel body =>
+        -- a JNode stands for its jvalue (§22.2)
         let unwrap (s : Seq) : List Seq := s.map (fun it => match it with
           | .map [(k, v)] => if deepAtomEq k memberKey then v else [it]
+          | .jnode _ _ v _ => v
           | _ => [it])
         match fe with
         | none =>
@@ -1263,18 +1749,31 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let s ← match sel with
           | some e => evalX cx e
           | none => do materializeAll env (← run n S cx body)
-        pure [.item (.map [(memberKey, s)])]
+        -- §22.2: a JNode in the value is replaced by its jvalue, recursively
+        pure [.item (.map [(memberKey, dejnode 64 s)])]
     | .evaluate xp ctxE wp nsE ty params scope baseUri =>
         let src ← atomStr cx (← evalX cx xp)
-        let ns ← match nsE with
+        -- with namespace-context, the namespaces of that node, and its
+        -- default namespace for unprefixed element names (§20.1.1)
+        let (ns, dflt) ← match nsE with
           | some e => do
               match ← evalX cx e with
-              | [.node nd] => pure (effScope (env.nrec nd).inscope |>.filter (·.1 != ""))
+              | [.node nd] =>
+                let sc := effScope (env.nrec nd).inscope
+                pure (sc.filter (·.1 != ""), (sc.lookup "").getD "")
               | _ => xerr "XTTE3170" "namespace-context must be a single node"
-          | none => pure scope
+          -- otherwise the xpath-default-namespace of the instruction
+          | none => pure (scope, (scope.lookup "#type").getD "")
         let e ← match parseXPath src ns with
-          | .ok e => pure e
+          | .ok e => pure (if dflt == "" then e else exprDefault dflt 100000 e)
           | .error er => xerr "XTDE3160" ("xsl:evaluate: " ++ er.code ++ " " ++ er.msg)
+        -- the XSLT function current-output-uri is not among the function
+        -- signatures of the target expression (§20.1.1)
+        if (exprAll 10000 [e]).any (fun x => match x with
+            | .call q _ _ => q.uri == nsFN && q.loc == "current-output-uri"
+            | .fref q _ => q.uri == nsFN && q.loc == "current-output-uri"
+            | _ => false) then
+          xerr "XTDE3160" "xsl:evaluate: current-output-uri is not available in the target expression"
         let mut vars : List (QN × Seq) := []
         match wp with
         | some w =>
@@ -1297,6 +1796,11 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               | _ => xerr "XTTE3210" "context-item must be a single item"
           | none => pure none
         let evars := vars.reverse ++ env.vars.filter (fun (q, _) => q.uri == "#xsl")
+        -- current() in the target expression is the context item of the
+        -- xsl:evaluate instruction
+        let evars := match env.ctx with
+          | some c => (vCurrent, c) :: evars
+          | none => evars
         let one := if ctxV.isSome then 1 else 0
         let ebase := if baseUri == "" then env.baseUri else baseUri
         let env' : Env := { env with vars := evars, ctx := ctxV, pos := one, size := one, ns, baseUri := ebase }
@@ -1318,21 +1822,49 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | some a => do
               let s ← avtStr cx a
               let q ← liftX (lexQName env.ns s false "XTDE1460")
+              if !(S.outputs.any (·.1 == q.eqn)) then
+                xerr "XTDE1460" ("no output definition named " ++ s)
               pure q.eqn
           | none => pure ""
         let mut sp : List (String × String) := []
-        for (k, a) in ser do sp := sp ++ [(k, ← avtStr cx a)]
-        let os ← run n S cx body
+        for (k, a) in ser do
+          let v ← avtStr cx a
+          -- a parameter document is resolved against the static base URI
+          let v := if k == "parameter-document" then resolveUri cx.env.baseUri v.trimAscii.toString else v
+          sp := sp ++ [(k, v)]
+        -- the href is resolved against the base output URI (§25.1), and
+        -- the result is the current output URI of its content
+        let base := match (cx.env.vars.find? (·.1 == vBaseOut)).map (·.2) with
+          | some [.atom a] => a.str
+          | _ => ""
+        let h := if h == "" then base else if base == "" then h else resolveUri base h
+        let cxR := if href.isNone then cx else cx.bind vOutUri (if h == "" then [] else [.atom (Atomic.ofUri h)])
+        -- writing a resource that the transformation reads (§25.2)
+        if h.startsWith "file:" && (env.docUris.any (·.1 == h) || env.resources.any (·.1 == h)) then
+          xerr "XTDE1500" ("the result document " ++ h ++ " is also read by the transformation")
+        let how := cx.docValidation
+        let cxR := { cxR with docValidation := "" }
+        let os ← run n S cxR body
         let id ← freshId
         let meth := match sp.lookup "method" with
           | some m => m
           | none => ((S.outputs.lookup f).bind (·.lookup "method")).getD ""
-        let buildTree := match sp.lookup "build-tree" with
+        let buildTree := match (sp.lookup "build-tree").orElse (fun _ => (S.outputs.lookup f).bind (·.lookup "build-tree")) with
           | some b => parseBool b != some false
-          | none => meth != "json" && meth != "adaptive"
+          | none => meth != "json" && meth != "adaptive" && meth != "csv"
+        let sep := match sp.lookup "item-separator" with
+          | some "#absent" => none
+          | some x => some x
+          | none => ((S.outputs.lookup f).bind (·.lookup "item-separator"))
         let v ← if !buildTree then materializeAll env os else match os with
           | [] => pure []
-          | _ => do pure [← liftX (materialize env id (.doc os ""))]
+          | _ => do pure [← liftX (materializeK (how == "preserve") env id (.doc (← liftX (Out.normalizeTop sep os)) h))]
+        -- §25.2: validation of the result document
+        let v ← if !buildTree || how == "" || how == "strip" || how == "preserve" then pure v else
+          v.mapM (fun i => do
+            match ← validateOut S env how (.item i) with
+            | .item j => pure j
+            | _ => pure i)
         let st ← get
         if st.results.any (fun (x, _, _, _) => x == h) then
           xerr "XTDE1490" ("two result documents with the URI '" ++ h ++ "'")
@@ -1341,10 +1873,11 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
     | .wherePopulated body =>
         let os ← run n S cx body
         pure (os.filter (fun o => match o with
-          | .elem _ _ cs => cs.any (fun c => match c with | .attr .. | .nsN .. => false | _ => true)
-          | .doc cs _ => !cs.isEmpty
-          | .text "" => false
-          | .item (.node nd) => nodeNonEmpty env nd
+          -- zero-length text nodes are not children (§5.7.1)
+          | .elem _ _ cs => cs.any (fun c => match c with | .attr .. | .nsN .. | .text "" => false | _ => true)
+          | .doc cs _ => cs.any (fun c => match c with | .text "" => false | _ => true)
+          | .text "" | .comment "" | .pi _ "" | .attr _ "" => false
+          | .item it => !itemDeemedEmpty env 64 it
           | _ => true))
     | .onEmpty _ _ | .onNonEmpty _ _ => pure []
     | .performSort sel sorts body =>
@@ -1355,6 +1888,19 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
     | .merge srcs action =>
         let mut rows : Array (List (List Atomic) × String × Item) := #[]
         let mut specs : List SortSpec := []
+        let tz := env.tz
+        -- corresponding merge keys agree in their attributes (XTDE2210)
+        let mut first : Option (List SortSpec) := none
+        for src in srcs do
+          match src with
+          | .mk _ _ _ _ _ keys =>
+            let ks ← sortSpecs cx keys
+            match first with
+            | none => first := some ks
+            | some f =>
+              if f.length != ks.length || (f.zip ks).any (fun (x, y) =>
+                  x.desc != y.desc || x.dataType != y.dataType || x.caseOrder != y.caseOrder || x.collation != y.collation) then
+                xerr "XTDE2210" "corresponding merge keys of two merge sources differ in their attributes"
         for src in srcs do
           match src with
           | .mk name fei fes sel sortBefore keys =>
@@ -1376,11 +1922,26 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               let items ← if sortBefore then sortSeq n S acx items keys else pure items
               let sz := items.length
               let mut k := 1
+              let mut prev : Option (List (List Atomic)) := none
               for it in items do
                 let kv ← sortKeysOf n S (acx.focus it k sz) keys ks
+                -- the keys of a source are comparable with those of the
+                -- other sources (XTTE2230) and in order (XTDE2220)
+                if let some (k0, _, _) := rows[0]? then
+                  for (x, y) in k0.zip kv do
+                    if let (some a, some b) := (x.head?, y.head?) then
+                      if !sortComparable tz a b then
+                        xerr "XTTE2230" ("merge key values " ++ a.str ++ " and " ++ b.str ++ " are not comparable")
+                if let some p := prev then
+                  for (x, y) in p.zip kv do
+                    if let (some a, some b) := (x.head?, y.head?) then
+                      if !sortComparable tz a b then
+                        xerr "XTTE2230" ("merge key values " ++ a.str ++ " and " ++ b.str ++ " are not comparable")
+                  if cmpKeys ks tz p kv == .gt then
+                    xerr "XTDE2220" "an input of xsl:merge is not in merge key order"
+                prev := some kv
                 rows := rows.push (kv, name, it)
                 k := k + 1
-        let tz := env.tz
         let sorted := rows.toList.mergeSort (fun a b => cmpKeys specs tz a.1 b.1 != .gt)
         -- group rows with equal keys
         let mut groups : Array (List (List Atomic) × Array (String × Item)) := #[]
@@ -1398,16 +1959,25 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           let items := g.toList.map (·.2)
           let named : Seq := g.toList.map (fun (nm, it) => .arr [[.atom (Atomic.ofStr nm)], [it]])
           let keyV : Seq := kv.flatten.map Item.atom
-          let gcx := ((cx.focus (items.headD default) gi gsz).bind vMergeGroup named).bind vMergeKey keyV
+          let names : Seq := srcs.map (fun s => match s with | .mk nm .. => .atom (Atomic.ofStr nm))
+          let gcx := (((cx.focus (items.headD default) gi gsz).bind vMergeGroup named).bind vMergeKey keyV).bind vMergeNames names
           let gcx := gcx.bind vGroup items
           for o in ← run n S { gcx with rule := none } action do out := out.push o
           gi := gi + 1
         pure out.toList
-    | .sourceDoc href body =>
+    | .sourceDoc href body accs =>
         let h ← avtStr cx href
         let d ← liftX (callFn 100000 env { uri := nsFN, loc := "doc" } [sStr h])
         match d with
-        | [i] => run n S (cx.focus i 1 1) body
+        | [i] =>
+          -- §18.1: the document is validated when the instruction asks for it
+          let how := cx.docValidation
+          let cx := { cx with docValidation := "" }
+          let i ← if how == "" || how == "strip" || how == "preserve" then pure i else do
+            match ← validateOut S env how (.item i) with
+            | .item j => pure j
+            | _ => pure i
+          run n S (withAccRules (cx.focus i 1 1) [i] accs) body
         | _ => xerr "FODC0002" ("cannot read " ++ h)
     | .unknown q fbs code =>
         match fbs with
@@ -1418,6 +1988,39 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               for o in ← run n S cx b do out := out.push o
             pure out.toList
     | .staticErr code msg => xerr code msg
+    | .withColl u body => run n S { cx with env := { cx.env with defaultCollation := u } } body
+    | .withNs ns body => run n S { cx with env := { cx.env with ns } } body
+    | .withCompat on body => run n S { cx with backCompat := on } body
+    | .doe cdata body =>
+        -- ignored in temporary output state (§26.1.8, §11.4.3); otherwise
+        -- the text is marked by the processing instructions the
+        -- serializer reads
+        if cx.tempOut then run n S cx body
+        else do
+          let os ← run n S cx body
+          match cdata with
+          | some a =>
+            let v := (← avtStr cx a).trimAscii.toString
+            match parseBool v with
+            | some true => pure ([Out.pi piCdataStart ""] ++ os ++ [Out.pi piCdataEnd ""])
+            | some false => pure os
+            | none => xerr "XTDE0030" ("invalid cdata value '" ++ v ++ "'")
+          | none => pure ([Out.pi piDisableEscaping ""] ++ os ++ [Out.pi piEnableEscaping ""])
+    | .withBase u body => run n S { cx with env := { cx.env with baseUri := u } } body
+    | .valid how body =>
+        -- §25: the copies of xsl:copy-of keep their annotations under
+        -- preserve; every item the instruction gives is then validated
+        let cx' := match body with
+          | [.copyOf ..] => { cx with keepCopies := how == "preserve" }
+          | [.resultDoc ..] | [.sourceDoc ..] => { cx with docValidation := how }
+          | _ => { cx with keepCopies := false }
+        let os ← run n S cx' body
+        -- the document of xsl:result-document and xsl:source-document is
+        -- validated by the instruction itself
+        if cx'.docValidation != "" then return os
+        let mut out : Array Out := #[]
+        for o in os do out := out.push (← validateOut S env how o)
+        pure out.toList
     | .extCall q ats fbs =>
         let cands := S.templates.toList.filter (fun t => t.name == some q)
         match cands.foldl (fun (b : Option Tmpl) t => match b with
@@ -1476,7 +2079,7 @@ def evalParams : Nat → Sheet → Ctx → List WParam → XM (List (QN × Seq) 
     let mut a : List (QN × Seq) := []
     let mut t : List (QN × Seq) := []
     for p in ps do
-      let v ← bindValue n S cx p.sel p.body p.ty ("$" ++ p.name.show)
+      let v ← bindValue n S cx p.sel p.body p.ty ("$" ++ p.name.show) "XTTE0590"
       if a.any (·.1 == p.name) || t.any (·.1 == p.name) then
         xerr "XTSE0670" ("two xsl:with-param elements named $" ++ p.name.show)
       if p.tunnel then t := t ++ [(p.name, v)] else a := a ++ [(p.name, v)]
@@ -1516,10 +2119,17 @@ def applyT : Nat → Sheet → Ctx → Seq → String → List (QN × Seq) → L
 def invoke : Nat → Sheet → Ctx → Tmpl → List (QN × Seq) → List (QN × Seq) → XM (List Out)
   | 0, _, _, _, _, _ => xerr "FOER0000" "XSLT evaluation too deep (fuel exhausted)"
   | n + 1, S, cx, t, ps, tun => do
+    -- an abstract template (§3.4.5.2) fails before its parameters are bound
+    if let [.staticErr "XTDE3052" msg] := t.body then xerr "XTDE3052" msg
     -- the template body sees the global variables and its parameters,
     -- not the caller's local variables
     let globals := cx.env.vars.dropWhile (fun (q, _) => !(q == xv "globals"))
-    let mut tcx : Ctx := { cx with env := { cx.env with vars := globals }, rule := if t.pat.isSome then some t else cx.rule, tunnel := tun, inFn := false }
+    -- the current captured groups are kept through template calls (§17.2.1)
+    let globals := match lookupVar cx.env.vars vRegex with
+      | some g => (vRegex, g) :: globals
+      | none => globals
+    let supplied := if t.pat.isSome then ps else cx.supplied
+    let mut tcx : Ctx := { cx with env := { cx.env with vars := globals }, supplied, rule := if t.pat.isSome then some t else cx.rule, tunnel := tun, inFn := false }
     if t.pat.isNone then tcx := { tcx with rule := cx.rule }
     for p in t.params do
       let given := if p.tunnel then tun.find? (·.1 == p.name) else ps.find? (·.1 == p.name)
@@ -1530,8 +2140,17 @@ def invoke : Nat → Sheet → Ctx → Tmpl → List (QN × Seq) → List (QN ×
             | none => pure v
         | none =>
             if p.required then xerr "XTDE0700" ("no value for the required parameter $" ++ p.name.show)
-            else bindValue n S tcx p.sel p.body p.ty ("$" ++ p.name.show)
+            -- with no default and a type that excludes (), the parameter
+            -- is implicitly mandatory (XTDE0700, §9.3); a default value
+            -- of the wrong type is XTTE0600
+            else if p.sel.isNone && p.body.isEmpty && (match p.ty with
+                | some ty => (cx.env.coerce ty [] "").toOption.isNone
+                | none => false) then
+              xerr "XTDE0700" ("no value for the implicitly mandatory parameter $" ++ p.name.show)
+            else bindValue n S tcx p.sel p.body p.ty ("$" ++ p.name.show) "XTTE0600"
       tcx := tcx.bind p.name v
+    if t.ctxUse == "required" && cx.env.ctx.isNone then
+      xerr "XTTE3090" "the template requires a context item, and there is none"
     if let some cty := t.ctxAs then
       match cx.env.ctx with
       | some c => if !(cx.env.seqMatches c cty) then xerr "XTTE0590" "the context item does not match the template's xsl:context-item type"
@@ -1572,7 +2191,14 @@ def builtin : Nat → Sheet → Ctx → Item → String → List (QN × Seq) →
         | .document => pure [.doc (← applyT n S cx kids mode ps tun none) (env.doc nd).uri]
         | .element =>
             let content := (← applyT n S cx ats mode ps tun none) ++ (← applyT n S cx kids mode ps tun none)
-            pure [.elem r.name (if md.copyNs then env.elemDecls nd else []) content]
+            -- the copy keeps the base URI of the element (§6.8.1, as xsl:copy)
+            -- (its xml:base attribute, copied too, applies on top)
+            let inh := if (env.xmlBaseOf nd).isNone then env.baseUriOf nd else
+              match r.parent with
+              | some p => env.baseUriOf (nd.at p)
+              | none => some (env.treeBaseUri nd)
+            let mark := Out.attr baseMarkQ (inh.getD "")
+            pure [.elem r.name (if md.copyNs then env.elemDecls nd else []) (mark :: content)]
         | _ => pure [.item it]
       | .arr ms => applyT n S cx ms.flatten mode ps tun none
       | _ => pure [.item it]
@@ -1603,7 +2229,7 @@ def sortKeysOf : Nat → Sheet → Ctx → List SortK → List SortSpec → XM (
           | none =>
             if body.isEmpty then pure (match cx.env.ctx with | some s => s | none => [])
             else do
-              let os ← run n S cx body
+              let os ← run n S { cx with tempOut := true } body
               pure [.atom (Atomic.ofStr (← simpleContent cx.env os ""))]
         let as ← liftX (cx.env.atomize v)
         let as := if cx.backCompat then as.take 1 else as
@@ -1622,6 +2248,16 @@ def sortSeq : Nat → Sheet → Ctx → Seq → List SortK → XM Seq
       keyed := keyed.push ((← sortKeysOf n S { cx.focus it k sz with rule := none } sorts specs), it)
       k := k + 1
     let tz := cx.env.tz
+    -- the values of one sort key must be comparable (XTDE1030)
+    -- (4.0: a key value is a sequence; items at one position compare)
+    for j in [0:specs.length] do
+      let seqs := keyed.toList.map (fun (ks, _) => (ks[j]?.getD []))
+      let width := seqs.foldl (fun a q => max a q.length) 0
+      for p in [0:width] do
+        let vals := seqs.filterMap (·[p]?)
+        if let some v0 := vals.head? then
+          if vals.any (fun v => !sortComparable tz v0 v) then
+            xerr "XTDE1030" "the values of a sort key cannot be compared"
     pure ((keyed.toList.mergeSort (fun a b => cmpKeys specs tz a.1 b.1 != .gt)).map (·.2))
 
 end

@@ -786,7 +786,9 @@ def unparsedBinaryFn : LibFn := fun _ e a => do
 
 The is-id property of an attribute: `xml:id`, or an attribute the DTD of
 its document declares `ID`; is-idrefs: one the DTD declares `IDREF` or
-`IDREFS`. No node here has a schema type, so no element is itself an ID. -/
+`IDREFS`; or a node whose schema type annotation (`NRec.tann`) is derived
+from `xs:ID` (an element of that type is itself an ID), `xs:IDREF` or
+`xs:IDREFS`. -/
 
 def qnameAsWritten (q : QN) : String := if q.pfx == "" then q.loc else q.pfx ++ ":" ++ q.loc
 

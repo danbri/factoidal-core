@@ -633,6 +633,10 @@ lean_exe «l4dict-fold-bench» where
 -- suite (Harness/RifRun.lean).
 @[default_target] lean_exe «l4rif» where root := `Harness.RifRun
 
+-- RDF Data Cube (2014) normalization and integrity constraints IC-0 to
+-- IC-21 over tests/datacube/ (Harness/DataCubeRun.lean).
+@[default_target] lean_exe «l4datacube» where root := `Harness.DataCubeRun
+
 -- XSLT 1.0 conformance over the vendored w3c/xslt30-test subset:
 -- XSLT/Transform runs the stylesheet, the result tree is serialised
 -- and compared with the suite's own assert-xml file (Harness/XsltRun.lean).

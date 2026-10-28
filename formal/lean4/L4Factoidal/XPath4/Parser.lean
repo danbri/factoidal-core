@@ -412,6 +412,13 @@ def resolveFn (p : Option String) (u : Option String) (l : String) : P QN := do
   let q ← resolve p u l (← dfltFnNs)
   pure (if u.isSome && q.uri == nsFN then { q with pfx := "#Q" } else q)
 
+/-- The namespace of an unprefixed type name: the host language's binding
+    `#type` (XSLT `xpath-default-namespace`), else the default namespace
+    for elements and types (XQuery `declare default element namespace`). -/
+def dfltTypeNs : P String := do
+  let ns := (← read).ns
+  pure (((ns.lookup "#type").orElse (fun _ => ns.lookup "")).getD "")
+
 /-- Run a parser at an offset with other namespace bindings (for the
     extension grammar's sub-parsers). -/
 def runAt {α} (c : PCtx) (p : P α) (ns : List (String × String)) (i : Nat) : Except Err (α × Nat) :=
@@ -762,13 +769,13 @@ def pItemType : Nat → P IType
         | other => throw { code := "XPST0003", msg := "unsupported item type " ++ other ++ "()" }
       | _ =>
         match ← peekQName with
-        | some (p, u, l, e) => set e; atomicTypeOf (← resolve p u l (((← read).ns.lookup "").getD ""))
+        | some (p, u, l, e) => set e; atomicTypeOf (← resolve p u l (← dfltTypeNs))
         | none => synErr "expected an item type"
     | _ =>
       match ← peekQName with
       | some (p, u, l, e) =>
         set e
-        let q ← resolve p u l (((← read).ns.lookup "").getD "")
+        let q ← resolve p u l (← dfltTypeNs)
         match (if q.uri == nsFN then recordTypesRaw.lookup q.loc else none), n with
         | some src, n' + 1 =>
           -- a named record type of F&O 4.0: parse its record(...) text

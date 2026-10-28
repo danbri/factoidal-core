@@ -596,13 +596,16 @@ theorem Doc.ofNodes_built (ns : List Node) (uri : String) (hfit : ∀ n ∈ ns, 
   DocProof.ofNodes_built ns uri hfit
 
 /-- The kinds of the children of the document record are the kinds of the
-    nodes of `mergeText ns`, in order. -/
+    nodes of `mergeText ns`, in order. The child records are the stored
+    records of the node table (`Doc.get` gives the same record for an
+    index below `nsBase`; above it are the namespace nodes). -/
 theorem Doc.ofNodes_child_kinds (ns : List Node) (uri : String) (hfit : ∀ n ∈ ns, Fits 100000 n) :
-    ((Doc.ofNodes ns uri).get 0).children.toList.map (fun c => ((Doc.ofNodes ns uri).get c).kind) =
+    ((Doc.ofNodes ns uri).get 0).children.toList.map
+        (fun c => ((Doc.ofNodes ns uri).nodes.getD c default).kind) =
       (mergeText ns).map nodeKind := by
   obtain ⟨cs, h0, hb⟩ := DocProof.ofNodes_built ns uri hfit
   have hk := hb.kinds
-  simp only [Doc.get, getD_of_get? h0]
+  simp only [Doc.get, show (0 : Nat) < nsBase by decide, if_true, getD_of_get? h0]
   have : ∀ (l : List Nat), l.map (fun c => (Doc.ofNodes ns uri).nodes[c]?.map NRec.kind) =
       (mergeText ns).map (fun k => some (nodeKind k)) →
       ∀ ks : List Node, ks = mergeText ns →
