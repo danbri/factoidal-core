@@ -94,6 +94,31 @@ def Expr.varsReadF : Nat → Expr → List QN
 
 def Expr.varsRead (e : Expr) : List QN := (Expr.varsReadF 100000 e).eraseDups
 
+/-- The static function calls of an expression: the name and the number
+    of arguments (positional and keyword). -/
+def Expr.callsF : Nat → Expr → List (QN × Nat)
+  | 0, _ => []
+  | f + 1, e =>
+    let go := Expr.callsF f
+    let goL (es : List Expr) : List (QN × Nat) := es.flatMap go
+    let goO (o : Option Expr) : List (QN × Nat) := match o with | some x => go x | none => []
+    match e with
+    | .call q args kw => (q, args.length + (kw.filter (·.1 != "#at")).length) :: (args.flatMap goO ++ kw.flatMap (fun (_, a) => goO a))
+    | .seq es | .arrS es | .tmpl es => goL es
+    | .slash a b | .filter a b | .bin _ a b | .smap a b | .pipe a b => go a ++ go b
+    | .step _ _ ps => goL ps
+    | .dstep _ x ps => go x ++ goL ps
+    | .dyn g args => go g ++ args.flatMap goO
+    | .inline _ _ body _ => go body
+    | .mapC es => es.flatMap (fun (k, v) => go k ++ go v)
+    | .arrC x | .neg x | .plus x | .instOf x _ | .treat x _ | .cast x _ _ | .castable x _ _ => go x
+    | .lookup x k => go x ++ goO k
+    | .ulookup k => goO k
+    | .ifE c t el => go c ++ go t ++ go el
+    | .forE _ _ _ _ _ src body | .letE _ _ src body | .quant _ _ _ src body => go src ++ go body
+    | .mapArrow a g args => go a ++ go g ++ args.flatMap goO
+    | _ => []
+
 /-- The variable names of an expression in first-occurrence order:
     references and binders (inline parameters, for, let and quantified
     variables), so two expressions of one shape list them in step. -/

@@ -1229,8 +1229,15 @@ end
 
 /-- Parse an XPath 4.0 expression with the computed node constructors
     (XPath 4.0 §4.12, `XQuery4.xpathGrammar`). -/
-def parseXPath4 (src : String) (ns : List (String × String) := []) : M Expr :=
-  parseXPath src ns (some L4Factoidal.XQuery4.xpathGrammar)
+def parseXPath4 (src : String) (ns : List (String × String) := []) : M Expr := do
+  let e ← parseXPath src ns (some L4Factoidal.XQuery4.xpathGrammar)
+  -- static check (XPath 4.0 §2.4.1, XPST0017): a call of a function in
+  -- the fn, math, map or array namespace needs a signature of its arity
+  for (q, k) in Expr.callsF 100000 e do
+    if (q.uri == nsFN || q.uri == nsMATH || q.uri == nsMAP || q.uri == nsARR) && !(q.uri == nsFN && q.loc == "concat")
+        && (findSigAny q).isSome && (findSig q k).isNone then
+      err "XPST0017" ("wrong number of arguments for " ++ q.show)
+  pure e
 
 /-- Evaluate an XPath 4.0 expression string. -/
 def evalString (src : String) (env : Env := {}) : M Seq := do
