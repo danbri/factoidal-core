@@ -812,26 +812,41 @@ docs/designissues/2026-10-28-http-over-xmpp.md
   'webdav-serve': `factoidal webdav-serve - serve LWS storages to file browsers over WebDAV
 
 usage: factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]
-                              [--users FILE] [--cert FILE --key FILE]
+                              [--users FILE] [--guest NAME] [--cert FILE --key FILE]
                               [--allow-host NAME]... [--allow-origin ORIGIN]...
                               [--login-limit N] [--login-window SECONDS]
                               [--dangerously-disable-ratelimits]
        factoidal webdav-serve CONFIGDIR --xmpp JID --xmpp-password-file FILE
-                 --xmpp-allow JID[,JID...] [--xmpp-host H] [--xmpp-port P] [--xmpp-tls]
+                 --xmpp-allow JID[,JID...] [--guest NAME] [--xmpp-host H] [--xmpp-port P] [--xmpp-tls]
 
-Starts a WebDAV server (RFC 4918, classes 1 and 2) that macOS Finder,
+EMERGENCY MODE (https://github.com/danbri/factoidal/issues/1147): the server
+is READ ONLY. Every write method (PUT, DELETE, MKCOL, COPY, MOVE, PROPPATCH,
+LOCK, UNLOCK) answers 403 on every mount; "writable:" in a mount file is
+ignored. Every request acts as one named user: a request with no credentials
+acts as the --guest user (with no --guest it gets 401); a request with
+credentials must log in through --users (with no --users it gets 401). Each
+mount file names its users ("- users: alice, bob", required); any other user
+gets 404 for that mount, and the root collection does not list it. Every
+"kind: local" mount is refused at start: use kind: lws with an agent key.
+"auth: bearer" is refused unless the mount file says
+"allow-external-token: true".
+
+Starts a WebDAV server (RFC 4918, class 1) that macOS Finder,
 Windows Explorer, GNOME Files and KDE Dolphin can connect to. Its root
 collection holds one folder per mount; a mount is one Markdown file
 CONFIGDIR/NAME.md (README.md is not a mount):
 
     # Display name
-    - kind: local | lws
+    - kind: lws                    (local: refused, issue 1147)
+    - users: alice, bob            (required: the users who may use it)
     - path: ./alice-storage        (local: an lws-serve storage directory)
     - url: https://storage.example/alice/   (lws: the storage root)
     - auth: none | did-key | bearer
     - key-file: ./alice.jwk        (did-key: a P-256 private JWK; made when absent)
     - token-file: ./alice.token    (bearer: an access token)
-    - writable: true | false       (default true for local, false for lws)
+    - allow-external-token: true   (bearer: required; a credential from
+                                   outside this installation)
+    - writable: true | false       (read, and ignored: read only, issue 1147)
     - storage: snapshot | files    (local: default what the directory holds)
     - base: IRI                    (local: the storage root's IRI, default http://localhost/)
 
@@ -839,14 +854,11 @@ Only the first "# " heading and the first "- key: value" list are read; the
 words in brackets above are notes, not part of a value. A malformed file
 stops the start with its name and line number.
 
-A local mount opens the directory with the operations lws-serve uses, as
-the storage's owner. It takes the lock DIR/lws.lock as lws-serve does
-(https://github.com/danbri/factoidal/issues/1135): a directory that
-lws-serve, solid-serve or another webdav-serve holds stops the start with a
-message that names the lock file and the process. At start each local mount
-says whether its storage is sealed (FACTOIDAL_LWS_KEY, see lws-serve --help
-and factoidal lws-keygen) or written in clear text. An lws mount reaches the
-storage through the LWS client.
+A local mount opened the directory with no authorization, as the storage's
+owner; it is refused at start until the server can tell that a storage has
+no access control (https://github.com/danbri/factoidal/issues/1147). An lws
+mount reaches the storage through the LWS client, with the mount's key or
+token: the LWS storage decides each request with its own access control.
 
   --port N         the port to bind (default 8090; 0 takes an ephemeral one)
   --host ADDRESS   the address to bind (default 127.0.0.1)
@@ -854,6 +866,10 @@ storage through the LWS client.
                    RFC 7617) from FILE, made with "factoidal webdav-user";
                    without TLS only on a loopback address (127.0.0.1, ::1),
                    because Basic sends the password in clear text
+  --guest NAME     a request with no credentials acts as the user NAME (list
+                   it in the "users:" of the mounts it may read). NAME may
+                   not be a user of --users. Without --guest such a request
+                   gets 401 (https://github.com/danbri/factoidal/issues/1147)
   --cert FILE      a PEM certificate chain: serve HTTPS (TLS)
   --key FILE       the PEM private key of --cert
   --login-limit N  with --users: failed logins allowed per user name and per
@@ -879,9 +895,9 @@ storage through the LWS client.
                    403 (a cross-site form POST)
                    https://github.com/danbri/factoidal/issues/1124
 
-Without --users the listener has no login: anyone who can reach the port can
-read and write every writable mount. Keep it on 127.0.0.1, or give --users
-and --cert/--key. A users file holds PBKDF2-HMAC-SHA256 password hashes, one
+Without --users the listener has no login: only the --guest user is
+served, and anyone who can reach the port reads the mounts that list it.
+Keep it on 127.0.0.1, or give --users and --cert/--key. A users file holds PBKDF2-HMAC-SHA256 password hashes, one
 user per line, NAME:pbkdf2-sha256:ITERATIONS:SALT_B64:HASH_B64; a malformed
 line stops the start with the file name and line number. Expert review of the
 login: https://github.com/danbri/factoidal/issues/1117
@@ -1137,7 +1153,7 @@ const VALUE_OPTIONS = {
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
   'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key']),
-  'webdav-serve': new Set(['port', 'host', 'users', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
+  'webdav-serve': new Set(['port', 'host', 'users', 'guest', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca', 'allow-host', 'allow-origin']),
   'webdav-user': new Set(['iterations']),
   'xmpp-http-proxy': new Set(['port', 'host', 'xmpp', 'xmpp-password-file', 'target', 'xmpp-host', 'xmpp-port',
@@ -2495,6 +2511,12 @@ async function commandWebdavServe (positional, options) {
   // The users file is named relative to the working directory here, and
   // given to the engine as an absolute path.
   if (typeof options.users === 'string') settings.users = resolvePath(options.users)
+  // The guest user (https://github.com/danbri/factoidal/issues/1147): the
+  // name goes to the engine unread; it checks it.
+  if (options.guest !== undefined) {
+    if (typeof options.guest !== 'string') throw new UsageError('--guest needs a user name')
+    settings.guest = options.guest
+  }
   // The Host and Origin guard (https://github.com/danbri/factoidal/issues/1124):
   // the values go to the engine unread; it checks them.
   Object.assign(settings, localGuardConfig(options))
@@ -2528,10 +2550,11 @@ async function commandWebdavServe (positional, options) {
   for (const n of running.storageNotices || []) err(`webdav-serve: ${n}`)
   if (!quiet) {
     err(`webdav-serve: listening on ${running.origin} for ${positional[0]}` +
-        (settings.users !== undefined ? `, login from ${options.users}` : ', NO LOGIN on this listener') +
+        (settings.users !== undefined ? `, login from ${options.users}` : ', no --users: credentials get 401') +
+        (settings.guest !== undefined ? `, guest ${settings.guest}` : ', no --guest') +
         (useTls ? ', TLS' : ''))
     for (const m of running.mounts) {
-      err(`webdav-serve: ${running.origin}/${encodeURIComponent(m.name)}/ - ${m.title} (${m.kind}${m.writable ? '' : ', read-only'}${m.agent ? ', as ' + m.agent : ''})`)
+      err(`webdav-serve: ${running.origin}/${encodeURIComponent(m.name)}/ - ${m.title} (${m.kind}${m.writable ? '' : ', read-only'}${m.agent ? ', as ' + m.agent : ''}${Array.isArray(m.users) ? ', users: ' + m.users.join(', ') : ''})`)
     }
   }
   out(running.origin)
@@ -2557,9 +2580,10 @@ async function webdavOverXmpp (configDir, options, quiet) {
   const allow = options['xmpp-allow'].split(',').map((x) => x.trim()).filter((x) => x.length > 0)
   const { openWebdav, WebdavHostError } = await import('../webdav/server.mjs')
   const { connectHttpTarget, XmppClientError } = await import('../xmpp/client.mjs')
+  if (options.guest !== undefined && typeof options.guest !== 'string') throw new UsageError('--guest needs a user name')
   let dav
   try {
-    dav = await openWebdav({ configDir })
+    dav = await openWebdav({ configDir, ...(typeof options.guest === 'string' ? { guest: options.guest } : {}) })
   } catch (error) {
     if (error instanceof WebdavHostError && error.unknownOp) return notWired('webdav-serve', error.message)
     if (error instanceof WebdavHostError || (error !== null && typeof error === 'object' && error.code === 'ENOENT')) {
@@ -2568,6 +2592,7 @@ async function webdavOverXmpp (configDir, options, quiet) {
     }
     throw error
   }
+  for (const w of dav.warnings || []) err(`factoidal webdav-serve: WARNING: ${w}`)
   for (const n of dav.storageNotices || []) err(`webdav-serve: ${n}`)
   const settings = {
     engine: dav.engine,

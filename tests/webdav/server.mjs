@@ -2,19 +2,22 @@
 //
 //   node tests/webdav/server.mjs
 //
-// One configuration directory, three mounts:
-//   local.md   kind local, an lws-serve storage directory (snapshot), writable
-//   remote.md  kind lws, `lws-serve --authz` started here with --owner the
-//              did:key of remote.jwk, auth did-key, writable
-//   other.md   kind lws, the same storage, auth did-key with a key file that
-//              does not exist (the engine makes it), read-only; that agent is
-//              not the owner, so the storage refuses it
-// plus README.md, which is not a mount. Then the login of the listener
-// (https://github.com/danbri/factoidal/issues/1108): `webdav-user` writes a
-// users file, `webdav-serve --users` needs HTTP Basic, the login cache, and
-// the refusals at start. Every WebDAV method runs through the
-// local and the remote mount, through the CLI and the socket. Every decision
-// is formal/lean4/L4Factoidal/WebDAV/; this file plays the file browser.
+// Emergency mode (https://github.com/danbri/factoidal/issues/1147): the
+// server is read only, every request acts as one named user (the --guest
+// user with no credentials, a user of --users with credentials), a mount
+// names its users (`users:`), and local mounts are refused at start.
+//
+// One `lws-serve --authz` storage started here, owned by the did:key of
+// remote.jwk, filled through the LWS client as the owner. One configuration
+// directory, three lws mounts of that storage:
+//   remote.md  auth did-key remote.jwk (the owner), users: alice, guest
+//   other.md   auth did-key other.jwk (made by the engine; not the owner, so
+//              the storage refuses it), users: alice
+//   hidden.md  auth did-key remote.jwk, users: bob
+// plus README.md, which is not a mount. Then the refusals at start, and the
+// login of the listener (https://github.com/danbri/factoidal/issues/1108).
+// Every decision is formal/lean4/L4Factoidal/WebDAV/; this file plays the
+// file browser.
 //
 // Score line: "N pass, M fail, X xfail, S skipped (out of T)".
 
@@ -110,10 +113,11 @@ function basic (user, password) {
 }
 
 /** The login of the listener (issue 1108). */
-async function login (dir) {
+async function login (dir, lwsOrigin, ownerJwk) {
   const conf = join(dir, 'login')
-  mkdirSync(join(conf, 'store'), { recursive: true })
-  writeFileSync(join(conf, 'notes.md'), '# Notes\n- kind: local\n- path: ./store\n')
+  mkdirSync(conf, { recursive: true })
+  writeFileSync(join(conf, 'owner.jwk'), ownerJwk, { mode: 0o600 })
+  writeFileSync(join(conf, 'notes.md'), `# Notes\n- kind: lws\n- url: ${lwsOrigin}/\n- auth: did-key\n- key-file: owner.jwk\n- users: alice, bob\n`)
   const users = join(dir, 'users.txt')
   await check('webdav-user: writes NAME:pbkdf2-sha256:ITERATIONS:SALT:HASH with mode 0600; a second name is added', async () => {
     let r = await runWithInput(['webdav-user', users, 'alice', '--iterations', '100000'], 'open sesame\n')
@@ -156,15 +160,17 @@ async function login (dir) {
         assert(r.status === 401, `${a}: ${r.status}`)
       }
     })
-    await check('login: the right password is 207; PUT and GET work for both users', async () => {
+    await check('login: the right password is 207; GET works for both users; PUT is 403 (read only, issue 1147)', async () => {
       let r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '1', authorization: basic('alice', 'open sesame') } })
       assert(r.status === 207 && r.text.includes('<D:href>/notes/</D:href>'), `PROPFIND ${r.status} ${r.text}`)
       r = await dav(origin, 'PUT', '/notes/a.txt', { headers: { authorization: basic('bob', 'hunter2') }, body: 'from bob' })
-      assert(r.status === 201, `PUT ${r.status} ${r.text}`)
-      r = await dav(origin, 'GET', '/notes/a.txt', { headers: { authorization: basic('alice', 'open sesame') } })
-      assert(r.status === 200 && r.text === 'from bob', `GET ${r.status} ${r.text}`)
-      r = await dav(origin, 'GET', '/notes/a.txt')
-      assert(r.status === 401, `GET without credentials ${r.status}`)
+      assert(r.status === 403, `PUT ${r.status} ${r.text}`)
+      for (const a of [basic('alice', 'open sesame'), basic('bob', 'hunter2')]) {
+        r = await dav(origin, 'GET', '/notes/greeting.txt', { headers: { authorization: a } })
+        assert(r.status === 200 && r.text === 'hello', `GET ${r.status} ${r.text}`)
+      }
+      r = await dav(origin, 'GET', '/notes/greeting.txt')
+      assert(r.status === 401, `GET without credentials and no --guest ${r.status}`)
     })
     // The failed-login limit (https://github.com/danbri/factoidal/issues/1119):
     // 5 failures per 60 s per name and per address. The checks above made 2
@@ -289,128 +295,43 @@ async function stop (proc) {
 
 const LOCK = '<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype><D:owner>tests/webdav</D:owner></D:lockinfo>'
 const PROPSET = '<D:propertyupdate xmlns:D="DAV:" xmlns:Z="http://example.org/z/"><D:set><D:prop><Z:colour>green</Z:colour></D:prop></D:set></D:propertyupdate>'
-const PROPGET = '<D:propfind xmlns:D="DAV:"><D:prop><Z:colour xmlns:Z="http://example.org/z/"/><D:getcontentlength/></D:prop></D:propfind>'
+const READ_ALLOW = 'OPTIONS, GET, HEAD, PROPFIND'
 
 async function dav (origin, method, path, { headers = {}, body } = {}) {
   const r = await fetch(origin + path, { method, headers, body })
   return { status: r.status, headers: r.headers, text: await r.text() }
 }
 
-/** Every method through one mount. */
-async function methods (origin, m) {
-  const base = `/${m}/`
-  await check(`${m}: OPTIONS advertises DAV 1, 2 and MS-Author-Via`, async () => {
-    const r = await dav(origin, 'OPTIONS', base)
-    assert(r.status === 200, `status ${r.status}`)
-    assert(r.headers.get('dav') === '1, 2', `dav ${r.headers.get('dav')}`)
-    assert(r.headers.get('ms-author-via') === 'DAV', 'no MS-Author-Via')
-  })
-  await check(`${m}: PUT creates (201), GET reads it back, PUT again replaces (204)`, async () => {
-    let r = await dav(origin, 'PUT', base + 'hello.txt', { headers: { 'content-type': 'text/plain' }, body: 'hello' })
-    assert(r.status === 201, `PUT ${r.status} ${r.text}`)
-    r = await dav(origin, 'GET', base + 'hello.txt')
-    assert(r.status === 200 && r.text === 'hello', `GET ${r.status} ${r.text}`)
-    r = await dav(origin, 'PUT', base + 'hello.txt', { headers: { 'content-type': 'text/plain' }, body: 'hello, world' })
-    assert(r.status === 204, `PUT again ${r.status}`)
-  })
-  await check(`${m}: PUT of bytes that are not UTF-8 reads back byte for byte`, async () => {
-    const bytes = new Uint8Array([0, 0xff, 0x80, 0x89, 0x50, 0x4e, 0x47, 0xfe])
-    let r = await fetch(origin + base + 'bin.dat', { method: 'PUT', body: bytes })
-    assert(r.status === 201, `PUT ${r.status}`)
-    r = await fetch(origin + base + 'bin.dat')
-    const got = new Uint8Array(await r.arrayBuffer())
-    assert(got.length === bytes.length && got.every((b, i) => b === bytes[i]), 'bytes differ')
-  })
-  await check(`${m}: MKCOL creates a collection (201); again 405; no parent 409`, async () => {
-    let r = await dav(origin, 'MKCOL', base + 'docs')
-    assert(r.status === 201, `MKCOL ${r.status} ${r.text}`)
-    r = await dav(origin, 'MKCOL', base + 'docs')
-    assert(r.status === 405, `MKCOL again ${r.status}`)
-    r = await dav(origin, 'MKCOL', base + 'no/such')
-    assert(r.status === 409, `MKCOL no parent ${r.status}`)
-  })
-  await check(`${m}: PROPFIND Depth 0 of a file gives its length, type and date`, async () => {
-    const r = await dav(origin, 'PROPFIND', base + 'hello.txt', { headers: { depth: '0' } })
-    assert(r.status === 207, `status ${r.status}`)
-    assert(r.text.includes('<D:getcontentlength>12</D:getcontentlength>'), r.text)
-    assert(r.text.includes('<D:getlastmodified>'), 'no getlastmodified')
-    assert(r.text.includes('<D:getcontenttype>text/plain</D:getcontenttype>'), 'no getcontenttype')
-  })
-  await check(`${m}: PROPFIND Depth 1 lists each member once`, async () => {
-    const r = await dav(origin, 'PROPFIND', base, { headers: { depth: '1' } })
-    assert(r.status === 207, `status ${r.status}`)
-    for (const href of [`${base}hello.txt`, `${base}docs/`, `${base}bin.dat`]) {
-      const n = r.text.split(`<D:href>${href}</D:href>`).length - 1
-      assert(n === 1, `${href} listed ${n} times`)
-    }
-  })
-  await check(`${m}: PROPFIND Depth infinity is refused (403, propfind-finite-depth)`, async () => {
-    const r = await dav(origin, 'PROPFIND', base, { headers: { depth: 'infinity' } })
-    assert(r.status === 403 && r.text.includes('propfind-finite-depth'), `status ${r.status}`)
-  })
-  await check(`${m}: PROPPATCH sets a dead property; PROPFIND reads it`, async () => {
-    let r = await dav(origin, 'PROPPATCH', base + 'hello.txt', { headers: { 'content-type': 'application/xml' }, body: PROPSET })
-    assert(r.status === 207 && r.text.includes('200 OK'), `PROPPATCH ${r.status} ${r.text}`)
-    r = await dav(origin, 'PROPFIND', base + 'hello.txt', { headers: { depth: '0' }, body: PROPGET })
-    assert(r.status === 207 && r.text.includes('>green</Z:colour>'), r.text)
-  })
-  await check(`${m}: COPY (201), COPY over it (204), Overwrite F (412)`, async () => {
-    let r = await dav(origin, 'COPY', base + 'hello.txt', { headers: { destination: origin + base + 'docs/copy.txt' } })
-    assert(r.status === 201, `COPY ${r.status} ${r.text}`)
-    r = await dav(origin, 'COPY', base + 'hello.txt', { headers: { destination: origin + base + 'docs/copy.txt' } })
-    assert(r.status === 204, `COPY over ${r.status}`)
-    r = await dav(origin, 'COPY', base + 'hello.txt', { headers: { destination: origin + base + 'docs/copy.txt', overwrite: 'F' } })
-    assert(r.status === 412, `Overwrite F ${r.status}`)
-    r = await dav(origin, 'GET', base + 'docs/copy.txt')
-    assert(r.text === 'hello, world', `copy reads ${r.text}`)
-  })
-  await check(`${m}: MOVE renames a collection with its members and dead properties`, async () => {
-    let r = await dav(origin, 'MOVE', base + 'docs/', { headers: { destination: origin + base + 'papers/' } })
-    assert(r.status === 201, `MOVE ${r.status} ${r.text}`)
-    r = await dav(origin, 'GET', base + 'papers/copy.txt')
-    assert(r.status === 200 && r.text === 'hello, world', `moved member ${r.status}`)
-    r = await dav(origin, 'GET', base + 'docs/copy.txt')
-    assert(r.status === 404, `old member ${r.status}`)
-    r = await dav(origin, 'MOVE', base + 'hello.txt', { headers: { destination: origin + base + 'greeting.txt' } })
-    assert(r.status === 201, `MOVE file ${r.status}`)
-    r = await dav(origin, 'PROPFIND', base + 'greeting.txt', { headers: { depth: '0' }, body: PROPGET })
-    assert(r.text.includes('>green</Z:colour>'), 'the dead property did not move')
-  })
-  await check(`${m}: LOCK (Lock-Token); PUT without the token 423, with it 204; UNLOCK 204`, async () => {
-    let r = await dav(origin, 'LOCK', base + 'greeting.txt', { headers: { timeout: 'Second-600', 'content-type': 'application/xml' }, body: LOCK })
-    assert(r.status === 200, `LOCK ${r.status} ${r.text}`)
-    const token = (r.headers.get('lock-token') || '').replace(/^<|>$/g, '')
-    assert(token.startsWith('urn:uuid:'), `token ${token}`)
-    assert(r.text.includes('<D:lockdiscovery>'), 'no lockdiscovery')
-    r = await dav(origin, 'PUT', base + 'greeting.txt', { body: 'x' })
-    assert(r.status === 423 && r.text.includes('lock-token-submitted'), `PUT without token ${r.status}`)
-    r = await dav(origin, 'PUT', base + 'greeting.txt', { headers: { if: `(<${token}>)` }, body: 'locked write' })
-    assert(r.status === 204, `PUT with token ${r.status}`)
-    r = await dav(origin, 'UNLOCK', base + 'greeting.txt', { headers: { 'lock-token': `<${token}>` } })
-    assert(r.status === 204, `UNLOCK ${r.status}`)
-    r = await dav(origin, 'PUT', base + 'greeting.txt', { body: 'free' })
-    assert(r.status === 204, `PUT after UNLOCK ${r.status}`)
-  })
-  await check(`${m}: DELETE of a collection (204) removes its members; DELETE again 404`, async () => {
-    let r = await dav(origin, 'DELETE', base + 'papers/')
-    assert(r.status === 204, `DELETE ${r.status} ${r.text}`)
-    r = await dav(origin, 'GET', base + 'papers/copy.txt')
-    assert(r.status === 404, `member ${r.status}`)
-    r = await dav(origin, 'DELETE', base + 'papers/')
-    assert(r.status === 404, `again ${r.status}`)
-  })
+/** Every write method on `path`, with these headers: each must be 403. */
+async function writesRefused (origin, path, headers = {}) {
+  const writes = [
+    ['PUT', { body: 'changed' }],
+    ['DELETE', {}],
+    ['MKCOL', {}],
+    ['COPY', { headers: { destination: origin + path + '.copy' } }],
+    ['MOVE', { headers: { destination: origin + path + '.moved' } }],
+    ['PROPPATCH', { body: PROPSET }],
+    ['LOCK', { headers: { timeout: 'Second-60' }, body: LOCK }],
+    ['UNLOCK', { headers: { 'lock-token': '<urn:uuid:00000000-0000-4000-8000-000000000000>' } }]
+  ]
+  for (const [method, opts] of writes) {
+    const r = await dav(origin, method, path, { headers: { ...headers, ...(opts.headers || {}) }, body: opts.body })
+    assert(r.status === 403, `${method} ${path}: ${r.status} ${r.text}`)
+    assert(r.headers.get('allow') === READ_ALLOW, `${method} Allow ${r.headers.get('allow')}`)
+    assert(r.text.includes('read only (emergency mode'), `${method} body ${r.text}`)
+  }
 }
 
 async function main () {
   const dir = mkdtempSync(join(process.env.WEBDAV_TEST_TMP || tmpdir(), 'factoidal-webdav-'))
   const conf = join(dir, 'conf')
   mkdirSync(conf)
-  mkdirSync(join(conf, 'store'))
   const owner = keyPair('ES256')
   const did = didKeyOf(owner)
-  writeFileSync(join(conf, 'remote.jwk'), JSON.stringify(owner.privateKey.export({ format: 'jwk' })), { mode: 0o600 })
-  writeFileSync(join(conf, 'local.md'), '# Local storage\n- kind: local\n- path: ./store\n\nA storage directory of lws-serve.\n')
+  const ownerJwk = JSON.stringify(owner.privateKey.export({ format: 'jwk' }))
+  writeFileSync(join(conf, 'remote.jwk'), ownerJwk, { mode: 0o600 })
   writeFileSync(join(conf, 'README.md'), '# Not a mount\n- colour: red\n')
+  const users = join(dir, 'users-main.txt')
   let lws = null
   let web = null
   try {
@@ -421,10 +342,26 @@ async function main () {
       skipped += 1
       return
     }
-    writeFileSync(join(conf, 'remote.md'), `# Remote storage\n- kind: lws\n- url: ${lws.origin}/\n- auth: did-key\n- key-file: remote.jwk\n- writable: true\n`)
-    writeFileSync(join(conf, 'other.md'), `# Someone else\n- kind: lws\n- url: ${lws.origin}/\n- auth: did-key\n- key-file: other.jwk\n`)
+    // The storage, filled as its owner through the LWS client.
+    const { createLwsClient } = await import('../../npm/factoidal/lws/client.mjs')
+    const ownerClient = await createLwsClient({
+      selfIssued: { subject: did, keyId: `${did}#${did.slice(8)}`, jwk: owner.privateKey.export({ format: 'jwk' }) }
+    })
+    const seeded = await ownerClient.update(`${lws.origin}/greeting.txt`, { body: 'hello', mediaType: 'text/plain', precondition: 'none' })
+    assert(seeded.status === 201 || seeded.status === 204, `seed ${seeded.status}`)
+    const bin = new Uint8Array([0, 0xff, 0x80, 0x89, 0x50, 0x4e, 0x47, 0xfe])
+    await ownerClient.update(`${lws.origin}/bin.dat`, { body: bin, mediaType: 'application/octet-stream', precondition: 'none' })
+    writeFileSync(join(conf, 'remote.md'), `# Remote storage\n- kind: lws\n- url: ${lws.origin}/\n- auth: did-key\n- key-file: remote.jwk\n- writable: true\n- users: alice, guest\n`)
+    writeFileSync(join(conf, 'other.md'), `# Someone else\n- kind: lws\n- url: ${lws.origin}/\n- auth: did-key\n- key-file: other.jwk\n- users: alice\n`)
+    writeFileSync(join(conf, 'hidden.md'), `# Bob only\n- kind: lws\n- url: ${lws.origin}/\n- auth: did-key\n- key-file: remote.jwk\n- users: bob\n`)
+    let r0 = await runWithInput(['webdav-user', users, 'alice', '--iterations', '100000'], 'open sesame\n')
+    assert(r0.code === 0, `webdav-user alice ${r0.code} ${r0.errText}`)
+    r0 = await runWithInput(['webdav-user', users, 'bob', '--iterations', '100000'], 'hunter2\n')
+    assert(r0.code === 0, `webdav-user bob ${r0.code} ${r0.errText}`)
+    const alice = { authorization: basic('alice', 'open sesame') }
+    const bob = { authorization: basic('bob', 'hunter2') }
     try {
-      web = await start(['webdav-serve', conf, '--port', '0'])
+      web = await start(['webdav-serve', conf, '--port', '0', '--users', users, '--guest', 'guest'])
     } catch (error) {
       if (/exited 3|not yet wired|does not carry webdav/.test(String(error.message))) {
         skipped += 1
@@ -434,86 +371,176 @@ async function main () {
       throw error
     }
     const origin = web.origin
-    await check('root: PROPFIND Depth 1 lists the three mounts and not README.md', async () => {
-      const r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '1' } })
-      assert(r.status === 207, `status ${r.status}`)
-      for (const m of ['local', 'remote', 'other']) assert(r.text.includes(`<D:href>/${m}/</D:href>`), `no ${m}`)
-      assert(!r.text.includes('README'), 'README.md is a mount')
-      assert(r.text.includes('<D:displayname>Local storage</D:displayname>'), 'no display name')
+    await check('start: the output says read only (emergency mode, issue 1147) and names the guest', async () => {
+      for (let i = 0; i < 50 && !web.errText().includes('listening on'); i++) await new Promise((resolve) => setTimeout(resolve, 100))
+      assert(web.errText().includes('read only (emergency mode, issue 1147)'), web.errText())
+      assert(web.errText().includes('acts as the guest user "guest"'), web.errText())
+      assert(web.errText().includes('users: alice, guest'), web.errText())
     })
-    await check('start: the key file the engine made exists, mode 0600, with a P-256 private key', async () => {
+    await check('start: the remote mount acts as the did:key of its key file; the key file the engine made exists, mode 0600', async () => {
+      assert(web.errText().includes(did), `the start lines do not name ${did}: ${web.errText()}`)
       const p = join(conf, 'other.jwk')
       assert(existsSync(p), 'no other.jwk')
       assert((statSync(p).mode & 0o777) === 0o600, `mode ${(statSync(p).mode & 0o777).toString(8)}`)
-      const jwk = JSON.parse(readFileSync(p, 'utf8'))
-      assert(jwk.kty === 'EC' && jwk.crv === 'P-256' && typeof jwk.d === 'string', 'not a P-256 private JWK')
     })
-    await check('start: the remote mount acts as the did:key of its key file', async () => {
-      assert(web.errText().includes(did), `the start lines do not name ${did}: ${web.errText()}`)
+    await check('OPTIONS: DAV 1, MS-Author-Via, Allow lists only the read methods', async () => {
+      const r = await dav(origin, 'OPTIONS', '/remote/')
+      assert(r.status === 200, `status ${r.status}`)
+      assert(r.headers.get('dav') === '1', `dav ${r.headers.get('dav')}`)
+      assert(r.headers.get('ms-author-via') === 'DAV', 'no MS-Author-Via')
+      assert(r.headers.get('allow') === READ_ALLOW, `allow ${r.headers.get('allow')}`)
     })
-    await methods(origin, 'local')
-    await methods(origin, 'remote')
-    await check('remote: the storage refuses an agent that is not its owner (403), read-only mount refuses PUT (403)', async () => {
-      let r = await dav(origin, 'PROPFIND', '/other/', { headers: { depth: '1' } })
+    await check('guest (no credentials): the root lists only the mounts that name guest, not README.md', async () => {
+      const r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '1' } })
+      assert(r.status === 207, `status ${r.status}`)
+      assert(r.text.includes('<D:href>/remote/</D:href>'), 'no remote')
+      assert(!r.text.includes('/other/') && !r.text.includes('/hidden/'), `lists another user's mount: ${r.text}`)
+      assert(!r.text.includes('README'), 'README.md is a mount')
+      assert(r.text.includes('<D:displayname>Remote storage</D:displayname>'), 'no display name')
+      const g = await dav(origin, 'GET', '/')
+      assert(g.status === 200 && g.text.includes('/remote/') && !g.text.includes('/hidden/'), `GET / ${g.text}`)
+    })
+    await check('guest: GET, HEAD and PROPFIND read the storage as the mount agent', async () => {
+      let r = await dav(origin, 'GET', '/remote/greeting.txt')
+      assert(r.status === 200 && r.text === 'hello', `GET ${r.status} ${r.text}`)
+      r = await dav(origin, 'HEAD', '/remote/greeting.txt')
+      assert(r.status === 200, `HEAD ${r.status}`)
+      r = await dav(origin, 'PROPFIND', '/remote/greeting.txt', { headers: { depth: '0' } })
+      assert(r.status === 207 && r.text.includes('<D:getcontentlength>5</D:getcontentlength>'), `PROPFIND ${r.status} ${r.text}`)
+      assert(r.text.includes('<D:supportedlock/>'), 'a lock is offered')
+      r = await dav(origin, 'PROPFIND', '/remote/', { headers: { depth: '1' } })
+      assert(r.status === 207 && r.text.split('<D:href>/remote/greeting.txt</D:href>').length === 2, `Depth 1 ${r.text}`)
+      const b = await fetch(origin + '/remote/bin.dat')
+      const got = new Uint8Array(await b.arrayBuffer())
+      assert(got.length === bin.length && got.every((x, i) => x === bin[i]), 'bytes differ')
+      r = await dav(origin, 'PROPFIND', '/remote/', { headers: { depth: 'infinity' } })
+      assert(r.status === 403 && r.text.includes('propfind-finite-depth'), `infinity ${r.status}`)
+    })
+    await check('read only: every write method is 403 with Allow of the read methods, for the guest and for a logged-in user, on every mount (writable: true is ignored)', async () => {
+      await writesRefused(origin, '/remote/greeting.txt')
+      await writesRefused(origin, '/remote/greeting.txt', alice)
+      await writesRefused(origin, '/remote/new.txt', alice)
+      await writesRefused(origin, '/hidden/greeting.txt', bob)
+      await writesRefused(origin, '/', alice)
+    })
+    await check('read only: the LWS storage is unchanged after the writes (read by the LWS client as the owner)', async () => {
+      const got = await ownerClient.read(`${lws.origin}/greeting.txt`)
+      assert(got.status === 200 && got.body === 'hello', `LWS client read ${got.status} ${got.body}`)
+      for (const name of ['new.txt', 'greeting.txt.copy', 'greeting.txt.moved']) {
+        const h = await fetch(`${lws.origin}/${name}`)
+        assert(h.status === 401 || h.status === 404, `${name}: ${h.status}`)
+        let gone = false
+        try {
+          const x = await ownerClient.read(`${lws.origin}/${name}`)
+          gone = x.status === 404
+        } catch (error) {
+          gone = error && error.detail && error.detail.status === 404
+        }
+        assert(gone, `${name} exists in the storage`)
+      }
+    })
+    await check('users: alice sees remote and other, not hidden; bob sees hidden only', async () => {
+      let r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '1', ...alice } })
+      assert(r.status === 207 && r.text.includes('/remote/') && r.text.includes('/other/') && !r.text.includes('/hidden/'), `alice ${r.text}`)
+      r = await dav(origin, 'PROPFIND', '/', { headers: { depth: '1', ...bob } })
+      assert(r.status === 207 && r.text.includes('/hidden/') && !r.text.includes('/remote/') && !r.text.includes('/other/'), `bob ${r.text}`)
+      r = await dav(origin, 'GET', '/hidden/greeting.txt', { headers: bob })
+      assert(r.status === 200 && r.text === 'hello', `bob GET ${r.status}`)
+    })
+    await check('users: a mount the user may not use is 404, as a mount that does not exist (same body), on every read method', async () => {
+      const absent = await dav(origin, 'GET', '/nomount/greeting.txt', { headers: alice })
+      assert(absent.status === 404, `absent ${absent.status}`)
+      for (const [method, path, headers] of [['GET', '/hidden/greeting.txt', alice], ['HEAD', '/hidden/greeting.txt', alice],
+        ['PROPFIND', '/hidden/', { depth: '0', ...alice }], ['OPTIONS', '/hidden/', alice],
+        ['GET', '/remote/greeting.txt', bob], ['GET', '/other/greeting.txt', {}], ['GET', '/hidden/', {}]]) {
+        const r = await dav(origin, method, path, { headers })
+        assert(r.status === 404, `${method} ${path}: ${r.status}`)
+        if (method !== 'HEAD') assert(r.text === absent.text, `${method} ${path} body ${r.text}`)
+      }
+    })
+    await check('the storage decides: a mount agent that is not the owner gets the storage refusal (403)', async () => {
+      const r = await dav(origin, 'PROPFIND', '/other/', { headers: { depth: '1', ...alice } })
       assert(r.status === 403, `PROPFIND ${r.status} ${r.text}`)
-      r = await dav(origin, 'PUT', '/other/x.txt', { body: 'x' })
-      assert(r.status === 403, `PUT ${r.status}`)
     })
-    await check('remote: a file written through WebDAV is in the LWS storage (read by the LWS client as the owner)', async () => {
-      const r = await fetch(`${lws.origin}/greeting.txt`)
-      assert(r.status === 401, `unauthenticated read ${r.status}`)
-      const { createLwsClient } = await import('../../npm/factoidal/lws/client.mjs')
-      const client = await createLwsClient({
-        selfIssued: { subject: did, keyId: `${did}#${did.slice(8)}`, jwk: owner.privateKey.export({ format: 'jwk' }) }
-      })
-      const got = await client.read(`${lws.origin}/greeting.txt`)
-      assert(got.status === 200 && got.body === 'free', `LWS client read ${got.status} ${got.body}`)
+    await check('credentials: a wrong password, an unknown user, a Bearer token and a malformed value are 401, never the guest', async () => {
+      for (const a of [basic('alice', 'wrong'), basic('mallory', 'x'), 'Bearer x', 'garbage']) {
+        const r = await dav(origin, 'GET', '/remote/greeting.txt', { headers: { authorization: a } })
+        assert(r.status === 401, `${a}: ${r.status}`)
+        assert((r.headers.get('www-authenticate') || '').startsWith('Basic'), `${a}: no challenge`)
+      }
     })
-    await check('cross-mount MOVE is 502 (RFC 4918 §9.9.4)', async () => {
-      const r = await dav(origin, 'MOVE', '/local/bin.dat', { headers: { destination: origin + '/remote/bin.dat' } })
-      assert(r.status === 502, `status ${r.status}`)
+    await stop(web)
+    web = null
+    web = await start(['webdav-serve', conf, '--port', '0', '--users', users])
+    await check('no --guest: a request with no credentials is 401 with WWW-Authenticate: Basic; a user is served', async () => {
+      let r = await dav(web.origin, 'PROPFIND', '/', { headers: { depth: '1' } })
+      assert(r.status === 401 && (r.headers.get('www-authenticate') || '').startsWith('Basic'), `status ${r.status}`)
+      r = await dav(web.origin, 'GET', '/remote/greeting.txt')
+      assert(r.status === 401, `GET ${r.status}`)
+      r = await dav(web.origin, 'GET', '/remote/greeting.txt', { headers: alice })
+      assert(r.status === 200 && r.text === 'hello', `alice ${r.status}`)
     })
-    await check('local: the storage directory is written (lws-state.json) and read again after a restart', async () => {
-      assert(existsSync(join(conf, 'store', 'lws-state.json')), 'no lws-state.json')
-      const set = await dav(origin, 'PROPPATCH', '/local/greeting.txt', { body: PROPSET })
-      assert(set.status === 207, `PROPPATCH before the restart ${set.status}`)
-      await stop(web)
-      web = await start(['webdav-serve', conf, '--port', '0'])
-      const r = await dav(web.origin, 'GET', '/local/greeting.txt')
-      assert(r.status === 200 && r.text === 'free', `after restart ${r.status} ${r.text}`)
+    await stop(web)
+    web = null
+    web = await start(['webdav-serve', conf, '--port', '0', '--guest', 'guest'])
+    await check('no --users: the guest is served; any request with credentials is 401 (no one to log in as)', async () => {
+      let r = await dav(web.origin, 'GET', '/remote/greeting.txt')
+      assert(r.status === 200 && r.text === 'hello', `guest ${r.status}`)
+      r = await dav(web.origin, 'GET', '/remote/greeting.txt', { headers: alice })
+      assert(r.status === 401, `credentials ${r.status}`)
     })
-    // https://github.com/danbri/factoidal/issues/1078: dead properties and
-    // locks are kept in CONFIGDIR/.webdav-state.json.
-    await check('local: a dead property survives a restart', async () => {
-      const r = await dav(web.origin, 'PROPFIND', '/local/greeting.txt', { headers: { depth: '0' }, body: PROPGET })
-      assert(r.status === 207 && r.text.includes('>green</Z:colour>'), `the dead property set before the restart is gone: ${r.status} ${r.text}`)
+    await stop(web)
+    web = null
+    web = await start(['webdav-serve', conf, '--port', '0'])
+    await check('neither --users nor --guest: every request is 401', async () => {
+      for (const h of [{}, alice]) {
+        const r = await dav(web.origin, 'PROPFIND', '/', { headers: { depth: '0', ...h } })
+        assert(r.status === 401, `status ${r.status}`)
+      }
+      for (let i = 0; i < 50 && !web.errText().includes('no --guest'); i++) await new Promise((resolve) => setTimeout(resolve, 100))
+      assert(web.errText().includes('no --guest: a request with no credentials gets 401'), web.errText())
     })
-    await check('local: a lock survives a restart; its token still unlocks; the state file has mode 0600', async () => {
-      const lockBody = '<?xml version="1.0"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope>' +
-        '<D:locktype><D:write/></D:locktype><D:owner>tester</D:owner></D:lockinfo>'
-      const l = await dav(web.origin, 'LOCK', '/local/greeting.txt', { headers: { timeout: 'Second-600' }, body: lockBody })
-      assert(l.status === 200, `LOCK ${l.status} ${l.text}`)
-      const token = l.headers.get('lock-token')
-      assert(token && token.startsWith('<urn:uuid:'), `Lock-Token ${token}`)
-      const file = join(conf, '.webdav-state.json')
-      assert(existsSync(file), 'no .webdav-state.json')
-      assert((statSync(file).mode & 0o777) === 0o600, `mode ${(statSync(file).mode & 0o777).toString(8)}`)
-      await stop(web)
-      web = await start(['webdav-serve', conf, '--port', '0'])
-      let r = await dav(web.origin, 'PUT', '/local/greeting.txt', { body: 'changed' })
-      assert(r.status === 423, `PUT without the token after the restart ${r.status}`)
-      r = await dav(web.origin, 'PROPFIND', '/local/greeting.txt', { headers: { depth: '0' } , body: '<D:propfind xmlns:D="DAV:"><D:prop><D:lockdiscovery/></D:prop></D:propfind>' })
-      assert(r.status === 207 && r.text.includes(token.slice(1, -1)), `lockdiscovery after the restart ${r.status} ${r.text}`)
-      r = await dav(web.origin, 'UNLOCK', '/local/greeting.txt', { headers: { 'lock-token': token } })
-      assert(r.status === 204, `UNLOCK after the restart ${r.status} ${r.text}`)
-      r = await dav(web.origin, 'GET', '/local/greeting.txt')
-      assert(r.status === 200 && r.text === 'free', `GET ${r.status} ${r.text}`)
+    await stop(web)
+    web = null
+    await check('start: --guest naming a user of --users stops the start (exit 1)', async () => {
+      const r = await run(['webdav-serve', conf, '--port', '0', '--users', users, '--guest', 'alice'])
+      assert(r.code === 1 && r.errText.includes('"alice" is a user of the users file'), `exit ${r.code} ${r.errText}`)
+    })
+    await check('start: a kind: local mount is refused with FILE:LINE, naming kind: lws with an agent key (exit 1)', async () => {
+      const bad = join(dir, 'local')
+      mkdirSync(join(bad, 'store'), { recursive: true })
+      writeFileSync(join(bad, 'l.md'), '# L\n- kind: local\n- path: ./store\n- users: guest\n')
+      const r = await run(['webdav-serve', bad, '--port', '0', '--guest', 'guest'])
+      assert(r.code === 1 && r.errText.includes('l.md:2: a `kind: local` mount opens its storage with no authorization'), `exit ${r.code} ${r.errText}`)
+      assert(r.errText.includes('use kind: lws with an agent key') && r.errText.includes('issues/1147'), r.errText)
+    })
+    await check('start: a mount with no users: is refused with FILE:LINE (exit 1)', async () => {
+      const bad = join(dir, 'nousers')
+      mkdirSync(bad)
+      writeFileSync(join(bad, 'n.md'), `# N\n- kind: lws\n- url: ${lws.origin}/\n`)
+      const r = await run(['webdav-serve', bad, '--port', '0', '--guest', 'guest'])
+      assert(r.code === 1 && r.errText.includes('n.md:2: the settings list has no `users`'), `exit ${r.code} ${r.errText}`)
+    })
+    await check('start: auth bearer with a token file is refused without allow-external-token: true (exit 1); with it, a warning', async () => {
+      const bad = join(dir, 'bearer')
+      mkdirSync(bad)
+      writeFileSync(join(bad, 't.token'), 'abc\n')
+      writeFileSync(join(bad, 't.md'), `- kind: lws\n- url: ${lws.origin}/\n- auth: bearer\n- token-file: t.token\n- users: guest\n`)
+      const r = await run(['webdav-serve', bad, '--port', '0', '--guest', 'guest'])
+      assert(r.code === 1 && r.errText.includes('t.md:3: auth `bearer` uses the token file, a credential from outside this installation'), `exit ${r.code} ${r.errText}`)
+      writeFileSync(join(bad, 't.md'), `- kind: lws\n- url: ${lws.origin}/\n- auth: bearer\n- token-file: t.token\n- users: guest\n- allow-external-token: true\n`)
+      const w = await start(['webdav-serve', bad, '--port', '0', '--guest', 'guest'])
+      try {
+        for (let i = 0; i < 50 && !w.errText().includes('allow-external-token'); i++) await new Promise((resolve) => setTimeout(resolve, 100))
+        assert(w.errText().includes('WARNING: t.md: allow-external-token: true: the mount uses the token file t.token'), w.errText())
+      } finally {
+        await stop(w)
+      }
     })
     await check('start: a malformed state file stops the start with its name (exit 1)', async () => {
       const bad = join(dir, 'badstate')
       mkdirSync(bad)
-      mkdirSync(join(bad, 'store'))
-      writeFileSync(join(bad, 's.md'), '- kind: local\n- path: ./store\n')
+      writeFileSync(join(bad, 's.md'), `- kind: lws\n- url: ${lws.origin}/\n- users: guest\n`)
       writeFileSync(join(bad, '.webdav-state.json'), '{"format":"factoidal-webdav-state","version":1,')
       let r = await run(['webdav-serve', bad, '--port', '0'])
       assert(r.code === 1 && r.errText.includes('.webdav-state.json: not JSON'), `exit ${r.code} ${r.errText}`)
@@ -524,19 +551,12 @@ async function main () {
     await check('start: a malformed mount file stops the start with its name and line (exit 1)', async () => {
       const bad = join(dir, 'bad')
       mkdirSync(bad)
-      writeFileSync(join(bad, 'x.md'), '# X\n- kind: local\n- colour: red\n')
+      writeFileSync(join(bad, 'x.md'), '# X\n- kind: lws\n- colour: red\n')
       const r = await run(['webdav-serve', bad, '--port', '0'])
       assert(r.code === 1, `exit ${r.code}`)
       assert(r.errText.includes('x.md:3: unknown key "colour"'), r.errText)
     })
-    await check('start: a local mount whose directory does not exist stops the start', async () => {
-      const bad = join(dir, 'bad2')
-      mkdirSync(bad)
-      writeFileSync(join(bad, 'y.md'), '- kind: local\n- path: ./absent\n')
-      const r = await run(['webdav-serve', bad, '--port', '0'])
-      assert(r.code === 1 && r.errText.includes('does not exist'), `exit ${r.code} ${r.errText}`)
-    })
-    await login(dir)
+    await login(dir, lws.origin, ownerJwk)
   } finally {
     await stop(web)
     await stop(lws)

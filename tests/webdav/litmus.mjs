@@ -84,6 +84,15 @@ function litmus (url, cwd) {
 }
 
 async function main () {
+  // Emergency mode (https://github.com/danbri/factoidal/issues/1147):
+  // webdav-serve is read only, and every litmus suite (basic, copymove,
+  // props, locks, http) writes. The suite is not run until writes come
+  // back; this is a skip, not a pass.
+  // FACTOIDAL_LITMUS_READ_ONLY_SKIP=0 runs it anyway (the writes then fail).
+  if (process.env.FACTOIDAL_LITMUS_READ_ONLY_SKIP !== '0') {
+    console.log('litmus: 0 pass, 0 fail, 0 xfail (out of 0) - not run: webdav-serve is read only (https://github.com/danbri/factoidal/issues/1147); every litmus suite writes')
+    process.exit(2)
+  }
   if (spawnSync('litmus', ['--version'], { encoding: 'utf8' }).error) {
     console.log('litmus: 0 pass, 0 fail, 0 xfail (out of 0) - not run: litmus is not installed (apt-get install litmus)')
     process.exit(2)
@@ -96,7 +105,6 @@ async function main () {
   const owner = keyPair('ES256')
   const did = didKeyOf(owner)
   writeFileSync(join(conf, 'owner.jwk'), JSON.stringify(owner.privateKey.export({ format: 'jwk' })), { mode: 0o600 })
-  writeFileSync(join(conf, 'local.md'), '# Local\n- kind: local\n- path: ./store\n')
   let lws = null
   let web = null
   let pass = 0
@@ -105,9 +113,9 @@ async function main () {
   const problems = []
   try {
     lws = await start(['lws-serve', join(dir, 'lws'), '--port', '0', '--authz', join(dir, 'lws-as'), '--owner', did, '--quiet'])
-    writeFileSync(join(conf, 'remote.md'), `# Remote\n- kind: lws\n- url: ${lws.origin}/\n- auth: did-key\n- key-file: owner.jwk\n- writable: true\n`)
-    web = await start(['webdav-serve', conf, '--port', '0', '--quiet'])
-    for (const mount of ['local', 'remote']) {
+    writeFileSync(join(conf, 'remote.md'), `# Remote\n- kind: lws\n- url: ${lws.origin}/\n- auth: did-key\n- key-file: owner.jwk\n- writable: true\n- users: guest\n`)
+    web = await start(['webdav-serve', conf, '--port', '0', '--quiet', '--guest', 'guest'])
+    for (const mount of ['remote']) {
       const work = join(dir, `work-${mount}`)
       mkdirSync(work)
       const got = litmus(`${web.origin}/${mount}/`, work)

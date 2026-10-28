@@ -117,17 +117,17 @@ const CLI_CHECKS = [
   'lws-serve: the lock file names this process while it runs',
   'lws-serve: a second lws-serve of the same DIR is refused (exit 1, names the lock file and the holder)',
   'solid-serve: a DIR that lws-serve holds is refused',
-  'webdav-serve: a local mount of a DIR that lws-serve holds is refused',
+  'webdav-serve: a local mount of a DIR that lws-serve holds is refused (every local mount is, issue 1147)',
   'lws-serve: a clean exit (SIGINT) removes the lock',
   'lws-serve: a clean exit (SIGTERM) removes the lock',
-  'webdav-serve: a clean exit removes the lock of its local mount',
+  'webdav-serve: a local mount is refused at start and takes no lock (issue 1147)',
   'lws-serve: a stale lock (process not running) is taken over with a warning',
   'lws-serve: a lock of another host is refused',
   'lws-serve: a file that is not a lock is refused',
   'lws-serve: with no key, the start notice says clear text and how to turn on encryption',
   'lws-serve: with a key, the start notice says sealed and gives the key id',
   'solid-serve: the start notice says clear text with no key',
-  'webdav-serve: the start notice of a local mount says clear text with no key',
+  'webdav-serve: no local mount starts, so no storage notice is printed (issue 1147)',
   'lws-keygen: prints a key whose key id is SHA-256 of the key; lws-serve starts sealed with it'
 ]
 
@@ -164,11 +164,13 @@ async function runCli (root) {
     await check(CLI_CHECKS[3], async () => {
       const conf = join(root, 'conf')
       mkdirSync(conf, { recursive: true })
-      writeFileSync(join(conf, 'local.md'), `# Local storage\n- kind: local\n- path: ${dir}\n`)
+      writeFileSync(join(conf, 'local.md'), `# Local storage\n- kind: local\n- path: ${dir}\n- users: guest\n`)
       const web = await start(['webdav-serve', conf, '--port', '0', '--quiet'])
       if (web.child !== undefined) { await stop(web.child); throw new Error('webdav-serve started') }
-      assert(web.code === 1 && web.stderr().includes(join(dir, 'lws.lock')) &&
-        web.stderr().includes(`process ${first.child.pid}`), `exit ${web.code} ${web.stderr()}`)
+      // https://github.com/danbri/factoidal/issues/1147: every local mount is
+      // refused at start, before any lock is asked for.
+      assert(web.code === 1 && web.stderr().includes('local.md:2: a `kind: local` mount opens its storage with no authorization'),
+        `exit ${web.code} ${web.stderr()}`)
     })
     await check(CLI_CHECKS[4], async () => {
       await stop(first.child, 'SIGINT')
@@ -185,11 +187,9 @@ async function runCli (root) {
     await check(CLI_CHECKS[6], async () => {
       const conf = join(root, 'conf')
       const web = await start(['webdav-serve', conf, '--port', '0', '--quiet'])
-      assert(web.child !== undefined, `no start: ${web.stderr()}`)
-      const lock = JSON.parse(readFileSync(join(dir, 'lws.lock'), 'utf8'))
-      assert(lock.command === 'webdav-serve' && lock.pid === web.child.pid, JSON.stringify(lock))
-      await stop(web.child)
-      assert(!existsSync(join(dir, 'lws.lock')), 'the lock is still there')
+      if (web.child !== undefined) { await stop(web.child); throw new Error('webdav-serve started') }
+      assert(web.code === 1 && web.stderr().includes('issues/1147'), `exit ${web.code} ${web.stderr()}`)
+      assert(!existsSync(join(dir, 'lws.lock')), 'webdav-serve took the lock of a refused mount')
     })
     await check(CLI_CHECKS[7], async () => {
       const pid = deadPid()
@@ -240,9 +240,8 @@ async function runCli (root) {
     })
     await check(CLI_CHECKS[13], async () => {
       const web = await start(['webdav-serve', join(root, 'conf'), '--port', '0', '--quiet'])
-      assert(web.child !== undefined, `no start: ${web.stderr()}`)
-      await stop(web.child)
-      assert(web.stderr().includes('webdav-serve: mount local: encryption at rest is OFF'), web.stderr())
+      if (web.child !== undefined) { await stop(web.child); throw new Error('webdav-serve started with a local mount') }
+      assert(web.code === 1 && web.stderr().includes('issues/1147') && !web.stderr().includes('encryption at rest'), web.stderr())
     })
     await check(CLI_CHECKS[14], async () => {
       const r = spawnSync(process.execPath, [CLI, 'lws-keygen'], { encoding: 'utf8' })

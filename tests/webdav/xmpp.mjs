@@ -17,6 +17,11 @@
 // formal/lean4/L4Factoidal/XMPP/ (ClientStream, HttpOverXmpp) and
 // formal/lean4/L4Factoidal/WebDAV/.
 //
+// Emergency mode (https://github.com/danbri/factoidal/issues/1147): the
+// mount is an lws mount of an `lws-serve --authz` storage started here and
+// filled through the LWS client as its owner; webdav-serve is read only and
+// every request over XMPP acts as the --guest user.
+//
 // Score line: "N pass, M fail, X xfail (out of T)".
 
 import { spawn, execFileSync } from 'node:child_process'
@@ -25,6 +30,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { TestClient, request as xreq } from './xmpp-client.mjs'
+import { keyPair, didKeyOf } from '../authz/fixtures.mjs'
 
 const CLI = fileURLToPath(new URL('../../npm/factoidal/bin/factoidal.mjs', import.meta.url))
 const DOMAIN = 'example.org'
@@ -102,9 +108,22 @@ function run (args, cwd) {
 async function main () {
   const dir = mkdtempSync(join(tmpdir(), 'webdav-xmpp-'))
   try {
-    mkdirSync(join(dir, 'dav', 'notes'), { recursive: true })
+    mkdirSync(join(dir, 'dav'), { recursive: true })
     mkdirSync(join(dir, 'xmpp'))
-    writeFileSync(join(dir, 'dav', 'notes.md'), '# Notes\n- kind: local\n- path: ./notes\n')
+    // The storage: lws-serve --authz, owned by the did:key of owner.jwk,
+    // filled through the LWS client (webdav-serve is read only, issue 1147).
+    const owner = keyPair('ES256')
+    const did = didKeyOf(owner)
+    const ownerJwk = owner.privateKey.export({ format: 'jwk' })
+    writeFileSync(join(dir, 'dav', 'owner.jwk'), JSON.stringify(ownerJwk), { mode: 0o600 })
+    const lws = await start(['lws-serve', 'lws', '--port', '0', '--authz', 'lws-as', '--owner', did, '--quiet'],
+      /^(http:\/\/127\.0\.0\.1:\d+)$/m, dir)
+    const lwsOrigin = lws.match[1]
+    const { createLwsClient } = await import('../../npm/factoidal/lws/client.mjs')
+    const ownerClient = await createLwsClient({ selfIssued: { subject: did, keyId: `${did}#${did.slice(8)}`, jwk: ownerJwk } })
+    await ownerClient.update(`${lwsOrigin}/hello.txt`, { body: 'hello over xmpp', mediaType: 'text/plain', precondition: 'none' })
+    writeFileSync(join(dir, 'dav', 'notes.md'),
+      `# Notes\n- kind: lws\n- url: ${lwsOrigin}/\n- auth: did-key\n- key-file: owner.jwk\n- users: guest\n`)
     writeFileSync(join(dir, 'accounts'), 'alice:alice-pw\nbob:bob-pw\ncarol:carol-pw\n')
     writeFileSync(join(dir, 'bob.password'), 'bob-pw\n')
     writeFileSync(join(dir, 'wrong.password'), 'not-bob-pw\n')
@@ -118,34 +137,37 @@ async function main () {
       '--cert', 'cert.pem', '--key', 'key.pem'], /^xmpps:\/\/127\.0\.0\.1:(\d+)$/m, dir)
     const xport = xs.match[1]
     const tlsArgs = ['--xmpp-host', '127.0.0.1', '--xmpp-port', xport, '--xmpp-tls', '--xmpp-ca', 'cert.pem']
-    const OPT_IN = '--dangerously-allow-writable-without-login'
+    const OPT_IN = '--guest'
+    const GUEST = 'guest'
 
     // Constraints of https://github.com/danbri/factoidal/issues/1120 and
     // https://github.com/danbri/factoidal/issues/1125, decided in Lean
     // (`xcStartRefusal`, `ClientStream.secureTransport`).
     await check('start refused: plain TCP to a host that is not loopback (exit 1, no connection)', async () => {
       const r = await run(['webdav-serve', 'dav', '--xmpp', `bob@${DOMAIN}`, '--xmpp-password-file', 'bob.password',
-        '--xmpp-allow', `alice@${DOMAIN}`, '--xmpp-host', '192.0.2.1', '--xmpp-port', '5222', OPT_IN], dir)
+        '--xmpp-allow', `alice@${DOMAIN}`, '--xmpp-host', '192.0.2.1', '--xmpp-port', '5222', OPT_IN, GUEST], dir)
       assert(r.code === 1 && r.errText.includes('plain TCP to 192.0.2.1 is refused'), `exit ${r.code}: ${r.errText}`)
     })
     await check('start refused: an allow-list entry with a resource (exit 1)', async () => {
       const r = await run(['webdav-serve', 'dav', '--xmpp', `bob@${DOMAIN}`, '--xmpp-password-file', 'bob.password',
-        '--xmpp-allow', `alice@${DOMAIN}/phone`, ...tlsArgs, OPT_IN], dir)
+        '--xmpp-allow', `alice@${DOMAIN}/phone`, ...tlsArgs, OPT_IN, GUEST], dir)
       assert(r.code === 1 && r.errText.includes('only bare JIDs'), `exit ${r.code}: ${r.errText}`)
     })
     await check('start refused: no --xmpp-allow (exit 2, usage)', async () => {
-      const r = await run(['webdav-serve', 'dav', '--xmpp', `bob@${DOMAIN}`, '--xmpp-password-file', 'bob.password', ...tlsArgs, OPT_IN], dir)
+      const r = await run(['webdav-serve', 'dav', '--xmpp', `bob@${DOMAIN}`, '--xmpp-password-file', 'bob.password', ...tlsArgs, OPT_IN, GUEST], dir)
       assert(r.code !== 0 && r.errText.includes('--xmpp-allow'), `exit ${r.code}: ${r.errText}`)
     })
-    await check('start refused: a writable local mount without the opt-in (exit 1)', async () => {
-      const r = await run(['webdav-serve', 'dav', '--xmpp', `bob@${DOMAIN}`, '--xmpp-password-file', 'bob.password',
-        '--xmpp-allow', `alice@${DOMAIN}`, ...tlsArgs], dir)
-      assert(r.code === 1 && r.errText.includes('--dangerously-allow-writable-without-login'), `exit ${r.code}: ${r.errText}`)
+    await check('start refused: a local mount (exit 1, issue 1147)', async () => {
+      mkdirSync(join(dir, 'davlocal', 'store'), { recursive: true })
+      writeFileSync(join(dir, 'davlocal', 'l.md'), '# L\n- kind: local\n- path: ./store\n- users: guest\n')
+      const r = await run(['webdav-serve', 'davlocal', '--xmpp', `bob@${DOMAIN}`, '--xmpp-password-file', 'bob.password',
+        '--xmpp-allow', `alice@${DOMAIN}`, ...tlsArgs, OPT_IN, GUEST], dir)
+      assert(r.code === 1 && r.errText.includes('l.md:2: a `kind: local` mount opens its storage with no authorization'), `exit ${r.code}: ${r.errText}`)
     })
 
     await check('webdav-serve --xmpp: a wrong password stops the start with the SASL condition (exit 1)', async () => {
       const r = await run(['webdav-serve', 'dav', '--xmpp', `bob@${DOMAIN}`, '--xmpp-password-file', 'wrong.password',
-        '--xmpp-allow', `alice@${DOMAIN}`, ...tlsArgs, OPT_IN], dir)
+        '--xmpp-allow', `alice@${DOMAIN}`, ...tlsArgs, OPT_IN, GUEST], dir)
       assert(r.code === 1, `exit ${r.code}: ${r.errText}`)
       assert(r.errText.includes('SASL failure: not-authorized'), r.errText)
     })
@@ -153,10 +175,11 @@ async function main () {
     let web = null
     await check('webdav-serve --xmpp: connects out as bob (direct TLS, SCRAM-SHA-256) and binds bob@example.org/dav', async () => {
       web = await start(['webdav-serve', 'dav', '--xmpp', `bob@${DOMAIN}`, '--xmpp-password-file', 'bob.password',
-        '--xmpp-allow', `alice@${DOMAIN}`, ...tlsArgs, OPT_IN],
+        '--xmpp-allow', `alice@${DOMAIN}`, ...tlsArgs, OPT_IN, GUEST],
       /^xmpp:(\S+)$/m, dir)
       assert(web.match[1] === TARGET, web.match[1])
-      assert(web.errText().includes('WARNING: --dangerously-allow-writable-without-login'), web.errText())
+      for (let i = 0; i < 50 && !web.errText().includes('read only'); i++) await new Promise((resolve) => setTimeout(resolve, 100))
+      assert(web.errText().includes('read only (emergency mode, issue 1147)'), web.errText())
     })
     if (web === null) return
 
@@ -169,11 +192,11 @@ async function main () {
       assert(/<xml>[\s\S]*multistatus[\s\S]*\/notes\/[\s\S]*<\/xml>/.test(r.iq), r.iq.slice(0, 500))
     })
 
-    await check('alice: PUT /notes/hello.txt as text gives 201', async () => {
+    await check('alice: PUT /notes/hello.txt gives 403 (read only, issue 1147)', async () => {
       const r = await request(alice, 'PUT', '/notes/hello.txt', {
-        headers: [['Content-Type', 'text/plain']], data: '<data><text>hello over xmpp</text></data>'
+        headers: [['Content-Type', 'text/plain']], data: '<data><text>overwritten</text></data>'
       })
-      assert(r.status === 201, `status ${r.status}: ${r.iq.slice(0, 300)}`)
+      assert(r.status === 403, `status ${r.status}: ${r.iq.slice(0, 300)}`)
     })
 
     await check('alice: GET /notes/hello.txt gives 200 and the text', async () => {
@@ -182,22 +205,20 @@ async function main () {
       assert(r.iq.includes('<text>hello over xmpp</text>'), r.iq.slice(0, 400))
     })
 
-    await check('alice: MKCOL then PROPFIND Depth 1 lists the new collection', async () => {
+    await check('alice: MKCOL is 403; PROPFIND Depth 1 lists the storage', async () => {
       const m = await request(alice, 'MKCOL', '/notes/docs/')
-      assert(m.status === 201, `MKCOL status ${m.status}`)
+      assert(m.status === 403, `MKCOL status ${m.status}`)
       const p = await request(alice, 'PROPFIND', '/notes/', { headers: [['Depth', '1']] })
-      assert(p.status === 207 && p.iq.includes('/notes/docs/') && p.iq.includes('/notes/hello.txt'), p.iq.slice(0, 600))
+      assert(p.status === 207 && !p.iq.includes('/notes/docs/') && p.iq.includes('/notes/hello.txt'), p.iq.slice(0, 600))
     })
 
     // 100,000 bytes: above the 65,536-byte inline limit, so the response
     // comes back as chunkedBase64 (two chunks of at most 65,536 bytes).
     const big = Buffer.alloc(100000)
     for (let i = 0; i < big.length; i += 1) big[i] = (i * 7) % 251
-    await check('alice: a 100,000-byte binary PUT as base64, then GET in chunkedBase64 chunks', async () => {
-      const put = await request(alice, 'PUT', '/notes/big.bin', {
-        headers: [['Content-Type', 'application/octet-stream']], data: `<data><base64>${big.toString('base64')}</base64></data>`
-      })
-      assert(put.status === 201, `PUT status ${put.status}`)
+    await check('alice: a 100,000-byte binary file (written over LWS), GET in chunkedBase64 chunks', async () => {
+      const put = await ownerClient.update(`${lwsOrigin}/big.bin`, { body: new Uint8Array(big), mediaType: 'application/octet-stream', precondition: 'none' })
+      assert(put.status === 201 || put.status === 204, `LWS update status ${put.status}`)
       const r = await request(alice, 'GET', '/notes/big.bin', { chunks: 2 })
       assert(r.status === 200, `GET status ${r.status}`)
       assert(/<chunkedBase64 streamId="[^"]+"/.test(r.iq), r.iq.slice(0, 400))

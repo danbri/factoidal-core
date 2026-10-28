@@ -13,6 +13,9 @@ Two loopbacks, in process, with no host:
   `LWS.step MemStore`, as the wasm handle does with the host's `fetch`.
 
 Every method and every status the server writes is reached at least once.
+The method tests drive `handleRW` (the whole RFC 4918 server, kept for the
+next release); the section "Emergency mode" drives `handle`, which
+`webdav-serve` runs (https://github.com/danbri/factoidal/issues/1147).
 -/
 import L4Factoidal.WebDAV.Server
 import L4Factoidal.WebDAV.Local
@@ -77,8 +80,10 @@ def remoteRun (st : MemState) (op : BOp) : BAns × MemState :=
 /-! ### Driving requests -/
 
 def mounts : List MountView :=
-  [{ name := "m", title := "My files", writable := true }, { name := "ro", title := "Read only", writable := false },
-   { name := "n", title := "Other", writable := true }]
+  [{ name := "m", title := "My files", writable := true, users := ["u", "v"] },
+   { name := "ro", title := "Read only", writable := false, users := ["u"] },
+   { name := "n", title := "Other", writable := true, users := ["u"] },
+   { name := "secret", title := "Secret", writable := true, users := ["v"] }]
 
 structure W where
   st : DavState := {}
@@ -92,11 +97,16 @@ abbrev Runner := MemState → BOp → BAns × MemState
 def reqOf (method target : String) (headers : List (String × String) := []) (body : String := "") : DavRequest :=
   { method, target, headers := (("host", "localhost:8090") :: headers), body := body.toUTF8 }
 
-def step (run : Runner) (w : W) (r : DavRequest) (now : Nat := 2000000000) : W :=
-  let cx : Ctx := { mounts, now, random := ByteArray.mk (Array.replicate 16 (UInt8.ofNat (w.st.serial + 1))) }
-  match (handle cx w.st r).runPure run 100000 w.store with
+/-- One request as the user `user`, through `handleRW` or, with `emergency`,
+through `handle`. -/
+def stepAs (emergency : Bool) (user : String) (run : Runner) (w : W) (r : DavRequest) (now : Nat := 2000000000) : W :=
+  let cx : Ctx := { mounts, now, user, random := ByteArray.mk (Array.replicate 16 (UInt8.ofNat (w.st.serial + 1))) }
+  let prog := if emergency then handle cx w.st r else handleRW cx w.st r
+  match prog.runPure run 100000 w.store with
   | some ((resp, st), store) => { st, store, last := resp, ran := true }
   | none => { w with ran := false, last := { status := 0 } }
+
+def step (run : Runner) (w : W) (r : DavRequest) (now : Nat := 2000000000) : W := stepAs false "u" run w r now
 
 def go (run : Runner) (rs : List DavRequest) : W := rs.foldl (step run) {}
 
@@ -124,7 +134,7 @@ def both (f : Runner → Bool) : Bool := f lwsRun && f remoteRun
 
 #guard both fun run =>
   let w := go run [reqOf "OPTIONS" "/m/"]
-  w.last.status == 200 && hdr w.last "dav" == some "1, 2" && hdr w.last "ms-author-via" == some "DAV"
+  w.last.status == 200 && hdr w.last "dav" == some "1" && hdr w.last "ms-author-via" == some "DAV"
 #guard both fun run =>
   let w := go run [pf "/" "1"]
   w.last.status == 207 && has w.last "<D:href>/m/</D:href>" && has w.last "<D:href>/ro/</D:href>" &&
@@ -398,14 +408,98 @@ def restart (w : W) (now : Nat := 2000000000) : Option W :=
   roundTrips { props := [("/m/a.txt", [{ name := { namespace_ := some "http://z/", localPart := "colour" },
                                           value := { raw := deep } }])] }
 
+/-! ## Emergency mode (https://github.com/danbri/factoidal/issues/1147)
+
+`handle`, as `webdav-serve` runs it. The storage is filled through
+`handleRW` (as a store an LWS client wrote), then read through `handle`. -/
+
+/-- A store with `/a.txt` and the collection `/c/` in it. -/
+def filled (run : Runner) : W :=
+  go run [put "/m/a.txt" "hello", reqOf "MKCOL" "/m/c", put "/m/c/b.txt" "b"]
+
+def stepE (user : String) (run : Runner) (w : W) (r : DavRequest) : W := stepAs true user run w r
+
+/-- The paths of a store, in order. -/
+def paths (st : MemState) : List String := st.entries.map (·.path)
+
+/-- The bodies of a store, in order. -/
+def bodies (st : MemState) : List ByteArray := st.entries.map (·.body)
+
+def sameStore (a b : MemState) : Bool :=
+  paths a == paths b && ((bodies a).zip (bodies b)).all (fun (x, y) => x.data == y.data)
+
+-- Every write method is 403 on every mount, with the read methods in Allow,
+-- and the storage and the state do not change.
+#guard both fun run =>
+  let w0 := filled run
+  let reqs := [ put "/m/a.txt" "changed", put "/m/new.txt" "x", reqOf "DELETE" "/m/a.txt", reqOf "MKCOL" "/m/d"
+              , reqOf "COPY" "/m/a.txt" [("destination", "/m/b.txt")]
+              , reqOf "MOVE" "/m/a.txt" [("destination", "/m/b.txt")]
+              , reqOf "PROPPATCH" "/m/a.txt" [] (setProp "red"), reqOf "LOCK" "/m/a.txt" [] (lockBody)
+              , reqOf "UNLOCK" "/m/a.txt" [("lock-token", "<urn:uuid:x>")]
+              , put "/n/a.txt" "x", put "/" "x", put "/nomount/a" "x", put "/secret/a" "x" ]
+  reqs.all (fun r =>
+    let w := stepE "u" run w0 r
+    w.last.status == 403 && hdr w.last "allow" == some "OPTIONS, GET, HEAD, PROPFIND" &&
+    sameStore w.store w0.store && w.st.props.isEmpty && w.st.locks.isEmpty)
+-- Also as a user who may not use the mount, and for the guest.
+#guard both fun run => (stepE "nobody" run (filled run) (put "/m/a.txt" "x")).last.status == 403
+-- OPTIONS: class 1, the read methods only.
+#guard both fun run =>
+  let w := stepE "u" run (filled run) (reqOf "OPTIONS" "/m/")
+  w.last.status == 200 && hdr w.last "dav" == some "1" && hdr w.last "allow" == some "OPTIONS, GET, HEAD, PROPFIND"
+-- Another method: 405 with the read methods.
+#guard both fun run =>
+  let w := stepE "u" run (filled run) (reqOf "PATCH" "/m/a.txt")
+  w.last.status == 405 && hdr w.last "allow" == some "OPTIONS, GET, HEAD, PROPFIND"
+-- Reading works for a user of the mount.
+#guard both fun run =>
+  let w := stepE "u" run (filled run) (reqOf "GET" "/m/a.txt")
+  w.last.status == 200 && bodyText w.last == "hello"
+#guard both fun run => (stepE "v" run (filled run) (pf "/m/" "1")).last.status == 207
+-- No lock is offered.
+#guard both fun run =>
+  let w := stepE "u" run (filled run) (pf "/m/a.txt" "0")
+  w.last.status == 207 && has w.last "<D:supportedlock/>" && !has w.last "lockentry"
+-- A user not in the mount's `users`: 404, as for a mount that does not
+-- exist, on every method, and the mount is not in the root.
+#guard both fun run =>
+  let w0 := filled run
+  [reqOf "GET" "/m/a.txt", reqOf "HEAD" "/m/a.txt", pf "/m/" "1", reqOf "OPTIONS" "/m/", reqOf "GET" "/m/"].all (fun r =>
+    let w := stepE "nobody" run w0 r
+    w.last.status == 404 && bodyText w.last == bodyText (stepE "nobody" run w0 (reqOf "GET" "/nomount/a")).last)
+#guard both fun run => (stepE "v" run (filled run) (reqOf "GET" "/n/")).last.status == 404
+#guard both fun run =>
+  let w := stepE "v" run (filled run) (pf "/" "1")
+  w.last.status == 207 && has w.last "<D:href>/m/</D:href>" && has w.last "<D:href>/secret/</D:href>" &&
+  !has w.last "<D:href>/n/</D:href>" && !has w.last "<D:href>/ro/</D:href>"
+#guard both fun run =>
+  let w := stepE "u" run (filled run) (reqOf "GET" "/")
+  has w.last "href=\"/n/\"" && !has w.last "/secret/"
+#guard both fun run =>
+  let w := stepE "nobody" run (filled run) (pf "/" "1")
+  w.last.status == 207 && !has w.last "<D:href>/m/</D:href>" && count w.last "<D:response>" == 1
+-- A refused request names no operation: a storage that answers nothing is
+-- never asked.
+#guard (stepE "nobody" downRun {} (reqOf "GET" "/m/a.txt")).last.status == 404
+#guard (stepE "u" downRun {} (put "/m/a.txt" "x")).last.status == 403
+
 /-! ## Theorems -/
 
 /-- A request the precheck refuses leaves the state and the storage as they
 were, in every loopback. -/
 theorem refused_no_change (run : Runner) (cx : Ctx) (st : DavState) (store : MemState)
     (r : DavRequest) (resp : DavResponse) (h : precheck cx r = some resp) :
-    (handle cx st r).runPure run 1 store = some ((resp, st), store) := by
-  rw [refused_keeps_state cx st r resp h]
+    (handleRW cx st r).runPure run 1 store = some ((resp, st), store) := by
+  rw [refused_keeps_state_rw cx st r resp h]
   rfl
+
+/-- In emergency mode, a request the precheck refuses, and every write
+method, leaves the state and the storage as they were. -/
+theorem refused_no_change_emergency (run : Runner) (cx : Ctx) (st : DavState) (store : MemState)
+    (r : DavRequest) (resp : DavResponse) (h : precheck cx r = some resp) :
+    ∃ resp', (handle cx st r).runPure run 1 store = some ((resp', st), store) := by
+  obtain ⟨resp', h'⟩ := refused_keeps_state cx st r resp h
+  exact ⟨resp', by rw [h']; rfl⟩
 
 end L4Factoidal.WebDAV.Tests
