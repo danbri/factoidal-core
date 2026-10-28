@@ -16,6 +16,8 @@ test('canonical: isomorphic documents, one canonical form, its SHA-256', async (
   assert.match(canonical, /_:c14n0/);
   assert.equal(await post.value('sameGraph'), true);
   assert.equal(await post.value('digest'), createHash('sha256').update(canonical).digest('hex'));
+  assert.equal(await post.value('hash'), await post.value('digest'));
+  assert.match(await post.value('hash'), /^[0-9a-f]{64}$/);
 });
 
 test('canonical: eddsa-rdfc-2022 sign, verify, tamper', async () => {

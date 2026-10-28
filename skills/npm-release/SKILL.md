@@ -1,6 +1,6 @@
 ---
 name: npm-release
-description: Release the Factoidal npm packages — which artifacts each build script produces, which files each package ships (since 0.9.0 the Lean 4 wasm engine only), how the version and the WebAssembly digest are stamped into version.json, how trusted publishing through the OIDC workflow works and why a token or one-time password never will, the gates that must be green first, and the traps that have cost time. Use before publishing @factoidal/core, before bumping a package version, when a wasm rebuild has to reach the package, when npm publish fails on authentication, or when the four wasm copies disagree.
+description: Release the Factoidal npm packages — which artifacts each build script produces, which files each package ships (since 0.9.0 the Lean 4 wasm engine only), how the version and the WebAssembly digest are stamped into version.json, how trusted publishing through the OIDC workflow works and why a token or one-time password never will, the gates that must be green first, the GitHub Release that follows every publish, and the traps that have cost time. Use before publishing @factoidal/core, before bumping a package version, when a wasm rebuild has to reach the package, when npm publish fails on authentication, or when the four wasm copies disagree.
 ---
 
 # Releasing the Factoidal npm packages
@@ -246,6 +246,60 @@ changes it.
 
 Cost: five to ten minutes with warm caches; about two hours with a cold
 `.checked` cache, because the tree re-verifies.
+
+### Before every publish: the npm README release row
+
+The npm page shows only `npm/factoidal/README.md`, so it is the only place
+where a reader of npmjs.com sees what changed. In the release PR, before the
+builds run of the release commit:
+
+1. Add one row at the top of the table in "Releases at a glance": the version
+   (linked to `https://github.com/danbri/factoidal-core/releases/tag/vX.Y.Z`),
+   the date, and the main changes in one to four short sentences, taken from
+   the CHANGELOG section. Put breaking changes first, in bold.
+2. Add the version's block at the top of "What is new" (3 to 6 bullets, each
+   with its PR or issue URL), and delete the block of the oldest version
+   there when there are more than three.
+3. Do not describe a version that is not yet published as published.
+
+Check: the first table row is the version in `package.json`.
+
+### After every publish: the GitHub Release
+
+Every version on npm has a GitHub Release in `danbri/factoidal-core`, tag
+`v<version>` on the core commit that was published
+(https://github.com/danbri/factoidal-core/releases). The publish workflow
+does not make it. Make it when the publish run is green and
+`npm view @factoidal/core@<version> version` prints the version. 0.17.0
+and 0.18.0 were the first (2026-10-27); 0.16.0 and earlier have none.
+
+The notes have three parts, in this order (copy the form of
+https://github.com/danbri/factoidal-core/releases/tag/v0.18.0):
+
+1. the install line and the npm page;
+2. the provenance line: the core commit (8 hex digits), the `web` release
+   of `danbri/factoidal-builds`, and the URL of the publish run;
+3. the text of the dated `## <version> (<date>)` section of
+   `npm/factoidal/CHANGELOG.md`, without its heading, unchanged.
+
+```bash
+V=0.19.0; SHA=<the 40-hex core commit that was published>; RUN=<publish run URL>
+NOTES=$(mktemp)
+{
+  printf '`npm install @factoidal/core@%s` — https://www.npmjs.com/package/@factoidal/core/v/%s\n\n' "$V" "$V"
+  printf 'Built from core %s; web release `build-%s…-web` in danbri/factoidal-builds; publish run %s (npm provenance).\n\n' "${SHA:0:8}" "${SHA:0:8}" "$RUN"
+  awk -v v="$V" 'index($0, "## " v " ") == 1 {on=1; next} on && /^## / {exit} on' npm/factoidal/CHANGELOG.md
+} > "$NOTES"
+gh release create "v$V" --repo danbri/factoidal-core --target "$SHA" \
+  --title "@factoidal/core $V" --notes-file "$NOTES" --latest
+```
+
+Check: `gh release view "v$V" --repo danbri/factoidal-core` shows the
+notes, and `gh api "repos/danbri/factoidal-core/git/refs/tags/v$V" --jq
+.object.sha` prints `$SHA`. Use `--latest` only for the highest version;
+for an older version made later, use `--latest=false`. A release is
+public at once: do not make it before the npm publish is green. The
+repository README links the releases page (section "Releases").
 
 ## The gates before a release
 

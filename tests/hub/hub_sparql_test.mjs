@@ -76,3 +76,22 @@ test('sparql: SPARQL 1.2 reifier and annotation patterns', async () => {
   assert.deepEqual(values(rows, 'reifier'), ['http://example.org/claim1']);
   assert.deepEqual(values(rows, 'source'), ['http://example.org/diary']);
 });
+
+test('sparql: string-function types and XSD casts (0.17.0, 0.18.0)', async () => {
+  const [row] = await post.value('stringsAndCasts');
+  assert.equal(row.get('sub').value, '12');
+  assert.equal(row.get('lengthOfNumber'), undefined);
+  assert.equal(row.get('byte').value, '12');
+  assert.equal(row.get('byte').datatype.value, 'http://www.w3.org/2001/XMLSchema#byte');
+  assert.equal(row.get('byteOutOfRange'), undefined);
+  assert.equal(row.get('date').value, '2026-10-27Z');
+});
+
+test('sparql: base direction in string functions (0.18.0)', async () => {
+  const [row] = await post.value('baseDirection');
+  assert.equal(row.get('before').value, 'a');
+  assert.equal(row.get('before').language, 'en');
+  assert.equal(row.get('before').direction, 'ltr');
+  assert.equal(row.get('mixedDirections'), undefined);
+  assert.equal(row.get('sameDirection').value, 'true');
+});

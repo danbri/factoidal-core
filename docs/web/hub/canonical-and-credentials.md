@@ -40,6 +40,16 @@ A SHA-256 of the canonical form identifies the graph:
 digest = Factoidal.vcSha256Hex(canonical)
 ```
 
+`canonicalHash` gives the same SHA-256 in one call. **Changed in 0.17.0:**
+before, `canonicalHash` gave the canonical text (now `canonicalize`); it
+now gives the 64 hex digits of the digest, computed in the engine
+(https://github.com/danbri/factoidal-core/pull/127,
+https://github.com/danbri/factoidal/issues/1040).
+
+```observable-js
+hash = Factoidal.canonicalHash(first)
+```
+
 ## A Data Integrity proof (eddsa-rdfc-2022)
 
 The proof value is an Ed25519 signature over the SHA-256 hashes of the

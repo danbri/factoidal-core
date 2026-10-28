@@ -795,7 +795,10 @@ protocol, auth/security code, CLIs etc (core library) “EXPERIMENTAL
 UNDEREEVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS
 WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.”"
 
-- The notice, spelled `EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.`, is at the top of `README.md`,
+- Owner, 2026-10-27, later: "I do want 'under-reviewed' not 'unreviewed'".
+- Owner, 2026-10-27, answer "UNDER-REVIWED" to the question: should the notice
+  say "UNREVIEWED" or "UNDER-REVIEWED"? Settled: "UNDER-REVIEWED".
+- The notice, spelled `EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.`, is at the top of `README.md`,
   `npm/factoidal/README.md`, the hub index and the hub servers page, in the
   npm package description, in every `factoidal` help text, and on standard
   error when a server, client or key command starts (`REVIEW_WARNING` in

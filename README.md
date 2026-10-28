@@ -1,12 +1,20 @@
 # Factoidal
 
-> ⚠️ **EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.**
+> ⚠️ **EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.**
 >
-> This covers the whole core library and every command line tool, and in
-> particular all protocol, authentication and security code (the LWS, Solid,
-> SPARQL Protocol, WebDAV and XMPP servers and clients, the authorization
-> server, JOSE, XML Signature and SAML, the crypto bindings). Owner decision,
-> 2026-10-27.
+> This covers the whole core library and every command line tool. Treat
+> every security component as under-reviewed and risky: the servers and
+> clients (SPARQL Protocol, LWS and its authorization server, Solid, WebDAV,
+> XMPP), authentication, bearer tokens and session keys, JOSE, XML
+> Signature and SAML, Verifiable Credentials Data Integrity, did:key,
+> signatures, hashes and the crypto bindings. They have had little
+> independent security review. Some of them use well-known primitives
+> (HACL\*, WebCrypto), but the code that combines and exposes those
+> primitives is new. A correct primitive does not make a protocol or a
+> server safe. Do not use these components to protect real data or real
+> accounts, and do not expose the servers to networks you do not trust.
+> Report security problems at https://github.com/danbri/factoidal/issues.
+
 
 **Current home: `factoidal-core`.** New Shardborough development is Lean 4
 first and test first. Shardborough's native pack, activation, disk query,
@@ -185,6 +193,31 @@ parser and algebra spec verified in F\* (ring-2 caveats above); on-disk
 backend still carries that glue until #118 completes.
 
 **[Live W3C test results](https://danbri.github.io/factoidal/test-results/)**
+
+## Releases
+
+The npm package `@factoidal/core` is released from this repository. Each
+version has a GitHub Release with its changelog section, the core commit it
+was built from and its publish run:
+https://github.com/danbri/factoidal-core/releases. Since 0.17.0
+(2026-10-27); older versions are on npm only. All versions:
+[`npm/factoidal/CHANGELOG.md`](npm/factoidal/CHANGELOG.md).
+
+- [0.18.0](https://github.com/danbri/factoidal-core/releases/tag/v0.18.0)
+  (2026-10-27): XSD constructor casts, base direction in the SPARQL string
+  functions, JSON-LD-star (option `rdfstar`), `factoidal webdav-serve`, a
+  larger LWS client, a faster store open.
+- [0.17.0](https://github.com/danbri/factoidal-core/releases/tag/v0.17.0)
+  (2026-10-27): **breaking**, `canonicalHash` gives the SHA-256 of the
+  canonical form; SPARQL string-function argument types; `factoidal pack
+  --layout sbm11`; `lws-serve --authz`; store open 2.6 times faster.
+- Next release: fixes for 16 defects that the
+  [echochamber](https://github.com/danbri/echochamber) test ports found
+  (https://github.com/danbri/factoidal-core/pull/148, not published yet).
+
+Release process: [`skills/npm-release/SKILL.md`](skills/npm-release/SKILL.md).
+Hub of live examples on the current release:
+https://danbri.github.io/factoidal/web/hub/.
 
 ## Orientation links
 
@@ -652,6 +685,16 @@ file. Caveats that apply to scores (ASK boolean comparison, lenient
 blank-node matching, the SPARQL-parser admitted regions above) are
 catalogued in
 [`docs/claude-rules/current-state.md`](docs/claude-rules/current-state.md).
+
+Linked Web Storage 1.0: Touchstone (https://github.com/ebremer/touchstone,
+another implementer's harness, 221 tests) publishes its own runs of
+several LWS servers at https://ebremer.com/lws/conformance. Its run of
+`factoidal lws-serve` 0.18.0 (2026-10-27): 212 passed, 0 failed, 9
+inapplicable. Our LWS client is not on its client page
+(https://ebremer.com/lws/conformance/clients); in Touchstone's client lab,
+run here on 0.19.0 (2026-10-27, Touchstone 58db634), it passes 52 of 53
+rules, 0 fail, 1 untested (OpenID sign-in,
+https://github.com/danbri/factoidal/issues/1043).
 
 ## Jena differential-testing harness
 

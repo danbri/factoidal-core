@@ -7,7 +7,7 @@ tests: tests/hub/hub_webdav_test.mjs
 
 # WebDAV
 
-<p class="warning"><strong>⚠️ EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.</strong> This covers the whole core
+<p class="warning"><strong>⚠️ EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.</strong> This covers the whole core
 library and every command line tool, and in particular all protocol,
 authentication and security code.</p>
 
@@ -39,7 +39,7 @@ factoidal webdav-serve dav
 ```
 
 ```
-factoidal webdav-serve: WARNING: EXPERIMENTAL UNREVIEWED CODE - ...
+factoidal webdav-serve: WARNING: EXPERIMENTAL UNDER-REVIEWED CODE - ...
 webdav-serve: listening on http://127.0.0.1:8090 for dav
 webdav-serve: http://127.0.0.1:8090/notes/ - My notes (local)
 http://127.0.0.1:8090

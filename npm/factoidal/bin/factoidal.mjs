@@ -93,7 +93,7 @@ function err (line) { console.error(line) }
 // Owner, 2026-10-27: every protocol, authentication and security component,
 // the CLIs and the core library carry this notice. It is printed with every
 // help text and on standard error when a server, client or key command starts.
-const REVIEW_WARNING = 'EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.'
+const REVIEW_WARNING = 'EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.'
 
 /** The commands that serve, speak a protocol, or handle keys and tokens. */
 const WARNED_COMMANDS = new Set(['serve', 'lws-serve', 'solid-serve', 'solid-client', 'lws-client',

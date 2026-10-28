@@ -1,15 +1,24 @@
 # @factoidal/core
 
-> ⚠️ **EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.**
+> ⚠️ **EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.**
 >
-> This covers the whole core library and every command line tool, and in
-> particular all protocol, authentication and security code (the LWS, Solid,
-> SPARQL Protocol, WebDAV and XMPP servers and clients, the authorization
-> server, JOSE, XML Signature and SAML, the crypto bindings). Owner decision,
-> 2026-10-27.
+> This covers the whole core library and every command line tool. Treat
+> every security component as under-reviewed and risky: the servers and
+> clients (SPARQL Protocol, LWS and its authorization server, Solid, WebDAV,
+> XMPP), authentication, bearer tokens and session keys, JOSE, XML
+> Signature and SAML, Verifiable Credentials Data Integrity, did:key,
+> signatures, hashes and the crypto bindings. They have had little
+> independent security review. Some of them use well-known primitives
+> (HACL\*, WebCrypto), but the code that combines and exposes those
+> primitives is new. A correct primitive does not make a protocol or a
+> server safe. Do not use these components to protect real data or real
+> accounts, and do not expose the servers to networks you do not trust.
+> Report security problems at https://github.com/danbri/factoidal/issues.
 
 RDF, SPARQL, reasoning, validation and Linked Data servers in one package.
 Runs in Node 22.12+, Deno 2 and browsers. No dependencies.
+
+
 
 ```bash
 npm install @factoidal/core
@@ -42,6 +51,24 @@ RDF 1.2 in JSON-LD (JSON-LD-star: `@triple`, `@reifies`, `@annotation`,
 `@direction`) needs the option `rdfstar`: `jsonldToRdf(text, { rdfstar: true })`
 and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
 
+## Releases at a glance
+
+One line per release. Full notes: [GitHub Releases](https://github.com/danbri/factoidal-core/releases)
+(0.13.0 and later) and [CHANGELOG.md](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/CHANGELOG.md) (every release; it is also in the
+package, for example https://unpkg.com/@factoidal/core@0.19.0/CHANGELOG.md).
+
+| Version | Date | Main changes |
+|---|---|---|
+| [0.19.0](https://github.com/danbri/factoidal-core/releases/tag/v0.19.0) | 2026-10-27 | 16 defects found by the Jena-, RDFLib-, N3.js- and RDF4J-style test ports are fixed (7 in SPARQL, 9 in the readers and writers). One RFC 3987 IRI check in every reader and writer; it makes parsing 10% to 19% slower. SAML 2.0 subject tokens in the authorization server. The experimental-code notice. |
+| [0.18.0](https://github.com/danbri/factoidal-core/releases/tag/v0.18.0) | 2026-10-27 | JSON-LD-star (RDF 1.2 in JSON-LD, option `rdfstar`). `factoidal webdav-serve` for file browsers. SPARQL XSD constructors cast as F&O 3.1 §19 says. SPARQL 1.2 base direction in the string functions. LWS client features. Faster store open. |
+| [0.17.0](https://github.com/danbri/factoidal-core/releases/tag/v0.17.0) | 2026-10-27 | **Breaking:** `canonicalHash` gives the SHA-256 of the canonical N-Quads. SPARQL string-function argument types. `factoidal pack --layout sbm11`. Store open in Node 2.6 times faster. `lws-serve --authz`. 996 Jena ARQ expression tests. |
+| 0.16.0 | 2026-10-26 | Node settings in the pipeline evidence. The SPARQL query form sets the output wire. CSVW as a pipeline stage. `packSbm11` in memory. SPARQL fixes: inverse paths to literals, warnings for unknown `FROM` graphs. |
+| 0.15.0 | 2026-10-25 | `openSbm11`: SPARQL over an SBM11 store in Node and browsers, also over LWS (`lwsSbm11Reader`). The pipeline type check comes from the engine. Property-path alternatives use the store indexes. |
+| 0.14.0 | 2026-10-25 | Pipelines: `stages()`, `node()`, `pipe()`, `run()`. `explain()` with a checked RDFS derivation. `Dataset.warnings` for language tags. IBK5 is the default store layout. Writers repair blank-node labels; language tags in lower case. |
+| 0.13.0 | 2026-10-24 | SPARQL `=` and `!=` as RDFterm-equal; language tags compare case-insensitively. XMPP server. LWS storage in files (stage 2), an authorization server, an LWS client, CORS. |
+
+Releases before 0.13.0: see [CHANGELOG.md](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/CHANGELOG.md).
+
 ## What it does
 
 - Syntaxes: N-Triples, N-Quads, Turtle, TriG, RDF/XML, JSON-LD; RDF 1.1 and 1.2
@@ -55,7 +82,9 @@ and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
 - Canonicalization: RDFC-1.0; Verifiable Credentials Data Integrity (eddsa-rdfc-2022), did:key
 - XML: XML 1.0, XPath 1.0, XSLT 1.0, XForms
 - Servers: SPARQL 1.1 Protocol and Graph Store (Fuseki-compatible paths,
-  Jena TDB2 read only), Linked Web Storage 1.0, Solid, an OAuth 2.0
+  Jena TDB2 read only), Linked Web Storage 1.0 (independent results:
+  https://ebremer.com/lws/conformance), WebDAV for file
+  browsers, Solid, an OAuth 2.0
   authorization server (token exchange for OpenID Connect ID tokens,
   self-issued CID credentials and SAML 2.0 assertions)
 - Security: JWS/JWT (ES256, RS256, EdDSA), XML Signature verification in the
@@ -74,6 +103,66 @@ and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
   is an IRI, `_:b` a blank node). See API.md, "Custom extension functions" and
   "Terms given as strings".
 - RDF/JS DataFactory and DatasetCore (`/rdfjs`), a functional API (`/fn`)
+
+## What is new
+
+Releases: https://github.com/danbri/factoidal-core/releases. All changes:
+[CHANGELOG.md](https://github.com/danbri/factoidal-core/blob/main/npm/factoidal/CHANGELOG.md).
+Live examples: https://danbri.github.io/factoidal/web/hub/.
+
+**0.19.0** (2026-10-27, [release](https://github.com/danbri/factoidal-core/releases/tag/v0.19.0)):
+
+- Fixes for 16 defects that the echo test ports (below) found: 7 in SPARQL
+  (https://github.com/danbri/factoidal-core/pull/146), 9 in the readers and
+  writers (https://github.com/danbri/factoidal-core/pull/147).
+- One RFC 3987 IRI check in the readers, `fromQuads`/`Dataset.add`, the SPARQL
+  parser and the writers (https://github.com/danbri/factoidal/issues/1057). It
+  makes parsing 10% to 19% slower; https://github.com/danbri/factoidal-core/pull/158
+  brings this back to about 3%.
+- Authorization server: SAML 2.0 subject tokens
+  (https://github.com/danbri/factoidal-core/pull/150).
+
+**0.18.0** (2026-10-27, [release](https://github.com/danbri/factoidal-core/releases/tag/v0.18.0)):
+
+- SPARQL: the XSD constructor functions (`xsd:byte`, `xsd:date`, `xsd:g*`,
+  durations, ...) cast as XPath F&O 3.1 §19 says; an invalid value is an
+  error, not an ill-typed literal (https://github.com/danbri/factoidal-core/pull/142).
+- SPARQL 1.2: STRSTARTS, STRENDS, CONTAINS, STRBEFORE and STRAFTER compare
+  the base direction; `STRBEFORE("abc"@en--ltr, "b")` is `"a"@en--ltr`
+  (https://github.com/danbri/factoidal-core/pull/136).
+- JSON-LD-star: RDF 1.2 triple terms, reifiers and annotations in JSON-LD
+  with the option `rdfstar` (https://github.com/danbri/factoidal-core/pull/134,
+  https://github.com/danbri/factoidal-core/pull/140). Hub page:
+  https://danbri.github.io/factoidal/web/hub/jsonld-star/.
+- `factoidal webdav-serve CONFIGDIR` serves LWS storages to file browsers
+  over WebDAV (RFC 4918 classes 1 and 2). litmus 0.13: 208 pass, 0 fail
+  (out of 208) (https://github.com/danbri/factoidal/issues/1066).
+- LWS client: range and conditional reads, trusted storages for
+  notifications, one-page search, linksets, Ed25519 session keys, bearer
+  tokens (https://github.com/danbri/factoidal/issues/1065).
+- Store open: a scoped `openStoreHandle` on the londat store takes 198 ms,
+  not 305 ms (median of 9) (https://github.com/danbri/factoidal-core/pull/141).
+
+**0.17.0** (2026-10-27, [release](https://github.com/danbri/factoidal-core/releases/tag/v0.17.0)):
+
+- **Breaking:** `canonicalHash(graph)` returns the SHA-256 (64 hex digits)
+  of the RDFC-1.0 canonical N-Quads; use `canonicalize()` for the text
+  (https://github.com/danbri/factoidal-core/pull/127).
+- SPARQL string functions take the argument types of SPARQL 1.1 §17.4.3;
+  `SUBSTR("12345", 0, 3)` is `"12"` (https://github.com/danbri/factoidal-core/pull/126).
+- `factoidal pack --layout sbm11` writes an SBM11 store, the same files as
+  `l4sbm11-pack` byte for byte (605 of 605 W3C census inputs); `activate`,
+  `inspect` and `query` read it (https://github.com/danbri/factoidal-core/pull/131).
+- Store open in Node: 562 ms, not 1,485 ms, on the londat store (142,314
+  quads; median of 7) (https://github.com/danbri/factoidal-core/pull/135).
+- `factoidal lws-serve DIR --authz ASDIR`: the storage and an authorization
+  server on one port; well-known paths also work behind a reverse proxy
+  with a path prefix.
+- Fixes in the chunked Turtle reader (https://github.com/danbri/factoidal-core/pull/128)
+  and RML (https://github.com/danbri/factoidal-core/pull/129); 996 Apache
+  Jena ARQ expression tests run on the package (https://github.com/danbri/factoidal-core/pull/132);
+  no npm test skips when the wasm lacks an op
+  (https://github.com/danbri/factoidal-core/pull/124, https://github.com/danbri/factoidal-core/pull/125).
 
 ## Checked pipelines
 
@@ -240,7 +329,7 @@ and the [assurance record](https://github.com/danbri/factoidal-core/blob/main/do
 | SPARQL 1.1 Query, Update, Protocol | 631 / 0 / 631 |
 | SPARQL 1.2 | 254 / 0 / 254 |
 | SPARQL Protocol, Graph Store, Service Description against `serve` | 50 / 0 / 50 [P] |
-| Linked Web Storage 1.0, Touchstone (another implementer's harness), `lws-serve` | 215 / 0 / 221 (6 not applicable) [L] |
+| Linked Web Storage 1.0, Touchstone (another implementer's harness), `lws-serve` | 215 / 0 / 221 (6 not applicable) [L]; Touchstone's own run of 0.18.0: 212 / 0 / 221 (9 inapplicable), https://ebremer.com/lws/conformance |
 | RDF 1.1 N-Triples, N-Quads, Turtle, TriG, RDF/XML | 992 / 0 / 992 |
 | RDF 1.2 syntax suites | all pass |
 | RDF 1.1 Semantics | 39 / 0 / 39 |
@@ -286,6 +375,28 @@ and the [assurance record](https://github.com/danbri/factoidal-core/blob/main/do
 - Large result sets can exceed Node's default stack; use
   `node --stack-size=4000` or Deno.
 - The API can change before 1.0.
+
+## Tested against other libraries' test suites
+
+[echochamber](https://github.com/danbri/echochamber) gives the API of four
+RDF libraries over this package and ports each library's own tests. Where
+this package and the library disagree, the specification decides: a
+Factoidal defect (an issue in https://github.com/danbri/factoidal), a
+divergence of the library from the specification, or a gap in the echo.
+Counts on 0.18.0 (echochamber main 5760a33, 2026-10-27,
+https://github.com/danbri/echochamber/pull/8):
+
+| echo | in the style of | ported | pass | defect | divergence | gap |
+|---|---|---:|---:|---:|---:|---:|
+| leana | Apache Jena | 748 | 317 | 1 | 15 | 415 |
+| Hardylib | RDFLib | 1,438 | 511 | 8 | 919 | 0 |
+| Enthie | N3.js and RDF/JS | 1,460 | 1,071 | 29 | 124 | 236 |
+| MoonForge | Eclipse RDF4J | 2,801 | 2,201 | 300 | 300 | 0 |
+
+MoonForge passed 2,124 cases on 0.16.0, 2,150 on 0.17.0
+(https://github.com/danbri/echochamber/pull/5) and 2,201 on 0.18.0
+(https://github.com/danbri/echochamber/pull/6). Details per echo:
+`docs/<echo>/feasibility.md` and `conformance/<echo>/` in echochamber.
 
 ## Licence
 
