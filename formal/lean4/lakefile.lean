@@ -615,6 +615,11 @@ lean_exe «l4dict-fold-bench» where
 
 @[default_target] lean_exe «l4xmlconf» where root := `Harness.XmlConfRun
 
+-- Canonical XML 1.0 and 1.1 and Exclusive XML Canonicalization over the
+-- vendored Recommendation examples and the C14N 1.1 interop cases
+-- (third_party/testing/xml-c14n).
+@[default_target] lean_exe «l4c14n» where root := `Harness.C14nRun
+
 -- The W3C XML Schema Test Suite, Part 2 Datatypes slice: suite.xml ->
 -- the *Meta/*.testSet manifests -> the datatype-only test groups.
 @[default_target] lean_exe «l4xsd-datatypes» where root := `Harness.XsdDatatypesRun
