@@ -712,8 +712,10 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         pure (.seq sel b (← optType c as))
     | "select" =>
         let src := m.text i
+        -- the body `[.lit "xsl:select"]` is never run (there is a select);
+        -- it marks the instruction as a disqualifying element (§9.4)
         if src.trimAscii.toString == "" then pure (.seq none [] (← optType c as))
-        else pure (.seq (some (← parseC c src)) [] (← optType c as))
+        else pure (.seq (some (← parseC c src)) [.lit "xsl:select"] (← optType c as))
     | "element" =>
         let nm ← liftM (c.avt (← reqAttr as "name" l))
         let useSets ← match as.get "use-attribute-sets" with
@@ -828,6 +830,9 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         pure (.copy (← optExpr c as "select") (← as.bool "copy-namespaces" true)
           (← as.bool "inherit-namespaces" true) useSets (← body))
     | "copy-of" =>
+        -- §11.9.2: the content of xsl:copy-of is empty
+        if (m.kids i).any (fun k => m.isElem k || !(m.text k).trimAscii.isEmpty) then
+          cerr "XTSE0260" "xsl:copy-of must be empty"
         pure (.copyOf (← parseC c (← reqAttr as "select" l)) (← as.bool "copy-namespaces" true)
           (← as.bool "copy-accumulators" false))
     | "message" =>

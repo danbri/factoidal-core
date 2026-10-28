@@ -157,6 +157,24 @@ def materializeAll (env : Env) (os : List Out) : XM Seq := do
       out := out.push (← liftX (materialize env id o))
   pure out.toList
 
+/-- A sequence with each JNode replaced by its jvalue, recursively. -/
+def dejnode : Nat → Seq → Seq
+  | 0, s => s
+  | f + 1, s => s.flatMap (fun i => match i with
+    | .jnode _ _ v _ => dejnode f v
+    | x => [x])
+
+/-- §9.4: the disqualifying elements (xsl:map, xsl:map-entry, xsl:array,
+    xsl:array-member, xsl:select) among the instructions of a sequence
+    constructor (through the wrappers that the compiler adds). -/
+def hasDisqualifying : Nat → List Instr → Bool
+  | 0, _ => false
+  | f + 1, is => is.any (fun i => match i with
+    | .mapI .. | .mapEntry .. | .arrayI .. | .arrayMember .. => true
+    | .seq (some _) [.lit "xsl:select"] _ => true
+    | .withBase _ b | .withColl _ b | .withCompat _ b => hasDisqualifying f b
+    | _ => false)
+
 /-- The string value of an `Out` that is a node. -/
 def outString (env : Env) : Nat → Out → String
   | 0, _ => ""
@@ -884,6 +902,9 @@ def bindValue : Nat → Sheet → Ctx → Option Expr → List Instr → Option 
           let os ← run n S { cx with tempOut := true } body
           match ty with
           | none => do
+              -- §9.4: no document node when the content has a
+              -- disqualifying element
+              if hasDisqualifying 64 body then materializeAll cx.env os else
               let id ← freshId
               pure [← liftX (materialize cx.env id (.doc os ""))]
           | some _ => materializeAll cx.env os
@@ -1143,12 +1164,51 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
                 for o in ← attrSetOuts n S cx' useSets do content := content.push o
                 for o in ← run n S cx' body do content := content.push o
                 pure [.elem r.name (if copyNs then env.elemDecls nd else []) content.toList]
-            | .document => pure [.doc (← run n S cx' body) (env.doc nd).uri]
+            | .document =>
+                let cs ← run n S cx' body
+                -- §5.7.1: no attribute or namespace node in a document
+                if cs.any (fun o => match o with
+                    | .attr .. | .nsN .. => true
+                    | .item (.node m) => let k := (env.nrec m).kind; k == .attribute || k == .namespace
+                    | _ => false) then
+                  xerr "XTDE0420" "an attribute or namespace node cannot be a child of a document node"
+                pure [.doc cs (env.doc nd).uri]
             | .text => pure [.text r.value]
             | .attribute => pure [.attr r.name r.value]
             | .comment => pure [.comment r.value]
             | .pi => pure [.pi r.name.loc r.value]
             | .namespace => pure [.nsN r.name.loc r.value]
+          | .jnode _ _ v _ =>
+            -- §11.9.1.2: a copy of a JNode; an array or map value is made
+            -- from the sequence constructor (as xsl:array, and as xsl:map
+            -- with duplicates use-last); a sequence value is copied item by
+            -- item, and xsl:copy of an atomic item, map or array is that
+            -- item, so the value stays; another value is kept. The copy is
+            -- a root JNode (this model has no parentless JNode with a key).
+            let build (cxv : Ctx) (x : Item) : XM Item := do
+              match x with
+              | .arr _ =>
+                let s ← materializeAll env (← run n S cxv body)
+                pure (.arr (s.map (fun m => match m with
+                  | .jnode _ _ mv _ => mv
+                  | .map [(k, mv)] => if deepAtomEq k memberKey then mv else [m]
+                  | y => [y])))
+              | .map _ =>
+                let s ← materializeAll env (← run n S cxv body)
+                let mut acc : MB := {}
+                for m in s do
+                  let kvs ← match m with
+                    | .map kvs => pure kvs
+                    | .jnode _ _ [.map kvs] _ => pure kvs
+                    | _ => xerr "XTTE3375" "the content of xsl:copy of a map JNode must be maps"
+                  for (k, y) in kvs do acc := acc.set k y
+                pure (.map acc.toList)
+              | y => pure y
+            let v1 ← match v with
+              | [x] => do pure [← build cx' x]
+              | _ => pure v
+            let id ← freshId
+            pure [.item (mkJRoot id.toUInt64 v1)]
           | other => pure [.item other]
     | .copyOf sel copyNs copyAcc =>
         let s ← evalX cx sel
@@ -1397,8 +1457,10 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | none => do materializeAll env (← run n S cx body)
         pure [.item (.map [(k, v)])]
     | .arrayI fe sel body =>
+        -- a JNode stands for its jvalue (§22.2)
         let unwrap (s : Seq) : List Seq := s.map (fun it => match it with
           | .map [(k, v)] => if deepAtomEq k memberKey then v else [it]
+          | .jnode _ _ v _ => v
           | _ => [it])
         match fe with
         | none =>
@@ -1425,7 +1487,8 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let s ← match sel with
           | some e => evalX cx e
           | none => do materializeAll env (← run n S cx body)
-        pure [.item (.map [(memberKey, s)])]
+        -- §22.2: a JNode in the value is replaced by its jvalue, recursively
+        pure [.item (.map [(memberKey, dejnode 64 s)])]
     | .evaluate xp ctxE wp nsE ty params scope baseUri =>
         let src ← atomStr cx (← evalX cx xp)
         -- with namespace-context, the namespaces of that node, and its
