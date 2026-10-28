@@ -489,7 +489,7 @@ def mergeUsed (d : Decl) (n : Nat) (q : PkgOut) : CM Unit := do
   let bt := s.tid
   let bo := s.order
   let sh : Sheet := { sh with
-    templates := sh.templates.map (fun t => { t with prec := t.prec + bp, id := t.id + bt, order := t.order + bo })
+    templates := sh.templates.map (fun t => { t with prec := t.prec + bp, precLo := t.precLo + bp, id := t.id + bt, order := t.order + bo })
     functions := sh.functions.map (fun g => { g with prec := g.prec + bp })
     globals := sh.globals.map (fun g => { g with prec := g.prec + bp, noCtx := true }) }
   -- the modes of the used package, with their visibility there (the

@@ -34,6 +34,8 @@ def vRegex : QN := xv "regex"
 def vSeed : QN := xv "seed"
 def vMergeGroup : QN := xv "merge-group"
 def vMergeKey : QN := xv "merge-key"
+/-- The names of the merge sources of the current `xsl:merge`. -/
+def vMergeNames : QN := xv "merge-names"
 def vOutUri : QN := xv "output-uri"
 /-- The current mode, for `fn:apply-templates` with `#current`. -/
 def vMode : QN := xv "mode"
@@ -95,6 +97,8 @@ structure Ctx where
   env : Env
   mode : String := "#unnamed"
   rule : Option Tmpl := none
+  /-- The non-tunnel parameters supplied to the current template rule. -/
+  supplied : List (QN × Seq) := []
   tunnel : List (QN × Seq) := []
   /-- In a stylesheet function (no current template rule, §10.3). -/
   inFn : Bool := false
@@ -795,12 +799,24 @@ def withOrigin (env : Env) (nd : NodeRef) (cp : Item) : Item :=
   match cp with
   | .node cn => match cn.rt with
     | some d =>
-      if r.kind != .attribute && r.kind != .namespace && r.last + 1 == nd.idx + d.nodes.size then
-        let o := match (env.doc nd).origin with
-          | some (d0, i0, ns0) => (d0, i0 + nd.idx, ns0)
-          | none => (nd.doc, nd.idx, nd.rt.map (·.nodes))
-        .node { cn with rt := some { d with origin := some o } }
-      else cp
+      let sz := r.last + 1 - nd.idx
+      let csz := (d.nodes.getD cn.idx default).last + 1 - cn.idx
+      if r.kind == .attribute || r.kind == .namespace || sz != csz || cn.idx + sz > d.nodes.size then cp else
+      -- the subtree of the copied node, then (fn:snapshot) its ancestors
+      let m := (List.range sz).foldl (fun a i => a.set! (cn.idx + i) (nd.idx + i)) (Array.replicate d.nodes.size 0)
+      let m := (List.range cn.idx).foldl (fun (acc : Array Nat × Option Nat × Option NodeRef) _ =>
+          match acc.2.1, acc.2.2 with
+          | some ci, some o =>
+            let cp' := (d.nodes.getD ci default).parent
+            let op' := env.parentOf o
+            match cp', op' with
+            | some c1, some o1 => (acc.1.set! c1 o1.idx, some c1, some o1)
+            | _, _ => (acc.1, none, none)
+          | _, _ => acc) (m, some cn.idx, some nd) |>.1
+      let o := match (env.doc nd).origin with
+        | some (d0, m0, ns0) => (d0, m.map (fun i => m0.getD i 0), ns0)
+        | none => (nd.doc, m, nd.rt.map (·.nodes))
+      .node { cn with rt := some { d with origin := some o } }
     | none => cp
   | other => other
 
@@ -1249,14 +1265,16 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               xerr "XTSE0680" ("template " ++ name.show ++ " has no parameter $" ++ p.name.show)
           let cx' := if t.ctxAbsent then cx.noFocus else cx
           invoke n S cx' t ps tun
-    | .applyImports params | .nextMatch params =>
+    | .applyImports params v4 | .nextMatch params v4 =>
         match cx.rule, env.ctx with
         | some r, some [it] =>
-          let isNext := match ins with | .nextMatch _ => true | _ => false
+          let isNext := match ins with | .nextMatch _ _ => true | _ => false
           let ok : Tmpl → Bool := if isNext
             then fun t => t.id != r.id && ruleBetter r t
-            else fun t => t.prec < r.prec
+            else fun t => t.prec < r.prec && t.prec ≥ r.precLo
           let (ps, tps) ← evalParams n S cx params
+          -- 4.0: the parameters of the current rule are passed on (§6.8)
+          let ps := if v4 then ps ++ cx.supplied.filter (fun (q, _) => !ps.any (·.1 == q)) else ps
           let tun := tps ++ cx.tunnel.filter (fun (q, _) => !tps.any (·.1 == q))
           match ← liftX (findRule S env cx.mode it ok) with
           | some t => invoke n S cx t ps tun
@@ -1829,6 +1847,19 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
     | .merge srcs action =>
         let mut rows : Array (List (List Atomic) × String × Item) := #[]
         let mut specs : List SortSpec := []
+        let tz := env.tz
+        -- corresponding merge keys agree in their attributes (XTDE2210)
+        let mut first : Option (List SortSpec) := none
+        for src in srcs do
+          match src with
+          | .mk _ _ _ _ _ keys =>
+            let ks ← sortSpecs cx keys
+            match first with
+            | none => first := some ks
+            | some f =>
+              if f.length != ks.length || (f.zip ks).any (fun (x, y) =>
+                  x.desc != y.desc || x.dataType != y.dataType || x.caseOrder != y.caseOrder || x.collation != y.collation) then
+                xerr "XTDE2210" "corresponding merge keys of two merge sources differ in their attributes"
         for src in srcs do
           match src with
           | .mk name fei fes sel sortBefore keys =>
@@ -1850,11 +1881,26 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               let items ← if sortBefore then sortSeq n S acx items keys else pure items
               let sz := items.length
               let mut k := 1
+              let mut prev : Option (List (List Atomic)) := none
               for it in items do
                 let kv ← sortKeysOf n S (acx.focus it k sz) keys ks
+                -- the keys of a source are comparable with those of the
+                -- other sources (XTTE2230) and in order (XTDE2220)
+                if let some (k0, _, _) := rows[0]? then
+                  for (x, y) in k0.zip kv do
+                    if let (some a, some b) := (x.head?, y.head?) then
+                      if !sortComparable tz a b then
+                        xerr "XTTE2230" ("merge key values " ++ a.str ++ " and " ++ b.str ++ " are not comparable")
+                if let some p := prev then
+                  for (x, y) in p.zip kv do
+                    if let (some a, some b) := (x.head?, y.head?) then
+                      if !sortComparable tz a b then
+                        xerr "XTTE2230" ("merge key values " ++ a.str ++ " and " ++ b.str ++ " are not comparable")
+                  if cmpKeys ks tz p kv == .gt then
+                    xerr "XTDE2220" "an input of xsl:merge is not in merge key order"
+                prev := some kv
                 rows := rows.push (kv, name, it)
                 k := k + 1
-        let tz := env.tz
         let sorted := rows.toList.mergeSort (fun a b => cmpKeys specs tz a.1 b.1 != .gt)
         -- group rows with equal keys
         let mut groups : Array (List (List Atomic) × Array (String × Item)) := #[]
@@ -1872,7 +1918,8 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           let items := g.toList.map (·.2)
           let named : Seq := g.toList.map (fun (nm, it) => .arr [[.atom (Atomic.ofStr nm)], [it]])
           let keyV : Seq := kv.flatten.map Item.atom
-          let gcx := ((cx.focus (items.headD default) gi gsz).bind vMergeGroup named).bind vMergeKey keyV
+          let names : Seq := srcs.map (fun s => match s with | .mk nm .. => .atom (Atomic.ofStr nm))
+          let gcx := (((cx.focus (items.headD default) gi gsz).bind vMergeGroup named).bind vMergeKey keyV).bind vMergeNames names
           let gcx := gcx.bind vGroup items
           for o in ← run n S { gcx with rule := none } action do out := out.push o
           gi := gi + 1
@@ -2019,7 +2066,8 @@ def invoke : Nat → Sheet → Ctx → Tmpl → List (QN × Seq) → List (QN ×
     let globals := match lookupVar cx.env.vars vRegex with
       | some g => (vRegex, g) :: globals
       | none => globals
-    let mut tcx : Ctx := { cx with env := { cx.env with vars := globals }, rule := if t.pat.isSome then some t else cx.rule, tunnel := tun, inFn := false }
+    let supplied := if t.pat.isSome then ps else cx.supplied
+    let mut tcx : Ctx := { cx with env := { cx.env with vars := globals }, supplied, rule := if t.pat.isSome then some t else cx.rule, tunnel := tun, inFn := false }
     if t.pat.isNone then tcx := { tcx with rule := cx.rule }
     for p in t.params do
       let given := if p.tunnel then tun.find? (·.1 == p.name) else ps.find? (·.1 == p.name)

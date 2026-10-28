@@ -652,6 +652,40 @@ def checkOrder (m : Mod) (i : Nat) : CM Unit := do
   if ["perform-sort", "for-each", "for-each-group"].contains l then
     firstOnly "sort" []
 
+/-- The XSLT elements whose content is a fixed list of XSLT elements
+    (the "Content:" lines of the element syntax summaries). -/
+def onlyChildren : List (String × List String) :=
+  [("apply-imports", ["with-param"]), ("next-match", ["with-param", "fallback"]),
+   ("call-template", ["with-param"]), ("apply-templates", ["sort", "with-param"]),
+   ("choose", ["when", "otherwise"]), ("attribute-set", ["attribute"]),
+   ("analyze-string", ["matching-substring", "non-matching-substring", "fallback"]),
+   ("merge-source", ["merge-key"]), ("evaluate", ["with-param", "fallback"]),
+   ("merge", ["merge-source", "merge-action", "fallback"]),
+   ("character-map", ["output-character"]), ("accumulator", ["accumulator-rule"])]
+
+/-- The content of an XSLT element with a fixed content model (XTSE0010);
+    not checked in forwards-compatible mode. -/
+def checkContent (c : SCx) (m : Mod) (i : Nat) : CM Unit := do
+  if c.forwardsCompat then return
+  let l := (m.name i).loc
+  let some ok := onlyChildren.lookup l | return
+  let mut seenOtherwise := false
+  let mut whens := 0
+  for k in m.kids i do
+    if m.isElem k then
+      if !(ok.any (m.isXsl k ·)) then
+        cerr "XTSE0010" ("xsl:" ++ l ++ " cannot contain the element " ++ (m.name k).loc)
+      if l == "choose" then
+        if m.isXsl k "otherwise" then
+          if seenOtherwise then cerr "XTSE0010" "xsl:choose has two xsl:otherwise elements"
+          seenOtherwise := true
+        else
+          if seenOtherwise then cerr "XTSE0010" "xsl:when follows xsl:otherwise"
+          whens := whens + 1
+    else if (m.r k).kind == .text && !((m.r k).value.toList.all Char.isWhitespace) then
+      cerr "XTSE0010" ("xsl:" ++ l ++ " cannot contain text")
+  if l == "choose" && whens == 0 then cerr "XTSE0010" "xsl:choose needs an xsl:when"
+
 def nextTid : CM Nat := do
   let s ← get
   set { s with tid := s.tid + 1 }
@@ -715,7 +749,7 @@ def compileElem : Nat → SCx → Mod → Nat → CM (List Instr)
     -- the content order of XSLT elements (XTSE0010): xsl:param first
     -- (after xsl:context-item), xsl:sort first in the instructions that
     -- sort
-    if (m.name i).uri == nsXSL then checkOrder m i
+    if (m.name i).uri == nsXSL then checkOrder m i; checkContent c m i
     -- a template, function or nested element is not inside the body of
     -- an iteration unless it is the iteration's own content
     let c := if m.isXsl i "iterate" then { c with inIter := false } else c
@@ -814,6 +848,15 @@ def compileParams1 : Nat → SCx → Mod → List Nat → String → CM (List WP
         cerr (if tag == "param" then "XTSE0620" else "XTSE0620") ("xsl:" ++ tag ++ " has both select and content")
       let required ← as.bool "required" false
       let tunnel ← as.bool "tunnel" false
+      -- a required parameter has no default value (XTSE0010, §9.3);
+      -- only a global parameter can be static (XTSE0020)
+      let inFn := match (m.r k).parent with
+        | some pi => m.isXsl pi "function"
+        | none => false
+      if tag == "param" && !inFn && required && (sel.isSome || !body.isEmpty) then
+        cerr "XTSE0010" ("the required parameter $" ++ nm.show ++ " has a default value")
+      if (as.get "static").isSome && (← as.bool "static" false) then
+        cerr "XTSE0020" ("the local parameter $" ++ nm.show ++ " cannot be static")
       pure (some (.mk nm sel body (← optType c' as) tunnel required)))
 
 def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
@@ -899,8 +942,8 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
     | "call-template" =>
         let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:call-template requires a name"
         pure (.callT nm (← compileParams f c m ekids "with-param"))
-    | "apply-imports" => pure (.applyImports (← compileParams f c m ekids "with-param"))
-    | "next-match" => pure (.nextMatch (← compileParams f c m ekids "with-param"))
+    | "apply-imports" => pure (.applyImports (← compileParams f c m ekids "with-param") ((versionMilli c.version).getD 4000 ≥ 4000))
+    | "next-match" => pure (.nextMatch (← compileParams f c m ekids "with-param") ((versionMilli c.version).getD 4000 ≥ 4000))
     | "for-each" =>
         let sel ← parseC c (← reqAttr as "select" l)
         pure (.forEach sel (← compileSorts f c m ekids) (← body (notTag ["sort"])) (← optAvt c as "separator"))
@@ -1191,6 +1234,13 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
             if fi.isSome && (fs.isSome || (kas.get "use-accumulators").isSome || (kas.get "streamable").isSome) then
               cerr "XTSE3195" "xsl:merge-source with for-each-item cannot have for-each-source, use-accumulators or streamable"
             let sel ← parseC ck (← reqAttr kas "select" "merge-source")
+            -- the name of a merge source is an NCName (XTSE0020)
+            if let some nm := kas.get "name" then
+              let nm := nm.trimAscii.toString
+              let ok := match nm.toList with
+                | ch :: cs => isNameStart ch && ch != ':' && cs.all (fun d => isNameCh d && d != ':')
+                | [] => false
+              if !ok then cerr "XTSE0020" ("invalid merge source name '" ++ nm ++ "'")
             let keys ← compileSorts f ck m (m.elemKids k)
             srcs := srcs ++ [.mk ((kas.get "name").getD "") (← optExpr ck kas "for-each-item")
               (← optExpr ck kas "for-each-source") sel (← kas.bool "sort-before-merge" false) keys]
@@ -1450,6 +1500,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
   let upd (f : Sheet → Sheet) : CM Unit := modify (fun s => { s with sheet := f s.sheet })
   checkAttrs c q.loc as
   if q.loc == "function" || q.loc == "template" then checkOrder m i
+  checkContent c m i
   match q.loc with
   | "template" => compileTemplate prec { d with c } as
   | "function" =>
@@ -1513,6 +1564,10 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
         cerr "XTSE0630" ("two global variables named $" ++ nm.show)
       let gty ← optType c as
       let req ← as.bool "required" false
+      if q.loc == "param" && req && (sel.isSome || !body.isEmpty) then
+        cerr "XTSE0010" ("the required parameter $" ++ nm.show ++ " has a default value")
+      if q.loc == "param" && (← as.bool "tunnel" false) then
+        cerr "XTSE0020" ("the global parameter $" ++ nm.show ++ " cannot be a tunnel parameter")
       let vis := ((as.get "visibility").getD "").trimAscii.toString
       if vis == "abstract" && (sel.isSome || !body.isEmpty) then
         cerr "XTSE0010" "an abstract variable must have no select attribute and no content"
@@ -2005,7 +2060,9 @@ def processModule (onUse : Decl → CM Unit) : Nat → Mod → CM Unit
         sh.attrSets.length, sh.modes.length) })
     else if decls.any (fun d => d.m.isXsl d.i "use-package") then
       cerr "XTSE3008" "xsl:use-package in a module that is not at the level of the principal module"
-    -- imports, in order, before this module's precedence is fixed
+    -- imports, in order, before this module's precedence is fixed; they
+    -- take the precedences from `lo` up to this module's
+    let lo := (← get).prec
     let mut seenOther := false
     for d in decls do
       if d.m.isXsl d.i "import" then
@@ -2029,6 +2086,8 @@ def processModule (onUse : Decl → CM Unit) : Nat → Mod → CM Unit
     for d in decls do
       if d.m.isXsl d.i "use-package" then compileUsePackage prec d
       else if !d.m.isXsl d.i "import" then compileDecl prec d
+    modify (fun s => { s with sheet := { s.sheet with templates := s.sheet.templates.map (fun t =>
+      if t.prec == prec then { t with precLo := lo } else t) } })
 
 /-- The `xsl:import-schema` declarations of a module text (§3.15). -/
 def schemaImportsOf (uri txt : String) : List SchemaImport :=
