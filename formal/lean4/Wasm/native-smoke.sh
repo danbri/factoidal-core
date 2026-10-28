@@ -1847,7 +1847,9 @@ checkseq "lwsStep drives create, read, update and delete" "$TMP/lws-crud.json" \
 # The handle reads mount files (webdavOpen, webdavLoad), then each request
 # is a program over storage operations: a local mount's operation comes out
 # as an `lws` request, answered with webdavResume. A malformed mount file is
-# refused with its name and line.
+# refused with its name and line. webdavOpen also asks for the state file
+# `.webdav-state.json` (dead properties and locks,
+# https://github.com/danbri/factoidal/issues/1078).
 python3 - "$TMP/webdav.json" <<'EOF'
 import json, sys, base64
 r = lambda **kw: json.dumps(kw)
@@ -1870,7 +1872,7 @@ json.dump(seq, open(sys.argv[1], "w"))
 EOF
 
 checkseq "webdav: mount files, OPTIONS, PROPFIND of the root, a GET carried as lws requests" "$TMP/webdav.json" \
-  'rs[0]["ok"] is True and rs[0]["need"]["read"] == ["a.md"]
+  'rs[0]["ok"] is True and rs[0]["need"]["read"] == ["a.md", ".webdav-state.json"]
    and rs[1]["need"]["exists"] == ["st", "st/lws-state.json", "st/lws-files.json"]
    and rs[2]["ready"]["local"][0]["config"]["storage"] == "snapshot"
    and rs[3]["response"]["status"] == 200
