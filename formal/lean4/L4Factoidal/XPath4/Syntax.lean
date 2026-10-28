@@ -186,6 +186,11 @@ inductive Expr where
       item prepended to `args`. -/
   | mapArrow (a : Expr) (f : Expr) (args : List (Option Expr))
   | tmpl (parts : List Expr)
+  /-- An XQuery 4.0 construct (`L4Factoidal.XQuery4`): `tag` names it,
+      `es` are its operand expressions, `ts` its types, `qs` its names
+      and `ss` its strings. The XPath 4.0 grammar never builds one;
+      `eval` gives it to `XQuery4.Runtime.evalExt`. -/
+  | ext (tag : String) (es : List Expr) (ts : List IType) (qs : List QN) (ss : List String)
 deriving Inhabited
 
 /-! ## Items (XDM 4.0 §2) -/
