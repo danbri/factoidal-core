@@ -322,4 +322,31 @@ def copyAsTree (env : Env) (id : Nat) (n : NodeRef) (copyNs : Bool := true) : M 
   let d := env.doc n
   pure (.node { doc := id, idx := 0, rt := some { nodes := a, uri := if n.idx == 0 then d.uri else "" } })
 
+/-- The top level of a raw result before it becomes a result tree
+    (XSLT 4.0 §26.1, Serialization 4.0 §2 steps 1 to 4): arrays are
+    flattened, a map or function item is an error (SENR0001), and with an
+    `item-separator` the separator stands between the items, each atomic
+    value as text. -/
+def Out.normalizeTop (sep : Option String) (os : List Out) : M (List Out) := do
+  let mut flat : Array Out := #[]
+  let mut todo : List Out := os
+  for _ in [0:10000000] do
+    match todo with
+    | [] => break
+    | o :: rest =>
+      todo := rest
+      match o with
+      | .item (.arr ms) => todo := ms.flatten.map Out.item ++ todo
+      | .item (.map _) => err "SENR0001" "a map cannot be serialized by this method"
+      | .item (.fn _) => err "SENR0001" "a function item cannot be serialized by this method"
+      | o => flat := flat.push o
+  match sep with
+  | none => pure flat.toList
+  | some s =>
+    pure (flat.toList.zipIdx.flatMap (fun (o, i) =>
+      (if i == 0 then [] else [Out.text s]) ++
+      [match o with
+        | .item (.atom a) => Out.text a.str
+        | o => o]))
+
 end L4Factoidal.XSLT4

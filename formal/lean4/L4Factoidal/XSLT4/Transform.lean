@@ -166,7 +166,7 @@ def buildKeyIndex (S : Sheet) (env : Env) (kd : KeyDef) (root : NodeRef) : M Key
   for i in [lo:hi+1] do
     let nd := root.at i
     if !(kd.pat.matches env (.node nd)) then continue
-    let cx : Ctx := { env := env.focus (.node nd) 1 1 }
+    let cx : Ctx := { env := env.focus (.node nd) 1 1, tempOut := true }
     let v ← match kd.use with
       | some e => (·.1) <$> (evalX cx e).run {}
       | none => do
@@ -187,7 +187,7 @@ def accumulatorValues (S : Sheet) (env : Env) (acc : Accumulator) (root : NodeRe
   let d := env.doc root
   let hi := (d.get root.idx).last
   let rootItem : Item := .node root
-  let cx0 : Ctx := { env := env.focus rootItem 1 1 }
+  let cx0 : Ctx := { env := env.focus rootItem 1 1, tempOut := true }
   let (init, _) ← (evalX cx0 acc.init).run {}
   let applyRules (isEnd : Bool) (nd : NodeRef) (v : Seq) : M Seq := do
     let mut v := v
@@ -195,7 +195,7 @@ def accumulatorValues (S : Sheet) (env : Env) (acc : Accumulator) (root : NodeRe
     match rules.getLast? with
     | none => pure v
     | some r =>
-      let cx := (({ env := env.focus (.node nd) 1 1 } : Ctx)).bind { uri := "", loc := "value" } v
+      let cx := (({ env := env.focus (.node nd) 1 1, tempOut := true } : Ctx)).bind { uri := "", loc := "value" } v
       let nv ← match r.sel with
         | some e => (·.1) <$> (evalX cx e).run {}
         | none => do
@@ -470,7 +470,7 @@ def evalGlobals (S : Sheet) (o : TOpts) (env0 : Env) : M Env := do
           | none => pure v
         | none =>
           if g.required then xerr "XTDE0050" ("no value given for the required parameter $" ++ g.name.show)
-          else bindValue 100000 S { env := genv, backCompat := ({ version := S.version } : SCx).backCompat } g.sel g.body g.ty ("$" ++ g.name.show) (if g.isParam then "XTTE0590" else "XTTE0570")
+          else bindValue 100000 S { env := genv, tempOut := true, backCompat := ({ version := S.version } : SCx).backCompat } g.sel g.body g.ty ("$" ++ g.name.show) (if g.isParam then "XTTE0590" else "XTTE0570")
       match act.run { base := (hash g.name.eqn).toNat % 100000 + 7 } with
       | .ok (v, _) =>
           env := { env with vars := env.vars ++ [(g.name, v)] }
@@ -507,7 +507,8 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
     (List.range docs.size).flatMap (fun di => S.accumulators.map (fun acc =>
       ((acc.name.eqn, di), Thunk.mk (fun _ => accumulatorValues S { env with host := mkHost S env [] [] 100000 } acc (NodeRef.mk' di 0)))))
   let host := mkHost S env keyCache accCache 100000
-  let env := { env with host, vars := env.vars ++ [(vOutUri, if o.outUri == "" then [] else [.atom (Atomic.ofUri o.outUri)])] }
+  let ouV : Seq := if o.outUri == "" then [] else [.atom (Atomic.ofUri o.outUri)]
+  let env := { env with host, vars := env.vars ++ [(vOutUri, ouV), (vBaseOut, ouV)] }
   let focusEnv := match o.globalCtx with
     | some i => env.focus i 1 1
     | none => env
@@ -591,11 +592,26 @@ def Sheet.charMapOf (S : Sheet) : Nat → String → M (List (Char × String))
       pure (out ++ own)
 
 /-- Serialization parameters from `xsl:output` properties. -/
-def serParamsOfProps (S : Sheet) (props : List (String × String)) : M SerParams := do
+def serParamsOfProps (S : Sheet) (env : Env) (props : List (String × String)) : M SerParams := do
   let mut p : SerParams := {}
   for (name0, v) in props do
     let name := if name0 == "output-version" then "version" else name0
-    if name == "build-tree" || name == "parameter-document" || name == "indent-attributes" then continue
+    if name == "build-tree" || name == "indent-attributes" then continue
+    -- §26.1.5: the parameters of a serialization parameter document; a
+    -- document that cannot be found is ignored
+    if name == "parameter-document" then
+      match env.resources.lookup v with
+      | none => pure ()
+      | some txt =>
+        match Doc.ofString txt v with
+        | .error m => err "SEPM0017" ("the serialization parameter document is not well-formed: " ++ m)
+        | .ok d =>
+          let env' := { env with docs := env.docs.push d }
+          let dn := NodeRef.mk' env.docs.size 0
+          match (env'.nrec dn).children.toList.map dn.at |>.find? (fun c => (env'.nrec c).kind == .element) with
+          | some r => p ← elemParams env' r p
+          | none => err "SEPM0017" "the serialization parameter document has no element"
+      continue
     if name == "use-character-maps" then
       let mut cm : List (Char × String) := []
       for t in (v.split (· == ' ')).toList.map (·.toString) |>.filter (· != "") do
@@ -646,8 +662,11 @@ def Sheet.outputProps (S : Sheet) (key : String) (extra : List (String × String
       | none => some (k, v)
     else if k == "item-separator" && v == "#absent" then none
     else some (k, v))
-  let base := base.filter (fun (k, _) => !(extra.any (·.1 == k)))
-  pure (base ++ extra')
+  let base := base.filter (fun (k, _) => k == "parameter-document" || !(extra.any (·.1 == k)))
+  -- §26.1.5: a parameter document overrides the attributes beside it
+  let pdLast (ps : List (String × String)) : List (String × String) :=
+    ps.filter (·.1 != "parameter-document") ++ ps.filter (·.1 == "parameter-document")
+  pure (pdLast base ++ pdLast extra')
 
 /-- The default output method (§26.1): `html` when the result's first
     element is `html` in no namespace, `xhtml` when it is in the XHTML
@@ -675,12 +694,13 @@ def defaultMethod (env : Env) (s : Seq) : String :=
 
 /-- Serialize a result with the output definition `props`. -/
 def serializeResult (S : Sheet) (env : Env) (props : List (String × String)) (s : Seq) : M String := do
-  let props := if props.any (·.1 == "method") then props else props ++ [("method", defaultMethod env s)]
+  -- the defaults come first: a parameter document may set them
+  let props := if props.any (·.1 == "method") then props else [("method", defaultMethod env s)] ++ props
   -- XSLT's default: the XML declaration is written (§26)
   let m := (props.lookup "method").getD "xml"
   let props := if (m == "xml" || m == "xhtml") && !(props.any (·.1 == "omit-xml-declaration")) then
-      props ++ [("omit-xml-declaration", "no")] else props
-  let p ← serParamsOfProps S props
+      [("omit-xml-declaration", "no")] ++ props else props
+  let p ← serParamsOfProps S env props
   let out ← env.serializeWith p s
   let bom := match props.lookup "byte-order-mark" with
     | some v => ["yes", "true", "1"].contains v.trimAscii.toString

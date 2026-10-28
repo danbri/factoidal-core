@@ -698,12 +698,15 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
         | some m => m == "json" || m == "adaptive"
         | none => false)
   let initialFn := !(kidsNamed testNode "initial-function").isEmpty
+  -- the principal result tree: sequence normalization with the
+  -- item-separator of the unnamed output definition (§26.1)
   let deliver (S : Sheet) (raw : Seq) : M Seq :=
     if rawMethod S || initialFn then pure raw else
+    let sep := ((S.outputs.lookup "").getD []).lookup "item-separator"
     match raw with
     | [.node n] => if (env.nrec n).kind == .document then pure raw else
-        do pure [← materialize env (2 ^ 45) (.doc (Out.ofSeq raw) "")]
-    | _ => do pure [← materialize env (2 ^ 45) (.doc (Out.ofSeq raw) "")]
+        do pure [← materialize env (2 ^ 45) (.doc (← Out.normalizeTop sep (Out.ofSeq raw)) "")]
+    | _ => do pure [← materialize env (2 ^ 45) (.doc (← Out.normalizeTop sep (Out.ofSeq raw)) "")]
   let res : M Seq := do
     let (r, S) ← outcome
     deliver S r.raw

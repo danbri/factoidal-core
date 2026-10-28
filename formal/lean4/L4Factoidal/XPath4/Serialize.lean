@@ -157,6 +157,14 @@ def SerParams.check (p : SerParams) : M SerParams := do
   if (p.method == "xml" || p.method == "xhtml") && p.omitDecl &&
       (p.standalone.isSome || (p.version.getD "1.0" != "1.0" && p.doctypeSystem.isSome)) then
     err "SEPM0009" "omit-xml-declaration is inconsistent with standalone, or with version and doctype-system"
+  if (p.method == "xml" || p.method == "xhtml") && p.undeclare && p.version.getD "1.0" == "1.0" then
+    err "SEPM0010" "undeclare-prefixes needs XML version 1.1"
+  -- the versions this serializer supports (SESU0013)
+  if let some v := p.version then
+    let ok := if p.method == "html" then ["1.0", "4.0", "4.01", "5", "5.0"].contains v
+      else if p.method == "xml" || p.method == "xhtml" then ["1.0", "1.1"].contains v
+      else true
+    if !ok then err "SESU0013" ("unsupported version " ++ v ++ " of the " ++ p.method ++ " method")
   let nf := p.normForm.toUpper
   if !["NONE", "NFC", "NFD", "NFKC", "NFKD"].contains nf then
     err "SESU0011" ("unsupported normalization form " ++ p.normForm)
@@ -257,13 +265,13 @@ def resolveLexQN (scope : List (String × String)) (s : String) : M QN :=
       | none => err "SEPM0017" ("undeclared prefix " ++ p)
     | _ => err "SEPM0017" ("bad QName " ++ s)
 
-def elemParams (e : Env) (root : NodeRef) : M SerParams := do
+def elemParams (e : Env) (root : NodeRef) (p0 : SerParams := {}) : M SerParams := do
   let r := e.nrec root
   if r.kind != .element || r.name.uri != nsOUTPUT || r.name.loc != "serialization-parameters" then
     err "XPTY0004" "the options must be an output:serialization-parameters element"
   for a in e.attrNodes root do
     if (e.nrec a).name.uri == "" then err "SEPM0017" "attribute on output:serialization-parameters"
-  let mut p : SerParams := {}
+  let mut p : SerParams := p0
   let mut seen : List String := []
   for c in e.elemKids root do
     let cr := e.nrec c
@@ -621,6 +629,8 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
       else emit (x.p.escText r.value)
     | .comment => emit ("<!--" ++ r.value ++ "-->")
     | .pi =>
+      if x.m == "html" && r.value.contains '>' then
+        err "SERE0015" "a processing instruction that contains '>' cannot be written by the html method"
       if x.m == "html" then emit ("<?" ++ r.name.loc ++ (if r.value == "" then "" else " " ++ r.value) ++ ">")
       else emit ("<?" ++ r.name.loc ++ (if r.value == "" then "" else " " ++ r.value) ++ "?>")
     | .attribute =>
@@ -679,6 +689,17 @@ def Env.writeMarkup (e : Env) (p : SerParams) (s : Seq) : M String := do
     | some v => (v.toList.headD '5') ≥ '5'
     | none => m != "html" || (match p.version with | some v => (v.toList.headD '5') ≥ '5' | none => true)
   let x : XCtx := { p, m, html5 }
+  -- SEPM0004: standalone and doctype-system need a well-formed document
+  -- entity (one element, no text at the top level)
+  if (m == "xml" || m == "xhtml") && !p.canonical && (p.standalone.isSome || p.doctypeSystem.isSome) then
+    let elems := items.filter (fun i => match i with
+      | .node n => (e.nrec n).kind == .element
+      | _ => false)
+    let texts := items.any (fun i => match i with
+      | .text _ => true
+      | .node n => (e.nrec n).kind == .text)
+    if elems.length != 1 || texts then
+      err "SEPM0004" "standalone or doctype-system is given and the result is not a well-formed document entity"
   let act : W Unit := do
     if m != "html" && !p.omitDecl && !p.canonical then
       emit ("<?xml version=\"" ++ (p.version.getD "1.0") ++ "\" encoding=\"" ++ p.encoding ++ "\"" ++

@@ -35,6 +35,9 @@ def vSeed : QN := xv "seed"
 def vMergeGroup : QN := xv "merge-group"
 def vMergeKey : QN := xv "merge-key"
 def vOutUri : QN := xv "output-uri"
+/-- The base output URI (§25.1): what a result document's href is
+    resolved against. -/
+def vBaseOut : QN := xv "base-output-uri"
 
 /-- The key of the map that stands for an `xsl:array-member` parcel. -/
 def memberKey : Atomic := Atomic.ofQN (xv "array-member")
@@ -1476,13 +1479,13 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         for (k, a) in ser do sp := sp ++ [(k, ← avtStr cx a)]
         -- the href is resolved against the base output URI (§25.1), and
         -- the result is the current output URI of its content
-        let base := match (cx.env.vars.find? (·.1 == vOutUri)).map (·.2) with
+        let base := match (cx.env.vars.find? (·.1 == vBaseOut)).map (·.2) with
           | some [.atom a] => a.str
           | _ => ""
         let h := if h == "" then base else if base == "" then h else resolveUri base h
         let cxR := cx.bind vOutUri (if h == "" then [] else [.atom (Atomic.ofUri h)])
         -- writing a resource that the transformation reads (§25.2)
-        if h != "" && (env.docUris.any (·.1 == h) || env.resources.any (·.1 == h)) then
+        if h.startsWith "file:" && (env.docUris.any (·.1 == h) || env.resources.any (·.1 == h)) then
           xerr "XTDE1500" ("the result document " ++ h ++ " is also read by the transformation")
         let os ← run n S cxR body
         let id ← freshId
@@ -1492,9 +1495,13 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let buildTree := match sp.lookup "build-tree" with
           | some b => parseBool b != some false
           | none => meth != "json" && meth != "adaptive"
+        let sep := match sp.lookup "item-separator" with
+          | some "#absent" => none
+          | some x => some x
+          | none => ((S.outputs.lookup f).bind (·.lookup "item-separator"))
         let v ← if !buildTree then materializeAll env os else match os with
           | [] => pure []
-          | _ => do pure [← liftX (materialize env id (.doc os ""))]
+          | _ => do pure [← liftX (materialize env id (.doc (← liftX (Out.normalizeTop sep os)) ""))]
         let st ← get
         if st.results.any (fun (x, _, _, _) => x == h) then
           xerr "XTDE1490" ("two result documents with the URI '" ++ h ++ "'")
@@ -1769,7 +1776,7 @@ def sortKeysOf : Nat → Sheet → Ctx → List SortK → List SortSpec → XM (
           | none =>
             if body.isEmpty then pure (match cx.env.ctx with | some s => s | none => [])
             else do
-              let os ← run n S cx body
+              let os ← run n S { cx with tempOut := true } body
               pure [.atom (Atomic.ofStr (← simpleContent cx.env os ""))]
         let as ← liftX (cx.env.atomize v)
         let as := if cx.backCompat then as.take 1 else as

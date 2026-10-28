@@ -285,7 +285,10 @@ def SCx.enter (c : SCx) (m : Mod) (i : Nat) (as : Attrs) : CM SCx := do
     match parseBool v with
     | some b => c := { c with expandText := b }
     | none => cerr "XTSE0020" ("invalid expand-text value '" ++ v ++ "'")
-  if let some v := g "version" then c := { c with version := v.trimAscii.toString }
+  -- the version attribute of xsl:output is the serialization version
+  -- (§26.1.4), not the standard attribute
+  if let some v := g "version" then
+    if !(isX && r.name.loc == "output") then c := { c with version := v.trimAscii.toString }
   if let some v := g "exclude-result-prefixes" then
     c := { c with excl := c.excl ++ (← exclUris ns v) }
   if let some v := g "extension-element-prefixes" then
@@ -459,6 +462,31 @@ def standardAttrs : List String :=
   ["default-collation", "default-mode", "default-validation", "exclude-result-prefixes",
    "expand-text", "extension-element-prefixes", "use-when", "version", "xpath-default-namespace"]
 
+/-- The serialization attributes of `xsl:output` and
+    `xsl:result-document` with a boolean value (§26.1.4). -/
+def serBoolAttrs : List String :=
+  ["allow-duplicate-names", "build-tree", "byte-order-mark", "canonical", "csv-header", "escape-solidus",
+   "escape-uri-attributes", "include-content-type", "indent", "indent-attributes", "json-lines",
+   "omit-xml-declaration", "undeclare-prefixes"]
+
+/-- Is `v` a valid value of the serialization attribute `k` (§26.1.4;
+    XTSE0020 when it is not)? A boolean, `standalone` (a boolean or
+    `omit`), `html-version` (an `xs:decimal`), `doctype-public`
+    (`PubidChar`s, XML 1.0 [13]). -/
+def serAttrOk (k v : String) : Bool :=
+  let v := v.trimAscii.toString
+  if serBoolAttrs.contains k then (parseBool v).isSome
+  else if k == "standalone" then v == "omit" || (parseBool v).isSome
+  else if k == "html-version" then
+    let ds := if v.startsWith "+" || v.startsWith "-" then (v.drop 1).toString else v
+    match ds.splitOn "." with
+    | [a] => a != "" && a.all Char.isDigit
+    | [a, b] => (a != "" || b != "") && a.all Char.isDigit && b.all Char.isDigit
+    | _ => false
+  else if k == "doctype-public" then
+    v.all (fun ch => ch == ' ' || ch == '\r' || ch == '\n' || ch.isAlphanum || "-'()+,./:=?;!*#@$_%".contains ch)
+  else true
+
 def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
   for (q, v) in as do
     if q.uri == nsXSL then cerr "XTSE0090" ("an XSLT element cannot have the attribute xsl:" ++ q.loc)
@@ -482,6 +510,10 @@ def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
             cerr "XTSE0020" ("invalid value '" ++ v ++ "' for attribute " ++ q.loc ++ " of xsl:" ++ l)
         if boolAttrs.contains q.loc && (parseBool v').isNone then
           cerr "XTSE0020" ("invalid boolean '" ++ v ++ "' for attribute " ++ q.loc ++ " of xsl:" ++ l)
+        -- serialization attributes; on xsl:result-document only a value
+        -- that is not an attribute value template
+        if (l == "output" || (l == "result-document" && !v.contains '{')) && !serAttrOk q.loc v then
+          cerr "XTSE0020" ("invalid value '" ++ v ++ "' for attribute " ++ q.loc ++ " of xsl:" ++ l)
 
 /-- The namespace bindings a literal result element copies (§11.1.3):
     all in scope except the XSLT namespace, excluded and extension
@@ -964,6 +996,8 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
               if q.loc == "use-character-maps" then
                 modify (fun s => { s with cmRefs := s.cmRefs ++ qs.map QN.eqn })
               pure (q.loc, [AvtPart.lit (String.intercalate " " (qs.map QN.eqn))])
+            else if q.loc == "parameter-document" && !v.contains '{' then
+              pure (q.loc, [AvtPart.lit (resolveUri c.baseUri v.trimAscii.toString)])
             else pure (q.loc, ← liftM (c.avt v)))
         let sel ← optExpr c as "select"
         let b ← body
@@ -1401,11 +1435,12 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
         | none => pure ""
       let mut props : List (String × String) := []
       for (aq, v) in as do
-        if aq.uri == "" && aq.loc != "name" && !standardAttrs.contains aq.loc then
+        if aq.uri == "" && aq.loc != "name" && (!standardAttrs.contains aq.loc || aq.loc == "version") then
           let v' ← if aq.loc == "cdata-section-elements" || aq.loc == "suppress-indentation" then
               do pure (String.intercalate " " ((← (tokens v).mapM (fun t => liftM (c.qname t true))).map QN.eqn))
             else if aq.loc == "use-character-maps" then
               do pure (String.intercalate " " ((← (tokens v).mapM (fun t => liftM (c.qname t))).map QN.eqn))
+            else if aq.loc == "parameter-document" then pure (resolveUri c.baseUri v.trimAscii.toString)
             else if aq.loc == "method" || aq.loc == "json-node-output-method" then
               -- XTSE1570: an EQName; in no namespace, one of the methods
               -- of Serialization 4.0
