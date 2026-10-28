@@ -40,14 +40,29 @@ structure SCx where
   types : List (QN × String) := []
 deriving Inhabited
 
-def SCx.backCompat (c : SCx) : Bool :=
-  match c.version.toList with
-  | '1' :: _ => true
-  | _ => false
+/-- The value of a `version` attribute, in thousandths (a decimal,
+    §3.9); `none` when it is not a decimal. -/
+def versionMilli (v : String) : Option Nat :=
+  let t := v.trimAscii.toString
+  match t.splitOn "." with
+  | [a] => a.toNat?.map (· * 1000)
+  | [a, b] =>
+    let b3 := (b ++ "000").take 3
+    match (if a == "" then some 0 else a.toNat?), b3.toString.toNat? with
+    | some x, some y => some (x * 1000 + y)
+    | _, _ => none
+  | _ => none
 
+/-- Backwards-compatible behaviour (§3.9): a version below 2.0. -/
+def SCx.backCompat (c : SCx) : Bool :=
+  match versionMilli c.version with
+  | some k => k < 2000
+  | none => false
+
+/-- Forwards-compatible behaviour (§3.10): a version above 4.0. -/
 def SCx.forwardsCompat (c : SCx) : Bool :=
-  match (c.version.splitOn ".").head?.bind String.toNat? with
-  | some k => k > 4
+  match versionMilli c.version with
+  | some k => k > 4000
   | none => false
 
 /-- The bindings the XPath parser sees (no default namespace entry). -/

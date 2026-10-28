@@ -488,7 +488,7 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
   let focusEnv := match o.globalCtx with
     | some i => env.focus i 1 1
     | none => env
-  let cx : Ctx := { env := focusEnv, mode := S.defaultMode, backCompat := S.version.startsWith "1" }
+  let cx : Ctx := { env := focusEnv, mode := S.defaultMode, backCompat := ({ version := S.version } : SCx).backCompat }
   let act : XM (List Out) := do
     match o.initialFunction with
     | some (fq, args) =>
