@@ -22,6 +22,11 @@ The leaves are in the `<file>.merkle` sidecar, which is not trusted:
   `Harness.PosixRangeIO.readVerifiedChunkCached?`).
 * `chunkSpan`, `sliceLo`, `sliceHi`: the chunks of a byte range, and the part
   of each chunk that the range covers.
+* `checkAnchor h name anchor bytes`: the trust anchor of the manifest
+  (https://github.com/danbri/factoidal/issues/1105): the SHA-256 of the
+  manifest bytes, refused when the caller gave an anchor and it is not that
+  digest. `sha256OfHex?` reads the anchor (64 hex digits).
+* `checkTerms`: the term count of the manifest against the GDX1 header.
 
 `Verify` is the choice of `l4sbm11 query --verify` (`Harness.Sbm11Gen.Verify`):
 `merkle` (every read widened to its chunks, each chunk checked) or `none`
@@ -127,6 +132,59 @@ def sliceLo (cb off c : Nat) : Nat := max off (c * cb) - c * cb
 /-- The end, inside chunk `c`, of the bytes `[off, off + len)`. -/
 def sliceHi (cb off len c : Nat) : Nat := min (off + len) ((c + 1) * cb) - c * cb
 
+/-! ## The trust anchor of the manifest (https://github.com/danbri/factoidal/issues/1105)
+
+The manifest has no digest of its own. The Merkle check above binds the
+names, the lengths and the Merkle references of the manifest to the bytes a
+query reads, but not its other fields (the SHA-256 of each file, the length
+and the SHA-256 of the source, the quad count). A caller that knows the
+SHA-256 of the manifest bytes (from a signed release, a CID document, or a
+value that the application pins) gives it as the trust anchor; the open
+then refuses a manifest whose SHA-256 is not the anchor, so every field of
+the manifest is bound. -/
+
+/-- The value of one hex digit, either case. -/
+def hexValue? (c : Char) : Option Nat :=
+  if '0' ≤ c && c ≤ '9' then some (c.toNat - '0'.toNat)
+  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
+  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 'A'.toNat + 10)
+  else none
+
+/-- The bytes of an even number of hex digits, appended to `acc`. -/
+def hexBytes? (acc : ByteArray) : List Char → Option ByteArray
+  | [] => some acc
+  | [_] => none
+  | a :: b :: rest =>
+    match hexValue? a, hexValue? b with
+    | some x, some y => hexBytes? (acc.push (x * 16 + y).toUInt8) rest
+    | _, _ => none
+
+/-- A SHA-256 digest written as 64 hex digits, either case. -/
+def sha256OfHex? (s : String) : Option ByteArray :=
+  if s.length != 64 then none else hexBytes? ByteArray.empty s.toList
+
+/-- A digest as lowercase hex. -/
+def hexOf (b : ByteArray) : String := L4Factoidal.Crypto.bytesToHex b
+
+/-- The trust-anchor check of the manifest bytes `mbytes` (named `name`):
+    the SHA-256 of the bytes (hash `h`), when there is no anchor or it is the
+    anchor; else an error that names the manifest and both digests. -/
+def checkAnchor (h : Hasher) (name : String) (anchor : Option ByteArray) (mbytes : ByteArray) :
+    Except String ByteArray :=
+  let d := h.digest mbytes
+  match anchor with
+  | none => .ok d
+  | some a =>
+    if a == d then .ok d
+    else .error s!"{name}: SHA-256 {hexOf d}, the trust anchor manifestSha256 is {hexOf a}; the manifest was changed, or the anchor is for another generation"
+
+/-- The term count of the manifest against the term count of the GDX1
+    header (`Harness.Sbm11Cli.verifyGen` makes the same check). The header is
+    read at open; under `merkle` its chunk is checked against the root. -/
+def checkTerms (gdxFile : String) (manifestTerms gdxTerms : Nat) : Except String Unit :=
+  if manifestTerms == gdxTerms then .ok ()
+  else .error s!"{gdxFile}: the GDX1 header gives {gdxTerms} terms, the manifest says {manifestTerms}"
+
 /-! ## Tests (the generation-level ones are in `HostVerifyTests`) -/
 
 private def c0 : ByteArray := ByteArray.mk #[1, 2]
@@ -171,5 +229,20 @@ private def chunkOk (index : Nat) (b : ByteArray) : Bool :=
 #guard chunkSpan 65536 65535 2 == (0, 1)
 #guard chunkSpan 65536 0 65536 == (0, 0)
 #guard sliceLo 2 1 0 == 1 && sliceHi 2 1 3 0 == 2 && sliceLo 2 1 1 == 0 && sliceHi 2 1 3 1 == 2
+-- the anchor: 64 hex digits of either case; any other text is no digest
+private def abcHex : String := "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+#guard (sha256OfHex? abcHex).map hexOf == some abcHex
+#guard (sha256OfHex? abcHex.toUpper).map hexOf == some abcHex
+#guard (sha256OfHex? (abcHex.drop 2).toString).isNone
+#guard (sha256OfHex? ((abcHex.drop 1).toString ++ "g")).isNone
+#guard (sha256OfHex? (abcHex ++ "00")).isNone
+-- the SHA-256 of "abc" (FIPS 180-4) passes as the anchor of the bytes "abc";
+-- no anchor gives the digest; another anchor is refused with both digests
+#guard (checkAnchor pureHasher "m" none "abc".toUTF8).toOption.map hexOf == some abcHex
+#guard (checkAnchor pureHasher "m" (sha256OfHex? abcHex) "abc".toUTF8).toBool
+#guard match checkAnchor pureHasher "m" (sha256OfHex? abcHex) "abd".toUTF8 with
+  | .error e => (e.splitOn abcHex).length > 1 && e.startsWith "m: SHA-256 "
+  | .ok _ => false
+#guard (checkTerms "dict.gdx1" 5 5).toBool && !(checkTerms "dict.gdx1" 5 4).toBool
 
 end L4Factoidal.Storage.Sbm11.HostVerify

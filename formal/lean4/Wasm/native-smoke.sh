@@ -3432,6 +3432,33 @@ args "$TMP/verify-side.json" "$TMP/verify-side"
 check "sbm11Open of a generation with a changed .merkle sidecar -> error naming the sidecar" sbm11Open \
   "$TMP/verify-side.json" 'r["ok"] is False and "spo.prb1.merkle" in r["error"]'
 
+# The trust anchor of sbm11Open (`manifestSha256`, the SHA-256 of the manifest
+# bytes; HostVerify.checkAnchor, https://github.com/danbri/factoidal/issues/1105):
+# the anchor of the fixture generation opens it and is the digest the answer
+# gives; one changed hex digit refuses it, naming the manifest and both
+# digests; a value that is not 64 hex digits is refused; sbm11Verify gives
+# the same digest.
+python3 - "$SBM11_ROOT/gen" "$TMP/sbm11-anchor-seq.json" "$TMP/sbm11-anchor.txt" <<'EOF'
+import hashlib, json, sys
+gen, out, txt = sys.argv[1], sys.argv[2], sys.argv[3]
+d = hashlib.sha256(open(gen + "/manifest.sbm11", "rb").read()).hexdigest()
+wrong = d[:63] + ("1" if d[63] == "0" else "0")
+open(txt, "w").write(d + " " + wrong + "\n")
+json.dump([["sbm11Open", [gen, json.dumps({"manifestSha256": d})]],
+           ["sbm11Open", [gen, json.dumps({"manifestSha256": wrong})]],
+           ["sbm11Open", [gen, json.dumps({"manifestSha256": "abc"})]],
+           ["sbm11Verify", [gen]],
+           ["sbm11Close", ["sbm11-1"]]], open(out, "w"))
+EOF
+read -r SBM11_ANCHOR SBM11_WRONG < "$TMP/sbm11-anchor.txt"
+checkseq "sbm11Open manifestSha256: the anchor opens, a wrong anchor and a malformed one are refused" \
+  "$TMP/sbm11-anchor-seq.json" \
+  'rs[0]["ok"] is True and rs[0]["manifestSha256"] == "'"$SBM11_ANCHOR"'"
+   and rs[1]["ok"] is False and "manifest.sbm11" in rs[1]["error"]
+   and "'"$SBM11_ANCHOR"'" in rs[1]["error"] and "'"$SBM11_WRONG"'" in rs[1]["error"]
+   and rs[2]["ok"] is False and "manifestSha256" in rs[2]["error"]
+   and rs[3]["ok"] is True and rs[3]["manifestSha256"] == "'"$SBM11_ANCHOR"'"'
+
 # SBM11 pack in memory (https://github.com/danbri/factoidal/issues/1009 stage 2):
 # the op through the string entry is refused by name; through the byte-region
 # entry (`l4factoidal sbm11-pack`, one call per file) it gives the files of

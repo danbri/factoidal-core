@@ -1393,6 +1393,10 @@ export interface Sbm11Store {
   terms: number;
   /** how the engine checks reads; undefined from a wasm module built before the Merkle check */
   verify: 'merkle' | 'none' | undefined;
+  /** the SHA-256 of the bytes of manifest.sbm11, 64 lowercase hex digits, as
+   * the engine computed it at open (pin it, then give it as
+   * `manifestSha256`); undefined from a wasm module built before issue 1105 */
+  manifestSha256: string | undefined;
   query(sparql: string, options?: { base?: string; sparql12?: boolean; reference?: boolean }): Sbm11Answer;
   /** the resources the reader read, when its reader records them (lwsSbm11Reader) */
   readonly evidence: Sbm11ReadEvidence[] | undefined;
@@ -1403,8 +1407,13 @@ export interface Sbm11Store {
  * Node: `source` is a directory unless a reader is given or registered.
  * `verify` (default 'merkle'): the engine checks every byte it decodes against
  * the manifest's Merkle roots and refuses a changed file with its name;
- * 'none' checks lengths only. */
-export function openSbm11(source: string, options?: { reader?: Sbm11Reader; verify?: 'merkle' | 'none' }): Promise<Sbm11Store>;
+ * 'none' checks lengths only.
+ * `manifestSha256`: the trust anchor, the SHA-256 of the bytes of
+ * manifest.sbm11 as 64 hex digits (https://github.com/danbri/factoidal/issues/1105);
+ * the engine refuses the open when the manifest has another digest. */
+export function openSbm11(source: string, options?: {
+  reader?: Sbm11Reader; verify?: 'merkle' | 'none'; manifestSha256?: string
+}): Promise<Sbm11Store>;
 
 /** Serve `source` with `reader`; `null` removes it. */
 export function registerSbm11Source(source: string, reader: Sbm11Reader | null): void;

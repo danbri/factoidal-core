@@ -37,9 +37,16 @@ What differs from `Harness/Sbm11Query.lean` (the native session):
   `Verify.none` (the caller's choice, as `l4sbm11 query --verify none`)
   checks every artifact's size at open and every read against the
   manifest's length, and hashes nothing;
-* the manifest has no digest of its own: the session reads no field of it
-  but the names, the lengths and the Merkle references, which the checks
-  above bind to the bytes. The full-file SHA-256 of each file is checked by
+* the manifest has no digest of its own: the Merkle check binds its names,
+  lengths and Merkle references to the bytes, and the open checks its term
+  count against the GDX1 header (`HostVerify.checkTerms`). Its other fields
+  (the SHA-256 of each file, the length and SHA-256 of the source, the quad
+  count) are bound only by a trust anchor: the caller gives the SHA-256 of
+  the manifest bytes (`anchor`), and the open refuses a manifest with
+  another digest (`HostVerify.checkAnchor`,
+  https://github.com/danbri/factoidal/issues/1105). The session keeps the
+  digest (`manifestSha256`) so that a caller can pin it. The open does not
+  read whole files: the full-file SHA-256 of each file is checked by
   `sbm11Verify` (activation), as by native `l4sbm11 activate`;
 * a generation with a delta log (`deltas.dlog` with bytes) is refused at
   open: the replay is stage 3 of issue 1007.
@@ -84,7 +91,7 @@ open L4Factoidal.SPARQL
 open L4Factoidal.Storage.Sbm11
 open L4Factoidal.Storage.Sbm11.Block
 open L4Factoidal.Storage.Sbm11.Manifest
-open L4Factoidal.Storage.Sbm11.HostVerify (Verify Admitted admit checkChunk chunkSpan sliceLo sliceHi
+open L4Factoidal.Storage.Sbm11.HostVerify (Verify Admitted admit checkChunk checkAnchor checkTerms chunkSpan sliceLo sliceHi
   sidecarName)
 
 /-- The positioned reads of one generation, supplied by the host: the
@@ -122,6 +129,9 @@ structure Session where
   verify : Verify
   /-- the hash of the Merkle check -/
   hasher : L4Factoidal.Storage.BlockMerkle.Hasher
+  /-- the SHA-256 of the manifest bytes (hash `hasher`), checked against the
+      trust anchor when the caller gave one -/
+  manifestSha256 : ByteArray
   /-- under `merkle`: the admitted sidecar of each artifact, at its index in
       `arts`; empty under `none` -/
   admitted : Array Admitted
@@ -285,17 +295,22 @@ def roleIndex (arts : Array Artifact) (role : String) : IO Nat :=
   | some i => pure i
   | none => ioErr s!"the manifest has no artifact {role}"
 
-/-- Open a generation: read and decode its manifest, check that every
-    artifact has the manifest's size, refuse a delta log; under `merkle`
-    (`v`) admit the `.merkle` sidecar of every artifact against the
-    manifest's root (`HostVerify.admit`, hash `h`); read the GDX1 header.
-    The host names a generation directory (`resolveHost` first for a
-    collection root). -/
-def openSession (host : Host) (v : Verify) (h : L4Factoidal.Storage.BlockMerkle.Hasher) :
-    IO Session := do
+/-- Open a generation: read the manifest and check its SHA-256 against the
+    trust anchor `anchor` when there is one (`HostVerify.checkAnchor`, hash
+    `h`), decode it, check that every artifact has the manifest's size,
+    refuse a delta log; under `merkle` (`v`) admit the `.merkle` sidecar of
+    every artifact against the manifest's root (`HostVerify.admit`); read the
+    GDX1 header and check the manifest's term count against it. The host
+    names a generation directory (`resolveHost` first for a collection
+    root). -/
+def openSession (host : Host) (v : Verify) (h : L4Factoidal.Storage.BlockMerkle.Hasher)
+    (anchor : Option ByteArray := none) : IO Session := do
   let some msize ← host.size manifestName
     | ioErr s!"{manifestName}: not found; the source is not an SBM11 generation directory"
   let mbytes ← host.readAt manifestName 0 msize
+  if mbytes.size != msize then
+    ioErr s!"{manifestName}: the host returned {mbytes.size} bytes for a read of {msize}"
+  let mdigest ← okOr "trust anchor" (checkAnchor h manifestName anchor mbytes)
   let some m := decodeManifest mbytes.data.toList
     | ioErr s!"{manifestName}: does not decode as an SBM11 manifest"
   for a in m.artifacts do
@@ -321,13 +336,14 @@ def openSession (host : Host) (v : Verify) (h : L4Factoidal.Storage.BlockMerkle.
   let gdv ← roleIndex arts "GDV1"
   let gdx ← roleIndex arts "GDX1"
   let ss0 : Session :=
-    { host, manifest := m, arts, verify := v, hasher := h, admitted,
+    { host, manifest := m, arts, verify := v, hasher := h, manifestSha256 := mdigest, admitted,
       chunks := ← IO.mkRef (if v == .merkle then Array.replicate arts.size {} else #[]),
       gdx, gdv, dictHdr := { termCount := 0, pageCount := 0 },
       perms := ← IO.mkRef #[none, none, none, none], pages := ← IO.mkRef {}, idMemo := ← IO.mkRef {},
       baseNamedRef := ← IO.mkRef none, bytesRead := ← IO.mkRef (msize + sideBytes),
       reads := ← IO.mkRef (1 + admitted.size) }
   let hdr ← okOr "GDX1" (Dict.parseGdxHeader (← ss0.gdxFetch 0 Dict.gdxHeaderBytes))
+  okOr manifestName (checkTerms ((arts[gdx]?.map (·.file)).getD "GDX1") m.terms hdr.termCount)
   return { ss0 with dictHdr := hdr }
 
 def Session.prmReadAt (ss : Session) (fi : Nat) (off len : Nat) : ExceptT String IO ByteArray :=

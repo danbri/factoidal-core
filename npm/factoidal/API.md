@@ -1392,8 +1392,36 @@ for later queries (16 MiB per file). A
 changed byte in a data file, a sidecar or a Merkle reference of the manifest
 refuses the open or the query, and the error names the file.
 `verify: 'none'` checks only the lengths against the manifest and hashes
-nothing. The manifest has no digest of its own; the full-file SHA-256 of each
-file is checked by `factoidal activate` (the op `sbm11Verify`).
+nothing but the manifest. Every open also checks the term count of the
+manifest against the dictionary header (`dict.gdx1`).
+
+Trust anchor (https://github.com/danbri/factoidal/issues/1105). The manifest
+has no digest of its own, so the Merkle check does not bind the manifest
+fields that no read uses: the SHA-256 of each file, the length and SHA-256 of
+the source, the quad count. Give the SHA-256 of the bytes of `manifest.sbm11`
+as `manifestSha256` (64 hex digits; from a signed release, a CID document, or
+a value your application pins):
+
+```js
+import { packSbm11, mapReader, openSbm11 } from "@factoidal/core";
+
+const files = await packSbm11('<http://e/s> <http://e/p> "x" .\n', { syntax: "ntriples" });
+// first open: no anchor; pin the digest the engine computed
+const first = await openSbm11("pinned", { reader: mapReader(files) });
+const pinned = first.manifestSha256;   // 64 lowercase hex digits
+first.close();
+// later opens: the engine refuses a manifest with another digest
+const store = await openSbm11("pinned", { manifestSha256: pinned });
+console.log(store.manifestSha256 === pinned);   // true
+store.close();
+```
+
+The engine computes the digest (HACL* SHA-256) and refuses the open when it
+is not the anchor; the error names `manifest.sbm11` and both digests. With no
+anchor the open is as before, and `store.manifestSha256` gives the digest to
+pin. The open reads no file whole: the full-file SHA-256 of each file is
+checked by `factoidal activate` (the op `sbm11Verify`, whose answer also
+gives `manifestSha256`).
 
 ## Packing an SBM11 generation in memory: `packSbm11`, `mapReader`
 

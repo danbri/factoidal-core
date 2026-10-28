@@ -121,13 +121,22 @@ export function sbm11Api (loadEngine) {
    * it decodes against the manifest's Merkle roots, and refuses a changed
    * file with its name) or 'none' (lengths only). The engine decides; this
    * file passes the string.
+   *
+   * `options.manifestSha256`: the trust anchor, the SHA-256 of the bytes of
+   * `manifest.sbm11` as 64 hex digits (https://github.com/danbri/factoidal/issues/1105).
+   * The engine computes the digest and refuses the open when it differs;
+   * the error names manifest.sbm11 and both digests. `store.manifestSha256`
+   * is the digest the engine computed, so that a caller can pin it.
    */
   async function openSbm11 (source, options = {}) {
     installBridge()
     if (options.reader) registerSbm11Source(source, options.reader)
     const eng = await loadEngine()
     const openArgs = [String(source)]
-    if (options.verify != null) openArgs.push(JSON.stringify({ verify: String(options.verify) }))
+    const o = {}
+    if (options.verify != null) o.verify = String(options.verify)
+    if (options.manifestSha256 != null) o.manifestSha256 = String(options.manifestSha256)
+    if (Object.keys(o).length > 0) openArgs.push(JSON.stringify(o))
     const opened = envelope(eng.call('sbm11Open', openArgs))
     const handle = opened.handle
     let open = true
@@ -145,6 +154,10 @@ export function sbm11Api (loadEngine) {
       /** how the engine checks reads: 'merkle' or 'none' (undefined from a
        *  wasm module built before the check) */
       verify: opened.verify,
+      /** the SHA-256 of the bytes of manifest.sbm11 (64 lowercase hex
+       *  digits), as the engine computed it at open; undefined from a wasm
+       *  module built before the trust anchor (issue 1105) */
+      manifestSha256: opened.manifestSha256,
       query (sparql, qopts = {}) {
         if (!open) throw new Error('sbm11: the store is closed')
         const o = {}
