@@ -2,7 +2,9 @@
 
 Date: 2026-10-28. Issue: https://github.com/danbri/factoidal/issues/1107.
 Status: stage 1 landed 2026-10-28 (the Lean codec, the mapping to
-`webdav-serve`, the access decision). Stages 2 and 3 are open. The owner's
+`webdav-serve`, the access decision). Step 1 of the owner's order of
+2026-10-28 (the outgoing client stream plus the WebDAV target) landed the same
+day; see "Step 1" at the end. Steps 2 to 5 are open. The owner's
 answer to the 🧭 question at the end, 2026-10-28, verbatim: "4. Y" (start
 stage 1).
 
@@ -165,3 +167,136 @@ the module header.
 - A wasm op for the above, with its `foundation/entrypoints.toml` entry and
   a node test, and the review notice on the new surfaces.
 - A measured stanza size limit of the XMPP server used (choice 4).
+
+## The order of the next steps (owner, 2026-10-28)
+
+Owner, 2026-10-28, verbatim: "Ordering: whatever is fastest and safest to
+implement" and "Do it", to this order:
+
+1. the outgoing XMPP client stream plus the WebDAV server target;
+2. a local HTTP proxy;
+3. native `httpx://` transport in our LWS client and WebDAV mounts;
+4. a raw LWS target with a fixed base IRI;
+5. LWS notifications as XMPP messages.
+
+The owner also asked about SPARQL over XMPP (plan below).
+
+Two client forms, for a reader of a server reached through XMPP:
+
+* **Local proxy** (step 2): `factoidal xmpp-http-proxy JID --port 8090`
+  listens on 127.0.0.1 and turns each HTTP request into a `req` stanza to
+  JID, so any HTTP client (Finder, Explorer, rclone, curl, a SPARQL client)
+  uses `http://127.0.0.1:8090/`. Not in XEP-0332; our own surface.
+* **Native `httpx://` transport** (step 3): our LWS client and the WebDAV
+  `lws` mounts accept `httpx://JID/path` (the URI scheme of XEP-0332) and
+  send the request as a stanza on their own client stream, with no local
+  port.
+
+## Step 1: the client stream and the WebDAV target (2026-10-28)
+
+`factoidal webdav-serve CONFIGDIR --xmpp JID --xmpp-password-file FILE
+--xmpp-allow JID[,JID]` connects out to an XMPP server and serves the WebDAV
+handle over XEP-0332. It opens no port.
+
+* `formal/lean4/L4Factoidal/XMPP/ClientStream.lean`: the client half of
+  RFC 6120 as one total state machine (`start`, `feed`, `outgoing`,
+  `close`): stream open, SASL SCRAM-SHA-256 with the check of the server
+  signature, the stream restart, resource binding, initial presence, stream
+  errors, and `service-unavailable` for an IQ get or set that is not HTTP
+  (`answerUnserved`). `feed` is a tail-recursive loop over the framed units.
+  `#guard`s run this client against `Server.step` (our server) for the whole
+  negotiation, a wrong password, an iteration count under the minimum, a
+  forged server signature, a server that offers only PLAIN, and a unit split
+  over two reads.
+* `HttpOverXmpp.step` is now `plan`, then `WebDAV.handle`, then `finish`
+  (same behaviour; the 49 stage 1 `#guard`s pass unchanged). The client
+  stream calls `plan` and `finish` and carries the request between them
+  through the WebDAV handle that already serves HTTP, so a request over XMPP
+  and one over HTTP run the same `webdavStep`/`webdavResume` program.
+* Wasm ops `xmppClientOpen`, `xmppClientFeed`, `xmppClientAnswer`,
+  `xmppClientClose` (`formal/lean4/Wasm/Ops/XmppClient.lean`).
+* Host: `npm/factoidal/xmpp/client.mjs` (`connectHttpTarget`): one TCP or
+  direct-TLS socket, the SCRAM client nonce from `crypto.randomBytes`, and
+  the bytes. No protocol decision.
+* Test: `node tests/webdav/xmpp.mjs` starts `factoidal xmpp-serve` with three
+  accounts on direct TLS (a self-signed certificate for `example.org`) and
+  `webdav-serve --xmpp bob@example.org --xmpp-allow alice@example.org
+  --xmpp-tls`; a test client logged in as alice gets PROPFIND 207,
+  PUT 201, GET 200, MKCOL 201, a 100,000-byte body back in two
+  `chunkedBase64` chunks, `not-allowed` for CONNECT and
+  `service-unavailable` for a non-HTTP IQ; carol gets `forbidden` and the
+  storage does not change; a wrong password stops the start with exit 1 and
+  "SASL failure: not-authorized". The hub test "webdav: reach the server
+  through XMPP (XEP-0332)" is now a plain test; a new expected failure
+  records that no file browser reaches the server until the local proxy of
+  step 2 exists.
+
+Choices (implementer), also in the module header of `ClientStream.lean`:
+
+1. TLS: the host does direct TLS (XEP-0368, `--xmpp-tls`), which is what
+   `xmpp-serve` serves, or plain TCP to a literal loopback address only.
+   STARTTLS is not implemented; a server that requires it and offers no
+   SCRAM is refused with a reason.
+2. SASL: SCRAM-SHA-256 only (no PLAIN, so the password never goes on the
+   wire; SCRAM-SHA-1 would need HMAC-SHA-1, which `Crypto/` does not have).
+3. Iteration count between 4,096 and 1,000,000.
+4. The server signature must verify, and the server nonce must extend the
+   client nonce, or the stream closes.
+5. Initial presence after binding.
+6. Server address from `--xmpp-host`/`--xmpp-port` (default the JID's
+   domain, port 5222 or 5223); no DNS SRV lookup.
+
+Not measured yet: the stanza size limit of a server other than ours (choice
+4 of stage 1). Our server accepts the 87 KiB base64 chunks of the test.
+
+### Invariants this step touches
+
+Constraints from the feature-combination audit
+(https://github.com/danbri/factoidal/issues/1120), tracked in
+https://github.com/danbri/factoidal/issues/1125 (owner mounts over XMPP) and
+https://github.com/danbri/factoidal/issues/1128 (login-limit key per JID).
+`HttpOverXmpp` runs `WebDAV.handle`, and a local mount acts as the storage
+owner, so on this path the JID allow list is the access control.
+
+1. The allow list is not empty and holds bare JIDs only. Decided in Lean
+   (`xcStartRefusal`, `Wasm/Ops/XmppClient.lean`; `#guard`s there). Tests:
+   "start refused: no --xmpp-allow" and "start refused: an allow-list entry
+   with a resource" (`tests/webdav/xmpp.mjs`); carol, not in the list, gets
+   `forbidden` and the storage does not change (same file).
+2. The allow list trusts the `from` that the server stamps; that is sound
+   only on a stream nobody else can read or change. The client does not
+   authenticate unless the transport is TLS or plain TCP to a literal
+   loopback address (`ClientStream.Config.secureTransport`,
+   `ClientStream.isLoopbackHost`); it never sends PLAIN (SCRAM-SHA-256
+   only). Tests: the `#guard` "on a transport that is neither TLS nor
+   loopback the client sends no `auth`" (`ClientStream.lean`); "start
+   refused: plain TCP to a host that is not loopback" (exit 1, before any
+   connection); the whole e2e run uses direct TLS.
+3. A writable local mount over XMPP needs the operator's opt-in
+   `--dangerously-allow-writable-without-login`, and the server prints a
+   warning when it is used. Test: "start refused: a writable local mount
+   without the opt-in"; the start with the opt-in checks the warning.
+4. Login gate on the XMPP path (1125) and the login-limit key per bare JID
+   (1128): not met. This branch has no WebDAV login (`--users`), so no rate
+   limit applies on this path and none is keyed by an empty client address;
+   the JID allow list is the access control. Both are expected failures in
+   `tests/webdav/xmpp.mjs` that name their issue and turn the run red when
+   they pass.
+
+## SPARQL over XMPP: the plan
+
+`factoidal serve` is not a target yet. Its HTTP handling is in Lean
+(`L4Factoidal.HTTP.Wire`, `L4Factoidal.SPARQL.StoreEndpoint`), but the wasm
+entry is byte-level (`storeServeRequest` takes the bytes a connection
+delivered and answers response bytes) with a durable-append step for updates
+(`storeServeCommit`). It has no record-level step that `plan`/`finish` can
+call the way they call `webdavStep`. The order:
+
+1. `serve` as a target: a record-level request op in
+   `Wasm/Ops/StoreServe.lean` (request record in, response record or append
+   request out), then `serve --xmpp JID` with the same client stream.
+2. Reflection through the proxy: any SPARQL client reaches the endpoint
+   through the local proxy of step 2.
+3. `SERVICE <httpx://JID/sparql>` through the native transport of step 3.
+4. Forwarding to third-party SPARQL endpoints last: allow-listed per
+   endpoint, off by default.

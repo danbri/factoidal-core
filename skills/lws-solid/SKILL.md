@@ -1045,6 +1045,34 @@ litmus`; expected failures in `tests/webdav/litmus-xfail.tsv`; 2026-10-27:
 208 pass, 0 fail, 0 xfail (out of 208)), `node tests/webdav/scaling.mjs`
 (the decoders at n, 2n, 4n through the wasm module).
 
+### WebDAV over XMPP (https://github.com/danbri/factoidal/issues/1107)
+
+```
+factoidal webdav-serve CONFIGDIR --xmpp bob@example.org --xmpp-password-file bob.password \
+  --xmpp-allow alice@example.org --xmpp-tls [--xmpp-ca FILE] [--xmpp-host H] [--xmpp-port P] \
+  [--dangerously-allow-writable-without-login]
+```
+
+The allow list is the only access control on this path (local mounts act as
+the owner). Lean refuses the start (`xcStartRefusal`) with an empty list, a
+JID with a resource, plain TCP to a host that is not loopback, or a writable
+local mount without the `--dangerously-` opt-in
+(https://github.com/danbri/factoidal/issues/1125). No login and no per-JID
+login limit yet (https://github.com/danbri/factoidal/issues/1125,
+https://github.com/danbri/factoidal/issues/1128): expected failures in the
+test.
+
+No port opens: the process connects out to an XMPP server, logs in with
+SCRAM-SHA-256, binds `bob@example.org/dav` (printed as `xmpp:JID`) and serves
+HTTP over XMPP (XEP-0332) requests from the allowed bare JIDs through the same
+WebDAV handle as the HTTP listener. Lean: `L4Factoidal/XMPP/ClientStream.lean`
+(the RFC 6120 client), `HttpOverXmpp.lean` (`plan`, `finish`); ops
+`xmppClientOpen`/`Feed`/`Answer`/`Close` (`Wasm/Ops/XmppClient.lean`); host
+`npm/factoidal/xmpp/client.mjs`. Test: `node tests/webdav/xmpp.mjs` (starts
+`xmpp-serve`; the test client is `tests/webdav/xmpp-client.mjs`). No file
+browser reaches it until the local proxy (step 2 of
+`docs/designissues/2026-10-28-http-over-xmpp.md`) exists.
+
 ## Run the tests
 
 ```

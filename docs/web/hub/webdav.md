@@ -269,11 +269,53 @@ macOS and Windows accept that address without TLS.
 
 ### XMPP
 
-Not possible today. `factoidal xmpp-serve` serves XMPP (RFC 6120/6121) over
-TCP or direct TLS (see [Servers](../servers/#xmpp)), but no part of
-Factoidal carries HTTP over XMPP (XEP-0332), and no file browser speaks it.
-Tracking: <https://github.com/danbri/factoidal/issues/1107>, an expected
-failure in `tests/hub/hub_webdav_test.mjs`.
+`webdav-serve --xmpp JID` opens no port. It connects out to an XMPP server
+as an account (SASL SCRAM-SHA-256), binds a resource, and answers HTTP over
+XMPP requests (XEP-0332) from the bare JIDs in `--xmpp-allow`. Other JIDs get
+`forbidden`. A server behind NAT is reached this way with no inbound port.
+Every decision (the stream, SASL, binding, the allow list, the request and
+response stanzas) is in Lean, `L4Factoidal/XMPP/ClientStream.lean` and
+`HttpOverXmpp.lean`.
+
+```
+# an XMPP server (here our own, on a machine both sides can reach)
+printf 'alice:alice-password\nbob:bob-password\ncarol:carol-password\n' > accounts
+factoidal xmpp-serve xmpp-state --domain example.org --accounts accounts
+# on the server machine, behind NAT: no port is opened
+echo bob-password > bob.password
+factoidal webdav-serve dav --xmpp bob@example.org --xmpp-password-file bob.password \
+  --xmpp-allow alice@example.org --xmpp-host 127.0.0.1 --xmpp-port 5222 \
+  --dangerously-allow-writable-without-login
+# prints: xmpp:bob@example.org/dav
+```
+
+The XMPP server above is on the same machine (127.0.0.1), so plain TCP is
+accepted. To any other host the connection must be direct TLS (XEP-0368):
+`--xmpp-tls --xmpp-host xmpp.example.org --xmpp-port 5223` (with
+`--xmpp-ca FILE` for a certificate your system does not trust), as
+`xmpp-serve --cert --key` serves; plain TCP to a host that is not loopback
+stops the start. STARTTLS is not implemented. There is no DNS SRV lookup.
+
+Access on this path is the allow list only: every allowed JID acts as the
+owner of a local mount, and there is no login on the XMPP path yet
+(<https://github.com/danbri/factoidal/issues/1125>; the per-JID login limit:
+<https://github.com/danbri/factoidal/issues/1128>). So the start is refused
+when a local mount is writable, unless you give
+`--dangerously-allow-writable-without-login` (the server then prints a
+warning), and `--xmpp-allow` must name bare JIDs.
+
+What works now (`node tests/webdav/xmpp.mjs`): `alice@example.org` sends
+XEP-0332 `req` stanzas to `bob@example.org/dav` and gets PROPFIND 207, PUT
+201, GET 200, MKCOL 201; a body above 65,536 bytes comes back in
+`chunkedBase64` chunks; `carol@example.org` gets `forbidden`.
+
+What does not work yet: no file browser speaks XEP-0332, and the local proxy
+that would turn `http://127.0.0.1:8090/` into XEP-0332 requests is not built
+(step 2 of `docs/designissues/2026-10-28-http-over-xmpp.md`). Tracking:
+<https://github.com/danbri/factoidal/issues/1107>, an expected failure in
+`tests/hub/hub_webdav_test.mjs`. XEP-0332 is Deferred; until another
+implementation is tested, this is our client talking to our server. Tailscale
+or SSH stay the routes for a file browser.
 
 ## Connect a file browser
 

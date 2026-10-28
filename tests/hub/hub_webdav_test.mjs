@@ -6,7 +6,7 @@
 // The expected failures name the gaps the page states:
 // https://github.com/danbri/factoidal/issues/1108 (no login, no TLS on the
 // WebDAV listener) and https://github.com/danbri/factoidal/issues/1107 (no
-// HTTP over XMPP).
+// local proxy for HTTP over XMPP yet, so no file browser reaches it).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,6 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { xfail } from './_helpers.mjs';
+import { TestClient, request as xreq } from '../webdav/xmpp-client.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CLI = path.join(ROOT, 'npm', 'factoidal', 'bin', 'factoidal.mjs');
@@ -145,7 +146,64 @@ xfail('webdav: --cert and --key serve HTTPS', LOGIN_ISSUE, async () => {
   await start(['webdav-serve', 'dav', '--port', '0', '--cert', 'cert.pem', '--key', 'key.pem'], dir);
 });
 
-xfail('webdav: reach the server through XMPP', XMPP_ISSUE, async () => {
+/** Start a CLI command; resolve once a stdout line matches `pattern`. */
+function startUntil(args, cwd, pattern) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI, ...args], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    children.push(child);
+    let out = '';
+    let err = '';
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`no start: ${out} ${err}`)); }, 120000);
+    child.stdout.on('data', (b) => {
+      out += b;
+      const m = pattern.exec(out);
+      if (m) { clearTimeout(timer); resolve(m); }
+    });
+    child.stderr.on('data', (b) => { err += b; });
+    child.on('exit', (code) => { clearTimeout(timer); reject(new Error(`exited ${code}: ${err.trim()}`)); });
+  });
+}
+
+// The page's XMPP commands: xmpp-serve with three accounts, then
+// webdav-serve --xmpp as bob with alice allowed. The reader is a minimal
+// XEP-0332 test client (tests/webdav/xmpp-client.mjs); the full test is
+// tests/webdav/xmpp.mjs.
+test('webdav: reach the server through XMPP (XEP-0332)', async () => {
   const dir = emptyConfig('xmpp');
-  await start(['webdav-serve', 'dav', '--port', '0', '--xmpp', 'alice@example.org'], dir);
+  fs.mkdirSync(path.join(dir, 'xmpp-state'));
+  fs.writeFileSync(path.join(dir, 'accounts'), 'alice:alice-password\nbob:bob-password\ncarol:carol-password\n');
+  fs.writeFileSync(path.join(dir, 'bob.password'), 'bob-password\n');
+  const xs = await startUntil(['xmpp-serve', 'xmpp-state', '--port', '0', '--domain', 'example.org', '--accounts', 'accounts'],
+    dir, /^xmpp:\/\/127\.0\.0\.1:(\d+)$/m);
+  const port = xs[1];
+  const bound = await startUntil(['webdav-serve', 'dav', '--xmpp', 'bob@example.org', '--xmpp-password-file', 'bob.password',
+    '--xmpp-allow', 'alice@example.org', '--xmpp-host', '127.0.0.1', '--xmpp-port', port,
+    '--dangerously-allow-writable-without-login'], dir, /^xmpp:(\S+)$/m);
+  assert.equal(bound[1], 'bob@example.org/dav');
+
+  const alice = new TestClient(Number(port), 'example.org');
+  try {
+    await alice.login('alice', 'alice-password');
+    const pf = await xreq(alice, bound[1], 'PROPFIND', '/', { headers: [['Depth', '1']] });
+    assert.equal(pf.status, 207);
+    assert.match(pf.iq, /\/notes\//);
+    assert.equal((await xreq(alice, bound[1], 'PUT', '/notes/a.txt', { headers: [['Content-Type', 'text/plain']], data: '<data><text>hi</text></data>' })).status, 201);
+    assert.match((await xreq(alice, bound[1], 'GET', '/notes/a.txt')).iq, /<text>hi<\/text>/);
+  } finally {
+    alice.close();
+  }
+  const carol = new TestClient(Number(port), 'example.org');
+  try {
+    await carol.login('carol', 'carol-password');
+    assert.match((await xreq(carol, bound[1], 'GET', '/notes/a.txt')).iq, /forbidden/);
+  } finally {
+    carol.close();
+  }
+});
+
+// The page: no file browser speaks XEP-0332, so a file browser needs the
+// local proxy of step 2 (https://github.com/danbri/factoidal/issues/1107).
+xfail('webdav: a file browser reaches the server through XMPP (local proxy)', XMPP_ISSUE, async () => {
+  const dir = emptyConfig('xmpp-proxy');
+  await start(['xmpp-http-proxy', 'bob@example.org/dav', '--port', '0'], dir);
 });

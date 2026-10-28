@@ -1336,6 +1336,22 @@ id = "wasm:webdavClose"
 reason = "lifecycle: drops a WebDAV handle; reads no data"
 
 [[nonstage]]
+id = "wasm:xmppClientOpen"
+reason = "protocol: opens an outgoing XMPP client stream (XMPP.ClientStream.start, RFC 6120) for HTTP over XMPP (https://github.com/danbri/factoidal/issues/1107); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppClientFeed"
+reason = "protocol: the bytes of the client stream (XMPP.ClientStream.feed: SASL SCRAM-SHA-256, binding) and each XEP-0332 request planned by XMPP.HttpOverXmpp.plan; moves resource bytes, reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppClientAnswer"
+reason = "protocol: the WebDAV response to a planned XEP-0332 request as stanzas (XMPP.HttpOverXmpp.finish); moves resource bytes, reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xmppClientClose"
+reason = "lifecycle: ends an XMPP client stream and drops its handle; reads no data"
+
+[[nonstage]]
 id = "npm:./webdav#openWebdav"
 reason = "host (webdav/server.mjs): lists the mount directory, reads and writes the files the engine names, opens local storages with openLwsStorage, carries lws requests and fetches; decides nothing (tools/host-purity-lint.sh); reads no RDF data"
 
