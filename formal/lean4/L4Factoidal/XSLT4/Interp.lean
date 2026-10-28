@@ -1694,7 +1694,8 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
                 let sc := effScope (env.nrec nd).inscope
                 pure (sc.filter (·.1 != ""), (sc.lookup "").getD "")
               | _ => xerr "XTTE3170" "namespace-context must be a single node"
-          | none => pure (scope, "")
+          -- otherwise the xpath-default-namespace of the instruction
+          | none => pure (scope, (scope.lookup "#type").getD "")
         let e ← match parseXPath src ns with
           | .ok e => pure (if dflt == "" then e else exprDefault dflt 100000 e)
           | .error er => xerr "XTDE3160" ("xsl:evaluate: " ++ er.code ++ " " ++ er.msg)
