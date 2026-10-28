@@ -236,9 +236,67 @@ def buildDateTimeFn : LibFn := fun _ e a => do
     pure [.atom ⟨.b ty, .x (.dt k v)⟩]
   | _ => err "XPTY0004" "build-dateTime needs a single map"
 
+/-! ## `fn:round` with a rounding mode (§4.4.5)
+
+The nine modes of the F&O 4.0 signature. The value is scaled by
+10^precision; `q` is the floor of the scaled value and `r` the remainder
+(0 ≤ r < den); the mode picks `q` or `q + 1`. -/
+
+def roundDecMode (d : Dec) (prec : Int) (mode : String) : Dec :=
+  let d := Dec.norm d
+  let intDigits : Int := (natDigits d.mantissa.natAbs : Int) - (d.scale : Int)
+  if d.mantissa == 0 || (prec ≥ 0 && d.scale ≤ prec.toNat) then d
+  else if prec < 0 && -prec > intDigits + 1 && mode.startsWith "half-" then Dec.zero
+  else
+    let num : Int := if prec ≥ 0 then d.mantissa * (10 : Int) ^ prec.toNat else d.mantissa
+    let den : Int := if prec ≥ 0 then (10 : Int) ^ d.scale else (10 : Int) ^ d.scale * (10 : Int) ^ (-prec).toNat
+    let q := Int.fdiv num den
+    let r := num - q * den
+    let pos := num ≥ 0
+    let up := q + 1
+    let rounded :=
+      if r == 0 then q
+      else match mode with
+      | "floor" => q
+      | "ceiling" => up
+      | "toward-zero" => if pos then q else up
+      | "away-from-zero" => if pos then up else q
+      | _ =>
+        if 2 * r > den then up
+        else if 2 * r < den then q
+        else match mode with
+          | "half-to-floor" => q
+          | "half-toward-zero" => if pos then q else up
+          | "half-away-from-zero" => if pos then up else q
+          | "half-to-even" => if q % 2 == 0 then q else up
+          | _ => up
+    if prec ≥ 0 then Dec.norm ⟨rounded, prec.toNat⟩ else Dec.ofInt (rounded * (10 : Int) ^ (-prec).toNat)
+
+def roundModeFn : LibFn := fun _ _ a => do
+  let mode := if (argN a 2).isEmpty then "half-to-ceiling" else strOf (argN a 2)
+  let prec := if (argN a 1).isEmpty then 0 else intOf (argN a 1)
+  match optAtom (argN a 0) with
+  | none => pure []
+  | some x =>
+    match x.num? with
+    | some (.i i) =>
+      if prec ≥ 0 then pure [.atom x]
+      else match (roundDecMode (Dec.ofInt i) prec mode).toInt? with
+        | some v => pure [.atom (Atomic.ofInt v)]
+        | none => pure [.atom x]
+    | some (.d d) => pure [.atom (Atomic.ofDec (roundDecMode d prec mode))]
+    | some (.f f) | some (.g f) =>
+      let mk := fun (y : Float) => if x.is .float then Atomic.ofFlt y else Atomic.ofDbl y
+      if f.isNaN || f.isInf || f == 0 then pure [.atom x]
+      else
+        let r := floatOfDec (roundDecMode (decOfFloat f) prec mode)
+        pure [.atom (mk (if r == 0 && f < 0 then -0.0 else r))]
+    | none => pure [.atom x]
+
 def fn4Table : List (String × LibFn) :=
   [("hash", hashFn), ("random-number-generator", rngFn), ("rng-record#", rngRecordFn),
    ("rng-permute#", rngPermuteFn), ("rng-take#", rngTakeFn),
-   ("parts-of-dateTime", partsOfDateTimeFn), ("build-dateTime", buildDateTimeFn)]
+   ("parts-of-dateTime", partsOfDateTimeFn), ("build-dateTime", buildDateTimeFn),
+   ("round", roundModeFn)]
 
 end L4Factoidal.XPath4
