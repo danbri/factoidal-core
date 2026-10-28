@@ -223,8 +223,9 @@ def serSeq (env : Env) (s : Seq) : String := Id.run do
     | _ => out := out ++ "?"; prevAtom := false
   pure out
 
-def xmlEq1 (env : Env) (got : Seq) (expected : String) : Bool :=
+def xmlEq1 (env : Env) (got : Seq) (expected : String) (trim : Bool := false) : Bool :=
   let gs := serSeq env got
+  let gs := if trim then gs.trimAscii.toString else gs
   match Doc.ofString ("<w>" ++ gs ++ "</w>"), Doc.ofString ("<w>" ++ expected ++ "</w>") with
   | .ok d1, .ok d2 =>
     let e2 : Env := { docs := #[d1, d2] }
@@ -236,7 +237,10 @@ def xmlEq1 (env : Env) (got : Seq) (expected : String) : Bool :=
 /-- `assert-xml`: also with the whitespace around the expected XML
     removed. -/
 def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
-  xmlEq1 env got expected || xmlEq1 env got expected.trimAscii.toString
+  xmlEq1 env got expected || xmlEq1 env got expected.trimAscii.toString ||
+  -- whitespace around the top-level nodes of the result is not part of
+  -- the fragment the assertion gives
+  xmlEq1 env got expected.trimAscii.toString true
 
 def codeMatches (expected got : String) : Bool :=
   expected == "*" || expected == got || ("err:" ++ got) == expected || expected.endsWith (":" ++ got) ||
@@ -727,7 +731,7 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
     clock). A test case that does not finish counts as FAIL, and a new
     child continues after it. -/
 def runIsolated (o : Opts) (secs : Nat) (setName file : String) : IO (Tally × String) := do
-  let pf := (← IO.getEnv "TMPDIR").getD "/tmp" ++ "/l4xslt4-progress-" ++ setName
+  let pf := (← IO.getEnv "TMPDIR").getD "/tmp" ++ "/l4xslt4-progress-" ++ toString (← IO.Process.getPID) ++ "-" ++ setName
   let mut total : Tally := {}
   let mut after : Option String := none
   let mut notes : List String := []

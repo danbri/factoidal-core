@@ -387,18 +387,23 @@ def compileNodes : Nat → SCx → Mod → List Nat → CM (List Instr)
   | 0, _, _, _ => cerr "XTSE0010" "stylesheet too deeply nested"
   | f + 1, c, m, ids => do
     let mut out : Array Instr := #[]
-    for i in ids do
-      let r := m.r i
-      match r.kind with
-      | .text =>
-          let t := r.value
-          if t.toList.all (fun ch => ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') && !c.preserveWs then
-            continue
+    -- comments and processing instructions are removed first, and the
+    -- text nodes around them are merged (§4.2)
+    let mut pending : Option String := none
+    for oi in ids.map some ++ [none] do
+      if let some i := oi then
+        let r := m.r i
+        if r.kind == .text then
+          pending := some (pending.getD "" ++ r.value)
+          continue
+        if r.kind != .element then continue
+      if let some t := pending then
+        pending := none
+        if !(t.toList.all (fun ch => ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') && !c.preserveWs) then
           if c.expandText then out := out.push (.tvt (← liftM (c.avt t)))
           else out := out.push (.lit t)
-      | .element =>
-          for x in ← compileElem f c m i do out := out.push x
-      | _ => pure ()
+      if let some i := oi then
+        for x in ← compileElem f c m i do out := out.push x
     pure out.toList
 
 /-- Compile one element of a sequence constructor. -/

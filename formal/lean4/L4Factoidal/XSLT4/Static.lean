@@ -67,8 +67,11 @@ def SCx.forwardsCompat (c : SCx) : Bool :=
 
 /-- The bindings the XPath parser sees (no default namespace entry). -/
 def SCx.xpNs (c : SCx) : List (String × String) :=
-  (c.ns.filter (fun (p, _) => p != "")).foldl (fun acc (p, u) =>
+  let ns := (c.ns.filter (fun (p, _) => p != "")).foldl (fun acc (p, u) =>
     if acc.any (·.1 == p) then acc else acc ++ [(p, u)]) []
+  -- `xpath-default-namespace` is also the namespace of unprefixed type
+  -- names (§5.1.2)
+  if c.xpathNs == "" then ns else ("#type", c.xpathNs) :: ns
 
 /-! ## `xpath-default-namespace`: unprefixed element names in name
 tests and element type tests take this namespace. -/
@@ -277,11 +280,39 @@ def splitTemplate (s : String) : M (List (Bool × String)) := do
   if buf != "" then out := out.push (false, buf)
   pure out.toList
 
+/-- The text of an expression with its comments `(: ... :)` (which
+    nest) removed, outside string literals. -/
+def dropComments (s : String) : String := Id.run do
+  let cs := s.toList.toArray
+  let mut out := ""
+  let mut i := 0
+  let mut depth := 0
+  let mut q : Option Char := none
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    let d := cs[i]!
+    let nx := cs.getD (i+1) ' '
+    if depth > 0 then
+      if d == ':' && nx == ')' then depth := depth - 1; i := i + 2
+      else if d == '(' && nx == ':' then depth := depth + 1; i := i + 2
+      else i := i + 1
+    else match q with
+      | some qc =>
+        out := out.push d
+        if d == qc then q := none
+        i := i + 1
+      | none =>
+        if d == '(' && nx == ':' then depth := 1; out := out.push ' '; i := i + 2
+        else
+          if d == '"' || d == '\'' then q := some d
+          out := out.push d; i := i + 1
+  pure out
+
 def SCx.avt (c : SCx) (s : String) : M Avt := do
   let parts ← splitTemplate s
   parts.mapM (fun (isE, t) => do
     if isE then
-      if t.trimAscii.toString == "" then pure (AvtPart.lit "")
+      if (dropComments t).trimAscii.toString == "" then pure (AvtPart.lit "")
       else pure (AvtPart.expr (← c.parse t))
     else pure (AvtPart.lit t))
 

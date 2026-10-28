@@ -304,6 +304,10 @@ def pStringLit : P String := do
     XQuery prolog declared another (binding `#fn`). -/
 def dfltFnNs : P String := do pure (((← read).ns.lookup "#fn").getD nsFN)
 
+/-- The namespace of an unprefixed type name: none, unless the host
+    language binds `#type` (XSLT `xpath-default-namespace`). -/
+def dfltTypeNs : P String := do pure (((← read).ns.lookup "#type").getD "")
+
 /-- The namespace of an unprefixed element name in a name test: none
     in XPath 4.0 here; the default element namespace (binding `""`) in
     XQuery 4.0. -/
@@ -575,13 +579,13 @@ def pItemType : Nat → P IType
         | other => throw { code := "XPST0003", msg := "unsupported item type " ++ other ++ "()" }
       | _ =>
         match ← peekQName with
-        | some (p, u, l, e) => set e; atomicTypeOf (← resolve p u l "")
+        | some (p, u, l, e) => set e; atomicTypeOf (← resolve p u l (← dfltTypeNs))
         | none => synErr "expected an item type"
     | _ =>
       match ← peekQName with
       | some (p, u, l, e) =>
         set e
-        let q ← resolve p u l ""
+        let q ← resolve p u l (← dfltTypeNs)
         match (if q.uri == nsFN then recordTypesRaw.lookup q.loc else none), n with
         | some src, n' + 1 =>
           -- a named record type of F&O 4.0: parse its record(...) text
