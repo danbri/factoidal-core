@@ -261,15 +261,17 @@ def Env.rangeNodes (e : Env) (d : NodeRef) (lo hi : Nat) : List NodeRef :=
 def Env.axis (e : Env) (ax : Axis) (n : NodeRef) : List NodeRef :=
   let r := e.nrec n
   let d := n
-  let kids := r.children.toList.map (fun c => d.at c)
   let isAttrLike := r.kind == .attribute || r.kind == .namespace
-  let sibs : List NodeRef :=
+  -- built only for the axes that read them (one list per call, not per
+  -- axis call of every kind: a step over a node with many siblings
+  -- otherwise pays for the sibling list on the child axis too)
+  let sibsF : Unit → List NodeRef := fun _ =>
     if isAttrLike then [] else
     match r.parent with
     | some p => ((e.doc n).get p).children.toList.map (fun c => d.at c)
     | none => []
   match ax with
-  | .child => kids
+  | .child => r.children.toList.map (fun c => d.at c)
   | .attribute => r.attrs.toList.map (fun c => d.at c)
   | .self => [n]
   | .descendant => if isAttrLike then [] else e.rangeNodes d (n.idx + 1) r.last
@@ -277,10 +279,10 @@ def Env.axis (e : Env) (ax : Axis) (n : NodeRef) : List NodeRef :=
   | .parent => match r.parent with | some p => [d.at p] | none => []
   | .ancestor => e.ancestors n
   | .ancestorOrSelf => n :: e.ancestors n
-  | .followingSibling => sibs.filter (fun m => m.idx > n.idx)
-  | .followingSiblingOrSelf => n :: sibs.filter (fun m => m.idx > n.idx)
-  | .precedingSibling => (sibs.filter (fun m => m.idx < n.idx)).reverse
-  | .precedingSiblingOrSelf => n :: (sibs.filter (fun m => m.idx < n.idx)).reverse
+  | .followingSibling => (sibsF ()).filter (fun m => m.idx > n.idx)
+  | .followingSiblingOrSelf => n :: (sibsF ()).filter (fun m => m.idx > n.idx)
+  | .precedingSibling => ((sibsF ()).filter (fun m => m.idx < n.idx)).reverse
+  | .precedingSiblingOrSelf => n :: ((sibsF ()).filter (fun m => m.idx < n.idx)).reverse
   | .following =>
       let start := if isAttrLike then (match r.parent with
         | some p => p + 1 | none => r.last + 1) else r.last + 1

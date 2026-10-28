@@ -23,6 +23,29 @@ import L4Factoidal.XPath4.RecordTypes
 
 namespace L4Factoidal.XPath4
 
+/-- The sub-parsers an extension grammar may call (XQuery 4.0 hook):
+    each runs at an offset, with the namespace bindings given, and
+    returns its result and the end offset. -/
+structure SubParsers where
+  expr : List (String × String) → Nat → Except Err (Expr × Nat)
+  exprSingle : List (String × String) → Nat → Except Err (Expr × Nat)
+  seqType : List (String × String) → Nat → Except Err (IType × Nat)
+
+/-- An extension of the expression grammar (XQuery 4.0 hook,
+    `L4Factoidal.XQuery4.Grammar`). The XPath 4.0 parser has none. -/
+structure ExtGrammar where
+  /-- Tried first at every ExprSingle; `none` when no extension
+      expression starts at the offset. -/
+  exprSingle : Array Char → List (String × String) → SubParsers → Nat → Except Err (Option (Expr × Nat))
+  /-- Tried first at every PrimaryExpr. -/
+  primary : Array Char → List (String × String) → SubParsers → Nat → Except Err (Option (Expr × Nat))
+  /-- Does an extension primary expression start at the offset, where
+      the step grammar would read a name test? -/
+  startsPrimary : Array Char → Nat → Bool
+  /-- The value of a string literal's characters (XQuery expands
+      entity and character references). -/
+  stringLit : String → Except Err String
+
 structure PCtx where
   s : Array Char
   /-- Namespace bindings for prefixes (static context). -/
@@ -31,6 +54,14 @@ structure PCtx where
       which marks optional fields `name?`; the user grammar has no such
       marker (XPath 4.0 §3.2.8.3, PR 2979). -/
   builtinRecords : Bool := false
+  /-- The XQuery 4.0 grammar extension; `none` for XPath 4.0. -/
+  ext : Option ExtGrammar := none
+  /-- Named item types of an XQuery 4.0 prolog (`declare type`,
+      `declare record`); empty for XPath 4.0. -/
+  types : List (QN × IType) := []
+  /-- Read an unknown type name as `item()` (the first pass over an
+      XQuery prolog, which collects the named types). -/
+  lenientTypes : Bool := false
 
 abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 
@@ -283,14 +314,45 @@ def pStringLit : P String := do
           else some (acc.reverse, j + 1)
         else go (j + 1) (ch :: acc) f
   match go (i + 1) [] (s.size + 1) with
-  | some (cs, e) => set e; pure (String.ofList cs)
+  | some (cs, e) =>
+    set e
+    match c.ext with
+    | some g => match g.stringLit (String.ofList cs) with
+      | .ok v => pure v
+      | .error er => throw er
+    | none => pure (String.ofList cs)
   | none => synErr "unterminated string literal"
+
+/-- The namespace of an unprefixed function name: `fn`, unless an
+    XQuery prolog declared another (binding `#fn`). -/
+def dfltFnNs : P String := do pure (((← read).ns.lookup "#fn").getD nsFN)
 
 /-- The namespace of an unprefixed element name in a name test: the
     default element namespace (binding `""`, from the static context or
     `declare default element namespace`, XPath 4.0 §2.2.1.1). -/
 def dfltElemNs : P String := do
   pure (((← read).ns.lookup "").getD "")
+
+/-- Run a parser at an offset with other namespace bindings (for the
+    extension grammar's sub-parsers). -/
+def runAt {α} (c : PCtx) (p : P α) (ns : List (String × String)) (i : Nat) : Except Err (α × Nat) :=
+  (p.run { c with ns }).run i
+
+def mkSub (c : PCtx) (pe pes : P Expr) (pst : P IType) : SubParsers :=
+  { expr := runAt c pe, exprSingle := runAt c pes, seqType := runAt c pst }
+
+/-- Try an extension production at the current offset. -/
+def tryExt (pick : ExtGrammar → Array Char → List (String × String) → SubParsers → Nat → Except Err (Option (Expr × Nat)))
+    (pe pes : P Expr) (pst : P IType) : P (Option Expr) := do
+  let c ← read
+  match c.ext with
+  | none => pure none
+  | some g =>
+    let i ← get
+    match pick g c.s c.ns (mkSub c pe pes pst) i with
+    | .ok (some (e, j)) => set j; pure (some e)
+    | .ok none => pure none
+    | .error er => throw er
 
 /-! ## The grammar -/
 
@@ -307,6 +369,12 @@ def reservedFnNames : List String :=
    "type", "typeswitch"]
 
 def atomicTypeOf (q : QN) : P IType := do
+  -- XQuery 4.0 hook: a named item type of the prolog
+  let c ← read
+  match c.types.find? (fun (n, _) => n == q) with
+  | some (_, t) => return t
+  | none => pure ()
+  if c.lenientTypes && q.uri != nsXS then return .item
   if q.uri == nsXS then
     if q.loc == "numeric" then
       pure (.choice [.atomic (.b .double), .atomic (.b .float), .atomic (.b .decimal)])
@@ -408,6 +476,27 @@ def pItemType : Nat → P IType
   | n + 1 => do
     ws
     let dE ← dfltElemNs
+    -- XQuery: annotations before a function test (`%a function(*)`) do
+    -- not change the type here (their meaning is implementation-defined)
+    if (← read).ext.isSome && (← peekAt 0) == '%' then
+      for _ in [0:100] do
+        ws
+        if (← peekAt 0) != '%' then break
+        adv 1
+        match ← peekQName with
+        | some (_, _, _, e) => set e
+        | none => synErr "bad annotation"
+        if ← eatS "(" then
+          for _ in [0:100] do
+            ws
+            let ch ← peekAt 0
+            if ch == '"' || ch == '\'' then let _ ← pStringLit
+            else if ch.isDigit || ch == '-' then let _ ← pNumber
+            else if ← atKw "true" then adv 4; expectS "("; expectS ")"
+            else if ← atKw "false" then adv 5; expectS "("; expectS ")"
+            if !(← eatS ",") then break
+          expectS ")"
+      ws
     if ← eatS "(" then
       let t ← pItemType n
       let mut ts := [t]
@@ -758,6 +847,8 @@ def pLet : Nat → P Expr
 def pExprSingle : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
+    -- XQuery 4.0 hook (FLWOR, switch, typeswitch, try)
+    if let some e ← tryExt ExtGrammar.exprSingle (pExpr n) (pExprSingle n) (pSeqType n) then return e
     if ← isForStart then pFor n
     else if ← isLetStart then pLet n
     else
@@ -970,7 +1061,7 @@ def pArrowTarget : Nat → P (Sum (QN) Expr × List (Option Expr) × List (Strin
             if p.isNone && u.isNone && reservedFnNames.contains l then
               synErr ("reserved function name " ++ l)
             set e
-            let q ← resolve p u l nsFN
+            let q ← resolve p u l (← dfltFnNs)
             let (args, kw) ← pArgs n
             pure (.inl q, args, kw)
         | none => synErr "expected an arrow target"
@@ -1104,6 +1195,10 @@ def pStep : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
     ws
+    -- XQuery 4.0 hook: a constructor keyword is a primary, not a name test
+    let c0 ← read
+    let i0 ← get
+    if (c0.ext.map (fun g => g.startsPrimary c0.s i0)).getD false then pPostfix n else
     let ch ← peekAt 0
     let ch1 ← peekAt 1
     if ch == '.' && ch1 == '.' then
@@ -1335,6 +1430,8 @@ def pPrimary : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
     ws
+    -- XQuery 4.0 hook (node constructors, extension expressions, ...)
+    if let some e ← tryExt ExtGrammar.primary (pExpr n) (pExprSingle n) (pSeqType n) then return e
     let ch ← peekAt 0
     let ch1 ← peekAt 1
     if ch.isDigit || (ch == '.' && ch1.isDigit) then pNumber
@@ -1377,6 +1474,11 @@ def pPrimary : Nat → P Expr
     | some ("map", '{', _) => expectKw "map"; pMapEntries n
     | some ("array", '{', _) => expectKw "array"; pure (.arrC (← pEnclosed n))
     | some ("function", c1, _) | some ("fn", c1, _) =>
+        -- only the unprefixed keyword (`local:function()` is a call)
+        let unpref ← match ← peekQName with
+          | some (none, none, _, _) => pure true
+          | _ => pure false
+        if !unpref then pCallAfterName n else
         if c1 == '(' || c1 == '{' then
           let _ ← eatKw "function"
           let _ ← eatKw "fn"
@@ -1388,7 +1490,7 @@ def pPrimary : Nat → P Expr
             if p.isNone && u.isNone && reservedFnNames.contains l then
               synErr ("reserved function name " ++ l)
             set e
-            let q ← resolve p u l nsFN
+            let q ← resolve p u l (← dfltFnNs)
             expectS "#"
             ws
             let c ← read
@@ -1412,7 +1514,7 @@ def pCallAfterName : Nat → P Expr
     match ← peekQName with
     | some (p, u, l, e) =>
         set e
-        let q ← resolve p u l nsFN
+        let q ← resolve p u l (← dfltFnNs)
         let (args, kw) ← pArgs n
         pure (.call q args kw)
     | none => synErr "expected a function name"

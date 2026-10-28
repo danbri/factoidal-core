@@ -1636,6 +1636,12 @@ L4Factoidal_XPath4_Ixml_compileFactor  # (b) recursion on the nesting of one gra
 L4Factoidal_XPath4_Ixml_factorOf  # (b) recursion on the element nesting of the XML form of a grammar (fuel 256); children are loops
 L4Factoidal_XPath4_Ixml_altsOf  # (b) as factorOf
 L4Factoidal_XPath4_Ixml_xdmToXml  # (b) recursion on the element nesting of a grammar element (fuel); children are mapped
+# --- XQuery 4.0 (L4Factoidal/XQuery4, https://github.com/danbri/factoidal/issues/1101), 2026-10-28
+L4Factoidal_XQuery4_pDirElem  # (b) nesting of direct element constructors in the query text; fuel 10000
+L4Factoidal_XQuery4_staticErr  # (b) nesting of the query's expression tree; fuel 100000
+L4Factoidal_XQuery4_flworToXPath  # (b) number of clauses of one FLWOR expression in the query text
+L4Factoidal_XQuery4_bindRound  # (b) number of variable declarations in the query's prolog
+L4Factoidal_XQuery4_loadImports  # (b) depth of module imports; fuel 50
 # --- 2026-10-28, graph pipelines (https://github.com/danbri/factoidal/issues/1130)
 L4Factoidal_Dataflow_gather  # (c) one frame per input port of one stage; the ports come from the Lean signature tables (at most 2 today); recursion stops at the last port
 L4Factoidal_Dataflow_srcIssues  # (c) one frame per input port of one stage, as gather; extra sources stop at the last port with one portCount issue

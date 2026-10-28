@@ -47,6 +47,10 @@ open L4Factoidal.XSD
 structure Err where
   code : String
   msg  : String := ""
+  /-- The namespace of the error code; empty for `err:` (the
+      `http://www.w3.org/2005/xqt-errors` namespace). Set by `fn:error`
+      with a QName in another namespace (XQuery 4.0 `catch`). -/
+  uri  : String := ""
 deriving Repr, Inhabited
 
 abbrev M := Except Err

@@ -18,6 +18,7 @@ references, partial application, dynamic calls, keyword arguments,
 Static calls are coerced to the F&O 4.0 signature first (§3.4.3).
 -/
 import L4Factoidal.XPath4.Ext
+import L4Factoidal.XQuery4.Runtime
 
 namespace L4Factoidal.XPath4
 
@@ -509,6 +510,10 @@ def eval : Nat → Env → Expr → M Seq
       let sig? := if q.uri == nsFN && q.loc == "concat" then some (default : Sig) else findSig q total
       match sig? with
       | none =>
+          -- XQuery 4.0 hook: a function declared in the prolog
+          match XQuery4.callUser? { eval := fun x => eval n env x, apply := fun f as => apply n env f as } env q args kw with
+          | some r => r
+          | none =>
           if (findSigAny q).isSome then err "XPST0017" ("wrong number of arguments for " ++ q.show)
           else err "XPST0017" ("unknown function " ++ q.show)
       | some sig =>
@@ -610,7 +615,11 @@ def eval : Nat → Env → Expr → M Seq
               pure [.fn (.papp (.fn (.builtin q (k + 1))) (List.replicate k none ++ [some c]))]
             else pure [.fn (.builtin q k)]
           | _, _ => pure [.fn (.builtin q k)]
-        | none => err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
+        | none =>
+          -- XQuery 4.0 hook: a function declared in the prolog
+          match XQuery4.refUser? (fun f as => apply n env f as) env q k with
+          | some r => r
+          | none => err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
   | .inline ps ret body focus => pure [.fn (.inline ps ret body focus env.vars)]
   | .mapC es => do
       let mut acc : MB := {}
@@ -768,6 +777,10 @@ def eval : Nat → Env → Expr → M Seq
         let s ← eval n env p
         for x in ← env.atomize s do out := out ++ x.str
       pure (sStr out)
+  -- XQuery 4.0 hook: the constructs of `XQuery4.Runtime`
+  | .ext tag es ts qs ss =>
+      XQuery4.evalExt { eval := fun e x => eval n e x, apply := fun e f as => apply n e f as }
+        env tag es ts qs ss
 
 def evalArgs : Nat → Env → List (Option Expr) → M (List (Option Seq))
   | 0, _, _ => fuelErr
