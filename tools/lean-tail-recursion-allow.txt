@@ -1689,3 +1689,5 @@ L4Factoidal_XQuery4_loadImports  # (b) depth of module imports; fuel 50
 L4Factoidal_Dataflow_gather  # (c) one frame per input port of one stage; the ports come from the Lean signature tables (at most 2 today); recursion stops at the last port
 L4Factoidal_Dataflow_srcIssues  # (c) one frame per input port of one stage, as gather; extra sources stop at the last port with one portCount issue
 L4Factoidal_XSLT4_compileParams1  # (b) the depth is the nesting of the stylesheet module and of its XPath expressions and types (XSLT 4.0, issue 1101)
+L4Factoidal_XPath4_normXmlId  # (b) the depth is the element nesting of the parsed document (fuel 100000); children are mapped (xml:id processing, issue 1101)
+L4Factoidal_XPath4_stripIgnorable  # (b) the depth is the element nesting of the parsed document (fuel 100000); children are filtered and mapped (DTD ignorable whitespace, issue 1101)

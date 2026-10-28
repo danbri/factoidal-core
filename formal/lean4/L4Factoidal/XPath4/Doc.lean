@@ -110,8 +110,22 @@ def Doc.ofNodes (ns : List Node) (uri : String := "") : Doc :=
   let ((), a) := act.run #[]
   { nodes := a, uri }
 
+/-- xml:id processing (xml:id 1.0 §4): the value of an `xml:id`
+    attribute is whitespace-normalized (leading and trailing spaces
+    removed, inner runs of spaces collapsed). -/
+def normXmlId : Nat → Node → Node
+  | 0, n => n
+  | f + 1, n =>
+    match n with
+    | .element tag attrs kids =>
+      let attrs := attrs.map (fun a => if a.name == "xml:id" then
+        { a with value := String.intercalate " " ((a.value.split (fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r')).toList.map (·.toString) |>.filter (· != "")) }
+        else a)
+      .element tag attrs (kids.map (normXmlId f))
+    | other => other
+
 def Doc.ofDocument (d : Document) (uri : String := "") : Doc :=
-  let base := Doc.ofNodes d.children uri
+  let base := Doc.ofNodes (d.children.map (normXmlId 100000)) uri
   match d.doctype with
   | some dt =>
     { base with idAttrs := dt.idAttrs,

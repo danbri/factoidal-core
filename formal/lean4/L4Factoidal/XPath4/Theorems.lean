@@ -164,19 +164,21 @@ open L4Factoidal.XML in
 /-- With no options, `fn:parse-xml` on a string that the XML parser
     (`XML.Parser`, the well-formedness decision) accepts, that is
     namespace-well-formed and that needs no external resource, returns the
-    document node of `Doc.ofNodes` over exactly the parser's document
-    children (prolog, element, epilog): the node table is built from
-    `XML.Document.children` and nothing else. -/
+    document node of `Doc.ofNodes` over the parser's document children
+    (prolog, element, epilog) after xml:id processing (`normXmlId`, which
+    only normalizes the value of `xml:id` attributes): the node table is
+    built from `XML.Document.children` and nothing else. -/
 theorem parseXml_eq (h : Hooks) (e : Env) (s : String) (d : Document)
     (hp : parseDecodedXMLWith (fun _ => none) s = .ok d)
     (hns : d.namespaceWellFormed = true)
     (hsys : d.doctype.bind (·.systemId) = none)
     (hext : refsExternalEntity d s = false) :
     parseXmlFn h e [sStr s, []] =
-      .ok [({ Doc.ofNodes d.children with baseUri := e.baseUri }).rootItem (runtimeDocId "parse-xml" s)] := by
-  simp [parseXmlFn, parseOpts, parseDocument, checkOptionKeys, optLookup, optBool, optionStr,
+      .ok [({ Doc.ofNodes (d.children.map (normXmlId 100000)) with baseUri := e.baseUri }).rootItem
+        (runtimeDocId "parse-xml" s)] := by
+  simp [parseXmlFn, parseOpts, parseDocument, docKids, checkOptionKeys, optLookup, optBool, optionStr,
     bytesOfAtomic, sStr, single, optAtom, argN, Atomic.ofStr, Atomic.str, hp, hns, hsys, hext]
-  rfl
+  cases d.doctype <;> rfl
 
 /-! ## One function library with SPARQL, RIF and RML
 

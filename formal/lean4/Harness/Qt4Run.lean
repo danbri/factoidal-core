@@ -613,6 +613,13 @@ def parseArgs : List String → Opts → Opts
   | [], o => o
 
 
+/-- The quoted system identifiers after `SYSTEM` in a document. -/
+def systemIds (txt : String) : List String :=
+  ((txt.splitOn "SYSTEM").drop 1).filterMap (fun piece =>
+    match piece.trimAsciiStart.toString.toList with
+    | q :: r => if q == '"' || q == '\'' then some (String.ofList (r.takeWhile (· != q))) else none
+    | [] => none)
+
 /-- The files a test names by a relative reference in its text (for
     `fn:unparsed-text`, `fn:json-doc`, `fn:doc`, and external entities
     under `trust-external`): every run of path characters that names a
@@ -640,7 +647,18 @@ def scanResources (root dir src : String) : IO (List (String × String) × List 
     if ← System.FilePath.pathExists path then
       if (← System.FilePath.isDir path) then continue
       match ← readFileSafe path with
-      | some txt => out := (t, txt) :: out
+      | some txt =>
+        out := (t, txt) :: out
+        -- the external DTD subset and external entities of a document,
+        -- relative to the document (`SYSTEM "..."`)
+        for sys in systemIds txt do
+          let key := L4Factoidal.XPath4.siblingRef t sys
+          if (out.lookup key).isNone then
+            let some p2 := normPath (rel ++ "/" ++ key) | continue
+            if ← System.FilePath.pathExists (root ++ "/" ++ p2) then
+              match ← readFileSafe (root ++ "/" ++ p2) with
+              | some t2 => out := (key, t2) :: out
+              | none => pure ()
       | none => pure ()
       match ← readBytesSafe path with
       | some bs => bins := (t, bs) :: bins
