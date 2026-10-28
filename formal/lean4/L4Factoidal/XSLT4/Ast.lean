@@ -233,6 +233,9 @@ structure Global where
   prec : Nat := 0
   /-- The `visibility` attribute (§3.4.5.1), `""` when absent. -/
   vis : String := ""
+  /-- Declared in a library package: the global context item is absent
+      when it is evaluated (§2.3.2). -/
+  noCtx : Bool := false
 deriving Inhabited
 
 structure AttrSet where

@@ -1278,6 +1278,16 @@ def tmplCompatible (o n : Tmpl) : Bool :=
   n.params.all (fun q => o.params.any (·.name == q.name) || !q.required) &&
   o.ctxUse == n.ctxUse && tyIdentical (o.ctxAs.getD .item) (n.ctxAs.getD .item)
 
+/-- The error for a reference to `xsl:original` where it names nothing
+    (§3.4.5.4). -/
+def origMisuse (k : Char) : CM Unit :=
+  match k with
+  | 'f' => cerr "XPST0017" "xsl:original is not a function here"
+  | 'v' => cerr "XPST0008" "$xsl:original is not a variable here"
+  | 't' => cerr "XTSE0650" "xsl:original is not a named template here"
+  | 'a' => cerr "XTSE0710" "xsl:original is not an attribute set here"
+  | _ => pure ()
+
 def isWsText (s : String) : Bool := s.all (fun ch => ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r')
 
 /-- Compile one declaration inside `xsl:override`: compile it as a
@@ -1359,8 +1369,13 @@ def compileOverride (prec : Nat) (recs : List OvRec) (pmods : List (String × St
     let as ← s1.sheet.attrSets.mapIdxM (fun k a => if k < nA then pure a else renAttrSet ren a)
     pure (ts.toArray, fs, gs, as)
   let ((ts, fs, gs, ats), refs) := act.run #[]
-  let usesOrig := refs.any (fun (_, n) => n == qnOriginal.eqn || n.startsWith (qnOriginal.eqn ++ "#"))
-  if usesOrig && abstractOrig then cerr "XTSE3075" "xsl:original refers to an abstract component"
+  let origRefs := refs.toList.filter (fun (_, n) => n == qnOriginal.eqn || n.startsWith (qnOriginal.eqn ++ "#"))
+  if !origRefs.isEmpty && abstractOrig then cerr "XTSE3075" "xsl:original refers to an abstract component"
+  -- xsl:original names only the overridden component (§3.4.5.4)
+  let myKind : Char := if !newF.isEmpty then 'f' else if !newG.isEmpty then 'v'
+    else if newT.any (·.name.isSome) then 't' else 'a'
+  for (k, _) in origRefs do
+    if k != myKind then origMisuse k
   modify (fun s => { s with sheet := { s.sheet with templates := ts, functions := fs, globals := gs, attrSets := ats },
                             ovComps := s.ovComps ++ comps })
 
@@ -1528,7 +1543,9 @@ def checkSheet : CM Unit := do
         | x :: rest =>
           todo := rest
           if x == a.name then cerr "XTSE0720" ("attribute set " ++ a.name.show ++ " uses itself")
-          if seen.contains x then continue
+          -- a cycle through a used package is found when it is evaluated
+          -- (XTDE0640)
+          if seen.contains x || x.uri.startsWith "#pkg" then continue
           seen := x :: seen
           for b in sets do
             if b.name == x then todo := todo ++ b.useSets

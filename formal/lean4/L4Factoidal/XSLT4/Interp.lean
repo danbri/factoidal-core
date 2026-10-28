@@ -1516,6 +1516,8 @@ def applyT : Nat → Sheet → Ctx → Seq → String → List (QN × Seq) → L
 def invoke : Nat → Sheet → Ctx → Tmpl → List (QN × Seq) → List (QN × Seq) → XM (List Out)
   | 0, _, _, _, _, _ => xerr "FOER0000" "XSLT evaluation too deep (fuel exhausted)"
   | n + 1, S, cx, t, ps, tun => do
+    -- an abstract template (§3.4.5.2) fails before its parameters are bound
+    if let [.staticErr "XTDE3052" msg] := t.body then xerr "XTDE3052" msg
     -- the template body sees the global variables and its parameters,
     -- not the caller's local variables
     let globals := cx.env.vars.dropWhile (fun (q, _) => !(q == xv "globals"))

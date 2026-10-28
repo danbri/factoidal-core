@@ -360,9 +360,11 @@ def overrideNames (d : Decl) : CM (List (String × QN × Nat)) := do
       let oas ← effAttrs d.c m o
       let co ← d.c.enter m o oas
       if !(← useWhenOk co m o oas) then continue
+      let l := (m.name o).loc
+      if (m.name o).uri != nsXSL || !(["template", "function", "variable", "param", "attribute-set"].contains l) then
+        cerr "XTSE0010" ("xsl:override cannot contain " ++ (m.name o).show)
       let some nmS := oas.get "name" | continue
       let nm ← liftM (co.qname nmS)
-      let l := (m.name o).loc
       let kind := if l == "param" then "variable" else l
       let hi := ((m.elemKids o).filter (m.isXsl · "param")).length
       out := out ++ [(kind, nm, if kind == "function" then hi else 0)]
@@ -465,8 +467,10 @@ def mergeUsed (d : Decl) (n : Nat) (q : PkgOut) : CM Unit := do
   let sh : Sheet := { sh with
     templates := sh.templates.map (fun t => { t with prec := t.prec + bp, id := t.id + bt, order := t.order + bo })
     functions := sh.functions.map (fun g => { g with prec := g.prec + bp })
-    globals := sh.globals.map (fun g => { g with prec := g.prec + bp }) }
-  let pmodes := (acq.filter (·.kind == "mode")).map (fun c => (c.name.eqn, c.vis))
+    globals := sh.globals.map (fun g => { g with prec := g.prec + bp, noCtx := true }) }
+  -- the modes of the used package, with their visibility there (the
+  -- template rules of xsl:override may go in its public modes, §3.4.6)
+  let pmodes := (q.comps.filter (·.kind == "mode")).map (fun c => (c.name.eqn, c.vis))
   set { s with
     prec := bp + maxP + 1, tid := bt + maxId + 1, order := bo + maxO + 1,
     statics := sh.statics ++ s.statics,
@@ -505,19 +509,24 @@ def finishPackage (principal : String) (top : Bool) : CM (List Comp) := do
   let ras ← effAttrs {} m root
   let c ← rootCx m root ras
   let explicit := m.isXsl root "package"
+  if explicit then
+    if (versionMilli ((ras.get "version").getD "")).isNone then
+      cerr "XTSE0110" "the version attribute of xsl:package must be a decimal"
+    if let some v := ras.get "package-version" then
+      if (parseVersion v).isNone then cerr "XTSE0020" ("invalid package version '" ++ v ++ "'")
   let declaredModes ← if explicit then ras.bool "declared-modes" true else pure false
   let rules ← if explicit then exposeRules m root c
     else pure [{ kind := "mode", toks := [.any], vis := "public" }, { kind := "template", toks := [.any], vis := "public" }]
   let s ← get
   let own := ownComps s (!declaredModes)
+  let mut own' : List Comp := []
+  for x in own do
+    own' := own' ++ [{ x with vis := ← exposedVis rules x }]
   -- XTSE3020: a token that is not a wildcard names a component
   for r in rules do
     for t in r.toks do
       if t.rank == 3 && !(own ++ s.acq).any (fun x => !x.isParam && r.kindOk x && t.matches x) then
         cerr "XTSE3020" "xsl:expose names a component that the package does not have"
-  let mut own' : List Comp := []
-  for x in own do
-    own' := own' ++ [{ x with vis := ← exposedVis rules x }]
   let ovc := s.ovComps.map (fun (k, q, h, v) => ({ kind := k, name := q, hi := h, vis := v } : Comp))
   -- XTSE3055: an overriding declaration and another declaration of this package
   for o in ovc do
@@ -535,14 +544,26 @@ def finishPackage (principal : String) (top : Bool) : CM (List Comp) := do
   for t in s.sheet.templates.toList.drop bT do
     if t.pat.isSome && !s.ovTids.contains t.id && t.modes.any accModes.contains then
       cerr "XTSE3050" "a template rule in a mode of a used package must be inside xsl:override"
+  -- `#all` names the modes of this package, not those of a used package
+  if !s.ovRecs.isEmpty then
+    let ownT : Sheet := { templates := (s.sheet.templates.toList.drop bT).toArray, modes := s.sheet.modes }
+    let keys := (sheetModes ownT ++ ["#unnamed"]).filter (fun k =>
+      k != "#all" && k != "#current" && !isMangledMode k && !accModes.contains k) |>.eraseDups
+    modify (fun s => { s with sheet := { s.sheet with templates := s.sheet.templates.mapIdx (fun k t =>
+      if k < bT || !t.modes.contains "#all" then t
+      else { t with modes := (t.modes.filter (· != "#all")) ++ keys }) } })
   let comps := own' ++ acq ++ ovc
+  let ownSheet : Sheet := { templates := (s.sheet.templates.toList.drop bT).toArray,
+                            functions := s.sheet.functions.drop s.ownStart.2.1,
+                            globals := s.sheet.globals.drop s.ownStart.2.2.1,
+                            attrSets := s.sheet.attrSets.drop s.ownStart.2.2.2.1 }
+  -- xsl:original outside an overriding declaration (§3.4.5.4)
+  let (_, ownRefs) : Sheet × Refs := Id.run ((renSheet {} ownSheet).run #[])
+  for (k, nm) in ownRefs.toList do
+    if nm == qnOriginal.eqn || nm.startsWith (qnOriginal.eqn ++ "#") then origMisuse k
   -- XTSE3085: declared modes (§3.4.6.1)
   if declaredModes then
     let declared := (s.sheet.modes.map (·.name)) ++ accModes
-    let ownSheet : Sheet := { templates := (s.sheet.templates.toList.drop bT).toArray,
-                              functions := s.sheet.functions.drop s.ownStart.2.1,
-                              globals := s.sheet.globals.drop s.ownStart.2.2.1,
-                              attrSets := s.sheet.attrSets.drop s.ownStart.2.2.2.1 }
     for k in sheetModes ownSheet do
       if k != "#all" && k != "#current" && !isMangledMode k && !declared.contains k then
         cerr "XTSE3085" ("the mode " ++ k ++ " is used but not declared (declared-modes is yes)")
@@ -553,14 +574,33 @@ def finishPackage (principal : String) (top : Bool) : CM (List Comp) := do
     if let some a := comps.find? (·.vis == "abstract") then
       cerr "XTSE3080" ("the top-level package has the abstract " ++ a.kind ++ " " ++ a.name.show)
     -- abstract variables of used packages: a reference raises XTDE3052
+    -- and so does a reference to a global variable that refers to one
+    -- (global variables are otherwise evaluated before the transformation
+    -- starts): those variables become functions of no arguments
     let absVars := s.sheet.globals.filter (·.vis == "abstract")
     if !absVars.isEmpty then
-      let fnOf (g : Global) : QN := { uri := "#abstract", loc := g.name.eqn }
-      let ren : Ren := { varCalls := absVars.map (fun g => (g.name, fnOf g)) }
-      let sh0 : Sheet := { s.sheet with globals := s.sheet.globals.filter (·.vis != "abstract") }
+      let refsOf (g : Global) : List String :=
+        let (_, r) : Global × Refs := Id.run ((renGlobal {} g).run #[])
+        (r.toList.filter (·.1 == 'v')).map (·.2)
+      let mut lazyNames : List String := absVars.map (·.name.eqn)
+      for _ in [0:s.sheet.globals.length] do
+        let more := s.sheet.globals.filter (fun g => !lazyNames.contains g.name.eqn && (refsOf g).any lazyNames.contains)
+        if more.isEmpty then break
+        lazyNames := lazyNames ++ more.map (·.name.eqn)
+      let lazyGs := s.sheet.globals.filter (fun g => lazyNames.contains g.name.eqn)
+      let fnOf (g : Global) : QN := { uri := "#lazy-global", loc := g.name.eqn }
+      let ren : Ren := { varCalls := lazyGs.map (fun g => (g.name, fnOf g)) }
+      let sh0 : Sheet := { s.sheet with globals := s.sheet.globals.filter (fun g => !lazyNames.contains g.name.eqn) }
       let (sh, _) : Sheet × Refs := Id.run ((renSheet ren sh0).run #[])
-      let errFns := absVars.map (fun g => ({ name := fnOf g, params := [], body := [abstractErr "variable" g.name] } : XFunction))
-      modify (fun s => { s with sheet := { sh with functions := sh.functions ++ errFns } })
+      let mut fns : List XFunction := []
+      for g in lazyGs do
+        let (g', _) : Global × Refs := Id.run ((renGlobal ren g).run #[])
+        let body := if g.vis == "abstract" then [abstractErr "variable" g.name]
+          else match g'.sel with
+            | some e => [Instr.seq (some e) [] none]
+            | none => if g.ty.isNone && !g'.body.isEmpty then [Instr.docI g'.body] else g'.body
+        fns := fns ++ [{ name := fnOf g, params := [], ty := g.ty, body }]
+      modify (fun s => { s with sheet := { sh with functions := sh.functions ++ fns } })
     let s ← get
     let priv := (comps.filter (fun x => x.kind == "template" && x.vis != "public" && x.vis != "final")).map (·.name)
     let pubModes := (comps.filter (fun x => x.kind == "mode" && (x.vis == "public" || x.vis == "final"))).map (·.name.eqn)
@@ -642,6 +682,20 @@ def compilePkg (lib : List PkgEntry) (texts : List (String × String)) :
     that `xsl:use-package` can name. -/
 def compileStylesheet (principal : String) (texts : List (String × String))
     (staticParams : List (QN × Seq) := []) (lib : List PkgEntry := []) : M Sheet := do
+  -- the name and version a package declares win over the catalog's
+  let lib := lib.map (fun e =>
+    match texts.lookup e.uri with
+    | none => e
+    | some txt => match Doc.ofString txt e.uri with
+      | .error _ => e
+      | .ok d =>
+        let m : Mod := { d, uri := e.uri }
+        match m.rootElem with
+        | none => e
+        | some r =>
+          let as := m.rawAttrs r
+          { e with name := ((Attrs.get as "name").map (·.trimAscii.toString)).getD e.name,
+                   version := ((Attrs.get as "package-version").map (·.trimAscii.toString)).getD e.version })
   let r ← compilePkg lib texts 30 principal staticParams [] 0 true
   pure r.sheet
 

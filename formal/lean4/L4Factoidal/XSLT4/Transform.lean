@@ -258,6 +258,7 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         | none => some g
         | some x => if g.prec > x.prec then some g else some x) none with
     | some fn => some fun c args => runFresh c fn.name.eqn args (do
+        if let [.staticErr "XTDE3052" msg] := fn.body then xerr "XTDE3052" msg
         let mut cx : Ctx := { env := { env with ctx := none, pos := 0, size := 0, ns := c.ns, vars := env.vars }, inFn := true, tempOut := true }
         let mut i := 0
         for p in fn.params do
@@ -440,8 +441,9 @@ def evalGlobals (S : Sheet) (o : TOpts) (env0 : Env) : M Env := do
     let mut lastErr : Option Err := none
     for g in pending do
       let host := mkHost S env [] [] 100000
-      let one := if o.globalCtx.isSome then 1 else 0
-      let genv : Env := { env with host, ctx := o.globalCtx.map (fun i => [i]), pos := one, size := one }
+      let gctx := if g.noCtx then none else o.globalCtx
+      let one := if gctx.isSome then 1 else 0
+      let genv : Env := { env with host, ctx := gctx.map (fun i => [i]), pos := one, size := one }
       let supplied := if g.isParam then lookupV o.params g.name else none
       let act : XM Seq := match supplied with
         | some v => match g.ty with
