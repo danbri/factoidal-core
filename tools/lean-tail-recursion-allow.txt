@@ -1636,3 +1636,6 @@ L4Factoidal_XPath4_Ixml_compileFactor  # (b) recursion on the nesting of one gra
 L4Factoidal_XPath4_Ixml_factorOf  # (b) recursion on the element nesting of the XML form of a grammar (fuel 256); children are loops
 L4Factoidal_XPath4_Ixml_altsOf  # (b) as factorOf
 L4Factoidal_XPath4_Ixml_xdmToXml  # (b) recursion on the element nesting of a grammar element (fuel); children are mapped
+# --- 2026-10-28, graph pipelines (https://github.com/danbri/factoidal/issues/1130)
+L4Factoidal_Dataflow_gather  # (c) one frame per input port of one stage; the ports come from the Lean signature tables (at most 2 today); recursion stops at the last port
+L4Factoidal_Dataflow_srcIssues  # (c) one frame per input port of one stage, as gather; extra sources stop at the last port with one portCount issue

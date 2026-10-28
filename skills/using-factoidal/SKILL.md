@@ -502,6 +502,13 @@ r.evidence[1].settingsDigest;  // 'sha256:…'
   graph).
 - Pipelines compared with XProc 3.1 (lists against graphs, ports, control
   steps, contracts, evidence): `docs/designissues/2026-10-28-dataflow-and-xproc.md`.
+- Graphs with named ports (wasm ops `graphCheckNodes`, `datasetMerge`, after
+  0.20.0): `graph({ inputs: ['String', 'String'], nodes: [{ node, from:
+  [{ input: 0 }] }, ..., { node: await node('datasetMerge'), from: [{ node: 0 },
+  { node: 1 }] }] })`, then `run(g, [textA, textB])`. The engine refuses a
+  graph with an unknown input, a cycle, a wrong source count or a wire
+  mismatch (`err.issues`). `datasetMerge(a, b)` keeps the blank nodes of the
+  two inputs apart (https://github.com/danbri/factoidal/issues/1130, graphs).
 - Node settings (wasm): evidence records carry `settings` and
   `settingsDigest`; a setting outside the proved domain of a proved stage
   makes the status `unproved` (with `registryStatus` and `outside`), and
