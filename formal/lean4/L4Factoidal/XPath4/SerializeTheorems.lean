@@ -29,12 +29,17 @@ Tested (`#guard`): the canonical JSON escape of the 32 C0 controls is
 Open: the round trip `parse-xml(serialize($doc))` deep-equal to `$doc` for
 a well-formed document (it needs a proof that `Doc.ofNodes` builds its
 table in preorder: https://github.com/danbri/factoidal/issues/1143).
+`XPath4/DocTheorems.lean` (imported here so that `l4qt4` builds it) proves
+the first part: parents precede children, index 0 is the document node, and
+the child and attribute lists agree with the parent links. Subtree
+contiguity and the round trip itself are still open.
 -/
 import L4Factoidal.XPath4.Serialize
 import L4Factoidal.XML.Theorems
 import L4Factoidal.JSON.Serialize
 import L4Factoidal.XPath4.Fn4
 import L4Factoidal.XPath4.DeepEqual
+import L4Factoidal.XPath4.DocTheorems
 
 namespace L4Factoidal.XPath4
 
