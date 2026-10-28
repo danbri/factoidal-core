@@ -902,14 +902,38 @@ it always (https://github.com/danbri/factoidal/issues/1115). `subscribe`
 with `endpoint` (CLI `--endpoint`) POSTs to the named notification endpoint
 with no storage-link discovery.
 
+Three options of https://github.com/danbri/factoidal/issues/1116:
+
+- Session option `requireHttps` (npm `createLwsClient({ requireHttps: true })`,
+  CLI `--require-https`; off by default): `enforce` refuses, before it is sent,
+  every request whose URL scheme is not `https`, in every phase (the
+  operation, discovery, the protected resource metadata, the authorization
+  server metadata, the token endpoint). The failure has code
+  `insecureTransport` with the URL; the driver error kind is `TransportError`.
+  Theorems `step_requireHttps`, `start_requireHttps`. The driver adapter maps
+  `allowInsecureHttp: false` to it (stricter than the lws-client design,
+  which asks https only of the authorization server and excepts loopback).
+- Operation member `ifNoneMatchTags` (CLI `--if-none-match TAG[,TAG]`; for
+  `read` the CLI flag sets the GET's `ifNoneMatch`): `If-None-Match` with
+  entity tags on a write (RFC 9110 §13.1.2), read by `entityTagList?` (each
+  member may be a list; `*` only alone). With no `precondition` it is
+  `ifNoneMatch` (the field alone); with `ifMatch`, `ifMatchCurrent` or
+  `ifUnmodifiedSince` both fields go (RFC 9110 §13.2.2 orders their
+  evaluation). Refused with `none` and `ifNoneMatchStar`. Every conditional
+  kind takes it, `patch` included.
+- Operation member `policies` (CLI `--policies JSON`): an access request or
+  grant with N policies, each `{actions, assignee, targets, constraint}`, in
+  the caller's order. The single-policy members stay as one policy; giving
+  both is `badArguments`.
+
 | path | what it is |
 | --- | --- |
 | `formal/lean4/L4Factoidal/LWS/Client/Wire.lean` | requests, responses, `Link`, `WWW-Authenticate`, `Allow`, `Accept-Patch`, form bodies, JSON forms |
 | `formal/lean4/L4Factoidal/LWS/Client/Machine.lean` | `Op`, `ClientState`, `step`, `enforce`, state JSON |
-| `formal/lean4/L4Factoidal/LWS/Client/Theorems.lean` | `walk_concat`, `walk_paths`, `walk_members_once`, `walk_listedMembers`, `step_write_precondition`, `step_no_token_request_without_validation`, `step_no_blind_create_retry`, `step_no_retry_after_lost_post`, `step_no_repeat_after_refusal` |
+| `formal/lean4/L4Factoidal/LWS/Client/Theorems.lean` | `walk_concat`, `walk_paths`, `walk_members_once`, `walk_listedMembers`, `step_write_precondition`, `step_no_token_request_without_validation`, `step_no_blind_create_retry`, `step_no_retry_after_lost_post`, `step_no_repeat_after_refusal`, `step_requireHttps`, `start_requireHttps` |
 | `formal/lean4/L4Factoidal/LWS/Client/Tests.lean` | `#guard`s: canned responses (decoys, stale tags, 405, 503, forged notifications) and a loopback against `LWS.step MemStore` |
 | `formal/lean4/Wasm/Ops/LwsClient.lean` | `lwsClientStart(opJson, sessionJson)`, `lwsClientStep(stateJson, eventJson)` → `{ok, state, action}` |
-| `npm/factoidal/lws/client.mjs` | `createLwsClient({ fetch, subjectToken, subjectTokenType, session, legacyChallenge })`, `createNotificationReceiver({ client })` |
+| `npm/factoidal/lws/client.mjs` | `createLwsClient({ fetch, subjectToken, subjectTokenType, session, legacyChallenge, requireHttps })`, `createNotificationReceiver({ client })` |
 | `tests/lws/client/own-server.mjs` | our client against our server, open and with authorization |
 | `tools/lws-touchstone-client.sh` | our client in Touchstone's client lab (53 rules) |
 
@@ -920,10 +944,11 @@ reach it. The state crosses the ABI as JSON; bodies as `bodyBase64`.
 ```
 factoidal lws-client <op> URL [--body TEXT|--file PATH] [--content-type M]
     [--if-match TAG|--if-match-current|--if-none-match-star|--no-precondition]
+    [--if-none-match TAG[,TAG]] [--require-https]
     [--retry-412 N] [--recursive] [--container] [--slug S] [--type IRI]
     [--subject-token-file F --subject-token-type URI] [--query JSON]
     [--inbox URL] [--topic URL] [--endpoint URL] [--legacy-challenge]
-    [--action A,B --assignee URI --target URL]
+    [--action A,B --assignee URI --target URL | --policies JSON]
 ```
 
 ```js

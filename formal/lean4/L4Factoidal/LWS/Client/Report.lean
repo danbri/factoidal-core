@@ -222,7 +222,10 @@ def errorReport (e : Json) : Json :=
     .object ([("kind", .string kind)] ++ optMember "status" (status.map natJson) ++
       [("message", .string message)] ++ extra)
   if code == "badArguments" then .object [("kind", .string "InvalidArguments"), ("message", .string message)]
-  else if code == "transport" then .object [("kind", .string "TransportError"), ("message", .string message)]
+  -- `insecureTransport`: a request to a URL that is not https, refused before
+  -- it is sent (`Session.requireHttps`).
+  else if code == "transport" || code == "insecureTransport" then
+    .object [("kind", .string "TransportError"), ("message", .string message)]
   else if authenticationCodes.contains code then
     withStatus "AuthenticationError"
       (optStr "oauthError" (bodyDoc.bind fun b => b.getString? "error") ++

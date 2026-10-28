@@ -766,11 +766,18 @@ operations:
   unsubscribe URL | revokeAccess URL
   requestAccess URL | grantAccess URL
                       --action A[,A] --assignee URI [--target URL[,URL]]
-                      [--inbox URL]
+                      [--inbox URL]; or --policies JSON, an array of
+                      {actions, assignee, targets, constraint?}, one
+                      member per policy of the document
 
 preconditions (update, patch, delete, updateLinkset, move):
   --if-match TAG | --if-match-current | --if-none-match-star |
   --if-unmodified-since DATE | --no-precondition
+  --if-none-match TAG[,TAG]   If-None-Match with entity tags (RFC 9110
+                      §13.1.2), alone or with --if-match TAG,
+                      --if-match-current or --if-unmodified-since;
+                      for read, the condition of the GET (304 is
+                      notModified)
   (default: --if-match-current for update, patch, updateLinkset and move)
   --retry-412 N       read the tag again and resend, at most N times
 
@@ -784,6 +791,10 @@ authorization:
                               Bearer as_uri="AS", realm="STORAGE" of the
                               drafts before 2026-10-19 (off by default: it
                               skips two discovery checks of lws10-core)
+  --require-https             send no request to a URL that is not https
+                              (the operation, discovery, metadata, the
+                              authorization server, the token endpoint);
+                              such an operation fails with insecureTransport
 
 Draft: https://w3c.github.io/lws-protocol/lws10-core/`
 }
@@ -862,7 +873,7 @@ const VALUE_OPTIONS = {
   'lws-client': new Set(['body', 'file', 'content-type', 'slug', 'type', 'link', 'if-match',
     'if-unmodified-since', 'retry-412', 'destination', 'query', 'topic', 'action', 'assignee',
     'target', 'subject-token-file', 'subject-token-type', 'access-token', 'storage', 'root',
-    'inbox', 'endpoint']),
+    'inbox', 'endpoint', 'if-none-match', 'policies']),
   'authz-serve': new Set(['port', 'host', 'issuer', 'resource', 'alg', 'token-lifetime', 'rotate-after',
     'cors-origin', 'saml-idp', 'saml-decrypt-key']),
   'authz-keys': new Set([]),
@@ -2275,6 +2286,11 @@ async function commandLwsClient (positional, options) {
     op.precondition = 'ifUnmodifiedSince'; op.tag = options['if-unmodified-since']
   }
   if (options['no-precondition'] === true) op.precondition = 'none'
+  if (typeof options['if-none-match'] === 'string') {
+    // The value goes to the engine whole; it reads the entity-tag list.
+    if (kind === 'read') op.ifNoneMatch = options['if-none-match']
+    else op.ifNoneMatchTags = [options['if-none-match']]
+  }
   if (typeof options['retry-412'] === 'string') op.retry412 = Number(options['retry-412'])
   if (typeof options.destination === 'string') op.destination = options.destination
   if (typeof options.query === 'string') op.query = JSON.parse(options.query)
@@ -2283,9 +2299,11 @@ async function commandLwsClient (positional, options) {
   if (typeof options.action === 'string') op.actions = list(options.action)
   if (typeof options.assignee === 'string') op.assignee = options.assignee
   if (typeof options.target === 'string') op.targets = list(options.target)
+  if (typeof options.policies === 'string') op.policies = JSON.parse(options.policies)
   if (typeof options.endpoint === 'string') op.endpoint = options.endpoint
   const clientOptions = {}
   if (options['legacy-challenge'] === true) clientOptions.legacyChallenge = true
+  if (options['require-https'] === true) clientOptions.requireHttps = true
   if (typeof options['subject-token-file'] === 'string') {
     clientOptions.subjectToken = new TextDecoder('utf-8', { fatal: true })
       .decode(readWhole(options['subject-token-file'])).trim()

@@ -82,6 +82,9 @@ const CHECKS = [
   'Authorization (drafts before 2026-10-19): the as_uri/realm challenge is followed only with legacyChallenge (and the CLI --legacy-challenge)',
   'Authorization: the token goes to a service endpoint of the storage description outside the StorageRoot path',
   'Notifications: subscribe to a named endpoint POSTs to it with no storage-link discovery',
+  'Transport: with requireHttps no request goes to an http URL (and the CLI --require-https)',
+  'Update Resource: If-None-Match with entity tags, alone and with If-Match; a listed current tag is a 412 (and the CLI --if-none-match)',
+  'Access Requests and Grants: a request and a grant with two policies',
   'Authorization (lws10-authn-ssi-cid): a self-issued did:key credential, signed by the engine, exchanged at factoidal authz-serve'
 ]
 
@@ -498,6 +501,77 @@ async function main () {
       const bad = await run(['lws-client', 'read', `${o}/no-such`])
       assert(bad.status === 1, `exit ${bad.status}`)
       assert(JSON.parse(bad.stdout).fail.code === 'status', bad.stdout)
+    })
+
+    // https://github.com/danbri/factoidal/issues/1116
+    const cliRun = (args) => new Promise((resolve) => {
+      const cli = fileURLToPath(new URL('../../../npm/factoidal/bin/factoidal.mjs', import.meta.url))
+      const child = spawn(process.execPath, [cli, ...args])
+      let stdout = ''
+      child.stdout.on('data', (d) => { stdout += d })
+      child.on('close', (status) => resolve({ status, stdout }))
+    })
+    await check(CHECKS[24], async () => {
+      const r = recording()
+      const c = await createLwsClient({ engine, fetch: r.wire, requireHttps: true })
+      const e = await rejects(c.read(t), 'insecureTransport')
+      assert(e.detail.url === t, JSON.stringify(e.detail))
+      assert(r.log.length === 0, `${r.log.length} requests sent`)
+      // Off by default: the same read is sent.
+      assert((await client.read(t)).body === 'five', 'read without the option')
+      const cliOn = await cliRun(['lws-client', 'read', t, '--require-https'])
+      assert(cliOn.status === 1 && JSON.parse(cliOn.stdout).fail.code === 'insecureTransport', cliOn.stdout)
+    })
+
+    await check(CHECKS[25], async () => {
+      const u = (await client.create(notes, { slug: 'inm.txt', mediaType: 'text/plain', body: 'one' })).location
+      const tag = (await client.head(u)).headers.find(([n]) => n === 'etag')[1]
+      // The current tag is listed: the server answers 412.
+      await rejects(client.update(u, { ifNoneMatchTags: [`"other", ${tag}`], mediaType: 'text/plain', body: 'x' }),
+        'preconditionFailed')
+      // Tags alone: If-None-Match and no If-Match, no tag read.
+      const seen = sinceLog()
+      await client.update(u, { ifNoneMatchTags: ['"other"', 'W/"old"'], mediaType: 'text/plain', body: 'two' })
+      const sent = seen()
+      assert(sent.map((x) => x.method).join(',') === 'PUT', sent.map((x) => x.method).join(','))
+      assert(sent[0].headers.get('if-none-match') === '"other", W/"old"', sent[0].headers.get('if-none-match'))
+      assert(sent[0].headers.get('if-match') === null, 'an If-Match was sent')
+      // With If-Match of the current tag: both fields, and the write is done.
+      const now = (await client.head(u)).headers.find(([n]) => n === 'etag')[1]
+      const both = sinceLog()
+      await client.update(u, { precondition: 'ifMatch', tag: now, ifNoneMatchTags: ['"other"'], mediaType: 'text/plain', body: 'three' })
+      const put = both()[0]
+      assert(put.headers.get('if-match') === now && put.headers.get('if-none-match') === '"other"',
+        `${put.headers.get('if-match')} ${put.headers.get('if-none-match')}`)
+      assert((await client.read(u)).body === 'three', 'not written')
+      // A malformed tag is refused before sending.
+      await rejects(client.update(u, { ifNoneMatchTags: ['other'], body: 'x' }), 'badArguments')
+      // The CLI flag: the listed current tag gives 412.
+      const cur = (await client.head(u)).headers.find(([n]) => n === 'etag')[1]
+      const cliPre = await cliRun(['lws-client', 'update', u, '--body', 'y', '--content-type', 'text/plain', '--if-none-match', cur])
+      assert(cliPre.status === 1 && JSON.parse(cliPre.stdout).fail.code === 'preconditionFailed', cliPre.stdout)
+    })
+
+    await check(CHECKS[26], async () => {
+      const policies = [
+        { actions: ['read'], assignee: 'https://id.example/bob', targets: [t] },
+        { actions: ['read'], assignee: 'https://id.example/carol', targets: [notes] }
+      ]
+      const seen = sinceLog()
+      const req = await client.requestAccess(`${o}/`, { policies })
+      assert(typeof req.location === 'string', JSON.stringify(req))
+      const grant = await client.grantAccess(`${o}/`, { policies })
+      assert(typeof grant.location === 'string', JSON.stringify(grant))
+      const posts = seen().filter((x) => x.method === 'POST')
+      assert(posts.length === 2, `${posts.length} POSTs`)
+      const got = JSON.parse((await client.getAccess(grant.location)).body)
+      const assignees = [].concat(got.access).map((a) => a.assignee)
+      assert(JSON.stringify(assignees) === JSON.stringify(['https://id.example/bob', 'https://id.example/carol']),
+        JSON.stringify(got))
+      // Policies with the single-policy members: refused before sending.
+      await rejects(client.requestAccess(`${o}/`, { policies, actions: ['read'] }), 'badArguments')
+      const cliTwo = await cliRun(['lws-client', 'requestAccess', `${o}/`, '--policies', JSON.stringify(policies)])
+      assert(cliTwo.status === 0, cliTwo.stdout)
     })
   } finally {
     await open.close()
