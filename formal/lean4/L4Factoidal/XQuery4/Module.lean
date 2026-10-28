@@ -785,15 +785,15 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
       fnsM.any (fun (q2, lo, hi) => (q2 == q || (q.uri == nsFN && q.pfx == "" && q2 == { q with uri := "" }))
         && lo ≤ k && k ≤ hi)
     let _ := known
-    -- schema names: the built-in types, else what the in-scope schema holds
-    let hasSchema := !env.schema.targetNamespaces.isEmpty
+    -- schema names: the built-in types, else a name in a namespace that
+    -- the in-scope schema has components for
     let tyKnown (q : QN) : Bool :=
       if q.uri == nsXS then
         (atypeOfName? q.loc).isSome ||
           -- the built-in union and list types also name types (XSD 1.1 Part 2 §3.4)
           ["anyType", "untyped", "anySimpleType", "untypedAtomic", "numeric", "error",
            "NMTOKENS", "IDREFS", "ENTITIES"].contains q.loc
-      else hasSchema
+      else env.schema.targetNamespaces.contains q.uri
     let base0 : SCtx := { vars := env.vars.map (·.1) ++ globalsM, knownFn := knownM }
     let base : SCtx := { base0 with typeKnown := tyKnown, elemKnown := fun q => (env.schema.elemDecl q).isSome,
                                     attrKnown := fun q => (env.schema.attrDecl q).isSome }
