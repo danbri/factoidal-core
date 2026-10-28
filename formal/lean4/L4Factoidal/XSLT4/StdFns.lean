@@ -1,0 +1,129 @@
+/-
+L4Factoidal.XSLT4.StdFns — the XSLT 4.0 functions that need no
+transformation state: `fn:system-property`, `fn:function-available`,
+`fn:element-available`, `fn:type-available`,
+`fn:available-system-properties` (XSLT 4.0 §20.5, §20.6). They are
+available in static expressions (`use-when`, shadow attributes, static
+variables, §9.7) as well as at run time.
+-/
+import L4Factoidal.XSLT4.Static
+
+namespace L4Factoidal.XSLT4
+
+open L4Factoidal.XPath4
+
+/-- The XSLT instructions this processor implements (for
+    `fn:element-available`). -/
+def xslInstructions : List String :=
+  ["analyze-string", "apply-imports", "apply-templates", "array", "array-member", "assert",
+   "attribute", "break", "call-template", "choose", "comment", "copy", "copy-of", "document",
+   "element", "evaluate", "fallback", "for-each", "for-each-group", "fork", "if", "iterate",
+   "map", "map-entry", "merge", "message", "namespace", "next-iteration", "next-match", "number",
+   "on-empty", "on-non-empty", "perform-sort", "processing-instruction", "result-document",
+   "select", "sequence", "source-document", "switch", "text", "try", "value-of", "variable",
+   "where-populated"]
+
+/-- The XSLT 4.0 functions (namespace `fn`) that the host provides. -/
+def xslFunctions : List (String × List Nat) :=
+  [("current", [0]), ("current-group", [0]), ("current-grouping-key", [0]),
+   ("current-merge-group", [0, 1]), ("current-merge-key", [0]), ("current-merge-key-array", [0]),
+   ("current-output-uri", [0]),
+   ("document", [1, 2]), ("element-available", [1]), ("function-available", [1, 2]),
+   ("key", [2, 3]), ("regex-group", [1]), ("stream-available", [1]), ("system-property", [1]),
+   ("type-available", [1]), ("unparsed-entity-public-id", [1, 2]), ("unparsed-entity-uri", [1, 2]),
+   ("accumulator-before", [1]), ("accumulator-after", [1]), ("copy-of", [0, 1]), ("snapshot", [0, 1]),
+   ("available-system-properties", [0]), ("apply-templates", [1, 2])]
+
+def systemProperty (l : String) : String :=
+  match l with
+  | "version" => "4.0"
+  | "vendor" => "Factoidal"
+  | "vendor-url" => "https://github.com/danbri/factoidal-core"
+  | "product-name" => "Factoidal"
+  | "product-version" => "0.21"
+  | "is-schema-aware" => "no"
+  | "supports-serialization" => "yes"
+  | "supports-backwards-compatibility" => "yes"
+  | "supports-namespace-axis" => "no"
+  | "supports-streaming" => "no"
+  | "supports-dynamic-evaluation" => "yes"
+  | "supports-higher-order-functions" => "yes"
+  | "xpath-version" => "4.0"
+  | "xsd-version" => "1.1"
+  | _ => ""
+
+def systemPropertyNames : List String :=
+  ["version", "vendor", "vendor-url", "product-name", "product-version", "is-schema-aware",
+   "supports-serialization", "supports-backwards-compatibility", "supports-namespace-axis",
+   "supports-streaming", "supports-dynamic-evaluation", "supports-higher-order-functions",
+   "xpath-version", "xsd-version"]
+
+/-- Resolve a lexical QName argument (`p:local`, `local`, `Q{uri}local`)
+    with the namespace bindings of the call. -/
+def lexQName (ns : List (String × String)) (s : String) (useDefault : Bool) (code : String) : M QN := do
+  let s := s.trimAscii.toString
+  if s.startsWith "Q{" then
+    match (s.drop 2).toString.splitOn "}" with
+    | [u, l] => pure { uri := u, loc := l }
+    | _ => err code ("invalid EQName '" ++ s ++ "'")
+  else match s.splitOn ":" with
+    | [l] =>
+        if !(isNCName l) then err code ("invalid QName '" ++ s ++ "'") else
+        pure { uri := if useDefault then nsFN else "", loc := l }
+    | [p, l] =>
+        if !(isNCName p && isNCName l) then err code ("invalid QName '" ++ s ++ "'") else
+        if p == "xml" then pure { uri := nsXML, loc := l, pfx := p } else
+        match ns.lookup p with
+        | some u => pure { uri := u, loc := l, pfx := p }
+        | none => match defaultNs.lookup p with
+          | some u => pure { uri := u, loc := l, pfx := p }
+          | none => err code ("undeclared prefix '" ++ p ++ "'")
+    | _ => err code ("invalid QName '" ++ s ++ "'")
+where
+  isNCName (x : String) : Bool :=
+    match x.toList with
+    | c :: cs => isNameStart c && cs.all (fun d => isNameCh d && d != ':')
+    | [] => false
+
+/-- A string argument (`xs:string`, or an untyped or URI value). -/
+def strArg (a : Seq) : String := match a with
+  | [.atom x] => x.str
+  | _ => ""
+
+/-- Does the stylesheet-independent function table define `q#k`? -/
+def builtinAvailable (q : QN) (k : Option Nat) : Bool :=
+  let xsl := q.uri == nsFN && ((xslFunctions.lookup q.loc).map (fun ks => match k with
+    | some n => ks.contains n | none => true)).getD false
+  let cat := match k with
+    | some n => (findSig q n).isSome || (q.uri == nsFN && q.loc == "concat" && n ≥ 2)
+    | none => (findSigAny q).isSome
+  let xs := q.uri == nsXS && (atypeOfName? q.loc).isSome && q.loc != "NOTATION"
+            && q.loc != "anyAtomicType" && (k.isNone || k == some 1)
+  let impl := (libLookupAll q).isSome || q.uri == nsXS
+  xsl || (cat && impl) || xs
+
+/-- The host functions of this module. `userFn q k` says whether the
+    stylesheet declares `q#k` (`none` arity: any). -/
+def stdHost (userFn : QN → Option Nat → Bool) (q : QN) (k : Nat) : Option HostFn :=
+  if q.uri != nsFN then none else
+  match q.loc, k with
+  | "system-property", 1 => some fun c a => do
+      let n ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE1390"
+      if n.uri == nsXSL then pure (sStr (systemProperty n.loc)) else pure (sStr "")
+  | "available-system-properties", 0 => some fun _ _ =>
+      pure (systemPropertyNames.map (fun l => Item.atom ⟨.b .qname, .qn { uri := nsXSL, loc := l, pfx := "xsl" }⟩))
+  | "function-available", 1 | "function-available", 2 => some fun c a => do
+      let n ← lexQName c.ns (strArg (a.getD 0 [])) true "XTDE1400"
+      let ar : Option Nat := match a.getD 1 [] with
+        | [.atom x] => x.str.toNat?
+        | _ => none
+      pure (sBool (builtinAvailable n ar || userFn n ar))
+  | "element-available", 1 => some fun c a => do
+      let n ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE1440"
+      pure (sBool (n.uri == nsXSL && xslInstructions.contains n.loc))
+  | "type-available", 1 => some fun c a => do
+      let n ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE1428"
+      pure (sBool (n.uri == nsXS && (atypeOfName? n.loc).isSome))
+  | _, _ => none
+
+end L4Factoidal.XSLT4
