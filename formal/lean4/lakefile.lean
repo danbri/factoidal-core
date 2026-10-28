@@ -632,6 +632,8 @@ lean_exe «l4dict-fold-bench» where
 -- RIF Core conformance: syntax and entailment cases from the W3C
 -- suite (Harness/RifRun.lean).
 @[default_target] lean_exe «l4rif» where root := `Harness.RifRun
+-- The W3C N3 Community Group suite with the Notation3 reader (Harness/N3Run.lean).
+@[default_target] lean_exe «l4n3» where root := `Harness.N3Run
 
 -- XSLT 1.0 conformance over the vendored w3c/xslt30-test subset:
 -- XSLT/Transform runs the stylesheet, the result tree is serialised
