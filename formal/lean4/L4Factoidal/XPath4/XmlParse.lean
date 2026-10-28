@@ -96,6 +96,21 @@ def refsExternalEntity (d : Document) (src : String) : Bool :=
   | none => false
   | some dt => dt.entities.defs.any (fun (n, ed) => ed.external && (src.splitOn ("&" ++ n ++ ";")).length > 1)
 
+/-- The option parameter conventions (F&O 4.0 §1.7.4): an option whose
+    name is not defined, and is not a QName in a namespace, is a type
+    error. -/
+def checkOptionKeys (opts : Seq) (known : List String) : M Unit := do
+  match opts with
+  | [.map kvs] =>
+    for (k, _) in kvs do
+      match k.v with
+      | .qn q => if q.uri == "" then err "XPTY0004" ("unknown option " ++ q.loc)
+      | _ => if !known.contains k.str then err "XPTY0004" ("unknown option " ++ k.str)
+  | _ => pure ()
+
+def parseXmlOptionNames : List String := ["base-uri", "dtd-validation", "strip-space", "trust-external",
+  "xinclude", "xsd-validation", "use-xsi-schema-location", "line-numbers", "stable"]
+
 /-! ## fn:parse-xml -/
 
 structure ParseOpts where
@@ -105,6 +120,7 @@ structure ParseOpts where
   trustExternal : Bool := false
 
 def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
+  checkOptionKeys opts parseXmlOptionNames
   let base := match optLookup opts "base-uri" with
     | some s => strOf s
     | none => e.baseUri

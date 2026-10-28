@@ -151,7 +151,7 @@ deriving Inhabited
 
 def escText (s : String) : String :=
   String.join (s.toList.map (fun c => match c with
-    | '&' => "&amp;" | '<' => "&lt;" | '>' => "&gt;" | c => String.ofList [c]))
+    | '&' => "&amp;" | '<' => "&lt;" | '>' => "&gt;" | '\r' => "&#xD;" | c => String.ofList [c]))
 
 def escAttr (s : String) : String :=
   String.join (s.toList.map (fun c => match c with
@@ -210,7 +210,7 @@ def evalIn (env : Env) (src : String) : M Seq := do
   let e ← parseXPath src env.ns
   eval 20000 env e
 
-def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
+def xmlEq1 (env : Env) (got : Seq) (expected : String) : Bool :=
   let gs := serSeq env got
   match Doc.ofString ("<w>" ++ gs ++ "</w>"), Doc.ofString ("<w>" ++ expected ++ "</w>") with
   | .ok d1, .ok d2 =>
@@ -219,6 +219,12 @@ def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
     let root2 := (d2.get 0).children.getD 0 0
     e2.nodeDeepEq 100000 (NodeRef.mk' 0 root1) (NodeRef.mk' 1 root2)
   | _, _ => gs == expected
+
+/-- `assert-xml`: also with the whitespace around the expected XML
+    removed (the catalog's CDATA sections often end with a space or a
+    newline that is not part of the expected result). -/
+def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
+  xmlEq1 env got expected || xmlEq1 env got expected.trimAscii.toString
 
 def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
   | 0, _ => .fail "assertion nesting"
