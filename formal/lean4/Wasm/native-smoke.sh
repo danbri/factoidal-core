@@ -3356,6 +3356,49 @@ check "cidRetrieve refuses an unknown relationship" cidRetrieve "$TMP/cid-r6.jso
 check "ops reflection lists the CID ops" ops "$TMP/dl-empty.json" \
   'set(["cidValidate","cidRetrieve"]) <= set(r["ops"])'
 
+# --- XPath 4.0, XQuery 4.0, XSLT 4.0 (Wasm/Ops/Qt4.lean) ----------------
+# No I/O: fn:doc, fn:unparsed-text, import module, xsl:import and
+# xsl:include fail with the specification's error code.
+args "$TMP/xp4.json" '<r><a>1</a><a>2</a></r>' '//a ! (. * 10) => sum()'
+check "xpath4Eval: arrow and simple map -> 30" xpath4Eval "$TMP/xp4.json" \
+  'r["ok"] is True and r["count"] == 1 and r["items"] == [{"type": "xs:double", "value": "30"}]'
+args "$TMP/xp4-map.json" '' 'map { "a": [1, 2] }'
+check "xpath4Eval: a map, adaptive JSON, no xml form" xpath4Eval "$TMP/xp4-map.json" \
+  'r["ok"] is True and r["items"][0]["type"] == "map(*)" and r["adaptive"] == "{\"a\":[1,2]}" and r["xml"] is None'
+args "$TMP/xp4-bad.json" '' '1 +'
+check "xpath4Eval: syntax error -> XPST0003" xpath4Eval "$TMP/xp4-bad.json" \
+  'r["ok"] is False and r["code"] == "xml.failed" and r["qtError"]["code"] == "XPST0003"
+   and r["qtError"]["namespace"] == "http://www.w3.org/2005/xqt-errors"'
+args "$TMP/xp4-doc.json" '' "doc('https://example.org/a.xml')"
+check "xpath4Eval: fn:doc of a URI -> FODC0002, no fetch" xpath4Eval "$TMP/xp4-doc.json" \
+  'r["ok"] is False and r["qtError"]["code"] == "FODC0002"'
+args "$TMP/xp4-txt.json" '' "unparsed-text('file:///etc/passwd')"
+check "xpath4Eval: fn:unparsed-text of a file -> FOUT1170, no read" xpath4Eval "$TMP/xp4-txt.json" \
+  'r["ok"] is False and r["qtError"]["code"] == "FOUT1170"'
+args "$TMP/xq.json" 'for $a in //a order by xs:integer($a) descending return <b>{string($a)}</b>' '<r><a>1</a><a>2</a></r>'
+check "xqueryEval: FLWOR with constructors over the context document" xqueryEval "$TMP/xq.json" \
+  'r["ok"] is True and r["count"] == 2 and r["xml"] == "<b>2</b><b>1</b>"'
+args "$TMP/xq-noctx.json" 'string-join(for $i in 1 to 3 return string($i), "-")'
+check "xqueryEval: one argument (no context item)" xqueryEval "$TMP/xq-noctx.json" \
+  'r["ok"] is True and r["xml"] == "1-2-3"'
+args "$TMP/xq-mod.json" "import module namespace m = 'urn:m' at 'https://example.org/m.xq'; m:f()" ''
+check "xqueryEval: import module of an external module -> XQST0059" xqueryEval "$TMP/xq-mod.json" \
+  'r["ok"] is False and r["qtError"]["code"] == "XQST0059"'
+args "$TMP/xq-deep.json" 'declare function local:f($n) { if ($n le 0) then 0 else 1 + local:f($n - 1) }; local:f(100000)' ''
+check "xqueryEval: deep recursion stops at the fuel -> FOER0000" xqueryEval "$TMP/xq-deep.json" \
+  'r["ok"] is False and r["qtError"]["code"] == "FOER0000"'
+args "$TMP/x4.json" '<xsl:stylesheet version="4.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes"><xsl:output method="text"/><xsl:template match="/">n={count(//a)}</xsl:template></xsl:stylesheet>' '<r><a/><a/></r>'
+check "xslt4Transform: text value template, method text" xslt4Transform "$TMP/x4.json" \
+  'r == {"ok": True, "output": "n=2", "method": "text", "secondary": [], "messages": []}'
+args "$TMP/x4-imp.json" '<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:import href="https://example.org/a.xsl"/></xsl:stylesheet>' '<r/>'
+check "xslt4Transform: xsl:import of an external module -> XTSE0165, no fetch" xslt4Transform "$TMP/x4-imp.json" \
+  'r["ok"] is False and r["qtError"]["code"] == "XTSE0165"'
+args "$TMP/x4-ar.json" '<a/>'
+check "xslt4Transform with one argument -> call.arity" xslt4Transform "$TMP/x4-ar.json" \
+  'r["ok"] is False and r["code"] == "call.arity"'
+check "ops reflection lists the XPath 4.0, XQuery 4.0 and XSLT 4.0 ops" ops "$TMP/dl-empty.json" \
+  'set(["xpath4Eval","xqueryEval","xslt4Transform"]) <= set(r["ops"])'
+
 # --- Dispatch reflection + unknown op ---------------------------------
 args "$TMP/empty.json"
 check "ops reflection (incl. handle ops via callIO)" ops "$TMP/empty.json" \
@@ -3642,6 +3685,8 @@ corecheck "core: ops reflection names the engine and the full-only ops" ops "$TM
    and "shaclValidate" in r["ops"] and "xpathEval" not in r["ops"]
    and "xpathEval" in r["fullOnlyOps"] and r["blobOps"] == [] and r["blobIoOps"] == []
    and "cidValidate" in r["fullOnlyOps"] and "cidRetrieve" in r["fullOnlyOps"]
+   and set(["xpath4Eval","xqueryEval","xslt4Transform"]) <= set(r["fullOnlyOps"])
+   and "xpath4Eval" not in r["ops"]
    and r["fullOnlyFormats"] == ["jsonld", "json-ld", "application/ld+json"]'
 corecheck "core: parseToDatasetJson turtle" parseToDatasetJson "$TMP/parse.json" \
   'r["ok"] is True and r["count"] == 1 and "example.org/alice" in r["nquads"]'
