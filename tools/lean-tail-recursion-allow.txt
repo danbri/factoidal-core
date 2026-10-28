@@ -1770,3 +1770,6 @@ L4Factoidal_XSLT4_Streaming_evCount  # (s) specification only: the measure of th
 L4Factoidal_XSLT4_Streaming_evCountList  # (s) specification only: the measure of the work-list loop eventsLoop (termination proof) and the work list's meaning in eventsLoop_eq; no compiled function calls it (XSLT Streaming 4.0, issue 1101)
 L4Factoidal_XSLT4_Streaming_flat  # (s) specification only: the measure of the work-list loop eventsLoop (termination proof) and the work list's meaning in eventsLoop_eq; no compiled function calls it (XSLT Streaming 4.0, issue 1101)
 L4Factoidal_XSLT4_Streaming_workCount  # (s) specification only: the measure of the work-list loop eventsLoop (termination proof) and the work list's meaning in eventsLoop_eq; no compiled function calls it (XSLT Streaming 4.0, issue 1101)
+L4Factoidal_XQuery4_flatMapE  # (s) XQuery4/FlworTheorems: specification of the tuple stream; the runtime runs runClauses (for loops)
+L4Factoidal_XQuery4_itemsE  # (s) XQuery4/FlworTheorems: specification of one for clause; the runtime runs stepClause (a for loop)
+L4Factoidal_XQuery4_nestT  # (s) XQuery4/FlworTheorems: the nested reading of a FLWOR, used only by flwor_stream_nested
