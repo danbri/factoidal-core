@@ -2041,9 +2041,20 @@ def applyT : Nat → Sheet → Ctx → Seq → String → List (QN × Seq) → L
     for it in s do
       if k > 1 then if let some t := sep then out := out.push (.text t)
       let icx := { cx.focus it k sz with mode }
+      -- the declared result type of the mode (§6.6.3): the result of a
+      -- rule with no `as` and of the built-in rule must match it
+      let mty := (S.modes.find? (·.name == mode)).bind (·.ty)
+      let checkTy (os : List Out) : XM (List Out) := do
+        match mty with
+        | none => pure os
+        | some ty =>
+          let v ← materializeAll cx.env os
+          pure (Out.ofSeq (← liftX (cx.env.coerce ty v ("the result of a template rule of mode " ++ mode))))
       match ← liftX (findRule S icx.env mode it) with
-      | some t => for o in ← invoke n S icx t ps tun do out := out.push o
-      | none => for o in ← builtin n S icx it mode ps tun do out := out.push o
+      | some t =>
+        let os ← invoke n S icx t ps tun
+        for o in ← (if t.ty.isNone then checkTy os else pure os) do out := out.push o
+      | none => for o in ← checkTy (← builtin n S icx it mode ps tun) do out := out.push o
       k := k + 1
     pure out.toList
 

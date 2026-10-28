@@ -2245,6 +2245,14 @@ def checkSheet : CM Unit := do
           if seen.contains x then continue
           seen := x :: seen
           todo := todo ++ usesOf x
+    -- XTSE4040: the declared type of a template rule is a subtype of the
+    -- declared type of each of its modes (§6.6.3)
+    for t in s.sheet.templates.toList do
+      if let (some _, some st) := (t.pat, t.ty) then
+        for md in s.sheet.modes do
+          if let some mt := md.ty then
+            if (t.modes.contains md.name || t.modes.contains "#all") && !subtype st mt then
+              cerr "XTSE4040" ("the type of a template rule is not a subtype of the type of mode " ++ md.name)
     -- XTSE1290: two values of a property at its highest precedence
     for ((key, k), p) in s.dfConflicts do
       if s.dfPrec.lookup (key, k) == some p then
