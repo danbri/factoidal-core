@@ -19,6 +19,7 @@ namespace `#xsl`, so an inline function item captures it with the
 rest of its closure.
 -/
 import L4Factoidal.XSLT4.Compile
+import L4Factoidal.XSLT4.Strip
 
 namespace L4Factoidal.XSLT4
 
@@ -1406,9 +1407,14 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
     | .sourceDoc href body =>
         let h ← avtStr cx href
         let d ← liftX (callFn 100000 env { uri := nsFN, loc := "doc" } [sStr h])
-        match d with
-        | [i] => run n S (cx.focus i 1 1) body
-        | _ => xerr "FODC0002" ("cannot read " ++ h)
+        -- §4.3: whitespace stripping applies to the document read here too
+        let i? : Option Item := match d with
+          | [.node r] => some (.node { r with rt := r.rt.map (stripDoc S) })
+          | [i] => some i
+          | _ => none
+        match i? with
+        | some i => run n S (cx.focus i 1 1) body
+        | none => xerr "FODC0002" ("cannot read " ++ h)
     | .unknown q fbs code =>
         match fbs with
         | [] => xerr code ("instruction " ++ q.show ++ " is not available and has no xsl:fallback")

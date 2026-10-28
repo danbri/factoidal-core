@@ -133,7 +133,16 @@ def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option Str
   let conv (x y : Atomic) : M Atomic :=
     if x.ty == .untyped then
       if y.ty == .untyped || y.isStringLike then pure (Atomic.ofStr x.str)
-      else if y.isNumeric then castAtomic x (.b .double)
+      else if y.isNumeric then
+        -- XPath 4.0 §4.11.2: to the primitive base type of the numeric
+        -- operand (xs:decimal, xs:double or xs:float), or, if that cast
+        -- fails, to xs:double (3.1 cast to xs:double; with the exact
+        -- numeric comparison of 4.0 that makes `untypedAtomic('6.58') = 6.58` false)
+        let prim : L4Factoidal.XSD.Builtin :=
+          if y.is .decimal then .decimal else if y.is .float then .float else .double
+        match castAtomic x (.b prim) with
+        | .ok v => pure v
+        | .error _ => castAtomic x (.b .double)
       else match y.ty with
         | .b bt => castAtomic x (.b (match bt.primitive with | some p => if derivedFrom bt .dayTimeDuration then .dayTimeDuration else if derivedFrom bt .yearMonthDuration then .yearMonthDuration else p | none => bt)) ns
         | .untyped => pure (Atomic.ofStr x.str)
