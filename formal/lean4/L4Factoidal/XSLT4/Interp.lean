@@ -1370,13 +1370,29 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | none => pure none
         let mut acc : MB := {}
         for it in v do
+          -- a JNode whose value is a map stands for that map (4.0)
+          let it := match it with
+            | .jnode _ _ [m@(.map _)] _ => m
+            | other => other
           match it with
           | .map kvs =>
             for (k, x) in kvs do
               match acc.get? k with
               | some old =>
+                -- 4.0 duplicates: a function of the old and new values (a
+                -- function of one argument gets the old value only), or
+                -- one of the map:merge policies (§21.1.2)
                 match dupF with
-                | some [f] => acc := acc.set k (← liftX (apply 100000 env f [old, x]))
+                | some [.atom pol] =>
+                  match pol.str with
+                  | "use-first" | "use-any" => pure ()
+                  | "use-last" => acc := acc.set k x
+                  | "combine" => acc := acc.set k (old ++ x)
+                  | "reject" => xerr "XTDE3365" ("duplicate key " ++ k.str ++ " in xsl:map")
+                  | other => xerr "XTDE3366" ("invalid duplicates value '" ++ other ++ "'")
+                | some [f] =>
+                  let args := if f.fnArity == some 1 then [old] else [old, x]
+                  acc := acc.set k (← liftX (apply 100000 env f args))
                 | _ => xerr "XTDE3365" ("duplicate key " ++ k.str ++ " in xsl:map")
               | none => acc := acc.set k x
           | _ => xerr "XTTE3375" "the content of xsl:map must be maps"

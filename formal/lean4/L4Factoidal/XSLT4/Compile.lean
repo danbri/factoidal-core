@@ -235,6 +235,8 @@ def staticAvt (c : SCx) (src : String) : CM String := do
 def effAttrs (c : SCx) (m : Mod) (i : Nat) : CM Attrs := do
   let raw := m.rawAttrs i
   if !(m.name i).uri.isEmpty && (m.name i).uri != nsXSL then return raw
+  -- the attributes in no namespace of xsl:record are its fields (§21.1)
+  if m.isXsl i "record" then return raw
   let mut out : Attrs := raw.filter (fun (q, _) => !(q.uri == "" && q.loc.startsWith "_"))
   for (q, v) in raw do
     if q.uri == "" && q.loc.startsWith "_" && q.loc.length > 1 then
@@ -266,7 +268,8 @@ def exclUris (ns : List (String × String)) (v : String) (code : String := "XTSE
     (§3.5: unprefixed on XSLT elements, `xsl:`-prefixed on others). -/
 def SCx.enter (c : SCx) (m : Mod) (i : Nat) (as : Attrs) : CM SCx := do
   let r := m.r i
-  let isX := r.name.uri == nsXSL
+  -- xsl:record takes the standard attributes in the XSLT namespace
+  let isX := r.name.uri == nsXSL && r.name.loc != "record"
   let g := fun (l : String) => if isX then as.get l else as.xsl l
   let nat := effScope r.inscope
   let mut c := { c with ns := c.fixedNs.getD nat, nat }
@@ -301,7 +304,7 @@ def SCx.enter (c : SCx) (m : Mod) (i : Nat) (as : Attrs) : CM SCx := do
 
 /-- `use-when` (§3.13.1): is the element included? -/
 def useWhenOk (c : SCx) (m : Mod) (i : Nat) (as : Attrs) : CM Bool := do
-  let isX := (m.name i).uri == nsXSL
+  let isX := (m.name i).uri == nsXSL && (m.name i).loc != "record"
   match (if isX then as.get "use-when" else as.xsl "use-when") with
   | none => pure true
   | some src => staticBool c src
@@ -452,7 +455,8 @@ def standardAttrs : List String :=
 
 def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
   for (q, v) in as do
-    if q.uri == nsXSL then cerr "XTSE0090" ("an XSLT element cannot have the attribute xsl:" ++ q.loc)
+    if q.uri == nsXSL && !(l == "record" && (standardAttrs ++ ["duplicates"]).contains q.loc) then
+      cerr "XTSE0090" ("an XSLT element cannot have the attribute xsl:" ++ q.loc)
     -- a processor that is not schema-aware (§3.14)
     if q.uri == "" && q.loc == "type" && l != "output" then
       cerr "XTSE1660" "the type attribute needs a schema-aware processor"
@@ -965,9 +969,12 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         -- 4.0 (§21): each attribute in no namespace is a field
         let mut ents : List Instr := []
         for (aq, v) in as do
-          if aq.uri != "" || standardAttrs.contains aq.loc then continue
+          if aq.uri != "" then continue
           ents := ents ++ [.mapEntry (.lit (Atomic.ofStr aq.loc)) (some (← parseC c v)) []]
-        pure (.mapI none (ents ++ (← body)) none)
+        let dups ← match as.xsl "duplicates" with
+          | some v => some <$> parseC c v
+          | none => pure none
+        pure (.mapI none (ents ++ (← body)) dups)
     | "map-entry" =>
         let key ← parseC c (← reqAttr as "key" l)
         let sel ← optExpr c as "select"
