@@ -31,6 +31,7 @@ import { memoryDeltaLogStore } from './delta-log-hosts.mjs';
 import { FactoidalError, errorFromEnvelope, envelopeResult } from './errors.mjs';
 import { buildNodes } from './nodes.mjs';
 import { runWithCipher } from './cipher-host.mjs';
+import { cidFunctions } from './cid.mjs';
 
 // The format names, regimes and query outputs are the engine's tables (op
 // engineTables, formal/lean4/Wasm/Ops/Handles.lean), read once per engine:
@@ -266,6 +267,10 @@ class Store {
  *        Where the deltaLog* functions keep their records
  *        (lib/delta-log-hosts.mjs): IndexedDB in the browser entries. The
  *        default keeps them in the memory of this process.
+ * @param {object} [driver.cidHost]
+ *        Name resolution and the GET of cidRetrieveVerificationMethod
+ *        (lib/cid-node.mjs under Node and Deno). The default is the browser
+ *        host of lib/cid.mjs: the page's fetch, no name resolution.
  */
 function buildApi(driver) {
   let entryPromise; // memoized; a failed load is retried on the next call
@@ -2497,6 +2502,7 @@ function buildApi(driver) {
       store: has('storeOpen') && has('storeHandleQuery'),
       deltaLog: has('deltaLogEncode') && has('deltaLogDecode') && has('deltaLogMerge'),
       literalValues: has('literalValue') && has('literalFromValue'),
+      cid: has('cidValidate') && has('cidRetrieve'),
     };
   }
 
@@ -2602,6 +2608,9 @@ function buildApi(driver) {
     parse, closure, shaclValidate, query, serialize, canonicalize, canonicalHash, explain, csvwToRdf,
   });
 
+  // Controlled Identifiers v1.0 (lib/cid.mjs, issue 1100 items 7 and 9).
+  const cid = cidFunctions({ entry, entryResult, requireEntryFn, host: driver.cidHost });
+
   return {
     parse,
     query,
@@ -2674,6 +2683,8 @@ function buildApi(driver) {
     vcCheckCredentialSubject,
     vcCheckNoDataLoss,
     vcCheckRelatedResourceDigests,
+    cidValidate: cid.cidValidate,
+    cidRetrieveVerificationMethod: cid.cidRetrieveVerificationMethod,
     capabilities,
     openStore,
     queryStore,

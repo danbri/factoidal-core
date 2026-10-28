@@ -1322,6 +1322,87 @@ Details: `lws/README.md`, `solid/server/README.md`,
 [`docs/lws-solid-conformance.md`](https://github.com/danbri/factoidal/blob/main/docs/lws-solid-conformance.md).
 
 
+## Controlled identifier documents (CID 1.0)
+
+[Controlled Identifiers v1.0](https://www.w3.org/TR/cid-1.0/) (W3C
+Recommendation, 15 May 2025). Two functions, in Node, Deno and the browser
+(https://github.com/danbri/factoidal/issues/1100). The Lean engine
+(`L4Factoidal/CID/`) makes every decision; the package moves bytes.
+
+```js
+import { cidValidate, cidRetrieveVerificationMethod } from '@factoidal/core'
+
+const doc = {
+  id: 'https://controller.example/123',
+  verificationMethod: [{
+    id: 'https://controller.example/123#key-456', type: 'Multikey',
+    controller: 'https://controller.example/123',
+    publicKeyMultibase: 'z6MkmM42vxfqZQsv4ehtTjFFxQ4sQKS2w6WR7emozFAn5cxu' }],
+  assertionMethod: ['#key-456'],
+}
+console.log(await cidValidate(doc))                  // { valid: true, errors: [] }
+console.log((await cidValidate({ id: 'x' })).errors) // [{ code: 'idNotUrl', message: …, path: '/id' }]
+
+// Here the host name and the GET are answered locally; by default the
+// package resolves the name and GETs the document itself.
+const r = await cidRetrieveVerificationMethod(
+  'https://controller.example/123#key-456', 'assertionMethod', {
+    now: new Date(),
+    resolve: async () => ['203.0.113.7'],
+    fetch: async () => new Response(JSON.stringify(doc), { headers: { 'content-type': 'application/cid' } }),
+  })
+if (r.ok) console.log(r.verificationMethod.type)     // 'Multikey'
+else console.log(r.code, r.problem)                  // RFC 9457 { type, title, detail }
+```
+
+**`cidValidate(doc)`** checks every MUST of §2. `valid` is the answer of
+the engine's document parser; `errors` lists each failed MUST it finds, with
+the engine's name (`code`), a message, and an RFC 6901 JSON Pointer (`path`;
+`''` is the whole document). A controlled identifier document is public, so
+`secretKeyMultibase`, `secretKeyJwk` and a private JWK member are errors.
+
+**`cidRetrieveVerificationMethod(url, relationship, options)`** is §3.3
+Retrieve Verification Method. `relationship` is one of `authentication`,
+`assertionMethod`, `keyAgreement`, `capabilityInvocation`,
+`capabilityDelegation`. The engine names each request; the package does it:
+
+1. The document URL is `https` (`http` only with `allowHttp: true`).
+2. The host name is resolved (`options.resolve`, default the system
+   resolver under Node and Deno). The fetch is refused (`FETCH_REFUSED`) when
+   any address is loopback, unspecified, link-local or private (RFC 1918,
+   RFC 4193), or the name is a `localhost` name, unless
+   `allowPrivateFetch: true`. This is the guard of `authz-serve`.
+3. The document is fetched from the address the engine chose, with
+   `Accept: application/cid, application/cid+json, application/ld+json, application/json`.
+   No redirect is followed.
+4. The answer must have status 200 (`FETCH_FAILED`) and one of those four
+   media types as its `Content-Type` (`UNSUPPORTED_MEDIA_TYPE`).
+5. §3.3 steps 5–12; a failure is a §3.5 processing error:
+   `INVALID_VERIFICATION_METHOD_URL`, `INVALID_CONTROLLED_IDENTIFIER_DOCUMENT`,
+   `INVALID_CONTROLLED_IDENTIFIER_DOCUMENT_ID`, `INVALID_VERIFICATION_METHOD`,
+   `INVALID_RELATIONSHIP_FOR_VERIFICATION_METHOD`, with `problem.type`
+   `https://w3id.org/security#<code>`.
+6. With `now` (a `Date`, or seconds since the epoch), a method at or after
+   its `expires` or `revoked` time is `VERIFICATION_METHOD_NOT_IN_FORCE`.
+
+The four codes that are not §3.5 errors have a `problem.type` of
+`tag:danbri.github.io,2026:factoidal/cid#<code>`. A failed retrieval does not
+reject; an unknown relationship rejects with a `FactoidalError`.
+
+`options.fetch(url, init)` replaces the GET. It gets `init.headers.accept`,
+`init.redirect: 'manual'` and, when the engine chose one, `init.address`
+(connect there; a replacement that ignores it loses the guard against a
+second DNS answer). It answers a `Response`, or
+`{ status, headers: { get(name) }, text() }`.
+
+**In a browser** a page cannot resolve names, so the guard covers IP
+literals and `localhost` names only; the browser chooses the address of a
+name. The default fetch there is the page's `fetch` with
+`redirect: 'manual'` and `credentials: 'omit'`, under the page's CORS rules.
+
+The design record: `docs/designissues/2026-10-27-cid-1.0.md`.
+
+
 ## An SBM11 store held in Linked Web Storage: `lwsSbm11Reader`
 
 `openSbm11` (the Shardborough store, https://github.com/danbri/factoidal/issues/1009)
@@ -1715,6 +1796,7 @@ runnable.
 | `xmlDecrypt`, `xmlEncrypt` | `(document, {keys, allowCbc?})`, `(document, {recipient, algorithm?, keyTransport?, keyWrap?, content?, saml?}) => {document, canonical}` | XML Encryption 1.1. Allowlist: `aes128-gcm`, `aes256-gcm` (CBC only with `allowCbc`), `rsa-oaep-mgf1p`, `xmlenc11#rsa-oaep`, `kw-aes128`, `kw-aes256`, ECDH-ES (P-256, X25519); `rsa-1_5` and remote references refused. Keys are JWKs, `kid` is the `ds:KeyName`. Every failure after the structure check is one error, `XML decryption failed` |
 | `jweDecrypt`, `jweEncrypt` | `(token, {jwk}) => {header, plaintext: Uint8Array}`, `(plaintext, {alg, enc, jwk, header?}) => token` | JWE Compact Serialization (RFC 7516). `alg` RSA-OAEP, RSA-OAEP-256, ECDH-ES, ECDH-ES+A128KW, ECDH-ES+A256KW, A128KW, A256KW, dir; `enc` A128GCM, A256GCM, A128CBC-HS256, A256CBC-HS512. RSA, P-256 and X25519 run in the wasm (HACL\*); AES runs in the host's WebCrypto (`globalThis.crypto.subtle`), so these four functions are asynchronous on every host |
 | `vcCheckCredential`, `vcCheckCredentialSubject`, `vcCheckNoDataLoss`, `vcCheckRelatedResourceDigests`, `didKeyResolve` | | VCDM 2.0 checks; `did:key` (Ed25519) resolution |
+| `cidValidate`, `cidRetrieveVerificationMethod` | `(doc) => {valid, errors}`, `(url, relationship, {fetch?, resolve?, now?, allowHttp?, allowPrivateFetch?}) => {ok, …}` | Controlled Identifiers v1.0 §2 and §3.3; see "Controlled identifier documents" |
 | `literalValue`, `isValidLiteral`, `canonicalLiteral` | `(Literal) => {datatype, recognized, valid, value?, canonical?}`, `=> boolean \| null`, `=> Literal \| null` | synchronous after `ready()`; see "Literal values" |
 | `literalFromValue` | `(boolean \| number \| bigint \| string \| Date, {datatype?}) => Literal` | synchronous after `ready()`; the engine table, or a named datatype; see "Literal values" |
 | `capabilities` | `() => {…}` | which ops the loaded wasm serves |

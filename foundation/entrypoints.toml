@@ -1441,3 +1441,30 @@ reason = "term-level: the XSD lexical-to-value mapping of one literal (RDF/Liter
 [[nonstage]]
 id = "wasm:literalFromValue"
 reason = "term-level: the literal of one JavaScript value (RDF/LiteralValue.lean jsValueLiteral), reads no graph"
+
+# Controlled Identifiers v1.0 (https://github.com/danbri/factoidal/issues/1100,
+# items 7 and 9): JSON documents and one host fetch; no RDF data, no stage.
+
+[[nonstage]]
+id = "wasm:cidValidate"
+reason = "JSON document check: CID 1.0 §2 (L4Factoidal/CID/Validate.lean check over CID.parseDocument); reads no RDF data"
+
+[[nonstage]]
+id = "wasm:cidRetrieve"
+reason = "one step of CID 1.0 §3.3 with the host (L4Factoidal/CID/Fetch.lean step: the private-address guard, status and Content-Type, then CID.retrieveFromText); reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#cidValidate"
+reason = "JSON document check over wasm:cidValidate (lib/cid.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#cidRetrieveVerificationMethod"
+reason = "host loop over wasm:cidRetrieve (lib/cid.mjs): resolves and fetches what the engine names (lib/cid-node.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#cidValidate"
+reason = "JSON document check over wasm:cidValidate (lib/cid.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#cidRetrieveVerificationMethod"
+reason = "host loop over wasm:cidRetrieve (lib/cid.mjs) with the page's fetch; reads no RDF data"

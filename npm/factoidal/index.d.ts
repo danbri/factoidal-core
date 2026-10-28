@@ -1884,6 +1884,70 @@ export function vcCheckRelatedResourceDigests(
   credentialJson: string
 ): Promise<{ valid: boolean; reason?: string }>;
 
+/** One failed MUST of CID 1.0 §2 (cidValidate). */
+export interface CidValidationError {
+  /** The engine's name of the failed MUST, e.g. 'idNotUrl', 'jwkPrivateMember'. */
+  code: string;
+  message: string;
+  /** RFC 6901 JSON Pointer to the member, e.g. '/verificationMethod/1/publicKeyJwk/d'; '' is the whole document. */
+  path: string;
+}
+
+/**
+ * Controlled Identifiers v1.0 §2 (https://www.w3.org/TR/cid-1.0/): check a
+ * controlled identifier document. `valid` is the engine's answer
+ * (L4Factoidal.CID.parseDocument); `errors` lists every failed MUST it found,
+ * empty when valid. Issue 1100 item 9.
+ */
+export function cidValidate(doc: string | object): Promise<{ valid: boolean; errors: CidValidationError[] }>;
+
+/** An RFC 9457 problem details object. */
+export interface CidProblem {
+  /** https://w3id.org/security#<NAME> for a §3.5 error; a tag: URI for the others. */
+  type: string;
+  title: string;
+  detail: string;
+}
+
+export interface CidRetrieveOptions {
+  /**
+   * GET the URL the engine names. Called as fetch(url, init) with
+   * init.headers.accept, init.redirect 'manual' and, when the engine chose
+   * one, init.address (the address to connect to). Answers a Response, or
+   * { status, headers: { get(name) }, text() }. Default: Node and Deno
+   * connect to init.address; a browser uses the page's fetch.
+   */
+  fetch?: (url: string, init: { method: 'GET'; headers: { accept: string }; redirect: 'manual'; address?: string }) =>
+    Promise<{ status: number; headers: { get(name: string): string | null }; text(): Promise<string> }>;
+  /** Every address of a host name. Default: the system resolver (Node, Deno); none in a browser. null: none. */
+  resolve?: ((host: string) => Promise<string[]>) | null;
+  /** Refuse a method that has expired or been revoked at this time (a Date, or seconds since the epoch). */
+  now?: Date | number;
+  /** Allow an http document URL (default: https only). */
+  allowHttp?: boolean;
+  /** Allow loopback, link-local, private and localhost addresses (default: refused). */
+  allowPrivateFetch?: boolean;
+}
+
+/**
+ * Controlled Identifiers v1.0 §3.3 Retrieve Verification Method. The engine
+ * names each fetch and decides each answer (the private-address guard of the
+ * authorization server, the status, the Content-Type: application/cid,
+ * application/cid+json, application/ld+json or application/json, then §3.3);
+ * this function does the fetch. Never rejects for a failed retrieval: it
+ * answers `ok: false` with the §3.5 name (or FETCH_REFUSED, FETCH_FAILED,
+ * UNSUPPORTED_MEDIA_TYPE, VERIFICATION_METHOD_NOT_IN_FORCE) and an RFC 9457
+ * object. Issue 1100 items 7 and 9.
+ */
+export function cidRetrieveVerificationMethod(
+  url: string,
+  relationship: 'authentication' | 'assertionMethod' | 'keyAgreement' | 'capabilityInvocation' | 'capabilityDelegation',
+  options?: CidRetrieveOptions
+): Promise<
+  | { ok: true; verificationMethod: Record<string, unknown>; controllerDocument: string }
+  | { ok: false; code: string; problem: CidProblem }
+>;
+
 /**
  * Feature probe: which ops the loaded wasm module serves. A module older
  * than this package can lack some; an operation whose op is missing
@@ -1936,6 +2000,8 @@ export function capabilities(): Promise<{
   deltaLog: boolean;
   /** ops literalValue and literalFromValue (issue 1051). */
   literalValues: boolean;
+  /** ops cidValidate and cidRetrieve (issue 1100). */
+  cid: boolean;
   /** 'full': the whole library is in the wasm module. */
   profile: 'full' | string;
   /** The dispatch ABI version string of the loaded wasm module. */
@@ -2085,6 +2151,8 @@ declare const _default: {
   vcCheckCredentialSubject: typeof vcCheckCredentialSubject;
   vcCheckNoDataLoss: typeof vcCheckNoDataLoss;
   vcCheckRelatedResourceDigests: typeof vcCheckRelatedResourceDigests;
+  cidValidate: typeof cidValidate;
+  cidRetrieveVerificationMethod: typeof cidRetrieveVerificationMethod;
   capabilities: typeof capabilities;
   Dataset: typeof Dataset;
   Store: typeof Store;

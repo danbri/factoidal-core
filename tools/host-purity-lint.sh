@@ -111,7 +111,9 @@ for f in "${store_files[@]}"; do scan "$f" "$store_pattern" "$store_allow"; done
 # The authorization server host (https://github.com/danbri/factoidal/issues/916):
 # no OAuth error code, no JWT claim or header member, no token type and no
 # address range. Lean (L4Factoidal/Authz/) decides every one of them.
-authz_files=("$root/npm/factoidal/authz/server.mjs")
+# The CID retrieval host (https://github.com/danbri/factoidal/issues/1100):
+# the same rules; L4Factoidal/CID/Fetch.lean decides every address.
+authz_files=("$root/npm/factoidal/authz/server.mjs" "$root/npm/factoidal/lib/cid.mjs" "$root/npm/factoidal/lib/cid-node.mjs")
 authz_pattern='invalid_(request|target|grant|client|token)|unsupported_grant_type|server_error|\b(aud|iss|sub|kid|jti|iat|exp|nbf|azp|client_id)\b|token-exchange|token-type|at\+jwt|\b(127|169\.254|192\.168|10)\.[0-9]|::1|fe80|fc00'
 # The default bind address of the listening socket is not a fetch decision.
 for f in "${authz_files[@]}"; do scan "$f" "$authz_pattern" "s/'127\.0\.0\.1'//g"; done
