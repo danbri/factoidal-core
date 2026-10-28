@@ -332,7 +332,17 @@ def regexRecord (p f : String) : Item :=
 def regexTable : List (String × LibFn) := [
   ent "analyze-string" (fun _ e a => do
     let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 2))
-    pure (analyzeString e (strOf (argN a 0)) re)),
+    let r := analyzeString e (strOf (argN a 0)) re
+    -- a schema-aware processor annotates the result with the types of
+    -- the `fn` schema (F&O 4.0 §6.6.3); without that schema it is untyped
+    match e.schema.validateIn, r with
+    | some f, [.node n] =>
+      match n.rt with
+      | some d => match f "strict" d n.idx "" with
+        | .ok d' => pure [.node { n with rt := some d' }]
+        | .error _ => pure r
+      | none => pure r
+    | _, _ => pure r),
   ent "matching-segments" (fun _ _ a => do
     let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 2))
     pure (matchingSegments (strOf (argN a 0)) re)),

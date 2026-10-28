@@ -11,6 +11,7 @@ The schema reading and validation themselves are pure
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.XSD11.XPathHooks
+import L4Factoidal.XSD11.FnSchemas
 
 namespace L4Factoidal.XSD11
 
@@ -57,7 +58,15 @@ def loadClosure (roots : List String) : IO (List LoadedDoc × Bool) := do
 def loadSchema (files : List String) : IO Schema := do
   let files := files.map pathNormalize
   let (docs, _) ← loadClosure files
-  return buildSchema none xpathHooks docs files
+  -- the schemas of the `fn` namespace are always in scope (F&O 4.0 C.1, C.2)
+  let (docs, roots) := withFnSchemas docs files
+  return buildSchema none xpathHooks docs roots
+
+/-- The built-in types and the schemas of the `fn` namespace: the in-scope
+    schema definitions when no schema is imported. -/
+def Schema.builtinsFn : Schema :=
+  let (docs, roots) := withFnSchemas [] []
+  buildSchema none xpathHooks docs roots
 
 /-- Schemas already read in this process, by their document files. -/
 initialize schemaCache : IO.Ref (List (List String × Schema)) ← IO.mkRef []

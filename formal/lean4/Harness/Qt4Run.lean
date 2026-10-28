@@ -734,7 +734,7 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool
   | none =>
     -- no schema in the environment: the built-in types only (lax validation,
     -- xsi:type with built-in types, fn:xsd-validator with a schema option)
-    env := { env with schema := L4Factoidal.XSD11.schemaHookOf L4Factoidal.XSD11.Schema.builtins }
+    env := { env with schema := L4Factoidal.XSD11.schemaHookOf L4Factoidal.XSD11.Schema.builtinsFn }
   for (role, file, uri0) in spec.sources do
     -- a source without a uri gets its file URI as its document URI
     -- (implementation-defined, F&O 4.0 §2.5)
