@@ -118,6 +118,8 @@ def featureSupported (f : String) : Bool :=
     || f == "simple-uca-fallback" || f == "advanced-uca-fallback"
   -- EXPath Binary 4.0 and File 4.0 (`L4Factoidal.EXPath`)
   || f == "binary" || f == "expath-file"
+  -- fn:invisible-xml (`XPath4.Ixml`)
+  || f == "fn-invisible-xml"
 
 def depOk (d : Node) : Bool :=
   let ty := attrD d "type"

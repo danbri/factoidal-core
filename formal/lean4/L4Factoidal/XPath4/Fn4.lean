@@ -374,7 +374,7 @@ def systemPropertiesFn : LibFn := fun _ _ _ =>
     (q "supports-xinclude", [.atom (Atomic.ofBool false)]),
     (q "supports-dtd-validation", [.atom (Atomic.ofBool false)]),
     (q "supports-dtd-attribute-typing", [.atom (Atomic.ofBool false)]),
-    (q "supports-invisible-xml", [.atom (Atomic.ofBool false)]),
+    (q "supports-invisible-xml", [.atom (Atomic.ofBool true)]),
     (q "supports-dynamic-xquery", [.atom (Atomic.ofBool false)]),
     (q "supports-dynamic-xslt", [.atom (Atomic.ofBool false)]),
     (q "supports-binary-library", [.atom (Atomic.ofBool true)]),
