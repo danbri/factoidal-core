@@ -128,6 +128,11 @@ inductive Instr where
   /-- An instruction this processor does not have, or an extension
       instruction: its `xsl:fallback` children. -/
   | unknown (name : QN) (fallbacks : List (List Instr)) (code : String)
+  /-- An element in an extension namespace (§10.1.3, 4.0): a call of the
+      named template of that name, its attributes (read as a value
+      template and as an expression) giving the parameters; otherwise
+      its `xsl:fallback` children. -/
+  | extCall (name : QN) (attrs : List (QN × Option Avt × Option Expr)) (fallbacks : List (List Instr))
   /-- A static error found while compiling, raised only when the
       instruction is evaluated (inside forwards-compatible regions or
       `use-when` branches the error never surfaces). -/

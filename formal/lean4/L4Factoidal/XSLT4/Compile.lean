@@ -408,7 +408,9 @@ def compileElem : Nat → SCx → Mod → Nat → CM (List Instr)
       -- an extension instruction: this processor has none (§24.2)
       let fbs ← (m.elemKids i).filterM (fun k => pure (m.isXsl k "fallback"))
       let bodies ← fbs.mapM (fun k => do compileNodes f c m (m.kids k))
-      return [.unknown q bodies "XTDE1450"]
+      let ats := (m.rawAttrs i).filter (fun (aq, _) => aq.uri != nsXSL)
+      let ats := ats.map (fun (aq, v) => (aq, (c.avt v).toOption, (c.parse v).toOption))
+      return [.extCall q ats bodies]
     -- a literal result element (§11.1)
     let mut ats : List (QN × Avt) := []
     for (aq, v) in m.rawAttrs i do
@@ -804,7 +806,7 @@ def addStatic (c : SCx) (m : Mod) (i : Nat) (as : Attrs) : CM Unit := do
       | none =>
         if isParam && (← as.bool "required" false) then
           cerr "XTDE0050" ("no value given for the required static parameter $" ++ nmS)
-        else pure (sStr "")
+        else pure (if (as.get "as").isSome then [] else sStr "")
   let v ← match as.get "as" with
     | some t => do
         let ty ← liftM (c.parseType t)
@@ -969,7 +971,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let key ← match as.get "name" with
         | some v => modeKey c v
         | none => pure "#unnamed"
-      let onm : NoMatch ← match (as.get "on-no-match").getD "text-only-copy" with
+      let onm : NoMatch ← match ((as.get "on-no-match").getD "text-only-copy").trimAscii.toString with
         | "text-only-copy" => pure .textOnlyCopy | "deep-copy" => pure .deepCopy
         | "shallow-copy" => pure .shallowCopy | "deep-skip" => pure .deepSkip
         | "shallow-skip" => pure .shallowSkip | "fail" => pure .fail

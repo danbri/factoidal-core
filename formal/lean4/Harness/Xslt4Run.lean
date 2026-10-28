@@ -310,7 +310,9 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
       | "assert-count" => ok? (s.length == (txt.trimAscii.toString.toNat?).getD 0) ("count " ++ toString s.length)
       | "assert-string-value" =>
           let got := stringValueOf env s
-          let ok := if attrD a "normalize-space" == "true" then normSp got == normSp txt else got == txt
+          -- the XSLT catalog's driver always normalizes space here
+          -- (runner/assert.xsl)
+          let ok := normSp got == normSp txt
           ok? ok ("string value '" ++ (cut got 80) ++ "'")
       | "assert-eq" =>
           match evalIn env txt with
@@ -488,8 +490,28 @@ def scanResources (root dir src : String) : IO (List (String × String)) := do
     if ← System.FilePath.pathExists path then
       if (← System.FilePath.isDir path) then continue
       match ← readFileSafe path with
-      | some txt => out := (fileUri path, txt) :: out
+      | some txt => out := (t, txt) :: (fileUri path, txt) :: out
       | none => pure ()
+  return out
+
+/-- The data files (`.xml`, `.json`, `.txt`, `.csv`, `.dtd`) of a
+    directory, read in advance, when it has at most 300 entries; files
+    above 1 MB are left out. -/
+def dirResources (dir : String) : IO (List (String × String)) := do
+  let entries ← try System.FilePath.readDir dir catch _ => pure #[]
+  if entries.size > 300 then return []
+  let mut out : List (String × String) := []
+  for e in entries do
+    let p := e.path.toString
+    let ext := (p.splitOn ".").getLast?.getD ""
+    if !["xml", "json", "txt", "csv", "dtd", "ent"].contains ext then continue
+    let md ← try some <$> e.path.metadata catch _ => pure none
+    match md with
+    | some m => if m.byteSize > 1000000 then continue
+    | none => continue
+    match ← readFileSafe p with
+    | some t => out := (fileUri (normPath p), t) :: out
+    | none => pure ()
   return out
 
 /-- Parse a source document, as the processor would read it. -/
@@ -566,6 +588,9 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
         res := res ++ (← scanResources o.root (dirOf (uriPath u)) t)
       res := res ++ (← scanResources o.root dir (testNode.textContent ++ String.join ((kids testNode).map (fun k =>
         String.join (k.elementAttrs.map (·.value ++ " "))))))
+      -- the small data files of the test set's directory (for URIs that
+      -- the stylesheet computes)
+      res := res ++ (← dirResources dir).filter (fun (u, _) => !res.any (·.1 == u))
       env := { env with resources := res }
       -- stylesheet parameters
       let mut params : List (QN × Seq) := []

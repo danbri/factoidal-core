@@ -75,11 +75,11 @@ def itDefault (d : String) : Nat → IType → IType
 def nodeTestDefault (d : String) (ax : Axis) : NodeTest → NodeTest
   | .name t => if ax == .attribute || ax == .namespace then .name t else .name (ntDefault d t)
   | .kind t => .kind (itDefault d 50 t)
+  | .ncname t l => if ax == .attribute || ax == .namespace then .ncname t l else .ncname (ntDefault d t) l
   | .union ts => .union (ts.map (fun t => match t with
       | .name n => if ax == .attribute || ax == .namespace then .name n else .name (ntDefault d n)
       | .kind k => .kind (itDefault d 50 k)
       | u => u))
-  | t => t
 
 /-- Apply `xpath-default-namespace` throughout an expression. -/
 def exprDefault (d : String) : Nat → Expr → Expr
@@ -277,6 +277,9 @@ def filterBase : Expr → Bool
 /-- The default priority of one pattern alternative (§6.4). -/
 def defaultPriority (e : Expr) : Float :=
   let ofTest (ax : Axis) (t : NodeTest) : Float :=
+    let t := match t with
+      | .ncname n _ => NodeTest.name n
+      | t => t
     match t with
     | .name (.name _) => 0
     | .name (.ns _) | .name (.loc _) => -0.25

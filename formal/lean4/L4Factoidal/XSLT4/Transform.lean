@@ -218,6 +218,22 @@ def accumulatorValues (S : Sheet) (env : Env) (acc : Accumulator) (root : NodeRe
     out := out.insert j ((out.getD j ([], [])).1, cur)
   pure out
 
+/-- Remove `.` and `..` segments from the path of a URI (RFC 3986
+    §5.2.4). -/
+def removeDots (u : String) : String := Id.run do
+  let (pre, path) := match u.splitOn "://" with
+    | [s, rest] =>
+      match rest.splitOn "/" with
+      | auth :: segs => (s ++ "://" ++ auth, segs)
+      | [] => (u, [])
+    | _ => ("", u.splitOn "/")
+  let mut out : List String := []
+  for seg in path do
+    if seg == "." then continue
+    if seg == ".." then out := out.dropLast
+    else out := out ++ [seg]
+  return if pre == "" then String.intercalate "/" out else pre ++ "/" ++ String.intercalate "/" out
+
 /-- The host function table over the dynamic context `base` (global
     variables bound), with `f` levels of nested stylesheet function
     calls. -/
@@ -369,10 +385,12 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
                 (env.nodeString nd, if base != "" then base else (if d.baseUri != "" then d.baseUri else d.uri))
             | .atom x => (x.str, if base != "" then base else S.baseUri)
             | _ => ("", S.baseUri)
+          let b := if b == "" then S.baseUri else b
           let abs := if u == "" then b else resolveUri b u
           let abs := match abs.splitOn "#" with
             | p :: _ => p
             | [] => abs
+          let abs := removeDots abs
           match callFn 100000 env { uri := nsFN, loc := "doc" } [sStr abs] with
           | .ok [.node d] => out := out.push d
           | .ok _ => pure ()
@@ -498,7 +516,8 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
     | none =>
       let mode := o.initialMode.getD S.defaultMode
       let mode := if mode == "#default" then S.defaultMode else mode
-      if mode != "#unnamed" && !(S.modes.any (·.name == mode)) && !(S.templates.any (fun t => t.modes.contains mode)) then
+      if mode != "#unnamed" && mode != S.defaultMode && !(S.modes.any (·.name == mode)) &&
+          !(S.templates.any (fun t => t.modes.contains mode || t.modes.contains "#all")) then
         xerr "XTDE0045" ("the initial mode " ++ mode ++ " is not declared")
       let sel := match o.initialSelect with
         | some s => s

@@ -337,7 +337,10 @@ def quickOk (env : Env) (t : Tmpl) (it : Item) : Bool :=
     match it with
     | .node n =>
       let r := env.nrec n
-      match (exprFlat 1000 p.e).getLast? with
+      let last := match (exprFlat 1000 p.e).getLast? with
+        | some (.step ax (.ncname nt _) ps) => some (Expr.step ax (.name nt) ps)
+        | x => x
+      match last with
       | some (.step .child (.name (.name q)) _) => r.kind == .element && r.name.loc == q.loc
       | some (.step .attribute (.name (.name q)) _) => r.kind == .attribute && r.name.loc == q.loc
       | some (.step .child (.name _) _) => r.kind == .element
@@ -1031,10 +1034,10 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               as.mapM (fun a => do
                 let d := orElseM (castAtomic (if a.ty == .untyped then Atomic.ofStr a.str else a) (.b .double)) (Atomic.ofDbl (0.0/0.0))
                 let f := (d.num?.map Num.toFloat).getD (0.0/0.0)
-                if f.isNaN || f.isInf || f < 0.5 then
+                if f.isNaN || f.isInf || f < -0.5 then
                   if cx.backCompat then pure (-1 : Int) else
                   xerr "XTDE0980" ("xsl:number value " ++ a.str ++ " is not a positive number")
-                else pure (Float.round f).toUInt64.toNat)
+                else pure (Int.ofNat (Float.round (if f < 0 then 0 else f)).toUInt64.toNat))
           | none => do
               let nd ← match sel with
                 | some e => do
@@ -1077,7 +1080,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             | _, _ => fmtd
           out := out ++ sep ++ fmtd
           i := i + 1
-        pure [.text (out ++ (if nums.isEmpty then "" else suf))]
+        pure [.text (out ++ suf)]
     | .iterate sel params onComp body =>
         let s ← evalX cx sel
         -- initial parameter values
@@ -1404,6 +1407,44 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               for o in ← run n S cx b do out := out.push o
             pure out.toList
     | .staticErr code msg => xerr code msg
+    | .extCall q ats fbs =>
+        let cands := S.templates.toList.filter (fun t => t.name == some q)
+        match cands.foldl (fun (b : Option Tmpl) t => match b with
+            | none => some t
+            | some x => if t.prec > x.prec then some t else some x) none with
+        | none =>
+          match fbs with
+          | [] => xerr "XTDE1450" ("instruction " ++ q.show ++ " is not available and has no xsl:fallback")
+          | _ => do
+              let mut out : Array Out := #[]
+              for b in fbs do
+                for o in ← run n S cx b do out := out.push o
+              pure out.toList
+        | some t =>
+          let mut ps : List (QN × Seq) := []
+          for (aq, avt?, ex?) in ats do
+            let some p := t.params.find? (fun p => p.name == aq && !p.tunnel)
+              | xerr "XTSE0680" ("template " ++ q.show ++ " has no parameter " ++ aq.show)
+            let v ← match p.ty with
+              | some (.atomic (.b .boolean)) =>
+                  match avt? with
+                  | some a => do
+                      let sv := (← avtStr cx a).trimAscii.toString
+                      match parseBool sv with
+                      | some b => pure (sBool b)
+                      | none => xerr "XTDE0030" ("invalid boolean '" ++ sv ++ "' for " ++ aq.show)
+                  | none => xerr "XTSE0350" ("invalid value template for " ++ aq.show)
+              | some (.atomic _) =>
+                  match avt? with
+                  | some a => do pure [.atom (Atomic.untypedOf (← avtStr cx a))]
+                  | none => xerr "XTSE0350" ("invalid value template for " ++ aq.show)
+              | _ =>
+                  match ex? with
+                  | some e => evalX cx e
+                  | none => xerr "XPST0003" ("invalid expression for " ++ aq.show)
+            ps := ps ++ [(aq, v)]
+          let cx' := if t.ctxAbsent then cx.noFocus else cx
+          invoke n S cx' t ps cx.tunnel
 
 /-- The string content of `xsl:comment`, `xsl:processing-instruction`
     and `xsl:namespace` (§5.7.2). -/
