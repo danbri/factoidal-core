@@ -807,7 +807,10 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
       let outerDecls := (ss.drop 1).filterMap (fun d => match d.splitOn "\x00" with
         | [p, u] => if p.startsWith "\x01" then some ((p.drop 1).toString, u) else none | _ => none)
       let mut vals : Array Seq := #[]
-      for p in parts do vals := vals.push (← cb.eval env p)
+      -- the content of a direct constructor sees its xmlns declarations (§4.12.1.2)
+      let envC := if ss.headD "" == "d" && !decls.isEmpty then
+          { env with ns := decls ++ env.ns.filter (fun (p, _) => !decls.any (·.1 == p)) } else env
+      for p in parts do vals := vals.push (← cb.eval envC p)
       let id := newDocId "elem" env (name.eqn ++ "|" ++ ss.headD "" ++ "|" ++
         String.intercalate "," (vals.toList.map (fun s => String.intercalate "," (s.map itemSig)))) ss
       buildElement env id name decls vals.toList (!ss.contains "#no-preserve") (!ss.contains "#no-inherit")
