@@ -348,13 +348,13 @@ def optType (c : SCx) (as : Attrs) (l : String := "as") : CM (Option IType) :=
   | none => pure none
   | some v => some <$> liftM (c.parseType v)
 
-def modeKey (c : SCx) (v : String) : CM String := do
+def modeKey (c : SCx) (v : String) (syn : String := "") : CM String := do
   let v := v.trimAscii.toString
   if v == "#default" then pure c.defaultMode
   else if v == "#unnamed" then pure "#unnamed"
   else if v == "#current" then pure "#current"
   else if v == "#all" then pure "#all"
-  else pure (← liftM (c.qname v)).eqn
+  else pure (← liftM (c.qname v (syn := syn))).eqn
 
 /-- The attributes each instruction allows (§2.3: XTSE0090 for any
     other attribute in no namespace, except in forwards-compatible
@@ -709,7 +709,7 @@ def compileElem : Nat → SCx → Mod → Nat → CM (List Instr)
         continue
       ats := ats ++ [(aq, ← liftM (c.avt v))]
     let useSets ← match as.xsl "use-attribute-sets" with
-      | some v => (tokens v).mapM (fun t => liftM (c.qname t))
+      | some v => (tokens v).mapM (fun t => liftM (c.qname t (syn := "XTSE0710")))
       | none => pure []
     let body ← compileNodes f c m (m.kids i)
     pure (wrap [.lre q (lreDecls c) ats useSets body])
@@ -812,7 +812,7 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
     | "element" =>
         let nm ← liftM (c.avt (← reqAttr as "name" l))
         let useSets ← match as.get "use-attribute-sets" with
-          | some v => (tokens v).mapM (fun t => liftM (c.qname t))
+          | some v => (tokens v).mapM (fun t => liftM (c.qname t (syn := "XTSE0710")))
           | none => pure []
         pure (.elem nm (← optAvt c as "namespace") c.ns useSets (← body))
     | "attribute" =>
@@ -916,7 +916,7 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         pure (.var nm (← optType c as) sel b)
     | "copy" =>
         let useSets ← match as.get "use-attribute-sets" with
-          | some v => (tokens v).mapM (fun t => liftM (c.qname t))
+          | some v => (tokens v).mapM (fun t => liftM (c.qname t (syn := "XTSE0710")))
           | none => pure []
         pure (.copy (← optExpr c as "select") (← as.bool "copy-namespaces" true)
           (← as.bool "inherit-namespaces" true) useSets (← body))
@@ -1339,7 +1339,7 @@ def compileTemplate (prec : Nat) (d : Decl) (as : Attrs) (inMode : Option String
         if ts.isEmpty then cerr "XTSE0550" "empty mode attribute" else
         if ts.contains "#all" && ts.length > 1 then cerr "XTSE0550" "#all with other modes" else
         if ts.eraseDups.length != ts.length then cerr "XTSE0550" "a mode is listed twice" else
-        ts.mapM (modeKey c)
+        ts.mapM (modeKey c · "XTSE0550")
     | none, some md => pure [md]
     | none, none => pure [c.defaultMode]
   let ps ← compileParams 100000 c m ekids "param"
@@ -1537,7 +1537,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
   | "attribute-set" =>
       let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:attribute-set requires a name"
       let useSets ← match as.get "use-attribute-sets" with
-        | some v => (tokens v).mapM (fun t => liftM (c.qname t))
+        | some v => (tokens v).mapM (fun t => liftM (c.qname t (syn := "XTSE0710")))
         | none => pure []
       for k in ekids do
         if !m.isXsl k "attribute" then cerr "XTSE0010" "xsl:attribute-set may contain only xsl:attribute"

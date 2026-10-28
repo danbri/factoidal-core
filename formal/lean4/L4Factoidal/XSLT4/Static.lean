@@ -213,7 +213,7 @@ def SCx.parseType (c : SCx) (src : String) : M IType := do
 
 /-- Resolve a lexical QName (or EQName) in the static context; the
     default namespace applies when `useDefault`. -/
-def SCx.qname (c : SCx) (s : String) (useDefault : Bool := false) (code : String := "XTSE0280") : M QN := do
+def SCx.qname (c : SCx) (s : String) (useDefault : Bool := false) (code : String := "XTSE0280") (syn : String := "") : M QN := do
   let s := s.trimAscii.toString
   if s.startsWith "Q{" then
     match (s.drop 2).toString.splitOn "}" with
@@ -224,7 +224,7 @@ def SCx.qname (c : SCx) (s : String) (useDefault : Bool := false) (code : String
   let nc (x : String) : Bool := match x.toList with
     | ch :: cs => isNameStart ch && ch != ':' && cs.all (fun d => isNameCh d && d != ':')
     | [] => false
-  let bad := if code == "XTSE0280" then "XTSE0020" else code
+  let bad := if syn != "" then syn else if code == "XTSE0280" then "XTSE0020" else code
   match s.splitOn ":" with
     | [l] =>
         if l == "" then err code "empty name" else
@@ -236,7 +236,7 @@ def SCx.qname (c : SCx) (s : String) (useDefault : Bool := false) (code : String
         match c.ns.lookup p with
         | some u => pure { uri := u, loc := l, pfx := p }
         | none => err code ("undeclared namespace prefix '" ++ p ++ "' in '" ++ s ++ "'")
-    | _ => err code ("invalid QName '" ++ s ++ "'")
+    | _ => err bad ("invalid QName '" ++ s ++ "'")
 
 /-! ## Value templates (§5.6) -/
 

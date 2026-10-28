@@ -1886,7 +1886,14 @@ def invoke : Nat → Sheet → Ctx → Tmpl → List (QN × Seq) → List (QN ×
             | none => pure v
         | none =>
             if p.required then xerr "XTDE0700" ("no value for the required parameter $" ++ p.name.show)
-            else bindValue n S tcx p.sel p.body p.ty ("$" ++ p.name.show) "XTTE0590"
+            -- with no default and a type that excludes (), the parameter
+            -- is implicitly mandatory (XTDE0700, §9.3); a default value
+            -- of the wrong type is XTTE0600
+            else if p.sel.isNone && p.body.isEmpty && (match p.ty with
+                | some ty => (cx.env.coerce ty [] "").toOption.isNone
+                | none => false) then
+              xerr "XTDE0700" ("no value for the implicitly mandatory parameter $" ++ p.name.show)
+            else bindValue n S tcx p.sel p.body p.ty ("$" ++ p.name.show) "XTTE0600"
       tcx := tcx.bind p.name v
     if let some cty := t.ctxAs then
       match cx.env.ctx with

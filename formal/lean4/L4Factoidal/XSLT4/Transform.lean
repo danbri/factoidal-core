@@ -232,6 +232,20 @@ def buildKeyIndex (S : Sheet) (env : Env) (kd : KeyDef) (root : NodeRef) : M Key
     tree at `root` (§18.2), by one walk in document order. -/
 def accumulatorValues (S : Sheet) (env : Env) (acc : Accumulator) (root : NodeRef) :
     M (Std.HashMap Nat (Seq × Seq)) := do
+  -- an accumulator rule that needs the value of the same accumulator
+  -- is a circularity (XTDE3400, §18.2.4)
+  let host0 := env.host
+  let guard (q : QN) (k : Nat) (c : HostCall) (a : List Seq) : M Seq := do
+    let nm ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE3340"
+    if nm == acc.name then
+      err "XTDE3400" ("the accumulator " ++ nm.show ++ " depends on itself")
+    else match host0 q k with
+      | some h => h c a
+      | none => err "XTDE3400" ("the accumulator " ++ acc.name.show ++ " depends on " ++ nm.show)
+  let host1 : QN → Nat → Option HostFn := fun q k =>
+    if q.uri == nsFN && (q.loc == "accumulator-before" || q.loc == "accumulator-after") && k == 1
+    then some (guard q k) else host0 q k
+  let env := { env with host := host1 }
   let d := env.doc root
   let hi := (d.get root.idx).last
   let rootItem : Item := .node root
@@ -581,7 +595,10 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
     | "accumulator-before", 1 | "accumulator-after", 1 => some fun c a => do
         let nm ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE3340"
         let some acc := S.accumulators.find? (·.name == nm) | err "XTDE3340" ("no accumulator named " ++ nm.show)
-        let nd ← ctxNode c q.loc
+        let nd ← match c.ctx with
+          | some [.node nd] => pure nd
+          | some _ => err "XTTE3360" (q.loc ++ " needs a node as context item")
+          | none => err "XTDE3350" (q.loc ++ " needs a context item")
         let r := env.nrec nd
         if r.kind == .attribute || r.kind == .namespace then err "XTTE3360" "accumulators are not defined on attribute and namespace nodes"
         -- a copy made by fn:copy-of: the values of the original node
