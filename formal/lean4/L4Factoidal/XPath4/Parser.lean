@@ -633,6 +633,8 @@ def pItemType : Nat → P IType
                     set e
                     let q ← resolve p u l ""
                     let nil ← eatS "?"
+                    -- `?` (nillable) is for element tests only
+                    if nil && nm == "attribute" then synErr "attribute() takes no '?' after the type name"
                     pure (some (q, nil))
                   | none => synErr "expected a type name"
                 else pure none
@@ -1375,7 +1377,10 @@ def pStep : Nat → P Expr
       if kindTestNames.contains nm then
         let t ← pNodeTest n .child
         let ax := match t with
+          -- an attribute test (also typed, a union or schema-attribute) uses
+          -- the attribute axis (XPath 4.0 §4.6.5)
           | .kind (.attr _) | .kind (.attrT ..) | .kind (.schemaAttr _) => Axis.attribute
+          | .kind (.choice (.attr _ :: _)) | .kind (.choice (.attrT .. :: _)) => Axis.attribute
           | .kind .nsNode => Axis.namespace
           | _ => Axis.child
         let ps ← pPreds n
