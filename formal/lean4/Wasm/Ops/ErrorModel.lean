@@ -205,7 +205,7 @@ def opTextArg (op : String) : Option Nat :=
       "deltaLogEncode", "serializeNQuads", "serializeTurtle", "serializeTurtleWith",
       "canonicalizeToNQuads"].contains op then some 0
   else if ["queryDataset", "queryDataset12", "updateDataset", "datasetQuery",
-           "datasetQuery12", "datasetUpdate", "queryRaw", "datasetQueryRaw",
+           "datasetQuery12", "datasetQuery12Entail", "datasetUpdate", "queryRaw", "datasetQueryRaw",
            "storeQuery", "storeQueryPlan"].contains op then some 1
   else if op == "queryHdt" || op == "storeQueryPlanBytes" then some 0
   else none
