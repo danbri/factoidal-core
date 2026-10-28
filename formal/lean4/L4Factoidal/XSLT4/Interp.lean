@@ -773,6 +773,18 @@ def withOrigin (env : Env) (nd : NodeRef) (cp : Item) : Item :=
     | none => cp
   | other => other
 
+/-- An item that `xsl:where-populated` deems empty (§8.4): a node with no
+    content, an atomic item whose string is zero-length, an empty map,
+    or an array whose flattened members are all deemed empty. -/
+def itemDeemedEmpty (env : Env) : Nat → Item → Bool
+  | 0, _ => false
+  | f + 1, it => match it with
+    | .node nd => !nodeNonEmpty env nd
+    | .atom a => a.str == ""
+    | .map kvs => kvs.isEmpty
+    | .arr ms => ms.all (fun m => m.all (itemDeemedEmpty env f))
+    | _ => false
+
 def isNCName (x : String) : Bool :=
   match x.toList with
   | c :: cs => isNameStart c && cs.all (fun d => isNameCh d && d != ':')
@@ -1797,10 +1809,11 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
     | .wherePopulated body =>
         let os ← run n S cx body
         pure (os.filter (fun o => match o with
-          | .elem _ _ cs => cs.any (fun c => match c with | .attr .. | .nsN .. => false | _ => true)
-          | .doc cs _ => !cs.isEmpty
+          -- zero-length text nodes are not children (§5.7.1)
+          | .elem _ _ cs => cs.any (fun c => match c with | .attr .. | .nsN .. | .text "" => false | _ => true)
+          | .doc cs _ => cs.any (fun c => match c with | .text "" => false | _ => true)
           | .text "" | .comment "" | .pi _ "" | .attr _ "" => false
-          | .item (.node nd) => nodeNonEmpty env nd
+          | .item it => !itemDeemedEmpty env 64 it
           | _ => true))
     | .onEmpty _ _ | .onNonEmpty _ _ => pure []
     | .performSort sel sorts body =>
