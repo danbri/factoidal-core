@@ -351,6 +351,11 @@ def subtypeF : Nat → IType → IType → Bool
     | .enum xs, .enum ys => xs.all (fun x => ys.contains x)
     | .elem _, .anyNode | .attr _, .anyNode | .text, .anyNode | .comment, .anyNode
     | .pi _, .anyNode | .doc _, .anyNode | .nsNode, .anyNode | .anyNode, .anyNode => true
+    | .xnode, .anyNode | .xnode, .xnode | .jnodeT _ _, .anyNode => true
+    | .elem _, .xnode | .attr _, .xnode | .text, .xnode | .comment, .xnode
+    | .pi _, .xnode | .doc _, .xnode | .nsNode, .xnode => true
+    | .jnodeT _ _, .jnodeT .any none => true
+    | .jnodeT _ (some t), .jnodeT .any (some u) => subtypeF f t u
     | .elem none, .elem none | .attr none, .attr none | .text, .text | .comment, .comment
     | .nsNode, .nsNode | .doc none, .doc none | .pi none, .pi none => true
     | .elem (some _), .elem none | .attr (some _), .attr none | .pi (some _), .pi none

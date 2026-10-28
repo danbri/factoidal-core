@@ -155,6 +155,11 @@ def maxRange : Int := 20000000
 
 /-- `cast as` to an item type. -/
 def castTo (e : Env) (s : Seq) (t : IType) (opt : Bool) : M Seq := do
+  -- XPath 4.0 §4.19.2.5, §4.19.2.6: `cast as array(*)` and `map(*)` coerce
+  match t with
+  | .anyArr | .anyMap => return ← e.coerce (if opt then .seq t .opt else t) s "cast target"
+  | .jnodeT .. | .xnode => err "XPST0080" "cast target is not an atomic, array or map type"
+  | _ => pure ()
   let as ← e.atomize s
   match as with
   | [] => if opt then pure [] else err "XPTY0004" "empty sequence cannot be cast"
@@ -465,7 +470,15 @@ def eval : Nat → Env → Expr → M Seq
         else err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
       else if q.uri == nsFN && q.loc == "concat" && k ≥ 2 then pure [.fn (.builtin q k)]
       else match findSig q k with
-        | some _ => pure [.fn (.builtin q k)]
+        | some sig =>
+          -- a reference to a context-dependent function whose omitted
+          -- argument defaults to `.` captures the focus (F&O 4.0 §1.5.2)
+          match env.ctx, (sig.ps.drop k).head? with
+          | some c, some p =>
+            if (match p.dflt with | some .ctx => true | _ => false) then
+              pure [.fn (.papp (.fn (.builtin q (k + 1))) (List.replicate k none ++ [some c]))]
+            else pure [.fn (.builtin q k)]
+          | _, _ => pure [.fn (.builtin q k)]
         | none => err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
   | .inline ps ret body focus => pure [.fn (.inline ps ret body focus env.vars)]
   | .mapC es => do
@@ -574,6 +587,9 @@ def eval : Nat → Env → Expr → M Seq
       match t with
       | .atomic aty =>
         if aty == .b .anyAtomicType || aty == .b .notation then err "XPST0080" "castable to an abstract type"
+      | .jnodeT .. | .xnode => err "XPST0080" "castable target is not an atomic, array or map type"
+      | .anyArr | .anyMap =>
+        return sBool (match castTo env s t opt with | .ok _ => true | .error _ => false)
       | _ => pure ()
       match env.atomize s with
       | .error e => if e.code == "FOTY0013" then throw e else pure (sBool false)
