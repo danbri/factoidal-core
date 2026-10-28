@@ -292,6 +292,7 @@ def renI (r : Ren) : Nat → List QN → Instr → RM Instr
         let ats' ← ats.mapM (fun (q, a, x) => do pure (q, ← avo a, ← eo x))
         pure (.extCall n ats' (← fbs.mapM b))
     | .withColl u body => .withColl u <$> b body
+    | .withNs ns body => .withNs ns <$> b body
     | .withCompat on body => .withCompat on <$> b body
     | .withBase u body => .withBase u <$> b body
     | .valid how body => .valid how <$> b body

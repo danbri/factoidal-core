@@ -88,6 +88,9 @@ structure CSt where
   /-- The import precedence of each decimal format property set so far:
       ((format, property), precedence) (§5.5.3). -/
   dfPrec : List ((String × String) × Nat) := []
+  /-- Two values of a decimal-format property at one precedence: an error
+      (XTSE1290) only if no declaration of higher precedence sets it. -/
+  dfConflicts : List ((String × String) × Nat) := []
   /-- Each `xsl:namespace-alias`: stylesheet URI, result URI, import
       precedence (for XTSE0810). -/
   aliasPrec : List (String × String × Nat) := []
@@ -760,6 +763,7 @@ def compileElem : Nat → SCx → Mod → Nat → CM (List Instr)
     let wrap : List Instr → List Instr := fun is =>
       let is := if c.backCompat != c0.backCompat then [.withCompat c.backCompat is] else is
       let is := if c.defaultCollation != c0.defaultCollation then [.withColl c.defaultCollation is] else is
+      let is := if c.xpNs != c0.xpNs then [.withNs c.xpNs is] else is
       if c.baseUri != c0.baseUri then [.withBase c.baseUri is] else is
     let q := m.name i
     if q.uri == nsXSL then
@@ -1484,6 +1488,7 @@ def compileTemplate (prec : Nat) (d : Decl) (as : Attrs) (inMode : Option String
   let body := if vis == "abstract" then [abstractErr "template" (name.getD default)]
     else [Instr.seq none body none]
   let body := if c.defaultCollation != "" then [Instr.withColl c.defaultCollation body] else body
+  let body := [Instr.withNs c.xpNs body]
   let body := [Instr.withCompat c.backCompat body]
   let body := if c.baseUri != "" then [Instr.withBase c.baseUri body] else body
   let as' ← optType c as
@@ -1559,6 +1564,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let bodyIds := (m.kids i).filter (fun k => !(m.isXsl k "param"))
       let body ← compileNodes 100000 c m bodyIds
       let body := if c.defaultCollation != "" then [Instr.withColl c.defaultCollation body] else body
+      let body := [Instr.withNs c.xpNs body]
       let body := [Instr.withCompat c.backCompat body]
       let body := if c.baseUri != "" then [Instr.withBase c.baseUri body] else body
       let s ← get
@@ -1746,14 +1752,14 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let old := (st.sheet.decimalFormats.lookup key).getD []
       let mut merged := old
       let mut dp := st.dfPrec
+      let mut conf := st.dfConflicts
       for (k, v) in props do
         match dp.lookup (key, k), old.lookup k with
-        | some p, some v0 => if p == prec && v0 != v then
-            cerr "XTSE1290" ("two values for property " ++ k ++ " of decimal format " ++ (if key == "" then "#default" else key))
+        | some p, some v0 => if p == prec && v0 != v then conf := ((key, k), prec) :: conf
         | _, _ => pure ()
         merged := (merged.filter (·.1 != k)) ++ [(k, v)]
         dp := ((key, k), prec) :: dp.filter (·.1 != (key, k))
-      set { st with dfPrec := dp }
+      set { st with dfPrec := dp, dfConflicts := conf }
       upd (fun sh => { sh with decimalFormats := (sh.decimalFormats.filter (·.1 != key)) ++ [(key, merged)] })
   | "strip-space" | "preserve-space" =>
       let strip := q.loc == "strip-space"
@@ -2300,6 +2306,10 @@ def checkSheet : CM Unit := do
           if seen.contains x then continue
           seen := x :: seen
           todo := todo ++ usesOf x
+    -- XTSE1290: two values of a property at its highest precedence
+    for ((key, k), p) in s.dfConflicts do
+      if s.dfPrec.lookup (key, k) == some p then
+        cerr "XTSE1290" ("two values for property " ++ k ++ " of decimal format " ++ (if key == "" then "#default" else key))
     -- XTSE1300: the characters of each decimal format must be distinct
     for (k, ps) in s.sheet.decimalFormats do
       let mut f : DecFormat := {}

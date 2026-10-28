@@ -243,7 +243,7 @@ def accumulatorValues (S : Sheet) (env : Env) (acc : Accumulator) (root : NodeRe
   -- is a circularity (XTDE3400, §18.2.4)
   let host0 := env.host
   let guard (q : QN) (k : Nat) (c : HostCall) (a : List Seq) : M Seq := do
-    let nm ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE3340"
+    let nm ← qnArg c.ns (a.getD 0 []) false "XTDE3340"
     if nm == acc.name then
       err "XTDE3400" ("the accumulator " ++ nm.show ++ " depends on itself")
     else match host0 q k with
@@ -545,7 +545,7 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
           (av, (sortNodes (ns.toList.eraseDups.map root.at)).map Item.node)))
         pure [.map entries]
     | "key", _ => if k != 2 && k != 3 then none else some fun c a => do
-        let nm ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE1260"
+        let nm ← qnArg c.ns (a.getD 0 []) false "XTDE1260"
         let kds := S.keys.filter (fun kd => kd.name == nm)
         if kds.isEmpty then err "XTDE1260" ("no key named " ++ nm.show)
         let root ← match a.getD 2 [] with
@@ -682,7 +682,7 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
           | none, _ => pure ()
         pure ((sortNodes out.toList).map Item.node)
     | "accumulator-before", 1 | "accumulator-after", 1 => some fun c a => do
-        let nm ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE3340"
+        let nm ← qnArg c.ns (a.getD 0 []) false "XTDE3340"
         let some acc := S.accumulators.find? (·.name == nm) | err "XTDE3340" ("no accumulator named " ++ nm.show)
         let nd ← match c.ctx with
           | some [.node nd] => pure nd

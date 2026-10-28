@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 340" width="860" height="340" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13">
+  <title>Three kinds of identity, and which one the pod checks (0.21.0)</title>
+  <rect width="860" height="340" fill="#ffffff"/>
+  <text x="430" y="26" text-anchor="middle" font-weight="700" font-size="15">Who is "a user"? Three separate layers</text>
+
+  <rect x="20" y="48" width="260" height="230" rx="10" fill="#f4f6f8" stroke="#8a96a3"/>
+  <text x="150" y="72" text-anchor="middle" font-weight="700">1. Mac account</text>
+  <text x="150" y="92" text-anchor="middle" fill="#555">danbri</text>
+  <text x="34" y="124">Owns every file in a mount</text>
+  <text x="34" y="144">(ls -l shows rwx------, but</text>
+  <text x="34" y="164">the volume is read only).</text>
+  <text x="34" y="196">Checked by: macOS only.</text>
+  <text x="34" y="216">The pod never sees it.</text>
+  <text x="34" y="248" fill="#555" font-size="12">Mount points live under the Mac</text>
+  <text x="34" y="264" fill="#555" font-size="12">user's own folders.</text>
+
+  <rect x="300" y="48" width="260" height="230" rx="10" fill="#eef5ff" stroke="#4a7bd0"/>
+  <text x="430" y="72" text-anchor="middle" font-weight="700">2. WebDAV user</text>
+  <text x="430" y="92" text-anchor="middle" fill="#555">--users login, or the --guest user</text>
+  <text x="314" y="124">Reaches only the mounts whose</text>
+  <text x="314" y="144">users: list it (others: 404),</text>
+  <text x="314" y="164">and acts there as the mount's</text>
+  <text x="314" y="184">one agent, read only.</text>
+  <text x="314" y="216">Checked by: webdav-serve.</text>
+  <text x="314" y="236">The pod never sees it.</text>
+  <text x="314" y="264" fill="#555" font-size="12">No own LWS agent yet (issue 1147).</text>
+
+  <rect x="580" y="48" width="260" height="230" rx="10" fill="#eefaf0" stroke="#3f9a55"/>
+  <text x="710" y="72" text-anchor="middle" font-weight="700">3. LWS agent</text>
+  <text x="710" y="92" text-anchor="middle" fill="#555">did:key:zDnae… (one per key)</text>
+  <text x="594" y="124">Named in the pod's ACL.</text>
+  <text x="594" y="144">Proved with a JWT signed by its</text>
+  <text x="594" y="164">private key, exchanged for an</text>
+  <text x="594" y="184">access token.</text>
+  <text x="594" y="216">Checked by: the pod, on every</text>
+  <text x="594" y="236">request.</text>
+  <text x="594" y="264" fill="#555" font-size="12">A WebDAV mount = one such key.</text>
+
+  <text x="430" y="300" text-anchor="middle" fill="#333">Here each agent has one mount, and each mount lists one login of the same name.</text>
+  <text x="430" y="320" text-anchor="middle" fill="#333">Guest gets only the mounts that list the --guest name.</text>
+</svg>
