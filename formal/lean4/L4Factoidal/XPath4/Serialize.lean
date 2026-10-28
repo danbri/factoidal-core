@@ -549,9 +549,35 @@ structure XCtx where
   m : String
   html5 : Bool
 
+/-- The element names of HTML5 (the HTML Living Standard element index),
+    for the XHTML method's recognition of no-namespace elements (§7.1). -/
+def html5Elems : List String :=
+  ["a", "abbr", "address", "area", "article", "aside", "audio", "b", "base", "bdi", "bdo",
+   "blockquote", "body", "br", "button", "canvas", "caption", "cite", "code", "col", "colgroup",
+   "data", "datalist", "dd", "del", "details", "dfn", "dialog", "div", "dl", "dt", "em", "embed",
+   "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6",
+   "head", "header", "hgroup", "hr", "html", "i", "iframe", "img", "input", "ins", "kbd", "keygen",
+   "label", "legend", "li", "link", "main", "map", "mark", "math", "menu", "meta", "meter", "nav",
+   "noscript", "object", "ol", "optgroup", "option", "output", "p", "param", "picture", "pre",
+   "progress", "q", "rp", "rt", "ruby", "s", "samp", "script", "search", "section", "select",
+   "slot", "small", "source", "span", "strong", "style", "sub", "summary", "sup", "svg", "table",
+   "tbody", "td", "template", "textarea", "tfoot", "th", "thead", "time", "title", "tr", "track",
+   "u", "ul", "var", "video", "wbr"]
+
+/-- The XHTML elements whose content model is EMPTY (§7.1, prior to HTML5). -/
+def xhtmlEmpty : List String :=
+  ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "basefont",
+   "frame", "isindex", "param"]
+
+/-- The void elements of HTML5 (§7.1). -/
+def html5Void : List String :=
+  ["area", "base", "br", "col", "embed", "hr", "img", "input", "keygen", "link", "meta",
+   "param", "source", "track", "wbr"]
+
 def XCtx.isHtmlElem (x : XCtx) (q : QN) : Bool :=
   if x.m == "html" then q.uri == "" || (x.html5 && q.uri == nsXHTML)
-  else if x.m == "xhtml" then q.uri == nsXHTML
+  -- §7.1: in the XHTML namespace, or (HTML5) an HTML5 element name in no namespace
+  else if x.m == "xhtml" then q.uri == nsXHTML || (x.html5 && q.uri == "" && html5Elems.contains q.loc.toLower)
   else false
 
 def lower (s : String) : String := s.toLower
@@ -628,14 +654,18 @@ def Env.sortedAttrs (e : Env) (x : XCtx) (n : NodeRef) : List NodeRef :=
 def metaTag (x : XCtx) : String :=
   let ct := (x.p.mediaType.getD "text/html") ++ "; charset=" ++ x.p.encoding
   let close := if x.m == "html" then ">" else " />"
-  if x.html5 && x.m == "html" then "<meta charset=\"" ++ x.p.encoding ++ "\"" ++ close
+  -- with HTML5, both the HTML and the XHTML method write meta charset (§6, §7)
+  if x.html5 then "<meta charset=\"" ++ x.p.encoding ++ "\"" ++ (if x.m == "html" then ">" else "/>")
   else "<meta http-equiv=\"Content-Type\" content=\"" ++
     (if x.m == "xhtml" then (x.p.mediaType.getD "text/html") ++ "; charset=" ++ x.p.encoding else ct) ++ "\"" ++ close
 
 def Env.isContentTypeMeta (e : Env) (x : XCtx) (n : NodeRef) : Bool :=
   let r := e.nrec n
   r.kind == .element && x.isHtmlElem r.name && lower r.name.loc == "meta" &&
-  (e.attrNodes n).any (fun a => let ar := e.nrec a; lower ar.name.loc == "http-equiv" && lower ar.value == "content-type")
+  -- a charset attribute, or http-equiv Content-Type (case-insensitive, trimmed)
+  (e.attrNodes n).any (fun a => let ar := e.nrec a;
+    ar.name.uri == "" && (lower ar.name.loc == "charset" ||
+      (lower ar.name.loc == "http-equiv" && lower (trimWs ar.value) == "content-type")))
 
 /-- XML 1.0 `Char` (§2.2 of XML 1.0): what an XML 1.0 output may hold;
     XML 1.1 also allows the C0 and C1 controls, as character
@@ -709,8 +739,10 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
         if x.m == "html" && isH then
           emit ">"
           if !htmlVoid.contains (lower r.name.loc) then emit ("</" ++ nm ++ ">")
-        else if x.m == "xhtml" && isH then
-          if htmlVoid.contains (lower r.name.loc) then emit " />" else emit ("></" ++ nm ++ ">")
+        else if x.m == "xhtml" then
+          -- §7.1: the minimized form only for an element expected to be empty
+          let empty := isH && (if x.html5 then html5Void else xhtmlEmpty).contains (lower r.name.loc)
+          if empty then emit " />" else emit ("></" ++ nm ++ ">")
         else if x.p.canonical then emit ("></" ++ nm ++ ">")
         else emit "/>"
       else

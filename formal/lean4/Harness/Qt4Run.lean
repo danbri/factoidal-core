@@ -360,7 +360,7 @@ def queryParams (env : Env) (src : String) : M SerParams :=
       | some u => match env.resource u with
         | some txt => paramDocParams env txt
         | none => err "XQST0119" ("parameter document not available: " ++ u)
-      | none => pure {}
+      | none => pure { omitDecl := false }
     declParams m.ns m.outputDecls init
   else pure {}
 
