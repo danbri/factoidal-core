@@ -521,6 +521,130 @@ def inScopeNamespacesFn : LibFn := fun _ e a => do
     pure [.map (sc.map (fun (p, u) => (Atomic.ofStr p, [.atom (Atomic.ofUri u)])))]
   | _ => err "XPTY0004" "in-scope-namespaces needs an element"
 
+/-! ## The F&O 4.0 total order of atomic items: `fn:compare`, `fn:min`, `fn:max`
+
+F&O 4.0 §5.3.6 `fn:compare` orders strings by the collation, numerics by
+their exact mathematical value (NaN first, then -INF, ..., INF; a double
+is compared exactly, as the rational number it denotes), booleans,
+binary values by their octets, the eight date/time types after the
+missing components are taken from 1972-01-01T00:00:00 and a missing
+timezone from the implicit timezone, durations by months then seconds,
+QNames by namespace URI then local name; any other pair raises
+XPTY0004. `fn:min` and `fn:max` (§14.4) use that order and return an
+item of the input (after untypedAtomic is cast to xs:double). -/
+
+/-- The days from 1970-01-01 of a civil date (H. Hinnant's
+    `days_from_civil`, the inverse of `civilFromDays`). -/
+def daysFromCivil (y : Int) (m d : Nat) : Int :=
+  let y := if m ≤ 2 then y - 1 else y
+  let era := Int.fdiv y 400
+  let yoe := y - era * 400
+  let mp : Int := if m > 2 then (m : Int) - 3 else (m : Int) + 9
+  let doy := (153 * mp + 2) / 5 + (d : Int) - 1
+  let doe := yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+
+/-- An exact rational `(num, den)`, den > 0, of a finite numeric value. -/
+def exactRat : Num → Int × Nat
+  | .i i => (i, 1)
+  | .d d => (d.mantissa, 10 ^ d.scale)
+  | .f f | .g f =>
+    let (neg, n, dn) := floatParts f
+    ((if neg then -(n : Int) else n), dn)
+
+def numKind (n : Num) : Nat :=
+  -- 0 NaN, 1 -INF, 2 finite, 3 +INF
+  match n with
+  | .f f | .g f => if f.isNaN then 0 else if f.isInf then (if f < 0 then 1 else 3) else 2
+  | _ => 2
+
+def cmpNat (a b : Nat) : Ordering := if a < b then .lt else if a == b then .eq else .gt
+def cmpInt (a b : Int) : Ordering := if a < b then .lt else if a == b then .eq else .gt
+
+def cmpNum (a b : Num) : Ordering :=
+  let ka := numKind a
+  let kb := numKind b
+  if ka != 2 || kb != 2 then cmpNat ka kb
+  else
+    let (p, q) := exactRat a
+    let (r, s) := exactRat b
+    cmpInt (p * s) (r * q)
+
+def lexCmp : List Nat → List Nat → Ordering
+  | [], [] => .eq
+  | [], _ => .lt
+  | _, [] => .gt
+  | a :: as, b :: bs => if a < b then .lt else if a > b then .gt else lexCmp as bs
+
+/-- The instant of a date/time value in seconds, its missing components
+    taken from 1972-01-01T00:00:00 and the implicit timezone. -/
+def dtInstant (tz : Int) (v : DTValue) : Dec :=
+  let y := v.year.getD 1972
+  let m := v.month.getD 1
+  let d := v.day.getD 1
+  let days := daysFromCivil y m d
+  let secs : Int := days * 86400 + (v.hour.getD 0 : Int) * 3600 + (v.minute.getD 0 : Int) * 60 - (v.tz.getD tz) * 60
+  let s := v.second.getD Dec.zero
+  Dec.norm ⟨secs * 10 ^ s.scale + s.mantissa, s.scale⟩
+
+def dtPrim : DTKind → Nat
+  | .dateTime => 0 | .date => 1 | .time => 2 | .gYearMonth => 3 | .gYear => 4
+  | .gMonthDay => 5 | .gDay => 6 | .gMonth => 7
+
+def strLike (a : Atomic) : Bool := a.ty == .untyped || a.is .string || a.is .anyURI
+
+def compareAtoms (c : Coll) (tz : Int) (x y : Atomic) : M Ordering := do
+  if strLike x && strLike y then return c.compare x.str y.str
+  match x.num?, y.num? with
+  | some a, some b => return cmpNum a b
+  | _, _ => pure ()
+  match x.v, y.v with
+  | .bool a, .bool b => pure (cmpNat (if a then 1 else 0) (if b then 1 else 0))
+  | .x (.bin _ p), .x (.bin _ q) => pure (lexCmp p q)
+  | .x (.dt k1 v1), .x (.dt k2 v2) =>
+    if dtPrim k1 != dtPrim k2 then err "XPTY0004" "date/time values of different types are not comparable"
+    else pure (Dec.cmp (dtInstant tz v1) (dtInstant tz v2))
+  | .x (.dur d1), .x (.dur d2) =>
+    match cmpInt d1.months d2.months with
+    | .eq => pure (Dec.cmp d1.seconds d2.seconds)
+    | o => pure o
+  | .qn p, .qn q =>
+    if (x.is .notation) != (y.is .notation) then err "XPTY0004" "a QName and a NOTATION are not comparable"
+    else match compare p.uri q.uri with
+      | .eq => pure (compare p.loc q.loc)
+      | o => pure o
+  | _, _ => err "XPTY0004" ("values of types xs:" ++ x.ty.name ++ " and xs:" ++ y.ty.name ++ " are not comparable")
+
+def ordInt : Ordering → Int | .lt => -1 | .eq => 0 | .gt => 1
+
+def compareFn : LibFn := fun _ e a => do
+  let c ← e.collation (argN a 2)
+  match optAtom (argN a 0), optAtom (argN a 1) with
+  | some x, some y => pure (sInt (ordInt (← compareAtoms c e.tz x y)))
+  | _, _ => pure []
+
+def isNaNAtom (a : Atomic) : Bool :=
+  match a.num? with
+  | some (.f f) | some (.g f) => f.isNaN
+  | _ => false
+
+/-- The items are taken in order: a NaN met before any type error is the
+    result (the qt4tests cases K-SeqMINFunc-21a and -22 fix this order). -/
+def minMax4 (isMax : Bool) : LibFn := fun _ e a => do
+  let c ← e.collation (argN a 1)
+  let xs ← e.atomize (argN a 0)
+  let mut best : Option Atomic := none
+  for x0 in xs do
+    let x ← if x0.ty == .untyped then castAtomic x0 (.b .double) else pure x0
+    if isNaNAtom x then return [.atom x]
+    match best with
+    | none => best := some x
+    | some b =>
+      match compareAtoms c e.tz x b with
+      | .error _ => err "FORG0006" "the values are not mutually comparable"
+      | .ok o => if (isMax && o == .gt) || (!isMax && o == .lt) then best := some x
+  pure (match best with | some b => [.atom b] | none => [])
+
 def fn4Table : List (String × LibFn) :=
   [("hash", hashFn), ("random-number-generator", rngFn), ("rng-record#", rngRecordFn),
    ("rng-permute#", rngPermuteFn), ("rng-take#", rngTakeFn),
@@ -528,6 +652,7 @@ def fn4Table : List (String × LibFn) :=
    ("round", roundModeFn), ("unix-dateTime", unixDateTimeFn), ("pad-string", padStringFn),
    ("trim-space", trimSpaceFn), ("system-properties", systemPropertiesFn),
    ("slice", sliceFn), ("scan", scanFn), ("path", pathFn),
-   ("in-scope-namespaces", inScopeNamespacesFn)]
+   ("in-scope-namespaces", inScopeNamespacesFn), ("compare", compareFn),
+   ("min", minMax4 false), ("max", minMax4 true)]
 
 end L4Factoidal.XPath4
