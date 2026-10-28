@@ -16,24 +16,8 @@ What was copied (and nothing else):
   with the `file/sandpit` directory), copied 2026-10-28 from the same commit
   for https://github.com/danbri/factoidal/issues/1101 (EXPath stage)
 
-Added 2026-10-28 for the XQuery 4.0 mode of the runner
-(https://github.com/danbri/factoidal/issues/1101), from a
-`git checkout` of the same commit, files unchanged:
-
-- `app/` (use cases, FunctX, the specification examples, XMark, ...)
-- `misc/` (keyword, error-code, focus, higher-order, JSON, HTML,
-  JSONPath, JMESPath and collation suites)
-
-Added 2026-10-28 for Serialization 4.0 and the XSD type tests of the XPath
-mode (https://github.com/danbri/factoidal/issues/1101), from a `git checkout`
-of the same commit, files unchanged:
-
-- `ser/` (Serialization 4.0)
-- `xs/` (XML Schema types: `xs:numeric`, `xs:error`, constructors)
-
-Not copied: `ft/` (Full Text) and `upd/` (XQuery Update), which are separate
-specifications that https://qt4cg.org/ does not publish; the drivers, tools, viewer and
-guide. A catalog test set whose file is not
+Not copied: `app/`, `ft/`, `misc/`, `ser/`, `upd/`, `xs/`,
+the drivers, tools, viewer and guide. A catalog test set whose file is not
 present is not run by `lake exe l4qt4` unless its family is selected.
 
 Licence: the suite is published by the W3C QT4 Community Group under the
