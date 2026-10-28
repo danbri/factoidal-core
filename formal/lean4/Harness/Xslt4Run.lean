@@ -640,10 +640,16 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
       let topts : TOpts := { initialTemplate := it, initialMode := imName, initialSelect := imSel, initialFunction := ifn, globalCtx, params, env, outUri := ou }
       pure (env, (do let r ← transform S topts; pure (r, S) : M (TResult × Sheet)))
   -- delivery (the catalog driver's default format is a document node)
+  -- delivery format raw: `output tree="no"` in the test, or an output
+  -- definition with build-tree="no" or method json or adaptive (§26.1)
+  let treeNo := (kidsNamed testNode "output").any (fun n => attrD n "tree" == "no")
   let rawMethod : Sheet → Bool := fun S =>
-    match (S.outputs.lookup "").bind (·.lookup "method") with
-    | some m => m == "json" || m == "adaptive"
-    | none => false
+    let od := (S.outputs.lookup "").getD []
+    treeNo || (match od.lookup "build-tree" with
+      | some b => parseBool b == some false
+      | none => match od.lookup "method" with
+        | some m => m == "json" || m == "adaptive"
+        | none => false)
   let initialFn := !(kidsNamed testNode "initial-function").isEmpty
   let deliver (S : Sheet) (raw : Seq) : M Seq :=
     if rawMethod S || initialFn then pure raw else
@@ -715,7 +721,7 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
     (an IO loop that ends on an outside event: the child exiting, or the
     clock). A test case that does not finish counts as FAIL, and a new
     child continues after it. -/
-def runIsolated (o : Opts) (secs : Nat) (setName : String) : IO (Tally × String) := do
+def runIsolated (o : Opts) (secs : Nat) (setName file : String) : IO (Tally × String) := do
   let pf := (← IO.getEnv "TMPDIR").getD "/tmp" ++ "/l4xslt4-progress-" ++ setName
   let mut total : Tally := {}
   let mut after : Option String := none
@@ -755,7 +761,16 @@ def runIsolated (o : Opts) (secs : Nat) (setName : String) : IO (Tally × String
     if o.listFails then IO.println s!"  FAIL {setName}/{last}: did not finish in {secs} s"
     after := some last
   try IO.FS.removeFile pf catch _ => pure ()
-  return (total, if notes.isEmpty then "" else s!" [{notes.length} test(s) did not finish in {secs} s, counted as fail: {String.intercalate ", " notes}]")
+  -- test cases no child reported (a child that stopped early) are fails
+  let count ← match ← readFileSafe file with
+    | some txt => match parseXML txt with
+      | .ok d => pure (kidsNamed d.root "test-case").length
+      | .error _ => pure total.total
+    | none => pure total.total
+  let missing := count - total.total
+  let res := { total with fail := total.fail + missing }
+  let ns := if missing > 0 then notes ++ [s!"{missing} not reported"] else notes
+  return (res, if ns.isEmpty then "" else s!" [{ns.length} test(s) did not finish in {secs} s, counted as fail: {String.intercalate ", " ns}]")
 
 /-! ## Agreement with the XSLT 1.0 engine
 
@@ -889,7 +904,7 @@ def main (args : List String) : IO UInt32 := do
     if !(← System.FilePath.pathExists path) then continue
     let (t, fails, note) ← match o.isolate with
       | some secs =>
-        let (t, note) ← runIsolated o secs nm
+        let (t, note) ← runIsolated o secs nm path
         pure (t, ([] : List String), note)
       | none =>
         let (_, t, fails) ← runSet o path

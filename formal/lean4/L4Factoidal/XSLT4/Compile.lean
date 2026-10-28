@@ -273,7 +273,7 @@ def allowedAttrs : List (String × List String) := [
   ("perform-sort", ["select"]), ("fallback", []), ("fork", []), ("select", ["as"]),
   ("evaluate", ["xpath", "as", "base-uri", "with-params", "context-item", "namespace-context",
      "schema-aware", "trusted"]),
-  ("result-document", ["format", "href", "validation", "type", "method", "allow-duplicate-names",
+  ("result-document", ["format", "href", "select", "validation", "type", "method", "allow-duplicate-names",
      "build-tree", "byte-order-mark", "canonical", "cdata-section-elements", "csv-header",
      "csv-quote-character", "csv-separator", "doctype-public", "doctype-system", "encoding",
      "escape-solidus", "escape-uri-attributes", "html-version", "include-content-type", "indent",
@@ -345,8 +345,13 @@ def standardAttrs : List String :=
    "expand-text", "extension-element-prefixes", "use-when", "version", "xpath-default-namespace"]
 
 def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
-  for (q, _) in as do
+  for (q, v) in as do
     if q.uri == nsXSL then cerr "XTSE0090" ("an XSLT element cannot have the attribute xsl:" ++ q.loc)
+    -- a processor that is not schema-aware (§3.14)
+    if q.uri == "" && q.loc == "type" && l != "output" then
+      cerr "XTSE1660" "the type attribute needs a schema-aware processor"
+    if q.uri == "" && (q.loc == "validation" || q.loc == "default-validation") && v.trimAscii.toString == "strict" then
+      cerr "XTSE1660" "validation=\"strict\" needs a schema-aware processor"
   if c.forwardsCompat then return
   match allowedAttrs.lookup l with
   | none => pure ()
@@ -414,6 +419,8 @@ def compileElem : Nat → SCx → Mod → Nat → CM (List Instr)
       let ats := ats.map (fun (aq, v) => (aq, (c.avt v).toOption, (c.parse v).toOption))
       return [.extCall q ats bodies]
     -- a literal result element (§11.1)
+    if (as.xsl "type").isSome || (as.xsl "validation") == some "strict" then
+      cerr "XTSE1660" "xsl:type and xsl:validation=\"strict\" need a schema-aware processor"
     let mut ats : List (QN × Avt) := []
     for (aq, v) in m.rawAttrs i do
       if aq.uri == nsXSL then continue
@@ -437,6 +444,17 @@ def compileSorts : Nat → SCx → Mod → List Nat → CM (List SortK)
         (← optAvt c' as "case-order") (← optAvt c' as "collation") (← optAvt c' as "stable"))))
 
 def compileParams : Nat → SCx → Mod → List Nat → String → CM (List WParam)
+  | 0, _, _, _, _ => pure []
+  | f + 1, c, m, ids, tag => do
+   let ps ← compileParams1 f c m ids tag
+   let names := ps.map (·.name)
+   if tag == "param" then
+     for (p, i) in names.zipIdx do
+       if (names.take i).any (· == p) then
+         cerr "XTSE0580" ("two parameters named $" ++ p.show)
+   pure ps
+
+def compileParams1 : Nat → SCx → Mod → List Nat → String → CM (List WParam)
   | 0, _, _, _, _ => pure []
   | f + 1, c, m, ids, tag => ids.filterMapM (fun k => do
       if !m.isXsl k tag then return none
@@ -610,6 +628,8 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
           | some v => some <$> liftM (c.pattern v) | none => pure none
         let frm ← match as.get "from" with
           | some v => some <$> liftM (c.pattern v) | none => pure none
+        if (as.get "value").isSome && ((as.get "select").isSome || (as.get "level").isSome || cnt.isSome || frm.isSome) then
+          cerr "XTSE0975" "xsl:number with value cannot have select, level, count or from"
         pure (.number (← optExpr c as "value") (← optExpr c as "select") level cnt frm
           ((← optAvt c as "format").getD [.lit "1"]) (← optAvt c as "lang") (← optAvt c as "ordinal")
           (← optAvt c as "start-at") (← optAvt c as "grouping-separator") (← optAvt c as "grouping-size"))
@@ -625,7 +645,9 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         pure (.iterate sel ps oc (← body (notTag ["param", "on-completion"])))
     | "break" =>
         let sel ← optExpr c as "select"
-        pure (.breakI sel (← body))
+        let b ← body
+        if sel.isSome && !b.isEmpty then cerr "XTSE3125" "xsl:break has both select and content"
+        pure (.breakI sel b)
     | "next-iteration" => pure (.nextIteration (← compileParams f c m ekids "with-param"))
     | "try" =>
         let sel ← optExpr c as "select"
@@ -682,10 +704,16 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
           (← optExpr c as "namespace-context") (← optType c as)
           (← compileParams f c m ekids "with-param") c.xpNs c.baseUri)
     | "result-document" =>
-        let ser ← (as.filter (fun (q, _) => q.uri == "" && q.loc != "href" && q.loc != "format"
+        let ser ← (as.filter (fun (q, _) => q.uri == "" && q.loc != "href" && q.loc != "format" && q.loc != "select"
             && q.loc != "validation" && q.loc != "type" && !standardAttrs.contains q.loc)).mapM
           (fun (q, v) => do pure (q.loc, ← liftM (c.avt v)))
-        pure (.resultDoc (← optAvt c as "href") (← optAvt c as "format") ser (← body))
+        let sel ← optExpr c as "select"
+        let b ← body
+        if sel.isSome && !b.isEmpty then cerr "XTSE3185" "xsl:result-document has both select and content"
+        let b := match sel with
+          | some e => [Instr.seq (some e) [] none]
+          | none => b
+        pure (.resultDoc (← optAvt c as "href") (← optAvt c as "format") ser b)
     | "where-populated" => pure (.wherePopulated (← body))
     | "on-empty" => pure (.onEmpty (← optExpr c as "select") (← body))
     | "on-non-empty" => pure (.onNonEmpty (← optExpr c as "select") (← body))
@@ -1211,6 +1239,27 @@ def compileStylesheet (principal : String) (texts : List (String × String))
     modify (fun s => { s with stack := [principal] })
     processModule 50 m
     let s ← get
+    -- XTSE0660: two named templates of one name and precedence
+    let named := s.sheet.templates.toList.filterMap (fun t => t.name.map (fun n => (n, t.prec, t.id)))
+    for (n, p, i) in named do
+      let top := (named.filter (fun (n2, _, _) => n2 == n)).foldl (fun a (_, p2, _) => max a p2) 0
+      if p == top && named.any (fun (n2, p2, i2) => n2 == n && p2 == p && i2 != i) then
+        cerr "XTSE0660" ("two templates named " ++ n.show)
+    -- XTSE0720: attribute sets that use themselves
+    let sets := s.sheet.attrSets
+    for a in sets do
+      let mut seen : List QN := []
+      let mut todo : List QN := a.useSets
+      for _ in [0:1000] do
+        match todo with
+        | [] => break
+        | x :: rest =>
+          todo := rest
+          if x == a.name then cerr "XTSE0720" ("attribute set " ++ a.name.show ++ " uses itself")
+          if seen.contains x then continue
+          seen := x :: seen
+          for b in sets do
+            if b.name == x then todo := todo ++ b.useSets
     pure { s.sheet with statics := s.statics, baseUri := principal }
   let (sh, _) ← act.run { texts, staticParams }
   pure sh
