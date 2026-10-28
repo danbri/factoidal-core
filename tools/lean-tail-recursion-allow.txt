@@ -1608,3 +1608,9 @@ L4Factoidal_SPARQLRL_inst  # (c) triple-term depth of the template term, at most
 L4Factoidal_SPARQLRL_occurs  # (c) depth of a term after substitution, at most the summed depth of two parsed triples (6 * (maxNesting + 1)); also fuel-bounded
 L4Factoidal_SPARQLRL_unify  # (c) depth of a term after substitution, at most 6 * (SPARQLRL.maxNesting + 1); also fuel-bounded (patternMatchesTemplate)
 L4Factoidal_SPARQLRL_resolveImportsAux  # (c) import nesting, at most 64 (the fuel of RuleSet.resolveImports); the import step is a List.foldl
+# --- XQuery 4.0 (L4Factoidal/XQuery4, https://github.com/danbri/factoidal/issues/1101), 2026-10-28
+L4Factoidal_XQuery4_pDirElem  # (b) nesting of direct element constructors in the query text; fuel 10000
+L4Factoidal_XQuery4_staticErr  # (b) nesting of the query's expression tree; fuel 100000
+L4Factoidal_XQuery4_flworToXPath  # (b) number of clauses of one FLWOR expression in the query text
+L4Factoidal_XQuery4_bindRound  # (b) number of variable declarations in the query's prolog
+L4Factoidal_XQuery4_loadImports  # (b) depth of module imports; fuel 50
