@@ -47,6 +47,8 @@ own binding, those rows are the difference.
 | `MoveRedirect.lean` | 301 Moved Permanently at the previous identifiers of a moved resource (LWS §Moving Resources SHOULD, issue 914): a bounded table of (previous path, current path), pruned after every request and kept in the snapshot; the 301 only when the same request at the current path is authorized. Theorems `redirect_current`, `after_ok`, `redirect_after_move`. Guards: `MoveRedirectTests.lean`. |
 | `InboxGuard.lean` | refuses a webhook inbox that names this server under another host name, an IP address or `localhost` (issue 915): IPv4 and IPv6 literals, the base IRI authority, the bound address and interface addresses, names the host resolved. |
 | `MoveTests.lean` | `#guard`s through `step`, `Authorization.decide` and `Notifications.serverStep`, positive and negative, and `lwsGuardMoveResource`. |
+| `Handler.lean` | `Handler.step`, the LWS request handler: one request against one storage (the guard, CORS, body files, inbox host, moved resources, search results, access grants, index services, notifications, the storage operation). The op `lwsStep` runs it. |
+| `AccessTheorems.lean` | the 0.21.0 access theorem `lws_data_only_through_authorized_step`: every outcome of `Handler.step` either reads no state or comes from `Authorization.decide`, and a refused request changes nothing. The module doc lists the one exception (`insecureNoAuth`, `lws-serve --insecure-no-auth`) and what is not covered. |
 | `Patch.lean` | the `?conditions` / `?insertions` / `?deletions` formula patch, its constraints, and `applyPatch`. Matching is `SPARQL.evalBgp` and instantiation is `SPARQL.instantiateTemplate` — no second matcher. |
 | `Conformance.lean` | the registry: id, section, verbatim statement, module, binding, status. |
 | `Tests.lean` | one `#guard` per `guarded` row, and the theorems the `proved` rows name. |
@@ -60,7 +62,9 @@ request sequence are strictly increasing and the server-assigned names of
 POST are distinct without a counter beside the clock.
 
 The wasm entry layer (`Wasm/Ops/Lws.lean`) holds the state in a handle table
-and is the only part that performs `IO`.
+and is the only part that performs `IO`. The table is `private` to that file:
+its ops (`lwsOpRole`) are the only engine code that reaches a storage handle,
+and `lwsStep` is the only one that answers a request with resource content.
 
 ## Running it
 
