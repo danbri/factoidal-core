@@ -439,7 +439,15 @@ PASSES counts as a FAIL, so the exclusion cannot outlive a corrected
 test. -/
 
 /-- `(test-case name, issue URL)`. -/
-def defective : List (String × String) := []
+def defective : List (String × String) :=
+  let i1163 := "https://github.com/danbri/factoidal/issues/1163"
+  -- default priorities of 4.0 patterns (§6.4.4, §6.4.6, §6.4.7); a
+  -- function result type error; a non-public initial template in a
+  -- package (§2.3.4); Saxon's code for a recursive item type (XTSE4035);
+  -- a static error in xsl:evaluate (XTDE3160)
+  [ "priority-124", "priority-141", "priority-160", "priority-162", "priority-163",
+    "function-40-012", "accumulator-038", "type-alias-003", "type-alias-004",
+    "evaluate-042" ].map (·, i1163)
 
 structure Tally where
   pass : Nat := 0

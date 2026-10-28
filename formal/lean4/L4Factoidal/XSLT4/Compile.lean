@@ -517,6 +517,34 @@ def iterInstrs : Nat → List Instr → List Instr
       | .iterate .. => []
       | _ => i.bodies.flatten))
 
+/-- The `error-code` of `xsl:message` and `xsl:assert`: a fixed lexical
+    QName is expanded with the namespaces of the instruction, to
+    `Q{uri}local` (the local name alone for the `err` namespace); an
+    unprefixed name is in no namespace (§23.1). -/
+def errCodeAvt (c : SCx) (as : Attrs) : CM (Option Avt) := do
+  match as.get "error-code" with
+  | none => pure none
+  | some v =>
+    let v := v.trimAscii.toString
+    -- a value template: the namespaces of the instruction go after a NUL,
+    -- for the expansion when it is evaluated (`validCode`)
+    if v.contains '{' && !v.startsWith "Q{" then
+      let nsTxt := String.intercalate "\x01" (c.ns.map (fun (p, u) => p ++ "=" ++ u))
+      return some ((← liftM (c.avt v)) ++ [.lit ("\x00" ++ nsTxt)])
+    if v.startsWith "Q{" then return some [.lit v]
+    match v.splitOn ":" with
+    | [l] =>
+      let ncOk := match l.toList with
+        | ch :: r => (ch.isAlpha || ch == '_' || ch.toNat > 127) &&
+            r.all (fun d => d.isAlphanum || d == '_' || d == '-' || d == '.' || d.toNat > 127)
+        | [] => false
+      pure (some [.lit (if ncOk then "Q{}" ++ l else v)])
+    | [p, l] =>
+      match c.ns.lookup p with
+      | some u => pure (some [.lit (if u == nsERR then l else "Q{" ++ u ++ "}" ++ l)])
+      | none => pure (some [.lit v])
+    | _ => pure (some [.lit v])
+
 def nextTid : CM Nat := do
   let s ← get
   set { s with tid := s.tid + 1 }
@@ -794,10 +822,10 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         pure (.copyOf (← parseC c (← reqAttr as "select" l)) (← as.bool "copy-namespaces" true))
     | "message" =>
         pure (.message (← optExpr c as "select") (← body)
-          ((← optAvt c as "terminate").getD [.lit "no"]) (← optAvt c as "error-code"))
+          ((← optAvt c as "terminate").getD [.lit "no"]) (← errCodeAvt c as))
     | "assert" =>
         pure (.assertI (← parseC c (← reqAttr as "test" l)) (← optExpr c as "select") (← body)
-          (← optAvt c as "error-code"))
+          (← errCodeAvt c as))
     | "number" =>
         let level := (as.get "level").getD "single"
         let cnt ← match as.get "count" with
@@ -908,7 +936,12 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         let xp ← parseC c (← reqAttr as "xpath" l)
         pure (.evaluate xp (← optExpr c as "context-item") (← optExpr c as "with-params")
           (← optExpr c as "namespace-context") (← optType c as)
-          (← compileParams f c m ekids "with-param") c.xpNs c.baseUri)
+          (← compileParams f c m ekids "with-param") c.xpNs
+          -- the static base URI of the target expression (a fixed base-uri
+          -- attribute, resolved against the stylesheet's)
+          (match as.get "base-uri" with
+            | some v => if v.contains '{' then c.baseUri else resolveUri c.baseUri v.trimAscii.toString
+            | none => c.baseUri))
     | "result-document" =>
         let ser ← (as.filter (fun (q, _) => q.uri == "" && q.loc != "href" && q.loc != "format" && q.loc != "select"
             && q.loc != "validation" && q.loc != "type" && !standardAttrs.contains q.loc)).mapM

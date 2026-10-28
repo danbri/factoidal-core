@@ -654,6 +654,8 @@ def SCx.pattern0 (c : SCx) (src : String) : M Pattern := do
     else none
   match typed? with
   | some (rest, paren) =>
+    -- named item types (§5.4) are expanded first
+    let rest := expandTypes c.types c.ns 10 rest
     let p : P (IType × Nat) := do
       let ty ← pItemType 1000
       if paren then expectS ")"

@@ -614,6 +614,28 @@ def errLocal (c : String) : String :=
     | [_, l] => l
     | _ => c
 
+/-- The error code of `xsl:message` and `xsl:assert`: the given code
+    when it is an EQName or a lexical QName, else the default (§23.1). -/
+def validCode (c dflt : String) : String :=
+  -- a code from a value template carries the namespaces after a NUL
+  let (c, ns) : String × Option (List (String × String)) := match c.splitOn "\x00" with
+    | [a, b] => (a, some ((b.splitOn "\x01").filterMap (fun (kv : String) => match kv.splitOn "=" with
+        | p :: rest => some (p, String.intercalate "=" rest)
+        | [] => none)))
+    | _ => (c, none)
+  let c := c.trimAscii.toString
+  if c.startsWith "Q{" && c.contains '}' then errLocal c
+  else match c.splitOn ":", ns with
+    | [l], some _ => if isNCName l then "Q{}" ++ l else dflt
+    | [l], none => if isNCName l then l else dflt
+    | [p, l], some ns =>
+      if !(isNCName p && isNCName l) then dflt else
+      match ns.lookup p with
+      | some u => if u == nsERR then l else "Q{" ++ u ++ "}" ++ l
+      | none => dflt
+    | [p, l], none => if isNCName p && isNCName l then errLocal c else dflt
+    | _, _ => dflt
+
 /-- The expanded name of `xsl:element` or `xsl:attribute` (§11.2.2,
     §11.3): from the lexical name, the namespace attribute, and the
     namespace bindings of the instruction. -/
@@ -1138,7 +1160,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             let c ← match code with
               | some a => avtStr cx a
               | none => pure "XTMM9000"
-            xerr (errLocal c) txt
+            xerr (validCode c "XTMM9000") txt
         | some false => pure []
         | none => xerr "XTDE0030" ("invalid terminate value '" ++ t ++ "'")
     | .assertI test sel body code =>
@@ -1151,7 +1173,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           let c ← match code with
             | some a => avtStr cx a
             | none => pure "XTMM9001"
-          xerr (errLocal c) txt
+          xerr (validCode c "XTMM9001") txt
     | .number value sel level cnt frm fmt lang ord startAt gsep gsize =>
         let nums ← match value with
           | some e => do
@@ -1385,14 +1407,18 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         pure [.item (.map [(memberKey, s)])]
     | .evaluate xp ctxE wp nsE ty params scope baseUri =>
         let src ← atomStr cx (← evalX cx xp)
-        let ns ← match nsE with
+        -- with namespace-context, the namespaces of that node, and its
+        -- default namespace for unprefixed element names (§20.1.1)
+        let (ns, dflt) ← match nsE with
           | some e => do
               match ← evalX cx e with
-              | [.node nd] => pure (effScope (env.nrec nd).inscope |>.filter (·.1 != ""))
+              | [.node nd] =>
+                let sc := effScope (env.nrec nd).inscope
+                pure (sc.filter (·.1 != ""), (sc.lookup "").getD "")
               | _ => xerr "XTTE3170" "namespace-context must be a single node"
-          | none => pure scope
+          | none => pure (scope, "")
         let e ← match parseXPath src ns with
-          | .ok e => pure e
+          | .ok e => pure (if dflt == "" then e else exprDefault dflt 100000 e)
           | .error er => xerr "XTDE3160" ("xsl:evaluate: " ++ er.code ++ " " ++ er.msg)
         let mut vars : List (QN × Seq) := []
         match wp with
@@ -1416,6 +1442,11 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               | _ => xerr "XTTE3210" "context-item must be a single item"
           | none => pure none
         let evars := vars.reverse ++ env.vars.filter (fun (q, _) => q.uri == "#xsl")
+        -- current() in the target expression is the context item of the
+        -- xsl:evaluate instruction
+        let evars := match env.ctx with
+          | some c => (vCurrent, c) :: evars
+          | none => evars
         let one := if ctxV.isSome then 1 else 0
         let ebase := if baseUri == "" then env.baseUri else baseUri
         let env' : Env := { env with vars := evars, ctx := ctxV, pos := one, size := one, ns, baseUri := ebase }
