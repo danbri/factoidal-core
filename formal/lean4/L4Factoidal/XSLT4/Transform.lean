@@ -603,7 +603,10 @@ def serParamsOfProps (S : Sheet) (props : List (String × String)) : M SerParams
           | .ok q => pure q.eqn
           | .error _ => pure t
         cm := cm ++ (← S.charMapOf 20 key)
-      p ← p.set "use-character-maps" (.cm cm)
+      -- a character that several maps map: the last mapping wins
+      -- (§26.1.3)
+      let cmLast := cm.foldl (fun acc (ch, r) => (acc.filter (·.1 != ch)) ++ [(ch, r)]) []
+      p ← p.set "use-character-maps" (.cm cmLast)
       continue
     let some kind := paramKinds.lookup name | continue
     let pv ← match kind with
@@ -631,7 +634,20 @@ def Sheet.outputProps (S : Sheet) (key : String) (extra : List (String × String
   let base ← match S.outputs.lookup key with
     | some ps => pure ps
     | none => if key == "" then pure [] else err "XTDE1460" ("no output definition named " ++ key)
-  pure ((base.filter (fun (k, _) => !(extra.any (·.1 == k)))) ++ extra)
+  -- §25.1: the instruction's names of cdata-section-elements and
+  -- suppress-indentation are added to those of the output definition,
+  -- and its character maps follow (and take precedence over) the
+  -- definition's; `#absent` unsets item-separator
+  let joined := ["cdata-section-elements", "suppress-indentation", "use-character-maps"]
+  let extra' := extra.filterMap (fun (k, v) =>
+    if joined.contains k then
+      match base.lookup k with
+      | some b => some (k, b ++ " " ++ v)
+      | none => some (k, v)
+    else if k == "item-separator" && v == "#absent" then none
+    else some (k, v))
+  let base := base.filter (fun (k, _) => !(extra.any (·.1 == k)))
+  pure (base ++ extra')
 
 /-- The default output method (§26.1): `html` when the result's first
     element is `html` in no namespace, `xhtml` when it is in the XHTML

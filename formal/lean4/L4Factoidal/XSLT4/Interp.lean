@@ -1468,11 +1468,23 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | some a => do
               let s ← avtStr cx a
               let q ← liftX (lexQName env.ns s false "XTDE1460")
+              if !(S.outputs.any (·.1 == q.eqn)) then
+                xerr "XTDE1460" ("no output definition named " ++ s)
               pure q.eqn
           | none => pure ""
         let mut sp : List (String × String) := []
         for (k, a) in ser do sp := sp ++ [(k, ← avtStr cx a)]
-        let os ← run n S cx body
+        -- the href is resolved against the base output URI (§25.1), and
+        -- the result is the current output URI of its content
+        let base := match (cx.env.vars.find? (·.1 == vOutUri)).map (·.2) with
+          | some [.atom a] => a.str
+          | _ => ""
+        let h := if h == "" then base else if base == "" then h else resolveUri base h
+        let cxR := cx.bind vOutUri (if h == "" then [] else [.atom (Atomic.ofUri h)])
+        -- writing a resource that the transformation reads (§25.2)
+        if h != "" && (env.docUris.any (·.1 == h) || env.resources.any (·.1 == h)) then
+          xerr "XTDE1500" ("the result document " ++ h ++ " is also read by the transformation")
+        let os ← run n S cxR body
         let id ← freshId
         let meth := match sp.lookup "method" with
           | some m => m

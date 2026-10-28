@@ -674,7 +674,16 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
             | .error e => return .fail ("cannot evaluate function param: " ++ e.code)
           pure (some (nsOf n (attrD n "name"), args))
         | none => pure none
-      let ou := fileUri ("/out/" ++ attrD tc "name" ++ "/principal.xml")
+      -- the base output URI: the test's `<output file="..."/>` against
+      -- the test set's directory (`#absent`: none); with no file, the
+      -- `results/<test>.xml` of that directory, as the tests that name
+      -- a file do
+      let ofile := ((kidsNamed testNode "output").findSome? (fun n => attr n "file"))
+      let ou := match ofile with
+        | some "#absent" => ""
+        | some "" => fileUri (dir ++ "/")
+        | some f => fileUri (dir ++ "/" ++ f)
+        | none => fileUri (dir ++ "/results/" ++ attrD tc "name" ++ ".xml")
       let topts : TOpts := { initialTemplate := it, initialMode := imName, initialSelect := imSel, initialFunction := ifn, globalCtx, params, env, outUri := ou }
       pure (env, (do let r ← transform S topts; pure (r, S) : M (TResult × Sheet)))
   -- delivery (the catalog driver's default format is a document node)
