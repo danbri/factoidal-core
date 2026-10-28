@@ -19,6 +19,7 @@ Static calls are coerced to the F&O 4.0 signature first (§3.4.3).
 -/
 import L4Factoidal.XPath4.Ext
 import L4Factoidal.XQuery4.Runtime
+import L4Factoidal.XQuery4.Grammar
 
 namespace L4Factoidal.XPath4
 
@@ -1153,9 +1154,14 @@ def rangeShortcut : Nat → Env → Expr → M (Option Seq)
 
 end
 
+/-- Parse an XPath 4.0 expression with the computed node constructors
+    (XPath 4.0 §4.12, `XQuery4.xpathGrammar`). -/
+def parseXPath4 (src : String) (ns : List (String × String) := []) : M Expr :=
+  parseXPath src ns (some L4Factoidal.XQuery4.xpathGrammar)
+
 /-- Evaluate an XPath 4.0 expression string. -/
 def evalString (src : String) (env : Env := {}) : M Seq := do
-  let e ← parseXPath src env.ns
+  let e ← parseXPath4 src env.ns
   eval 100000 env e
 
 def showSeq (s : Seq) : String :=

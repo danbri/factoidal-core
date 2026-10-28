@@ -45,6 +45,9 @@ structure ExtGrammar where
   /-- The value of a string literal's characters (XQuery expands
       entity and character references). -/
   stringLit : String → Except Err String
+  /-- The XQuery 4.0 grammar (true) or the XPath 4.0 profile that only
+      adds the computed node constructors (false, XPath 4.0 §4.12). -/
+  xquery : Bool := true
 
 structure PCtx where
   s : Array Char
@@ -478,7 +481,7 @@ def pItemType : Nat → P IType
     let dE ← dfltElemNs
     -- XQuery: annotations before a function test (`%a function(*)`) do
     -- not change the type here (their meaning is implementation-defined)
-    if (← read).ext.isSome && (← peekAt 0) == '%' then
+    if ((← read).ext.map (·.xquery)).getD false && (← peekAt 0) == '%' then
       for _ in [0:100] do
         ws
         if (← peekAt 0) != '%' then break
@@ -1523,7 +1526,7 @@ end
 
 /-- Parse a complete XPath 4.0 expression, with optional namespace
     declarations prolog. -/
-def parseXPath (src : String) (ns : List (String × String) := []) : M Expr :=
+def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option ExtGrammar := none) : M Expr :=
   let p : P Expr := do
     -- prolog (XPath 4.0 §2.1): DefaultElementNamespaceDecl? NamespaceDecl*
     let mut extra : List (String × String) := []
@@ -1571,7 +1574,7 @@ def parseXPath (src : String) (ns : List (String × String) := []) : M Expr :=
     if i < c.s.size then synErr ("unexpected text at offset " ++ toString i ++ ": '" ++
        String.ofList ((List.range (min 20 (c.s.size - i))).map (fun k => chAt c.s (i + k))) ++ "'")
     pure e
-  match (p.run { s := src.toList.toArray, ns }).run 0 with
+  match (p.run { s := src.toList.toArray, ns, ext }).run 0 with
   | .ok (e, _) => .ok e
   | .error e => .error e
 

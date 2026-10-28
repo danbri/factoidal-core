@@ -303,7 +303,7 @@ def isXqEnv (env : Env) : Bool := env.vars.any (fun (q, _) => q == xqMode)
 
 def evalIn (env : Env) (src : String) : M Seq := do
   if isXqEnv env then L4Factoidal.XQuery4.evalQuery src env 20000 else
-  let e ← parseXPath src env.ns
+  let e ← parseXPath4 src env.ns
   match env.fileSys with
   -- EXPath File 4.0: an assertion may also call a writing `file:` function
   | some fs => (·.1) <$> L4Factoidal.EXPath.File.evalMem env fs e

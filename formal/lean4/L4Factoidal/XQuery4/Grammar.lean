@@ -809,8 +809,8 @@ def pCompName (sp : SubParsers) (kind : String) : P Expr := do
   ws
   if (← curCh) == '{' then pBraced sp
   else
-  -- 4.0: a QName literal `#name`
-  if (← curCh) == '#' then adv 1
+  -- 4.0: a QName literal `#name` (white space may follow the `#`)
+  if (← curCh) == '#' then adv 1; ws
   match ← peekQName with
     | some (p, u, l, e) =>
       set e
@@ -851,7 +851,7 @@ def startsComputed (s : Array Char) (i : Nat) : Bool :=
       | none => false
     else if n == "element" || n == "attribute" || n == "processing-instruction" || n == "namespace" then
       -- a name (or a QName literal `#name`) then '{'
-      let j := if c == '#' then j + 1 else j
+      let j := if c == '#' then skipWsF s (s.size + 1) 0 (j + 1) else j
       let c := chAt s j
       match qnameAt s j with
       | some (_, _, e2) => chAt s (skipWsF s (s.size + 1) 0 e2) == '{'
@@ -1030,5 +1030,32 @@ def grammar (cfg : Cfg) : ExtGrammar where
   primary s ns sp i := liftOpt (runP (primaryP cfg sp) s ns i)
   startsPrimary s i := startsComputed s i
   stringLit := expandRefs
+
+/-- Does an XPath 4.0 computed node constructor start at `i`? XPath 4.0
+    §4.12 has the computed constructors of XQuery, with a name written
+    only as a QName literal `#name` or an enclosed expression
+    (CompNodeName and CompNodeNCName without UnreservedName). -/
+def startsComputedXPath (s : Array Char) (i : Nat) : Bool :=
+  match ncnameAt s i with
+  | some (n, e) =>
+    if !["element", "attribute", "text", "comment", "document", "processing-instruction", "namespace"].contains n then false
+    else if chAt s e == ':' then false
+    else
+      let j := skipWsF s (s.size + 1) 0 e
+      let c := chAt s j
+      if c == '{' then true
+      else if c == '#' then n == "element" || n == "attribute" || n == "processing-instruction" || n == "namespace"
+      else false
+  | none => false
+
+/-- The XPath 4.0 profile of the extension: the computed node
+    constructors only (XPath 4.0 §4.12); string literals are not
+    expanded. -/
+def xpathGrammar : ExtGrammar where
+  exprSingle _ _ _ _ := .ok none
+  primary s ns sp i := if startsComputedXPath s i then liftOpt (runP (primaryP {} sp) s ns i) else .ok none
+  startsPrimary s i := startsComputedXPath s i
+  stringLit v := .ok v
+  xquery := false
 
 end L4Factoidal.XQuery4
