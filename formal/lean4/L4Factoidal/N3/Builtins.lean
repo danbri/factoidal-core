@@ -1,8 +1,8 @@
 /-
 L4Factoidal.N3.Builtins — the N3 built-in predicates the reasoner evaluates.
 
-Specification: Notation3 Builtin Functions (W3C N3 Community Group editor's
-draft, `spec/builtins.html` at commit `1d29dea7` of https://github.com/w3c/N3,
+Specification: Notation3 Builtin Functions (W3C N3 Community Group, Final
+Community Group Report of 3 June 2026, `spec/builtins.html` at commit `1d29dea7` of https://github.com/w3c/N3,
 last changed 2026-06-03; `third_party/testing/n3-PROVENANCE.md`). Each entry of
 `builtinTable` names the section of that draft it implements. Design record:
 `docs/designissues/2026-10-28-n3.md` § 4. Tracking:
@@ -40,17 +40,25 @@ which the triple holds, binding a variable object (or subject) to the
 computed value. A computed value and a written value are compared by value
 (`=` of the SPARQL evaluator), so `(2 3) math:sum 5.0` holds.
 
-Not implemented (the triple then has no solution, and a test that needs it
-fails): the trigonometric functions, `math:exponentiation` with a non-integer
-argument, `string:format`, `string:scrape`, `string:containsRoughly`,
-`log:semantics`, `log:content`, `log:parsedAsN3` (these read a document from
-the Web or a file; with no retrieval record in this layer they are refused,
-rule of 2026-10-25 on network retrieval), `log:outputString`.
+`rdf:first` and `rdf:rest` hold of every non-empty N3 list (`listAxiom`): the
+list term has them, in the data, in a rule body and inside `log:includes`.
+
+Not implemented (the triple then has no solution; each case of the suite that
+needs one is an expected failure of
+https://github.com/danbri/factoidal/issues/1175): `math:exponentiation` with a
+non-integer exponent, the trigonometric functions, `string:format`,
+`string:scrape`, `string:containsRoughly`, `string:encodeForURI`,
+`string:encodeForFragID`, the `time:` built-ins, `log:supports`,
+`log:outputString`, and `log:semantics`, `log:content`, `log:parsedAsN3`
+(these read a document from the Web or a file; with no retrieval record in
+this layer they are refused, the owner's rule of 2026-10-25 on network
+retrieval).
 
 No `sorry`, no `axiom`, no `partial def`.
 -/
 import L4Factoidal.N3.Compare
 import L4Factoidal.N3.Parser
+import L4Factoidal.N3.Rdf
 import L4Factoidal.SPARQL.Expr
 
 namespace L4Factoidal.N3
@@ -104,19 +112,32 @@ def hasVar (bv : BVars) : Nat → N3Term → Bool
       | .list xs => xs.any (hasVar bv f)
       | _ => false
 
-/-- Two ground terms are the same term (`{}` read as `true`). -/
-def termEq (a b : N3Term) : Bool :=
-  a.normalize.key (fun b => "_:" ++ b) == b.normalize.key (fun b => "_:" ++ b)
+/-- The key of a term for comparison: `{}` read as `true`, `rdf:nil` as the
+empty list `()`. -/
+def cmpKey (t : N3Term) : String :=
+  let k := t.normalize.key (fun b => "_:" ++ b)
+  if k == "<http://www.w3.org/1999/02/22-rdf-syntax-ns#nil>" then "( )" else k
 
-/-- Each element with the rest of the list, in order. A tail call per element. -/
-def picks {α : Type} (xs : List α) : List (α × List α) :=
-  let rec go : List α → List α → List (α × List α) → List (α × List α)
+/-- Two ground terms are the same term (`{}` read as `true`, `rdf:nil` as
+`()`). -/
+def termEq (a b : N3Term) : Bool := cmpKey a == cmpKey b
+
+/-- For each element of `xs` that `f` matches, its solutions, each with the
+other elements in order. The rest of the list is built only for an element
+that matches; a tail call per element. -/
+def matchEach {α β : Type} (f : α → List β) (xs : List α) : List (β × List α) :=
+  let rec go : List α → List α → List (β × List α) → List (β × List α)
     | [], _, acc => acc.reverse
-    | x :: rest, before, acc => go rest (x :: before) ((x, before.reverse ++ rest) :: acc)
+    | x :: rest, beforeRev, acc =>
+        match f x with
+        | [] => go rest (x :: beforeRev) acc
+        | sols =>
+            let others := beforeRev.reverse ++ rest
+            go rest (x :: beforeRev) (sols.foldl (fun a b => (b, others) :: a) acc)
   go xs [] []
 
 /-- The most solutions one match may give; more are dropped. -/
-def maxSolutions : Nat := 4096
+def maxSolutions : Nat := 100000
 
 mutual
 
@@ -140,35 +161,75 @@ def unify (bv : BVars) (fuel : Nat) (p t : N3Term) (σ : Subst) : List Subst :=
       | _, _ => if termEq p t then [σ] else []
 termination_by (fuel, 0)
 
+/-- Members in order: a left fold over the pairs (a loop), so the depth of
+the recursion is the nesting of the terms, not the length of the list. -/
 def unifyList (bv : BVars) (fuel : Nat) (ps ts : List N3Term) (σ : Subst) : List Subst :=
-  match ps, ts with
-  | [], [] => [σ]
-  | p :: ps', t :: ts' =>
-      (unify bv fuel p t σ).flatMap fun σ' => unifyList bv fuel ps' ts' σ'
-  | _, _ => []
-termination_by (fuel, ps.length + 1)
+  if ps.length != ts.length then []
+  else (ps.zip ts).attach.foldl (fun (acc : List Subst) ⟨(p, t), _⟩ =>
+    (acc.flatMap fun σ' => unify bv fuel p t σ').take maxSolutions) [σ]
+termination_by (fuel, 1)
+decreasing_by all_goals simp_wf; omega
 
 def unifyTriple (bv : BVars) (fuel : Nat) (p t : N3Triple) (σ : Subst) : List Subst :=
   (unify bv fuel p.1 t.1 σ).flatMap fun σ1 =>
     (unify bv fuel p.2.1 t.2.1 σ1).flatMap fun σ2 => unify bv fuel p.2.2 t.2.2 σ2
 termination_by (fuel, 1)
 
-/-- Each pattern triple to a different triple of `ts`. -/
+/-- Each pattern triple to a different triple of `ts`: a left fold over the
+pattern triples whose state is the partial solutions, each with the triples
+of `ts` not used yet (a loop; the depth of the recursion is the nesting). -/
 def unifyGraph (bv : BVars) (fuel : Nat) (ps ts : List N3Triple) (σ : Subst) : List Subst :=
-  match ps with
-  | [] => if ts.isEmpty then [σ] else []
-  | p :: ps' =>
-      ((picks ts).flatMap fun (t, rest) =>
-        (unifyTriple bv fuel p t σ).flatMap fun σ' => unifyGraph bv fuel ps' rest σ').take maxSolutions
-termination_by (fuel, ps.length + 2)
+  let final := ps.attach.foldl (fun (acc : List (Subst × List N3Triple)) ⟨p, _⟩ =>
+    (acc.flatMap fun (σ', remaining) =>
+      matchEach (fun t => unifyTriple bv fuel p t σ') remaining).take maxSolutions) [(σ, ts)]
+  final.filterMap fun (σ', rest) => if rest.isEmpty then some σ' else none
+termination_by (fuel, 2)
+decreasing_by all_goals simp_wf; omega
 
 end
 
+def rdfNsStr : String := "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+
+/-- The list axioms: a non-empty N3 list has an `rdf:first` (its first member)
+and an `rdf:rest` (the list of the others; `rdf:nil` is the empty list).
+`none` when the triple is not about a list term. -/
+def listAxiom (bv : BVars) (s p o : N3Term) (σ : Subst) : Option (List Subst) :=
+  match s, p with
+  | .list (x :: xs), .iri i =>
+      if i.val == rdfNsStr ++ "first" then some (unify bv termFuel o x σ)
+      else if i.val == rdfNsStr ++ "rest" then
+        some (unify bv termFuel o (.list xs) σ)
+      else none
+  | _, _ => none
+
+/-- Whether a pattern triple is an `rdf:first` or `rdf:rest` triple. -/
+def isListProp : N3Term → Bool
+  | .iri i => i.val == rdfNsStr ++ "first" || i.val == rdfNsStr ++ "rest"
+  | _ => false
+
 /-- `log:includes`: every triple of the pattern matches some triple of the
-graph (the same triple may serve two patterns). -/
+graph (the same triple may serve two patterns), or holds by the list axioms
+(`listAxiom`). The pattern triples are taken in order, except that an
+`rdf:first`/`rdf:rest` triple whose subject is still a variable waits for the
+others. A tail call per pattern triple. -/
 def includesMatch (bv : BVars) (ps ts : List N3Triple) (σ : Subst) : List Subst :=
-  (ps.foldl (fun (acc : List Subst) p =>
-    (acc.flatMap fun σ' => ts.flatMap fun t => unifyTriple bv termFuel p t σ').take maxSolutions) [σ])
+  let rec go : Nat → List N3Triple → List Subst → List Subst
+    | 0, _, acc => acc
+    | _, [], acc => acc
+    | f + 1, pending, acc =>
+        let ready (σ' : Subst) (t : N3Triple) : Bool :=
+          !(isListProp t.2.1 && (varKey bv (subst bv σ' termFuel t.1)).isSome)
+        -- the first triple that is ready for every partial solution
+        let i := (pending.findIdx? fun t => acc.all fun σ' => ready σ' t).getD 0
+        let t := pending.getD i (pending.headD (.var "", .var "", .var ""))
+        let rest := pending.eraseIdx i
+        let acc' := (acc.flatMap fun σ' =>
+          let (s', p', o') := substT bv σ' t
+          match listAxiom bv s' p' o' σ' with
+          | some l => l
+          | none => ts.flatMap fun u => unifyTriple bv termFuel (s', p', o') u σ').take maxSolutions
+        go f rest acc'
+  go (ps.length + 1) ps [σ]
 
 /-! ## Values -/
 
@@ -323,15 +384,26 @@ def negation (bv : BVars) (s o : N3Term) (σ : Subst) : BResult :=
     | none => .sols []
   else .notReady
 
-/-- Integer power, for `math:exponentiation` with integer arguments. -/
-def intPow (b : Int) : Nat → Int
-  | 0 => 1
-  | n + 1 => b * intPow b n
-
 def intOf? (t : N3Term) : Option Int :=
   match numeric? t with
   | some l => if l.val.datatype == xsdInteger then l.val.lexicalForm.trimAscii.toString.toInt? else none
   | none => none
+
+/-- `xsd:integer(e)`: Builtins § math:rounded gives an `xsd:integer` object;
+`math:ceiling` and `math:floor` (not in the 2026-06-03 report; cwm built-ins)
+are given the same result type. -/
+def toInteger (e : SPARQL.Expr) : SPARQL.Expr := .functionCall xsdInteger [e]
+
+/-- The largest integer exponent `math:exponentiation` computes. -/
+def maxExponent : Nat := 4096
+
+/-- `x` to the power `n` by repeated multiplication with the SPARQL
+evaluator: exact for integers and decimals. -/
+def powerOf (x : WfLiteral) (n : Nat) : Option N3Term :=
+  (List.replicate n x).foldl (fun (acc : Option N3Term) b =>
+    match acc.bind numeric? with
+    | some a => evalExpr (.arith .mul (litE a) (litE b))
+    | none => none) (some (intLit 1))
 
 /-- The math, string and list built-ins with a ground-argument rule
 (Builtins §§ "math", "string", "list"). `log:` built-ins that need the
@@ -345,19 +417,25 @@ def evalBuiltin (bv : BVars) (p : String) (s o : N3Term) (σ : Subst) : BResult 
     | "quotient" => listFn bv (fun xs => if xs.length == 2 then foldNumbers .div none xs else none) s o σ
     | "remainder" => listFn bv (fun xs => match xs with
         | [a, b] => match intOf? a, intOf? b with
-          | some x, some y => if y == 0 then none else some (intLit (x.tmod y))
+          | some x, some y => if y == 0 then none else some (intLit (x.fmod y))
           | _, _ => none
         | _ => none) s o σ
     | "exponentiation" => listFn bv (fun xs => match xs with
-        | [a, b] => match intOf? a, intOf? b with
-          | some x, some y => if y ≥ 0 then some (intLit (intPow x y.toNat)) else none
+        | [a, b] => match numeric? a, intOf? b with
+          | some x, some n =>
+              -- The exponent is bounded: a larger one gives no solution (issue 1175).
+              if n.natAbs > maxExponent then none else
+              let pow := powerOf x n.natAbs
+              if n ≥ 0 then pow
+              else pow.bind fun d => (numeric? d).bind fun dl =>
+                evalExpr (.arith .div (.lit (SPARQL.mkTypedLiteral "1.0E0" xsdDouble)) (litE dl))
           | _, _ => none
         | _ => none) s o σ
     | "negation" => negation bv s o σ
     | "absoluteValue" => unaryFn bv (fun t => (numeric? t).bind fun l => evalExpr (.abs (litE l))) s o σ
-    | "ceiling" => unaryFn bv (fun t => (numeric? t).bind fun l => evalExpr (.ceil (litE l))) s o σ
-    | "floor" => unaryFn bv (fun t => (numeric? t).bind fun l => evalExpr (.floor (litE l))) s o σ
-    | "rounded" => unaryFn bv (fun t => (numeric? t).bind fun l => evalExpr (.round (litE l))) s o σ
+    | "ceiling" => unaryFn bv (fun t => (numeric? t).bind fun l => evalExpr (toInteger (.ceil (litE l)))) s o σ
+    | "floor" => unaryFn bv (fun t => (numeric? t).bind fun l => evalExpr (toInteger (.floor (litE l)))) s o σ
+    | "rounded" => unaryFn bv (fun t => (numeric? t).bind fun l => evalExpr (toInteger (.round (litE l)))) s o σ
     | "memberCount" => listFn bv (fun xs => some (intLit xs.length)) s o σ
     | "equalTo" => numTest bv .eq s o σ
     | "notEqualTo" => numTest bv .ne s o σ
@@ -388,6 +466,15 @@ def evalBuiltin (bv : BVars) (p : String) (s o : N3Term) (σ : Subst) : BResult 
     | "replace" => listFn bv (fun xs => match xs.mapM strE? with
         | some [a, pat, rep] => evalExpr (.replace a pat rep none)
         | _ => none) s o σ
+    | _ => .notBuiltin
+  else if p == rdfNsStr ++ "first" || p == rdfNsStr ++ "rest" then
+    match s with
+    | .list _ =>
+        match (match p with
+               | "" => none
+               | _ => listAxiom bv s (if p.endsWith "first" then .iri rdfFirstI else .iri rdfRestI) o σ) with
+        | some l => .sols l
+        | none => .sols []
     | _ => .notBuiltin
   else if p.startsWith listNs then
     match p.drop listNs.length |>.toString with

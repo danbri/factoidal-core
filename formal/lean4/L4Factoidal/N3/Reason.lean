@@ -29,8 +29,9 @@ The body triples are solved one at a time, in the order written, with this
 exception: a built-in whose input is still a variable is tried after the
 others (`BResult.notReady`). A triple that is not a built-in is matched with
 the store triples of the same predicate (`unifyTriple`). A rule fires once for
-each assignment of its body variables (`RState.fired`), so a rule with an
-existential head does not fire again for the same assignment.
+each assignment of the variables its head uses (`firingKey`, `RState.fired`),
+so a rule with an existential head does not fire again for the same values.
+An N3 list has `rdf:first` and `rdf:rest` (`listAxiom`).
 
 ## Rounds
 
@@ -104,6 +105,8 @@ structure Store where
   triples : Array N3Triple := #[]
   keys    : Std.HashSet String := {}
   byPred  : Std.HashMap String (Array N3Triple) := {}
+  /-- By predicate and subject (`cmpKey`), for an IRI predicate. -/
+  byPS    : Std.HashMap String (Array N3Triple) := {}
   others  : Array N3Triple := #[]
 
 /-- Add a triple; `false` when the store has it already. -/
@@ -114,14 +117,21 @@ def Store.add (st : Store) (t : N3Triple) : Store × Bool :=
     let pk := predKey t.2.1
     let st1 := { st with triples := st.triples.push t, keys := st.keys.insert k }
     if pk.isEmpty then ({ st1 with others := st1.others.push t }, true)
-    else ({ st1 with byPred := st1.byPred.insert pk ((st1.byPred.getD pk #[]).push t) }, true)
+    else
+      let psk := pk ++ " " ++ cmpKey t.1
+      ({ st1 with byPred := st1.byPred.insert pk ((st1.byPred.getD pk #[]).push t),
+                  byPS := st1.byPS.insert psk ((st1.byPS.getD psk #[]).push t) }, true)
 
 def Store.ofList (g : List N3Triple) : Store := g.foldl (fun st t => (st.add t).1) {}
 
-/-- The store triples a pattern triple can match. -/
-def Store.candidates (st : Store) (p : N3Term) : Array N3Triple :=
+/-- The store triples a pattern triple can match: by predicate and subject
+when both are known (`ground`: the subject has no variable and is not a graph
+term), by predicate when the predicate is an IRI, else all. -/
+def Store.candidates (st : Store) (s p : N3Term) (ground : Bool) : Array N3Triple :=
   match p with
-  | .iri i => st.byPred.getD i.val #[] ++ st.others
+  | .iri i =>
+      if ground then st.byPS.getD (i.val ++ " " ++ cmpKey s) #[] ++ st.others
+      else st.byPred.getD i.val #[] ++ st.others
   | _ => st.triples
 
 /-! ## `log:` built-ins (Builtins § "log") -/
@@ -154,6 +164,20 @@ def mkLit? (lex : String) (dt : Option WfIri) (lang : Option String) : Option N3
 def maxRounds : Nat := 200
 def maxTriples : Nat := 200000
 
+/-- The most steps one rule body may take in one round. -/
+def solveSteps : Nat := 10000000
+
+/-- The first triple of `pending` whose solutions are known now, with its
+solutions and the other triples in order. A tail call per triple tried; the
+rest of the list is rebuilt only for the triple chosen. -/
+def firstReady (try? : N3Triple → Option (List Subst)) :
+    List N3Triple → List N3Triple → Option (List Subst × List N3Triple)
+  | [], _ => none
+  | t :: rest, beforeRev =>
+      match try? t with
+      | some sols => some (sols, beforeRev.reverse ++ rest)
+      | none => firstReady try? rest (t :: beforeRev)
+
 /-- Reasoner state. `added`: the triples the rules concluded, in order. -/
 structure RState where
   store : Store
@@ -163,24 +187,42 @@ structure RState where
   /-- A bound stopped the run. -/
   limit : Bool := false
 
-/-- The firing key: the rule and the values of its body variables. -/
+/-- The variable keys a rule head uses: its quick variables and the body
+blank nodes that occur in it. -/
+def headVarKeys (r : N3Rule) : List String :=
+  let vs := r.head.flatMap fun (s, p, o) => s.vars ++ p.vars ++ o.vars
+  let bs := r.head.flatMap fun (s, p, o) => s.allBnodes ++ p.allBnodes ++ o.allBnodes
+  vs.map ("?" ++ ·) ++ (bs.filter r.bvars.contains).map ("_:" ++ ·)
+
+/-- The firing key: the rule and the values of the variables its head uses.
+Two solutions that agree on those give the same conclusions up to the names of
+the head's fresh blank nodes, so the rule fires once for them (a lean result:
+`{ ?x a :S } => { [] a :G }` concludes one `[] a :G`). -/
 def firingKey (r : N3Rule) (σ : Subst) : String :=
+  let used := headVarKeys r
   r.id ++ "\n" ++ String.intercalate "\n"
-    (sortDedup (σ.map fun (k, v) => k ++ "=" ++ v.normalize.key (fun x => "_:" ++ x)))
+    (sortDedup ((σ.filter fun (k, _) => used.contains k).map fun (k, v) => k ++ "=" ++ cmpKey v))
 
-mutual
+/-- Fire one rule under one substitution. -/
+def fire (pfx : String) (r : N3Rule) (rs : RState) (σ : Subst) : RState :=
+  let k := firingKey r σ
+  if rs.fired.contains k then rs
+  else
+    let (ren, n) := r.hvars.foldl (fun (acc : Subst × Nat) b =>
+      (("_:" ++ b, .bnode (pfx ++ "sk" ++ toString acc.2)) :: acc.1, acc.2 + 1)) ([], rs.fresh)
+    let rs1 := { rs with fired := rs.fired.insert k, fresh := n }
+    r.head.foldl (fun acc t =>
+      let t1 := substT r.hvars ren (substT r.bvars σ t)
+      let (st1, isNew) := acc.store.add t1
+      if isNew then { acc with store := st1, added := acc.added.push t1 } else acc) rs1
 
-/-- One body triple: the substitutions under which it holds, or `none` when it
-is a built-in whose input is still a variable. `depth` bounds the nesting of
-`log:conclusion`. -/
-def solveOne (depth : Nat) (st : Store) (bv : BVars) (t : N3Triple) (σ : Subst) :
-    Option (List Subst) :=
-  let (s, p, o) := substT bv σ t
-  let pk := predKey p
-  let matchStore : List Subst :=
-    ((st.candidates p).toList.flatMap fun u => unifyTriple bv termFuel (s, p, o) u σ).take maxSolutions
-  if pk.startsWith logNsStr then
-    match pk.drop logNsStr.length |>.toString with
+/-- The `log:` built-ins that need no reasoning (Builtins § "log"), on a
+substituted triple named `name` (the local name): `none` when an input is
+still a variable, else the solutions; a `log:` name that is not one of them is
+matched with the store (`matchStore`). -/
+def logBuiltin (bv : BVars) (name : String) (s o : N3Term) (σ : Subst)
+    (matchStore : List Subst) : Option (List Subst) :=
+  match name with
     | "equalTo" =>
         if !hasVar bv termFuel o then some (unify bv termFuel s o σ)
         else if !hasVar bv termFuel s then some (unify bv termFuel o s σ)
@@ -204,12 +246,6 @@ def solveOne (depth : Nat) (st : Store) (bv : BVars) (t : N3Triple) (σ : Subst)
               | some gs => some (giveValue bv o (.graph (Store.ofList gs.flatten).triples.toList) σ)
               | none => some []
         | _ => if (varKey bv s).isSome then none else some []
-    | "conclusion" =>
-        match depth, graphTriples? s with
-        | d + 1, some g =>
-            let rs := chain d maxRounds false { store := Store.ofList g }
-            if rs.limit then some [] else some (giveValue bv o (.graph rs.store.triples.toList) σ)
-        | _, _ => if (varKey bv s).isSome then none else some []
     | "uri" =>
         match s, o with
         | .iri i, _ => some (giveValue bv o (strLit i.val) σ)
@@ -246,6 +282,27 @@ def solveOne (depth : Nat) (st : Store) (bv : BVars) (t : N3Triple) (σ : Subst)
         -- header of `N3/Builtins.lean`).
         some []
     | _ => some matchStore
+
+mutual
+
+/-- One body triple: the substitutions under which it holds, or `none` when it
+is a built-in whose input is still a variable. `depth` bounds the nesting of
+`log:conclusion`. -/
+def solveOne (depth : Nat) (st : Store) (bv : BVars) (t : N3Triple) (σ : Subst) :
+    Option (List Subst) :=
+  let (s, p, o) := substT bv σ t
+  let pk := predKey p
+  let matchStore : List Subst :=
+    ((st.candidates s p (!hasVar bv termFuel s && !(s matches .graph _))).toList.flatMap fun u =>
+      unifyTriple bv termFuel (s, p, o) u σ).take maxSolutions
+  if pk == logNsStr ++ "conclusion" then
+    match depth, graphTriples? s with
+        | d + 1, some g =>
+            let rs := chain d maxRounds false { store := Store.ofList g }
+            if rs.limit then some [] else some (giveValue bv o (.graph rs.store.triples.toList) σ)
+        | _, _ => if (varKey bv s).isSome then none else some []
+  else if pk.startsWith logNsStr then
+    logBuiltin bv (pk.drop logNsStr.length |>.toString) s o σ matchStore
   else
     match evalBuiltin bv pk s o σ with
     | .notBuiltin => some matchStore
@@ -253,41 +310,26 @@ def solveOne (depth : Nat) (st : Store) (bv : BVars) (t : N3Triple) (σ : Subst)
     | .sols l => some l
 termination_by (depth, 0, 0)
 
-/-- Solve a rule body: one triple at a time (module header), a tail call per
-triple. `pending` keeps the triples not yet solved, in order. -/
-def solveBody (depth : Nat) (st : Store) (bv : BVars) (fuel : Nat) (pending : List N3Triple)
-    (σs : List Subst) : List Subst :=
-  match fuel, pending with
-  | _, [] => σs
-  | 0, _ => []
-  | f + 1, _ =>
-      -- For each partial solution, the first triple that can be solved now.
-      let step : Subst → List Subst := fun σ =>
-        let rec pick : List (N3Triple × List N3Triple) → Option (List Subst × List N3Triple)
-          | [] => none
-          | (t, rest) :: more =>
-              match solveOne depth st bv t σ with
-              | some sols => some (sols, rest)
-              | none => pick more
-        match pick (picks pending) with
-        | none => []
-        | some (sols, rest) => solveBody depth st bv f rest sols
-      (σs.flatMap step).take maxSolutions
+/-- Solve a rule body (module header): a worklist of partial solutions, each
+with the body triples it has not solved yet; a tail call per step. Gives the
+solutions and `true` when a bound stopped it (`maxSolutions` solutions, or
+`fuel` steps), which `chain` reports as a limit, never as a complete result. -/
+def solveBody (depth : Nat) (st : Store) (bv : BVars) (fuel : Nat)
+    (work : List (Subst × List N3Triple)) (out : Array Subst) : Array Subst × Bool :=
+  match fuel with
+  | 0 => (out, !work.isEmpty)
+  | f + 1 =>
+    match work with
+    | [] => (out, false)
+    | (σ, []) :: rest =>
+        if out.size ≥ maxSolutions then (out, true)
+        else solveBody depth st bv f rest (out.push σ)
+    | (σ, pending) :: rest =>
+        let chosen := firstReady (fun t => solveOne depth st bv t σ) pending []
+        match chosen with
+        | none => solveBody depth st bv f rest out
+        | some (sols, rem) => solveBody depth st bv f (sols.map (·, rem) ++ rest) out
 termination_by (depth, 1, fuel)
-
-/-- Fire one rule under one substitution. -/
-def fire (pfx : String) (r : N3Rule) (rs : RState) (σ : Subst) : RState :=
-  let k := firingKey r σ
-  if rs.fired.contains k then rs
-  else
-    let (ren, n) := r.hvars.foldl (fun (acc : Subst × Nat) b =>
-      (("_:" ++ b, .bnode (pfx ++ "sk" ++ toString acc.2)) :: acc.1, acc.2 + 1)) ([], rs.fresh)
-    let rs1 := { rs with fired := rs.fired.insert k, fresh := n }
-    r.head.foldl (fun acc t =>
-      let t1 := substT r.hvars ren (substT r.bvars σ t)
-      let (st1, isNew) := acc.store.add t1
-      if isNew then { acc with store := st1, added := acc.added.push t1 } else acc) rs1
-termination_by (0, 0, 0)
 
 /-- Rounds (module header). `once`: one round only (cwm `--rules`). -/
 def chain (depth : Nat) (rounds : Nat) (once : Bool) (rs : RState) : RState :=
@@ -299,9 +341,11 @@ def chain (depth : Nat) (rounds : Nat) (once : Bool) (rs : RState) : RState :=
       let before := rs.added.size
       let pfx := "n3r" ++ toString depth ++ "x"
       let rs1 := rules.foldl (fun acc r =>
-        let sols := solveBody depth snap r.bvars (r.body.length + 1) r.body [[]]
-        sols.foldl (fire pfx r) acc) rs
-      if rs1.store.triples.size > maxTriples then { rs1 with limit := true }
+        let (sols, cut) := solveBody depth snap r.bvars solveSteps [([], r.body)] #[]
+        let acc1 := sols.foldl (fire pfx r) acc
+        if cut then { acc1 with limit := true } else acc1) rs
+      if rs1.limit then rs1
+      else if rs1.store.triples.size > maxTriples then { rs1 with limit := true }
       else if rs1.added.size == before || once then rs1
       else chain depth n once rs1
 termination_by (depth, 2, rounds)

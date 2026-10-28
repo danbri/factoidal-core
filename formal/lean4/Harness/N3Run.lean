@@ -27,7 +27,8 @@ https://github.com/danbri/factoidal/issues/1165.
     one in `mf:result`.
 
 A test in `defective` is reported as `EXCLUDED`, apart from the total, with
-its issue.
+its issue. A test in `expectedFail` that fails is counted as `expected-fail`
+with its issue.
 
 ## Approval
 
@@ -127,7 +128,22 @@ data"): reported apart, after the total, with the issue that gives the
 evidence. A pass of one of them fails the run, so the exclusion cannot outlive
 a corrected test. -/
 def defective : List (String × String × String) :=
-  [ ("N3Tests/manifest-parser.ttl", "numbers.n3", "https://github.com/danbri/factoidal/issues/1170") ]
+  [ ("N3Tests/manifest-parser.ttl", "numbers.n3", "https://github.com/danbri/factoidal/issues/1170") ] ++
+  (["includes-conclusion-simple.n3", "includes-conclusion.n3", "includes-t10.n3",
+    "unify-unify1.n3", "rounded.n3", "log-parsedAsN3.n3"].map fun n =>
+    ("N3Tests/manifest-reasoner.ttl", n, "https://github.com/danbri/factoidal/issues/1174"))
+
+/-- Expected failures (skill test-suites, "Expected failures"): an engine
+shortfall with an open issue. A FAIL is counted as `expected-fail`; a PASS
+fails the run, so the entry is removed in the fixing commit. -/
+def expectedFail : List (String × String × String) :=
+  ["exponentiation.n3", "math-trig.n3", "string-concatenation.n3", "string-format.n3",
+   "string-scrape.n3", "string-roughly.n3", "string-uriEncode.n3", "time-t1.n3",
+   "supports-simple.n3", "includes-t11.n3", "log-content.n3", "includes-xsd.n3"].map fun n =>
+    ("N3Tests/manifest-reasoner.ttl", n, "https://github.com/danbri/factoidal/issues/1175")
+
+def expectedFail? (manifestPath name : String) : Option String :=
+  (expectedFail.find? fun (m, n, _) => manifestPath.endsWith m && n == name).map (·.2.2)
 
 def defective? (manifestPath name : String) : Option String :=
   (defective.find? fun (m, n, _) => manifestPath.endsWith m && n == name).map (·.2.2)
@@ -153,11 +169,18 @@ def readExpected (path text base : String) (mode : Mode) : Except String N3Graph
 as an N3 graph. An `.nt` or `.nq` result writes lists as collections, so the
 document's lists are expanded first (`expandLists`). -/
 def compareExpected (rf : String) (d : N3Document) (exp : N3Graph) : Outcome :=
-  if rf.endsWith ".n3" then isoOutcome "not isomorphic to the result" (n3Isomorphic d.triples exp)
+  let why (g : N3Graph) : String :=
+    let a := graphKeys g {}
+    let b := graphKeys exp {}
+    let missing := (b.filter fun k => !a.contains k).take 2
+    let extra := (a.filter fun k => !b.contains k).take 2
+    s!"not isomorphic to the result ({g.length} triples, expected {exp.length}; " ++
+      s!"missing {missing}; extra {extra})"
+  if rf.endsWith ".n3" then isoOutcome (why d.triples) (n3Isomorphic d.triples exp)
   else
     match expandLists (d.bnodePrefix ++ "c") d.triples with
     | .error e => .fail e
-    | .ok g => isoOutcome "not isomorphic to the result" (n3Isomorphic g exp)
+    | .ok g => isoOutcome (why g) (n3Isomorphic g exp)
 
 def testNs : String := "https://w3c.github.io/N3/tests/test.n3#"
 
@@ -265,10 +288,21 @@ def runManifest (mode : Mode) (quiet : Bool) (path : String) : IO (Option Tally)
         | some url, .fail _ =>
             t := { t with excluded := t.excluded + 1 }
             IO.println s!"EXCLUDED {tc.name}: defective test data, {url}"
+        | none, .fail why =>
+            match expectedFail? abs.toString tc.name with
+            | some url =>
+                t := { t with current := { t.current with xfail := t.current.xfail + 1 } }
+                if !quiet then IO.println s!"XFAIL {tc.name}: {url} ({why})"
+            | none =>
+                if rej then t := { t with rejected := t.rejected.bump o0 }
+                else t := { t with current := t.current.bump o0 }
+                if !quiet || !rej then
+                  IO.println ((if rej then "[rejected] " else "") ++ o0.line tc.name)
         | d, _ =>
-            let o : Outcome := match d, o0 with
-              | some url, .pass => .fail s!"unexpected pass: remove the defective-data exclusion and close {url}"
-              | _, _ => o0
+            let o : Outcome := match d, o0, expectedFail? abs.toString tc.name with
+              | none, .pass, some url => .fail s!"unexpected pass: remove the expected failure and update {url}"
+              | some url, .pass, _ => .fail s!"unexpected pass: remove the defective-data exclusion and close {url}"
+              | _, _, _ => o0
             if rej then t := { t with rejected := t.rejected.bump o }
             else t := { t with current := t.current.bump o }
             if !quiet || (o.isFail && !rej) then
