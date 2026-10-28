@@ -631,8 +631,20 @@ def Env.nsDecls (e : Env) (x : XCtx) (n : NodeRef) (scope : List (String × Stri
   let all := decls ++ undecl
   if x.p.canonical then all.mergeSort (fun a b => a.1 ≤ b.1) else all
 
+/-- Is `n` inside (a strict descendant of) an HTML `script` or `style`
+    element, under the HTML method? Its text and the attributes of its
+    descendants are not escaped (§7.4). -/
+def Env.inRawHtml (e : Env) (x : XCtx) (n : NodeRef) : Bool :=
+  x.m == "html" && (e.ancestors n).any (fun a =>
+    let r := e.nrec a
+    r.kind == .element && x.isHtmlElem r.name && ["script", "style"].contains (lower r.name.loc))
+
 def Env.writeAttr (e : Env) (x : XCtx) (elemHtml : Bool) (a : NodeRef) : W Unit := do
   let ar := e.nrec a
+  -- an attribute of an element inside script or style: not escaped
+  let rawHere := match ar.parent with
+    | some p => e.inRawHtml x (a.at p)
+    | none => false
   let nm := if ar.name.pfx == "" then ar.name.loc else ar.name.pfx ++ ":" ++ ar.name.loc
   let v := ar.value
   if elemHtml && x.m == "html" && ar.name.uri == "" && htmlBoolAttrs.contains (lower nm) && lower v == lower nm then
@@ -640,7 +652,7 @@ def Env.writeAttr (e : Env) (x : XCtx) (elemHtml : Bool) (a : NodeRef) : W Unit 
   else
     let v := if elemHtml && x.p.escapeUriAttrs && ar.name.uri == "" && uriAttrs.contains (lower nm)
       then Fn.String.escapeHtmlUri v else v
-    emit (" " ++ nm ++ "=\"" ++ x.p.escAttr (elemHtml && x.m == "html") v ++ "\"")
+    emit (" " ++ nm ++ "=\"" ++ (if rawHere then x.p.rawText v else x.p.escAttr (elemHtml && x.m == "html") v) ++ "\"")
 
 def Env.sortedAttrs (e : Env) (x : XCtx) (n : NodeRef) : List NodeRef :=
   let as := e.attrNodes n
@@ -701,9 +713,9 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
       let inCdata := match parent with
         | some q => qnIn q x.p.cdata && !(x.m == "html" && x.isHtmlElem q)
         | none => false
-      let raw := match parent with
+      let raw := (match parent with
         | some q => x.m == "html" && x.isHtmlElem q && ["script", "style"].contains (lower q.loc)
-        | none => false
+        | none => false) || e.inRawHtml x n
       if inCdata && !x.p.canonical then emit (cdataSection r.value)
       else if raw then emit (x.p.rawText r.value)
       else emit (x.p.escText r.value)
