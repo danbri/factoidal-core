@@ -4,6 +4,9 @@
 
 - Verifiable Credentials: the Data Integrity ECDSA cryptosuites `ecdsa-rdfc-2019` and `ecdsa-jcs-2019` (Data Integrity ECDSA Cryptosuites v1.0) with P-256 keys, in one table with `eddsa-rdfc-2022` (`L4Factoidal/VC/Cryptosuite.lean`; https://github.com/danbri/factoidal/issues/1165). New wasm ops `vcDiKey`, `vcDiSecure` and `vcDiVerify` (through `loadEngine().call`): secure and verify a credential at the document level, with did:key resolution on Ed25519, P-256 and P-384. P-384 is refused (HACL\* has no P-384: https://github.com/danbri/factoidal/issues/1166).
 - Verifiable Credentials: `eddsa-jcs-2022` (Data Integrity EdDSA Cryptosuites v1.0 §3.4) in the same table, through the same ops.
+- Verifiable Credentials: Bitstring Status List v1.0 (`L4Factoidal/VC/StatusList.lean`): entries, list credentials, the GZIP and base64url list, and the §3.2 validation, through new wasm ops `vcStatusEntryNew`, `vcStatusListCredential`, `vcStatusEntryCheck` and `vcStatusValidate`.
+- VC DI §2.4 data-loss check: also refuses a top-level member that no context of the document defines, and reads `credentialSubject` keys under the subject's type-scoped contexts.
+- Fixed: base64url decoding of long inputs no longer overflows the wasm stack (loop forms with `csimp` proofs).
 - Fixed: the RFC 8785 (JCS) writer sorts object member names by UTF-16 code units (RFC 8785 §3.2.3); it used code-point order, which differs for names with characters above U+FFFF. This changes the canonical form of JSON-LD `@json` literals with such names.
 
 ## 0.21.0 (2026-10-28)
