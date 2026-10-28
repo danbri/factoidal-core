@@ -26,6 +26,7 @@ table to `XML.Node` and loop invariants over `Runtime.buildElement`
 -/
 import L4Factoidal.XQuery4.Module
 import L4Factoidal.XSD11.Load
+import L4Factoidal.XQuery4.FlworTheorems
 
 namespace L4Factoidal.XQuery4
 
