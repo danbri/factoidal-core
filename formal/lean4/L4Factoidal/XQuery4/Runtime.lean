@@ -96,13 +96,27 @@ def userDecl? (e : Env) (q0 : QN) (k : Nat) : Option (Item × Nat × List Item) 
     let withCl (d : Item) : Item := match d with
       | .fn (.inline ps' r' b' f' _) => .fn (.inline ps' r' b' f' sv)
       | x => x
-    some (.fn (.inline ps r b f sv), lo, dflts.map withCl)
+    -- the function's name, for fn:function-name (a closure entry that no
+    -- variable reference can name)
+    let nm : QN × List Item := ({ uri := "#fname", loc := "" }, [.atom (Atomic.ofQN q)])
+    some (.fn (.inline ps r b f (nm :: sv)), lo, dflts.map withCl)
   | _ => none
 
 /-- The callbacks into the evaluator for a user function call. -/
 structure CallCb where
   eval : Expr → M Seq
   apply : Item → List Seq → M Seq
+  /-- Evaluation in another dynamic context (a parameter default, in the
+      focus of the call: context value, position and size). -/
+  evalIn : Env → Expr → M Seq := fun _ _ => pure []
+
+/-- The value of a parameter default `d` in the focus of `e` (XQuery 4.0
+    §5.18.1: the default is evaluated in the dynamic context of the
+    caller, with the function's static context). -/
+def defaultIn (evalIn : Env → Expr → M Seq) (applyF : Item → List Seq → M Seq) (e : Env) (d : Item) : M Seq :=
+  match d with
+  | .fn (.inline [] _ body true cl) => evalIn { e with vars := cl ++ e.vars } body
+  | _ => applyF d [e.ctx.getD []]
 
 /-- A static call `q(args, kw)` of a function declared in the prolog
     (XQuery 4.0 §4.5.1): positional arguments, then keyword arguments
@@ -125,7 +139,6 @@ def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
         if (slots.getD i none).isSome then err "XPST0017" ("argument " ++ nm ++ " given twice")
         slots := slots.set! i (some a)
       | none => err "XPST0017" ("no parameter named " ++ nm ++ " in " ++ q.show)
-    let ctxArg : Seq := e.ctx.getD []
     let mut fixed : Array (Option Seq) := #[]
     let mut isPartial := false
     for (sl, i) in slots.toList.zip (List.range m) do
@@ -135,7 +148,7 @@ def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
       | none =>
         if i < lo then err "XPST0017" ("missing argument $" ++ ((ps.getD i default).1.show) ++ " of " ++ q.show)
         match dflts[i - lo]? with
-        | some d => fixed := fixed.push (some (← cb.apply d [ctxArg]))
+        | some d => fixed := fixed.push (some (← defaultIn cb.evalIn cb.apply e d))
         | none => err "XPST0017" ("missing argument of " ++ q.show)
     if isPartial then pure [.fn (.papp fi fixed.toList)]
     else cb.apply fi (fixed.toList.map (·.getD []))

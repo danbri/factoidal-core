@@ -605,7 +605,8 @@ def eval : Nat → Env → Expr → M Seq
       match sig? with
       | none =>
           -- XQuery 4.0 hook: a function declared in the prolog
-          match XQuery4.callUser? { eval := fun x => eval n env x, apply := fun f as => apply n env f as } env q args kw with
+          match XQuery4.callUser? { eval := fun x => eval n env x, apply := fun f as => apply n env f as,
+                                     evalIn := fun e' x => eval n e' x } env q args kw with
           | some r => r
           | none =>
           if (findSigAny q).isSome then err "XPST0017" ("wrong number of arguments for " ++ q.show)
