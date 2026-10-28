@@ -380,27 +380,9 @@ def systemPropertiesFn : LibFn := fun _ _ _ =>
     (q "supports-binary-library", [.atom (Atomic.ofBool false)]),
     (q "supports-file-library", [.atom (Atomic.ofBool false)])]]
 
-/-! ## `fn:slice` (§14.1.x) and `fn:scan` -/
-
-/-- The rules of `fn:slice`, on a list; `rev` is the fuel for the one
-    reversal a negative step makes. -/
-def sliceList {α} : Nat → List α → Int → Int → Int → List α
-  | 0, _, _, _, _ => []
-  | rev + 1, xs, start, stop, step =>
-    let n : Int := xs.length
-    let s := if start == 0 && step < 0 then n else if start == 0 then 1 else if start < 0 then n + start + 1 else start
-    let e := if stop == 0 && step < 0 then 1 else if stop == 0 then n else if stop < 0 then n + stop + 1 else stop
-    let st := if step == 0 then (if e ≥ s then 1 else -1) else step
-    if st < 0 then sliceList rev xs.reverse (-s) (-e) (-st)
-    else
-      (xs.zipIdx 1).filterMap (fun (x, p) =>
-        let p : Int := p
-        if p ≥ s && p ≤ e && (p - s) % st == 0 then some x else none)
+/-! ## `fn:scan` -/
 
 def optInt (s : Seq) : Int := if s.isEmpty then 0 else intOf s
-
-def sliceFn : LibFn := fun _ _ a =>
-  pure (sliceList 2 (argN a 0) (optInt (argN a 1)) (optInt (argN a 2)) (optInt (argN a 3)))
 
 def scanFn : LibFn := fun h _ a => do
   let mut acc := argN a 1
@@ -645,14 +627,93 @@ def minMax4 (isMax : Bool) : LibFn := fun _ e a => do
       | .ok o => if (isMax && o == .gt) || (!isMax && o == .lt) then best := some x
   pure (match best with | some b => [.atom b] | none => [])
 
+/-! ## `fn:decode-from-uri` and `fn:unparsed-binary` -/
+
+/-- UTF-8 decoding where an invalid or incomplete sequence becomes one
+    U+FFFD for the octets read so far (F&O 4.0 `fn:decode-from-uri`: the
+    octets x41 xF0 x9F x92 x41 decode as "A\uFFFDA"). -/
+def utf8Maximal (bs : List Nat) : String := Id.run do
+  let arr := bs.toArray
+  let n := arr.size
+  let mut out : String := ""
+  let mut i := 0
+  for _ in [0:n] do
+    if i ≥ n then break
+    let b0 := arr[i]!
+    if b0 < 0x80 then out := out.push (Char.ofNat b0); i := i + 1; continue
+    let (len, lo, hi, init) :=
+      if 0xC2 ≤ b0 && b0 ≤ 0xDF then (2, 0x80, 0xBF, b0 &&& 0x1F)
+      else if b0 == 0xE0 then (3, 0xA0, 0xBF, b0 &&& 0x0F)
+      else if 0xE1 ≤ b0 && b0 ≤ 0xEC then (3, 0x80, 0xBF, b0 &&& 0x0F)
+      else if b0 == 0xED then (3, 0x80, 0x9F, b0 &&& 0x0F)
+      else if 0xEE ≤ b0 && b0 ≤ 0xEF then (3, 0x80, 0xBF, b0 &&& 0x0F)
+      else if b0 == 0xF0 then (4, 0x90, 0xBF, b0 &&& 0x07)
+      else if 0xF1 ≤ b0 && b0 ≤ 0xF3 then (4, 0x80, 0xBF, b0 &&& 0x07)
+      else if b0 == 0xF4 then (4, 0x80, 0x8F, b0 &&& 0x07)
+      else (0, 0, 0, 0)
+    if len == 0 then out := out.push '\uFFFD'; i := i + 1; continue
+    let mut cp := init
+    let mut j := 1
+    let mut ok := true
+    for k in [1:len] do
+      let b := arr.getD (i + k) 256
+      let (l, h) := if k == 1 then (lo, hi) else (0x80, 0xBF)
+      if l ≤ b && b ≤ h then cp := cp * 64 + (b &&& 0x3F); j := j + 1
+      else ok := false; break
+    if ok then out := out.push (Char.ofNat cp) else out := out.push '\uFFFD'
+    i := i + j
+  return out
+
+def hexDigitVal (c : Char) : Option Nat :=
+  if c.isDigit then some (c.toNat - 48)
+  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 87)
+  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55)
+  else none
+
+/-- The percent decoding works on the UTF-8 octets of the value: `%`
+    and two hexadecimal digits give one octet; `%` followed by octets that
+    are not two hexadecimal digits gives U+FFFD for `%` and up to two of
+    them. A decoded character that XML does not allow becomes U+FFFD. -/
+def decodeFromUriFn : LibFn := fun _ _ a => do
+  let src := (strOf (argN a 0)).toUTF8.toList.map (·.toNat) |>.toArray
+  let hexv (b : Nat) : Option Nat :=
+    if 0x30 ≤ b && b ≤ 0x39 then some (b - 0x30)
+    else if 0x61 ≤ b && b ≤ 0x66 then some (b - 0x57)
+    else if 0x41 ≤ b && b ≤ 0x46 then some (b - 0x37)
+    else none
+  let mut octs : Array Nat := #[]
+  let mut i := 0
+  for _ in [0:src.size] do
+    if i ≥ src.size then break
+    let b := src[i]!
+    if b == 0x25 then
+      match (src[i + 1]?).bind hexv, (src[i + 2]?).bind hexv with
+      | some h, some l => octs := octs.push (h * 16 + l); i := i + 3
+      | _, _ =>
+        octs := octs ++ #[0xEF, 0xBF, 0xBD]
+        i := i + 1 + min 2 (src.size - (i + 1))
+    else
+      octs := octs.push b; i := i + 1
+  let t := utf8Maximal octs.toList
+  pure (sStr (String.ofList (t.toList.map (fun c => if isXmlCp c.toNat then c else '\uFFFD'))))
+
+def unparsedBinaryFn : LibFn := fun _ e a => do
+  match optAtom (argN a 0) with
+  | none => pure []
+  | some h =>
+    match e.resourceBin h.str with
+    | some bs => pure [.atom ⟨.b .base64Binary, .x (.bin false (bs.toList.map (·.toNat)))⟩]
+    | none => err "FOUT1170" ("resource not available: " ++ h.str)
+
 def fn4Table : List (String × LibFn) :=
   [("hash", hashFn), ("random-number-generator", rngFn), ("rng-record#", rngRecordFn),
    ("rng-permute#", rngPermuteFn), ("rng-take#", rngTakeFn),
    ("parts-of-dateTime", partsOfDateTimeFn), ("build-dateTime", buildDateTimeFn),
    ("round", roundModeFn), ("unix-dateTime", unixDateTimeFn), ("pad-string", padStringFn),
    ("trim-space", trimSpaceFn), ("system-properties", systemPropertiesFn),
-   ("slice", sliceFn), ("scan", scanFn), ("path", pathFn),
+   ("scan", scanFn), ("path", pathFn),
    ("in-scope-namespaces", inScopeNamespacesFn), ("compare", compareFn),
+   ("decode-from-uri", decodeFromUriFn), ("unparsed-binary", unparsedBinaryFn),
    ("min", minMax4 false), ("max", minMax4 true)]
 
 end L4Factoidal.XPath4

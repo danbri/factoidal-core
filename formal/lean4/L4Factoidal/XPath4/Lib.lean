@@ -510,25 +510,26 @@ def eqForIndexOf (a b : Atomic) : Bool :=
   | .ok (some .eq) => true
   | _ => false
 
-/-- F&O 4.0 `fn:slice` positions (0-based) for a sequence of `len` items. -/
+/-- The rules of `fn:slice`, on a list; `rev` is the fuel for the one
+    reversal a negative step makes. -/
+def sliceList {α} : Nat → List α → Int → Int → Int → List α
+  | 0, _, _, _, _ => []
+  | rev + 1, xs, start, stop, step =>
+    let n : Int := xs.length
+    let s := if start == 0 && step < 0 then n else if start == 0 then 1 else if start < 0 then n + start + 1 else start
+    let e := if stop == 0 && step < 0 then 1 else if stop == 0 then n else if stop < 0 then n + stop + 1 else stop
+    let st := if step == 0 then (if e ≥ s then 1 else -1) else step
+    if st < 0 then sliceList rev xs.reverse (-s) (-e) (-st)
+    else
+      (xs.zipIdx 1).filterMap (fun (x, p) =>
+        let p : Int := p
+        if p ≥ s && p ≤ e && (p - s) % st == 0 then some x else none)
+
+/-- The positions (0-based) that `fn:slice` and `array:slice` select:
+    `sliceList` (the F&O 4.0 rules) over the positions. -/
 def sliceIdx (len : Nat) (a1 a2 a3 : Seq) : List Nat :=
-  let n : Int := len
-  let norm (v : Seq) (d : Int) : Int :=
-    match v with
-    | [] => d
-    | _ => let x := intOf v; if x == 0 then d else if x < 0 then n + x + 1 else x
-  let st : Int := norm a1 1
-  let en : Int := norm a2 n
-  let step0 : Int := match a3 with | [] => 0 | v => intOf v
-  let step : Int := if step0 == 0 then (if st ≤ en then 1 else -1) else step0
-  if step > 0 then
-    (List.range len).filter (fun (i : Nat) =>
-      let p : Int := (i : Int) + 1
-      decide (st ≤ p) && decide (p ≤ en) && (p - st) % step == 0)
-  else
-    ((List.range len).reverse).filter (fun (i : Nat) =>
-      let p : Int := (i : Int) + 1
-      decide (p ≤ st) && decide (en ≤ p) && (st - p) % (-step) == 0)
+  let o (v : Seq) : Int := if v.isEmpty then 0 else intOf v
+  sliceList 2 (List.range len) (o a1) (o a2) (o a3)
 
 def ent (n : String) (f : LibFn) : String × LibFn := (n, f)
 
