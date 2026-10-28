@@ -146,7 +146,11 @@ def depOk (xq : Bool) (d : Node) : Bool :=
       let has := (v.splitOn " ").any (fun x => x == "1.0" || x == "1.0:4-" || x.startsWith "1.0")
       if sat then has else !has
   | "xsd-version" => if sat then v == "1.1" else v != "1.1"
-  | "default-language" | "language" => if sat then v == "en" else v != "en"
+  -- `XPath4.NumberWords`: German, French and Italian words and names
+  | "language" =>
+      let has := v == "en" || NumberWords.hasLang v
+      if sat then has else !has
+  | "default-language" => if sat then v == "en" else v != "en"
   -- `XPath4.Unicode`: UAX #15 NFC, NFD, NFKC, NFKD (not FULLY-NORMALIZED)
   | "unicode-normalization-form" =>
       let has := v == "NFC" || v == "NFD" || v == "NFKC" || v == "NFKD"
