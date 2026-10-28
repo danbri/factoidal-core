@@ -741,10 +741,16 @@ def loadImports (env : Env) : Nat → List String → Module → M (List Module 
   | d + 1, seen, m => do
     let mut out : List Module := []
     let mut seen := seen
-    for (_, u, _) in m.imports do
+    for (_, u, locs) in m.imports do
       if seen.contains u then continue
       seen := u :: seen
-      let texts := moduleTexts env u
+      -- the caller's texts for the namespace, else the files that the
+      -- location hints name (§5.12)
+      let texts := match moduleTexts env u with
+        | [] => locs.filterMap (fun l => match env.resources.lookup l with
+            | some t => some t
+            | none => env.resources.lookup (resolveUri env.baseUri l))
+        | ts => ts
       if texts.isEmpty then err "XQST0059" ("no module found for namespace " ++ u)
       for t in texts do
         let lm ← parseModule t [] (typeLoader env 8 seen)
