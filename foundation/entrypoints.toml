@@ -1389,3 +1389,23 @@ reason = "term-level: the XSD lexical-to-value mapping of one literal (RDF/Liter
 [[nonstage]]
 id = "wasm:literalFromValue"
 reason = "term-level: the literal of one JavaScript value (RDF/LiteralValue.lean jsValueLiteral), reads no graph"
+
+[[entry]]
+id = "wasm:lwsDatasetView"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader"]
+covers = "part"
+note = "Wasm/Ops/LwsDataset.lean: LWS.DatasetView.viewOfDocsJson reads each representation only through Dataflow.readers (readOfDone, the reader of formatOfMediaType of its Content-Type). Not covered: the blank-node scope per read (scopeDocument), the view (LWS.DatasetView.view; its source theorem lwsSource_query_sound has no registry stage yet, issue 1011), and the output text Dataset.toNQuads (no writer stage)."
+
+[[entry]]
+id = "npm:./lws/dataset#openLwsDataset"
+stages = ["ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader"]
+covers = "part"
+note = "npm/factoidal/lws/dataset.mjs: the LWS client's list and read, the ops lwsViewPlan and lwsDatasetView (see wasm:lwsDatasetView), then parse of the N-Quads view. Not covered: the HTTP crawl (assumption lwsReadsAtSnapshot) and the query, which is Dataset.query."
+
+[[nonstage]]
+id = "wasm:lwsViewPlan"
+reason = "the crawl plan of one container listing (LWS.DatasetView.planListing): which members to list, read or leave out; reads no RDF data"
+
+[[nonstage]]
+id = "npm:./lws/dataset#lwsDatasetOpsAvailable"
+reason = "reflection: whether the loaded engine has the op lwsViewPlan; reads no RDF data"

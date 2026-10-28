@@ -823,3 +823,8 @@ spec = "JSON-LD 1.1 Processing Algorithms and API §8.5-§8.6 (serialize RDF as 
 name = "L4Factoidal.JSONLD.Frame"
 level = 3
 spec = "JSON-LD 1.1 Framing §4 (the framing algorithm)"
+
+[[module]]
+name = "L4Factoidal.LWS.DatasetView"
+level = 1
+spec = "Linked Web Storage 1.0 Core (editor's draft) Terminology, Containers, Read Resource; LDP 1.0 §5.2.1.4 (ldp:contains). LWS does not define a dataset view: this is Factoidal's definition, https://github.com/danbri/factoidal/issues/1011"

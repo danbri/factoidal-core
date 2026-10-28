@@ -59,6 +59,7 @@ import L4Factoidal.Dataflow.Compose
 import L4Factoidal.Dataflow.EndToEnd
 import L4Factoidal.Dataflow.Sources
 import L4Factoidal.Dataflow.SourcesTests
+import L4Factoidal.Dataflow.LwsSource
 import L4Factoidal.Dataflow.Registry
 import L4Factoidal.Dataflow.NodeSettings
 import L4Factoidal.Dataflow.PackSetStage
@@ -940,6 +941,9 @@ import L4Factoidal.Unified.RifEmbed
 -- carry one `#guard` per `guarded` row of each conformance registry, so
 -- importing them here makes every one of those checks a build gate.
 import L4Factoidal.LWS.Tests
+import L4Factoidal.LWS.DatasetView
+import L4Factoidal.LWS.DatasetViewRead
+import L4Factoidal.LWS.DatasetViewTests
 import L4Factoidal.LWS.PaginationLinksTests
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.AuthorizationTests

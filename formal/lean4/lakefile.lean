@@ -318,6 +318,7 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Solid,
              `Wasm.Ops.LwsClient,
              `Wasm.Ops.WebDAV,
+             `Wasm.Ops.LwsDataset,
              `Wasm.Ops.Authz,
              `Wasm.Ops.Toan,
              `Wasm.Ops.Xmpp,

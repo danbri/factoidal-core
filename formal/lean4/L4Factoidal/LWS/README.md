@@ -48,6 +48,8 @@ own binding, those rows are the difference.
 | `InboxGuard.lean` | refuses a webhook inbox that names this server under another host name, an IP address or `localhost` (issue 915): IPv4 and IPv6 literals, the base IRI authority, the bound address and interface addresses, names the host resolved. |
 | `MoveTests.lean` | `#guard`s through `step`, `Authorization.decide` and `Notifications.serverStep`, positive and negative, and `lwsGuardMoveResource`. |
 | `Patch.lean` | the `?conditions` / `?insertions` / `?deletions` formula patch, its constraints, and `applyPatch`. Matching is `SPARQL.evalBgp` and instantiation is `SPARQL.instantiateTemplate` — no second matcher. |
+| `DatasetView.lean` | the dataset view of a snapshot (issue 1011; Factoidal's definition, LWS does not define one): `ldp:contains` in the default graph, one named graph per RDF resource; theorems `view_names_nodup`, `view_replace`. The source theorem is `Dataflow/LwsSource.lean`. |
+| `DatasetViewRead.lean` | the crawl plan of a listing and each read, over the client's `done` documents (wasm ops `lwsViewPlan`, `lwsDatasetView`); guards in `DatasetViewTests.lean`. |
 | `Conformance.lean` | the registry: id, section, verbatim statement, module, binding, status. |
 | `Tests.lean` | one `#guard` per `guarded` row, and the theorems the `proved` rows name. |
 
