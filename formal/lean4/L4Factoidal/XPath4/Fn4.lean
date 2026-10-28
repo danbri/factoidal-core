@@ -362,8 +362,10 @@ def trimSpaceFn : LibFn := fun _ e a => do
   let cs := if side != "start" then (cs.reverse.dropWhile isWs).reverse else cs
   pure (sStr (String.ofList cs))
 
-def systemPropertiesFn : LibFn := fun _ _ _ =>
+def systemPropertiesFn : LibFn := fun _ e _ =>
   let q (l : String) : Atomic := Atomic.ofQN { uri := "", loc := l }
+  -- dynamic XQuery and XSLT: when the host offers them (`Env.host`)
+  let hostHas (l : String) (k : Nat) : Bool := (e.host { uri := nsFN, loc := l } k).isSome
   pure [.map [
     (q "xpath-version", [.atom (Atomic.ofDec ⟨40, 1⟩)]),
     (q "xsd-version", [.atom (Atomic.ofDec ⟨11, 1⟩)]),
@@ -375,8 +377,8 @@ def systemPropertiesFn : LibFn := fun _ _ _ =>
     (q "supports-dtd-validation", [.atom (Atomic.ofBool false)]),
     (q "supports-dtd-attribute-typing", [.atom (Atomic.ofBool false)]),
     (q "supports-invisible-xml", [.atom (Atomic.ofBool true)]),
-    (q "supports-dynamic-xquery", [.atom (Atomic.ofBool false)]),
-    (q "supports-dynamic-xslt", [.atom (Atomic.ofBool false)]),
+    (q "supports-dynamic-xquery", [.atom (Atomic.ofBool (hostHas "load-xquery-module" 1))]),
+    (q "supports-dynamic-xslt", [.atom (Atomic.ofBool (hostHas "transform" 1))]),
     (q "supports-binary-library", [.atom (Atomic.ofBool true)]),
     (q "supports-file-library", [.atom (Atomic.ofBool true)])]]
 
