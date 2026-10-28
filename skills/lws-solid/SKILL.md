@@ -990,7 +990,9 @@ CONFIGDIR holds one Markdown file per mount (`README.md` is not one):
 * Connect: macOS Finder, Go > Connect to Server, `http://127.0.0.1:8090/`;
   Windows, Map network drive, `http://127.0.0.1:8090/`; GNOME Files,
   `dav://127.0.0.1:8090/`; KDE Dolphin, `webdav://127.0.0.1:8090/`. Not yet
-  checked with the real clients: https://github.com/danbri/factoidal/issues/1079.
+  checked with these clients: https://github.com/danbri/factoidal/issues/1079.
+  rclone and cadaver are: `node tests/webdav/clients.mjs` (11 pass, 0 fail,
+  out of 11, on 2026-10-28; `apt-get install rclone cadaver`).
 
 | path | what it is |
 | --- | --- |
