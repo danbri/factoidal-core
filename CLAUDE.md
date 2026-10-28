@@ -833,6 +833,14 @@ risk file issue to flag for expert review", to these questions:
 4. HTTP over XMPP (https://github.com/danbri/factoidal/issues/1107): start
    stage 1 of `docs/designissues/2026-10-28-http-over-xmpp.md`.
 
+Owner, 2026-10-28, verbatim, on the WebDAV login: "Does “no rate limit”
+expose our server passwords to automated hacking tools? In which case default
+to protection but have a —dangerously-disable-ratelimits option ?" Rule: a
+login surface limits failed logins by default; turning the limit off needs an
+option whose name starts with `--dangerously-`, and the server warns at start
+when it is used. First instance: `webdav-serve --users`
+(https://github.com/danbri/factoidal/issues/1119).
+
 ### Feature-combination safety; MCP over XMPP (owner, 2026-10-28)
 
 Owner, verbatim: "Thanks for your care re open proxy. We will need careful
