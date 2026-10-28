@@ -758,3 +758,6 @@ lean_exe «l4xslt4» where root := `Harness.Xslt4Run
 -- protocol decision is in L4Factoidal/XMPP/Server.lean, not here.
 @[default_target] lean_exe «l4xmpp-serve» where root := `Harness.XmppServe
 @[default_target] lean_exe «l4xml-namespaces» where root := `Harness.NamespaceRun
+
+-- XProc 3.1 processor and upstream conformance runner; excluded from library root.
+lean_exe l4xproc where root := `L4Factoidal.XProc31.Runner

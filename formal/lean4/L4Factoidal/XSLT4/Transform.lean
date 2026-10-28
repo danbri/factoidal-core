@@ -710,7 +710,7 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         match vals.get? nd.idx with
         | some (b, af) => pure (if q.loc == "accumulator-before" then b else af)
         | none => pure []
-    | _, _ => none
+    | _, _ => base.host q k
 
 /-! ## The transformation -/
 
