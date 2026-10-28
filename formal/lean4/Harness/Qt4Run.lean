@@ -39,6 +39,7 @@ import L4Factoidal.XSD11.Load
 import L4Factoidal.XPath4.Theorems
 import L4Factoidal.XQuery4.Module
 import L4Factoidal.XQuery4.Theorems
+import L4Factoidal.XQueryUpdate.Query
 import L4Factoidal.XPath4.SerializeTheorems
 import L4Factoidal.EXPath.File.IOHost
 import L4Factoidal.EXPath.File.Theorems
@@ -126,6 +127,8 @@ def featureSupported (f : String) : Bool :=
   -- XML Schema 1.1 (`L4Factoidal.XSD11`): in-scope schema definitions from
   -- the environment's `schema`, validated sources, typed data
   || f == "schemaImport" || f == "schemaValidation" || f == "typedData"
+  -- XQuery Update Facility 3.0 (`L4Factoidal.XQueryUpdate`)
+  || f == "XQUpdate"
 
 def depOk (xq : Bool) (d : Node) : Bool :=
   let ty := attrD d "type"
@@ -141,6 +144,9 @@ def depOk (xq : Bool) (d : Node) : Bool :=
       if sat then has else !has
   | "xsd-version" => if sat then v == "1.1" else v != "1.1"
   | "default-language" | "language" => if sat then v == "en" else v != "en"
+  -- XQuery Update Facility: the revalidation modes this processor
+  -- supports (all three, `XQueryUpdate.Revalidate`)
+  | "revalidation" => if sat then ["strict", "lax", "skip"].contains v else !(["strict", "lax", "skip"].contains v)
   | _ => !sat
 
 /-! ## Environments -/
@@ -285,7 +291,7 @@ def xqMode : QN := { uri := "#qt4run", loc := "xquery" }
 def isXqEnv (env : Env) : Bool := env.vars.any (fun (q, _) => q == xqMode)
 
 def evalIn (env : Env) (src : String) : M Seq := do
-  if isXqEnv env then L4Factoidal.XQuery4.evalQuery src env 20000 else
+  if isXqEnv env then (·.1) <$> L4Factoidal.XQueryUpdate.evalUpdQuery src env 20000 else
   let e ← parseXPath src env.ns
   match env.fileSys with
   -- EXPath File 4.0: an assertion may also call a writing `file:` function
@@ -701,10 +707,17 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         | some r => (localEnvs.lookup r).orElse (fun _ => catEnvs.lookup r)
         | none => some (parseEnv dir e xq)
     let some spec := envSpec | do t := { t with unsup := t.unsup + 1 }; continue
-    let some testNode := (kidsNamed tc "test").head? | do t := { t with fail := t.fail + 1 }; continue
-    let src ← match attr testNode "file" with
+    let testNodes := kidsNamed tc "test"
+    let some testNode := testNodes.getLast? | do t := { t with fail := t.fail + 1 }; continue
+    let srcOf (tn : Node) : IO String := do
+      match attr tn "file" with
       | some f => pure ((← readFileSafe (dir ++ "/" ++ f)).getD "")
-      | none => pure testNode.textContent
+      | none => pure tn.textContent
+    let src ← srcOf testNode
+    -- XQuery Update test cases: the queries before the last one run in
+    -- order, each on the documents the one before it left (`update="true"`)
+    let mut before : List String := []
+    for tn in testNodes.dropLast do before := before ++ [← srcOf tn]
     if o.trace then IO.eprintln s!"  test {name}"
     if o.hang.contains name then
       t := { t with fail := t.fail + 1 }
@@ -725,9 +738,19 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         | some txt => mods := mods ++ [("#module " ++ attrD md "uri", txt)]
         | none => pure ()
       let env := { env with resources := env.resources ++ mods }
-      let (res, env) ← match spec.sandpit with
-        | some sp => L4Factoidal.EXPath.File.evalSandpit (o.fileHost == "io") sp env src
-        | none => pure (evalIn env src, env)
+      -- the earlier queries of an XQuery Update test case; an error ends the chain
+      let mut chainEnv := env
+      let mut chainErr : Option Err := none
+      for b in before do
+        if chainErr.isSome then break
+        match L4Factoidal.XQueryUpdate.evalUpdQuery b chainEnv 20000 with
+        | .ok (_, e') => chainEnv := e'
+        | .error e => chainErr := some e
+      let env := chainEnv
+      let (res, env) ← match chainErr, spec.sandpit with
+        | some e, _ => pure (.error e, env)
+        | none, some sp => L4Factoidal.EXPath.File.evalSandpit (o.fileHost == "io") sp env src
+        | none, none => pure (evalIn env src, env)
       let some r := (kidsNamed tc "result").head? | do t := { t with fail := t.fail + 1 }; continue
       let r ← resolveXmlFiles o.root dir 100 r
       match (kids r).head? with
@@ -793,7 +816,7 @@ def main (args : List String) : IO UInt32 := do
   -- XQuery mode also scores `app` and `misc` (use cases, FunctX, ...);
   -- the XPath mode keeps its six families
   let fams := if !o.families.isEmpty then o.families
-    else if o.lang == "xquery" then ["prod", "op", "fn", "map", "array", "math", "app", "misc"]
+    else if o.lang == "xquery" then ["prod", "op", "fn", "map", "array", "math", "app", "misc", "upd"]
     else ["prod", "op", "fn", "map", "array", "math"]
   let some ctxt ← readFileSafe (o.root ++ "/catalog.xml")
     | IO.eprintln s!"cannot read {o.root}/catalog.xml"; return 2

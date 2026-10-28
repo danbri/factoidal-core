@@ -659,6 +659,8 @@ def eval : Nat → Env → Expr → M Seq
           if args.any Option.isNone then
             pure [.fn (.papp fi (← evalArgs n env args))]
           else
+            -- XQuery Update Facility 3.0 §7.11: an updating function needs `invoke updating`
+            if XQueryUpdate.isUpdatingFn fi then err "XUDY0038" "a dynamic call of an updating function"
             let vs ← evalArgs n env args
             apply n env fi (vs.map (·.getD []))
       | _ =>
@@ -1074,7 +1076,11 @@ def apply : Nat → Env → Item → List Seq → M Seq
             vars := (v, ← env.coerce t a ("$" ++ v.show)) :: vars
           let env' := { env with vars, ctx := none, pos := 0, size := 0 }
           let r ← eval n env' body
-          env.coerce ret r "function result"
+          -- XQuery Update: the pending update list is not part of the
+          -- XDM instance that the return type describes
+          let (pu, xs) := r.partition XQueryUpdate.isPulItem
+          if pu.isEmpty then env.coerce ret r "function result"
+          else return (← env.coerce ret xs "function result") ++ pu
     | .fn (.papp g fixed) => do
         let mut rest := args
         let mut full : List Seq := []
