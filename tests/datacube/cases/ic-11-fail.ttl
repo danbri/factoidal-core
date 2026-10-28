@@ -1,0 +1,22 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix qb:   <http://purl.org/linked-data/cube#> .
+@prefix eg:   <http://example.org/ns#> .
+
+eg:ds a qb:DataSet ; qb:structure eg:dsd .
+eg:dsd a qb:DataStructureDefinition ;
+    qb:component [ qb:dimension eg:area ] ,
+                 [ qb:measure eg:pop ] ,
+                 [ qb:attribute eg:unit ; qb:componentRequired "false"^^xsd:boolean ] .
+eg:area a qb:DimensionProperty ; rdfs:range skos:Concept ; qb:codeList eg:areas .
+eg:pop a qb:MeasureProperty .
+eg:unit a qb:AttributeProperty .
+eg:areas a skos:ConceptScheme .
+eg:a1 a skos:Concept ; skos:inScheme eg:areas .
+eg:a2 a skos:Concept ; skos:inScheme eg:areas .
+eg:a3 a skos:Concept .
+eg:o1 a qb:Observation ; qb:dataSet eg:ds ; eg:area eg:a1 ; eg:pop 10 .
+eg:o2 a qb:Observation ; qb:dataSet eg:ds ; eg:pop 20 .

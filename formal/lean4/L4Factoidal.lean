@@ -623,6 +623,11 @@ import L4Factoidal.RML.SparqlSource
 import L4Factoidal.RML.Functions
 import L4Factoidal.RML.FunctionTests
 import L4Factoidal.RML.VirtualSource
+import L4Factoidal.DataCube.Vocabulary
+import L4Factoidal.DataCube.Queries
+import L4Factoidal.DataCube.Normalize
+import L4Factoidal.DataCube.NormalizeTheorems
+import L4Factoidal.DataCube.Constraints
 import L4Factoidal.RIF.Syntax
 import L4Factoidal.RIF.Ps
 import L4Factoidal.RIF.Builtins
@@ -758,6 +763,10 @@ import L4Factoidal.Storage.BlockWireV0
 import L4Factoidal.Storage.BlockWireV0Tests
 import L4Factoidal.VC.Credential
 import L4Factoidal.VC.CredentialTests
+import L4Factoidal.VC.Cryptosuite
+import L4Factoidal.VC.CryptosuiteNative
+import L4Factoidal.VC.CryptosuiteTheorems
+import L4Factoidal.VC.CryptosuiteTests
 import L4Factoidal.HDT.Container
 import L4Factoidal.HDT.ContainerTheorems
 import L4Factoidal.HDT.Dictionary

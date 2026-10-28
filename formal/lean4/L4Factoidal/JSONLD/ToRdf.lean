@@ -307,12 +307,33 @@ mandatory set RFC 8259 §7 defines, which `JSON.escapeString` already
 implements. -/
 def jcsString (s : String) : String := "\"" ++ escapeString s ++ "\""
 
-/-- Insertion-sort an object's members by key (RFC 8785 §3.2.3, "sort by
-code point"). -/
+/-- RFC 8785 §3.2.3 sorts member names "as arrays of UTF-16 code units".
+That order differs from code-point order only between a character above
+U+FFFF (two code units, the first in D800–DBFF) and a character in
+U+E000–U+FFFF: the first sorts lower in UTF-16. `utf16OrderChar` moves the
+supplementary planes down by 0x2000 (to U+E000–U+10DFFF) and U+E000–U+FFFF up
+by 0x100000 (to U+10E000–U+10FFFF). The map is injective, every result is a
+valid scalar value, and code-point order of the images is UTF-16 order of the
+originals. Before 2026-10-28 the sort used code-point order, and the RFC's own
+§3.2.3 example came out in the wrong order (the `#guard` after
+`jcsDocument`). -/
+def utf16OrderChar (c : Char) : Char :=
+  let n := c.toNat
+  if 0x10000 ≤ n then Char.ofNat (n - 0x2000)
+  else if 0xE000 ≤ n then Char.ofNat (n + 0x100000)
+  else c
+
+/-- The key that `jcsSortFields` compares: code-point order on it is the
+UTF-16 code-unit order of RFC 8785 §3.2.3 on the member name. -/
+def jcsSortKey (s : String) : String := s.map utf16OrderChar
+
+/-- Insertion-sort an object's members by key (RFC 8785 §3.2.3, UTF-16
+code-unit order, through `jcsSortKey`). -/
 def jcsInsertSorted (kv : String × Json) : List (String × Json) → List (String × Json)
   | [] => [kv]
   | (k2, v2) :: rest =>
-    if strLt kv.1 k2 then kv :: (k2, v2) :: rest else (k2, v2) :: jcsInsertSorted kv rest
+    if strLt (jcsSortKey kv.1) (jcsSortKey k2) then kv :: (k2, v2) :: rest
+    else (k2, v2) :: jcsInsertSorted kv rest
 
 def jcsSortFields : List (String × Json) → List (String × Json)
   | [] => []
@@ -336,7 +357,7 @@ def jcsInsertSortedGo (kv : String × Json) :
     List (String × Json) → List (String × Json) → List (String × Json)
   | acc, [] => acc.reverseAux [kv]
   | acc, (k2, v2) :: rest =>
-    if strLt kv.1 k2 then acc.reverseAux (kv :: (k2, v2) :: rest)
+    if strLt (jcsSortKey kv.1) (jcsSortKey k2) then acc.reverseAux (kv :: (k2, v2) :: rest)
     else jcsInsertSortedGo kv ((k2, v2) :: acc) rest
 
 theorem jcsInsertSortedGo_eq (kv : String × Json) : ∀ (acc l : List (String × Json)),
@@ -344,7 +365,7 @@ theorem jcsInsertSortedGo_eq (kv : String × Json) : ∀ (acc l : List (String �
   | acc, [] => by simp [jcsInsertSortedGo, jcsInsertSorted, List.reverseAux_eq]
   | acc, (k2, v2) :: rest => by
     unfold jcsInsertSortedGo jcsInsertSorted
-    by_cases hh : strLt kv.1 k2 = true
+    by_cases hh : strLt (jcsSortKey kv.1) (jcsSortKey k2) = true
     · simp [hh, List.reverseAux_eq]
     · simp [hh, jcsInsertSortedGo_eq kv ((k2, v2) :: acc) rest]
 
@@ -501,13 +522,13 @@ theorem foldr_insByKey_eq_fast {α : Type} (key : α → String) (l : List α) :
   · simp [List.foldl_reverse]
 
 theorem jcsInsertSorted_eq_insByKey (kv : String × Json) : ∀ l : List (String × Json),
-    jcsInsertSorted kv l = insByKey Prod.fst kv l
+    jcsInsertSorted kv l = insByKey (fun p => jcsSortKey p.1) kv l
   | [] => rfl
   | (k2, v2) :: rest => by
     simp only [jcsInsertSorted, insByKey, jcsInsertSorted_eq_insByKey kv rest]
 
 def jcsSortFieldsFast (l : List (String × Json)) : List (String × Json) :=
-  sortByKeyFast Prod.fst l
+  sortByKeyFast (fun p => jcsSortKey p.1) l
 
 theorem jcsSortFields_eq_foldr : ∀ l : List (String × Json),
     jcsSortFields l = l.foldr jcsInsertSorted []
@@ -630,6 +651,18 @@ def jcsSerializeFieldsFast (fields : List (String × Json)) (fuel : Nat) : Strin
 #guard jcsSerW (.array [.number "1", .number "2"]) 20 != "[2,1]"
 
 def jcsDocument (v : Json) : String := jcsSerialize v (10 * Json.size v + 32)
+
+private def grinningFace : String := String.singleton (Char.ofNat 0x1F600)
+
+/- RFC 8785 §3.2.3, the sorting example: U+1F600 (UTF-16 D83D DE00) sorts
+before U+FB33, the reverse of code-point order. -/
+#guard jcsDocument (.object [("\u20ac", .string "Euro Sign"), ("\r", .string "Carriage Return"),
+    ("\ufb33", .string "Hebrew Letter Dalet With Dagesh"), ("1", .string "One"),
+    (grinningFace, .string "Emoji: Grinning Face"), ("\u0080", .string "Control"),
+    ("\u00f6", .string "Latin Small Letter O With Diaeresis")]) ==
+  "{\"\\r\":\"Carriage Return\",\"1\":\"One\",\"\u0080\":\"Control\"," ++
+  "\"\u00f6\":\"Latin Small Letter O With Diaeresis\",\"\u20ac\":\"Euro Sign\"," ++
+  "\"" ++ grinningFace ++ "\":\"Emoji: Grinning Face\",\"\ufb33\":\"Hebrew Letter Dalet With Dagesh\"}"
 
 /-! ## §8.6 Data Round Tripping — canonical `xsd:double` form
 
