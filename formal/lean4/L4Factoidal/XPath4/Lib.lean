@@ -23,6 +23,7 @@ documents the caller registers.
 import L4Factoidal.XPath4.Core
 import L4Factoidal.Fn.String
 import L4Factoidal.Regex.XPath
+import L4Factoidal.Regex.Profiles
 import Std.Data.HashSet
 import L4Factoidal.XPath4.Grapheme
 import L4Factoidal.XPath4.Collation
@@ -146,7 +147,7 @@ def maxQuant (p : String) : Nat := Id.run do
 
 def compileRe (p f : String) : M Regex.Compiled :=
   if maxQuant p > 1000 then err "FOER0000" "implementation limit: regex quantifier above 1000" else
-  match Regex.compile p f with
+  match Regex.Profiles.compileXPath40 p f with
   | .ok r => pure r
   | .error e => regexErr e
 
