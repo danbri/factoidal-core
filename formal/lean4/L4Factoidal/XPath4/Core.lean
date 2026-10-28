@@ -28,6 +28,8 @@ structure HostCall where
   size : Nat := 0
   /-- The static namespace bindings in force (`Env.ns`). -/
   ns : List (String × String) := []
+  /-- The call is made by untrusted code (`Env.untrusted`). -/
+  untrusted : Bool := false
 
 /-- A host function: called with the dynamic context of the call and
     the argument values. -/

@@ -128,7 +128,7 @@ def loadXQueryModule : Nat → Nat → Env → List Seq → M Seq
   -- the loaded code may itself call fn:load-xquery-module
   let host : QN → Nat → Option HostFn := fun q k =>
     if q.uri == nsFN && q.loc == "load-xquery-module" && (k == 1 || k == 2) then
-      some (fun _ a => loadXQueryModule fuel depth { env with untrusted } a)
+      some (fun c a => loadXQueryModule fuel depth { env with untrusted := untrusted || c.untrusted } a)
     else env.host q k
   let env0 : Env := { env with vars := extVars, ctx := ctxv, pos := if ctxv.isSome then 1 else 0,
                                size := if ctxv.isSome then 1 else 0, untrusted, host }
@@ -193,7 +193,7 @@ def loadXQueryModule : Nat → Nat → Env → List Seq → M Seq
 def loadModuleHost (env : Env) (base : QN → Nat → Option HostFn) : QN → Nat → Option HostFn :=
   fun q k =>
     if q.uri == nsFN && q.loc == "load-xquery-module" && (k == 1 || k == 2) then
-      some (fun _ args => loadXQueryModule 20000 20 env args)
+      some (fun c args => loadXQueryModule 20000 20 { env with untrusted := env.untrusted || c.untrusted } args)
     else base q k
 
 end L4Factoidal.XQuery4

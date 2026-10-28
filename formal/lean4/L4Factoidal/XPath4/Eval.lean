@@ -583,7 +583,7 @@ def eval : Nat → Env → Expr → M Seq
       | some h =>
           let vs ← evalArgs n env args
           if args.any Option.isNone then pure [.fn (.papp (.fn (.builtin q args.length)) vs)]
-          else h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns } (vs.map (·.getD []))
+          else h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns, untrusted := env.untrusted } (vs.map (·.getD []))
       | none =>
       -- fn:concat is sequence-variadic (F&O 4.0 §5.4.1): any arity
       let sig? := if q.uri == nsFN && q.loc == "concat" then some (default : Sig) else findSig q total
@@ -676,6 +676,12 @@ def eval : Nat → Env → Expr → M Seq
             out := out ++ (← apply n env fi (vs.map (·.getD [])))
           pure out
   | .fref q k => do
+      -- a reference made by untrusted code to a function that reads
+      -- external resources stays untrusted (F&O 4.0 §17.4.1)
+      if env.untrusted && isExternalFn q then
+        let ps : List (QN × IType) := (List.range k).map (fun i => ({ uri := "#untrusted", loc := "a" ++ toString i }, .seq .item .star))
+        return [.fn (.inline ps (.seq .item .star)
+          (.ext "untrusted" [.call q (ps.map (fun (v, _) => some (.var v))) []] [] [] []) false env.vars)]
       if q.uri == nsXS then
         if k == 1 && (xsCtorType? q.loc).isSome then pure [.fn (.builtin q 1)]
         -- arity 0: the argument defaults to the focus at the reference
@@ -708,7 +714,11 @@ def eval : Nat → Env → Expr → M Seq
           match XQuery4.refUser? (fun f as => apply n env f as) env q k with
           | some r => r
           | none => err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
-  | .inline ps ret body focus => pure [.fn (.inline ps ret body focus env.vars)]
+  -- trust is lexical (F&O 4.0 §17.4.1): a function made by untrusted
+  -- code runs as untrusted code
+  | .inline ps ret body focus =>
+      let body := if env.untrusted then .ext "untrusted" [body] [] [] [] else body
+      pure [.fn (.inline ps ret body focus env.vars)]
   | .mapC es => do
       let mut acc : MB := {}
       for (k, v) in es do
@@ -1076,7 +1086,7 @@ def apply : Nat → Env → Item → List Seq → M Seq
     | .fn (.builtin q k) => do
         if args.length != k then err "XPTY0004" ("function " ++ q.show ++ " expects " ++ toString k ++ " arguments")
         if let some h := env.host q k then
-          h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns } args
+          h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns, untrusted := env.untrusted } args
         else
         if q.uri == nsXS then
           if k == 0 then err "XPDY0002" "the context value is absent"
@@ -1099,7 +1109,7 @@ def apply : Nat → Env → Item → List Seq → M Seq
         if focus then
           if args.length != 1 then err "XPTY0004" "a focus function takes one argument"
           let a := args.headD []
-          let env' := { env with vars := cl, ctx := some a, pos := 1, size := 1 }
+          let env' := { env with vars := cl, ctx := some a, pos := 1, size := 1, untrusted := false }
           eval n env' body
         else
           if args.length != ps.length then
@@ -1107,7 +1117,7 @@ def apply : Nat → Env → Item → List Seq → M Seq
           let mut vars := cl
           for ((v, t), a) in ps.zip args do
             vars := (v, ← env.coerce t a ("$" ++ v.show)) :: vars
-          let env' := { env with vars, ctx := none, pos := 0, size := 0 }
+          let env' := { env with vars, ctx := none, pos := 0, size := 0, untrusted := false }
           let r ← eval n env' body
           env.coerce ret r "function result"
     | .fn (.papp g fixed) => do
