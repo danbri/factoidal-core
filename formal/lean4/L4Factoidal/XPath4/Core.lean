@@ -378,6 +378,9 @@ def subtypeF : Nat → IType → IType → Bool
   | 0, _, _ => false
   | f + 1, a, b =>
     match a, b with
+    -- `xs:error` (the union with no members) has no instances, so a
+    -- type of it is a subtype of every type (XSD 1.1 Part 2 §3.16.7.3)
+    | .choice [], _ | .seq (.choice []) _, _ => true
     | .empty, .empty => true
     | .empty, .seq _ o => o == .opt || o == .star
     | _, .empty => false
@@ -671,8 +674,9 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
           | none => out := out ++ [(ka, va)]
         for (nm, opt, ft) in fs do
           if !(kvs.any (fun (k, _) => k.isStringLike && k.str == nm)) then
-            if opt then pure ()
-            else if e.seqMatchesF f [] ft then out := out ++ [(Atomic.ofStr nm, [])]
+            -- a record has an entry for every field (XPath 4.0 §3.2.8.3)
+            if e.seqMatchesF f [] ft then out := out ++ [(Atomic.ofStr nm, [])]
+            else if opt then pure ()
             else err "XPTY0004" ("the map has no entry " ++ nm ++ " for the record type, for " ++ what)
         pure (Item.map out)
     | _, _ => pure i)

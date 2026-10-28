@@ -1014,9 +1014,6 @@ def fnTable : List (String × LibFn) := [
     | some k => sInt k | none => [])),
   ent "function-name" (fun _ _ a => pure (match argN a 0 with
     | [.fn (.builtin q _)] => single (Atomic.ofQN q)
-    -- a partial application whose arguments are all placeholders is the
-    -- named function (XPath 4.0 §4.5.4)
-    | [.fn (.papp (.fn (.builtin q _)) fixed)] => if fixed.all Option.isNone then single (Atomic.ofQN q) else []
     | _ => [])),
   -- F&O 4.0 §17.1.4: an XPath function item has no annotations
   ent "function-annotations" (fun _ _ a => match argN a 0 with

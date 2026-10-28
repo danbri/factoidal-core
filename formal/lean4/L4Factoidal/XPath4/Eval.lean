@@ -497,7 +497,8 @@ def eval : Nat → Env → Expr → M Seq
         let s ← eval n env a
         filterSeq n env s p
   | .call q args kw => do
-      if q.uri == nsFN && kw.isEmpty && (q.loc == "count" || q.loc == "head" || q.loc == "starts-with-subsequence" || q.loc == "ends-with-subsequence") then
+      if q.uri == nsFN && kw.isEmpty && (q.loc == "count" || q.loc == "head" || q.loc == "starts-with-subsequence" || q.loc == "ends-with-subsequence"
+          || q.loc == "subsequence" || q.loc == "codepoints-to-string") then
         if let some r ← rangeShortcut n env (.call q args kw) then return r
       if isTmplMarker q then
         let s ← match args with | [some x] => eval n env x | _ => pure []
@@ -555,6 +556,10 @@ def eval : Nat → Env → Expr → M Seq
             if (slots.getD i none).isSome then err "XPST0017" ("duplicate argument " ++ k)
             slots := slots.set! i (some a)
           | none => err "XPST0017" ("no parameter named " ++ k)
+        -- a static call whose arguments are all placeholders is the
+        -- named function `q#k` (XPath 4.0 §4.5.4)
+        if !slots.isEmpty && slots.toList.all (fun s => match s with | some none => true | _ => false) && kw.isEmpty then
+          return [.fn (.builtin q slots.size)]
         -- placeholders make a partial application
         if slots.toList.any (fun s => match s with | some none => true | _ => false) then
           let mut fixed : List (Option Seq) := []
@@ -913,7 +918,7 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
           match x.v, y.v with
           | .int lo, .int hi =>
             if hi < lo then pure []
-            else if hi - lo > maxRange then err "FOAR0002" "range too large for this implementation"
+            else if hi - lo > maxRange then err "XPDY0130" "range too large for this implementation (an implementation limit)"
             else pure ((List.range (hi - lo + 1).toNat).map (fun (k : Nat) => .atom (Atomic.ofInt (lo + (k : Int)))))
           | _, _ => err "XPTY0004" "range bounds must be integers"
         | _, _ => pure []
@@ -1136,8 +1141,31 @@ def rangeShortcut : Nat → Env → Expr → M (Option Seq)
             | none => pure none
           else pure none
         | _ => pure none
+      -- codepoints-to-string of a large range: a code point above
+      -- U+10FFFF is in it (FOCH0001)
+      else if q.loc == "codepoints-to-string" then do
+        match ← largeRangeOf? n env x with
+        | some (_, hi, _) => if hi > 0x10FFFF then err "FOCH0001" "not a valid XML character" else pure none
+        | none => pure none
       else pure none
     | .call q (some r :: some s :: rest) [] =>
+      -- subsequence of a large range: the selected positions, by
+      -- the rules of `fn:subsequence` (rounding with `roundX`)
+      if q.uri == nsFN && q.loc == "subsequence" && rest.length ≤ 1 then do
+        match ← largeRangeOf? n env r with
+        | some (lo, hi, rev) =>
+          let st := roundX (← eval n env s)
+          let en ← match rest with
+            | [some l] => pure (st.add (roundX (← eval n env l)))
+            | _ => pure XInt.posInf
+          let size := hi - lo + 1
+          let first : Int := match st with | .fin a => max a 1 | .negInf => 1 | _ => size + 1
+          let last : Int := match en with | .fin b => min (b - 1) size | .posInf => size | _ => 0
+          if last < first then pure (some [])
+          else if last - first > maxRange then err "XPDY0130" "range too large for this implementation (an implementation limit)"
+          else pure (some (rangeSlice lo hi rev first.toNat (last - first + 1).toNat))
+        | none => pure none
+      else
       if q.uri == nsFN && (q.loc == "starts-with-subsequence" || q.loc == "ends-with-subsequence") then do
         match ← largeRangeOf? n env r with
         | some (lo, hi, rev) =>
