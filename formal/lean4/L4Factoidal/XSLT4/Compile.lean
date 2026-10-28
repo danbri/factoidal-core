@@ -170,8 +170,9 @@ def SCx.enter (c : SCx) (m : Mod) (i : Nat) (as : Attrs) : CM SCx := do
   let r := m.r i
   let isX := r.name.uri == nsXSL
   let g := fun (l : String) => if isX then as.get l else as.xsl l
-  let ns := effScope r.inscope
-  let mut c := { c with ns }
+  let nat := effScope r.inscope
+  let mut c := { c with ns := c.fixedNs.getD nat, nat }
+  let ns := c.ns
   if let some v := g "xpath-default-namespace" then c := { c with xpathNs := v.trimAscii.toString }
   if let some v := g "expand-text" then
     match parseBool v with
@@ -281,7 +282,60 @@ def allowedAttrs : List (String × List String) := [
   ("merge", []), ("merge-source", ["name", "for-each-item", "for-each-source", "select", "streamable",
      "use-accumulators", "sort-before-merge", "validation", "type"]),
   ("merge-key", ["select", "lang", "order", "collation", "case-order", "data-type"]),
-  ("merge-action", [])]
+  ("merge-action", []),
+  ("template", ["match", "name", "priority", "mode", "as", "visibility"]),
+  ("function", ["name", "as", "visibility", "streamability", "override-extension-function", "override",
+     "new-each-time", "cache"]),
+  ("key", ["name", "match", "use", "composite", "collation"]),
+  ("mode", ["name", "as", "streamable", "use-accumulators", "on-no-match", "on-multiple-match",
+     "warning-on-no-match", "warning-on-multiple-match", "typed", "copy-namespaces", "visibility"]),
+  ("include", ["href"]), ("import", ["href"]),
+  ("attribute-set", ["name", "use-attribute-sets", "visibility", "streamable"]),
+  ("decimal-format", ["name", "decimal-separator", "grouping-separator", "infinity", "minus-sign",
+     "exponent-separator", "NaN", "percent", "per-mille", "zero-digit", "digit", "pattern-separator"]),
+  ("strip-space", ["elements"]), ("preserve-space", ["elements"]),
+  ("namespace-alias", ["stylesheet-prefix", "result-prefix"]),
+  ("character-map", ["name", "use-character-maps"]), ("output-character", ["character", "string"]),
+  ("accumulator", ["name", "initial-value", "as", "streamable"]),
+  ("accumulator-rule", ["match", "phase", "select", "capture"]),
+  ("global-context-item", ["as", "use"]), ("context-item", ["as", "use"]),
+  ("stylesheet", ["id", "version", "default-mode", "default-validation", "input-type-annotations",
+     "default-collation", "extension-element-prefixes", "exclude-result-prefixes", "expand-text",
+     "fixed-namespaces", "main-module", "schema-role", "use-when", "xpath-default-namespace"]),
+  ("transform", ["id", "version", "default-mode", "default-validation", "input-type-annotations",
+     "default-collation", "extension-element-prefixes", "exclude-result-prefixes", "expand-text",
+     "fixed-namespaces", "main-module", "schema-role", "use-when", "xpath-default-namespace"]),
+  ("package", ["id", "name", "package-version", "version", "input-type-annotations", "declared-modes",
+     "default-mode", "default-validation", "default-collation", "extension-element-prefixes",
+     "exclude-result-prefixes", "expand-text", "fixed-namespaces", "schema-role", "use-when",
+     "xpath-default-namespace"]),
+  ("output", ["name", "method", "allow-duplicate-names", "build-tree", "byte-order-mark", "canonical",
+     "cdata-section-elements", "csv-header", "csv-quote-character", "csv-separator", "doctype-public",
+     "doctype-system", "encoding", "escape-solidus", "escape-uri-attributes", "html-version",
+     "include-content-type", "indent", "indent-attributes", "indent-unit", "item-separator", "json-lines",
+     "json-node-output-method", "line-ending", "media-type", "normalization-form", "omit-xml-declaration",
+     "parameter-document", "standalone", "suppress-indentation", "undeclare-prefixes", "use-character-maps",
+     "version"])]
+
+/-- Attributes whose value must be one of a fixed set (XTSE0020). -/
+def enumAttrs : List (String × List String) := [
+  ("level", ["single", "multiple", "any"]),
+  ("visibility", ["public", "private", "final", "abstract"]),
+  ("on-multiple-match", ["use-last", "fail"]),
+  ("on-no-match", ["deep-copy", "shallow-copy", "deep-skip", "shallow-skip", "text-only-copy", "fail"]),
+  ("validation", ["strict", "lax", "preserve", "strip"]),
+  ("default-validation", ["preserve", "strip"]),
+  ("use", ["required", "optional", "absent"]),
+  ("phase", ["start", "end"]),
+  ("input-type-annotations", ["preserve", "strip", "unspecified"])]
+
+/-- Attributes whose value must be a boolean (XTSE0020); the attributes
+    that are attribute value templates are checked when evaluated. -/
+def boolAttrs : List String :=
+  ["copy-namespaces", "inherit-namespaces", "tunnel", "required", "static", "composite", "streamable",
+   "cache", "override", "override-extension-function", "declared-modes", "copy-accumulators",
+   "rollback-output", "sort-before-merge", "capture", "warning-on-no-match", "warning-on-multiple-match",
+   "expand-text"]
 
 /-- The standard attributes every XSLT element may have (§3.5). -/
 def standardAttrs : List String :=
@@ -289,19 +343,28 @@ def standardAttrs : List String :=
    "expand-text", "extension-element-prefixes", "use-when", "version", "xpath-default-namespace"]
 
 def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
+  for (q, _) in as do
+    if q.uri == nsXSL then cerr "XTSE0090" ("an XSLT element cannot have the attribute xsl:" ++ q.loc)
   if c.forwardsCompat then return
   match allowedAttrs.lookup l with
   | none => pure ()
   | some ok =>
-    for (q, _) in as do
+    for (q, v) in as do
       if q.uri == "" && !ok.contains q.loc && !standardAttrs.contains q.loc then
         cerr "XTSE0090" ("attribute " ++ q.loc ++ " is not allowed on xsl:" ++ l)
+      if q.uri == "" then
+        let v' := v.trimAscii.toString
+        if let some vals := enumAttrs.lookup q.loc then
+          if !vals.contains v' && !(q.loc == "typed") then
+            cerr "XTSE0020" ("invalid value '" ++ v ++ "' for attribute " ++ q.loc ++ " of xsl:" ++ l)
+        if boolAttrs.contains q.loc && (parseBool v').isNone then
+          cerr "XTSE0020" ("invalid boolean '" ++ v ++ "' for attribute " ++ q.loc ++ " of xsl:" ++ l)
 
 /-- The namespace bindings a literal result element copies (§11.1.3):
     all in scope except the XSLT namespace, excluded and extension
     namespaces. -/
 def lreDecls (c : SCx) : List (String × String) :=
-  c.ns.filter (fun (p, u) => p != "xml" && u != nsXSL && !c.excl.contains u && !c.ext.contains u)
+  c.nat.filter (fun (p, u) => p != "xml" && u != nsXSL && !c.excl.contains u && !c.ext.contains u)
 
 def nextTid : CM Nat := do
   let s ← get
@@ -395,12 +458,15 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
     let notTag (ts : List String) : List Nat := kids.filter (fun k => !(ts.any (m.isXsl k ·)))
     match l with
     | "text" =>
-        if !ekids.isEmpty then cerr "XTSE0010" "xsl:text must not contain elements"
         let t := m.text i
         match ← optExpr c as "select" with
         | some e => pure (.valueOf (some e) (← optAvt c as "separator") [] false)
         | none =>
-          if c.expandText then pure (.tvt (← liftM (c.avt t))) else pure (.lit t)
+          if !ekids.isEmpty then
+            -- 4.0: the content is a sequence constructor (§11.4.2)
+            let b ← compileNodes f { c with preserveWs := true } m kids
+            pure (.valueOf none (← optAvt c as "separator") b false)
+          else if c.expandText then pure (.tvt (← liftM (c.avt t))) else pure (.lit t)
     | "value-of" =>
         let sel ← optExpr c as "select"
         let b ← body
@@ -590,6 +656,13 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         if ms.isNone && ns.isNone then cerr "XTSE1130" "xsl:analyze-string needs matching or non-matching content"
         pure (.analyzeString sel rx fl ms ns)
     | "map" => pure (.mapI (← optExpr c as "select") (← body) (← optExpr c as "duplicates"))
+    | "record" =>
+        -- 4.0 (§21): each attribute in no namespace is a field
+        let mut ents : List Instr := []
+        for (aq, v) in as do
+          if aq.uri != "" || standardAttrs.contains aq.loc then continue
+          ents := ents ++ [.mapEntry (.lit (Atomic.ofStr aq.loc)) (some (← liftM (c.parse v))) []]
+        pure (.mapI none (ents ++ (← body)) none)
     | "map-entry" =>
         let key ← liftM (c.parse (← reqAttr as "key" l))
         let sel ← optExpr c as "select"
@@ -614,6 +687,7 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
     | "perform-sort" =>
         pure (.performSort (← optExpr c as "select") (← compileSorts f c m ekids) (← body (notTag ["sort"])))
     | "fork" => pure (.seq none (← body (notTag ["fallback"])) none)
+    | "note" => pure (.seq none [] none)
     | "fallback" => pure (.seq none [] none)
     | "source-document" =>
         pure (.sourceDoc (← liftM (c.avt (← reqAttr as "href" l))) (← body))
@@ -675,9 +749,42 @@ def Mod.rootElem (m : Mod) : Option Nat :=
 def resolveHref (base href : String) : String := resolveUri base href
 
 /-- The module-level static context of the root element. -/
+def standardNs : List (String × String) :=
+  [("xsl", nsXSL), ("xml", nsXML), ("xs", nsXS), ("xsi", "http://www.w3.org/2001/XMLSchema-instance"),
+   ("fn", nsFN), ("math", nsMATH), ("map", nsMAP), ("array", nsARR), ("err", nsERR)]
+
 def rootCx (m : Mod) (i : Nat) (as : Attrs) : CM SCx := do
   let c : SCx := { baseUri := m.uri }
-  c.enter m i as
+  let c ← c.enter m i as
+  match as.get "fixed-namespaces" with
+  | none => pure c
+  | some v =>
+    let mut fx : List (String × String) := []
+    let add (fx : List (String × String)) (p u : String) := (fx.filter (·.1 != p)) ++ [(p, u)]
+    for t in tokens v do
+      if t == "#standard" then
+        for (p, u) in standardNs do fx := add fx p u
+      else if let some u := c.nat.lookup t then fx := add fx t u
+      else if let some u := standardNs.lookup t then fx := add fx t u
+      else match t.splitOn "=" with
+        | [p, u] =>
+            if p == "xmlns" || (p == "xml") != (u == nsXML) then cerr "XTSE0122" ("cannot bind prefix " ++ p)
+            fx := add fx p u
+        | _ =>
+          -- a URI of a document whose outermost element gives the bindings
+          let uri := resolveHref m.uri t
+          match (← get).texts.lookup uri with
+          | some txt =>
+            match Doc.ofString txt uri with
+            | .ok d =>
+              let some r := (d.get 0).children.toList.find? (fun k => (d.get k).kind == .element)
+                | cerr "XTSE0122" ("no element in " ++ t)
+              for (p, u) in effScope (d.get r).inscope do
+                if p != "xml" && p != "" then fx := add fx p u
+            | .error _ => cerr "XTSE0122" ("cannot read " ++ t)
+          | none => cerr "XTSE0122" ("invalid fixed-namespaces token '" ++ t ++ "'")
+    let c := { c with fixedNs := some fx }
+    pure { c with ns := fx }
 
 /-- Evaluate a static variable or parameter (§9.6) and record it. -/
 def addStatic (c : SCx) (m : Mod) (i : Nat) (as : Attrs) : CM Unit := do
@@ -813,17 +920,21 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
     return  -- user-defined data elements are ignored (§3.7.3)
   let ekids := m.elemKids i
   let upd (f : Sheet → Sheet) : CM Unit := modify (fun s => { s with sheet := f s.sheet })
+  checkAttrs c q.loc as
   match q.loc with
   | "template" => compileTemplate prec d as
   | "function" =>
       let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:function requires a name"
-      if nm.uri == "" then cerr "XTSE0740" "a stylesheet function must have a prefixed name"
       if [nsFN, nsXS, nsMATH, nsMAP, nsARR, nsXSL, nsXML].contains nm.uri then
         cerr "XTSE0080" ("a stylesheet function cannot be in namespace " ++ nm.uri)
       let ps ← compileParams 100000 c m ekids "param"
+      -- 4.0 (§10.3.2): optional parameters, with default values, follow
+      -- the required ones
+      let mut seenOpt := false
       for p in ps do
-        if p.sel.isSome || !p.body.isEmpty then
-          cerr "XTSE0760" "a function parameter cannot have a default value"
+        let opt := p.sel.isSome || !p.body.isEmpty
+        if opt then seenOpt := true
+        else if seenOpt then cerr "XTSE0761" "a required function parameter follows an optional one"
       let bodyIds := (m.kids i).filter (fun k => !(m.isXsl k "param"))
       let body ← compileNodes 100000 c m bodyIds
       let s ← get
@@ -969,7 +1080,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let use := (as.get "use").getD "optional"
       let t ← optType c as
       upd (fun sh => { sh with globalCtxUse := use, globalCtxAs := t })
-  | "import" => cerr "XTSE0190" "xsl:import must come before the other declarations"
+  | "import" => pure ()
   | "include" => pure ()
   | "import-schema" => cerr "XTSE1650" "xsl:import-schema: this processor is not schema-aware"
   | "use-package" => cerr "XTSE3000" "xsl:use-package: packages are not implemented"
@@ -989,27 +1100,32 @@ def processModule : Nat → Mod → CM Unit
     let ras ← effAttrs {} m root
     let c ← rootCx m root ras
     let rq := m.name root
-    if rq.uri != nsXSL then
-      -- a simplified stylesheet (§3.8): one template rule for "/"
-      if (ras.xsl "version").isNone then
-        cerr "XTSE0150" "a literal result element used as a stylesheet needs xsl:version"
-      let body ← compileElem 100000 { c with version := (ras.xsl "version").getD "4.0" } m root
+    if rq.uri != nsXSL || !["stylesheet", "transform", "package"].contains rq.loc then
+      -- a simplified stylesheet (§3.8): one template rule for "."
+      -- 4.0: xsl:version may be omitted; it defaults to 4.0, and then
+      -- text value templates are on (§3.8)
+      let ver := (if rq.uri == nsXSL then ras.get "version" else ras.xsl "version").getD "4.0"
+      let et := match (ver.splitOn ".").head?.bind String.toNat? with
+        | some k => k ≥ 4
+        | none => true
+      let c := { c with version := ver, expandText := if (ras.xsl "expand-text").isSome then c.expandText else et }
+      let body ← compileElem 100000 c m root
       let prec := (← get).prec
       modify (fun s => { s with prec := s.prec + 1 })
       let tid ← nextTid
-      addTemplate { id := tid, pat := some { e := .root, src := "/" }, prio := -0.5, prec, body }
+      addTemplate { id := tid, pat := some { e := .ctx, src := "." }, prio := -1, prec, body }
+      modify (fun s => { s with sheet := { s.sheet with version := ver } })
       return
-    if rq.loc == "package" then cerr "XTSE3000" "xsl:package: packages are not implemented"
-    if rq.loc != "stylesheet" && rq.loc != "transform" then
+    if rq.loc != "stylesheet" && rq.loc != "transform" && rq.loc != "package" then
       cerr "XTSE0150" ("xsl:" ++ rq.loc ++ " is not a stylesheet root element")
     if (ras.get "version").isNone then cerr "XTSE0110" "xsl:stylesheet requires a version attribute"
+    checkAttrs c rq.loc ras
     if !(← useWhenOk c m root ras) then return
     let decls ← expandModule 100 m root c
     -- imports, in order, before this module's precedence is fixed
     let mut seenOther := false
     for d in decls do
       if d.m.isXsl d.i "import" then
-        if seenOther && d.m.uri == m.uri then cerr "XTSE0190" "xsl:import must come before the other declarations"
         let as ← effAttrs d.c d.m d.i
         let some href := as.get "href" | cerr "XTSE0010" "xsl:import requires href"
         let uri := resolveHref d.m.uri href

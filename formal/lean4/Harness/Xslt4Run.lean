@@ -425,6 +425,8 @@ structure Opts where
   progress : Option String := none
   childMode : Bool := false
   only : Option String := none
+  /-- Skip the test cases up to and including this one. -/
+  after : Option String := none
 
 def parseArgs : List String → Opts → Opts
   | "--root" :: r :: rest, o => parseArgs rest { o with root := r }
@@ -434,6 +436,7 @@ def parseArgs : List String → Opts → Opts
   | "--isolate" :: n :: rest, o => parseArgs rest { o with isolate := n.toNat? }
   | "--progress" :: f :: rest, o => parseArgs rest { o with progress := some f, childMode := true }
   | "--test" :: t :: rest, o => parseArgs rest { o with only := some t }
+  | "--after" :: t :: rest, o => parseArgs rest { o with after := some t }
   | _ :: rest, o => parseArgs rest o
   | [], o => o
 
@@ -513,7 +516,24 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
       | .error _ => return .fail ("cannot evaluate static param " ++ nm)
   let r ← resolveXmlFiles dir 100 (fixXml 100000 ((kidsNamed tc "result").head?.getD (.element "result" [] [])))
   let some a := (kids r).head? | return .fail "no assertion"
-  let sheet := compileStylesheet pUri mods statics
+  -- modules named only through static values (shadow attributes):
+  -- read the one the compiler asks for, and compile again
+  let mut mods := mods
+  let mut sheet := compileStylesheet pUri mods statics
+  for _ in [0:20] do
+    match sheet with
+    | .error e =>
+      if e.code == "XTSE0165" && e.msg.startsWith "cannot read stylesheet module " then
+        let u := (e.msg.drop "cannot read stylesheet module ".length).toString
+        if mods.any (·.1 == u) then break
+        match ← readFileSafe (uriPath u) with
+        | some txt =>
+          mods := mods ++ (← loadModules u).filter (fun (x, _) => !mods.any (·.1 == x))
+          let _ := txt
+          sheet := compileStylesheet pUri mods statics
+        | none => break
+      else break
+    | .ok _ => break
   let (env, outcome) ← match sheet with
     | .error e => pure (({} : Env), (.error e : M (TResult × Sheet)))
     | .ok S => do
@@ -618,8 +638,12 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
     match attr e "name" with | some n => some (n, parseEnv dir e) | none => none)
   let mut t : Tally := {}
   let mut fails : List String := []
+  let mut skipping := o.after.isSome
   for tc in kidsNamed ts "test-case" do
     let name := attrD tc "name"
+    if skipping then
+      if some name == o.after then skipping := false
+      continue
     if let some only := o.only then
       if name != only then continue
     if let some pf := o.progress then
@@ -642,40 +666,51 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
     IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} DONE\n"
   return (setName, t, fails)
 
-/-- Run one test set in a child process with a time limit (an IO loop
-    that ends on an outside event: the child exiting, or the clock). -/
-def runIsolated (o : Opts) (secs : Nat) (setName file : String) : IO (Tally × String) := do
+/-- Run one test set in child processes, with a time limit per test case
+    (an IO loop that ends on an outside event: the child exiting, or the
+    clock). A test case that does not finish counts as FAIL, and a new
+    child continues after it. -/
+def runIsolated (o : Opts) (secs : Nat) (setName : String) : IO (Tally × String) := do
   let pf := (← IO.getEnv "TMPDIR").getD "/tmp" ++ "/l4xslt4-progress-" ++ setName
-  IO.FS.writeFile pf ""
-  let mut args : Array String := #["--root", o.root, "--set", setName, "--progress", pf]
-  if o.listFails then args := args.push "--list-fails"
-  let child ← IO.Process.spawn { cmd := (← IO.appPath).toString, args, stdin := .null, stdout := .inherit, stderr := .null }
-  let start ← IO.monoMsNow
-  let mut finished := false
-  repeat
-    match ← child.tryWait with
-    | some _ => finished := true; break
-    | none =>
-      if (← IO.monoMsNow) - start > secs * 1000 then break
-      IO.sleep 50
-  if !finished then
-    child.kill
-    let _ ← child.wait
-  let line := ((← readFileSafe pf).getD "").trimAscii.toString
+  let mut total : Tally := {}
+  let mut after : Option String := none
+  let mut notes : List String := []
+  for _ in [0:100000] do
+    IO.FS.writeFile pf ""
+    let mut args : Array String := #["--root", o.root, "--set", setName, "--progress", pf]
+    if o.listFails then args := args.push "--list-fails"
+    if let some a := after then args := args ++ #["--after", a]
+    let child ← IO.Process.spawn { cmd := (← IO.appPath).toString, args, stdin := .null, stdout := .inherit, stderr := .null }
+    let mut lastName := ""
+    let mut since ← IO.monoMsNow
+    let mut finished := false
+    repeat
+      match ← child.tryWait with
+      | some _ => finished := true; break
+      | none =>
+        let line := ((← readFileSafe pf).getD "").trimAscii.toString
+        let nm := (line.splitOn " ").getD 3 ""
+        if nm != lastName then lastName := nm; since ← IO.monoMsNow
+        if (← IO.monoMsNow) - since > secs * 1000 then break
+        IO.sleep 50
+    if !finished then
+      child.kill
+      let _ ← child.wait
+    let line := ((← readFileSafe pf).getD "").trimAscii.toString
+    let parts := line.splitOn " "
+    let num (i : Nat) : Nat := ((parts.getD i "0").toNat?).getD 0
+    let t : Tally := ⟨num 0, num 1, num 2⟩
+    let last := parts.getD 3 ""
+    total := total.add t
+    if finished && last == "DONE" then break
+    if last == "" || last == "DONE" then break
+    -- the test case `last` did not finish: a failure; go on after it
+    total := { total with fail := total.fail + 1 }
+    notes := notes ++ [last]
+    if o.listFails then IO.println s!"  FAIL {setName}/{last}: did not finish in {secs} s"
+    after := some last
   try IO.FS.removeFile pf catch _ => pure ()
-  let parts := line.splitOn " "
-  let num (i : Nat) : Nat := ((parts.getD i "0").toNat?).getD 0
-  let t : Tally := ⟨num 0, num 1, num 2⟩
-  let last := parts.getD 3 ""
-  if finished && last == "DONE" then return (t, "")
-  let total ← match ← readFileSafe file with
-    | some txt => match parseXML txt with
-      | .ok d => pure (kidsNamed d.root "test-case").length
-      | .error _ => pure t.total
-    | none => pure t.total
-  let rest := total - t.total
-  return ({ t with fail := t.fail + rest },
-    s!" [TIMEOUT or crash at test {last}: {rest} tests not finished, counted as fail]")
+  return (total, if notes.isEmpty then "" else s!" [{notes.length} test(s) did not finish in {secs} s, counted as fail: {String.intercalate ", " notes}]")
 
 def main (args : List String) : IO UInt32 := do
   let o := parseArgs args {}
@@ -698,7 +733,7 @@ def main (args : List String) : IO UInt32 := do
     if !(← System.FilePath.pathExists path) then continue
     let (t, fails, note) ← match o.isolate with
       | some secs =>
-        let (t, note) ← runIsolated o secs nm path
+        let (t, note) ← runIsolated o secs nm
         pure (t, ([] : List String), note)
       | none =>
         let (_, t, fails) ← runSet o path

@@ -30,6 +30,11 @@ structure SCx where
   baseUri : String := ""
   preserveWs : Bool := false
   defaultCollation : String := ""
+  /-- The native in-scope namespaces (for the namespace nodes of literal
+      result elements); `ns` differs when `fixed-namespaces` is in force. -/
+  nat : List (String × String) := []
+  /-- The fixed namespace bindings of the module (§3.6.1), if any. -/
+  fixedNs : Option (List (String × String)) := none
 deriving Inhabited
 
 def SCx.backCompat (c : SCx) : Bool :=
@@ -228,6 +233,40 @@ def isPatternAxis (ax : Axis) : Bool :=
   ax == .child || ax == .attribute || ax == .self || ax == .descendant ||
   ax == .descendantOrSelf || ax == .namespace
 
+/-- The number of derivation steps from a primitive type down to `b`
+    (1 for a primitive type). -/
+def derivDepth (b : L4Factoidal.XSD.Builtin) : Nat := Id.run do
+  let mut cur := b
+  let mut k := 1
+  for _ in [0:30] do
+    if cur.primitive == some cur then break
+    match cur.base? with
+    | some p => cur := p; k := k + 1
+    | none => break
+  return k
+
+/-- The default priority of a type pattern `~T` (the priorities the
+    xslt40-test `priority` test set gives for the 4.0 draft). -/
+def typePriority : Nat → IType → Float
+  | 0, _ => 0.5
+  | f + 1, t =>
+    match t with
+    | .item => -1
+    | .anyNode | .anyFn | .elem none | .attr none | .elem (some .any) | .attr (some .any)
+    | .text | .comment | .nsNode | .pi none | .doc none => -0.5
+    | .atomic (.b .anyAtomicType) => -0.5
+    | .elem (some (.name _)) | .attr (some (.name _)) | .pi (some _) => 0
+    | .elem (some _) | .attr (some _) => -0.25
+    | .anyArr | .anyMap => -0.25
+    | .record _ true => -0.25
+    | .enum _ => 0.25
+    | .atomic (.b b) => 0.5 - Float.pow 2 (-(Float.ofNat (derivDepth b)))
+    | .choice ts =>
+        let ps := ts.map (typePriority f)
+        if ts.all (fun x => match x with | .atomic _ => true | _ => false) then
+          ps.foldl max (-1) else 0
+    | _ => 0.25
+
 /-- The default priority of one pattern alternative (§6.4). -/
 def defaultPriority (e : Expr) : Float :=
   let ofTest (ax : Axis) (t : NodeTest) : Float :=
@@ -249,14 +288,46 @@ def defaultPriority (e : Expr) : Float :=
   | .root => -0.5
   | .ctx => -1
   | .filter .ctx _ => 1
+  | .instOf .ctx ty => typePriority 50 ty
   | _ => 0.5
 
-/-- Parse a pattern. `.` with predicates and `atomic(T)` are simple
-    patterns (§6.3.3, §6.3.4); everything else is read as the XPath
-    expression of an XNode pattern. -/
+/-- Parse a pattern. `~T` and `type(T)` (with predicates) are type
+    patterns of the 4.0 draft that the test suite uses; `.` with
+    predicates is a simple pattern (§6.3.3); everything else is read as
+    the XPath expression of an XNode pattern. -/
 def SCx.pattern (c : SCx) (src : String) : M Pattern := do
   let t := src.trimAscii.toString
   if t == "" then err "XTSE0340" "empty pattern" else
+  let typed? : Option (String × Bool) :=
+    if t.startsWith "~" then some ((t.drop 1).toString, false)
+    else if t.startsWith "type(" then some ((t.drop 5).toString, true)
+    else none
+  match typed? with
+  | some (rest, paren) =>
+    let p : P (IType × Nat) := do
+      let ty ← pItemType 1000
+      if paren then expectS ")"
+      ws
+      pure (ty, ← get)
+    match (p.run { s := rest.toList.toArray, ns := c.xpNs }).run 0 with
+    | .ok ((ty, i), _) =>
+      let ty := if c.xpathNs == "" then ty else itDefault c.xpathNs 50 ty
+      let tail := String.ofList (rest.toList.drop i)
+      let base : Expr := .instOf .ctx ty
+      if tail.trimAscii.toString == "" then pure { e := base, src := t }
+      else
+        match c.parse ("." ++ tail) with
+        | .ok e =>
+          -- replace the `.` at the bottom of the predicate chain
+          let rec swap : Nat → Expr → Expr
+            | 0, e => e
+            | f + 1, .filter a pr => .filter (swap f a) pr
+            | _, .ctx => base
+            | _, e => e
+          pure { e := swap 100 e, src := t }
+        | .error er => err "XTSE0340" ("invalid pattern '" ++ t ++ "': " ++ er.msg)
+    | .error er => err "XTSE0340" ("invalid pattern '" ++ t ++ "': " ++ er.msg)
+  | none =>
   match c.parse t with
   | .ok e => pure { e, src := t }
   | .error er => err "XTSE0340" ("invalid pattern '" ++ t ++ "': " ++ er.msg)

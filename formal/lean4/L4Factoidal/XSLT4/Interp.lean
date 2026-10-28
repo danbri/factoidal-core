@@ -86,6 +86,9 @@ structure Ctx where
   /-- In a stylesheet function (no current template rule, §10.3). -/
   inFn : Bool := false
   backCompat : Bool := false
+  /-- Temporary output state (§25.2): in a variable, parameter or
+      function body, `xsl:result-document` is an error. -/
+  tempOut : Bool := false
 deriving Inhabited
 
 def Ctx.focus (cx : Ctx) (i : Item) (p sz : Nat) : Ctx := { cx with env := cx.env.focus i p sz }
@@ -230,6 +233,7 @@ def patMatch (env : Env) : Nat → Expr → Item → M Bool
     | .bin .except a b => do
         if ← patMatch env f a it then (do pure !(← patMatch env f b it)) else pure false
     | .ctx => pure true
+    | .instOf .ctx ty => pure (env.itemMatches it ty)
     | .filter .ctx pr => do
         let r ← eval 100000 (env.focus it 1 1) (.filter .ctx pr)
         pure !r.isEmpty
@@ -331,8 +335,10 @@ def findRule (S : Sheet) (env : Env) (mode : String) (it : Item) (ok : Tmpl → 
     match best with
     | none => best := some t; tie := false
     | some b =>
-      if ruleBetter t b then best := some t; tie := false
-      else if !(ruleBetter b t) && b.id != t.id then tie := true
+      if t.prec == b.prec && t.prio == b.prio && b.id != t.id then tie := true
+      if ruleBetter t b then
+        if !(t.prec == b.prec && t.prio == b.prio) then tie := false
+        best := some t
   if tie && (S.mode mode).onMultiple == "fail" then
     err "XTDE0540" "several template rules match with the same precedence and priority"
   pure best
@@ -346,21 +352,30 @@ structure SortSpec where
   collation : String := ""
 deriving Inhabited
 
-def cmpKey (sp : SortSpec) (tz : Int) (a b : Option Atomic) : Ordering :=
-  let o : Ordering := match a, b with
-    | none, none => .eq
-    | none, some _ => .lt
-    | some _, none => .gt
-    | some x, some y =>
-      let nanX := (x.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
-      let nanY := (y.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
-      if nanX && nanY then .eq else if nanX then .lt else if nanY then .gt else
-      match atomicCmp x y tz with
-      | .ok (some c) => c
-      | _ => compare x.str y.str
+def cmpAtom (tz : Int) (x y : Atomic) : Ordering :=
+  let nanX := (x.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
+  let nanY := (y.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
+  if nanX && nanY then .eq else if nanX then .lt else if nanY then .gt else
+  match atomicCmp x y tz with
+  | .ok (some c) => c
+  | _ => compare x.str y.str
+
+/-- Compare two sort key values; 4.0 (§13.1.2): a key value is a
+    sequence, compared item by item, a shorter prefix first. -/
+def cmpSeqKey (tz : Int) : List Atomic → List Atomic → Ordering
+  | [], [] => .eq
+  | [], _ :: _ => .lt
+  | _ :: _, [] => .gt
+  | x :: xs, y :: ys =>
+    match cmpAtom tz x y with
+    | .eq => cmpSeqKey tz xs ys
+    | o => o
+
+def cmpKey (sp : SortSpec) (tz : Int) (a b : List Atomic) : Ordering :=
+  let o := cmpSeqKey tz a b
   if sp.desc then o.swap else o
 
-def cmpKeys (sps : List SortSpec) (tz : Int) : List (Option Atomic) → List (Option Atomic) → Ordering
+def cmpKeys (sps : List SortSpec) (tz : Int) : List (List Atomic) → List (List Atomic) → Ordering
   | a :: as, b :: bs =>
     match sps with
     | sp :: rest =>
@@ -371,17 +386,14 @@ def cmpKeys (sps : List SortSpec) (tz : Int) : List (Option Atomic) → List (Op
   | _, _ => .eq
 
 /-- Normalise a sort key value (§13.1.2). -/
-def sortKeyAtom (dataType : String) (as : List Atomic) : M (Option Atomic) := do
-  match as with
-  | [] => pure none
-  | [a] =>
+def sortKeyAtom (dataType : String) (as : List Atomic) : M (List Atomic) := do
+  as.mapM (fun a =>
     if dataType == "number" then
-      match castAtomic a (.b .double) with
-      | .ok d => pure (some d)
-      | .error _ => pure (some (Atomic.ofDbl (0.0 / 0.0)))
-    else if dataType == "text" then pure (some (Atomic.ofStr a.str))
-    else pure (some (if a.ty == .untyped then Atomic.ofStr a.str else a))
-  | _ => err "XTTE1020" "a sort key value is a sequence of more than one item"
+      match castAtomic (if a.ty == .untyped then Atomic.ofStr a.str else a) (.b .double) with
+      | .ok d => pure d
+      | .error _ => pure (Atomic.ofDbl (0.0 / 0.0))
+    else if dataType == "text" then pure (Atomic.ofStr a.str)
+    else pure (if a.ty == .untyped then Atomic.ofStr a.str else a))
 
 /-! ## Grouping keys -/
 
@@ -575,9 +587,6 @@ def makeGroups (cx : Ctx) (s : Seq) (kind : GroupKind) (key : Option Expr) (pat 
     let mut openG := false
     for it in s do
       let hit := p.matches env it
-      match it with
-      | .node _ => pure ()
-      | _ => xerr "XTTE1120" "group-starting-with and group-ending-with need nodes"
       if kind == .startingWith then
         if hit || out.isEmpty then out := out.push #[it]
         else out := out.pop.push (out.back!.push it)
@@ -694,7 +703,7 @@ def bindValue : Nat → Sheet → Ctx → Option Expr → List Instr → Option 
         if body.isEmpty then
           pure (if ty.isSome then [] else sStr "")
         else
-          let os ← run n S cx body
+          let os ← run n S { cx with tempOut := true } body
           match ty with
           | none => do
               let id ← freshId
@@ -865,7 +874,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let groups ← makeGroups cx s kind key pat composite
         -- sort the groups: the sort keys see the group as current-group
         let groups ← if sorts.isEmpty then pure groups else do
-          let mut keyed : Array (List (Option Atomic) × (Seq × Seq)) := #[]
+          let mut keyed : Array (List (List Atomic) × (Seq × Seq)) := #[]
           let specs ← sortSpecs cx sorts
           let gsz := groups.length
           let mut gi := 1
@@ -1220,7 +1229,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | none => pure scope
         let e ← match parseXPath src ns with
           | .ok e => pure e
-          | .error er => xerr "XTDE3160" ("xsl:evaluate: " ++ er.msg)
+          | .error er => xerr "XTDE3160" ("xsl:evaluate: " ++ er.code ++ " " ++ er.msg)
         let mut vars : List (QN × Seq) := []
         match wp with
         | some w =>
@@ -1246,12 +1255,17 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let one := if ctxV.isSome then 1 else 0
         let ebase := if baseUri == "" then env.baseUri else baseUri
         let env' : Env := { env with vars := evars, ctx := ctxV, pos := one, size := one, ns, baseUri := ebase }
-        let r ← liftX (eval 100000 env' e)
+        let r ← match eval 100000 env' e with
+          | .ok v => pure v
+          | .error er =>
+            if er.code.startsWith "XPST" then xerr "XTDE3160" ("xsl:evaluate: " ++ er.code ++ " " ++ er.msg)
+            else throw er
         let r ← match ty with
           | some t => liftX (env.coerce t r "xsl:evaluate result")
           | none => pure r
         pure (Out.ofSeq r)
     | .resultDoc href fmt ser body =>
+        if cx.tempOut then xerr "XTDE1480" "xsl:result-document is not allowed in temporary output state"
         let h ← match href with
           | some a => avtStr cx a
           | none => pure ""
@@ -1288,7 +1302,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | none => do materializeAll env (← run n S cx body)
         pure (Out.ofSeq (← sortSeq n S cx s sorts))
     | .merge srcs action =>
-        let mut rows : Array (List (Option Atomic) × String × Item) := #[]
+        let mut rows : Array (List (List Atomic) × String × Item) := #[]
         let mut specs : List SortSpec := []
         for src in srcs do
           match src with
@@ -1318,7 +1332,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let tz := env.tz
         let sorted := rows.toList.mergeSort (fun a b => cmpKeys specs tz a.1 b.1 != .gt)
         -- group rows with equal keys
-        let mut groups : Array (List (Option Atomic) × Array (String × Item)) := #[]
+        let mut groups : Array (List (List Atomic) × Array (String × Item)) := #[]
         for (kv, nm, it) in sorted do
           match groups.back? with
           | some (k0, g) =>
@@ -1332,7 +1346,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         for (kv, g) in groups.toList do
           let items := g.toList.map (·.2)
           let named : Seq := g.toList.map (fun (nm, it) => .arr [[.atom (Atomic.ofStr nm)], [it]])
-          let keyV : Seq := kv.filterMap (fun x => x.map Item.atom)
+          let keyV : Seq := kv.flatten.map Item.atom
           let gcx := ((cx.focus (items.headD default) gi gsz).bind vMergeGroup named).bind vMergeKey keyV
           let gcx := gcx.bind vGroup items
           for o in ← run n S { gcx with rule := none } action do out := out.push o
@@ -1488,10 +1502,10 @@ def builtin : Nat → Sheet → Ctx → Item → String → List (QN × Seq) →
       | _ => pure []
 
 /-- The keys of each item for `xsl:sort` (computed once per item). -/
-def sortKeysOf : Nat → Sheet → Ctx → List SortK → List SortSpec → XM (List (Option Atomic))
+def sortKeysOf : Nat → Sheet → Ctx → List SortK → List SortSpec → XM (List (List Atomic))
   | 0, _, _, _, _ => xerr "FOER0000" "XSLT evaluation too deep (fuel exhausted)"
   | n + 1, S, cx, sorts, specs => do
-    let mut out : Array (Option Atomic) := #[]
+    let mut out : Array (List Atomic) := #[]
     for (k, sp) in sorts.zip specs do
       match k with
       | .mk sel body .. =>
@@ -1513,7 +1527,7 @@ def sortSeq : Nat → Sheet → Ctx → Seq → List SortK → XM Seq
   | n + 1, S, cx, s, sorts => do
     let specs ← sortSpecs cx sorts
     let sz := s.length
-    let mut keyed : Array (List (Option Atomic) × Item) := #[]
+    let mut keyed : Array (List (List Atomic) × Item) := #[]
     let mut k := 1
     for it in s do
       keyed := keyed.push ((← sortKeysOf n S { cx.focus it k sz with rule := none } sorts specs), it)

@@ -118,8 +118,14 @@ deriving Inhabited
 
 /-! ## The host functions -/
 
+def XFunction.minArity (f : XFunction) : Nat :=
+  (f.params.filter (fun p => p.sel.isNone && p.body.isEmpty)).length
+
+def XFunction.accepts (f : XFunction) (k : Nat) : Bool :=
+  f.minArity ≤ k && k ≤ f.params.length
+
 def userFnAvail (S : Sheet) (q : QN) (k : Option Nat) : Bool :=
-  S.functions.any (fun f => f.name == q && (k.isNone || k == some f.params.length))
+  S.functions.any (fun f => f.name == q && (match k with | some n => f.accepts n | none => true))
 
 def lookupV (vs : List (QN × Seq)) (q : QN) : Option Seq :=
   (vs.find? (fun (v, _) => v == q)).map (·.2)
@@ -222,18 +228,28 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
       | some [.node nd] => pure nd
       | some _ => err "XTTE1020" (what ++ " needs a node as context item")
       | none => err "XTDE1270" (what ++ " needs a context item")
-    -- stylesheet functions (highest import precedence)
-    let fns := S.functions.filter (fun g => g.name == q && g.params.length == k)
+    -- stylesheet functions (highest import precedence); an unprefixed
+    -- call also finds a function in no namespace (4.0)
+    let q := if q.uri == nsFN && q.pfx == "" && S.functions.any (fun g => g.name.uri == "" && g.name.loc == q.loc)
+      then { q with uri := "" } else q
+    let fns := S.functions.filter (fun g => g.name == q && g.accepts k)
     match fns.foldl (fun (b : Option XFunction) g => match b with
         | none => some g
         | some x => if g.prec > x.prec then some g else some x) none with
     | some fn => some fun c args => runFresh c fn.name.eqn args (do
-        let mut cx : Ctx := { env := { env with ctx := none, pos := 0, size := 0, ns := c.ns, vars := env.vars }, inFn := true }
-        for (p, a) in fn.params.zip args do
-          let v ← match p.ty with
-            | some t => liftX (env.coerce t a ("$" ++ p.name.show ++ " of " ++ fn.name.show))
-            | none => pure a
+        let mut cx : Ctx := { env := { env with ctx := none, pos := 0, size := 0, ns := c.ns, vars := env.vars }, inFn := true, tempOut := true }
+        let mut i := 0
+        for p in fn.params do
+          let v ← match args[i]? with
+            | some a => match p.ty with
+              | some t => liftX (env.coerce t a ("$" ++ p.name.show ++ " of " ++ fn.name.show))
+              | none => pure a
+            | none =>
+              -- a default value, in the focus of the call
+              let dcx : Ctx := { cx with env := { cx.env with ctx := c.ctx, pos := c.pos, size := c.size } }
+              bindValue 100000 S dcx p.sel p.body p.ty ("$" ++ p.name.show)
           cx := cx.bind p.name v
+          i := i + 1
         let os ← run 1000000 S cx fn.body
         let v ← materializeAll env os
         match fn.ty with
@@ -571,6 +587,10 @@ def defaultMethod (env : Env) (s : Seq) : String :=
 /-- Serialize a result with the output definition `props`. -/
 def serializeResult (S : Sheet) (env : Env) (props : List (String × String)) (s : Seq) : M String := do
   let props := if props.any (·.1 == "method") then props else props ++ [("method", defaultMethod env s)]
+  -- XSLT's default: the XML declaration is written (§26)
+  let m := (props.lookup "method").getD "xml"
+  let props := if (m == "xml" || m == "xhtml") && !(props.any (·.1 == "omit-xml-declaration")) then
+      props ++ [("omit-xml-declaration", "no")] else props
   let p ← serParamsOfProps S props
   env.serializeWith p s
 
