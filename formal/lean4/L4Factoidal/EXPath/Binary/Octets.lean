@@ -38,6 +38,19 @@ def packBEAcc : Nat → Nat → List Nat → List Nat
   | 0, _, acc => acc
   | n + 1, v, acc => packBEAcc n (v / 256) (v % 256 :: acc)
 
+theorem packBE_eq_packBEAcc (n v : Nat) (acc : List Nat) :
+    packBEAcc n v acc = packBE n v ++ acc := by
+  induction n generalizing v acc with
+  | zero => simp [packBEAcc, packBE]
+  | succ n ih => simp [packBEAcc, packBE, ih]
+
+/-- `packBEAcc` from an empty accumulator. -/
+def packBELoop (n v : Nat) : List Nat := packBEAcc n v []
+
+/-- The compiled code of `packBE` is the loop `packBEAcc`. -/
+@[csimp] theorem packBE_csimp : @packBE = @packBELoop := by
+  funext n v; rw [packBELoop, packBE_eq_packBEAcc, List.append_nil]
+
 /-- Two's complement of an integer in `n` octets: `v mod 256^n`. -/
 def twosComplement (n : Nat) (v : Int) : Nat := (v % ((256 : Int) ^ n)).toNat
 
@@ -116,10 +129,13 @@ def hexDigit? (c : Char) : Option Nat :=
   else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55)
   else none
 
-/-- Octets from an even number of hexadecimal digits. -/
-def hexPairs : List Nat → List Nat
-  | a :: b :: r => (a * 16 + b) :: hexPairs r
-  | _ => []
+/-- Octets from an even number of hexadecimal digits (a tail call;
+    `acc` holds the octets read so far, last first). -/
+def hexPairsAcc : List Nat → List Nat → List Nat
+  | a :: b :: r, acc => hexPairsAcc r ((a * 16 + b) :: acc)
+  | _, acc => acc.reverse
+
+def hexPairs (ds : List Nat) : List Nat := hexPairsAcc ds []
 
 /-- `bin:hex` on a string: strip, pad to even length, read pairs;
 `none` for a character that is not a hexadecimal digit. -/

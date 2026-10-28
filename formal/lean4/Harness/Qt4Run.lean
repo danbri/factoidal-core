@@ -32,6 +32,8 @@ anything but XPath expressions in this evaluator.
 import L4Factoidal.XPath4.Eval
 import L4Factoidal.XPath4.Theorems
 import L4Factoidal.EXPath.File.IOHost
+import L4Factoidal.EXPath.File.Theorems
+import L4Factoidal.EXPath.Binary.Theorems
 
 open L4Factoidal.XPath4
 open L4Factoidal.XML

@@ -70,19 +70,37 @@ def nameOf (s : String) : String :=
   | some n => n
   | none => ""
 
-/-- Glob matching with `*` and `?` (§ file:list). -/
-def globMatch (pat name : List Char) : Bool :=
-  let rec go (fuel : Nat) (p n : List Char) : Bool :=
-    match fuel with
-    | 0 => false
-    | f + 1 =>
-    match p, n with
-    | [], [] => true
-    | '*' :: pr, _ => go f pr n || (match n with | _ :: nr => go f p nr | [] => false)
-    | '?' :: pr, _ :: nr => go f pr nr
-    | c :: pr, d :: nr => c == d && go f pr nr
-    | _, _ => false
-  go ((pat.length + 1) * (name.length + 1) + 1) pat name
+/-- Glob matching with `*` and `?` (§ file:list): the two-index
+    algorithm with one backtrack point (the last `*`), a loop. -/
+def globMatch (pat name : List Char) : Bool := Id.run do
+  let p := pat.toArray
+  let n := name.toArray
+  let mut i := 0
+  let mut j := 0
+  let mut star : Option Nat := none
+  let mut mark := 0
+  -- each step advances `j`, or advances `i` past a `*`; at most
+  -- (|p| + 1) * (|n| + 1) steps
+  for _ in [0:(p.size + 1) * (n.size + 1) + 1] do
+    if j < n.size then
+      if i < p.size && (p[i]! == '?' || (p[i]! != '*' && p[i]! == n[j]!)) then
+        i := i + 1; j := j + 1
+      else if i < p.size && p[i]! == '*' then
+        star := some i; mark := j; i := i + 1
+      else match star with
+        | some s => i := s + 1; mark := mark + 1; j := mark
+        | none => return false
+    else
+      for _ in [0:p.size] do
+        if i < p.size && p[i]! == '*' then i := i + 1 else break
+      return i == p.size
+  return false
+
+#guard globMatch "*.txt".toList "a.txt".toList
+#guard !globMatch "*.txt".toList "a.tx".toList
+#guard globMatch "?b*".toList "abcd".toList
+#guard globMatch "*".toList "".toList
+#guard !globMatch "a?".toList "a".toList
 
 /-- Percent-encode a path for a `file:` URI (RFC 3986 path characters
     are kept). -/
