@@ -518,6 +518,9 @@ def duplicateAtoms (as : List Atomic) (eqf : Atomic → Atomic → Bool) : List 
 def eqForIndexOf (a b : Atomic) : Bool :=
   let a := if a.ty == .untyped then Atomic.ofStr a.str else a
   let b := if b.ty == .untyped then Atomic.ofStr b.str else b
+  let nan (z : Atomic) := (z.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
+  -- F&O 4.0 §14.1.4: NaN is equal to NaN here
+  if nan a && nan b then true else
   match atomicCmp a b with
   | .ok (some .eq) => true
   | _ => false
@@ -936,8 +939,10 @@ def fnTable : List (String × LibFn) := [
     let f := (argN a 0).headD default
     match argN a 1 with
     | [.arr ms] =>
-      if f.fnArity != some ms.length then err "FOAP0001" "wrong number of arguments for fn:apply"
-      h.call f ms
+      -- excess members are ignored (F&O 4.0 §17.2.1)
+      match f.fnArity with
+      | some k => if k > ms.length then err "FOAP0001" "fn:apply: too few members for the arity" else h.call f (ms.take k)
+      | none => h.call f ms
     | _ => err "XPTY0004" "fn:apply expects an array"),
   ent "function-arity" (fun _ _ a => pure (match (argN a 0).headD default |>.fnArity with
     | some k => sInt k | none => [])),
@@ -1291,7 +1296,7 @@ def fnTable2 : List (String × LibFn) := [
             | some c => pure [.fn (.papp (.fn (.builtin q 1)) [some c])]
             | none => pure [.fn (.builtin q 0)]
           else pure []
-        else if q.uri == nsFN && q.loc == "concat" then pure (if k ≥ 2 then [.fn (.builtin q k.toNat)] else [])
+        else if q.uri == nsFN && q.loc == "concat" then pure [.fn (.builtin q k.toNat)]
         else match findSig q k.toNat with
           | some _ => pure [.fn (.builtin q k.toNat)]
           | none => pure []
@@ -1545,18 +1550,25 @@ def fnTable3 : List (String × LibFn) := [
       let x : QN := { uri := "#op", loc := "a" }
       let y : QN := { uri := "#op", loc := "b" }
       pure [.fn (.inline [(x, .seq .item .star), (y, .seq .item .star)] (.seq .item .star) (mk (.var x) (.var y)) false [])]
-    | none => err "FOAP0003" ("unknown operator " ++ o)),
-  ent "partial-apply" (fun _ _ a => do
+    | none => err "XPTY0004" ("fn:op: unknown operator " ++ o)),
+  ent "partial-apply" (fun _ e a => do
     let f := (argN a 0).headD default
     let m ← asMap (argN a 1)
+    if m.isEmpty then return [f]
     let k := (f.fnArity).getD 0
+    -- keys outside 1..arity are ignored; supplied values are coerced
+    -- to the parameter types (F&O 4.0 §17.2.4)
+    let pts : List IType := match f with
+      | .fn fi => ((fnSigOf fi).map (·.1)).getD []
+      | _ => []
     let mut fixed : List (Option Seq) := []
     for i in List.range k do
-      fixed := fixed ++ [mapGet m (Atomic.ofInt (i + 1))]
-    for (key, _) in m do
-      match key.v with
-      | .int j => if j < 1 || j > k then err "FOAP0001" "partial-apply position out of range"
-      | _ => err "XPTY0004" "partial-apply key"
+      match mapGet m (Atomic.ofInt (i + 1)) with
+      | some v =>
+        match pts[i]? with
+        | some t => fixed := fixed ++ [some (← e.coerce t v "fn:partial-apply argument")]
+        | none => fixed := fixed ++ [some v]
+      | none => fixed := fixed ++ [none]
     pure [.fn (.papp f fixed)]),
   ent "drop-while" (fun h _ a => do
     let f := (argN a 1).headD default
@@ -1566,6 +1578,9 @@ def fnTable3 : List (String × LibFn) := [
       if ← h.pred f [[x], sInt (i + 1)] then i := i + 1 else break
     pure (xs.drop i)),
   ent "index-of-substring" (fun _ _ a =>
+    let v := cps (strOf (argN a 0))
+    -- a zero-length substring occurs at every position (F&O 4.0 §5.5.6)
+    if (strOf (argN a 1)).isEmpty then pure ((List.range (v.length + 1)).map (fun (i : Nat) => .atom (Atomic.ofInt (i + 1)))) else
     pure ((indexOfSub (cps (strOf (argN a 0))) (cps (strOf (argN a 1)))).map (fun (i : Nat) => .atom (Atomic.ofInt (i + 1))))),
   ent "substring-before-last" (fun _ e a => do
     let c ← e.collation (argN a 2)

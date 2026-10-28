@@ -467,14 +467,18 @@ def eval : Nat → Env → Expr → M Seq
         | _ => err "XPST0017" ("constructor function xs:" ++ q.loc ++ " takes one argument")
       else
       let total := args.length + kw.length
-      let sig? := if q.uri == nsFN && q.loc == "concat" then
-          (if total ≥ 2 then some (default : Sig) else none) else findSig q total
+      -- fn:concat is sequence-variadic (F&O 4.0 §5.4.1): any arity
+      let sig? := if q.uri == nsFN && q.loc == "concat" then some (default : Sig) else findSig q total
       match sig? with
       | none =>
           if (findSigAny q).isSome then err "XPST0017" ("wrong number of arguments for " ++ q.show)
           else err "XPST0017" ("unknown function " ++ q.show)
       | some sig =>
         if q.uri == nsFN && q.loc == "concat" then
+          let args ← match args, kw with
+            | _, [] => pure args
+            | [], [("values", a)] => pure [a]
+            | _, _ => err "XPST0017" "fn:concat has one parameter, $values"
           if args.any Option.isNone then
             pure [.fn (.papp (.fn (.builtin q args.length)) (← evalArgs n env args))]
           else
@@ -551,7 +555,7 @@ def eval : Nat → Env → Expr → M Seq
           | some c => pure [.fn (.papp (.fn (.builtin q 1)) [some c])]
           | none => pure [.fn (.builtin q 0)]
         else err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
-      else if q.uri == nsFN && q.loc == "concat" && k ≥ 2 then pure [.fn (.builtin q k)]
+      else if q.uri == nsFN && q.loc == "concat" then pure [.fn (.builtin q k)]
       else match findSig q k with
         | some sig =>
           -- a reference to a context-dependent function whose omitted
