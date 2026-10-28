@@ -535,13 +535,13 @@ def bindWinVars (env : Env) (vs : QN × QN × QN × QN) (items : Array Item) (i 
   let env := bindOpt env prev (if i == 0 then [] else atJ (i - 1))
   bindOpt env next (atJ (i + 1))
 
-/-- Evaluate a list of FLWOR clauses over a tuple stream. `bound`
-    collects the names the clauses bound so far (for `group by`). -/
-def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN) :
+/-- One FLWOR clause over the tuple stream `tuples`. `bound` collects
+    the names the clauses bound so far (for `group by`). -/
+def stepClause (cb : XCb) (c : Expr) (tuples : List Env) (bound : List QN) :
     M (List Env × List QN) := do
   let mut ts := tuples
   let mut bnd := bound
-  for c in cs do
+  do
     match c with
     | .ext "c:for" [src] [vt] [v, pv] [kind, allowing] =>
       let mut out : Array Env := #[]
@@ -706,6 +706,12 @@ def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN)
       bnd := bnd ++ [v, s1, s2, s3, s4, e1, e2, e3, e4].filter (fun q => !isNoName q)
     | _ => err "XPST0003" "unknown FLWOR clause"
   pure (ts, bnd)
+
+/-- Evaluate a list of FLWOR clauses, in order, over a tuple stream
+    (XQuery 4.0 §4.13). -/
+def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN) :
+    M (List Env × List QN) :=
+  cs.foldlM (fun (r : List Env × List QN) c => stepClause cb c r.1 r.2) (tuples, bound)
 
 /-! ## try/catch -/
 
