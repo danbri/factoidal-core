@@ -836,7 +836,9 @@ documentation and theorems to ensure that subtle combinations of these
 features are not disasterous." Tracking:
 https://github.com/danbri/factoidal/issues/1120. A PR that adds a server
 target, a transport, a client option or a tool states the invariants of that
-issue it touches, and the theorem or test for each.
+issue it touches, and the theorem or test for each. Audit and the gate for a new
+surface: `docs/designissues/2026-10-28-feature-combination-safety.md`
+(section 5).
 
 Owner, verbatim: "there is value in implementing both sides of mcp-over-xmpp
 (“xmpcp”?), please progress that - issues, subagent, lit review", then "maybe
