@@ -151,6 +151,9 @@ export async function lwsClientOpsAvailable (engine) {
  * @param {boolean} [options.legacyChallenge] follow the 401 challenge
  *   `Bearer as_uri="…", realm="…"` of the drafts before 2026-10-19 (default
  *   false: it skips two of the discovery checks of lws10-core)
+ * @param {boolean} [options.requireHttps] send no request to a URL whose
+ *   scheme is not https, in any phase; such an operation fails with code
+ *   `insecureTransport` (default false; the engine decides)
  * @param {object} [options.session] a session from an earlier client
  * @param {number} [options.maxSteps] the loop cap of one operation
  * @returns {Promise<object>} the client
@@ -174,6 +177,8 @@ export async function createLwsClient (options = {}) {
   // Follow the `Bearer as_uri, realm` challenge of the drafts before
   // 2026-10-19 (`Machine.on401`); the engine decides, off by default.
   if (options.legacyChallenge === true) session.legacyChallenge = true
+  // Refuse every request to a URL that is not https (`Machine.enforce`).
+  if (options.requireHttps === true) session.requireHttps = true
 
   function call (op, args) {
     try {
@@ -254,7 +259,9 @@ export async function createLwsClient (options = {}) {
     head: with_('head'),
     /** `create(containerUrl, { body, mediaType, slug, container, types, links })` */
     create: with_('create'),
-    /** `update(url, { body, mediaType, precondition, tag, retry412, links })` */
+    /** `update(url, { body, mediaType, precondition, tag, ifNoneMatchTags, retry412, links })`;
+     *  `ifNoneMatchTags` (entity tags, or field values of them) sends
+     *  `If-None-Match`, alone or with the `If-Match` of `precondition` */
     update: with_('update'),
     patch: with_('patch'),
     /** `delete(url, { recursive, precondition, tag })` */
@@ -279,6 +286,8 @@ export async function createLwsClient (options = {}) {
     subscribe: with_('subscribe'),
     getSubscription: with_('getSubscription'),
     unsubscribe: with_('unsubscribe'),
+    /** `requestAccess(url, { policies: [{ actions, assignee, targets, constraint }], inbox })`,
+     *  or one policy as `{ actions, assignee, targets, constraint }` */
     requestAccess: with_('requestAccess'),
     grantAccess: with_('grantAccess'),
     getAccess: with_('getAccess'),

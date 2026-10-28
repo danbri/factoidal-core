@@ -69,7 +69,6 @@ class Reported extends Error {
   }
 }
 const invalid = (message) => new AdapterError('InvalidArguments', message)
-const unsupported = (message) => new AdapterError('Unsupported', message)
 
 // ---------------------------------------------------------------------------
 // Arguments
@@ -141,17 +140,17 @@ function patchBody (patch) {
   return new TextEncoder().encode(JSON.stringify(patch))
 }
 
-/** A write's precondition, in the names of the client's `precondition` member. */
+/** A write's precondition, in the names of the client's members: `ifMatch`
+ *  is the `precondition` with its `tag`; `ifNoneMatch` goes whole to
+ *  `ifNoneMatchTags`, and the client reads the entity-tag list (or `*`) and
+ *  sends it alone or with the If-Match. */
 function preconditionOf (args) {
   const ifMatch = optional(args, 'ifMatch')
   const ifNoneMatch = optional(args, 'ifNoneMatch')
-  if (ifMatch !== undefined && ifNoneMatch !== undefined) throw unsupported('ifMatch and ifNoneMatch together')
-  if (ifMatch !== undefined) return { precondition: 'ifMatch', tag: ifMatch }
-  if (ifNoneMatch !== undefined) {
-    if (ifNoneMatch === '*') return { precondition: 'ifNoneMatchStar' }
-    throw unsupported('ifNoneMatch other than "*" on a write')
-  }
-  return {}
+  const out = {}
+  if (ifMatch !== undefined) Object.assign(out, { precondition: 'ifMatch', tag: ifMatch })
+  if (ifNoneMatch !== undefined) out.ifNoneMatchTags = [ifNoneMatch]
+  return out
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +196,9 @@ async function configure (args) {
   // too (https://github.com/danbri/factoidal/issues/1115).
   const next = { userAgent: optional(args, 'userAgent'), timeoutSeconds: optional(args, 'timeoutSeconds', 'number'), headers: optional(args, 'headers', 'object'), options: { legacyChallenge: true } }
   if (next.timeoutSeconds !== undefined && !(Number.isInteger(next.timeoutSeconds) && next.timeoutSeconds > 0)) throw invalid("argument 'timeoutSeconds' must be a positive integer")
-  if (optional(args, 'allowInsecureHttp', 'boolean') === false) throw unsupported('allowInsecureHttp false: the client does not refuse http')
+  // `allowInsecureHttp: false`: the client sends no request to a URL that is
+  // not https (https://github.com/danbri/factoidal/issues/1116).
+  if (optional(args, 'allowInsecureHttp', 'boolean') === false) next.options.requireHttps = true
   const result = { library: LIBRARY }
   switch (auth.type) {
     case 'none':
@@ -257,16 +258,18 @@ async function listing (kind, url, args, extra = {}) {
   return limited(found, args)
 }
 
-/** The members of an access document are the client's arguments: one policy. */
-async function accessWrite (kind, args, doc, type) {
+/** The members of an access document are the client's arguments: one
+ *  `policies` member per policy, in the document's order. */
+async function accessWrite (kind, args, doc) {
   const serviceUrl = targetOf(args, 'serviceUrl')
-  const policies = [].concat(doc.access ?? [])
-  if (policies.length !== 1) throw unsupported(`${type} with ${policies.length} policies: the client writes one policy`)
-  const policy = policies[0]
-  const target = policy.target
-  const targets = [].concat(target?.value ?? target ?? []).filter((t) => typeof t === 'string')
-  const extra = { actions: [].concat(policy.action ?? []), assignee: policy.assignee, targets }
-  if (policy.constraint !== undefined) extra.constraint = policy.constraint
+  const policies = [].concat(doc.access ?? []).map((policy) => {
+    const target = policy?.target
+    const targets = [].concat(target?.value ?? target ?? []).filter((t) => typeof t === 'string')
+    const one = { actions: [].concat(policy?.action ?? []), assignee: policy?.assignee, targets }
+    if (policy?.constraint !== undefined) one.constraint = policy.constraint
+    return one
+  })
+  const extra = { policies }
   if (typeof doc.inbox === 'string') extra.inbox = doc.inbox
   return report(kind, serviceUrl, extra)
 }
@@ -340,7 +343,6 @@ const operations = {
 
   async patch (args) {
     const url = targetOf(args, 'url')
-    if (args.ifNoneMatch !== undefined && args.ifNoneMatch !== null) throw unsupported('ifNoneMatch on patch')
     return report('patch', url, { body: patchBody(args.patch), ...preconditionOf(args) })
   },
 
@@ -414,7 +416,7 @@ const operations = {
   },
 
   async request_access (args) {
-    return { location: (await accessWrite('requestAccess', args, required(args, 'request', 'object'), 'AccessRequest')).location }
+    return { location: (await accessWrite('requestAccess', args, required(args, 'request', 'object'))).location }
   },
 
   async get_access_request (args) {
@@ -431,7 +433,7 @@ const operations = {
   },
 
   async grant_access (args) {
-    return { location: (await accessWrite('grantAccess', args, required(args, 'grant', 'object'), 'AccessGrant')).location }
+    return { location: (await accessWrite('grantAccess', args, required(args, 'grant', 'object'))).location }
   },
 
   async get_access_grant (args) {
