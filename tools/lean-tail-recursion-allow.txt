@@ -1588,6 +1588,7 @@ L4Factoidal_SPARQLRL_pPathEltOrInverse  # (c) path parenthesis nesting, at most 
 L4Factoidal_SPARQLRL_pPathSeqRest  # (c) path parenthesis nesting, at most SPARQLRL.maxNesting (64); the `/` step is a self tail call
 L4Factoidal_SPARQLRL_pEltSeq  # (c) at most two levels (NOT and GROUP only at the top of a body); the element step is a self tail call
 L4Factoidal_SPARQLRL_expandPathAcc  # (c) path parenthesis nesting, at most SPARQLRL.maxNesting (64); a sequence is right-nested, its walk a self tail call
+L4Factoidal_SPARQLRL_trTerm  # (s) the translation of a SPARQL-RL pattern term to a SPARQL pattern term, for the theorems of SPARQLRL/BgpAgreement.lean only: no function of the emitted C outside BgpAgreement.c names it (checked 2026-10-28); its depth is the triple-term nesting of one pattern, at most SPARQLRL.maxNesting + 1
 L4Factoidal_SPARQLRL_Elt_makesRunOnce  # (c) rule element nesting, at most two levels from the parser
 L4Factoidal_SPARQLRL_Elt_listMakesRunOnce  # (c) rule element nesting, at most two levels; the element step is a self tail call
 L4Factoidal_SPARQLRL_Elt_depPatterns  # (c) rule element nesting, at most two levels from the parser
