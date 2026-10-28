@@ -55,6 +55,7 @@ reads the document only through its canonical form.
 -/
 import L4Factoidal.VC.DataIntegrity
 import L4Factoidal.CID.Multiformats
+import L4Factoidal.VC.Credential
 
 namespace L4Factoidal.VC.Cryptosuite
 
@@ -262,6 +263,9 @@ inductive SuiteError where
   /-- VC DI: a proof `@context` that the document's `@context` does not
   start with. -/
   | contextNotPrefix
+  /-- VC DI 1.0 §2.4 Securing Data Losslessly: JSON-LD processing would drop
+  a term (DATA_LOSS_DETECTION_ERROR). -/
+  | dataLoss (reason : String)
   deriving Repr, DecidableEq
 
 def SuiteError.describe : SuiteError → String
@@ -271,6 +275,7 @@ def SuiteError.describe : SuiteError → String
   | .curveUnavailable c =>
       s!"{c} is not available on this target (HACL* has no {c}; https://github.com/danbri/factoidal/issues/1166)"
   | .contextNotPrefix => "the document's @context does not start with the proof's @context"
+  | .dataLoss r => r
 
 /-! ## Key resolution -/
 
@@ -336,6 +341,30 @@ def verifyInputs (t : Transform) (doc proof : Json) : Except SuiteError (Json ×
       else .error .contextNotPrefix
   | none => .ok (unsecured, configOf t doc proof)
 
+/-! ## Securing data losslessly
+
+VC DI 1.0 §2.4: "Implementations that use JSON-LD processing, such as RDF
+Dataset Canonicalization, MUST throw an error, which SHOULD be
+DATA_LOSS_DETECTION_ERROR, when data is dropped by a JSON-LD processor, such
+as when an undefined term is detected in an input document." The RDFC suites
+run `VC.Doc.checkNoDataLoss` (an undefined `type` entry or `credentialSubject`
+key, with the document's own active context from `loader`) before they
+canonicalize. JCS processes no JSON-LD and drops nothing. -/
+
+def checkLossless (loader : Loader) (t : Transform) (doc : Json) : Except SuiteError Unit :=
+  match t with
+  | .jcs => .ok ()
+  | .rdfc10 =>
+      match doc.field? "@context" with
+      | none => .ok ()
+      | some ctx =>
+          match activeContextFromJson loader ctx with
+          | .error _ => .ok ()   -- toRdf refuses the context itself, with its own error
+          | .ok ac =>
+              match L4Factoidal.VC.Doc.checkNoDataLoss ac doc with
+              | .pass => .ok ()
+              | .fail r => .error (.dataLoss r)
+
 /-! ## Verify -/
 
 /-- Verify one proof object of a secured document (VC DI 1.0 §4.4, with the
@@ -364,6 +393,7 @@ def verifyProof (loader : Loader) (prims : Primitives) (expectedPurpose : String
   if !prims.available pk.curve then throw (.curveUnavailable pk.curve.name)
   let alg := pk.curve.hashAlg
   let (unsecured, cfg) ← verifyInputs suite.transform doc proof
+  checkLossless loader suite.transform unsecured
   let canonicalDoc ← match transform loader suite.transform alg unsecured with
     | .ok s => pure s
     | .error m => throw (.di (.canonicalization "document" m))
@@ -404,6 +434,9 @@ def secureDocument (loader : Loader) (signer : Signer) (suite : Suite)
     { cryptosuite := suite.name, verificationMethod := signer.verificationMethod,
       proofPurpose, created, proofValue := "" }
   let cfg := configOf suite.transform doc options.toJson
+  match checkLossless loader suite.transform unsecured with
+  | .error e => throw e.describe
+  | .ok () => pure ()
   let canonicalDoc ← transform loader suite.transform alg unsecured
   let canonicalCfg ← transform loader suite.transform alg cfg
   let signF : SignFn := fun _ msg => (signer.sign msg).getD ByteArray.empty

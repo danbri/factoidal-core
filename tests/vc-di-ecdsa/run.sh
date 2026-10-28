@@ -19,6 +19,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SUITE_DIR="$REPO_ROOT/third_party/testing/vc-di-ecdsa"
 PORT="${VC_DI_ECDSA_PORT:-40448}"
 RESULT_JSON="$REPO_ROOT/docs/test-results/by-suite/vc-di-ecdsa.json"
+mkdir -p "$(dirname "$RESULT_JSON")"
 MOCHA_JSON="$(mktemp)"
 SHIM_LOG="$(mktemp)"
 

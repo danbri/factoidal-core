@@ -178,4 +178,22 @@ def echoPrims : Primitives :=
 #guard (secureDocument Loader.none (echoSigner .ed25519 vmP256) ecdsaJcs2019 "assertionMethod"
     "" (j unsignedJson)).toOption.isNone
 
+/-! ## VC DI 1.0 §2.4: an undefined term is a refusal under RDFC, not a dropped triple -/
+
+def lossyDoc : Json := j ("{\"@context\": {\"name\": \"https://schema.org/name\"}, " ++
+  "\"credentialSubject\": {\"name\": \"Alice\", \"undefinedTerm\": \"x\"}, " ++
+  "\"proof\": {\"type\": \"DataIntegrityProof\", \"cryptosuite\": \"ecdsa-rdfc-2019\", " ++
+  "\"verificationMethod\": \"" ++ vmP256 ++ "\", \"proofPurpose\": \"assertionMethod\", " ++
+  "\"proofValue\": \"z1\"}}")
+
+#guard (match verifyDocument Loader.none stubP256 lossyDoc with
+  | .error (.dataLoss _) => true | _ => false)
+-- the same document under JCS drops nothing: it reaches the signature check
+#guard verifyDocument Loader.none stubP256
+    (setField "proof" (setField "cryptosuite" (.string "ecdsa-jcs-2019")
+      ((lossyDoc.field? "proof").getD .null)) lossyDoc) == .error (.di .signatureRejected)
+-- and securing it under RDFC is refused
+#guard (secureDocument Loader.none (echoSigner .p256 vmP256) ecdsaRdfc2019 "assertionMethod" ""
+    (unsecuredOf lossyDoc)).toOption.isNone
+
 end L4Factoidal.VC.CryptosuiteTests
