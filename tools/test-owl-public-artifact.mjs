@@ -82,7 +82,8 @@ export async function owlIsConsistent(input, options) {
     ? c.options === '' : c.options === JSON.stringify({ fuel: String(options.fuel) })));
   if (!c) throw new Error('unexpected synthetic public input/options');
   const envelope = dispatchEnvelope(c);
-  if (c.expectedOk) return { consistent: envelope.consistent, reason: envelope.reason };
+  if (c.expectedOk) return 'reason' in envelope
+    ? { consistent: envelope.consistent, reason: envelope.reason } : { consistent: envelope.consistent };
   if (c.id === 'parse-error') throw new FactoidalError('expected object', {
     code: 'parse.syntax', spec: 'https://www.w3.org/TR/rdf12-n-quads/#sec-grammar',
     format: 'nquads', position: { line: 1, column: 17, offset: 16, byteOffset: 16 },
@@ -149,7 +150,8 @@ async function main() {
     const source = JSON.parse(sourceBytes);
     assert.equal(source.format, 'owl-public-boundary-v1');
     assert.equal(source.status, 'pass');
-    assert.equal(source.cases.length, 20);
+    // The case count of the EXPECTED table in check-owl-public-artifact.mjs.
+    assert.equal(source.cases.length, 23);
     assert(source.cases.every(c => c.passed && typeof c.dispatchResponse === 'string'));
     report.sourceReportSha256 = digest(sourceBytes);
     report.runnerSha256 = digest(readFileSync(RUNNER));
