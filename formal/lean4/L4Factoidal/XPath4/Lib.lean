@@ -366,6 +366,39 @@ def nodeArg (e : Env) (s : Seq) : M (Option NodeRef) :=
   | [.node n] => pure (some n)
   | _ => err "XPTY0004" "expected a node"
 
+/-- The ancestors of a GNode (any order). -/
+def Env.gAncestors (e : Env) (i : Item) : List Item :=
+  match i with
+  | .node n => (e.ancestors n).map Item.node
+  | j@(.jnode ..) => jancestors j
+  | _ => []
+
+/-- One step of `fn:path` for a JNode (F&O 4.0 §14.1.10, "For a JNode"). -/
+def jpathStep (k : Atomic) : String :=
+  if k.isStringLike then
+    let cs := k.str.toList.toArray
+    if (match ncnameAt cs 0 with | some (_, j) => j == cs.size | none => false) then k.str
+    else "\"" ++ String.intercalate "\"\"" (k.str.splitOn "\"") ++ "\""
+  else if k.isNumeric then k.str
+  else match k.v with
+    | .qn q => "#" ++ q.eqn
+    | .bool b => if b then "true()" else "false()"
+    | _ => "child::{xs:" ++ k.ty.name ++ "(\"" ++ k.str ++ "\")}"
+
+/-- `fn:path` of a JNode, relative to `origin` (a root by default). -/
+def jpathOf (j : Item) (origin : Option Item) : M String := do
+  let anc := (j :: jancestors j)
+  match origin with
+  | none =>
+    let ks := ((j :: jancestors j).filterMap jkeyOf).reverse
+    pure ("/" ++ String.intercalate "/" (ks.map jpathStep))
+  | some o =>
+    match anc.findIdx? (jsame o) with
+    | some i =>
+      let ks := ((anc.take i).filterMap jkeyOf).reverse
+      pure (String.intercalate "/" (ks.map jpathStep))
+    | none => err "FOPA0001" "the origin is not an ancestor of the node"
+
 def Env.rootOf (e : Env) (n : NodeRef) : NodeRef :=
   match (e.ancestors n).getLast? with
   | some r => r
@@ -448,9 +481,17 @@ def sliceIdx (len : Nat) (a1 a2 a3 : Seq) : List Nat :=
 
 def ent (n : String) (f : LibFn) : String × LibFn := (n, f)
 
+/-- The ·jvalue· of a single JNode, repeatedly; any other value as is. -/
+def unwrapJValue : Nat → Seq → Seq
+  | 0, s => s
+  | f + 1, s => match s with
+    | [.jnode _ _ v _] => unwrapJValue f v
+    | _ => s
+
 def fnTable : List (String × LibFn) := [
   -- accessors
-  ent "string" (fun _ e a => match argN a 0 with
+  -- a JNode: `string(jvalue($value))` (F&O 4.0 §2.1.3)
+  ent "string" (fun _ e a => match unwrapJValue 64 (argN a 0) with
     | [] => pure (sStr "")
     | [.atom x] => pure (sStr x.str)
     | [.node n] => pure (sStr (e.nodeString n))
@@ -942,10 +983,12 @@ def fnTable : List (String × LibFn) := [
     | some n => pure (match e.nodeName n with | some q => single (Atomic.ofQN q) | none => [])
     | none => pure []),
   ent "root" (fun _ e a => do
+    if let [j@(.jnode ..)] := argN a 0 then return [jrootOf j]
     match ← nodeArg e (argN a 0) with
     | some n => pure [.node (e.rootOf n)]
     | none => pure []),
   ent "has-children" (fun _ e a => do
+    if let [j@(.jnode ..)] := argN a 0 then return sBool !(jchildren j).isEmpty
     match ← nodeArg e (argN a 0) with
     | some n => pure (sBool !(e.nrec n).children.isEmpty)
     | none => pure (sBool false)),
@@ -966,13 +1009,23 @@ def fnTable : List (String × LibFn) := [
     | some ns =>
       let ns := sortNodes ns
       pure ((ns.filter (fun n => !ns.any (fun m => (e.ancestors m).contains n))).map Item.node)
-    | none => err "XPTY0004" "fn:innermost expects nodes"),
+    | none =>
+      match gnodesOf (argN a 0) with
+      | some ns =>
+        let ns := sortGNodes ns
+        pure (ns.filter (fun n => !ns.any (fun m => (e.gAncestors m).any (gnodeEq n))))
+      | none => err "XPTY0004" "fn:innermost expects nodes"),
   ent "outermost" (fun _ e a => do
     match nodesOf (argN a 0) with
     | some ns =>
       let ns := sortNodes ns
       pure ((ns.filter (fun n => !(e.ancestors n).any (fun m => ns.contains m))).map Item.node)
-    | none => err "XPTY0004" "fn:outermost expects nodes"),
+    | none =>
+      match gnodesOf (argN a 0) with
+      | some ns =>
+        let ns := sortGNodes ns
+        pure (ns.filter (fun n => !(e.gAncestors n).any (fun m => ns.any (gnodeEq m))))
+      | none => err "XPTY0004" "fn:outermost expects nodes"),
   ent "in-scope-prefixes" (fun _ e a => do
     match argN a 0 with
     | [.node n] =>
@@ -1213,8 +1266,15 @@ def fnTable2 : List (String × LibFn) := [
   ent "distinct-ordered-nodes" (fun _ _ a => do
     match nodesOf (argN a 0) with
     | some ns => pure ((sortNodes ns).map Item.node)
-    | none => err "XPTY0004" "expected nodes"),
+    | none =>
+      match gnodesOf (argN a 0) with
+      | some ns => pure (sortGNodes ns)
+      | none => err "XPTY0004" "expected nodes"),
   ent "siblings" (fun _ e a => do
+    if let [j@(.jnode _ st _ _)] := argN a 0 then
+      return (match st, jparent j with
+        | s :: _, some p => if s.pos == 0 then [j] else jchildren p
+        | _, _ => [j])
     match ← nodeArg e (argN a 0) with
     | some n =>
       let r := e.nrec n
@@ -1360,6 +1420,14 @@ def tzOf (a : List Seq) : Seq :=
   | _ => []
 
 def fnTable3 : List (String × LibFn) := [
+  -- F&O 4.0 §16.1: fn:jtree, fn:jkey, fn:jvalue
+  ent "jtree" (fun _ _ a => pure [mkJRoot 0 (argN a 0)]),
+  ent "jkey" (fun _ _ a => pure (match argN a 0 with
+    | [j@(.jnode ..)] => match jkeyOf j with | some k => [.atom k] | none => []
+    | _ => [])),
+  ent "jvalue" (fun _ _ a => pure (match argN a 0 with
+    | [.jnode _ _ v _] => v
+    | _ => [])),
   ent "sort-by" (fun h e a => sortByKeys h e (argN a 0) (fun x => [x]) (argN a 1)),
   ent "timezone-from-dateTime" (fun _ _ a => pure (tzOf a)),
   ent "timezone-from-date" (fun _ _ a => pure (tzOf a)),
@@ -1420,7 +1488,7 @@ def fnTable3 : List (String × LibFn) := [
     match argN a 0 with
     | [] => pure []
     | start =>
-      let mut found : List NodeRef := []
+      let mut found : List Item := []
       let mut frontier := start
       for _ in [0:100000] do
         if frontier.isEmpty then break
@@ -1428,12 +1496,11 @@ def fnTable3 : List (String × LibFn) := [
         let rest := frontier.drop 1
         let mut newOnes : Seq := []
         for i in next do
-          match i with
-          | .node nd => if !found.contains nd then
-                          found := found ++ [nd]; newOnes := newOnes ++ [i]
-          | _ => err "XPTY0004" "transitive-closure step must return nodes"
+          if !i.isGNode then err "XPTY0004" "transitive-closure step must return nodes"
+          if !found.any (gnodeEq i) then
+            found := found ++ [i]; newOnes := newOnes ++ [i]
         frontier := rest ++ newOnes
-      pure ((sortNodes found).map Item.node)),
+      pure (sortGNodes found)),
   ent "type-of" (fun _ e a => do
     let xs := argN a 0
     if xs.isEmpty then return sStr "empty-sequence()"
@@ -1444,6 +1511,7 @@ def fnTable3 : List (String × LibFn) := [
         | .text => "text()" | .pi => "processing-instruction()" | .comment => "comment()"
         | .namespace => "namespace-node()"
       | .arr _ => "array(*)" | .map _ => "map(*)" | .fn _ => "fn(*)"
+      | .jnode .. => "jnode()"
     let ss := (xs.map one).eraseDups
     let body := if ss.length == 1 then ss.headD "" else "(" ++ String.intercalate "|" ss ++ ")"
     pure (sStr (body ++ (if xs.length > 1 then "+" else "")))),
@@ -1455,10 +1523,20 @@ def fnTable3 : List (String × LibFn) := [
     | some x => (Grapheme.graphemes x.str).map (fun g => .atom (Atomic.ofStr g))
     | none => [])),
   ent "generate-id" (fun _ e a => do
+    if let [j@(.jnode r _ _ _)] := argN a 0 then
+      return sStr ("j" ++ toString r ++ String.join ((jposPath j).map (fun p => "p" ++ toString p)))
     match ← nodeArg e (argN a 0) with
     | some n => pure (sStr ("d" ++ toString n.doc ++ "n" ++ toString n.idx))
     | none => pure (sStr "")),
   ent "path" (fun _ e a => do
+    if let [j@(.jnode ..)] := argN a 0 then
+      let origin ← match argN a 1 with
+        | [.map kvs] => match mapGet kvs (Atomic.ofStr "origin") with
+          | some [o] => pure (some o)
+          | some [] | none => pure none
+          | some _ => err "XPTY0004" "the origin option must be a single node"
+        | _ => pure none
+      return sStr (← jpathOf j origin)
     if !(argN a 1).isEmpty && !(match argN a 1 with | [.map []] => true | _ => false) then
       err "XPST0017" "fn:path options are not implemented"
     match ← nodeArg e (argN a 0) with
@@ -1690,13 +1768,17 @@ def arrayTable : List (String × LibFn) := [
           | .arr ms => go f ms.flatten acc
           | x => acc.push x) acc
     pure (go 1000 (argN a 0) #[]).toList),
-  ent "members" (fun _ _ a => do pure ((← asArr (argN a 0)).map (fun m => .map [(Atomic.ofStr "value", m)]))),
+  -- F&O 4.0 §15.2.18, §15.2.19: the members as JNodes (`jtree($array)/child::*`),
+  -- and an array from the ·jvalue·s of JNodes
+  ent "members" (fun _ _ a => do
+    match argN a 0 with
+    | [x@(.arr _)] => pure (jchildren (mkJRoot 0 [x]))
+    | _ => err "XPTY0004" "expected an array"),
   ent "of-members" (fun _ _ a => do
     let ms ← (argN a 0).mapM (fun i => do
-      let m ← asMap [i]
-      match mapGet m (Atomic.ofStr "value") with
-      | some v => pure v
-      | none => err "XPTY0004" "array:of-members expects value records")
+      match i with
+      | .jnode _ _ v _ => pure v
+      | _ => err "XPTY0004" "array:of-members expects JNodes")
     pure (arrItem ms)),
   ent "split" (fun _ _ a => do pure ((← asArr (argN a 0)).map (fun m => .arr [m]))),
   ent "items" (fun _ _ a => do pure (← asArr (argN a 0)).flatten),

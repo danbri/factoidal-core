@@ -265,7 +265,7 @@ def pStringLit : P String := do
 def kindTestNames : List String :=
   ["node", "text", "comment", "element", "attribute", "document-node",
    "processing-instruction", "namespace-node", "schema-element", "schema-attribute",
-   "gnode", "xnode", "jnode"]
+   "xnode", "jnode"]
 
 def reservedFnNames : List String :=
   kindTestNames ++ ["array", "empty-sequence", "fn", "function", "if", "item", "map",
@@ -304,6 +304,42 @@ def pNameTest (dflt : String) : P NameTest := do
           | none => pure (.ns (← lookupNs (p.getD "")))
         else pure (.name (← resolve p u l dflt))
     | none => synErr "expected a name test"
+
+/-- The first argument of `jnode(...)` (XPath 4.0 §3.2.12). -/
+def pJKeyTest : P JKeyTest := do
+  ws
+  let ch ← peekAt 0
+  if ← eatS "*" then pure .any
+  else if ch == '(' then
+    adv 1; expectS ")"; pure .root
+  else if ch == '"' || ch == '\'' then pure (.key (Atomic.ofStr (← pStringLit)))
+  else if ch == '#' then
+    adv 1
+    match ← peekQName with
+    | some (p, u, l, e) =>
+        set e
+        pure (.key (Atomic.ofQN (← resolve p u l "")))
+    | none => synErr "bad QName literal"
+  else if ch.isDigit || ch == '.' || ch == '-' then
+    let neg ← eatS "-"
+    match ← pNumber with
+    | .lit a =>
+      if !neg then pure (.key a) else
+      match a.num? with
+      | some v => pure (.key (numNeg v).atomic)
+      | none => synErr "bad numeric constant"
+    | _ => synErr "bad numeric constant"
+  else
+    match ← afterName with
+    | some (nm, '(', _) =>
+      if nm == "true" || nm == "false" then
+        adv nm.length; expectS "("; expectS ")"
+        pure (.key (Atomic.ofBool (nm == "true")))
+      else synErr "bad jnode() key"
+    | _ =>
+      match ← peekQName with
+      | some (none, none, l, e) => set e; pure (.key (Atomic.ofStr l))
+      | _ => synErr "bad jnode() key"
 
 def pOcc (t : IType) : P IType := do
   -- occurrence indicator directly follows the item type
@@ -346,7 +382,16 @@ def pItemType : Nat → P IType
         set e; expectS "("
         match nm with
         | "item" => expectS ")"; pure .item
-        | "node" | "gnode" | "xnode" => expectS ")"; pure .anyNode
+        | "node" => expectS ")"; pure .anyNode
+        | "xnode" => expectS ")"; pure .xnode
+        | "jnode" =>
+            -- XPath 4.0 §3.2.12: jnode((* | () | NCName | Constant) (, SequenceType)?)
+            if ← eatS ")" then pure (.jnodeT .any none)
+            else
+              let k ← pJKeyTest
+              let vt ← if ← eatS "," then pure (some (← pSeqType n)) else pure none
+              expectS ")"
+              pure (.jnodeT k vt)
         | "text" => expectS ")"; pure .text
         | "comment" => expectS ")"; pure .comment
         | "namespace-node" => expectS ")"; pure .nsNode
@@ -944,7 +989,13 @@ def pNodeTest : Nat → Axis → P NodeTest
     | some (nm, '(', _) =>
       if kindTestNames.contains nm then pure (.kind (← pItemType n))
       else synErr ("unexpected function call in a step: " ++ nm)
-    | _ => pure (.name (← pNameTest (if ax == .attribute then "" else "")))
+    | _ =>
+      let star := (← peekAt 0) == '*'
+      match ← peekQName with
+      | some (none, none, l, _) =>
+        if star || l == "*" then pure (.name (← pNameTest ""))
+        else pure (.ncname (← pNameTest "") l)
+      | _ => pure (.name (← pNameTest (if ax == .attribute then "" else "")))
 
 def pStep : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
@@ -972,6 +1023,13 @@ def pStep : Nat → P Expr
       | some ax =>
           let _ ← peekQName
           adv nm.length; ws; expectS "::"
+          ws
+          if (← peekAt 0) == '{' then
+            -- a dynamic node test (XPath 4.0 §4.7.5.2)
+            let e ← pEnclosed n
+            let ps ← pPreds n
+            pure (.dstep ax e ps)
+          else
           let t ← pNodeTest n ax
           let ps ← pPreds n
           pure (.step ax t ps)
