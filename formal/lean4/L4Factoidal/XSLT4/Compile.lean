@@ -881,6 +881,10 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         pure (.copyOf (← parseC c (← reqAttr as "select" l)) (← as.bool "copy-namespaces" true)
           (← as.bool "copy-accumulators" false))
     | "message" =>
+        -- a fixed terminate value must be a boolean (XTSE0020)
+        if let some v := as.get "terminate" then
+          if !v.contains '{' && (parseBool v).isNone then
+            cerr "XTSE0020" ("invalid terminate value '" ++ v ++ "'")
         pure (.message (← optExpr c as "select") (← body)
           ((← optAvt c as "terminate").getD [.lit "no"]) (← errCodeAvt c as))
     | "assert" =>
@@ -1363,8 +1367,12 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let body := [Instr.withCompat c.backCompat body]
       let body := if c.baseUri != "" then [Instr.withBase c.baseUri body] else body
       let s ← get
-      if s.sheet.functions.any (fun g => g.name == nm && g.params.length == ps.length && g.prec == prec) then
-        cerr "XTSE0770" ("two functions " ++ nm.show ++ "#" ++ toString ps.length)
+      -- two functions of one name and precedence whose arity ranges
+      -- overlap (XTSE0770, §10.3.2)
+      let minA (qs : List WParam) := (qs.filter (·.required)).length
+      if s.sheet.functions.any (fun g => g.name == nm && g.prec == prec &&
+          minA g.params ≤ ps.length && minA ps ≤ g.params.length) then
+        cerr "XTSE0770" ("two functions " ++ nm.show ++ " with overlapping arities")
       let fty ← optType c as
       let vis := ((as.get "visibility").getD "").trimAscii.toString
       let body := if vis == "abstract" then [abstractErr "function" nm] else body

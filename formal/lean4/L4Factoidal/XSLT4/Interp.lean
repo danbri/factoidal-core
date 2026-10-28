@@ -1058,8 +1058,12 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             let v ← evalX cx e
             let v := if first then v.take 1 else v
             let sp ← match sep with | some a => avtStr cx a | none => pure " "
-            let as ← liftX (env.atomize v)
-            pure [.text (String.intercalate sp (as.map Atomic.str))]
+            -- constructing simple content (§5.7.2): zero-length text
+            -- nodes are removed and adjacent text nodes merged
+            if first then
+              let as ← liftX (env.atomize v)
+              pure [.text (String.intercalate sp (as.map Atomic.str))]
+            else pure [.text (← simpleContent env (Out.ofSeq v) sp)]
         | none =>
             let os ← run n S cx body
             let sp ← match sep with | some a => avtStr cx a | none => pure ""
@@ -1358,17 +1362,27 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         pure out.toList
     | .message sel body term code =>
         -- the message: the select value followed by the content (§23.1)
-        let os1 ← match sel with
-          | some e => do pure (Out.ofSeq (← evalX cx e))
-          | none => pure []
-        let os := os1 ++ (← run n S cx body)
-        let txt ← simpleContent env os ""
-        let id ← freshId
-        let mdoc ← match materialize env id (.doc os "") with
-          | .ok d => pure [d]
-          | .error _ => pure []
-        modify (fun s => { s with msgs := s.msgs.push txt, msgDocs := s.msgDocs ++ mdoc.toArray })
         let t := (← avtStr cx term).trimAscii.toString
+        let content : XM (String × List Item) := do
+          let os1 ← match sel with
+            | some e => do pure (Out.ofSeq (← evalX cx e))
+            | none => pure []
+          let os := os1 ++ (← run n S cx body)
+          let txt ← simpleContent env os ""
+          let id ← freshId
+          let mdoc ← match materialize env id (.doc os "") with
+            | .ok d => pure [d]
+            | .error _ => pure []
+          pure (txt, mdoc)
+        -- a dynamic error in the content does not make the transformation
+        -- fail; the message then reports the error (§23.1)
+        let st0 ← get
+        let (txt, mdoc) ← match content.run st0 with
+          | .ok (r, st1) => do set st1; pure r
+          | .error e =>
+            if parseBool t == some true then throw e
+            else pure ("error " ++ e.code ++ ": " ++ e.msg, [])
+        modify (fun s => { s with msgs := s.msgs.push txt, msgDocs := s.msgDocs ++ mdoc.toArray })
         match parseBool t with
         | some true =>
             let c ← match code with

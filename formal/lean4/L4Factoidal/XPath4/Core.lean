@@ -71,6 +71,9 @@ structure Env where
       `fn:key`, ...). Consulted before the built-in library; empty for
       XPath. -/
   host : QN → Nat → Option HostFn := fun _ _ => none
+  /-- The parameter names of a host function by name and arity, for
+      keyword arguments (XPath 4.0 §4.5.1.1); `none` when it has none. -/
+  hostParams : QN → Nat → Option (List String) := fun _ _ => none
   /-- XPath 1.0 compatibility mode (XPath 4.0 §2.2.1.1): set by a host
       language (XSLT with a version below 2.0); false for XPath. -/
   compat10 : Bool := false

@@ -308,6 +308,8 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
     | some fn => some fun c args => runFresh c fn.name.eqn args (do
         if let [.staticErr "XTDE3052" msg] := fn.body then xerr "XTDE3052" msg
         let mut cx : Ctx := { env := { env with ctx := none, pos := 0, size := 0, ns := c.ns, vars := env.vars }, inFn := true, tempOut := true }
+        -- the defaults see none of the parameters (XPST0008)
+        let cx0 := cx
         let mut i := 0
         for p in fn.params do
           let v ← match args[i]? with
@@ -316,14 +318,14 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
               | none => pure a
             | none =>
               -- a default value, in the focus of the call
-              let dcx : Ctx := { cx with env := { cx.env with ctx := c.ctx, pos := c.pos, size := c.size } }
+              let dcx : Ctx := { cx0 with env := { cx0.env with ctx := c.ctx, pos := c.pos, size := c.size } }
               -- with no select and no content the default is the empty
               -- sequence (§10.3.2)
               if p.sel.isNone && p.body.isEmpty then
                 match p.ty with
                 | some t => liftX (env.coerce t [] ("$" ++ p.name.show ++ " of " ++ fn.name.show))
                 | none => pure []
-              else bindValue 100000 S dcx p.sel p.body p.ty ("$" ++ p.name.show) ""
+              else bindValue 100000 S dcx p.sel p.body p.ty ("$" ++ p.name.show) "XTTE0600"
           cx := cx.bind p.name v
           i := i + 1
         let os ← run 1000000 S cx fn.body
@@ -340,6 +342,13 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
     | some h => some h
     | none =>
     match q.loc, k with
+    | "function-lookup", 2 => some fun _ a => do
+        -- a stylesheet function is found too (F&O 4.0 §16.1.2)
+        match a.getD 0 [], a.getD 1 [] with
+        | [.atom ⟨_, .qn fq⟩], [.atom ⟨_, .int ar⟩] =>
+          if ar ≥ 0 && userFnAvail S fq (some ar.toNat) then pure [.fn (.builtin fq ar.toNat)]
+          else callFn 100000 env q a
+        | _, _ => callFn 100000 env q a
     | "current", 0 => some fun c _ =>
         match lookupV c.vars vCurrent with
         | some v => pure v
@@ -708,7 +717,11 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
     (List.range docs.size).flatMap (fun di => S.accumulators.map (fun acc =>
       ((acc.name.eqn, di), Thunk.mk (fun _ => accumulatorValues S { env with host := mkHost S env [] [] 100000 } acc (NodeRef.mk' di 0)))))
   let host := mkHost S env keyCache accCache 100000
-  let env := { env with host, vars := env.vars ++ [(vOutUri, if o.outUri == "" then [] else [.atom (Atomic.ofUri o.outUri)])] }
+  let hostParams (q : QN) (k : Nat) : Option (List String) :=
+    let q := if q.uri == nsFN && q.pfx == "" && S.functions.any (fun g => g.name.uri == "" && g.name.loc == q.loc && g.accepts k)
+      then { q with uri := "" } else q
+    (S.functions.find? (fun f => f.name == q && f.accepts k)).map (·.params.map (·.name.loc))
+  let env := { env with host, hostParams, vars := env.vars ++ [(vOutUri, if o.outUri == "" then [] else [.atom (Atomic.ofUri o.outUri)])] }
   let focusEnv := match o.globalCtx with
     | some i => env.focus i 1 1
     | none => env
