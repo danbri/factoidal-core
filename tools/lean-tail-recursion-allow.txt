@@ -748,7 +748,7 @@ L4Factoidal_Regex_CRe_dotAll  # (b) nesting of one regular expression
 L4Factoidal_Regex_CRe_repeatExact  # (b) the count of one {n} quantifier in the pattern (query or schema text)
 L4Factoidal_Regex_CRe_size  # (b) nesting of one regular expression
 L4Factoidal_Regex_absorbMarkers  # (b) nesting of one regular expression
-L4Factoidal_Regex_cmatch  # (a) PENDING https://github.com/danbri/factoidal/issues/816 the star case recurses once per repetition over the matched text (data), and every level maps all outcomes of the level below (quadratic memory); expected failure: tests/stack case regex-replace-groups, 5,000 repetitions overflow at 512 KB (split from issue 752)
+L4Factoidal_Regex_cmatchE  # (a) PENDING https://github.com/danbri/factoidal/issues/816 the star case recurses once per repetition over the matched text (data), and each repetition nests one more continuation (was `cmatch` until the F&O 4.0 dialect made `cmatch` a wrapper that passes no captures); expected failure: tests/stack case regex-replace-groups, 5,000 repetitions overflow at 512 KB (split from issue 752)
 L4Factoidal_Regex_cparseAlt  # (b) branches of one alternation in one regex pattern (query text); fuel-bounded
 L4Factoidal_Regex_cparseSeq  # (b) atoms of one sequence in one regex pattern (query text); fuel-bounded
 L4Factoidal_Regex_dotAll  # (b) nesting of one regular expression
