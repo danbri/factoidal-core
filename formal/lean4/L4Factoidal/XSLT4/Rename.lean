@@ -42,6 +42,14 @@ structure Ren where
   /-- Keys and accumulators (local to a package, §3.4.8). -/
   keys : List (QN × QN) := []
   accs : List (QN × QN) := []
+  /-- Decimal formats (local to a package): named ones, and the name
+      that the unnamed one gets (`format-number` with two arguments then
+      names it). -/
+  dfs : List (QN × QN) := []
+  dfUnnamed : Option String := none
+  /-- Output definitions (local to a package): unprefixed name, new
+      expanded name (`xsl:result-document format`). -/
+  outs : List (String × String) := []
 deriving Inhabited
 
 /-- The new name of a key or accumulator named by the string `s` (an
@@ -111,6 +119,10 @@ def renE (r : Ren) : Nat → List QN → Expr → RM Expr
             (some (.lit (Atomic.ofStr (r.keyName r.keys a.str)))) :: rest
           | true, "accumulator-before", [some (.lit a)] | true, "accumulator-after", [some (.lit a)] =>
             [some (.lit (Atomic.ofStr (r.keyName r.accs a.str)))]
+          | true, "format-number", [x, y, some (.lit a)] => [x, y, some (.lit (Atomic.ofStr (r.keyName r.dfs a.str)))]
+          | true, "format-number", [x, y] => match r.dfUnnamed with
+            | some u => [x, y, some (.lit (Atomic.ofStr u))]
+            | none => [x, y]
           | _, _, xs => xs
         let kw' ← kw.mapM (fun (n, v) => do pure (n, ← goO v))
         pure (.call (r.fn q k) as' kw')
@@ -262,6 +274,11 @@ def renI (r : Ren) : Nat → List QN → Instr → RM Instr
     | .evaluate x ci wp nc as ps sc bu => do
         pure (.evaluate (← e x) (← eo ci) (← eo wp) (← eo nc) as (← renPs r f bd ps) sc bu)
     | .resultDoc h fmt ser body => do
+        let fmt := match fmt with
+          | some [.lit s] => match r.outs.lookup s.trimAscii.toString with
+            | some k => some [AvtPart.lit k]
+            | none => fmt
+          | _ => fmt
         pure (.resultDoc (← avo h) (← avo fmt) (← ser.mapM (fun (k, a) => do pure (k, ← av a))) (← b body))
     | .wherePopulated body => .wherePopulated <$> b body
     | .onEmpty sel body => do pure (.onEmpty (← eo sel) (← b body))

@@ -447,6 +447,18 @@ def mergeUsed (d : Decl) (n : Nat) (q : PkgOut) : CM Unit := do
   let localNames (qs : List QN) := (qs.filter (·.uri == "")).eraseDups.map (fun x => (x, mangle n x))
   ren := { ren with keys := localNames (q.sheet.keys.map (·.name)),
                     accs := localNames (q.sheet.accumulators.map (·.name)) }
+  -- decimal formats, output definitions and character maps are local
+  -- too; the unnamed decimal format of the used package gets a name
+  let unnamedDf := (mangle n { uri := "#df", loc := "unnamed" }).eqn
+  let dfNames := (q.sheet.decimalFormats.map (·.1)).filter (·.startsWith "Q{}") |>.map qnOfKey
+  let localKey (k : String) : String := if k.startsWith "Q{}" then (mangle n (qnOfKey k)).eqn else k
+  let outs := ((q.sheet.outputs.map (·.1)).filter (·.startsWith "Q{}")).map (fun k => ((qnOfKey k).loc, localKey k))
+  ren := { ren with dfs := localNames dfNames, dfUnnamed := some unnamedDf, outs }
+  let qDfs := q.sheet.decimalFormats.map (fun (k, ps) => (if k == "" then unnamedDf else localKey k, ps))
+  let qDfs := if qDfs.any (·.1 == unnamedDf) then qDfs else qDfs ++ [(unnamedDf, [])]
+  let qOuts := (q.sheet.outputs.filter (·.1 != "")).map (fun (k, ps) => (localKey k, ps.map (fun (pk, v) =>
+    (pk, if pk == "use-character-maps" then String.intercalate " " ((tokens v).map (fun t => localKey (if t.startsWith "Q{" || t.contains ':' then t else "Q{}" ++ t))) else v))))
+  let qMaps := q.sheet.charMaps.map (fun (k, us, cs) => (localKey k, us.map localKey, cs))
   let params := q.params.map (fun (p, st) => (p, ren.var p, st))
   let (sh, _) : Sheet × Refs := Id.run ((renSheet ren q.sheet).run #[])
   -- the declarations of overridden components get the fresh name
@@ -456,7 +468,9 @@ def mergeUsed (d : Decl) (n : Nat) (q : PkgOut) : CM Unit := do
     functions := sh.functions.map (fun g => match isRen "function" g.name g.params.length with
       | some o => { g with name := o } | none => g)
     globals := sh.globals.map (fun g => match isRen "variable" g.name 0 with
-      | some o => { g with name := o } | none => g)
+      -- the original is reached only through xsl:original
+      | some o => { g with name := o, isParam := false, required := false }
+      | none => g)
     templates := sh.templates.map (fun t => match t.name with
       | some nm => match isRen "template" nm 0 with
         | some o => { t with name := some o } | none => t
@@ -489,7 +503,10 @@ def mergeUsed (d : Decl) (n : Nat) (q : PkgOut) : CM Unit := do
       attrSets := s.sheet.attrSets ++ sh.attrSets
       keys := s.sheet.keys ++ sh.keys
       accumulators := s.sheet.accumulators ++ sh.accumulators
-      modes := s.sheet.modes ++ sh.modes }
+      modes := s.sheet.modes ++ sh.modes
+      decimalFormats := s.sheet.decimalFormats ++ qDfs
+      outputs := s.sheet.outputs ++ qOuts
+      charMaps := qMaps ++ s.sheet.charMaps }
     ovRecs := (key, recs) :: s.ovRecs
     usedParams := (key, params) :: s.usedParams
     usedModes := (key, pmodes) :: s.usedModes
@@ -565,6 +582,15 @@ def finishPackage (principal : String) (top : Bool) : CM (List Comp) := do
                             functions := s.sheet.functions.drop s.ownStart.2.1,
                             globals := s.sheet.globals.drop s.ownStart.2.2.1,
                             attrSets := s.sheet.attrSets.drop s.ownStart.2.2.2.1 }
+  -- XTSE1590: the character maps an output definition names exist (in
+  -- this package: those of a used package are local to it, §3.4.8)
+  if !s.ovRecs.isEmpty then
+    for (k, ps) in s.sheet.outputs do
+      if k.startsWith "Q{#pkg" then continue
+      for t in tokens ((ps.lookup "use-character-maps").getD "") do
+        if t.startsWith "Q{" || t.contains ':' then continue
+        if !s.sheet.charMaps.any (·.1 == "Q{}" ++ t) then
+          cerr "XTSE1590" ("no character map named " ++ t)
   -- xsl:original outside an overriding declaration (§3.4.5.4)
   let (_, ownRefs) : Sheet × Refs := Id.run ((renSheet {} ownSheet).run #[])
   for (k, nm) in ownRefs.toList do
@@ -585,7 +611,10 @@ def finishPackage (principal : String) (top : Bool) : CM (List Comp) := do
     -- and so does a reference to a global variable that refers to one
     -- (global variables are otherwise evaluated before the transformation
     -- starts): those variables become functions of no arguments
-    let absVars := s.sheet.globals.filter (·.vis == "abstract")
+    -- (the original of an overridden parameter with no default value
+    -- is evaluated only through xsl:original, too)
+    let absVars := s.sheet.globals.filter (fun g => g.vis == "abstract" ||
+      (g.name.uri.startsWith "#pkg" && g.sel.isNone && g.body.isEmpty && g.ty.isSome))
     if !absVars.isEmpty then
       let refsOf (g : Global) : List String :=
         let (_, r) : Global × Refs := Id.run ((renGlobal {} g).run #[])
