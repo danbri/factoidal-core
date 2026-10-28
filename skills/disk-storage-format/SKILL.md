@@ -521,14 +521,13 @@ stage 3/4 test scripts.
 | compaction orchestration (`factoidal compact`) | consumer tool (`bin/factoidal-cli/factoidal_cli.ml`), not verified-library code — it only sequences already-verified F\* calls + the existing import pipeline; no new byte-layout decisions live there |
 | the 928-line `cottas_ondisk_runtime.sh` fast-path override | still a standing rule-#11 violation (VIOLATION-SEM), but as of 2026-07-06 the **production SPARQL query path no longer calls it** — `RDF.Store.Capabilities.Cottas.fst`'s `sc_solve`/`sc_estimate`/etc. were rewired to F\* `_tok` entry points (`9750eb7`/`9c3d160`). The patch can't be deleted yet because three non-production consumers (a `tests/unit` baseline, the `cottas-ondisk-smoketest` binary, `factoidal-explain`) still call the id-based entry points. See `fstar-ocaml-boundary-audit.md` (2026-07-06 ratchet audit, authoritative), issue #118/#254. |
 
-**Standing qualifier** (Iron Rule #11, until the boundary audit + recovery
-Phase 9 land): "parser and algebra spec verified in F\*; on-disk backend
-has unverified OCaml-side optimization layers being migrated back to
-F\*." The durable-UPDATE work (delta log, merge-on-read, compaction
+**F\* on-disk debt** (the qualifier sentence that Iron Rule #11 required
+until 2026-10-27, when the owner removed the requirement): the F\* on-disk
+backend has unverified OCaml-side optimization layers. The durable-UPDATE work (delta log, merge-on-read, compaction
 orchestration) does **not** add to that debt — it is the first
 durability-I/O surface in the codebase and is built entirely inside the
 rule-#11 taxonomy (five `assume val`s total, issue #282, no shadow
-semantic logic). The debt this qualifier refers to is the pre-existing
+semantic logic). This debt is the pre-existing
 COTTAS-on-disk *read* fast path, not this durable-UPDATE layer.
 
 ## 6. Browser/JS in-memory bytes store (npm entry points)
