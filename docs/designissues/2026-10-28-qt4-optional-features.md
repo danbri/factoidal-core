@@ -67,7 +67,17 @@ unsupported: this processor never uses those name rules.
   (`non_unicode_codepoint_collation`): `XPath4.Collation`.
 * `arbitraryPrecisionDecimal`: a cast from `xs:double` or `xs:float` to
   `xs:decimal` keeps every digit (`XPath4.decOfFloat`).
-* `limits=big_integer` and `limits=year_lt_0`.
+* `limits=big_integer` and `limits=year_lt_0`. A year before 1 is shown
+  with the AD calendar as `1 - year` BC (XSD 1.1 year 0 is 1 BC; F&O 4.0
+  §9.8.4: "the year before 1 CE is thus 1 BCE").
+* `unicode-normalization-form`: NFC, NFD, NFKC, NFKD and
+  `FULLY-NORMALIZED` (`XPath4.Unicode.fullyNormalize`: a space before a
+  first composing character, then NFC, as F&O 4.0 §5.4.9 defines it).
+* The `dtd-validation` option: it was implemented (`XmlParse.parseDocument`
+  calls `XML.validate`) but `fn:system-properties` reported false. It is
+  now a setting (`Env.dtdValidation`, on by default). `fn:doc` resolves the
+  external DTD subset and external entities against the document's URI,
+  and the runner reads the files that an XML resource names.
 
 ## 4. Static typing: dropped by the 4.0 specifications
 
@@ -95,7 +105,22 @@ static typing as an opt-in mode of the runner.
   the test is for processors that lack F. Unsupported, unless F is a
   setting (section 2).
 
-## 6. Theorems
+## 6. Measured
+
+From `formal/lean4/`, `ulimit -s 65520`, `lake build l4qt4`,
+`.lake/build/bin/l4qt4 --isolate 60 [--lang xquery]`, qt4tests `b39c4bc0`
+(the vendored copy on `main`), each run with its own `TMPDIR`:
+
+| mode | `main` 08ef339d | this work |
+|---|---|---|
+| XPath | 28250 pass, 705 fail, 9704 unsupported | 28331 pass, 695 fail, 9633 unsupported |
+| XQuery | 42244 pass, 1746 fail, 1956 unsupported | 42305 pass, 1735 fail, 1906 unsupported |
+
+(out of 38659 and 45946). No test set has fewer passes. FULLY-NORMALIZED
+came after these runs: `fn-normalize-unicode` 41 pass, 9 unsupported before,
+44 pass, 6 unsupported after, in both modes.
+
+## 7. Theorems
 
 No `sorry`, no new axioms (`#print axioms`: propext, Classical.choice,
 Quot.sound).
@@ -125,7 +150,7 @@ Open: that `XPath4.buildNode` sets `inscope` to `convScope` of the scope
 that `XML.applyDeclarations` computes for the same element (tested by the
 `#guard`s, not proved).
 
-## 7. A measurement error and its repair
+## 8. A measurement error and its repair
 
 2026-10-28: two `l4qt4 --isolate` runs at the same time (XPath mode and
 XQuery mode) wrote the same progress files `$TMPDIR/l4qt4-progress-<set>`.
