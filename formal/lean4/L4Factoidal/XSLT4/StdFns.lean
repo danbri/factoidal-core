@@ -23,16 +23,27 @@ def xslInstructions : List String :=
    "select", "sequence", "source-document", "switch", "text", "try", "value-of", "variable",
    "where-populated"]
 
+/-- The XSLT elements that are not instructions: declarations and the
+    elements that occur only inside other elements. -/
+def xslOtherElements : List String :=
+  ["accept", "accumulator", "accumulator-rule", "attribute-set", "catch", "character-map",
+   "context-item", "decimal-format", "expose", "function", "global-context-item", "import",
+   "import-schema", "include", "item-type", "key", "matching-substring", "merge-action",
+   "merge-key", "merge-source", "mode", "namespace-alias", "non-matching-substring",
+   "otherwise", "output", "output-character", "override", "package", "param", "preserve-space",
+   "record", "sort", "strip-space", "stylesheet", "template", "transform", "use-package", "when",
+   "with-param"]
+
 /-- The XSLT 4.0 functions (namespace `fn`) that the host provides. -/
 def xslFunctions : List (String × List Nat) :=
   [("current", [0]), ("current-group", [0]), ("current-grouping-key", [0]),
    ("current-merge-group", [0, 1]), ("current-merge-key", [0]), ("current-merge-key-array", [0]),
-   ("current-output-uri", [0]),
+   ("current-output-uri", [0]), ("character-map", [1]),
    ("document", [1, 2]), ("element-available", [1]), ("function-available", [1, 2]),
-   ("key", [2, 3]), ("regex-group", [1]), ("stream-available", [1]), ("system-property", [1]),
+   ("key", [2, 3]), ("regex-group", [1]), ("regex-groups", [0]), ("stream-available", [1]), ("system-property", [1]),
    ("type-available", [1]), ("unparsed-entity-public-id", [1, 2]), ("unparsed-entity-uri", [1, 2]),
    ("accumulator-before", [1]), ("accumulator-after", [1]), ("copy-of", [0, 1]), ("snapshot", [0, 1]),
-   ("available-system-properties", [0]), ("apply-templates", [1, 2])]
+   ("available-system-properties", [0]), ("apply-templates", [1, 2]), ("map-for-key", [1, 2]), ("transform", [1])]
 
 def systemProperty (l : String) : String :=
   match l with
@@ -41,10 +52,10 @@ def systemProperty (l : String) : String :=
   | "vendor-url" => "https://github.com/danbri/factoidal-core"
   | "product-name" => "Factoidal"
   | "product-version" => "0.21"
-  | "is-schema-aware" => "no"
+  | "is-schema-aware" => "yes"
   | "supports-serialization" => "yes"
   | "supports-backwards-compatibility" => "yes"
-  | "supports-namespace-axis" => "no"
+  | "supports-namespace-axis" => "yes"
   -- XSLT Streaming 4.0: the streamability analysis is `XSLT4.Streaming`
   -- (XTSE3430); accepted stylesheets give the results of a streamed
   -- evaluation (Streaming §3.1)
@@ -105,28 +116,54 @@ def builtinAvailable (q : QN) (k : Option Nat) : Bool :=
   let impl := (libLookupAll q).isSome || q.uri == nsXS
   xsl || (cat && impl) || xs
 
+/-- A name argument: an `xs:QName`, or a string holding an EQName or a
+    lexical QName (resolved in `ns`). -/
+def qnArg (ns : List (String × String)) (v : Seq) (useDefault : Bool) (code : String) : M QN :=
+  match v with
+  | [.atom ⟨_, .qn q⟩] => pure q
+  | _ => lexQName ns (strArg v) useDefault code
+
 /-- The host functions of this module. `userFn q k` says whether the
     stylesheet declares `q#k` (`none` arity: any). -/
-def stdHost (userFn : QN → Option Nat → Bool) (q : QN) (k : Nat) : Option HostFn :=
+def stdHostT (typeKnown : QN → Bool) (userFn : QN → Option Nat → Bool) (q : QN) (k : Nat) : Option HostFn :=
   if q.uri != nsFN then none else
   match q.loc, k with
   | "system-property", 1 => some fun c a => do
-      let n ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE1390"
+      let n ← qnArg c.ns (a.getD 0 []) false "XTDE1390"
       if n.uri == nsXSL then pure (sStr (systemProperty n.loc)) else pure (sStr "")
   | "available-system-properties", 0 => some fun _ _ =>
       pure (systemPropertyNames.map (fun l => Item.atom ⟨.b .qname, .qn { uri := nsXSL, loc := l, pfx := "xsl" }⟩))
   | "function-available", 1 | "function-available", 2 => some fun c a => do
-      let n ← lexQName c.ns (strArg (a.getD 0 [])) true "XTDE1400"
+      let n ← qnArg c.ns (a.getD 0 []) true "XTDE1400"
       let ar : Option Nat := match a.getD 1 [] with
         | [.atom x] => x.str.toNat?
         | _ => none
       pure (sBool (builtinAvailable n ar || userFn n ar))
   | "element-available", 1 => some fun c a => do
-      let n ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE1440"
-      pure (sBool (n.uri == nsXSL && xslInstructions.contains n.loc))
+      -- a QName, or an EQName string; an unprefixed name is in the
+      -- default namespace (§24.3.2)
+      let n ← match a.getD 0 [] with
+        | [.atom ⟨_, .qn q⟩] => pure q
+        | v => do
+          let n ← lexQName c.ns (strArg v) false "XTDE1440"
+          let s := (strArg v).trimAscii.toString
+          if n.uri == "" && !s.contains ':' && !s.startsWith "Q{" then
+            pure { n with uri := (c.ns.lookup "#type").getD ((c.ns.lookup "").getD "") }
+          else pure n
+      -- any XSLT element this processor implements (§24.3.2)
+      pure (sBool (n.uri == nsXSL && (xslInstructions.contains n.loc || xslOtherElements.contains n.loc)))
   | "type-available", 1 => some fun c a => do
-      let n ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE1428"
-      pure (sBool (n.uri == nsXS && (atypeOfName? n.loc).isSome))
+      let n ← qnArg c.ns (a.getD 0 []) false "XTDE1428"
+      -- a built-in type, or a type of the in-scope schema (§3.15)
+      let s := (strArg (a.getD 0 [])).trimAscii.toString
+      let n := if n.uri == "" && !s.contains ':' && !s.startsWith "Q{" then
+          { n with uri := (c.ns.lookup "#type").getD ((c.ns.lookup "").getD "") } else n
+      pure (sBool ((n.uri == nsXS && ((atypeOfName? n.loc).isSome ||
+        ["anyType", "untyped", "anySimpleType", "untypedAtomic"].contains n.loc)) || typeKnown n))
   | _, _ => none
+
+/-- `stdHostT` with no schema types beyond the built-in ones. -/
+def stdHost (userFn : QN → Option Nat → Bool) (q : QN) (k : Nat) : Option HostFn :=
+  stdHostT (fun _ => false) userFn q k
 
 end L4Factoidal.XSLT4

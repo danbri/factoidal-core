@@ -17,6 +17,7 @@ parent's node table once. A constructed node is a new runtime document
 then its children, in document order.
 -/
 import L4Factoidal.XPath4.Eval
+import L4Factoidal.XPath4.BaseUri
 
 namespace L4Factoidal.XSLT4
 
@@ -40,6 +41,17 @@ deriving Inhabited
 
 def Out.ofSeq (s : Seq) : List Out := s.map Out.item
 
+/-- The name of a content attribute that is not an attribute: the first
+    item of the content of an `Out.elem` that keeps the base URI of the
+    node it copies (`xsl:copy`, §11.9.1). `buildElem` drops it; it sets
+    the base URI of the tree when the element is the root. -/
+def baseMarkQ : QN := { uri := "urn:x-factoidal:internal", loc := "base-uri" }
+
+/-- The name of a content attribute that is not an attribute: the
+    children of the element do not inherit the namespaces it declares
+    (`inherit-namespaces="no"`, §11.9.1). `buildElem` drops it. -/
+def noInheritQ : QN := { uri := "urn:x-factoidal:internal", loc := "no-inherit" }
+
 /-! ## Normalised content (§5.7.1) -/
 
 /-- A child of a node that is being built. -/
@@ -58,6 +70,9 @@ structure Norm where
   /-- The last thing added was an atomic value (for the space between
       adjacent atomic values). -/
   lastAtom : Bool := false
+  /-- The type annotations of attributes added as nodes (§25.1.1): the
+      record of the attribute node, by name. -/
+  attrAnn : List (QN × NRec) := []
 deriving Inhabited
 
 def Norm.pushText (nm : Norm) (s : String) : Norm :=
@@ -97,7 +112,10 @@ def normItem (env : Env) : Nat → Norm → Item → M Norm
           for c in r.children.toList do
             nm ← normItem env f nm (.node (n.at c))
           pure nm
-      | .attribute => nm.addAttr r.name r.value
+      | .attribute => do
+          let nm' ← nm.addAttr r.name r.value
+          let ann := nm'.attrAnn.filter (fun (q, _) => !(q == r.name))
+          pure { nm' with attrAnn := if r.tann.isSome then (r.name, r) :: ann else ann }
       | .namespace => nm.addNs r.name.loc r.value
       | .text => pure { (nm.pushText r.value) with lastAtom := false }
       | _ => pure { nm with kids := nm.kids.push (.node n), lastAtom := false }
@@ -153,11 +171,19 @@ def neededNs (d : Doc) (r : NRec) : List (String × String) :=
     let ar := d.get a
     if ar.name.uri != "" && ar.name.pfx != "" then some (ar.name.pfx, ar.name.uri) else none)
 
+/-- The record of a node without its schema type annotation
+    (`validation="strip"`, §25.1.1): `xs:untyped` or `xs:untypedAtomic`,
+    the typed value is the string value, not nilled. -/
+def _root_.L4Factoidal.XPath4.NRec.untyped (r : NRec) : NRec :=
+  { r with tann := none, tval := none, nilled := false, noTypedValue := false }
+
 /-- Copy the subtree of `src` (one loop over its index range) under
     `par`; `pscope` is the namespace scope of the new parent. Returns
-    the index of the copy. -/
+    the index of the copy. `keep`: the copies keep their type
+    annotations (`validation="preserve"`); otherwise they are untyped
+    (`validation="strip"`, §25.1.1). -/
 def copyTree (env : Env) (src : NodeRef) (par : Option Nat) (pscope : List (String × String))
-    (copyNs : Bool) : TB Nat := do
+    (copyNs : Bool) (keep : Bool := true) : TB Nat := do
   let d := env.doc src
   let r := d.get src.idx
   let lo := src.idx
@@ -169,9 +195,12 @@ def copyTree (env : Env) (src : NodeRef) (par : Option Nat) (pscope : List (Stri
     let par' := if i == lo then par else x.parent.map shift
     let sc := if x.kind == .element then
         (if copyNs then x.inscope ++ pscope else neededNs d x ++ pscope) else []
+    -- namespace fixup (§5.7.3): an element in no namespace does not
+    -- inherit a default namespace from its new parent
+    let sc := if x.kind == .element && x.name.uri == "" && (sc.lookup "").getD "" != "" then ("", "") :: sc else sc
     let newPar := par'
     let rec' : NRec := { x with parent := newPar, children := x.children.map shift, attrs := x.attrs.map shift, last := shift (max x.last i), inscope := sc }
-    let _ ← tPush rec'
+    let _ ← tPush (if keep then rec' else rec'.untyped)
   pure base
 
 /-- A prefix for namespace `uri` that is free in `scope` (`ns0`,
@@ -213,13 +242,29 @@ def fixAttrName (q : QN) (scope : List (String × String)) : QN × List (String 
     if scope.lookup p == some q.uri then (q', scope) else (q', (p, q.uri) :: scope)
 
 mutual
-/-- Build an element under `par`. -/
-def buildElem (env : Env) : Nat → Option Nat → List (String × String) → QN →
+/-- Build an element under `par`. `keep`: the nodes copied into it keep
+    their type annotations (`validation="preserve"`, §25.1.1); the
+    elements built inside it are built with `keep` false. -/
+def buildElem (env : Env) (keep : Bool) : Nat → Option Nat → List (String × String) → QN →
     List (String × String) → List Out → TB Nat
   | 0, _, _, _, _, _ => throw { code := "FOER0000", msg := "result tree too deep" }
   | f + 1, par, pscope, name, decls, content => do
     let nm ← normContent env content
+    let noInherit := nm.attrs.any (fun (q, _) => q == noInheritQ)
+    let nm := { nm with attrs := nm.attrs.filter (fun (q, _) => !(q == baseMarkQ) && !(q == noInheritQ)) }
+    -- §5.7.1: two namespace nodes that bind one prefix to two URIs
+    for (p, u) in nm.nss do
+      match decls.lookup p with
+      | some u' => if u' != u then
+          throw { code := "XTDE0430", msg := "two namespace nodes bind prefix '" ++ p ++ "' to different URIs" }
+      | none => pure ()
     let scope0 := (decls ++ nm.nss).reverse ++ pscope
+    -- a namespace node of the element that binds the prefix of its name
+    -- to another URI: the element gets another prefix (§5.7.3)
+    let name := match nm.nss.lookup name.pfx with
+      | some u => if u != name.uri && name.uri != "" && name.pfx != "xml" then
+          { name with pfx := freePrefix scope0 name.uri "" } else name
+      | none => name
     let (name, scope1) := fixElemName name scope0
     let mut scope := scope1
     let mut ats : Array (QN × String) := #[]
@@ -228,10 +273,17 @@ def buildElem (env : Env) : Nat → Option Nat → List (String × String) → Q
       scope := sc'
       ats := ats.push (q', v)
     let i ← tPush { kind := .element, name, parent := par, inscope := scope }
+    -- the scope the children start from: with inherit-namespaces="no"
+    -- they do not get the bindings of this element, only those that it
+    -- inherits itself (as when the element is copied into its parent)
+    let kscope := if noInherit then pscope else scope
     let mut aIdx : Array Nat := #[]
     for (q, v) in ats.toList do
       let j ← tPush { kind := .attribute, name := q, value := v, parent := some i }
       tSet j (fun r => { r with last := j })
+      if keep then
+        if let some (_, ar) := nm.attrAnn.find? (fun (x, _) => x == q) then
+          tSet j (fun r => { r with tann := ar.tann, tval := ar.tval })
       aIdx := aIdx.push j
     let mut cs : Array Nat := #[]
     for k in nm.kids.toList do
@@ -240,9 +292,9 @@ def buildElem (env : Env) : Nat → Option Nat → List (String × String) → Q
           let j ← tPush { kind := .text, value := s, parent := some i }
           tSet j (fun r => { r with last := j })
           cs := cs.push j
-      | .node n => cs := cs.push (← copyTree env n (some i) scope true)
+      | .node n => cs := cs.push (← copyTree env n (some i) kscope true keep)
       | .out o =>
-          match ← buildKid env f (some i) scope o with
+          match ← buildKid env f (some i) kscope o with
           | some j => cs := cs.push j
           | none => pure ()
     let sz := (← get).size
@@ -254,7 +306,7 @@ def buildKid (env : Env) : Nat → Option Nat → List (String × String) → Ou
   | 0, _, _, _ => throw { code := "FOER0000", msg := "result tree too deep" }
   | f + 1, par, scope, o =>
     match o with
-    | .elem q ds cs => some <$> buildElem env f par scope q ds cs
+    | .elem q ds cs => some <$> buildElem env false f par scope q ds cs
     | .comment s => do
         let j ← tPush { kind := .comment, value := s, parent := par }
         tSet j (fun r => { r with last := j }); pure (some j)
@@ -268,8 +320,8 @@ def buildKid (env : Env) : Nat → Option Nat → List (String × String) → Ou
     | _ => pure none
 end
 
-/-- Build a document node with content `cs`. -/
-def buildDoc (env : Env) (cs : List Out) : TB Unit := do
+/-- Build a document node with content `cs` (`keep` as for `buildElem`). -/
+def buildDoc (env : Env) (cs : List Out) (keep : Bool := false) : TB Unit := do
   let nm ← normContent env cs
   if !nm.attrs.isEmpty then
     throw { code := "XTDE0420", msg := "an attribute node cannot be a child of a document node" }
@@ -284,7 +336,7 @@ def buildDoc (env : Env) (cs : List Out) : TB Unit := do
         let j ← tPush { kind := .text, value := s, parent := some i }
         tSet j (fun r => { r with last := j })
         kids := kids.push j
-    | .node n => kids := kids.push (← copyTree env n (some i) scope true)
+    | .node n => kids := kids.push (← copyTree env n (some i) scope true keep)
     | .out o =>
         match ← buildKid env 100000 (some i) scope o with
         | some j => kids := kids.push j
@@ -293,15 +345,22 @@ def buildDoc (env : Env) (cs : List Out) : TB Unit := do
   tSet i (fun r => { r with children := kids, last := sz - 1 })
 
 /-- The XDM item for one `Out`, as a new tree with document number
-    `id` when it is a node that is being built. -/
-def materialize (env : Env) (id : Nat) (o : Out) : M Item := do
-  let mkItem (act : TB Unit) (uri : String := "") : M Item := do
+    `id` when it is a node that is being built. `keep`: the nodes copied
+    into the new node keep their type annotations (§25.1.1). -/
+def materializeK (keep : Bool) (env : Env) (id : Nat) (o : Out) : M Item := do
+  -- the base URI of a new tree is the static base URI where it is made
+  -- (§5.7.1, §9.4), unless the node keeps that of the node it copies
+  let mkItem (act : TB Unit) (uri : String := "") (base : String := env.baseUri) : M Item := do
     let ((), a) ← act.run #[]
-    pure (.node { doc := id, idx := 0, rt := some { nodes := a, uri } })
+    pure (.node { doc := id, idx := 0, rt := some { nodes := a, uri, baseUri := (if uri != "" then "" else base) } })
   match o with
   | .item i => pure i
-  | .elem q ds cs => mkItem (do let _ ← buildElem env 100000 none [("xml", nsXML)] q ds cs)
-  | .doc cs uri => mkItem (buildDoc env cs) uri
+  | .elem q ds cs =>
+      let base := match cs with
+        | .attr bq v :: _ => if bq == baseMarkQ then v else env.baseUri
+        | _ => env.baseUri
+      mkItem (do let _ ← buildElem env keep 100000 none [("xml", nsXML)] q ds cs) "" base
+  | .doc cs uri => mkItem (buildDoc env cs keep) uri
   | .attr q v =>
       let (q', _) := fixAttrName q []
       mkItem (do let j ← tPush { kind := .attribute, name := q', value := v }; tSet j (fun r => { r with last := j }))
@@ -314,62 +373,94 @@ def materialize (env : Env) (id : Nat) (o : Out) : M Item := do
       let j ← tPush { kind := .namespace, name := { uri := "", loc := p }, value := u }
       tSet j (fun r => { r with last := j }))
 
+/-- `materializeK`: the nodes copied into a new node are untyped
+    (`validation="strip"`, the default). -/
+def materialize (env : Env) (id : Nat) (o : Out) : M Item := materializeK false env id o
+
 /-- A deep copy of an existing node as a new tree (`xsl:copy-of`,
-    `fn:copy-of`). -/
-def copyAsTree (env : Env) (id : Nat) (n : NodeRef) (copyNs : Bool := true) : M Item := do
-  let act : TB Unit := do let _ ← copyTree env n none [("xml", nsXML)] copyNs
+    `fn:copy-of`); `keep` false: the copy is untyped. -/
+def copyAsTree (env : Env) (id : Nat) (n : NodeRef) (copyNs : Bool := true) (keep : Bool := true) : M Item := do
+  let act : TB Unit := do let _ ← copyTree env n none [("xml", nsXML)] copyNs keep
   let ((), a) ← act.run #[]
   let d := env.doc n
-  pure (.node { doc := id, idx := 0, rt := some { nodes := a, uri := if n.idx == 0 then d.uri else "" } })
+  -- §11.9.2: the copy has the base URI of the node, except that its
+  -- `xml:base` attribute (copied with it) is resolved against the
+  -- static base URI
+  let base := if (env.xmlBaseOf n).isSome && env.baseUri != "" then env.baseUri
+    else (env.baseUriOf n).getD ""
+  let uri := if n.idx == 0 then d.uri else ""
+  pure (.node { doc := id, idx := 0, rt := some { nodes := a, uri, baseUri := base } })
 
-/-- The ancestors of node `i` of `d`, outermost first. -/
-def ancestorsOf (d : Doc) : Nat → Nat → List Nat → List Nat
-  | 0, _, acc => acc
-  | f + 1, i, acc =>
-    match (d.get i).parent with
-    | some p => ancestorsOf d f p (p :: acc)
-    | none => acc
-
-/-- `fn:snapshot` (XSLT 4.0 §20.3.2): a copy of the node with its
-    subtree, inside copies of its ancestors that keep their names,
-    attributes and in-scope namespaces but no other children. The item is
-    the copy of the node itself (for an attribute, the copy of the
-    attribute on the copy of its parent). -/
+/-- `fn:snapshot` (XSLT 4.0 §20.6.2): a deep copy of `n` in a new tree
+    that also holds copies of its ancestors, each with its attributes
+    and namespaces but with no other children. The result is the copy
+    of `n` (the root of the new tree is a copy of the root of the old
+    one, a document node or not). -/
 def snapshotAsTree (env : Env) (id : Nat) (n : NodeRef) : M Item := do
   let d := env.doc n
   let r := d.get n.idx
-  let isAttr := r.kind == .attribute || r.kind == .namespace
-  let chain : List Nat :=
-    if isAttr then match r.parent with
-      | some p => ancestorsOf d 100000 p [] ++ [p]
-      | none => []
-    else ancestorsOf d 100000 n.idx []
+  let anc := (env.ancestors n).reverse
   let act : TB Nat := do
-    let mut prev : Option Nat := none
-    let mut newChain : List Nat := []
-    let mut attrOf : List (Nat × Nat) := []
-    for a in chain do
-      let ra := d.get a
-      let j ← tPush { ra with parent := prev, children := #[], attrs := #[] }
-      if let some p := prev then tSet p (fun x => { x with children := #[j] })
+    let mut par : Option Nat := none
+    let mut scope : List (String × String) := [("xml", nsXML)]
+    let mut target : Option Nat := none
+    let mut made : Array Nat := #[]
+    for a in anc do
+      let ra := d.get a.idx
+      let i ← tPush { ra with parent := par, children := #[], attrs := #[], last := 0 }
+      made := made.push i
       let mut ats : Array Nat := #[]
-      for ax in ra.attrs.toList do
-        let k ← tPush { d.get ax with parent := some j, children := #[], attrs := #[] }
-        tSet k (fun x => { x with last := k })
-        ats := ats.push k
-        attrOf := (ax, k) :: attrOf
-      tSet j (fun x => { x with attrs := ats })
-      newChain := newChain ++ [j]
-      prev := some j
-    let target ← if isAttr then pure ((attrOf.lookup n.idx).getD 0)
-      else do
-        let t ← copyTree env n prev [("xml", nsXML)] true
-        if let some p := prev then tSet p (fun x => { x with children := #[t] })
-        pure t
+      for x in ra.attrs.toList do
+        let j ← tPush { d.get x with parent := some i, children := #[], attrs := #[] }
+        tSet j (fun y => { y with last := j })
+        ats := ats.push j
+        if x == n.idx then target := some j
+      tSet i (fun y => { y with attrs := ats })
+      if let some p := par then tSet p (fun y => { y with children := y.children.push i })
+      par := some i
+      if ra.kind == .element then scope := ra.inscope ++ scope
+    -- the node itself: an attribute is copied with its parent; a
+    -- namespace node is one of the namespace nodes of the copied parent
+    let tgt ← match target, r.kind, par with
+      | some j, _, _ => pure j
+      | none, .namespace, some p => pure (nsNodeIdx p ((n.idx - nsBase) % nsSlot))
+      | none, _, _ => do
+          let j ← copyTree env n par scope true
+          if let some p := par then tSet p (fun y => { y with children := y.children.push j })
+          pure j
     let sz := (← get).size
-    for j in newChain do tSet j (fun x => { x with last := sz - 1 })
-    pure target
-  let (t, a) ← act.run #[]
-  pure (.node { doc := id, idx := t, rt := some { nodes := a, uri := d.uri } })
+    for i in made do tSet i (fun y => { y with last := sz - 1 })
+    pure tgt
+  let (tgt, a) ← act.run #[]
+  let root := (anc.head?).getD n
+  let base := env.treeBaseUri root
+  pure (.node { doc := id, idx := tgt, rt := some { nodes := a, baseUri := base } })
+
+/-- The top level of a raw result before it becomes a result tree
+    (XSLT 4.0 §26.1, Serialization 4.0 §2 steps 1 to 4): arrays are
+    flattened, a map or function item is an error (SENR0001), and with an
+    `item-separator` the separator stands between the items, each atomic
+    value as text. -/
+def Out.normalizeTop (sep : Option String) (os : List Out) : M (List Out) := do
+  let mut flat : Array Out := #[]
+  let mut todo : List Out := os
+  for _ in [0:10000000] do
+    match todo with
+    | [] => break
+    | o :: rest =>
+      todo := rest
+      match o with
+      | .item (.arr ms) => todo := ms.flatten.map Out.item ++ todo
+      | .item (.map _) => err "SENR0001" "a map cannot be serialized by this method"
+      | .item (.fn _) => err "SENR0001" "a function item cannot be serialized by this method"
+      | o => flat := flat.push o
+  match sep with
+  | none => pure flat.toList
+  | some s =>
+    pure (flat.toList.zipIdx.flatMap (fun (o, i) =>
+      (if i == 0 then [] else [Out.text s]) ++
+      [match o with
+        | .item (.atom a) => Out.text a.str
+        | o => o]))
 
 end L4Factoidal.XSLT4

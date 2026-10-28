@@ -74,6 +74,8 @@ structure HostCall where
   size : Nat := 0
   /-- The static namespace bindings in force (`Env.ns`). -/
   ns : List (String × String) := []
+  /-- The static base URI at the call (`Env.baseUri`). -/
+  baseUri : String := ""
 
 /-- A host function: called with the dynamic context of the call and
     the argument values. -/
@@ -119,6 +121,12 @@ structure Env where
       `fn:key`, ...). Consulted before the built-in library; empty for
       XPath. -/
   host : QN → Nat → Option HostFn := fun _ _ => none
+  /-- The parameter names of a host function by name and arity, for
+      keyword arguments (XPath 4.0 §4.5.1.1); `none` when it has none. -/
+  hostParams : QN → Nat → Option (List String) := fun _ _ => none
+  /-- XPath 1.0 compatibility mode (XPath 4.0 §2.2.1.1): set by a host
+      language (XSLT with a version below 2.0); false for XPath. -/
+  compat10 : Bool := false
 deriving Inhabited
 
 def Env.doc (e : Env) (n : NodeRef) : Doc :=
@@ -137,7 +145,9 @@ def Env.nsResolve (e : Env) (p : String) : Option String :=
 def Item.isNode : Item → Bool | .node _ => true | _ => false
 def Item.isFn : Item → Bool | .fn _ | .map _ | .arr _ => true | _ => false
 
-def nodeLt (a b : NodeRef) : Bool := a.doc < b.doc || (a.doc == b.doc && a.idx < b.idx)
+def nodeLt (a b : NodeRef) : Bool :=
+  a.doc < b.doc || (a.doc == b.doc &&
+    (ordKey a.idx < ordKey b.idx || (ordKey a.idx == ordKey b.idx && a.idx < b.idx)))
 
 def sortNodes (ns : List NodeRef) : List NodeRef :=
   let s := ns.mergeSort (fun a b => !(nodeLt b a))
@@ -371,7 +381,7 @@ def Env.axis (e : Env) (ax : Axis) (n : NodeRef) : List NodeRef :=
   | .precedingOrSelf =>
       let anc := e.ancestors n
       n :: ((e.rangeNodes d 0 (n.idx - 1)).filter (fun m => n.idx > 0 && !anc.contains m)).reverse
-  | .namespace => []
+  | .namespace => (List.range (nsNodesOf r).length).map (fun k => d.at (nsNodeIdx n.idx k))
   | .item => []
 
 /-! ## Sequence types -/

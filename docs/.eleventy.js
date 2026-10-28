@@ -75,6 +75,9 @@ module.exports = function(eleventyConfig) {
   // simplified, re-keyed) rather than an unmodified vendored file.
   eleventyConfig.addPassthroughCopy("web/hub/assets/geo");
 
+  // The figures (SVG) of the hub page "Pods, bots and access control".
+  eleventyConfig.addPassthroughCopy("web/hub/assets/pods");
+
   // Pass-through the vendored Valis vocabulary and example circuits
   // (third_party/valis/ -- MIT, see its PROVENANCE.md) so hub post 55's
   // live cells can fetch them same-origin. Same pattern as the Leaflet

@@ -110,10 +110,12 @@ def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
   | _, _, _ => err "XPTY0004" ("invalid arithmetic on xs:" ++ a.ty.name ++ " and xs:" ++ b.ty.name)
 
 /-- Value comparison of two atomic values (§3.7.2). -/
-def valueCmp (tz : Int) (op : BOp) (a b : Atomic) : M Bool := do
+def valueCmp (tz : Int) (op : BOp) (a b : Atomic) (coll : Coll := .codepoint) : M Bool := do
   let a := if a.ty == .untyped then Atomic.ofStr a.str else a
   let b := if b.ty == .untyped then Atomic.ofStr b.str else b
-  let c ← atomicCmp a b tz
+  -- strings compare under the default collation (§3.7.2)
+  let c ← if !coll.isCodepoint && a.isStringLike && b.isStringLike then pure (some (coll.compare a.str b.str))
+    else atomicCmp a b tz
   match op with
   | .veq | .geq => pure (c == some .eq)
   | .vne | .gne => pure (c != some .eq)
@@ -129,7 +131,7 @@ def valueCmp (tz : Int) (op : BOp) (a b : Atomic) : M Bool := do
 
 /-- General comparison of one pair, with the untyped conversions of
     §3.7.1. -/
-def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option String) : M Bool := do
+def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option String) (coll : Coll := .codepoint) : M Bool := do
   let conv (x y : Atomic) : M Atomic :=
     if x.ty == .untyped then
       if y.ty == .untyped || y.isStringLike then pure (Atomic.ofStr x.str)
@@ -149,7 +151,7 @@ def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option Str
     else pure x
   let a' ← conv a b
   let b' ← conv b a
-  valueCmp tz op a' b'
+  valueCmp tz op a' b' coll
 
 def BOp.isGeneral : BOp → Bool
   | .geq | .gne | .glt | .gle | .ggt | .gge => true | _ => false
@@ -160,6 +162,90 @@ def BOp.isNodeCmp : BOp → Bool
 def BOp.arOp? : BOp → Option ArOp
   | .add => some .add | .sub => some .sub | .mul => some .mul | .div => some .div
   | .idiv => some .idiv | .mod => some .mod | _ => none
+
+/-! ## XPath 1.0 compatibility mode
+
+The rules that apply when `Env.compat10` is true: argument coercion of
+static function calls (§3.4.1), arithmetic operands (§4.8.1) and general
+comparisons (§4.10.2). -/
+
+/-- The primitive type of an atomic type (itself if it has none). -/
+def primOf : AType → AType
+  | .b bt => .b (bt.primitive.getD bt)
+  | t => t
+
+/-- `fn:number` of one atomic item. -/
+def compatNum (a : Atomic) : Atomic :=
+  if a.isNumeric && a.ty == .b .double then a else
+  let a := if a.ty == .untyped then Atomic.ofStr a.str else a
+  match castAtomic a (.b .double) with
+  | .ok d => d
+  | .error _ => Atomic.ofDbl (0.0 / 0.0)
+
+/-- An arithmetic operand: the first atomized item, converted by
+    `fn:number` when it is a boolean, string, decimal, float or untyped
+    value; `none` when empty (the result is then NaN). -/
+def compatOperand (env : Env) (s : Seq) : M (Option Atomic) := do
+  match ← env.atomize s with
+  | [] => pure none
+  | a :: _ =>
+    let conv := a.ty == .untyped || a.isStringLike || a.isNumeric || a.ty == .b .boolean
+    pure (some (if conv then compatNum a else a))
+
+/-- Arithmetic in XPath 1.0 compatibility mode. -/
+def compatArith (env : Env) (ar : ArOp) (x y : Seq) : M Seq := do
+  match ← compatOperand env x, ← compatOperand env y with
+  | some a, some b => pure (single (← arith env.tz ar a b))
+  | _, _ => pure (single (Atomic.ofDbl (0.0 / 0.0)))
+
+/-- A general comparison in XPath 1.0 compatibility mode. -/
+def compatGeneral (env : Env) (op : BOp) (xs ys : Seq) : M Bool := do
+  let isBool (s : Seq) : Bool := match s with
+    | [.atom a] => a.ty == .b .boolean
+    | _ => false
+  let valOp : BOp := match op with
+    | .geq => .veq | .gne => .vne | .glt => .vlt | .gle => .vle | .ggt => .vgt | _ => .vge
+  if isBool xs || isBool ys then
+    let a ← ebv xs
+    let b ← ebv ys
+    if op == .geq || op == .gne then return ← valueCmp env.tz valOp (Atomic.ofBool a) (Atomic.ofBool b)
+    else return ← valueCmp env.tz valOp (compatNum (Atomic.ofBool a)) (compatNum (Atomic.ofBool b))
+  let as ← env.atomize xs
+  let bs ← env.atomize ys
+  let rel := !(op == .geq || op == .gne)
+  for a in as do
+    for b in bs do
+      let (a', b') ←
+        if rel || a.isNumeric || b.isNumeric then pure (compatNum a, compatNum b)
+        else if a.isStringLike || b.isStringLike || (a.ty == .untyped && b.ty == .untyped) then
+          pure (Atomic.ofStr a.str, Atomic.ofStr b.str)
+        else if a.ty == .untyped then pure (← castAtomic (Atomic.ofStr a.str) (primOf b.ty), b)
+        else if b.ty == .untyped then pure (a, ← castAtomic (Atomic.ofStr b.str) (primOf a.ty))
+        else pure (a, b)
+      if ← valueCmp env.tz valOp a' b' env.defaultColl then return true
+  pure false
+
+/-- Coerce a static function call argument in XPath 1.0 compatibility
+    mode (§3.4.1): `V[1]` for a single or optional type, then `fn:string`
+    for `xs:string`, `fn:number` for `xs:double`. -/
+def compatArg (env : Env) (t : IType) (v : Seq) : M Seq := do
+  let (it, single?) := match t with
+    | .seq i o => (i, o == Occ.opt)
+    | i => (i, true)
+  if !single? then return v
+  let v := v.take 1
+  match it with
+  | .atomic (.b .string) =>
+    match v with
+    | [] => pure (sStr "")
+    | [.atom x] => pure (sStr x.str)
+    | [.node n] => pure (sStr (env.nodeString n))
+    | _ => pure v
+  | .atomic (.b .double) =>
+    match ← env.atomize v with
+    | [] => pure (single (Atomic.ofDbl (0.0 / 0.0)))
+    | a :: _ => pure (single (compatNum a))
+  | _ => pure v
 
 def maxRange : Int := 20000000
 
@@ -326,7 +412,7 @@ def Env.stepOrigins (e : Env) : M (List Item) :=
     let s := (s.zip (List.range s.length)).map (fun (i, k) => jwrap (k + 1).toUInt64 i)
     if s.all Item.isGNode then pure s
     else match s with
-      | [_] => err "XPTY0004" "the context item is not a node"
+      | [_] => err "XPTY0020" "the context item is not a node"
       | _ => err "XPTY0004" "the context value is not a sequence of nodes"
 
 def isNumericLit : Expr → Option Int
@@ -492,12 +578,30 @@ def eval : Nat → Env → Expr → M Seq
         | _ => err "XPST0017" ("constructor function xs:" ++ q.loc ++ " takes one argument")
       else
       let total := args.length + kw.length
+      -- keyword arguments of a host function are placed by its
+      -- parameter names (XPath 4.0 §4.5.1.1)
+      let (args, kw) ← match (if kw.isEmpty then none else env.hostParams q total) with
+        | some names => do
+          let mut slots : Array (Option (Option Expr)) := (names.map (fun _ => none)).toArray
+          for (a, i) in args.zip (List.range args.length) do
+            slots := slots.set! i (some a)
+          for (k, a) in kw do
+            match names.findIdx? (· == k) with
+            | some i =>
+              if (slots.getD i none).isSome then err "XPST0017" ("duplicate argument " ++ k)
+              slots := slots.set! i (some a)
+            | none => err "XPST0017" ("no parameter named " ++ k ++ " in " ++ q.show)
+          let placed := slots.toList.take total
+          if placed.any Option.isNone then
+            err "XPST0017" ("the keyword arguments of " ++ q.show ++ " leave a parameter without a value")
+          pure (placed.map (·.getD none), [])
+        | none => pure (args, kw)
       -- host hook: a function of the host language (XSLT 4.0)
       match (if kw.isEmpty then env.host q total else none) with
       | some h =>
           let vs ← evalArgs n env args
           if args.any Option.isNone then pure [.fn (.papp (.fn (.builtin q args.length)) vs)]
-          else h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns } (vs.map (·.getD []))
+          else h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns, baseUri := env.baseUri } (vs.map (·.getD []))
       | none =>
       let sig? := if q.uri == nsFN && q.loc == "concat" then
           (if total ≥ 2 then some (default : Sig) else none) else findSig q total
@@ -553,6 +657,7 @@ def eval : Nat → Env → Expr → M Seq
               match p.dflt with
               | some d => vals := vals ++ [← eval n env d]
               | none => err "XPST0017" ("missing argument " ++ p.name)
+          if env.compat10 then vals ← (vals.zip sig.ps).mapM (fun (v, p) => compatArg env p.ty v)
           callFn n env q vals
   | .dyn f args => do
       let fs ← eval n env f
@@ -877,20 +982,22 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
             pure (sortGNodes r)
           | _, _ => err "XPTY0004" "union/intersect/except operands must be nodes"
     | _ =>
-      if op.isGeneral then do
+      if op.isGeneral && env.compat10 then do
+        pure (sBool (← compatGeneral env op (← eval n env a) (← eval n env b)))
+      else if op.isGeneral then do
         let xs ← env.atomize (← eval n env a)
         let ys ← env.atomize (← eval n env b)
         let mut res := false
         for x in xs do
           for y in ys do
-            if ← generalPair env.tz op x y env.nsResolve then res := true; break
+            if ← generalPair env.tz op x y env.nsResolve env.defaultColl then res := true; break
           if res then break
         pure (sBool res)
       else if op.isValue then do
         let x ← env.atomizeOpt (← eval n env a)
         let y ← env.atomizeOpt (← eval n env b)
         match x, y with
-        | some x, some y => pure (sBool (← valueCmp env.tz op x y))
+        | some x, some y => pure (sBool (← valueCmp env.tz op x y env.defaultColl))
         | _, _ => pure []
       else if op.isNodeCmp then do
         let x ← eval n env a
@@ -913,7 +1020,8 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
             | _ => gnodeEq p q || gnodeLt q p))
         | _, _ => err "XPTY0004" "node comparison operands must be single nodes"
       else match op.arOp? with
-        | some ar => do
+        | some ar =>
+          if env.compat10 then do compatArith env ar (← eval n env a) (← eval n env b) else do
           let x ← env.atomizeOpt (← eval n env a)
           let y ← env.atomizeOpt (← eval n env b)
           match x, y with
@@ -943,7 +1051,7 @@ def apply : Nat → Env → Item → List Seq → M Seq
     | .fn (.builtin q k) => do
         if args.length != k then err "XPTY0004" ("function " ++ q.show ++ " expects " ++ toString k ++ " arguments")
         if let some h := env.host q k then
-          h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns } args
+          h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns, baseUri := env.baseUri } args
         else
         if q.uri == nsXS then
           match atypeOfName? q.loc with
