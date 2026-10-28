@@ -340,8 +340,11 @@ def xqMode : QN := { uri := "#qt4run", loc := "xquery" }
 def isXqEnv (env : Env) : Bool := env.vars.any (fun (q, _) => q == xqMode)
 
 def evalIn (env : Env) (src : String) : M Seq := do
-  if isXqEnv env then L4Factoidal.XQuery4.evalQuery src env 20000 else
-  let e ← parseXPath4 src env.ns
+  -- XQuery mode: an assertion that is an XPath expression over the EXPath
+  -- file system takes the file path below (its writing calls)
+  let xp := if isXqEnv env && env.fileSys.isSome then (parseXPath4 src env.ns).toOption else none
+  if isXqEnv env && xp.isNone then L4Factoidal.XQuery4.evalQuery src env 20000 else
+  let e ← match xp with | some e => pure e | none => parseXPath4 src env.ns
   match env.fileSys with
   -- EXPath File 4.0: an assertion may also call a writing `file:` function
   | some fs => (·.1) <$> L4Factoidal.EXPath.File.evalMem env fs e
@@ -884,7 +887,16 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       -- fn:transform through the XSLT 4.0 processor
       let env := { env with host := L4Factoidal.XSLT4.transformHost env (fun f a => apply 20000 env f a) env.host }
       let (res, env) ← match spec.sandpit with
-        | some sp => L4Factoidal.EXPath.File.evalSandpit (o.fileHost == "io") sp env src
+        | some sp =>
+          -- XQuery mode: a main module with an empty prolog is its body
+          -- (`XQuery4.evalModule_emptyProlog`), given to the file evaluator
+          let xqBody : Option Expr := if !isXqEnv env || (parseXPath4 src env.ns).isOk then none else
+            match L4Factoidal.XQuery4.parseModule src env.ns with
+            | .ok m => if m.decls.isEmpty && m.imports.isEmpty && m.schemaImports.isEmpty && m.libNs.isNone then m.body else none
+            | .error _ => none
+          match xqBody with
+          | some b => L4Factoidal.EXPath.File.evalSandpitExpr (o.fileHost == "io") sp env b
+          | none => L4Factoidal.EXPath.File.evalSandpit (o.fileHost == "io") sp env src
         | none => pure (evalIn env src, env)
       let some r := (kidsNamed tc "result").head? | do t := { t with fail := t.fail + 1 }; continue
       let r ← resolveXmlFiles o.root dir 100 r
