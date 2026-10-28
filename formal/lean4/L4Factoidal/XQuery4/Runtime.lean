@@ -171,7 +171,23 @@ def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
         match dflts[i - lo]? with
         | some d => fixed := fixed.push (some (← cb.apply d (focusArgs e)))
         | none => err "XPST0017" ("missing argument of " ++ q.show)
-    if isPartial then pure [.fn (.papp fi fixed.toList)]
+    if isPartial then
+      -- the new function takes the placeholders in the order written
+      -- (§4.5.1.2); the slots in declared order are the `papp` order
+      let written := (args.zip (List.range args.length)).filterMap (fun (a, i) => if a.isNone then some i else none)
+        ++ kw.filterMap (fun (nm, a) => if a.isNone then
+              ps.findIdx? (fun (v, _) => if nm.startsWith "Q{" then v.eqn == nm else (v.uri == "" && v.loc == nm))
+            else none)
+      let sorted := written.mergeSort (· ≤ ·)
+      if written == sorted then pure [.fn (.papp fi fixed.toList)]
+      else
+        let pname (i : Nat) : QN := { uri := "#xqp", loc := "p" ++ toString i }
+        let cl := (fixed.toList.zip (List.range m)).filterMap (fun (x, i) => x.bind (fun v => some (pname i, v)))
+        let newPs := written.map (fun i => (pname i, (ps.getD i default).2))
+        let body : Expr := .call q ((List.range m).map (fun i => some (.var (pname i)))) []
+        let ret := match fi with | .fn (.inline _ r _ _ _) => r | _ => .seq .item .star
+        let sv := match fi with | .fn (.inline _ _ _ _ c) => c | _ => []
+        pure [.fn (.inline newPs ret body false (cl ++ sv))]
     else cb.apply fi (fixed.toList.map (·.getD []))
 
 /-- The closure entry that keeps the focus of a function reference. -/
