@@ -102,7 +102,8 @@ theorem evalModule_emptyProlog (fuel : Nat) (env : Env) (m : Module) (e : Expr)
   have h50 : ∀ (env' : Env) (seen : List String), loadImports env' 50 seen m = pure ([], seen) :=
     fun env' seen => loadImports_nil env' 49 seen m hi
   simp only [evalModule, h50, hs]
-  simp [hb, hl, bindModules_empty _ _ _ hd]
+  simp [hb, hl, hd, bindModules_empty _ _ _ hd]
+  split <;> rfl
 
 /-! ## More FLWOR clauses as XPath 4.0 expressions -/
 

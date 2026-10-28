@@ -567,6 +567,8 @@ def pItemType : Nat → P IType
           set e
           -- XQuery 4.0 §3.2.8: an annotation in a reserved namespace is XQST0045
           let q ← resolve p u l "http://www.w3.org/2012/xquery"
+          if q.uri == "http://www.w3.org/2012/xquery" && !(["public", "private", "constructor"].contains l) then
+            throw { code := "XQST0045", msg := "reserved annotation %" ++ l }
           if [nsFN, nsXS, nsMATH, nsMAP, nsARR, nsXML, "http://www.w3.org/2001/XMLSchema-instance"].contains q.uri then
             throw { code := "XQST0045", msg := "annotation in a reserved namespace " ++ l }
         | none => synErr "bad annotation"

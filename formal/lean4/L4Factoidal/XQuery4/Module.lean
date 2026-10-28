@@ -932,6 +932,12 @@ def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
   let (libs, _) ← loadImports env 50 ((m.libNs.map (·.2)).toList) m
   checkModules env (libs ++ [m])
   let env ← bindModules fuel env (libs ++ [m])
+  -- §5.17: the context value must match the type that each module declares
+  if let some c := env.ctx then
+    for lm in libs ++ [m] do
+      for d in lm.decls do
+        if let .ctx ty _ _ := d then
+          if !(env.seqMatches c ty) then err "XPTY0004" "the context value does not match a declared context item type"
   match m.body with
   | some b => eval fuel (markStatic env) b
   | none => err "XPST0003" "a library module has no query body"
