@@ -11,14 +11,15 @@
 
 - `catalog.xml`, unchanged.
 - `tests/attr`, `tests/decl`, `tests/expr`, `tests/fn`, `tests/insn`,
-  `tests/misc`, `tests/sandp`, `tests/type`, unchanged, EXCEPT these
-  directories, which were not copied:
-  - `tests/strm` and `tests/attr/streamable`: XSLT Streaming tests; this
-    processor does not stream (the streaming dependency makes them
-    unsupported). Seven files under `tests/strm` that non-streaming test
-    sets read are copied: `docs/books.xml`, `docs/ot.xml`, `docs/recursive.xml`, `docs/transactions.xml`,
-    `si-value-of/si-value-of-100.xml`, `si-value-of/si-value-of-101.xsl`,
-    `su-absorbing/su-absorbing-901.xsl`.
+  `tests/misc`, `tests/sandp`, `tests/type`, unchanged, with these
+  exceptions:
+  - `tests/strm` and `tests/attr/streamable` were first left out
+    (XSLT 4.0 stage 1, https://github.com/danbri/factoidal-core/pull/208).
+    They were copied on 2026-10-28 from the same commit `91328fbf`, for
+    XSLT Streaming 4.0 (branch `claude/qt4-xslt-streaming`), unchanged,
+    except `tests/strm/docs/city-list.json` (19 MB; no streaming test set
+    reads it). Size: 27 MB (`tests/strm`) and 14 MB
+    (`tests/attr/streamable`).
   - `tests/misc/docbook` (52 MB) and `tests/misc/unicode-90` (117 MB):
     size.
   - `tests/fn/json-to-xml` (24 MB) and `tests/strm/docs/city-list.json`
@@ -26,7 +27,7 @@
 
 The runner (`formal/lean4/Harness/Xslt4Run.lean`, `lake exe l4xslt4`)
 skips a test set whose file is not present, so the scores cover the copied
-test sets only. Size of the copy: about 70 MB, 10,700 files.
+test sets only. Size of the copy: about 110 MB.
 
 ## Use
 

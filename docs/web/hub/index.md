@@ -29,6 +29,7 @@ in your browser.
   <li><a href="./sparql/">SPARQL</a> — query and update, property paths, aggregates, GeoSPARQL functions, <code>text:query</code>, extension functions in JavaScript and WebAssembly, SERVICE, SPARQL 1.2 triple patterns</li>
   <li><a href="./importers/">Data importers and integration</a> — CSVW, RML, JSON-LD and a GRDDL-style XSLT step, four independent sources merged into one dataset, each in its own named graph, one query across them</li>
   <li><a href="./inference/">Inference</a> — RDFS and OWL 2 RL closure over pipeline output, derived triples in their own graph, OWL 2 DL consistency and entailment</li>
+  <li><a href="./sparql-rl/">SPARQL-RL</a> — SPARQL 1.2 RL rules (W3C editor's draft) with data blocks, NOT, SET, GROUP, stratification and run-once rules; OWL 2 RL as SPARQL-RL rules; the semi-naive and BGP theorems; comparison with RIF, SWRL, SPIN, SHACL rules, N3, Datalog and OWL 2 RL</li>
   <li><a href="./canary-wharf-pipeline/">A Canary Wharf pipeline</a> — Turtle and CSVW sources through checked nodes, merged into named graphs, one query across them, N-Quads for an SBM11 store, and the pipeline's record queried as RDF</li>
   <li><a href="./checked-pipelines/">Checked pipelines</a> — readers, reasoners, the SPARQL evaluator and writers as nodes; per-step status and contract, entailment explanations, and the list of what is proved and what is assumed</li>
   <li><a href="./validation/">SHACL and ShEx</a> — validation reports as RDF, SHACL-SPARQL, ShExC schemas</li>
@@ -36,6 +37,7 @@ in your browser.
   <li><a href="./servers/">Servers</a> — SPARQL Protocol and Graph Store with Fuseki paths, read-only Jena TDB2, Linked Web Storage, Solid, XMPP (commands and recorded output)</li>
   <li><a href="./webdav/">WebDAV</a> — serve local and remote Linked Web Storage to Finder, Windows Explorer, GNOME Files and other WebDAV clients; did:key login to an LWS server, HTTPS through a proxy, Tailscale and SSH from behind NAT</li>
   <li><a href="./webdav-lws-design/">WebDAV, LWS and custodians</a> — design note: what the 0.21.0 WebDAV and LWS theorems say and do not say, one custodian per privileged resource, careful read-write LWS mounts, and read-only projections of SPARQL, SKOS, feeds and public pods</li>
+  <li><a href="./pods-and-bots/">Pods, bots and access control</a> — one LWS pod owned by a did:key agent, a read-write and a read-only bot through a Web Access Control ACL; which identity is checked where, one read-only WebDAV mount per bot in 0.21.0, and what each sees in a mounted volume</li>
   <li><a href="./shardborough/">Shardborough (early stage)</a> — the persisted store: pack, activate, query, update through a delta log, compact</li>
 </ul>
 

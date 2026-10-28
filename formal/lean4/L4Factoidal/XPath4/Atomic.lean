@@ -49,7 +49,8 @@ structure Err where
   msg  : String := ""
   /-- The namespace of the error code; empty for `err:` (the
       `http://www.w3.org/2005/xqt-errors` namespace). Set by `fn:error`
-      with a QName in another namespace (XQuery 4.0 `catch`). -/
+      with a QName in another namespace (XQuery 4.0 `catch`); `#none`
+      for a QName in no namespace. -/
   uri  : String := ""
 deriving Repr, Inhabited
 

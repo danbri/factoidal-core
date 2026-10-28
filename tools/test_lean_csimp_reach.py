@@ -594,6 +594,19 @@ def _():
         t.close()
 
 
+@case("a theorem in a module with no emitted C file is listed as not built; it does not fail the gate")
+def _():
+    other = "namespace B\ndef p := 1\ndef q := 1\n@[csimp] theorem p_eq : @p = @q := rfl\nend B\n"
+    t = with_tree({"A.lean": BASE_LEAN, "B.lean": other}, base_c())
+    try:
+        rc, res, out, err = t.run("--gate")
+        assert rc == 0 and res["problems"] == [], (rc, res["problems"], err)
+        assert [x["theorem"] for x in res["not_built"]] == ["p_eq"], res["not_built"]
+        assert "NOT BUILT B.lean" in out, out
+    finally:
+        t.close()
+
+
 @case("an unreadable statement and the `attribute [csimp]` form fail the gate; they are not skipped")
 def _():
     lean = BASE_LEAN + "namespace A\n@[csimp] theorem bad : f 1 = g 1 := rfl\nattribute [csimp] f_eq\nend A\n"

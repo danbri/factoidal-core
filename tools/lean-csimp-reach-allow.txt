@@ -68,3 +68,4 @@ L4Factoidal.OWL.RL.closure L4Factoidal.OWL.RL.inconsistent                     #
 L4Factoidal.OWL.RL.closure L4Factoidal.OWL.RL.inconsistentPlus                 # spec: the same
 L4Factoidal.OWL.RL.closure L4Factoidal.OWL.RdfBased.rbRound                    # spec: OWL/RdfBased/Engine.lean: the readable alternation; callers are the #guard lines of OWL/RdfBased/Tests.lean; Harness/OwlProbe.lean runs the alternation with the indexed closure
 L4Factoidal.OWL.RL.closure L4Factoidal.OWL.RdfBased.rbSaturate                 # spec: the same
+L4Factoidal.XSLT4.Streaming.eventsList L4Factoidal.XSLT4.Streaming.events   # the mutual partner of the specification eventsList (XSLT4/Streaming/Events.lean); compiled code reaches the event stream through eventsList, which the loop replaces; events itself is called only by theorems (XSLT Streaming 4.0, https://github.com/danbri/factoidal/issues/1101)

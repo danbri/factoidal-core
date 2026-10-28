@@ -38,12 +38,19 @@ structure SCx where
   /-- Named item types (`xsl:item-type`, `xsl:record-type`, §5.4): the
       expanded name and the text of the item type. -/
   types : List (QN × String) := []
+  /-- Inside the body of an `xsl:iterate` (where `xsl:break` and
+      `xsl:next-iteration` may appear). -/
+  inIter : Bool := false
+  /-- `[xsl:]default-validation` (§25): `strip` or `preserve`. -/
+  defaultValidation : String := "strip"
 deriving Inhabited
 
 /-- The value of a `version` attribute, in thousandths (a decimal,
     §3.9); `none` when it is not a decimal. -/
 def versionMilli (v : String) : Option Nat :=
   let t := v.trimAscii.toString
+  -- an xs:decimal: a leading `+` is allowed
+  let t := if t.startsWith "+" then (t.drop 1).toString else t
   match t.splitOn "." with
   | [a] => a.toNat?.map (· * 1000)
   | [a, b] =>
@@ -67,8 +74,11 @@ def SCx.forwardsCompat (c : SCx) : Bool :=
 
 /-- The bindings the XPath parser sees (no default namespace entry). -/
 def SCx.xpNs (c : SCx) : List (String × String) :=
-  (c.ns.filter (fun (p, _) => p != "")).foldl (fun acc (p, u) =>
+  let ns := (c.ns.filter (fun (p, _) => p != "")).foldl (fun acc (p, u) =>
     if acc.any (·.1 == p) then acc else acc ++ [(p, u)]) []
+  -- `xpath-default-namespace` is also the namespace of unprefixed type
+  -- names (§5.1.2)
+  if c.xpathNs == "" then ns else ("#type", c.xpathNs) :: ns
 
 /-! ## `xpath-default-namespace`: unprefixed element names in name
 tests and element type tests take this namespace. -/
@@ -82,6 +92,12 @@ def itDefault (d : String) : Nat → IType → IType
   | f + 1, t =>
     match t with
     | .elem (some n) => .elem (some (ntDefault d n))
+    -- schema-element(E), element(E, T), attribute(A, T): unprefixed
+    -- element and type names (§5.1.2)
+    | .schemaElem q => .schemaElem (if q.uri == "" && q.pfx == "" then { q with uri := d } else q)
+    | .elemT n ty nil =>
+      .elemT (n.map (ntDefault d)) (if ty.uri == "" && ty.pfx == "" then { ty with uri := d } else ty) nil
+    | .attrT n ty => .attrT n (if ty.uri == "" && ty.pfx == "" then { ty with uri := d } else ty)
     | .doc (some i) => .doc (some (itDefault d f i))
     | .seq i o => .seq (itDefault d f i) o
     | .choice ts => .choice (ts.map (itDefault d f))
@@ -205,22 +221,30 @@ def SCx.parseType (c : SCx) (src : String) : M IType := do
 
 /-- Resolve a lexical QName (or EQName) in the static context; the
     default namespace applies when `useDefault`. -/
-def SCx.qname (c : SCx) (s : String) (useDefault : Bool := false) (code : String := "XTSE0280") : M QN := do
+def SCx.qname (c : SCx) (s : String) (useDefault : Bool := false) (code : String := "XTSE0280") (syn : String := "") : M QN := do
   let s := s.trimAscii.toString
   if s.startsWith "Q{" then
     match (s.drop 2).toString.splitOn "}" with
     | [u, l] => pure { uri := u, loc := l }
     | _ => err code ("invalid EQName '" ++ s ++ "'")
-  else match s.splitOn ":" with
+  else
+  -- a value that is not a lexical QName is XTSE0020 in a static context
+  let nc (x : String) : Bool := match x.toList with
+    | ch :: cs => isNameStart ch && ch != ':' && cs.all (fun d => isNameCh d && d != ':')
+    | [] => false
+  let bad := if syn != "" then syn else if code == "XTSE0280" then "XTSE0020" else code
+  match s.splitOn ":" with
     | [l] =>
         if l == "" then err code "empty name" else
+        if !nc l then err bad ("invalid QName '" ++ s ++ "'") else
         pure { uri := if useDefault then (c.ns.lookup "").getD "" else "", loc := l }
     | [p, l] =>
+        if !(nc p && nc l) then err bad ("invalid QName '" ++ s ++ "'") else
         if p == "xml" then pure { uri := nsXML, loc := l, pfx := p } else
         match c.ns.lookup p with
         | some u => pure { uri := u, loc := l, pfx := p }
         | none => err code ("undeclared namespace prefix '" ++ p ++ "' in '" ++ s ++ "'")
-    | _ => err code ("invalid QName '" ++ s ++ "'")
+    | _ => err bad ("invalid QName '" ++ s ++ "'")
 
 /-! ## Value templates (§5.6) -/
 
@@ -277,11 +301,39 @@ def splitTemplate (s : String) : M (List (Bool × String)) := do
   if buf != "" then out := out.push (false, buf)
   pure out.toList
 
+/-- The text of an expression with its comments `(: ... :)` (which
+    nest) removed, outside string literals. -/
+def dropComments (s : String) : String := Id.run do
+  let cs := s.toList.toArray
+  let mut out := ""
+  let mut i := 0
+  let mut depth := 0
+  let mut q : Option Char := none
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    let d := cs[i]!
+    let nx := cs.getD (i+1) ' '
+    if depth > 0 then
+      if d == ':' && nx == ')' then depth := depth - 1; i := i + 2
+      else if d == '(' && nx == ':' then depth := depth + 1; i := i + 2
+      else i := i + 1
+    else match q with
+      | some qc =>
+        out := out.push d
+        if d == qc then q := none
+        i := i + 1
+      | none =>
+        if d == '(' && nx == ':' then depth := 1; out := out.push ' '; i := i + 2
+        else
+          if d == '"' || d == '\'' then q := some d
+          out := out.push d; i := i + 1
+  pure out
+
 def SCx.avt (c : SCx) (s : String) : M Avt := do
   let parts ← splitTemplate s
   parts.mapM (fun (isE, t) => do
     if isE then
-      if t.trimAscii.toString == "" then pure (AvtPart.lit "")
+      if (dropComments t).trimAscii.toString == "" then pure (AvtPart.lit "")
       else pure (AvtPart.expr (← c.parse t))
     else pure (AvtPart.lit t))
 
@@ -325,6 +377,7 @@ def typePriority : Nat → IType → Float
     | .anyNode | .anyFn | .elem none | .attr none | .elem (some .any) | .attr (some .any)
     | .text | .comment | .nsNode | .pi none | .doc none => -0.5
     | .atomic (.b .anyAtomicType) => -0.5
+    | .xnode | .jnodeT .any none => -0.5
     | .elem (some (.name _)) | .attr (some (.name _)) | .pi (some _) => 0
     | .elem (some _) | .attr (some _) => -0.25
     | .anyArr | .anyMap => -0.25
@@ -356,7 +409,19 @@ def defaultPriority (e : Expr) : Float :=
     | .kind (.elem (some (.name _))) | .kind (.attr (some (.name _))) => 0
     | .kind (.elem (some (.ns _))) | .kind (.attr (some (.ns _))) => -0.25
     | .kind (.elem (some (.loc _))) | .kind (.attr (some (.loc _))) => -0.25
+    -- typed tests (§6.5): by type only 0, wildcard and type 0.125,
+    -- name and type 0.25
+    | .kind (.elemT none _ _) | .kind (.attrT none _) => 0
+    | .kind (.elemT (some .any) _ _) | .kind (.attrT (some .any) _) => 0
+    | .kind (.elemT (some (.name _)) _ _) | .kind (.attrT (some (.name _)) _) => 0.25
+    | .kind (.elemT (some _) _ _) | .kind (.attrT (some _) _) => 0.125
+    | .kind (.schemaElem _) | .kind (.schemaAttr _) => 0.25
     | .kind (.pi (some _)) => 0
+    -- document-node() with a typed element test (§6.5)
+    | .kind (.doc (some (.elemT none _ _))) => 0
+    | .kind (.doc (some (.elemT (some (.name _)) _ _))) => 0.25
+    | .kind (.doc (some (.elemT (some _) _ _))) => 0.125
+    | .kind (.doc (some (.schemaElem _))) => 0.25
     | .kind (.doc (some (.elem (some (.name _))))) => 0
     | .kind (.doc (some _)) => -0.25
     | .kind _ => -0.5
@@ -389,8 +454,10 @@ def patternOk : Nat → Bool → Expr → Bool
   | 0, _, _ => false
   | f + 1, top, e =>
     match e with
-    | .bin .union a b | .bin .intersect a b | .bin .except a b => patternOk f top a && patternOk f top b
-    | .seq [a] => patternOk f top a
+    -- the operands of a union, and a parenthesized pattern, are XNode
+    -- patterns: a simple pattern (`.`, `~T`) is not allowed there (§6.3.1)
+    | .bin .union a b | .bin .intersect a b | .bin .except a b => patternOk f false a && patternOk f false b
+    | .seq [a] => patternOk f false a
     | .root => true
     | .ctx => top
     | .instOf .ctx _ => top
@@ -400,22 +467,226 @@ def patternOk : Nat → Bool → Expr → Bool
     | .call q args kw => kw.isEmpty && patFnOk q args.length && args.all (fun a => patArgOk a)
     | .slash a b => patternOk f false a && patternOk f false b && (match b with
         | .var _ | .root => false
-        | _ => true)
+        | _ => true) &&
+        -- a function call or variable reference only at the start of a
+        -- path (§6.3.2: RootedPath)
+        ((exprFlat 1000 e).drop 1).all (fun x => match x with
+          | .call .. | .var _ => false
+          | _ => true)
     | _ => false
+
+/-! ## Walking expressions (for static checks) -/
+
+/-- The operand expressions of an expression. -/
+def exprKids : Expr → List Expr
+  | .seq es | .arrS es | .tmpl es | .ext _ es _ _ _ | .step _ _ es => es
+  | .slash a b | .filter a b | .bin _ a b | .smap a b | .pipe a b
+  | .letE _ _ a b | .forE _ _ _ _ _ a b | .quant _ _ _ a b => [a, b]
+  | .dstep _ e ps => e :: ps
+  | .call _ as kw => as.filterMap id ++ kw.filterMap (·.2)
+  | .dyn f as => f :: as.filterMap id
+  | .mapArrow a g as => a :: g :: as.filterMap id
+  | .inline _ _ b _ | .arrC b | .neg b | .plus b | .instOf b _ | .treat b _
+  | .cast b _ _ | .castable b _ _ => [b]
+  | .mapC es => es.flatMap (fun (k, v) => [k, v])
+  | .lookup e k => e :: k.toList
+  | .ulookup k => k.toList
+  | .ifE c t e => [c, t, e]
+  | _ => []
+
+/-- Every subexpression (breadth first, `fuel` rounds). -/
+def exprAll : Nat → List Expr → List Expr
+  | 0, _ => []
+  | _, [] => []
+  | f + 1, es => es ++ exprAll f (es.flatMap exprKids)
+
+/-- The names of the functions an expression calls statically or by a
+    named function reference. -/
+def exprCalls (e : Expr) : List QN :=
+  (exprAll 10000 [e]).filterMap (fun x => match x with
+    | .call q _ _ => some q
+    | .fref q _ => some q
+    | _ => none)
+
+/-- The function of the XSLT grouping and merging family that a
+    pattern must not call, with its error code (§14.2, §15.5). -/
+def patternForbidden (e : Expr) : Option (String × String) :=
+  (exprCalls e).findSome? (fun q =>
+    if q.uri != nsFN then none else
+    match q.loc with
+    | "current-group" => some ("XTSE1060", "current-group")
+    | "current-grouping-key" => some ("XTSE1070", "current-grouping-key")
+    | "current-merge-group" => some ("XTSE3470", "current-merge-group")
+    | "current-merge-key" | "current-merge-key-array" => some ("XTSE3500", q.loc)
+    | _ => none)
+
+/-! ## Item patterns of XSLT 4.0 (§6.3.3 to §6.3.9) -/
+
+/-- An occurrence indicator directly after a pattern in a sequence
+    pattern (§6.3.5); `one` when there is none. -/
+def pPatOcc : P Occ := do
+  let c ← read
+  let i ← get
+  let j := skipWsF c.s (c.s.size + 1) 0 i
+  match chAt c.s j with
+  | '?' => set (j + 1); pure .opt
+  | '*' => set (j + 1); pure .star
+  | '+' => set (j + 1); pure .plus
+  | _ => pure .one
+
+/-- A `Constant` (§6.3.6): a string or numeric literal, a QName
+    literal, `true()` or `false()`. -/
+def pPatConst : P Atomic := do
+  ws
+  if (← atS "\"") || (← atS "'") then return Atomic.ofStr (← pStringLit)
+  if ← eatS "#" then
+    match ← peekQName with
+    | some (p, u, l, e) => set e; return Atomic.ofQN (← resolve p u l "")
+    | none => synErr "expected a QName after #"
+  if ← eatKw "true" then expectS "("; expectS ")"; return Atomic.ofBool true
+  if ← eatKw "false" then expectS "("; expectS ")"; return Atomic.ofBool false
+  let neg ← eatS "-"
+  match ← pNumber with
+  | .lit a =>
+    if !neg then pure a else
+    match castAtomic (Atomic.ofStr ("-" ++ a.str)) a.ty with
+    | .ok b => pure b
+    | .error _ => synErr "bad numeric constant"
+  | _ => synErr "expected a constant"
+
+/-- Is the next token the keyword `k` followed by `(` (or `{` for
+    `map`)? -/
+def atKwOpen (k : String) (o : Char) : P Bool := do
+  if !(← atKw k) then return false
+  let c ← read
+  let i ← get
+  let j := skipWsF c.s (c.s.size + 1) 0 (i + k.length)
+  pure (chAt c.s j == o)
+
+mutual
+
+/-- A sequence pattern (§6.3.5): `none` for `empty-sequence()`. -/
+def pSeqPat : Nat → P (Option IPat × Occ)
+  | 0 => synErr "pattern too deeply nested"
+  | n + 1 => do
+    if ← atKwOpen "empty-sequence" '(' then
+      adv "empty-sequence".length; expectS "("; expectS ")"
+      return (none, .one)
+    let p ← pItemPat n
+    pure (some p, ← pPatOcc)
+
+/-- A pattern inside a map, array or JNode pattern: an item pattern
+    with predicates, or an XNode pattern (§6.3.1). -/
+def pItemPat : Nat → P IPat
+  | 0 => synErr "pattern too deeply nested"
+  | n + 1 => do
+    ws
+    let c ← read
+    let i ← get
+    let base ← if chAt c.s i == '~' then do
+        adv 1; pure (IPat.types (← pItemType 1000))
+      else if ← atKwOpen "type" '(' then do
+        adv 4; expectS "("; let t ← pItemType 1000; expectS ")"; pure (IPat.types t)
+      else if ← atKwOpen "atomic" '(' then do
+        adv 6; expectS "("
+        let mut ts : List IType := []
+        for _ in [0:1000] do
+          ts := ts ++ [← pItemType 1000]
+          if !(← eatS "|") then break
+        expectS ")"
+        pure (IPat.types (match ts with | [t] => t | _ => .choice ts))
+      else if ← atKwOpen "record" '(' then do
+        adv 6; expectS "("; let t ← pItemType 1000; expectS ")"; pure (IPat.types t)
+      else if (← atS "{") || (← atKwOpen "map" '{') then do
+        if ← atKw "map" then adv 3
+        expectS "{"
+        if ← eatS "}" then return IPat.mapP [] false
+        let mut es : List (Atomic × Option (Option IPat × Occ)) := []
+        let mut open_ := false
+        for _ in [0:10000] do
+          if ← eatS "*" then open_ := true; break
+          let k ← pPatConst
+          let sp ← if ← eatS ":" then some <$> pSeqPat n else pure none
+          es := es ++ [(k, sp)]
+          if !(← eatS ",") then break
+        expectS "}"
+        pure (IPat.mapP es open_)
+      else if ← atKwOpen "array" '(' then do
+        adv 5; expectS "("
+        let (m, o) ← pSeqPat n
+        expectS ")"
+        pure (IPat.arrayP m o)
+      else if ← atKwOpen "jnode" '(' then do
+        adv 5; expectS "("
+        let k ← if ← eatS "*" then pure none else some <$> pPatConst
+        expectS ","
+        let (m, o) ← pSeqPat n
+        expectS ")"
+        pure (IPat.jnodeP k m o)
+      else if chAt c.s i == '.' && chAt c.s (i + 1) != '.' && chAt c.s (i + 1) != '/' then do
+        adv 1; pure IPat.any
+      else pure (IPat.xnode (← pLevel n 8))
+    let preds ← pPreds n
+    pure (if preds.isEmpty then base else .filtered base preds)
+
+end
+
+/-- The default priority of an item pattern (§6.4.2 to §6.4.7). -/
+def ipPriority : Nat → IPat → Float
+  | 0, _ => 0.5
+  | f + 1, p =>
+    match p with
+    | .xnode e => defaultPriority e
+    | .any => -1
+    | .types t => match t with
+      | .record _ false => 0
+      | t => typePriority 50 t
+    | .mapP es open_ =>
+      if es.isEmpty && !open_ then 0.5
+      else if es.any (fun (_, sp) => sp.isSome) then 0.25
+      else if !es.isEmpty then 0 else -0.25
+    | .arrayP none _ => 0.5
+    | .arrayP (some q) _ => ipPriority f q
+    | .jnodeP k m _ =>
+      let a := if k.isSome then 0.5 else -1
+      let b := match m with
+        | none => 0.5
+        | some q => ipPriority f q
+      max a b
+    | .filtered (.jnodeP ..) _ => 1
+    | .filtered _ _ => 0.5
+
+/-- Does the pattern text start with a 4.0 item pattern keyword
+    (`atomic(`, `record(`, `array(`, `jnode(`, `map{` or `{`)? -/
+def startsItemPattern (t : String) : Bool :=
+  let t := t.trimAscii.toString
+  let noWs := String.ofList (t.toList.filter (fun ch => ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r'))
+  t.startsWith "{" || ["atomic(", "record(", "array(", "jnode(", "map{"].any (fun k => noWs.startsWith k)
 
 /-- Parse a pattern. `~T` and `type(T)` (with predicates) are type
     patterns of the 4.0 draft that the test suite uses; `.` with
     predicates is a simple pattern (§6.3.3); everything else is read as
     the XPath expression of an XNode pattern. -/
-def SCx.pattern (c : SCx) (src : String) : M Pattern := do
+def SCx.pattern0 (c : SCx) (src : String) : M Pattern := do
   let t := src.trimAscii.toString
   if t == "" then err "XTSE0340" "empty pattern" else
+  if startsItemPattern t then
+    let t' := expandTypes c.types c.ns 10 t
+    let p : P IPat := do let q ← pItemPat 1000; ws; pure q
+    match (p.run { s := t'.toList.toArray, ns := c.xpNs }).run 0 with
+    | .ok (ip, i) =>
+      if i < t'.length then err "XTSE0340" ("invalid pattern '" ++ t ++ "'")
+      else pure { e := .ctx, src := t, ip := some (ip, ipPriority 100 ip) }
+    | .error er => err "XTSE0340" ("invalid pattern '" ++ t ++ "': " ++ er.msg)
+  else
   let typed? : Option (String × Bool) :=
     if t.startsWith "~" then some ((t.drop 1).toString, false)
     else if t.startsWith "type(" then some ((t.drop 5).toString, true)
     else none
   match typed? with
   | some (rest, paren) =>
+    -- named item types (§5.4) are expanded first
+    let rest := expandTypes c.types c.ns 10 rest
     let p : P (IType × Nat) := do
       let ty ← pItemType 1000
       if paren then expectS ")"
@@ -444,5 +715,11 @@ def SCx.pattern (c : SCx) (src : String) : M Pattern := do
   | .ok e => if patternOk 1000 true e then pure { e, src := t }
              else err "XTSE0340" ("'" ++ t ++ "' is not a pattern")
   | .error er => err "XTSE0340" ("invalid pattern '" ++ t ++ "': " ++ er.msg)
+
+def SCx.pattern (c : SCx) (src : String) : M Pattern := do
+  let p ← c.pattern0 src
+  match patternForbidden p.e with
+  | some (code, f) => err code (f ++ "() is used in the pattern '" ++ p.src ++ "'")
+  | none => pure p
 
 end L4Factoidal.XSLT4
