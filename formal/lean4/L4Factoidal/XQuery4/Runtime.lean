@@ -685,6 +685,7 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
     | nm :: parts =>
       let sns := sNs qs
       let name ← nameOf env (← cb.eval env nm) sns false
+      let name := if name.uri == nsXML && name.pfx == "" then { name with pfx := "xml" } else name
       if ss.headD "" == "c" && (name.pfx == "xmlns" || name.uri == "http://www.w3.org/2000/xmlns/") then
         err "XQDY0096" "the element name is in the xmlns namespace"
       let decls := (ss.drop 1).filterMap (fun d => match d.splitOn "\x00" with
@@ -699,6 +700,7 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
     match es with
     | nm :: parts =>
       let name ← nameOf env (← cb.eval env nm) (sNs qs) true
+      let name := if name.uri == nsXML && name.pfx == "" then { name with pfx := "xml" } else name
       if isXmlnsName name then err (if ss.headD "" == "d" then "XQST0071" else "XQDY0044") "an attribute named xmlns"
       if name.pfx == "xml" && name.uri != nsXML then err "XQDY0044" "prefix xml bound to another namespace"
       if name.uri == nsXML && name.pfx != "xml" then err "XQDY0044" "the xml namespace with another prefix"
