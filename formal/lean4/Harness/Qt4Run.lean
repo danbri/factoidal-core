@@ -81,6 +81,12 @@ def defective : List (String × String) :=
   -- xs:yearMonthDuration argument is XPTY0004
   ++ [ ("duration-to-seconds-016", "https://github.com/danbri/factoidal/issues/1158") ]
 
+/-- Defective in XPath mode only: the expected result reads an XQuery
+    predefined entity reference in a string literal (XPath 4.0 has none). -/
+def defectiveXPath : List (String × String) :=
+  [ ("map-to-element-014", "https://github.com/danbri/factoidal/issues/1159"),
+    ("map-to-element-021", "https://github.com/danbri/factoidal/issues/1159") ]
+
 end Harness.Qt4Defective
 
 namespace Harness.Qt4Run
@@ -792,7 +798,9 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       match (kids r).head? with
       | none => t := { t with fail := t.fail + 1 }
       | some a =>
-        let bad := Harness.Qt4Defective.defective.lookup name
+        let bad := match Harness.Qt4Defective.defective.lookup name with
+          | some i => some i
+          | none => if xq then none else Harness.Qt4Defective.defectiveXPath.lookup name
         match checkAssert env res 100 a, bad with
         | .pass, none => t := { t with pass := t.pass + 1 }
         | .pass, some iss =>
