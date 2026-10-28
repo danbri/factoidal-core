@@ -1018,6 +1018,12 @@ CONFIGDIR holds one Markdown file per mount (`README.md` is not one):
   checked with these clients: https://github.com/danbri/factoidal/issues/1079.
   rclone and cadaver are: `node tests/webdav/clients.mjs` (11 pass, 0 fail,
   out of 11, on 2026-10-28; `apt-get install rclone cadaver`).
+* Desktop clients: `node tests/webdav-desktop/serve-labs.mjs` serves the lab
+  trees of `labs/filetrees/` through a recording proxy on 127.0.0.1:8091;
+  `probe-macos.sh`, `probe-linux.sh`, `probe-windows.ps1` and `checklist.md`
+  in the same folder; results in `tests/webdav-desktop/results/`. First run:
+  gvfs 1.54.4 through `gio`, 21 ok, 0 FAIL (2026-10-28). Record:
+  `docs/designissues/2026-10-28-desktop-webdav-labs.md`.
 
 | path | what it is |
 | --- | --- |
