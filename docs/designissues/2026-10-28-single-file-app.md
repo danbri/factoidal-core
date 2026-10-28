@@ -1,7 +1,7 @@
 # One executable file per platform (or one for all): Factoidal with a JS runtime, a GUI and the servers
 
-Date: 2026-10-28. Status: study, no code. Decision needed (section
-"Proposal").
+Date: 2026-10-28. Status: stage 1 approved (owner, 2026-10-28: "2y") and
+built (section "Stage 1, as built"); stages 2 to 4 need a decision.
 
 Owner, 2026-10-28, verbatim (chat):
 
@@ -99,3 +99,34 @@ later; it adds a per-platform build of its own.
 * Node single executable applications: https://nodejs.org/download/release/v26.7.0/docs/api/single-executable-applications.html
 * Cosmopolitan `cosmocc`: https://github.com/jart/cosmopolitan (README of the `cosmocc` release, platform table)
 * llamafile: https://github.com/mozilla-ai/llamafile (README: Windows `.exe` rename and 4 GB limit)
+
+## Stage 1, as built (2026-10-28)
+
+* `tools/build-exe.sh OUTDIR [--targets ...]`: `deno compile --allow-all
+  --no-check --include l4-assets bin/factoidal.mjs` from `npm/factoidal/`,
+  for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
+  `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`,
+  `aarch64-pc-windows-msvc`; writes `SHA256SUMS`. `DENORT_DIR` gives the
+  Deno runtimes where `dl.deno.land` is not reachable (the cloud container:
+  they come from the `denort-<target>.zip` assets of the Deno GitHub
+  release).
+* `tools/check-exe.sh EXE`: help, version, `sample-store` and a COUNT query,
+  `serve` answers an ASK over HTTP, and the desktop WebDAV harness.
+* `danbri/factoidal-builds` `exe.yml`: builds the six files from a published
+  `web` release, runs `check-exe.sh` on Linux x86_64, macOS arm64 and
+  Windows x86_64 (`--quick` on Windows), and publishes release
+  `build-<commit>-exe` with the files, `exe.tar.gz` and `build-info.json`.
+
+Measured with Deno 2.9.6 and npm `@factoidal/core` 0.19.0 in the cloud
+container: Linux x86_64 118 MB, macOS arm64 83 MB, Windows x86_64 94 MB.
+`check-exe.sh` on the Linux file: 5 pass, 1 fail (out of 6); the failure is
+the WebDAV check of https://github.com/danbri/factoidal/issues/1122, which a
+0.19.0 engine does not have. The CLI on the Deno runtime also ran
+`webdav-serve` under the WebDAV harness: 14 pass, 0 fail, 1 xfail (out of
+15, before the fix).
+
+Defect found and fixed in the same landing: in a compiled executable,
+`pack` and `sample-store` re-ran the executable with `run ...` (meant for the
+`deno` command, to raise the V8 stack) and stopped with `unknown command
+"run"`. `bin/pack-host.mjs` now packs in process when the executable is not
+named `deno`. A compiled executable therefore packs with the default stack.

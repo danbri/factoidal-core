@@ -867,6 +867,24 @@ deployments?" Rule: the Lean MCP core is 2026-07-28 stateless only; the
 2025-11-25 `initialize`/session flow is a separate compatibility layer over
 it, for stdio and HTTP only. Record: section 7a of the design record above.
 
+### WebDAV media types; single-file executables (owner, 2026-10-28)
+
+Owner, 2026-10-28, verbatim: "Decisions / 1 y / 2y", to these questions
+(https://github.com/danbri/factoidal-core/pull/179, desktop WebDAV labs):
+
+1. https://github.com/danbri/factoidal/issues/1122 (PUT with no
+   Content-Type): yes. A PUT with no Content-Type, and a LOCK that makes an
+   empty resource, get the media type of the name's extension from a fixed
+   table in Lean (`formal/lean4/L4Factoidal/WebDAV/MediaType.lean`); a name
+   with no known extension stays `application/octet-stream`; a client's
+   Content-Type is kept.
+2. Single-file executables, stage 1 of
+   `docs/designissues/2026-10-28-single-file-app.md`: yes. `deno compile` of
+   the CLI with the wasm included, for six targets (`tools/build-exe.sh`,
+   checked by `tools/check-exe.sh`), built and released by
+   `danbri/factoidal-builds` (`exe.yml`, set `exe`). Stages 2 to 4 (the
+   local web GUI, the Cosmopolitan study, signing) still need a decision.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where

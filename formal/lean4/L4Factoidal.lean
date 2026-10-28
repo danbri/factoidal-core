@@ -981,6 +981,7 @@ import L4Factoidal.WebDAV.Config
 import L4Factoidal.WebDAV.Path
 import L4Factoidal.WebDAV.Xml
 import L4Factoidal.WebDAV.If
+import L4Factoidal.WebDAV.MediaType
 import L4Factoidal.WebDAV.Backend
 import L4Factoidal.WebDAV.Server
 import L4Factoidal.WebDAV.State
