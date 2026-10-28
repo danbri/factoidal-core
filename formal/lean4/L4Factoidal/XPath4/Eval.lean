@@ -18,6 +18,7 @@ references, partial application, dynamic calls, keyword arguments,
 Static calls are coerced to the F&O 4.0 signature first (§3.4.3).
 -/
 import L4Factoidal.XPath4.Ext
+import L4Factoidal.XQuery4.Runtime
 
 namespace L4Factoidal.XPath4
 
@@ -449,6 +450,12 @@ def eval : Nat → Env → Expr → M Seq
         if q.loc == "NOTATION" || q.loc == "anyAtomicType" || q.loc == "anySimpleType" then
           err "XPST0017" ("no constructor function xs:" ++ q.loc)
         else
+        -- the one parameter is named `value` (`xs:long(value := '1')`)
+        let args := if args.isEmpty then (match kw with
+          | [("value", a)] => [a]
+          | _ => args) else args
+        if !kw.isEmpty && !(kw.length == 1 && kw.all (·.1 == "value")) then
+          err "XPST0017" ("constructor function xs:" ++ q.loc ++ " has one parameter, named value")
         match (if args.isEmpty then [some Expr.ctx] else args) with
         | [some x] =>
             let s ← eval n env x
@@ -472,6 +479,10 @@ def eval : Nat → Env → Expr → M Seq
           (if total ≥ 2 then some (default : Sig) else none) else findSig q total
       match sig? with
       | none =>
+          -- XQuery 4.0 hook: a function declared in the prolog
+          match XQuery4.callUser? { eval := fun x => eval n env x, apply := fun f as => apply n env f as } env q args kw with
+          | some r => r
+          | none =>
           if (findSigAny q).isSome then err "XPST0017" ("wrong number of arguments for " ++ q.show)
           else err "XPST0017" ("unknown function " ++ q.show)
       | some sig =>
@@ -563,7 +574,11 @@ def eval : Nat → Env → Expr → M Seq
               pure [.fn (.papp (.fn (.builtin q (k + 1))) (List.replicate k none ++ [some c]))]
             else pure [.fn (.builtin q k)]
           | _, _ => pure [.fn (.builtin q k)]
-        | none => err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
+        | none =>
+          -- XQuery 4.0 hook: a function declared in the prolog
+          match XQuery4.refUser? (fun f as => apply n env f as) env q k with
+          | some r => r
+          | none => err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
   | .inline ps ret body focus => pure [.fn (.inline ps ret body focus env.vars)]
   | .mapC es => do
       let mut acc : MB := {}
@@ -710,6 +725,10 @@ def eval : Nat → Env → Expr → M Seq
         let s ← eval n env p
         for x in ← env.atomize s do out := out ++ x.str
       pure (sStr out)
+  -- XQuery 4.0 hook: the constructs of `XQuery4.Runtime`
+  | .ext tag es ts qs ss =>
+      XQuery4.evalExt { eval := fun e x => eval n e x, apply := fun e f as => apply n e f as }
+        env tag es ts qs ss
 
 def evalArgs : Nat → Env → List (Option Expr) → M (List (Option Seq))
   | 0, _, _ => fuelErr

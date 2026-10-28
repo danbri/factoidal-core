@@ -43,10 +43,9 @@ def mergeText : List Node → List Node
 
 abbrev B := StateM (Array NRec)
 
-def pushRec (r : NRec) : B Nat := do
-  let a ← get
-  set (a.push r)
-  pure a.size
+def pushRec (r : NRec) : B Nat :=
+  -- `modifyGet` keeps the array unshared, so `push` does not copy it
+  modifyGet (fun a => (a.size, a.push r))
 
 def setRec (i : Nat) (f : NRec → NRec) : B Unit :=
   modify (fun a => if h : i < a.size then a.set i (f a[i]) else a)
