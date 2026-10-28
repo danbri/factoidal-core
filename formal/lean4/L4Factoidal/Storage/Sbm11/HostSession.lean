@@ -146,8 +146,9 @@ structure Session where
       and q21 need between 4,096 and 8,192 pages; at 4,096 they ran 2.2 to 2.6
       times as long as native `l4sbm11 query`. -/
   pageLimit : Nat := 8192
-  /-- the most checked chunks kept per file under `merkle` (65,536 bytes
-      each): 256 chunks, 16 MiB. A full map drops a sixteenth
+  /-- the most checked chunks kept per file under `merkle`, counted in
+      chunks of 65,536 bytes: 256, so 16 MiB. A file with larger chunks keeps
+      proportionally fewer (at least one). A full map drops a sixteenth
       (`MemoCache.insertEvict`); a dropped chunk is read and checked again
       when it is needed. -/
   chunkLimit : Nat := 256
@@ -217,7 +218,9 @@ def Session.chunk (ss : Session) (fi c : Nat) : IO ByteArray := do
     | ioErr s!"{a.file}: no chunk {c} (the manifest gives {a.merkle.chunkCount})"
   let b ← ss.hostRead a.file off len
   okOr "Merkle check" (checkChunk ss.hasher ad c b)
-  ss.chunks.modify fun cs => cs.modify fi fun m => MemoCache.insertEvict m ss.chunkLimit c b
+  -- The same byte budget whatever the chunk size (16 MiB with the default).
+  let lim := max 1 (ss.chunkLimit * HostVerify.sbm11ChunkBytes / max 1 a.merkle.chunkBytes)
+  ss.chunks.modify fun cs => cs.modify fi fun m => MemoCache.insertEvict m lim c b
   return b
 
 /-- A checked read of the artifact `fi`: inside its manifest length, exactly

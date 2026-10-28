@@ -13,6 +13,18 @@
 //
 // No Node built-ins: the browser imports this file as it is.
 
+import { checkEngineStamp } from './engine-integrity.mjs';
+
+// version.json next to the engine, or null (absent, unreadable, not JSON).
+async function stampOf(url) {
+  try {
+    const r = await fetch(url);
+    return r.ok ? await r.json() : null;
+  } catch {
+    return null;
+  }
+}
+
 async function instantiate(url, imports) {
   try {
     return await WebAssembly.instantiateStreaming(fetch(url), imports);
@@ -59,7 +71,22 @@ export function browserEngine(name, defaultAssetsUrl) {
       // newer loader (the loader's own locateFile does the same).
       const version = loader.wasmVersion ? `?v=${loader.wasmVersion}` : '';
       const wasmUrl = new URL(`${name}.wasm`, assetsUrl).href + version;
-      return loader.loadL4({ instantiateWasm: (imports) => instantiate(wasmUrl, imports) });
+      // The release stamp check (engine-integrity.mjs, issue 1106): with a
+      // stamped version.json next to the full engine, its bytes are hashed
+      // before they are compiled (no streaming compile then). Without one,
+      // the streaming path as before.
+      const stamp = name === 'l4factoidal'
+        ? await stampOf(new URL('version.json', assetsUrl).href + version) : null;
+      if (!stamp || stamp.stamped !== true) {
+        return loader.loadL4({ instantiateWasm: (imports) => instantiate(wasmUrl, imports) });
+      }
+      const response = await fetch(wasmUrl);
+      if (!response.ok) {
+        throw new Error(`factoidal: fetching ${wasmUrl} failed: ${response.status} ${response.statusText}`);
+      }
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      await checkEngineStamp(bytes, stamp, { where: wasmUrl });
+      return loader.loadL4({ instantiateWasm: (imports) => WebAssembly.instantiate(bytes, imports) });
     })();
     enginePromise.catch(() => { enginePromise = null; });
     return enginePromise;

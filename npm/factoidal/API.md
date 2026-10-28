@@ -644,7 +644,8 @@ RDF/XML `application/rdf+xml` `.rdf`, JSON-LD `application/ld+json` `.jsonld`.
 The media type wins when it is given, and its parameters and letter case do not
 change the answer. An unknown media type (`text/plain`) gives `null`; it does not
 fall back to the name. The query and the fragment of an IRI are ignored.
-`.owl` and `.xml` are not registered and give `null`. Each row of `formats()`
+`.xml` is not registered and gives `null`. `.owl` is not registered either, but
+gives RDF/XML when no media type is given, as Jena does (since 0.20.0). Each row of `formats()`
 has the same `mediaTypes` and `extensions`.
 
 This table is not the one the file readers use. When `factoidal pack` or
@@ -652,8 +653,8 @@ another file-reading command gets no `--format`, it uses the extension table
 `RDF.formatOfExtension` (`formal/lean4/L4Factoidal/RDF/Format.lean`). That
 table also maps `.owl`, `.xml` and `.rdfxml` to RDF/XML, `.ntriples` to
 N-Triples, `.turtle` to Turtle, `.nquads` to N-Quads and `.json-ld` to JSON-LD.
-`syntaxFor` keeps to the registrations, so `syntaxFor('onto.owl')` is `null`.
-Jena's `RDFLanguages.filenameToLang('onto.owl')` gives RDF/XML. The tests are
+`syntaxFor` keeps to the registrations, except `.owl`: `syntaxFor('onto.owl')` is
+`'rdfxml'`, as Jena's `RDFLanguages.filenameToLang('onto.owl')`. The tests are
 in `test/syntax-names-1053.test.mjs`.
 
 `splitIri(iri)` gives `{namespace, localName}`
@@ -1383,9 +1384,11 @@ Integrity. `openSbm11(source, { verify })` checks reads by default
 (`verify: 'merkle'`, Lean `Storage/Sbm11/HostVerify.lean`, as native
 `l4sbm11 query --verify merkle`). The open reads the `.merkle` sidecar of each
 file and refuses it unless its leaves rebuild the Merkle root in
-`manifest.sbm11`. Each read is then widened to its 65,536-byte chunks, and
-each chunk is checked by its Merkle proof before the engine decodes a byte of
-it; checked chunks are kept for later queries (at most 256 per file). A
+`manifest.sbm11`. Each read is then widened to its chunks (65,536 bytes as
+every packer writes them; any chunk size of 1 to 16 MiB that agrees with the
+file's length and chunk count is admitted), and each chunk is checked by its
+Merkle proof before the engine decodes a byte of it; checked chunks are kept
+for later queries (16 MiB per file). A
 changed byte in a data file, a sidecar or a Merkle reference of the manifest
 refuses the open or the query, and the error names the file.
 `verify: 'none'` checks only the lengths against the manifest and hashes
@@ -1656,7 +1659,7 @@ runnable.
 | `memberOrdinal` | `(iri) => number \| null` | the `n` of `rdf:_n`; synchronous |
 | `canonicalize` | `(data, {format?, baseIRI?}) => string` | RDFC-1.0 canonical N-Quads |
 | `graphs` | `(Dataset) => Array<[NamedNode \| BlankNode, Dataset]>` | named graphs, default graph excluded |
-| `canonicalHash` | `(Dataset) => string` | SHA-256 (64 lowercase hex digits) of the RDFC-1.0 canonical N-Quads that `canonicalize` answers, graph names included (since 0.20.0; before, graph names were dropped) |
+| `canonicalHash` | `(data, {format?, baseIRI?}) => string` | SHA-256 (64 lowercase hex digits) of the RDFC-1.0 canonical N-Quads that `canonicalize` answers, graph names included (since 0.20.0; before, graph names were dropped). `data` as for `canonicalize`: a Dataset or text; text is a string of characters, so decode bytes first (UTF-8) |
 | `asDefaultGraph` | `(Dataset) => Dataset` | the triples of every graph, all in the default graph; `canonicalHash(asDefaultGraph(g))` hashes a graph whatever its name |
 | `queryRaw` | `(dataText, sparql, {dataFormat?, entail?, output?}) => object \| string` | one call, serialized answer: `json` (parsed), `csv`, `tsv`, `xml`, `table`, `ntriples` |
 | `queryHdt` | `(hdtBytes, sparql) => Bindings[] \| boolean` | SELECT/ASK over an HDT file's bytes |
