@@ -270,6 +270,8 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
       | .error e => .fail ("error " ++ e.code ++ ": " ++ e.msg)
       | .ok s =>
       let envR := env.bind { uri := "", loc := "result" } s
+      -- QT3 test-suite assertions: the context item is the result when it is one item
+      let envR := match s with | [_] => { envR with ctx := some s, pos := 1, size := 1 } | _ => envR
       match tag with
       | "assert-true" => ok? (match s with | [.atom ⟨_, .bool true⟩] => true | _ => false) ("got " ++ (sh s 80))
       | "assert-false" => ok? (match s with | [.atom ⟨_, .bool false⟩] => true | _ => false) ("got " ++ (sh s 80))

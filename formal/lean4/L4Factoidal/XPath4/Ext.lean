@@ -10,11 +10,14 @@ import L4Factoidal.XPath4.Regex4
 import L4Factoidal.XPath4.Serialize
 import L4Factoidal.XPath4.ElemMap
 import L4Factoidal.XPath4.Fn4
+import L4Factoidal.XPath4.Uri
+import L4Factoidal.XPath4.Csv
 
 namespace L4Factoidal.XPath4
 
 def extTable : List (String × LibFn) :=
-  xmlParseTable ++ formatTable ++ jsonTable ++ regexTable ++ serializeTable ++ elemMapTable ++ fn4Table
+  xmlParseTable ++ formatTable ++ jsonTable ++ regexTable ++ serializeTable ++ elemMapTable ++ fn4Table ++
+  uriTable ++ csvTable
 
 /-- Look up a built-in function: the Stage 2 tables first. -/
 def libLookupAll (q : QN) : Option LibFn :=
