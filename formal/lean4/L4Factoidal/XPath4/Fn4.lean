@@ -5,7 +5,7 @@ L4Factoidal.XPath4.Fn4 — F&O 4.0 functions added after Stage 2:
 
 Spec: F&O 4.0 editor's draft (read 2026-10-28).
 -/
-import L4Factoidal.XPath4.XmlParse
+import L4Factoidal.XPath4.Serialize
 import L4Factoidal.Crypto.MD5
 import L4Factoidal.Crypto.SHA1
 import L4Factoidal.Crypto.Blake3
@@ -412,12 +412,122 @@ def scanFn : LibFn := fun h _ a => do
     pos := pos + 1
   pure out.toList
 
+/-! ## `fn:path` with options (§14.1.x): `origin`, `lexical`, `namespaces`, `indexes` -/
+
+structure PathOpts where
+  origin : Option NodeRef := none
+  lexical : Bool := false
+  nsMap : Option (List (String × String)) := none
+  indexes : Bool := true
+
+def PathOpts.prefixFor (o : PathOpts) (u : String) : Option String :=
+  o.nsMap.bind (fun m => (m.find? (fun (p, v) => p != "" && v == u)).map (·.1))
+
+def PathOpts.elemName (o : PathOpts) (q : QN) : String :=
+  if o.lexical then q.show
+  else match o.nsMap with
+    | some m =>
+      if q.uri != "" then
+        match o.prefixFor q.uri with
+        | some p => p ++ ":" ++ q.loc
+        | none => if m.any (fun (p, v) => p == "" && v == q.uri) then q.loc else q.eqn
+      else if m.all (fun (p, v) => p != "" || v == "") then q.loc else q.eqn
+    | none => q.eqn
+
+def PathOpts.attrName (o : PathOpts) (q : QN) : String :=
+  if o.lexical then q.show
+  else if q.uri == "" then q.loc
+  else match o.prefixFor q.uri with
+    | some p => p ++ ":" ++ q.loc
+    | none => q.eqn
+
+def Env.pathStep (e : Env) (o : PathOpts) (m : NodeRef) : String :=
+  let r := e.nrec m
+  let sameKind (c : Nat) : Bool :=
+    let rc := e.nrec (m.at c)
+    rc.kind == r.kind && (r.kind != .element || rc.name == r.name) && (r.kind != .pi || rc.name.loc == r.name.loc)
+  let pos : Nat := match r.parent with
+    | some p => (((e.doc m).get p).children.toList.filter (fun c => c ≤ m.idx && sameKind c)).length
+    | none => 1
+  let ix := if o.indexes then "[" ++ toString pos ++ "]" else ""
+  match r.kind with
+  | .document => ""
+  | .element => o.elemName r.name ++ ix
+  | .attribute => "@" ++ o.attrName r.name
+  | .text => "text()" ++ ix
+  | .comment => "comment()" ++ ix
+  | .pi => "processing-instruction(" ++ r.name.loc ++ ")" ++ ix
+  | .namespace => "namespace::" ++ (if r.name.loc == "" then "*[Q{http://www.w3.org/2005/xpath-functions}local-name()=\"\"]" else r.name.loc)
+
+def pathOptsOf (e : Env) (opts : Seq) : M PathOpts := do
+  let origin ← match optLookup opts "origin" with
+    | none | some [] => pure none
+    | some [.node n] => pure (some n)
+    | some _ => err "XPTY0004" "the origin option must be a single node"
+  let lexical ← optBool opts "lexical" false
+  let indexes ← optBool opts "indexes" true
+  let nsMap ← match optLookup opts "namespaces" with
+    | none | some [] => pure none
+    | some [.map kvs] => pure (some (kvs.map (fun (k, v) => (k.str, strOf v))))
+    | some _ => err "XPTY0004" "the namespaces option must be a map"
+  pure { origin, lexical, nsMap, indexes }
+
+def pathFn : LibFn := fun h e a => do
+  match argN a 0 with
+  | [.jnode ..] =>
+    match libLookup { uri := nsFN, loc := "path" } with
+    | some f => f h e a
+    | none => pure []
+  | [] => pure []
+  | [.node n] =>
+    let o ← pathOptsOf e (argN a 1)
+    let chain := (n :: e.ancestors n).reverse
+    match o.origin with
+    | some r =>
+      match (chain.dropLast).findIdx? (fun m => m == r) with
+      | none => err "FOPA0001" "the origin is not an ancestor of the node"
+      | some i =>
+        let steps := (chain.drop (i + 1)).map (e.pathStep o)
+        pure (sStr (String.intercalate "/" steps))
+    | none =>
+      match chain with
+      | [] => pure []
+      | top :: rest =>
+        let topR := e.nrec top
+        if topR.kind == .document && rest.isEmpty then return sStr "/"
+        let pre :=
+          if topR.kind == .document then ""
+          else if o.lexical then "fn:root()"
+          else match o.nsMap with
+            | some m =>
+              match m.find? (fun (p, v) => p != "" && v == nsFN) with
+              | some (p, _) => p ++ ":root()"
+              | none => if m.any (fun (p, v) => p == "" && v == nsFN) then "root()" else "Q{" ++ nsFN ++ "}root()"
+            | none => "Q{" ++ nsFN ++ "}root()"
+        pure (sStr (pre ++ String.join (rest.map (fun m => "/" ++ e.pathStep o m))))
+  | _ => err "XPTY0004" "fn:path needs a node"
+
+/-- `fn:in-scope-namespaces` (§10.2.x): the in-scope namespace bindings
+    of an element, as a map from prefix to URI (the `xml` binding
+    included). -/
+def inScopeNamespacesFn : LibFn := fun _ e a => do
+  match argN a 0 with
+  | [.node n] =>
+    let r := e.nrec n
+    if r.kind != .element then err "XPTY0004" "in-scope-namespaces needs an element"
+    let sc := (effectiveScope r.inscope).filter (fun (_, u) => u != "")
+    let sc := if sc.any (·.1 == "xml") then sc else sc ++ [("xml", nsXML)]
+    let sc := if r.name.uri != "" && !sc.any (·.1 == r.name.pfx) then sc ++ [(r.name.pfx, r.name.uri)] else sc
+    pure [.map (sc.map (fun (p, u) => (Atomic.ofStr p, [.atom (Atomic.ofUri u)])))]
+  | _ => err "XPTY0004" "in-scope-namespaces needs an element"
+
 def fn4Table : List (String × LibFn) :=
   [("hash", hashFn), ("random-number-generator", rngFn), ("rng-record#", rngRecordFn),
    ("rng-permute#", rngPermuteFn), ("rng-take#", rngTakeFn),
    ("parts-of-dateTime", partsOfDateTimeFn), ("build-dateTime", buildDateTimeFn),
    ("round", roundModeFn), ("unix-dateTime", unixDateTimeFn), ("pad-string", padStringFn),
    ("trim-space", trimSpaceFn), ("system-properties", systemPropertiesFn),
-   ("slice", sliceFn), ("scan", scanFn)]
+   ("slice", sliceFn), ("scan", scanFn), ("path", pathFn),
+   ("in-scope-namespaces", inScopeNamespacesFn)]
 
 end L4Factoidal.XPath4
