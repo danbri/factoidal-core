@@ -669,11 +669,19 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
      String.ofList ((List.range (min 20 (c.s.size - i))).map (fun k => chAt c.s (i + k))) ++ "'")
   pure m
 
-/-- Parse an XQuery 4.0 module, with the namespace bindings of the
-    environment. -/
+/-- End-of-line handling (XQuery 4.0 §A.2.3, as XML 1.0 §2.11): a carriage
+    return followed by a line feed, or a carriage return alone, is read as
+    a line feed. -/
+def normEol (cs : List Char) : List Char :=
+  (cs.foldl (fun (acc : Array Char × Bool) c =>
+    let (out, cr) := acc
+    if c == '\r' then (out.push '\n', true)
+    else if c == '\n' && cr then (out, false)
+    else (out.push c, false)) (#[], false)).1.toList
+
 def parseModule (src : String) (ns : List (String × String) := [])
     (loader : String → Except Err (List (QN × IType)) := fun _ => .ok []) : M Module :=
-  let s := src.toList.toArray
+  let s := (normEol src.toList).toArray
   -- first pass: the named types, with forward references read as item()
   let types0 := match ((pModule [] true loader).run { s, ns }).run 0 with
     | .ok (m, _) => m.types
@@ -781,7 +789,10 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
     let hasSchema := !env.schema.targetNamespaces.isEmpty
     let tyKnown (q : QN) : Bool :=
       if q.uri == nsXS then
-        (atypeOfName? q.loc).isSome || ["anyType", "untyped", "anySimpleType", "untypedAtomic"].contains q.loc
+        (atypeOfName? q.loc).isSome ||
+          -- the built-in union and list types also name types (XSD 1.1 Part 2 §3.4)
+          ["anyType", "untyped", "anySimpleType", "untypedAtomic", "numeric", "error",
+           "NMTOKENS", "IDREFS", "ENTITIES"].contains q.loc
       else hasSchema
     let base0 : SCtx := { vars := env.vars.map (·.1) ++ globalsM, knownFn := knownM }
     let base : SCtx := { base0 with typeKnown := tyKnown, elemKnown := fun q => (env.schema.elemDecl q).isSome,

@@ -184,7 +184,9 @@ def depOk (xq : Bool) (d : Node) : Bool :=
       let fs := v.splitOn " "
       if sat then fs.all has else !(fs.all has)
   | "xml-version" =>
-      let has := (v.splitOn " ").any (fun x => x == "1.0" || x == "1.0:4-" || x.startsWith "1.0")
+      -- XML 1.0 fifth edition (names of `XML.Parser`); not the fourth
+      -- edition or earlier (`1.0:4-`), not XML 1.1
+      let has := (v.splitOn " ").any (fun x => x == "1.0" || x == "1.0:5+")
       if sat then has else !has
   | "xsd-version" => if sat then v == "1.1" else v != "1.1"
   -- `XPath4.NumberWords`: German, French and Italian words and names
