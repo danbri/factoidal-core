@@ -457,7 +457,9 @@ def Env.stepOrigins (e : Env) : M (List Item) :=
     let s := (s.zip (List.range s.length)).map (fun (i, k) => jwrap (k + 1).toUInt64 i)
     if s.all Item.isGNode then pure s
     else match s with
-      | [_] => err "XPTY0020" "the context item is not a node"
+      -- XPath 4.0 §4.7 (qt4tests K2-Axes-38a, axis-err-1a): XPTY0004; the
+      -- XPath 3.1 code XPTY0020 is what xslt40-test error-XPTY0020a expects
+      | [_] => err "XPTY0004" "the context item is not a node"
       | _ => err "XPTY0004" "the context value is not a sequence of nodes"
 
 def isNumericLit : Expr → Option Int
