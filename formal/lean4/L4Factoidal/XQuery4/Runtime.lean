@@ -343,7 +343,8 @@ def constructionStripKey : QN := { uri := "#xq", loc := "construction-strip" }
 
 /-- Build an element node: name, namespace declarations, content. -/
 def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × String))
-    (parts : List Seq) (preserve inherit : Bool := true) (direct : List Bool := []) : M Seq := do
+    (parts : List Seq) (preserve inherit : Bool := true) (direct : List Bool := [])
+    (outerDecls : List (String × String) := []) : M Seq := do
   if isXmlnsName name then err "XQDY0096" "the element name is in the xmlns namespace"
   if name.pfx == "xml" && name.uri != nsXML then err "XQDY0096" "prefix xml bound to another namespace"
   if name.uri == nsXML && name.pfx != "xml" && name.pfx != "" then err "XQDY0096" "the xml namespace with another prefix"
@@ -391,6 +392,10 @@ def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × Str
       else if (scope.lookup an.pfx).isNone then scope := (an.pfx, an.uri) :: scope
     atRecs := atRecs.push { r with name := an, parent := some 0 }
   if (scope.lookup "xml").isNone then scope := scope ++ [("xml", nsXML)]
+  -- the namespaces of the enclosing direct constructors are in scope too, unless
+  -- the element's own names use the prefix (§4.12.1.2)
+  for (p, u) in outerDecls do
+    if (scope.lookup p).isNone && !(p == "" && name.uri == "" && u != "") then scope := scope ++ [(p, u)]
   -- a ("", "") binding stays: it undeclares the default namespace (§4.12.1.2)
   -- XQuery 4.0 §3.9.1.1: under construction mode preserve the new element
   -- is annotated xs:anyType; under strip, xs:untyped (no annotation)
@@ -797,13 +802,17 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
       if ss.headD "" == "c" && (name.pfx == "xmlns" || name.uri == "http://www.w3.org/2000/xmlns/") then
         err "XQDY0096" "the element name is in the xmlns namespace"
       let decls := (ss.drop 1).filterMap (fun d => match d.splitOn "\x00" with
-        | [p, u] => some (p, u) | _ => none)
+        | [p, u] => if p.startsWith "\x01" then none else some (p, u) | _ => none)
+      -- the declarations of the enclosing direct constructors (§4.12.1.2)
+      let outerDecls := (ss.drop 1).filterMap (fun d => match d.splitOn "\x00" with
+        | [p, u] => if p.startsWith "\x01" then some ((p.drop 1).toString, u) else none | _ => none)
       let mut vals : Array Seq := #[]
       for p in parts do vals := vals.push (← cb.eval env p)
       let id := newDocId "elem" env (name.eqn ++ "|" ++ ss.headD "" ++ "|" ++
         String.intercalate "," (vals.toList.map (fun s => String.intercalate "," (s.map itemSig)))) ss
       buildElement env id name decls vals.toList (!ss.contains "#no-preserve") (!ss.contains "#no-inherit")
         (parts.map (fun p => match p with | .ext "elem" _ _ _ s => s.contains "#nested" | _ => false))
+        outerDecls
     | [] => err "XPST0003" "element constructor without name"
   | "attr" =>
     match es with

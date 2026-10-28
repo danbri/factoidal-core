@@ -575,7 +575,15 @@ def tagAt (i : Nat) : Expr → Expr
 /-- The static namespace bindings, for computed names at run time. -/
 def staticNs : P (List QN) := do
   let c ← read
-  pure (c.ns.map (fun (p, u) => nsBinding p u))
+  pure ((c.ns.filter (fun (p, _) => !p.startsWith "#dir:")).map (fun (p, u) => nsBinding p u))
+
+/-- The namespace declarations of the enclosing direct element constructors
+    (entries `#dir:<prefix>` of the static namespaces), as declaration
+    strings marked `\x01`: a constructed element has them in scope
+    (XQuery 4.0 §4.12.1.2). -/
+def dirDeclStrs (ns : List (String × String)) : List String :=
+  (ns.filter (fun (p, _) => p.startsWith "#dir:")).map (fun (p, u) =>
+    "\x01" ++ (p.drop 5).toString ++ "\x00" ++ u)
 
 def readUntil (s : Array Char) (i : Nat) (stop : String) : Option (String × Nat) := Id.run do
   let st := stop.toList
@@ -788,7 +796,9 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
     let nsA := pre ++ c.ns.filter (fun (p, _) => !pre.any (·.1 == p))
     let (decls, ats) ← withReader (fun c => { c with ns := nsA }) (pStartTag sp)
     let outer := c.ns
-    let ns' := decls ++ outer.filter (fun (p, _) => !decls.any (·.1 == p))
+    let outerDir := outer.filter (fun (p, _) => p.startsWith "#dir:" && !decls.any (fun d => "#dir:" ++ d.1 == p))
+    let ns' := decls ++ (outer.filter (fun (p, _) => !p.startsWith "#dir:" && !decls.any (·.1 == p))) ++
+      decls.map (fun (p, u) => ("#dir:" ++ p, u)) ++ outerDir
     withReader (fun c => { c with ns := ns' }) do
       let resolveP (p : String) : P String :=
         if p == "xml" then pure nsXML else lookupNs p
@@ -802,7 +812,7 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
         if seen.contains (auri, al) then throw { code := "XQST0040", msg := "duplicate attribute " ++ al }
         seen := (auri, al) :: seen
         attrEs := attrEs.push (.ext "attr" (.lit (Atomic.ofQN { uri := auri, loc := al, pfx := ap }) :: parts) [] sns ["d"])
-      let declStrs := decls.map (fun (p, u) => p ++ "\x00" ++ u) ++ copyFlags cfg
+      let declStrs := decls.map (fun (p, u) => p ++ "\x00" ++ u) ++ copyFlags cfg ++ dirDeclStrs outerDir
       let s := c.s
       if chAt s (← get) == '/' then
         adv 1
@@ -1113,7 +1123,7 @@ where
   | "element" =>
     let nm ← pCompName sp "elem"
     let body ← pBraced sp
-    pure (some (.ext "elem" [nm, body] [] sns ("c" :: copyFlags cfg)))
+    pure (some (.ext "elem" [nm, body] [] sns ("c" :: copyFlags cfg ++ dirDeclStrs (← read).ns)))
   | "attribute" =>
     let nm ← pCompName sp "attr"
     let body ← pBraced sp
