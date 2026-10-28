@@ -885,6 +885,16 @@ Owner, 2026-10-28, verbatim: "Decisions / 1 y / 2y", to these questions
    `danbri/factoidal-builds` (`exe.yml`, set `exe`). Stages 2 to 4 (the
    local web GUI, the Cosmopolitan study, signing) still need a decision.
 
+### One owner per release (owner, 2026-10-28)
+
+Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and
+"Yes, re one owner". From the first build of a release commit until the
+version is on npm, only the release manager named in the release issue
+dispatches, cancels or re-runs builds in `danbri/factoidal-builds`, pushes
+to its `main`, or runs `npm-publish.yml`; other sessions comment on the
+release issue (first instance: https://github.com/danbri/factoidal/issues/1140).
+Reason and cost: `skills/npm-release/SKILL.md` § One owner per release.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where
