@@ -865,6 +865,10 @@ def registry : List Entry := [
     theorems := [``L4Factoidal.OWL.RL.closure_sound, ``L4Factoidal.OWL.RL.rl_derives_holds,
       ``L4Factoidal.RDF.Graph.toSet_sublist]
     note := "SoundReasoner interface type: soundness against OwlRlEntails (Derives, and truth in every interpretation meeting the row conditions) is a field; completeness is the named assumption assumed_completeness (closureFix_saturated, https://github.com/danbri/factoidal/issues/756)" },
+  { area := "SPARQL 1.2 RL infer (SPARQLRL.RuleSet.infer; wasm datasetSparqlRlInfer)", dir := "SPARQLRL"
+    wireIn := .graph, wireOut := .graph, status := .tested
+    tests := ["W3C SPARQL 1.2 RL suite (l4shacl-rules)", "SPARQLRL/Tests.lean #guards"]
+    note := "the rule-set semantics of the editor's draft is not proved (https://github.com/danbri/factoidal/issues/1099)" },
   { area := "LawfulValidator: SHACL (decodeShapesGraph, validateFull; wasm shaclValidate, datasetShaclValidate)", dir := "SHACL"
     stage := ``shaclValidator, wireIn := .graph, wireOut := .validationReport, params := ["shapes graph"]
     contract := ``CoreConformance, status := .proved

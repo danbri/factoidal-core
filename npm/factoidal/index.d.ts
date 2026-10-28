@@ -530,6 +530,18 @@ export function closure(
   options?: { format?: DataFormat; baseIRI?: string }
 ): Promise<Dataset>;
 
+/**
+ * SPARQL 1.2 RL infer (https://w3c.github.io/data-shapes/sparql12-rl/): the
+ * inference graph of the rule set `rules` (SPARQL-RL text) over the default
+ * graph of `data`, as a new Dataset. Rejects when the rule set has a syntax
+ * error, is not well-formed or not stratifiable, or has IMPORTS.
+ */
+export function sparqlRlInfer(
+  data: DataInput,
+  rules: string,
+  options?: { format?: DataFormat; baseIRI?: string }
+): Promise<Dataset>;
+
 /** The syntaxes the engine reads and writes, from the engine (op datasetFormats). */
 export function formats(): Promise<FormatCapability[]>;
 
@@ -1870,6 +1882,8 @@ export function capabilities(): Promise<{
   canonicalHash: boolean;
   shacl: boolean;
   shex: boolean;
+  /** the engine has the SPARQL 1.2 RL op (datasetSparqlRlInfer) */
+  sparqlRl: boolean;
   owlClosure: boolean;
   explain: boolean;
   stages: boolean;
@@ -1984,6 +1998,7 @@ declare const _default: {
   update: typeof update;
   openDataset: typeof openDataset;
   closure: typeof closure;
+  sparqlRlInfer: typeof sparqlRlInfer;
   formats: typeof formats;
   serialize: typeof serialize;
   canonicalize: typeof canonicalize;

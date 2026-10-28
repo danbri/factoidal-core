@@ -790,6 +790,65 @@ of 8); Solid `protocol.mjs` 12 pass, 0 fail (out of 12); `oidc.mjs` 21 pass, 0
 fail (out of 21); `against-own-server.mjs` 7 pass, 0 fail (out of 7);
 `tools/host-purity-lint.sh` 35 pass, 0 fail (out of 35).
 
+## Client interop: our client against the six target servers, 2026-10-28
+
+Method: Touchstone `targetservers/interop-all.sh` (lws-client pinned at
+99b8b10), every server in local Docker, one scenario per client and server
+(discover, container, create and read, conditional update, JSON Patch,
+linkset, type search, notifications, access, recursive delete). Clients:
+Erich Bremer's Java and JS clients, and ours (`@factoidal/core@0.19.0`,
+`factoidal lws-client` through `deploy/lws-client-adapter/adapter.mjs`,
+whose checker gives 37 passed, 0 failed). A small clients image held only
+these three clients; the stock image builds eleven toolchains and does not
+fit the session disk.
+
+Steps passed, of the steps each server offers:
+
+| Server | java | js | factoidal |
+| --- | --- | --- | --- |
+| Community Solid Server | 7 of 10 | 7 of 10 | 0 of 11 |
+| Halcyon | 11 of 11 | 11 of 11 | 11 of 11 |
+| lws-drupal | 11 of 11 | 11 of 11 | 10 of 11 |
+| lws-server | 11 of 11 | 11 of 11 | 11 of 11 |
+| lwsd | 11 of 11 | 11 of 11 | 10 of 11 |
+| sparq-lws | 11 of 11 | 11 of 11 | 0 of 11 |
+
+The Java and JS failures on Community Solid Server are the server's: 415 on
+JSON Patch, 405 on PUT of `.meta`, and its token endpoint refuses
+`.notifications/` as a resource. Our four failures are three client defects,
+https://github.com/danbri/factoidal/issues/1115:
+
+1. Community Solid Server and sparq-lws answer 401 with only
+   `WWW-Authenticate: Bearer as_uri="…", realm="…"` (drafts before
+   2026-10-19); our client needs `resource_metadata`.
+2. lws-drupal's type index is outside the StorageRoot path; our client sends
+   no token there and gets an index filtered to empty.
+3. lwsd's notification endpoint sends no `Link rel=lws#storage`; our client
+   needs one before it subscribes.
+
+### Rerun after the fixes, 2026-10-28 03:12 UTC
+
+The same run, with our client from this repository at the commit of
+https://github.com/danbri/factoidal-core/pull/170 (the three fixes; the
+adapter sets `legacyChallenge` and passes the notification `serviceUrl` as
+the subscribe endpoint):
+
+| Server | java | js | factoidal |
+| --- | --- | --- | --- |
+| Community Solid Server | 7 of 10 | 7 of 10 | 7 of 10 |
+| Halcyon | 11 of 11 | 11 of 11 | 11 of 11 |
+| lws-drupal | 11 of 11 | 11 of 11 | 11 of 11 |
+| lws-server | 11 of 11 | 11 of 11 | 11 of 11 |
+| lwsd | 11 of 11 | 11 of 11 | 11 of 11 |
+| sparq-lws | 11 of 11 | 11 of 11 | 11 of 11 |
+
+No step fails for our client alone. On Community Solid Server all three
+clients fail the same three steps, which are the server's: JSON Patch (415;
+it accepts N3 Patch, SPARQL Update and merge-patch only), linkset (not
+advertised; our client refuses with `notAdvertised`, Java and JS get 415
+then 405), and notifications (the token exchange answers 400
+`invalid_target` for `.notifications/`).
+
 ## Run details
 
 * Host: Linux, OpenJDK 21.0.12, Maven 3.9.11, Node 22.22.0. No Docker

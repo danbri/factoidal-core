@@ -113,6 +113,15 @@ named fixture dirs from the main checkout — but the agent must say so
 in its report; never present a result from a checkout where the script
 exits 1.
 
+## Wasm builds in a worktree (MANDATORY)
+
+A worktree agent that runs `formal/lean4/Wasm/build-wasm.sh` sets its own
+work directory: `L4_WASM_WORK=$PWD/.wasm-work bash formal/lean4/Wasm/build-wasm.sh`.
+The default `/tmp/l4wasm-build` is shared by every checkout on the machine.
+2026-10-28: an agent's objects from an older base were kept by the main
+checkout's next build, and that wasm carried code the source had removed
+(three npm tests failed; trap 11 of `skills/lean4-wasm-export`).
+
 ## Iteration-loop briefs (MANDATORY): ship the fast loop, not the full pipeline
 
 Any brief whose task is an edit-verify-test **loop** (suite burn-down,
@@ -398,3 +407,25 @@ Rules:
    worktree's history. Check that `bin/<platform>/<name>` exists in the
    worktree after Step 0 before the brief promises it; otherwise the
    brief tells the agent to build it.
+
+## Parallel agents in one Lean namespace: build the combined tree before landing (2026-10-28)
+
+Two agents that each add a file under the same Lean namespace can each
+build green alone and still fail together: the umbrella import refuses a
+name that both files declare. On 2026-10-28 the SPARQL-RL proof agents
+(`SPARQLRL/BgpAgreement.lean`, `SPARQLRL/SemiNaiveTheorems.lean`, for
+https://github.com/danbri/factoidal-core/pull/163) both declared
+`L4Factoidal.SPARQLRL.matchTerm_ext`; the merged branch failed `lake build`
+at `L4Factoidal.lean` ("environment already contains"), and the landing
+cost one more full build cycle.
+
+Rules:
+1. A brief that runs agents in parallel in one namespace gives each a name
+   prefix for helper lemmas, or a sub-namespace (`SPARQLRL.Bgp`,
+   `SPARQLRL.SemiNaive`).
+2. The coordinator merges all agent branches, then runs the full
+   `lake build` once on the merged tree before any push. A green build of
+   each branch alone is not evidence about the merge.
+3. A worktree that copies `.lake` from another checkout carries C files of
+   modules that branch may not have; the tail-recursion gate then reports
+   them. Delete IR whose `.lean` source is absent before the gate.

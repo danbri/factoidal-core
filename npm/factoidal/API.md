@@ -309,6 +309,15 @@ engine closes the default graph under the regime, then answers the query
 and SERVICE registrations are not in scope on this path. `x-ikl-*` names are
 refused ([issue 581](https://github.com/danbri/factoidal/issues/581)).
 
+With `sparql12: true` (or `version: '1.2'`) the query is read by the SPARQL
+1.2 grammar and runs on the closed dataset (op `datasetQuery12Entail`,
+[issue 1109](https://github.com/danbri/factoidal/issues/1109)); on this path
+extension functions and SERVICE registrations are in scope. `output` with
+SPARQL 1.2 is refused with `option.conflict`. The OWL 2 RL closure
+substitutes `owl:sameAs` inside triple terms, so
+`ASK { ex:dave ex:said <<( ex:robert ex:likes ex:tea )>> }` is true after
+`ex:bob owl:sameAs ex:robert` and `ex:dave ex:said <<( ex:bob ex:likes ex:tea )>>`.
+
 ## Custom extension functions (SPARQL 1.1 §17.6)
 
 Register your own functions by IRI (the
@@ -1635,6 +1644,7 @@ runnable.
 | `update` | `(data, sparqlUpdate, {format?, baseIRI?}) => Dataset` | answers a NEW Dataset; `dataset.update()` changes one in place |
 | `openDataset` | `(data, {format?, baseIRI?}) => Dataset` | a Dataset argument is cloned |
 | `closure` | `(data, 'rdfs' \| 'owl-rl' \| 'rho-df' \| 'rdfs-plus') => Dataset` | the closure of the default graph |
+| `sparqlRlInfer` | `(data, rulesText) => Dataset` | SPARQL 1.2 RL infer: the inference graph of the rule set over the default graph (no IMPORTS) |
 | `serialize` | `(data, {format, version?, prefixes?, literalShorthand?, useNativeTypes?, useRdfType?, rdfDirection?, rdfstar?, inputFormat?, baseIRI?}) => string` | `nquads`, `ntriples` (refuses a named graph), `turtle`, `trig`, `rdfxml`, `jsonld`, `rdfc`; see "Datasets" |
 | `formats` | `() => [{name, read11, read12, write11, write12, engine, mediaTypes, extensions}]` | the engine's list; `mediaTypes` and `extensions` are the W3C registrations (issue 1053) |
 | `sameValue` | `(a, b) => boolean \| null` | SPARQL 1.1 `=` on two terms; `null` incomparable; synchronous after `ready()`; see "Matching literals by value" |

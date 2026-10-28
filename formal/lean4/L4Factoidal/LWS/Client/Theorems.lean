@@ -26,6 +26,10 @@ The machine (`Client.Machine.step`), for every state and every event:
   checks hold (`Validated`), and asks for the storage of that record
   (lws10-core §Discovery Validation by a Client, "If any check fails, the
   client MUST NOT use the discovered values to request an access token").
+  A record of the `as_uri`/`realm` challenge of the drafts before 2026-10-19
+  satisfies the realm checks of `Validated` instead, and only in a session
+  that turned on `legacyChallenge`
+  (https://github.com/danbri/factoidal/issues/1115).
 * `step_no_blind_create_retry`, `step_no_retry_after_lost_post`: after a
   POST answered 5xx, or lost, the next action is not the same POST
   (§Create Resource, "clients SHOULD avoid unintentional retries").
@@ -44,7 +48,8 @@ The driver features (https://github.com/danbri/factoidal/issues/1065):
 * `onPage_onePage_no_fetch`: an operation that asked for one page ends with
   that page; the client does not request the `next` page.
 * `attachToken_realm`: with no any-token, a request is sent as it is or with
-  the token of an entry whose realm (root) its URL is under.
+  the token of an entry whose realm (root), or one of whose service endpoints,
+  its URL is under.
 -/
 import L4Factoidal.LWS.Client.Machine
 import L4Factoidal.LWS.Operations
@@ -205,7 +210,8 @@ three checks hold, for the storage of that record. -/
 theorem step_no_token_request_without_validation (V : L4Factoidal.Authz.Crypto)
     (s : ClientState) (e : Event) (r : Req) (h : (step V s e).2 = .fetch r)
     (ht : isTokenExchange r = true) :
-    ∃ c, (step V s e).1.auth = some c ∧ Validated c ∧ tokenResource? r = some c.storage := by
+    ∃ c, (step V s e).1.auth = some c ∧ Validated c ∧ tokenResource? r = some c.storage ∧
+      (c.legacy = true → (step V s e).1.session.legacyChallenge = true) := by
   unfold step at h ⊢
   generalize core V s e = out at h ⊢
   obtain ⟨s', a⟩ := out
@@ -219,8 +225,12 @@ theorem step_no_token_request_without_validation (V : L4Factoidal.Authz.Crypto)
   cases hauth : s'.auth with
   | none => simp [hauth] at hb
   | some c =>
-    simp only [hauth, Bool.and_eq_true, beq_iff_eq] at hb
-    exact ⟨c, rfl, (validated_iff c).mp hb.1, hb.2⟩
+    simp only [hauth, Bool.and_eq_true, beq_iff_eq, Bool.or_eq_true, Bool.not_eq_true'] at hb
+    obtain ⟨⟨hv, hl⟩, hr⟩ := hb
+    refine ⟨c, rfl, (validated_iff c).mp hv, hr, fun hc => ?_⟩
+    rcases hl with hl | hl
+    · rw [hl] at hc; cases hc
+    · exact hl
 
 /-- After a POST answered 5xx, the next action is not the same POST. -/
 theorem step_no_blind_create_retry (V : L4Factoidal.Authz.Crypto) (s : ClientState)
@@ -327,7 +337,9 @@ theorem onPage_onePage_no_fetch (s : ClientState) (r : Resp) (items : List Json)
 attached only to a request whose URL is under that realm; with no
 any-token, a request is sent as it is or with the token of such an entry. -/
 theorem attachToken_realm (ses : Session) (r : Req) (hany : ses.anyToken = "") :
-    attachToken ses r = r ∨ ∃ t ∈ ses.tokens, t.root ≠ "" ∧ r.url.startsWith t.root = true := by
+    attachToken ses r = r ∨ ∃ t ∈ ses.tokens,
+      (t.root ≠ "" ∧ r.url.startsWith t.root = true) ∨
+      (∃ e ∈ t.endpoints, e ≠ "" ∧ r.url.startsWith e = true) := by
   unfold attachToken
   split
   · left; rfl
@@ -336,7 +348,7 @@ theorem attachToken_realm (ses : Session) (r : Req) (hany : ses.anyToken = "") :
       right
       refine ⟨t, List.mem_of_find?_eq_some ht, ?_⟩
       have := List.find?_some ht
-      simpa using this
+      simpa [TokenEntry.covers] using this
     · left; simp [hany]
 
 

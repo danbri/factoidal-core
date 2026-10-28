@@ -205,7 +205,7 @@ def opTextArg (op : String) : Option Nat :=
       "deltaLogEncode", "serializeNQuads", "serializeTurtle", "serializeTurtleWith",
       "canonicalizeToNQuads"].contains op then some 0
   else if ["queryDataset", "queryDataset12", "updateDataset", "datasetQuery",
-           "datasetQuery12", "datasetUpdate", "queryRaw", "datasetQueryRaw",
+           "datasetQuery12", "datasetQuery12Entail", "datasetUpdate", "queryRaw", "datasetQueryRaw",
            "storeQuery", "storeQueryPlan"].contains op then some 1
   else if op == "queryHdt" || op == "storeQueryPlanBytes" then some 0
   else none
@@ -216,7 +216,7 @@ def familyCode (op : String) : String :=
   let c (xs : List String) := xs.any fun x => has op x
   -- dataset-handle forms of the producers: the part after `dataset` names it
   if p ["dataset"] && c ["FromJsonLd", "FromCsvw", "FromRml", "FromJsonld"] then "parse.syntax"
-  else if p ["dataset"] && c ["Rif", "Owl", "Tableau", "Closure", "Rdfs", "RhoDf"] then
+  else if p ["dataset"] && c ["Rif", "Owl", "Tableau", "Closure", "Rdfs", "RhoDf", "SparqlRl"] then
     "reason.failed"
   else if p ["dataset"] && c ["Shacl", "Shex"] then "validate.failed"
   else if p ["parse", "detectFormat", "jsonldToRdf", "csvwToRdf", "rmlMap"] then "parse.syntax"

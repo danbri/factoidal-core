@@ -194,7 +194,6 @@ nothing about the asserted graph: `rdf:reifies` does not assert its object
 * JSON-LD-star is a draft; Factoidal follows RDF 1.2 where the draft and
   RDF 1.2 Turtle disagree. The choices are listed on the
   [JSON-LD-star page](../jsonld-star/).
-* `entail` cannot be combined with `sparql12` in one `query` call; take the
-  closure first (as above), then query it
-  (https://github.com/danbri/factoidal/issues/1109, an expected failure in
-  `tests/hub/hub_rdf12-jsonld-usecases_test.mjs`).
+* `entail` with `sparql12` in one `query` call needs a release after 0.20.0
+  (https://github.com/danbri/factoidal/issues/1109). With 0.19.0 and 0.20.0,
+  take the closure first (as above), then query it.
