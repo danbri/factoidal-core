@@ -18,13 +18,14 @@ import L4Factoidal.XPath4.Update
 import L4Factoidal.XPath4.Tz
 import L4Factoidal.XPath4.Ixml
 import L4Factoidal.XPath4.Collections
+import L4Factoidal.XPath4.SchemaType
 import L4Factoidal.EXPath.Hook
 
 namespace L4Factoidal.XPath4
 
 def extTable : List (String × LibFn) :=
   xmlParseTable ++ formatTable ++ jsonTable ++ regexTable ++ serializeTable ++ elemMapTable ++ fn4Table ++
-  uriTable ++ csvTable ++ deepEqualTable ++ htmlTable ++ updateTable ++ tzTable ++ Ixml.ixmlTable ++ collectionTable
+  uriTable ++ csvTable ++ deepEqualTable ++ htmlTable ++ updateTable ++ tzTable ++ Ixml.ixmlTable ++ collectionTable ++ schemaTypeTable
 
 /-- Look up a built-in function: the Stage 2 tables first. -/
 def libLookupAll (q : QN) : Option LibFn :=

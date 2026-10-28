@@ -386,11 +386,18 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
           match evalIn env txt with
           | .ok exp =>
             -- a single node (XNode or JNode) is compared by its typed value
+            -- a single node (XNode or JNode) or array is compared by its
+            -- typed value (`eq` atomizes its operands)
             let s : Seq := match s with
-              | [.node _] | [.jnode ..] => match env.atomize s with
+              | [.node _] | [.jnode ..] | [.arr _] => match env.atomize s with
                 | .ok [x] => [Item.atom x]
                 | _ => s
               | _ => s
+            let exp : Seq := match exp with
+              | [.arr _] => match env.atomize exp with
+                | .ok [x] => [Item.atom x]
+                | _ => exp
+              | _ => exp
             match s, exp with
             | [.atom x], [.atom y] =>
               let nan (z : Atomic) := (z.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
