@@ -688,7 +688,7 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         if r.kind == .attribute || r.kind == .namespace then err "XTTE3360" "accumulators are not defined on attribute and namespace nodes"
         -- a copy made by fn:copy-of: the values of the original node
         let nd := match (env.doc nd).origin with
-          | some (d0, i0, ns0) => { doc := d0, idx := i0 + nd.idx, rt := ns0.map (fun a => { nodes := a }) }
+          | some (d0, m0, ns0) => { doc := d0, idx := m0.getD nd.idx 0, rt := ns0.map (fun a => { nodes := a }) }
           | none => nd
         let root := env.treeRoot nd
         let vals ← match nd.rt, accCache.lookup (acc.name.eqn, nd.doc) with

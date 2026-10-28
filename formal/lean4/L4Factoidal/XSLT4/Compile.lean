@@ -618,6 +618,40 @@ def checkOrder (m : Mod) (i : Nat) : CM Unit := do
   if ["perform-sort", "for-each", "for-each-group"].contains l then
     firstOnly "sort" []
 
+/-- The XSLT elements whose content is a fixed list of XSLT elements
+    (the "Content:" lines of the element syntax summaries). -/
+def onlyChildren : List (String × List String) :=
+  [("apply-imports", ["with-param"]), ("next-match", ["with-param", "fallback"]),
+   ("call-template", ["with-param"]), ("apply-templates", ["sort", "with-param"]),
+   ("choose", ["when", "otherwise"]), ("attribute-set", ["attribute"]),
+   ("analyze-string", ["matching-substring", "non-matching-substring", "fallback"]),
+   ("merge-source", ["merge-key"]), ("evaluate", ["with-param", "fallback"]),
+   ("merge", ["merge-source", "merge-action", "fallback"]),
+   ("character-map", ["output-character"]), ("accumulator", ["accumulator-rule"])]
+
+/-- The content of an XSLT element with a fixed content model (XTSE0010);
+    not checked in forwards-compatible mode. -/
+def checkContent (c : SCx) (m : Mod) (i : Nat) : CM Unit := do
+  if c.forwardsCompat then return
+  let l := (m.name i).loc
+  let some ok := onlyChildren.lookup l | return
+  let mut seenOtherwise := false
+  let mut whens := 0
+  for k in m.kids i do
+    if m.isElem k then
+      if !(ok.any (m.isXsl k ·)) then
+        cerr "XTSE0010" ("xsl:" ++ l ++ " cannot contain the element " ++ (m.name k).loc)
+      if l == "choose" then
+        if m.isXsl k "otherwise" then
+          if seenOtherwise then cerr "XTSE0010" "xsl:choose has two xsl:otherwise elements"
+          seenOtherwise := true
+        else
+          if seenOtherwise then cerr "XTSE0010" "xsl:when follows xsl:otherwise"
+          whens := whens + 1
+    else if (m.r k).kind == .text && !((m.r k).value.toList.all Char.isWhitespace) then
+      cerr "XTSE0010" ("xsl:" ++ l ++ " cannot contain text")
+  if l == "choose" && whens == 0 then cerr "XTSE0010" "xsl:choose needs an xsl:when"
+
 def nextTid : CM Nat := do
   let s ← get
   set { s with tid := s.tid + 1 }
@@ -681,7 +715,7 @@ def compileElem : Nat → SCx → Mod → Nat → CM (List Instr)
     -- the content order of XSLT elements (XTSE0010): xsl:param first
     -- (after xsl:context-item), xsl:sort first in the instructions that
     -- sort
-    if (m.name i).uri == nsXSL then checkOrder m i
+    if (m.name i).uri == nsXSL then checkOrder m i; checkContent c m i
     -- a template, function or nested element is not inside the body of
     -- an iteration unless it is the iteration's own content
     let c := if m.isXsl i "iterate" then { c with inIter := false } else c
@@ -1412,6 +1446,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
   let upd (f : Sheet → Sheet) : CM Unit := modify (fun s => { s with sheet := f s.sheet })
   checkAttrs c q.loc as
   if q.loc == "function" || q.loc == "template" then checkOrder m i
+  checkContent c m i
   match q.loc with
   | "template" => compileTemplate prec { d with c } as
   | "function" =>

@@ -744,12 +744,24 @@ def withOrigin (env : Env) (nd : NodeRef) (cp : Item) : Item :=
   match cp with
   | .node cn => match cn.rt with
     | some d =>
-      if r.kind != .attribute && r.kind != .namespace && r.last + 1 == nd.idx + d.nodes.size then
-        let o := match (env.doc nd).origin with
-          | some (d0, i0, ns0) => (d0, i0 + nd.idx, ns0)
-          | none => (nd.doc, nd.idx, nd.rt.map (·.nodes))
-        .node { cn with rt := some { d with origin := some o } }
-      else cp
+      let sz := r.last + 1 - nd.idx
+      let csz := (d.nodes.getD cn.idx default).last + 1 - cn.idx
+      if r.kind == .attribute || r.kind == .namespace || sz != csz || cn.idx + sz > d.nodes.size then cp else
+      -- the subtree of the copied node, then (fn:snapshot) its ancestors
+      let m := (List.range sz).foldl (fun a i => a.set! (cn.idx + i) (nd.idx + i)) (Array.replicate d.nodes.size 0)
+      let m := (List.range cn.idx).foldl (fun (acc : Array Nat × Option Nat × Option NodeRef) _ =>
+          match acc.2.1, acc.2.2 with
+          | some ci, some o =>
+            let cp' := (d.nodes.getD ci default).parent
+            let op' := env.parentOf o
+            match cp', op' with
+            | some c1, some o1 => (acc.1.set! c1 o1.idx, some c1, some o1)
+            | _, _ => (acc.1, none, none)
+          | _, _ => acc) (m, some cn.idx, some nd) |>.1
+      let o := match (env.doc nd).origin with
+        | some (d0, m0, ns0) => (d0, m.map (fun i => m0.getD i 0), ns0)
+        | none => (nd.doc, m, nd.rt.map (·.nodes))
+      .node { cn with rt := some { d with origin := some o } }
     | none => cp
   | other => other
 
