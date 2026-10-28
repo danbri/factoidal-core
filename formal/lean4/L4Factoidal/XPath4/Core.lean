@@ -57,6 +57,9 @@ structure Env where
   /-- The available URI collections (`fn:uri-collection`): an absolute
       URI, or `""` for the default, and the URIs of its resources. -/
   uriCollections : List (String × List String) := []
+  /-- External encoding information of resources (as an HTTP charset
+      would give, F&O 4.0 §17.1.5): the reference and the encoding name. -/
+  resourceEncodings : List (String × String) := []
 deriving Inhabited
 
 def Env.doc (e : Env) (n : NodeRef) : Doc :=

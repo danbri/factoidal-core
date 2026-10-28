@@ -167,6 +167,8 @@ structure EnvSpec where
   defaultCollation : Option String := none
   /-- `resource` elements: (uri, file). -/
   resources : List (String × String) := []
+  /-- The `encoding` attributes of `resource` elements: (uri, encoding). -/
+  resourceEncodings : List (String × String) := []
   decimalFormats : List (String × List (String × String)) := []
   /-- EXPath File 4.0: the `sandpit` directory, copied for each test. -/
   sandpit : Option String := none
@@ -195,6 +197,8 @@ def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
         s := { s with collections := s.collections ++ [(attrD c "uri", srcs, qs)] }
     | "resource" =>
         s := { s with resources := s.resources ++ [(attrD c "uri", dir ++ "/" ++ attrD c "file")] }
+        if attrD c "encoding" != "" then
+          s := { s with resourceEncodings := s.resourceEncodings ++ [(attrD c "uri", attrD c "encoding")] }
     | "decimal-format" =>
         let ats := c.elementAttrs
         let nsOf (p : String) : String :=
@@ -590,7 +594,8 @@ def scanResources (root dir src : String) : IO (List (String × String) × List 
     when it cannot be built. -/
 def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) : IO (Except String Env) := do
   if let some why := spec.unsupported then return .error why
-  let mut env : Env := { ns := spec.ns, baseUri := spec.baseUri }
+  let mut env : Env := { ns := spec.ns, baseUri := if spec.baseUri == "#UNDEFINED" then "" else spec.baseUri,
+                         resourceEncodings := spec.resourceEncodings }
   if let some c := spec.defaultCollation then env := { env with defaultCollation := c }
   for (role, file, uri) in spec.sources do
     let doc ← match (← cache.get).lookup file with
@@ -705,7 +710,14 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
     | .ok env =>
-      let (scanned, scannedBins) ← scanResources o.root dir src
+      -- the static base URI, when the environment sets none, is the
+      -- location of the test set (implementation-defined, XPath 4.0 C.1)
+      -- (`#UNDEFINED`: the test wants the base URI absent)
+      let undefBase := spec.baseUri == "#UNDEFINED"
+      let env ← if env.baseUri != "" || undefBase then pure env else do
+        let abs ← try pure (← IO.FS.realPath dir).toString catch _ => pure dir
+        pure { env with baseUri := "file://" ++ abs ++ "/" }
+      let (scanned, scannedBins) ← if undefBase then pure ([], []) else scanResources o.root dir src
       let env := { env with resources := env.resources ++ scanned,
                             resourceBytes := env.resourceBytes ++ scannedBins }
       let (res, env) ← match spec.sandpit with

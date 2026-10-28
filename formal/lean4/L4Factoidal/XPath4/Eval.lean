@@ -181,7 +181,8 @@ def maxRange : Int := 20000000
 def castTargetError : IType → Option String
   | .anyFn | .fnT .. => some "XPST0080"
   | .choice ts => if ts.all (fun t => match t with | .atomic _ | .enum _ | .choice _ => true | _ => false) then none else some "XPST0080"
-  | .atomic _ | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap => none
+  | .atomic aty => if aty == .b .anyAtomicType || aty == .b .notation then some "XPST0080" else none
+  | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap => none
   | .jnodeT .. | .xnode => some "XPST0080"
   | _ => some "XPST0051"
 

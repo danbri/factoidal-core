@@ -227,4 +227,22 @@ theorem matches_shared (p f : String) :
 
 end FnShared
 
+/-! ## Bridge: fn:resolve-uri and the RDF parsers' RFC 3986 resolver
+
+`fn:resolve-uri` and the readers resolve with `L4Factoidal.Syntax.resolveIri`,
+the resolver of the Turtle, TriG, RDF/XML and SPARQL parsers (RFC 3986 §5.2,
+checked there against all 44 examples of RFC 3986 §5.4). -/
+
+/-- For a relative reference against an absolute base without a fragment,
+    the readers' resolution is the RDF parsers' resolution. -/
+theorem resolveUri_eq_resolveIri (base href : String)
+    (hb : isAbsIri base = true) (hh : isAbsIri href = false) :
+    resolveUri base href = L4Factoidal.Syntax.resolveIri ((base.splitOn "#").headD base) href := by
+  simp [resolveUri, hb, hh]
+
+/-- An absolute reference is returned unchanged (F&O 4.0 §6.1). -/
+theorem resolveUri_abs (base href : String) (hh : isAbsIri href = true) :
+    resolveUri base href = href := by
+  simp [resolveUri, hh]
+
 end L4Factoidal.XPath4

@@ -314,7 +314,10 @@ def decodeResource (bs : ByteArray) (cand : Option String) (fallback : Bool) : M
 def textResourceWith (e : Env) (href : String) (cand : Option String) (fallback : Bool) : M String := do
   if (href.splitOn "#").length > 1 then err "FOUT1170" "a fragment identifier is not allowed"
   match e.resourceBin href with
-  | some bs => decodeResource bs cand fallback
+  | some bs =>
+    -- with no $encoding, external encoding information is used first
+    let ext := (e.resourceEncodings.lookup href).orElse (fun _ => e.resourceEncodings.lookup (resolveUri e.baseUri href))
+    decodeResource bs (cand.orElse (fun _ => ext)) fallback
   | none =>
   match e.resource href with
   | some t =>

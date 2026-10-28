@@ -28,6 +28,7 @@ import Std.Data.HashSet
 import L4Factoidal.XPath4.Grapheme
 import L4Factoidal.HTML.Entities
 import L4Factoidal.XPath4.Collation
+import L4Factoidal.Syntax.IriResolve
 
 namespace L4Factoidal.XPath4
 
@@ -1524,8 +1525,60 @@ def Env.pathOf (e : Env) (n : NodeRef) : String :=
     if rest.isEmpty && topR.kind == .document then "/"
     else pre ++ String.join (rest.map (fun m => "/" ++ step m))
 
+/-- An IRI reference that the RFC 3986 resolution algorithm accepts,
+    with the characters that are not valid in a URI treated as unreserved
+    (F&O 4.0 §6.1): every `%` starts a `%HH` escape, and a reference
+    without a scheme has no `:` in its first path segment. -/
+def iriRefOk (s : String) : Bool :=
+  let cs := s.toList
+  let hex (c : Char) : Bool := c.isDigit || ('a' ≤ c && c ≤ 'f') || ('A' ≤ c && c ≤ 'F')
+  let rec pct : List Char → Bool
+    | '%' :: a :: b :: r => hex a && hex b && pct r
+    | '%' :: _ => false
+    | _ :: r => pct r
+    | [] => true
+  let noSpace := !(cs.any (fun c => c == ' ' || c == '<' || c == '>' || c == '"' || c == '{' || c == '}' || c == '\\' || c == '|' || c == '`'))
+  let firstSeg := cs.takeWhile (fun c => c != '/' && c != '?' && c != '#')
+  let schemeOk := match firstSeg.findIdx? (· == ':') with
+    | none => true
+    | some 0 => false
+    | some i => let sch := firstSeg.take i
+                (sch.headD ' ').isAlpha && sch.all (fun c => c.isAlphanum || c == '+' || c == '-' || c == '.')
+  noSpace && pct cs && schemeOk
+
+/-- An absolute IRI: a scheme and `:` (RFC 3986 §4.3). -/
+def isAbsIri (s : String) : Bool :=
+  match s.toList.findIdx? (· == ':') with
+  | some i =>
+    let sch := s.toList.take i
+    i > 0 && (sch.headD ' ').isAlpha && sch.all (fun c => c.isAlphanum || c == '+' || c == '-' || c == '.')
+  | none => false
+
+/-- `fn:resolve-uri` (F&O 4.0 §6.1): RFC 3986 §5.2 resolution, done by
+    the RDF parsers' resolver `Syntax.resolveIri`
+    (`XPath4.Theorems.resolveUriFn_eq_resolveIri`). An absolute `href` is
+    returned unchanged; the base is the explicit one or the executable
+    base URI (FONS0005 when absent); a base that is not an absolute
+    hierarchical IRI is FORG0002; its fragment is ignored. -/
+def resolveUriFn (dfltBase href : String) (base? : Option String) : M String := do
+  if !iriRefOk href then err "FORG0002" ("not a valid IRI reference: " ++ href)
+  if isAbsIri href then return href
+  let base := base?.getD dfltBase
+  if base == "" && base?.isNone then err "FONS0005" "the base URI is absent"
+  if !iriRefOk base || !isAbsIri base then err "FORG0002" ("not an absolute IRI: " ++ base)
+  let base := (base.splitOn "#").headD base
+  let rest := (base.drop ((base.toList.findIdx? (· == ':')).getD 0 + 1)).toString
+  if !rest.startsWith "/" then err "FORG0002" ("not a hierarchical IRI: " ++ base)
+  pure (L4Factoidal.Syntax.resolveIri base href)
+
+/-- Resolve a reference for the readers (`fn:doc`, `fn:unparsed-text`,
+    ...): an absolute reference is kept; against an absolute base it is
+    RFC 3986 resolution (`Syntax.resolveIri`); against a relative base the
+    directory of the base is prefixed. -/
 def resolveUri (base href : String) : String :=
-  if (href.splitOn ":").length > 1 && ((href.splitOn ":").headD "").all Char.isAlpha && href != "" then href
+  if isAbsIri href then href
+  else if isAbsIri base then L4Factoidal.Syntax.resolveIri ((base.splitOn "#").headD base) href
+  else if (href.splitOn ":").length > 1 && ((href.splitOn ":").headD "").all Char.isAlpha && href != "" then href
   else if href.startsWith "/" then
     match (base.splitOn "//") with
     | sch :: rest :: _ => sch ++ "//" ++ ((rest.splitOn "/").headD "") ++ href
@@ -1725,10 +1778,7 @@ def fnTable3 : List (String × LibFn) := [
   ent "resolve-uri" (fun _ e a => do
     match optAtom (argN a 0) with
     | none => pure []
-    | some h =>
-      let base := if (argN a 1).isEmpty then e.baseUri else strOf (argN a 1)
-      if base == "" && !(h.str.splitOn ":").length > 1 then err "FONS0005" "no base URI"
-      else pure (single (Atomic.ofUri (resolveUri base h.str)))),
+    | some h => pure (single (Atomic.ofUri (← resolveUriFn e.baseUri h.str (optAtom (argN a 1) |>.map Atomic.str))))),
   ent "duration-to-seconds" (fun _ _ a => pure (match optAtom (argN a 0) with
     | some ⟨_, .x (.dur d)⟩ => single (Atomic.ofDec d.seconds)
     | _ => [])),

@@ -339,6 +339,9 @@ def pNameTest (dflt : String) : P NameTest := do
           match u with
           | some uu => pure (.ns uu)
           | none => pure (.ns (← lookupNs (p.getD "")))
+        -- "##any" as the default element namespace: an unprefixed name
+        -- matches in every namespace (XPath 4.0 §2.2.1.1)
+        else if p.isNone && u.isNone && dflt == "##any" then pure (.loc l)
         else pure (.name (← resolve p u l dflt))
     | none => synErr "expected a name test"
 
