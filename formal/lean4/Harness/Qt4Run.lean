@@ -69,6 +69,10 @@ def defective : List (String × String) :=
     "EXPath-binary-pad-left-003", "EXPath-binary-pad-left-004", "bin-pad-left5",
     "EXPath-binary-pad-right-003", "EXPath-binary-pad-right-004", "bin-pad-right5"
   ].map (fun n => (n, i1141))
+  -- F&O 4.0: fn:collection and fn:uri-collection take $options, so two
+  -- arguments are XPTY0004, not XPST0017
+  ++ [ ("fn-collection-1", "https://github.com/danbri/factoidal/issues/1150"),
+       ("fn-uri-collection-1", "https://github.com/danbri/factoidal/issues/1150") ]
 
 end Harness.Qt4Defective
 
@@ -166,6 +170,9 @@ structure EnvSpec where
   decimalFormats : List (String × List (String × String)) := []
   /-- EXPath File 4.0: the `sandpit` directory, copied for each test. -/
   sandpit : Option String := none
+  /-- `collection` elements: the URI (`""` for the default collection),
+      the sources (file resolved, uri) and the `query` texts. -/
+  collections : List (String × List (String × String) × List String) := []
 deriving Inhabited
 
 def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
@@ -182,7 +189,10 @@ def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
     | "namespace" => s := { s with ns := s.ns ++ [(attrD c "prefix", attrD c "uri")] }
     | "context-item" => s := { s with ctxSelect := attr c "select" }
     | "schema" => s := { s with unsupported := some "schema" }
-    | "collection" => s := { s with unsupported := some "collection" }
+    | "collection" =>
+        let srcs := (kidsNamed c "source").map (fun x => (dir ++ "/" ++ attrD x "file", attrD x "uri"))
+        let qs := (kidsNamed c "query").map (fun x => x.textContent)
+        s := { s with collections := s.collections ++ [(attrD c "uri", srcs, qs)] }
     | "resource" =>
         s := { s with resources := s.resources ++ [(attrD c "uri", dir ++ "/" ++ attrD c "file")] }
     | "decimal-format" =>
@@ -601,6 +611,34 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) : IO (Exce
       if role == "." then env := { env with ctx := some [.node (NodeRef.mk' idx 0)], pos := 1, size := 1 }
       else if role.startsWith "$" then
         env := env.bind { uri := "", loc := (role.drop 1).toString } [.node (NodeRef.mk' idx 0)]
+  -- collections (F&O 4.0 §1.7.2): documents are loaded like sources
+  for (curi, srcs, qs) in spec.collections do
+    let mut items : Seq := []
+    let mut uris : List String := []
+    for (file, uri) in srcs do
+      let doc ← match (← cache.get).lookup file with
+        | some d => pure (some d)
+        | none =>
+          match ← readFileSafe file with
+          | none => pure none
+          | some txt =>
+            match Doc.ofString txt uri with
+            | .ok d => cache.modify (fun c => (file, d) :: c); pure (some d)
+            | .error _ => pure none
+      match doc with
+      | none => return .error ("collection source not loadable: " ++ file)
+      | some d =>
+        let idx := env.docs.size
+        env := { env with docs := env.docs.push d,
+                          docUris := if uri == "" then env.docUris else (uri, idx) :: env.docUris }
+        items := items ++ [.node (NodeRef.mk' idx 0)]
+        if uri != "" then uris := uris ++ [uri]
+    for q in qs do
+      match evalIn env q with
+      | .ok v => items := items ++ v
+      | .error e => return .error ("collection query: " ++ e.code)
+    env := { env with collections := (curi, items) :: env.collections,
+                      uriCollections := (curi, uris) :: env.uriCollections }
   env := { env with decimalFormats := spec.decimalFormats }
   for (uri, file) in spec.resources do
     match ← readBytesSafe file with

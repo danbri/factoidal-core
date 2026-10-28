@@ -51,6 +51,12 @@ structure Env where
   /-- EXPath hook: the in-memory file system that the `file:` functions
       read (`L4Factoidal.EXPath.File`); `none` when there is none. -/
   fileSys : Option L4Factoidal.EXPath.File.FS := none
+  /-- The available collections (F&O 4.0 §1.7.2, `fn:collection`): an
+      absolute URI, or `""` for the default collection, and its items. -/
+  collections : List (String × Seq) := []
+  /-- The available URI collections (`fn:uri-collection`): an absolute
+      URI, or `""` for the default, and the URIs of its resources. -/
+  uriCollections : List (String × List String) := []
 deriving Inhabited
 
 def Env.doc (e : Env) (n : NodeRef) : Doc :=

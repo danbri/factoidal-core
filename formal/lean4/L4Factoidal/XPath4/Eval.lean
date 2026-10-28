@@ -591,7 +591,7 @@ def eval : Nat → Env → Expr → M Seq
           -- argument defaults to `.` captures the focus (F&O 4.0 §1.5.2)
           match env.ctx, (sig.ps.drop k).head? with
           | some c, some p =>
-            if (match p.dflt with | some .ctx => true | _ => false) then
+            if dfltUsesFocus p.dflt then
               pure [.fn (.papp (.fn (.builtin q (k + 1))) (List.replicate k none ++ [some c]))]
             else pure [.fn (.builtin q k)]
           | _, _ => pure [.fn (.builtin q k)]

@@ -50,6 +50,14 @@ def xsCtorType? (loc : String) : Option IType :=
   else if loc == "error" then some (.choice [])
   else (atypeOfName? loc).map .atomic
 
+/-- Does a parameter default read the focus (`.`, or a call with `.` as
+    an argument, as in `string(.)`)? Then a reference to the function
+    with that parameter omitted captures the focus (F&O 4.0 §1.5.2). -/
+def dfltUsesFocus : Option Expr → Bool
+  | some .ctx => true
+  | some (.call _ args _) => args.any (fun a => match a with | some .ctx => true | _ => false)
+  | _ => false
+
 /-- `fn:position#0` and `fn:last#0` capture the focus (F&O 4.0 §1.5.2):
     a function item of arity 0 that returns the captured position or
     size. The two bodies differ in form so that the two functions are
@@ -1144,6 +1152,28 @@ def fnTable : List (String × LibFn) := [
         let ps := (sc.map (·.1)).eraseDups.filter (fun p => (sc.lookup p).getD "" != "" || p == "xml")
         pure (ps.map (fun p => .atom (Atomic.ofStr p)))
     | _ => err "XPTY0004" "expected an element"),
+  ent "resolve-QName" (fun _ e a => do
+    -- F&O 4.0 §10.2.4: the prefix is resolved by the in-scope
+    -- namespaces of the element; no prefix takes its default namespace
+    match optAtom (argN a 0), argN a 1 with
+    | none, _ => pure []
+    | some v, [.node n] =>
+      let s := v.str.trimAscii.toString
+      let (p, l) := match s.splitOn ":" with
+        | [l] => ("", l)
+        | [p, l] => (p, l)
+        | _ => ("#bad", "")
+      let ncOk (x : String) : Bool := match x.toList with
+        | c :: cs => (c.isAlpha || c == '_' || c.toNat ≥ 0xC0) && cs.all (fun d => d.isAlphanum || d == '_' || d == '-' || d == '.' || d.toNat ≥ 0xB7)
+        | [] => false
+      if p == "#bad" || !ncOk l || (p != "" && !ncOk p) then err "FOCA0002" ("not a lexical QName: " ++ s)
+      match (e.nrec n).inscope.lookup p with
+      | some u => pure (single (Atomic.ofQN { uri := u, loc := l, pfx := p }))
+      | none =>
+        if p == "" then pure (single (Atomic.ofQN { uri := "", loc := l }))
+        else if p == "xml" then pure (single (Atomic.ofQN { uri := nsXML, loc := l, pfx := p }))
+        else err "FONS0004" ("no namespace binding for prefix " ++ p)
+    | _, _ => err "XPTY0004" "fn:resolve-QName expects an element"),
   ent "namespace-uri-for-prefix" (fun _ e a => do
     match argN a 1 with
     | [.node n] =>
@@ -1311,7 +1341,15 @@ def fnTable2 : List (String × LibFn) := [
         else if q.uri == nsFN && k == 0 && (q.loc == "position" || q.loc == "last") && e.ctx.isSome then
           pure [focusFn q.loc e.pos e.size]
         else match findSig q k.toNat with
-          | some _ => pure [.fn (.builtin q k.toNat)]
+          | some sig =>
+            -- a context-dependent function captures the focus of the
+            -- fn:function-lookup call (F&O 4.0 §17.1.1)
+            match e.ctx, (sig.ps.drop k.toNat).head? with
+            | some c, some p =>
+              if dfltUsesFocus p.dflt then
+                pure [.fn (.papp (.fn (.builtin q (k.toNat + 1))) (List.replicate k.toNat none ++ [some c]))]
+              else pure [.fn (.builtin q k.toNat)]
+            | _, _ => pure [.fn (.builtin q k.toNat)]
           | none => pure []
     | _ => pure []),
   ent "collation-available" (fun _ e a =>
