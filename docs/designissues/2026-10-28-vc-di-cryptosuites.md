@@ -98,7 +98,12 @@ for any key function).
   (`third_party/testing/vc-di-ecdsa/`), `tests/vc-di-ecdsa/run.sh`, through
   `bin/vc-api-shim` routes `/<cryptosuite>/credentials/{issue,verify}`.
   Scores: `docs/claude-rules/w3c-completeness-ledger.md`, row "VC 2.0 + Data
-  Integrity".
+  Integrity". 2026-10-28: 62 pass, 0 fail (out of 62). The first run was 61
+  pass, 1 fail: an undefined `credentialSubject` term added after issuance
+  verified, because the vendored VCDM 2.0 context has no `@vocab`, JSON-LD
+  dropped the term, and RDFC-1.0 could not see it. VC DI 1.0 §2.4 requires
+  an error there; the RDFC suites now run `VC.Doc.checkNoDataLoss` before
+  they canonicalize (`checkLossless`), on verify and on secure.
 
 ## Not done
 
