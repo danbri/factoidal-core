@@ -854,6 +854,8 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         if sel.isSome && !b.isEmpty then cerr "XTSE3185" "xsl:sequence has both select and content"
         pure (.seq sel b (← optType c as))
     | "select" =>
+        -- the content is the text of an expression (XTSE0010)
+        if ekids.any (fun k => !m.isXsl k "fallback") then cerr "XTSE0010" "xsl:select contains an element"
         let src := m.text i
         -- the body `[.lit "xsl:select"]` is never run (there is a select);
         -- it marks the instruction as a disqualifying element (§9.4)

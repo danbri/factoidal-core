@@ -1087,7 +1087,9 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         for p in parts do
           match p with
           | .lit t => s := s ++ t
-          | .expr e => s := s ++ (← atomStr cx (← evalX cx e))
+          -- as simple content (§5.6.2, §5.7.2): adjacent text nodes are
+          -- merged before the values are joined with spaces
+          | .expr e => s := s ++ (← simpleContent env (Out.ofSeq (← evalX cx e)) " ")
         pure [.text s]
     | .valueOf sel sep body first =>
         match sel with
