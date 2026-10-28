@@ -441,38 +441,53 @@ def keyOf (env : Env) (s : Seq) : M (Option Atomic) := do
 
 def isNaNA (a : Atomic) : Bool := (a.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
 
-/-- Compare two order keys (§4.13.9): `lt` when `a` sorts first. The
-    empty key and NaN come first with `emptyLeast`. -/
-def keyCmp (tz : Int) (emptyLeast : Bool) (a b : Option Atomic) : Ordering :=
+/-- Compare two order keys (§4.13.9): `lt` when `a` sorts first. With
+    `empty least` the empty key sorts first and NaN next; with `empty
+    greatest` NaN sorts after every other value and the empty key last.
+    Strings compare under the collation `coll`. -/
+def keyCmp (tz : Int) (emptyLeast : Bool) (coll : Coll) (a b : Option Atomic) : Ordering :=
   let rank (x : Option Atomic) : Nat := match x with
-    | none => if emptyLeast then 0 else 3
-    | some v => if isNaNA v then (if emptyLeast then 1 else 2) else 5
+    | none => if emptyLeast then 0 else 2
+    | some v => if isNaNA v then 1 else (if emptyLeast then 2 else 0)
   match a, b with
   | some x, some y =>
     if isNaNA x || isNaNA y then compare (rank a) (rank b)
+    else if x.isStringLike && y.isStringLike && !coll.isCodepoint then coll.compare x.str y.str
     else match atomicCmp x y tz with
       | .ok (some o) => o
       | _ => .eq
-  | _, _ =>
-    let ra := rank a
-    let rb := rank b
-    if ra == 5 then (if emptyLeast then .gt else .lt)
-    else if rb == 5 then (if emptyLeast then .lt else .gt)
-    else compare ra rb
+  | _, _ => compare (rank a) (rank b)
 
 /-- One `order by` key spec: descending, empty least, collation. -/
 structure OSpec where
   desc : Bool := false
   emptyLeast : Bool := true
+  coll : String := ""
 
+/-- Spec strings: `a`/`d`, then `l`/`g` (absent: the prolog default),
+    then `|` and the collation URI as written (absent: the default
+    collation). -/
 def OSpec.decode (s : String) (dflt : Bool) : OSpec :=
-  { desc := s.startsWith "d", emptyLeast := if s.length ≥ 2 then (s.drop 1).startsWith "l" else dflt }
+  let (f, c) := match s.splitOn "|" with
+    | f :: rest => (f, "|".intercalate rest)
+    | [] => ("", "")
+  { desc := f.startsWith "d", emptyLeast := if f.length ≥ 2 then (f.drop 1).startsWith "l" else dflt,
+    coll := c }
 
-def cmpTuples (tz : Int) (specs : List OSpec) : List (Option Atomic) → List (Option Atomic) → Ordering
+/-- The collation of an `order by` or `group by` spec: the default
+    collation when none is written; one this processor does not provide
+    is XQST0076 (§4.13.9). -/
+def specColl (env : Env) (u : String) : M Coll :=
+  if u == "" then env.collation []
+  else match collationOf env.baseUri u with
+    | .ok c => pure c
+    | .error _ => err "XQST0076" ("unknown collation " ++ u)
+
+def cmpTuples (tz : Int) (specs : List (OSpec × Coll)) : List (Option Atomic) → List (Option Atomic) → Ordering
   | a :: as, b :: bs =>
     match specs with
-    | sp :: rest =>
-      let o := keyCmp tz sp.emptyLeast a b
+    | (sp, c) :: rest =>
+      let o := keyCmp tz sp.emptyLeast c a b
       let o := if sp.desc then o.swap else o
       if o == .eq then cmpTuples tz rest as bs else o
     | [] => .eq
@@ -480,10 +495,12 @@ def cmpTuples (tz : Int) (specs : List OSpec) : List (Option Atomic) → List (O
 
 /-- `group by` key equality (§4.13.7): deep-equal of the atomized keys,
     NaN equal to NaN; the empty key equals the empty key. -/
-def groupKeyEq (a b : Option Atomic) : Bool :=
+def groupKeyEq (a b : Option Atomic) (coll : Coll := .codepoint) : Bool :=
   match a, b with
   | none, none => true
-  | some x, some y => deepAtomEq x y
+  | some x, some y =>
+    if x.isStringLike && y.isStringLike && !coll.isCodepoint then coll.eq x.str y.str
+    else deepAtomEq x y
   | _, _ => false
 
 /-- The decoded window clause. -/
@@ -518,16 +535,20 @@ def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN)
       for t in ts do
         let s ← cb.eval t src
         if kind == "member" then
-          match s with
-          | [.arr ms] =>
-            let mut k := 1
-            for m in ms do
-              let x ← t.coerce vt m ("$" ++ v.show)
-              out := out.push (bindOpt (bindV t v x) pv (sInt k)); k := k + 1
-          | _ => err "XPTY0004" "for member needs a single array"
+          -- a sequence of arrays is iterated in turn (XPath 4.0 §4.13.2, PR 2715)
+          let mut k := 1
+          for a in s do
+            match a with
+            | .arr ms =>
+              for m in ms do
+                let x ← t.coerce vt m ("$" ++ v.show)
+                out := out.push (bindOpt (bindV t v x) pv (sInt k)); k := k + 1
+            | _ => err "XPTY0004" "for member requires arrays"
         else
         if s.isEmpty && allowing == "1" then
-          out := out.push (bindOpt (bindV t v []) pv (sInt 0))
+          -- the empty sequence must match the declared type (§4.13.2)
+          let x ← t.coerce vt [] ("$" ++ v.show)
+          out := out.push (bindOpt (bindV t v x) pv (sInt 0))
         else
           let mut k := 1
           for i in s do
@@ -535,16 +556,20 @@ def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN)
             out := out.push (bindOpt (bindV t v x) pv (sInt k)); k := k + 1
       ts := out.toList
       bnd := bnd ++ [v] ++ (if isNoName pv then [] else [pv])
-    | .ext "c:forkv" [src] [] [kv, vv, pv] [] =>
+    | .ext "c:forkv" [src] [kt, vt] [kv, vv, pv] [] =>
       let mut out : Array Env := #[]
       for t in ts do
-        match ← cb.eval t src with
-        | [.map kvs] =>
-          let mut k := 1
-          for (key, val) in kvs do
-            let t1 := bindOpt (bindOpt t kv [.atom key]) vv val
-            out := out.push (bindOpt t1 pv (sInt k)); k := k + 1
-        | _ => err "XPTY0004" "for key/value needs a single map"
+        -- a sequence of maps is iterated in turn (XPath 4.0 §4.13.2, PR 2715)
+        let mut k := 1
+        for m in ← cb.eval t src do
+          match m with
+          | .map kvs =>
+            for (key, val) in kvs do
+              let kx ← t.coerce kt [.atom key] ("$" ++ kv.show)
+              let vx ← if isNoName vv then pure val else t.coerce vt val ("$" ++ vv.show)
+              let t1 := bindOpt (bindOpt t kv kx) vv vx
+              out := out.push (bindOpt t1 pv (sInt k)); k := k + 1
+          | _ => err "XPTY0004" "for key/value requires maps"
       ts := out.toList
       bnd := bnd ++ [kv, vv, pv].filter (fun q => !isNoName q)
     | .ext "c:let" [e] [vt] [v] [] =>
@@ -569,7 +594,10 @@ def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN)
       bnd := bnd ++ [v]
     | .ext "c:order" keys [] [] specs =>
       let dflt := specs.headD "l" == "l"
-      let sps := (specs.drop 1).map (OSpec.decode · dflt)
+      let sps0 := (specs.drop 1).map (OSpec.decode · dflt)
+      let env0 := ts.headD {}
+      let mut sps : List (OSpec × Coll) := []
+      for sp in sps0 do sps := sps ++ [(sp, ← specColl env0 sp.coll)]
       let mut keyed : Array (List (Option Atomic) × Env) := #[]
       for t in ts do
         let mut ks : Array (Option Atomic) := #[]
@@ -589,14 +617,23 @@ def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN)
       let tz := (ts.headD {}).tz
       let sorted := keyed.toList.mergeSort (fun x y => cmpTuples tz sps x.1 y.1 != .gt)
       ts := sorted.map (·.2)
-    | .ext "c:group" keys [] gvs _ =>
+    | .ext "c:group" keys tys gvs colls =>
       -- groups in order of first appearance
+      let env0 := ts.headD {}
+      let mut cl : List Coll := []
+      for c in colls do cl := cl ++ [← specColl env0 c]
       let mut groups : Array (List (Option Atomic) × Array Env) := #[]
       for t in ts do
         let mut ks : Array (Option Atomic) := #[]
-        for k in keys do ks := ks.push (← keyOf t (← cb.eval t k))
+        for (k, ty, q) in (keys.zip (tys.zip gvs)) do
+          let kv ← cb.eval t k
+          -- the declared type of a grouping variable is checked against
+          -- the atomized key (§4.13.7)
+          let _ ← t.coerce ty ((← t.atomize kv).map .atom) ("$" ++ q.show)
+          ks := ks.push (← keyOf t kv)
         let kl := ks.toList
-        match groups.findIdx? (fun (g, _) => g.length == kl.length && (g.zip kl).all (fun (a, b) => groupKeyEq a b)) with
+        match groups.findIdx? (fun (g, _) => g.length == kl.length &&
+            ((g.zip kl).zip (cl ++ List.replicate kl.length .codepoint)).all (fun ((a, b), c) => groupKeyEq a b c)) with
         | some gi => groups := groups.modify gi (fun (g, ms) => (g, ms.push t))
         | none => groups := groups.push (kl, #[t])
       let others := bnd.filter (fun q => !gvs.any (· == q))
@@ -659,7 +696,7 @@ def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN)
 
 /-! ## try/catch -/
 
-def errUri (e : Err) : String := if e.uri == "" then nsERR else e.uri
+def errUri (e : Err) : String := if e.noNs then "" else if e.uri == "" then nsERR else e.uri
 
 /-- The expanded name of an error: a code written `Q{uri}local` (as
     the EXPath modules write theirs) is split; otherwise the code is a
@@ -682,11 +719,16 @@ def catchMatches (t : String) (e : Err) : Bool :=
 def errVars (e : Err) : List (QN × Seq) :=
   let n (l : String) : QN := { uri := nsERR, loc := l, pfx := "err" }
   let (eu, el) := errName e
-  let code : Seq := single (Atomic.ofQN { uri := eu, loc := el, pfx := if eu == nsERR then "err" else "" })
-  [(n "code", code), (n "description", sStr e.msg), (n "value", []), (n "module", []),
+  let pfx := if e.pfx != "" then e.pfx else if eu == nsERR then "err" else ""
+  let code : Seq := single (Atomic.ofQN { uri := eu, loc := el, pfx })
+  let value : Seq := e.value.map .atom
+  -- $err:map (XQuery 4.0 §4.20.2): the entries that have a value
+  let m : List (Atomic × Seq) := [(Atomic.ofStr "code", code), (Atomic.ofStr "description", sStr e.msg)] ++
+    (if value.isEmpty then [] else [(Atomic.ofStr "value", value)])
+  [(n "code", code), (n "description", sStr e.msg), (n "value", value), (n "module", []),
    (n "line-number", []), (n "column-number", []), (n "additional", []),
    (n "stack-trace", []),
-   (n "map", [.map [(Atomic.ofStr "code", code), (Atomic.ofStr "description", sStr e.msg)]])]
+   (n "map", [.map m])]
 
 /-! ## The dispatcher -/
 
@@ -800,7 +842,10 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
         | none => .error e
     match fin with
     | some f =>
-      let _ ← cb.eval env f
+      -- the finally clause must give the empty sequence (XQTY0153); its
+      -- error replaces the result of the try and catch clauses (§4.20.3)
+      let fv ← cb.eval env f
+      if !fv.isEmpty then err "XQTY0153" "a finally clause gave a non-empty value"
       r
     | none => r
   | "typeswitch" =>

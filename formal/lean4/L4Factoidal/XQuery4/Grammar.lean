@@ -135,16 +135,26 @@ def expandRefs (t : String) : Except Err String := do
 /-- One FLWOR clause as parsed. -/
 inductive Clause where
   | forI (kind : String) (v : QN) (vt : IType) (pos : QN) (allowing : Bool) (src : Expr)
-  | forKV (k v pos : QN) (src : Expr)
+  | forKV (k v pos : QN) (kt vt : IType) (src : Expr)
   | letC (v : QN) (vt : IType) (e : Expr)
   | whereC (e : Expr)
   | whileC (e : Expr)
   | countC (v : QN)
   | orderC (keys : List Expr) (specs : List String)
-  | groupC (keys : List Expr) (vs : List QN)
+  | groupC (keys : List Expr) (vs : List QN) (tys : List IType) (colls : List String)
   | window (sliding : Bool) (v : QN) (vt : IType) (src : Expr) (s : List QN) (sc : Expr)
       (e : List QN) (ec : Option Expr) (only : Bool)
 deriving Inhabited
+
+/-- The variables a clause binds. -/
+def Clause.binds : Clause → List QN
+  | .forI _ v _ pos _ _ => [v, pos]
+  | .forKV k v pos _ _ _ => [k, v, pos]
+  | .letC v _ _ => [v]
+  | .countC v => [v]
+  | .groupC _ vs _ _ => vs
+  | .window _ v _ _ s _ e _ _ => v :: s ++ e
+  | _ => []
 
 /-- Can the clause be written as XPath `for`/`let`/`if`? -/
 def Clause.simple : Clause → Bool
@@ -160,23 +170,27 @@ def flworToXPath : List Clause → Expr → Expr
   | .forI kind v vt pos _ src :: cs, ret =>
       .forE (if kind == "member" then .member else .item) v none
         (if isNoName pos then none else some pos) vt src (flworToXPath cs ret)
-  | .forKV k v pos src :: cs, ret =>
+  | .forKV k v pos kt vt src :: cs, ret =>
+      -- the declared type of the value variable is checked by a let
+      -- binding, as the XPath parser does
+      let body := flworToXPath cs ret
       .forE .entry (if isNoName k then { uri := "#none", loc := "#key" } else k)
         (if isNoName v then none else some v)
-        (if isNoName pos then none else some pos) (.seq .item .star) src (flworToXPath cs ret)
+        (if isNoName pos then none else some pos) kt src
+        (if isNoName v then body else .letE v vt (.var v) body)
   | .letC v vt e :: cs, ret => .letE v vt e (flworToXPath cs ret)
   | .whereC c :: cs, ret => .ifE c (flworToXPath cs ret) (.seq [])
   | _ :: cs, ret => flworToXPath cs ret
 
 def Clause.toExt : Clause → Expr
   | .forI kind v vt pos allowing src => .ext "c:for" [src] [vt] [v, pos] [kind, if allowing then "1" else "0"]
-  | .forKV k v pos src => .ext "c:forkv" [src] [] [k, v, pos] []
+  | .forKV k v pos kt vt src => .ext "c:forkv" [src] [kt, vt] [k, v, pos] []
   | .letC v vt e => .ext "c:let" [e] [vt] [v] []
   | .whereC e => .ext "c:where" [e] [] [] []
   | .whileC e => .ext "c:while" [e] [] [] []
   | .countC v => .ext "c:count" [] [] [v] []
   | .orderC ks sp => .ext "c:order" ks [] [] sp
-  | .groupC ks vs => .ext "c:group" ks [] vs []
+  | .groupC ks vs tys cs => .ext "c:group" ks tys vs cs
   | .window sl v vt src s sc e ec only =>
       .ext "c:window" (src :: sc :: ec.toList) [vt] (v :: s ++ e) [if sl then "sliding" else "tumbling", if only then "1" else "0"]
 
@@ -221,35 +235,45 @@ def isFlworStart : P Bool := do
     if ← kwThenKw "for" k2 then return true
   pure false
 
+/-- The variables of one for binding have distinct names (XQST0089). -/
+def distinctVars (vs : List QN) : P Unit := do
+  let named := vs.filter (fun q => !isNoName q)
+  if named.length != named.eraseDups.length then
+    throw { code := "XQST0089", msg := "a for binding uses one variable name twice" }
+
 def pForBinding (sp : SubParsers) : P Clause := do
   if ← eatKw "member" then
     let v ← pVar
     let vt ← pOptType sp
     let pos ← if ← eatKw "at" then pVar else pure noName
+    distinctVars [v, pos]
     expectKw "in"
     pure (.forI "member" v vt pos false (← subE sp.exprSingle))
   else if ← atKw "key" then
     adv 3
     let k ← pVar
-    let _ ← pOptType sp
+    let kt ← pOptType sp
     let v ← if ← eatKw "value" then pVar else pure noName
-    let _ ← if isNoName v then pure (.seq .item .star) else pOptType sp
+    let vt ← if isNoName v then pure (.seq .item .star) else pOptType sp
     let pos ← if ← eatKw "at" then pVar else pure noName
+    distinctVars [k, v, pos]
     expectKw "in"
-    pure (.forKV k v pos (← subE sp.exprSingle))
+    pure (.forKV k v pos kt vt (← subE sp.exprSingle))
   else if ← atKw "value" then
     adv 5
     let v ← pVar
-    let _ ← pOptType sp
+    let vt ← pOptType sp
     let pos ← if ← eatKw "at" then pVar else pure noName
+    distinctVars [v, pos]
     expectKw "in"
-    pure (.forKV noName v pos (← subE sp.exprSingle))
+    pure (.forKV noName v pos (.seq .item .star) vt (← subE sp.exprSingle))
   else
     let v ← pVar
     let vt ← pOptType sp
     let allowing ← if ← eatKw "allowing" then expectKw "empty"; pure true else pure false
     let pos ← if ← eatKw "at" then pVar else pure noName
     if ← eatKw "score" then synErr "full-text score variables are not supported"
+    distinctVars [v, pos]
     expectKw "in"
     pure (.forI "item" v vt pos allowing (← subE sp.exprSingle))
 
@@ -311,11 +335,13 @@ def pFlwor (sp : SubParsers) : P Expr := do
         ws
         let c ← read
         let j ← get
-        let open_ := chAt c.s (j+1)
+        let k0 := skipWsF c.s (c.s.size + 1) 0 (j + 1)
+        let open_ := chAt c.s k0
         if chAt c.s j == '$' && (open_ == '(' || open_ == '[' || open_ == '{') then
           -- destructuring (XPath 4.0 §4.12.2), as the XPath parser
           -- desugars it: a fresh variable, then one binding per name
-          set (j + 2)
+          -- ("$(" is two tokens: whitespace and comments may separate them)
+          set (k0 + 1)
           let close := if open_ == '(' then ")" else if open_ == '[' then "]" else "}"
           let mut vs : Array (QN × IType) := #[]
           for _ in [0:1000] do
@@ -330,6 +356,9 @@ def pFlwor (sp : SubParsers) : P Expr := do
           let e ← subE sp.exprSingle
           let tmp : QN := { uri := "#let", loc := toString j }
           cs := cs.push (.letC tmp st e)
+          -- a map or array binding needs exactly one map or array (XPTY0004)
+          if open_ != '(' then
+            cs := cs.push (.letC { uri := "#let", loc := toString j ++ "!" } dflt (.var tmp))
           let k := vs.size
           for ((v, vt), idx) in vs.toList.zip (List.range k) do
             let pos : Expr := .lit (Atomic.ofInt (idx + 1))
@@ -350,6 +379,13 @@ def pFlwor (sp : SubParsers) : P Expr := do
     else if ← atKw "while" then
       expectKw "while"
       cs := cs.push (.whileC (← subE sp.exprSingle))
+    else if ← atKw "trace" then
+      -- TraceClause (XQuery 4.0 §4.13.11): `fn:trace` of the expression for
+      -- each tuple; the tuple stream is unchanged
+      expectKw "trace"
+      let e ← subE sp.exprSingle
+      let tmp : QN := { uri := "#trace", loc := toString cs.size }
+      cs := cs.push (.letC tmp (.seq .item .star) (.call { uri := nsFN, loc := "trace" } [some e] []))
     else if ← kwThen "count" '$' then
       expectKw "count"
       cs := cs.push (.countC (← pVar))
@@ -365,29 +401,40 @@ def pFlwor (sp : SubParsers) : P Expr := do
         let emp ← if ← eatKw "empty" then
             if ← eatKw "greatest" then pure "g" else expectKw "least"; pure "l"
           else pure "?"
-        if ← eatKw "collation" then
-          let _ ← pStringLit
-        specs := specs.push ((if desc then "d" else "a") ++ emp)
+        let coll ← if ← eatKw "collation" then pure ("|" ++ (← pStringLit)) else pure ""
+        specs := specs.push ((if desc then "d" else "a") ++ emp ++ coll)
         if !(← eatS ",") then break
       -- "?" (no empty modifier) takes the prolog default: the runtime reads specs[0]
-      cs := cs.push (.orderC keys.toList ("l" :: specs.toList.map (fun s => if s.endsWith "?" then (s.dropEnd 1).toString else s)))
+      cs := cs.push (.orderC keys.toList ("l" :: specs.toList.map (fun s => s.replace "?" "")))
     else if ← kwThenKw "group" "by" then
       expectKw "group"; expectKw "by"
+      -- a grouping spec with an initializing expression is a let clause
+      -- before the group by clause (§4.13.7); its declared type applies
+      -- to the atomized grouping key
       let mut keys : Array Expr := #[]
       let mut vs : Array QN := #[]
+      let mut tys : Array IType := #[]
+      let mut colls : Array String := #[]
+      let mut lets : Array Clause := #[]
       for _ in [0:10000] do
         let v ← pVar
+        let hasType ← atKw "as"
         let vt ← pOptType sp
-        let e ← if ← eatS ":=" then
-            let x ← subE sp.exprSingle
-            pure (Expr.letE v vt x (.var v))
-          else pure (.var v)
-        if ← eatKw "collation" then
-          let _ ← pStringLit
-        keys := keys.push e
+        if ← eatS ":=" then
+          lets := lets.push (.letC v (.seq .item .star) (← subE sp.exprSingle))
+        else
+          if hasType then synErr "a grouping variable without an expression takes no type"
+          -- the variable must be bound by an earlier clause of this FLWOR
+          if !(lets.toList ++ cs.toList).any (fun c => c.binds.contains v) then
+            throw { code := "XQST0094", msg := "grouping variable $" ++ v.show ++ " is not bound by a clause of the FLWOR expression" }
+        let coll ← if ← eatKw "collation" then pStringLit else pure ""
+        keys := keys.push (.var v)
         vs := vs.push v
+        tys := tys.push vt
+        colls := colls.push coll
         if !(← eatS ",") then break
-      cs := cs.push (.groupC keys.toList vs.toList)
+      cs := cs ++ lets
+      cs := cs.push (.groupC keys.toList vs.toList tys.toList colls.toList)
     else if ← eatKw "return" then
       ret := some (← subE sp.exprSingle)
       break

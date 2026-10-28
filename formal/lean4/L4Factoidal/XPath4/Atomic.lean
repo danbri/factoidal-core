@@ -40,23 +40,6 @@ namespace L4Factoidal.XPath4
 
 open L4Factoidal.XSD
 
-/-! ## Errors -/
-
-/-- A dynamic or static error, with its `err:` code (local name only,
-    for example `"XPTY0004"`). -/
-structure Err where
-  code : String
-  msg  : String := ""
-  /-- The namespace of the error code; empty for `err:` (the
-      `http://www.w3.org/2005/xqt-errors` namespace). Set by `fn:error`
-      with a QName in another namespace (XQuery 4.0 `catch`). -/
-  uri  : String := ""
-deriving Repr, Inhabited
-
-abbrev M := Except Err
-
-def err {α} (code : String) (msg : String := "") : M α := .error { code, msg }
-
 /-! ## Names -/
 
 /-- An expanded QName. Equality ignores the prefix. -/
@@ -125,6 +108,32 @@ structure Atomic where
   ty : AType
   v  : AV
 deriving Repr, Inhabited
+
+/-! ## Errors -/
+
+/-- A dynamic or static error, with its `err:` code (local name only,
+    for example `"XPTY0004"`). -/
+structure Err where
+  code : String
+  msg  : String := ""
+  /-- The namespace of the error code; empty for `err:` (the
+      `http://www.w3.org/2005/xqt-errors` namespace). Set by `fn:error`
+      with a QName in another namespace (XQuery 4.0 `catch`). -/
+  uri  : String := ""
+  /-- The prefix of the error code QName (`fn:error`). -/
+  pfx  : String := ""
+  /-- The error code QName is in no namespace (`fn:error(xs:QName('a'))`). -/
+  noNs : Bool := false
+  /-- The error value (the third argument of `fn:error`, F&O 4.0 §3.1.1):
+      its atomic items; a node or function item is kept as its string
+      value, as `xs:untypedAtomic`. -/
+  value : List Atomic := []
+deriving Repr, Inhabited
+
+abbrev M := Except Err
+
+def err {α} (code : String) (msg : String := "") : M α := .error { code, msg }
+
 
 def Atomic.ofStr (s : String) : Atomic := ⟨.b .string, .str s⟩
 def Atomic.ofBool (b : Bool) : Atomic := ⟨.b .boolean, .bool b⟩
@@ -244,9 +253,10 @@ def fmtFloating (isF32 : Bool) (f : Float) : String :=
     let (d, q) := shortestDigits isF32 f
     let ds := (toString d).toList
     let ds := let t := stripTrailingZeros ds; if t.isEmpty then ['0'] else t
-    let a := f.abs
+    -- the range test is on the value the shortest digits denote, so an
+    -- xs:float such as 1.0E-6 (stored as 9.99999997E-7) is 0.000001
     let body :=
-      if a ≥ 1e-6 && a < 1e6 then
+      if q ≥ -6 && q ≤ 5 then
         -- decimal notation
         if q ≥ 0 then
           let qn := q.toNat

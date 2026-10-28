@@ -1099,11 +1099,15 @@ def fnTable : List (String × LibFn) := [
       if ok then found := true; break
     pure (sBool found)),
   -- errors and diagnostics
-  ent "error" (fun _ _ a => do
-    let (code, uri) := match optAtom (argN a 0) with
-      | some ⟨_, .qn q⟩ => (q.loc, if q.uri == nsERR then "" else q.uri)
-      | _ => ("FOER0000", "")
-    throw { code, msg := strOf (argN a 1), uri }),
+  ent "error" (fun _ e a => do
+    let (code, uri, pfx, noNs) := match optAtom (argN a 0) with
+      | some ⟨_, .qn q⟩ => (q.loc, (if q.uri == nsERR then "" else q.uri), q.pfx, q.uri == "")
+      | _ => ("FOER0000", "", "err", false)
+    -- the error value: atomic items as they are, other items atomized
+    let value := (argN a 2).flatMap (fun i => match i with
+      | .atom x => [x]
+      | _ => match e.atomize [i] with | .ok xs => xs | .error _ => [])
+    throw { code, msg := strOf (argN a 1), uri, pfx, noNs, value }),
   ent "trace" (fun _ _ a => pure (argN a 0)),
   ent "message" (fun _ _ _ => pure []),
   ent "default-collation" (fun _ e _ => pure (sStr e.defaultCollation)),
