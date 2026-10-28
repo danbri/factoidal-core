@@ -82,10 +82,13 @@ def defective : List (String × String) :=
   ++ [ ("duration-to-seconds-016", "https://github.com/danbri/factoidal/issues/1158") ]
 
 /-- Defective in XPath mode only: the expected result reads an XQuery
-    predefined entity reference in a string literal (XPath 4.0 has none). -/
+    predefined entity reference or a character reference in a string
+    literal (XPath 4.0 has neither). -/
 def defectiveXPath : List (String × String) :=
   [ ("map-to-element-014", "https://github.com/danbri/factoidal/issues/1159"),
-    ("map-to-element-021", "https://github.com/danbri/factoidal/issues/1159") ]
+    ("map-to-element-021", "https://github.com/danbri/factoidal/issues/1159"),
+    ("serialize-csv-002", "https://github.com/danbri/factoidal/issues/1159"),
+    ("serialize-csv-003", "https://github.com/danbri/factoidal/issues/1159") ]
 
 end Harness.Qt4Defective
 
