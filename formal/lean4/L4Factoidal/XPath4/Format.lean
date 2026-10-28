@@ -525,16 +525,32 @@ def decOfFloatShort (isF32 : Bool) (x : Float) : Dec :=
   let m : Int := if x < 0 then -(d : Int) else d
   if e ≥ 0 then Dec.norm ⟨m * (10 : Int) ^ e.toNat, 0⟩ else Dec.norm ⟨m, (-e).toNat⟩
 
+/-- The exact decimal value of the absolute value of a finite double. -/
+def floatExactDec (x : Float) : Dec :=
+  let bits := x.toBits.toNat
+  let e := (bits >>> 52) % 2048
+  let frac := bits % (2 ^ 52)
+  let (m, p) : Nat × Int := if e == 0 then (frac, -1074) else (frac + 2 ^ 52, (e : Int) - 1075)
+  if p ≥ 0 then ⟨((m * 2 ^ p.toNat : Nat) : Int), 0⟩
+  else Dec.norm ⟨((m * 5 ^ (-p).toNat : Nat) : Int), (-p).toNat⟩
+
 def pow10Dec (k : Int) : Dec := if k ≥ 0 then ⟨(10 : Int) ^ k.toNat, 0⟩ else ⟨1, (-k).toNat⟩
 
 def decMul (a b : Dec) : Dec := Dec.norm ⟨a.mantissa * b.mantissa, a.scale + b.scale⟩
 
-def formatSub (f : DecFormat) (sp : SubPic) (absv : Dec) : String := Id.run do
-  let v := if sp.pct then decMul absv (Dec.ofInt 100) else if sp.pml then decMul absv (Dec.ofInt 1000) else absv
+/-- Format the absolute value `absv`. `adjusted`: the percent or per-mille
+    multiplication is done; `mex`: the mantissa and exponent are given
+    (for a float or double, whose mantissa keeps its type, §5.5.3). -/
+def formatSub (f : DecFormat) (sp : SubPic) (absv : Dec) (adjusted : Bool := false)
+    (mex : Option (Dec × Int) := none) : String := Id.run do
+  let v := if adjusted then absv
+    else if sp.pct then decMul absv (Dec.ofInt 100) else if sp.pml then decMul absv (Dec.ofInt 1000) else absv
   -- exponent
   let mut m := v
   let mut ex : Int := 0
-  if sp.minExp > 0 && v.mantissa != 0 then
+  if let some (m0, e0) := mex then
+    m := m0; ex := e0
+  else if sp.minExp > 0 && v.mantissa != 0 then
     let (ip, fp) := decDigits v
     -- position of the decimal exponent: v = 0.d1d2.. × 10^k
     let k : Int := if !ip.isEmpty then ip.length else -((fp.takeWhile (· == '0')).length : Int)
@@ -593,11 +609,30 @@ def formatNumberWith (f : DecFormat) (x : Option Num) (pic : String) : M String 
       let big := v.isInf || ((sp.pct || sp.pml) && (v * 1000).isInf)
       if big then return (sp.pre ++ f.infinity ++ sp.suf)
     | _ => pure ()
+    match n with
+    | .f v | .g v =>
+      -- F&O 4.0 §5.5.3: the adjusted number and the mantissa keep the
+      -- type of the input; then the shortest decimal that converts back
+      let isF32 : Bool := match n with | .f _ => true | _ => false
+      let rnd (y : Float) : Float := if isF32 then y.toFloat32.toFloat else y
+      let k : Float := if sp.pct then 100 else if sp.pml then 1000 else 1
+      let adj := rnd (v.abs * k)
+      let short (y : Float) : Dec := let x := decOfFloatShort isF32 y; ⟨x.mantissa.natAbs, x.scale⟩
+      let d := short adj
+      if sp.minExp > 0 && adj != 0 then
+        let (ip, fp) := decDigits d
+        let pos : Int := if !ip.isEmpty then ip.length else -((fp.takeWhile (· == '0')).length : Int)
+        let ex := pos - sp.scale
+        -- M = adj / 10^ex, as the nearest value of the input's type
+        let exact := decMul (floatExactDec adj) (pow10Dec (-ex))
+        let mF := rnd (Float.ofScientific exact.mantissa.natAbs true exact.scale)
+        pure (formatSub f sp d true (some (short mF, ex)))
+      else pure (formatSub f sp d true)
+    | _ =>
     let d : Dec := match n with
       | .i v => Dec.ofInt v.natAbs
       | .d v => ⟨v.mantissa.natAbs, v.scale⟩
-      | .f v => let x := decOfFloatShort true v; ⟨x.mantissa.natAbs, x.scale⟩
-      | .g v => let x := decOfFloatShort false v; ⟨x.mantissa.natAbs, x.scale⟩
+      | _ => Dec.zero
     pure (formatSub f sp d)
 
 /-! ## Dates and times (§9.8) -/
@@ -1147,7 +1182,10 @@ def formatTable : List (String × LibFn) := [
           match v with
           | [.atom q] => fmtName := some (match q.v with | .qn n => n.eqn | _ => "Q{}" ++ q.str)
           | _ => pure ()
-        else props := props ++ [(k.str, strOf v)]
+        else
+          -- the property values are atomized (an array gives its members)
+          let as ← e.atomize v
+          props := props ++ [(k.str, String.join (as.map Atomic.str))]
     | [.atom s] =>
       let nm := s.str.trim
       if nm.startsWith "Q{" then fmtName := some nm
