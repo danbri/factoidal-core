@@ -174,21 +174,28 @@ def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
     if isPartial then pure [.fn (.papp fi fixed.toList)]
     else cb.apply fi (fixed.toList.map (·.getD []))
 
-/-- A named function reference `q#k` to a declared function: the
-    defaults of the omitted parameters are computed now, in the focus
-    of the reference. -/
-def refUser? (applyF : Item → List Seq → M Seq) (e : Env) (q : QN) (k : Nat) : Option (M Seq) :=
+/-- The closure entry that keeps the focus of a function reference. -/
+def refFocusKey : QN := { uri := "#xqr", loc := "focus" }
+
+/-- A named function reference `q#k` to a declared function (XQuery 4.0
+    §4.5.4). When the function has more parameters than `k`, the result
+    is a function item of arity `k` whose call calls the function with
+    the defaults of the omitted parameters, computed when the item is
+    called, in the focus that the reference captured. -/
+def refUser? (_applyF : Item → List Seq → M Seq) (e : Env) (q : QN) (k : Nat) : Option (M Seq) :=
   match userDecl? e q k with
   | none => none
-  | some (fi, lo, dflts) => some do
-    let m := match fi with | .fn (.inline ps _ _ _ _) => ps.length | _ => k
-    if k == m then return [fi]
-    let mut fixed : List (Option Seq) := List.replicate k none
-    for i in [k:m] do
-      match dflts[i - lo]? with
-      | some d => fixed := fixed ++ [some (← applyF d (focusArgs e))]
-      | none => err "XPST0017" ("missing argument of " ++ q.show)
-    pure [.fn (.papp fi fixed)]
+  | some (fi, _, _) => some do
+    match fi with
+    | .fn (.inline ps r _ _ cl) =>
+      if k == ps.length then return [fi]
+      let ps' := ps.take k
+      let call : Expr := .call q (ps'.map (fun (v, _) => some (.var v))) []
+      let (body, focus) := match e.ctx with
+        | some c => (Expr.smap (.var refFocusKey) call, [(refFocusKey, c)])
+        | none => (call, [])
+      pure [.fn (.inline ps' r body false (focus ++ staticVars e.vars ++ metaEntries cl))]
+    | _ => pure [fi]
 
 /-! ## Encodings of names in `ext` nodes -/
 
