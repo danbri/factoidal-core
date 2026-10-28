@@ -77,7 +77,19 @@ unsupported: this processor never uses those name rules.
   calls `XML.validate`) but `fn:system-properties` reported false. It is
   now a setting (`Env.dtdValidation`, on by default). `fn:doc` resolves the
   external DTD subset and external entities against the document's URI,
-  and the runner reads the files that an XML resource names.
+  and the runner reads the files that an XML resource names. After DTD
+  validation, whitespace text in element content is dropped (XDM 4.0
+  §7.6.3).
+* The `xinclude` option: XInclude 1.1 (`XPath4.XInclude`): `parse="xml"`
+  and `parse="text"`, `xi:fallback`, loop detection, base URI fixup
+  (`xml:base`) and default-namespace fixup; `xpointer` is not evaluated (a
+  resource error, so the fallback applies). A setting (`Env.xinclude`), as
+  the DTD option. Included resources need `trust-external`.
+* `fn:doc` with other parsing options (`strip-space`, `dtd-validation`,
+  `xinclude`, `xsd-validation`) gives another document node (option
+  `stable`, F&O 4.0 §14.6.1).
+* `l4qt4 --list-fails` writes the reason of every unsupported case: the
+  first dependency that is not satisfied, or the environment.
 
 ## 4. Static typing: dropped by the 4.0 specifications
 
@@ -145,6 +157,14 @@ Quot.sound).
 * `isXmlCharV_of_xml10`, `isXmlCharV_true_eq`: a character reference that
   the XML 1.0 grammar reads is read the same with XML 1.1; the XML 1.1
   class is `XML.isXml11CharCode`.
+
+`formal/lean4/L4Factoidal/XPath4/XIncludeTheorems.lean`:
+
+* `expand_noXi`: `XInclude.expand` gives back the node itself when no
+  element of the subtree is in the XInclude namespace. So the `xinclude`
+  option changes nothing for such a document. `#guard`s in
+  `XPath4/XInclude.lean` test text and XML inclusion, the fallback, a
+  resource error and a loop.
 
 Open: that `XPath4.buildNode` sets `inscope` to `convScope` of the scope
 that `XML.applyDeclarations` computes for the same element (tested by the

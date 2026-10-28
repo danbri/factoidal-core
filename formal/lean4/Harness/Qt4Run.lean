@@ -41,6 +41,7 @@ import L4Factoidal.XSD11.Load
 import L4Factoidal.XPath4.Theorems
 import L4Factoidal.XPath4.OptionalTheorems
 import L4Factoidal.XQuery4.XmlVersionTheorems
+import L4Factoidal.XPath4.XIncludeTheorems
 import L4Factoidal.XQuery4.Module
 import L4Factoidal.XQuery4.Theorems
 import L4Factoidal.XPath4.SerializeTheorems
