@@ -35,6 +35,9 @@ structure Env where
       `fn:json-doc`, `fn:doc`, and external entities and DTDs when
       `trust-external` is true. The evaluator itself does no I/O. -/
   resources : List (String × String) := []
+  /-- The decimal formats of the static context: the expanded name as
+      `Q{uri}local` (`""` for the unnamed one) and its properties. -/
+  decimalFormats : List (String × List (String × String)) := []
   defaultCollation : String := "http://www.w3.org/2005/xpath-functions/collation/codepoint"
   baseUri : String := ""
 deriving Inhabited

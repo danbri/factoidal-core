@@ -100,6 +100,7 @@ structure EnvSpec where
   baseUri : String := ""
   /-- `resource` elements: (uri, file). -/
   resources : List (String × String) := []
+  decimalFormats : List (String × List (String × String)) := []
 deriving Inhabited
 
 def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
@@ -119,7 +120,19 @@ def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
     | "collection" => s := { s with unsupported := some "collection" }
     | "resource" =>
         s := { s with resources := s.resources ++ [(attrD c "uri", dir ++ "/" ++ attrD c "file")] }
-    | "decimal-format" => s := { s with unsupported := some "decimal-format" }
+    | "decimal-format" =>
+        let ats := c.elementAttrs
+        let nsOf (p : String) : String :=
+          match ats.find? (fun a => a.name == "xmlns:" ++ p) with
+          | some a => a.value
+          | none => (s.ns.lookup p).getD ""
+        let key := match attr c "name" with
+          | none => ""
+          | some n => match n.splitOn ":" with
+            | [p, l] => "Q{" ++ nsOf p ++ "}" ++ l
+            | _ => "Q{}" ++ n
+        let props := (ats.filter (fun a => a.name != "name" && !a.name.startsWith "xmlns")).map (fun a => (a.name, a.value))
+        s := { s with decimalFormats := s.decimalFormats ++ [(key, props)] }
     | "collation" => s := { s with unsupported := some "collation" }
     | "static-base-uri" => s := { s with baseUri := attrD c "uri" }
     | "function-library" => s := { s with unsupported := some "function-library" }
@@ -427,6 +440,7 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) : IO (Exce
       if role == "." then env := { env with ctx := some [.node (NodeRef.mk' idx 0)], pos := 1, size := 1 }
       else if role.startsWith "$" then
         env := env.bind { uri := "", loc := (role.drop 1).toString } [.node (NodeRef.mk' idx 0)]
+  env := { env with decimalFormats := spec.decimalFormats }
   for (uri, file) in spec.resources do
     match ← readFileSafe file with
     | some txt => env := { env with resources := (uri, txt) :: env.resources }
