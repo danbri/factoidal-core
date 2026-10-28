@@ -16,8 +16,9 @@ unless the options keep them, adjacent text merged, whitespace-only text
 removed under `strip` and `normalize` outside `xml:space="preserve"`),
 JNodes (by their values), and function items.
 
-Collations: the Unicode codepoint collation only (another raises
-`FOCH0002`).
+Collations: those of `XPath4.Collation` (strings are equal when they
+compare equal under the collation); the default collation when the
+options name none.
 -/
 import L4Factoidal.XPath4.Serialize
 
@@ -39,6 +40,7 @@ structure DEOpts where
   unordered : List QN := []
   whitespace : String := "preserve"
   ignoreEmpty : Bool := false
+  coll : Coll := .codepoint
 deriving Inhabited
 
 def deBoolKeys : List String :=
@@ -46,18 +48,14 @@ def deBoolKeys : List String :=
    "in-scope-namespaces", "map-order", "namespace-prefixes", "nilled-property", "ordered",
    "processing-instructions", "timezones", "type-annotations", "type-variety", "typed-values"]
 
-def collationCheck (c : String) : M Unit :=
-  if c == "http://www.w3.org/2005/xpath-functions/collation/codepoint" then pure ()
-  else err "FOCH0002" ("unsupported collation " ++ c)
-
 def parseDEOpts (e : Env) (opts : Seq) : M DEOpts := do
   match opts with
-  | [] => pure {}
+  | [] => pure { coll := ← e.collation [] }
   | [.atom a] =>
-    if a.isStringLike then collationCheck a.str; pure {}
+    if a.isStringLike then pure { coll := ← collationOf e.baseUri a.str }
     else err "XPTY0004" "the options of deep-equal must be a map or a collation name"
   | [.map kvs] =>
-    let mut o : DEOpts := {}
+    let mut o : DEOpts := { coll := ← e.collation [] }
     for (k, v) in kvs do
       let key := k.str
       let known := deBoolKeys.contains key || ["collation", "normalization-form", "whitespace",
@@ -86,7 +84,7 @@ def parseDEOpts (e : Env) (opts : Seq) : M DEOpts := do
       else match key with
         | "collation" =>
           match ← e.coerceTo "xs:string" v key with
-          | [.atom a] => collationCheck a.str
+          | [.atom a] => o := { o with coll := ← collationOf e.baseUri a.str }
           | _ => err "XPTY0004" "collation must be xs:string"
         | "normalization-form" =>
           match ← e.coerceTo "xs:string" v key with
@@ -119,7 +117,7 @@ def parseDEOpts (e : Env) (opts : Seq) : M DEOpts := do
 def DEOpts.equalStrings (o : DEOpts) (a b : String) : Bool :=
   let n1 (s : String) := if o.whitespace == "normalize" then normSpace s else s
   let n2 (s : String) := if o.normForm == "" then s else (Unicode.normalize o.normForm s).getD s
-  n2 (n1 a) == n2 (n1 b)
+  if o.coll.isCodepoint then n2 (n1 a) == n2 (n1 b) else o.coll.eq (n2 (n1 a)) (n2 (n1 b))
 
 def isDateTimeType (a : Atomic) : Bool :=
   match a.v with

@@ -80,6 +80,9 @@ def specOk (v : String) : Bool :=
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
   f == "higherOrderFunctions" || f == "serialization"
+    -- UCA collations: unknown parameters are ignored with fallback=yes,
+    -- and the parameters of `XPath4.Collation` are implemented
+    || f == "simple-uca-fallback" || f == "advanced-uca-fallback"
 
 def depOk (d : Node) : Bool :=
   let ty := attrD d "type"
@@ -106,6 +109,8 @@ structure EnvSpec where
   ctxSelect : Option String := none
   unsupported : Option String := none
   baseUri : String := ""
+  /-- A `collation` element with `default="true"`. -/
+  defaultCollation : Option String := none
   /-- `resource` elements: (uri, file). -/
   resources : List (String × String) := []
   decimalFormats : List (String × List (String × String)) := []
@@ -141,7 +146,11 @@ def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
             | _ => "Q{}" ++ n
         let props := (ats.filter (fun a => a.name != "name" && !a.name.startsWith "xmlns")).map (fun a => (a.name, a.value))
         s := { s with decimalFormats := s.decimalFormats ++ [(key, props)] }
-    | "collation" => s := { s with unsupported := some "collation" }
+    | "collation" =>
+        let u := attrD c "uri"
+        match collationOf "" u with
+        | .ok _ => if attrD c "default" == "true" then s := { s with defaultCollation := some u }
+        | .error _ => s := { s with unsupported := some ("collation " ++ u) }
     | "static-base-uri" => s := { s with baseUri := attrD c "uri" }
     | "function-library" => s := { s with unsupported := some "function-library" }
     | _ => pure ()
@@ -504,6 +513,7 @@ def scanResources (root dir src : String) : IO (List (String × String) × List 
 def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) : IO (Except String Env) := do
   if let some why := spec.unsupported then return .error why
   let mut env : Env := { ns := spec.ns, baseUri := spec.baseUri }
+  if let some c := spec.defaultCollation then env := { env with defaultCollation := c }
   for (role, file, uri) in spec.sources do
     let doc ← match (← cache.get).lookup file with
       | some d => pure (some d)
