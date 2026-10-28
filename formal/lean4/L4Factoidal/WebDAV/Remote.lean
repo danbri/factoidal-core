@@ -26,14 +26,18 @@ Credentials (mount file key `auth`):
   a self-issued credential (lws10-authn-ssi-cid) whose subject is the
   key's `did:key` (multicodec 0x1200, the compressed point, base58btc) and
   whose `kid` is `did:key:z…#z…`, which the authorization server checks
-  (`Authz.SubjectToken.selfIssuedKey`). A key file that does not exist is
-  made from 32 bytes of the host's random source (`newKeyJwk`).
+  (`Authz.SubjectToken.selfIssuedKey`). The identifier and the key id are
+  the LWS client's (`LWS.Client.agentOfSecret`), so
+  `LWS.Client.KeysTheorems` (the server reads back the key the client
+  names) covers this mount too. A key file that does not exist is made from
+  32 bytes of the host's random source (`newKey`).
 * `bearer`: an access token in a file (`token-file`), sent to every URL
   under the mount's `url`.
 -/
 import L4Factoidal.WebDAV.Local
 import L4Factoidal.WebDAV.Config
 import L4Factoidal.LWS.Client.Machine
+import L4Factoidal.LWS.Client.Keys
 import L4Factoidal.VC.Multibase
 import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.JSON.Serialize
@@ -92,16 +96,6 @@ def answerOfFail (url : String) (op : BOp) (err : Json) : BAns :=
 
 /-! ## Credentials -/
 
-/-- The `did:key` of a P-256 public key (`x || y`, 64 bytes), and the
-verification method id `did:key:z…#z…`. -/
-def didKeyOfPublic (xy : ByteArray) : Option (String × String) :=
-  if xy.size != 64 then none else
-  let x := xy.extract 0 32
-  let yLast := xy.get! 63
-  let prefixByte : UInt8 := if yLast % 2 == 1 then 3 else 2
-  let mb := "z" ++ L4Factoidal.VC.Multibase.base58Encode ([0x80, 0x24, prefixByte] ++ x.data.toList)
-  some ("did:key:" ++ mb, "did:key:" ++ mb ++ "#" ++ mb)
-
 /-- The private key (`d`) of a P-256 JWK document. -/
 def secretOfJwk (text : String) : Except String ByteArray := do
   let j ← match parseJson? text with
@@ -132,7 +126,7 @@ def newKey (sha : ByteArray → ByteArray) (toPublic : ByteArray → Option Byte
 /-- The client session of a mount: a self-issued credential signed with the
 key (`did-key`), the access token for every URL under the mount (`bearer`),
 or nothing (`none`). -/
-def sessionOf (m : Mount) (toPublic : ByteArray → Option ByteArray)
+def sessionOf (m : Mount) (C : L4Factoidal.Authz.Crypto)
     (key : Option ByteArray) (token : Option String) : Except String Session :=
   match m.auth with
   | .none => .ok {}
@@ -144,9 +138,9 @@ def sessionOf (m : Mount) (toPublic : ByteArray → Option ByteArray)
     match key with
     | none => .error s!"{m.name}: no key was read from {m.keyFile}"
     | some d =>
-      match (toPublic d).bind didKeyOfPublic with
+      match L4Factoidal.LWS.Client.agentOfSecret C .es256 d with
       | none => .error s!"{m.name}: the key in {m.keyFile} is not a valid P-256 private key"
-      | some (did, kid) => .ok { selfIssued := some { subject := did, keyId := kid, privateKey := d } }
+      | some a => .ok { selfIssued := some a.key }
 
 /-- The identity a session acts as, for the start message of the host. -/
 def sessionSubject (s : Session) : Option String := s.selfIssued.map (·.subject)
@@ -156,8 +150,6 @@ def sessionSubject (s : Session) : Option String := s.selfIssued.map (·.subject
 #guard (remoteOp "https://s.example/a/" (.delete "/c/")).recursive
 #guard (answerOfFail "u" (.head "/x") (.object [("code", .string "status"), ("status", .number "404")])).status == 404
 #guard (answerOfFail "u" (.head "/x") (.object [("code", .string "transport")])).status == 0
--- did:key of a point with an even y: prefix 0x02.
-#guard ((didKeyOfPublic (ByteArray.mk (Array.replicate 64 0))).map (·.1.take 10 |>.toString)) == some "did:key:zD"
 #guard (match secretOfJwk "{\"kty\":\"EC\",\"crv\":\"P-256\",\"d\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAE\"}" with
         | .ok d => d.size == 32 | .error _ => false)
 #guard (secretOfJwk "{\"kty\":\"OKP\"}").toOption.isNone
