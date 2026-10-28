@@ -39,6 +39,9 @@ def vOutUri : QN := xv "output-uri"
 def vMode : QN := xv "mode"
 /-- The tunnel parameters in force, for `fn:apply-templates`. -/
 def vTunnel : QN := xv "tunnel"
+/-- The base output URI (§25.1): what a result document's href is
+    resolved against. -/
+def vBaseOut : QN := xv "base-output-uri"
 
 /-- The key of the map that stands for an `xsl:array-member` parcel. -/
 def memberKey : Atomic := Atomic.ofQN (xv "array-member")
@@ -402,8 +405,9 @@ def ipMatch (env : Env) : Nat → IPat → Item → Bool
 /-- Pattern matching with errors masked (§6.5). -/
 def Pattern.matches (p : Pattern) (env : Env) (it : Item) : Bool :=
   -- `current()` in a pattern is the item being matched (§20.4.1)
-  -- and the current captured groups are empty in a pattern (§17.2.1)
-  let env := { env with vars := (vCurrent, [it]) :: (vRegex, [.map []]) :: env.vars }
+  -- and the current captured groups are empty in a pattern (§17.2.1),
+  -- and current-output-uri() is absent there (§25.4)
+  let env := { env with vars := (vCurrent, [it]) :: (vRegex, [.map []]) :: (vOutUri, []) :: env.vars }
   match p.ip with
   | some (ip, _) => ipMatch env 200 ip it
   | none =>
@@ -1580,6 +1584,13 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let e ← match parseXPath src ns with
           | .ok e => pure (if dflt == "" then e else exprDefault dflt 100000 e)
           | .error er => xerr "XTDE3160" ("xsl:evaluate: " ++ er.code ++ " " ++ er.msg)
+        -- the XSLT function current-output-uri is not among the function
+        -- signatures of the target expression (§20.1.1)
+        if (exprAll 10000 [e]).any (fun x => match x with
+            | .call q _ _ => q.uri == nsFN && q.loc == "current-output-uri"
+            | .fref q _ => q.uri == nsFN && q.loc == "current-output-uri"
+            | _ => false) then
+          xerr "XTDE3160" "xsl:evaluate: current-output-uri is not available in the target expression"
         let mut vars : List (QN × Seq) := []
         match wp with
         | some w =>
@@ -1628,21 +1639,41 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | some a => do
               let s ← avtStr cx a
               let q ← liftX (lexQName env.ns s false "XTDE1460")
+              if !(S.outputs.any (·.1 == q.eqn)) then
+                xerr "XTDE1460" ("no output definition named " ++ s)
               pure q.eqn
           | none => pure ""
         let mut sp : List (String × String) := []
-        for (k, a) in ser do sp := sp ++ [(k, ← avtStr cx a)]
-        let os ← run n S cx body
+        for (k, a) in ser do
+          let v ← avtStr cx a
+          -- a parameter document is resolved against the static base URI
+          let v := if k == "parameter-document" then resolveUri cx.env.baseUri v.trimAscii.toString else v
+          sp := sp ++ [(k, v)]
+        -- the href is resolved against the base output URI (§25.1), and
+        -- the result is the current output URI of its content
+        let base := match (cx.env.vars.find? (·.1 == vBaseOut)).map (·.2) with
+          | some [.atom a] => a.str
+          | _ => ""
+        let h := if h == "" then base else if base == "" then h else resolveUri base h
+        let cxR := if href.isNone then cx else cx.bind vOutUri (if h == "" then [] else [.atom (Atomic.ofUri h)])
+        -- writing a resource that the transformation reads (§25.2)
+        if h.startsWith "file:" && (env.docUris.any (·.1 == h) || env.resources.any (·.1 == h)) then
+          xerr "XTDE1500" ("the result document " ++ h ++ " is also read by the transformation")
+        let os ← run n S cxR body
         let id ← freshId
         let meth := match sp.lookup "method" with
           | some m => m
           | none => ((S.outputs.lookup f).bind (·.lookup "method")).getD ""
-        let buildTree := match sp.lookup "build-tree" with
+        let buildTree := match (sp.lookup "build-tree").orElse (fun _ => (S.outputs.lookup f).bind (·.lookup "build-tree")) with
           | some b => parseBool b != some false
-          | none => meth != "json" && meth != "adaptive"
+          | none => meth != "json" && meth != "adaptive" && meth != "csv"
+        let sep := match sp.lookup "item-separator" with
+          | some "#absent" => none
+          | some x => some x
+          | none => ((S.outputs.lookup f).bind (·.lookup "item-separator"))
         let v ← if !buildTree then materializeAll env os else match os with
           | [] => pure []
-          | _ => do pure [← liftX (materialize env id (.doc os ""))]
+          | _ => do pure [← liftX (materialize env id (.doc (← liftX (Out.normalizeTop sep os)) h))]
         let st ← get
         if st.results.any (fun (x, _, _, _) => x == h) then
           xerr "XTDE1490" ("two result documents with the URI '" ++ h ++ "'")
@@ -1730,6 +1761,13 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
     | .staticErr code msg => xerr code msg
     | .withColl u body => run n S { cx with env := { cx.env with defaultCollation := u } } body
     | .withCompat on body => run n S { cx with backCompat := on } body
+    | .doe body =>
+        -- ignored in temporary output state (§26.1.8); otherwise the text
+        -- is marked by the processing instructions the serializer reads
+        if cx.tempOut then run n S cx body
+        else do
+          let os ← run n S cx body
+          pure ([Out.pi piDisableEscaping ""] ++ os ++ [Out.pi piEnableEscaping ""])
     | .extCall q ats fbs =>
         let cands := S.templates.toList.filter (fun t => t.name == some q)
         match cands.foldl (fun (b : Option Tmpl) t => match b with
@@ -1921,7 +1959,7 @@ def sortKeysOf : Nat → Sheet → Ctx → List SortK → List SortSpec → XM (
           | none =>
             if body.isEmpty then pure (match cx.env.ctx with | some s => s | none => [])
             else do
-              let os ← run n S cx body
+              let os ← run n S { cx with tempOut := true } body
               pure [.atom (Atomic.ofStr (← simpleContent cx.env os ""))]
         let as ← liftX (cx.env.atomize v)
         let as := if cx.backCompat then as.take 1 else as

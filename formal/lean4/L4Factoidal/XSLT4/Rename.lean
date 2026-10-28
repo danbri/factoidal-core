@@ -281,6 +281,7 @@ def renI (r : Ren) : Nat → List QN → Instr → RM Instr
           | _ => fmt
         pure (.resultDoc (← avo h) (← avo fmt) (← ser.mapM (fun (k, a) => do pure (k, ← av a))) (← b body))
     | .wherePopulated body => .wherePopulated <$> b body
+    | .doe body => .doe <$> b body
     | .onEmpty sel body => do pure (.onEmpty (← eo sel) (← b body))
     | .onNonEmpty sel body => do pure (.onNonEmpty (← eo sel) (← b body))
     | .performSort sel sorts body => do pure (.performSort (← eo sel) (← renSorts r f bd sorts) (← b body))

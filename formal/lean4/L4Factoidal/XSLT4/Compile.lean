@@ -97,6 +97,15 @@ structure CSt where
   /-- The attributes of the `xsl:mode` declarations of each mode so far,
       with their import precedence. -/
   modeAttrs : List (String × List (String × String × Nat)) := []
+  /-- The attributes of the `xsl:output` declarations of each output
+      definition so far, with their import precedence (§26.1, XTSE1560). -/
+  outAttrs : List (String × List (String × String × Nat)) := []
+  /-- Each `xsl:character-map` declaration: expanded name, import
+      precedence, the names it uses (§26.1.3, XTSE1580 to XTSE1600). -/
+  cmDecls : List (String × Nat × List String) := []
+  /-- The character map names in `use-character-maps` of
+      `xsl:result-document` instructions (XTSE1590). -/
+  cmRefs : List String := []
   /-- Packages (§3.4). The number of package instances made so far (for
       fresh component names). -/
   pkgCounter : Nat := 0
@@ -279,7 +288,10 @@ def SCx.enter (c : SCx) (m : Mod) (i : Nat) (as : Attrs) : CM SCx := do
     match parseBool v with
     | some b => c := { c with expandText := b }
     | none => cerr "XTSE0020" ("invalid expand-text value '" ++ v ++ "'")
-  if let some v := g "version" then c := { c with version := v.trimAscii.toString }
+  -- the version attribute of xsl:output is the serialization version
+  -- (§26.1.4), not the standard attribute
+  if let some v := g "version" then
+    if !(isX && r.name.loc == "output") then c := { c with version := v.trimAscii.toString }
   if let some v := g "exclude-result-prefixes" then
     c := { c with excl := c.excl ++ (← exclUris ns v) }
   if let some v := g "extension-element-prefixes" then
@@ -447,12 +459,42 @@ def boolAttrs : List String :=
   ["copy-namespaces", "inherit-namespaces", "tunnel", "required", "static", "composite", "streamable",
    "cache", "override", "override-extension-function", "declared-modes", "copy-accumulators",
    "rollback-output", "sort-before-merge", "capture", "warning-on-no-match", "warning-on-multiple-match",
-   "expand-text"]
+   "expand-text", "disable-output-escaping"]
 
 /-- The standard attributes every XSLT element may have (§3.5). -/
 def standardAttrs : List String :=
   ["default-collation", "default-mode", "default-validation", "exclude-result-prefixes",
    "expand-text", "extension-element-prefixes", "use-when", "version", "xpath-default-namespace"]
+
+/-- The serialization attributes of `xsl:output` and
+    `xsl:result-document` with a boolean value (§26.1.4). -/
+def serBoolAttrs : List String :=
+  ["allow-duplicate-names", "build-tree", "byte-order-mark", "canonical", "csv-header", "escape-solidus",
+   "escape-uri-attributes", "include-content-type", "indent", "indent-attributes", "json-lines",
+   "omit-xml-declaration", "undeclare-prefixes"]
+
+/-- Is `v` a valid value of the serialization attribute `k` (§26.1.4;
+    XTSE0020 when it is not)? A boolean, `standalone` (a boolean or
+    `omit`), `html-version` (an `xs:decimal`), `doctype-public`
+    (`PubidChar`s, XML 1.0 [13]). -/
+def serAttrOk (k v : String) : Bool :=
+  let v := v.trimAscii.toString
+  if serBoolAttrs.contains k then (parseBool v).isSome
+  else if k == "standalone" then v == "omit" || (parseBool v).isSome
+  else if k == "html-version" then
+    let ds := if v.startsWith "+" || v.startsWith "-" then (v.drop 1).toString else v
+    match ds.splitOn "." with
+    | [a] => a != "" && a.all Char.isDigit
+    | [a, b] => (a != "" || b != "") && a.all Char.isDigit && b.all Char.isDigit
+    | _ => false
+  else if k == "doctype-public" then
+    v.all (fun ch => ch == ' ' || ch == '\r' || ch == '\n' || ch.isAlphanum || "-'()+,./:=?;!*#@$_%".contains ch)
+  else true
+
+/-- `disable-output-escaping="yes"` on `xsl:text` and `xsl:value-of`
+    (§26.1.8); ignored when a `cdata` attribute is present (§11.4.3). -/
+def withDoe (as : Attrs) (r : Instr) : Instr :=
+  if ((as.get "disable-output-escaping").bind parseBool) == some true && (as.get "cdata").isNone then .doe [r] else r
 
 def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
   for (q, v) in as do
@@ -478,6 +520,10 @@ def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
             cerr "XTSE0020" ("invalid value '" ++ v ++ "' for attribute " ++ q.loc ++ " of xsl:" ++ l)
         if boolAttrs.contains q.loc && (parseBool v').isNone then
           cerr "XTSE0020" ("invalid boolean '" ++ v ++ "' for attribute " ++ q.loc ++ " of xsl:" ++ l)
+        -- serialization attributes; on xsl:result-document only a value
+        -- that is not an attribute value template
+        if (l == "output" || (l == "result-document" && !v.contains '{')) && !serAttrOk q.loc v then
+          cerr "XTSE0020" ("invalid value '" ++ v ++ "' for attribute " ++ q.loc ++ " of xsl:" ++ l)
 
 /-- The namespace bindings a literal result element copies (§11.1.3):
     all in scope except the XSLT namespace, excluded and extension
@@ -585,6 +631,7 @@ def compileNodes : Nat → SCx → Mod → List Nat → CM (List Instr)
     -- text nodes around them are merged (§4.2)
     let mut pending : Option String := none
     let mut lastText := 0
+    let mut afterCatch := false
     for oi in ids.map some ++ [none] do
       if let some i := oi then
         let r := m.r i
@@ -601,7 +648,14 @@ def compileNodes : Nat → SCx → Mod → List Nat → CM (List Instr)
           continue
       if let some t := pending then
         pending := none
-        if !(t.toList.all (fun ch => ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') && !c.preserveWs) then
+        let ws := t.toList.all (fun ch => ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r')
+        -- whitespace before xsl:param, xsl:sort, xsl:context-item or
+        -- xsl:on-completion, and after xsl:catch, is removed regardless
+        -- of xml:space (§4.3)
+        let nx := lastText + 1
+        let beforeDecl := nx < m.d.nodes.size && (m.r nx).parent == (m.r lastText).parent &&
+          ["param", "sort", "context-item", "on-completion"].any (m.isXsl nx ·)
+        if !(ws && (!c.preserveWs || beforeDecl || afterCatch)) then
           if c.expandText then out := out.push (.tvt (← liftM (c.avt t)))
           else out := out.push (.lit t)
       if let some i := oi then
@@ -610,6 +664,7 @@ def compileNodes : Nat → SCx → Mod → List Nat → CM (List Instr)
           pending := some r.value
           lastText := i
         else
+          afterCatch := m.isXsl i "catch"
           for x in ← compileElem f c m i do out := out.push x
     pure out.toList
 
@@ -730,20 +785,21 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
     match l with
     | "text" =>
         let t := m.text i
-        match ← optExpr c as "select" with
-        | some e => pure (.valueOf (some e) (← optAvt c as "separator") [] false)
-        | none =>
-          if !ekids.isEmpty then
-            -- 4.0: the content is a sequence constructor (§11.4.2)
-            let b ← compileNodes f { c with preserveWs := true } m kids
-            pure (.valueOf none (← optAvt c as "separator") b false)
-          else if c.expandText then pure (.tvt (← liftM (c.avt t))) else pure (.lit t)
+        let r ← match ← optExpr c as "select" with
+          | some e => pure (.valueOf (some e) (← optAvt c as "separator") [] false)
+          | none =>
+            if !ekids.isEmpty then
+              -- 4.0: the content is a sequence constructor (§11.4.2)
+              let b ← compileNodes f { c with preserveWs := true } m kids
+              pure (.valueOf none (← optAvt c as "separator") b false)
+            else if c.expandText then pure (.tvt (← liftM (c.avt t))) else pure (.lit t)
+        pure (withDoe as r)
     | "value-of" =>
         let sel ← optExpr c as "select"
         let b ← body
         if sel.isSome && !b.isEmpty then cerr "XTSE0870" "xsl:value-of has both select and content"
         let sep ← optAvt c as "separator"
-        pure (.valueOf sel sep b (c.backCompat && sep.isNone))
+        pure (withDoe as (.valueOf sel sep b (c.backCompat && sep.isNone)))
     | "sequence" =>
         let sel ← optExpr c as "select"
         let b ← body (notTag ["fallback"])
@@ -1027,14 +1083,36 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
     | "result-document" =>
         let ser ← (as.filter (fun (q, _) => q.uri == "" && q.loc != "href" && q.loc != "format" && q.loc != "select"
             && q.loc != "validation" && q.loc != "type" && !standardAttrs.contains q.loc)).mapM
-          (fun (q, v) => do pure (q.loc, ← liftM (c.avt v)))
+          (fun (q, v) => do
+            -- the names in these attributes are expanded with the
+            -- namespaces of the instruction (§25.1); use-character-maps is
+            -- not an attribute value template
+            let qnAttr := ["cdata-section-elements", "suppress-indentation", "use-character-maps"].contains q.loc
+            if qnAttr && (q.loc == "use-character-maps" || !v.contains '{') then
+              let qs ← (tokens v).mapM (fun t => liftM (c.qname t (q.loc != "use-character-maps")))
+              if q.loc == "use-character-maps" then
+                modify (fun s => { s with cmRefs := s.cmRefs ++ qs.map QN.eqn })
+              pure (q.loc, [AvtPart.lit (String.intercalate " " (qs.map QN.eqn))])
+            else if q.loc == "parameter-document" && !v.contains '{' then
+              pure (q.loc, [AvtPart.lit (resolveUri c.baseUri v.trimAscii.toString)])
+            else pure (q.loc, ← liftM (c.avt v)))
         let sel ← optExpr c as "select"
         let b ← body
         if sel.isSome && !b.isEmpty then cerr "XTSE3185" "xsl:result-document has both select and content"
         let b := match sel with
           | some e => [Instr.seq (some e) [] none]
           | none => b
-        pure (.resultDoc (← optAvt c as "href") (← optAvt c as "format") ser b)
+        -- a fixed format name is expanded with the namespaces of the
+        -- instruction
+        let fixedFmt : Option String := match as.get "format" with
+          | some v => if v.contains '{' || !v.contains ':' then none else some v.trimAscii.toString
+          | none => none
+        let fmt ← match fixedFmt with
+          | some v => do
+            let q ← liftM (c.qname v false "XTDE1460")
+            pure (some [AvtPart.lit q.eqn])
+          | none => optAvt c as "format"
+        pure (.resultDoc (← optAvt c as "href") fmt ser b)
     | "where-populated" => pure (.wherePopulated (← body))
     | "on-empty" => pure (.onEmpty (← optExpr c as "select") (← body))
     | "on-non-empty" => pure (.onNonEmpty (← optExpr c as "select") (← body))
@@ -1463,7 +1541,9 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
         | none => pure []
       for k in ekids do
         if !m.isXsl k "attribute" then cerr "XTSE0010" "xsl:attribute-set may contain only xsl:attribute"
-      let body ← compileNodes 100000 c m (m.kids i)
+      -- whitespace text in xsl:attribute-set is removed regardless of
+      -- xml:space (§4.3)
+      let body ← compileNodes 100000 { c with preserveWs := false } m (m.kids i)
       let vis := ((as.get "visibility").getD "").trimAscii.toString
       let body := if vis == "abstract" then [abstractErr "attribute set" nm] else body
       upd (fun sh => { sh with attrSets := sh.attrSets ++ [{ name := nm, useSets, body, vis }] })
@@ -1473,15 +1553,41 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
         | none => pure ""
       let mut props : List (String × String) := []
       for (aq, v) in as do
-        if aq.uri == "" && aq.loc != "name" && !standardAttrs.contains aq.loc then
+        if aq.uri == "" && aq.loc != "name" && (!standardAttrs.contains aq.loc || aq.loc == "version") then
           let v' ← if aq.loc == "cdata-section-elements" || aq.loc == "suppress-indentation" then
               do pure (String.intercalate " " ((← (tokens v).mapM (fun t => liftM (c.qname t true))).map QN.eqn))
-            else if aq.loc == "method" && v.contains ':' then do pure (← liftM (c.qname v)).eqn
+            else if aq.loc == "use-character-maps" then
+              do pure (String.intercalate " " ((← (tokens v).mapM (fun t => liftM (c.qname t))).map QN.eqn))
+            else if aq.loc == "parameter-document" then pure (resolveUri c.baseUri v.trimAscii.toString)
+            else if aq.loc == "method" || aq.loc == "json-node-output-method" then
+              -- XTSE1570: an EQName; in no namespace, one of the methods
+              -- of Serialization 4.0
+              let x := v.trimAscii.toString
+              match c.qname x with
+              | .ok q =>
+                if q.uri == "" then
+                  if ["xml", "html", "xhtml", "text", "json", "csv", "adaptive"].contains q.loc &&
+                      !(aq.loc == "json-node-output-method" && ["json", "csv", "adaptive"].contains q.loc) then pure q.loc
+                  else cerr "XTSE1570" ("'" ++ x ++ "' is not an output method")
+                else pure q.eqn
+              | .error _ => cerr "XTSE1570" ("'" ++ x ++ "' is not a valid EQName")
             else pure v
           props := props ++ [(aq.loc, v')]
-      let s ← get
-      let old := (s.sheet.outputs.lookup key).getD []
-      let merged := (old.filter (fun (k, _) => !(props.any (·.1 == k)))) ++ props
+      -- the declarations of one output definition are merged (§26.1):
+      -- the union of cdata-section-elements and suppress-indentation, the
+      -- concatenation of use-character-maps (in order of increasing
+      -- import precedence, which is the order of processing), and for
+      -- the other attributes the value at the highest import precedence
+      let st ← get
+      let all := ((st.outAttrs.lookup key).getD []) ++ props.map (fun (k, v) => (k, v, prec))
+      set { st with outAttrs := (key, all) :: st.outAttrs.filter (·.1 != key) }
+      let merged : List (String × String) := (all.map (·.1)).eraseDups.filterMap (fun k =>
+        let es := all.filter (·.1 == k)
+        if k == "cdata-section-elements" || k == "suppress-indentation" || k == "use-character-maps" then
+          let toks := es.flatMap (fun (_, v, _) => tokens v)
+          let toks := if k == "use-character-maps" then toks else toks.eraseDups
+          some (k, String.intercalate " " toks)
+        else (es.getLast?).map (fun (_, v, _) => (k, v)))
       upd (fun sh => { sh with outputs := (sh.outputs.filter (·.1 != key)) ++ [(key, merged)] })
   | "decimal-format" =>
       let key ← match as.get "name" with
@@ -1547,7 +1653,10 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       for k in ekids do
         if m.isXsl k "output-character" then
           let kas := m.rawAttrs k
-          let ch := (Attrs.get kas "character").getD ""
+          checkAttrs c "output-character" kas
+          let some ch := Attrs.get kas "character"
+            | cerr "XTSE0010" "xsl:output-character requires a character attribute"
+          if (Attrs.get kas "string").isNone then cerr "XTSE0010" "xsl:output-character requires a string attribute"
           match ch.toList with
           | [x] => cs := cs ++ [(x, (Attrs.get kas "string").getD "")]
           | _ => cerr "XTSE0020" "xsl:output-character needs a single character"
@@ -1557,6 +1666,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       if let some v := as.get "use-character-maps" then
         for t in tokens v do
           uses := uses ++ [(← liftM (c.qname t)).eqn]
+      modify (fun s => { s with cmDecls := s.cmDecls ++ [(nm.eqn, prec, uses)] })
       upd (fun sh => { sh with charMaps := sh.charMaps ++ [(nm.eqn, uses, cs)] })
   | "accumulator" =>
       let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:accumulator requires a name"
@@ -1979,6 +2089,50 @@ def checkSheet : CM Unit := do
         let top := es.foldl (fun a (_, _, p) => max a p) 0
         let vs := ((es.filter (·.2.2 == top)).map (·.2.1)).eraseDups
         if vs.length > 1 then cerr "XTSE0545" ("two values for attribute " ++ k ++ " of mode " ++ mk)
+    -- XTSE1560: two xsl:output declarations of one output definition
+    -- with different values of an attribute at its highest precedence
+    for (ok, all) in s.outAttrs do
+      for k in (all.map (·.1)).eraseDups do
+        if ["cdata-section-elements", "suppress-indentation", "use-character-maps"].contains k then continue
+        let es := all.filter (·.1 == k)
+        let top := es.foldl (fun a (_, _, p) => max a p) 0
+        let vs := ((es.filter (·.2.2 == top)).map (fun (_, v, _) => v.trimAscii.toString)).eraseDups
+        if vs.length > 1 then
+          cerr "XTSE1560" ("two values for attribute " ++ k ++ " of output definition " ++ (if ok == "" then "#unnamed" else ok))
+    -- XTSE1580: two character maps of one name at its highest precedence
+    for (nm, p, _) in s.cmDecls do
+      let top := (s.cmDecls.filter (·.1 == nm)).foldl (fun a (_, p2, _) => max a p2) 0
+      if p == top && ((s.cmDecls.filter (fun (n2, p2, _) => n2 == nm && p2 == p)).length > 1) then
+        cerr "XTSE1580" ("two character maps named " ++ nm ++ " at the same import precedence")
+    -- XTSE1590: a name in use-character-maps that no character map has
+    let cmNames := s.cmDecls.map (·.1)
+    for (_, _, uses) in s.cmDecls do
+      for u in uses do
+        if !cmNames.contains u then cerr "XTSE1590" ("no character map named " ++ u)
+    for u in s.cmRefs do
+      if !cmNames.contains u then cerr "XTSE1590" ("no character map named " ++ u)
+    for (_, all) in s.outAttrs do
+      for (k, v, _) in all do
+        if k == "use-character-maps" then
+          for u in tokens v do
+            if !cmNames.contains u then cerr "XTSE1590" ("no character map named " ++ u)
+    -- XTSE1600: a character map that uses itself, directly or not
+    let usesOf (n : String) : List String :=
+      match (s.cmDecls.filter (·.1 == n)).getLast? with
+      | some (_, _, us) => us
+      | none => []
+    for (nm, _, _) in s.cmDecls do
+      let mut seen : List String := []
+      let mut todo : List String := usesOf nm
+      for _ in [0:10000] do
+        match todo with
+        | [] => break
+        | x :: rest =>
+          todo := rest
+          if x == nm then cerr "XTSE1600" ("character map " ++ nm ++ " uses itself")
+          if seen.contains x then continue
+          seen := x :: seen
+          todo := todo ++ usesOf x
     -- XTSE1300: the characters of each decimal format must be distinct
     for (k, ps) in s.sheet.decimalFormats do
       let mut f : DecFormat := {}

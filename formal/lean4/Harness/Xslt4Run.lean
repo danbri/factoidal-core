@@ -102,7 +102,7 @@ def specOk (v : String) : Bool :=
 
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
-  ["higher_order_functions", "serialization", "backwards_compatibility", "dynamic_evaluation",
+  ["higher_order_functions", "serialization", "backwards_compatibility", "dynamic_evaluation", "disabling_output_escaping",
    "XPath_3.1", "XSD_1.1", "HTML5", "built_in_derived_types", "dtd", "XML_1.1"].contains f
 
 def depOk (d : Node) : Bool :=
@@ -294,7 +294,12 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
         let code := attrD a "code"
         match res with
         | .error e => ok? (codeMatches code (errCode e)) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ "): " ++ cut e.msg 100)
-        | .ok s => .fail ("expected error " ++ code ++ ", got " ++ (sh s 80))
+        | .ok s =>
+          -- a serialization error of the result is an error of the test
+          -- (the catalog driver serializes the result)
+          match rc.ser s with
+          | .error e => ok? (codeMatches code (errCode e)) ("wrong serialization error " ++ e.code ++ " (expected " ++ code ++ "): " ++ cut e.msg 100)
+          | .ok _ => .fail ("expected error " ++ code ++ ", got " ++ (sh s 80))
     | "any-of" =>
         let rs := (kids a).map (fun c => checkAssert rc f c)
         if rs.any (fun r => match r with | .pass => true | _ => false) then .pass
@@ -411,7 +416,7 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
             let envM := (((({} : Env).bind q (sStr out)).bind pq (sStr txt)).bind fq (sStr (attrD a "flags")))
             match evalIn envM "matches($l4ser, $l4pat, $l4flags)" with
             | .ok [.atom ⟨_, .bool true⟩] => .pass
-            | .ok _ => .fail ("serialization '" ++ cut out 120 ++ "' does not match " ++ cut txt 60)
+            | .ok _ => .fail ("serialization '" ++ cut out 300 ++ "' does not match " ++ cut txt 60)
             | .error e => .fail ("serialization-matches raised " ++ e.code)
       | "assert-serialization" =>
           match rc.ser s with
@@ -419,7 +424,7 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
           | .ok out =>
             let ok := if attrD a "normalize-space" == "true" then normSp out == normSp txt
               else out == txt || xmlEq env s txt
-            ok? ok ("serialization '" ++ cut out 120 ++ "'")
+            ok? ok ("serialization '" ++ cut out 300 ++ "'")
       | "assert-xml" =>
           ok? (xmlEq env s txt) ("xml " ++ (cut (serSeq env s) 600))
       | other => .fail ("assertion " ++ other ++ " is not evaluated")
@@ -725,9 +730,20 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
             | .error e => return .fail ("cannot evaluate function param: " ++ e.code)
           pure (some (nsOf n (attrD n "name"), args))
         | none => pure none
-      let ou := fileUri ("/out/" ++ attrD tc "name" ++ "/principal.xml")
+      -- the base output URI: the test's `<output file="..."/>` against
+      -- the test set's directory (`#absent`: none); with no file, the
+      -- `results/<test>.xml` of that directory, as the tests that name
+      -- a file do
+      let ofile := ((kidsNamed testNode "output").findSome? (fun n => attr n "file"))
+      let ou := match ofile with
+        | some "#absent" => ""
+        | some "" => fileUri (dir ++ "/")
+        | some f => fileUri (dir ++ "/" ++ f)
+        | none => fileUri (dir ++ "/results/" ++ attrD tc "name" ++ ".xml")
       let topts : TOpts := { initialTemplate := it, initialMode := imName, initialSelect := imSel, initialFunction := ifn, globalCtx, params, env, outUri := ou }
-      pure (env, (do let r ← transform S topts; pure (r, S) : M (TResult × Sheet)))
+      -- the result refers to the source documents as the transformation
+      -- saw them: with whitespace stripped (§4.3)
+      pure ({ env with docs := env.docs.map (stripDoc S) }, (do let r ← transform S topts; pure (r, S) : M (TResult × Sheet)))
   -- delivery (the catalog driver's default format is a document node)
   -- delivery format raw: `output tree="no"` in the test, or an output
   -- definition with build-tree="no" or method json or adaptive (§26.1)
@@ -737,18 +753,24 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
     treeNo || (match od.lookup "build-tree" with
       | some b => parseBool b == some false
       | none => match od.lookup "method" with
-        | some m => m == "json" || m == "adaptive"
+        | some m => m == "json" || m == "adaptive" || m == "csv"
         | none => false)
   let initialFn := !(kidsNamed testNode "initial-function").isEmpty
+  -- the principal result tree: sequence normalization with the
+  -- item-separator of the unnamed output definition (§26.1)
   let deliver (S : Sheet) (raw : Seq) : M Seq :=
     if rawMethod S || initialFn then pure raw else
+    let sep := ((S.outputs.lookup "").getD []).lookup "item-separator"
     match raw with
     | [.node n] => if (env.nrec n).kind == .document then pure raw else
-        do pure [← materialize env (2 ^ 45) (.doc (Out.ofSeq raw) "")]
-    | _ => do pure [← materialize env (2 ^ 45) (.doc (Out.ofSeq raw) "")]
+        do pure [← materialize env (2 ^ 45) (.doc (← Out.normalizeTop sep (Out.ofSeq raw)) "")]
+    | _ => do pure [← materialize env (2 ^ 45) (.doc (← Out.normalizeTop sep (Out.ofSeq raw)) "")]
   let res : M Seq := do
     let (r, S) ← outcome
-    deliver S r.raw
+    -- a principal result written by xsl:result-document is delivered as
+    -- that instruction built it
+    if r.principalFormat.1 != "" || !r.principalFormat.2.isEmpty then pure r.raw
+    else deliver S r.raw
   let serWith (fmt : String) (sp : List (String × String)) : Seq → M String := fun s => match outcome with
     | .ok (_, S) => do
         let props ← S.outputProps fmt sp

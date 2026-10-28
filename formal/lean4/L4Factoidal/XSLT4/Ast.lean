@@ -166,6 +166,9 @@ inductive Instr where
   /-- A sequence constructor in (or out of) backwards-compatible mode
       (§3.9): XPath 1.0 compatibility mode for its expressions. -/
   | withCompat (on : Bool) (body : List Instr)
+  /-- `disable-output-escaping="yes"` (§26.1.8): the text nodes of the
+      body are written without escaping when the result is serialized. -/
+  | doe (body : List Instr)
 
 /-- An `xsl:sort` (§13.1): select (or body), order, lang, data-type,
     case-order, collation, stable. -/
@@ -352,7 +355,7 @@ def Instr.bodies : Instr → List (List Instr)
   | .comment _ b | .pi _ _ b | .nsI _ _ b | .docI b | .var _ _ _ b | .copy _ _ _ _ b
   | .message _ b _ _ | .assertI _ _ b _ | .breakI _ b | .mapI _ b _ | .mapEntry _ _ b
   | .arrayI _ _ b | .arrayMember _ b | .wherePopulated b | .onEmpty _ b | .onNonEmpty _ b
-  | .sourceDoc _ b | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b | .withCompat _ b => [b]
+  | .sourceDoc _ b | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b | .withCompat _ b | .doe b => [b]
   | .applyT _ _ ss ps _ => ss.map SortK.body ++ ps.map WParam.body
   | .callT _ ps | .applyImports ps | .nextMatch ps | .nextIteration ps => ps.map WParam.body
   | .forEach _ ss b _ | .forEachGroup _ _ _ _ _ _ ss b | .performSort _ ss b => b :: ss.map SortK.body

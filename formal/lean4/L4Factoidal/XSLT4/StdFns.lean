@@ -38,7 +38,7 @@ def xslOtherElements : List String :=
 def xslFunctions : List (String × List Nat) :=
   [("current", [0]), ("current-group", [0]), ("current-grouping-key", [0]),
    ("current-merge-group", [0, 1]), ("current-merge-key", [0]), ("current-merge-key-array", [0]),
-   ("current-output-uri", [0]),
+   ("current-output-uri", [0]), ("character-map", [1]),
    ("document", [1, 2]), ("element-available", [1]), ("function-available", [1, 2]),
    ("key", [2, 3]), ("regex-group", [1]), ("regex-groups", [0]), ("stream-available", [1]), ("system-property", [1]),
    ("type-available", [1]), ("unparsed-entity-public-id", [1, 2]), ("unparsed-entity-uri", [1, 2]),

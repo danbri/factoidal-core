@@ -42,6 +42,7 @@ def nsXHTML : String := "http://www.w3.org/1999/xhtml"
 structure SerParams where
   method : String := "xml"
   indent : Bool := false
+  indentAttrs : Bool := false
   omitDecl : Bool := true
   standalone : Option Bool := none
   version : Option String := none
@@ -115,9 +116,10 @@ def SerParams.set (p : SerParams) (name : String) (v : PVal) : M SerParams := do
   | "encoding", .s x => pure { p with encoding := x }
   | "escape-solidus", .b x => pure { p with escapeSolidus := x }
   | "escape-uri-attributes", .b x => pure { p with escapeUriAttrs := x }
-  | "html-version", .s x => pure { p with htmlVersion := some x }
+  | "html-version", .s x => pure { p with htmlVersion := some (trimWs x) }
   | "include-content-type", .b x => pure { p with includeContentType := x }
   | "indent", .b x => pure { p with indent := x }
+  | "indent-attributes", .b x => pure { p with indentAttrs := x }
   | "indent-unit", .s x =>
       let x := x.replace "\\t" "\t"
       if x.toList.all (· == ' ') || x.toList.all (· == '\t') then pure { p with indentUnit := x }
@@ -157,6 +159,14 @@ def SerParams.check (p : SerParams) : M SerParams := do
   if (p.method == "xml" || p.method == "xhtml") && p.omitDecl &&
       (p.standalone.isSome || (p.version.getD "1.0" != "1.0" && p.doctypeSystem.isSome)) then
     err "SEPM0009" "omit-xml-declaration is inconsistent with standalone, or with version and doctype-system"
+  if (p.method == "xml" || p.method == "xhtml") && p.undeclare && p.version.getD "1.0" == "1.0" then
+    err "SEPM0010" "undeclare-prefixes needs XML version 1.1"
+  -- the versions this serializer supports (SESU0013)
+  if let some v := p.version then
+    let ok := if p.method == "html" then ["1.0", "4.0", "4.01", "5", "5.0"].contains v
+      else if p.method == "xml" || p.method == "xhtml" then ["1.0", "1.1"].contains v
+      else true
+    if !ok then err "SESU0013" ("unsupported version " ++ v ++ " of the " ++ p.method ++ " method")
   let nf := p.normForm.toUpper
   if !["NONE", "NFC", "NFD", "NFKC", "NFKD"].contains nf then
     err "SESU0011" ("unsupported normalization form " ++ p.normForm)
@@ -257,13 +267,13 @@ def resolveLexQN (scope : List (String × String)) (s : String) : M QN :=
       | none => err "SEPM0017" ("undeclared prefix " ++ p)
     | _ => err "SEPM0017" ("bad QName " ++ s)
 
-def elemParams (e : Env) (root : NodeRef) : M SerParams := do
+def elemParams (e : Env) (root : NodeRef) (p0 : SerParams := {}) : M SerParams := do
   let r := e.nrec root
   if r.kind != .element || r.name.uri != nsOUTPUT || r.name.loc != "serialization-parameters" then
     err "XPTY0004" "the options must be an output:serialization-parameters element"
   for a in e.attrNodes root do
     if (e.nrec a).name.uri == "" then err "SEPM0017" "attribute on output:serialization-parameters"
-  let mut p : SerParams := {}
+  let mut p : SerParams := p0
   let mut seen : List String := []
   for c in e.elemKids root do
     let cr := e.nrec c
@@ -387,22 +397,36 @@ def SerParams.norm (p : SerParams) (s : String) : String :=
   let f := p.normForm.toUpper
   if f == "NONE" then s else (Unicode.normalize f s).getD s
 
-def SerParams.escText (p : SerParams) (s : String) : String :=
-  (p.norm s).toList.foldl (fun acc c => acc ++ p.escTextChar c) ""
+/-- A string cut at the characters a character map replaces (§12): the
+    replacement strings (`true`), which are written as they are, and the
+    runs between them (`false`), normalized by `normalization-form`. -/
+def SerParams.segments (p : SerParams) (s : String) : List (Bool × String) :=
+  if p.charMap.isEmpty then [(false, p.norm s)] else
+  let (segs, run) := s.toList.foldl (fun (acc : Array (Bool × String) × String) c =>
+    match p.mapped c with
+    | some r => ((if acc.2 == "" then acc.1 else acc.1.push (false, p.norm acc.2)).push (true, r), "")
+    | none => (acc.1, acc.2.push c)) (#[], "")
+  (if run == "" then segs else segs.push (false, p.norm run)).toList
 
-def SerParams.escAttr (p : SerParams) (html : Bool) (s : String) : String := Id.run do
-  let cs := (p.norm s).toList.toArray
-  let mut out := ""
-  for i in [0:cs.size] do
-    out := out ++ p.escAttrChar html cs[i + 1]? (cs.getD i ' ')
-  return out
+def SerParams.escText (p : SerParams) (s : String) : String :=
+  let q := { p with charMap := [] }
+  String.join ((p.segments s).map (fun (m, t) =>
+    if m then t else t.toList.foldl (fun acc c => acc ++ q.escTextChar c) ""))
+
+def SerParams.escAttr (p : SerParams) (html : Bool) (s : String) : String :=
+  let q := { p with charMap := [] }
+  String.join ((p.segments s).map (fun (m, t) => if m then t else Id.run do
+    let cs := t.toList.toArray
+    let mut out := ""
+    for i in [0:cs.size] do
+      out := out ++ q.escAttrChar html cs[i + 1]? (cs.getD i ' ')
+    return out))
 
 /-- Text where markup is not recognised (HTML `script`, `style`): only
     the character map and the encoding apply. -/
 def SerParams.rawText (p : SerParams) (s : String) : String :=
-  (p.norm s).toList.foldl (fun acc c => acc ++ match p.mapped c with
-    | some r => r
-    | none => if p.encodable c then String.singleton c else charRef c) ""
+  String.join ((p.segments s).map (fun (m, t) =>
+    if m then t else t.toList.foldl (fun acc c => acc ++ (if p.encodable c then String.singleton c else charRef c)) ""))
 
 /-! ### Sequence normalization (§2) -/
 
@@ -473,9 +497,47 @@ def Env.normalizeSeq (e : Env) (p : SerParams) (s : Seq) : M (List NItem) := do
 
 /-! ### The XML, XHTML and HTML methods (§5, §6, §7) -/
 
-def htmlVoid : List String :=
-  ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
-   "source", "track", "wbr", "basefont", "frame", "isindex", "keygen", "command"]
+/-- The void elements of HTML5 (§6, §7.1). -/
+def html5Void : List String :=
+  ["area", "base", "br", "col", "embed", "hr", "img", "input", "keygen", "link", "meta", "param",
+   "source", "track", "wbr"]
+
+/-- The elements with an EMPTY content model prior to HTML5 (§6, §7.1). -/
+def html4Empty : List String :=
+  ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "basefont", "frame",
+   "isindex", "param"]
+
+/-- The elements that HTML5 defines (for the XHTML method's recognition
+    of an HTML element in no namespace, §6). -/
+def html5Elements : List String :=
+  ["a", "abbr", "address", "area", "article", "aside", "audio", "b", "base", "bdi", "bdo", "blockquote",
+   "body", "br", "button", "canvas", "caption", "cite", "code", "col", "colgroup", "data", "datalist",
+   "dd", "del", "details", "dfn", "dialog", "div", "dl", "dt", "em", "embed", "fieldset", "figcaption",
+   "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hgroup", "hr",
+   "html", "i", "iframe", "img", "input", "ins", "kbd", "label", "legend", "li", "link", "main", "map",
+   "mark", "menu", "meta", "meter", "nav", "noscript", "object", "ol", "optgroup", "option", "output",
+   "p", "param", "picture", "pre", "progress", "q", "rp", "rt", "ruby", "s", "samp", "script", "search",
+   "section", "select", "slot", "small", "source", "span", "strong", "style", "sub", "summary", "sup",
+   "table", "tbody", "td", "template", "textarea", "tfoot", "th", "thead", "time", "title", "tr",
+   "track", "u", "ul", "var", "video", "wbr"]
+
+def serNsSvg : String := "http://www.w3.org/2000/svg"
+
+/-- The processing instructions that mark text written without escaping
+    (XSLT 4.0 §26.1.8, `disable-output-escaping`); the serializer writes
+    neither. -/
+def piDisableEscaping : String := "javax.xml.transform.disable-output-escaping"
+def piEnableEscaping : String := "javax.xml.transform.enable-output-escaping"
+
+/-- Is the node one of the two marker processing instructions: `some
+    true` for the start of unescaped text, `some false` for its end? -/
+def Env.escapeMarker (e : Env) (n : NodeRef) : Option Bool :=
+  let r := e.nrec n
+  if r.kind != .pi then none
+  else if r.name.loc == piDisableEscaping then some true
+  else if r.name.loc == piEnableEscaping then some false
+  else none
+def serNsMathMl : String := "http://www.w3.org/1998/Math/MathML"
 
 def htmlBoolAttrs : List String :=
   ["checked", "compact", "declare", "defer", "disabled", "ismap", "multiple", "nohref",
@@ -493,8 +555,19 @@ structure XCtx where
 
 def XCtx.isHtmlElem (x : XCtx) (q : QN) : Bool :=
   if x.m == "html" then q.uri == "" || (x.html5 && q.uri == nsXHTML)
-  else if x.m == "xhtml" then q.uri == nsXHTML
+  else if x.m == "xhtml" then q.uri == nsXHTML || (x.html5 && q.uri == "" && html5Elements.contains q.loc.toLower)
   else false
+
+/-- The elements that are written empty (`<br>`, `<br />`): the void
+    elements with HTML5, else those with an EMPTY content model. -/
+def XCtx.voidElem (x : XCtx) (loc : String) : Bool :=
+  if x.html5 then html5Void.contains loc.toLower else html4Empty.contains loc.toLower
+
+/-- Prefix normalization with HTML5 (§6, §7.1): an element in the XHTML,
+    SVG or MathML namespace is written with its local name and a default
+    namespace declaration. -/
+def XCtx.prefixNorm (x : XCtx) (q : QN) : Bool :=
+  x.html5 && (x.m == "xhtml" || x.m == "html") && [nsXHTML, serNsSvg, serNsMathMl].contains q.uri
 
 def lower (s : String) : String := s.toLower
 
@@ -549,14 +622,16 @@ def Env.nsDecls (e : Env) (x : XCtx) (n : NodeRef) (scope : List (String × Stri
 
 def Env.writeAttr (e : Env) (x : XCtx) (elemHtml : Bool) (a : NodeRef) : W Unit := do
   let ar := e.nrec a
-  let nm := if ar.name.pfx == "" then ar.name.loc else ar.name.pfx ++ ":" ++ ar.name.loc
+  let nm := x.p.norm (if ar.name.pfx == "" then ar.name.loc else ar.name.pfx ++ ":" ++ ar.name.loc)
   let v := ar.value
   if elemHtml && x.m == "html" && ar.name.uri == "" && htmlBoolAttrs.contains (lower nm) && lower v == lower nm then
     emit (" " ++ nm)
   else
-    let v := if elemHtml && x.p.escapeUriAttrs && ar.name.uri == "" && uriAttrs.contains (lower nm)
-      then Fn.String.escapeHtmlUri v else v
-    emit (" " ++ nm ++ "=\"" ++ x.p.escAttr (elemHtml && x.m == "html") v ++ "\"")
+    let isUri := elemHtml && x.p.escapeUriAttrs && ar.name.uri == "" && uriAttrs.contains (lower nm)
+    let v := if isUri then Fn.String.escapeHtmlUri ((Unicode.normalize "NFC" v).getD v) else v
+    -- a URI attribute that is %-escaped is not character-mapped (§12)
+    let p := if isUri then { x.p with charMap := [] } else x.p
+    emit (" " ++ nm ++ "=\"" ++ p.escAttr (elemHtml && x.m == "html") v ++ "\"")
 
 def Env.sortedAttrs (e : Env) (x : XCtx) (n : NodeRef) : List NodeRef :=
   let as := e.attrNodes n
@@ -570,14 +645,16 @@ def Env.sortedAttrs (e : Env) (x : XCtx) (n : NodeRef) : List NodeRef :=
 def metaTag (x : XCtx) : String :=
   let ct := (x.p.mediaType.getD "text/html") ++ "; charset=" ++ x.p.encoding
   let close := if x.m == "html" then ">" else " />"
-  if x.html5 && x.m == "html" then "<meta charset=\"" ++ x.p.encoding ++ "\"" ++ close
+  if x.html5 then "<meta charset=\"" ++ x.p.encoding ++ "\"" ++ close
   else "<meta http-equiv=\"Content-Type\" content=\"" ++
     (if x.m == "xhtml" then (x.p.mediaType.getD "text/html") ++ "; charset=" ++ x.p.encoding else ct) ++ "\"" ++ close
 
 def Env.isContentTypeMeta (e : Env) (x : XCtx) (n : NodeRef) : Bool :=
   let r := e.nrec n
   r.kind == .element && x.isHtmlElem r.name && lower r.name.loc == "meta" &&
-  (e.attrNodes n).any (fun a => let ar := e.nrec a; lower ar.name.loc == "http-equiv" && lower ar.value == "content-type")
+  (e.attrNodes n).any (fun a => let ar := e.nrec a
+    (lower ar.name.loc == "http-equiv" && lower (trimWs ar.value) == "content-type") ||
+    (ar.name.uri == "" && lower ar.name.loc == "charset"))
 
 /-- XML 1.0 `Char` (§2.2 of XML 1.0): what an XML 1.0 output may hold;
     XML 1.1 also allows the C0 and C1 controls, as character
@@ -616,11 +693,20 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
       let raw := match parent with
         | some q => x.m == "html" && x.isHtmlElem q && ["script", "style"].contains (lower q.loc)
         | none => false
-      if inCdata && !x.p.canonical then emit (cdataSection r.value)
+      if inCdata && !x.p.canonical then
+        -- a character the encoding cannot hold ends the CDATA section
+        -- and is written as a character reference (§5.1.5)
+        let inner := (x.p.norm r.value).replace "]]>" "]]]]><![CDATA[>"
+        let body := inner.toList.foldl (fun acc c =>
+          acc ++ (if x.p.encodable c then String.singleton c else "]]>" ++ charRef c ++ "<![CDATA[")) ""
+        emit (("<![CDATA[" ++ body ++ "]]>").replace "<![CDATA[]]>" "")
       else if raw then emit (x.p.rawText r.value)
       else emit (x.p.escText r.value)
     | .comment => emit ("<!--" ++ r.value ++ "-->")
     | .pi =>
+      if (e.escapeMarker n).isSome then return
+      if x.m == "html" && r.value.contains '>' then
+        err "SERE0015" "a processing instruction that contains '>' cannot be written by the html method"
       if x.m == "html" then emit ("<?" ++ r.name.loc ++ (if r.value == "" then "" else " " ++ r.value) ++ ">")
       else emit ("<?" ++ r.name.loc ++ (if r.value == "" then "" else " " ++ r.value) ++ "?>")
     | .attribute =>
@@ -629,18 +715,34 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
       emit ("xmlns" ++ (if r.name.loc == "" then "" else ":" ++ r.name.loc) ++ "=\"" ++ x.p.escAttr false r.value ++ "\"")
     | .element =>
       let isH := x.isHtmlElem r.name
-      let nm := if r.name.pfx == "" then r.name.loc else r.name.pfx ++ ":" ++ r.name.loc
+      let pn := x.prefixNorm r.name
+      let nm := x.p.norm (if r.name.pfx == "" || pn then r.name.loc else r.name.pfx ++ ":" ++ r.name.loc)
       let decls := if x.m == "html" && isH && r.name.uri == "" then
           (e.nsDecls x n scope).filter (fun (pf, _) => pf != "")
         else e.nsDecls x n scope
+      -- prefix normalization: no prefixed declaration of the three
+      -- namespaces unless an attribute uses the prefix, and the element's
+      -- namespace as the default namespace
+      let attrPfx := (e.attrNodes n).map (fun a => (e.nrec a).name.pfx)
+      let decls := if !(x.html5 && (x.m == "xhtml" || x.m == "html")) then decls else
+        decls.filter (fun (pf, u) => !(pf != "" && [nsXHTML, serNsSvg, serNsMathMl].contains u && !attrPfx.contains pf))
+      let decls := if !pn then decls else
+        let ds := decls.filter (fun (pf, _) => pf != "")
+        if scope.lookup "" == some r.name.uri then ds else ("", r.name.uri) :: ds
       if x.p.canonical && decls.any (fun (_, u) => u != "" && !hasScheme u) then
         err "SERE0024" "canonical serialization: a namespace URI is not absolute"
       for a in e.attrNodes n do x.checkChars (e.nrec a).value
       emit ("<" ++ nm)
       for (pf, u) in decls do
         emit (" xmlns" ++ (if pf == "" then "" else ":" ++ pf) ++ "=\"" ++ x.p.escAttr false u ++ "\"")
+      -- indent-attributes (§5.1.6): each attribute after the first on a
+      -- line of its own, under the first
+      let mut firstAttr := true
       for a in e.sortedAttrs x n do
+        if !firstAttr && x.p.indent && x.p.indentAttrs && ind && !x.p.canonical then
+          emit (x.nl depth ++ String.ofList (List.replicate nm.length ' '))
         e.writeAttr x isH a
+        firstAttr := false
       let scope' := decls ++ scope
       let kidsAll := r.children.toList.map n.at
       let indentHere := ind && x.indentsIn e n
@@ -650,9 +752,9 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
       if kids.isEmpty && !isHead then
         if x.m == "html" && isH then
           emit ">"
-          if !htmlVoid.contains (lower r.name.loc) then emit ("</" ++ nm ++ ">")
+          if !x.voidElem r.name.loc then emit ("</" ++ nm ++ ">")
         else if x.m == "xhtml" && isH then
-          if htmlVoid.contains (lower r.name.loc) then emit " />" else emit ("></" ++ nm ++ ">")
+          if x.voidElem r.name.loc then emit " />" else emit ("></" ++ nm ++ ">")
         else if x.p.canonical then emit ("></" ++ nm ++ ">")
         else emit "/>"
       else
@@ -660,7 +762,14 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
         if isHead then
           if indentHere then emit (x.nl (depth + 1))
           emit (metaTag x)
+        let mut noEsc := false
         for c in kids do
+          if let some b := e.escapeMarker c then
+            noEsc := b
+            continue
+          if noEsc && (e.nrec c).kind == .text then
+            emit ({ x.p with charMap := [] }.rawText (e.nrec c).value)
+            continue
           if indentHere then emit (x.nl (depth + 1))
           e.writeNode x f c scope' (depth + 1) (ind && indentHere) (some r.name)
         if indentHere then emit (x.nl depth)
@@ -679,6 +788,17 @@ def Env.writeMarkup (e : Env) (p : SerParams) (s : Seq) : M String := do
     | some v => (v.toList.headD '5') ≥ '5'
     | none => m != "html" || (match p.version with | some v => (v.toList.headD '5') ≥ '5' | none => true)
   let x : XCtx := { p, m, html5 }
+  -- SEPM0004: standalone and doctype-system need a well-formed document
+  -- entity (one element, no text at the top level)
+  if (m == "xml" || m == "xhtml") && !p.canonical && (p.standalone.isSome || p.doctypeSystem.isSome) then
+    let elems := items.filter (fun i => match i with
+      | .node n => (e.nrec n).kind == .element
+      | _ => false)
+    let texts := items.any (fun i => match i with
+      | .text _ => true
+      | .node n => (e.nrec n).kind == .text)
+    if elems.length != 1 || texts then
+      err "SEPM0004" "standalone or doctype-system is given and the result is not a well-formed document entity"
   let act : W Unit := do
     if m != "html" && !p.omitDecl && !p.canonical then
       emit ("<?xml version=\"" ++ (p.version.getD "1.0") ++ "\" encoding=\"" ++ p.encoding ++ "\"" ++
@@ -686,33 +806,53 @@ def Env.writeMarkup (e : Env) (p : SerParams) (s : Seq) : M String := do
           | some b => " standalone=\"" ++ (if b then "yes" else "no") ++ "\""
           | none => "") ++ "?>")
       if p.indent then emit "\n"
-    match e.firstElem items with
-    | some fe =>
-      let r := e.nrec fe
-      let root := if r.name.pfx == "" then r.name.loc else r.name.pfx ++ ":" ++ r.name.loc
-      if !p.canonical then
-        match p.doctypeSystem, p.doctypePublic with
-        | some sys, some pub => emit ("<!DOCTYPE " ++ root ++ " PUBLIC \"" ++ pub ++ "\" \"" ++ sys ++ "\">")
-        | some sys, none => emit ("<!DOCTYPE " ++ root ++ " SYSTEM \"" ++ sys ++ "\">")
-        | none, some pub =>
-            if m != "xml" then emit ("<!DOCTYPE " ++ root ++ " PUBLIC \"" ++ pub ++ "\">")
-        | none, none =>
-            if m != "xml" && html5 && lower r.name.loc == "html" && x.isHtmlElem r.name then
-              emit "<!DOCTYPE html>"
-              if p.indent then emit "\n"
-    | none => pure ()
+    -- the document type declaration, written immediately before the
+    -- first element (§5.1.10, §6.1.11, §7.5.8); a literal with a
+    -- quotation mark is written in apostrophes
+    let lit (v : String) : String := if v.contains '"' then "'" ++ v ++ "'" else "\"" ++ v ++ "\""
+    let doctype : Option String := match e.firstElem items with
+      | some fe =>
+        let r := e.nrec fe
+        let root := if r.name.pfx == "" || x.prefixNorm r.name then r.name.loc else r.name.pfx ++ ":" ++ r.name.loc
+        -- only whitespace text before the element
+        let textBefore := (items.takeWhile (fun i => match i with
+            | .node n => n != fe
+            | _ => true)).any (fun i => match i with
+            | .text t => !t.toList.all isWs
+            | _ => false)
+        let html5Doc := html5 && lower r.name.loc == "html" && x.isHtmlElem r.name && !textBefore
+        if p.canonical then none
+        else match m, p.doctypeSystem, p.doctypePublic with
+        | "html", some sys, some pub => some ("<!DOCTYPE " ++ root ++ " PUBLIC " ++ lit pub ++ " " ++ lit sys ++ ">")
+        | "html", some sys, none => some ("<!DOCTYPE " ++ root ++ " SYSTEM " ++ lit sys ++ ">")
+        | "html", none, some pub => some ("<!DOCTYPE " ++ root ++ " PUBLIC " ++ lit pub ++ ">")
+        | "html", none, none => if html5Doc then some "<!DOCTYPE html>" else none
+        | "xhtml", none, _ => if html5Doc then some ("<!DOCTYPE " ++ r.name.loc ++ ">") else none
+        | _, some sys, some pub => some ("<!DOCTYPE " ++ root ++ " PUBLIC " ++ lit pub ++ " " ++ lit sys ++ ">")
+        | _, some sys, none => some ("<!DOCTYPE " ++ root ++ " SYSTEM " ++ lit sys ++ ">")
+        | _, none, _ => none
+      | none => none
+    let fe := e.firstElem items
     let mut first := true
     let mut seenElem := false
+    let mut noEsc := false
     for i in items do
       match i with
       | .text t =>
         x.checkChars t
-        emit (p.escText t)
+        emit (if noEsc then { p with charMap := [] }.rawText t else p.escText t)
       | .node n =>
+        if let some b := e.escapeMarker n then
+          noEsc := b
+          continue
         let k := (e.nrec n).kind
         if p.canonical && !first then
           if seenElem || k == .element then emit "\n"
         else if p.indent && !first then emit "\n"
+        if some n == fe then
+          if let some d := doctype then
+            emit d
+            if p.indent then emit "\n"
         e.writeNode x 100000 n [("", ""), ("xml", nsXML)] 0 true none
         if k == .element then seenElem := true
       first := false
@@ -942,7 +1082,9 @@ def Env.adaptiveItem (e : Env) (p : SerParams) : Nat → Item → W Unit
       if k == .attribute || k == .namespace then
         e.writeNode { p, m := "xml", html5 := true } 10 n [] 0 false none
       else
-        let s ← (e.writeMarkup { p with method := "xml", itemSep := none, omitDecl := true } [.node n] : M String)
+        -- a document node is written by the XML method with the
+        -- parameters given (the XML declaration among them)
+        let s ← (e.writeMarkup { p with method := "xml", itemSep := none, omitDecl := p.omitDecl || k != .document } [.node n] : M String)
         emit s
     | .jnode _ _ v _ => e.adaptiveMember p f v
     | .arr ms =>

@@ -128,6 +128,20 @@ deriving Inhabited
 
 /-! ## The host functions -/
 
+/-- The characters a named character map maps, with the maps it uses
+    first (§26.1). -/
+def Sheet.charMapOf (S : Sheet) : Nat → String → M (List (Char × String))
+  | 0, _ => err "XTSE1600" "character maps use each other in a cycle"
+  | f + 1, key => do
+    -- the declaration with the highest import precedence (the last)
+    match S.charMaps.reverse.find? (·.1 == key) with
+    | none => err "XTSE1590" ("unknown character map " ++ key)
+    | some (_, uses, own) =>
+      let mut out : List (Char × String) := []
+      for u in uses do out := out ++ (← S.charMapOf f u)
+      pure (out ++ own)
+
+
 def XFunction.minArity (f : XFunction) : Nat :=
   (f.params.filter (fun p => p.required)).length
 
@@ -200,7 +214,7 @@ def buildKeyIndex (S : Sheet) (env : Env) (kd : KeyDef) (root : NodeRef) : M Key
   for i in [lo:hi+1] do
     let nd := root.at i
     if !(kd.pat.matches env (.node nd)) then continue
-    let cx : Ctx := { env := env.focus (.node nd) 1 1 }
+    let cx : Ctx := { env := env.focus (.node nd) 1 1, tempOut := true }
     let v ← match kd.use with
       | some e => (·.1) <$> (evalX cx e).run {}
       | none => do
@@ -221,7 +235,7 @@ def accumulatorValues (S : Sheet) (env : Env) (acc : Accumulator) (root : NodeRe
   let d := env.doc root
   let hi := (d.get root.idx).last
   let rootItem : Item := .node root
-  let cx0 : Ctx := { env := env.focus rootItem 1 1 }
+  let cx0 : Ctx := { env := env.focus rootItem 1 1, tempOut := true }
   let (init, _) ← (evalX cx0 acc.init).run {}
   let applyRules (isEnd : Bool) (nd : NodeRef) (v : Seq) : M Seq := do
     let mut v := v
@@ -229,7 +243,7 @@ def accumulatorValues (S : Sheet) (env : Env) (acc : Accumulator) (root : NodeRe
     match rules.getLast? with
     | none => pure v
     | some r =>
-      let cx := (({ env := env.focus (.node nd) 1 1 } : Ctx)).bind { uri := "", loc := "value" } v
+      let cx := (({ env := env.focus (.node nd) 1 1, tempOut := true } : Ctx)).bind { uri := "", loc := "value" } v
       let nv ← match r.sel with
         | some e => (·.1) <$> (evalX cx e).run {}
         | none => do
@@ -306,7 +320,8 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
     -- since the new trees are numbered from the call alone
     | some fn => some fun c args => runFresh (if fn.newEachTime == "no" then { c with vars := [] } else c) fn.name.eqn args (do
         if let [.staticErr "XTDE3052" msg] := fn.body then xerr "XTDE3052" msg
-        let mut cx : Ctx := { env := { env with ctx := none, pos := 0, size := 0, ns := c.ns, vars := env.vars }, inFn := true, tempOut := true }
+        -- current-output-uri() is absent in a function body (§25.4)
+        let mut cx : Ctx := { env := { env with ctx := none, pos := 0, size := 0, ns := c.ns, vars := (vOutUri, []) :: env.vars }, inFn := true, tempOut := true }
         -- the defaults see none of the parameters (XPST0008)
         let cx0 := cx
         let mut i := 0
@@ -400,6 +415,16 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
           | some (_, [.map rec]) => pure ((rec.find? (fun (k1, _) => k1.str == "value")).map (·.2) |>.getD (sStr ""))
           | _ => pure (sStr "")
         | _ => pure (sStr "")
+    -- fn:character-map (§26.1.7.1): the mappings of a character map,
+    -- with the maps it uses first, a later mapping of a character winning
+    | "character-map", 1 => some fun _ a => do
+        match a.getD 0 [] with
+        | [.atom ⟨_, .qn q⟩] =>
+          if !(S.charMaps.any (·.1 == q.eqn)) then pure [] else
+          let cm ← S.charMapOf 20 q.eqn
+          let cm := cm.foldl (fun acc (ch, r) => (acc.filter (·.1 != ch)) ++ [(ch, r)]) []
+          pure [.map (cm.map (fun (ch, r) => (Atomic.ofStr (String.singleton ch), [Item.atom (Atomic.ofStr r)])))]
+        | _ => err "XPTY0004" "character-map needs an xs:QName"
     | "current-output-uri", 0 => some fun c _ =>
         match lookupV c.vars vOutUri with
         | some v => pure v
@@ -606,7 +631,7 @@ def evalGlobals (S : Sheet) (o : TOpts) (env0 : Env) : M Env := do
           | none => pure v
         | none =>
           if g.required then xerr "XTDE0050" ("no value given for the required parameter $" ++ g.name.show)
-          else bindValue 100000 S { env := genv, backCompat := ({ version := S.version } : SCx).backCompat } g.sel g.body g.ty ("$" ++ g.name.show) (if g.isParam then "XTTE0590" else "XTTE0570")
+          else bindValue 100000 S { env := genv, tempOut := true, backCompat := ({ version := S.version } : SCx).backCompat } g.sel g.body g.ty ("$" ++ g.name.show) (if g.isParam then "XTTE0590" else "XTTE0570")
       match act.run { base := (hash g.name.eqn).toNat % 100000 + 7 } with
       | .ok (v, _) =>
           env := { env with vars := env.vars ++ [(g.name, v)] }
@@ -647,7 +672,8 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
     let q := if q.uri == nsFN && q.pfx == "" && S.functions.any (fun g => g.name.uri == "" && g.name.loc == q.loc && g.accepts k)
       then { q with uri := "" } else q
     (S.functions.find? (fun f => f.name == q && f.accepts k)).map (·.params.map (·.name.loc))
-  let env := { env with host, hostParams, vars := env.vars ++ [(vOutUri, if o.outUri == "" then [] else [.atom (Atomic.ofUri o.outUri)])] }
+  let ouV : Seq := if o.outUri == "" then [] else [.atom (Atomic.ofUri o.outUri)]
+  let env := { env with host, hostParams, vars := env.vars ++ [(vOutUri, ouV), (vBaseOut, ouV)] }
   let focusEnv := match o.globalCtx with
     | some i => env.focus i 1 1
     | none => env
@@ -717,25 +743,27 @@ def serKinds : List String :=
    "method", "normalization-form", "omit-xml-declaration", "standalone", "suppress-indentation",
    "undeclare-prefixes", "use-character-maps", "version"]
 
-/-- The characters a named character map maps, with the maps it uses
-    first (§26.1). -/
-def Sheet.charMapOf (S : Sheet) : Nat → String → M (List (Char × String))
-  | 0, _ => err "XTSE1600" "character maps use each other in a cycle"
-  | f + 1, key => do
-    -- the declaration with the highest import precedence (the last)
-    match S.charMaps.reverse.find? (·.1 == key) with
-    | none => err "XTSE1590" ("unknown character map " ++ key)
-    | some (_, uses, own) =>
-      let mut out : List (Char × String) := []
-      for u in uses do out := out ++ (← S.charMapOf f u)
-      pure (out ++ own)
-
 /-- Serialization parameters from `xsl:output` properties. -/
-def serParamsOfProps (S : Sheet) (props : List (String × String)) : M SerParams := do
+def serParamsOfProps (S : Sheet) (env : Env) (props : List (String × String)) : M SerParams := do
   let mut p : SerParams := {}
   for (name0, v) in props do
     let name := if name0 == "output-version" then "version" else name0
-    if name == "build-tree" || name == "parameter-document" || name == "indent-attributes" then continue
+    if name == "build-tree" then continue
+    -- §26.1.5: the parameters of a serialization parameter document; a
+    -- document that cannot be found is ignored
+    if name == "parameter-document" then
+      match env.resources.lookup v with
+      | none => pure ()
+      | some txt =>
+        match Doc.ofString txt v with
+        | .error m => err "SEPM0017" ("the serialization parameter document is not well-formed: " ++ m)
+        | .ok d =>
+          let env' := { env with docs := env.docs.push d }
+          let dn := NodeRef.mk' env.docs.size 0
+          match (env'.nrec dn).children.toList.map dn.at |>.find? (fun c => (env'.nrec c).kind == .element) with
+          | some r => p ← elemParams env' r p
+          | none => err "SEPM0017" "the serialization parameter document has no element"
+      continue
     if name == "use-character-maps" then
       let mut cm : List (Char × String) := []
       for t in (v.split (· == ' ')).toList.map (·.toString) |>.filter (· != "") do
@@ -743,7 +771,10 @@ def serParamsOfProps (S : Sheet) (props : List (String × String)) : M SerParams
           | .ok q => pure q.eqn
           | .error _ => pure t
         cm := cm ++ (← S.charMapOf 20 key)
-      p ← p.set "use-character-maps" (.cm cm)
+      -- a character that several maps map: the last mapping wins
+      -- (§26.1.3)
+      let cmLast := cm.foldl (fun acc (ch, r) => (acc.filter (·.1 != ch)) ++ [(ch, r)]) []
+      p ← p.set "use-character-maps" (.cm cmLast)
       continue
     let some kind := paramKinds.lookup name | continue
     let pv ← match kind with
@@ -771,7 +802,23 @@ def Sheet.outputProps (S : Sheet) (key : String) (extra : List (String × String
   let base ← match S.outputs.lookup key with
     | some ps => pure ps
     | none => if key == "" then pure [] else err "XTDE1460" ("no output definition named " ++ key)
-  pure ((base.filter (fun (k, _) => !(extra.any (·.1 == k)))) ++ extra)
+  -- §25.1: the instruction's names of cdata-section-elements and
+  -- suppress-indentation are added to those of the output definition,
+  -- and its character maps follow (and take precedence over) the
+  -- definition's; `#absent` unsets item-separator
+  let joined := ["cdata-section-elements", "suppress-indentation", "use-character-maps"]
+  let extra' := extra.filterMap (fun (k, v) =>
+    if joined.contains k then
+      match base.lookup k with
+      | some b => some (k, b ++ " " ++ v)
+      | none => some (k, v)
+    else if k == "item-separator" && v == "#absent" then none
+    else some (k, v))
+  let base := base.filter (fun (k, _) => k == "parameter-document" || !(extra.any (·.1 == k)))
+  -- §26.1.5: a parameter document overrides the attributes beside it
+  let pdLast (ps : List (String × String)) : List (String × String) :=
+    ps.filter (·.1 != "parameter-document") ++ ps.filter (·.1 == "parameter-document")
+  pure (pdLast base ++ pdLast extra')
 
 /-- The default output method (§26.1): `html` when the result's first
     element is `html` in no namespace, `xhtml` when it is in the XHTML
@@ -799,12 +846,13 @@ def defaultMethod (env : Env) (s : Seq) : String :=
 
 /-- Serialize a result with the output definition `props`. -/
 def serializeResult (S : Sheet) (env : Env) (props : List (String × String)) (s : Seq) : M String := do
-  let props := if props.any (·.1 == "method") then props else props ++ [("method", defaultMethod env s)]
+  -- the defaults come first: a parameter document may set them
+  let props := if props.any (·.1 == "method") then props else [("method", defaultMethod env s)] ++ props
   -- XSLT's default: the XML declaration is written (§26)
   let m := (props.lookup "method").getD "xml"
   let props := if (m == "xml" || m == "xhtml") && !(props.any (·.1 == "omit-xml-declaration")) then
-      props ++ [("omit-xml-declaration", "no")] else props
-  let p ← serParamsOfProps S props
+      [("omit-xml-declaration", "no")] ++ props else props
+  let p ← serParamsOfProps S env props
   let out ← env.serializeWith p s
   let bom := match props.lookup "byte-order-mark" with
     | some v => ["yes", "true", "1"].contains v.trimAscii.toString
