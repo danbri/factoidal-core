@@ -137,6 +137,10 @@ structure Env where
       §A.3.3) and namespace undeclarations in constructors; strings hold
       every XML 1.1 character in both (XDM 4.0 §4.1.6). -/
   xml11 : Bool := false
+  /-- The `dtd-validation` option of `fn:doc` and `fn:parse-xml` is
+      available (F&O 4.0 §14.6.1); when a host turns it off, the option
+      raises FODC0013 and `fn:system-properties` reports false. -/
+  dtdValidation : Bool := true
 deriving Inhabited
 
 def Env.doc (e : Env) (n : NodeRef) : Doc :=

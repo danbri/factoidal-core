@@ -127,6 +127,8 @@ def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
     | some s => strOf s
     | none => e.baseUri
   let dtd ← optBool opts "dtd-validation" false
+  if dtd && !e.dtdValidation then
+    err "FODC0013" "this processor is configured without DTD validation"
   let strip := optionStr opts "strip-space" "none"
   if !["all", "none", "conditional"].contains strip then
     err "XPTY0004" ("strip-space must be all, none or conditional, not " ++ strip)
@@ -145,9 +147,22 @@ def docOfKids (e : Env) (o : ParseOpts) (kids : List Node) (uri : String) : M Do
       | .error x => throw x
     | _, _ => err "FODC0009" "no schema to validate with"
 
-/-- Parse a whole document (string or bytes) under the options. -/
-def parseDocument (e : Env) (o : ParseOpts) (src : Atomic) : M Document := do
-  let resolve : Resolver := if o.trustExternal then (fun h => e.resource h) else (fun _ => none)
+/-- A relative reference `h` against the URI of the document that names
+    it (its directory), for the external DTD subset and external entities
+    of a document read by `fn:doc`. -/
+def relToDoc (docUri h : String) : String :=
+  if docUri == "" || (h.splitOn "://").length > 1 || h.startsWith "/" then h
+  else match (docUri.splitOn "/").dropLast with
+    | [] => h
+    | dirs => String.intercalate "/" dirs ++ "/" ++ h
+
+/-- Parse a whole document (string or bytes) under the options. `docUri`
+    is the URI of the document (for `fn:doc`), against which its external
+    DTD subset and external entities are resolved first. -/
+def parseDocument (e : Env) (o : ParseOpts) (src : Atomic) (docUri : String := "") : M Document := do
+  let resolve : Resolver := if o.trustExternal then
+      (fun h => (e.resource (relToDoc docUri h)).orElse (fun _ => e.resource h))
+    else (fun _ => none)
   let run (r : Resolver) : Except XmlError Document :=
     match bytesOfAtomic src with
     | some bs => parseXMLBytesWith r bs
@@ -382,7 +397,7 @@ def docFn (e : Env) (a : List Seq) : M Seq := do
     | none =>
       match e.resource u.str with
       | some t =>
-        let d ← match parseDocument e o (Atomic.ofStr t) with
+        let d ← match parseDocument e o (Atomic.ofStr t) u.str with
           | .ok d => pure d
           | .error x => if x.code == "FODC0006" then err "FODC0002" x.msg else throw x
         let uri := resolveUri e.baseUri u.str

@@ -136,21 +136,27 @@ def featureSupported (f : String) : Bool :=
     have it, XQST0134), XPath 1.0 compatibility mode (XPath 4.0
     §2.2.1.1, which only a host language sets: `configureFor` sets
     `Env.compat10` for the test that asks for it) and a collation other
-    than the codepoint collation (`XPath4.Collation`). -/
+    than the codepoint collation (`XPath4.Collation`), and a cast from
+    `xs:double` or `xs:float` to `xs:decimal` that keeps every digit
+    (`XPath4.decOfFloat`). -/
 def featureSupportedIn (xq : Bool) (f : String) : Bool :=
-  featureSupported f || f == "non_unicode_codepoint_collation"
+  featureSupported f || f == "non_unicode_codepoint_collation" || f == "arbitraryPrecisionDecimal"
+    -- the dtd-validation option is a setting (`Env.dtdValidation`):
+    -- `configureFor` turns it off for a test that needs it absent
+    || f == "dtd-validation-option"
     || (!xq && (f == "namespace-axis" || f == "xpath-1.0-compatibility"))
 
 /-- The dynamic context settings that a test case's dependencies select:
-    XPath 1.0 compatibility mode, the default language and the XML
-    version. -/
+    XPath 1.0 compatibility mode, the default language, the XML version,
+    and whether the `dtd-validation` option is available. -/
 def configureFor (deps : List Node) (env : Env) : Env :=
   deps.foldl (fun env d =>
     let sat := attrD d "satisfied" "true" != "false"
     match attrD d "type" with
     | "feature" =>
-        if sat && ((attrD d "value").splitOn " ").contains "xpath-1.0-compatibility"
-        then { env with compat10 := true } else env
+        let fs := (attrD d "value").splitOn " "
+        let env := if sat && fs.contains "xpath-1.0-compatibility" then { env with compat10 := true } else env
+        if !sat && fs.contains "dtd-validation-option" then { env with dtdValidation := false } else env
     | "default-language" => if sat then { env with defaultLanguage := attrD d "value" } else env
     | "xml-version" =>
         if sat && ((attrD d "value").splitOn " ").all (· == "1.1") then { env with xml11 := true } else env
@@ -164,7 +170,10 @@ def depOk (xq : Bool) (d : Node) : Bool :=
   | "spec" => specOk v xq
   | "feature" =>
       let fs := v.splitOn " "
-      if sat then fs.all (featureSupportedIn xq) else !(fs.all (featureSupportedIn xq))
+      -- a feature that is a setting (`dtd-validation-option`) can also be
+      -- absent: `configureFor` turns it off
+      if sat then fs.all (featureSupportedIn xq)
+      else !(fs.all (featureSupportedIn xq)) || fs.all (· == "dtd-validation-option")
   -- The version of XML and XML Names is a setting of this processor
   -- (XPath 4.0 §A.2, constraint xml-version): `configureFor` sets
   -- `Env.xml11` for a test that names only XML 1.1. Strings hold every
@@ -607,6 +616,21 @@ def parseArgs : List String → Opts → Opts
   | [], o => o
 
 
+/-- The quoted system identifiers of an XML text (`SYSTEM "x"`,
+    `PUBLIC "p" "x"`): the last quoted literal after each `SYSTEM` or
+    `PUBLIC` keyword, up to the next `>`. -/
+def xmlSystemIds (txt : String) : List String :=
+  let parts := (txt.splitOn "SYSTEM").drop 1 ++ (txt.splitOn "PUBLIC").drop 1
+  parts.filterMap (fun p =>
+    let upto := (p.splitOn ">").headD ""
+    let qs := (upto.splitOn "\"").toArray
+    let qs2 := (upto.splitOn "'").toArray
+    let lit (a : Array String) : Option String :=
+      if a.size ≥ 3 then some a[a.size - 2]! else none
+    match lit qs with
+    | some s => some s
+    | none => lit qs2)
+
 /-- The files a test names by a relative reference in its text (for
     `fn:unparsed-text`, `fn:json-doc`, `fn:doc`, and external entities
     under `trust-external`): every run of path characters that names a
@@ -634,7 +658,20 @@ def scanResources (root dir src : String) : IO (List (String × String) × List 
     if ← System.FilePath.pathExists path then
       if (← System.FilePath.isDir path) then continue
       match ← readFileSafe path with
-      | some txt => out := (t, txt) :: out
+      | some txt =>
+        out := (t, txt) :: out
+        -- the files an XML resource names (its external DTD subset and
+        -- external entities), one level, keyed relative to the query
+        if t.endsWith ".xml" then
+          let tdir := match (t.splitOn "/").dropLast with
+            | [] => "" | ds => String.intercalate "/" ds ++ "/"
+          for sub in xmlSystemIds txt do
+            if (sub.splitOn "://").length > 1 || sub.startsWith "/" then continue
+            let some sp := normPath (rel ++ "/" ++ tdir ++ sub) | continue
+            if out.any (·.1 == tdir ++ sub) then continue
+            match ← readFileSafe (root ++ "/" ++ sp) with
+            | some st => out := (tdir ++ sub, st) :: out
+            | none => pure ()
       | none => pure ()
       match ← readBytesSafe path with
       | some bs => bins := (t, bs) :: bins
@@ -794,7 +831,10 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
 /-- Run one test set in a child process with a time limit (an IO loop
     that ends on an outside event: the child exiting, or the clock). -/
 def runIsolated (o : Opts) (secs : Nat) (fam setName file : String) : IO (Tally × String) := do
-  let pf := (← IO.getEnv "TMPDIR").getD "/tmp" ++ "/l4qt4-progress-" ++ setName
+  -- the mode and the process id keep two runs at the same time (XPath
+  -- and XQuery mode) from reading each other's progress files
+  let pf := (← IO.getEnv "TMPDIR").getD "/tmp" ++ "/l4qt4-progress-" ++ o.lang ++ "-" ++
+    toString (← IO.Process.getPID) ++ "-" ++ setName
   IO.FS.writeFile pf ""
   let mut args : Array String := #["--root", o.root, "--family", fam, "--set", setName, "--progress", pf, "--lang", o.lang]
   if o.listFails then args := args.push "--list-fails"

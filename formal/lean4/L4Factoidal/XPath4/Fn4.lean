@@ -437,7 +437,7 @@ def trimSpaceFn : LibFn := fun _ e a => do
   let cs := if side != "start" then (cs.reverse.dropWhile isWs).reverse else cs
   pure (sStr (String.ofList cs))
 
-def systemPropertiesFn : LibFn := fun _ _ _ =>
+def systemPropertiesFn : LibFn := fun _ e _ =>
   let q (l : String) : Atomic := Atomic.ofQN { uri := "", loc := l }
   pure [.map [
     (q "xpath-version", [.atom (Atomic.ofDec ⟨40, 1⟩)]),
@@ -447,8 +447,10 @@ def systemPropertiesFn : LibFn := fun _ _ _ =>
     (q "schema-aware", [.atom (Atomic.ofBool true)]),
     (q "accepts-typed-data", [.atom (Atomic.ofBool true)]),
     (q "supports-xinclude", [.atom (Atomic.ofBool false)]),
-    (q "supports-dtd-validation", [.atom (Atomic.ofBool false)]),
-    (q "supports-dtd-attribute-typing", [.atom (Atomic.ofBool false)]),
+    -- `XML.validate` against the DTD (`XmlParse.parseDocument`), and ID
+    -- and IDREF attributes of the DTD (`Doc.ofDocument`)
+    (q "supports-dtd-validation", [.atom (Atomic.ofBool e.dtdValidation)]),
+    (q "supports-dtd-attribute-typing", [.atom (Atomic.ofBool e.dtdValidation)]),
     (q "supports-invisible-xml", [.atom (Atomic.ofBool false)]),
     (q "supports-dynamic-xquery", [.atom (Atomic.ofBool false)]),
     (q "supports-dynamic-xslt", [.atom (Atomic.ofBool false)]),
