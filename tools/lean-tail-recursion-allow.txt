@@ -1612,3 +1612,6 @@ L4Factoidal_SPARQLRL_resolveImportsAux  # (c) import nesting, at most 64 (the fu
 L4Factoidal_EXPath_File_exec  # (b) the depth is the nesting of the XPath expression (EXPath File 4.0 evaluator, issue 1101)
 L4Factoidal_EXPath_File_hasWrite  # (b) the depth is the nesting of the XPath expression (EXPath File 4.0, issue 1101)
 L4Factoidal_EXPath_Binary_packBE  # (s) specification only: no emitted C outside Binary/Octets.lean and Binary/Theorems.lean calls it; bin:pack-* call the loop packBEAcc (packBE_eq_packBEAcc)
+# --- 2026-10-28, graph pipelines (https://github.com/danbri/factoidal/issues/1130)
+L4Factoidal_Dataflow_gather  # (c) one frame per input port of one stage; the ports come from the Lean signature tables (at most 2 today); recursion stops at the last port
+L4Factoidal_Dataflow_srcIssues  # (c) one frame per input port of one stage, as gather; extra sources stop at the last port with one portCount issue

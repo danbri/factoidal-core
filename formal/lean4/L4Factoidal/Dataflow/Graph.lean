@@ -132,6 +132,32 @@ def graphIssuesAux (conv : W → W → Bool) (inW : List W) :
     srcIssues conv inW outs outs.length 0 srcs sig.inWires ++
     graphIssuesAux conv inW (outs ++ [sig.outW]) rest
 
+/-- `graphIssuesAux` as a loop: the issues so far in `acc` (one frame for
+any number of nodes; the number of nodes comes from the request). -/
+def graphIssuesLoop (conv : W → W → Bool) (inW : List W) :
+    List (GraphIssue W) → List W → List (PortSig W N × List Src) → List (GraphIssue W)
+  | acc, _, [] => acc
+  | acc, outs, (sig, srcs) :: rest =>
+    graphIssuesLoop conv inW (acc ++ srcIssues conv inW outs outs.length 0 srcs sig.inWires)
+      (outs ++ [sig.outW]) rest
+
+theorem graphIssuesLoop_eq (conv : W → W → Bool) (inW : List W) :
+    ∀ (acc : List (GraphIssue W)) (outs : List W) (g : List (PortSig W N × List Src)),
+      graphIssuesLoop conv inW acc outs g = acc ++ graphIssuesAux conv inW outs g
+  | acc, _, [] => by simp [graphIssuesLoop, graphIssuesAux]
+  | acc, outs, (sig, srcs) :: rest => by
+    simp [graphIssuesLoop, graphIssuesAux, graphIssuesLoop_eq conv inW _ _ rest, List.append_assoc]
+
+/-- The loop with an empty accumulator; the compiled code of `graphIssuesAux`. -/
+def graphIssuesAuxFast (conv : W → W → Bool) (inW : List W) (outs : List W)
+    (g : List (PortSig W N × List Src)) : List (GraphIssue W) :=
+  graphIssuesLoop conv inW [] outs g
+
+@[csimp] theorem graphIssuesAux_eq_fast :
+    @graphIssuesAux = @graphIssuesAuxFast := by
+  funext W N _ conv inW outs g
+  simp [graphIssuesAuxFast, graphIssuesLoop_eq]
+
 /-- **The static check** of a graph whose inputs are on the wires `inW`. -/
 def graphIssues (conv : W → W → Bool) (inW : List W) (g : List (PortSig W N × List Src)) :
     List (GraphIssue W) :=
