@@ -2,7 +2,9 @@
 L4Factoidal.XPath4.Lib — the F&O 4.0 function library (the Stage 1
 core): `fn:` strings, numerics, booleans, sequences, aggregates,
 higher-order functions, node accessors and QNames; `map:`, `array:`
-and `math:`.
+and `math:`. Collations: `XPath4.Collation`; a string comparison under
+a collation other than the codepoint collation goes through the
+collation key of the string (`collProxy`).
 
 Every implementation receives its arguments ALREADY COERCED to the
 parameter types of the F&O 4.0 signature (`XPath4.Catalog`, applied by
@@ -14,8 +16,7 @@ Not implemented (they raise `XPST0017` with "not implemented"): the
 date/time formatting and arithmetic functions beyond the component
 accessors, `fn:format-*`, `fn:analyze-string`, `fn:tokenize` with a
 non-trivial pattern, JSON/CSV/XML/HTML parsing and serialization,
-`fn:transform`, `fn:load-xquery-module`, collations other than the
-Unicode codepoint collation, `fn:normalize-unicode` beyond NFC on
+`fn:transform`, `fn:load-xquery-module`, `fn:normalize-unicode` beyond NFC on
 input that is already NFC, and `fn:doc`/`fn:collection` beyond the
 documents the caller registers.
 -/
@@ -24,6 +25,7 @@ import L4Factoidal.Fn.String
 import L4Factoidal.Regex.XPath
 import Std.Data.HashSet
 import L4Factoidal.XPath4.Grapheme
+import L4Factoidal.XPath4.Collation
 
 namespace L4Factoidal.XPath4
 
@@ -74,6 +76,18 @@ def collationOk (c : Seq) : M Unit :=
     let u := a.str
     if u == "http://www.w3.org/2005/xpath-functions/collation/codepoint" then pure ()
     else err "FOCH0002" ("unsupported collation " ++ u)
+
+def isStrish (a : Atomic) : Bool := a.is .string || a.is .anyURI || a.ty == .untyped
+
+/-- The value that stands for a string-like `a` under the collation `c`:
+    a string whose codepoint order and equality are the order and
+    equality of `a` under `c` (its collation key, one character per
+    octet). Other values, and every value under the codepoint
+    collation, stand for themselves. -/
+def collProxy (c : Coll) (a : Atomic) : Atomic :=
+  if !c.isCodepoint && isStrish a then
+    ⟨a.ty, .str (String.ofList ((c.key a.str).map (fun b => Char.ofNat (b + 0x100))))⟩
+  else a
 
 /-! ## Strings -/
 
@@ -248,6 +262,25 @@ def minMax (isMax : Bool) (as : List Atomic) : M Seq := do
         | some .lt => if !isMax then best := b
         | _ => pure ()
       pure (single best)
+
+/-- `fn:min`/`fn:max` under a collation (F&O 4.0 §14.4.3): strings
+    compare under `c`; other values as without one. -/
+def minMaxC (c : Coll) (isMax : Bool) (as : List Atomic) : M Seq := do
+  if c.isCodepoint then minMax isMax as else
+  let as' ← as.mapM (fun a => if a.ty == .untyped then castAtomic a (.b .double) else pure a)
+  match as' with
+  | x :: rest =>
+    if as'.all (fun a => a.is .string || a.is .anyURI) then
+      let mut best := x
+      for b in rest do
+        match c.compare b.str best.str with
+        | .gt => if isMax then best := b
+        | .lt => if !isMax then best := b
+        | .eq => pure ()
+      let mixed := as'.any (fun a => a.is .anyURI) && as'.any (fun a => a.is .string)
+      pure (single (if mixed then Atomic.ofStr best.str else best))
+    else minMax isMax as
+  | [] => pure []
 
 /-! ## Sorting -/
 
@@ -428,6 +461,24 @@ def distinctAtoms (as : List Atomic) : List Atomic :=
     pure out.toList
   else distinctAtomsSlow as
 
+/-- `fn:distinct-values` under a collation: the first item of each class
+    of values equal under `c`. -/
+def distinctAtomsC (c : Coll) (as : List Atomic) : List Atomic :=
+  let ps := as.map (collProxy c)
+  if ps.all (fun a => (sameKey a).isSome) then Id.run do
+    let mut seen : Std.HashSet String := {}
+    let mut out : Array Atomic := #[]
+    for (a, p) in as.zip ps do
+      let k := (sameKey p).getD ""
+      if !seen.contains k then
+        seen := seen.insert k
+        out := out.push a
+    pure out.toList
+  else
+    let norm (b : Atomic) : Atomic := if b.ty == .untyped then Atomic.ofStr b.str else b
+    ((as.zip ps).foldl (fun acc (a, p) =>
+      if acc.any (fun (_, q) => atomicEqual (norm q) (norm p)) then acc else acc ++ [(a, p)]) []).map (·.1)
+
 /-- The values that occur more than once, first occurrence order of the
     second occurrence. -/
 def duplicateAtoms (as : List Atomic) (eqf : Atomic → Atomic → Bool) : List Atomic :=
@@ -517,11 +568,28 @@ def fnTable : List (String × LibFn) := [
   ent "substring" (fun _ _ a =>
     let len := match argN a 2 with | [] => none | s => some (numFloat s)
     pure (sStr (substr (strOf (argN a 0)) (numFloat (argN a 1)) len))),
-  ent "substring-before" (fun _ _ a => do collationOk (argN a 2); pure (sStr (Fn.String.substringBefore (strOf (argN a 0)) (strOf (argN a 1))))),
-  ent "substring-after" (fun _ _ a => do collationOk (argN a 2); pure (sStr (Fn.String.substringAfter (strOf (argN a 0)) (strOf (argN a 1))))),
-  ent "contains" (fun _ _ a => do collationOk (argN a 2); pure (sBool (Fn.String.contains (strOf (argN a 0)) (strOf (argN a 1))))),
-  ent "starts-with" (fun _ _ a => do collationOk (argN a 2); pure (sBool ((strOf (argN a 0)).startsWith (strOf (argN a 1))))),
-  ent "ends-with" (fun _ _ a => do collationOk (argN a 2); pure (sBool ((strOf (argN a 0)).endsWith (strOf (argN a 1))))),
+  ent "substring-before" (fun _ e a => do
+    let c ← e.collation (argN a 2)
+    let q := strOf (argN a 0); let p := strOf (argN a 1)
+    if c.isCodepoint || p == "" then pure (sStr (Fn.String.substringBefore q p))
+    else pure (sStr (match c.find q p true with | some (st, _) => charsTake q st | none => ""))),
+  ent "substring-after" (fun _ e a => do
+    let c ← e.collation (argN a 2)
+    let q := strOf (argN a 0); let p := strOf (argN a 1)
+    if c.isCodepoint || p == "" then pure (sStr (Fn.String.substringAfter q p))
+    else pure (sStr (match c.find q p true with | some (_, en) => charsDrop q en | none => ""))),
+  ent "contains" (fun _ e a => do
+    let c ← e.collation (argN a 2)
+    if c.isCodepoint then pure (sBool (Fn.String.contains (strOf (argN a 0)) (strOf (argN a 1))))
+    else pure (sBool (c.contains (strOf (argN a 0)) (strOf (argN a 1))))),
+  ent "starts-with" (fun _ e a => do
+    let c ← e.collation (argN a 2)
+    if c.isCodepoint then pure (sBool ((strOf (argN a 0)).startsWith (strOf (argN a 1))))
+    else pure (sBool (c.startsWith (strOf (argN a 0)) (strOf (argN a 1))))),
+  ent "ends-with" (fun _ e a => do
+    let c ← e.collation (argN a 2)
+    if c.isCodepoint then pure (sBool ((strOf (argN a 0)).endsWith (strOf (argN a 1))))
+    else pure (sBool (c.endsWith (strOf (argN a 0)) (strOf (argN a 1))))),
   ent "translate" (fun _ _ a => pure (sStr (translateStr (strOf (argN a 0)) (strOf (argN a 1)) (strOf (argN a 2))))),
   ent "codepoints-to-string" (fun _ _ a => do
     let mut out : Array Char := #[]
@@ -531,10 +599,10 @@ def fnTable : List (String × LibFn) := [
       out := out.push (Char.ofNat n.toNat)
     pure (sStr (String.ofList out.toList))),
   ent "string-to-codepoints" (fun _ _ a => pure ((cps (strOf (argN a 0))).map (fun c => .atom (Atomic.ofInt c.toNat)))),
-  ent "compare" (fun _ _ a => do
-    collationOk (argN a 2)
+  ent "compare" (fun _ e a => do
+    let c ← e.collation (argN a 2)
     match optAtom (argN a 0), optAtom (argN a 1) with
-    | some x, some y => pure (sInt (if x.str < y.str then -1 else if x.str == y.str then 0 else 1))
+    | some x, some y => pure (sInt (match c.compare x.str y.str with | .lt => -1 | .eq => 0 | .gt => 1))
     | _, _ => pure []),
   ent "codepoint-equal" (fun _ _ a =>
     match optAtom (argN a 0), optAtom (argN a 1) with
@@ -651,19 +719,28 @@ def fnTable : List (String × LibFn) := [
     let k := intOf (argN a 1)
     if k < 0 then err "XPTY0004" "negative count"
     pure ((List.replicate k.toNat (argN a 0)).flatten)),
-  ent "distinct-values" (fun _ _ a => do
-    collationOk (argN a 1)
-    pure (seqOfAtoms (distinctAtoms ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none))))),
-  ent "duplicate-values" (fun _ _ a => do
+  ent "distinct-values" (fun _ e a => do
+    let c ← e.collation (argN a 1)
     let as := (argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)
-    pure (seqOfAtoms (duplicateAtoms as eqForIndexOf))),
-  ent "index-of" (fun _ _ a => do
-    collationOk (argN a 2)
+    if c.isCodepoint then pure (seqOfAtoms (distinctAtoms as))
+    else pure (seqOfAtoms (distinctAtomsC c as))),
+  ent "duplicate-values" (fun _ e a => do
+    let c ← e.collation (argN a 1)
+    let as := (argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)
+    if c.isCodepoint then pure (seqOfAtoms (duplicateAtoms as eqForIndexOf))
+    else
+      let ps := as.map (collProxy c)
+      let ds := duplicateAtoms ps eqForIndexOf
+      -- the first item of each duplicated class
+      pure (seqOfAtoms (ds.filterMap (fun d => ((as.zip ps).find? (fun (_, p) => eqForIndexOf p d)).map (·.1))))),
+  ent "index-of" (fun _ e a => do
+    let c ← e.collation (argN a 2)
     match optAtom (argN a 1) with
     | some t =>
       let xs := argN a 0
+      let t := collProxy c t
       pure ((List.range xs.length).filterMap (fun (i : Nat) => match xs[i]? with
-        | some (.atom x) => if eqForIndexOf x t then some (.atom (Atomic.ofInt (i + 1))) else none
+        | some (.atom x) => if eqForIndexOf (collProxy c x) t then some (.atom (Atomic.ofInt (i + 1))) else none
         | _ => none))
     | none => pure []),
   ent "deep-equal" (fun _ e a => do
@@ -699,15 +776,19 @@ def fnTable : List (String × LibFn) := [
               pure (single ⟨t.ty, .x (.dur { months := 0, seconds := sd })⟩)
           | _ => err "FORG0006" "fn:avg"
       | _ => pure []),
-  ent "max" (fun _ _ a => do collationOk (argN a 1); minMax true ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none))),
-  ent "min" (fun _ _ a => do collationOk (argN a 1); minMax false ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none))),
-  ent "all-equal" (fun _ _ a => do
-    collationOk (argN a 1)
-    let as := (argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)
+  ent "max" (fun _ e a => do
+    let c ← e.collation (argN a 1)
+    minMaxC c true ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none))),
+  ent "min" (fun _ e a => do
+    let c ← e.collation (argN a 1)
+    minMaxC c false ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none))),
+  ent "all-equal" (fun _ e a => do
+    let c ← e.collation (argN a 1)
+    let as := (argN a 0).filterMap (fun i => match i with | .atom x => some (collProxy c x) | _ => none)
     pure (sBool (match as with | [] => true | x :: r => r.all (fun y => eqForIndexOf x y || atomicEqual x y)))),
-  ent "all-different" (fun _ _ a => do
-    collationOk (argN a 1)
-    let as := (argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)
+  ent "all-different" (fun _ e a => do
+    let c ← e.collation (argN a 1)
+    let as := (argN a 0).filterMap (fun i => match i with | .atom x => some (collProxy c x) | _ => none)
     pure (sBool ((distinctAtoms as).length == as.length))),
   ent "position" (fun _ e _ => if e.ctx.isNone then err "XPDY0002" "context is absent" else pure (sInt e.pos)),
   ent "last" (fun _ e _ => if e.ctx.isNone then err "XPDY0002" "context is absent" else pure (sInt e.size)),
@@ -781,12 +862,12 @@ def fnTable : List (String × LibFn) := [
         if !(← h.pred f [[x], sInt (i + 1)]) then r := false; break
       pure (sBool r)),
   ent "highest" (fun h e a => do
-    collationOk (argN a 1)
+    let c ← e.collation (argN a 1)
     let xs := argN a 0
     let keyOf (x : Item) : M (List Atomic) := do
       match argN a 2 with
-      | [] => e.atomize [x]
-      | f :: _ => e.atomize (← h.callN f [[x]])
+      | [] => pure ((← e.atomize [x]).map (collProxy c))
+      | f :: _ => pure ((← e.atomize (← h.callN f [[x]])).map (collProxy c))
     let ks ← xs.mapM keyOf
     let mut best : List (Item × List Atomic) := []
     for (x, k) in xs.zip ks do
@@ -799,12 +880,12 @@ def fnTable : List (String × LibFn) := [
         | .lt => pure ()
     pure (best.map (·.1))),
   ent "lowest" (fun h e a => do
-    collationOk (argN a 1)
+    let c ← e.collation (argN a 1)
     let xs := argN a 0
     let keyOf (x : Item) : M (List Atomic) := do
       match argN a 2 with
-      | [] => e.atomize [x]
-      | f :: _ => e.atomize (← h.callN f [[x]])
+      | [] => pure ((← e.atomize [x]).map (collProxy c))
+      | f :: _ => pure ((← e.atomize (← h.callN f [[x]])).map (collProxy c))
     let ks ← xs.mapM keyOf
     let mut best : List (Item × List Atomic) := []
     for (x, k) in xs.zip ks do
@@ -817,12 +898,12 @@ def fnTable : List (String × LibFn) := [
         | .gt => pure ()
     pure (best.map (·.1))),
   ent "sort" (fun h e a => do
-    collationOk (argN a 1)
+    let c ← e.collation (argN a 1)
     let xs := argN a 0
     let keyed ← xs.mapM (fun x => do
       match argN a 2 with
-      | [] => pure (x, ← e.atomize [x])
-      | f :: _ => pure (x, ← e.atomize (← h.callN f [[x]])))
+      | [] => pure (x, (← e.atomize [x]).map (collProxy c))
+      | f :: _ => pure (x, (← e.atomize (← h.callN f [[x]])).map (collProxy c)))
     let sorted ← msortM (fun p q => do pure ((← sortCmpKeys p.2 q.2) == .lt)) 64 keyed
     pure (sorted.map (·.1))),
   ent "sort-with" (fun h _ a => do
@@ -1182,12 +1263,12 @@ def fnTable2 : List (String × LibFn) := [
           | some c => pure (sStr (String.ofList [Char.ofNat c]))
           | none => err "FOCH0005" ("unknown character name " ++ s)
     | none => err "XPTY0004" "fn:char"),
-  ent "contains-token" (fun _ _ a => do
-    collationOk (argN a 2)
+  ent "contains-token" (fun _ e a => do
+    let c ← e.collation (argN a 2)
     let tok := trimWs (strOf (argN a 1))
     if tok == "" then pure (sBool false)
     else pure (sBool ((argN a 0).any (fun i => match i with
-      | .atom x => (normSpace x.str).splitOn " " |>.contains tok
+      | .atom x => (normSpace x.str).splitOn " " |>.any (fun t => t != "" && c.eq t tok)
       | _ => false)))),
   ent "atomic-equal" (fun _ _ a =>
     match optAtom (argN a 0), optAtom (argN a 1) with
@@ -1205,8 +1286,23 @@ def fnTable2 : List (String × LibFn) := [
           | some _ => pure [.fn (.builtin q k.toNat)]
           | none => pure []
     | _ => pure []),
-  ent "collation-available" (fun _ _ a =>
-    pure (sBool (strOf (argN a 0) == "http://www.w3.org/2005/xpath-functions/collation/codepoint"))),
+  ent "collation-available" (fun _ e a =>
+    pure (sBool (match collationOf e.baseUri (strOf (argN a 0)) with | .ok _ => true | .error _ => false))),
+  ent "collation-key" (fun _ e a => do
+    let c ← e.collation (argN a 1)
+    pure (single ⟨.b .base64Binary, .x (.bin false (c.key (strOf (argN a 0))))⟩)),
+  ent "collation" (fun _ _ a => do
+    let kvs ← asMap (argN a 0)
+    let mut ps : Array String := #[]
+    for (k, v) in kvs do
+      if !(k.is .string || k.is .anyURI || k.ty == .untyped) then
+        err "XPTY0004" "a collation option name must be a string"
+      let val ← match v with
+        | [.atom ⟨_, .bool b⟩] => pure (if b then "yes" else "no")
+        | [.atom x] => pure x.str
+        | _ => err "XPTY0004" ("the value of collation option " ++ k.str ++ " is not castable to xs:string")
+      ps := ps.push (k.str ++ "=" ++ val)
+    pure (sStr (if ps.isEmpty then ucaCollation else ucaCollation ++ "?" ++ String.intercalate ";" ps.toList))),
   ent "environment-variable" (fun _ _ _ => pure []),
   ent "available-environment-variables" (fun _ _ _ => pure []),
   ent "divide-decimals" (fun _ _ a => do
@@ -1379,20 +1475,20 @@ def sortByKeys {α} (h : Hooks) (e : Env) (xs : List α) (view : α → Seq) (ke
   let specs ← keys.mapM (fun k => do
     let m ← asMap [k]
     let kf := (mapGet m (Atomic.ofStr "key")).bind (·.head?)
-    collationOk ((mapGet m (Atomic.ofStr "collation")).getD [])
+    let c ← e.collation ((mapGet m (Atomic.ofStr "collation")).getD [])
     let ord := strOf ((mapGet m (Atomic.ofStr "order")).getD [])
     if ord != "" && ord != "ascending" && ord != "descending" then err "XPTY0004" "invalid sort order"
-    pure (kf, ord == "descending"))
-  let specs := if specs.isEmpty then [(none, false)] else specs
+    pure (kf, ord == "descending", c))
+  let specs ← if specs.isEmpty then pure [(none, false, ← e.collation [])] else pure specs
   let keyed ← xs.mapM (fun x => do
-    let ks ← specs.mapM (fun (kf, _) => do
+    let ks ← specs.mapM (fun (kf, _, c) => do
       match kf with
-      | none => e.atomize (view x)
-      | some f => e.atomize (← h.callN f [view x]))
+      | none => pure ((← e.atomize (view x)).map (collProxy c))
+      | some f => pure ((← e.atomize (← h.callN f [view x])).map (collProxy c)))
     pure (x, ks))
   let lt (p q : α × List (List Atomic)) : M Bool := do
     let mut res := false
-    for ((ka, kb), (_, desc)) in (p.2.zip q.2).zip specs do
+    for ((ka, kb), (_, desc, _)) in (p.2.zip q.2).zip specs do
       let o ← sortCmpKeys ka kb
       let o := if desc then o.swap else o
       if o == .lt then res := true; break
@@ -1461,17 +1557,26 @@ def fnTable3 : List (String × LibFn) := [
     pure (xs.drop i)),
   ent "index-of-substring" (fun _ _ a =>
     pure ((indexOfSub (cps (strOf (argN a 0))) (cps (strOf (argN a 1)))).map (fun (i : Nat) => .atom (Atomic.ofInt (i + 1))))),
-  ent "substring-before-last" (fun _ _ a => do
-    collationOk (argN a 2)
+  ent "substring-before-last" (fun _ e a => do
+    let c ← e.collation (argN a 2)
     let h := cps (strOf (argN a 0)); let n := cps (strOf (argN a 1))
-    if n.isEmpty then pure (sStr "") else
+    -- F&O 4.0 §5.4.6: a zero-length $substring gives $value
+    if n.isEmpty then pure (sStr (strOf (argN a 0))) else
+    if !c.isCodepoint then
+      let q := strOf (argN a 0)
+      pure (sStr (match c.find q (strOf (argN a 1)) false with | some (st, _) => charsTake q st | none => ""))
+    else
     match (indexOfSub h n).getLast? with
     | some i => pure (sStr (String.ofList (h.take i)))
     | none => pure (sStr "")),
-  ent "substring-after-last" (fun _ _ a => do
-    collationOk (argN a 2)
+  ent "substring-after-last" (fun _ e a => do
+    let c ← e.collation (argN a 2)
     let h := cps (strOf (argN a 0)); let n := cps (strOf (argN a 1))
     if n.isEmpty then pure (sStr "") else
+    if !c.isCodepoint then
+      let q := strOf (argN a 0)
+      pure (sStr (match c.find q (strOf (argN a 1)) false with | some (_, en) => charsDrop q en | none => ""))
+    else
     match (indexOfSub h n).getLast? with
     | some i => pure (sStr (String.ofList (h.drop (i + n.length))))
     | none => pure (sStr "")),
@@ -1840,12 +1945,12 @@ def arrayTable : List (String × LibFn) := [
       out := out.push (← h.callN f [x, y, sInt (i + 1)])
     pure (arrItem out.toList)),
   ent "sort" (fun h e a => do
-    collationOk (argN a 1)
+    let c ← e.collation (argN a 1)
     let ms ← asArr (argN a 0)
     let keyed ← ms.mapM (fun m => do
       match argN a 2 with
-      | [] => pure (m, ← e.atomize m)
-      | f :: _ => pure (m, ← e.atomize (← h.callN f [m])))
+      | [] => pure (m, (← e.atomize m).map (collProxy c))
+      | f :: _ => pure (m, (← e.atomize (← h.callN f [m])).map (collProxy c)))
     let sorted ← msortM (fun p q => do pure ((← sortCmpKeys p.2 q.2) == .lt)) 64 keyed
     pure (arrItem (sorted.map (·.1)))),
   ent "slice" (fun _ _ a => do
