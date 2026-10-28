@@ -203,15 +203,21 @@ theorem iriToUri_shared :
 theorem escapeHtmlUri_shared :
     (libLookupAll (fnQ "escape-html-uri")).map (fun f => f h e [sStr s]) =
       some (pure (sStr (Fn.String.escapeHtmlUri s))) := rfl
-theorem contains_shared :
+/-- Under the codepoint default collation, `fn:contains`,
+    `fn:substring-before` and `fn:substring-after` are the shared
+    `Fn.String` functions. -/
+theorem contains_shared (he : e.defaultCollation = codepointCollation) :
     (libLookupAll (fnQ "contains")).map (fun f => f h e [sStr s, sStr t]) =
-      some (pure (sBool (Fn.String.contains s t))) := rfl
-theorem substringBefore_shared :
+      some (pure (sBool (Fn.String.contains s t))) := by
+  cases e; simp only at he; subst he; rfl
+theorem substringBefore_shared (he : e.defaultCollation = codepointCollation) :
     (libLookupAll (fnQ "substring-before")).map (fun f => f h e [sStr s, sStr t]) =
-      some (pure (sStr (Fn.String.substringBefore s t))) := rfl
-theorem substringAfter_shared :
+      some (pure (sStr (Fn.String.substringBefore s t))) := by
+  cases e; simp only at he; subst he; rfl
+theorem substringAfter_shared (he : e.defaultCollation = codepointCollation) :
     (libLookupAll (fnQ "substring-after")).map (fun f => f h e [sStr s, sStr t]) =
-      some (pure (sStr (Fn.String.substringAfter s t))) := rfl
+      some (pure (sStr (Fn.String.substringAfter s t))) := by
+  cases e; simp only at he; subst he; rfl
 
 /-- `fn:matches` is `Regex.isMatch` (the engine of SPARQL `REGEX`) on the
     compiled pattern. -/

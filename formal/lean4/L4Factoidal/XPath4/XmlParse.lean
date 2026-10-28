@@ -219,15 +219,136 @@ def checkEncoding (enc : Seq) : M Unit := do
     if !["utf-8", "utf8", "utf-16", "us-ascii", "ascii", "iso-8859-1", "latin1", "utf-16le", "utf-16be"].contains n then
       err "FOUT1190" ("unsupported encoding " ++ x.str)
 
-def textResource (e : Env) (href : String) : M String := do
+def Env.resourceBin (e : Env) (href : String) : Option ByteArray :=
+  match e.resourceBytes.lookup href with
+  | some t => some t
+  | none => e.resourceBytes.lookup (resolveUri e.baseUri href)
+
+def supportedEncodings : List String :=
+  ["UTF-8", "UTF8", "UTF-16", "UTF-16LE", "UTF-16BE", "US-ASCII", "ASCII", "ISO-8859-1", "LATIN1"]
+
+/-- `bin:infer-encoding` (EXPath Binary 4.0): the effective encoding and
+    the offset after a byte order mark. -/
+def inferEncoding (bs : ByteArray) (cand : Option String) : String × Nat :=
+  let b (i : Nat) : Nat := if i < bs.size then (bs.get! i).toNat else 256
+  let e := cand.map String.toUpper
+  if (e.isNone || e == some "UTF-8") && b 0 == 0xEF && b 1 == 0xBB && b 2 == 0xBF then ("UTF-8", 3)
+  else if (e.isNone || e == some "UTF-16" || e == some "UTF-16LE") && b 0 == 0xFF && b 1 == 0xFE then ("UTF-16LE", 2)
+  else if (e.isNone || e == some "UTF-16" || e == some "UTF-16BE") && b 0 == 0xFE && b 1 == 0xFF then ("UTF-16BE", 2)
+  else if e == some "UTF-16" then ("UTF-16BE", 0)
+  else match e with
+    | some x => (x, 0)
+    | none => ("UTF-8", 0)
+
+def decodeUtf16 (bs : ByteArray) (off : Nat) (be : Bool) : Option String := Id.run do
+  if (bs.size - off) % 2 != 0 then return none
+  let mut out : String := ""
+  let mut hi : Option Nat := none
+  let n := (bs.size - off) / 2
+  for k in [0:n] do
+    let i := off + 2 * k
+    let a := (bs.get! i).toNat
+    let c := (bs.get! (i + 1)).toNat
+    let u := if be then a * 256 + c else c * 256 + a
+    match hi with
+    | some h =>
+      if 0xDC00 ≤ u && u ≤ 0xDFFF then
+        out := out.push (Char.ofNat (0x10000 + (h - 0xD800) * 0x400 + (u - 0xDC00)))
+        hi := none
+      else return none
+    | none =>
+      if 0xD800 ≤ u && u ≤ 0xDBFF then hi := some u
+      else if 0xDC00 ≤ u && u ≤ 0xDFFF then return none
+      else out := out.push (Char.ofNat u)
+  if hi.isSome then return none
+  return some out
+
+/-- UTF-8 decoding in which each maximal invalid subsequence becomes
+    U+FFFD (the `fallback` option). -/
+def utf8Lossy (bs : ByteArray) : String := Id.run do
+  let mut out : String := ""
+  let mut i := 0
+  let n := bs.size
+  for _ in [0:n] do
+    if i ≥ n then break
+    let b0 := (bs.get! i).toNat
+    let len := if b0 < 0x80 then 1 else if b0 &&& 0xE0 == 0xC0 then 2
+      else if b0 &&& 0xF0 == 0xE0 then 3 else if b0 &&& 0xF8 == 0xF0 then 4 else 0
+    if len == 0 || i + len > n then
+      out := out.push '\uFFFD'; i := i + 1
+    else
+      match String.fromUTF8? (bs.extract i (i + len)) with
+      | some t => out := out ++ t; i := i + len
+      | none => out := out.push '\uFFFD'; i := i + 1
+  return out
+
+/-- Decode the octets of a resource (F&O 4.0 §17.1.5): FOUT1190 for an
+    encoding that is not supported or octets that it cannot decode, when
+    an encoding was given; FOUT1200 when none was given and the inferred
+    one cannot decode them. With `fallback`, a character that cannot be
+    decoded or is not permitted becomes U+FFFD. -/
+def decodeResource (bs : ByteArray) (cand : Option String) (fallback : Bool) : M String := do
+  if let some c := cand then
+    if !supportedEncodings.contains c.toUpper then err "FOUT1190" ("unsupported encoding " ++ c)
+  let (enc, off) := inferEncoding bs cand
+  let body := bs.extract off bs.size
+  let fail {α} : M α := if cand.isNone then err "FOUT1200" "cannot infer the encoding of the resource"
+    else err "FOUT1190" ("the resource cannot be decoded as " ++ enc)
+  let text ← match enc.toUpper with
+    | "UTF-8" | "UTF8" =>
+      match String.fromUTF8? body with
+      | some t => pure t
+      | none => if fallback then pure (utf8Lossy body) else fail
+    | "UTF-16LE" => match decodeUtf16 bs off false with | some t => pure t | none => fail
+    | "UTF-16BE" | "UTF-16" => match decodeUtf16 bs off true with | some t => pure t | none => fail
+    | "US-ASCII" | "ASCII" =>
+      if body.toList.all (· < 128) then pure (String.ofList (body.toList.map (fun x => Char.ofNat x.toNat)))
+      else if fallback then pure (String.ofList (body.toList.map (fun x => if x < 128 then Char.ofNat x.toNat else '\uFFFD')))
+      else fail
+    | _ => pure (String.ofList (body.toList.map (fun x => Char.ofNat x.toNat)))
+  if text.toList.any (fun c => !isXmlCp c.toNat) then
+    if fallback then pure (String.ofList (text.toList.map (fun c => if isXmlCp c.toNat then c else '\uFFFD')))
+    else err "FOUT1190" "the resource contains a character that is not allowed in XML"
+  else pure text
+
+def textResourceWith (e : Env) (href : String) (cand : Option String) (fallback : Bool) : M String := do
   if (href.splitOn "#").length > 1 then err "FOUT1170" "a fragment identifier is not allowed"
+  match e.resourceBin href with
+  | some bs => decodeResource bs cand fallback
+  | none =>
   match e.resource href with
   | some t =>
+    if let some c := cand then
+      if !supportedEncodings.contains c.toUpper then err "FOUT1190" ("unsupported encoding " ++ c)
     let bad : Bool := t.toList.any (fun c => !isXmlCp c.toNat)
-    if bad then err "FOUT1190" "the resource contains a character that is not allowed in XML"
+    if bad && !fallback then err "FOUT1190" "the resource contains a character that is not allowed in XML"
     let t' : String := if t.startsWith "\uFEFF" then (t.drop 1).toString else t
     pure t'
   | none => err "FOUT1170" ("resource not available: " ++ href)
+
+def textResource (e : Env) (href : String) : M String := textResourceWith e href none false
+
+/-- The options of `fn:unparsed-text` and its relatives: a string (the
+    encoding) or a map (`encoding`, `normalize-newlines`, `fallback`). -/
+def unparsedOpts (e : Env) (o : Seq) : M (Option String × Bool × Bool) := do
+  match o with
+  | [] => pure (none, false, false)
+  | [.map _] =>
+    let enc ← match optLookup o "encoding" with
+      | none | some [] => pure none
+      | some v => match ← e.coerce (parseTy "xs:string") v "encoding" with
+        | [.atom x] => pure (some x.str)
+        | _ => err "XPTY0004" "encoding must be xs:string"
+    let nl ← optBool o "normalize-newlines" false
+    let fb ← optBool o "fallback" false
+    pure (enc, nl, fb)
+  | [.atom x] => pure (some x.str, false, false)
+  | _ => err "XPTY0004" "the options must be a string or a map"
+
+def readUnparsed (e : Env) (href : String) (o : Seq) : M String := do
+  let (enc, nl, fb) ← unparsedOpts e o
+  let t ← textResourceWith e href enc fb
+  pure (if nl then (t.replace "\r\n" "\n").replace "\r" "\n" else t)
 
 /-- Split text into lines (`\n`, `\r\n`, `\r`); a final empty line is
     dropped. -/
@@ -265,15 +386,17 @@ def xmlParseTable : List (String × LibFn) := [
   ent "unparsed-text" (fun _ e a => do
     match optAtom (argN a 0) with
     | none => pure []
-    | some h => checkEncoding (argN a 1); pure (sStr (← textResource e h.str))),
+    | some h => pure (sStr (← readUnparsed e h.str (argN a 1)))),
   ent "unparsed-text-lines" (fun _ e a => do
     match optAtom (argN a 0) with
     | none => pure []
-    | some h => checkEncoding (argN a 1); pure ((textLines (← textResource e h.str)).map (fun l => .atom (Atomic.ofStr l)))),
+    | some h => pure ((textLines (← readUnparsed e h.str (argN a 1))).map (fun l => .atom (Atomic.ofStr l)))),
   ent "unparsed-text-available" (fun _ e a => do
     match optAtom (argN a 0) with
     | none => pure (sBool false)
-    | some h => pure (sBool (match textResource e h.str with | .ok _ => true | .error _ => false))),
+    | some h =>
+      let _ ← unparsedOpts e (argN a 1)
+      pure (sBool (match readUnparsed e h.str (argN a 1) with | .ok _ => true | .error _ => false))),
   ent "doc" (fun _ e a => docFn e a),
   ent "doc-available" (fun _ e a => do
     match optAtom (argN a 0) with
