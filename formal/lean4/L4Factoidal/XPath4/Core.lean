@@ -8,6 +8,7 @@ operations every part of the evaluator uses: atomization (XPath 4.0
 import L4Factoidal.XPath4.Parser
 import L4Factoidal.XPath4.Doc
 import L4Factoidal.XPath4.Catalog
+import L4Factoidal.EXPath.File.FS
 import Std.Data.HashMap
 
 namespace L4Factoidal.XPath4
@@ -40,6 +41,9 @@ structure Env where
   decimalFormats : List (String × List (String × String)) := []
   defaultCollation : String := "http://www.w3.org/2005/xpath-functions/collation/codepoint"
   baseUri : String := ""
+  /-- EXPath hook: the in-memory file system that the `file:` functions
+      read (`L4Factoidal.EXPath.File`); `none` when there is none. -/
+  fileSys : Option L4Factoidal.EXPath.File.FS := none
 deriving Inhabited
 
 def Env.doc (e : Env) (n : NodeRef) : Doc :=
@@ -251,7 +255,10 @@ structure Sig where
 deriving Inhabited
 
 def pfxUri : String → String
-  | "fn" => nsFN | "math" => nsMATH | "map" => nsMAP | "array" => nsARR | "op" => nsOP | _ => ""
+  | "fn" => nsFN | "math" => nsMATH | "map" => nsMAP | "array" => nsARR | "op" => nsOP
+  -- EXPath hook (`L4Factoidal.EXPath.Catalog`)
+  | "bin" => "http://expath.org/ns/binary" | "file" => "http://expath.org/ns/file"
+  | _ => ""
 
 def parseTy (t : String) : IType :=
   match parseSeqType t with
@@ -264,7 +271,7 @@ def mkParam (y : String × String × Option String) : Param :=
 def mkSig (x : String × String × String × List (String × String × Option String)) : Sig :=
   Sig.mk (pfxUri x.1) x.2.1 (parseTy x.2.2.1) (x.2.2.2.map mkParam)
 
-def sigs : Array Sig := (catalogRaw.map mkSig).toArray
+def sigs : Array Sig := ((catalogRaw ++ catalogExt).map mkSig).toArray
 
 def Sig.minArity (s : Sig) : Nat := (s.ps.filter (·.dflt.isNone)).length
 def Sig.maxArity (s : Sig) : Nat := s.ps.length

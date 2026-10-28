@@ -7,6 +7,7 @@ import L4Factoidal.XPath4.XmlParse
 import L4Factoidal.XPath4.Format
 import L4Factoidal.XPath4.Json
 import L4Factoidal.XPath4.Regex4
+import L4Factoidal.EXPath.Hook
 
 namespace L4Factoidal.XPath4
 
@@ -19,6 +20,8 @@ def libLookupAll (q : QN) : Option LibFn :=
     match extTable.lookup q.loc with
     | some f => some f
     | none => libLookup q
-  else libLookup q
+  else match L4Factoidal.EXPath.expathLookup q with  -- EXPath hook
+    | some f => some f
+    | none => libLookup q
 
 end L4Factoidal.XPath4

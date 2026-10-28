@@ -1608,3 +1608,7 @@ L4Factoidal_SPARQLRL_inst  # (c) triple-term depth of the template term, at most
 L4Factoidal_SPARQLRL_occurs  # (c) depth of a term after substitution, at most the summed depth of two parsed triples (6 * (maxNesting + 1)); also fuel-bounded
 L4Factoidal_SPARQLRL_unify  # (c) depth of a term after substitution, at most 6 * (SPARQLRL.maxNesting + 1); also fuel-bounded (patternMatchesTemplate)
 L4Factoidal_SPARQLRL_resolveImportsAux  # (c) import nesting, at most 64 (the fuel of RuleSet.resolveImports); the import step is a List.foldl
+# --- Added 2026-10-28, EXPath File 4.0 evaluator (https://github.com/danbri/factoidal/issues/1101) ---
+L4Factoidal_EXPath_File_exec  # (b) the depth is the nesting of the XPath expression (EXPath File 4.0 evaluator, issue 1101)
+L4Factoidal_EXPath_File_hasWrite  # (b) the depth is the nesting of the XPath expression (EXPath File 4.0, issue 1101)
+L4Factoidal_EXPath_Binary_packBE  # (s) specification only: no emitted C outside Binary/Octets.lean and Binary/Theorems.lean calls it; bin:pack-* call the loop packBEAcc (packBE_eq_packBEAcc)
