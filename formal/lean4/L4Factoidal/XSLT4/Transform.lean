@@ -10,6 +10,7 @@ Spec: XSLT 4.0 editor's draft (https://qt4cg.org/specifications/xslt-40/Overview
 read 2026-10-28).
 -/
 import L4Factoidal.XSLT4.Interp
+import L4Factoidal.XSLT4.Package
 
 namespace L4Factoidal.XSLT4
 
@@ -508,6 +509,8 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
           | some x => if t.prec > x.prec then some t else some x) none with
       | none => xerr "XTDE0040" ("no template named " ++ tn.show)
       | some t =>
+        if S.privTemplates.contains tn then
+          xerr "XTDE0040" ("the template " ++ tn.show ++ " is not public, so it cannot be the initial template")
         for p in t.params do
           if p.required && !p.tunnel then
             xerr "XTDE0700" ("no value for the required parameter $" ++ p.name.show ++ " of the initial template")
@@ -516,6 +519,11 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
     | none =>
       let mode := o.initialMode.getD S.defaultMode
       let mode := if mode == "#default" then S.defaultMode else mode
+      if S.isPackage && o.initialMode.isSome && o.initialSelect.isNone && o.globalCtx.isNone then
+        xerr "XTDE0044" "an initial mode is given and there is no initial match selection"
+      if let some ok := S.initModes then
+        if o.initialMode.isSome && !ok.contains mode then
+          xerr "XTDE0045" ("the mode " ++ mode ++ " is not eligible as an initial mode")
       if mode != "#unnamed" && mode != S.defaultMode && !(S.modes.any (·.name == mode)) &&
           !(S.templates.any (fun t => t.modes.contains mode || t.modes.contains "#all")) then
         xerr "XTDE0045" ("the initial mode " ++ mode ++ " is not declared")

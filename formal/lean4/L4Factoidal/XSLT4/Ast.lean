@@ -185,6 +185,10 @@ structure Tmpl where
   /-- `xsl:context-item use="absent"` or `as` type. -/
   ctxAbsent : Bool := false
   ctxAs : Option IType := none
+  /-- `xsl:context-item use` (`optional` when absent). -/
+  ctxUse : String := "optional"
+  /-- The `visibility` attribute (§3.4.5.1), `""` when absent. -/
+  vis : String := ""
 deriving Inhabited
 
 structure XFunction where
@@ -193,6 +197,10 @@ structure XFunction where
   ty : Option IType := none
   body : List Instr := []
   prec : Nat := 0
+  /-- The `visibility` attribute (§3.4.5.1), `""` when absent. -/
+  vis : String := ""
+  /-- The `new-each-time` attribute (§10.3.3), `maybe` when absent. -/
+  newEachTime : String := "maybe"
 deriving Inhabited
 
 structure KeyDef where
@@ -210,6 +218,8 @@ structure ModeDef where
   typed : String := "unspecified"
   ty : Option IType := none
   copyNs : Bool := true
+  /-- The `visibility` attribute (§3.4.6), `""` when absent. -/
+  vis : String := ""
 deriving Inhabited
 
 structure Global where
@@ -221,12 +231,16 @@ structure Global where
   required : Bool := false
   isStatic : Bool := false
   prec : Nat := 0
+  /-- The `visibility` attribute (§3.4.5.1), `""` when absent. -/
+  vis : String := ""
 deriving Inhabited
 
 structure AttrSet where
   name : QN
   useSets : List QN := []
   body : List Instr := []
+  /-- The `visibility` attribute (§3.4.5.1), `""` when absent. -/
+  vis : String := ""
 deriving Inhabited
 
 structure AccRule where
@@ -279,6 +293,14 @@ structure Sheet where
   /-- In-scope namespaces of the principal module's root (for
       messages and `xsl:evaluate` defaults). -/
   ns : List (String × String) := []
+  /-- Packages (§3.4): the named templates of the top-level package that
+      are not public or final (not eligible as initial templates, §2.3.4). -/
+  privTemplates : List QN := []
+  /-- The modes eligible as initial modes (§2.3.3); `none` when every
+      mode is. -/
+  initModes : Option (List String) := none
+  /-- The principal module is an `xsl:package`. -/
+  isPackage : Bool := false
 deriving Inhabited
 
 def Sheet.mode (s : Sheet) (k : String) : ModeDef :=

@@ -13,11 +13,16 @@ The module texts are supplied by the caller (`texts`, by absolute
 URI): the compiler does no I/O. `moduleRefs` lists the modules a text
 refers to, so a caller can fetch them first.
 
-Not implemented: packages (`xsl:package`, `xsl:use-package`), schema
-import, named item and record types. They raise a static error that
-names the construct.
+Packages (§3.4): `processModule` compiles the declarations of one
+package; `XSLT4.Package` compiles the used packages and merges their
+components. `compileUsePackage` compiles the `xsl:override` and
+`xsl:with-param` children of an `xsl:use-package` declaration.
+
+Not implemented: schema import. It raises a static error that names the
+construct.
 -/
 import L4Factoidal.XSLT4.StdFns
+import L4Factoidal.XSLT4.Rename
 
 namespace L4Factoidal.XSLT4
 
@@ -28,6 +33,37 @@ structure Mod where
   d : Doc
   uri : String
 deriving Inhabited
+
+/-- A component of a used package that an `xsl:override` declaration
+    replaces (§3.4.5.3): kind, name, highest arity (functions), the new
+    name of the original (the target of `xsl:original`), its visibility
+    in the used package. -/
+structure OvRec where
+  kind : String
+  name : QN
+  hi : Nat := 0
+  orig : QN
+  vis : String
+deriving Inhabited
+
+/-- A named component of a package (§3.4.5): kind (`function`,
+    `template`, `variable`, `attribute-set`, `mode`), expanded name,
+    arity range (functions), visibility in the containing package, the
+    `visibility` attribute of its declaration (`""` when absent), and
+    whether it is a stylesheet parameter. -/
+structure Comp where
+  kind : String
+  name : QN
+  lo : Nat := 0
+  hi : Nat := 0
+  vis : String := "private"
+  declared : String := ""
+  isParam : Bool := false
+deriving Inhabited
+
+/-- The symbolic identifier of a component (§3.4.5). -/
+def Comp.sym (c : Comp) : String :=
+  c.kind ++ " " ++ c.name.eqn ++ (if c.kind == "function" then "#" ++ toString c.hi else "")
 
 structure CSt where
   sheet : Sheet := {}
@@ -47,6 +83,30 @@ structure CSt where
   fnNames : List (QN × Nat) := []
   /-- The named item types of all modules (§5.4). -/
   types : List (QN × String) := []
+  /-- Packages (§3.4). The number of package instances made so far (for
+      fresh component names). -/
+  pkgCounter : Nat := 0
+  /-- Per `xsl:use-package` element (module URI, node index): the
+      overridden components. -/
+  ovRecs : List ((String × Nat) × List OvRec) := []
+  /-- Per `xsl:use-package` element: the stylesheet parameters of the
+      used package (name, name in the merged sheet, static). -/
+  usedParams : List ((String × Nat) × List (QN × QN × Bool)) := []
+  /-- Per `xsl:use-package` element: the modes of the used package
+      that are not hidden here (key, visibility). -/
+  usedModes : List ((String × Nat) × List (String × String)) := []
+  /-- Components declared inside `xsl:override`: kind, name, highest
+      arity, visibility. -/
+  ovComps : List (String × QN × Nat × String) := []
+  /-- The template ids of the template rules declared inside
+      `xsl:override`. -/
+  ovTids : List Nat := []
+  /-- The number of templates, functions, globals, attribute sets and
+      modes that came from used packages (they come first). -/
+  ownStart : Nat × Nat × Nat × Nat × Nat := (0, 0, 0, 0, 0)
+  /-- The components accepted from used packages, with their visibility
+      here (hidden ones are left out). -/
+  acq : List Comp := []
 deriving Inhabited
 
 abbrev CM := StateT CSt M
@@ -292,6 +352,9 @@ def allowedAttrs : List (String × List String) := [
   ("mode", ["name", "as", "streamable", "use-accumulators", "on-no-match", "on-multiple-match",
      "warning-on-no-match", "warning-on-multiple-match", "typed", "copy-namespaces", "visibility"]),
   ("include", ["href"]), ("import", ["href"]),
+  ("use-package", ["name", "package-version"]), ("expose", ["component", "names", "visibility"]),
+  ("accept", ["component", "names", "visibility"]), ("override", []),
+  ("package-location", ["href", "path-in-archive", "archive-type", "is-priority", "format"]),
   ("attribute-set", ["name", "use-attribute-sets", "visibility", "streamable"]),
   ("decimal-format", ["name", "decimal-separator", "grouping-separator", "infinity", "minus-sign",
      "exponent-separator", "NaN", "percent", "per-mille", "zero-digit", "digit", "pattern-separator"]),
@@ -865,6 +928,7 @@ def expandModule : Nat → Mod → Nat → SCx → CM (List Decl)
         let as' ← effAttrs {} m' r'
         let c' ← rootCx m' r' as'
         if !(← useWhenOk c' m' r' as') then continue
+        if m'.isXsl r' "package" then cerr "XTSE0165" "an xsl:package cannot be included"
         modify (fun s => { s with stack := uri :: s.stack })
         let sub ← if (m'.name r').uri == nsXSL then expandModule f m' r' c'
           else pure [{ m := m', i := r', c := c' }]  -- an included simplified stylesheet
@@ -886,6 +950,11 @@ def expandModule : Nat → Mod → Nat → SCx → CM (List Decl)
               modify (fun s => { s with fnNames := (q, ar) :: s.fnNames })
         out := out ++ [{ m, i, c := ci }]
     pure out
+
+/-- The body of an abstract component (§3.4.5.2): invoking it is the
+    dynamic error XTDE3052. -/
+def abstractErr (kind : String) (q : QN) : Instr :=
+  .staticErr "XTDE3052" ("the abstract " ++ kind ++ " " ++ q.show ++ " is invoked and has no implementation")
 
 def addTemplate (t : Tmpl) : CM Unit :=
   modify (fun s => { s with sheet := { s.sheet with templates := s.sheet.templates.push t } })
@@ -920,14 +989,20 @@ def compileTemplate (prec : Nat) (d : Decl) (as : Attrs) (inMode : Option String
     | none, none => pure [c.defaultMode]
   let ps ← compileParams 100000 c m ekids "param"
   let ctxEl := ekids.find? (m.isXsl · "context-item")
-  let (ctxAbsent, ctxAs) ← match ctxEl with
+  let (ctxAbsent, ctxAs, ctxUse) ← match ctxEl with
     | some k => do
         let kas ← effAttrs c m k
-        pure (((kas.get "use").getD "") == "absent", ← optType c kas)
-    | none => pure (false, none)
+        let u := ((kas.get "use").getD "optional").trimAscii.toString
+        pure (u == "absent", ← optType c kas, u)
+    | none => pure (false, none, "optional")
+  let vis := ((as.get "visibility").getD "").trimAscii.toString
+  if vis != "" && name.isNone then cerr "XTSE0500" "a template with no name cannot have a visibility attribute"
   let bodyIds := (m.kids i).filter (fun k => !(m.isXsl k "param" || m.isXsl k "context-item"))
   let body ← compileNodes 100000 c m bodyIds
-  let body := [Instr.seq none body none]
+  if vis == "abstract" && bodyIds.any (fun k => m.isElem k || !(m.text k).trimAscii.isEmpty) then
+    cerr "XTSE0010" "an abstract template must have no content"
+  let body := if vis == "abstract" then [abstractErr "template" (name.getD default)]
+    else [Instr.seq none body none]
   let as' ← optType c as
   let tid ← nextTid
   let order ← nextOrder
@@ -943,9 +1018,9 @@ def compileTemplate (prec : Nat) (d : Decl) (as : Attrs) (inMode : Option String
   | some p =>
     let alts := exprAlternatives 1000 p.e
     for a in alts do
-      addTemplate { id := tid, pat := some { e := a, src := p.src }, name, modes, prec, order, prio := prio?.getD (defaultPriority a), params := ps, ty := as', body, ctxAbsent, ctxAs }
+      addTemplate { id := tid, pat := some { e := a, src := p.src }, name, modes, prec, order, prio := prio?.getD (defaultPriority a), params := ps, ty := as', body, ctxAbsent, ctxAs, ctxUse, vis }
   | none =>
-    addTemplate { id := tid, pat := none, name, modes, prec, order, params := ps, ty := as', body, ctxAbsent, ctxAs }
+    addTemplate { id := tid, pat := none, name, modes, prec, order, params := ps, ty := as', body, ctxAbsent, ctxAs, ctxUse, vis }
 
 /-- Compile the declarations of one module (at precedence `prec`). -/
 def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
@@ -980,7 +1055,12 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       if s.sheet.functions.any (fun g => g.name == nm && g.params.length == ps.length && g.prec == prec) then
         cerr "XTSE0770" ("two functions " ++ nm.show ++ "#" ++ toString ps.length)
       let fty ← optType c as
-      upd (fun sh => { sh with functions := sh.functions ++ [{ name := nm, params := ps, ty := fty, body, prec }] })
+      let vis := ((as.get "visibility").getD "").trimAscii.toString
+      let body := if vis == "abstract" then [abstractErr "function" nm] else body
+      let net := ((as.get "new-each-time").getD "maybe").trimAscii.toString
+      let net := if net == "yes" || net == "true" || net == "1" then "yes"
+        else if net == "no" || net == "false" || net == "0" then "no" else net
+      upd (fun sh => { sh with functions := sh.functions ++ [{ name := nm, params := ps, ty := fty, body, prec, vis, newEachTime := net }] })
   | "variable" | "param" =>
       let some nm ← qnOf c as "name" | cerr "XTSE0010" ("xsl:" ++ q.loc ++ " requires a name")
       let isStatic ← as.bool "static" false
@@ -992,7 +1072,10 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
         cerr "XTSE0630" ("two global variables named $" ++ nm.show)
       let gty ← optType c as
       let req ← as.bool "required" false
-      let g : Global := { name := nm, isParam := q.loc == "param", sel, body, ty := gty, required := req, isStatic, prec }
+      let vis := ((as.get "visibility").getD "").trimAscii.toString
+      if vis == "abstract" && (sel.isSome || !body.isEmpty) then
+        cerr "XTSE0010" "an abstract variable must have no select attribute and no content"
+      let g : Global := { name := nm, isParam := q.loc == "param", sel, body, ty := gty, required := req, isStatic, prec, vis }
       upd (fun sh => { sh with globals := sh.globals ++ [g] })
   | "key" =>
       let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:key requires a name"
@@ -1005,7 +1088,9 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       upd (fun sh => { sh with keys := sh.keys ++ [{ name := nm, pat, use, body, composite := comp }] })
   | "mode" =>
       let key ← match as.get "name" with
-        | some v => modeKey c v
+        | some v =>
+          if v.trimAscii.toString.startsWith "#" then cerr "XTSE0020" ("invalid mode name '" ++ v ++ "'")
+          else modeKey c v
         | none => pure "#unnamed"
       let onm : NoMatch ← match ((as.get "on-no-match").getD "text-only-copy").trimAscii.toString with
         | "text-only-copy" => pure .textOnlyCopy | "deep-copy" => pure .deepCopy
@@ -1014,7 +1099,11 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
         | v => cerr "XTSE0020" ("invalid on-no-match '" ++ v ++ "'")
       let mty ← optType c as
       let mcn ← as.bool "copy-namespaces" true
-      let md : ModeDef := { name := key, onNoMatch := onm, onMultiple := (as.get "on-multiple-match").getD "use-last", typed := (as.get "typed").getD "unspecified", ty := mty, copyNs := mcn }
+      let vis := ((as.get "visibility").getD "").trimAscii.toString
+      if key == "#unnamed" && vis != "" && vis != "private" then
+        cerr "XTSE0020" "the unnamed mode is always private"
+      if vis == "abstract" then cerr "XTSE0020" "a mode cannot be abstract"
+      let md : ModeDef := { name := key, onNoMatch := onm, onMultiple := (as.get "on-multiple-match").getD "use-last", typed := (as.get "typed").getD "unspecified", ty := mty, copyNs := mcn, vis }
       upd (fun sh => { sh with modes := (sh.modes.filter (·.name != key)) ++ [md] })
       -- 4.0 enclosing modes (§6.9.6): templates inside xsl:mode
       for k in ekids do
@@ -1031,7 +1120,9 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       for k in ekids do
         if !m.isXsl k "attribute" then cerr "XTSE0010" "xsl:attribute-set may contain only xsl:attribute"
       let body ← compileNodes 100000 c m (m.kids i)
-      upd (fun sh => { sh with attrSets := sh.attrSets ++ [{ name := nm, useSets, body }] })
+      let vis := ((as.get "visibility").getD "").trimAscii.toString
+      let body := if vis == "abstract" then [abstractErr "attribute set" nm] else body
+      upd (fun sh => { sh with attrSets := sh.attrSets ++ [{ name := nm, useSets, body, vis }] })
   | "output" =>
       let key ← match as.get "name" with
         | some v => do pure (← liftM (c.qname v)).eqn
@@ -1119,7 +1210,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
   | "import" => pure ()
   | "include" => pure ()
   | "import-schema" => cerr "XTSE1650" "xsl:import-schema: this processor is not schema-aware"
-  | "use-package" => cerr "XTSE3000" "xsl:use-package: packages are not implemented"
+  | "use-package" => pure ()  -- `compileUsePackage`
   | "item-type" => pure ()
   | "record-type" =>
       -- the constructor function (§5.4.2.2): one parameter per field
@@ -1137,15 +1228,191 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
         ps := ps ++ [.mk fq sel b (← optType ck kas) false false]
         ents := ents ++ [.mapEntry (.lit (Atomic.ofStr fnm)) (some (.var fq)) []]
       upd (fun sh => { sh with functions := sh.functions ++ [{ name := nm, params := ps, body := [.mapI none ents none], prec }] })
-  | "expose" | "accept" | "override" => cerr "XTSE3000" ("xsl:" ++ q.loc ++ ": packages are not implemented")
+  | "expose" =>
+      -- only as a child of xsl:package (§3.4.5.1)
+      let ok := match (m.r i).parent with
+        | some p => m.isXsl p "package" && (m.r p).parent == some 0
+        | none => false
+      if !ok then cerr "XTSE0010" "xsl:expose is allowed only as a child of xsl:package"
+  | "accept" | "override" | "package-location" =>
+      cerr "XTSE0010" ("xsl:" ++ q.loc ++ " is allowed only as a child of xsl:use-package")
   | "note" => pure ()
   | l =>
       if d.c.forwardsCompat then pure ()
       else cerr "XTSE0010" ("unknown XSLT declaration xsl:" ++ l)
 
+/-! ## `xsl:use-package`: overriding declarations (§3.4.5.3) -/
+
+def qnOriginal : QN := { uri := nsXSL, loc := "original" }
+
+def itemStar : IType := .seq .item .star
+
+/-- Types are identical when each is a subtype of the other (§3.4.5.3). -/
+def tyIdentical (a b : IType) : Bool := subtype a b && subtype b a
+
+/-- The declared type of a global variable (§3.4.5.3). -/
+def Global.declType (g : Global) : IType :=
+  match g.ty with
+  | some t => t
+  | none => if g.sel.isSome then itemStar else if !g.body.isEmpty then .doc none else .atomic (.b .string)
+
+/-- XTSE3070: the signature of an overriding function is compatible
+    with the overridden one. -/
+def fnCompatible (o n : XFunction) : Bool :=
+  let req (f : XFunction) := (f.params.filter (fun p => p.sel.isNone && p.body.isEmpty)).length
+  o.params.length == n.params.length && req o == req n &&
+  (o.params.zip n.params).all (fun (a, b) => tyIdentical (a.ty.getD itemStar) (b.ty.getD itemStar)) &&
+  tyIdentical (o.ty.getD itemStar) (n.ty.getD itemStar) && o.newEachTime == n.newEachTime
+
+/-- XTSE3070 for named templates. -/
+def tmplCompatible (o n : Tmpl) : Bool :=
+  tyIdentical (o.ty.getD itemStar) (n.ty.getD itemStar) &&
+  o.params.all (fun p =>
+    if p.tunnel then
+      match n.params.find? (·.name == p.name) with
+      | some q => q.tunnel && tyIdentical (p.ty.getD itemStar) (q.ty.getD itemStar)
+      | none => true
+    else
+      n.params.any (fun q => q.name == p.name && !q.tunnel && q.required == p.required &&
+        tyIdentical (p.ty.getD itemStar) (q.ty.getD itemStar))) &&
+  n.params.all (fun q => o.params.any (·.name == q.name) || !q.required) &&
+  o.ctxUse == n.ctxUse && tyIdentical (o.ctxAs.getD .item) (n.ctxAs.getD .item)
+
+def isWsText (s : String) : Bool := s.all (fun ch => ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r')
+
+/-- Compile one declaration inside `xsl:override`: compile it as a
+    declaration of this package, bind `xsl:original` in it to the
+    overridden component, and check the override rules. -/
+def compileOverride (prec : Nat) (recs : List OvRec) (pmods : List (String × String)) (d : Decl) : CM Unit := do
+  let m := d.m
+  let i := d.i
+  let l := (m.name i).loc
+  if !(["template", "function", "variable", "param", "attribute-set"].contains l) || (m.name i).uri != nsXSL then
+    cerr "XTSE0010" ("xsl:override cannot contain " ++ (m.name i).show)
+  let s0 ← get
+  let nT := s0.sheet.templates.size
+  let nF := s0.sheet.functions.length
+  let nG := s0.sheet.globals.length
+  let nA := s0.sheet.attrSets.length
+  compileDecl prec d
+  let s1 ← get
+  let newT := s1.sheet.templates.toList.drop nT
+  let newF := s1.sheet.functions.drop nF
+  let newG := s1.sheet.globals.drop nG
+  let newA := s1.sheet.attrSets.drop nA
+  let find (k : String) (q : QN) (hi : Nat) : CM OvRec :=
+    match recs.find? (fun r => r.kind == k && r.name == q && (k != "function" || r.hi == hi)) with
+    | some r => pure r
+    | none => cerr "XTSE3058" ("xsl:override: " ++ k ++ " " ++ q.show ++ " is not a component of the used package")
+  let mut ren : Ren := {}
+  let mut abstractOrig := false
+  let mut comps : List (String × QN × Nat × String) := []
+  -- template rules: only in modes the used package makes public (§3.4.6)
+  for t in newT do
+    if t.pat.isSome then
+      for md in t.modes do
+        match pmods.lookup md with
+        | some "public" => pure ()
+        | some _ => cerr "XTSE3060" ("cannot add template rules to the mode " ++ md ++ " of a used package")
+        | none =>
+          if md == "#unnamed" then cerr "XTSE3440" "a template rule in xsl:override must be in a public mode of the used package"
+          else cerr "XTSE3060" ("the mode " ++ md ++ " is not a public mode of the used package")
+      modify (fun s => { s with ovTids := t.id :: s.ovTids })
+  match newT.find? (·.name.isSome) with
+  | some t =>
+    let nm := t.name.getD default
+    let r ← find "template" nm 0
+    ren := { ren with tmpls := [(qnOriginal, r.orig)] }
+    abstractOrig := r.vis == "abstract"
+    match s1.sheet.templates.toList.find? (fun x => x.name == some r.orig) with
+    | some o => if !tmplCompatible o t then cerr "XTSE3070" ("the override of template " ++ nm.show ++ " has an incompatible signature")
+    | none => pure ()
+    comps := comps ++ [("template", nm, 0, if t.vis == "" then "private" else t.vis)]
+  | none => pure ()
+  for g in newF do
+    let r ← find "function" g.name g.params.length
+    ren := { ren with fns := [(qnOriginal, 0, 100000, r.orig)] }
+    abstractOrig := r.vis == "abstract"
+    match s1.sheet.functions.find? (fun x => x.name == r.orig) with
+    | some o => if !fnCompatible o g then cerr "XTSE3070" ("the override of function " ++ g.name.show ++ " has an incompatible signature")
+    | none => pure ()
+    comps := comps ++ [("function", g.name, g.params.length, if g.vis == "" then "private" else g.vis)]
+  for g in newG do
+    let r ← find "variable" g.name 0
+    ren := { ren with vars := [(qnOriginal, r.orig)] }
+    abstractOrig := r.vis == "abstract"
+    match s1.sheet.globals.find? (fun x => x.name == r.orig) with
+    | some o => if !tyIdentical o.declType g.declType then
+        cerr "XTSE3070" ("the override of variable $" ++ g.name.show ++ " has a different type")
+    | none => pure ()
+    comps := comps ++ [("variable", g.name, 0, if g.isParam then "public" else if g.vis == "" then "private" else g.vis)]
+  for a in newA do
+    let r ← find "attribute-set" a.name 0
+    ren := { ren with sets := [(qnOriginal, r.orig)] }
+    abstractOrig := r.vis == "abstract"
+    comps := comps ++ [("attribute-set", a.name, 0, if a.vis == "" then "private" else a.vis)]
+  -- bind xsl:original
+  let act : RM (Array Tmpl × List XFunction × List Global × List AttrSet) := do
+    let ts ← s1.sheet.templates.toList.mapIdxM (fun k t => if k < nT then pure t else renTmpl ren t)
+    let fs ← s1.sheet.functions.mapIdxM (fun k g => if k < nF then pure g else renFn ren g)
+    let gs ← s1.sheet.globals.mapIdxM (fun k g => if k < nG then pure g else renGlobal ren g)
+    let as ← s1.sheet.attrSets.mapIdxM (fun k a => if k < nA then pure a else renAttrSet ren a)
+    pure (ts.toArray, fs, gs, as)
+  let ((ts, fs, gs, ats), refs) := act.run #[]
+  let usesOrig := refs.any (fun (_, n) => n == qnOriginal.eqn || n.startsWith (qnOriginal.eqn ++ "#"))
+  if usesOrig && abstractOrig then cerr "XTSE3075" "xsl:original refers to an abstract component"
+  modify (fun s => { s with sheet := { s.sheet with templates := ts, functions := fs, globals := gs, attrSets := ats },
+                            ovComps := s.ovComps ++ comps })
+
+/-- Compile the children of an `xsl:use-package` declaration that
+    belong to this package: the `xsl:override` declarations and the
+    `xsl:with-param` values for the used package's parameters (§3.4.4).
+    The used package itself was merged before (`XSLT4.Package`). -/
+def compileUsePackage (prec : Nat) (d : Decl) : CM Unit := do
+  let m := d.m
+  let i := d.i
+  let c := d.c
+  let key := (m.uri, i)
+  let recs := ((← get).ovRecs.lookup key).getD []
+  let pmods := ((← get).usedModes.lookup key).getD []
+  for k in m.kids i do
+    let r := m.r k
+    if r.kind == .text then
+      if !isWsText r.value then cerr "XTSE0010" "xsl:use-package cannot contain text"
+      continue
+    if r.kind != .element then continue
+    let kas ← effAttrs c m k
+    let ck ← c.enter m k kas
+    if !(← useWhenOk ck m k kas) then continue
+    if m.isXsl k "override" then
+      for o in m.kids k do
+        let ro := m.r o
+        if ro.kind == .text then
+          if !isWsText ro.value then cerr "XTSE0010" "xsl:override cannot contain text"
+          continue
+        if ro.kind != .element then continue
+        let oas ← effAttrs ck m o
+        let co ← ck.enter m o oas
+        if !(← useWhenOk co m o oas) then continue
+        compileOverride prec recs pmods { m, i := o, c := co }
+    else if m.isXsl k "accept" || m.isXsl k "package-location" || m.isXsl k "with-param" then pure ()
+    else cerr "XTSE0010" ("xsl:use-package cannot contain " ++ (m.name k).show)
+  -- parameter values for the used package (non-static ones; static ones
+  -- were given when it was compiled)
+  let wps ← compileParams 100000 c m (m.elemKids i) "with-param"
+  let pm := ((← get).usedParams.lookup key).getD []
+  for p in wps do
+    match pm.find? (·.1 == p.name) with
+    | some (_, gq, false) =>
+      modify (fun s => { s with sheet := { s.sheet with globals := s.sheet.globals.map (fun g =>
+        if g.name == gq then { g with sel := p.sel, body := p.body, isParam := false, required := false } else g) } })
+    | _ => pure ()
+
 /-- Process one module and its imports (§3.11): imports first (lower
-    precedence), then the module's own declarations. -/
-def processModule : Nat → Mod → CM Unit
+    precedence), then the module's own declarations. `onUse` merges
+    the package that an `xsl:use-package` declaration of the principal
+    module names (§3.4.2); it runs before any precedence is given. -/
+def processModule (onUse : Decl → CM Unit) : Nat → Mod → CM Unit
   | 0, _ => cerr "XTSE0210" "imports nested too deeply"
   | f + 1, m => do
     let some root := m.rootElem | cerr "XTSE0165" "the stylesheet module has no element"
@@ -1173,7 +1440,18 @@ def processModule : Nat → Mod → CM Unit
     if (ras.get "version").isNone then cerr "XTSE0110" "xsl:stylesheet requires a version attribute"
     checkAttrs c rq.loc ras
     if !(← useWhenOk c m root ras) then return
+    if rq.loc == "package" && (← get).stack.length > 1 then
+      cerr "XTSE0165" "an xsl:package cannot be included or imported"
     let decls ← expandModule 100 m root c
+    -- used packages (§3.4.2): only at the level of the principal module
+    if (← get).stack.length == 1 then
+      for d in decls do
+        if d.m.isXsl d.i "use-package" then onUse d
+      let sh := (← get).sheet
+      modify (fun s => { s with ownStart := (sh.templates.size, sh.functions.length, sh.globals.length,
+        sh.attrSets.length, sh.modes.length) })
+    else if decls.any (fun d => d.m.isXsl d.i "use-package") then
+      cerr "XTSE3008" "xsl:use-package in a module that is not at the level of the principal module"
     -- imports, in order, before this module's precedence is fixed
     let mut seenOther := false
     for d in decls do
@@ -1184,7 +1462,7 @@ def processModule : Nat → Mod → CM Unit
         if (← get).stack.contains uri then cerr "XTSE0210" ("stylesheet module " ++ uri ++ " imports itself")
         let m' ← openModule uri
         modify (fun s => { s with stack := uri :: s.stack })
-        processModule f m'
+        processModule onUse f m'
         modify (fun s => { s with stack := s.stack.drop 1 })
       else seenOther := true
     let prec := (← get).prec
@@ -1193,7 +1471,8 @@ def processModule : Nat → Mod → CM Unit
       modify (fun s => { s with sheet := { s.sheet with
         version := (ras.get "version").getD "4.0", defaultMode := c.defaultMode, ns := c.ns } })
     for d in decls do
-      if !d.m.isXsl d.i "import" then compileDecl prec d
+      if d.m.isXsl d.i "use-package" then compileUsePackage prec d
+      else if !d.m.isXsl d.i "import" then compileDecl prec d
 
 /-- The named item types declared in a module text (`xsl:item-type`,
     `xsl:record-type` children of the root): expanded name, item type. -/
@@ -1229,23 +1508,16 @@ def typeDecls (uri txt : String) : List (QN × String) :=
           | none => none
         else none)
 
-/-- Compile a stylesheet: the principal module's URI, the module texts
-    by URI, and the values given for static parameters. -/
-def compileStylesheet (principal : String) (texts : List (String × String))
-    (staticParams : List (QN × Seq) := []) : M Sheet := do
-  let act : CM Sheet := do
-    modify (fun s => { s with types := texts.flatMap (fun (u, t) => typeDecls u t) })
-    let m ← openModule principal
-    modify (fun s => { s with stack := [principal] })
-    processModule 50 m
+/-- The static checks over a whole compiled package: XTSE0660 (two
+    named templates of one name and precedence) and XTSE0720 (attribute
+    sets that use themselves). -/
+def checkSheet : CM Unit := do
     let s ← get
-    -- XTSE0660: two named templates of one name and precedence
     let named := s.sheet.templates.toList.filterMap (fun t => t.name.map (fun n => (n, t.prec, t.id)))
     for (n, p, i) in named do
       let top := (named.filter (fun (n2, _, _) => n2 == n)).foldl (fun a (_, p2, _) => max a p2) 0
       if p == top && named.any (fun (n2, p2, i2) => n2 == n && p2 == p && i2 != i) then
         cerr "XTSE0660" ("two templates named " ++ n.show)
-    -- XTSE0720: attribute sets that use themselves
     let sets := s.sheet.attrSets
     for a in sets do
       let mut seen : List QN := []
@@ -1260,9 +1532,6 @@ def compileStylesheet (principal : String) (texts : List (String × String))
           seen := x :: seen
           for b in sets do
             if b.name == x then todo := todo ++ b.useSets
-    pure { s.sheet with statics := s.statics, baseUri := principal }
-  let (sh, _) ← act.run { texts, staticParams }
-  pure sh
 
 /-- The modules a module text refers to (`xsl:include`, `xsl:import`),
     as absolute URIs. -/
