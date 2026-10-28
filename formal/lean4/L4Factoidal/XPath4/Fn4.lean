@@ -705,6 +705,58 @@ def unparsedBinaryFn : LibFn := fun _ e a => do
     | some bs => pure [.atom ⟨.b .base64Binary, .x (.bin false (bs.toList.map (·.toNat)))⟩]
     | none => err "FOUT1170" ("resource not available: " ++ h.str)
 
+/-! ## `fn:id`, `fn:element-with-id`, `fn:idref` (§14.6.x)
+
+The is-id property of an attribute: `xml:id`, or an attribute the DTD of
+its document declares `ID`; is-idrefs: one the DTD declares `IDREF` or
+`IDREFS`. No node here has a schema type, so no element is itself an ID. -/
+
+def qnameAsWritten (q : QN) : String := if q.pfx == "" then q.loc else q.pfx ++ ":" ++ q.loc
+
+def idTokens (vs : Seq) : List String :=
+  vs.flatMap (fun v => match v with
+    | .atom a => (normSpace a.str).splitOn " " |>.filter (· != "")
+    | _ => [])
+
+def Env.idTarget (e : Env) (a : List Seq) : M NodeRef := do
+  match argN a 1 with
+  | [.node n] =>
+    let root := (e.ancestors n).getLast?.getD n
+    if (e.nrec root).kind != .document then err "FODC0001" "the node is not in a document"
+    pure root
+  | _ => err "XPTY0004" "the second argument must be a node"
+
+def idFn : LibFn := fun _ e a => do
+  let root ← e.idTarget a
+  let cands := idTokens (argN a 0)
+  let d := e.doc root
+  let mut out : Array Item := #[]
+  for i in [0:d.nodes.size] do
+    let r := d.get i
+    if r.kind != .element then continue
+    let hit := r.attrs.toList.any (fun ai =>
+      let ar := d.get ai
+      let isId := (ar.name.uri == nsXML && ar.name.loc == "id") ||
+        d.idAttrs.contains (qnameAsWritten r.name, qnameAsWritten ar.name)
+      isId && cands.contains (normSpace ar.value))
+    if hit then out := out.push (.node (root.at i))
+  pure out.toList
+
+def idrefFn : LibFn := fun _ e a => do
+  let root ← e.idTarget a
+  let cands := idTokens (argN a 0)
+  let d := e.doc root
+  let mut out : Array Item := #[]
+  for i in [0:d.nodes.size] do
+    let r := d.get i
+    if r.kind != .attribute then continue
+    let some p := r.parent | continue
+    let pr := d.get p
+    if !d.idrefAttrs.contains (qnameAsWritten pr.name, qnameAsWritten r.name) then continue
+    let toks := (normSpace r.value).splitOn " "
+    if toks.any (fun t => cands.contains t) then out := out.push (.node (root.at i))
+  pure out.toList
+
 def fn4Table : List (String × LibFn) :=
   [("hash", hashFn), ("random-number-generator", rngFn), ("rng-record#", rngRecordFn),
    ("rng-permute#", rngPermuteFn), ("rng-take#", rngTakeFn),
@@ -714,6 +766,7 @@ def fn4Table : List (String × LibFn) :=
    ("scan", scanFn), ("path", pathFn),
    ("in-scope-namespaces", inScopeNamespacesFn), ("compare", compareFn),
    ("decode-from-uri", decodeFromUriFn), ("unparsed-binary", unparsedBinaryFn),
-   ("min", minMax4 false), ("max", minMax4 true)]
+   ("min", minMax4 false), ("max", minMax4 true),
+   ("id", idFn), ("element-with-id", idFn), ("idref", idrefFn)]
 
 end L4Factoidal.XPath4

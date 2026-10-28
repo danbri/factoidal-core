@@ -203,6 +203,10 @@ structure Doc where
   /-- The base URI of the document node when it differs from `uri`
       (`fn:parse-xml` with the `base-uri` option). -/
   baseUri : String := ""
+  /-- `(element, attribute)` names (as written) that the DTD declares
+      `ID`, and those it declares `IDREF` or `IDREFS` (`fn:id`, `fn:idref`). -/
+  idAttrs : List (String × String) := []
+  idrefAttrs : List (String × String) := []
 deriving Inhabited
 
 /-- A node reference: document number and node index. A document built

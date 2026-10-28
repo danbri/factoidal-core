@@ -112,7 +112,13 @@ def Doc.ofNodes (ns : List Node) (uri : String := "") : Doc :=
   { nodes := a, uri }
 
 def Doc.ofDocument (d : Document) (uri : String := "") : Doc :=
-  Doc.ofNodes d.children uri
+  let base := Doc.ofNodes d.children uri
+  match d.doctype with
+  | some dt =>
+    { base with idAttrs := dt.idAttrs,
+                idrefAttrs := (dt.attDecls.filter (fun a => a.type == AttType.IDREF || a.type == AttType.IDREFS)).map
+                  (fun a => (a.element, a.name)) }
+  | none => base
 
 def Doc.ofString (s : String) (uri : String := "") : Except String Doc :=
   match parseXML s with
