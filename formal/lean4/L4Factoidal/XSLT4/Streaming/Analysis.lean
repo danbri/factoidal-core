@@ -109,8 +109,8 @@ def utOf : Nat → IType → UT
     | .anyNode | .xnode => UT.nodes
     | .jnodeT .. => UT.jnode
     | .atomic a => utOfAtomic a
-    | .elem _ => UT.elem
-    | .attr _ => UT.attr
+    | .elem _ | .elemT .. | .schemaElem _ => UT.elem
+    | .attr _ | .attrT .. | .schemaAttr _ => UT.attr
     | .text => UT.text
     | .comment => UT.comment
     | .nsNode => UT.ns
