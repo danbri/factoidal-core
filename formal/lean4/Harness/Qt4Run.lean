@@ -442,7 +442,7 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
               | _ => txt
             -- the expected fragment as written (child markup included)
             let exp := if (kids a).isEmpty then exp else exp
-            ok? (xmlEq env s txt || xmlEq env s exp) ("xml " ++ (cut (serSeq env s) 80))
+            ok? (xmlEq env s txt || xmlEq env s exp) ("xml " ++ (cut (serSeq env s) 400))
       | other => .fail ("assertion " ++ other ++ " is not evaluated")
 
 /-- The assert-xml expected value is the element's inner markup; the

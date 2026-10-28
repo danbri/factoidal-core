@@ -95,7 +95,7 @@ def pCopy (cfg : Cfg) (sp : SubParsers) : P Expr := do
   expectKw "return"
   let r ← subE sp.exprSingle
   let vs := bs.toList.map (·.1)
-  let body : Expr := .ext "upd-modify" [m, r] [] vs [inheritFlag cfg]
+  let body : Expr := .ext "upd-modify" [m, r] [] vs [inheritFlag cfg, cfg.revalidation.getD ""]
   pure (bs.toList.zipIdx.foldr (fun ((v, e), k) acc =>
     .letE v (.seq .item .star) (.ext "upd-copy" [e] [] []
       [toString i0 ++ "." ++ toString k, if cfg.copyPreserve then "preserve" else "no-preserve"]) acc) body)

@@ -55,10 +55,13 @@ def markUpdating : Item → Item
 /-- The binding that holds the revalidation mode of the module (§3.1). -/
 def revalKey : QN := { uri := "#upd", loc := "revalidation" }
 
+/-- The revalidation mode (§3.1). Its default is implementation-defined
+    ("Overwritable"); here it is `skip`, so a module without `declare
+    revalidation` does not validate. -/
 def revalMode (env : Env) : String :=
   match env.vars.lookup revalKey with
   | some [.atom a] => a.str
-  | _ => "lax"
+  | _ => "skip"
 
 /-! ## The insertion sequence -/
 
@@ -126,8 +129,18 @@ def oneNode? (s : Seq) : Option (Option NodeRef) :=
 
 /-! ## The expressions -/
 
+/-- The construction mode of the static context (XQuery 3.0 §4.6):
+    `declare construction strip` is the binding `XQuery4.constructionStripKey`. -/
+def constructionStrip (env : Env) : Bool :=
+  env.vars.any (fun (q, _) => q.uri == "#xq" && q.loc == "construction-strip")
+
+/-- The flags a content primitive carries in `Prim.str`. -/
+def contentFlags (env : Env) (inh : String) : String :=
+  inh ++ (if constructionStrip env then ",strip" else "")
+
 /-- `insert node(s) S (as first|as last)? into|after|before T` (§5.1). -/
-def evalInsert (cb : UCb) (env : Env) (src tgt : Expr) (mode : String) (inh : String := "inherit") : M Seq := do
+def evalInsert (cb : UCb) (env : Env) (src tgt : Expr) (mode : String) (inh0 : String := "inherit") : M Seq := do
+  let inh := contentFlags env inh0
   let (sv, p1) := splitPul (← cb.eval env src)
   let (alist, clist) ← insertionSeq env sv
   let (tv, p2) := splitPul (← cb.eval env tgt)
@@ -189,7 +202,8 @@ def replaceTarget (env : Env) (tv : Seq) : M NodeRef :=
   | none => err "XUTY0008" "the target of a replace expression is not a single node"
 
 /-- `replace node T with E` (§5.3.1). -/
-def evalReplace (cb : UCb) (env : Env) (tgt wth : Expr) (inh : String := "inherit") : M Seq := do
+def evalReplace (cb : UCb) (env : Env) (tgt wth : Expr) (inh0 : String := "inherit") : M Seq := do
+  let inh := contentFlags env inh0
   let (wv, p1) := splitPul (← cb.eval env wth)
   let (tv, p2) := splitPul (← cb.eval env tgt)
   let target ← replaceTarget env tv
@@ -308,7 +322,7 @@ abbrev RevalFn := Env → String → Applied → M Applied
 
 /-- `upd-modify`: the modify and return clauses of copy modify (§5.6
     steps 2 to 4). `vs` are the copy variables. -/
-def evalModify (cb : UCb) (reval : RevalFn) (env : Env) (m r : Expr) (vs : List QN) : M Seq := do
+def evalModify (cb : UCb) (reval : RevalFn) (env : Env) (m r : Expr) (vs : List QN) (mode : String := "") : M Seq := do
   -- the copies' pending update lists are on the variables' values
   let mut copies : List Nat := []
   let mut copyPul : List Prim := []
@@ -330,7 +344,7 @@ def evalModify (cb : UCb) (reval : RevalFn) (env : Env) (m r : Expr) (vs : List 
     if !copies.contains p.target.doc then
       err "XUDY0014" "the modify clause changes a node that the copy clause did not create"
   let a ← applyUpdates env1 pul
-  let a ← reval env1 (revalMode env1) a
+  let a ← reval env1 (if mode == "" then revalMode env1 else mode) a
   let env2 := { env1 with vars := env1.vars.map (fun (q, s) =>
     if vs.contains q then (q, s.map (fun i => match i with | .node n => .node (a.refresh n) | x => x)) else (q, s)) }
   let res ← cb.eval env2 r
@@ -379,7 +393,7 @@ def evalUpd (cb : UCb) (reval : RevalFn) (env : Env) (tag : String) (es : List E
   | "upd-replace-value", [t, w] => evalReplaceValue cb env t w
   | "upd-rename", [t, n] => evalRename cb env t n (qs.map (fun q => (q.pfx, q.uri))) (ss.headD "inherit")
   | "upd-copy", [s] => evalCopy cb env s (ss.headD "") (ss.getD 1 "preserve" != "no-preserve")
-  | "upd-modify", [m, r] => evalModify cb reval env m r qs
+  | "upd-modify", [m, r] => evalModify cb reval env m r qs (ss.getD 1 "")
   | "upd-invoke", f :: args => evalInvoke cb env f args
   | "upd-fn", [e] =>
     let v ← cb.eval env e

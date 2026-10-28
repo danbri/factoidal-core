@@ -514,6 +514,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       if !(["strict", "lax", "skip"].contains mode) then synErr ("unknown revalidation mode " ++ mode)
       if m.revalidation.isSome then qerr "XUST0003" "two revalidation declarations"
       m := { m with revalidation := some mode }
+      cfg := { cfg with revalidation := some mode }
     | _ => synErr ("unknown declaration " ++ w)
   m := { m with ns, types := cfg.types }
   if m.libNs.isNone then

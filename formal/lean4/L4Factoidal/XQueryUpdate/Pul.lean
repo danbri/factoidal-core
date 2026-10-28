@@ -225,8 +225,21 @@ def _root_.L4Factoidal.XPath4.NRec.isUntyped (r : NRec) : Bool :=
   | none => true
   | some q => q.uri == nsXS && q.loc == "untyped"
 
+/-- Does a content sequence hold an element or a text node (an atomic
+    item is a text node)? -/
+def hasElemOrText (env : Env) (s : Seq) : Bool :=
+  s.any (fun i => match i with
+    | .node m => let k := (env.nrec m).kind; k == .element || k == .text
+    | .atom _ => true
+    | _ => false)
+
+/-- The flags of a primitive (`Prim.str` of the content primitives):
+    `noinherit` (copy-namespaces no-inherit), `strip` (construction strip). -/
+def Prim.flag (p : Prim) (f : String) : Bool := (p.str.splitOn ",").contains f
+
 /-- Record the primitives of one document in `Ops`. `env` is the
-    snapshot. -/
+    snapshot. The nodes marked in `touched` are those §8.1 passes to
+    `upd:removeType`. -/
 def collectOps (env : Env) (d : Doc) (ps : List Prim) : Ops := Id.run do
   let mut o : Ops := {}
   for p in ps do
@@ -234,29 +247,40 @@ def collectOps (env : Env) (d : Doc) (ps : List Prim) : Ops := Id.run do
     let r := d.get i
     let parIdx := r.parent.getD i
     let par := d.get parIdx
-    -- §8.1.1 rule 1b: content inserted under an untyped parent is untyped
+    -- §8.1.1 rule 1b: content inserted under an untyped parent is untyped;
+    -- construction strip copies the content untyped (XQuery 3.0 §3.9.1.3)
     let cx (owner : NRec) : List XT :=
       let xs := contentXT env p.content
-      if owner.isUntyped then xs.map (untypeXT 100000) else xs
+      if owner.isUntyped || p.flag "strip" then xs.map (untypeXT 100000) else xs
+    let et := hasElemOrText env p.content
+    let touch (o : Ops) (b : Bool) (k : Nat) : Ops := if b then { o with touched := o.touched.insert k } else o
     match p.kind with
-    | .insertBefore => o := { o with before := addTo o.before i (cx par), touched := o.touched.insert parIdx }
-    | .insertAfter => o := { o with after := addTo o.after i (cx par), touched := o.touched.insert parIdx }
-    | .insertInto => o := { o with into := addTo o.into i (cx r), touched := o.touched.insert i }
-    | .insertIntoAsFirst => o := { o with first := addTo o.first i (cx r), touched := o.touched.insert i }
-    | .insertIntoAsLast => o := { o with last := addTo o.last i (cx r), touched := o.touched.insert i }
+    | .insertBefore => o := touch { o with before := addTo o.before i (cx par) } et parIdx
+    | .insertAfter => o := touch { o with after := addTo o.after i (cx par) } et parIdx
+    | .insertInto => o := touch { o with into := addTo o.into i (cx r) } et i
+    | .insertIntoAsFirst => o := touch { o with first := addTo o.first i (cx r) } et i
+    | .insertIntoAsLast => o := touch { o with last := addTo o.last i (cx r) } et i
     | .insertAttributes =>
       let ats := (cx r).filterMap (fun t => match t with | .lf a => some a | _ => none)
-      o := { o with attrs := o.attrs.insert i ((o.attrs.getD i #[]) ++ ats.toArray), touched := o.touched.insert i }
-    | .delete => o := { o with del := o.del.insert i, touched := o.touched.insert parIdx }
+      o := touch { o with attrs := o.attrs.insert i ((o.attrs.getD i #[]) ++ ats.toArray) } true i
+    | .delete =>
+      let b := (r.kind == .element || r.kind == .attribute || r.kind == .text) && par.kind == .element
+      o := touch { o with del := o.del.insert i } b parIdx
     | .replaceNode =>
-      o := { o with repl := o.repl.insert i (cx par).toArray, touched := o.touched.insert parIdx }
-    | .replaceValue => o := { o with val := o.val.insert i p.str, touched := o.touched.insert i }
+      let b := r.kind == .element || r.kind == .attribute || r.kind == .text || et ||
+        p.content.any (fun x => match x with | .node m => (env.nrec m).kind == .attribute | _ => false)
+      o := touch { o with repl := o.repl.insert i (cx par).toArray } b parIdx
+    | .replaceValue =>
+      o := { o with val := o.val.insert i p.str }
+      if r.kind == .attribute then o := touch o true i
+      else if r.kind == .text && r.parent.isSome then o := touch o true parIdx
     | .replaceElementContent =>
       let t := match p.content with
         | [.atom a] => some a.str
         | _ => none
-      o := { o with content := o.content.insert i t, touched := o.touched.insert i }
-    | .rename => o := { o with ren := o.ren.insert i p.name, touched := o.touched.insert i }
+      o := touch { o with content := o.content.insert i t } true i
+    | .rename =>
+      o := touch { o with ren := o.ren.insert i p.name } (r.kind == .element || r.kind == .attribute) i
     | .put => pure ()
   return o
 
@@ -298,8 +322,14 @@ def withAncestors (d : Doc) (t : Std.HashSet Nat) : Std.HashSet Nat := Id.run do
 def rebuild (d : Doc) (o : Ops) (typeGone : Std.HashSet Nat) : Nat → Nat → M (List XT)
   | 0, _ => err "XUDY0021" "document too deep"
   | f + 1, i => do
-    if let some rs := o.repl.get? i then return rs.toList
-    if o.del.contains i then return []
+    -- a deleted or replaced node is still checked (§8.2.3 rule 4: a
+    -- detached node must satisfy the XDM constraints too)
+    if let some rs := o.repl.get? i then
+      let _ ← rebuild d { o with repl := o.repl.erase i } typeGone f i
+      return rs.toList
+    if o.del.contains i then
+      let _ ← rebuild d { o with del := o.del.erase i } typeGone f i
+      return []
     let r0 := d.get i
     let r := match o.ren.get? i with
       | some q => renamed r0 q
@@ -403,7 +433,7 @@ def applyDoc (env : Env) (d : Doc) (ps : List Prim) : M Doc := do
   let o := collectOps env d ps
   let typeGone := withAncestors d o.touched
   -- the copy-namespaces inherit mode of the expressions (`Prim.str`)
-  let inherit := !ps.any (fun p => p.str == "noinherit" &&
+  let inherit := !ps.any (fun p => p.flag "noinherit" &&
     [PKind.insertBefore, .insertAfter, .insertInto, .insertIntoAsFirst, .insertIntoAsLast,
      .insertAttributes, .replaceNode, .rename].contains p.kind)
   match ← rebuild d o typeGone 100000 0 with
