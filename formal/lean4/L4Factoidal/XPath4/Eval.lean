@@ -289,6 +289,13 @@ def eval : Nat → Env → Expr → M Seq
         | _ => err "XPST0017" ("constructor function xs:" ++ q.loc ++ " takes one argument")
       else
       let total := args.length + kw.length
+      -- host hook: a function of the host language (XSLT 4.0)
+      match (if kw.isEmpty then env.host q total else none) with
+      | some h =>
+          let vs ← evalArgs n env args
+          if args.any Option.isNone then pure [.fn (.papp (.fn (.builtin q args.length)) vs)]
+          else h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size } (vs.map (·.getD []))
+      | none =>
       let sig? := if q.uri == nsFN && q.loc == "concat" then
           (if total ≥ 2 then some (default : Sig) else none) else findSig q total
       match sig? with
@@ -356,6 +363,7 @@ def eval : Nat → Env → Expr → M Seq
         if k == 1 && ((atypeOfName? q.loc).isSome || q.loc == "numeric") && q.loc != "NOTATION" && q.loc != "anyAtomicType" then pure [.fn (.builtin q 1)]
         else err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
       else if q.uri == nsFN && q.loc == "concat" && k ≥ 2 then pure [.fn (.builtin q k)]
+      else if (env.host q k).isSome then pure [.fn (.builtin q k)]
       else match findSig q k with
         | some _ => pure [.fn (.builtin q k)]
         | none => err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
@@ -668,6 +676,9 @@ def apply : Nat → Env → Item → List Seq → M Seq
         | none => err "XPTY0004" "array index must be a single integer"
     | .fn (.builtin q k) => do
         if args.length != k then err "XPTY0004" ("function " ++ q.show ++ " expects " ++ toString k ++ " arguments")
+        if let some h := env.host q k then
+          h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size } args
+        else
         if q.uri == nsXS then
           match atypeOfName? q.loc with
           | some t => castTo env (args.headD []) (.atomic t) true

@@ -17,6 +17,18 @@ open L4Factoidal.XSD
 
 /-! ## The dynamic context -/
 
+/-- The part of the dynamic context that a host function sees
+    (`Env.host`): the variable bindings and the focus at the call. -/
+structure HostCall where
+  vars : List (QN × Seq) := []
+  ctx : Option Seq := none
+  pos : Nat := 0
+  size : Nat := 0
+
+/-- A host function: called with the dynamic context of the call and
+    the argument values. -/
+abbrev HostFn := HostCall → List Seq → M Seq
+
 structure Env where
   docs : Array Doc := #[]
   vars : List (QN × Seq) := []
@@ -44,6 +56,11 @@ structure Env where
   /-- EXPath hook: the in-memory file system that the `file:` functions
       read (`L4Factoidal.EXPath.File`); `none` when there is none. -/
   fileSys : Option L4Factoidal.EXPath.File.FS := none
+  /-- Host hook (XSLT 4.0, `L4Factoidal.XSLT4`): the functions of the
+      host language by name and arity (`xsl:function`, `fn:current`,
+      `fn:key`, ...). Consulted before the built-in library; empty for
+      XPath. -/
+  host : QN → Nat → Option HostFn := fun _ _ => none
 deriving Inhabited
 
 def Env.doc (e : Env) (n : NodeRef) : Doc :=
