@@ -10,6 +10,7 @@ Spec: XSLT 4.0 editor's draft (https://qt4cg.org/specifications/xslt-40/Overview
 read 2026-10-28).
 -/
 import L4Factoidal.XSLT4.Interp
+import L4Factoidal.XSLT4.Package
 
 namespace L4Factoidal.XSLT4
 
@@ -268,6 +269,7 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         | none => some g
         | some x => if g.prec > x.prec then some g else some x) none with
     | some fn => some fun c args => runFresh c fn.name.eqn args (do
+        if let [.staticErr "XTDE3052" msg] := fn.body then xerr "XTDE3052" msg
         let mut cx : Ctx := { env := { env with ctx := none, pos := 0, size := 0, ns := c.ns, vars := env.vars }, inFn := true, tempOut := true }
         let mut i := 0
         for p in fn.params do
@@ -458,8 +460,9 @@ def evalGlobals (S : Sheet) (o : TOpts) (env0 : Env) : M Env := do
     let mut lastErr : Option Err := none
     for g in pending do
       let host := mkHost S env [] [] 100000
-      let one := if o.globalCtx.isSome then 1 else 0
-      let genv : Env := { env with host, ctx := o.globalCtx.map (fun i => [i]), pos := one, size := one }
+      let gctx := if g.noCtx then none else o.globalCtx
+      let one := if gctx.isSome then 1 else 0
+      let genv : Env := { env with host, ctx := gctx.map (fun i => [i]), pos := one, size := one }
       let supplied := if g.isParam then lookupV o.params g.name else none
       let act : XM Seq := match supplied with
         | some v => match g.ty with
@@ -528,6 +531,8 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
           | some x => if t.prec > x.prec then some t else some x) none with
       | none => xerr "XTDE0040" ("no template named " ++ tn.show)
       | some t =>
+        if S.privTemplates.contains tn then
+          xerr "XTDE0040" ("the template " ++ tn.show ++ " is not public, so it cannot be the initial template")
         for p in t.params do
           if p.required && !p.tunnel then
             xerr "XTDE0700" ("no value for the required parameter $" ++ p.name.show ++ " of the initial template")
@@ -536,6 +541,11 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
     | none =>
       let mode := o.initialMode.getD S.defaultMode
       let mode := if mode == "#default" then S.defaultMode else mode
+      if S.isPackage && o.initialMode.isSome && o.initialSelect.isNone && o.globalCtx.isNone then
+        xerr "XTDE0044" "an initial mode is given and there is no initial match selection"
+      if let some ok := S.initModes then
+        if o.initialMode.isSome && !ok.contains mode then
+          xerr "XTDE0045" ("the mode " ++ mode ++ " is not eligible as an initial mode")
       if mode != "#unnamed" && mode != S.defaultMode && !(S.modes.any (·.name == mode)) &&
           !(S.templates.any (fun t => t.modes.contains mode || t.modes.contains "#all")) then
         xerr "XTDE0045" ("the initial mode " ++ mode ++ " is not declared")

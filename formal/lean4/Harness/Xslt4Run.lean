@@ -115,6 +115,8 @@ def depOk (d : Node) : Bool :=
       if sat then fs.all featureSupported else !(fs.all featureSupported)
   | "on-multiple-match" => if sat then v == "use-last" else v != "use-last"
   | "default_html_version" => if sat then v == "5" else v != "5"
+  -- xsl:use-package picks the highest version that matches (§3.4.2)
+  | "package_version_resolution" => if sat then v == "highest_version" else v != "highest_version"
   | _ => !sat
 
 /-! ## Environments -/
@@ -123,6 +125,8 @@ structure EnvSpec where
   /-- (role, file path, uri, inline content) -/
   sources : List (String × String × String × Option String) := []
   stylesheets : List (String × String) := []    -- file, role
+  /-- `<package>`: file, role, name (`uri`), version. -/
+  packages : List (String × String × String × String) := []
   params : List (String × String × Bool) := []   -- name, select, static
   unsupported : Option String := none
   serialize : Bool := false
@@ -148,7 +152,9 @@ def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
         s := { s with params := s.params ++ [(attrD c "name", attrD c "select" "()", st)] }
     | "schema" => s := { s with unsupported := some "schema" }
     | "collection" => s := { s with unsupported := some "collection" }
-    | "package" => s := { s with unsupported := some "package" }
+    | "package" =>
+        s := { s with packages := s.packages ++ [(normPath (dir ++ "/" ++ attrD c "file"), attrD c "role",
+          (attrD c "uri").trimAscii.toString, (attrD c "package-version" "1").trimAscii.toString)] }
     | "output" => if attrD c "serialize" == "yes" then s := { s with serialize := true }
     | _ => pure ()
   pure s
@@ -371,7 +377,7 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
               else out == txt || xmlEq env s txt
             ok? ok ("serialization '" ++ cut out 120 ++ "'")
       | "assert-xml" =>
-          ok? (xmlEq env s txt) ("xml " ++ (cut (serSeq env s) 160))
+          ok? (xmlEq env s txt) ("xml " ++ (cut (serSeq env s) 600))
       | other => .fail ("assertion " ++ other ++ " is not evaluated")
 
 /-- The assert-xml expected value is the element's inner markup. -/
@@ -491,7 +497,7 @@ def loadModules (principal : String) : IO (List (String × String)) := do
       | none => pure ()
       | some txt =>
         done := done ++ [(u, txt)]
-        for r in moduleRefs u txt do
+        for r in moduleRefs u txt ++ packageRefs u txt do
           if !done.any (·.1 == r) then todo := todo ++ [r]
   return done
 
@@ -560,10 +566,16 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
   let some testNode := (kidsNamed tc "test").head? | return .fail "no test element"
   let tspec := parseEnv dir testNode
   if let some why := tspec.unsupported then return .unsupported why
-  let sheets := tspec.stylesheets ++ spec.stylesheets
+  let sheets := tspec.stylesheets ++ spec.stylesheets ++
+    (tspec.packages ++ spec.packages).filterMap (fun (f, r, _, _) => if r == "principal" then some (f, r) else none)
   let some (principal, _) := sheets.find? (fun (_, r) => r != "secondary") | return .unsupported "no stylesheet"
   let pUri := fileUri principal
-  let mods ← loadModules pUri
+  let mut mods ← loadModules pUri
+  -- the packages that xsl:use-package can name (§3.4.3)
+  let lib : List PkgEntry := (tspec.packages ++ spec.packages).filterMap (fun (f, r, u, v) =>
+    if r == "principal" then none else some { name := u, version := v, uri := fileUri f })
+  for e in lib do
+    mods := mods ++ (← loadModules e.uri).filter (fun (x, _) => !mods.any (·.1 == x))
   -- static parameters
   let mut statics : List (QN × Seq) := []
   for (nm, sel, st) in tspec.params ++ spec.params do
@@ -575,8 +587,7 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
   let some a := (kids r).head? | return .fail "no assertion"
   -- modules named only through static values (shadow attributes):
   -- read the one the compiler asks for, and compile again
-  let mut mods := mods
-  let mut sheet := compileStylesheet pUri mods statics
+  let mut sheet := compileStylesheet pUri mods statics lib
   for _ in [0:20] do
     match sheet with
     | .error e =>
@@ -587,7 +598,7 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
         | some txt =>
           mods := mods ++ (← loadModules u).filter (fun (x, _) => !mods.any (·.1 == x))
           let _ := txt
-          sheet := compileStylesheet pUri mods statics
+          sheet := compileStylesheet pUri mods statics lib
         | none => break
       else break
     | .ok _ => break

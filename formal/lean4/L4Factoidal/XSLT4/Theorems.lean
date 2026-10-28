@@ -20,6 +20,11 @@ Proved (no `sorry`; `#print axioms` below):
   is the identity on source documents (§4.3);
 * `findRule_empty`: with no template rules, no rule matches, so the
   built-in rules of the mode apply (§6.10);
+* `mangle_inj`: the fresh names that a used package's hidden components
+  get are injective, so two hidden components never get one name
+  (§3.4.5.2); `cmpVersion_refl`, `exact_matches_self`: a package version
+  equals itself and a version range that is a version matches it
+  (§3.4.1); the ordering and range examples of §3.4.1 are `#guard`s;
 * `defaultPriority_*`: the default priorities of the basic pattern
   forms are the values of §6.4.
 
@@ -206,5 +211,48 @@ def styles10 : List String :=
    "</xsl:stylesheet>"]
 
 #guard styles10.all (fun st => agrees st "<doc><list><item n='1'>one</item><item n='2'>two</item></list></doc>")
+
+/-! ## Packages (§3.4) -/
+
+/-- The fresh names of the components of a package instance are distinct
+    for distinct names (§3.4.5.2: hidden components do not collide). -/
+theorem mangle_inj (n : Nat) (a b : QN) (h : mangle n a = mangle n b) : a.uri = b.uri ∧ a.loc = b.loc := by
+  have hu := congrArg QN.uri h
+  have hl := congrArg QN.loc h
+  simp [mangle] at hu hl
+  exact ⟨hu, hl⟩
+
+theorem cmpPortion_self (p : Portion) : cmpPortion p p = .eq := by
+  cases p <;> simp [cmpPortion]
+
+theorem cmpPortions_self : (ps : List Portion) → cmpPortions ps ps = .eq
+  | [] => rfl
+  | p :: ps => by simp [cmpPortions, cmpPortion_self, cmpPortions_self ps]
+
+theorem cmpVersion_refl (v : List Portion) : cmpVersion v v = .eq := cmpPortions_self _
+
+theorem exact_matches_self (v : List Portion) : (VRange.exact v).matches v = true := by
+  simp [VRange.matches, cmpVersion_refl]
+
+theorem any_matches (v : List Portion) : VRange.any.matches v = true := rfl
+
+#guard (parseVersion "1.0.3-rc1").isSome
+#guard (parseVersion "1.").isNone
+#guard (parseVersion "-5").isNone
+#guard (parseVersion "34E9").isNone
+#guard (parseVersion "2.0.0-alpha:beta").isNone
+def vlt (a b : String) : Bool := match parseVersion a, parseVersion b with
+  | some x, some y => cmpVersion x y == .lt
+  | _, _ => false
+#guard ["0-rc1", "0-rc2", "0", "1", "1.0.2", "1.0.3-rc1", "1.0.3", "1.0.3.2", "1.0.10"].zip
+  ["0-rc2", "0", "1", "1.0.2", "1.0.3-rc1", "1.0.3", "1.0.3.2", "1.0.10", "2"] |>.all (fun (a, b) => vlt a b)
+def inRange (r v : String) : Bool := match parseRange r, parseVersion v with
+  | some rs, some x => rs.any (·.matches x)
+  | _, _ => false
+#guard ["1.3", "1.3.5", "1.3.10.2", "1.3-beta"].all (inRange "1.3.*") && !inRange "1.3.*" "1.4" && !inRange "1.3.*" "1.35"
+#guard ["1.3", "1.3.2", "1.4", "2.1"].all (inRange "1.3+") && !inRange "1.3+" "1.3-beta"
+#guard ["1.5", "4.0", "4.0-beta"].all (inRange "to 4.0") && !inRange "to 4.0" "4.0.1"
+#guard ["1.1", "5.0"].all (inRange "1 to 5") && !inRange "1 to 5" "5.1" && inRange "1 to 5.*" "5.7.2"
+#guard inRange "9.5.0.8, 9.6+" "9.7" && !inRange "9.5.0.8, 9.6+" "9.5.1"
 
 end L4Factoidal.XSLT4
