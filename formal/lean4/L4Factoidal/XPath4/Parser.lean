@@ -256,10 +256,16 @@ def afterName : P (Option (String × Char × Char)) := do
   let c ← read
   let i ← get
   match ← peekQName with
-  | some (_, _, n, e) =>
+  | some (p, u, n, e) =>
       let j := skipWsF c.s (c.s.size + 1) 0 e
       set i
-      pure (some (n, chAt c.s j, chAt c.s (j+1)))
+      -- a prefixed name or an EQName is never a keyword or a kind test
+      -- name (`f:attribute(...)` is a function call)
+      let nm := match p, u with
+        | none, none => n
+        | some pp, _ => pp ++ ":" ++ n
+        | none, some uu => "Q{" ++ uu ++ "}" ++ n
+      pure (some (nm, chAt c.s j, chAt c.s (j+1)))
   | none => set i; pure none
 
 /-! ## Literals -/
