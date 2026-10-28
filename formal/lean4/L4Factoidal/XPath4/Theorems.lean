@@ -48,6 +48,7 @@ children of `XML.Node`; a proof of the 1.0/4.0 agreement over the whole
 1.0 fragment; a proof of the JSON round trip.
 -/
 import L4Factoidal.XPath4.Eval
+import L4Factoidal.XPath4.CastTheorems
 import L4Factoidal.XPath.Eval
 import L4Factoidal.JSON.Parser
 
@@ -244,5 +245,21 @@ theorem resolveUri_eq_resolveIri (base href : String)
 theorem resolveUri_abs (base href : String) (hh : isAbsIri href = true) :
     resolveUri base href = href := by
   simp [resolveUri, hh]
+
+/-! ## Bridge: date and time arithmetic is `L4Factoidal.Fn.DateTime`
+
+The subtraction of two xs:dateTime values and the addition of a duration
+to a date are the functions SPARQL's date arithmetic uses
+(`Fn.DateTime.subtractValues`, `Fn.DateTime.plusDuration`). -/
+
+theorem sub_dateTime_shared (tz : Int) (x y : XSD.DTValue) :
+    arith0 tz .sub ⟨.b .dateTime, .x (.dt .dateTime x)⟩ ⟨.b .dateTime, .x (.dt .dateTime y)⟩ =
+      .ok (mkDur .dayTimeDuration 0 (Fn.DateTime.subtractValues tz x y).seconds) := by
+  rfl
+
+theorem add_date_duration_shared (tz : Int) (x : XSD.DTValue) (d : XSD.DurValue) :
+    arith0 tz .add ⟨.b .date, .x (.dt .date x)⟩ ⟨.b .dayTimeDuration, .x (.dur d)⟩ =
+      .ok ⟨.b .date, .x (.dt .date (dtProject .date (Fn.DateTime.plusDuration x d)))⟩ := by
+  rfl
 
 end L4Factoidal.XPath4

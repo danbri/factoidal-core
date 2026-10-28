@@ -460,10 +460,9 @@ def castFromString (s : String) (t : AType) (nsResolve : String → Option Strin
         | none => bad
     | .anyURI => pure ⟨t, .str w⟩
     | .boolean =>
-        match w with
-        | "true" | "1" => pure (Atomic.ofBool true)
-        | "false" | "0" => pure (Atomic.ofBool false)
-        | _ => bad
+        match XSD.parseBooleanLex w with
+        | some v => pure (Atomic.ofBool v)
+        | none => bad
     | .decimal =>
         match parseDecimalLex w with
         | some d => pure (Atomic.ofDec d)
