@@ -46,6 +46,15 @@ theorem vcDiEcdsa10_ecdsaRdfc2019_p256_shares_eddsaRdfc2022 :
       transform loader eddsaRdfc2022.transform Curve.ed25519.hashAlg j) :=
   ⟨rfl, rfl, fun _ _ => rfl⟩
 
+/-- VC DI EdDSA 1.0 §3.4 and VC DI ECDSA 1.0: eddsa-jcs-2022 and ecdsa-jcs-2019
+with P-256 share the transformation (RFC 8785) and the hash (SHA-256). -/
+theorem vcDiEddsa10_eddsaJcs2022_shares_ecdsaJcs2019_p256 :
+    eddsaJcs2022.transform = ecdsaJcs2019.transform ∧
+    Curve.ed25519.hashAlg = Curve.p256.hashAlg ∧
+    (∀ loader j, transform loader eddsaJcs2022.transform Curve.ed25519.hashAlg j =
+      transform loader ecdsaJcs2019.transform Curve.p256.hashAlg j) :=
+  ⟨rfl, rfl, fun _ _ => rfl⟩
+
 /-- VC DI EdDSA 1.0 §3.3: the table at eddsa-rdfc-2022 and an Ed25519 key is
 the eddsa-rdfc-2022 verifier of `DataIntegrity`. -/
 theorem verifyDataset_eddsaRdfc2022 (prims : Primitives) (pk : ByteArray)
@@ -98,6 +107,7 @@ theorem verifyJcs_canonical_only (loader : Loader) (alg : HashAlgorithm) (j1 j2 
   simp only [transform, h]
 
 #print axioms vcDiEcdsa10_ecdsaRdfc2019_p256_shares_eddsaRdfc2022
+#print axioms vcDiEddsa10_eddsaJcs2022_shares_ecdsaJcs2019_p256
 #print axioms verifyDataset_eddsaRdfc2022
 #print axioms verifyDataset_ecdsaRdfc2019_p256
 #print axioms transform_rdfc10_sha256

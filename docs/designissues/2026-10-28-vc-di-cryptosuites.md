@@ -59,6 +59,18 @@ derives no nonce. VC DI ECDSA 1.0 says signatures "SHOULD use the
 deterministic variant"; HACL\* has no RFC 6979 nonce derivation, so the
 signatures are randomised. Verifiers cannot tell the difference.
 
+## Step 2: eddsa-jcs-2022
+
+`eddsa-jcs-2022` (VC DI EdDSA 1.0 §3.4) is a fourth row: RFC 8785, SHA-256,
+Ed25519. `vcDiEddsa10_eddsaJcs2022_shares_ecdsaJcs2019_p256` states that it
+shares the transform and hash with ecdsa-jcs-2019 at P-256; the two specs'
+vectors publish the same document hash for the same unsigned credential (a
+`#guard`). The vc-di-eddsa-test-suite was refreshed to 1e86cc4c, whose files
+70 and 80 load; 55 pass, 0 fail (out of 55), eddsa-rdfc-2022 and
+eddsa-jcs-2022. The refreshed 05 and 15 files test VC DI §2.4 data loss on
+VCDM 2.0 credentials, so the shim's structural gate now runs
+`VC.Doc.checkNoDataLoss` for VCDM 2.0 documents as it did for VC 1.1.
+
 ## Theorems (`VC/CryptosuiteTheorems.lean`)
 
 - `vcDiEcdsa10_ecdsaRdfc2019_p256_shares_eddsaRdfc2022`: ecdsa-rdfc-2019
