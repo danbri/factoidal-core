@@ -1352,18 +1352,24 @@ def pArgs : Nat → P (List (Option Expr) × List (String × Option Expr))
       let mut kws : List (String × Option Expr) := []
       for _ in [0:100000] do
         -- keyword argument `name := value`
+        -- (XQuery 4.0 §4.5.2: the keyword is an EQName; a name in a
+        -- namespace is kept as `Q{uri}local`)
+        ws
         let c ← read
         let i ← get
-        let j := skipWsF c.s (c.s.size + 1) 0 i
-        let kwName : Option String :=
-          match ncnameAt c.s j with
-          | some (nm, e) =>
+        let j := i
+        let kwName : Option (String × Nat) ←
+          match ← peekQName with
+          | some (p, u, l, e) =>
               let k := skipWsF c.s (c.s.size + 1) 0 e
-              if chAt c.s k == ':' && chAt c.s (k+1) == '=' then some nm else none
-          | none => none
+              if chAt c.s k == ':' && chAt c.s (k+1) == '=' && l != "*" then
+                let q ← resolve p u l ""
+                pure (some ((if q.uri == "" then q.loc else q.eqn), e))
+              else pure none
+          | none => pure none
         match kwName with
-        | some nm =>
-            set j; adv nm.length; expectS ":="
+        | some (nm, e) =>
+            set e; expectS ":="
             if ← atPlaceholder then expectS "?"; kws := kws ++ [(nm, none)]
             else kws := kws ++ [(nm, some (← pExprSingle n))]
         | none =>

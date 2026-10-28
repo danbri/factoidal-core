@@ -706,6 +706,11 @@ def eval : Nat → Env → Expr → M Seq
         let ps : List (QN × IType) := (List.range k).map (fun i => ({ uri := "#untrusted", loc := "a" ++ toString i }, .seq .item .star))
         return [.fn (.inline ps (.seq .item .star)
           (.ext "untrusted" [.call q (ps.map (fun (v, _) => some (.var v))) []] [] [] []) false env.vars)]
+      -- XQuery 4.0 §5.18.1: an unprefixed name finds a no-namespace function first
+      if q.uri == nsFN && q.pfx == "" && XQuery4.userAny env { q with uri := "" } then
+        match XQuery4.refUser? (fun f as => apply n env f as) env q k with
+        | some r => return (← r)
+        | none => pure ()
       if q.uri == nsXS then
         if k == 1 && (xsCtorType? q.loc).isSome then pure [.fn (.builtin q 1)]
         -- arity 0: the argument defaults to the focus at the reference
@@ -1131,9 +1136,15 @@ def apply : Nat → Env → Item → List Seq → M Seq
         | none => err "XPST0017" ("unknown function " ++ q.show)
     | .fn (.inline ps ret body focus cl) => do
         if focus then
-          if args.length != 1 then err "XPTY0004" "a focus function takes one argument"
-          let a := args.headD []
-          let env' := { env with vars := cl, ctx := some a, pos := 1, size := 1, untrusted := false }
+          -- one argument: the context value; three: the context value,
+          -- position and size (the default of a parameter, XQuery 4.0
+          -- §5.18.2); none: an absent focus
+          let sz1 (s : Seq) : Nat := match s with | [.atom ⟨_, .int i⟩] => i.toNat | _ => 1
+          let env' ← match args with
+            | [] => pure { env with vars := cl, ctx := none, pos := 0, size := 0, untrusted := false }
+            | [a] => pure { env with vars := cl, ctx := some a, pos := 1, size := 1, untrusted := false }
+            | [a, p, z] => pure { env with vars := cl, ctx := some a, pos := sz1 p, size := sz1 z, untrusted := false }
+            | _ => err "XPTY0004" "a focus function takes one argument"
           eval n env' body
         else
           if args.length != ps.length then

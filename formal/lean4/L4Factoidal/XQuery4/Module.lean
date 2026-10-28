@@ -565,6 +565,9 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
       expectS ";"
       let maxA := ps.size
       let minA := (ps.toList.takeWhile (fun (_, _, d) => d.isNone)).length
+      -- §5.18.3: after a parameter with a default, all have one
+      if (ps.toList.drop minA).any (fun (_, _, d) => d.isNone) then
+        qerr "XQST0148" "a required parameter after a parameter with a default"
       if fnSigs.any (fun (q2, lo, hi) => q2 == q && !(hi < minA || maxA < lo)) then
         qerr "XQST0034" ("function " ++ q.show ++ " declared twice")
       fnSigs := (q, minA, maxA) :: fnSigs

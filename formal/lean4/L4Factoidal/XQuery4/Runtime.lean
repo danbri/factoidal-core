@@ -68,6 +68,13 @@ def staticVars (vs : List (QN × Seq)) : List (QN × Seq) :=
   | [] => vs
   | r => r
 
+/-- The arguments of a default-value function: the focus of the call
+    (context value, position, size), or none when the focus is absent. -/
+def focusArgs (e : Env) : List Seq :=
+  match e.ctx with
+  | some c => [c, [.atom (Atomic.ofInt e.pos)], [.atom (Atomic.ofInt e.size)]]
+  | none => []
+
 /-- Is any declaration of `q` there (for the error code)? -/
 def userAny (e : Env) (q : QN) : Bool :=
   e.vars.any (fun (v, _) => v.uri == "#xqf" && v.loc.startsWith (q.eqn ++ "#"))
@@ -120,7 +127,7 @@ def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
     for (a, i) in args.zip (List.range args.length) do
       slots := slots.set! i (some a)
     for (nm, a) in kw do
-      match ps.findIdx? (fun (v, _) => v.loc == nm) with
+      match ps.findIdx? (fun (v, _) => if nm.startsWith "Q{" then v.eqn == nm else (v.uri == "" && v.loc == nm)) with
       | some i =>
         if (slots.getD i none).isSome then err "XPST0017" ("argument " ++ nm ++ " given twice")
         slots := slots.set! i (some a)
@@ -135,7 +142,7 @@ def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
       | none =>
         if i < lo then err "XPST0017" ("missing argument $" ++ ((ps.getD i default).1.show) ++ " of " ++ q.show)
         match dflts[i - lo]? with
-        | some d => fixed := fixed.push (some (← cb.apply d [ctxArg]))
+        | some d => fixed := fixed.push (some (← cb.apply d (focusArgs e)))
         | none => err "XPST0017" ("missing argument of " ++ q.show)
     if isPartial then pure [.fn (.papp fi fixed.toList)]
     else cb.apply fi (fixed.toList.map (·.getD []))
@@ -152,7 +159,7 @@ def refUser? (applyF : Item → List Seq → M Seq) (e : Env) (q : QN) (k : Nat)
     let mut fixed : List (Option Seq) := List.replicate k none
     for i in [k:m] do
       match dflts[i - lo]? with
-      | some d => fixed := fixed ++ [some (← applyF d [e.ctx.getD []])]
+      | some d => fixed := fixed ++ [some (← applyF d (focusArgs e))]
       | none => err "XPST0017" ("missing argument of " ++ q.show)
     pure [.fn (.papp fi fixed)]
 
