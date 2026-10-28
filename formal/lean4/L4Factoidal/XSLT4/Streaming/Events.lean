@@ -56,6 +56,104 @@ def eventsList : List Node → List Event
   | n :: ns => events n ++ eventsList ns
 end
 
+/-! ## The event stream as a loop
+
+`eventsList` makes one stack frame per sibling. `eventsLoop` produces the
+same list with a work list (one entry per pending node or end tag) and an
+accumulator, as a tail-recursive loop; `eventsList_eq_loop` proves the two
+equal and `@[csimp]` makes compiled code use the loop. -/
+
+inductive Work where
+  | node (n : Node)
+  | close
+
+/-- The events that a work list stands for. -/
+def flat : List Work → List Event
+  | [] => []
+  | .node n :: ws => events n ++ flat ws
+  | .close :: ws => .stop :: flat ws
+
+mutual
+/-- The number of events of a node. -/
+def evCount : Node → Nat
+  | .element _ _ cs => evCountList cs + 2
+  | _ => 1
+
+def evCountList : List Node → Nat
+  | [] => 0
+  | n :: ns => evCount n + evCountList ns
+end
+
+def workCount : List Work → Nat
+  | [] => 0
+  | .node n :: ws => evCount n + workCount ws
+  | .close :: ws => 1 + workCount ws
+
+theorem workCount_map_node (cs : List Node) (ws : List Work) :
+    workCount (cs.map Work.node ++ ws) = evCountList cs + workCount ws := by
+  induction cs with
+  | nil => simp [workCount, evCountList]
+  | cons c cs ih => simp [workCount, evCountList, ih]; omega
+
+theorem flat_map_node (cs : List Node) (ws : List Work) :
+    flat (cs.map Work.node ++ ws) = eventsList cs ++ flat ws := by
+  induction cs with
+  | nil => simp [eventsList]
+  | cons c cs ih => simp [flat, eventsList, ih]
+
+/-- The work list after the start tag of an element: its children, then
+    its end tag. -/
+def openKids (cs : List Node) (rest : List Work) : List Work := cs.map Work.node ++ .close :: rest
+
+theorem workCount_openKids (cs : List Node) (rest : List Work) :
+    workCount (openKids cs rest) = evCountList cs + 1 + workCount rest := by
+  simp only [openKids, workCount_map_node, workCount]; omega
+
+def eventsLoop (ws : List Work) (acc : List Event) : List Event :=
+  match ws with
+  | [] => acc.reverse
+  | .close :: rest => eventsLoop rest (.stop :: acc)
+  | .node (.element t a cs) :: rest => eventsLoop (openKids cs rest) (.start t a :: acc)
+  | .node (.text x) :: rest => eventsLoop rest (.text x :: acc)
+  | .node (.comment x) :: rest => eventsLoop rest (.comment x :: acc)
+  | .node (.cdata x) :: rest => eventsLoop rest (.cdata x :: acc)
+  | .node (.pi x y) :: rest => eventsLoop rest (.pi x y :: acc)
+termination_by workCount ws
+decreasing_by
+  all_goals simp only [workCount, evCount]
+  all_goals (try rw [workCount_openKids])
+  all_goals omega
+
+theorem eventsLoop_eq (ws : List Work) (acc : List Event) :
+    eventsLoop ws acc = acc.reverse ++ flat ws := by
+  match ws with
+  | [] => simp [eventsLoop, flat]
+  | .close :: rest =>
+    rw [eventsLoop, eventsLoop_eq rest]; simp [flat]
+  | .node (.element t a cs) :: rest =>
+    rw [eventsLoop, eventsLoop_eq _, openKids, flat_map_node]; simp [flat, events]
+  | .node (.text x) :: rest =>
+    rw [eventsLoop, eventsLoop_eq rest]; simp [flat, events]
+  | .node (.comment x) :: rest =>
+    rw [eventsLoop, eventsLoop_eq rest]; simp [flat, events]
+  | .node (.cdata x) :: rest =>
+    rw [eventsLoop, eventsLoop_eq rest]; simp [flat, events]
+  | .node (.pi x y) :: rest =>
+    rw [eventsLoop, eventsLoop_eq rest]; simp [flat, events]
+termination_by workCount ws
+decreasing_by
+  all_goals simp only [workCount, evCount]
+  all_goals (try rw [workCount_openKids])
+  all_goals omega
+
+def eventsListLoop (ns : List Node) : List Event := eventsLoop (ns.map Work.node) []
+
+@[csimp] theorem eventsList_eq_loop : @eventsList = @eventsListLoop := by
+  funext ns
+  have h := flat_map_node ns []
+  simp only [flat, List.append_nil] at h
+  simp [eventsListLoop, eventsLoop_eq, h]
+
 /-- The events of a document: those of its children (prolog, document
     element, epilog). The document node itself has no event. -/
 def docEvents (d : Document) : List Event := eventsList d.children

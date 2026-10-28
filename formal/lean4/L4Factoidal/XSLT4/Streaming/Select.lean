@@ -282,6 +282,62 @@ def strValueList : List Node → String
   | n :: ns => strValue n ++ strValueList ns
 end
 
+/-! ## String values as a loop
+
+`strValue` makes one frame per sibling; `strValueLoop` reads the text
+events of the work-list loop `eventsLoop`. `@[csimp]` makes compiled code
+use it. -/
+
+/-- The text of an event list, appended to `acc` (a left fold). -/
+def textAcc (acc : String) (es : List Event) : String :=
+  es.foldl (fun a e => match e with
+    | .text s => a ++ s
+    | .cdata s => a ++ s
+    | _ => a) acc
+
+theorem textAcc_append (acc : String) (xs ys : List Event) :
+    textAcc acc (xs ++ ys) = textAcc (textAcc acc xs) ys := by
+  simp [textAcc, List.foldl_append]
+
+mutual
+theorem textAcc_events (acc : String) (n : Node) : textAcc acc (events n) = acc ++ strValue n := by
+  match n with
+  | .element t a cs =>
+    simp only [events]
+    rw [show (Event.start t a :: (eventsList cs ++ [Event.stop])) =
+        [Event.start t a] ++ (eventsList cs ++ [Event.stop]) from rfl, textAcc_append, textAcc_append,
+      textAcc_eventsList]
+    simp [textAcc, strValue]
+  | .text s => simp [textAcc, events, strValue]
+  | .comment s => simp [textAcc, events, strValue]
+  | .cdata s => simp [textAcc, events, strValue]
+  | .pi x y => simp [textAcc, events, strValue]
+
+theorem textAcc_eventsList (acc : String) (ns : List Node) :
+    textAcc acc (eventsList ns) = acc ++ strValueList ns := by
+  match ns with
+  | [] => simp [textAcc, eventsList, strValueList]
+  | n :: rest =>
+    simp only [eventsList]
+    rw [textAcc_append, textAcc_events, textAcc_eventsList]
+    simp [strValueList, String.append_assoc]
+end
+
+def strValueLoop (n : Node) : String := textAcc "" (eventsListLoop [n])
+
+def strValueListLoop (ns : List Node) : String := textAcc "" (eventsListLoop ns)
+
+@[csimp] theorem strValue_eq_loop : @strValue = @strValueLoop := by
+  funext n
+  simp only [strValueLoop, ← eventsList_eq_loop]
+  rw [show eventsList [n] = events n ++ [] by simp [eventsList]]
+  simp [textAcc_events]
+
+@[csimp] theorem strValueList_eq_loop : @strValueList = @strValueListLoop := by
+  funext ns
+  simp only [strValueListLoop, ← eventsList_eq_loop, textAcc_eventsList]
+  simp
+
 /-- `count(P)`, streamed. -/
 def streamCount (p : List String) (es : List Event) : Option Nat :=
   (streamSelect p es).map List.length

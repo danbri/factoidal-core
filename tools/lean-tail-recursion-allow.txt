@@ -1715,7 +1715,4 @@ L4Factoidal_XSLT4_Streaming_walk  # (s) specification only: called by the theore
 L4Factoidal_XSLT4_Streaming_walkList  # (s) specification only: called by the theorems of XSLT4/Streaming (Events.lean, Select.lean); the executed path is SSt.run / ASt.run over the event list (XSLT Streaming 4.0, issue 1101)
 L4Factoidal_XSLT4_Streaming_selNode  # (s) specification only: called by the theorems of XSLT4/Streaming (Events.lean, Select.lean); the executed path is SSt.run / ASt.run over the event list (XSLT Streaming 4.0, issue 1101)
 L4Factoidal_XSLT4_Streaming_selList  # (s) specification only: called by the theorems of XSLT4/Streaming (Events.lean, Select.lean); the executed path is SSt.run / ASt.run over the event list (XSLT Streaming 4.0, issue 1101)
-L4Factoidal_XSLT4_Streaming_events  # (a) PENDING https://github.com/danbri/factoidal/issues/1162 one frame per sibling; a work-list loop replaces it
-L4Factoidal_XSLT4_Streaming_eventsList  # (a) PENDING https://github.com/danbri/factoidal/issues/1162 one frame per sibling; a work-list loop replaces it
-L4Factoidal_XSLT4_Streaming_strValue  # (a) PENDING https://github.com/danbri/factoidal/issues/1162 one frame per sibling; a work-list loop replaces it
-L4Factoidal_XSLT4_Streaming_strValueList  # (a) PENDING https://github.com/danbri/factoidal/issues/1162 one frame per sibling; a work-list loop replaces it
+L4Factoidal_XSLT4_Streaming_events  # (s) specification only: compiled code reaches it through eventsList, which @[csimp] eventsList_eq_loop replaces by the loop eventsListLoop (XSLT Streaming 4.0, issue 1101)
