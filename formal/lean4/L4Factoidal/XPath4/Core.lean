@@ -531,42 +531,76 @@ def atomicTarget : IType → Option (List AType)
   | .enum _ => some [.b .string]
   | _ => none
 
-/-- Coerce one atomic value to one of the target types (§3.4.3 rules
-    2–4: untyped casting, numeric promotion, URI promotion, and the
-    4.0 relabelling of numeric values to a derived type in range). -/
+/-- Coerce one atomic value to one target type (XPath 4.0 §3.4.3: untyped
+    casting, the implicit casting table, URI and binary promotion, and
+    relabeling to a derived type whose value space holds the datum). -/
+def coerceAtom1 (t : AType) (a : Atomic) : M Atomic := do
+  if a.ty.derives t then return a
+  if a.ty == .untyped then
+    -- XPath 4.0 §3.4.3: an untyped value is not cast to a
+    -- namespace-sensitive type
+    if t == .b .qname || t == .b .notation then
+      err "XPTY0117" "an xs:untypedAtomic value cannot be coerced to a namespace-sensitive type"
+    return ← castAtomic a t
+  let fail {α} : M α := err "XPTY0004" ("cannot convert xs:" ++ a.ty.name ++ " value '" ++ a.str ++ "' to xs:" ++ t.name)
+  match t with
+  -- XPath 4.0 §3.4.2, the implicit casting table
+  | .b .double => if a.isNumeric then castAtomic a t else fail
+  | .b .float => if a.isNumeric then castAtomic a t else fail
+  | .b .decimal => if a.is .float || a.is .double then castAtomic a t else fail
+  | .b .string => if a.is .anyURI then pure (Atomic.ofStr a.str) else fail
+  | .b .anyURI => if a.is .string then castAtomic a t else fail
+  | .b .hexBinary => if a.is .base64Binary then castAtomic a t else fail
+  | .b .base64Binary => if a.is .hexBinary then castAtomic a t else fail
+  | .b b =>
+      if derivedFrom b .integer then
+        -- relabeling: an xs:decimal whose datum is an integer in range
+        let i? : Option Int := match a.v with
+          | .int i => some i
+          | .dec d => if a.is .decimal && (Dec.norm d).scale == 0 then some (Dec.norm d).mantissa else none
+          | _ => none
+        match i? with
+        | some i => if inIntBounds b i then pure ⟨t, .int i⟩ else fail
+        | none => fail
+      else if b.primitive.isSome && !(derivedFrom b .decimal) &&
+          (match a.ty with | .b ab => ab.primitive == b.primitive | .untyped => false) then
+        -- relabeling: the datum of `a` is in the value space of the
+        -- derived type (the cast keeps the lexical form)
+        match castAtomic a t with
+        | .ok r => if r.str == a.str then pure r else fail
+        | .error _ => fail
+      else fail
+  | _ => fail
+
+/-- Coerce one atomic value to one of the target types, the alternatives
+    of a choice or union in order (XPath 4.0 §3.4.3): a value of one of
+    them is kept; otherwise the first alternative that does not fail;
+    otherwise the error of the first. -/
 def coerceAtom (ts : List AType) (a : Atomic) : M Atomic := do
   if ts.any (fun t => a.ty.derives t) then return a
-  if a.ty == .untyped then
-    let t := if ts.length > 1 && ts.all (fun t => t == .b .double || t == .b .float || t == .b .decimal)
-             then .b .double else ts.headD (.b .string)
-    return ← castAtomic a t
+  let mut first : Option Err := none
   for t in ts do
-    match t with
-    -- XPath 4.0 §3.4.2, the implicit casting table
-    | .b .double => if a.isNumeric then return ← castAtomic a t
-    | .b .float => if a.isNumeric then return ← castAtomic a t
-    | .b .decimal => if a.is .float || a.is .double then return ← castAtomic a t
-    | .b .string => if a.is .anyURI then return Atomic.ofStr a.str
-    | .b .anyURI => if a.is .string then return ← castAtomic a t
-    | .b .hexBinary => if a.is .base64Binary then return ← castAtomic a t
-    | .b .base64Binary => if a.is .hexBinary then return ← castAtomic a t
-    | .b b =>
-        if derivedFrom b .integer && a.is .integer then
-          match a.v with
-          | .int i => if inIntBounds b i then return ⟨t, .int i⟩
-          | _ => pure ()
-        else if b.primitive.isSome && !(derivedFrom b .decimal) &&
-            (match a.ty with | .b ab => ab.primitive == b.primitive | .untyped => false) then
-          -- relabeling: the datum of `a` is in the value space of the
-          -- derived type (the cast keeps the lexical form)
-          match castAtomic a t with
-          | .ok r => if r.str == a.str then return r
-          | .error _ => pure ()
-        else pure ()
-    | _ => pure ()
-  err "XPTY0004" ("cannot convert xs:" ++ a.ty.name ++ " value '" ++ a.str ++ "' to the required type")
+    match coerceAtom1 t a with
+    | .ok r => return r
+    | .error x => if first.isNone then first := some x
+  match first with
+  | some x => throw x
+  | none => err "XPTY0004" ("cannot convert xs:" ++ a.ty.name ++ " value '" ++ a.str ++ "' to the required type")
 
 def IType.isEmptyT : IType → Bool | .empty => true | _ => false
+
+/-- The variable that holds the wrapped function of a coerced function
+    item, and the names of its parameters (not names the parser makes). -/
+def coercedFnVar : QN := { uri := "#coerce", loc := "f" }
+def coercedArgVar (j : Nat) : QN := { uri := "#coerce", loc := toString j }
+
+/-- Function coercion (XPath 4.0 §3.4.4): a function item with the
+    required parameter types and result type that calls `f` with its
+    first `k` arguments. -/
+def coercedFn (f : Item) (k : Nat) (ps : List IType) (r : IType) : Item :=
+  let params := (ps.zip (List.range ps.length)).map (fun (t, j) => (coercedArgVar j, t))
+  .fn (.inline params r (.dyn (.var coercedFnVar) ((List.range k).map (fun j => some (.var (coercedArgVar j))))) false
+    [(coercedFnVar, [f])])
 
 /-- XPath 4.0 §3.4.3: a JNode that does not match the required item type
     is replaced by its ·jvalue·, whose items are coerced in turn. -/
@@ -629,19 +663,36 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
     | _, _ => pure i)
   match it with
   | .item => pure s
-  | .fnT ps _ =>
-      -- XPath 4.0 §3.4.4: a function of lower arity is accepted
-      if s.all (fun i => match i.fnArity with | some k => k ≤ ps.length | none => false) then pure s
-      else err "XPTY0004" ("function item of wrong type for " ++ what)
+  | .fnT ps r =>
+      -- XPath 4.0 §3.4.4 (function coercion): a function of lower arity
+      -- is accepted; a function that does not match the required type is
+      -- wrapped so that its arguments and its result are coerced
+      s.mapM (fun i => do
+        match i.fnArity with
+        | some k =>
+          if k > ps.length then err "XPTY0004" ("function item of wrong type for " ++ what)
+          else if k == ps.length && e.itemMatches i it then pure i
+          else pure (coercedFn i k ps r)
+        | none => err "XPTY0004" ("function item of wrong type for " ++ what))
   | .anyFn =>
       if s.all (fun i => e.itemMatches i it) then pure s
       else err "XPTY0004" ("function item of wrong type for " ++ what)
   | .choice ts =>
     if s.all (fun i => e.itemMatches i it) then pure s else
-    -- only a choice that mixes atomic and function types is handled here;
-    -- a choice of function types alone keeps the strict test
+    -- a choice without atomic alternatives (records, maps, arrays):
+    -- each item is coerced to the alternatives in order (XPath 4.0 §3.4.3)
     if !(ts.any (fun t => match t with | .atomic _ | .enum _ => true | _ => false)) then
-      err "XPTY0004" ("value of wrong type for " ++ what) else
+      s.mapM (fun i => do
+        if e.itemMatches i it then return i
+        let mut first : Option Err := none
+        for alt in ts do
+          match e.coerceF f alt [i] what with
+          | .ok [r] => return r
+          | .ok _ => pure ()
+          | .error x => if first.isNone then first := some x
+        match first with
+        | some x => throw x
+        | none => err "XPTY0004" ("value of wrong type for " ++ what)) else
     -- a choice of atomic types and function types (for example the
     -- `$replacement` of `fn:replace`): coerce each item to a member
     let atoms := ts.filterMap (fun t => match t with | .atomic a => some a | .enum _ => some (.b .string) | _ => none)

@@ -623,7 +623,13 @@ def checkLimits (a : Atomic) : M Atomic :=
   | _ => pure a
 
 def castAtomic (a : Atomic) (t : AType) (nsResolve : String → Option String := fun _ => none) : M Atomic := do
-  checkLimits (← castAtomic0 a t nsResolve)
+  let r ← castAtomic0 a t nsResolve
+  -- xs:dateTimeStamp requires a timezone (XSD 1.1 Part 2 §3.4.28)
+  if t == .b .dateTimeStamp then
+    match r.v with
+    | .x (.dt _ v) => if v.tz.isNone then err "FORG0001" "an xs:dateTimeStamp needs a timezone"
+    | _ => pure ()
+  checkLimits r
 
 /-- The primitive type, for comparability. -/
 def AType.prim : AType → String

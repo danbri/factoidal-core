@@ -1120,10 +1120,16 @@ def fnTable : List (String × LibFn) := [
     | some ⟨_, .qn q⟩ => sStr q.eqn
     | _ => [])),
   ent "parse-QName" (fun _ e a => do
+    if (argN a 0).isEmpty then return []
     let s := trimWs (strOf (argN a 0))
     if s.startsWith "Q{" then
       match s.toList.findIdx? (· == '}') with
-      | some i => pure (single (Atomic.ofQN { uri := String.ofList ((s.toList.drop 2).take (i - 2)), loc := String.ofList (s.toList.drop (i + 1)) }))
+      | some i =>
+        let uri := String.ofList ((s.toList.drop 2).take (i - 2))
+        let loc := String.ofList (s.toList.drop (i + 1))
+        -- BracedURILiteral has no `{`; the local part is an NCName
+        if uri.any (· == '{') || (parseQNameLex loc).map (·.1) != some "" then err "FOCA0002" "invalid EQName"
+        pure (single (Atomic.ofQN { uri, loc }))
       | none => err "FOCA0002" "invalid EQName"
     else
       match parseQNameLex s with

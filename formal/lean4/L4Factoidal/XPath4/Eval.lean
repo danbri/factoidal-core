@@ -243,6 +243,14 @@ def castToF (e : Env) : Nat → Seq → IType → Bool → M Seq
     match t with
     | .atomic aty =>
         if aty == .b .anyAtomicType || aty == .b .notation then err "XPST0080" "cast to an abstract type"
+        -- a list type (xs:NMTOKENS, xs:IDREFS, xs:ENTITIES): the
+        -- whitespace-separated tokens, each cast to the item type
+        -- (XPath 4.0 §4.19.2.2)
+        else if let some item := (match aty with | .b b => XSD.builtinListItem? b | _ => none) then
+          if !(a.isStringLike || a.ty == .untyped) then err "XPTY0004" "a list type is cast from a string"
+          let toks := (a.str.split (fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r')).toList.map (·.toString) |>.filter (· != "")
+          if toks.isEmpty then err "FORG0001" ("an empty value for the list type xs:" ++ aty.name)
+          pure (← toks.mapM (fun tk => do pure (Item.atom (← castAtomic (Atomic.ofStr tk) (.b item)))))
         else if (aty == .b .qname) && !(a.isStringLike || a.is .qname) then
           err "XPTY0004" "cannot cast to xs:QName"
         else pure (single (← castAtomic a aty e.nsResolve))
@@ -626,7 +634,14 @@ def eval : Nat → Env → Expr → M Seq
       let mut acc : MB := {}
       for (k, v) in es do
         if isMergeMarker v then
-          let ms ← eval n env k
+          let ms0 ← eval n env k
+          -- XPath 4.0 §4.14.1.1 (PR 2541): a JNode with a ·jkey· is the
+          -- one-entry map of its key and value; one without (a root) is
+          -- its ·jvalue·, which must be maps
+          let ms : Seq := ms0.flatMap (fun m => match m with
+            | .jnode _ (st :: _) v _ => [Item.map [(st.key, v)]]
+            | .jnode _ [] v _ => v
+            | other => [other])
           for m in ms do
             match m with
             | .map kvs =>
@@ -875,9 +890,11 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
         let s ← eval n env a
         if s.isEmpty then eval n env b else pure s
     | .concat => do
-        let x ← env.atomizeOpt (← eval n env a)
-        let y ← env.atomizeOpt (← eval n env b)
-        pure (sStr ((x.map Atomic.str).getD "" ++ (y.map Atomic.str).getD ""))
+        -- XPath 4.0 §4.11: `a || b` is `fn:concat(a, b)`, whose arguments
+        -- are sequences of atomic items
+        let x ← env.atomize (← eval n env a)
+        let y ← env.atomize (← eval n env b)
+        pure (sStr (String.join ((x ++ y).map Atomic.str)))
     | .to => do
         let x ← env.atomizeOpt (← eval n env a)
         let y ← env.atomizeOpt (← eval n env b)
