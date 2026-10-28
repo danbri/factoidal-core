@@ -1186,7 +1186,9 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
     | "note" => pure (.seq none [] none)
     | "fallback" => pure (.seq none [] none)
     | "source-document" =>
-        pure (.sourceDoc (← liftM (c.avt (← reqAttr as "href" l))) (← body))
+        let accs ← (tokens ((as.get "use-accumulators").getD "")).mapM (fun t =>
+          if t == "#all" then pure t else do pure (← liftM (c.qname t)).eqn)
+        pure (.sourceDoc (← liftM (c.avt (← reqAttr as "href" l))) (← body) accs)
     | "merge" =>
         let mut srcs : List MSource := []
         for k in ekids do
@@ -1605,7 +1607,9 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let mty ← optType c mas
       let mcn ← mas.bool "copy-namespaces" true
       let vis := ((mas.get "visibility").getD "").trimAscii.toString
-      let md : ModeDef := { name := key, onNoMatch := onm, onMultiple := (mas.get "on-multiple-match").getD "use-last", typed := (mas.get "typed").getD "unspecified", ty := mty, copyNs := mcn, vis }
+      let useAccs ← ((tokens ((mas.get "use-accumulators").getD ""))).mapM (fun t =>
+        if t == "#all" then pure t else do pure (← liftM (c.qname t)).eqn)
+      let md : ModeDef := { useAccs, name := key, onNoMatch := onm, onMultiple := (mas.get "on-multiple-match").getD "use-last", typed := (mas.get "typed").getD "unspecified", ty := mty, copyNs := mcn, vis }
       upd (fun sh => { sh with modes := (sh.modes.filter (·.name != key)) ++ [md] })
       modify (fun s => { s with declModes := s.declModes ++ [(key, vis)] })
       -- 4.0 enclosing modes (§6.9.6): templates inside xsl:mode

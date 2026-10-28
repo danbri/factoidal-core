@@ -694,6 +694,15 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         let nd := match (env.doc nd).origin with
           | some (d0, m0, ns0) => { doc := d0, idx := m0.getD nd.idx 0, rt := ns0.map (fun a => { nodes := a }) }
           | none => nd
+        -- the accumulator must be applicable to the tree (XTDE3362)
+        if nd.rt.isNone then
+          if let some rules := lookupV c.vars vAccRules then
+            for rl in rules do
+              if let .arr (dv :: names) := rl then
+                if (match dv with | [.atom a] => a.str == toString nd.doc | _ => false) then
+                  let ns := names.filterMap (fun x => match x with | [.atom a] => some a.str | _ => none)
+                  if !ns.contains "#all" && !ns.contains acc.name.eqn then
+                    err "XTDE3362" ("the accumulator " ++ acc.name.show ++ " is not applicable to this tree")
         let root := env.treeRoot nd
         let vals ← match nd.rt, accCache.lookup (acc.name.eqn, nd.doc) with
           | none, some th => th.get
@@ -825,7 +834,10 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
       let sel := match o.initialSelect with
         | some s => s
         | none => match o.globalCtx with | some i => [i] | none => []
-      applyT 1000000 S { cx with mode } sel mode o.templateParams o.tunnelParams none
+      -- the accumulators of the initial mode apply to the documents of
+      -- the initial match selection (§19.2)
+      let accs := ((S.modes.find? (·.name == mode)).map (·.useAccs)).getD []
+      applyT 1000000 S (withAccRules { cx with mode } sel accs) sel mode o.templateParams o.tunnelParams none
   let (os, st) ← act.run { base := 1 }
   let (raw, st) ← (materializeAll env os).run st
   let abs (h : String) : String := if o.outUri == "" then h else resolveUri o.outUri h

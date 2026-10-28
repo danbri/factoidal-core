@@ -286,7 +286,7 @@ def renI (r : Ren) : Nat → List QN → Instr → RM Instr
     | .onNonEmpty sel body => do pure (.onNonEmpty (← eo sel) (← b body))
     | .performSort sel sorts body => do pure (.performSort (← eo sel) (← renSorts r f bd sorts) (← b body))
     | .merge srcs act => do pure (.merge (← renMSrcs r f bd srcs) (← b act))
-    | .sourceDoc h body => do pure (.sourceDoc (← av h) (← b body))
+    | .sourceDoc h body ac => do pure (.sourceDoc (← av h) (← b body) ac)
     | .unknown n fbs code => do pure (.unknown n (← fbs.mapM b) code)
     | .extCall n ats fbs => do
         let ats' ← ats.mapM (fun (q, a, x) => do pure (q, ← avo a, ← eo x))

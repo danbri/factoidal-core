@@ -36,6 +36,10 @@ def vMergeGroup : QN := xv "merge-group"
 def vMergeKey : QN := xv "merge-key"
 /-- The names of the merge sources of the current `xsl:merge`. -/
 def vMergeNames : QN := xv "merge-names"
+/-- The accumulators applicable to the principal and `xsl:source-document`
+    documents (§19.2): arrays of the document number and the names. -/
+def vAccRules : QN := xv "accumulator-rules"
+
 def vOutUri : QN := xv "output-uri"
 /-- The current mode, for `fn:apply-templates` with `#current`. -/
 def vMode : QN := xv "mode"
@@ -776,6 +780,16 @@ def isNCName (x : String) : Bool :=
 
 def Ctx.bindAll (cx : Ctx) (vs : List (QN × Seq)) : Ctx :=
   vs.foldl (fun c (q, v) => c.bind q v) cx
+
+/-- Bind the accumulators applicable to the documents of `items`; the
+    binding goes after the global variables, so template calls keep it. -/
+def withAccRules (cx : Ctx) (items : Seq) (names : List String) : Ctx :=
+  let docs := (items.filterMap (fun i => match i with
+    | .node nd => if nd.rt.isNone then some nd.doc else none
+    | _ => none)).eraseDups
+  let old := (cx.env.vars.find? (·.1 == vAccRules)).map (·.2) |>.getD []
+  let new : Seq := docs.map (fun d => .arr ([.atom (Atomic.ofInt d)] :: names.map (fun s => [.atom (Atomic.ofStr s)])))
+  { cx with env := { cx.env with vars := cx.env.vars.filter (·.1 != vAccRules) ++ [(vAccRules, new ++ old)] } }
 
 /-- The local name of an error code given as an EQName or QName (the
     error codes of `XPath4.Err` carry no namespace). -/
@@ -1873,11 +1887,11 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           for o in ← run n S { gcx with rule := none } action do out := out.push o
           gi := gi + 1
         pure out.toList
-    | .sourceDoc href body =>
+    | .sourceDoc href body accs =>
         let h ← avtStr cx href
         let d ← liftX (callFn 100000 env { uri := nsFN, loc := "doc" } [sStr h])
         match d with
-        | [i] => run n S (cx.focus i 1 1) body
+        | [i] => run n S (withAccRules (cx.focus i 1 1) [i] accs) body
         | _ => xerr "FODC0002" ("cannot read " ++ h)
     | .unknown q fbs code =>
         match fbs with

@@ -149,8 +149,8 @@ inductive Instr where
   /-- `xsl:merge` (§15): the sources (name, for-each-item,
       for-each-source, select, sort-before-merge, keys) and the action. -/
   | merge (sources : List MSource) (action : List Instr)
-  /-- `xsl:source-document` (non-streamed reading, §18.1). -/
-  | sourceDoc (href : Avt) (body : List Instr)
+  /-- `xsl:source-document` (non-streamed reading, §18.1); `accs`: its `use-accumulators` (§19.2). -/
+  | sourceDoc (href : Avt) (body : List Instr) (accs : List String)
   /-- An instruction this processor does not have, or an extension
       instruction: its `xsl:fallback` children. -/
   | unknown (name : QN) (fallbacks : List (List Instr)) (code : String)
@@ -265,6 +265,8 @@ structure ModeDef where
   copyNs : Bool := true
   /-- The `visibility` attribute (§3.4.6), `""` when absent. -/
   vis : String := ""
+  /-- `use-accumulators` (§19.2): expanded names, or `#all`. -/
+  useAccs : List String := []
 deriving Inhabited
 
 structure Global where
@@ -368,7 +370,7 @@ def Instr.bodies : Instr → List (List Instr)
   | .comment _ b | .pi _ _ b | .nsI _ _ b | .docI b | .var _ _ _ b | .copy _ _ _ _ b
   | .message _ b _ _ | .assertI _ _ b _ | .breakI _ b | .mapI _ b _ | .mapEntry _ _ b
   | .arrayI _ _ b | .arrayMember _ b | .wherePopulated b | .onEmpty _ b | .onNonEmpty _ b
-  | .sourceDoc _ b | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b | .withCompat _ b | .doe b
+  | .sourceDoc _ b _ | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b | .withCompat _ b | .doe b
   | .withBase _ b => [b]
   | .applyT _ _ ss ps _ => ss.map SortK.body ++ ps.map WParam.body
   | .callT _ ps | .applyImports ps _ | .nextMatch ps _ | .nextIteration ps => ps.map WParam.body
