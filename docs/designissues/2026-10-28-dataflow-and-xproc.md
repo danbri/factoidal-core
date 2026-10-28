@@ -1,7 +1,9 @@
 # Factoidal checked pipelines and XProc 3.1
 
-Date: 2026-10-28. Status: comparison and proposals, no code. Decision needed
-(section "Proposals").
+Date: 2026-10-28. Status: proposals approved (owner, 2026-10-28: "Merged
+https://github.com/danbri/factoidal-core/pull/185 - do it!"; also "we add a
+lot more xml stuff soon"). Epic https://github.com/danbri/factoidal/issues/1129;
+stage 1 in progress (section "Stage 1").
 
 Owner, 2026-10-28, verbatim (chat): "How does our dataflow architecture
 compare to xml processing pipelinez / xproc"
@@ -94,3 +96,32 @@ theorems), then 4, then 5. Each stage of the work gets an issue.
 * XProc 3.1: Standard Step Library: https://spec.xproc.org/3.1/steps/
 * XProc 1.0 (W3C Recommendation): https://www.w3.org/TR/xproc/
 * XML Calabash 3, `cx:rdf-merge`: https://docs.xmlcalabash.com/reference/3.0.31/cx-rdf-merge.html
+
+## Stage 1 (https://github.com/danbri/factoidal/issues/1130)
+
+Stage 1a, Lean (2026-10-28):
+
+* `formal/lean4/L4Factoidal/Dataflow/Graph.lean`: `PortSig` (named input
+  ports, one output wire), `PortComponent`, `Src` (graph input `k` or node
+  `j`), `Graph` (nodes in a topological order: a node reads only graph inputs
+  and nodes before it). `graphIssues`: the static check (`unknownInput`,
+  `forwardRef` for a cycle, `portCount`, `wireMismatch`). Theorems
+  `Graph.guarantee_sound` (every node's contract holds on its sources, under
+  the union of the named assumptions) and `Graph.run_stage_error_only` (a
+  checked graph with inputs on the declared wires fails only in a stage).
+  `PortComponent.ofComponent`: a one-port component of `Pipeline.lean` with
+  port `in`; `StageSig.toPortSig` does the same for registry signatures.
+* `Dataflow/GraphStages.lean`: `datasetMergeStage`, the first stage with two
+  ports (`left`, `right`); theorem `datasetMerge_isMerge`: its output denotes
+  an RDF merge of its inputs (blank nodes of the two inputs kept apart).
+* `Dataflow/GraphTests.lean`: two N-Triples documents that both use `_:b`,
+  two reader nodes, the merge node, selection, BGP SELECT: two solutions; the
+  graph's contract with no premise (`twoDocs_sound`); fan-out; each kind of
+  static issue with its node and port; registry signatures as port
+  signatures.
+
+Stage 1b, next: the wasm op (a JSON graph of registry stages and port stages,
+answering the issues, the output wire, the assumptions and each node's
+status), a wasm op for `datasetMerge`, and the npm API that runs a graph
+(`graph({inputs, nodes})`, `run(graph, inputs)`). The list API (`pipe`)
+stays.
