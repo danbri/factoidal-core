@@ -27,6 +27,7 @@ table to `XML.Node` and loop invariants over `Runtime.buildElement`
 import L4Factoidal.XQuery4.Module
 import L4Factoidal.XSD11.Load
 import L4Factoidal.XQuery4.FlworTheorems
+import L4Factoidal.XPath4.Theorems
 
 namespace L4Factoidal.XQuery4
 
@@ -210,5 +211,34 @@ theorem nameOf_ncname (env : Env) (s : Seq) (sns : List (String × String)) (isA
         have hl := isNCName_xsd_xml l (parseQNameLex_local _ p l hp)
         repeat' (first | (split at h) | (simp [pure, Except.pure] at h; subst h; exact hl) | (simp [err, throw, throwThe, MonadExceptOf.throw] at h))
       · simp [err, throw, throwThe, MonadExceptOf.throw] at h
+
+/-! ## Regular expressions in XQuery are the shared `Regex`
+
+XQuery has no regex code of its own: a call of `fn:matches`, `fn:replace`
+or `fn:tokenize` is the XPath 4.0 library entry (`XPath4.matches_shared`
+for `fn:matches`), which compiles the pattern with the F&O 4.0 profile
+`Regex.Profiles.compileXPath40` of the shared `L4Factoidal.Regex` and
+matches with its engine (`Regex.isMatch`, `Regex.Exec`), the engine that
+SPARQL `REGEX` runs with its XPath 2.0 and 3.0 dialects. -/
+
+section RegexShared
+variable (h : Hooks) (e : Env) (s p f : String) (rep : Seq)
+
+theorem tokenize_shared :
+    (libLookupAll (fnQ "tokenize")).map (fun g => g h e [sStr s, sStr p, sStr f]) =
+      some (do let re ← compileRe4 p f; pure ((tokenize4 s re).map (fun t => .atom (Atomic.ofStr t)))) := rfl
+
+theorem replace_shared :
+    (libLookupAll (fnQ "replace")).map (fun g => g h e [sStr s, sStr p, rep, sStr f]) =
+      some (do let re ← compileRe4 p f; pure (sStr (← replace4 h e s re rep))) := rfl
+
+/-- The pattern is compiled by the shared profile (below the quantifier
+    limit of 1000). -/
+theorem compileRe4_shared (r : L4Factoidal.Regex.Compiled) (hq : ¬ maxQuant p > 1000)
+    (hc : L4Factoidal.Regex.Profiles.compileXPath40 p f = .ok r) :
+    compileRe4 p f = .ok { r, names := r.names, groups := countGroups r.capt } := by
+  simp [compileRe4, compileRe, hq, hc, bind, Except.bind, pure, Except.pure]
+
+end RegexShared
 
 end L4Factoidal.XQuery4
