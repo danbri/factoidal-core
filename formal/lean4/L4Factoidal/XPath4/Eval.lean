@@ -236,6 +236,12 @@ def compatArg (env : Env) (t : IType) (v : Seq) : M Seq := do
     match ← env.atomize v with
     | [] => pure (single (Atomic.ofDbl (0.0 / 0.0)))
     | a :: _ => pure (single (compatNum a))
+  -- `xs:numeric?` (the choice of the three numeric types): `fn:number`
+  -- of the first item when it is not numeric (XPath 4.0 §3.4.3)
+  | .choice [.atomic (.b .double), .atomic (.b .float), .atomic (.b .decimal)] =>
+    match ← env.atomize v with
+    | [] => pure (if t matches .seq _ .opt then [] else single (Atomic.ofDbl (0.0 / 0.0)))
+    | a :: _ => pure (single (if a.isNumeric then a else compatNum a))
   | _ => pure v
 
 def maxRange : Int := 20000000

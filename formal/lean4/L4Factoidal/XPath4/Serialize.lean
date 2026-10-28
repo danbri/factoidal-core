@@ -614,7 +614,10 @@ def XCtx.indentsIn (x : XCtx) (e : Env) (n : NodeRef) : Bool :=
 def Env.nsDecls (e : Env) (x : XCtx) (n : NodeRef) (scope : List (String × String)) :
     List (String × String) :=
   let r := e.nrec n
-  let own := effectiveScope r.inscope |>.filter (fun (pf, _) => pf != "xml")
+  -- an undeclared prefix (an XML 1.1 source) is written as an
+  -- undeclaration only with undeclare-prefixes and version 1.1 (§5.1.4)
+  let undeclOk := x.p.undeclare && x.p.version == some "1.1"
+  let own := effectiveScope r.inscope |>.filter (fun (pf, u) => pf != "xml" && (pf == "" || u != "" || undeclOk))
   let needed := own ++ [(r.name.pfx, r.name.uri)] ++
     (e.attrNodes n).filterMap (fun a =>
       let ar := e.nrec a

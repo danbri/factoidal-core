@@ -872,7 +872,10 @@ def formatDT (kind : DTKind) (v : DTValue) (pic : String) (lang cal : Option Str
                 let w := (tok.filter (fun c => isDigitU c || c == '#')).length
                 if w ≥ 2 then some w else none
               else none
-          let yv := y.natAbs
+          -- the AD and OS calendars have no year zero: the XSD 1.1 year
+          -- 0 is 1 BC, -55 is 56 BC; the ISO calendar numbers year zero
+          let iso := (cal.map (·.trim)) == some "ISO"
+          let yv := if y ≤ 0 && !iso then (1 - y).toNat else y.natAbs
           let yv := match n with | some k => yv % (10 ^ k) | none => yv
           if isNameTok mk.pres1 then fmtComp { mk with pres1 := "1" } "1" yv
           else fmtComp mk "1" yv

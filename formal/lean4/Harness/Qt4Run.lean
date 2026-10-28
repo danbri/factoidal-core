@@ -12,11 +12,13 @@ and `misc`), and scores every test case for XPath 4.0 or, with
 * **unsupported** — the test case or its test set has a dependency
   this processor does not satisfy: a spec that is not XPath 4.0
   (`XQ*` only, or an `XP` version range that excludes 4.0), a feature
-  it does not have (schema import/validation, typed data, static
-  typing, the namespace axis, `fn:transform`, ...), XML 1.1, a
-  non-English default language, or an environment that needs a schema,
-  a collection, a decimal format or a resource. An unsupported test is
-  NEVER a pass;
+  it does not have (static typing, which XPath 4.0 and XQuery 4.0 have
+  dropped, `fn:transform`, ...), a language other than English, XML 1.0
+  before the fifth edition, or an environment that needs a collection
+  or a function library. An unsupported test is NEVER a pass. The
+  settings of the dynamic context that a test names (the default
+  language, the XML version, XPath 1.0 compatibility mode) are set for
+  that test (`configureFor`); the namespace axis is on in XPath mode;
 * **pass** — every assertion holds; an `error` assertion holds only
   when the error raised has the expected code (or the code is `*`);
 * **fail** — anything else, including a wrong error code.
@@ -37,6 +39,7 @@ anything but XPath expressions in this evaluator.
 import L4Factoidal.XPath4.Eval
 import L4Factoidal.XSD11.Load
 import L4Factoidal.XPath4.Theorems
+import L4Factoidal.XPath4.OptionalTheorems
 import L4Factoidal.XQuery4.Module
 import L4Factoidal.XQuery4.Theorems
 import L4Factoidal.XPath4.SerializeTheorems
@@ -127,6 +130,31 @@ def featureSupported (f : String) : Bool :=
   -- the environment's `schema`, validated sources, typed data
   || f == "schemaImport" || f == "schemaValidation" || f == "typedData"
 
+/-- The features this processor has in one mode: `featureSupported`,
+    plus the namespace axis (XPath 4.0 §4.7.2.1; XQuery 4.0 does not
+    have it, XQST0134), XPath 1.0 compatibility mode (XPath 4.0
+    §2.2.1.1, which only a host language sets: `configureFor` sets
+    `Env.compat10` for the test that asks for it) and a collation other
+    than the codepoint collation (`XPath4.Collation`). -/
+def featureSupportedIn (xq : Bool) (f : String) : Bool :=
+  featureSupported f || f == "non_unicode_codepoint_collation"
+    || (!xq && (f == "namespace-axis" || f == "xpath-1.0-compatibility"))
+
+/-- The dynamic context settings that a test case's dependencies select:
+    XPath 1.0 compatibility mode, the default language and the XML
+    version. -/
+def configureFor (deps : List Node) (env : Env) : Env :=
+  deps.foldl (fun env d =>
+    let sat := attrD d "satisfied" "true" != "false"
+    match attrD d "type" with
+    | "feature" =>
+        if sat && ((attrD d "value").splitOn " ").contains "xpath-1.0-compatibility"
+        then { env with compat10 := true } else env
+    | "default-language" => if sat then { env with defaultLanguage := attrD d "value" } else env
+    | "xml-version" =>
+        if sat && ((attrD d "value").splitOn " ").all (· == "1.1") then { env with xml11 := true } else env
+    | _ => env) env
+
 def depOk (xq : Bool) (d : Node) : Bool :=
   let ty := attrD d "type"
   let v := attrD d "value"
@@ -135,12 +163,23 @@ def depOk (xq : Bool) (d : Node) : Bool :=
   | "spec" => specOk v xq
   | "feature" =>
       let fs := v.splitOn " "
-      if sat then fs.all featureSupported else !(fs.all featureSupported)
+      if sat then fs.all (featureSupportedIn xq) else !(fs.all (featureSupportedIn xq))
+  -- The version of XML and XML Names is a setting of this processor
+  -- (XPath 4.0 §A.2, constraint xml-version): `configureFor` sets
+  -- `Env.xml11` for a test that names only XML 1.1. Strings hold every
+  -- XML 1.1 character in both settings (XDM 4.0 §4.1.6). "1.0:4-" is
+  -- XML 1.0 before the fifth edition, which this processor never uses.
   | "xml-version" =>
-      let has := (v.splitOn " ").any (fun x => x == "1.0" || x == "1.0:4-" || x.startsWith "1.0")
+      let has := (v.splitOn " ").any (fun x => x == "1.1" || (x.startsWith "1.0" && x != "1.0:4-"))
       if sat then has else !has
   | "xsd-version" => if sat then v == "1.1" else v != "1.1"
-  | "default-language" | "language" => if sat then v == "en" else v != "en"
+  | "language" => if sat then v == "en" else v != "en"
+  -- the default language is a setting of the dynamic context
+  -- (`Env.defaultLanguage`); `configureFor` sets the one a test names
+  | "default-language" => if sat then true else v != "en"
+  -- `big_integer`: `xs:integer` is Lean's `Int` (no bound);
+  -- `year_lt_0`: years before 1 are dates (`XPath4.Atomic`)
+  | "limits" => if sat then v == "big_integer" || v == "year_lt_0" else !(v == "big_integer" || v == "year_lt_0")
   | _ => !sat
 
 /-! ## Environments -/
@@ -715,6 +754,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
     | .ok env =>
+      let env := configureFor (setDeps ++ deps) env
       let (scanned, scannedBins) ← scanResources o.root dir src
       let env := { env with resources := env.resources ++ scanned,
                             resourceBytes := env.resourceBytes ++ scannedBins }

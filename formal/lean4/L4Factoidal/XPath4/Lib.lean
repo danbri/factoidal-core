@@ -1011,7 +1011,7 @@ def fnTable : List (String × LibFn) := [
   ent "trace" (fun _ _ a => pure (argN a 0)),
   ent "message" (fun _ _ _ => pure []),
   ent "default-collation" (fun _ e _ => pure (sStr e.defaultCollation)),
-  ent "default-language" (fun _ _ _ => pure (single ⟨.b .language, .str "en"⟩)),
+  ent "default-language" (fun _ e _ => pure (single ⟨.b .language, .str e.defaultLanguage⟩)),
   ent "static-base-uri" (fun _ e _ => pure (if e.baseUri == "" then [] else single (Atomic.ofUri e.baseUri))),
   ent "current-dateTime" (fun _ e _ => do pure (single (← castFromString e.now (.b .dateTimeStamp)))),
   ent "current-date" (fun _ e _ => do pure (single (← castAtomic (← castFromString e.now (.b .dateTime)) (.b .date)))),
