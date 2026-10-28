@@ -58,6 +58,10 @@ structure PCtx where
   /-- Read an unknown type name as `item()` (the first pass over an
       XQuery prolog, which collects the named types). -/
   lenientTypes : Bool := false
+  /-- XML 1.1 and XML Names 1.1 are in force (`Env.xml11`): the XQuery
+      grammar reads character references to XML 1.1 characters and
+      namespace undeclarations. -/
+  xml11 : Bool := false
 
 abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 
@@ -171,7 +175,8 @@ def peekQName : P (Option (Option String × Option String × String × Nat)) := 
 def lookupNs (p : String) : P String := do
   let c ← read
   match c.ns.lookup p with
-  | some u => pure u
+  -- a prefix undeclared by `xmlns:p=""` (XML Names 1.1) is not bound
+  | some u => if u == "" && p != "" then throw { code := "XPST0081", msg := "undeclared namespace prefix " ++ p } else pure u
   | none => match defaultNs.lookup p with
     | some u => pure u
     | none => throw { code := "XPST0081", msg := "undeclared namespace prefix " ++ p }

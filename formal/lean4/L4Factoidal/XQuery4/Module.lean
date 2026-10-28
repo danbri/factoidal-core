@@ -162,8 +162,8 @@ def pFieldName : P String := do
     first pass; `lenient` makes that first pass. -/
 def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Module := do
   let mut m : Module := {}
-  let mut cfg : Cfg := { types := types0, lenient }
   let c0 ← read
+  let mut cfg : Cfg := { types := types0, lenient, xml11 := c0.xml11 }
   let mut ns : List (String × String) := c0.ns
   -- the version declaration
   if ← kwThenKw "xquery" "version" then
@@ -509,15 +509,33 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
      String.ofList ((List.range (min 20 (c.s.size - i))).map (fun k => chAt c.s (i + k))) ++ "'")
   pure m
 
+/-- End-of-line handling (XQuery 4.0 §A.3.3): before parsing, CR LF and a
+    lone CR become LF; with XML 1.1 (§A.3.3.2) also CR NEL, NEL and LINE
+    SEPARATOR. One pass, accumulator. -/
+def normalizeLineEnds (xml11 : Bool) (cs : List Char) : List Char :=
+  let rec go : List Char → List Char → List Char
+    | [], acc => acc.reverse
+    | '\r' :: '\n' :: r, acc => go r ('\n' :: acc)
+    | '\r' :: c :: r, acc =>
+        if xml11 && c == '\u0085' then go r ('\n' :: acc) else go (c :: r) ('\n' :: acc)
+    | '\r' :: [], acc => go [] ('\n' :: acc)
+    | c :: r, acc =>
+        if xml11 && (c == '\u0085' || c == '\u2028') then go r ('\n' :: acc) else go r (c :: acc)
+  go cs []
+
+#guard normalizeLineEnds false "a\r\nb\rc\u0085".toList == "a\nb\nc\u0085".toList
+#guard normalizeLineEnds true "a\r\u0085b\u2028c\u0085".toList == "a\nb\nc\n".toList
+
 /-- Parse an XQuery 4.0 module, with the namespace bindings of the
-    environment. -/
-def parseModule (src : String) (ns : List (String × String) := []) : M Module :=
-  let s := src.toList.toArray
+    environment.
+    `xml11` selects the XML 1.1 end-of-line handling and grammar. -/
+def parseModule (src : String) (ns : List (String × String) := []) (xml11 : Bool := false) : M Module :=
+  let s := (normalizeLineEnds xml11 src.toList).toArray
   -- first pass: the named types, with forward references read as item()
-  let types0 := match ((pModule [] true).run { s, ns }).run 0 with
+  let types0 := match ((pModule [] true).run { s, ns, xml11 }).run 0 with
     | .ok (m, _) => m.types
     | .error _ => []
-  match ((pModule types0 false).run { s, ns }).run 0 with
+  match ((pModule types0 false).run { s, ns, xml11 }).run 0 with
   | .ok (m, _) => .ok m
   | .error e => .error e
 
@@ -714,7 +732,7 @@ def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
 
 /-- Parse and evaluate an XQuery 4.0 main module. -/
 def evalQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) : M Seq := do
-  let m ← parseModule src env.ns
+  let m ← parseModule src env.ns env.xml11
   evalModule fuel env m
 
 def evalQShow (src : String) : String :=
