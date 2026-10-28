@@ -1108,7 +1108,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         | some b => run n S cx b
         | none => pure []
     | .var _ _ _ _ => pure []
-    | .copy sel copyNs _ useSets body =>
+    | .copy sel copyNs inheritNs useSets body =>
         let it? ← match sel with
           | some e => do
               let s ← evalX cx e
@@ -1136,6 +1136,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
                   | some v => resolveRef env.baseUri v.trimAscii.toString
                   | none => (env.baseUriOf nd).getD ""
                 let mut content : Array Out := #[.attr baseMarkQ base]
+                if !inheritNs then content := content.push (.attr noInheritQ "")
                 for o in ← attrSetOuts n S cx' useSets do content := content.push o
                 for o in ← run n S cx' body do content := content.push o
                 pure [.elem r.name (if copyNs then env.elemDecls nd else []) content.toList]
@@ -1146,16 +1147,20 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             | .pi => pure [.pi r.name.loc r.value]
             | .namespace => pure [.nsN r.name.loc r.value]
           | other => pure [.item other]
-    | .copyOf sel copyNs =>
+    | .copyOf sel copyNs copyAcc =>
         let s ← evalX cx sel
         let mut out : Array Out := #[]
         for it in s do
           match it with
           | .node nd =>
-            -- a copy is made only where it differs from the node: other
-            -- namespaces, or another base URI (§11.9.2: an `xml:base` is
-            -- resolved against the static base URI)
-            if (!copyNs || (env.xmlBaseOf nd).isSome) && (env.nrec nd).kind == .element then
+            -- a copy is made where it can differ from the node: other
+            -- namespaces, another base URI (§11.9.2: an `xml:base` is
+            -- resolved against the static base URI), or a value that a
+            -- variable or function returns (its identity is new)
+            let isElem := (env.nrec nd).kind == .element
+            -- (with copy-accumulators="yes" the node itself stands for its
+            -- copy, so that the accumulator values are those of the node)
+            if (isElem && (!copyNs || (env.xmlBaseOf nd).isSome)) || (cx.tempOut && !copyAcc) then
               let id ← freshId
               out := out.push (.item (← liftX (copyAsTree env id nd copyNs)))
             else out := out.push (.item it)
@@ -1506,7 +1511,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         pure (os.filter (fun o => match o with
           | .elem _ _ cs => cs.any (fun c => match c with | .attr .. | .nsN .. => false | _ => true)
           | .doc cs _ => !cs.isEmpty
-          | .text "" => false
+          | .text "" | .comment "" | .pi _ "" | .attr _ "" => false
           | .item (.node nd) => nodeNonEmpty env nd
           | _ => true))
     | .onEmpty _ _ | .onNonEmpty _ _ => pure []
@@ -1740,7 +1745,14 @@ def builtin : Nat → Sheet → Ctx → Item → String → List (QN × Seq) →
         | .document => pure [.doc (← applyT n S cx kids mode ps tun none) (env.doc nd).uri]
         | .element =>
             let content := (← applyT n S cx ats mode ps tun none) ++ (← applyT n S cx kids mode ps tun none)
-            pure [.elem r.name (if md.copyNs then env.elemDecls nd else []) content]
+            -- the copy keeps the base URI of the element (§6.8.1, as xsl:copy)
+            -- (its xml:base attribute, copied too, applies on top)
+            let inh := if (env.xmlBaseOf nd).isNone then env.baseUriOf nd else
+              match r.parent with
+              | some p => env.baseUriOf (nd.at p)
+              | none => some (env.treeBaseUri nd)
+            let mark := Out.attr baseMarkQ (inh.getD "")
+            pure [.elem r.name (if md.copyNs then env.elemDecls nd else []) (mark :: content)]
         | _ => pure [.item it]
       | .arr ms => applyT n S cx ms.flatten mode ps tun none
       | _ => pure [.item it]

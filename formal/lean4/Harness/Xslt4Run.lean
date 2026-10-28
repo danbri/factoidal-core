@@ -209,11 +209,13 @@ def serNode (env : Env) : Nat → NodeRef → String
       let nm := r.name.show
       let decl := " xmlns" ++ (if r.name.pfx == "" then "" else ":" ++ r.name.pfx) ++ "=\"" ++ escAttr r.name.uri ++ "\""
       let decl := if r.name.uri == "" && r.name.pfx != "" then "" else decl
-      let ats := r.attrs.toList.map (fun a =>
+      -- each prefix is declared once on the element
+      let (ats, _) := r.attrs.toList.foldl (fun (acc, seen) a =>
         let ra := env.nrec (n.at (a))
-        let d := if ra.name.uri != "" && ra.name.pfx != "" && ra.name.pfx != "xml" then
-          " xmlns:" ++ ra.name.pfx ++ "=\"" ++ escAttr ra.name.uri ++ "\"" else ""
-        d ++ " " ++ ra.name.show ++ "=\"" ++ escAttr ra.value ++ "\"")
+        let need := ra.name.uri != "" && ra.name.pfx != "" && ra.name.pfx != "xml" && !seen.contains ra.name.pfx
+        let d := if need then " xmlns:" ++ ra.name.pfx ++ "=\"" ++ escAttr ra.name.uri ++ "\"" else ""
+        (acc ++ [d ++ " " ++ ra.name.show ++ "=\"" ++ escAttr ra.value ++ "\""],
+         if need then ra.name.pfx :: seen else seen)) (([] : List String), [r.name.pfx])
       let body := String.join (r.children.toList.map (fun c => serNode env f (n.at (c))))
       "<" ++ nm ++ decl ++ String.join ats ++ (if body == "" then "/>" else ">" ++ body ++ "</" ++ nm ++ ">")
 

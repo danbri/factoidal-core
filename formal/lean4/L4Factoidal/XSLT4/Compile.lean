@@ -824,7 +824,8 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         pure (.copy (← optExpr c as "select") (← as.bool "copy-namespaces" true)
           (← as.bool "inherit-namespaces" true) useSets (← body))
     | "copy-of" =>
-        pure (.copyOf (← parseC c (← reqAttr as "select" l)) (← as.bool "copy-namespaces" true))
+        pure (.copyOf (← parseC c (← reqAttr as "select" l)) (← as.bool "copy-namespaces" true)
+          (← as.bool "copy-accumulators" false))
     | "message" =>
         pure (.message (← optExpr c as "select") (← body)
           ((← optAvt c as "terminate").getD [.lit "no"]) (← errCodeAvt c as))

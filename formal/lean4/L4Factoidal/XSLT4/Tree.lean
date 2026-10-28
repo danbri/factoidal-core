@@ -47,6 +47,11 @@ def Out.ofSeq (s : Seq) : List Out := s.map Out.item
     the base URI of the tree when the element is the root. -/
 def baseMarkQ : QN := { uri := "urn:x-factoidal:internal", loc := "base-uri" }
 
+/-- The name of a content attribute that is not an attribute: the
+    children of the element do not inherit its namespaces
+    (`inherit-namespaces="no"`, §11.9.1). `buildElem` drops it. -/
+def noInheritQ : QN := { uri := "urn:x-factoidal:internal", loc := "no-inherit" }
+
 /-! ## Normalised content (§5.7.1) -/
 
 /-- A child of a node that is being built. -/
@@ -176,6 +181,9 @@ def copyTree (env : Env) (src : NodeRef) (par : Option Nat) (pscope : List (Stri
     let par' := if i == lo then par else x.parent.map shift
     let sc := if x.kind == .element then
         (if copyNs then x.inscope ++ pscope else neededNs d x ++ pscope) else []
+    -- namespace fixup (§5.7.3): an element in no namespace does not
+    -- inherit a default namespace from its new parent
+    let sc := if x.kind == .element && x.name.uri == "" && (sc.lookup "").getD "" != "" then ("", "") :: sc else sc
     let newPar := par'
     let rec' : NRec := { x with parent := newPar, children := x.children.map shift, attrs := x.attrs.map shift, last := shift (max x.last i), inscope := sc }
     let _ ← tPush rec'
@@ -226,7 +234,8 @@ def buildElem (env : Env) : Nat → Option Nat → List (String × String) → Q
   | 0, _, _, _, _, _ => throw { code := "FOER0000", msg := "result tree too deep" }
   | f + 1, par, pscope, name, decls, content => do
     let nm ← normContent env content
-    let nm := { nm with attrs := nm.attrs.filter (fun (q, _) => !(q == baseMarkQ)) }
+    let noInherit := nm.attrs.any (fun (q, _) => q == noInheritQ)
+    let nm := { nm with attrs := nm.attrs.filter (fun (q, _) => !(q == baseMarkQ) && !(q == noInheritQ)) }
     let scope0 := (decls ++ nm.nss).reverse ++ pscope
     -- a namespace node of the element that binds the prefix of its name
     -- to another URI: the element gets another prefix (§5.7.3)
@@ -242,6 +251,8 @@ def buildElem (env : Env) : Nat → Option Nat → List (String × String) → Q
       scope := sc'
       ats := ats.push (q', v)
     let i ← tPush { kind := .element, name, parent := par, inscope := scope }
+    -- the scope the children start from
+    let kscope := if noInherit then [("xml", nsXML)] else scope
     let mut aIdx : Array Nat := #[]
     for (q, v) in ats.toList do
       let j ← tPush { kind := .attribute, name := q, value := v, parent := some i }
@@ -254,9 +265,9 @@ def buildElem (env : Env) : Nat → Option Nat → List (String × String) → Q
           let j ← tPush { kind := .text, value := s, parent := some i }
           tSet j (fun r => { r with last := j })
           cs := cs.push j
-      | .node n => cs := cs.push (← copyTree env n (some i) scope true)
+      | .node n => cs := cs.push (← copyTree env n (some i) kscope true)
       | .out o =>
-          match ← buildKid env f (some i) scope o with
+          match ← buildKid env f (some i) kscope o with
           | some j => cs := cs.push j
           | none => pure ()
     let sz := (← get).size

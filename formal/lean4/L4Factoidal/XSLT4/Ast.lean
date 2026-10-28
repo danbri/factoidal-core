@@ -115,7 +115,8 @@ inductive Instr where
   /-- A local `xsl:variable` (§9.1): it binds the following siblings. -/
   | var (name : QN) (as : Option IType) (sel : Option Expr) (body : List Instr)
   | copy (sel : Option Expr) (copyNs inheritNs : Bool) (useSets : List QN) (body : List Instr)
-  | copyOf (sel : Expr) (copyNs : Bool)
+  /-- `xsl:copy-of`: select, copy-namespaces, copy-accumulators. -/
+  | copyOf (sel : Expr) (copyNs copyAcc : Bool)
   | message (sel : Option Expr) (body : List Instr) (terminate : Avt) (code : Option Avt)
   | assertI (test : Expr) (sel : Option Expr) (body : List Instr) (code : Option Avt)
   /-- `xsl:number` (§12): value, select, level, count, from, format,

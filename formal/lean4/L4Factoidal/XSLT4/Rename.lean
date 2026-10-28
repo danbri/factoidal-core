@@ -238,7 +238,7 @@ def renI (r : Ren) : Nat → List QN → Instr → RM Instr
         pure (.switch (← e sel) ws' ow')
     | .var n as sel body => do pure (.var n as (← eo sel) (← b body))
     | .copy sel cn inh us body => do pure (.copy (← eo sel) cn inh (← renSets r us) (← b body))
-    | .copyOf sel cn => do pure (.copyOf (← e sel) cn)
+    | .copyOf sel cn ca => do pure (.copyOf (← e sel) cn ca)
     | .message sel body term code => do pure (.message (← eo sel) (← b body) (← av term) (← avo code))
     | .assertI t sel body code => do pure (.assertI (← e t) (← eo sel) (← b body) (← avo code))
     | .number v sel lvl cnt frm fmt lang ord st gs gz => do
