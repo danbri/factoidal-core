@@ -481,10 +481,15 @@ def pItemType : Nat → P IType
             if ← eatS "*" then expectS ")"; pure .anyFn
             else
               let mut ps : List IType := []
+              let mut names : List String := []
               if !(← eatS ")") then
                 for _ in [0:1000] do
                   if ← eatS "$" then
-                    let _ ← pNameTest ""
+                    let nmT ← pNameTest ""
+                    let key := match nmT with | .name q => q.uri ++ "|" ++ q.loc | _ => ""
+                    if key != "" && names.contains key then
+                      throw { code := "XQST0039", msg := "two parameters of a function type have one name" }
+                    names := key :: names
                     expectKw "as"
                   ps := ps ++ [← pSeqType n]
                   if !(← eatS ",") then break
@@ -944,6 +949,8 @@ def pArrowTarget : Nat → P (Sum (QN) Expr × List (Option Expr) × List (Strin
         else
         match ← peekQName with
         | some (p, u, l, e) =>
+            if p.isNone && u.isNone && reservedFnNames.contains l then
+              synErr ("reserved function name " ++ l)
             set e
             let q ← resolve p u l nsFN
             let (args, kw) ← pArgs n
@@ -1250,6 +1257,8 @@ def pInlineFn : Nat → P Expr
       if !(← eatS ")") then
         for _ in [0:1000] do
           let v ← pVarName n
+          if ps.any (fun (w, _) => w == v) then
+            throw { code := "XQST0039", msg := "two parameters are named $" ++ v.show }
           let t ← pTypeDecl n
           ps := ps ++ [(v, t)]
           if !(← eatS ",") then break

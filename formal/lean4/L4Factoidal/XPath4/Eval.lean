@@ -132,7 +132,14 @@ def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option Str
   let conv (x y : Atomic) : M Atomic :=
     if x.ty == .untyped then
       if y.ty == .untyped || y.isStringLike then pure (Atomic.ofStr x.str)
-      else if y.isNumeric then castAtomic x (.b .double)
+      -- XPath 4.0 §4.10.2: to the primitive type of the numeric
+      -- operand, or if that fails to xs:double
+      else if y.isNumeric then
+        match y.ty with
+        | .b bt => match castAtomic x (.b (bt.primitive.getD bt)) with
+          | .ok v => pure v
+          | .error _ => castAtomic x (.b .double)
+        | _ => castAtomic x (.b .double)
       else match y.ty with
         | .b bt => castAtomic x (.b (match bt.primitive with | some p => if derivedFrom bt .dayTimeDuration then .dayTimeDuration else if derivedFrom bt .yearMonthDuration then .yearMonthDuration else p | none => bt)) ns
         | .untyped => pure (Atomic.ofStr x.str)
@@ -330,7 +337,9 @@ def eval : Nat → Env → Expr → M Seq
       match env.ctx with
       | some [j@(.jnode ..)] => return [jrootOf j]
       | some [i@(.map _)] | some [i@(.arr _)] => return [jwrap 1 i]
-      | _ => pure ()
+      -- a leading `/` needs a node: `treat as node()` (XPath 4.0 §4.7.1)
+      | some [.node _] | none => pure ()
+      | some _ => err "XPTY0004" "the context value of a leading / is not a node"
       let c ← env.ctxNode
       let r := env.treeRoot c
       if (env.nrec r).kind != .document then err "XPDY0050" "the root of the tree is not a document node"
@@ -706,6 +715,9 @@ def eval : Nat → Env → Expr → M Seq
         let rest ← evalArgs n env args
         let mut out : Array Item := #[]
         for i in s do
+          -- a placeholder makes a partial application for each item
+          if rest.any Option.isNone then out := out.push (.fn (.papp fi (some [i] :: rest)))
+          else
           for r in ← apply n env fi ([i] :: rest.map (·.getD [])) do out := out.push r
         pure out.toList
       | _ => err "XPTY0004" "=!> target must be a single function"
