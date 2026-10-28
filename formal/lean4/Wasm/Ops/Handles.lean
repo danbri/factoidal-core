@@ -12,6 +12,7 @@ store so later calls carry only a handle string and the query:
   datasetQuery(handle, sparql)
     -> the queryDataset envelope family verbatim (Wasm/Ops/Query.lean)
   datasetQuery12(handle, sparql)
+  datasetQuery12Entail(handle, sparql, entail)
     -> the same, with the query read by the SPARQL 1.2 grammar
   datasetUpdate(handle, sparqlUpdate)
     -> {"ok":true,"count":N}   — the stored dataset is REPLACED
@@ -245,6 +246,25 @@ def datasetQuery12 (h sparql : String) (base : Option String := none) : IO Strin
   withHandle h fun od =>
     pure (queryParsedDatasetWith od.ds (some od.backend) sparql [] extIris services .v12 base
             (some now))
+
+/-- `datasetQuery12Entail(handle, sparql, entail)` — `datasetQuery12` over
+the stored dataset closed under the entailment regime `entail` (the
+`closeDefaultGraph` of `queryRawParsed`: none, RDFS, OWL-RL, x-rdfscore,
+x-rdfsplus). The OWL 2 RL closure substitutes `owl:sameAs` inside triple
+terms (https://github.com/danbri/factoidal/issues/873), so a SPARQL 1.2
+triple-term pattern matches the substituted statement. The closed dataset is
+not stored and has no cached backend. The envelope is that of
+`datasetQuery12`. https://github.com/danbri/factoidal/issues/1109 -/
+def datasetQuery12Entail (h sparql entail : String) (base : Option String := none) :
+    IO String := do
+  let extIris ← extSnapshot
+  let services ← serviceSnapshot
+  let now ← nowDateTime
+  withHandle h fun od =>
+    match closeDefaultGraph entail od.ds with
+    | .error e => pure (errJson e)
+    | .ok ds =>
+      pure (queryParsedDatasetWith ds none sparql [] extIris services .v12 base (some now))
 
 /-- A SPARQL Update request applied to a set gives a set. -/
 theorem applyUpdateText_isSet {ds ds' : Dataset} (h : ds.IsSet) {text : String}
@@ -1319,11 +1339,12 @@ def optionConflict (who : String) (fields : List (String × Json)) : Option Stri
     | some _ => true
   if ["query", "Dataset.query"].contains who then
     let rdf12 := str "sparql12" == some "true" || str "version" == some "1.2"
-    let rawPath := present "output" || (match str "entail" with
-      | some e => e != "none" | none => false)
-    if rdf12 && rawPath then
+    -- `entail` with SPARQL 1.2 is `datasetQuery12Entail`
+    -- (https://github.com/danbri/factoidal/issues/1109); `output` (a results
+    -- text format) is still read by the SPARQL 1.1 path only.
+    if rdf12 && present "output" then
       some (errCoded "option.conflict"
-        s!"{who}: entail/output and SPARQL 1.2 cannot be combined; that path reads SPARQL 1.1")
+        s!"{who}: output and SPARQL 1.2 cannot be combined; that path reads SPARQL 1.1")
     else none
   else if ["serialize", "Dataset.serialize", "Dataset.toString"].contains who then
     let tag := ((str "format").getD "nquads").toLower
@@ -1383,6 +1404,8 @@ def apiCheck (who optionsJson : String) : String :=
 #guard codeOf? (apiCheck "owlClosure" "{\"mode\":\"rho-df\"}") == some "option.invalid-value"
 #guard codeOf? (apiCheck "Dataset.update" "{\"x\":null}") == some "option.unknown"
 #guard codeOf? (apiCheck "query" "{\"version\":\"1.2\",\"output\":\"csv\"}") == some "option.conflict"
+-- issue 1109: entail with SPARQL 1.2 is datasetQuery12Entail, not a conflict.
+#guard codeOf? (apiCheck "Dataset.query" "{\"version\":\"1.2\",\"entail\":\"OWL-RL\"}") == none
 #guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"nt\",\"prefixes\":{}}") == some "option.conflict"
 #guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"ttl\",\"prefixes\":{}}") == none
 #guard codeOf? (apiCheck "Dataset.serialize" "{\"format\":\"nt\",\"prefixes\":null}") == none

@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { extractObservableCells, runReactivePost, pretty, HUB_PAGE_DIR, xfail } from './_helpers.mjs';
+import { extractObservableCells, runReactivePost, pretty, HUB_PAGE_DIR } from './_helpers.mjs';
 import * as Factoidal from '../../npm/factoidal/index.mjs';
 
 const cells = extractObservableCells('rdf12-jsonld-usecases.md', HUB_PAGE_DIR);
@@ -55,7 +55,7 @@ test('rdf12 use cases: written back as JSON-LD-star; owl:sameAs inside a triple 
   assert.deepEqual(await post.value('sameAs'), [{ who: ex('dave') }]);
 });
 
-xfail('rdf12 use cases: entail with sparql12 in one query', 'https://github.com/danbri/factoidal/issues/1109', async () => {
+test('rdf12 use cases: entail with sparql12 in one query (issue 1109)', async () => {
   const data = await Factoidal.parse(`VERSION "1.2"
 PREFIX ex: <http://example.org/>
 PREFIX owl: <http://www.w3.org/2002/07/owl#>

@@ -75,7 +75,7 @@ private inductive RawAnswer where
   | result (r : QueryResult)
   | graph  (g : Graph)
 
-private def closeDefaultGraph (entail : String) (ds : Dataset) : Except String Dataset :=
+def closeDefaultGraph (entail : String) (ds : Dataset) : Except String Dataset :=
   match entail with
   | "none" | "" => .ok ds
   | "RDFS" | "rdfs" =>

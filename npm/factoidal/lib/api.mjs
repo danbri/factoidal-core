@@ -656,6 +656,17 @@ function buildApi(driver) {
     const entail = opts.entail || 'none';
     const sparql12 = opts.sparql12 === true || String(opts.version || '') === '1.2';
     const e = c.e;
+    if (sparql12 && entail !== 'none' && opts.output === undefined) {
+      // SPARQL 1.2 under an entailment regime: the engine closes the stored
+      // dataset and runs the SPARQL 1.2 evaluator (op datasetQuery12Entail,
+      // https://github.com/danbri/factoidal/issues/1109).
+      requireEntryFn(e, 'datasetQuery12Entail', 'query {sparql12, entail}');
+      const r = await withExtensionRounds(() => entryResult(
+        e.datasetQuery12Entail(ds.handle, sparql, entail), 'query', sparql));
+      if (r.kind === 'ask') return r.boolean;
+      if (r.kind === 'construct' || r.kind === 'describe') return c.fromNQuads(r.nquads, ds.prefixes);
+      return bindingsFromSrj(r.srj);
+    }
     if (entail !== 'none' || opts.output !== undefined) {
       // queryRaw over the stored dataset: an entailment regime, or a
       // results format (SPARQL 1.1 Query Results JSON, XML, CSV, TSV).
