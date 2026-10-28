@@ -12,12 +12,13 @@ import L4Factoidal.XPath4.ElemMap
 import L4Factoidal.XPath4.Fn4
 import L4Factoidal.XPath4.Uri
 import L4Factoidal.XPath4.Csv
+import L4Factoidal.XPath4.DeepEqual
 
 namespace L4Factoidal.XPath4
 
 def extTable : List (String × LibFn) :=
   xmlParseTable ++ formatTable ++ jsonTable ++ regexTable ++ serializeTable ++ elemMapTable ++ fn4Table ++
-  uriTable ++ csvTable
+  uriTable ++ csvTable ++ deepEqualTable
 
 /-- Look up a built-in function: the Stage 2 tables first. -/
 def libLookupAll (q : QN) : Option LibFn :=
