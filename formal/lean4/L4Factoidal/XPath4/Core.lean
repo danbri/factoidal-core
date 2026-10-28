@@ -810,7 +810,9 @@ def Env.deepEqFuel (e : Env) : Nat → Seq → Seq → Bool
       | .jnode _ _ v1 _, .jnode _ _ v2 _ => e.deepEqFuel f v1 v2
       -- function items: equivalence (F&O 4.0 §1.5.1, PR 2805): the
       -- same static form and the same captured values
-      | .fn (.papp g1 a1), .fn (.papp g2 a2) =>
+      -- (a partial application of a user function may capture the focus
+      -- through a parameter default, so only built-in functions here)
+      | .fn (.papp g1@(.fn (.builtin ..)) a1), .fn (.papp g2@(.fn (.builtin ..)) a2) =>
           e.deepEqFuel f [g1] [g2] && a1.length == a2.length &&
           (a1.zip a2).all (fun (x, y) => match x, y with
             | none, none => true

@@ -165,7 +165,13 @@ def peekQName : P (Option (Option String × Option String × String × Nat)) := 
       (w.split (fun c => c == '\n' || c == '\t' || c == '\r')).toList.map (·.toString) |>.filter (· != "")))
     if chAt s (j+1) == '*' then pure (some (none, some uri, "*", j + 2))
     else match ncnameAt s (j + 1) with
-      | some (l, e) => pure (some (none, some uri, l, e))
+      | some (l, e) =>
+        -- URIQualifiedName may carry a prefix: Q{uri}prefix:local (XPath 4.0 A.2.1)
+        if chAt s e == ':' && isNameStart (chAt s (e+1)) then
+          match ncnameAt s (e + 1) with
+          | some (l2, e2) => pure (some (some l, some uri, l2, e2))
+          | none => pure (some (none, some uri, l, e))
+        else pure (some (none, some uri, l, e))
       | none => pure none
   else if chAt s i == '*' && chAt s (i+1) == ':' then
     match ncnameAt s (i + 2) with
@@ -198,7 +204,7 @@ def resolve (pfx : Option String) (uri : Option String) (l : String) (dflt : Str
   | some u =>
     if u == "http://www.w3.org/2000/xmlns/" then
       throw { code := "XQST0070", msg := "the namespace " ++ u ++ " cannot be used in a name" }
-    pure { uri := u, loc := l }
+    pure { uri := u, loc := l, pfx := pfx.getD "" }
   | none => match pfx with
     | some p => pure { uri := ← lookupNs p, loc := l, pfx := p }
     | none => pure { uri := dflt, loc := l }

@@ -255,8 +255,11 @@ def castToF (e : Env) : Nat → Seq → IType → Bool → M Seq
           err "XPTY0004" "cannot cast to xs:QName"
         else pure (single (← castAtomic a aty e.nsResolve))
     | .choice ts =>
-        -- a value of a member type is kept (XPath 4.0 §4.19.2.3)
-        if ts.any (fun t => e.itemMatches (.atom a) t) then return single a
+        -- F&O 4.0 §21.3.5 (casting to union types): a string or untyped
+        -- value is cast from its lexical form to the members in order; a
+        -- value of a member type is kept; other values are cast to the
+        -- members in order
+        if !(a.is .string || a.ty == .untyped) && ts.any (fun t => e.itemMatches (.atom a) t) then return single a
         let mut res : Option Atomic := none
         for t in ts do
           match t with
