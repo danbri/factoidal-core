@@ -273,8 +273,14 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         for it in s do
           match it with
           | .node nd =>
-            let id := (2 : Nat) ^ 43 + (hash (toString (seedOf c) ++ ":" ++ toString j)).toNat % 1000000000000
-            out := out.push (← copyAsTree env id nd)
+            -- the copied node's identity is part of the number, so that the
+            -- copies made by one call per item (`a/b/copy-of()`) are distinct
+            -- nodes and `/` keeps them all; the number grows with the source
+            -- node's document and index, so copies sort in the order of the
+            -- nodes they copy
+            let h := (hash (toString (seedOf c))).toNat % 1000000
+            let id := (2 : Nat) ^ 43 + h * 10 ^ 40 + nd.doc * 10 ^ 16 + nd.idx * 10 ^ 4 + j % 10 ^ 4
+            out := out.push (← if q.loc == "snapshot" then snapshotAsTree env id nd else copyAsTree env id nd)
           | other => out := out.push other
           j := j + 1
         pure out.toList

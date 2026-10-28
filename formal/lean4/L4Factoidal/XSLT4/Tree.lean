@@ -322,4 +322,54 @@ def copyAsTree (env : Env) (id : Nat) (n : NodeRef) (copyNs : Bool := true) : M 
   let d := env.doc n
   pure (.node { doc := id, idx := 0, rt := some { nodes := a, uri := if n.idx == 0 then d.uri else "" } })
 
+/-- The ancestors of node `i` of `d`, outermost first. -/
+def ancestorsOf (d : Doc) : Nat → Nat → List Nat → List Nat
+  | 0, _, acc => acc
+  | f + 1, i, acc =>
+    match (d.get i).parent with
+    | some p => ancestorsOf d f p (p :: acc)
+    | none => acc
+
+/-- `fn:snapshot` (XSLT 4.0 §20.3.2): a copy of the node with its
+    subtree, inside copies of its ancestors that keep their names,
+    attributes and in-scope namespaces but no other children. The item is
+    the copy of the node itself (for an attribute, the copy of the
+    attribute on the copy of its parent). -/
+def snapshotAsTree (env : Env) (id : Nat) (n : NodeRef) : M Item := do
+  let d := env.doc n
+  let r := d.get n.idx
+  let isAttr := r.kind == .attribute || r.kind == .namespace
+  let chain : List Nat :=
+    if isAttr then match r.parent with
+      | some p => ancestorsOf d 100000 p [] ++ [p]
+      | none => []
+    else ancestorsOf d 100000 n.idx []
+  let act : TB Nat := do
+    let mut prev : Option Nat := none
+    let mut newChain : List Nat := []
+    let mut attrOf : List (Nat × Nat) := []
+    for a in chain do
+      let ra := d.get a
+      let j ← tPush { ra with parent := prev, children := #[], attrs := #[] }
+      if let some p := prev then tSet p (fun x => { x with children := #[j] })
+      let mut ats : Array Nat := #[]
+      for ax in ra.attrs.toList do
+        let k ← tPush { d.get ax with parent := some j, children := #[], attrs := #[] }
+        tSet k (fun x => { x with last := k })
+        ats := ats.push k
+        attrOf := (ax, k) :: attrOf
+      tSet j (fun x => { x with attrs := ats })
+      newChain := newChain ++ [j]
+      prev := some j
+    let target ← if isAttr then pure ((attrOf.lookup n.idx).getD 0)
+      else do
+        let t ← copyTree env n prev [("xml", nsXML)] true
+        if let some p := prev then tSet p (fun x => { x with children := #[t] })
+        pure t
+    let sz := (← get).size
+    for j in newChain do tSet j (fun x => { x with last := sz - 1 })
+    pure target
+  let (t, a) ← act.run #[]
+  pure (.node { doc := id, idx := t, rt := some { nodes := a, uri := d.uri } })
+
 end L4Factoidal.XSLT4
