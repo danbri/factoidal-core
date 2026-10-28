@@ -35,6 +35,9 @@ structure SCx where
   nat : List (String × String) := []
   /-- The fixed namespace bindings of the module (§3.6.1), if any. -/
   fixedNs : Option (List (String × String)) := none
+  /-- Named item types (`xsl:item-type`, `xsl:record-type`, §5.4): the
+      expanded name and the text of the item type. -/
+  types : List (QN × String) := []
 deriving Inhabited
 
 def SCx.backCompat (c : SCx) : Bool :=
@@ -118,8 +121,58 @@ def exprDefault (d : String) : Nat → Expr → Expr
     | .tmpl ps => .tmpl (ps.map r)
     | other => other
 
+/-- Replace the names of named item types in an expression or a type
+    by their definitions, in parentheses. A name is replaced where it is
+    a whole QName token outside string literals, not after `$`, `@`, `/`,
+    `:` or `#`, and not before `(`, `#` or `:`. Up to 10 rounds, for types
+    that refer to other named types. -/
+def expandTypes (types : List (QN × String)) (ns : List (String × String)) : Nat → String → String
+  | 0, s => s
+  | f + 1, s =>
+    if types.isEmpty then s else
+    let cs := s.toList.toArray
+    let isNC (c : Char) := isNameCh c
+    Id.run do
+      let mut out : String := ""
+      let mut i := 0
+      let mut q : Option Char := none
+      let mut changed := false
+      for _ in [0:cs.size + 1] do
+        if i ≥ cs.size then break
+        let c := cs[i]!
+        match q with
+        | some qc => out := out.push c; i := i + 1; if c == qc then q := none
+        | none =>
+          if c == '"' || c == '\'' then q := some c; out := out.push c; i := i + 1
+          else if isNameStart c && (i == 0 || !(isNC cs[i-1]! || ['$', '@', '/', ':', '#', '{', '}'].contains cs[i-1]!)) then
+            -- read a QName
+            let mut j := i
+            let mut tok := ""
+            for _ in [0:cs.size] do
+              if j < cs.size && (isNC cs[j]! || (cs[j]! == ':' && j + 1 < cs.size && isNameStart cs[j+1]! && !tok.contains ':')) then
+                tok := tok.push cs[j]!; j := j + 1
+              else break
+            let nextC := (List.range (cs.size - j)).findSome? (fun k =>
+              let d := cs[j + k]!
+              if d == ' ' || d == '\n' || d == '\t' || d == '\r' then none else some d)
+            let qn? : Option QN := match tok.splitOn ":" with
+              | [l] => some { uri := "", loc := l }
+              | [p, l] => (ns.lookup p).map (fun u => { uri := u, loc := l })
+              | _ => none
+            let hit := match qn? with
+              | some qn => if nextC == some '(' || nextC == some '#' || nextC == some ':' then none
+                           else (types.find? (fun (t, _) => t == qn)).map (·.2)
+              | none => none
+            match hit with
+            | some d => out := out ++ "(" ++ d ++ ")"; changed := true
+            | none => out := out ++ tok
+            i := j
+          else out := out.push c; i := i + 1
+      return if changed then expandTypes types ns f out else out
+
 /-- Parse an XPath expression in the static context `c`. -/
 def SCx.parse (c : SCx) (src : String) : M Expr := do
+  let src := expandTypes c.types c.ns 10 src
   let e ← match parseXPath src c.xpNs with
     | .ok e => pure e
     | .error er => throw { er with msg := er.msg ++ " in '" ++ src ++ "'" }
@@ -127,6 +180,7 @@ def SCx.parse (c : SCx) (src : String) : M Expr := do
 
 /-- Parse a sequence type in the static context `c`. -/
 def SCx.parseType (c : SCx) (src : String) : M IType := do
+  let src := expandTypes c.types c.ns 10 src
   let p : P IType := do let t ← pSeqType 1000; ws; pure t
   match (p.run { s := src.toList.toArray, ns := c.xpNs }).run 0 with
   | .ok (t, i) =>

@@ -548,7 +548,11 @@ def eval : Nat → Env → Expr → M Seq
         if k == 1 && ((atypeOfName? q.loc).isSome || q.loc == "numeric") && q.loc != "NOTATION" && q.loc != "anyAtomicType" then pure [.fn (.builtin q 1)]
         else err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
       else if q.uri == nsFN && q.loc == "concat" && k ≥ 2 then pure [.fn (.builtin q k)]
-      else if (env.host q k).isSome then pure [.fn (.builtin q k)]
+      else if (env.host q k).isSome then
+        -- a host function item closes over the bindings of the reference
+        -- (XSLT `current-group#0` keeps the group of its creation)
+        let ps : List (QN × IType) := (List.range k).map (fun i => ({ uri := "#host", loc := "a" ++ toString i }, .seq .item .star))
+        pure [.fn (.inline ps (.seq .item .star) (.call q (ps.map (fun (v, _) => some (.var v))) []) false env.vars)]
       else match findSig q k with
         | some sig =>
           -- a reference to a context-dependent function whose omitted

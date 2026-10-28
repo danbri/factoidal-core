@@ -583,9 +583,20 @@ def makeGroups (cx : Ctx) (s : Seq) (kind : GroupKind) (key : Option Expr) (pat 
     let mut k := 1
     for it in s do
       let as ← liftX (env.atomize (← evalX (cx.focus it k sz) ke))
+      -- values compared with `eq` across timezones (dates and times)
+      -- take the key string of an equal key already seen
+      let canon (a : Atomic) : String :=
+        match a.v with
+        | .x (.dt _ _) =>
+          match keys.toList.find? (fun (_, kv) => match kv with
+              | [.atom b] => (match atomicCmp a b env.tz with | .ok (some .eq) => true | _ => false)
+              | _ => false) with
+          | some (k0, _) => k0
+          | none => groupKeyStr a
+        | _ => groupKeyStr a
       let ks : List (String × Seq) := if composite
         then [(String.intercalate "\x00" (as.map groupKeyStr), as.map Item.atom)]
-        else as.map (fun a => (groupKeyStr a, [Item.atom a]))
+        else as.map (fun a => (canon a, [Item.atom a]))
       let mut seen : List String := []
       for (ks0, kv) in ks do
         if seen.contains ks0 then continue

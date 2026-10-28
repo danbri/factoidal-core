@@ -59,8 +59,16 @@ def dirOf (p : String) : String :=
   | [] => "."
   | ps => String.intercalate "/" ps
 
+/-- Read a file as text: UTF-8, or else decoded by its XML encoding
+    declaration (XML 1.0 §4.3.3, `XML.decodeXmlBytes`). -/
 def readFileSafe (p : String) : IO (Option String) := do
-  try pure (some (← IO.FS.readFile p)) catch _ => pure none
+  try pure (some (← IO.FS.readFile p)) catch _ =>
+    try
+      let bs ← IO.FS.readBinFile p
+      match L4Factoidal.XML.decodeXmlBytes bs with
+      | .ok t => pure (some t)
+      | .error _ => pure none
+    catch _ => pure none
 
 /-- Normalise a file path (`a/./b/../c` to `a/c`). -/
 def normPath (p : String) : String := Id.run do
@@ -636,8 +644,9 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
     match (S.outputs.lookup "").bind (·.lookup "method") with
     | some m => m == "json" || m == "adaptive"
     | none => false
+  let initialFn := !(kidsNamed testNode "initial-function").isEmpty
   let deliver (S : Sheet) (raw : Seq) : M Seq :=
-    if rawMethod S then pure raw else
+    if rawMethod S || initialFn then pure raw else
     match raw with
     | [.node n] => if (env.nrec n).kind == .document then pure raw else
         do pure [← materialize env (2 ^ 45) (.doc (Out.ofSeq raw) "")]

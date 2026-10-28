@@ -4,7 +4,8 @@ XSLT 4.0 processor, bound to the code it states things about.
 
 Proved (no `sorry`; `#print axioms` below):
 
-* `parse_eq_parseXPath`: with no `xpath-default-namespace`, an XPath
+* `parse_eq_parseXPath`: with no `xpath-default-namespace` and no named
+  item types, an XPath
   expression of a stylesheet is the expression that `XPath4.parseXPath`
   reads, in the stylesheet's namespace bindings — XSLT adds nothing to
   the XPath 4.0 grammar (XSLT 4.0 §5.3);
@@ -48,9 +49,12 @@ open L4Factoidal.XPath4
 
 /-! ## XPath expressions of a stylesheet -/
 
+theorem expandTypes_nil (ns : List (String × String)) (f : Nat) (s : String) : expandTypes [] ns f s = s := by
+  cases f <;> simp [expandTypes]
+
 theorem parse_eq_parseXPath (c : SCx) (src : String) (e : Expr)
-    (hns : c.xpathNs = "") (h : parseXPath src c.xpNs = .ok e) : c.parse src = .ok e := by
-  simp [SCx.parse, h, hns]
+    (hns : c.xpathNs = "") (hty : c.types = []) (h : parseXPath src c.xpNs = .ok e) : c.parse src = .ok e := by
+  simp [SCx.parse, hty, expandTypes_nil, h, hns]
   rfl
 
 /-! ## Items are delivered as themselves -/

@@ -552,7 +552,8 @@ def serKinds : List String :=
 def Sheet.charMapOf (S : Sheet) : Nat → String → M (List (Char × String))
   | 0, _ => err "XTSE1600" "character maps use each other in a cycle"
   | f + 1, key => do
-    match S.charMaps.find? (·.1 == key) with
+    -- the declaration with the highest import precedence (the last)
+    match S.charMaps.reverse.find? (·.1 == key) with
     | none => err "XTSE1590" ("unknown character map " ++ key)
     | some (_, uses, own) =>
       let mut out : List (Char × String) := []

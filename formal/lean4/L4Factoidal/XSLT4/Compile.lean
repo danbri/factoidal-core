@@ -45,6 +45,8 @@ structure CSt where
   /-- Names of the stylesheet functions seen so far (for
       `function-available` in later static expressions). -/
   fnNames : List (QN × Nat) := []
+  /-- The named item types of all modules (§5.4). -/
+  types : List (QN × String) := []
 deriving Inhabited
 
 abbrev CM := StateT CSt M
@@ -757,7 +759,7 @@ def standardNs : List (String × String) :=
    ("fn", nsFN), ("math", nsMATH), ("map", nsMAP), ("array", nsARR), ("err", nsERR)]
 
 def rootCx (m : Mod) (i : Nat) (as : Attrs) : CM SCx := do
-  let c : SCx := { baseUri := m.uri }
+  let c : SCx := { baseUri := m.uri, types := (← get).types }
   let c ← c.enter m i as
   match as.get "fixed-namespaces" with
   | none => pure c
@@ -843,6 +845,12 @@ def expandModule : Nat → Mod → Nat → SCx → CM (List Decl)
       else
         if (m.isXsl i "variable" || m.isXsl i "param") && (← as.bool "static" false) then
           addStatic ci m i as
+        if m.isXsl i "item-type" then
+          -- the type text after shadow attributes (static values)
+          if let some n := as.get "name" then
+            if let .ok q := ci.qname n then
+              let t := (as.get "as").getD "item()*"
+              modify (fun s => { s with types := (q, t) :: s.types.filter (fun (x, _) => !(x == q)) })
         if m.isXsl i "function" then
           if let some n := as.get "name" then
             if let .ok q := ci.qname n then
@@ -913,7 +921,7 @@ def compileTemplate (prec : Nat) (d : Decl) (as : Attrs) (inMode : Option String
 
 /-- Compile the declarations of one module (at precedence `prec`). -/
 def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
-  let c := d.c
+  let c := { d.c with types := (← get).types }
   let m := d.m
   let i := d.i
   let as ← effAttrs c m i
@@ -925,7 +933,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
   let upd (f : Sheet → Sheet) : CM Unit := modify (fun s => { s with sheet := f s.sheet })
   checkAttrs c q.loc as
   match q.loc with
-  | "template" => compileTemplate prec d as
+  | "template" => compileTemplate prec { d with c } as
   | "function" =>
       let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:function requires a name"
       if [nsFN, nsXS, nsMATH, nsMAP, nsARR, nsXSL, nsXML].contains nm.uri then
@@ -1084,7 +1092,23 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
   | "include" => pure ()
   | "import-schema" => cerr "XTSE1650" "xsl:import-schema: this processor is not schema-aware"
   | "use-package" => cerr "XTSE3000" "xsl:use-package: packages are not implemented"
-  | "item-type" | "record-type" => cerr "XTSE0010" ("xsl:" ++ q.loc ++ ": named item types are not implemented")
+  | "item-type" => pure ()
+  | "record-type" =>
+      -- the constructor function (§5.4.2.2): one parameter per field
+      let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:record-type requires a name"
+      let mut ps : List WParam := []
+      let mut ents : List Instr := []
+      for k in ekids do
+        if !m.isXsl k "field" then continue
+        let kas ← effAttrs c m k
+        let ck ← c.enter m k kas
+        let some fnm := kas.get "name" | cerr "XTSE0010" "xsl:field requires a name"
+        let fq : QN := { uri := "", loc := fnm }
+        let sel ← optExpr ck kas "select"
+        let b ← compileNodes 100000 ck m (m.kids k)
+        ps := ps ++ [.mk fq sel b (← optType ck kas) false false]
+        ents := ents ++ [.mapEntry (.lit (Atomic.ofStr fnm)) (some (.var fq)) []]
+      upd (fun sh => { sh with functions := sh.functions ++ [{ name := nm, params := ps, body := [.mapI none ents none], prec }] })
   | "expose" | "accept" | "override" => cerr "XTSE3000" ("xsl:" ++ q.loc ++ ": packages are not implemented")
   | "note" => pure ()
   | l =>
@@ -1143,11 +1167,46 @@ def processModule : Nat → Mod → CM Unit
     for d in decls do
       if !d.m.isXsl d.i "import" then compileDecl prec d
 
+/-- The named item types declared in a module text (`xsl:item-type`,
+    `xsl:record-type` children of the root): expanded name, item type. -/
+def typeDecls (uri txt : String) : List (QN × String) :=
+  match Doc.ofString txt uri with
+  | .error _ => []
+  | .ok d =>
+    let m : Mod := { d, uri }
+    match m.rootElem with
+    | none => []
+    | some r =>
+      (m.elemKids r).filterMap (fun i =>
+        let as := m.rawAttrs i
+        let sc := effScope (m.r i).inscope
+        let resolve (s : String) : Option QN := match s.splitOn ":" with
+          | [l] => some { uri := "", loc := l }
+          | [p, l] => (sc.lookup p).map (fun u => { uri := u, loc := l })
+          | _ => none
+        if m.isXsl i "item-type" then
+          match (Attrs.get as "name").bind resolve with
+          | some q => some (q, (Attrs.get as "as").getD "item()*")
+          | none => none
+        else if m.isXsl i "record-type" then
+          match (Attrs.get as "name").bind resolve with
+          | some q =>
+            let fields := ((m.elemKids i).filter (m.isXsl · "field")).map (fun k =>
+              let fa := m.rawAttrs k
+              let opt := (Attrs.get fa "select").isSome || !(m.kids k).isEmpty
+              let ty := (Attrs.get fa "as").getD "item()*"
+              let ty := if ty.trimAscii.toString.endsWith "?" || ty.trimAscii.toString.endsWith "*" then ty else ty
+              (Attrs.get fa "name").getD "" ++ (if opt then "?" else "") ++ " as " ++ ty)
+            some (q, "record(" ++ String.intercalate ", " fields ++ ")")
+          | none => none
+        else none)
+
 /-- Compile a stylesheet: the principal module's URI, the module texts
     by URI, and the values given for static parameters. -/
 def compileStylesheet (principal : String) (texts : List (String × String))
     (staticParams : List (QN × Seq) := []) : M Sheet := do
   let act : CM Sheet := do
+    modify (fun s => { s with types := texts.flatMap (fun (u, t) => typeDecls u t) })
     let m ← openModule principal
     modify (fun s => { s with stack := [principal] })
     processModule 50 m
