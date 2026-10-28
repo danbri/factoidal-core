@@ -810,6 +810,15 @@ def compileParams1 : Nat → SCx → Mod → List Nat → String → CM (List WP
         cerr (if tag == "param" then "XTSE0620" else "XTSE0620") ("xsl:" ++ tag ++ " has both select and content")
       let required ← as.bool "required" false
       let tunnel ← as.bool "tunnel" false
+      -- a required parameter has no default value (XTSE0010, §9.3);
+      -- only a global parameter can be static (XTSE0020)
+      let inFn := match (m.r k).parent with
+        | some pi => m.isXsl pi "function"
+        | none => false
+      if tag == "param" && !inFn && required && (sel.isSome || !body.isEmpty) then
+        cerr "XTSE0010" ("the required parameter $" ++ nm.show ++ " has a default value")
+      if (as.get "static").isSome && (← as.bool "static" false) then
+        cerr "XTSE0020" ("the local parameter $" ++ nm.show ++ " cannot be static")
       pure (some (.mk nm sel body (← optType c' as) tunnel required)))
 
 def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
@@ -1517,6 +1526,10 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
         cerr "XTSE0630" ("two global variables named $" ++ nm.show)
       let gty ← optType c as
       let req ← as.bool "required" false
+      if q.loc == "param" && req && (sel.isSome || !body.isEmpty) then
+        cerr "XTSE0010" ("the required parameter $" ++ nm.show ++ " has a default value")
+      if q.loc == "param" && (← as.bool "tunnel" false) then
+        cerr "XTSE0020" ("the global parameter $" ++ nm.show ++ " cannot be a tunnel parameter")
       let vis := ((as.get "visibility").getD "").trimAscii.toString
       if vis == "abstract" && (sel.isSome || !body.isEmpty) then
         cerr "XTSE0010" "an abstract variable must have no select attribute and no content"
