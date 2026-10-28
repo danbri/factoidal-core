@@ -380,11 +380,44 @@ def systemPropertiesFn : LibFn := fun _ _ _ =>
     (q "supports-binary-library", [.atom (Atomic.ofBool false)]),
     (q "supports-file-library", [.atom (Atomic.ofBool false)])]]
 
+/-! ## `fn:slice` (§14.1.x) and `fn:scan` -/
+
+/-- The rules of `fn:slice`, on a list; `rev` is the fuel for the one
+    reversal a negative step makes. -/
+def sliceList {α} : Nat → List α → Int → Int → Int → List α
+  | 0, _, _, _, _ => []
+  | rev + 1, xs, start, stop, step =>
+    let n : Int := xs.length
+    let s := if start == 0 && step < 0 then n else if start == 0 then 1 else if start < 0 then n + start + 1 else start
+    let e := if stop == 0 && step < 0 then 1 else if stop == 0 then n else if stop < 0 then n + stop + 1 else stop
+    let st := if step == 0 then (if e ≥ s then 1 else -1) else step
+    if st < 0 then sliceList rev xs.reverse (-s) (-e) (-st)
+    else
+      (xs.zipIdx 1).filterMap (fun (x, p) =>
+        let p : Int := p
+        if p ≥ s && p ≤ e && (p - s) % st == 0 then some x else none)
+
+def optInt (s : Seq) : Int := if s.isEmpty then 0 else intOf s
+
+def sliceFn : LibFn := fun _ _ a =>
+  pure (sliceList 2 (argN a 0) (optInt (argN a 1)) (optInt (argN a 2)) (optInt (argN a 3)))
+
+def scanFn : LibFn := fun h _ a => do
+  let mut acc := argN a 1
+  let mut out : Array Item := #[.arr [acc]]
+  let mut pos : Int := 1
+  for x in argN a 0 do
+    acc ← h.callN (argN a 2 |>.headD (.atom default)) [acc, [x], sInt pos]
+    out := out.push (.arr [acc])
+    pos := pos + 1
+  pure out.toList
+
 def fn4Table : List (String × LibFn) :=
   [("hash", hashFn), ("random-number-generator", rngFn), ("rng-record#", rngRecordFn),
    ("rng-permute#", rngPermuteFn), ("rng-take#", rngTakeFn),
    ("parts-of-dateTime", partsOfDateTimeFn), ("build-dateTime", buildDateTimeFn),
    ("round", roundModeFn), ("unix-dateTime", unixDateTimeFn), ("pad-string", padStringFn),
-   ("trim-space", trimSpaceFn), ("system-properties", systemPropertiesFn)]
+   ("trim-space", trimSpaceFn), ("system-properties", systemPropertiesFn),
+   ("slice", sliceFn), ("scan", scanFn)]
 
 end L4Factoidal.XPath4
