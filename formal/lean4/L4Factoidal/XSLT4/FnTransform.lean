@@ -98,9 +98,18 @@ def fnTransform (env : Env) (applyF : Item → List Seq → M Seq) (args : List 
     | some x => if x.toFloat > 4.0 then err "FOXT0001" ("no XSLT " ++ v.str ++ " processor is available")
     | none => pure ()
   | _ => pure ()
+  -- requested properties (F&O 4.0 §17.5.2): a request that the processor's
+  -- system-property value does not meet is FOXT0001; xsl:version is ignored
   for (q, v) in qnameBindings (get "requested-properties") do
-    if q.uri == nsXSL && q.loc == "is-schema-aware" && propString env v == "yes" then
-      err "FOXT0001" "no schema-aware XSLT processor is available"
+    if q.uri != nsXSL || q.loc == "version" then continue
+    let want := propString env v
+    let actual := systemProperty q.loc
+    let norm (s : String) : String := match s.trimAscii.toString.toLower with
+      | "true" | "yes" | "1" => "yes"
+      | "false" | "no" | "0" => "no"
+      | x => x
+    if actual != "" && norm want != norm actual then
+      err "FOXT0001" ("no XSLT processor with " ++ q.loc ++ " = " ++ want ++ " is available")
   let delivery := (str? "delivery-format").getD "document"
   if !["document", "serialized", "raw"].contains delivery then
     if delivery == "file" then err "FOXT0001" "the delivery format file is not supported"
