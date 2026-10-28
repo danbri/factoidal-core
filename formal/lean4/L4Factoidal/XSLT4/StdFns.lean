@@ -56,7 +56,10 @@ def systemProperty (l : String) : String :=
   | "supports-serialization" => "yes"
   | "supports-backwards-compatibility" => "yes"
   | "supports-namespace-axis" => "yes"
-  | "supports-streaming" => "no"
+  -- XSLT Streaming 4.0: the streamability analysis is `XSLT4.Streaming`
+  -- (XTSE3430); accepted stylesheets give the results of a streamed
+  -- evaluation (Streaming §3.1)
+  | "supports-streaming" => "yes"
   | "supports-dynamic-evaluation" => "yes"
   | "supports-higher-order-functions" => "yes"
   | "xpath-version" => "4.0"

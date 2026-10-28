@@ -505,8 +505,11 @@ def serAttrOk (k v : String) : Bool :=
 
 /-- `disable-output-escaping="yes"` on `xsl:text` and `xsl:value-of`
     (§26.1.8); ignored when a `cdata` attribute is present (§11.4.3). -/
-def withDoe (as : Attrs) (r : Instr) : Instr :=
-  if ((as.get "disable-output-escaping").bind parseBool) == some true && (as.get "cdata").isNone then .doe [r] else r
+def withDoe (c : SCx) (as : Attrs) (r : Instr) : CM Instr := do
+  if let some v := as.get "cdata" then
+    return .doe (some (← liftM (c.avt v))) [r]
+  if ((as.get "disable-output-escaping").bind parseBool) == some true then return .doe none [r]
+  return r
 
 def checkAttrs (c : SCx) (l : String) (as : Attrs) : CM Unit := do
   for (q, v) in as do
@@ -883,19 +886,21 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
               let b ← compileNodes f { c with preserveWs := true } m kids
               pure (.valueOf none (← optAvt c as "separator") b false)
             else if c.expandText then pure (.tvt (← liftM (c.avt t))) else pure (.lit t)
-        pure (withDoe as r)
+        withDoe c as r
     | "value-of" =>
         let sel ← optExpr c as "select"
         let b ← body
         if sel.isSome && !b.isEmpty then cerr "XTSE0870" "xsl:value-of has both select and content"
         let sep ← optAvt c as "separator"
-        pure (withDoe as (.valueOf sel sep b (c.backCompat && sep.isNone)))
+        withDoe c as (.valueOf sel sep b (c.backCompat && sep.isNone))
     | "sequence" =>
         let sel ← optExpr c as "select"
         let b ← body (notTag ["fallback"])
         if sel.isSome && !b.isEmpty then cerr "XTSE3185" "xsl:sequence has both select and content"
         pure (.seq sel b (← optType c as))
     | "select" =>
+        -- the content is the text of an expression (XTSE0010)
+        if ekids.any (fun k => !m.isXsl k "fallback") then cerr "XTSE0010" "xsl:select contains an element"
         let src := m.text i
         -- the body `[.lit "xsl:select"]` is never run (there is a select);
         -- it marks the instruction as a disqualifying element (§9.4)
@@ -1226,7 +1231,9 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
     | "note" => pure (.seq none [] none)
     | "fallback" => pure (.seq none [] none)
     | "source-document" =>
-        pure (.sourceDoc (← liftM (c.avt (← reqAttr as "href" l))) (← body))
+        let accs ← (tokens ((as.get "use-accumulators").getD "")).mapM (fun t =>
+          if t == "#all" then pure t else do pure (← liftM (c.qname t)).eqn)
+        pure (.sourceDoc (← liftM (c.avt (← reqAttr as "href" l))) (← body) accs)
     | "merge" =>
         let mut srcs : List MSource := []
         for k in ekids do
@@ -1434,6 +1441,11 @@ def compileTemplate (prec : Nat) (d : Decl) (as : Attrs) (inMode : Option String
   checkAttrs c "template" as
   let ekids := m.elemKids i
   let name ← qnOf c as "name"
+  -- names in the XSLT namespace are reserved (XTSE0080), except the
+  -- initial template
+  if let some q := name then
+    if q.uri == nsXSL && q.loc != "initial-template" && q.loc != "original" then
+      cerr "XTSE0080" ("the template name " ++ q.show ++ " is in the XSLT namespace")
   let pat ← match as.get "match" with
     | some v => some <$> patternC c v
     | none => pure none
@@ -1455,6 +1467,12 @@ def compileTemplate (prec : Nat) (d : Decl) (as : Attrs) (inMode : Option String
     | some k => do
         let kas ← effAttrs c m k
         let u := ((kas.get "use").getD "optional").trimAscii.toString
+        -- xsl:context-item comes first (XTSE0010); use="absent" takes no
+        -- type (XTSE3088) and is not for template rules (XTSE0020)
+        if ekids.head? != some k then cerr "XTSE0010" "xsl:context-item must be the first child of xsl:template"
+        if u == "absent" && (kas.get "as").isSome then cerr "XTSE3088" "xsl:context-item with use=\"absent\" cannot have an as attribute"
+        if u == "absent" && (as.get "match").isSome then cerr "XTSE0020" "a template rule cannot have xsl:context-item use=\"absent\""
+        checkAttrs c "context-item" kas
         pure (u == "absent", ← optType c kas, u)
     | none => pure (false, none, "optional")
   let vis := ((as.get "visibility").getD "").trimAscii.toString
@@ -1639,7 +1657,9 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let mty ← optType c mas
       let mcn ← mas.bool "copy-namespaces" true
       let vis := ((mas.get "visibility").getD "").trimAscii.toString
-      let md : ModeDef := { name := key, onNoMatch := onm, onMultiple := (mas.get "on-multiple-match").getD "use-last", typed := (mas.get "typed").getD "unspecified", ty := mty, copyNs := mcn, vis }
+      let useAccs ← ((tokens ((mas.get "use-accumulators").getD ""))).mapM (fun t =>
+        if t == "#all" then pure t else do pure (← liftM (c.qname t)).eqn)
+      let md : ModeDef := { useAccs, name := key, onNoMatch := onm, onMultiple := (mas.get "on-multiple-match").getD "use-last", typed := (mas.get "typed").getD "unspecified", ty := mty, copyNs := mcn, vis }
       upd (fun sh => { sh with modes := (sh.modes.filter (·.name != key)) ++ [md] })
       modify (fun s => { s with declModes := s.declModes ++ [(key, vis)] })
       -- 4.0 enclosing modes (§6.9.6): templates inside xsl:mode
@@ -1748,6 +1768,13 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let ts := if c.xpathNs != "" then ts.map (fun t => match t with
           | .name n => if n.uri == "" && n.pfx == "" then NameTest.name { n with uri := c.xpathNs } else t
           | t => t) else ts
+      -- one name test in xsl:strip-space and xsl:preserve-space at one
+      -- precedence (XTSE0270)
+      let key : NameTest → String := fun t => match t with
+        | .any => "*" | .loc l => "*:" ++ l | .ns u => "Q{" ++ u ++ "}*" | .name n => n.eqn
+      for t in ts do
+        if (← get).sheet.space.any (fun (t0, s0, p0) => p0 == prec && s0 != strip && key t0 == key t) then
+          cerr "XTSE0270" ("the name test " ++ key t ++ " is in both xsl:strip-space and xsl:preserve-space")
       upd (fun sh => { sh with space := sh.space ++ ts.map (fun t => (t, strip, prec)) })
   | "namespace-alias" =>
       let sp ← reqAttr as "stylesheet-prefix" "namespace-alias"

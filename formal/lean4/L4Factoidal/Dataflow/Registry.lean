@@ -832,6 +832,11 @@ def registry : List Entry := [
     tests := ["xslt40-test 91328fbf non-streaming subset (lake exe l4xslt4 --isolate 30): 6766 pass, 1280 fail, 3053 unsupported of 11099",
       "XSLT 1.0 corpora (l4xslt4 --xslt10): xslt 84 of 88 pass, xslt1-xalan 1455 of 1686 pass"]
     note := "XSLT4 is not in the library root; its theorems and #guards (XSLT4/Theorems.lean: parse_eq_parseXPath, patMatch_type, stripDoc_noRules, the identity transform, agreement with the XSLT 1.0 engine) are checked by lake build l4xslt4 (docs/20261028-xslt4-stage1.md)" },
+  { area := "XSLT Streaming 4.0 transformation", dir := "XSLT4"
+    wireIn := .xml, wireOut := .xml, params := ["stylesheet"], status := .tested
+    tests := ["xslt40-test 91328fbf streaming sets tests/strm and tests/attr/streamable (lake exe l4xslt4 --isolate 30): strm 2049 pass, 332 fail, 183 unsupported of 2564; attr/streamable 58 pass, 4 fail, 77 unsupported of 139",
+      "l4xslt4 --stream-diff: the streamed selection core against the XPath 4.0 evaluator: 237 of 237 (document, path) pairs agree"]
+    note := "XSLT4 is not in the library root; the streamability analysis (XTSE3430) and the theorems of XSLT4/Streaming (build_docEvents, parse_events_rebuild, streamAcc_events, maxOpen_eventsList, streamSelect_docEvents) are checked by lake build l4xslt4; results of accepted stylesheets come from the non-streaming XSLT 4.0 evaluator (docs/20261028-xslt-streaming.md)" },
   { area := "Schematron validation", dir := "Schematron"
     wireIn := .xml, wireOut := .report, params := ["schema"], status := .missing },
   { area := "Ed25519 verify primitive (HACL* call-out)", dir := "Crypto"

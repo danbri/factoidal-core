@@ -36,6 +36,10 @@ def vMergeGroup : QN := xv "merge-group"
 def vMergeKey : QN := xv "merge-key"
 /-- The names of the merge sources of the current `xsl:merge`. -/
 def vMergeNames : QN := xv "merge-names"
+/-- The accumulators applicable to the principal and `xsl:source-document`
+    documents (§19.2): arrays of the document number and the names. -/
+def vAccRules : QN := xv "accumulator-rules"
+
 def vOutUri : QN := xv "output-uri"
 /-- The current mode, for `fn:apply-templates` with `#current`. -/
 def vMode : QN := xv "mode"
@@ -831,6 +835,16 @@ def isNCName (x : String) : Bool :=
 def Ctx.bindAll (cx : Ctx) (vs : List (QN × Seq)) : Ctx :=
   vs.foldl (fun c (q, v) => c.bind q v) cx
 
+/-- Bind the accumulators applicable to the documents of `items`; the
+    binding goes after the global variables, so template calls keep it. -/
+def withAccRules (cx : Ctx) (items : Seq) (names : List String) : Ctx :=
+  let docs := (items.filterMap (fun i => match i with
+    | .node nd => if nd.rt.isNone then some nd.doc else none
+    | _ => none)).eraseDups
+  let old := (cx.env.vars.find? (·.1 == vAccRules)).map (·.2) |>.getD []
+  let new : Seq := docs.map (fun d => .arr ([.atom (Atomic.ofInt d)] :: names.map (fun s => [.atom (Atomic.ofStr s)])))
+  { cx with env := { cx.env with vars := cx.env.vars.filter (·.1 != vAccRules) ++ [(vAccRules, new ++ old)] } }
+
 /-- The local name of an error code given as an EQName or QName (the
     error codes of `XPath4.Err` carry no namespace). -/
 def errLocal (c : String) : String :=
@@ -1143,7 +1157,9 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         for p in parts do
           match p with
           | .lit t => s := s ++ t
-          | .expr e => s := s ++ (← atomStr cx (← evalX cx e))
+          -- as simple content (§5.6.2, §5.7.2): adjacent text nodes are
+          -- merged before the values are joined with spaces
+          | .expr e => s := s ++ (← simpleContent env (Out.ofSeq (← evalX cx e)) " ")
         pure [.text s]
     | .valueOf sel sep body first =>
         match sel with
@@ -1734,7 +1750,8 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
                 let sc := effScope (env.nrec nd).inscope
                 pure (sc.filter (·.1 != ""), (sc.lookup "").getD "")
               | _ => xerr "XTTE3170" "namespace-context must be a single node"
-          | none => pure (scope, "")
+          -- otherwise the xpath-default-namespace of the instruction
+          | none => pure (scope, (scope.lookup "#type").getD "")
         let e ← match parseXPath src ns with
           | .ok e => pure (if dflt == "" then e else exprDefault dflt 100000 e)
           | .error er => xerr "XTDE3160" ("xsl:evaluate: " ++ er.code ++ " " ++ er.msg)
@@ -1935,7 +1952,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           for o in ← run n S { gcx with rule := none } action do out := out.push o
           gi := gi + 1
         pure out.toList
-    | .sourceDoc href body =>
+    | .sourceDoc href body accs =>
         let h ← avtStr cx href
         let d ← liftX (callFn 100000 env { uri := nsFN, loc := "doc" } [sStr h])
         match d with
@@ -1947,7 +1964,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             match ← validateOut S env how (.item i) with
             | .item j => pure j
             | _ => pure i
-          run n S (cx.focus i 1 1) body
+          run n S (withAccRules (cx.focus i 1 1) [i] accs) body
         | _ => xerr "FODC0002" ("cannot read " ++ h)
     | .unknown q fbs code =>
         match fbs with
@@ -1960,13 +1977,21 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
     | .staticErr code msg => xerr code msg
     | .withColl u body => run n S { cx with env := { cx.env with defaultCollation := u } } body
     | .withCompat on body => run n S { cx with backCompat := on } body
-    | .doe body =>
-        -- ignored in temporary output state (§26.1.8); otherwise the text
-        -- is marked by the processing instructions the serializer reads
+    | .doe cdata body =>
+        -- ignored in temporary output state (§26.1.8, §11.4.3); otherwise
+        -- the text is marked by the processing instructions the
+        -- serializer reads
         if cx.tempOut then run n S cx body
         else do
           let os ← run n S cx body
-          pure ([Out.pi piDisableEscaping ""] ++ os ++ [Out.pi piEnableEscaping ""])
+          match cdata with
+          | some a =>
+            let v := (← avtStr cx a).trimAscii.toString
+            match parseBool v with
+            | some true => pure ([Out.pi piCdataStart ""] ++ os ++ [Out.pi piCdataEnd ""])
+            | some false => pure os
+            | none => xerr "XTDE0030" ("invalid cdata value '" ++ v ++ "'")
+          | none => pure ([Out.pi piDisableEscaping ""] ++ os ++ [Out.pi piEnableEscaping ""])
     | .withBase u body => run n S { cx with env := { cx.env with baseUri := u } } body
     | .valid how body =>
         -- §25: the copies of xsl:copy-of keep their annotations under
@@ -2110,6 +2135,8 @@ def invoke : Nat → Sheet → Ctx → Tmpl → List (QN × Seq) → List (QN ×
               xerr "XTDE0700" ("no value for the implicitly mandatory parameter $" ++ p.name.show)
             else bindValue n S tcx p.sel p.body p.ty ("$" ++ p.name.show) "XTTE0600"
       tcx := tcx.bind p.name v
+    if t.ctxUse == "required" && cx.env.ctx.isNone then
+      xerr "XTTE3090" "the template requires a context item, and there is none"
     if let some cty := t.ctxAs then
       match cx.env.ctx with
       | some c => if !(cx.env.seqMatches c cty) then xerr "XTTE0590" "the context item does not match the template's xsl:context-item type"
