@@ -113,6 +113,15 @@ named fixture dirs from the main checkout — but the agent must say so
 in its report; never present a result from a checkout where the script
 exits 1.
 
+## Wasm builds in a worktree (MANDATORY)
+
+A worktree agent that runs `formal/lean4/Wasm/build-wasm.sh` sets its own
+work directory: `L4_WASM_WORK=$PWD/.wasm-work bash formal/lean4/Wasm/build-wasm.sh`.
+The default `/tmp/l4wasm-build` is shared by every checkout on the machine.
+2026-10-28: an agent's objects from an older base were kept by the main
+checkout's next build, and that wasm carried code the source had removed
+(three npm tests failed; trap 11 of `skills/lean4-wasm-export`).
+
 ## Iteration-loop briefs (MANDATORY): ship the fast loop, not the full pipeline
 
 Any brief whose task is an edit-verify-test **loop** (suite burn-down,
