@@ -38,6 +38,36 @@ import L4Factoidal.EXPath.Binary.Theorems
 open L4Factoidal.XPath4
 open L4Factoidal.XML
 
+/-! ## Defective test data
+
+qt4tests cases whose expected result
+contradicts the normative text of the specification they test
+(defective test data, `skills/test-suites/SKILL.md` § Defective test
+data). `l4qt4` reports them apart as "excluded (defective test data)",
+not in pass, fail or the total; a case on this list that PASSES counts
+as a FAIL, so the exclusion cannot outlive a corrected test.
+-/
+namespace Harness.Qt4Defective
+
+/-- `(test-case name, issue URL)`. -/
+def defective : List (String × String) :=
+  let i1141 := "https://github.com/danbri/factoidal/issues/1141"
+  -- EXPath Binary 4.0: a wrong $order is XPTY0004 (§ Octet order), an
+  -- octet outside 0..255 is XPTY0004 (xs:unsignedByte arguments)
+  [ "EXPath-binary-pack-double-001", "bin-pack-double15", "bin-pack-float15",
+    "EXPath-binary-pack-integer-001", "bin-pack-integer14",
+    "EXPath-binary-unpack-double-001", "bin-unpack-double18",
+    "EXPath-binary-unpack-float-001", "bin-unpack-float18",
+    "EXPath-binary-unpack-integer-001", "bin-unpack-integer16",
+    "EXPath-binary-unpack-unsigned-integer-001", "bin-unpack-unsigned-integer20",
+    "EXPath-binary-from-octets-003", "EXPath-binary-from-octets-004",
+    "bin-from-octets4", "bin-from-octets5",
+    "EXPath-binary-pad-left-003", "EXPath-binary-pad-left-004", "bin-pad-left5",
+    "EXPath-binary-pad-right-003", "EXPath-binary-pad-right-004", "bin-pad-right5"
+  ].map (fun n => (n, i1141))
+
+end Harness.Qt4Defective
+
 namespace Harness.Qt4Run
 
 /-! ## XML helpers over the raw parse tree -/
@@ -358,12 +388,15 @@ structure Tally where
   pass : Nat := 0
   fail : Nat := 0
   unsup : Nat := 0
+  /-- Defective test data (`Harness.Qt4Defective`): not in the total. -/
+  excl : Nat := 0
 deriving Inhabited
 
-def Tally.add (a b : Tally) : Tally := ⟨a.pass + b.pass, a.fail + b.fail, a.unsup + b.unsup⟩
+def Tally.add (a b : Tally) : Tally := ⟨a.pass + b.pass, a.fail + b.fail, a.unsup + b.unsup, a.excl + b.excl⟩
 def Tally.total (t : Tally) : Nat := t.pass + t.fail + t.unsup
 def Tally.show (t : Tally) : String :=
   s!"{t.pass} pass, {t.fail} fail, {t.unsup} unsupported (out of {t.total})"
+    ++ (if t.excl > 0 then s!"; {t.excl} excluded (defective test data)" else "")
 
 structure Opts where
   root : String := "../../third_party/testing/qt4tests"
@@ -496,7 +529,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
   for tc in kidsNamed ts "test-case" do
     let name := attrD tc "name"
     if let some pf := o.progress then
-      IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} {name}\n"
+      IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} {name} {t.excl}\n"
     let deps := kidsNamed tc "dependency"
     let specGiven := deps.any (fun x => attrD x "type" == "spec")
     -- a test case's spec dependency replaces the set's
@@ -534,14 +567,21 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       match (kids r).head? with
       | none => t := { t with fail := t.fail + 1 }
       | some a =>
-        match checkAssert env res 100 a with
-        | .pass => t := { t with pass := t.pass + 1 }
-        | .fail why =>
+        let bad := Harness.Qt4Defective.defective.lookup name
+        match checkAssert env res 100 a, bad with
+        | .pass, none => t := { t with pass := t.pass + 1 }
+        | .pass, some iss =>
+            t := { t with fail := t.fail + 1 }
+            fails := fails ++ [s!"FAIL {setName}/{name}: STALE exclusion: the test passes; remove it from Harness.Qt4Defective in Harness/Qt4Run.lean ({iss})"]
+        | .fail _, some iss =>
+            t := { t with excl := t.excl + 1 }
+            if o.listFails then fails := fails ++ [s!"EXCLUDED {setName}/{name}: defective test data, {iss}"]
+        | .fail why, none =>
             t := { t with fail := t.fail + 1 }
             if o.listFails then fails := fails ++ [s!"FAIL {setName}/{name}: {why}"]
-        | .unsupported _ => t := { t with unsup := t.unsup + 1 }
+        | .unsupported _, _ => t := { t with unsup := t.unsup + 1 }
   if let some pf := o.progress then
-    IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} DONE\n"
+    IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} DONE {t.excl}\n"
   return (setName, t, fails)
 
 /-- Run one test set in a child process with a time limit (an IO loop
@@ -569,7 +609,7 @@ def runIsolated (o : Opts) (secs : Nat) (fam setName file : String) : IO (Tally 
   try IO.FS.removeFile pf catch _ => pure ()
   let parts := line.splitOn " "
   let num (i : Nat) : Nat := ((parts.getD i "0").toNat?).getD 0
-  let t : Tally := ⟨num 0, num 1, num 2⟩
+  let t : Tally := ⟨num 0, num 1, num 2, num 4⟩
   let last := parts.getD 3 ""
   if finished && last == "DONE" then return (t, "")
   -- count the test cases of the set; those not reached are failures
@@ -578,7 +618,7 @@ def runIsolated (o : Opts) (secs : Nat) (fam setName file : String) : IO (Tally 
       | .ok d => pure (kidsNamed d.root "test-case").length
       | .error _ => pure t.total
     | none => pure t.total
-  let rest := total - t.total
+  let rest := total - t.total - t.excl
   return ({ t with fail := t.fail + rest },
     s!" [TIMEOUT or crash at test {last}: {rest} tests not finished, counted as fail]")
 
