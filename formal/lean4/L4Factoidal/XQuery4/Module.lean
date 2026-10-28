@@ -324,7 +324,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
       expectS ";"
       if pfx == "xml" || pfx == "xmlns" then qerr "XQST0070" "import prefix xml or xmlns"
       if m.imports.any (fun (_, u', _) => u' == u) then qerr "XQST0047" "the same module imported twice"
-      if (m.libNs.map (·.2)) == some u then qerr "XQST0047" "a module imports itself"
+      -- a module that imports itself is no error: cycles are resolved (§5.12)
       if pfx != "" then
         if seenNs.contains pfx then qerr "XQST0033" ("prefix " ++ pfx ++ " declared twice")
         seenNs := pfx :: seenNs
@@ -694,10 +694,25 @@ def parseModule (src : String) (ns : List (String × String) := [])
 
 def markStatic (e : Env) : Env := e.bind staticKey []
 
+/-- The dynamic context of a module before its declarations are bound:
+    the prolog's namespaces, collation, base URI and decimal formats. -/
+def moduleEnv (env : Env) (m : Module) : Env :=
+  let env := { env with ns := m.ns }
+  -- a relative base URI is resolved against the host's one (§5.5)
+  let env := match m.baseUri with
+    | some b => { env with baseUri := if b == "" then env.baseUri else resolveUri env.baseUri b }
+    | none => env
+  -- the declared collation URI is resolved against the base URI (§5.5)
+  let env := match m.defaultCollation with
+    | some c => { env with defaultCollation := (match resolveCollationUri env.baseUri c with | .ok u => u | .error _ => c) }
+    | none => env
+  let env := { env with decimalFormats := m.decimalFormats ++ env.decimalFormats }
+  if m.constructionStrip then env.bind constructionStripKey [] else env
+
 /-- The binding of a declaration: the function item of the full arity
     and, for each optional parameter, a focus function computing its
     default value in the focus of the call (XQuery 4.0 §5.18.2). -/
-def fnBinding (d : FnDecl) : Option (QN × Seq) :=
+def fnBinding (ctx : Seq) (d : FnDecl) : Option (QN × Seq) :=
   match d.body with
   | none => none
   | some body =>
@@ -705,7 +720,7 @@ def fnBinding (d : FnDecl) : Option (QN × Seq) :=
     let lo := (ps.takeWhile (fun (_, _, x) => x.isNone)).length
     let anns : Seq := d.annots.map (fun (q, vs) => Item.map [(Atomic.ofQN q, vs.map Item.atom)])
     let full : Item := .fn (.inline (ps.map (fun (v, t, _) => (v, t))) d.ret body false
-      [(annKey, anns), (nameKey d.name, [])])
+      [(modCtxKey, ctx), (annKey, anns), (nameKey d.name, [])])
     let dflts : List Item := (ps.drop lo).map (fun (_, t, x) =>
       .fn (.inline [] t (x.getD (.seq [])) true []))
     some (fnKey d.name lo ps.length, full :: dflts)
@@ -734,10 +749,16 @@ def loadImports (env : Env) : Nat → List String → Module → M (List Module 
   | d + 1, seen, m => do
     let mut out : List Module := []
     let mut seen := seen
-    for (_, u, _) in m.imports do
+    for (_, u, locs) in m.imports do
       if seen.contains u then continue
       seen := u :: seen
-      let texts := moduleTexts env u
+      -- the caller's texts for the namespace, else the files that the
+      -- location hints name (§5.12)
+      let texts := match moduleTexts env u with
+        | [] => locs.filterMap (fun l => match env.resources.lookup l with
+            | some t => some t
+            | none => env.resources.lookup (resolveUri env.baseUri l))
+        | ts => ts
       if texts.isEmpty then err "XQST0059" ("no module found for namespace " ++ u)
       for t in texts do
         let lm ← parseModule t [] (typeLoader env 8 seen)
@@ -817,16 +838,18 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
     order by dependency); a round with no progress is `XQDY0054`. -/
 def bindFns (env : Env) (ms : List Module) : Env :=
   ms.foldl (fun e m => m.decls.foldl (fun e d => match d with
-    | .fn fd => match fnBinding fd with
+    | .fn fd =>
+      let me := moduleEnv env m
+      match fnBinding (encodeModCtx me.baseUri me.defaultCollation me.decimalFormats me.ns) fd with
       | some b => { e with vars := b :: e.vars }
       | none => e
     | _ => e) e) env
 
 /-- Bind one global variable or the context value; `none` when the
     initializer reads a global not bound yet (try again later). -/
-def bindOne (fuel : Nat) (globals : List QN) (env : Env) : Decl → M (Option Env × Option Err)
+def bindOne (fuel : Nat) (globals : List QN) (env : Env) (m : Module) : Decl → M (Option Env × Option Err)
   | .var v ty init external => do
-    let env1 := markStatic env
+    let env1 := markStatic (moduleEnv env m)
     let r : M Seq := if external then
         match env.vars.find? (fun (q, _) => q == v) with
         | some (_, s) => pure s
@@ -845,7 +868,7 @@ def bindOne (fuel : Nat) (globals : List QN) (env : Env) : Decl → M (Option En
       else if e.code == "XPDY0002" && env.ctx.isNone then pure (none, some e)
       else throw e
   | .ctx ty init external => do
-    let env1 := markStatic env
+    let env1 := markStatic (moduleEnv env m)
     -- an initializer that reads a global not bound yet is tried again later
     let evalInit (e : Expr) : M (Option Seq × Option Err) := do
       match eval fuel env1 e with
@@ -878,10 +901,10 @@ def bindOne (fuel : Nat) (globals : List QN) (env : Env) : Decl → M (Option En
 
 /-- One round over the pending declarations: the bound environment,
     the declarations to try again, the last postponement. -/
-def bindRound (fuel : Nat) (globals : List QN) : Env → List Decl → M (Env × List Decl × Option Err)
+def bindRound (fuel : Nat) (globals : List QN) : Env → List (Module × Decl) → M (Env × List (Module × Decl) × Option Err)
   | env, [] => pure (env, [], none)
   | env, d :: ds => do
-    match ← bindOne fuel globals env d with
+    match ← bindOne fuel globals env d.1 d.2 with
     | (some env', _) => bindRound fuel globals env' ds
     | (none, e) =>
       let (env', later, e') ← bindRound fuel globals env ds
@@ -890,7 +913,7 @@ def bindRound (fuel : Nat) (globals : List QN) : Env → List Decl → M (Env ×
 /-- Rounds until every declaration is bound; a round with no progress
     is `XQDY0054` (XQuery 4.0 §5.16: variables bound in dependency
     order, a cycle is an error). -/
-def bindRounds (fuel : Nat) (globals : List QN) : Nat → Env → List Decl → M Env
+def bindRounds (fuel : Nat) (globals : List QN) : Nat → Env → List (Module × Decl) → M Env
   | _, env, [] => pure env
   | 0, env, _ => pure env
   | k + 1, env, pending@(_ :: _) => do
@@ -903,23 +926,11 @@ def bindRounds (fuel : Nat) (globals : List QN) : Nat → Env → List Decl → 
     else bindRounds fuel globals k env' later
 
 def bindModules (fuel : Nat) (env : Env) (ms : List Module) : M Env :=
-  let pending0 := ms.flatMap (fun m => m.decls.filter (fun d => match d with | .fn _ => false | _ => true))
+  let pending0 := ms.flatMap (fun m => (m.decls.filter (fun d => match d with | .fn _ => false | _ => true)).map (fun d => (m, d)))
   -- the context value first: variables may use it (forward reference, §5.17)
-  let pending := pending0.filter (fun d => match d with | .ctx .. => true | _ => false) ++
-    pending0.filter (fun d => match d with | .ctx .. => false | _ => true)
+  let pending := pending0.filter (fun (_, d) => match d with | .ctx .. => true | _ => false) ++
+    pending0.filter (fun (_, d) => match d with | .ctx .. => false | _ => true)
   bindRounds fuel (ms.flatMap Module.globals) (pending.length + 1) (bindFns env ms) pending
-
-/-- The dynamic context of a module before its declarations are bound:
-    the prolog's namespaces, collation, base URI and decimal formats. -/
-def moduleEnv (env : Env) (m : Module) : Env :=
-  let env := { env with ns := m.ns }
-  let env := match m.baseUri with | some b => { env with baseUri := b } | none => env
-  -- the declared collation URI is resolved against the base URI (§5.5)
-  let env := match m.defaultCollation with
-    | some c => { env with defaultCollation := (match resolveCollationUri env.baseUri c with | .ok u => u | .error _ => c) }
-    | none => env
-  let env := { env with decimalFormats := m.decimalFormats ++ env.decimalFormats }
-  if m.constructionStrip then env.bind constructionStripKey [] else env
 
 /-- Evaluate a main module. -/
 def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
@@ -932,6 +943,12 @@ def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
   let (libs, _) ← loadImports env 50 ((m.libNs.map (·.2)).toList) m
   checkModules env (libs ++ [m])
   let env ← bindModules fuel env (libs ++ [m])
+  -- §5.17: the context value must match the type that each module declares
+  if let some c := env.ctx then
+    for lm in libs ++ [m] do
+      for d in lm.decls do
+        if let .ctx ty _ _ := d then
+          if !(env.seqMatches c ty) then err "XPTY0004" "the context value does not match a declared context item type"
   match m.body with
   | some b => eval fuel (markStatic env) b
   | none => err "XPST0003" "a library module has no query body"

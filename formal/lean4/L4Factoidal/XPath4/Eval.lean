@@ -125,10 +125,13 @@ def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
   | _ => checkLimits r
 
 /-- Value comparison of two atomic values (§3.7.2). -/
-def valueCmp (tz : Int) (op : BOp) (a b : Atomic) : M Bool := do
+def valueCmp (tz : Int) (op : BOp) (a b : Atomic) (coll : Option Coll := none) : M Bool := do
   let a := if a.ty == .untyped then Atomic.ofStr a.str else a
   let b := if b.ty == .untyped then Atomic.ofStr b.str else b
-  let c ← atomicCmp a b tz
+  -- strings compare under the default collation (XPath 4.0 §4.10.1)
+  let c ← match coll with
+    | some k => if a.isStringLike && b.isStringLike then pure (some (k.compare a.str b.str)) else atomicCmp a b tz
+    | none => atomicCmp a b tz
   match op with
   | .veq | .geq => pure (c == some .eq)
   | .vne | .gne => pure (c != some .eq)
@@ -144,7 +147,7 @@ def valueCmp (tz : Int) (op : BOp) (a b : Atomic) : M Bool := do
 
 /-- General comparison of one pair, with the untyped conversions of
     §3.7.1. -/
-def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option String) : M Bool := do
+def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option String) (coll : Option Coll := none) : M Bool := do
   let conv (x y : Atomic) : M Atomic :=
     if x.ty == .untyped then
       if y.ty == .untyped || y.isStringLike then pure (Atomic.ofStr x.str)
@@ -162,7 +165,7 @@ def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option Str
     else pure x
   let a' ← conv a b
   let b' ← conv b a
-  valueCmp tz op a' b'
+  valueCmp tz op a' b' coll
 
 def BOp.isGeneral : BOp → Bool
   | .geq | .gne | .glt | .gle | .ggt | .gge => true | _ => false
@@ -390,8 +393,27 @@ def isNumericLit : Expr → Option Int
 def isExternalFn (q : QN) : Bool :=
   (q.uri == nsFN && ["doc", "doc-available", "unparsed-text", "unparsed-text-lines",
      "unparsed-text-available", "unparsed-binary", "json-doc", "collection", "uri-collection",
-     "load-xquery-module", "transform"].contains q.loc)
+     "load-xquery-module", "transform", "csv-doc", "html-doc"].contains q.loc)
   || q.uri == "http://expath.org/ns/file"
+
+/-- Does the function item name a function that reads external resources? -/
+def extFnItem : Item → Bool
+  | .fn (.builtin q _) => isExternalFn q
+  | .fn (.papp (.fn (.builtin q _)) _) => isExternalFn q
+  | _ => false
+
+/-- An item made by untrusted code from a function that reads external
+    resources stays untrusted when it is called from trusted code
+    (F&O 4.0 §17.4.1): a wrapper whose body runs untrusted. -/
+def untrustedItem (it : Item) : Item :=
+  match it with
+  | .fn f =>
+    let fv : QN := { uri := "#untrusted", loc := "f" }
+    let ps : List (QN × IType) := (List.range f.arity).map (fun i => ({ uri := "#untrusted", loc := "a" ++ toString i }, .seq .item .star))
+    .fn (.inline ps (.seq .item .star)
+      (.ext "untrusted" [.dyn (.var fv) (ps.map (fun (v, _) => some (.var v)))] [] [] []) false [(fv, [it])])
+  | _ => it
+
 
 /-- A step applied to each item of a `fn:generate` sequence before its
     consumer: a lookup `?k` or a simple map `! e`. -/
@@ -663,12 +685,16 @@ def eval : Nat → Env → Expr → M Seq
           for (sl, p) in slots.toList.zip sig.ps do
             match sl with
             | some none => fixed := fixed ++ [none]; arity := arity + 1
-            | some (some x) => fixed := fixed ++ [some (← eval n env x)]
+            | some (some x) =>
+              -- the supplied argument is converted to the parameter type
+              -- now (XPath 4.0 §4.5.1.2, XPTY0004)
+              fixed := fixed ++ [some (← env.coerce p.ty (← eval n env x) ("$" ++ p.name ++ " of " ++ q.show))]
             | none =>
               match p.dflt with
               | some d => fixed := fixed ++ [some (← eval n env d)]
               | none => err "XPST0017" ("missing argument " ++ p.name)
-          pure [.fn (.papp (.fn (.builtin q fixed.length)) fixed)]
+          let it : Item := .fn (.papp (.fn (.builtin q fixed.length)) fixed)
+          pure [if env.untrusted && isExternalFn q then untrustedItem it else it]
         else
           let mut vals : List Seq := []
           let mut lastGiven := 0
@@ -717,6 +743,12 @@ def eval : Nat → Env → Expr → M Seq
         let ps : List (QN × IType) := (List.range k).map (fun i => ({ uri := "#untrusted", loc := "a" ++ toString i }, .seq .item .star))
         return [.fn (.inline ps (.seq .item .star)
           (.ext "untrusted" [.call q (ps.map (fun (v, _) => some (.var v))) []] [] [] []) false env.vars)]
+      -- a reference made by trusted code keeps its trust when untrusted
+      -- code calls it (a wrapper whose body runs trusted)
+      if !env.untrusted && (isExternalFn q || (q.uri == nsFN && (q.loc == "parse-xml" || q.loc == "parse-xml-fragment")))
+          && (findSig q k).isSome then
+        let ps : List (QN × IType) := (List.range k).map (fun i => ({ uri := "#trusted", loc := "a" ++ toString i }, .seq .item .star))
+        return [.fn (.inline ps (.seq .item .star) (.call q (ps.map (fun (v, _) => some (.var v))) []) false [])]
       -- XQuery 4.0 §5.18.1: an unprefixed name finds a no-namespace function first
       if q.uri == nsFN && q.pfx == "" && XQuery4.userAny env { q with uri := "" } then
         match XQuery4.refUser? (fun f as => apply n env f as) env q k with
@@ -1061,19 +1093,21 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
           | _, _ => err "XPTY0004" "union/intersect/except operands must be nodes"
     | _ =>
       if op.isGeneral then do
+        let coll ← if env.defaultCollation == codepointCollation then pure none else some <$> collationOf env.baseUri env.defaultCollation
         let xs ← env.atomize (← eval n env a)
         let ys ← env.atomize (← eval n env b)
         let mut res := false
         for x in xs do
           for y in ys do
-            if ← generalPair env.tz op x y env.nsResolve then res := true; break
+            if ← generalPair env.tz op x y env.nsResolve coll then res := true; break
           if res then break
         pure (sBool res)
       else if op.isValue then do
+        let coll ← if env.defaultCollation == codepointCollation then pure none else some <$> collationOf env.baseUri env.defaultCollation
         let x ← env.atomizeOpt (← eval n env a)
         let y ← env.atomizeOpt (← eval n env b)
         match x, y with
-        | some x, some y => pure (sBool (← valueCmp env.tz op x y))
+        | some x, some y => pure (sBool (← valueCmp env.tz op x y coll))
         | _, _ => pure []
       else if op.isNodeCmp then do
         let x ← eval n env a
@@ -1160,10 +1194,10 @@ def apply : Nat → Env → Item → List Seq → M Seq
         else
           if args.length != ps.length then
             err "XPTY0004" ("inline function expects " ++ toString ps.length ++ " arguments, got " ++ toString args.length)
-          let mut vars := cl
+          let mut vars := XQuery4.lateClosure cl env.vars
           for ((v, t), a) in ps.zip args do
             vars := (v, ← env.coerce t a ("$" ++ v.show)) :: vars
-          let env' := { env with vars, ctx := none, pos := 0, size := 0, untrusted := false }
+          let env' := XQuery4.withModCtx cl { env with vars, ctx := none, pos := 0, size := 0, untrusted := false }
           let r ← eval n env' body
           env.coerce ret r "function result"
     | .fn (.papp g fixed) => do
@@ -1187,6 +1221,13 @@ def callFn : Nat → Env → QN → List Seq → M Seq
   | n + 1, env, q, args => do
     if env.untrusted && isExternalFn q then
       err "FODC0016" ("untrusted code may not read external resources (" ++ q.show ++ ")")
+    -- untrusted code may not turn on `trust-external` (F&O 4.0 §17.4.1)
+    if env.untrusted && q.uri == nsFN && (q.loc == "parse-xml" || q.loc == "parse-xml-fragment") then
+      match args with
+      | [_, [.map kvs]] =>
+        if kvs.any (fun (k, v) => k.str == "trust-external" && (match v with | [.atom ⟨_, .bool true⟩] => true | _ => false)) then
+          err "FODC0016" ("untrusted code may not read external resources (" ++ q.show ++ ")")
+      | _ => pure ()
     let args ← if q.uri == nsFN && q.loc == "concat" then
         args.mapM (fun a => do pure (seqOfAtoms (← env.atomize a)))
       else match findSig q args.length with
@@ -1195,6 +1236,9 @@ def callFn : Nat → Env → QN → List Seq → M Seq
     match libLookupAll q with
     | some impl => do
       let r ← impl { call := fun f as => apply n env f as } env args
+      -- a function item that untrusted code looks up stays untrusted
+      let r := if env.untrusted && q.uri == nsFN && q.loc == "function-lookup" && r.any extFnItem
+        then r.map untrustedItem else r
       -- date results stay within the limits (`checkLimits`)
       match r with
       | [.atom a@⟨_, .x (.dt ..)⟩] => pure [.atom (← checkLimits a)]

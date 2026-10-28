@@ -244,7 +244,12 @@ def parseEnv (dir : String) (e : Node) (xq : Bool := false) : EnvSpec := Id.run 
         s := { s with sources := s.sources ++ [(attrD c "role", dir ++ "/" ++ attrD c "file", attrD c "uri")] }
     | "param" =>
         if xq || attrD c "declared" != "true" then
-          s := { s with params := s.params ++ [(attrD c "name", attrD c "select" "()")] }
+          -- a prefixed name is resolved by the xmlns declaration on the element
+          let nm := attrD c "name"
+          let nm := match nm.splitOn ":" with
+            | [p, l] => match attr c ("xmlns:" ++ p) with | some u => "Q{" ++ u ++ "}" ++ l | none => nm
+            | _ => nm
+          s := { s with params := s.params ++ [(nm, attrD c "select" "()")] }
     | "namespace" => s := { s with ns := s.ns ++ [(attrD c "prefix", attrD c "uri")] }
     | "context-item" => s := { s with ctxSelect := attr c "select" }
     | "schema" => s := { s with schemas := s.schemas ++ [(attrD c "uri", dir ++ "/" ++ attrD c "file")] }
@@ -841,7 +846,13 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool
     | none => return .error ("resource not readable: " ++ file)
   for (name, sel) in spec.params do
     match evalIn env sel with
-    | .ok v => env := env.bind { uri := "", loc := name } v
+    | .ok v =>
+      let q : QN := if name.startsWith "Q{" then
+          match (name.drop 2).toString.splitOn "}" with
+          | [u, l] => { uri := u, loc := l }
+          | _ => { uri := "", loc := name }
+        else { uri := "", loc := name }
+      env := env.bind q v
     | .error e => return .error ("param " ++ name ++ ": " ++ e.code)
   if let some sel := spec.ctxSelect then
     match evalIn env sel with

@@ -68,6 +68,23 @@ def staticVars (vs : List (QN × Seq)) : List (QN × Seq) :=
   | [] => vs
   | r => r
 
+/-- The closure of a function item at a call (XQuery 4.0 §5.15): a
+    global variable bound after the item was made is visible to its
+    body (`declare variable $f := fn() { $f }`, a reference to a function
+    that reads a later variable). The caller's static part has the
+    item's static part as a suffix, so the newer bindings are the
+    leading entries. -/
+def lateClosure (cl env : List (QN × Seq)) : List (QN × Seq) :=
+  if !cl.any (fun (q, _) => q == staticKey) then cl else
+  -- the static parts start with a marker; the rest is the bindings
+  -- (the closure may end with entries that are not variables)
+  let es := (staticVars env).drop 1
+  let st := staticVars cl
+  let n := (st.filter (fun (q, _) => !(q.uri == "#xqa" || q.uri == "#xqn"))).length - 1
+  if es.length ≤ n then cl else
+  -- the local variables stay in front of the marker, the new globals follow it
+  cl.takeWhile (fun (q, _) => !(q == staticKey)) ++ st.take 1 ++ es.take (es.length - n) ++ st.drop 1
+
 /-- The arguments of a default-value function: the focus of the call
     (context value, position, size), or none when the focus is absent. -/
 def focusArgs (e : Env) : List Seq :=
@@ -85,6 +102,47 @@ def nameKey (q : QN) : QN := { uri := "#xqn", loc := q.loc, pfx := q.uri }
 /-- The closure entries of a function item that are not variables. -/
 def metaEntries (cl : List (QN × Seq)) : List (QN × Seq) :=
   cl.filter (fun (k, _) => k.uri == "#xqa" || k.uri == "#xqn")
+
+/-- The closure entry (always first) that keeps the static context of
+    the module that declares a function: base URI, default collation and
+    decimal formats (XQuery 4.0 §5.5, §5.6; each module has its own). -/
+def modCtxKey : QN := { uri := "#xqm", loc := "ctx" }
+
+def encodeModCtx (base coll : String) (df : List (String × List (String × String)))
+    (ns : List (String × String)) : Seq :=
+  [.map [(Atomic.ofStr "ns", [.map (ns.map (fun (p, u) => (Atomic.ofStr p, [.atom (Atomic.ofStr u)])))]),
+         (Atomic.ofStr "base", [.atom (Atomic.ofStr base)]),
+         (Atomic.ofStr "coll", [.atom (Atomic.ofStr coll)]),
+         (Atomic.ofStr "df", [.map (df.map (fun (n, props) =>
+            (Atomic.ofStr n, [.map (props.map (fun (k, v) => (Atomic.ofStr k, [.atom (Atomic.ofStr v)])))])))])]]
+
+/-- The module context entries of a function item's closure. -/
+def ctxEntries (cl : List (QN × Seq)) : List (QN × Seq) :=
+  cl.filter (fun (k, _) => k == modCtxKey)
+
+/-- The environment for the body of a function item: the static
+    context of its module when the closure carries one. -/
+def withModCtx (cl : List (QN × Seq)) (e : Env) : Env :=
+  match cl with
+  | (k, [.map kvs]) :: _ =>
+    if k == modCtxKey then
+      let str (n : String) : Option String := match kvs.find? (fun (a, _) => a.str == n) with
+        | some (_, [.atom v]) => some v.str
+        | _ => none
+      let df : List (String × List (String × String)) := match kvs.find? (fun (a, _) => a.str == "df") with
+        | some (_, [.map ds]) => ds.filterMap (fun (a, v) => match v with
+            | [.map ps] => some (a.str, ps.filterMap (fun (k, v) => match v with
+                | [.atom x] => some (k.str, x.str) | _ => none))
+            | _ => none)
+        | _ => e.decimalFormats
+      let ns : List (String × String) := match kvs.find? (fun (a, _) => a.str == "ns") with
+        | some (_, [.map ps]) => ps.filterMap (fun (a, v) => match v with
+            | [.atom x] => some (a.str, x.str) | _ => none)
+        | _ => e.ns
+      { e with ns, baseUri := (str "base").getD e.baseUri, defaultCollation := (str "coll").getD e.defaultCollation,
+               decimalFormats := df }
+    else e
+  | _ => e
 
 /-- Is any declaration of `q` there (for the error code)? -/
 def userAny (e : Env) (q : QN) : Bool :=
@@ -114,7 +172,7 @@ def userDecl? (e : Env) (q0 : QN) (k : Nat) : Option (Item × Nat × List Item) 
     let withCl (d : Item) : Item := match d with
       | .fn (.inline ps' r' b' f' _) => .fn (.inline ps' r' b' f' sv)
       | x => x
-    some (.fn (.inline ps r b f (sv ++ metaEntries cl0)), lo, dflts.map withCl)
+    some (.fn (.inline ps r b f (ctxEntries cl0 ++ sv ++ metaEntries cl0)), lo, dflts.map withCl)
   | _ => none
 
 /-- The callbacks into the evaluator for a user function call. -/
@@ -154,24 +212,47 @@ def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
         match dflts[i - lo]? with
         | some d => fixed := fixed.push (some (← cb.apply d (focusArgs e)))
         | none => err "XPST0017" ("missing argument of " ++ q.show)
-    if isPartial then pure [.fn (.papp fi fixed.toList)]
+    if isPartial then
+      -- the new function takes the placeholders in the order written
+      -- (§4.5.1.2); the slots in declared order are the `papp` order
+      let written := (args.zip (List.range args.length)).filterMap (fun (a, i) => if a.isNone then some i else none)
+        ++ kw.filterMap (fun (nm, a) => if a.isNone then
+              ps.findIdx? (fun (v, _) => if nm.startsWith "Q{" then v.eqn == nm else (v.uri == "" && v.loc == nm))
+            else none)
+      let sorted := written.mergeSort (· ≤ ·)
+      if written == sorted then pure [.fn (.papp fi fixed.toList)]
+      else
+        let pname (i : Nat) : QN := { uri := "#xqp", loc := "p" ++ toString i }
+        let cl := (fixed.toList.zip (List.range m)).filterMap (fun (x, i) => x.bind (fun v => some (pname i, v)))
+        let newPs := written.map (fun i => (pname i, (ps.getD i default).2))
+        let body : Expr := .call q ((List.range m).map (fun i => some (.var (pname i)))) []
+        let ret := match fi with | .fn (.inline _ r _ _ _) => r | _ => .seq .item .star
+        let sv := match fi with | .fn (.inline _ _ _ _ c) => c | _ => []
+        pure [.fn (.inline newPs ret body false (cl ++ sv))]
     else cb.apply fi (fixed.toList.map (·.getD []))
 
-/-- A named function reference `q#k` to a declared function: the
-    defaults of the omitted parameters are computed now, in the focus
-    of the reference. -/
-def refUser? (applyF : Item → List Seq → M Seq) (e : Env) (q : QN) (k : Nat) : Option (M Seq) :=
+/-- The closure entry that keeps the focus of a function reference. -/
+def refFocusKey : QN := { uri := "#xqr", loc := "focus" }
+
+/-- A named function reference `q#k` to a declared function (XQuery 4.0
+    §4.5.4). When the function has more parameters than `k`, the result
+    is a function item of arity `k` whose call calls the function with
+    the defaults of the omitted parameters, computed when the item is
+    called, in the focus that the reference captured. -/
+def refUser? (_applyF : Item → List Seq → M Seq) (e : Env) (q : QN) (k : Nat) : Option (M Seq) :=
   match userDecl? e q k with
   | none => none
-  | some (fi, lo, dflts) => some do
-    let m := match fi with | .fn (.inline ps _ _ _ _) => ps.length | _ => k
-    if k == m then return [fi]
-    let mut fixed : List (Option Seq) := List.replicate k none
-    for i in [k:m] do
-      match dflts[i - lo]? with
-      | some d => fixed := fixed ++ [some (← applyF d (focusArgs e))]
-      | none => err "XPST0017" ("missing argument of " ++ q.show)
-    pure [.fn (.papp fi fixed)]
+  | some (fi, _, _) => some do
+    match fi with
+    | .fn (.inline ps r _ _ cl) =>
+      if k == ps.length then return [fi]
+      let ps' := ps.take k
+      let call : Expr := .call q (ps'.map (fun (v, _) => some (.var v))) []
+      let (body, focus) := match e.ctx with
+        | some c => (Expr.smap (.var refFocusKey) call, [(refFocusKey, c)])
+        | none => (call, [])
+      pure [.fn (.inline ps' r body false (focus ++ staticVars e.vars ++ metaEntries cl))]
+    | _ => pure [fi]
 
 /-! ## Encodings of names in `ext` nodes -/
 
