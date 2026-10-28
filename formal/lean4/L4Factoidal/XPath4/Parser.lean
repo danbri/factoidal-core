@@ -19,6 +19,7 @@ EXCEPT `but with`, `=?>` method calls, `jnode()` types, destructuring
 schema-attribute types. Those raise `XPST0003` naming the construct.
 -/
 import L4Factoidal.XPath4.Syntax
+import L4Factoidal.XPath4.RecordTypes
 
 namespace L4Factoidal.XPath4
 
@@ -533,7 +534,19 @@ def pItemType : Nat → P IType
         | none => synErr "expected an item type"
     | _ =>
       match ← peekQName with
-      | some (p, u, l, e) => set e; atomicTypeOf (← resolve p u l "")
+      | some (p, u, l, e) =>
+        set e
+        let q ← resolve p u l ""
+        match (if q.uri == nsFN then recordTypesRaw.lookup q.loc else none), n with
+        | some src, n' + 1 =>
+          -- a named record type of F&O 4.0: parse its record(...) text
+          let save ← get
+          let t ← withReader (fun c => { c with s := src.toList.toArray, ns := defaultNs }) (do
+            set 0
+            pItemType n')
+          set save
+          pure t
+        | _, _ => atomicTypeOf q
       | none => synErr "expected an item type"
 
 end

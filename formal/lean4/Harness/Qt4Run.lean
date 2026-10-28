@@ -19,14 +19,17 @@ and `misc`), and scores every test case for XPath 4.0 or, with
   NEVER a pass;
 * **pass** — every assertion holds; an `error` assertion holds only
   when the error raised has the expected code (or the code is `*`);
-* **fail** — anything else, including an assertion kind this runner
-  does not evaluate (`serialization-matches`), and a wrong error code.
+* **fail** — anything else, including a wrong error code.
 
 The assertions are evaluated with the same XPath 4.0 evaluator
 (`assert-eq` compares with `eq`, `assert-deep-eq` with `fn:deep-equal`,
 `assert` evaluates the expression with `$result` bound). `assert-xml`
 serialises the result nodes and compares them, with the expected XML,
-by `fn:deep-equal` on the two parsed fragments.
+by `fn:deep-equal` on the two parsed fragments (`assert-xml` with a
+`file` attribute reads the expected XML from that file).
+`serialization-matches`, `assert-serialization` and
+`assert-serialization-error` serialize the result with
+`XPath4.Serialize` (method `xml`, the map-form defaults).
 
 The test data is untrusted input: it is parsed, never executed as
 anything but XPath expressions in this evaluator.
@@ -35,6 +38,7 @@ import L4Factoidal.XPath4.Eval
 import L4Factoidal.XPath4.Theorems
 import L4Factoidal.XQuery4.Module
 import L4Factoidal.XQuery4.Theorems
+import L4Factoidal.XPath4.SerializeTheorems
 import L4Factoidal.EXPath.File.IOHost
 import L4Factoidal.EXPath.File.Theorems
 import L4Factoidal.EXPath.Binary.Theorems
@@ -109,7 +113,7 @@ def specOk (v : String) (xq : Bool := false) : Bool :=
 
 /-- The features this processor has. -/
 def featureSupported (f : String) : Bool :=
-  f == "higherOrderFunctions"
+  f == "higherOrderFunctions" || f == "serialization"
   -- EXPath Binary 4.0 and File 4.0 (`L4Factoidal.EXPath`)
   || f == "binary" || f == "expath-file"
 
@@ -310,11 +314,22 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
           | .pass => .fail "not: inner assertion held"
           | _ => .pass
         | none => .fail "empty not"
+    | "assert-serialization-error" =>
+        let code := attrD a "code"
+        let codeOk (c : String) := code == "*" || code == c || ("err:" ++ c) == code || code.endsWith (":" ++ c)
+        match res with
+        | .error e => ok? (codeOk e.code) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
+        | .ok s =>
+          match env.serializeWith {} s with
+          | .error e => ok? (codeOk e.code) ("wrong serialization error " ++ e.code ++ " (expected " ++ code ++ ")")
+          | .ok out => .fail ("expected serialization error " ++ code ++ ", got " ++ cut out 80)
     | tag =>
       match res with
       | .error e => .fail ("error " ++ e.code ++ ": " ++ e.msg)
       | .ok s =>
       let envR := env.bind { uri := "", loc := "result" } s
+      -- QT3 test-suite assertions: the context item is the result when it is one item
+      let envR := match s with | [_] => { envR with ctx := some s, pos := 1, size := 1 } | _ => envR
       match tag with
       | "assert-true" => ok? (match s with | [.atom ⟨_, .bool true⟩] => true | _ => false) ("got " ++ (sh s 80))
       | "assert-false" => ok? (match s with | [.atom ⟨_, .bool false⟩] => true | _ => false) ("got " ++ (sh s 80))
@@ -359,9 +374,27 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
           match parseSeqType txt with
           | .ok t => ok? (env.seqMatches s t) ("type mismatch: got " ++ (sh s 60))
           | .error e => .fail ("bad type in assert-type: " ++ e.msg)
+      | "serialization-matches" =>
+          match env.serializeWith {} s with
+          | .error e => .fail ("serialization raised " ++ e.code ++ " " ++ e.msg)
+          | .ok out =>
+            let q : QN := { uri := "", loc := "l4ser" }
+            let pq : QN := { uri := "", loc := "l4pat" }
+            let fq : QN := { uri := "", loc := "l4flags" }
+            let envM := ((env.bind q (sStr out)).bind pq (sStr txt)).bind fq (sStr (attrD a "flags"))
+            match evalIn envM "matches($l4ser, $l4pat, $l4flags)" with
+            | .ok [.atom ⟨_, .bool true⟩] => .pass
+            | .ok _ => .fail ("serialization '" ++ cut out 80 ++ "' does not match")
+            | .error e => .fail ("serialization-matches raised " ++ e.code)
+      | "assert-serialization" =>
+          match env.serializeWith {} s with
+          | .error e => .fail ("serialization raised " ++ e.code ++ " " ++ e.msg)
+          | .ok out =>
+            let ok := if attrD a "normalize-space" == "true" then normSp out == normSp txt else out == txt || xmlEq env s txt
+            ok? ok ("serialization '" ++ cut out 80 ++ "'")
       | "assert-xml" =>
           match attr a "file" with
-          | some _ => .fail "assert-xml with file is not evaluated"
+          | some _ => .fail "assert-xml file could not be read"
           | none =>
             let exp := match a with
               | .element _ _ cs => String.join (cs.map (fun c => match c with
@@ -409,30 +442,46 @@ def fixXml : Nat → Node → Node
         else .element tag ats (cs.map (fixXml f))
     | other => other
 
-/-- `assert-xml file="..."`: the expected XML read from the file (in
-    the test set's directory), put in place of the attribute. -/
-def inlineXmlFiles (dir : String) : Nat → Node → IO Node
+/-- Normalise a relative file path (`a/./b/../c` to `a/c`); `none` when
+    it climbs above its start. -/
+def normPath (p : String) : Option String := Id.run do
+  let mut out : List String := []
+  for seg in p.splitOn "/" do
+    if seg == "." || seg == "" then continue
+    if seg == ".." then
+      match out with
+      | _ :: r => out := r
+      | [] => return none
+    else out := seg :: out
+  return some (String.intercalate "/" out.reverse)
+
+/-- Read the expected XML of each `assert-xml file="..."` (relative to
+    the test set's directory, only under the suite root) into the
+    element's text, without its XML declaration. -/
+def resolveXmlFiles (root dir : String) : Nat → Node → IO Node
   | 0, n => pure n
   | f + 1, n =>
     match n with
-    | .element tag ats cs =>
-      if (splitName tag).2 == "assert-xml" then do
-        match findAttr "file" ats with
-        | some file =>
-          let content ← readFileSafe (dir ++ "/" ++ file)
-          match content with
-          | some (txt : String) =>
-            -- drop an XML declaration
-            let txt := if txt.startsWith "<?xml" then
-                (match txt.splitOn "?>" with | _ :: rest => String.intercalate "?>" rest | [] => txt)
-              else txt
-            pure (.element tag (ats.filter (·.name != "file")) [.text txt])
+    | .element tag ats cs => do
+      if (splitName tag).2 == "assert-xml" then
+        match ats.find? (fun x => x.name == "file") with
+        | some fa =>
+          let rel := if dir.startsWith (root ++ "/") then (dir.drop (root.length + 1)).toString else dir
+          match normPath (rel ++ "/" ++ fa.value) with
           | none => pure n
+          | some pth =>
+            match ← readFileSafe (root ++ "/" ++ pth) with
+            | none => pure n
+            | some txt =>
+              let txt := if txt.startsWith "<?xml" then
+                  match txt.splitOn "?>" with
+                  | _ :: rest => String.intercalate "?>" rest
+                  | [] => txt
+                else txt
+              pure (.element tag (ats.filter (fun x => x.name != "file")) [.text txt])
         | none => pure n
-      else do
-        let mut out : Array Node := #[]
-        for c in cs do out := out.push (← inlineXmlFiles dir f c)
-        pure (.element tag ats out.toList)
+      else
+        pure (.element tag ats (← cs.mapM (resolveXmlFiles root dir f)))
     | other => pure other
 
 /-! ## Running -/
@@ -485,18 +534,6 @@ def parseArgs : List String → Opts → Opts
   | _ :: rest, o => parseArgs rest o
   | [], o => o
 
-/-- Normalise a relative file path (`a/./b/../c` to `a/c`); `none` when
-    it climbs above its start. -/
-def normPath (p : String) : Option String := Id.run do
-  let mut out : List String := []
-  for seg in p.splitOn "/" do
-    if seg == "." || seg == "" then continue
-    if seg == ".." then
-      match out with
-      | _ :: r => out := r
-      | [] => return none
-    else out := seg :: out
-  return some (String.intercalate "/" out.reverse)
 
 /-- The files a test names by a relative reference in its text (for
     `fn:unparsed-text`, `fn:json-doc`, `fn:doc`, and external entities
@@ -629,7 +666,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         | some sp => L4Factoidal.EXPath.File.evalSandpit (o.fileHost == "io") sp env src
         | none => pure (evalIn env src, env)
       let some r := (kidsNamed tc "result").head? | do t := { t with fail := t.fail + 1 }; continue
-      let r ← inlineXmlFiles dir 100 r
+      let r ← resolveXmlFiles o.root dir 100 r
       match (kids r).head? with
       | none => t := { t with fail := t.fail + 1 }
       | some a =>
