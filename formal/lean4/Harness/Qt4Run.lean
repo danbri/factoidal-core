@@ -38,6 +38,7 @@ import L4Factoidal.XPath4.Eval
 import L4Factoidal.XPath4.Theorems
 import L4Factoidal.XQuery4.Module
 import L4Factoidal.XQuery4.LoadModule
+import L4Factoidal.XSLT4.FnTransform
 import L4Factoidal.XQuery4.Theorems
 import L4Factoidal.XPath4.SerializeTheorems
 import L4Factoidal.EXPath.File.IOHost
@@ -143,6 +144,8 @@ def featureSupported (f : String) : Bool :=
   || f == "binary" || f == "expath-file"
   -- `XQuery4.LoadModule` through the host hook
   || f == "fn-load-xquery-module"
+  -- `XSLT4.FnTransform` through the host hook (an XSLT 4.0 processor)
+  || f == "fn-transform-XSLT" || f == "fn-transform-XSLT30"
   -- IANA zone names (`XPath4.Tz`)
   || f == "olson-timezone"
   -- fn:invisible-xml (`XPath4.Ixml`)
@@ -824,6 +827,15 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         scanResources o.root dir (String.intercalate " " (src :: spec.params.map (·.2)))
       let env := { env with resources := env.resources ++ scanned,
                             resourceBytes := env.resourceBytes ++ scannedBins }
+      -- the files that the source documents name (an XSLT module that a
+      -- source stylesheet includes, for fn:transform), relative to each
+      let mut fromSources : List (String × String) := []
+      for (_, file, _) in spec.sources do
+        if !file.endsWith ".xsl" then continue
+        if let some txt ← readFileSafe file then
+          let (found, _) ← scanResources o.root (dirOf file) txt
+          fromSources := fromSources ++ found.filter (fun (k, _) => !(env.resources.any (·.1 == k)))
+      let env := { env with resources := env.resources ++ fromSources }
       -- XQuery library modules named by the test case (`import module`)
       let mut mods : List (String × String) := []
       for md in kidsNamed tc "module" do
@@ -833,6 +845,8 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       let env := { env with resources := env.resources ++ mods }
       -- fn:load-xquery-module through the XQuery 4.0 processor
       let env := { env with host := L4Factoidal.XQuery4.loadModuleHost env env.host }
+      -- fn:transform through the XSLT 4.0 processor
+      let env := { env with host := L4Factoidal.XSLT4.transformHost env (fun f a => apply 20000 env f a) env.host }
       let (res, env) ← match spec.sandpit with
         | some sp => L4Factoidal.EXPath.File.evalSandpit (o.fileHost == "io") sp env src
         | none => pure (evalIn env src, env)

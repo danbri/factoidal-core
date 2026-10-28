@@ -105,6 +105,10 @@ structure TOpts where
   env : Env := {}
   /-- The base output URI (`current-output-uri`, relative `href`s). -/
   outUri : String := ""
+  /-- The non-tunnel and tunnel parameters of the initial template
+      (`fn:transform` options `template-params`, `tunnel-params`). -/
+  templateParams : List (QN × Seq) := []
+  tunnelParams : List (QN × Seq) := []
 deriving Inhabited
 
 structure TResult where
@@ -509,10 +513,10 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
       | none => xerr "XTDE0040" ("no template named " ++ tn.show)
       | some t =>
         for p in t.params do
-          if p.required && !p.tunnel then
+          if p.required && !p.tunnel && !(o.templateParams.any (·.1 == p.name)) then
             xerr "XTDE0700" ("no value for the required parameter $" ++ p.name.show ++ " of the initial template")
         let cx' := if t.ctxAbsent then cx.noFocus else cx
-        invoke 1000000 S cx' t [] []
+        invoke 1000000 S cx' t o.templateParams o.tunnelParams
     | none =>
       let mode := o.initialMode.getD S.defaultMode
       let mode := if mode == "#default" then S.defaultMode else mode
@@ -522,7 +526,7 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
       let sel := match o.initialSelect with
         | some s => s
         | none => match o.globalCtx with | some i => [i] | none => []
-      applyT 1000000 S { cx with mode } sel mode [] [] none
+      applyT 1000000 S { cx with mode } sel mode o.templateParams o.tunnelParams none
   let (os, st) ← act.run { base := 1 }
   let (raw, st) ← (materializeAll env os).run st
   let abs (h : String) : String := if o.outUri == "" then h else resolveUri o.outUri h
