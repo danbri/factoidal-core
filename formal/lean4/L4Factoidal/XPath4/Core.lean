@@ -54,6 +54,12 @@ structure SchemaHook where
   /-- The same for a node of a document already built (XQuery `validate`):
       the mode, the document, the node's index, the document URI. -/
   validateIn : Option (String → Doc → Nat → String → Except Err Doc) := none
+  /-- `fn:xsd-validator`: the mode, schema documents given in the options
+      (document or element nodes; none means the in-scope schema), the
+      document, the node's index, the URI; the typed document when valid,
+      and the error messages. -/
+  validateWith : Option (String → List (Doc × Nat) → Doc → Nat → String →
+      Except Err (Option Doc × List String)) := none
 deriving Inhabited
 
 structure Env where

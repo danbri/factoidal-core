@@ -190,6 +190,23 @@ def bodyPatternsOk : Nat → XSD.SimpleType → String → Bool
      | .list it _ => ((norm.splitOn " ").filter (· != "")).all (bodyPatternsOk f it)
      | .union ms _ => ms.any (fun m => (XSD.valueOf m norm).isSome && bodyPatternsOk f m norm))
 
+/-- The enumeration in force on a simple type and the bindings of the
+step that declared it. -/
+def Schema.enumOf (s : Schema) : Nat → Nat → Option (List String × NsBindings)
+  | 0, _ => none
+  | f + 1, t =>
+    match s.type t with
+    | .simple sd =>
+      if t ≤ errorTypeIdx then none
+      else match sd.facets.enumeration with
+        | some vs => some (vs, sd.facetNs)
+        | none => s.enumOf f sd.base
+    | _ => none
+
+def clearEnum : XSD.SimpleType → XSD.SimpleType
+  | .atomic b f => .atomic b { f with enumeration := none }
+  | other => other
+
 /-- §3.16.4 String Valid: the literal against simple type `t`. Returns
 the schema-normalized value and the typed value, or the error. -/
 def validateSimple (s : Schema) (h : Hooks) (bs : NsBindings) (t : Nat) (lit : String)
@@ -198,7 +215,13 @@ def validateSimple (s : Schema) (h : Hooks) (bs : NsBindings) (t : Nat) (lit : S
   | none => (.error "not a simple type", unsup)
   | some sd =>
     let norm := XSD.applyWhiteSpace sd.body.whiteSpaceOf lit
-    match (XSD.valueOf sd.body lit).filter (fun _ => bodyPatternsOk 16 sd.body lit) with
+    -- QName and NOTATION enumerations compare expanded names (Part 2
+    -- §3.3.18): the facet values with the schema's bindings, below
+    let qEnum : Bool := match sd.body with
+      | .atomic b f => (b.primitive == some .qname || b.primitive == some .notation) && f.enumeration.isSome
+      | _ => false
+    let body := if qEnum then clearEnum sd.body else sd.body
+    match (XSD.valueOf body lit).filter (fun _ => bodyPatternsOk 16 sd.body lit) with
     | none => (.error s!"'{lit}' is not valid for {(sd.name.map XName.show).getD "an anonymous type"}", unsup)
     | some v =>
       -- QName and NOTATION values need their prefixes declared.
@@ -216,7 +239,16 @@ def validateSimple (s : Schema) (h : Hooks) (bs : NsBindings) (t : Nat) (lit : S
         let notationOk := !isNotation || (match v with
           | .qname u l _ => s.notations.contains ⟨u, l⟩
           | _ => false)
+        let enumOk := !qEnum || (match s.enumOf 64 t with
+          | some (vs, ens) => vs.any (fun ev =>
+              match resolveInstQName ens ev with
+              | some n => (match v with
+                | .qname u l _ => n.ns == u && n.loc == l
+                | _ => false)
+              | none => false)
+          | none => true)
         if !notationOk then (.error s!"'{lit}' does not name a declared notation", unsup)
+        else if !enumOk then (.error s!"'{lit}' is not in the enumeration", unsup)
         else
         let asserts := s.simpleAsserts 64 t
         let (ok, unsup) := asserts.foldl (fun (ok, un) a =>

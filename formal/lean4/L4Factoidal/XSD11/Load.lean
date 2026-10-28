@@ -93,7 +93,8 @@ def validateFor (s : Schema) (mode : String) (root : Node) (uri : String) : Exce
       | _ => none
     else none
   match how? with
-  | none => .error { code := "FODC0007", msg := s!"xsd-validation {mode}: no declaration or type to validate against" }
+  | none => .error { code := if mode == "strict" then "XQDY0084" else "FODC0007",
+                     msg := s!"xsd-validation {mode}: no declaration or type to validate against" }
   | some how =>
     let r := validateElement s xpathHooks 10000 [] how root {}
     let idcErrs := checkIdcs s r.1
@@ -133,6 +134,22 @@ def validateNodeIn (s : Schema) (mode : String) (d : XPath4.Doc) (i : Nat) (uri 
   | none => .error { code := "XQDY0061", msg := "the document node has no element child" }
   | some j => validateFor s mode (nodeTree d 100000 j) uri
 
+/-- `fn:xsd-validator`: validate a node of an XDM document; with schema
+documents from the options, against the schema they make. -/
+def validateWithFor (s : Schema) (mode : String) (extra : List (XPath4.Doc × Nat))
+    (d : XPath4.Doc) (i : Nat) (uri : String) : Except XPath4.Err (Option XPath4.Doc × List String) :=
+  let s := if extra.isEmpty then s else
+    let docs : List LoadedDoc := extra.zipIdx.filterMap (fun ((xd, j), k) =>
+      let r := xd.get j
+      let el := if r.kind == .document then r.children.toList.find? (fun c => (xd.get c).kind == .element) else some j
+      el.map (fun e => { loc := s!"#xsd-validator-schema-{k}",
+                         doc := { decl := none, doctype := none, prolog := [], root := nodeTree xd 100000 e, epilog := [] } }))
+    buildSchema none xpathHooks docs (docs.map (·.loc))
+  if !s.errors.isEmpty then .error { code := "FODC0007", msg := s!"the schema is not valid: {s.errors.take 2}" } else
+  match validateNodeIn s mode d i uri with
+  | .ok nd => .ok (some nd, [])
+  | .error x => if x.code == "FODC0007" || x.code == "XQDY0061" || x.code == "XQDY0084" then .ok (none, [x.msg]) else .error x
+
 /-- The in-scope schema definitions of `s` for XPath 4.0. -/
 def schemaHookOf (s : Schema) : XPath4.SchemaHook :=
   { derives := fun t u =>
@@ -147,7 +164,8 @@ def schemaHookOf (s : Schema) : XPath4.SchemaHook :=
       | some ni, some hi => s.substOk hi ni
       | _, _ => false,
     validate := some (validateFor s),
-    validateIn := some (validateNodeIn s) }
+    validateIn := some (validateNodeIn s),
+    validateWith := some (validateWithFor s) }
 
 /-- Validate a document (§5.2, strict) and give its XDM 4.0 document with
 the PSVI type annotations. -/

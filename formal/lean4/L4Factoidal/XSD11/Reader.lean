@@ -623,7 +623,7 @@ def readSimpleType (fuel : Nat) (c : Ctx) (n : Node) (name : Option XName) : RM 
         if facetTags.contains l && l != "pattern" && l != "enumeration" && l != "assertion" then some l else none)
       if fnames.length != fnames.eraseDups.length then addErr "a facet is given twice in one restriction"
       pure { name, base := baseIdx, variety, item, members, builtin, facets, fixedFacets, final,
-             asserts := assertsOf bc "assertion" b }
+             asserts := assertsOf bc "assertion" b, facetNs := bc.bs }
     else if isXs b "list" then
       let inline := xsKid? b "simpleType"
       let itemIdx ← match attrOf "itemType" b, inline with

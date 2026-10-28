@@ -605,9 +605,14 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool
   -- XSD11: the in-scope schema definitions and the validated sources
   let sch ← if spec.schemas.isEmpty then pure none
     else pure (some (← L4Factoidal.XSD11.loadSchemaCached (spec.schemas.map (·.2))))
-  if let some s := sch then
+  match sch with
+  | some s =>
     if !s.errors.isEmpty then return .error ("schema not valid: " ++ toString (s.errors.take 2))
     env := { env with schema := L4Factoidal.XSD11.schemaHookOf s }
+  | none =>
+    -- no schema in the environment: the built-in types only (lax validation,
+    -- xsi:type with built-in types, fn:xsd-validator with a schema option)
+    env := { env with schema := L4Factoidal.XSD11.schemaHookOf L4Factoidal.XSD11.Schema.builtins }
   for (role, file, uri) in spec.sources do
     let doc ← match spec.validated.lookup file, sch with
       | some mode, some s =>

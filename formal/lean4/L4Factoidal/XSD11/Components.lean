@@ -236,6 +236,9 @@ structure SimpleDef where
   fixedFacets : List String := []
   final : List DerivKw := []
   asserts : List Assertion := []
+  /-- The namespace bindings in scope on this step's facets (QName and
+  NOTATION enumeration values are resolved with them). -/
+  facetNs : NsBindings := []
   body : SimpleType := .atomic .anySimpleType {}
 deriving Repr, Inhabited
 
