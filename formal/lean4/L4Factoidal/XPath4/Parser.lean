@@ -572,6 +572,8 @@ def pItemType : Nat → P IType
                     set e
                     let q ← resolve p u l ""
                     let nil ← eatS "?"
+                    -- `?` (nillable) is for element tests only
+                    if nil && nm == "attribute" then synErr "attribute() takes no '?' after the type name"
                     pure (some (q, nil))
                   | none => synErr "expected a type name"
                 else pure none
@@ -584,11 +586,16 @@ def pItemType : Nat → P IType
                 let mk (x : NameTest) : IType := if nm == "element" then .elem (some x) else .attr (some x)
                 pure (if more.isEmpty then mk t else .choice ((t :: more).map mk))
               | some (q, nil) =>
-                pure (if nm == "element" then .elemT t' q nil else .attrT t' q)
+                let mkT (x : NameTest) : IType :=
+                  let x' : Option NameTest := match x with | .any => none | other => some other
+                  if nm == "element" then .elemT x' q nil else .attrT x' q
+                pure (if more.isEmpty then (if nm == "element" then .elemT t' q nil else .attrT t' q)
+                  else .choice ((t :: more).map mkT))
         | "schema-element" | "schema-attribute" =>
             ws
             match ← peekQName with
             | some (p, u, l, e) =>
+              if p == some "*" || l == "*" then synErr (nm ++ "() takes a QName, not a wildcard")
               set e
               let den ← dfltElemNs
               let q ← resolve p u l (if nm == "schema-element" then den else "")
@@ -1295,7 +1302,10 @@ def pStep : Nat → P Expr
       if kindTestNames.contains nm then
         let t ← pNodeTest n .child
         let ax := match t with
-          | .kind (.attr _) => Axis.attribute
+          -- an attribute test (also typed, a union or schema-attribute) uses
+          -- the attribute axis (XPath 4.0 §4.6.5)
+          | .kind (.attr _) | .kind (.attrT ..) | .kind (.schemaAttr _) => Axis.attribute
+          | .kind (.choice (.attr _ :: _)) | .kind (.choice (.attrT .. :: _)) => Axis.attribute
           | .kind .nsNode => Axis.namespace
           | _ => Axis.child
         let ps ← pPreds n

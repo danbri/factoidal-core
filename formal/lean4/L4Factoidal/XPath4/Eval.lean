@@ -493,6 +493,17 @@ def eval : Nat → Env → Expr → M Seq
         else if res.any Item.isGNode then err "XPTY0018" "a path step returned both nodes and non-nodes"
         else pure res
   | .step ax t preds => do
+      -- schema-element(N), schema-attribute(N): N must be declared in the
+      -- in-scope schema definitions (XPath 4.0 §3.2.7.3, XPST0008), a
+      -- static error, so it comes before the context check
+      match t with
+      | .kind (.schemaElem q) | .kind (.doc (some (.schemaElem q))) =>
+        if (env.schema.elemDecl q).isNone then
+          err "XPST0008" ("schema-element(" ++ q.show ++ "): no such element declaration")
+      | .kind (.schemaAttr q) =>
+        if (env.schema.attrDecl q).isNone then
+          err "XPST0008" ("schema-attribute(" ++ q.show ++ "): no such attribute declaration")
+      | _ => pure ()
       match env.ctx with
       | some [.node c] =>
         if ax == .item then err "XPTY0004" "the item axis is defined only for JNodes"

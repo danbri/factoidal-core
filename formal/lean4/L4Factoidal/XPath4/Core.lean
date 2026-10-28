@@ -324,6 +324,14 @@ def Env.kindMatches (e : Env) (n : NodeRef) : IType → Bool
   | .choice ts => ts.any (fun t => match t with
       | .elem x => (e.nrec n).kind == .element && (x.map (nameTestMatches · (e.nrec n).name)).getD true
       | .attr x => (e.nrec n).kind == .attribute && (x.map (nameTestMatches · (e.nrec n).name)).getD true
+      | .elemT x ty nil =>
+        let r := e.nrec n
+        r.kind == .element && (x.map (nameTestMatches · r.name)).getD true &&
+        e.schema.derives (r.tann.getD untypedQN) ty && (!r.nilled || nil)
+      | .attrT x ty =>
+        let r := e.nrec n
+        r.kind == .attribute && (x.map (nameTestMatches · r.name)).getD true &&
+        e.schema.derives (r.tann.getD untypedAtomicQN) ty
       | _ => false)
   | _ => false
 
