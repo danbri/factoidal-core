@@ -434,11 +434,56 @@ def patternOk : Nat → Bool → Expr → Bool
         | _ => true)
     | _ => false
 
+/-! ## Walking expressions (for static checks) -/
+
+/-- The operand expressions of an expression. -/
+def exprKids : Expr → List Expr
+  | .seq es | .arrS es | .tmpl es | .ext _ es _ _ _ | .step _ _ es => es
+  | .slash a b | .filter a b | .bin _ a b | .smap a b | .pipe a b
+  | .letE _ _ a b | .forE _ _ _ _ _ a b | .quant _ _ _ a b => [a, b]
+  | .dstep _ e ps => e :: ps
+  | .call _ as kw => as.filterMap id ++ kw.filterMap (·.2)
+  | .dyn f as => f :: as.filterMap id
+  | .mapArrow a g as => a :: g :: as.filterMap id
+  | .inline _ _ b _ | .arrC b | .neg b | .plus b | .instOf b _ | .treat b _
+  | .cast b _ _ | .castable b _ _ => [b]
+  | .mapC es => es.flatMap (fun (k, v) => [k, v])
+  | .lookup e k => e :: k.toList
+  | .ulookup k => k.toList
+  | .ifE c t e => [c, t, e]
+  | _ => []
+
+/-- Every subexpression (breadth first, `fuel` rounds). -/
+def exprAll : Nat → List Expr → List Expr
+  | 0, _ => []
+  | _, [] => []
+  | f + 1, es => es ++ exprAll f (es.flatMap exprKids)
+
+/-- The names of the functions an expression calls statically or by a
+    named function reference. -/
+def exprCalls (e : Expr) : List QN :=
+  (exprAll 10000 [e]).filterMap (fun x => match x with
+    | .call q _ _ => some q
+    | .fref q _ => some q
+    | _ => none)
+
+/-- The function of the XSLT grouping and merging family that a
+    pattern must not call, with its error code (§14.2, §15.5). -/
+def patternForbidden (e : Expr) : Option (String × String) :=
+  (exprCalls e).findSome? (fun q =>
+    if q.uri != nsFN then none else
+    match q.loc with
+    | "current-group" => some ("XTSE1060", "current-group")
+    | "current-grouping-key" => some ("XTSE1070", "current-grouping-key")
+    | "current-merge-group" => some ("XTSE3470", "current-merge-group")
+    | "current-merge-key" | "current-merge-key-array" => some ("XTSE3500", q.loc)
+    | _ => none)
+
 /-- Parse a pattern. `~T` and `type(T)` (with predicates) are type
     patterns of the 4.0 draft that the test suite uses; `.` with
     predicates is a simple pattern (§6.3.3); everything else is read as
     the XPath expression of an XNode pattern. -/
-def SCx.pattern (c : SCx) (src : String) : M Pattern := do
+def SCx.pattern0 (c : SCx) (src : String) : M Pattern := do
   let t := src.trimAscii.toString
   if t == "" then err "XTSE0340" "empty pattern" else
   let typed? : Option (String × Bool) :=
@@ -475,5 +520,11 @@ def SCx.pattern (c : SCx) (src : String) : M Pattern := do
   | .ok e => if patternOk 1000 true e then pure { e, src := t }
              else err "XTSE0340" ("'" ++ t ++ "' is not a pattern")
   | .error er => err "XTSE0340" ("invalid pattern '" ++ t ++ "': " ++ er.msg)
+
+def SCx.pattern (c : SCx) (src : String) : M Pattern := do
+  let p ← c.pattern0 src
+  match patternForbidden p.e with
+  | some (code, f) => err code (f ++ "() is used in the pattern '" ++ p.src ++ "'")
+  | none => pure p
 
 end L4Factoidal.XSLT4

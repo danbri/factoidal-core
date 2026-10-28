@@ -384,29 +384,40 @@ structure SortSpec where
   dataType : String := ""
   caseOrder : String := ""
   collation : String := ""
+  /-- The collation of string comparisons. -/
+  coll : Coll := .codepoint
 deriving Inhabited
 
-def cmpAtom (tz : Int) (x y : Atomic) : Ordering :=
+def cmpAtom (coll : Coll) (tz : Int) (x y : Atomic) : Ordering :=
   let nanX := (x.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
   let nanY := (y.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
   if nanX && nanY then .eq else if nanX then .lt else if nanY then .gt else
+  let strLike (a : Atomic) := a.isStringLike || a.ty == .untyped
+  if strLike x && strLike y && !coll.isCodepoint then coll.compare x.str y.str else
   match atomicCmp x y tz with
   | .ok (some c) => c
   | _ => compare x.str y.str
 
+/-- Can two sort key values be compared (§13.1.2, XTDE1030)? -/
+def sortComparable (tz : Int) (x y : Atomic) : Bool :=
+  let nan (a : Atomic) := (a.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
+  nan x || nan y || (match atomicCmp x y tz with
+    | .ok (some _) => true
+    | _ => false)
+
 /-- Compare two sort key values; 4.0 (§13.1.2): a key value is a
     sequence, compared item by item, a shorter prefix first. -/
-def cmpSeqKey (tz : Int) : List Atomic → List Atomic → Ordering
+def cmpSeqKey (coll : Coll) (tz : Int) : List Atomic → List Atomic → Ordering
   | [], [] => .eq
   | [], _ :: _ => .lt
   | _ :: _, [] => .gt
   | x :: xs, y :: ys =>
-    match cmpAtom tz x y with
-    | .eq => cmpSeqKey tz xs ys
+    match cmpAtom coll tz x y with
+    | .eq => cmpSeqKey coll tz xs ys
     | o => o
 
 def cmpKey (sp : SortSpec) (tz : Int) (a b : List Atomic) : Ordering :=
-  let o := cmpSeqKey tz a b
+  let o := cmpSeqKey sp.coll tz a b
   if sp.desc then o.swap else o
 
 def cmpKeys (sps : List SortSpec) (tz : Int) : List (List Atomic) → List (List Atomic) → Ordering
@@ -566,13 +577,29 @@ def sortSpecs (cx : Ctx) (sorts : List SortK) : XM (List SortSpec) :=
       match o with
       | some v => if v != "ascending" && v != "descending" then xerr "XTDE0030" ("invalid sort order '" ++ v ++ "'")
       | none => pure ()
-      pure { desc := o == some "descending", dataType := d.getD "", caseOrder := c.getD "", collation := cl.getD "" })
+      -- the collation: the attribute, else the default collation; with
+      -- case-order and no collation, the UCA with that case order
+      let curi := cl.getD cx.env.defaultCollation
+      let coll ← match collationOf cx.env.baseUri curi with
+        | .ok k => pure k
+        | .error _ => xerr "XTDE1035" ("unknown collation " ++ curi ++ " in xsl:sort")
+      let coll := match cl, c with
+        | none, some "upper-first" => Coll.uca { upperFirst := true }
+        | none, some "lower-first" => Coll.uca {}
+        | _, _ => coll
+      pure { desc := o == some "descending", dataType := d.getD "", caseOrder := c.getD "",
+             collation := cl.getD "", coll })
 
 /-- The groups of `xsl:for-each-group` (§14): (key, items), in order of
     first appearance. -/
 def makeGroups (cx : Ctx) (s : Seq) (kind : GroupKind) (key : Option Expr) (pat : Option Pattern)
-    (composite : Bool) : XM (List (Seq × Seq)) := do
+    (composite : Bool) (coll : Coll := .codepoint) : XM (List (Seq × Seq)) := do
   let env := cx.env
+  -- string keys are equal when their collation keys are equal
+  let groupKeyStr (a : Atomic) : String :=
+    if (a.ty == .untyped || a.isStringLike) && !coll.isCodepoint then
+      "s:" ++ String.intercalate "," ((coll.key a.str).map toString)
+    else groupKeyStr a
   let sz := s.length
   match kind with
   | .by =>
@@ -914,9 +941,14 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           for o in ← run n S ({ cx.focus it k sz with rule := none }) body do out := out.push o
           k := k + 1
         pure out.toList
-    | .forEachGroup sel kind key pat composite _ sorts body =>
+    | .forEachGroup sel kind key pat composite collA sorts body =>
         let s ← evalX cx sel
-        let groups ← makeGroups cx s kind key pat composite
+        -- the collation of string keys (§14.4; XTDE1110 if unknown)
+        let curi := (← optAvtStr cx collA).getD cx.env.defaultCollation
+        let coll ← match collationOf cx.env.baseUri curi with
+          | .ok k => pure k
+          | .error _ => xerr "XTDE1110" ("unknown collation " ++ curi ++ " in xsl:for-each-group")
+        let groups ← makeGroups cx s kind key pat composite coll
         -- sort the groups: the sort keys see the group as current-group
         let groups ← if sorts.isEmpty then pure groups else do
           let mut keyed : Array (List (List Atomic) × (Seq × Seq)) := #[]
@@ -1418,6 +1450,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               for o in ← run n S cx b do out := out.push o
             pure out.toList
     | .staticErr code msg => xerr code msg
+    | .withColl u body => run n S { cx with env := { cx.env with defaultCollation := u } } body
     | .extCall q ats fbs =>
         let cands := S.templates.toList.filter (fun t => t.name == some q)
         match cands.foldl (fun (b : Option Tmpl) t => match b with
@@ -1622,6 +1655,12 @@ def sortSeq : Nat → Sheet → Ctx → Seq → List SortK → XM Seq
       keyed := keyed.push ((← sortKeysOf n S { cx.focus it k sz with rule := none } sorts specs), it)
       k := k + 1
     let tz := cx.env.tz
+    -- the values of one sort key must be comparable (XTDE1030)
+    for j in [0:specs.length] do
+      let vals := keyed.toList.flatMap (fun (ks, _) => (ks[j]?.getD []))
+      if let some v0 := vals.head? then
+        if vals.any (fun v => !sortComparable tz v0 v) then
+          xerr "XTDE1030" "the values of a sort key cannot be compared"
     pure ((keyed.toList.mergeSort (fun a b => cmpKeys specs tz a.1 b.1 != .gt)).map (·.2))
 
 end

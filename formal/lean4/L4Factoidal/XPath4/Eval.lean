@@ -110,10 +110,12 @@ def arith (tz : Int) (op : ArOp) (a b : Atomic) : M Atomic := do
   | _, _, _ => err "XPTY0004" ("invalid arithmetic on xs:" ++ a.ty.name ++ " and xs:" ++ b.ty.name)
 
 /-- Value comparison of two atomic values (§3.7.2). -/
-def valueCmp (tz : Int) (op : BOp) (a b : Atomic) : M Bool := do
+def valueCmp (tz : Int) (op : BOp) (a b : Atomic) (coll : Coll := .codepoint) : M Bool := do
   let a := if a.ty == .untyped then Atomic.ofStr a.str else a
   let b := if b.ty == .untyped then Atomic.ofStr b.str else b
-  let c ← atomicCmp a b tz
+  -- strings compare under the default collation (§3.7.2)
+  let c ← if !coll.isCodepoint && a.isStringLike && b.isStringLike then pure (some (coll.compare a.str b.str))
+    else atomicCmp a b tz
   match op with
   | .veq | .geq => pure (c == some .eq)
   | .vne | .gne => pure (c != some .eq)
@@ -129,7 +131,7 @@ def valueCmp (tz : Int) (op : BOp) (a b : Atomic) : M Bool := do
 
 /-- General comparison of one pair, with the untyped conversions of
     §3.7.1. -/
-def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option String) : M Bool := do
+def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option String) (coll : Coll := .codepoint) : M Bool := do
   let conv (x y : Atomic) : M Atomic :=
     if x.ty == .untyped then
       if y.ty == .untyped || y.isStringLike then pure (Atomic.ofStr x.str)
@@ -140,7 +142,7 @@ def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option Str
     else pure x
   let a' ← conv a b
   let b' ← conv b a
-  valueCmp tz op a' b'
+  valueCmp tz op a' b' coll
 
 def BOp.isGeneral : BOp → Bool
   | .geq | .gne | .glt | .gle | .ggt | .gge => true | _ => false
@@ -859,14 +861,14 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
         let mut res := false
         for x in xs do
           for y in ys do
-            if ← generalPair env.tz op x y env.nsResolve then res := true; break
+            if ← generalPair env.tz op x y env.nsResolve env.defaultColl then res := true; break
           if res then break
         pure (sBool res)
       else if op.isValue then do
         let x ← env.atomizeOpt (← eval n env a)
         let y ← env.atomizeOpt (← eval n env b)
         match x, y with
-        | some x, some y => pure (sBool (← valueCmp env.tz op x y))
+        | some x, some y => pure (sBool (← valueCmp env.tz op x y env.defaultColl))
         | _, _ => pure []
       else if op.isNodeCmp then do
         let x ← eval n env a

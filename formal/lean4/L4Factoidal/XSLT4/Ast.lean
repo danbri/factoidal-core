@@ -137,6 +137,9 @@ inductive Instr where
       instruction is evaluated (inside forwards-compatible regions or
       `use-when` branches the error never surfaces). -/
   | staticErr (code msg : String)
+  /-- A sequence constructor under a `[xsl:]default-collation`
+      attribute (§3.7.2): the default collation of its expressions. -/
+  | withColl (uri : String) (body : List Instr)
 
 /-- An `xsl:sort` (§13.1): select (or body), order, lang, data-type,
     case-order, collation, stable. -/
@@ -201,6 +204,8 @@ structure KeyDef where
   use : Option Expr := none
   body : List Instr := []
   composite : Bool := false
+  /-- The collation URI (`""`: the default collation of the call). -/
+  collation : String := ""
 deriving Inhabited
 
 structure ModeDef where
@@ -267,6 +272,8 @@ structure Sheet where
       its own mapped characters. -/
   charMaps : List (String × List String × List (Char × String)) := []
   defaultMode : String := "#unnamed"
+  /-- The default collation of the principal module (§3.7.2). -/
+  defaultCollation : String := ""
   /-- The `version` attribute of the principal module. -/
   version : String := "4.0"
   /-- `xsl:global-context-item`: `use` and type. -/
@@ -280,6 +287,43 @@ structure Sheet where
       messages and `xsl:evaluate` defaults). -/
   ns : List (String × String) := []
 deriving Inhabited
+
+def SortK.body : SortK → List Instr | .mk _ b .. => b
+def MSource.keys : MSource → List SortK | .mk _ _ _ _ _ ks => ks
+
+/-- The sequence constructors directly inside an instruction (its
+    content, the bodies of its parameters, sort keys and branches). -/
+def Instr.bodies : Instr → List (List Instr)
+  | .valueOf _ _ b _ | .seq _ b _ | .lre _ _ _ _ b | .elem _ _ _ _ b | .attr _ _ _ _ _ b
+  | .comment _ b | .pi _ _ b | .nsI _ _ b | .docI b | .var _ _ _ b | .copy _ _ _ _ b
+  | .message _ b _ _ | .assertI _ _ b _ | .breakI _ b | .mapI _ b _ | .mapEntry _ _ b
+  | .arrayI _ _ b | .arrayMember _ b | .wherePopulated b | .onEmpty _ b | .onNonEmpty _ b
+  | .sourceDoc _ b | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b => [b]
+  | .applyT _ _ ss ps _ => ss.map SortK.body ++ ps.map WParam.body
+  | .callT _ ps | .applyImports ps | .nextMatch ps | .nextIteration ps => ps.map WParam.body
+  | .forEach _ ss b _ | .forEachGroup _ _ _ _ _ _ ss b | .performSort _ ss b => b :: ss.map SortK.body
+  | .choose ws o | .switch _ ws o => ws.map (·.2) ++ o.toList
+  | .iterate _ ps oc b => b :: ps.map WParam.body ++ (oc.map (·.2)).toList
+  | .tryI _ b cs => b :: cs.map (fun (_, _, x) => x)
+  | .analyzeString _ _ _ m n => m.toList ++ n.toList
+  | .evaluate _ _ _ _ _ ps _ _ => ps.map WParam.body
+  | .merge srcs a => a :: srcs.flatMap (fun s => s.keys.map SortK.body)
+  | .unknown _ fbs _ | .extCall _ _ fbs => fbs
+  | _ => []
+
+/-- Every instruction in a list of sequence constructors, nested ones
+    included (breadth first; `fuel` bounds the number of rounds). -/
+def allInstrs : Nat → List Instr → List Instr
+  | 0, _ => []
+  | _, [] => []
+  | f + 1, is => is ++ allInstrs f (is.flatMap (fun i => i.bodies.flatten))
+
+/-- The sequence constructors of every component of a stylesheet. -/
+def Sheet.bodies (S : Sheet) : List (List Instr) :=
+  S.templates.toList.map (fun t => t.body ++ t.params.flatMap (·.body)) ++
+  S.functions.map (fun f => f.body ++ f.params.flatMap (·.body)) ++
+  S.globals.map (·.body) ++ S.attrSets.map (·.body) ++
+  S.keys.map (·.body) ++ S.accumulators.flatMap (fun a => a.rules.map (·.body))
 
 def Sheet.mode (s : Sheet) (k : String) : ModeDef :=
   (s.modes.find? (·.name == k)).getD { name := k }

@@ -123,7 +123,7 @@ deriving Inhabited
 /-! ## The host functions -/
 
 def XFunction.minArity (f : XFunction) : Nat :=
-  (f.params.filter (fun p => p.sel.isNone && p.body.isEmpty)).length
+  (f.params.filter (fun p => p.required)).length
 
 def XFunction.accepts (f : XFunction) (k : Nat) : Bool :=
   f.minArity ≤ k && k ≤ f.params.length
@@ -146,6 +146,16 @@ def runFresh {α} (c : HostCall) (tag : String) (args : List Seq) (act : XM α) 
   let (v, _) ← act.run { base := (h.toNat % 1000000007) + 1 }
   pure v
 
+/-- The index string of a key value: with a collation other than the
+    codepoint collation, strings are indexed by their collation key. -/
+def keyStrOf (env : Env) (coll : String) (a : Atomic) : String :=
+  match (if coll == "" then none else (collationOf env.baseUri coll).toOption) with
+  | some c =>
+    if (a.ty == .untyped || a.isStringLike) && !c.isCodepoint then
+      "s:" ++ String.intercalate "," ((c.key a.str).map toString)
+    else groupKeyStr a
+  | none => groupKeyStr a
+
 /-- The key index of `kd` over document `doc` (number `di`). -/
 def buildKeyIndex (S : Sheet) (env : Env) (kd : KeyDef) (root : NodeRef) : M KeyIndex := do
   let d := env.doc root
@@ -163,7 +173,8 @@ def buildKeyIndex (S : Sheet) (env : Env) (kd : KeyDef) (root : NodeRef) : M Key
         let (v, _) ← (materializeAll env os).run {}
         pure v
     let as ← env.atomize v
-    let ks := if kd.composite then [String.intercalate "\x00" (as.map groupKeyStr)] else as.map groupKeyStr
+    let kstr := keyStrOf env kd.collation
+    let ks := if kd.composite then [String.intercalate "\x00" (as.map kstr)] else as.map kstr
     for k in ks.eraseDups do
       idx := idx.insert k ((idx.getD k #[]).push i)
   pure idx
@@ -267,7 +278,13 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
             | none =>
               -- a default value, in the focus of the call
               let dcx : Ctx := { cx with env := { cx.env with ctx := c.ctx, pos := c.pos, size := c.size } }
-              bindValue 100000 S dcx p.sel p.body p.ty ("$" ++ p.name.show)
+              -- with no select and no content the default is the empty
+              -- sequence (§10.3.2)
+              if p.sel.isNone && p.body.isEmpty then
+                match p.ty with
+                | some t => liftX (env.coerce t [] ("$" ++ p.name.show ++ " of " ++ fn.name.show))
+                | none => pure []
+              else bindValue 100000 S dcx p.sel p.body p.ty ("$" ++ p.name.show)
           cx := cx.bind p.name v
           i := i + 1
         let os ← run 1000000 S cx fn.body
@@ -353,15 +370,17 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
               let nd ← ctxNode c "key()"
               pure (env.treeRoot nd)
           | _ => err "XPTY0004" "the third argument of key() must be a node"
-        let rootN := if k == 3 then root else root
-        if k == 2 && (env.nrec (env.treeRoot rootN)).kind != .document then
-          err "XTDE1270" "key() with two arguments needs a context node in a document"
+        let rootN := root
+        if (env.nrec (env.treeRoot rootN)).kind != .document then
+          err "XTDE1270" "key() needs a node in a tree whose root is a document node"
         let vals ← env.atomize (a.getD 1 [])
         let comp := kds.any (·.composite)
-        let wanted := if comp then [String.intercalate "\x00" (vals.map groupKeyStr)] else vals.map groupKeyStr
+        let ks := keyStrOf env (kds.head?.map (·.collation) |>.getD "")
+        let wanted := if comp then [String.intercalate "\x00" (vals.map ks)] else vals.map ks
         let mut hits : Array NodeRef := #[]
-        for kd in kds do
-          let idx ← match rootN.rt, keyCache.lookup (kd.name.eqn, rootN.doc) with
+        for (kd, j) in S.keys.zipIdx do
+          if kd.name != nm then continue
+          let idx ← match rootN.rt, keyCache.lookup (kd.name.eqn ++ "#" ++ toString j, rootN.doc) with
             | none, some th => if rootN.idx == 0 then th.get else buildKeyIndex S env kd rootN
             | _, _ => buildKeyIndex S env kd rootN
           for w in wanted do
@@ -471,6 +490,7 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
   let ns0 := S.ns.filter (·.1 != "")
   let vars0 := [(xslGlobals, [])] ++ S.statics.reverse
   let env0 : Env := { o.env with docs, decimalFormats := dfs, baseUri := S.baseUri, ns := ns0, vars := vars0 }
+  let env0 := if S.defaultCollation != "" then { env0 with defaultCollation := S.defaultCollation } else env0
   if S.globalCtxUse == "required" && o.globalCtx.isNone then
     err "XTDE3086" "the stylesheet requires a global context item"
   let globalCtx := if S.globalCtxUse == "absent" then none else o.globalCtx
@@ -478,8 +498,8 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
   let env ← evalGlobals S o env0
   -- key and accumulator caches over the documents of the context
   let keyCache : List ((String × Nat) × Thunk (M KeyIndex)) :=
-    (List.range docs.size).flatMap (fun di => S.keys.map (fun kd =>
-      ((kd.name.eqn, di), Thunk.mk (fun _ => buildKeyIndex S { env with host := mkHost S env [] [] 100000 } kd (NodeRef.mk' di 0)))))
+    (List.range docs.size).flatMap (fun di => S.keys.zipIdx.map (fun (kd, j) =>
+      ((kd.name.eqn ++ "#" ++ toString j, di), Thunk.mk (fun _ => buildKeyIndex S { env with host := mkHost S env [] [] 100000 } kd (NodeRef.mk' di 0)))))
   let accCache : List ((String × Nat) × Thunk (M (Std.HashMap Nat (Seq × Seq)))) :=
     (List.range docs.size).flatMap (fun di => S.accumulators.map (fun acc =>
       ((acc.name.eqn, di), Thunk.mk (fun _ => accumulatorValues S { env with host := mkHost S env [] [] 100000 } acc (NodeRef.mk' di 0)))))
