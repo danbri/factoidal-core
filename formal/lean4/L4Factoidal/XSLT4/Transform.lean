@@ -828,8 +828,9 @@ def transform (S : Sheet) (o : TOpts) : M TResult := do
       if let some ok := S.initModes then
         if o.initialMode.isSome && !ok.contains mode then
           xerr "XTDE0045" ("the mode " ++ mode ++ " is not eligible as an initial mode")
+      -- a mode that only mode="#all" names is not declared (§2.3.3)
       if mode != "#unnamed" && mode != S.defaultMode && !(S.modes.any (·.name == mode)) &&
-          !(S.templates.any (fun t => t.modes.contains mode || t.modes.contains "#all")) then
+          !(S.templates.any (fun t => t.modes.contains mode)) then
         xerr "XTDE0045" ("the initial mode " ++ mode ++ " is not declared")
       let sel := match o.initialSelect with
         | some s => s
