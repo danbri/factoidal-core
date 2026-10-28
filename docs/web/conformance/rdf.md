@@ -21,9 +21,6 @@ machine-readable copy is the
 `latest.json`; a number here that disagrees with that file is a bug in
 one of them, not a judgement call.
 
-Parser and algebra spec are verified in F\*; the on-disk backend has
-unverified OCaml-side optimization layers being migrated back to F\*.
-
 Sibling pages: [OWL 2 conformance]({{ '/web/conformance/owl2/' | url }})
 &middot; [SPARQL conformance]({{ '/web/conformance/sparql/' | url }})
 &middot; [per-module assurance inventory]({{ '/web/conformance/assurance-inventory/' | url }}).

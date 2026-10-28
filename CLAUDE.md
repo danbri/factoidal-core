@@ -811,6 +811,24 @@ WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.”"
   https://github.com/danbri/factoidal/issues/677. Rule text:
   `skills/crypto-policy/SKILL.md` § AES through WebCrypto.
 
+### Four answers of 2026-10-28 (owner)
+
+Owner, 2026-10-28, verbatim: "1. Y 2. Y 3. Y 4. Y. Re 3 if controversial or
+risk file issue to flag for expert review", to these questions:
+
+1. Publish npm 0.20.0: yes. It is published from the commit that cut 0.20.0
+   (`0c9a222b`, CHANGELOG "Unreleased" empty), through `npm-publish.yml` in
+   `danbri/factoidal-builds`, dist-tag `latest`; then the hub pages load it.
+2. Remove the old F\* qualifier sentence from the public pages
+   (`docs/index.md`, `docs/web/how-it-works.md`, the three conformance
+   pages): yes.
+3. WebDAV listener login (https://github.com/danbri/factoidal/issues/1108):
+   PBKDF2-HMAC-SHA256 over the vendored HACL\* HMAC, yes. If the choice is
+   disputed or carries risk, open an issue that asks for expert review and
+   link it from the code and the docs.
+4. HTTP over XMPP (https://github.com/danbri/factoidal/issues/1107): start
+   stage 1 of `docs/designissues/2026-10-28-http-over-xmpp.md`.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where

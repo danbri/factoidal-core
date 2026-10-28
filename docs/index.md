@@ -82,8 +82,6 @@ an independently-stated formalisation — plus its active `assume val`
 count, any admissions, and which official suites exercise it at what
 coverage.
 
-Parser and algebra spec are verified in F\*; the on-disk backend has
-unverified OCaml-side optimization layers being migrated back to F\*.
 [How Factoidal works]({{ '/web/how-it-works/' | url }}) covers the
 verification story, the four extraction targets, the read-write store,
 and the module dependency graph.

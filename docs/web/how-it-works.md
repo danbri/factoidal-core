@@ -21,12 +21,6 @@ under z3 with no `--lax` and no escape hatches. Executable code comes
 out of `fstar.exe --codegen OCaml`, so the code you run is derived
 from the spec rather than written to match it.
 
-Standing qualifier: parser and algebra spec verified in F\*; on-disk
-backend has unverified OCaml-side optimization layers being migrated
-back to F\*. That boundary is tracked openly in
-[issue #118](https://github.com/danbri/factoidal/issues/118) and the
-[recovery plan](https://github.com/danbri/factoidal/blob/claude/main/docs/designissues/2026-05-07-query-planning-fstar-recovery.md).
-
 The [verified-in-F\* hub post]({{ '/web/hub/16-the-verified-in-fstar-story/' | url }})
 walks through why F\*, what the proofs cover, and what one proof gap
 looks like when stated plainly.
