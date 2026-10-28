@@ -451,6 +451,24 @@ webmcp options for our browser-visible servers."
   descriptions as the MCP core; the same safety rules as section 7 (write tools
   behind authorization; results are data, not instructions).
 
+- **Stateless first, classic as a compatibility layer.** Owner, 2026-10-28,
+  verbatim: "Stateless mcp is future of mcp afaik; can we align even if
+  support classic for historical reasons and legacy deployments?" Decision
+  (coordinator, to that question): the Lean MCP core implements only the
+  2026-07-28 stateless model (per-request `_meta`, `server/discover`,
+  `input_required` results). A separate compatibility layer accepts the
+  2025-11-25 flow (`initialize`, `notifications/initialized`,
+  `Mcp-Session-Id`) and maps it onto the core: it keeps the negotiated
+  version and client capabilities per session and adds them to each request
+  as `_meta`. Server-initiated requests (sampling, elicitation) are not sent
+  on the classic path; the layer returns a JSON-RPC error that names
+  https://github.com/danbri/factoidal/issues/1121. The XMPP binding (option
+  b) is stateless only, because no XMPP client of the classic model exists.
+  Reason: the stable official SDKs and the conformance tool 0.1.16 still
+  target 2025-11-25 (section 2), so stdio and HTTP clients need the layer
+  now. The layer has its own tests and is removable with no change to the
+  core.
+
 ## 8. What I could not find
 
 - Any MCP-over-XMPP specification, ProtoXEP or implementation, or any

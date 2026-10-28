@@ -847,6 +847,12 @@ https://github.com/danbri/factoidal/issues/1121; review and order:
 `docs/designissues/2026-10-28-mcp-over-xmpp.md`. The name's expansion is the
 owner's to choose.
 
+Owner, 2026-10-28, verbatim: "Stateless mcp is future of mcp afaik; can we
+align even if support classic for historical reasons and legacy
+deployments?" Rule: the Lean MCP core is 2026-07-28 stateless only; the
+2025-11-25 `initialize`/session flow is a separate compatibility layer over
+it, for stdio and HTTP only. Record: section 7a of the design record above.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where
