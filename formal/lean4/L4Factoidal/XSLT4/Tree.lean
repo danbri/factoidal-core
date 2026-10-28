@@ -48,7 +48,7 @@ def Out.ofSeq (s : Seq) : List Out := s.map Out.item
 def baseMarkQ : QN := { uri := "urn:x-factoidal:internal", loc := "base-uri" }
 
 /-- The name of a content attribute that is not an attribute: the
-    children of the element do not inherit its namespaces
+    children of the element do not inherit the namespaces it declares
     (`inherit-namespaces="no"`, §11.9.1). `buildElem` drops it. -/
 def noInheritQ : QN := { uri := "urn:x-factoidal:internal", loc := "no-inherit" }
 
@@ -236,6 +236,12 @@ def buildElem (env : Env) : Nat → Option Nat → List (String × String) → Q
     let nm ← normContent env content
     let noInherit := nm.attrs.any (fun (q, _) => q == noInheritQ)
     let nm := { nm with attrs := nm.attrs.filter (fun (q, _) => !(q == baseMarkQ) && !(q == noInheritQ)) }
+    -- §5.7.1: two namespace nodes that bind one prefix to two URIs
+    for (p, u) in nm.nss do
+      match decls.lookup p with
+      | some u' => if u' != u then
+          throw { code := "XTDE0430", msg := "two namespace nodes bind prefix '" ++ p ++ "' to different URIs" }
+      | none => pure ()
     let scope0 := (decls ++ nm.nss).reverse ++ pscope
     -- a namespace node of the element that binds the prefix of its name
     -- to another URI: the element gets another prefix (§5.7.3)
@@ -251,8 +257,10 @@ def buildElem (env : Env) : Nat → Option Nat → List (String × String) → Q
       scope := sc'
       ats := ats.push (q', v)
     let i ← tPush { kind := .element, name, parent := par, inscope := scope }
-    -- the scope the children start from
-    let kscope := if noInherit then [("xml", nsXML)] else scope
+    -- the scope the children start from: with inherit-namespaces="no"
+    -- they do not get the bindings of this element, only those that it
+    -- inherits itself (as when the element is copied into its parent)
+    let kscope := if noInherit then pscope else scope
     let mut aIdx : Array Nat := #[]
     for (q, v) in ats.toList do
       let j ← tPush { kind := .attribute, name := q, value := v, parent := some i }

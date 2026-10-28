@@ -643,7 +643,7 @@ def resolveName (name : String) (ns : Option Avt) (scope : List (String × Strin
     (cx : Ctx) (badName undeclared : String) : XM QN := do
   let (p, l) ← match name.splitOn ":" with
     | [l] => pure ("", l)
-    | [p, l] => pure (p, l)
+    | [p, l] => if p == "" then xerr badName ("invalid name '" ++ name ++ "'") else pure (p, l)
     | _ => xerr badName ("invalid name '" ++ name ++ "'")
   if !isNCName l || (p != "" && !isNCName p) then
     if name.startsWith "Q{" && name.contains '}' then
@@ -654,7 +654,8 @@ def resolveName (name : String) (ns : Option Avt) (scope : List (String × Strin
   match ns with
   | some a =>
       let u ← avtStr cx a
-      if !isElem && u == "" then return { uri := "", loc := l }
+      -- a name in no namespace has no prefix (§11.2, §11.3)
+      if u == "" then return { uri := "", loc := l }
       let p := if !isElem && p == "" && u != "" then "" else p
       pure { uri := u, loc := l, pfx := if p == "xmlns" then "" else p }
   | none =>
@@ -950,6 +951,8 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let name ← avtStr cx nm
         let name := name.trimAscii.toString
         let q ← resolveName name ns scope true cx "XTDE0820" "XTDE0830"
+        if q.uri == "http://www.w3.org/2000/xmlns/" then
+          xerr "XTDE0835" "an element cannot be in the xmlns namespace"
         let mut content : Array Out := #[]
         for o in ← attrSetOuts n S cx useSets do content := content.push o
         for o in ← run n S cx body do content := content.push o

@@ -534,13 +534,25 @@ def scanResources (root dir src : String) : IO (List (String × String)) := do
   let absRoot := normPath root
   let mut out : List (String × String) := []
   for t in toks do
-    let path := normPath (dir ++ "/" ++ t)
+    let path0 := normPath (dir ++ "/" ++ t)
+    -- a reference that `xml:base` makes relative to a directory above
+    -- (`xml:base="../../"`): the first one up to two levels above that
+    -- names a file
+    let mut path := path0
+    if !(← System.FilePath.pathExists path0) then
+      for up in ["/..", "/../.."] do
+        let p := normPath (dir ++ up ++ "/" ++ t)
+        if ← System.FilePath.pathExists p then
+          path := p
+          break
     if !path.startsWith absRoot then continue
     if path.endsWith ".xsl" then continue
     if ← System.FilePath.pathExists path then
       if (← System.FilePath.isDir path) then continue
       match ← readFileSafe path with
-      | some txt => out := (t, txt) :: (fileUri path, txt) :: out
+      | some txt =>
+        -- the reference as written names only a file of this directory
+        out := (if path == path0 then [(t, txt)] else []) ++ (fileUri path, txt) :: out
       | none => pure ()
   return out
 

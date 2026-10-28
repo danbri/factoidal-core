@@ -719,7 +719,11 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         let useSets ← match as.get "use-attribute-sets" with
           | some v => (tokens v).mapM (fun t => liftM (c.qname t))
           | none => pure []
-        pure (.elem nm (← optAvt c as "namespace") c.ns useSets (← body))
+        -- inherit-namespaces="no" (§11.2): an internal content attribute
+        -- that `buildElem` reads and drops
+        let mark : List Instr := if ← as.bool "inherit-namespaces" true then [] else
+          [.attr [.lit noInheritQ.loc] (some [.lit noInheritQ.uri]) [] none none []]
+        pure (.elem nm (← optAvt c as "namespace") c.ns useSets (mark ++ (← body)))
     | "attribute" =>
         let nm ← liftM (c.avt (← reqAttr as "name" l))
         let sel ← optExpr c as "select"
