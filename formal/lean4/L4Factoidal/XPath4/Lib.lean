@@ -1004,10 +1004,10 @@ def fnTable : List (String × LibFn) := [
     pure (sBool found)),
   -- errors and diagnostics
   ent "error" (fun _ _ a => do
-    let code := match optAtom (argN a 0) with
-      | some ⟨_, .qn q⟩ => q.loc
-      | _ => "FOER0000"
-    err code (strOf (argN a 1))),
+    let (code, uri) := match optAtom (argN a 0) with
+      | some ⟨_, .qn q⟩ => (q.loc, if q.uri == nsERR then "" else q.uri)
+      | _ => ("FOER0000", "")
+    throw { code, msg := strOf (argN a 1), uri }),
   ent "trace" (fun _ _ a => pure (argN a 0)),
   ent "message" (fun _ _ _ => pure []),
   ent "default-collation" (fun _ e _ => pure (sStr e.defaultCollation)),
