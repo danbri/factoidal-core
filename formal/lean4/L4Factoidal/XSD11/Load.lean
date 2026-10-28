@@ -163,6 +163,8 @@ def schemaHookOf (s : Schema) : XPath4.SchemaHook :=
       match s.elemIdx? (qnXName n), s.elemIdx? (qnXName h) with
       | some ni, some hi => s.substOk hi ni
       | _, _ => false,
+    targetNamespaces := ((s.gTypes.map (·.1.ns)) ++ (s.gElems.map (·.1.ns)) ++ (s.gAttrs.map (·.1.ns))).filter
+      (fun u => u != xsNS && u != xsiNS) |>.eraseDups,
     validate := some (validateFor s),
     validateIn := some (validateNodeIn s),
     validateWith := some (validateWithFor s) }

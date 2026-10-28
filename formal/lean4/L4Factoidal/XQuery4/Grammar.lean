@@ -1002,7 +1002,12 @@ where
           pure ("type Q{" ++ q.uri ++ "}" ++ q.loc)
         | none => synErr "expected a type name after validate type"
       else pure "strict"
-    let body ← pBraced sp
+    ws
+    expectS "{"
+    -- the braces of a validate expression hold an Expr (not empty)
+    if ← eatS "}" then synErr "validate needs an expression"
+    let body ← subE sp.expr
+    expectS "}"
     pure (some (.ext "validate" [body] [] [] [mode]))
   | _ => pure none
 

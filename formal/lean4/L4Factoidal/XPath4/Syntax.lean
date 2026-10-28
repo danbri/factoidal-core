@@ -219,6 +219,9 @@ structure NRec where
   tval : Option (List Atomic) := none
   /-- Hook for schema validation: `dm:nilled`. -/
   nilled : Bool := false
+  /-- Hook for schema validation: the element has element-only content,
+      so `dm:typed-value` is absent and atomization fails (FOTY0012). -/
+  noTypedValue : Bool := false
 deriving Inhabited
 
 structure Doc where

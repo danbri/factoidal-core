@@ -97,7 +97,14 @@ def annotRec (s : Schema) (r : NRec) (i : PInfo) : NRec :=
     let tval := match i.normalized with
       | some norm => if i.nilled then some [] else atomsOf s nsr t norm
       | none => if i.nilled then some [] else none
-    { r with tann := some (s.typeQN t), tval, nilled := i.nilled }
+    let elemOnly : Bool := match s.type t with
+      | .complex c => match c.content with
+        | .elems _ false => true
+        | .empty => false
+        | _ => false
+      | _ => false
+    { r with tann := some (s.typeQN t), tval, nilled := i.nilled,
+             noTypedValue := elemOnly && r.kind == .element }
 
 /-- Copy the PSVI annotations onto the node records of `d`, starting at
 record `idx` for the PSVI node `p`. -/

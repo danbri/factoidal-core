@@ -57,6 +57,8 @@ structure Module where
   emptyGreatest : Bool := false
   /-- Named item types (`declare type`, `declare record`). -/
   types : List (QN × IType) := []
+  /-- `import schema`: the target namespaces (XQuery 4.0 §5.11). -/
+  schemaImports : List String := []
   /-- Decimal formats (`declare decimal-format`), as `Env.decimalFormats`. -/
   decimalFormats : List (String × List (String × String)) := []
 deriving Inhabited
@@ -215,6 +217,9 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
             let _ ← pUriLit
             if !(← eatS ",") then break
         expectS ";"
+        if u == "" && (pfx.map (· != "")).getD false then qerr "XQST0057" "a schema import with a prefix and an empty namespace"
+        if m.schemaImports.contains u then qerr "XQST0058" "the same schema namespace imported twice"
+        m := { m with schemaImports := m.schemaImports ++ [u] }
         match pfx with
         | some "xml" | some "xmlns" => qerr "XQST0070" "import prefix xml or xmlns"
         | some p =>
@@ -675,6 +680,11 @@ def moduleEnv (env : Env) (m : Module) : Env :=
 
 /-- Evaluate a main module. -/
 def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
+  -- XQuery 4.0 §5.11: an imported schema namespace must be one the in-scope
+  -- schema definitions (`XPath4.SchemaHook`) have components for
+  for u in m.schemaImports do
+    if !env.schema.targetNamespaces.contains u then
+      err "XQST0059" ("no schema for the imported namespace " ++ u)
   let env := moduleEnv env m
   let (libs, _) ← loadImports env 50 ((m.libNs.map (·.2)).toList) m
   checkModules env (libs ++ [m])

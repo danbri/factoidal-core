@@ -46,6 +46,9 @@ structure SchemaHook where
   attrDecl : QN → Option QN := fun _ => none
   /-- `substitutes n h`: an element named `n` may stand for head `h`. -/
   substitutes : QN → QN → Bool := fun _ _ => false
+  /-- The target namespaces the schema has components for (XQuery
+      `import schema`, XQST0059). -/
+  targetNamespaces : List String := []
   /-- Validate a document element against the in-scope schema (`xsd-validation`
       of `fn:parse-xml` and `fn:doc`): the mode (`strict`, `lax` or
       `type Q{uri}local`), the element, the document URI; the typed document
@@ -180,7 +183,9 @@ def Env.atomizeFuel (e : Env) : Nat → Seq → M (List Atomic)
     for i in s do
       match i with
       | .atom a => out := out.push a
-      | .node n => out := out ++ (e.typedValues n).toArray
+      | .node n =>
+        if (e.nrec n).noTypedValue then err "FOTY0012" "the node has element-only content, so no typed value"
+        out := out ++ (e.typedValues n).toArray
       | .arr ms =>
           for m in ms do
             for a in ← e.atomizeFuel f m do out := out.push a
