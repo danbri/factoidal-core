@@ -901,10 +901,30 @@ def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
   | some b => eval fuel (markStatic env) b
   | none => err "XPST0003" "a library module has no query body"
 
+/-- `fn:function-lookup` finds the functions of the prolog (F&O 4.0
+    §17.1.1; their default parameter values are computed in the focus of
+    the lookup); any other name goes to the built-in function. -/
+def fnLookupHost (fuel : Nat) (env : Env) (q : QN) : HostFn := fun c a => do
+  let e' : Env := { env with vars := c.vars, ctx := c.ctx, pos := c.pos, size := c.size,
+                             ns := c.ns, untrusted := c.untrusted }
+  match a with
+  | [[.atom ⟨_, .qn n⟩], [.atom ⟨_, .int i⟩]] =>
+    match (if i < 0 then none else
+        refUser? (fun f as => apply fuel e' f as) e' { n with pfx := "#Q" } i.toNat) with
+    | some r => r
+    | none => callFn fuel e' q a
+  | _ => callFn fuel e' q a
+
+def withFnLookup (fuel : Nat) (env : Env) : Env :=
+  { env with host := fun q k =>
+      if q.uri == nsFN && q.loc == "function-lookup" && k == 2 then
+        Option.some (fnLookupHost fuel env q)
+      else env.host q k }
+
 /-- Parse and evaluate an XQuery 4.0 main module. -/
 def evalQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) : M Seq := do
   let m ← parseModule src env.ns (typeLoader env 8 [])
-  evalModule fuel env m
+  evalModule fuel (withFnLookup fuel env) m
 
 def evalQShow (src : String) : String :=
   match evalQuery src with
