@@ -342,6 +342,8 @@ def catalogRaw : List (String × String × String × List (String × String × O
   ("fn", "rng-record#", "map(xs:string, item())", [("state", "xs:integer", none)]),
   ("fn", "rng-permute#", "item()*", [("state", "xs:integer", none), ("input", "item()*", none)]),
   ("fn", "rng-take#", "xs:double*", [("state", "xs:integer", none), ("count", "xs:nonNegativeInteger", none)]),
+  -- internal (XPath4.Ixml): the parse function that fn:invisible-xml returns
+  ("fn", "ixml-parse#", "item()", [("grammar", "item()?", none), ("fail", "xs:boolean", none), ("input", "xs:string", none)]),
   ("fn", "every", "xs:boolean", [("input", "item()*", none), ("predicate", "(fn($item as item(), $pos as xs:integer) as xs:boolean?)?", some "fn:boolean#1")]),
   ("fn", "char", "xs:string", [("value", "(xs:string | xs:integer)", none)]),
   ("fn", "characters", "xs:string*", [("value", "xs:string?", none)]),

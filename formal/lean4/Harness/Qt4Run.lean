@@ -120,6 +120,8 @@ def featureSupported (f : String) : Bool :=
   || f == "binary" || f == "expath-file"
   -- IANA zone names (`XPath4.Tz`)
   || f == "olson-timezone"
+  -- fn:invisible-xml (`XPath4.Ixml`)
+  || f == "fn-invisible-xml"
 
 def depOk (d : Node) : Bool :=
   let ty := attrD d "type"
