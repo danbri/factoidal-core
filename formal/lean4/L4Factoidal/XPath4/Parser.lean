@@ -639,7 +639,9 @@ def pItemType : Nat → P IType
                   match ← peekQName with
                   | some (p, u, l, e) =>
                     set e
-                    let q ← resolve p u l ""
+                    -- an unprefixed type name is in the default namespace for
+                    -- elements and types (XPath 4.0 §3.2.7.2)
+                    let q ← resolve p u l den
                     let nil ← eatS "?"
                     -- `?` (nillable) is for element tests only
                     if nil && nm == "attribute" then synErr "attribute() takes no '?' after the type name"
