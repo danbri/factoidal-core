@@ -335,6 +335,11 @@ A file browser, rclone, cadaver, litmus or curl then uses
   copymove 13, props 30, locks 41, http 4), rclone and cadaver through the
   proxy. The hub test "webdav: a file browser reaches the server through XMPP
   (local proxy)" is now a plain test.
+* The proxy and its target must use two accounts: `xmpp-serve` does not route
+  an IQ between two resources of one account (it answers
+  `service-unavailable` itself), https://github.com/danbri/factoidal/issues/1139.
+  Expected failure "xmpp-serve routes an IQ from alice/u to alice/t" in
+  `tests/webdav/xmpp.mjs`.
 
 Choices (implementer), also in the module header of `HttpRequester.lean`:
 
