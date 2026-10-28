@@ -704,6 +704,11 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
     let setOk := if specGiven then (setDeps.filter (fun x => localTag x != "spec")).all depOk else setDeps.all depOk
     if !(setOk && deps.all depOk) then
       t := { t with unsup := t.unsup + 1 }
+      if o.listFails then
+        let bad := (setDeps.filter (fun x => !depOk x && !(specGiven && localTag x == "spec"))) ++ deps.filter (fun x => !depOk x)
+        let why := String.intercalate " " (bad.map (fun x => localTag x ++ "=" ++ attrD x "value" ++
+          (if attrD x "satisfied" "true" == "false" then "(not)" else "")))
+        fails := fails ++ [s!"UNSUP {setName}/{name}: dep {why}"]
       continue
     match ← runCase o dir localEnvs tc with
     | .pass => t := { t with pass := t.pass + 1 }
