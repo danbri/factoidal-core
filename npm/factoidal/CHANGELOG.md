@@ -11,6 +11,11 @@
 - `kind: local` mounts are refused at start (use `kind: lws` with an agent key). `auth: bearer` needs `allow-external-token: true` (a warning is printed).
 - Lean theorems (`L4Factoidal/WebDAV/Theorems.lean`, `Route.lean`): `webdav_within_lws` (every storage operation that a request causes is a read, on a mount that lists the request's user, and leaves the server only as an LWS client operation on that mount, which the LWS server authorizes), `load_no_unauthorized_storage` (every accepted mount is `kind: lws`), `handle_no_write`, `hidden_mount_trace`. Not yet: each WebDAV user mapped to an LWS agent of its own (a mount's listed users act as the mount's agent).
 
+### Security: LWS storage data
+
+- LWS: a Lean theorem, `lws_data_only_through_authorized_step` (`L4Factoidal/LWS/AccessTheorems.lean`), proves that only the LWS request handler reads or changes an LWS storage's data, and only after `Authorization.decide`; a refused request changes nothing. The one exception is `lws-serve --insecure-no-auth` (`insecureNoAuth`). The engine's LWS handle tables are private to the LWS ops, and `lwsStep` is the only op that serves resource content. Not covered: file system access to the storage directory (encryption at rest, `FACTOIDAL_LWS_KEY`, addresses it), and JavaScript in the same process.
+- `solid-serve` (and `openSolidStorage`) refuses a directory that holds an LWS storage written by `lws-serve`. Before, it served that data under Solid rules, with no authentication when no `auth` option was given, and dropped the LWS notification and access state.
+
 ### Other changes
 
 - The engine is checked against its release stamp when it loads (https://github.com/danbri/factoidal/issues/1106, layer 1): when `l4-assets/version.json` is stamped, the SHA-256 and size of `l4factoidal.wasm` must match it, in Node, Deno and the browser, or the package does not start (error code `engine.modified`, naming the file and both digests). An unstamped copy (a source checkout) loads as before. `FACTOIDAL_ALLOW_MODIFIED_ENGINE=1` loads a changed engine with a warning. This catches a stale or partly upgraded install; it does not defend against someone who can edit the package. In the browser a stamped engine is compiled from its fetched bytes, not streamed.
