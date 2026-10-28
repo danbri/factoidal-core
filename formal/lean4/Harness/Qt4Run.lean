@@ -776,6 +776,14 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
     let setOk' := if specGiven then (setDeps.filter (fun x => attrD x "type" != "spec")).all (depOk xq) else setOk
     if !(setOk' && deps.all (depOk xq)) then
       t := { t with unsup := t.unsup + 1 }
+      if o.listFails then
+        let setDeps' := if specGiven then setDeps.filter (fun x => attrD x "type" != "spec") else setDeps
+        let bad := (setDeps' ++ deps).filter (fun x => !depOk xq x)
+        let why := match bad.head? with
+          | some x => (if attrD x "satisfied" "true" == "false" then "!" else "") ++
+              attrD x "type" ++ "=" ++ attrD x "value"
+          | none => "dependency"
+        fails := fails ++ [s!"UNSUP {setName}/{name}: dependency {why}"]
       continue
     let envSpec : Option EnvSpec :=
       match (kidsNamed tc "environment").head? with
@@ -784,7 +792,10 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         match attr e "ref" with
         | some r => (localEnvs.lookup r).orElse (fun _ => catEnvs.lookup r)
         | none => some (parseEnv dir e xq)
-    let some spec := envSpec | do t := { t with unsup := t.unsup + 1 }; continue
+    let some spec := envSpec | do
+      t := { t with unsup := t.unsup + 1 }
+      if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: environment not found"]
+      continue
     let some testNode := (kidsNamed tc "test").head? | do t := { t with fail := t.fail + 1 }; continue
     let src ← match attr testNode "file" with
       | some f => pure ((← readFileSafe (dir ++ "/" ++ f)).getD "")
@@ -830,7 +841,9 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         | .fail why, none =>
             t := { t with fail := t.fail + 1 }
             if o.listFails then fails := fails ++ [s!"FAIL {setName}/{name}: {why}"]
-        | .unsupported _, _ => t := { t with unsup := t.unsup + 1 }
+        | .unsupported why, _ =>
+            t := { t with unsup := t.unsup + 1 }
+            if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
   if let some pf := o.progress then
     IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} DONE {t.excl}\n"
   return (setName, t, fails)
