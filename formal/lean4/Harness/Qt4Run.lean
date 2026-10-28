@@ -325,7 +325,11 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
       | "assert" =>
           match evalIn envR txt with
           | .ok [.atom ⟨_, .bool true⟩] => .pass
-          | .ok r => .fail ("assert gave " ++ (sh r 60) ++ " for result " ++ (sh s 60))
+          | .ok r =>
+            -- QT3 catalog: `assert` holds when the effective boolean value is true
+            match ebv r with
+            | .ok true => .pass
+            | _ => .fail ("assert gave " ++ (sh r 60) ++ " for result " ++ (sh s 60))
           | .error e => .fail ("assert raised " ++ e.code ++ " " ++ e.msg)
       | "assert-type" =>
           match parseSeqType txt with
