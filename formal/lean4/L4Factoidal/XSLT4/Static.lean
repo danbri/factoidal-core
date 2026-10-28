@@ -219,11 +219,19 @@ def SCx.qname (c : SCx) (s : String) (useDefault : Bool := false) (code : String
     match (s.drop 2).toString.splitOn "}" with
     | [u, l] => pure { uri := u, loc := l }
     | _ => err code ("invalid EQName '" ++ s ++ "'")
-  else match s.splitOn ":" with
+  else
+  -- a value that is not a lexical QName is XTSE0020 in a static context
+  let nc (x : String) : Bool := match x.toList with
+    | ch :: cs => isNameStart ch && ch != ':' && cs.all (fun d => isNameCh d && d != ':')
+    | [] => false
+  let bad := if code == "XTSE0280" then "XTSE0020" else code
+  match s.splitOn ":" with
     | [l] =>
         if l == "" then err code "empty name" else
+        if !nc l then err bad ("invalid QName '" ++ s ++ "'") else
         pure { uri := if useDefault then (c.ns.lookup "").getD "" else "", loc := l }
     | [p, l] =>
+        if !(nc p && nc l) then err bad ("invalid QName '" ++ s ++ "'") else
         if p == "xml" then pure { uri := nsXML, loc := l, pfx := p } else
         match c.ns.lookup p with
         | some u => pure { uri := u, loc := l, pfx := p }

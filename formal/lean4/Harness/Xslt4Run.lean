@@ -395,8 +395,8 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
           | .ok r =>
             match ebv r with
             | .ok true => .pass
-            | _ => .fail ("assert {" ++ cut txt 80 ++ "} gave " ++ (sh r 60) ++ " for result " ++ cut (serSeq env s) 100)
-          | .error e => .fail ("assert {" ++ cut txt 60 ++ "} raised " ++ e.code ++ " " ++ cut e.msg 80 ++ " for result " ++ cut (serSeq env s) 100)
+            | _ => .fail ("assert {" ++ cut txt 80 ++ "} gave " ++ (sh r 60) ++ " for result " ++ cut (serSeq env s) 400)
+          | .error e => .fail ("assert {" ++ cut txt 60 ++ "} raised " ++ e.code ++ " " ++ cut e.msg 80 ++ " for result " ++ cut (serSeq env s) 400)
       | "assert-type" =>
           match parseSeqType txt with
           | .ok t => ok? (env.seqMatches s t) ("type mismatch: got " ++ (sh s 60))

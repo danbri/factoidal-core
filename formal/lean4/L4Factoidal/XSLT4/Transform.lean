@@ -148,7 +148,11 @@ def seedOf (c : HostCall) : Nat :=
 /-- Run XSLT code from a host function: a fresh state whose document
     numbers derive from the call. -/
 def runFresh {α} (c : HostCall) (tag : String) (args : List Seq) (act : XM α) : M α := do
-  let h := hash (tag ++ "\x00" ++ toString (seedOf c) ++ "\x00" ++ toString (args.map showSeq))
+  -- node arguments by identity, so that distinct nodes give distinct trees
+  let ids := args.map (fun a => a.map (fun i => match i with
+    | .node nd => toString nd.doc ++ ":" ++ toString nd.idx
+    | _ => ""))
+  let h := hash (tag ++ "\x00" ++ toString (seedOf c) ++ "\x00" ++ toString (args.map showSeq) ++ toString ids)
   let (v, _) ← act.run { base := (h.toNat % 1000000007) + 1 }
   pure v
 
@@ -298,7 +302,9 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
     match fns.foldl (fun (b : Option XFunction) g => match b with
         | none => some g
         | some x => if g.prec > x.prec then some g else some x) none with
-    | some fn => some fun c args => runFresh c fn.name.eqn args (do
+    -- new-each-time="no": equal calls give identical nodes (§10.3.3),
+    -- since the new trees are numbered from the call alone
+    | some fn => some fun c args => runFresh (if fn.newEachTime == "no" then { c with vars := [] } else c) fn.name.eqn args (do
         if let [.staticErr "XTDE3052" msg] := fn.body then xerr "XTDE3052" msg
         let mut cx : Ctx := { env := { env with ctx := none, pos := 0, size := 0, ns := c.ns, vars := env.vars }, inFn := true, tempOut := true }
         -- the defaults see none of the parameters (XPST0008)

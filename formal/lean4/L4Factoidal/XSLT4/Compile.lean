@@ -438,7 +438,8 @@ def enumAttrs : List (String × List String) := [
   ("default-validation", ["preserve", "strip"]),
   ("use", ["required", "optional", "absent"]),
   ("phase", ["start", "end"]),
-  ("input-type-annotations", ["preserve", "strip", "unspecified"])]
+  ("input-type-annotations", ["preserve", "strip", "unspecified"]),
+  ("new-each-time", ["yes", "no", "maybe", "true", "false", "1", "0"])]
 
 /-- Attributes whose value must be a boolean (XTSE0020); the attributes
     that are attribute value templates are checked when evaluated. -/
@@ -1316,6 +1317,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
   let ekids := m.elemKids i
   let upd (f : Sheet → Sheet) : CM Unit := modify (fun s => { s with sheet := f s.sheet })
   checkAttrs c q.loc as
+  if q.loc == "function" || q.loc == "template" then checkOrder m i
   match q.loc with
   | "template" => compileTemplate prec { d with c } as
   | "function" =>
@@ -1325,6 +1327,10 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       -- a function in no namespace must be private (XTSE0740)
       if nm.uri == "" && ((as.get "visibility").getD "private") != "private" then
         cerr "XTSE0740" ("the function " ++ nm.loc ++ " is in no namespace and is not private")
+      -- override and override-extension-function must agree (§10.3.4)
+      if let (some a, some b) := (as.get "override", as.get "override-extension-function") then
+        if parseBool a != parseBool b then
+          cerr "XTSE0020" "the attributes override and override-extension-function of xsl:function disagree"
       let ps ← compileParams 100000 c m ekids "param"
       -- 4.0 (§10.3.2): optional parameters, with default values, follow
       -- the required ones

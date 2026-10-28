@@ -23,6 +23,17 @@ def xslInstructions : List String :=
    "select", "sequence", "source-document", "switch", "text", "try", "value-of", "variable",
    "where-populated"]
 
+/-- The XSLT elements that are not instructions: declarations and the
+    elements that occur only inside other elements. -/
+def xslOtherElements : List String :=
+  ["accept", "accumulator", "accumulator-rule", "attribute-set", "catch", "character-map",
+   "context-item", "decimal-format", "expose", "function", "global-context-item", "import",
+   "import-schema", "include", "item-type", "key", "matching-substring", "merge-action",
+   "merge-key", "merge-source", "mode", "namespace-alias", "non-matching-substring",
+   "otherwise", "output", "output-character", "override", "package", "param", "preserve-space",
+   "record", "sort", "strip-space", "stylesheet", "template", "transform", "use-package", "when",
+   "with-param"]
+
 /-- The XSLT 4.0 functions (namespace `fn`) that the host provides. -/
 def xslFunctions : List (String × List Nat) :=
   [("current", [0]), ("current-group", [0]), ("current-grouping-key", [0]),
@@ -119,8 +130,18 @@ def stdHost (userFn : QN → Option Nat → Bool) (q : QN) (k : Nat) : Option Ho
         | _ => none
       pure (sBool (builtinAvailable n ar || userFn n ar))
   | "element-available", 1 => some fun c a => do
-      let n ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE1440"
-      pure (sBool (n.uri == nsXSL && xslInstructions.contains n.loc))
+      -- a QName, or an EQName string; an unprefixed name is in the
+      -- default namespace (§24.3.2)
+      let n ← match a.getD 0 [] with
+        | [.atom ⟨_, .qn q⟩] => pure q
+        | v => do
+          let n ← lexQName c.ns (strArg v) false "XTDE1440"
+          let s := (strArg v).trimAscii.toString
+          if n.uri == "" && !s.contains ':' && !s.startsWith "Q{" then
+            pure { n with uri := (c.ns.lookup "#type").getD ((c.ns.lookup "").getD "") }
+          else pure n
+      -- any XSLT element this processor implements (§24.3.2)
+      pure (sBool (n.uri == nsXSL && (xslInstructions.contains n.loc || xslOtherElements.contains n.loc)))
   | "type-available", 1 => some fun c a => do
       let n ← lexQName c.ns (strArg (a.getD 0 [])) false "XTDE1428"
       pure (sBool (n.uri == nsXS && (atypeOfName? n.loc).isSome))
