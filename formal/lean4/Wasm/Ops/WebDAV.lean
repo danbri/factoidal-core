@@ -30,6 +30,21 @@ listener that is not on a loopback address. Each request then passes
 runs (`need`), whose answer `Login.finish` compares with the stored hash. The
 login cache (`Login.Cache`) and its secret stay in this handle.
 
+Emergency mode (https://github.com/danbri/factoidal/issues/1147): every
+request acts as one named user, decided by `Login.admit`: the guest
+(`login.guest`, from `--guest NAME`) when it has no `Authorization` field,
+else a user of the users file through the login; with neither, 401. The
+user goes to `handle` as `Ctx.user`, and a mount whose `users:` does not
+name it is 404 and not listed. `handle` refuses every write method (403).
+Every `kind: local` mount is refused at start (`Route.mountsForStart`), so
+`ready.local` is always empty and no storage is opened with no
+authorization. A request's operations go to `Route.serveMount` (the
+target's lws mount, only when its `users:` name the user), each as
+`Route.carryOp` (an LWS client operation with that mount's session).
+Theorem `webdav_within_lws` (`L4Factoidal/WebDAV/Theorems.lean`).
+`ready.warnings` carries the read-only notice and one warning per mount
+that uses an outside token (`allow-external-token: true`).
+
 The failed-login limit (https://github.com/danbri/factoidal/issues/1119):
 `login` may also hold `limit` and `window` (the text of `--login-limit` and
 `--login-window`, unread) and `disableRateLimits: true`
@@ -88,6 +103,7 @@ import L4Factoidal.WebDAV.State
 import L4Factoidal.WebDAV.Local
 import L4Factoidal.WebDAV.Remote
 import L4Factoidal.WebDAV.Login
+import L4Factoidal.WebDAV.Route
 import L4Factoidal.HTTP.LocalGuard
 import L4Factoidal.Crypto.SHA2Native
 import L4Factoidal.Authz.Keys
@@ -133,6 +149,9 @@ structure DavHandle where
   /-- The failed-login limit, from the options at `webdavOpen`. -/
   limits : Login.Limits := {}
   login : Option DavLogin := none
+  /-- The guest user (`--guest NAME`, issue 1147): a request with no
+  credentials acts as it; `none`: such a request gets 401. -/
+  guest : Option String := none
   entropy : ByteArray := ByteArray.empty
   mounts : List Mount := []
   sessions : List (String × L4Factoidal.LWS.Client.Session) := []
@@ -187,6 +206,11 @@ def webdavOpen (configJson : String) : IO String := do
     let host := (login.getString? "host").getD "127.0.0.1"
     if usersFile.isSome && !Login.transportAllowsBasic tls host then
       return errJson (Login.transportRefusal host)
+    -- The guest user (issue 1147): a user name; checked against the users
+    -- file when it is read.
+    let guest := login.getString? "guest"
+    if let some g := guest then
+      if let .error e := Login.guestCheck g [] then return errJson e
     let limits ← match Login.limitsOf usersFile.isSome (login.getString? "limit") (login.getString? "window")
         (login.field? "disableRateLimits" == some (.bool true)) with
       | .ok l => pure l
@@ -201,7 +225,7 @@ def webdavOpen (configJson : String) : IO String := do
         | .error e => return errJson s!"webdavOpen: {e}"
     let n ← davCounter.modifyGet (fun c => (c + 1, c + 1))
     let h := s!"webdav{n}"
-    davTable.modify (·.insert h { load := .mountFiles files, entropy, now, usersFile, limits, guard })
+    davTable.modify (·.insert h { load := .mountFiles files, entropy, now, usersFile, limits, guard, guest })
     pure (okWith [("handle", .string h), ("need", davNeedJson (files ++ [stateFileName] ++ usersFile.toList) [])])
 
 /-- A file the host read: its text, or `none` when it does not exist. -/
@@ -246,9 +270,11 @@ def davStorageModeOf (m : Mount) (j : Json) : Except String String :=
     | some s => .ok s
     | none => .ok (if hasFiles then "files" else "snapshot")
 
+/-- A mount as `ready` names it. `writable` is `false` for every mount:
+emergency mode (issue 1147) serves no write, whatever the file says. -/
 def davMountJson (m : Mount) (ses : Option L4Factoidal.LWS.Client.Session) : Json :=
   .object ([ ("name", .string m.name), ("title", .string m.title), ("kind", .string m.kind.name)
-           , ("writable", .bool m.writable) ] ++
+           , ("writable", .bool false), ("users", davStrs m.users) ] ++
     (if m.kind == .lws then [("url", .string m.url), ("auth", .string m.auth.name)] else [("path", .string m.path)]) ++
     (match ses.bind sessionSubject with
      | some s => [("agent", .string s)]
@@ -264,6 +290,22 @@ def davKeyPathKey (p : String) : String :=
 #guard davKeyPathKey "./alice.jwk" == davKeyPathKey "alice.jwk"
 #guard davKeyPathKey "keys//./a.jwk" == "keys/a.jwk"
 
+/-- The start warnings of emergency mode (issue 1147): read only; who a
+request with no credentials acts as; each mount that uses a token from
+outside this installation. -/
+def davStartWarnings (ms : List Mount) (guest : Option String) : List String :=
+  [ "read only (emergency mode, issue 1147): every write method (PUT, DELETE, MKCOL, COPY, MOVE, PROPPATCH, LOCK, UNLOCK) answers 403; `writable:` in a mount file is ignored; https://github.com/danbri/factoidal/issues/1147"
+  , match guest with
+    | some g => s!"a request with no credentials acts as the guest user \"{g}\" (--guest)"
+    | none => "no --guest: a request with no credentials gets 401" ] ++
+  ms.filterMap (fun m =>
+    if m.kind == .lws && m.auth == .bearer && m.allowExternalToken then
+      some s!"{m.name}.md: allow-external-token: true: the mount uses the token file {m.tokenFile}, a credential from outside this installation"
+    else none)
+
+#guard (davStartWarnings [] none).length == 2
+#guard ((davStartWarnings [] none).head?.map (·.startsWith "read only (emergency mode, issue 1147)")) == some true
+
 /-- The second load: credentials and storage formats. -/
 def davFinishLoad (hd : DavHandle) (ms : List Mount) (j : Json) : Except String (DavHandle × Json) := do
   let toPublic := davCrypto.es256Public
@@ -274,10 +316,8 @@ def davFinishLoad (hd : DavHandle) (ms : List Mount) (j : Json) : Except String 
   for m in ms do
     match m.kind with
     | .localStore =>
-      let mode ← davStorageModeOf m j
-      locals := locals ++ [.object [ ("name", .string m.name), ("dir", .string m.path)
-        , ("config", .object [ ("storage", .string mode), ("baseIri", .string m.base)
-                             , ("pageSize", .number "0"), ("insecureNoAuth", .bool true) ]) ]]
+      -- Not reached: `mountsForStart` refuses every local mount (issue 1147).
+      throw s!"{m.name}.md: a `kind: local` mount is not served (https://github.com/danbri/factoidal/issues/1147)"
     | .lws =>
       match m.auth with
       | .none => sessions := sessions ++ [(m.name, ({ } : L4Factoidal.LWS.Client.Session))]
@@ -305,7 +345,7 @@ def davFinishLoad (hd : DavHandle) (ms : List Mount) (j : Json) : Except String 
   let mountsJ := ms.map (fun m => davMountJson m (sessions.lookup m.name))
   pure ({ hd with load := .ready, mounts := ms, sessions },
         .object [("mounts", .array mountsJ), ("local", .array locals), ("write", .array writes)
-                , ("warnings", .array ((Login.limitsWarnings hd.limits).map Json.string))])
+                , ("warnings", .array ((davStartWarnings ms hd.guest ++ Login.limitsWarnings hd.limits).map Json.string))])
 
 /-- The hash of the login cache: SHA-256 through HACL\* (crypto policy: a
 password goes through HACL\*, never the pure-Lean specification hash). -/
@@ -329,10 +369,11 @@ def webdavLoad (h filesJson : String) : IO String := do
       match hd.load with
       | .ready => pure (errJson "webdavLoad: the handle is ready")
       | .mountFiles files =>
-        let parsed := files.mapM (fun f =>
+        let texts := files.mapM (fun f =>
           match davFileOf j f with
-          | some (some t) => mountOfMarkdown f t
+          | some (some t) => .ok (f, t)
           | _ => .error s!"{f}: the file could not be read")
+        let parsed := texts >>= mountsForStart
         -- The state file: absent is an empty state; a text the engine does
         -- not read stops the start.
         let state : Except String DavState :=
@@ -349,11 +390,17 @@ def webdavLoad (h filesJson : String) : IO String := do
               (Login.usersForServer uf t).map (fun us =>
                 some { settings := { users := us, secret := davLoginSecret hd.entropy, limits := hd.limits } })
             | _ => .error s!"{uf}: the users file could not be read"
-        match parsed, state, login with
-        | .error e, _, _ => fail e
-        | _, .error e, _ => fail e
-        | _, _, .error e => fail e
-        | .ok ms, .ok st0, .ok lg =>
+        -- The guest is not a user of the users file (issue 1147).
+        let guestOk : Except String Unit :=
+          match hd.guest, login with
+          | some g, .ok (some l) => (Login.guestCheck g l.settings.users).map (fun _ => ())
+          | _, _ => .ok ()
+        match parsed, state, login, guestOk with
+        | .error e, _, _, _ => fail e
+        | _, .error e, _, _ => fail e
+        | _, _, .error e, _ => fail e
+        | _, _, _, .error e => fail e
+        | .ok ms, .ok st0, .ok lg, .ok () =>
           let st := stateAtStart st0 hd.now
           let (read, ex) := davCredentialNeeds ms
           davTable.modify (·.insert h { hd with load := .credentials ms, dav := st, saved := stateText st, login := lg })
@@ -437,11 +484,13 @@ def davDrive (hd : DavHandle) (mount? : Option Mount) : Nat → Prog (DavRespons
     match mount? with
     | none => ({ hd with pending := none }, .response (davInternalError "webdav: an operation with no mount"))
     | some m =>
-      match m.kind with
-      | .localStore => ({ hd with pending := some { mount := m, op, k } }, .lws m.name (localRequest op))
-      | .lws =>
+      -- The one form an operation leaves in (`carryOp`): an LWS client
+      -- operation with the mount's session (issue 1147).
+      match carryOp m op with
+      | none => ({ hd with pending := none }, .response (davInternalError "webdav: this mount is not served"))
+      | some cop =>
         let ses := (hd.sessions.lookup m.name).getD ({ } : L4Factoidal.LWS.Client.Session)
-        let (cs, act) := L4Factoidal.LWS.Client.start davCrypto (remoteOp m.url op) ses
+        let (cs, act) := L4Factoidal.LWS.Client.start davCrypto cop ses
         match act with
         | .fetch r => ({ hd with pending := some { mount := m, op, k, client := some cs } }, .fetch r)
         | _ =>
@@ -489,18 +538,17 @@ private def davReq (m t : String) (hs : List (String × String)) : DavRequest :=
   [("host", "127.0.0.1:8090"), ("origin", "https://evil.example")])).map (·.status)) == some 403
 #guard (davGuard (some default) (davReq "PROPFIND" "/" [("host", "127.0.0.1:8090")])).isNone
 
-def davViewsOf (hd : DavHandle) : List MountView :=
-  hd.mounts.map (fun m => { name := m.name, title := m.title, writable := m.writable })
+def davViewsOf (hd : DavHandle) : List MountView := hd.mounts.map viewOf
 
 def davFinishOut (h : String) (hd : DavHandle) (o : DavOut) (blobOut : Bool) : IO (String × ByteArray) := do
   davTable.modify (·.insert h hd)
   pure (davOutEnvelope o blobOut)
 
-/-- One request after the login: the WebDAV program, driven until it needs
-the host. -/
-def davServe (hd : DavHandle) (r : DavRequest) (now : Nat) (random : ByteArray) : DavHandle × DavOut :=
-  let cx : Ctx := { mounts := davViewsOf hd, now, random }
-  let mount? := (mountOf r).bind (fun n => hd.mounts.find? (·.name == n))
+/-- One request after the login, as `user`: the WebDAV program, driven until
+it needs the host. -/
+def davServe (hd : DavHandle) (user : String) (r : DavRequest) (now : Nat) (random : ByteArray) : DavHandle × DavOut :=
+  let cx : Ctx := { mounts := davViewsOf hd, now, random, user }
+  let mount? := serveMount user hd.mounts r
   davDrive hd mount? davDriveFuel (handle cx hd.dav r)
 
 /-- `webdavStep(handle, requestJson)`. -/
@@ -525,22 +573,22 @@ def webdavStepWith (h requestJson : String) (blob : Option ByteArray) : IO (Stri
           match davGuard hd.guard r with
           | some resp => davFinishOut h hd (.response resp) blobOut
           | none =>
-          match hd.login with
-          | none =>
-            let (hd', o) := davServe hd r now random
+          -- Who the request acts as (issue 1147): the guest, a user of the
+          -- users file, or nobody (401).
+          let address := (j.getString? "remoteAddress").getD ""
+          let lgs := hd.login.map (·.settings)
+          let cache := (hd.login.map (·.cache)).getD {}
+          let withCache (c : Login.Cache) (p : Option DavLoginPending := none) : DavHandle :=
+            { hd with login := hd.login.map (fun lg => { lg with cache := c, pending := p }) }
+          match Login.admit davLoginHash lgs hd.guest cache now address (r.header? "authorization") with
+          | (.refuse, c) => davFinishOut h (withCache c) (.response Login.unauthorized) blobOut
+          | (.limited seconds, c) => davFinishOut h (withCache c) (.response (Login.tooManyFailures seconds)) blobOut
+          | (.allow user, c) =>
+            let (hd', o) := davServe (withCache c) user r now random
             davFinishOut h hd' o blobOut
-          | some lg =>
-            let address := (j.getString? "remoteAddress").getD ""
-            match Login.gate davLoginHash lg.settings lg.cache now address (r.header? "authorization") with
-            | (.refuse, c) => davFinishOut h { hd with login := some { lg with cache := c } } (.response Login.unauthorized) blobOut
-            | (.limited seconds, c) =>
-              davFinishOut h { hd with login := some { lg with cache := c } } (.response (Login.tooManyFailures seconds)) blobOut
-            | (.allow _, c) =>
-              let (hd', o) := davServe { hd with login := some { lg with cache := c } } r now random
-              davFinishOut h hd' o blobOut
-            | (.derive d, c) =>
-              let p : DavLoginPending := { derive := d, request := r, now, random }
-              davFinishOut h { hd with login := some { lg with cache := c, pending := some p } } (.need d) blobOut
+          | (.derive d, c) =>
+            let p : DavLoginPending := { derive := d, request := r, now, random }
+            davFinishOut h (withCache c (some p)) (.need d) blobOut
     | _ => pure (noBytes (errJson "webdavStep: the handle is still loading (webdavLoad)"))
 
 def davRespHeaders (j : Json) : List (String × String) :=
@@ -559,7 +607,9 @@ def davLoginResume (h : String) (hd : DavHandle) (lg : DavLogin) (p : DavLoginPe
     let (ok, c) := Login.finish davLoginHash lg.settings lg.cache p.now p.derive (davKdfAnswer j)
     let hd := { hd with login := some { lg with cache := c, pending := none } }
     if ok then
-      let (hd', o) := davServe hd p.request p.now p.random
+      -- `ok` holds only for a user of the users file
+      -- (`Login.finish_allow_known`): the request acts as that user.
+      let (hd', o) := davServe hd p.derive.user p.request p.now p.random
       davFinishOut h hd' o blobOut
     else davFinishOut h hd (.response Login.unauthorized) blobOut
 
