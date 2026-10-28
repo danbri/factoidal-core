@@ -879,21 +879,61 @@ One pure state machine decides everything:
 request (`fetch`) and ends with `done` or `fail`. In Lean: the 401 flow
 (the three checks of §Discovery Validation by a Client, RFC 8414 metadata
 at `/.well-known/lws-configuration`, RFC 8693 token exchange, `Bearer`
-only to URLs under the StorageRoot of the token's storage), preconditions
+only to URLs under the StorageRoot of the token's storage or under a
+`serviceEndpoint` of its storage description on the requested URI's origin),
+preconditions
 (`update`, `patch`, `updateLinkset`, `move` default to the current ETag),
 the 412, 405/415 and 5xx retry rules, paging by `rel="next"` only, linkset
 writes only in advertised methods and formats, and the RFC 9421 check of a
 webhook notification (keyid with a fragment, document id, digest,
 signature by HACL*).
 
+401 handling (`on401`): the current challenge (`resource_metadata` and a
+`Link rel=lws#storage`) takes the three checks. A 401 with only `Bearer
+as_uri="AS", realm="STORAGE"` (the drafts before 2026-10-19; css and
+sparq-lws still send it) is followed only with the session option
+`legacyChallenge` (npm `createLwsClient({ legacyChallenge: true })`, CLI
+`--legacy-challenge`; off by default): the realm must have the scheme and
+authority of the requested URL and contain it; `as_uri` is the authorization
+server and the realm is the token's storage and root. That path skips checks
+1 and 2 of §Discovery Validation by a Client, which is why it is off by
+default; the driver adapter turns it on, as the Java and JS clients follow
+it always (https://github.com/danbri/factoidal/issues/1115). `subscribe`
+with `endpoint` (CLI `--endpoint`) POSTs to the named notification endpoint
+with no storage-link discovery.
+
+Three options of https://github.com/danbri/factoidal/issues/1116:
+
+- Session option `requireHttps` (npm `createLwsClient({ requireHttps: true })`,
+  CLI `--require-https`; off by default): `enforce` refuses, before it is sent,
+  every request whose URL scheme is not `https`, in every phase (the
+  operation, discovery, the protected resource metadata, the authorization
+  server metadata, the token endpoint). The failure has code
+  `insecureTransport` with the URL; the driver error kind is `TransportError`.
+  Theorems `step_requireHttps`, `start_requireHttps`. The driver adapter maps
+  `allowInsecureHttp: false` to it (stricter than the lws-client design,
+  which asks https only of the authorization server and excepts loopback).
+- Operation member `ifNoneMatchTags` (CLI `--if-none-match TAG[,TAG]`; for
+  `read` the CLI flag sets the GET's `ifNoneMatch`): `If-None-Match` with
+  entity tags on a write (RFC 9110 §13.1.2), read by `entityTagList?` (each
+  member may be a list; `*` only alone). With no `precondition` it is
+  `ifNoneMatch` (the field alone); with `ifMatch`, `ifMatchCurrent` or
+  `ifUnmodifiedSince` both fields go (RFC 9110 §13.2.2 orders their
+  evaluation). Refused with `none` and `ifNoneMatchStar`. Every conditional
+  kind takes it, `patch` included.
+- Operation member `policies` (CLI `--policies JSON`): an access request or
+  grant with N policies, each `{actions, assignee, targets, constraint}`, in
+  the caller's order. The single-policy members stay as one policy; giving
+  both is `badArguments`.
+
 | path | what it is |
 | --- | --- |
 | `formal/lean4/L4Factoidal/LWS/Client/Wire.lean` | requests, responses, `Link`, `WWW-Authenticate`, `Allow`, `Accept-Patch`, form bodies, JSON forms |
 | `formal/lean4/L4Factoidal/LWS/Client/Machine.lean` | `Op`, `ClientState`, `step`, `enforce`, state JSON |
-| `formal/lean4/L4Factoidal/LWS/Client/Theorems.lean` | `walk_concat`, `walk_paths`, `walk_members_once`, `walk_listedMembers`, `step_write_precondition`, `step_no_token_request_without_validation`, `step_no_blind_create_retry`, `step_no_retry_after_lost_post`, `step_no_repeat_after_refusal` |
+| `formal/lean4/L4Factoidal/LWS/Client/Theorems.lean` | `walk_concat`, `walk_paths`, `walk_members_once`, `walk_listedMembers`, `step_write_precondition`, `step_no_token_request_without_validation`, `step_no_blind_create_retry`, `step_no_retry_after_lost_post`, `step_no_repeat_after_refusal`, `step_requireHttps`, `start_requireHttps` |
 | `formal/lean4/L4Factoidal/LWS/Client/Tests.lean` | `#guard`s: canned responses (decoys, stale tags, 405, 503, forged notifications) and a loopback against `LWS.step MemStore` |
 | `formal/lean4/Wasm/Ops/LwsClient.lean` | `lwsClientStart(opJson, sessionJson)`, `lwsClientStep(stateJson, eventJson)` → `{ok, state, action}` |
-| `npm/factoidal/lws/client.mjs` | `createLwsClient({ fetch, subjectToken, subjectTokenType, session })`, `createNotificationReceiver({ client })` |
+| `npm/factoidal/lws/client.mjs` | `createLwsClient({ fetch, subjectToken, subjectTokenType, session, legacyChallenge, requireHttps })`, `createNotificationReceiver({ client })` |
 | `tests/lws/client/own-server.mjs` | our client against our server, open and with authorization |
 | `tools/lws-touchstone-client.sh` | our client in Touchstone's client lab (53 rules) |
 
@@ -904,9 +944,11 @@ reach it. The state crosses the ABI as JSON; bodies as `bodyBase64`.
 ```
 factoidal lws-client <op> URL [--body TEXT|--file PATH] [--content-type M]
     [--if-match TAG|--if-match-current|--if-none-match-star|--no-precondition]
+    [--if-none-match TAG[,TAG]] [--require-https]
     [--retry-412 N] [--recursive] [--container] [--slug S] [--type IRI]
     [--subject-token-file F --subject-token-type URI] [--query JSON]
-    [--inbox URL] [--topic URL] [--action A,B --assignee URI --target URL]
+    [--inbox URL] [--topic URL] [--endpoint URL] [--legacy-challenge]
+    [--action A,B --assignee URI --target URL | --policies JSON]
 ```
 
 ```js
@@ -973,7 +1015,15 @@ CONFIGDIR holds one Markdown file per mount (`README.md` is not one):
 * Connect: macOS Finder, Go > Connect to Server, `http://127.0.0.1:8090/`;
   Windows, Map network drive, `http://127.0.0.1:8090/`; GNOME Files,
   `dav://127.0.0.1:8090/`; KDE Dolphin, `webdav://127.0.0.1:8090/`. Not yet
-  checked with the real clients: https://github.com/danbri/factoidal/issues/1079.
+  checked with these clients: https://github.com/danbri/factoidal/issues/1079.
+  rclone and cadaver are: `node tests/webdav/clients.mjs` (11 pass, 0 fail,
+  out of 11, on 2026-10-28; `apt-get install rclone cadaver`).
+* Desktop clients: `node tests/webdav-desktop/serve-labs.mjs` serves the lab
+  trees of `labs/filetrees/` through a recording proxy on 127.0.0.1:8091;
+  `probe-macos.sh`, `probe-linux.sh`, `probe-windows.ps1` and `checklist.md`
+  in the same folder; results in `tests/webdav-desktop/results/`. First run:
+  gvfs 1.54.4 through `gio`, 21 ok, 0 FAIL (2026-10-28). Record:
+  `docs/designissues/2026-10-28-desktop-webdav-labs.md`.
 
 | path | what it is |
 | --- | --- |
@@ -981,14 +1031,16 @@ CONFIGDIR holds one Markdown file per mount (`README.md` is not one):
 | `formal/lean4/L4Factoidal/WebDAV/Server.lean` | every method as a program over six storage operations (`Backend.Prog`); theorem `refused_keeps_state` |
 | `formal/lean4/L4Factoidal/WebDAV/Local.lean`, `Remote.lean` | an operation as one LWS request; as one LWS client operation (the one module that uses the client API) |
 | `formal/lean4/L4Factoidal/WebDAV/Xml.lean`, `If.lean`, `Path.lean` | XML bodies (depth limit 256, work-list serializer), the `If` header, targets |
+| `formal/lean4/L4Factoidal/WebDAV/State.lean` | `DavState` (dead properties, locks) as the JSON text of `CONFIGDIR/.webdav-state.json`, and back; refuses an unknown format or version |
 | `formal/lean4/L4Factoidal/WebDAV/Tests.lean`, `Theorems.lean` | `#guard`s of every method against `LWS.step MemStore`, directly and through the client; `browse_no_write` |
 | `formal/lean4/Wasm/Ops/WebDAV.lean` | `webdavOpen`, `webdavLoad`, `webdavStep`, `webdavResume`, `webdavClose` |
 | `npm/factoidal/webdav/server.mjs` | the host: sockets, the files the engine names, `lws` requests to the storage handle, `fetch`es |
 
 Tests: `node tests/webdav/server.mjs` (every method through a local and a
-remote mount on `lws-serve --authz`; one expected failure,
-https://github.com/danbri/factoidal/issues/1078: dead properties and locks are
-lost at a restart), `node tests/webdav/litmus.mjs` (needs `apt-get install
+remote mount on `lws-serve --authz`; dead properties and locks survive a
+restart: the engine reads and names writes of `CONFIGDIR/.webdav-state.json`,
+form in `L4Factoidal/WebDAV/State.lean`,
+https://github.com/danbri/factoidal/issues/1078), `node tests/webdav/litmus.mjs` (needs `apt-get install
 litmus`; expected failures in `tests/webdav/litmus-xfail.tsv`; 2026-10-27:
 208 pass, 0 fail, 0 xfail (out of 208)), `node tests/webdav/scaling.mjs`
 (the decoders at n, 2n, 4n through the wasm module).
@@ -1013,6 +1065,22 @@ tests.** A module without the new ops answers `unknown op`; each suite
 probes with one call and then SKIPS every check by name with that reason
 printed. A skip is never a pass (anti-pattern 3), and the score line
 always carries the skip count.
+
+## Our LWS client against other servers (Touchstone interop)
+
+Touchstone's `targetservers/interop-all.sh` builds the six LWS target servers
+and drives each client through one scenario against each
+(`targetservers/tools/interop.mjs`; results in `targetservers/runs/<time>-interop/`).
+Our client takes part through `deploy/lws-client-adapter/adapter.mjs`
+(lws-driver/1), registered as an extra language of the lws-client driver.
+The stock `clients` image builds eleven client toolchains and does not fit a
+session disk of about 16 GB: build a small clients image with only the driver,
+the Java and JS adapters and ours, and pass `--languages java,js,factoidal`.
+In a cloud session every Dockerfile also needs the proxy CA (`/root/.ccr/`)
+and a git HTTPS rewrite; keep those changes in local copies, never in
+Touchstone's tree. Start `dockerd` first. Results of 2026-10-28 and the three
+client defects they found: `docs/designissues/2026-10-21-lws-touchstone-run.md`
+§ "Client interop", https://github.com/danbri/factoidal/issues/1115.
 
 ## Run the interop scripts
 

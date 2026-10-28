@@ -350,13 +350,20 @@ for o in "${LIB_OBJ:?}"/*.o; do
   [ -e "$o" ] || continue
   b="$(basename "${o%.o}")"
   case "$b" in Hacl_*|Lib_*|l4_*) continue;; esac
-  grep -q " $b\$" "$LIBC_LIST" || rm -f "$o"
+  grep -q " $b\$" "$LIBC_LIST" || rm -f "$o" "$o.sha"
 done
+# An object is current when it was compiled from a .c with the same SHA-256
+# (kept in $o.sha), never by modification time alone. 2026-10-28: a worktree
+# agent ran this script with the same default work dir; its objects, compiled
+# from older source, were newer than this checkout's .c files, the mtime test
+# kept them, and the wasm answered with code the source no longer had (three
+# npm tests failed with a refusal message removed the day before).
 lib_cc_one() {
   local f="$1" b="$2" o="$LIB_OBJ/$2.o"
-  if [ -s "$o" ] && [ "$o" -nt "$f" ]; then return 0; fi
-  emcc $CFLAGS -c "$f" -o "$o.tmp" && mv "$o.tmp" "$o" \
-    || { echo "CC-FAIL $b" >&2; rm -f "$o.tmp" "$o"; return 1; }
+  local h; h="$(sha256sum "$f" | cut -d' ' -f1)"
+  if [ -s "$o" ] && [ "$(cat "$o.sha" 2>/dev/null)" = "$h" ]; then return 0; fi
+  emcc $CFLAGS -c "$f" -o "$o.tmp" && mv "$o.tmp" "$o" && printf '%s\n' "$h" > "$o.sha" \
+    || { echo "CC-FAIL $b" >&2; rm -f "$o.tmp" "$o" "$o.sha"; return 1; }
 }
 export -f lib_cc_one
 export LIB_OBJ

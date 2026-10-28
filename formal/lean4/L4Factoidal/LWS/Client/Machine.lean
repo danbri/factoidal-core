@@ -39,7 +39,20 @@ lws10-core §Authorization
 * Presentation: "A client MUST present an access token to a storage server
   using the Authorization header with an authentication scheme as defined
   in [RFC6750]." — `attachToken`. A token goes only to URLs under the
-  StorageRoot endpoint of the storage it was issued for.
+  StorageRoot endpoint of the storage it was issued for, or under a
+  `serviceEndpoint` of that storage's description that has the scheme and
+  authority of the requested URI (check 3's origin rule;
+  https://github.com/danbri/factoidal/issues/1115: lws-drupal's type index is
+  outside its StorageRoot path).
+* The challenge of the drafts before 2026-10-19, `Bearer as_uri="…",
+  realm="…"`: followed only when the session asks for it
+  (`Session.legacyChallenge`, off by default) — `on401`, `legacyChallenge?`.
+* Transport: with `Session.requireHttps` (off by default) no request goes to
+  a URL whose scheme is not `https`, in any phase: the operation, discovery,
+  the protected resource metadata, the authorization server metadata, the
+  token endpoint (`enforce`, `step_requireHttps`;
+  https://github.com/danbri/factoidal/issues/1116). The host follows no
+  redirect (`redirect: 'manual'`), so a redirect target is not sent to.
 
 lws10-core §Operations
 * Create: "To create a Container, the client MUST include a Link header
@@ -55,6 +68,9 @@ lws10-core §Operations
   to avoid overwriting concurrent changes." and "clients MAY include Link
   headers in the PUT/PATCH request to the resource URI and specify the
   preference 'Prefer: set-linkset'" — `preconditionHeaders`, `updateReq`.
+  `If-None-Match` with entity tags (RFC 9110 §13.1.2) goes alone or with
+  `If-Match` or `If-Unmodified-Since`; RFC 9110 §13.2.2 orders their
+  evaluation at the server (`entityTagList?`, `noneMatchHeader`).
 * Delete: "Clients MUST use the Depth: infinity header to request for a
   recursive delete" and "Clients MAY include an If-Match header with an
   ETag for concurrency checks." — `deleteReq`.
@@ -116,6 +132,22 @@ def conditionalKinds : List String := ["update", "patch", "delete", "updateLinks
 
 /-! ## The operation a caller asks for -/
 
+/-- One policy of an access request or grant (lws10-core §Access Requests
+and Grants): the actions, the assignee, the targets, the constraints. -/
+structure Policy where
+  actions : List String := []
+  assignee : String := ""
+  targets : List String := []
+  constraint : Json := .null
+
+def policyJson (p : Policy) : Json :=
+  .object [ ("actions", strsJson p.actions), ("assignee", .string p.assignee)
+          , ("targets", strsJson p.targets), ("constraint", p.constraint) ]
+
+def policyOfJson (j : Json) : Policy :=
+  { actions := jStrs j "actions", assignee := jStr j "assignee", targets := jStrs j "targets"
+    constraint := jAny j "constraint" }
+
 /-- One operation. Members not used by a kind are ignored. -/
 structure Op where
   kind : String
@@ -132,8 +164,9 @@ structure Op where
   types : List String := []
   /-- `create`, `update`, `patch`: client links, as `Link` field values. -/
   links : List String := []
-  /-- `none`, `ifMatch`, `ifMatchCurrent`, `ifNoneMatchStar`, `ifUnmodifiedSince`;
-  empty: the default of the kind (`defaultPrecondition`, applied by `start`). -/
+  /-- `none`, `ifMatch`, `ifMatchCurrent`, `ifNoneMatchStar`, `ifNoneMatch`,
+  `ifUnmodifiedSince`; empty: `ifNoneMatch` when `ifNoneMatchTags` is given,
+  else the default of the kind (`defaultPrecondition`, applied by `start`). -/
   precondition : String := ""
   /-- The entity tag of `ifMatch`, the HTTP-date of `ifUnmodifiedSince`. -/
   tag : String := ""
@@ -145,7 +178,15 @@ structure Op where
   /-- `subscribe`. -/
   topics : List String := []
   inbox : String := ""
-  /-- `requestAccess`, `grantAccess`: one policy. -/
+  /-- A write: the entity tags of `If-None-Match` (RFC 9110 §13.1.2). Each
+  member is an entity tag or a field value `1#entity-tag`; `*` only alone.
+  With precondition `ifNoneMatch` the header goes alone; with `ifMatch`,
+  `ifMatchCurrent` or `ifUnmodifiedSince` it goes with that header. -/
+  ifNoneMatchTags : List String := []
+  /-- `requestAccess`, `grantAccess`: the policies of the document. Empty:
+  one policy from `actions`, `assignee`, `targets` and `constraint`. -/
+  policies : List Policy := []
+  /-- `requestAccess`, `grantAccess`: one policy, when `policies` is empty. -/
   actions : List String := []
   assignee : String := ""
   targets : List String := []
@@ -166,8 +207,8 @@ structure Op where
   /-- `updateLinkset`, `putLinkset`: the linkset resource, when the caller
   has it; the resource's `Link` field is not read. -/
   linksetUrl : String := ""
-  /-- `typeIndex`, `search`: the service endpoint, when the caller has it;
-  the storage description is not read. -/
+  /-- `typeIndex`, `search`, `subscribe`: the service endpoint, when the
+  caller has it; the storage description is not read. -/
   endpoint : String := ""
   /-- A service kind: the storage's description URL, when the caller has it;
   `url` is not asked for the storage link. -/
@@ -197,7 +238,9 @@ def Op.normalize (op : Op) : Op :=
   -- page of a listing is `list` that stops after the first page.
   let op := if op.kind == "putLinkset" then { op with kind := "updateLinkset", mediaType := mediaLinkset } else op
   let op := if op.kind == "readPage" then { op with kind := "list", onePage := true } else op
-  if op.precondition == "" then { op with precondition := defaultPrecondition op.kind } else op
+  if op.precondition == "" then
+    { op with precondition := if op.ifNoneMatchTags.isEmpty then defaultPrecondition op.kind else "ifNoneMatch" }
+  else op
 
 def opJson (op : Op) : Json :=
   .object ([ ("kind", .string op.kind), ("url", .string op.url)
@@ -214,7 +257,9 @@ def opJson (op : Op) : Json :=
     , ("requestTarget", .string op.requestTarget), ("ifNoneMatch", .string op.ifNoneMatch)
     , ("prefer", .string op.prefer), ("onePage", .bool op.onePage), ("expires", .string op.expires)
     , ("linksetUrl", .string op.linksetUrl), ("endpoint", .string op.endpoint)
-    , ("storage", .string op.storage), ("trustedStorages", strsJson op.trustedStorages) ] ++
+    , ("storage", .string op.storage), ("trustedStorages", strsJson op.trustedStorages)
+    , ("ifNoneMatchTags", strsJson op.ifNoneMatchTags)
+    , ("policies", .array (op.policies.map policyJson)) ] ++
     optMember "rangeStart" (op.rangeStart.map natJson) ++ optMember "rangeEnd" (op.rangeEnd.map natJson))
 
 /-- A link given as `{href, rel}`, as a `Link` field value (RFC 8288 §3). -/
@@ -229,7 +274,7 @@ def opOfJson (j : Json) : Except String Op := do
   if !opKinds.contains kind then
     .error ("op: unknown kind \"" ++ kind ++ "\" (" ++ ", ".intercalate opKinds ++ ")")
   let precondition := (j.getString? "precondition").getD ""
-  if !["", "none", "ifMatch", "ifMatchCurrent", "ifNoneMatchStar", "ifUnmodifiedSince"].contains precondition then
+  if !["", "none", "ifMatch", "ifMatchCurrent", "ifNoneMatchStar", "ifNoneMatch", "ifUnmodifiedSince"].contains precondition then
     .error ("op: unknown precondition \"" ++ precondition ++ "\"")
   .ok { kind, url := jStr j "url", body := jBody j, mediaType := jStr j "mediaType"
       , slug := jStr j "slug", container := jBool j "container", types := jStrs j "types"
@@ -244,16 +289,20 @@ def opOfJson (j : Json) : Except String Op := do
       , rangeEnd := jNat? j "rangeEnd", ifNoneMatch := jStr j "ifNoneMatch", prefer := jStr j "prefer"
       , onePage := jBool j "onePage", expires := jStr j "expires", linksetUrl := jStr j "linksetUrl"
       , endpoint := jStr j "endpoint", storage := jStr j "storage"
-      , trustedStorages := jStrs j "trustedStorages" }
+      , trustedStorages := jStrs j "trustedStorages", ifNoneMatchTags := jStrs j "ifNoneMatchTags"
+      , policies := ((j.getArray? "policies").getD []).map policyOfJson }
 
 /-! ## Session: tokens kept between operations -/
 
 /-- An access token and the storage it was issued for. `root` is the
-StorageRoot endpoint: the token goes only to URLs under it. -/
+StorageRoot endpoint: the token goes to URLs under it. `endpoints` are the
+service endpoints of the storage description that have the origin of the
+requested URI: the token goes to URLs under them too. -/
 structure TokenEntry where
   storage : String
   root : String
   token : String
+  endpoints : List String := []
 
 /-- A key the client signs its own credentials with (lws10-authn-ssi-cid,
 "Self-issued credentials"): the agent's identifier, the verification method
@@ -277,6 +326,14 @@ structure Session where
   subjectToken : String := ""
   subjectTokenType : String := ""
   selfIssued : Option SelfIssued := none
+  /-- Follow the `Bearer as_uri="…", realm="…"` challenge of the drafts
+  before 2026-10-19 when a 401 has no `resource_metadata`. Off by default:
+  that path skips checks 1 and 2 of lws10-core §Discovery Validation by a
+  Client (`on401`). -/
+  legacyChallenge : Bool := false
+  /-- Send no request to a URL whose scheme is not `https`, in any phase
+  (`enforce`). Off by default. -/
+  requireHttps : Bool := false
 
 /-- The token type of an OpenID Connect ID Token (RFC 8693 §3). -/
 def idTokenType : String := "urn:ietf:params:oauth:token-type:id_token"
@@ -305,10 +362,13 @@ def selfIssuedOfJson (j : Json) : Option SelfIssued := do
 
 def sessionJson (s : Session) : Json :=
   .object ([ ("tokens", .array (s.tokens.map (fun t => .object
-              [("storage", .string t.storage), ("root", .string t.root), ("token", .string t.token)])))
+              ([("storage", .string t.storage), ("root", .string t.root), ("token", .string t.token)] ++
+               (if t.endpoints.isEmpty then [] else [("endpoints", strsJson t.endpoints)])))))
           , ("anyToken", .string s.anyToken)
           , ("subjectToken", .string s.subjectToken)
           , ("subjectTokenType", .string s.subjectTokenType) ] ++
+    (if s.legacyChallenge then [("legacyChallenge", .bool true)] else []) ++
+    (if s.requireHttps then [("requireHttps", .bool true)] else []) ++
     (match s.selfIssued with
      | some k => [("selfIssued", selfIssuedJson k)]
      | none => []))
@@ -324,13 +384,15 @@ def sessionOfJson (j : Json) : Session :=
   let idTok := jStr j "idToken"
   { tokens := ((j.getArray? "tokens").getD []).filterMap (fun t =>
       match t.getString? "storage", t.getString? "root", t.getString? "token" with
-      | some s, some r, some k => some { storage := s, root := r, token := k }
+      | some s, some r, some k => some { storage := s, root := r, token := k, endpoints := jStrs t "endpoints" }
       | _, _, _ => none) ++
       (if bToken != "" && bRealm != "" then [{ storage := bRealm, root := bRealm, token := bToken }] else [])
     anyToken := if bToken != "" && bRealm == "" then bToken else jStr j "anyToken"
     subjectToken := if idTok != "" then idTok else jStr j "subjectToken"
     subjectTokenType := if idTok != "" then idTokenType else jStr j "subjectTokenType"
-    selfIssued := (j.field? "selfIssued").bind selfIssuedOfJson }
+    selfIssued := (j.field? "selfIssued").bind selfIssuedOfJson
+    legacyChallenge := jBool j "legacyChallenge"
+    requireHttps := jBool j "requireHttps" }
 
 /-- Is the `selfIssued` member of a session document, if there is one, a
 usable key (a P-256 or an Ed25519 private JWK of 32 bytes)? -/
@@ -360,32 +422,53 @@ structure AuthCtx where
   description. -/
   rootEndpoint : String := ""
   tokenEndpoint : String := ""
+  /-- The other service endpoints of the storage description that have the
+  scheme and authority of the requested URI: the token goes to them too. -/
+  endpoints : List String := []
+  /-- The record comes from the `as_uri`/`realm` challenge of the drafts
+  before 2026-10-19: `asIssuer` is `as_uri`, `storage` and `rootEndpoint`
+  are the realm, and no metadata was read. -/
+  legacy : Bool := false
 
-/-- The three checks, over the recorded values. -/
+/-- What the challenge of the drafts before 2026-10-19 lets the client check:
+the realm has the scheme and authority of the requested URI and contains it,
+and it is the storage and the root of the record. -/
+def legacyValidated (c : AuthCtx) : Bool :=
+  sameOrigin c.storage c.requestUri && c.requestUri.startsWith c.storage &&
+  c.rootEndpoint == c.storage
+
+/-- The three checks, over the recorded values; for a record of the earlier
+challenge, `legacyValidated`. -/
 def validated (c : AuthCtx) : Bool :=
+  if c.legacy then legacyValidated c else
   sameOrigin c.metadataUrl c.requestUri && c.metadataResource == c.requestUri &&
   sameOrigin c.rootEndpoint c.requestUri
 
-/-- The three checks as a proposition. -/
+/-- The three checks as a proposition, or, for a record of the earlier
+challenge, the realm checks. -/
 def Validated (c : AuthCtx) : Prop :=
-  sameOrigin c.metadataUrl c.requestUri = true ∧ c.metadataResource = c.requestUri ∧
-  sameOrigin c.rootEndpoint c.requestUri = true
+  (c.legacy = false ∧ sameOrigin c.metadataUrl c.requestUri = true ∧
+    c.metadataResource = c.requestUri ∧ sameOrigin c.rootEndpoint c.requestUri = true) ∨
+  (c.legacy = true ∧ sameOrigin c.storage c.requestUri = true ∧
+    c.requestUri.startsWith c.storage = true ∧ c.rootEndpoint = c.storage)
 
 theorem validated_iff (c : AuthCtx) : validated c = true ↔ Validated c := by
-  unfold validated Validated
-  simp [Bool.and_eq_true, beq_iff_eq, and_assoc]
+  unfold validated Validated legacyValidated
+  cases h : c.legacy <;> simp [Bool.and_eq_true, beq_iff_eq, and_assoc]
 
 def authJson (c : AuthCtx) : Json :=
   .object [ ("requestUri", .string c.requestUri), ("metadataUrl", .string c.metadataUrl)
           , ("storage", .string c.storage), ("metadataResource", .string c.metadataResource)
           , ("asIssuer", .string c.asIssuer), ("rootEndpoint", .string c.rootEndpoint)
-          , ("tokenEndpoint", .string c.tokenEndpoint) ]
+          , ("tokenEndpoint", .string c.tokenEndpoint), ("endpoints", strsJson c.endpoints)
+          , ("legacy", .bool c.legacy) ]
 
 def authOfJson (j : Json) : AuthCtx :=
   { requestUri := jStr j "requestUri", metadataUrl := jStr j "metadataUrl"
     storage := jStr j "storage", metadataResource := jStr j "metadataResource"
     asIssuer := jStr j "asIssuer", rootEndpoint := jStr j "rootEndpoint"
-    tokenEndpoint := jStr j "tokenEndpoint" }
+    tokenEndpoint := jStr j "tokenEndpoint", endpoints := jStrs j "endpoints"
+    legacy := jBool j "legacy" }
 
 /-! ## State, events, actions -/
 
@@ -468,11 +551,17 @@ def failWith (s : ClientState) (code : String) (extra : List (String × Json) :=
     ClientState × Action :=
   finish s (.fail (errJ code extra))
 
-/-- Attach the access token of the storage whose root the URL is under
-(lws10-core §Presentation: the `Authorization` header, RFC 6750 §2.1). -/
+/-- Is a URL in the scope of a token entry: under its root, or under one of
+its service endpoints? -/
+def TokenEntry.covers (t : TokenEntry) (url : String) : Bool :=
+  (t.root != "" && url.startsWith t.root) || t.endpoints.any (fun e => e != "" && url.startsWith e)
+
+/-- Attach the access token of the storage whose root, or one of whose
+service endpoints, the URL is under (lws10-core §Presentation: the
+`Authorization` header, RFC 6750 §2.1). -/
 def attachToken (ses : Session) (r : Req) : Req :=
   if (r.header? "authorization").isSome then r else
-  match ses.tokens.find? (fun t => t.root != "" && r.url.startsWith t.root) with
+  match ses.tokens.find? (fun t => t.covers r.url) with
   | some t => { r with headers := r.headers ++ [("Authorization", "Bearer " ++ t.token)] }
   | none =>
       if ses.anyToken == "" then r
@@ -510,15 +599,79 @@ def statusFail (s : ClientState) (r : Resp) : ClientState × Action :=
 
 /-! ## Preconditions (lws10-core §Update Resource, §Delete Resource) -/
 
+/-- One `etagc` (RFC 9110 §8.8.3): `%x21 / %x23-7E / obs-text`. -/
+def etagc (c : Char) : Bool :=
+  c.toNat == 0x21 || (0x23 ≤ c.toNat && c.toNat ≤ 0x7E) || 0x80 ≤ c.toNat
+
+/-- Optional white space (RFC 9110 §5.6.3). -/
+def isOws (c : Char) : Bool := c == ' ' || c == '\t'
+
+/-- The `etagc` characters of an opaque tag up to its closing quote, and the
+characters after that quote; `none` without a closing quote or with a
+character that is not `etagc`. -/
+def readOpaqueTag : List Char → List Char → Option (List Char × List Char)
+  | [], _ => none
+  | '"' :: rest, acc => some (acc.reverse, rest)
+  | c :: rest, acc => if etagc c then readOpaqueTag rest (c :: acc) else none
+
+/-- After an entity tag: white space, then a comma or the end. -/
+def tagEnds (cs : List Char) : Bool :=
+  match cs.dropWhile isOws with
+  | [] => true
+  | ',' :: _ => true
+  | _ => false
+
+/-- The entity tags of `1#entity-tag` (RFC 9110 §5.6.1, §8.8.3), in order.
+Empty list elements and white space between elements are skipped, as §5.6.1
+asks of a recipient. Each round reads at least one character, so `fuel`
+of the length plus one is enough. -/
+def entityTagsLoop : Nat → List Char → List String → Option (List String)
+  | 0, _, _ => none
+  | fuel + 1, cs, acc =>
+    match cs.dropWhile (fun c => isOws c || c == ',') with
+    | [] => if acc.isEmpty then none else some acc.reverse
+    | 'W' :: '/' :: '"' :: rest =>
+      match readOpaqueTag rest [] with
+      | some (body, rest') =>
+        if tagEnds rest' then entityTagsLoop fuel rest' (("W/\"" ++ String.ofList body ++ "\"") :: acc) else none
+      | none => none
+    | '"' :: rest =>
+      match readOpaqueTag rest [] with
+      | some (body, rest') =>
+        if tagEnds rest' then entityTagsLoop fuel rest' (("\"" ++ String.ofList body ++ "\"") :: acc) else none
+      | none => none
+    | _ => none
+
+/-- An `If-None-Match` field value (RFC 9110 §13.1.2): `*`, or one or more
+entity tags. -/
+def entityTagList? (v : String) : Option (List String) :=
+  if v.toList.filter (fun c => !isOws c) == ['*'] then some ["*"] else entityTagsLoop (v.length + 1) v.toList []
+
+/-- The entity tags of `ifNoneMatchTags`, each member read as a field value;
+`none` when one is malformed, when there is none, or when `*` is not alone. -/
+def noneMatchTags? (op : Op) : Option (List String) := do
+  let tss ← op.ifNoneMatchTags.mapM entityTagList?
+  let ts := tss.flatten
+  if ts.isEmpty || (ts.contains "*" && ts.length != 1) then none else some ts
+
+/-- The `If-None-Match` field of a write's entity tags, in the list syntax
+of RFC 9110 §5.6.1. None for precondition `none` or `ifNoneMatchStar`
+(`argProblem` refuses tags with those). -/
+def noneMatchHeader (op : Op) : List (String × String) :=
+  if op.precondition == "none" || op.precondition == "ifNoneMatchStar" then [] else
+  match noneMatchTags? op with
+  | some ts => [("If-None-Match", ", ".intercalate ts)]
+  | none => []
+
 /-- The precondition header fields of a write. `current` is the entity tag
 last read; it replaces the caller's tag after a 412 re-read. -/
 def preconditionHeaders (op : Op) (current : String) : List (String × String) :=
-  match op.precondition with
+  (match op.precondition with
   | "ifMatch" => [("If-Match", if current != "" then current else op.tag)]
   | "ifMatchCurrent" => [("If-Match", current)]
   | "ifNoneMatchStar" => [("If-None-Match", "*")]
   | "ifUnmodifiedSince" => [("If-Unmodified-Since", op.tag)]
-  | _ => []
+  | _ => []) ++ noneMatchHeader op
 
 /-- Does the operation ask for a precondition on its write? -/
 def wantsPrecondition (op : Op) : Bool :=
@@ -530,11 +683,13 @@ def isWrite (r : Req) : Bool := r.method == "PUT" || r.method == "PATCH" || r.me
 /-- Does a request carry the header field of the operation's
 precondition? -/
 def carriesPrecondition (op : Op) (r : Req) : Bool :=
-  match op.precondition with
+  (match op.precondition with
   | "ifMatch" | "ifMatchCurrent" => (r.header? "if-match").any (· != "")
   | "ifNoneMatchStar" => r.header? "if-none-match" == some "*"
+  | "ifNoneMatch" => (r.header? "if-none-match").any (· != "")
   | "ifUnmodifiedSince" => (r.header? "if-unmodified-since").any (· != "")
-  | _ => true
+  | _ => true) &&
+  (op.ifNoneMatchTags.isEmpty || op.precondition == "none" || (r.header? "if-none-match").any (· != ""))
 
 /-! ## Request builders -/
 
@@ -615,31 +770,55 @@ def hasCapability (desc : Json) (ty : String) : Bool :=
 
 def isAbsoluteUri (s : String) : Bool := (L4Factoidal.Syntax.parseIri s).scheme.isSome
 
-/-- The arguments of an access document are usable: one or more actions, an
-assignee that is a URI, targets that are URIs, an inbox that is a URI. -/
-def accessArgsOk (op : Op) : Bool :=
-  !op.actions.isEmpty && isAbsoluteUri op.assignee && op.targets.all isAbsoluteUri &&
-  (op.inbox == "" || isAbsoluteUri op.inbox) &&
-  (match op.constraint with
+/-- The policies of an access document: `policies`, or one policy from the
+single-policy members when `policies` is empty. -/
+def Op.accessPolicies (op : Op) : List Policy :=
+  if op.policies.isEmpty then
+    [{ actions := op.actions, assignee := op.assignee, targets := op.targets, constraint := op.constraint }]
+  else op.policies
+
+/-- A policy is usable: one or more actions, an assignee that is a URI,
+targets that are URIs, constraints with `leftOperand`, `operator` and
+`rightOperand`. -/
+def policyOk (p : Policy) : Bool :=
+  !p.actions.isEmpty && isAbsoluteUri p.assignee && p.targets.all isAbsoluteUri &&
+  (match p.constraint with
    | .null => true
    | .array cs => cs.all (fun c => (c.getString? "leftOperand").isSome &&
        (c.getString? "operator").isSome && (c.field? "rightOperand").isSome)
    | _ => false)
 
-/-- An access request or grant with one policy: `@context`, `type`,
-`storage`, `access` (each policy `type`, `action`, `assignee`, `target`,
-`constraint`), `inbox`. -/
+/-- Is the constraint member absent? -/
+def noConstraint : Json → Bool
+  | .null => true
+  | _ => false
+
+/-- The arguments of an access document are usable: every policy is usable,
+the inbox is a URI, and `policies` is not given with the single-policy
+members (one of them would be dropped). -/
+def accessArgsOk (op : Op) : Bool :=
+  (op.policies.isEmpty || (op.actions.isEmpty && op.assignee == "" && op.targets.isEmpty &&
+    noConstraint op.constraint)) &&
+  op.accessPolicies.all policyOk && (op.inbox == "" || isAbsoluteUri op.inbox)
+
+/-- One policy of an access document: `type`, `action`, `assignee`,
+`target`, `constraint`. -/
+def policyDoc (p : Policy) : Json :=
+  .object (
+    [ ("type", .array [.string "AccessPolicy"]), ("action", strsJson p.actions)
+    , ("assignee", .string p.assignee) ] ++
+    (if p.targets.isEmpty then [] else
+      [("target", .object [("type", .string "StorageResource"), ("value", strsJson p.targets)])]) ++
+    (match p.constraint with
+     | .array (c :: cs) => [("constraint", .array (c :: cs))]
+     | _ => []))
+
+/-- An access request or grant: `@context`, `type`, `storage`, `access` (one
+member per policy, in the caller's order), `inbox`. -/
 def accessDoc (ty storage : String) (op : Op) : Json :=
   .object ([ ("@context", .array [.string lwsProfile]), ("type", .array [.string ty])
            , ("storage", .string storage)
-           , ("access", .array [ .object (
-                [ ("type", .array [.string "AccessPolicy"]), ("action", strsJson op.actions)
-                , ("assignee", .string op.assignee) ] ++
-                (if op.targets.isEmpty then [] else
-                  [("target", .object [("type", .string "StorageResource"), ("value", strsJson op.targets)])]) ++
-                (match op.constraint with
-                 | .array (c :: cs) => [("constraint", .array (c :: cs))]
-                 | _ => [])) ]) ] ++
+           , ("access", .array (op.accessPolicies.map policyDoc)) ] ++
     (if op.inbox == "" then [] else [("inbox", .string op.inbox)]))
 
 /-- A webhook subscription (lws10-core §Subscription Request,
@@ -942,7 +1121,27 @@ def isTokenExchange (r : Req) : Bool :=
 /-- The `resource` a token request asks for. -/
 def tokenResource? (r : Req) : Option String := (formPairs r.body).lookup "resource"
 
-/-- A 401 from the storage: check, then ask for a token. -/
+/-- The `as_uri` and `realm` of a Bearer challenge of the drafts before
+2026-10-19 (`Bearer as_uri="…", realm="…"`). -/
+def legacyChallenge? (r : Resp) : Option (String × String) := do
+  let ps ← (r.header? "www-authenticate").bind bearerParams
+  let asUri ← ps.lookup "as_uri"
+  let realm ← ps.lookup "realm"
+  pure (asUri, realm)
+
+/-- A 401 from the storage: check, then ask for a token.
+
+With `Session.legacyChallenge` (off by default), a 401 with no
+`resource_metadata` and a challenge `Bearer as_uri="…", realm="…"` (the
+drafts before 2026-10-19, still answered by css and sparq-lws:
+https://github.com/danbri/factoidal/issues/1115) is followed as the Java and
+JS clients follow it: `as_uri` is the authorization server, the realm is the
+storage and the root, and the flow continues at the authorization server
+metadata. This skips checks 1 and 2 of lws10-core §Discovery Validation by a
+Client (there is no protected resource metadata to check) and the storage
+description read of check 3; what is left is that the realm has the scheme
+and authority of the requested URI and contains it (`legacyValidated`).
+That is why the option is off by default. -/
 def on401 (s : ClientState) (r : Resp) : ClientState × Action :=
   match s.sent with
   | none => statusFail s r
@@ -966,8 +1165,23 @@ def on401 (s : ClientState) (r : Resp) : ClientState × Action :=
                           , auth := some { requestUri := sent.url, metadataUrl := rmeta, storage }
                           , exchanges := s.exchanges - 1 }
           .authMeta (getReq rmeta mediaJson)
-    | _, _ => failWith s "unauthorized"
-        ([("reason", .string "the 401 has no resource_metadata or no storage link")] ++ respSummary r)
+    | _, _ =>
+      match (if s.session.legacyChallenge then legacyChallenge? r else none) with
+      | some (asUri, realm) =>
+        if !sameOrigin realm sent.url then
+          failWith s "discoveryValidation" [("check", .string "realmOrigin"), ("challenge", .string challenge)]
+        else if !sent.url.startsWith realm then
+          failWith s "discoveryValidation" [("check", .string "realmContains"), ("challenge", .string challenge)]
+        else
+          let ses := { s.session with tokens := s.session.tokens.filter (fun t => t.storage != realm) }
+          let pending : Req := { sent with headers := sent.headers.filter (fun (n, _) => n.toLower != "authorization") }
+          sendPublic { s with session := ses, pending := some pending, pendingPhase := s.phase
+                            , auth := some { requestUri := sent.url, metadataUrl := "", storage := realm
+                                           , asIssuer := asUri, rootEndpoint := realm, legacy := true }
+                            , exchanges := s.exchanges - 1 }
+            .authAsMeta (getReq (asMetadataUrl asUri) mediaJson)
+      | none => failWith s "unauthorized"
+          ([("reason", .string "the 401 has no resource_metadata or no storage link")] ++ respSummary r)
 
 /-- The next request of the flow, after each answer. -/
 def authStep (C : L4Factoidal.Authz.Crypto) (s : ClientState) (c : AuthCtx) (r : Resp) :
@@ -1002,7 +1216,12 @@ def authStep (C : L4Factoidal.Authz.Crypto) (s : ClientState) (c : AuthCtx) (r :
         if !sameOrigin root c.requestUri then
           failWith s "discoveryValidation" [("check", .string "storageRootOrigin"), ("root", .string root)]
         else
-          sendPublic { s with auth := some { c with rootEndpoint := root } }
+          -- The other service endpoints the token may go to: only those with
+          -- the scheme and authority of the requested URI (check 3's rule).
+          let eps := ((desc.getArray? "service").getD []).filterMap (fun sv =>
+            (sv.getString? "serviceEndpoint").map (resolve c.storage)) |>.filter (fun e =>
+              e != root && sameOrigin e c.requestUri)
+          sendPublic { s with auth := some { c with rootEndpoint := root, endpoints := eps.eraseDups } }
             .authAsMeta (getReq (asMetadataUrl c.asIssuer) mediaJson)
   | .authAsMeta =>
     match r.json? with
@@ -1030,7 +1249,8 @@ def authStep (C : L4Factoidal.Authz.Crypto) (s : ClientState) (c : AuthCtx) (r :
         if (jStr j "token_type").toLower != "bearer" then
           failWith s "authorization" [("phase", .string "authToken"), ("reason", .string "token_type is not Bearer")]
         else
-        let entry : TokenEntry := { storage := c.storage, root := c.rootEndpoint, token := tok }
+        let entry : TokenEntry := { storage := c.storage, root := c.rootEndpoint, token := tok
+                                    , endpoints := c.endpoints }
         let kept := s.session.tokens.filter (fun t => t.storage != c.storage)
         let ses : Session := { s.session with tokens := entry :: kept }
         let s := { s with session := ses, auth := none }
@@ -1090,7 +1310,15 @@ def argProblem (op : Op) : Option String :=
   else if op.kind == "subscribe" && op.expires != "" && (Notifications.parseRfc3339? op.expires).isNone then
     some "expires is not an RFC 3339 date-time"
   else if (op.kind == "requestAccess" || op.kind == "grantAccess") && !accessArgsOk op then
-    some "an access document needs actions, an assignee URI and target URIs"
+    some "an access document needs, for each policy, actions, an assignee URI and target URIs (and policies or the single-policy members, not both)"
+  else if op.precondition == "ifNoneMatch" && op.ifNoneMatchTags.isEmpty then
+    some "the precondition ifNoneMatch needs entity tags (ifNoneMatchTags)"
+  else if !op.ifNoneMatchTags.isEmpty && !conditionalKinds.contains op.kind then
+    some "ifNoneMatchTags is for a write: update, patch, delete, updateLinkset, move"
+  else if !op.ifNoneMatchTags.isEmpty && (noneMatchTags? op).isNone then
+    some "an If-None-Match value is not * or a list of entity tags (RFC 9110 §8.8.3, §13.1.2)"
+  else if !op.ifNoneMatchTags.isEmpty && (op.precondition == "none" || op.precondition == "ifNoneMatchStar") then
+    some ("ifNoneMatchTags with precondition " ++ op.precondition)
   else if op.kind == "move" && !isAbsoluteUri op.destination then
     some "a move needs a destination container URI"
   else if (op.kind == "patch" || (op.kind == "updateLinkset" && op.mediaType.toLower != mediaLinkset)) &&
@@ -1146,7 +1374,15 @@ def begin (s : ClientState) : ClientState × Action :=
       if op.endpoint != "" then startService s op.endpoint
       else if op.storage != "" then send s .discoverDesc (getReq op.storage mediaLwsCid)
       else send s .discoverHead (headReq op.url)
-  | "discover" | "subscribe" | "requestAccess" | "grantAccess" | "move" =>
+  | "subscribe" =>
+      -- The caller names the notification service endpoint: POST the
+      -- subscription to it, with no storage link to find first (lwsd's
+      -- endpoint sends none: https://github.com/danbri/factoidal/issues/1115).
+      if op.endpoint != "" then
+        send { s with endpoint := op.endpoint } .main (jsonReq "POST" op.endpoint (subscriptionDoc op))
+      else if op.storage != "" then send s .discoverDesc (getReq op.storage mediaLwsCid)
+      else send s .discoverHead (headReq op.url)
+  | "discover" | "requestAccess" | "grantAccess" | "move" =>
       if op.storage != "" then send s .discoverDesc (getReq op.storage mediaLwsCid)
       else send s .discoverHead (headReq op.url)
   | "describe" => send s .discoverDesc (getReq op.url mediaLwsCid)
@@ -1425,15 +1661,20 @@ def repeatsRefused (s : ClientState) (e : Event) (r : Req) : Bool :=
 hold, for the storage it asks for? -/
 def tokenBacked (s : ClientState) (r : Req) : Bool :=
   match s.auth with
-  | some c => validated c && tokenResource? r == some c.storage
+  | some c => validated c && (!c.legacy || s.session.legacyChallenge) && tokenResource? r == some c.storage
   | none => false
+
+/-- Is the scheme of a URL `https` (RFC 3986 §3.1: case-insensitive)? -/
+def isHttpsUrl (url : String) : Bool := url.toLower.startsWith "https://"
 
 /-- The last word of `step`: an action that breaks one of the properties
 of `Client/Theorems.lean` becomes `fail`. -/
 def enforce (s : ClientState) (e : Event) (out : ClientState × Action) : ClientState × Action :=
   match out with
   | (s', .fetch r) =>
-    if wantsPrecondition s.op && isWrite r && !carriesPrecondition s.op r then
+    if s.session.requireHttps && !isHttpsUrl r.url then
+      failWith s' "insecureTransport" [("url", .string r.url)]
+    else if wantsPrecondition s.op && isWrite r && !carriesPrecondition s.op r then
       failWith s' "enforce" [("rule", .string "precondition")]
     else if isTokenExchange r && !tokenBacked s' r then
       failWith s' "enforce" [("rule", .string "discoveryValidation")]

@@ -811,6 +811,50 @@ WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.”"
   https://github.com/danbri/factoidal/issues/677. Rule text:
   `skills/crypto-policy/SKILL.md` § AES through WebCrypto.
 
+### Four answers of 2026-10-28 (owner)
+
+Owner, 2026-10-28, verbatim: "1. Y 2. Y 3. Y 4. Y. Re 3 if controversial or
+risk file issue to flag for expert review", to these questions:
+
+1. Publish npm 0.20.0: yes. It is published from the commit that cut 0.20.0
+   (`0c9a222b`, CHANGELOG "Unreleased" empty), through `npm-publish.yml` in
+   `danbri/factoidal-builds`, dist-tag `latest`; then the hub pages load it.
+2. Remove the old F\* qualifier sentence from the public pages
+   (`docs/index.md`, `docs/web/how-it-works.md`, the three conformance
+   pages): yes.
+3. WebDAV listener login (https://github.com/danbri/factoidal/issues/1108):
+   PBKDF2-HMAC-SHA256 over the vendored HACL\* HMAC, yes. If the choice is
+   disputed or carries risk, open an issue that asks for expert review and
+   link it from the code and the docs.
+4. HTTP over XMPP (https://github.com/danbri/factoidal/issues/1107): start
+   stage 1 of `docs/designissues/2026-10-28-http-over-xmpp.md`.
+
+### Feature-combination safety; MCP over XMPP (owner, 2026-10-28)
+
+Owner, verbatim: "Thanks for your care re open proxy. We will need careful
+documentation and theorems to ensure that subtle combinations of these
+features are not disasterous." Tracking:
+https://github.com/danbri/factoidal/issues/1120. A PR that adds a server
+target, a transport, a client option or a tool states the invariants of that
+issue it touches, and the theorem or test for each. Audit and the gate for a new
+surface: `docs/designissues/2026-10-28-feature-combination-safety.md`
+(section 5).
+
+Owner, verbatim: "there is value in implementing both sides of mcp-over-xmpp
+(“xmpcp”?), please progress that - issues, subagent, lit review", then "maybe
+i meant xmpp+mcp as “xmcpp”; needs a bacronym" and "Note also we will want mcp
+controls for factoidal CLIs too; or subsets. And webmcp options for our
+browser-visible servers." Tracking:
+https://github.com/danbri/factoidal/issues/1121; review and order:
+`docs/designissues/2026-10-28-mcp-over-xmpp.md`. The name's expansion is the
+owner's to choose.
+
+Owner, 2026-10-28, verbatim: "Stateless mcp is future of mcp afaik; can we
+align even if support classic for historical reasons and legacy
+deployments?" Rule: the Lean MCP core is 2026-07-28 stateless only; the
+2025-11-25 `initialize`/session flow is a separate compatibility layer over
+it, for stdio and HTTP only. Record: section 7a of the design record above.
+
 ### There are no users. Prefer the right structure to the compatible one
 
 The issue-566 ruling above says "We have no users so rip it up where

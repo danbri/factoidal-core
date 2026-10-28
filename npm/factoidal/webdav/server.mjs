@@ -15,7 +15,9 @@
 //   `webdavStep`, then carry what the engine answers: an `lws` request to
 //   the local storage it names (no socket: the storage handle's own step),
 //   a `fetch` to the URL it names, until it answers a `response`, which
-//   this file writes back.
+//   this file writes back; when the response carries `write` (the state
+//   file `.webdav-state.json`: dead properties and locks), replace that file
+//   first (a new file in the same directory, mode 0600, then a rename).
 //
 // It makes NO protocol decision. Which files are mounts, what a mount file
 // says, every status code, header field, XML body, lock, property and path
@@ -27,12 +29,14 @@
 // THE WASM CONTRACT (formal/lean4/Wasm/Ops/WebDAV.lean)
 //   webdavOpen   [configJson]                 -> { ok, handle, need }
 //   webdavLoad   [handle, filesJson]          -> { ok, need } | { ok, ready }
-//   webdavStep   [handle, requestJson] + body -> { ok, response | lws | fetch } + body
+//   webdavStep   [handle, requestJson] + body -> { ok, response [+ write] | lws | fetch } + body
 //   webdavResume [handle, answerJson]  + body -> { ok, response | lws | fetch } + body
 //   webdavClose  [handle]                     -> { ok }
 
-import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs'
-import { resolve as resolvePath } from 'node:path'
+import {
+  readFileSync, readdirSync, writeFileSync, existsSync, openSync, writeSync, fsyncSync, closeSync, renameSync, unlinkSync
+} from 'node:fs'
+import { resolve as resolvePath, dirname, basename, join } from 'node:path'
 import { loadEngine } from '../bin/engine.mjs'
 import { openLwsStorage } from '../lws/server.mjs'
 
@@ -108,6 +112,30 @@ function gather (configDir, need) {
 }
 
 /**
+ * Replace a file the engine named (`write` on a response) atomically: write
+ * a new file in the same directory, flush it, then rename it over the old
+ * one, so a crash leaves the old text or the new text. Pure I/O.
+ */
+function replaceFile (configDir, write) {
+  const target = resolvePath(configDir, write.path)
+  const suffix = Buffer.from(globalThis.crypto.getRandomValues(new Uint8Array(6))).toString('hex')
+  const temp = join(dirname(target), `.${basename(target)}.${process.pid}.${suffix}.tmp`)
+  const fd = openSync(temp, 'wx', parseInt(write.mode, 8))
+  try {
+    writeSync(fd, write.text)
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+  try {
+    renameSync(temp, target)
+  } catch (error) {
+    try { unlinkSync(temp) } catch (_error) { /* already gone */ }
+    throw error
+  }
+}
+
+/**
  * Open a WebDAV server handle over the mount files of `configDir`.
  *
  * @param {object} options
@@ -120,7 +148,7 @@ export async function openWebdav (options = {}) {
   const configDir = options.configDir
   const engine = options.engine !== undefined ? options.engine : await loadEngine()
   const listing = readdirSync(configDir)
-  let envelope = callEngine(engine, 'webdavOpen', [JSON.stringify({ listing, entropy: randomBase64(32) })])
+  let envelope = callEngine(engine, 'webdavOpen', [JSON.stringify({ listing, entropy: randomBase64(32), now: nowSeconds() })])
   if (envelope.ok === false) throw new WebdavHostError(envelope.error, { envelope })
   const handle = envelope.handle
   let loads = 0
@@ -174,6 +202,7 @@ export async function openWebdav (options = {}) {
     for (let hop = 0; hop < MAX_HOPS; hop += 1) {
       const env = got.envelope
       if (env.response !== undefined) {
+        if (env.write !== undefined) replaceFile(configDir, env.write)
         return { status: env.response.status, headers: env.response.headers || [], body: got.bytes }
       }
       let answer

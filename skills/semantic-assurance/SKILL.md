@@ -113,6 +113,20 @@ The finite gate does not replace external suites.
 When updating the gate, verify that it rejects a missing package and a
 known defective artifact; enforce synchronous Wasm deadlines out of process.
 
+A check that no CI job runs goes out of date with no signal. On 2026-10-24
+commit `a701bef1` (https://github.com/danbri/factoidal/issues/960) changed
+the OWL consistency verdicts (a checked finite model gives `true` with no
+`reason`) and added 3 cases to `tools/check-owl-public-boundary.py`, which core
+CI runs. It did not update `tools/check-owl-public-artifact.mjs` and
+`tools/test-owl-public-artifact.mjs`, which only the unmerged
+https://github.com/danbri/factoidal-builds/pull/1 runs. On 2026-10-28 both
+tools stopped with "23 !== 20" before they checked any case, and once
+repaired they found a public-API defect in the 0.20.0 package
+(https://github.com/danbri/factoidal/issues/1118). Rules: when you change a
+case list or a verdict contract, grep `tools/` and `tests/` for every copy of
+it in the same landing; a checker belongs in a CI job of this repository or of
+factoidal-builds before its results are cited.
+
 When changing verdict architecture, try an invalid proof-free verdict,
 regime substitution and checker bypass. Record which proof or test rejects
 each. A type-level example demonstrates the interface pattern only until
@@ -152,6 +166,9 @@ that builds them is untrusted; never add a premise about it to a soundness
 theorem. Record:
 [OWL model certificates](../../docs/designissues/2026-10-24-owl-model-certificates.md)
 (https://github.com/danbri/factoidal/issues/960).
+Overview of the whole path, from the npm call to the theorems and the two
+CI gates:
+[OWL consistency overview](../../docs/designissues/2026-10-28-owl-consistency-overview.md).
 
 Run `python3 tools/check-owl-reader-contracts.py --json /new/contracts.json`
 for adversarial cases, independent original-graph model witnesses, axiom

@@ -192,6 +192,7 @@ import L4Factoidal.Syntax.RdfXml
 import L4Factoidal.JSON.Parser
 import Harness.Common
 import Harness.Fixtures
+import L4Factoidal.SPARQLRL.OwlRlDiff
 
 open L4Factoidal.XML
 open L4Factoidal.RDF
@@ -2828,6 +2829,11 @@ structure Opts where
   fsInput : Bool := false
   /-- `--rdf-based`: the OWL 2 RDF-Based Semantics regime (issue 721). -/
   rdfBased : Bool := false
+  /-- `--srl-diff`: compare the SPARQL-RL OWL 2 RL rule set
+  (`SPARQLRL/OwlRl.lean`) with the Lean closure on every premise. -/
+  srlDiff : Bool := false
+  /-- `--srl-max N`: skip premises of more than N triples in `--srl-diff`. -/
+  srlMax : Nat := 5000
 
 def parseArgs : List String → Opts → Opts
   | [], o => o
@@ -2840,6 +2846,8 @@ def parseArgs : List String → Opts → Opts
   | "--syntax" :: rest, o => parseArgs rest { o with species := true }
   | "--fs-input" :: rest, o => parseArgs rest { o with fsInput := true }
   | "--rdf-based" :: rest, o => parseArgs rest { o with rdfBased := true }
+  | "--srl-diff" :: rest, o => parseArgs rest { o with srlDiff := true }
+  | "--srl-max" :: n :: rest, o => parseArgs rest { o with srlMax := n.toNat! }
   | "--slow-ms" :: n :: rest, o => parseArgs rest { o with slowMs := n.toNat! }
   | "--case" :: c :: rest, o => parseArgs rest { o with cases := o.cases ++ [c] }
   | "--rounds" :: n :: rest, o => parseArgs rest { o with rounds := n.toNat!.max 1 }
@@ -3458,6 +3466,83 @@ def speciesMain (o : Opts) : IO UInt32 := do
   return (if notRead.isEmpty && total.fail == 0 && total.total > 0 &&
              stale.isEmpty && unmatched.isEmpty then 0 else 1)
 
+
+/-! ## `--srl-diff`: the SPARQL-RL OWL 2 RL rule set against the Lean closure
+
+For each case with a premise graph (`premiseGraph`: RDF/XML premise plus
+imports, else the functional-syntax or OWL/XML premise), two comparisons
+(`SPARQLRL/OwlRlDiff.lean`):
+
+* `[table]`: `OwlRl.owlRlCommon` against `OwlRl.tableClosure` (the table
+  rows of the Lean closure). Every case must agree; the exit code is 1 when
+  one differs.
+* `[library]`: `OwlRl.owlRl` (all rows) against `indexedClosureSN` (the
+  closure with the `[ext]` rows). Reported only: the `[ext]` rows and
+  cls-maxqc3/cls-maxqc4 make the two differ by design.
+
+The unit is a test case (not a case and test type), once per catalog. A
+premise of more than `--srl-max` triples is skipped and counted. -/
+
+def srlDiffLine (tag id : String) (d : L4Factoidal.SPARQLRL.OwlRl.Diff) (ms : Nat) : String :=
+  s!"SRL-DIFF [{tag}] {id}: {if d.agrees then "agree" else "differ"} rules={d.ruleCount} \
+lean={d.leanCount} only_rules={d.onlyRules.length} only_lean={d.onlyLean.length} \
+clash_rules={d.rulesClash} clash_lean={d.leanClash} ms={ms}"
+
+def srlDiffMain (o : Opts) : IO UInt32 := do
+  let dir : System.FilePath := o.dir
+  let names := if o.only.isEmpty then ["profile-RL.rdf"] else o.only
+  let mut bad := false
+  for name in names do
+    let p := dir / name
+    if !(← p.pathExists) then
+      IO.println s!"MISSING {name}"
+      bad := true
+      continue
+    match ← readCatalog p with
+    | none => bad := true
+    | some cat =>
+      let mut agreeT := 0
+      let mut differT := 0
+      let mut agreeL := 0
+      let mut differL := 0
+      let mut skipped := 0
+      let mut total := 0
+      for c in cat.cases do
+        if !o.cases.isEmpty && !o.cases.contains c.id then continue
+        total := total + 1
+        match premiseGraph cat c with
+        | .error _ =>
+            IO.println s!"SRL-SKIP {c.id}: no premise graph"
+            skipped := skipped + 1
+        | .ok g =>
+          if g.length > o.srlMax then
+            IO.println s!"SRL-SKIP {c.id}: premise of {g.length} triples (--srl-max {o.srlMax})"
+            skipped := skipped + 1
+            continue
+          for (tag, f) in [("table", L4Factoidal.SPARQLRL.OwlRl.compareTable),
+                           ("library", L4Factoidal.SPARQLRL.OwlRl.compareLibrary)] do
+            let t0 ← IO.monoMsNow
+            let r := f g
+            let n := match r with | .ok d => d.ruleCount + d.leanCount | .error _ => 0
+            let t1 ← IO.monoMsNow
+            match r with
+            | .error e =>
+                IO.println s!"SRL-DIFF [{tag}] {c.id}: differ (infer error: {e}) ms={t1 - t0} n={n}"
+                if tag == "table" then differT := differT + 1 else differL := differL + 1
+            | .ok d =>
+                IO.println (srlDiffLine tag c.id d (t1 - t0))
+                if !d.agrees then
+                  for t in d.onlyRules.take 5 do IO.println s!"    only-rules {showTriple t}"
+                  for t in d.onlyLean.take 5 do IO.println s!"    only-lean {showTriple t}"
+                if tag == "table" then
+                  if d.agrees then agreeT := agreeT + 1 else differT := differT + 1
+                else
+                  if d.agrees then agreeL := agreeL + 1 else differL := differL + 1
+      IO.println s!"{name} [table]: {agreeT} agree, {differT} differ, {skipped} skipped (out of {total})"
+      IO.println s!"{name} [library]: {agreeL} agree, {differL} differ, {skipped} skipped (out of {total})"
+      if differT > 0 then bad := true
+  return (if bad then 1 else 0)
+
 def main (args : List String) : IO UInt32 := do
   let o := parseArgs args {}
   let dir : System.FilePath := o.dir
@@ -3496,6 +3581,7 @@ unrelated triple absent = {!unrelatedAbsent}"
   if o.species then return (← speciesMain o)
   if o.fsInput then return (← fsInputMain o)
   if o.rdfBased then return (← rdfBasedMain o)
+  if o.srlDiff then return (← srlDiffMain o)
   let names := if o.only.isEmpty then catalogs else o.only
   let mut total : Harness.Score := {}
   let mut totalClosure : Harness.Score := {}

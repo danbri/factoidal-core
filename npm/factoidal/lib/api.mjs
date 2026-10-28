@@ -656,6 +656,17 @@ function buildApi(driver) {
     const entail = opts.entail || 'none';
     const sparql12 = opts.sparql12 === true || String(opts.version || '') === '1.2';
     const e = c.e;
+    if (sparql12 && entail !== 'none' && opts.output === undefined) {
+      // SPARQL 1.2 under an entailment regime: the engine closes the stored
+      // dataset and runs the SPARQL 1.2 evaluator (op datasetQuery12Entail,
+      // https://github.com/danbri/factoidal/issues/1109).
+      requireEntryFn(e, 'datasetQuery12Entail', 'query {sparql12, entail}');
+      const r = await withExtensionRounds(() => entryResult(
+        e.datasetQuery12Entail(ds.handle, sparql, entail), 'query', sparql));
+      if (r.kind === 'ask') return r.boolean;
+      if (r.kind === 'construct' || r.kind === 'describe') return c.fromNQuads(r.nquads, ds.prefixes);
+      return bindingsFromSrj(r.srj);
+    }
     if (entail !== 'none' || opts.output !== undefined) {
       // queryRaw over the stored dataset: an entailment regime, or a
       // results format (SPARQL 1.1 Query Results JSON, XML, CSV, TSV).
@@ -1130,6 +1141,28 @@ function buildApi(driver) {
   async function closure(data, regime, options) {
     const opts = await checkedOptions('closure', optionsOf('closure', options));
     return withDataset(data, opts, 'closure', (c, ds) => closureOnHandle(c, ds, regime));
+  }
+
+  /**
+   * SPARQL 1.2 RL (SPARQL-RL) infer: apply a rule set to the default graph
+   * of `data` and answer the inference graph (the triples the rules derive,
+   * the rule set's DATA blocks included, that are not in `data`) as a new
+   * Dataset. The rule set is SPARQL-RL text (https://w3c.github.io/data-shapes/sparql12-rl/).
+   * A rule set that is not well-formed, not stratifiable, or has IMPORTS is
+   * refused. Engine op: datasetSparqlRlInfer.
+   * @param {Dataset|string|Array} data
+   * @param {string} rules
+   * @param {{format?: string, baseIRI?: string}} [options]
+   * @returns {Promise<Dataset>}
+   */
+  async function sparqlRlInfer(data, rules, options) {
+    const opts = await checkedOptions('sparqlRlInfer', optionsOf('sparqlRlInfer', options));
+    if (typeof rules !== 'string') throw new TypeError('sparqlRlInfer: rules must be a string');
+    return withDataset(data, opts, 'sparqlRlInfer(data)', (c, ds) => {
+      requireEntryFn(c.e, 'datasetSparqlRlInfer', 'sparqlRlInfer');
+      const r = entryResult(c.e.datasetSparqlRlInfer(ds.handle, rules), 'sparqlRlInfer');
+      return c.wrap(r, ds.prefixes);
+    });
   }
 
   /**
@@ -2424,6 +2457,7 @@ function buildApi(driver) {
       // ops it actually has.
       shacl: has('shaclValidate'),
       shex: has('shexValidate'),
+      sparqlRl: has('datasetSparqlRlInfer'),
       owlClosure: has('owlClosure'),
       explain: has('explainGraph'),
       stages: has('stageList'),
@@ -2585,6 +2619,7 @@ function buildApi(driver) {
     asDefaultGraph,
     shaclValidate,
     shexValidate,
+    sparqlRlInfer,
     owlClosure,
     coreRdfsClosure,
     coreRdfsCheck,

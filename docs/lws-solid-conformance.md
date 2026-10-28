@@ -299,12 +299,12 @@ unread. Every decision is `L4Factoidal.LWS.Client.step`
 op      { kind, url, body | bodyBase64, mediaType, slug, container, types, links,
           precondition, tag, retry412, recursive, accept, query, topics, inbox,
           actions, assignee, targets, constraint, destination,
-          method, headers, requestTarget }          (members a kind does not use are ignored)
+          method, headers, requestTarget, endpoint }  (members a kind does not use are ignored)
 action  { fetch: { method, url, headers: [[name, value]], bodyBase64? } }
       | { done: RESULT, session } | { fail: { code, ... }, session }
 event   { status, headers: [[name, value]], bodyBase64 | body, now, randomBase64 } | { error }
-session { tokens: [{ storage, root, token }], subjectToken, subjectTokenType,
-          selfIssued?: { subject, keyId, jwk } }
+session { tokens: [{ storage, root, token, endpoints? }], subjectToken, subjectTokenType,
+          selfIssued?: { subject, keyId, jwk }, legacyChallenge? }
 ```
 
 Kinds: `discover`, `read`, `head`, `create`, `update`, `patch`, `delete`,

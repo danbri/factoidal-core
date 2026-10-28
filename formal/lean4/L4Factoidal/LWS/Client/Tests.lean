@@ -58,6 +58,18 @@ def script (op : Op) (resps : List Resp) (ses : Session := {}) : List Req × Act
   let (s, a) := Client.start Vt op ses
   go s a [] resps
 
+/-- The session at the end of an operation against canned responses. -/
+def scriptSession (op : Op) (resps : List Resp) (ses : Session := {}) : Session :=
+  let rec go (s : ClientState) (a : Action) : List Resp → Session
+    | [] => s.session
+    | x :: xs => match a with
+      | .fetch _ =>
+        let (s', a') := Client.step Vt s (.response x)
+        go s' a' xs
+      | _ => s.session
+  let (s, a) := Client.start Vt op ses
+  go s a resps
+
 def failCode : Action → String
   | .fail e => (e.getString? "code").getD ""
   | _ => ""
@@ -315,6 +327,226 @@ def cidToken : String := ((formPairs (sentAt cid.1 4).body).lookup "subject_toke
   [ challenge "https://s.example/.well-known/oauth-protected-resource/a" "https://s.example/st"
   , prm "https://s.example/a", descRoot "https://s.example/", asMeta ] cidSes).2 == "credential"
 #guard (sessionOfJson (sessionJson cidSes)).selfIssued.map (·.privateKey.data) == some (Array.replicate 32 1)
+
+/-! ### Interop defects (https://github.com/danbri/factoidal/issues/1115) -/
+
+-- 1. The challenge of the drafts before 2026-10-19, `Bearer as_uri, realm`,
+-- with no resource_metadata and no storage link (css, sparq-lws). Opt-in.
+def legacy401 (asUri realm : String) : Resp :=
+  rsp 401 [("WWW-Authenticate", "Bearer as_uri=\"" ++ asUri ++ "\", realm=\"" ++ realm ++ "\"")]
+def legacySes : Session := { ses with legacyChallenge := true }
+def legacyRun := script { kind := "read", url := B ++ "a" }
+  [ legacy401 "https://as.example/t" B, asMeta, tokenResp, rsp 200 [] "hello" ] legacySes
+-- No protected resource metadata, no storage description: the authorization
+-- server metadata, the token, the request again.
+#guard legacyRun.1.map (·.url) ==
+  [ B ++ "a", "https://as.example/.well-known/lws-configuration/t", "https://as.example/t/token", B ++ "a" ]
+-- The token's resource is the realm.
+#guard (formPairs (sentAt legacyRun.1 2).body).lookup "resource" == some B
+#guard (sentAt legacyRun.1 3).header? "authorization" == some "Bearer AT1"
+#guard (doneJson legacyRun.2).getString? "body" == some "hello"
+-- The token is kept for the realm, and goes under it only.
+#guard (scriptSession { kind := "read", url := B ++ "a" }
+  [ legacy401 "https://as.example/t" B, asMeta, tokenResp, rsp 200 [] "hello" ] legacySes).tokens.map
+  (fun t => (t.storage, t.root)) == [(B, B)]
+-- Off by default: the same 401 is the answer, and nothing more is sent.
+def legacyOff := script { kind := "read", url := B ++ "a" } [legacy401 "https://as.example/t" B] ses
+#guard failCode legacyOff.2 == "unauthorized"
+#guard legacyOff.1.length == 1
+-- A realm on another origin: no token request.
+def legacyEvil := script { kind := "read", url := B ++ "a" }
+  [legacy401 "https://as.example/t" "https://evil.example/"] legacySes
+#guard failCode legacyEvil.2 == "discoveryValidation"
+#guard legacyEvil.1.all (fun r => !isTokenExchange r)
+-- A realm that does not contain the requested URL: no token request.
+#guard failCode (script { kind := "read", url := B ++ "a" }
+  [legacy401 "https://as.example/t" (B ++ "other/")] legacySes).2 == "discoveryValidation"
+-- A 401 with resource_metadata still takes the full checks with the option on.
+#guard failCode (script { kind := "read", url := B ++ "decoy" }
+  [ challenge "https://s.example/.well-known/oauth-protected-resource/decoy" "https://s.example/other"
+  , prm "https://s.example/decoy", descRoot "https://evil.example/" ] legacySes).2 == "discoveryValidation"
+-- The option goes through the session document.
+#guard (sessionOfJson (sessionJson legacySes)).legacyChallenge
+#guard !(sessionOfJson (sessionJson ses)).legacyChallenge
+#guard (sessionOfJson (.object [("legacyChallenge", .bool true)])).legacyChallenge
+
+-- 2. The token also goes to the service endpoints of the storage description
+-- on the requested URI's origin (lws-drupal's type index is outside its
+-- StorageRoot path), never to another origin.
+def descServices : Resp := rsp 200 [] ("{\"id\":\"https://s.example/st\",\"service\":[" ++
+  "{\"type\":\"StorageRoot\",\"serviceEndpoint\":\"https://s.example/root/\"}," ++
+  "{\"type\":\"TypeIndexService\",\"serviceEndpoint\":\"/types\"}," ++
+  "{\"type\":\"NotificationService\",\"serviceEndpoint\":\"https://other.example/n\"}]}")
+def epSession : Session := scriptSession { kind := "read", url := "https://s.example/root/a" }
+  [ challenge "https://s.example/.well-known/oauth-protected-resource/root/a" "https://s.example/st"
+  , prm "https://s.example/root/a", descServices, asMeta, tokenResp, rsp 200 [] "x" ] ses
+#guard epSession.tokens.map (·.endpoints) == [["https://s.example/types"]]
+#guard (sentAt (script { kind := "typeIndex", url := "https://s.example/types", endpoint := "https://s.example/types" }
+  [] epSession).1 0).header? "authorization" == some "Bearer AT1"
+#guard ((sentAt (script { kind := "typeIndex", url := "https://other.example/n", endpoint := "https://other.example/n" }
+  [] epSession).1 0).header? "authorization").isNone
+#guard ((sentAt (script { kind := "read", url := "https://s.example/elsewhere" } [] epSession).1 0).header?
+  "authorization").isNone
+-- The endpoints go through the session document; a document without them reads as none.
+#guard (sessionOfJson (sessionJson epSession)).tokens.map (·.endpoints) == [["https://s.example/types"]]
+#guard (sessionOfJson (sessionJson ses)).tokens.isEmpty
+
+-- 3. A subscription to a notification endpoint the caller names: POST to it,
+-- with no HEAD for a storage link (lwsd's endpoint sends none).
+def subDirect := script { kind := "subscribe", url := B ++ "a", endpoint := "https://s.example/subs"
+                        , inbox := "https://in.example/1" } [rsp 201 [("Location", "/subs/1")]]
+#guard subDirect.1.map (fun r => (r.method, r.url)) == [("POST", "https://s.example/subs")]
+#guard (String.fromUTF8? (sentAt subDirect.1 0).body) ==
+  some "{\"type\":\"WebhookSubscription\",\"topic\":[\"https://s.example/a\"],\"inbox\":\"https://in.example/1\"}"
+#guard ((doneJson subDirect.2).field? "report" |>.bind (·.getString? "subscription")) == some "https://s.example/subs/1"
+-- Without a named endpoint the client still finds it, and a HEAD with no
+-- storage link stops it.
+#guard failCode (script { kind := "subscribe", url := B ++ "a", inbox := "https://in.example/1" } [rsp 200]).2 ==
+  "noStorageLink"
+
+/-! ### Driver options (https://github.com/danbri/factoidal/issues/1116) -/
+
+-- 1. requireHttps: no request to a URL whose scheme is not https, in any
+-- phase. Off by default.
+def httpsSes : Session := { ses with requireHttps := true }
+-- The operation itself: refused before it is sent, with the URL named.
+def plainOp := script { kind := "read", url := "http://s.example/a" } [] httpsSes
+#guard plainOp.1.isEmpty
+#guard failCode plainOp.2 == "insecureTransport"
+#guard (match plainOp.2 with | .fail e => e.getString? "url" == some "http://s.example/a" | _ => false)
+-- The driver protocol's error kind: TransportError.
+#guard (match plainOp.2 with | .fail e => (errorReport e).getString? "kind" == some "TransportError" | _ => false)
+-- The scheme is case-insensitive (RFC 3986 §3.1).
+#guard isHttpsUrl "HTTPS://s.example/a" && !isHttpsUrl "http://s.example/a" && !isHttpsUrl "ftp://s.example/"
+#guard isDone (script { kind := "read", url := "HTTPS://s.example/a" } [rsp 200] httpsSes).2
+-- Off: the same read is sent.
+#guard (script { kind := "read", url := "http://s.example/a" } [] ses).1.length == 1
+-- The https flow is the same with the option on.
+def authedHttps := script { kind := "read", url := B ++ "a" }
+  [ challenge "https://s.example/.well-known/oauth-protected-resource/a" "https://s.example/st"
+  , prm "https://s.example/a", descRoot "https://s.example/", asMeta, tokenResp, rsp 200 [] "hello" ] httpsSes
+#guard authedHttps.1.map (·.url) == authed.1.map (·.url)
+#guard isDone authedHttps.2
+-- An authorization server on http: its metadata is not requested, so no
+-- credential goes to it.
+def prmPlainAs (resource : String) : Resp :=
+  rsp 200 [] ("{\"resource\":\"" ++ resource ++ "\",\"authorization_servers\":[\"http://as.example/t\"]}")
+def plainAs := script { kind := "read", url := B ++ "a" }
+  [ challenge "https://s.example/.well-known/oauth-protected-resource/a" "https://s.example/st"
+  , prmPlainAs "https://s.example/a", descRoot "https://s.example/" ] httpsSes
+#guard plainAs.1.length == 3
+#guard plainAs.1.all (fun r => isHttpsUrl r.url)
+#guard failCode plainAs.2 == "insecureTransport"
+-- Off: the metadata is requested on http.
+#guard ((script { kind := "read", url := B ++ "a" }
+  [ challenge "https://s.example/.well-known/oauth-protected-resource/a" "https://s.example/st"
+  , prmPlainAs "https://s.example/a", descRoot "https://s.example/" ] ses).1.getLast?.map (·.url)) ==
+  some "http://as.example/.well-known/lws-configuration/t"
+-- A token endpoint on http: the subject token is not sent.
+def asMetaPlainToken : Resp :=
+  rsp 200 [] "{\"issuer\":\"https://as.example/t\",\"token_endpoint\":\"http://as.example/t/token\"}"
+def plainToken := script { kind := "read", url := B ++ "a" }
+  [ challenge "https://s.example/.well-known/oauth-protected-resource/a" "https://s.example/st"
+  , prm "https://s.example/a", descRoot "https://s.example/", asMetaPlainToken ] httpsSes
+#guard plainToken.1.length == 4
+#guard plainToken.1.all (fun r => !isTokenExchange r)
+#guard failCode plainToken.2 == "insecureTransport"
+-- A storage link to an http description (discovery): not followed.
+#guard failCode (script { kind := "discover", url := B ++ "a" }
+  [rsp 200 [("Link", "<http://s.example/st>; rel=\"" ++ lwsStorageRel ++ "\"")]] httpsSes).2 == "insecureTransport"
+-- The option goes through the session document.
+#guard (sessionOfJson (sessionJson httpsSes)).requireHttps
+#guard !(sessionOfJson (sessionJson ses)).requireHttps
+#guard (sessionOfJson (.object [("requireHttps", .bool true)])).requireHttps
+
+-- 2. If-None-Match with entity tags on a write (RFC 9110 §13.1.2).
+#guard entityTagList? "\"a\", W/\"b\"" == some ["\"a\"", "W/\"b\""]
+#guard entityTagList? " * " == some ["*"]
+#guard entityTagList? "\"a,b\"" == some ["\"a,b\""]
+#guard entityTagList? "\"a\",, \"b\"" == some ["\"a\"", "\"b\""]
+#guard entityTagList? "a" == none
+#guard entityTagList? "\"a\" x" == none
+#guard entityTagList? "\"a" == none
+#guard entityTagList? "" == none
+#guard entityTagList? "\"a b\"" == none
+-- Tags alone: the precondition is ifNoneMatch, no If-Match and no tag read.
+def inm := script { kind := "update", url := B ++ "a", body := "y".toUTF8, ifNoneMatchTags := ["\"t1\"", "W/\"t2\""] }
+  [rsp 204]
+#guard inm.1.map (·.method) == ["PUT"]
+#guard (sentAt inm.1 0).header? "if-none-match" == some "\"t1\", W/\"t2\""
+#guard ((sentAt inm.1 0).header? "if-match").isNone
+#guard isDone inm.2
+-- One member may be a list itself.
+#guard (sentAt (script { kind := "update", url := B ++ "a", ifNoneMatchTags := ["\"t1\", \"t2\""] } []).1 0).header?
+  "if-none-match" == some "\"t1\", \"t2\""
+-- A 412 ends the operation.
+#guard failCode (script { kind := "update", url := B ++ "a", ifNoneMatchTags := ["\"t1\""] } [rsp 412]).2 ==
+  "preconditionFailed"
+-- With If-Match: both fields (RFC 9110 §13.2.2 evaluates If-Match first).
+def bothPre := script { kind := "update", url := B ++ "a", precondition := "ifMatch", tag := "\"t1\""
+                      , ifNoneMatchTags := ["\"t0\""] } [rsp 204]
+#guard (sentAt bothPre.1 0).header? "if-match" == some "\"t1\""
+#guard (sentAt bothPre.1 0).header? "if-none-match" == some "\"t0\""
+#guard isDone bothPre.2
+-- With the current tag: HEAD, then the PUT with both.
+def bothCur := script { kind := "update", url := B ++ "a", precondition := "ifMatchCurrent", ifNoneMatchTags := ["\"t0\""] }
+  [rsp 200 [("ETag", "\"t1\"")], rsp 204]
+#guard bothCur.1.map (·.method) == ["HEAD", "PUT"]
+#guard (sentAt bothCur.1 1).header? "if-match" == some "\"t1\""
+#guard (sentAt bothCur.1 1).header? "if-none-match" == some "\"t0\""
+-- A patch and a delete take the tags in the same way.
+#guard (sentAt (script { kind := "patch", url := B ++ "a", body := "[]".toUTF8, ifNoneMatchTags := ["\"t0\""] } []).1 0).header?
+  "if-none-match" == some "\"t0\""
+#guard (sentAt (script { kind := "delete", url := B ++ "a", ifNoneMatchTags := ["\"t0\""] } []).1 0).header?
+  "if-none-match" == some "\"t0\""
+-- Refused before sending: a malformed tag, * with another tag, tags with
+-- precondition none or ifNoneMatchStar, tags on a read, ifNoneMatch with no tag.
+#guard failCode (script { kind := "update", url := B ++ "a", ifNoneMatchTags := ["t1"] } []).2 == "badArguments"
+#guard failCode (script { kind := "update", url := B ++ "a", ifNoneMatchTags := ["*", "\"a\""] } []).2 == "badArguments"
+#guard failCode (script { kind := "update", url := B ++ "a", precondition := "none", ifNoneMatchTags := ["\"a\""] } []).2 ==
+  "badArguments"
+#guard failCode (script { kind := "update", url := B ++ "a", precondition := "ifNoneMatchStar", ifNoneMatchTags := ["\"a\""] } []).2 ==
+  "badArguments"
+#guard failCode (script { kind := "read", url := B ++ "a", ifNoneMatchTags := ["\"a\""] } []).2 == "badArguments"
+#guard failCode (script { kind := "update", url := B ++ "a", precondition := "ifNoneMatch" } []).2 == "badArguments"
+#guard (script { kind := "update", url := B ++ "a", ifNoneMatchTags := ["t1"] } []).1.isEmpty
+-- The tags go through the operation document.
+#guard (match opOfJson (opJson { kind := "update", precondition := "ifNoneMatch", ifNoneMatchTags := ["\"a\""] }) with
+  | .ok o => o.ifNoneMatchTags == ["\"a\""] && o.precondition == "ifNoneMatch"
+  | .error _ => false)
+
+-- 3. An access document with more than one policy, in the caller's order.
+def twoPolicies : List Policy :=
+  [ { actions := ["read"], assignee := "https://bob.example/#me", targets := [B ++ "a"] }
+  , { actions := ["read", "write"], assignee := "https://carol.example/#me", targets := [B ++ "b/"]
+      constraint := .array [.object [("leftOperand", .string "dateTime"), ("operator", .string "lt")
+                                     , ("rightOperand", .string "2027-01-01T00:00:00Z")]] } ]
+def askedTwo := script { kind := "requestAccess", url := B, policies := twoPolicies } [descHead, desc, rsp 201]
+#guard (String.fromUTF8? (sentAt askedTwo.1 2).body) == some ("{\"@context\":[\"https://www.w3.org/ns/lws/v1\"]," ++
+  "\"type\":[\"AccessRequest\"],\"storage\":\"https://s.example/.well-known/lws-storage\"," ++
+  "\"access\":[{\"type\":[\"AccessPolicy\"],\"action\":[\"read\"],\"assignee\":\"https://bob.example/#me\"," ++
+  "\"target\":{\"type\":\"StorageResource\",\"value\":[\"https://s.example/a\"]}}," ++
+  "{\"type\":[\"AccessPolicy\"],\"action\":[\"read\",\"write\"],\"assignee\":\"https://carol.example/#me\"," ++
+  "\"target\":{\"type\":\"StorageResource\",\"value\":[\"https://s.example/b/\"]}," ++
+  "\"constraint\":[{\"leftOperand\":\"dateTime\",\"operator\":\"lt\",\"rightOperand\":\"2027-01-01T00:00:00Z\"}]}]}")
+#guard isDone askedTwo.2
+-- A grant with two policies.
+def descGrant : Resp := rsp 200 []
+  "{\"id\":\"https://s.example/st\",\"service\":[{\"type\":\"AccessGrantService\",\"serviceEndpoint\":\"https://s.example/grants\"}]}"
+def grantedTwo := script { kind := "grantAccess", url := B, policies := twoPolicies } [descHead, descGrant, rsp 201 [("Location", "/grants/1")]]
+#guard (sentAt grantedTwo.1 2).url == "https://s.example/grants"
+#guard (((String.fromUTF8? (sentAt grantedTwo.1 2).body).bind parseJson?).bind (·.getArray? "access")).map List.length == some 2
+#guard (doneJson grantedTwo.2).getString? "location" == some "https://s.example/grants/1"
+-- One bad policy refuses the document; so do policies with the single-policy members.
+def badPolicies : List Policy := twoPolicies ++ [{ actions := [], assignee := "https://d.example/" }]
+#guard failCode (script { kind := "requestAccess", url := B, policies := badPolicies } []).2 == "badArguments"
+#guard failCode (script { kind := "requestAccess", url := B, policies := twoPolicies, actions := ["read"] } []).2 ==
+  "badArguments"
+-- The policies go through the operation document.
+#guard (match opOfJson (opJson { kind := "requestAccess", policies := twoPolicies }) with
+  | .ok o => o.policies.map (·.assignee) == twoPolicies.map (·.assignee) &&
+      o.policies.map (·.actions) == twoPolicies.map (·.actions)
+  | .error _ => false)
 
 /-! ### Verifying a notification (lws10-notifications-webhook §5.2) -/
 

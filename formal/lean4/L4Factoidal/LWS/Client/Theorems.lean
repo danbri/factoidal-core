@@ -26,12 +26,21 @@ The machine (`Client.Machine.step`), for every state and every event:
   checks hold (`Validated`), and asks for the storage of that record
   (lws10-core §Discovery Validation by a Client, "If any check fails, the
   client MUST NOT use the discovered values to request an access token").
+  A record of the `as_uri`/`realm` challenge of the drafts before 2026-10-19
+  satisfies the realm checks of `Validated` instead, and only in a session
+  that turned on `legacyChallenge`
+  (https://github.com/danbri/factoidal/issues/1115).
 * `step_no_blind_create_retry`, `step_no_retry_after_lost_post`: after a
   POST answered 5xx, or lost, the next action is not the same POST
   (§Create Resource, "clients SHOULD avoid unintentional retries").
 * `step_no_repeat_after_refusal`: after a 405 or 415 the next action is not
   the same request (§Metadata, "MUST handle 405 Method Not Allowed or 415
   Unsupported Media Type responses gracefully").
+* `step_requireHttps`, `start_requireHttps`: in a state whose session has
+  `requireHttps`, every request `step` emits goes to an `https` URL
+  (https://github.com/danbri/factoidal/issues/1116). The machine never turns
+  the option off: every session it builds is the input session with other
+  members changed. That is read from the code, not proved here.
 
 Two requests are the same when method, URL, content and the header fields
 other than `Authorization` agree (`Req.same`).
@@ -44,7 +53,8 @@ The driver features (https://github.com/danbri/factoidal/issues/1065):
 * `onPage_onePage_no_fetch`: an operation that asked for one page ends with
   that page; the client does not request the `next` page.
 * `attachToken_realm`: with no any-token, a request is sent as it is or with
-  the token of an entry whose realm (root) its URL is under.
+  the token of an entry whose realm (root), or one of whose service endpoints,
+  its URL is under.
 -/
 import L4Factoidal.LWS.Client.Machine
 import L4Factoidal.LWS.Operations
@@ -157,6 +167,7 @@ theorem walk_listedMembers {σ : Type} (S : Store σ) (st : σ) (c : String) (k 
 private theorem enforce_fetch {s : ClientState} {e : Event} {s' : ClientState} {a : Action} {r : Req}
     (h : (enforce s e (s', a)).2 = .fetch r) :
     a = .fetch r ∧ (enforce s e (s', a)).1 = s' ∧
+    ¬ (s.session.requireHttps = true ∧ isHttpsUrl r.url = false) ∧
     ¬ (wantsPrecondition s.op = true ∧ isWrite r = true ∧ carriesPrecondition s.op r = false) ∧
     ¬ (isTokenExchange r = true ∧ tokenBacked s' r = false) ∧
     repeatsRefused s e r = false := by
@@ -164,29 +175,56 @@ private theorem enforce_fetch {s : ClientState} {e : Event} {s' : ClientState} {
   | done _ => simp [enforce] at h
   | fail _ => simp [enforce] at h
   | fetch r' =>
+    by_cases h0 : (s.session.requireHttps && !isHttpsUrl r'.url) = true
+    · simp only [enforce] at h
+      rw [if_pos h0] at h
+      simp [failWith, finish] at h
     by_cases h1 : (wantsPrecondition s.op && isWrite r' && !carriesPrecondition s.op r') = true
     · simp only [enforce] at h
-      rw [if_pos h1] at h
+      rw [if_neg h0, if_pos h1] at h
       simp [failWith, finish] at h
     · by_cases h2 : (isTokenExchange r' && !tokenBacked s' r') = true
       · simp only [enforce] at h
-        rw [if_neg h1, if_pos h2] at h
+        rw [if_neg h0, if_neg h1, if_pos h2] at h
         simp [failWith, finish] at h
       · by_cases h3 : repeatsRefused s e r' = true
         · simp only [enforce] at h
-          rw [if_neg h1, if_neg h2, if_pos h3] at h
+          rw [if_neg h0, if_neg h1, if_neg h2, if_pos h3] at h
           simp [failWith, finish] at h
         · have hif : enforce s e (s', .fetch r') = (s', .fetch r') := by
             simp only [enforce]
-            rw [if_neg h1, if_neg h2, if_neg h3]
+            rw [if_neg h0, if_neg h1, if_neg h2, if_neg h3]
           rw [hif] at h
           simp only [Action.fetch.injEq] at h
           subst h
-          refine ⟨rfl, by rw [hif], ?_, ?_, by simpa using h3⟩
+          refine ⟨rfl, by rw [hif], ?_, ?_, ?_, by simpa using h3⟩
+          · intro ⟨a, b⟩
+            simp [a, b] at h0
           · intro ⟨a, b, c⟩
             simp [a, b, c] at h1
           · intro ⟨a, b⟩
             simp [a, b] at h2
+
+/-- With `requireHttps` in the session, every request `step` emits goes to an
+`https` URL: the operation, discovery, metadata, the authorization server,
+the token endpoint (https://github.com/danbri/factoidal/issues/1116). -/
+theorem step_requireHttps (V : L4Factoidal.Authz.Crypto) (s : ClientState) (e : Event) (r : Req)
+    (hs : s.session.requireHttps = true) (h : (step V s e).2 = .fetch r) :
+    isHttpsUrl r.url = true := by
+  unfold step at h
+  generalize core V s e = out at h
+  obtain ⟨s', a⟩ := out
+  obtain ⟨_, _, h0, _, _, _⟩ := enforce_fetch h
+  cases hu : isHttpsUrl r.url
+  · exact absurd ⟨hs, hu⟩ h0
+  · rfl
+
+/-- The first request of an operation started in a session with
+`requireHttps` goes to an `https` URL, or is not sent. -/
+theorem start_requireHttps (V : L4Factoidal.Authz.Crypto) (op : Op) (ses : Session) (r : Req)
+    (hs : ses.requireHttps = true) (h : (start V op ses).2 = .fetch r) :
+    isHttpsUrl r.url = true :=
+  step_requireHttps V _ _ r hs h
 
 /-- A write of an operation that asked for a precondition carries it. -/
 theorem step_write_precondition (V : L4Factoidal.Authz.Crypto) (s : ClientState) (e : Event)
@@ -195,7 +233,7 @@ theorem step_write_precondition (V : L4Factoidal.Authz.Crypto) (s : ClientState)
   unfold step at h
   generalize core V s e = out at h
   obtain ⟨s', a⟩ := out
-  obtain ⟨_, _, h1, _, _⟩ := enforce_fetch h
+  obtain ⟨_, _, _, h1, _, _⟩ := enforce_fetch h
   cases hc : carriesPrecondition s.op r
   · exact absurd ⟨hw, hr, hc⟩ h1
   · rfl
@@ -205,11 +243,12 @@ three checks hold, for the storage of that record. -/
 theorem step_no_token_request_without_validation (V : L4Factoidal.Authz.Crypto)
     (s : ClientState) (e : Event) (r : Req) (h : (step V s e).2 = .fetch r)
     (ht : isTokenExchange r = true) :
-    ∃ c, (step V s e).1.auth = some c ∧ Validated c ∧ tokenResource? r = some c.storage := by
+    ∃ c, (step V s e).1.auth = some c ∧ Validated c ∧ tokenResource? r = some c.storage ∧
+      (c.legacy = true → (step V s e).1.session.legacyChallenge = true) := by
   unfold step at h ⊢
   generalize core V s e = out at h ⊢
   obtain ⟨s', a⟩ := out
-  obtain ⟨_, hs, _, h2, _⟩ := enforce_fetch h
+  obtain ⟨_, hs, _, _, h2, _⟩ := enforce_fetch h
   rw [hs]
   have hb : tokenBacked s' r = true := by
     cases hb : tokenBacked s' r
@@ -219,8 +258,12 @@ theorem step_no_token_request_without_validation (V : L4Factoidal.Authz.Crypto)
   cases hauth : s'.auth with
   | none => simp [hauth] at hb
   | some c =>
-    simp only [hauth, Bool.and_eq_true, beq_iff_eq] at hb
-    exact ⟨c, rfl, (validated_iff c).mp hb.1, hb.2⟩
+    simp only [hauth, Bool.and_eq_true, beq_iff_eq, Bool.or_eq_true, Bool.not_eq_true'] at hb
+    obtain ⟨⟨hv, hl⟩, hr⟩ := hb
+    refine ⟨c, rfl, (validated_iff c).mp hv, hr, fun hc => ?_⟩
+    rcases hl with hl | hl
+    · rw [hl] at hc; cases hc
+    · exact hl
 
 /-- After a POST answered 5xx, the next action is not the same POST. -/
 theorem step_no_blind_create_retry (V : L4Factoidal.Authz.Crypto) (s : ClientState)
@@ -230,7 +273,7 @@ theorem step_no_blind_create_retry (V : L4Factoidal.Authz.Crypto) (s : ClientSta
   unfold step at h
   generalize core V s (.response resp) = out at h
   obtain ⟨s', a⟩ := out
-  obtain ⟨_, _, _, _, h3⟩ := enforce_fetch h
+  obtain ⟨_, _, _, _, _, h3⟩ := enforce_fetch h
   simp only [repeatsRefused, hs, hp] at h3
   cases hsame : prev.same r
   · rfl
@@ -244,7 +287,7 @@ theorem step_no_retry_after_lost_post (V : L4Factoidal.Authz.Crypto) (s : Client
   unfold step at h
   generalize core V s (.transportError msg) = out at h
   obtain ⟨s', a⟩ := out
-  obtain ⟨_, _, _, _, h3⟩ := enforce_fetch h
+  obtain ⟨_, _, _, _, _, h3⟩ := enforce_fetch h
   simp only [repeatsRefused, hs, hp] at h3
   cases hsame : prev.same r
   · rfl
@@ -258,7 +301,7 @@ theorem step_no_repeat_after_refusal (V : L4Factoidal.Authz.Crypto) (s : ClientS
   unfold step at h
   generalize core V s (.response resp) = out at h
   obtain ⟨s', a⟩ := out
-  obtain ⟨_, _, _, _, h3⟩ := enforce_fetch h
+  obtain ⟨_, _, _, _, _, h3⟩ := enforce_fetch h
   simp only [repeatsRefused, hs] at h3
   cases hsame : prev.same r
   · rfl
@@ -327,7 +370,9 @@ theorem onPage_onePage_no_fetch (s : ClientState) (r : Resp) (items : List Json)
 attached only to a request whose URL is under that realm; with no
 any-token, a request is sent as it is or with the token of such an entry. -/
 theorem attachToken_realm (ses : Session) (r : Req) (hany : ses.anyToken = "") :
-    attachToken ses r = r ∨ ∃ t ∈ ses.tokens, t.root ≠ "" ∧ r.url.startsWith t.root = true := by
+    attachToken ses r = r ∨ ∃ t ∈ ses.tokens,
+      (t.root ≠ "" ∧ r.url.startsWith t.root = true) ∨
+      (∃ e ∈ t.endpoints, e ≠ "" ∧ r.url.startsWith e = true) := by
   unfold attachToken
   split
   · left; rfl
@@ -336,7 +381,7 @@ theorem attachToken_realm (ses : Session) (r : Req) (hany : ses.anyToken = "") :
       right
       refine ⟨t, List.mem_of_find?_eq_some ht, ?_⟩
       have := List.find?_some ht
-      simpa using this
+      simpa [TokenEntry.covers] using this
     · left; simp [hany]
 
 
