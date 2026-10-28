@@ -592,9 +592,26 @@ def exStep : Nat → Ctx → Expr → SR
       | none => SR.gm (cx.varType q)
     | .ctx => { p := cx.post, s := .motionless, t := cx.ct }
     | .root => rootOf f cx { p := cx.post, s := .motionless, t := cx.ct }
+    | .slash (.slash a (.step .descendantOrSelf (.kind .anyNode) [])) (.step .child t preds) =>
+      -- `E//X` with a child step `X` whose predicates are not positional
+      -- selects what `E/descendant::X` selects (XPath 4.0 §4.6.7, the note
+      -- on `//`); the analysis reads it in that form, as streaming
+      -- processors do (§3.1 permits a more liberal analysis)
+      let pcx := cx.focus .crawling (stepType .child t UT.all)
+      if preds.all (fun pr => !callsPositional 200 pr && !UT.meets (ex f pcx pr).t UT.num) then
+        ex f cx (.slash a (.step .descendant t preds))
+      else
+        let ra := ex f cx (.slash a (.step .descendantOrSelf (.kind .anyNode) []))
+        let rb := ex f (cx.focus ra.p ra.t) (.step .child t preds)
+        if rb.p == .roaming && isScanning f cx e then
+          { p := if UT.meets rb.t UT.elem then .crawling else .striding,
+            s := if ra.s == .freeRanging then .freeRanging else .consuming, t := rb.t }
+        else { p := rb.p, s := ra.s.wider rb.s, t := rb.t }
     | .slash a (.slash b c) =>
       -- `/` is associative; the rules of §12.8.9 read `a/b/c` as `(a/b)/c`
-      ex f cx (.slash (.slash a b) c)
+      match exprFlat 200 (.slash a (.slash b c)) with
+      | x :: xs => ex f cx (xs.foldl Expr.slash x)
+      | [] => SR.roam
     | .slash a b =>
       let ra := ex f cx a
       let rb := ex f (cx.focus ra.p ra.t) b

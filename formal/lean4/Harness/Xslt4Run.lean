@@ -35,6 +35,7 @@ root before the run.
 import L4Factoidal.XSLT4.Transform
 import L4Factoidal.XSLT4.Theorems
 import L4Factoidal.XSLT4.Streaming.Check
+import L4Factoidal.XSLT4.Streaming.StreamDiff
 import L4Factoidal.XSLT.Transform
 import L4Factoidal.XML.Canonical
 import Lean.Data.Json
@@ -451,6 +452,8 @@ structure Opts where
   /-- Count the tests that need the `streaming` feature as unsupported
       (the scoring before XSLT Streaming 4.0). -/
   noStreaming : Bool := false
+  /-- Run `XSLT4.Streaming.StreamDiff` instead of the test cases. -/
+  streamDiff : Bool := false
 
 def parseArgs : List String → Opts → Opts
   | "--root" :: r :: rest, o => parseArgs rest { o with root := r }
@@ -458,6 +461,7 @@ def parseArgs : List String → Opts → Opts
   | "--dir" :: s :: rest, o => parseArgs rest { o with dirs := o.dirs ++ [s] }
   | "--list-fails" :: rest, o => parseArgs rest { o with listFails := true }
   | "--no-streaming" :: rest, o => parseArgs rest { o with noStreaming := true }
+  | "--stream-diff" :: rest, o => parseArgs rest { o with streamDiff := true }
   | "--isolate" :: n :: rest, o => parseArgs rest { o with isolate := n.toNat? }
   | "--progress" :: f :: rest, o => parseArgs rest { o with progress := some f, childMode := true }
   | "--test" :: t :: rest, o => parseArgs rest { o with only := some t }
@@ -910,6 +914,7 @@ def main (args : List String) : IO UInt32 := do
     return ← agree10 (normPath (if d.startsWith "/" then d else cwd.toString ++ "/" ++ d))
   let cwd ← IO.currentDir
   let o := { o with root := normPath (if o.root.startsWith "/" then o.root else cwd.toString ++ "/" ++ o.root) }
+  if o.streamDiff then return ← L4Factoidal.XSLT4.Streaming.StreamDiff.run o.root
   let some ctxt ← readFileSafe (o.root ++ "/catalog.xml")
     | IO.eprintln s!"cannot read {o.root}/catalog.xml"; return 2
   let cat ← match parseXML ctxt with
