@@ -1014,6 +1014,22 @@ probes with one call and then SKIPS every check by name with that reason
 printed. A skip is never a pass (anti-pattern 3), and the score line
 always carries the skip count.
 
+## Our LWS client against other servers (Touchstone interop)
+
+Touchstone's `targetservers/interop-all.sh` builds the six LWS target servers
+and drives each client through one scenario against each
+(`targetservers/tools/interop.mjs`; results in `targetservers/runs/<time>-interop/`).
+Our client takes part through `deploy/lws-client-adapter/adapter.mjs`
+(lws-driver/1), registered as an extra language of the lws-client driver.
+The stock `clients` image builds eleven client toolchains and does not fit a
+session disk of about 16 GB: build a small clients image with only the driver,
+the Java and JS adapters and ours, and pass `--languages java,js,factoidal`.
+In a cloud session every Dockerfile also needs the proxy CA (`/root/.ccr/`)
+and a git HTTPS rewrite; keep those changes in local copies, never in
+Touchstone's tree. Start `dockerd` first. Results of 2026-10-28 and the three
+client defects they found: `docs/designissues/2026-10-21-lws-touchstone-run.md`
+§ "Client interop", https://github.com/danbri/factoidal/issues/1115.
+
 ## Run the interop scripts
 
 ```
