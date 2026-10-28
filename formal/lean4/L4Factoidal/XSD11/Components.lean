@@ -352,7 +352,12 @@ def builtinDef (b : Builtin) : TypeDef :=
   .simple { name := some (xs b.localName), base := baseIdx,
             variety := builtinVariety b,
             builtin := if b == .anySimpleType then none else some b,
-            item, body := .atomic b {} }
+            item,
+            -- §3.4.1: NMTOKENS, IDREFS and ENTITIES are list types, so
+            -- `length` counts items (Part 2 §4.3.1).
+            body := match builtinListItem? b with
+              | some it => .list (.atomic it {}) {}
+              | none => .atomic b {} }
 
 /-- §3.16.7.3 `xs:error`: a union with no members, so no literal is
 valid against it. -/

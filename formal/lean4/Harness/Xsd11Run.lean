@@ -230,6 +230,8 @@ def main (args : List String) : IO UInt32 := do
           | some g => groups.filter (fun x => attrOf "name" x == some g)
         let mut t : Tally := {}
         for g in groups do
+          if args.contains "--trace" then
+            IO.eprintln s!"  group {(attrOf "name" g).getD "?"}"
           t := t.add (← runGroup s4s base g verbose)
         IO.println s!"{rel}: {t.show}"
         total := total.add t

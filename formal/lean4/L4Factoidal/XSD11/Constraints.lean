@@ -524,7 +524,7 @@ def simpleErrors (s : Schema) (t : Nat) (sd : SimpleDef) : List String :=
     | some vs => vs.filterMap (fun v =>
         if (XSD.valueOf bbody v).isNone then some s!"{nm}: enumeration value {v} is not valid for the base type" else none)
     | none => []
-  let patErr := (XSD.unreadablePatterns f.patterns).map (fun p => s!"{nm}: pattern {p} is not a valid regular expression")
+  let patErr := (unreadablePatterns11 f.patterns).map (fun p => s!"{nm}: pattern {p} is not a valid regular expression")
   let etzErr := match bf.explicitTimezone, f.explicitTimezone with
     | some .required, some .optional | some .required, some .prohibited
     | some .prohibited, some .optional | some .prohibited, some .required =>

@@ -33,6 +33,7 @@ No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
 import L4Factoidal.XSD11.ContentModel
 import L4Factoidal.XSD11.Reader
+import L4Factoidal.XSD11.Pattern
 
 namespace L4Factoidal.XSD11
 
@@ -155,7 +156,8 @@ def Hooks.none : Hooks := ⟨fun _ _ _ _ _ => Option.none, fun _ _ _ _ _ _ => Op
 compare by expanded name (Part 2 §3.3.18: the value space of `QName` is
 the set of expanded names). -/
 def resolveQNameVal (bs : NsBindings) : XSD.Val → Option XSD.Val
-  | .qname p l nt => (lookupNs bs p).map (fun u => .qname u l nt)
+  | .qname p l nt => if p == "" then some (.qname ((lookupNs bs "").getD "") l nt)
+                     else (lookupNs bs p).map (fun u => .qname u l nt)
   | .seq vs =>
     let rs := vs.map (resolveQNameVal' bs)
     if rs.all Option.isSome then some (.seq (rs.filterMap id)) else none
@@ -174,6 +176,20 @@ def Schema.simpleAsserts (s : Schema) : Nat → Nat → List Assertion
     | .simple sd => if t ≤ errorTypeIdx then [] else sd.asserts ++ s.simpleAsserts f sd.base
     | _ => []
 
+/-- The `pattern` facets of a Part 2 type at every level (the list
+level on the whole literal, the item type on each item, a union's member
+on the value), decided by `XSD11.Pattern` (the shared XSD profile, then
+the F&O 4.0 parser for the XSD 1.1 syntax the profile refuses). -/
+def bodyPatternsOk : Nat → XSD.SimpleType → String → Bool
+  | 0, _, _ => true
+  | f + 1, t, lit =>
+    let norm := XSD.applyWhiteSpace t.whiteSpaceOf lit
+    patternOk11 t.facets.patterns norm &&
+    (match t with
+     | .atomic _ _ => true
+     | .list it _ => ((norm.splitOn " ").filter (· != "")).all (bodyPatternsOk f it)
+     | .union ms _ => ms.any (fun m => (XSD.valueOf m norm).isSome && bodyPatternsOk f m norm))
+
 /-- §3.16.4 String Valid: the literal against simple type `t`. Returns
 the schema-normalized value and the typed value, or the error. -/
 def validateSimple (s : Schema) (h : Hooks) (bs : NsBindings) (t : Nat) (lit : String)
@@ -182,7 +198,7 @@ def validateSimple (s : Schema) (h : Hooks) (bs : NsBindings) (t : Nat) (lit : S
   | none => (.error "not a simple type", unsup)
   | some sd =>
     let norm := XSD.applyWhiteSpace sd.body.whiteSpaceOf lit
-    match XSD.valueOf sd.body lit with
+    match (XSD.valueOf sd.body lit).filter (fun _ => bodyPatternsOk 16 sd.body lit) with
     | none => (.error s!"'{lit}' is not valid for {(sd.name.map XName.show).getD "an anonymous type"}", unsup)
     | some v =>
       -- QName and NOTATION values need their prefixes declared.
@@ -471,9 +487,262 @@ def checkAsserts (s : Schema) (h : Hooks) (t : Nat) (pn : PNode) (acc : VAcc) : 
       | none => (ok, { acc with unsupported := s!"assertion {a.test}" :: acc.unsupported })) (true, acc)
   | .simple _ => (true, acc)
 
+/-! ## Children -/
+
+/-- How the children of an element are assessed. -/
+inductive KidMode where
+  /-- Every element child is skipped (the parent is skipped or nilled). -/
+  | skip
+  /-- Every element child is assessed laxly (§3.10.4.1, lax). -/
+  | lax
+  /-- Simple content: an element child is an error. -/
+  | simple
+  /-- Element or mixed content: the children follow the content model. -/
+  | content (m : MatchCtx) (oc : Option (OpenMode × Wildcard)) (mixed : Bool)
+
+/-- The state carried across the children. -/
+structure KState where
+  cm : Option CMState := none
+  ok : Bool := true
+  acc : VAcc := {}
+
+def kidBindings (bs : NsBindings) : Node → NsBindings
+  | .element _ kattrs _ => instBindings bs kattrs
+  | _ => bs
+
+def kidTag : Node → String
+  | .element t _ _ => t
+  | _ => ""
+
+/-- How an element child is validated, and the state after the content
+model consumed it. -/
+def KidMode.decide (mode : KidMode) (bs : NsBindings) (parent : XName) (st : KState) (k : Node) : How × KState :=
+  match mode with
+  | .skip => (.wild .skip, { st with ok := false })
+  | .lax => (.wild .lax, st)
+  | .simple =>
+    let acc := st.acc.err s!"element {parent.show}: element child in simple content"
+    (.wild .skip, { st with ok := false, acc := acc })
+  | .content m oc _ =>
+    let kname := elemXName (kidBindings bs k) (kidTag k)
+    match st.cm.bind (fun c => c.step m oc kname) with
+    | some (c', .decl d) => (.decl d, { st with cm := some c' })
+    | some (c', .wild w) => (.wild w.pc, { st with cm := some c' })
+    | none =>
+      let acc := st.acc.err s!"element {parent.show}: child {kname.show} not allowed here"
+      (.wild .skip, { st with cm := none, ok := false, acc := acc })
+
+/-- The state after an element child was validated: its validity counts. -/
+def KidMode.after (mode : KidMode) (how : How) (st : KState) (pk : PNode) : KState :=
+  let kv := (pk.info?.map (·.validity)).getD .notKnown
+  let kok := match mode, how with
+    | .skip, _ | .simple, _ => true
+    | .lax, _ => kv != .invalid
+    | .content .., .decl _ => kv == .valid
+    | .content .., .wild .strict => kv == .valid
+    | .content .., .wild .skip => true
+    | .content .., _ => kv != .invalid
+  { st with ok := st.ok && kok }
+
+/-- The state after a character, comment or processing-instruction child. -/
+def KidMode.leaf (mode : KidMode) (parent : XName) (st : KState) (k : Node) : KState :=
+  match mode with
+  | .content _ _ mixed =>
+    let x := leafText k
+    if mixed || isWs x then st
+    else { st with ok := false, acc := st.acc.err s!"element {parent.show}: character data not allowed" }
+  | _ => st
+
+/-- One child: an element is validated by `rec` as the mode decides; any
+other node is copied. -/
+def kidStep (rec : NsBindings → How → Node → VAcc → PNode × VAcc) (mode : KidMode)
+    (bs : NsBindings) (parent : XName) (st : KState) (k : Node) : PNode × KState :=
+  match k with
+  | .element .. =>
+    let (how, st) := mode.decide bs parent st k
+    let (pk, acc) := rec bs how k st.acc
+    (pk, mode.after how { st with acc } pk)
+  | other => (PNode.ofLeaf other, mode.leaf parent st other)
+
+/-- The children, one step each, with the state threaded through (a tail
+call per child). -/
+def foldKids (step : KState → Node → PNode × KState) : List Node → KState → List PNode → List PNode × KState
+  | [], st, out => (out.reverse, st)
+  | k :: ks, st, out =>
+    let r := step st k
+    foldKids step ks r.2 (r.1 :: out)
+
+/-- Pair the attributes with their PSVI information, in order. -/
+def mkPAttrs (nm : String → XName) : List Attribute → List PInfo → List PAttr
+  | [], _ => []
+  | a :: as, i :: is => ⟨a, nm a.name, i⟩ :: mkPAttrs nm as is
+  | a :: as, [] => ⟨a, nm a.name, {}⟩ :: mkPAttrs nm as []
+
+/-- The attributes of an element that has no type (lax assessment): an
+attribute with a global declaration is validated against it. -/
+def laxAttrs (s : Schema) (h : Hooks) (bs : NsBindings) (attrs : List Attribute) (acc : VAcc)
+    : List PInfo × Bool × VAcc :=
+  let (ainfos, aok, acc) := attrs.foldl (fun (st : Array PInfo × Bool × VAcc) a =>
+    let (out, ok, acc) := st
+    if isNsDecl a then (out.push {}, ok, acc)
+    else
+    match s.attrIdx? (attrXName bs a.name) with
+    | some d =>
+      let (i, acc) := validateAttrValue s h bs d none a acc
+      (out.push i, ok && i.validity != .invalid, acc)
+    | none => (out.push {}, ok, acc)) (#[], true, acc)
+  (ainfos.toList, aok, acc)
+
+/-! ## Element validation -/
+
+/-- What is known about an element before its children are read. -/
+structure Head where
+  declOpt : Option Nat
+  typ : Option Nat
+  skip : Bool
+  /-- `xsi:type`, abstractness and `xsi:nil` are acceptable. -/
+  headOk : Bool
+  nilled : Bool
+  ainfos : List PInfo
+  defaults : List PAttr
+  aok : Bool
+  mode : KidMode
+  st0 : KState
+
+/-- §3.3.4.3 clauses 1-4 and §3.4.4.2 clauses 2-4: the declaration, the
+governing type (type table, `xsi:type`), `xsi:nil`, the attributes, and
+how the children are to be read. -/
+def elemHead (s : Schema) (h : Hooks) (bs : NsBindings) (how : How) (tag : String)
+    (attrs : List Attribute) (kids : List Node) (acc : VAcc) : Head :=
+  let name := elemXName bs tag
+  let probe := PNode.elem tag (attrs.map (fun a => ⟨a, attrXName bs a.name, {}⟩)) [] name {} [] none
+  let declOpt : Option Nat := match how with
+    | .decl d => some d
+    | .wild .skip => none
+    | .wild _ => s.elemIdx? name
+    | .typ _ => none
+  let skip := match how with | .wild .skip => true | _ => false
+  let declInvalid := match declOpt with
+    | some d => (s.elem d).abstract
+    | none => false
+  let acc := if declInvalid then acc.err s!"element {name.show}: declaration is abstract" else acc
+  let (declType, acc) : Option Nat × VAcc := match declOpt, how with
+    | some d, _ => let (t, a) := selectType s h d probe acc; (some t, a)
+    | none, .typ t => (some t, acc)
+    | none, _ => (none, acc)
+  let xsiType := if skip then none else xsiAttrVal bs attrs "type"
+  let (typ, typOk, acc) : Option Nat × Bool × VAcc := match xsiType with
+    | none => (declType, true, acc)
+    | some q =>
+      match (resolveInstQName bs q).bind s.typeIdx? with
+      | none => (declType, false, acc.err s!"element {name.show}: xsi:type {q} does not resolve")
+      | some xt =>
+        match declType with
+        | none => (some xt, true, acc)
+        | some dt =>
+          let blocked := (declOpt.map (fun d => (s.elem d).block)).getD [] ++
+            (match s.type dt with | .complex c => c.block | _ => [])
+          if s.derivOkBlocked xt dt blocked then (some xt, true, acc)
+          else (declType, false, acc.err s!"element {name.show}: xsi:type {q} is not validly derived")
+  let typAbstract := match typ.map s.type with
+    | some (.complex c) => c.abstract
+    | _ => false
+  let acc := if typAbstract then acc.err s!"element {name.show}: type is abstract" else acc
+  match typ with
+  | none =>
+    if skip then
+      { declOpt, typ, skip, headOk := true, nilled := false, ainfos := [], defaults := [],
+        aok := true, mode := .skip, st0 := { acc } }
+    else
+      let (ainfos, aok, acc) := laxAttrs s h bs attrs acc
+      { declOpt, typ, skip, headOk := typOk, nilled := false, ainfos, defaults := [], aok,
+        mode := .lax, st0 := { acc } }
+  | some t =>
+    let nilAttr := xsiAttrVal bs attrs "nil"
+    let nillable := (declOpt.map (fun d => (s.elem d).nillable)).getD false
+    let nilled := nilAttr.map (fun v => XSD.applyWhiteSpace .collapse v == "true" ||
+      XSD.applyWhiteSpace .collapse v == "1") |>.getD false
+    let nilOk := !nilAttr.isSome || nillable
+    let acc := if !nilOk then acc.err s!"element {name.show}: xsi:nil on a non-nillable declaration" else acc
+    let (ainfos, defaults, aok, acc) := validateAttrs s h bs t attrs acc
+    let vc := declOpt.bind (fun d => (s.elem d).vc)
+    let txt := textContent kids
+    let nilContentOk := !nilled || (!hasElementKid kids && txt.all XML.isXmlSpace && (vc.map (·.kind)) != some .fixed)
+    let acc := if !nilContentOk then acc.err s!"element {name.show}: nilled element has content" else acc
+    let headOk := typOk && nilOk && nilContentOk && !declInvalid && !typAbstract
+    let isSimple : Bool := (s.simpleOf? t).isSome
+    let (mode, cm) : KidMode × Option CMState :=
+      if nilled then (.skip, none)
+      else if isSimple then (.simple, none)
+      else match s.type t with
+        | .complex c => match c.content with
+          | .elems p m => (.content (s.matchCtx (Particle.elemNames s 64 p)) c.openContent m, some (CMState.init p))
+          | _ => (.content (s.matchCtx []) c.openContent false, some { res := [.eps] })
+        | _ => (.content (s.matchCtx []) none false, some { res := [.eps] })
+    -- a nilled element's children are an error already counted above
+    let st0 : KState := { cm, acc }
+    { declOpt, typ, skip, headOk, nilled := nilled && nilOk, ainfos, defaults, aok, mode, st0 }
+
+/-- §3.3.4.3 clause 5 and §3.4.4.2 clause 1: the PSVI information of the
+element once its children are read, and the default text. -/
+def elemFinish (s : Schema) (h : Hooks) (bs : NsBindings) (tag : String) (attrs : List Attribute)
+    (kids : List Node) (hd : Head) (outs : List PNode) (kst : KState) : PInfo × Option String × VAcc :=
+  let name := elemXName bs tag
+  let acc := kst.acc
+  match hd.typ with
+  | none =>
+    let v := if hd.skip then Validity.notKnown
+      else if kst.ok && hd.aok && hd.headOk then .notKnown else .invalid
+    ({ validity := v }, none, acc)
+  | some t =>
+    let pattrs := mkPAttrs (attrXName bs) attrs hd.ainfos
+    let base := hd.headOk && hd.aok && kst.ok
+    if hd.nilled then
+      ({ validity := if base then .valid else .invalid, typ := some t, decl := hd.declOpt, nilled := true }, none, acc)
+    else
+    match s.simpleOf? t with
+    | some sd =>
+      let st := match s.type t with
+        | .complex c => match c.content with
+          | .simple x => x
+          | _ => t
+        | _ => t
+      let _ := sd
+      let vc := hd.declOpt.bind (fun d => (s.elem d).vc)
+      let txt := textContent kids
+      let noContent := !hasElementKid kids && txt == ""
+      let (lit, defText) := if noContent then
+          match vc with
+          | some v => (v.lex, some v.lex)
+          | none => (txt, none)
+        else (txt, none)
+      let (r, un) := validateSimple s h bs st lit acc.unsupported
+      let acc := { acc with unsupported := un }
+      let (sok, norm, val, acc) := match r with
+        | .ok (norm, v) => (true, some norm, some v, acc.noteIds s st v)
+        | .error e => (false, none, none, acc.err s!"element {name.show}: {e}")
+      let fixedOk := match vc, val with
+        | some ⟨.fixed, lex⟩, some v =>
+          match (validateSimple s h bs st lex []).1 with
+          | .ok (_, fv) => XSD.valEqualOrIdentical v fv
+          | .error _ => false
+        | _, _ => true
+      let acc := if !fixedOk then acc.err s!"element {name.show}: value does not match fixed value" else acc
+      let info : PInfo := { validity := .notKnown, typ := some t, decl := hd.declOpt, normalized := norm, value := val }
+      let (asOk, acc) := checkAsserts s h t (PNode.elem tag pattrs outs name info hd.defaults defText) acc
+      ({ info with validity := if base && sok && fixedOk && asOk then .valid else .invalid }, defText, acc)
+    | none =>
+      let endOk := (kst.cm.map CMState.nullable).getD false
+      let acc := if endOk then acc else acc.err s!"element {name.show}: content incomplete"
+      let info : PInfo := { validity := .notKnown, typ := some t, decl := hd.declOpt }
+      let (asOk, acc) := checkAsserts s h t (PNode.elem tag pattrs outs name info hd.defaults none) acc
+      ({ info with validity := if base && endOk && asOk then .valid else .invalid }, none, acc)
+
 /-- Validate an element (§3.3.4.3 Element Locally Valid (Element) and
-§3.4.4.2 Element Locally Valid (Complex Type)). `bs` holds the bindings
-in scope on the parent. -/
+§3.4.4.2 Element Locally Valid (Complex Type)). `bs0` holds the bindings
+in scope on the parent. The output element is built in one place from
+the input's tag, attributes and children, which is what makes
+`Theorems.validateElement_erase` a short induction. -/
 def validateElement (s : Schema) (h : Hooks) : Nat → NsBindings → How → Node → VAcc → PNode × VAcc
   | 0, _, _, n, acc => (PNode.ofNode n, acc.err "element nesting too deep")
   | f + 1, bs0, how, n, acc =>
@@ -481,178 +750,10 @@ def validateElement (s : Schema) (h : Hooks) : Nat → NsBindings → How → No
     | .element tag attrs kids =>
       let bs := instBindings bs0 attrs
       let name := elemXName bs tag
-      let probe := PNode.elem tag (attrs.map (fun a => ⟨a, attrXName bs a.name, {}⟩)) [] name {} [] none
-      -- 1. the declaration and the governing type
-      let declOpt : Option Nat := match how with
-        | .decl d => some d
-        | .wild .skip => none
-        | .wild _ => s.elemIdx? name
-        | .typ _ => none
-      let skip := match how with | .wild .skip => true | _ => false
-      let declInvalid := match declOpt with
-        | some d => (s.elem d).abstract
-        | none => false
-      let acc := if declInvalid then acc.err s!"element {name.show}: declaration is abstract" else acc
-      let (declType, acc) : Option Nat × VAcc := match declOpt, how with
-        | some d, _ => let (t, a) := selectType s h d probe acc; (some t, a)
-        | none, .typ t => (some t, acc)
-        | none, _ => (none, acc)
-      -- xsi:type (§3.3.4.3 clause 4)
-      let xsiType := if skip then none else xsiAttrVal bs attrs "type"
-      let (typ, typOk, acc) : Option Nat × Bool × VAcc := match xsiType with
-        | none => (declType, true, acc)
-        | some q =>
-          match (resolveInstQName bs q).bind s.typeIdx? with
-          | none => (declType, false, acc.err s!"element {name.show}: xsi:type {q} does not resolve")
-          | some xt =>
-            match declType with
-            | none => (some xt, true, acc)
-            | some dt =>
-              let blocked := (declOpt.map (fun d => (s.elem d).block)).getD [] ++
-                (match s.type dt with | .complex c => c.block | _ => [])
-              if s.derivOkBlocked xt dt blocked then (some xt, true, acc)
-              else (declType, false, acc.err s!"element {name.show}: xsi:type {q} is not validly derived")
-      let typAbstract := match typ.map s.type with
-        | some (.complex c) => c.abstract
-        | _ => false
-      let acc := if typAbstract then acc.err s!"element {name.show}: type is abstract" else acc
-      match typ with
-      | none =>
-        -- no declaration and no type: skip, or lax (§3.10.4 / §3.3.4.4)
-        if skip then
-          (.elem tag (attrs.map (fun a => ⟨a, attrXName bs a.name, {}⟩)) (PNode.ofNodeList kids) name
-             { validity := .notKnown } [] none, acc)
-        else
-          -- lax: attributes and children assessed where declarations exist
-          let (outs, ok, acc) := kids.foldl (fun (st : Array PNode × Bool × VAcc) k =>
-            let (outs, ok, acc) := st
-            match k with
-            | .element _ _ _ =>
-              let (pk, acc) := validateElement s h f bs (.wild .lax) k acc
-              (outs.push pk, ok && (pk.info?.map (·.validity)) != some .invalid, acc)
-            | other => (outs.push (PNode.ofLeaf other), ok, acc)) (#[], true, acc)
-          let (ainfos, aok, acc) := attrs.foldl (fun (st : Array PInfo × Bool × VAcc) a =>
-            let (out, ok, acc) := st
-            if isNsDecl a then (out.push {}, ok, acc)
-            else
-            let an := attrXName bs a.name
-            match s.attrIdx? an with
-            | some d =>
-              let (i, acc) := validateAttrValue s h bs d none a acc
-              (out.push i, ok && i.validity != .invalid, acc)
-            | none => (out.push {}, ok, acc)) (#[], true, acc)
-          let pattrs := (attrs.zip ainfos.toList).map (fun (a, i) => ⟨a, attrXName bs a.name, i⟩)
-          let pattrs := if pattrs.length == attrs.length then pattrs
-            else attrs.map (fun a => ⟨a, attrXName bs a.name, {}⟩)
-          let v := if ok && aok && typOk then Validity.notKnown else .invalid
-          (.elem tag pattrs outs.toList name { validity := v } [] none, acc)
-      | some t =>
-        -- 2. xsi:nil (§3.3.4.3 clause 3)
-        let nilAttr := xsiAttrVal bs attrs "nil"
-        let nillable := (declOpt.map (fun d => (s.elem d).nillable)).getD false
-        let nilled := nilAttr.map (fun v => XSD.applyWhiteSpace .collapse v == "true" || XSD.applyWhiteSpace .collapse v == "1") |>.getD false
-        let nilOk := !nilAttr.isSome || nillable
-        let acc := if !nilOk then acc.err s!"element {name.show}: xsi:nil on a non-nillable declaration" else acc
-        -- 3. attributes
-        let (ainfos, defaults, aok, acc) := validateAttrs s h bs t attrs acc
-        let pattrs := (attrs.zip ainfos).map (fun (a, i) => ⟨a, attrXName bs a.name, i⟩)
-        let pattrs := if pattrs.length == attrs.length then pattrs
-          else attrs.map (fun a => ⟨a, attrXName bs a.name, {}⟩)
-        let vc := declOpt.bind (fun d => (s.elem d).vc)
-        -- 4. content
-        let txt := textContent kids
-        let noContent := !hasElementKid kids && txt == ""
-        let nilContentOk := !nilled || (!hasElementKid kids && txt.all XML.isXmlSpace && (vc.map (·.kind)) != some .fixed)
-        let acc := if !nilContentOk then acc.err s!"element {name.show}: nilled element has content" else acc
-        -- simple content (a simple type, or a complex type with simple content)
-        let simpleT : Option Nat := match s.type t with
-          | .simple _ => some t
-          | .complex c => match c.content with
-            | .simple st => some st
-            | _ => none
-        match simpleT with
-        | some st =>
-          let (outs, ok, acc) := kids.foldl (fun (st : Array PNode × Bool × VAcc) k =>
-            let (outs, ok, acc) := st
-            match k with
-            | .element _ _ _ =>
-              let (pk, acc) := validateElement s h f bs (.wild .skip) k acc
-              (outs.push pk, false, acc.err s!"element {name.show}: element child in simple content")
-            | other => (outs.push (PNode.ofLeaf other), ok, acc)) (#[], true, acc)
-          let (lit, defText) := if noContent && !nilled then
-              match vc with
-              | some v => (v.lex, some v.lex)
-              | none => (txt, none)
-            else (txt, none)
-          if nilled then
-            let v := if ok && aok && typOk && nilOk && nilContentOk && !declInvalid && !typAbstract then Validity.valid else .invalid
-            (.elem tag pattrs outs.toList name { validity := v, typ := some t, decl := declOpt, nilled := true } defaults none, acc)
-          else
-          let (r, un) := validateSimple s h bs st lit acc.unsupported
-          let acc := { acc with unsupported := un }
-          let (sok, norm, val, acc) := match r with
-            | .ok (norm, v) => (true, some norm, some v, acc.noteIds s st v)
-            | .error e => (false, none, none, acc.err s!"element {name.show}: {e}")
-          let fixedOk := match vc, val with
-            | some ⟨.fixed, lex⟩, some v =>
-              match (validateSimple s h bs st lex []).1 with
-              | .ok (_, fv) => XSD.valEqualOrIdentical v fv
-              | .error _ => false
-            | _, _ => true
-          let acc := if !fixedOk then acc.err s!"element {name.show}: value does not match fixed value" else acc
-          let info : PInfo := { validity := .notKnown, typ := some t, decl := declOpt, normalized := norm, value := val }
-          let pn0 := PNode.elem tag pattrs outs.toList name info defaults defText
-          let (asOk, acc) := checkAsserts s h t pn0 acc
-          let v := if ok && aok && typOk && sok && fixedOk && asOk && nilOk && !declInvalid && !typAbstract then Validity.valid else .invalid
-          (.elem tag pattrs outs.toList name { info with validity := v } defaults defText, acc)
-        | none =>
-          let (p, mixed, oc) := match s.type t with
-            | .complex c => match c.content with
-              | .elems p m => (some p, m, c.openContent)
-              | _ => (none, false, c.openContent)
-            | _ => (none, false, none)
-          let m := s.matchCtx ((p.map (Particle.elemNames s 64)).getD [])
-          let st0 : CMState := match p with
-            | some p => CMState.init p
-            | none => { res := [.eps] }
-          let (outs, cst, ok, acc) := kids.foldl (fun (st : Array PNode × Option CMState × Bool × VAcc) k =>
-            let (outs, cst, ok, acc) := st
-            match k with
-            | .element ktag _ _ =>
-              let kbs := match k with
-                | .element _ kattrs _ => instBindings bs kattrs
-                | _ => bs
-              let kname := elemXName kbs ktag
-              if nilled then
-                let (pk, acc) := validateElement s h f bs (.wild .skip) k acc
-                (outs.push pk, cst, false, acc)
-              else
-              match cst.bind (fun c => c.step m oc kname) with
-              | some (c', .decl d) =>
-                let (pk, acc) := validateElement s h f bs (.decl d) k acc
-                (outs.push pk, some c', ok && (pk.info?.map (·.validity)) == some .valid, acc)
-              | some (c', .wild w) =>
-                let (pk, acc) := validateElement s h f bs (.wild w.pc) k acc
-                let kv := (pk.info?.map (·.validity)).getD .notKnown
-                let kok := match w.pc with
-                  | .strict => kv == .valid
-                  | _ => kv != .invalid
-                (outs.push pk, some c', ok && kok, acc)
-              | none =>
-                let (pk, acc) := validateElement s h f bs (.wild .skip) k acc
-                (outs.push pk, none, false, acc.err s!"element {name.show}: child {kname.show} not allowed here")
-            | .text x | .cdata x =>
-              let tok := mixed || isWs x
-              (outs.push (PNode.ofLeaf k), cst, ok && tok,
-                if tok then acc else acc.err s!"element {name.show}: character data not allowed")
-            | other => (outs.push (PNode.ofLeaf other), cst, ok, acc)) (#[], some st0, true, acc)
-          let endOk := nilled || (cst.map CMState.nullable).getD false
-          let acc := if endOk then acc else acc.err s!"element {name.show}: content incomplete"
-          let info : PInfo := { validity := .notKnown, typ := some t, decl := declOpt, nilled := nilled && nilOk }
-          let pn0 := PNode.elem tag pattrs outs.toList name info defaults none
-          let (asOk, acc) := if nilled then (true, acc) else checkAsserts s h t pn0 acc
-          let v := if ok && endOk && aok && typOk && asOk && nilOk && nilContentOk && !declInvalid && !typAbstract then Validity.valid else .invalid
-          (.elem tag pattrs outs.toList name { info with validity := v } defaults none, acc)
+      let hd := elemHead s h bs how tag attrs kids acc
+      let (outs, kst) := foldKids (kidStep (validateElement s h f) hd.mode bs name) kids hd.st0 []
+      let (info, defText, acc) := elemFinish s h bs tag attrs kids hd outs kst
+      (.elem tag (mkPAttrs (attrXName bs) attrs hd.ainfos) outs name info hd.defaults defText, acc)
     | other => (PNode.ofLeaf other, acc)
 
 /-! ## Assessment of a document -/
@@ -664,32 +765,37 @@ structure Assessment where
   unsupported : List String
 deriving Inhabited
 
+/-- How the document element is validated: by its global declaration,
+else by its `xsi:type`; `none` when it has neither. -/
+def rootHow (s : Schema) (root : Node) (bs : NsBindings) : Option How :=
+  match root with
+  | .element tag attrs _ =>
+    let rbs := instBindings bs attrs
+    match s.elemIdx? (elemXName rbs tag) with
+    | some d => some (.decl d)
+    | none =>
+      match (xsiAttrVal rbs attrs "type").bind (resolveInstQName rbs) |>.bind s.typeIdx? with
+      | some t => some (.typ t)
+      | none => none
+  | _ => none
+
 /-- §5.2 assessment starting from the document element, strictly: the
 element must have a global declaration (or an `xsi:type`) and be valid,
 and every IDREF must name an ID (§3.17.4). Identity constraints are
 checked by `XSD11/Identity.lean` through `assessDoc`. -/
 def assessRoot (s : Schema) (h : Hooks) (root : Node) (bs : NsBindings := []) : Assessment :=
-  let how : Option How := match root with
-    | .element tag attrs _ =>
-      let rbs := instBindings bs attrs
-      match s.elemIdx? (elemXName rbs tag) with
-      | some d => some (.decl d)
-      | none =>
-        match (xsiAttrVal rbs attrs "type").bind (resolveInstQName rbs) |>.bind s.typeIdx? with
-        | some t => some (.typ t)
-        | none => none
-    | _ => none
-  match how with
+  match rootHow s root bs with
   | none =>
-    let (pn, acc) := validateElement s h 10000 bs (.wild .lax) root {}
-    { root := pn, valid := false, errors := "no declaration for the document element" :: acc.errors,
-      unsupported := acc.unsupported }
+    let r := validateElement s h 10000 bs (.wild .lax) root {}
+    { root := r.1, valid := false, errors := "no declaration for the document element" :: r.2.errors,
+      unsupported := r.2.unsupported }
   | some how =>
-    let (pn, acc) := validateElement s h 10000 bs how root {}
-    let dangling := acc.idrefs.filter (fun r => !acc.ids.contains r)
-    let errs := dangling.map (fun r => s!"IDREF {r} has no matching ID") ++ acc.errors
+    let r := validateElement s h 10000 bs how root {}
+    let acc := r.2
+    let dangling := acc.idrefs.filter (fun x => !acc.ids.contains x)
+    let errs := dangling.map (fun x => s!"IDREF {x} has no matching ID") ++ acc.errors
     let dupIds := acc.errors.filter (fun e => e.startsWith "duplicate ID")
-    { root := pn, valid := (pn.info?.map (·.validity)) == some .valid && dangling.isEmpty && dupIds.isEmpty,
+    { root := r.1, valid := (r.1.info?.map (·.validity)) == some .valid && dangling.isEmpty && dupIds.isEmpty,
       errors := errs, unsupported := acc.unsupported }
 
 end L4Factoidal.XSD11
