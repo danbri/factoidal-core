@@ -829,7 +829,7 @@ def registry : List Entry := [
     wireIn := .xml, wireOut := .xml, params := ["stylesheet"], status := .missing },
   { area := "XSLT 4.0 transformation", dir := "XSLT4"
     wireIn := .xml, wireOut := .xml, params := ["stylesheet"], status := .tested
-    tests := ["xslt40-test 91328fbf non-streaming subset (lake exe l4xslt4 --isolate 30): 6762 pass, 1284 fail, 3053 unsupported of 11099",
+    tests := ["xslt40-test 91328fbf non-streaming subset (lake exe l4xslt4 --isolate 30): 6766 pass, 1280 fail, 3053 unsupported of 11099",
       "XSLT 1.0 corpora (l4xslt4 --xslt10): xslt 84 of 88 pass, xslt1-xalan 1455 of 1686 pass"]
     note := "XSLT4 is not in the library root; its theorems and #guards (XSLT4/Theorems.lean: parse_eq_parseXPath, patMatch_type, stripDoc_noRules, the identity transform, agreement with the XSLT 1.0 engine) are checked by lake build l4xslt4 (docs/20261028-xslt4-stage1.md)" },
   { area := "Schematron validation", dir := "Schematron"
