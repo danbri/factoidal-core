@@ -377,11 +377,36 @@ def xmlEq1 (env : Env) (got : Seq) (expected : String) : Bool :=
     e2.nodeDeepEq 100000 (NodeRef.mk' 0 root1) (NodeRef.mk' 1 root2)
   | _, _ => gs == expected
 
+/-- Does the expected XML carry indentation (a whitespace-only text node
+    with a line end between two tags)? -/
+def hasIndentation (expected : String) : Bool :=
+  ((expected.splitOn ">").drop 1).any (fun piece =>
+    let cs := piece.toList
+    let ws := cs.takeWhile (fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r')
+    ws.contains '\n' && (cs.drop ws.length).head? == some '<')
+
+/-- `assert-xml` by `fn:deep-equal` with the whitespace-only text nodes of
+    both sides removed: for expected XML written with indentation (the
+    catalog allows a deep-equal comparison, `catalog-schema.xsd`
+    assert-xml). -/
+def xmlEqWs (env : Env) (got : Seq) (expected : String) : Bool :=
+  let gs := serSeq env got
+  match L4Factoidal.XML.parseXML ("<w>" ++ gs ++ "</w>"), L4Factoidal.XML.parseXML ("<w>" ++ expected ++ "</w>") with
+  | .ok a, .ok b =>
+    let d1 := Doc.ofNodes [stripWs 100000 false a.root]
+    let d2 := Doc.ofNodes [stripWs 100000 false b.root]
+    let e2 : Env := { docs := #[d1, d2] }
+    let root1 := (d1.get 0).children.getD 0 0
+    let root2 := (d2.get 0).children.getD 0 0
+    e2.nodeDeepEq 100000 (NodeRef.mk' 0 root1) (NodeRef.mk' 1 root2)
+  | _, _ => false
+
 /-- `assert-xml`: also with the whitespace around the expected XML
     removed (the catalog's CDATA sections often end with a space or a
     newline that is not part of the expected result). -/
 def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
-  xmlEq1 env got expected || xmlEq1 env got expected.trimAscii.toString
+  xmlEq1 env got expected || xmlEq1 env got expected.trimAscii.toString ||
+  (hasIndentation expected && xmlEqWs env got expected)
 
 /-- The serialization parameters of a query: the XQuery output
     declarations of its prolog (`XPath4.declParams`); none in XPath. -/
