@@ -580,6 +580,10 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
             | p :: f :: _ => (p, some f)
             | _ => (abs, none)
           let abs := removeDots abs
+          -- §20.1: a fragment identifier this processor does not recognize
+          -- (only a shorthand pointer, an NCName, is)
+          if let some f := frag then
+            if !isNCName f then err "XTDE1160" ("fragment identifier '" ++ f ++ "' is not recognized")
           -- the options of the call go to fn:doc; a document read with
           -- options is another document than one read without them
           let opts : List Seq := match a.getD 1 [] with
@@ -609,7 +613,6 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
           | some d, some f =>
               -- a shorthand pointer (XPointer Framework §3.2): the element
               -- with that ID
-              if !isNCName f then err "XTDE1160" ("fragment identifier '" ++ f ++ "' is not recognized")
               match callFn 100000 env { uri := nsFN, loc := "id" } [sStr f, [.node d]] with
               | .ok ns => for x in ns do
                   match x with

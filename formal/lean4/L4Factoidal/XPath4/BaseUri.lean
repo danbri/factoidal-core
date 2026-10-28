@@ -7,8 +7,9 @@ The root of a tree has the base URI of its document table
 attribute has the value of that attribute, resolved against the base
 URI of its parent (or of the tree, for a root). Another element, and
 the document node, has the base URI of its parent. An attribute, text,
-comment or processing-instruction node has the base URI of its parent.
-A namespace node has no base URI.
+comment or processing-instruction node has the base URI of its parent;
+a parentless attribute, text or comment node has none, and a parentless
+processing instruction that of its tree. A namespace node has none.
 -/
 import L4Factoidal.XPath4.Core
 import L4Factoidal.Syntax.IriResolve
@@ -49,6 +50,8 @@ def Env.treeBaseUri (e : Env) (n : NodeRef) : String :=
 def Env.baseUriOf (e : Env) (n : NodeRef) : Option String :=
   let r := e.nrec n
   if r.kind == .namespace then none else
+  -- a parentless attribute, text or comment node has no base URI
+  if r.parent.isNone && (r.kind == .attribute || r.kind == .text || r.kind == .comment) then none else
   -- the element ancestors (and the node itself when it is an element),
   -- from the root down
   let chain := ((if r.kind == .element then [n] else []) ++ e.ancestors n).reverse
