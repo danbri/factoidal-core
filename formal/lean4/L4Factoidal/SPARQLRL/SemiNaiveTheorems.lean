@@ -229,7 +229,7 @@ theorem BExt.refl (b : Binding) : BExt b b := fun _ _ h => h
 theorem BExt.trans {a b c : Binding} (h1 : BExt a b) (h2 : BExt b c) : BExt a c :=
   fun v u h => h2 v u (h1 v u h)
 
-theorem matchTerm_ext : ∀ (x : STerm) (b : Binding) (t : Term) (b' : Binding),
+theorem matchTerm_bext : ∀ (x : STerm) (b : Binding) (t : Term) (b' : Binding),
     matchTerm b x t = some b' → BExt b b'
   | .var v, b, t, b', h => by
     unfold matchTerm at h
@@ -263,8 +263,8 @@ theorem matchTerm_ext : ∀ (x : STerm) (b : Binding) (t : Term) (b' : Binding),
         split at h
         · cases h
         · rename_i b2 h2
-          exact (matchTerm_ext s _ _ _ h1).trans ((matchTerm_ext p _ _ _ h2).trans
-            (matchTerm_ext o _ _ _ h))
+          exact (matchTerm_bext s _ _ _ h1).trans ((matchTerm_bext p _ _ _ h2).trans
+            (matchTerm_bext o _ _ _ h))
     | iri _ => unfold matchTerm at h; cases h
     | bnode _ => unfold matchTerm at h; cases h
     | literal _ => unfold matchTerm at h; cases h
@@ -329,9 +329,9 @@ theorem matchTerm_ground : ∀ (x : STerm) (b : Binding) (bn : String → Term) 
           · rename_i b2 h2
             have e1 := matchTerm_ground s b bn _ _ _ hbs hs h1
             have e2 := matchTerm_ground p b1 bn _ _ _ hbp
-              (inst_ext (matchTerm_ext s _ _ _ h1) bn p _ hp) h2
+              (inst_ext (matchTerm_bext s _ _ _ h1) bn p _ hp) h2
             have e3 := matchTerm_ground o b2 bn _ _ _ hbo
-              (inst_ext ((matchTerm_ext s _ _ _ h1).trans (matchTerm_ext p _ _ _ h2)) bn o _ ho) hm
+              (inst_ext ((matchTerm_bext s _ _ _ h1).trans (matchTerm_bext p _ _ _ h2)) bn o _ ho) hm
             cases e2
             subst e3
             rw [← e1, Subject.toTerm_toSubject] at hi
@@ -373,8 +373,8 @@ theorem matchT_some {b : Binding} {tp : STriple} {t : T3} {b' : Binding}
     | some b2 =>
       rw [h2] at h
       simp only [Option.bind_some] at h
-      have e1 := matchTerm_ext _ _ _ _ h1
-      have e2 := matchTerm_ext _ _ _ _ h2
+      have e1 := matchTerm_bext _ _ _ _ h1
+      have e2 := matchTerm_bext _ _ _ _ h2
       exact ⟨fun k hk => matchTerm_ground? hk (BExt.refl b) h1,
              fun k hk => matchTerm_ground? hk e1 h2,
              fun k hk => matchTerm_ground? hk (e1.trans e2) h⟩
