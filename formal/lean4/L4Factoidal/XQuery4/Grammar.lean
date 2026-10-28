@@ -33,6 +33,7 @@ Productions:
 * `validate` uses the in-scope schema (`XPath4.SchemaHook.validateIn`); without one it raises `XQST0075`.
 -/
 import L4Factoidal.XQuery4.Runtime
+import L4Factoidal.FullText.Parser
 
 namespace L4Factoidal.XQuery4
 
@@ -221,13 +222,13 @@ def isFlworStart : P Bool := do
     if ← kwThenKw "for" k2 then return true
   pure false
 
-def pForBinding (sp : SubParsers) : P Clause := do
+def pForBinding (sp : SubParsers) : P (List Clause) := do
   if ← eatKw "member" then
     let v ← pVar
     let vt ← pOptType sp
     let pos ← if ← eatKw "at" then pVar else pure noName
     expectKw "in"
-    pure (.forI "member" v vt pos false (← subE sp.exprSingle))
+    pure [.forI "member" v vt pos false (← subE sp.exprSingle)]
   else if ← atKw "key" then
     adv 3
     let k ← pVar
@@ -236,22 +237,35 @@ def pForBinding (sp : SubParsers) : P Clause := do
     let _ ← if isNoName v then pure (.seq .item .star) else pOptType sp
     let pos ← if ← eatKw "at" then pVar else pure noName
     expectKw "in"
-    pure (.forKV k v pos (← subE sp.exprSingle))
+    pure [.forKV k v pos (← subE sp.exprSingle)]
   else if ← atKw "value" then
     adv 5
     let v ← pVar
     let _ ← pOptType sp
     let pos ← if ← eatKw "at" then pVar else pure noName
     expectKw "in"
-    pure (.forKV noName v pos (← subE sp.exprSingle))
+    pure [.forKV noName v pos (← subE sp.exprSingle)]
   else
     let v ← pVar
     let vt ← pOptType sp
     let allowing ← if ← eatKw "allowing" then expectKw "empty"; pure true else pure false
     let pos ← if ← eatKw "at" then pVar else pure noName
-    if ← eatKw "score" then synErr "full-text score variables are not supported"
+    -- Full Text 3.0 §2.3 FTScoreVar, rewritten as in §4.4: the score
+    -- sequence, the `for` with a position, and the score of the item
+    let at0 ← get
+    let sc ← if ← eatKw "score" then pure (some (← pVar)) else pure none
     expectKw "in"
-    pure (.forI "item" v vt pos allowing (← subE sp.exprSingle))
+    let src ← subE sp.exprSingle
+    match sc with
+    | none => pure [.forI "item" v vt pos allowing src]
+    | some s =>
+      if s == v || (!isNoName pos && s == pos) then
+        throw { code := "XQST0089", msg := "a score variable with the name of its for or positional variable" }
+      let seqV : QN := { uri := "#ftscore", loc := toString at0 }
+      let posV : QN := if isNoName pos then { uri := "#ftpos", loc := toString at0 } else pos
+      pure [.letC seqV (.seq .item .star) (.ext "ft.scoreSeq" [src] [] [] []),
+            .forI "item" v vt posV allowing src,
+            .letC s (.seq .item .star) (.ext "ft.scoreAt" [.var seqV, .var posV] [] [] [])]
 
 /-- A window start or end condition's variables: current, `at`,
     `previous`, `next`. -/
@@ -304,7 +318,7 @@ def pFlwor (sp : SubParsers) : P Expr := do
         cs := cs.push (← pWindow sp)
       else
         for _ in [0:10000] do
-          cs := cs.push (← pForBinding sp)
+          cs := cs ++ (← pForBinding sp).toArray
           if !(← eatS ",") then break
     else if ← eatKw "let" then
       for _ in [0:10000] do
@@ -340,6 +354,11 @@ def pFlwor (sp : SubParsers) : P Expr := do
               else if open_ == '[' then .call { uri := nsARR, loc := "get" } [some (.var tmp), some pos] []
               else .lookup (.var tmp) (some (.lit (Atomic.ofStr v.loc)))
             cs := cs.push (.letC v vt rhs)
+        else if ← eatKw "score" then
+          -- Full Text 3.0 §2.3: `let score $s := E` is `let $s := fts:score(E)`
+          let v ← pVar
+          expectS ":="
+          cs := cs.push (.letC v (.seq .item .star) (.ext "ft.score" [← subE sp.exprSingle] [] [] []))
         else
           let v ← pVar
           let vt ← pOptType sp
@@ -1036,5 +1055,6 @@ def grammar (cfg : Cfg) : ExtGrammar where
   primary s ns sp i := liftOpt (runP (primaryP cfg sp) s ns i)
   startsPrimary s i := startsComputed s i
   stringLit := expandRefs
+  postConcat s ns sp lhs i := L4Factoidal.FullText.ftPostConcat expandRefs s ns sp lhs i
 
 end L4Factoidal.XQuery4

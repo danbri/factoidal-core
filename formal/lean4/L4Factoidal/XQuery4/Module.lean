@@ -82,7 +82,7 @@ def reservedFnNs : List String :=
 def declWords : List String :=
   ["namespace", "default", "boundary-space", "base-uri", "construction", "ordering",
    "copy-namespaces", "decimal-format", "variable", "function", "option", "context",
-   "record", "type", "revalidation", "updating", "fixed"]
+   "record", "type", "revalidation", "updating", "fixed", "ft-option"]
 
 /-- Is a `declare`/`import` keyword followed by a declaration word? -/
 def atDecl : P (Option String) := do
@@ -365,6 +365,15 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       expectS ";"
       if m.decimalFormats.any (·.1 == key) then qerr "XQST0111" "two decimal formats with one name"
       m := { m with decimalFormats := m.decimalFormats ++ [(key, props)] }
+    | "ft-option" =>
+      -- Full Text 3.0 §2.4 FTOptionDecl: the match options of the static
+      -- context, kept under the pseudo-prefix `#ftopt` for the
+      -- `contains text` parser (one entry per declaration, in order)
+      let os ← withXq cfg ns (L4Factoidal.FullText.pMatchOptions expandRefs)
+      expectS ";"
+      let prev := (ns.lookup "#ftopt").getD ""
+      ns := ("#ftopt", prev ++ "\x1e" ++ String.intercalate L4Factoidal.FullText.osep os) ::
+        ns.filter (·.1 != "#ftopt")
     | "option" =>
       match ← peekQName with
       | some (p, u, l, e) =>

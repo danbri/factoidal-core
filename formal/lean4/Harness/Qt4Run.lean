@@ -126,6 +126,9 @@ def featureSupported (f : String) : Bool :=
   -- XML Schema 1.1 (`L4Factoidal.XSD11`): in-scope schema definitions from
   -- the environment's `schema`, validated sources, typed data
   || f == "schemaImport" || f == "schemaValidation" || f == "typedData"
+  -- XQuery and XPath Full Text 3.0 (`L4Factoidal.FullText`), with the
+  -- ignore option, every FTUnit and FTBigUnit, and the default match options
+  || f == "fullText" || f == "fullText-ignore" || f == "fullText-units" || f == "fullText-defaults"
 
 def depOk (xq : Bool) (d : Node) : Bool :=
   let ty := attrD d "type"
@@ -655,7 +658,9 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool
       env := { env with resourceBytes := (uri, bs) :: env.resourceBytes }
       if let some txt := String.fromUTF8? bs then
         env := { env with resources := (uri, txt) :: env.resources }
-    | none => return .error ("resource not readable: " ++ file)
+    -- a resource whose file is absent is not given to the evaluator (the
+    -- full-text tests name absent stop word lists and thesauri on purpose)
+    | none => pure ()
   for (name, sel) in spec.params do
     match evalIn env sel with
     | .ok v => env := env.bind { uri := "", loc := name } v
@@ -793,7 +798,7 @@ def main (args : List String) : IO UInt32 := do
   -- XQuery mode also scores `app` and `misc` (use cases, FunctX, ...);
   -- the XPath mode keeps its six families
   let fams := if !o.families.isEmpty then o.families
-    else if o.lang == "xquery" then ["prod", "op", "fn", "map", "array", "math", "app", "misc"]
+    else if o.lang == "xquery" then ["prod", "op", "fn", "map", "array", "math", "app", "misc", "ft"]
     else ["prod", "op", "fn", "map", "array", "math"]
   let some ctxt ← readFileSafe (o.root ++ "/catalog.xml")
     | IO.eprintln s!"cannot read {o.root}/catalog.xml"; return 2
