@@ -153,11 +153,52 @@ def BOp.arOp? : BOp → Option ArOp
 
 def maxRange : Int := 20000000
 
-/-- `cast as` to an item type. -/
-def castTo (e : Env) (s : Seq) (t : IType) (opt : Bool) : M Seq := do
-  -- XPath 4.0 §4.19.2.5, §4.19.2.6: `cast as array(*)` and `map(*)` coerce
+/-- Whether an item type is a valid cast target (XPath 4.0 §4.19.2). -/
+def isCastTarget : IType → Bool
+  | .atomic _ | .choice _ | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap => true
+  | _ => false
+
+mutual
+/-- `cast as` (XPath 4.0 §4.19.2): generalized atomic types, and array,
+    map and record types (§4.19.2.5 to §4.19.2.7). -/
+def castToF (e : Env) : Nat → Seq → IType → Bool → M Seq
+  | 0, _, _, _ => err "FOER0000" "cast nested too deeply"
+  | f + 1, s, t, opt => do
   match t with
   | .anyArr | .anyMap => return ← e.coerce (if opt then .seq t .opt else t) s "cast target"
+  | .arrT m =>
+    match ← e.coerce (if opt then .seq .anyArr .opt else .anyArr) s "cast target" with
+    | [] => return []
+    | [.arr ms] => return [.arr (← ms.mapM (fun x => e.castSeqF f x m))]
+    | _ => err "XPTY0004" "cast to an array type needs an array"
+  | .mapT kt vt =>
+    match ← e.coerce (if opt then .seq .anyMap .opt else .anyMap) s "cast target" with
+    | [] => return []
+    | [.map kvs] =>
+      let mut out : List (Atomic × Seq) := []
+      for (k, v) in kvs do
+        let k1 ← if e.itemMatches (.atom k) kt then pure k
+          else match ← castToF e f [.atom k] kt false with
+            | [.atom k1] => pure k1
+            | _ => err "XPTY0004" "a map key must cast to an atomic value"
+        if out.any (fun (k2, _) => atomicEqual k1 k2) then err "XQDY0137" "the cast gives two equal keys"
+        out := out ++ [(k1, ← e.castSeqF f v vt)]
+      return [.map out]
+    | _ => err "XPTY0004" "cast to a map type needs a map"
+  | .record fs ext =>
+    if fs.isEmpty && ext then return ← e.coerce (if opt then .seq .anyMap .opt else .anyMap) s "cast target"
+    match ← e.coerce (if opt then .seq .anyMap .opt else .anyMap) s "cast target" with
+    | [] => return []
+    | [.map kvs] =>
+      let mut out : List (Atomic × Seq) := []
+      for (name, _, ft) in fs do
+        match kvs.find? (fun (k, _) => k.isStringLike && k.str == name) with
+        | some (_, v) => out := out ++ [(Atomic.ofStr name, ← e.castSeqF f v ft)]
+        | none =>
+          if e.seqMatches [] ft then out := out ++ [(Atomic.ofStr name, [])]
+          else err "XPTY0004" ("the map has no entry " ++ name ++ " for the record type")
+      return [.map out]
+    | _ => err "XPTY0004" "cast to a record type needs a map"
   | .jnodeT .. | .xnode => err "XPST0080" "cast target is not an atomic, array or map type"
   | _ => pure ()
   let as ← e.atomize s
@@ -186,6 +227,25 @@ def castTo (e : Env) (s : Seq) (t : IType) (opt : Bool) : M Seq := do
         if vs.contains a.str then pure (sStr a.str) else err "FORG0001" "value not in enumeration"
     | _ => err "XPST0051" "cast target is not an atomic type"
   | _ => err "XPTY0004" "more than one item cannot be cast"
+
+/-- Casting a sequence to a sequence type (XPath 4.0 §4.19.2.4). -/
+def Env.castSeqF (e : Env) : Nat → Seq → IType → M Seq
+  | 0, _, _ => err "FOER0000" "cast nested too deeply"
+  | f + 1, s, st => do
+    match st with
+    | .empty => if s.isEmpty then pure [] else err "XPTY0004" "the value must be empty"
+    | _ =>
+      let (t, occ) := splitST st
+      let mut out : Array Item := #[]
+      for j in s do
+        if e.itemMatches j t then out := out.push j
+        else if isCastTarget t then out := out ++ (← castToF e f [j] t false).toArray
+        else err "XPTY0004" "an item does not match the required type and cannot be cast to it"
+      if !occOk occ out.size then err "XPTY0004" "the cast value does not have the required number of items"
+      pure out.toList
+end
+
+def castTo (e : Env) (s : Seq) (t : IType) (opt : Bool) : M Seq := castToF e 64 s t opt
 
 /-- The root of the tree containing `n`. -/
 def Env.treeRoot (e : Env) (n : NodeRef) : NodeRef :=
@@ -588,7 +648,7 @@ def eval : Nat → Env → Expr → M Seq
       | .atomic aty =>
         if aty == .b .anyAtomicType || aty == .b .notation then err "XPST0080" "castable to an abstract type"
       | .jnodeT .. | .xnode => err "XPST0080" "castable target is not an atomic, array or map type"
-      | .anyArr | .anyMap =>
+      | .anyArr | .anyMap | .arrT _ | .mapT _ _ | .record _ _ =>
         return sBool (match castTo env s t opt with | .ok _ => true | .error _ => false)
       | _ => pure ()
       match env.atomize s with
