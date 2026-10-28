@@ -34,6 +34,7 @@ anything but XPath expressions in this evaluator.
 -/
 import L4Factoidal.XPath4.Eval
 import L4Factoidal.XPath4.Theorems
+import L4Factoidal.XPath4.SerializeTheorems
 
 open L4Factoidal.XPath4
 open L4Factoidal.XML

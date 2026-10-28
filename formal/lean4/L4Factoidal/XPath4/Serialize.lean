@@ -344,6 +344,7 @@ def hexU (n : Nat) : String :=
 def charRef (c : Char) : String := "&#x" ++ hexU c.toNat ++ ";"
 
 def SerParams.encodable (p : SerParams) (c : Char) : Bool :=
+  if p.encoding == "UTF-8" then true else
   match p.encoding.toLower with
   | "us-ascii" | "ascii" => c.toNat < 128
   | "iso-8859-1" | "latin1" | "iso-latin-1" => c.toNat < 256
@@ -356,15 +357,13 @@ def SerParams.escTextChar (p : SerParams) (c : Char) : String :=
   match p.mapped c with
   | some r => r
   | none =>
-    match c with
-    | '&' => "&amp;"
-    | '<' => "&lt;"
-    | '>' => "&gt;"
-    | '\r' => "&#xD;"
-    | c =>
-      let n := c.toNat
-      if !p.canonical && ((0x7F ≤ n && n ≤ 0x9F) || n == 0x2028 || (n < 0x20 && n != 9 && n != 10)) then charRef c
-      else if p.encodable c then String.singleton c else charRef c
+    let n := c.toNat
+    if c == '&' then "&amp;"
+    else if c == '<' then "&lt;"
+    else if c == '>' then "&gt;"
+    else if c == '\r' then "&#xD;"
+    else if !p.canonical && ((0x7F ≤ n && n ≤ 0x9F) || n == 0x2028 || (n < 0x20 && n != 9 && n != 10)) then charRef c
+    else if p.encodable c then String.singleton c else charRef c
 
 def SerParams.escAttrChar (p : SerParams) (html : Bool) (next : Option Char) (c : Char) : String :=
   match p.mapped c with
@@ -767,21 +766,24 @@ def hex4u (n : Nat) : String := (hex4l n).toUpper
 
 def SerParams.jsonEscChar (p : SerParams) (c : Char) : String :=
   let n := c.toNat
+  let short : Option String :=
+    if c == '"' then some "\\\"" else if c == '\\' then some "\\\\"
+    else if c == '\x08' then some "\\b" else if c == '\x0C' then some "\\f"
+    else if c == '\n' then some "\\n" else if c == '\r' then some "\\r"
+    else if c == '\t' then some "\\t" else none
   if p.canonical then
-    match c with
-    | '"' => "\\\"" | '\\' => "\\\\" | '\x08' => "\\b" | '\x0C' => "\\f"
-    | '\n' => "\\n" | '\r' => "\\r" | '\t' => "\\t"
-    | c => if n < 0x20 then "\\u" ++ hex4l n else String.singleton c
+    match short with
+    | some e => e
+    | none => if n < 0x20 then "\\u" ++ hex4l n else String.singleton c
   else
     match p.mapped c with
     | some r => r
     | none =>
-      match c with
-      | '"' => "\\\"" | '\\' => "\\\\" | '\x08' => "\\b" | '\x0C' => "\\f"
-      | '\n' => "\\n" | '\r' => "\\r" | '\t' => "\\t"
-      | '/' => if p.escapeSolidus then "\\/" else "/"
-      | c =>
-        if n < 0x20 || (0x7F ≤ n && n ≤ 0x9F) then "\\u" ++ hex4u n
+      match short with
+      | some e => e
+      | none =>
+        if c == '/' then (if p.escapeSolidus then "\\/" else "/")
+        else if n < 0x20 || (0x7F ≤ n && n ≤ 0x9F) then "\\u" ++ hex4u n
         else if p.encodable c then String.singleton c
         else if n ≥ 0x10000 then
           let v := n - 0x10000
