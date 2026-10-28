@@ -479,6 +479,24 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
   | .anyFn =>
       if s.all (fun i => e.itemMatches i it) then pure s
       else err "XPTY0004" ("function item of wrong type for " ++ what)
+  | .choice ts =>
+    if s.all (fun i => e.itemMatches i it) then pure s else
+    -- a choice of atomic types and function types (for example the
+    -- `$replacement` of `fn:replace`): coerce each item to a member
+    let atoms := ts.filterMap (fun t => match t with | .atomic a => some a | .enum _ => some (.b .string) | _ => none)
+    let fnArity := ts.filterMap (fun t => match t with | .fnT ps _ => some ps.length | _ => none)
+    s.mapM (fun i => do
+      match i.fnArity with
+      | some k =>
+        if fnArity.any (k ≤ ·) || e.itemMatches i it then pure i
+        else err "XPTY0004" ("function item of wrong type for " ++ what)
+      | none =>
+        if e.itemMatches i it then pure i
+        else if atoms.isEmpty then err "XPTY0004" ("value of wrong type for " ++ what)
+        else
+          match ← e.atomize [i] with
+          | [a] => pure (Item.atom (← coerceAtom atoms a))
+          | _ => err "XPTY0004" ("value of wrong type for " ++ what))
   | _ =>
     if s.all (fun i => e.itemMatches i it) then pure s
     else err "XPTY0004" ("value of wrong type for " ++ what)
