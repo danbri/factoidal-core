@@ -6,6 +6,7 @@ operations every part of the evaluator uses: atomization (XPath 4.0
 `fn:deep-equal` (F&O 4.0 §13.2.1, default options).
 -/
 import L4Factoidal.XPath4.Parser
+import L4Factoidal.XPath4.ExprEq
 import L4Factoidal.XPath4.Doc
 import L4Factoidal.XPath4.Catalog
 import L4Factoidal.XPath4.JNode
@@ -727,11 +728,22 @@ def Env.deepEqFuel (e : Env) : Nat → Seq → Seq → Bool
       | .arr ma, .arr mb => ma.length == mb.length && (ma.zip mb).all (fun (p, q) => e.deepEqFuel f p q)
       | .fn (.builtin q1 k1), .fn (.builtin q2 k2) => q1 == q2 && k1 == k2
       | .jnode _ _ v1 _, .jnode _ _ v2 _ => e.deepEqFuel f v1 v2
-      | .fn (.papp (.fn (.builtin q1 k1)) a1), .fn (.papp (.fn (.builtin q2 k2)) a2) =>
-          q1 == q2 && k1 == k2 && a1.length == a2.length &&
+      -- function items: equivalence (F&O 4.0 §1.5.1, PR 2805): the
+      -- same static form and the same captured values
+      | .fn (.papp g1 a1), .fn (.papp g2 a2) =>
+          e.deepEqFuel f [g1] [g2] && a1.length == a2.length &&
           (a1.zip a2).all (fun (x, y) => match x, y with
             | none, none => true
             | some u, some w => e.deepEqFuel f u w
+            | _, _ => false)
+      | .fn (.inline ps1 r1 b1 fo1 c1), .fn (.inline ps2 r2 b2 fo2 c2) =>
+          fo1 == fo2 &&
+          match inlineAlphaEq? ps1 r1 b1 ps2 r2 b2 with
+          | none => false
+          | some pairs => pairs.all (fun (q1, q2) =>
+            match c1.lookup q1, c2.lookup q2 with
+            | some v1, some v2 => e.deepEqFuel f v1 v2
+            | none, none => true
             | _, _ => false)
       | _, _ => false)
 

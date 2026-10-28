@@ -50,6 +50,14 @@ def xsCtorType? (loc : String) : Option IType :=
   else if loc == "error" then some (.choice [])
   else (atypeOfName? loc).map .atomic
 
+/-- `fn:position#0` and `fn:last#0` capture the focus (F&O 4.0 §1.5.2):
+    a function item of arity 0 that returns the captured position or
+    size. The two bodies differ in form so that the two functions are
+    not equivalent (F&O 4.0 §1.5.1) even when the numbers are equal. -/
+def focusFn (which : String) (pos size : Nat) : Item :=
+  if which == "position" then .fn (.inline [] (.atomic (.b .integer)) (.lit (Atomic.ofInt pos)) false [])
+  else .fn (.inline [] (.atomic (.b .integer)) (.seq [.lit (Atomic.ofInt size)]) false [])
+
 def argN (a : List Seq) (i : Nat) : Seq := a.getD i []
 
 def optAtom (s : Seq) : Option Atomic :=
@@ -1300,6 +1308,8 @@ def fnTable2 : List (String × LibFn) := [
             | none => pure [.fn (.builtin q 0)]
           else pure []
         else if q.uri == nsFN && q.loc == "concat" then pure [.fn (.builtin q k.toNat)]
+        else if q.uri == nsFN && k == 0 && (q.loc == "position" || q.loc == "last") && e.ctx.isSome then
+          pure [focusFn q.loc e.pos e.size]
         else match findSig q k.toNat with
           | some _ => pure [.fn (.builtin q k.toNat)]
           | none => pure []

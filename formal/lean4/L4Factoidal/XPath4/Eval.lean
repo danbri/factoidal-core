@@ -552,6 +552,9 @@ def eval : Nat → Env → Expr → M Seq
       | [fi] =>
           if !fi.isFn then err "XPTY0004" "dynamic call of a value that is not a function"
           if args.any Option.isNone then
+            -- the argument count must be the arity (XPath 4.0 §4.5.4)
+            if let some k := fi.fnArity then
+              if k != args.length then err "XPTY0004" "partial application with the wrong number of arguments"
             pure [.fn (.papp fi (← evalArgs n env args))]
           else
             let vs ← evalArgs n env args
@@ -579,6 +582,9 @@ def eval : Nat → Env → Expr → M Seq
           | none => pure [.fn (.builtin q 0)]
         else err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
       else if q.uri == nsFN && q.loc == "concat" then pure [.fn (.builtin q k)]
+      -- fn:position#0 and fn:last#0 capture the focus (F&O 4.0 §1.5.2)
+      else if q.uri == nsFN && k == 0 && (q.loc == "position" || q.loc == "last") && env.ctx.isSome then
+        pure [focusFn q.loc env.pos env.size]
       else match findSig q k with
         | some sig =>
           -- a reference to a context-dependent function whose omitted
