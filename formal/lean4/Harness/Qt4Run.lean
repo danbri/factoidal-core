@@ -2,10 +2,12 @@
 Harness/Qt4Run — the qt4tests (QT4 Community Group XPath/XQuery/F&O
 test suite) runner for the XPath 4.0 evaluator `L4Factoidal.XPath4`.
 
-    lake exe l4qt4 [--root DIR] [--family F]... [--set NAME] [--list-fails]
+    lake exe l4qt4 [--root DIR] [--lang xpath|xquery] [--family F]... [--set NAME] [--list-fails]
 
 It reads `catalog.xml`, then every test set of the selected families
-(default `prod op fn map array math`), and scores every test case:
+(default `prod op fn map array math`; with `--lang xquery` also `app`
+and `misc`), and scores every test case for XPath 4.0 or, with
+`--lang xquery`, for XQuery 4.0 (`L4Factoidal.XQuery4`):
 
 * **unsupported** — the test case or its test set has a dependency
   this processor does not satisfy: a spec that is not XPath 4.0
@@ -244,7 +246,11 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
     | "error" =>
         let code := attrD a "code"
         match res with
-        | .error e => ok? (code == "*" || code == e.code || ("err:" ++ e.code) == code || code.endsWith (":" ++ e.code)) ("wrong error code " ++ e.code ++ " (expected " ++ code ++ ")")
+        | .error e =>
+          let eqn := "Q{" ++ (if e.uri == "" then nsERR else e.uri) ++ "}" ++ e.code
+          let ok := if code.startsWith "Q{" then code == eqn
+            else code == "*" || code == e.code || ("err:" ++ e.code) == code || code.endsWith (":" ++ e.code)
+          ok? ok ("wrong error code " ++ (if e.uri == "" then e.code else eqn) ++ " (expected " ++ code ++ ")")
         | .ok s => .fail ("expected error " ++ code ++ ", got " ++ (sh s 80))
     | "any-of" =>
         let rs := (kids a).map (fun c => checkAssert env res f c)
@@ -359,6 +365,32 @@ def fixXml : Nat → Node → Node
           .element tag ats [.text top]
         else .element tag ats (cs.map (fixXml f))
     | other => other
+
+/-- `assert-xml file="..."`: the expected XML read from the file (in
+    the test set's directory), put in place of the attribute. -/
+def inlineXmlFiles (dir : String) : Nat → Node → IO Node
+  | 0, n => pure n
+  | f + 1, n =>
+    match n with
+    | .element tag ats cs =>
+      if (splitName tag).2 == "assert-xml" then do
+        match findAttr "file" ats with
+        | some file =>
+          let content ← readFileSafe (dir ++ "/" ++ file)
+          match content with
+          | some (txt : String) =>
+            -- drop an XML declaration
+            let txt := if txt.startsWith "<?xml" then
+                (match txt.splitOn "?>" with | _ :: rest => String.intercalate "?>" rest | [] => txt)
+              else txt
+            pure (.element tag (ats.filter (·.name != "file")) [.text txt])
+          | none => pure n
+        | none => pure n
+      else do
+        let mut out : Array Node := #[]
+        for c in cs do out := out.push (← inlineXmlFiles dir f c)
+        pure (.element tag ats out.toList)
+    | other => pure other
 
 /-! ## Running -/
 
@@ -545,6 +577,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       let env := { env with resources := env.resources ++ mods }
       let res := evalIn env src
       let some r := (kidsNamed tc "result").head? | do t := { t with fail := t.fail + 1 }; continue
+      let r ← inlineXmlFiles dir 100 r
       match (kids r).head? with
       | none => t := { t with fail := t.fail + 1 }
       | some a =>
@@ -597,7 +630,11 @@ def runIsolated (o : Opts) (secs : Nat) (fam setName file : String) : IO (Tally 
 
 def main (args : List String) : IO UInt32 := do
   let o := parseArgs args {}
-  let fams := if o.families.isEmpty then ["prod", "op", "fn", "map", "array", "math"] else o.families
+  -- XQuery mode also scores `app` and `misc` (use cases, FunctX, ...);
+  -- the XPath mode keeps its six families
+  let fams := if !o.families.isEmpty then o.families
+    else if o.lang == "xquery" then ["prod", "op", "fn", "map", "array", "math", "app", "misc"]
+    else ["prod", "op", "fn", "map", "array", "math"]
   let some ctxt ← readFileSafe (o.root ++ "/catalog.xml")
     | IO.eprintln s!"cannot read {o.root}/catalog.xml"; return 2
   let cat ← match parseXML ctxt with

@@ -144,7 +144,10 @@ def peekQName : P (Option (Option String × Option String × String × Nat)) := 
       | 0 => j
       | f + 1 => if j ≥ s.size || chAt s j == '}' then j else findClose (j + 1) f
     let j := findClose (i + 2) s.size
-    let uri := String.ofList ((List.range (j - i - 2)).map (fun k => chAt s (i + 2 + k)))
+    -- the braced URI is whitespace-collapsed (as xs:anyURI)
+    let raw := String.ofList ((List.range (j - i - 2)).map (fun k => chAt s (i + 2 + k)))
+    let uri := String.intercalate " " ((raw.splitOn " ").filter (· != "") |>.flatMap (fun w =>
+      (w.split (fun c => c == '\n' || c == '\t' || c == '\r')).toList.map (·.toString) |>.filter (· != "")))
     if chAt s (j+1) == '*' then pure (some (none, some uri, "*", j + 2))
     else match ncnameAt s (j + 1) with
       | some (l, e) => pure (some (none, some uri, l, e))
@@ -300,6 +303,13 @@ def pStringLit : P String := do
     XQuery prolog declared another (binding `#fn`). -/
 def dfltFnNs : P String := do pure (((← read).ns.lookup "#fn").getD nsFN)
 
+/-- The namespace of an unprefixed element name in a name test: none
+    in XPath 4.0 here; the default element namespace (binding `""`) in
+    XQuery 4.0. -/
+def dfltElemNs : P String := do
+  let c ← read
+  pure (if c.ext.isSome then (c.ns.lookup "").getD "" else "")
+
 /-- Run a parser at an offset with other namespace bindings (for the
     extension grammar's sub-parsers). -/
 def runAt {α} (c : PCtx) (p : P α) (ns : List (String × String)) (i : Nat) : Except Err (α × Nat) :=
@@ -449,7 +459,8 @@ def pItemType : Nat → P IType
         | "element" | "attribute" =>
             if ← eatS ")" then pure (if nm == "element" then .elem none else .attr none)
             else
-              let t ← pNameTest ""
+              let en ← dfltElemNs
+              let t ← pNameTest (if nm == "element" then en else "")
               -- union of names, then optional type name (ignored: no schema types)
               for _ in [0:100] do
                 if ← eatS "|" then let _ ← pNameTest "" else break
@@ -1022,7 +1033,9 @@ def pNodeTest : Nat → Axis → P NodeTest
     | some (nm, '(', _) =>
       if kindTestNames.contains nm then pure (.kind (← pItemType n))
       else synErr ("unexpected function call in a step: " ++ nm)
-    | _ => pure (.name (← pNameTest (if ax == .attribute then "" else "")))
+    | _ =>
+      let en ← dfltElemNs
+      pure (.name (← pNameTest (if ax == .attribute then "" else en)))
 
 def pStep : Nat → P Expr
   | 0 => synErr "expression too deeply nested"

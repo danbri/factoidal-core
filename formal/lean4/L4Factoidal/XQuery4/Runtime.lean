@@ -67,13 +67,20 @@ def staticVars (vs : List (QN × Seq)) : List (QN × Seq) :=
   | [] => vs
   | r => r
 
+/-- Is any declaration of `q` there (for the error code)? -/
+def userAny (e : Env) (q : QN) : Bool :=
+  e.vars.any (fun (v, _) => v.uri == "#xqf" && v.loc.startsWith (q.eqn ++ "#"))
+
 /-- The declaration of `q` that accepts `k` arguments: its function
     item (of the full arity, closure = the static bindings of `e`, so
     the body sees the globals and every function, itself included),
     the number of required parameters, and one focus function per
     optional parameter, which computes the default value in the focus
     of the call. -/
-def userDecl? (e : Env) (q : QN) (k : Nat) : Option (Item × Nat × List Item) :=
+def userDecl? (e : Env) (q0 : QN) (k : Nat) : Option (Item × Nat × List Item) :=
+  -- 4.0: an unprefixed call with no `fn` function finds a function in
+  -- no namespace
+  let q := if q0.uri == nsFN && q0.pfx == "" && userAny e { q0 with uri := "" } then { q0 with uri := "" } else q0
   let pre := q.eqn ++ "#"
   let hit := e.vars.find? (fun (v, _) =>
     v.uri == "#xqf" && v.loc.startsWith pre &&
@@ -90,10 +97,6 @@ def userDecl? (e : Env) (q : QN) (k : Nat) : Option (Item × Nat × List Item) :
       | x => x
     some (.fn (.inline ps r b f sv), lo, dflts.map withCl)
   | _ => none
-
-/-- Is any declaration of `q` there (for the error code)? -/
-def userAny (e : Env) (q : QN) : Bool :=
-  e.vars.any (fun (v, _) => v.uri == "#xqf" && v.loc.startsWith (q.eqn ++ "#"))
 
 /-- The callbacks into the evaluator for a user function call. -/
 structure CallCb where
@@ -179,8 +182,9 @@ def envSalt (e : Env) : String :=
   toString e.pos ++ "|" ++ String.intercalate ";" vs ++ "|" ++
     (match e.ctx with | some s => String.intercalate "," ((s.take 2).map itemSig) | none => "")
 
-def newDocId (tag : String) (e : Env) (content : String) : Nat :=
-  runtimeDocId ("xq-" ++ tag) (envSalt e ++ "\x00" ++ content)
+def newDocId (tag : String) (e : Env) (content : String) (ss : List String := []) : Nat :=
+  runtimeDocId ("xq-" ++ tag) (envSalt e ++ "\x00" ++ content ++ "\x00" ++
+    String.intercalate "," (ss.filter (·.startsWith "#at")))
 
 /-- A piece of element or document content after §4.12.1.3. -/
 inductive Piece where
@@ -192,7 +196,7 @@ inductive Piece where
     the copy is one loop with an index offset. `inh` are namespace
     bindings to add to every copied element (copy-namespaces inherit). -/
 def copyInto (env : Env) (src : NodeRef) (par : Option Nat) (inh : List (String × String))
-    (out : Array NRec) : Array NRec × Nat := Id.run do
+    (out : Array NRec) (preserve : Bool := true) : Array NRec × Nat := Id.run do
   let d := env.doc src
   let r0 := d.get src.idx
   let lo := src.idx
@@ -204,9 +208,15 @@ def copyInto (env : Env) (src : NodeRef) (par : Option Nat) (inh : List (String 
     let i := lo + k
     let r := d.get i
     let parent := if i == lo then par else r.parent.map shift
+    -- copy-namespaces no-preserve: only the bindings the names use
+    let own := if preserve || r.kind != .element then r.inscope else
+      let used := (if r.name.uri != "" then [(r.name.pfx, r.name.uri)] else []) ++
+        r.attrs.toList.filterMap (fun a => let ra := d.get a
+          if ra.name.uri != "" && ra.name.pfx != "" then some (ra.name.pfx, ra.name.uri) else none)
+      used ++ [("xml", nsXML)]
     let inscope := if r.kind == .element && !inh.isEmpty then
-        r.inscope ++ inh.filter (fun (p, _) => (r.inscope.lookup p).isNone)
-      else r.inscope
+        own ++ inh.filter (fun (p, _) => (own.lookup p).isNone)
+      else own
     o := o.push { r with parent, inscope,
                          children := r.children.map shift, attrs := r.attrs.map shift,
                          last := shift (if r.kind == .element || r.kind == .document then r.last else i) }
@@ -269,7 +279,7 @@ def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool) :
 /-- Push the children pieces under `par`; returns the new array and the
     child indices. -/
 def pushPieces (env : Env) (par : Nat) (inh : List (String × String)) (ps : List Piece)
-    (out : Array NRec) : Array NRec × Array Nat := Id.run do
+    (out : Array NRec) (preserve : Bool := true) : Array NRec × Array Nat := Id.run do
   let mut o := out
   let mut cs : Array Nat := #[]
   for p in ps do
@@ -279,7 +289,7 @@ def pushPieces (env : Env) (par : Nat) (inh : List (String × String)) (ps : Lis
         o := o.push { kind := .text, value := s, parent := some par, last := i }
         cs := cs.push i
     | .node n =>
-        let (o', i) := copyInto env n (some par) inh o
+        let (o', i) := copyInto env n (some par) inh o preserve
         o := o'
         cs := cs.push i
   (o, cs)
@@ -297,7 +307,7 @@ def freshPrefix (used : List (String × String)) : String := Id.run do
 
 /-- Build an element node: name, namespace declarations, content. -/
 def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × String))
-    (parts : List Seq) : M Seq := do
+    (parts : List Seq) (preserve inherit : Bool := true) : M Seq := do
   if isXmlnsName name then err "XQDY0096" "the element name is in the xmlns namespace"
   if name.pfx == "xml" && name.uri != nsXML then err "XQDY0096" "prefix xml bound to another namespace"
   if name.uri == nsXML && name.pfx != "xml" && name.pfx != "" then err "XQDY0096" "the xml namespace with another prefix"
@@ -349,8 +359,8 @@ def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × Str
     let i := out.size
     out := out.push { r with last := i }
     aIdx := aIdx.push i
-  let inh := scope.filter (fun (p, _) => p != "xml")
-  let (o2, cs) := pushPieces env 0 inh ps out
+  let inh := if inherit then scope.filter (fun (p, _) => p != "xml") else []
+  let (o2, cs) := pushPieces env 0 inh ps out preserve
   let o3 := o2.set! 0 { (o2.getD 0 default) with children := cs, attrs := aIdx, last := o2.size - 1 }
   let doc : Doc := { nodes := o3, baseUri := env.baseUri }
   pure [.node { doc := id, idx := 0, rt := some doc }]
@@ -635,7 +645,7 @@ def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN)
 
 /-! ## try/catch -/
 
-def errUri (_ : Err) : String := nsERR
+def errUri (e : Err) : String := if e.uri == "" then nsERR else e.uri
 
 /-- Does a catch name test (`*`, `Q{u}*`, `*:l`, `Q{u}l`) match? -/
 def catchMatches (t : String) (e : Err) : Bool :=
@@ -646,7 +656,7 @@ def catchMatches (t : String) (e : Err) : Bool :=
 
 def errVars (e : Err) : List (QN × Seq) :=
   let n (l : String) : QN := { uri := nsERR, loc := l, pfx := "err" }
-  let code : Seq := single (Atomic.ofQN { uri := errUri e, loc := e.code, pfx := "err" })
+  let code : Seq := single (Atomic.ofQN { uri := errUri e, loc := e.code, pfx := if e.uri == "" then "err" else "" })
   [(n "code", code), (n "description", sStr e.msg), (n "value", []), (n "module", []),
    (n "line-number", []), (n "column-number", []), (n "additional", []),
    (n "stack-trace", []),
@@ -669,8 +679,8 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
       let mut vals : Array Seq := #[]
       for p in parts do vals := vals.push (← cb.eval env p)
       let id := newDocId "elem" env (name.eqn ++ "|" ++ ss.headD "" ++ "|" ++
-        String.intercalate "," (vals.toList.map (fun s => String.intercalate "," (s.map itemSig))))
-      buildElement env id name decls vals.toList
+        String.intercalate "," (vals.toList.map (fun s => String.intercalate "," (s.map itemSig)))) ss
+      buildElement env id name decls vals.toList (!ss.contains "#no-preserve") (!ss.contains "#no-inherit")
     | [] => err "XPST0003" "element constructor without name"
   | "attr" =>
     match es with
@@ -682,7 +692,7 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
       let mut v := ""
       for p in parts do v := v ++ (← contentString env (← cb.eval env p))
       let v' := if name == ({ uri := nsXML, loc := "id" } : QN) then normSpace v else v
-      let id := newDocId "attr" env (name.eqn ++ "=" ++ v' ++ toString es.length)
+      let id := newDocId "attr" env (name.eqn ++ "=" ++ v' ++ toString es.length) ss
       pure (leafNode env id { kind := .attribute, name, value := v' })
     | [] => err "XPST0003" "attribute constructor without name"
   | "text" =>
@@ -690,11 +700,11 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
     let as ← env.atomize s
     if as.isEmpty then pure [] else
     let v := String.intercalate " " (as.map Atomic.str)
-    pure (leafNode env (newDocId "text" env v) { kind := .text, value := v })
+    pure (leafNode env (newDocId "text" env v ss) { kind := .text, value := v })
   | "comment" =>
     let v ← contentString env (← cb.eval env (es.headD (.seq [])))
     if (v.splitOn "--").length > 1 || v.endsWith "-" then err "XQDY0072" "a comment with '--' or a final '-'"
-    pure (leafNode env (newDocId "comment" env v) { kind := .comment, value := v })
+    pure (leafNode env (newDocId "comment" env v ss) { kind := .comment, value := v })
   | "pi" =>
     match es with
     | [tgt, body] =>
@@ -710,12 +720,12 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
       let v ← contentString env (← cb.eval env body)
       if (v.splitOn "?>").length > 1 then err "XQDY0026" "processing-instruction content with '?>'"
       let v := String.ofList (v.toList.dropWhile (fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r'))
-      pure (leafNode env (newDocId "pi" env (target ++ " " ++ v))
+      pure (leafNode env (newDocId "pi" env (target ++ " " ++ v) ss)
         { kind := .pi, name := { uri := "", loc := target }, value := v })
     | _ => err "XPST0003" "bad processing-instruction constructor"
   | "doc" =>
     let s ← cb.eval env (es.headD (.seq []))
-    buildDocument env (newDocId "doc" env (String.intercalate "," (s.map itemSig))) [s]
+    buildDocument env (newDocId "doc" env (String.intercalate "," (s.map itemSig)) ss) [s]
   | "ns" =>
     match es with
     | [px, ux] =>
@@ -732,7 +742,7 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
       if p == "xmlns" || u == "http://www.w3.org/2000/xmlns/" then err "XQDY0101" "the xmlns namespace"
       if (p == "xml") != (u == nsXML) then err "XQDY0101" "the xml prefix and namespace go together"
       if u == "" then err "XQDY0101" "a namespace node with an empty URI"
-      pure (leafNode env (newDocId "ns" env (p ++ "=" ++ u))
+      pure (leafNode env (newDocId "ns" env (p ++ "=" ++ u) ss)
         { kind := .namespace, name := { uri := "", loc := p }, value := u })
     | _ => err "XPST0003" "bad namespace constructor"
   | "flwor" =>

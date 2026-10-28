@@ -278,6 +278,12 @@ def eval : Nat → Env → Expr → M Seq
         if q.loc == "NOTATION" || q.loc == "anyAtomicType" || q.loc == "anySimpleType" then
           err "XPST0017" ("no constructor function xs:" ++ q.loc)
         else
+        -- the one parameter is named `value` (`xs:long(value := '1')`)
+        let args := if args.isEmpty then (match kw with
+          | [("value", a)] => [a]
+          | _ => args) else args
+        if !kw.isEmpty && !(kw.length == 1 && kw.all (·.1 == "value")) then
+          err "XPST0017" ("constructor function xs:" ++ q.loc ++ " has one parameter, named value")
         match (if args.isEmpty then [some Expr.ctx] else args) with
         | [some x] =>
             let s ← eval n env x

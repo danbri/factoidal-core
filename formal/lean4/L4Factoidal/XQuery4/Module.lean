@@ -125,12 +125,21 @@ def pAnnotations : P (List String) := do
         qerr "XQST0045" ("annotation in a reserved namespace " ++ l)
       out := out ++ [l]
       if ← eatS "(" then
+        -- AnnotationValue: a string literal, a numeric literal with an
+        -- optional minus, `true()` or `false()` (XQuery 4.0 [32])
         for _ in [0:1000] do
           ws
           let ch ← peekAt 0
           if ch == '"' || ch == '\'' then let _ ← pStringLit
-          else
-            let _ ← pExpr 100
+          else if ch == '-' || ch.isDigit || ch == '.' then
+            let _ ← eatS "-"
+            ws
+            let ch2 ← peekAt 0
+            if !(ch2.isDigit || ch2 == '.') then synErr "an annotation value must be a literal"
+            let _ ← pNumber
+          else if (← kwThen "true" '(') || (← kwThen "false" '(') then
+            let _ ← pNCName; expectS "("; expectS ")"
+          else synErr "an annotation value must be a literal"
           if !(← eatS ",") then break
         expectS ")"
     | none => synErr "bad annotation"
@@ -215,6 +224,8 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
     expectKw "declare"
     let annots ← withXq cfg ns pAnnotations
     let w ← pNCName
+    -- 4.0: `declare fixed default ... namespace` (fixed for the module)
+    let w ← if w == "fixed" then pNCName else pure w
     match w with
     | "namespace" =>
       let p ← pNCName
@@ -294,10 +305,11 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       if seen.contains "ordering" then qerr "XQST0065" "two ordering declarations"
       seen := "ordering" :: seen
     | "copy-namespaces" =>
-      if !(← eatKw "preserve") then expectKw "no-preserve"
+      let pres ← if ← eatKw "preserve" then pure true else expectKw "no-preserve"; pure false
       expectS ","
-      if !(← eatKw "inherit") then expectKw "no-inherit"
+      let inh ← if ← eatKw "inherit" then pure true else expectKw "no-inherit"; pure false
       expectS ";"
+      cfg := { cfg with copyPreserve := pres, copyInherit := inh }
       if seen.contains "copyns" then qerr "XQST0055" "two copy-namespaces declarations"
       seen := "copyns" :: seen
     | "decimal-format" =>
@@ -360,11 +372,15 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       let _ := annots
       let q ← match ← peekQName with
         | some (p, u, l, e) =>
+          if p.isNone && u.isNone && reservedFnNames.contains l then
+            synErr ("reserved function name " ++ l)
           set e
-          withXq cfg ns (resolve p u l ((ns.lookup "#fn").getD nsFN))
+          let q ← withXq cfg ns (resolve p u l ((ns.lookup "#fn").getD nsFN))
+          -- 4.0: an unprefixed name with the default function namespace
+          -- fn is a name in no namespace (§5.18.1)
+          pure (if p.isNone && u.isNone && q.uri == nsFN then { q with uri := "" } else q)
         | none => synErr "expected a function name"
       if reservedFnNs.contains q.uri then qerr "XQST0045" ("function " ++ q.show ++ " in a reserved namespace")
-      if q.uri == "" then qerr "XQST0060" ("function " ++ q.show ++ " in no namespace")
       if let some (_, u) := m.libNs then
         if q.uri != u then qerr "XQST0048" "a library module function outside the module namespace"
       expectS "("
@@ -527,7 +543,8 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
   let fns := ms.flatMap Module.fnArities
   let known (q : QN) (k : Nat) : Bool :=
     (findSigAny q).isSome || (q.uri == nsFN && q.loc == "concat") ||
-    fns.any (fun (q2, lo, hi) => q2 == q && lo ≤ k && k ≤ hi)
+    fns.any (fun (q2, lo, hi) => (q2 == q || (q.uri == nsFN && q.pfx == "" && q2 == { q with uri := "" }))
+      && lo ≤ k && k ≤ hi)
   if globals.length != globals.eraseDups.length then
     err "XQST0049" "a global variable declared in two modules"
   for (q, lo, hi) in fns do

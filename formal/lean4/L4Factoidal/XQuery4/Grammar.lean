@@ -45,6 +45,9 @@ structure Cfg where
   types : List (QN × IType) := []
   /-- The first pass over a prolog: unknown type names are `item()`. -/
   lenient : Bool := false
+  /-- `declare copy-namespaces` (§5.8): preserve, inherit. -/
+  copyPreserve : Bool := true
+  copyInherit : Bool := true
 deriving Inhabited
 
 /-! ## Helpers -/
@@ -269,16 +272,18 @@ def pWindow (sp : SubParsers) : P Clause := do
   let vt ← pOptType sp
   expectKw "in"
   let src ← subE sp.exprSingle
-  expectKw "start"
-  let s ← pWindowVars
-  expectKw "when"
-  let sc ← subE sp.exprSingle
+  -- 4.0: the start condition, and the `when` parts, may be absent (true)
+  let tru : Expr := .lit (Atomic.ofBool true)
+  let (s, sc) ← if ← eatKw "start" then
+      let s ← pWindowVars
+      let sc ← if ← eatKw "when" then subE sp.exprSingle else pure tru
+      pure (s, sc)
+    else pure ([noName, noName, noName, noName], tru)
   let only ← eatKw "only"
   if only || (← atKw "end") then
     expectKw "end"
     let e ← pWindowVars
-    expectKw "when"
-    let ec ← subE sp.exprSingle
+    let ec ← if ← eatKw "when" then subE sp.exprSingle else pure tru
     let names := (v :: s ++ e).filter (fun q => !isNoName q)
     if names.length != names.eraseDups.length then
       throw { code := "XQST0103", msg := "two window variables with one name" }
@@ -495,6 +500,17 @@ def pTry (sp : SubParsers) : P Expr := do
 
 /-! ## Direct constructors -/
 
+/-- Mark a constructor with its offset in the query text, so that two
+    constructors with equal content give nodes of different identity. -/
+def tagAt (i : Nat) : Expr → Expr
+  | .ext tag es ts qs ss =>
+    if ["elem", "attr", "text", "comment", "pi", "doc", "ns"].contains tag then
+      .ext tag es ts qs (ss ++ ["#at" ++ toString i])
+    else .ext tag es ts qs ss
+  | e => e
+
+
+
 /-- The static namespace bindings, for computed names at run time. -/
 def staticNs : P (List QN) := do
   let c ← read
@@ -692,6 +708,10 @@ def pStartTag (sp : SubParsers) : P (List (String × String) × Array (String ×
       ats := ats.push (ap, al, parts, literal)
   pure (decls, ats)
 
+/-- The copy-namespaces mode, as strings in an `elem` node. -/
+def copyFlags (cfg : Cfg) : List String :=
+  (if cfg.copyPreserve then [] else ["#no-preserve"]) ++ (if cfg.copyInherit then [] else ["#no-inherit"])
+
 def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
   | 0 => synErr "direct constructors nested too deeply"
   | f + 1 => do
@@ -718,7 +738,7 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
         if seen.contains (auri, al) then throw { code := "XQST0040", msg := "duplicate attribute " ++ al }
         seen := (auri, al) :: seen
         attrEs := attrEs.push (.ext "attr" (.lit (Atomic.ofQN { uri := auri, loc := al, pfx := ap }) :: parts) [] sns ["d"])
-      let declStrs := decls.map (fun (p, u) => p ++ "\x00" ++ u)
+      let declStrs := decls.map (fun (p, u) => p ++ "\x00" ++ u) ++ copyFlags cfg
       let s := c.s
       if chAt s (← get) == '/' then
         adv 1; expectS ">"
@@ -753,7 +773,7 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
             let e ← if chAt s (j+1) == '!' then pDirComment
               else if chAt s (j+1) == '?' then pDirPI
               else pDirElem cfg sp f
-            ps := ps.push (.bound e)
+            ps := ps.push (.bound (tagAt j e))
         else if ch == '{' && chAt s (j+1) == '{' then buf := buf.push '{'; adv 2
         else if ch == '}' && chAt s (j+1) == '}' then buf := buf.push '}'; adv 2
         else if ch == '}' then synErr "unescaped '}' in element content"
@@ -898,6 +918,12 @@ def pExtensionExpr (sp : SubParsers) : P Expr := do
 
 def primaryP (cfg : Cfg) (sp : SubParsers) : P (Option Expr) := do
   ws
+  let i0 ← get
+  match ← primaryP0 cfg sp with
+  | some e => pure (some (tagAt i0 e))
+  | none => pure none
+where
+  primaryP0 (cfg : Cfg) (sp : SubParsers) : P (Option Expr) := do
   let c ← read
   let i ← get
   let s := c.s
@@ -910,6 +936,34 @@ def primaryP (cfg : Cfg) (sp : SubParsers) : P (Option Expr) := do
     return none
   if ch == '`' && chAt s (i+1) == '`' && chAt s (i+2) == '[' then return some (← pStringConstructor sp)
   if ch == '(' && chAt s (i+1) == '#' then return some (← pExtensionExpr sp)
+  if ch == '%' then
+    -- annotations on an inline function (ignored), then the function
+    for _ in [0:100] do
+      ws
+      if (← curCh) != '%' then break
+      adv 1
+      match ← peekQName with
+      | some (p, _, _, e) =>
+        if let some pp := p then let _ ← lookupNs pp
+        set e
+      | none => synErr "bad annotation"
+      if ← eatS "(" then
+        for _ in [0:100] do
+          ws
+          let c2 ← curCh
+          if c2 == '"' || c2 == '\'' then let _ ← pStringLit
+          else if c2 == '-' || c2.isDigit || c2 == '.' then
+            let _ ← eatS "-"
+            let _ ← pNumber
+          else if (← kwThen "true" '(') || (← kwThen "false" '(') then
+            let some (_, e2) := ncnameAt (← read).s (← get) | synErr "bad annotation value"
+            set e2; expectS "("; expectS ")"
+          else synErr "an annotation value must be a literal"
+          if !(← eatS ",") then break
+        expectS ")"
+    if !((← kwThen "function" '(') || (← kwThen "fn" '(') || (← kwThen "function" '{') || (← kwThen "fn" '{')) then
+      synErr "annotations must be followed by a function"
+    return some (← subE sp.exprSingle)
   if !startsComputed s i then return none
   let some (kw, _) := ncnameAt s i | return none
   adv kw.length
@@ -918,7 +972,7 @@ def primaryP (cfg : Cfg) (sp : SubParsers) : P (Option Expr) := do
   | "element" =>
     let nm ← pCompName sp "elem"
     let body ← pBraced sp
-    pure (some (.ext "elem" [nm, body] [] sns ["c"]))
+    pure (some (.ext "elem" [nm, body] [] sns ("c" :: copyFlags cfg)))
   | "attribute" =>
     let nm ← pCompName sp "attr"
     let body ← pBraced sp
