@@ -481,6 +481,10 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
       else err "XPTY0004" ("function item of wrong type for " ++ what)
   | .choice ts =>
     if s.all (fun i => e.itemMatches i it) then pure s else
+    -- only a choice that mixes atomic and function types is handled here;
+    -- a choice of function types alone keeps the strict test
+    if !(ts.any (fun t => match t with | .atomic _ | .enum _ => true | _ => false)) then
+      err "XPTY0004" ("value of wrong type for " ++ what) else
     -- a choice of atomic types and function types (for example the
     -- `$replacement` of `fn:replace`): coerce each item to a member
     let atoms := ts.filterMap (fun t => match t with | .atomic a => some a | .enum _ => some (.b .string) | _ => none)
