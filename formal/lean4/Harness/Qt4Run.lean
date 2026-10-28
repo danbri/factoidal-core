@@ -98,6 +98,8 @@ structure EnvSpec where
   ctxSelect : Option String := none
   unsupported : Option String := none
   baseUri : String := ""
+  /-- `resource` elements: (uri, file). -/
+  resources : List (String × String) := []
 deriving Inhabited
 
 def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
@@ -115,7 +117,8 @@ def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
     | "context-item" => s := { s with ctxSelect := attr c "select" }
     | "schema" => s := { s with unsupported := some "schema" }
     | "collection" => s := { s with unsupported := some "collection" }
-    | "resource" => s := { s with unsupported := some "resource" }
+    | "resource" =>
+        s := { s with resources := s.resources ++ [(attrD c "uri", dir ++ "/" ++ attrD c "file")] }
     | "decimal-format" => s := { s with unsupported := some "decimal-format" }
     | "collation" => s := { s with unsupported := some "collation" }
     | "static-base-uri" => s := { s with baseUri := attrD c "uri" }
@@ -146,7 +149,7 @@ def serNode (env : Env) : Nat → NodeRef → String
   | f + 1, n =>
     let r := env.nrec n
     match r.kind with
-    | .document => String.join (r.children.toList.map (fun c => serNode env f ⟨n.doc, c⟩))
+    | .document => String.join (r.children.toList.map (fun c => serNode env f (n.at (c))))
     | .text => escText r.value
     | .comment => "<!--" ++ r.value ++ "-->"
     | .pi => "<?" ++ r.name.loc ++ (if r.value == "" then "" else " " ++ r.value) ++ "?>"
@@ -157,11 +160,11 @@ def serNode (env : Env) : Nat → NodeRef → String
       let decl := if r.name.uri == "" then (if r.name.pfx == "" then "" else "")
         else " xmlns" ++ (if r.name.pfx == "" then "" else ":" ++ r.name.pfx) ++ "=\"" ++ escAttr r.name.uri ++ "\""
       let ats := r.attrs.toList.map (fun a =>
-        let ra := env.nrec ⟨n.doc, a⟩
+        let ra := env.nrec (n.at (a))
         let d := if ra.name.uri != "" && ra.name.pfx != "" && ra.name.pfx != "xml" then
           " xmlns:" ++ ra.name.pfx ++ "=\"" ++ escAttr ra.name.uri ++ "\"" else ""
         d ++ " " ++ ra.name.show ++ "=\"" ++ escAttr ra.value ++ "\"")
-      let body := String.join (r.children.toList.map (fun c => serNode env f ⟨n.doc, c⟩))
+      let body := String.join (r.children.toList.map (fun c => serNode env f (n.at (c))))
       "<" ++ nm ++ decl ++ String.join ats ++ (if body == "" then "/>" else ">" ++ body ++ "</" ++ nm ++ ">")
 
 def serSeq (env : Env) (s : Seq) : String := Id.run do
@@ -201,7 +204,7 @@ def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
     let e2 : Env := { docs := #[d1, d2] }
     let root1 := (d1.get 0).children.getD 0 0
     let root2 := (d2.get 0).children.getD 0 0
-    e2.nodeDeepEq 100000 ⟨0, root1⟩ ⟨1, root2⟩
+    e2.nodeDeepEq 100000 (NodeRef.mk' 0 root1) (NodeRef.mk' 1 root2)
   | _, _ => gs == expected
 
 def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
@@ -357,6 +360,49 @@ def parseArgs : List String → Opts → Opts
   | _ :: rest, o => parseArgs rest o
   | [], o => o
 
+/-- Normalise a relative file path (`a/./b/../c` to `a/c`); `none` when
+    it climbs above its start. -/
+def normPath (p : String) : Option String := Id.run do
+  let mut out : List String := []
+  for seg in p.splitOn "/" do
+    if seg == "." || seg == "" then continue
+    if seg == ".." then
+      match out with
+      | _ :: r => out := r
+      | [] => return none
+    else out := seg :: out
+  return some (String.intercalate "/" out.reverse)
+
+/-- The files a test names by a relative reference in its text (for
+    `fn:unparsed-text`, `fn:json-doc`, `fn:doc`, and external entities
+    under `trust-external`): every run of path characters that names a
+    file under the test suite root, resolved against the test set's
+    directory. Read in advance, as text, because the evaluator does no
+    I/O. Only files under the suite root are read. -/
+def scanResources (root dir src : String) : IO (List (String × String)) := do
+  let isPathChar (c : Char) := c.isAlphanum || c == '_' || c == '.' || c == '/' || c == '-'
+  let mut toks : List String := []
+  let mut cur : String := ""
+  for c in src.toList ++ [' '] do
+    if isPathChar c then cur := cur.push c
+    else
+      if cur.length > 2 && cur.length < 200 && (cur.splitOn ".").length > 1 && !toks.contains cur then
+        toks := cur :: toks
+      cur := ""
+  let rel := if dir.startsWith (root ++ "/") then (dir.drop (root.length + 1)).toString else dir
+  let mut out : List (String × String) := []
+  for t in toks do
+    let t' := if t.startsWith "file:///" then none else some t
+    let some t := t' | continue
+    let some p := normPath (rel ++ "/" ++ t) | continue
+    let path := root ++ "/" ++ p
+    if ← System.FilePath.pathExists path then
+      if (← System.FilePath.isDir path) then continue
+      match ← readFileSafe path with
+      | some txt => out := (t, txt) :: out
+      | none => pure ()
+  return out
+
 /-- Build the dynamic context for an environment; `none` with a reason
     when it cannot be built. -/
 def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) : IO (Except String Env) := do
@@ -378,9 +424,13 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) : IO (Exce
       let idx := env.docs.size
       env := { env with docs := env.docs.push d,
                         docUris := if uri == "" then env.docUris else (uri, idx) :: env.docUris }
-      if role == "." then env := { env with ctx := some [.node ⟨idx, 0⟩], pos := 1, size := 1 }
+      if role == "." then env := { env with ctx := some [.node (NodeRef.mk' idx 0)], pos := 1, size := 1 }
       else if role.startsWith "$" then
-        env := env.bind { uri := "", loc := (role.drop 1).toString } [.node ⟨idx, 0⟩]
+        env := env.bind { uri := "", loc := (role.drop 1).toString } [.node (NodeRef.mk' idx 0)]
+  for (uri, file) in spec.resources do
+    match ← readFileSafe file with
+    | some txt => env := { env with resources := (uri, txt) :: env.resources }
+    | none => return .error ("resource not readable: " ++ file)
   for (name, sel) in spec.params do
     match evalIn env sel with
     | .ok v => env := env.bind { uri := "", loc := name } v
@@ -439,6 +489,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
     | .ok env =>
+      let env := { env with resources := env.resources ++ (← scanResources o.root dir src) }
       let res := evalIn env src
       let some r := (kidsNamed tc "result").head? | do t := { t with fail := t.fail + 1 }; continue
       match (kids r).head? with

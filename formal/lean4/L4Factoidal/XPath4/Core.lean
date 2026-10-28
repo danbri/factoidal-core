@@ -30,11 +30,19 @@ structure Env where
   now : String := "2026-10-27T12:00:00Z"
   /-- Named documents for `fn:doc` and friends: (uri, doc index). -/
   docUris : List (String × Nat) := []
+  /-- Text resources the caller has read in advance (URI or relative
+      reference as written, then the text): `fn:unparsed-text`,
+      `fn:json-doc`, `fn:doc`, and external entities and DTDs when
+      `trust-external` is true. The evaluator itself does no I/O. -/
+  resources : List (String × String) := []
   defaultCollation : String := "http://www.w3.org/2005/xpath-functions/collation/codepoint"
   baseUri : String := ""
 deriving Inhabited
 
-def Env.doc (e : Env) (n : NodeRef) : Doc := e.docs.getD n.doc default
+def Env.doc (e : Env) (n : NodeRef) : Doc :=
+  match n.rt with
+  | some d => d
+  | none => e.docs.getD n.doc default
 def Env.nrec (e : Env) (n : NodeRef) : NRec := (e.doc n).get n.idx
 
 def Env.nsResolve (e : Env) (p : String) : Option String :=
@@ -136,9 +144,9 @@ def Env.kindMatches (e : Env) (n : NodeRef) : IType → Bool
       (match inner with
        | none => true
        | some (.elem t) =>
-          let els := (e.nrec n).children.toList.filter (fun c => (e.nrec ⟨n.doc, c⟩).kind == .element)
+          let els := (e.nrec n).children.toList.filter (fun c => (e.nrec (n.at (c))).kind == .element)
           match els with
-          | [c] => (t.map (nameTestMatches · (e.nrec ⟨n.doc, c⟩).name)).getD true
+          | [c] => (t.map (nameTestMatches · (e.nrec (n.at (c))).name)).getD true
           | _ => false
        | some _ => true)
   | _ => false
@@ -162,33 +170,33 @@ def Env.ancestors (e : Env) (n : NodeRef) : List NodeRef :=
     match fuel, i with
     | 0, _ => acc
     | _, none => acc
-    | f + 1, some j => go ((e.doc n).get j).parent f (acc ++ [⟨n.doc, j⟩])
+    | f + 1, some j => go ((e.doc n).get j).parent f (acc ++ [(n.at (j))])
   go (e.nrec n).parent 100000 []
 
-def Env.rangeNodes (e : Env) (d : Nat) (lo hi : Nat) : List NodeRef :=
+def Env.rangeNodes (e : Env) (d : NodeRef) (lo hi : Nat) : List NodeRef :=
   if hi < lo then []
-  else ((List.range (hi + 1 - lo)).map (fun k => (⟨d, lo + k⟩ : NodeRef))).filter
+  else ((List.range (hi + 1 - lo)).map (fun k => (d.at (lo + k)))).filter
         (fun m => let k := (e.nrec m).kind; k != .attribute && k != .namespace)
 
 /-- The nodes on an axis, in AXIS order (reverse document order for a
     reverse axis). -/
 def Env.axis (e : Env) (ax : Axis) (n : NodeRef) : List NodeRef :=
   let r := e.nrec n
-  let d := n.doc
-  let kids := r.children.toList.map (fun c => (⟨d, c⟩ : NodeRef))
+  let d := n
+  let kids := r.children.toList.map (fun c => d.at c)
   let isAttrLike := r.kind == .attribute || r.kind == .namespace
   let sibs : List NodeRef :=
     if isAttrLike then [] else
     match r.parent with
-    | some p => ((e.doc n).get p).children.toList.map (fun c => (⟨d, c⟩ : NodeRef))
+    | some p => ((e.doc n).get p).children.toList.map (fun c => d.at c)
     | none => []
   match ax with
   | .child => kids
-  | .attribute => r.attrs.toList.map (fun c => ⟨d, c⟩)
+  | .attribute => r.attrs.toList.map (fun c => d.at c)
   | .self => [n]
   | .descendant => if isAttrLike then [] else e.rangeNodes d (n.idx + 1) r.last
   | .descendantOrSelf => n :: (if isAttrLike then [] else e.rangeNodes d (n.idx + 1) r.last)
-  | .parent => match r.parent with | some p => [⟨d, p⟩] | none => []
+  | .parent => match r.parent with | some p => [d.at p] | none => []
   | .ancestor => e.ancestors n
   | .ancestorOrSelf => n :: e.ancestors n
   | .followingSibling => sibs.filter (fun m => m.idx > n.idx)
@@ -529,12 +537,12 @@ def Env.nodeDeepEq (e : Env) : Nat → NodeRef → NodeRef → Bool
         let nameOk := ra.kind == .document || ra.name == rb.name
         let attrsOk := ra.attrs.size == rb.attrs.size &&
           ra.attrs.toList.all (fun x =>
-            let rx := e.nrec ⟨a.doc, x⟩
+            let rx := e.nrec (a.at (x))
             rb.attrs.toList.any (fun y =>
-              let ry := e.nrec ⟨b.doc, y⟩
+              let ry := e.nrec (b.at (y))
               rx.name == ry.name && rx.value == ry.value))
         let kidsOf (n : NodeRef) (r : NRec) : List NodeRef :=
-          (r.children.toList.map (fun c => (⟨n.doc, c⟩ : NodeRef))).filter
+          (r.children.toList.map (fun c => ((n.at (c)) : NodeRef))).filter
             (fun m => let k := (e.nrec m).kind; k != .comment && k != .pi)
         let ka := kidsOf a ra
         let kb := kidsOf b rb

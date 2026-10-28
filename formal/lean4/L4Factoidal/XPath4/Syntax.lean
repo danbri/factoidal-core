@@ -157,11 +157,51 @@ deriving Inhabited
 
 /-! ## Items (XDM 4.0 §2) -/
 
-/-- A node reference: document number and node index. -/
+/-! ## Document tables (the node store of `XPath4.Doc`) -/
+
+inductive NKind where
+  | document | element | attribute | text | comment | pi | namespace
+deriving DecidableEq, Repr, Inhabited
+
+structure NRec where
+  kind : NKind
+  name : QN := default
+  value : String := ""
+  parent : Option Nat := none
+  children : Array Nat := #[]
+  attrs : Array Nat := #[]
+  inscope : List (String × String) := []
+  last : Nat := 0
+deriving Inhabited
+
+structure Doc where
+  nodes : Array NRec
+  /-- The document URI (`fn:document-uri`); empty when absent. -/
+  uri : String := ""
+  /-- The base URI of the document node when it differs from `uri`
+      (`fn:parse-xml` with the `base-uri` option). -/
+  baseUri : String := ""
+deriving Inhabited
+
+/-- A node reference: document number and node index. A document built
+    at run time (`fn:parse-xml` and friends) travels WITH its nodes in
+    `rt`, because the dynamic context is read-only; `doc` is then a
+    number derived from the content, outside the range the caller's
+    documents use. Identity and order use `doc` and `idx` only. -/
 structure NodeRef where
   doc : Nat
   idx : Nat
-deriving DecidableEq, Repr, Inhabited
+  rt : Option Doc := none
+deriving Inhabited
+
+instance : BEq NodeRef := ⟨fun a b => a.doc == b.doc && a.idx == b.idx⟩
+
+instance : Repr NodeRef := ⟨fun n _ => "node(" ++ repr n.doc ++ ", " ++ repr n.idx ++ ")"⟩
+
+/-- Another node of the same document. -/
+def NodeRef.at (n : NodeRef) (i : Nat) : NodeRef := { n with idx := i }
+
+def NodeRef.mk' (d i : Nat) : NodeRef := { doc := d, idx := i }
 
 mutual
 inductive Item where
