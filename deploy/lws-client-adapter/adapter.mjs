@@ -168,7 +168,7 @@ function errorResult (e) {
 // The client
 
 let client = null
-let configured = { userAgent: undefined, timeoutSeconds: undefined, headers: undefined, options: {} }
+let configured = { userAgent: undefined, timeoutSeconds: undefined, headers: undefined, options: { legacyChallenge: true } }
 
 /** A `fetch` that adds only what `configure` asked for: a user agent, extra
  *  headers, a timeout. The request is otherwise the client's. */
@@ -192,7 +192,10 @@ async function theClient () {
 async function configure (args) {
   const auth = args.auth ?? { type: 'none' }
   if (auth === null || typeof auth !== 'object' || Array.isArray(auth)) throw invalid("argument 'auth' must be an object")
-  const next = { userAgent: optional(args, 'userAgent'), timeoutSeconds: optional(args, 'timeoutSeconds', 'number'), headers: optional(args, 'headers', 'object'), options: {} }
+  // The driver protocol has no option for the challenge of the drafts before
+  // 2026-10-19; its Java and JS clients follow it always, so this client does
+  // too (https://github.com/danbri/factoidal/issues/1115).
+  const next = { userAgent: optional(args, 'userAgent'), timeoutSeconds: optional(args, 'timeoutSeconds', 'number'), headers: optional(args, 'headers', 'object'), options: { legacyChallenge: true } }
   if (next.timeoutSeconds !== undefined && !(Number.isInteger(next.timeoutSeconds) && next.timeoutSeconds > 0)) throw invalid("argument 'timeoutSeconds' must be a positive integer")
   if (optional(args, 'allowInsecureHttp', 'boolean') === false) throw unsupported('allowInsecureHttp false: the client does not refuse http')
   const result = { library: LIBRARY }
@@ -375,10 +378,13 @@ const operations = {
   },
 
   async subscribe (args) {
-    const extra = { topics: required(args, 'topics', 'array'), inbox: required(args, 'inbox') }
+    // `serviceUrl` is the notification service endpoint: the client POSTs to
+    // it with no discovery, as the driver's other clients do.
+    const serviceUrl = targetOf(args, 'serviceUrl')
+    const extra = { topics: required(args, 'topics', 'array'), inbox: required(args, 'inbox'), endpoint: serviceUrl }
     const expires = optional(args, 'expires')
     if (expires !== undefined) extra.expires = expires
-    return report('subscribe', targetOf(args, 'serviceUrl'), extra)
+    return report('subscribe', serviceUrl, extra)
   },
 
   async list_subscriptions (args) {

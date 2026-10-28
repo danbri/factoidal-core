@@ -148,6 +148,9 @@ export async function lwsClientOpsAvailable (engine) {
  * @param {string} [options.idToken] an OpenID Connect ID Token to exchange
  * @param {object} [options.bearer] `{ token, realm? }`: an access token the
  *   caller already has; with a realm it is sent only under it
+ * @param {boolean} [options.legacyChallenge] follow the 401 challenge
+ *   `Bearer as_uri="…", realm="…"` of the drafts before 2026-10-19 (default
+ *   false: it skips two of the discovery checks of lws10-core)
  * @param {object} [options.session] a session from an earlier client
  * @param {number} [options.maxSteps] the loop cap of one operation
  * @returns {Promise<object>} the client
@@ -168,6 +171,9 @@ export async function createLwsClient (options = {}) {
   // Read by the engine's session reader (`Machine.sessionOfJson`), unread here.
   if (options.idToken !== undefined) session.idToken = options.idToken
   if (options.bearer !== undefined) session.bearer = options.bearer
+  // Follow the `Bearer as_uri, realm` challenge of the drafts before
+  // 2026-10-19 (`Machine.on401`); the engine decides, off by default.
+  if (options.legacyChallenge === true) session.legacyChallenge = true
 
   function call (op, args) {
     try {
@@ -267,7 +273,9 @@ export async function createLwsClient (options = {}) {
      *  the service endpoint, `{ onePage: true }` for one page */
     search: with_('search'),
     queryFormats: with_('queryFormats'),
-    /** `subscribe(url, { topics, inbox, expires })` */
+    /** `subscribe(url, { topics, inbox, expires })`, or with `{ endpoint }`
+     *  when the caller has the notification service endpoint: the
+     *  subscription is POSTed to it with no discovery */
     subscribe: with_('subscribe'),
     getSubscription: with_('getSubscription'),
     unsubscribe: with_('unsubscribe'),

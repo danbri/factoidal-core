@@ -879,12 +879,28 @@ One pure state machine decides everything:
 request (`fetch`) and ends with `done` or `fail`. In Lean: the 401 flow
 (the three checks of §Discovery Validation by a Client, RFC 8414 metadata
 at `/.well-known/lws-configuration`, RFC 8693 token exchange, `Bearer`
-only to URLs under the StorageRoot of the token's storage), preconditions
+only to URLs under the StorageRoot of the token's storage or under a
+`serviceEndpoint` of its storage description on the requested URI's origin),
+preconditions
 (`update`, `patch`, `updateLinkset`, `move` default to the current ETag),
 the 412, 405/415 and 5xx retry rules, paging by `rel="next"` only, linkset
 writes only in advertised methods and formats, and the RFC 9421 check of a
 webhook notification (keyid with a fragment, document id, digest,
 signature by HACL*).
+
+401 handling (`on401`): the current challenge (`resource_metadata` and a
+`Link rel=lws#storage`) takes the three checks. A 401 with only `Bearer
+as_uri="AS", realm="STORAGE"` (the drafts before 2026-10-19; css and
+sparq-lws still send it) is followed only with the session option
+`legacyChallenge` (npm `createLwsClient({ legacyChallenge: true })`, CLI
+`--legacy-challenge`; off by default): the realm must have the scheme and
+authority of the requested URL and contain it; `as_uri` is the authorization
+server and the realm is the token's storage and root. That path skips checks
+1 and 2 of §Discovery Validation by a Client, which is why it is off by
+default; the driver adapter turns it on, as the Java and JS clients follow
+it always (https://github.com/danbri/factoidal/issues/1115). `subscribe`
+with `endpoint` (CLI `--endpoint`) POSTs to the named notification endpoint
+with no storage-link discovery.
 
 | path | what it is |
 | --- | --- |
@@ -893,7 +909,7 @@ signature by HACL*).
 | `formal/lean4/L4Factoidal/LWS/Client/Theorems.lean` | `walk_concat`, `walk_paths`, `walk_members_once`, `walk_listedMembers`, `step_write_precondition`, `step_no_token_request_without_validation`, `step_no_blind_create_retry`, `step_no_retry_after_lost_post`, `step_no_repeat_after_refusal` |
 | `formal/lean4/L4Factoidal/LWS/Client/Tests.lean` | `#guard`s: canned responses (decoys, stale tags, 405, 503, forged notifications) and a loopback against `LWS.step MemStore` |
 | `formal/lean4/Wasm/Ops/LwsClient.lean` | `lwsClientStart(opJson, sessionJson)`, `lwsClientStep(stateJson, eventJson)` → `{ok, state, action}` |
-| `npm/factoidal/lws/client.mjs` | `createLwsClient({ fetch, subjectToken, subjectTokenType, session })`, `createNotificationReceiver({ client })` |
+| `npm/factoidal/lws/client.mjs` | `createLwsClient({ fetch, subjectToken, subjectTokenType, session, legacyChallenge })`, `createNotificationReceiver({ client })` |
 | `tests/lws/client/own-server.mjs` | our client against our server, open and with authorization |
 | `tools/lws-touchstone-client.sh` | our client in Touchstone's client lab (53 rules) |
 
@@ -906,7 +922,8 @@ factoidal lws-client <op> URL [--body TEXT|--file PATH] [--content-type M]
     [--if-match TAG|--if-match-current|--if-none-match-star|--no-precondition]
     [--retry-412 N] [--recursive] [--container] [--slug S] [--type IRI]
     [--subject-token-file F --subject-token-type URI] [--query JSON]
-    [--inbox URL] [--topic URL] [--action A,B --assignee URI --target URL]
+    [--inbox URL] [--topic URL] [--endpoint URL] [--legacy-challenge]
+    [--action A,B --assignee URI --target URL]
 ```
 
 ```js
