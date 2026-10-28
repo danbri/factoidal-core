@@ -419,7 +419,7 @@ def subtypeF : Nat → IType → IType → Bool
         (e2 || (!e1 && fs.all (fun (n, _, _) => gs.any (·.1 == n))))
     | .anyArr, .anyArr | .arrT _, .anyArr => true
     | .arrT m, .arrT m2 => subtypeF f m m2
-    | .mapT k v, .fnT [p] r => subtypeF f p k && subtypeF f (.seq v .opt) r
+    | .mapT _ v, .fnT [p] r => subtypeF f p (.atomic (.b .anyAtomicType)) && subtypeF f (.seq v .opt) r
     | .anyMap, .fnT [p] r => subtypeF f p (.atomic (.b .anyAtomicType)) && subtypeF f (.seq .item .star) r
     | .arrT m, .fnT [p] r => subtypeF f p (.atomic (.b .integer)) && subtypeF f m r
     | .anyArr, .fnT [p] r => subtypeF f p (.atomic (.b .integer)) && subtypeF f (.seq .item .star) r
@@ -464,8 +464,16 @@ def Env.itemMatchesF (e : Env) : Nat → Item → IType → Bool
        | .fn fi => match fnSigOf fi with
           | some (fps, fr) => (ps.zip fps).all (fun (p, q) => subtype p q) && subtype fr r
           | none => true
-       | .map _ => subtype (.anyMap) (.fnT ps r) || true
-       | .arr _ => true
+       -- XPath 4.0 §3.3.2.6: a map is a function(xs:anyAtomicType) as V?
+       -- and an array a function(xs:integer) as V; the instance test
+       -- uses the entries and members it has
+       | .map kvs => (match ps with
+          | [p] => subtype p (.atomic (.b .anyAtomicType)) && e.seqMatchesF f [] r &&
+                   kvs.all (fun (_, v) => e.seqMatchesF f v r)
+          | _ => false)
+       | .arr ms => (match ps with
+          | [p] => subtype p (.atomic (.b .integer)) && ms.all (fun v => e.seqMatchesF f v r)
+          | _ => false)
        | _ => false)
   | .anyMap => match i with | .map _ => true | _ => false
   | .mapT k v => match i with
@@ -635,12 +643,19 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
   let s ← s.mapM (fun i => do
     match it, i with
     | .arrT m, .arr ms => pure (Item.arr (← ms.mapM (fun x => e.coerceF f m x what)))
-    | .mapT k v, .map kvs =>
-        pure (Item.map (← kvs.mapM (fun (ka, va) => do
+    | .mapT k v, .map kvs => do
+        let out ← kvs.mapM (fun (ka, va) => do
           let ka' ← match atomicTarget k with
             | some ts => coerceAtom ts ka
             | none => pure ka
-          pure (ka', ← e.coerceF f v va what))))
+          pure (ka', ← e.coerceF f v va what))
+        -- coerced keys that become the same key are a type error
+        -- (XPath 4.0 §3.4.4)
+        let keys := out.map (·.1)
+        let changed := (out.zip kvs).any (fun ((k1, _), (k0, _)) => k1.ty != k0.ty)
+        if changed && (List.range keys.length).any (fun i => (keys.drop (i + 1)).any (fun k2 => atomicEqual (keys.getD i default) k2)) then
+          err "XPTY0004" ("coercion of the map keys gives two equal keys, for " ++ what)
+        pure (Item.map out)
     | .record fs ext, .map kvs => do
         -- XPath 4.0 §3.4.4 (coercion to a record type): an entry that is
         -- not a declared field is an error; the result has the fields in
