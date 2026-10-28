@@ -11,8 +11,8 @@ b4723ff52fd9d4fabf2b4cd33bd44f21939c512c (`xpath-functions.xml` §5.4,
 Language: English only (names, words, ordinals). Another language gives
 English output, and the date functions then prefix `[Language: en]`
 (§9.8.4.8). Calendars: `AD` and `ISO`; another calendar gives `AD` output
-with the prefix `[Calendar: AD]`. Places (time zone names) are not
-supported: the `place` argument is ignored.
+with the prefix `[Calendar: AD]`. Places: an IANA zone name in `place` (`XPath4.Tz`) adjusts a dateTime
+with a timezone to that zone's civil time; any other `place` is ignored.
 
 Decimal digit families are the Unicode 15.1 `Nd` ranges (each a run of
 ten code points with digit values 0 to 9; the list of zero digits below).
@@ -24,6 +24,7 @@ that is not alphanumeric.
 -/
 import L4Factoidal.XPath4.Lib
 import L4Factoidal.Fn.DateTime
+import L4Factoidal.XPath4.Tz
 
 namespace L4Factoidal.XPath4
 
@@ -743,8 +744,13 @@ def fmtComp (mk : Marker) (dflt : String) (v : Nat) : M String := asDateErr do
     | some k => pure (s ++ String.ofList (List.replicate (k - min k s.length) ' '))
     | none => pure s
 
-def tzString (mk : Marker) (tz : Option Int) : M String := do
+def tzString (mk : Marker) (tz : Option Int) (abbr : Option String := none) : M String := do
   let p1 := if mk.pres1 == "" then "01:01" else mk.pres1
+  -- the N presentation with a recognised place: the zone abbreviation, when it is letters
+  let named : Option String := match abbr with
+    | some a => if p1 == "N" && !a.isEmpty && a.toList.all Char.isAlpha then some a else none
+    | none => none
+  if let some a := named then return a
   let gmt := if mk.comp == 'z' then "GMT" else ""
   match tz with
   | none => pure (if p1 == "Z" then "J" else "")
@@ -821,7 +827,14 @@ def fracSeconds (mk : Marker) (sec : Dec) : M String := do
     out := out.push (Char.ofNat (zero + (c.toNat - 48)))
   pure out
 
-def formatDT (kind : DTKind) (v : DTValue) (pic : String) (lang cal : Option String) : M String := do
+def formatDT (kind : DTKind) (v0 : DTValue) (pic : String) (lang cal : Option String)
+    (place : Option String := none) : M String := do
+  let (v, abbr) : DTValue × Option String :=
+    match place with
+    | some p => if kind == .dateTime then
+        (match placeAdjust v0 p with | some (v', a) => (v', some a) | none => (v0, none))
+      else (v0, none)
+    | none => (v0, none)
   let parts ← parseDatePicture pic
   let hasDate := kind != .time
   let hasTime := kind != .date
@@ -896,7 +909,7 @@ def formatDT (kind : DTKind) (v : DTValue) (pic : String) (lang cal : Option Str
         | 'm' => fmtComp mk "01" mi
         | 's' => fmtComp mk "01" (sec.floorDiv.toNat)
         | 'f' => fracSeconds mk sec
-        | 'Z' | 'z' => tzString mk v.tz
+        | 'Z' | 'z' => tzString mk v.tz abbr
         | 'C' => pure (nameFmt "AD" (if mk.pres1 == "" then "N" else mk.pres1) mk.minW mk.maxW)
         | 'E' => pure (nameFmt (if y > 0 then "AD" else "BC") (if mk.pres1 == "" then "N" else mk.pres1) mk.minW mk.maxW)
         | _ => dateErr "unknown component"
@@ -1084,7 +1097,7 @@ def dateFn : LibFn := fun _ _ a => do
   | some x =>
     match dtOf x with
     | some (k, v) =>
-      let s ← formatDT k v (strOf (argN a 1)) (optStr (argN a 2)) (optStr (argN a 3))
+      let s ← formatDT k v (strOf (argN a 1)) (optStr (argN a 2)) (optStr (argN a 3)) (optStr (argN a 4))
       pure (sStr s)
     | none => err "XPTY0004" "expected a date/time value"
 
