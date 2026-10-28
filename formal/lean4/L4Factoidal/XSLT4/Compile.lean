@@ -1399,6 +1399,11 @@ def compileTemplate (prec : Nat) (d : Decl) (as : Attrs) (inMode : Option String
   checkAttrs c "template" as
   let ekids := m.elemKids i
   let name ← qnOf c as "name"
+  -- names in the XSLT namespace are reserved (XTSE0080), except the
+  -- initial template
+  if let some q := name then
+    if q.uri == nsXSL && q.loc != "initial-template" && q.loc != "original" then
+      cerr "XTSE0080" ("the template name " ++ q.show ++ " is in the XSLT namespace")
   let pat ← match as.get "match" with
     | some v => some <$> patternC c v
     | none => pure none
@@ -1721,6 +1726,13 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let ts := if c.xpathNs != "" then ts.map (fun t => match t with
           | .name n => if n.uri == "" && n.pfx == "" then NameTest.name { n with uri := c.xpathNs } else t
           | t => t) else ts
+      -- one name test in xsl:strip-space and xsl:preserve-space at one
+      -- precedence (XTSE0270)
+      let key : NameTest → String := fun t => match t with
+        | .any => "*" | .loc l => "*:" ++ l | .ns u => "Q{" ++ u ++ "}*" | .name n => n.eqn
+      for t in ts do
+        if (← get).sheet.space.any (fun (t0, s0, p0) => p0 == prec && s0 != strip && key t0 == key t) then
+          cerr "XTSE0270" ("the name test " ++ key t ++ " is in both xsl:strip-space and xsl:preserve-space")
       upd (fun sh => { sh with space := sh.space ++ ts.map (fun t => (t, strip, prec)) })
   | "namespace-alias" =>
       let sp ← reqAttr as "stylesheet-prefix" "namespace-alias"
