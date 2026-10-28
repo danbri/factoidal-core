@@ -10,8 +10,8 @@ and `specifications/expath-file/src/function-catalog.xml` of
 https://github.com/qt4cg/qtspecs at commit
 b4723ff52fd9d4fabf2b4cd33bd44f21939c512c (2026-10-22): for each
 `fos:proto`, the prefix, the local name, the return type and each
-parameter's name, type and default, as the specification writes them.
-`XPath4.Catalog.catalogExt` adds this table to the XPath 4.0 signature
+parameter's name, type and default, as the specification writes them (one change, marked at
+`file:write-binary`). `XPath4.Catalog.catalogExt` adds this table to the XPath 4.0 signature
 table; the implementations are `EXPath.Binary.Lib` and
 `EXPath.File.Lib`.
 -/
@@ -74,7 +74,11 @@ def catalogRaw : List (String × String × String × List (String × String × O
   ("file", "read-text", "xs:string", [("file", "xs:string", none), ("options", "(xs:string | map(*))?", some "()")]),
   ("file", "read-text-lines", "xs:string*", [("file", "xs:string", none), ("options", "(xs:string | map(*))?", some "()")]),
   ("file", "write", "empty-sequence()", [("file", "xs:string", none), ("value", "item()*", none), ("options", "(element(output:serialization-parameters) | map(*))?", some "()")]),
-  ("file", "write-binary", "empty-sequence()", [("file", "xs:string", none), ("value", "xs:base64Binary", none), ("offset", "xs:integer?", some "0")]),
+  -- `$offset` defaults to `()`, not `0` as the catalog writes it: the
+  -- rules distinguish "if $offset is specified" (overwrite from it) from
+  -- the 2-argument form (replace the file), and qt4tests
+  -- EXPath-file-writeBinary2-002 expects the replacement.
+  ("file", "write-binary", "empty-sequence()", [("file", "xs:string", none), ("value", "xs:base64Binary", none), ("offset", "xs:integer?", some "()")]),
   ("file", "write-text", "empty-sequence()", [("file", "xs:string", none), ("value", "xs:string", none), ("encoding", "xs:string?", some "'UTF-8'")]),
   ("file", "write-text-lines", "empty-sequence()", [("file", "xs:string", none), ("values", "xs:string*", none), ("encoding", "xs:string?", some "'UTF-8'")]),
   ("file", "name", "xs:string", [("path", "xs:string", none)]),

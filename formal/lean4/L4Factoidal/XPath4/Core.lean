@@ -8,6 +8,7 @@ operations every part of the evaluator uses: atomization (XPath 4.0
 import L4Factoidal.XPath4.Parser
 import L4Factoidal.XPath4.Doc
 import L4Factoidal.XPath4.Catalog
+import L4Factoidal.EXPath.File.FS
 import Std.Data.HashMap
 
 namespace L4Factoidal.XPath4
@@ -40,6 +41,9 @@ structure Env where
   decimalFormats : List (String × List (String × String)) := []
   defaultCollation : String := "http://www.w3.org/2005/xpath-functions/collation/codepoint"
   baseUri : String := ""
+  /-- EXPath hook: the in-memory file system that the `file:` functions
+      read (`L4Factoidal.EXPath.File`); `none` when there is none. -/
+  fileSys : Option L4Factoidal.EXPath.File.FS := none
 deriving Inhabited
 
 def Env.doc (e : Env) (n : NodeRef) : Doc :=

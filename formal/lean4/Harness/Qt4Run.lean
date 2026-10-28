@@ -31,6 +31,7 @@ anything but XPath expressions in this evaluator.
 -/
 import L4Factoidal.XPath4.Eval
 import L4Factoidal.XPath4.Theorems
+import L4Factoidal.EXPath.File.IOHost
 
 open L4Factoidal.XPath4
 open L4Factoidal.XML
@@ -104,6 +105,8 @@ structure EnvSpec where
   /-- `resource` elements: (uri, file). -/
   resources : List (String × String) := []
   decimalFormats : List (String × List (String × String)) := []
+  /-- EXPath File 4.0: the `sandpit` directory, copied for each test. -/
+  sandpit : Option String := none
 deriving Inhabited
 
 def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
@@ -139,6 +142,7 @@ def parseEnv (dir : String) (e : Node) : EnvSpec := Id.run do
     | "collation" => s := { s with unsupported := some "collation" }
     | "static-base-uri" => s := { s with baseUri := attrD c "uri" }
     | "function-library" => s := { s with unsupported := some "function-library" }
+    | "sandpit" => s := { s with sandpit := some (dir ++ "/" ++ attrD c "path") }
     | _ => pure ()
   pure s
 
@@ -211,7 +215,10 @@ def normSp (s : String) : String :=
 
 def evalIn (env : Env) (src : String) : M Seq := do
   let e ← parseXPath src env.ns
-  eval 20000 env e
+  match env.fileSys with
+  -- EXPath File 4.0: an assertion may also call a writing `file:` function
+  | some fs => (·.1) <$> L4Factoidal.EXPath.File.evalMem env fs e
+  | none => eval 20000 env e
 
 def xmlEq1 (env : Env) (got : Seq) (expected : String) : Bool :=
   let gs := serSeq env got
@@ -370,6 +377,9 @@ structure Opts where
   isolate : Option Nat := none
   progress : Option String := none
   childMode : Bool := false
+  /-- EXPath File 4.0 tests: `memory` (the in-memory file system) or
+      `io` (a copy of the sandpit in a temporary directory). -/
+  fileHost : String := "memory"
 
 def parseArgs : List String → Opts → Opts
   | "--root" :: r :: rest, o => parseArgs rest { o with root := r }
@@ -380,6 +390,7 @@ def parseArgs : List String → Opts → Opts
   | "--isolate" :: n :: rest, o => parseArgs rest { o with isolate := n.toNat? }
   | "--progress" :: f :: rest, o => parseArgs rest { o with progress := some f, childMode := true }
   | "--hang" :: h :: rest, o => parseArgs rest { o with hang := o.hang ++ [h] }
+  | "--file-host" :: h :: rest, o => parseArgs rest { o with fileHost := h }
   | _ :: rest, o => parseArgs rest o
   | [], o => o
 
@@ -514,7 +525,9 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
     | .ok env =>
       let env := { env with resources := env.resources ++ (← scanResources o.root dir src) }
-      let res := evalIn env src
+      let (res, env) ← match spec.sandpit with
+        | some sp => L4Factoidal.EXPath.File.evalSandpit (o.fileHost == "io") sp env src
+        | none => pure (evalIn env src, env)
       let some r := (kidsNamed tc "result").head? | do t := { t with fail := t.fail + 1 }; continue
       match (kids r).head? with
       | none => t := { t with fail := t.fail + 1 }
@@ -537,6 +550,7 @@ def runIsolated (o : Opts) (secs : Nat) (fam setName file : String) : IO (Tally 
   let mut args : Array String := #["--root", o.root, "--family", fam, "--set", setName, "--progress", pf]
   if o.listFails then args := args.push "--list-fails"
   for h in o.hang do args := args ++ #["--hang", h]
+  args := args ++ #["--file-host", o.fileHost]
   let child ← IO.Process.spawn { cmd := (← IO.appPath).toString, args, stdin := .null, stdout := .inherit, stderr := .null }
   let start ← IO.monoMsNow
   let mut finished := false
