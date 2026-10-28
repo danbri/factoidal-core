@@ -2,7 +2,23 @@
 
 ## Unreleased
 
+## 0.22.0 (2026-10-29)
+
+### XPath 4.0, XQuery 4.0 and XSLT 4.0 in the package
+
 - XPath 4.0, XQuery 4.0 and XSLT 4.0: new functions `xpath4Eval(xmlText, expr)`, `xqueryEval(query, contextXml?)` and `xslt4Transform(stylesheetXml, sourceXml)`, in Node, Deno and the browser, over the Lean engines `L4Factoidal/XPath4`, `XQuery4` and `XSLT4`. `xpath4Eval` and `xqueryEval` give `{count, items, adaptive, xml}` (each item with its type and its Serialization 4.0 adaptive form; the whole sequence with the adaptive and the xml method); `xslt4Transform` gives `{output, method, secondary, messages}` (the principal result serialized with the stylesheet's output definition, the `xsl:result-document` results, the `xsl:message` texts). An error rejects with a `FactoidalError` (code `xml.failed`) whose new member `qtError` is `{code, namespace, message}`, for example `XPST0003`. No I/O: `fn:doc`, `fn:unparsed-text`, `fn:json-doc`, `file:` functions, `import module`, `xsl:import` and `xsl:include` of anything but the arguments fail with the specification's error code (FODC0002, FOUT1170, `file:io-error`, XQST0059, XTSE0165). An evaluation deeper than 4,000 nested steps fails with FOER0000; in the wasm module the host's call stack ends first for a document of more than about 6,000 sibling elements, a recursion more than about 400 calls deep or an expression nested more than about 200 levels (the call rejects with `op.failed`, https://github.com/danbri/factoidal/issues/1110). New wasm ops `xpath4Eval`, `xqueryEval`, `xslt4Transform` (full engine only); `capabilities().xpath4`, `.xquery`, `.xslt4`. `xpathEval` (XPath 1.0) and `xsltTransform` (XSLT 1.0) do not change.
+
+### In the Lean tree (native runners; not new package functions)
+
+- XML Schema 1.1 structures (`L4Factoidal/XSD11/`): schema components, schema documents (include, import, redefine, override), content models by derivatives with counted repetition and 1.1 `all`, assessment to a PSVI, identity constraints, type alternatives and assertions; the schema-aware parts of XPath 4.0, XQuery 4.0 and XSLT 4.0 use it (https://github.com/danbri/factoidal-core/pull/206, https://github.com/danbri/factoidal-core/pull/217). Native `l4xsd11`: 41086 pass, 479 fail, 103 unsupported (out of 41668), measured on that PR.
+- XSLT 4.0 (https://github.com/danbri/factoidal-core/pull/208) and XSLT Streaming 4.0 (https://github.com/danbri/factoidal-core/pull/213): xslt40-test, all vendored sets, 9096 pass, 1557 fail, 3149 unsupported (out of 13802), measured on PR 213.
+- XQuery 4.0: `%private` across modules and the `xml` prefix in constructors (https://github.com/danbri/factoidal-core/pull/210). qt4tests in XQuery mode, measured on PR 206: 42202 pass, 1788 fail, 1956 unsupported (out of 45946); XPath mode 28248 pass, 707 fail, 9704 unsupported (out of 38659).
+- RDF Data Cube 2014: normalization and the integrity constraints IC-0 to IC-21 (`L4Factoidal/DataCube/`, `lake exe l4datacube`), each computed two ways (the SPARQL queries of the Recommendation and a direct Lean definition) that must agree; 31 pass, 0 fail (out of 31) project cases (the Recommendation has no test suite); theorems `normalize_extensive`, `phase1_rdfs_sound` (https://github.com/danbri/factoidal-core/pull/219).
+- Design records for RDFa and Microdata, XForms, MathML and SMIL 3.0 (https://github.com/danbri/factoidal-core/pull/218).
+
+### Hub
+
+- New pages: "WebDAV, LWS and custodians" (the 0.21.0 theorems and the design behind them), "Pods, bots and access control" (rewritten for 0.21.0), "SPARQL-RL, and how it compares with RIF"; the hub pages load this release.
 
 ## 0.21.0 (2026-10-28)
 
