@@ -821,6 +821,10 @@ def registry : List Entry := [
     wireIn := .text, wireOut := .xml, status := .missing },
   { area := "XPath evaluation", dir := "XPath"
     wireIn := .xml, wireOut := .xdmSequence, params := ["expression"], status := .missing },
+  { area := "XPath 4.0 evaluation (XDM 4.0, F&O 4.0 subset)", dir := "XPath4"
+    wireIn := .xml, wireOut := .xdmSequence, params := ["expression"], status := .tested
+    tests := ["qt4tests b39c4bc0 prod op fn map array math (lake exe l4qt4 --isolate 60): 24152 pass, 4327 fail, 10180 unsupported of 38659"]
+    note := "XPath4 is not in the library root; its theorems (XPath4/Theorems.lean: parseXml_eq, parseJsonText_eq, Fn.String sharing, document order) are checked by lake build l4qt4; a proved entry would put XPath4 in the library root (docs/20261028-xpath4-stage2.md)" },
   { area := "XSLT transformation", dir := "XSLT"
     wireIn := .xml, wireOut := .xml, params := ["stylesheet"], status := .missing },
   { area := "Schematron validation", dir := "Schematron"
