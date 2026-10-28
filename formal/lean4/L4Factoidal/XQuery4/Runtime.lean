@@ -29,11 +29,12 @@ Implemented here:
 * user-defined functions of the prolog (§5.18): the evaluator asks
   `callUser?` when a static call names no built-in function.
 
-Not implemented: node identity is derived from the content and the
-bindings in scope, so two constructions with equal content in the
-same bindings give the same identity
+Not implemented: node identity is derived from the content, the
+constructor's offset in the query text and the bindings in scope, so
+two evaluations of one constructor with equal content in the same
+bindings give the same identity
 (https://github.com/danbri/factoidal/issues/1101); schema validation
-(`validate`, XQST0075); `copy-namespaces no-preserve`.
+(`validate`, XQST0075).
 -/
 import L4Factoidal.XPath4.Ext
 

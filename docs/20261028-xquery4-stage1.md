@@ -50,54 +50,73 @@ Commands (from `formal/lean4/`, with `ulimit -s 65520`):
 
 `--lang xquery` applies the XQuery dependency filter (`XQ10+` to `XQ40`)
 in place of the XPath one, binds the environment parameters that the
-query declares `external`, and gives the evaluator the library modules
-that a test case names. Same catalogue, same six families.
+query declares `external`, gives the evaluator the library modules that
+a test case names, and also scores the families `app` and `misc`
+(vendored for this stage from the same qt4tests commit; see
+`third_party/testing/qt4tests/PROVENANCE.md`).
 
 XQuery 4.0:
 
 | Family | Pass | Fail | Unsupported | Total |
 | --- | ---: | ---: | ---: | ---: |
-| prod | 12215 | 1381 | 1352 | 14948 |
-| op | 4521 | 106 | 162 | 4789 |
-| fn | 12609 | 3562 | 1672 | 17843 |
+| prod | 12351 | 1246 | 1351 | 14948 |
+| op | 4526 | 101 | 162 | 4789 |
+| fn | 12620 | 3551 | 1672 | 17843 |
 | map | 347 | 11 | 3 | 361 |
 | array | 475 | 49 | 13 | 537 |
 | math | 181 | 0 | 0 | 181 |
-| **Total** | **30348** | **5109** | **3202** | **38659** |
+| app | 2636 | 384 | 36 | 3056 |
+| misc | 1376 | 2600 | 255 | 4231 |
+| **Total** | **34512** | **7942** | **3492** | **45946** |
 
-Of the tests that apply in XQuery mode (pass + fail = 35457), 85.6% pass.
-Two test sets stop at the 60 s limit (`fn-fold-left` at `fold-left-024`,
-`op-same-key` at `same-key-023`; the unfinished tests count as fail).
+Of the tests that apply in XQuery mode (pass + fail = 42454), 81.3% pass;
+in the six XPath families only, 30500 pass, 4958 fail (86.0%). One test
+set stops at the 60 s limit (`op-same-key` at `same-key-023`; the
+unfinished tests count as fail). In `misc`, three suites of functions
+that are not XQuery-specific have most of the failures: `HtmlTestSuite`
+(`fn:parse-html`, 1379), `JMESPathTestSuite` (607), `JSONPathTestSuite`
+(460).
 
-XPath 4.0 mode, before (stage 2) and after:
+XPath 4.0 mode, before (main, stage 2) and after:
 
 | Family | Pass before | Pass after | Fail after | Unsupported |
 | --- | ---: | ---: | ---: | ---: |
-| prod | 7856 | 7870 | 893 | 6185 |
+| prod | 7856 | 7879 | 884 | 6185 |
 | op | 3710 | 3712 | 75 | 1002 |
 | fn | 11613 | 11620 | 3284 | 2939 |
 | map | 342 | 342 | 11 | 8 |
 | array | 450 | 450 | 41 | 46 |
 | math | 181 | 181 | 0 | 0 |
-| **Total** | **24152** | **24175** | **4304** | **10180** |
+| **Total** | **24152** | **24184** | **4295** | **10180** |
 
-No XPath test set lost a pass (compared set by set). The 23 new XPath
-passes come from two parser fixes (`local:function()` was read as an
-inline function; `if#1` and the other reserved names are now XPST0003 in
-a function reference) and two runner fixes (`assert` takes the effective
-boolean value, as the catalogue says; `assert-xml` with the expected
-markup written as escaped text).
+No XPath test set lost a pass (compared set by set). The EXPath families
+of https://github.com/danbri/factoidal-core/pull/198 (`--family bin
+--family file`): bin 647 pass, 0 fail, 2 unsupported (out of 649; 23
+excluded, defective test data), file 266 pass, 1 fail, 3 unsupported (out
+of 270); main gave 647 and 265.
+
+The new XPath passes come from parser fixes (`local:function()` was read
+as an inline function; `if#1` and the other reserved names are XPST0003
+in a function reference; the braced URI of an EQName is whitespace-
+collapsed), the `value :=` keyword of `xs:` constructor functions, and
+runner fixes (`assert` takes the effective boolean value; `assert-xml`
+with the expected markup written as escaped text, or in a file).
+
+Two speed repairs in `XPath4/` that the XQuery tests found: `pushRec`
+(`Doc.lean`) copied the node table on every push (the array was shared
+between `get` and `set`); `Env.axis` (`Core.lean`) built the sibling list
+on every call, for every axis. The XMark set (a 3.5 MB document, 21
+queries) went from more than 5 minutes (not finished) to 31 s.
 
 Where the XQuery failures are: most are in functions and XPath 4.0
 features that are not XQuery-specific (the regex engine in
 `fn-matches.re`, `fn:serialize`, `fn:update`, `fn:element-to-map`,
-`fn:map-to-element`, CSV, JNodes in `prod-PathExpr.J` and
+`fn:map-to-element`, CSV, HTML, JNodes in `prod-PathExpr.J` and
 `prod-AxisStep.J`, composite casts). The XQuery-specific sets with the
-most failures are `prod-NamedRecordTypeDecl` (59; named record types
-are structural here, the 4.0 draft makes a coerced map an instance of
-the named type), `prod-FunctionDecl` (42), `prod-ModuleImport` (32),
-`prod-ItemTypeDecl` (31), `prod-WindowClause` (24),
-`prod-DefaultNamespaceDecl` (24), `prod-Annotation` (24).
+most failures are `prod-NamedRecordTypeDecl` (named record types are
+structural here; the 4.0 draft makes a coerced map an instance of the
+named type), `prod-FunctionDecl`, `prod-ModuleImport`,
+`prod-ItemTypeDecl`.
 
 ## Theorems (`XQuery4/Theorems.lean`)
 
@@ -134,11 +153,11 @@ Open:
 ## Not implemented
 
 Node identity of constructed nodes is derived from the content, the
-constructor and the bindings in scope; two constructions with equal
-content in equal bindings get the same identity. Named record types are
-structural (a map that has the fields is an instance). `fn:error` loses
-the namespace and the value of the error (`$err:value` is empty, a catch
-of `Q{uri}name` for a non-`err` namespace does not match). Schema import
-and validation (XQST0009, XQST0075), `copy-namespaces no-preserve`,
+constructor's offset in the query text and the bindings in scope; two
+evaluations of one constructor with equal content in equal bindings get
+the same identity. Named record types are
+structural (a map that has the fields is an instance). `fn:error` keeps
+the namespace of the error code, not its value (`$err:value` is empty). Schema import
+and validation (XQST0009, XQST0075),
 `construction preserve`, `declare option` (read and ignored),
 serialization parameters, the XQuery Update Facility, full text.
