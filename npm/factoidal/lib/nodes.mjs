@@ -38,6 +38,22 @@
 // {"$nquads": its N-Quads text}. With an older engine, records carry no
 // settings and the evaluator's output wire is the registry's.
 //
+// Graphs (https://github.com/danbri/factoidal/issues/1130, stage 1b):
+// graph({inputs, nodes}) is a pipeline whose nodes read named input ports,
+// each port from a graph input or from the output of an earlier node, so a
+// node can read two values (datasetMerge) and one value can feed two nodes.
+// The engine decides the check (op graphCheckNodes, formal/lean4/Wasm/Ops/
+// GraphNodes.lean, computed by graphIssues of formal/lean4/L4Factoidal/
+// Dataflow/Graph.lean): unknown graph inputs, references to the node itself
+// or to a later node, the number of sources per node, and the wires. graph()
+// refuses a graph with an issue. The engine also gives each node's ports and
+// output wire, the union of the named assumptions (the premises of
+// Graph.guarantee_sound) and the stages with more than one port (node()
+// reads a port stage such as datasetMerge from that op, as stageList has one
+// input wire per stage). PORT_RUNNERS binds a port stage to the package
+// function that runs it; tools/runners-gate.py checks it against the Lean
+// list portStageNames. This file makes no RDF decision and no graph check.
+//
 // ES module, no Node built-ins: the browser loads this file as it is.
 
 import { FactoidalError } from './errors.mjs';
@@ -49,7 +65,8 @@ import { refusalFor, makeRecord, summarize, unionAssumptions, unionLists } from 
  */
 export function buildNodes(deps) {
   const { entry, entryResult, requireEntryFn, Dataset,
-    parse, closure, shaclValidate, query, serialize, canonicalize, canonicalHash, explain, csvwToRdf } = deps;
+    parse, closure, shaclValidate, query, serialize, canonicalize, canonicalHash, explain, csvwToRdf,
+    datasetMerge } = deps;
 
   const reader = (format) => async (wire, params) => {
     if (typeof wire.graph !== 'string') {
@@ -134,6 +151,23 @@ export function buildNodes(deps) {
       return { graph: result, artefact: result };
     },
   };
+
+  // Port stage name (the Lean list portStageNames, formal/lean4/Wasm/Ops/
+  // GraphNodes.lean) -> the package function that runs it. A runner of a
+  // stage with more than one port gets the values of its ports, in port
+  // order, as the array `wire.graph`.
+  const PORT_RUNNERS = {
+    // RDF 1.1 Semantics section 5.2 merge: the blank nodes of the two
+    // inputs are kept apart (op datasetMerge, theorem mergeDatasets_isMerge).
+    datasetMerge: async (wire) => {
+      const [left, right] = wire.graph;
+      return { graph: await datasetMerge(left, right), artefact: { ports: ['left', 'right'] } };
+    },
+  };
+
+  const hasRunner = (n) => Object.prototype.hasOwnProperty.call(n.ports && n.ports.length > 1
+    ? PORT_RUNNERS : RUNNERS, n.stage);
+  const runnerOf = (n) => (n.ports && n.ports.length > 1 ? PORT_RUNNERS : RUNNERS)[n.stage];
 
   // Whether `value` represents the wire type `wire` (a wire name of the
   // engine's registry, Dataflow/Wire.lean) in this package: a Dataset for the
@@ -232,6 +266,29 @@ export function buildNodes(deps) {
   }
 
   const hasNodeCheck = () => !!engine && typeof engine.pipelineCheckNodes === 'function';
+  const hasGraphCheck = () => !!engine && typeof engine.graphCheckNodes === 'function';
+
+  // The engine's check of a graph request (op graphCheckNodes).
+  function graphCheck(inputs, items) {
+    return entryResult(engine.graphCheckNodes(JSON.stringify({
+      inputs,
+      nodes: items.map((it) => ({ stage: it.node.stage, settings: it.node.settingsWire, from: it.from })),
+    })), 'graph');
+  }
+
+  // A node of a port stage (a stage with more than one input port), read
+  // from the engine's answer for a graph of that one node; null when the
+  // engine has no op graphCheckNodes or no port stage of this name. The
+  // answer's portCount issue (the probe gives no source) is not read.
+  function portNodeInfo(name, settingsWire) {
+    if (!hasGraphCheck()) return null;
+    const r = JSON.parse(engine.graphCheckNodes(JSON.stringify({
+      inputs: [], nodes: [{ stage: name, settings: settingsWire, from: [] }],
+    })));
+    if (!r.ok || !Array.isArray(r.nodes) || r.nodes.length !== 1) return null;
+    const s = r.nodes[0];
+    return s.ports.length > 1 ? s : null;
+  }
 
   // The engine's check of nodes with settings (op pipelineCheckNodes).
   function nodeCheck(items) {
@@ -253,14 +310,38 @@ export function buildNodes(deps) {
       throw new TypeError('node: params must be an object');
     }
     const info = (await stages()).find((s) => s.name === name);
-    if (!info) {
-      throw new FactoidalError(`node: no registered stage named '${name}' (see stages())`,
-        { code: 'option.invalid-value' });
-    }
     // The copy first, then its wire form: the engine checks and digests
     // exactly the settings the node keeps.
     const own = snapshot({ ...(params || {}) });
     const settingsWire = snapshot(marshal(own, 'params'));
+    if (!info) {
+      const p = portNodeInfo(name, settingsWire);
+      if (!p) {
+        throw new FactoidalError(`node: no registered stage named '${name}' (see stages(); ` +
+          'an engine with the op graphCheckNodes also has the stages with more than one port)',
+        { code: 'option.invalid-value' });
+      }
+      return Object.freeze({
+        [NODE]: true,
+        stage: p.name,
+        kind: p.kind,
+        status: p.status,
+        registryStatus: p.registryStatus,
+        contract: p.contract,
+        assumptions: Object.freeze([...p.assumptions]),
+        ports: Object.freeze(p.ports.map((x) => Object.freeze({ ...x }))),
+        wireIn: null,
+        wireOut: p.wireOut,
+        runnable: p.status !== 'missing',
+        bound: Object.prototype.hasOwnProperty.call(PORT_RUNNERS, p.name),
+        params: own,
+        settingsWire,
+        settings: p.settings,
+        settingsDigest: p.settingsDigest,
+        outside: Object.freeze(p.outside.map((o) => Object.freeze({ ...o }))),
+        derived: Object.freeze({ ...p.derived }),
+      });
+    }
     // The engine's reading of the settings, when it has the op.
     let s = null;
     if (hasNodeCheck()) s = nodeCheck([{ stage: info.name, settingsWire }]).stages[0];
@@ -272,6 +353,7 @@ export function buildNodes(deps) {
       registryStatus: info.status,
       contract: info.contract,
       assumptions: info.assumptions,
+      ports: Object.freeze([Object.freeze({ name: 'in', wire: info.wireIn })]),
       wireIn: info.wireIn,
       wireOut: s ? s.wireOut : info.wireOut,
       runnable: info.runnable,
@@ -288,6 +370,10 @@ export function buildNodes(deps) {
   function nodesOf(items, who) {
     const out = [];
     for (const n of items) {
+      if (n && n[NODE] && n.ports && n.ports.length > 1) {
+        throw new TypeError(`${who}: node ${n.stage} has ${n.ports.length} input ports ` +
+          `(${n.ports.map((x) => x.name).join(', ')}); a list pipeline gives each node one input; use graph()`);
+      }
       if (n && n[NODE]) out.push(n);
       else if (n && Array.isArray(n.nodes)) out.push(...nodesOf(n.nodes, who));
       else throw new TypeError(`${who}: expected nodes from node() or pipelines from pipe()`);
@@ -363,9 +449,10 @@ export function buildNodes(deps) {
       throw new TypeError('run: options must be an object');
     }
     const unchecked = !!(options && options.unchecked);
+    if (pipeline && pipeline[GRAPH]) return runGraph(pipeline, input, unchecked);
     const nodes = nodesOf([pipeline], 'run');
     for (const n of nodes) {
-      const why = refusalFor(n, unchecked, Object.prototype.hasOwnProperty.call(RUNNERS, n.stage));
+      const why = refusalFor(n, unchecked, hasRunner(n));
       if (why) throw why;
       assertSettingsUnchanged(n);
     }
@@ -414,5 +501,141 @@ export function buildNodes(deps) {
     };
   }
 
-  return { stages, node, pipe, run };
+  const GRAPH = Symbol('factoidal.graph');
+
+  // The text of one issue of the engine's check (op graphCheckNodes).
+  function issueText(x) {
+    switch (x.kind) {
+      case 'unknownInput':
+        return `node ${x.node} port ${x.port} (${x.portName}) reads graph input ${x.input}, which does not exist`;
+      case 'forwardRef':
+        return `node ${x.node} port ${x.port} (${x.portName}) reads node ${x.ref}, which is not before it ` +
+          '(a cycle or a forward reference)';
+      case 'portCount':
+        return `node ${x.node} has ${x.ports} input ports and ${x.sources} sources`;
+      case 'wireMismatch':
+        return `node ${x.node} port ${x.port} (${x.portName}) reads ${x.portWire}, its source writes ${x.source}`;
+      default:
+        return JSON.stringify(x);
+    }
+  }
+
+  /**
+   * A graph: nodes with named input ports (https://github.com/danbri/factoidal/issues/1130).
+   * `spec.inputs`: the wire of each graph input (a wire label, e.g. 'String';
+   * see stages() wireIn/wireOut). `spec.nodes`: in order, `{ node, from }`,
+   * where `node` comes from node() and `from` has one source per input port of
+   * the node: `{ input: k }` (graph input k) or `{ node: j }` (the output of
+   * node j, which must come before it). The engine's op graphCheckNodes checks
+   * the graph; a graph with an issue is refused (FactoidalError code
+   * op.failed, `err.issues` the engine's list). An engine without the op is
+   * refused with code op.unknown. The last node's output is the graph's output.
+   * @param {{inputs?: string[], nodes: Array<{node: object, from: object[]}>}} spec
+   * @returns {object}
+   */
+  function graph(spec) {
+    if (spec === null || typeof spec !== 'object') throw new TypeError('graph: spec must be an object');
+    const inputs = spec.inputs === undefined ? [] : spec.inputs;
+    if (!Array.isArray(inputs) || !inputs.every((w) => typeof w === 'string')) {
+      throw new TypeError('graph: spec.inputs must be an array of wire labels (strings)');
+    }
+    if (!Array.isArray(spec.nodes) || spec.nodes.length === 0) {
+      throw new TypeError('graph: spec.nodes must be a non-empty array');
+    }
+    const items = spec.nodes.map((it, i) => {
+      if (!it || typeof it !== 'object' || !it.node || !it.node[NODE]) {
+        throw new TypeError(`graph: spec.nodes[${i}].node must be a node from node()`);
+      }
+      if (!Array.isArray(it.from)) throw new TypeError(`graph: spec.nodes[${i}].from must be an array`);
+      return Object.freeze({ node: it.node, from: snapshot(marshal(it.from, `nodes[${i}].from`)) });
+    });
+    requireEntryFn(engine || {}, 'graphCheckNodes', 'graph');
+    const r = graphCheck(inputs, items);
+    if (r.issues.length > 0) {
+      const err = new FactoidalError(`graph: the engine's check (op graphCheckNodes) found ` +
+        `${r.issues.length} issue${r.issues.length === 1 ? '' : 's'}: ${r.issues.map(issueText).join('; ')}`,
+      { code: 'op.failed' });
+      err.issues = Object.freeze(r.issues.map((x) => Object.freeze({ ...x })));
+      throw err;
+    }
+    const check = Object.freeze({
+      issues: Object.freeze([]),
+      wireOut: r.wireOut,
+      assumptions: Object.freeze([...r.assumptions]),
+      contract: Object.freeze({ ...r.contract }),
+      nodes: Object.freeze(r.nodes.map((s) => Object.freeze({
+        ...s,
+        theorems: Object.freeze([...s.theorems]),
+        assumptions: Object.freeze([...s.assumptions]),
+        ports: Object.freeze(s.ports.map((x) => Object.freeze({ ...x }))),
+        outside: Object.freeze(s.outside.map((o) => Object.freeze({ ...o }))),
+      }))),
+    });
+    return Object.freeze({
+      [GRAPH]: true,
+      inputs: Object.freeze([...inputs]),
+      nodes: Object.freeze(items),
+      wireOut: r.wireOut,
+      assumptions: check.assumptions,
+      check,
+    });
+  }
+
+  // run() of a graph: the nodes in order, each on the values of its sources.
+  async function runGraph(g, inputs, unchecked) {
+    if (!Array.isArray(inputs)) {
+      throw new TypeError('run: the input of a graph is an array, one value per graph input');
+    }
+    if (inputs.length !== g.inputs.length) {
+      throw new TypeError(`run: the graph has ${g.inputs.length} inputs, got ${inputs.length} values`);
+    }
+    for (const it of g.nodes) {
+      const why = refusalFor(it.node, unchecked, hasRunner(it.node));
+      if (why) throw why;
+      assertSettingsUnchanged(it.node);
+    }
+    // A graph input given as a wire value {graph, evidence} keeps its records.
+    const prior = [];
+    const inputValues = inputs.map((x, k) => {
+      const v = isWire(x) ? x.graph : x;
+      if (isWire(x)) prior.push(...x.evidence);
+      if (!wireHolds(g.inputs[k], v)) {
+        throw new FactoidalError(`run: graph input ${k} is declared ${g.inputs[k]}, got ${describe(v)}`,
+          { code: 'op.failed' });
+      }
+      return v;
+    });
+    const values = [];
+    const records = [];
+    for (let i = 0; i < g.nodes.length; i++) {
+      const { node: n, from } = g.nodes[i];
+      // graph() refused every graph whose sources are not all before the node.
+      const vals = from.map((src) => (Object.prototype.hasOwnProperty.call(src, 'input')
+        ? inputValues[src.input] : values[src.node]));
+      const wire = { graph: n.ports.length > 1 ? vals : vals[0], evidence: [] };
+      const out = await runnerOf(n)(wire, n.params);
+      const value = out.graph;
+      const wireOut = g.check.nodes[i].wireOut;
+      if (!wireHolds(wireOut, value)) {
+        throw new FactoidalError(`run: node ${i} (${n.stage}) declares the output wire ${wireOut} ` +
+          `but its runner gave ${describe(value)}`, { code: 'op.failed' });
+      }
+      values.push(value);
+      records.push(Object.freeze({ ...makeRecord(n, out.artefact, unchecked), node: i, from }));
+    }
+    const s = summarize(records);
+    return {
+      graph: values[values.length - 1],
+      values,
+      evidence: [...prior, ...records],
+      assumptions: prior.length === 0 ? [...g.check.assumptions]
+        : unionLists([unionAssumptions(prior), g.check.assumptions]),
+      proved: s.proved && summarize(prior).proved,
+      uncheckedSteps: [...summarize(prior).uncheckedSteps, ...s.uncheckedSteps],
+      wellTyped: true,
+      issues: [],
+    };
+  }
+
+  return { stages, node, pipe, graph, run };
 }

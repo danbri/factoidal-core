@@ -1,7 +1,9 @@
 # Factoidal checked pipelines and XProc 3.1
 
-Date: 2026-10-28. Status: comparison and proposals, no code. Decision needed
-(section "Proposals").
+Date: 2026-10-28. Status: proposals approved (owner, 2026-10-28: "Merged
+https://github.com/danbri/factoidal-core/pull/185 - do it!"; also "we add a
+lot more xml stuff soon"). Epic https://github.com/danbri/factoidal/issues/1129;
+stage 1 in progress (section "Stage 1").
 
 Owner, 2026-10-28, verbatim (chat): "How does our dataflow architecture
 compare to xml processing pipelinez / xproc"
@@ -94,3 +96,81 @@ theorems), then 4, then 5. Each stage of the work gets an issue.
 * XProc 3.1: Standard Step Library: https://spec.xproc.org/3.1/steps/
 * XProc 1.0 (W3C Recommendation): https://www.w3.org/TR/xproc/
 * XML Calabash 3, `cx:rdf-merge`: https://docs.xmlcalabash.com/reference/3.0.31/cx-rdf-merge.html
+
+## Stage 1 (https://github.com/danbri/factoidal/issues/1130)
+
+Stage 1a, Lean (2026-10-28):
+
+* `formal/lean4/L4Factoidal/Dataflow/Graph.lean`: `PortSig` (named input
+  ports, one output wire), `PortComponent`, `Src` (graph input `k` or node
+  `j`), `Graph` (nodes in a topological order: a node reads only graph inputs
+  and nodes before it). `graphIssues`: the static check (`unknownInput`,
+  `forwardRef` for a cycle, `portCount`, `wireMismatch`). Theorems
+  `Graph.guarantee_sound` (every node's contract holds on its sources, under
+  the union of the named assumptions) and `Graph.run_stage_error_only` (a
+  checked graph with inputs on the declared wires fails only in a stage).
+  `PortComponent.ofComponent`: a one-port component of `Pipeline.lean` with
+  port `in`; `StageSig.toPortSig` does the same for registry signatures.
+* `Dataflow/GraphStages.lean`: `datasetMergeStage`, the first stage with two
+  ports (`left`, `right`); theorem `datasetMerge_isMerge`: its output denotes
+  an RDF merge of its inputs (blank nodes of the two inputs kept apart).
+* `Dataflow/GraphTests.lean`: two N-Triples documents that both use `_:b`,
+  two reader nodes, the merge node, selection, BGP SELECT: two solutions; the
+  graph's contract with no premise (`twoDocs_sound`); fan-out; each kind of
+  static issue with its node and port; registry signatures as port
+  signatures.
+
+Stage 1b, wasm ops and npm (2026-10-28):
+
+* `formal/lean4/Wasm/Ops/GraphNodes.lean`, op `graphCheckNodes(graphJson)`.
+  The request is `{"inputs":[WIRE,...],"nodes":[{"stage":S,"settings":{...},
+  "from":[{"input":K}|{"node":J},...]}]}`; a wire is a `Wire.label`, read back
+  by `Wire.ofLabel?` (`Dataflow/Wire.lean`). A registry stage is read as by
+  `pipelineCheckNodes` (`nodeOfJson`: the stage, its settings, the output
+  wire that the settings select) and gets one port, `in`
+  (`StageSig.toPortSig`). A port stage comes from the Lean table
+  `portStages`; it has one row, `datasetMerge` (`datasetMergeSig`: ports
+  `left` and `right` on `Dataset`, contract `DatasetDen.IsMerge`, status
+  `proved`). The answer: `issues` is `graphIssues Wire.conv inW sigs` and
+  nothing else (kinds `unknownInput`, `forwardRef`, `portCount`,
+  `wireMismatch`, with node, port and port name); `wireOut` is
+  `graphOutWire`; `assumptions` is `sigAssumptions`, which theorem
+  `Graph.assumptions_eq_sigs` proves equal to `Graph.assumptions`, the
+  premises of `Graph.guarantee_sound`; and the fields of each node. An answer
+  with no issue is the premise of `Graph.run_stage_error_only`.
+* Op `datasetMerge(handle1, handle2)`: a new handle with `mergeDatasets n` of
+  the two stored datasets, `datasetMergeAt n (n + 1)`, where `n` comes from
+  the engine's document-scope counter, so the merge shares no blank-node
+  label with any other document of the engine. Theorem `mergeDatasets_isMerge`:
+  the result denotes an RDF merge of the inputs for every `n`. The counter
+  is IO; that it gives a fresh `n` is not modelled.
+* Both ops are in the full table only (`Wasm/Dispatch.lean`;
+  `Core.fullOnlyOpNames`). `Wasm/GraphNodesTests.lean` checks each issue kind,
+  the refusals, fan-out, the merge graph, and `mergeDatasets` on two N-Quads
+  documents that both use `_:b` (2 quads, 2 SELECT solutions; the union
+  without scopes has 1 quad). An IO op cannot run in a `#guard`; the op
+  `datasetMerge` itself is run by the npm tests.
+* npm (`npm/factoidal/lib/nodes.mjs`): `graph({inputs, nodes:[{node, from}]})`
+  sends the request to `graphCheckNodes` and refuses a graph with an issue
+  (`FactoidalError` code `op.failed`, `err.issues`); with an engine that has
+  no such op, code `op.unknown`. `node('datasetMerge')` reads the port stage
+  from the same op (a request of one node; `stageList` has one input wire per
+  stage, so it cannot list the stage). Every node has `ports`. `run(graph,
+  inputs[])` runs the nodes in order, gives a multi-port runner its values in
+  port order, and appends one evidence record per node with `node` and
+  `from`. The package function `datasetMerge(a, b)` calls the op
+  `datasetMerge`. `pipe()` is unchanged, and refuses a node with more than
+  one port.
+* What is checked where. Lean: the graph check, the output wires, the
+  assumption union, the merge. JavaScript: the shape of the spec (arrays,
+  nodes from `node()`), that each input value is of its declared wire and
+  each runner's value is of the node's output wire (`wireHolds`, as for the
+  list `run()`), and the binding of a port stage to its package function
+  (`PORT_RUNNERS`). `tools/runners-gate.py` checks that each `PORT_RUNNERS`
+  key is in the Lean list `portStageNames` and calls only functions that
+  `foundation/entrypoints.toml` maps.
+* Next port stages, under https://github.com/danbri/factoidal/issues/1130
+  (open): SHACL with data and shapes as two ports, and a query over several
+  sources. `foundation/entrypoints.toml` maps the two `datasetMerge` entry
+  points to `scopeStage` with `covers = "part"`, because the registry and
+  `docs/dataflow-inventory.md` have no row for a port stage.

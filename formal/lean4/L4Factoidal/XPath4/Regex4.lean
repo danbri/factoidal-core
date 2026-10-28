@@ -18,63 +18,16 @@ may follow a non-empty one (so `.*` matches "abc" and then "" at the end),
 as the 4.0 rules say; a pattern that matches the empty string is no longer
 an error.
 
-Not supported (the engine's grammar): lookahead groups, back-references.
+The pattern grammar is the F&O 4.0 dialect of `Regex.XPath40` (comments,
+named groups, back-references, lookaround, word boundaries). `fn:tokenize`
+follows the 4.0 rules over the same segments, so a pattern that matches the
+empty string is no longer an error there either.
 -/
 import L4Factoidal.XPath4.XmlParse
 
 namespace L4Factoidal.XPath4
 
 open L4Factoidal.XML
-
-/-! ## Pattern preprocessing -/
-
-/-- Remove comments (`c` flag): from an unescaped `#` outside a character
-    class to the next `#` or the end. -/
-def stripRegexComments (p : String) : String := Id.run do
-  let mut out : List Char := []
-  let mut cs := p.toList
-  let mut inClass := false
-  for _ in [0:p.length + 1] do
-    match cs with
-    | [] => break
-    | '\\' :: c :: r => out := c :: '\\' :: out; cs := r
-    | '[' :: r => inClass := true; out := '[' :: out; cs := r
-    | ']' :: r => inClass := false; out := ']' :: out; cs := r
-    | '#' :: r =>
-      if inClass then out := '#' :: out; cs := r
-      else cs := (r.dropWhile (· != '#')).drop 1
-    | c :: r => out := c :: out; cs := r
-  return String.ofList out.reverse
-
-/-- Rewrite `(?<name>` to `(`, and list the group names: (group number,
-    name). Group numbers count the capturing left parentheses. -/
-def namedGroups (p : String) : String × List (Nat × String) := Id.run do
-  let mut out : List Char := []
-  let mut names : List (Nat × String) := []
-  let mut n := 0
-  let mut cs := p.toList
-  let mut inClass := false
-  for _ in [0:p.length + 1] do
-    match cs with
-    | [] => break
-    -- `\#` (4.0 SingleCharEsc) is a plain `#` for the XSD grammar
-    | '\\' :: '#' :: r => out := '#' :: out; cs := r
-    | '\\' :: c :: r => out := c :: '\\' :: out; cs := r
-    | '[' :: r => inClass := true; out := '[' :: out; cs := r
-    | ']' :: r => inClass := false; out := ']' :: out; cs := r
-    | '(' :: '?' :: '<' :: r =>
-      if inClass then out := '<' :: '?' :: '(' :: out; cs := r
-      else
-        let nm := r.takeWhile (· != '>')
-        n := n + 1
-        names := names ++ [(n, String.ofList nm)]
-        out := '(' :: out
-        cs := (r.drop nm.length).drop 1
-    | '(' :: '?' :: r => out := '?' :: '(' :: out; cs := r
-    | '(' :: r => if !inClass then n := n + 1
-                  out := '(' :: out; cs := r
-    | c :: r => out := c :: out; cs := r
-  return (String.ofList out.reverse, names)
 
 structure Re4 where
   r : Regex.Compiled
@@ -85,6 +38,7 @@ structure Re4 where
 inductive GT where
   | node (n : Nat) (kids : List GT)
 
+/-- The ordinary groups (F&O 4.0 §6.3.4: not within a lookahead), nested. -/
 def groupTree : Regex.CRe → List GT
   | .group n inner => [.node n (groupTree inner)]
   | .cat a b => groupTree a ++ groupTree b
@@ -92,21 +46,30 @@ def groupTree : Regex.CRe → List GT
   | .star _ a => groupTree a
   | _ => []
 
+/-- The group numbers within lookahead assertions (the lookahead groups). -/
+def lookaheadGroups : Regex.CRe → Bool → List Nat
+  | .group n inner, inLook => (if inLook then [n] else []) ++ lookaheadGroups inner inLook
+  | .cat a b, inLook => lookaheadGroups a inLook ++ lookaheadGroups b inLook
+  | .alt a b, inLook => lookaheadGroups a inLook ++ lookaheadGroups b inLook
+  | .star _ a, inLook => lookaheadGroups a inLook
+  | .ahead _ a, _ => lookaheadGroups a true
+  | _, _ => []
+
+/-- The number of capturing groups: the largest group number (a counted
+    repetition copies a group, with its number). -/
 def countGroups : Regex.CRe → Nat
-  | .group _ inner => 1 + countGroups inner
-  | .cat a b => countGroups a + countGroups b
-  | .alt a b => countGroups a + countGroups b
+  | .group n inner => max n (countGroups inner)
+  | .cat a b => max (countGroups a) (countGroups b)
+  | .alt a b => max (countGroups a) (countGroups b)
   | .star _ a => countGroups a
+  | .ahead _ a => countGroups a
   | _ => 0
 
+/-- F&O 4.0 §6.1: the `c` flag and named groups are part of the 4.0 dialect
+    (`Regex.XPath40`), which `compileRe` uses. -/
 def compileRe4 (p f : String) : M Re4 := do
-  let hasC := f.toList.contains 'c'
-  let hasQ := f.toList.contains 'q'
-  let f' := String.ofList (f.toList.filter (· != 'c'))
-  let p1 := if hasC && !hasQ then stripRegexComments p else p
-  let (p2, names) := if hasQ then (p1, []) else namedGroups p1
-  let r ← compileRe p2 f'
-  pure { r, names, groups := countGroups r.capt }
+  let r ← compileRe p f
+  pure { r, names := r.names, groups := countGroups r.capt }
 
 /-! ## Matching segments -/
 
@@ -166,6 +129,22 @@ def renderGroups (input : List Nat) (re : Re4) (caps : List Regex.Cap) : Nat →
     if e > cur then out := out.push (.text (cpsStr (Regex.slice input cur e)))
     return out.toList
 
+/-- F&O 4.0 §6.3.4: the `fn:lookahead-group` elements of a match, in group
+    number order. -/
+def lookaheadNodes (input : List Nat) (re : Re4) (caps : List Regex.Cap) : List Node :=
+  let nums := ((lookaheadGroups re.r.capt false).toArray.qsort (· < ·)).toList.eraseDups
+  nums.filterMap fun n =>
+    match Regex.findCap caps n with
+    | none => none
+    | some (gs, ge) =>
+      let nameAt := match re.names.lookup n with
+        | some nm => [{ name := "name", value := nm : Attribute }]
+        | none => []
+      some (fnEl "lookahead-group"
+        ([{ name := "nr", value := toString n : Attribute }] ++ nameAt ++
+          [{ name := "value", value := cpsStr (Regex.slice input gs ge) },
+           { name := "position", value := toString (gs + 1) }]) [])
+
 def analyzeString (e : Env) (s : String) (re : Re4) : Seq :=
   let input := s.toList.map Char.toNat
   let segs := segments re.r input
@@ -173,7 +152,8 @@ def analyzeString (e : Env) (s : String) (re : Re4) : Seq :=
   let (nodes, cur) := segs.foldl (fun (acc : Array Node × Nat) sg =>
     let (out, cur) := acc
     let out := if sg.start > cur then out.push (fnEl "non-match" [] [.text (cpsStr (Regex.slice input cur sg.start))]) else out
-    let out := out.push (fnEl "match" [] (renderGroups input re sg.caps 1000 sg.start sg.stop tree))
+    let out := out.push (fnEl "match" [] (renderGroups input re sg.caps 1000 sg.start sg.stop tree ++
+      lookaheadNodes input re sg.caps))
     (out, sg.stop)) (#[], 0)
   let nodes := if input.length > cur then nodes.push (fnEl "non-match" [] [.text (cpsStr (Regex.slice input cur input.length))]) else nodes
   let root : Node := .element "analyze-string-result" [{ name := "xmlns", value := nsFN }] nodes.toList
@@ -298,6 +278,55 @@ def replace4 (h : Hooks) (e : Env) (s : String) (re : Re4) (rep : Seq) : M Strin
   for c in Regex.slice input cur input.length do out := out.push (Char.ofNat c)
   pure (String.ofList out.toList)
 
+/-! ## fn:tokenize -/
+
+/-- F&O 4.0 §6.3.3: the strings between the disjoint matching segments, with
+    a zero-length segment added at the start and at the end unless one is
+    there. -/
+def tokenize4 (s : String) (re : Re4) : List String :=
+  let input := s.toList.map Char.toNat
+  let len := input.length
+  if len == 0 then [] else
+  let segs := (segments re.r input).map (fun sg => (sg.start, sg.stop))
+  let m1 := match segs.head? with
+    | some (0, 0) => segs
+    | _ => (0, 0) :: segs
+  let m2 := match m1.getLast? with
+    | some (a, b) => if a == len && b == len then m1 else m1 ++ [(len, len)]
+    | none => [(len, len)]
+  (m2.zip (m2.drop 1)).map fun ((_, e), (s2, _)) => cpsStr (Regex.slice input e s2)
+
+/-! ## fn:regex (F&O 4.0 §6.3.8)
+
+The record `fn:compiled-regex-record` (§6.3.9): `pattern`, `flags`, and five
+inline function items whose bodies call `fn:matches`, `fn:tokenize`,
+`fn:replace`, `fn:analyze-string` and `fn:matching-segments` with the record's
+pattern and flags, which is the effect §6.3.9 defines for each field. The
+pattern is compiled once by `fn:regex`, so an invalid pattern or invalid
+flags raise FORX0002 / FORX0001 there. -/
+
+def regexRecord (p f : String) : Item :=
+  let q (l : String) : QN := { uri := nsFN, loc := l }
+  let vS : QN := { uri := "", loc := "s" }
+  let vR : QN := { uri := "", loc := "r" }
+  let lp : Expr := .lit (Atomic.ofStr p)
+  let lf : Expr := .lit (Atomic.ofStr f)
+  let fn1 (name ret : String) : Item :=
+    .fn (.inline [(vS, parseTy "xs:string")] (parseTy ret)
+      (.call (q name) [some (.var vS), some lp, some lf] []) false [])
+  .map [
+    (Atomic.ofStr "pattern", sStr p),
+    (Atomic.ofStr "flags", sStr f),
+    (Atomic.ofStr "matches", [fn1 "matches" "xs:boolean"]),
+    (Atomic.ofStr "tokenize", [fn1 "tokenize" "xs:string*"]),
+    (Atomic.ofStr "replace", [.fn (.inline
+      [(vS, parseTy "xs:string"),
+       (vR, parseTy "(xs:string | fn($match as xs:untypedAtomic, $groups as map((xs:integer | xs:string), xs:untypedAtomic)) as item()?)?")]
+      (parseTy "xs:string")
+      (.call (q "replace") [some (.var vS), some lp, some (.var vR), some lf] []) false [])]),
+    (Atomic.ofStr "analyze-string", [fn1 "analyze-string" "element(fn:analyze-string-result)"]),
+    (Atomic.ofStr "matching-segments", [fn1 "matching-segments" "fn:matching-segment-record*"])]
+
 /-! ## The table -/
 
 def regexTable : List (String × LibFn) := [
@@ -312,7 +341,19 @@ def regexTable : List (String × LibFn) := [
     pure (sBool (Regex.isMatch re.r (strOf (argN a 0))))),
   ent "replace" (fun h e a => do
     let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 3))
-    pure (sStr (← replace4 h e (strOf (argN a 0)) re (argN a 2))))
+    pure (sStr (← replace4 h e (strOf (argN a 0)) re (argN a 2)))),
+  ent "regex" (fun _ _ a => do
+    let p := strOf (argN a 0)
+    let f := strOf (argN a 1)
+    let _ ← compileRe4 p f
+    pure [regexRecord p f]),
+  ent "tokenize" (fun _ _ a => do
+    let s := strOf (argN a 0)
+    if (argN a 1).isEmpty then
+      pure ((normSpace s).splitOn " " |>.filter (· != "") |>.map (fun t => .atom (Atomic.ofStr t)))
+    else
+      let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 2))
+      pure ((tokenize4 s re).map (fun t => .atom (Atomic.ofStr t))))
 ]
 
 end L4Factoidal.XPath4
