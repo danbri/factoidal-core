@@ -131,6 +131,42 @@ def ncnameAt (s : Array Char) (i : Nat) : Option (String × Nat) :=
     -- a trailing '.' or '-' is part of the name per XML rules; keep it
     some (String.ofList ((List.range (j - i)).map (fun k => chAt s (i + k))), j)
 
+/-- Expand `&lt; &gt; &amp; &quot; &apos;` and numeric character
+    references in the text of a braced URI literal. -/
+def expandUriRefs (t : String) : String := Id.run do
+  let cs := t.toList.toArray
+  let mut out : Array Char := #[]
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    if cs[i]! == '&' then
+      let mut j := i + 1
+      for _ in [0:cs.size + 1] do
+        if j < cs.size && cs[j]! != ';' then j := j + 1 else break
+      if j < cs.size then
+        let body := String.ofList ((cs.extract (i + 1) j).toList)
+        let r : Option Char :=
+          if body == "lt" then some '<' else if body == "gt" then some '>'
+          else if body == "amp" then some '&' else if body == "quot" then some '"'
+          else if body == "apos" then some '\''
+          else if body.startsWith "#x" then
+            (body.drop 2).toString.foldl (fun (a : Option Nat) ch =>
+              a.bind (fun v => if ch.isDigit then some (v * 16 + (ch.toNat - 48))
+                else if 'a' ≤ ch && ch ≤ 'f' then some (v * 16 + (ch.toNat - 87))
+                else if 'A' ≤ ch && ch ≤ 'F' then some (v * 16 + (ch.toNat - 55)) else none)) (some 0)
+              |>.map Char.ofNat
+          else if body.startsWith "#" then
+            (body.drop 1).toString.foldl (fun (a : Option Nat) ch =>
+              a.bind (fun v => if ch.isDigit then some (v * 10 + (ch.toNat - 48)) else none)) (some 0)
+              |>.map Char.ofNat
+          else none
+        match r with
+        | some ch => out := out.push ch; i := j + 1; continue
+        | none => pure ()
+    out := out.push cs[i]!
+    i := i + 1
+  String.ofList out.toList
+
 /-- Peek a lexical QName (or `Q{uri}local`) at the current position.
     Returns `(prefix?, uri?, local, end)`; the local may be `*` for
     `p:*`, the prefix may be `*` for `*:l`. -/
@@ -147,6 +183,8 @@ def peekQName : P (Option (Option String × Option String × String × Nat)) := 
     let j := findClose (i + 2) s.size
     -- the braced URI is whitespace-collapsed (as xs:anyURI)
     let raw := String.ofList ((List.range (j - i - 2)).map (fun k => chAt s (i + 2 + k)))
+    -- XQuery reads character and entity references in a braced URI (§4.1, BracedURILiteral)
+    let raw := if c.ext.isSome then expandUriRefs raw else raw
     let uri := String.intercalate " " ((raw.splitOn " ").filter (· != "") |>.flatMap (fun w =>
       (w.split (fun c => c == '\n' || c == '\t' || c == '\r')).toList.map (·.toString) |>.filter (· != "")))
     if chAt s (j+1) == '*' then pure (some (none, some uri, "*", j + 2))
@@ -171,7 +209,10 @@ def peekQName : P (Option (Option String × Option String × String × Nat)) := 
 def lookupNs (p : String) : P String := do
   let c ← read
   match c.ns.lookup p with
-  | some u => pure u
+  | some u =>
+    if u == "" && p != "" then
+      throw { code := "XPST0081", msg := "the namespace prefix " ++ p ++ " is undeclared" }
+    pure u
   | none => match defaultNs.lookup p with
     | some u => pure u
     | none => throw { code := "XPST0081", msg := "undeclared namespace prefix " ++ p }
@@ -286,6 +327,8 @@ def pStringLit : P String := do
   let i ← get
   let s := c.s
   let q := chAt s i
+  -- a string literal is quoted with " or ' (a backtick string is a template)
+  if q != '"' && q != '\'' then synErr "expected a string literal"
   let rec go (j : Nat) (acc : List Char) (fuel : Nat) : Option (List Char × Nat) :=
     match fuel with
     | 0 => none
@@ -508,8 +551,9 @@ def pItemType : Nat → P IType
               let den ← dfltElemNs
               let t ← pNameTest (if nm == "element" then den else "")
               -- union of names, then an optional type name
+              let mut t := t
               for _ in [0:100] do
-                if ← eatS "|" then let _ ← pNameTest "" else break
+                if ← eatS "|" then t := .union t (← pNameTest (if nm == "element" then den else "")) else break
               let ty ← if ← eatS "," then
                   ws
                   match ← peekQName with

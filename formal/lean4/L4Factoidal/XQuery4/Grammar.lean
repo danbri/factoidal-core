@@ -63,6 +63,19 @@ def curCh : P Char := peekAt 0
 
 def isWsCh (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
+/-- Skip XML whitespace only: a comment is not allowed inside a tag
+    (§4.12.1, the whitespace of a start or end tag is not ignorable
+    XQuery whitespace; `(:` there is XPST0003). -/
+def skipXmlWs (s : Array Char) (i : Nat) : Nat := Id.run do
+  let mut j := i
+  for _ in [0:s.size + 1] do
+    if isWsCh (chAt s j) && j < s.size then j := j + 1 else break
+  j
+
+def wsX : P Unit := do
+  let c ← read
+  modify (skipXmlWs c.s)
+
 /-- A lexical QName exactly at offset `i` (no whitespace): prefix (or
     ""), local, end. -/
 def qnameAt (s : Array Char) (i : Nat) : Option (String × String × Nat) :=
@@ -85,7 +98,7 @@ def isXmlChar (n : Nat) : Bool :=
 def refAt (s : Array Char) (i : Nat) : Except Err (Char × Nat) := do
   let close (j : Nat) : Nat := Id.run do
     let mut k := j
-    for _ in [0:12] do
+    for _ in [0:64] do
       if chAt s k == ';' || k ≥ s.size then break
       k := k + 1
     k
@@ -656,13 +669,13 @@ def scanDecls (s : Array Char) (i : Nat) : List (String × String) := Id.run do
   let mut j := i
   let mut out : List (String × String) := []
   for _ in [0:s.size + 1] do
-    let k := skipWsF s (s.size + 1) 0 j
+    let k := skipXmlWs s j
     let ch := chAt s k
     if ch == '/' || ch == '>' || k ≥ s.size then break
     let some (ap, al, ae) := qnameAt s k | break
-    let k2 := skipWsF s (s.size + 1) 0 ae
+    let k2 := skipXmlWs s ae
     if chAt s k2 != '=' then break
-    let k3 := skipWsF s (s.size + 1) 0 (k2 + 1)
+    let k3 := skipXmlWs s (k2 + 1)
     let q := chAt s k3
     if q != '"' && q != '\'' then break
     let (lit, e) := skipAttrValue s q (k3 + 1)
@@ -683,13 +696,16 @@ def pStartTag (sp : SubParsers) : P (List (String × String) × Array (String ×
   let mut ats : Array (String × String × List Expr × Bool) := #[]
   for _ in [0:100000] do
     let j ← get
-    let k := skipWsF c.s (c.s.size + 1) 0 j
+    let k := skipXmlWs c.s j
     let ch := chAt c.s k
     if ch == '/' || ch == '>' then set k; break
     if k == j then synErr "expected whitespace before an attribute"
     let some (ap, al, ae) := qnameAt c.s k | synErr "bad attribute name"
     set ae
-    ws; expectS "="; ws
+    wsX
+    if chAt c.s (← get) != '=' then synErr "expected '=' after an attribute name"
+    adv 1
+    wsX
     let q := chAt c.s (← get)
     if q != '"' && q != '\'' then synErr "expected a quoted attribute value"
     adv 1
@@ -741,7 +757,9 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
       let declStrs := decls.map (fun (p, u) => p ++ "\x00" ++ u) ++ copyFlags cfg
       let s := c.s
       if chAt s (← get) == '/' then
-        adv 1; expectS ">"
+        adv 1
+        if chAt s (← get) != '>' then synErr "expected '>' after '/'"
+        adv 1
         return .ext "elem" (.lit (Atomic.ofQN name) :: attrEs.toList) [] sns ("d" :: declStrs)
       adv 1  -- '>'
       -- content
@@ -758,8 +776,10 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
           if chAt s (j+1) == '/' then
             ps := flush ps buf keep; buf := #[]
             let some (ep, el, ee) := qnameAt s (j + 2) | synErr "bad end tag"
-            if ep != pfx || el != loc then synErr ("end tag </" ++ (if ep == "" then el else ep ++ ":" ++ el) ++ "> does not match")
-            set ee; ws; expectS ">"
+            if ep != pfx || el != loc then throw { code := "XQST0118", msg := ("end tag </" ++ (if ep == "" then el else ep ++ ":" ++ el) ++ "> does not match the start tag") }
+            set ee; wsX
+            if chAt s (← get) != '>' then synErr "expected '>' in an end tag"
+            adv 1
             break
           else if chAt s (j+1) == '!' && chAt s (j+2) == '[' then
             -- CDATA section
@@ -822,7 +842,8 @@ def pCompName (sp : SubParsers) (kind : String) : P Expr := do
         let dflt := if kind == "attr" then "" else (c.ns.lookup "").getD ""
         let q ← match p, u with
           | some "xml", none => pure { uri := nsXML, loc := l, pfx := "xml" }
-          | some "xmlns", none => pure { uri := "http://www.w3.org/2000/xmlns/", loc := l, pfx := "xmlns" }
+          -- the prefix xmlns is never bound in the static context (§4.12.3.2, XPST0081)
+          | some "xmlns", none => throw { code := "XPST0081", msg := "the prefix xmlns is not bound" }
           | _, _ => resolve p u l dflt
         pure (.lit (Atomic.ofQN q))
     | none => synErr "expected a constructor name"
@@ -895,13 +916,28 @@ def pExtensionExpr (sp : SubParsers) : P Expr := do
     adv 2
     let c ← read
     let i ← get
-    let j := skipWsF c.s (c.s.size + 1) 0 i
-    let some (p, _, _) := qnameAt c.s j | synErr "bad pragma name"
-    if p != "" then
-      let _ ← lookupNs p
-    else if !(c.s.getD j ' ' == 'Q') then
-      throw { code := "XPST0081", msg := "a pragma name needs a namespace" }
-    match readUntil c.s j "#)" with
+    -- Pragma (4.0): "(#" S EQName (S PragmaContents)? "#)"; the whitespace
+    -- holds no comment and is not optional.
+    let j := skipXmlWs c.s i
+    if j == i then synErr "a pragma needs whitespace after '(#'"
+    let mut nameEnd := j
+    if chAt c.s j == 'Q' && chAt c.s (j+1) == '{' then
+      match readUntil c.s (j + 2) "}" with
+      | some (_, e) =>
+        match ncnameAt c.s e with
+        | some (_, e2) => nameEnd := e2
+        | none => synErr "bad pragma name"
+      | none => synErr "bad pragma name"
+    else
+      let some (p, _, e) := qnameAt c.s j | synErr "bad pragma name"
+      if p != "" then
+        let u ← lookupNs p
+        if u == "" then throw { code := "XPST0081", msg := "the pragma prefix " ++ p ++ " has no namespace" }
+      nameEnd := e
+    -- the name ends at whitespace or at the end of the pragma
+    if !(isWsCh (chAt c.s nameEnd) || (chAt c.s nameEnd == '#' && chAt c.s (nameEnd+1) == ')')) then
+      synErr "a pragma name must be followed by whitespace or '#)'"
+    match readUntil c.s nameEnd "#)" with
     | some (_, e) => set e
     | none => synErr "unterminated pragma"
   ws

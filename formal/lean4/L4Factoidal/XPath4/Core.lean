@@ -253,6 +253,7 @@ def nameTestMatches (t : NameTest) (q : QN) : Bool :=
   | .ns u => q.uri == u
   | .loc l => q.loc == l
   | .name n => n.uri == q.uri && n.loc == q.loc
+  | .union a b => nameTestMatches a q || nameTestMatches b q
 
 def Env.kindMatches (e : Env) (n : NodeRef) : IType → Bool
   | .item | .anyNode => true

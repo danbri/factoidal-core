@@ -405,7 +405,10 @@ def nameOf (env : Env) (s : Seq) (sns : List (String × String)) (isAttr : Bool)
       let lex := lex.trimAscii.toString
       if lex.startsWith "Q{" then
         match lex.splitOn "}" with
-        | [u, l] => if isNCName l then pure { uri := (u.drop 2).toString, loc := l } else err "XQDY0074" ("invalid name " ++ lex)
+        | [u, l] =>
+          -- a braced URI holds no brace (EQName, XQDY0074)
+          if isNCName l && !(u.drop 2).toString.any (· == '{') then pure { uri := (u.drop 2).toString, loc := l }
+          else err "XQDY0074" ("invalid name " ++ lex)
         | _ => err "XQDY0074" ("invalid name " ++ lex)
       else
       match parseQNameLex lex with
@@ -414,6 +417,7 @@ def nameOf (env : Env) (s : Seq) (sns : List (String × String)) (isAttr : Bool)
         else if p == "xml" then pure { uri := nsXML, loc := l, pfx := p }
         else if p == "xmlns" then pure { uri := "http://www.w3.org/2000/xmlns/", loc := l, pfx := p }
         else match sns.lookup p with
+          | some "" => err "XQDY0074" ("undeclared prefix " ++ p)
           | some u => pure { uri := u, loc := l, pfx := p }
           | none => match defaultNs.lookup p with
             | some u => pure { uri := u, loc := l, pfx := p }

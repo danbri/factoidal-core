@@ -110,6 +110,12 @@ def pNCName : P String := do
   | some (n, e) => set e; pure n
   | none => synErr "expected an NCName"
 
+/-- A string literal with its references expanded (version and encoding
+    declarations, §5.1). -/
+def pStrRefs : P String := do
+  let u ← pStringLit
+  match expandRefs u with | .ok v => pure v | .error e => throw e
+
 def pUriLit : P String := do
   let u ← pStringLit
   expandRefs u |> fun r => match r with | .ok v => pure (normSpace v) | .error e => throw e
@@ -168,10 +174,10 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
   -- the version declaration
   if ← kwThenKw "xquery" "version" then
     expectKw "xquery"; expectKw "version"
-    let v ← pStringLit
+    let v ← pStrRefs
     if !["1.0", "3.0", "3.1", "4.0"].contains v then qerr "XQST0031" ("XQuery version " ++ v ++ " is not supported")
     if ← eatKw "encoding" then
-      let enc ← pStringLit
+      let enc ← pStrRefs
       let ok := match enc.toList with
         | c :: rest => c.isAlpha && rest.all (fun x => x.isAlphanum || x == '.' || x == '_' || x == '-')
         | [] => false
@@ -179,7 +185,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
     expectS ";"
   else if ← kwThenKw "xquery" "encoding" then
     expectKw "xquery"; expectKw "encoding"
-    let enc ← pStringLit
+    let enc ← pStrRefs
     let ok := match enc.toList with
       | c :: rest => c.isAlpha && rest.all (fun x => x.isAlphanum || x == '.' || x == '_' || x == '-')
       | [] => false
@@ -201,9 +207,13 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
   let mut fnSigs : List (QN × Nat × Nat) := []
   let mut varNames : List QN := []
   let mut ctxSeen := false
+  -- Prolog (§5): namespace, setter and import declarations come before
+  -- variable, function, option, context and item type declarations (XPST0003)
+  let mut late := false
   for _ in [0:100000] do
     let some kw ← atDecl | break
     if kw == "import" then
+      if late then synErr "an import after a variable or function declaration"
       expectKw "import"
       if ← eatKw "schema" then
         -- XQuery 4.0 §5.11: the in-scope schema definitions come from the
@@ -260,6 +270,10 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
     let w ← pNCName
     -- 4.0: `declare fixed default ... namespace` (fixed for the module)
     let w ← if w == "fixed" then pNCName else pure w
+    if ["variable", "function", "option", "context", "type", "record"].contains w then late := true
+    else if late && ["namespace", "default", "boundary-space", "base-uri", "construction", "ordering",
+        "copy-namespaces", "decimal-format"].contains w then
+      synErr ("the " ++ w ++ " declaration follows a variable or function declaration")
     match w with
     | "namespace" =>
       let p ← pNCName
@@ -270,7 +284,8 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       if u == nsXML || u == "http://www.w3.org/2000/xmlns/" then qerr "XQST0070" "a reserved namespace"
       if seenNs.contains p then qerr "XQST0033" ("prefix " ++ p ++ " declared twice")
       seenNs := p :: seenNs
-      ns := if u == "" then ns.filter (·.1 != p) else (p, u) :: ns.filter (·.1 != p)
+      -- an empty URI undeclares the prefix, also a predeclared one (XPST0081 on use)
+      ns := (p, u) :: ns.filter (·.1 != p)
     | "default" =>
       if ← eatKw "element" then
         expectKw "namespace"

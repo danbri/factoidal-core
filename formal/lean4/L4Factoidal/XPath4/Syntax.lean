@@ -57,6 +57,8 @@ inductive NameTest where
   | ns (uri : String)
   | loc (l : String)
   | name (q : QN)
+  /-- `element(a|b)`: a union of name tests (XPath 4.0 §3.2.1.1). -/
+  | union (a b : NameTest)
 deriving Repr, Inhabited
 
 /-- The key constraint of a `jnode(...)` type (XPath 4.0 §3.2.12): `*`
