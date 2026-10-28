@@ -500,6 +500,8 @@ r.evidence[1].settingsDigest;  // 'sha256:…'
 - Query warnings (wasm): `rows.warnings` with class `dataset-iri-not-found`
   (https://github.com/danbri/factoidal/issues/1032, FROM IRI that names no
   graph).
+- Pipelines compared with XProc 3.1 (lists against graphs, ports, control
+  steps, contracts, evidence): `docs/designissues/2026-10-28-dataflow-and-xproc.md`.
 - Node settings (wasm): evidence records carry `settings` and
   `settingsDigest`; a setting outside the proved domain of a proved stage
   makes the status `unproved` (with `registryStatus` and `outside`), and
