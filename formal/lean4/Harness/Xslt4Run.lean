@@ -855,8 +855,8 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
     let sep := ((S.outputs.lookup "").getD []).lookup "item-separator"
     match raw with
     | [.node n] => if (env.nrec n).kind == .document then pure raw else
-        do pure [← materialize env (2 ^ 45) (.doc (← Out.normalizeTop sep (Out.ofSeq raw)) "")]
-    | _ => do pure [← materialize env (2 ^ 45) (.doc (← Out.normalizeTop sep (Out.ofSeq raw)) "")]
+        do pure [← materializeK (S.finalValidation == "preserve") env (2 ^ 45) (.doc (← Out.normalizeTop sep (Out.ofSeq raw)) "")]
+    | _ => do pure [← materializeK (S.finalValidation == "preserve") env (2 ^ 45) (.doc (← Out.normalizeTop sep (Out.ofSeq raw)) "")]
   let res : M Seq := do
     let (r, S) ← outcome
     -- a principal result written by xsl:result-document is delivered as

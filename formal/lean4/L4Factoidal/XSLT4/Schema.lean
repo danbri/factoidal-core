@@ -93,6 +93,8 @@ def stylesheetSchema (texts : List (String × String)) (imps : List SchemaImport
       | none =>
         -- a namespace only: the schema documents for it that the caller gave
         let want := im.ns.getD ""
+        -- the XML namespace: the schema document that XSD11 has built in
+        if want == nsXML then roots := roots ++ [XSD11.xmlNsSchemaLoc]
         for (u, t) in texts do
           if !(u.endsWith ".xsd") then continue
           match L4Factoidal.XML.parseXML t with
@@ -124,9 +126,41 @@ def validationCode (how : String) (e : Err) : String :=
     whose element child is validated): the typed document, record 1 the
     element. -/
 def validateTree (s : Schema) (how : String) (d : Doc) (i : Nat) : Except Err Doc :=
-  match XSD11.validateNodeIn s how d i d.uri with
-  | .ok d' => .ok d'
-  | .error e => .error { code := validationCode how e, msg := e.msg }
+  if (d.get i).kind != .document then
+    match XSD11.validateNodeIn s how d i d.uri with
+    | .ok d' => .ok d'
+    | .error e => .error { code := validationCode how e, msg := e.msg }
+  else
+  -- a document node (§25.2): its element child, then the document-level
+  -- constraints: unique IDs and no IDREF without its ID (XTTE1555)
+  match (d.get i).children.toList.find? (fun j => (d.get j).kind == .element) with
+  | none => .error { code := "XTTE1550", msg := "the document node has no element child" }
+  | some j =>
+    let root := XSD11.nodeTree d 100000 j
+    let how? : Option XSD11.How :=
+      if how == "strict" then XSD11.rootHow s root []
+      else if how == "lax" then some (.wild .lax)
+      else if how.startsWith "type Q{" then
+        match (how.drop 7).toString.splitOn "}" with
+        | [u, l] => (s.typeIdx? ⟨u, l⟩).map XSD11.How.typ
+        | _ => none
+      else none
+    match how? with
+    | none => .error { code := if how == "strict" then "XTTE1512" else "XTTE1540",
+                       msg := s!"validation {how}: no declaration or type to validate against" }
+    | some h =>
+      let r := XSD11.validateElement s XSD11.xpathHooks 10000 [] h root {}
+      let v := (r.1.info?.map (·.validity)).getD .notKnown
+      let idcErrs := XSD11.checkIdcs s r.1
+      if (how != "lax" && v != .valid) || v == .invalid || !idcErrs.isEmpty then
+        .error { code := validationCode how { code := "" },
+                 msg := s!"the document is not valid: {(r.2.errors ++ idcErrs).take 2}" }
+      else
+      let dangling := r.2.idrefs.filter (fun x => !r.2.ids.contains x)
+      let dups := r.2.errors.filter (fun e => e.startsWith "duplicate ID")
+      if !dangling.isEmpty || !dups.isEmpty then
+        .error { code := "XTTE1555", msg := s!"ID/IDREF constraints: {dups.take 2} {dangling.take 2}" }
+      else .ok (XSD11.psviDoc s r.1 d.uri)
 
 /-- Validate an attribute value (§25.1.1, §25.1.2): `how` is `strict`,
     `lax` or `type Q{uri}local`; `scope` resolves prefixes in the value.
@@ -135,6 +169,8 @@ def validateTree (s : Schema) (how : String) (d : Doc) (i : Nat) : Except Err Do
     `xs:ID` (§25.3). -/
 def validateAttrValue (s : Schema) (how : String) (q : QN) (v : String) (scope : List (String × String)) :
     Except Err (Option (QN × Option (List Atomic))) := do
+  -- xs:untypedAtomic: valid as an xs:string, annotated xs:untypedAtomic (§25.1.2)
+  if how == "type Q{" ++ nsXS ++ "}untypedAtomic" then return none
   let t? : Option Nat ←
     if how.startsWith "type Q{" then
       match (how.drop 7).toString.splitOn "}" with

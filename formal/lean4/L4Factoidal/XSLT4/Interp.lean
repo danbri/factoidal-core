@@ -109,6 +109,9 @@ structure Ctx where
   /-- `xsl:copy-of validation="preserve"` (§25.1.1): its copies keep
       their type annotations; otherwise they are untyped. -/
   keepCopies : Bool := false
+  /-- The validation of the document that `xsl:result-document` or
+      `xsl:source-document` makes (§25.2); `""` for none. -/
+  docValidation : String := ""
 deriving Inhabited
 
 def Ctx.focus (cx : Ctx) (i : Item) (p sz : Nat) : Ctx := { cx with env := cx.env.focus i p sz }
@@ -1810,6 +1813,8 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         -- writing a resource that the transformation reads (§25.2)
         if h.startsWith "file:" && (env.docUris.any (·.1 == h) || env.resources.any (·.1 == h)) then
           xerr "XTDE1500" ("the result document " ++ h ++ " is also read by the transformation")
+        let how := cx.docValidation
+        let cxR := { cxR with docValidation := "" }
         let os ← run n S cxR body
         let id ← freshId
         let meth := match sp.lookup "method" with
@@ -1824,7 +1829,13 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | none => ((S.outputs.lookup f).bind (·.lookup "item-separator"))
         let v ← if !buildTree then materializeAll env os else match os with
           | [] => pure []
-          | _ => do pure [← liftX (materialize env id (.doc (← liftX (Out.normalizeTop sep os)) h))]
+          | _ => do pure [← liftX (materializeK (how == "preserve") env id (.doc (← liftX (Out.normalizeTop sep os)) h))]
+        -- §25.2: validation of the result document
+        let v ← if !buildTree || how == "" || how == "strip" || how == "preserve" then pure v else
+          v.mapM (fun i => do
+            match ← validateOut S env how (.item i) with
+            | .item j => pure j
+            | _ => pure i)
         let st ← get
         if st.results.any (fun (x, _, _, _) => x == h) then
           xerr "XTDE1490" ("two result documents with the URI '" ++ h ++ "'")
@@ -1928,7 +1939,15 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         let h ← avtStr cx href
         let d ← liftX (callFn 100000 env { uri := nsFN, loc := "doc" } [sStr h])
         match d with
-        | [i] => run n S (cx.focus i 1 1) body
+        | [i] =>
+          -- §18.1: the document is validated when the instruction asks for it
+          let how := cx.docValidation
+          let cx := { cx with docValidation := "" }
+          let i ← if how == "" || how == "strip" || how == "preserve" then pure i else do
+            match ← validateOut S env how (.item i) with
+            | .item j => pure j
+            | _ => pure i
+          run n S (cx.focus i 1 1) body
         | _ => xerr "FODC0002" ("cannot read " ++ h)
     | .unknown q fbs code =>
         match fbs with
@@ -1954,8 +1973,12 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
         -- preserve; every item the instruction gives is then validated
         let cx' := match body with
           | [.copyOf ..] => { cx with keepCopies := how == "preserve" }
+          | [.resultDoc ..] | [.sourceDoc ..] => { cx with docValidation := how }
           | _ => { cx with keepCopies := false }
         let os ← run n S cx' body
+        -- the document of xsl:result-document and xsl:source-document is
+        -- validated by the instruction itself
+        if cx'.docValidation != "" then return os
         let mut out : Array Out := #[]
         for o in os do out := out.push (← validateOut S env how o)
         pure out.toList

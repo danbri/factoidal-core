@@ -475,7 +475,7 @@ def boolAttrs : List String :=
 
 /-- The standard attributes every XSLT element may have (§3.5). -/
 def standardAttrs : List String :=
-  ["default-collation", "default-mode", "default-validation", "exclude-result-prefixes",
+  ["default-collation", "default-mode", "default-validation", "exclude-result-prefixes", "schema-role",
    "expand-text", "extension-element-prefixes", "use-when", "version", "xpath-default-namespace"]
 
 /-- The serialization attributes of `xsl:output` and
@@ -762,8 +762,12 @@ def compileElem : Nat → SCx → Mod → Nat → CM (List Instr)
     if q.uri == nsXSL then
       let ins ← compileXsl f c m i as
       -- §25: the validation of the node an instruction constructs
-      if ["element", "attribute", "copy", "copy-of", "document"].contains q.loc then
+      if ["element", "attribute", "copy", "copy-of", "document", "result-document"].contains q.loc then
         let how ← validationOf c as false q.loc c0.defaultValidation
+        return wrap [withValidation how ins]
+      -- xsl:source-document validates only when asked to (§25)
+      if q.loc == "source-document" then
+        let how ← validationOf c as false q.loc "strip"
         return wrap [withValidation how ins]
       return wrap [ins]
     if c.ext.contains q.uri then

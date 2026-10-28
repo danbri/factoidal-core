@@ -92,6 +92,12 @@ def itDefault (d : String) : Nat → IType → IType
   | f + 1, t =>
     match t with
     | .elem (some n) => .elem (some (ntDefault d n))
+    -- schema-element(E), element(E, T), attribute(A, T): unprefixed
+    -- element and type names (§5.1.2)
+    | .schemaElem q => .schemaElem (if q.uri == "" && q.pfx == "" then { q with uri := d } else q)
+    | .elemT n ty nil =>
+      .elemT (n.map (ntDefault d)) (if ty.uri == "" && ty.pfx == "" then { ty with uri := d } else ty) nil
+    | .attrT n ty => .attrT n (if ty.uri == "" && ty.pfx == "" then { ty with uri := d } else ty)
     | .doc (some i) => .doc (some (itDefault d f i))
     | .seq i o => .seq (itDefault d f i) o
     | .choice ts => .choice (ts.map (itDefault d f))
@@ -411,11 +417,7 @@ def defaultPriority (e : Expr) : Float :=
     | .kind (.elemT (some _) _ _) | .kind (.attrT (some _) _) => 0.125
     | .kind (.schemaElem _) | .kind (.schemaAttr _) => 0.25
     | .kind (.pi (some _)) => 0
-    -- the typed tests of §6.6.1 (schema awareness)
-    | .kind (.elemT none _ _) | .kind (.attrT none _) => 0
-    | .kind (.elemT (some (.name _)) _ _) | .kind (.attrT (some (.name _)) _) => 0.25
-    | .kind (.elemT (some _) _ _) | .kind (.attrT (some _) _) => 0.125
-    | .kind (.schemaElem _) | .kind (.schemaAttr _) => 0.25
+    -- document-node() with a typed element test (§6.5)
     | .kind (.doc (some (.elemT none _ _))) => 0
     | .kind (.doc (some (.elemT (some (.name _)) _ _))) => 0.25
     | .kind (.doc (some (.elemT (some _) _ _))) => 0.125
