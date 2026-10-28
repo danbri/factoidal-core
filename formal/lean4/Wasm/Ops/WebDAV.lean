@@ -188,16 +188,16 @@ def davFinishLoad (hd : DavHandle) (ms : List Mount) (j : Json) : Except String 
       | .none => sessions := sessions ++ [(m.name, ({ } : L4Factoidal.LWS.Client.Session))]
       | .bearer =>
         match davFileOf j m.tokenFile with
-        | some (some t) => sessions := sessions ++ [(m.name, ← sessionOf m toPublic none (some t))]
+        | some (some t) => sessions := sessions ++ [(m.name, ← sessionOf m davCrypto none (some t))]
         | _ => throw s!"{m.name}.md: the token file {m.tokenFile} does not exist"
       | .didKey =>
         match davFileOf j m.keyFile with
         | some (some t) =>
           let d ← (secretOfJwk t).mapError (fun e => s!"{m.name}.md: {m.keyFile}: {e}")
-          sessions := sessions ++ [(m.name, ← sessionOf m toPublic (some d) none)]
+          sessions := sessions ++ [(m.name, ← sessionOf m davCrypto (some d) none)]
         | _ =>
           match made.lookup (davKeyPathKey m.keyFile) with
-          | some d => sessions := sessions ++ [(m.name, ← sessionOf m toPublic (some d) none)]
+          | some d => sessions := sessions ++ [(m.name, ← sessionOf m davCrypto (some d) none)]
           | none =>
           -- No key file: a new key, written for the host to keep.
           let seed := hd.entropy ++ m.name.toUTF8
@@ -206,7 +206,7 @@ def davFinishLoad (hd : DavHandle) (ms : List Mount) (j : Json) : Except String 
           | some (d, xy) =>
             writes := writes ++ [.object [("path", .string m.keyFile), ("text", .string (jwkText d xy)), ("mode", .string "0600")]]
             made := made ++ [(davKeyPathKey m.keyFile, d)]
-            sessions := sessions ++ [(m.name, ← sessionOf m toPublic (some d) none)]
+            sessions := sessions ++ [(m.name, ← sessionOf m davCrypto (some d) none)]
   let mountsJ := ms.map (fun m => davMountJson m (sessions.lookup m.name))
   pure ({ hd with load := .ready, mounts := ms, sessions },
         .object [("mounts", .array mountsJ), ("local", .array locals), ("write", .array writes)])
