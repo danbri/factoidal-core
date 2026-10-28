@@ -166,6 +166,9 @@ that builds them is untrusted; never add a premise about it to a soundness
 theorem. Record:
 [OWL model certificates](../../docs/designissues/2026-10-24-owl-model-certificates.md)
 (https://github.com/danbri/factoidal/issues/960).
+Overview of the whole path, from the npm call to the theorems and the two
+CI gates:
+[OWL consistency overview](../../docs/designissues/2026-10-28-owl-consistency-overview.md).
 
 Run `python3 tools/check-owl-reader-contracts.py --json /new/contracts.json`
 for adversarial cases, independent original-graph model witnesses, axiom
