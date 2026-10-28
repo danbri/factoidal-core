@@ -1,8 +1,8 @@
 # Vendored: w3c/vc-di-eddsa-test-suite
 
 - **Upstream:** https://github.com/w3c/vc-di-eddsa-test-suite
-- **Commit:** `769275c968c608799939aa25bb32869ce76a8e10` (2026-01-14T15:55:48-05:00)
-- **Retrieved:** 2026-07-10, `git clone --depth 1`
+- **Commit:** `1e86cc4ca16d77eb76cd15e3905a624bc16c0879` (2026-08-27T11:57:52-04:00)
+- **Retrieved:** 2026-10-28, `git clone --depth 1` (refreshed from `769275c9`, 2026-01-14, retrieved 2026-07-10: that copy's `tests/vc-generator/contexts.js` crashed at load under Node 22 with a `structuredClone` DataCloneError, which kept `60-jcs-interop.js`, `70-data-model.js` and `80-algorithms.js` from running; this copy loads)
 - **Licence:** BSD-3-Clause (`LICENSE.md`, Copyright (c) 2024 W3C, Inc.)
 
 Vendored for task #88 (canivc.com community-compatibility integration)

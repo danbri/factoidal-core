@@ -1,0 +1,16 @@
+[package]
+name = "wc-client"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# A wasm32-wasip2 command component that imports factoidal:core/rdf
+# (wit/factoidal.wit, world `client`). Composed with the Lean engine
+# component by build.sh compose.
+[dependencies]
+wit-bindgen = "=0.45.0"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

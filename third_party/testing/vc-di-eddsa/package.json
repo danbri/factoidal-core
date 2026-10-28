@@ -8,6 +8,7 @@
     "tests": "tests"
   },
   "scripts": {
+    "pretest": "npm install vc-test-suite-implementations@github:w3c/vc-test-suite-implementations#main --no-save",
     "test": "mocha tests/ --reporter @digitalbazaar/mocha-w3c-interop-reporter --reporter-options abstract=\"$PWD/config/abstract.hbs\",reportDir=\"$PWD/reports\",respec=\"$PWD/config/respec.json\",suiteLog='./suite.log',templateData=\"$PWD/reports/index.json\",title=\"Data Integrity eddsa 2022 Interoperability Report 1.0\" --timeout 15000 --preserve-symlinks",
     "lint": "eslint ."
   },
@@ -24,7 +25,7 @@
     }
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
     "@digitalbazaar/credentials-context": "^3.1.0",
@@ -43,10 +44,9 @@
     "chai": "^4.3.6",
     "data-integrity-test-suite-assertion": "github:w3c-ccg/data-integrity-test-suite-assertion",
     "jsonld-document-loader": "^2.0.0",
-    "mocha": "^10.0.0",
-    "uuid": "^9.0.0",
+    "mocha": "^11.7.6",
     "varint": "^6.0.0",
-    "vc-test-suite-implementations": "github:w3c/vc-test-suite-implementations"
+    "vc-test-suite-implementations": "github:w3c/vc-test-suite-implementations#main"
   },
   "devDependencies": {
     "eslint": "^8.52.0",
