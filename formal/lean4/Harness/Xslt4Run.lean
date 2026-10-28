@@ -787,6 +787,11 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
     if let some only := o.only then
       if name != only then continue
     if let some pf := o.progress then
+      -- a child prints its lines as it goes: a child that is stopped
+      -- for time loses none
+      for f in fails do IO.println ("  " ++ f)
+      (← IO.getStdout).flush
+      fails := []
       IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} {name} {t.excl}\n"
     let deps := (kidsNamed tc "dependencies").flatMap kids
     let specGiven := deps.any (fun x => localTag x == "spec")
