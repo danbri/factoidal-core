@@ -103,6 +103,41 @@ def nameKey (q : QN) : QN := { uri := "#xqn", loc := q.loc, pfx := q.uri }
 def metaEntries (cl : List (QN × Seq)) : List (QN × Seq) :=
   cl.filter (fun (k, _) => k.uri == "#xqa" || k.uri == "#xqn")
 
+/-- The closure entry (always first) that keeps the static context of
+    the module that declares a function: base URI, default collation and
+    decimal formats (XQuery 4.0 §5.5, §5.6; each module has its own). -/
+def modCtxKey : QN := { uri := "#xqm", loc := "ctx" }
+
+def encodeModCtx (base coll : String) (df : List (String × List (String × String))) : Seq :=
+  [.map [(Atomic.ofStr "base", [.atom (Atomic.ofStr base)]),
+         (Atomic.ofStr "coll", [.atom (Atomic.ofStr coll)]),
+         (Atomic.ofStr "df", [.map (df.map (fun (n, props) =>
+            (Atomic.ofStr n, [.map (props.map (fun (k, v) => (Atomic.ofStr k, [.atom (Atomic.ofStr v)])))])))])]]
+
+/-- The module context entries of a function item's closure. -/
+def ctxEntries (cl : List (QN × Seq)) : List (QN × Seq) :=
+  cl.filter (fun (k, _) => k == modCtxKey)
+
+/-- The environment for the body of a function item: the static
+    context of its module when the closure carries one. -/
+def withModCtx (cl : List (QN × Seq)) (e : Env) : Env :=
+  match cl with
+  | (k, [.map kvs]) :: _ =>
+    if k == modCtxKey then
+      let str (n : String) : Option String := match kvs.find? (fun (a, _) => a.str == n) with
+        | some (_, [.atom v]) => some v.str
+        | _ => none
+      let df : List (String × List (String × String)) := match kvs.find? (fun (a, _) => a.str == "df") with
+        | some (_, [.map ds]) => ds.filterMap (fun (a, v) => match v with
+            | [.map ps] => some (a.str, ps.filterMap (fun (k, v) => match v with
+                | [.atom x] => some (k.str, x.str) | _ => none))
+            | _ => none)
+        | _ => e.decimalFormats
+      { e with baseUri := (str "base").getD e.baseUri, defaultCollation := (str "coll").getD e.defaultCollation,
+               decimalFormats := df }
+    else e
+  | _ => e
+
 /-- Is any declaration of `q` there (for the error code)? -/
 def userAny (e : Env) (q : QN) : Bool :=
   e.vars.any (fun (v, _) => v.uri == "#xqf" && v.loc.startsWith (q.eqn ++ "#"))
@@ -131,7 +166,7 @@ def userDecl? (e : Env) (q0 : QN) (k : Nat) : Option (Item × Nat × List Item) 
     let withCl (d : Item) : Item := match d with
       | .fn (.inline ps' r' b' f' _) => .fn (.inline ps' r' b' f' sv)
       | x => x
-    some (.fn (.inline ps r b f (sv ++ metaEntries cl0)), lo, dflts.map withCl)
+    some (.fn (.inline ps r b f (ctxEntries cl0 ++ sv ++ metaEntries cl0)), lo, dflts.map withCl)
   | _ => none
 
 /-- The callbacks into the evaluator for a user function call. -/

@@ -1166,7 +1166,7 @@ def apply : Nat → Env → Item → List Seq → M Seq
           let mut vars := XQuery4.lateClosure cl env.vars
           for ((v, t), a) in ps.zip args do
             vars := (v, ← env.coerce t a ("$" ++ v.show)) :: vars
-          let env' := { env with vars, ctx := none, pos := 0, size := 0, untrusted := false }
+          let env' := XQuery4.withModCtx cl { env with vars, ctx := none, pos := 0, size := 0, untrusted := false }
           let r ← eval n env' body
           env.coerce ret r "function result"
     | .fn (.papp g fixed) => do
