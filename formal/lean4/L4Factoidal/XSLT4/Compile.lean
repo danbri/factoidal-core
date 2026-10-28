@@ -865,7 +865,7 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         pure (.copy (← optExpr c as "select") (← as.bool "copy-namespaces" true)
           (← as.bool "inherit-namespaces" true) useSets (← body))
     | "copy-of" =>
-        pure (.copyOf (← parseC c (← reqAttr as "select" l)) (← as.bool "copy-namespaces" true))
+        pure (.copyOf (← parseC c (← reqAttr as "select" l)) (← as.bool "copy-namespaces" true) (← as.bool "copy-accumulators" false))
     | "message" =>
         -- a fixed terminate value must be a boolean (XTSE0020)
         if let some v := as.get "terminate" then

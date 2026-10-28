@@ -212,6 +212,12 @@ structure Doc where
       `ID`, and those it declares `IDREF` or `IDREFS` (`fn:id`, `fn:idref`). -/
   idAttrs : List (String × String) := []
   idrefAttrs : List (String × String) := []
+  /-- For a copy made by XSLT `fn:copy-of` or `fn:snapshot`: the document
+      number of the original, the index of the original node (the copy's
+      node `i` is the original's node `idx + i`), and the original's nodes
+      when it is a tree built at run time. The copy keeps the
+      accumulator values of the original (XSLT 4.0 §18.2.3). -/
+  origin : Option (Nat × Nat × Option (Array NRec)) := none
 deriving Inhabited
 
 /-- A node reference: document number and node index. A document built

@@ -714,6 +714,23 @@ def nodeNonEmpty (env : Env) (nd : NodeRef) : Bool :=
   | .text | .comment | .pi | .attribute => r.value != ""
   | _ => true
 
+/-- A copy `cp` of the node `nd` that keeps the accumulator values of
+    `nd` (§18.2.3), when the copy's nodes correspond one to one with the
+    subtree of `nd`. -/
+def withOrigin (env : Env) (nd : NodeRef) (cp : Item) : Item :=
+  let r := env.nrec nd
+  match cp with
+  | .node cn => match cn.rt with
+    | some d =>
+      if r.kind != .attribute && r.kind != .namespace && r.last + 1 == nd.idx + d.nodes.size then
+        let o := match (env.doc nd).origin with
+          | some (d0, i0, ns0) => (d0, i0 + nd.idx, ns0)
+          | none => (nd.doc, nd.idx, nd.rt.map (·.nodes))
+        .node { cn with rt := some { d with origin := some o } }
+      else cp
+    | none => cp
+  | other => other
+
 def isNCName (x : String) : Bool :=
   match x.toList with
   | c :: cs => isNameStart c && cs.all (fun d => isNameCh d && d != ':')
@@ -1267,15 +1284,20 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
             | .pi => pure [.pi r.name.loc r.value]
             | .namespace => pure [.nsN r.name.loc r.value]
           | other => pure [.item other]
-    | .copyOf sel copyNs =>
+    | .copyOf sel copyNs copyAcc =>
         let s ← evalX cx sel
         let mut out : Array Out := #[]
         for it in s do
           match it with
           | .node nd =>
-            if !copyNs && (env.nrec nd).kind == .element then
+            -- a copy, with a new identity, when the result is a sequence
+            -- (a variable or a function result); in a tree under
+            -- construction the node is copied when it is attached
+            let k := (env.nrec nd).kind
+            if (!copyNs && k == .element) || (cx.tempOut && (k == .element || k == .document)) then
               let id ← freshId
-              out := out.push (.item (← liftX (copyAsTree env id nd false)))
+              let cp ← liftX (copyAsTree env id nd copyNs)
+              out := out.push (.item (if copyAcc then withOrigin env nd cp else cp))
             else out := out.push (.item it)
           | _ => out := out.push (.item it)
         pure out.toList

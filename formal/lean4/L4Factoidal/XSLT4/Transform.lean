@@ -460,7 +460,10 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
           match it with
           | .node nd =>
             let id := (2 : Nat) ^ 43 + (hash (toString (seedOf c) ++ ":" ++ toString j)).toNat % 1000000000000
-            out := out.push (← copyAsTree env id nd)
+            let cp ← copyAsTree env id nd
+            -- the copy keeps the accumulator values of the original (§18.2.3)
+            let cp := withOrigin env nd cp
+            out := out.push cp
           | other => out := out.push other
           j := j + 1
         pure out.toList
@@ -556,6 +559,10 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         let nd ← ctxNode c q.loc
         let r := env.nrec nd
         if r.kind == .attribute || r.kind == .namespace then err "XTTE3360" "accumulators are not defined on attribute and namespace nodes"
+        -- a copy made by fn:copy-of: the values of the original node
+        let nd := match (env.doc nd).origin with
+          | some (d0, i0, ns0) => { doc := d0, idx := i0 + nd.idx, rt := ns0.map (fun a => { nodes := a }) }
+          | none => nd
         let root := env.treeRoot nd
         let vals ← match nd.rt, accCache.lookup (acc.name.eqn, nd.doc) with
           | none, some th => th.get
