@@ -42,6 +42,19 @@ XPath4 hooks (small, in shared files):
 - `XPath4/Parser.lean`: `element(N, T?)`, `attribute(N, T)`,
   `schema-element(N)`, `schema-attribute(N)`.
 - `XPath4/Lib.lean`: `fn:nilled` reads `NRec.nilled`.
+- `XPath4/Core.lean` `SchemaHook`: also `targetNamespaces` (XQuery
+  `import schema`, XQST0059), `validate` (the `xsd-validation` option of
+  `fn:parse-xml` and `fn:doc`), `validateIn` (XQuery `validate`),
+  `validateWith` (`fn:xsd-validator`, with schema documents in the
+  options); `NRec.noTypedValue` (element-only content, FOTY0012).
+- `XPath4/Fn4.lean`: `fn:xsd-validator`; `system-properties` report
+  `schema-aware` and `accepts-typed-data` true.
+- `XPath4/Parser.lean`: one default element namespace (the empty-prefix
+  binding) in XPath and XQuery mode; `cast as xs:NMTOKENS` (and IDREFS,
+  ENTITIES).
+- `XQuery4/Module.lean`, `Grammar.lean`, `Runtime.lean`: `import schema`
+  binds its prefix (the schema is the host's, from the environment);
+  `validate (lax | strict | type T) { E }`.
 
 With no schema the hook knows only the built-in types, and every node is
 untyped, so XPath without a schema behaves as before.
@@ -69,6 +82,16 @@ untyped, so XPath without a schema behaves as before.
   whitespace-normalized literal.
 - `shacl_datatype_is_xsd`: SHACL `sh:datatype` (`SHACL.literalIllFormed`) and
   XSD11 agree for non-date/time, non-float built-ins.
+
+## Checking a change
+
+`lake build l4xsd11` builds the theorems (`Harness/Xsd11Run.lean` imports
+`XSD11.ShaclBridge`, which imports `XSD11.Theorems`); `lake build l4qt4`
+does not. Cost of not doing so, 2026-10-28: a change to `validateSimple`
+(QName enumerations) was pushed after only `lake build l4qt4`, and
+`validateSimple_ok` did not type-check on the branch until the next push.
+Before a push that touches `XSD11/`, build `l4xsd11` and run
+`#print axioms` on the theorems listed above.
 
 ## Measurements
 
