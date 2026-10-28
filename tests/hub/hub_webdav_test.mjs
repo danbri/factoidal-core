@@ -175,6 +175,10 @@ test('webdav: failed logins are limited (--login-limit, --login-window); --dange
   assert.match(right.headers['retry-after'], /^[0-9]+$/);
   assert.ok(Number(right.headers['retry-after']) <= 300);
   assert.equal((await req(s.origin, 'PROPFIND', '/', { depth: '0' })).status, 401);
+  // One process writes a storage directory (https://github.com/danbri/factoidal/issues/1135):
+  // stop the first server before the second opens the same mount.
+  s.child.kill('SIGTERM');
+  await new Promise((r) => (s.child.exitCode !== null ? r() : s.child.on('close', r)));
   const off = await start(['webdav-serve', 'dav', '--port', '0', '--users', 'users.txt', '--dangerously-disable-ratelimits'], dir);
   // Standard error and standard output are two pipes: wait for the warning.
   for (let i = 0; i < 50 && !off.out().includes('WARNING: --dangerously'); i++) await new Promise((r) => setTimeout(r, 100));
