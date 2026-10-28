@@ -57,6 +57,9 @@ structure Module where
   emptyGreatest : Bool := false
   /-- Named item types (`declare type`, `declare record`). -/
   types : List (QN × IType) := []
+  /-- Variables and functions declared `%private` (§5.15): not seen
+      by an importing module. -/
+  privates : List QN := []
   /-- Decimal formats (`declare decimal-format`), as `Env.decimalFormats`. -/
   decimalFormats : List (String × List (String × String)) := []
 deriving Inhabited
@@ -357,17 +360,19 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       if varNames.any (· == v) then qerr "XQST0049" ("variable $" ++ v.show ++ " declared twice")
       varNames := v :: varNames
       if let some (_, u) := m.libNs then
-        if v.uri != u then qerr "XQST0048" "a library module variable outside the module namespace"
+        if v.uri != u && !annots.contains "private" then qerr "XQST0048" "a library module variable outside the module namespace"
       let ty ← if ← eatKw "as" then withXq cfg ns (pSeqType 1000) else pure (.seq .item .star)
       if ← eatS ":=" then
         let e ← withXq cfg ns (pExprSingle 100000)
         expectS ";"
         m := { m with decls := m.decls ++ [.var v ty (some e) false] }
+        if annots.contains "private" then m := { m with privates := v :: m.privates }
       else
         expectKw "external"
         let d ← if ← eatS ":=" then pure (some (← withXq cfg ns (pExprSingle 100000))) else pure none
         expectS ";"
         m := { m with decls := m.decls ++ [.var v ty d true] }
+        if annots.contains "private" then m := { m with privates := v :: m.privates }
     | "function" =>
       let _ := annots
       let q ← match ← peekQName with
@@ -382,7 +387,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
         | none => synErr "expected a function name"
       if reservedFnNs.contains q.uri then qerr "XQST0045" ("function " ++ q.show ++ " in a reserved namespace")
       if let some (_, u) := m.libNs then
-        if q.uri != u then qerr "XQST0048" "a library module function outside the module namespace"
+        if q.uri != u && !annots.contains "private" then qerr "XQST0048" "a library module function outside the module namespace"
       expectS "("
       let mut ps : Array (QN × IType × Option Expr) := #[]
       if !(← eatS ")") then
@@ -404,6 +409,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
         qerr "XQST0034" ("function " ++ q.show ++ " declared twice")
       fnSigs := (q, minA, maxA) :: fnSigs
       m := { m with decls := m.decls ++ [.fn { name := q, params := ps.toList, ret, body }] }
+      if annots.contains "private" then m := { m with privates := q :: m.privates }
     | "type" =>
       let q ← match ← peekQName with
         | some (p, u, l, e) => set e; withXq cfg ns (resolve p u l ((ns.lookup "").getD ""))
@@ -550,8 +556,17 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
   for (q, lo, hi) in fns do
     if (fns.filter (fun (q2, lo2, hi2) => q2 == q && !(hi < lo2 || hi2 < lo))).length > 1 then
       err "XQST0034" ("function " ++ q.show ++ " declared twice")
-  let base : SCtx := { vars := env.vars.map (·.1) ++ globals, knownFn := known }
   for m in ms do
+    -- a module sees its own declarations and the public ones of the others
+    let vis (m2 : Module) (q : QN) : Bool := m2.libNs == m.libNs || !m2.privates.any (· == q)
+    let globalsM := ms.flatMap (fun m2 => m2.globals.filter (vis m2))
+    let fnsM := ms.flatMap (fun m2 => m2.fnArities.filter (fun (q, _, _) => vis m2 q))
+    let knownM (q : QN) (k : Nat) : Bool :=
+      (findSigAny q).isSome || (q.uri == nsFN && q.loc == "concat") ||
+      fnsM.any (fun (q2, lo, hi) => (q2 == q || (q.uri == nsFN && q.pfx == "" && q2 == { q with uri := "" }))
+        && lo ≤ k && k ≤ hi)
+    let _ := known
+    let base : SCtx := { vars := env.vars.map (·.1) ++ globalsM, knownFn := knownM }
     for d in m.decls do
       let r := match d with
         | .var _ _ (some e) _ => staticErr 100000 base e

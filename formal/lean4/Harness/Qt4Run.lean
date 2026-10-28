@@ -314,7 +314,12 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
       match res with
       | .error e => .fail ("error " ++ e.code ++ ": " ++ e.msg)
       | .ok s =>
+      -- `$result` is bound; a single result item is also the focus
+      -- (`<assert>/result/a = 1</assert>`)
       let envR := env.bind { uri := "", loc := "result" } s
+      let envR := match s with
+        | [_] => { envR with ctx := some s, pos := 1, size := 1 }
+        | _ => envR
       match tag with
       | "assert-true" => ok? (match s with | [.atom ⟨_, .bool true⟩] => true | _ => false) ("got " ++ (sh s 80))
       | "assert-false" => ok? (match s with | [.atom ⟨_, .bool false⟩] => true | _ => false) ("got " ++ (sh s 80))
