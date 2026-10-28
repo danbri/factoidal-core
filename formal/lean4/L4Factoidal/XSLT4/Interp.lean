@@ -629,6 +629,37 @@ def analyzeParts (s : String) (re : Re4) : List ASPart :=
   let input := s.toList.map Char.toNat
   partsFrom input re 0 (segments re.r input)
 
+/-- One number of `xsl:number` in the format token `tok` (§12.4): the
+    F&O 4.0 function `fn:format-integer`, with `;o` for an ordinal. -/
+def formatOne (env : Env) (x : Int) (tok : String) (ordS lng : Option String) : M String := do
+  let pic := match ordS with
+    | some o => if o == "" || o == "no" then tok else tok ++ ";o"
+    | none => tok
+  if x < 0 then pure "NaN" else do
+    let r ← callFn 100000 env { uri := nsFN, loc := "format-integer" }
+      [sInt x, sStr pic, match lng with | some l => sStr l | none => []]
+    pure (match r with | [.atom a] => a.str | _ => toString x)
+
+/-- The text of `xsl:number` (§12.4): the format string split into a
+    prefix, format tokens with their separators, and a suffix; each
+    number formatted by `formatOne`, then grouped. -/
+def numberText (env : Env) (nums : List Int) (fs : String) (gs gz ordS lng : Option String) : M String := do
+  let (pre, toks, suf) := numberFormatParts fs
+  let mut out := pre
+  let mut i := 0
+  for x in nums do
+    let (sep, tok) := toks.getD i (toks.getLast?.getD (".", "1"))
+    let sep := if i == 0 then "" else (if i < toks.length then (if sep == "" then "." else sep) else (match toks.reverse with
+      | (s, _) :: _ => if s == "" then "." else s
+      | [] => "."))
+    let fmtd ← formatOne env x tok ordS lng
+    let fmtd := match gs, gz with
+      | some g, some z => groupDigits fmtd g ((z.toNat?).getD 0)
+      | _, _ => fmtd
+    out := out ++ sep ++ fmtd
+    i := i + 1
+  pure (out ++ suf)
+
 /-! ## Helpers of the instructions -/
 
 /-- Not "deemed empty" (§8.5.1). -/
@@ -1255,31 +1286,11 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           | none => pure [1]
         let nums := nums.zipIdx.map (fun (x, i) => if x < 0 then x else x + (start.getD i (start.getLast?.getD 1)) - 1)
         let fs ← avtStr cx fmt
-        let (pre, toks, suf) := numberFormatParts fs
         let gs ← optAvtStr cx gsep
         let gz ← optAvtStr cx gsize
         let ordS ← optAvtStr cx ord
         let lng ← optAvtStr cx lang
-        let mut out := pre
-        let mut i := 0
-        for x in nums do
-          let (sep, tok) := toks.getD i (toks.getLast?.getD (".", "1"))
-          let sep := if i == 0 then "" else (if i < toks.length then (if sep == "" then "." else sep) else (match toks.reverse with
-            | (s, _) :: _ => if s == "" then "." else s
-            | [] => "."))
-          let pic := match ordS with
-            | some o => if o == "" || o == "no" then tok else tok ++ ";o"
-            | none => tok
-          let fmtd ← if x < 0 then pure "NaN" else do
-            let r ← liftX (callFn 100000 env { uri := nsFN, loc := "format-integer" }
-              [sInt x, sStr pic, match lng with | some l => sStr l | none => []])
-            pure (match r with | [.atom a] => a.str | _ => toString x)
-          let fmtd := match gs, gz with
-            | some g, some z => groupDigits fmtd g ((z.toNat?).getD 0)
-            | _, _ => fmtd
-          out := out ++ sep ++ fmtd
-          i := i + 1
-        pure [.text (out ++ suf)]
+        pure [.text (← liftX (numberText env nums fs gs gz ordS lng))]
     | .iterate sel params onComp body =>
         let s ← evalX cx sel
         -- initial parameter values

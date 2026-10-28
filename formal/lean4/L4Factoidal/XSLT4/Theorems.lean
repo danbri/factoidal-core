@@ -299,4 +299,29 @@ theorem analyzeParts_groups (s : String) (re : Re4) :
 #print axioms analyzeParts_substrings
 #print axioms analyzeParts_groups
 
+/-! ## `xsl:number` formats with `fn:format-integer`
+
+With a format of one token and no prefix or suffix, no grouping and no
+ordinal, the text of `xsl:number` for one non-negative number is the
+result of F&O 4.0 `fn:format-integer` with that token as the picture
+(§12.4; F&O 4.0 §4.6.1). -/
+
+theorem numberText_single (env : Env) (x : Int) (fs tok : String) (lng : Option String)
+    (hf : numberFormatParts fs = ("", [("", tok)], "")) :
+    numberText env [x] fs none none none lng = formatOne env x tok none lng := by
+  simp only [numberText, hf]
+  cases h : formatOne env x tok none lng <;> simp [h, bind, Except.bind, pure, Except.pure, forIn, ForIn.forIn,
+    List.forIn', List.getD, String.append_empty, String.empty_append] <;> rfl
+
+theorem formatOne_eq (env : Env) (x : Int) (tok : String) (lng : Option String) (hx : ¬ x < 0) :
+    formatOne env x tok none lng = (fun r => match r with | [.atom a] => a.str | _ => toString x) <$>
+      callFn 100000 env { uri := nsFN, loc := "format-integer" }
+        [sInt x, sStr tok, match lng with | some l => sStr l | none => []] := by
+  simp only [formatOne, hx, if_false]
+  cases callFn 100000 env { uri := nsFN, loc := "format-integer" } [sInt x, sStr tok,
+    match lng with | some l => sStr l | none => []] <;> rfl
+
+#print axioms numberText_single
+#print axioms formatOne_eq
+
 end L4Factoidal.XSLT4
