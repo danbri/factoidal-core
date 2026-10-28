@@ -85,7 +85,7 @@ cd "$SUITE_DIR"
 MOCHA_RC=0
 timeout 300 npx mocha tests/05-rdfc-di-create.js tests/15-rdfc-di-verify.js \
   tests/70-data-model.js tests/90-algorithms-rdfc.js tests/90-algorithms-jcs.js \
-  --timeout 15000 --reporter json > "$MOCHA_JSON" 2>/dev/null || MOCHA_RC=$?
+  --timeout 15000 --reporter json --reporter-option "output=$MOCHA_JSON" >/dev/null 2>&1 || MOCHA_RC=$?
 
 python3 - "$MOCHA_JSON" "$RESULT_JSON" "$MOCHA_RC" << 'PYEOF'
 import json, sys, datetime

@@ -746,6 +746,30 @@ def run (root : System.FilePath) (loader : Loader) : IO Tally := do
               check t "eddsa-rdfc-2022: the DataIntegrity verifier agrees"
                 (L4Factoidal.VC.DataIntegrity.verifyDocument loader L4Factoidal.Crypto.Ed25519.verify out == .ok ())
   | _ => check t "spec Ed25519 secret key decodes" false specSkMultikey
+  -- eddsa-jcs-2022 (VC DI EdDSA 1.0 §3.4): the published proof through HACL* Ed25519
+  let edDir := root / "third_party" / "testing" / "vc-di-eddsa-vectors"
+  match ← readOpt (edDir / "eddsa-jcs-2022" / "signedJCS.json") with
+  | none => check t "eddsa-jcs-2022: signed credential" false "file missing"
+  | some txt =>
+      let doc := (parseJson? txt).getD .null
+      let r := L4Factoidal.VC.Cryptosuite.verifyDocument loader diPrimitives doc
+      check t "eddsa-jcs-2022: published proof verifies (HACL* Ed25519)" (r == .ok ())
+        (match r with | .ok () => "" | .error e => e.describe)
+      let r2 := L4Factoidal.VC.Cryptosuite.verifyDocument loader diPrimitives
+        (setField "name" (.string "Alumni Credential!") doc)
+      check t "eddsa-jcs-2022: changed credential is rejected" (r2 == .error (.di .signatureRejected))
+  match multikeyToEd25519SecretKey? specSkMultikey with
+  | none => pure ()
+  | some sk =>
+      match diSigner .ed25519 (toByteArray sk) ByteArray.empty with
+      | none => pure ()
+      | some sg =>
+          match secureDocument loader sg eddsaJcs2022 "assertionMethod" "2023-02-24T23:36:38Z" unsigned with
+          | .error e => check t "eddsa-jcs-2022: secure" false e
+          | .ok out =>
+              let r := L4Factoidal.VC.Cryptosuite.verifyDocument loader diPrimitives out
+              check t "eddsa-jcs-2022: secure then verify (Ed25519)" (r == .ok ())
+                (match r with | .ok () => "" | .error e => e.describe)
   t.get
 
 end Ecdsa

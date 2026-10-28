@@ -293,6 +293,12 @@ async function checkStructural(doc) {
   }
   const structural = await engine.vcCheckCredential(V2_CONTEXT_TEXT, JSON.stringify(doc));
   if (!structural.valid) return structural;
+  // VC Data Integrity 1.0 §2.4 (DATA_LOSS_DETECTION_ERROR) for VCDM 2.0
+  // documents too: the 2.0 base context has no @vocab, so an undefined type
+  // or credentialSubject term is dropped by JSON-LD processing. The judgment
+  // is the engine's (VC.Doc.checkNoDataLoss), as for the VC 1.1 branch above.
+  const lossless = await engine.vcCheckNoDataLoss(JSON.stringify(inlineContexts(doc)));
+  if (!lossless.valid) return lossless;
   // relatedResource digest verification (VCDM 2.0 §5.3) — a separate
   // F*-verified gate because vc_check_document's signature carries no
   // digest registry (see the registry builder's comment above).
@@ -749,6 +755,7 @@ async function handleVerifyPresentation(body) {
 
 const DI_SUITES = new Map([
   ['eddsa-rdfc-2022', 'Ed25519'],
+  ['eddsa-jcs-2022', 'Ed25519'],
   ['ecdsa-rdfc-2019', 'P-256'],
   ['ecdsa-jcs-2019', 'P-256'],
 ]);

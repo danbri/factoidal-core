@@ -196,4 +196,36 @@ def lossyDoc : Json := j ("{\"@context\": {\"name\": \"https://schema.org/name\"
 #guard (secureDocument Loader.none (echoSigner .p256 vmP256) ecdsaRdfc2019 "assertionMethod" ""
     (unsecuredOf lossyDoc)).toOption.isNone
 
+/-! ## eddsa-jcs-2022 (VC DI EdDSA 1.0 §3.4)
+
+Vectors: w3c/vc-di-eddsa `TestVectors/eddsa-jcs-2022` (commit 13e7070534d1,
+2026-09-01), vendored in `third_party/testing/vc-di-eddsa-vectors/`. -/
+
+def edJcsCanonDoc : String := "{\"@context\":[\"https://www.w3.org/ns/credentials/v2\",\"https://www.w3.org/ns/credentials/examples/v2\"],\"credentialSubject\":{\"alumniOf\":\"The School of Examples\",\"id\":\"did:example:abcdefgh\"},\"description\":\"A minimum viable example of an Alumni Credential.\",\"id\":\"urn:uuid:58172aac-d8ba-11ed-83dd-0b3aef56cc33\",\"issuer\":\"https://vc.example/issuers/5678\",\"name\":\"Alumni Credential\",\"type\":[\"VerifiableCredential\",\"AlumniCredential\"],\"validFrom\":\"2023-01-01T00:00:00Z\"}"
+def edJcsProofCanon : String := "{\"@context\":[\"https://www.w3.org/ns/credentials/v2\",\"https://www.w3.org/ns/credentials/examples/v2\"],\"created\":\"2023-02-24T23:36:38Z\",\"cryptosuite\":\"eddsa-jcs-2022\",\"proofPurpose\":\"assertionMethod\",\"type\":\"DataIntegrityProof\",\"verificationMethod\":\"did:key:z6MkrJVnaZkeFzdQyMZu1cgjg7k1pZZ6pvBQ7XJPt4swbTQ2#z6MkrJVnaZkeFzdQyMZu1cgjg7k1pZZ6pvBQ7XJPt4swbTQ2\"}"
+def edJcsProofConfig : String := "{\n  \"type\": \"DataIntegrityProof\",\n  \"cryptosuite\": \"eddsa-jcs-2022\",\n  \"created\": \"2023-02-24T23:36:38Z\",\n  \"verificationMethod\": \"did:key:z6MkrJVnaZkeFzdQyMZu1cgjg7k1pZZ6pvBQ7XJPt4swbTQ2#z6MkrJVnaZkeFzdQyMZu1cgjg7k1pZZ6pvBQ7XJPt4swbTQ2\",\n  \"proofPurpose\": \"assertionMethod\",\n  \"@context\": [\n    \"https://www.w3.org/ns/credentials/v2\",\n    \"https://www.w3.org/ns/credentials/examples/v2\"\n  ]\n}"
+def edJcsCombined : String := "66ab154f5c2890a140cb8388a22a160454f80575f6eae09e5a097cabe539a1db59b7cb6251b8991add1ce0bc83107e3db9dbbab5bd2c28f687db1a03abc92f19"
+def edJcsSigHex : String := "407cd12654b33d718ecbb99179a1506daaa849450bf3fc523cce3e1c96f8b80351da3f253d725c6f00b07c9e5448d50b3ef78012b9ab54255116d069c6dd2808"
+def edJcsSigned : String := "{\n  \"@context\": [\n    \"https://www.w3.org/ns/credentials/v2\",\n    \"https://www.w3.org/ns/credentials/examples/v2\"\n  ],\n  \"id\": \"urn:uuid:58172aac-d8ba-11ed-83dd-0b3aef56cc33\",\n  \"type\": [\n    \"VerifiableCredential\",\n    \"AlumniCredential\"\n  ],\n  \"name\": \"Alumni Credential\",\n  \"description\": \"A minimum viable example of an Alumni Credential.\",\n  \"issuer\": \"https://vc.example/issuers/5678\",\n  \"validFrom\": \"2023-01-01T00:00:00Z\",\n  \"credentialSubject\": {\n    \"id\": \"did:example:abcdefgh\",\n    \"alumniOf\": \"The School of Examples\"\n  },\n  \"proof\": {\n    \"type\": \"DataIntegrityProof\",\n    \"cryptosuite\": \"eddsa-jcs-2022\",\n    \"created\": \"2023-02-24T23:36:38Z\",\n    \"verificationMethod\": \"did:key:z6MkrJVnaZkeFzdQyMZu1cgjg7k1pZZ6pvBQ7XJPt4swbTQ2#z6MkrJVnaZkeFzdQyMZu1cgjg7k1pZZ6pvBQ7XJPt4swbTQ2\",\n    \"proofPurpose\": \"assertionMethod\",\n    \"@context\": [\n      \"https://www.w3.org/ns/credentials/v2\",\n      \"https://www.w3.org/ns/credentials/examples/v2\"\n    ],\n    \"proofValue\": \"z2HnFSSPPBzR36zdDgK8PbEHeXbR56YF24jwMpt3R1eHXQzJDMWS93FCzpvJpwTWd3GAVFuUfjoJdcnTMuVor51aX\"\n  }\n}"
+def edUnsigned : String := "{\n    \"@context\": [\n        \"https://www.w3.org/ns/credentials/v2\",\n        \"https://www.w3.org/ns/credentials/examples/v2\"\n    ],\n    \"id\": \"urn:uuid:58172aac-d8ba-11ed-83dd-0b3aef56cc33\",\n    \"type\": [\"VerifiableCredential\", \"AlumniCredential\"],\n    \"name\": \"Alumni Credential\",\n    \"description\": \"A minimum viable example of an Alumni Credential.\",\n    \"issuer\": \"https://vc.example/issuers/5678\",\n    \"validFrom\": \"2023-01-01T00:00:00Z\",\n    \"credentialSubject\": {\n        \"id\": \"did:example:abcdefgh\",\n        \"alumniOf\": \"The School of Examples\"\n    }\n}"
+def edPublicMultibase : String := "z6MkrJVnaZkeFzdQyMZu1cgjg7k1pZZ6pvBQ7XJPt4swbTQ2"
+
+
+def vmEd : String := s!"did:key:{edPublicMultibase}#{edPublicMultibase}"
+
+#guard transform Loader.none eddsaJcs2022.transform Curve.ed25519.hashAlg (j edUnsigned) == .ok edJcsCanonDoc
+#guard transform Loader.none eddsaJcs2022.transform Curve.ed25519.hashAlg (j edJcsProofConfig) == .ok edJcsProofCanon
+#guard hashDataHex Curve.ed25519.hashAlg edJcsCanonDoc edJcsProofCanon == edJcsCombined
+#guard Suite.ofName? "eddsa-jcs-2022" == some eddsaJcs2022
+#guard eddsaJcs2022.accepts .ed25519 && !eddsaJcs2022.accepts .p256
+
+def stubEd : Primitives := stubFor .ed25519 vmEd edJcsCombined edJcsSigHex
+
+#guard verifyDocument Loader.none stubEd (j edJcsSigned) == .ok ()
+#guard verifyDocument Loader.none stubEd (setField "name" (.string "x") (j edJcsSigned))
+  == .error (.di .signatureRejected)
+-- eddsa-jcs-2022 and ecdsa-jcs-2019 with P-256 hash the same (vc-di-ecdsa and
+-- vc-di-eddsa publish the same document hash for the same unsigned credential)
+#guard jcsCanonDocP256 == edJcsCanonDoc
+
 end L4Factoidal.VC.CryptosuiteTests

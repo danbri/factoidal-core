@@ -1,6 +1,7 @@
 /-
 L4Factoidal.VC.Cryptosuite — the Data Integrity cryptosuites as one table
-over shared steps: `eddsa-rdfc-2022`, `ecdsa-rdfc-2019` and `ecdsa-jcs-2019`.
+over shared steps: `eddsa-rdfc-2022`, `eddsa-jcs-2022`, `ecdsa-rdfc-2019` and
+`ecdsa-jcs-2019`.
 
 Specifications, by version (a later version is a new table row or a new
 theorem, never a silent change of these):
@@ -15,7 +16,7 @@ theorem, never a silent change of these):
     §7), proof values base58-btc Multibase, and "For P-384 keys, SHA-2 with
     384-bits of output MUST be used" as the RDFC-1.0 hash too.
   * VC DI EdDSA 1.0 — Data Integrity EdDSA Cryptosuites v1.0, W3C
-    Recommendation 2025-05-15, §3.3 `eddsa-rdfc-2022`.
+    Recommendation 2025-05-15, §3.3 `eddsa-rdfc-2022`, §3.4 `eddsa-jcs-2022`.
   * RDFC-1.0 — RDF Dataset Canonicalization, W3C Recommendation 2024-05-21
     (`RDF/Canonical.lean`).
   * RFC 8785 — JSON Canonicalization Scheme (`JSONLD.jcsDocument`).
@@ -23,7 +24,7 @@ theorem, never a silent change of these):
     0x8024, P-384 0x8124, Ed25519 0xed01) and §3.3 Retrieve Verification
     Method (`CID/Retrieve.lean`).
 
-## One definition, three cryptosuites
+## One definition, four cryptosuites
 
 Every suite runs the same four steps, and each step is one definition here
 or in `VC/DataIntegrity.lean`:
@@ -110,12 +111,14 @@ structure Suite where
 
 /-- VC DI EdDSA 1.0 §3.3. -/
 def eddsaRdfc2022 : Suite := ⟨"eddsa-rdfc-2022", .eddsa, .rdfc10⟩
+/-- VC DI EdDSA 1.0 §3.4, `eddsa-jcs-2022`. -/
+def eddsaJcs2022 : Suite := ⟨"eddsa-jcs-2022", .eddsa, .jcs⟩
 /-- VC DI ECDSA 1.0, `ecdsa-rdfc-2019`. -/
 def ecdsaRdfc2019 : Suite := ⟨"ecdsa-rdfc-2019", .ecdsa, .rdfc10⟩
 /-- VC DI ECDSA 1.0, `ecdsa-jcs-2019`. -/
 def ecdsaJcs2019 : Suite := ⟨"ecdsa-jcs-2019", .ecdsa, .jcs⟩
 
-def suites : List Suite := [eddsaRdfc2022, ecdsaRdfc2019, ecdsaJcs2019]
+def suites : List Suite := [eddsaRdfc2022, eddsaJcs2022, ecdsaRdfc2019, ecdsaJcs2019]
 
 def Suite.ofName? (n : String) : Option Suite := suites.find? (·.name == n)
 
