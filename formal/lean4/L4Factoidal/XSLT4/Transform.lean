@@ -402,6 +402,10 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         | _, _ => err "XTDE3480" "there is no current merge group"
     | "current-merge-group", 1 => some fun c a => do
         let nm := strArg (a.getD 0 [])
+        -- the name of a merge source of this xsl:merge (XTDE3490)
+        if let some ns := lookupV c.vars vMergeNames then
+          if !ns.any (fun i => match i with | .atom s => s.str == nm | _ => false) then
+            err "XTDE3490" ("there is no merge source named " ++ nm)
         match lookupV c.vars vMergeGroup with
         | some rows => pure (rows.filterMap (fun r => match r with
             | .arr [[.atom s], [it]] => if s.str == nm then some it else none

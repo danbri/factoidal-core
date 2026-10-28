@@ -34,6 +34,8 @@ def vRegex : QN := xv "regex"
 def vSeed : QN := xv "seed"
 def vMergeGroup : QN := xv "merge-group"
 def vMergeKey : QN := xv "merge-key"
+/-- The names of the merge sources of the current `xsl:merge`. -/
+def vMergeNames : QN := xv "merge-names"
 def vOutUri : QN := xv "output-uri"
 /-- The current mode, for `fn:apply-templates` with `#current`. -/
 def vMode : QN := xv "mode"
@@ -1792,6 +1794,19 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
     | .merge srcs action =>
         let mut rows : Array (List (List Atomic) × String × Item) := #[]
         let mut specs : List SortSpec := []
+        let tz := env.tz
+        -- corresponding merge keys agree in their attributes (XTDE2210)
+        let mut first : Option (List SortSpec) := none
+        for src in srcs do
+          match src with
+          | .mk _ _ _ _ _ keys =>
+            let ks ← sortSpecs cx keys
+            match first with
+            | none => first := some ks
+            | some f =>
+              if f.length != ks.length || (f.zip ks).any (fun (x, y) =>
+                  x.desc != y.desc || x.dataType != y.dataType || x.caseOrder != y.caseOrder || x.collation != y.collation) then
+                xerr "XTDE2210" "corresponding merge keys of two merge sources differ in their attributes"
         for src in srcs do
           match src with
           | .mk name fei fes sel sortBefore keys =>
@@ -1813,11 +1828,26 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               let items ← if sortBefore then sortSeq n S acx items keys else pure items
               let sz := items.length
               let mut k := 1
+              let mut prev : Option (List (List Atomic)) := none
               for it in items do
                 let kv ← sortKeysOf n S (acx.focus it k sz) keys ks
+                -- the keys of a source are comparable with those of the
+                -- other sources (XTTE2230) and in order (XTDE2220)
+                if let some (k0, _, _) := rows[0]? then
+                  for (x, y) in k0.zip kv do
+                    if let (some a, some b) := (x.head?, y.head?) then
+                      if !sortComparable tz a b then
+                        xerr "XTTE2230" ("merge key values " ++ a.str ++ " and " ++ b.str ++ " are not comparable")
+                if let some p := prev then
+                  for (x, y) in p.zip kv do
+                    if let (some a, some b) := (x.head?, y.head?) then
+                      if !sortComparable tz a b then
+                        xerr "XTTE2230" ("merge key values " ++ a.str ++ " and " ++ b.str ++ " are not comparable")
+                  if cmpKeys ks tz p kv == .gt then
+                    xerr "XTDE2220" "an input of xsl:merge is not in merge key order"
+                prev := some kv
                 rows := rows.push (kv, name, it)
                 k := k + 1
-        let tz := env.tz
         let sorted := rows.toList.mergeSort (fun a b => cmpKeys specs tz a.1 b.1 != .gt)
         -- group rows with equal keys
         let mut groups : Array (List (List Atomic) × Array (String × Item)) := #[]
@@ -1835,7 +1865,8 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
           let items := g.toList.map (·.2)
           let named : Seq := g.toList.map (fun (nm, it) => .arr [[.atom (Atomic.ofStr nm)], [it]])
           let keyV : Seq := kv.flatten.map Item.atom
-          let gcx := ((cx.focus (items.headD default) gi gsz).bind vMergeGroup named).bind vMergeKey keyV
+          let names : Seq := srcs.map (fun s => match s with | .mk nm .. => .atom (Atomic.ofStr nm))
+          let gcx := (((cx.focus (items.headD default) gi gsz).bind vMergeGroup named).bind vMergeKey keyV).bind vMergeNames names
           let gcx := gcx.bind vGroup items
           for o in ← run n S { gcx with rule := none } action do out := out.push o
           gi := gi + 1

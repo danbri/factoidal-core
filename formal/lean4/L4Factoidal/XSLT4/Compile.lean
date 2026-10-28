@@ -1187,6 +1187,13 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
             if fi.isSome && (fs.isSome || (kas.get "use-accumulators").isSome || (kas.get "streamable").isSome) then
               cerr "XTSE3195" "xsl:merge-source with for-each-item cannot have for-each-source, use-accumulators or streamable"
             let sel ← parseC ck (← reqAttr kas "select" "merge-source")
+            -- the name of a merge source is an NCName (XTSE0020)
+            if let some nm := kas.get "name" then
+              let nm := nm.trimAscii.toString
+              let ok := match nm.toList with
+                | ch :: cs => isNameStart ch && ch != ':' && cs.all (fun d => isNameCh d && d != ':')
+                | [] => false
+              if !ok then cerr "XTSE0020" ("invalid merge source name '" ++ nm ++ "'")
             let keys ← compileSorts f ck m (m.elemKids k)
             srcs := srcs ++ [.mk ((kas.get "name").getD "") (← optExpr ck kas "for-each-item")
               (← optExpr ck kas "for-each-source") sel (← kas.bool "sort-before-merge" false) keys]
