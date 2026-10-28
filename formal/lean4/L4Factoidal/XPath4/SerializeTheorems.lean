@@ -4,6 +4,13 @@ L4Factoidal.XPath4.SerializeTheorems — what binds `XPath4.Serialize`
 
 Proved (no `sorry`, no new axioms):
 
+* `hash_md5_shared`, `hash_sha1_shared`, `hash_sha256_shared`,
+  `hash_blake3_shared`, `hash_crc32_shared` — `fn:hash` is the project's
+  digest for each algorithm.
+* `normalize_low` — `fn:normalize-unicode` returns text below U+00A0
+  unchanged in all four forms.
+* `sliceList_pos` — `fn:slice` with positive arguments is the filter that
+  F&O 4.0 states.
 * `escTextChar_eq_xml` — for a text character that needs no character
   reference, the XML output method escapes it as `XML.escapeText`
   (`L4Factoidal.XML.Theorems`, the serializer of the XML tree) does, when
@@ -26,6 +33,8 @@ table in preorder: https://github.com/danbri/factoidal/issues/1143).
 import L4Factoidal.XPath4.Serialize
 import L4Factoidal.XML.Theorems
 import L4Factoidal.JSON.Serialize
+import L4Factoidal.XPath4.Fn4
+import L4Factoidal.XPath4.DeepEqual
 
 namespace L4Factoidal.XPath4
 
@@ -152,10 +161,59 @@ theorem jsonEscChar_eq_json (p : SerParams) (hc : p.canonical = false) (hm : p.c
   · subst h3; simp [hs]
   · simp [h3]
 
+/-! ## `fn:hash` is the project's digests
+
+`fn:hash` with each algorithm of F&O 4.0 §5.3.18 is the digest of
+`L4Factoidal.Crypto` (or `Codec.crc32`) that other parts of the project
+use, so the FIPS 180-4 and RFC 1321 vectors and the SHA-2 theorems of
+`Crypto.SHA2Theorems` hold for it. -/
+
+theorem hash_md5_shared (b : ByteArray) : hashBytes "MD5" b = some (Crypto.md5 b) := rfl
+theorem hash_sha1_shared (b : ByteArray) : hashBytes "SHA-1" b = some (Crypto.sha1 b) := rfl
+theorem hash_sha256_shared (b : ByteArray) : hashBytes "SHA-256" b = some (Crypto.sha256 b) := rfl
+theorem hash_blake3_shared (b : ByteArray) : hashBytes "BLAKE3" b = some (Crypto.Blake3.hash b) := rfl
+theorem hash_crc32_shared (b : ByteArray) : hashBytes "CRC-32" b = some (be32 (Codec.crc32 b)) := rfl
+
+/-! ## `fn:normalize-unicode` -/
+
+/-- Text below U+00A0 is in every normalization form (no character there
+    has a decomposition or a non-zero combining class), so it is returned
+    unchanged. -/
+theorem normalize_low (f s : String) (hf : f ∈ ["NFC", "NFD", "NFKC", "NFKD"])
+    (hs : s.toList.all (fun c => c.toNat < 0xA0) = true) : Unicode.normalize f s = some s := by
+  simp only [Unicode.normalize]
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hf
+  simp [hs]
+  rcases hf with h | h | h | h <;> simp [h]
+
+/-! ## `fn:slice` -/
+
+/-- With a positive step and positive bounds, `fn:slice` keeps the items
+    at the positions `start, start + step, ...` up to `end`: the filter of
+    F&O 4.0 §14.1.x, `$input[position() ge $S and position() le $E and
+    (position() - $S) mod $STEP eq 0]`. -/
+theorem sliceList_pos {α} (xs : List α) (s e st : Int) (fuel : Nat)
+    (hs : 0 < s) (he : 0 < e) (hst : 0 < st) :
+    sliceList (fuel + 1) xs s e st =
+      (xs.zipIdx 1).filterMap (fun (x, p) =>
+        let p : Int := p
+        if p ≥ s && p ≤ e && (p - s) % st == 0 then some x else none) := by
+  have h1 : (s == 0) = false := by simp; omega
+  have h2 : (e == 0) = false := by simp; omega
+  have h3 : ¬ s < 0 := by omega
+  have h4 : ¬ e < 0 := by omega
+  have h5 : (st == 0) = false := by simp; omega
+  have h6 : ¬ st < 0 := by omega
+  simp [sliceList, h1, h2, h3, h4, h5, h6]
+
 /-! ## Checks -/
 
 #guard (List.range 32).all (fun n =>
   ({ canonical := true } : SerParams).jsonEscChar (Char.ofNat n) == JSON.escapeChar (Char.ofNat n))
 #guard ({} : SerParams).escText "a<b & c>d" == XML.escapeText "a<b & c>d"
+#guard civilFromDays 0 == (1970, 1, 1)
+#guard civilFromDays 19782 == (2024, 2, 29)
+#guard civilFromDays (-1) == (1969, 12, 31)
+#guard civilFromDays (-719528) == (0, 1, 1)
 
 end L4Factoidal.XPath4
