@@ -77,6 +77,9 @@ def defective : List (String × String) :=
   -- arguments are XPTY0004, not XPST0017
   ++ [ ("fn-collection-1", "https://github.com/danbri/factoidal/issues/1150"),
        ("fn-uri-collection-1", "https://github.com/danbri/factoidal/issues/1150") ]
+  -- F&O 4.0: fn:duration-to-seconds takes xs:dayTimeDuration?, so an
+  -- xs:yearMonthDuration argument is XPTY0004
+  ++ [ ("duration-to-seconds-016", "https://github.com/danbri/factoidal/issues/1158") ]
 
 end Harness.Qt4Defective
 
