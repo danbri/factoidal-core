@@ -40,6 +40,16 @@ abbrev LibFn := Hooks → Env → List Seq → M Seq
 
 /-! ## Argument access -/
 
+/-- The target type of the constructor function `xs:loc` (XPath 4.0
+    §3.1.6): `xs:numeric` is the union of xs:double, xs:float and
+    xs:decimal, and `xs:error` is the union type with no member types
+    (XSD 1.1 Part 2 §3.16.7.3). -/
+def xsCtorType? (loc : String) : Option IType :=
+  if loc == "NOTATION" || loc == "anyAtomicType" || loc == "anySimpleType" then none
+  else if loc == "numeric" then some (.choice [.atomic (.b .double), .atomic (.b .float), .atomic (.b .decimal)])
+  else if loc == "error" then some (.choice [])
+  else (atypeOfName? loc).map .atomic
+
 def argN (a : List Seq) (i : Nat) : Seq := a.getD i []
 
 def optAtom (s : Seq) : Option Atomic :=
@@ -1268,13 +1278,19 @@ def fnTable2 : List (String × LibFn) := [
     match optAtom (argN a 0), optAtom (argN a 1) with
     | some x, some y => pure (sBool (atomicEqual x y))
     | _, _ => err "XPTY0004" "fn:atomic-equal"),
-  ent "function-lookup" (fun _ _ a => do
+  ent "function-lookup" (fun _ e a => do
     match optAtom (argN a 0) with
     | some ⟨_, .qn q⟩ =>
         let k := intOf (argN a 1)
         if k < 0 then pure [] else
         if q.uri == nsXS then
-          pure (if k == 1 && ((atypeOfName? q.loc).isSome || q.loc == "numeric") && q.loc != "anyAtomicType" && q.loc != "NOTATION" then [.fn (.builtin q 1)] else [])
+          if (xsCtorType? q.loc).isNone then pure []
+          else if k == 1 then pure [.fn (.builtin q 1)]
+          else if k == 0 then
+            match e.ctx with
+            | some c => pure [.fn (.papp (.fn (.builtin q 1)) [some c])]
+            | none => pure [.fn (.builtin q 0)]
+          else pure []
         else if q.uri == nsFN && q.loc == "concat" then pure (if k ≥ 2 then [.fn (.builtin q k.toNat)] else [])
         else match findSig q k.toNat with
           | some _ => pure [.fn (.builtin q k.toNat)]

@@ -212,6 +212,8 @@ def castToF (e : Env) : Nat → Seq → IType → Bool → M Seq
           err "XPTY0004" "cannot cast to xs:QName"
         else pure (single (← castAtomic a aty e.nsResolve))
     | .choice ts =>
+        -- a value of a member type is kept (XPath 4.0 §4.19.2.3)
+        if ts.any (fun t => e.itemMatches (.atom a) t) then return single a
         let mut res : Option Atomic := none
         for t in ts do
           match t with
@@ -449,14 +451,18 @@ def eval : Nat → Env → Expr → M Seq
         if q.loc == "NOTATION" || q.loc == "anyAtomicType" || q.loc == "anySimpleType" then
           err "XPST0017" ("no constructor function xs:" ++ q.loc)
         else
+        -- the parameter of a constructor function is `$value` (F&O 4.0 §21.1)
+        let args ← match args, kw with
+          | _, [] => pure args
+          | [], [("value", v)] => pure [v]
+          | _, _ => err "XPST0017" ("constructor function xs:" ++ q.loc ++ " has one parameter, $value")
         match (if args.isEmpty then [some Expr.ctx] else args) with
         | [some x] =>
             let s ← eval n env x
             if s.length > 1 then err "XPTY0004" "constructor function argument has more than one item"
-            match atypeOfName? q.loc with
-            | some t => castTo env s (.atomic t) true
-            | none => if q.loc == "numeric" then castTo env s (.choice [.atomic (.b .double)]) true
-                      else err "XPST0017" ("unknown constructor function xs:" ++ q.loc)
+            match xsCtorType? q.loc with
+            | some t => castTo env s t true
+            | none => err "XPST0017" ("unknown constructor function xs:" ++ q.loc)
         | [none] => pure [.fn (.papp (.fn (.builtin q 1)) [none])]
         | _ => err "XPST0017" ("constructor function xs:" ++ q.loc ++ " takes one argument")
       else
@@ -538,7 +544,12 @@ def eval : Nat → Env → Expr → M Seq
           pure out
   | .fref q k => do
       if q.uri == nsXS then
-        if k == 1 && ((atypeOfName? q.loc).isSome || q.loc == "numeric") && q.loc != "NOTATION" && q.loc != "anyAtomicType" then pure [.fn (.builtin q 1)]
+        if k == 1 && (xsCtorType? q.loc).isSome then pure [.fn (.builtin q 1)]
+        -- arity 0: the argument defaults to the focus at the reference
+        else if k == 0 && (xsCtorType? q.loc).isSome then
+          match env.ctx with
+          | some c => pure [.fn (.papp (.fn (.builtin q 1)) [some c])]
+          | none => pure [.fn (.builtin q 0)]
         else err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
       else if q.uri == nsFN && q.loc == "concat" && k ≥ 2 then pure [.fn (.builtin q k)]
       else match findSig q k with
@@ -888,9 +899,10 @@ def apply : Nat → Env → Item → List Seq → M Seq
     | .fn (.builtin q k) => do
         if args.length != k then err "XPTY0004" ("function " ++ q.show ++ " expects " ++ toString k ++ " arguments")
         if q.uri == nsXS then
-          match atypeOfName? q.loc with
-          | some t => castTo env (args.headD []) (.atomic t) true
-          | none => castTo env (args.headD []) (.choice [.atomic (.b .double)]) true
+          if k == 0 then err "XPDY0002" "the context value is absent"
+          match xsCtorType? q.loc with
+          | some t => castTo env (args.headD []) t true
+          | none => err "XPST0017" ("unknown constructor function " ++ q.show)
         else if q.uri == nsFN && q.loc == "concat" then callFn n env q args
         else
         match findSig q k with

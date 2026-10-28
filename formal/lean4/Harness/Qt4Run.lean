@@ -133,6 +133,17 @@ def depOk (d : Node) : Bool :=
       if sat then has else !has
   | "xsd-version" => if sat then v == "1.1" else v != "1.1"
   | "default-language" | "language" => if sat then v == "en" else v != "en"
+  -- `XPath4.Unicode`: UAX #15 NFC, NFD, NFKC, NFKD (not FULLY-NORMALIZED)
+  | "unicode-normalization-form" =>
+      let has := v == "NFC" || v == "NFD" || v == "NFKC" || v == "NFKD"
+      if sat then has else !has
+  -- `XPath4.Format.fmtIntToken`: decimal digit families and the
+  -- circled, parenthesised, full-stop and Greek sequences
+  | "format-integer-sequence" =>
+      let has := match v.toList with
+        | [c] => isDigitU c || [0x2460, 0x2474, 0x2488, 0x3B1, 0x391].contains c.toNat
+        | _ => false
+      if sat then has else !has
   | _ => !sat
 
 /-! ## Environments -/

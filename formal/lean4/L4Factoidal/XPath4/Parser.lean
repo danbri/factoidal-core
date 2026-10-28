@@ -275,6 +275,8 @@ def atomicTypeOf (q : QN) : P IType := do
   if q.uri == nsXS then
     if q.loc == "numeric" then
       pure (.choice [.atomic (.b .double), .atomic (.b .float), .atomic (.b .decimal)])
+    -- xs:error: the union type with no member types (XSD 1.1 Part 2 §3.16.7.3)
+    else if q.loc == "error" then pure (.choice [])
     else match atypeOfName? q.loc with
       | some t =>
         if t == .b .anyAtomicType || !(t == .b .nmtokens || t == .b .idrefs || t == .b .entities) then
