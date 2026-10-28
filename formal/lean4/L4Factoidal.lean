@@ -1022,6 +1022,7 @@ import L4Factoidal.XMPP.Gc3
 import L4Factoidal.XMPP.HttpOverXmpp
 import L4Factoidal.XMPP.HttpOverXmppTests
 import L4Factoidal.XMPP.ClientStream
+import L4Factoidal.XMPP.HttpRequester
 import L4Factoidal.Fn.Theorems
 import L4Factoidal.Planner.Requirement
 import L4Factoidal.Planner.Capability

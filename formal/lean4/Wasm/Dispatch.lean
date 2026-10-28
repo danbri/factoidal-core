@@ -771,6 +771,8 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "xmppClientFeed"     => withArgs (arityIO2 op Ops.xmppClientFeed)
   | "xmppClientAnswer"   => withArgs (arityIO3 op Ops.xmppClientAnswer)
   | "xmppClientClose"    => withArgs (arityIO1 op Ops.xmppClientClose)
+  | "xmppClientRequest"  => withArgs (arityIO3 op Ops.xmppClientRequest)
+  | "xmppClientTick"     => withArgs (arityIO2 op Ops.xmppClientTick)
   | "storeHandleList" =>
       withArgs (fun args =>
         match args with

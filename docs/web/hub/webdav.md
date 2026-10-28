@@ -374,13 +374,44 @@ XEP-0332 `req` stanzas to `bob@example.org/dav` and gets PROPFIND 207, PUT
 201, GET 200, MKCOL 201; a body above 65,536 bytes comes back in
 `chunkedBase64` chunks; `carol@example.org` gets `forbidden`.
 
-What does not work yet: no file browser speaks XEP-0332, and the local proxy
-that would turn `http://127.0.0.1:8090/` into XEP-0332 requests is not built
-(step 2 of `docs/designissues/2026-10-28-http-over-xmpp.md`). Tracking:
-<https://github.com/danbri/factoidal/issues/1107>, an expected failure in
-`tests/hub/hub_webdav_test.mjs`. XEP-0332 is Deferred; until another
-implementation is tested, this is our client talking to our server. Tailscale
-or SSH stay the routes for a file browser.
+A file browser does not speak XEP-0332, so the reader runs a local proxy,
+`factoidal xmpp-http-proxy`. It connects to the XMPP server as an allowed JID
+and listens on 127.0.0.1; each HTTP request to it is sent to one target JID
+and the answer is written back:
+
+```
+# on the reader's machine, as alice (in --xmpp-allow of the server)
+echo alice-password > alice.password
+factoidal xmpp-http-proxy --xmpp alice@example.org --xmpp-password-file alice.password \
+  --target bob@example.org/dav --xmpp-host 127.0.0.1 --xmpp-port 5222 --port 8091
+# prints: http://127.0.0.1:8091/
+```
+
+Then connect the file browser to `http://127.0.0.1:8091/` (next section).
+Rules of the proxy, decided in Lean (`L4Factoidal/XMPP/HttpRequester.lean`):
+
+* It listens on 127.0.0.1 only; `--host` with any other address stops the
+  start.
+* Requests go to `--target` and to no other JID; an answer from another JID
+  is dropped. An absolute-form request (`GET http://other.example/`) gets
+  400 and CONNECT gets 405: it is not a forward proxy.
+* `Authorization` goes to the target unchanged; the proxy adds no
+  credential; `Proxy-Authorization` and the other hop-by-hop headers are not
+  sent on.
+* A body above 16 MiB gets 413; more than 16 waiting requests, 503; no
+  answer in `--timeout` seconds (default 60), 504. A JID not in the server's
+  `--xmpp-allow` gets 403.
+* It has no login. Every local process, and a web page in a local browser,
+  can send requests as the proxy's JID. A `Host` and `Origin` check is not in
+  it yet (<https://github.com/danbri/factoidal/issues/1124>, an expected
+  failure in `tests/webdav/xmpp-proxy.mjs`).
+
+What works now (`node tests/webdav/xmpp-proxy.mjs`): fetch, litmus, rclone and
+cadaver through the proxy; a 100,000-byte file up and down in
+`chunkedBase64` chunks; 403 for a JID not on the allow list. XEP-0332 is
+Deferred; until another implementation is tested, this is our client talking
+to our server. Tailscale or SSH stay the routes that need no XMPP account.
+Tracking: <https://github.com/danbri/factoidal/issues/1107>.
 
 ## Connect a file browser
 

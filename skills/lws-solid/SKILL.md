@@ -1104,9 +1104,28 @@ WebDAV handle as the HTTP listener. Lean: `L4Factoidal/XMPP/ClientStream.lean`
 (the RFC 6120 client), `HttpOverXmpp.lean` (`plan`, `finish`); ops
 `xmppClientOpen`/`Feed`/`Answer`/`Close` (`Wasm/Ops/XmppClient.lean`); host
 `npm/factoidal/xmpp/client.mjs`. Test: `node tests/webdav/xmpp.mjs` (starts
-`xmpp-serve`; the test client is `tests/webdav/xmpp-client.mjs`). No file
-browser reaches it until the local proxy (step 2 of
-`docs/designissues/2026-10-28-http-over-xmpp.md`) exists.
+`xmpp-serve`; the test client is `tests/webdav/xmpp-client.mjs`).
+
+A file browser reaches it through the local proxy (step 2):
+
+```
+factoidal xmpp-http-proxy --xmpp alice@example.org --xmpp-password-file alice.password \
+  --target bob@example.org/dav --xmpp-tls [--xmpp-ca FILE] [--xmpp-host H] [--xmpp-port P] \
+  [--port 8091] [--timeout 60]
+# prints http://127.0.0.1:8091/
+```
+
+Lean `L4Factoidal/XMPP/HttpRequester.lean` (`send`, `receive`, `tick`,
+`abortAll`; theorems `send_to_target`, `receiveNode_other_sender`,
+`forwardHeaders_sublist`, `forwardHeaders_keeps_authorization`); requester
+mode of `xmppClientOpen` (`proxyTarget`), ops `xmppClientRequest`,
+`xmppClientTick`; start rule `xcProxyRefusal` (listener 127.0.0.1 only, full
+target JID, TLS or loopback XMPP). Host `npm/factoidal/xmpp/proxy.mjs`. Test:
+`node tests/webdav/xmpp-proxy.mjs` (fetch, litmus, rclone, cadaver through the
+proxy; 403 for a JID not on the allow list; 504 on timeout; a forged answer
+from another JID dropped). Expected failure: no `Host`/`Origin` check on the
+listener (https://github.com/danbri/factoidal/issues/1124). Record:
+`docs/designissues/2026-10-28-http-over-xmpp.md` § Step 2.
 
 ## Run the tests
 

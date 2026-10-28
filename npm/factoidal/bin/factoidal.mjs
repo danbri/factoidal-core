@@ -97,7 +97,7 @@ const REVIEW_WARNING = 'EXPERIMENTAL UNREVIEWED CODE - USE WITH CARE - DO NOT CR
 
 /** The commands that serve, speak a protocol, or handle keys and tokens. */
 const WARNED_COMMANDS = new Set(['serve', 'lws-serve', 'solid-serve', 'solid-client', 'lws-client',
-  'authz-serve', 'authz-keys', 'xmpp-serve', 'webdav-serve', 'webdav-user'])
+  'authz-serve', 'authz-keys', 'xmpp-serve', 'webdav-serve', 'webdav-user', 'xmpp-http-proxy'])
 
 const USAGE = `factoidal - the Factoidal persisted store, from Node or Deno
 
@@ -126,6 +126,8 @@ commands:
                               browsers over WebDAV (RFC 4918)
   webdav-user FILE NAME       add or replace a user in a webdav-serve users
                               file (the password is read from standard input)
+  xmpp-http-proxy             a local HTTP listener (127.0.0.1) whose requests
+                              go over XMPP (XEP-0332) to one target JID
 
 global options:
   -h, --help                  print this text, or a command's own help
@@ -675,6 +677,58 @@ MUC/MIX/GC3 rooms.
 Specifications: https://www.rfc-editor.org/rfc/rfc6120 and
 https://www.rfc-editor.org/rfc/rfc6121`,
 
+  'xmpp-http-proxy': `factoidal xmpp-http-proxy - reach an HTTP server over XMPP (XEP-0332) from 127.0.0.1
+
+usage: factoidal xmpp-http-proxy --xmpp JID --xmpp-password-file FILE
+                 --target JID/RESOURCE [--port N] [--host 127.0.0.1]
+                 [--xmpp-host H] [--xmpp-port P] [--xmpp-tls] [--xmpp-ca FILE]
+                 [--xmpp-resource R] [--timeout SECONDS]
+
+Connects OUT to an XMPP server as JID (SASL SCRAM-SHA-256), binds a resource,
+and opens an HTTP listener on 127.0.0.1. Every HTTP request to that listener
+is sent as a XEP-0332 request to --target, and the answer is written back.
+So a file browser, rclone, curl or "factoidal lws-client" uses
+http://127.0.0.1:PORT/ to reach "factoidal webdav-serve CONFIGDIR --xmpp"
+behind NAT. JID must be in that server's --xmpp-allow list, or every
+request gets 403.
+
+  --xmpp JID                 the account (user@domain[/resource])
+  --xmpp-password-file FILE  the account's password (first line)
+  --target JID/RESOURCE      the full JID of the server (as webdav-serve
+                             --xmpp prints it). Requests go to this JID and
+                             to no other: this is not an open proxy.
+  --port N                   the port to listen on (default 8091; 0 takes an
+                             ephemeral one)
+  --host ADDRESS             the address to listen on: 127.0.0.1 only. Any
+                             other address is refused (exit 1).
+  --xmpp-host H              the XMPP server's address (default: the JID's
+                             domain; no DNS SRV lookup)
+  --xmpp-port P              default 5222, or 5223 with --xmpp-tls
+  --xmpp-tls                 direct TLS (XEP-0368). Without it, only a
+                             loopback --xmpp-host (127.0.0.0/8, ::1) is
+                             accepted.
+  --xmpp-ca FILE             PEM certificates to trust for --xmpp-tls
+  --xmpp-resource R          the resource to bind (default proxy)
+  --timeout SECONDS          how long a request waits for its answer
+                             (default 60, 1 to 3600); then 504
+
+It prints the listener's origin (http://127.0.0.1:PORT/) on standard output.
+
+The listener has no login of its own. Every process on this computer that
+can open a connection to 127.0.0.1 acts as JID, and a web page in a browser
+on this computer can send requests to it (the Host and Origin check of
+https://github.com/danbri/factoidal/issues/1124 is not in this command yet).
+Authorization headers pass to the target unchanged; the proxy adds no
+credential. Proxy-Authorization and the other hop-by-hop headers (RFC 9110
+section 7.6.1) are not forwarded. A request body above 16 MiB gets 413, more
+than 16 waiting requests 503, an absolute-form request target (a forward
+proxy request) 400, CONNECT 405.
+
+Every decision is in formal/lean4/L4Factoidal/XMPP/HttpRequester.lean and
+formal/lean4/Wasm/Ops/XmppClient.lean. Design:
+docs/designissues/2026-10-28-http-over-xmpp.md
+(https://github.com/danbri/factoidal/issues/1107).`,
+
   'webdav-serve': `factoidal webdav-serve - serve LWS storages to file browsers over WebDAV
 
 usage: factoidal webdav-serve CONFIGDIR [--port N] [--host ADDRESS]
@@ -764,9 +818,9 @@ NAT is reached this way with no inbound port.
   --xmpp-resource R          the resource to bind (default dav)
 
 It prints the bound JID (xmpp:user@domain/resource) on standard output.
-XEP-0332 is Deferred, and no WebDAV client speaks it yet: the local proxy
-(step 2 of the design record) is not built, so today a reader is our own
-code or another XEP-0332 client.
+XEP-0332 is Deferred, and no WebDAV client speaks it: a reader runs
+"factoidal xmpp-http-proxy --target JID/RESOURCE" (as an allowed JID) and
+points the file browser at the http://127.0.0.1:PORT/ that it prints.
 
 Connect: macOS Finder, Go > Connect to Server, http://127.0.0.1:8090/ ;
 Windows, Map network drive, http://127.0.0.1:8090/ ; GNOME Files,
@@ -964,7 +1018,9 @@ const VALUE_OPTIONS = {
   'xmpp-serve': new Set(['port', 'host', 'domain', 'accounts', 'cert', 'key']),
   'webdav-serve': new Set(['port', 'host', 'users', 'cert', 'key', 'login-limit', 'login-window', 'xmpp', 'xmpp-password-file',
     'xmpp-host', 'xmpp-port', 'xmpp-allow', 'xmpp-resource', 'xmpp-ca']),
-  'webdav-user': new Set(['iterations'])
+  'webdav-user': new Set(['iterations']),
+  'xmpp-http-proxy': new Set(['port', 'host', 'xmpp', 'xmpp-password-file', 'target', 'xmpp-host', 'xmpp-port',
+    'xmpp-resource', 'xmpp-ca', 'timeout'])
 }
 
 // ------------------------------------------------------------- commands
@@ -2355,6 +2411,68 @@ async function webdavOverXmpp (configDir, options, quiet) {
   return Promise.race([untilInterrupted(running, quiet), ended])
 }
 
+// xmpp-http-proxy (https://github.com/danbri/factoidal/issues/1107, step 2):
+// a loopback HTTP listener whose requests go over XMPP (XEP-0332) to one
+// target JID. The host moves bytes; the target, the listener address, the
+// headers forwarded, the limits, timeouts and every status are decided in
+// L4Factoidal/XMPP/HttpRequester.lean and Wasm/Ops/XmppClient.lean.
+async function commandXmppHttpProxy (positional, options) {
+  if (positional.length !== 0) throw new UsageError('xmpp-http-proxy takes no positional argument')
+  const quiet = options.quiet === true
+  if (typeof options.xmpp !== 'string') throw new UsageError('xmpp-http-proxy needs --xmpp JID')
+  if (typeof options['xmpp-password-file'] !== 'string') throw new UsageError('xmpp-http-proxy needs --xmpp-password-file FILE')
+  if (typeof options.target !== 'string') throw new UsageError('xmpp-http-proxy needs --target JID/RESOURCE')
+  const fs = await import('node:fs/promises')
+  const password = (await fs.readFile(options['xmpp-password-file'], 'utf8')).split(/\r?\n/)[0]
+  const { startHttpProxy } = await import('../xmpp/proxy.mjs')
+  const { XmppClientError } = await import('../xmpp/client.mjs')
+  const settings = {
+    jid: options.xmpp,
+    password,
+    target: options.target,
+    resource: typeof options['xmpp-resource'] === 'string' ? options['xmpp-resource'] : 'proxy',
+    tls: options['xmpp-tls'] === true,
+    // The address goes to the engine unread; it accepts 127.0.0.1 only.
+    listenHost: typeof options.host === 'string' ? options.host : '127.0.0.1',
+    listenPort: servePort(options, 8091),
+    onError: (error) => { if (!quiet) err(`xmpp-http-proxy: ${error.message}`) }
+  }
+  if (options.timeout !== undefined) {
+    const t = Number(options.timeout)
+    if (!Number.isInteger(t) || t < 0) throw new UsageError('--timeout needs a whole number of seconds')
+    settings.timeoutSeconds = t
+  }
+  if (typeof options['xmpp-host'] === 'string') settings.host = options['xmpp-host']
+  if (typeof options['xmpp-ca'] === 'string') settings.tlsOptions = { ca: await fs.readFile(options['xmpp-ca']) }
+  if (options['xmpp-port'] !== undefined) {
+    const port = Number(options['xmpp-port'])
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new UsageError('--xmpp-port needs a port number')
+    settings.port = port
+  }
+  let running
+  try {
+    running = await startHttpProxy(settings)
+  } catch (error) {
+    if (error instanceof XmppClientError && error.unknownOp) return notWired('xmpp-http-proxy', error.message)
+    if (error instanceof XmppClientError || (error !== null && typeof error === 'object' && typeof error.code === 'string')) {
+      err(`factoidal xmpp-http-proxy: ${error.message}`)
+      return EXIT_FAILURE
+    }
+    throw error
+  }
+  if (!quiet) {
+    err(`xmpp-http-proxy: connected to XMPP as ${running.jid}; requests to ${running.origin} go to ${running.target} only`)
+    err('xmpp-http-proxy: the listener has no login: every local process (and any web page in a local browser) acts as ' +
+        `${running.jid} (https://github.com/danbri/factoidal/issues/1124)`)
+  }
+  out(running.origin)
+  const ended = running.closed.then((reason) => {
+    if (!quiet && reason) err(`xmpp-http-proxy: xmpp: connection closed: ${reason}`)
+    return EXIT_FAILURE
+  })
+  return Promise.race([untilInterrupted(running, quiet), ended])
+}
+
 /** A password from standard input: on a terminal, asked for with no echo;
  *  else all of standard input. The bytes go to the engine unread. Pure I/O. */
 async function readPasswordInput () {
@@ -2630,7 +2748,8 @@ const COMMANDS = {
   'authz-keys': commandAuthzKeys,
   'xmpp-serve': commandXmppServe,
   'webdav-serve': commandWebdavServe,
-  'webdav-user': commandWebdavUser
+  'webdav-user': commandWebdavUser,
+  'xmpp-http-proxy': commandXmppHttpProxy
 }
 
 // ----------------------------------------------------------------- main

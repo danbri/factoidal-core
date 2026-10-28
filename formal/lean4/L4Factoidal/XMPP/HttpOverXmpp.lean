@@ -317,10 +317,9 @@ def renderRespIq (env : Envelope) (r : Resp) : String :=
   L4Factoidal.XMPP.Wire.render
     (.element "iq" (envAttrs { from_ := env.to, to := env.from_, id := env.id } "result") [respNode r])
 
-/-- Parse a response stanza (the client side). The envelope is as written
-in the stanza. -/
-def parseRespIq (s : String) : Option (Envelope × Resp) := do
-  let n ← L4Factoidal.XMPP.Wire.parseElement s
+/-- Read a response `iq` element (the client side). The envelope is as
+written in the stanza. -/
+def respOfIq? (n : Node) : Option (Envelope × Resp) := do
   if elemName n != some "iq" || attr n "type" != some "result" then none
   let r ← kid? n "resp" (some nsHttp)
   let v ← attr r "version"
@@ -330,6 +329,10 @@ def parseRespIq (s : String) : Option (Envelope × Resp) := do
   let b ← (parseBody r).toOption
   some ({ from_ := attr n "from", to := attr n "to", id := (attr n "id").getD "" },
         { version := v, statusCode := sc.toNat!, statusMessage := attr r "statusMessage", headers := hs, body := b })
+
+/-- Parse a response stanza text (the client side). -/
+def parseRespIq (s : String) : Option (Envelope × Resp) :=
+  (L4Factoidal.XMPP.Wire.parseElement s).bind respOfIq?
 
 /-- The `<iq type='error'>` answering `env` (RFC 6120 §8.3). -/
 def renderRefusal (env : Envelope) (why : Refusal) : String :=
