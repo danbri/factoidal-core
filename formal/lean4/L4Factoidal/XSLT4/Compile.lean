@@ -830,7 +830,10 @@ def compileSorts : Nat → SCx → Mod → List Nat → CM (List SortK)
           cerr "XTSE0020" ("invalid language '" ++ lg ++ "' for xsl:sort")
       let sel ← optExpr c' as "select"
       let body ← compileNodes f c' m (m.kids k)
-      if sel.isSome && !body.isEmpty then cerr "XTSE1015" "xsl:sort has both a select attribute and content"
+      if sel.isSome && !body.isEmpty then
+        -- XTSE3200 for xsl:merge-key, XTSE1015 for xsl:sort
+        if m.isXsl k "merge-key" then cerr "XTSE3200" "xsl:merge-key has both a select attribute and content"
+        else cerr "XTSE1015" "xsl:sort has both a select attribute and content"
       pure (some (.mk sel body (← optAvt c' as "order") (← optAvt c' as "lang") (← optAvt c' as "data-type")
         (← optAvt c' as "case-order") (← optAvt c' as "collation") (← optAvt c' as "stable"))))
 
@@ -1289,7 +1292,9 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
                "transform", "package", "decimal-format", "attribute-set", "namespace-alias",
                "strip-space", "preserve-space", "character-map", "accumulator", "global-context-item",
                "import-schema", "use-package", "expose", "accept", "override", "item-type", "record-type"].contains l then
-        cerr "XTSE0010" ("xsl:" ++ l ++ " is a declaration, not an instruction")
+        -- xsl:include and xsl:import only at the top level (XTSE0170, XTSE0190)
+        cerr (if l == "include" then "XTSE0170" else if l == "import" then "XTSE0190" else "XTSE0010")
+          ("xsl:" ++ l ++ " is a declaration, not an instruction")
       else cerr "XTSE0010" ("unknown XSLT instruction xsl:" ++ l)
 
 end
@@ -1390,9 +1395,19 @@ def expandModule : Nat → Mod → Nat → SCx → CM (List Decl)
   | 0, _, _, _ => cerr "XTSE0180" "includes nested too deeply"
   | f + 1, m, root, c => do
     let mut out : List Decl := []
+    -- no text at the top level (XTSE0120)
+    if (m.kids root).any (fun k => (m.r k).kind == .text && !((m.r k).value.toList.all Char.isWhitespace)) then
+      cerr "XTSE0120" "text at the top level of a stylesheet module"
     for i in m.elemKids root do
       let as ← effAttrs c m i
       let ci ← c.enter m i as
+      -- declarations that are always empty (XTSE0260)
+      if ["include", "import", "strip-space", "preserve-space", "output", "decimal-format",
+          "namespace-alias", "mode", "global-context-item", "accept"].any (m.isXsl i ·) then
+        let pres := (m.rawAttrs i).any (fun (q, v) => q.uri == nsXML && q.loc == "space" && v.trimAscii.toString == "preserve")
+        if (m.kids i).any (fun k => m.isElem k ||
+            ((m.r k).kind == .text && (pres || !((m.r k).value.toList.all Char.isWhitespace)))) then
+          cerr "XTSE0260" ("xsl:" ++ (m.name i).loc ++ " must be empty")
       if !(← useWhenOk ci m i as) then continue
       if m.isXsl i "include" then
         let some href := as.get "href" | cerr "XTSE0010" "xsl:include requires href"
