@@ -49,7 +49,9 @@ deriving BEq, Inhabited
 def isNCNameStr (s : String) : Bool :=
   match s.toList with
   | [] => false
-  | c :: cs => isNameStart c && c != ':' && cs.all (fun d => isNameCh d && d != ':')
+  | c :: cs =>
+    -- XML 1.0 (5th ed.) name characters end at #xEFFFF
+    isNameStart c && c != ':' && c.toNat ≤ 0xEFFFF && cs.all (fun d => isNameCh d && d != ':' && d.toNat ≤ 0xEFFFF)
 
 /-- Parse a `PackageVersion` (the portions as written). -/
 def parseVersion (v : String) : Option (List Portion) :=
