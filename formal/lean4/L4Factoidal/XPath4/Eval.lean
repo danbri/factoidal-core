@@ -369,6 +369,34 @@ def isNumericLit : Expr → Option Int
   | .lit ⟨_, .int i⟩ => some i
   | _ => none
 
+/-- A step applied to each item of a `fn:generate` sequence before its
+    consumer: a lookup `?k` or a simple map `! e`. -/
+inductive GenStage where
+  | look (k : Option Expr)
+  | smap (b : Expr)
+
+/-- `fn:generate(init, step)` under lookups and simple maps (in order of
+    application), as `(init, step, stages)`. -/
+def genSrc? : Expr → Option (Expr × Expr × List GenStage)
+  | .seq [x] => genSrc? x
+  | .call q [some i, some f] [] =>
+    if q.uri == nsFN && q.loc == "generate" then some (i, f, []) else none
+  | .lookup a k => (genSrc? a).map (fun (i, f, st) => (i, f, st ++ [.look k]))
+  | .smap a b => (genSrc? a).map (fun (i, f, st) => (i, f, st ++ [.smap b]))
+  | _ => none
+
+/-- The largest position that a positional predicate of literals selects:
+    `[k]` or `[a to b]`. -/
+def litPositions? : Expr → Option Int
+  | .lit ⟨_, .int k⟩ => some k
+  | .bin .to (.lit ⟨_, .int _⟩) (.lit ⟨_, .int b⟩) => some b
+  | .seq [x] => litPositions? x
+  | _ => none
+
+/-- The number of states that `fn:generate` makes before it stops with
+    an implementation limit (XPDY0130). -/
+def genCap : Nat := 100000
+
 mutual
 
 def eval : Nat → Env → Expr → M Seq
@@ -493,6 +521,7 @@ def eval : Nat → Env → Expr → M Seq
       pure (sortGNodes out.toList)
   | .filter a p => do
       if let some r ← rangeShortcut n env (.filter a p) then return r
+      if let some r ← genShortcut n env (.filter a p) then return r
       match a, isNumericLit p with
       | .seq es, some k =>
         -- `(e1, e2, ...)[k]`: evaluate only as far as item k
@@ -514,6 +543,8 @@ def eval : Nat → Env → Expr → M Seq
       if q.uri == nsFN && kw.isEmpty && (q.loc == "count" || q.loc == "head" || q.loc == "starts-with-subsequence" || q.loc == "ends-with-subsequence"
           || q.loc == "subsequence" || q.loc == "codepoints-to-string") then
         if let some r ← rangeShortcut n env (.call q args kw) then return r
+      if q.uri == nsFN && kw.isEmpty && (q.loc == "head" || q.loc == "take-while" || q.loc == "subsequence") then
+        if let some r ← genShortcut n env (.call q args kw) then return r
       if isTmplMarker q then
         let s ← match args with | [some x] => eval n env x | _ => pure []
         let as ← env.atomize s
@@ -1240,6 +1271,119 @@ def rangeShortcut : Nat → Env → Expr → M (Option Seq)
         | _ => pure none
     | _ => pure none
 
+
+/-- Pull the items of `fn:generate(init, step)` through `stages`, one
+    state at a time, until `stop` holds of the output so far or the step
+    function gives the empty sequence (F&O 4.0 §15.5.4: a consumer that
+    needs only a prefix ends the evaluation). -/
+def genPull : Nat → Env → Expr → Expr → List GenStage → (Array Item → M Bool) → M (Array Item)
+  | 0, _, _, _, _, _ => fuelErr
+  | n + 1, env, init, step, stages, stop => do
+    let st0 ← eval n env init
+    let some first := st0.head? | err "XPTY0004" "fn:generate: $init must be one item"
+    if st0.length != 1 then err "XPTY0004" "fn:generate: $init must be one item"
+    let fs ← eval n env step
+    let some f := fs.head? | err "XPTY0004" "fn:generate: $step must be a function"
+    let mut state := first
+    let mut out : Array Item := #[]
+    let mut pos : Nat := 1
+    for _ in [0:genCap] do
+      let mut items : Seq := [state]
+      for sg in stages do
+        let mut nx : Array Item := #[]
+        let mut idx := 1
+        for i in items do
+          match sg with
+          | .look k => for r in ← lookupIn n env i k do nx := nx.push r
+          | .smap b => for r in ← eval n (env.focus i idx 0) b do nx := nx.push r
+          idx := idx + 1
+        items := nx.toList
+      for r in items do out := out.push r
+      if ← stop out then return out
+      -- an arity-0 or arity-1 step function gets the first arguments only
+      let nxt ← apply n env f (([[state], sInt pos] : List Seq).take ((f.fnArity.getD 2).min 2))
+      match nxt with
+      | [] => return out
+      | [x] => state := x
+      | _ => err "XPTY0004" "fn:generate: $step must return at most one item"
+      pos := pos + 1
+    err "XPDY0130" "fn:generate made more states than this implementation allows (an implementation limit)"
+
+/-- Consumers of `fn:generate` that need only a prefix: a predicate of
+    literal positions, `subsequence` with a length, `take-while`, `head`.
+    `none`: evaluate as usual. -/
+def genShortcut : Nat → Env → Expr → M (Option Seq)
+  | 0, _, _ => pure none
+  | n + 1, env, e =>
+    match e with
+    | .filter a p =>
+      match genSrc? a, litPositions? p with
+      | some (i, f, st), some k => do
+        let out ← genPull n env i f st (fun o => pure (o.size ≥ k.toNat))
+        pure (some (← filterSeq n env out.toList p))
+      | none, some k =>
+        -- `index-of(G, t)[k]`, `index-where(G, f)[k]`: pull until k matches
+        let a' := match a with | .seq [x] => x | x => x
+        match a' with
+        | .call q [some g, some t] [] =>
+          if q.uri == nsFN && (q.loc == "index-of" || q.loc == "index-where") then
+            match genSrc? g with
+            | some (i, f, st) => do
+              let tv ← eval n env t
+              let out ← genPull n env i f st (fun o => do
+                match o.back? with
+                | none => pure false
+                | some x =>
+                  let hit ← if q.loc == "index-of" then pure !(← callFn n env q [[x], tv]).isEmpty
+                    else match tv.head? with
+                      | some pf => ebv (← apply n env pf (([[x], sInt o.size] : List Seq).take ((pf.fnArity.getD 2).min 2)))
+                      | none => pure false
+                  if !hit then pure false
+                  else pure ((← callFn n env q [o.toList, tv]).length ≥ k.toNat))
+              pure (some (← filterSeq n env (← callFn n env q [out.toList, tv]) p))
+            | none => pure none
+          else pure none
+        | _ => pure none
+      | _, _ => pure none
+    | .call q args [] =>
+      if q.uri != nsFN then pure none else
+      match args with
+      | [some a] =>
+        if q.loc != "head" then pure none else
+        match genSrc? a with
+        | some (i, f, st) => do
+          let out ← genPull n env i f st (fun o => pure (o.size ≥ 1))
+          pure (some (out.toList.take 1))
+        | none => pure none
+      | [some a, some b] =>
+        if q.loc != "take-while" then pure none else
+        match genSrc? a with
+        | some (i, f, st) => do
+          let ps ← eval n env b
+          let some pf := ps.head? | pure none
+          -- stop at the first item that fails the predicate
+          let out ← genPull n env i f st (fun o => do
+            match o.back? with
+            | some x =>
+              let r ← apply n env pf (if pf.fnArity == some 1 then [[x]] else [[x], sInt o.size])
+              pure !(← ebv r)
+            | none => pure false)
+          pure (some (← callFn n env q [out.toList, ps]))
+        | none => pure none
+      | [some a, some s0, some l0] =>
+        if q.loc != "subsequence" then pure none else
+        match genSrc? a with
+        | some (i, f, st) => do
+          let sv ← eval n env s0
+          let lv ← eval n env l0
+          match (roundX sv).add (roundX lv) with
+          | .fin e =>
+            let out ← genPull n env i f st (fun o => pure ((o.size : Int) ≥ e - 1))
+            pure (some (← callFn n env q [out.toList, sv, lv]))
+          | _ => pure none
+        | none => pure none
+      | _ => pure none
+    | _ => pure none
 end
 
 /-- Parse an XPath 4.0 expression with the computed node constructors

@@ -352,6 +352,7 @@ def catalogRaw : List (String × String × String × List (String × String × O
   ("fn", "highest", "item()*", [("input", "item()*", none), ("collation", "xs:string?", some "fn:default-collation()"), ("key", "(fn($item as item()) as xs:anyAtomicType*)?", some "fn:data#1")]),
   ("fn", "index-where", "xs:integer*", [("input", "item()*", none), ("predicate", "fn($item as item(), $pos as xs:integer) as xs:boolean?", none)]),
   ("fn", "is-NaN", "xs:boolean", [("value", "xs:anyAtomicType", none)]),
+  ("fn", "generate", "item()*", [("init", "item()", none), ("step", "fn($state as item(), $pos as xs:integer) as item()?", none)]),
   ("fn", "take-while", "item()*", [("input", "item()*", none), ("predicate", "fn($item as item(), $pos as xs:integer) as xs:boolean?", none)]),
   ("fn", "drop-while", "item()*", [("input", "item()*", none), ("predicate", "fn($item as item(), $pos as xs:integer) as xs:boolean?", none)]),
   ("fn", "lowest", "item()*", [("input", "item()*", none), ("collation", "xs:string?", some "fn:default-collation()"), ("key", "(fn($item as item()) as xs:anyAtomicType*)?", some "fn:data#1")]),
