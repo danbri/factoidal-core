@@ -1039,12 +1039,7 @@ def bodyOf (s : Schema) : Nat → Nat → SimpleType
   | f + 1, i =>
     match s.type i with
     | .complex _ => .atomic .anySimpleType {}
-    | .simple sd =>
-      match sd.name with
-      | some n =>
-        if n.ns == xsNS then sd.body
-        else go f sd
-      | none => go f sd
+    | .simple sd => if i ≤ errorTypeIdx then sd.body else go f sd
 where
   go (f : Nat) (sd : SimpleDef) : SimpleType :=
     match sd.variety, sd.item with
@@ -1073,7 +1068,7 @@ def inheritVariety (s : Schema) : Nat → Nat → (Variety × Option Nat × List
     match s.type i with
     | .complex _ => (.atomic, none, [], none)
     | .simple sd =>
-      if sd.base == anySimpleTypeIdx || sd.base == anyTypeIdx || (sd.name.map XName.ns) == some xsNS then
+      if sd.base == anySimpleTypeIdx || sd.base == anyTypeIdx || i ≤ errorTypeIdx then
         (sd.variety, sd.item, sd.members, sd.builtin)
       else inheritVariety s f sd.base
 
@@ -1223,7 +1218,7 @@ def readSchemaDocs (docs : List LoadedDoc) (roots : List String) : Schema :=
   let sch := { sch with types := sch.types.mapIdx (fun i (t : TypeDef) =>
     match t with
     | .simple sd =>
-      if (sd.name.map XName.ns) == some xsNS && i ≤ errorTypeIdx then t
+      if i ≤ errorTypeIdx then t
       else
         let (v, it, ms, b) := inheritVariety sch 64 i
         .simple { sd with variety := v, item := it, members := ms, builtin := b }
