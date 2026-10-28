@@ -234,12 +234,9 @@ def matchTokenInfos (o : EOpts) (toks : Array DocTok) (qs : List String) :
   if qs.isEmpty then return []
   let pq ← qs.mapM (prepTok o)
   let k := pq.length
-  let mut out : Array TokenInfo := #[]
-  if toks.size < k then return []
-  for i in [0:toks.size + 1 - k] do
-    let ok := (pq.zipIdx).all (fun (q, j) => qtokMatch o q (toks.getD (i + j) default).word)
-    if ok then out := out.push (tokInfo toks i (i + k - 1))
-  return out.toList
+  pure ((List.range (toks.size + 1 - k)).filterMap (fun i =>
+    if (pq.zipIdx).all (fun (q, j) => qtokMatch o q (toks.getD (i + j) default).word)
+    then some (tokInfo toks i (i + k - 1)) else none))
 
 /-! ## Thesaurus lookup (§4.2.5.3 `fts:lookupThesaurus`) -/
 
@@ -305,19 +302,34 @@ def phraseNoThes (o : EOpts) (toks : Array DocTok) (qs : List String) (qpos : Na
   let tis ← matchTokenInfos o toks qs
   pure { stokenNum := qpos, ms := tis.map (fun ti => { incl := [{ queryPos := qpos, ti }] }) }
 
+/-- The query position after a query item (`fts:ApplyFTWordsAny`): one
+    more than the largest query position of its Matches, or unchanged. -/
+def nextQueryPos (am : AllMatches) (qpos : Nat) : Nat :=
+  let qps := am.ms.flatMap (fun m => (m.incl ++ m.excl).map (·.queryPos))
+  match listMax (qps.map Int.ofNat) with
+  | some mx => mx.toNat + 1
+  | none => qpos
+
+/-- `fts:ApplyFTWordsAny` (`conj = false`) and `fts:ApplyFTWordsAll`
+    (`conj = true`) over query items, each matched as a phrase by `ph`: a
+    fold over the items (FTOr and FTAnd are associative on Matches, so the
+    left fold gives the Matches of the right-nested text in the same
+    order). -/
+def wordsFold (ph : List String → Nat → Except (String × String) AllMatches) (conj : Bool)
+    (items : List (List String)) (qpos : Nat) : Except (String × String) AllMatches := do
+  let r ← items.foldlM (fun (st : Option AllMatches × Nat) it => do
+    let am ← (if it.isEmpty then pure { stokenNum := 0 } else ph it st.2)
+    let acc := match st.1 with
+      | none => am
+      | some a => if conj then applyAnd a am else applyOr a am
+    pure (some acc, nextQueryPos am st.2)) (none, qpos)
+  pure (r.1.getD { stokenNum := 0 })
+
 /-- `fts:ApplyFTWordsAny` over query items that are matched as phrases
     without the thesaurus. -/
-def wordsAnyNoThes (o : EOpts) (toks : Array DocTok) : List (List String) → Nat →
-    Except (String × String) AllMatches
-  | [], _ => pure { stokenNum := 0 }
-  | it :: rest, qpos => do
-    let first ← (if it.isEmpty then pure { stokenNum := 0 } else phraseNoThes o toks it qpos)
-    let qps := first.ms.flatMap (fun m => (m.incl ++ m.excl).map (·.queryPos))
-    let np := match listMax (qps.map Int.ofNat) with
-      | some mx => mx.toNat + 1
-      | none => qpos
-    let r ← wordsAnyNoThes o toks rest np
-    pure (applyOr first r)
+def wordsAnyNoThes (o : EOpts) (toks : Array DocTok) (items : List (List String)) (qpos : Nat) :
+    Except (String × String) AllMatches :=
+  wordsFold (phraseNoThes o toks) false items qpos
 
 /-- `fts:applyQueryTokensAsPhrase` (§4.2.5.2): with a thesaurus, the
     alternatives of the lookup, matched with the thesaurus off. -/
@@ -342,18 +354,9 @@ def wordsEach (o : EOpts) (toks : Array DocTok) (conj : Bool) (qs : List String)
     pure acc
 
 /-- `fts:ApplyFTWordsAny` and `fts:ApplyFTWordsAll` over query items. -/
-def wordsItems (o : EOpts) (toks : Array DocTok) (conj : Bool) : List (List String) → Nat →
-    Except (String × String) AllMatches
-  | [], _ => pure { stokenNum := 0 }
-  | it :: rest, qpos => do
-    let first ← (if it.isEmpty then pure { stokenNum := 0 } else phrase o toks it qpos)
-    if conj && rest.isEmpty then return first
-    let qps := first.ms.flatMap (fun m => (m.incl ++ m.excl).map (·.queryPos))
-    let np := match listMax (qps.map Int.ofNat) with
-      | some mx => mx.toNat + 1
-      | none => qpos
-    let r ← wordsItems o toks conj rest np
-    pure (if conj then applyAnd first r else applyOr first r)
+def wordsItems (o : EOpts) (toks : Array DocTok) (conj : Bool) (items : List (List String))
+    (qpos : Nat) : Except (String × String) AllMatches :=
+  wordsFold (phrase o toks) conj items qpos
 
 /-- The query tokens of a string under the options (§3.2). -/
 def tokensOf (o : EOpts) (s : String) : List String :=

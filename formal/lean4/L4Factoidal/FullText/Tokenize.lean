@@ -131,13 +131,12 @@ def tokenizeSegments (segs : List String) : Array DocTok := Id.run do
       st := st.flush
       if !first then st := { st with paraEnd := true }
     first := false
-    for c in seg.toList do
-      st := st.step c
+    st := seg.toList.foldl TokState.step st
   st := st.flush
   return st.out
 
-/-- Tokenize one string (one paragraph). -/
-def tokenizeString (s : String) : Array DocTok := tokenizeSegments [s]
+/-- Tokenize one string (one paragraph): a fold over its characters. -/
+def tokenizeString (s : String) : Array DocTok := (s.toList.foldl TokState.step {}).flush.out
 
 /-- The words of a string, in order. -/
 def words (s : String) : List String := (tokenizeString s).toList.map (·.word)

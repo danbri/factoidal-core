@@ -90,6 +90,25 @@ def unaryNotHelper : List Match → List Match
     let r := unaryNotHelper rest
     m.children.flatMap (fun c => r.map (fun x => x.addInverted c))
 
+/-- One step of `unaryNotHelper`: the inverted children of `m` in front
+    of each Match of `acc`. -/
+def unaryNotStep (acc : List Match) (m : Match) : List Match :=
+  m.children.flatMap (fun c => acc.map (fun x => x.addInverted c))
+
+/-- `unaryNotHelper` as a loop over the Matches, last first. -/
+def unaryNotLoop (ms : List Match) : List Match := ms.reverse.foldl unaryNotStep [{}]
+
+theorem unaryNotHelper_eq_loop_pt (ms : List Match) : unaryNotHelper ms = unaryNotLoop ms := by
+  induction ms with
+  | nil => rfl
+  | cons m rest ih =>
+    simp only [unaryNotHelper, unaryNotLoop, List.reverse_cons, List.foldl_append, List.foldl_cons,
+      List.foldl_nil]
+    rw [ih]; rfl
+
+@[csimp] theorem unaryNotHelper_eq_loop : @unaryNotHelper = @unaryNotLoop := by
+  funext ms; exact unaryNotHelper_eq_loop_pt ms
+
 /-- `fts:ApplyFTUnaryNot`. -/
 def applyUnaryNot (a : AllMatches) : AllMatches :=
   { stokenNum := a.stokenNum, ms := unaryNotHelper a.ms }
@@ -253,20 +272,24 @@ def unitDistance (u : Unit_) (a b : TokenInfo) : Int :=
     then (a, b) else (b, a)
   y.startOf u - x.endOf u - 1
 
-/-- Insertion of a StringMatch into a list sorted by `(startPos, endPos)`
-    (the `order by` of `fts:ApplyFTWordDistance*`, stable). -/
-def insertSorted (s : StringMatch) : List StringMatch → List StringMatch
-  | [] => [s]
-  | t :: ts =>
-    if s.ti.startPos < t.ti.startPos || (s.ti.startPos == t.ti.startPos && s.ti.endPos < t.ti.endPos)
-    then s :: t :: ts else t :: insertSorted s ts
+/-- `(startPos, endPos)` order (the `order by` of `fts:ApplyFTWordDistance*`). -/
+def tiBefore (s t : StringMatch) : Bool :=
+  s.ti.startPos < t.ti.startPos || (s.ti.startPos == t.ti.startPos && s.ti.endPos < t.ti.endPos)
 
-def sortIncludes (ss : List StringMatch) : List StringMatch := ss.foldl (fun acc s => insertSorted s acc) []
+/-- The StringIncludes sorted by `(startPos, endPos)`, stable: an insertion
+    sort as a loop. -/
+def sortIncludes (ss : List StringMatch) : List StringMatch := Id.run do
+  let mut a : Array StringMatch := #[]
+  for s in ss do
+    -- the position after the last element not after `s`
+    let mut k := a.size
+    for _ in [0:a.size] do
+      if k > 0 && tiBefore s (a.getD (k - 1) default) then k := k - 1 else break
+    a := (a.extract 0 k).push s ++ a.extract k a.size
+  return a.toList
 
 /-- Adjacent pairs of a list. -/
-def adjPairs {α} : List α → List (α × α)
-  | a :: b :: rest => (a, b) :: adjPairs (b :: rest)
-  | _ => []
+def adjPairs {α} (l : List α) : List (α × α) := l.zip l.tail
 
 /-- `fts:ApplyFTDistance` (all twelve `fts:Apply*Distance*` functions). -/
 def applyDistance (u : Unit_) (r : Range) (a : AllMatches) : AllMatches :=

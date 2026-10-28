@@ -24,7 +24,15 @@ Added 2026-10-28 for the XQuery 4.0 mode of the runner
 - `misc/` (keyword, error-code, focus, higher-order, JSON, HTML,
   JSONPath, JMESPath and collation suites)
 
-Not copied: `ft/`, `ser/`, `upd/`, `xs/`, the drivers, tools, viewer and
+Added 2026-10-28 for XQuery and XPath Full Text 3.0
+(https://github.com/danbri/factoidal/issues/1101, agent qt4-M), from a
+sparse `git clone --depth 1` of commit
+b1616b79c7300167c79a8b0790ba79b5e0b7080d (committed
+2026-10-28T14:34:07+00:00), files unchanged:
+
+- `ft/` (84 full-text test sets and `ft/TestSources`)
+
+Not copied: `ser/`, `upd/`, `xs/`, the drivers, tools, viewer and
 guide. A catalog test set whose file is not
 present is not run by `lake exe l4qt4` unless its family is selected.
 

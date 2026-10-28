@@ -12,28 +12,34 @@ equal. For another language there is no stemmer: the stem is the word.
 -/
 namespace L4Factoidal.FullText.Porter
 
-/-- Porter's consonant: not a, e, i, o, u, and not a `y` after a consonant. -/
-def isCons (w : Array Char) : Nat → Bool
-  | 0 => match w.getD 0 ' ' with
-    | 'a' | 'e' | 'i' | 'o' | 'u' => false
-    | _ => true
-  | i + 1 => match w.getD (i + 1) ' ' with
-    | 'a' | 'e' | 'i' | 'o' | 'u' => false
-    | 'y' => !isCons w i
-    | _ => true
+/-- Porter's consonant flags of a word: not a, e, i, o, u, and not a `y`
+    after a consonant. A loop from left to right. -/
+def consFlags (w : Array Char) : Array Bool := Id.run do
+  let mut out : Array Bool := #[]
+  for i in [0:w.size] do
+    let c := match w.getD i ' ' with
+      | 'a' | 'e' | 'i' | 'o' | 'u' => false
+      | 'y' => if i == 0 then true else !(out.getD (i - 1) false)
+      | _ => true
+    out := out.push c
+  return out
+
+def isCons (w : Array Char) (i : Nat) : Bool := (consFlags w).getD i true
 
 /-- The measure m of the first `len` letters: the number of VC sequences. -/
 def measure (w : Array Char) (len : Nat) : Nat := Id.run do
+  let fl := consFlags w
   let mut m := 0
   let mut prevVowel := false
   for i in [0:len] do
-    let c := isCons w i
+    let c := fl.getD i true
     if c && prevVowel then m := m + 1
     prevVowel := !c
   return m
 
 def hasVowel (w : Array Char) (len : Nat) : Bool :=
-  (List.range len).any (fun i => !isCons w i)
+  let fl := consFlags w
+  (List.range len).any (fun i => !fl.getD i true)
 
 def endsDouble (w : Array Char) (len : Nat) : Bool :=
   len ≥ 2 && w.getD (len - 1) ' ' == w.getD (len - 2) ' ' && isCons w (len - 1)
@@ -87,8 +93,14 @@ def step1c (s : String) : String :=
 /-- Apply the rule of the longest suffix in `rules` that `s` ends with,
     when the measure of the stem is above `minM`. -/
 def applyRules (rules : List (String × String)) (minM : Nat) (s : String) : String :=
-  let sorted := rules.toArray.qsort (fun a b => a.1.length > b.1.length)
-  match sorted.toList.find? (fun r => s.endsWith r.1) with
+  -- the longest suffix: the first of the longest matches
+  let best := rules.foldl (fun (acc : Option (String × String)) r =>
+    if s.endsWith r.1 then
+      match acc with
+      | some b => if r.1.length > b.1.length then some r else acc
+      | none => some r
+    else acc) none
+  match best with
   | some (suf, rep) =>
     let t := before s suf
     if m t > minM then t ++ rep else s
@@ -109,8 +121,13 @@ def step4Suffixes : List String :=
    "ou", "ism", "ate", "iti", "ous", "ive", "ize"]
 
 def step4 (s : String) : String :=
-  let sorted := step4Suffixes.toArray.qsort (fun a b => a.length > b.length)
-  match sorted.toList.find? (fun suf => s.endsWith suf) with
+  let best := step4Suffixes.foldl (fun (acc : Option String) suf =>
+    if s.endsWith suf then
+      match acc with
+      | some b => if suf.length > b.length then some suf else acc
+      | none => some suf
+    else acc) none
+  match best with
   | some suf =>
     let t := before s suf
     if m t > 1 then
