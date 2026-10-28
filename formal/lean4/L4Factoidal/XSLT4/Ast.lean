@@ -31,11 +31,34 @@ def Avt.const? : Avt → Option String
   | [.lit s] => some s
   | _ => none
 
+/-- An item pattern of XSLT 4.0 (§6.3.3 to §6.3.9). A sequence pattern
+    (§6.3.5) is `(some p, occurrence)`, or `(none, _)` for
+    `empty-sequence()`. -/
+inductive IPat where
+  /-- An XNode pattern (§6.3.2), as its XPath expression. -/
+  | xnode (e : Expr)
+  /-- `.`: any item. -/
+  | any
+  /-- `atomic(T | U)`, `record(N)`, `~T`: the items of a type. -/
+  | types (t : IType)
+  /-- A map pattern: entries (key, sequence pattern if given), and
+      whether `*` allows other keys. -/
+  | mapP (es : List (Atomic × Option (Option IPat × Occ))) (open_ : Bool)
+  | arrayP (m : Option IPat) (o : Occ)
+  /-- `jnode(K, SP)`: `none` for the selector `*`. -/
+  | jnodeP (key : Option Atomic) (v : Option IPat) (o : Occ)
+  /-- A pattern with predicates. -/
+  | filtered (p : IPat) (preds : List Expr)
+deriving Inhabited
+
 /-- A pattern (§6.3), as the expression tree of its XPath reading.
-    `src` is the pattern text, for messages. -/
+    `src` is the pattern text, for messages. `ip` is the item pattern
+    of a 4.0 simple pattern (§6.3.3), with its default priority; when it
+    is present it decides the match. -/
 structure Pattern where
   e : Expr
   src : String := ""
+  ip : Option (IPat × Float) := none
 deriving Inhabited
 
 /-- The kind of grouping of `xsl:for-each-group` (§14). -/
@@ -140,6 +163,9 @@ inductive Instr where
   /-- A sequence constructor under a `[xsl:]default-collation`
       attribute (§3.7.2): the default collation of its expressions. -/
   | withColl (uri : String) (body : List Instr)
+  /-- A sequence constructor in (or out of) backwards-compatible mode
+      (§3.9): XPath 1.0 compatibility mode for its expressions. -/
+  | withCompat (on : Bool) (body : List Instr)
 
 /-- An `xsl:sort` (§13.1): select (or body), order, lang, data-type,
     case-order, collation, stable. -/
@@ -298,7 +324,7 @@ def Instr.bodies : Instr → List (List Instr)
   | .comment _ b | .pi _ _ b | .nsI _ _ b | .docI b | .var _ _ _ b | .copy _ _ _ _ b
   | .message _ b _ _ | .assertI _ _ b _ | .breakI _ b | .mapI _ b _ | .mapEntry _ _ b
   | .arrayI _ _ b | .arrayMember _ b | .wherePopulated b | .onEmpty _ b | .onNonEmpty _ b
-  | .sourceDoc _ b | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b => [b]
+  | .sourceDoc _ b | .ifI _ _ _ b | .resultDoc _ _ _ b | .withColl _ b | .withCompat _ b => [b]
   | .applyT _ _ ss ps _ => ss.map SortK.body ++ ps.map WParam.body
   | .callT _ ps | .applyImports ps | .nextMatch ps | .nextIteration ps => ps.map WParam.body
   | .forEach _ ss b _ | .forEachGroup _ _ _ _ _ _ ss b | .performSort _ ss b => b :: ss.map SortK.body

@@ -55,6 +55,12 @@ structure CSt where
   aliasPrec : List (String × String × Nat) := []
   /-- The collation of each `xsl:key` declaration seen so far. -/
   keyColls : List (QN × Option String) := []
+  /-- Expressions whose function calls are checked when all declarations
+      are known (XPST0017). -/
+  checkExprs : List Expr := []
+  /-- The attributes of the `xsl:mode` declarations of each mode so far,
+      with their import precedence. -/
+  modeAttrs : List (String × List (String × String × Nat)) := []
 deriving Inhabited
 
 abbrev CM := StateT CSt M
@@ -103,6 +109,26 @@ def tokens (s : String) : List String :=
   (s.split (fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r')).toList.map (·.toString) |>.filter (· != "")
 
 /-! ## Static evaluation (§9.7) -/
+
+/-- Parse an XPath expression of the stylesheet, and keep it for the
+    static check of function names when the element is neither in
+    backwards- nor in forwards-compatible mode. -/
+def parseC (c : SCx) (src : String) : CM Expr := do
+  let e ← liftM (c.parse src)
+  if !c.backCompat && !c.forwardsCompat then
+    modify (fun s => { s with checkExprs := e :: s.checkExprs })
+  pure e
+
+/-- Parse a pattern; its expressions join the static check of function
+    names (as for `parseC`). -/
+def patternC (c : SCx) (src : String) : CM Pattern := do
+  let p ← liftM (c.pattern src)
+  if !c.backCompat && !c.forwardsCompat then
+    let es := p.e :: (match p.ip with
+      | some _ => []
+      | none => [])
+    modify (fun s => { s with checkExprs := es ++ s.checkExprs })
+  pure p
 
 def CSt.userFn (s : CSt) (q : QN) (k : Option Nat) : Bool :=
   s.fnNames.any (fun (n, a) => n == q && (k.isNone || k == some a))
@@ -161,7 +187,7 @@ def effScope (sc : List (String × String)) : List (String × String) :=
   sc.foldl (fun acc (p, u) => if acc.any (·.1 == p) then acc else acc ++ [(p, u)]) []
 
 /-- The URIs named by an `exclude-result-prefixes` value. -/
-def exclUris (ns : List (String × String)) (v : String) : CM (List String) := do
+def exclUris (ns : List (String × String)) (v : String) (code : String := "XTSE0808") : CM (List String) := do
   let mut out : List String := []
   for t in tokens v do
     if t == "#all" then out := out ++ ns.map (·.2)
@@ -171,7 +197,7 @@ def exclUris (ns : List (String × String)) (v : String) : CM (List String) := d
       | none => cerr "XTSE0809" "#default used where there is no default namespace"
     else match ns.lookup t with
       | some u => out := out ++ [u]
-      | none => cerr "XTSE0808" ("exclude-result-prefixes names undeclared prefix '" ++ t ++ "'")
+      | none => cerr code ("undeclared prefix '" ++ t ++ "' in a prefix list")
   pure out
 
 /-- Enter element `i`: its namespaces and the standard attributes
@@ -192,7 +218,7 @@ def SCx.enter (c : SCx) (m : Mod) (i : Nat) (as : Attrs) : CM SCx := do
   if let some v := g "exclude-result-prefixes" then
     c := { c with excl := c.excl ++ (← exclUris ns v) }
   if let some v := g "extension-element-prefixes" then
-    c := { c with ext := c.ext ++ (← exclUris ns v) }
+    c := { c with ext := c.ext ++ (← exclUris ns v "XTSE1430") }
   if let some v := g "default-mode" then
     let v := v.trimAscii.toString
     let dm ← if v == "#unnamed" then pure "#unnamed" else do pure (← liftM (c.qname v)).eqn
@@ -233,7 +259,7 @@ def reqAttr (as : Attrs) (l : String) (inst : String) : CM String :=
 def optExpr (c : SCx) (as : Attrs) (l : String) : CM (Option Expr) :=
   match as.get l with
   | none => pure none
-  | some v => some <$> liftM (c.parse v)
+  | some v => some <$> parseC c v
 
 def optAvt (c : SCx) (as : Attrs) (l : String) : CM (Option Avt) :=
   match as.get l with
@@ -339,7 +365,7 @@ def enumAttrs : List (String × List String) := [
   ("level", ["single", "multiple", "any"]),
   ("visibility", ["public", "private", "final", "abstract"]),
   ("on-multiple-match", ["use-last", "fail"]),
-  ("on-no-match", ["deep-copy", "shallow-copy", "deep-skip", "shallow-skip", "text-only-copy", "fail"]),
+  ("on-no-match", ["deep-copy", "shallow-copy", "shallow-copy-all", "deep-skip", "shallow-skip", "text-only-copy", "fail"]),
   ("validation", ["strict", "lax", "preserve", "strip"]),
   ("default-validation", ["preserve", "strip"]),
   ("use", ["required", "optional", "absent"]),
@@ -479,6 +505,7 @@ def compileElem : Nat → SCx → Mod → Nat → CM (List Instr)
     let c ← c0.enter m i as
     if !(← useWhenOk c m i as) then return []
     let wrap : List Instr → List Instr := fun is =>
+      let is := if c.backCompat != c0.backCompat then [.withCompat c.backCompat is] else is
       if c.defaultCollation != c0.defaultCollation then [.withColl c.defaultCollation is] else is
     let q := m.name i
     if q.uri == nsXSL then
@@ -588,7 +615,7 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
     | "select" =>
         let src := m.text i
         if src.trimAscii.toString == "" then pure (.seq none [] (← optType c as))
-        else pure (.seq (some (← liftM (c.parse src))) [] (← optType c as))
+        else pure (.seq (some (← parseC c src)) [] (← optType c as))
     | "element" =>
         let nm ← liftM (c.avt (← reqAttr as "name" l))
         let useSets ← match as.get "use-attribute-sets" with
@@ -633,10 +660,10 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
     | "apply-imports" => pure (.applyImports (← compileParams f c m ekids "with-param"))
     | "next-match" => pure (.nextMatch (← compileParams f c m ekids "with-param"))
     | "for-each" =>
-        let sel ← liftM (c.parse (← reqAttr as "select" l))
+        let sel ← parseC c (← reqAttr as "select" l)
         pure (.forEach sel (← compileSorts f c m ekids) (← body (notTag ["sort"])) (← optAvt c as "separator"))
     | "for-each-group" =>
-        let sel ← liftM (c.parse (← reqAttr as "select" l))
+        let sel ← parseC c (← reqAttr as "select" l)
         let opts := ["group-by", "group-adjacent", "group-starting-with", "group-ending-with", "split-when", "merge-when"]
         let given := opts.filter (fun o => (as.get o).isSome)
         if given.length != 1 then cerr "XTSE1080" "xsl:for-each-group needs exactly one grouping attribute"
@@ -646,15 +673,15 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
           | "group-ending-with" => .endingWith | "split-when" => .splitWhen | _ => .mergeWhen
         let v := (as.get g).getD ""
         let (key, pat) ← if kind == .startingWith || kind == .endingWith then
-            do pure (none, some (← liftM (c.pattern v)))
-          else do pure (some (← liftM (c.parse v)), none)
+            do pure (none, some (← patternC c v))
+          else do pure (some (← parseC c v), none)
         let composite ← as.bool "composite" false
         if (as.get "collation").isSome && !(kind == .by || kind == .adjacent) then
           cerr "XTSE1090" "collation is allowed only with group-by or group-adjacent"
         pure (.forEachGroup sel kind key pat composite (← optAvt c as "collation")
           (← compileSorts f c m ekids) (← body (notTag ["sort"])))
     | "if" =>
-        let test ← liftM (c.parse (← reqAttr as "test" l))
+        let test ← parseC c (← reqAttr as "test" l)
         let th ← optExpr c as "then"
         let b ← body
         if th.isSome && !b.isEmpty then cerr "XTSE3185" "xsl:if has both a then attribute and content"
@@ -668,7 +695,7 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
           if !(← useWhenOk ck m k kas) then continue
           if m.isXsl k "when" then
             if other.isSome then cerr "XTSE0010" "xsl:when after xsl:otherwise"
-            let t ← liftM (ck.parse (← reqAttr kas "test" "when"))
+            let t ← parseC ck (← reqAttr kas "test" "when")
             let sel ← optExpr ck kas "select"
             let b ← compileNodes f ck m (m.kids k)
             let b := match sel with | some e => [Instr.seq (some e) [] none] | none => b
@@ -685,7 +712,7 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
             cerr "XTSE0010" ("text is not allowed in xsl:" ++ l)
         if whens.isEmpty then cerr "XTSE0010" ("xsl:" ++ l ++ " needs at least one xsl:when")
         if l == "choose" then pure (.choose whens other)
-        else pure (.switch (← liftM (c.parse (← reqAttr as "select" l))) whens other)
+        else pure (.switch (← parseC c (← reqAttr as "select" l)) whens other)
     | "variable" =>
         let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:variable requires a name"
         let sel ← optExpr c as "select"
@@ -699,26 +726,32 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         pure (.copy (← optExpr c as "select") (← as.bool "copy-namespaces" true)
           (← as.bool "inherit-namespaces" true) useSets (← body))
     | "copy-of" =>
-        pure (.copyOf (← liftM (c.parse (← reqAttr as "select" l))) (← as.bool "copy-namespaces" true))
+        pure (.copyOf (← parseC c (← reqAttr as "select" l)) (← as.bool "copy-namespaces" true))
     | "message" =>
         pure (.message (← optExpr c as "select") (← body)
           ((← optAvt c as "terminate").getD [.lit "no"]) (← optAvt c as "error-code"))
     | "assert" =>
-        pure (.assertI (← liftM (c.parse (← reqAttr as "test" l))) (← optExpr c as "select") (← body)
+        pure (.assertI (← parseC c (← reqAttr as "test" l)) (← optExpr c as "select") (← body)
           (← optAvt c as "error-code"))
     | "number" =>
         let level := (as.get "level").getD "single"
         let cnt ← match as.get "count" with
-          | some v => some <$> liftM (c.pattern v) | none => pure none
+          | some v => some <$> patternC c v | none => pure none
         let frm ← match as.get "from" with
-          | some v => some <$> liftM (c.pattern v) | none => pure none
+          | some v => some <$> patternC c v | none => pure none
         if (as.get "value").isSome && ((as.get "select").isSome || (as.get "level").isSome || cnt.isSome || frm.isSome) then
           cerr "XTSE0975" "xsl:number with value cannot have select, level, count or from"
+        -- a fixed start-at must be integers (§12.3; XTSE0020)
+        if let some sa := as.get "start-at" then
+          if !sa.contains '{' && !((tokens sa).all (fun t =>
+              let t := if t.startsWith "-" then (t.drop 1).toString else t
+              t != "" && t.all Char.isDigit)) then
+            cerr "XTSE0020" ("invalid start-at value '" ++ sa ++ "'")
         pure (.number (← optExpr c as "value") (← optExpr c as "select") level cnt frm
           ((← optAvt c as "format").getD [.lit "1"]) (← optAvt c as "lang") (← optAvt c as "ordinal")
           (← optAvt c as "start-at") (← optAvt c as "grouping-separator") (← optAvt c as "grouping-size"))
     | "iterate" =>
-        let sel ← liftM (c.parse (← reqAttr as "select" l))
+        let sel ← parseC c (← reqAttr as "select" l)
         let ps ← compileParams f c m ekids "param"
         let oc ← match ekids.find? (m.isXsl · "on-completion") with
           | some k => do
@@ -781,7 +814,7 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         if sel.isSome && !b.isEmpty then cerr "XTSE3140" "xsl:try has both select and content"
         pure (.tryI sel b catches)
     | "analyze-string" =>
-        let sel ← liftM (c.parse (← reqAttr as "select" l))
+        let sel ← parseC c (← reqAttr as "select" l)
         let rx ← liftM (c.avt (← reqAttr as "regex" l))
         let fl ← liftM (c.avt ((as.get "flags").getD ""))
         let ms ← match ekids.find? (m.isXsl · "matching-substring") with
@@ -796,10 +829,10 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
         let mut ents : List Instr := []
         for (aq, v) in as do
           if aq.uri != "" || standardAttrs.contains aq.loc then continue
-          ents := ents ++ [.mapEntry (.lit (Atomic.ofStr aq.loc)) (some (← liftM (c.parse v))) []]
+          ents := ents ++ [.mapEntry (.lit (Atomic.ofStr aq.loc)) (some (← parseC c v)) []]
         pure (.mapI none (ents ++ (← body)) none)
     | "map-entry" =>
-        let key ← liftM (c.parse (← reqAttr as "key" l))
+        let key ← parseC c (← reqAttr as "key" l)
         let sel ← optExpr c as "select"
         let b ← body
         if sel.isSome && !b.isEmpty then cerr "XTSE3280" "xsl:map-entry has both select and content"
@@ -807,7 +840,7 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
     | "array" => pure (.arrayI (← optExpr c as "for-each") (← optExpr c as "select") (← body))
     | "array-member" => pure (.arrayMember (← optExpr c as "select") (← body))
     | "evaluate" =>
-        let xp ← liftM (c.parse (← reqAttr as "xpath" l))
+        let xp ← parseC c (← reqAttr as "xpath" l)
         pure (.evaluate xp (← optExpr c as "context-item") (← optExpr c as "with-params")
           (← optExpr c as "namespace-context") (← optType c as)
           (← compileParams f c m ekids "with-param") c.xpNs c.baseUri)
@@ -846,13 +879,16 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
             let fs := kas.get "for-each-source"
             if fi.isSome && (fs.isSome || (kas.get "use-accumulators").isSome || (kas.get "streamable").isSome) then
               cerr "XTSE3195" "xsl:merge-source with for-each-item cannot have for-each-source, use-accumulators or streamable"
-            let sel ← liftM (ck.parse (← reqAttr kas "select" "merge-source"))
+            let sel ← parseC ck (← reqAttr kas "select" "merge-source")
             let keys ← compileSorts f ck m (m.elemKids k)
             srcs := srcs ++ [.mk ((kas.get "name").getD "") (← optExpr ck kas "for-each-item")
               (← optExpr ck kas "for-each-source") sel (← kas.bool "sort-before-merge" false) keys]
         let act ← match ekids.find? (m.isXsl · "merge-action") with
           | some k => compileNodes f c m (m.kids k)
           | none => cerr "XTSE0010" "xsl:merge needs xsl:merge-action"
+        -- at least one merge source, each with a merge key (XTSE0010)
+        if srcs.isEmpty then cerr "XTSE0010" "xsl:merge needs an xsl:merge-source"
+        if srcs.any (fun x => x.keys.isEmpty) then cerr "XTSE0010" "xsl:merge-source needs an xsl:merge-key"
         -- distinct names (XTSE3190) and the same number of keys (XTSE2200)
         let names := (srcs.map (fun (.mk n ..) => n)).filter (· != "")
         if names.length != names.eraseDups.length then cerr "XTSE3190" "two xsl:merge-source elements have the same name"
@@ -1028,7 +1064,7 @@ def compileTemplate (prec : Nat) (d : Decl) (as : Attrs) (inMode : Option String
   let ekids := m.elemKids i
   let name ← qnOf c as "name"
   let pat ← match as.get "match" with
-    | some v => some <$> liftM (c.pattern v)
+    | some v => some <$> patternC c v
     | none => pure none
   if name.isNone && pat.isNone then cerr "XTSE0500" "xsl:template needs a match or a name attribute"
   if pat.isNone && ((as.get "mode").isSome || (as.get "priority").isSome) then
@@ -1053,6 +1089,7 @@ def compileTemplate (prec : Nat) (d : Decl) (as : Attrs) (inMode : Option String
   let body ← compileNodes 100000 c m bodyIds
   let body := [Instr.seq none body none]
   let body := if c.defaultCollation != "" then [Instr.withColl c.defaultCollation body] else body
+  let body := [Instr.withCompat c.backCompat body]
   let as' ← optType c as
   let tid ← nextTid
   let order ← nextOrder
@@ -1066,6 +1103,9 @@ def compileTemplate (prec : Nat) (d : Decl) (as : Attrs) (inMode : Option String
     | none => pure none
   match pat with
   | some p =>
+    if let some (_, pr) := p.ip then
+      addTemplate { id := tid, pat := some p, name, modes, prec, order, prio := prio?.getD pr, params := ps, ty := as', body, ctxAbsent, ctxAs }
+      return
     let alts := exprAlternatives 1000 p.e
     for a in alts do
       addTemplate { id := tid, pat := some { e := a, src := p.src }, name, modes, prec, order, prio := prio?.getD (defaultPriority a), params := ps, ty := as', body, ctxAbsent, ctxAs }
@@ -1091,6 +1131,9 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:function requires a name"
       if [nsFN, nsXS, nsMATH, nsMAP, nsARR, nsXSL, nsXML].contains nm.uri then
         cerr "XTSE0080" ("a stylesheet function cannot be in namespace " ++ nm.uri)
+      -- a function in no namespace must be private (XTSE0740)
+      if nm.uri == "" && ((as.get "visibility").getD "private") != "private" then
+        cerr "XTSE0740" ("the function " ++ nm.loc ++ " is in no namespace and is not private")
       let ps ← compileParams 100000 c m ekids "param"
       -- 4.0 (§10.3.2): optional parameters, with default values, follow
       -- the required ones
@@ -1114,6 +1157,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let bodyIds := (m.kids i).filter (fun k => !(m.isXsl k "param"))
       let body ← compileNodes 100000 c m bodyIds
       let body := if c.defaultCollation != "" then [Instr.withColl c.defaultCollation body] else body
+      let body := [Instr.withCompat c.backCompat body]
       let s ← get
       if s.sheet.functions.any (fun g => g.name == nm && g.params.length == ps.length && g.prec == prec) then
         cerr "XTSE0770" ("two functions " ++ nm.show ++ "#" ++ toString ps.length)
@@ -1134,7 +1178,7 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       upd (fun sh => { sh with globals := sh.globals ++ [g] })
   | "key" =>
       let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:key requires a name"
-      let pat ← liftM (c.pattern (← reqAttr as "match" "key"))
+      let pat ← patternC c (← reqAttr as "match" "key")
       let use ← optExpr c as "use"
       let body ← compileNodes 100000 c m (m.kids i)
       if use.isSome && !body.isEmpty then cerr "XTSE1205" "xsl:key has both use and content"
@@ -1163,14 +1207,34 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       let key ← match as.get "name" with
         | some v => modeKey c v
         | none => pure "#unnamed"
-      let onm : NoMatch ← match ((as.get "on-no-match").getD "text-only-copy").trimAscii.toString with
+      -- the declarations of one mode are merged attribute by attribute;
+      -- two values of one attribute at the same import precedence are an
+      -- error (XTSE0545)
+      let own := (as.filter (fun (aq, _) => aq.uri == "" && aq.loc != "name" && !standardAttrs.contains aq.loc)).map
+        (fun (aq, v) => (aq.loc, v.trimAscii.toString))
+      let st ← get
+      let all := ((st.modeAttrs.lookup key).getD []) ++ own.map (fun (k, v) => (k, v, prec))
+      set { st with modeAttrs := (key, all) :: st.modeAttrs.filter (·.1 != key) }
+      -- the value of each attribute at its highest precedence so far
+      let mas : Attrs := (all.map (·.1)).eraseDups.filterMap (fun k =>
+        let es := all.filter (·.1 == k)
+        let top := es.foldl (fun a (_, _, p) => max a p) 0
+        (es.reverse.find? (·.2.2 == top)).map (fun (_, v, _) => ({ uri := "", loc := k }, v)))
+      if key == "#unnamed" && (mas.get "visibility").isSome then
+        cerr "XTSE0020" "the unnamed mode cannot have a visibility attribute"
+      if mas.get "visibility" == some "abstract" then
+        cerr "XTSE0020" "a mode cannot be abstract"
+      if let some t := mas.get "typed" then
+        if !["yes", "no", "true", "false", "1", "0", "strict", "lax", "unspecified"].contains t then
+          cerr "XTSE0020" ("invalid typed value '" ++ t ++ "'")
+      let onm : NoMatch ← match ((mas.get "on-no-match").getD "text-only-copy") with
         | "text-only-copy" => pure .textOnlyCopy | "deep-copy" => pure .deepCopy
-        | "shallow-copy" => pure .shallowCopy | "deep-skip" => pure .deepSkip
+        | "shallow-copy" | "shallow-copy-all" => pure .shallowCopy | "deep-skip" => pure .deepSkip
         | "shallow-skip" => pure .shallowSkip | "fail" => pure .fail
         | v => cerr "XTSE0020" ("invalid on-no-match '" ++ v ++ "'")
-      let mty ← optType c as
-      let mcn ← as.bool "copy-namespaces" true
-      let md : ModeDef := { name := key, onNoMatch := onm, onMultiple := (as.get "on-multiple-match").getD "use-last", typed := (as.get "typed").getD "unspecified", ty := mty, copyNs := mcn }
+      let mty ← optType c mas
+      let mcn ← mas.bool "copy-namespaces" true
+      let md : ModeDef := { name := key, onNoMatch := onm, onMultiple := (mas.get "on-multiple-match").getD "use-last", typed := (mas.get "typed").getD "unspecified", ty := mty, copyNs := mcn }
       upd (fun sh => { sh with modes := (sh.modes.filter (·.name != key)) ++ [md] })
       -- 4.0 enclosing modes (§6.9.6): templates inside xsl:mode
       for k in ekids do
@@ -1281,13 +1345,13 @@ def compileDecl (prec : Nat) (d : Decl) : CM Unit := do
       upd (fun sh => { sh with charMaps := sh.charMaps ++ [(nm.eqn, uses, cs)] })
   | "accumulator" =>
       let some nm ← qnOf c as "name" | cerr "XTSE0010" "xsl:accumulator requires a name"
-      let init ← liftM (c.parse (← reqAttr as "initial-value" "accumulator"))
+      let init ← parseC c (← reqAttr as "initial-value" "accumulator")
       let mut rules : List AccRule := []
       for k in ekids do
         if m.isXsl k "accumulator-rule" then
           let kas ← effAttrs c m k
           let ck ← c.enter m k kas
-          let pat ← liftM (ck.pattern (← reqAttr kas "match" "accumulator-rule"))
+          let pat ← patternC ck (← reqAttr kas "match" "accumulator-rule")
           let sel ← optExpr ck kas "select"
           let b ← compileNodes 100000 ck m (m.kids k)
           rules := rules ++ [{ pat, isEnd := (kas.get "phase") == some "end", sel, body := b }]
@@ -1452,15 +1516,53 @@ def compileStylesheet (principal : String) (texts : List (String × String))
       if !(u.uri == nsXSL && u.loc == "original") && !sets.any (·.name == u) then
         cerr "XTSE0710" ("no attribute set named " ++ u.show)
     for i in instrs do
-      if let .callT n _ := i then
+      if let .callT n wps := i then
         if !(n.uri == nsXSL && n.loc == "original") && !s.sheet.templates.any (·.name == some n) then
           cerr "XTSE0650" ("no template named " ++ n.show)
+        -- XTSE0690: a mandatory non-tunnel parameter of the template
+        -- that the call does not supply
+        let ts := s.sheet.templates.toList.filter (·.name == some n)
+        let top := ts.foldl (fun a t => max a t.prec) 0
+        if let some t := ts.find? (·.prec == top) then
+          for p in t.params do
+            if p.required && !p.tunnel && !wps.any (fun w => !w.tunnel && w.name == p.name) then
+              cerr "XTSE0690" ("xsl:call-template " ++ n.show ++ " does not supply the required parameter $" ++ p.name.show)
     -- XTSE0810: two aliases of one namespace at its highest precedence
     -- with different result namespaces
     for (su, ru, p) in s.aliasPrec do
       let top := (s.aliasPrec.filter (·.1 == su)).foldl (fun a (_, _, p2) => max a p2) 0
       if p == top && s.aliasPrec.any (fun (su2, ru2, p2) => su2 == su && p2 == p && ru2 != ru) then
         cerr "XTSE0810" ("two xsl:namespace-alias declarations for namespace '" ++ su ++ "'")
+    -- XPST0017: a static call of a function that no library, host or
+    -- stylesheet declaration provides (not in backwards-compatible mode)
+    let fns := s.sheet.functions
+    for e in s.checkExprs do
+      for x in exprAll 10000 [e] do
+        let (q, k) := match x with
+          | .call q as kw => (q, as.length + kw.length)
+          | .fref q k => (q, k)
+          | _ => ({ uri := nsXSL, loc := "" }, 0)
+        if q.uri == nsXSL || q.uri == nsXS || s.types.any (·.1 == q) then continue
+        -- an unprefixed call finds a function in no namespace first (4.0)
+        let q := if q.uri == nsFN && q.pfx == "" && fns.any (fun g => g.name.uri == "" && g.name.loc == q.loc &&
+            g.params.length ≥ k && (g.params.filter (·.required)).length ≤ k)
+          then { q with uri := "" } else q
+        let host := q.uri == nsFN && (xslFunctions.lookup q.loc).any (·.contains k)
+        let lib := (findSig q k).isSome || (q.uri == nsFN && q.loc == "concat" && k ≥ 2)
+        let user := fns.any (fun g => g.name == q && g.params.length ≥ k &&
+          (g.params.filter (·.required)).length ≤ k)
+        let rec_ := q.uri == nsFN && (recordTypesRaw.lookup q.loc).isSome
+        if !(host || lib || user || rec_) then
+          cerr "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
+    -- XTSE0545: two declarations of a mode with different values of an
+    -- attribute at its highest precedence
+    for (mk, all) in s.modeAttrs do
+      for k in (all.map (·.1)).eraseDups do
+        if k == "use-accumulators" then continue
+        let es := all.filter (·.1 == k)
+        let top := es.foldl (fun a (_, _, p) => max a p) 0
+        let vs := ((es.filter (·.2.2 == top)).map (·.2.1)).eraseDups
+        if vs.length > 1 then cerr "XTSE0545" ("two values for attribute " ++ k ++ " of mode " ++ mk)
     -- XTSE1300: the characters of each decimal format must be distinct
     for (k, ps) in s.sheet.decimalFormats do
       let mut f : DecFormat := {}

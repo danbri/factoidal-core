@@ -261,7 +261,7 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
       | none => err "XTDE1270" (what ++ " needs a context item")
     -- stylesheet functions (highest import precedence); an unprefixed
     -- call also finds a function in no namespace (4.0)
-    let q := if q.uri == nsFN && q.pfx == "" && S.functions.any (fun g => g.name.uri == "" && g.name.loc == q.loc)
+    let q := if q.uri == nsFN && q.pfx == "" && S.functions.any (fun g => g.name.uri == "" && g.name.loc == q.loc && g.accepts k)
       then { q with uri := "" } else q
     let fns := S.functions.filter (fun g => g.name == q && g.accepts k)
     match fns.foldl (fun (b : Option XFunction) g => match b with
@@ -284,13 +284,13 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
                 match p.ty with
                 | some t => liftX (env.coerce t [] ("$" ++ p.name.show ++ " of " ++ fn.name.show))
                 | none => pure []
-              else bindValue 100000 S dcx p.sel p.body p.ty ("$" ++ p.name.show)
+              else bindValue 100000 S dcx p.sel p.body p.ty ("$" ++ p.name.show) ""
           cx := cx.bind p.name v
           i := i + 1
         let os ← run 1000000 S cx fn.body
         let v ← materializeAll env os
         match fn.ty with
-        | some t => liftX (env.coerce t v ("the result of " ++ fn.name.show))
+        | some t => liftX (typeErrAs "XTTE0780" (env.coerce t v ("the result of " ++ fn.name.show)))
         | none => pure v)
     | none =>
     if q.uri != nsFN then none else
@@ -308,7 +308,7 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
         | none => err "XTDE1061" "there is no current group"
     | "current-grouping-key", 0 => some fun c _ =>
         match lookupV c.vars vGroupKey with
-        | some v => pure v
+        | some v => if showSeq v == showSeq noGroupKey then err "XTDE1071" "there is no current grouping key" else pure v
         | none => err "XTDE1071" "there is no current grouping key"
     | "current-merge-group", 0 => some fun c _ =>
         match lookupV c.vars vGroup, lookupV c.vars vMergeGroup with
@@ -463,11 +463,11 @@ def evalGlobals (S : Sheet) (o : TOpts) (env0 : Env) : M Env := do
       let supplied := if g.isParam then lookupV o.params g.name else none
       let act : XM Seq := match supplied with
         | some v => match g.ty with
-          | some t => liftX (genv.coerce t v ("$" ++ g.name.show))
+          | some t => liftX (typeErrAs "XTTE0590" (genv.coerce t v ("$" ++ g.name.show)))
           | none => pure v
         | none =>
           if g.required then xerr "XTDE0050" ("no value given for the required parameter $" ++ g.name.show)
-          else bindValue 100000 S { env := genv } g.sel g.body g.ty ("$" ++ g.name.show)
+          else bindValue 100000 S { env := genv, backCompat := ({ version := S.version } : SCx).backCompat } g.sel g.body g.ty ("$" ++ g.name.show) (if g.isParam then "XTTE0590" else "XTTE0570")
       match act.run { base := (hash g.name.eqn).toNat % 100000 + 7 } with
       | .ok (v, _) =>
           env := { env with vars := env.vars ++ [(g.name, v)] }

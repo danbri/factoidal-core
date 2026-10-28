@@ -154,6 +154,90 @@ def BOp.arOp? : BOp → Option ArOp
   | .add => some .add | .sub => some .sub | .mul => some .mul | .div => some .div
   | .idiv => some .idiv | .mod => some .mod | _ => none
 
+/-! ## XPath 1.0 compatibility mode
+
+The rules that apply when `Env.compat10` is true: argument coercion of
+static function calls (§3.4.1), arithmetic operands (§4.8.1) and general
+comparisons (§4.10.2). -/
+
+/-- The primitive type of an atomic type (itself if it has none). -/
+def primOf : AType → AType
+  | .b bt => .b (bt.primitive.getD bt)
+  | t => t
+
+/-- `fn:number` of one atomic item. -/
+def compatNum (a : Atomic) : Atomic :=
+  if a.isNumeric && a.ty == .b .double then a else
+  let a := if a.ty == .untyped then Atomic.ofStr a.str else a
+  match castAtomic a (.b .double) with
+  | .ok d => d
+  | .error _ => Atomic.ofDbl (0.0 / 0.0)
+
+/-- An arithmetic operand: the first atomized item, converted by
+    `fn:number` when it is a boolean, string, decimal, float or untyped
+    value; `none` when empty (the result is then NaN). -/
+def compatOperand (env : Env) (s : Seq) : M (Option Atomic) := do
+  match ← env.atomize s with
+  | [] => pure none
+  | a :: _ =>
+    let conv := a.ty == .untyped || a.isStringLike || a.isNumeric || a.ty == .b .boolean
+    pure (some (if conv then compatNum a else a))
+
+/-- Arithmetic in XPath 1.0 compatibility mode. -/
+def compatArith (env : Env) (ar : ArOp) (x y : Seq) : M Seq := do
+  match ← compatOperand env x, ← compatOperand env y with
+  | some a, some b => pure (single (← arith env.tz ar a b))
+  | _, _ => pure (single (Atomic.ofDbl (0.0 / 0.0)))
+
+/-- A general comparison in XPath 1.0 compatibility mode. -/
+def compatGeneral (env : Env) (op : BOp) (xs ys : Seq) : M Bool := do
+  let isBool (s : Seq) : Bool := match s with
+    | [.atom a] => a.ty == .b .boolean
+    | _ => false
+  let valOp : BOp := match op with
+    | .geq => .veq | .gne => .vne | .glt => .vlt | .gle => .vle | .ggt => .vgt | _ => .vge
+  if isBool xs || isBool ys then
+    let a ← ebv xs
+    let b ← ebv ys
+    if op == .geq || op == .gne then return ← valueCmp env.tz valOp (Atomic.ofBool a) (Atomic.ofBool b)
+    else return ← valueCmp env.tz valOp (compatNum (Atomic.ofBool a)) (compatNum (Atomic.ofBool b))
+  let as ← env.atomize xs
+  let bs ← env.atomize ys
+  let rel := !(op == .geq || op == .gne)
+  for a in as do
+    for b in bs do
+      let (a', b') ←
+        if rel || a.isNumeric || b.isNumeric then pure (compatNum a, compatNum b)
+        else if a.isStringLike || b.isStringLike || (a.ty == .untyped && b.ty == .untyped) then
+          pure (Atomic.ofStr a.str, Atomic.ofStr b.str)
+        else if a.ty == .untyped then pure (← castAtomic (Atomic.ofStr a.str) (primOf b.ty), b)
+        else if b.ty == .untyped then pure (a, ← castAtomic (Atomic.ofStr b.str) (primOf a.ty))
+        else pure (a, b)
+      if ← valueCmp env.tz valOp a' b' env.defaultColl then return true
+  pure false
+
+/-- Coerce a static function call argument in XPath 1.0 compatibility
+    mode (§3.4.1): `V[1]` for a single or optional type, then `fn:string`
+    for `xs:string`, `fn:number` for `xs:double`. -/
+def compatArg (env : Env) (t : IType) (v : Seq) : M Seq := do
+  let (it, single?) := match t with
+    | .seq i o => (i, o == Occ.opt)
+    | i => (i, true)
+  if !single? then return v
+  let v := v.take 1
+  match it with
+  | .atomic (.b .string) =>
+    match v with
+    | [] => pure (sStr "")
+    | [.atom x] => pure (sStr x.str)
+    | [.node n] => pure (sStr (env.nodeString n))
+    | _ => pure v
+  | .atomic (.b .double) =>
+    match ← env.atomize v with
+    | [] => pure (single (Atomic.ofDbl (0.0 / 0.0)))
+    | a :: _ => pure (single (compatNum a))
+  | _ => pure v
+
 def maxRange : Int := 20000000
 
 /-- Whether an item type is a valid cast target (XPath 4.0 §4.19.2). -/
@@ -531,6 +615,7 @@ def eval : Nat → Env → Expr → M Seq
               match p.dflt with
               | some d => vals := vals ++ [← eval n env d]
               | none => err "XPST0017" ("missing argument " ++ p.name)
+          if env.compat10 then vals ← (vals.zip sig.ps).mapM (fun (v, p) => compatArg env p.ty v)
           callFn n env q vals
   | .dyn f args => do
       let fs ← eval n env f
@@ -855,7 +940,9 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
             pure (sortGNodes r)
           | _, _ => err "XPTY0004" "union/intersect/except operands must be nodes"
     | _ =>
-      if op.isGeneral then do
+      if op.isGeneral && env.compat10 then do
+        pure (sBool (← compatGeneral env op (← eval n env a) (← eval n env b)))
+      else if op.isGeneral then do
         let xs ← env.atomize (← eval n env a)
         let ys ← env.atomize (← eval n env b)
         let mut res := false
@@ -891,7 +978,8 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
             | _ => gnodeEq p q || gnodeLt q p))
         | _, _ => err "XPTY0004" "node comparison operands must be single nodes"
       else match op.arOp? with
-        | some ar => do
+        | some ar =>
+          if env.compat10 then do compatArith env ar (← eval n env a) (← eval n env b) else do
           let x ← env.atomizeOpt (← eval n env a)
           let y ← env.atomizeOpt (← eval n env b)
           match x, y with

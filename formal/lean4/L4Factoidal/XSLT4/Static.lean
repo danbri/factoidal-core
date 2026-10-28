@@ -44,6 +44,8 @@ deriving Inhabited
     §3.9); `none` when it is not a decimal. -/
 def versionMilli (v : String) : Option Nat :=
   let t := v.trimAscii.toString
+  -- an xs:decimal: a leading `+` is allowed
+  let t := if t.startsWith "+" then (t.drop 1).toString else t
   match t.splitOn "." with
   | [a] => a.toNat?.map (· * 1000)
   | [a, b] =>
@@ -356,6 +358,7 @@ def typePriority : Nat → IType → Float
     | .anyNode | .anyFn | .elem none | .attr none | .elem (some .any) | .attr (some .any)
     | .text | .comment | .nsNode | .pi none | .doc none => -0.5
     | .atomic (.b .anyAtomicType) => -0.5
+    | .xnode | .jnodeT .any none => -0.5
     | .elem (some (.name _)) | .attr (some (.name _)) | .pi (some _) => 0
     | .elem (some _) | .attr (some _) => -0.25
     | .anyArr | .anyMap => -0.25
@@ -420,8 +423,10 @@ def patternOk : Nat → Bool → Expr → Bool
   | 0, _, _ => false
   | f + 1, top, e =>
     match e with
-    | .bin .union a b | .bin .intersect a b | .bin .except a b => patternOk f top a && patternOk f top b
-    | .seq [a] => patternOk f top a
+    -- the operands of a union, and a parenthesized pattern, are XNode
+    -- patterns: a simple pattern (`.`, `~T`) is not allowed there (§6.3.1)
+    | .bin .union a b | .bin .intersect a b | .bin .except a b => patternOk f false a && patternOk f false b
+    | .seq [a] => patternOk f false a
     | .root => true
     | .ctx => top
     | .instOf .ctx _ => top
@@ -431,7 +436,12 @@ def patternOk : Nat → Bool → Expr → Bool
     | .call q args kw => kw.isEmpty && patFnOk q args.length && args.all (fun a => patArgOk a)
     | .slash a b => patternOk f false a && patternOk f false b && (match b with
         | .var _ | .root => false
-        | _ => true)
+        | _ => true) &&
+        -- a function call or variable reference only at the start of a
+        -- path (§6.3.2: RootedPath)
+        ((exprFlat 1000 e).drop 1).all (fun x => match x with
+          | .call .. | .var _ => false
+          | _ => true)
     | _ => false
 
 /-! ## Walking expressions (for static checks) -/
@@ -479,6 +489,149 @@ def patternForbidden (e : Expr) : Option (String × String) :=
     | "current-merge-key" | "current-merge-key-array" => some ("XTSE3500", q.loc)
     | _ => none)
 
+/-! ## Item patterns of XSLT 4.0 (§6.3.3 to §6.3.9) -/
+
+/-- An occurrence indicator directly after a pattern in a sequence
+    pattern (§6.3.5); `one` when there is none. -/
+def pPatOcc : P Occ := do
+  let c ← read
+  let i ← get
+  let j := skipWsF c.s (c.s.size + 1) 0 i
+  match chAt c.s j with
+  | '?' => set (j + 1); pure .opt
+  | '*' => set (j + 1); pure .star
+  | '+' => set (j + 1); pure .plus
+  | _ => pure .one
+
+/-- A `Constant` (§6.3.6): a string or numeric literal, a QName
+    literal, `true()` or `false()`. -/
+def pPatConst : P Atomic := do
+  ws
+  if (← atS "\"") || (← atS "'") then return Atomic.ofStr (← pStringLit)
+  if ← eatS "#" then
+    match ← peekQName with
+    | some (p, u, l, e) => set e; return Atomic.ofQN (← resolve p u l "")
+    | none => synErr "expected a QName after #"
+  if ← eatKw "true" then expectS "("; expectS ")"; return Atomic.ofBool true
+  if ← eatKw "false" then expectS "("; expectS ")"; return Atomic.ofBool false
+  let neg ← eatS "-"
+  match ← pNumber with
+  | .lit a =>
+    if !neg then pure a else
+    match castAtomic (Atomic.ofStr ("-" ++ a.str)) a.ty with
+    | .ok b => pure b
+    | .error _ => synErr "bad numeric constant"
+  | _ => synErr "expected a constant"
+
+/-- Is the next token the keyword `k` followed by `(` (or `{` for
+    `map`)? -/
+def atKwOpen (k : String) (o : Char) : P Bool := do
+  if !(← atKw k) then return false
+  let c ← read
+  let i ← get
+  let j := skipWsF c.s (c.s.size + 1) 0 (i + k.length)
+  pure (chAt c.s j == o)
+
+mutual
+
+/-- A sequence pattern (§6.3.5): `none` for `empty-sequence()`. -/
+def pSeqPat : Nat → P (Option IPat × Occ)
+  | 0 => synErr "pattern too deeply nested"
+  | n + 1 => do
+    if ← atKwOpen "empty-sequence" '(' then
+      adv "empty-sequence".length; expectS "("; expectS ")"
+      return (none, .one)
+    let p ← pItemPat n
+    pure (some p, ← pPatOcc)
+
+/-- A pattern inside a map, array or JNode pattern: an item pattern
+    with predicates, or an XNode pattern (§6.3.1). -/
+def pItemPat : Nat → P IPat
+  | 0 => synErr "pattern too deeply nested"
+  | n + 1 => do
+    ws
+    let c ← read
+    let i ← get
+    let base ← if chAt c.s i == '~' then do
+        adv 1; pure (IPat.types (← pItemType 1000))
+      else if ← atKwOpen "type" '(' then do
+        adv 4; expectS "("; let t ← pItemType 1000; expectS ")"; pure (IPat.types t)
+      else if ← atKwOpen "atomic" '(' then do
+        adv 6; expectS "("
+        let mut ts : List IType := []
+        for _ in [0:1000] do
+          ts := ts ++ [← pItemType 1000]
+          if !(← eatS "|") then break
+        expectS ")"
+        pure (IPat.types (match ts with | [t] => t | _ => .choice ts))
+      else if ← atKwOpen "record" '(' then do
+        adv 6; expectS "("; let t ← pItemType 1000; expectS ")"; pure (IPat.types t)
+      else if (← atS "{") || (← atKwOpen "map" '{') then do
+        if ← atKw "map" then adv 3
+        expectS "{"
+        if ← eatS "}" then return IPat.mapP [] false
+        let mut es : List (Atomic × Option (Option IPat × Occ)) := []
+        let mut open_ := false
+        for _ in [0:10000] do
+          if ← eatS "*" then open_ := true; break
+          let k ← pPatConst
+          let sp ← if ← eatS ":" then some <$> pSeqPat n else pure none
+          es := es ++ [(k, sp)]
+          if !(← eatS ",") then break
+        expectS "}"
+        pure (IPat.mapP es open_)
+      else if ← atKwOpen "array" '(' then do
+        adv 5; expectS "("
+        let (m, o) ← pSeqPat n
+        expectS ")"
+        pure (IPat.arrayP m o)
+      else if ← atKwOpen "jnode" '(' then do
+        adv 5; expectS "("
+        let k ← if ← eatS "*" then pure none else some <$> pPatConst
+        expectS ","
+        let (m, o) ← pSeqPat n
+        expectS ")"
+        pure (IPat.jnodeP k m o)
+      else if chAt c.s i == '.' && chAt c.s (i + 1) != '.' && chAt c.s (i + 1) != '/' then do
+        adv 1; pure IPat.any
+      else pure (IPat.xnode (← pLevel n 8))
+    let preds ← pPreds n
+    pure (if preds.isEmpty then base else .filtered base preds)
+
+end
+
+/-- The default priority of an item pattern (§6.4.2 to §6.4.7). -/
+def ipPriority : Nat → IPat → Float
+  | 0, _ => 0.5
+  | f + 1, p =>
+    match p with
+    | .xnode e => defaultPriority e
+    | .any => -1
+    | .types t => match t with
+      | .record _ false => 0
+      | t => typePriority 50 t
+    | .mapP es open_ =>
+      if es.isEmpty && !open_ then 0.5
+      else if es.any (fun (_, sp) => sp.isSome) then 0.25
+      else if !es.isEmpty then 0 else -0.25
+    | .arrayP none _ => 0.5
+    | .arrayP (some q) _ => ipPriority f q
+    | .jnodeP k m _ =>
+      let a := if k.isSome then 0.5 else -1
+      let b := match m with
+        | none => 0.5
+        | some q => ipPriority f q
+      max a b
+    | .filtered (.jnodeP ..) _ => 1
+    | .filtered _ _ => 0.5
+
+/-- Does the pattern text start with a 4.0 item pattern keyword
+    (`atomic(`, `record(`, `array(`, `jnode(`, `map{` or `{`)? -/
+def startsItemPattern (t : String) : Bool :=
+  let t := t.trimAscii.toString
+  let noWs := String.ofList (t.toList.filter (fun ch => ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r'))
+  t.startsWith "{" || ["atomic(", "record(", "array(", "jnode(", "map{"].any (fun k => noWs.startsWith k)
+
 /-- Parse a pattern. `~T` and `type(T)` (with predicates) are type
     patterns of the 4.0 draft that the test suite uses; `.` with
     predicates is a simple pattern (§6.3.3); everything else is read as
@@ -486,6 +639,15 @@ def patternForbidden (e : Expr) : Option (String × String) :=
 def SCx.pattern0 (c : SCx) (src : String) : M Pattern := do
   let t := src.trimAscii.toString
   if t == "" then err "XTSE0340" "empty pattern" else
+  if startsItemPattern t then
+    let t' := expandTypes c.types c.ns 10 t
+    let p : P IPat := do let q ← pItemPat 1000; ws; pure q
+    match (p.run { s := t'.toList.toArray, ns := c.xpNs }).run 0 with
+    | .ok (ip, i) =>
+      if i < t'.length then err "XTSE0340" ("invalid pattern '" ++ t ++ "'")
+      else pure { e := .ctx, src := t, ip := some (ip, ipPriority 100 ip) }
+    | .error er => err "XTSE0340" ("invalid pattern '" ++ t ++ "': " ++ er.msg)
+  else
   let typed? : Option (String × Bool) :=
     if t.startsWith "~" then some ((t.drop 1).toString, false)
     else if t.startsWith "type(" then some ((t.drop 5).toString, true)

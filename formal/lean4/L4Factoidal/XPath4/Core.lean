@@ -69,6 +69,9 @@ structure Env where
       `fn:key`, ...). Consulted before the built-in library; empty for
       XPath. -/
   host : QN → Nat → Option HostFn := fun _ _ => none
+  /-- XPath 1.0 compatibility mode (XPath 4.0 §2.2.1.1): set by a host
+      language (XSLT with a version below 2.0); false for XPath. -/
+  compat10 : Bool := false
 deriving Inhabited
 
 def Env.doc (e : Env) (n : NodeRef) : Doc :=

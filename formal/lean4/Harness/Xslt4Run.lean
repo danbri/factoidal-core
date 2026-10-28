@@ -423,16 +423,31 @@ def resolveXmlFiles (dir : String) : Nat → Node → IO Node
 
 /-! ## Running -/
 
+/-! ## Defective test data
+
+xslt40-test cases whose expected result contradicts the normative text
+of XSLT 4.0 (defective test data, `skills/test-suites/SKILL.md`
+§ Defective test data). They are reported apart as "excluded (defective
+test data)", not in pass, fail or the total; a case on this list that
+PASSES counts as a FAIL, so the exclusion cannot outlive a corrected
+test. -/
+
+/-- `(test-case name, issue URL)`. -/
+def defective : List (String × String) := []
+
 structure Tally where
   pass : Nat := 0
   fail : Nat := 0
   unsup : Nat := 0
+  /-- Defective test data (`defective`): not in the total. -/
+  excl : Nat := 0
 deriving Inhabited
 
-def Tally.add (a b : Tally) : Tally := ⟨a.pass + b.pass, a.fail + b.fail, a.unsup + b.unsup⟩
+def Tally.add (a b : Tally) : Tally := ⟨a.pass + b.pass, a.fail + b.fail, a.unsup + b.unsup, a.excl + b.excl⟩
 def Tally.total (t : Tally) : Nat := t.pass + t.fail + t.unsup
 def Tally.show (t : Tally) : String :=
   s!"{t.pass} pass, {t.fail} fail, {t.unsup} unsupported (out of {t.total})"
+    ++ (if t.excl > 0 then s!"; {t.excl} excluded (defective test data)" else "")
 
 structure Opts where
   root : String := "../../third_party/testing/xslt40-test"
@@ -702,7 +717,7 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
     if let some only := o.only then
       if name != only then continue
     if let some pf := o.progress then
-      IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} {name}\n"
+      IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} {name} {t.excl}\n"
     let deps := (kidsNamed tc "dependencies").flatMap kids
     let specGiven := deps.any (fun x => localTag x == "spec")
     let setOk := if specGiven then (setDeps.filter (fun x => localTag x != "spec")).all depOk else setDeps.all depOk
@@ -714,7 +729,17 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
           (if attrD x "satisfied" "true" == "false" then "(not)" else "")))
         fails := fails ++ [s!"UNSUP {setName}/{name}: dep {why}"]
       continue
-    match ← runCase o dir localEnvs tc with
+    let outcome ← runCase o dir localEnvs tc
+    if let some iss := defective.lookup name then
+      match outcome with
+      | .pass =>
+        t := { t with fail := t.fail + 1 }
+        fails := fails ++ [s!"FAIL {setName}/{name}: STALE exclusion: the test passes; remove it from `defective` in Harness/Xslt4Run.lean ({iss})"]
+      | _ =>
+        t := { t with excl := t.excl + 1 }
+        if o.listFails then fails := fails ++ [s!"EXCLUDED {setName}/{name}: defective test data, {iss}"]
+      continue
+    match outcome with
     | .pass => t := { t with pass := t.pass + 1 }
     | .fail why =>
         t := { t with fail := t.fail + 1 }
@@ -723,7 +748,7 @@ def runSet (o : Opts) (file : String) : IO (String × Tally × List String) := d
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
   if let some pf := o.progress then
-    IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} DONE\n"
+    IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} DONE {t.excl}\n"
   return (setName, t, fails)
 
 /-- Run one test set in child processes, with a time limit per test case
@@ -759,7 +784,7 @@ def runIsolated (o : Opts) (secs : Nat) (setName file : String) : IO (Tally × S
     let line := ((← readFileSafe pf).getD "").trimAscii.toString
     let parts := line.splitOn " "
     let num (i : Nat) : Nat := ((parts.getD i "0").toNat?).getD 0
-    let t : Tally := ⟨num 0, num 1, num 2⟩
+    let t : Tally := ⟨num 0, num 1, num 2, num 4⟩
     let last := parts.getD 3 ""
     total := total.add t
     if finished && last == "DONE" then break
@@ -776,7 +801,7 @@ def runIsolated (o : Opts) (secs : Nat) (setName file : String) : IO (Tally × S
       | .ok d => pure (kidsNamed d.root "test-case").length
       | .error _ => pure total.total
     | none => pure total.total
-  let missing := count - total.total
+  let missing := count - total.total - total.excl
   let res := { total with fail := total.fail + missing }
   let ns := if missing > 0 then notes ++ [s!"{missing} not reported"] else notes
   return (res, if ns.isEmpty then "" else s!" [{ns.length} test(s) did not finish in {secs} s, counted as fail: {String.intercalate ", " ns}]")
