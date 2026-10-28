@@ -306,7 +306,7 @@ def pFlwor (sp : SubParsers) : P Expr := do
         cs := cs.push (.letC v vt (← subE sp.exprSingle))
         if !(← eatS ",") then break
     else if ← eatKw "where" then cs := cs.push (.whereC (← subE sp.exprSingle))
-    else if ← kwThen "while" '(' then
+    else if ← atKw "while" then
       expectKw "while"
       cs := cs.push (.whileC (← subE sp.exprSingle))
     else if ← kwThen "count" '$' then
@@ -565,6 +565,97 @@ def contentExprs (cfg : Cfg) (ps : List CPiece) : List Expr :=
     | .expr e => some e
     | .bound e => some e)
 
+/-- Skip a quoted attribute value at `i` (after the quote), with the
+    enclosed expressions in it (brace depth, string literals). Returns
+    the raw text when it has no enclosed expression, and the end. -/
+def skipAttrValue (s : Array Char) (q : Char) (i : Nat) : Option String × Nat := Id.run do
+  let mut j := i
+  let mut depth := 0
+  let mut lit := true
+  let mut buf : Array Char := #[]
+  for _ in [0:s.size + 1] do
+    if j ≥ s.size then break
+    let ch := chAt s j
+    if depth == 0 then
+      if ch == q then
+        if chAt s (j+1) == q then buf := buf.push q; j := j + 2; continue
+        j := j + 1; break
+      if ch == '{' && chAt s (j+1) == '{' then buf := buf.push '{'; j := j + 2; continue
+      if ch == '}' && chAt s (j+1) == '}' then buf := buf.push '}'; j := j + 2; continue
+      if ch == '{' then depth := 1; lit := false; j := j + 1; continue
+      buf := buf.push ch; j := j + 1
+    else
+      if ch == '{' then depth := depth + 1; j := j + 1
+      else if ch == '}' then depth := depth - 1; j := j + 1
+      else if ch == '"' || ch == '\'' then
+        let mut k := j + 1
+        for _ in [0:s.size + 1] do
+          if k ≥ s.size then break
+          if chAt s k == ch then
+            if chAt s (k+1) == ch then k := k + 2 else break
+          else k := k + 1
+        j := k + 1
+      else j := j + 1
+  (if lit then some (String.ofList buf.toList) else none, j)
+
+/-- The namespace declaration attributes of a start tag, read ahead
+    (they are in scope for every attribute of the tag, §4.12.1.2). -/
+def scanDecls (s : Array Char) (i : Nat) : List (String × String) := Id.run do
+  let mut j := i
+  let mut out : List (String × String) := []
+  for _ in [0:s.size + 1] do
+    let k := skipWsF s (s.size + 1) 0 j
+    let ch := chAt s k
+    if ch == '/' || ch == '>' || k ≥ s.size then break
+    let some (ap, al, ae) := qnameAt s k | break
+    let k2 := skipWsF s (s.size + 1) 0 ae
+    if chAt s k2 != '=' then break
+    let k3 := skipWsF s (s.size + 1) 0 (k2 + 1)
+    let q := chAt s k3
+    if q != '"' && q != '\'' then break
+    let (lit, e) := skipAttrValue s q (k3 + 1)
+    if (ap == "" && al == "xmlns") || ap == "xmlns" then
+      match lit with
+      | some v =>
+        let v := (expandRefs v).toOption.getD v
+        out := out ++ [(if ap == "" then "" else al, v)]
+      | none => pure ()
+    j := e
+  out
+
+/-- The attributes of a start tag (after the name, up to `/` or `>`):
+    namespace declarations and the other attributes. -/
+def pStartTag (sp : SubParsers) : P (List (String × String) × Array (String × String × List Expr × Bool)) := do
+  let c ← read
+  let mut decls : List (String × String) := []
+  let mut ats : Array (String × String × List Expr × Bool) := #[]
+  for _ in [0:100000] do
+    let j ← get
+    let k := skipWsF c.s (c.s.size + 1) 0 j
+    let ch := chAt c.s k
+    if ch == '/' || ch == '>' then set k; break
+    if k == j then synErr "expected whitespace before an attribute"
+    let some (ap, al, ae) := qnameAt c.s k | synErr "bad attribute name"
+    set ae
+    ws; expectS "="; ws
+    let q := chAt c.s (← get)
+    if q != '"' && q != '\'' then synErr "expected a quoted attribute value"
+    adv 1
+    let (parts, literal) ← pAttrValue sp q
+    if (ap == "" && al == "xmlns") || ap == "xmlns" then
+      if !literal then throw { code := "XQST0022", msg := "a namespace declaration with an enclosed expression" }
+      let uri := litString parts
+      let p := if ap == "" then "" else al
+      if p == "xml" && uri != nsXML then throw { code := "XQST0070", msg := "the xml prefix rebound" }
+      if p == "xmlns" then throw { code := "XQST0070", msg := "the xmlns prefix declared" }
+      if uri == nsXML && p != "xml" then throw { code := "XQST0070", msg := "the xml namespace bound to another prefix" }
+      if uri == "http://www.w3.org/2000/xmlns/" then throw { code := "XQST0070", msg := "the xmlns namespace declared" }
+      if decls.any (·.1 == p) then throw { code := "XQST0071", msg := "duplicate namespace declaration" }
+      decls := decls ++ [(p, uri)]
+    else
+      ats := ats.push (ap, al, parts, literal)
+  pure (decls, ats)
+
 def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
   | 0 => synErr "direct constructors nested too deeply"
   | f + 1 => do
@@ -573,35 +664,9 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
     -- at '<'
     let some (pfx, loc, e) := qnameAt c.s (i + 1) | synErr "bad element name"
     set e
-    -- attributes
-    let mut decls : List (String × String) := []
-    let mut ats : Array (String × String × List Expr × Bool) := #[]
-    for _ in [0:100000] do
-      let j ← get
-      let k := skipWsF c.s (c.s.size + 1) 0 j
-      let ch := chAt c.s k
-      if ch == '/' || ch == '>' then set k; break
-      if k == j then synErr "expected whitespace before an attribute"
-      let some (ap, al, ae) := qnameAt c.s k | synErr "bad attribute name"
-      set ae
-      ws; expectS "="; ws
-      let q := chAt c.s (← get)
-      if q != '"' && q != '\'' then synErr "expected a quoted attribute value"
-      adv 1
-      let (parts, literal) ← pAttrValue sp q
-      if (ap == "" && al == "xmlns") || ap == "xmlns" then
-        if !literal then throw { code := "XQST0022", msg := "a namespace declaration with an enclosed expression" }
-        let uri := litString parts
-        let p := if ap == "" then "" else al
-        if p == "xml" && uri != nsXML then throw { code := "XQST0070", msg := "the xml prefix rebound" }
-        if p == "xmlns" then throw { code := "XQST0070", msg := "the xmlns prefix declared" }
-        if uri == nsXML && p != "xml" then throw { code := "XQST0070", msg := "the xml namespace bound to another prefix" }
-        if uri == "http://www.w3.org/2000/xmlns/" then throw { code := "XQST0070", msg := "the xmlns namespace declared" }
-        if p != "" && uri == "" && false then throw { code := "XQST0085", msg := "a prefix undeclared" }
-        if decls.any (·.1 == p) then throw { code := "XQST0071", msg := "duplicate namespace declaration" }
-        decls := decls ++ [(p, uri)]
-      else
-        ats := ats.push (ap, al, parts, literal)
+    let pre := scanDecls c.s e
+    let nsA := pre ++ c.ns.filter (fun (p, _) => !pre.any (·.1 == p))
+    let (decls, ats) ← withReader (fun c => { c with ns := nsA }) (pStartTag sp)
     let outer := c.ns
     let ns' := decls ++ outer.filter (fun (p, _) => !decls.any (·.1 == p))
     withReader (fun c => { c with ns := ns' }) do

@@ -299,7 +299,11 @@ def checkAssert (env : Env) (res : M Seq) : Nat → Node → Outcome
       | "assert" =>
           match evalIn envR txt with
           | .ok [.atom ⟨_, .bool true⟩] => .pass
-          | .ok r => .fail ("assert gave " ++ (sh r 60) ++ " for result " ++ (sh s 60))
+          | .ok r =>
+            -- the effective boolean value of the assertion
+            match ebv r with
+            | .ok true => .pass
+            | _ => .fail ("assert gave " ++ (sh r 60) ++ " for result " ++ (sh s 60))
           | .error e => .fail ("assert raised " ++ e.code ++ " " ++ e.msg)
       | "assert-type" =>
           match parseSeqType txt with
@@ -343,7 +347,15 @@ def fixXml : Nat → Node → Node
   | f + 1, n =>
     match n with
     | .element tag ats cs =>
-        if (splitName tag).2 == "assert-xml" then .element tag ats [.text (innerXml 1000 n)]
+        if (splitName tag).2 == "assert-xml" then
+          -- a text child at the top is the expected markup itself
+          -- (written with `&lt;`); deeper text is element content
+          let top := match n with
+            | .element _ _ cs => String.join (cs.map (fun c => match c with
+                | .text t => if t.contains (Char.ofNat 60) then t else escText t
+                | other => innerXml 1000 (.element "w" [] [other])))
+            | _ => ""
+          .element tag ats [.text top]
         else .element tag ats (cs.map (fixXml f))
     | other => other
 

@@ -290,6 +290,10 @@ def pStringLit : P String := do
     | none => pure (String.ofList cs)
   | none => synErr "unterminated string literal"
 
+/-- The namespace of an unprefixed function name: `fn`, unless an
+    XQuery prolog declared another (binding `#fn`). -/
+def dfltFnNs : P String := do pure (((← read).ns.lookup "#fn").getD nsFN)
+
 /-- Run a parser at an offset with other namespace bindings (for the
     extension grammar's sub-parsers). -/
 def runAt {α} (c : PCtx) (p : P α) (ns : List (String × String)) (i : Nat) : Except Err (α × Nat) :=
@@ -864,7 +868,7 @@ def pArrowTarget : Nat → P (Sum (QN) Expr × List (Option Expr) × List (Strin
         match ← peekQName with
         | some (p, u, l, e) =>
             set e
-            let q ← resolve p u l nsFN
+            let q ← resolve p u l (← dfltFnNs)
             let (args, kw) ← pArgs n
             pure (.inl q, args, kw)
         | none => synErr "expected an arrow target"
@@ -1239,6 +1243,11 @@ def pPrimary : Nat → P Expr
     | some ("map", '{', _) => expectKw "map"; pMapEntries n
     | some ("array", '{', _) => expectKw "array"; pure (.arrC (← pEnclosed n))
     | some ("function", c1, _) | some ("fn", c1, _) =>
+        -- only the unprefixed keyword (`local:function()` is a call)
+        let unpref ← match ← peekQName with
+          | some (none, none, _, _) => pure true
+          | _ => pure false
+        if !unpref then pCallAfterName n else
         if c1 == '(' || c1 == '{' then
           let _ ← eatKw "function"
           let _ ← eatKw "fn"
@@ -1248,7 +1257,7 @@ def pPrimary : Nat → P Expr
         match ← peekQName with
         | some (p, u, l, e) =>
             set e
-            let q ← resolve p u l nsFN
+            let q ← resolve p u l (← dfltFnNs)
             expectS "#"
             let c ← read
             let i ← get
@@ -1270,7 +1279,7 @@ def pCallAfterName : Nat → P Expr
     match ← peekQName with
     | some (p, u, l, e) =>
         set e
-        let q ← resolve p u l nsFN
+        let q ← resolve p u l (← dfltFnNs)
         let (args, kw) ← pArgs n
         pure (.call q args kw)
     | none => synErr "expected a function name"

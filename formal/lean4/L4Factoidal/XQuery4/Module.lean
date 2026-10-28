@@ -21,6 +21,7 @@ A main module is evaluated as follows: the functions are bound
 marker `Runtime.staticKey` on top of the bindings, then the query body.
 -/
 import L4Factoidal.XQuery4.Grammar
+import L4Factoidal.XQuery4.Static
 import L4Factoidal.XPath4.Eval
 
 namespace L4Factoidal.XQuery4
@@ -200,7 +201,7 @@ def pModule : P Module := do
       m := { m with imports := m.imports ++ [(pfx, u, locs)] }
       continue
     expectKw "declare"
-    let annots ← pAnnotations
+    let annots ← withXq cfg ns pAnnotations
     let w ← pNCName
     match w with
     | "namespace" =>
@@ -229,7 +230,7 @@ def pModule : P Module := do
         if seen.contains "deffn" then qerr "XQST0066" "two default function namespace declarations"
         seen := "deffn" :: seen
         if u == nsXML || u == "http://www.w3.org/2000/xmlns/" then qerr "XQST0070" "a reserved namespace"
-        if u != nsFN then qerr "XQST0066" "a default function namespace other than fn is not supported"
+        ns := ("#fn", u) :: ns.filter (·.1 != "#fn")
       else if ← eatKw "collation" then
         let u ← pUriLit
         expectS ";"
@@ -331,7 +332,7 @@ def pModule : P Module := do
       let q ← match ← peekQName with
         | some (p, u, l, e) =>
           set e
-          withXq cfg ns (resolve p u l nsFN)
+          withXq cfg ns (resolve p u l ((ns.lookup "#fn").getD nsFN))
         | none => synErr "expected a function name"
       if reservedFnNs.contains q.uri then qerr "XQST0045" ("function " ++ q.show ++ " in a reserved namespace")
       if q.uri == "" then qerr "XQST0060" ("function " ++ q.show ++ " in no namespace")
@@ -407,38 +408,91 @@ def fnBindings (d : FnDecl) : List (QN × Seq) :=
 def moduleTexts (env : Env) (uri : String) : List String :=
   env.resources.filterMap (fun (k, v) => if k == "#module " ++ uri then some v else none)
 
-/-- Bind a module's functions and global variables (and those of the
-    modules it imports, to depth `fuel`). -/
-def bindModule (fuel : Nat) : Nat → Env → Module → M Env
-  | 0, _, _ => err "XQST0093" "module imports nested too deeply"
-  | d + 1, env, m => do
-    let mut env := env
-    -- imported library modules first
+/-- The library modules a module imports, transitively (imported
+    modules first), to depth `d`. -/
+def loadImports (env : Env) : Nat → Module → M (List Module)
+  | 0, _ => err "XQST0093" "module imports nested too deeply"
+  | d + 1, m => do
+    let mut out : List Module := []
     for (_, u, _) in m.imports do
       let texts := moduleTexts env u
       if texts.isEmpty then err "XQST0059" ("no module found for namespace " ++ u)
       for t in texts do
         let lm ← parseModule t
         if (lm.libNs.map (·.2)) != some u then err "XQST0059" ("the module text is not a module for " ++ u)
-        env ← bindModule fuel d env lm
-    -- functions
+        let sub ← loadImports env d lm
+        out := out ++ sub ++ [lm]
+    pure out
+
+def Module.globals (m : Module) : List QN :=
+  m.decls.filterMap (fun d => match d with | .var v .. => some v | _ => none)
+
+def Module.fnArities (m : Module) : List (QN × Nat × Nat) :=
+  m.decls.filterMap (fun d => match d with
+    | .fn fd =>
+      let minA := (fd.params.takeWhile (fun (_, _, x) => x.isNone)).length
+      some (fd.name, minA, fd.params.length)
+    | _ => none)
+
+/-- The static checks of `Static.staticErr` over every module: the
+    initializers, the function bodies, the query body. -/
+def checkModules (env : Env) (ms : List Module) : M Unit := do
+  let globals := ms.flatMap Module.globals
+  let fns := ms.flatMap Module.fnArities
+  let known (q : QN) (k : Nat) : Bool :=
+    (findSigAny q).isSome || (q.uri == nsFN && q.loc == "concat") ||
+    fns.any (fun (q2, lo, hi) => q2 == q && lo ≤ k && k ≤ hi)
+  let base : SCtx := { vars := env.vars.map (·.1) ++ globals, knownFn := known }
+  for m in ms do
+    for d in m.decls do
+      let r := match d with
+        | .var _ _ (some e) _ => staticErr 100000 base e
+        | .ctx _ (some e) _ => staticErr 100000 base e
+        | .fn fd => match fd.body with
+          | some b =>
+            -- defaults see the earlier parameters; the body sees all of them
+            staticErr 100000 (base.add (fd.params.map (·.1))) b
+          | none => none
+        | _ => none
+      if let some e := r then throw e
+    if let some b := m.body then
+      if let some e := staticErr 100000 base b then throw e
+
+/-- Bind the functions of the modules, then their global variables and
+    context value. A variable whose initializer reads a global that is
+    not bound yet is tried again after the others (XQuery 4.0 §5.16:
+    order by dependency); a round with no progress is `XQDY0054`. -/
+def bindModules (fuel : Nat) (env : Env) (ms : List Module) : M Env := do
+  let mut env := env
+  for m in ms do
     for dcl in m.decls do
       if let .fn fd := dcl then
         for b in fnBindings fd do env := { env with vars := b :: env.vars }
-    -- global variables and the context value, in order
-    for dcl in m.decls do
+  let globals := ms.flatMap Module.globals
+  let mut pending : List Decl := ms.flatMap (fun m => m.decls.filter (fun d => match d with | .fn _ => false | _ => true))
+  for _ in [0:pending.length + 1] do
+    if pending.isEmpty then break
+    let mut later : List Decl := []
+    let mut lastErr : Option Err := none
+    for dcl in pending do
       match dcl with
       | .var v ty init external =>
         let env1 := markStatic env
-        let val ← if external then
+        let r : M Seq := if external then
             match env.vars.find? (fun (q, _) => q == v) with
             | some (_, s) => pure s
             | none => match init with
               | some e => eval fuel env1 e
               | none => err "XPDY0002" ("no value for the external variable $" ++ v.show)
           else eval fuel env1 (init.getD (.seq []))
-        let val ← env.coerce ty val ("$" ++ v.show)
-        env := env.bind v val
+        match r with
+        | .ok val =>
+          let val ← env.coerce ty val ("$" ++ v.show)
+          env := env.bind v val
+        | .error e =>
+          if e.code == "XPST0008" && globals.any (fun g => e.msg.endsWith ("$" ++ g.show)) then
+            later := later ++ [dcl]; lastErr := some e
+          else throw e
       | .ctx ty init external =>
         let env1 := markStatic env
         let val ← if external then
@@ -452,14 +506,21 @@ def bindModule (fuel : Nat) : Nat → Env → Module → M Env
           if !(env.seqMatches val ty) then err "XPTY0004" "the context value does not match its declared type"
           env := { env with ctx := some val, pos := 1, size := 1 }
       | .fn _ => pure ()
-    pure env
+    if later.length == pending.length then
+      match lastErr with
+      | some e => throw { e with code := "XQDY0054", msg := "circular variable dependency: " ++ e.msg }
+      | none => break
+    pending := later
+  pure env
 
 /-- Evaluate a main module. -/
 def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
   let env := { env with ns := m.ns }
   let env := match m.defaultCollation with | some c => { env with defaultCollation := c } | none => env
   let env := match m.baseUri with | some b => { env with baseUri := b } | none => env
-  let env ← bindModule fuel 20 env m
+  let libs ← loadImports env 20 m
+  checkModules env (libs ++ [m])
+  let env ← bindModules fuel env (libs ++ [m])
   match m.body with
   | some b => eval fuel (markStatic env) b
   | none => err "XPST0003" "a library module has no query body"
