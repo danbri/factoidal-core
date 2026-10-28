@@ -58,6 +58,7 @@ import Wasm.Ops.Proof
 import Wasm.Ops.Explain
 import Wasm.Ops.StageList
 import Wasm.Ops.PipelineNodes
+import Wasm.Ops.GraphNodes
 import Wasm.Ops.Handles
 import Wasm.Ops.DatasetFull
 import Wasm.Ops.Pack
@@ -131,6 +132,7 @@ def opNames : List String :=
   , "stageList"
   , "pipelineCheck"
   , "pipelineCheckNodes"
+  , "graphCheckNodes"
   , "toanSummation"
   , "toanProduct"
   , "toanSimplify"
@@ -288,7 +290,8 @@ def handleOpNames : List String :=
   , "datasetFromJsonLd"
   , "datasetToJsonLd"
   , "datasetShexValidate"
-  , "datasetRifEval" ] ++ collectionOpNames
+  , "datasetRifEval"
+  , "datasetMerge" ] ++ collectionOpNames
 
 /-- The store-handle op names (`Wasm/Ops/StoreHandles.lean`), served ONLY by
 `callIO` and `callBlobIO` — the pure `call` cannot reach the store-handle
@@ -502,6 +505,7 @@ def callUncoded (op : String) (argsJson : String) : String :=
                                   | _ => errJson s!"{op} expects 0 arguments, got {args.length}")
     | "pipelineCheck"        => arity1 op pipelineCheck args
     | "pipelineCheckNodes"   => arity1 op pipelineCheckNodes args
+    | "graphCheckNodes"      => arity1 op graphCheckNodes args
     | "toanSummation"        => arity4 op toanSummation args
     | "toanProduct"          => arity4 op toanProduct args
     | "toanSimplify"         => arity1 op toanSimplify args
@@ -660,6 +664,9 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
       | [a, b, c, d] => Ops.datasetShexValidate a b c d
       | _ => pure (errJson s!"{op} expects 4 arguments, got {args.length}"))
   | "datasetRifEval"   => withArgs (arityIO2 op Ops.datasetRifEval)
+  -- The RDF merge of two stored datasets (`Wasm/Ops/GraphNodes.lean`,
+  -- https://github.com/danbri/factoidal/issues/1130).
+  | "datasetMerge"     => withArgs (arityIO2 op Ops.datasetMergeOp)
   | "storeHandleClose" => withArgs (arityIO1 op Ops.storeHandleClose)
   -- The SPARQL endpoint over a served generation (issue 669). The open
   -- carries a byte region; through this entry it takes the hex descriptor

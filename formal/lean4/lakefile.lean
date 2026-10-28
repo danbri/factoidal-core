@@ -311,6 +311,7 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Explain,
              `Wasm.Ops.StageList,
              `Wasm.Ops.PipelineNodes,
+             `Wasm.Ops.GraphNodes, `Wasm.GraphNodesTests,
              `Wasm.Ops.Handles,
              `Wasm.Ops.DatasetFull,
              `Wasm.Ops.Pack,

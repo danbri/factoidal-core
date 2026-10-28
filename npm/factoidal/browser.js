@@ -85,6 +85,7 @@ export const graphs = api.graphs;
 export const canonicalHash = api.canonicalHash;
 export const asDefaultGraph = api.asDefaultGraph;
 export const isomorphic = api.isomorphic;
+export const datasetMerge = api.datasetMerge;
 export const fromQuads = api.fromQuads;
 // Literal values (https://github.com/danbri/factoidal/issues/1051): synchronous
 // after the engine is loaded.
@@ -137,6 +138,7 @@ export const explain = api.explain;
 export const stages = api.stages;
 export const node = api.node;
 export const pipe = api.pipe;
+export const graph = api.graph;
 export const run = api.run;
 export const rdfsPlusClosure = api.rdfsPlusClosure;
 export const rhoDfClosure = api.rhoDfClosure;
