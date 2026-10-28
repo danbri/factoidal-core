@@ -154,6 +154,23 @@ def refusingRun : Runner := fun st _ => ({ status := 403 }, st)
 #guard both fun run =>
   let w := go run [put "/m/a.txt" "hello", reqOf "GET" "/m/a.txt"]
   bodyText w.last == "hello" && hdr w.last "content-type" == some "text/plain" && (hdr w.last "etag").isSome
+-- No Content-Type: the type of the name (https://github.com/danbri/factoidal/issues/1122).
+#guard both fun run =>
+  let w := go run [reqOf "PUT" "/m/notes.txt" [] "hello", reqOf "GET" "/m/notes.txt"]
+  hdr w.last "content-type" == some "text/plain"
+#guard both fun run =>
+  let w := go run [reqOf "PUT" "/m/notes.txt" [("content-type", "")] "hello", pf "/m/notes.txt" "0"]
+  has w.last "<D:getcontenttype>text/plain</D:getcontenttype>"
+#guard both fun run =>
+  let w := go run [reqOf "PUT" "/m/blob" [] "x", reqOf "GET" "/m/blob"]
+  hdr w.last "content-type" == some "application/octet-stream"
+#guard both fun run =>
+  let w := go run [reqOf "PUT" "/m/._notes.txt" [] "x", reqOf "GET" "/m/._notes.txt"]
+  hdr w.last "content-type" == some "application/applefile"
+-- A Content-Type the client sends is kept, whatever the name.
+#guard both fun run =>
+  let w := go run [reqOf "PUT" "/m/notes.txt" [("content-type", "text/x-own")] "x", reqOf "GET" "/m/notes.txt"]
+  hdr w.last "content-type" == some "text/x-own"
 -- No parent collection: 409 (RFC 4918 §9.7.1).
 #guard both fun run => (go run [put "/m/no/a.txt" "x"]).last.status == 409
 -- A UTF-8 name, written in two spellings of its percent-encoding.
@@ -312,7 +329,7 @@ def tokenOf (r : DavResponse) : String :=
 -- A LOCK of an unmapped URL makes an empty resource (201).
 #guard both fun run =>
   let w := go run [reqOf "LOCK" "/m/new.txt" [] (lockBody), reqOf "GET" "/m/new.txt"]
-  w.last.status == 200 && w.last.body.size == 0
+  w.last.status == 200 && w.last.body.size == 0 && hdr w.last "content-type" == some "text/plain"
 #guard both fun run => (go run [reqOf "LOCK" "/m/no/new.txt" [] (lockBody)]).last.status == 409
 #guard both fun run => (go run [put "/m/a.txt" "x", reqOf "LOCK" "/m/a.txt" [] "<bad"]).last.status == 400
 #guard both fun run => (go run [put "/m/a.txt" "x", reqOf "UNLOCK" "/m/a.txt"]).last.status == 400

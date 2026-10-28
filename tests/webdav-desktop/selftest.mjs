@@ -124,7 +124,8 @@ try {
     const r = await davRequest(P, 'PUT', `/types/${encodePath('._hello.txt')}`, { body: Buffer.from([0, 5, 22, 7, 0, 2, 0, 0]) })
     assert(r.status === 201 || r.status === 204, `${r.status}`)
   })
-  await xfail('PUT with no Content-Type of a .txt name is stored as text/plain', 'https://github.com/danbri/factoidal/issues/1122', async () => {
+  // Fixed in Lean (WebDAV/MediaType.lean); an engine older than that fix fails here.
+  await check('PUT with no Content-Type of a .txt name is stored as text/plain (https://github.com/danbri/factoidal/issues/1122)', async () => {
     const put = await davRequest(P, 'PUT', '/config/no-content-type.txt', { body: Buffer.from('plain\n') })
     assert(put.status === 201 || put.status === 204, `PUT ${put.status}`)
     const r = await davRequest(P, 'PROPFIND', '/config/no-content-type.txt', { headers: { depth: '0' } })
