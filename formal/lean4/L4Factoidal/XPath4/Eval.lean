@@ -174,6 +174,17 @@ def BOp.arOp? : BOp → Option ArOp
 
 def maxRange : Int := 20000000
 
+/-- The static error for a type that is not a cast target (XPath 4.0
+    §4.19.2): XPST0080 for a function type or a choice with a member that
+    is not atomic, XPST0051 for any other type that is not a generalized
+    atomic, array, map or record type; `none` for a cast target. -/
+def castTargetError : IType → Option String
+  | .anyFn | .fnT .. => some "XPST0080"
+  | .choice ts => if ts.all (fun t => match t with | .atomic _ | .enum _ | .choice _ => true | _ => false) then none else some "XPST0080"
+  | .atomic _ | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap => none
+  | .jnodeT .. | .xnode => some "XPST0080"
+  | _ => some "XPST0051"
+
 /-- Whether an item type is a valid cast target (XPath 4.0 §4.19.2). -/
 def isCastTarget : IType → Bool
   | .atomic _ | .choice _ | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap => true
@@ -705,8 +716,11 @@ def eval : Nat → Env → Expr → M Seq
   | .treat a t => do
       let s ← eval n env a
       if env.seqMatches s t then pure s else err "XPDY0050" "treat as: value does not match the type"
-  | .cast a t opt => do castTo env (← eval n env a) t opt
+  | .cast a t opt => do
+      if let some c := castTargetError t then err c "cast target is not an atomic, array, map or record type"
+      castTo env (← eval n env a) t opt
   | .castable a t opt => do
+      if let some c := castTargetError t then err c "castable target is not an atomic, array, map or record type"
       let s ← eval n env a
       match t with
       | .atomic aty =>
@@ -714,7 +728,7 @@ def eval : Nat → Env → Expr → M Seq
       | .jnodeT .. | .xnode => err "XPST0080" "castable target is not an atomic, array or map type"
       | .anyArr | .anyMap | .arrT _ | .mapT _ _ | .record _ _ =>
         return sBool (match castTo env s t opt with | .ok _ => true | .error _ => false)
-      | t => if !isCastTarget t then err "XPST0051" "castable target is not an atomic, array, map or record type"
+      | t => if let some c := castTargetError t then err c "castable target is not an atomic, array, map or record type"
       match env.atomize s with
       | .error e => if e.code == "FOTY0013" then throw e else pure (sBool false)
       | .ok _ =>

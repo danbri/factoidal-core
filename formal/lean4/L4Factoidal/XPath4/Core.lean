@@ -66,6 +66,10 @@ def Env.doc (e : Env) (n : NodeRef) : Doc :=
 def Env.nrec (e : Env) (n : NodeRef) : NRec := (e.doc n).get n.idx
 
 def Env.nsResolve (e : Env) (p : String) : Option String :=
+  -- a binding of the XPath 4.0 prolog (`nsBindingVar`); "" undeclares
+  match e.vars.lookup (nsBindingVar p) with
+  | some [.atom a] => if a.str == "" then none else some a.str
+  | _ =>
   match e.ns.lookup p with
   | some u => some u
   | none => if p == "" then none else defaultNs.lookup p
@@ -598,11 +602,25 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
             | some ts => coerceAtom ts ka
             | none => pure ka
           pure (ka', ← e.coerceF f v va what))))
-    | .record fs _, .map kvs =>
-        pure (Item.map (← kvs.mapM (fun (ka, va) => do
+    | .record fs ext, .map kvs => do
+        -- XPath 4.0 §3.4.4 (coercion to a record type): an entry that is
+        -- not a declared field is an error; the result has the fields in
+        -- the declared order, an absent field being the empty sequence
+        if !ext then
+          if let some (k, _) := kvs.find? (fun (k, _) => !(k.isStringLike && fs.any (fun (nm, _, _) => nm == k.str))) then
+            err "XPTY0004" ("the map entry " ++ k.str ++ " is not a field of the record type, for " ++ what)
+        -- the entries keep their order; absent fields follow
+        let mut out : List (Atomic × Seq) := []
+        for (ka, va) in kvs do
           match fs.find? (fun (nm, _, _) => ka.isStringLike && ka.str == nm) with
-          | some (_, _, ft) => pure (ka, ← e.coerceF f ft va what)
-          | none => pure (ka, va))))
+          | some (_, _, ft) => out := out ++ [(ka, ← e.coerceF f ft va what)]
+          | none => out := out ++ [(ka, va)]
+        for (nm, opt, ft) in fs do
+          if !(kvs.any (fun (k, _) => k.isStringLike && k.str == nm)) then
+            if opt then pure ()
+            else if e.seqMatchesF f [] ft then out := out ++ [(Atomic.ofStr nm, [])]
+            else err "XPTY0004" ("the map has no entry " ++ nm ++ " for the record type, for " ++ what)
+        pure (Item.map out)
     | _, _ => pure i)
   match it with
   | .item => pure s

@@ -27,6 +27,10 @@ structure PCtx where
   s : Array Char
   /-- Namespace bindings for prefixes (static context). -/
   ns : List (String × String)
+  /-- Reading the text of a built-in named record type (`recordTypesRaw`),
+      which marks optional fields `name?`; the user grammar has no such
+      marker (XPath 4.0 §3.2.8.3, PR 2979). -/
+  builtinRecords : Bool := false
 
 abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 
@@ -36,6 +40,10 @@ def defaultNs : List (String × String) :=
    ("xsi", "http://www.w3.org/2001/XMLSchema-instance")]
 
 def synErr {α} (msg : String) : P α := throw { code := "XPST0003", msg }
+
+/-- The variable that carries a prolog namespace binding of prefix `p`
+    to the evaluator (`Env.nsResolve`). -/
+def nsBindingVar (p : String) : QN := { uri := "#ns", loc := p }
 
 def chAt (s : Array Char) (i : Nat) : Char := s.getD i '\x00'
 
@@ -514,14 +522,21 @@ def pItemType : Nat → P IType
             else
               let mut fs : List (String × Bool × IType) := []
               let mut ext := false
+              let internal := (← read).builtinRecords
               if !(← eatS ")") then
                 for _ in [0:1000] do
-                  if ← eatS "*" then ext := true; break
+                  -- TypedRecordType has no extensible flag (XPath 4.0 A.1)
+                  if ← eatS "*" then
+                    if !internal then synErr "a record type has no extensible marker *"
+                    ext := true; break
                   let fname ← if (← peekAt 0) == '"' || (← peekAt 0) == '\'' then pStringLit
                     else match ← peekQName with
                       | some (_, _, l, e) => set e; pure l
                       | none => synErr "bad record field"
+                  if fs.any (·.1 == fname) then
+                    throw { code := "XPST0021", msg := "two fields of a record type are named " ++ fname }
                   let opt ← eatS "?"
+                  if opt && !internal then synErr "a record field has no optional marker ?"
                   let ft ← if ← eatKw "as" then pSeqType n else pure (.seq .item .star)
                   fs := fs ++ [(fname, opt, ft)]
                   if !(← eatS ",") then break
@@ -548,7 +563,7 @@ def pItemType : Nat → P IType
         | some src, n' + 1 =>
           -- a named record type of F&O 4.0: parse its record(...) text
           let save ← get
-          let t ← withReader (fun c => { c with s := src.toList.toArray, ns := defaultNs }) (do
+          let t ← withReader (fun c => { c with s := src.toList.toArray, ns := defaultNs, builtinRecords := true }) (do
             set 0
             pItemType n')
           set save
@@ -1440,6 +1455,11 @@ def parseXPath (src : String) (ns : List (String × String) := []) : M Expr :=
         else set save; break
       else break
     let e ← withReader (fun c => { c with ns := extra ++ c.ns }) (pExpr 100000)
+    -- the prolog's namespace bindings are also in the dynamic part of the
+    -- static context that casts to xs:QName read (`Env.nsResolve`): they
+    -- are bound as variables in the namespace `#ns`
+    let e := extra.foldl (fun acc (p, u) =>
+      if p == "" then acc else .letE (nsBindingVar p) (.seq .item .star) (.lit (Atomic.ofStr u)) acc) e
     ws
     let c ← read
     let i ← get
