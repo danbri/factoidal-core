@@ -13,7 +13,7 @@ every nested call (no `partial def`); running out of fuel is the
 static error `XPST0003` with a message saying so, never a wrong parse.
 
 Implemented: every production of the XPath 4.0 expression grammar
-EXCEPT `but with`, `=?>` method calls, `jnode()` types, destructuring
+EXCEPT `jnode()` types, destructuring
 `let $( )`/`$[ ]`/`${ }` bindings, computed node constructors, the
 `declare default element namespace` prolog and schema-element /
 schema-attribute types. Those raise `XPST0003` naming the construct.
@@ -535,6 +535,7 @@ def pVarName : Nat → P QN
   | 0 => synErr "expression too deeply nested"
   | _ + 1 => do
     expectS "$"
+    ws
     match ← peekQName with
     | some (p, u, l, e) => set e; resolve p u l ""
     | none => synErr "expected a variable name"
@@ -624,11 +625,12 @@ def pLet : Nat → P Expr
       let c ← read
       let i ← get
       let j := skipWsF c.s (c.s.size + 1) 0 i
-      let open_ := chAt c.s (j+1)
+      let k := skipWsF c.s (c.s.size + 1) 0 (j + 1)
+      let open_ := chAt c.s k
       if chAt c.s j == '$' && (open_ == '(' || open_ == '[' || open_ == '{') then
         -- destructuring binding (XPath 4.0 §4.12.2): desugared to a
         -- binding of a fresh variable and one binding per name
-        set (j + 2)
+        set (k + 1)
         let close := if open_ == '(' then ")" else if open_ == '[' then "]" else "}"
         let mut vs : List (QN × IType) := []
         for _ in [0:1000] do
@@ -781,11 +783,24 @@ def opAt (lvl : Nat) : P (Option (BOp × Nat)) := do
 def pInstance : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
-    let e ← pTreat n
-    if ← atKw "instance" then
-      adv 8; expectKw "of"
-      pure (.instOf e (← pSeqType n))
-    else pure e
+    let one : P Expr := do
+      let e ← pTreat n
+      if ← atKw "instance" then
+        adv 8; expectKw "of"
+        pure (.instOf e (← pSeqType n))
+      else pure e
+    let mut e ← one
+    -- XPath 4.0 §4.15.4 `A but with B`: `map:merge((A, B), {'duplicates':'use-last'})`
+    -- (no value here carries a record type annotation, so the result is
+    -- not checked against the record type of A)
+    for _ in [0:10000] do
+      if ← atKw "but" then
+        adv 3; expectKw "with"
+        let b ← one
+        e := .call { uri := nsMAP, loc := "merge" }
+          [some (.seq [e, b]), some (.mapC [(.lit (Atomic.ofStr "duplicates"), .lit (Atomic.ofStr "use-last"))])] []
+      else break
+    pure e
 
 def pTreat : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
@@ -1047,7 +1062,7 @@ def pStep : Nat → P Expr
     | some (nm, c1, c2) =>
       -- a name: a step unless it is a primary-expression keyword
       let isPrimaryKw :=
-        (c1 == '#' && (c2.isDigit)) ||
+        (c1 == '#' && (c2.isDigit || c2 == ' ' || c2 == '\t' || c2 == '\n' || c2 == '\r' || c2 == '(')) ||
         ((nm == "map" || nm == "array") && c1 == '{') ||
         ((nm == "fn" || nm == "function") && (c1 == '{' || c1 == '('))
       if isPrimaryKw then pPostfix n
@@ -1141,7 +1156,20 @@ def pPostfix : Nat → P Expr
         let k ← pKeySpec n
         a := .lookup a k
       else if ch == '=' && (← peekAt 1) == '?' && (← peekAt 2) == '>' then
-        synErr "method calls (=?>) are not implemented"
+        -- XPath 4.0 §4.15.5 method call `M =?> N(args)`: for each map $m
+        -- in M, `$m?N($m, args)` (a variable name no source text can bind)
+        adv 3
+        ws
+        let c ← read
+        let i ← get
+        let some (nm, e) := ncnameAt c.s i | synErr "expected a method name after =?>"
+        set e
+        let (args, kw) ← pArgs n
+        if !kw.isEmpty || args.any Option.isNone then
+          synErr "a method call cannot have keyword arguments or placeholders"
+        let v : QN := { uri := "", loc := "#method-target" }
+        a := .forE .item v none none (.seq .item .star) a
+          (.dyn (.lookup (.var v) (some (.lit (Atomic.ofStr nm)))) (some (.var v) :: args))
       else break
     pure a
 
@@ -1270,9 +1298,11 @@ def pPrimary : Nat → P Expr
             set e
             let q ← resolve p u l nsFN
             expectS "#"
+            ws
             let c ← read
             let i ← get
             let (ds, j) := digitsUs c.s i Char.isDigit
+            if ds.isEmpty then synErr "expected the arity after #"
             set j
             pure (.fref q (ds.foldl (fun a d => a * 10 + (d.toNat - 48)) 0))
         | none => synErr "bad named function reference"
