@@ -554,6 +554,24 @@ def eval : Nat → Env → Expr → M Seq
         | _ => err "XPST0017" ("constructor function xs:" ++ q.loc ++ " takes one argument")
       else
       let total := args.length + kw.length
+      -- keyword arguments of a host function are placed by its
+      -- parameter names (XPath 4.0 §4.5.1.1)
+      let (args, kw) ← match (if kw.isEmpty then none else env.hostParams q total) with
+        | some names => do
+          let mut slots : Array (Option (Option Expr)) := (names.map (fun _ => none)).toArray
+          for (a, i) in args.zip (List.range args.length) do
+            slots := slots.set! i (some a)
+          for (k, a) in kw do
+            match names.findIdx? (· == k) with
+            | some i =>
+              if (slots.getD i none).isSome then err "XPST0017" ("duplicate argument " ++ k)
+              slots := slots.set! i (some a)
+            | none => err "XPST0017" ("no parameter named " ++ k ++ " in " ++ q.show)
+          let placed := slots.toList.take total
+          if placed.any Option.isNone then
+            err "XPST0017" ("the keyword arguments of " ++ q.show ++ " leave a parameter without a value")
+          pure (placed.map (·.getD none), [])
+        | none => pure (args, kw)
       -- host hook: a function of the host language (XSLT 4.0)
       match (if kw.isEmpty then env.host q total else none) with
       | some h =>

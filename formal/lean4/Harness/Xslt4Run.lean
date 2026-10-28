@@ -317,11 +317,21 @@ def checkAssert (rc : RCtx) : Nat → Node → Outcome
         match (kids a).head? with
         | none => .pass
         | some inner =>
+          -- a message is a document node; assert-eq compares its
+          -- string value
           let one (m : Item) : Bool :=
-            match checkAssert { rc with res := pure [m] } f inner with
-            | .pass => true
-            | _ => false
-          if msgs.any one then .pass else .fail ("assert-message: no message satisfies the assertion")
+            let sv : Item := match m with
+              | .node n => .atom (Atomic.ofStr (env.nodeString n))
+              | i => i
+            [m, sv].any (fun x => match checkAssert { rc with res := pure [x] } f inner with
+              | .pass => true
+              | _ => false)
+          if msgs.any one then .pass else
+          match msgs.head? with
+          | some m => match checkAssert { rc with res := pure [m] } f inner with
+            | .fail x => .fail ("assert-message: no message satisfies the assertion; the first: " ++ x)
+            | _ => .fail "assert-message: no message satisfies the assertion"
+          | none => .fail "assert-message: there is no message"
     | "assert-warning" => .pass
     | "assert-serialization-error" =>
         let code := attrD a "code"
