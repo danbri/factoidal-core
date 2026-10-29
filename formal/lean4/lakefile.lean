@@ -653,6 +653,11 @@ lean_exe «l4dict-fold-bench» where
 -- inputs through the YAML 1.2.2 loader.
 @[default_target] lean_exe «l4yamlld» where root := `Harness.YamlLdRun
 
+-- W3C Web Annotation Data Model and Vocabulary (2017) over
+-- third_party/testing/web-annotation/ (Harness/WebAnnotationRun.lean):
+-- the annotation-model JSON Schema tests and the vocabulary checks.
+@[default_target] lean_exe «l4webannotation» where root := `Harness.WebAnnotationRun
+
 -- XSLT 1.0 conformance over the vendored w3c/xslt30-test subset:
 -- XSLT/Transform runs the stylesheet, the result tree is serialised
 -- and compared with the suite's own assert-xml file (Harness/XsltRun.lean).

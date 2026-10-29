@@ -1845,6 +1845,7 @@ L4Factoidal_YAML_flowMap  # (b) one frame per nesting level; the loop over entri
 L4Factoidal_YAML_mapEntries  # (b) one frame per nesting level; the loop over entries is a self tail call
 L4Factoidal_YAML_seqEntries  # (b) one frame per nesting level; the loop over entries is a self tail call
 YamlLdRun_unorderedNorm  # (b) harness comparison; nesting of an expected or produced document; fuel-bounded by Json.size; arrays via List.map
+WebAnnotationRun_walkDir  # (b) harness; explicit depth argument bounds the directory nesting of the suite tree
 YamlLdRun_walkDir  # (b) harness; explicit depth argument bounds the directory nesting of the suite tree
 
 # --- 2026-10-28, XPath 4.0 / XQuery 4.0 / XSLT 4.0 in the wasm dispatch (Wasm/Ops/Qt4.lean:
