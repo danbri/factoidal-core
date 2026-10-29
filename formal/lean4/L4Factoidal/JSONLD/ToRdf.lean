@@ -1710,34 +1710,41 @@ A document carrying an inline `@context`, or for which `base` or
 `expandContext` is given, is run through `JSONLD.Expand` first; a
 document with none of the three goes straight to `datasetOfJson`, which
 requires EXPANDED FORM input. -/
-def parseJsonLd (loader : Loader) (input : String) (base : Option String)
+def parseJsonLdRoot (loader : Loader) (root : Json) (base : Option String)
     (rdfDirection : Option String) (expandContext : Option String)
     (processingMode : Option String) (rdfstar : Bool := false) : Res Dataset :=
   let rdir := rdfDirectionModeFor rdfDirection rdfstar
   let mode10 := processingMode == some "json-ld-1.0"
+  if hasInlineContext root || base.isSome || expandContext.isSome then
+    let acSeed : ActiveContext :=
+      { cur := { emptyContextCore with base := base, mode10 := mode10, rdfstar := rdfstar },
+        prev := [] }
+    match (match expandContext with
+           | none => Except.ok acSeed
+           | some ctxRef => contextProcess loader acSeed (.string ctxRef) false
+                              contextFuel remoteContextFuel []) with
+    | .error e => .error e
+    | .ok ac0 =>
+      match expand loader ac0 root with
+      | .error e => .error e
+      | .ok expanded =>
+        match datasetOfJson rdir expanded rdfstar with
+        | some ds => .ok ds
+        | none    => .error .notJsonLd
+  else
+    match datasetOfJson rdir root rdfstar with
+    | some ds => .ok ds
+    | none    => .error .notJsonLd
+
+/-- `parseJsonLdRoot` on a JSON text: the JSON-LD 1.1 API's toRdf with the
+input document parsed first (the internal representation of a JSON
+document is its parsed JSON value). -/
+def parseJsonLd (loader : Loader) (input : String) (base : Option String)
+    (rdfDirection : Option String) (expandContext : Option String)
+    (processingMode : Option String) (rdfstar : Bool := false) : Res Dataset :=
   match parseJson input with
   | .error _ => .error .notJsonLd
-  | .ok root =>
-    if hasInlineContext root || base.isSome || expandContext.isSome then
-      let acSeed : ActiveContext :=
-        { cur := { emptyContextCore with base := base, mode10 := mode10, rdfstar := rdfstar },
-          prev := [] }
-      match (match expandContext with
-             | none => Except.ok acSeed
-             | some ctxRef => contextProcess loader acSeed (.string ctxRef) false
-                                contextFuel remoteContextFuel []) with
-      | .error e => .error e
-      | .ok ac0 =>
-        match expand loader ac0 root with
-        | .error e => .error e
-        | .ok expanded =>
-          match datasetOfJson rdir expanded rdfstar with
-          | some ds => .ok ds
-          | none    => .error .notJsonLd
-    else
-      match datasetOfJson rdir root rdfstar with
-      | some ds => .ok ds
-      | none    => .error .notJsonLd
+  | .ok root => parseJsonLdRoot loader root base rdfDirection expandContext processingMode rdfstar
 
 /-! ### JSON-LD-star on expanded input
 
@@ -1787,24 +1794,29 @@ algorithm to drop unmapped properties, array-wrap values, and so on.
 `frameExpansion` selects the JSON-LD Framing grammar and defaults to
 `false`. The FRAME document is the only thing expanded with it set —
 never the input being framed. -/
-def expandDocument (loader : Loader) (input : String) (base : Option String)
+def expandRoot (loader : Loader) (root : Json) (base : Option String)
     (expandContext : Option String) (processingMode : Option String)
     (frameExpansion : Bool := false) (rdfstar : Bool := false) : Res Json :=
   let mode10 := processingMode == some "json-ld-1.0"
+  let acSeed : ActiveContext :=
+    { cur := { emptyContextCore with
+                 base := base, mode10 := mode10, frameExpansion := frameExpansion,
+                 rdfstar := rdfstar },
+      prev := [] }
+  match (match expandContext with
+         | none => Except.ok acSeed
+         | some ctxRef => contextProcess loader acSeed (.string ctxRef) false
+                            contextFuel remoteContextFuel []) with
+  | .error e => .error e
+  | .ok ac0 => expand loader ac0 root
+
+/-- `expandRoot` on a JSON text. -/
+def expandDocument (loader : Loader) (input : String) (base : Option String)
+    (expandContext : Option String) (processingMode : Option String)
+    (frameExpansion : Bool := false) (rdfstar : Bool := false) : Res Json :=
   match parseJson input with
   | .error _ => .error .notJsonLd
-  | .ok root =>
-    let acSeed : ActiveContext :=
-      { cur := { emptyContextCore with
-                   base := base, mode10 := mode10, frameExpansion := frameExpansion,
-                   rdfstar := rdfstar },
-        prev := [] }
-    match (match expandContext with
-           | none => Except.ok acSeed
-           | some ctxRef => contextProcess loader acSeed (.string ctxRef) false
-                              contextFuel remoteContextFuel []) with
-    | .error e => .error e
-    | .ok ac0 => expand loader ac0 root
+  | .ok root => expandRoot loader root base expandContext processingMode frameExpansion rdfstar
 
 /-- Structural equality of two expanded documents, as the expansion
 suite compares them: member order is INSIGNIFICANT (keys are sorted),

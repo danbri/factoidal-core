@@ -23,6 +23,8 @@ on:
       - 'third_party/testing/owl/**'
       - 'third_party/testing/n3'
       - 'tests/n3/**'
+      - 'third_party/testing/yaml-ld/**'
+      - 'tests/yamlld/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
 
@@ -155,3 +157,10 @@ jobs:
       # must agree on every fixture (https://github.com/danbri/factoidal/issues/1165).
       - name: RDF Data Cube integrity constraints (tests/datacube/run.sh)
         run: bash tests/datacube/run.sh
+
+      # YAML-LD 1.0 over the YAML 1.2.2 loader, and every JSON-LD 1.1 suite
+      # input through the same loader (https://github.com/danbri/factoidal/issues/1165).
+      - name: YAML-LD test suite (tests/yamlld/run.sh)
+        run: |
+          git submodule update --init --depth 1 third_party/testing/json-ld
+          bash tests/yamlld/run.sh

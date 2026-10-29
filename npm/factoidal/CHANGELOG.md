@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- JSON-LD expansion of a `null` document gives `[]` (JSON-LD 1.1 API §5.1.2 step 1 and the `expand()` method); it was the error `not JSON-LD`.
 - Verifiable Credentials: the Data Integrity ECDSA cryptosuites `ecdsa-rdfc-2019` and `ecdsa-jcs-2019` (Data Integrity ECDSA Cryptosuites v1.0) with P-256 keys, in one table with `eddsa-rdfc-2022` (`L4Factoidal/VC/Cryptosuite.lean`; https://github.com/danbri/factoidal/issues/1165). New wasm ops `vcDiKey`, `vcDiSecure` and `vcDiVerify` (through `loadEngine().call`): secure and verify a credential at the document level, with did:key resolution on Ed25519, P-256 and P-384. P-384 is refused (HACL\* has no P-384: https://github.com/danbri/factoidal/issues/1166).
 - Verifiable Credentials: `eddsa-jcs-2022` (Data Integrity EdDSA Cryptosuites v1.0 §3.4) in the same table, through the same ops.
 - Verifiable Credentials: Bitstring Status List v1.0 (`L4Factoidal/VC/StatusList.lean`): entries, list credentials, the GZIP and base64url list, and the §3.2 validation, through new wasm ops `vcStatusEntryNew`, `vcStatusListCredential`, `vcStatusEntryCheck` and `vcStatusValidate`.
