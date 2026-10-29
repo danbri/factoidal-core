@@ -2014,3 +2014,6 @@ L4Factoidal_RIF_Prd_withMemberRule  # (b) nesting of one RIF Core formula of a r
 L4Factoidal_RIF_Prd_qualifyCond  # (b) nesting of one RIF-PRD condition of a rule document or goal
 L4Factoidal_RIF_Prd_qualifyLocalFormula  # (b) nesting of one RIF Core formula of a rule document or goal
 L4Factoidal_RIF_Prd_qualifyLocalTm  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document or goal
+# --- WHATWG URL in Lean (https://github.com/danbri/factoidal/issues/1167, milestone 3)
+Harness_WhatwgUrl_allStrings  # (c) depth is the generated string length, the constant 6 in `l4whatwg-url rfc3986`
+L4Factoidal_WHATWG_URL_Theorems_joinSlash  # (s) used only by WHATWG/URL/Theorems.lean; the parser serializes paths with Array.foldl (Url.serializePath)

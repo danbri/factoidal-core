@@ -3153,6 +3153,21 @@ in the same file (`propext`, `Classical.choice`, `Quot.sound` only).
 | `verifyDataset_canonical_only`, `verifyJcs_canonical_only` — verification reads a credential only through its RDFC-1.0 or RFC 8785 canonical form | ✅ PROVED (2026-10-28) | none |
 | `vcDi10_rdfc10_isomorphic_verify_alike` — RDF-isomorphic credentials verify alike | ✅ PROVED as a reduction (2026-10-28) | `RDF.Canonical.RelabellingInvariance` (RDFC-1.0, STATED, NOT PROVED) |
 
+## WHATWG URL and RFC 3986 (Lean 4, 2026-10-29)
+
+Milestone 3 of [#1167](https://github.com/danbri/factoidal/issues/1167). Design
+record: [`designissues/2026-10-29-whatwg-url.md`](designissues/2026-10-29-whatwg-url.md).
+Module `formal/lean4/L4Factoidal/WHATWG/URL/Theorems.lean` (URL Standard snapshot
+`845bafca`, 2026-10-19; RFC 3986 §5.2.4 as `Syntax.removeDotSegments`);
+`#print axioms`: `propext`, `Classical.choice`, `Quot.sound` only.
+
+| Theorem | Status | Hypotheses |
+|---|---|---|
+| `pathSegment_segments` — the parser's path-state segment rule `Url.pathSegment` acts on a non-file URL's segments as the list function `segRule` | ✅ PROVED (2026-10-29) | scheme is not "file"; the segment reads alike (`ReadAlike`: no `/`, dot segment only when `.` or `..`) |
+| `rfc3986_removeDotSegments_eq_whatwg` — RFC 3986 `removeDotSegments ("/" ++ "/".intercalate segs)` is the URL path serialization of `wpFold [] segs` | ✅ PROVED (2026-10-29) | segs non-empty; no `/` in a segment |
+| `whatwg2026_path_eq_rfc3986` — folding `Url.pathSegment` from an empty path gives `removeDotSegments` of the path | ✅ PROVED (2026-10-29) | the two above |
+| the whole parser: `(parseUrl ref base).href = resolveIri base ref` where both read the input alike | 🟡 MEASURED, NOT PROVED: `l4whatwg-url rfc3986` 403407 agree, 0 disagree (out of 403407) | https://github.com/danbri/factoidal/issues/1188 |
+
 ## 10. JOSE, DPoP and Solid-OIDC over HACL\* — Lean tree
 
 Landed 2026-09-06. Design record:
