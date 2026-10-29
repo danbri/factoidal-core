@@ -39,6 +39,9 @@ on:
       - 'third_party/unicode-18.0.0/**'
       - 'tests/whatwg-url/**'
       - 'tools/whatwg/**'
+      - 'third_party/testing/unicode-18.0.0/**'
+      - 'tests/unicode/**'
+      - 'tools/unicode/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
 
@@ -213,3 +216,9 @@ jobs:
       # files (https://github.com/danbri/factoidal/issues/1167, milestone 3).
       - name: WHATWG URL, WPT url tests (tests/whatwg-url/run.sh)
         run: bash tests/whatwg-url/run.sh
+
+      # Unicode 18.0.0 algorithms (normalization, segmentation, bidi, line
+      # breaking) over the Unicode conformance files
+      # (https://github.com/danbri/factoidal/issues/1167, milestone 4).
+      - name: Unicode algorithms, Unicode conformance files (tests/unicode/run.sh)
+        run: bash tests/unicode/run.sh
