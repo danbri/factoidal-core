@@ -74,7 +74,7 @@ instance : Inhabited DNode := ⟨{}⟩
 inductive Mode where
   | initial | beforeHtml | beforeHead | inHead | inHeadNoscript | afterHead | inBody | text
   | inTable | inTableText | inCaption | inColumnGroup | inTableBody | inRow | inCell
-  | inSelect | inSelectInTable | inTemplate | afterBody | inFrameset | afterFrameset
+  | inTemplate | afterBody | inFrameset | afterFrameset
   | afterAfterBody | afterAfterFrameset
 deriving BEq, Inhabited
 
@@ -147,12 +147,12 @@ def htmlIP (n : DNode) : Bool :=
     || (n.ns == .svg && svgHtmlIPNames.contains n.name))
 
 inductive Scope where
-  | default | listItem | button | table | select
+  | default | listItem | button | table
 deriving BEq
 
 def defaultBoundary (n : DNode) : Bool :=
   match n.ns with
-  | .html => n.isAny ["applet", "caption", "html", "table", "td", "th", "marquee", "object", "template"]
+  | .html => n.isAny ["applet", "caption", "html", "table", "td", "th", "marquee", "object", "select", "template"]
   | .math => mathTextNames.contains n.name || n.name == "annotation-xml"
   | .svg => svgHtmlIPNames.contains n.name
 
@@ -162,7 +162,6 @@ def boundary (n : DNode) (s : Scope) : Bool :=
   | .listItem => defaultBoundary n || n.isAny ["ol", "ul"]
   | .button => defaultBoundary n || n.is "button"
   | .table => n.isAny ["html", "table", "template"]
-  | .select => !(n.isAny ["optgroup", "option"])
 
 def isTreeWs (c : Char) : Bool := c == '\t' || c == '\n' || c == '\x0C' || c == '\r' || c == ' '
 
@@ -195,6 +194,15 @@ def ctxIsSelect : P Bool := do
   match tb.ctx with
   | some c => return tb.dom[c]!.is "select"
   | none => return false
+
+/-- "Parsing template contents" (§13.2.4.5): a `template` element is on the
+stack of open elements, or the fragment context element is a `template`. -/
+def parsingTemplate : P Bool := do
+  let tb ← get
+  let ctxT := match tb.ctx with
+    | some c => tb.dom[c]!.is "template"
+    | none => false
+  return ctxT || tb.stack.any (fun i => tb.dom[i]!.is "template")
 
 def setMode (m : Mode) : P Unit := modify fun tb => { tb with mode := m }
 def popCur : P Unit := modify fun tb => { tb with stack := tb.stack.pop }
@@ -801,6 +809,8 @@ def inHeadNoscriptH (tok : Token) : P Act := do
 def afterHeadH (tok : Token) : P Act := do
   let anything : P Act := do
     let _ ← insertHtml "body"
+    -- whatwg/html 83c0aa8: the frameset-ok flag is "ok" again when body is implied
+    modify fun tb => { tb with framesetOk := true }
     setMode .inBody
     return .reprocess
   match tok with
@@ -932,12 +942,12 @@ def inBodyH (tok : Token) : P Act := do
       return .done
     else if n == "form" then
       let tb ← get
-      if tb.formPtr.isSome && !(← hasOnStack (·.is "template")) then
+      if tb.formPtr.isSome && !(← parsingTemplate) then
         perr "unexpected-form-start-tag"
         return .done
       closeP
       let id ← insertHtml n attrs
-      if !(← hasOnStack (·.is "template")) then modify fun tb => { tb with formPtr := some id }
+      if !(← parsingTemplate) then modify fun tb => { tb with formPtr := some id }
       return .done
     else if n == "li" || n == "dd" || n == "dt" then
       modify fun tb => { tb with framesetOk := false }
@@ -1134,7 +1144,7 @@ def inBodyH (tok : Token) : P Act := do
       popUntil (·.is n)
       return .done
     else if n == "form" then
-      if !(← hasOnStack (·.is "template")) then
+      if !(← parsingTemplate) then
         let tb ← get
         let node := tb.formPtr
         modify fun tb => { tb with formPtr := none }
@@ -1350,9 +1360,10 @@ def inTableH (tok : Token) : P Act := do
       else anything
     else if n == "form" then
       perr "unexpected-form-in-table"
-      if (← hasOnStack (·.is "template")) || (← get).formPtr.isSome then return .done
+      let pt ← parsingTemplate
+      if (← get).formPtr.isSome && !pt then return .done
       let id ← insertHtml n attrs
-      modify fun tb => { tb with formPtr := some id }
+      if !pt then modify fun tb => { tb with formPtr := some id }
       popCur
       return .done
     else anything
@@ -1548,86 +1559,6 @@ def inCellH (tok : Token) : P Act := do
     else return .via .inBody
   | _ => return .via .inBody
 
-def inSelectH (tok : Token) : P Act := do
-  match tok with
-  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
-  | .char c =>
-    if c == '\x00' then perr "unexpected-null-character" else insertChar c
-    return .done
-  | .comment d => insertComment d; return .done
-  | .doctype .. => perr "unexpected-doctype"; return .done
-  | .startTag n attrs _ =>
-    if n == "html" then return .via .inBody
-    else if n == "option" then
-      if (← curNode).is "option" then popCur
-      let _ ← insertHtml n attrs
-      return .done
-    else if n == "optgroup" then
-      if (← curNode).is "option" then popCur
-      if (← curNode).is "optgroup" then popCur
-      let _ ← insertHtml n attrs
-      return .done
-    else if n == "hr" then
-      if (← curNode).is "option" then popCur
-      if (← curNode).is "optgroup" then popCur
-      let _ ← insertHtml n attrs
-      popCur
-      setAck
-      return .done
-    else if n == "select" then
-      perr "unexpected-select-in-select"
-      if !(← hasNamed "select" .select) then return .done
-      popUntil (·.is "select")
-      resetMode
-      return .done
-    else if n == "input" || n == "keygen" || n == "textarea" then
-      perr "unexpected-input-in-select"
-      if !(← hasNamed "select" .select) then return .done
-      popUntil (·.is "select")
-      resetMode
-      return .reprocess
-    else if n == "script" || n == "template" then return .via .inHead
-    else perr "unexpected-start-tag-in-select"; return .done
-  | .endTag n =>
-    if n == "optgroup" then
-      let tb ← get
-      let cur := tb.dom[tb.stack.back?.getD 0]!
-      let below := tb.dom[(tb.stack[tb.stack.size - 2]?).getD 0]!
-      if cur.is "option" && below.is "optgroup" then popCur
-      if (← curNode).is "optgroup" then popCur else perr "unexpected-end-tag"
-      return .done
-    else if n == "option" then
-      if (← curNode).is "option" then popCur else perr "unexpected-end-tag"
-      return .done
-    else if n == "select" then
-      if !(← hasNamed "select" .select) then perr "unexpected-end-tag"; return .done
-      popUntil (·.is "select")
-      resetMode
-      return .done
-    else if n == "template" then return .via .inHead
-    else perr "unexpected-end-tag-in-select"; return .done
-  | .eof => return .via .inBody
-
-def inSelectInTableH (tok : Token) : P Act := do
-  let tbl := ["caption", "table", "tbody", "tfoot", "thead", "tr", "td", "th"]
-  match tok with
-  | .startTag n _ _ =>
-    if tbl.contains n then
-      perr "unexpected-table-element-in-select"
-      popUntil (·.is "select")
-      resetMode
-      return .reprocess
-    else return .via .inSelect
-  | .endTag n =>
-    if tbl.contains n then
-      perr "unexpected-end-tag"
-      if !(← hasNamed n .table) then return .done
-      popUntil (·.is "select")
-      resetMode
-      return .reprocess
-    else return .via .inSelect
-  | _ => return .via .inSelect
-
 def inTemplateH (tok : Token) : P Act := do
   let switch (m : Mode) : P Act := do
     modify fun tb => { tb with tmodes := (tb.tmodes.pop).push m, mode := m }
@@ -1669,7 +1600,9 @@ def afterBodyH (tok : Token) : P Act := do
     return .done
   | .doctype .. => perr "unexpected-doctype"; return .done
   | .startTag "html" _ _ => return .via .inBody
-  | .endTag "html" => setMode .afterAfterBody; return .done
+  | .endTag "html" =>
+    if (← get).ctx.isSome then perr "unexpected-end-tag"; return .done  -- fragment case
+    setMode .afterAfterBody; return .done
   | .eof => modify fun tb => { tb with done := true }; return .done
   | _ =>
     perr "unexpected-token-after-body"
@@ -1767,8 +1700,6 @@ def handler (m : Mode) (tok : Token) : P Act :=
   | .inTableBody => inTableBodyH tok
   | .inRow => inRowH tok
   | .inCell => inCellH tok
-  | .inSelect => inSelectH tok
-  | .inSelectInTable => inSelectInTableH tok
   | .inTemplate => inTemplateH tok
   | .afterBody => afterBodyH tok
   | .inFrameset => inFramesetH tok

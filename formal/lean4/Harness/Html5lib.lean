@@ -31,7 +31,7 @@ def nsPrefix : NS → String
 test format for an attribute of an SVG or MathML element. -/
 def foreignAttrName (n : String) : String :=
   match n with
-  | "xlink:actuate" | "xlink:arcrole" | "xlink:href" | "xlink:role" | "xlink:verbose" | "xlink:title"
+  | "xlink:actuate" | "xlink:arcrole" | "xlink:href" | "xlink:role" | "xlink:show" | "xlink:title"
   | "xlink:type" => "xlink " ++ (n.drop 6).toString
   | "xml:lang" | "xml:space" => "xml " ++ (n.drop 4).toString
   | "xmlns" => "xmlns xmlns"
