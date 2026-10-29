@@ -70,7 +70,10 @@ def propString (e : Env) (v : Seq) : String :=
   match v with
   | [.atom ⟨_, .bool b⟩] => if b then "yes" else "no"
   | [.atom ⟨_, .qn q⟩] => q.eqn
-  | _ => String.intercalate " " ((e.atomize v).toOption.getD [] |>.map Atomic.str)
+  | _ => String.intercalate " " ((e.atomize v).toOption.getD [] |>.map (fun a =>
+      match a.v with
+      | .qn q => q.eqn
+      | _ => a.str))
 
 /-- `fn:transform($options)`. `apply` calls a function item (for
     `post-process`). -/

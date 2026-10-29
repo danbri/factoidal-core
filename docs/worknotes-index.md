@@ -149,3 +149,4 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-29 | [XQuery 4.0 merge against updated main](20261029-xquery4-merge-main2.md) | uncommitted | record |
 | 2026-10-29 | [QT4 optional features merge against updated main](20261029-qt4-optional-features-merge2.md) | uncommitted | record: both baselines, per-family validation |
 | 2026-10-29 | [QT4 Unicode reuse and namespace lookup agreement](20261029-qt4-unicode-namespace.md) | same commit | Unicode 18 adapters, four explicit older-fixture differences, verified namespace lookup bridge and remaining proof obligations; https://github.com/danbri/factoidal/issues/1195, https://github.com/danbri/factoidal/issues/1181 |
+| 2026-10-29 | [QName lists in fn:transform serialization parameters](20261029-qt4-transform-qname-lists.md) | same commit | two QT4 failures fixed; namespace-sensitive public regressions; https://github.com/danbri/factoidal/issues/1161 |
