@@ -779,3 +779,8 @@ lean_exe «l4xslt4» where root := `Harness.Xslt4Run
 -- milestone 2): the engine behind tests/whatwg-encoding/run.mjs, the
 -- web-platform-tests encoding runner (Harness/WhatwgEncodingServe.lean).
 @[default_target] lean_exe «l4whatwg-encoding» where root := `Harness.WhatwgEncodingServe
+
+-- WHATWG URL Standard in Lean (https://github.com/danbri/factoidal/issues/1167,
+-- milestone 3): the engine behind tests/whatwg-url/run.mjs, the
+-- web-platform-tests url runner (Harness/WhatwgUrl.lean).
+@[default_target] lean_exe «l4whatwg-url» where root := `Harness.WhatwgUrl

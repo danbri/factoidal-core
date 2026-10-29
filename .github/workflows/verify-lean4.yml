@@ -32,6 +32,9 @@ on:
       - 'third_party/testing/wpt-encoding/**'
       - 'third_party/whatwg-encoding/**'
       - 'tests/whatwg-encoding/**'
+      - 'third_party/testing/wpt-url/**'
+      - 'third_party/unicode-18.0.0/**'
+      - 'tests/whatwg-url/**'
       - 'tools/whatwg/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
@@ -196,3 +199,8 @@ jobs:
           node-version: '22'
       - name: WHATWG Encoding, WPT encoding tests (tests/whatwg-encoding/run.sh)
         run: bash tests/whatwg-encoding/run.sh
+
+      # WHATWG URL Standard over the vendored web-platform-tests url/ data
+      # files (https://github.com/danbri/factoidal/issues/1167, milestone 3).
+      - name: WHATWG URL, WPT url tests (tests/whatwg-url/run.sh)
+        run: bash tests/whatwg-url/run.sh

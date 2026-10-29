@@ -1142,3 +1142,7 @@ import L4Factoidal.WHATWG.Encoding.Core
 import L4Factoidal.WHATWG.Encoding.Tests
 import L4Factoidal.WHATWG.Encoding.Theorems
 import L4Factoidal.WHATWG.URL.PercentEncode
+import L4Factoidal.WHATWG.URL.IdnaData
+import L4Factoidal.WHATWG.URL.Idna
+import L4Factoidal.WHATWG.URL.Host
+import L4Factoidal.WHATWG.URL.Parser
