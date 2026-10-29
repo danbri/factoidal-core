@@ -1627,6 +1627,15 @@ L4Factoidal_XPath4_lookaheadGroups  # (b) nesting of one parsed regular expressi
 L4Factoidal_EXPath_File_exec  # (b) the depth is the nesting of the XPath expression (EXPath File 4.0 evaluator, issue 1101)
 L4Factoidal_EXPath_File_hasWrite  # (b) the depth is the nesting of the XPath expression (EXPath File 4.0, issue 1101)
 L4Factoidal_EXPath_Binary_packBE  # (s) specification only: no emitted C outside Binary/Octets.lean and Binary/Theorems.lean calls it; bin:pack-* call the loop packBEAcc (packBE_eq_packBEAcc)
+# --- Added 2026-10-28, fn:invisible-xml (XPath4/Ixml.lean) ---
+L4Factoidal_XPath4_Ixml_Boot_pAlts  # (b) bootstrap ixml grammar parser, run on the fixed ixml grammar text only; fuel decreases at each call; depth is the parenthesis nesting; lists are loops
+L4Factoidal_XPath4_Ixml_Boot_pAlt  # (b) as Boot_pAlts
+L4Factoidal_XPath4_Ixml_Boot_pTerm  # (b) as Boot_pAlts
+L4Factoidal_XPath4_Ixml_Boot_pFactor  # (b) as Boot_pAlts
+L4Factoidal_XPath4_Ixml_compileFactor  # (b) recursion on the nesting of one grammar factor (fuel 256); lists of factors are loops
+L4Factoidal_XPath4_Ixml_factorOf  # (b) recursion on the element nesting of the XML form of a grammar (fuel 256); children are loops
+L4Factoidal_XPath4_Ixml_altsOf  # (b) as factorOf
+L4Factoidal_XPath4_Ixml_xdmToXml  # (b) recursion on the element nesting of a grammar element (fuel); children are mapped
 
 # --- Added 2026-10-28, XSLT 4.0 processor (https://github.com/danbri/factoidal/issues/1101) ---
 Harness_Xslt4Run_checkAssert  # (b) the depth is the nesting of the test catalog assertion (all-of, any-of, not) (XSLT 4.0, issue 1101)
@@ -1719,6 +1728,8 @@ L4Factoidal_XSD11_readSimpleType  # (b) depth is the nesting of a schema documen
 L4Factoidal_XSD11_schemaHints_pairs  # (a) PENDING https://github.com/danbri/factoidal/issues/1151 one frame per child or list item
 L4Factoidal_XSD11_validateElement  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
 L4Factoidal_XSLT4_compileParams1  # (b) the depth is the nesting of the stylesheet module and of its XPath expressions and types (XSLT 4.0, issue 1101)
+L4Factoidal_XPath4_normXmlId  # (b) the depth is the element nesting of the parsed document (fuel 100000); children are mapped (xml:id processing, issue 1101)
+L4Factoidal_XPath4_stripIgnorable  # (b) the depth is the element nesting of the parsed document (fuel 100000); children are filtered and mapped (DTD ignorable whitespace, issue 1101)
 # --- XSLT Streaming 4.0 (XSLT4/Streaming, https://github.com/danbri/factoidal/issues/1101)
 L4Factoidal_XSLT4_Streaming_callSR  # (b) the depth is the nesting of the stylesheet module and of its XPath expressions (fuel-bounded) (XSLT Streaming 4.0, issue 1101)
 L4Factoidal_XSLT4_Streaming_callsPositional  # (b) the depth is the nesting of the stylesheet module and of its XPath expressions (fuel-bounded) (XSLT Streaming 4.0, issue 1101)
@@ -1784,6 +1795,15 @@ L4Factoidal_N3_readTriples  # (b) depth is the nesting of an N3 document's { } (
 L4Factoidal_N3_readVerb  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
 L4Factoidal_N3_termToRdf  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
 L4Factoidal_N3_isoSearch  # (c) at most 65 levels: the search fuel is min 64 (blank-node count) + 1 and each level individualises one label (N3/Compare.lean n3Isomorphic)
+L4Factoidal_N3_hasVar  # (b) depth is the nesting of N3 terms (lists, graph terms), at most 2 * N3.maxNesting + 8 (termFuel); sequences are List.map, List.any or left folds. Measured: tests/n3/run.sh reasoner stack cases (list pattern of 200,000 members, graph-term pattern of 2,000 triples) with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_subst  # (b) depth is the nesting of N3 terms (lists, graph terms), at most 2 * N3.maxNesting + 8 (termFuel); sequences are List.map, List.any or left folds. Measured: tests/n3/run.sh reasoner stack cases (list pattern of 200,000 members, graph-term pattern of 2,000 triples) with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_unify  # (b) depth is the nesting of N3 terms (lists, graph terms), at most 2 * N3.maxNesting + 8 (termFuel); sequences are List.map, List.any or left folds. Measured: tests/n3/run.sh reasoner stack cases (list pattern of 200,000 members, graph-term pattern of 2,000 triples) with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_unifyGraph  # (b) depth is the nesting of N3 terms (lists, graph terms), at most 2 * N3.maxNesting + 8 (termFuel); sequences are List.map, List.any or left folds. Measured: tests/n3/run.sh reasoner stack cases (list pattern of 200,000 members, graph-term pattern of 2,000 triples) with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_unifyList  # (b) depth is the nesting of N3 terms (lists, graph terms), at most 2 * N3.maxNesting + 8 (termFuel); sequences are List.map, List.any or left folds. Measured: tests/n3/run.sh reasoner stack cases (list pattern of 200,000 members, graph-term pattern of 2,000 triples) with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_unifyTriple  # (b) depth is the nesting of N3 terms (lists, graph terms), at most 2 * N3.maxNesting + 8 (termFuel); sequences are List.map, List.any or left folds. Measured: tests/n3/run.sh reasoner stack cases (list pattern of 200,000 members, graph-term pattern of 2,000 triples) with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_chain  # (c) the solver and the rounds are self tail calls (worklist, rounds); the cycle through solveOne is log:conclusion, at most 4 levels (chain 4 in N3.reason). Measured: tests/n3/run.sh rule body of 20,000 triples with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_solveBody  # (c) the solver and the rounds are self tail calls (worklist, rounds); the cycle through solveOne is log:conclusion, at most 4 levels (chain 4 in N3.reason). Measured: tests/n3/run.sh rule body of 20,000 triples with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_solveOne  # (c) the solver and the rounds are self tail calls (worklist, rounds); the cycle through solveOne is log:conclusion, at most 4 levels (chain 4 in N3.reason). Measured: tests/n3/run.sh rule body of 20,000 triples with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
 # --- XQuery Update Facility (XQueryUpdate/, https://github.com/danbri/factoidal/issues/1101)
 L4Factoidal_XQueryUpdate_flatU  # (b) one frame per element nesting level of the rebuilt document; siblings are a for loop (as XPath4.flatXT)
 L4Factoidal_XQueryUpdate_rebuild  # (b) one frame per element nesting level of the updated document; attributes and children are for loops
@@ -1792,6 +1812,19 @@ L4Factoidal_XQueryUpdate_untypeXT  # (b) one frame per element nesting level of 
 L4Factoidal_XQueryUpdate_noPreserveXT  # (b) one frame per element nesting level of a copied tree
 L4Factoidal_XQueryUpdate_stripElementOnlyWs  # (b) one frame per element nesting level of a revalidated tree
 L4Factoidal_XQueryUpdate_XT_fits  # (s) specification only: the hypothesis of the theorem flatU_true_eq_flatXT; no compiled function calls it
+# --- Added 2026-10-29 (YAML 1.2.2 loader for YAML-LD, https://github.com/danbri/factoidal/issues/1165) ---
+# The entry loops (mapEntries, seqEntries, flowSeq, flowMap) step to the next entry with a self tail call;
+# the cycle through blockNode/flowNode is one frame per NESTING level. Checked by `l4yamlld --scale 100000`
+# under `ulimit -s 1024`: 400,000-entry mappings and sequences load (tests/yamlld/run.sh).
+L4Factoidal_YAML_blockNode  # (b) depth is the nesting of the YAML document; fuel runs out with tooDeep
+L4Factoidal_YAML_blockContent  # (b) as blockNode: one frame per collection nesting level
+L4Factoidal_YAML_flowNode  # (b) depth is the nesting of flow collections
+L4Factoidal_YAML_flowSeq  # (b) one frame per nesting level; the loop over items is a self tail call
+L4Factoidal_YAML_flowMap  # (b) one frame per nesting level; the loop over entries is a self tail call
+L4Factoidal_YAML_mapEntries  # (b) one frame per nesting level; the loop over entries is a self tail call
+L4Factoidal_YAML_seqEntries  # (b) one frame per nesting level; the loop over entries is a self tail call
+YamlLdRun_unorderedNorm  # (b) harness comparison; nesting of an expected or produced document; fuel-bounded by Json.size; arrays via List.map
+YamlLdRun_walkDir  # (b) harness; explicit depth argument bounds the directory nesting of the suite tree
 
 # --- 2026-10-28, XPath 4.0 / XQuery 4.0 / XSLT 4.0 in the wasm dispatch (Wasm/Ops/Qt4.lean:
 #     xpath4Eval, xqueryEval, xslt4Transform). The l4wasm library now imports

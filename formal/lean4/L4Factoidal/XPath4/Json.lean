@@ -335,7 +335,8 @@ def addFnNs : Node → Node
   | n => n
 
 def jsonToXmlFn (h : Hooks) (e : Env) (src : String) (opts : Seq) : M Seq := do
-  checkOptionKeys opts ["liberal", "duplicates", "validate", "escape", "fallback", "number-parser"]
+  -- `number-parser` was removed by qtspecs PR 2671
+  checkOptionKeys opts ["liberal", "duplicates", "validate", "escape", "fallback"]
   if (← optBoolT opts "validate" false) then err "FOJS0004" "this processor is not schema-aware"
   let o ← jsonOpts opts "retain" ["reject", "use-first", "retain"]
   let v ← parseJsonText src

@@ -48,8 +48,11 @@ children of `XML.Node`; a proof of the 1.0/4.0 agreement over the whole
 1.0 fragment; a proof of the JSON round trip.
 -/
 import L4Factoidal.XPath4.Eval
+import L4Factoidal.XPath4.CastTheorems
 import L4Factoidal.XPath.Eval
 import L4Factoidal.JSON.Parser
+import L4Factoidal.XPath4.DocTheorems2
+import L4Factoidal.XPath4.PathTheorems
 
 namespace L4Factoidal.XPath4
 
@@ -161,19 +164,21 @@ open L4Factoidal.XML in
 /-- With no options, `fn:parse-xml` on a string that the XML parser
     (`XML.Parser`, the well-formedness decision) accepts, that is
     namespace-well-formed and that needs no external resource, returns the
-    document node of `Doc.ofNodes` over exactly the parser's document
-    children (prolog, element, epilog): the node table is built from
-    `XML.Document.children` and nothing else. -/
+    document node of `Doc.ofNodes` over the parser's document children
+    (prolog, element, epilog) after xml:id processing (`normXmlId`, which
+    only normalizes the value of `xml:id` attributes): the node table is
+    built from `XML.Document.children` and nothing else. -/
 theorem parseXml_eq (h : Hooks) (e : Env) (s : String) (d : Document)
     (hp : parseDecodedXMLWith (fun _ => none) s = .ok d)
     (hns : d.namespaceWellFormed = true)
     (hsys : d.doctype.bind (·.systemId) = none)
     (hext : refsExternalEntity d s = false) :
     parseXmlFn h e [sStr s, []] =
-      .ok [({ Doc.ofNodes d.children with baseUri := e.baseUri }).rootItem (runtimeDocId "parse-xml" s)] := by
-  simp [parseXmlFn, parseOpts, parseDocument, checkOptionKeys, optLookup, optBool, optionStr,
+      .ok [({ Doc.ofNodes (d.children.map (normXmlId 100000)) with baseUri := e.baseUri }).rootItem
+        (runtimeDocId "parse-xml" s)] := by
+  simp [parseXmlFn, parseOpts, parseDocument, docKids, checkOptionKeys, optLookup, optBool, optionStr,
     bytesOfAtomic, sStr, single, optAtom, argN, Atomic.ofStr, Atomic.str, hp, hns, hsys, hext]
-  rfl
+  cases d.doctype <;> rfl
 
 /-! ## One function library with SPARQL, RIF and RML
 
@@ -226,5 +231,39 @@ theorem matches_shared (p f : String) :
       some (do let re ← compileRe4 p f; pure (sBool (Regex.isMatch re.r s))) := rfl
 
 end FnShared
+
+/-! ## Bridge: fn:resolve-uri and the RDF parsers' RFC 3986 resolver
+
+`fn:resolve-uri` and the readers resolve with `L4Factoidal.Syntax.resolveIri`,
+the resolver of the Turtle, TriG, RDF/XML and SPARQL parsers (RFC 3986 §5.2,
+checked there against all 44 examples of RFC 3986 §5.4). -/
+
+/-- For a relative reference against an absolute base without a fragment,
+    the readers' resolution is the RDF parsers' resolution. -/
+theorem resolveUri_eq_resolveIri (base href : String)
+    (hb : isAbsIri base = true) (hh : isAbsIri href = false) :
+    resolveUri base href = L4Factoidal.Syntax.resolveIri ((base.splitOn "#").headD base) href := by
+  simp [resolveUri, hb, hh]
+
+/-- An absolute reference is returned unchanged (F&O 4.0 §6.1). -/
+theorem resolveUri_abs (base href : String) (hh : isAbsIri href = true) :
+    resolveUri base href = href := by
+  simp [resolveUri, hh]
+
+/-! ## Bridge: date and time arithmetic is `L4Factoidal.Fn.DateTime`
+
+The subtraction of two xs:dateTime values and the addition of a duration
+to a date are the functions SPARQL's date arithmetic uses
+(`Fn.DateTime.subtractValues`, `Fn.DateTime.plusDuration`). -/
+
+theorem sub_dateTime_shared (tz : Int) (x y : XSD.DTValue) :
+    arith0 tz .sub ⟨.b .dateTime, .x (.dt .dateTime x)⟩ ⟨.b .dateTime, .x (.dt .dateTime y)⟩ =
+      .ok (mkDur .dayTimeDuration 0 (Fn.DateTime.subtractValues tz x y).seconds) := by
+  rfl
+
+theorem add_date_duration_shared (tz : Int) (x : XSD.DTValue) (d : XSD.DurValue) :
+    arith0 tz .add ⟨.b .date, .x (.dt .date x)⟩ ⟨.b .dayTimeDuration, .x (.dur d)⟩ =
+      .ok ⟨.b .date, .x (.dt .date (dtProject .date (Fn.DateTime.plusDuration x d)))⟩ := by
+  rfl
 
 end L4Factoidal.XPath4
