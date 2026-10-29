@@ -1,10 +1,11 @@
 /-
-Namespace-sensitive serialization parameters through fn:transform.
+Serialization parameters and assertion options through fn:transform.
 F&O fn:transform and Serialization: QName-valued parameters preserve
 expanded names and merge with the stylesheet's output declaration.
 https://github.com/danbri/factoidal/issues/1161
 -/
 import L4Factoidal.XSLT4.QtFnTransform
+import L4Factoidal.XSLT4.FnTransform
 
 namespace L4Factoidal.XSLT4.Qt.Tests
 
@@ -60,5 +61,52 @@ private def call (sheet key values : String) : String :=
 #guard answer (call indentSheet "suppress-indentation" "QName('urn:target', 'c')" ++
     "contains($s, '><t>base</t><') and contains($s, '><t>target</t><') and " ++
     "matches($s, '>\\s+<t>plain</t>\\s+<') and matches($s, '>\\s+<t>other</t>\\s+<')") == "true"
+
+
+private def assertSheet (test body : String) : String :=
+  "<xsl:stylesheet xmlns:xsl='http://www.w3.org/1999/XSL/Transform' version='3.0'>" ++
+  "<xsl:template name='main'><out>ok<xsl:assert test='" ++ test ++ "'>" ++ body ++
+  "</xsl:assert></out></xsl:template></xsl:stylesheet>"
+
+private def assertCall (test body option : String) : String :=
+  "transform(map { 'stylesheet-text': \"" ++ assertSheet test body ++ "\", " ++
+  "'initial-template': QName('', 'main')" ++ option ++ " })?output ! string()"
+
+-- Direct XSLT invocation keeps assertions enabled by default.
+private def directAnswer (test : String) : String :=
+  let result : M TResult := do
+    let uri := "https://example.org/assertions.xsl"
+    let sheet ← compileStylesheet uri [(uri, assertSheet test "")]
+    transform sheet { initialTemplate := some { uri := "", loc := "main" } }
+  match result with
+  | .ok _ => "ok"
+  | .error er => er.code
+
+#guard directAnswer "false()" == "XTMM9001"
+#guard directAnswer "true()" == "ok"
+
+-- F&O fn:transform: assertions are disabled unless explicitly enabled.
+#guard answer (assertCall "false()" "" "") == "ok"
+#guard answer (assertCall "false()" "" ", 'enable-assertions': false()") == "ok"
+#guard answer (assertCall "false()" "" ", 'enable-assertions': true()") == "XTMM9001"
+
+-- A disabled assertion evaluates neither its test nor its message body.
+#guard answer (assertCall "1 idiv 0 = 1" "" ", 'enable-assertions': false()") == "ok"
+#guard answer (assertCall "false()" "<xsl:sequence select='1 idiv 0'/>"
+    ", 'enable-assertions': false()") == "ok"
+#guard answer (assertCall "1 idiv 0 = 1" "" ", 'enable-assertions': true()") == "FOAR0001"
+
+-- The adapter also used for nested XSLT fn:transform calls follows the same
+-- option contract. Its independent entry point must retain the option.
+private def nestedAnswer (src : String) : String :=
+  let e : Env := { baseUri := "https://example.org/query.xq" }
+  let e := { e with host := L4Factoidal.XSLT4.fnTransformHost 10 [] e }
+  match evalString src e with
+  | .ok s => showSeq s
+  | .error er => er.code
+
+#guard nestedAnswer (assertCall "false()" "" "") == "ok"
+#guard nestedAnswer (assertCall "1 idiv 0 = 1" "" ", 'enable-assertions': false()") == "ok"
+#guard nestedAnswer (assertCall "false()" "" ", 'enable-assertions': true()") == "XTMM9001"
 
 end L4Factoidal.XSLT4.Qt.Tests

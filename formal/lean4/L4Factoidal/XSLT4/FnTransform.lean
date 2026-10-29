@@ -132,7 +132,13 @@ def fnTransform : Nat → List PkgEntry → Env → HostCall → List Seq → M 
     let libTexts := moduleClosure env.resources 1000 (lib.map (·.uri)) []
     let texts := texts ++ libTexts.filter (fun (u, _) => !texts.any (·.1 == u))
     let S ← compileStylesheet principal texts statics lib
-    let S := { S with extraHost := fnTransformHost f lib }
+    let assertionsEnabled ← match opt "enable-assertions" with
+      | none => pure false
+      | some v => do
+        match ← env.coerce (parseTy "xs:boolean") v "option enable-assertions" with
+        | [.atom ⟨_, .bool b⟩] => pure b
+        | _ => err "XPTY0004" "enable-assertions must be a boolean"
+    let S := { S with extraHost := fnTransformHost f lib, assertionsEnabled }
     let params ← qnEntries (opt "stylesheet-params") "stylesheet-params"
     let tparams ← qnEntries (opt "template-params") "template-params"
     let tunnel ← qnEntries (opt "tunnel-params") "tunnel-params"
