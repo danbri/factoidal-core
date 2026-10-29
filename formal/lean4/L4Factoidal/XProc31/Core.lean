@@ -11,18 +11,22 @@ structure Document where
   /-- Non-core document properties, with QName keys and retained XDM values.
       content-type and base-uri are materialized from the fields above. -/
   properties : List (XPath4.Atomic × XPath4.Seq) := []
+  /-- Native XDM content for map/array documents. Serialization occurs only at boundaries. -/
+  value : Option XPath4.Seq := none
 deriving Inhabited
 
 structure ProcError where
   code : String
   message : String
   unsupported : Bool := false
+  details : List XML.Node := []
+  errorName : Option XPath4.QN := none
 deriving Inhabited, Repr
 
 abbrev Result := Except ProcError
 
-def unsupported {α} (s : String) : Result α := .error ⟨"unsupported", s, true⟩
-def error {α} (code msg : String) : Result α := .error ⟨code, msg, false⟩
+def unsupported {α} (s : String) : Result α := .error ⟨"unsupported", s, true, [], none⟩
+def error {α} (code msg : String) : Result α := .error ⟨code, msg, false, [], none⟩
 def localName (s : String) : String := (XPath4.splitName s).2
 def tag (n : Node) : String := localName (n.elementTag.getD "")
 def attr (n : Node) (s : String) (fallback : String := "") : String :=
@@ -77,7 +81,7 @@ def xpathEnv (context : Option Document) (bindings : List (XPath4.QN × XPath4.S
   | none => { ns := namespaces, vars := bindings }
   | some d =>
     { docs := #[XPath4.Doc.ofNodes (documentNodes d) d.baseUri]
-      ctx := if d.contentType == "application/json" then
+      ctx := if d.value.isSome then d.value else if d.contentType == "application/json" || d.contentType.endsWith "+json" then
         match XPath4.evalString "parse-json($raw)" { vars := [(⟨"", "raw", ""⟩, XPath4.sStr d.node.textContent)] } with
         | .ok value => some value
         | .error _ => none
@@ -89,7 +93,7 @@ def xpathEnv (context : Option Document) (bindings : List (XPath4.QN × XPath4.S
       baseUri := d.baseUri }
 
 def fromXPath {α} (r : XPath4.M α) : Result α := r.mapError fun e =>
-  ⟨e.code, e.msg, e.code == "XPST0017" || e.msg.contains "not implemented"⟩
+  ⟨e.code, e.msg, e.code == "XPST0017" || e.msg.contains "not implemented", [], none⟩
 
 def eval (s : String) (env : XPath4.Env) : Result XPath4.Seq :=
   (fromXPath (XPath4.evalString s env)).mapError fun e =>
@@ -202,18 +206,26 @@ def nodeFromRef (env : XPath4.Env) : Nat → XPath4.NodeRef → Result Node
 
 def seqDocuments (env : XPath4.Env) (s : XPath4.Seq) (baseUri : String := "") : Result (List Document) :=
   s.mapM fun i => match i with
-    | .node n => do pure ⟨← nodeFromRef env 4096 n, "application/xml", baseUri, []⟩
-    | .atom a => pure ⟨.text a.str, "text/plain", baseUri, []⟩
-    | .map kvs => do
-      let text ← fromXPath (env.serializeWith { method := "json" } [.map kvs])
-      pure ⟨.text text, "application/json", baseUri, []⟩
-    | .arr ms => do
-      let text ← fromXPath (env.serializeWith { method := "json" } [.arr ms])
-      pure ⟨.text text, "application/json", baseUri, []⟩
+    | .node n => do pure {node := ← nodeFromRef env 4096 n, baseUri}
+    | .atom a => pure {node := .text a.str, contentType := "text/plain", baseUri}
+    | .map _ | .arr _ => pure {node := .text "", contentType := "application/json", baseUri, value := some (retainItems env 4096 [i])}
     | _ => unsupported "function item cannot be a document"
 
 def identity (docs : List Document) : List Document := docs
 def forEachDocuments (f : Document → Result (List Document)) (docs : List Document) : Result (List Document) :=
   List.flatten <$> docs.mapM f
 
+end L4Factoidal.XProc31
+
+namespace L4Factoidal.XProc31
+/-- The native map payload preserves both multi-item values and node identity. -/
+private def nativeMapProbe : Result Bool := do
+  let source : Document := {node := .element "node" [] [.text "retained"]}
+  let env := xpathEnv (some source)
+  let docs ← seqDocuments env [.map [(XPath4.Atomic.ofStr "sequence", XPath4.sInt 1 ++ XPath4.sInt 2),
+    (XPath4.Atomic.ofStr "node", [.node ⟨0,0,none⟩])]]
+  let some doc := docs.head? | pure false
+  let context := xpathEnv (some doc)
+  evalBool "count(.?sequence) = 2 and .?node/node/string() = 'retained'" context
+#guard nativeMapProbe.toOption == some true
 end L4Factoidal.XProc31

@@ -1,5 +1,7 @@
 import L4Factoidal.XProc31.Runtime
+import L4Factoidal.XProc31.Regression
 import L4Factoidal.XProc31.Bridge
+import L4Factoidal.XProc31.FileEnvironment
 import L4Factoidal.XPath4.Eval
 
 /-! XProc community test-suite runner. Each test executes in a separate process
@@ -154,6 +156,9 @@ def serializationOptions (env : XPath4.Env) (opts : XPath4.Seq) : XPath4.M XPath
   opts.mapM fun item => match item with
     | .map entries => do
       let entries ← entries.mapM fun (key, value) => do
+        let key := match key.v with
+          | .qn q => if q.uri == "" then XPath4.Atomic.ofStr q.loc else key
+          | _ => key
         if !["cdata-section-elements", "suppress-indentation", "double-space"].contains key.str then
           pure (key, value)
         else
@@ -168,12 +173,13 @@ def serializationOptions (env : XPath4.Env) (opts : XPath4.Seq) : XPath4.M XPath
       pure (.map entries)
     | i => pure i
 
-def runTest (path : String) : IO Outcome := do
+def runTestIn (path sandbox : String) : IO Outcome := do
   let path := (← IO.FS.realPath path).toString
   let root ← match ← loadXml path with
     | .error m => return .fail ("test XML: " ++ m)
     | .ok n => pure n
   if tag root != "test" then return .unsupported "not a t:test"
+  if (words (attr root "features")).contains "lazy-eval" then return .unsupported "lazy evaluation mode (processor uses eager evaluation)"
   let features := words (attr root "features")
   if features.contains "urify-windows" && !System.Platform.isWindows then
     return .unsupported "Windows platform dependency"
@@ -181,7 +187,11 @@ def runTest (path : String) : IO Outcome := do
     return .unsupported "non-Windows platform dependency"
   if attr root "src" != "" then return .unsupported "t:test external indirection"
   if attr root "step" != "" then return .unsupported "library entry step selection"
-  if !(named root "file-environment").isEmpty then return .unsupported "file-environment setup and cleanup"
+  let requiresFiles := XProc31.needsFileEnvironment 4096 root
+  let prepared ← if requiresFiles then XProc31.prepareFileEnvironment path sandbox root else pure (.ok path)
+  let path ← match prepared with
+    | .ok path => pure path
+    | .error e => return .unsupported e.message
   if attr root "when" != "" then
     match evalBool { ns := namespaces root } (attr root "when") with
     | .ok true => pure ()
@@ -207,6 +217,7 @@ def runTest (path : String) : IO Outcome := do
       for n in kids input do
         inputs := inputs ++ [{ node := inheritNs root (inheritNs input n), baseUri := "file://" ++ path }]
   let result ← XProc31.runPipeline pipeline inputs ("file://" ++ pipelinePath) options
+    (if requiresFiles then some sandbox else none)
   match result with
   | .error e =>
     if e.unsupported then return .unsupported e.message
@@ -239,9 +250,14 @@ def runTest (path : String) : IO Outcome := do
         | .ok v => pure v
         | .error e => return oracleError "serialization options" (e.code ++ ": " ++ e.msg)
       let serialized := do
-        let opts ← serializationOptions env opts
+        let stored ← serializationOptions env (documentProperty output ⟨"", "serialization", ""⟩)
+        let explicit ← serializationOptions env opts
+        let opts : XPath4.Seq := match stored, explicit with
+          | [.map old], [.map overrides] => [.map (overrides ++ old.filter (fun (entry : XPath4.Atomic × XPath4.Seq) => !overrides.any (fun (replacement : XPath4.Atomic × XPath4.Seq) => replacement.1.str == entry.1.str)))]
+          | _, [] => stored
+          | _, _ => explicit
         let params ← XPath4.serParamsOf env opts
-        env.serializeWith params [.node { doc := 0, idx := 0 }]
+        env.serializeWith params ((xpathEnv (some output)).ctx.getD [])
       match serialized with
       | .error e => return oracleError "serialization" (e.code ++ ": " ++ e.msg)
       | .ok text => pure { output with node := .element "serialization" [] [.text text] }
@@ -302,8 +318,8 @@ def parseOptions : List String → Options → Except String Options
   | "--list-unsupported" :: rest, o => parseOptions rest { o with listUnsupported := true }
   | a :: _, _ => .error ("unknown argument: " ++ a)
 
-def isolated (exe path : String) (timeoutMs : Nat) : IO Outcome := do
-  let child ← IO.Process.spawn { cmd := exe, args := #["--one", path], stdout := .piped, stderr := .null }
+def isolatedIn (exe path sandbox : String) (timeoutMs : Nat) : IO Outcome := do
+  let child ← IO.Process.spawn { cmd := exe, args := #["--one-sandbox", path, sandbox], stdout := .piped, stderr := .null }
   let start ← IO.monoMsNow
   let mut code : Option UInt32 := none
   for _ in [:timeoutMs / 5 + 2] do
@@ -320,6 +336,16 @@ def isolated (exe path : String) (timeoutMs : Nat) : IO Outcome := do
   | some 0 => pure .pass
   | some 2 => pure (.unsupported message.trimAscii.toString)
   | _ => pure (.fail message.trimAscii.toString)
+
+def runTest (path : String) : IO Outcome := do
+  let sandbox ← IO.FS.createTempDir
+  try runTestIn path (← IO.FS.realPath sandbox).toString
+  finally IO.FS.removeDirAll sandbox
+
+def isolated (exe path : String) (timeoutMs : Nat) : IO Outcome := do
+  let sandbox ← IO.FS.createTempDir
+  try isolatedIn exe path (← IO.FS.realPath sandbox).toString timeoutMs
+  finally IO.FS.removeDirAll sandbox
 
 /-- Infer features from executable step syntax, not test filenames. Inline
 input documents and stylesheet/query payloads are not traversed as pipelines. -/
@@ -355,13 +381,13 @@ def pipelineArguments : List String → List (String × String) → Except Strin
     | _ => .error "--option requires NAME=XPath"
   | arg :: _, _ => .error ("unknown pipeline argument: " ++ arg)
 
-def runFile (path : String) (options : List (String × String)) : IO UInt32 := do
+def runFile (path : String) (options : List (String × String)) (writeRoot : Option String := none) : IO UInt32 := do
   try
     let path := (← IO.FS.realPath path).toString
     let pipeline ← match ← loadXml path with
       | .ok node => pure node
       | .error message => IO.eprintln ("ERROR XML: " ++ message); return 1
-    let result ← XProc31.runPipeline pipeline [] ("file://" ++ path) options
+    let result ← XProc31.runPipeline pipeline [] ("file://" ++ path) options writeRoot
     match result with
     | .error e =>
       IO.eprintln s!"{if e.unsupported then "UNSUPPORTED" else "ERROR"} {e.code}: {e.message}"
@@ -377,8 +403,12 @@ def runFile (path : String) (options : List (String × String)) : IO UInt32 := d
         return 2
       for doc in docs do
         let ct := mediaType doc
-        if ct == "application/json" || ct.endsWith "+json" ||
-            (ct.startsWith "text/" && ct != "text/xml" && ct != "text/html") then
+        if ct == "application/json" || ct.endsWith "+json" then
+          let env := XProc31.xpathEnv (some doc)
+          match env.serializeWith {method := "json"} (env.ctx.getD []) with
+          | .ok text => IO.println text
+          | .error e => IO.eprintln ("ERROR " ++ e.code ++ ": " ++ e.msg); return 1
+        else if ct.startsWith "text/" && ct != "text/xml" && ct != "text/html" then
           IO.println doc.node.textContent
         else
           IO.println (String.join ((XProc31.documentNodes doc).map XML.Node.serialize))
@@ -463,17 +493,28 @@ end L4Factoidal.XProc31.Runner
 open L4Factoidal.XProc31.Runner in
 def main (args : List String) : IO UInt32 := do
   match args with
+  | ["--scale-test"] => L4Factoidal.XProc31.Regression.scaling
+  | ["--self-test"] => L4Factoidal.XProc31.Regression.run
   | ["--help"] =>
-    IO.println "l4xproc --pipeline FILE [--option NAME=XPath]..."
+    IO.println "l4xproc --self-test | --scale-test"
+    IO.println "l4xproc --pipeline FILE [--write-root DIR] [--option NAME=XPath]..."
     IO.println "l4xproc [--root TESTS] [--filter TEXT] [--timeout-ms N] [--list-fails] [--list-unsupported]"
     IO.println "Feature counts overlap when a test exercises several pipeline steps."
     pure 0
+  | "--pipeline" :: path :: "--write-root" :: root :: rest =>
+    match pipelineArguments rest [] with
+    | .error message => IO.eprintln message; pure 2
+    | .ok options => runFile path options (some root)
   | "--pipeline" :: path :: rest =>
     match pipelineArguments rest [] with
     | .error message => IO.eprintln message; pure 2
     | .ok options => runFile path options
   | ["--one", path] =>
     let result ← try runTest path catch e => pure (.fail s!"runner exception: {e}")
+    IO.println result.message
+    pure result.code
+  | ["--one-sandbox", path, sandbox] =>
+    let result ← try runTestIn path sandbox catch e => pure (.fail s!"runner exception: {e}")
     IO.println result.message
     pure result.code
   | _ =>

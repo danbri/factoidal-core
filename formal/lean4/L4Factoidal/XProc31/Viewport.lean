@@ -13,7 +13,7 @@ def viewportXmlType (contentType : String) : Bool :=
 def viewportPattern (step : XML.Node) (env : XPath4.Env) : Result XSLT4.Pattern := do
   let source ← option step "match" env
   let static : XSLT4.SCx := { ns := ns step, xpathNs := ((ns step).lookup "").getD "", baseUri := env.baseUri }
-  (static.pattern source).mapError fun e => ⟨"XS0107", e.msg, false⟩
+  (static.pattern source).mapError fun e => ⟨"XS0107", e.msg, false, [], none⟩
 
 /-- Unlike XSLT template rule selection, a viewport does not mask pattern
 errors. The underlying XSLT pattern evaluator is shared. -/
@@ -23,7 +23,7 @@ def viewportMatches (pattern : XSLT4.Pattern) (env : XPath4.Env) (node : XPath4.
   match pattern.ip with
   | some (ip, _) => pure (XSLT4.ipMatch e 512 ip item)
   | none => (XSLT4.patMatch e 512 pattern.e item).mapError fun err =>
-      ⟨if err.code.startsWith "XPST" then "XS0107" else err.code, err.msg, false⟩
+      ⟨if err.code.startsWith "XPST" then "XS0107" else err.code, err.msg, false, [], none⟩
 
 /-- Store the iteration position at selected topmost nodes. A selected ancestor
 suppresses every descendant; unmatched attributes are never rebuilt as children. -/
@@ -94,6 +94,16 @@ def viewportRebuild (env : XPath4.Env) (source : Document) (positions : Array Na
     | .pi => return .ok [.pi record.name.loc record.value]
     | _ => return error "XD0010" "viewport cannot materialize an attribute or namespace as a child"
 
+/-- A text-only rebuilt document changes media type and discards obsolete
+serialization settings, while preserving the source's other properties. -/
+def viewportResultDocument (source : Document) (nodes : List XML.Node) : Document :=
+  let node := match nodes with | [n] => n | _ => XML.Node.element "#document" [] nodes
+  let textOnly := !nodes.isEmpty && nodes.all fun n => match n with | .text _ | .cdata _ => true | _ => false
+  let contentType := if textOnly then "text/plain" else source.contentType
+  let properties := if contentType == source.contentType then source.properties else
+    source.properties.filter (fun (key,_) => propertyName key != some ⟨"", "serialization", ""⟩)
+  {source with node, contentType, properties}
+
 /-- The callback receives iteration position, iteration size, and current
 subtree document. Runtime provides the subpipeline and its port bindings. -/
 def viewportStepWithFocus (step : XML.Node) (docs : List Document) (env : XPath4.Env)
@@ -121,8 +131,7 @@ def viewportStepWithFocus (step : XML.Node) (docs : List Document) (env : XPath4
         (fun position size doc => callback (offset + position) size doc) 4096 ⟨0,0,none⟩ with
     | .error er => return .error er
     | .ok nodes =>
-      let node := match nodes with | [n] => n | _ => XML.Node.element "#document" [] nodes
-      output := output.push { source with node }
+      output := output.push (viewportResultDocument source nodes)
     offset := offset + count
   return .ok output.toList
 
@@ -143,5 +152,12 @@ def viewportStep (step : XML.Node) (docs : List Document) (env : XPath4.Env)
   let env := xpathEnv (some source)
   let pattern ← viewportPattern (.element "p:viewport" [{name := "match", value := "@x"}] []) env
   viewportPositions pattern env : Result (Array Nat × Nat)).toBool == false
+
+#guard (viewportResultDocument {node := .element "doc" [] []} [.text "replacement"]).contentType == "text/plain"
+#guard (documentProperty (viewportResultDocument {
+  node := .element "doc" [] []
+  properties := [(XPath4.Atomic.ofQN ⟨"", "prop", ""⟩, XPath4.sStr "kept"),
+    (XPath4.Atomic.ofQN ⟨"", "serialization", ""⟩, [.map []])] } [.text "replacement"])
+  ⟨"", "serialization", ""⟩).isEmpty
 
 end L4Factoidal.XProc31

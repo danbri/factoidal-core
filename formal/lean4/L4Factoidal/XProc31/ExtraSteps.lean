@@ -182,6 +182,10 @@ def includeNode (options : IncludeOptions) (active : List String) : Nat → Stri
     let lang := (XML.findAttr "xml:lang" node.elementAttrs).getD lang
     let q := nameInScope (ns node) false (node.elementTag.getD "")
     if q.uri == "http://www.w3.org/2001/XInclude" && q.loc == "include" then
+      -- The raw XML tree has no per-node base URI property. Omitting the
+      -- fixup attribute would lose the included nodes' base URIs.
+      if !options.fixBase && attr node "parse" "xml" == "xml" then
+        return unsupported "XInclude fixup-xml-base=false requires per-node base URI preservation"
       let uri := XPath4.resolveRef base (attr node "href")
       if active.contains uri then return error "XC0029" "cyclic XInclude"
       let result ← includeResource options (uri :: active) fuel uri (attr node "parse" "xml")
@@ -212,7 +216,7 @@ def includeResource (options : IncludeOptions) (active : List String) (fuel : Na
     if pointer != "" then return unsupported "text XInclude with XPointer"
     let text := XPath4.decodeResource bytes (if encoding == "" then none else some encoding) false
     return do
-      let text ← text.mapError (fun e => ⟨"XC0029",e.msg,false⟩)
+      let text ← text.mapError (fun e => ⟨"XC0029",e.msg,false,[],none⟩)
       if !text.toList.all XML.isXmlChar then error "XC0029" "text inclusion contains a character forbidden in XML"
       else pure [.text ((text.replace "\r\n" "\n").replace "\r" "\n")]
   else if parse != "xml" then return error "XC0029" "invalid XInclude parse mode"

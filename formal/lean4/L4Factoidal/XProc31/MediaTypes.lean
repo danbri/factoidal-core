@@ -173,4 +173,5 @@ def checkPortContentTypes (port : XML.Node) (docs : List Document) : Result (Lis
 #guard match checkContentTypes "xml" [{ node := .text "x", contentType := "text/plain" }] true with
   | .error e => e.code == "XD0042" | _ => false
 
+#print axioms acceptsMediaType_append
 end L4Factoidal.XProc31

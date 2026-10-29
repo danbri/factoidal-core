@@ -39,13 +39,22 @@ def nodeDepth : XML.Node → Nat
   | .element _ _ children => 1 + (children.map nodeDepth).foldl max 0
   | _ => 1
 
+private def inheritNamespaces : Nat → List XML.Attribute → XML.Node → XML.Node
+  | 0, _, n => n
+  | f+1, inherited, .element t attrs cs =>
+    let attrs := attrs ++ inherited.filter (fun a => !attrs.any (fun b => a.name == b.name))
+    let ns := attrs.filter (fun a => a.name == "xmlns" || a.name.startsWith "xmlns:")
+    .element t attrs (cs.map (inheritNamespaces f ns))
+  | _, _, n => n
+
 private def staticAttr (node : XML.Node) (name : String) : String :=
   ((XML.findAttr name node.elementAttrs).orElse fun _ =>
     if name == "depends" && !(node.elementTag.getD "").startsWith "p:" then
       XML.findAttr "p:depends" node.elementAttrs else none).getD ""
 
 private def staticLocalName (node : XML.Node) : String :=
-  ((node.elementTag.getD "").splitOn ":").getLast!
+  let (pfx, loc) := XPath4.splitName (node.elementTag.getD "")
+  if ((ns node).lookup pfx).getD "" == "http://www.w3.org/ns/xproc" then loc else "#extension"
 
 private def words (s : String) : List String :=
   (((s.replace "\t" " ").replace "\n" " ").replace "\r" " " |>.splitOn " ").filter (! ·.isEmpty)
@@ -72,12 +81,13 @@ def referencedStepsAux : Nat → XML.Node → List String
       return own.filter (! ·.isEmpty)
     let children := node.allChildElements.filter fun c =>
       -- A binding's literal children are documents, not executable markup.
-      if staticLocalName node == "with-input" then
+      if ["with-input", "input", "output", "variable", "with-option", "run-input"].contains (staticLocalName node) then
         ["pipe", "empty", "document"].contains (staticLocalName c)
       else true
     return (own ++ children.flatMap (referencedStepsAux fuel)).filter (! ·.isEmpty)
 
-def referencedSteps (node : XML.Node) : List String := referencedStepsAux (nodeDepth node) node
+def referencedSteps (node : XML.Node) : List String :=
+  referencedStepsAux (nodeDepth node) (inheritNamespaces (nodeDepth node) [] node)
 
 /-- Context dependence of the supported XPath expression constructors.
 The right side of a path/filter/simple-map obtains its own focus. -/
@@ -130,6 +140,7 @@ private def inlineNeedsFocus : Nat → Bool → XML.Node → Bool
     | _ => false
 
 def pipelineConnections (root : XML.Node) : Connections := Id.run do
+  let root := inheritNamespaces (nodeDepth root) [] root
   let steps := root.allChildElements.filter isPipelineStep
   let names := steps.map (fun n => staticAttr n "name")
   return steps.zipIdx |>.map fun (step, i) =>
@@ -174,14 +185,6 @@ private def nameKey (n : XML.Node) (lex : String) : String × String :=
   | .ok (.var q) => (q.uri, q.loc)
   | _ => ("", lex)
 
-private def inheritNamespaces : Nat → List XML.Attribute → XML.Node → XML.Node
-  | 0, _, n => n
-  | f+1, inherited, .element t attrs cs =>
-    let attrs := attrs ++ inherited.filter (fun a => !attrs.any (fun b => a.name == b.name))
-    let ns := attrs.filter (fun a => a.name == "xmlns" || a.name.startsWith "xmlns:")
-    .element t attrs (cs.map (inheritNamespaces f ns))
-  | _, _, n => n
-
 private def supportedVersion (s : String) : Bool :=
   let s := s.trimAscii.toString
   let s := if s.startsWith "+" then (s.drop 1).toString else s
@@ -203,10 +206,16 @@ private def primaryOutput : Nat → List XML.Node → XML.Node → Option (Optio
       match (node.allChildElements.filter isPipelineStep).getLast? with
       | some last => primaryOutput f declarations last
       | none => some none
-    else match declarations.find? (fun d => staticAttr d "type" == node.elementTag.getD "") with
+    else match declarations.find? (fun d => nameKey d (staticAttr d "type") == nameKey node (node.elementTag.getD "")) with
       | some d => primaryOutput f declarations d
       | none =>
-        if (node.elementTag.getD "").startsWith "p:" then some (some "result") else none
+        if staticLocalName node != "#extension" then some (some "result") else none
+
+/-- A connection child may be literal XML. Metadata alone is not a binding.
+An empty pipe attribute explicitly requests the default readable port. -/
+private def hasExplicitConnection (node : XML.Node) : Bool :=
+  staticAttr node "pipe" != "" || XML.hasAttr "href" node.elementAttrs ||
+  node.allChildElements.any (fun c => !["documentation", "pipeinfo"].contains (staticLocalName c))
 
 private def localSyntaxErrors (root : XML.Node) (declarations : List XML.Node) : List (String × String) := Id.run do
   let kind := staticLocalName root
@@ -214,6 +223,32 @@ private def localSyntaxErrors (root : XML.Node) (declarations : List XML.Node) :
     (a == "depends" && !(root.elementTag.getD "").startsWith "p:" && XML.hasAttr "p:depends" root.elementAttrs)
   let cs := root.allChildElements.filter (fun n => !["documentation", "pipeinfo"].contains (staticLocalName n))
   let mut errors := []
+  if ["input", "with-input", "run-input"].contains kind then
+    let literals := cs.filter (fun c => staticLocalName c == "#extension")
+    let connections := cs.filter (fun c => ["inline", "document", "pipe", "empty"].contains (staticLocalName c))
+    if cs.any (fun c => staticLocalName c == "empty") && cs.length > 1 then
+      errors := errors ++ [("XS0089", "Empty must be the only connection child")]
+    if cs.any (fun c => staticLocalName c != "#extension" &&
+        !["inline", "document", "pipe", "empty"].contains (staticLocalName c)) ||
+        (!literals.isEmpty && !connections.isEmpty) then
+      errors := errors ++ [("XS0100", "Invalid or mixed binding child forms")]
+    if !literals.isEmpty && (children root).any (fun c => match c with
+        | .comment _ | .pi .. => true
+        | .text t | .cdata t => !t.trimAscii.toString.isEmpty
+        | _ => false) then
+      errors := errors ++ [("XS0079", "Implicit inline siblings may only be elements or whitespace")]
+  if kind == "run-input" && !has "port" then
+    errors := errors ++ [("XS0038", "Run input requires a port name")]
+  if kind == "run-option" && (!has "name" || !has "select") then
+    errors := errors ++ [("XS0038", "Run option requires name and select")]
+  if kind == "run" then
+    let pipelineInput := cs.find? (fun c => staticLocalName c == "with-input")
+    if pipelineInput.isNone then errors := errors ++ [("XS0003", "Run requires an explicit pipeline input")]
+    let runPorts := (cs.filter (fun c => staticLocalName c == "run-input")).map (staticAttr · "port")
+    if runPorts.eraseDups.length != runPorts.length then
+      errors := errors ++ [("XS0086", "Run input port is bound more than once")]
+  if ["load", "directory-list"].contains kind && cs.any (fun c => staticLocalName c == "with-input") then
+    errors := errors ++ [("XS0065", "This step has no primary input port")]
   if ["input", "output", "with-input", "run-input"].contains kind && has "content-types" then
     match validateDeclaredContentTypes (staticAttr root "content-types") with
     | .error e => errors := errors ++ [(e.code, e.message)]
@@ -243,7 +278,7 @@ private def localSyntaxErrors (root : XML.Node) (declarations : List XML.Node) :
     if uri == "" || uri == "http://www.w3.org/ns/xproc" then
       errors := errors ++ [("XS0025", "Step type must be in a non-XProc namespace")]
   let optNames := (cs.filter (fun n => staticLocalName n == "option")).map (fun n => nameKey n (staticAttr n "name"))
-  if optNames.eraseDups.length != optNames.length then errors := errors ++ [("XS0004", "Duplicate option name")]
+  if optNames.eraseDups.length != optNames.length then errors := errors ++ [(if kind == "library" then "XS0071" else "XS0004", "Duplicate option name")]
   if (root.elementTag.getD "").startsWith "p:" && XML.hasAttr "p:depends" root.elementAttrs then
     errors := errors ++ [("XS0097", "XProc steps use unprefixed depends")]
   if kind == "with-option" && staticAttr root "name" == "p:depends" then
@@ -272,13 +307,21 @@ private def localSyntaxErrors (root : XML.Node) (declarations : List XML.Node) :
       errors := errors ++ [("XS0092", "Static option cannot be changed at invocation")]
     if (supplied ++ shortcutNames).any (fun n => !known.contains n) then
       errors := errors ++ [("XS0031", "Unknown option on declared step")]
+    let declaredInputs := declaration.allChildElements.filter (fun n => staticLocalName n == "input")
+    for input in declaredInputs do
+      let primary := staticAttr input "primary" == "true" ||
+        (declaredInputs.length == 1 && staticAttr input "primary" != "false")
+      let binding := cs.find? (fun n => staticLocalName n == "with-input" && staticAttr n "port" == staticAttr input "port")
+      if !primary && !hasExplicitConnection input &&
+          !(binding.any (fun n => hasExplicitConnection n || XML.hasAttr "pipe" n.elementAttrs)) then
+        errors := errors ++ [("XS0032", "Secondary input has neither a connection nor a default")]
   let boolAttrs := if ["input", "output", "option", "variable", "with-option", "when", "if"].contains kind then
     ["primary", "sequence", "static", "required", "collection"] else []
   if boolAttrs.any (fun a => has a && !["true", "false"].contains (staticAttr root a)) then
     errors := errors ++ [("XS0077", "Invalid static boolean attribute")]
   if has "depends" && ((words (staticAttr root "depends")).isEmpty || !(words (staticAttr root "depends")).all ncName) then
     errors := errors ++ [("XS0077", "depends requires a nonempty list of NCNames")]
-  if has "port" && ["input", "output", "with-input", "pipe"].contains kind && !ncName (staticAttr root "port") then
+  if has "port" && ["input", "output", "with-input", "run-input", "pipe"].contains kind && !ncName (staticAttr root "port") then
     errors := errors ++ [("XS0077", "Invalid port NCName")]
   if has "name" && ["option", "variable", "declare-step"].contains kind && !eqName (staticAttr root "name") then
     errors := errors ++ [("XS0077", "Invalid name")]
@@ -288,7 +331,7 @@ private def localSyntaxErrors (root : XML.Node) (declarations : List XML.Node) :
     errors := errors ++ [("XS0077", "Invalid option visibility")]
   if isBranch root && has "depends" then errors := errors ++ [("XS0008", "depends is not allowed on branches")]
   if kind == "input" && has "pipe" then errors := errors ++ [("XS0008", "pipe is not allowed on input declarations")]
-  if ["input", "with-input", "variable", "with-option"].contains kind then
+  if ["input", "with-input", "run-input", "variable", "with-option"].contains kind then
     if has "href" && has "pipe" then errors := errors ++ [("XS0085", "href and pipe cannot occur together")]
     if has "href" && !cs.isEmpty then errors := errors ++ [("XS0081", "href cannot accompany a connection child")]
     if has "pipe" && !cs.isEmpty then errors := errors ++ [("XS0082", "pipe cannot accompany a connection child")]
@@ -302,9 +345,35 @@ private def localSyntaxErrors (root : XML.Node) (declarations : List XML.Node) :
     errors := errors ++ [("XS0030", "More than one primary input")]
   if (outs.filter (fun n => staticAttr n "primary" == "true")).length > 1 then
     errors := errors ++ [("XS0014", "More than one primary output")]
+  if ["declare-step", "group", "for-each", "viewport", "if", "when", "otherwise", "try", "catch", "finally"].contains kind then
+    if let some last := (cs.filter isPipelineStep).getLast? then
+      if primaryOutput (nodeDepth root + 1) declarations last == some none &&
+          (outs.any (fun out => !hasExplicitConnection out) || (kind == "viewport" && outs.isEmpty)) &&
+          staticLocalName last != "if" then
+        errors := errors ++ [("XS0006", "Output has no default readable port")]
+  if kind == "insert" then
+    let insertion := cs.find? (fun c => staticLocalName c == "with-input" && staticAttr c "port" == "insertion")
+    if !(insertion.any (fun n => hasExplicitConnection n || XML.hasAttr "pipe" n.elementAttrs)) then
+      errors := errors ++ [("XS0032", "Required insertion input is not connected")]
+  if kind == "if" && primaryOutput (nodeDepth root + 1) declarations root == some none then
+    errors := errors ++ [("XS0108", "If must have a primary output port")]
+  if !["inline", "documentation", "pipeinfo"].contains kind && (children root).any (fun c => match c with
+      | .text t | .cdata t => !t.trimAscii.toString.isEmpty | _ => false) then
+    errors := errors ++ [("XS0037", "Non-whitespace text is not allowed in pipeline structure")]
+  if ["when", "choose", "if", "for-each", "viewport", "run"].contains kind && cs.any (fun c => staticLocalName c == "with-input" && XML.hasAttr "port" c.elementAttrs) then
+    errors := errors ++ [("XS0043", "The context input port is anonymous")]
+  if ["identity", "sink"].contains kind && cs.any (fun c => staticLocalName c == "with-input" &&
+      XML.hasAttr "port" c.elementAttrs && staticAttr c "port" != "source") then
+    errors := errors ++ [("XS0114", "Input port is not declared")]
+  if kind == "declare-step" || kind == "library" then
+    let mut seenPort := false
+    for child in cs do
+      if ["input", "output"].contains (staticLocalName child) then seenPort := true
+      if seenPort && staticLocalName child == "import" then
+        errors := errors ++ [("XS0100", "Imports must precede port declarations")]
   let bindings := cs.filter (fun n => staticLocalName n == "with-input" && staticAttr n "use-when" == "")
   let boundPorts := bindings.map (fun n => if staticAttr n "port" == "" then "source" else staticAttr n "port")
-  let options := (cs.filter (fun n => ["with-option", "run-option"].contains (staticLocalName n))).map (fun n => staticAttr n "name")
+  let options := (cs.filter (fun n => ["with-option", "run-option"].contains (staticLocalName n))).map (fun n => nameKey n (staticAttr n "name"))
   if boundPorts.eraseDups.length != boundPorts.length then
     errors := errors ++ [("XS0086", "Input port is bound more than once")]
   if options.eraseDups.length != options.length then
@@ -452,6 +521,40 @@ private def variableErrorsAux : Nat → List NameKey → List NameKey → XML.No
         if kind == "option" && staticAttr child "static" == "true" then statics := key :: statics
     return errors
 
+/-- Track whether a default readable port exists, not whether its runtime
+sequence is empty. Unknown extension signatures remain unknown/available so
+this conservative check cannot reject them merely for lacking a catalog entry. -/
+private def inputConnectionErrors : Nat → List XML.Node → Bool → XML.Node → List (String × String)
+  | 0, _, _, _ => []
+  | fuel+1, declarations, incoming, root => Id.run do
+    let kind := staticLocalName root
+    let cs := structuralChildren root
+    let declarations := cs.filter (fun c => staticLocalName c == "declare-step") ++ declarations
+    let inputs := cs.filter (fun c => staticLocalName c == "input")
+    let mut available := if kind == "declare-step" then
+      inputs.any (fun c => staticAttr c "primary" == "true" ||
+        (inputs.length == 1 && staticAttr c "primary" != "false"))
+      else if kind == "catch" then true else incoming
+    let mut errors := []
+    for c in cs.filter (fun c => staticLocalName c == "declare-step") do
+      errors := errors ++ inputConnectionErrors fuel declarations false c
+    for step in cs.filter isPipelineStep do
+      let stepKind := staticLocalName step
+      let source := step.allChildElements.find? (fun c => staticLocalName c == "with-input" &&
+        (staticAttr c "port" == "" || staticAttr c "port" == "source"))
+      let connected := source.any hasExplicitConnection || available
+      if stepKind == "identity" && !connected then
+        errors := errors ++ [(if source.any (fun c => XML.hasAttr "pipe" c.elementAttrs) then "XS0067" else "XS0032",
+          "Primary input has no connection or default readable port")]
+      if ["group", "for-each", "viewport", "if", "try"].contains stepKind then
+        errors := errors ++ inputConnectionErrors fuel declarations
+          (if ["for-each", "viewport"].contains stepKind then connected else available) step
+      if stepKind == "choose" || stepKind == "try" then
+        for branch in step.allChildElements.filter isBranch do
+          errors := errors ++ inputConnectionErrors fuel declarations available branch
+      available := (primaryOutput (nodeDepth step + 1) declarations step).map Option.isSome |>.getD true
+    return errors
+
 /-- Cycle diagnostics in each subpipeline, after lexical and scope checks. -/
 def staticErrorsAux : Nat → XML.Node → List (String × String)
   | 0, _ => []
@@ -466,33 +569,222 @@ def staticErrorsAux : Nat → XML.Node → List (String × String)
         "declare-step"].contains (staticLocalName n)
     return own ++ nested.flatMap (staticErrorsAux fuel)
 
-def staticErrors (root : XML.Node) : List (String × String) :=
+/-- Inline controls are checked inside literal content without treating that
+content as pipeline structure. Only attributes in the XProc namespace act as
+controls on literal or extension elements. -/
+private def controlErrors : Nat → Bool → XML.Node → List (String × String)
+  | 0, _, _ => []
+  | fuel+1, literal, node => Id.run do
+    let kind := staticLocalName node
+    if !literal && ["documentation", "pipeinfo"].contains kind then return []
+    let mut errors := []
+    for a in node.elementAttrs do
+      let (pfx, loc) := XPath4.splitName a.name
+      let qualified := pfx != "" && ((ns node).lookup pfx).getD "" == "http://www.w3.org/ns/xproc"
+      let standard := !literal && kind != "#extension" && pfx == ""
+      if (standard && loc == "expand-text") || (qualified && ["expand-text", "inline-expand-text"].contains loc) then
+        if !["true", "false"].contains a.value then
+          errors := errors ++ [("XS0113", "Text expansion control must be a static boolean")]
+      if (standard || qualified) && loc == "exclude-inline-prefixes" then
+        let prefixes := words a.value
+        if prefixes.any (fun p => p != "#all" && p != "#default" &&
+            (p != "xml" && ((ns node).lookup p).isNone)) then
+          errors := errors ++ [("XS0057", "Excluded namespace prefix is not bound")]
+        if prefixes.contains "#default" && ((ns node).lookup "").getD "" == "" then
+          errors := errors ++ [("XS0058", "No default namespace is bound")]
+    for child in node.allChildElements do
+      let childLiteral := literal || kind == "inline" ||
+        (["input", "output", "with-input", "run-input", "variable", "with-option"].contains kind && staticLocalName child == "#extension")
+      errors := errors ++ controlErrors fuel childLiteral child
+    return errors
+
+def staticErrors (root : XML.Node) (imports : List XML.Node := []) : List (String × String) :=
   let root := inheritNamespaces (nodeDepth root) [] root
   let version := if ["declare-step", "library"].contains (staticLocalName root) && !XML.hasAttr "version" root.elementAttrs then
     [("XS0062", "The outer pipeline must declare its version")] else []
-  version ++ syntaxErrors root ++ variableErrorsAux (nodeDepth root) [] [] root ++ scopeErrorsAux (nodeDepth root) [] [] root ++ staticErrorsAux (nodeDepth root) root
+  let outer := if !["declare-step", "library"].contains (staticLocalName root) then
+    [("XS0059", "Pipeline root must be declare-step or library")] else []
+  let importedOptions := (imports.filter (fun n => staticLocalName n == "option" && staticAttr n "static" == "true")).map (fun n => nameKey n (staticAttr n "name"))
+  outer ++ version ++ controlErrors (nodeDepth root) false root ++ syntaxErrors root ++ variableErrorsAux (nodeDepth root) importedOptions importedOptions root ++ scopeErrorsAux (nodeDepth root) [] [] root ++ inputConnectionErrors (nodeDepth root) [] false root ++ staticErrorsAux (nodeDepth root) root
+
+/-- Validate extension calls within one source's lexical scope. Imported
+bodies are checked separately in their own source, never in the importing
+pipeline's enlarged scope. Nested imports require their own loader check. -/
+private def importScopeErrorsAux : Nat → List NameKey → Bool → XML.Node → List (String × String)
+  | 0, _, _, _ => []
+  | fuel+1, visible, unresolvedImports, node => Id.run do
+    let cs := structuralChildren node
+    let locals := cs.filter (fun c => staticLocalName c == "declare-step" && staticAttr c "type" != "")
+    let localNames := locals.map (fun c => nameKey c (staticAttr c "type"))
+    let known := localNames ++ visible
+    let mut errors := []
+    if localNames.eraseDups.length != localNames.length || localNames.any visible.contains then
+      errors := errors ++ [("XS0036", "Declared and imported step types overlap")]
+    if !unresolvedImports && isPipelineStep node && staticLocalName node == "#extension" &&
+        !known.contains (nameKey node (node.elementTag.getD "")) then
+      errors := errors ++ [("XS0044", "Step type is not visible in this source")]
+    for child in cs do
+      let childImports := (structuralChildren child).any (fun n => staticLocalName n == "import")
+      errors := errors ++ importScopeErrorsAux fuel known (unresolvedImports || childImports) child
+    return errors
+
+/-- Check one source after its direct imports are resolved. The caller must
+remove repeated imports by source identity, not by step QName. Distinct source
+files exporting the same type are conflicting declarations. Stand-alone
+imported pipelines require a type, even though a principal pipeline need not.
+Private declarations remain visible within their own library; the loader
+selects exports before passing them as another source's imports. -/
+def importScopeErrors (root : XML.Node) (imports : List XML.Node)
+    (importedSource : Bool := false) : List (String × String) := Id.run do
+  let root := inheritNamespaces (nodeDepth root) [] root
+  let importedNames := imports.filterMap fun d =>
+    if staticAttr d "type" == "" then none else some (nameKey d (staticAttr d "type"))
+  let ownType := if staticAttr root "type" == "" then [] else [nameKey root (staticAttr root "type")]
+  let names := ownType ++ importedNames
+  let mut errors := []
+  let importedOptions := (imports.filter (fun n => staticLocalName n == "option")).map (fun n => nameKey n (staticAttr n "name"))
+  if importedOptions.eraseDups.length != importedOptions.length then
+    errors := errors ++ [("XS0109", "Imported libraries export the same option name")]
+  if (root.allChildElements.filter (fun n => staticLocalName n == "option")).any
+      (fun n => importedOptions.contains (nameKey n (staticAttr n "name"))) then
+    errors := errors ++ [("XS0088", "Imported static option cannot be shadowed")]
+
+  if importedSource && staticLocalName root == "declare-step" && staticAttr root "type" == "" then
+    errors := errors ++ [("XS0044", "Imported pipeline has no step type")]
+  if names.eraseDups.length != names.length then
+    errors := errors ++ [("XS0036", "Imported step types overlap")]
+  return errors ++ importScopeErrorsAux (nodeDepth root) names false root
+
+private def testElement (name : String) (attrs : List XML.Attribute) (children : List XML.Node) : XML.Node :=
+  .element name (⟨"xmlns:p", "http://www.w3.org/ns/xproc"⟩ :: attrs) children
 
 -- Regression cases: lexical validation, forward DAGs, and inline focus.
 #guard templateNeedsFocus "prefix{ . }suffix"
 #guard !templateNeedsFocus "{{.}}"
 #guard !templateNeedsFocus "{42}"
 #guard templateNeedsFocus "{string()}"
-#guard (staticErrors (.element "p:declare-step" []
-  [.element "p:input" [⟨"port", "source"⟩, ⟨"primary", "yes"⟩] []])).any (fun e => e.1 == "XS0077")
-#guard (staticErrors (.element "p:declare-step" []
-  [.element "p:identity" [⟨"name", "same"⟩] [],
-   .element "p:identity" [⟨"name", "same"⟩] []])).any (fun e => e.1 == "XS0002")
-#guard (staticErrors (.element "p:declare-step" [⟨"version", "3.0"⟩]
-  [.element "p:output" [⟨"port", "result"⟩]
-    [.element "otherwise" [] []], .element "p:identity" [] []])).isEmpty
+#guard (staticErrors (testElement "p:declare-step" []
+  [testElement "p:input" [⟨"port", "source"⟩, ⟨"primary", "yes"⟩] []])).any (fun e => e.1 == "XS0077")
+#guard (staticErrors (testElement "p:declare-step" []
+  [testElement "p:identity" [⟨"name", "same"⟩] [],
+   testElement "p:identity" [⟨"name", "same"⟩] []])).any (fun e => e.1 == "XS0002")
+#guard (staticErrors (testElement "p:declare-step" [⟨"version", "3.0"⟩]
+  [testElement "p:output" [⟨"port", "result"⟩]
+    [.element "otherwise" [] []], testElement "p:identity" []
+      [testElement "p:with-input" [] [.element "doc" [] []]]])).isEmpty
 
-#guard (localSyntaxErrors (.element "p:try" []
-  [.element "p:catch" [] [.element "p:identity" [] []]]) []).any (fun e => e.1 == "XS0075")
-#guard (localSyntaxErrors (.element "p:try" []
-  [.element "p:identity" [] [],
-   .element "p:catch" [⟨"code", "a"⟩] [.element "p:identity" [] []],
-   .element "p:catch" [⟨"code", "Q{}a"⟩] [.element "p:identity" [] []]]) []).any (fun e => e.1 == "XS0064")
-#guard (localSyntaxErrors (.element "p:try" []
-  [.element "p:identity" [] [], .element "p:finally" [] [.element "p:sink" [] []]]) []).isEmpty
+#guard (localSyntaxErrors (testElement "p:try" []
+  [testElement "p:catch" [] [testElement "p:identity" [] []]]) []).any (fun e => e.1 == "XS0075")
+#guard (localSyntaxErrors (testElement "p:try" []
+  [testElement "p:identity" [] [],
+   testElement "p:catch" [⟨"code", "a"⟩] [testElement "p:identity" [] []],
+   testElement "p:catch" [⟨"code", "Q{}a"⟩] [testElement "p:identity" [] []]]) []).any (fun e => e.1 == "XS0064")
+#guard (localSyntaxErrors (testElement "p:try" []
+  [testElement "p:identity" [] [], testElement "p:finally" [] [testElement "p:sink" [] []]]) []).isEmpty
+
+-- Literal bindings must never become pipeline references, even when their
+-- element names and attributes resemble XProc syntax. Namespace inheritance
+-- applies to aliases; an explicit default namespace reset remains literal.
+private def namespaceRegression (literal : XML.Node) : XML.Node :=
+  .element "x:declare-step" [⟨"xmlns:x", "http://www.w3.org/ns/xproc"⟩, ⟨"version", "3.0"⟩]
+    [.element "x:output" [⟨"port", "result"⟩] [],
+     .element "x:identity" [⟨"name", "producer"⟩]
+       [.element "x:with-input" [] [literal]]]
+
+#guard (staticErrors (namespaceRegression (.element "pipe"
+  [⟨"step", "missing"⟩, ⟨"port", "x"⟩] []))).isEmpty
+#guard (staticErrors (namespaceRegression (.element "e:pipe"
+  [⟨"xmlns:e", "urn:literal"⟩, ⟨"step", "producer"⟩] []))).isEmpty
+#guard (staticErrors (namespaceRegression (.element "x:pipe"
+  [⟨"step", "missing"⟩, ⟨"port", "x"⟩] []))).any (fun e => e.1 == "XS0022")
+#guard (staticErrors (namespaceRegression (.element "x:inline" []
+  [.element "x:pipe" [⟨"step", "missing"⟩] []]))).isEmpty
+#guard (staticErrors (.element "declare-step"
+  [⟨"xmlns", "http://www.w3.org/ns/xproc"⟩, ⟨"version", "3.0"⟩]
+  [.element "identity" [] [.element "with-input" []
+    [.element "pipe" [⟨"xmlns", ""⟩, ⟨"step", "missing"⟩] []]]])).isEmpty
+#guard isPipelineStep (.element "e:output" [⟨"xmlns:e", "urn:extension"⟩] [])
+
+-- Connection availability is distinct from runtime sequence cardinality.
+private def portRegression (body : List XML.Node) : XML.Node :=
+  testElement "p:declare-step" [⟨"version", "3.0"⟩]
+    (testElement "p:output" [⟨"port", "result"⟩] [] :: body)
+
+#guard (staticErrors (portRegression [testElement "p:identity" [] []])).any (fun e => e.1 == "XS0032")
+#guard (staticErrors (portRegression [testElement "p:identity" []
+  [testElement "p:with-input" [⟨"pipe", ""⟩] []]])).any (fun e => e.1 == "XS0067")
+#guard (staticErrors (portRegression [testElement "p:identity" []
+  [testElement "p:with-input" [] [testElement "p:empty" [] []]]])).isEmpty
+#guard (staticErrors (portRegression [testElement "p:identity" []
+  [testElement "p:with-input" [] [.element "doc" [] []]],
+  testElement "p:sink" [] []])).any (fun e => e.1 == "XS0006")
+#guard (staticErrors (portRegression [testElement "p:insert" []
+  [testElement "p:with-input" [] [.element "doc" [] []]]])).any (fun e => e.1 == "XS0032")
+#guard (staticErrors (portRegression [testElement "p:insert" []
+  [testElement "p:with-input" [] [.element "doc" [] []],
+   testElement "p:with-input" [⟨"port", "insertion"⟩] [testElement "p:empty" [] []]]])).isEmpty
+
+private def secondaryRegression (fallback : List XML.Node) : XML.Node :=
+  portRegression
+    [testElement "p:declare-step" [⟨"type", "e:test"⟩, ⟨"xmlns:e", "urn:test"⟩]
+      [testElement "p:input" [⟨"port", "source"⟩, ⟨"primary", "true"⟩] [],
+       testElement "p:input" [⟨"port", "secondary"⟩] fallback,
+       testElement "p:output" [⟨"port", "result"⟩] [], testElement "p:identity" [] []],
+     .element "e:test" [⟨"xmlns:e", "urn:test"⟩]
+       [testElement "p:with-input" [] [.element "doc" [] []]]]
+
+#guard (staticErrors (secondaryRegression [])).any (fun e => e.1 == "XS0032")
+#guard (staticErrors (secondaryRegression [testElement "p:empty" [] []])).isEmpty
+
+private def bindingRegression (nodes : List XML.Node) : XML.Node :=
+  portRegression [testElement "p:identity" [] [testElement "p:with-input" [] nodes]]
+
+#guard (staticErrors (bindingRegression [testElement "p:empty" [] [], .element "doc" [] []])).any (fun e => e.1 == "XS0089")
+#guard (staticErrors (bindingRegression [testElement "p:inline" [] [.element "doc" [] []],
+  .element "other" [] []])).any (fun e => e.1 == "XS0100")
+#guard (staticErrors (bindingRegression [testElement "p:declare-step" [] []])).any (fun e => e.1 == "XS0100")
+#guard (staticErrors (bindingRegression [.comment "not allowed", .element "doc" [] []])).any (fun e => e.1 == "XS0079")
+#guard (staticErrors (bindingRegression [.element "doc" [] [.comment "inside is allowed"]])).isEmpty
+#guard (staticErrors (bindingRegression [testElement "p:inline" [] [testElement "p:declare-step" [] []]])).isEmpty
+#guard (localSyntaxErrors (testElement "p:run" []
+  [testElement "p:with-input" [] [], testElement "p:run-input" [⟨"port", "source"⟩] [],
+   testElement "p:run-input" [⟨"port", "source"⟩] []]) []).any (fun e => e.1 == "XS0086")
+#guard (localSyntaxErrors (testElement "p:run-input" [] []) []).any (fun e => e.1 == "XS0038")
+#guard (localSyntaxErrors (testElement "p:run" [] []) []).any (fun e => e.1 == "XS0003")
+#guard (localSyntaxErrors (testElement "p:run" []
+  [testElement "p:with-input" [] [],
+   testElement "p:run-option" [⟨"name", "a:x"⟩, ⟨"xmlns:a", "urn:option"⟩, ⟨"select", "1"⟩] [],
+   testElement "p:run-option" [⟨"name", "b:x"⟩, ⟨"xmlns:b", "urn:option"⟩, ⟨"select", "2"⟩] []]) []).any (fun e => e.1 == "XS0080")
+
+-- Pipeline structure and inline controls have different namespace rules.
+#guard (staticErrors (portRegression [.text "illegal", testElement "p:identity" []
+  [testElement "p:with-input" [] [.element "doc" [] []]]])).any (fun e => e.1 == "XS0037")
+#guard (staticErrors (bindingRegression [.element "doc" [] [.text "ordinary data"]])).isEmpty
+#guard (staticErrors (bindingRegression [.element "doc" [⟨"expand-text", "no"⟩] []])).isEmpty
+#guard (staticErrors (bindingRegression [.element "doc"
+  [⟨"xmlns:x", "http://www.w3.org/ns/xproc"⟩, ⟨"x:inline-expand-text", "no"⟩] []])).any (fun e => e.1 == "XS0113")
+#guard (staticErrors (portRegression [testElement "p:identity" [⟨"expand-text", "{true()}"⟩]
+  [testElement "p:with-input" [] [.element "doc" [] []]]])).any (fun e => e.1 == "XS0113")
+#guard (localSyntaxErrors (testElement "p:declare-step" []
+  [testElement "p:output" [⟨"port", "result"⟩] [], testElement "p:import" [⟨"href", "lib.xpl"⟩] []]) []).any (fun e => e.1 == "XS0100")
+#guard (controlErrors 4 false (testElement "p:with-input" [⟨"exclude-inline-prefixes", "missing"⟩] [])).any (fun e => e.1 == "XS0057")
+#guard (controlErrors 4 false (testElement "p:with-input" [⟨"exclude-inline-prefixes", "#default"⟩] [])).any (fun e => e.1 == "XS0058")
+#guard (controlErrors 4 false (testElement "p:with-input"
+  [⟨"exclude-inline-prefixes", "#default p xml"⟩, ⟨"xmlns", "urn:default"⟩] [])).isEmpty
+#guard (staticErrors (testElement "p:boxing-day" [] [])).any (fun e => e.1 == "XS0059")
+
+private def importRegressionDecl (pfx : String) : XML.Node :=
+  testElement "p:declare-step" [⟨"type", pfx ++ ":step"⟩, ⟨"xmlns:" ++ pfx, "urn:import"⟩] []
+
+#guard (importScopeErrors (testElement "p:declare-step" [] []) [] true).any (fun e => e.1 == "XS0044")
+#guard (importScopeErrors (testElement "p:declare-step" [] []) [] false).isEmpty
+#guard (importScopeErrors (importRegressionDecl "a") [importRegressionDecl "b"]).any (fun e => e.1 == "XS0036")
+#guard (importScopeErrors (testElement "p:declare-step" [] [importRegressionDecl "a"])
+  [importRegressionDecl "b"]).any (fun e => e.1 == "XS0036")
+#guard (importScopeErrors (testElement "p:declare-step" []
+  [.element "b:step" [⟨"xmlns:b", "urn:import"⟩] []]) [importRegressionDecl "a"]).isEmpty
+#guard (importScopeErrors (testElement "p:declare-step" []
+  [.element "b:step" [⟨"xmlns:b", "urn:import"⟩] []]) []).any (fun e => e.1 == "XS0044")
+#guard (importScopeErrors (bindingRegression [.element "unknown:literal" [] []]) []).isEmpty
 
 end L4Factoidal.XProc31

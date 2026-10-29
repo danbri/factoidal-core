@@ -70,13 +70,13 @@ theorem forEachIO_error_head (doc : Document) (docs : List Document)
 -- Execute both effects and output checks; later iterations must not run
 -- after a processor error, and successful batches retain input order.
 #eval (do
-  let docs : List Document := [⟨.text "a", "text/plain", "", []⟩, ⟨.text "b", "text/plain", "", []⟩,
-    ⟨.text "c", "text/plain", "", []⟩]
+  let docs : List Document := [⟨.text "a", "text/plain", "", [], none⟩, ⟨.text "b", "text/plain", "", [], none⟩,
+    ⟨.text "c", "text/plain", "", [], none⟩]
   let calls ← IO.mkRef ([] : List Nat)
   let result ← forEachIO docs fun pos size doc => do
     calls.modify (· ++ [pos])
     if size != 3 then throw (IO.userError "wrong iteration size")
-    if pos == 2 then return .error ⟨"test:error", "stop", false⟩
+    if pos == 2 then return .error ⟨"test:error", "stop", false, [], none⟩
     return .ok [doc]
   if (← calls.get) != [1, 2] then throw (IO.userError "for-each did not short-circuit")
   match result with
