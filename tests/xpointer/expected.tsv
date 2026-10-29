@@ -1,0 +1,98 @@
+EdUni/test/extract.xml	intro	hits 1: <intro id="intro"> You will enjoy this book. </intro>
+EdUni/test/extract.xml	chap1	no-subresource
+EdUni/test/lang.xml	none	hits 1: <sentence id="none">Hi.</sentence>
+EdUni/test/lang.xml	none2	hits 1: <sentence id="none2">Yo..</sentence>
+EdUni/test/lang.xml	english	hits 1: <sentence id="english" xml:lang="en-gb">Hello.</sentence>
+EdUni/test/lang.xml	english2	hits 1: <sentence id="english2">Hello.</sentence>
+EdUni/test/lang.xml	french	hits 1: <sentence id="french" xml:lang="fr">Bonjour.</sentence>
+EdUni/test/lang.xml	german	hits 1: <sentence id="german">Guten Tag.</sentence>
+EdUni/test/lang.xml	australian	hits 1: <sentence id="australian">G'day mate.</sentence>
+EdUni/test/lang.xml	none	hits 1: <sentence id="none">Hi.</sentence>
+EdUni/test/lang.xml	none2	hits 1: <sentence id="none2">Yo..</sentence>
+EdUni/test/lang.xml	english	hits 1: <sentence id="english" xml:lang="en-gb">Hello.</sentence>
+EdUni/test/lang.xml	english2	hits 1: <sentence id="english2">Hello.</sentence>
+EdUni/test/lang.xml	french	hits 1: <sentence id="french" xml:lang="fr">Bonjour.</sentence>
+EdUni/test/lang.xml	german	hits 1: <sentence id="german">Guten Tag.</sentence>
+EdUni/test/lang.xml	australian	hits 1: <sentence id="australian">G'day mate.</sentence>
+FourThought/test/XInclude/docs/ft-include4.xml	xpointer(/ADDRBOOK/ENTRY)	hits 1: <ENTRY ID="pa">     <NAME>Pieter Aaron</NAME>     <EMAIL>pieter.aaron@inter.net</EMAIL>   </ENTRY>
+FourThought/test/XInclude/docs/ft-include5.xml	xpointer(/ADDRBOOK/ENTRY)	hits 3: <ENTRY ID="pa">     <NAME>Pieter Aaron</NAME>     <EMAIL>pieter.aaron@inter.net</EMAIL>   </ENTRY> | <ENTRY ID="en">     <NAME>Emeka Ndubuisi</NAME>     <EMAIL>endubuisi@spamtron.com</EMAIL>   </ENTRY> | <ENTRY ID="vz">     <NAME>Vasia Zhugenev</NAME>     <EMAIL>vxz@gog.ru</EMAIL>   </ENTRY>
+FourThought/test/XInclude/docs/ft-include6.xml	xpointer(/ADDRBOOK)	hits 1: <ADDRBOOK>   <ENTRY ID="pa">     <NAME>Pieter Aaron</NAME>     <EMAIL>pieter.aaron@inter.net</EMAIL>   </ENTRY> </ADDRBOOK>
+FourThought/test/XInclude/docs/ft-include7.xml	xpointer(/ADDRBOOK/ENTRY/NAME)	hits 1: <NAME>Pieter Aaron</NAME>
+Harold/test/badelementschemedata.xml	element(***)	no-subresource
+Harold/test/badxptr.xml	/1/1	syntax-error
+Harold/test/badxptr2.xml	element(rose red/1/1)	no-subresource
+Harold/test/badxptr3.xml	element(p:l/2/3)	no-subresource
+Harold/test/badxptr4.xml	element(p^l/2/3)	syntax-error
+Harold/test/circleback.xml	element(/1/1)	hits 1: <p>This will be duplicated if we're successful</p>
+Harold/test/circlepointer3.xml	element(/1/1)	hits 1: <xi:include href="circlepointer2.xml" xmlns:xi="http://www.w3.org/2001/XInclude"></xi:include>
+Harold/test/colonizedschemename.xml	test:xpath(somedata)element(/1/1)	hits 1: <p id="p1">Test worked</p>
+Harold/test/fallbackbadxpointer.xml	badscheme(/1/1)	no-subresource
+Harold/test/fallbackinternalxpointer.xml	element(/1/2)	hits 1: <data>test</data>
+Harold/test/fallbackxpointerpointsnowhere.xml	element(/1/17/82)	no-subresource
+Harold/test/includefromsamedocumentwithbase.xml	element(/1/2)	hits 1: <data xml:base="http://www.example.org/">This should be duplicated</data>
+Harold/test/internalcircular.xml	element(/1/1)	hits 1: <xi:include xpointer="element(/1/1)" xmlns:xi="http://www.w3.org/2001/XInclude"></xi:include>
+Harold/test/internalcircularviaancestor.xml	element(/1)	hits 1: <test>   This file is just for making sure my XIncluder can detect    circular local links.   <xi:include xpointer="element(/1)" xmlns:xi="http://www.w3.org/2001/XInclude"></xi:include> </test>
+Harold/test/langtest2.xml	element(/1/1)	hits 1: <test>Zut Alors!</test>
+Harold/test/langtest3.xml	element(/1/1)	hits 1: <test>Zut Alors!</test>
+Harold/test/laterfailure.xml	element(/1/1)element(^^^)	syntax-error
+Harold/test/laterfailure2.xml	element(/1/1)element(/1/2	syntax-error
+Harold/test/marshtest.xml	foo	hits 1: <x id="foo">   <xi:include xpointer="bar"></xi:include> </x>
+Harold/test/marshtest.xml	bar	hits 1: <x id="bar"></x>
+Harold/test/marshtestwithxmlbase.xml	foo	hits 1: <x id="foo">   <xi:include xpointer="bar"></xi:include> </x>
+Harold/test/marshtestwithxmlbase.xml	bar	hits 1: <x id="bar"></x>
+Harold/test/marshtestwithxmlbaseandemptyhref.xml	foo	hits 1: <x id="foo">   <xi:include href="" xpointer="bar"></xi:include> </x>
+Harold/test/marshtestwithxmlbaseandemptyhref.xml	bar	hits 1: <x id="bar"></x>
+Harold/test/metafallbacktest2.xml	element(/1)	hits 1: <test>   <xi:include href="missing.xml" xmlns:xi="http://www.w3.org/2001/XInclude"><xi:fallback><xi:include href="simple.xml" parse="text"></xi:include></xi:fallback></xi:include> </test>
+Harold/test/metafallbacktest3.xml	element(/1/1)	hits 1: <xi:include href="missing.xml" xmlns:xi="http://www.w3.org/2001/XInclude"><xi:fallback><xi:include href="simple.xml" parse="no"></xi:include></xi:fallback></xi:include>
+Harold/test/metafallbacktest4.xml	element(/1/1)	hits 1: <xi:include href="missing.xml" xmlns:xi="http://www.w3.org/2001/XInclude"><xi:fallback><xi:include></xi:include></xi:fallback></xi:include>
+Harold/test/metafallbacktest5.xml	element(/1/1)	hits 1: <xi:include href="disclaimer.xml" xpointer="element(/1/17/82)" xmlns:xi="http://www.w3.org/2001/XInclude"><xi:fallback>fallback text</xi:fallback></xi:include>
+Harold/test/metafallbacktest6.xml	element(/1/1)	hits 1: <xi:include href="missing.xml" xmlns:xi="http://www.w3.org/2001/XInclude"><xi:fallback><xi:include href="" xpointer="element(/1/2)"></xi:include></xi:fallback></xi:include>
+Harold/test/metafallbacktestwithxpointer.xml	element(/1/1)	hits 1: <xi:include href="missing.xml" xmlns:xi="http://www.w3.org/2001/XInclude"><xi:fallback><test>some data</test></xi:fallback></xi:include>
+Harold/test/metafallbacktestwithxpointer2.xml	element(/1)	hits 1: <test>   <xi:include href="missing.xml" xmlns:xi="http://www.w3.org/2001/XInclude"><xi:fallback>some data<!--comment-->more data</xi:fallback></xi:include> </test>
+Harold/test/metafallbackwithbadxpointertest.xml	element(/1/1)	hits 1: <xi:include href="missing.xml" xmlns:xi="http://www.w3.org/2001/XInclude"><xi:fallback><xi:include href="disclaimer.xml" xpointer="badscheme(/1/1)"></xi:include></xi:fallback></xi:include>
+Harold/test/metamissingfallbacktestwithxpointer.xml	element(/1/1)	hits 1: <xi:include href="missing.xml" xmlns:xi="http://www.w3.org/2001/XInclude"></xi:include>
+Harold/test/onlyxpointer.xml	element(/1/2)	hits 1: <data>      This will be copied   </data>
+Harold/test/recursewithinsamedocument.xml	element(/1/3)	hits 1: <data>      This will be copied   </data>
+Harold/test/recursewithinsamedocument.xml	element(/1/1)	hits 1: <xi:include xpointer="element(/1/3)" xmlns:xi="http://www.w3.org/2001/XInclude"></xi:include>
+Harold/test/resolvethruxpointer.xml	element(/1/2)	hits 1: <xi:include href="disclaimer.xml"></xi:include>
+Harold/test/tobintop.xml	element(/1/1/2)	no-subresource
+Harold/test/unrecognizedscheme.xml	unknown(somedata)	no-subresource
+Harold/test/unrecognizedschemewithfallback.xml	unknown(somedata)	no-subresource
+Harold/test/xmlbasetest3.xml	element(/1/1)	hits 1: <child></child>
+Harold/test/xpointeroverridesfragmentid.xml	element(/1/2)	hits 1: <element2></element2>
+Harold/test/xpointerwithpercentescape.xml	element(/1/%32)	no-subresource
+Harold/test/xptr2tumblertest.xml	element(/1/12/3)element(/1/2)element(/1/1)	hits 1: <p id="p1">Test worked</p>
+Harold/test/xptrdoubletumblertest.xml	element(book/1)element(/1/1)	hits 1: <p id="p1">Test worked</p>
+Harold/test/xptrfallback.xml	xlimit(1/1)	no-subresource
+Harold/test/xptridandtumblertest.xml	element(p1/1/2)	hits 1: <q>If you only see the q element the test worked</q>
+Harold/test/xptridtest.xml	p1	hits 1: <p id="p1">Test worked</p>
+Harold/test/xptridtest2.xml	nonesuch	no-subresource
+Harold/test/xptrsyntaxerrorbutfallback.xml	element(///)	no-subresource
+Harold/test/xptrtumblerfailsbutfallback.xml	element(/1/12/3)	no-subresource
+Harold/test/xptrtumblertest.xml	element(/1/1)	hits 1: <p id="p1">Test worked</p>
+Harold/test/xptrtumblertest2.xml	element(/1/3)	no-subresource
+Harold/test/xptrtumblertest3.xml	element(/1/12/3)               element(/1/2)   element(/1/1)	hits 1: <p id="p1">Test worked</p>
+Imaq/test/XInclude/docs/nodes.xml	xpointer(//p)	hits 3: <p>something</p> | <p>really</p> | <p>simple</p>
+Nist/test/docs/nist-include-17.xml	element(/1/1)	hits 1: <xinc:include href="../ents/something.xml"></xinc:include>
+Nist/test/docs/nist-include-18.xml	xpointer(//chapter)	hits 3: <chapter>chapter 1.  <subtitle>first subtitle</subtitle>  <subtitle>Second subtitle</subtitle> </chapter> | <chapter>chapter 2.  <subtitle>first subtitle</subtitle>  <subtitle>Second subtitle</subtitle> </chapter> | <chapter>chapter 3.  <subtitle>first subtitle</subtitle>  <subtitle>Second subtitle</subtitle> </chapter>
+Nist/test/docs/nist-include-19.xml	xpointer(//book/chapter[1])	hits 1: <chapter>chapter 1.  <subtitle>first subtitle</subtitle>  <subtitle>Second subtitle</subtitle> </chapter>
+Nist/test/docs/nist-include-20.xml	xpointer(/book)	hits 1: <book> <chapter>chapter 1.  <subtitle>first subtitle</subtitle>  <subtitle>Second subtitle</subtitle> </chapter> <chapter>chapter 2.  <subtitle>first subtitle</subtitle>  <subtitle>Second subtitle</subtitle> </chapter> <chapter>chapter 3.  <subtitle>first subtitle</subtitle>  <subtitle>Second subtitle</subtitle> </chapter> </book>
+Nist/test/docs/nist-include-23.xml	xpointer(//chapter)	hits 3: <chapter>chapter 1.  <subtitle>first subtitle</subtitle>  <subtitle>Second subtitle</subtitle> </chapter> | <chapter>chapter 2.  <subtitle>first subtitle</subtitle>  <subtitle>Second subtitle</subtitle> </chapter> | <chapter>chapter 3.  <subtitle>first subtitle</subtitle>  <subtitle>Second subtitle</subtitle> </chapter>
+Nist/test/docs/nist-include-24.xml	xpointer(//processing-instruction())	hits 1: <?some processing instructions ?>
+Nist/test/docs/nist-include-25.xml	xpointer(//comment())	hits 1: <!-- Comment for chapter 1. -->
+Nist/test/docs/nist-include-28.xml	dup	hits 1: <isid myid="dup"></isid>
+Nist/test/docs/nist-include-29.xml	f1	hits 1: <family fnumber="f1">Lopez</family>
+Nist/test/docs/nist-include-30.xml	f3	hits 1: <family fnumber="f3" mother="f1" father="f2">Jackson</family>
+Nist/test/docs/nist-include-31.xml	element(/1/1/1)	hits 1: <p>Sentence 1.  Sentence 2.</p>
+Nist/test/docs/nist-include-32.xml	element(book/1)	no-subresource
+Nist/test/docs/nist-include-33.xml	element(chapter)	no-subresource
+Nist/test/docs/nist-include-34.xml	element(f1)	hits 1: <family fnumber="f1">Lopez</family>
+Nist/test/docs/nist-include-35.xml	element(/1)	hits 1: <doc>     <family fnumber="f1">Lopez</family>     <family fnumber="f2">Clark</family>     <family fnumber="f3" mother="f1" father="f2">Jackson</family>     <family fnumber="f4" mother="f1" father="f2">Medina</family> </doc>
+Nist/test/docs/nist-include-36.xml	element(/1/2)	hits 1: <family fnumber="f2">Clark</family>
+Nist/test/docs/nist-include-37.xml	element(/1/2)xpointer(id('f2'))	hits 1: <family fnumber="f2">Clark</family>
+Nist/test/docs/nist-include-38.xml	xpointer(id('f2'))element(/1/2)	hits 1: <family fnumber="f2">Clark</family>
+Nist/test/docs/nist-include-48.xml	xpointer(//doc)	hits 1: <doc>Data </doc>
+Nist/test/docs/nist-include-51.xml	xpointer(//comment())	hits 1: <!-- Comment for chapter 1. -->
+Nist/test/docs/nist-include-52.xml	xpointer(//processing-instruction())	hits 1: <?some processing instructions ?>
+Nist/test/docs/nist-include-53.xml	xpointer(//@*)	hits 8: @fnumber="f1" | @fnumber="f2" | @fnumber="f3" | @mother="f1" | @father="f2" | @fnumber="f4" | @mother="f1" | @father="f2"
+Nist/test/docs/nist-include-54.xml	xpointer(//family/@fnumber)	hits 4: @fnumber="f1" | @fnumber="f2" | @fnumber="f3" | @fnumber="f4"
