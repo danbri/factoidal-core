@@ -754,6 +754,12 @@ def compilePkg (lib : List PkgEntry) (texts : List (String × String)) :
       -- the in-scope schema (§3.15), before any declaration is compiled
       let xsd ← liftM (stylesheetSchema texts (texts.flatMap (fun (u, t) => schemaImportsOf u t)))
       modify (fun s => { s with xsd })
+      -- input-type-annotations (§3.15): strip when one module says strip;
+      -- strip in one module and preserve in another is XTSE0265
+      let itas := texts.filterMap (fun (u, t) => inputTypeAnnOf u t)
+      if itas.contains "strip" && itas.contains "preserve" then
+        cerr "XTSE0265" "input-type-annotations is strip in one stylesheet module and preserve in another"
+      let ita := if itas.contains "strip" then "strip" else if itas.contains "preserve" then "preserve" else "unspecified"
       let m ← openModule uri
       modify (fun s => { s with stack := [uri] })
       processModule onUse 50 m
@@ -766,6 +772,7 @@ def compilePkg (lib : List PkgEntry) (texts : List (String × String)) :
       let sheet : Sheet := { sheet with validateNode := (fun how d i => validateTree xsd how d i) }
       let sheet : Sheet := { sheet with validateAttr := (fun how q v sc => validateAttrValue xsd how q v sc) }
       let sheet : Sheet := { sheet with typeKnown := (fun q => schemaHasType xsd q) }
+      let sheet : Sheet := { sheet with inputTypeAnn := ita }
       pure { sheet, comps, counter := s.pkgCounter, params }
     let (r, _) ← act.run { texts, staticParams := statics }
     pure r
