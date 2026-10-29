@@ -109,6 +109,9 @@ shard packer, the proofs between them, the costs paid and open):
   proof check: `#guard` expressions evaluate during elaboration, so a
   wrong answer is a build error; every theorem is kernel-rechecked.
 - **Gates after a full `lake build`**, each run from the repository root and read by its exit code:
+  Run gates that read generated C only after the build finishes. On 2026-10-29,
+  running the tail-recursion audit during an incremental QT4 rebuild failed
+  when Lake replaced `XPath4/Theorems.c`; that run provided no gate result.
   `python3 tools/lean-tail-recursion-audit.py --gate` (recursion that consumes stack),
   `python3 tools/lean-unbuilt-modules.py --gate` (a module no build root imports), and
   `python3 tools/lean-csimp-reach.py --gate` (a `@[csimp]` replacement that a caller does not

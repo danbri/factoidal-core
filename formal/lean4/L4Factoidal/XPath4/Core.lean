@@ -185,6 +185,23 @@ structure Env where
   /-- XPath 1.0 compatibility mode (XPath 4.0 §2.2.1.1): set by a host
       language (XSLT with a version below 2.0); false for XPath. -/
   compat10 : Bool := false
+  /-- The default language of the dynamic context (XPath 4.0 §B.2,
+      `fn:default-language`); implementation-defined, `en` here unless
+      the host sets it. -/
+  defaultLanguage : String := "en"
+  /-- The version of XML and XML Names in force (XPath 4.0 §A.2,
+      constraint xml-version): `false` is XML 1.0 Fifth Edition, `true`
+      XML 1.1. It decides the XQuery end-of-line handling (XQuery 4.0
+      §A.3.3) and namespace undeclarations in constructors; strings hold
+      every XML 1.1 character in both (XDM 4.0 §4.1.6). -/
+  xml11 : Bool := false
+  /-- The `dtd-validation` option of `fn:doc` and `fn:parse-xml` is
+      available (F&O 4.0 §14.6.1); when a host turns it off, the option
+      raises FODC0013 and `fn:system-properties` reports false. -/
+  dtdValidation : Bool := true
+  /-- The `xinclude` option of `fn:doc` and `fn:parse-xml` is available
+      (`XPath4.XInclude`); off, the option raises FODC0013. -/
+  xinclude : Bool := true
 deriving Inhabited
 
 /-- Apply a feature configuration to a context (XPath 4.0 §2.2.1).
