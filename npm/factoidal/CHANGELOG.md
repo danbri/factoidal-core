@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- RELAX NG in the Lean engine (`L4Factoidal/RelaxNG/`): the XML syntax of RELAX NG (OASIS 2001, ISO/IEC 19757-2), with simplification, the §7 restrictions, validation by derivatives, and the XSD datatype library through `XSD.SimpleType`. James Clark's spectest: 965 pass, 0 fail (out of 965) (`lake exe l4relaxng`). No npm or wasm op yet.
+
 ## 0.26.0 (2026-10-29)
 
 - QT4 processor feature switches (https://github.com/danbri/factoidal-core/pull/252): the native qt4tests runner can run as a processor without a feature, so the tests written for such processors run instead of being unsupported; qt4tests in XQuery mode, measured on that PR: `fn` 17188 → 17217 pass, `prod` 13819 → 13823 pass, no new failures.

@@ -188,6 +188,14 @@ jobs:
         working-directory: formal/lean4
         run: lake exe l4xpointer
 
+      # RELAX NG (OASIS 2001, ISO/IEC 19757-2) XML syntax over James Clark's
+      # spectest.xml in third_party/testing/relaxng
+      # (https://github.com/danbri/factoidal/issues/1165, track B item 3).
+      # Exits non-zero when a check fails.
+      - name: RELAX NG (lake exe l4relaxng)
+        working-directory: formal/lean4
+        run: lake exe l4relaxng
+
       # YAML-LD 1.0 over the YAML 1.2.2 loader, and every JSON-LD 1.1 suite
       # input through the same loader (https://github.com/danbri/factoidal/issues/1165).
       - name: YAML-LD test suite (tests/yamlld/run.sh)
