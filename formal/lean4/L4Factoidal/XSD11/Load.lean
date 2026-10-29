@@ -62,11 +62,17 @@ def fnSchemaFile : String := "#fn"
 /-- A schema from schema document files (component constraints checked);
 `fnSchemaFile` adds the F&O 4.0 result schemas. -/
 def loadSchema (files : List String) : IO Schema := do
-  let withFn := files.contains fnSchemaFile
   let files := (files.filter (· != fnSchemaFile)).map pathNormalize
   let (docs, _) ← loadClosure files
-  let extra := if withFn then fnSchemaDocs else []
-  return buildSchema none xpathHooks (docs ++ extra) (files ++ extra.map (·.loc))
+  -- the schemas of the `fn` namespace are always in scope (F&O 4.0 C.1, C.2)
+  let (docs, roots) := withFnSchemas docs files
+  return buildSchema none xpathHooks docs roots
+
+/-- The built-in types and the schemas of the `fn` namespace: the in-scope
+    schema definitions when no schema is imported. -/
+def Schema.builtinsFn : Schema :=
+  let (docs, roots) := withFnSchemas [] []
+  buildSchema none xpathHooks docs roots
 
 /-- The schema of the F&O 4.0 result schemas alone. -/
 def fnSchema : Schema := buildSchema none xpathHooks fnSchemaDocs (fnSchemaDocs.map (·.loc))

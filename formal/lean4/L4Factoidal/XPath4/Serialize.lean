@@ -740,7 +740,8 @@ def Env.sortedAttrs (e : Env) (x : XCtx) (n : NodeRef) : List NodeRef :=
 def metaTag (x : XCtx) : String :=
   let ct := (x.p.mediaType.getD "text/html") ++ "; charset=" ++ x.p.encoding
   let close := if x.m == "html" then ">" else " />"
-  if x.html5 then "<meta charset=\"" ++ x.p.encoding ++ "\"" ++ close
+  -- with HTML5, both the HTML and the XHTML method write meta charset (§6, §7)
+  if x.html5 then "<meta charset=\"" ++ x.p.encoding ++ "\"" ++ (if x.m == "html" then ">" else "/>")
   else "<meta http-equiv=\"Content-Type\" content=\"" ++
     (if x.m == "xhtml" then (x.p.mediaType.getD "text/html") ++ "; charset=" ++ x.p.encoding else ct) ++ "\"" ++ close
 
@@ -850,8 +851,12 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
         if x.m == "html" && isH then
           emit ">"
           if !x.voidElem r.name.loc then emit ("</" ++ nm ++ ">")
-        else if x.m == "xhtml" && isH then
-          if x.voidElem r.name.loc then emit " />" else emit ("></" ++ nm ++ ">")
+        else if x.m == "xhtml" then
+          -- §7.1: the minimized form only for an element expected to be
+          -- empty; any other element with no children has an end tag
+          let expected := x.voidElem r.name.loc &&
+            (isH || (x.html5 && r.name.uri == ""))
+          if expected then emit " />" else emit ("></" ++ nm ++ ">")
         else if x.p.canonical then emit ("></" ++ nm ++ ">")
         else emit "/>"
       else
