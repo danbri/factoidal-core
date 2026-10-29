@@ -142,6 +142,7 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-29 | [Factoidal as WebAssembly components: build strategies, measured](designissues/2026-10-29-wasm-components.md) | (this commit) | record: Lean runtime v4.33.1 under wasi-sdk 34 (blockers B0 to B14), WIT exports by wit-bindgen C, composition with Rust by wac, wasmtime 49, jco 1.38 in Node and Chromium, static link; 13 builds measured against Emscripten; recommendation; experiment in `experiments/wasm-components/`; tracking https://github.com/danbri/factoidal/issues/1167 |
 
 | 2026-10-29 | [XQuery 4.0 merge validation](20261029-xquery4-merge.md) | uncommitted | record |
+| 2026-10-29 | [Factoidal on iOS and Android: a native library from Lean's C output](designissues/2026-10-29-mobile-native-library.md) | (this commit) | proposal, no code: web view first, then the Lean runtime and core library for iOS and Android with the C ABI of the wasm, Swift and Kotlin wrappers, a differential test against the wasm, host I/O rules; graphics from Lean (SVG, display list, RGBA pixels); decisions needed; tracking https://github.com/danbri/factoidal/issues/1198 |
 | 2026-10-29 | [Full Text and XQuery Update merge](20261029-full-text-update-merge.md) | pending | record |
 | 2026-10-29 | [Processor feature settings](20261029-processor-feature-settings.md) | uncommitted | record |
 | 2026-10-29 | [XQuery 4.0 merge against updated main](20261029-xquery4-merge-main2.md) | uncommitted | record |
