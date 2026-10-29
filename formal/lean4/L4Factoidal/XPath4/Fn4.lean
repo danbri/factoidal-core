@@ -184,9 +184,12 @@ def xsdValidateFn : LibFn := fun _ e a => do
       | .error x => throw x
       | .ok (res, errs) =>
         let id := n.doc + (2 : Nat) ^ 42
+        -- the typed node of an element is a new parentless element
+        -- (record 1 of the validated document, its document node cut off)
         let typed : List Item := match res with
           | some nd => if r.kind == .document then [.node { doc := id, idx := 0, rt := some nd }]
-                       else [.node { doc := id, idx := 1, rt := some nd }]
+                       else [.node { doc := id, idx := 1,
+                                     rt := some { nd with nodes := nd.nodes.modify 1 (fun x => { x with parent := none }) } }]
           | none => []
         let entries : List (Atomic × Seq) :=
           [(Atomic.ofStr "is-valid", [.atom (Atomic.ofBool res.isSome)])] ++
@@ -439,6 +442,8 @@ def trimSpaceFn : LibFn := fun _ e a => do
 
 def systemPropertiesFn : LibFn := fun _ e _ =>
   let q (l : String) : Atomic := Atomic.ofQN { uri := "", loc := l }
+  -- dynamic XQuery and XSLT: when the host offers them (`Env.host`)
+  let hostHas (l : String) (k : Nat) : Bool := (e.host { uri := nsFN, loc := l } k).isSome
   pure [.map [
     (q "xpath-version", [.atom (Atomic.ofDec ⟨40, 1⟩)]),
     (q "xsd-version", [.atom (Atomic.ofDec ⟨11, 1⟩)]),
@@ -451,9 +456,9 @@ def systemPropertiesFn : LibFn := fun _ e _ =>
     -- and IDREF attributes of the DTD (`Doc.ofDocument`)
     (q "supports-dtd-validation", [.atom (Atomic.ofBool e.dtdValidation)]),
     (q "supports-dtd-attribute-typing", [.atom (Atomic.ofBool e.dtdValidation)]),
-    (q "supports-invisible-xml", [.atom (Atomic.ofBool false)]),
-    (q "supports-dynamic-xquery", [.atom (Atomic.ofBool false)]),
-    (q "supports-dynamic-xslt", [.atom (Atomic.ofBool false)]),
+    (q "supports-invisible-xml", [.atom (Atomic.ofBool true)]),
+    (q "supports-dynamic-xquery", [.atom (Atomic.ofBool (hostHas "load-xquery-module" 1))]),
+    (q "supports-dynamic-xslt", [.atom (Atomic.ofBool (hostHas "transform" 1))]),
     (q "supports-binary-library", [.atom (Atomic.ofBool true)]),
     (q "supports-file-library", [.atom (Atomic.ofBool true)])]]
 
@@ -805,26 +810,48 @@ def Env.idTarget (e : Env) (a : List Seq) : M NodeRef := do
     pure root
   | _ => err "XPTY0004" "the second argument must be a node"
 
-def idFn : LibFn := fun _ e a => do
+/-- Is a node's type annotation `xs:ID` or derived from it (the is-id
+    property of a schema-validated node, XDM 4.0 §5.5)? -/
+def Env.isIdTyped (e : Env) (t : Option QN) : Bool :=
+  match t with
+  | some q => e.schema.derives q { uri := nsXS, loc := "ID" }
+  | none => false
+
+/-- The is-idrefs property: a type annotation `xs:IDREF`, `xs:IDREFS`, or
+    one derived from them. -/
+def Env.isIdrefTyped (e : Env) (t : Option QN) : Bool :=
+  match t with
+  | some q => e.schema.derives q { uri := nsXS, loc := "IDREF" } || e.schema.derives q { uri := nsXS, loc := "IDREFS" }
+  | none => false
+
+/-- `fn:id` and `fn:element-with-id` (F&O 4.0 §14.5.2, §14.5.3): the
+    elements with an ID attribute (`xml:id`, DTD or schema typed) whose
+    value is a candidate, and for an element whose own type is an ID,
+    the element itself (`fn:id`) or its parent (`fn:element-with-id`). -/
+def idFnWith (withId : Bool) : LibFn := fun _ e a => do
   let root ← e.idTarget a
   let cands := idTokens (argN a 0)
   let d := e.doc root
-  let mut out : Array Item := #[]
+  let mut hits : Array Nat := #[]
   for i in [0:d.nodes.size] do
     let r := d.get i
     if r.kind != .element then continue
     let hit := r.attrs.toList.any (fun ai =>
       let ar := d.get ai
       let isId := (ar.name.uri == nsXML && ar.name.loc == "id") ||
-        d.idAttrs.contains (qnameAsWritten r.name, qnameAsWritten ar.name) ||
-        -- an attribute with a schema type derived from xs:ID
-        ar.tann.any (fun t => e.schema.derives t { uri := nsXS, loc := "ID" })
+        d.idAttrs.contains (qnameAsWritten r.name, qnameAsWritten ar.name) || e.isIdTyped ar.tann
       isId && cands.contains (normSpace ar.value))
-    -- an element whose schema type is derived from xs:ID is itself an ID
-    let selfId := r.tann.any (fun t => e.schema.derives t { uri := nsXS, loc := "ID" }) &&
-      cands.contains (normSpace (d.stringValue i))
-    if hit || selfId then out := out.push (.node (root.at i))
-  pure out.toList
+    if hit then hits := hits.push i
+    if e.isIdTyped r.tann && cands.contains (normSpace (d.stringValue i)) then
+      if !withId then hits := hits.push i
+      else match r.parent with
+        | some p => if (d.get p).kind == .element then hits := hits.push p
+        | none => pure ()
+  -- in document order, without duplicates
+  let idx := (hits.toList.eraseDups).mergeSort (· ≤ ·)
+  pure (idx.map (fun i => .node (root.at i)))
+
+def idFn : LibFn := idFnWith false
 
 def idrefFn : LibFn := fun _ e a => do
   let root ← e.idTarget a
@@ -833,18 +860,45 @@ def idrefFn : LibFn := fun _ e a => do
   let mut out : Array Item := #[]
   for i in [0:d.nodes.size] do
     let r := d.get i
+    let typed := e.isIdrefTyped r.tann
+    if r.kind == .element then
+      -- an element whose own type is IDREF or IDREFS (is-idrefs)
+      if typed && ((normSpace (d.stringValue i)).splitOn " ").any (fun t => cands.contains t) then
+        out := out.push (.node (root.at i))
+      continue
     if r.kind != .attribute then continue
     let some p := r.parent | continue
     let pr := d.get p
-    let typed := r.tann.any (fun t => e.schema.derives t { uri := nsXS, loc := "IDREF" } ||
-      e.schema.derives t { uri := nsXS, loc := "IDREFS" })
-    if !typed && !d.idrefAttrs.contains (qnameAsWritten pr.name, qnameAsWritten r.name) then continue
+    if !(typed || d.idrefAttrs.contains (qnameAsWritten pr.name, qnameAsWritten r.name)) then continue
     let toks := (normSpace r.value).splitOn " "
     if toks.any (fun t => cands.contains t) then out := out.push (.node (root.at i))
   pure out.toList
 
+/-- The number of states that `fn:generate` makes before it stops. -/
+def genStates : Nat := 100000
+
+/-- `fn:generate` (F&O 4.0 §15.5.4) evaluated in full: the states until
+    the step function gives the empty sequence. The consumers that need
+    only a prefix (`XPath4.Eval.genShortcut`) do not come here. A sequence
+    of more than 100,000 states is an implementation limit (XPDY0130). -/
+def generateFn : LibFn := fun h _ a => do
+  let some first := (argN a 0).head? | err "XPTY0004" "fn:generate: $init must be one item"
+  let f := (argN a 1).headD default
+  let mut state := first
+  let mut out : Array Item := #[first]
+  let mut pos : Nat := 1
+  for _ in [0:genStates] do
+    -- an arity-0 or arity-1 step function gets the first arguments only
+    let nxt ← h.call f (([[state], [.atom (Atomic.ofInt pos)]] : List Seq).take ((f.fnArity.getD 2).min 2))
+    match nxt with
+    | [] => return out.toList
+    | [x] => state := x; out := out.push x
+    | _ => err "XPTY0004" "fn:generate: $step must return at most one item"
+    pos := pos + 1
+  err "XPDY0130" "fn:generate made more states than this implementation allows (an implementation limit)"
+
 def fn4Table : List (String × LibFn) :=
-  [("hash", hashFn), ("random-number-generator", rngFn), ("rng-record#", rngRecordFn),
+  [("hash", hashFn), ("generate", generateFn), ("random-number-generator", rngFn), ("rng-record#", rngRecordFn),
    ("xsd-validator", xsdValidatorFn), ("xsd-validate#", xsdValidateFn),
    ("rng-permute#", rngPermuteFn), ("rng-take#", rngTakeFn),
    ("parts-of-dateTime", partsOfDateTimeFn), ("build-dateTime", buildDateTimeFn),
@@ -854,6 +908,6 @@ def fn4Table : List (String × LibFn) :=
    ("in-scope-namespaces", inScopeNamespacesFn), ("compare", compareFn),
    ("decode-from-uri", decodeFromUriFn), ("unparsed-binary", unparsedBinaryFn),
    ("min", minMax4 false), ("max", minMax4 true),
-   ("id", idFn), ("element-with-id", idFn), ("idref", idrefFn)]
+   ("id", idFn), ("element-with-id", idFnWith true), ("idref", idrefFn)]
 
 end L4Factoidal.XPath4

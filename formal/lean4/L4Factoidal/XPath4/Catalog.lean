@@ -228,8 +228,8 @@ def catalogRaw : List (String × String × String × List (String × String × O
   ("fn", "idref", "xnode()*", [("values", "xs:string*", none), ("node", "xnode()", some ".")]),
   ("fn", "doc", "document-node()?", [("source", "xs:string?", none), ("options", "map(*)?", some "{}")]),
   ("fn", "doc-available", "xs:boolean", [("source", "xs:string?", none), ("options", "map(*)?", some "{}")]),
-  ("fn", "collection", "item()*", [("source", "xs:string?", some "()")]),
-  ("fn", "uri-collection", "xs:anyURI*", [("source", "xs:string?", some "()")]),
+  ("fn", "collection", "item()*", [("source", "xs:string?", some "()"), ("options", "map(*)?", some "{}")]),
+  ("fn", "uri-collection", "xs:anyURI*", [("source", "xs:string?", some "()"), ("options", "map(*)?", some "{}")]),
   ("fn", "unparsed-text", "xs:string?", [("source", "xs:string?", none), ("options", "(xs:string | map(*))?", some "{}")]),
   ("fn", "unparsed-text-lines", "xs:string*", [("source", "xs:string?", none), ("options", "(xs:string | map(*))?", some "{}")]),
   ("fn", "unparsed-text-available", "xs:boolean", [("source", "xs:string?", none), ("options", "(xs:string | map(*))?", some "{}")]),
@@ -340,10 +340,14 @@ def catalogRaw : List (String × String × String × List (String × String × O
   ("fn", "random-number-generator", "item()*", [("seed", "xs:anyAtomicType?", some "()")]),
   -- internal (XPath4.Fn4): the function that fn:xsd-validator returns
   ("fn", "xsd-validate#", "item()*", [("options", "map(*)", none), ("node", "item()*", none)]),
+  -- internal (XPath4.SchemaType): the constructor of a type of the in-scope schema
+  ("fn", "schema-type-cast#", "xs:anyAtomicType*", [("type", "xs:QName", none), ("value", "xs:anyAtomicType?", none)]),
   -- internal (XPath4.Fn4): the functions of a random-number-generator record
   ("fn", "rng-record#", "map(xs:string, item())", [("state", "xs:integer", none)]),
   ("fn", "rng-permute#", "item()*", [("state", "xs:integer", none), ("input", "item()*", none)]),
   ("fn", "rng-take#", "xs:double*", [("state", "xs:integer", none), ("count", "xs:nonNegativeInteger", none)]),
+  -- internal (XPath4.Ixml): the parse function that fn:invisible-xml returns
+  ("fn", "ixml-parse#", "item()", [("grammar", "item()?", none), ("fail", "xs:boolean", none), ("input", "xs:string", none)]),
   ("fn", "every", "xs:boolean", [("input", "item()*", none), ("predicate", "(fn($item as item(), $pos as xs:integer) as xs:boolean?)?", some "fn:boolean#1")]),
   ("fn", "char", "xs:string", [("value", "(xs:string | xs:integer)", none)]),
   ("fn", "characters", "xs:string*", [("value", "xs:string?", none)]),
@@ -352,6 +356,7 @@ def catalogRaw : List (String × String × String × List (String × String × O
   ("fn", "highest", "item()*", [("input", "item()*", none), ("collation", "xs:string?", some "fn:default-collation()"), ("key", "(fn($item as item()) as xs:anyAtomicType*)?", some "fn:data#1")]),
   ("fn", "index-where", "xs:integer*", [("input", "item()*", none), ("predicate", "fn($item as item(), $pos as xs:integer) as xs:boolean?", none)]),
   ("fn", "is-NaN", "xs:boolean", [("value", "xs:anyAtomicType", none)]),
+  ("fn", "generate", "item()*", [("init", "item()", none), ("step", "fn($state as item(), $pos as xs:integer) as item()?", none)]),
   ("fn", "take-while", "item()*", [("input", "item()*", none), ("predicate", "fn($item as item(), $pos as xs:integer) as xs:boolean?", none)]),
   ("fn", "drop-while", "item()*", [("input", "item()*", none), ("predicate", "fn($item as item(), $pos as xs:integer) as xs:boolean?", none)]),
   ("fn", "lowest", "item()*", [("input", "item()*", none), ("collation", "xs:string?", some "fn:default-collation()"), ("key", "(fn($item as item()) as xs:anyAtomicType*)?", some "fn:data#1")]),

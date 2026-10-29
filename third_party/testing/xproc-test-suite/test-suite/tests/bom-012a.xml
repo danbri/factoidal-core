@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<t:test expected="pass" features="webaccess"
+        xmlns:t="http://xproc.org/ns/testsuite/3.0">
+   <t:info>
+      <t:title>bom-012a</t:title>
+      <t:revision-history>
+         <t:revision>
+            <t:date>2025-05-23</t:date>
+            <t:author>
+               <t:name>Norm Tovey-Walsh</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Added static options for web server host and port.</p>
+            </t:description>
+         </t:revision>
+         <t:revision>
+            <t:date>2025-02-07</t:date>
+            <t:author>
+               <t:name>Achim Berndzen</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Ported from bom12: Overwriting server supplied encoding.</p>
+            </t:description>
+         </t:revision>
+         <t:revision>
+            <t:date>2025-02-06</t:date>
+            <t:author>
+               <t:name>Norm Tovey-Walsh</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+              <p>Initial commit.</p>
+            </t:description>
+         </t:revision>
+      </t:revision-history>
+   </t:info>
+   <t:description xmlns="http://www.w3.org/1999/xhtml">
+      <p>Tests that the p:document charset does not override server metadata.</p>
+   </t:description>
+   <t:pipeline>
+      <p:declare-step version="3.0"
+                      xmlns:p="http://www.w3.org/ns/xproc">
+         <p:output port="result"/>
+         <p:option name="WHOST" select="'http://localhost:8246'" static="true"/>
+
+         <p:identity>
+            <p:with-input>
+              <p:document content-type="text/plain; charset=UTF-8" href="{$WHOST}/docs/not-a-bom.txt"/>
+            </p:with-input>
+         </p:identity>
+
+         <p:identity>
+           <p:with-input>
+             <!-- UTF-8 BOM, overwrite ISO-8859-1 from server-->
+              <p:inline><result>{starts-with(., "It's not a BOM.")}</result></p:inline>
+           </p:with-input>
+         </p:identity>
+
+      </p:declare-step>
+   </t:pipeline>
+   <t:schematron>
+      <s:schema queryBinding="xslt2"
+                xmlns:s="http://purl.oclc.org/dsdl/schematron"
+                xmlns="http://www.w3.org/1999/xhtml">
+         <s:ns uri="http://www.w3.org/1999/xhtml"
+               prefix="html"/>
+         <s:pattern>
+            <s:rule context="/">
+               <s:assert test="result='true'">The BOM was removed.</s:assert>
+            </s:rule>
+         </s:pattern>
+      </s:schema>
+   </t:schematron>
+</t:test>

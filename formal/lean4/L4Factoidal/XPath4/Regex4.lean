@@ -157,7 +157,15 @@ def analyzeString (e : Env) (s : String) (re : Re4) : Seq :=
     (out, sg.stop)) (#[], 0)
   let nodes := if input.length > cur then nodes.push (fnEl "non-match" [] [.text (cpsStr (Regex.slice input cur input.length))]) else nodes
   let root : Node := .element "analyze-string-result" [{ name := "xmlns", value := nsFN }] nodes.toList
-  let doc := { Doc.ofNodes [root] with baseUri := e.baseUri }
+  -- a schema-aware processor gives the result the type annotations of the
+  -- F&O 4.0 schema for it (`SchemaHook.validateFnNs`); a result that is not
+  -- valid is left untyped
+  let typed : Doc := match e.schema.validateFnNs with
+    | some f => match f root "" with
+      | .ok d => d
+      | .error _ => Doc.ofNodes [root]
+    | none => Doc.ofNodes [root]
+  let doc := { typed with baseUri := e.baseUri }
   -- the element, not the document node
   [.node { doc := runtimeDocId "analyze-string" (s ++ "\x00" ++ toString re.groups), idx := 1, rt := some doc }]
 
@@ -332,7 +340,17 @@ def regexRecord (p f : String) : Item :=
 def regexTable : List (String × LibFn) := [
   ent "analyze-string" (fun _ e a => do
     let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 2))
-    pure (analyzeString e (strOf (argN a 0)) re)),
+    let r := analyzeString e (strOf (argN a 0)) re
+    -- a schema-aware processor annotates the result with the types of
+    -- the `fn` schema (F&O 4.0 §6.6.3); without that schema it is untyped
+    match e.schema.validateIn, r with
+    | some f, [.node n] =>
+      match n.rt with
+      | some d => match f "strict" d n.idx "" with
+        | .ok d' => pure [.node { n with rt := some d' }]
+        | .error _ => pure r
+      | none => pure r
+    | _, _ => pure r),
   ent "matching-segments" (fun _ _ a => do
     let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 2))
     pure (matchingSegments (strOf (argN a 0)) re)),

@@ -1,0 +1,51 @@
+when:
+  - event: [push, tag]
+    branch: main
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      recursive: true
+
+steps:
+  - name: Setup
+    image: xproc-build
+    volumes:
+      - xproc-builder-home:/home/builder
+    commands:
+      # This build has to run as a non-root user
+      - sudo chown -R builder:builder .
+      # Avoid Invalid Java installation found at '/home/builder/.gradle/.tmp/jdks/... ???
+      - rm -rf /home/builder/.gradle/.tmp
+      # Make a local copy of the gradle properties
+      - mkdir -p ./gradle-build/.gradle
+      - cp /home/builder/.gradle/gradle.properties ./gradle-build/.gradle/
+
+  - name: Build website
+    image: xproc-build
+    volumes:
+      - xproc-builder-home:/home/builder
+    environment:
+      GRADLE_USER_HOME: ./gradle-build/.gradle
+      SAXON_LICENSE_DIR: /home/builder/java
+    commands:
+      - /bin/bash -l -c "./gradlew website"
+
+  - name: Publish website
+    image: xproc-build
+    volumes:
+      - xproc-builder-home:/home/builder
+    environment:
+      GRADLE_USER_HOME: ./gradle-build/.gradle
+      SAXON_LICENSE_DIR: /home/builder/java
+    commands:
+      - cd build
+      - git clone --depth 1 --branch pages ssh://git@codeberg.org/XProc/test-suite.git pages
+      - cd pages
+      - rsync -ar --delete --exclude .git ../html/ ./
+      - ls -lA
+      - git add .
+      - git commit -m "Updated by CI"
+      - git push
+

@@ -6,6 +6,7 @@ operations every part of the evaluator uses: atomization (XPath 4.0
 `fn:deep-equal` (F&O 4.0 §13.2.1, default options).
 -/
 import L4Factoidal.XPath4.Parser
+import L4Factoidal.XPath4.ExprEq
 import L4Factoidal.XPath4.Doc
 import L4Factoidal.XPath4.Catalog
 import L4Factoidal.XPath4.JNode
@@ -27,11 +28,36 @@ type derives from `xs:anyType`; `xs:untyped` and the simple types from it;
 `xs:untypedAtomic` and the atomic built-ins from `xs:anyAtomicType`. -/
 def builtinTypeDerives (t u : QN) : Bool :=
   t == u || u == anyTypeQN ||
+  -- xs:numeric is the union of xs:double, xs:float and xs:decimal: a type
+  -- derives from it when it derives from a member (XPath 4.0 §3.3.1.1)
+  (u.uri == nsXS && u.loc == "numeric" && t.uri == nsXS &&
+    (match builtinOfName? t.loc with
+     | some a => derivedFrom a .double || derivedFrom a .float || derivedFrom a .decimal
+     | none => false)) ||
   (t.uri == nsXS && u.uri == nsXS &&
     (if t.loc == "untypedAtomic" then u.loc == "anyAtomicType" || u.loc == "anySimpleType"
      else match builtinOfName? t.loc, builtinOfName? u.loc with
        | some a, some b => derivedFrom a b || b == .anySimpleType
        | _, _ => false))
+
+/-- A type definition of the in-scope schema that is not a built-in type
+(`fn:schema-type`, `fn:node-type-annotation`, F&O 4.0 §20.1). -/
+structure SchemaTypeInfo where
+  /-- The type name; `none` for an anonymous type. -/
+  name : Option QN
+  simple : Bool
+  /-- The annotation name of the base type (a built-in type, or one that
+      `SchemaHook.typeInfo` knows). -/
+  base : QN
+  /-- The primitive type of an atomic type. -/
+  primitive : Option QN := none
+  /-- `atomic`, `list`, `union`, or for a complex type the content type
+      variety: `empty`, `simple`, `element-only`, `mixed`. -/
+  variety : String
+  /-- The typed value of a lexical form validated against the type;
+      `none` when the form is not valid. Absent for a complex type. -/
+  cast : Option (String → Option (List Atomic)) := none
+deriving Inhabited
 
 /-- Hook for schema-aware processing (`L4Factoidal.XSD11` supplies one
 from a schema): type derivation by type name, the global element and
@@ -63,7 +89,22 @@ structure SchemaHook where
       and the error messages. -/
   validateWith : Option (String → List (Doc × Nat) → Doc → Nat → String →
       Except Err (Option Doc × List String)) := none
+  /-- Validate the XML result of an F&O 4.0 function in the `fn` namespace
+      (`fn:json-to-xml` with `validate`, `fn:analyze-string`) against the
+      F&O 4.0 result schemas (`XSD11.FnSchemas`): the document element and
+      the document URI; the typed document or the error. `none`: this
+      processor is not schema-aware. -/
+  validateFnNs : Option (L4Factoidal.XML.Node → String → Except Err Doc) := none
+  /-- The type definitions of the in-scope schema by annotation name
+      (`NRec.tann`); `none` for a built-in type or an unknown name. -/
+  typeInfo : QN → Option SchemaTypeInfo := fun _ => none
 deriving Inhabited
+
+/-- The in-scope element (`true`) or attribute (`false`) declaration test
+    for the parser (`PCtx.schemaDecl`, XPST0008 of `schema-element()` and
+    `schema-attribute()`). -/
+def SchemaHook.declared (h : SchemaHook) (isElem : Bool) (q : QN) : Bool :=
+  if isElem then (h.elemDecl q).isSome else (h.attrDecl q).isSome
 
 /-- The part of the dynamic context that a host function sees
     (`Env.host`): the variable bindings and the focus at the call. -/
@@ -74,6 +115,8 @@ structure HostCall where
   size : Nat := 0
   /-- The static namespace bindings in force (`Env.ns`). -/
   ns : List (String × String) := []
+  /-- The call is made by untrusted code (`Env.untrusted`). -/
+  untrusted : Bool := false
   /-- The static base URI at the call (`Env.baseUri`). -/
   baseUri : String := ""
 
@@ -113,6 +156,19 @@ structure Env where
   /-- EXPath hook: the in-memory file system that the `file:` functions
       read (`L4Factoidal.EXPath.File`); `none` when there is none. -/
   fileSys : Option L4Factoidal.EXPath.File.FS := none
+  /-- Code of a module loaded by `fn:load-xquery-module` with `trusted`
+      false (F&O 4.0 §17.4.1): the functions that read external resources
+      raise FODC0016 (`Env.externalFns`). -/
+  untrusted : Bool := false
+  /-- The available collections (F&O 4.0 §1.7.2, `fn:collection`): an
+      absolute URI, or `""` for the default collection, and its items. -/
+  collections : List (String × Seq) := []
+  /-- The available URI collections (`fn:uri-collection`): an absolute
+      URI, or `""` for the default, and the URIs of its resources. -/
+  uriCollections : List (String × List String) := []
+  /-- External encoding information of resources (as an HTTP charset
+      would give, F&O 4.0 §17.1.5): the reference and the encoding name. -/
+  resourceEncodings : List (String × String) := []
   /-- Schema hook: the in-scope schema definitions (`SchemaHook`). -/
   schema : SchemaHook := {}
 
@@ -153,6 +209,10 @@ def Env.doc (e : Env) (n : NodeRef) : Doc :=
 def Env.nrec (e : Env) (n : NodeRef) : NRec := (e.doc n).get n.idx
 
 def Env.nsResolve (e : Env) (p : String) : Option String :=
+  -- a binding of the XPath 4.0 prolog (`nsBindingVar`); "" undeclares
+  match e.vars.lookup (nsBindingVar p) with
+  | some [.atom a] => if a.str == "" then none else some a.str
+  | _ =>
   match e.ns.lookup p with
   | some u => some u
   | none => if p == "" then none else defaultNs.lookup p
@@ -281,7 +341,10 @@ def nameTestMatches (t : NameTest) (q : QN) : Bool :=
   | .loc l => q.loc == l
   | .name n => n.uri == q.uri && n.loc == q.loc
 
-def Env.kindMatches (e : Env) (n : NodeRef) : IType → Bool
+/-- A kind test that is not a union and not `document-node(..)`: the node
+    kind, the name test and, for a test with a type name, the type
+    annotation (XPath 4.0 §3.2.7). -/
+def Env.kindMatches1 (e : Env) (n : NodeRef) : IType → Bool
   | .item | .anyNode => true
   | .elem t => (e.nrec n).kind == .element && (t.map (nameTestMatches · (e.nrec n).name)).getD true
   | .attr t => (e.nrec n).kind == .attribute && (t.map (nameTestMatches · (e.nrec n).name)).getD true
@@ -309,17 +372,29 @@ def Env.kindMatches (e : Env) (n : NodeRef) : IType → Bool
   | .comment => (e.nrec n).kind == .comment
   | .nsNode => (e.nrec n).kind == .namespace
   | .pi t => (e.nrec n).kind == .pi && (t.map (· == (e.nrec n).name.loc)).getD true
+  | _ => false
+
+/-- An element test, or a NameTestUnion of element tests (XPath 4.0
+    §3.2.7.2), on one node. -/
+def Env.kindMatchesU (e : Env) (n : NodeRef) : IType → Bool
+  | .choice ts => ts.any (e.kindMatches1 n)
+  | t => e.kindMatches1 n t
+
+def Env.kindMatches (e : Env) (n : NodeRef) : IType → Bool
   | .doc inner =>
       (e.nrec n).kind == .document &&
       (match inner with
        | none => true
-       | some (.elem t) =>
+       | some t =>
+          -- document-node(E): exactly one element child, and it matches E
+          -- (XPath 4.0 §3.2.7.1)
           let els := (e.nrec n).children.toList.filter (fun c => (e.nrec (n.at (c))).kind == .element)
           match els with
-          | [c] => (t.map (nameTestMatches · (e.nrec (n.at (c))).name)).getD true
-          | _ => false
-       | some _ => true)
-  | _ => false
+          | [c] => e.kindMatchesU (n.at c) t
+          | _ => false)
+  -- a NameTestUnion inside element() or attribute() (XPath 4.0 §3.2.7.2)
+  | .choice ts => ts.any (e.kindMatches1 n)
+  | t => e.kindMatches1 n t
 
 def Env.testMatches1 (e : Env) (ax : Axis) (n : NodeRef) : NodeTest → Bool
   | .name t =>
@@ -469,6 +544,51 @@ def occLe (a b : Occ) : Bool :=
   | .plus, .plus => true
   | _, _ => false
 
+/-- Name test subsumption (XPath 4.0 §3.3.2.4): every name that `a`
+    matches, `b` matches. `none` is the wildcard. -/
+def nameTestLe : Option NameTest → Option NameTest → Bool
+  | _, none | _, some .any => true
+  | none, some _ | some .any, some _ => false
+  | some (.name q), some (.ns u) => q.uri == u
+  | some (.name q), some (.loc l) => q.loc == l
+  | some (.name q), some (.name r) => q.uri == r.uri && q.loc == r.loc
+  | some (.ns u), some (.ns v) => u == v
+  | some (.loc l), some (.loc m) => l == m
+  | _, _ => false
+
+/-- Is the type named `a` the type named `b` or derived from it (the
+    built-in types; a user-defined type only names itself)? -/
+def typeNameLe (a b : QN) : Bool :=
+  (a.uri == b.uri && a.loc == b.loc) ||
+  (b.uri == nsXS && b.loc == "anyType") ||
+  (a.uri == nsXS && b.uri == nsXS && b.loc == "numeric" &&
+    (a.loc == "numeric" || ["decimal", "float", "double"].any (fun n =>
+      match atypeOfName? a.loc, atypeOfName? n with
+      | some x, some y => x.derives y
+      | _, _ => false))) ||
+  (a.uri == nsXS && b.uri == nsXS &&
+    match atypeOfName? a.loc, atypeOfName? b.loc with
+    | some x, some y => x.derives y || (b.loc == "anySimpleType")
+    | _, _ => false)
+
+/-- The occurrence of `t` made optional: the value type of a map seen as
+    a function (`V?`). -/
+def optOf : IType → IType
+  | .empty => .empty
+  | .seq t o => .seq t (match o with | .one => .opt | .plus => .star | x => x)
+  | t => .seq t .opt
+
+/-- The disjoint parts of a type that a choice may cover part by part
+    (XPath 4.0 §3.3.2.2): `item()` is nodes, atomic values and
+    functions; `node()` is XNodes and JNodes; `xnode()` is the seven
+    node kinds. -/
+def typeParts : IType → Option (List IType)
+  | .item => some [.anyNode, .atomic (.b .anyAtomicType), .anyFn]
+  | .anyNode => some [.xnode, .jnodeT .any none]
+  | .xnode => some [.elem none, .attr none, .text, .comment, .pi none, .doc none, .nsNode]
+  | .doc (some (.choice ts)) => some (ts.map (fun t => .doc (some t)))
+  | _ => none
+
 /-- Sequence-type subtyping (XPath 4.0 §3.3), approximated: atomic
     derivation, node kinds, choices, and function/map/array types with
     the usual variance. -/
@@ -476,6 +596,9 @@ def subtypeF : Nat → IType → IType → Bool
   | 0, _, _ => false
   | f + 1, a, b =>
     match a, b with
+    -- `xs:error` (the union with no members) has no instances, so a
+    -- type of it is a subtype of every type (XSD 1.1 Part 2 §3.16.7.3)
+    | .choice [], _ | .seq (.choice []) _, _ => true
     | .empty, .empty => true
     | .empty, .seq _ o => o == .opt || o == .star
     | _, .empty => false
@@ -484,7 +607,10 @@ def subtypeF : Nat → IType → IType → Bool
     | t, .seq u p => occLe .one p && subtypeF f t u
     | _, .item => true
     | .choice ts, u => ts.all (fun t => subtypeF f t u)
-    | t, .choice us => us.any (fun u => subtypeF f t u)
+    | t, .choice us => us.any (fun u => subtypeF f t u) ||
+        (match typeParts t with
+         | some ps => ps.all (fun p => subtypeF f p (.choice us))
+         | none => false)
     | .atomic x, .atomic y => x.derives y
     | .enum _, .atomic y => (AType.b .string).derives y
     | .enum xs, .enum ys => xs.all (fun x => ys.contains x)
@@ -503,6 +629,12 @@ def subtypeF : Nat → IType → IType → Bool
     | .schemaAttr _, .attr none => true
     | .elem (some _), .elem none | .attr (some _), .attr none | .pi (some _), .pi none
     | .doc (some _), .doc none => true
+    | .elem x, .elem y | .attr x, .attr y => nameTestLe x y
+    | .elemT x _ _, .elem y | .attrT x _, .attr y => nameTestLe x y
+    | .elemT x q n, .elemT y r m => nameTestLe x y && typeNameLe q r && (!n || m)
+    | .attrT x q, .attrT y r => nameTestLe x y && typeNameLe q r
+    | .elem x, .elemT y r m => nameTestLe x y && (r.uri == nsXS && r.loc == "anyType") && m
+    | .doc (some t), .doc (some u) => subtypeF f t u
     | .fnT _ _, .anyFn | .anyMap, .anyFn | .mapT _ _, .anyFn | .anyArr, .anyFn | .arrT _, .anyFn
     | .record _ _, .anyFn | .anyFn, .anyFn => true
     | .fnT ps r, .fnT qs t =>
@@ -521,7 +653,10 @@ def subtypeF : Nat → IType → IType → Bool
         (e2 || (!e1 && fs.all (fun (n, _, _) => gs.any (·.1 == n))))
     | .anyArr, .anyArr | .arrT _, .anyArr => true
     | .arrT m, .arrT m2 => subtypeF f m m2
-    | .mapT k v, .fnT [p] r => subtypeF f p k && subtypeF f (.seq v .opt) r
+    | .mapT _ v, .fnT [p] r => subtypeF f p (.atomic (.b .anyAtomicType)) && subtypeF f (optOf v) r
+    | .record fs ext, .fnT [p] r =>
+        subtypeF f p (.atomic (.b .anyAtomicType)) &&
+        (subtypeF f (.seq .item .star) r || (!ext && fs.all (fun (_, _, t) => subtypeF f (optOf t) r) && subtypeF f .empty r))
     | .anyMap, .fnT [p] r => subtypeF f p (.atomic (.b .anyAtomicType)) && subtypeF f (.seq .item .star) r
     | .arrT m, .fnT [p] r => subtypeF f p (.atomic (.b .integer)) && subtypeF f m r
     | .anyArr, .fnT [p] r => subtypeF f p (.atomic (.b .integer)) && subtypeF f (.seq .item .star) r
@@ -566,8 +701,16 @@ def Env.itemMatchesF (e : Env) : Nat → Item → IType → Bool
        | .fn fi => match fnSigOf fi with
           | some (fps, fr) => (ps.zip fps).all (fun (p, q) => subtype p q) && subtype fr r
           | none => true
-       | .map _ => subtype (.anyMap) (.fnT ps r) || true
-       | .arr _ => true
+       -- XPath 4.0 §3.3.2.6: a map is a function(xs:anyAtomicType) as V?
+       -- and an array a function(xs:integer) as V; the instance test
+       -- uses the entries and members it has
+       | .map kvs => (match ps with
+          | [p] => subtype p (.atomic (.b .anyAtomicType)) && e.seqMatchesF f [] r &&
+                   kvs.all (fun (_, v) => e.seqMatchesF f v r)
+          | _ => false)
+       | .arr ms => (match ps with
+          | [p] => subtype p (.atomic (.b .integer)) && ms.all (fun v => e.seqMatchesF f v r)
+          | _ => false)
        | _ => false)
   | .anyMap => match i with | .map _ => true | _ => false
   | .mapT k v => match i with
@@ -633,42 +776,76 @@ def atomicTarget : IType → Option (List AType)
   | .enum _ => some [.b .string]
   | _ => none
 
-/-- Coerce one atomic value to one of the target types (§3.4.3 rules
-    2–4: untyped casting, numeric promotion, URI promotion, and the
-    4.0 relabelling of numeric values to a derived type in range). -/
+/-- Coerce one atomic value to one target type (XPath 4.0 §3.4.3: untyped
+    casting, the implicit casting table, URI and binary promotion, and
+    relabeling to a derived type whose value space holds the datum). -/
+def coerceAtom1 (t : AType) (a : Atomic) : M Atomic := do
+  if a.ty.derives t then return a
+  if a.ty == .untyped then
+    -- XPath 4.0 §3.4.3: an untyped value is not cast to a
+    -- namespace-sensitive type
+    if t == .b .qname || t == .b .notation then
+      err "XPTY0117" "an xs:untypedAtomic value cannot be coerced to a namespace-sensitive type"
+    return ← castAtomic a t
+  let fail {α} : M α := err "XPTY0004" ("cannot convert xs:" ++ a.ty.name ++ " value '" ++ a.str ++ "' to xs:" ++ t.name)
+  match t with
+  -- XPath 4.0 §3.4.2, the implicit casting table
+  | .b .double => if a.isNumeric then castAtomic a t else fail
+  | .b .float => if a.isNumeric then castAtomic a t else fail
+  | .b .decimal => if a.is .float || a.is .double then castAtomic a t else fail
+  | .b .string => if a.is .anyURI then pure (Atomic.ofStr a.str) else fail
+  | .b .anyURI => if a.is .string then castAtomic a t else fail
+  | .b .hexBinary => if a.is .base64Binary then castAtomic a t else fail
+  | .b .base64Binary => if a.is .hexBinary then castAtomic a t else fail
+  | .b b =>
+      if derivedFrom b .integer then
+        -- relabeling: an xs:decimal whose datum is an integer in range
+        let i? : Option Int := match a.v with
+          | .int i => some i
+          | .dec d => if a.is .decimal && (Dec.norm d).scale == 0 then some (Dec.norm d).mantissa else none
+          | _ => none
+        match i? with
+        | some i => if inIntBounds b i then pure ⟨t, .int i⟩ else fail
+        | none => fail
+      else if b.primitive.isSome && !(derivedFrom b .decimal) &&
+          (match a.ty with | .b ab => ab.primitive == b.primitive | .untyped => false) then
+        -- relabeling: the datum of `a` is in the value space of the
+        -- derived type (the cast keeps the lexical form)
+        match castAtomic a t with
+        | .ok r => if r.str == a.str then pure r else fail
+        | .error _ => fail
+      else fail
+  | _ => fail
+
+/-- Coerce one atomic value to one of the target types, the alternatives
+    of a choice or union in order (XPath 4.0 §3.4.3): a value of one of
+    them is kept; otherwise the first alternative that does not fail;
+    otherwise the error of the first. -/
 def coerceAtom (ts : List AType) (a : Atomic) : M Atomic := do
   if ts.any (fun t => a.ty.derives t) then return a
-  if a.ty == .untyped then
-    let t := if ts.length > 1 && ts.all (fun t => t == .b .double || t == .b .float || t == .b .decimal)
-             then .b .double else ts.headD (.b .string)
-    return ← castAtomic a t
+  let mut first : Option Err := none
   for t in ts do
-    match t with
-    -- XPath 4.0 §3.4.2, the implicit casting table
-    | .b .double => if a.isNumeric then return ← castAtomic a t
-    | .b .float => if a.isNumeric then return ← castAtomic a t
-    | .b .decimal => if a.is .float || a.is .double then return ← castAtomic a t
-    | .b .string => if a.is .anyURI then return Atomic.ofStr a.str
-    | .b .anyURI => if a.is .string then return ← castAtomic a t
-    | .b .hexBinary => if a.is .base64Binary then return ← castAtomic a t
-    | .b .base64Binary => if a.is .hexBinary then return ← castAtomic a t
-    | .b b =>
-        if derivedFrom b .integer && a.is .integer then
-          match a.v with
-          | .int i => if inIntBounds b i then return ⟨t, .int i⟩
-          | _ => pure ()
-        else if b.primitive.isSome && !(derivedFrom b .decimal) &&
-            (match a.ty with | .b ab => ab.primitive == b.primitive | .untyped => false) then
-          -- relabeling: the datum of `a` is in the value space of the
-          -- derived type (the cast keeps the lexical form)
-          match castAtomic a t with
-          | .ok r => if r.str == a.str then return r
-          | .error _ => pure ()
-        else pure ()
-    | _ => pure ()
-  err "XPTY0004" ("cannot convert xs:" ++ a.ty.name ++ " value '" ++ a.str ++ "' to the required type")
+    match coerceAtom1 t a with
+    | .ok r => return r
+    | .error x => if first.isNone then first := some x
+  match first with
+  | some x => throw x
+  | none => err "XPTY0004" ("cannot convert xs:" ++ a.ty.name ++ " value '" ++ a.str ++ "' to the required type")
 
 def IType.isEmptyT : IType → Bool | .empty => true | _ => false
+
+/-- The variable that holds the wrapped function of a coerced function
+    item, and the names of its parameters (not names the parser makes). -/
+def coercedFnVar : QN := { uri := "#coerce", loc := "f" }
+def coercedArgVar (j : Nat) : QN := { uri := "#coerce", loc := toString j }
+
+/-- Function coercion (XPath 4.0 §3.4.4): a function item with the
+    required parameter types and result type that calls `f` with its
+    first `k` arguments. -/
+def coercedFn (f : Item) (k : Nat) (ps : List IType) (r : IType) : Item :=
+  let params := (ps.zip (List.range ps.length)).map (fun (t, j) => (coercedArgVar j, t))
+  .fn (.inline params r (.dyn (.var coercedFnVar) ((List.range k).map (fun j => some (.var (coercedArgVar j))))) false
+    [(coercedFnVar, [f])])
 
 /-- XPath 4.0 §3.4.3: a JNode that does not match the required item type
     is replaced by its ·jvalue·, whose items are coerced in turn. -/
@@ -703,33 +880,79 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
   let s ← s.mapM (fun i => do
     match it, i with
     | .arrT m, .arr ms => pure (Item.arr (← ms.mapM (fun x => e.coerceF f m x what)))
-    | .mapT k v, .map kvs =>
-        pure (Item.map (← kvs.mapM (fun (ka, va) => do
+    | .mapT k v, .map kvs => do
+        let out ← kvs.mapM (fun (ka, va) => do
           let ka' ← match atomicTarget k with
             | some ts => coerceAtom ts ka
             | none => pure ka
-          pure (ka', ← e.coerceF f v va what))))
-    | .record fs _, .map kvs =>
-        pure (Item.map (← kvs.mapM (fun (ka, va) => do
+          pure (ka', ← e.coerceF f v va what))
+        -- coerced keys that become the same key are a type error
+        -- (XPath 4.0 §3.4.4)
+        let keys := out.map (·.1)
+        let changed := (out.zip kvs).any (fun ((k1, _), (k0, _)) => k1.ty != k0.ty)
+        if changed && (List.range keys.length).any (fun i => (keys.drop (i + 1)).any (fun k2 => atomicEqual (keys.getD i default) k2)) then
+          err "XPTY0004" ("coercion of the map keys gives two equal keys, for " ++ what)
+        pure (Item.map out)
+    | .record fs ext, .map kvs => do
+        -- XPath 4.0 §3.4.4 (coercion to a record type): an entry that is
+        -- not a declared field is an error; the result has the fields in
+        -- the declared order, an absent field being the empty sequence
+        if !ext then
+          if let some (k, _) := kvs.find? (fun (k, _) => !(k.isStringLike && fs.any (fun (nm, _, _) => nm == k.str))) then
+            err "XPTY0004" ("the map entry " ++ k.str ++ " is not a field of the record type, for " ++ what)
+        -- the entries keep their order; absent fields follow
+        let mut out : List (Atomic × Seq) := []
+        for (ka, va) in kvs do
           match fs.find? (fun (nm, _, _) => ka.isStringLike && ka.str == nm) with
-          | some (_, _, ft) => pure (ka, ← e.coerceF f ft va what)
-          | none => pure (ka, va))))
+          | some (_, _, ft) => out := out ++ [(ka, ← e.coerceF f ft va what)]
+          | none => out := out ++ [(ka, va)]
+        for (nm, opt, ft) in fs do
+          if !(kvs.any (fun (k, _) => k.isStringLike && k.str == nm)) then
+            -- a record has an entry for every field (XPath 4.0 §3.2.8.3)
+            if e.seqMatchesF f [] ft then out := out ++ [(Atomic.ofStr nm, [])]
+            else if opt then pure ()
+            else err "XPTY0004" ("the map has no entry " ++ nm ++ " for the record type, for " ++ what)
+        pure (Item.map out)
     | _, _ => pure i)
   match it with
   | .item => pure s
-  | .fnT ps _ =>
-      -- XPath 4.0 §3.4.4: a function of lower arity is accepted
-      if s.all (fun i => match i.fnArity with | some k => k ≤ ps.length | none => false) then pure s
-      else err "XPTY0004" ("function item of wrong type for " ++ what)
+  | .fnT ps r =>
+      -- XPath 4.0 §3.4.4 (function coercion): a function of lower arity
+      -- is accepted; a function that does not match the required type is
+      -- wrapped so that its arguments and its result are coerced
+      s.mapM (fun i => do
+        match i.fnArity with
+        | some k =>
+          if k > ps.length then err "XPTY0004" ("function item of wrong type for " ++ what)
+          -- a map or an array that matches is kept as it is; a function
+          -- item is kept only when its signature is the required one
+          else match i with
+            | .map _ | .arr _ => if k == ps.length && e.itemMatches i it then pure i else pure (coercedFn i k ps r)
+            | .fn fi =>
+              match fnSigOf fi with
+              | some (fps, fr) => if k == ps.length && fps == ps && fr == r then pure i else pure (coercedFn i k ps r)
+              | none => pure (coercedFn i k ps r)
+            | _ => pure (coercedFn i k ps r)
+        | none => err "XPTY0004" ("function item of wrong type for " ++ what))
   | .anyFn =>
       if s.all (fun i => e.itemMatches i it) then pure s
       else err "XPTY0004" ("function item of wrong type for " ++ what)
   | .choice ts =>
     if s.all (fun i => e.itemMatches i it) then pure s else
-    -- only a choice that mixes atomic and function types is handled here;
-    -- a choice of function types alone keeps the strict test
+    -- a choice without atomic alternatives (records, maps, arrays):
+    -- each item is coerced to the alternatives in order (XPath 4.0 §3.4.3)
     if !(ts.any (fun t => match t with | .atomic _ | .enum _ => true | _ => false)) then
-      err "XPTY0004" ("value of wrong type for " ++ what) else
+      s.mapM (fun i => do
+        if e.itemMatches i it then return i
+        let mut first : Option Err := none
+        for alt in ts do
+          match e.coerceF f alt [i] what with
+          | .ok [r] => return r
+          | .ok _ => pure ()
+          | .error x => if first.isNone then first := some x
+        match first with
+        | some x => throw x
+        | none => err "XPTY0004" ("value of wrong type for " ++ what)) else
     -- a choice of atomic types and function types (for example the
     -- `$replacement` of `fn:replace`): coerce each item to a member
     let atoms := ts.filterMap (fun t => match t with | .atomic a => some a | .enum _ => some (.b .string) | _ => none)
@@ -845,11 +1068,24 @@ def Env.deepEqFuel (e : Env) : Nat → Seq → Seq → Bool
       | .arr ma, .arr mb => ma.length == mb.length && (ma.zip mb).all (fun (p, q) => e.deepEqFuel f p q)
       | .fn (.builtin q1 k1), .fn (.builtin q2 k2) => q1 == q2 && k1 == k2
       | .jnode _ _ v1 _, .jnode _ _ v2 _ => e.deepEqFuel f v1 v2
-      | .fn (.papp (.fn (.builtin q1 k1)) a1), .fn (.papp (.fn (.builtin q2 k2)) a2) =>
-          q1 == q2 && k1 == k2 && a1.length == a2.length &&
+      -- function items: equivalence (F&O 4.0 §1.5.1, PR 2805): the
+      -- same static form and the same captured values
+      -- (a partial application of a user function may capture the focus
+      -- through a parameter default, so only built-in functions here)
+      | .fn (.papp g1@(.fn (.builtin ..)) a1), .fn (.papp g2@(.fn (.builtin ..)) a2) =>
+          e.deepEqFuel f [g1] [g2] && a1.length == a2.length &&
           (a1.zip a2).all (fun (x, y) => match x, y with
             | none, none => true
             | some u, some w => e.deepEqFuel f u w
+            | _, _ => false)
+      | .fn (.inline ps1 r1 b1 fo1 c1), .fn (.inline ps2 r2 b2 fo2 c2) =>
+          fo1 == fo2 &&
+          match inlineAlphaEq? ps1 r1 b1 ps2 r2 b2 with
+          | none => false
+          | some pairs => pairs.all (fun (q1, q2) =>
+            match c1.lookup q1, c2.lookup q2 with
+            | some v1, some v2 => e.deepEqFuel f v1 v2
+            | none, none => true
             | _, _ => false)
       | _, _ => false)
 

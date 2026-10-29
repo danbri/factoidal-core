@@ -146,30 +146,20 @@ def exprSingleU (cfg : Cfg) (sp : SubParsers) : P (Option Expr) := do
   if ← kwThenKw "invoke" "updating" then return some (← pInvoke sp)
   pure none
 
-/-- The `%updating` or `%simple` annotation at offset `i` (an inline
-    function expression, §7.9), if the annotations there name one. -/
-def updAnnotationAt (s : Array Char) (i : Nat) : Option String := Id.run do
-  let isWs (c : Char) := c == ' ' || c == '\t' || c == '\n' || c == '\r'
-  let isNm (c : Char) := c.isAlphanum || c == '-' || c == '_' || c == ':' || c == '.'
-  let mut j := i
-  let mut found : Option String := none
-  for _ in [0:100] do
-    for _ in [0:s.size] do
-      if j < s.size && isWs (chAt s j) then j := j + 1 else break
-    if chAt s j != '%' then break
-    j := j + 1
-    let st := j
-    for _ in [0:s.size] do
-      if j < s.size && isNm (chAt s j) then j := j + 1 else break
-    let nm := String.ofList ((List.range (j - st)).map (fun k => chAt s (st + k)))
-    let lname := (nm.splitOn ":").getLast?.getD nm
-    if lname == "updating" || lname == "simple" then found := some lname
-    -- skip an argument list
-    if chAt s j == '(' then
-      for _ in [0:s.size] do
-        if j < s.size && chAt s j != ')' then j := j + 1 else break
-      j := j + 1
-  return found
+/-- The resolved Update Facility annotations of an inline function
+    (§7.9), retained by the XQuery 4.0 annotation wrapper. -/
+def updAnnotation (e : Expr) : Except Err (Option String) := do
+  let maps := match e with
+    | .ext "annotated" (_ :: maps) _ _ _ => maps
+    | _ => []
+  let anns : List String := maps.filterMap (fun mp => match mp with
+    | .mapC [(.lit ⟨_, .qn q⟩, _)] =>
+      if q.uri == "http://www.w3.org/2012/xquery" &&
+          (q.loc == "updating" || q.loc == "simple") then some q.loc else none
+    | _ => none)
+  if anns.length > 1 then
+    throw { code := "XUST0033", msg := "more than one %updating or %simple annotation" }
+  pure anns.head?
 
 /-- The XQuery 4.0 grammar extension with the update productions. -/
 def grammarU (cfg : Cfg) : ExtGrammar :=
@@ -183,9 +173,10 @@ def grammarU (cfg : Cfg) : ExtGrammar :=
     primary := fun s ns sp i =>
       match base.primary s ns sp i with
       | .ok (some (e, j)) =>
-        match updAnnotationAt s i with
-        | some a => .ok (some (.ext "upd-fn" [e] [] [] [a], j))
-        | none => .ok (some (e, j))
+        match updAnnotation e with
+        | .ok (some a) => .ok (some (.ext "upd-fn" [e] [] [] [a], j))
+        | .ok none => .ok (some (e, j))
+        | .error err => .error err
       | other => other }
 
 end L4Factoidal.XQueryUpdate

@@ -156,6 +156,10 @@ def SerParams.check (p : SerParams) : M SerParams := do
     err "SESU0007" ("unsupported encoding " ++ p.encoding)
   if p.method == "csv" && p.csvSep == p.csvQuote then
     err "SEPM0016" "csv-separator and csv-quote-character must differ"
+  -- Serialization 4.0 §11.2, §11.3: one character, not U+000A or U+000D
+  for (nm, v) in [("csv-separator", p.csvSep), ("csv-quote-character", p.csvQuote)] do
+    if v.length != 1 || v == "\n" || v == "\r" then
+      err "SEPM0016" (nm ++ " must be one character other than U+000A and U+000D")
   if (p.method == "xml" || p.method == "xhtml") && p.omitDecl &&
       (p.standalone.isSome || (p.version.getD "1.0" != "1.0" && p.doctypeSystem.isSome)) then
     err "SEPM0009" "omit-xml-declaration is inconsistent with standalone, or with version and doctype-system"
@@ -334,6 +338,62 @@ def elemParams (e : Env) (root : NodeRef) (p0 : SerParams := {}) : M SerParams :
       | _ => pure (PVal.s v)
     p ← p.set name pv
   p.check
+
+/-- The serialization parameters of XQuery output declarations
+    (`declare option output:name "value";`, XQuery 4.0 §5.20.2): local
+    name and string value, in order. The values have the lexical forms of
+    the parameter document (Serialization 4.0 §3.1); a value that is not
+    valid for its parameter is SEPM0016. `scope` resolves the QName values
+    (`method`, `cdata-section-elements`, `suppress-indentation`). -/
+def declParams (scope : List (String × String)) (decls : List (String × String))
+    (init : SerParams := {}) : M SerParams := do
+  let sepm {α} (m : String) : M α := err "SEPM0016" m
+  let yesNo (name v : String) : M Bool :=
+    match trimWs v with
+    | "yes" | "true" | "1" => pure true
+    | "no" | "false" | "0" => pure false
+    | x => sepm (name ++ ": '" ++ x ++ "' is not yes or no")
+  let lexQN (v : String) : M QN :=
+    match resolveLexQN scope v with
+    | .ok q => pure q
+    | .error ex => sepm ex.msg
+  let mut p : SerParams := init
+  for (name, v) in decls do
+    if name == "parameter-document" then continue
+    let some kind := paramKinds.lookup name | err "XQST0109" ("unknown serialization parameter " ++ name)
+    let pv ← match kind with
+      | .bool => pure (PVal.b (← yesNo name v))
+      | .boolOpt =>
+        match trimWs v with
+        | "omit" => pure (PVal.ob none)
+        | x => pure (PVal.ob (some (← yesNo name x)))
+      | .qnames =>
+        let toks := (trimWs v).splitOn " " |>.filter (· != "")
+        pure (PVal.qs (← toks.mapM lexQN))
+      | .method =>
+        let x := trimWs v
+        -- Q{}local is a name in no namespace: a method of this specification
+        let x := if x.startsWith "Q{}" then (x.drop 3).toString else x
+        if x.contains ':' || x.startsWith "Q{" then pure (PVal.s (← lexQN x).eqn)
+        else if serMethods.contains x then pure (PVal.s x)
+        else sepm ("unknown method " ++ x)
+      | .charmap => err "XQST0109" "use-character-maps is not an output declaration"
+      | _ => pure (PVal.s v)
+    p ← p.set name pv
+  p.check
+
+/-- The parameters of an `output:parameter-document` (XQuery 4.0
+    §5.20.2): the text of a serialization parameter document. A document
+    that does not parse is XQST0119; its parameter errors are those of the
+    parameter document (SEPM0017, SEPM0018, SEPM0019). -/
+def paramDocParams (e : Env) (txt : String) : M SerParams := do
+  match Doc.ofString txt with
+  | .error m => err "XQST0119" ("the parameter document does not parse: " ++ m)
+  | .ok d =>
+    let n0 : NodeRef := { doc := 0, idx := 0, rt := some d }
+    let some root := ((e.nrec n0).children.toList.map n0.at).find? (fun c => (e.nrec c).kind == .element)
+      | err "XQST0119" "the parameter document has no element"
+    elemParams e root
 
 def serParamsOf (e : Env) (opts : Seq) : M SerParams :=
   match opts with
@@ -596,6 +656,21 @@ def effectiveScope (sc : List (String × String)) : List (String × String) :=
 def cdataSection (s : String) : String :=
   "<![CDATA[" ++ s.replace "]]>" "]]]]><![CDATA[>" ++ "]]>"
 
+/-- A CDATA section in an encoding: a character that the encoding cannot
+    represent ends the section and is written as a character reference
+    (Serialization 4.0 §5.1.4, `cdata-section-elements`). -/
+def SerParams.cdataIn (p : SerParams) (s : String) : String := Id.run do
+  let mut out := ""
+  let mut cur := ""
+  for c in s.toList do
+    if p.encodable c then cur := cur.push c
+    else
+      if cur != "" then out := out ++ cdataSection cur
+      cur := ""
+      out := out ++ charRef c
+  if cur != "" || out == "" then out := out ++ cdataSection cur
+  out
+
 def XCtx.nl (x : XCtx) (depth : Nat) : String :=
   "\n" ++ String.join (List.replicate depth x.p.indentUnit)
 
@@ -635,6 +710,14 @@ def Env.nsDecls (e : Env) (x : XCtx) (n : NodeRef) (scope : List (String × Stri
   let all := decls ++ undecl
   if x.p.canonical then all.mergeSort (fun a b => a.1 ≤ b.1) else all
 
+/-- Is `n` inside (a strict descendant of) an HTML `script` or `style`
+    element, under the HTML method? Its text and the attributes of its
+    descendants are not escaped (§7.4). -/
+def Env.inRawHtml (e : Env) (x : XCtx) (n : NodeRef) : Bool :=
+  x.m == "html" && (e.ancestors n).any (fun a =>
+    let r := e.nrec a
+    r.kind == .element && x.isHtmlElem r.name && ["script", "style"].contains (lower r.name.loc))
+
 def Env.writeAttr (e : Env) (x : XCtx) (elemHtml : Bool) (a : NodeRef) : W Unit := do
   let ar := e.nrec a
   let nm := x.p.norm (if ar.name.pfx == "" then ar.name.loc else ar.name.pfx ++ ":" ++ ar.name.loc)
@@ -660,7 +743,8 @@ def Env.sortedAttrs (e : Env) (x : XCtx) (n : NodeRef) : List NodeRef :=
 def metaTag (x : XCtx) : String :=
   let ct := (x.p.mediaType.getD "text/html") ++ "; charset=" ++ x.p.encoding
   let close := if x.m == "html" then ">" else " />"
-  if x.html5 then "<meta charset=\"" ++ x.p.encoding ++ "\"" ++ close
+  -- with HTML5, both the HTML and the XHTML method write meta charset (§6, §7)
+  if x.html5 then "<meta charset=\"" ++ x.p.encoding ++ "\"" ++ (if x.m == "html" then ">" else "/>")
   else "<meta http-equiv=\"Content-Type\" content=\"" ++
     (if x.m == "xhtml" then (x.p.mediaType.getD "text/html") ++ "; charset=" ++ x.p.encoding else ct) ++ "\"" ++ close
 
@@ -770,8 +854,12 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
         if x.m == "html" && isH then
           emit ">"
           if !x.voidElem r.name.loc then emit ("</" ++ nm ++ ">")
-        else if x.m == "xhtml" && isH then
-          if x.voidElem r.name.loc then emit " />" else emit ("></" ++ nm ++ ">")
+        else if x.m == "xhtml" then
+          -- §7.1: the minimized form only for an element expected to be
+          -- empty; any other element with no children has an end tag
+          let expected := x.voidElem r.name.loc &&
+            (isH || (x.html5 && r.name.uri == ""))
+          if expected then emit " />" else emit ("></" ++ nm ++ ">")
         else if x.p.canonical then emit ("></" ++ nm ++ ">")
         else emit "/>"
       else
@@ -1111,7 +1199,11 @@ def Env.adaptiveItem (e : Env) (p : SerParams) : Nat → Item → W Unit
         -- parameters given (the XML declaration among them)
         let s ← (e.writeMarkup { p with method := "xml", itemSep := none, omitDecl := p.omitDecl || k != .document } [.node n] : M String)
         emit s
-    | .jnode _ _ v _ => e.adaptiveMember p f v
+    -- Serialization 4.0 §11: jtree(V) for a parentless JNode, else jnode(K:V)
+    | .jnode _ steps v _ =>
+      match steps with
+      | [] => emit "jtree(" *> e.adaptiveMember p f v *> emit ")"
+      | st :: _ => emit ("jnode(" ++ p.adaptiveAtom st.key ++ ":") *> e.adaptiveMember p f v *> emit ")"
     | .arr ms =>
       emit "["
       let mut first := true

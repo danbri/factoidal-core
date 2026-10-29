@@ -328,7 +328,7 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests, `Wasm.GraphSetTests,
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
              `Wasm.Ops.Maths,
-             `Wasm.Ops.Vc, `Wasm.Ops.Cid,
+             `Wasm.Ops.Vc, `Wasm.Ops.Cid, `Wasm.Ops.Qt4,
              `Wasm.Ops.Lenient, `Wasm.Ops.Validate,
              `Wasm.Ops.DeltaLog, `Wasm.Ops.LiteralValue,
              `Wasm.Ops.Terms, `Wasm.Ops.Collections,
@@ -615,6 +615,11 @@ lean_exe «l4dict-fold-bench» where
 
 @[default_target] lean_exe «l4xmlconf» where root := `Harness.XmlConfRun
 
+-- Canonical XML 1.0 and 1.1 and Exclusive XML Canonicalization over the
+-- vendored Recommendation examples and the C14N 1.1 interop cases
+-- (third_party/testing/xml-c14n).
+@[default_target] lean_exe «l4c14n» where root := `Harness.C14nRun
+
 -- The W3C XML Schema Test Suite, Part 2 Datatypes slice: suite.xml ->
 -- the *Meta/*.testSet manifests -> the datatype-only test groups.
 @[default_target] lean_exe «l4xsd-datatypes» where root := `Harness.XsdDatatypesRun
@@ -632,10 +637,17 @@ lean_exe «l4dict-fold-bench» where
 -- RIF Core conformance: syntax and entailment cases from the W3C
 -- suite (Harness/RifRun.lean).
 @[default_target] lean_exe «l4rif» where root := `Harness.RifRun
+-- The W3C N3 Community Group suite with the Notation3 reader (Harness/N3Run.lean).
+@[default_target] lean_exe «l4n3» where root := `Harness.N3Run
 
 -- RDF Data Cube (2014) normalization and integrity constraints IC-0 to
 -- IC-21 over tests/datacube/ (Harness/DataCubeRun.lean).
 @[default_target] lean_exe «l4datacube» where root := `Harness.DataCubeRun
+
+-- YAML-LD 1.0 (Editor's Draft) over third_party/testing/yaml-ld/
+-- (Harness/YamlLdRun.lean); `--json-superset` loads the JSON-LD 1.1 suite's
+-- inputs through the YAML 1.2.2 loader.
+@[default_target] lean_exe «l4yamlld» where root := `Harness.YamlLdRun
 
 -- XSLT 1.0 conformance over the vendored w3c/xslt30-test subset:
 -- XSLT/Transform runs the stylesheet, the result tree is serialised
@@ -762,3 +774,15 @@ lean_exe «l4xslt4» where root := `Harness.Xslt4Run
 -- protocol decision is in L4Factoidal/XMPP/Server.lean, not here.
 @[default_target] lean_exe «l4xmpp-serve» where root := `Harness.XmppServe
 @[default_target] lean_exe «l4xml-namespaces» where root := `Harness.NamespaceRun
+
+-- XProc 3.1 processor and upstream conformance runner; excluded from library root.
+lean_exe l4xproc where root := `L4Factoidal.XProc31.Runner
+-- WHATWG Encoding Standard in Lean (https://github.com/danbri/factoidal/issues/1167,
+-- milestone 2): the engine behind tests/whatwg-encoding/run.mjs, the
+-- web-platform-tests encoding runner (Harness/WhatwgEncodingServe.lean).
+@[default_target] lean_exe «l4whatwg-encoding» where root := `Harness.WhatwgEncodingServe
+
+-- WHATWG URL Standard in Lean (https://github.com/danbri/factoidal/issues/1167,
+-- milestone 3): the engine behind tests/whatwg-url/run.mjs, the
+-- web-platform-tests url runner (Harness/WhatwgUrl.lean).
+@[default_target] lean_exe «l4whatwg-url» where root := `Harness.WhatwgUrl

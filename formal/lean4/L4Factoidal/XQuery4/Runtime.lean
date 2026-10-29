@@ -37,6 +37,7 @@ bindings give the same identity
 (`validate`, XQST0075).
 -/
 import L4Factoidal.XPath4.Ext
+import L4Factoidal.FullText.Eval
 import L4Factoidal.XQueryUpdate.Revalidate
 
 namespace L4Factoidal.XQuery4
@@ -69,6 +70,86 @@ def staticVars (vs : List (QN × Seq)) : List (QN × Seq) :=
   | [] => vs
   | r => r
 
+/-- The closure of a function item at a call (XQuery 4.0 §5.15): a
+    global variable bound after the item was made is visible to its
+    body (`declare variable $f := fn() { $f }`, a reference to a function
+    that reads a later variable): the caller's globals whose names the
+    closure does not have are added after the marker. -/
+def lateClosure (cl env : List (QN × Seq)) : List (QN × Seq) :=
+  if !cl.any (fun (q, _) => q == staticKey) then cl else
+  -- the static parts start with a marker; the rest is the bindings
+  -- (the closure may end with entries that are not variables)
+  let st := staticVars cl
+  let names := st.map (·.1)
+  -- the globals of the caller that the closure does not have (bound after
+  -- the function item was made); the name and annotation entries are not
+  -- globals. Adding only absent names keeps the closure from growing at
+  -- each call of a recursive function.
+  let extra := ((staticVars env).drop 1).filter (fun (q, _) =>
+    !(q.uri == "#xqa" || q.uri == "#xqn") && !names.contains q)
+  if extra.isEmpty then cl else
+  -- the local variables stay in front of the marker, the new globals follow it
+  cl.takeWhile (fun (q, _) => !(q == staticKey)) ++ st.take 1 ++ extra ++ st.drop 1
+
+/-- The arguments of a default-value function: the focus of the call
+    (context value, position, size), or none when the focus is absent. -/
+def focusArgs (e : Env) : List Seq :=
+  match e.ctx with
+  | some c => [c, [.atom (Atomic.ofInt e.pos)], [.atom (Atomic.ofInt e.size)]]
+  | none => []
+
+/-- The closure entry that keeps the annotations of a function item
+    (a sequence of maps, `fn:function-annotations`). -/
+def annKey : QN := { uri := "#xqa", loc := "annotations" }
+
+/-- The closure entry that keeps the name of a declared function. -/
+def nameKey (q : QN) : QN := { uri := "#xqn", loc := q.loc, pfx := q.uri }
+
+/-- The closure entries of a function item that are not variables. -/
+def metaEntries (cl : List (QN × Seq)) : List (QN × Seq) :=
+  cl.filter (fun (k, _) => k.uri == "#xqa" || k.uri == "#xqn" || k == XQueryUpdate.updFnKey)
+
+/-- The closure entry (always first) that keeps the static context of
+    the module that declares a function: base URI, default collation and
+    decimal formats (XQuery 4.0 §5.5, §5.6; each module has its own). -/
+def modCtxKey : QN := { uri := "#xqm", loc := "ctx" }
+
+def encodeModCtx (base coll : String) (df : List (String × List (String × String)))
+    (ns : List (String × String)) : Seq :=
+  [.map [(Atomic.ofStr "ns", [.map (ns.map (fun (p, u) => (Atomic.ofStr p, [.atom (Atomic.ofStr u)])))]),
+         (Atomic.ofStr "base", [.atom (Atomic.ofStr base)]),
+         (Atomic.ofStr "coll", [.atom (Atomic.ofStr coll)]),
+         (Atomic.ofStr "df", [.map (df.map (fun (n, props) =>
+            (Atomic.ofStr n, [.map (props.map (fun (k, v) => (Atomic.ofStr k, [.atom (Atomic.ofStr v)])))])))])]]
+
+/-- The module context entries of a function item's closure. -/
+def ctxEntries (cl : List (QN × Seq)) : List (QN × Seq) :=
+  cl.filter (fun (k, _) => k == modCtxKey)
+
+/-- The environment for the body of a function item: the static
+    context of its module when the closure carries one. -/
+def withModCtx (cl : List (QN × Seq)) (e : Env) : Env :=
+  match cl with
+  | (k, [.map kvs]) :: _ =>
+    if k == modCtxKey then
+      let str (n : String) : Option String := match kvs.find? (fun (a, _) => a.str == n) with
+        | some (_, [.atom v]) => some v.str
+        | _ => none
+      let df : List (String × List (String × String)) := match kvs.find? (fun (a, _) => a.str == "df") with
+        | some (_, [.map ds]) => ds.filterMap (fun (a, v) => match v with
+            | [.map ps] => some (a.str, ps.filterMap (fun (k, v) => match v with
+                | [.atom x] => some (k.str, x.str) | _ => none))
+            | _ => none)
+        | _ => e.decimalFormats
+      let ns : List (String × String) := match kvs.find? (fun (a, _) => a.str == "ns") with
+        | some (_, [.map ps]) => ps.filterMap (fun (a, v) => match v with
+            | [.atom x] => some (a.str, x.str) | _ => none)
+        | _ => e.ns
+      { e with ns, baseUri := (str "base").getD e.baseUri, defaultCollation := (str "coll").getD e.defaultCollation,
+               decimalFormats := df }
+    else e
+  | _ => e
+
 /-- Is any declaration of `q` there (for the error code)? -/
 def userAny (e : Env) (q : QN) : Bool :=
   e.vars.any (fun (v, _) => v.uri == "#xqf" && v.loc.startsWith (q.eqn ++ "#"))
@@ -90,14 +171,14 @@ def userDecl? (e : Env) (q0 : QN) (k : Nat) : Option (Item × Nat × List Item) 
      | [some lo, some hi] => lo ≤ k && k ≤ hi
      | _ => false))
   match hit with
-  | some (v, .fn (.inline ps r b f _) :: dflts) =>
+  | some (v, .fn (.inline ps r b f cl0) :: dflts) =>
     let lo := match ((v.loc.drop pre.length).toString.splitOn "-").map String.toNat? with
       | [some lo, _] => lo | _ => ps.length
     let sv := staticVars e.vars
     let withCl (d : Item) : Item := match d with
       | .fn (.inline ps' r' b' f' _) => .fn (.inline ps' r' b' f' sv)
       | x => x
-    some (.fn (.inline ps r b f sv), lo, dflts.map withCl)
+    some (.fn (.inline ps r b f (ctxEntries cl0 ++ sv ++ metaEntries cl0)), lo, dflts.map withCl)
   | _ => none
 
 /-- The callbacks into the evaluator for a user function call. -/
@@ -126,12 +207,11 @@ def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
     for (a, i) in args.zip (List.range args.length) do
       slots := slots.set! i (some a)
     for (nm, a) in kw do
-      match ps.findIdx? (fun (v, _) => v.loc == nm) with
+      match ps.findIdx? (fun (v, _) => if nm.startsWith "Q{" then v.eqn == nm else (v.uri == "" && v.loc == nm)) with
       | some i =>
         if (slots.getD i none).isSome then err "XPST0017" ("argument " ++ nm ++ " given twice")
         slots := slots.set! i (some a)
       | none => err "XPST0017" ("no parameter named " ++ nm ++ " in " ++ q.show)
-    let ctxArg : Seq := e.ctx.getD []
     let mut fixed : Array (Option Seq) := #[]
     let mut isPartial := false
     for (sl, i) in slots.toList.zip (List.range m) do
@@ -141,15 +221,36 @@ def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
       | none =>
         if i < lo then err "XPST0017" ("missing argument $" ++ ((ps.getD i default).1.show) ++ " of " ++ q.show)
         match dflts[i - lo]? with
-        | some d => fixed := fixed.push (some (← cb.apply d [ctxArg]))
+        | some d => fixed := fixed.push (some (← cb.apply d (focusArgs e)))
         | none => err "XPST0017" ("missing argument of " ++ q.show)
-    if isPartial then pure [.fn (.papp fi fixed.toList)]
+    if isPartial then
+      -- the new function takes the placeholders in the order written
+      -- (§4.5.1.2); the slots in declared order are the `papp` order
+      let written := (args.zip (List.range args.length)).filterMap (fun (a, i) => if a.isNone then some i else none)
+        ++ kw.filterMap (fun (nm, a) => if a.isNone then
+              ps.findIdx? (fun (v, _) => if nm.startsWith "Q{" then v.eqn == nm else (v.uri == "" && v.loc == nm))
+            else none)
+      let sorted := written.mergeSort (· ≤ ·)
+      if written == sorted then pure [.fn (.papp fi fixed.toList)]
+      else
+        let pname (i : Nat) : QN := { uri := "#xqp", loc := "p" ++ toString i }
+        let cl := (fixed.toList.zip (List.range m)).filterMap (fun (x, i) => x.bind (fun v => some (pname i, v)))
+        let newPs := written.map (fun i => (pname i, (ps.getD i default).2))
+        let body : Expr := .call q ((List.range m).map (fun i => some (.var (pname i)))) []
+        let ret := match fi with | .fn (.inline _ r _ _ _) => r | _ => .seq .item .star
+        let sv := match fi with | .fn (.inline _ _ _ _ c) => c | _ => []
+        pure [.fn (.inline newPs ret body false (cl ++ sv))]
     else cb.apply fi (fixed.toList.map (·.getD []))
 
-/-- A named function reference `q#k` to a declared function: the
-    defaults of the omitted parameters are computed now, in the focus
-    of the reference. -/
-def refUser? (applyF : Item → List Seq → M Seq) (e : Env) (q : QN) (k : Nat) : Option (M Seq) :=
+/-- The closure entry that keeps the focus of a function reference. -/
+def refFocusKey : QN := { uri := "#xqr", loc := "focus" }
+
+/-- A named function reference `q#k` to a declared function (XQuery 4.0
+    §4.5.4). When the function has more parameters than `k`, the result
+    is a function item of arity `k` whose call calls the function with
+    the defaults of the omitted parameters, computed when the item is
+    called, in the focus that the reference captured. -/
+def refUser? (_applyF : Item → List Seq → M Seq) (e : Env) (q : QN) (k : Nat) : Option (M Seq) :=
   -- fn:put#2 and fn:put#3 (XQuery Update Facility 3.0 §6.1): an updating function item
   if q.uri == nsFN && q.loc == "put" && (k == 2 || k == 3) then
     let ps : List (QN × IType) := (List.range k).map (fun i => ({ uri := "#upd", loc := "p" ++ toString i }, .seq .item .star))
@@ -158,15 +259,17 @@ def refUser? (applyF : Item → List Seq → M Seq) (e : Env) (q : QN) (k : Nat)
   else
   match userDecl? e q k with
   | none => none
-  | some (fi, lo, dflts) => some do
-    let m := match fi with | .fn (.inline ps _ _ _ _) => ps.length | _ => k
-    if k == m then return [fi]
-    let mut fixed : List (Option Seq) := List.replicate k none
-    for i in [k:m] do
-      match dflts[i - lo]? with
-      | some d => fixed := fixed ++ [some (← applyF d [e.ctx.getD []])]
-      | none => err "XPST0017" ("missing argument of " ++ q.show)
-    pure [.fn (.papp fi fixed)]
+  | some (fi, _, _) => some do
+    match fi with
+    | .fn (.inline ps r _ _ cl) =>
+      if k == ps.length then return [fi]
+      let ps' := ps.take k
+      let call : Expr := .call q (ps'.map (fun (v, _) => some (.var v))) []
+      let (body, focus) := match e.ctx with
+        | some c => (Expr.smap (.var refFocusKey) call, [(refFocusKey, c)])
+        | none => (call, [])
+      pure [.fn (.inline ps' r body false (focus ++ staticVars e.vars ++ metaEntries cl))]
+    | _ => pure [fi]
 
 /-! ## Encodings of names in `ext` nodes -/
 
@@ -203,6 +306,9 @@ def newDocId (tag : String) (e : Env) (content : String) (ss : List String := []
 inductive Piece where
   | text (s : String)
   | node (n : NodeRef)
+  /-- A node from a nested direct element constructor: it inherits only
+      the namespace declarations of its parent (§4.12.1.3). -/
+  | dnode (n : NodeRef)
 
 /-- Copy the subtree of `src` (in `env`) to the end of `out`, with
     parent `par`. A subtree is the index range `[src.idx, last]`, so
@@ -230,6 +336,9 @@ def copyInto (env : Env) (src : NodeRef) (par : Option Nat) (inh : List (String 
     let inscope := if r.kind == .element && !inh.isEmpty then
         own ++ inh.filter (fun (p, _) => (own.lookup p).isNone)
       else own
+    -- an element in no namespace undeclares an inherited default namespace
+    let inscope := if r.kind == .element && r.name.uri == "" && r.name.pfx == "" &&
+        (inscope.lookup "").any (· != "") then ("", "") :: inscope else inscope
     o := o.push { r with parent, inscope,
                          children := r.children.map shift, attrs := r.attrs.map shift,
                          last := shift (if r.kind == .element || r.kind == .document then r.last else i) }
@@ -240,12 +349,15 @@ def copyInto (env : Env) (src : NodeRef) (par : Option Nat) (inh : List (String 
     one part, adjacent atomic values are joined by a space. Arrays are
     flattened; a map or function is `XQTY0105`; a document node gives
     its children. Attribute nodes come first, in `attrs`. -/
-def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool) :
-    M (List NodeRef × List Piece) := do
+def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool)
+    (direct : List Bool := []) : M (List NodeRef × List Piece) := do
   let mut attrs : Array NodeRef := #[]
   let mut ps : Array Piece := #[]
   let mut seenOther := false
+  let mut pidx := 0
   for part in parts do
+    let isDirect := direct.getD pidx false
+    pidx := pidx + 1
     let mut atoms : Option String := none
     let flat : Seq := part.flatMap (fun i => match i with
       | .arr ms => ms.flatten
@@ -278,7 +390,7 @@ def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool) :
               else ps := ps.push (.node (n.at c))
             seenOther := true
         | .text => ps := ps.push (.text r.value); seenOther := true
-        | _ => ps := ps.push (.node n); seenOther := true
+        | _ => ps := ps.push (if isDirect then .dnode n else .node n); seenOther := true
     if let some s := atoms then
       ps := ps.push (.text s); seenOther := true
   -- merge adjacent text, drop empty text
@@ -293,7 +405,7 @@ def contentPieces (env : Env) (parts : List Seq) (forDoc : Bool) :
 /-- Push the children pieces under `par`; returns the new array and the
     child indices. -/
 def pushPieces (env : Env) (par : Nat) (inh : List (String × String)) (ps : List Piece)
-    (out : Array NRec) (preserve : Bool := true) : Array NRec × Array Nat := Id.run do
+    (out : Array NRec) (preserve : Bool := true) (inhDirect : List (String × String) := []) : Array NRec × Array Nat := Id.run do
   let mut o := out
   let mut cs : Array Nat := #[]
   for p in ps do
@@ -304,6 +416,10 @@ def pushPieces (env : Env) (par : Nat) (inh : List (String × String)) (ps : Lis
         cs := cs.push i
     | .node n =>
         let (o', i) := copyInto env n (some par) inh o preserve
+        o := o'
+        cs := cs.push i
+    | .dnode n =>
+        let (o', i) := copyInto env n (some par) inhDirect o preserve
         o := o'
         cs := cs.push i
   (o, cs)
@@ -325,11 +441,12 @@ def constructionStripKey : QN := { uri := "#xq", loc := "construction-strip" }
 
 /-- Build an element node: name, namespace declarations, content. -/
 def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × String))
-    (parts : List Seq) (preserve inherit : Bool := true) : M Seq := do
+    (parts : List Seq) (preserve inherit : Bool := true) (direct : List Bool := [])
+    (outerDecls : List (String × String) := []) : M Seq := do
   if isXmlnsName name then err "XQDY0096" "the element name is in the xmlns namespace"
   if name.pfx == "xml" && name.uri != nsXML then err "XQDY0096" "prefix xml bound to another namespace"
   if name.uri == nsXML && name.pfx != "xml" && name.pfx != "" then err "XQDY0096" "the xml namespace with another prefix"
-  let (ats, ps) ← contentPieces env parts false
+  let (ats, ps) ← contentPieces env parts false direct
   -- in-scope namespaces: declarations, the element name, the attribute names
   let mut scope : List (String × String) := decls
   let mut name := name
@@ -351,6 +468,9 @@ def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × Str
     let r := env.nrec a
     if r.kind == .namespace then
       let p := r.name.loc
+      -- an element in no namespace cannot have a default namespace
+      if p == "" && r.value != "" && name.uri == "" && name.pfx == "" then
+        err "XQDY0102" "a default namespace on an element in no namespace"
       match scope.lookup p with
       | some u => if u != r.value then err "XQDY0102" ("namespace prefix " ++ p ++ " bound twice")
       | none => scope := (p, r.value) :: scope
@@ -370,7 +490,11 @@ def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × Str
       else if (scope.lookup an.pfx).isNone then scope := (an.pfx, an.uri) :: scope
     atRecs := atRecs.push { r with name := an, parent := some 0 }
   if (scope.lookup "xml").isNone then scope := scope ++ [("xml", nsXML)]
-  scope := scope.filter (fun (p, u) => !(p == "" && u == ""))
+  -- the namespaces of the enclosing direct constructors are in scope too, unless
+  -- the element's own names use the prefix (§4.12.1.2)
+  for (p, u) in outerDecls do
+    if (scope.lookup p).isNone && !(p == "" && name.uri == "" && u != "") then scope := scope ++ [(p, u)]
+  -- a ("", "") binding stays: it undeclares the default namespace (§4.12.1.2)
   -- XQuery 4.0 §3.9.1.1: under construction mode preserve the new element
   -- is annotated xs:anyType; under strip, xs:untyped (no annotation)
   let strip := env.vars.any (fun (q, _) => q == constructionStripKey)
@@ -382,7 +506,8 @@ def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × Str
     out := out.push { r with last := i }
     aIdx := aIdx.push i
   let inh := if inherit then scope.filter (fun (p, _) => p != "xml") else []
-  let (o2, cs) := pushPieces env 0 inh ps out preserve
+  let inhD := if inherit then decls.filter (fun (p, _) => p != "xml") else []
+  let (o2, cs) := pushPieces env 0 inh ps out preserve inhD
   let o3 := o2.set! 0 { (o2.getD 0 default) with children := cs, attrs := aIdx, last := o2.size - 1 }
   let doc : Doc := { nodes := o3, baseUri := env.baseUri }
   pure [.node { doc := id, idx := 0, rt := some doc }]
@@ -417,7 +542,12 @@ def nameOf (env : Env) (s : Seq) (sns : List (String × String)) (isAttr : Bool)
       let lex := lex.trimAscii.toString
       if lex.startsWith "Q{" then
         match lex.splitOn "}" with
-        | [u, l] => if isNCName l then pure { uri := (u.drop 2).toString, loc := l } else err "XQDY0074" ("invalid name " ++ lex)
+        | [u, l] =>
+          -- a braced URI holds no brace (EQName, XQDY0074); its whitespace is collapsed
+          let uri := String.intercalate " " (((u.drop 2).toString.map (fun ch =>
+            if ch == '\t' || ch == '\n' || ch == '\r' then ' ' else ch)).splitOn " " |>.filter (· != ""))
+          if isNCName l && !uri.any (· == '{') then pure { uri, loc := l }
+          else err "XQDY0074" ("invalid name " ++ lex)
         | _ => err "XQDY0074" ("invalid name " ++ lex)
       else
       match parseQNameLex lex with
@@ -426,6 +556,7 @@ def nameOf (env : Env) (s : Seq) (sns : List (String × String)) (isAttr : Bool)
         else if p == "xml" then pure { uri := nsXML, loc := l, pfx := p }
         else if p == "xmlns" then pure { uri := "http://www.w3.org/2000/xmlns/", loc := l, pfx := p }
         else match sns.lookup p with
+          | some "" => err "XQDY0074" ("undeclared prefix " ++ p)
           | some u => pure { uri := u, loc := l, pfx := p }
           | none => match defaultNs.lookup p with
             | some u => pure { uri := u, loc := l, pfx := p }
@@ -449,38 +580,53 @@ def keyOf (env : Env) (s : Seq) : M (Option Atomic) := do
 
 def isNaNA (a : Atomic) : Bool := (a.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
 
-/-- Compare two order keys (§4.13.9): `lt` when `a` sorts first. The
-    empty key and NaN come first with `emptyLeast`. -/
-def keyCmp (tz : Int) (emptyLeast : Bool) (a b : Option Atomic) : Ordering :=
+/-- Compare two order keys (§4.13.9): `lt` when `a` sorts first. With
+    `empty least` the empty key sorts first and NaN next; with `empty
+    greatest` NaN sorts after every other value and the empty key last.
+    Strings compare under the collation `coll`. -/
+def keyCmp (tz : Int) (emptyLeast : Bool) (coll : Coll) (a b : Option Atomic) : Ordering :=
   let rank (x : Option Atomic) : Nat := match x with
-    | none => if emptyLeast then 0 else 3
-    | some v => if isNaNA v then (if emptyLeast then 1 else 2) else 5
+    | none => if emptyLeast then 0 else 2
+    | some v => if isNaNA v then 1 else (if emptyLeast then 2 else 0)
   match a, b with
   | some x, some y =>
     if isNaNA x || isNaNA y then compare (rank a) (rank b)
+    else if x.isStringLike && y.isStringLike && !coll.isCodepoint then coll.compare x.str y.str
     else match atomicCmp x y tz with
       | .ok (some o) => o
       | _ => .eq
-  | _, _ =>
-    let ra := rank a
-    let rb := rank b
-    if ra == 5 then (if emptyLeast then .gt else .lt)
-    else if rb == 5 then (if emptyLeast then .lt else .gt)
-    else compare ra rb
+  | _, _ => compare (rank a) (rank b)
 
 /-- One `order by` key spec: descending, empty least, collation. -/
 structure OSpec where
   desc : Bool := false
   emptyLeast : Bool := true
+  coll : String := ""
 
+/-- Spec strings: `a`/`d`, then `l`/`g` (absent: the prolog default),
+    then `|` and the collation URI as written (absent: the default
+    collation). -/
 def OSpec.decode (s : String) (dflt : Bool) : OSpec :=
-  { desc := s.startsWith "d", emptyLeast := if s.length ≥ 2 then (s.drop 1).startsWith "l" else dflt }
+  let (f, c) := match s.splitOn "|" with
+    | f :: rest => (f, "|".intercalate rest)
+    | [] => ("", "")
+  { desc := f.startsWith "d", emptyLeast := if f.length ≥ 2 then (f.drop 1).startsWith "l" else dflt,
+    coll := c }
 
-def cmpTuples (tz : Int) (specs : List OSpec) : List (Option Atomic) → List (Option Atomic) → Ordering
+/-- The collation of an `order by` or `group by` spec: the default
+    collation when none is written; one this processor does not provide
+    is XQST0076 (§4.13.9). -/
+def specColl (env : Env) (u : String) : M Coll :=
+  if u == "" then env.collation []
+  else match collationOf env.baseUri u with
+    | .ok c => pure c
+    | .error _ => err "XQST0076" ("unknown collation " ++ u)
+
+def cmpTuples (tz : Int) (specs : List (OSpec × Coll)) : List (Option Atomic) → List (Option Atomic) → Ordering
   | a :: as, b :: bs =>
     match specs with
-    | sp :: rest =>
-      let o := keyCmp tz sp.emptyLeast a b
+    | (sp, c) :: rest =>
+      let o := keyCmp tz sp.emptyLeast c a b
       let o := if sp.desc then o.swap else o
       if o == .eq then cmpTuples tz rest as bs else o
     | [] => .eq
@@ -488,10 +634,12 @@ def cmpTuples (tz : Int) (specs : List OSpec) : List (Option Atomic) → List (O
 
 /-- `group by` key equality (§4.13.7): deep-equal of the atomized keys,
     NaN equal to NaN; the empty key equals the empty key. -/
-def groupKeyEq (a b : Option Atomic) : Bool :=
+def groupKeyEq (a b : Option Atomic) (coll : Coll := .codepoint) : Bool :=
   match a, b with
   | none, none => true
-  | some x, some y => deepAtomEq x y
+  | some x, some y =>
+    if x.isStringLike && y.isStringLike && !coll.isCodepoint then coll.eq x.str y.str
+    else deepAtomEq x y
   | _, _ => false
 
 /-- The decoded window clause. -/
@@ -513,29 +661,33 @@ def bindWinVars (env : Env) (vs : QN × QN × QN × QN) (items : Array Item) (i 
   let env := bindOpt env prev (if i == 0 then [] else atJ (i - 1))
   bindOpt env next (atJ (i + 1))
 
-/-- Evaluate a list of FLWOR clauses over a tuple stream. `bound`
-    collects the names the clauses bound so far (for `group by`). -/
-def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN) :
+/-- One FLWOR clause over the tuple stream `tuples`. `bound` collects
+    the names the clauses bound so far (for `group by`). -/
+def stepClause (cb : XCb) (c : Expr) (tuples : List Env) (bound : List QN) :
     M (List Env × List QN) := do
   let mut ts := tuples
   let mut bnd := bound
-  for c in cs do
+  do
     match c with
     | .ext "c:for" [src] [vt] [v, pv] [kind, allowing] =>
       let mut out : Array Env := #[]
       for t in ts do
         let s ← cb.eval t src
         if kind == "member" then
-          match s with
-          | [.arr ms] =>
-            let mut k := 1
-            for m in ms do
-              let x ← t.coerce vt m ("$" ++ v.show)
-              out := out.push (bindOpt (bindV t v x) pv (sInt k)); k := k + 1
-          | _ => err "XPTY0004" "for member needs a single array"
+          -- a sequence of arrays is iterated in turn (XPath 4.0 §4.13.2, PR 2715)
+          let mut k := 1
+          for a in s do
+            match a with
+            | .arr ms =>
+              for m in ms do
+                let x ← t.coerce vt m ("$" ++ v.show)
+                out := out.push (bindOpt (bindV t v x) pv (sInt k)); k := k + 1
+            | _ => err "XPTY0004" "for member requires arrays"
         else
         if s.isEmpty && allowing == "1" then
-          out := out.push (bindOpt (bindV t v []) pv (sInt 0))
+          -- the empty sequence must match the declared type (§4.13.2)
+          let x ← t.coerce vt [] ("$" ++ v.show)
+          out := out.push (bindOpt (bindV t v x) pv (sInt 0))
         else
           let mut k := 1
           for i in s do
@@ -543,16 +695,20 @@ def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN)
             out := out.push (bindOpt (bindV t v x) pv (sInt k)); k := k + 1
       ts := out.toList
       bnd := bnd ++ [v] ++ (if isNoName pv then [] else [pv])
-    | .ext "c:forkv" [src] [] [kv, vv, pv] [] =>
+    | .ext "c:forkv" [src] [kt, vt] [kv, vv, pv] [] =>
       let mut out : Array Env := #[]
       for t in ts do
-        match ← cb.eval t src with
-        | [.map kvs] =>
-          let mut k := 1
-          for (key, val) in kvs do
-            let t1 := bindOpt (bindOpt t kv [.atom key]) vv val
-            out := out.push (bindOpt t1 pv (sInt k)); k := k + 1
-        | _ => err "XPTY0004" "for key/value needs a single map"
+        -- a sequence of maps is iterated in turn (XPath 4.0 §4.13.2, PR 2715)
+        let mut k := 1
+        for m in ← cb.eval t src do
+          match m with
+          | .map kvs =>
+            for (key, val) in kvs do
+              let kx ← t.coerce kt [.atom key] ("$" ++ kv.show)
+              let vx ← if isNoName vv then pure val else t.coerce vt val ("$" ++ vv.show)
+              let t1 := bindOpt (bindOpt t kv kx) vv vx
+              out := out.push (bindOpt t1 pv (sInt k)); k := k + 1
+          | _ => err "XPTY0004" "for key/value requires maps"
       ts := out.toList
       bnd := bnd ++ [kv, vv, pv].filter (fun q => !isNoName q)
     | .ext "c:let" [e] [vt] [v] [] =>
@@ -577,7 +733,10 @@ def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN)
       bnd := bnd ++ [v]
     | .ext "c:order" keys [] [] specs =>
       let dflt := specs.headD "l" == "l"
-      let sps := (specs.drop 1).map (OSpec.decode · dflt)
+      let sps0 := (specs.drop 1).map (OSpec.decode · dflt)
+      let env0 := ts.headD {}
+      let mut sps : List (OSpec × Coll) := []
+      for sp in sps0 do sps := sps ++ [(sp, ← specColl env0 sp.coll)]
       let mut keyed : Array (List (Option Atomic) × Env) := #[]
       for t in ts do
         let mut ks : Array (Option Atomic) := #[]
@@ -597,14 +756,23 @@ def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN)
       let tz := (ts.headD {}).tz
       let sorted := keyed.toList.mergeSort (fun x y => cmpTuples tz sps x.1 y.1 != .gt)
       ts := sorted.map (·.2)
-    | .ext "c:group" keys [] gvs _ =>
+    | .ext "c:group" keys tys gvs colls =>
       -- groups in order of first appearance
+      let env0 := ts.headD {}
+      let mut cl : List Coll := []
+      for c in colls do cl := cl ++ [← specColl env0 c]
       let mut groups : Array (List (Option Atomic) × Array Env) := #[]
       for t in ts do
         let mut ks : Array (Option Atomic) := #[]
-        for k in keys do ks := ks.push (← keyOf t (← cb.eval t k))
+        for (k, ty, q) in (keys.zip (tys.zip gvs)) do
+          let kv ← cb.eval t k
+          -- the declared type of a grouping variable is checked against
+          -- the atomized key (§4.13.7)
+          let _ ← t.coerce ty ((← t.atomize kv).map .atom) ("$" ++ q.show)
+          ks := ks.push (← keyOf t kv)
         let kl := ks.toList
-        match groups.findIdx? (fun (g, _) => g.length == kl.length && (g.zip kl).all (fun (a, b) => groupKeyEq a b)) with
+        match groups.findIdx? (fun (g, _) => g.length == kl.length &&
+            ((g.zip kl).zip (cl ++ List.replicate kl.length .codepoint)).all (fun ((a, b), c) => groupKeyEq a b c)) with
         | some gi => groups := groups.modify gi (fun (g, ms) => (g, ms.push t))
         | none => groups := groups.push (kl, #[t])
       let others := bnd.filter (fun q => !gvs.any (· == q))
@@ -665,9 +833,15 @@ def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN)
     | _ => err "XPST0003" "unknown FLWOR clause"
   pure (ts, bnd)
 
+/-- Evaluate a list of FLWOR clauses, in order, over a tuple stream
+    (XQuery 4.0 §4.13). -/
+def runClauses (cb : XCb) (cs : List Expr) (tuples : List Env) (bound : List QN) :
+    M (List Env × List QN) :=
+  cs.foldlM (fun (r : List Env × List QN) c => stepClause cb c r.1 r.2) (tuples, bound)
+
 /-! ## try/catch -/
 
-def errUri (e : Err) : String := if e.uri == "" then nsERR else e.uri
+def errUri (e : Err) : String := if e.noNs then "" else if e.uri == "" then nsERR else e.uri
 
 /-- The expanded name of an error: a code written `Q{uri}local` (as
     the EXPath modules write theirs) is split; otherwise the code is a
@@ -690,17 +864,36 @@ def catchMatches (t : String) (e : Err) : Bool :=
 def errVars (e : Err) : List (QN × Seq) :=
   let n (l : String) : QN := { uri := nsERR, loc := l, pfx := "err" }
   let (eu, el) := errName e
-  let code : Seq := single (Atomic.ofQN { uri := eu, loc := el, pfx := if eu == nsERR then "err" else "" })
-  [(n "code", code), (n "description", sStr e.msg), (n "value", []), (n "module", []),
+  let pfx := if e.pfx != "" then e.pfx else if eu == nsERR then "err" else ""
+  let code : Seq := single (Atomic.ofQN { uri := eu, loc := el, pfx })
+  let value : Seq := e.value.map .atom
+  -- $err:map (XQuery 4.0 §4.20.2): the entries that have a value
+  let m : List (Atomic × Seq) := [(Atomic.ofStr "code", code), (Atomic.ofStr "description", sStr e.msg)] ++
+    (if value.isEmpty then [] else [(Atomic.ofStr "value", value)])
+  [(n "code", code), (n "description", sStr e.msg), (n "value", value), (n "module", []),
    (n "line-number", []), (n "column-number", []), (n "additional", []),
    (n "stack-trace", []),
-   (n "map", [.map [(Atomic.ofStr "code", code), (Atomic.ofStr "description", sStr e.msg)]])]
+   (n "map", [.map m])]
 
 /-! ## The dispatcher -/
 
 def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IType)
     (qs : List QN) (ss : List String) : M Seq := do
+  -- XQuery and XPath Full Text 3.0 (`L4Factoidal.FullText`)
+  if tag.startsWith "ft." then
+    return ← L4Factoidal.FullText.evalFt { eval := cb.eval } env tag es ss
   match tag with
+  | "annotated" =>
+    -- an inline function with annotations (XQuery 4.0 §4.19.1)
+    match es with
+    | f :: maps =>
+      let fv ← cb.eval env f
+      let mut mv : Seq := []
+      for mp in maps do mv := mv ++ (← cb.eval env mp)
+      match fv with
+      | [.fn (.inline ps r b fo cl)] => pure [.fn (.inline ps r b fo (cl ++ [(annKey, mv)]))]
+      | other => pure other
+    | [] => pure []
   | "elem" =>
     match es with
     | nm :: parts =>
@@ -710,18 +903,29 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
       if ss.headD "" == "c" && (name.pfx == "xmlns" || name.uri == "http://www.w3.org/2000/xmlns/") then
         err "XQDY0096" "the element name is in the xmlns namespace"
       let decls := (ss.drop 1).filterMap (fun d => match d.splitOn "\x00" with
-        | [p, u] => some (p, u) | _ => none)
+        | [p, u] => if p.startsWith "\x01" then none else some (p, u) | _ => none)
+      -- the declarations of the enclosing direct constructors (§4.12.1.2)
+      let outerDecls := (ss.drop 1).filterMap (fun d => match d.splitOn "\x00" with
+        | [p, u] => if p.startsWith "\x01" then some ((p.drop 1).toString, u) else none | _ => none)
       let mut vals : Array Seq := #[]
-      for p in parts do vals := vals.push (← cb.eval env p)
+      -- the content of a direct constructor sees its xmlns declarations (§4.12.1.2)
+      let envC := if ss.headD "" == "d" && !decls.isEmpty then
+          { env with ns := decls ++ env.ns.filter (fun (p, _) => !decls.any (·.1 == p)) } else env
+      for p in parts do vals := vals.push (← cb.eval envC p)
       let id := newDocId "elem" env (name.eqn ++ "|" ++ ss.headD "" ++ "|" ++
         String.intercalate "," (vals.toList.map (fun s => String.intercalate "," (s.map itemSig)))) ss
       buildElement env id name decls vals.toList (!ss.contains "#no-preserve") (!ss.contains "#no-inherit")
+        (parts.map (fun p => match p with | .ext "elem" _ _ _ s => s.contains "#nested" | _ => false))
+        outerDecls
     | [] => err "XPST0003" "element constructor without name"
   | "attr" =>
     match es with
     | nm :: parts =>
       let name ← nameOf env (← cb.eval env nm) (sNs qs) true
       let name := if name.uri == nsXML && name.pfx == "" then { name with pfx := "xml" } else name
+      -- an attribute in a namespace needs a prefix: an implementation-dependent
+      -- one when it has none (XQuery 4.0 §5.7.3.2)
+      let name := if name.uri != "" && name.uri != nsXML && name.pfx == "" then { name with pfx := freshPrefix [] } else name
       if isXmlnsName name then err (if ss.headD "" == "d" then "XQST0071" else "XQDY0044") "an attribute named xmlns"
       if name.pfx == "xml" && name.uri != nsXML then err "XQDY0044" "prefix xml bound to another namespace"
       if name.uri == nsXML && name.pfx != "xml" then err "XQDY0044" "the xml namespace with another prefix"
@@ -805,7 +1009,10 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
         | none => .error e
     match fin with
     | some f =>
-      let _ ← cb.eval env f
+      -- the finally clause must give the empty sequence (XQTY0153); its
+      -- error replaces the result of the try and catch clauses (§4.20.3)
+      let fv ← cb.eval env f
+      if !fv.isEmpty then err "XQTY0153" "a finally clause gave a non-empty value"
       r
     | none => r
   | "typeswitch" =>

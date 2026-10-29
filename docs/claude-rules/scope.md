@@ -77,7 +77,12 @@ inconsistency), and single `<Import>` companion-graph resolution
 `apply_import_closure`). RIF **List terms**, the **full
 date/time/duration builtin family** (only the EBusiness slice is
 implemented), and RIF-PRD (production rules, actions, retraction)
-are **not implemented**; RIF-PRD is not planned.
+are **not implemented** in the F\* tree. The Lean tree has RIF-BLD since
+2026-10-29 (`formal/lean4/L4Factoidal/RIF/Bld.lean`, W3C BLD suite through
+`tests/rif-bld/run.sh`) and RIF-PRD since 2026-10-29
+(`formal/lean4/L4Factoidal/RIF/Prd.lean`, the W3C PRD manifest through
+`tests/rif-prd/run.sh`), track A of
+https://github.com/danbri/factoidal/issues/1165.
 
 **Concretely:** the 4 RIF tests under
 `third_party/testing/w3c/sparql/sparql11/entailment/` (manifest IRIs
