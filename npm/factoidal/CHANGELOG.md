@@ -6,7 +6,9 @@
 
 ## 0.24.0 (2026-10-29)
 
-In the Lean tree (native runners; no new package functions; the wasm does not change):
+- `xslt4Transform`: a function call that the XSLT host does not handle falls back to the XPath host of the base environment instead of failing (https://github.com/danbri/factoidal-core/pull/249). (Corrected after publishing: the 0.24.0 package's own changelog says the wasm does not change; it does, by this change.)
+
+In the Lean tree (native runners; no new package functions):
 
 - WHATWG URL Standard (`L4Factoidal/WHATWG/URL/`): web-platform-tests `url/` at ce5ca396, 4570 pass, 0 fail (out of 4570). Theorem `whatwg2026_path_eq_rfc3986`: the parser's path-segment rule gives the same path as RFC 3986 §5.2.4 `removeDotSegments` when no segment contains `/`; a theorem for the whole parser is open (https://github.com/danbri/factoidal/issues/1188). (https://github.com/danbri/factoidal-core/pull/241, https://github.com/danbri/factoidal/issues/1167 milestone 3)
 - XProc 3.1 (`L4Factoidal/XProc31/`, `lake build l4xproc`): XProc test suite (Codeberg, dc530eb6) 2243 pass, 125 fail, 995 unsupported (out of 3363); bridge theorems in `XProc31/Bridge.lean` and `XProc31/Sequence.lean` (https://github.com/danbri/factoidal-core/pull/249).
