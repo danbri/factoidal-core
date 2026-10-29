@@ -109,6 +109,9 @@ shard packer, the proofs between them, the costs paid and open):
   proof check: `#guard` expressions evaluate during elaboration, so a
   wrong answer is a build error; every theorem is kernel-rechecked.
 - **Gates after a full `lake build`**, each run from the repository root and read by its exit code:
+  Run gates that read generated C only after the build finishes. On 2026-10-29,
+  running the tail-recursion audit during an incremental QT4 rebuild failed
+  when Lake replaced `XPath4/Theorems.c`; that run provided no gate result.
   `python3 tools/lean-tail-recursion-audit.py --gate` (recursion that consumes stack),
   `python3 tools/lean-unbuilt-modules.py --gate` (a module no build root imports), and
   `python3 tools/lean-csimp-reach.py --gate` (a `@[csimp]` replacement that a caller does not
@@ -543,3 +546,11 @@ next to the issue URL that tracks X and with an expected-failure case in the
 relevant probe or Node suite (`skills/test-suites/SKILL.md` § Expected
 failures). Owner, 2026-09-07: prose alone "is close to nothing". First
 instance: `L4Factoidal/XMPP/Jid.lean` and https://github.com/danbri/factoidal/issues/676.
+
+## XPath and XQuery optional feature settings (2026-10-29)
+
+Use `XPath4.Env.restrictFeatures` to disable optional processor features.
+The settings also reach the parser and module checks. The qt4tests runner
+selects restrictions from negative feature dependencies. See the
+[design record](../../docs/designissues/2026-10-29-processor-feature-settings.md)
+and [measured report](../../docs/20261029-processor-feature-settings.md).

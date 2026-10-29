@@ -39,6 +39,8 @@ def storePuts (env : Env) (puts : List (String × NodeRef)) : Env := Id.run do
 /-- Evaluate a main module with the update facility. `v10`: the
     XQuery Update Facility 1.0 category rules (`Static`). -/
 def evalUpdModule (fuel : Nat) (env : Env) (m : Module) (v10 : Bool := true) : M (Seq × Env) := do
+  if !env.features.schemaImport && !m.schemaImports.isEmpty then
+    err "XQST0009" "schema import is disabled"
   for u in m.schemaImports do
     if !env.schema.targetNamespaces.contains u then
       err "XQST0059" ("no schema for the imported namespace " ++ u)
@@ -73,8 +75,14 @@ def evalUpdModule (fuel : Nat) (env : Env) (m : Module) (v10 : Bool := true) : M
 /-- Parse and evaluate an XQuery main module with the update facility. -/
 def evalUpdQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) (v10 : Bool := true) :
     M (Seq × Env) := do
-  let m ← parseModule src env.ns (typeLoader env 8 []) env.schema.declared
+  let m ← parseModule src env.ns (typeLoader env 8 []) env.schema.declared env.xml11 env.features
   evalUpdModule fuel (withFnLookup fuel env) m v10
+
+-- The update entry point keeps the caller's XML version setting.
+#guard (match evalUpdQuery "string-to-codepoints('&#x1;')" { xml11 := true } with
+  | .ok (s, _) => showSeq s | .error e => e.code) == "1"
+#guard (match evalUpdQuery "string-to-codepoints('&#x1;')" { xml11 := false } with
+  | .ok (s, _) => showSeq s | .error e => e.code) == "XQST0090"
 
 /-- The result of a query with its updates applied, then a second query
     over the updated documents (for the `#guard`s below). -/

@@ -58,6 +58,8 @@ structure ExtGrammar where
   xquery : Bool := true
 
 structure PCtx where
+  /-- Optional features of the static context. -/
+  features : FeatureSettings := {}
   s : Array Char
   /-- Namespace bindings for prefixes (static context). -/
   ns : List (String × String)
@@ -73,6 +75,10 @@ structure PCtx where
   /-- Read an unknown type name as `item()` (the first pass over an
       XQuery prolog, which collects the named types). -/
   lenientTypes : Bool := false
+  /-- XML 1.1 and XML Names 1.1 are in force (`Env.xml11`): the XQuery
+      grammar reads character references to XML 1.1 characters and
+      namespace undeclarations. -/
+  xml11 : Bool := false
   /-- Set by the XQuery grammar's own parsers: a braced URI reads references. -/
   xqRefs : Bool := false
   /-- The in-scope element (`true`) and attribute (`false`) declarations of
@@ -256,10 +262,8 @@ def peekQName : P (Option (Option String × Option String × String × Nat)) := 
 def lookupNs (p : String) : P String := do
   let c ← read
   match c.ns.lookup p with
-  | some u =>
-    if u == "" && p != "" then
-      throw { code := "XPST0081", msg := "the namespace prefix " ++ p ++ " is undeclared" }
-    pure u
+  -- a prefix undeclared by `xmlns:p=""` (XML Names 1.1) is not bound
+  | some u => if u == "" && p != "" then throw { code := "XPST0081", msg := "undeclared namespace prefix " ++ p } else pure u
   | none => match defaultNs.lookup p with
     | some u => pure u
     | none => throw { code := "XPST0081", msg := "undeclared namespace prefix " ++ p }
@@ -1424,7 +1428,7 @@ def pStep : Nat → P Expr
       match axisOfName? nm with
       | some ax =>
           -- the namespace axis is not recognized in XQuery
-          if nm == "namespace" && c0.ext.isSome then synErr "the namespace axis is not recognized in XQuery"
+          if nm == "namespace" && (c0.ext.map (·.xquery)).getD false then synErr "the namespace axis is not recognized in XQuery"
           let _ ← peekQName
           adv nm.length; ws; expectS "::"
           ws
@@ -1749,7 +1753,8 @@ end
 /-- Parse a complete XPath 4.0 expression, with optional namespace
     declarations prolog. -/
 def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option ExtGrammar := none)
-    (schemaDecl : Bool → QN → Bool := fun _ _ => false) : M Expr :=
+    (schemaDecl : Bool → QN → Bool := fun _ _ => false)
+    (features : FeatureSettings := {}) : M Expr :=
   let p : P Expr := do
     -- prolog (XPath 4.0 §2.1): DefaultElementNamespaceDecl? NamespaceDecl*
     let mut extra : List (String × String) := []
@@ -1797,7 +1802,7 @@ def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option
     if i < c.s.size then synErr ("unexpected text at offset " ++ toString i ++ ": '" ++
        String.ofList ((List.range (min 20 (c.s.size - i))).map (fun k => chAt c.s (i + k))) ++ "'")
     pure e
-  match (p.run { s := src.toList.toArray, ns, ext, schemaDecl }).run 0 with
+  match (p.run { s := src.toList.toArray, ns, ext, schemaDecl, features }).run 0 with
   | .ok (e, _) => .ok e
   | .error e => .error e
 

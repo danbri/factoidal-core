@@ -49,6 +49,10 @@ structure Cfg where
   /-- `declare copy-namespaces` (§5.8): preserve, inherit. -/
   copyPreserve : Bool := true
   copyInherit : Bool := true
+  /-- XML 1.1 and XML Names 1.1 are in force (XPath 4.0 §A.2, constraint
+      xml-version): character references may name any XML 1.1 `Char`,
+      and `xmlns:p=""` undeclares `p` (XQST0085 otherwise). -/
+  xml11 : Bool := false
   /-- XQuery Update Facility 3.0 §4.1: `declare revalidation`, for the
       copy modify expressions of the module. -/
   revalidation : Option String := none
@@ -97,9 +101,16 @@ def isXmlChar (n : Nat) : Bool :=
   n == 0x9 || n == 0xA || n == 0xD || (0x20 ≤ n && n ≤ 0xD7FF) || (0xE000 ≤ n && n ≤ 0xFFFD) ||
   (0x10000 ≤ n && n ≤ 0x10FFFF)
 
+/-- XML `[2] Char` of the version in force: XML 1.1 admits every
+    character but NUL, the surrogates, #xFFFE and #xFFFF. -/
+def isXmlCharV (v11 : Bool) (n : Nat) : Bool :=
+  if v11 then (0x1 ≤ n && n ≤ 0xD7FF) || (0xE000 ≤ n && n ≤ 0xFFFD) || (0x10000 ≤ n && n ≤ 0x10FFFF)
+  else isXmlChar n
+
 /-- Read an entity or character reference at `i` (which is `&`):
-    the character and the end offset. -/
-def refAt (s : Array Char) (i : Nat) : Except Err (Char × Nat) := do
+    the character and the end offset. With `v11`, a character reference
+    may name any XML 1.1 character (XQuery 4.0 §2.4.2, XQST0090). -/
+def refAt (s : Array Char) (i : Nat) (v11 : Bool := false) : Except Err (Char × Nat) := do
   let close (j : Nat) : Nat := Id.run do
     let mut k := j
     for _ in [0:64] do
@@ -120,20 +131,20 @@ def refAt (s : Array Char) (i : Nat) : Except Err (Char × Nat) := do
       if ds.isEmpty || !ds.all (fun c => c.isDigit || ('a' ≤ c && c ≤ 'f') || ('A' ≤ c && c ≤ 'F')) then
         throw { code := "XPST0003", msg := "bad character reference &" ++ body ++ ";" }
       let v := ds.foldl (fun a c => a * 16 + hexVal c) 0
-      if !isXmlChar v then throw { code := "XQST0090", msg := "character reference to a non-XML character" }
+      if !isXmlCharV v11 v then throw { code := "XQST0090", msg := "character reference to a non-XML character" }
       pure (Char.ofNat v, j + 1)
     else if body.startsWith "#" then
       let ds := (body.drop 1).toString.toList
       if ds.isEmpty || !ds.all Char.isDigit then
         throw { code := "XPST0003", msg := "bad character reference &" ++ body ++ ";" }
       let v := ds.foldl (fun a c => a * 10 + (c.toNat - 48)) 0
-      if !isXmlChar v then throw { code := "XQST0090", msg := "character reference to a non-XML character" }
+      if !isXmlCharV v11 v then throw { code := "XQST0090", msg := "character reference to a non-XML character" }
       pure (Char.ofNat v, j + 1)
     else throw { code := "XPST0003", msg := "unknown entity &" ++ body ++ ";" }
 
 /-- XQuery string literals: entity and character references expanded
     (§4.2.1, production [233] StringLiteral). -/
-def expandRefs (t : String) : Except Err String := do
+def expandRefs (t : String) (v11 : Bool := false) : Except Err String := do
   if !t.contains '&' then return t
   let s := t.toList.toArray
   let mut out : Array Char := #[]
@@ -142,7 +153,7 @@ def expandRefs (t : String) : Except Err String := do
     if i ≥ s.size then break
     let c := chAt s i
     if c == '&' then
-      let (ch, j) ← refAt s i
+      let (ch, j) ← refAt s i v11
       out := out.push ch; i := j
     else out := out.push c; i := i + 1
   pure (String.ofList out.toList)
@@ -651,7 +662,7 @@ def normAttrCh (c : Char) : Char := if c == '\t' || c == '\n' || c == '\r' then 
 
 /-- A direct attribute value in quotes `q` at offset `i` (after the
     quote): its parts, literal strings and enclosed expressions. -/
-def pAttrValue (sp : SubParsers) (q : Char) : P (List Expr × Bool) := do
+def pAttrValue (sp : SubParsers) (q : Char) (v11 : Bool := false) : P (List Expr × Bool) := do
   let c ← read
   let mut parts : Array Expr := #[]
   let mut buf : Array Char := #[]
@@ -679,7 +690,7 @@ def pAttrValue (sp : SubParsers) (q : Char) : P (List Expr × Bool) := do
         expectS "}"
         parts := parts.push e
     else if ch == '&' then
-      match refAt c.s i with
+      match refAt c.s i v11 with
       | .ok (r, j) => buf := buf.push r; set j
       | .error e => throw e
     else buf := buf.push (normAttrCh ch); adv 1
@@ -769,7 +780,7 @@ def scanDecls (s : Array Char) (i : Nat) : List (String × String) := Id.run do
 
 /-- The attributes of a start tag (after the name, up to `/` or `>`):
     namespace declarations and the other attributes. -/
-def pStartTag (sp : SubParsers) : P (List (String × String) × Array (String × String × List Expr × Bool)) := do
+def pStartTag (sp : SubParsers) (v11 : Bool := false) : P (List (String × String) × Array (String × String × List Expr × Bool)) := do
   let c ← read
   let mut decls : List (String × String) := []
   let mut ats : Array (String × String × List Expr × Bool) := #[]
@@ -788,7 +799,7 @@ def pStartTag (sp : SubParsers) : P (List (String × String) × Array (String ×
     let q := chAt c.s (← get)
     if q != '"' && q != '\'' then synErr "expected a quoted attribute value"
     adv 1
-    let (parts, literal) ← pAttrValue sp q
+    let (parts, literal) ← pAttrValue sp q v11
     if (ap == "" && al == "xmlns") || ap == "xmlns" then
       if !literal then throw { code := "XQST0022", msg := "a namespace declaration with an enclosed expression" }
       let uri := litString parts
@@ -798,6 +809,9 @@ def pStartTag (sp : SubParsers) : P (List (String × String) × Array (String ×
       if uri == nsXML && p != "xml" then throw { code := "XQST0070", msg := "the xml namespace bound to another prefix" }
       if uri == "http://www.w3.org/2000/xmlns/" then throw { code := "XQST0070", msg := "the xmlns namespace declared" }
       if decls.any (·.1 == p) then throw { code := "XQST0071", msg := "duplicate namespace declaration" }
+      -- an undeclaration needs XML Names 1.1 (XQuery 4.0 §3.9.1.2)
+      if p != "" && uri == "" && !v11 then
+        throw { code := "XQST0085", msg := "undeclaring the prefix " ++ p ++ " needs XML Names 1.1" }
       decls := decls ++ [(p, uri)]
     else
       ats := ats.push (ap, al, parts, literal)
@@ -817,7 +831,7 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
     set e
     let pre := scanDecls c.s e
     let nsA := pre ++ c.ns.filter (fun (p, _) => !pre.any (·.1 == p))
-    let (decls, ats) ← withReader (fun c => { c with ns := nsA }) (pStartTag sp)
+    let (decls, ats) ← withReader (fun c => { c with ns := nsA }) (pStartTag sp cfg.xml11)
     let outer := c.ns
     let outerDir := outer.filter (fun (p, _) => p.startsWith "#dir:" && !decls.any (fun d => "#dir:" ++ d.1 == p))
     let ns' := decls ++ (outer.filter (fun (p, _) => !p.startsWith "#dir:" && !decls.any (·.1 == p))) ++
@@ -895,7 +909,7 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
             expectS "}"
             ps := ps.push (.bound e)
         else if ch == '&' then
-          match refAt s j with
+          match refAt s j cfg.xml11 with
           | .ok (r, e2) => buf := buf.push r; keep := true; set e2
           | .error er => throw er
         else
@@ -1212,8 +1226,8 @@ def grammar (cfg : Cfg) : ExtGrammar where
   exprSingle s ns sp i := liftOpt (runP (exprSingleP sp) s ns i)
   primary s ns sp i := liftOpt (runP (primaryP cfg sp) s ns i)
   startsPrimary s i := startsComputed s i
-  stringLit := expandRefs
-  postConcat s ns sp lhs i := L4Factoidal.FullText.ftPostConcat expandRefs s ns sp lhs i
+  stringLit t := expandRefs t cfg.xml11
+  postConcat s ns sp lhs i := L4Factoidal.FullText.ftPostConcat (fun t => expandRefs t cfg.xml11) s ns sp lhs i
 
 /-- Does an XPath 4.0 computed node constructor start at `i`? XPath 4.0
     §4.12 has the computed constructors of XQuery, with a name written
