@@ -1977,3 +1977,16 @@ L4Factoidal_RIF_Bld_freeVarsFormula  # (b) nesting of one RIF formula (And, Or, 
 L4Factoidal_RIF_Bld_tmsOfFormula  # (b) nesting of one RIF formula (And, Or, Exists) of a rule document or goal
 L4Factoidal_RIF_insertNamedArg  # (b) RIF presentation syntax reader; the named arguments of one uniterm
 L4Factoidal_RIF_parseNamedArgsGoF  # (b) RIF presentation syntax reader; depth is the parenthesis nesting; the loop over arguments is a tail call; fuel is a token budget
+L4Factoidal_XPath4_genSrc?  # (b) the depth is the nesting of lookups and simple maps over one fn:generate call in a parsed expression (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_genPull  # (b) in the mutual block of XPath4.eval: the depth is the nesting of the parsed expression; fuel decreases at each call; the generated items are an Array loop (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_genShortcut  # (b) as genPull: one call per fn:generate consumer in the parsed expression; fuel decreases (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_largeRangeOf?  # (b) the depth is the nesting of the parsed range expression; fuel decreases at each call (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_rangeShortcut  # (b) as largeRangeOf?: one call per range consumer in the parsed expression; fuel decreases (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_Expr_renameF  # (b) the depth is the nesting of the parsed expression of an inline function body; fuel decreases at each call (F&O 4.0 §1.5.1 static form)
+L4Factoidal_XPath4_Expr_varsReadF  # (b) as renameF: one call per subexpression of the parsed body; fuel decreases
+L4Factoidal_XPath4_Expr_callsF  # (b) as renameF: one call per subexpression of the parsed expression; fuel decreases
+L4Factoidal_XPath4_Expr_namesF  # (b) as renameF: one call per subexpression of the parsed body; fuel decreases
+L4Factoidal_XPath4_instBEqExpr_beq  # (b) `deriving BEq for Expr`: the depth is the nesting of the two parsed expressions compared
+L4Factoidal_XPath4_instBEqIType_beq  # (b) `deriving BEq for IType`: the depth is the nesting of a parsed sequence type
+L4Factoidal_XPath4_instBEqNodeTest_beq  # (b) `deriving BEq for NodeTest`: the depth is the nesting of a parsed node test inside a sequence type
+L4Factoidal_WHATWG_Encoding_runHandle  # (s) specification only: the per-byte run of the UTF-8 decoder handler that the theorems of WHATWG/Encoding/Theorems.lean state over; no compiled code outside Theorems.c calls it; the executed path is Encoding.decodeLoop, a tail call (milestone 2 of https://github.com/danbri/factoidal/issues/1167)

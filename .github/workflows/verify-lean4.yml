@@ -29,6 +29,10 @@ on:
       - 'third_party/testing/rif-core-suite/**'
       - 'tests/rif-bld/**'
       - 'tests/rif-bld-local/**'
+      - 'third_party/testing/wpt-encoding/**'
+      - 'third_party/whatwg-encoding/**'
+      - 'tests/whatwg-encoding/**'
+      - 'tools/whatwg/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
 
@@ -174,3 +178,13 @@ jobs:
       # (https://github.com/danbri/factoidal/issues/1165).
       - name: RIF BLD test suite (tests/rif-bld/run.sh)
         run: bash tests/rif-bld/run.sh
+
+      # WHATWG Encoding Standard over the vendored web-platform-tests encoding/
+      # directory (https://github.com/danbri/factoidal/issues/1167, milestone 2).
+      # Node 22: the test host runs the WPT files in vm realms.
+      - name: Node 22 for the WPT encoding host
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: WHATWG Encoding, WPT encoding tests (tests/whatwg-encoding/run.sh)
+        run: bash tests/whatwg-encoding/run.sh
