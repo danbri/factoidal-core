@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.25.0 (2026-10-29)
+
+- XQuery 4.0 and XPath 4.0 engines (behind `xqueryEval` and `xpath4Eval`) toward all of qt4tests (https://github.com/danbri/factoidal-core/pull/214). qt4tests b1616b79, native runner, measured on that PR: XQuery mode 45040 → 45855 pass, 1187 → 619 fail, 1397 → 1150 unsupported (out of 47624); XPath mode 32928 → 32982 pass, 106 → 78 fail. One test set has one pass fewer (`fn-system-properties`, 23 → 22): the runner now declares the `infoset-dtd` feature. The wasm limits on deep recursion and very large documents still apply (https://github.com/danbri/factoidal/issues/1110).
+
 ## 0.24.0 (2026-10-29)
 
 - `xslt4Transform`: a function call that the XSLT host does not handle falls back to the XPath host of the base environment instead of failing (https://github.com/danbri/factoidal-core/pull/249). (Corrected after publishing: the 0.24.0 package's own changelog says the wasm does not change; it does, by this change.)
