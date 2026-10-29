@@ -1,6 +1,6 @@
 /-
 L4Factoidal.Unicode.Bidi — the Unicode Bidirectional Algorithm, UAX #9
-revision 52 (Unicode 18.0.0), for one paragraph that is laid out as one line
+revision 52 (Unicode 18.0.0)
 (https://github.com/danbri/factoidal/issues/1167, milestone 4).
 
 Rules, with the UAX #9 section numbers:
@@ -20,9 +20,13 @@ Rules, with the UAX #9 section numbers:
   §3.4    L1, L2     reset of separators and trailing white space and
                      isolate formatting characters; reordering.
 
-Rule P1 (splitting text into paragraphs) is the caller's: `levels` treats its
-input as one paragraph, as both Unicode conformance files do. A character of
-type B gets the paragraph level (X8, L1).
+  §3.3.1  P1         `paragraphs` and `levelsOfText`: split text after each
+                     character of type B.
+
+`levels` treats its input as one paragraph, as both Unicode conformance files
+do. A character of type B gets the paragraph level (X8, L1). `levels` and
+`visualOrder` lay a paragraph out as one line; `visualOrderLines` applies L1
+and L2 to each line of a paragraph that the caller has broken into lines.
 
 Characters removed by X9 get no level (`none`) and are left out of the visual
 order, as in BidiTest.txt and BidiCharacterTest.txt.
@@ -534,6 +538,69 @@ def visualOrder (lv : Array (Option Nat)) : Array Nat := Id.run do
 information from BidiBrackets.txt. -/
 def levelsOfChars (cs : Array Char) (paraDir : ParaDir) : Array (Option Nat) × Nat :=
   levels (cs.map bidiClassOf) (BracketInfo.ofChars cs) paraDir
+
+/-- P1: split text into paragraphs. Each paragraph ends after a character of
+class B (kept with the paragraph it ends), or at the end of the text. The
+result is the list of `[start, stop)` ranges, in order. -/
+def paragraphs (cs : Array Char) : Array (Nat × Nat) := Id.run do
+  let mut out : Array (Nat × Nat) := #[]
+  let mut start := 0
+  for i in [0:cs.size] do
+    if bidiClassOf cs[i]! == .B then
+      out := out.push (start, i + 1)
+      start := i + 1
+  if start < cs.size then out := out.push (start, cs.size)
+  pure out
+
+/-- P1 to I2 over text with any number of paragraphs: each paragraph gets its
+own paragraph level (P2, P3, or `paraDir`) and its own levels. The result
+lists, per paragraph, its range, its levels and its paragraph level. -/
+def levelsOfText (cs : Array Char) (paraDir : ParaDir) :
+    Array ((Nat × Nat) × Array (Option Nat) × Nat) :=
+  (paragraphs cs).map fun (a, b) => ((a, b), levelsOfChars (cs.extract a b) paraDir)
+
+/-- L1 and L2 for a paragraph that is broken into lines (UAX #9 §3.4). `cs` is
+one paragraph, `lp` its result from `levelsOfChars`, and `lineEnds` the
+positions, increasing, where its lines end (the last one is `cs.size`; for
+example from `LineBreak.breaks`). L1 resets the white space and isolate
+formatting characters at the end of each line to the paragraph level; L2
+reorders each line by itself. The result is the visual order of the whole
+paragraph, line after line, as indices into `cs`. -/
+def visualOrderLines (cs : Array Char) (lp : Array (Option Nat) × Nat)
+    (lineEnds : Array Nat) : Array Nat := Id.run do
+  let (lv0, para) := lp
+  let mut lv := lv0
+  let mut start := 0
+  let mut out : Array Nat := #[]
+  for e0 in lineEnds do
+    let e := min e0 cs.size
+    if e > start then
+      -- L1 at the end of this line.
+      let mut trailing := true
+      for q in [0:e - start] do
+        let i := e - 1 - q
+        if trailing then
+          let c := bidiClassOf cs[i]!
+          if c.isRemovedByX9 then pure ()
+          else if c == .WS || c.isIsolateInitiator || c == .PDI then
+            lv := lv.set! i (some para)
+          else trailing := false
+      -- L2 on this line.
+      for k in visualOrder (lv.extract start e) do
+        out := out.push (start + k)
+      start := e
+  pure out
+
+#guard visualOrderLines "ab".toList.toArray (levelsOfChars "ab".toList.toArray .ltr) #[2] == #[0, 1]
+#guard (let t := "אב גד".toList.toArray
+        visualOrderLines t (levelsOfChars t .ltr) #[3, 5]) == #[1, 0, 2, 4, 3]
+#guard (let t := "אב גד".toList.toArray
+        visualOrderLines t (levelsOfChars t .ltr) #[5]) == #[4, 3, 2, 1, 0]
+
+#guard paragraphs "ab\ncd".toList.toArray == #[(0, 3), (3, 5)]
+#guard paragraphs "ab\n".toList.toArray == #[(0, 3)]
+#guard paragraphs #[] == #[]
+#guard ((levelsOfText "a\nא".toList.toArray .auto).map (·.2.2)) == #[0, 1]
 
 #guard bidiClassOf 'a' == .L
 #guard bidiClassOf 'א' == .R

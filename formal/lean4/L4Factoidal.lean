@@ -1151,3 +1151,15 @@ import L4Factoidal.WHATWG.URL.Idna
 import L4Factoidal.WHATWG.URL.Host
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.WHATWG.URL.Theorems
+import L4Factoidal.Unicode.RangeTable
+import L4Factoidal.Unicode.NormData
+import L4Factoidal.Unicode.Normalization
+import L4Factoidal.Unicode.SegmentData
+import L4Factoidal.Unicode.Segmentation
+import L4Factoidal.Unicode.SegmentationTheorems
+import L4Factoidal.Unicode.BidiData
+import L4Factoidal.Unicode.Bidi
+import L4Factoidal.Unicode.BidiTheorems
+import L4Factoidal.Unicode.LineBreakData
+import L4Factoidal.Unicode.LineBreak
+import L4Factoidal.Unicode.LineBreakTheorems
