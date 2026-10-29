@@ -57,7 +57,9 @@ inductive TS where
   | attrValueDq | attrValueSq | attrValueUnq | afterAttrValueQuoted | selfClosingStart
   | bogusComment | markupDecl | commentStart | commentStartDash | comment
   | commentEndDash | commentEnd | commentEndBang
-  | doctype | cdata
+  | doctype | beforeDName | dName | afterDName | afterDPubKw | beforeDPub | dPubDq | dPubSq | afterDPub
+  | betweenDPubSys | afterDSysKw | beforeDSys | dSysDq | dSysSq | afterDSys | bogusDoctype
+  | cdata
   | piOpen | piTarget | afterPiTarget | piData | piQuestion
   | escStart | escStartDash | esc | escDash | escDashDash | escLt
   | dblEscStart | dblEsc | dblEscDash | dblEscDashDash | dblEscLt | dblEscEnd
@@ -80,6 +82,11 @@ structure Tok where
   buf : String := ""
   tmp : String := ""
   lastStart : String := ""
+  /-- The current DOCTYPE token: name, public and system identifiers, force-quirks flag. -/
+  dName : Option String := none
+  dPub : Option String := none
+  dSys : Option String := none
+  dFq : Bool := false
   /-- Set by the tree builder: the adjusted current node is not in the HTML namespace. -/
   foreign : Bool := false
   errs : Array String := #[]
@@ -230,59 +237,18 @@ def charRef (inp : Array Char) (p : Nat) (inAttr : Bool) : String × Nat × List
 
 /-! ## DOCTYPE -/
 
-def skipWsL : List Char → List Char
-  | c :: r => if isWs c then skipWsL r else c :: r
-  | [] => []
-
-/-- A quoted identifier at the start of `cs` (after white space). -/
-def quotedId (cs : List Char) : Option (String × List Char) :=
-  match skipWsL cs with
-  | q :: r =>
-    if q == '"' || q == '\'' then
-      let body := r.takeWhile (· != q)
-      some (String.ofList body, (r.drop body.length).drop 1)
-    else none
-  | [] => none
-
-/-- Parse the text between `<!DOCTYPE` and `>`. -/
-def parseDoctype (raw : List Char) : Token × List String :=
-  let startErr : List String := match raw with
-    | c :: _ => if isWs c then [] else ["missing-whitespace-before-doctype-name"]
-    | [] => ["missing-doctype-name"]
-  let cs := skipWsL raw
-  let nameCs := cs.takeWhile (fun c => !isWs c)
-  let rest := skipWsL (cs.drop nameCs.length)
-  let name : Option String := if nameCs.isEmpty then none else some (lowerStr (String.ofList nameCs))
-  let nameErr : List String := if nameCs.isEmpty && raw != [] then ["missing-doctype-name"] else []
-  let kw (s : String) : Bool := rest.length ≥ s.length && lowerStr (String.ofList (rest.take s.length)) == lowerStr s
-  if rest.isEmpty then (.doctype name none none nameCs.isEmpty, startErr ++ nameErr)
-  else if kw "public" then
-    match quotedId (rest.drop 6) with
-    | some (pub, r) =>
-      match quotedId r with
-      | some (sys, r2) =>
-        (.doctype name (some pub) (some sys) false,
-          startErr ++ (if (skipWsL r2).isEmpty then [] else ["missing-whitespace-after-doctype-system-identifier"]))
-      | none =>
-        (.doctype name (some pub) none (!(skipWsL r).isEmpty), startErr ++ (if (skipWsL r).isEmpty then [] else ["missing-quote-before-doctype-system-identifier"]))
-    | none => (.doctype name none none true, startErr ++ ["missing-quote-before-doctype-public-identifier"])
-  else if kw "system" then
-    match quotedId (rest.drop 6) with
-    | some (sys, r) =>
-      (.doctype name none (some sys) false,
-        startErr ++ (if (skipWsL r).isEmpty then [] else ["unexpected-character-after-doctype-system-identifier"]))
-    | none => (.doctype name none none true, startErr ++ ["missing-quote-before-doctype-system-identifier"])
-  else (.doctype name none none true, startErr ++ ["invalid-character-sequence-after-doctype-name"])
-
-def findGtGo (inp : Array Char) : Nat → Nat → Nat
-  | 0, i => i
-  | f + 1, i => match inp[i]? with
-    | some c => if c == '>' then i else findGtGo inp f (i + 1)
-    | none => i
-
 /-! ## The state machine -/
 
 def Tok.errs' (t : Tok) (es : List String) : Tok := es.foldl (fun t e => t.err e) t
+
+/-- Emit the current DOCTYPE token and switch to the data state. -/
+def Tok.emitDoctype (t : Tok) : Tok := { t.emit (.doctype t.dName t.dPub t.dSys t.dFq) with st := .data }
+
+/-- EOF in a DOCTYPE state: force-quirks on, emit the token and an end-of-file token. -/
+def Tok.eofDoctype (t : Tok) : Tok := ({ t.err "eof-in-doctype" with dFq := true }.emitDoctype).emit .eof
+
+/-- Append to the name, public or system identifier of the current DOCTYPE token. -/
+def appendOpt (o : Option String) (c : Char) : Option String := some ((o.getD "").push c)
 
 /-- One transition of the tokenizer. -/
 def Tok.step (t : Tok) : Tok :=
@@ -550,17 +516,104 @@ def Tok.step (t : Tok) : Tok :=
     | some '>' => { (t.err "incorrectly-closed-comment").adv.emit (.comment t.buf) with st := .data, buf := "" }
     | none => ((t.err "eof-in-comment").emit (.comment t.buf)).emit .eof
     | some _ => { t with buf := t.buf ++ "--!", st := .comment }
+  -- the DOCTYPE states (§13.2.5.53 to §13.2.5.68)
   | .doctype =>
-    let e := findGtGo t.inp (t.inp.size - t.pos) t.pos
-    let raw := (t.inp.extract t.pos e).toList
-    let (tok, es) := parseDoctype raw
-    let atEof := e ≥ t.inp.size
-    let tok := match tok with
-      | .doctype n p s q => .doctype n p s (q || atEof)
-      | x => x
-    let t := (t.errs' es).emit tok
-    if atEof then ((t.err "eof-in-doctype").to .data) |> fun t => { t with pos := e }
-    else { t with pos := e + 1, st := .data }
+    match c? with
+    | none => ({ t with dName := none, dPub := none, dSys := none, dFq := false }).eofDoctype
+    | some c =>
+      let t := { t with dName := none, dPub := none, dSys := none, dFq := false }
+      if isWs c then t.adv.to .beforeDName
+      else if c == '>' then t.to .beforeDName
+      else (t.err "missing-whitespace-before-doctype-name").to .beforeDName
+  | .beforeDName =>
+    match c? with
+    | none => t.eofDoctype
+    | some c =>
+      if isWs c then t.adv
+      else if c == '\x00' then { (t.err "unexpected-null-character").adv with dName := some "\uFFFD", st := .dName }
+      else if c == '>' then { (t.err "missing-doctype-name").adv with dFq := true }.emitDoctype
+      else { t.adv with dName := some (String.singleton (lowerAscii c)), st := .dName }
+  | .dName =>
+    match c? with
+    | none => t.eofDoctype
+    | some c =>
+      if isWs c then t.adv.to .afterDName
+      else if c == '>' then t.adv.emitDoctype
+      else if c == '\x00' then { (t.err "unexpected-null-character").adv with dName := appendOpt t.dName '\uFFFD' }
+      else { t.adv with dName := appendOpt t.dName (lowerAscii c) }
+  | .afterDName =>
+    match c? with
+    | none => t.eofDoctype
+    | some c =>
+      if isWs c then t.adv
+      else if c == '>' then t.adv.emitDoctype
+      else if startsWithAt t.inp t.pos "public" true then { t with pos := t.pos + 6, st := .afterDPubKw }
+      else if startsWithAt t.inp t.pos "system" true then { t with pos := t.pos + 6, st := .afterDSysKw }
+      else { (t.err "invalid-character-sequence-after-doctype-name") with dFq := true, st := .bogusDoctype }
+  | .afterDPubKw | .beforeDPub =>
+    let kw := t.st == .afterDPubKw
+    match c? with
+    | none => t.eofDoctype
+    | some c =>
+      if isWs c then (if kw then t.adv.to .beforeDPub else t.adv)
+      else if c == '"' || c == '\'' then
+        let t := if kw then t.err "missing-whitespace-after-doctype-public-keyword" else t
+        { t.adv with dPub := some "", st := if c == '"' then .dPubDq else .dPubSq }
+      else if c == '>' then { (t.err "missing-doctype-public-identifier").adv with dFq := true }.emitDoctype
+      else { (t.err "missing-quote-before-doctype-public-identifier") with dFq := true, st := .bogusDoctype }
+  | .dPubDq | .dPubSq =>
+    let q := if t.st == .dPubDq then '"' else '\''
+    match c? with
+    | none => t.eofDoctype
+    | some c =>
+      if c == q then t.adv.to .afterDPub
+      else if c == '\x00' then { (t.err "unexpected-null-character").adv with dPub := appendOpt t.dPub '\uFFFD' }
+      else if c == '>' then { (t.err "abrupt-doctype-public-identifier").adv with dFq := true }.emitDoctype
+      else { t.adv with dPub := appendOpt t.dPub c }
+  | .afterDPub | .betweenDPubSys =>
+    let after := t.st == .afterDPub
+    match c? with
+    | none => t.eofDoctype
+    | some c =>
+      if isWs c then (if after then t.adv.to .betweenDPubSys else t.adv)
+      else if c == '>' then t.adv.emitDoctype
+      else if c == '"' || c == '\'' then
+        let t := if after then t.err "missing-whitespace-between-doctype-public-and-system-identifiers" else t
+        { t.adv with dSys := some "", st := if c == '"' then .dSysDq else .dSysSq }
+      else { (t.err "missing-quote-before-doctype-system-identifier") with dFq := true, st := .bogusDoctype }
+  | .afterDSysKw | .beforeDSys =>
+    let kw := t.st == .afterDSysKw
+    match c? with
+    | none => t.eofDoctype
+    | some c =>
+      if isWs c then (if kw then t.adv.to .beforeDSys else t.adv)
+      else if c == '"' || c == '\'' then
+        let t := if kw then t.err "missing-whitespace-after-doctype-system-keyword" else t
+        { t.adv with dSys := some "", st := if c == '"' then .dSysDq else .dSysSq }
+      else if c == '>' then { (t.err "missing-doctype-system-identifier").adv with dFq := true }.emitDoctype
+      else { (t.err "missing-quote-before-doctype-system-identifier") with dFq := true, st := .bogusDoctype }
+  | .dSysDq | .dSysSq =>
+    let q := if t.st == .dSysDq then '"' else '\''
+    match c? with
+    | none => t.eofDoctype
+    | some c =>
+      if c == q then t.adv.to .afterDSys
+      else if c == '\x00' then { (t.err "unexpected-null-character").adv with dSys := appendOpt t.dSys '\uFFFD' }
+      else if c == '>' then { (t.err "abrupt-doctype-system-identifier").adv with dFq := true }.emitDoctype
+      else { t.adv with dSys := appendOpt t.dSys c }
+  | .afterDSys =>
+    match c? with
+    | none => t.eofDoctype
+    | some c =>
+      if isWs c then t.adv
+      else if c == '>' then t.adv.emitDoctype
+      else (t.err "unexpected-character-after-doctype-system-identifier").to .bogusDoctype
+  | .bogusDoctype =>
+    match c? with
+    | none => t.emitDoctype.emit .eof
+    | some '>' => t.adv.emitDoctype
+    | some '\x00' => (t.err "unexpected-null-character").adv
+    | some _ => t.adv
   | .piOpen =>
     match c? with
     | none => (t.err "eof-in-processing-instruction").emit .eof
