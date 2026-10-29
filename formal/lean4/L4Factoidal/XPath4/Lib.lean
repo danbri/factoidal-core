@@ -1025,7 +1025,22 @@ def fnTable : List (String × LibFn) := [
     | some k => sInt k | none => [])),
   ent "function-name" (fun _ _ a => pure (match argN a 0 with
     | [.fn (.builtin q _)] => single (Atomic.ofQN q)
+    | [.fn (.inline _ _ _ _ cl)] =>
+      -- a declared function keeps its name in its closure (XQuery prolog)
+      match cl.find? (fun (k, _) => k.uri == "#xqn") with
+      | some (k, _) => single (Atomic.ofQN { uri := k.pfx, loc := k.loc })
+      | none => []
     | _ => [])),
+  ent "function-annotations" (fun _ _ a =>
+    let rec go : Nat → Item → Seq
+      | 0, _ => []
+      | f + 1, .fn (.papp g _) => go f g
+      | _, .fn (.inline _ _ _ _ cl) =>
+        match cl.find? (fun (k, _) => k.uri == "#xqa") with
+        | some (_, s) => s
+        | none => []
+      | _, _ => []
+    pure (go 10000 ((argN a 0).headD default))),
   -- F&O 4.0 §17.1.4: an XPath function item has no annotations
   ent "function-annotations" (fun _ _ a => match argN a 0 with
     | [_] => pure []
@@ -1099,11 +1114,15 @@ def fnTable : List (String × LibFn) := [
       if ok then found := true; break
     pure (sBool found)),
   -- errors and diagnostics
-  ent "error" (fun _ _ a => do
-    let (code, uri) := match optAtom (argN a 0) with
-      | some ⟨_, .qn q⟩ => (q.loc, if q.uri == nsERR then "" else if q.uri == "" then "#none" else q.uri)
-      | _ => ("FOER0000", "")
-    throw { code, msg := strOf (argN a 1), uri }),
+  ent "error" (fun _ e a => do
+    let (code, uri, pfx, noNs) := match optAtom (argN a 0) with
+      | some ⟨_, .qn q⟩ => (q.loc, (if q.uri == nsERR then "" else if q.uri == "" then "#none" else q.uri), q.pfx, q.uri == "")
+      | _ => ("FOER0000", "", "err", false)
+    -- the error value: atomic items as they are, other items atomized
+    let value := (argN a 2).flatMap (fun i => match i with
+      | .atom x => [x]
+      | _ => match e.atomize [i] with | .ok xs => xs | .error _ => [])
+    throw { code, msg := strOf (argN a 1), uri, pfx, noNs, value }),
   ent "trace" (fun _ _ a => pure (argN a 0)),
   ent "message" (fun _ _ _ => pure []),
   ent "default-collation" (fun _ e _ => pure (sStr e.defaultCollation)),
@@ -1396,7 +1415,7 @@ def fnTable2 : List (String × LibFn) := [
     match optAtom (argN a 0) with
     | some ⟨_, .qn q⟩ =>
         let k := intOf (argN a 1)
-        if k < 0 then pure [] else
+        if k < 0 || !e.features.functionEnabled q then pure [] else
         if q.uri == nsXS then
           if (xsCtorType? q.loc).isNone then pure []
           else if k == 1 then pure [.fn (.builtin q 1)]

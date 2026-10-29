@@ -80,6 +80,13 @@ def isConstructorTag (t : String) : Bool :=
 def isBasicUpdTag (t : String) : Bool :=
   ["upd-insert", "upd-delete", "upd-replace", "upd-replace-value", "upd-rename"].contains t
 
+/-- The body of an inline function, through its XQuery 4.0 annotation
+    wrapper (§4.5.5.2), for the Update Facility §7.9 checks. -/
+def inlineBody? : Expr → Option Expr
+  | .inline _ _ body _ => some body
+  | .ext "annotated" (.inline _ _ body _ :: _) _ _ _ => some body
+  | _ => none
+
 /-- The category of an expression, or the first static error. -/
 def cat : Nat → CCtx → Expr → Except Err Cat
   | 0, _, _ => .ok .simple
@@ -188,8 +195,8 @@ def cat : Nat → CCtx → Expr → Except Err Cat
           pure (if cr == .updating then .updating else .simple)
         | _ => pure .simple
       else if t == "upd-fn" then
-        match es with
-        | [.inline _ _ body _] =>
+        match es.head?.bind inlineBody? with
+        | some body =>
           let cb ← go body
           if ss_simple ex && cb == .updating then
             xust "XUST0001" "the body of a %simple inline function is updating"

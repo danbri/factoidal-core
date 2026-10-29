@@ -39,6 +39,8 @@ def storePuts (env : Env) (puts : List (String × NodeRef)) : Env := Id.run do
 /-- Evaluate a main module with the update facility. `v10`: the
     XQuery Update Facility 1.0 category rules (`Static`). -/
 def evalUpdModule (fuel : Nat) (env : Env) (m : Module) (v10 : Bool := true) : M (Seq × Env) := do
+  if !env.features.schemaImport && !m.schemaImports.isEmpty then
+    err "XQST0009" "schema import is disabled"
   for u in m.schemaImports do
     if !env.schema.targetNamespaces.contains u then
       err "XQST0059" ("no schema for the imported namespace " ++ u)
@@ -51,6 +53,13 @@ def evalUpdModule (fuel : Nat) (env : Env) (m : Module) (v10 : Bool := true) : M
   checkModules menv (libs ++ [m])
   checkCategories v10 (libs ++ [m])
   let menv ← bindModules fuel menv (libs ++ [m])
+  -- XQuery 4.0 §5.17: each module's context value type applies after binding.
+  if let some c := menv.ctx then
+    for lm in libs ++ [m] do
+      for d in lm.decls do
+        if let .ctx ty _ _ := d then
+          if !(menv.seqMatches c ty) then
+            err "XPTY0004" "the context value does not match a declared context item type"
   match m.body with
   | none => err "XPST0003" "a library module has no query body"
   | some b =>
@@ -66,8 +75,8 @@ def evalUpdModule (fuel : Nat) (env : Env) (m : Module) (v10 : Bool := true) : M
 /-- Parse and evaluate an XQuery main module with the update facility. -/
 def evalUpdQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) (v10 : Bool := true) :
     M (Seq × Env) := do
-  let m ← parseModule src env.ns env.schema.declared
-  evalUpdModule fuel env m v10
+  let m ← parseModule src env.ns (typeLoader env 8 []) env.schema.declared env.features
+  evalUpdModule fuel (withFnLookup fuel env) m v10
 
 /-- The result of a query with its updates applied, then a second query
     over the updated documents (for the `#guard`s below). -/
@@ -105,5 +114,18 @@ def testEnv : Env :=
 #guard evalUpdShow "let $f := %updating function($n) { delete node $n } return invoke updating $f(/r/a)" "count(/r/*)" testEnv == "1"
 #guard evalUpdShow "let $f := %updating function($n) { delete node $n } return $f(/r/a)" "1" testEnv == "error XUDY0038"
 #guard evalUpdShow "invoke updating fn:put#2(/r, 'urn:x')" "string(doc('urn:x')/r/a)" testEnv == "1"
+
+-- The Update entry point keeps the XQuery module context and lookup rules.
+#guard (match evalUpdQuery "declare context item as xs:string external; ()" testEnv with
+  | .ok _ => "ok" | .error e => e.code) == "XPTY0004"
+#guard (match evalUpdQuery "declare function local:f() { 42 }; function-lookup(xs:QName('local:f'), 0)()" with
+  | .ok (s, _) => showSeq s | .error e => e.code) == "42"
+#guard (match evalUpdQuery "let $f := %simple function($n) { delete node $n } return ()" with
+  | .ok _ => "ok" | .error e => e.code) == "XUST0001"
+
+#guard (match evalUpdQuery "let $f := %Q{urn:custom}updating function() { 42 } return $f()" with
+  | .ok (s, _) => showSeq s | .error e => e.code) == "42"
+#guard (match evalUpdQuery "let $f := %Q{http://www.w3.org/2012/xquery}simple function($n) { delete node $n } return ()" with
+  | .ok _ => "ok" | .error e => e.code) == "XUST0001"
 
 end L4Factoidal.XQueryUpdate

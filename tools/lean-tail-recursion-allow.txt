@@ -1770,6 +1770,9 @@ L4Factoidal_XSLT4_Streaming_evCount  # (s) specification only: the measure of th
 L4Factoidal_XSLT4_Streaming_evCountList  # (s) specification only: the measure of the work-list loop eventsLoop (termination proof) and the work list's meaning in eventsLoop_eq; no compiled function calls it (XSLT Streaming 4.0, issue 1101)
 L4Factoidal_XSLT4_Streaming_flat  # (s) specification only: the measure of the work-list loop eventsLoop (termination proof) and the work list's meaning in eventsLoop_eq; no compiled function calls it (XSLT Streaming 4.0, issue 1101)
 L4Factoidal_XSLT4_Streaming_workCount  # (s) specification only: the measure of the work-list loop eventsLoop (termination proof) and the work list's meaning in eventsLoop_eq; no compiled function calls it (XSLT Streaming 4.0, issue 1101)
+L4Factoidal_XQuery4_flatMapE  # (s) XQuery4/FlworTheorems: specification of the tuple stream; the runtime runs runClauses (for loops)
+L4Factoidal_XQuery4_itemsE  # (s) XQuery4/FlworTheorems: specification of one for clause; the runtime runs stepClause (a for loop)
+L4Factoidal_XQuery4_nestT  # (s) XQuery4/FlworTheorems: the nested reading of a FLWOR, used only by flwor_stream_nested
 # --- XQuery and XPath Full Text 3.0 (L4Factoidal/FullText, https://github.com/danbri/factoidal/issues/1101), 2026-10-28
 L4Factoidal_FullText_evalSel  # (b) nesting of the full-text selection in the query text
 L4Factoidal_FullText_resolve  # (b) nesting of the full-text selection; fuel 1000
@@ -2020,3 +2023,7 @@ L4Factoidal_RIF_Prd_qualifyLocalTm  # (b) nesting of one RIF term; the sibling l
 # --- WHATWG URL in Lean (https://github.com/danbri/factoidal/issues/1167, milestone 3)
 Harness_WhatwgUrl_allStrings  # (c) depth is the generated string length, the constant 6 in `l4whatwg-url rfc3986`
 L4Factoidal_WHATWG_URL_Theorems_joinSlash  # (s) used only by WHATWG/URL/Theorems.lean; the parser serializes paths with Array.foldl (Url.serializePath)
+L4Factoidal_XPath4_FeatureSettings_checkExpr  # (b) the depth is the nesting of the query expression: the static check of disabled features walks the AST (depth, L4Factoidal/XPath4/Eval.lean)
+L4Factoidal_XQuery4_nodeTestStaticErr  # (b) XQuery4/Static: the depth is the nesting of a node test union in the query, and the fuel argument bounds it
+L4Factoidal_XQuery4_typeLoader  # (c) XQuery4/Module: the recursion is one level per module import, at most 8 (typeLoader env 8); the list folds are foldlM loops
+L4Factoidal_XQuery4_loadXQueryModule  # (c) XQuery4/LoadModule: one level per fn:load-xquery-module call made by a loaded module, at most 20 (the depth argument, loadModuleHost)

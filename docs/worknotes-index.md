@@ -140,4 +140,8 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-28 | [XQuery and XPath Full Text 3.0 in Lean](designissues/2026-10-28-xquery-full-text.md) | same commit | current: ft/ scores, the hook into the XPath 4.0 parser, the tokenizer and match option choices, the bridge theorems; https://github.com/danbri/factoidal/issues/1101 |
 | 2026-10-28 | [OWL consistency: what `owlIsConsistent` answers and how each answer is checked](designissues/2026-10-28-owl-consistency-overview.md) | same commit | current: overview for developers who know OWL 2 and Lean; the three answers, the admitted fragment, the theorem chain to the JSON field, what is not proved, the source gate and the packed-package gate; https://github.com/danbri/factoidal/issues/1118 |
 | 2026-10-29 | [Factoidal as WebAssembly components: build strategies, measured](designissues/2026-10-29-wasm-components.md) | (this commit) | record: Lean runtime v4.33.1 under wasi-sdk 34 (blockers B0 to B14), WIT exports by wit-bindgen C, composition with Rust by wac, wasmtime 49, jco 1.38 in Node and Chromium, static link; 13 builds measured against Emscripten; recommendation; experiment in `experiments/wasm-components/`; tracking https://github.com/danbri/factoidal/issues/1167 |
+
+| 2026-10-29 | [XQuery 4.0 merge validation](20261029-xquery4-merge.md) | uncommitted | record |
 | 2026-10-29 | [Full Text and XQuery Update merge](20261029-full-text-update-merge.md) | pending | record |
+| 2026-10-29 | [Processor feature settings](20261029-processor-feature-settings.md) | uncommitted | record |
+| 2026-10-29 | [XQuery 4.0 merge against updated main](20261029-xquery4-merge-main2.md) | uncommitted | record |
