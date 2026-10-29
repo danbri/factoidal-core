@@ -290,6 +290,7 @@ extern_lib libl4hostread pkg := do
     `Harness.Sbm11Export, `Harness.Sbm11MemGenCheck, `Harness.Sbm11PackSpecCheck,
     `Harness.PlannerCheck, `Harness.PlannerKinds, `Harness.PlannerSbm11IO,
     `Harness.ProofObligations, `Harness.WorkerPool] : Array Lean.Name).map Glob.one
+  ++ #[Glob.submodules `Harness.Unicode]
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
 -- (Wasm/Abi.lean) and the `@[export]` C symbols (Wasm/Exports.lean).
@@ -786,3 +787,9 @@ lean_exe l4xproc where root := `L4Factoidal.XProc31.Runner
 -- milestone 3): the engine behind tests/whatwg-url/run.mjs, the
 -- web-platform-tests url runner (Harness/WhatwgUrl.lean).
 @[default_target] lean_exe «l4whatwg-url» where root := `Harness.WhatwgUrl
+
+-- Unicode algorithms in Lean, Unicode 18.0.0 (https://github.com/danbri/factoidal/issues/1167,
+-- milestone 4): normalization (UAX #15), segmentation (UAX #29), bidi (UAX #9)
+-- and line breaking (UAX #14) over the Unicode conformance files
+-- (Harness/UnicodeConformance.lean, tests/unicode/run.sh).
+@[default_target] lean_exe «l4unicode» where root := `Harness.UnicodeConformance
