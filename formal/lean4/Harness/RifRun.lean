@@ -40,10 +40,18 @@ graph, from that graph's own `@prefix` lines. That is the suite's
 convention rather than a RIF rule, and it is applied here because the
 alternative is calling a well-formed conclusion unparsable.
 
-Usage: `lake exe l4rif [suite-dir]`
+## RIF BLD and RIF PRD
+
+`--bld` runs the W3C BLD suite under `RIF/Bld.lean`. `--prd` runs the 53
+cases of the W3C PRD manifest under `RIF/Prd.lean` (46 of them read from
+the Core suite), and requires every shared Core entailment case to keep its
+Core verdict (`prdMain`).
+
+Usage: `lake exe l4rif [suite-dir] [--bld | --prd] [--verbose]`
 -/
 import L4Factoidal.RIF.Engine
 import L4Factoidal.RIF.Bld
+import L4Factoidal.RIF.PrdXml
 import L4Factoidal.RIF.Conformance
 import L4Factoidal.RIF.OwlDirect
 import L4Factoidal.Syntax.RdfXml
@@ -181,6 +189,10 @@ structure Tally where
   staleOverrides : List String := []
   excluded  : Nat := 0
   staleExclusions : List String := []
+  /-- `--prd`: shared Core cases where the PRD verdict and the Core verdict agree. -/
+  coreAgree : Nat := 0
+  /-- `--prd`: shared Core cases where they differ (fails the run). -/
+  coreDiffer : List String := []
 deriving Inhabited
 
 /-- W3C cases whose test data is defective, each with the open issue that
@@ -219,12 +231,42 @@ def bldDefectiveData : List (String × String) :=
 
 def rounds : Nat := 24
 
+/-- The PRD-only cases of the W3C PRD suite (`PRD_v1.22`), read from their
+RIF/XML files: the XML is the normative syntax (RIF PRD 2013 §8), and
+three of the six presentation-syntax files disagree with their XML
+(`L4Factoidal/RIF/PrdXml.lean`). -/
+def prdXmlCases : List String :=
+  ["Assert", "AssertRetract", "AssertRetract2", "Modify", "Modify_loop", "Retract"]
+
+/-- Two verdicts are the same answer (the reason of an `undecided` aside). -/
+def sameVerdictClass : Verdict → Verdict → Bool
+  | .holds, .holds => true
+  | .doesNotHold, .doesNotHold => true
+  | .undecided _, .undecided _ => true
+  | _, _ => false
+
+/-- Score one verdict against the expected one. -/
+def scoreVerdict (t : Tally) (kind name : String) (want : Bool) (verdict : Verdict) : IO Tally := do
+  match verdict with
+  | .holds =>
+      if want then return { t with pass := t.pass + 1 }
+      IO.println s!"FAIL {kind}/{name}: entailed, and must not be"
+      return { t with fail := t.fail + 1 }
+  | .doesNotHold =>
+      if !want then return { t with pass := t.pass + 1 }
+      IO.println s!"FAIL {kind}/{name}: not entailed, and must be"
+      return { t with fail := t.fail + 1 }
+  | .undecided why =>
+      IO.println s!"UNDECIDED {kind}/{name}: {why}"
+      return { t with undecided := t.undecided + 1 }
+
 /-- Run every case under `dir` (one subdirectory per test kind, one per
 case). Used for the W3C corpus and for the project-local corrected copies
 in `tests/rif-local/`. -/
 def runSuite (dir : String) (verbose : Bool) (overrides : List String)
     (defective : List (String × String)) (bld : Bool := false)
-    (entailmentOnly : Bool := false) : IO Tally := do
+    (entailmentOnly : Bool := false) (prd : Bool := false)
+    (skipNames : List String := []) (compareCore : Bool := true) : IO Tally := do
   let mut t : Tally := {}
   for kindEntry in (← System.FilePath.readDir dir) do
     if ← System.FilePath.isDir kindEntry.path then
@@ -232,14 +274,36 @@ def runSuite (dir : String) (verbose : Bool) (overrides : List String)
       for caseEntry in (← System.FilePath.readDir kindEntry.path) do
         if ← System.FilePath.isDir caseEntry.path then
           let name := caseEntry.fileName
+          if verbose then IO.eprintln s!"case {kind}/{name}"
           let cdir := caseEntry.path.toString
           let files := (← System.FilePath.readDir cdir).toList.map (·.fileName)
           let readOne := fun (suffix : String) => do
             match files.find? (·.endsWith suffix) with
             | none   => pure none
             | some f => (IO.FS.readFile (cdir ++ "/" ++ f)).map some
-          if entailmentOnly && !(kind == "PositiveEntailmentTest" || kind == "NegativeEntailmentTest") then
+          if skipNames.contains name ||
+              (entailmentOnly && !(kind == "PositiveEntailmentTest" || kind == "NegativeEntailmentTest")) then
             pure ()
+          else if prd && prdXmlCases.contains name then
+            -- A PRD-only case, read from its RIF/XML files.
+            let want := kind == "PositiveEntailmentTest"
+            let prem ← readOne "-premise.rif"
+            let conc ← (do
+              match ← readOne "-conclusion.rif" with
+              | some c => pure (some c)
+              | none   => readOne "-nonconclusion.rif")
+            match prem.bind L4Factoidal.RIF.PrdXml.parseDoc, conc.bind L4Factoidal.RIF.PrdXml.parseConclusion with
+            | some doc, some goal =>
+                if !doc.imports.isEmpty then
+                  t := { t with notRead := t.notRead + 1 }
+                  IO.println s!"NOT READ {kind}/{name}: a PRD-only case with an import"
+                else
+                  let o := L4Factoidal.RIF.Prd.run doc.rules doc.facts L4Factoidal.RIF.Prd.defaultCycles
+                  if verbose then IO.println s!"PRD {kind}/{name}: {o.cycles} cycles, final = {o.final}"
+                  t ← scoreVerdict t kind name want (L4Factoidal.RIF.Prd.entailsPrd doc.rules doc.facts goal)
+            | _, _ =>
+                t := { t with notRead := t.notRead + 1 }
+                IO.println s!"NOT READ {kind}/{name}: the RIF/XML premise or conclusion did not parse"
           else if kind == "ImportRejectionTest" then
             -- The import combination must be REJECTED. The verdict is
             -- the library's disjunction of the RIF-RDF/OWL Combination
@@ -375,7 +439,7 @@ def runSuite (dir : String) (verbose : Bool) (overrides : List String)
                           -- condition 8 has one direction only;
                           -- `RDF_Combination_SubClass_5`).
                           let factsOf := fun (tr : Triple) => (factsOfTriple tr).filter
-                            (fun f => !bld || match f with | .sub _ _ => false | _ => true)
+                            (fun f => !(bld || prd) || match f with | .sub _ _ => false | _ => true)
                           let facts := g.flatMap factsOf
                           let want := kind == "PositiveEntailmentTest"
                           -- Local constants are DOCUMENT-scoped, so
@@ -417,7 +481,31 @@ def runSuite (dir : String) (verbose : Bool) (overrides : List String)
                                                (L4Factoidal.RDFS.containerMembershipIn tg) tg).flatMap factsOf
                                            else [] }
                                        rules facts goal
-                                   else entails rules facts goal rounds)
+                                   else entails rules (if prd then g.flatMap factsOfTriple else facts) goal rounds)
+                          -- RIF PRD 2013: the Core rules as production rules
+                          -- (`Prd.ofCoreRule`), the imported facts as the initial
+                          -- state, and the RIF-RDF combination conditions 7 and 8
+                          -- as rules when the document imports a graph. An
+                          -- OWL-Direct import is decided as in RIF Core.
+                          let prdVerdict : Verdict :=
+                            if unsupportedRegime then Verdict.undecided
+                              "the case imports under an entailment regime this port does not implement"
+                            else if owlDirectOnly then
+                              L4Factoidal.RIF.OwlDirect.entailsOwlDirect rules imported goal rounds
+                            else if !graphMappingSupported g then Verdict.undecided
+                              "RDF input cannot be represented in RIF (direction or triple term)"
+                            else
+                              L4Factoidal.RIF.Prd.entailsPrd
+                                ((rules ++ (if doc.imports.isEmpty then []
+                                            else L4Factoidal.RIF.Bld.rdfCombinationRules)).map
+                                  L4Factoidal.RIF.Prd.ofCoreRule)
+                                facts (.core goal)
+                          if prd && compareCore then
+                            if sameVerdictClass prdVerdict verdict then t := { t with coreAgree := t.coreAgree + 1 }
+                            else
+                              t := { t with coreDiffer := t.coreDiffer ++ [name] }
+                              IO.println s!"CORE DIFFERS {kind}/{name}: PRD {repr prdVerdict}, Core {repr verdict}"
+                          let verdict := if prd then prdVerdict else verdict
                           let ok := match verdict with
                             | .holds => want
                             | .doesNotHold => !want
@@ -471,7 +559,57 @@ def runSuite (dir : String) (verbose : Bool) (overrides : List String)
                                 IO.println s!"UNDECIDED {kind}/{name}: {why}{usedStr}"
   return t
 
+/-- The case directory names under a suite directory. -/
+def caseNames (dir : String) : IO (List String) := do
+  let mut names : List String := []
+  for k in ← System.FilePath.readDir dir do
+    if ← System.FilePath.isDir k.path then
+      for c in ← System.FilePath.readDir k.path do
+        if ← System.FilePath.isDir c.path then names := names ++ [c.fileName]
+  return names
+
+/-- `--prd`: the W3C RIF PRD manifest (`PRDTests.xml`, 53 cases) under the
+PRD engine (`RIF/Prd.lean`, RIF PRD 2013). 46 of its cases are the W3C RIF
+Core cases, vendored in the Core suite and read from there; the other 7 are
+in `PRD_v1.22` (the 3 cases that `PRD_v1.22` repeats from Core are read
+once). Every shared entailment case must also get its Core verdict. -/
+def prdMain (verbose : Bool) : IO UInt32 := do
+  let prdDir ← Harness.resolveFixtureOr "third_party/testing/rif-prd-suite/PRD_v1.22/Approved"
+  let coreDir ← Harness.resolveFixtureOr "third_party/testing/rif-core-suite/Core_v1.22/Approved"
+  if !(← System.FilePath.isDir prdDir) || !(← System.FilePath.isDir coreDir) then
+    IO.println s!"rif runner: corpus not found: {prdDir} or {coreDir}"
+    return 1
+  let overrides ← loadOverrides (← Harness.resolveFixtureOr "tests/local-overrides/rif")
+  let coreNames ← caseNames coreDir
+  let c ← runSuite coreDir verbose overrides defectiveData false false true
+  -- `PRD_v1.22` cases are not RIF Core cases (`RDF_Combination_SubClass_5`
+  -- is listed for BLD and PRD only), so they are not compared with Core.
+  let p ← runSuite prdDir verbose overrides [] false false true coreNames false
+  let localDir ← Harness.resolveFixtureOr "tests/rif-local"
+  let l ← if ← System.FilePath.isDir localDir
+    then runSuite localDir verbose [] [] false false true else pure {}
+  let pass := c.pass + p.pass
+  let fail := c.fail + p.fail + c.staleExclusions.length + p.staleExclusions.length
+  let total := pass + fail + c.undecided + p.undecided + c.notRead + p.notRead + c.overridden + p.overridden
+  IO.println ""
+  IO.println (s!"rif-prd DECIDED: {pass} pass, {fail} fail (out of {pass + fail} decided); " ++
+    s!"{c.undecided + p.undecided} undecided; {c.notRead + p.notRead} not read; " ++
+    s!"{c.overridden + p.overridden} local override; {c.excluded + p.excluded} excluded (defective test data)")
+  IO.println s!"  of which PRD-only (PRD_v1.22): {p.pass} pass, {p.fail} fail, {p.undecided} undecided, {p.notRead} not read"
+  IO.println (s!"  inventory: {total + c.excluded + p.excluded} cases of the W3C PRD manifest (53 listed)")
+  let differ := c.coreDiffer ++ p.coreDiffer ++ l.coreDiffer
+  IO.println (s!"PRD against Core: {c.coreAgree + p.coreAgree + l.coreAgree} entailment cases agree, " ++
+    s!"{differ.length} differ" ++ (if differ.isEmpty then "" else s!": {differ}"))
+  let localTotal := l.pass + l.fail + l.undecided + l.notRead
+  IO.println s!"rif-local under PRD: {l.pass} pass, {l.fail} fail, {l.undecided} undecided, {l.notRead} not read (out of {localTotal})"
+  for stale in c.staleOverrides ++ p.staleOverrides do
+    IO.println s!"STALE OVERRIDE {stale}: this test now passes on its own — remove its .override file"
+  let ok := fail == 0 && differ.isEmpty && total > 0 && c.staleOverrides.isEmpty && p.staleOverrides.isEmpty
+    && l.pass == localTotal && localTotal > 0 && p.notRead == 0
+  return if ok then 0 else 1
+
 def main (args : List String) : IO UInt32 := do
+  if args.contains "--prd" then return ← prdMain (args.contains "--verbose")
   -- `--bld`: the RIF-BLD 2013 suite under the BLD engine (`RIF/Bld.lean`).
   let bld := args.contains "--bld"
   let dir ← Harness.fixtureArgOr ((args.filter (fun a => !a.startsWith "--")).head?)

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- RIF PRD (W3C Recommendation, Second Edition 2013) in the Lean engine, `L4Factoidal/RIF/Prd.lean`, over the RIF Core matcher: conditions with `Not` and the PRD membership rule, the actions Assert, Retract (of a fact, of all slot values, of an object), Modify and Execute (`act:print`), action blocks with `New()` and slot-value action variables, and the `rif:forwardChaining` strategy (refraction, priority, recency) over cycle and transitional states. The RIF/XML syntax of PRD is read by `L4Factoidal/RIF/PrdXml.lean`. W3C PRD manifest (53 cases, 46 shared with RIF Core): 49 pass, 0 fail (out of 49 decided), 1 undecided, 3 excluded (defective test data, https://github.com/danbri/factoidal/issues/1031); the 37 shared Core entailment cases give the Core verdict. No npm or wasm op yet.
 - RIF BLD (W3C Recommendation, Second Edition 2013) in the Lean engine, `L4Factoidal/RIF/Bld.lean`, over the RIF Core engine: equality in rule conclusions with congruence and list injectivity, inconsistency when two data values are made equal, the semantic conditions on `#` and `##`, rules whose body does not bind every variable, named-argument uniterms, open lists and conjunctive conclusions in the presentation syntax. W3C BLD suite: 28 pass, 0 fail (out of 28 decided), 1 undecided, 3 excluded (defective test data, https://github.com/danbri/factoidal/issues/1186). No npm or wasm op yet.
 
 ## 0.22.0 (2026-10-29)

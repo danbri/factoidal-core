@@ -2003,3 +2003,14 @@ L4Factoidal_XPath4_instBEqExpr_beq  # (b) `deriving BEq for Expr`: the depth is 
 L4Factoidal_XPath4_instBEqIType_beq  # (b) `deriving BEq for IType`: the depth is the nesting of a parsed sequence type
 L4Factoidal_XPath4_instBEqNodeTest_beq  # (b) `deriving BEq for NodeTest`: the depth is the nesting of a parsed node test inside a sequence type
 L4Factoidal_WHATWG_Encoding_runHandle  # (s) specification only: the per-byte run of the UTF-8 decoder handler that the theorems of WHATWG/Encoding/Theorems.lean state over; no compiled code outside Theorems.c calls it; the executed path is Encoding.decodeLoop, a tail call (milestone 2 of https://github.com/danbri/factoidal/issues/1167)
+L4Factoidal_RIF_PrdXml_parseCondNode  # (b) nesting of one RIF-PRD XML condition (And, Or, INeg, Exists); conjuncts are read by mapM, a loop
+L4Factoidal_RIF_PrdXml_parseGroup  # (b) nesting of Group, Forall and Implies elements of a RIF-PRD XML document; sentences are read by mapM, a loop
+L4Factoidal_RIF_PrdXml_parseRule  # (b) nesting of Group, Forall and Implies elements of a RIF-PRD XML document; sentences are read by mapM, a loop
+L4Factoidal_RIF_Prd_condMonotone  # (b) nesting of one RIF-PRD condition of a rule document; conjuncts by List.all, a loop
+L4Factoidal_RIF_Prd_condVars  # (b) nesting of one RIF-PRD condition of a rule document or goal
+L4Factoidal_RIF_Prd_instHashableGTerm_hash  # (b) `deriving Hashable for GTerm`: the depth is the nesting of one ground RIF term
+L4Factoidal_RIF_Prd_matchCond  # (b) nesting of one RIF-PRD condition of a rule document or goal; facts and substitutions are folded by List.foldl, a loop
+L4Factoidal_RIF_Prd_withMemberRule  # (b) nesting of one RIF Core formula of a rule document or goal
+L4Factoidal_RIF_Prd_qualifyCond  # (b) nesting of one RIF-PRD condition of a rule document or goal
+L4Factoidal_RIF_Prd_qualifyLocalFormula  # (b) nesting of one RIF Core formula of a rule document or goal
+L4Factoidal_RIF_Prd_qualifyLocalTm  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document or goal
