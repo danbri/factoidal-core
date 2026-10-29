@@ -1,0 +1,12 @@
+{
+  "@context": "http://www.w3.org/ns/anno.jsonld",
+  "id": "http://example.org/page1",
+  "type": "AnnotationPage",
+  "partOf": {
+    "id": "http://example.org/collection1",
+    "label": "Steampunk Annotations",
+    "total": 42023
+  },
+  "next": "http://example.org/page2",
+  "startIndex": 0
+}

@@ -426,11 +426,113 @@ def annotationKeywords : List String :=
    "$id", "definitions", "readOnly", "writeOnly", "contentMediaType",
    "contentEncoding", "format"]
 
+/-! ### Dialects
+
+The validator reads draft-07 by default. A `Dialect` selects the few
+places where an older draft or a named validator reads a schema
+differently. The Web Annotation test suite (W3C, 2017) is written for
+draft-04 and for the validator its harness loads, ajv 4.0.4; its verdicts
+depend on three of these points:
+
+* **Unknown keywords.** Draft-04 §5.4 (and ajv) ignore a keyword the
+  validator does not know. The suite puts `assertionType`,
+  `expectedResult`, `errorMessage` and `onUnexpectedResult` in every
+  schema, and writes `"$ref "` (with a space) twice. By default an
+  unknown keyword stays `unsupported`.
+* **Boolean `exclusiveMinimum` and `exclusiveMaximum`** (draft-04 §5.1.2
+  and §5.1.3): `true` makes the sibling `minimum` or `maximum` strict.
+* **`format` as an assertion.** ajv 4.0.4 checks `format` in its
+  default "fast" mode. `formatCheck` gives the check for each format
+  name, or `none` for a name it does not know (ajv ignores those). -/
+
+/-- Where a schema reading differs from the draft-07 default. -/
+structure Dialect where
+  /-- An unknown keyword passes (draft-04 §5.4) instead of being `unsupported`. -/
+  ignoreUnknown : Bool := false
+  /-- `exclusiveMinimum`/`exclusiveMaximum` are booleans (draft-04). -/
+  booleanExclusive : Bool := false
+  /-- `format` is an assertion, checked by `formatCheck`. -/
+  assertFormat : Bool := false
+  /-- The `format` check: `some ok` for a known format name. -/
+  formatCheck : String → Option (String → Bool) := fun _ => none
+
+/-- `some true`, as a Boolean. -/
+def isTrue : Option Json → Bool
+  | some (.bool true) => true
+  | _                 => false
+
+/-- White space as ECMAScript `\s` reads it (ECMA-262 §22.2.2.9:
+    WhiteSpace and LineTerminator code points). -/
+def isEcmaSpace (c : Char) : Bool :=
+  let n := c.toNat
+  n == 0x09 || n == 0x0A || n == 0x0B || n == 0x0C || n == 0x0D || n == 0x20 ||
+  n == 0xA0 || n == 0x1680 || (0x2000 ≤ n && n ≤ 0x200A) || n == 0x2028 ||
+  n == 0x2029 || n == 0x202F || n == 0x205F || n == 0x3000 || n == 0xFEFF
+
+private def dig (c : Char) : Bool := '0' ≤ c && c ≤ '9'
+private def digIn (lo hi : Char) (c : Char) : Bool := lo ≤ c && c ≤ hi
+
+/-- ajv 4.0.4 "fast" mode `date-time`. The ajv source writes it as the
+    pattern `^\d\d\d\d-[0-1]\d-[0-3]\d[t\s][0-2]\d:[0-5]\d:[0-5]\d(?:\.\d+)?(?:z|[+-]\d\d:\d\d)$`
+    with flag `i`; this function accepts the same strings. It checks the
+    shape only (`2015-19-39T29:59:59Z` passes), as ajv's fast mode does. -/
+def ajv4DateTime (s : String) : Bool :=
+  let tz : List Char → Bool := fun r => match r with
+    | ['z'] | ['Z'] => true
+    | [sg, h1, h2, ':', m1, m2] => (sg == '+' || sg == '-') && dig h1 && dig h2 && dig m1 && dig m2
+    | _ => false
+  match s.toList with
+  | y1 :: y2 :: y3 :: y4 :: '-' :: mo1 :: mo2 :: '-' :: d1 :: d2 :: sep ::
+    h1 :: h2 :: ':' :: mi1 :: mi2 :: ':' :: s1 :: s2 :: rest =>
+      dig y1 && dig y2 && dig y3 && dig y4 && digIn '0' '1' mo1 && dig mo2 &&
+      digIn '0' '3' d1 && dig d2 && (sep == 't' || sep == 'T' || isEcmaSpace sep) &&
+      digIn '0' '2' h1 && dig h2 && digIn '0' '5' mi1 && dig mi2 &&
+      digIn '0' '5' s1 && dig s2 &&
+      (match rest with
+       | '.' :: frac =>
+           let ds := frac.takeWhile dig
+           !ds.isEmpty && tz (frac.drop ds.length)
+       | _ => tz rest)
+  | _ => false
+
+/-- ajv 4.0.4 "fast" mode `uri`: the pattern
+    `^(?:[a-z][a-z0-9+-.]*)?(?:\:|\/)\/?[^\s]*$` with flag `i`. The scheme
+    class (`+-.` is the range `+`, `,`, `-`, `.`) has no `:` or `/`, so the
+    pattern holds exactly when the text has no white space and a `:` or `/`
+    comes first or right after a maximal run of scheme characters that
+    starts with a letter. -/
+def ajv4Uri (s : String) : Bool :=
+  let cs := s.toList
+  let schemeChar : Char → Bool := fun c =>
+    (c.isAlpha && c.toNat < 128) || dig c || c == '+' || c == ',' || c == '-' || c == '.'
+  let sepAt : List Char → Bool := fun r => match r with
+    | c :: _ => c == ':' || c == '/'
+    | [] => false
+  !(cs.any isEcmaSpace) &&
+  (sepAt cs ||
+   match cs with
+   | c :: _ => c.isAlpha && c.toNat < 128 && sepAt (cs.dropWhile schemeChar)
+   | [] => false)
+
+/-- The formats ajv 4.0.4 checks in "fast" mode that the Web Annotation
+    schemas use (`uri`, `date-time`). Any other name is not checked, as
+    in ajv for a format it does not know. -/
+def ajv4Formats : String → Option (String → Bool)
+  | "date-time" => some ajv4DateTime
+  | "uri"       => some ajv4Uri
+  | _           => none
+
+/-- The draft-04 reading of the ajv 4.0.4 validator that the W3C Web
+    Annotation test harness (`annotation-model/scripts/JSONtest.js`) loads. -/
+def draft04Ajv4 : Dialect :=
+  { ignoreUnknown := true, booleanExclusive := true, assertFormat := true,
+    formatCheck := ajv4Formats }
+
 /-- Validate one instance against one schema, in the context of the
     document `root`. `true`/`false` schemas are the boolean forms from
     draft 2019-09 onward. -/
 partial def validateIn (reg : Registry) (root : Json) (base : String) (fuel : Nat)
-    (schema inst : Json) : VResult :=
+    (schema inst : Json) (d : Dialect := {}) : VResult :=
   match fuel with
   | 0 => .unsupported
   | fuel + 1 =>
@@ -438,7 +540,7 @@ partial def validateIn (reg : Registry) (root : Json) (base : String) (fuel : Na
   -- `base` unchanged when a sibling `$ref` cancels the `$id`, so the
   -- §8.3 rule holds here without a second test.
   let base' := baseInside base schema
-  let rec' := validateIn reg root base' fuel
+  let rec' := fun s i => validateIn reg root base' fuel s i d
   match schema with
   | .bool true  => .pass
   | .bool false => .fail
@@ -471,7 +573,7 @@ partial def validateIn (reg : Registry) (root : Json) (base : String) (fuel : Na
                -- `$id` cannot have moved it), and the referenced
                -- schema is then validated in ITS OWN scope.
                (match resolveRefFrom reg root base r with
-                | some (sub, subBase) => validateIn reg root subBase fuel sub inst
+                | some (sub, subBase) => validateIn reg root subBase fuel sub inst d
                 | none                => .unsupported)
            | _ => .unsupported)
         else if k == "type" then checkType v inst
@@ -480,8 +582,26 @@ partial def validateIn (reg : Registry) (root : Json) (base : String) (fuel : Na
           (match v with
            | .array vs => if vs.any (fun c => jsonEq c inst) then .pass else .fail
            | _         => .unsupported)
-        else if k == "minimum" then ratKeyword v inst (fun x b => ratLe b x)
-        else if k == "maximum" then ratKeyword v inst (fun x b => ratLe x b)
+        else if k == "minimum" then
+          (if d.booleanExclusive && isTrue (field? "exclusiveMinimum" schema)
+           then ratKeyword v inst (fun x b => ratLt b x)
+           else ratKeyword v inst (fun x b => ratLe b x))
+        else if k == "maximum" then
+          (if d.booleanExclusive && isTrue (field? "exclusiveMaximum" schema)
+           then ratKeyword v inst (fun x b => ratLt x b)
+           else ratKeyword v inst (fun x b => ratLe x b))
+        else if d.booleanExclusive && (k == "exclusiveMinimum" || k == "exclusiveMaximum") then
+          -- Draft-04: a boolean that the sibling `minimum`/`maximum` reads.
+          (match v with
+           | .bool _ => .pass
+           | _       => .unsupported)
+        else if k == "format" && d.assertFormat then
+          (match v, inst with
+           | .string f, .string s =>
+               (match d.formatCheck f with
+                | some ok => if ok s then .pass else .fail
+                | none    => .pass)
+           | _, _ => .pass)
         else if k == "exclusiveMinimum" then ratKeyword v inst (fun x b => ratLt b x)
         else if k == "exclusiveMaximum" then ratKeyword v inst (fun x b => ratLt x b)
         else if k == "multipleOf" then ratKeyword v inst isMultiple
@@ -641,6 +761,7 @@ partial def validateIn (reg : Registry) (root : Json) (base : String) (fuel : Na
           -- nothing (draft-07 §6.6.2/§6.6.3).
           (if (field? "if" schema).isSome then .pass else .pass)
         else if annotationKeywords.contains k then .pass
+        else if d.ignoreUnknown then .pass
         else .unsupported))
   | _ => .unsupported
 

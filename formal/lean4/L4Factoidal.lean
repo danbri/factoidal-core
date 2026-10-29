@@ -640,6 +640,9 @@ import L4Factoidal.DataCube.Constraints
 import L4Factoidal.YAML.Loader
 import L4Factoidal.YAMLLD.Api
 import L4Factoidal.YAMLLD.Theorems
+import L4Factoidal.WebAnnotation.JsonTest
+import L4Factoidal.WebAnnotation.Vocab
+import L4Factoidal.WebAnnotation.Theorems
 import L4Factoidal.RIF.Syntax
 import L4Factoidal.RIF.Ps
 import L4Factoidal.RIF.Builtins

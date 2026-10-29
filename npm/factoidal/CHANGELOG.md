@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Web Annotation Data Model and Vocabulary (W3C Recommendations, 2017) in the Lean engine, `L4Factoidal/WebAnnotation/`: the procedure of the W3C annotation-model tests (`JsonTest.lean`) over the JSON Schema validator, which gains a draft-04 dialect (`draft04Ajv4`: unknown keywords ignored, boolean `exclusiveMinimum`/`exclusiveMaximum`, `format` checked as ajv 4.0.4 "fast" mode checks `uri` and `date-time`); the vocabulary checks over the existing JSON-LD 1.1, N-Triples, Turtle and RDF/XML code (`Vocab.lean`). `bash tests/webannotation/run.sh`: model tests on the 44 Recommendation examples and 41 protocol samples 246 pass, 0 fail (out of 246 runs), 6 excluded (defective test data, https://github.com/danbri/factoidal/issues/1193); 19 negative documents 19 pass, 0 fail (out of 19); vocabulary 342 pass, 0 fail (out of 342). No npm or wasm op yet; the Annotation Protocol is not done yet.
+
 ## 0.24.0 (2026-10-29)
 
 In the Lean tree (native runners; no new package functions; the wasm does not change):
