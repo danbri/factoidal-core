@@ -48,20 +48,10 @@ def qnEntries (v : Option Seq) (what : String) : M (List (QN × Seq)) :=
       | _ => err "XPTY0004" ("the keys of " ++ what ++ " must be QNames"))
   | some _ => err "XPTY0004" (what ++ " must be a map")
 
-mutual
-
-/-- `fn:transform` with `fuel` levels of nesting, and the packages the
-    run knows (for `package-name` and for `xsl:use-package`). -/
-def fnTransformHost : Nat → List PkgEntry → Env → QN → Nat → Option HostFn
-  | 0, _, _, _, _ => none
-  | f + 1, lib, env, q, k =>
-    if q.uri == nsFN && q.loc == "transform" && k == 1 then
-      some (fun c a => fnTransform f lib env c a)
-    else none
-
-def fnTransform : Nat → List PkgEntry → Env → HostCall → List Seq → M Seq
-  | 0, _, _, _, _ => err "FOXT0001" "fn:transform is nested too deeply"
-  | f + 1, lib, env, c, a => do
+/-- One transformation, with the host for nested calls supplied explicitly.
+    This body does not construct or call a recursive copy of itself. -/
+def fnTransformWithHost (nestedHost : Env → QN → Nat → Option HostFn)
+    (lib : List PkgEntry) (env : Env) (_c : HostCall) (a : List Seq) : M Seq := do
     let opts ← match a.getD 0 [] with
       | [.map kvs] => pure kvs
       | _ => err "XPTY0004" "the argument of fn:transform must be a map"
@@ -138,7 +128,7 @@ def fnTransform : Nat → List PkgEntry → Env → HostCall → List Seq → M 
         match ← env.coerce (parseTy "xs:boolean") v "option enable-assertions" with
         | [.atom ⟨_, .bool b⟩] => pure b
         | _ => err "XPTY0004" "enable-assertions must be a boolean"
-    let S := { S with extraHost := fnTransformHost f lib, assertionsEnabled }
+    let S := { S with extraHost := nestedHost, assertionsEnabled }
     let params ← qnEntries (opt "stylesheet-params") "stylesheet-params"
     let tparams ← qnEntries (opt "template-params") "template-params"
     let tunnel ← qnEntries (opt "tunnel-params") "tunnel-params"
@@ -203,6 +193,46 @@ def fnTransform : Nat → List PkgEntry → Env → HostCall → List Seq → M 
       entries := entries ++ [(Atomic.ofStr h, ← deliver v fm sp)]
     pure [.map entries]
 
+mutual
+
+/-- A lazy nested-transform host. The callback spends one unit of fuel;
+    fnTransform spends another before installing the next host. -/
+def fnTransformHost : Nat → List PkgEntry → Env → QN → Nat → Option HostFn
+  | 0, _, _, _, _ => none
+  | f + 1, lib, env, q, k =>
+    if q.uri == nsFN && q.loc == "transform" && k == 1 then
+      some (fun c a => fnTransform f lib env c a)
+    else none
+
+/-- fn:transform with the original fuel budget and package library.
+    Host construction is constant work, independent of the unused fuel. -/
+def fnTransform : Nat → List PkgEntry → Env → HostCall → List Seq → M Seq
+  | 0, _, _, _, _ => err "FOXT0001" "fn:transform is nested too deeply"
+  | f + 1, lib, env, c, a =>
+      fnTransformWithHost (fnTransformHost f lib) lib env c a
+
 end
+
+-- These equations retain the former mutual definitions for every fuel.
+theorem fnTransform_zero (lib : List PkgEntry) (env : Env) (c : HostCall) (a : List Seq) :
+    fnTransform 0 lib env c a = err "FOXT0001" "fn:transform is nested too deeply" := rfl
+
+theorem fnTransform_succ (fuel : Nat) (lib : List PkgEntry) (env : Env)
+    (c : HostCall) (a : List Seq) :
+    fnTransform (fuel + 1) lib env c a =
+      fnTransformWithHost (fnTransformHost fuel lib) lib env c a := rfl
+
+theorem fnTransformHost_zero (lib : List PkgEntry) (env : Env) (q : QN) (k : Nat) :
+    fnTransformHost 0 lib env q k = none := rfl
+
+theorem fnTransformHost_succ (fuel : Nat) (lib : List PkgEntry) (env : Env)
+    (q : QN) (k : Nat) :
+    fnTransformHost (fuel + 1) lib env q k =
+      if q.uri == nsFN && q.loc == "transform" && k == 1 then
+        some (fun c a => fnTransform fuel lib env c a)
+      else none := rfl
+
+#print axioms fnTransform_succ
+#print axioms fnTransformHost_succ
 
 end L4Factoidal.XSLT4

@@ -109,4 +109,24 @@ private def nestedAnswer (src : String) : String :=
 #guard nestedAnswer (assertCall "1 idiv 0 = 1" "" ", 'enable-assertions': false()") == "ok"
 #guard nestedAnswer (assertCall "false()" "" ", 'enable-assertions': true()") == "XTMM9001"
 
+
+-- An actual transform inside a stylesheet consumes the predecessor host
+-- and runner budgets. Adjacent budgets expose exhaustion and success.
+private def nestedFuelAnswer (fuel : Nat) : String :=
+  let leaf := "<xsl:stylesheet xmlns:xsl='http://www.w3.org/1999/XSL/Transform' version='3.0'>" ++
+    "<xsl:template name='main'><xsl:sequence select='7'/></xsl:template></xsl:stylesheet>"
+  let outer := "<xsl:stylesheet xmlns:xsl='http://www.w3.org/1999/XSL/Transform' version='3.0'>" ++
+    "<xsl:template name='main'><xsl:sequence select=\"transform(map { " ++
+    "'stylesheet-location': 'leaf.xsl', 'initial-template': QName('', 'main'), " ++
+    "'delivery-format': 'raw' })?output\"/></xsl:template></xsl:stylesheet>"
+  let e : Env := { baseUri := "https://example.org/nested/query.xq", resources :=
+    [("https://example.org/nested/leaf.xsl", leaf), ("https://example.org/nested/outer.xsl", outer)] }
+  let e := { e with host := L4Factoidal.XSLT4.fnTransformHost fuel [] e }
+  match evalString "transform(map { 'stylesheet-location': 'outer.xsl', 'initial-template': QName('', 'main'), 'delivery-format': 'raw' })?output" e with
+  | .ok s => showSeq s
+  | .error er => er.code
+
+#guard nestedFuelAnswer 3 == "FOXT0001"
+#guard nestedFuelAnswer 4 == "7"
+
 end L4Factoidal.XSLT4.Qt.Tests

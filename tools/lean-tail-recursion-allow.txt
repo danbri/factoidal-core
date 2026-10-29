@@ -2031,3 +2031,7 @@ L4Factoidal_XPath4_XInclude_expand  # (b) depth is the element nesting of the do
 L4Factoidal_XPath4_XInclude_runText_txt  # (b) #guard helper over the element nesting of a test document (fuel 50); children visited by List.map
 L4Factoidal_XPath4_XIncludeTheorems_noXi  # (b) specification predicate of expand_noXi over the element nesting of a document (fuel argument); children visited by List.all
 L4Factoidal_XPath4_stripElemContentWs  # (b) XPath4/XmlParse: depth is the element nesting of a DTD-validated document (fuel 100000, as stripWs); children visited by List.map
+
+# XSLT fn:transform callback nesting, newly compiled by assertion regressions.
+L4Factoidal_XSLT4_fnTransform  # (b) nested transformation depth; fuel decreases before installing fnTransformHost, whose callback decreases it again; zero/succ equations and real nested fuel-boundary tests in FnTransform/QtFnTransformTests.lean; production host fuel 3; https://github.com/danbri/factoidal/issues/1161
+L4Factoidal_XSLT4_fnTransformHost  # (b) lazy callback cycle with fnTransform, not traversal of the List arguments; predecessor fuel on every host/runner edge, zero host has no callback; exact equations and nested tests in FnTransform/QtFnTransformTests.lean; https://github.com/danbri/factoidal/issues/1161
