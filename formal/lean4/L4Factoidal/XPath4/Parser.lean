@@ -58,6 +58,8 @@ structure ExtGrammar where
   xquery : Bool := true
 
 structure PCtx where
+  /-- Optional features of the static context. -/
+  features : FeatureSettings := {}
   s : Array Char
   /-- Namespace bindings for prefixes (static context). -/
   ns : List (String × String)
@@ -1658,7 +1660,8 @@ end
 /-- Parse a complete XPath 4.0 expression, with optional namespace
     declarations prolog. -/
 def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option ExtGrammar := none)
-    (schemaDecl : Bool → QN → Bool := fun _ _ => false) : M Expr :=
+    (schemaDecl : Bool → QN → Bool := fun _ _ => false)
+    (features : FeatureSettings := {}) : M Expr :=
   let p : P Expr := do
     -- prolog (XPath 4.0 §2.1): DefaultElementNamespaceDecl? NamespaceDecl*
     let mut extra : List (String × String) := []
@@ -1706,7 +1709,7 @@ def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option
     if i < c.s.size then synErr ("unexpected text at offset " ++ toString i ++ ": '" ++
        String.ofList ((List.range (min 20 (c.s.size - i))).map (fun k => chAt c.s (i + k))) ++ "'")
     pure e
-  match (p.run { s := src.toList.toArray, ns, ext, schemaDecl }).run 0 with
+  match (p.run { s := src.toList.toArray, ns, ext, schemaDecl, features }).run 0 with
   | .ok (e, _) => .ok e
   | .error e => .error e
 

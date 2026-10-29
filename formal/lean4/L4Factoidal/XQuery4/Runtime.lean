@@ -377,7 +377,7 @@ def buildElement (env : Env) (id : Nat) (name : QN) (decls : List (String × Str
   scope := scope.filter (fun (p, u) => !(p == "" && u == ""))
   -- XQuery 4.0 §3.9.1.1: under construction mode preserve the new element
   -- is annotated xs:anyType; under strip, xs:untyped (no annotation)
-  let strip := env.vars.any (fun (q, _) => q == constructionStripKey)
+  let strip := !env.features.typedData || env.vars.any (fun (q, _) => q == constructionStripKey)
   let mut out : Array NRec := #[{ kind := .element, name, inscope := scope,
                                   tann := if strip then none else some anyTypeQN }]
   let mut aIdx : Array Nat := #[]
@@ -870,6 +870,7 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
   | "error" => err (ss.headD "XPST0003") (ss.getD 1 "")
   | "validate" =>
     -- XQuery 4.0 §3.21 (validate expressions), through the schema hook
+    if !env.features.schemaValidation then err "XQST0075" "schema validation is disabled" else
     match env.schema.validateIn with
     | none => err "XQST0075" "validate needs an in-scope schema"
     | some f =>

@@ -217,6 +217,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
     if kw == "import" then
       expectKw "import"
       if ← eatKw "schema" then
+        if !(← read).features.schemaImport then qerr "XQST0009" "schema import is disabled"
         -- XQuery 4.0 §5.11: the in-scope schema definitions come from the
         -- host (`XPath4.SchemaHook`); the import binds the prefix
         let mut pfx : Option String := none
@@ -403,7 +404,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
         | .error ex => throw ex
       expectS ";"
       -- output declarations (§5.20.2): XQST0108, XQST0109, XQST0110
-      if oq.uri == nsOUTPUT then
+      if oq.uri == nsOUTPUT && (← read).features.serialization then
         if m.libNs.isSome then qerr "XQST0108" "an output declaration in a library module"
         if ((paramKinds.lookup oq.loc).isNone && oq.loc != "parameter-document") || oq.loc == "use-character-maps" then
           qerr "XQST0109" ("unknown serialization parameter output:" ++ oq.loc)
@@ -558,13 +559,14 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
 /-- Parse an XQuery 4.0 module, with the namespace bindings of the
     environment. -/
 def parseModule (src : String) (ns : List (String × String) := [])
-    (schemaDecl : Bool → QN → Bool := fun _ _ => false) : M Module :=
+    (schemaDecl : Bool → QN → Bool := fun _ _ => false)
+    (features : FeatureSettings := {}) : M Module :=
   let s := src.toList.toArray
   -- first pass: the named types, with forward references read as item()
-  let types0 := match ((pModule [] true).run { s, ns, schemaDecl }).run 0 with
+  let types0 := match ((pModule [] true).run { s, ns, schemaDecl, features }).run 0 with
     | .ok (m, _) => m.types
     | .error _ => []
-  match ((pModule types0 false).run { s, ns, schemaDecl }).run 0 with
+  match ((pModule types0 false).run { s, ns, schemaDecl, features }).run 0 with
   | .ok (m, _) => .ok m
   | .error e => .error e
 
@@ -605,7 +607,7 @@ def loadImports (env : Env) : Nat → List String → Module → M (List Module 
       let texts := moduleTexts env u
       if texts.isEmpty then err "XQST0059" ("no module found for namespace " ++ u)
       for t in texts do
-        let lm ← parseModule t [] env.schema.declared
+        let lm ← parseModule t [] env.schema.declared env.features
         if (lm.libNs.map (·.2)) != some u then err "XQST0059" ("the module text is not a module for " ++ u)
         let (sub, seen') ← loadImports env d seen lm
         seen := seen'
@@ -637,6 +639,16 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
     if (fns.filter (fun (q2, lo2, hi2) => q2 == q && !(hi < lo2 || hi2 < lo))).length > 1 then
       err "XQST0034" ("function " ++ q.show ++ " declared twice")
   for m in ms do
+    if !env.features.schemaImport && !m.schemaImports.isEmpty then
+      err "XQST0009" "schema import is disabled"
+    for d in m.decls do
+      match d with
+      | .var _ _ init _ | .ctx _ init _ => for e in init.toList do env.features.check e
+      | .fn fd =>
+        for (_, _, init) in fd.params do
+          for e in init.toList do env.features.check e
+        for e in fd.body.toList do env.features.check e
+    for e in m.body.toList do env.features.check e
     -- a module sees its own declarations and the public ones of the others
     let vis (m2 : Module) (q : QN) : Bool := m2.libNs == m.libNs || !m2.privates.any (· == q)
     let globalsM := ms.flatMap (fun m2 => m2.globals.filter (vis m2))
@@ -752,6 +764,8 @@ def moduleEnv (env : Env) (m : Module) : Env :=
 
 /-- Evaluate a main module. -/
 def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
+  if !env.features.schemaImport && !m.schemaImports.isEmpty then
+    err "XQST0009" "schema import is disabled"
   -- XQuery 4.0 §5.11: an imported schema namespace must be one the in-scope
   -- schema definitions (`XPath4.SchemaHook`) have components for
   for u in m.schemaImports do
@@ -767,7 +781,7 @@ def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
 
 /-- Parse and evaluate an XQuery 4.0 main module. -/
 def evalQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) : M Seq := do
-  let m ← parseModule src env.ns env.schema.declared
+  let m ← parseModule src env.ns env.schema.declared env.features
   evalModule fuel env m
 
 def evalQShow (src : String) : String :=

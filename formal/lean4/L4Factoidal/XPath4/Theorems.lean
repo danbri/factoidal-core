@@ -75,8 +75,8 @@ theorem nodeRef_at_doc (n : NodeRef) (i : Nat) : (n.at i).doc = n.doc := rfl
 theorem nodeRef_at_rt (n : NodeRef) (i : Nat) : (n.at i).rt = n.rt := rfl
 theorem nodeRef_at_idx (n : NodeRef) (i : Nat) : (n.at i).idx = i := rfl
 
-theorem Env.doc_rt (e : Env) (n : NodeRef) (d : Doc) (h : n.rt = some d) : e.doc n = d := by
-  simp [Env.doc, h]
+theorem Env.doc_rt (e : Env) (n : NodeRef) (d : Doc) (h : n.rt = some d) (ht : e.features.typedData = true) : e.doc n = d := by
+  simp [Env.doc, h, ht]
 
 /-! ## Regular expressions -/
 

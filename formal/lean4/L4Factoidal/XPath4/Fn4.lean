@@ -449,16 +449,16 @@ def systemPropertiesFn : LibFn := fun _ e _ =>
     (q "xsd-version", [.atom (Atomic.ofDec ⟨11, 1⟩)]),
     (q "product-name", [.atom (Atomic.ofStr "Factoidal")]),
     (q "product-version", [.atom (Atomic.ofStr "0.21")]),
-    (q "schema-aware", [.atom (Atomic.ofBool true)]),
-    (q "accepts-typed-data", [.atom (Atomic.ofBool true)]),
+    (q "schema-aware", [.atom (Atomic.ofBool e.features.schemaImport)]),
+    (q "accepts-typed-data", [.atom (Atomic.ofBool e.features.typedData)]),
     (q "supports-xinclude", [.atom (Atomic.ofBool false)]),
     (q "supports-dtd-validation", [.atom (Atomic.ofBool false)]),
     (q "supports-dtd-attribute-typing", [.atom (Atomic.ofBool false)]),
-    (q "supports-invisible-xml", [.atom (Atomic.ofBool true)]),
-    (q "supports-dynamic-xquery", [.atom (Atomic.ofBool (hostHas "load-xquery-module" 1))]),
-    (q "supports-dynamic-xslt", [.atom (Atomic.ofBool (hostHas "transform" 1))]),
-    (q "supports-binary-library", [.atom (Atomic.ofBool true)]),
-    (q "supports-file-library", [.atom (Atomic.ofBool true)])]]
+    (q "supports-invisible-xml", [.atom (Atomic.ofBool e.features.invisibleXml)]),
+    (q "supports-dynamic-xquery", [.atom (Atomic.ofBool (e.features.loadXQueryModule && hostHas "load-xquery-module" 1))]),
+    (q "supports-dynamic-xslt", [.atom (Atomic.ofBool (e.features.transform && hostHas "transform" 1))]),
+    (q "supports-binary-library", [.atom (Atomic.ofBool e.features.binary)]),
+    (q "supports-file-library", [.atom (Atomic.ofBool e.features.file)])]]
 
 /-! ## `fn:scan` -/
 
