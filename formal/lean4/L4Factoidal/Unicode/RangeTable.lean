@@ -7,7 +7,7 @@ The generators under `tools/unicode/` write each table as one string
 literal, `lo hi v;lo hi v;...` with `lo`, `hi` in hexadecimal and `v` in
 decimal; `ofText` reads it once. A string literal compiles in constant
 time, where an `Array` literal of tuples needs a raised `maxRecDepth`
-(as the former `XPath4.GraphemeData` arrays did).
+(compare `XPath4.GraphemeData`).
 -/
 namespace L4Factoidal.Unicode
 

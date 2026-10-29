@@ -1,9 +1,10 @@
 /-
-XPath Unicode 18 bridge regressions through the public XPath entry point.
+XPath Unicode 18 normalization and retained Unicode 15.1 grapheme regressions.
 F&O 4.0 §5.4.9 (normalize-unicode) and fn:graphemes.
 https://github.com/danbri/factoidal/issues/1195
 -/
 import L4Factoidal.XPath4.Eval
+import L4Factoidal.Unicode.Segmentation
 
 namespace L4Factoidal.XPath4.UnicodeBridgeTests
 
@@ -48,11 +49,18 @@ private def answer (src : String) : String :=
 -- UAX #29 rev49 changes GB9c to Linker Extend* × Consonant:
 -- https://www.unicode.org/reports/tr29/tr29-49.html#GB9c
 -- Unicode 18 GraphemeBreakTest.txt lines 179–180 and 859–860 join these strings.
--- QT4's Unicode 15.1 cases graphemes-1045/1046/1187/1188 expect two clusters instead.
--- This is a version change, not an implementation defect or an exclusion.
-#guard answer "count(graphemes(codepoints-to-string((97, 2381, 2340))))" == "1"
-#guard answer "count(graphemes(codepoints-to-string((63, 2381, 2340))))" == "1"
-#guard answer "count(graphemes(codepoints-to-string((2381, 2325))))" == "1"
-#guard answer "count(graphemes(codepoints-to-string((2381, 776, 2325))))" == "1"
+-- XPath retains Unicode 15.1, matching QT4 cases graphemes-1045/1046/1187/1188.
+-- The shared module explicitly uses Unicode 18; the difference is deliberate.
+-- XPath migration remains open: https://github.com/danbri/factoidal/issues/1195.
+#guard answer "deep-equal(graphemes(codepoints-to-string((97, 2381, 2340))), (codepoints-to-string((97, 2381)), codepoints-to-string(2340)))" == "true"
+#guard answer "deep-equal(graphemes(codepoints-to-string((63, 2381, 2340))), (codepoints-to-string((63, 2381)), codepoints-to-string(2340)))" == "true"
+#guard answer "deep-equal(graphemes(codepoints-to-string((2381, 2325))), (codepoints-to-string(2381), codepoints-to-string(2325)))" == "true"
+#guard answer "deep-equal(graphemes(codepoints-to-string((2381, 776, 2325))), (codepoints-to-string((2381, 776)), codepoints-to-string(2325)))" == "true"
+
+-- The same input has one cluster under the shared Unicode 18 GB9c rule.
+#guard let s := String.ofList [Char.ofNat 0x94D, Char.ofNat 0x308, Char.ofNat 0x915]
+       L4Factoidal.Unicode.Segmentation.graphemes s == [s] &&
+       Grapheme.graphemes s ==
+         [String.ofList [Char.ofNat 0x94D, Char.ofNat 0x308], String.singleton (Char.ofNat 0x915)]
 
 end L4Factoidal.XPath4.UnicodeBridgeTests
