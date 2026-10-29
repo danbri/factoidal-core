@@ -21,6 +21,8 @@ on:
       - 'tools/lean-*'
       - 'tools/test_lean_*'
       - 'third_party/testing/owl/**'
+      - 'third_party/testing/n3'
+      - 'tests/n3/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
 
@@ -137,6 +139,16 @@ jobs:
       - name: HACL* extern probe (Ed25519 vectors + sha256 differential)
         working-directory: formal/lean4
         run: lake exe l4vc-probe
+
+      # The Notation3 reader on the W3C N3 Community Group suite and on the RDF
+      # 1.1 and RDF 1.2 Turtle suites, with the N3/Turtle reader agreement
+      # (https://github.com/danbri/factoidal/issues/1171). Both submodules are
+      # pinned; tests/n3/run.sh fails on a counted failure or a disagreement.
+      - name: Fetch pinned N3 and RDF test suites
+        run: git submodule update --init --depth 1 third_party/testing/n3 third_party/testing/w3c
+
+      - name: N3 reader and writer (W3C N3 CG suite, Turtle suites)
+        run: tests/n3/run.sh
 
       # RDF Data Cube 2014: normalization and IC-0 to IC-21, each checked by the
       # Recommendation's SPARQL texts and by the direct Lean functions, which
