@@ -154,25 +154,47 @@ def collectionEnv (env : XPath4.Env) (source : List Document) (enabled : Bool) :
             | none => XPath4.err "FODC0002" "named collection is not defined")
       else env.host q arity }
 
-def xsltStep (step : Node) (ports : List (String × List Document)) (env : XPath4.Env) : Result (List Document) := do
+def xsltDocuments (e : XPath4.Env) (raw : XPath4.Seq) (props : List (String × String)) (uri : String) : Result (List Document) := do
+  let method := (props.lookup "method").getD (XSLT4.defaultMethod e raw)
+  let buildTree := (props.lookup "build-tree").getD (if ["json", "adaptive"].contains method then "no" else "yes")
+  if ["no","false"].contains buildTree then
+    raw.flatMapM fun item => match item with
+      | .atom _ => pure [{node := .text "", contentType := "application/json", value := some [item]}]
+      | _ => queryDocuments e [item] uri
+  else
+  let tree ← fromXPath (XSLT4.materialize e 9000000 (.doc (XSLT4.Out.ofSeq raw) uri))
+  let docs ← queryDocuments e [tree] uri
+  let ct := (props.lookup "media-type").getD (if method == "html" then "text/html" else if method == "xhtml" then "application/xhtml+xml" else if method == "text" then "text/plain" else "")
+  let serialization := props.map (fun (name,value) =>
+    (XPath4.Atomic.ofQN ⟨"",name,""⟩, if ["yes","no","true","false"].contains value then XPath4.sBool (["yes","true"].contains value) else XPath4.sStr value))
+  pure (docs.map (fun d => {d with
+    contentType := if ct == "" then d.contentType else ct
+    properties := (XPath4.Atomic.ofQN ⟨"","serialization",""⟩, [.map serialization]) :: d.properties}))
+
+def xsltOutputs (step : Node) (ports : List (String × List Document)) (env : XPath4.Env) : Result (List Document × List Document) := do
   let source := (ports.lookup "source").getD []
   let sheet ← oneSource ((ports.lookup "stylesheet").getD [])
-  let version ← option step "version" env (attr sheet.node "version" "3.0")
+  let version ← option step "version" env (attr (documentElement sheet) "version" "3.0")
   if !["1.0", "2.0", "3.0", "4.0"].contains version then error "XC0038" "unsupported XSLT version" else
-  if version == "1.0" && (source.length != 1 || source.any (fun d => d.contentType != "application/xml" && d.contentType != "text/xml")) then error "XC0039" "XSLT 1.0 requires one XML source document" else
+  if version == "1.0" && (source.length != 1 || source.any (fun d => d.value.isSome || d.contentType == "text/plain")) then error "XC0039" "XSLT 1.0 requires one XML source document" else
   if version == "2.0" && source.any (fun d => d.contentType == "application/json") then error "XC0094" "XSLT 2.0 source must be a document" else
   let params ← mapParameters step env
   if version != "3.0" && version != "4.0" && params.any (fun (_,v) => v.any (fun i => match i with | .map _ | .arr _ => true | _ => false)) then
     error (if version == "1.0" then "XC0105" else "XC0007") "XSLT version does not accept maps or arrays" else
   let uri := if sheet.baseUri == "" then "urn:factoidal:xproc:stylesheet" else sheet.baseUri
-  let compiled ← (XSLT4.compileStylesheet uri [(uri, sheet.node.serialize)]).mapError (fun e => ⟨"XC0093", e.msg, false, [], none⟩)
+  let staticValues ← typedOption step "static-parameters" env "map{}"
+  let staticParams ← match staticValues with
+    | [.map entries] => entries.mapM (fun (key,value) => do pure (← propertyQName env key, value))
+    | _ => error "XD0036" "static parameters must be a map"
+  let compiled ← (XSLT4.compileStylesheet uri [(uri, documentXml sheet)] staticParams).mapError (fun e => ⟨"XC0093", e.msg, false, [], none⟩)
   let docs := source.map (fun d => XPath4.Doc.ofNodes (documentNodes d) d.baseUri) |>.toArray
   let selection := source.zipIdx |>.flatMap fun (d,i) =>
     if d.contentType == "application/json" then ((xpathEnv (some d)).ctx).getD [] else [.node ⟨i,0,none⟩]
   let populate ← option step "populate-default-collection" env "true"
   let e := collectionEnv { env with docs := docs } source (populate != "false")
   let hasGlobal := attr step "global-context-item" != "" || (named step "with-option").any (fun n => attr n "name" == "global-context-item")
-  let global ← if hasGlobal then typedOption step "global-context-item" env else pure (selection.take 1)
+  let suppliedGlobal ← if hasGlobal then typedOption step "global-context-item" env else pure []
+  let global := if suppliedGlobal.isEmpty then (if version == "1.0" || version == "2.0" then selection.take 1 else if selection.length == 1 then selection else []) else suppliedGlobal
   if global.length > 1 then error "XD0036" "global context item must be singleton" else
   let tmpl ← qnameOption step "template-name" env
   let mode ← qnameOption step "initial-mode" env
@@ -181,21 +203,20 @@ def xsltStep (step : Node) (ports : List (String × List Document)) (env : XPath
   let opts : XSLT4.TOpts :=
     { env := e
       params := params
-      globalCtx := (freezeNodes (if hasGlobal then env else e) global).head?
-      initialSelect := if tmpl == "" then some selection else none
+      globalCtx := (freezeNodes (if suppliedGlobal.isEmpty then e else env) global).head?
+      initialSelect := if tmpl == "" then some (if version == "1.0" || version == "2.0" then selection.take 1 else selection) else none
       initialTemplate := initialTemplate
       initialMode := initialMode
-      outUri := ← option step "output-base-uri" env env.baseUri }
+      outUri := Syntax.resolveIri env.baseUri (← option step "output-base-uri" env sheet.baseUri) }
   let r ← (evalXslt compiled opts).mapError xsltFailure
-  if !r.secondary.isEmpty then unsupported "secondary XSLT result ports" else
   let props := r.principalFormat.2 ++ ((compiled.outputs.lookup r.principalFormat.1).getD [])
-  let method := (props.lookup "method").getD (XSLT4.defaultMethod e r.raw)
-  let buildTree := (props.lookup "build-tree").getD (if ["json", "adaptive"].contains method then "no" else "yes")
-  if buildTree == "no" then queryDocuments e r.raw opts.outUri else
-  let tree ← fromXPath (XSLT4.materialize e 9000000 (.doc (XSLT4.Out.ofSeq r.raw) opts.outUri))
-  let docs ← queryDocuments e [tree] opts.outUri
-  let ct := (props.lookup "media-type").getD (if method == "html" then "text/html" else if method == "xhtml" then "application/xhtml+xml" else if method == "text" then "text/plain" else "")
-  pure (docs.map (fun d => if ct == "" then d else {d with contentType := ct}))
+  let principal ← xsltDocuments e r.raw props opts.outUri
+  let secondary ← r.secondary.flatMapM fun (uri,raw,format,overrides) =>
+    xsltDocuments e raw (overrides ++ (compiled.outputs.lookup format).getD []) uri
+  pure (principal,secondary)
+
+def xsltStep (step : Node) (ports : List (String × List Document)) (env : XPath4.Env) : Result (List Document) :=
+  (xsltOutputs step ports env).map Prod.fst
 
 def deleteNamespaces (uris : List String) : Nat → List (String × String) → Node → Result Node
   | 0, _, _ => unsupported "namespace-delete depth limit"
@@ -284,6 +305,92 @@ def wrapDescendants (env : XPath4.Env) (selectedIndices : List Nat) (name : Stri
     | .element tag attrs _ => pure (.element tag attrs nodes)
     | _ => pure original
 
+/-- Preserve supplied schema documents as roots; dependency documents are
+loaded separately so include/import namespace rules remain the XSD reader's. -/
+private def xsdDocuments (schemas : List Document) : List XSD11.LoadedDoc :=
+  schemas.zipIdx |>.map fun (s,i) =>
+    { loc := if s.baseUri == "" then "schema" ++ toString i ++ ".xsd"
+        else if (schemas.filter (fun other => other.baseUri == s.baseUri)).length > 1 then
+          s.baseUri ++ "#schema-" ++ toString i else s.baseUri
+      doc := { root := documentElement s, decl := none, doctype := none, prolog := [], epilog := [] } }
+
+private def validateXsd (step : Node) (ports : List (String × List Document))
+    (env : XPath4.Env) (extra : List XSD11.LoadedDoc := []) (extraRoots : List String := []) : Result (List Document) := do
+  let version ← option step "version" env "1.1"
+  if !["1.0", "1.1"].contains version then error "XC0011" "Unsupported XML Schema version" else
+  let d ← oneSource ((ports.lookup "source").getD [])
+  let loaded := xsdDocuments ((ports.lookup "schema").getD [])
+  if (loaded ++ extra).any (fun s => !XSD11.isXs s.doc.root "schema") then
+    error "XC0152" "Schema input is not an XML Schema document" else
+  let schema := XSD11.buildSchema none XSD11.xpathHooks (loaded ++ extra) (loaded.map (·.loc) ++ extraRoots)
+  if !schema.unsupported.isEmpty then unsupported ("XML Schema component: " ++ String.intercalate ", " schema.unsupported) else
+  if !schema.errors.isEmpty then error "XC0152" (String.intercalate "; " (schema.errors.take 3)) else
+  let mode ← option step "mode" env "strict"
+  match XSD11.validateFor schema mode (documentElement d) d.baseUri with
+  | .ok _ => pure [d]
+  | .error e =>
+    if (← option step "assert-valid" env "true") == "false" then pure [d]
+    else error (if e.code == "XQDY0084" then "XC0156" else "XC0053") e.msg
+
+private def xsdRegression (schemaText : String) (attrs : List XML.Attribute := []) : Result (List Document) := do
+  let schema ← match XML.parseXML schemaText with
+    | .ok parsed => pure ({node := parsed.root} : Document)
+    | .error _ => error "test" "Invalid regression XML"
+  validateXsd (.element "p:validate-with-xml-schema" attrs [])
+    [("source", [{node := .element "root" [] [.text "value"]}]), ("schema", [schema])] {}
+
+private def xsdRegressionCode (schema : String) (attrs : List XML.Attribute := []) : String :=
+  match xsdRegression schema attrs with | .ok _ => "" | .error e => e.code
+
+#guard (xsdRegression "<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'><xs:element name='root' type='xs:string'/></xs:schema>").toBool
+#guard xsdRegressionCode "<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'/>" == "XC0156"
+#guard xsdRegressionCode "<invalid/>" == "XC0152"
+#guard xsdRegressionCode "<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'/>" [⟨"version", "999999"⟩] == "XC0011"
+#guard (xsdRegression "<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'/>" [⟨"mode", "lax"⟩]).toBool
+
+private def validateXsdIO (step : Node) (ports : List (String × List Document))
+    (env : XPath4.Env) : IO (Result (List Document)) := do
+  let version ← match option step "version" env "1.1" with
+    | .error e => return .error e | .ok value => pure value
+  if !["1.0", "1.1"].contains version then return error "XC0011" "Unsupported XML Schema version"
+  let .ok d := oneSource ((ports.lookup "source").getD []) | return validateXsd step ports env
+  let hints ← match option step "use-location-hints" env "false" with
+    | .error e => return .error e | .ok value => pure (value == "true")
+  let tryNamespaces ← match option step "try-namespaces" env "false" with
+    | .error e => return .error e | .ok value => pure (value == "true")
+  let root := documentElement d
+  let scope := ns root
+  let xsiAttr (localName : String) := root.elementAttrs.find? fun a =>
+    let (p,l) := XPath4.splitName a.name
+    p != "" && l == localName && (scope.lookup p).getD "" == "http://www.w3.org/2001/XMLSchema-instance"
+  let words (s : String) := (((s.replace "\n" " ").replace "\t" " ").replace "\r" " " |>.splitOn " ").filter (· != "")
+  let pairs := words ((xsiAttr "schemaLocation").map (·.value) |>.getD "")
+  let locations := if hints then
+    (pairs.zipIdx).filterMap (fun (loc,i) => if i % 2 == 1 then some loc else none) ++
+      ((xsiAttr "noNamespaceSchemaLocation").map (fun a => [a.value])).getD [] else []
+  let namespaceLocations := if tryNamespaces then
+    let (p,_) := XPath4.splitName (root.elementTag.getD "")
+    let uri := (scope.lookup p).getD ""
+    if uri == "" then [] else [uri]
+    else []
+  let roots := (locations ++ namespaceLocations).map (Syntax.resolveIri (if d.baseUri == "" then env.baseUri else d.baseUri))
+  let supplied := xsdDocuments ((ports.lookup "schema").getD [])
+  let roots := roots.map (fun uri => if uri.startsWith "file://" then (uri.drop 7).toString else uri)
+  let paths := (roots ++ supplied.flatMap (fun s => XSD11.refsOf s.loc s.doc)).eraseDups
+  if paths.any (fun uri => uri.startsWith "http:" || uri.startsWith "https:") then
+    return unsupported "network schema resolution"
+  let paths := paths.map (fun uri => if uri.startsWith "file://" then (uri.drop 7).toString else uri)
+  let (extra, allRead) ← XSD11.loadClosure paths
+  if !allRead then return error "XC0152" "Schema dependency could not be parsed"
+  if (extra.flatMap (fun s => XSD11.refsOf s.loc s.doc)).any (fun uri => uri.startsWith "http:" || uri.startsWith "https:") then
+    return unsupported "network schema dependency resolution"
+  let suppliedLocations := supplied.map (·.loc)
+  let extra := extra.filter (fun s => !suppliedLocations.contains s.loc)
+  -- Missing optional hints do not make the schema invalid: strict validation
+  -- subsequently reports XC0156 when no declaration was found.
+  let roots := roots.filter (fun loc => extra.any (fun s => s.loc == loc))
+  return validateXsd step ports env extra roots
+
 def atomicPure (step : Node) (ports : List (String × List Document)) (env : XPath4.Env) : Result (List Document) := do
   let source := (ports.lookup "source").getD []
   let opt := fun n d => option step n env d
@@ -359,7 +466,7 @@ def atomicPure (step : Node) (ports : List (String × List Document)) (env : XPa
       | some n => pure n
       | none => error "XC0119" "invalid flatten-to-depth"
     let values := source.map fun d => freezeNodes (xpathEnv (some d)) (((xpathEnv (some d)).ctx).getD [])
-    seqDocuments env [.arr (flattenJson n values)] env.baseUri
+    seqDocuments env [.arr (flattenJson n values)]
   | "json-merge" =>
     let duplicate ← opt "duplicates" "use-first"
     if !["use-first", "use-last", "use-any", "combine", "reject"].contains duplicate then error "XD0019" "invalid duplicates policy" else
@@ -376,7 +483,7 @@ def atomicPure (step : Node) (ports : List (String × List Document)) (env : XPa
         | _ => error "XC0110" "merge key must be one atomic value"
     let e := { env with vars := [(⟨"","maps",""⟩, maps), (⟨"","duplicates",""⟩, XPath4.sStr duplicate)] ++ env.vars }
     let merged ← (eval "map:merge($maps,map{'duplicates':$duplicates})" e).mapError (fun er => if duplicate == "reject" then { er with code := "XC0106" } else er)
-    seqDocuments e merged env.baseUri
+    seqDocuments e merged
   | "cast-content-type" =>
     let original ← oneSource source
     let ct ← opt "content-type" ""
@@ -491,17 +598,7 @@ def atomicPure (step : Node) (ports : List (String × List Document)) (env : XPa
     let value ← (eval "replace($s,$p,$r,$f)" e).mapError (fun er => if er.unsupported then er else { er with code := "XD0030" })
     pure [textDocument (seqString e value) d]
   | "text-line-count" => unsupported "nonstandard text-line-count"
-  | "validate-with-xml-schema" =>
-    let d ← oneSource source
-    let schemas := (ports.lookup "schema").getD []
-    if schemas.isEmpty then unsupported "schema discovery from instance" else
-    let loaded : List XSD11.LoadedDoc := schemas.zipIdx |>.map fun (s,i) =>
-      { loc := if s.baseUri == "" then "schema" ++ toString i ++ ".xsd" else s.baseUri, doc := { root := s.node, decl := none, doctype := none, prolog := [], epilog := [] } }
-    let schema := XSD11.readSchemaDocs loaded (loaded.map (·.loc))
-    if !schema.unsupported.isEmpty then unsupported "unsupported XML Schema component" else
-    match XSD11.validateFor schema (← opt "mode" "strict") d.node d.baseUri with
-    | .ok _ => pure [d]
-    | .error e => if (← opt "assert-valid" "true") == "false" then pure [d] else error "XC0053" e.msg
+  | "validate-with-xml-schema" => validateXsd step ports env
   | "xslt" => xsltStep step ports env
   | "xquery" =>
     let q ← oneSource ((ports.lookup "query").getD [])
@@ -637,7 +734,8 @@ def supportedAtomic (name : String) : Bool :=
    "set-attributes", "replace", "insert", "string-replace", "namespace-delete", "add-xml-base", "make-absolute-uris", "label-elements", "json-join", "json-merge"].contains name
 
 def atomic (step : Node) (ports : List (String × List Document)) (env : XPath4.Env) : IO (Result (List Document)) :=
-  pure (atomicPure step ports env)
+  if tag step == "validate-with-xml-schema" then validateXsdIO step ports env
+  else pure (atomicPure step ports env)
 
 end L4Factoidal.XProc31
 

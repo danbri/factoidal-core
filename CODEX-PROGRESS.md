@@ -244,3 +244,29 @@ Build28 passed391 jobs and25/25 independent regressions. `.lake/build/bin/l4xpro
 Runner now mirrors support documents, pipelines, libraries, schemas and the current test into a temporary suite directory for filesystem tests. Copies contain actual bytes; symlinks and special files are refused. `t:file` text and nested `t:folder` instructions populate the temporary `testfolder`. Path guards reject absolute paths, schemes and traversal. The parent test process owns temporary cleanup, including after child timeout. Direct `--one` also cleans up. Runtime receives the canonical temporary root for write confinement; normal pipeline execution needs explicit `--write-root DIR` for filesystem writes.
 
 188 of217 file environments use supported setup instructions. The other29 require false permissions, hidden flags or timestamps and remain explicitly unsupported. Missing runtime file operations remain unsupported independently. FileEnvironment module built (83 jobs); Runner source typechecked. A real ab-file-copy012 setup probe checked the copied test and exact nested file text, then removed its directory. Full runner measurement awaits filesystem-step integration.
+
+## 2026-10-29 — filesystem milestone and twelfth full measurement
+
+Build32 passed395 jobs;25/25 regressions passed. Full command `.lake/build/bin/l4xproc --list-fails --list-unsupported > /tmp/xproc-suite-12.log 2>&1`, explicit `formal/lean4` workdir, measured **2202 pass / 164 fail / 997 unsupported**, total3363. Additional failures reflect previously unsupported filesystem cases becoming runnable, and remain reported as failures. Runner creates real temporary copies of fixtures, confines mutation under that test root, and cleans them even when a subprocess times out.188/217 file-environments can be constructed; metadata-dependent setups remain unsupported.
+
+`FileSteps.lean` adds store, file-info, directory-list, mkdir, delete, copy and move. Actual IO smoke checks cover store/readback/copy/list/delete and rejected escape/root deletion; file-touch remains unsupported. CLI mutations require `--pipeline FILE --write-root DIR`. No fixture originals are modified. Follow-up corrections address actual filesystem test expectations and source document metadata.
+
+### 2026-10-29 — local filesystem implementation and confinement
+
+Added FileSteps IO dispatcher for store/info/list/mkdir/delete/copy/move. Runtime explicit writeRoot enforces canonical path confinement; root deletion and missing authorization are refused. Store retains typed content until serialization; listing handles relative regex sequence filters/depth/detailed metadata/content-type overrides; copy handles overwrite/skip and directory nesting. Exported real temporary IO regression passes. FileSteps builds successfully. Measured targeted fixtures: file-copy35/0/3, directory-list47/4/8, store2/0/0 (pass/fail/unsupported). Four writable metadata assertions remain failures, and touch stays explicitly unsupported because Lean IO exposes no timestamp setter. Detailed evidence: docs/designissues/2026-10-29-xproc-file-steps.md.
+
+## 2026-10-29 — thirteenth full measurement
+
+Build36 passed395 jobs and25/25 regressions. `.lake/build/bin/l4xproc --list-fails --list-unsupported > /tmp/xproc-suite-13.log 2>&1` measured **2243 pass / 125 fail / 995 unsupported**, total3363, five-second timeout. Local file-copy35/0/3 and directory-list47/4/8 targeted results retain missing writable metadata as failures. The full result includes one cycle-test timeout that must be rechecked, not silently counted passing.
+
+Subsequent source work adds an actual filesystem effect/confinement regression (26 total checks), secondary XSLT output routing, correct XSLT2 primary selection, and continued capability implementations. XML inline whitespace is preserved; stylesheet serialization and dynamic pipeline extraction consume document children correctly. Variable selections preserve the original document only when selecting it, discard serialization metadata on newly formed documents, and derive text content types.
+
+### 2026-10-29 — exclusive temporary files
+
+FileSteps now supports p:file-create-tempfile using Lean O_EXCL creation,
+prefix/suffix names, canonical write-root confinement, optional directory,
+owner-only permissions, and XProc URI/destination/error handling. Default
+allocation remains in the authorized sandbox. Upstream tempfile fixtures:
+21pass/0fail/3unsupported. Persistent actual-IO regression includes uniqueness
+and filename checks and returned true. FileSteps module builds. Also fixed
+file-info unknown extensions to application/octet-stream.

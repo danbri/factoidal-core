@@ -1,5 +1,6 @@
 import L4Factoidal.XPath4.Eval
 import L4Factoidal.XPath4.Serialize
+import L4Factoidal.XML.Theorems
 
 namespace L4Factoidal.XProc31
 open XML
@@ -51,6 +52,11 @@ def documentNodes (d : Document) : List Node :=
   match d.node with
   | .element "#document" _ cs => cs
   | n => [n]
+
+def documentElement (d : Document) : Node :=
+  ((documentNodes d).find? (fun n => n.elementTag.isSome)).getD d.node
+
+def documentXml (d : Document) : String := String.join ((documentNodes d).map Node.serialize)
 
 def propertyName (key : XPath4.Atomic) : Option XPath4.QN :=
   match key.v with
@@ -206,8 +212,11 @@ def nodeFromRef (env : XPath4.Env) : Nat → XPath4.NodeRef → Result Node
 
 def seqDocuments (env : XPath4.Env) (s : XPath4.Seq) (baseUri : String := "") : Result (List Document) :=
   s.mapM fun i => match i with
-    | .node n => do pure {node := ← nodeFromRef env 4096 n, baseUri}
-    | .atom a => pure {node := .text a.str, contentType := "text/plain", baseUri}
+    | .node n => do
+      let node ← nodeFromRef env 4096 n
+      let textOnly := match node with | .text _ | .cdata _ => true | _ => false
+      pure {node, baseUri := if textOnly then "" else baseUri, contentType := if textOnly then "text/plain" else "application/xml"}
+    | .atom a => pure {node := .text a.str, contentType := "application/json", value := some [.atom a]}
     | .map _ | .arr _ => pure {node := .text "", contentType := "application/json", baseUri, value := some (retainItems env 4096 [i])}
     | _ => unsupported "function item cannot be a document"
 

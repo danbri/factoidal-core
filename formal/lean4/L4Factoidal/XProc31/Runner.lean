@@ -166,7 +166,16 @@ def serializationOptions (env : XPath4.Env) (opts : XPath4.Seq) : XPath4.M XPath
             | .atom a =>
               if a.isStringLike then
                 (words a.str).mapM fun lexical => do
-                  pure (.atom (← XPath4.castFromString lexical (.b .qname) env.nsResolve))
+                  if lexical.startsWith "Q{" then
+                    let parts := ((lexical.drop 2).toString).splitOn "}"
+                    match parts with
+                    | [uri, loc] =>
+                      if uri.contains '{' || loc.contains ':' then XPath4.err "SEPM0016" "invalid serialization EQName"
+                      else
+                        let _ ← XPath4.castFromString loc (.b .qname) env.nsResolve
+                        pure (.atom (XPath4.Atomic.ofQN ⟨uri,loc,""⟩))
+                    | _ => XPath4.err "SEPM0016" "invalid serialization EQName"
+                  else pure (.atom (← XPath4.castFromString lexical (.b .qname) env.nsResolve))
               else pure [item]
             | _ => pure [item]
           pure (key, values.flatten)

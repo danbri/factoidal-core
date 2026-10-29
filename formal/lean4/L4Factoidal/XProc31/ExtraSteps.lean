@@ -1,4 +1,5 @@
 import L4Factoidal.XProc31.Core
+import L4Factoidal.XProc31.FormEncoding
 import L4Factoidal.XML.Encoding
 import L4Factoidal.XPath4.BaseUri
 import L4Factoidal.XPath4.Uri
@@ -6,7 +7,7 @@ import L4Factoidal.XPath4.Uri
 namespace L4Factoidal.XProc31
 open XML
 
-def supportsExtra (name : String) : Bool := ["namespace-rename", "xinclude"].contains name
+def supportsExtra (name : String) : Bool := ["namespace-rename", "xinclude", "www-form-urldecode", "www-form-urlencode"].contains name
 
 def extraOne (docs : List Document) : Result Document :=
   match docs with | [d] => pure d | _ => error "XD0006" "step requires one source document"
@@ -255,6 +256,7 @@ def extraAtomic (step : Node) (ports : List (String × List Document)) (env : XP
   match tag step with
   | "namespace-rename" => pure (namespaceRenameStep step source env)
   | "xinclude" => xincludeStep step source env
+  | "www-form-urldecode" | "www-form-urlencode" => pure (formStep step env)
   | _ => pure (unsupported ("extra step " ++ tag step))
 
 #guard (renameNamespaceTree "urn:a" "" "all" 20 []

@@ -1,4 +1,5 @@
 import L4Factoidal.XML.Validity
+import L4Factoidal.RDF.IriSyntax
 import L4Factoidal.XProc31.Core
 import L4Factoidal.XProc31.MediaTypes
 import L4Factoidal.XML.Encoding
@@ -118,7 +119,7 @@ def parsedXmlDocument (uri contentType : String) (text : String) (validateDtd : 
     | .ok r => pure r
   let resolve : XML.Resolver := fun identifier => (resources.find? (·.systemId == identifier)).map (·.text)
   match XML.parseDecodedXMLWith resolve text with
-  | .error e => return error "XD0011" (toString e)
+  | .error e => return error "XD0049" (toString e)
   | .ok parsed =>
     if validateDtd && !(XML.validate parsed).isEmpty then return error "XD0023" "DTD validation failed"
     if !XML.isNamespaceWellFormed ((parsed.decl.map (·.version)).getD "1.0") parsed.root then
@@ -139,7 +140,9 @@ def inferredDocumentType (uri : String) : String :=
 
 /-- Shared local loader for p:document and p:load. It retains parsed JSON as
 XDM, uses the HTML parser for text/html, and keeps XML document fragments. -/
-def loadDocument (uri contentType : String) (validateDtd : Bool := false) : IO (Result Document) := do
+def loadDocument (uri contentType : String) (validateDtd : Bool := false)
+    (parameters : XPath4.Seq := [.map []]) : IO (Result Document) := do
+  if !RDF.isAbsoluteIri uri then return error "XD0064" "invalid document URI"
   let contentType := if contentType == "" then inferredDocumentType uri else contentType
   let media ← match parseMediaType contentType with | .error e => return .error e | .ok m => pure m
   if media.kind == .binary then return unsupported "binary document representation"
@@ -152,8 +155,8 @@ def loadDocument (uri contentType : String) (validateDtd : Bool := false) : IO (
     | .ok text => return .ok {node := .text text, contentType, baseUri := uri}
   | .json =>
     let text ← match decodeDocumentText bytes charset with | .error e => return .error e | .ok t => pure t
-    match XPath4.evalString "parse-json($raw)" { vars := [(⟨"","raw",""⟩, XPath4.sStr text)] } with
-    | .error e => return error "XD0057" e.msg
+    match XPath4.evalString "parse-json($raw,$params)" { vars := [(⟨"","raw",""⟩, XPath4.sStr text), (⟨"","params",""⟩,parameters)] } with
+    | .error e => return error (if e.code == "FOJS0003" then "XD0058" else if e.code == "FOJS0005" then "XD0059" else "XD0057") e.msg
     | .ok value => return .ok {node := .text text, contentType, baseUri := uri, value := some value}
   | .html =>
     if media.subtype == "xhtml+xml" then

@@ -6,7 +6,7 @@ namespace L4Factoidal.XProc31
 open XML
 
 def supportsFile (name : String) : Bool :=
-  ["store", "file-info", "directory-list", "file-mkdir", "file-delete", "file-copy", "file-move"].contains name
+  ["file-create-tempfile", "store", "file-info", "directory-list", "file-mkdir", "file-delete", "file-copy", "file-move"].contains name
 
 def fileUri (path : System.FilePath) : String := "file://" ++ Fn.String.iriToUri path.toString
 
@@ -47,45 +47,75 @@ def fileFailure (step : Node) (env : XPath4.Env) (e : ProcError) : Result (List 
   pure [{node := .element "c:error" [⟨"xmlns:c", "http://www.w3.org/ns/xproc-step"⟩,
     ⟨"code", "{http://www.w3.org/ns/xproc-error}" ++ e.code⟩] [.text e.message]}]
 
-def fileInfoNode (path : System.FilePath) : IO Node := do
+def fileInfoNode (path : System.FilePath) (detailed : Bool := true) : IO Node := do
   let m ← path.metadata
   let kind := if m.type == .dir then "directory" else if m.type == .file then "file" else "other"
-  pure (.element ("c:" ++ kind) [⟨"xmlns:c", "http://www.w3.org/ns/xproc-step"⟩,
-    ⟨"name", path.fileName.getD path.toString⟩, ⟨"xml:base", fileUri path⟩,
-    ⟨"size", toString m.byteSize⟩] [])
+  let mut attributes : List XML.Attribute := [⟨"xmlns:c", "http://www.w3.org/ns/xproc-step"⟩,
+    ⟨"name", path.fileName.getD path.toString⟩, ⟨"xml:base", fileUri path⟩]
+  if detailed then
+    let readable ← try
+      if m.type == .dir then let _ ← path.readDir; pure true else
+        let _ ← IO.FS.Handle.mk path .read; pure true
+      catch _ => pure false
+    let modified := match eval ("string(unix-dateTime(" ++ toString (m.modified.sec * 1000 + m.modified.nsec.toNat / 1000000) ++ "))") {} with
+      | .ok value => seqString {} value | .error _ => ""
+    attributes := attributes ++ [⟨"size", toString m.byteSize⟩, ⟨"readable", if readable then "true" else "false"⟩,
+      ⟨"last-modified", modified⟩, ⟨"content-type", if m.type == .dir || !( [".xml", ".xhtml", ".html", ".htm", ".json", ".txt", ".xq", ".xquery"].any (fun extension => path.toString.endsWith extension)) then "application/octet-stream" else inferredDocumentType path.toString⟩]
+  pure (.element ("c:" ++ kind) attributes [])
 
-def listingTree (env : XPath4.Env) (inclusion exclusion : String) : Nat → System.FilePath → IO (Result Node)
-  | 0, path => return .ok (← fileInfoNode path)
-  | depth+1, path => do
-    let base ← fileInfoNode path
+def filterPatterns (step : Node) (env : XPath4.Env) (name : String) : Result (List String) :=
+  match (named step "with-option").find? (fun n => attr n "name" == name) with
+  | some n => do pure ((← eval (attr n "select") env).map (fun item => seqString env [item]))
+  | none => match XML.findAttr name step.elementAttrs with
+    | some value => do pure [← avt value env]
+    | none => pure []
+
+def anyPattern (env : XPath4.Env) (patterns : List String) (name : String) : Result Bool := do
+  for pattern in patterns do
+    if ← evalBool "matches($name,$pattern)" {env with vars := [(⟨"","name",""⟩,XPath4.sStr name), (⟨"","pattern",""⟩,XPath4.sStr pattern)] ++ env.vars} then return true
+  pure false
+
+def listingTree (env : XPath4.Env) (inclusion exclusion : List String) (detailed : Bool)
+    (overrides : List (String × String)) : Nat → System.FilePath → String → IO (Result Node)
+  | 0, path, _ => return .ok (← fileInfoNode path detailed)
+  | depth+1, path, relative => do
+    let base ← fileInfoNode path detailed
     if !(← path.isDir) then return .ok base
-    let mut children := []
+    let mut output := []
     for entry in (← path.readDir).toList.mergeSort (fun a b => a.fileName ≤ b.fileName) do
-      let e := {env with vars := (⟨"", "name", ""⟩, XPath4.sStr entry.fileName) :: env.vars}
+      let directory ← entry.path.isDir
+      let name := relative ++ entry.fileName ++ (if directory then "/" else "")
       let accepted := do
-        let inc ← if inclusion == "" then pure true else evalBool ("matches($name, '" ++ inclusion.replace "'" "''" ++ "')") e
-        let exc ← if exclusion == "" then pure false else evalBool ("matches($name, '" ++ exclusion.replace "'" "''" ++ "')") e
+        let inc ← if inclusion.isEmpty then pure true else anyPattern env inclusion name
+        let exc ← anyPattern env exclusion name
         pure (inc && !exc)
       let .ok accepted := accepted | return accepted.map (fun _ => base)
-      if accepted then
-        let child ← listingTree env inclusion exclusion depth entry.path
-        let .ok child := child | return child
-        children := children ++ [child]
-    return .ok (.element (base.elementTag.getD "c:directory") base.elementAttrs children)
+      let child ← listingTree env inclusion exclusion detailed overrides depth entry.path name
+      let .ok child := child | return child
+      if accepted || !(children child).isEmpty then
+        let mut attrs := child.elementAttrs
+        if detailed then
+          for (pattern,ct) in overrides do
+            if (anyPattern env [pattern] name).toOption == some true then
+              attrs := attrs.filter (·.name != "content-type") ++ [⟨"content-type",ct⟩]
+        output := output ++ [.element (child.elementTag.getD "c:file") attrs (children child)]
+    return .ok (.element (base.elementTag.getD "c:directory") base.elementAttrs output)
 
 def copyTree (root : Option String) (overwrite : Bool) : Nat → System.FilePath → System.FilePath → IO (Result Unit)
   | 0, _, _ => return unsupported "filesystem tree depth limit"
   | fuel+1, source, target => do
     if let .error e ← checkWrite root target then return .error e
     if ← source.isDir then
-      if (← target.pathExists) && !(← target.isDir) then return error "XC0157" "cannot copy directory onto a file"
+      if (← target.pathExists) && !(← target.isDir) then
+        if !overwrite then return .ok ()
+        IO.FS.removeFile target
       IO.FS.createDirAll target
       for entry in ← source.readDir do
         let r ← copyTree root overwrite fuel entry.path (target / entry.fileName)
         if let .error e := r then return .error e
       return .ok ()
     else
-      if (← target.pathExists) && !overwrite then return error "XC0050" "copy target already exists"
+      if (← target.pathExists) && !overwrite then return .ok ()
       IO.FS.createDirAll (target.parent.getD target)
       IO.FS.writeBinFile target (← IO.FS.readBinFile source)
       return .ok ()
@@ -102,16 +132,39 @@ def fileStep (step : Node) (ports : List (String × List Document)) (env : XPath
     (writeRoot : Option String := none) : IO (Result (List Document)) := do
   let kind := tag step
   let schemeError := match kind with
-    | "file-info" => "XC0134" | "file-delete" => "XC0142" | "file-mkdir" => "XC0140"
+    | "file-create-tempfile" => "XC0138" | "file-info" => "XC0134" | "file-delete" => "XC0142" | "file-mkdir" => "XC0140"
     | "file-copy" => "XC0144" | "file-move" => "XC0148" | _ => "XD0011"
-  let path ← match fileOptionPath step env (if kind == "directory-list" then "path" else "href") schemeError with
+  let pathOption := if kind == "file-create-tempfile" && attr step "href" == "" && !(named step "with-option").any (fun n => attr n "name" == "href") then
+    match writeRoot with | some root => .ok (fileUri ⟨root⟩, System.FilePath.mk root) | none => unsupported "temporary file creation requires an authorized write root"
+    else fileOptionPath step env (if kind == "directory-list" then "path" else "href") schemeError
+  let path ← match pathOption with
     | .error e => return fileFailure step env e
     | .ok path => pure path
   let (uri,path) := path
   let failureCode := match kind with
-    | "file-mkdir" => "XC0114" | "file-delete" => "XC0113" | "file-copy" => "XC0050"
+    | "file-create-tempfile" => "XC0116" | "file-mkdir" => "XC0114" | "file-delete" => "XC0113" | "file-copy" => "XC0050"
     | "file-move" => "XC0115" | _ => "XD0011"
   let action : IO (Result (List Document)) := do
+    if kind == "file-create-tempfile" then
+      if !(← path.isDir) then return error "XD0011" "temporary file destination must be an existing directory"
+      let settings := do pure (← option step "prefix" env "", ← option step "suffix" env "")
+      let .ok (pfx,suffix) := settings | return settings.map (fun _ => [])
+      if [pfx,suffix].any (fun s => s.contains '/' || s.contains '\\') then return error "XC0116" "temporary filename prefix and suffix must not contain separators"
+      for _ in [:128] do
+        let nonce ← IO.rand 0 18446744073709551615
+        let target := path / (pfx ++ "tmp" ++ toString nonce ++ suffix)
+        if let .error e ← checkWrite writeRoot target then return .error e
+        let handle ← try pure (some (← IO.FS.Handle.mk target .writeNew)) catch e =>
+          if ← target.pathExists then pure none else throw e
+        if let some handle := handle then
+          try
+            IO.setAccessRights target {user := {read := true, write := true}}
+            handle.flush
+            return .ok (fileResult (fileUri target))
+          catch e =>
+            IO.FS.removeFile target
+            throw e
+      return error "XC0116" "unable to allocate a unique temporary filename"
     if kind == "store" then
       let serialized := do
         let d ← oneSource ((ports.lookup "source").getD [])
@@ -148,19 +201,29 @@ def fileStep (step : Node) (ports : List (String × List Document)) (env : XPath
       let opts := do
         let depth ← option step "max-depth" env "1"
         let depth ← if depth == "unbounded" then pure 512 else match depth.toNat? with | some n => pure n | none => error "XD0028" "invalid maximum directory depth"
-        pure (depth, ← option step "include-filter" env, ← option step "exclude-filter" env)
-      let .ok (depth,inclusion,exclusion) := opts | return opts.map (fun _ => [])
-      let result ← listingTree env inclusion exclusion depth path
+        let values ← typedOption step "override-content-types" env "[]"
+        let overrides ← match values with
+          | [.arr pairs] => pairs.mapM fun (pair : XPath4.Seq) => match pair with
+            | [.arr [pattern,ct]] => pure (seqString env pattern, seqString env ct)
+            | _ => error "XD0036" "override-content-types entries must be pairs"
+          | _ => error "XD0036" "override-content-types must be an array"
+        pure (depth, ← filterPatterns step env "include-filter", ← filterPatterns step env "exclude-filter", (← option step "detailed" env "false") == "true", overrides)
+      let .ok (depth,inclusion,exclusion,detailed,overrides) := opts | return opts.map (fun _ => [])
+      let result ← listingTree env inclusion exclusion detailed overrides depth path ""
       return result.map (fun node => [{node, baseUri := uri}])
     if kind == "file-copy" || kind == "file-move" then
       let target := fileOptionPath step env "target" schemeError
-      let .ok (_,target) := target | return target.map (fun _ => [])
-      let target := if (← target.isDir) then target / path.fileName.getD "" else target
+      let .ok (targetUri,target) := target | return target.map (fun _ => [])
+      let sourceDir ← path.isDir
+      if sourceDir && (← target.pathExists) && !(← target.isDir) then
+        return error (if kind == "file-copy" then "XC0157" else "XC0158") "cannot copy or move directory onto a file"
+      let target := if (← target.isDir) || (kind == "file-copy" && sourceDir) then target / path.fileName.getD "" else target
+      let target : System.FilePath := ⟨if target.toString.endsWith "/" then (target.toString.dropEnd 1).toString else target.toString⟩
       if let .error e ← checkWrite writeRoot target then return .error e
-      let overwrite := (option step "overwrite" env "false").toOption.getD "false" == "true"
+      let overwrite := (option step "overwrite" env "true").toOption.getD "true" == "true"
       if kind == "file-copy" then
         let result ← copyTree writeRoot overwrite 512 path target
-        return result.map (fun _ => fileResult (fileUri target))
+        return result.map (fun _ => fileResult (if targetUri.endsWith "/" && !sourceDir then targetUri else fileUri target))
       else
         if let .error e ← checkWrite writeRoot path then return .error e
         if (← target.pathExists) && !overwrite then return error "XC0115" "move target already exists"
@@ -171,5 +234,31 @@ def fileStep (step : Node) (ports : List (String × List Document)) (env : XPath
     return unsupported ("filesystem step " ++ kind)
   let result ← try action catch e => pure (error failureCode e.toString)
   match result with | .ok docs => return .ok docs | .error e => return fileFailure step env e
+
+/-- Real filesystem regression, confined to an automatically cleaned temporary directory. -/
+def fileStepsRegression : IO Bool := IO.FS.withTempDir fun root => do
+  let env : XPath4.Env := {baseUri := fileUri root ++ "/pipeline.xpl"}
+  let step := fun name attrs => XML.Node.element ("p:" ++ name) attrs []
+  let source : Document := {node := .element "doc" [] [.text "stored"]}
+  let tempStep := step "file-create-tempfile" [⟨"prefix", "probe-"⟩, ⟨"suffix", ".tmp"⟩]
+  let first ← fileStep tempStep [] env (some root.toString)
+  let second ← fileStep tempStep [] env (some root.toString)
+  let some [a] := first.toOption | return false
+  let some [b] := second.toOption | return false
+  if a.node.textContent == b.node.textContent then return false
+  let .ok tempPath := documentFilePath a.node.textContent | return false
+  if !(((System.FilePath.mk tempPath).fileName.getD "").startsWith "probe-") then return false
+  if !tempPath.endsWith ".tmp" || !(← (System.FilePath.mk tempPath).pathExists) then return false
+  let stored ← fileStep (step "store" [⟨"href", "sub/result.xml"⟩]) [("source",[source])] env (some root.toString)
+  if !stored.toBool then return false
+  if !((← IO.FS.readFile (root / "sub/result.xml")).contains "stored") then return false
+  let copied ← fileStep (step "file-copy" [⟨"href", "sub/result.xml"⟩, ⟨"target", "copy.xml"⟩]) [] env (some root.toString)
+  if !copied.toBool then return false
+  let denied ← fileStep (step "store" [⟨"href", "../escape.xml"⟩]) [("source",[source])] env (some root.toString)
+  if denied.toBool then return false
+  let rootDelete ← fileStep (step "file-delete" [⟨"href", "."⟩, ⟨"recursive", "true"⟩]) [] env (some root.toString)
+  if rootDelete.toBool then return false
+  let deleted ← fileStep (step "file-delete" [⟨"href", "copy.xml"⟩]) [] env (some root.toString)
+  return deleted.toBool && !(← (root / "copy.xml").pathExists)
 
 end L4Factoidal.XProc31

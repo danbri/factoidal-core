@@ -166,6 +166,16 @@ private def eqName (s : String) : Bool :=
     | [a,b] => ncName a && ncName b
     | _ => false
 
+private def typePrefixesBound (node : XML.Node) (text : String) : Bool :=
+  let (_, tokens) := text.toList.foldl (fun (state : Bool × String) c =>
+    if c == '{' then (true, state.2 ++ " ")
+    else if c == '}' then (false, state.2 ++ " ")
+    else if state.1 then state
+    else (false, state.2.push (if c.isAlphanum || [':', '_', '-', '.'].contains c then c else ' '))) (false, "")
+  (words tokens).all fun token => match token.splitOn ":" with
+    | [pfx, loc] => !ncName pfx || !ncName loc || ((ns node).lookup pfx).isSome || pfx == "xml"
+    | _ => true
+
 private def isBranch (n : XML.Node) : Bool :=
   ["when", "otherwise", "catch", "finally"].contains (staticLocalName n)
 
@@ -254,7 +264,14 @@ private def localSyntaxErrors (root : XML.Node) (declarations : List XML.Node) :
     | .error e => errors := errors ++ [(e.code, e.message)]
     | .ok _ => pure ()
   if ["declare-step", "library"].contains kind && has "version" && !supportedVersion (staticAttr root "version") then
-    errors := errors ++ [("XS0060", "Unsupported XProc version")]
+    let v := (staticAttr root "version").trimAscii.toString
+    let v := if v.startsWith "+" || v.startsWith "-" then (v.drop 1).toString else v
+    let parts := v.splitOn "."
+    let decimal := parts.length <= 2 && v.toList.any Char.isDigit &&
+      parts.all (fun part => part.toList.all Char.isDigit)
+    errors := errors ++ [(if decimal then "XS0060" else "XS0063", "Invalid or unsupported XProc version")]
+  if (kind == "input" && !has "port") || (["if", "when"].contains kind && !has "test") then
+    errors := errors ++ [("XS0038", "Required port or test attribute is missing")]
   if ["option", "variable"].contains kind then
     if !has "name" || (kind == "variable" && !has "select") then
       errors := errors ++ [("XS0038", "Required declaration attribute is missing")]
@@ -266,7 +283,8 @@ private def localSyntaxErrors (root : XML.Node) (declarations : List XML.Node) :
       | .error e =>
         if e.code == "XPST0081" then errors := errors ++ [("XS0087", "Undeclared name prefix")]
       | _ => pure ()
-    if has "as" && (XPath4.parseXPath ("() instance of " ++ staticAttr root "as") (nodeNamespaces root)).toOption.isNone then
+    if has "as" && (!typePrefixesBound root (staticAttr root "as") ||
+        (XPath4.parseXPath ("() instance of " ++ staticAttr root "as") (nodeNamespaces root)).toOption.isNone) then
       errors := errors ++ [("XS0096", "Invalid sequence type")]
     if has "select" && (XPath4.parseXPath (staticAttr root "select") (nodeNamespaces root)).toOption.isNone then
       errors := errors ++ [("XS0107", "Invalid XPath expression")]
@@ -538,8 +556,21 @@ private def inputConnectionErrors : Nat → List XML.Node → Bool → XML.Node 
     let mut errors := []
     for c in cs.filter (fun c => staticLocalName c == "declare-step") do
       errors := errors ++ inputConnectionErrors fuel declarations false c
-    for step in cs.filter isPipelineStep do
+    for step in cs do
       let stepKind := staticLocalName step
+      let bindings := if stepKind == "variable" then [step] else
+        step.allChildElements.filter (fun c => ["with-input", "with-option"].contains (staticLocalName c))
+      for binding in bindings do
+        if XML.hasAttr "pipe" binding.elementAttrs && (words (staticAttr binding "pipe")).isEmpty && !available then
+          errors := errors ++ [("XS0067", "Explicit default connection has no readable port")]
+        let targets := ((words (staticAttr binding "pipe")).filter (·.startsWith "@")).map (fun p => (p.drop 1).toString) ++
+          (binding.allChildElements.filter (fun p => staticLocalName p == "pipe" && !XML.hasAttr "port" p.elementAttrs)).map (staticAttr · "step")
+        for target in targets do
+          if target != "" then
+            if let some producer := cs.find? (fun n => isPipelineStep n && staticAttr n "name" == target) then
+              if primaryOutput (nodeDepth producer+1) declarations producer == some none then
+                errors := errors ++ [("XS0068", "Referenced step has no primary output port")]
+      if !isPipelineStep step then continue
       let source := step.allChildElements.find? (fun c => staticLocalName c == "with-input" &&
         (staticAttr c "port" == "" || staticAttr c "port" == "source"))
       let connected := source.any hasExplicitConnection || available
@@ -786,5 +817,33 @@ private def importRegressionDecl (pfx : String) : XML.Node :=
 #guard (importScopeErrors (testElement "p:declare-step" []
   [.element "b:step" [⟨"xmlns:b", "urn:import"⟩] []]) []).any (fun e => e.1 == "XS0044")
 #guard (importScopeErrors (bindingRegression [.element "unknown:literal" [] []]) []).isEmpty
+
+#guard !(typePrefixesBound (testElement "p:option" [] []) "xs:boolean")
+#guard typePrefixesBound (testElement "p:option" [⟨"xmlns:xs", "http://www.w3.org/2001/XMLSchema"⟩] []) "xs:boolean"
+#guard typePrefixesBound (testElement "p:option" [] []) "Q{http://www.w3.org/2001/XMLSchema}boolean"
+#guard (importScopeErrors (testElement "p:declare-step" [] [])
+  [testElement "p:option" [⟨"name", "x"⟩, ⟨"static", "true"⟩] [],
+   testElement "p:option" [⟨"name", "x"⟩, ⟨"static", "true"⟩] []]).any (fun e => e.1 == "XS0109")
+#guard (importScopeErrors (testElement "p:declare-step" []
+  [testElement "p:option" [⟨"name", "x"⟩] []])
+  [testElement "p:option" [⟨"name", "x"⟩, ⟨"static", "true"⟩] []]).any (fun e => e.1 == "XS0088")
+
+private def missingPrimaryRegression (connection : XML.Node) : XML.Node :=
+  portRegression [testElement "p:identity" [⟨"name", "producer"⟩]
+    [testElement "p:with-input" [] [.element "doc" [] []]],
+    testElement "p:sink" [⟨"name", "stop"⟩] [], connection,
+    testElement "p:identity" [] [testElement "p:with-input" [] [.element "result" [] []]]]
+
+#guard (staticErrors (missingPrimaryRegression (testElement "p:variable"
+  [⟨"name", "v"⟩, ⟨"select", "42"⟩, ⟨"pipe", ""⟩] []))).any (fun e => e.1 == "XS0067")
+#guard (staticErrors (missingPrimaryRegression (testElement "p:variable"
+  [⟨"name", "v"⟩, ⟨"select", "42"⟩, ⟨"pipe", "@stop"⟩] []))).any (fun e => e.1 == "XS0068")
+#guard (staticErrors (missingPrimaryRegression (testElement "p:variable"
+  [⟨"name", "v"⟩, ⟨"select", "42"⟩] [testElement "p:pipe" [⟨"step", "stop"⟩] []]))).any (fun e => e.1 == "XS0068")
+#guard (staticErrors (missingPrimaryRegression (testElement "p:variable"
+  [⟨"name", "v"⟩, ⟨"select", "42"⟩, ⟨"pipe", "@producer"⟩] []))).isEmpty
+#guard (localSyntaxErrors (testElement "p:input" [] []) []).any (fun e => e.1 == "XS0038")
+#guard (localSyntaxErrors (testElement "p:if" [] []) []).any (fun e => e.1 == "XS0038")
+#guard (localSyntaxErrors (testElement "p:library" [⟨"version", "C"⟩] []) []).any (fun e => e.1 == "XS0063")
 
 end L4Factoidal.XProc31

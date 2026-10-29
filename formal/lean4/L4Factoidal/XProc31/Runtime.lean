@@ -115,7 +115,7 @@ def procHost (docs : List Document) (position size : Nat) (q : XPath4.QN) (_arit
         pure [.map (documentProperties d)])
   | "document-property" => some (fun c args => do
       let some d := docs.head? | XPath4.err "XD0001" "document context absent"
-      let key ← functionQName {c with ns := c.ns.filter (fun p => p.1 != "")} (args[1]?.getD [])
+      let key ← (functionQName {c with ns := c.ns.filter (fun p => p.1 != "")} (args[1]?.getD [])).mapError (fun e => {e with code := "XD0061"})
       pure (documentProperty d key))
   | _ => xprocFunction q _arity standardAvailable
 
@@ -140,7 +140,7 @@ def contextEnv (ctx : RunContext) (step : Node) (docs : List Document) : XPath4.
             | [.atom _] => docs.head?.filter (fun d => d.value.isSome)
             | _ => none
           if q.loc == "document-properties" then return [.map (saved.map documentProperties |>.getD [])]
-          let key ← functionQName {c with ns := c.ns.filter (fun p => p.1 != "")} (args[1]?.getD [])
+          let key ← (functionQName {c with ns := c.ns.filter (fun p => p.1 != "")} (args[1]?.getD [])).mapError (fun e => {e with code := "XD0061"})
           return saved.map (fun d => documentProperty d key) |>.getD [])
       else if q.uri == "http://www.w3.org/ns/xproc" && q.loc == "step-available" then
         xprocFunction q arity (fun name => standardAvailable name || ctx.declarations.any (fun d =>
@@ -172,7 +172,7 @@ def loadWithProperties (uri : String) (step : Node) (env : XPath4.Env) : IO (Res
   let validateDtd := match params with
     | [.map entries] => entries.any (fun (k,v) => k.str == "dtd-validate" && v.any (fun i => match i with | .atom a => a.str == "true" | _ => false))
     | _ => false
-  match ← loadDocument uri ct validateDtd with
+  match ← loadDocument uri ct validateDtd params with
   | .error e => return .error e
   | .ok d => return updateProperties env d properties
 
@@ -255,6 +255,7 @@ def inlineDoc (ctx : RunContext) (n : Node) (defaultDocs : List Document) : Resu
   if encoding == "" && (media.parameters.lookup "charset").isSome then
     error "XD0055" "unencoded inline content cannot declare a charset" else pure ()
   if encoding != "" && !(kids n).isEmpty then error "XD0056" "encoded inline content contains markup" else pure ()
+  if media.kind == .text && encoding == "" && !(kids n).isEmpty then error "XD0063" "text inline content contains markup" else pure ()
   let enabled := attr n "expand-text" (if ctx.expandText then "true" else "false") != "false"
   if media.kind == .text || media.kind == .json || media.kind == .binary then
     let text ← if encoding == "base64" then do
@@ -274,8 +275,7 @@ def inlineDoc (ctx : RunContext) (n : Node) (defaultDocs : List Document) : Resu
       applyProperties env n {node := .text text, contentType := ct, baseUri := ctx.baseUri, value := some value}
     else applyProperties env n {node := .text text, contentType := ct, baseUri := ctx.baseUri}
   else
-    let cs := (children n).filter fun c => match c with
-      | .text s => !s.trimAscii.toString.isEmpty | _ => true
+    let cs := children n
     let cs ← cs.mapM (expandInline env 4096 enabled)
     let cs := cs.flatMap fun c => if c.elementTag == some "#document" then children c else [c]
     let root := match cs with | [c] => c | cs => .element "#document" [] cs
@@ -283,6 +283,7 @@ def inlineDoc (ctx : RunContext) (n : Node) (defaultDocs : List Document) : Resu
     applyProperties env n ⟨root, ct, ctx.baseUri, [], none⟩
 
 def binding (ctx : RunContext) (n : Node) (defaultDocs : List Document) : IO (Result (List Document)) := do
+  let ctx := if attr n "xml:base" == "" then ctx else {ctx with baseUri := resolvePath ctx.baseUri (attr n "xml:base")}
   let ctx := if attr n "xml:base" == "" then ctx else {ctx with baseUri := resolvePath ctx.baseUri (attr n "xml:base")}
   let ctx := {ctx with expandText := attr n "expand-text" (if ctx.expandText then "true" else "false") != "false"}
   let ctx := {ctx with excludedInlinePrefixes := inlineExclusions ctx n}
@@ -304,7 +305,9 @@ def binding (ctx : RunContext) (n : Node) (defaultDocs : List Document) : IO (Re
         | "document" =>
           match avt (attr c "href") env with
           | .error e => pure (.error e)
-          | .ok uri => do pure ((← loadWithProperties (resolvePath ctx.baseUri uri) c env).map List.singleton)
+          | .ok uri => do
+            let base := if attr c "xml:base" == "" then ctx.baseUri else resolvePath ctx.baseUri (attr c "xml:base")
+            pure ((← loadWithProperties (resolvePath base uri) c env).map List.singleton)
         | "inline" => pure (((inlineDoc ctx c defaultDocs).mapError (fun e =>
             if defaultDocs.length > 1 && e.code == "XD0001" then {e with code := "XD0065"} else e)).map List.singleton)
         | _ => pure (do
@@ -323,7 +326,13 @@ def binding (ctx : RunContext) (n : Node) (defaultDocs : List Document) : IO (Re
     return docs.foldlM (fun out d => do
       let env := contextEnv ctx n [d]
       let seq ← eval (attr n "select") env
-      pure (out ++ ((← seqDocuments env seq d.baseUri).map (fun x => {x with properties := d.properties})))) []
+      let batch ← seq.flatMapM fun item => do
+        if (attr n "select").trimAscii.toString == "." then return [d]
+        if let .node ref := item then
+          if ref.idx == 0 && ref.rt.isNone then return [d]
+        let selected ← seqDocuments env [item] (match item with | .node _ => d.baseUri | _ => "")
+        pure (selected.map (fun x => {x with properties := d.properties.filter (fun p => propertyName p.1 != some ⟨"", "serialization", ""⟩)}))
+      pure (out ++ batch)) []
 
 def selectionContext (ctx : RunContext) (node : Node) (docs : List Document) : IO (Result (List Document)) :=
   let n := match node with
@@ -360,7 +369,7 @@ def stepPorts (ctx : RunContext) (step : Node) (docs : List Document) : IO (Resu
   let mut ports := [("source", docs)]
   for n in pNamed step "with-input" do
     let port := attr n "port" "source"
-    match ← binding ctx n (if port == "source" then docs else []) with
+    match ← binding ctx n docs with
     | .error e => return .error (pipelineError e)
     | .ok ds => ports := (port, ds) :: ports.filter (fun p => p.1 != port)
   return .ok ports
@@ -667,13 +676,23 @@ def runStep : Nat → RunContext → Node → List Document → IO (Result StepO
       | none => return unsupported ("extension step " ++ step.elementTag.getD "")
       | some declaration => return ← runDeclared fuel ctx step declaration docs ports env
     match tag step with
+    | "xslt" => return (xsltOutputs step ports env).map (fun (principal,secondary) =>
+        {primary := principal, ports := [("result",principal),("secondary",secondary)]})
     | "group" => runBody fuel ctx step docs
     | "viewport" =>
       withPrimary (viewportStepWithFocus step docs env (fun pos size current =>
         primaryOnly (runBody fuel {ctx with position := pos, size := size, values := ("/current", [current]) :: (attr step "name" ++ "/#primary", [current]) :: (attr step "name" ++ "/current", [current]) :: ctx.values} step [current])))
     | "for-each" =>
-      withPrimary (forEachIO docs (fun pos size doc =>
-        primaryOnly (runBody fuel {ctx with position := pos, size := size, values := ("/current", [doc]) :: (attr step "name" ++ "/#primary", [doc]) :: (attr step "name" ++ "/current", [doc]) :: ctx.values} step [doc])))
+      let collected ← IO.mkRef ((pNamed step "output").map (fun o => (attr o "port", ([] : List Document))))
+      let result ← forEachIO docs (fun pos size doc => do
+        match ← runBody fuel {ctx with position := pos, size := size, values := ("/current", [doc]) :: (attr step "name" ++ "/#primary", [doc]) :: (attr step "name" ++ "/current", [doc]) :: ctx.values} step [doc] with
+        | .error e => return .error e
+        | .ok output =>
+          collected.modify fun previous => output.ports.foldl (fun ports (name,batch) =>
+            (name, (ports.lookup name).getD [] ++ batch) :: ports.filter (fun p => p.1 != name)) previous
+          return .ok output.primary)
+      let ports ← collected.get
+      return result.map (fun primary => {primary, ports})
     | "if" =>
       let collection := attr step "collection" == "true"
       let env := if collection then { (collectionEnv env docs true) with ctx := none, docs := (docs.map (fun d => XPath4.Doc.ofNodes (documentNodes d) d.baseUri)).toArray } else env
@@ -737,6 +756,9 @@ def runStep : Nat → RunContext → Node → List Document → IO (Result StepO
       for (d,i) in docs.zipIdx do
         if initialOnly && stopped then unmatched := d :: unmatched else
           let focus := { (contextEnv ctx step [d]) with pos := i+1, size := docs.length }
+          let focus := match (pNamed step "with-option").find? (fun n => attr n "name" == "test") with
+            | some opt => {focus with ns := ns opt}
+            | none => focus
           match evalBool test focus with
           | .error e => return .error (pipelineError e)
           | .ok true => matched := d :: matched
@@ -750,7 +772,7 @@ def runStep : Nat → RunContext → Node → List Document → IO (Result StepO
       if (pNamed step "with-input").any (fun n => attr n "port" != "") then
         return error "XS0114" "run pipeline input is anonymous"
       let [pipelineDoc] := docs | return error "XD0006" "run requires one pipeline document"
-      let pipeline := inheritNS 4096 [] pipelineDoc.node
+      let pipeline := inheritNS 4096 [] (documentElement pipelineDoc)
       if pTag pipeline != "declare-step" then return error "XC0200" "run input is not a pipeline"
       let runInputs := pNamed step "run-input"
       if (runInputs.map (fun n => attr n "port")).eraseDups.length != runInputs.length then
@@ -863,7 +885,7 @@ def runDeclared : Nat → RunContext → Node → Node → List Document → Bin
       for opt in pNamed scope "option" do
         let q := qname opt (attr opt "name")
         let supplied := if attr opt "visibility" != "private" then ctx.staticVars.lookup q else none
-        let value := match supplied with
+        let value : Result XPath4.Seq := match supplied with
           | some v => .ok v
           | none => eval (attr opt "select" "()") (xpathEnv none statics (ns opt))
         let .ok value := value | return value.map (fun _ => primaryOutput [])

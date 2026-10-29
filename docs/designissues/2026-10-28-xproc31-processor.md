@@ -184,3 +184,51 @@ importer. This avoids making one imported file's declarations visible inside
 another imported file. Nested scopes with their own imports require separate
 loader checks. This new API is not included in the static-only suite count.
 `lake build L4Factoidal.XProc31.Static` passes.
+
+## Import loader integration and missing primary ports
+
+The loader now caches canonical source identities through re-exports. Repeated,
+diamond, and cyclic imports do not create duplicate declarations; conflicting
+types from different sources still fail. Each imported source is pruned and
+checked against its own imports. Exported step declarations carry lexical
+scope in `p:pipeinfo/#xproc-scope`, with the canonical source path, original
+local declarations, imported declarations, and static options including private
+ones. Runtime declaration invocation uses this metadata to restore source
+scope. Private declarations remain available inside their library.
+
+A loader probe covered 101 inline fixtures with direct imports and found no
+new positive-fixture errors. Before the later scope-invocation integration,
+the executable's `ab-import-` filter measured 31 pass, 2 fail, 30 unsupported;
+its two failures were availability queries seeing another imported source.
+The `ab-library-` filter measured 20 pass and 5 fail. These are intermediate
+measurements, not the final suite score.
+
+Static checking now accepts imported static-option declarations as context;
+checks imported option conflicts/shadowing (XS0109/XS0088); validates namespace
+bindings in sequence-type attributes; distinguishes invalid version syntax
+(XS0063) from unsupported numeric versions; and diagnoses required input/guard
+attributes plus default/primary pipe connections (XS0038, XS0067, XS0068).
+Twelve further guards pass. The static-only probe matches 359 of 1,101 expected
+negative fixtures, with no wrong-code diagnostics or new positive diagnostics.
+Static and Runtime module builds passed. No processor executable was rebuilt
+by this subtask.
+
+## XML Schema step validation
+
+The XProc XML Schema step now uses `XSD11.buildSchema` for component checks,
+loads local include/import dependencies with `XSD11.loadClosure`, and resolves
+enabled local instance location hints. It distinguishes missing root
+declarations (XC0156), invalid schemas (XC0152), invalid instances (XC0053),
+and unsupported requested versions (XC0011). Strict/lax validation and
+`assert-valid` use the existing engine. Missing optional hints leave strict
+validation to report the absent declaration. Network resolution returns
+unsupported instead of silently skipping required resources.
+
+The implementation passed Atomic and Runtime module builds before the
+coordinating build handoff. Five persisted guards cover ordinary validity,
+missing declarations, invalid schema roots, unsupported versions, and lax
+validation; their final build and fixture totals are recorded by the
+coordinating session. The returned document still has its original XML and
+properties: this change does not propagate schema type annotations, inserted
+defaults, or PSVI into subsequent XProc steps. The shared XSD engine's existing
+unsupported-component boundary remains in force.

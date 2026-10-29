@@ -60,13 +60,17 @@ def runCase (c : Case) : IO (Except String Unit) := do
 
 def run : IO UInt32 := do
   let mut failed := 0
+  if ← fileStepsRegression then IO.println "PASS filesystem effects and confinement"
+  else
+    IO.println "FAIL filesystem effects and confinement"
+    failed := failed + 1
   for c in cases do
     match ← runCase c with
     | .ok () => IO.println ("PASS " ++ c.name)
     | .error msg =>
       failed := failed + 1
       IO.println ("FAIL " ++ c.name ++ ": " ++ msg)
-  IO.println s!"REGRESSIONS {cases.length - failed} pass / {failed} fail (out of {cases.length})"
+  IO.println s!"REGRESSIONS {cases.length + 1 - failed} pass / {failed} fail (out of {cases.length + 1})"
   pure (if failed == 0 then 0 else 1)
 
 /-- Measure the actual parse/check/execute path at increasing step counts. -/
