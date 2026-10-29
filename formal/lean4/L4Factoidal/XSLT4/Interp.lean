@@ -227,8 +227,14 @@ def validateOut (S : Sheet) (env : Env) (how : String) (o : Out) : XM Out := do
       if (kids.filter (· == .element)).length != 1 || kids.any (· == .text) then
         xerr "XTTE1550" "a validated document node must have one element child and no text node"
       let d' ← liftX (S.validateNode how d nd.idx)
+      -- the comments and processing instructions of the document stay
+      -- around the validated element (§25.2)
+      let id1 ← freshId
+      let el ← liftX (copyAsTree env id1 { doc := id1, idx := 1, rt := some d' } true true)
+      let kidsO : List Out := r.children.toList.map (fun j =>
+        if (d.get j).kind == .element then Out.item el else Out.item (.node (nd.at j)))
       let id2 ← freshId
-      pure (.item (.node { doc := id2, idx := 0, rt := some { d' with uri := d.uri } }))
+      pure (.item (← liftX (materializeK true env id2 (.doc kidsO d.uri))))
     | _ => pure o
   | _ => pure o
 
@@ -278,6 +284,10 @@ def simpleContent (env : Env) (os : List Out) (sep : String) : XM String := do
       | .text s => pure (true, [s])
       | .item (.node n) =>
           if (env.nrec n).kind == .text then pure (true, [env.nodeString n])
+          -- a node with a schema type gives its typed value (§5.7.2, atomization)
+          else if (env.nrec n).tann.isSome then do
+            let as ← liftX (env.atomize [.node n])
+            pure (false, as.map Atomic.str)
           else pure (false, [env.nodeString n])
       | .item (.atom a) => pure (false, [a.str])
       | .item (.arr ms) => do
