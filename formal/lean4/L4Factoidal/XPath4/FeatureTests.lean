@@ -6,6 +6,7 @@ These are executable checks, not equivalence proofs.
 -/
 import L4Factoidal.XQueryUpdate.Query
 import L4Factoidal.XSLT4.QtFnTransform
+import L4Factoidal.XPath4.UnicodeBridgeTests
 
 namespace L4Factoidal.XPath4.FeatureTests
 
