@@ -620,6 +620,10 @@ lean_exe «l4dict-fold-bench» where
 -- (third_party/testing/xml-c14n).
 @[default_target] lean_exe «l4c14n» where root := `Harness.C14nRun
 
+-- XPointer (Framework, element(), xmlns(), xpointer()) over the pointers of
+-- the W3C XInclude test suite.
+@[default_target] lean_exe «l4xpointer» where root := `Harness.XPointerRun
+
 -- The W3C XML Schema Test Suite, Part 2 Datatypes slice: suite.xml ->
 -- the *Meta/*.testSet manifests -> the datatype-only test groups.
 @[default_target] lean_exe «l4xsd-datatypes» where root := `Harness.XsdDatatypesRun

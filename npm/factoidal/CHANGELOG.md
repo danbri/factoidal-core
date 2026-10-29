@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- XPointer in the Lean engine: the XPointer Framework, element() and xmlns() schemes (W3C Recommendations 2003) in `L4Factoidal/XML/XPointer.lean`, and the xpointer() scheme (W3C Working Draft 2002) through the XPath 4.0 engine in `XML/XPointerXPath.lean`. Over the 98 pointers of the W3C XInclude test suite: 98 pass, 0 fail (out of 98) (`lake exe l4xpointer`). Not yet used by XInclude, and no npm or wasm op yet.
+
 - RIF BLD (W3C Recommendation, Second Edition 2013) in the Lean engine, `L4Factoidal/RIF/Bld.lean`, over the RIF Core engine: equality in rule conclusions with congruence and list injectivity, inconsistency when two data values are made equal, the semantic conditions on `#` and `##`, rules whose body does not bind every variable, named-argument uniterms, open lists and conjunctive conclusions in the presentation syntax. W3C BLD suite: 28 pass, 0 fail (out of 28 decided), 1 undecided, 3 excluded (defective test data, https://github.com/danbri/factoidal/issues/1186). No npm or wasm op yet.
 
 ## 0.22.0 (2026-10-29)

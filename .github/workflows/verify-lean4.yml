@@ -174,6 +174,14 @@ jobs:
         working-directory: formal/lean4
         run: lake exe l4c14n
 
+      # XPointer Framework, element() and xmlns() (2003) and xpointer() (2002
+      # draft) over the 98 pointers of the W3C XInclude test suite in
+      # third_party/testing/xinclude (https://github.com/danbri/factoidal/issues/1165,
+      # track B item 2). Exits non-zero when a line differs from tests/xpointer/expected.tsv.
+      - name: XPointer (lake exe l4xpointer)
+        working-directory: formal/lean4
+        run: lake exe l4xpointer
+
       # YAML-LD 1.0 over the YAML 1.2.2 loader, and every JSON-LD 1.1 suite
       # input through the same loader (https://github.com/danbri/factoidal/issues/1165).
       - name: YAML-LD test suite (tests/yamlld/run.sh)
