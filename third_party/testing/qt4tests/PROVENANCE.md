@@ -32,7 +32,15 @@ b1616b79c7300167c79a8b0790ba79b5e0b7080d (committed
 
 - `ft/` (84 full-text test sets and `ft/TestSources`)
 
-Not copied: `ser/`, `upd/`, `xs/`, the drivers, tools, viewer and
+Added 2026-10-28 for the XQuery Update Facility
+(https://github.com/danbri/factoidal/issues/1101), from a `git checkout` of
+commit b39c4bc0 (`upd/` is the same at b1616b79):
+
+- `upd/` (40 test sets, 825 test cases, with `TestSources/` and
+  `LibraryModules/`). The upstream `upd/TestSources/CVS/` directory (CVS
+  metadata, no test data) is not copied; every other file is unchanged.
+
+Not copied: `ser/`, `xs/`, the drivers, tools, viewer and
 guide. A catalog test set whose file is not
 present is not run by `lake exe l4qt4` unless its family is selected.
 

@@ -1772,3 +1772,11 @@ L4Factoidal_FullText_pPrimaryWithOptions  # (b) nesting of the full-text selecti
 L4Factoidal_FullText_pPrimary  # (b) nesting of the full-text selection; fuel 200
 L4Factoidal_FullText_synEdges  # (c) nesting of synonym elements in a thesaurus document; fuel 64
 L4Factoidal_FullText_formCombinations  # (a) PENDING https://github.com/danbri/factoidal/issues/1179 one frame per Match of an FTTimes operand
+# --- XQuery Update Facility (XQueryUpdate/, https://github.com/danbri/factoidal/issues/1101)
+L4Factoidal_XQueryUpdate_flatU  # (b) one frame per element nesting level of the rebuilt document; siblings are a for loop (as XPath4.flatXT)
+L4Factoidal_XQueryUpdate_rebuild  # (b) one frame per element nesting level of the updated document; attributes and children are for loops
+L4Factoidal_XQueryUpdate_cat  # (b) one frame per expression nesting level of the query (category rules)
+L4Factoidal_XQueryUpdate_untypeXT  # (b) one frame per element nesting level of an inserted tree
+L4Factoidal_XQueryUpdate_noPreserveXT  # (b) one frame per element nesting level of a copied tree
+L4Factoidal_XQueryUpdate_stripElementOnlyWs  # (b) one frame per element nesting level of a revalidated tree
+L4Factoidal_XQueryUpdate_XT_fits  # (s) specification only: the hypothesis of the theorem flatU_true_eq_flatXT; no compiled function calls it
