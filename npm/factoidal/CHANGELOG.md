@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.24.0 (2026-10-29)
+
+In the Lean tree (native runners; no new package functions; the wasm does not change):
+
+- WHATWG URL Standard (`L4Factoidal/WHATWG/URL/`): web-platform-tests `url/` at ce5ca396, 4570 pass, 0 fail (out of 4570). Theorem `whatwg2026_path_eq_rfc3986`: the parser's path-segment rule gives the same path as RFC 3986 §5.2.4 `removeDotSegments` when no segment contains `/`; a theorem for the whole parser is open (https://github.com/danbri/factoidal/issues/1188). (https://github.com/danbri/factoidal-core/pull/241, https://github.com/danbri/factoidal/issues/1167 milestone 3)
+- XProc 3.1 (`L4Factoidal/XProc31/`, `lake build l4xproc`): XProc test suite (Codeberg, dc530eb6) 2243 pass, 125 fail, 995 unsupported (out of 3363); bridge theorems in `XProc31/Bridge.lean` and `XProc31/Sequence.lean` (https://github.com/danbri/factoidal-core/pull/249).
+
 ## 0.23.0 (2026-10-29)
 
 - RIF PRD (W3C Recommendation, Second Edition 2013) in the Lean engine, `L4Factoidal/RIF/Prd.lean`, over the RIF Core matcher: conditions with `Not` and the PRD membership rule, the actions Assert, Retract (of a fact, of all slot values, of an object), Modify and Execute (`act:print`), action blocks with `New()` and slot-value action variables, and the `rif:forwardChaining` strategy (refraction, priority, recency) over cycle and transitional states. The RIF/XML syntax of PRD is read by `L4Factoidal/RIF/PrdXml.lean`. W3C PRD manifest (53 cases, 46 shared with RIF Core): 49 pass, 0 fail (out of 49 decided), 1 undecided, 3 excluded (defective test data, https://github.com/danbri/factoidal/issues/1031); the 37 shared Core entailment cases give the Core verdict. No npm or wasm op yet.
