@@ -2022,3 +2022,4 @@ Harness_WhatwgUrl_allStrings  # (c) depth is the generated string length, the co
 L4Factoidal_WHATWG_URL_Theorems_joinSlash  # (s) used only by WHATWG/URL/Theorems.lean; the parser serializes paths with Array.foldl (Url.serializePath)
 L4Factoidal_XQuery4_nodeTestStaticErr  # (b) XQuery4/Static: the depth is the nesting of a node test union in the query, and the fuel argument bounds it
 L4Factoidal_XQuery4_typeLoader  # (c) XQuery4/Module: the recursion is one level per module import, at most 8 (typeLoader env 8); the list folds are foldlM loops
+L4Factoidal_XQuery4_loadXQueryModule  # (c) XQuery4/LoadModule: one level per fn:load-xquery-module call made by a loaded module, at most 20 (the depth argument, loadModuleHost)
