@@ -30,8 +30,9 @@ def s4sErrors (s4s : Schema) (h : Hooks) (docs : List LoadedDoc) : List String :
 
 /-- A schema from its documents, with the component constraints and (when
 a schema for schema documents is given) the representation constraint. -/
-def buildSchema (s4s : Option Schema) (h : Hooks) (docs : List LoadedDoc) (roots : List String) : Schema :=
-  let s := checkSchema (readSchemaDocs docs roots)
+def buildSchema (s4s : Option Schema) (h : Hooks) (docs : List LoadedDoc) (roots : List String)
+    (version : XSD.Version := .v11) : Schema :=
+  let s := checkSchema (readSchemaDocs docs roots version)
   match s4s with
   | some s4 => { s with errors := s.errors ++ s4sErrors s4 h docs }
   | none => s

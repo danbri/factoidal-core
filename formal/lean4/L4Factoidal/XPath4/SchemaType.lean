@@ -134,7 +134,9 @@ def userTypeRecord (q : QN) (i : SchemaTypeInfo) : Seq :=
 /-- The record of a type name: a built-in type, or a type of the in-scope
 schema. -/
 def typeRecordOf (e : Env) (q : QN) : Seq :=
-  if q.uri == nsXS then (builtinSchemaType? q.loc).getD []
+  if q.uri == nsXS then
+    if e.features.xsdVersion == .v10 && (q.loc == "dateTimeStamp" || q.loc == "error") then []
+    else (builtinSchemaType? q.loc).getD []
   else match e.schema.typeInfo q with
     | some i => userTypeRecord q i
     | none => []

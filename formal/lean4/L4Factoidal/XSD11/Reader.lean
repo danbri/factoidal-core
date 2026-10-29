@@ -1136,12 +1136,51 @@ def headType (s : Schema) : Nat → Nat → Nat
 
 /-! ## Entry point -/
 
+/-- Schema-document features introduced in XSD 1.1. Inspect names with
+their namespace bindings, so annotations and foreign vocabularies remain
+permitted in XSD 1.0. This runs on the original documents before 1.1
+conditional inclusion can remove any syntax. -/
+def xsd10DocumentErrors : Nat → NsBindings → Node → List String
+  | 0, _, _ => ["XSD 1.0 schema document nesting limit"]
+  | fuel + 1, bs, .element tag attrs kids =>
+    let bs := bindingsOf attrs ++ bs
+    let schemaNode := lookupNs bs (prefixOf tag) == some xsNS
+    let loc := localOf tag
+    if schemaNode && loc == "annotation" then [] else
+    let constructs := ["assert", "assertion", "alternative", "openContent",
+      "defaultOpenContent", "override", "explicitTimezone", "minScale", "maxScale"]
+    let features := ["xpathDefaultNamespace", "defaultAttributes", "defaultAttributesApply",
+      "inheritable", "notNamespace", "notQName"]
+    let errs := if !schemaNode then [] else
+      (if constructs.contains loc then [s!"XSD 1.0 does not permit xs:{loc}"] else []) ++
+      (attrs.filterMap (fun a => if features.contains a.name then
+        some s!"XSD 1.0 does not permit attribute {a.name}" else none)) ++
+      (if loc != "schema" && (attrOf "targetNamespace" (.element tag attrs kids)).isSome
+        then ["XSD 1.0 permits targetNamespace only on xs:schema"] else []) ++
+      (if loc == "element" && (XSD.qnameList ((attrOf "substitutionGroup" (.element tag attrs kids)).getD "")).length > 1
+        then ["XSD 1.0 permits one substitution-group affiliation"] else []) ++
+      (if loc == "all" then
+        let occursOk (n : Node) :=
+          ["minOccurs", "maxOccurs"].all (fun a =>
+            let v := (attrOf a n).getD "1"
+            v == "0" || v == "1")
+        (if !occursOk (.element tag attrs kids) ||
+            (attrOf "maxOccurs" (.element tag attrs kids)).getD "1" != "1" ||
+            (elementChildren (.element tag attrs kids)).any (fun k => isXs k "element" && !occursOk k)
+          then ["XSD 1.0 all-group occurrence limits must be zero or one"] else []) ++
+        (if (elementChildren (.element tag attrs kids)).any (fun k => isXs k "any" || isXs k "group")
+          then ["XSD 1.0 all groups permit only element particles"] else [])
+      else [])
+    errs ++ kids.flatMap (xsd10DocumentErrors fuel bs)
+  | _, _, _ => []
+
 /-- Read a schema from its first document and the documents it reaches
 (`docs`, keyed by location). Additional `extra` locations are read as
 further top-level documents (an instance's schema location hints). -/
-def readSchemaDocs (docs : List LoadedDoc) (roots : List String) : Schema :=
+def readSchemaDocs (docs : List LoadedDoc) (roots : List String)
+    (version : XSD.Version := .v11) : Schema :=
   let col := roots.foldl (fun st r => collectDoc docs 32 r none [] [] st) ({} : Collect)
-  let base := Schema.builtins
+  let base := Schema.builtinsFor version
   let tops := col.tops
   -- pass 2: indices
   -- The schema for schema documents defines `xs:anyType` and may define
@@ -1165,7 +1204,9 @@ def readSchemaDocs (docs : List LoadedDoc) (roots : List String) : Schema :=
     go l []
   let gTypeNames := gTypesNew.map (·.1)
   let builtinClash := gTypeNames.filter (fun n => n.ns == xsNS && (base.gTypes.lookup n).isSome)
-  let errs0 := col.errors ++ dupErrs gTypeNames "type" ++ dupErrs (gElems.map (·.1)) "element" ++
+  let versionErrs := if version == .v10 then
+    docs.flatMap (fun d => (xsd10DocumentErrors 10000 [] d.doc.root).map (fun e => d.loc ++ ": " ++ e)) else []
+  let errs0 := versionErrs ++ col.errors ++ dupErrs gTypeNames "type" ++ dupErrs (gElems.map (·.1)) "element" ++
     dupErrs (gAttrsNew.map (·.1)) "attribute" ++
     dupErrs ((tops.toList.filter (·.kind == .group)).map (·.name)) "group" ++
     dupErrs ((tops.toList.filter (·.kind == .attributeGroup)).map (·.name)) "attribute group" ++
@@ -1232,10 +1273,11 @@ def readSchemaDocs (docs : List LoadedDoc) (roots : List String) : Schema :=
     match t with
     | .complex _ => if i == anyTypeIdx then t else .complex (effComplex sch 64 i)
     | other => other) }
-  sch
+  { sch with sourceDocuments := docs.map (fun d => (d.loc, d.doc)), sourceRoots := roots }
 
 /-- Read a schema from one parsed document with no other documents. -/
-def readSchemaDoc (d : Document) (loc : String := "schema.xsd") : Schema :=
-  readSchemaDocs [{ loc, doc := d }] [loc]
+def readSchemaDoc (d : Document) (loc : String := "schema.xsd")
+    (version : XSD.Version := .v11) : Schema :=
+  readSchemaDocs [{ loc, doc := d }] [loc] version
 
 end L4Factoidal.XSD11

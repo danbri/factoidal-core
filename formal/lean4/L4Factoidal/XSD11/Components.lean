@@ -23,7 +23,8 @@ lookup): 0 is `xs:anyType` (§3.4.7), 1 + k is the k-th entry of
 
 No `sorry`, no `axiom`, no `native_decide`, no `partial`.
 -/
-import L4Factoidal.XSD.SimpleType
+import L4Factoidal.XSD11.Datatypes
+import L4Factoidal.XML.Document
 
 namespace L4Factoidal.XSD11
 
@@ -296,6 +297,10 @@ def TypeDef.isSimple : TypeDef → Bool
 Constraint or Schema Representation Constraint, or an unresolved
 reference); a schema with errors is not a valid schema. -/
 structure Schema where
+  version : XSD.Version := .v11
+  /-- Original documents retained for extension by schema location hints. -/
+  sourceDocuments : List (String × XML.Document) := []
+  sourceRoots : List String := []
   types : Array TypeDef := #[]
   elems : Array ElemDecl := #[]
   attrs : Array AttrDecl := #[]
@@ -382,6 +387,23 @@ def Schema.builtins : Schema :=
   { types, gTypes, attrs,
     gAttrs := [(⟨xsiNS, "type"⟩, 0), (⟨xsiNS, "nil"⟩, 1),
                (⟨xsiNS, "schemaLocation"⟩, 2), (⟨xsiNS, "noNamespaceSchemaLocation"⟩, 3)] }
+
+/-- Keep the fixed component indices, but expose only types declared by
+the selected edition. The private slots avoid changing every component
+reference when an edition is selected. -/
+def Schema.builtinsFor (version : XSD.Version := .v11) : Schema :=
+  match version with
+  | .v11 => Schema.builtins
+  | .v10 =>
+    { Schema.builtins with
+      version := .v10
+      gTypes := Schema.builtins.gTypes.filter (fun (n, _) =>
+        if n == xs "error" then false else
+        match XSD.builtinOfName? n.loc with
+        | some b => XSD.builtinAvailable .v10 b
+        | none => true) }
+
+@[simp] theorem Schema.builtinsFor_default : Schema.builtinsFor = Schema.builtins := rfl
 
 /-! ## Derivation -/
 

@@ -49,7 +49,6 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-03 | [Dynamic font requests](20261103-web-render-dynamic-font-requests.md) | this commit | current — Lean requests, actual HarfBuzz/FreeType broker and arbitrary edited text |
 | 2026-11-03 | [QuickJS scripting boundary](20261103-web-render-script-engine.md) | this commit | current — actual isolated QuickJS WASM, typed Lean DOM commands |
 | 2026-11-03 | [Script engine architecture](designissues/2026-11-03-script-engine-architecture.md) | this commit | current — separate instances and heaps, message transactions, verified-JS research limits |
-
 | 2026-11-03 | [Original HTML document context for embedded SVG](20261103-html-svg-document-context.md) | this commit | current — original DOM paths and cross-root source guards; linked runtime and original browser comparison next |
 | 2026-11-03 | [Reuse WebGPU sessions for editor changes](20261103-gpu-edit-session-reuse.md) | 50f735802 | current — bounded full-buffer updates, exact whole-image and stale-request controls; published runtime qualification separate |
 | 2026-11-03 | [Prepared path sampling in the Lean renderer](20261103-lean-path-sampling-preparation.md) | this commit | current — exact prepared path/polygon source proofs and emitted-C hoisting; paired current-curve WASM speed measurements recorded |
@@ -90,6 +89,7 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-10-31 | [Compositor XML representability counterexample](20261031-compositor-xml-representability.md) | 1b1f81a10 | current: two controls, one serializer-admission expected defect |
 | 2026-10-31 | [Readable compositor evidence](20261031-compositor-evidence-explanations.md) | this commit | current |
 | 2026-10-31 | [Variable SERVICE backend correlation](20261031-service-variable-correlation.md) | pending | current |
+| 2026-10-29 | [XSD 1.0 configuration](20261029-xsd10-configuration.md) | https://github.com/danbri/factoidal-core/pull/264 | current: [design](designissues/2026-10-29-xsd10-configuration.md) |
 | 2026-10-29 | [Selectable static typing](20261029-static-typing.md) | eddfd724 | current: implementation, proof boundary and measurements |
 | 2026-10-30 | [Compact WebDAV/LWS Base64 codecs](20261030-webdav-compact-base64.md) | pending | current: equivalent codec; native 49/51 MB probes pass; full WebDAV gate remains open |
 | 2026-10-29 | [WebDAV executable gate investigation](20261029-webdav-executable-gate.md) and [assurance boundary](designissues/2026-10-29-webdav-executable-assurance.md) | this change | current: startup fixed; large remote reads still fail |

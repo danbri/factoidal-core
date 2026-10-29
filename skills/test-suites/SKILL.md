@@ -18,6 +18,11 @@ detector: new semantic tests follow the
 `graph_default_semantics_regressions.sh` pattern — same fixtures,
 same queries, every backend, results diffed.
 
+Compare failure names as well as totals when enabling more test cases.
+On 2026-10-29, the XSD configuration work gained passes overall
+while four existing namespace tests regressed. The case-name
+comparison caught them before completion; an aggregate floor alone did not.
+
 Every change in this repo is judged by test counts. Conformance and
 performance are measured on **separate, repeatable harnesses and never
 conflated**: this skill covers correctness; timing lives in the

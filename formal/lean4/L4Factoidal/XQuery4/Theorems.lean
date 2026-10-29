@@ -97,12 +97,12 @@ theorem loadImports_nil (env : Env) (d : Nat) (seen : List String) (m : Module) 
     variable). -/
 theorem evalModule_emptyProlog (fuel : Nat) (env : Env) (m : Module) (e : Expr)
     (hd : m.decls = []) (hi : m.imports = []) (hs : m.schemaImports = []) (hb : m.body = some e)
-    (hl : m.libNs = none) :
+    (hl : m.libNs = none) (hsl : m.schemaLocations = []) :
     evalModule fuel env m =
       (do checkModules (moduleEnv env m) [m]; eval fuel (markStatic (moduleEnv env m)) e) := by
   have h50 : ∀ (env' : Env) (seen : List String), loadImports env' 50 seen m = pure ([], seen) :=
     fun env' seen => loadImports_nil env' 49 seen m hi
-  simp only [evalModule, h50, hs]
+  simp only [evalModule, h50, hs, hsl, withSchemaLocations_nil]
   simp [hb, hl, hd, bindModules_empty _ _ _ hd]
   split <;> rfl
 
@@ -229,18 +229,18 @@ variable (h : Hooks) (e : Env) (s p f : String) (rep : Seq)
 
 theorem tokenize_shared :
     (libLookupAll (fnQ "tokenize")).map (fun g => g h e [sStr s, sStr p, sStr f]) =
-      some (do let re ← compileRe4 p f; pure ((tokenize4 s re).map (fun t => .atom (Atomic.ofStr t)))) := rfl
+      some (do let re ← compileRe4 p f e.features.xsdVersion; pure ((tokenize4 s re).map (fun t => .atom (Atomic.ofStr t)))) := rfl
 
 theorem replace_shared :
     (libLookupAll (fnQ "replace")).map (fun g => g h e [sStr s, sStr p, rep, sStr f]) =
-      some (do let re ← compileRe4 p f; pure (sStr (← replace4 h e s re rep))) := rfl
+      some (do let re ← compileRe4 p f e.features.xsdVersion; pure (sStr (← replace4 h e s re rep))) := rfl
 
 /-- The pattern is compiled by the shared profile (below the quantifier
     limit of 1000). -/
 theorem compileRe4_shared (r : L4Factoidal.Regex.Compiled) (hq : ¬ maxQuant p > 1000)
     (hc : L4Factoidal.Regex.Profiles.compileXPath40 p f = .ok r) :
     compileRe4 p f = .ok { r, names := r.names, groups := countGroups r.capt } := by
-  simp [compileRe4, compileRe, hq, hc, bind, Except.bind, pure, Except.pure]
+  simp [compileRe4, compileRe, L4Factoidal.Regex.Profiles.compileXPath40Version_default, hq, hc, bind, Except.bind, pure, Except.pure]
 
 end RegexShared
 

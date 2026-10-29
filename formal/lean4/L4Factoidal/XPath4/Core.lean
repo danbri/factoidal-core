@@ -20,107 +20,6 @@ open L4Factoidal.XSD
 
 /-! ## The dynamic context -/
 
-def untypedQN : QN := { uri := nsXS, loc := "untyped" }
-def untypedAtomicQN : QN := { uri := nsXS, loc := "untypedAtomic" }
-def anyTypeQN : QN := { uri := nsXS, loc := "anyType" }
-
-/-- Type derivation between built-in type names (XDM 4.0 §2.7.4): every
-type derives from `xs:anyType`; `xs:untyped` and the simple types from it;
-`xs:untypedAtomic` and the atomic built-ins from `xs:anyAtomicType`. -/
-def builtinTypeDerives (t u : QN) : Bool :=
-  t == u || u == anyTypeQN ||
-  -- xs:numeric is the union of xs:double, xs:float and xs:decimal: a type
-  -- derives from it when it derives from a member (XPath 4.0 §3.3.1.1)
-  (u.uri == nsXS && u.loc == "numeric" && t.uri == nsXS &&
-    (match builtinOfName? t.loc with
-     | some a => derivedFrom a .double || derivedFrom a .float || derivedFrom a .decimal
-     | none => false)) ||
-  (t.uri == nsXS && u.uri == nsXS &&
-    (if t.loc == "untypedAtomic" then u.loc == "anyAtomicType" || u.loc == "anySimpleType"
-     else match builtinOfName? t.loc, builtinOfName? u.loc with
-       | some a, some b => derivedFrom a b || b == .anySimpleType
-       | _, _ => false))
-
-/-- A type definition of the in-scope schema that is not a built-in type
-(`fn:schema-type`, `fn:node-type-annotation`, F&O 4.0 §20.1). -/
-structure SchemaTypeInfo where
-  /-- The type name; `none` for an anonymous type. -/
-  name : Option QN
-  simple : Bool
-  /-- The annotation name of the base type (a built-in type, or one that
-      `SchemaHook.typeInfo` knows). -/
-  base : QN
-  /-- The primitive type of an atomic type. -/
-  primitive : Option QN := none
-  /-- `atomic`, `list`, `union`, or for a complex type the content type
-      variety: `empty`, `simple`, `element-only`, `mixed`. -/
-  variety : String
-  /-- The typed value of a lexical form validated against the type;
-      `none` when the form is not valid. Absent for a complex type. -/
-  cast : Option (String → Option (List Atomic)) := none
-  /-- The XSD 1.1 Part 2 body of a simple type (base, variety, members or
-      item type, facets): what `cast as`, `castable as`, the constructor
-      function and `instance of` use (`XPath4.SchemaSimple`). Absent for a
-      complex type. -/
-  body : Option L4Factoidal.XSD.SimpleType := none
-deriving Inhabited
-
-/-- Schema component facts needed by F&O 4.0 §14.6.6. These describe the
-    declared content model, not the children and attributes in one instance. -/
-structure SchemaContentInfo where
-  /-- `simple`, `empty`, `element-only`, or `mixed`. -/
-  variety : String
-  list : Bool := false
-  zeroLength : Bool := false
-  attributes : Bool := false
-  wildcard : Bool := false
-  /-- Maximum occurrences per expanded child name; `none` is unbounded. -/
-  children : List (QN × Option Nat) := []
-deriving Inhabited
-
-/-- Hook for schema-aware processing (`L4Factoidal.XSD11` supplies one
-from a schema): type derivation by type name, the global element and
-attribute declarations, and substitution groups. The default knows the
-built-in types only and has no declarations. -/
-structure SchemaHook where
-  /-- `derives t u`: type `t` is `u` or derived from it. -/
-  derives : QN → QN → Bool := builtinTypeDerives
-  /-- The type and `nillable` of the global element declaration of a name. -/
-  elemDecl : QN → Option (QN × Bool) := fun _ => none
-  /-- The type of the global attribute declaration of a name. -/
-  attrDecl : QN → Option QN := fun _ => none
-  /-- `substitutes n h`: an element named `n` may stand for head `h`. -/
-  substitutes : QN → QN → Bool := fun _ _ => false
-  /-- The target namespaces the schema has components for (XQuery
-      `import schema`, XQST0059). -/
-  targetNamespaces : List String := []
-  /-- Validate a document element against the in-scope schema (`xsd-validation`
-      of `fn:parse-xml` and `fn:doc`): the mode (`strict`, `lax` or
-      `type Q{uri}local`), the element, the document URI; the typed document
-      or the error. `none`: this processor has no schema to validate with. -/
-  validate : Option (String → L4Factoidal.XML.Node → String → Except Err Doc) := none
-  /-- The same for a node of a document already built (XQuery `validate`):
-      the mode, the document, the node's index, the document URI. -/
-  validateIn : Option (String → Doc → Nat → String → Except Err Doc) := none
-  /-- `fn:xsd-validator`: the mode, schema documents given in the options
-      (document or element nodes; none means the in-scope schema), the
-      document, the node's index, the URI; the typed document when valid,
-      and the error messages. -/
-  validateWith : Option (String → List (Doc × Nat) → Doc → Nat → String →
-      Except Err (Option Doc × List String)) := none
-  /-- Validate the XML result of an F&O 4.0 function in the `fn` namespace
-      (`fn:json-to-xml` with `validate`, `fn:analyze-string`) against the
-      F&O 4.0 result schemas (`XSD11.FnSchemas`): the document element and
-      the document URI; the typed document or the error. `none`: this
-      processor is not schema-aware. -/
-  validateFnNs : Option (L4Factoidal.XML.Node → String → Except Err Doc) := none
-  /-- The type definitions of the in-scope schema by annotation name
-      (`NRec.tann`); `none` for a built-in type or an unknown name. -/
-  typeInfo : QN → Option SchemaTypeInfo := fun _ => none
-  /-- Content model facts for schema-based element-to-map conversion. -/
-  contentInfo : QN → Option SchemaContentInfo := fun _ => none
-deriving Inhabited
-
 /-- The Part 2 body of a simple type of the in-scope schema that is not
     built in; `none` for another name. -/
 def SchemaHook.simpleBody (h : SchemaHook) (q : QN) : Option L4Factoidal.XSD.SimpleType :=
@@ -141,12 +40,6 @@ def SchemaHook.simpleUse (h : SchemaHook) (q : QN) : Option SchemaSimpleUse :=
       | .union _ _, some ls => .general (.choice (ls.map IType.atomic))
       | _, _ => .general (.schemaType q)
     else .castOnly)
-
-/-- The in-scope element (`true`) or attribute (`false`) declaration test
-    for the parser (`PCtx.schemaDecl`, XPST0008 of `schema-element()` and
-    `schema-attribute()`). -/
-def SchemaHook.declared (h : SchemaHook) (isElem : Bool) (q : QN) : Bool :=
-  if isElem then (h.elemDecl q).isSome else (h.attrDecl q).isSome
 
 /-- The part of the dynamic context that a host function sees
     (`Env.host`): the variable bindings and the focus at the call. -/
@@ -257,6 +150,8 @@ def Env.restrictFeatures (e : Env) (features : FeatureSettings) : Env :=
   if features == ({} : FeatureSettings) then e else
   let features : FeatureSettings := {
     staticTyping := e.features.staticTyping || features.staticTyping
+    xsdVersion := features.xsdVersion
+    schemaLocationHints := features.schemaLocationHints
     loadXQueryModule := e.features.loadXQueryModule && features.loadXQueryModule
     transform := e.features.transform && features.transform
     transform30 := e.features.transform30 && features.transform30
@@ -298,6 +193,10 @@ def Env.nsResolve (e : Env) (p : String) : Option String :=
   match e.ns.lookup p with
   | some u => some u
   | none => if p == "" then none else defaultNs.lookup p
+
+/-- Atomic conversion uses the datatype configuration of this context. -/
+def Env.castAtomic (e : Env) (a : Atomic) (t : AType) : M Atomic :=
+  castAtomicVersion e.features.xsdVersion a t e.nsResolve
 
 /-! ## Item helpers -/
 
@@ -440,8 +339,8 @@ def Env.kindMatches1 (e : Env) (n : NodeRef) : IType → Bool
       e.schema.derives (r.tann.getD untypedAtomicQN) ty
   | .schemaElem q =>
       let r := e.nrec n
-      r.kind == .element && (r.name == q || e.schema.substitutes r.name q) &&
-      (match e.schema.elemDecl q with
+      r.kind == .element && !e.schema.elemAbstract r.name && (r.name == q || e.schema.substitutes r.name q) &&
+      (match e.schema.elemDecl r.name with
        | some (ty, nil) => e.schema.derives (r.tann.getD untypedQN) ty && (!r.nilled || nil)
        | none => false)
   | .schemaAttr q =>
@@ -676,7 +575,7 @@ def typeParts : IType → Option (List IType)
 /-- Sequence-type subtyping (XPath 4.0 §3.3), approximated: atomic
     derivation, node kinds, choices, and function/map/array types with
     the usual variance. -/
-def subtypeF : Nat → IType → IType → Bool
+def subtypeWithSchemaF (schema : SchemaHook) : Nat → IType → IType → Bool
   | 0, _, _ => false
   | f + 1, a, b =>
     match a, b with
@@ -686,15 +585,25 @@ def subtypeF : Nat → IType → IType → Bool
     | .empty, .empty => true
     | .empty, .seq _ o => o == .opt || o == .star
     | _, .empty => false
-    | .seq t o, .seq u p => occLe o p && subtypeF f t u
-    | .seq t o, u => o == .one && subtypeF f t u
-    | t, .seq u p => occLe .one p && subtypeF f t u
+    | .seq t o, .seq u p => occLe o p && subtypeWithSchemaF schema f t u
+    | .seq t o, u => o == .one && subtypeWithSchemaF schema f t u
+    | t, .seq u p => occLe .one p && subtypeWithSchemaF schema f t u
     | _, .item => true
-    | .choice ts, u => ts.all (fun t => subtypeF f t u)
-    | t, .choice us => us.any (fun u => subtypeF f t u) ||
+    | .choice ts, u => ts.all (fun t => subtypeWithSchemaF schema f t u)
+    | t, .choice us => us.any (fun u => subtypeWithSchemaF schema f t u) ||
         (match typeParts t with
-         | some ps => ps.all (fun p => subtypeF f p (.choice us))
+         | some ps => ps.all (fun p => subtypeWithSchemaF schema f p (.choice us))
          | none => false)
+    | .schemaElem n, .schemaElem m => n == m || schema.substitutionType n m
+    | .schemaElem n, .elemT m ty nil =>
+        nameTestLe none m && (match schema.elemDecl n with
+          | some (nt, nnil) => (typeNameLe nt ty || schema.derives nt ty) && (!nnil || nil)
+          | none => false)
+    | .schemaAttr n, .schemaAttr m => n == m
+    | .schemaAttr n, .attrT m ty =>
+        nameTestLe (some (.name n)) m && (match schema.attrDecl n with
+          | some nt => typeNameLe nt ty || schema.derives nt ty
+          | none => false)
     | .atomic x, .atomic y => x.derives y
     -- a simple type of the in-scope schema is a subtype of itself and of
     -- xs:anyAtomicType (its relation to other types needs the schema)
@@ -708,8 +617,8 @@ def subtypeF : Nat → IType → IType → Bool
     | .elem _, .xnode | .attr _, .xnode | .text, .xnode | .comment, .xnode
     | .pi _, .xnode | .doc _, .xnode | .nsNode, .xnode => true
     | .jnodeT _ _, .jnodeT .any none => true
-    | .jnodeT _ (some t), .jnodeT .any (some u) => subtypeF f t u
-    | .elem none, .elem none | .attr none, .attr none | .text, .text | .comment, .comment
+    | .jnodeT _ (some t), .jnodeT .any (some u) => subtypeWithSchemaF schema f t u
+    | .text, .text | .comment, .comment
     | .nsNode, .nsNode | .doc none, .doc none | .pi none, .pi none => true
     | .elemT .., .anyNode | .attrT .., .anyNode | .schemaElem _, .anyNode | .schemaAttr _, .anyNode
     | .elemT .., .xnode | .attrT .., .xnode | .schemaElem _, .xnode | .schemaAttr _, .xnode
@@ -719,38 +628,48 @@ def subtypeF : Nat → IType → IType → Bool
     | .doc (some _), .doc none => true
     | .elem x, .elem y | .attr x, .attr y => nameTestLe x y
     | .elemT x _ _, .elem y | .attrT x _, .attr y => nameTestLe x y
-    | .elemT x q n, .elemT y r m => nameTestLe x y && typeNameLe q r && (!n || m)
-    | .attrT x q, .attrT y r => nameTestLe x y && typeNameLe q r
+    | .elemT x q n, .elemT y r m => nameTestLe x y && (typeNameLe q r || schema.derives q r) && (!n || m)
+    | .attrT x q, .attrT y r => nameTestLe x y && (typeNameLe q r || schema.derives q r)
     | .elem x, .elemT y r m => nameTestLe x y && (r.uri == nsXS && r.loc == "anyType") && m
-    | .doc (some t), .doc (some u) => subtypeF f t u
+    | .doc (some t), .doc (some u) => subtypeWithSchemaF schema f t u
+    | .schemaAttr n, .attr m => nameTestLe (some (.name n)) m
     | .fnT _ _, .anyFn | .anyMap, .anyFn | .mapT _ _, .anyFn | .anyArr, .anyFn | .arrT _, .anyFn
     | .record _ _, .anyFn | .anyFn, .anyFn => true
     | .fnT ps r, .fnT qs t =>
-        ps.length == qs.length && (qs.zip ps).all (fun (q, p) => subtypeF f q p) && subtypeF f r t
+        ps.length == qs.length && (qs.zip ps).all (fun (q, p) => subtypeWithSchemaF schema f q p) && subtypeWithSchemaF schema f r t
     | .mapT _ _, .anyMap | .record _ _, .anyMap | .anyMap, .anyMap => true
-    | .mapT k v, .mapT k2 v2 => subtypeF f k k2 && subtypeF f v v2
+    | .mapT k v, .mapT k2 v2 => subtypeWithSchemaF schema f k k2 && subtypeWithSchemaF schema f v v2
     -- XPath 4.0 §3.3.2.5: a record type is a subtype of a map type whose key
     -- type admits xs:string and whose value type admits every field
     | .record fs ext, .mapT k v =>
-        subtypeF f (.atomic (.b .string)) k &&
-        (if ext then subtypeF f (.seq .item .star) v else fs.all (fun (_, _, t) => subtypeF f t v))
+        subtypeWithSchemaF schema f (.atomic (.b .string)) k &&
+        (if ext then subtypeWithSchemaF schema f (.seq .item .star) v else fs.all (fun (_, _, t) => subtypeWithSchemaF schema f t v))
     | .record fs e1, .record gs e2 =>
         gs.all (fun (n, opt, t) => match fs.find? (·.1 == n) with
-          | some (_, o1, t1) => (opt || !o1) && subtypeF f t1 t
+          | some (_, o1, t1) => (opt || !o1) && subtypeWithSchemaF schema f t1 t
           | none => opt && !e1) &&
         (e2 || (!e1 && fs.all (fun (n, _, _) => gs.any (·.1 == n))))
     | .anyArr, .anyArr | .arrT _, .anyArr => true
-    | .arrT m, .arrT m2 => subtypeF f m m2
-    | .mapT _ v, .fnT [p] r => subtypeF f p (.atomic (.b .anyAtomicType)) && subtypeF f (optOf v) r
+    | .arrT m, .arrT m2 => subtypeWithSchemaF schema f m m2
+    | .mapT _ v, .fnT [p] r => subtypeWithSchemaF schema f p (.atomic (.b .anyAtomicType)) && subtypeWithSchemaF schema f (optOf v) r
     | .record fs ext, .fnT [p] r =>
-        subtypeF f p (.atomic (.b .anyAtomicType)) &&
-        (subtypeF f (.seq .item .star) r || (!ext && fs.all (fun (_, _, t) => subtypeF f (optOf t) r) && subtypeF f .empty r))
-    | .anyMap, .fnT [p] r => subtypeF f p (.atomic (.b .anyAtomicType)) && subtypeF f (.seq .item .star) r
-    | .arrT m, .fnT [p] r => subtypeF f p (.atomic (.b .integer)) && subtypeF f m r
-    | .anyArr, .fnT [p] r => subtypeF f p (.atomic (.b .integer)) && subtypeF f (.seq .item .star) r
+        subtypeWithSchemaF schema f p (.atomic (.b .anyAtomicType)) &&
+        (subtypeWithSchemaF schema f (.seq .item .star) r || (!ext && fs.all (fun (_, _, t) => subtypeWithSchemaF schema f (optOf t) r) && subtypeWithSchemaF schema f .empty r))
+    | .anyMap, .fnT [p] r => subtypeWithSchemaF schema f p (.atomic (.b .anyAtomicType)) && subtypeWithSchemaF schema f (.seq .item .star) r
+    | .arrT m, .fnT [p] r => subtypeWithSchemaF schema f p (.atomic (.b .integer)) && subtypeWithSchemaF schema f m r
+    | .anyArr, .fnT [p] r => subtypeWithSchemaF schema f p (.atomic (.b .integer)) && subtypeWithSchemaF schema f (.seq .item .star) r
     | _, _ => false
 
+def subtypeF : Nat → IType → IType → Bool := subtypeWithSchemaF {}
+
 def subtype (a b : IType) : Bool := subtypeF 200 a b
+
+/-- Function instance tests use the same recursive subtype rules with
+    the declarations and type derivation of the in-scope schema. -/
+def Env.subtype (e : Env) (a b : IType) : Bool := subtypeWithSchemaF e.schema 200 a b
+
+@[simp] theorem subtypeWithSchema_default (a b : IType) :
+    subtypeWithSchemaF {} 200 a b = subtype a b := rfl
 
 /-- The declared signature of a function item, when known. -/
 def fnSigOf : FnItem → Option (List IType × IType)
@@ -762,6 +681,34 @@ def fnSigOf : FnItem → Option (List IType × IType)
     else (findSig q k).map (fun s => ((s.ps.take k).map (·.ty), s.ret))
   | .inline ps ret _ focus _ => if focus then some ([.seq .item .star], ret) else some (ps.map (·.2), ret)
   | .papp _ _ => none
+  | .scoped _ _ f => fnSigOf f
+
+@[simp] theorem fnSigOf_scoped (schema : SchemaHook) (features : FeatureSettings) (f : FnItem) :
+    fnSigOf (.scoped schema features f) = fnSigOf f := rfl
+
+/-- Invoke the constructor of a simple type in the in-scope schema. -/
+def Env.schemaConstructor (e : Env) (q : QN) (s : Seq) : M Seq := do
+  let some info := e.schema.typeInfo q
+    | err "XPST0017" ("unknown constructor function " ++ q.show)
+  let some cast := info.cast
+    | err "XPST0017" ("unknown constructor function " ++ q.show)
+  match ← e.atomize s with
+  | [] => pure []
+  | [a] =>
+    -- Atomic restrictions use the existing conversion to their primitive
+    -- value space before the schema callback checks their facets. Strings
+    -- and untyped values retain the lexical route.
+    let value ← if a.isStringLike then pure a else
+      match info.primitive with
+      | some p =>
+        match (if p.uri == nsXS then atypeOfNameVersion? e.features.xsdVersion p.loc else none) with
+        | some t => e.castAtomic a t
+        | none => pure a
+      | none => pure a
+    match cast value.str with
+    | some vs => pure (vs.map Item.atom)
+    | none => err "FORG0001" ("invalid lexical form '" ++ value.str ++ "' for " ++ q.show)
+  | _ => err "XPTY0004" "constructor function argument has more than one atomic value"
 
 mutual
 def Env.itemMatchesF (e : Env) : Nat → Item → IType → Bool
@@ -791,17 +738,17 @@ def Env.itemMatchesF (e : Env) : Nat → Item → IType → Bool
   | .fnT ps r => i.fnArity == some ps.length &&
       (match i with
        | .fn fi => match fnSigOf fi with
-          | some (fps, fr) => (ps.zip fps).all (fun (p, q) => subtype p q) && subtype fr r
+          | some (fps, fr) => (ps.zip fps).all (fun (p, q) => e.subtype p q) && e.subtype fr r
           | none => true
        -- XPath 4.0 §3.3.2.6: a map is a function(xs:anyAtomicType) as V?
        -- and an array a function(xs:integer) as V; the instance test
        -- uses the entries and members it has
        | .map kvs => (match ps with
-          | [p] => subtype p (.atomic (.b .anyAtomicType)) && e.seqMatchesF f [] r &&
+          | [p] => e.subtype p (.atomic (.b .anyAtomicType)) && e.seqMatchesF f [] r &&
                    kvs.all (fun (_, v) => e.seqMatchesF f v r)
           | _ => false)
        | .arr ms => (match ps with
-          | [p] => subtype p (.atomic (.b .integer)) && ms.all (fun v => e.seqMatchesF f v r)
+          | [p] => e.subtype p (.atomic (.b .integer)) && ms.all (fun v => e.seqMatchesF f v r)
           | _ => false)
        | _ => false)
   | .anyMap => match i with | .map _ => true | _ => false
@@ -871,24 +818,24 @@ def atomicTarget : IType → Option (List AType)
 /-- Coerce one atomic value to one target type (XPath 4.0 §3.4.3: untyped
     casting, the implicit casting table, URI and binary promotion, and
     relabeling to a derived type whose value space holds the datum). -/
-def coerceAtom1 (t : AType) (a : Atomic) : M Atomic := do
+def coerceAtom1 (t : AType) (a : Atomic) (version : XSD.Version := .v11) : M Atomic := do
   if a.ty.derives t then return a
   if a.ty == .untyped then
     -- XPath 4.0 §3.4.3: an untyped value is not cast to a
     -- namespace-sensitive type
     if t == .b .qname || t == .b .notation then
       err "XPTY0117" "an xs:untypedAtomic value cannot be coerced to a namespace-sensitive type"
-    return ← castAtomic a t
+    return ← castAtomicVersion version a t
   let fail {α} : M α := err "XPTY0004" ("cannot convert xs:" ++ a.ty.name ++ " value '" ++ a.str ++ "' to xs:" ++ t.name)
   match t with
   -- XPath 4.0 §3.4.2, the implicit casting table
-  | .b .double => if a.isNumeric then castAtomic a t else fail
-  | .b .float => if a.isNumeric then castAtomic a t else fail
-  | .b .decimal => if a.is .float || a.is .double then castAtomic a t else fail
+  | .b .double => if a.isNumeric then castAtomicVersion version a t else fail
+  | .b .float => if a.isNumeric then castAtomicVersion version a t else fail
+  | .b .decimal => if a.is .float || a.is .double then castAtomicVersion version a t else fail
   | .b .string => if a.is .anyURI then pure (Atomic.ofStr a.str) else fail
-  | .b .anyURI => if a.is .string then castAtomic a t else fail
-  | .b .hexBinary => if a.is .base64Binary then castAtomic a t else fail
-  | .b .base64Binary => if a.is .hexBinary then castAtomic a t else fail
+  | .b .anyURI => if a.is .string then castAtomicVersion version a t else fail
+  | .b .hexBinary => if a.is .base64Binary then castAtomicVersion version a t else fail
+  | .b .base64Binary => if a.is .hexBinary then castAtomicVersion version a t else fail
   | .b b =>
       if derivedFrom b .integer then
         -- relabeling: an xs:decimal whose datum is an integer in range
@@ -903,7 +850,7 @@ def coerceAtom1 (t : AType) (a : Atomic) : M Atomic := do
           (match a.ty with | .b ab => ab.primitive == b.primitive | .untyped => false) then
         -- relabeling: the datum of `a` is in the value space of the
         -- derived type (the cast keeps the lexical form)
-        match castAtomic a t with
+        match castAtomicVersion version a t with
         | .ok r => if r.str == a.str then pure r else fail
         | .error _ => fail
       else fail
@@ -913,11 +860,11 @@ def coerceAtom1 (t : AType) (a : Atomic) : M Atomic := do
     of a choice or union in order (XPath 4.0 §3.4.3): a value of one of
     them is kept; otherwise the first alternative that does not fail;
     otherwise the error of the first. -/
-def coerceAtom (ts : List AType) (a : Atomic) : M Atomic := do
+def coerceAtom (ts : List AType) (a : Atomic) (version : XSD.Version := .v11) : M Atomic := do
   if ts.any (fun t => a.ty.derives t) then return a
   let mut first : Option Err := none
   for t in ts do
-    match coerceAtom1 t a with
+    match coerceAtom1 t a version with
     | .ok r => return r
     | .error x => if first.isNone then first := some x
   match first with
@@ -958,7 +905,7 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
   let s ← match atomicTarget it with
     | some ts => do
         let as ← e.atomize s
-        let cs ← as.mapM (coerceAtom ts)
+        let cs ← as.mapM (fun a => coerceAtom ts a e.features.xsdVersion)
         -- enumerations check values
         match it with
         | .enum vs => if cs.all (fun a => vs.contains a.str) then pure (seqOfAtoms cs)
@@ -975,7 +922,7 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
     | .mapT k v, .map kvs => do
         let out ← kvs.mapM (fun (ka, va) => do
           let ka' ← match atomicTarget k with
-            | some ts => coerceAtom ts ka
+            | some ts => coerceAtom ts ka e.features.xsdVersion
             | none => pure ka
           pure (ka', ← e.coerceF f v va what))
         -- coerced keys that become the same key are a type error
@@ -1059,7 +1006,7 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
         else if atoms.isEmpty then err "XPTY0004" ("value of wrong type for " ++ what)
         else
           match ← e.atomize [i] with
-          | [a] => pure (Item.atom (← coerceAtom atoms a))
+          | [a] => pure (Item.atom (← coerceAtom atoms a e.features.xsdVersion))
           | _ => err "XPTY0004" ("value of wrong type for " ++ what))
   | _ =>
     if s.all (fun i => e.itemMatches i it) then pure s

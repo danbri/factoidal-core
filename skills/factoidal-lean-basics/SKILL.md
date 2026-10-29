@@ -667,3 +667,8 @@ layout intermediate. The initial ASCII bitmap profile is incomplete text
 support, not shaped real-font coverage. Scope, architecture reconciliation
 and evidence: [design record](../../docs/designissues/2026-11-02-lean-web-rendering.md),
 https://github.com/danbri/factoidal/issues/1230 (shared Lean web renderer).
+
+For XML Schema edition settings and schema location hints, see the
+[XSD 1.0 configuration design](../../docs/designissues/2026-10-29-xsd10-configuration.md)
+and [worknote](../../docs/20261029-xsd10-configuration.md). Choose the edition
+before schema loading and source validation; keep it in the schema cache key.

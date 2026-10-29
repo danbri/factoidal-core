@@ -46,6 +46,7 @@ Known limits: quantifier bounds above 1000 are refused by the caller
 -/
 import L4Factoidal.Regex.XPath
 import L4Factoidal.Regex.UnicodeProps
+import L4Factoidal.XSD.Version
 
 namespace L4Factoidal.Regex.XPath40
 
@@ -271,7 +272,7 @@ def classItem : List Nat → Option (Item × List Nat)
     Returns the code points (with the case-variants under `ci`), the rest after
     `]` or after `-[`, and whether a subtraction follows. `n` counts the
     parts: a group has at least one. -/
-def classParts (ci : Bool) :
+def classPartsWith (strict ci : Bool) :
     Nat → List Nat → List (Nat × Nat) → Nat → Option (List (Nat × Nat) × List Nat × Bool)
   | 0, _, _, _ => none
   | _ + 1, [], _, _ => none
@@ -279,18 +280,19 @@ def classParts (ci : Bool) :
     if h == 0x5D then (if n == 0 then none else some (acc, t, false))
     else if h == 0x2D && t.head? == some 0x5B then
       (if n == 0 then none else some (acc, t.drop 1, true))
+    else if strict && h == 0x2D && n != 0 && t.head? != some 0x5D then none
     else
       match classItem (h :: t) with
       | none => none
-      | some (.set rs, rest) => classParts ci fuel rest (acc ++ rs) (n + 1)
+      | some (.set rs, rest) => classPartsWith strict ci fuel rest (acc ++ rs) (n + 1)
       | some (.single c unesc, rest) =>
         let lit (x : Nat) := ciLit ci [(x, x)]
         match rest with
         | 0x2D :: r2 =>
           match r2 with
-          | 0x5B :: _ => classParts ci fuel rest (acc ++ lit c) (n + 1)
-          | 0x5D :: _ => classParts ci fuel r2 (acc ++ lit c ++ lit 0x2D) (n + 2)
-          | 0x2D :: 0x5B :: _ => classParts ci fuel r2 (acc ++ lit c ++ lit 0x2D) (n + 2)
+          | 0x5B :: _ => classPartsWith strict ci fuel rest (acc ++ lit c) (n + 1)
+          | 0x5D :: _ => classPartsWith strict ci fuel r2 (acc ++ lit c ++ lit 0x2D) (n + 2)
+          | 0x2D :: 0x5B :: _ => classPartsWith strict ci fuel r2 (acc ++ lit c ++ lit 0x2D) (n + 2)
           | _ =>
             -- a range; neither end is an unescaped hyphen
             if unesc && c == 0x2D then none
@@ -298,28 +300,48 @@ def classParts (ci : Bool) :
               match classItem r2 with
               | some (.single e unescE, r3) =>
                 if (unescE && e == 0x2D) || e < c then none
-                else classParts ci fuel r3 (acc ++ ciLit ci [(c, e)]) (n + 1)
+                else classPartsWith strict ci fuel r3 (acc ++ ciLit ci [(c, e)]) (n + 1)
               | _ => none
-        | _ => classParts ci fuel rest (acc ++ lit c) (n + 1)
+        | _ => classPartsWith strict ci fuel rest (acc ++ lit c) (n + 1)
 
 /-- A character class expression after its `[`: the code points it matches
     (sorted, disjoint) and the rest after its `]`. -/
-def classExpr (ci : Bool) : Nat → List Nat → Option (List (Nat × Nat) × List Nat)
+def classExprWith (strict ci : Bool) : Nat → List Nat → Option (List (Nat × Nat) × List Nat)
   | 0, _ => none
   | fuel + 1, input =>
     let (neg, body) := match input with
       | 0x5E :: t => (true, t)
       | _ => (false, input)
-    match classParts ci (body.length + 1) body [] 0 with
+    match classPartsWith strict ci (body.length + 1) body [] 0 with
     | none => none
     | some (rs, rest, sub) =>
       let base := Text.CaseMap.normalizeRanges rs
       let g := if neg then complementRanges base else base
       if sub then
-        match classExpr ci fuel rest with
+        match classExprWith strict ci fuel rest with
         | some (srs, 0x5D :: rest2) => some (diffRanges g srs, rest2)
         | _ => none
       else some (g, rest)
+
+/-- The existing XSD 1.1 class parser. -/
+def classParts (ci : Bool) := classPartsWith false ci
+
+def classExpr (ci : Bool) := classExprWith false ci
+
+/-- Check XSD 1.0 hyphen placement using the shared class parser. A literal
+hyphen is allowed at the start or end of a positive character group, or as
+an escaped character. After a range or class escape it cannot introduce a
+further range. Nested subtraction uses the same rule. Outside classes,
+escapes are skipped so an escaped bracket cannot start a class. -/
+def xsd10Classes : Nat → List Nat → Bool
+  | 0, _ => false
+  | _ + 1, [] => true
+  | fuel + 1, 0x5C :: _ :: rest => xsd10Classes fuel rest
+  | fuel + 1, 0x5B :: rest =>
+    match classExprWith true false (rest.length + 1) rest with
+    | none => false
+    | some (_, tail) => xsd10Classes fuel tail
+  | fuel + 1, _ :: rest => xsd10Classes fuel rest
 
 /-! ## Quantifiers -/
 
@@ -660,5 +682,67 @@ def compile (pattern : String) (flags : String) : Except RegexError Compiled :=
         | none =>
           .ok { matchRe := .empty, capt, multiline := hasM, ordered := true,
                 finalNewline := hasM, names := st.names }
+
+/-- Apply the selected XSD character-class grammar after the same flag
+preprocessing as the compiler. The literal `q` flag has no regex grammar. -/
+def xsd10Admitted (pattern flags : String) : Bool :=
+  if flags.contains 'q' then true
+  else
+    let source := cpsOfString pattern
+    let comments := if flags.contains 'c' then stripComments source 0 false [] else source
+    let prepared := if flags.contains 'x' then stripWs comments 0 false [] else comments
+    xsd10Classes (prepared.length + 1) prepared
+
+/-- XSD 1.0 changes admission of character classes. The parser, Unicode
+sets, capturing groups, and execution engines are shared with XSD 1.1. -/
+def compileVersion (version : XSD.Version) (pattern flags : String) : Except RegexError Compiled :=
+  if version == .v10 && validFlags flags && !xsd10Admitted pattern flags then
+    .error (.invalidPattern pattern)
+  else compile pattern flags
+
+theorem compileVersion_default (pattern flags : String) :
+    compileVersion .v11 pattern flags = compile pattern flags := rfl
+
+/-- Accepted XSD 1.0 patterns use exactly the default compiled program. -/
+theorem compileVersion_common (pattern flags : String)
+    (h : xsd10Admitted pattern flags = true) :
+    compileVersion .v10 pattern flags = compileVersion .v11 pattern flags := by
+  simp [compileVersion, h]
+
+/-- Consequently the execution engines agree on every admitted pattern. -/
+theorem matchVersion_common (pattern flags text : String)
+    (h : xsd10Admitted pattern flags = true) :
+    (compileVersion .v10 pattern flags).map (fun r => isMatch r text) =
+      (compileVersion .v11 pattern flags).map (fun r => isMatch r text) := by
+  rw [compileVersion_common pattern flags h]
+
+/-- Replacement also reuses the same compiled program on the common grammar. -/
+theorem replaceVersion_common (pattern flags text replacement : String)
+    (h : xsd10Admitted pattern flags = true) :
+    (compileVersion .v10 pattern flags).bind (fun r => replace r text replacement) =
+      (compileVersion .v11 pattern flags).bind (fun r => replace r text replacement) := by
+  rw [compileVersion_common pattern flags h]
+
+#guard !xsd10Admitted "[a-c-d]" ""
+#guard !xsd10Admitted "[\\d-z]" ""
+#guard xsd10Admitted "[-a-c]" ""
+#guard xsd10Admitted "[a-c-]" ""
+#guard xsd10Admitted "[a-c\\-d]" ""
+#guard xsd10Admitted "[a-z-[aeiou]]" ""
+#guard xsd10Admitted "[a-c-d]" "q"
+#guard xsd10Admitted "a# [a-c-d] #b" "c"
+#guard !xsd10Admitted "[a-c-d]" "x"
+-- Re-entered optional groups cannot supply an older iteration's capture
+-- to a back-reference inside their enclosing group.
+#guard match compile "^((.)?a\\2)+$" "" with
+  | .ok r => isMatch r "babadad"
+  | .error _ => false
+#guard match compile "^((.)?a\\2)+$" "" with
+  | .ok r => !isMatch r "babadab"
+  | .error _ => false
+#print axioms compileVersion_default
+#print axioms compileVersion_common
+#print axioms matchVersion_common
+#print axioms replaceVersion_common
 
 end L4Factoidal.Regex.XPath40

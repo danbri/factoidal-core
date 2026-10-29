@@ -117,12 +117,14 @@ def loadXQueryModule : Nat → Nat → Env → List Seq → M Seq
   let texts := if content != "" then [content] else moduleTexts env uri
   if texts.isEmpty then err "FOQM0002" ("no library module with the namespace " ++ uri)
   let mut mods : List Module := []
+  let mut schemaEnv := env
   for t in texts do
-    match parseModule t [] (typeLoader env 8 [uri]) env.schema.declared env.xml11 env.features env.schema.simpleUse with
+    match prepareModule t { schemaEnv with ns := [] } (fun e => typeLoader e 8 [uri]) with
     | .error ex =>
       if isStaticCode ex.code then err "FOQM0003" ("a static error in the module: " ++ ex.code ++ " " ++ ex.msg)
       else throw ex
-    | .ok lm =>
+    | .ok (loaded, lm) =>
+      schemaEnv := loaded
       if (lm.libNs.map (·.2)) != some uri then
         err "FOQM0002" ("the module text is not a library module for " ++ uri)
       mods := mods ++ [if untrusted then lm.untrustedBodies else lm]
@@ -133,8 +135,13 @@ def loadXQueryModule : Nat → Nat → Env → List Seq → M Seq
     if q.uri == nsFN && q.loc == "load-xquery-module" && (k == 1 || k == 2) then
       some (fun c a => loadXQueryModule fuel depth { env with untrusted := untrusted || c.untrusted } a)
     else env.host q k
-  let env0 : Env := { env with vars := extVars, ctx := ctxv, pos := if ctxv.isSome then 1 else 0,
-                               size := if ctxv.isSome then 1 else 0, untrusted, host }
+  let env0 : Env := { schemaEnv with
+    vars := extVars
+    ctx := ctxv
+    pos := (if ctxv.isSome then 1 else 0)
+    size := (if ctxv.isSome then 1 else 0)
+    untrusted := untrusted
+    host := host }
   -- untrusted code reads no resource, so it names no module location (§17.4.1)
   if untrusted then
     for lm in mods do
@@ -147,6 +154,9 @@ def loadXQueryModule : Nat → Nat → Env → List Seq → M Seq
     libs := libs ++ (if untrusted then ls.map Module.untrustedBodies else ls); seen := s'
   let all := libs ++ mods
   let envm := match mods.head? with | some lm => moduleEnv env0 lm | none => env0
+  let envm ← match withSchemaLocations envm (libs.flatMap (·.schemaLocations)) with
+    | .ok loaded => pure loaded
+    | .error ex => err "FOQM0003" ("a static error in the module: " ++ ex.code ++ " " ++ ex.msg)
   match checkModules envm all with
   | .error ex =>
     if isStaticCode ex.code then err "FOQM0003" ("a static error in the module: " ++ ex.code ++ " " ++ ex.msg)
@@ -185,7 +195,12 @@ def loadXQueryModule : Nat → Nat → Env → List Seq → M Seq
         let mut byArity : List (Atomic × Seq) := []
         for k in [lo:fd.params.length + 1] do
           match refUser? (fun f as => apply fuel (markStatic envb) f as) (markStatic envb) fd.name k with
-          | some r => byArity := byArity ++ [(Atomic.ofInt k, ← r)]
+          | some r =>
+            let value ← r
+            let value := if envb.features.schemaLocationHints then value.map (fun i => match i with
+              | .fn f => .fn (.scoped envb.schema envb.features f)
+              | other => other) else value
+            byArity := byArity ++ [(Atomic.ofInt k, value)]
           | none => pure ()
         -- one entry per name: the arities of all its declarations
         let key := Atomic.ofQN fd.name
