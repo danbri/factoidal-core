@@ -54,7 +54,7 @@ inductive NS where
 deriving BEq, Inhabited
 
 inductive DKind where
-  | doc | elem | text | comment
+  | doc | elem | text | comment | doctype | pi
 deriving BEq, Inhabited
 
 structure DNode where
@@ -63,6 +63,9 @@ structure DNode where
   name : String := ""
   attrs : Array (String × String) := #[]
   data : String := ""
+  /-- A DOCTYPE node's public and system identifiers (`doctype` only). -/
+  pubId : String := ""
+  sysId : String := ""
   parent : Option Nat := none
   kids : Array Nat := #[]
 
@@ -93,6 +96,11 @@ structure TB where
   errs : Array String := #[]
   tk : Tok
   done : Bool := false
+  /-- The scripting flag (§13.2.4.5). -/
+  scripting : Bool := false
+  /-- The context element of the HTML fragment parsing algorithm (§13.4): an
+  arena node that is not a child of the Document. -/
+  ctx : Option Nat := none
 
 abbrev P := StateM TB
 
@@ -163,6 +171,19 @@ def curNode : P DNode := do
   match tb.stack.back? with
   | some i => return tb.dom[i]!
   | none => return default
+/-- The adjusted current node (§13.2.4.1): the context element when the stack
+holds only the root `html` element of a fragment parse. -/
+def adjustedIdx (tb : TB) : Option Nat :=
+  match tb.ctx with
+  | some c => if tb.stack.size == 1 then some c else tb.stack.back?
+  | none => tb.stack.back?
+
+def adjustedCur : P DNode := do
+  let tb ← get
+  match adjustedIdx tb with
+  | some i => return tb.dom[i]!
+  | none => return default
+
 def setMode (m : Mode) : P Unit := modify fun tb => { tb with mode := m }
 def popCur : P Unit := modify fun tb => { tb with stack := tb.stack.pop }
 
@@ -495,7 +516,9 @@ def resetMode : P Unit := do
   for k in [0:n] do
     let i := n - 1 - k
     let last := (i == 0)
-    let nd := tb.dom[tb.stack[i]!]!
+    let nd := match tb.ctx with
+      | some c => if last then tb.dom[c]! else tb.dom[tb.stack[i]!]!
+      | none => tb.dom[tb.stack[i]!]!
     let r : Option Mode :=
       if nd.is "select" then
         some (Id.run do
@@ -592,6 +615,8 @@ def initialH (tok : Token) : P Act := do
       perr "unexpected-doctype"
     let q := fq || name != some "html" || (pub.any (fun p => quirkyPublic (lowerStr p)))
       || (pub.any (fun p => sys.isNone && (lowerStr p).startsWith "-//w3c//dtd html 4.01 transitional//"))
+    let id ← newNode { kind := .doctype, name := name.getD "", pubId := pub.getD "", sysId := sys.getD "" }
+    insertAt 0 none id
     modify fun tb => { tb with quirks := q }
     setMode .beforeHtml
     return .done
@@ -1124,7 +1149,7 @@ def foreignH (tok : Token) : P Act := do
           popCur
       return .reprocess
     else
-      let cn ← curNode
+      let cn ← adjustedCur
       let ns := cn.ns
       let name := if ns == .svg then adjustName svgTagNames n else n
       let ats := if ns == .svg then attrs.map (fun a => (adjustName svgAttrNames a.1, a.2))
@@ -1639,7 +1664,7 @@ def handler (m : Mode) (tok : Token) : P Act :=
 
 /-- The tree construction dispatcher (§13.2.6.1). -/
 def useHtmlRules (tb : TB) (tok : Token) : Bool :=
-  match tb.stack.back? with
+  match adjustedIdx tb with
   | none => true
   | some i =>
     let n := tb.dom[i]!
@@ -1701,25 +1726,53 @@ def buildTree (dom : Array DNode) : Nat → Nat → List HNode
       | .text => some (HNode.text c.data)
       | .comment => some (HNode.comment c.data)
       | .elem => some (HNode.element c.ns c.name c.attrs.toList (buildTree dom f k))
-      | .doc => none
+      | .doc | .doctype | .pi => none
 
 def runAll : P Unit := do
   let n := (← get).tk.inp.size
   for _ in [0:3 * n + 100] do
     if (← get).done then break
     let tb ← get
-    let foreign := match tb.stack.back? with
+    let foreign := match adjustedIdx tb with
       | some i => tb.dom[i]!.ns != .html
       | none => false
     let (tok, tk) := ({ tb.tk with foreign }).pull
     set { tb with tk }
     process tok
 
+/-- Parse a whole document (§13.2) and return the final parser state; its
+`dom` is the document arena (index 0 is the Document). -/
+def parseDocumentState (src : String) (scripting : Bool := false) : TB :=
+  let inp := normalizeNewlines src
+  let tb0 : TB := { tk := { inp }, errs := inputErrors inp, scripting }
+  (runAll.run tb0).2
+
 /-- Parse a whole document (§13.2). -/
 def parseHtml (src : String) : Parsed :=
-  let inp := normalizeNewlines src
-  let tb0 : TB := { tk := { inp }, errs := inputErrors inp }
-  let ((), tb) := runAll.run tb0
+  let tb := parseDocumentState src
   { children := buildTree tb.dom (tb.dom.size + 1) 0, errors := tb.errs ++ tb.tk.errs }
+
+/-- The HTML fragment parsing algorithm (§13.4) for a context element with
+namespace `ns` and local name `name`. Returns the final state and the arena
+index of the root `html` element, whose children are the result. -/
+def parseFragmentState (ns : NS) (name : String) (src : String) (scripting : Bool := false) : TB × Nat :=
+  let inp := normalizeNewlines src
+  let st : TS :=
+    if ns != .html then .data
+    else if name == "title" || name == "textarea" then .rcdata
+    else if ["style", "xmp", "iframe", "noembed", "noframes"].contains name then .rawtext
+    else if name == "script" then .scriptData
+    else if name == "noscript" then (if scripting then .rawtext else .data)
+    else if name == "plaintext" then .plaintext
+    else .data
+  -- arena: 0 Document, 1 root html, 2 the context element (not in the tree)
+  let dom : Array DNode := #[{ kind := .doc, kids := #[1] }, { kind := .elem, name := "html", parent := some 0 },
+    { kind := .elem, ns, name }]
+  -- no appropriate end tag exists in the fragment case (§13.4 note): `lastStart` stays empty
+  let tb0 : TB := { dom, stack := #[1], tk := { inp, st }, errs := inputErrors inp, scripting,
+                    ctx := some 2, tmodes := if ns == .html && name == "template" then #[.inTemplate] else #[] }
+  let ((), tb1) := resetMode.run tb0
+  let ((), tb) := runAll.run tb1
+  (tb, 1)
 
 end L4Factoidal.HTML
