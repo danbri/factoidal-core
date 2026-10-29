@@ -22,7 +22,7 @@ Measured, not proved: the whole tree. `xhtmlTree` maps the HTML parser's arena
 to `XML.Node`, and `Harness/Html5lib.lean` (`l4html5lib agree`) compares it with
 the XML parser's document element on generated documents that are well-formed
 XML and that the HTML parser reads with no parse error. A theorem for the whole
-parser is ISSUE_WHOLE.
+parser is https://github.com/danbri/factoidal/issues/1204.
 -/
 import L4Factoidal.HTML.TreeBuilder
 import L4Factoidal.XML.Parser

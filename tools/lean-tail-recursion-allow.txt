@@ -2031,3 +2031,9 @@ L4Factoidal_XPath4_XInclude_expand  # (b) depth is the element nesting of the do
 L4Factoidal_XPath4_XInclude_runText_txt  # (b) #guard helper over the element nesting of a test document (fuel 50); children visited by List.map
 L4Factoidal_XPath4_XIncludeTheorems_noXi  # (b) specification predicate of expand_noXi over the element nesting of a document (fuel argument); children visited by List.all
 L4Factoidal_XPath4_stripElemContentWs  # (b) XPath4/XmlParse: depth is the element nesting of a DTD-validated document (fuel 100000, as stripWs); children visited by List.map
+L4Factoidal_HTML_xhtmlTree  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per tree level of an HTML document, as L4Factoidal_HTML_buildTree (length, L4Factoidal/HTML/XmlAgreement.lean)
+Harness_Html5lib_dumpChildren  # (c) Array.qsort over the attributes of one element of a test tree; median-of-three pivot, expected depth O(log n); the tree walk itself is a loop over a frame list
+Harness_Html5lib_tokenizerFile  # (c) Array.qsort over the error codes of one html5lib tokenizer test (at most 16) and the attributes of one tag; expected depth O(log n)
+Harness_Html5lib_genInline  # (c) depth is the generator's nesting argument, the constant 2 in `l4html5lib agree`
+Harness_Html5lib_genBlocks  # (c) depth is the generator's nesting argument, the constant 3 in `l4html5lib agree`
+Harness_Html5lib_normXml  # (b) element nesting of one generated document (at most 8 in `l4html5lib agree`); children visited by List.map and List.foldr

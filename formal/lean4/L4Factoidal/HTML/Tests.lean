@@ -20,6 +20,7 @@ def showNodes : Nat → List HNode → String
   | f + 1, ns => String.join (ns.map fun
     | .text s => s
     | .comment s => "<!--" ++ s ++ "-->"
+    | .pi t d => "<?" ++ t ++ " " ++ d ++ ">"
     | .element ns name attrs kids =>
       "<" ++ nsTag ns ++ name ++ String.join (attrs.map fun a => " " ++ a.1 ++ "=" ++ a.2) ++ ">"
         ++ showNodes f kids ++ "</" ++ name ++ ">")

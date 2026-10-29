@@ -10,40 +10,36 @@ indexes into it. Each insertion mode is a function `Token → P Act`, where
 reprocessed in the (new) current mode, or it is processed "using the rules
 for" another mode. The dispatcher is a loop bounded by fuel.
 
-Implemented (section numbers of §13.2.6.4):
-  insertion modes initial, before html, before head, in head, in head
-  noscript (the scripting flag is OFF, so the content of `noscript` is
-  parsed as elements), after head, in body, text, in table, in table text,
-  in caption, in column group, in table body, in row, in cell, in select,
-  in select in table, in template, after body, in frameset, after frameset,
-  after after body, after after frameset;
-  tree construction dispatcher (§13.2.6.1) with MathML and HTML integration
-  points, and the rules for parsing tokens in foreign content (§13.2.6.5)
-  with the SVG tag name and attribute adjustments and the MathML ones;
-  implied `html`, `head`, `body`; void elements; "has an element in
-  scope" for the default, list item, button, table and select scopes;
-  implied end tags (also thorough); the list of active formatting elements
-  with markers, the Noah's Ark clause, "reconstruct the active formatting
-  elements" and the adoption agency algorithm (§13.2.6.4.7, including the
-  outer loop of 8 and the inner loop with its counter); foster parenting;
-  `template` (its children are the children of the `template` element in the
-  arena; there is no separate template contents document fragment);
-  the stack of template insertion modes and "reset the insertion mode
-  appropriately"; the LF after `pre`, `listing`, `textarea`; self-closing
-  flag acknowledgement; quirks mode from the DOCTYPE (a short list of public
-  identifier prefixes); generic RCDATA and raw text parsing for `title`,
-  `textarea`, `style`, `xmp`, `iframe`, `noembed`, `noframes`, `script`;
-  `plaintext`; parse errors for every rule that has one in the places above.
+Specification: HTML Living Standard, whatwg/html commit `93967771` (26 October
+2026), §13.2.6 and the HTML fragment parsing algorithm of §13.4
+(`parseFragmentState`). Changes of 2025 and 2026 that this code follows:
+customizable `select` (whatwg/html `172cccf`: no "in select" insertion modes;
+`select` is a default scope boundary), processing instruction tokens (`320c05f`,
+`255188e`), frameset-ok reset when `body` is implied (`83c0aa8`), the form
+element pointer ignored throughout template contents (`9ed7f27`), DOCTYPE
+missing and empty identifiers handled alike (`e7318c5`).
 
-Not implemented: the HTML fragment parsing algorithm (§13.2.6.4 "context
-element"; the function always parses a whole document); `form` element
-association other than the form element pointer; `isindex`; script
-execution (`document.write`, the script nesting level, the parser pause,
-`async`/`defer` handling); the `<meta charset>` change-the-encoding step
-(`HTML/Html.lean`'s caller does a prescan instead); the `srcdoc` and
-"iframe" document rules; the full quirks mode table (limited-quirks mode is
-not distinguished from no-quirks mode); the customizable `select` content
-model of the newest Living Standard (the older `in select` rules are used).
+Implemented: all 21 insertion modes; the tree construction dispatcher with the
+adjusted current node, MathML and HTML integration points, and the rules for
+foreign content (§13.2.6.5) with the SVG and MathML adjustments; implied tags;
+the list of active formatting elements and the adoption agency algorithm;
+foster parenting; `template` (its children are the children of the `template`
+element in the arena: there is no separate template contents fragment);
+"reset the insertion mode appropriately"; quirks mode from the DOCTYPE (the full
+list; limited-quirks mode is not distinguished, and no rule of §13.2.6 reads
+it); the scripting flag (`scripting`; `noscript` is raw text when it is on).
+
+Not implemented: script execution (`document.write`, the parser pause; 6 WPT
+cases, https://github.com/danbri/factoidal/issues/1205); the DOM steps that
+keep `selectedcontent` up to date (4 WPT cases,
+https://github.com/danbri/factoidal/issues/1206); the parser sanitizer
+configuration and `<template for>` insertion target redirection (no test
+in the vendored suites uses them); `<meta charset>` change of encoding (the
+caller sniffs first).
+
+Tests: web-platform-tests tree construction `.dat` files
+(`tests/html5lib/run.sh`): 1963 pass, 0 fail (out of 1963), plus the 10
+expected failures above. Speed: https://github.com/danbri/factoidal/issues/1208.
 -/
 import L4Factoidal.HTML.Tokenizer
 
@@ -207,26 +203,29 @@ def parsingTemplate : P Bool := do
 def setMode (m : Mode) : P Unit := modify fun tb => { tb with mode := m }
 def popCur : P Unit := modify fun tb => { tb with stack := tb.stack.pop }
 
-def newNode (n : DNode) : P Nat := do
-  let tb ← get
-  set { tb with dom := tb.dom.push n }
-  return tb.dom.size
+/-- Append a node to the arena and return its index. `modifyGet` keeps the
+arena unshared, so `push` does not copy it. -/
+def newNode (n : DNode) : P Nat :=
+  modifyGet fun tb => (tb.dom.size, { tb with dom := tb.dom.push n })
 
+/-- Insert `child` into `parent` before `before` (or at the end). `Array.modify`
+takes the parent out of the arena while its child list changes, so neither
+array is copied. -/
 def insertAt (parent : Nat) (before : Option Nat) (child : Nat) : P Unit := modify fun tb =>
-  let p := tb.dom[parent]!
-  let kids := match before with
-    | none => p.kids.push child
-    | some b => match p.kids.findIdx? (· == b) with
-      | some k => arrInsert p.kids k child
+  let add (p : DNode) : DNode :=
+    let kids := match before with
       | none => p.kids.push child
-  { tb with dom := (tb.dom.set! parent { p with kids }).modify child (fun c => { c with parent := some parent }) }
+      | some b => match p.kids.findIdx? (· == b) with
+        | some k => arrInsert p.kids k child
+        | none => p.kids.push child
+    { p with kids }
+  { tb with dom := (tb.dom.modify parent add).modify child (fun c => { c with parent := some parent }) }
 
 def detach (child : Nat) : P Unit := modify fun tb =>
   match tb.dom[child]!.parent with
   | none => tb
   | some p =>
-    let pn := tb.dom[p]!
-    let d1 := tb.dom.set! p { pn with kids := pn.kids.filter (· != child) }
+    let d1 := tb.dom.modify p (fun pn => { pn with kids := pn.kids.filter (· != child) })
     { tb with dom := d1.modify child (fun c => { c with parent := none }) }
 
 def lastIdx (tb : TB) (pred : DNode → Bool) : Option Nat := Id.run do
@@ -1761,6 +1760,8 @@ inductive HNode where
   | element (ns : NS) (name : String) (attrs : List (String × String)) (kids : List HNode)
   | text (s : String)
   | comment (s : String)
+  /-- A processing instruction: target and data. -/
+  | pi (target data : String)
 
 structure Parsed where
   children : List HNode
@@ -1775,8 +1776,9 @@ def buildTree (dom : Array DNode) : Nat → Nat → List HNode
       match c.kind with
       | .text => some (HNode.text c.data)
       | .comment => some (HNode.comment c.data)
+      | .pi => some (HNode.pi c.name c.data)
       | .elem => some (HNode.element c.ns c.name c.attrs.toList (buildTree dom f k))
-      | .doc | .doctype | .pi => none
+      | .doc | .doctype => none
 
 def runAll : P Unit := do
   let n := (← get).tk.inp.size

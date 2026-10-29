@@ -147,6 +147,45 @@ def runTree (t : DatTest) (scripting : Bool) : String :=
     let (tb, root) := parseFragmentState ns nm t.data scripting
     "\n".intercalate (dumpChildren tb.dom root 0).toList
 
+/-! ## Expected failures and defective test data
+
+`--expect FILE` reads lines `KIND<TAB>KEY<TAB>ISSUE-URL`, KIND `xfail` (an open
+engine gap) or `defective` (the test data contradicts the specification). KEY
+is `tree:FILE.dat:LINE` or `tokenizer:FILE.test:DESCRIPTION:STATE`. A listed
+case that fails is counted apart; a listed case that passes is STALE, and a
+stale case fails the run. -/
+
+initialize expectations : IO.Ref (List (String × String)) ← IO.mkRef []
+initialize staleCount : IO.Ref Nat ← IO.mkRef 0
+initialize xfailCount : IO.Ref Nat ← IO.mkRef 0
+initialize defectCount : IO.Ref Nat ← IO.mkRef 0
+
+def loadExpectations (path : System.FilePath) : IO Unit := do
+  let txt ← IO.FS.readFile path
+  let mut acc : List (String × String) := []
+  for l in txt.splitOn "\n" do
+    if l.startsWith "#" || l.trim.isEmpty then continue
+    match l.splitOn "\t" with
+    | kind :: key :: _ => acc := (key, kind) :: acc
+    | _ => pure ()
+  expectations.set acc
+
+/-- `true` when the case counts as a pass or a failure of the score; `false`
+when it is counted apart (or stale). -/
+def classify (key : String) (ok : Bool) : IO Bool := do
+  match (← expectations.get).lookup key with
+  | none => return true
+  | some kind =>
+    if ok then
+      IO.println s!"STALE {kind}: {key} passes; remove it from the expected failures"
+      staleCount.modify (· + 1)
+    else if kind == "defective" then defectCount.modify (· + 1)
+    else xfailCount.modify (· + 1)
+    return false
+
+initialize errCountSame : IO.Ref Nat ← IO.mkRef 0
+initialize errCountDiff : IO.Ref Nat ← IO.mkRef 0
+
 def treeFile (path : System.FilePath) (verbose : Bool) : IO (Nat × Nat) := do
   let txt ← IO.FS.readFile path
   let tests := parseDat txt
@@ -163,7 +202,15 @@ def treeFile (path : System.FilePath) (verbose : Bool) : IO (Nat × Nat) := do
         ok := false
         if verbose then
           IO.println s!"--- FAIL {path}:{t.line} scripting={m}{match t.fragment with | some c => " fragment=" ++ c | none => ""}\n#data\n{t.data}\n#expected\n{t.document}\n#got\n{got}"
-    if ok then p := p + 1 else f := f + 1
+    let base := path.fileName.getD path.toString
+    if ← classify s!"tree:{base}:{t.line}" ok then
+      if ok then p := p + 1 else f := f + 1
+    -- parse error counts (#errors plus #new-errors), measured, not scored
+    if t.fragment.isNone then
+      let m := t.scripting.getD false
+      let tb := parseDocumentState t.data m
+      let n := (tb.errs ++ tb.tk.errs).size
+      if n == t.errors then errCountSame.modify (· + 1) else errCountDiff.modify (· + 1)
   return (p, f)
 
 
@@ -281,8 +328,12 @@ def tokenize (input : String) (st : TS) (lastStart : String) : List String × Li
 /-- Counts of a tokenizer file: (output pass, output fail, error codes pass,
 error codes fail, not run because an input names a surrogate). -/
 structure TokCounts where
+  /-- Scored: the tokens and the error codes both match. -/
   pass : Nat := 0
   fail : Nat := 0
+  /-- Raw: the tokens match; the error codes match. -/
+  outPass : Nat := 0
+  outFail : Nat := 0
   errPass : Nat := 0
   errFail : Nat := 0
   surrogate : Nat := 0
@@ -322,17 +373,22 @@ def tokenizerFile (path : System.FilePath) (verbose : Bool) : IO TokCounts := do
       for sname in states do
         let some st := initialState sname | continue
         let (got, errs) := tokenize input st last
-        if got == exp then c := { c with pass := c.pass + 1 }
+        let outOk := got == exp
+        if outOk then c := { c with outPass := c.outPass + 1 }
         else
-          c := { c with fail := c.fail + 1 }
+          c := { c with outFail := c.outFail + 1 }
           if verbose then
             IO.println s!"--- FAIL {path}: {desc} [{sname}]\n#input {repr input}\n#expected {repr exp}\n#got      {repr got}"
         let srt := fun (l : List String) => (l.toArray.qsort (· < ·)).toList
-        if srt errs == srt errCodes then c := { c with errPass := c.errPass + 1 }
+        let errOk := srt errs == srt errCodes
+        if errOk then c := { c with errPass := c.errPass + 1 }
         else
           c := { c with errFail := c.errFail + 1 }
           if verbose then
             IO.println s!"--- ERRORS {path}: {desc} [{sname}] {repr input}\n#expected {srt errCodes}\n#got      {srt errs}"
+        let base := path.fileName.getD path.toString
+        if ← classify s!"tokenizer:{base}:{desc}:{sname}" (outOk && errOk) then
+          if outOk && errOk then c := { c with pass := c.pass + 1 } else c := { c with fail := c.fail + 1 }
     | _, _ => c := { c with surrogate := c.surrogate + states.length }
   return c
 
@@ -505,6 +561,11 @@ open Harness.Html5lib in
 def main (args : List String) : IO UInt32 := do
   let verbose := args.contains "--show"
   let args := args.filter (· != "--show")
+  let args ← match args with
+    | "--expect" :: f :: rest => do Harness.Html5lib.loadExpectations f; pure rest
+    | a => pure a
+  let apart : IO String := do
+    pure s!"{← xfailCount.get} expected failures (open issues), {← defectCount.get} excluded (defective test data), {← staleCount.get} stale"
   match args with
   | "tree" :: files =>
     let mut tp := 0
@@ -514,21 +575,43 @@ def main (args : List String) : IO UInt32 := do
       IO.println s!"{(System.FilePath.mk fl).fileName.getD fl}: {p} pass, {f} fail (out of {p + f})"
       tp := tp + p
       tf := tf + f
-    IO.println s!"tree construction: {tp} pass, {tf} fail (out of {tp + tf})"
-    pure (if tf == 0 && tp > 0 then 0 else 1)
+    IO.println s!"tree construction: {tp} pass, {tf} fail (out of {tp + tf}); {← apart}"
+    IO.println s!"parse error counts (documents, measured only): {← errCountSame.get} same, {← errCountDiff.get} different"
+    pure (if tf == 0 && tp > 0 && (← staleCount.get) == 0 then 0 else 1)
   | "tokenizer" :: files =>
     let mut t : TokCounts := {}
     for fl in files do
       let c ← tokenizerFile fl verbose
-      IO.println s!"{(System.FilePath.mk fl).fileName.getD fl}: {c.pass} pass, {c.fail} fail (out of {c.pass + c.fail}); error codes {c.errPass} pass, {c.errFail} fail; {c.surrogate} not run (surrogate input)"
-      t := { pass := t.pass + c.pass, fail := t.fail + c.fail, errPass := t.errPass + c.errPass,
+      IO.println s!"{(System.FilePath.mk fl).fileName.getD fl}: {c.pass} pass, {c.fail} fail (out of {c.pass + c.fail}); tokens {c.outPass} pass, {c.outFail} fail; error codes {c.errPass} pass, {c.errFail} fail; {c.surrogate} not run (surrogate input)"
+      t := { pass := t.pass + c.pass, fail := t.fail + c.fail, outPass := t.outPass + c.outPass,
+             outFail := t.outFail + c.outFail, errPass := t.errPass + c.errPass,
              errFail := t.errFail + c.errFail, surrogate := t.surrogate + c.surrogate }
-    IO.println s!"tokenizer: {t.pass} pass, {t.fail} fail (out of {t.pass + t.fail}); error codes {t.errPass} pass, {t.errFail} fail; {t.surrogate} not run (surrogate input)"
-    pure (if t.fail == 0 && t.pass > 0 then 0 else 1)
+    IO.println s!"tokenizer (tokens and error codes): {t.pass} pass, {t.fail} fail (out of {t.pass + t.fail}); {← apart}; {t.surrogate} not run (surrogate input)"
+    IO.println s!"tokenizer, all cases run: tokens {t.outPass} pass, {t.outFail} fail; error codes {t.errPass} pass, {t.errFail} fail"
+    pure (if t.fail == 0 && t.pass > 0 && (← staleCount.get) == 0 then 0 else 1)
   | ["agree", n] =>
     let (same, diff, nb) ← agreeRun n.toNat! verbose
     IO.println s!"xhtml agreement: {same} agree, {diff} disagree (out of {same + diff}); {nb} generated documents not both well-formed XML and HTML without parse errors"
     pure (if diff == 0 && nb == 0 && same > 0 then 0 else 1)
+  | ["bench", file, n] =>
+    -- parse FILE n times; prints the node count and the median time
+    let src ← IO.FS.readFile file
+    let mut times : Array Nat := #[]
+    let mut nodes := 0
+    for i in [0:n.toNat!] do
+      -- the input depends on `i`, so the pure parse is not lifted out of the loop
+      let inp := src.pushn ' ' i
+      let t0 ← IO.monoNanosNow
+      let tb := L4Factoidal.HTML.parseDocumentState inp
+      nodes := tb.dom.size
+      -- an effect that depends on the result, so the parse runs before `t1`
+      if nodes == 0 then IO.println "empty"
+      let t1 ← IO.monoNanosNow
+      times := times.push (t1 - t0)
+    let sorted := times.qsort (· < ·)
+    let med := sorted[sorted.size / 2]!
+    IO.println s!"bench: {src.utf8ByteSize} bytes, {nodes} nodes, median {med / 1000000} ms over {n} runs"
+    pure 0
   | ["dump", file] =>
     let src ← IO.FS.readFile file
     let tb := L4Factoidal.HTML.parseDocumentState src
