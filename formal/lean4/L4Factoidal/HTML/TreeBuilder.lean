@@ -101,6 +101,11 @@ structure TB where
   /-- The context element of the HTML fragment parsing algorithm (§13.4): an
   arena node that is not a child of the Document. -/
   ctx : Option Nat := none
+  /-- The target of the processing instruction token being processed. The tree
+  construction rules for a processing instruction token are those for a comment
+  token, with "insert a processing instruction" for "insert a comment"; `process`
+  dispatches a PI token as a comment token with this field set. -/
+  piTarget : Option String := none
 
 abbrev P := StateM TB
 
@@ -261,7 +266,9 @@ def insertChar (c : Char) : P Unit := do
 
 def insertComment (data : String) (target : Option Nat := none) : P Unit := do
   let (par, before) ← appropriatePlace target
-  let id ← newNode { kind := .comment, data }
+  let id ← match (← get).piTarget with
+    | some t => newNode { kind := .pi, name := t, data }
+    | none => newNode { kind := .comment, data }
   insertAt par before id
 
 def insertElement (ns : NS) (name : String) (attrs : Array (String × String)) : P Nat := do
@@ -796,6 +803,7 @@ def isVoidInBody (n : String) : Bool := ["area", "br", "embed", "img", "keygen",
 
 def inBodyH (tok : Token) : P Act := do
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char c =>
     if c == '\x00' then perr "unexpected-null-character"; return .done
     reconstructAfe
@@ -1126,6 +1134,7 @@ def inBodyH (tok : Token) : P Act := do
 
 def foreignH (tok : Token) : P Act := do
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char c =>
     if c == '\x00' then
       perr "unexpected-null-character"
@@ -1190,6 +1199,7 @@ def inTableH (tok : Token) : P Act := do
     modify fun tb => { tb with foster := false }
     return a
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char _ =>
     if (← curNode).isAny ["table", "tbody", "template", "tfoot", "thead", "tr"] then
       modify fun tb => { tb with pend := #[], orig := tb.mode, mode := .inTableText }
@@ -1311,6 +1321,7 @@ def inColumnGroupH (tok : Token) : P Act := do
     setMode .inTable
     return .reprocess
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char c => if isTreeWs c then insertChar c; return .done else anything
   | .comment d => insertComment d; return .done
   | .doctype .. => perr "unexpected-doctype"; return .done
@@ -1440,6 +1451,7 @@ def inCellH (tok : Token) : P Act := do
 
 def inSelectH (tok : Token) : P Act := do
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char c =>
     if c == '\x00' then perr "unexpected-null-character" else insertChar c
     return .done
@@ -1522,6 +1534,7 @@ def inTemplateH (tok : Token) : P Act := do
     modify fun tb => { tb with tmodes := (tb.tmodes.pop).push m, mode := m }
     return .reprocess
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char _ | .comment _ | .doctype .. => return .via .inBody
   | .startTag n _ _ =>
     if ["base", "basefont", "bgsound", "link", "meta", "noframes", "script", "style", "template", "title"].contains n then
@@ -1581,6 +1594,7 @@ def afterAfterBodyH (tok : Token) : P Act := do
 
 def inFramesetH (tok : Token) : P Act := do
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char c =>
     if isTreeWs c then insertChar c else perr "unexpected-char-in-frameset"
     return .done
@@ -1610,6 +1624,7 @@ def inFramesetH (tok : Token) : P Act := do
 
 def afterFramesetH (tok : Token) : P Act := do
   match tok with
+  | .pi .. => return .done  -- `process` dispatches a PI token as a comment token
   | .char c =>
     if isTreeWs c then insertChar c else perr "unexpected-char-after-frameset"
     return .done
@@ -1699,7 +1714,12 @@ def process (tok : Token) : P Unit := do
     | .char '\n' => return
     | _ => pure ()
   modify fun tb => { tb with ack := false }
-  dispatch 32 none tok
+  match tok with
+  | .pi t d =>
+    modify fun tb => { tb with piTarget := some t }
+    dispatch 32 none (.comment d)
+    modify fun tb => { tb with piTarget := none }
+  | _ => dispatch 32 none tok
   match tok with
   | .startTag _ _ true =>
     if !(← get).ack then perr "non-void-html-element-start-tag-with-trailing-solidus"

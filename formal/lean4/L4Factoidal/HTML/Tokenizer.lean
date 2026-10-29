@@ -43,6 +43,8 @@ inductive Token where
   | startTag (name : String) (attrs : List (String × String)) (selfClosing : Bool)
   | endTag (name : String)
   | comment (data : String)
+  /-- A processing instruction token (§13.2.5, the processing instruction states). -/
+  | pi (target : String) (data : String)
   | char (c : Char)
   | eof
 deriving Inhabited
@@ -56,6 +58,9 @@ inductive TS where
   | bogusComment | markupDecl | commentStart | commentStartDash | comment
   | commentEndDash | commentEnd | commentEndBang
   | doctype | cdata
+  | piOpen | piTarget | afterPiTarget | piData | piQuestion
+  | escStart | escStartDash | esc | escDash | escDashDash | escLt
+  | dblEscStart | dblEsc | dblEscDash | dblEscDashDash | dblEscLt | dblEscEnd
 deriving BEq, Inhabited
 
 structure Tok where
@@ -322,7 +327,7 @@ def Tok.step (t : Tok) : Tok :=
     match c? with
     | some '!' => { t.adv with st := .markupDecl }
     | some '/' => { t.adv with st := .endTagOpen }
-    | some '?' => ((t.err "unexpected-question-mark-instead-of-tag-name").to .bogusComment) |> fun t => { t with buf := "" }
+    | some '?' => { t.adv with st := .piOpen, tmp := "" }
     | some c =>
       if isAsciiAlpha c then (t.newTag false).to .tagName
       else ((t.err "invalid-first-character-of-tag-name").emit (.char '<')).to .data
@@ -346,7 +351,65 @@ def Tok.step (t : Tok) : Tok :=
   | .rawLt =>
     match c? with
     | some '/' => { t.adv with st := .rawEndOpen, tmp := "" }
+    | some '!' =>
+      if t.back == .scriptData then ((t.adv.emit (.char '<')).emit (.char '!')).to .escStart
+      else (t.emit (.char '<')).to t.back
     | _ => (t.emit (.char '<')).to t.back
+  -- the script data escaped and double escaped states (§13.2.5.20 to §13.2.5.31);
+  -- the escaped end tag open and end tag name states are `rawEndOpen` and
+  -- `rawEndName` with `back := .esc`
+  | .escStart =>
+    match c? with
+    | some '-' => (t.adv.emit (.char '-')).to .escStartDash
+    | _ => t.to .scriptData
+  | .escStartDash =>
+    match c? with
+    | some '-' => (t.adv.emit (.char '-')).to .escDashDash
+    | _ => t.to .scriptData
+  | .esc | .escDash | .escDashDash =>
+    match c? with
+    | none => (t.err "eof-in-script-html-comment-like-text").emit .eof
+    | some '-' =>
+      (t.adv.emit (.char '-')).to (if t.st == .esc then .escDash else .escDashDash)
+    | some '<' => t.adv.to .escLt
+    | some '>' =>
+      if t.st == .escDashDash then (t.adv.emit (.char '>')).to .scriptData
+      else (t.adv.emit (.char '>')).to .esc
+    | some '\x00' => ((t.err "unexpected-null-character").adv.emit (.char '�')).to .esc
+    | some c => (t.adv.emit (.char c)).to .esc
+  | .escLt =>
+    match c? with
+    | some '/' => { t.adv with st := .rawEndOpen, back := .esc, tmp := "" }
+    | some c =>
+      if isAsciiAlpha c then { (t.emit (.char '<')) with st := .dblEscStart, tmp := "" }
+      else (t.emit (.char '<')).to .esc
+    | none => (t.emit (.char '<')).to .esc
+  | .dblEscStart | .dblEscEnd =>
+    let isStart := t.st == .dblEscStart
+    match c? with
+    | some c =>
+      if isWs c || c == '/' || c == '>' then
+        let nx := if t.tmp == "script" then (if isStart then TS.dblEsc else .esc)
+          else (if isStart then .esc else .dblEsc)
+        (t.adv.emit (.char c)).to nx
+      else if isAsciiAlpha c then { t.adv.emit (.char c) with tmp := t.tmp.push (lowerAscii c) }
+      else t.to (if isStart then .esc else .dblEsc)
+    | none => t.to (if isStart then .esc else .dblEsc)
+  | .dblEsc | .dblEscDash | .dblEscDashDash =>
+    match c? with
+    | none => (t.err "eof-in-script-html-comment-like-text").emit .eof
+    | some '-' =>
+      (t.adv.emit (.char '-')).to (if t.st == .dblEsc then .dblEscDash else .dblEscDashDash)
+    | some '<' => (t.adv.emit (.char '<')).to .dblEscLt
+    | some '>' =>
+      if t.st == .dblEscDashDash then (t.adv.emit (.char '>')).to .scriptData
+      else (t.adv.emit (.char '>')).to .dblEsc
+    | some '\x00' => ((t.err "unexpected-null-character").adv.emit (.char '�')).to .dblEsc
+    | some c => (t.adv.emit (.char c)).to .dblEsc
+  | .dblEscLt =>
+    match c? with
+    | some '/' => { (t.adv.emit (.char '/')) with st := .dblEscEnd, tmp := "" }
+    | _ => t.to .dblEsc
   | .rawEndOpen =>
     match c? with
     | some c =>
@@ -498,6 +561,38 @@ def Tok.step (t : Tok) : Tok :=
     let t := (t.errs' es).emit tok
     if atEof then ((t.err "eof-in-doctype").to .data) |> fun t => { t with pos := e }
     else { t with pos := e + 1, st := .data }
+  | .piOpen =>
+    match c? with
+    | none => (t.err "eof-in-processing-instruction").emit .eof
+    | some c =>
+      if isAsciiAlpha c || c == '_' then t.to .piTarget
+      else { (t.err "invalid-first-character-of-processing-instruction-target") with
+               st := .bogusComment, buf := "?" ++ t.tmp }
+  | .piTarget =>
+    match c? with
+    | none => (t.err "eof-in-processing-instruction").emit .eof
+    | some c =>
+      if isWs c || c == '?' || c == '>' then
+        if lowerStr t.tmp == "xml" || lowerStr t.tmp == "xml-stylesheet" then
+          { (t.err "disallowed-processing-instruction-target") with st := .bogusComment, buf := "?" ++ t.tmp }
+        else { t with st := .afterPiTarget, buf := "" }
+      else if isAsciiAlnum c || c == '-' || c == '_' then { t.adv with tmp := t.tmp.push c }
+      else { (t.err "invalid-processing-instruction-target") with st := .bogusComment, buf := "?" ++ t.tmp }
+  | .afterPiTarget =>
+    match c? with
+    | some c => if isWs c then t.adv else t.to .piData
+    | none => t.to .piData
+  | .piData =>
+    match c? with
+    | none => (t.err "eof-in-processing-instruction").emit .eof
+    | some '?' => t.adv.to .piQuestion
+    | some '>' => { t.adv.emit (.pi t.tmp t.buf) with st := .data, buf := "" }
+    | some c => { t.adv with buf := t.buf.push c }
+  | .piQuestion =>
+    match c? with
+    | none => (t.err "eof-in-processing-instruction").emit .eof
+    | some '>' => { t.adv.emit (.pi t.tmp t.buf) with st := .data, buf := "" }
+    | some _ => { t with buf := t.buf.push '?', st := .piData }
   | .cdata =>
     if startsWithAt t.inp t.pos "]]>" false then { t with pos := t.pos + 3, st := .data }
     else match c? with
