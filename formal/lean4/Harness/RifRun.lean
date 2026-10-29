@@ -43,6 +43,7 @@ alternative is calling a well-formed conclusion unparsable.
 Usage: `lake exe l4rif [suite-dir]`
 -/
 import L4Factoidal.RIF.Engine
+import L4Factoidal.RIF.Bld
 import L4Factoidal.RIF.Conformance
 import L4Factoidal.RIF.OwlDirect
 import L4Factoidal.Syntax.RdfXml
@@ -50,6 +51,7 @@ import L4Factoidal.XML.Parser
 import L4Factoidal.RIF.Ps
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.RDFS.Closure
+import L4Factoidal.RDFS.FullClosure
 import Harness.Fixtures
 import Harness.RifImport
 import L4Factoidal.RIF.RdfMapping
@@ -205,13 +207,24 @@ def defectiveData : List (String × String) :=
    ("Builtins_Time",         "https://github.com/danbri/factoidal/issues/1031"),
    ("Builtins_PlainLiteral", "https://github.com/danbri/factoidal/issues/1031")]
 
+/-- RIF-BLD cases whose test data is defective, with the open issue that
+    gives the evidence. The three conclusions write `pred:iri-string` as an
+    ordinary atom, without `External` (RIF BLD 2013 §2.1, RIF-DTB 2013 §4),
+    so as written they are not entailed. Corrected copies with `External`
+    are in `tests/rif-bld-local/`. -/
+def bldDefectiveData : List (String × String) :=
+  [("IRI_from_IRI",              "https://github.com/danbri/factoidal/issues/1186"),
+   ("Multiple_IRIs_from_String", "https://github.com/danbri/factoidal/issues/1186"),
+   ("Multiple_Strings_from_IRI", "https://github.com/danbri/factoidal/issues/1186")]
+
 def rounds : Nat := 24
 
 /-- Run every case under `dir` (one subdirectory per test kind, one per
 case). Used for the W3C corpus and for the project-local corrected copies
 in `tests/rif-local/`. -/
 def runSuite (dir : String) (verbose : Bool) (overrides : List String)
-    (defective : List (String × String)) : IO Tally := do
+    (defective : List (String × String)) (bld : Bool := false)
+    (entailmentOnly : Bool := false) : IO Tally := do
   let mut t : Tally := {}
   for kindEntry in (← System.FilePath.readDir dir) do
     if ← System.FilePath.isDir kindEntry.path then
@@ -225,7 +238,9 @@ def runSuite (dir : String) (verbose : Bool) (overrides : List String)
             match files.find? (·.endsWith suffix) with
             | none   => pure none
             | some f => (IO.FS.readFile (cdir ++ "/" ++ f)).map some
-          if kind == "ImportRejectionTest" then
+          if entailmentOnly && !(kind == "PositiveEntailmentTest" || kind == "NegativeEntailmentTest") then
+            pure ()
+          else if kind == "ImportRejectionTest" then
             -- The import combination must be REJECTED. The verdict is
             -- the library's disjunction of the RIF-RDF/OWL Combination
             -- import-validity conditions; the runner only resolves the
@@ -253,9 +268,12 @@ def runSuite (dir : String) (verbose : Bool) (overrides : List String)
                 -- SAFENESS is part of being a RIF Core document, and
                 -- a parser cannot see it: `Core_NonSafeness` parses
                 -- and is still not RIF Core.
+                -- RIF-BLD has no safeness condition; its syntax
+                -- condition is that no variable is free (BLD §2.6).
                 let parsed := match parseDocument src with
                   | .error _ => false
-                  | .ok d    => documentSafe d.rules
+                  | .ok d    => if bld then L4Factoidal.RIF.Bld.documentWellFormed d.rules
+                                else documentSafe d.rules
                 let want := kind == "PositiveSyntaxTest"
                 if parsed == want then t := { t with pass := t.pass + 1 }
                 else
@@ -352,7 +370,13 @@ def runSuite (dir : String) (verbose : Bool) (overrides : List String)
                           let g := if wantsRdfs && !imported.isEmpty
                                    then L4Factoidal.RDFS.closureFix imported
                                    else imported
-                          let facts := g.flatMap factsOfTriple
+                          -- Under RIF-BLD the triple `a rdfs:subClassOf b`
+                          -- does not give `a ## b` (RIF-RDF-OWL §5.1.1
+                          -- condition 8 has one direction only;
+                          -- `RDF_Combination_SubClass_5`).
+                          let factsOf := fun (tr : Triple) => (factsOfTriple tr).filter
+                            (fun f => !bld || match f with | .sub _ _ => false | _ => true)
+                          let facts := g.flatMap factsOf
                           let want := kind == "PositiveEntailmentTest"
                           -- Local constants are DOCUMENT-scoped, so
                           -- the premise's `_p` and the conclusion's are
@@ -378,6 +402,21 @@ def runSuite (dir : String) (verbose : Bool) (overrides : List String)
                                    then L4Factoidal.RIF.OwlDirect.entailsOwlDirect rules imported goal rounds
                                    else if !graphMappingSupported g then Verdict.undecided
                                      "RDF input cannot be represented in RIF (direction or triple term)"
+                                   else if bld then
+                                     L4Factoidal.RIF.Bld.entailsBld
+                                       { rdfCombination := !doc.imports.isEmpty,
+                                         extra := fun fs =>
+                                           -- Under an RDFS import the facts are read
+                                           -- through the full RDF 1.1 Semantics closure
+                                           -- (rdfs1-rdfs13 and the axiomatic triples;
+                                           -- rdfs10 is what `RDF_Combination_SubClass_4`
+                                           -- needs).
+                                           if wantsRdfs then
+                                             let tg := fs.filterMap tripleOfGAtom
+                                             (L4Factoidal.RDFS.fullClosure []
+                                               (L4Factoidal.RDFS.containerMembershipIn tg) tg).flatMap factsOf
+                                           else [] }
+                                       rules facts goal
                                    else entails rules facts goal rounds)
                           let ok := match verdict with
                             | .holds => want
@@ -433,8 +472,11 @@ def runSuite (dir : String) (verbose : Bool) (overrides : List String)
   return t
 
 def main (args : List String) : IO UInt32 := do
+  -- `--bld`: the RIF-BLD 2013 suite under the BLD engine (`RIF/Bld.lean`).
+  let bld := args.contains "--bld"
   let dir ← Harness.fixtureArgOr ((args.filter (fun a => !a.startsWith "--")).head?)
-    "third_party/testing/rif-core-suite/Core_v1.22/Approved"
+    (if bld then "third_party/testing/rif-bld-suite/BLD_v1.22/Approved"
+     else "third_party/testing/rif-core-suite/Core_v1.22/Approved")
   let verbose := args.contains "--verbose"
   let overrideDir ← Harness.resolveFixtureOr "tests/local-overrides/rif"
   let overrides ← loadOverrides overrideDir
@@ -442,17 +484,17 @@ def main (args : List String) : IO UInt32 := do
     IO.println s!"rif runner: corpus not found: {dir}"
     IO.println "run tools/ensure-test-env.sh from the repository root first"
     return 1
-  let t ← runSuite dir verbose overrides defectiveData
+  let t ← runSuite dir verbose overrides (if bld then bldDefectiveData else defectiveData) bld
   let decided := t.pass + t.fail
   -- The project-local corrected copies of the excluded cases
   -- (https://github.com/danbri/factoidal/issues/1031). Exclusions do not
   -- apply here: these must pass.
-  let localDir ← Harness.resolveFixtureOr "tests/rif-local"
+  let localDir ← Harness.resolveFixtureOr (if bld then "tests/rif-bld-local" else "tests/rif-local")
   let localTally ← if ← System.FilePath.isDir localDir
-    then runSuite localDir verbose [] [] else pure {}
+    then runSuite localDir verbose [] [] bld else pure {}
   let localTotal := localTally.pass + localTally.fail + localTally.undecided + localTally.notRead
   IO.println ""
-  IO.println (s!"rif-core DECIDED: {t.pass} pass, {t.fail + t.staleExclusions.length} fail " ++
+  IO.println (s!"{if bld then "rif-bld" else "rif-core"} DECIDED: {t.pass} pass, {t.fail + t.staleExclusions.length} fail " ++
     s!"(out of {decided + t.staleExclusions.length} decided); " ++
     s!"{t.excluded} excluded (defective test data)")
   IO.println s!"UNDECIDED: {t.undecided} cases — a built-in outside this port's slice"
@@ -475,11 +517,22 @@ def main (args : List String) : IO UInt32 := do
   if inventory == 0 then
     IO.eprintln "rif runner: empty inventory; no cases were scored or classified"
   IO.println ""
-  IO.println (s!"rif-local: {localTally.pass} pass, {localTally.fail} fail, " ++
+  IO.println (s!"{if bld then "rif-bld-local" else "rif-local"}: {localTally.pass} pass, {localTally.fail} fail, " ++
     s!"{localTally.undecided} undecided, {localTally.notRead} not read (out of {localTotal}) " ++
     s!"— corrected copies of the excluded W3C cases, {localDir}")
   if localTotal == 0 then
     IO.eprintln s!"rif runner: no project-local cases found under {localDir}"
-  let localOk := localTally.pass == localTotal && localTotal > 0
+  -- RIF BLD 2013 extends RIF Core 2013: every entailment case of the W3C
+  -- Core suite must get its Core verdict from the BLD engine too. Its
+  -- syntax cases are left out, because BLD drops Core's safeness.
+  let coreOk ← if bld then do
+      let coreDir ← Harness.resolveFixtureOr "third_party/testing/rif-core-suite/Core_v1.22/Approved"
+      let c ← runSuite coreDir verbose overrides defectiveData true true
+      IO.println (s!"rif-core under BLD: {c.pass} pass, {c.fail + c.staleExclusions.length} fail, " ++
+        s!"{c.undecided} undecided, {c.excluded} excluded (defective test data) — the W3C RIF Core " ++
+        "entailment cases run through the BLD engine")
+      pure (c.fail == 0 && c.staleExclusions.isEmpty && c.pass > 0)
+    else pure true
+  let localOk := localTally.pass == localTotal && localTotal > 0 && coreOk
   return if t.fail > 0 || !t.staleOverrides.isEmpty || !t.staleExclusions.isEmpty
             || inventory == 0 || !localOk then 1 else 0

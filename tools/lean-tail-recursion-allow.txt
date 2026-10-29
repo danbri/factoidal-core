@@ -1956,3 +1956,24 @@ L4Factoidal_XSLT4_renIs  # (a) PENDING https://github.com/danbri/factoidal/issue
 L4Factoidal_XSLT4_renMSrcs  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Rename.lean)
 L4Factoidal_XSLT4_renPs  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Rename.lean)
 L4Factoidal_XSLT4_renSorts  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Rename.lean)
+# --- Added 2026-10-29, RIF-BLD 2013 layer (RIF/Bld.lean) and the BLD forms of the RIF-PS reader ---
+L4Factoidal_RIF_Bld_canon  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_canonList  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_canonTm  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_canonTms  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_gOfTm?  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_gOfTms?  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_groundTmC  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_groundTmsC  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_reached  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_reachedList  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_tmOfG  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_varsOutsideExternal  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_varsOutsideExternalList  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_canonFormula  # (b) nesting of one RIF formula (And, Or, Exists) of a rule document or goal
+L4Factoidal_RIF_Bld_conjuncts  # (b) nesting of one RIF formula (And, Or, Exists) of a rule document or goal
+L4Factoidal_RIF_Bld_expandBuiltins  # (b) nesting of one RIF formula (And, Or, Exists) of a rule document or goal
+L4Factoidal_RIF_Bld_freeVarsFormula  # (b) nesting of one RIF formula (And, Or, Exists) of a rule document or goal
+L4Factoidal_RIF_Bld_tmsOfFormula  # (b) nesting of one RIF formula (And, Or, Exists) of a rule document or goal
+L4Factoidal_RIF_insertNamedArg  # (b) RIF presentation syntax reader; the named arguments of one uniterm
+L4Factoidal_RIF_parseNamedArgsGoF  # (b) RIF presentation syntax reader; depth is the parenthesis nesting; the loop over arguments is a tail call; fuel is a token budget

@@ -25,6 +25,10 @@ on:
       - 'tests/n3/**'
       - 'third_party/testing/yaml-ld/**'
       - 'tests/yamlld/**'
+      - 'third_party/testing/rif-bld-suite/**'
+      - 'third_party/testing/rif-core-suite/**'
+      - 'tests/rif-bld/**'
+      - 'tests/rif-bld-local/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
 
@@ -164,3 +168,9 @@ jobs:
         run: |
           git submodule update --init --depth 1 third_party/testing/json-ld
           bash tests/yamlld/run.sh
+
+      # RIF BLD 2013 on the W3C BLD suite, the corrected local copies, and
+      # every W3C RIF Core entailment case through the BLD engine
+      # (https://github.com/danbri/factoidal/issues/1165).
+      - name: RIF BLD test suite (tests/rif-bld/run.sh)
+        run: bash tests/rif-bld/run.sh
