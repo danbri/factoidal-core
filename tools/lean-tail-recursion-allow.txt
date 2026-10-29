@@ -1956,3 +1956,13 @@ L4Factoidal_XSLT4_renIs  # (a) PENDING https://github.com/danbri/factoidal/issue
 L4Factoidal_XSLT4_renMSrcs  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Rename.lean)
 L4Factoidal_XSLT4_renPs  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Rename.lean)
 L4Factoidal_XSLT4_renSorts  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Rename.lean)
+
+# --- 2026-10-29, XPath 4.0 function-item equivalence (L4Factoidal/XPath4/ExprEq.lean,
+#     PR 205) now reached from the wasm dispatch through Wasm/Ops/Qt4.lean.
+L4Factoidal_XPath4_Expr_callsF  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/ExprEq.lean)
+L4Factoidal_XPath4_Expr_namesF  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/ExprEq.lean)
+L4Factoidal_XPath4_Expr_varsReadF  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/ExprEq.lean)
+L4Factoidal_XPath4_Expr_renameF  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/ExprEq.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_instBEqExpr_beq  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (derived BEq, L4Factoidal/XPath4/ExprEq.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_instBEqIType_beq  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (derived BEq, L4Factoidal/XPath4/ExprEq.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_instBEqNodeTest_beq  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (derived BEq, L4Factoidal/XPath4/ExprEq.lean); issue 1110 tracks a nesting bound
