@@ -1,0 +1,5 @@
+running prod/VarDefaultValue.xml
+prod/prod-VarDefaultValue: 40 pass, 0 fail, 3 unsupported (out of 43)
+== families ==
+prod: 40 pass, 0 fail, 3 unsupported (out of 43)
+TOTAL: 40 pass, 0 fail, 3 unsupported (out of 43)

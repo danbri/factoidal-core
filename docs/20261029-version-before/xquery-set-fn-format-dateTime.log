@@ -1,0 +1,5 @@
+running fn/format-dateTime.xml
+fn/fn-format-dateTime: 92 pass, 0 fail, 2 unsupported (out of 94)
+== families ==
+fn: 92 pass, 0 fail, 2 unsupported (out of 94)
+TOTAL: 92 pass, 0 fail, 2 unsupported (out of 94)

@@ -1,0 +1,5 @@
+running prod/ArrowExpr.xml
+prod/prod-ArrowExpr: 69 pass, 0 fail, 2 unsupported (out of 71)
+== families ==
+prod: 69 pass, 0 fail, 2 unsupported (out of 71)
+TOTAL: 69 pass, 0 fail, 2 unsupported (out of 71)

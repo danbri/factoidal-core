@@ -1,0 +1,5 @@
+running prod/OptionDecl.xml
+prod/prod-OptionDecl: 8 pass, 0 fail, 1 unsupported (out of 9)
+== families ==
+prod: 8 pass, 0 fail, 1 unsupported (out of 9)
+TOTAL: 8 pass, 0 fail, 1 unsupported (out of 9)

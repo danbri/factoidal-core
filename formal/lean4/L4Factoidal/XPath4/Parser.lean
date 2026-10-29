@@ -350,11 +350,13 @@ def pNumber : P Expr := do
   let i ← get
   let s := c.s
   if chAt s i == '0' && (chAt s (i+1) == 'x' || chAt s (i+1) == 'X') then
+    if c.features.version != .v40 then synErr "hexadecimal literals require version 4.0"
     let (ds, j) := digitsUs s (i + 2) (fun c => c.isDigit || ('a' ≤ c && c ≤ 'f') || ('A' ≤ c && c ≤ 'F'))
     if ds.isEmpty then synErr "bad hex literal"
     set j
     pure (.lit (Atomic.ofInt (ds.foldl (fun a c => a * 16 + hexVal c) 0)))
   else if chAt s i == '0' && (chAt s (i+1) == 'b' || chAt s (i+1) == 'B') then
+    if c.features.version != .v40 then synErr "binary literals require version 4.0"
     let (ds, j) := digitsUs s (i + 2) (fun c => c == '0' || c == '1')
     if ds.isEmpty then synErr "bad binary literal"
     set j
@@ -480,6 +482,16 @@ def reservedFnNames : List String :=
    "processing-instruction", "schema-attribute", "schema-element", "text", "xnode",
    "array", "enum", "fn", "function", "if", "item", "jnode", "map", "record", "switch",
    "type", "typeswitch"]
+
+/-- Reserved function names of the selected grammar (XPath Appendix A.3). -/
+def reservedFnName (name : String) : P Bool := do
+  let v := (← read).features.version.number
+  if v == 40 then return reservedFnNames.contains name
+  if name == "empty-sequence" then return true
+  if ["xnode", "jnode", "enum", "fn", "record", "type"].contains name then return false
+  if v < 31 && ["array", "map"].contains name then return false
+  if v < 30 && ["function", "namespace-node", "switch"].contains name then return false
+  return reservedFnNames.contains name
 
 def atomicTypeOf (q : QN) : P IType := do
   -- XQuery 4.0 hook: a named item type of the prolog
@@ -715,6 +727,7 @@ def pItemType : Nat → P IType
               let inner ← match ← afterName with
                 | some ("element", '(', _) | some ("schema-element", '(', _) => pItemType n
                 | _ =>
+                  if (← read).features.version != .v40 then synErr "document-node() takes an element test before 4.0"
                   if (← peekAt 0) == '*' || isNameStart (← peekAt 0) || (← peekAt 0) == 'Q' then
                     let t ← pNameTest dE
                     let mut more : List NameTest := []
@@ -851,7 +864,9 @@ def pEnclosed : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
     expectS "{"
-    if ← eatS "}" then pure (.seq [])
+    if ← eatS "}" then
+      if (← read).features.version.number < 31 then synErr "an enclosed expression must not be empty before 3.1"
+      pure (.seq [])
     else
       let e ← pExpr n
       expectS "}"
@@ -875,7 +890,11 @@ def pTypeDecl : Nat → P IType
 def pForLetReturn : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
-    if ← isForStart then pFor n
+    let c ← read
+    if c.features.version != .v40 && !(c.ext.any (·.xquery)) then
+      expectKw "return"
+      pExprSingle n
+    else if ← isForStart then pFor n
     else if ← isLetStart then pLet n
     else
       expectKw "return"
@@ -1073,6 +1092,8 @@ def opAt (lvl : Nat) : P (Option (BOp × Nat)) := do
   let ch := chAt s i
   let ch1 := chAt s (i+1)
   let kw : Option String := (ncnameAt s i).map (·.1)
+  if c.features.version != .v40 && lvl == 2 &&
+      (kw == some "precedes" || kw == some "follows") then return none
   match lvl with
   | 0 => pure (if kw == some "or" then some (.or, 2) else none)
   | 1 => pure (if kw == some "and" then some (.and, 3) else none)
@@ -1156,6 +1177,10 @@ def pCastTarget : Nat → P (IType × Bool)
     ws
     let st ← get
     let c0 ← read
+    if c0.features.version != .v40 then
+      match ← afterName with
+      | some (_, '(', _) => synErr "a cast target must be a type name before 4.0"
+      | _ => pure ()
     let listT ← match ← peekQName with
       | some (p, u, l, e) =>
         let uri : Option String := match u, p with
@@ -1171,7 +1196,11 @@ def pCastTarget : Nat → P (IType × Bool)
     if listT.isNone then set st
     let t ← match listT with
       | some t => pure t
-      | none => pItemType n
+      | none =>
+        try pItemType n catch er =>
+          if c0.features.version.number ≥ 30 && c0.features.version != .v40 && er.code == "XPST0051" then
+            throw { er with code := "XQST0052" }
+          else throw er
     let c ← read
     let i ← get
     let j := skipWsF c.s (c.s.size + 1) 0 i
@@ -1256,7 +1285,7 @@ def pArrowTarget : Nat → P (Sum (QN) Expr × List (Option Expr) × List (Strin
         else
         match ← peekQName with
         | some (p, u, l, e) =>
-            if p.isNone && u.isNone && reservedFnNames.contains l then
+            if p.isNone && u.isNone && (← reservedFnName l) then
               synErr ("reserved function name " ++ l)
             set e
             let q ← resolveFn p u l
@@ -1330,6 +1359,8 @@ def pPath : Nat → P Expr
         -- `/*` is a wildcard step (xgc: leading-lone-slash)
         let r ← pRel n
         pure (.slash .root r)
+      else if ch == '<' && c.features.version != .v40 then
+        synErr "a leading lone slash before '<' must be parenthesized"
       else if ch == '<' && c.ext.isSome && isNameStart (chAt c.s (j+1)) then
         -- XQuery: '/' then a direct constructor is a path; when the text is no
         -- constructor, '/' is alone and '<' is the comparison (xgc: leading-lone-slash)
@@ -1426,7 +1457,7 @@ def pStep : Nat → P Expr
       match axisOfName? nm with
       | some ax =>
           -- the namespace axis is not recognized in XQuery
-          if nm == "namespace" && c0.ext.isSome then synErr "the namespace axis is not recognized in XQuery"
+          if nm == "namespace" && c0.ext.any (·.xquery) then synErr "the namespace axis is not recognized in XQuery"
           let _ ← peekQName
           adv nm.length; ws; expectS "::"
           ws
@@ -1441,7 +1472,7 @@ def pStep : Nat → P Expr
           pure (.step ax t ps)
       | none => synErr ("unknown axis " ++ nm)
     | some (nm, '(', _) =>
-      if kindTestNames.contains nm then
+      if kindTestNames.contains nm && !(nm == "namespace-node" && c0.features.version.number < 30) then
         let t ← pNodeTest n .child
         -- the default axis of an attribute test (with a NameTestUnion or a
         -- type name) or a schema attribute test is attribute (XPath 4.0 §4.7.6)
@@ -1521,7 +1552,13 @@ def pKeySpec : Nat → P (Option Expr)
         expectS ")"; pure (some e)
     else if ch == '$' then pure (some (.var (← pVarName n)))
     else if ch == '"' || ch == '\'' then pure (some (.lit (Atomic.ofStr (← pStringLit))))
-    else if ch.isDigit then pure (some (← pNumber))
+    else if ch.isDigit then
+      let e ← pNumber
+      if (← read).features.version != .v40 then
+        match e with
+        | .lit ⟨_, .int _⟩ => pure ()
+        | _ => synErr "a lookup key literal must be an integer before 4.0"
+      pure (some e)
     else if ch == '.' then adv 1; pure (some .ctx)
     else if ch == '#' then
       -- a QName literal as the key (XPath 4.0 KeySpecifier)
@@ -1538,7 +1575,7 @@ def pKeySpec : Nat → P (Option Expr)
       match ncnameAt c.s i with
       | some (nm, e) =>
         -- the longest token is a QName (XPath 4.0 A.3.1), which is not a key
-        if chAt c.s e == ':' && isNameStart (chAt c.s (e + 1)) then
+        if c.features.version == .v40 && chAt c.s e == ':' && isNameStart (chAt c.s (e + 1)) then
           synErr ("a lookup key must be an NCName, not the QName " ++ nm ++ ":...")
         set e; pure (some (.lit (Atomic.ofStr nm)))
       | none => synErr "bad lookup key"
@@ -1602,6 +1639,10 @@ def pInlineFn : Nat → P Expr
         expectS ")"
       let r ← pTypeDecl n
       let body ← pEnclosed n
+      if (← read).features.version.number < 31 then
+        match body with
+        | .seq [] => synErr "an inline function body must not be empty before 3.1"
+        | _ => pure ()
       pure (.inline ps r body false)
 
 def pMapEntries : Nat → P Expr
@@ -1617,6 +1658,7 @@ def pMapEntries : Nat → P Expr
           let v ← pExprSingle n
           es := es ++ [(k, v)]
         else
+          if (← read).features.version != .v40 then synErr "expected ':' in map entry"
           -- an entry without ':' is a map expression whose entries are merged
           es := es ++ [(k, .call { uri := "#merge", loc := "#merge" } [] [])]
         if !(← eatS ",") then break
@@ -1681,7 +1723,9 @@ def pPrimary : Nat → P Expr
           if !(← eatS ",") then break
         expectS "]"
         pure (.arrS es)
-    else if ch == '{' then pMapEntries n
+    else if ch == '{' then
+      if (← read).features.version != .v40 then synErr "a map constructor requires the map keyword before 4.0"
+      pMapEntries n
     else if ch == '?' then
       adv 1
       pure (.ulookup (← pKeySpec n))
@@ -1703,6 +1747,8 @@ def pPrimary : Nat → P Expr
           | some (none, none, _, _) => pure true
           | _ => pure false
         if !unpref then pCallAfterName n else
+        let isFn ← atKw "fn"
+        if (← read).features.version.number < 30 || (isFn && (← read).features.version != .v40) then pCallAfterName n else
         if c1 == '(' || c1 == '{' then
           let _ ← eatKw "function"
           let _ ← eatKw "fn"
@@ -1711,7 +1757,7 @@ def pPrimary : Nat → P Expr
     | some (_, '#', _) =>
         match ← peekQName with
         | some (p, u, l, e) =>
-            if p.isNone && u.isNone && reservedFnNames.contains l then
+            if p.isNone && u.isNone && (← reservedFnName l) then
               synErr ("reserved function name " ++ l)
             set e
             let q ← resolveFn p u l
@@ -1725,7 +1771,7 @@ def pPrimary : Nat → P Expr
             pure (.fref q (ds.foldl (fun a d => a * 10 + (d.toNat - 48)) 0))
         | none => synErr "bad named function reference"
     | some (nm, '(', _) =>
-        if reservedFnNames.contains nm then
+        if ← reservedFnName nm then
           match ← peekQName with
           | some (none, none, _, _) => synErr ("reserved function name " ++ nm)
           | _ => pCallAfterName n

@@ -695,6 +695,7 @@ def isNaNAtom (a : Atomic) : Bool :=
 def minMax4 (isMax : Bool) : LibFn := fun _ e a => do
   let c ← e.collation (argN a 1)
   let xs ← e.atomize (argN a 0)
+  if e.features.version != .v40 then return ← minMaxVersion e.features.version c isMax xs
   let mut best : Option Atomic := none
   for x0 in xs do
     let x ← if x0.ty == .untyped then castAtomic x0 (.b .double) else pure x0

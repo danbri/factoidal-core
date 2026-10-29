@@ -163,8 +163,12 @@ def pFieldName : P String := do
 def checkDecimalFormat (props : List (String × String)) : P Unit := do
   let known := ["decimal-separator", "grouping-separator", "exponent-separator", "percent",
     "per-mille", "infinity", "minus-sign", "NaN", "zero-digit", "digit", "pattern-separator"]
-  for (k, _) in props do
+  for (k, v) in props do
     if !known.contains k then synErr ("unknown decimal format property " ++ k)
+    if (← read).features.version.number < 31 && k == "exponent-separator" then
+      synErr "exponent-separator requires version 3.1"
+    if (← read).features.version != .v40 && k == "minus-sign" && v.length != 1 then
+      qerr "XQST0097" "minus-sign must be one character before 4.0"
   match props.foldlM (fun f (kv : String × String) => f.set kv.1 kv.2) ({} : DecFormat) with
   | .error e => qerr "XQST0097" e.msg
   | .ok f =>
@@ -242,14 +246,16 @@ def typeRefs (s : Array Char) (st en : Nat) (ns : List (String × String)) : Lis
 def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
     (loader : String → Except Err (List (QN × IType)) := fun _ => .ok []) : P Module := do
   let mut m : Module := {}
-  let mut cfg : Cfg := { types := types0, lenient }
   let c0 ← read
+  let mut cfg : Cfg := { types := types0, lenient, features := c0.features }
   let mut ns : List (String × String) := c0.ns
   -- the version declaration
   if ← kwThenKw "xquery" "version" then
     expectKw "xquery"; expectKw "version"
     let v ← pStrRefs
     if !["1.0", "3.0", "3.1", "4.0"].contains v then qerr "XQST0031" ("XQuery version " ++ v ++ " is not supported")
+    let declared := if v == "1.0" then 10 else if v == "3.0" then 30 else if v == "3.1" then 31 else 40
+    if declared > c0.features.version.number then qerr "XQST0031" "declared version exceeds processor version"
     if ← eatKw "encoding" then
       let enc ← pStrRefs
       let ok := match enc.toList with
@@ -258,6 +264,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
       if !ok then qerr "XQST0087" ("invalid encoding " ++ enc)
     expectS ";"
   else if ← kwThenKw "xquery" "encoding" then
+    if c0.features.version.number < 30 then synErr "XQuery 1.0 requires a version before encoding"
     expectKw "xquery"; expectKw "encoding"
     let enc ← pStrRefs
     let ok := match enc.toList with
@@ -491,6 +498,8 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
       let oq ← match ← peekQName with
       | some (p, u, l, e) =>
         set e
+        if c0.features.version.number < 30 && p.isNone && u.isNone then
+          qerr "XPST0081" "an option name must have a namespace prefix in XQuery 1.0"
         withXq cfg ns (resolve p u l "http://www.w3.org/2012/xquery")
       | none => synErr "bad option name"
       -- an XQuery string literal: references expanded (§4.2.1)
@@ -538,7 +547,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
       if varNames.any (· == v) then qerr "XQST0049" ("variable $" ++ v.show ++ " declared twice")
       varNames := v :: varNames
       if let some (_, u) := m.libNs then
-        if v.uri != u && !isPrivateAnn annots then qerr "XQST0048" "a library module variable outside the module namespace"
+        if v.uri != u && (c0.features.version != .v40 || !isPrivateAnn annots) then qerr "XQST0048" "a library module variable outside the module namespace"
       let ty ← if ← eatKw "as" then withXq cfg ns (pSeqType 1000) else pure (.seq .item .star)
       if ← eatS ":=" then
         let e ← withXq cfg ns (pExprSingle 100000)
@@ -549,23 +558,27 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
         expectKw "external"
         let d ← if ← eatS ":=" then pure (some (← withXq cfg ns (pExprSingle 100000))) else pure none
         expectS ";"
+        if c0.features.version.number < 30 && d.isSome then
+          synErr "external variable defaults require version 3.0"
         m := { m with decls := m.decls ++ [.var v ty d true] }
         if isPrivateAnn annots then m := { m with privates := v :: m.privates }
     | "function" =>
       checkVisibility annots "XQST0106"
       let q ← match ← peekQName with
         | some (p, u, l, e) =>
-          if p.isNone && u.isNone && reservedFnNames.contains l then
+          if c0.features.version.number ≥ 30 && p.isNone && u.isNone && (← reservedFnName l) then
             synErr ("reserved function name " ++ l)
           set e
           let q ← withXq cfg ns (resolve p u l ((ns.lookup "#fn").getD nsFN))
           -- 4.0: an unprefixed name with the default function namespace
           -- fn is a name in no namespace (§5.18.1)
-          pure (if p.isNone && u.isNone && q.uri == nsFN then { q with uri := "" } else q)
+          pure (if c0.features.version == .v40 && p.isNone && u.isNone && q.uri == nsFN then { q with uri := "" } else q)
         | none => synErr "expected a function name"
+      if c0.features.version != .v40 && q.uri == "" then
+        qerr "XQST0060" "a function declaration requires a namespace before 4.0"
       if reservedFnNs.contains q.uri then qerr "XQST0045" ("function " ++ q.show ++ " in a reserved namespace")
       if let some (_, u) := m.libNs then
-        if q.uri != u && !isPrivateAnn annots then qerr "XQST0048" "a library module function outside the module namespace"
+        if q.uri != u && (c0.features.version != .v40 || !isPrivateAnn annots) then qerr "XQST0048" "a library module function outside the module namespace"
       expectS "("
       let mut ps : Array (QN × IType × Option Expr) := #[]
       if !(← eatS ")") then
@@ -574,6 +587,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
           if ps.any (fun (x, _, _) => x == v) then qerr "XQST0039" ("parameter $" ++ v.show ++ " twice")
           let t ← if ← eatKw "as" then withXq cfg ns (pSeqType 1000) else pure (.seq .item .star)
           let d ← if ← eatS ":=" then pure (some (← withXq cfg ns (pExprSingle 100000))) else pure none
+          if c0.features.version != .v40 && d.isSome then synErr "parameter defaults require version 4.0"
           ps := ps.push (v, t, d)
           if !(← eatS ",") then break
         expectS ")"
@@ -581,6 +595,10 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
       let ret ← if ← eatKw "as" then withXq cfg ns (pSeqType 1000) else pure (.seq .item .star)
       let body ← if ← eatKw "external" then pure none
         else pure (some (← withXq cfg ns (pEnclosed 100000)))
+      if c0.features.version.number < 31 then
+        match body with
+        | some (.seq []) => synErr "a function body must not be empty before 3.1"
+        | _ => pure ()
       expectS ";"
       let maxA := ps.size
       let minA := (ps.toList.takeWhile (fun (_, _, d) => d.isNone)).length
@@ -822,6 +840,80 @@ def Module.fnArities (m : Module) : List (QN × Nat × Nat) :=
       some (fd.name, minA, fd.params.length)
     | _ => none)
 
+/-- XQuery 1.0 §4.14: dependencies through variable initializers and
+    function bodies must not form a cycle containing a global variable.
+    Reuse the static scope checker with dependency names withheld, so
+    local binders do not create false dependencies on a global name.
+    Precondition: `checkModules` has checked every body and initializer.
+    The dependency context admits all schema names and all names except
+    those withheld; unrelated static errors must be rejected first. -/
+def checkVariableCycles (env : Env) (ms : List Module) : M Unit := do
+  if env.features.version.number ≥ 30 then return ()
+  -- XQuery 1.0 §4.11 also prohibits a cycle in module imports.
+  for m in ms do
+    if let some (_, uri) := m.libNs then
+      let mut reachable := m.imports.map (fun (_, u, _) => u)
+      for _ in [0:ms.length + 1] do
+        if reachable.contains uri then err "XQST0093" ("cyclic module import: " ++ uri)
+        let more := ms.flatMap (fun lm =>
+          if lm.libNs.any (fun (_, u) => reachable.contains u) then
+            lm.imports.map (fun (_, u, _) => u) else [])
+        reachable := (reachable ++ more).eraseDups
+  let globals := ms.flatMap Module.globals
+  let vars := ms.flatMap (fun m => m.decls.filterMap (fun d => match d with
+    | .var q _ (some e) _ => some (q, e)
+    | _ => none))
+  let fns := ms.flatMap (fun m => m.decls.filterMap (fun d => match d with
+    | .fn fd => some fd
+    | _ => none))
+  let depends (vs : List QN) (fs : List (QN × Nat)) (locals : List QN) (e : Expr) : Bool :=
+    let depCtx : SCtx := {
+      vars := locals ++ (env.vars.map (·.1) ++ globals).filter (fun q => !vs.contains q)
+      knownFn := fun q k => !fs.contains (q, k) }
+    (staticErr 100000 depCtx e).isSome
+  for (target, init) in vars do
+    let mut vs := [target]
+    let mut fs : List (QN × Nat) := []
+    -- A name can be added once; one round per declaration reaches closure.
+    for _ in [0:vars.length + fns.length + 1] do
+      for fd in fns do
+        if let some body := fd.body then
+          let sig := (fd.name, fd.params.length)
+          if !fs.contains sig && depends vs fs (fd.params.map (·.1)) body then
+            fs := sig :: fs
+      for (q, e) in vars do
+        if !vs.contains q && depends vs fs [] e then vs := q :: vs
+    if depends vs fs [] init then
+      err "XQST0054" ("circular variable dependency: $" ++ target.show)
+
+/-- XQuery 1.0 §4.11 (XQST0036): a module importing a public variable
+    or function signature must have the schema components named by that
+    signature in scope. This checks the schema-name-bearing item types
+    retained by the parser; named atomic schema types need parser support. -/
+def Module.checkImportTypes (m : Module) (version : LanguageVersion) (ms : List Module) : M Unit := do
+  if version.number ≥ 30 then return ()
+  let imported (q : QN) : Bool := m.schemaImports.contains q.uri
+  let schemaCtx : SCtx := {
+    vars := []
+    knownFn := fun _ _ => true
+    typeKnown := fun q => q.uri == nsXS || imported q
+    elemKnown := imported
+    attrKnown := imported }
+  for lm in ms do
+    if lm.libNs.any (fun (_, u) => m.imports.any (fun (_, iu, _) => iu == u)) then
+      for d in lm.decls do
+        let publicTypes : List IType := match d with
+          | .var q ty _ _ => if lm.privates.contains q then [] else [ty]
+          | .fn fd => if lm.privates.contains fd.name then [] else fd.ret :: fd.params.map (fun (_, ty, _) => ty)
+          | .ctx .. => []
+        for ty in publicTypes do
+          if let some er := typeStaticErr schemaCtx 1000 ty then
+            err "XQST0036" ("imported signature uses a schema component absent from the importing module: " ++ er.msg)
+
+/-- The 4.0 default has no XQuery 1.0 import-interface restriction. -/
+theorem Module.checkImportTypes_v40 (m : Module) (ms : List Module) :
+    m.checkImportTypes .v40 ms = .ok () := rfl
+
 /-- The static checks of `Static.staticErr` over every module: the
     initializers, the function bodies, the query body. -/
 def checkModules (env : Env) (ms : List Module) : M Unit := do
@@ -837,6 +929,7 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
     if (fns.filter (fun (q2, lo2, hi2) => q2 == q && !(hi < lo2 || hi2 < lo))).length > 1 then
       err "XQST0034" ("function " ++ q.show ++ " declared twice")
   for m in ms do
+    m.checkImportTypes env.features.version ms
     if !env.features.schemaImport && !m.schemaImports.isEmpty then
       err "XQST0009" "schema import is disabled"
     for d in m.decls do
@@ -874,19 +967,27 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
     let base0 : SCtx := { vars := env.vars.map (·.1) ++ globalsM, knownFn := knownM }
     let base : SCtx := { base0 with typeKnown := tyKnown, elemKnown := fun q => (env.schema.elemDecl q).isSome,
                                     attrKnown := fun q => (env.schema.attrDecl q).isSome }
+    let mut prior := globalsM.filter (fun q => !m.globals.contains q)
     for d in m.decls do
+      let declCtx := if env.features.version.number < 30 then
+        { base with vars := env.vars.map (·.1) ++ prior } else base
       let r := match d with
-        | .var _ _ (some e) _ => staticErr 100000 base e
+        | .var v _ (some e) _ =>
+          let declCtx := if env.features.version != .v40 then
+            { declCtx with vars := declCtx.vars.filter (· != v) } else declCtx
+          staticErr 100000 declCtx e
         | .ctx _ (some e) _ => staticErr 100000 base e
         | .fn fd => match fd.body with
           | some b =>
             -- defaults see the earlier parameters; the body sees all of them
-            staticErr 100000 (base.add (fd.params.map (·.1))) b
+            staticErr 100000 (declCtx.add (fd.params.map (·.1))) b
           | none => none
         | _ => none
       if let some e := r then throw e
+      if let .var v .. := d then prior := v :: prior
     if let some b := m.body then
       if let some e := staticErr 100000 base b then throw e
+  checkVariableCycles env ms
 
 /-- Bind the functions of the modules, then their global variables and
     context value. A variable whose initializer reads a global that is
@@ -915,7 +1016,7 @@ def bindOne (fuel : Nat) (globals : List QN) (env : Env) (m : Module) : Decl →
       else eval fuel env1 (init.getD (.seq []))
     match r with
     | .ok val =>
-      let val ← env.coerce ty val ("$" ++ v.show)
+      let val ← env.bindTyped ty val ("$" ++ v.show)
       pure (some (env.bind v val), none)
     | .error e =>
       if e.code == "XPST0008" && globals.any (fun g => e.msg.endsWith ("$" ++ g.show)) then
@@ -945,12 +1046,12 @@ def bindOne (fuel : Nat) (globals : List QN) (env : Env) (m : Module) : Decl →
     | some val =>
     if !val.isEmpty || !external then
       -- §5.17: exactly one item; a value from the host must match the
-      -- type, an initializer is converted by the function conversion rules
+      -- type; before 4.0 initializers also require type matching
       if given then
         if !(env.seqMatches val ty) then err "XPTY0004" "the context value does not match its declared type"
         pure (some { env with ctx := some val, pos := 1, size := 1 }, none)
       else
-        let val ← env.coerce ty val "the context value"
+        let val ← env.bindTyped ty val "the context value"
         pure (some { env with ctx := some val, pos := 1, size := 1 }, none)
     else pure (some env, none)
   | .fn _ => pure (some env, none)
@@ -977,7 +1078,9 @@ def bindRounds (fuel : Nat) (globals : List QN) : Nat → Env → List (Module �
     if later.length == pending.length then
       match lastErr with
       | some e => if e.code == "XPDY0002" then throw e
-                  else throw { e with code := "XQDY0054", msg := "circular variable dependency: " ++ e.msg }
+                  else throw { e with
+                    code := (if env.features.version.number < 30 then "XQST0054" else "XQDY0054")
+                    msg := "circular variable dependency: " ++ e.msg }
       | none => pure env'
     else bindRounds fuel globals k env' later
 

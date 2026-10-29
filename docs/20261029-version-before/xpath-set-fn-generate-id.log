@@ -1,0 +1,5 @@
+running fn/generate-id.xml
+fn/fn-generate-id: 30 pass, 0 fail, 11 unsupported (out of 41)
+== families ==
+fn: 30 pass, 0 fail, 11 unsupported (out of 41)
+TOTAL: 30 pass, 0 fail, 11 unsupported (out of 41)

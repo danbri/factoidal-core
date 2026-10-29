@@ -215,6 +215,16 @@ def mapParamValue (e : Env) (name : String) (k : PKind) (v : Seq) : M (Option PV
       | [.atom a] => pure (some (.s a.str))
       | _ => err "XPTY0004" (name ++ " must be xs:string or xs:QName")
   | .charmap =>
+    -- F&O 3.1 option conversion is not recursive within a supplied map.
+    if e.features.version != .v40 then
+      match v with
+      | [.map kvs] =>
+        for (key, val) in kvs do
+          if !key.is .string then err "XPTY0004" "use-character-maps: key must be xs:string"
+          match val with
+          | [.atom a] => if !a.is .string then err "XPTY0004" "use-character-maps: value must be xs:string"
+          | _ => err "XPTY0004" "use-character-maps: value must be xs:string"
+      | _ => err "XPTY0004" "use-character-maps must be a map(xs:string, xs:string)"
     match ← e.coerceTo "map(xs:string, xs:string)" v name with
     | [.map kvs] =>
       let mut out : List (Char × String) := []
@@ -231,12 +241,12 @@ def mapParams (e : Env) (kvs : List (Atomic × Seq)) : M SerParams := do
   for (k, v) in kvs do
     match k.v with
     | .qn q =>
-        if q.uri == "" then err "XPTY0004" ("serialization parameter " ++ q.loc ++ " must be a string, not a QName in no namespace")
+        if q.uri == "" && e.features.version == .v40 then err "XPTY0004" ("serialization parameter " ++ q.loc ++ " must be a string, not a QName in no namespace")
     | _ =>
       if !k.isStringLike then err "XPTY0004" "serialization parameter names are strings"
       let name := k.str
       match paramKinds.lookup name with
-      | none => err "XPTY0004" ("unknown serialization parameter " ++ name)
+      | none => if e.features.version == .v40 then err "XPTY0004" ("unknown serialization parameter " ++ name) else pure ()
       | some kind =>
         match ← mapParamValue e name kind v with
         | some pv => p ← p.set name pv
@@ -624,6 +634,7 @@ structure XCtx where
   /-- `xml`, `xhtml` or `html`. -/
   m : String
   html5 : Bool
+  languageVersion : LanguageVersion := .v40
 
 def XCtx.isHtmlElem (x : XCtx) (q : QN) : Bool :=
   if x.m == "html" then q.uri == "" || (x.html5 && q.uri == nsXHTML)
@@ -681,6 +692,9 @@ def XCtx.indentsIn (x : XCtx) (e : Env) (n : NodeRef) : Bool :=
   let r := e.nrec n
   x.p.indent && !x.p.canonical && !qnIn r.name x.p.suppress &&
   !(r.children.toList.any (fun c => (e.nrec (n.at c)).kind == .text && !e.isWsText (n.at c))) &&
+  -- Keep the text adjacency of legacy HTML processing instructions.
+  !(x.languageVersion != .v40 && x.m == "html" &&
+    r.children.toList.any (fun c => (e.nrec (n.at c)).kind == .pi)) &&
   !(r.attrs.toList.any (fun a => let ar := e.nrec (n.at a); ar.name.uri == nsXML && ar.name.loc == "space" && ar.value == "preserve")) &&
   !(x.m == "html" && x.isHtmlElem r.name && ["pre", "script", "style", "textarea", "title"].contains (lower r.name.loc))
 
@@ -741,7 +755,7 @@ def metaTag (x : XCtx) : String :=
   let ct := (x.p.mediaType.getD "text/html") ++ "; charset=" ++ x.p.encoding
   let close := if x.m == "html" then ">" else " />"
   -- with HTML5, both the HTML and the XHTML method write meta charset (§6, §7)
-  if x.html5 then "<meta charset=\"" ++ x.p.encoding ++ "\"" ++ (if x.m == "html" then ">" else "/>")
+  if x.html5 && x.languageVersion == .v40 then "<meta charset=\"" ++ x.p.encoding ++ "\"" ++ (if x.m == "html" then ">" else "/>")
   else "<meta http-equiv=\"Content-Type\" content=\"" ++
     (if x.m == "xhtml" then (x.p.mediaType.getD "text/html") ++ "; charset=" ++ x.p.encoding else ct) ++ "\"" ++ close
 
@@ -897,7 +911,7 @@ def Env.writeMarkup (e : Env) (p : SerParams) (s : Seq) : M String := do
   let html5 := match p.htmlVersion with
     | some v => (v.toList.headD '5') ≥ '5'
     | none => m != "html" || (match p.version with | some v => (v.toList.headD '5') ≥ '5' | none => true)
-  let x : XCtx := { p, m, html5 }
+  let x : XCtx := { p, m, html5, languageVersion := e.features.version }
   -- SEPM0004: standalone and doctype-system need a well-formed document
   -- entity (one element, no text at the top level)
   if (m == "xml" || m == "xhtml") && !p.canonical && (p.standalone.isSome || p.doctypeSystem.isSome) then
@@ -1058,15 +1072,15 @@ def lexLt : List Nat → List Nat → Bool
   | _, [] => false
   | a :: as, b :: bs => a < b || (a == b && lexLt as bs)
 
-def Env.jsonNumber (p : SerParams) (a : Atomic) : M String :=
+def Env.jsonNumber (p : SerParams) (a : Atomic) (version : LanguageVersion := .v40) : M String :=
   match a.num? with
   | some (.i i) => pure (toString i)
   | some (.d d) =>
     if p.canonical then pure (esNumber (floatOfDec d)) else pure (Dec.canonical d)
   | some (.f f) | some (.g f) =>
-    if f.isNaN then (if p.canonical then err "SERE0020" "NaN in canonical JSON" else pure "null")
+    if f.isNaN then (if p.canonical || version != .v40 then err "SERE0020" "NaN in canonical JSON" else pure "null")
     else if f.isInf then
-      (if p.canonical then err "SERE0020" "infinity in canonical JSON"
+      (if p.canonical || version != .v40 then err "SERE0020" "infinity in canonical JSON"
        else pure (if f > 0 then "1e9999" else "-1e9999"))
     else if f == 0 && !p.canonical && (1.0 / f) < 0 then pure "-0"
     else pure (esNumber f)
@@ -1081,7 +1095,7 @@ def Env.jsonItem (e : Env) (p : SerParams) : Nat → Nat → Item → W Unit
     let sp := if p.indent then " " else ""
     match i with
     | .atom a =>
-      if a.isNumeric then emit (← Env.jsonNumber p a)
+      if a.isNumeric then emit (← Env.jsonNumber p a e.features.version)
       else match a.v with
         | .bool b => emit (if b then "true" else "false")
         | .qn q => if q.uri == nsFN && q.loc == "null" then emit "null" else emit (p.jsonString a.str)
@@ -1166,17 +1180,30 @@ def primitiveName (a : Atomic) : String :=
     | none => b.localName
   | .untyped => "untypedAtomic"
 
-def SerParams.adaptiveAtom (p : SerParams) (a : Atomic) : String :=
+/-- Serialization 3.1 §10.1: finite doubles use exponential notation.
+    The digits come from the shared shortest-round-trip conversion. -/
+def adaptiveDouble31 (f : Float) : String :=
+  if f.isNaN || f.isInf then fmtDouble f
+  else if f == 0 then (if (f.toBits >>> 63) == 1 then "-0.0e0" else "0.0e0")
+  else
+    let (d, q) := shortestDigits false f
+    let ds := stripTrailingZeros (toString d).toList
+    let frac := ds.drop 1
+    (if f < 0 then "-" else "") ++ String.ofList (ds.take 1) ++ "." ++
+      (if frac.isEmpty then "0" else String.ofList frac) ++ "e" ++ toString q
+
+def SerParams.adaptiveAtom (p : SerParams) (a : Atomic) (version : LanguageVersion := .v40) : String :=
   match a.v with
   | .bool b => if b then "true()" else "false()"
   | .qn q =>
-    if a.is .notation then q.eqn else "#" ++ adaptiveName q
+    if a.is .notation || version != .v40 then q.eqn else "#" ++ adaptiveName q
   | _ =>
     if a.ty == .untyped || a.is .string || a.is .anyURI then p.adaptiveStr a.str
     else if a.is .integer || a.is .decimal then a.str
     else if a.is .double then
       (match a.v with
-        | .dbl f => if f.isNaN then "NaN" else if f.isInf then (if f > 0 then "INF" else "-INF") else a.str
+        | .dbl f => if version != .v40 then adaptiveDouble31 f
+          else if f.isNaN then "NaN" else if f.isInf then (if f > 0 then "INF" else "-INF") else a.str
         | _ => a.str)
     else if a.is .float then "xs:float(\"" ++ a.str ++ "\")"
     else "xs:" ++ primitiveName a ++ "(\"" ++ p.rawText a.str ++ "\")"
@@ -1186,7 +1213,7 @@ def Env.adaptiveItem (e : Env) (p : SerParams) : Nat → Item → W Unit
   | 0, _ => pure ()
   | f + 1, i => do
     match i with
-    | .atom a => emit (p.adaptiveAtom a)
+    | .atom a => emit (p.adaptiveAtom a e.features.version)
     | .node n =>
       let k := (e.nrec n).kind
       if k == .attribute || k == .namespace then
@@ -1200,7 +1227,7 @@ def Env.adaptiveItem (e : Env) (p : SerParams) : Nat → Item → W Unit
     | .jnode _ steps v _ =>
       match steps with
       | [] => emit "jtree(" *> e.adaptiveMember p f v *> emit ")"
-      | st :: _ => emit ("jnode(" ++ p.adaptiveAtom st.key ++ ":") *> e.adaptiveMember p f v *> emit ")"
+      | st :: _ => emit ("jnode(" ++ p.adaptiveAtom st.key e.features.version ++ ":") *> e.adaptiveMember p f v *> emit ")"
     | .arr ms =>
       emit "["
       let mut first := true
@@ -1210,11 +1237,11 @@ def Env.adaptiveItem (e : Env) (p : SerParams) : Nat → Item → W Unit
         first := false
       emit "]"
     | .map kvs =>
-      emit "{"
+      emit (if e.features.version == .v40 then "{" else "map{")
       let mut first := true
       for (k, v) in kvs do
         if !first then emit ","
-        emit (p.adaptiveAtom k ++ ":")
+        emit (p.adaptiveAtom k e.features.version ++ ":")
         e.adaptiveMember p f v
         first := false
       emit "}"
@@ -1244,6 +1271,14 @@ def Env.writeAdaptive (e : Env) (p : SerParams) (s : Seq) : M String := do
     let ((), out) ← (e.adaptiveItem p 100000 i).run ""
     parts := parts ++ [out]
   pure (String.intercalate sep parts)
+
+-- Pin the version differences at the serializer entry points.
+#guard (Env.writeAdaptive { features := { version := .v31 } } {} [.map []]).toOption == some "map{}"
+#guard (Env.writeAdaptive {} {} [.map []]).toOption == some "{}"
+#guard ({} : SerParams).adaptiveAtom (Atomic.ofDbl 1.0) .v31 == "1.0e0"
+#guard ({} : SerParams).adaptiveAtom (Atomic.ofDbl 1.0) == "1"
+#guard (Env.jsonNumber {} (Atomic.ofDbl (0.0 / 0.0)) .v31).toOption == none
+#guard (Env.jsonNumber {} (Atomic.ofDbl (0.0 / 0.0))).toOption == some "null"
 
 /-! ### The CSV method (§10) -/
 

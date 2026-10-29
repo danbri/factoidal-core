@@ -1,0 +1,5 @@
+running fn/base-uri.xml
+fn/fn-base-uri: 5 pass, 0 fail, 78 unsupported (out of 83)
+== families ==
+fn: 5 pass, 0 fail, 78 unsupported (out of 83)
+TOTAL: 5 pass, 0 fail, 78 unsupported (out of 83)

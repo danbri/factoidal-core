@@ -20,9 +20,20 @@ import L4Factoidal.XPath4.Atomic
 
 namespace L4Factoidal.XPath4
 
+/-- Language version selected by the host static context. XPath 2.0 and
+    XQuery 1.0 share the original F&O library. -/
+inductive LanguageVersion where
+  | v10 | v20 | v30 | v31 | v40
+  deriving BEq, Repr, Inhabited
+
+def LanguageVersion.number : LanguageVersion → Nat
+  | .v10 => 10 | .v20 => 20 | .v30 => 30 | .v31 => 31 | .v40 => 40
+
 /-- Optional processor features (XPath 4.0 §2.2.1, XQuery 4.0 §2.2.1).
     The default configuration enables every implemented feature. -/
 structure FeatureSettings where
+  version : LanguageVersion := .v40
+  xpath10Compatibility : Bool := false
   loadXQueryModule : Bool := true
   transform : Bool := true
   transform30 : Bool := true
@@ -61,11 +72,47 @@ def FeatureSettings.switchable (name : String) : Bool :=
     F&O error fallbacks (FOXT0004, FODC0010 and FOQM0006), as
     required by qt4tests fn-load-xquery-module-901 through -914. -/
 def FeatureSettings.functionEnabled (s : FeatureSettings) (q : QN) : Bool :=
-  if q.uri == "http://expath.org/ns/binary" then s.binary
+  if s.version.number < 30 && q.uri == nsFN &&
+      ["unparsed-text", "unparsed-text-available", "unparsed-text-lines", "format-number",
+       "format-date", "format-time", "format-dateTime", "format-integer", "analyze-string",
+       "serialize", "parse-xml", "parse-xml-fragment", "head", "tail", "function-lookup",
+       "function-name", "function-arity", "for-each", "filter", "fold-left", "fold-right",
+       "for-each-pair", "environment-variable", "available-environment-variables"].contains q.loc then false
+  else if s.version.number < 40 && q.uri == nsFN && q.loc == "generate-id" then false
+  else if q.uri == "http://expath.org/ns/binary" then s.binary
   else if q.uri == "http://expath.org/ns/file" then s.file
   else if q.uri == nsFN then
     match q.loc with
     | "invisible-xml" => s.invisibleXml
+    | _ => true
+  else true
+
+/-- F&O signatures that changed between the published editions.
+    Other signatures continue through the common signature table. -/
+def FeatureSettings.arityEnabled (s : FeatureSettings) (q : QN) (arity : Nat) : Bool :=
+  let v := s.version.number
+  if v == 40 then true
+  else if q.uri == nsXS then arity == 1
+  else if q.uri == nsFN then
+    match q.loc with
+    | "concat" => arity ≥ 2
+    | "codepoints-to-string" | "doc" | "doc-available" => arity == 1
+    | "collection" | "uri-collection" => arity ≤ 1
+    | "data" | "document-uri" | "nilled" | "node-name" => if v < 30 then arity == 1 else arity ≤ 1
+    | "format-date" | "format-time" | "format-dateTime" => arity == 2 || arity == 5
+    | "round" => arity == 1 || (v ≥ 30 && arity == 2)
+    | "trace" => arity == 2 || (v ≥ 31 && arity == 1)
+    | "string-join" => if v < 30 then arity == 2 else arity == 1 || arity == 2
+    | "string" | "number" | "name" | "local-name" | "namespace-uri" | "base-uri"
+    | "root" | "normalize-space" | "string-length" => arity ≤ 1
+    | "contains" | "starts-with" | "ends-with" | "substring-before" | "substring-after"
+    | "compare" | "deep-equal" | "index-of" => arity == 2 || arity == 3
+    | "substring" | "subsequence" => arity == 2 || arity == 3
+    | "matches" | "tokenize" | "analyze-string" =>
+        if q.loc == "tokenize" && v ≥ 31 then arity ≥ 1 && arity ≤ 3
+        else arity == 2 || arity == 3
+    | "replace" => arity == 3 || arity == 4
+    | "distinct-values" | "min" | "max" | "sort" => arity ≥ 1 && arity ≤ (if q.loc == "sort" then 3 else 2)
     | _ => true
   else true
 

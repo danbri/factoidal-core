@@ -1,0 +1,5 @@
+running fn/tokenize.xml
+fn/fn-tokenize: 71 pass, 0 fail, 8 unsupported (out of 79)
+== families ==
+fn: 71 pass, 0 fail, 8 unsupported (out of 79)
+TOTAL: 71 pass, 0 fail, 8 unsupported (out of 79)

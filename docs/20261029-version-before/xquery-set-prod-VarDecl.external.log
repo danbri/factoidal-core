@@ -1,0 +1,7 @@
+running prod/VarDecl.external.xml
+  FAIL prod-VarDecl.external/extvardeclwithouttype-24: error XPDY0002: no value for the external variable $test:x
+  FAIL prod-VarDecl.external/extvardeclwithtype-24: error XPDY0002: no value for the external variable $test:x
+prod/prod-VarDecl.external: 96 pass, 2 fail, 9 unsupported (out of 107)
+== families ==
+prod: 96 pass, 2 fail, 9 unsupported (out of 107)
+TOTAL: 96 pass, 2 fail, 9 unsupported (out of 107)

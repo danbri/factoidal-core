@@ -1,0 +1,8 @@
+running prod/StepExpr.xml
+  FAIL prod-StepExpr/K2-Steps-48: error XPST0003: expected a name test
+  FAIL prod-StepExpr/Steps-leading-lone-slash-11: error XPST0003: unexpected token
+  FAIL prod-StepExpr/Steps-leading-lone-slash-12: error XPST0003: unexpected token
+prod/prod-StepExpr: 63 pass, 3 fail, 4 unsupported (out of 70)
+== families ==
+prod: 63 pass, 3 fail, 4 unsupported (out of 70)
+TOTAL: 63 pass, 3 fail, 4 unsupported (out of 70)

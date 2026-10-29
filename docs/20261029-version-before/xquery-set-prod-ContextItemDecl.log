@@ -1,0 +1,24 @@
+running prod/ContextItemDecl.xml
+  FAIL prod-ContextItemDecl/contextDecl-014: error XPDY0002: the context value is absent
+  FAIL prod-ContextItemDecl/contextDecl-023: expected error XPST0003, got 5
+  FAIL prod-ContextItemDecl/contextDecl-032: expected error XPTY0004, got 
+  FAIL prod-ContextItemDecl/contextDecl-033: expected error XPTY0004, got 6 7 8 9 10 11 12 13 14 15 16 17
+  FAIL prod-ContextItemDecl/contextDecl-037a: error XPTY0004: the context value does not match its declared type
+  FAIL prod-ContextItemDecl/contextDecl-038a: error XPTY0004: the context value does not match its declared type
+  FAIL prod-ContextItemDecl/contextDecl-039a: error XPTY0004: the context value does not match its declared type
+  FAIL prod-ContextItemDecl/contextDecl-044a: error XPTY0004: the context value does not match its declared type
+  FAIL prod-ContextItemDecl/contextDecl-048: expected error XQST0113, got true
+  FAIL prod-ContextItemDecl/contextDecl-050: expected error XPTY0004, got true
+  FAIL prod-ContextItemDecl/contextDecl-052: wrong error code XQST0059 (expected XQST0113)
+  FAIL prod-ContextItemDecl/contextDecl-056: error XPST0051: unknown type u:decimal-or-string
+  FAIL prod-ContextItemDecl/contextDecl-057: wrong error code XPST0051 (expected XPTY0004)
+  FAIL prod-ContextItemDecl/contextDecl-059: expected error XPTY0004, got true
+  FAIL prod-ContextItemDecl/contextDecl-060: expected error XPTY0004, got false
+  FAIL prod-ContextItemDecl/contextDecl-063: error XPST0051: unknown type u:decimal-or-string
+  FAIL prod-ContextItemDecl/contextDecl-064: wrong error code XPST0051 (expected XPTY0004)
+  FAIL prod-ContextItemDecl/contextDecl-065: error XPST0051: unknown type u:decimal-or-string
+  FAIL prod-ContextItemDecl/contextDecl-066: wrong error code XPST0051 (expected XPTY0004)
+prod/prod-ContextItemDecl: 30 pass, 19 fail, 4 unsupported (out of 53)
+== families ==
+prod: 30 pass, 19 fail, 4 unsupported (out of 53)
+TOTAL: 30 pass, 19 fail, 4 unsupported (out of 53)

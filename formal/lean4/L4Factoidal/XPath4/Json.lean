@@ -222,6 +222,10 @@ def jsonOpts (opts : Seq) (dupDefault : String) (dupsAllowed : List String) : M 
 def renderPieces (h : Hooks) (e : Env) (o : JOpts) (ps : List JPiece) : M String := do
   let mut out := ""
   for p in ps do
+    let p : JPiece := match p with
+      | .ch c => if e.features.version != LanguageVersion.v40 && !(L4Factoidal.XML.isXmlCharCode c.toNat) then
+          JPiece.bad c.toNat (escChar c) else p
+      | _ => p
     match p with
     | .ch c => out := out ++ (if o.escape then escChar c else String.singleton c)
     | .bad code esc =>
@@ -283,7 +287,7 @@ def jvToXdm (h : Hooks) (e : Env) (o : JOpts) : Nat → JV → M Seq
       pure [.map acc.toList]
 
 def parseJsonFn (h : Hooks) (e : Env) (src : String) (opts : Seq) : M Seq := do
-  checkOptionKeys opts ["liberal", "duplicates", "escape", "fallback", "null", "number-format"]
+  if e.features.version == .v40 then checkOptionKeys opts ["liberal", "duplicates", "escape", "fallback", "null", "number-format"]
   let o ← jsonOpts opts "use-first" ["reject", "use-first", "use-last"]
   let v ← parseJsonText src
   jvToXdm h e o 100000 v
@@ -336,7 +340,7 @@ def addFnNs : Node → Node
 
 def jsonToXmlFn (h : Hooks) (e : Env) (src : String) (opts : Seq) : M Seq := do
   -- `number-parser` was removed by qtspecs PR 2671
-  checkOptionKeys opts ["liberal", "duplicates", "validate", "escape", "fallback"]
+  if e.features.version == .v40 then checkOptionKeys opts ["liberal", "duplicates", "validate", "escape", "fallback"]
   let validate ← optBoolT opts "validate" false
   -- with `validate`, `duplicates` defaults to `reject`, and `retain` is
   -- FOJS0005 (a valid result has unique keys)
@@ -479,7 +483,11 @@ def x2j (e : Env) (solidus indent : Bool) : Nat → Nat → NodeRef → Bool →
       else x2jErr ("not a boolean: " ++ v)
     | "number" =>
       if !elems.isEmpty then x2jErr "number has element content"
-      jsonNumberOut (e.nodeString n)
+      let text ← jsonNumberOut (e.nodeString n)
+      if e.features.version == .v40 then pure text else
+        match castFromString text (.b .double) with
+        | .ok a => pure a.str
+        | .error _ => x2jErr "invalid numeric value"
     | "string" =>
       if !elems.isEmpty then x2jErr "string has element content"
       let s := e.nodeString n
@@ -513,7 +521,7 @@ def x2j (e : Env) (solidus indent : Bool) : Nat → Nat → NodeRef → Bool →
     | other => x2jErr ("unknown element " ++ other)
 
 def xmlToJsonFn (e : Env) (n : NodeRef) (opts : Seq) : M Seq := do
-  checkOptionKeys opts ["indent", "escape-solidus"]
+  if e.features.version == .v40 then checkOptionKeys opts ["indent", "escape-solidus"]
   let indent ← optBoolT opts "indent" false
   let solidus ← optBoolT opts "escape-solidus" true
   let r := e.nrec n

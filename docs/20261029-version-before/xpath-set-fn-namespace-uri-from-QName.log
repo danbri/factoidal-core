@@ -1,0 +1,5 @@
+running fn/namespace-uri-from-QName.xml
+fn/fn-namespace-uri-from-QName: 24 pass, 0 fail, 6 unsupported (out of 30)
+== families ==
+fn: 24 pass, 0 fail, 6 unsupported (out of 30)
+TOTAL: 24 pass, 0 fail, 6 unsupported (out of 30)

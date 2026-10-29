@@ -1,0 +1,11 @@
+running prod/VarDecl.xml
+  FAIL prod-VarDecl/K-InternalVariablesWith-17b: any-of: error XQDY0054: circular variable dependency: undeclared variable $var; wrong error code XQDY0054 (expected XQST0054)
+  FAIL prod-VarDecl/K-InternalVariablesWith-17c: any-of: error XQDY0054: circular variable dependency: undeclared variable $var; wrong error code XQDY0054 (expected XQST0054)
+  FAIL prod-VarDecl/K-InternalVariablesWith-17d: any-of: error XQDY0054: circular variable dependency: undeclared variable $var; wrong error code XQDY0054 (expected XQST0054)
+  FAIL prod-VarDecl/K-InternalVariablesWith-17e: any-of: error XQDY0054: circular variable dependency: undeclared variable $var; wrong error code XQDY0054 (expected XQST0054)
+  FAIL prod-VarDecl/K-InternalVariablesWith-50: error XPST0008: undeclared variable $factorial
+  FAIL prod-VarDecl/K-InternalVariablesWith-52: error XPST0008: undeclared variable $f
+prod/prod-VarDecl: 136 pass, 6 fail, 25 unsupported (out of 167)
+== families ==
+prod: 136 pass, 6 fail, 25 unsupported (out of 167)
+TOTAL: 136 pass, 6 fail, 25 unsupported (out of 167)

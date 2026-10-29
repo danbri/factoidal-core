@@ -139,20 +139,22 @@ theorem schemaHookOf_validateIn (s : L4Factoidal.XSD11.Schema) :
     (L4Factoidal.XSD11.schemaHookOf s).validateIn = some (L4Factoidal.XSD11.validateNodeIn s) := rfl
 
 theorem validate_xsd11 (cb : XCb) (env : Env) (s : L4Factoidal.XSD11.Schema)
-    (hs : env.schema = L4Factoidal.XSD11.schemaHookOf s) (e : Expr) (mode : String) (n : NodeRef)
+    (hs : env.schema = L4Factoidal.XSD11.schemaHookOf s)
+    (henabled : env.features.schemaValidation = true) (e : Expr) (mode : String) (n : NodeRef)
     (he : cb.eval env e = .ok [.node n]) (hk : (env.nrec n).kind = .element) (nd : Doc)
     (hv : L4Factoidal.XSD11.validateNodeIn s mode (env.doc n) n.idx (env.doc n).uri = .ok nd) :
     evalExt cb env "validate" [e] [] [] [mode] =
       .ok [.node { doc := n.doc + (2 : Nat) ^ 41, idx := 1, rt := some nd }] := by
-  simp [evalExt, hs, schemaHookOf_validateIn, he, hk, hv, bind, Except.bind, pure, Except.pure]
+  simp [evalExt, henabled, hs, schemaHookOf_validateIn, he, hk, hv, bind, Except.bind, pure, Except.pure]
 
 theorem validate_xsd11_error (cb : XCb) (env : Env) (s : L4Factoidal.XSD11.Schema)
-    (hs : env.schema = L4Factoidal.XSD11.schemaHookOf s) (e : Expr) (mode : String) (n : NodeRef)
+    (hs : env.schema = L4Factoidal.XSD11.schemaHookOf s)
+    (henabled : env.features.schemaValidation = true) (e : Expr) (mode : String) (n : NodeRef)
     (he : cb.eval env e = .ok [.node n]) (hk : (env.nrec n).kind = .element) (x : Err)
     (hv : L4Factoidal.XSD11.validateNodeIn s mode (env.doc n) n.idx (env.doc n).uri = .error x) :
     evalExt cb env "validate" [e] [] [] [mode] =
       .error { code := if x.code == "FODC0007" then "XQDY0027" else x.code, msg := x.msg } := by
-  simp [evalExt, hs, schemaHookOf_validateIn, he, hk, hv, bind, Except.bind, err]
+  simp [evalExt, henabled, hs, schemaHookOf_validateIn, he, hk, hv, bind, Except.bind, err]
 
 /-! ## Names of constructed nodes are XML names
 
@@ -194,24 +196,27 @@ theorem nameOf_ncname (env : Env) (s : Seq) (sns : List (String × String)) (isA
   simp only [ha, hv, bind, Except.bind] at h
   split at h
   · simp [err] at h
-  ·
+  · simp only [pure, Except.pure, bind, Except.bind] at h
     split at h
-    · -- Q{uri}local
+    · simp [err] at h
+    ·
       split at h
-      · rename_i u l _
+      · -- Q{uri}local
         split at h
-        · rename_i hc
-          simp [pure, Except.pure] at h
-          subst h
-          simp only [Bool.and_eq_true] at hc
-          exact isNCName_xsd_xml l hc.1
+        · rename_i u l _
+          split at h
+          · rename_i hc
+            simp [pure, Except.pure] at h
+            subst h
+            simp only [Bool.and_eq_true] at hc
+            exact isNCName_xsd_xml l hc.1
+          · simp [err, throw, throwThe, MonadExceptOf.throw] at h
         · simp [err, throw, throwThe, MonadExceptOf.throw] at h
-      · simp [err, throw, throwThe, MonadExceptOf.throw] at h
-    · split at h
-      · rename_i p l hp
-        have hl := isNCName_xsd_xml l (parseQNameLex_local _ p l hp)
-        repeat' (first | (split at h) | (simp [pure, Except.pure] at h; subst h; exact hl) | (simp [err, throw, throwThe, MonadExceptOf.throw] at h))
-      · simp [err, throw, throwThe, MonadExceptOf.throw] at h
+      · split at h
+        · rename_i p l hp
+          have hl := isNCName_xsd_xml l (parseQNameLex_local _ p l hp)
+          repeat' (first | (split at h) | (simp [pure, Except.pure] at h; subst h; exact hl) | (simp [err, throw, throwThe, MonadExceptOf.throw] at h))
+        · simp [err, throw, throwThe, MonadExceptOf.throw] at h
 
 /-! ## Regular expressions in XQuery are the shared `Regex`
 
@@ -227,18 +232,24 @@ variable (h : Hooks) (e : Env) (s p f : String) (rep : Seq)
 
 theorem tokenize_shared :
     (libLookupAll (fnQ "tokenize")).map (fun g => g h e [sStr s, sStr p, sStr f]) =
-      some (do let re ← compileRe4 p f; pure ((tokenize4 s re).map (fun t => .atom (Atomic.ofStr t)))) := rfl
+      some (do
+        let re ← compileRe4 p f e.features.version
+        rejectEmptyPattern e.features.version re.r
+        pure ((tokenize4 s re).map (fun t => .atom (Atomic.ofStr t)))) := rfl
 
 theorem replace_shared :
     (libLookupAll (fnQ "replace")).map (fun g => g h e [sStr s, sStr p, rep, sStr f]) =
-      some (do let re ← compileRe4 p f; pure (sStr (← replace4 h e s re rep))) := rfl
+      some (do
+        let re ← compileRe4 p f e.features.version
+        rejectEmptyPattern e.features.version re.r
+        pure (sStr (← replace4 h e s re rep))) := rfl
 
 /-- The pattern is compiled by the shared profile (below the quantifier
     limit of 1000). -/
 theorem compileRe4_shared (r : L4Factoidal.Regex.Compiled) (hq : ¬ maxQuant p > 1000)
     (hc : L4Factoidal.Regex.Profiles.compileXPath40 p f = .ok r) :
     compileRe4 p f = .ok { r, names := r.names, groups := countGroups r.capt } := by
-  simp [compileRe4, compileRe, hq, hc, bind, Except.bind, pure, Except.pure]
+  simp [compileRe4, compileReVersion_v40, compileRe, hq, hc, bind, Except.bind, pure, Except.pure]
 
 end RegexShared
 

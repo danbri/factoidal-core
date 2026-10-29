@@ -1,0 +1,5 @@
+running op/same-key.xml
+op/op-same-key: 11 pass, 0 fail, 19 unsupported (out of 30)
+== families ==
+op: 11 pass, 0 fail, 19 unsupported (out of 30)
+TOTAL: 11 pass, 0 fail, 19 unsupported (out of 30)

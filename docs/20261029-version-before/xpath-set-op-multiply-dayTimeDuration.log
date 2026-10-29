@@ -1,0 +1,5 @@
+running op/multiply-dayTimeDuration.xml
+op/op-multiply-dayTimeDuration: 43 pass, 0 fail, 14 unsupported (out of 57)
+== families ==
+op: 43 pass, 0 fail, 14 unsupported (out of 57)
+TOTAL: 43 pass, 0 fail, 14 unsupported (out of 57)

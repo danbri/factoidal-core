@@ -1,0 +1,5 @@
+running fn/parse-xml.xml
+fn/fn-parse-xml: 42 pass, 0 fail, 15 unsupported (out of 57)
+== families ==
+fn: 42 pass, 0 fail, 15 unsupported (out of 57)
+TOTAL: 42 pass, 0 fail, 15 unsupported (out of 57)

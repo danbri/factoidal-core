@@ -1,0 +1,8 @@
+running prod/AxisStep.xml
+  FAIL prod-AxisStep/Axes112: expected error XQST0134, got <node>
+  FAIL prod-AxisStep/K2-Axes-54: wrong error code XPDY0002 (expected XPST0003)
+  FAIL prod-AxisStep/K2-Axes-103: string value '|        _11c _11c _11 _11  _17c _17c _17 _17   _11    _17 _11c  _17 _17 _23 |'
+prod/prod-AxisStep: 336 pass, 3 fail, 23 unsupported (out of 362)
+== families ==
+prod: 336 pass, 3 fail, 23 unsupported (out of 362)
+TOTAL: 336 pass, 3 fail, 23 unsupported (out of 362)

@@ -1,0 +1,8 @@
+running fn/namespace-uri-from-QName.xml
+  FAIL fn-namespace-uri-from-QName/K2-NamespaceURIFromQNameFunc-1: string value 'http://example.com/ANamespace'
+  FAIL fn-namespace-uri-from-QName/K2-NamespaceURIFromQNameFunc-3: got http://example.com/ (xs:string), expected 
+  FAIL fn-namespace-uri-from-QName/K2-NamespaceURIFromQNameFunc-4: string value '[http://example.com/|http://example.com/2]'
+fn/fn-namespace-uri-from-QName: 25 pass, 3 fail, 2 unsupported (out of 30)
+== families ==
+fn: 25 pass, 3 fail, 2 unsupported (out of 30)
+TOTAL: 25 pass, 3 fail, 2 unsupported (out of 30)

@@ -551,3 +551,6 @@ The settings also reach the parser and module checks. The qt4tests runner
 selects restrictions from negative feature dependencies. See the
 [design record](../../docs/designissues/2026-10-29-processor-feature-settings.md)
 and [measured report](../../docs/20261029-processor-feature-settings.md).
+
+Selectable historical language versions and the compatibility theorem boundary:
+[language version settings](../../docs/designissues/2026-10-29-language-version-settings.md).

@@ -1,0 +1,5 @@
+running fn/function-lookup.xml
+fn/fn-function-lookup: 664 pass, 0 fail, 20 unsupported (out of 684)
+== families ==
+fn: 664 pass, 0 fail, 20 unsupported (out of 684)
+TOTAL: 664 pass, 0 fail, 20 unsupported (out of 684)

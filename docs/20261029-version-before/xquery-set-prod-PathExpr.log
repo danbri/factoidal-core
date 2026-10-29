@@ -1,0 +1,6 @@
+running prod/PathExpr.xml
+  FAIL prod-PathExpr/PathExpr-14: error XPST0003: unexpected token
+prod/prod-PathExpr: 29 pass, 1 fail, 4 unsupported (out of 34)
+== families ==
+prod: 29 pass, 1 fail, 4 unsupported (out of 34)
+TOTAL: 29 pass, 1 fail, 4 unsupported (out of 34)

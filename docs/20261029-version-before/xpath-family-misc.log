@@ -1,0 +1,37 @@
+running misc/BuiltInKeywords.xml
+misc/misc-BuiltInKeywords: 306 pass, 0 fail, 0 unsupported (out of 306)
+running misc/CombinedErrorCodes.xml
+misc/misc-CombinedErrorCodes: 1 pass, 0 fail, 263 unsupported (out of 264)
+running misc/AnnexE.xml
+misc/misc-AnnexE: 0 pass, 0 fail, 8 unsupported (out of 8)
+running misc/AppendixA4.xml
+misc/misc-AppendixA4: 9 pass, 0 fail, 0 unsupported (out of 9)
+running misc/ConstructorKeywords.xml
+misc/misc-ConstructorKeywords: 153 pass, 0 fail, 0 unsupported (out of 153)
+running misc/ErrorsAndOptimization.xml
+misc/misc-ErrorsAndOptimization: 6 pass, 0 fail, 1 unsupported (out of 7)
+running misc/FocusConstructors.xml
+misc/misc-FocusConstructors: 153 pass, 0 fail, 0 unsupported (out of 153)
+running misc/HigherOrderFunctions.xml
+misc/misc-HigherOrderFunctions: 53 pass, 0 fail, 95 unsupported (out of 148)
+running misc/HtmlTestSuite.xml
+misc/misc-HtmlTestSuite: 0 pass, 0 fail, 1379 unsupported (out of 1379)
+running misc/JsonTestSuite.xml
+misc/misc-JsonTestSuite: 0 pass, 0 fail, 319 unsupported (out of 319)
+running misc/JMESPathTestSuite.xml
+misc/misc-JMESPathTestSuite: 0 pass, 0 fail, 728 unsupported (out of 728)
+running misc/JSONPathTestSuite.xml
+misc/misc-JSONPathTestSuite: 0 pass, 0 fail, 460 unsupported (out of 460)
+running misc/StaticContext.xml
+misc/misc-StaticContext: 0 pass, 0 fail, 1 unsupported (out of 1)
+running misc/Subtyping.xml
+misc/misc-Subtyping: 0 pass, 0 fail, 159 unsupported (out of 159)
+running misc/Surrogates.xml
+misc/misc-Surrogates: 17 pass, 0 fail, 15 unsupported (out of 32)
+running misc/UCACollation.xml
+misc/misc-UCACollation: 87 pass, 0 fail, 0 unsupported (out of 87)
+running misc/XMLEdition.xml
+misc/misc-XMLEdition: 1 pass, 0 fail, 18 unsupported (out of 19)
+== families ==
+misc: 786 pass, 0 fail, 3446 unsupported (out of 4232)
+TOTAL: 786 pass, 0 fail, 3446 unsupported (out of 4232)

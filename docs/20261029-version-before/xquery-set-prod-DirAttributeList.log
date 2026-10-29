@@ -1,0 +1,12 @@
+running prod/DirAttributeList.xml
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-1: expected error XPST0003, got <node>
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-4a: any-of: expected error XPST0003, got <node>; expected error XQST0118, got <node>
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-6a: wrong error code XPST0003 (expected XQST0118)
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-25: expected error XPST0003, got <node>
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-26: expected error XPST0003, got <node>
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-27: expected error XPST0003, got <node>
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-28: expected error XPST0003, got <node>
+prod/prod-DirAttributeList: 126 pass, 7 fail, 3 unsupported (out of 136)
+== families ==
+prod: 126 pass, 7 fail, 3 unsupported (out of 136)
+TOTAL: 126 pass, 7 fail, 3 unsupported (out of 136)

@@ -1,0 +1,7 @@
+running prod/Literal.xml
+  FAIL prod-Literal/K2-Literals-18: wrong error code XPST0003 (expected XQST0090)
+  FAIL prod-Literal/K2-Literals-19: wrong error code XPST0003 (expected XQST0090)
+prod/prod-Literal: 228 pass, 2 fail, 12 unsupported (out of 242)
+== families ==
+prod: 228 pass, 2 fail, 12 unsupported (out of 242)
+TOTAL: 228 pass, 2 fail, 12 unsupported (out of 242)

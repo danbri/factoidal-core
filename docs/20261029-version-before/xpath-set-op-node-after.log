@@ -1,0 +1,5 @@
+running op/node-after.xml
+op/op-node-after: 28 pass, 0 fail, 12 unsupported (out of 40)
+== families ==
+op: 28 pass, 0 fail, 12 unsupported (out of 40)
+TOTAL: 28 pass, 0 fail, 12 unsupported (out of 40)

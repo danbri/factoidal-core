@@ -1,0 +1,21 @@
+running prod/CastExpr.xml
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-6: error XPST0017: unknown function ntn:pictures#1
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-7: error XPST0051: unknown type ntn:pictures
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-8: wrong error code XPST0051 (expected XPTY0117)
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-9: wrong error code XPST0051 (expected XPTY0117)
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-10: error XPST0051: unknown type ntn:qnames
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-11: wrong error code XPST0051 (expected XPTY0117)
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-12: wrong error code XPST0051 (expected XPTY0117)
+  FAIL prod-CastExpr/K-SeqExprCast-3a: any-of: wrong error code XPST0051 (expected XPST0003); wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K-SeqExprCast-4a: wrong error code XPST0051 (expected XPST0080)
+  FAIL prod-CastExpr/K-SeqExprCast-5a: wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K-SeqExprCast-7a: wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K-SeqExprCast-10a: any-of: wrong error code XPST0051 (expected XPST0003); wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K-SeqExprCast-11a: any-of: wrong error code XPST0051 (expected XPST0003); wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K-SeqExprCast-12a: any-of: wrong error code XPST0051 (expected XPST0003); wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K-SeqExprCast-13a: any-of: wrong error code XPST0051 (expected XPST0003); wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K2-SeqExprCast-479: error FONS0004: no namespace binding for prefix prefix
+prod/prod-CastExpr: 2773 pass, 16 fail, 48 unsupported (out of 2837)
+== families ==
+prod: 2773 pass, 16 fail, 48 unsupported (out of 2837)
+TOTAL: 2773 pass, 16 fail, 48 unsupported (out of 2837)

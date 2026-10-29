@@ -1,0 +1,5 @@
+running misc/CombinedErrorCodes.xml
+misc/misc-CombinedErrorCodes: 1 pass, 0 fail, 263 unsupported (out of 264)
+== families ==
+misc: 1 pass, 0 fail, 263 unsupported (out of 264)
+TOTAL: 1 pass, 0 fail, 263 unsupported (out of 264)

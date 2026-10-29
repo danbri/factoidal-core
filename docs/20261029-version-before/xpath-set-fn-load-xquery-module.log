@@ -1,0 +1,10 @@
+running fn/load-xquery-module.xml
+  FAIL fn-load-xquery-module/fn-load-xquery-module-029: error FOQM0003: a static error in the module: XQST0047 a module imports itself
+  FAIL fn-load-xquery-module/fn-load-xquery-module-040: error FODF1280: unknown decimal format Q{http://www.w3.org/2005/xquery-local-functions}de
+  FAIL fn-load-xquery-module/fn-load-xquery-module-042: string value '0 0 1 1 1'
+  FAIL fn-load-xquery-module/fn-load-xquery-module-050: error FOQM0003: a static error in the module: XPST0051 unknown type hat:hatsize
+  FAIL fn-load-xquery-module/fn-load-xquery-module-076: error FONS0004: no namespace binding for prefix vm
+fn/fn-load-xquery-module: 69 pass, 5 fail, 110 unsupported (out of 184)
+== families ==
+fn: 69 pass, 5 fail, 110 unsupported (out of 184)
+TOTAL: 69 pass, 5 fail, 110 unsupported (out of 184)

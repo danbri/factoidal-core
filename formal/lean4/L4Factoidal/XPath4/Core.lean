@@ -192,6 +192,8 @@ deriving Inhabited
 def Env.restrictFeatures (e : Env) (features : FeatureSettings) : Env :=
   if features == ({} : FeatureSettings) then e else
   let features : FeatureSettings := {
+    version := features.version
+    xpath10Compatibility := features.xpath10Compatibility
     loadXQueryModule := e.features.loadXQueryModule && features.loadXQueryModule
     transform := e.features.transform && features.transform
     transform30 := e.features.transform30 && features.transform30
@@ -207,7 +209,7 @@ def Env.restrictFeatures (e : Env) (features : FeatureSettings) : Env :=
   let schema := if features.schemaImport && features.schemaValidation then e.schema else
     { e.schema with
       validate := none, validateIn := none, validateWith := none, validateFnNs := none }
-  { e with features, schema }
+  { e with features, schema, compat10 := e.compat10 || features.xpath10Compatibility }
 
 @[simp] theorem Env.restrictFeatures_allEnabled (e : Env) :
     e.restrictFeatures {} = e := rfl
@@ -546,6 +548,32 @@ def findSig (q : QN) (arity : Nat) : Option Sig :=
 def findSigAny (q : QN) : Option Sig :=
   sigs.find? (fun s => s.uri == q.uri && s.loc == q.loc)
 
+/-- Earlier function items expose the earlier callback and node parameter
+    types. The remaining signature data is shared with the 4.0 catalog. -/
+def Sig.forVersion (s : Sig) (version : LanguageVersion) : Sig :=
+  if version == .v40 then s else
+  let override (i : Nat) : Option IType :=
+    if s.uri == nsFN then
+      match s.loc, i with
+      | "name", 0 | "local-name", 0 | "namespace-uri", 0 | "root", 0 => some (parseTy "node()?")
+      | "filter", 1 => some (parseTy "function(item()) as xs:boolean")
+      | "for-each", 1 => some (parseTy "function(item()) as item()*")
+      | "for-each-pair", 2 => some (parseTy "function(item(), item()) as item()*")
+      | _, _ => none
+    else if s.uri == nsARR then
+      match s.loc, i with
+      | "filter", 1 => some (parseTy "function(item()*) as xs:boolean")
+      | "for-each", 1 => some (parseTy "function(item()*) as item()*")
+      | "for-each-pair", 2 => some (parseTy "function(item()*, item()*) as item()*")
+      | _, _ => none
+    else none
+  { s with ps := (s.ps.zip (List.range s.ps.length)).map (fun (p, i) =>
+      match override i with | some ty => { p with ty } | none => p) }
+
+def findSigVersion (version : LanguageVersion) (q : QN) (arity : Nat) : Option Sig :=
+  if version == .v40 then findSig q arity
+  else (findSig q arity).map (·.forVersion version)
+
 def Item.fnArity : Item → Option Nat
   | .fn f => some f.arity
   | .map _ => some 1
@@ -692,6 +720,14 @@ def fnSigOf : FnItem → Option (List IType × IType)
   | .inline ps ret _ focus _ => if focus then some ([.seq .item .star], ret) else some (ps.map (·.2), ret)
   | .papp _ _ => none
 
+def fnSigOfVersion (version : LanguageVersion) (fi : FnItem) : Option (List IType × IType) :=
+  if version == .v40 then fnSigOf fi else
+  match fi with
+  | .builtin q k =>
+    if q.uri == nsXS then fnSigOf fi
+    else (findSigVersion version q k).map (fun s => ((s.ps.take k).map (·.ty), s.ret))
+  | _ => fnSigOf fi
+
 mutual
 def Env.itemMatchesF (e : Env) : Nat → Item → IType → Bool
   | 0, _, _ => false
@@ -715,7 +751,7 @@ def Env.itemMatchesF (e : Env) : Nat → Item → IType → Bool
   | .anyFn => i.isFn
   | .fnT ps r => i.fnArity == some ps.length &&
       (match i with
-       | .fn fi => match fnSigOf fi with
+       | .fn fi => match fnSigOfVersion e.features.version fi with
           | some (fps, fr) => (ps.zip fps).all (fun (p, q) => subtype p q) && subtype fr r
           | none => true
        -- XPath 4.0 §3.3.2.6: a map is a function(xs:anyAtomicType) as V?
@@ -849,6 +885,18 @@ def coerceAtom (ts : List AType) (a : Atomic) : M Atomic := do
   | some x => throw x
   | none => err "XPTY0004" ("cannot convert xs:" ++ a.ty.name ++ " value '" ++ a.str ++ "' to the required type")
 
+/-- XPath 2.0/3.1 function conversion permits untyped conversion, numeric
+    promotion and anyURI-to-string promotion, but no narrowing or relabeling. -/
+def coerceAtomVersion (version : LanguageVersion) (ts : List AType) (a : Atomic) : M Atomic :=
+  if version == .v40 then coerceAtom ts a else
+  let allowed := ts.filter (fun t =>
+    a.ty.derives t ||
+    (a.ty == .untyped && t != .b .qname && t != .b .notation) ||
+    (t == .b .double && a.isNumeric) ||
+    (t == .b .float && a.is .decimal) ||
+    (t == .b .string && a.is .anyURI))
+  coerceAtom allowed a
+
 def IType.isEmptyT : IType → Bool | .empty => true | _ => false
 
 /-- The variable that holds the wrapped function of a coerced function
@@ -883,7 +931,7 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
   let s ← match atomicTarget it with
     | some ts => do
         let as ← e.atomize s
-        let cs ← as.mapM (coerceAtom ts)
+        let cs ← as.mapM (coerceAtomVersion e.features.version ts)
         -- enumerations check values
         match it with
         | .enum vs => if cs.all (fun a => vs.contains a.str) then pure (seqOfAtoms cs)
@@ -895,6 +943,7 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
   else
   -- coerce inside maps, records and arrays
   let s ← s.mapM (fun i => do
+    if e.features.version != .v40 then return i
     match it, i with
     | .arrT m, .arr ms => pure (Item.arr (← ms.mapM (fun x => e.coerceF f m x what)))
     | .mapT k v, .map kvs => do
@@ -940,13 +989,13 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
       s.mapM (fun i => do
         match i.fnArity with
         | some k =>
-          if k > ps.length then err "XPTY0004" ("function item of wrong type for " ++ what)
+          if k > ps.length || (e.features.version != .v40 && k != ps.length) then err "XPTY0004" ("function item of wrong type for " ++ what)
           -- a map or an array that matches is kept as it is; a function
           -- item is kept only when its signature is the required one
           else match i with
             | .map _ | .arr _ => if k == ps.length && e.itemMatches i it then pure i else pure (coercedFn i k ps r)
             | .fn fi =>
-              match fnSigOf fi with
+              match fnSigOfVersion e.features.version fi with
               | some (fps, fr) => if k == ps.length && fps == ps && fr == r then pure i else pure (coercedFn i k ps r)
               | none => pure (coercedFn i k ps r)
             | _ => pure (coercedFn i k ps r)
@@ -977,14 +1026,14 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
     s.mapM (fun i => do
       match i.fnArity with
       | some k =>
-        if fnArity.any (k ≤ ·) || e.itemMatches i it then pure i
+        if fnArity.any (fun n => if e.features.version == .v40 then k ≤ n else k == n) || e.itemMatches i it then pure i
         else err "XPTY0004" ("function item of wrong type for " ++ what)
       | none =>
         if e.itemMatches i it then pure i
         else if atoms.isEmpty then err "XPTY0004" ("value of wrong type for " ++ what)
         else
           match ← e.atomize [i] with
-          | [a] => pure (Item.atom (← coerceAtom atoms a))
+          | [a] => pure (Item.atom (← coerceAtomVersion e.features.version atoms a))
           | _ => err "XPTY0004" ("value of wrong type for " ++ what))
   | _ =>
     if s.all (fun i => e.itemMatches i it) then pure s
@@ -992,6 +1041,18 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
 
 def Env.coerce (e : Env) (t : IType) (s : Seq) (what : String := "value") : M Seq :=
   e.coerceF 64 t s what
+
+/-- Typed variable bindings before 4.0 check the sequence type without
+    function conversion (XPath 3.1 §3.12; XQuery 3.1 §3.12 and §4.18). -/
+def Env.bindTyped (e : Env) (t : IType) (s : Seq) (what : String := "value") : M Seq :=
+  if e.features.version == .v40 then e.coerce t s what
+  else if e.seqMatches s t then pure s
+  else err "XPTY0004" (what ++ " does not match its declared type")
+
+theorem Env.bindTyped_v40 (e : Env) (t : IType) (s : Seq) (what : String) :
+    ({ e with features := { e.features with version := .v40 } } : Env).bindTyped t s what =
+    ({ e with features := { e.features with version := .v40 } } : Env).coerce t s what := by
+  simp only [Env.bindTyped, show (LanguageVersion.v40 == .v40) = true from rfl, ↓reduceIte]
 
 /-- A string key with `k a = k b ↔ atomicEqual a b` (untyped read as
     string), for the value kinds where one is cheap; `none` otherwise. -/

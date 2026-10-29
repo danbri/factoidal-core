@@ -1,0 +1,9 @@
+running prod/CompNamespaceConstructor.xml
+  FAIL prod-CompNamespaceConstructor/nscons-011: error XQDY0102: namespace prefix p bound twice
+  FAIL prod-CompNamespaceConstructor/nscons-028: string value 'true true'
+  FAIL prod-CompNamespaceConstructor/nscons-047: any-of: expected error XPTY0004, got <node>; expected error XPDY0002, got <node>
+  FAIL prod-CompNamespaceConstructor/nscons-048: got <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <no
+prod/prod-CompNamespaceConstructor: 47 pass, 4 fail, 1 unsupported (out of 52)
+== families ==
+prod: 47 pass, 4 fail, 1 unsupported (out of 52)
+TOTAL: 47 pass, 4 fail, 1 unsupported (out of 52)

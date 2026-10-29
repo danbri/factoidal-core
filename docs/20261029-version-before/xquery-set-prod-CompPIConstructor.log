@@ -1,0 +1,7 @@
+running prod/CompPIConstructor.xml
+  FAIL prod-CompPIConstructor/K2-ComputeConPI-16: any-of: expected error XPTY0004, got <node>; expected error XPDY0002, got <node>
+  FAIL prod-CompPIConstructor/K2-ComputeConPI-17: got <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <no
+prod/prod-CompPIConstructor: 60 pass, 2 fail, 4 unsupported (out of 66)
+== families ==
+prod: 60 pass, 2 fail, 4 unsupported (out of 66)
+TOTAL: 60 pass, 2 fail, 4 unsupported (out of 66)

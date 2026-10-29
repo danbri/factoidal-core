@@ -1,0 +1,21 @@
+running prod/ValidateExpr.xml
+  FAIL prod-ValidateExpr/validateexpr-10: got 1 (xs:integer), expected 0
+  FAIL prod-ValidateExpr/validateexpr-11: got 1 (xs:integer), expected 0
+  FAIL prod-ValidateExpr/validateexpr-12: got 1 (xs:integer), expected 0
+  FAIL prod-ValidateExpr/validateexpr-13: got 1 (xs:integer), expected 0
+  FAIL prod-ValidateExpr/validateexpr-27: xml <results><para1 idcount="1"/><para2 idcount="0"/><para2 idcount="0"/><para3 idcount="0"/><para3 idcount="0"/></results>
+  FAIL prod-ValidateExpr/validateexpr-29: expected error XQDY0061, got <node>
+  FAIL prod-ValidateExpr/validateexpr-30: got 1 (xs:integer), expected 3
+  FAIL prod-ValidateExpr/validateexpr-46: expected error XPST0003, got one string
+  FAIL prod-ValidateExpr/validateexpr-47: expected error XPST0003, got 
+  FAIL prod-ValidateExpr/validate-as-108: error XQDY0027: xsd-validation type Q{http://www.w3.org/2001/XMLSchema}untyped: no declaration or type to validate against
+  FAIL prod-ValidateExpr/validate-as-91011: wrong error code XQDY0027 (expected XQST0104)
+  FAIL prod-ValidateExpr/validate-as-91017: expected error XPST0003, got <node>
+  FAIL prod-ValidateExpr/cbcl-validateexpr-5: wrong error code XQDY0027 (expected XQDY0084)
+  FAIL prod-ValidateExpr/cbcl-validateexpr-6: expected error XQDY0084, got <node>
+  FAIL prod-ValidateExpr/cbcl-validateexpr-7: wrong error code XQDY0027 (expected XQDY0084)
+  FAIL prod-ValidateExpr/cbcl-validateexpr-13: expected error XQDY0061, got <node>
+prod/prod-ValidateExpr: 74 pass, 16 fail, 2 unsupported (out of 92)
+== families ==
+prod: 74 pass, 16 fail, 2 unsupported (out of 92)
+TOTAL: 74 pass, 16 fail, 2 unsupported (out of 92)

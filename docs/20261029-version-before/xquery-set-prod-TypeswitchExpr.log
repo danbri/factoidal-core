@@ -1,0 +1,7 @@
+running prod/TypeswitchExpr.xml
+  FAIL prod-TypeswitchExpr/typeswitch-112: error XPST0051: unknown type lu:unionType
+  FAIL prod-TypeswitchExpr/typeswitch-116: error XPST0051: unknown type lu:unionOfUnionType
+prod/prod-TypeswitchExpr: 85 pass, 2 fail, 1 unsupported (out of 88)
+== families ==
+prod: 85 pass, 2 fail, 1 unsupported (out of 88)
+TOTAL: 85 pass, 2 fail, 1 unsupported (out of 88)

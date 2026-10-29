@@ -1,0 +1,16 @@
+running prod/DecimalFormatDecl.xml
+  FAIL prod-DecimalFormatDecl/decimal-format-07: wrong error code FODF1290 (expected XPST0003)
+  FAIL prod-DecimalFormatDecl/decimal-format-21: error FODF1310: a passive character between active characters
+  FAIL prod-DecimalFormatDecl/decimal-format-35: expected error XQST0097, got true
+  FAIL prod-DecimalFormatDecl/decimal-format-36: expected error XQST0098, got true
+  FAIL prod-DecimalFormatDecl/decimal-format-37: expected error XQST0098, got true
+  FAIL prod-DecimalFormatDecl/decimal-format-38: expected error XPST0003, got true
+  FAIL prod-DecimalFormatDecl/decimal-format-901err: wrong error code FODF1290 (expected XQST0098)
+  FAIL prod-DecimalFormatDecl/decimal-format-908err: wrong error code FODF1290 (expected XQST0097)
+  FAIL prod-DecimalFormatDecl/decimal-format-909err: wrong error code FODF1290 (expected XQST0097)
+  FAIL prod-DecimalFormatDecl/decimal-format-910err: wrong error code FODF1290 (expected XQST0097)
+  FAIL prod-DecimalFormatDecl/decimal-format-912err: expected error XQST0098, got true
+prod/prod-DecimalFormatDecl: 35 pass, 11 fail, 1 unsupported (out of 47)
+== families ==
+prod: 35 pass, 11 fail, 1 unsupported (out of 47)
+TOTAL: 35 pass, 11 fail, 1 unsupported (out of 47)

@@ -1,0 +1,6 @@
+running prod/LetClause.xml
+  FAIL prod-LetClause/let-map-027: expected error XPTY0004, got 1 2
+prod/prod-LetClause: 136 pass, 1 fail, 52 unsupported (out of 189)
+== families ==
+prod: 136 pass, 1 fail, 52 unsupported (out of 189)
+TOTAL: 136 pass, 1 fail, 52 unsupported (out of 189)

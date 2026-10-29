@@ -1,0 +1,5 @@
+running fn/distinct-values.xml
+fn/fn-distinct-values: 106 pass, 0 fail, 19 unsupported (out of 125)
+== families ==
+fn: 106 pass, 0 fail, 19 unsupported (out of 125)
+TOTAL: 106 pass, 0 fail, 19 unsupported (out of 125)

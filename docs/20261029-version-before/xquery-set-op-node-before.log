@@ -1,0 +1,5 @@
+running op/node-before.xml
+op/op-node-before: 42 pass, 0 fail, 1 unsupported (out of 43)
+== families ==
+op: 42 pass, 0 fail, 1 unsupported (out of 43)
+TOTAL: 42 pass, 0 fail, 1 unsupported (out of 43)

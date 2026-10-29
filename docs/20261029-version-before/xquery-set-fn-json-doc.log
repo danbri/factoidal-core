@@ -1,0 +1,5 @@
+running fn/json-doc.xml
+fn/fn-json-doc: 77 pass, 0 fail, 4 unsupported (out of 81)
+== families ==
+fn: 77 pass, 0 fail, 4 unsupported (out of 81)
+TOTAL: 77 pass, 0 fail, 4 unsupported (out of 81)

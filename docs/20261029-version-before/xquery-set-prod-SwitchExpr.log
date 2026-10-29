@@ -1,0 +1,5 @@
+running prod/SwitchExpr.xml
+prod/prod-SwitchExpr: 57 pass, 0 fail, 1 unsupported (out of 58)
+== families ==
+prod: 57 pass, 0 fail, 1 unsupported (out of 58)
+TOTAL: 57 pass, 0 fail, 1 unsupported (out of 58)

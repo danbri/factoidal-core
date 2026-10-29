@@ -57,7 +57,7 @@ def loadXQueryModule : Nat → Nat → Env → List Seq → M Seq
     | _ => err "XPTY0004" "fn:load-xquery-module: $module-uri must be one string"
   if uri == "" then err "FOQM0001" "fn:load-xquery-module: the module URI is a zero-length string"
   let opts0 := args.getD 1 []
-  checkOptionKeys opts0 loadOptionNames
+  if env.features.version == .v40 then checkOptionKeys opts0 loadOptionNames
   -- each option value is coerced to its declared type (the option
   -- parameter conventions, F&O 4.0 §1.7.4)
   let optTypes : List (String × String) :=

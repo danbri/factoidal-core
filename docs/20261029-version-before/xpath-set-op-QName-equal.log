@@ -1,0 +1,5 @@
+running op/QName-equal.xml
+op/op-QName-equal: 36 pass, 0 fail, 6 unsupported (out of 42)
+== families ==
+op: 36 pass, 0 fail, 6 unsupported (out of 42)
+TOTAL: 36 pass, 0 fail, 6 unsupported (out of 42)

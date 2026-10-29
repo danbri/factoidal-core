@@ -1,0 +1,14 @@
+running prod/DirElemContent.xml
+  FAIL prod-DirElemContent/Constr-cont-constrmod-1: got 2 (xs:integer), expected 1
+  FAIL prod-DirElemContent/Constr-cont-constrmod-3: expected error FORG0001, got 12678967
+  FAIL prod-DirElemContent/Constr-cont-constrmod-5: got 2 (xs:integer), expected 1
+  FAIL prod-DirElemContent/Constr-cont-constrmod-7: expected error FORG0001, got 12678967
+  FAIL prod-DirElemContent/Constr-cont-nsmode-7: expected error XQTY0086, got <node>
+  FAIL prod-DirElemContent/Constr-cont-nsmode-8: expected error XQTY0086, got <node>
+  FAIL prod-DirElemContent/Constr-cont-nsmode-10: expected error XQTY0086, got <node>
+  FAIL prod-DirElemContent/Constr-cont-nsmode-11: any-of: error XPST0051: unknown type ns:myString; error XPST0051: unknown type ns:myString
+  FAIL prod-DirElemContent/K2-DirectConElemContent-48: xml <e xmlns="http://www.example.com/"><a xmlns=""/></e>2<e xmlns="http://www.example.com/"><a xmlns=""><b/></a></e>
+prod/prod-DirElemContent: 124 pass, 9 fail, 2 unsupported (out of 135)
+== families ==
+prod: 124 pass, 9 fail, 2 unsupported (out of 135)
+TOTAL: 124 pass, 9 fail, 2 unsupported (out of 135)

@@ -1,0 +1,5 @@
+running fn/index-of.xml
+fn/fn-index-of: 61 pass, 0 fail, 7 unsupported (out of 68)
+== families ==
+fn: 61 pass, 0 fail, 7 unsupported (out of 68)
+TOTAL: 61 pass, 0 fail, 7 unsupported (out of 68)

@@ -1,0 +1,5 @@
+running fn/node-name.xml
+fn/fn-node-name: 17 pass, 0 fail, 31 unsupported (out of 48)
+== families ==
+fn: 17 pass, 0 fail, 31 unsupported (out of 48)
+TOTAL: 17 pass, 0 fail, 31 unsupported (out of 48)

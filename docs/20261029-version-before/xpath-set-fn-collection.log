@@ -1,0 +1,5 @@
+running fn/collection.xml
+fn/fn-collection: 35 pass, 0 fail, 9 unsupported (out of 44)
+== families ==
+fn: 35 pass, 0 fail, 9 unsupported (out of 44)
+TOTAL: 35 pass, 0 fail, 9 unsupported (out of 44)

@@ -1,0 +1,15 @@
+running prod/DefaultNamespaceDecl.xml
+  FAIL prod-DefaultNamespaceDecl/K2-DefaultNamespaceProlog-6: assert gave false for result http://example.com/ <node> http://example.com/
+  FAIL prod-DefaultNamespaceDecl/K2-DefaultNamespaceProlog-11: error XPST0051: unknown type byte
+  FAIL prod-DefaultNamespaceDecl/K2-DefaultNamespaceProlog-13: expected error XPST0003, got 1
+  FAIL prod-DefaultNamespaceDecl/K2-DefaultNamespaceProlog-14: expected error XPST0003, got 1
+  FAIL prod-DefaultNamespaceDecl/K2-DefaultNamespaceProlog-15: expected error XPST0003, got 1
+  FAIL prod-DefaultNamespaceDecl/K2-DefaultNamespaceProlog-16: expected error XPST0003, got 1
+  FAIL prod-DefaultNamespaceDecl/default-namespace-40-04: got  (xs:string), expected data
+  FAIL prod-DefaultNamespaceDecl/default-namespace-40-14: got 1 1, expected user 1
+  FAIL prod-DefaultNamespaceDecl/default-namespace-40-16: got ##any (xs:anyURI), expected 
+  FAIL prod-DefaultNamespaceDecl/default-namespace-40-17: error XPST0051: unknown type integer
+prod/prod-DefaultNamespaceDecl: 70 pass, 10 fail, 2 unsupported (out of 82)
+== families ==
+prod: 70 pass, 10 fail, 2 unsupported (out of 82)
+TOTAL: 70 pass, 10 fail, 2 unsupported (out of 82)

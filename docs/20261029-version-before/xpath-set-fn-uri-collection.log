@@ -1,0 +1,5 @@
+running fn/uri-collection.xml
+fn/fn-uri-collection: 12 pass, 0 fail, 1 unsupported (out of 13)
+== families ==
+fn: 12 pass, 0 fail, 1 unsupported (out of 13)
+TOTAL: 12 pass, 0 fail, 1 unsupported (out of 13)

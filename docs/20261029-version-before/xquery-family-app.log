@@ -1,0 +1,83 @@
+running app/CatalogCheck.xml
+  UNSUP app-CatalogCheck/Catalog001: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog002: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog003: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog004: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog006: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog007: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog008: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog009: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog010: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog011: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog012: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog013: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog014: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog015: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog016: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog017: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog018: source not valid: [no declaration for the document element]
+  UNSUP app-CatalogCheck/Catalog019: source not valid: [no declaration for the document element]
+app/app-CatalogCheck: 0 pass, 0 fail, 18 unsupported (out of 18)
+running app/Demos.xml
+app/app-Demos: 2 pass, 11 fail, 0 unsupported (out of 13) [TIMEOUT or crash at test itunes: 11 tests not finished, counted as fail]
+running app/Duplicates.xml
+app/app-Duplicates: 14 pass, 0 fail, 0 unsupported (out of 14)
+running app/FunctxFn.xml
+app/app-FunctxFn: 502 pass, 0 fail, 0 unsupported (out of 502)
+running app/FunctxFunctx.xml
+  FAIL app-FunctxFunctx/functx-functx-get-matches-1: string value '  123'
+  FAIL app-FunctxFunctx/functx-functx-get-matches-2: string value '2  3  1'
+  FAIL app-FunctxFunctx/functx-functx-get-matches-3: string value 'de  ab '
+  FAIL app-FunctxFunctx/functx-functx-get-matches-all: string value '  123 2  3  1 de  ab '
+app/app-FunctxFunctx: 622 pass, 4 fail, 1 unsupported (out of 627)
+running app/UseCaseCompoundValues.xml
+app/app-UseCaseCompoundValues: 1 pass, 0 fail, 0 unsupported (out of 1)
+running app/UseCaseJSON.xml
+app/app-UseCaseJSON: 13 pass, 0 fail, 0 unsupported (out of 13)
+running app/UseCaseJSONiq.xml
+app/app-UseCaseJSONiq: 7 pass, 0 fail, 0 unsupported (out of 7)
+running app/UseCaseNLP.xml
+app/app-UseCaseNLP: 7 pass, 0 fail, 0 unsupported (out of 7)
+running app/UseCaseNS.xml
+app/app-UseCaseNS: 8 pass, 0 fail, 0 unsupported (out of 8)
+running app/UseCasePARTS.xml
+app/app-UseCasePARTS: 1 pass, 0 fail, 0 unsupported (out of 1)
+running app/UseCaseR.xml
+app/app-UseCaseR: 18 pass, 0 fail, 0 unsupported (out of 18)
+running app/UseCaseR31.xml
+  UNSUP app-UseCaseR31/UseCaseR31-026: collection query: FOUT1170
+  UNSUP app-UseCaseR31/UseCaseR31-027: collection query: FOUT1170
+app/app-UseCaseR31: 23 pass, 0 fail, 2 unsupported (out of 25)
+running app/UseCaseSEQ.xml
+app/app-UseCaseSEQ: 5 pass, 0 fail, 0 unsupported (out of 5)
+running app/UseCaseSGML.xml
+app/app-UseCaseSGML: 11 pass, 0 fail, 0 unsupported (out of 11)
+running app/UseCaseSTRING.xml
+app/app-UseCaseSTRING: 4 pass, 0 fail, 0 unsupported (out of 4)
+running app/UseCaseTREE.xml
+app/app-UseCaseTREE: 6 pass, 0 fail, 0 unsupported (out of 6)
+running app/UseCaseXMP.xml
+app/app-UseCaseXMP: 12 pass, 0 fail, 0 unsupported (out of 12)
+running app/Walmsley.xml
+app/app-Walmsley: 222 pass, 0 fail, 1 unsupported (out of 223)
+running app/XMark.xml
+app/app-XMark: 21 pass, 0 fail, 0 unsupported (out of 21)
+running app/fo-spec-examples.xml
+  FAIL app-spec-examples/fo-test-fn-analyze-string-002: xml <analyze-string-result xmlns="http://www.w3.org/2005/xpath-functions"><match xmlns="http://www.w3.org/2005/xpath-functions"><group xmlns="http://www.w3.org/2005/xpath-functions" nr="1">08</group>-<group xmlns="http://www.w3.org/2005/xpath-functions" nr="2">12</group>-<group xmlns="http://www.w3.org/2005/xpath-functions" nr="3">03</group></match></analyze-string-result>
+  FAIL app-spec-examples/fo-test-fn-analyze-string-003: xml <analyze-string-result xmlns="http://www.w3.org/2005/xpath-functions"><match xmlns="http://www.w3.org/2005/xpath-functions"><group xmlns="http://www.w3.org/2005/xpath-functions" nr="1">A</group><group xmlns="http://www.w3.org/2005/xpath-functions" nr="2">1</group></match><non-match xmlns="http://www.w3.org/2005/xpath-functions">,</non-match><match xmlns="http://www.w3.org/2005/xpath-functions"><gr
+  FAIL app-spec-examples/fo-test-fn-analyze-string-004: xml <analyze-string-result xmlns="http://www.w3.org/2005/xpath-functions"><match xmlns="http://www.w3.org/2005/xpath-functions"><group xmlns="http://www.w3.org/2005/xpath-functions" nr="1">Chapter</group><lookahead-group xmlns="http://www.w3.org/2005/xpath-functions" nr="2" value="5" position="9"/></match><non-match xmlns="http://www.w3.org/2005/xpath-functions"> 5</non-match></analyze-string-result>
+  FAIL app-spec-examples/fo-test-fn-analyze-string-006: xml <analyze-string-result xmlns="http://www.w3.org/2005/xpath-functions"><match xmlns="http://www.w3.org/2005/xpath-functions"><group xmlns="http://www.w3.org/2005/xpath-functions" nr="1" name="y">2026</group>-<group xmlns="http://www.w3.org/2005/xpath-functions" nr="2" name="m">06</group>-<group xmlns="http://www.w3.org/2005/xpath-functions" nr="3" name="d">25</group></match></analyze-string-result>
+  FAIL app-spec-examples/fo-test-fn-parse-QName-004: error FOCA0002: invalid EQName
+  FAIL app-spec-examples/fo-test-fn-deep-equal-010: got true
+  FAIL app-spec-examples/fo-test-fn-element-with-id-002: got empnr, expected employee
+  FAIL app-spec-examples/fo-test-fn-idref-001: got , expected Brown
+  FAIL app-spec-examples/fo-test-fn-idref-002: got , expected Singh
+  FAIL app-spec-examples/fo-test-fn-function-annotations-002: got , expected map{...}
+  FAIL app-spec-examples/fo-test-fn-function-annotations-003: got map{...}, expected map{...}
+  FAIL app-spec-examples/fo-test-fn-node-type-annotation-003: got xs:untyped, expected fn:arrayType
+  FAIL app-spec-examples/fo-test-fn-node-type-annotation-004: got xs:untyped xs:anyType, expected fn:numberType fn:finiteNumberType xs:double
+  FAIL app-spec-examples/fo-test-fn-map-to-element-004: xml <name><first>Jane</first><middle>Elizabeth</middle><middle>Mary</middle><last>Smith</last></name>
+app/app-spec-examples: 1506 pass, 14 fail, 0 unsupported (out of 1520)
+== families ==
+app: 3005 pass, 29 fail, 22 unsupported (out of 3056)
+TOTAL: 3005 pass, 29 fail, 22 unsupported (out of 3056)

@@ -1,0 +1,15 @@
+running fn/function-lookup.xml
+  FAIL fn-function-lookup/fn-function-lookup-605: got 
+  FAIL fn-function-lookup/fn-function-lookup-606: got 
+  FAIL fn-function-lookup/fn-function-lookup-610a: expected error XPTY0004, got 
+  FAIL fn-function-lookup/fn-function-lookup-611: expected error XPTY0004, got 
+  FAIL fn-function-lookup/fn-function-lookup-613: expected error XQDY0054, got 
+  FAIL fn-function-lookup/fn-function-lookup-616: got 
+  FAIL fn-function-lookup/fn-function-lookup-617: got 
+  FAIL fn-function-lookup/fn-function-lookup-902: got 
+  FAIL fn-function-lookup/fn-function-lookup-903: got 
+  FAIL fn-function-lookup/fn-function-lookup-904: got , expected X y
+fn/fn-function-lookup: 670 pass, 10 fail, 4 unsupported (out of 684)
+== families ==
+fn: 670 pass, 10 fail, 4 unsupported (out of 684)
+TOTAL: 670 pass, 10 fail, 4 unsupported (out of 684)

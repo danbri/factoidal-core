@@ -1,0 +1,5 @@
+running prod/CompTextConstructor.xml
+prod/prod-CompTextConstructor: 14 pass, 0 fail, 25 unsupported (out of 39)
+== families ==
+prod: 14 pass, 0 fail, 25 unsupported (out of 39)
+TOTAL: 14 pass, 0 fail, 25 unsupported (out of 39)

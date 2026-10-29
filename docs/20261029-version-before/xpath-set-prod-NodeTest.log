@@ -1,0 +1,5 @@
+running prod/NodeTest.xml
+prod/prod-NodeTest: 34 pass, 0 fail, 50 unsupported (out of 84)
+== families ==
+prod: 34 pass, 0 fail, 50 unsupported (out of 84)
+TOTAL: 34 pass, 0 fail, 50 unsupported (out of 84)

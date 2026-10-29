@@ -1,0 +1,11 @@
+running ser/method-json.xml
+  FAIL method-json/Serialization-json-82: got {
+  "a": [
+    1,
+    2
+  ]
+} (xs:string), expected {"a":[1,2]}
+ser/method-json: 83 pass, 1 fail, 5 unsupported (out of 89)
+== families ==
+ser: 83 pass, 1 fail, 5 unsupported (out of 89)
+TOTAL: 83 pass, 1 fail, 5 unsupported (out of 89)

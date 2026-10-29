@@ -1,0 +1,32 @@
+running prod/SchemaImport.xml
+  FAIL prod-SchemaImport/modules-schema-context: error XPST0051: unknown type simple:myType
+  FAIL prod-SchemaImport/schema-import-32: error XQST0059: no schema for the imported namespace http://www.w3.org/XQueryTest/hats
+  FAIL prod-SchemaImport/schema-import-33: error XQST0059: no schema for the imported namespace http://www.w3.org/XQueryTest/hats
+  FAIL prod-SchemaImport/qischema001: error XPST0051: unknown type hat:hatsize
+  FAIL prod-SchemaImport/qischema002: error XPST0051: unknown type hatsize
+  FAIL prod-SchemaImport/qischema003: error XPST0051: unknown type date2003
+  FAIL prod-SchemaImport/qischema004: error XPST0051: unknown type vreg
+  FAIL prod-SchemaImport/qischema017: got 0 (xs:string), expected 1
+  FAIL prod-SchemaImport/qischema018: error XPST0051: unknown type date2003
+  FAIL prod-SchemaImport/qischema030: error XPST0017: unknown function hatsize#1
+  FAIL prod-SchemaImport/qischema031: error XPST0051: unknown type hatsize
+  FAIL prod-SchemaImport/qischema040: error XPST0051: unknown type hat:hatsize
+  FAIL prod-SchemaImport/qischema040a: error XPST0051: unknown type hat:hatsize
+  FAIL prod-SchemaImport/qischema044: error XPST0051: unknown type hat:hatsize
+  FAIL prod-SchemaImport/qischema90007: expected error XPST0003, got <node> <node> <node> <node> <node> <node>
+  FAIL prod-SchemaImport/qischema90031-err: wrong error code XPST0051 (expected FORG0001)
+  FAIL prod-SchemaImport/qischema90041-err: wrong error code XPST0051 (expected FORG0001)
+  FAIL prod-SchemaImport/qischema90042-err: wrong error code XPST0051 (expected FORG0001)
+  FAIL prod-SchemaImport/substitution-020: got true
+  FAIL prod-SchemaImport/substitution-021: got true
+  FAIL prod-SchemaImport/substitution-024: got true
+  FAIL prod-SchemaImport/substitution-025: got true
+  FAIL prod-SchemaImport/cbcl-schema-element-1: string value '5'
+  FAIL prod-SchemaImport/cbcl-schema-element-9: error XPTY0004: value of wrong type for $x
+  FAIL prod-SchemaImport/cbcl-validated-schema-element-1: string value '5'
+  FAIL prod-SchemaImport/cbcl-validated-schema-element-2: string value '5'
+  FAIL prod-SchemaImport/cbcl-validated-schema-element-3: string value '5'
+prod/prod-SchemaImport: 98 pass, 27 fail, 20 unsupported (out of 145)
+== families ==
+prod: 98 pass, 27 fail, 20 unsupported (out of 145)
+TOTAL: 98 pass, 27 fail, 20 unsupported (out of 145)

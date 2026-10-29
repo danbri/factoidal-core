@@ -1,0 +1,13 @@
+running misc/CombinedErrorCodes.xml
+  FAIL misc-CombinedErrorCodes/XPTY0019_3a: wrong error code XPTY0018 (expected XPTY0004)
+  FAIL misc-CombinedErrorCodes/XQST0046_12: any-of: expected error XQST0046, got a a a; expected error XQST0076, got a a a; string value 'a a a'
+  FAIL misc-CombinedErrorCodes/XQST0076: expected error XQST0076, got a b c
+  FAIL misc-CombinedErrorCodes/XQST0085: expected error XQST0085, got <node>
+  FAIL misc-CombinedErrorCodes/XQST0089: expected error XQST0089, got 1 2 3
+  FAIL misc-CombinedErrorCodes/XQST0090: wrong error code XPST0003 (expected XQST0090)
+  FAIL misc-CombinedErrorCodes/XQST0125_1: expected error XQST0125, got 2
+  FAIL misc-CombinedErrorCodes/XQST0125_2: expected error XQST0125, got 2
+misc/misc-CombinedErrorCodes: 218 pass, 8 fail, 38 unsupported (out of 264)
+== families ==
+misc: 218 pass, 8 fail, 38 unsupported (out of 264)
+TOTAL: 218 pass, 8 fail, 38 unsupported (out of 264)

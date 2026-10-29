@@ -1,0 +1,5 @@
+running fn/concat.xml
+fn/fn-concat: 106 pass, 0 fail, 5 unsupported (out of 111)
+== families ==
+fn: 106 pass, 0 fail, 5 unsupported (out of 111)
+TOTAL: 106 pass, 0 fail, 5 unsupported (out of 111)

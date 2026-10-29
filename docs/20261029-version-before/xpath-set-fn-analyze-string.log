@@ -1,0 +1,5 @@
+running fn/analyze-string.xml
+fn/fn-analyze-string: 32 pass, 0 fail, 17 unsupported (out of 49)
+== families ==
+fn: 32 pass, 0 fail, 17 unsupported (out of 49)
+TOTAL: 32 pass, 0 fail, 17 unsupported (out of 49)

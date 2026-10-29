@@ -1,0 +1,5 @@
+running prod/NamedFunctionRef.xml
+prod/prod-NamedFunctionRef: 550 pass, 0 fail, 15 unsupported (out of 565)
+== families ==
+prod: 550 pass, 0 fail, 15 unsupported (out of 565)
+TOTAL: 550 pass, 0 fail, 15 unsupported (out of 565)

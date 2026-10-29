@@ -1,0 +1,5 @@
+running fn/for-each-pair.xml
+fn/fn-for-each-pair: 48 pass, 0 fail, 7 unsupported (out of 55)
+== families ==
+fn: 48 pass, 0 fail, 7 unsupported (out of 55)
+TOTAL: 48 pass, 0 fail, 7 unsupported (out of 55)

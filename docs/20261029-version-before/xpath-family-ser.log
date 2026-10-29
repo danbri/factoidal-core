@@ -1,0 +1,17 @@
+running ser/method-adaptive.xml
+ser/method-adaptive: 0 pass, 0 fail, 140 unsupported (out of 140)
+running ser/method-csv.xml
+ser/method-csv: 0 pass, 0 fail, 48 unsupported (out of 48)
+running ser/method-html.xml
+ser/method-html: 0 pass, 0 fail, 73 unsupported (out of 73)
+running ser/method-json.xml
+ser/method-json: 0 pass, 0 fail, 89 unsupported (out of 89)
+running ser/method-text.xml
+ser/method-text: 0 pass, 0 fail, 23 unsupported (out of 23)
+running ser/method-xhtml.xml
+ser/method-xhtml: 0 pass, 0 fail, 61 unsupported (out of 61)
+running ser/method-xml.xml
+ser/method-xml: 0 pass, 0 fail, 74 unsupported (out of 74)
+== families ==
+ser: 0 pass, 0 fail, 508 unsupported (out of 508)
+TOTAL: 0 pass, 0 fail, 508 unsupported (out of 508)

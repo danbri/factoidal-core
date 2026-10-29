@@ -1,0 +1,5 @@
+running fn/codepoints-to-string.xml
+fn/fn-codepoints-to-string: 91 pass, 0 fail, 19 unsupported (out of 110)
+== families ==
+fn: 91 pass, 0 fail, 19 unsupported (out of 110)
+TOTAL: 91 pass, 0 fail, 19 unsupported (out of 110)

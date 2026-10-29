@@ -1,0 +1,7 @@
+running fn/namespace-uri-for-prefix.xml
+  FAIL fn-namespace-uri-for-prefix/fn-namespace-uri-for-prefix-25: expected error XPTY0004, got 
+  FAIL fn-namespace-uri-for-prefix/K2-NamespaceURIForPrefixFunc-2: string value 'http://www.example.com/A'
+fn/fn-namespace-uri-for-prefix: 28 pass, 2 fail, 1 unsupported (out of 31)
+== families ==
+fn: 28 pass, 2 fail, 1 unsupported (out of 31)
+TOTAL: 28 pass, 2 fail, 1 unsupported (out of 31)

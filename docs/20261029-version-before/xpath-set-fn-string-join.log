@@ -1,0 +1,5 @@
+running fn/string-join.xml
+fn/fn-string-join: 40 pass, 0 fail, 8 unsupported (out of 48)
+== families ==
+fn: 40 pass, 0 fail, 8 unsupported (out of 48)
+TOTAL: 40 pass, 0 fail, 8 unsupported (out of 48)

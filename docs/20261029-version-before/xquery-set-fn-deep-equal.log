@@ -1,0 +1,17 @@
+running fn/deep-equal.xml
+  FAIL fn-deep-equal/K2-SeqDeepEqualFunc-36: got true
+  FAIL fn-deep-equal/K2-SeqDeepEqualFunc-38: got true
+  FAIL fn-deep-equal/K2-SeqDeepEqualFunc-39: error XQDY0027: the document is not valid: [element {http://www.w3.org/XQueryTest/perversity}e: character data not allowed]
+  FAIL fn-deep-equal/K2-SeqDeepEqualFunc-42: got true
+  FAIL fn-deep-equal/deep-equal-40-id-property-001: got true
+  FAIL fn-deep-equal/deep-equal-40-idref-property-001: got true
+  FAIL fn-deep-equal/deep-equal-40-nilled-property-002: got true
+  FAIL fn-deep-equal/deep-equal-40-type-annotations-008: got true
+  FAIL fn-deep-equal/deep-equal-40-function-items-057: got false
+  FAIL fn-deep-equal/deep-equal-40-function-items-059: got false
+  FAIL fn-deep-equal/deep-equal-40-function-items-060: got false
+  FAIL fn-deep-equal/deep-equal-40-function-items-095: got 11 11, expected 11 12
+fn/fn-deep-equal: 562 pass, 12 fail, 13 unsupported (out of 587)
+== families ==
+fn: 562 pass, 12 fail, 13 unsupported (out of 587)
+TOTAL: 562 pass, 12 fail, 13 unsupported (out of 587)

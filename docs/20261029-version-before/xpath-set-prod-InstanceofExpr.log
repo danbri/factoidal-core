@@ -1,0 +1,5 @@
+running prod/InstanceofExpr.xml
+prod/prod-InstanceofExpr: 284 pass, 0 fail, 44 unsupported (out of 328)
+== families ==
+prod: 284 pass, 0 fail, 44 unsupported (out of 328)
+TOTAL: 284 pass, 0 fail, 44 unsupported (out of 328)

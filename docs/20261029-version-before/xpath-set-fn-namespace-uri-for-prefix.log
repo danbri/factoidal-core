@@ -1,0 +1,5 @@
+running fn/namespace-uri-for-prefix.xml
+fn/fn-namespace-uri-for-prefix: 2 pass, 0 fail, 29 unsupported (out of 31)
+== families ==
+fn: 2 pass, 0 fail, 29 unsupported (out of 31)
+TOTAL: 2 pass, 0 fail, 29 unsupported (out of 31)

@@ -1,0 +1,5 @@
+running fn/max.xml
+fn/fn-max: 197 pass, 0 fail, 35 unsupported (out of 232)
+== families ==
+fn: 197 pass, 0 fail, 35 unsupported (out of 232)
+TOTAL: 197 pass, 0 fail, 35 unsupported (out of 232)

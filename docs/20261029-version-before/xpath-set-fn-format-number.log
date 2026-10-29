@@ -1,0 +1,5 @@
+running fn/format-number.xml
+fn/fn-format-number: 286 pass, 0 fail, 22 unsupported (out of 308)
+== families ==
+fn: 286 pass, 0 fail, 22 unsupported (out of 308)
+TOTAL: 286 pass, 0 fail, 22 unsupported (out of 308)

@@ -1,0 +1,67 @@
+running ser/method-adaptive.xml
+  EXCLUDED method-adaptive/Serialization-adaptive-37a: defective test data, https://github.com/danbri/factoidal/issues/1160
+ser/method-adaptive: 99 pass, 0 fail, 40 unsupported (out of 139); 1 excluded (defective test data)
+running ser/method-csv.xml
+  FAIL method-csv/Serialization-csv-20: serialization 'A,Ä
+O,Ö
+' does not match
+  FAIL method-csv/Serialization-csv-31: serialization raised SERE0025 CSV rows must be arrays of atomic values
+  FAIL method-csv/Serialization-csv-901: expected serialization error SERE0025, got a b
+
+  FAIL method-csv/Serialization-csv-916: expected serialization error SEPM0016, got ["<a>1<\/a>","<b>2<\/b>"]
+  FAIL method-csv/Serialization-csv-918: expected serialization error SERE0025, got a b
+
+ser/method-csv: 43 pass, 5 fail, 0 unsupported (out of 48)
+running ser/method-html.xml
+  FAIL method-html/Serialization-html-9: serialization '<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="U' does not match
+  FAIL method-html/Serialization-html-10: serialization '<!DOCTYPE html><HTML xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="U' does not match
+  FAIL method-html/Serialization-html-56: serialization '<!DOCTYPE html>
+<html>
+  <body>
+    <table>
+      <tr>
+        <td>
+          <p' does not match
+  FAIL method-html/Serialization-html-59a: serialization '<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+  </head>
+  <body>
+  ' does not match
+  FAIL method-html/Serialization-html-61: serialization '<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+  </head>
+  <body>
+  ' does not match
+ser/method-html: 65 pass, 5 fail, 3 unsupported (out of 73)
+running ser/method-json.xml
+  FAIL method-json/Serialization-json-82: got {
+  "a": [
+    1,
+    2
+  ]
+} (xs:string), expected {"a":[1,2]}
+ser/method-json: 83 pass, 1 fail, 5 unsupported (out of 89)
+running ser/method-text.xml
+ser/method-text: 19 pass, 0 fail, 4 unsupported (out of 23)
+running ser/method-xhtml.xml
+  FAIL method-xhtml/Serialization-xhtml-1a: serialization '<?xml version="1.0" encoding="UTF-8"?><html><body><area/><base/><br/><col/><embe' does not match
+  FAIL method-xhtml/Serialization-xhtml-23: serialization '<?xml version="1.0" encoding="UTF-8"?><foo/>' does not match
+  FAIL method-xhtml/Serialization-xhtml-24: serialization '<?xml version="1.0" encoding="UTF-8"?><foo/>' does not match
+  FAIL method-xhtml/Serialization-xhtml-35: serialization '<?xml version="1.0" encoding="UTF-8"?><html/>' does not match
+  FAIL method-xhtml/Serialization-xhtml-39: serialization '<?xml version="1.0" encoding="UTF-8"?><html><head/></html>' does not match
+  FAIL method-xhtml/Serialization-xhtml-41: serialization '<?xml version="1.0" encoding="UTF-8"?><html><body><area/><base/><br/><col/><embe' does not match
+  FAIL method-xhtml/Serialization-xhtml-51: serialization '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html xmlns="http://www.w3.' does not match
+  FAIL method-xhtml/Serialization-xhtml-68: any-of: serialization '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html><head><meta charset="' does not match; serialization '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html><head><meta charset="' does not match
+  FAIL method-xhtml/Serialization-xhtml-71: serialization '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html xmlns="http://www.w3.' does not match
+ser/method-xhtml: 48 pass, 9 fail, 4 unsupported (out of 61)
+running ser/method-xml.xml
+  FAIL method-xml/K2-Serialization-28: not: inner assertion held
+  FAIL method-xml/K2-Serialization-31: serialization '<?xml version="1.0" encoding="UTF-8"?><chapter xmlns="http://www.example.com/ns/' does not match
+ser/method-xml: 64 pass, 2 fail, 8 unsupported (out of 74)
+== families ==
+ser: 421 pass, 22 fail, 64 unsupported (out of 507); 1 excluded (defective test data)
+TOTAL: 421 pass, 22 fail, 64 unsupported (out of 507); 1 excluded (defective test data)

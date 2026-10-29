@@ -1,0 +1,5 @@
+running fn/error.xml
+fn/fn-error: 103 pass, 0 fail, 1 unsupported (out of 104)
+== families ==
+fn: 103 pass, 0 fail, 1 unsupported (out of 104)
+TOTAL: 103 pass, 0 fail, 1 unsupported (out of 104)

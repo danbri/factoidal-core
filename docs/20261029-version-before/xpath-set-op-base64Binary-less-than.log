@@ -1,0 +1,5 @@
+running op/base64Binary-less-than.xml
+op/op-base64Binary-less-than: 32 pass, 0 fail, 10 unsupported (out of 42)
+== families ==
+op: 32 pass, 0 fail, 10 unsupported (out of 42)
+TOTAL: 32 pass, 0 fail, 10 unsupported (out of 42)

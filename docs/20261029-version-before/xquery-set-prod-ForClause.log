@@ -1,0 +1,11 @@
+running prod/ForClause.xml
+  FAIL prod-ForClause/ForExpr024: wrong error code XPTY0004 (expected XQST0089)
+  FAIL prod-ForClause/ForExpr031: expected error XQST0089, got 1 4
+  FAIL prod-ForClause/K2-ForExprWithout-42a: expected error XPST0003, got 1
+  FAIL prod-ForClause/K2-ForExprWithout-43a: expected error XPST0003, got 1
+  FAIL prod-ForClause/K2-ForExprWithout-44a: expected error XPST0003, got 1
+  FAIL prod-ForClause/ForExprType075: expected error XPTY0004, got 0
+prod/prod-ForClause: 199 pass, 6 fail, 7 unsupported (out of 212)
+== families ==
+prod: 199 pass, 6 fail, 7 unsupported (out of 212)
+TOTAL: 199 pass, 6 fail, 7 unsupported (out of 212)

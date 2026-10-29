@@ -1,0 +1,5 @@
+running prod/CompElemConstructor.xml
+prod/prod-CompElemConstructor: 43 pass, 0 fail, 71 unsupported (out of 114)
+== families ==
+prod: 43 pass, 0 fail, 71 unsupported (out of 114)
+TOTAL: 43 pass, 0 fail, 71 unsupported (out of 114)

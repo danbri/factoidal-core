@@ -1,0 +1,5 @@
+running op/same-key.xml
+op/op-same-key: 21 pass, 7 fail, 2 unsupported (out of 30) [TIMEOUT or crash at test same-key-023: 6 tests not finished, counted as fail]
+== families ==
+op: 21 pass, 7 fail, 2 unsupported (out of 30)
+TOTAL: 21 pass, 7 fail, 2 unsupported (out of 30)

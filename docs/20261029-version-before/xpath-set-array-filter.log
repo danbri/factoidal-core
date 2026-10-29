@@ -1,0 +1,5 @@
+running array/filter.xml
+array/array-filter: 18 pass, 0 fail, 1 unsupported (out of 19)
+== families ==
+array: 18 pass, 0 fail, 1 unsupported (out of 19)
+TOTAL: 18 pass, 0 fail, 1 unsupported (out of 19)

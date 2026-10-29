@@ -1,0 +1,5 @@
+running fn/format-time.xml
+fn/fn-format-time: 94 pass, 0 fail, 4 unsupported (out of 98)
+== families ==
+fn: 94 pass, 0 fail, 4 unsupported (out of 98)
+TOTAL: 94 pass, 0 fail, 4 unsupported (out of 98)

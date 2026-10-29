@@ -61,7 +61,7 @@ theorem forIn_acc {α β} (ts : List α) (acc : Array β) (g : α → M (List β
 /-- The tuples a `let` clause makes from one tuple. -/
 def letT (cb : XCb) (e : Expr) (vt : IType) (v : QN) (t : Env) : M (List Env) := do
   let s ← cb.eval t e
-  let x ← t.coerce vt s ("$" ++ v.show)
+  let x ← t.bindTyped vt s ("$" ++ v.show)
   pure [bindV t v x]
 
 theorem step_let (cb : XCb) (e : Expr) (vt : IType) (v : QN) (ts : List Env) (b : List QN) :
@@ -76,7 +76,7 @@ theorem step_let (cb : XCb) (e : Expr) (vt : IType) (v : QN) (ts : List Env) (b 
     cases h1 : cb.eval t e with
     | error x => rfl
     | ok sq =>
-      cases h2 : t.coerce vt sq ("$" ++ v.show) <;>
+      cases h2 : t.bindTyped vt sq ("$" ++ v.show) <;>
         simp [h2, bind, Except.bind, Functor.map, Except.map, pure, Except.pure]
 
 /-- The tuples a `where` clause keeps of one tuple. -/
@@ -127,7 +127,7 @@ theorem foldl_items (f : Item → M Seq) (mk : Seq → Int → Env)
 /-- The tuples a `for` clause (no `allowing empty`) makes from one tuple. -/
 def forT (cb : XCb) (src : Expr) (vt : IType) (v pv : QN) (t : Env) : M (List Env) := do
   let s ← cb.eval t src
-  itemsE (fun a => t.coerce vt [a] ("$" ++ v.show)) (fun c k => bindOpt (bindV t v c) pv (sInt k)) s 1
+  itemsE (fun a => t.bindTyped vt [a] ("$" ++ v.show)) (fun c k => bindOpt (bindV t v c) pv (sInt k)) s 1
 
 theorem step_for (cb : XCb) (src : Expr) (vt : IType) (v pv : QN) (ts : List Env) (b : List QN) :
     stepClause cb (.ext "c:for" [src] [vt] [v, pv] ["item", "0"]) ts b =
@@ -142,9 +142,9 @@ theorem step_for (cb : XCb) (src : Expr) (vt : IType) (v pv : QN) (ts : List Env
     | error x => rfl
     | ok sq =>
       simp only [bind, Except.bind]
-      rw [foldl_items (fun a => t.coerce vt [a] ("$" ++ v.show)) (fun c k => bindOpt (bindV t v c) pv (sInt k)) _
+      rw [foldl_items (fun a => t.bindTyped vt [a] ("$" ++ v.show)) (fun c k => bindOpt (bindV t v c) pv (sInt k)) _
         (fun b a => rfl)]
-      cases itemsE (fun a => t.coerce vt [a] ("$" ++ v.show)) (fun c k => bindOpt (bindV t v c) pv (sInt k)) sq 1 <;>
+      cases itemsE (fun a => t.bindTyped vt [a] ("$" ++ v.show)) (fun c k => bindOpt (bindV t v c) pv (sInt k)) sq 1 <;>
         simp [Functor.map, Except.map]
 
 theorem flatMapE_append {α β} (g : α → M (List β)) (a b : List α) :

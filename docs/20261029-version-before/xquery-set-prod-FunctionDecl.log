@@ -1,0 +1,19 @@
+running prod/FunctionDecl.xml
+  FAIL prod-FunctionDecl/function-decl-40-010: error XPST0003: expected ')' at offset 199
+  FAIL prod-FunctionDecl/function-decl-40-011: error XPST0003: expected ')' at offset 165
+  FAIL prod-FunctionDecl/function-decl-40-012: error XPST0003: expected ')' at offset 165
+  FAIL prod-FunctionDecl/function-decl-40-021: got 
+  FAIL prod-FunctionDecl/function-decl-40-022: got 
+  FAIL prod-FunctionDecl/function-decl-40-026: got 5 (xs:integer), expected 8
+  FAIL prod-FunctionDecl/function-decl-40-028: got 23 (xs:integer), expected -23
+  FAIL prod-FunctionDecl/function-decl-40-031: got 5 (xs:integer), expected 8
+  FAIL prod-FunctionDecl/function-decl-40-043: got 1/1 1/1 1/1, expected 1/3 2/3 3/3
+  FAIL prod-FunctionDecl/function-decl-40-044: got 
+  FAIL prod-FunctionDecl/function-decl-40-050: error FOER0000: evaluation too deep (fuel exhausted)
+  FAIL prod-FunctionDecl/function-decl-40-053: error FOER0000: evaluation too deep (fuel exhausted)
+  FAIL prod-FunctionDecl/function-decl-40-913: expected error XQST0148, got 
+  FAIL prod-FunctionDecl/function-decl-40-914: expected error XPDY0002, got [[]]
+prod/prod-FunctionDecl: 214 pass, 14 fail, 26 unsupported (out of 254)
+== families ==
+prod: 214 pass, 14 fail, 26 unsupported (out of 254)
+TOTAL: 214 pass, 14 fail, 26 unsupported (out of 254)

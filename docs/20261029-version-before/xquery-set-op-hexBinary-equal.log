@@ -1,0 +1,5 @@
+running op/hexBinary-equal.xml
+op/op-hexBinary-equal: 36 pass, 0 fail, 1 unsupported (out of 37)
+== families ==
+op: 36 pass, 0 fail, 1 unsupported (out of 37)
+TOTAL: 36 pass, 0 fail, 1 unsupported (out of 37)

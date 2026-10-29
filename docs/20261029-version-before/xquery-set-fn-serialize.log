@@ -1,0 +1,13 @@
+running fn/serialize.xml
+  FAIL fn-serialize/serialize-xml-151: expected error SERE0024, got <a></a>
+<b></b>
+  UNSUP fn-serialize/serialize-xml-canonical-5: source not loadable: ../../third_party/testing/qt4tests/fn/serialize/serialize-canonical-5-src.xml
+  FAIL fn-serialize/serialize-html-004: string value '<body><p>Hello World!<?pi data></p></body>'
+  FAIL fn-serialize/serialize-html-005: string value '<body><p>Hello World!<?pi></p></body>'
+  FAIL fn-serialize/serialize-html-006: string value '<body><p>Hello World!<?pi data--with--hyphens></p></body>'
+  FAIL fn-serialize/serialize-html-007: string value '<body><p>Hello World!<?pi -----></p></body>'
+  FAIL fn-serialize/serialize-xml-172: got <a xmlns="X"/> (xs:string), expected <a xmlns="x"/>
+fn/fn-serialize: 265 pass, 6 fail, 21 unsupported (out of 292)
+== families ==
+fn: 265 pass, 6 fail, 21 unsupported (out of 292)
+TOTAL: 265 pass, 6 fail, 21 unsupported (out of 292)

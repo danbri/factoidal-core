@@ -1,0 +1,187 @@
+running op/add-dayTimeDurations.xml
+op/op-add-dayTimeDurations: 64 pass, 0 fail, 0 unsupported (out of 64)
+running op/add-dayTimeDuration-to-date.xml
+  FAIL op-add-dayTimeDuration-to-date/Add-UnionType-36: error XPST0051: unknown type s:dateOrDateTime
+  FAIL op-add-dayTimeDuration-to-date/Add-UnionType-37: error XPST0051: unknown type s:dateOrDateTime
+op/op-add-dayTimeDuration-to-date: 27 pass, 2 fail, 0 unsupported (out of 29)
+running op/add-dayTimeDuration-to-dateTime.xml
+op/op-add-dayTimeDuration-to-dateTime: 32 pass, 0 fail, 0 unsupported (out of 32)
+running op/add-dayTimeDuration-to-time.xml
+op/op-add-dayTimeDuration-to-time: 27 pass, 0 fail, 0 unsupported (out of 27)
+running op/add-yearMonthDurations.xml
+op/op-add-yearMonthDurations: 27 pass, 0 fail, 0 unsupported (out of 27)
+running op/add-yearMonthDuration-to-date.xml
+op/op-add-yearMonthDuration-to-date: 28 pass, 0 fail, 0 unsupported (out of 28)
+running op/add-yearMonthDuration-to-dateTime.xml
+op/op-add-yearMonthDuration-to-dateTime: 29 pass, 0 fail, 0 unsupported (out of 29)
+running op/anyURI-equal.xml
+op/op-anyURI-equal: 22 pass, 0 fail, 0 unsupported (out of 22)
+running op/anyURI-greater-than.xml
+op/op-anyURI-greater-than: 10 pass, 0 fail, 0 unsupported (out of 10)
+running op/anyURI-less-than.xml
+op/op-anyURI-less-than: 8 pass, 0 fail, 0 unsupported (out of 8)
+running op/bang.xml
+op/op-bang: 19 pass, 0 fail, 0 unsupported (out of 19)
+running op/base64Binary-equal.xml
+op/op-base64Binary-equal: 39 pass, 0 fail, 14 unsupported (out of 53)
+running op/base64Binary-less-than.xml
+op/op-base64Binary-less-than: 36 pass, 0 fail, 6 unsupported (out of 42)
+running op/base64Binary-greater-than.xml
+op/op-base64Binary-greater-than: 35 pass, 0 fail, 1 unsupported (out of 36)
+running op/boolean-equal.xml
+op/op-boolean-equal: 57 pass, 0 fail, 0 unsupported (out of 57)
+running op/boolean-greater-than.xml
+op/op-boolean-greater-than: 49 pass, 0 fail, 0 unsupported (out of 49)
+running op/boolean-less-than.xml
+op/op-boolean-less-than: 49 pass, 0 fail, 0 unsupported (out of 49)
+running op/concat.xml
+op/op-concat: 95 pass, 0 fail, 3 unsupported (out of 98)
+running op/concatenate.xml
+op/op-concatenate: 54 pass, 0 fail, 0 unsupported (out of 54)
+running op/date-equal.xml
+op/op-date-equal: 47 pass, 0 fail, 0 unsupported (out of 47)
+running op/date-greater-than.xml
+op/op-date-greater-than: 49 pass, 0 fail, 0 unsupported (out of 49)
+running op/date-less-than.xml
+op/op-date-less-than: 48 pass, 0 fail, 0 unsupported (out of 48)
+running op/dateTime-equal.xml
+  FAIL op-dateTime-equal/UnionType-equal-01: error XPST0051: unknown type s:dateOrDateTime
+  FAIL op-dateTime-equal/UnionType-equal-02: error XPST0051: unknown type s:dateOrDateTime
+op/op-dateTime-equal: 72 pass, 2 fail, 0 unsupported (out of 74)
+running op/dateTime-greater-than.xml
+op/op-dateTime-greater-than: 44 pass, 0 fail, 0 unsupported (out of 44)
+running op/dateTime-less-than.xml
+op/op-dateTime-less-than: 44 pass, 0 fail, 0 unsupported (out of 44)
+running op/dayTimeDuration-greater-than.xml
+op/op-dayTimeDuration-greater-than: 59 pass, 0 fail, 12 unsupported (out of 71)
+running op/dayTimeDuration-less-than.xml
+op/op-dayTimeDuration-less-than: 46 pass, 0 fail, 6 unsupported (out of 52)
+running op/divide-dayTimeDuration.xml
+op/op-divide-dayTimeDuration: 60 pass, 0 fail, 5 unsupported (out of 65)
+running op/divide-dayTimeDuration-by-dayTimeDuration.xml
+op/op-divide-dayTimeDuration-by-dayTimeDuration: 28 pass, 0 fail, 0 unsupported (out of 28)
+running op/divide-yearMonthDuration.xml
+op/op-divide-yearMonthDuration: 31 pass, 0 fail, 2 unsupported (out of 33)
+running op/divide-yearMonthDuration-by-yearMonthDuration.xml
+op/op-divide-yearMonthDuration-by-yearMonthDuration: 25 pass, 0 fail, 0 unsupported (out of 25)
+running op/duration-equal.xml
+op/op-duration-equal: 158 pass, 0 fail, 32 unsupported (out of 190)
+running op/except.xml
+op/op-except: 83 pass, 0 fail, 0 unsupported (out of 83)
+running op/gDay-equal.xml
+op/op-gDay-equal: 51 pass, 0 fail, 0 unsupported (out of 51)
+running op/gMonth-equal.xml
+op/op-gMonth-equal: 45 pass, 0 fail, 0 unsupported (out of 45)
+running op/gMonthDay-equal.xml
+op/op-gMonthDay-equal: 51 pass, 0 fail, 0 unsupported (out of 51)
+running op/gYear-equal.xml
+op/op-gYear-equal: 46 pass, 0 fail, 0 unsupported (out of 46)
+running op/gYearMonth-equal.xml
+op/op-gYearMonth-equal: 46 pass, 0 fail, 0 unsupported (out of 46)
+running op/hexBinary-equal.xml
+op/op-hexBinary-equal: 36 pass, 0 fail, 1 unsupported (out of 37)
+running op/hexBinary-greater-than.xml
+op/op-hexBinary-greater-than: 31 pass, 0 fail, 1 unsupported (out of 32)
+running op/hexBinary-less-than.xml
+op/op-hexBinary-less-than: 31 pass, 0 fail, 1 unsupported (out of 32)
+running op/intersect.xml
+op/op-intersect: 86 pass, 0 fail, 0 unsupported (out of 86)
+running op/is-not-same-node.xml
+  FAIL op-is-not-same-node/is-not-303: got false
+op/op-is-not-same-node: 37 pass, 1 fail, 0 unsupported (out of 38)
+running op/is-same-node.xml
+  FAIL op-is-same-node/cbcl-is-same-node-001: got true
+op/op-is-same-node: 48 pass, 1 fail, 0 unsupported (out of 49)
+running op/multiply-dayTimeDuration.xml
+op/op-multiply-dayTimeDuration: 53 pass, 0 fail, 4 unsupported (out of 57)
+running op/multiply-yearMonthDuration.xml
+op/op-multiply-yearMonthDuration: 44 pass, 0 fail, 2 unsupported (out of 46)
+running op/node-after.xml
+op/op-node-after: 39 pass, 0 fail, 1 unsupported (out of 40)
+running op/node-before.xml
+op/op-node-before: 42 pass, 0 fail, 1 unsupported (out of 43)
+running op/node-follows-or-is.xml
+op/op-node-follows-or-is: 34 pass, 0 fail, 0 unsupported (out of 34)
+running op/node-precedes-or-is.xml
+op/op-node-precedes-or-is: 34 pass, 0 fail, 0 unsupported (out of 34)
+running op/NOTATION-equal.xml
+op/op-NOTATION-equal: 22 pass, 0 fail, 0 unsupported (out of 22)
+running op/numeric-add.xml
+  FAIL op-numeric-add/op-numeric-add-13: error XPST0051: unknown type t:sizeType
+  FAIL op-numeric-add/op-numeric-add-14: error XPST0051: unknown type t:sizeType
+  FAIL op-numeric-add/op-numeric-add-15: error XPST0051: unknown type t:floatBased
+  FAIL op-numeric-add/op-numeric-add-16: wrong error code XPST0051 (expected XPTY0004)
+op/op-numeric-add: 159 pass, 4 fail, 0 unsupported (out of 163)
+running op/numeric-equal.xml
+op/op-numeric-equal: 209 pass, 0 fail, 0 unsupported (out of 209)
+running op/numeric-divide.xml
+  FAIL op-numeric-divide/op-numeric-divideintg2args-2: any-of: got -0.830993497117024304 (xs:decimal), expected -0.830993497117024305; got -0.830993497117024304 (xs:decimal), expected -0.830993497117
+  FAIL op-numeric-divide/op-numeric-dividedec2args-2: any-of: got -0.617375191608514839 (xs:decimal), expected -0.61737519160851484; got -0.617375191608514839 (xs:decimal), expected -0.6173751916085
+  FAIL op-numeric-divide/op-numeric-dividedec2args-4: any-of: got -1.6197605825310069 (xs:decimal), expected -1.619760582531006901; got -1.6197605825310069 (xs:decimal), expected -1.619760582531
+  FAIL op-numeric-divide/op-numeric-dividenpi2args-4: any-of: got 2.102216328265447023 (xs:decimal), expected 2.102216328265447024; got 2.102216328265447023 (xs:decimal), expected 2.102216328265
+op/op-numeric-divide: 138 pass, 4 fail, 0 unsupported (out of 142)
+running op/numeric-greater-than.xml
+op/op-numeric-greater-than: 122 pass, 0 fail, 0 unsupported (out of 122)
+running op/numeric-integer-divide.xml
+op/op-numeric-integer-divide: 143 pass, 0 fail, 0 unsupported (out of 143)
+running op/numeric-less-than.xml
+op/op-numeric-less-than: 187 pass, 0 fail, 0 unsupported (out of 187)
+running op/numeric-mod.xml
+op/op-numeric-mod: 131 pass, 0 fail, 0 unsupported (out of 131)
+running op/numeric-multiply.xml
+op/op-numeric-multiply: 119 pass, 0 fail, 0 unsupported (out of 119)
+running op/numeric-subtract.xml
+op/op-numeric-subtract: 125 pass, 0 fail, 0 unsupported (out of 125)
+running op/numeric-unary-minus.xml
+op/op-numeric-unary-minus: 70 pass, 0 fail, 0 unsupported (out of 70)
+running op/numeric-unary-plus.xml
+op/op-numeric-unary-plus: 55 pass, 0 fail, 0 unsupported (out of 55)
+running op/pipeline.xml
+op/op-pipeline: 25 pass, 0 fail, 0 unsupported (out of 25)
+running op/QName-equal.xml
+op/op-QName-equal: 38 pass, 0 fail, 4 unsupported (out of 42)
+running op/string-equal.xml
+op/op-string-equal: 15 pass, 0 fail, 0 unsupported (out of 15)
+running op/string-greater-than.xml
+op/op-string-greater-than: 9 pass, 0 fail, 0 unsupported (out of 9)
+running op/string-less-than.xml
+op/op-string-less-than: 10 pass, 0 fail, 0 unsupported (out of 10)
+running op/subtract-dates.xml
+op/op-subtract-dates: 31 pass, 0 fail, 0 unsupported (out of 31)
+running op/subtract-dateTimes.xml
+op/op-subtract-dateTimes: 33 pass, 0 fail, 0 unsupported (out of 33)
+running op/subtract-dayTimeDuration-from-date.xml
+op/op-subtract-dayTimeDuration-from-date: 24 pass, 0 fail, 0 unsupported (out of 24)
+running op/subtract-dayTimeDuration-from-dateTime.xml
+op/op-subtract-dayTimeDuration-from-dateTime: 24 pass, 0 fail, 0 unsupported (out of 24)
+running op/subtract-dayTimeDuration-from-time.xml
+op/op-subtract-dayTimeDuration-from-time: 28 pass, 0 fail, 0 unsupported (out of 28)
+running op/subtract-dayTimeDurations.xml
+op/op-subtract-dayTimeDurations: 69 pass, 0 fail, 0 unsupported (out of 69)
+running op/subtract-times.xml
+op/op-subtract-times: 33 pass, 0 fail, 0 unsupported (out of 33)
+running op/subtract-yearMonthDuration-from-date.xml
+op/op-subtract-yearMonthDuration-from-date: 26 pass, 0 fail, 0 unsupported (out of 26)
+running op/subtract-yearMonthDuration-from-dateTime.xml
+op/op-subtract-yearMonthDuration-from-dateTime: 23 pass, 0 fail, 0 unsupported (out of 23)
+running op/subtract-yearMonthDurations.xml
+op/op-subtract-yearMonthDurations: 33 pass, 0 fail, 0 unsupported (out of 33)
+running op/time-equal.xml
+op/op-time-equal: 58 pass, 0 fail, 0 unsupported (out of 58)
+running op/time-greater-than.xml
+op/op-time-greater-than: 45 pass, 0 fail, 0 unsupported (out of 45)
+running op/time-less-than.xml
+op/op-time-less-than: 44 pass, 0 fail, 0 unsupported (out of 44)
+running op/to.xml
+op/op-to: 185 pass, 0 fail, 0 unsupported (out of 185)
+running op/union.xml
+op/op-union: 93 pass, 0 fail, 0 unsupported (out of 93)
+running op/yearMonthDuration-greater-than.xml
+op/op-yearMonthDuration-greater-than: 34 pass, 0 fail, 0 unsupported (out of 34)
+running op/yearMonthDuration-less-than.xml
+op/op-yearMonthDuration-less-than: 34 pass, 0 fail, 0 unsupported (out of 34)
+running op/same-key.xml
+op/op-same-key: 21 pass, 7 fail, 2 unsupported (out of 30) [TIMEOUT or crash at test same-key-023: 6 tests not finished, counted as fail]
+== families ==
+op: 4670 pass, 21 fail, 98 unsupported (out of 4789)
+TOTAL: 4670 pass, 21 fail, 98 unsupported (out of 4789)

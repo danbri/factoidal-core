@@ -166,8 +166,12 @@ def Env.significantChildren (e : Env) (o : DEOpts) (n : NodeRef) : List SChild :
   for c in r.children.toList do
     let m := n.at c
     let k := (e.nrec m).kind
-    if k == .comment && !o.comments then continue
-    if k == .pi && !o.pis then continue
+    if (k == .comment && !o.comments) || (k == .pi && !o.pis) then
+      -- Earlier editions remove these nodes without merging text on either side.
+      if e.features.version != .v40 then
+        if let some (t, tn) := acc then out := out.push (.text t tn)
+        acc := none
+      continue
     if k == .text then
       acc := match acc with
         | none => some ((e.nrec m).value, some m)
@@ -206,15 +210,17 @@ def Env.deItem (e : Env) (h : Hooks) (o : DEOpts) : Nat → Item → Item → M 
       | [] => pure ()
       | _ => err "XPTY0004" "items-equal must return xs:boolean?"
     match x, y with
-    | .atom a, .atom b => pure (o.atomEq a b)
+    | .atom a, .atom b =>
+      pure (if e.features.version == .v40 then o.atomEq a b
+        else legacyValueEqual e.tz (collProxy o.coll a) (collProxy o.coll b))
     | .map ka, .map kb =>
       let sig (kv : Atomic × Seq) := !(o.ignoreEmpty && kv.2.isEmpty)
       let ka := ka.filter sig
       let kb := kb.filter sig
       if ka.length != kb.length then return false
-      if o.mapOrder && !(ka.zip kb).all (fun (p, q) => atomicEqual p.1 q.1) then return false
+      if o.mapOrder && !(ka.zip kb).all (fun (p, q) => mapKeyEqualVersion e.features.version p.1 q.1) then return false
       for (k, v) in ka do
-        match kb.find? (fun (k2, _) => atomicEqual k k2) with
+        match kb.find? (fun (k2, _) => mapKeyEqualVersion e.features.version k k2) with
         | some (_, v2) => if !(← e.deSeq h o f v v2 true) then return false
         | none => return false
       pure true
@@ -225,7 +231,12 @@ def Env.deItem (e : Env) (h : Hooks) (o : DEOpts) : Nat → Item → Item → M 
       pure true
     | .node a, .node b => e.deNode h o f a b
     | .jnode _ _ v1 _, .jnode _ _ v2 _ => e.deSeq h o f v1 v2 true
-    | .fn _, .fn _ => pure (e.deepEq [x] [y])
+    | .fn _, .fn _ =>
+      if e.features.version != .v40 then err "FOTY0015" "deep-equal cannot compare function items before 4.0"
+      else pure (e.deepEq [x] [y])
+    | .fn _, _ | _, .fn _ =>
+      if e.features.version != .v40 then err "FOTY0015" "deep-equal cannot compare function items before 4.0"
+      else pure false
     | _, _ => pure false
 def Env.deNode (e : Env) (h : Hooks) (o : DEOpts) : Nat → NodeRef → NodeRef → M Bool
   | 0, _, _ => pure false

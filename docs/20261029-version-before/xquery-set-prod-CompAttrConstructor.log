@@ -1,0 +1,15 @@
+running prod/CompAttrConstructor.xml
+  FAIL prod-CompAttrConstructor/K2-ComputeConAttr-37: wrong error code XQDY0044 (expected XPST0081)
+  FAIL prod-CompAttrConstructor/K2-ComputeConAttr-65: any-of: expected error XPTY0004, got <node>; expected error XPDY0002, got <node>
+  FAIL prod-CompAttrConstructor/K2-ComputeConAttr-66: got <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <no
+  FAIL prod-CompAttrConstructor/K2-ComputeConAttr-72: error XPTY0004: value of wrong type for $map of map:size
+  FAIL prod-CompAttrConstructor/Constr-compattr-eqname-entities-1: assert gave  for result <node>
+  FAIL prod-CompAttrConstructor/Constr-compattr-eqname-entities-3: assert gave  for result <node>
+  FAIL prod-CompAttrConstructor/Constr-compattr-eqname-entities-5: assert gave  for result <node>
+  FAIL prod-CompAttrConstructor/Constr-compattr-eqname-entities-6: assert gave  for result <node>
+  FAIL prod-CompAttrConstructor/Constr-compattr-eqname-error-5: expected error XQDY0074, got <node>
+  FAIL prod-CompAttrConstructor/Constr-compattr-eqname-error-6: expected error XQDY0074, got <node>
+prod/prod-CompAttrConstructor: 136 pass, 10 fail, 2 unsupported (out of 148)
+== families ==
+prod: 136 pass, 10 fail, 2 unsupported (out of 148)
+TOTAL: 136 pass, 10 fail, 2 unsupported (out of 148)

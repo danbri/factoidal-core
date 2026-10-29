@@ -1,0 +1,5 @@
+running op/hexBinary-greater-than.xml
+op/op-hexBinary-greater-than: 27 pass, 0 fail, 5 unsupported (out of 32)
+== families ==
+op: 27 pass, 0 fail, 5 unsupported (out of 32)
+TOTAL: 27 pass, 0 fail, 5 unsupported (out of 32)

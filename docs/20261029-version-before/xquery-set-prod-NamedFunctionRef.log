@@ -1,0 +1,8 @@
+running prod/NamedFunctionRef.xml
+  FAIL prod-NamedFunctionRef/function-literal-701: got 
+  FAIL prod-NamedFunctionRef/function-literal-704: got 
+  FAIL prod-NamedFunctionRef/function-literal-707: error XPST0008: undeclared variable $a
+prod/prod-NamedFunctionRef: 561 pass, 3 fail, 1 unsupported (out of 565)
+== families ==
+prod: 561 pass, 3 fail, 1 unsupported (out of 565)
+TOTAL: 561 pass, 3 fail, 1 unsupported (out of 565)

@@ -1,0 +1,5 @@
+running fn/local-name-from-QName.xml
+fn/fn-local-name-from-QName: 27 pass, 0 fail, 1 unsupported (out of 28)
+== families ==
+fn: 27 pass, 0 fail, 1 unsupported (out of 28)
+TOTAL: 27 pass, 0 fail, 1 unsupported (out of 28)

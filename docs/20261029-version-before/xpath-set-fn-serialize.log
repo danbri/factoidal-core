@@ -1,0 +1,8 @@
+running fn/serialize.xml
+  UNSUP fn-serialize/serialize-xml-canonical-5: source not loadable: ../../third_party/testing/qt4tests/fn/serialize/serialize-canonical-5-src.xml
+  EXCLUDED fn-serialize/serialize-csv-002: defective test data, https://github.com/danbri/factoidal/issues/1159
+  EXCLUDED fn-serialize/serialize-csv-003: defective test data, https://github.com/danbri/factoidal/issues/1159
+fn/fn-serialize: 216 pass, 0 fail, 74 unsupported (out of 290); 2 excluded (defective test data)
+== families ==
+fn: 216 pass, 0 fail, 74 unsupported (out of 290); 2 excluded (defective test data)
+TOTAL: 216 pass, 0 fail, 74 unsupported (out of 290); 2 excluded (defective test data)

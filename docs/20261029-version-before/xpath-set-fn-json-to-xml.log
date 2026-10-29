@@ -1,0 +1,5 @@
+running fn/json-to-xml.xml
+fn/fn-json-to-xml: 94 pass, 0 fail, 10 unsupported (out of 104)
+== families ==
+fn: 94 pass, 0 fail, 10 unsupported (out of 104)
+TOTAL: 94 pass, 0 fail, 10 unsupported (out of 104)

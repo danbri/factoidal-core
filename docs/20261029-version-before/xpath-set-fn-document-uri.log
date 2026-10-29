@@ -1,0 +1,5 @@
+running fn/document-uri.xml
+fn/fn-document-uri: 24 pass, 0 fail, 31 unsupported (out of 55)
+== families ==
+fn: 24 pass, 0 fail, 31 unsupported (out of 55)
+TOTAL: 24 pass, 0 fail, 31 unsupported (out of 55)
