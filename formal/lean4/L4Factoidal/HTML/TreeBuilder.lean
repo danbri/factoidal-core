@@ -189,6 +189,13 @@ def adjustedCur : P DNode := do
   | some i => return tb.dom[i]!
   | none => return default
 
+/-- The parser's fragment context element is a `select` element (fragment case). -/
+def ctxIsSelect : P Bool := do
+  let tb ← get
+  match tb.ctx with
+  | some c => return tb.dom[c]!.is "select"
+  | none => return false
+
 def setMode (m : Mode) : P Unit := modify fun tb => { tb with mode := m }
 def popCur : P Unit := modify fun tb => { tb with stack := tb.stack.pop }
 
@@ -527,20 +534,7 @@ def resetMode : P Unit := do
       | some c => if last then tb.dom[c]! else tb.dom[tb.stack[i]!]!
       | none => tb.dom[tb.stack[i]!]!
     let r : Option Mode :=
-      if nd.is "select" then
-        some (Id.run do
-          let mut res := Mode.inSelect
-          let mut j := i
-          for _ in [0:i] do
-            if j == 0 then break
-            j := j - 1
-            let a := tb.dom[tb.stack[j]!]!
-            if a.is "template" then break
-            if a.is "table" then
-              res := .inSelectInTable
-              break
-          return res)
-      else if (nd.is "td" || nd.is "th") && !last then some .inCell
+      if (nd.is "td" || nd.is "th") && !last then some .inCell
       else if nd.is "tr" then some .inRow
       else if nd.isAny ["tbody", "thead", "tfoot"] then some .inTableBody
       else if nd.is "caption" then some .inCaption
@@ -1021,6 +1015,10 @@ def inBodyH (tok : Token) : P Act := do
       modify fun tb => { tb with framesetOk := false }
       return .done
     else if n == "input" then
+      if ← ctxIsSelect then perr "unexpected-input-in-select"; return .done
+      if ← hasNamed "select" .default then
+        perr "unexpected-input-in-select"
+        popUntil (·.is "select")
       reconstructAfe
       let _ ← insertHtml n attrs
       popCur
@@ -1035,6 +1033,9 @@ def inBodyH (tok : Token) : P Act := do
       return .done
     else if n == "hr" then
       closeP
+      if ← hasNamed "select" .default then
+        genImplied
+        if (← hasNamed "option" .default) || (← hasNamed "optgroup" .default) then perr "unexpected-hr-in-option"
       let _ ← insertHtml n attrs
       popCur
       setAck
@@ -1057,14 +1058,29 @@ def inBodyH (tok : Token) : P Act := do
       return .done
     else if n == "noembed" || (n == "noscript" && (← get).scripting) then genericRaw n attrs .rawtext; return .done
     else if n == "select" then
+      -- the customizable select content model: there is no "in select" mode
+      if ← ctxIsSelect then perr "unexpected-select-in-select"; return .done
+      if ← hasNamed "select" .default then
+        perr "unexpected-select-in-select"
+        popUntil (·.is "select")
+        return .done
       reconstructAfe
       let _ ← insertHtml n attrs
-      let tb ← get
-      let m := if [Mode.inTable, .inCaption, .inTableBody, .inRow, .inCell].contains tb.mode then Mode.inSelectInTable else .inSelect
-      modify fun tb => { tb with framesetOk := false, mode := m }
+      modify fun tb => { tb with framesetOk := false }
       return .done
-    else if n == "optgroup" || n == "option" then
-      if (← curNode).is "option" then popCur
+    else if n == "option" then
+      if ← hasNamed "select" .default then
+        genImplied false "optgroup"
+        if ← hasNamed "option" .default then perr "unexpected-option-in-option"
+      else if (← curNode).is "option" then popCur
+      reconstructAfe
+      let _ ← insertHtml n attrs
+      return .done
+    else if n == "optgroup" then
+      if ← hasNamed "select" .default then
+        genImplied
+        if (← hasNamed "option" .default) || (← hasNamed "optgroup" .default) then perr "unexpected-optgroup-in-option"
+      else if (← curNode).is "option" then popCur
       reconstructAfe
       let _ ← insertHtml n attrs
       return .done
@@ -1111,7 +1127,7 @@ def inBodyH (tok : Token) : P Act := do
     else if n == "template" then return .via .inHead
     else if ["address", "article", "aside", "blockquote", "button", "center", "details", "dialog", "dir", "div",
         "dl", "fieldset", "figcaption", "figure", "footer", "header", "hgroup", "listing", "main", "menu", "nav",
-        "ol", "pre", "search", "section", "summary", "ul"].contains n then
+        "ol", "pre", "search", "section", "select", "summary", "ul"].contains n then
       if !(← hasNamed n .default) then perr "unexpected-end-tag"; return .done
       genImplied
       if !(← curNode).is n then perr "end-tag-mismatch"
@@ -1221,7 +1237,10 @@ def foreignH (tok : Token) : P Act := do
           let nd := tb.dom[i]!
           if nd.ns == .html || mathTextIP nd || htmlIP nd then break
           popCur
-      return .reprocess
+      -- "according to the rules ... corresponding to the current insertion mode in
+      -- HTML content": not the dispatcher, whose adjusted current node may still be
+      -- a foreign context element (fragment case)
+      return .via (← get).mode
     else
       let cn ← adjustedCur
       let ns := cn.ns
@@ -1234,6 +1253,17 @@ def foreignH (tok : Token) : P Act := do
         setAck
       return .done
   | .endTag n =>
+    if n == "br" || n == "p" then
+      perr "unexpected-html-element-in-foreign-content"
+      for _ in [0:(← get).stack.size] do
+        let tb ← get
+        match tb.stack.back? with
+        | none => break
+        | some i =>
+          let nd := tb.dom[i]!
+          if nd.ns == .html || mathTextIP nd || htmlIP nd then break
+          popCur
+      return .via (← get).mode
     let tb ← get
     let top := tb.dom[tb.stack.back?.getD 0]!
     if top.ns == .svg && top.name == "script" && n == "script" then
