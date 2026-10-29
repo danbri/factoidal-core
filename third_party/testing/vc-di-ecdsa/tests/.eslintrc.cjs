@@ -1,0 +1,9 @@
+// Copyright 2023 Digital Bazaar, Inc.
+//
+// SPDX-License-Identifier: BSD-3-Clause
+
+module.exports = {
+  env: {
+    mocha: true
+  }
+};
