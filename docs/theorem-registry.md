@@ -3594,3 +3594,21 @@ names, 0 missing, `lake env lean` in `formal/lean4`):
 | parsers | 273 | 0 of 273 | 0 of 273 | 0 of 273 | 0 of 273 | 273 of 273 |
 | other | 107 | 0 of 107 | 0 of 107 | 0 of 107 | 0 of 107 | 107 of 107 |
 | total | 1383 | 142 of 1383 | 27 of 1383 | 483 of 1383 | 25 of 1383 | 706 of 1383 |
+
+## XPath and XQuery static typing (2026-10-29)
+
+`XPath4.StaticTyping.fragment_sound` in
+[`StaticTypingTheorems.lean`](../formal/lean4/L4Factoidal/XPath4/StaticTypingTheorems.lean)
+relates actual static inference to actual evaluation and `Env.seqMatches`.
+For its syntactic fragment and sufficient inference fuel, a successful
+evaluation matches the inferred type. The fragment contains atomic literals,
+literal pairs, empty expressions, nested singleton sequences and conditionals
+with an empty branch. This does not prove the remaining inference rules or
+completeness of static error detection.
+
+`XPath4.evalConfigured_staticTypingOff` is a definitional equality (`rfl`)
+with the existing evaluator when static typing is disabled. The existing
+default-settings agreement theorems remain checked. The proof modules are
+imported by `Harness/Qt4Run.lean`; `lake build l4qt4` checks them. The
+soundness axiom audit reports only `propext`, `Classical.choice`, `Quot.sound`.
+See the [design and proof boundary](designissues/2026-10-29-static-typing.md).

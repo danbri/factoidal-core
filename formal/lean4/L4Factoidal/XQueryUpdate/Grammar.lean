@@ -176,7 +176,7 @@ def grammarU (cfg : Cfg) : ExtGrammar :=
   let base := grammar cfg
   { base with
     exprSingle := fun s ns sp i =>
-      match liftOpt (runP (exprSingleU cfg sp) s ns i) with
+      match liftOpt (runP (exprSingleU cfg sp) s ns i cfg.features) with
       | .ok (some r) => .ok (some r)
       | .ok none => base.exprSingle s ns sp i
       | .error e => .error e

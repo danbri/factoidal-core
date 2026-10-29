@@ -919,9 +919,17 @@ def pLet : Nat → P Expr
         if !(← eatS ",") then break
         continue
       let v ← pVarName n
+      let explicitType ← atKw "as"
       let vt ← pTypeDecl n
       expectS ":="
       let e ← pExprSingle n
+      -- Preserve an explicit item()* annotation for static type analysis.
+      -- It is otherwise indistinguishable from an omitted declaration.
+      let e := if explicitType && (← read).features.staticTyping then
+        match vt with
+        | .seq .item .star => Expr.treat e vt
+        | _ => e
+        else e
       binds := binds ++ [(v, vt, e)]
       if !(← eatS ",") then break
     let body ← pForLetReturn n

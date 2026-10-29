@@ -18,6 +18,7 @@ references, partial application, dynamic calls, keyword arguments,
 Static calls are coerced to the F&O 4.0 signature first (§3.4.3).
 -/
 import L4Factoidal.XPath4.Ext
+import L4Factoidal.XPath4.StaticTyping
 import L4Factoidal.XQuery4.Runtime
 import L4Factoidal.XQuery4.Grammar
 
@@ -1620,10 +1621,20 @@ def parseXPath4 (src : String) (ns : List (String × String) := [])
       err "XPST0017" ("wrong number of arguments for " ++ q.show)
   pure e
 
+/-- XPath 4.0 §2.3.3: run the selected static analysis before evaluation. -/
+def evalConfigured (fuel : Nat) (env : Env) (e : Expr) : M Seq := do
+  if env.features.staticTyping then StaticTyping.check env e
+  eval fuel env e
+
+/-- Turning static typing off leaves the evaluator definitionally unchanged. -/
+theorem evalConfigured_staticTypingOff (fuel : Nat) (env : Env) (e : Expr) :
+    evalConfigured fuel { env with features := { env.features with staticTyping := false } } e =
+      eval fuel { env with features := { env.features with staticTyping := false } } e := rfl
+
 /-- Evaluate an XPath 4.0 expression string. -/
 def evalString (src : String) (env : Env := {}) : M Seq := do
   let e ← parseXPath4 src env.ns env.schema.declared env.features
-  eval 100000 env e
+  evalConfigured 100000 env e
 
 /-- Applying the all-enabled settings leaves evaluation definitionally
     unchanged. This theorem concerns configuration application. -/

@@ -23,7 +23,9 @@ References: [XQuery 4.0 optional features](https://qt4cg.org/specifications/xque
 [F&O 4.0](https://qt4cg.org/specifications/xpath-functions-40/Overview.html).
 
 `Harness.Qt4Run.featureSettings` reads negative feature dependencies from
-the test set and case. The selected settings apply to the query and its
+the test set and case, and positive dependencies for the opt-in
+[static typing configuration](2026-10-29-static-typing.md).
+The selected settings apply to the query and its
 assertions. Other tests use the default. The runner does not infer a pass
 from a dependency; the query must produce the expected result or error.
 

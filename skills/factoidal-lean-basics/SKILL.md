@@ -551,3 +551,16 @@ The settings also reach the parser and module checks. The qt4tests runner
 selects restrictions from negative feature dependencies. See the
 [design record](../../docs/designissues/2026-10-29-processor-feature-settings.md)
 and [measured report](../../docs/20261029-processor-feature-settings.md).
+
+Static typing is opt-in through `FeatureSettings.staticTyping`. XPath uses
+`evalConfigured` (also called by `evalString`); XQuery and XQuery Update use
+the type-analysis phase of `checkModules`. Host static types belong in
+`Env.staticVars` and `Env.staticFocus`, separate from runtime values.
+The [static typing design](../../docs/designissues/2026-10-29-static-typing.md)
+states the implemented rules and the exact soundness fragment. Its proofs
+and execution guards are imported by `Harness/Qt4Run.lean`.
+Pass these settings through grammar-extension contexts as well as the
+outer parser. On 2026-10-29, `XQuery4.runP` reset its parser context to
+default settings; the first corpus run then lost an explicit `as item()*`
+annotation and failed `stf-delete-001`. `Cfg.features` now reaches `runP`,
+and a direct public-API guard checks this handoff.

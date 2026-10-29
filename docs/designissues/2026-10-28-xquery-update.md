@@ -116,7 +116,9 @@ https://github.com/danbri/factoidal/issues/1178.
 
 ## Not done
 
-- Static typing (27 tests): https://github.com/danbri/factoidal/issues/1177.
+- Static typing: the [2026-10-29 configuration](2026-10-29-static-typing.md)
+  passes all 27 `upd-StaticTyping` tests. Wider inference and ordered mixed
+  insertion-source types remain under https://github.com/danbri/factoidal/issues/1177.
 - 6 tests with defective expected XML (whitespace):
   https://github.com/danbri/factoidal/issues/1176.
 - Node identity across a snapshot (a rebuilt document has new indices).

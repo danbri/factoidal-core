@@ -127,6 +127,11 @@ abbrev HostFn := HostCall → List Seq → M Seq
 structure Env where
   /-- Optional processor features, shared by XPath and its host languages. -/
   features : FeatureSettings := {}
+  /-- Host declarations for external variables (XPath 4.0 §2.1.1).
+      These are supplied types, not types sampled from evaluated values. -/
+  staticVars : List (QN × IType) := []
+  /-- Declared context item type; the host may declare a document source. -/
+  staticFocus : IType := .item
   docs : Array Doc := #[]
   vars : List (QN × Seq) := []
   /-- The context value (a single item except under `->`). -/
@@ -192,6 +197,7 @@ deriving Inhabited
 def Env.restrictFeatures (e : Env) (features : FeatureSettings) : Env :=
   if features == ({} : FeatureSettings) then e else
   let features : FeatureSettings := {
+    staticTyping := e.features.staticTyping || features.staticTyping
     loadXQueryModule := e.features.loadXQueryModule && features.loadXQueryModule
     transform := e.features.transform && features.transform
     transform30 := e.features.transform30 && features.transform30
