@@ -66,7 +66,7 @@ def evalUpdModule (fuel : Nat) (env : Env) (m : Module) (v10 : Bool := true) : M
 /-- Parse and evaluate an XQuery main module with the update facility. -/
 def evalUpdQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) (v10 : Bool := true) :
     M (Seq × Env) := do
-  let m ← parseModule src env.ns
+  let m ← parseModule src env.ns env.schema.declared
   evalUpdModule fuel env m v10
 
 /-- The result of a query with its updates applied, then a second query
