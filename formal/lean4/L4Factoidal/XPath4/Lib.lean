@@ -69,6 +69,49 @@ def focusFn (which : String) (pos size : Nat) : Item :=
 
 def argN (a : List Seq) (i : Nat) : Seq := a.getD i []
 
+/-- Validate the supplied arguments against the pre-4.0 signatures, before
+    adding defaults or applying the common 4.0 conversion. F&O 2.0/3.0/3.1
+    sections 2, 5, 7, 14, 15 and 17. The existing coercion supplies atomization,
+    cardinality checks, untyped conversion, and anyURI-to-string promotion. -/
+def checkVersionArgs (env : Env) (q : QN) (args : List Seq) : M Unit := do
+  if env.features.version == .v40 || env.compat10 then return ()
+  let v := env.features.version.number
+  let overrides : List (Nat × String) :=
+    if q.uri == nsFN then
+      match q.loc with
+      | "compare" => [(0, "xs:string?"), (1, "xs:string?"), (2, "xs:string")]
+      | "string-length" | "normalize-space" => [(0, "xs:string?")]
+      | "string-join" => (if v < 31 then [(0, "xs:string*")] else []) ++ [(1, "xs:string")]
+      | "normalize-unicode" => [(1, "xs:string")]
+      | "matches" | "tokenize" | "analyze-string" => [(1, "xs:string"), (2, "xs:string")]
+      | "replace" => [(2, "xs:string"), (3, "xs:string")]
+      | "contains" | "starts-with" | "ends-with" | "substring-before" | "substring-after"
+      | "index-of" | "deep-equal" => [(2, "xs:string")]
+      | "distinct-values" | "min" | "max" => [(1, "xs:string")]
+      | "unparsed-text" | "unparsed-text-lines" | "unparsed-text-available" => [(1, "xs:string")]
+      | "error" => if v < 31 && args.length == 1 then [(0, "xs:QName")] else []
+      | "remove" => [(1, "xs:integer")]
+      | _ => []
+    else if q.uri == nsMAP && q.loc == "merge" then [(1, "map(*)")]
+    else []
+  for (i, ty) in overrides do
+    if let some arg := args[i]? then
+      match env.coerce (parseTy ty) arg with
+      | .ok _ => pure ()
+      | .error _ => err "XPTY0004" ("argument type of " ++ q.show ++ " before 4.0")
+  if q.uri == nsFN && q.loc == "remove" then
+    for a in ← env.atomize (argN args 1) do
+      if !(a.is .integer || a.ty == .untyped) then
+        err "XPTY0004" "remove position must be an integer before 4.0"
+  if q.uri == nsFN && ["local-name-from-QName", "namespace-uri-from-QName", "prefix-from-QName"].contains q.loc then
+    for a in ← env.atomize (argN args 0) do
+      if !a.is .qname then err "XPTY0004" "QName argument required"
+
+/-- The default version does not add any argument checks. -/
+theorem checkVersionArgs_v40 (env : Env) (q : QN) (args : List Seq) :
+    checkVersionArgs { env with features := { env.features with version := .v40 } } q args =
+      pure () := rfl
+
 def optAtom (s : Seq) : Option Atomic :=
   match s with
   | [.atom x] => some x
@@ -247,11 +290,18 @@ def compileReVersion (version : LanguageVersion) (p f : String) : M Regex.Compil
   else if version.number < 30 && f.contains 'q' then err "FORX0001" "q requires F&O 3.0"
   else if maxQuant p > 1000 then err "FOER0000" "implementation limit: regex quantifier above 1000"
   else match Regex.compile p f with
-    | .ok r => pure r
+    -- The shared ordered matcher treats anchors as zero-width assertions.
+    -- The sentinel matcher consumes them, so repeated anchors such as ^{2}
+    -- need the ordered path. Escaped anchors and q-mode literals also remain
+    -- correct on this path; the parser has already distinguished them.
+    | .ok r => pure { r with ordered := p.contains '^' || p.contains '$' }
     | .error e => regexErr e
 
 theorem compileReVersion_v40 (p f : String) :
     compileReVersion .v40 p f = compileRe p f := rfl
+
+#guard ((compileReVersion .v31 "^{2}alpha" "").toOption.map
+  (fun r => Regex.isMatch r "alpha" && !Regex.isMatch r "zalpha")).getD false
 
 /-- F&O 3.1 analyze-string, replace and tokenize reject a pattern that
     matches the zero-length string, independently of the input text. -/
@@ -398,6 +448,29 @@ def minMaxC (c : Coll) (isMax : Bool) (as : List Atomic) : M Seq := do
     else minMax isMax as
   | [] => pure []
 
+/-- F&O 2.0/3.1 aggregate validation precedes NaN selection; all numeric
+    inputs participate in promotion, and anyURI values become strings. -/
+def minMaxVersion (version : LanguageVersion) (c : Coll) (isMax : Bool)
+    (as : List Atomic) : M Seq := do
+  if version == .v40 then return ← minMaxC c isMax as
+  let as ← as.mapM (fun a => do
+    let a ← untypedToDouble a
+    pure (if a.is .anyURI then Atomic.ofStr a.str else a))
+  if as.any (fun a => ["QName", "NOTATION", "gYear", "gYearMonth", "gMonth", "gMonthDay", "gDay", "binary"].contains a.ty.prim ||
+      (a.ty.prim == "duration" && !(a.is .yearMonthDuration || a.is .dayTimeDuration))) then
+    err "FORG0006" "aggregate type is not ordered before 4.0"
+  if as.any Atomic.isNumeric && !as.all Atomic.isNumeric then
+    err "FORG0006" "numeric aggregate mixed with another primitive type"
+  if as.any (·.is .yearMonthDuration) && !as.all (·.is .yearMonthDuration) then
+    err "FORG0006" "incompatible duration types"
+  if as.any (·.is .dayTimeDuration) && !as.all (·.is .dayTimeDuration) then
+    err "FORG0006" "incompatible duration types"
+  minMaxC c isMax as
+
+theorem minMaxVersion_v40 (c : Coll) (isMax : Bool) (as : List Atomic) :
+    minMaxVersion .v40 c isMax as = minMaxC c isMax as := by
+  simp only [minMaxVersion, show (LanguageVersion.v40 == .v40) = true from rfl, ↓reduceIte]
+
 /-! ## Sorting -/
 
 /-- Stable merge sort with a comparator that may fail. -/
@@ -452,6 +525,33 @@ def sortCmpKeys : List Atomic → List Atomic → M Ordering
     | .eq => sortCmpKeys as bs
     | o => pure o
 
+/-- Earlier sorting uses numeric promotion and only the earlier ordered
+    value spaces; the common 4.0 comparator remains the default. -/
+def sortCmpAtomVersion (version : LanguageVersion) (a b : Atomic) : M Ordering := do
+  if version == .v40 then return ← sortCmpAtom a b
+  if a.ty.prim == "binary" && b.ty.prim == "binary" && a.ty != b.ty then
+    err "XPTY0004" "different binary types cannot be ordered before 4.0"
+  if ["QName", "NOTATION", "gYear", "gYearMonth", "gMonth", "gMonthDay", "gDay"].contains a.ty.prim ||
+      ["QName", "NOTATION", "gYear", "gYearMonth", "gMonth", "gMonthDay", "gDay"].contains b.ty.prim then
+    err "XPTY0004" "type is not ordered before 4.0"
+  if a.ty.prim == "duration" && b.ty.prim == "duration" &&
+      !((a.is .yearMonthDuration && b.is .yearMonthDuration) || (a.is .dayTimeDuration && b.is .dayTimeDuration)) then
+    err "XPTY0004" "duration types cannot be ordered before 4.0"
+  match a.num?, b.num? with
+  | some x, some y =>
+    let rank := max x.rank y.rank
+    sortCmpAtom (x.promote rank).atomic (y.promote rank).atomic
+  | _, _ => sortCmpAtom a b
+
+def sortCmpKeysVersion (version : LanguageVersion) : List Atomic → List Atomic → M Ordering
+  | [], [] => pure .eq
+  | [], _ => pure .lt
+  | _, [] => pure .gt
+  | a :: as, b :: bs => do
+    match ← sortCmpAtomVersion version a b with
+    | .eq => sortCmpKeysVersion version as bs
+    | o => pure o
+
 /-! ## Maps and arrays -/
 
 def mapGet (kvs : List (Atomic × Seq)) (k : Atomic) : Option Seq :=
@@ -464,6 +564,32 @@ def mapPut (kvs : List (Atomic × Seq)) (k : Atomic) (v : Seq) : List (Atomic ×
 
 def mapRemove (kvs : List (Atomic × Seq)) (k : Atomic) : List (Atomic × Seq) :=
   kvs.filter (fun (k2, _) => !atomicEqual k k2)
+
+/-- F&O 3.1 keeps hexBinary and base64Binary keys in distinct value spaces. -/
+def mapKeyEqualVersion (version : LanguageVersion) (a b : Atomic) : Bool :=
+  if version == .v40 then atomicEqual a b
+  else if a.ty.prim == "binary" && b.ty.prim == "binary" && a.ty != b.ty then false
+  else atomicEqual a b
+
+def mapGetVersion (version : LanguageVersion) (kvs : List (Atomic × Seq)) (k : Atomic) : Option Seq :=
+  if version == .v40 then mapGet kvs k
+  else (kvs.find? (fun (k2, _) => mapKeyEqualVersion version k k2)).map (·.2)
+
+def mapPutVersion (version : LanguageVersion) (kvs : List (Atomic × Seq)) (k : Atomic) (v : Seq) : List (Atomic × Seq) :=
+  if version == .v40 then mapPut kvs k v
+  else if kvs.any (fun (k2, _) => mapKeyEqualVersion version k k2) then
+    kvs.map (fun (k2, v2) => if mapKeyEqualVersion version k k2 then (k, v) else (k2, v2))
+  else kvs ++ [(k, v)]
+
+def mapRemoveVersion (version : LanguageVersion) (kvs : List (Atomic × Seq)) (k : Atomic) : List (Atomic × Seq) :=
+  if version == .v40 then mapRemove kvs k
+  else kvs.filter (fun (k2, _) => !mapKeyEqualVersion version k k2)
+
+theorem mapGetVersion_v40 (kvs : List (Atomic × Seq)) (k : Atomic) :
+    mapGetVersion .v40 kvs k = mapGet kvs k := rfl
+
+theorem mapPutVersion_v40 (kvs : List (Atomic × Seq)) (k : Atomic) (v : Seq) :
+    mapPutVersion .v40 kvs k v = mapPut kvs k v := rfl
 
 def asMap (s : Seq) : M (List (Atomic × Seq)) :=
   match s with
@@ -498,6 +624,23 @@ def mergeMaps (maps : List (List (Atomic × Seq))) (dup : String) : M (List (Ato
         | "reject" => err "FOJS0003" "duplicate key in map:merge"
         | _ => err "FOJS0005" ("invalid duplicates option " ++ dup)
   pure acc.toList
+
+def mergeMapsVersion (version : LanguageVersion) (maps : List (List (Atomic × Seq)))
+    (dup : String) : M (List (Atomic × Seq)) := do
+  if version == .v40 then return ← mergeMaps maps dup
+  let mut acc := []
+  for m in maps do
+    for (k, v) in m do
+      match mapGetVersion version acc k with
+      | none => acc := acc ++ [(k, v)]
+      | some old =>
+        match dup with
+        | "use-first" | "use-any" => pure ()
+        | "use-last" => acc := mapPutVersion version acc k v
+        | "combine" => acc := mapPutVersion version acc k (old ++ v)
+        | "reject" => err "FOJS0003" "duplicate key in map:merge"
+        | _ => err "FOJS0005" ("invalid duplicates option " ++ dup)
+  pure acc
 
 def optionStr (opts : Seq) (key : String) (dflt : String) : String :=
   match opts with
@@ -576,6 +719,50 @@ def atomicEqualTz (tz : Option Int) (a b : Atomic) : Bool :=
     | .ok (some .eq) => true
     | _ => false
   | _, _, _ => atomicEqual a b
+
+/-- Before 4.0, equality in distinct-values and deep-equal promotes each
+    numeric pair to its common type. Map keys retain exact numeric equality. -/
+def legacyValueEqual (tz : Int) (a b : Atomic) : Bool :=
+  let a := if a.ty == .untyped then Atomic.ofStr a.str else a
+  let b := if b.ty == .untyped then Atomic.ofStr b.str else b
+  if a.ty.prim == "binary" && b.ty.prim == "binary" && a.ty != b.ty then false
+  else match a.num?, b.num? with
+    | some x, some y =>
+      let rank := max x.rank y.rank
+      atomicEqualTz (some tz) (x.promote rank).atomic (y.promote rank).atomic
+    | _, _ => atomicEqualTz (some tz) a b
+
+def distinctAtomsLegacy (c : Coll) (as : List Atomic) (tz : Int) : List Atomic :=
+  as.foldl (fun acc a =>
+    if acc.any (fun b => legacyValueEqual tz (collProxy c a) (collProxy c b)) then acc else acc ++ [a]) []
+
+/-- Earlier deep equality has no function-item equivalence operation. -/
+def Env.deepEqLegacy (e : Env) : Nat → Seq → Seq → M Bool
+  | 0, _, _ => err "FOER0000" "deep-equal nesting limit"
+  | f + 1, xs, ys => do
+    if xs.length != ys.length then return false
+    for (x, y) in xs.zip ys do
+      let same ← match x, y with
+        | .atom a, .atom b => pure (legacyValueEqual e.tz a b)
+        | .node a, .node b => pure (e.nodeDeepEq 100000 a b)
+        | .map ka, .map kb => do
+          if ka.length != kb.length then pure false else
+          let mut same := true
+          for (k, v) in ka do
+            match mapGetVersion e.features.version kb k with
+            | some w => if !(← e.deepEqLegacy f v w) then same := false
+            | none => same := false
+          pure same
+        | .arr ma, .arr mb => do
+          if ma.length != mb.length then pure false else
+          let mut same := true
+          for (a, b) in ma.zip mb do
+            if !(← e.deepEqLegacy f a b) then same := false
+          pure same
+        | .fn _, _ | _, .fn _ => err "FOTY0015" "deep-equal cannot compare function items before 4.0"
+        | _, _ => pure false
+      if !same then return false
+    pure true
 
 def distinctAtomsSlow (as : List Atomic) (tz : Option Int := none) : List Atomic :=
   as.foldl (fun acc a =>
@@ -728,11 +915,11 @@ def fnTable : List (String × LibFn) := [
     if c.isCodepoint then pure (sBool ((strOf (argN a 0)).endsWith (strOf (argN a 1))))
     else pure (sBool (c.endsWith (strOf (argN a 0)) (strOf (argN a 1))))),
   ent "translate" (fun _ _ a => pure (sStr (translateStr (strOf (argN a 0)) (strOf (argN a 1)) (strOf (argN a 2))))),
-  ent "codepoints-to-string" (fun _ _ a => do
+  ent "codepoints-to-string" (fun _ e a => do
     let mut out : Array Char := #[]
     for i in argN a 0 do
       let n := intOf [i]
-      if n < 0 || !isXmlCp n.toNat then err "FOCH0001" ("invalid codepoint " ++ toString n)
+      if n < 0 || !(if e.features.version == .v40 then isXmlCp n.toNat else XML.isXmlCharCode n.toNat) then err "FOCH0001" ("invalid codepoint " ++ toString n)
       out := out.push (Char.ofNat n.toNat)
     pure (sStr (String.ofList out.toList))),
   ent "string-to-codepoints" (fun _ _ a => pure ((cps (strOf (argN a 0))).map (fun c => .atom (Atomic.ofInt c.toNat)))),
@@ -856,7 +1043,8 @@ def fnTable : List (String × LibFn) := [
   ent "distinct-values" (fun _ e a => do
     let c ← e.collation (argN a 1)
     let as := (argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)
-    if c.isCodepoint then pure (seqOfAtoms (distinctAtoms as (some e.tz)))
+    if e.features.version != .v40 then pure (seqOfAtoms (distinctAtomsLegacy c as e.tz))
+    else if c.isCodepoint then pure (seqOfAtoms (distinctAtoms as (some e.tz)))
     else pure (seqOfAtoms (distinctAtomsC c as (some e.tz)))),
   ent "duplicate-values" (fun _ e a => do
     let c ← e.collation (argN a 1)
@@ -874,7 +1062,8 @@ def fnTable : List (String × LibFn) := [
       let xs := argN a 0
       let t := collProxy c t
       pure ((List.range xs.length).filterMap (fun (i : Nat) => match xs[i]? with
-        | some (.atom x) => if eqForIndexOf (collProxy c x) t then some (.atom (Atomic.ofInt (i + 1))) else none
+        | some (.atom x) => if (if e.features.version == .v40 then eqForIndexOf (collProxy c x) t
+            else !(x.num?.map (·.toFloat.isNaN)).getD false && !(t.num?.map (·.toFloat.isNaN)).getD false && legacyValueEqual e.tz (collProxy c x) t) then some (.atom (Atomic.ofInt (i + 1))) else none
         | _ => none))
     | none => pure []),
   ent "deep-equal" (fun _ e a => do
@@ -883,7 +1072,9 @@ def fnTable : List (String × LibFn) := [
     | [.map []] => pure ()
     | [.atom c] => collationOk [.atom c]
     | _ => err "XPST0017" "fn:deep-equal options are not implemented"
-    pure (sBool (e.deepEq (argN a 0) (argN a 1)))),
+    let same ← if e.features.version == .v40 then pure (e.deepEq (argN a 0) (argN a 1))
+      else e.deepEqLegacy 100000 (argN a 0) (argN a 1)
+    pure (sBool same)),
   ent "zero-or-one" (fun _ _ a => if (argN a 0).length ≤ 1 then pure (argN a 0) else err "FORG0003" "more than one item"),
   ent "one-or-more" (fun _ _ a => if (argN a 0).length ≥ 1 then pure (argN a 0) else err "FORG0004" "empty sequence"),
   ent "exactly-one" (fun _ _ a => if (argN a 0).length == 1 then pure (argN a 0) else err "FORG0005" "not exactly one item"),
@@ -912,10 +1103,10 @@ def fnTable : List (String × LibFn) := [
       | _ => pure []),
   ent "max" (fun _ e a => do
     let c ← e.collation (argN a 1)
-    minMaxC c true ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none))),
+    minMaxVersion e.features.version c true ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none))),
   ent "min" (fun _ e a => do
     let c ← e.collation (argN a 1)
-    minMaxC c false ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none))),
+    minMaxVersion e.features.version c false ((argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none))),
   ent "all-equal" (fun _ e a => do
     let c ← e.collation (argN a 1)
     let as := (argN a 0).filterMap (fun i => match i with | .atom x => some (collProxy c x) | _ => none)
@@ -1043,7 +1234,7 @@ def fnTable : List (String × LibFn) := [
       match argN a 2 with
       | [] => pure (x, (← e.atomize [x]).map (collProxy c))
       | f :: _ => pure (x, (← e.atomize (← h.callN f [[x]])).map (collProxy c)))
-    let sorted ← msortM (fun p q => do pure ((← sortCmpKeys p.2 q.2) == .lt)) 64 keyed
+    let sorted ← msortM (fun p q => do pure ((← sortCmpKeysVersion e.features.version p.2 q.2) == .lt)) 64 keyed
     pure (sorted.map (·.1))),
   ent "sort-with" (fun h _ a => do
     let xs := argN a 0
@@ -1074,7 +1265,22 @@ def fnTable : List (String × LibFn) := [
     | some k => sInt k | none => [])),
   ent "function-name" (fun _ _ a => pure (match argN a 0 with
     | [.fn (.builtin q _)] => single (Atomic.ofQN q)
+    | [.fn (.inline _ _ _ _ cl)] =>
+      -- a declared function keeps its name in its closure (XQuery prolog)
+      match cl.find? (fun (k, _) => k.uri == "#xqn") with
+      | some (k, _) => single (Atomic.ofQN { uri := k.pfx, loc := k.loc })
+      | none => []
     | _ => [])),
+  ent "function-annotations" (fun _ _ a =>
+    let rec go : Nat → Item → Seq
+      | 0, _ => []
+      | f + 1, .fn (.papp g _) => go f g
+      | _, .fn (.inline _ _ _ _ cl) =>
+        match cl.find? (fun (k, _) => k.uri == "#xqa") with
+        | some (_, s) => s
+        | none => []
+      | _, _ => []
+    pure (go 10000 ((argN a 0).headD default))),
   -- F&O 4.0 §17.1.4: an XPath function item has no annotations
   ent "function-annotations" (fun _ _ a => match argN a 0 with
     | [_] => pure []
@@ -1148,11 +1354,15 @@ def fnTable : List (String × LibFn) := [
       if ok then found := true; break
     pure (sBool found)),
   -- errors and diagnostics
-  ent "error" (fun _ _ a => do
-    let (code, uri) := match optAtom (argN a 0) with
-      | some ⟨_, .qn q⟩ => (q.loc, if q.uri == nsERR then "" else if q.uri == "" then "#none" else q.uri)
-      | _ => ("FOER0000", "")
-    throw { code, msg := strOf (argN a 1), uri }),
+  ent "error" (fun _ e a => do
+    let (code, uri, pfx, noNs) := match optAtom (argN a 0) with
+      | some ⟨_, .qn q⟩ => (q.loc, (if q.uri == nsERR then "" else if q.uri == "" then "#none" else q.uri), q.pfx, q.uri == "")
+      | _ => ("FOER0000", "", "err", false)
+    -- the error value: atomic items as they are, other items atomized
+    let value := (argN a 2).flatMap (fun i => match i with
+      | .atom x => [x]
+      | _ => match e.atomize [i] with | .ok xs => xs | .error _ => [])
+    throw { code, msg := strOf (argN a 1), uri, pfx, noNs, value }),
   ent "trace" (fun _ _ a => pure (argN a 0)),
   ent "message" (fun _ _ _ => pure []),
   ent "default-collation" (fun _ e _ => pure (sStr e.defaultCollation)),
@@ -1445,7 +1655,7 @@ def fnTable2 : List (String × LibFn) := [
     match optAtom (argN a 0) with
     | some ⟨_, .qn q⟩ =>
         let k := intOf (argN a 1)
-        if k < 0 || !e.features.functionEnabled q then pure [] else
+        if k < 0 || !e.features.functionEnabled q || !e.features.arityEnabled q k.toNat then pure [] else
         if q.uri == nsXS then
           if (xsCtorType? q.loc).isNone then pure []
           else if k == 1 then pure [.fn (.builtin q 1)]
@@ -1892,6 +2102,8 @@ def fnTable3 : List (String × LibFn) := [
     | some n => pure (sStr (e.pathOf n))
     | none => pure []),
   ent "resolve-uri" (fun _ e a => do
+    if e.features.version != .v40 && (strOf (argN a 1)).contains '#' then
+      err "FORG0002" "the base URI must not contain a fragment before 4.0"
     match optAtom (argN a 0) with
     | none => pure []
     | some h => pure (single (Atomic.ofUri (← resolveUriFn e.baseUri h.str (optAtom (argN a 1) |>.map Atomic.str))))),
@@ -1928,28 +2140,28 @@ def mapTable : List (String × LibFn) := [
   ent "size" (fun _ _ a => do pure (sInt (← asMap (argN a 0)).length)),
   ent "keys" (fun _ _ a => do pure ((← asMap (argN a 0)).map (fun (k, _) => .atom k))),
   ent "items" (fun _ _ a => do pure ((← asMap (argN a 0)).flatMap (·.2))),
-  ent "contains" (fun _ _ a => do
+  ent "contains" (fun _ e a => do
     let m ← asMap (argN a 0)
     match optAtom (argN a 1) with
-    | some k => pure (sBool (mapGet m k).isSome)
+    | some k => pure (sBool (mapGetVersion e.features.version m k).isSome)
     | none => pure (sBool false)),
-  ent "get" (fun h _ a => do
+  ent "get" (fun h e a => do
     let m ← asMap (argN a 0)
     match optAtom (argN a 1) with
-    | some k => match mapGet m k with
+    | some k => match mapGetVersion e.features.version m k with
       | some v => pure v
       -- F&O 4.0 §18.4.11: the default value is returned as it is
       | none => pure (argN a 2)
     | none => pure []),
-  ent "put" (fun _ _ a => do
+  ent "put" (fun _ e a => do
     let m ← asMap (argN a 0)
     match optAtom (argN a 1) with
-    | some k => pure (mapItem (mapPut m k (argN a 2)))
+    | some k => pure (mapItem (mapPutVersion e.features.version m k (argN a 2)))
     | none => err "XPTY0004" "map:put key"),
-  ent "remove" (fun _ _ a => do
+  ent "remove" (fun _ e a => do
     let m ← asMap (argN a 0)
     let ks := (argN a 1).filterMap (fun i => match i with | .atom x => some x | _ => none)
-    pure (mapItem (ks.foldl mapRemove m))),
+    pure (mapItem (ks.foldl (mapRemoveVersion e.features.version) m))),
   ent "entry" (fun _ _ a =>
     match optAtom (argN a 0) with
     | some k => pure (mapItem [(k, argN a 1)])
@@ -1959,7 +2171,7 @@ def mapTable : List (String × LibFn) := [
     | some k => pure (mapItem [(Atomic.ofStr "key", [.atom k]), (Atomic.ofStr "value", argN a 1)])
     | none => err "XPTY0004" "map:pair key"),
   ent "empty" (fun _ _ a => do pure (sBool (← asMap (argN a 0)).isEmpty)),
-  ent "merge" (fun h _ a => do
+  ent "merge" (fun h e a => do
     let maps ← (argN a 0).mapM (fun i => asMap [i])
     -- F&O 4.0 §18.4.17: `duplicates` is a keyword or a function
     -- fn(item()*, item()*) as item()* that combines the two values
@@ -1971,7 +2183,7 @@ def mapTable : List (String × LibFn) := [
     match combineFn with
     | none =>
       let dup := optionStr (argN a 1) "duplicates" "use-first"
-      pure (mapItem (← mergeMaps maps dup))
+      pure (mapItem (← mergeMapsVersion e.features.version maps dup))
     | some f =>
       let mut acc : MB := {}
       for m in maps do
@@ -2214,7 +2426,7 @@ def arrayTable : List (String × LibFn) := [
       match argN a 2 with
       | [] => pure (m, (← e.atomize m).map (collProxy c))
       | f :: _ => pure (m, (← e.atomize (← h.callN f [m])).map (collProxy c)))
-    let sorted ← msortM (fun p q => do pure ((← sortCmpKeys p.2 q.2) == .lt)) 64 keyed
+    let sorted ← msortM (fun p q => do pure ((← sortCmpKeysVersion e.features.version p.2 q.2) == .lt)) 64 keyed
     pure (arrItem (sorted.map (·.1)))),
   ent "slice" (fun _ _ a => do
     let ms ← asArr (argN a 0)

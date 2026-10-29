@@ -36,12 +36,23 @@ theorem string_conversion_agrees (e : Literal) :
     e.atomic.str = e.oldValue.toStr := by
   cases e <;> rfl
 
+set_option maxRecDepth 2048 in
 /-- The XPath4 evaluator produces the corresponding value for every
     common literal, with compatibility mode selected and nonzero fuel. -/
 theorem eval_literal (fuel : Nat) (env : Env) (e : Literal) :
     eval (fuel + 1) { env with compat10 := true } e.newExpr =
       .ok [Item.atom e.atomic] := by
-  simp only [Literal.newExpr, eval]
+  rfl
+
+/-- Applying the default (version 4.0, all features enabled) configuration
+    preserves every evaluation, including errors and fuel exhaustion. -/
+theorem eval_default_configuration (fuel : Nat) (env : Env) (e : Expr) :
+    eval fuel (env.restrictFeatures {}) e = eval fuel env e := rfl
+
+/-- Explicit version 4.0 and the default version select the same evaluator. -/
+theorem eval_version40_default (fuel : Nat) (env : Env) (e : Expr) :
+    eval fuel { env with features := { version := .v40 } } e =
+      eval fuel { env with features := {} } e := rfl
 
 /-- The actual compatibility conversion of a singleton string argument
     agrees with XPath 1.0 string conversion on the common value fragment. -/
@@ -78,6 +89,8 @@ private def resultText (r : M Seq) : String :=
 
 #print axioms string_conversion_agrees
 #print axioms eval_literal
+#print axioms eval_default_configuration
+#print axioms eval_version40_default
 #print axioms compatibility_string_argument
 
 end L4Factoidal.XPath4.Compatibility

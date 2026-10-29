@@ -695,6 +695,7 @@ def isNaNAtom (a : Atomic) : Bool :=
 def minMax4 (isMax : Bool) : LibFn := fun _ e a => do
   let c ← e.collation (argN a 1)
   let xs ← e.atomize (argN a 0)
+  if e.features.version != .v40 then return ← minMaxVersion e.features.version c isMax xs
   let mut best : Option Atomic := none
   for x0 in xs do
     let x ← if x0.ty == .untyped then castAtomic x0 (.b .double) else pure x0
@@ -808,26 +809,48 @@ def Env.idTarget (e : Env) (a : List Seq) : M NodeRef := do
     pure root
   | _ => err "XPTY0004" "the second argument must be a node"
 
-def idFn : LibFn := fun _ e a => do
+/-- Is a node's type annotation `xs:ID` or derived from it (the is-id
+    property of a schema-validated node, XDM 4.0 §5.5)? -/
+def Env.isIdTyped (e : Env) (t : Option QN) : Bool :=
+  match t with
+  | some q => e.schema.derives q { uri := nsXS, loc := "ID" }
+  | none => false
+
+/-- The is-idrefs property: a type annotation `xs:IDREF`, `xs:IDREFS`, or
+    one derived from them. -/
+def Env.isIdrefTyped (e : Env) (t : Option QN) : Bool :=
+  match t with
+  | some q => e.schema.derives q { uri := nsXS, loc := "IDREF" } || e.schema.derives q { uri := nsXS, loc := "IDREFS" }
+  | none => false
+
+/-- `fn:id` and `fn:element-with-id` (F&O 4.0 §14.5.2, §14.5.3): the
+    elements with an ID attribute (`xml:id`, DTD or schema typed) whose
+    value is a candidate, and for an element whose own type is an ID,
+    the element itself (`fn:id`) or its parent (`fn:element-with-id`). -/
+def idFnWith (withId : Bool) : LibFn := fun _ e a => do
   let root ← e.idTarget a
   let cands := idTokens (argN a 0)
   let d := e.doc root
-  let mut out : Array Item := #[]
+  let mut hits : Array Nat := #[]
   for i in [0:d.nodes.size] do
     let r := d.get i
     if r.kind != .element then continue
     let hit := r.attrs.toList.any (fun ai =>
       let ar := d.get ai
       let isId := (ar.name.uri == nsXML && ar.name.loc == "id") ||
-        d.idAttrs.contains (qnameAsWritten r.name, qnameAsWritten ar.name) ||
-        -- an attribute with a schema type derived from xs:ID
-        ar.tann.any (fun t => e.schema.derives t { uri := nsXS, loc := "ID" })
+        d.idAttrs.contains (qnameAsWritten r.name, qnameAsWritten ar.name) || e.isIdTyped ar.tann
       isId && cands.contains (normSpace ar.value))
-    -- an element whose schema type is derived from xs:ID is itself an ID
-    let selfId := r.tann.any (fun t => e.schema.derives t { uri := nsXS, loc := "ID" }) &&
-      cands.contains (normSpace (d.stringValue i))
-    if hit || selfId then out := out.push (.node (root.at i))
-  pure out.toList
+    if hit then hits := hits.push i
+    if e.isIdTyped r.tann && cands.contains (normSpace (d.stringValue i)) then
+      if !withId then hits := hits.push i
+      else match r.parent with
+        | some p => if (d.get p).kind == .element then hits := hits.push p
+        | none => pure ()
+  -- in document order, without duplicates
+  let idx := (hits.toList.eraseDups).mergeSort (· ≤ ·)
+  pure (idx.map (fun i => .node (root.at i)))
+
+def idFn : LibFn := idFnWith false
 
 def idrefFn : LibFn := fun _ e a => do
   let root ← e.idTarget a
@@ -836,12 +859,16 @@ def idrefFn : LibFn := fun _ e a => do
   let mut out : Array Item := #[]
   for i in [0:d.nodes.size] do
     let r := d.get i
+    let typed := e.isIdrefTyped r.tann
+    if r.kind == .element then
+      -- an element whose own type is IDREF or IDREFS (is-idrefs)
+      if typed && ((normSpace (d.stringValue i)).splitOn " ").any (fun t => cands.contains t) then
+        out := out.push (.node (root.at i))
+      continue
     if r.kind != .attribute then continue
     let some p := r.parent | continue
     let pr := d.get p
-    let typed := r.tann.any (fun t => e.schema.derives t { uri := nsXS, loc := "IDREF" } ||
-      e.schema.derives t { uri := nsXS, loc := "IDREFS" })
-    if !typed && !d.idrefAttrs.contains (qnameAsWritten pr.name, qnameAsWritten r.name) then continue
+    if !(typed || d.idrefAttrs.contains (qnameAsWritten pr.name, qnameAsWritten r.name)) then continue
     let toks := (normSpace r.value).splitOn " "
     if toks.any (fun t => cands.contains t) then out := out.push (.node (root.at i))
   pure out.toList
@@ -880,6 +907,6 @@ def fn4Table : List (String × LibFn) :=
    ("in-scope-namespaces", inScopeNamespacesFn), ("compare", compareFn),
    ("decode-from-uri", decodeFromUriFn), ("unparsed-binary", unparsedBinaryFn),
    ("min", minMax4 false), ("max", minMax4 true),
-   ("id", idFn), ("element-with-id", idFn), ("idref", idrefFn)]
+   ("id", idFn), ("element-with-id", idFnWith true), ("idref", idrefFn)]
 
 end L4Factoidal.XPath4

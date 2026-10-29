@@ -161,7 +161,7 @@ def jvShape : JV → String
 /-! ## fn:parse-xml is the project's XML parser -/
 
 open L4Factoidal.XML in
-/-- With no options, `fn:parse-xml` on a string that the XML parser
+/-- In version 4.0 with no options, `fn:parse-xml` on a string that the XML parser
     (`XML.Parser`, the well-formedness decision) accepts, that is
     namespace-well-formed and that needs no external resource, returns the
     document node of `Doc.ofNodes` over the parser's document children
@@ -169,6 +169,7 @@ open L4Factoidal.XML in
     only normalizes the value of `xml:id` attributes): the node table is
     built from `XML.Document.children` and nothing else. -/
 theorem parseXml_eq (h : Hooks) (e : Env) (s : String) (d : Document)
+    (hv : e.features.version = .v40)
     (hp : parseDecodedXMLWith (fun _ => none) s = .ok d)
     (hns : d.namespaceWellFormed = true)
     (hsys : d.doctype.bind (·.systemId) = none)
@@ -177,7 +178,8 @@ theorem parseXml_eq (h : Hooks) (e : Env) (s : String) (d : Document)
       .ok [({ Doc.ofNodes (d.children.map (normXmlId 100000)) with baseUri := e.baseUri }).rootItem
         (runtimeDocId "parse-xml" s)] := by
   simp [parseXmlFn, parseOpts, parseDocument, docKids, checkOptionKeys, optLookup, optBool, optionStr,
-    bytesOfAtomic, sStr, single, optAtom, argN, Atomic.ofStr, Atomic.str, hp, hns, hsys, hext]
+    bytesOfAtomic, sStr, single, optAtom, argN, Atomic.ofStr, Atomic.str, hp, hns, hsys, hext, hv,
+    show (LanguageVersion.v40 != .v40) = false from rfl]
   cases d.doctype <;> rfl
 
 /-! ## One function library with SPARQL, RIF and RML

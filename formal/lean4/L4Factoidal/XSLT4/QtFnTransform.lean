@@ -76,7 +76,7 @@ def propString (e : Env) (v : Seq) : String :=
     `post-process`). -/
 def fnTransform (env : Env) (applyF : Item → List Seq → M Seq) (args : List Seq) : M Seq := do
   let opts0 := args.headD []
-  checkOptionKeys opts0 transformOptionNames
+  if env.features.version == .v40 then checkOptionKeys opts0 transformOptionNames
   let opts ← match opts0 with
     | [.map kvs] => do
       let mut out : List (Atomic × Seq) := []

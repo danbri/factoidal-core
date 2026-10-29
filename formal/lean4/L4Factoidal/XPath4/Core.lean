@@ -548,6 +548,32 @@ def findSig (q : QN) (arity : Nat) : Option Sig :=
 def findSigAny (q : QN) : Option Sig :=
   sigs.find? (fun s => s.uri == q.uri && s.loc == q.loc)
 
+/-- Earlier function items expose the earlier callback and node parameter
+    types. The remaining signature data is shared with the 4.0 catalog. -/
+def Sig.forVersion (s : Sig) (version : LanguageVersion) : Sig :=
+  if version == .v40 then s else
+  let override (i : Nat) : Option IType :=
+    if s.uri == nsFN then
+      match s.loc, i with
+      | "name", 0 | "local-name", 0 | "namespace-uri", 0 | "root", 0 => some (parseTy "node()?")
+      | "filter", 1 => some (parseTy "function(item()) as xs:boolean")
+      | "for-each", 1 => some (parseTy "function(item()) as item()*")
+      | "for-each-pair", 2 => some (parseTy "function(item(), item()) as item()*")
+      | _, _ => none
+    else if s.uri == nsARR then
+      match s.loc, i with
+      | "filter", 1 => some (parseTy "function(item()*) as xs:boolean")
+      | "for-each", 1 => some (parseTy "function(item()*) as item()*")
+      | "for-each-pair", 2 => some (parseTy "function(item()*, item()*) as item()*")
+      | _, _ => none
+    else none
+  { s with ps := (s.ps.zip (List.range s.ps.length)).map (fun (p, i) =>
+      match override i with | some ty => { p with ty } | none => p) }
+
+def findSigVersion (version : LanguageVersion) (q : QN) (arity : Nat) : Option Sig :=
+  if version == .v40 then findSig q arity
+  else (findSig q arity).map (·.forVersion version)
+
 def Item.fnArity : Item → Option Nat
   | .fn f => some f.arity
   | .map _ => some 1
@@ -562,6 +588,51 @@ def occLe (a b : Occ) : Bool :=
   | .opt, .opt => true
   | .plus, .plus => true
   | _, _ => false
+
+/-- Name test subsumption (XPath 4.0 §3.3.2.4): every name that `a`
+    matches, `b` matches. `none` is the wildcard. -/
+def nameTestLe : Option NameTest → Option NameTest → Bool
+  | _, none | _, some .any => true
+  | none, some _ | some .any, some _ => false
+  | some (.name q), some (.ns u) => q.uri == u
+  | some (.name q), some (.loc l) => q.loc == l
+  | some (.name q), some (.name r) => q.uri == r.uri && q.loc == r.loc
+  | some (.ns u), some (.ns v) => u == v
+  | some (.loc l), some (.loc m) => l == m
+  | _, _ => false
+
+/-- Is the type named `a` the type named `b` or derived from it (the
+    built-in types; a user-defined type only names itself)? -/
+def typeNameLe (a b : QN) : Bool :=
+  (a.uri == b.uri && a.loc == b.loc) ||
+  (b.uri == nsXS && b.loc == "anyType") ||
+  (a.uri == nsXS && b.uri == nsXS && b.loc == "numeric" &&
+    (a.loc == "numeric" || ["decimal", "float", "double"].any (fun n =>
+      match atypeOfName? a.loc, atypeOfName? n with
+      | some x, some y => x.derives y
+      | _, _ => false))) ||
+  (a.uri == nsXS && b.uri == nsXS &&
+    match atypeOfName? a.loc, atypeOfName? b.loc with
+    | some x, some y => x.derives y || (b.loc == "anySimpleType")
+    | _, _ => false)
+
+/-- The occurrence of `t` made optional: the value type of a map seen as
+    a function (`V?`). -/
+def optOf : IType → IType
+  | .empty => .empty
+  | .seq t o => .seq t (match o with | .one => .opt | .plus => .star | x => x)
+  | t => .seq t .opt
+
+/-- The disjoint parts of a type that a choice may cover part by part
+    (XPath 4.0 §3.3.2.2): `item()` is nodes, atomic values and
+    functions; `node()` is XNodes and JNodes; `xnode()` is the seven
+    node kinds. -/
+def typeParts : IType → Option (List IType)
+  | .item => some [.anyNode, .atomic (.b .anyAtomicType), .anyFn]
+  | .anyNode => some [.xnode, .jnodeT .any none]
+  | .xnode => some [.elem none, .attr none, .text, .comment, .pi none, .doc none, .nsNode]
+  | .doc (some (.choice ts)) => some (ts.map (fun t => .doc (some t)))
+  | _ => none
 
 /-- Sequence-type subtyping (XPath 4.0 §3.3), approximated: atomic
     derivation, node kinds, choices, and function/map/array types with
@@ -581,7 +652,10 @@ def subtypeF : Nat → IType → IType → Bool
     | t, .seq u p => occLe .one p && subtypeF f t u
     | _, .item => true
     | .choice ts, u => ts.all (fun t => subtypeF f t u)
-    | t, .choice us => us.any (fun u => subtypeF f t u)
+    | t, .choice us => us.any (fun u => subtypeF f t u) ||
+        (match typeParts t with
+         | some ps => ps.all (fun p => subtypeF f p (.choice us))
+         | none => false)
     | .atomic x, .atomic y => x.derives y
     | .enum _, .atomic y => (AType.b .string).derives y
     | .enum xs, .enum ys => xs.all (fun x => ys.contains x)
@@ -600,6 +674,12 @@ def subtypeF : Nat → IType → IType → Bool
     | .schemaAttr _, .attr none => true
     | .elem (some _), .elem none | .attr (some _), .attr none | .pi (some _), .pi none
     | .doc (some _), .doc none => true
+    | .elem x, .elem y | .attr x, .attr y => nameTestLe x y
+    | .elemT x _ _, .elem y | .attrT x _, .attr y => nameTestLe x y
+    | .elemT x q n, .elemT y r m => nameTestLe x y && typeNameLe q r && (!n || m)
+    | .attrT x q, .attrT y r => nameTestLe x y && typeNameLe q r
+    | .elem x, .elemT y r m => nameTestLe x y && (r.uri == nsXS && r.loc == "anyType") && m
+    | .doc (some t), .doc (some u) => subtypeF f t u
     | .fnT _ _, .anyFn | .anyMap, .anyFn | .mapT _ _, .anyFn | .anyArr, .anyFn | .arrT _, .anyFn
     | .record _ _, .anyFn | .anyFn, .anyFn => true
     | .fnT ps r, .fnT qs t =>
@@ -618,7 +698,10 @@ def subtypeF : Nat → IType → IType → Bool
         (e2 || (!e1 && fs.all (fun (n, _, _) => gs.any (·.1 == n))))
     | .anyArr, .anyArr | .arrT _, .anyArr => true
     | .arrT m, .arrT m2 => subtypeF f m m2
-    | .mapT _ v, .fnT [p] r => subtypeF f p (.atomic (.b .anyAtomicType)) && subtypeF f (.seq v .opt) r
+    | .mapT _ v, .fnT [p] r => subtypeF f p (.atomic (.b .anyAtomicType)) && subtypeF f (optOf v) r
+    | .record fs ext, .fnT [p] r =>
+        subtypeF f p (.atomic (.b .anyAtomicType)) &&
+        (subtypeF f (.seq .item .star) r || (!ext && fs.all (fun (_, _, t) => subtypeF f (optOf t) r) && subtypeF f .empty r))
     | .anyMap, .fnT [p] r => subtypeF f p (.atomic (.b .anyAtomicType)) && subtypeF f (.seq .item .star) r
     | .arrT m, .fnT [p] r => subtypeF f p (.atomic (.b .integer)) && subtypeF f m r
     | .anyArr, .fnT [p] r => subtypeF f p (.atomic (.b .integer)) && subtypeF f (.seq .item .star) r
@@ -636,6 +719,14 @@ def fnSigOf : FnItem → Option (List IType × IType)
     else (findSig q k).map (fun s => ((s.ps.take k).map (·.ty), s.ret))
   | .inline ps ret _ focus _ => if focus then some ([.seq .item .star], ret) else some (ps.map (·.2), ret)
   | .papp _ _ => none
+
+def fnSigOfVersion (version : LanguageVersion) (fi : FnItem) : Option (List IType × IType) :=
+  if version == .v40 then fnSigOf fi else
+  match fi with
+  | .builtin q k =>
+    if q.uri == nsXS then fnSigOf fi
+    else (findSigVersion version q k).map (fun s => ((s.ps.take k).map (·.ty), s.ret))
+  | _ => fnSigOf fi
 
 mutual
 def Env.itemMatchesF (e : Env) : Nat → Item → IType → Bool
@@ -660,7 +751,7 @@ def Env.itemMatchesF (e : Env) : Nat → Item → IType → Bool
   | .anyFn => i.isFn
   | .fnT ps r => i.fnArity == some ps.length &&
       (match i with
-       | .fn fi => match fnSigOf fi with
+       | .fn fi => match fnSigOfVersion e.features.version fi with
           | some (fps, fr) => (ps.zip fps).all (fun (p, q) => subtype p q) && subtype fr r
           | none => true
        -- XPath 4.0 §3.3.2.6: a map is a function(xs:anyAtomicType) as V?
@@ -794,6 +885,18 @@ def coerceAtom (ts : List AType) (a : Atomic) : M Atomic := do
   | some x => throw x
   | none => err "XPTY0004" ("cannot convert xs:" ++ a.ty.name ++ " value '" ++ a.str ++ "' to the required type")
 
+/-- XPath 2.0/3.1 function conversion permits untyped conversion, numeric
+    promotion and anyURI-to-string promotion, but no narrowing or relabeling. -/
+def coerceAtomVersion (version : LanguageVersion) (ts : List AType) (a : Atomic) : M Atomic :=
+  if version == .v40 then coerceAtom ts a else
+  let allowed := ts.filter (fun t =>
+    a.ty.derives t ||
+    (a.ty == .untyped && t != .b .qname && t != .b .notation) ||
+    (t == .b .double && a.isNumeric) ||
+    (t == .b .float && a.is .decimal) ||
+    (t == .b .string && a.is .anyURI))
+  coerceAtom allowed a
+
 def IType.isEmptyT : IType → Bool | .empty => true | _ => false
 
 /-- The variable that holds the wrapped function of a coerced function
@@ -828,7 +931,7 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
   let s ← match atomicTarget it with
     | some ts => do
         let as ← e.atomize s
-        let cs ← as.mapM (coerceAtom ts)
+        let cs ← as.mapM (coerceAtomVersion e.features.version ts)
         -- enumerations check values
         match it with
         | .enum vs => if cs.all (fun a => vs.contains a.str) then pure (seqOfAtoms cs)
@@ -840,6 +943,7 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
   else
   -- coerce inside maps, records and arrays
   let s ← s.mapM (fun i => do
+    if e.features.version != .v40 then return i
     match it, i with
     | .arrT m, .arr ms => pure (Item.arr (← ms.mapM (fun x => e.coerceF f m x what)))
     | .mapT k v, .map kvs => do
@@ -885,13 +989,13 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
       s.mapM (fun i => do
         match i.fnArity with
         | some k =>
-          if k > ps.length then err "XPTY0004" ("function item of wrong type for " ++ what)
+          if k > ps.length || (e.features.version != .v40 && k != ps.length) then err "XPTY0004" ("function item of wrong type for " ++ what)
           -- a map or an array that matches is kept as it is; a function
           -- item is kept only when its signature is the required one
           else match i with
             | .map _ | .arr _ => if k == ps.length && e.itemMatches i it then pure i else pure (coercedFn i k ps r)
             | .fn fi =>
-              match fnSigOf fi with
+              match fnSigOfVersion e.features.version fi with
               | some (fps, fr) => if k == ps.length && fps == ps && fr == r then pure i else pure (coercedFn i k ps r)
               | none => pure (coercedFn i k ps r)
             | _ => pure (coercedFn i k ps r)
@@ -922,14 +1026,14 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
     s.mapM (fun i => do
       match i.fnArity with
       | some k =>
-        if fnArity.any (k ≤ ·) || e.itemMatches i it then pure i
+        if fnArity.any (fun n => if e.features.version == .v40 then k ≤ n else k == n) || e.itemMatches i it then pure i
         else err "XPTY0004" ("function item of wrong type for " ++ what)
       | none =>
         if e.itemMatches i it then pure i
         else if atoms.isEmpty then err "XPTY0004" ("value of wrong type for " ++ what)
         else
           match ← e.atomize [i] with
-          | [a] => pure (Item.atom (← coerceAtom atoms a))
+          | [a] => pure (Item.atom (← coerceAtomVersion e.features.version atoms a))
           | _ => err "XPTY0004" ("value of wrong type for " ++ what))
   | _ =>
     if s.all (fun i => e.itemMatches i it) then pure s
@@ -937,6 +1041,18 @@ def Env.coerceF (e : Env) : Nat → IType → Seq → String → M Seq
 
 def Env.coerce (e : Env) (t : IType) (s : Seq) (what : String := "value") : M Seq :=
   e.coerceF 64 t s what
+
+/-- Typed variable bindings before 4.0 check the sequence type without
+    function conversion (XPath 3.1 §3.12; XQuery 3.1 §3.12 and §4.18). -/
+def Env.bindTyped (e : Env) (t : IType) (s : Seq) (what : String := "value") : M Seq :=
+  if e.features.version == .v40 then e.coerce t s what
+  else if e.seqMatches s t then pure s
+  else err "XPTY0004" (what ++ " does not match its declared type")
+
+theorem Env.bindTyped_v40 (e : Env) (t : IType) (s : Seq) (what : String) :
+    ({ e with features := { e.features with version := .v40 } } : Env).bindTyped t s what =
+    ({ e with features := { e.features with version := .v40 } } : Env).coerce t s what := by
+  simp only [Env.bindTyped, show (LanguageVersion.v40 == .v40) = true from rfl, ↓reduceIte]
 
 /-- A string key with `k a = k b ↔ atomicEqual a b` (untyped read as
     string), for the value kinds where one is cheap; `none` otherwise. -/

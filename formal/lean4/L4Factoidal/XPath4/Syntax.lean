@@ -92,9 +92,16 @@ def FeatureSettings.functionEnabled (s : FeatureSettings) (q : QN) : Bool :=
 def FeatureSettings.arityEnabled (s : FeatureSettings) (q : QN) (arity : Nat) : Bool :=
   let v := s.version.number
   if v == 40 then true
+  else if q.uri == nsXS then arity == 1
   else if q.uri == nsFN then
     match q.loc with
     | "concat" => arity ≥ 2
+    | "codepoints-to-string" | "doc" | "doc-available" => arity == 1
+    | "collection" | "uri-collection" => arity ≤ 1
+    | "data" | "document-uri" | "nilled" | "node-name" => if v < 30 then arity == 1 else arity ≤ 1
+    | "format-date" | "format-time" | "format-dateTime" => arity == 2 || arity == 5
+    | "round" => arity == 1 || (v ≥ 30 && arity == 2)
+    | "trace" => arity == 2 || (v ≥ 31 && arity == 1)
     | "string-join" => if v < 30 then arity == 2 else arity == 1 || arity == 2
     | "string" | "number" | "name" | "local-name" | "namespace-uri" | "base-uri"
     | "root" | "normalize-space" | "string-length" => arity ≤ 1

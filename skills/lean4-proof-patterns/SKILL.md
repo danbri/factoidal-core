@@ -652,3 +652,14 @@ in the main theorem.
 - If the definition changed to make the proof possible (sections 2, 4), the
   W3C suites for that syntax are the behaviour gate, and the WASM mirrors
   are rebuilt.
+
+## Version-wrapper identity proofs (2026-10-29)
+
+`Env.bindTyped_v40` initially used `rfl` on a wrapper around the large
+`Env.coerce` definition. The Core build did not finish for more than twenty
+minutes; disk space fell during that build. After stopping it and replacing
+that proof with `simp only [Env.bindTyped, show (LanguageVersion.v40 == .v40)
+= true from rfl, ↓reduceIte]`, Core built in one second. For a configuration
+wrapper, unfold only the wrapper and its branch condition. Keep the shared
+implementation opaque to simplification. Do not repeatedly restart a silent
+build without narrowing the new proof first.

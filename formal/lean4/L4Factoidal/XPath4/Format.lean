@@ -429,7 +429,7 @@ structure SubPic where
   hasDecSep : Bool
 deriving Inhabited
 
-def analyzeSub (f : DecFormat) (pic : List Char) : M SubPic := do
+def analyzeSub (f : DecFormat) (pic : List Char) (version : LanguageVersion := .v40) : M SubPic := do
   let isFam (c : Char) := f.zero ≤ c.toNat && c.toNat < f.zero + 10
   let isActive0 (c : Char) := c == f.decSep || c == f.grpSep || c == f.digit || c == f.patSep || isFam c
   let isActiveE (c : Char) := isActive0 c || c == f.expSep
@@ -438,7 +438,9 @@ def analyzeSub (f : DecFormat) (pic : List Char) : M SubPic := do
   let idxs := List.range n
   let activeBefore (i : Nat) := (pic.take i).any isActive0
   let activeAfter (i : Nat) := (pic.drop (i + 1)).any isActive0
-  let expIdxs := idxs.filter (fun i => pic.getD i ' ' == f.expSep && activeBefore i && activeAfter i)
+  -- F&O 3.0 §4.7 treats 'e' as a passive character, including in pictures.
+  let expIdxs := if version.number < 31 then [] else
+    idxs.filter (fun i => pic.getD i ' ' == f.expSep && activeBefore i && activeAfter i)
   if expIdxs.length > 1 then fmtErr "more than one exponent separator"
   let expIdx := expIdxs.head?
   let isAct (i : Nat) := isActive0 (pic.getD i ' ') || expIdx == some i
@@ -583,7 +585,7 @@ def formatSub (f : DecFormat) (sp : SubPic) (absv : Dec) (adjusted : Bool := fal
     String.join (s.toList.map (fun c => if c == f.percent then f.percentR else if c == f.permille then f.permilleR else String.singleton c))
   pure (renderAffix sp.pre ++ out ++ renderAffix sp.suf)
 
-def formatNumberWith (f : DecFormat) (x : Option Num) (pic : String) : M String := do
+def formatNumberWith (f : DecFormat) (x : Option Num) (pic : String) (version : LanguageVersion := .v40) : M String := do
   f.check
   let cs := pic.toList
   let parts := (cs.splitOn f.patSep)
@@ -591,9 +593,9 @@ def formatNumberWith (f : DecFormat) (x : Option Num) (pic : String) : M String 
     | [p] => pure (p, none)
     | [p, q] => pure (p, some q)
     | _ => fmtErr "more than one pattern separator"
-  let pos ← analyzeSub f posP
+  let pos ← analyzeSub f posP version
   let neg ← match negP with
-    | some q => analyzeSub f q
+    | some q => analyzeSub f q version
     | none => pure { pos with pre := f.minus ++ pos.pre }
   match x with
   | none => pure f.nan
@@ -1206,7 +1208,7 @@ def formatTable : List (String × LibFn) := [
     | none => if key != "" then err "FODF1280" ("unknown decimal format " ++ key)
     for (k, v) in props do f ← f.set k v
     let x := (optAtom (argN a 0)).bind Atomic.num?
-    pure (sStr (← formatNumberWith f x (strOf (argN a 1))))),
+    pure (sStr (← formatNumberWith f x (strOf (argN a 1)) e.features.version))),
   ent "format-dateTime" dateFn,
   ent "format-date" dateFn,
   ent "format-time" dateFn,
@@ -1227,3 +1229,7 @@ def formatTable : List (String × LibFn) := [
 #guard (formatNumberWith {} (some (.g 0.000123)) "0.0e0").toOption == some "1.2e-4"
 
 end L4Factoidal.XPath4
+
+-- Earlier pictures retain passive suffixes but reject an interior 'e'.
+#guard (L4Factoidal.XPath4.formatNumberWith {} (some (.g 12345.678)) "9.9999e999" .v30).toOption == none
+#guard (L4Factoidal.XPath4.formatNumberWith {} (some (.g 2.0)) "0e" .v30).toOption == some "2e"
