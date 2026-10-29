@@ -1,8 +1,15 @@
 # qt4tests (partial copy)
 
 Source: https://github.com/qt4cg/qt4tests
-Commit: b39c4bc027a56c82407f479709bc59e2122be5fc (committed 2026-10-27T11:18:42+01:00)
-Copied: 2026-10-27, from a `git clone --depth 1` of that commit, files unchanged.
+Commit: b1616b79c7300167c79a8b0790ba79b5e0b7080d (committed 2026-10-28T14:34:07Z,
+the deploy of qtspecs 3e9f3bddd38f39f8953750306f0c574a2fbd0387)
+Copied: 2026-10-27 from b39c4bc027a56c82407f479709bc59e2122be5fc (committed
+2026-10-27T11:18:42+01:00), from a `git clone --depth 1` of that commit, files
+unchanged; updated 2026-10-28 to b1616b79: the 19 test-set files that changed
+between the two commits were copied unchanged (the simple and labeled record
+types of qtspecs PR 2979, the options of fn:collection and fn:uri-collection of
+PR 2918, order by with empty greatest, and the specification examples).
+`catalog.xml` and `docs/` are the same at both commits.
 
 What was copied (and nothing else):
 
@@ -32,6 +39,13 @@ b1616b79c7300167c79a8b0790ba79b5e0b7080d (committed
 
 - `ft/` (84 full-text test sets and `ft/TestSources`)
 
+Added 2026-10-28 for Serialization 4.0 and the XSD type tests of the XPath
+mode (https://github.com/danbri/factoidal/issues/1101), from a `git checkout`
+of the same commit, files unchanged:
+
+- `ser/` (Serialization 4.0)
+- `xs/` (XML Schema types: `xs:numeric`, `xs:error`, constructors)
+
 Added 2026-10-28 for the XQuery Update Facility
 (https://github.com/danbri/factoidal/issues/1101), from a `git checkout` of
 commit b39c4bc0 (`upd/` is the same at b1616b79):
@@ -40,7 +54,7 @@ commit b39c4bc0 (`upd/` is the same at b1616b79):
   `LibraryModules/`). The upstream `upd/TestSources/CVS/` directory (CVS
   metadata, no test data) is not copied; every other file is unchanged.
 
-Not copied: `ser/`, `xs/`, the drivers, tools, viewer and
+Not copied: the drivers, tools, viewer and
 guide. A catalog test set whose file is not
 present is not run by `lake exe l4qt4` unless its family is selected.
 

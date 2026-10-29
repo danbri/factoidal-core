@@ -353,6 +353,15 @@ import L4Factoidal.SHACL.ShaclTests
 import L4Factoidal.SHACL.ShaclTheorems
 import L4Factoidal.SHACL.SparqlTheorems
 import L4Factoidal.SHACL.Rules
+import L4Factoidal.N3.Syntax
+import L4Factoidal.N3.Parser
+import L4Factoidal.N3.Rdf
+import L4Factoidal.N3.Writer
+import L4Factoidal.N3.Compare
+import L4Factoidal.N3.Tests
+import L4Factoidal.N3.Builtins
+import L4Factoidal.N3.Reason
+import L4Factoidal.N3.ReasonTests
 import L4Factoidal.SPARQLRL.Syntax
 import L4Factoidal.SPARQLRL.Parser
 import L4Factoidal.SPARQLRL.Eval
