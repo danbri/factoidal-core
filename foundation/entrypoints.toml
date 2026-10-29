@@ -341,6 +341,22 @@ covers = "part"
 note = "Wasm/Ops/Vc.lean vcDiVerify: VC.Cryptosuite.verifyDocument, which ends in DataIntegrity.verifyFromCanonical with VC.Cryptosuite.diPrimitives. Not covered: the ECDSA suites, the JCS transform, did:key and CID key resolution, the context rule."
 
 [[nonstage]]
+id = "wasm:vcStatusEntryNew"
+reason = "builds one Bitstring Status List v1.0 BitstringStatusListEntry object (VC.StatusList); reads no document"
+
+[[nonstage]]
+id = "wasm:vcStatusListCredential"
+reason = "builds an unsigned BitstringStatusListCredential: the bitstring, GZIP and base64url of VC.StatusList.generate; reads no RDF"
+
+[[nonstage]]
+id = "wasm:vcStatusEntryCheck"
+reason = "JSON-level check of the credentialStatus entries (VC.StatusList.checkEntry); reads no RDF"
+
+[[nonstage]]
+id = "wasm:vcStatusValidate"
+reason = "Bitstring Status List v1.0 section 3.2 on a list credential already verified by vcDiVerify (VC.StatusList.validate); reads no RDF"
+
+[[nonstage]]
 id = "wasm:vcDiKey"
 reason = "key-level: the did:key verification method of a secret key (VC.Cryptosuite.diSigner, HACL* secret-to-public, SEC 1 point compression); reads no document"
 
