@@ -125,6 +125,8 @@ structure HostCall where
 abbrev HostFn := HostCall → List Seq → M Seq
 
 structure Env where
+  /-- Optional processor features, shared by XPath and its host languages. -/
+  features : FeatureSettings := {}
   docs : Array Doc := #[]
   vars : List (QN × Seq) := []
   /-- The context value (a single item except under `->`). -/
@@ -185,10 +187,42 @@ structure Env where
   compat10 : Bool := false
 deriving Inhabited
 
+/-- Apply a feature configuration to a context (XPath 4.0 §2.2.1).
+    The all-enabled configuration is an identity, including host hooks. -/
+def Env.restrictFeatures (e : Env) (features : FeatureSettings) : Env :=
+  if features == ({} : FeatureSettings) then e else
+  let features : FeatureSettings := {
+    loadXQueryModule := e.features.loadXQueryModule && features.loadXQueryModule
+    transform := e.features.transform && features.transform
+    transform30 := e.features.transform30 && features.transform30
+    invisibleXml := e.features.invisibleXml && features.invisibleXml
+    binary := e.features.binary && features.binary
+    file := e.features.file && features.file
+    schemaImport := e.features.schemaImport && features.schemaImport
+    schemaValidation := e.features.schemaValidation && features.schemaValidation
+    typedData := e.features.typedData && features.typedData
+    serialization := e.features.serialization && features.serialization }
+  let features := if features.typedData then features else
+    { features with schemaImport := false, schemaValidation := false }
+  let schema := if features.schemaImport && features.schemaValidation then e.schema else
+    { e.schema with
+      validate := none, validateIn := none, validateWith := none, validateFnNs := none }
+  { e with features, schema }
+
+@[simp] theorem Env.restrictFeatures_allEnabled (e : Env) :
+    e.restrictFeatures {} = e := rfl
+
+/-- Without typed-data support, node annotations and typed values are
+    removed (XQuery 4.0 §5.6, XDM 4.0 §2.7). -/
+def Doc.withoutTypes (d : Doc) : Doc :=
+  { d with nodes := d.nodes.map (fun r =>
+      { r with tann := none, tval := none, nilled := false, noTypedValue := false }) }
+
 def Env.doc (e : Env) (n : NodeRef) : Doc :=
-  match n.rt with
-  | some d => d
-  | none => e.docs.getD n.doc default
+  let d := match n.rt with
+    | some d => d
+    | none => e.docs.getD n.doc default
+  if e.features.typedData then d else d.withoutTypes
 def Env.nrec (e : Env) (n : NodeRef) : NRec := (e.doc n).get n.idx
 
 def Env.nsResolve (e : Env) (p : String) : Option String :=
@@ -527,6 +561,51 @@ def occLe (a b : Occ) : Bool :=
   | .plus, .plus => true
   | _, _ => false
 
+/-- Name test subsumption (XPath 4.0 §3.3.2.4): every name that `a`
+    matches, `b` matches. `none` is the wildcard. -/
+def nameTestLe : Option NameTest → Option NameTest → Bool
+  | _, none | _, some .any => true
+  | none, some _ | some .any, some _ => false
+  | some (.name q), some (.ns u) => q.uri == u
+  | some (.name q), some (.loc l) => q.loc == l
+  | some (.name q), some (.name r) => q.uri == r.uri && q.loc == r.loc
+  | some (.ns u), some (.ns v) => u == v
+  | some (.loc l), some (.loc m) => l == m
+  | _, _ => false
+
+/-- Is the type named `a` the type named `b` or derived from it (the
+    built-in types; a user-defined type only names itself)? -/
+def typeNameLe (a b : QN) : Bool :=
+  (a.uri == b.uri && a.loc == b.loc) ||
+  (b.uri == nsXS && b.loc == "anyType") ||
+  (a.uri == nsXS && b.uri == nsXS && b.loc == "numeric" &&
+    (a.loc == "numeric" || ["decimal", "float", "double"].any (fun n =>
+      match atypeOfName? a.loc, atypeOfName? n with
+      | some x, some y => x.derives y
+      | _, _ => false))) ||
+  (a.uri == nsXS && b.uri == nsXS &&
+    match atypeOfName? a.loc, atypeOfName? b.loc with
+    | some x, some y => x.derives y || (b.loc == "anySimpleType")
+    | _, _ => false)
+
+/-- The occurrence of `t` made optional: the value type of a map seen as
+    a function (`V?`). -/
+def optOf : IType → IType
+  | .empty => .empty
+  | .seq t o => .seq t (match o with | .one => .opt | .plus => .star | x => x)
+  | t => .seq t .opt
+
+/-- The disjoint parts of a type that a choice may cover part by part
+    (XPath 4.0 §3.3.2.2): `item()` is nodes, atomic values and
+    functions; `node()` is XNodes and JNodes; `xnode()` is the seven
+    node kinds. -/
+def typeParts : IType → Option (List IType)
+  | .item => some [.anyNode, .atomic (.b .anyAtomicType), .anyFn]
+  | .anyNode => some [.xnode, .jnodeT .any none]
+  | .xnode => some [.elem none, .attr none, .text, .comment, .pi none, .doc none, .nsNode]
+  | .doc (some (.choice ts)) => some (ts.map (fun t => .doc (some t)))
+  | _ => none
+
 /-- Sequence-type subtyping (XPath 4.0 §3.3), approximated: atomic
     derivation, node kinds, choices, and function/map/array types with
     the usual variance. -/
@@ -545,7 +624,10 @@ def subtypeF : Nat → IType → IType → Bool
     | t, .seq u p => occLe .one p && subtypeF f t u
     | _, .item => true
     | .choice ts, u => ts.all (fun t => subtypeF f t u)
-    | t, .choice us => us.any (fun u => subtypeF f t u)
+    | t, .choice us => us.any (fun u => subtypeF f t u) ||
+        (match typeParts t with
+         | some ps => ps.all (fun p => subtypeF f p (.choice us))
+         | none => false)
     | .atomic x, .atomic y => x.derives y
     | .enum _, .atomic y => (AType.b .string).derives y
     | .enum xs, .enum ys => xs.all (fun x => ys.contains x)
@@ -564,6 +646,12 @@ def subtypeF : Nat → IType → IType → Bool
     | .schemaAttr _, .attr none => true
     | .elem (some _), .elem none | .attr (some _), .attr none | .pi (some _), .pi none
     | .doc (some _), .doc none => true
+    | .elem x, .elem y | .attr x, .attr y => nameTestLe x y
+    | .elemT x _ _, .elem y | .attrT x _, .attr y => nameTestLe x y
+    | .elemT x q n, .elemT y r m => nameTestLe x y && typeNameLe q r && (!n || m)
+    | .attrT x q, .attrT y r => nameTestLe x y && typeNameLe q r
+    | .elem x, .elemT y r m => nameTestLe x y && (r.uri == nsXS && r.loc == "anyType") && m
+    | .doc (some t), .doc (some u) => subtypeF f t u
     | .fnT _ _, .anyFn | .anyMap, .anyFn | .mapT _ _, .anyFn | .anyArr, .anyFn | .arrT _, .anyFn
     | .record _ _, .anyFn | .anyFn, .anyFn => true
     | .fnT ps r, .fnT qs t =>
@@ -582,7 +670,10 @@ def subtypeF : Nat → IType → IType → Bool
         (e2 || (!e1 && fs.all (fun (n, _, _) => gs.any (·.1 == n))))
     | .anyArr, .anyArr | .arrT _, .anyArr => true
     | .arrT m, .arrT m2 => subtypeF f m m2
-    | .mapT _ v, .fnT [p] r => subtypeF f p (.atomic (.b .anyAtomicType)) && subtypeF f (.seq v .opt) r
+    | .mapT _ v, .fnT [p] r => subtypeF f p (.atomic (.b .anyAtomicType)) && subtypeF f (optOf v) r
+    | .record fs ext, .fnT [p] r =>
+        subtypeF f p (.atomic (.b .anyAtomicType)) &&
+        (subtypeF f (.seq .item .star) r || (!ext && fs.all (fun (_, _, t) => subtypeF f (optOf t) r) && subtypeF f .empty r))
     | .anyMap, .fnT [p] r => subtypeF f p (.atomic (.b .anyAtomicType)) && subtypeF f (.seq .item .star) r
     | .arrT m, .fnT [p] r => subtypeF f p (.atomic (.b .integer)) && subtypeF f m r
     | .anyArr, .fnT [p] r => subtypeF f p (.atomic (.b .integer)) && subtypeF f (.seq .item .star) r

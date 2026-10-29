@@ -165,16 +165,14 @@ def writeOut (root : String) (fs : FS) : IO Unit := do
     in-memory file system (`useIO` false), or over a copy of the
     sandpit in a new temporary directory that is removed afterwards
     (`useIO` true). Returns the result and the dynamic context with
-    the file system after the evaluation, for the assertions. -/
-def evalSandpit (useIO : Bool) (sandpit : String) (env : Env) (src : String) : IO (M Seq × Env) := do
+    the file system after the evaluation, for the assertions. This form
+    takes a parsed expression (an XQuery main module body, for example). -/
+def evalSandpitExpr (useIO : Bool) (sandpit : String) (env : Env) (e : Expr) : IO (M Seq × Env) := do
   let fs ← sandpitFS sandpit env.now
   -- the test set's directory is `/work` (its `sandpit` is
   -- `/work/sandpit`), so the static base URI, when the environment
   -- gives none, is the test set file there
   let env := if env.baseUri == "" then { env with baseUri := "file:///work/test-set.xml" } else env
-  match parseXPath src env.ns with
-  | .error e => return (.error e, env)
-  | .ok e =>
   if !useIO then
     match evalMem env fs e with
     | .ok (r, fs') => return (.ok r, { env with fileSys := some fs' })
@@ -190,5 +188,10 @@ def evalSandpit (useIO : Bool) (sandpit : String) (env : Env) (src : String) : I
       return (r, { env with fileSys := some fs' })
     finally
       IO.FS.removeDirAll root
+
+def evalSandpit (useIO : Bool) (sandpit : String) (env : Env) (src : String) : IO (M Seq × Env) := do
+  match parseXPath src env.ns with
+  | .error e => return (.error e, env)
+  | .ok e => evalSandpitExpr useIO sandpit env e
 
 end L4Factoidal.EXPath.File

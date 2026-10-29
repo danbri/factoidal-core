@@ -347,6 +347,7 @@ def jsonToXmlFn (h : Hooks) (e : Env) (src : String) (opts : Seq) : M Seq := do
   -- `validate`: the result is validated against the schema for the XML
   -- representation of JSON (`SchemaHook.validateFnNs`, F&O 4.0 §17.5)
   let d ← if validate then
+      if !e.features.schemaValidation then err "FOJS0004" "schema validation is disabled" else
       match e.schema.validateFnNs with
       | some f => match f (addFnNs root) "" with
         | .ok d => pure d
@@ -542,7 +543,7 @@ def jsonTable : List (String × LibFn) := [
     match optAtom (argN a 0) with
     | none => pure []
     | some u =>
-      let txt ← textResource e u.str
+      let txt ← textResourceWith e u.str none false (xmlChars := false)
       parseJsonFn h e txt (argN a 1)),
   ent "json-to-xml" (fun h e a => do
     match optAtom (argN a 0) with
