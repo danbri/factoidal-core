@@ -28,6 +28,7 @@ import Std.Data.HashSet
 import L4Factoidal.XPath4.Grapheme
 import L4Factoidal.HTML.Entities
 import L4Factoidal.XPath4.Collation
+import L4Factoidal.Syntax.IriResolve
 
 namespace L4Factoidal.XPath4
 
@@ -39,6 +40,32 @@ structure Hooks where
 abbrev LibFn := Hooks → Env → List Seq → M Seq
 
 /-! ## Argument access -/
+
+/-- The target type of the constructor function `xs:loc` (XPath 4.0
+    §3.1.6): `xs:numeric` is the union of xs:double, xs:float and
+    xs:decimal, and `xs:error` is the union type with no member types
+    (XSD 1.1 Part 2 §3.16.7.3). -/
+def xsCtorType? (loc : String) : Option IType :=
+  if loc == "NOTATION" || loc == "anyAtomicType" || loc == "anySimpleType" then none
+  else if loc == "numeric" then some (.choice [.atomic (.b .double), .atomic (.b .float), .atomic (.b .decimal)])
+  else if loc == "error" then some (.choice [])
+  else (atypeOfName? loc).map .atomic
+
+/-- Does a parameter default read the focus (`.`, or a call with `.` as
+    an argument, as in `string(.)`)? Then a reference to the function
+    with that parameter omitted captures the focus (F&O 4.0 §1.5.2). -/
+def dfltUsesFocus : Option Expr → Bool
+  | some .ctx => true
+  | some (.call _ args _) => args.any (fun a => match a with | some .ctx => true | _ => false)
+  | _ => false
+
+/-- `fn:position#0` and `fn:last#0` capture the focus (F&O 4.0 §1.5.2):
+    a function item of arity 0 that returns the captured position or
+    size. The two bodies differ in form so that the two functions are
+    not equivalent (F&O 4.0 §1.5.1) even when the numbers are equal. -/
+def focusFn (which : String) (pos size : Nat) : Item :=
+  if which == "position" then .fn (.inline [] (.atomic (.b .integer)) (.lit (Atomic.ofInt pos)) false [])
+  else .fn (.inline [] (.atomic (.b .integer)) (.seq [.lit (Atomic.ofInt size)]) false [])
 
 def argN (a : List Seq) (i : Nat) : Seq := a.getD i []
 
@@ -94,6 +121,49 @@ def collProxy (c : Coll) (a : Atomic) : Atomic :=
 /-! ## Strings -/
 
 def cps (s : String) : List Char := s.toList
+
+/-- An integer, or an infinity, or NaN: `fn:round` of an xs:numeric value
+    for the position arithmetic of `fn:substring` and `fn:subsequence`
+    (F&O 4.0 §5.4.3, §14.1.10), exact for xs:integer and xs:decimal. -/
+inductive XInt where
+  | fin (i : Int) | posInf | negInf | nan
+
+def XInt.add : XInt → XInt → XInt
+  | .nan, _ | _, .nan => .nan
+  | .posInf, .negInf | .negInf, .posInf => .nan
+  | .posInf, _ | _, .posInf => .posInf
+  | .negInf, _ | _, .negInf => .negInf
+  | .fin a, .fin b => .fin (a + b)
+
+/-- `lo ≤ p < hi` for a position `p`. -/
+def XInt.window (lo hi : XInt) (p : Int) : Bool :=
+  (match lo with | .fin a => a ≤ p | .negInf => true | _ => false) &&
+  (match hi with | .fin b => p < b | .posInf => true | _ => false)
+
+def floatRoundX (f : Float) : XInt :=
+  if f.isNaN then .nan
+  else
+    let r := (f + 0.5).floor
+    if r > 4.0e18 then .posInf else if r < -4.0e18 then .negInf
+    else .fin r.toInt64.toInt
+
+/-- `fn:round` (half towards positive infinity) of a numeric item. -/
+def roundX (s : Seq) : XInt :=
+  match optAtom s with
+  | none => .nan
+  | some a => match a.num? with
+    | some (.i i) => .fin i
+    | some (.d d) =>
+      let d2 := Dec.add d ⟨5, 1⟩
+      .fin (Int.fdiv d2.mantissa ((10 : Int) ^ d2.scale))
+    | some (.f f) | some (.g f) => floatRoundX f
+    | none => .nan
+
+def substrX (s : String) (start : XInt) (len : Option XInt) : String :=
+  let cs := cps s
+  let en := match len with | some l => start.add l | none => .posInf
+  String.ofList ((List.range cs.length).filterMap (fun (i : Nat) =>
+    if XInt.window start en ((i : Int) + 1) then cs[i]? else none))
 
 def substr (s : String) (start : Float) (len : Option Float) : String :=
   -- F&O 4.0 §5.4.3: characters at positions p with round(start) ≤ p < round(start)+round(len)
@@ -213,7 +283,7 @@ def fCeil (f : Float) : Float := let r := f.ceil; if r == 0 && f < 0 then -0.0 e
 def untypedToDouble (a : Atomic) : M Atomic :=
   if a.ty == .untyped then castAtomic a (.b .double) else pure a
 
-def addAtoms (a b : Atomic) : M Atomic := do
+def addAtoms0 (a b : Atomic) : M Atomic := do
   match a.num?, b.num? with
   | some x, some y => pure (← numArith .add x y).atomic
   | _, _ =>
@@ -225,6 +295,9 @@ def addAtoms (a b : Atomic) : M Atomic := do
           pure ⟨.b .dayTimeDuration, .x (.dur { months := 0, seconds := Dec.norm (Dec.add x.seconds y.seconds) })⟩
         else err "FORG0006" "cannot add these durations"
     | _, _ => err "FORG0006" "invalid argument to fn:sum/fn:avg"
+
+/-- `addAtoms0` with the duration limits (`checkLimits`). -/
+def addAtoms (a b : Atomic) : M Atomic := do checkLimits (← addAtoms0 a b)
 
 def sumAtoms (as : List Atomic) (zero : Seq) : M Seq := do
   match as with
@@ -309,8 +382,14 @@ def msortM {α} (lt : α → α → M Bool) : Nat → List α → M (List α)
         | [], [] => pure ()
       pure out.toList
 
+/-- `fn:highest` and `fn:lowest` (F&O 4.0 §14.4.4): an untyped key value
+    is cast to xs:double (FORG0001 when it cannot be). -/
+def untypedToDoubleKey (k : Atomic) : M Atomic :=
+  if k.ty == .untyped then castAtomic k (.b .double) else pure k
+
 /-- Compare two atomic values for sorting (F&O 4.0 §15.2.4): NaN is
     least, values compare by `lt`; incomparable is XPTY0004. -/
+
 def sortCmpAtom (a b : Atomic) : M Ordering := do
   let a := if a.ty == .untyped then Atomic.ofStr a.str else a
   let b := if b.ty == .untyped then Atomic.ofStr b.str else b
@@ -446,12 +525,23 @@ def Env.nodeName (e : Env) (n : NodeRef) : Option QN :=
   | .namespace => if r.name.loc == "" then none else some { uri := "", loc := r.name.loc }
   | _ => none
 
-def distinctAtomsSlow (as : List Atomic) : List Atomic :=
+/-- Equality for `fn:distinct-values`: `atomicEqual`, except that a date
+    or time with no timezone has the implicit timezone `tz` (minutes), when
+    one is given (F&O 4.0 §14.1.2). -/
+def atomicEqualTz (tz : Option Int) (a b : Atomic) : Bool :=
+  match tz, a.v, b.v with
+  | some z, .x (.dt _ _), .x (.dt _ _) =>
+    match atomicCmp a b z with
+    | .ok (some .eq) => true
+    | _ => false
+  | _, _, _ => atomicEqual a b
+
+def distinctAtomsSlow (as : List Atomic) (tz : Option Int := none) : List Atomic :=
   as.foldl (fun acc a =>
     let a' := if a.ty == .untyped then Atomic.ofStr a.str else a
-    if acc.any (fun b => atomicEqual (if b.ty == .untyped then Atomic.ofStr b.str else b) a') then acc else acc ++ [a]) []
+    if acc.any (fun b => atomicEqualTz tz (if b.ty == .untyped then Atomic.ofStr b.str else b) a') then acc else acc ++ [a]) []
 
-def distinctAtoms (as : List Atomic) : List Atomic :=
+def distinctAtoms (as : List Atomic) (tz : Option Int := none) : List Atomic :=
   if as.all (fun a => (sameKey a).isSome) then Id.run do
     let mut seen : Std.HashSet String := {}
     let mut out : Array Atomic := #[]
@@ -461,11 +551,11 @@ def distinctAtoms (as : List Atomic) : List Atomic :=
         seen := seen.insert k
         out := out.push a
     pure out.toList
-  else distinctAtomsSlow as
+  else distinctAtomsSlow as tz
 
 /-- `fn:distinct-values` under a collation: the first item of each class
     of values equal under `c`. -/
-def distinctAtomsC (c : Coll) (as : List Atomic) : List Atomic :=
+def distinctAtomsC (c : Coll) (as : List Atomic) (tz : Option Int := none) : List Atomic :=
   let ps := as.map (collProxy c)
   if ps.all (fun a => (sameKey a).isSome) then Id.run do
     let mut seen : Std.HashSet String := {}
@@ -479,7 +569,7 @@ def distinctAtomsC (c : Coll) (as : List Atomic) : List Atomic :=
   else
     let norm (b : Atomic) : Atomic := if b.ty == .untyped then Atomic.ofStr b.str else b
     ((as.zip ps).foldl (fun acc (a, p) =>
-      if acc.any (fun (_, q) => atomicEqual (norm q) (norm p)) then acc else acc ++ [(a, p)]) []).map (·.1)
+      if acc.any (fun (_, q) => atomicEqualTz tz (norm q) (norm p)) then acc else acc ++ [(a, p)]) []).map (·.1)
 
 /-- The values that occur more than once, first occurrence order of the
     second occurrence. -/
@@ -508,6 +598,9 @@ def duplicateAtoms (as : List Atomic) (eqf : Atomic → Atomic → Bool) : List 
 def eqForIndexOf (a b : Atomic) : Bool :=
   let a := if a.ty == .untyped then Atomic.ofStr a.str else a
   let b := if b.ty == .untyped then Atomic.ofStr b.str else b
+  let nan (z : Atomic) := (z.num?.map (fun n => n.rank ≥ 2 && n.toFloat.isNaN)).getD false
+  -- F&O 4.0 §14.1.4: NaN is equal to NaN here
+  if nan a && nan b then true else
   match atomicCmp a b with
   | .ok (some .eq) => true
   | _ => false
@@ -569,8 +662,8 @@ def fnTable : List (String × LibFn) := [
     pure (sStr out)),
   ent "string-join" (fun _ _ a => pure (sStr (String.intercalate (strOf (argN a 1)) ((argN a 0).map (fun i => match i with | .atom x => x.str | _ => ""))))),
   ent "substring" (fun _ _ a =>
-    let len := match argN a 2 with | [] => none | s => some (numFloat s)
-    pure (sStr (substr (strOf (argN a 0)) (numFloat (argN a 1)) len))),
+    let len := match argN a 2 with | [] => none | s => some (roundX s)
+    pure (sStr (substrX (strOf (argN a 0)) (roundX (argN a 1)) len))),
   ent "substring-before" (fun _ e a => do
     let c ← e.collation (argN a 2)
     let q := strOf (argN a 0); let p := strOf (argN a 1)
@@ -700,13 +793,10 @@ def fnTable : List (String × LibFn) := [
     pure ((List.range s.length).filterMap (fun (i : Nat) => if ps.contains ((i : Int) + 1) then none else s[i]?))),
   ent "subsequence" (fun _ _ a =>
     let s := argN a 0
-    let len := match argN a 2 with | [] => none | l => some (numFloat l)
-    let rnd (f : Float) : Float := (f + 0.5).floor
-    let st := rnd (numFloat (argN a 1))
-    let en : Float := match len with | some l => st + rnd l | none => (1.0 / 0.0)
+    let st := roundX (argN a 1)
+    let en := match argN a 2 with | [] => XInt.posInf | l => st.add (roundX l)
     pure ((List.range s.length).filterMap (fun (i : Nat) =>
-      let p := (i + 1).toFloat
-      if p ≥ st && p < en then s[i]? else none))),
+      if XInt.window st en ((i : Int) + 1) then s[i]? else none))),
   ent "items-at" (fun _ _ a => do
     let s := argN a 0
     let sa := s.toArray
@@ -725,8 +815,8 @@ def fnTable : List (String × LibFn) := [
   ent "distinct-values" (fun _ e a => do
     let c ← e.collation (argN a 1)
     let as := (argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)
-    if c.isCodepoint then pure (seqOfAtoms (distinctAtoms as))
-    else pure (seqOfAtoms (distinctAtomsC c as))),
+    if c.isCodepoint then pure (seqOfAtoms (distinctAtoms as (some e.tz)))
+    else pure (seqOfAtoms (distinctAtomsC c as (some e.tz)))),
   ent "duplicate-values" (fun _ e a => do
     let c ← e.collation (argN a 1)
     let as := (argN a 0).filterMap (fun i => match i with | .atom x => some x | _ => none)
@@ -869,8 +959,8 @@ def fnTable : List (String × LibFn) := [
     let xs := argN a 0
     let keyOf (x : Item) : M (List Atomic) := do
       match argN a 2 with
-      | [] => pure ((← e.atomize [x]).map (collProxy c))
-      | f :: _ => pure ((← e.atomize (← h.callN f [[x]])).map (collProxy c))
+      | [] => ((← e.atomize [x]).mapM (fun k => untypedToDoubleKey k)).map (·.map (collProxy c))
+      | f :: _ => ((← e.atomize (← h.callN f [[x]])).mapM (fun k => untypedToDoubleKey k)).map (·.map (collProxy c))
     let ks ← xs.mapM keyOf
     let mut best : List (Item × List Atomic) := []
     for (x, k) in xs.zip ks do
@@ -887,8 +977,8 @@ def fnTable : List (String × LibFn) := [
     let xs := argN a 0
     let keyOf (x : Item) : M (List Atomic) := do
       match argN a 2 with
-      | [] => pure ((← e.atomize [x]).map (collProxy c))
-      | f :: _ => pure ((← e.atomize (← h.callN f [[x]])).map (collProxy c))
+      | [] => ((← e.atomize [x]).mapM (fun k => untypedToDoubleKey k)).map (·.map (collProxy c))
+      | f :: _ => ((← e.atomize (← h.callN f [[x]])).mapM (fun k => untypedToDoubleKey k)).map (·.map (collProxy c))
     let ks ← xs.mapM keyOf
     let mut best : List (Item × List Atomic) := []
     for (x, k) in xs.zip ks do
@@ -926,14 +1016,20 @@ def fnTable : List (String × LibFn) := [
     let f := (argN a 0).headD default
     match argN a 1 with
     | [.arr ms] =>
-      if f.fnArity != some ms.length then err "FOAP0001" "wrong number of arguments for fn:apply"
-      h.call f ms
+      -- excess members are ignored (F&O 4.0 §17.2.1)
+      match f.fnArity with
+      | some k => if k > ms.length then err "FOAP0001" "fn:apply: too few members for the arity" else h.call f (ms.take k)
+      | none => h.call f ms
     | _ => err "XPTY0004" "fn:apply expects an array"),
   ent "function-arity" (fun _ _ a => pure (match (argN a 0).headD default |>.fnArity with
     | some k => sInt k | none => [])),
   ent "function-name" (fun _ _ a => pure (match argN a 0 with
     | [.fn (.builtin q _)] => single (Atomic.ofQN q)
     | _ => [])),
+  -- F&O 4.0 §17.1.4: an XPath function item has no annotations
+  ent "function-annotations" (fun _ _ a => match argN a 0 with
+    | [_] => pure []
+    | _ => err "XPTY0004" "fn:function-annotations expects one function"),
   ent "while-do" (fun h _ a => do
     let p := (argN a 1).headD default
     let f := (argN a 2).headD default
@@ -1039,10 +1135,16 @@ def fnTable : List (String × LibFn) := [
     | some ⟨_, .qn q⟩ => sStr q.eqn
     | _ => [])),
   ent "parse-QName" (fun _ e a => do
+    if (argN a 0).isEmpty then return []
     let s := trimWs (strOf (argN a 0))
     if s.startsWith "Q{" then
       match s.toList.findIdx? (· == '}') with
-      | some i => pure (single (Atomic.ofQN { uri := String.ofList ((s.toList.drop 2).take (i - 2)), loc := String.ofList (s.toList.drop (i + 1)) }))
+      | some i =>
+        let uri := String.ofList ((s.toList.drop 2).take (i - 2))
+        let loc := String.ofList (s.toList.drop (i + 1))
+        -- BracedURILiteral has no `{`; the local part is an NCName
+        if uri.any (· == '{') || (parseQNameLex loc).map (·.1) != some "" then err "FOCA0002" "invalid EQName"
+        pure (single (Atomic.ofQN { uri, loc }))
       | none => err "FOCA0002" "invalid EQName"
     else
       match parseQNameLex s with
@@ -1118,6 +1220,28 @@ def fnTable : List (String × LibFn) := [
         let ps := (sc.map (·.1)).eraseDups.filter (fun p => (sc.lookup p).getD "" != "" || p == "xml")
         pure (ps.map (fun p => .atom (Atomic.ofStr p)))
     | _ => err "XPTY0004" "expected an element"),
+  ent "resolve-QName" (fun _ e a => do
+    -- F&O 4.0 §10.2.4: the prefix is resolved by the in-scope
+    -- namespaces of the element; no prefix takes its default namespace
+    match optAtom (argN a 0), argN a 1 with
+    | none, _ => pure []
+    | some v, [.node n] =>
+      let s := v.str.trimAscii.toString
+      let (p, l) := match s.splitOn ":" with
+        | [l] => ("", l)
+        | [p, l] => (p, l)
+        | _ => ("#bad", "")
+      let ncOk (x : String) : Bool := match x.toList with
+        | c :: cs => (c.isAlpha || c == '_' || c.toNat ≥ 0xC0) && cs.all (fun d => d.isAlphanum || d == '_' || d == '-' || d == '.' || d.toNat ≥ 0xB7)
+        | [] => false
+      if p == "#bad" || !ncOk l || (p != "" && !ncOk p) then err "FOCA0002" ("not a lexical QName: " ++ s)
+      match (e.nrec n).inscope.lookup p with
+      | some u => pure (single (Atomic.ofQN { uri := u, loc := l, pfx := p }))
+      | none =>
+        if p == "" then pure (single (Atomic.ofQN { uri := "", loc := l }))
+        else if p == "xml" then pure (single (Atomic.ofQN { uri := nsXML, loc := l, pfx := p }))
+        else err "FONS0004" ("no namespace binding for prefix " ++ p)
+    | _, _ => err "XPTY0004" "fn:resolve-QName expects an element"),
   ent "namespace-uri-for-prefix" (fun _ e a => do
     match argN a 1 with
     | [.node n] =>
@@ -1268,16 +1392,32 @@ def fnTable2 : List (String × LibFn) := [
     match optAtom (argN a 0), optAtom (argN a 1) with
     | some x, some y => pure (sBool (atomicEqual x y))
     | _, _ => err "XPTY0004" "fn:atomic-equal"),
-  ent "function-lookup" (fun _ _ a => do
+  ent "function-lookup" (fun _ e a => do
     match optAtom (argN a 0) with
     | some ⟨_, .qn q⟩ =>
         let k := intOf (argN a 1)
         if k < 0 then pure [] else
         if q.uri == nsXS then
-          pure (if k == 1 && ((atypeOfName? q.loc).isSome || q.loc == "numeric") && q.loc != "anyAtomicType" && q.loc != "NOTATION" then [.fn (.builtin q 1)] else [])
-        else if q.uri == nsFN && q.loc == "concat" then pure (if k ≥ 2 then [.fn (.builtin q k.toNat)] else [])
+          if (xsCtorType? q.loc).isNone then pure []
+          else if k == 1 then pure [.fn (.builtin q 1)]
+          else if k == 0 then
+            match e.ctx with
+            | some c => pure [.fn (.papp (.fn (.builtin q 1)) [some c])]
+            | none => pure [.fn (.builtin q 0)]
+          else pure []
+        else if q.uri == nsFN && q.loc == "concat" then pure [.fn (.builtin q k.toNat)]
+        else if q.uri == nsFN && k == 0 && (q.loc == "position" || q.loc == "last") && e.ctx.isSome then
+          pure [focusFn q.loc e.pos e.size]
         else match findSig q k.toNat with
-          | some _ => pure [.fn (.builtin q k.toNat)]
+          | some sig =>
+            -- a context-dependent function captures the focus of the
+            -- fn:function-lookup call (F&O 4.0 §17.1.1)
+            match e.ctx, (sig.ps.drop k.toNat).head? with
+            | some c, some p =>
+              if dfltUsesFocus p.dflt then
+                pure [.fn (.papp (.fn (.builtin q (k.toNat + 1))) (List.replicate k.toNat none ++ [some c]))]
+              else pure [.fn (.builtin q k.toNat)]
+            | _, _ => pure [.fn (.builtin q k.toNat)]
           | none => pure []
     | _ => pure []),
   ent "collation-available" (fun _ e a =>
@@ -1390,7 +1530,6 @@ def opOfString : String → Option (Expr → Expr → Expr)
   | "||" => some (.bin .concat) | "|" => some (.bin .union) | "union" => some (.bin .union)
   | "except" => some (.bin .except) | "intersect" => some (.bin .intersect)
   | "to" => some (.bin .to) | "otherwise" => some (.bin .otherwise)
-  | "!" => some .smap | "/" => some .slash
   | "×" => some (.bin .mul) | "÷" => some (.bin .div)
   | _ => none
 
@@ -1453,8 +1592,60 @@ def Env.pathOf (e : Env) (n : NodeRef) : String :=
     if rest.isEmpty && topR.kind == .document then "/"
     else pre ++ String.join (rest.map (fun m => "/" ++ step m))
 
+/-- An IRI reference that the RFC 3986 resolution algorithm accepts,
+    with the characters that are not valid in a URI treated as unreserved
+    (F&O 4.0 §6.1): every `%` starts a `%HH` escape, and a reference
+    without a scheme has no `:` in its first path segment. -/
+def iriRefOk (s : String) : Bool :=
+  let cs := s.toList
+  let hex (c : Char) : Bool := c.isDigit || ('a' ≤ c && c ≤ 'f') || ('A' ≤ c && c ≤ 'F')
+  let rec pct : List Char → Bool
+    | '%' :: a :: b :: r => hex a && hex b && pct r
+    | '%' :: _ => false
+    | _ :: r => pct r
+    | [] => true
+  let noSpace := !(cs.any (fun c => c == ' ' || c == '<' || c == '>' || c == '"' || c == '{' || c == '}' || c == '\\' || c == '|' || c == '`'))
+  let firstSeg := cs.takeWhile (fun c => c != '/' && c != '?' && c != '#')
+  let schemeOk := match firstSeg.findIdx? (· == ':') with
+    | none => true
+    | some 0 => false
+    | some i => let sch := firstSeg.take i
+                (sch.headD ' ').isAlpha && sch.all (fun c => c.isAlphanum || c == '+' || c == '-' || c == '.')
+  noSpace && pct cs && schemeOk
+
+/-- An absolute IRI: a scheme and `:` (RFC 3986 §4.3). -/
+def isAbsIri (s : String) : Bool :=
+  match s.toList.findIdx? (· == ':') with
+  | some i =>
+    let sch := s.toList.take i
+    i > 0 && (sch.headD ' ').isAlpha && sch.all (fun c => c.isAlphanum || c == '+' || c == '-' || c == '.')
+  | none => false
+
+/-- `fn:resolve-uri` (F&O 4.0 §6.1): RFC 3986 §5.2 resolution, done by
+    the RDF parsers' resolver `Syntax.resolveIri`
+    (`XPath4.Theorems.resolveUriFn_eq_resolveIri`). An absolute `href` is
+    returned unchanged; the base is the explicit one or the executable
+    base URI (FONS0005 when absent); a base that is not an absolute
+    hierarchical IRI is FORG0002; its fragment is ignored. -/
+def resolveUriFn (dfltBase href : String) (base? : Option String) : M String := do
+  if !iriRefOk href then err "FORG0002" ("not a valid IRI reference: " ++ href)
+  if isAbsIri href then return href
+  let base := base?.getD dfltBase
+  if base == "" && base?.isNone then err "FONS0005" "the base URI is absent"
+  if !iriRefOk base || !isAbsIri base then err "FORG0002" ("not an absolute IRI: " ++ base)
+  let base := (base.splitOn "#").headD base
+  let rest := (base.drop ((base.toList.findIdx? (· == ':')).getD 0 + 1)).toString
+  if !rest.startsWith "/" then err "FORG0002" ("not a hierarchical IRI: " ++ base)
+  pure (L4Factoidal.Syntax.resolveIri base href)
+
+/-- Resolve a reference for the readers (`fn:doc`, `fn:unparsed-text`,
+    ...): an absolute reference is kept; against an absolute base it is
+    RFC 3986 resolution (`Syntax.resolveIri`); against a relative base the
+    directory of the base is prefixed. -/
 def resolveUri (base href : String) : String :=
-  if (href.splitOn ":").length > 1 && ((href.splitOn ":").headD "").all Char.isAlpha && href != "" then href
+  if isAbsIri href then href
+  else if isAbsIri base then L4Factoidal.Syntax.resolveIri ((base.splitOn "#").headD base) href
+  else if (href.splitOn ":").length > 1 && ((href.splitOn ":").headD "").all Char.isAlpha && href != "" then href
   else if href.startsWith "/" then
     match (base.splitOn "//") with
     | sch :: rest :: _ => sch ++ "//" ++ ((rest.splitOn "/").headD "") ++ href
@@ -1529,18 +1720,25 @@ def fnTable3 : List (String × LibFn) := [
       let x : QN := { uri := "#op", loc := "a" }
       let y : QN := { uri := "#op", loc := "b" }
       pure [.fn (.inline [(x, .seq .item .star), (y, .seq .item .star)] (.seq .item .star) (mk (.var x) (.var y)) false [])]
-    | none => err "FOAP0003" ("unknown operator " ++ o)),
-  ent "partial-apply" (fun _ _ a => do
+    | none => err "XPTY0004" ("fn:op: unknown operator " ++ o)),
+  ent "partial-apply" (fun _ e a => do
     let f := (argN a 0).headD default
     let m ← asMap (argN a 1)
+    if m.isEmpty then return [f]
     let k := (f.fnArity).getD 0
+    -- keys outside 1..arity are ignored; supplied values are coerced
+    -- to the parameter types (F&O 4.0 §17.2.4)
+    let pts : List IType := match f with
+      | .fn fi => ((fnSigOf fi).map (·.1)).getD []
+      | _ => []
     let mut fixed : List (Option Seq) := []
     for i in List.range k do
-      fixed := fixed ++ [mapGet m (Atomic.ofInt (i + 1))]
-    for (key, _) in m do
-      match key.v with
-      | .int j => if j < 1 || j > k then err "FOAP0001" "partial-apply position out of range"
-      | _ => err "XPTY0004" "partial-apply key"
+      match mapGet m (Atomic.ofInt (i + 1)) with
+      | some v =>
+        match pts[i]? with
+        | some t => fixed := fixed ++ [some (← e.coerce t v "fn:partial-apply argument")]
+        | none => fixed := fixed ++ [some v]
+      | none => fixed := fixed ++ [none]
     pure [.fn (.papp f fixed)]),
   ent "drop-while" (fun h _ a => do
     let f := (argN a 1).headD default
@@ -1550,6 +1748,9 @@ def fnTable3 : List (String × LibFn) := [
       if ← h.pred f [[x], sInt (i + 1)] then i := i + 1 else break
     pure (xs.drop i)),
   ent "index-of-substring" (fun _ _ a =>
+    let v := cps (strOf (argN a 0))
+    -- a zero-length substring occurs at every position (F&O 4.0 §5.5.6)
+    if (strOf (argN a 1)).isEmpty then pure ((List.range (v.length + 1)).map (fun (i : Nat) => .atom (Atomic.ofInt (i + 1)))) else
     pure ((indexOfSub (cps (strOf (argN a 0))) (cps (strOf (argN a 1)))).map (fun (i : Nat) => .atom (Atomic.ofInt (i + 1))))),
   ent "substring-before-last" (fun _ e a => do
     let c ← e.collation (argN a 2)
@@ -1644,10 +1845,7 @@ def fnTable3 : List (String × LibFn) := [
   ent "resolve-uri" (fun _ e a => do
     match optAtom (argN a 0) with
     | none => pure []
-    | some h =>
-      let base := if (argN a 1).isEmpty then e.baseUri else strOf (argN a 1)
-      if base == "" && !(h.str.splitOn ":").length > 1 then err "FONS0005" "no base URI"
-      else pure (single (Atomic.ofUri (resolveUri base h.str)))),
+    | some h => pure (single (Atomic.ofUri (← resolveUriFn e.baseUri h.str (optAtom (argN a 1) |>.map Atomic.str))))),
   ent "duration-to-seconds" (fun _ _ a => pure (match optAtom (argN a 0) with
     | some ⟨_, .x (.dur d)⟩ => single (Atomic.ofDec d.seconds)
     | _ => [])),
@@ -1691,9 +1889,8 @@ def mapTable : List (String × LibFn) := [
     match optAtom (argN a 1) with
     | some k => match mapGet m k with
       | some v => pure v
-      | none => match argN a 2 with
-        | [] => pure []
-        | f :: _ => h.callN f [[.atom k]]
+      -- F&O 4.0 §18.4.11: the default value is returned as it is
+      | none => pure (argN a 2)
     | none => pure []),
   ent "put" (fun _ _ a => do
     let m ← asMap (argN a 0)
@@ -1713,10 +1910,27 @@ def mapTable : List (String × LibFn) := [
     | some k => pure (mapItem [(Atomic.ofStr "key", [.atom k]), (Atomic.ofStr "value", argN a 1)])
     | none => err "XPTY0004" "map:pair key"),
   ent "empty" (fun _ _ a => do pure (sBool (← asMap (argN a 0)).isEmpty)),
-  ent "merge" (fun _ _ a => do
+  ent "merge" (fun h _ a => do
     let maps ← (argN a 0).mapM (fun i => asMap [i])
-    let dup := optionStr (argN a 1) "duplicates" "use-first"
-    pure (mapItem (← mergeMaps maps dup))),
+    -- F&O 4.0 §18.4.17: `duplicates` is a keyword or a function
+    -- fn(item()*, item()*) as item()* that combines the two values
+    let combineFn : Option Item := match argN a 1 with
+      | [.map kvs] => match mapGet kvs (Atomic.ofStr "duplicates") with
+        | some [f] => if f.isFn then some f else none
+        | _ => none
+      | _ => none
+    match combineFn with
+    | none =>
+      let dup := optionStr (argN a 1) "duplicates" "use-first"
+      pure (mapItem (← mergeMaps maps dup))
+    | some f =>
+      let mut acc : MB := {}
+      for m in maps do
+        for (k, v) in m do
+          match acc.get? k with
+          | none => acc := acc.set k v
+          | some old => acc := acc.set k (← h.callN f [old, v])
+      pure (mapItem acc.toList)),
   ent "of-pairs" (fun _ _ a => do
     let mut acc : MB := {}
     for p in argN a 0 do
@@ -1805,9 +2019,9 @@ def arrayTable : List (String × LibFn) := [
     let ms ← asArr (argN a 0)
     let i := intOf (argN a 1)
     if i ≥ 1 && i.toNat ≤ ms.length then pure (ms.getD (i.toNat - 1) [])
-    else match argN a 2 with
-      | [] => err "FOAY0001" ("array index " ++ toString i ++ " out of bounds")
-      | f :: _ => h.callN f [sInt i]),
+    -- F&O 4.0 §19.2.12: with $default, an index out of bounds gives it
+    else if a.length ≥ 3 then pure (argN a 2)
+    else err "FOAY0001" ("array index " ++ toString i ++ " out of bounds")),
   ent "put" (fun _ _ a => do
     let ms ← asArr (argN a 0)
     let i := intOf (argN a 1)
