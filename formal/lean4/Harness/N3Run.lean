@@ -176,11 +176,16 @@ def compareExpected (rf : String) (d : N3Document) (exp : N3Graph) : Outcome :=
     let extra := (a.filter fun k => !b.contains k).take 2
     s!"not isomorphic to the result ({g.length} triples, expected {exp.length}; " ++
       s!"missing {missing}; extra {extra})"
-  if rf.endsWith ".n3" then isoOutcome (why d.triples) (n3Isomorphic d.triples exp)
+  -- `why` only on a failure: it is quadratic in the size of the graphs.
+  let outcome (g : N3Graph) : Outcome :=
+    match n3Isomorphic g exp with
+    | .equal => .pass
+    | r => isoOutcome (why g) r
+  if rf.endsWith ".n3" then outcome d.triples
   else
     match expandLists (d.bnodePrefix ++ "c") d.triples with
     | .error e => .fail e
-    | .ok g => isoOutcome (why g) (n3Isomorphic g exp)
+    | .ok g => outcome g
 
 def testNs : String := "https://w3c.github.io/N3/tests/test.n3#"
 
