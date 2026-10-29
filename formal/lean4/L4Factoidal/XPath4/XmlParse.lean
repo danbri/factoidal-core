@@ -21,7 +21,7 @@ The evaluator does no I/O. An external DTD or entity, and the text of
 
 Options of `fn:parse-xml`: `base-uri`, `dtd-validation`, `strip-space`
 (`all`, `none`, `conditional` = `none`), `trust-external`, `xinclude`
-(`true` is `FODC0013`: there is no XInclude processor), `xsd-validation`
+(resource-backed expansion when enabled in `FeatureSettings`), `xsd-validation`
 (`strict`, `lax` and `type T` validate through the schema hook
 `Env.schema`, `SchemaHook.validate`; another value is XPTY0004), `use-xsi-schema-location`,
 `line-numbers` (ignored, as the spec allows).
@@ -30,6 +30,7 @@ import L4Factoidal.XPath4.Lib
 import L4Factoidal.XML.Encoding
 import L4Factoidal.XML.Namespaces
 import L4Factoidal.XML.Validity
+import L4Factoidal.XPath4.DtdInfoset
 
 namespace L4Factoidal.XPath4
 
@@ -136,6 +137,7 @@ def parseXmlOptionNames : List String := ["base-uri", "dtd-validation", "strip-s
 structure ParseOpts where
   baseUri : String
   dtdValidation : Bool := false
+  xinclude : Bool := false
   stripAll : Bool := false
   trustExternal : Bool := false
   /-- `xsd-validation`: `skip`, or a mode for `SchemaHook.validate`. -/
@@ -147,16 +149,19 @@ def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
     | some s => strOf s
     | none => e.baseUri
   let dtd ← optBool opts "dtd-validation" false
+  if dtd && !e.features.dtdValidation then
+    err "FODC0007" "DTD validation is disabled in this processor configuration"
   let strip := optionStr opts "strip-space" "none"
   if !["all", "none", "conditional"].contains strip then
     err "XPTY0004" ("strip-space must be all, none or conditional, not " ++ strip)
   let trust ← optBool opts "trust-external" false
-  if ← optBool opts "xinclude" false then
+  let xi ← optBool opts "xinclude" false
+  if xi && !e.features.xinclude then
     err "FODC0013" "no XInclude processor is available"
   let xsd := optionStr opts "xsd-validation" "skip"
   if !(["skip", "strict", "lax"].contains xsd || xsd.startsWith "type ") then
     err "XPTY0004" ("xsd-validation must be strict, lax, skip or type T, not " ++ xsd)
-  pure { baseUri := base, dtdValidation := dtd, stripAll := strip == "all", trustExternal := trust, xsd }
+  pure { baseUri := base, dtdValidation := dtd, stripAll := strip == "all", trustExternal := trust, xsd, xinclude := xi }
 
 /-- An element node of a parsed tree (the document element is the first). -/
 def isElemKid (k : Node) : Bool :=
@@ -193,6 +198,110 @@ def siblingRef (docHref sys : String) : String :=
   | [] => sys
   | ds => String.intercalate "/" ds ++ "/" ++ sys
 
+/-- Materialize context which would be lost when an inclusion or fallback
+    element is removed. Existing namespace declarations and xml:lang win;
+    xml:base is resolved against the resource URI before insertion. -/
+def includeFixup (base language : String) (scope : List (String × String)) : Node → Node
+  | .element tag attrs kids =>
+    let attrs := scope.foldl (fun accumulated (p, u) =>
+      if p == "xml" then accumulated else
+      let key := if p == "" then "xmlns" else "xmlns:" ++ p
+      if accumulated.any (fun a => a.name == key) then accumulated else accumulated ++ [{ name := key, value := u }]) attrs
+    let ownBase := (attrs.find? (fun a => a.name == "xml:base")).map (·.value)
+    let effectiveBase := match ownBase with
+      | some b => resolveUri base b
+      | none => base
+    let attrs := attrs.filter (fun a => a.name != "xml:base")
+    let attrs := attrs ++ [{ name := "xml:base", value := effectiveBase }]
+    let attrs := if attrs.any (fun a => a.name == "xml:lang") then attrs
+      else attrs ++ [{ name := "xml:lang", value := language }]
+    .element tag attrs kids
+  | other => other
+
+/-- Resource-backed XInclude expansion. The resolver is the caller's resource
+    table; the evaluator performs no I/O. A finite depth bound rejects cycles
+    and excessive inclusion depth instead of leaving include elements untouched. -/
+def expandXmlIncludes (e : Env) (o : ParseOpts) :
+    Nat → String → List (String × String) → String → List String → List Node → M (List Node)
+  | 0, _, _, _, _, _ => err "FODC0013" "XInclude expansion depth exceeded"
+  | fuel + 1, base, inherited, inheritedLang, active, nodes => do
+    let groups ← nodes.mapM fun n => do
+      match n with
+      | .element tag attrs kids =>
+        let scope := attrs.foldl (fun sc a =>
+          if a.name == "xmlns" then ("", a.value) :: sc
+          else if a.name.startsWith "xmlns:" then ((splitName a.name).2, a.value) :: sc
+          else sc) inherited
+        let attr (key : String) := (attrs.find? (fun a => a.name == key)).map (·.value)
+        let language := (attr "xml:lang").getD inheritedLang
+        let base := match attr "xml:base" with
+          | none => base
+          | some b => resolveUri base b
+        let isXi (name : String) (localName : String) :=
+          let (p, l) := splitName name
+          l == localName && scope.lookup p == some "http://www.w3.org/2001/XInclude"
+        if isXi tag "include" then
+          let href := (attr "href").getD ""
+          let uri := resolveUri base href
+          let read : M (List Node) := do
+            if !o.trustExternal then err "FODC0016" "XInclude needs trust-external"
+            if active.contains uri then err "FODC0013" "cyclic XInclude reference"
+            if (attr "xpointer").isSome || (href.splitOn "#").length > 1 then
+              err "FODC0013" "XInclude XPointer is not supported"
+            let source ← match (e.resource uri).orElse (fun _ => e.resource href) with
+              | some source => pure source
+              | none => err "FODC0013" ("XInclude resource unavailable: " ++ uri)
+            match (attr "parse").getD "xml" with
+            | "text" =>
+              if source.toList.any (fun c => !isXmlCp c.toNat) then
+                err "FODC0013" "XInclude text contains a character forbidden in XML"
+              pure [.text source]
+            | "xml" =>
+              let resolver : Resolver := fun h =>
+                (e.resource (resolveUri uri h)).orElse (fun _ => e.resource h)
+              match parseDecodedXMLWith resolver source with
+              | .error ex => err "FODC0013" ("XInclude XML resource: " ++ ex.message)
+              | .ok d =>
+                if !d.namespaceWellFormed then err "FODC0013" "XInclude resource is not namespace-well-formed"
+                let children := d.children.map (includeFixup uri "" [("", "")])
+                expandXmlIncludes e o fuel uri [("xml", nsXML)] "" (uri :: active) children
+            | _ => err "FODC0013" "XInclude parse must be xml or text"
+          match read with
+          | .ok result => pure result
+          | .error ex =>
+            match kids.find? (fun k => match k with
+                | .element name _ _ => isXi name "fallback"
+                | _ => false) with
+            | some (.element _ fallbackAttrs fallback) =>
+              let fallbackScope := fallbackAttrs.foldl (fun sc a =>
+                if a.name == "xmlns" then ("", a.value) :: sc
+                else if a.name.startsWith "xmlns:" then ((splitName a.name).2, a.value) :: sc
+                else sc) scope
+              let fallbackBase := match fallbackAttrs.find? (fun a => a.name == "xml:base") with
+                | some a => resolveUri base a.value
+                | none => base
+              let fallbackLang := match fallbackAttrs.find? (fun a => a.name == "xml:lang") with
+                | some a => a.value
+                | none => language
+              let fallback := fallback.map (includeFixup fallbackBase fallbackLang fallbackScope)
+              expandXmlIncludes e o fuel fallbackBase fallbackScope fallbackLang active fallback
+            | _ => throw ex
+        else
+          let children ← expandXmlIncludes e o fuel base scope language active kids
+          pure [.element tag attrs children]
+      | _ => pure [n]
+    pure groups.flatten
+
+/-- Disabled XInclude leaves the caller's parsed document children unchanged. -/
+def configuredIncludes (e : Env) (o : ParseOpts) (base : String) (kids : List Node) : M (List Node) :=
+  if o.xinclude then expandXmlIncludes e o 256 base [("xml", nsXML)] "" [] kids
+  else pure kids
+
+@[simp] theorem configuredIncludes_disabled (e : Env) (o : ParseOpts) (base : String)
+    (kids : List Node) (h : o.xinclude = false) :
+    configuredIncludes e o base kids = .ok kids := by
+  simp [configuredIncludes, h]
+
 /-- Parse a whole document (string or bytes) under the options;
     `docHref` is the reference the document was read from, against which
     its external DTD subset and external entities are resolved. -/
@@ -202,24 +311,26 @@ def parseDocument (e : Env) (o : ParseOpts) (src : Atomic) (docHref : String := 
         | some t => some t
         | none => if docHref == "" then none else e.resource (siblingRef docHref h))
     else (fun _ => none)
-  let run (r : Resolver) : Except XmlError Document :=
+  let run (r : Resolver) : Except XmlError (Document × Notes) :=
     match bytesOfAtomic src with
-    | some bs => parseXMLBytesWith r bs
-    | none => parseDecodedXMLWith r src.str
+    | some bs => match decodeXmlBytesE bs with
+      | .error ex => .error { message := ex.message, position := 0 }
+      | .ok text => parseXMLNotes r true text
+    | none => parseXMLNotes r true src.str
   match run resolve with
   | .error ex =>
     -- an unread external resource: FODC0016 when trust-external is false
     if !o.trustExternal && (run (fun _ => some "")).isOk then
       err "FODC0016" "the document needs an external resource and trust-external is false"
     else err "FODC0006" ("not well-formed: " ++ ex.message)
-  | .ok d =>
+  | .ok (d, notes) =>
     if !d.namespaceWellFormed then err "FODC0006" "not namespace-well-formed"
     if !o.trustExternal then
       if (d.doctype.bind (·.systemId)).isSome || refsExternalEntity d src.str then
         err "FODC0016" "the document needs an external resource and trust-external is false"
     if o.dtdValidation then
       if d.doctype.isNone then err "FODC0007" "DTD validation requested, and there is no DOCTYPE"
-      if !(validate d).isEmpty then err "FODC0007" "the document is not valid against its DTD"
+      if !(validateWithNotes d notes).isEmpty then err "FODC0007" "the document is not valid against its DTD"
     pure d
 
 def parseXmlFn : LibFn := fun _ e a => do
@@ -228,8 +339,9 @@ def parseXmlFn : LibFn := fun _ e a => do
   | some src =>
     let o ← parseOpts e (argN a 1)
     let d ← parseDocument e o src
-    let kids := docKids o d
-    let doc := { (← docOfKids e o kids "") with baseUri := o.baseUri }
+    let kids ← configuredIncludes e o o.baseUri (docKids o d)
+    let doc := (← docOfKids e o kids "").withDtdInfoset d e.features.dtdInfoset
+    let doc := { doc with baseUri := o.baseUri }
     pure [doc.rootItem (runtimeDocId "parse-xml" src.str)]
 
 /-! ## fn:parse-xml-fragment -/
@@ -270,6 +382,7 @@ def parseFragmentFn : LibFn := fun _ e a => do
         | _ => []
       let kids := if o.stripAll then (kids.filter (fun k => match k with
           | .text t => !isXmlWs t | _ => true)).map (stripWs 100000 false) else kids
+      let kids ← configuredIncludes e o o.baseUri kids
       let doc := { (← docOfKids e o kids "") with baseUri := o.baseUri }
       pure [doc.rootItem (runtimeDocId "parse-xml-fragment" src.str)]
 
@@ -439,27 +552,34 @@ def docFn (e : Env) (a : List Seq) : M Seq := do
     if (u.str.splitOn "#").length > 1 then err "FODC0005" "a fragment identifier is not allowed"
     if !iriRefOk u.str then err "FODC0005" ("not a valid URI reference: " ++ u.str)
     let o ← parseOpts e (argN a 1)
-    -- a relative reference is resolved against the static base URI
-    match e.docUris.lookup u.str |>.orElse (fun _ => e.docUris.lookup (resolveUri e.baseUri u.str)) with
+    -- Options which change the document must use its original resource,
+    -- even when the caller also registered a prebuilt document at this URI.
+    let source := (e.resource u.str).orElse (fun _ => e.resource (u.str.replace "%20" " "))
+    let rebuild := o.dtdValidation || o.xinclude || o.stripAll || o.xsd != "skip"
+    let registered := e.docUris.lookup u.str |>.orElse (fun _ => e.docUris.lookup (resolveUri e.baseUri u.str))
+    let registered := if rebuild && source.isSome then none else registered
+    match registered with
     | some d =>
-      if o.dtdValidation then err "FODC0007" "DTD validation of a registered document" else
+      if o.dtdValidation then err "FODC0007" "DTD validation requires the registered document's source" else
+      if o.xinclude then err "FODC0013" "XInclude requires the registered document's source" else
       pure [.node (NodeRef.mk' d 0)]
     | none =>
       -- a resource the caller stored under the unescaped name (a space
       -- that the URI reference carries as %20)
-      match (e.resource u.str).orElse (fun _ => e.resource (u.str.replace "%20" " ")) with
+      match source with
       | some t =>
         let d ← match parseDocument e o (Atomic.ofStr t) u.str with
           | .ok d => pure d
           | .error x => if x.code == "FODC0006" then err "FODC0002" x.msg else throw x
         let uri := resolveUri e.baseUri u.str
-        let kids := docKids o d
+        let kids ← configuredIncludes e o uri (docKids o d)
         -- documents read with different options are different documents
-        let oSig := toString o.stripAll ++ toString o.dtdValidation ++ toString o.trustExternal ++ o.xsd
+        let oSig := toString o.stripAll ++ toString o.dtdValidation ++ toString o.trustExternal ++ (if o.xinclude then "xinclude" else "") ++ o.xsd
         -- fn:doc: a document that cannot be validated is not available (FODC0002)
         let doc ← match docOfKids e o kids uri with
           | .ok d => pure d
           | .error x => err "FODC0002" x.msg
+        let doc := doc.withDtdInfoset d e.features.dtdInfoset
         pure [doc.rootItem (runtimeDocId "doc" (uri ++ "|" ++ oSig))]
       | none => err "FODC0002" ("document not available: " ++ u.str)
 

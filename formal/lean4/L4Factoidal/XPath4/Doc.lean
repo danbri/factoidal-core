@@ -18,7 +18,7 @@ schema validation, `is-id`/`is-idrefs`, base URIs other than the
 document URI.
 -/
 import L4Factoidal.XPath4.Syntax
-import L4Factoidal.XML.Parser
+import L4Factoidal.XML.NamespaceView
 
 namespace L4Factoidal.XPath4
 
@@ -150,15 +150,38 @@ def nsBase : Nat := 1099511627776
 /-- The number of namespace node indices for each element. -/
 def nsSlot : Nat := 4096
 
-/-- The namespace nodes of an element record, as (prefix, URI): the
-    in-scope bindings (the first binding of a prefix is in force),
-    without the undeclarations, and the `xml` binding. -/
+/-- Adapt the XDM string-valued scope to the XML namespace view. Empty
+URIs are undeclarations (Namespaces in XML §6.2). -/
+def NRec.namespaceScope (r : NRec) : NsScope :=
+  r.inscope.map (fun (p, u) => (p, if u == "" then none else some u))
+
+/-- The namespace nodes of an element record, as (prefix, URI), using
+`XML.visibleBindings` for shadowing and undeclarations. The fixed index
+encoding reserves `nsSlot` positions per element. -/
 def nsNodesOf (r : NRec) : List (String × String) :=
   if r.kind != .element then [] else
-  let sc := r.inscope.foldl (fun acc (p, u) => if acc.any (·.1 == p) then acc else acc ++ [(p, u)]) []
-  let sc := sc.filter (fun (_, u) => u != "")
-  let sc := sc.take (nsSlot - 2)
+  let sc := (visibleBindings r.namespaceScope).take (nsSlot - 2)
   if sc.any (·.1 == "xml") then sc else sc ++ [("xml", nsXML)]
+
+/-- For an element whose visible scope fits the namespace index encoding
+and includes the mandatory XML binding, namespace enumeration is exactly
+`XML.NamespaceView.visibleBindings`, including its order. -/
+theorem nsNodesOf_eq_visibleBindings (r : NRec)
+    (he : r.kind = .element)
+    (hsize : (visibleBindings r.namespaceScope).length ≤ nsSlot - 2)
+    (hxml : (visibleBindings r.namespaceScope).any (·.1 == "xml") = true) :
+    nsNodesOf r = visibleBindings r.namespaceScope := by
+  simp [nsNodesOf, he, List.take_of_length_le hsize, hxml]
+
+-- Shadowing and undeclarations use the shared namespace view. The XML
+-- binding is present even for a manually constructed record with no scope.
+#guard nsNodesOf {
+    kind := .element
+    inscope := [("p", "urn:new"), ("", ""), ("p", "urn:old"),
+                ("", "urn:old-default"), ("xml", nsXML)] } ==
+  [("p", "urn:new"), ("xml", nsXML)]
+#guard nsNodesOf { kind := .text, inscope := [("p", "urn:p")] } == []
+#guard nsNodesOf { kind := .element } == [("xml", nsXML)]
 
 /-- The index of namespace node `k` of the element at index `e`. -/
 def nsNodeIdx (e k : Nat) : Nat := nsBase + e * nsSlot + k

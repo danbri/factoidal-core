@@ -520,8 +520,13 @@ def FeatureSettings.checkExpr (settings : FeatureSettings) : Nat → Expr → M 
       for e in es do go e
     | .seq es | .arrS es | .tmpl es => for e in es do go e
     | .slash a b | .filter a b | .bin _ a b | .smap a b | .pipe a b => go a; go b
-    | .step _ _ ps => for p in ps do go p
-    | .dstep _ x ps => go x; for p in ps do go p
+    | .step ax _ ps =>
+      if ax == .namespace && !settings.namespaceAxis then err "XPST0010" "namespace axis is disabled"
+      for p in ps do go p
+    | .dstep ax x ps =>
+      if ax == .namespace && !settings.namespaceAxis then err "XPST0010" "namespace axis is disabled"
+      go x
+      for p in ps do go p
     | .dyn g args => go g; for e in args.filterMap id do go e
     | .inline _ _ body _ => go body
     | .mapC es => for (a, b) in es do go a; go b

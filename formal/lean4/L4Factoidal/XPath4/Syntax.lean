@@ -33,6 +33,10 @@ structure FeatureSettings where
   schemaValidation : Bool := true
   typedData : Bool := true
   serialization : Bool := true
+  namespaceAxis : Bool := true
+  dtdInfoset : Bool := true
+  dtdValidation : Bool := true
+  xinclude : Bool := false
 deriving BEq, Repr, Inhabited
 
 /-- Disable a named optional feature, using the qt4tests dependency names. -/
@@ -48,13 +52,27 @@ def FeatureSettings.disable (s : FeatureSettings) (name : String) : FeatureSetti
   | "schemaValidation" => { s with schemaValidation := false }
   | "typedData" => { s with typedData := false }
   | "serialization" => { s with serialization := false }
+  | "namespace-axis" => { s with namespaceAxis := false }
+  | "infoset-dtd" => { s with dtdInfoset := false }
+  | "dtd-validation-option" => { s with dtdValidation := false }
+  | "xinclude-option" => { s with xinclude := false }
+  | _ => s
+
+/-- Enable the XML capabilities selected by positive dependencies. -/
+def FeatureSettings.enableXml (s : FeatureSettings) (name : String) : FeatureSettings :=
+  match name with
+  | "namespace-axis" => { s with namespaceAxis := true }
+  | "infoset-dtd" => { s with dtdInfoset := true }
+  | "dtd-validation-option" => { s with dtdValidation := true }
+  | "xinclude-option" => { s with xinclude := true }
   | _ => s
 
 /-- Features with a selectable implementation in the processor. -/
 def FeatureSettings.switchable (name : String) : Bool :=
   ["fn-load-xquery-module", "fn-transform-XSLT", "fn-transform-XSLT30",
    "fn-invisible-xml", "binary", "expath-file", "schemaImport",
-   "schemaValidation", "typedData", "serialization"].contains name
+   "schemaValidation", "typedData", "serialization", "namespace-axis",
+   "infoset-dtd", "dtd-validation-option", "xinclude-option"].contains name
 
 /-- Functions absent from the static context when their feature is off.
     `transform`, `serialize`, and `load-xquery-module` retain their

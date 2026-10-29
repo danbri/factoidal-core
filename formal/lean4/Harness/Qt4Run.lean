@@ -37,6 +37,7 @@ anything but XPath expressions in this evaluator.
 -/
 import L4Factoidal.XPath4.Eval
 import L4Factoidal.XPath4.FeatureTests
+import L4Factoidal.XPath4.XmlFeatureTests
 import L4Factoidal.XSD11.Load
 import L4Factoidal.XSD11.XPathBridge
 import L4Factoidal.XPath4.Theorems
@@ -181,13 +182,17 @@ def featureSupported (f : String) : Bool :=
   || f == "fullText" || f == "fullText-ignore" || f == "fullText-units" || f == "fullText-defaults"
   -- XQuery Update Facility 3.0 (`L4Factoidal.XQueryUpdate`)
   || f == "XQUpdate"
+  || f == "namespace-axis" || f == "infoset-dtd"
+  || f == "dtd-validation-option" || f == "xinclude-option"
 
 /-- Select a processor configuration for negative feature dependencies.
     The query and its assertions use this same configuration. -/
 def featureSettings (deps : List Node) : FeatureSettings :=
   deps.foldl (fun settings d =>
-    if attrD d "type" == "feature" && attrD d "satisfied" "true" == "false" then
-      (attrD d "value").splitOn " " |>.foldl FeatureSettings.disable settings
+    if attrD d "type" == "feature" then
+      (attrD d "value").splitOn " " |>.foldl
+        (if attrD d "satisfied" "true" == "false" then FeatureSettings.disable
+         else FeatureSettings.enableXml) settings
     else settings) {}
 
 def depOk (xq : Bool) (d : Node) : Bool :=
@@ -777,7 +782,7 @@ def scanResources (root dir src : String) : IO (List (String × String) × List 
 
 /-- Build the dynamic context for an environment; `none` with a reason
     when it cannot be built. -/
-def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool := false) : IO (Except String Env) := do
+def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool := false) (root : String := "../../third_party/testing/qt4tests") : IO (Except String Env) := do
   if let some why := spec.unsupported then return .error why
   let mut env : Env := { ns := spec.ns, baseUri := if spec.baseUri == "#UNDEFINED" then "" else spec.baseUri,
                          resourceEncodings := spec.resourceEncodings }
@@ -821,8 +826,14 @@ def buildEnv (spec : EnvSpec) (cache : IO.Ref (List (String × Doc))) (xq : Bool
         match txt? with
         | none => pure none
         | some txt =>
-          match Doc.ofString txt uri with
-          | .ok d => cache.modify (fun c => (file, d) :: c); pure (some d)
+          -- Reuse the resource scanner for the source's external DTD and
+          -- entity files, then let XML.Parser interpret their declarations.
+          let (resources, _) ← scanResources root (dirOf file) txt
+          match parseDecodedXMLWith (fun h => resources.lookup h) txt with
+          | .ok xd =>
+            let d := Doc.ofDocument xd uri
+            cache.modify (fun c => (file, d) :: c)
+            pure (some d)
           | .error _ => pure none
     match doc with
     | none => return .error ("source not loadable: " ++ file)
@@ -934,7 +945,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       t := { t with fail := t.fail + 1 }
       if o.listFails then fails := fails ++ [s!"FAIL {setName}/{name}: not run (does not terminate in this implementation)"]
       continue
-    match ← buildEnv spec cache xq with
+    match ← buildEnv spec cache xq o.root with
     | .error why =>
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]

@@ -201,7 +201,11 @@ def Env.restrictFeatures (e : Env) (features : FeatureSettings) : Env :=
     schemaImport := e.features.schemaImport && features.schemaImport
     schemaValidation := e.features.schemaValidation && features.schemaValidation
     typedData := e.features.typedData && features.typedData
-    serialization := e.features.serialization && features.serialization }
+    serialization := e.features.serialization && features.serialization
+    namespaceAxis := e.features.namespaceAxis && features.namespaceAxis
+    dtdInfoset := e.features.dtdInfoset && features.dtdInfoset
+    dtdValidation := e.features.dtdValidation && features.dtdValidation
+    xinclude := features.xinclude }
   let features := if features.typedData then features else
     { features with schemaImport := false, schemaValidation := false }
   let schema := if features.schemaImport && features.schemaValidation then e.schema else
@@ -222,6 +226,7 @@ def Env.doc (e : Env) (n : NodeRef) : Doc :=
   let d := match n.rt with
     | some d => d
     | none => e.docs.getD n.doc default
+  let d := if e.features.dtdInfoset then d else { d with idAttrs := [], idrefAttrs := [] }
   if e.features.typedData then d else d.withoutTypes
 def Env.nrec (e : Env) (n : NodeRef) : NRec := (e.doc n).get n.idx
 
@@ -490,7 +495,8 @@ def Env.axis (e : Env) (ax : Axis) (n : NodeRef) : List NodeRef :=
   | .precedingOrSelf =>
       let anc := e.ancestors n
       n :: ((e.rangeNodes d 0 (n.idx - 1)).filter (fun m => n.idx > 0 && !anc.contains m)).reverse
-  | .namespace => (List.range (nsNodesOf r).length).map (fun k => d.at (nsNodeIdx n.idx k))
+  | .namespace => if e.features.namespaceAxis then
+      (List.range (nsNodesOf r).length).map (fun k => d.at (nsNodeIdx n.idx k)) else []
   | .item => []
 
 /-! ## Sequence types -/
