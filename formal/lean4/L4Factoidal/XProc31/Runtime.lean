@@ -1,5 +1,6 @@
 import L4Factoidal.XProc31.Core
 import L4Factoidal.XProc31.Static
+import L4Factoidal.XProc31.Scheduling
 import L4Factoidal.XProc31.Atomic
 import L4Factoidal.XProc31.Viewport
 import L4Factoidal.XProc31.Sequence
@@ -7,6 +8,14 @@ import L4Factoidal.XProc31.Functions
 import L4Factoidal.XProc31.ExtraSteps
 import L4Factoidal.XProc31.Loading
 import L4Factoidal.XProc31.FileSteps
+import L4Factoidal.XProc31.UtilitySteps
+import L4Factoidal.XProc31.ResourceContext
+import L4Factoidal.XProc31.ValidationSteps
+import L4Factoidal.XProc31.ArchiveSteps
+import L4Factoidal.XProc31.CompressionSteps
+import L4Factoidal.XProc31.ProcessSteps
+import L4Factoidal.XProc31.SchematronSteps
+import L4Factoidal.XProc31.JsonSchemaSteps
 import L4Factoidal.Syntax.IriResolve
 import L4Factoidal.RDF.IriSyntax
 import L4Factoidal.XML.Encoding
@@ -47,6 +56,9 @@ structure RunContext where
   expandText : Bool := true
   propertyDocs : List (Nat × Document) := []
   writeRoot : Option String := none
+  resources : List (String × String) := []
+  resourceBytes : List (String × ByteArray) := []
+  resourceEncodings : List (String × String) := []
   excludedInlinePrefixes : List String := ["http://www.w3.org/ns/xproc"]
 
 /-- Resolve exclusion controls before expansion; the resulting namespace URIs
@@ -66,10 +78,12 @@ def excludeInlineNamespaces (excluded : List String) : Nat → List (String × S
     let used := (XPath4.splitName name).1 :: (ats.filterMap fun a =>
       if a.name == "xmlns" || a.name.startsWith "xmlns:" then none
       else let p := (XPath4.splitName a.name).1; if p == "" then none else some p)
+    let scope := ns (.element name ats []) ++ inherited
+    let usedUris := used.filterMap (fun p => scope.lookup p)
     let ats := ats.filter fun a =>
       if a.name == "xmlns" || a.name.startsWith "xmlns:" then
         let p := if a.name == "xmlns" then "" else (a.name.drop 6).toString
-        let removed := (excluded.contains "#all" || excluded.contains a.value) && !used.contains p
+        let removed := (excluded.contains "#all" || excluded.contains a.value) && !usedUris.contains a.value
         !removed && (inherited.lookup p).getD "" != a.value
       else true
     let bindings := ns (.element name ats []) ++ inherited
@@ -93,14 +107,14 @@ def pipelineError (e : ProcError) : ProcError :=
 def retainVariable (env : XPath4.Env) (id : Nat) : Nat → XPath4.Seq → XPath4.Seq
   | 0, values => values
   | fuel+1, values => values.map fun item => match item with
-    | .node n => if n.rt.isSome then item else .node {n with doc := id, rt := some (env.doc n)}
+    | .node n => if n.rt.isSome then item else .node {n with doc := id + n.doc, rt := some (env.doc n)}
     | .map entries => .map (entries.map (fun (k,v) => (k,retainVariable env id fuel v)))
     | .arr members => .arr (members.map (retainVariable env id fuel))
     | _ => item
 
 def standardAvailable (q : XPath4.QN) : Bool :=
   q.uri == "http://www.w3.org/ns/xproc" &&
-    (supportedAtomic q.loc || supportsExtra q.loc || supportsFile q.loc || ["group", "for-each", "viewport", "choose", "if", "try", "load", "run", "split-sequence"].contains q.loc)
+    (supportedAtomic q.loc || supportsExtra q.loc || supportsFile q.loc || supportsUtility q.loc || supportsValidation q.loc || supportsArchive q.loc || supportsCompression q.loc || supportsSchematron q.loc || supportsJsonSchema q.loc || q.loc == "os-exec" || ["group", "for-each", "viewport", "choose", "if", "try", "load", "run", "split-sequence"].contains q.loc)
 
 def procHost (docs : List Document) (position size : Nat) (q : XPath4.QN) (_arity : Nat) : Option XPath4.HostFn :=
   if q.uri != "http://www.w3.org/ns/xproc" then none else
@@ -131,11 +145,19 @@ def qname (n : Node) (name : String) : XPath4.QN :=
 def contextEnv (ctx : RunContext) (step : Node) (docs : List Document) : XPath4.Env :=
   { (xpathEnv (if docs.length == 1 then docs.head? else none) ctx.vars (ns step) ctx.position ctx.size) with
     baseUri := ctx.baseUri
+    resources := ctx.resources
+    resourceBytes := ctx.resourceBytes
+    resourceEncodings := ctx.resourceEncodings
     host := fun q arity =>
       if q.uri == nsXProc && ["document-properties", "document-property"].contains q.loc then
-        some (fun c args => do
-          let saved := match args[0]?.getD [] with
-            | [.node n] => if n.rt.isSome then ctx.propertyDocs.lookup n.doc else docs.head?
+        some (fun (c : XPath4.HostCall) (args : List XPath4.Seq) => do
+          let argument : XPath4.Seq := args.getD 0 []
+          let saved : Option Document := match argument with
+            | [XPath4.Item.node n] => if let some tree := n.rt then
+                (ctx.propertyDocs.lookup n.doc).orElse (fun _ =>
+                  (docs.head?.filter (fun d => d.value.isSome)).orElse (fun _ =>
+                    if n.idx == 0 then some {node := .text "", baseUri := if tree.baseUri == "" then tree.uri else tree.baseUri} else none))
+              else docs[n.doc]?
             | [.map _] | [.arr _] => docs.head?
             | [.atom _] => docs.head?.filter (fun d => d.value.isSome)
             | _ => none
@@ -148,7 +170,7 @@ def contextEnv (ctx : RunContext) (step : Node) (docs : List Document) : XPath4.
       else procHost docs ctx.position ctx.size q arity }
 
 def resolvePath (base ref : String) : String :=
-  Syntax.resolveIri base ref
+  Syntax.resolveIri (if base.startsWith "/" then "file://" ++ Fn.String.iriToUri base else base) ref
 
 def readDocument (uri contentType : String) : IO (Result Document) := loadDocument uri contentType
 
@@ -255,6 +277,9 @@ def inlineDoc (ctx : RunContext) (n : Node) (defaultDocs : List Document) : Resu
   if encoding == "" && (media.parameters.lookup "charset").isSome then
     error "XD0055" "unencoded inline content cannot declare a charset" else pure ()
   if encoding != "" && !(kids n).isEmpty then error "XD0056" "encoded inline content contains markup" else pure ()
+  if media.kind == .binary && encoding == "base64" then
+    let some bytes := XSD.parseBase64Lex n.textContent | error "XD0040" "invalid base64 inline content"
+    return ← applyProperties env n (binaryDocument ⟨(bytes.map UInt8.ofNat).toArray⟩ ct ctx.baseUri)
   if media.kind == .text && encoding == "" && !(kids n).isEmpty then error "XD0063" "text inline content contains markup" else pure ()
   let enabled := attr n "expand-text" (if ctx.expandText then "true" else "false") != "false"
   if media.kind == .text || media.kind == .json || media.kind == .binary then
@@ -268,7 +293,8 @@ def inlineDoc (ctx : RunContext) (n : Node) (defaultDocs : List Document) : Resu
         if !expanded.elementAttrs.isEmpty then error "XD0084" "attribute in text inline document"
         else pure expanded.textContent
       else pure n.textContent
-    if media.kind == .binary then unsupported "binary inline documents" else pure ()
+    if media.kind == .binary then
+      return ← applyProperties env n (binaryDocument text.toUTF8 ct ctx.baseUri)
     if media.kind == .json then
       let value ← (eval "parse-json($raw)" { env with vars := (⟨"", "raw", ""⟩, XPath4.sStr text) :: env.vars }).mapError
         (fun e => {e with code := "XD0057"})
@@ -283,7 +309,6 @@ def inlineDoc (ctx : RunContext) (n : Node) (defaultDocs : List Document) : Resu
     applyProperties env n ⟨root, ct, ctx.baseUri, [], none⟩
 
 def binding (ctx : RunContext) (n : Node) (defaultDocs : List Document) : IO (Result (List Document)) := do
-  let ctx := if attr n "xml:base" == "" then ctx else {ctx with baseUri := resolvePath ctx.baseUri (attr n "xml:base")}
   let ctx := if attr n "xml:base" == "" then ctx else {ctx with baseUri := resolvePath ctx.baseUri (attr n "xml:base")}
   let ctx := {ctx with expandText := attr n "expand-text" (if ctx.expandText then "true" else "false") != "false"}
   let ctx := {ctx with excludedInlinePrefixes := inlineExclusions ctx n}
@@ -331,7 +356,7 @@ def binding (ctx : RunContext) (n : Node) (defaultDocs : List Document) : IO (Re
         if let .node ref := item then
           if ref.idx == 0 && ref.rt.isNone then return [d]
         let selected ← seqDocuments env [item] (match item with | .node _ => d.baseUri | _ => "")
-        pure (selected.map (fun x => {x with properties := d.properties.filter (fun p => propertyName p.1 != some ⟨"", "serialization", ""⟩)}))
+        pure (selected.map (fun x => {x with properties := d.properties.filter (fun p => x.contentType == d.contentType || propertyName p.1 != some ⟨"", "serialization", ""⟩)}))
       pure (out ++ batch)) []
 
 def selectionContext (ctx : RunContext) (node : Node) (docs : List Document) : IO (Result (List Document)) :=
@@ -551,6 +576,12 @@ def runBody : Nat → RunContext → Node → List Document → IO (Result StepO
     let mut docs := initial
     ctx := {ctx with expandText := attr pipeline "expand-text" (if ctx.expandText then "true" else "false") != "false"}
     ctx := {ctx with excludedInlinePrefixes := inlineExclusions ctx pipeline}
+    for opt in pNamed pipeline "option" do
+      let q := qname opt (attr opt "name")
+      if attr opt "static" == "true" && !(ctx.vars.any (fun pair => pair.1 == q)) then
+        match eval (attr opt "select" "()") (contextEnv ctx opt []) with
+        | .error e => return .error (pipelineError e)
+        | .ok value => ctx := {ctx with vars := (q,value) :: ctx.vars, staticVars := (q,value) :: ctx.staticVars}
     let inputDecls := pNamed pipeline "input"
     let primaryInput := (inputDecls.find? (fun n => attr n "primary" == "true")).orElse
       (fun _ => inputDecls.head?)
@@ -590,17 +621,22 @@ def runBody : Nat → RunContext → Node → List Document → IO (Result StepO
         | .error e => return .error (pipelineError e)
         | .ok value => ctx := {ctx with vars := (q,value) :: ctx.vars.filter (fun p => p.1 != q)}
     let initial := docs
-    let hasVariables := !(pNamed pipeline "variable").isEmpty
-    let executable := (kids pipeline).filter isPipelineStep
-    let jobs := if hasVariables then (kids pipeline).zipIdx else
-      ((orderConnections (pipelineConnections pipeline)).getD (List.range executable.length)).filterMap
-        (fun i => (executable[i]?).map (fun n => (n,i)))
+    let lexicalJobs := pipelineJobs pipeline
+    let some order := orderConnections (scheduledConnections qname pipeline)
+      | return error "XS0001" "cyclic step and variable dependencies"
+    let jobs := order.filterMap (fun i => (lexicalJobs[i]?).map (fun n => (n,i)))
+    let outerVars := ctx.vars
+    let mut evaluatedVariables : List (Nat × (XPath4.QN × XPath4.Seq)) := []
     for (step, stepIndex) in jobs do
-      if !hasVariables then
-        docs := if stepIndex == 0 then initial else
-          (ctx.values.lookup ("#auto" ++ toString (stepIndex-1))).getD initial
+      ctx := {ctx with vars := ((lexicalJobs.take stepIndex).zipIdx.reverse.filterMap
+        (fun (_,i) => evaluatedVariables.lookup i)) ++ outerVars}
+      docs := match previousExecutable lexicalJobs stepIndex with
+        | none => initial
+        | some i => (ctx.values.lookup ("#auto" ++ toString i)).getD initial
       let t := pTag step
       if declarationTag t then continue
+      let loaded ← preloadXPathResources (contextEnv ctx step docs) step
+      ctx := {ctx with resources := loaded.resources, resourceBytes := loaded.resourceBytes, resourceEncodings := loaded.resourceEncodings}
       if t == "variable" then
         let variableDocs ← match ← selectionContext ctx step docs with
           | .error e => return .error (pipelineError e)
@@ -608,17 +644,25 @@ def runBody : Nat → RunContext → Node → List Document → IO (Result StepO
         if variableDocs.length > 1 && attr step "collection" != "true" &&
             (XPath4.parseXPath (attr step "select") (ns step)).toOption.any (expressionNeedsFocus ((attr step "select").length+1)) then
           return error "XD0001" "variable context requires one document"
-        match eval (attr step "select") (contextEnv ctx step variableDocs) with
+        let variableEnv := contextEnv ctx step variableDocs
+        let variableEnv := if attr step "collection" == "true" then
+          {(collectionEnv variableEnv variableDocs true) with
+            ctx := none
+            docs := (variableDocs.map (fun d => XPath4.Doc.ofNodes (documentNodes d) d.baseUri)).toArray}
+          else variableEnv
+        match eval (attr step "select") variableEnv with
         | .error e => return .error (pipelineError e)
         | .ok v =>
-          match typedValue step (contextEnv ctx step variableDocs) v with
+          match typedValue step variableEnv v with
           | .error e => return .error (pipelineError e)
           | .ok v =>
             let id := ctx.propertyDocs.length + 1
-            let value := retainVariable (contextEnv ctx step variableDocs) id 256 v
+            let value := retainVariable variableEnv id 256 v
             ctx := {ctx with
               vars := (qname step (attr step "name"),value) :: ctx.vars
-              propertyDocs := (variableDocs.head?.map (fun d => [(id,d)]) |>.getD []) ++ ctx.propertyDocs}
+              propertyDocs := (variableDocs.zipIdx.map (fun (d,i) => (id+i,d))) ++ ctx.propertyDocs}
+        if let some value := ctx.vars.lookup (qname step (attr step "name")) then
+          evaluatedVariables := (stepIndex,(qname step (attr step "name"),value)) :: evaluatedVariables
         continue
       let enabled := if attr step "use-when" == "" then .ok true else evalBool (attr step "use-when") (contextEnv ctx step [])
       match enabled with
@@ -637,8 +681,10 @@ def runBody : Nat → RunContext → Node → List Document → IO (Result StepO
             ctx := {ctx with values := (attr step "name" ++ "/" ++ port, batch) :: ctx.values}
         if attr step "name" != "" then
           ctx := {ctx with values := (attr step "name" ++ "/#primary", docs) :: ctx.values}
-    if !hasVariables && !executable.isEmpty then
-      docs := (ctx.values.lookup ("#auto" ++ toString (executable.length-1))).getD docs
+    ctx := {ctx with vars := (lexicalJobs.zipIdx.reverse.filterMap
+      (fun (_,i) => evaluatedVariables.lookup i)) ++ outerVars}
+    if let some i := previousExecutable lexicalJobs lexicalJobs.length then
+      docs := (ctx.values.lookup ("#auto" ++ toString i)).getD docs
     let outputs := pNamed pipeline "output"
     if outputs.isEmpty then return .ok (primaryOutput docs)
     let selected := (outputs.find? (fun n => attr n "primary" == "true")).orElse
@@ -646,7 +692,7 @@ def runBody : Nat → RunContext → Node → List Document → IO (Result StepO
     let mut boundOutputs := []
     for output in outputs do
       let result ← if attr output "pipe" != "" || !(kids output).isEmpty then binding ctx output docs
-        else pure (.ok docs)
+        else pure (.ok (if selected.any (fun primary => attr primary "port" == attr output "port") then docs else []))
       match result with
       | .error e => return .error (pipelineError e)
       | .ok ds =>
@@ -662,7 +708,9 @@ def runStep : Nat → RunContext → Node → List Document → IO (Result StepO
   | fuel+1, ctx, step, defaultDocs => do
     let ctx := if attr step "xml:base" == "" then ctx else {ctx with baseUri := resolvePath ctx.baseUri (attr step "xml:base")}
     let ctx := {ctx with expandText := attr step "expand-text" (if ctx.expandText then "true" else "false") != "false"}
-    if !supportedAtomic (tag step) && !supportsExtra (tag step) && !supportsFile (tag step) && !(["group", "for-each", "viewport", "if", "choose", "try", "load", "run", "split-sequence", "with-input"].contains (tag step)) &&
+    let loaded ← preloadXPathResources (contextEnv ctx step defaultDocs) step
+    let ctx := {ctx with resources := loaded.resources, resourceBytes := loaded.resourceBytes, resourceEncodings := loaded.resourceEncodings}
+    if !supportedAtomic (tag step) && !supportsExtra (tag step) && !supportsFile (tag step) && !supportsUtility (tag step) && !supportsValidation (tag step) && !supportsArchive (tag step) && !supportsCompression (tag step) && !supportsSchematron (tag step) && !supportsJsonSchema (tag step) && tag step != "os-exec" && !(["group", "for-each", "viewport", "if", "choose", "try", "load", "run", "split-sequence", "with-input"].contains (tag step)) &&
         !(ctx.declarations.any (fun d => qname d (attr d "type") == qname step (step.elementTag.getD ""))) then
       return unsupported ("step " ++ step.elementTag.getD "")
     let ports ← stepPorts ctx step defaultDocs
@@ -726,8 +774,10 @@ def runStep : Nat → RunContext → Node → List Document → IO (Result StepO
       let errors := match initial with
         | .ok _ => []
         | .error e =>
-          let code := e.errorName.map (fun q => if q.pfx == "" then q.loc else q.pfx ++ ":" ++ q.loc) |>.getD e.code
-          let namespaces := e.errorName.map (fun q => if q.pfx == "" then [] else [{name := "xmlns:" ++ q.pfx, value := q.uri}]) |>.getD []
+          let errorQName := e.errorName.getD (if e.code.startsWith "Q{" then qname step e.code else ⟨"http://www.w3.org/ns/xproc-error",e.code,"err"⟩)
+          let codePrefix := if errorQName.uri != "" && errorQName.pfx == "" then "_error" else errorQName.pfx
+          let code := if codePrefix == "" then errorQName.loc else codePrefix ++ ":" ++ errorQName.loc
+          let namespaces := if codePrefix == "" then [] else [{name := "xmlns:" ++ codePrefix, value := errorQName.uri}]
           [{ node := .element "c:errors" [{name := "xmlns:c", value := "http://www.w3.org/ns/xproc-step"}] [.element "c:error" ({name := "code", value := code} :: namespaces) ([.text e.message] ++ e.details)], baseUri := ctx.baseUri }]
       let result ← match initial with
         | .ok output => pure (.ok output)
@@ -872,6 +922,18 @@ def runStep : Nat → RunContext → Node → List Document → IO (Result StepO
     | "with-input" => return .ok (primaryOutput docs)
     | _ =>
       if supportsFile (tag step) then return (← fileStep step ports env ctx.writeRoot).map primaryOutput
+      if supportsUtility (tag step) then return (← utilityStep step ports env).map primaryOutput
+      if supportsArchive (tag step) then
+        return (← archiveStep step ports env).map (fun ports => {primary := (ports.lookup "result").getD [], ports})
+      if tag step == "os-exec" then
+        return (← processStep step ports env).map (fun ports => {primary := (ports.lookup "result").getD [], ports})
+      if supportsSchematron (tag step) then
+        return (schematronPorts step ports env).map (fun ports => {primary := (ports.lookup "result").getD [], ports})
+      if supportsJsonSchema (tag step) then
+        return (jsonSchemaPorts step ports env).map (fun ports => {primary := (ports.lookup "result").getD [], ports})
+      if supportsCompression (tag step) then return (← compressionStep step ports env).map primaryOutput
+      if supportsValidation (tag step) then
+        return (← validationPorts step ports env).map (fun ports => {primary := (ports.lookup "result").getD [], ports})
       withPrimary (if supportsExtra (tag step) then extraAtomic step ports env else atomic step ports env)
 
 def runDeclared : Nat → RunContext → Node → Node → List Document → Bindings → XPath4.Env → IO (Result StepOutput)

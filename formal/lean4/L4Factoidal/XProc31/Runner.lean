@@ -28,6 +28,47 @@ def inheritNs (parent child : XML.Node) : XML.Node :=
     .element name (attrs ++ add) children
   | n => n
 
+/-- Prefix-shaped references include names, XPath/AVT expressions and
+QName-valued attributes such as `as`. Namespace declarations themselves are
+excluded by the caller: writing one is not a use of a wrapper binding. -/
+private def componentPrefixes (text : String) : List String :=
+  let tokens := String.ofList (text.toList.map (fun c => if XML.isNameChar c then c else ' '))
+  (tokens.splitOn " ").flatMap fun token =>
+    (token.splitOn ":").dropLast.filter (fun p => p != "" && XML.isName p)
+
+/-- Detach a suite component from its wrapper. All namespace declarations
+physically inside the component are retained, including unused declarations.
+Wrapper-only bindings are copied where element/attribute names or lexical
+prefix references need them, rather than being added to the component root. -/
+private def copyComponent : Nat → List (String × String) → List (String × String) → XML.Node → XML.Node
+  | 0, _, _, node => node
+  | fuel+1, inherited, retained, .element name attrs children =>
+    let written := namespaces (.element name attrs [])
+    let original := written ++ inherited.filter (fun pair => !written.any (fun own => own.1 == pair.1))
+    let copied := written ++ retained.filter (fun pair => !written.any (fun own => own.1 == pair.1))
+    let ordinary := attrs.filter (fun a => a.name != "xmlns" && !a.name.startsWith "xmlns:")
+    let references := componentPrefixes name ++ ordinary.flatMap (fun a => componentPrefixes (a.name ++ " " ++ a.value)) ++
+      children.flatMap (fun c => match c with | .text t | .cdata t => componentPrefixes t | _ => [])
+    let references := if !name.contains ':' then "" :: references else references
+    let additions := references.eraseDups.filterMap fun p => do
+      let uri ← original.lookup p
+      if copied.lookup p == some uri then none else
+        some ({name := if p == "" then "xmlns" else "xmlns:" ++ p, value := uri} : XML.Attribute)
+    let next := namespaces (.element name additions []) ++ copied
+    .element name (attrs ++ additions) (children.map (copyComponent fuel original next))
+  | _, _, _, node => node
+
+#guard namespaces (copyComponent 8 [("outer", "urn:outer")] [] (.element "doc" [] [])) == []
+#guard namespaces (copyComponent 8 [("outer", "urn:outer")] []
+  (.element "doc" [⟨"xmlns:unused", "urn:physical"⟩] [])) == [("unused", "urn:physical")]
+#guard attr (copyComponent 8 [("a", "urn:ancestor")] [] (.element "a:doc" [] [])) "xmlns:a" == "urn:ancestor"
+#guard attr (copyComponent 8 [("xs", "http://www.w3.org/2001/XMLSchema")] []
+  (.element "option" [⟨"as", "xs:integer"⟩] [])) "xmlns:xs" == "http://www.w3.org/2001/XMLSchema"
+#guard attr (copyComponent 8 [("v", "urn:variables")] []
+  (.element "doc" [⟨"value", "{$v:item}"⟩] [])) "xmlns:v" == "urn:variables"
+#guard attr (copyComponent 8 [("a", "urn:ancestor")] []
+  (.element "doc" [⟨"xmlns:a", "urn:local"⟩, ⟨"as", "a:type"⟩] [])) "xmlns:a" == "urn:local"
+
 def desc : Nat → XML.Node → List XML.Node
   | 0, _ => []
   | fuel + 1, n => n :: (kids n).flatMap (desc fuel)
@@ -127,13 +168,14 @@ def checkSchema (schema : XML.Node) (output : XProc31.Document) : Outcome := Id.
   if assertions == 0 then return .unsupported "no Schematron assertion evaluated"
   return .pass
 
-/-- Load an inline or external suite component, preserving inherited namespaces. -/
+/-- Load an external component unchanged, or detach an inline component
+with namespace fixup while retaining its own lexical namespace declarations. -/
 def component (base : String) (parent node : XML.Node) : IO (Except String XML.Node) := do
   let src := attr node "src"
   if src != "" then loadXml (resolve base src)
   else pure <| match (kids node).head? with
     | none => .error ("empty " ++ tag node)
-    | some n => .ok (inheritNs parent (inheritNs node n))
+    | some n => .ok (copyComponent 4096 (namespaces (inheritNs parent node)) [] n)
 
 def expandedCode (scope : List (String × String)) (code : String) : String :=
   if code.startsWith "Q{" then code
@@ -182,6 +224,10 @@ def serializationOptions (env : XPath4.Env) (opts : XPath4.Seq) : XPath4.M XPath
       pure (.map entries)
     | i => pure i
 
+#guard (match serializationOptions {} [.map [(XPath4.Atomic.ofStr "cdata-section-elements", XPath4.sStr "Q{urn:example}pre")]] with
+  | .ok [.map [(_, [.atom a])]] => XProc31.propertyName a == some ⟨"urn:example", "pre", ""⟩
+  | _ => false)
+
 def runTestIn (path sandbox : String) : IO Outcome := do
   let path := (← IO.FS.realPath path).toString
   let root ← match ← loadXml path with
@@ -190,6 +236,8 @@ def runTestIn (path sandbox : String) : IO Outcome := do
   if tag root != "test" then return .unsupported "not a t:test"
   if (words (attr root "features")).contains "lazy-eval" then return .unsupported "lazy evaluation mode (processor uses eager evaluation)"
   let features := words (attr root "features")
+  if features.contains "no-psvi-support" then
+    return .unsupported "test requires a processor without PSVI support; this processor retains schema annotations"
   if features.contains "urify-windows" && !System.Platform.isWindows then
     return .unsupported "Windows platform dependency"
   if features.contains "urify-non-windows" && System.Platform.isWindows then
@@ -328,7 +376,9 @@ def parseOptions : List String → Options → Except String Options
   | a :: _, _ => .error ("unknown argument: " ++ a)
 
 def isolatedIn (exe path sandbox : String) (timeoutMs : Nat) : IO Outcome := do
-  let child ← IO.Process.spawn { cmd := exe, args := #["--one-sandbox", path, sandbox], stdout := .piped, stderr := .null }
+  let child ← IO.Process.spawn {
+    cmd := exe, args := #["--one-sandbox", path, sandbox], stdout := .piped, stderr := .null
+    setsid := !System.Platform.isWindows }
   let start ← IO.monoMsNow
   let mut code : Option UInt32 := none
   for _ in [:timeoutMs / 5 + 2] do
@@ -337,7 +387,12 @@ def isolatedIn (exe path sandbox : String) (timeoutMs : Nat) : IO Outcome := do
     if (← IO.monoMsNow) - start ≥ timeoutMs then break
     IO.sleep 5
   if code.isNone then
-    child.kill
+    if System.Platform.isWindows then child.kill else
+      try
+        let killer ← IO.Process.spawn {cmd := "/bin/kill", args := #["-KILL", "--", "-" ++ toString child.pid], stdout := .null, stderr := .null}
+        let result ← killer.wait
+        if result != 0 then child.kill
+      catch _ => child.kill
     let _ ← child.wait
     return .fail s!"timeout after {timeoutMs} ms"
   let message ← child.stdout.readToEnd

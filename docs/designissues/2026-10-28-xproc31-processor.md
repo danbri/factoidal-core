@@ -232,3 +232,37 @@ coordinating session. The returned document still has its original XML and
 properties: this change does not propagate schema type annotations, inserted
 defaults, or PSVI into subsequent XProc steps. The shared XSD engine's existing
 unsupported-component boundary remains in force.
+
+The first integrated XML Schema run exposed a URI/path adapter error: supplied
+schema document properties use `file:` URIs, whereas `XSD11.refsOf` and
+`loadClosure` operate on filesystem locations. The adapter now uses the shared
+`documentFilePath` decoder, including percent escapes, before extracting
+schema dependencies. Two regression guards cover this conversion and rejection
+of schema roots in the wrong namespace. The coordinating session owns builds
+and subsequent fixture verification.
+
+## Structural error precedence and control namespaces
+
+Static dependency attributes now resolve their namespace. An unqualified
+`depends` on an extension step is an option, not an XProc dependency; the
+qualified XProc control accepts namespace aliases. Sequence-type validation
+also covers `p:with-option` and `p:run-option`. Inline expansion controls are
+rejected outside inline content. Structural syntax diagnostics precede port
+inference diagnostics, so an empty compound step reports XS0015 rather than
+an inferred missing output. The coordinating session performs builds and
+regression measurements for these changes.
+
+## 2026-10-29: Inline suite component namespace boundary
+
+Runner component extraction now preserves every namespace declaration physically
+inside an inline component, but copies wrapper-only bindings only where element
+or attribute names, QName-valued attributes, XPath/AVT text, or other lexical
+prefix references require them. This is an inference from the suite's component
+semantics: copying the harness namespace wholesale changes literal XML and makes
+otherwise-valid DTD documents acquire undeclared attributes. No namespace URI or
+prefix is singled out. Six guards cover unused ancestor removal, physical unused
+declaration preservation, element and lexical references, and local shadowing.
+A read-only corpus scan found inherited prefix uses in eleven inline pipelines;
+those meaningful bindings remain available. Prefixes assembled dynamically from
+strings cannot be detected by the lexical scan. The coordinator owns integration
+builds and fixture verification.

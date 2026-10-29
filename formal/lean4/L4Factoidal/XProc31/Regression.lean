@@ -64,13 +64,37 @@ def run : IO UInt32 := do
   else
     IO.println "FAIL filesystem effects and confinement"
     failed := failed + 1
+  if ← resourceContextRegression then IO.println "PASS XPath resource loading and refresh"
+  else
+    IO.println "FAIL XPath resource loading and refresh"
+    failed := failed + 1
+  if ← utilityStepsRegression then IO.println "PASS UUID generation"
+  else
+    IO.println "FAIL UUID generation"
+    failed := failed + 1
+  if ← validationStepsRegression then IO.println "PASS DTD validation and reports"
+  else
+    IO.println "FAIL DTD validation and reports"
+    failed := failed + 1
+  if ← compressionStepsRegression then IO.println "PASS gzip byte roundtrip"
+  else
+    IO.println "FAIL gzip byte roundtrip"
+    failed := failed + 1
+  if ← archiveStepsRegression then IO.println "PASS ZIP archive update and extraction"
+  else
+    IO.println "FAIL ZIP archive update and extraction"
+    failed := failed + 1
+  if ← processStepsRegression then IO.println "PASS process byte streams and errors"
+  else
+    IO.println "FAIL process byte streams and errors"
+    failed := failed + 1
   for c in cases do
     match ← runCase c with
     | .ok () => IO.println ("PASS " ++ c.name)
     | .error msg =>
       failed := failed + 1
       IO.println ("FAIL " ++ c.name ++ ": " ++ msg)
-  IO.println s!"REGRESSIONS {cases.length + 1 - failed} pass / {failed} fail (out of {cases.length + 1})"
+  IO.println s!"REGRESSIONS {cases.length + 7 - failed} pass / {failed} fail (out of {cases.length + 7})"
   pure (if failed == 0 then 0 else 1)
 
 /-- Measure the actual parse/check/execute path at increasing step counts. -/

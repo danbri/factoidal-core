@@ -47,10 +47,16 @@ private def inheritNamespaces : Nat → List XML.Attribute → XML.Node → XML.
     .element t attrs (cs.map (inheritNamespaces f ns))
   | _, _, n => n
 
+private def dependencyAttr (node : XML.Node) : Option String :=
+  let (pfx, _) := XPath4.splitName (node.elementTag.getD "")
+  if ((ns node).lookup pfx).getD "" == "http://www.w3.org/ns/xproc" then
+    XML.findAttr "depends" node.elementAttrs
+  else (node.elementAttrs.find? (fun a =>
+    let (p,l) := XPath4.splitName a.name
+    p != "" && l == "depends" && ((ns node).lookup p).getD "" == "http://www.w3.org/ns/xproc")).map (·.value)
+
 private def staticAttr (node : XML.Node) (name : String) : String :=
-  ((XML.findAttr name node.elementAttrs).orElse fun _ =>
-    if name == "depends" && !(node.elementTag.getD "").startsWith "p:" then
-      XML.findAttr "p:depends" node.elementAttrs else none).getD ""
+  (if name == "depends" then dependencyAttr node else XML.findAttr name node.elementAttrs).getD ""
 
 private def staticLocalName (node : XML.Node) : String :=
   let (pfx, loc) := XPath4.splitName (node.elementTag.getD "")
@@ -229,8 +235,7 @@ private def hasExplicitConnection (node : XML.Node) : Bool :=
 
 private def localSyntaxErrors (root : XML.Node) (declarations : List XML.Node) : List (String × String) := Id.run do
   let kind := staticLocalName root
-  let has := fun a => XML.hasAttr a root.elementAttrs ||
-    (a == "depends" && !(root.elementTag.getD "").startsWith "p:" && XML.hasAttr "p:depends" root.elementAttrs)
+  let has := fun a => if a == "depends" then (dependencyAttr root).isSome else XML.hasAttr a root.elementAttrs
   let cs := root.allChildElements.filter (fun n => !["documentation", "pipeinfo"].contains (staticLocalName n))
   let mut errors := []
   if ["input", "with-input", "run-input"].contains kind then
@@ -272,10 +277,10 @@ private def localSyntaxErrors (root : XML.Node) (declarations : List XML.Node) :
     errors := errors ++ [(if decimal then "XS0060" else "XS0063", "Invalid or unsupported XProc version")]
   if (kind == "input" && !has "port") || (["if", "when"].contains kind && !has "test") then
     errors := errors ++ [("XS0038", "Required port or test attribute is missing")]
-  if ["option", "variable"].contains kind then
-    if !has "name" || (kind == "variable" && !has "select") then
+  if ["option", "variable", "with-option", "run-option"].contains kind then
+    if !has "name" || (kind != "option" && !has "select") then
       errors := errors ++ [("XS0038", "Required declaration attribute is missing")]
-    if has "name" && eqName (staticAttr root "name") then
+    if ["option", "variable"].contains kind && has "name" && eqName (staticAttr root "name") then
       match XPath4.parseXPath ("$" ++ staticAttr root "name") (nodeNamespaces root) with
       | .ok (.var q) =>
         if q.uri == "http://www.w3.org/ns/xproc" then
@@ -297,11 +302,14 @@ private def localSyntaxErrors (root : XML.Node) (declarations : List XML.Node) :
       errors := errors ++ [("XS0025", "Step type must be in a non-XProc namespace")]
   let optNames := (cs.filter (fun n => staticLocalName n == "option")).map (fun n => nameKey n (staticAttr n "name"))
   if optNames.eraseDups.length != optNames.length then errors := errors ++ [(if kind == "library" then "XS0071" else "XS0004", "Duplicate option name")]
-  if (root.elementTag.getD "").startsWith "p:" && XML.hasAttr "p:depends" root.elementAttrs then
+  if kind != "#extension" && root.elementAttrs.any (fun a =>
+      let (p,l) := XPath4.splitName a.name
+      p != "" && l == "depends" && ((ns root).lookup p).getD "" == "http://www.w3.org/ns/xproc") then
     errors := errors ++ [("XS0097", "XProc steps use unprefixed depends")]
   if kind == "with-option" && staticAttr root "name" == "p:depends" then
     errors := errors ++ [("XS0031", "depends is not a step option")]
   let globalAttrs := ["name", "depends", "use-when", "expand-text", "exclude-inline-prefixes", "version", "psvi-required", "xpath-version"]
+  let globalAttrs := if kind == "#extension" then globalAttrs.filter (· != "depends") else globalAttrs
   if kind == "input" || kind == "variable" then
     let allowed := globalAttrs ++ (if kind == "input" then
       ["port", "primary", "sequence", "content-types", "href", "select", "document-properties", "pipe"] else
@@ -613,6 +621,9 @@ private def controlErrors : Nat → Bool → XML.Node → List (String × String
       let (pfx, loc) := XPath4.splitName a.name
       let qualified := pfx != "" && ((ns node).lookup pfx).getD "" == "http://www.w3.org/ns/xproc"
       let standard := !literal && kind != "#extension" && pfx == ""
+      if !literal && kind != "inline" && loc == "inline-expand-text" && (standard || qualified) then
+        errors := errors ++ [(if standard then "XS0008" else "XS0031", "Inline expansion control is outside inline content")]
+
       if (standard && loc == "expand-text") || (qualified && ["expand-text", "inline-expand-text"].contains loc) then
         if !["true", "false"].contains a.value then
           errors := errors ++ [("XS0113", "Text expansion control must be a static boolean")]
@@ -636,7 +647,12 @@ def staticErrors (root : XML.Node) (imports : List XML.Node := []) : List (Strin
   let outer := if !["declare-step", "library"].contains (staticLocalName root) then
     [("XS0059", "Pipeline root must be declare-step or library")] else []
   let importedOptions := (imports.filter (fun n => staticLocalName n == "option" && staticAttr n "static" == "true")).map (fun n => nameKey n (staticAttr n "name"))
-  outer ++ version ++ controlErrors (nodeDepth root) false root ++ syntaxErrors root ++ variableErrorsAux (nodeDepth root) importedOptions importedOptions root ++ scopeErrorsAux (nodeDepth root) [] [] root ++ inputConnectionErrors (nodeDepth root) [] false root ++ staticErrorsAux (nodeDepth root) root
+  let diagnostics := syntaxErrors root
+  -- Reject malformed structure before deriving port signatures from it.
+  let structural := fun e : String × String =>
+    ["XS0008", "XS0015", "XS0038", "XS0074", "XS0075", "XS0077", "XS0087", "XS0096"].contains e.1
+  outer ++ version ++ controlErrors (nodeDepth root) false root ++
+    diagnostics.filter structural ++ diagnostics.filter (fun e => !structural e) ++ variableErrorsAux (nodeDepth root) importedOptions importedOptions root ++ scopeErrorsAux (nodeDepth root) [] [] root ++ inputConnectionErrors (nodeDepth root) [] false root ++ staticErrorsAux (nodeDepth root) root
 
 /-- Validate extension calls within one source's lexical scope. Imported
 bodies are checked separately in their own source, never in the importing
