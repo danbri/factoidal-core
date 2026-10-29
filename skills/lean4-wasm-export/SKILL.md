@@ -99,15 +99,15 @@ Rejected, with reasons:
   is why it is recorded here rather than left for someone to rediscover.
   Setting `isModule: true` (Init uses Lean's new module system — the
   sources begin with `module`) did not change the output.
-- **WASI (`wasi-sdk` / `clang --target=wasm32-wasi`) and `zig cc`.** Not
-  attempted after Emscripten linked, per the brief's instruction to take
-  the route that links first and document the rest. The blocking risk to
-  check first if this is revisited: Lean's runtime throws C++ exceptions
-  (`runtime/exception.cpp`), and wasi-sdk's libc++ exception support is
-  the historic weak point; Emscripten's `-fwasm-exceptions` is
-  well-trodden. The upside WASI would buy — no JS glue at all — is
-  smaller than it looks here, because the glue is 62 KB and our loader
-  already hides it behind one `loadL4()`.
+- **WASI (`wasi-sdk`) and `zig cc`.** Not taken for the shipped module.
+  WASI was measured on 2026-10-29 as a component experiment
+  (`experiments/wasm-components/`, record
+  `docs/designissues/2026-10-29-wasm-components.md`): wasi-sdk 30 builds the
+  Lean C and runtime for `wasm32-wasip2` with 5 guarded runtime patches, and
+  the component has the throughput of this build, but jco's glue makes it load
+  2 times slower in Node. The exception risk named here was real: wasi-sdk 27
+  and 30 ship libc++abi without `__cxa_throw`, so the experiment aborts on a
+  throw. `zig cc` was not tried.
 
 ## Build it
 

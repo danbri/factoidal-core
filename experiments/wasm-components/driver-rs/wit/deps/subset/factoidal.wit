@@ -1,0 +1,20 @@
+/// The Factoidal subset of the wasm component experiments
+/// (https://github.com/danbri/factoidal/issues/1167, milestone 1).
+/// A coarse interface: one call per document and one per query.
+package factoidal:subset@0.1.0;
+
+interface rdf {
+  /// Parse an RDF document in a concrete syntax (format tags of the
+  /// shipped `parseToDatasetJson` op: "turtle", "ntriples", "nquads",
+  /// "trig", "rdfxml"). Answer the canonical N-Quads of the dataset,
+  /// or the reader's error message.
+  parse: func(text: string, format: string, base: string) -> result<string, string>;
+
+  /// Evaluate a SPARQL 1.1 query over a dataset given as N-Quads. Answer
+  /// the JSON envelope of the shipped `queryDataset` op.
+  query: func(nquads: string, sparql: string) -> string;
+}
+
+world subset {
+  export rdf;
+}

@@ -1,0 +1,16 @@
+[package]
+name = "fx-driver-static"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Strategy 3 of https://github.com/danbri/factoidal/issues/1167: the same
+# driver as ../driver-rs, but a static library that wasm-ld links with the
+# Lean C into ONE core module (one memory, direct calls, no canonical ABI).
+[lib]
+crate-type = ["staticlib"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"

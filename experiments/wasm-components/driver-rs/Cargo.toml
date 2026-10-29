@@ -1,0 +1,15 @@
+[package]
+name = "fx-driver"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# A small Rust component that imports factoidal:subset/rdf and runs as a
+# wasi:cli command; composed with the Lean component by `wac plug`.
+[dependencies]
+wit-bindgen = "=0.46.0"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
