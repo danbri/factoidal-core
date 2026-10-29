@@ -602,11 +602,76 @@ def genericRaw (name : String) (attrs : List (String × String)) (st : TS) : P U
 
 def setAck : P Unit := modify fun tb => { tb with ack := true }
 
-def quirkyPublic (p : String) : Bool :=
-  ["-//w3o//dtd w3 html strict 3.0//", "-//w3c//dtd html 3.2", "-//ietf//dtd html", "-//netscape comm. corp.//dtd html",
-   "-//microsoft//dtd internet explorer", "-//sun microsystems corp.//dtd hotjava", "-//softquad", "-//spyglass//dtd html 2.0 extended//",
-   "-//as//dtd html 3.0 aswedit + extensions//", "-//advasoft ltd//dtd html 3.0 aswedit + extensions//"].any (fun x => p.startsWith x)
-  || p == "html" || p == "-//w3o//dtd w3 html strict 3.0//en//" || p == "-/w3c/dtd html 4.0 transitional/en"
+/-- The public identifier prefixes of the quirks mode list of the "initial"
+insertion mode (§13.2.6.4.1), lowercased. -/
+def quirkyPrefixes : List String :=
+  ["+//silmaril//dtd html pro v0r11 19970101//",
+   "-//as//dtd html 3.0 aswedit + extensions//",
+   "-//advasoft ltd//dtd html 3.0 aswedit + extensions//",
+   "-//ietf//dtd html 2.0 level 1//",
+   "-//ietf//dtd html 2.0 level 2//",
+   "-//ietf//dtd html 2.0 strict level 1//",
+   "-//ietf//dtd html 2.0 strict level 2//",
+   "-//ietf//dtd html 2.0 strict//",
+   "-//ietf//dtd html 2.0//",
+   "-//ietf//dtd html 2.1e//",
+   "-//ietf//dtd html 3.0//",
+   "-//ietf//dtd html 3.2 final//",
+   "-//ietf//dtd html 3.2//",
+   "-//ietf//dtd html 3//",
+   "-//ietf//dtd html level 0//",
+   "-//ietf//dtd html level 1//",
+   "-//ietf//dtd html level 2//",
+   "-//ietf//dtd html level 3//",
+   "-//ietf//dtd html strict level 0//",
+   "-//ietf//dtd html strict level 1//",
+   "-//ietf//dtd html strict level 2//",
+   "-//ietf//dtd html strict level 3//",
+   "-//ietf//dtd html strict//",
+   "-//ietf//dtd html//",
+   "-//metrius//dtd metrius presentational//",
+   "-//microsoft//dtd internet explorer 2.0 html strict//",
+   "-//microsoft//dtd internet explorer 2.0 html//",
+   "-//microsoft//dtd internet explorer 2.0 tables//",
+   "-//microsoft//dtd internet explorer 3.0 html strict//",
+   "-//microsoft//dtd internet explorer 3.0 html//",
+   "-//microsoft//dtd internet explorer 3.0 tables//",
+   "-//netscape comm. corp.//dtd html//",
+   "-//netscape comm. corp.//dtd strict html//",
+   "-//o'reilly and associates//dtd html 2.0//",
+   "-//o'reilly and associates//dtd html extended 1.0//",
+   "-//o'reilly and associates//dtd html extended relaxed 1.0//",
+   "-//sq//dtd html 2.0 hotmetal + extensions//",
+   "-//softquad software//dtd hotmetal pro 6.0::19990601::extensions to html 4.0//",
+   "-//softquad//dtd hotmetal pro 4.0::19971010::extensions to html 4.0//",
+   "-//spyglass//dtd html 2.0 extended//",
+   "-//sun microsystems corp.//dtd hotjava html//",
+   "-//sun microsystems corp.//dtd hotjava strict html//",
+   "-//w3c//dtd html 3 1995-03-24//",
+   "-//w3c//dtd html 3.2 draft//",
+   "-//w3c//dtd html 3.2 final//",
+   "-//w3c//dtd html 3.2//",
+   "-//w3c//dtd html 3.2s draft//",
+   "-//w3c//dtd html 4.0 frameset//",
+   "-//w3c//dtd html 4.0 transitional//",
+   "-//w3c//dtd html experimental 19960712//",
+   "-//w3c//dtd html experimental 970421//",
+   "-//w3c//dtd w3 html//",
+   "-//w3o//dtd w3 html 3.0//",
+   "-//webtechs//dtd mozilla html 2.0//",
+   "-//webtechs//dtd mozilla html//"]
+
+/-- The DOCTYPE token conditions that set the Document to quirks mode
+(§13.2.6.4.1); identifiers are compared ASCII case-insensitively. -/
+def doctypeQuirks (name pub sys : Option String) (fq : Bool) : Bool :=
+  let p := (pub.map lowerStr).getD ""
+  let hasPub := pub.isSome
+  let sysEmpty := (sys.getD "").isEmpty
+  fq || name != some "html"
+    || (hasPub && (p == "-//w3o//dtd w3 html strict 3.0//en//" || p == "-/w3c/dtd html 4.0 transitional/en" || p == "html"))
+    || (sys.map lowerStr) == some "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd"
+    || (hasPub && quirkyPrefixes.any (fun x => p.startsWith x))
+    || (hasPub && sysEmpty && (p.startsWith "-//w3c//dtd html 4.01 frameset//" || p.startsWith "-//w3c//dtd html 4.01 transitional//"))
 
 def initialH (tok : Token) : P Act := do
   match tok with
@@ -620,8 +685,7 @@ def initialH (tok : Token) : P Act := do
   | .doctype name pub sys fq =>
     if name != some "html" || pub.isSome || (sys.isSome && sys != some "about:legacy-compat") then
       perr "unexpected-doctype"
-    let q := fq || name != some "html" || (pub.any (fun p => quirkyPublic (lowerStr p)))
-      || (pub.any (fun p => sys.isNone && (lowerStr p).startsWith "-//w3c//dtd html 4.01 transitional//"))
+    let q := doctypeQuirks name pub sys fq
     let id ← newNode { kind := .doctype, name := name.getD "", pubId := pub.getD "", sysId := sys.getD "" }
     insertAt 0 none id
     modify fun tb => { tb with quirks := q }
@@ -690,6 +754,7 @@ def inHeadH (tok : Token) : P Act := do
       return .done
     else if n == "title" then genericRaw n attrs .rcdata; return .done
     else if n == "noscript" then
+      if (← get).scripting then genericRaw n attrs .rawtext; return .done
       let _ ← insertHtml n attrs
       setMode .inHeadNoscript
       return .done
@@ -990,7 +1055,7 @@ def inBodyH (tok : Token) : P Act := do
       modify fun tb => { tb with framesetOk := false }
       genericRaw n attrs .rawtext
       return .done
-    else if n == "noembed" then genericRaw n attrs .rawtext; return .done
+    else if n == "noembed" || (n == "noscript" && (← get).scripting) then genericRaw n attrs .rawtext; return .done
     else if n == "select" then
       reconstructAfe
       let _ ← insertHtml n attrs
@@ -1196,6 +1261,10 @@ def inTableH (tok : Token) : P Act := do
     perr "foster-parenting"
     modify fun tb => { tb with foster := true }
     let a ← inBodyH tok
+    -- "process using the rules for in head" happens while foster parenting is on
+    let a ← match a with
+      | .via .inHead => inHeadH tok
+      | a => pure a
     modify fun tb => { tb with foster := false }
     return a
   match tok with

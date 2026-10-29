@@ -111,7 +111,7 @@ def parseDat (txt : String) : Array DatTest := Id.run do
     let mut sect := "errors"
     while i < n do
       let l := lines[i]!
-      if l == "#data" && sect == "document" then break
+      if (l == "#data" || l == "#description") && sect == "document" && docLines.back? == some "" then break
       if sect != "document" && l.startsWith "#" then
         if l == "#document-fragment" then
           sect := "fragment"
@@ -125,7 +125,8 @@ def parseDat (txt : String) : Array DatTest := Id.run do
       else if sect == "document" then docLines := docLines.push l
       i := i + 1
     -- the blank line that separates tests, and the final newline of the file
-    if docLines.back? == some "" then docLines := docLines.pop
+    for _ in [0:docLines.size] do
+      if docLines.back? == some "" then docLines := docLines.pop
     out := out.push { data := "\n".intercalate dataLines.toList, errors := errs, fragment := frag,
                       scripting := scr, document := "\n".intercalate docLines.toList, line := start }
   return out
