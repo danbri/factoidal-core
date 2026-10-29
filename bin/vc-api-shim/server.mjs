@@ -65,6 +65,7 @@
 //   node bin/vc-api-shim/server.mjs --port 40443 --seed-file path.json
 
 import http from 'node:http';
+import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -293,6 +294,12 @@ async function checkStructural(doc) {
   }
   const structural = await engine.vcCheckCredential(V2_CONTEXT_TEXT, JSON.stringify(doc));
   if (!structural.valid) return structural;
+  // VC Data Integrity 1.0 §2.4 (DATA_LOSS_DETECTION_ERROR) for VCDM 2.0
+  // documents too: the 2.0 base context has no @vocab, so an undefined type
+  // or credentialSubject term is dropped by JSON-LD processing. The judgment
+  // is the engine's (VC.Doc.checkNoDataLoss), as for the VC 1.1 branch above.
+  const lossless = await engine.vcCheckNoDataLoss(JSON.stringify(inlineContexts(doc)));
+  if (!lossless.valid) return lossless;
   // relatedResource digest verification (VCDM 2.0 §5.3) — a separate
   // F*-verified gate because vc_check_document's signature carries no
   // digest registry (see the registry builder's comment above).
@@ -732,21 +739,221 @@ async function handleVerifyPresentation(body) {
   return verifySecuredDocument(vp);
 }
 
+// ---------------------------------------------------------------------
+// The Data Integrity cryptosuite table of the Lean engine
+// (formal/lean4/L4Factoidal/VC/Cryptosuite.lean, ops vcDiKey, vcDiSecure,
+// vcDiVerify of Wasm/Ops/Vc.lean): eddsa-rdfc-2022, ecdsa-rdfc-2019 and
+// ecdsa-jcs-2019, one route pair per suite,
+//   POST /<cryptosuite>/credentials/issue
+//   POST /<cryptosuite>/credentials/verify
+// The engine does every Data Integrity step: the transformation (RDFC-1.0
+// or RFC 8785), the hash data, the proof configuration and context rule,
+// did:key resolution on all three curves, and the verdict. The key stays
+// in the engine's signer (`diSigner`); this shim passes the test key once
+// per call and a fresh 32-byte ECDSA nonce from node:crypto. It passes the
+// vendored context documents as text (the engine does no I/O).
+// ---------------------------------------------------------------------
+
+const DI_SUITES = new Map([
+  ['eddsa-rdfc-2022', 'Ed25519'],
+  ['eddsa-jcs-2022', 'Ed25519'],
+  ['ecdsa-rdfc-2019', 'P-256'],
+  ['ecdsa-jcs-2019', 'P-256'],
+]);
+const DI_ROUTE = /^\/([a-z0-9-]+)\/credentials\/(issue|verify)$/;
+
+let l4Engine;
+async function l4() {
+  if (!l4Engine) {
+    const mod = await import(path.join(REPO_ROOT, 'npm', 'factoidal', 'index.mjs'));
+    l4Engine = await mod.loadEngine();
+  }
+  return l4Engine;
+}
+
+let contextsJsonText;
+function contextsJson() {
+  if (!contextsJsonText) {
+    const table = {};
+    for (const iri of CONTEXT_REGISTRY.keys()) {
+      table[iri] = fs.readFileSync(path.join(CONTEXTS_DIR, CONTEXT_REGISTRY.get(iri)), 'utf8');
+    }
+    contextsJsonText = JSON.stringify(table);
+  }
+  return contextsJsonText;
+}
+
+async function diKeys(seedFile) {
+  const fixture = JSON.parse(fs.readFileSync(seedFile, 'utf8'));
+  const eng = await l4();
+  const keys = new Map();
+  for (const [curve, skHex] of [['Ed25519', fixture.secretKeyHex], ['P-256', fixture.p256SecretKeyHex]]) {
+    const k = eng.call('vcDiKey', [curve, skHex]);
+    keys.set(curve, { skHex, verificationMethod: k.verificationMethod, did: k.verificationMethod.split('#')[0] });
+  }
+  return keys;
+}
+
+async function handleDiIssue(keys, suite, body) {
+  const credential = body && body.credential;
+  if (!credential || typeof credential !== 'object') {
+    return [400, { errors: [{ message: 'request body must have a "credential" object' }] }];
+  }
+  const structural = await checkStructural(credential);
+  if (!structural.valid) {
+    return [400, { errors: [{ message: `structural validation failed: ${structural.reason}` }] }];
+  }
+  const curve = DI_SUITES.get(suite);
+  const key = keys.get(curve);
+  const proofPurpose = (body.options && body.options.proofPurpose) || 'assertionMethod';
+  try {
+    const out = (await l4()).call('vcDiSecure', [suite, curve, key.skHex,
+      crypto.randomBytes(32).toString('hex'), proofPurpose, new Date().toISOString(),
+      contextsJson(), JSON.stringify(credential)]);
+    const vc = out.document;
+    return [201, { ...vc, verifiableCredential: vc }];
+  } catch (e) {
+    return [400, { errors: [{ message: e.message }] }];
+  }
+}
+
+async function handleDiVerify(body) {
+  const doc = body && (body.verifiableCredential || body.verifiablePresentation);
+  if (!doc || typeof doc !== 'object') {
+    return [400, { verified: false, errors: [{ message: 'request body must have a "verifiableCredential" object' }] }];
+  }
+  const structural = await checkStructural(doc);
+  if (!structural.valid) {
+    return [400, { verified: false, errors: [{ message: `structural validation failed: ${structural.reason}` }] }];
+  }
+  const purpose = (body.options && body.options.expectedProofPurpose) || 'assertionMethod';
+  try {
+    const r = (await l4()).call('vcDiVerify', [purpose, contextsJson(), JSON.stringify(doc)]);
+    return r.verified ? [200, { verified: true }]
+      : [400, { verified: false, errors: [{ message: r.reason }] }];
+  } catch (e) {
+    return [400, { verified: false, errors: [{ message: e.message }] }];
+  }
+}
+
+// ---------------------------------------------------------------------
+// Bitstring Status List v1.0 (formal/lean4/L4Factoidal/VC/StatusList.lean,
+// ops vcStatusEntryNew, vcStatusListCredential, vcStatusEntryCheck,
+// vcStatusValidate). The shim hosts ONE revocation list at
+// <base>/status/1, where <base> is the TLS listener when there is one (the
+// W3C suite dereferences status lists over https only). Its state is the
+// next free index and the set of revoked indices; the entry, the list
+// credential, the bitstring and every verdict are the engine's. The list
+// credential is secured with eddsa-rdfc-2022 by the engine's signer.
+//   POST /bitstring-status-list/credentials/issue
+//   POST /bitstring-status-list/credentials/verify
+//   GET  /status/1
+// ---------------------------------------------------------------------
+
+const statusList = { base: '', next: 0, revoked: [] };
+
+function statusListUrl() { return `${statusList.base}/status/1`; }
+
+async function statusListCredential(keys) {
+  const eng = await l4();
+  const ed = keys.get('Ed25519');
+  const unsigned = eng.call('vcStatusListCredential', [statusListUrl(), ed.did, 'revocation', '1',
+    JSON.stringify(statusList.revoked.map((i) => [i, 1])), '2026-01-01T00:00:00Z']).credential;
+  return eng.call('vcDiSecure', ['eddsa-rdfc-2022', 'Ed25519', ed.skHex, '', 'assertionMethod',
+    new Date().toISOString(), contextsJson(), JSON.stringify(unsigned)]).document;
+}
+
+async function handleStatusIssue(keys, body) {
+  const credential = body && body.credential;
+  if (!credential || typeof credential !== 'object') {
+    return [400, { errors: [{ message: 'request body must have a "credential" object' }] }];
+  }
+  const eng = await l4();
+  const given = eng.call('vcStatusEntryCheck', [JSON.stringify(credential)]);
+  if (!given.valid) return [400, { errors: [{ message: given.reason, code: given.code }] }];
+  const out = { ...credential };
+  if (out.credentialStatus === undefined) {
+    const index = String(statusList.next++);
+    out.credentialStatus = eng.call('vcStatusEntryNew', [statusListUrl(), 'revocation', index]).entry;
+  }
+  return handleDiIssue(keys, 'eddsa-rdfc-2022', { ...body, credential: out });
+}
+
+// The list credential named by an entry: this shim's own list without a
+// network round trip, any other URL fetched over https with certificate
+// checks on. A failed fetch is the host's STATUS_RETRIEVAL_ERROR.
+async function fetchStatusList(keys, url) {
+  if (url === statusListUrl()) return statusListCredential(keys);
+  const r = await fetch(url, { headers: { accept: 'application/vc+ld+json, application/ld+json, application/json' } });
+  if (!r.ok) throw new Error(`STATUS_RETRIEVAL_ERROR: ${url} answered ${r.status}`);
+  return r.json();
+}
+
+async function handleStatusVerify(keys, body) {
+  const [status, out] = await handleDiVerify(body);
+  if (status !== 200) return [status, out];
+  const doc = body.verifiableCredential || body.verifiablePresentation;
+  const raw = doc.credentialStatus === undefined ? [] : [].concat(doc.credentialStatus);
+  const eng = await l4();
+  const results = [];
+  for (const entry of raw.filter((e) => e && e.type === 'BitstringStatusListEntry')) {
+    let slc;
+    try { slc = await fetchStatusList(keys, entry.statusListCredential); } catch (e) {
+      return [400, { verified: false, errors: [{ message: e.message }] }];
+    }
+    const proof = eng.call('vcDiVerify', ['assertionMethod', contextsJson(), JSON.stringify(slc)]);
+    if (!proof.verified) {
+      return [400, { verified: false, errors: [{ message: `STATUS_VERIFICATION_ERROR: ${proof.reason}` }] }];
+    }
+    const r = eng.call('vcStatusValidate', [JSON.stringify(entry), JSON.stringify(slc)]);
+    if (r.error) return [400, { verified: false, errors: [{ message: r.reason, code: r.error }] }];
+    results.push(r);
+    if (!r.valid) return [400, { verified: false, statusResults: results, errors: [{ message: `status ${r.purpose}: ${r.status}` }] }];
+  }
+  return [200, { verified: true, statusResults: results }];
+}
+
 async function main() {
   const args = process.argv.slice(2);
   let port = 40443;
   let seedFile = path.join(__dirname, 'test-issuer-seed.json');
+  let tlsPort = 0;
+  let tlsKey = '';
+  let tlsCert = '';
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port') port = Number(args[++i]);
     else if (args[i] === '--seed-file') seedFile = args[++i];
+    else if (args[i] === '--tls-port') tlsPort = Number(args[++i]);
+    else if (args[i] === '--tls-key') tlsKey = args[++i];
+    else if (args[i] === '--tls-cert') tlsCert = args[++i];
   }
 
   const issuer = await buildIssuer(seedFile);
+  const keys = await diKeys(seedFile);
 
-  const server = http.createServer(async (req, res) => {
+  statusList.base = tlsPort ? `https://localhost:${tlsPort}` : `http://localhost:${port}`;
+  const handler = async (req, res) => {
     try {
+      if (req.method === 'GET' && req.url === '/status/1') {
+        return sendJson(res, 200, await statusListCredential(keys));
+      }
+      if (req.method === 'POST' && req.url === '/bitstring-status-list/credentials/issue') {
+        const [status, out] = await handleStatusIssue(keys, await readJsonBody(req));
+        return sendJson(res, status, out);
+      }
+      if (req.method === 'POST' && req.url === '/bitstring-status-list/credentials/verify') {
+        const [status, out] = await handleStatusVerify(keys, await readJsonBody(req));
+        return sendJson(res, status, out);
+      }
       if (req.method === 'GET' && req.url === '/') {
         return sendJson(res, 200, { name: 'factoidal-vc-api-shim', issuer: issuer.did });
+      }
+      const di = req.method === 'POST' && DI_ROUTE.exec(req.url);
+      if (di && DI_SUITES.has(di[1])) {
+        const body = await readJsonBody(req);
+        const [status, out] = di[2] === 'issue'
+          ? await handleDiIssue(keys, di[1], body) : await handleDiVerify(body);
+        return sendJson(res, status, out);
       }
       if (req.method === 'POST' && req.url === '/credentials/issue') {
         const body = await readJsonBody(req);
@@ -767,12 +974,18 @@ async function main() {
     } catch (e) {
       return sendJson(res, 500, { errors: [{ message: e.message || String(e) }] });
     }
-  });
+  };
+  const server = http.createServer(handler);
+  const tlsServer = tlsPort
+    ? https.createServer({ key: fs.readFileSync(tlsKey), cert: fs.readFileSync(tlsCert) }, handler)
+    : null;
+  if (tlsServer) tlsServer.listen(tlsPort);
 
   server.listen(port, () => {
     // Deterministic startup log line (grepped by tests/vc-api-shim/run.sh
     // and the suite run.sh scripts to know the shim is ready).
-    console.log(`vc-api-shim listening on http://localhost:${port} issuer=${issuer.did}`);
+    console.log(`vc-api-shim listening on http://localhost:${port} issuer=${issuer.did}` +
+      ` issuer-p256=${keys.get('P-256').did}`);
   });
 
   process.on('SIGTERM', () => server.close(() => process.exit(0)));

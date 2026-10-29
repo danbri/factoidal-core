@@ -517,7 +517,10 @@ def defective : List (String × String) :=
   [ "priority-124", "priority-141", "priority-160", "priority-162", "priority-163",
     "function-40-012", "accumulator-038", "type-alias-003", "type-alias-004",
     "evaluate-042", "format-number-014", "format-number-035", "format-number-038",
-    "format-number-039", "format-number-040", "format-number-041" ].map (·, i1163)
+    "format-number-039", "format-number-040", "format-number-041",
+    -- XPTY0020 and XPTY0019 are replaced by XPTY0004 (XPath 4.0 §4.7.3,
+    -- §4.7.5, PR 2627)
+    "analyze-string-085", "error-XPTY0019a" ].map (·, i1163)
 
 structure Tally where
   pass : Nat := 0
@@ -837,6 +840,16 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
           | .ok v => pure (some v)
           | .error e => return .fail ("cannot evaluate initial-mode select: " ++ e.code)
         | none => pure none
+      -- the parameters of the initial template or initial mode
+      let mut tps : List (QN × Seq) := []
+      let mut tuns : List (QN × Seq) := []
+      for n in (kidsNamed testNode "initial-template") ++ (kidsNamed testNode "initial-mode") do
+        for p in kidsNamed n "param" do
+          match evalIn { env with ctx := globalCtx.map (fun i => [i]), pos := 1, size := 1 } (attrD p "select" "()") with
+          | .ok v =>
+            if attrD p "tunnel" == "yes" then tuns := tuns ++ [(nsOf p (attrD p "name"), v)]
+            else tps := tps ++ [(nsOf p (attrD p "name"), v)]
+          | .error e => return .fail ("cannot evaluate initial param: " ++ e.code)
       let ifn ← match (kidsNamed testNode "initial-function").head? with
         | some n => do
           let mut args : List Seq := []
@@ -856,7 +869,7 @@ def runCase (o : Opts) (dir : String) (localEnvs : List (String × EnvSpec)) (tc
         | some "" => fileUri (dir ++ "/")
         | some f => fileUri (dir ++ "/" ++ f)
         | none => fileUri (dir ++ "/results/" ++ attrD tc "name" ++ ".xml")
-      let topts : TOpts := { initialTemplate := it, initialMode := imName, initialSelect := imSel, initialFunction := ifn, globalCtx, params, env, outUri := ou }
+      let topts : TOpts := { initialTemplate := it, initialMode := imName, initialSelect := imSel, initialFunction := ifn, globalCtx, params, env, outUri := ou, templateParams := tps, tunnelParams := tuns }
       -- the result refers to the source documents as the transformation
       -- saw them: with whitespace stripped (§4.3)
       pure ({ env with docs := env.docs.map (stripDoc S) }, (do let r ← transform S topts; pure (r, S) : M (TResult × Sheet)))

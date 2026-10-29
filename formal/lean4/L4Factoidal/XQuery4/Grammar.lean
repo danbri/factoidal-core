@@ -48,6 +48,9 @@ structure Cfg where
   /-- `declare copy-namespaces` (§5.8): preserve, inherit. -/
   copyPreserve : Bool := true
   copyInherit : Bool := true
+  /-- XQuery Update Facility 3.0 §4.1: `declare revalidation`, for the
+      copy modify expressions of the module. -/
+  revalidation : Option String := none
 deriving Inhabited
 
 /-! ## Helpers -/
@@ -712,7 +715,7 @@ def pStartTag (sp : SubParsers) : P (List (String × String) × Array (String ×
 def copyFlags (cfg : Cfg) : List String :=
   (if cfg.copyPreserve then [] else ["#no-preserve"]) ++ (if cfg.copyInherit then [] else ["#no-inherit"])
 
-def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
+def pDirElem (cfg : Cfg) (sp : SubParsers) (encl : List (String × String) := []) : Nat → P Expr
   | 0 => synErr "direct constructors nested too deeply"
   | f + 1 => do
     let c ← read
@@ -738,7 +741,11 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
         if seen.contains (auri, al) then throw { code := "XQST0040", msg := "duplicate attribute " ++ al }
         seen := (auri, al) :: seen
         attrEs := attrEs.push (.ext "attr" (.lit (Atomic.ofQN { uri := auri, loc := al, pfx := ap }) :: parts) [] sns ["d"])
-      let declStrs := decls.map (fun (p, u) => p ++ "\x00" ++ u) ++ copyFlags cfg
+      -- XQuery 3.1 §3.9.4: also a binding for each namespace declared by a
+      -- namespace declaration attribute of an enclosing direct constructor
+      -- (copy-namespaces mode does not apply to a new element)
+      let encl' := decls ++ encl.filter (fun (p, _) => !decls.any (·.1 == p))
+      let declStrs := encl'.map (fun (p, u) => p ++ "\x00" ++ u) ++ copyFlags cfg
       let s := c.s
       if chAt s (← get) == '/' then
         adv 1; expectS ">"
@@ -772,7 +779,7 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
             ps := flush ps buf keep; buf := #[]; keep := false
             let e ← if chAt s (j+1) == '!' then pDirComment
               else if chAt s (j+1) == '?' then pDirPI
-              else pDirElem cfg sp f
+              else pDirElem cfg sp encl' f
             ps := ps.push (.bound (tagAt j e))
         else if ch == '{' && chAt s (j+1) == '{' then buf := buf.push '{'; adv 2
         else if ch == '}' && chAt s (j+1) == '}' then buf := buf.push '}'; adv 2
@@ -932,7 +939,7 @@ where
     let ch1 := chAt s (i+1)
     if ch1 == '!' && chAt s (i+2) == '-' && chAt s (i+3) == '-' then return some (← pDirComment)
     if ch1 == '?' then return some (← pDirPI)
-    if isNameStart ch1 then return some (← pDirElem cfg sp 10000)
+    if isNameStart ch1 then return some (← pDirElem cfg sp [] 10000)
     return none
   if ch == '`' && chAt s (i+1) == '`' && chAt s (i+2) == '[' then return some (← pStringConstructor sp)
   if ch == '(' && chAt s (i+1) == '#' then return some (← pExtensionExpr sp)

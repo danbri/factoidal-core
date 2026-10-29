@@ -632,6 +632,8 @@ lean_exe «l4dict-fold-bench» where
 -- RIF Core conformance: syntax and entailment cases from the W3C
 -- suite (Harness/RifRun.lean).
 @[default_target] lean_exe «l4rif» where root := `Harness.RifRun
+-- The W3C N3 Community Group suite with the Notation3 reader (Harness/N3Run.lean).
+@[default_target] lean_exe «l4n3» where root := `Harness.N3Run
 
 -- RDF Data Cube (2014) normalization and integrity constraints IC-0 to
 -- IC-21 over tests/datacube/ (Harness/DataCubeRun.lean).
