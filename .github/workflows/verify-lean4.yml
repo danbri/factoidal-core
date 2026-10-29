@@ -25,6 +25,10 @@ on:
       - 'tests/n3/**'
       - 'third_party/testing/yaml-ld/**'
       - 'tests/yamlld/**'
+      - 'third_party/testing/wpt-encoding/**'
+      - 'third_party/whatwg-encoding/**'
+      - 'tests/whatwg-encoding/**'
+      - 'tools/whatwg/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
 
@@ -164,3 +168,13 @@ jobs:
         run: |
           git submodule update --init --depth 1 third_party/testing/json-ld
           bash tests/yamlld/run.sh
+
+      # WHATWG Encoding Standard over the vendored web-platform-tests encoding/
+      # directory (https://github.com/danbri/factoidal/issues/1167, milestone 2).
+      # Node 22: the test host runs the WPT files in vm realms.
+      - name: Node 22 for the WPT encoding host
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: WHATWG Encoding, WPT encoding tests (tests/whatwg-encoding/run.sh)
+        run: bash tests/whatwg-encoding/run.sh

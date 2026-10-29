@@ -628,6 +628,17 @@ by a specification that no live code reaches (the left side of another theorem) 
 the reason `guard`. `L4Factoidal/CsimpReachFixture.lean` holds the known-bad cases on purpose;
 `tools/test_lean_csimp_reach.py` asserts that the tool reports them.
 
+## 9f. `simp [loop]` on a fuel loop whose fuel is `k * n + c` does not return
+
+Found 2026-10-29 in `WHATWG/Encoding/Theorems.lean` (the lift of the UTF-8
+round trip through `decodeLoop`). With the fuel term `7 * L.length + 23`,
+`simp [decodeLoop]` never returned: the literal `23` unifies with `n + 1`, so
+simp unfolds the loop again on each pass. Fix: `generalize` the fuel to a
+variable with a hypothesis `fuel > bytes left`, then `rw [decodeLoop]` once per
+step. Prove a lemma "the loop agrees with the plain step function when the fuel
+exceeds the input" (`decodeLoop_run`) and use it, rather than unfolding the loop
+in the main theorem.
+
 ## 10. Gate before commit
 
 - `#print axioms <thm>` at the end of the module: only `propext`,
