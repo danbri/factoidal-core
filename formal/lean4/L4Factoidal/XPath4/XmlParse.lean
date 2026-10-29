@@ -168,6 +168,7 @@ def isElemKid (k : Node) : Bool :=
     (`XSD11.XPathBridge.docOfKids_validate`: through the schema hook only). -/
 def docOfKids (e : Env) (o : ParseOpts) (kids : List Node) (uri : String) : M Doc :=
   if o.xsd == "skip" then pure (Doc.ofNodes kids uri)
+  else if !e.features.schemaImport || !e.features.schemaValidation then err "FODC0009" "schema validation is disabled"
   else match e.schema.validate, kids.find? isElemKid with
     | some f, some root => match f o.xsd root uri with
       | .ok d => pure d

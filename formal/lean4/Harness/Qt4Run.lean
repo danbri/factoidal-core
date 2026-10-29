@@ -12,11 +12,12 @@ and `misc`), and scores every test case for XPath 4.0 or, with
 * **unsupported** — the test case or its test set has a dependency
   this processor does not satisfy: a spec that is not XPath 4.0
   (`XQ*` only, or an `XP` version range that excludes 4.0), a feature
-  it does not have (schema import/validation, typed data, static
-  typing, the namespace axis, `fn:transform`, ...), XML 1.1, a
+  it does not have, XML 1.1, a
   non-English default language, or an environment that needs a schema,
   a collection, a decimal format or a resource. An unsupported test is
   NEVER a pass;
+* Negative optional-feature dependencies select an engine configuration
+  with those features disabled; the test still runs.
 * **pass** — every assertion holds; an `error` assertion holds only
   when the error raised has the expected code (or the code is `*`);
 * **fail** — anything else, including a wrong error code.
@@ -35,6 +36,7 @@ The test data is untrusted input: it is parsed, never executed as
 anything but XPath expressions in this evaluator.
 -/
 import L4Factoidal.XPath4.Eval
+import L4Factoidal.XPath4.FeatureTests
 import L4Factoidal.XSD11.Load
 import L4Factoidal.XSD11.XPathBridge
 import L4Factoidal.XPath4.Theorems
@@ -190,6 +192,14 @@ def featureSupported (f : String) : Bool :=
   -- XQuery Update Facility 3.0 (`L4Factoidal.XQueryUpdate`)
   || f == "XQUpdate"
 
+/-- Select a processor configuration for negative feature dependencies.
+    The query and its assertions use this same configuration. -/
+def featureSettings (deps : List Node) : FeatureSettings :=
+  deps.foldl (fun settings d =>
+    if attrD d "type" == "feature" && attrD d "satisfied" "true" == "false" then
+      (attrD d "value").splitOn " " |>.foldl FeatureSettings.disable settings
+    else settings) {}
+
 def depOk (xq : Bool) (d : Node) : Bool :=
   let ty := attrD d "type"
   let v := attrD d "value"
@@ -202,7 +212,8 @@ def depOk (xq : Bool) (d : Node) : Bool :=
       -- attributes, `XML.Parser` with `XPath4.docKids`)
       let has (f : String) : Bool := featureSupported f || (xq && f == "moduleImport") || f == "infoset-dtd"
       let fs := v.splitOn " "
-      if sat then fs.all has else !(fs.all has)
+      if sat then fs.all has
+      else fs.any FeatureSettings.switchable || !(fs.all has)
   | "xml-version" =>
       -- XML 1.0 fifth edition (names of `XML.Parser`); not the fourth
       -- edition or earlier (`1.0:4-`), not XML 1.1
@@ -409,9 +420,9 @@ def isXqEnv (env : Env) : Bool := env.vars.any (fun (q, _) => q == xqMode)
 def evalIn (env : Env) (src : String) : M Seq := do
   -- XQuery mode: an assertion that is an XPath expression over the EXPath
   -- file system takes the file path below (its writing calls)
-  let xp := if isXqEnv env && env.fileSys.isSome then (parseXPath4 src env.ns env.schema.declared).toOption else none
+  let xp := if isXqEnv env && env.fileSys.isSome then (parseXPath4 src env.ns env.schema.declared env.features).toOption else none
   if isXqEnv env && xp.isNone then (·.1) <$> L4Factoidal.XQueryUpdate.evalUpdQuery src env 20000 else
-  let e ← match xp with | some e => pure e | none => parseXPath4 src env.ns env.schema.declared
+  let e ← match xp with | some e => pure e | none => parseXPath4 src env.ns env.schema.declared env.features
   match env.fileSys with
   -- EXPath File 4.0: an assertion may also call a writing `file:` function
   | some fs => (·.1) <$> L4Factoidal.EXPath.File.evalMem env fs e
@@ -483,8 +494,8 @@ def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
 /-- The serialization parameters of a query: the XQuery output
     declarations of its prolog (`XPath4.declParams`); none in XPath. -/
 def queryParams (env : Env) (src : String) : M SerParams :=
-  if isXqEnv env then do
-    let m ← L4Factoidal.XQuery4.parseModule src env.ns (L4Factoidal.XQuery4.typeLoader env 8 []) env.schema.declared
+  if isXqEnv env && env.features.serialization then do
+    let m ← L4Factoidal.XQuery4.parseModule src env.ns (L4Factoidal.XQuery4.typeLoader env 8 []) env.schema.declared env.features
     -- `output:parameter-document`: the document first, then the other
     -- output declarations over it
     let init ← match m.outputDecls.lookup "parameter-document" with
@@ -983,7 +994,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
     | .ok env =>
-      let env := configureUpd (setDeps ++ deps) env
+      let env := (configureUpd (setDeps ++ deps) env).restrictFeatures (featureSettings (setDeps ++ deps))
       -- the static base URI, when the environment sets none, is the
       -- location of the test set (implementation-defined, XPath 4.0 C.1)
       -- (`#UNDEFINED`: the test wants the base URI absent)

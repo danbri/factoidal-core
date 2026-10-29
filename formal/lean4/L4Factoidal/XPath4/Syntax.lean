@@ -20,6 +20,55 @@ import L4Factoidal.XPath4.Atomic
 
 namespace L4Factoidal.XPath4
 
+/-- Optional processor features (XPath 4.0 §2.2.1, XQuery 4.0 §2.2.1).
+    The default configuration enables every implemented feature. -/
+structure FeatureSettings where
+  loadXQueryModule : Bool := true
+  transform : Bool := true
+  transform30 : Bool := true
+  invisibleXml : Bool := true
+  binary : Bool := true
+  file : Bool := true
+  schemaImport : Bool := true
+  schemaValidation : Bool := true
+  typedData : Bool := true
+  serialization : Bool := true
+deriving BEq, Repr, Inhabited
+
+/-- Disable a named optional feature, using the qt4tests dependency names. -/
+def FeatureSettings.disable (s : FeatureSettings) (name : String) : FeatureSettings :=
+  match name with
+  | "fn-load-xquery-module" => { s with loadXQueryModule := false }
+  | "fn-transform-XSLT" => { s with transform := false }
+  | "fn-transform-XSLT30" => { s with transform30 := false }
+  | "fn-invisible-xml" => { s with invisibleXml := false }
+  | "binary" => { s with binary := false }
+  | "expath-file" => { s with file := false }
+  | "schemaImport" => { s with schemaImport := false }
+  | "schemaValidation" => { s with schemaValidation := false }
+  | "typedData" => { s with typedData := false }
+  | "serialization" => { s with serialization := false }
+  | _ => s
+
+/-- Features with a selectable implementation in the processor. -/
+def FeatureSettings.switchable (name : String) : Bool :=
+  ["fn-load-xquery-module", "fn-transform-XSLT", "fn-transform-XSLT30",
+   "fn-invisible-xml", "binary", "expath-file", "schemaImport",
+   "schemaValidation", "typedData", "serialization"].contains name
+
+/-- Functions absent from the static context when their feature is off.
+    `transform`, `serialize`, and `load-xquery-module` retain their
+    F&O error fallbacks (FOXT0004, FODC0010 and FOQM0006), as
+    required by qt4tests fn-load-xquery-module-901 through -914. -/
+def FeatureSettings.functionEnabled (s : FeatureSettings) (q : QN) : Bool :=
+  if q.uri == "http://expath.org/ns/binary" then s.binary
+  else if q.uri == "http://expath.org/ns/file" then s.file
+  else if q.uri == nsFN then
+    match q.loc with
+    | "invisible-xml" => s.invisibleXml
+    | _ => true
+  else true
+
 /-! ## Axes and node tests -/
 
 inductive Axis where

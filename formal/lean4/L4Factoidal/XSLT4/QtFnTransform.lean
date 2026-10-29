@@ -96,7 +96,8 @@ def fnTransform (env : Env) (applyF : Item → List Seq → M Seq) (args : List 
   match get "xslt-version" with
   | some [.atom v] =>
     match v.num? with
-    | some x => if x.toFloat > 4.0 then err "FOXT0001" ("no XSLT " ++ v.str ++ " processor is available")
+    | some x => if x.toFloat > (if env.features.transform30 then 4.0 else 2.0) then
+        err "FOXT0001" ("no XSLT " ++ v.str ++ " processor is available")
     | none => pure ()
   | _ => pure ()
   -- requested properties (F&O 4.0 §17.5.2): a request that the processor's
@@ -112,9 +113,17 @@ def fnTransform (env : Env) (applyF : Item → List Seq → M Seq) (args : List 
     if actual != "" && norm want != norm actual then
       err "FOXT0001" ("no XSLT processor with " ++ q.loc ++ " = " ++ want ++ " is available")
   let delivery := (str? "delivery-format").getD "document"
+  if !env.features.transform30 && delivery == "raw" then
+    err "FOXT0002" "raw delivery requires XSLT 3.0 support"
   if !["document", "serialized", "raw"].contains delivery then
     if delivery == "file" then err "FOXT0001" "the delivery format file is not supported"
     else err "FOXT0002" ("unknown delivery format " ++ delivery)
+  -- F&O fn:transform: options that require an XSLT 3.0 processor.
+  if !env.features.transform30 then
+    for k in ["static-params", "initial-function", "function-params", "global-context-item",
+        "initial-match-selection", "enable-assertions", "package-name", "package-location",
+        "package-node", "package-text", "package-version"] do
+      if (get k).isSome then err "FOXT0001" ("the option " ++ k ++ " requires XSLT 3.0 support")
   -- the stylesheet: exactly one of location, node, text
   let given := ["stylesheet-location", "stylesheet-node", "stylesheet-text"].filter (fun k => (get k).isSome)
   if given.length != 1 then
@@ -138,6 +147,20 @@ def fnTransform (env : Env) (applyF : Item → List Seq → M Seq) (args : List 
     | none, some _, _ => err "XPTY0004" "stylesheet-node must be a node"
     | none, none, some t => pure (base, t)
     | none, none, none => err "FOXT0002" "no stylesheet"
+  -- A transform30-off host does not select an XSLT 3.0 or 4.0
+  -- principal stylesheet. This is a version restriction; the compiler
+  -- still accepts its full grammar within a version 2.0 stylesheet.
+  if !env.features.transform30 then
+    match Doc.ofString pText pUri with
+    | .ok d =>
+      let m : Mod := { d, uri := pUri }
+      if let some root := m.rootElem then
+        let versionNs := if (m.name root).uri == nsXSL then "" else nsXSL
+        let version := ((m.rawAttrs root).find? (fun (q, _) =>
+          q.uri == versionNs && q.loc == "version")).map (·.2) |>.getD "4.0"
+        if ((versionMilli version).getD 4000) ≥ 3000 then
+          err "FOXT0001" "the principal stylesheet requires XSLT 3.0 or later"
+    | .error _ => pure () -- the compiler reports malformed stylesheet XML
   -- the modules: the principal one and the caller's resources
   let texts : List (String × String) := (pUri, pText) ::
     env.resources.flatMap (fun (k, v) => if k.startsWith "#" then [] else [(resolveUri pUri k, v), (k, v)])
