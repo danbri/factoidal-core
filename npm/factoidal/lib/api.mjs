@@ -2033,6 +2033,67 @@ function buildApi(driver) {
     return r.output;
   }
 
+  // XPath 4.0, XQuery 4.0 and XSLT 4.0 (formal/lean4/Wasm/Ops/Qt4.lean). The
+  // engine evaluates and serializes; these functions check argument types and
+  // unwrap the envelope. A QT4 error rejects with a FactoidalError (code
+  // `xml.failed`) whose `qtError` is {code, namespace, message}: the error
+  // code the specification names (XPST0003, FODC0002, XTSE0165, ...).
+  // The engine does no I/O: fn:doc, fn:unparsed-text, import module,
+  // xsl:import and xsl:include of anything but the arguments fail with the
+  // specification's error code.
+  function qt4Result(r) {
+    const { ok: _ok, ...rest } = r;
+    return rest;
+  }
+
+  /**
+   * Evaluate an XPath 4.0 expression with an XML document as context item.
+   * @param {string} xmlText the context document, or '' for no context item
+   * @param {string} expr an XPath 4.0 expression
+   * @returns {Promise<{count:number, items:Array<{type:string,value:string}>, adaptive:string, xml:string|null}>}
+   */
+  async function xpath4Eval(xmlText, expr) {
+    if (typeof xmlText !== 'string' || typeof expr !== 'string') {
+      throw new TypeError('xpath4Eval: xmlText and expr must be strings');
+    }
+    const e = await entry();
+    requireEntryFn(e, 'xpath4Eval', 'XPath 4.0 evaluation');
+    return qt4Result(entryResult(e.xpath4Eval(xmlText, expr), 'xpath4Eval'));
+  }
+
+  /**
+   * Evaluate an XQuery 4.0 main module, optionally with an XML document as
+   * context item.
+   * @param {string} query an XQuery 4.0 main module
+   * @param {string} [contextXml] the context document ('' or absent: none)
+   * @returns {Promise<{count:number, items:Array<{type:string,value:string}>, adaptive:string, xml:string|null}>}
+   */
+  async function xqueryEval(query, contextXml) {
+    if (typeof query !== 'string' || (contextXml !== undefined && typeof contextXml !== 'string')) {
+      throw new TypeError('xqueryEval: query must be a string, contextXml a string when given');
+    }
+    const e = await entry();
+    requireEntryFn(e, 'xqueryEval', 'XQuery 4.0 evaluation');
+    return qt4Result(entryResult(e.xqueryEval(query, contextXml ?? ''), 'xqueryEval'));
+  }
+
+  /**
+   * XSLT 4.0 transform. The principal result is serialized with the
+   * stylesheet's unnamed output definition; `secondary` holds the results of
+   * xsl:result-document, `messages` the xsl:message texts.
+   * @param {string} stylesheetXml an XSLT stylesheet (one module)
+   * @param {string} sourceXml the source document, or '' for no global context item
+   * @returns {Promise<{output:string, method:string, secondary:Array<{href:string,output:string}>, messages:string[]}>}
+   */
+  async function xslt4Transform(stylesheetXml, sourceXml) {
+    if (typeof stylesheetXml !== 'string' || typeof sourceXml !== 'string') {
+      throw new TypeError('xslt4Transform: stylesheetXml and sourceXml must be strings');
+    }
+    const e = await entry();
+    requireEntryFn(e, 'xslt4Transform', 'XSLT 4.0 transform');
+    return qt4Result(entryResult(e.xslt4Transform(stylesheetXml, sourceXml), 'xslt4Transform'));
+  }
+
   /**
    * Evaluate a Content MathML document (entry_jsoo.ml's mathmlEval
    * export -> MathML.Content.eval_doc_env). `bindings` maps
@@ -2508,6 +2569,9 @@ function buildApi(driver) {
       xpath: has('xpathEval'),
       rif: has('rifEval'),
       xslt: has('xsltTransform'),
+      xpath4: has('xpath4Eval'),
+      xquery: has('xqueryEval'),
+      xslt4: has('xslt4Transform'),
       mathml: has('mathmlEval'),
       xforms: has('xformsRecalc'),
       jsonSchema: has('jsonSchemaValidate'),
@@ -2688,6 +2752,9 @@ function buildApi(driver) {
     clNormalize,
     rifEval,
     xsltTransform,
+    xpath4Eval,
+    xqueryEval,
+    xslt4Transform,
     mathmlEval,
     xformsRecalc,
     jsonSchemaValidate,
