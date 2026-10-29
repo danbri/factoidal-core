@@ -25,6 +25,10 @@ on:
       - 'tests/n3/**'
       - 'third_party/testing/yaml-ld/**'
       - 'tests/yamlld/**'
+      - 'third_party/testing/wpt-encoding/**'
+      - 'third_party/whatwg-encoding/**'
+      - 'tests/whatwg-encoding/**'
+      - 'tools/whatwg/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
 
