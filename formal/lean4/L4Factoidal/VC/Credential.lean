@@ -627,9 +627,9 @@ Verifiable Credential Data Integrity 1.0, "Securing Data Losslessly": an
 implementation MUST throw an error, which SHOULD be DATA_LOSS_DETECTION_ERROR,
 when a JSON-LD processor drops data, such as an undefined term.
 
-Scope: the two shapes the vc-di-eddsa suite exercises. An undefined `type`
-entry (`termResolvesAsType`: vocabulary-relative, then document-relative), and
-an undefined `credentialSubject` property key, one level down
+Scope: an undefined `type` entry (`termResolvesAsType`: vocabulary-relative,
+then document-relative), an undefined `credentialSubject` property key, one
+level down, and an undefined member of the document itself
 (`termResolvesAsProperty`: vocabulary-relative only, the JSON-LD 1.1 rule for
 member keys). It is not a recursive coverage checker. -/
 
@@ -643,7 +643,15 @@ def subjectKeys : Json → List String
   | _ => []
 
 def checkSubjectTermsResolveOne (ac : L4Factoidal.JSONLD.ActiveContext) (subj : Json) : Verdict :=
-  if (subjectKeys subj).all (L4Factoidal.JSONLD.termResolvesAsProperty ac) then .pass
+  -- The subject's own `type` values bring their type-scoped contexts (JSON-LD
+  -- 1.1 API §5.1; Bitstring Status List v1.0 defines `encodedList` and
+  -- `statusPurpose` in the scoped context of `BitstringStatusList`).
+  let acSubj := match L4Factoidal.JSONLD.applyTypeScoped L4Factoidal.JSONLD.Loader.none ac ac
+      (L4Factoidal.JSONLD.sortStrings (docTypes subj)) false with
+    | .ok (a, _) => a
+    | .error _ => ac
+  if (subjectKeys subj).all (fun k => L4Factoidal.JSONLD.termResolvesAsProperty ac k ||
+      L4Factoidal.JSONLD.termResolvesAsProperty acSubj k) then .pass
   else .fail "undefined credentialSubject term would be dropped by JSON-LD processing (DATA_LOSS_DETECTION_ERROR)"
 
 def checkSubjectTermsResolve (ac : L4Factoidal.JSONLD.ActiveContext) (v : Json) : Verdict :=
@@ -653,9 +661,55 @@ def checkSubjectTermsResolve (ac : L4Factoidal.JSONLD.ActiveContext) (v : Json) 
   | some (.array items) => checkAll (checkSubjectTermsResolveOne ac) items
   | some _ => .pass   -- a shape error is `checkSubject`'s concern
 
-/-- Port of `vc_check_no_data_loss`. -/
+/-- The member names of the document itself, keywords and their `id`/`type`
+aliases excluded. -/
+def topLevelKeys : Json → List String
+  | .object fields =>
+      (fields.filter (fun f => !f.1.startsWith "@" && f.1 != "id" && f.1 != "type")).map (·.1)
+  | _ => []
+
+/-- The names an active context defines in any scope: its own terms, and the
+member names of each term's scoped context (an object, or the objects of an
+array). -/
+def namesDefinedAnywhere (ac : L4Factoidal.JSONLD.ActiveContext) : List String :=
+  let keysOf : Json → List String
+    | .object fs => fs.map (·.1)
+    | .array xs => xs.flatMap (fun x => match x with | .object fs => fs.map (·.1) | _ => [])
+    | _ => []
+  ac.terms.flatMap fun (n, td) => n :: (match td.scopedContext with
+    | some (sc, _) => keysOf sc
+    | none => [])
+
+/-- An undefined member name at the top level of the document (added
+2026-10-28: the W3C vc-bitstring-status-list-test-suite posts a credential
+with an undefined `statusEntry` member and expects the issuer to refuse it).
+
+The rule is narrower than "does not resolve here": a member fails only when it
+resolves neither under the active context with the document's type-scoped
+contexts applied (JSON-LD 1.1 API §5.1) nor names a term that the document's
+contexts define in some other scope. The second clause keeps a VCDM 2.0
+`VerifiableCredential` with a top-level `verifiableCredential` member (a term
+of the `VerifiablePresentation` scope) accepted, as the W3C
+vc-data-model-2.0-test-suite requires (its §4.12 verifier tests issue and
+verify one). A member that no context defines anywhere is refused. -/
+def checkTopLevelTermsResolve (ac : L4Factoidal.JSONLD.ActiveContext) (v : Json) : Verdict :=
+  -- Type-scoped contexts are inline in VCDM 2.0, so no loader is needed; a
+  -- type whose scoped context does not process leaves the check to the
+  -- JSON-LD processor, which refuses it.
+  let types := L4Factoidal.JSONLD.sortStrings (docTypes v)
+  match L4Factoidal.JSONLD.applyTypeScoped L4Factoidal.JSONLD.Loader.none ac ac types false with
+  | .error _ => .pass
+  | .ok (ac', _) =>
+      let anywhere := namesDefinedAnywhere ac
+      match (topLevelKeys v).find? (fun k =>
+          !L4Factoidal.JSONLD.termResolvesAsProperty ac' k && !anywhere.contains k) with
+      | none => .pass
+      | some k => .fail s!"undefined term \"{k}\" would be dropped by JSON-LD processing (DATA_LOSS_DETECTION_ERROR)"
+
+/-- Port of `vc_check_no_data_loss`, with the top-level members added. -/
 def checkNoDataLoss (ac : L4Factoidal.JSONLD.ActiveContext) (v : Json) : Verdict :=
-  Verdict.both (checkTypeTermsResolve ac v) (checkSubjectTermsResolve ac v)
+  Verdict.both (checkTypeTermsResolve ac v)
+    (Verdict.both (checkSubjectTermsResolve ac v) (checkTopLevelTermsResolve ac v))
 
 /-- Port of `vc_check_no_data_loss_from_string`. `input` is the document's raw
 JSON text with its `@context` ALREADY resolved to inline JSON. The loader is

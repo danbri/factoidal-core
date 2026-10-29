@@ -667,7 +667,9 @@ def onlyChildren : List (String × List String) :=
    ("analyze-string", ["matching-substring", "non-matching-substring", "fallback"]),
    ("merge-source", ["merge-key"]), ("evaluate", ["with-param", "fallback"]),
    ("merge", ["merge-source", "merge-action", "fallback"]),
-   ("character-map", ["output-character"]), ("accumulator", ["accumulator-rule"])]
+   ("character-map", ["output-character"]), ("accumulator", ["accumulator-rule"]),
+   -- 4.0: an enclosing mode contains its template rules (§6.7.2)
+   ("mode", ["template"])]
 
 /-- The content of an XSLT element with a fixed content model (XTSE0010);
     not checked in forwards-compatible mode. -/
@@ -678,7 +680,7 @@ def checkContent (c : SCx) (m : Mod) (i : Nat) : CM Unit := do
   let mut seenOtherwise := false
   let mut whens := 0
   for k in m.kids i do
-    if m.isElem k then
+    if m.isElem k && !m.isXsl k "note" then
       if !(ok.any (m.isXsl k ·)) then
         cerr "XTSE0010" ("xsl:" ++ l ++ " cannot contain the element " ++ (m.name k).loc)
       if l == "choose" then
@@ -830,7 +832,10 @@ def compileSorts : Nat → SCx → Mod → List Nat → CM (List SortK)
           cerr "XTSE0020" ("invalid language '" ++ lg ++ "' for xsl:sort")
       let sel ← optExpr c' as "select"
       let body ← compileNodes f c' m (m.kids k)
-      if sel.isSome && !body.isEmpty then cerr "XTSE1015" "xsl:sort has both a select attribute and content"
+      if sel.isSome && !body.isEmpty then
+        -- XTSE3200 for xsl:merge-key, XTSE1015 for xsl:sort
+        if m.isXsl k "merge-key" then cerr "XTSE3200" "xsl:merge-key has both a select attribute and content"
+        else cerr "XTSE1015" "xsl:sort has both a select attribute and content"
       pure (some (.mk sel body (← optAvt c' as "order") (← optAvt c' as "lang") (← optAvt c' as "data-type")
         (← optAvt c' as "case-order") (← optAvt c' as "collation") (← optAvt c' as "stable"))))
 
@@ -1246,7 +1251,9 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
             let ck ← c.enter m k kas
             let fi := kas.get "for-each-item"
             let fs := kas.get "for-each-source"
-            if fi.isSome && (fs.isSome || (kas.get "use-accumulators").isSome || (kas.get "streamable").isSome) then
+            -- (streamable="no" is read as absent, as the W3C tests do)
+            let streamYes := ((kas.get "streamable").bind parseBool).getD ((kas.get "streamable").isSome)
+            if fi.isSome && (fs.isSome || (kas.get "use-accumulators").isSome || streamYes) then
               cerr "XTSE3195" "xsl:merge-source with for-each-item cannot have for-each-source, use-accumulators or streamable"
             let sel ← parseC ck (← reqAttr kas "select" "merge-source")
             -- the name of a merge source is an NCName (XTSE0020)
@@ -1287,7 +1294,9 @@ def compileXsl : Nat → SCx → Mod → Nat → Attrs → CM Instr
                "transform", "package", "decimal-format", "attribute-set", "namespace-alias",
                "strip-space", "preserve-space", "character-map", "accumulator", "global-context-item",
                "import-schema", "use-package", "expose", "accept", "override", "item-type", "record-type"].contains l then
-        cerr "XTSE0010" ("xsl:" ++ l ++ " is a declaration, not an instruction")
+        -- xsl:include and xsl:import only at the top level (XTSE0170, XTSE0190)
+        cerr (if l == "include" then "XTSE0170" else if l == "import" then "XTSE0190" else "XTSE0010")
+          ("xsl:" ++ l ++ " is a declaration, not an instruction")
       else cerr "XTSE0010" ("unknown XSLT instruction xsl:" ++ l)
 
 end
@@ -1388,9 +1397,20 @@ def expandModule : Nat → Mod → Nat → SCx → CM (List Decl)
   | 0, _, _, _ => cerr "XTSE0180" "includes nested too deeply"
   | f + 1, m, root, c => do
     let mut out : List Decl := []
+    -- no text at the top level (XTSE0120)
+    if (m.kids root).any (fun k => (m.r k).kind == .text && !((m.r k).value.toList.all Char.isWhitespace)) then
+      cerr "XTSE0120" "text at the top level of a stylesheet module"
     for i in m.elemKids root do
       let as ← effAttrs c m i
       let ci ← c.enter m i as
+      -- declarations that are always empty (XTSE0260)
+      if ["include", "import", "strip-space", "preserve-space", "output", "decimal-format",
+          "namespace-alias", "global-context-item", "accept"].any (m.isXsl i ·) then
+        let pres := (m.rawAttrs i).any (fun (q, v) => q.uri == nsXML && q.loc == "space" && v.trimAscii.toString == "preserve")
+        -- (4.0: xsl:note may appear in any XSLT element)
+        if (m.kids i).any (fun k => (m.isElem k && !m.isXsl k "note") ||
+            ((m.r k).kind == .text && (pres || !((m.r k).value.toList.all Char.isWhitespace)))) then
+          cerr "XTSE0260" ("xsl:" ++ (m.name i).loc ++ " must be empty")
       if !(← useWhenOk ci m i as) then continue
       if m.isXsl i "include" then
         let some href := as.get "href" | cerr "XTSE0010" "xsl:include requires href"
@@ -2126,6 +2146,19 @@ def processModule (onUse : Decl → CM Unit) : Nat → Mod → CM Unit
     modify (fun s => { s with sheet := { s.sheet with templates := s.sheet.templates.map (fun t =>
       if t.prec == prec then { t with precLo := lo } else t) } })
 
+/-- The `input-type-annotations` attribute of a stylesheet module text
+    (§3.15), when it has one. -/
+def inputTypeAnnOf (uri txt : String) : Option String :=
+  match Doc.ofString txt uri with
+  | .error _ => none
+  | .ok d =>
+    let m : Mod := { d, uri }
+    match m.rootElem with
+    | none => none
+    | some r =>
+      if !(m.isXsl r "stylesheet" || m.isXsl r "transform" || m.isXsl r "package") then none else
+      (Attrs.get (m.rawAttrs r) "input-type-annotations").map (·.trimAscii.toString)
+
 /-- The `xsl:import-schema` declarations of a module text (§3.15). -/
 def schemaImportsOf (uri txt : String) : List SchemaImport :=
   match Doc.ofString txt uri with
@@ -2306,6 +2339,14 @@ def checkSheet : CM Unit := do
           if seen.contains x then continue
           seen := x :: seen
           todo := todo ++ usesOf x
+    -- XTSE4040: the declared type of a template rule is a subtype of the
+    -- declared type of each of its modes (§6.6.3)
+    for t in s.sheet.templates.toList do
+      if let (some _, some st) := (t.pat, t.ty) then
+        for md in s.sheet.modes do
+          if let some mt := md.ty then
+            if (t.modes.contains md.name || t.modes.contains "#all") && !subtype st mt then
+              cerr "XTSE4040" ("the type of a template rule is not a subtype of the type of mode " ++ md.name)
     -- XTSE1290: two values of a property at its highest precedence
     for ((key, k), p) in s.dfConflicts do
       if s.dfPrec.lookup (key, k) == some p then

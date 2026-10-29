@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
 # tests/vc-di-eddsa/run.sh — run the vendored W3C vc-di-eddsa-test-suite
 # (third_party/testing/vc-di-eddsa/) against bin/vc-api-shim/server.mjs,
-# scoped to the eddsa-rdfc-2022 create + verify test files (task #88,
-# canivc.com community-compatibility integration).
+# eddsa-rdfc-2022 (routes /credentials/*, the original shim path) and
+# eddsa-jcs-2022 (routes /eddsa-jcs-2022/credentials/*, the Lean cryptosuite
+# table of formal/lean4/L4Factoidal/VC/Cryptosuite.lean).
 #
-# Not run: 30-rdfc-interop.js, 60-jcs-interop.js, 70-data-model.js,
-# 80-algorithms.js — all four import tests/vc-generator/contexts.js,
-# which crashes at module-load time in this Node version
-# ("DOMException [DataCloneError]: Cannot clone object of unsupported
-# type" from structuredClone() on line 19) — an upstream/environment
-# bug in the vendored suite's own dependency chain, not something this
-# task's shim can affect. 60-jcs-interop.js is additionally out of
-# scope: this shim implements eddsa-rdfc-2022 only, not eddsa-jcs-2022
-# (see docs/designissues/2026-07-10-canivc-community-compat.md).
+# Files run: 05-di-rdfc-create, 15-di-rdfc-verify, 70-data-model,
+# 80-algorithms. Not run: 30-rdfc-interop.js and 60-jcs-interop.js, the
+# interoperability files, which need other implementations' endpoints
+# (settings.enableInteropTests is false). Until 2026-10-28 the vendored copy
+# (769275c9) crashed at load in 70 and 80 (structuredClone DataCloneError in
+# tests/vc-generator/contexts.js); the refreshed copy (1e86cc4c) loads.
 #
 # Requires: `npm install` already run in third_party/testing/vc-di-eddsa
 # (see that directory's PROVENANCE.md).
@@ -65,11 +63,20 @@ module.exports = {
       endpoint: \`\${baseUrl}/credentials/issue\`,
       supports: { vc: ['1.1', '2.0'] },
       tags: ['eddsa-rdfc-2022']
+    }, {
+      id: '$ISSUER_DID',
+      endpoint: \`\${baseUrl}/eddsa-jcs-2022/credentials/issue\`,
+      supports: { vc: ['1.1', '2.0'] },
+      tags: ['eddsa-jcs-2022']
     }],
     verifiers: [{
       id: '$ISSUER_DID',
       endpoint: \`\${baseUrl}/credentials/verify\`,
       tags: ['eddsa-rdfc-2022']
+    }, {
+      id: '$ISSUER_DID',
+      endpoint: \`\${baseUrl}/eddsa-jcs-2022/credentials/verify\`,
+      tags: ['eddsa-jcs-2022']
     }]
   }]
 };
@@ -78,7 +85,8 @@ EOF
 cd "$SUITE_DIR"
 MOCHA_RC=0
 timeout 300 npx mocha tests/05-di-rdfc-create.js tests/15-di-rdfc-verify.js \
-  --timeout 15000 --reporter json > "$MOCHA_JSON" 2>/dev/null || MOCHA_RC=$?
+  tests/70-data-model.js tests/80-algorithms.js \
+  --timeout 15000 --reporter json --reporter-option "output=$MOCHA_JSON" >/dev/null 2>&1 || MOCHA_RC=$?
 
 python3 - "$MOCHA_JSON" "$RESULT_JSON" "$MOCHA_RC" << 'PYEOF'
 import json, sys, datetime
@@ -100,7 +108,7 @@ failures = [
 
 result = {
     "spec": "https://w3c.github.io/vc-di-eddsa-test-suite/",
-    "suite": "vc-di-eddsa (eddsa-rdfc-2022 create + verify)",
+    "suite": "vc-di-eddsa (eddsa-rdfc-2022 + eddsa-jcs-2022: create, verify, data model, algorithms)",
     "runner": "tests/vc-di-eddsa/run.sh",
     "retrieved_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "pass": stats["passes"],
@@ -110,9 +118,8 @@ result = {
     "present": True,
     "not_run_files": [
         "30-rdfc-interop.js", "60-jcs-interop.js",
-        "70-data-model.js", "80-algorithms.js",
     ],
-    "not_run_reason": "module-load crash in the vendored suite's own tests/vc-generator/contexts.js (structuredClone DataCloneError) for 30/70/80; 60-jcs-interop.js is also out of scope (eddsa-jcs-2022 not implemented)",
+    "not_run_reason": "interoperability files: they need other implementations' endpoints (enableInteropTests false)",
     "failures": failures,
 }
 
