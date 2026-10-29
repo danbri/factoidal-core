@@ -85,23 +85,81 @@ check is in `L4Factoidal/WebAnnotation/Vocab.lean`.
 - `testVerdict_pass_iff`: a document passes a `.test` file exactly when every
   reported subtest passes.
 
-## Stage 2: the Annotation Protocol (not done yet)
+## Stage 2: the Annotation Protocol
 
-The Protocol is LDP (Basic Containers) with the annotation media type and
-paging by `AnnotationPage`. The suite's `annotation-protocol/` is one manual
-page (`server/server-manual.html`) that runs requests against a server URL,
-and a Python reference server (not vendored). The plan:
+📊 `bash tests/webannotation/run.sh`, section "protocol":
 
-1. Read the request list of `server-manual.html` into a Lean test table
-   (method, headers, expected status and headers), the same way the LWS
-   host tests are written.
-2. Serve an annotation container on the LWS storage (`L4Factoidal/LWS/`),
-   which already has containers, ETags and paging. Read the Protocol's
-   rules for container discovery, creation, update and deletion, the
-   `Prefer` header, and container representations as `AnnotationPage`
-   pages, and write each as a Lean rule with its section number.
-3. Check every annotation the server returns with the stage 1 musts.
-4. Add `annotation-protocol` to `tests/webannotation/run.sh`.
+- `server-manual.html` MUST assertions: 35 pass, 0 fail (out of 35).
+- `server-manual.html` SHOULD assertions: 10 pass, 0 fail (out of 10).
+- Rules of §4.2, §5 and §6 that the page does not test (marked `extra`):
+  11 pass, 0 fail (out of 11).
+- 1 expected failure, with its open issue: a GET with
+  `Accept: text/turtle` gets JSON-LD, not Turtle (§3.1, a SHOULD),
+  https://github.com/danbri/factoidal/issues/1197. The run fails if it
+  passes.
+- The 64 annotations that the server sent (POST and PUT responses, GET
+  responses, page items), each through its Data Model tests: 183 pass,
+  0 fail (out of 183 runs); 9 excluded (defective test data,
+  https://github.com/danbri/factoidal/issues/1193, the samples that use
+  `Composite`, `List` and `Independents`).
 
-A new server surface carries the experimental code notice and states the
-invariants of https://github.com/danbri/factoidal/issues/1120 it touches.
+### How it is built
+
+- `L4Factoidal/WebAnnotation/Protocol.lean`: `step`, a total function
+  from a state and a request to a state and a response. The state is an
+  `LWS.Store` state and the list of deleted paths. A container is an LWS
+  container entry; an annotation is an LWS data resource whose bytes are
+  its JSON-LD text. So every backend that satisfies `LWS.StoreLaws` holds
+  annotations, and the listing order and the pages are those of LWS
+  (`orderedMemberPaths`, `pageAt`). Names of new annotations use
+  `LWS.freeName` and `LWS.slugUsable` (the `Slug` header, §5.1). Each rule
+  has its section number in the module header.
+- `L4Factoidal/WebAnnotation/ProtocolSuite.lean`: the request list and the
+  assertion texts of `server-manual.html`, sent to `step` over
+  `LWS.MemStore`. The container is first filled with the suite's 41 sample
+  annotations by POST (page size 10, so 5 pages).
+- `Harness/WebAnnotationRun.lean` prints the scores and runs every
+  annotation the server sent through the stage 1 Data Model tests.
+
+### Decisions
+
+- Default preference: PreferContainedDescriptions (§4.2.1: "If no
+  preference is given by the client, the server SHOULD default to the
+  PreferContainedDescriptions behavior"). The first page is embedded.
+- Container IRIs of the two views: `?iris=0` and `?iris=1`, pages
+  `?iris=N&page=K` from 0, as in the examples of §4.2. `Content-Location`
+  is the IRI of the view and equals the `id`.
+- A deleted IRI is not used again, and a GET answers 410 (§5.3, §6).
+- A PUT whose `id` is not the annotation's IRI answers 400; a PUT that
+  changes a `canonical` or `via` that was set answers 409 (§5.2, §6:
+  "set or change a value that the server does not allow").
+- A POST or PUT body that is not JSON-LD, or not an annotation in the Web
+  Annotation context with a `target`, answers 415 (§6).
+
+### Finding about the W3C page
+
+The page tests on `first`, `last`, `partOf`, `next` and `prev` call
+`request(...)` inside a `then` and do not return its promise, so in a
+browser these four tests pass whatever the server answers. With the
+default preference, `first` is an embedded page object, and the page would
+request the URL `[object Object]`. The Lean suite makes each request,
+follows `first.id` when `first` is embedded, and decides.
+
+### Theorems (`Protocol.lean`)
+
+- `wap2017_page_eq_lws10_page`: page `i` of a Web Annotation Protocol 2017
+  container is page `i + 1` of the LWS 1.0 listing (`LWS.pageItems`).
+- `wap2017_pages_concat`: the pages together give the container's
+  annotations, each once, in listing order (from `LWS.pageItems_concat`).
+- `assignId_id`, `assignId_canonical`: a created annotation has the
+  assigned `id`, and its `canonical` is unchanged (§5.1 MUST).
+- `newPath_fresh`, `newPath_prefix`: a POST never replaces an annotation,
+  never uses the IRI of a deleted one, and the new IRI is the container IRI
+  with a component added (§5.1 MUST).
+
+### Not done
+
+- Turtle (§3.1 SHOULD) and a host that serves `step` over HTTP:
+  https://github.com/danbri/factoidal/issues/1197. A served surface needs
+  the experimental code notice and the invariants of
+  https://github.com/danbri/factoidal/issues/1120.

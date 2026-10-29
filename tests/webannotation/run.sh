@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# tests/webannotation/run.sh — the W3C Web Annotation Data Model and Vocabulary
-# tests (Recommendations, 2017-02-23) in Lean, over the vendored suite
+# tests/webannotation/run.sh — the W3C Web Annotation Data Model, Vocabulary and
+# Protocol tests (Recommendations, 2017-02-23) in Lean, over the vendored suite
 # third_party/testing/web-annotation (provenance:
 # third_party/testing/web-annotation-PROVENANCE.md;
 # https://github.com/danbri/factoidal/issues/1165).
@@ -15,6 +15,11 @@
 #      named assertion must fail.
 #   3. annotation-vocab 01-06: expansion, RDF, three syntax round trips, the
 #      JSON-LD round trip, oa.ttl parses, domains and ranges.
+#   4. annotation-protocol: the assertions of server/server-manual.html against
+#      the Lean handler L4Factoidal/WebAnnotation/Protocol.lean over the LWS
+#      MemStore, then every annotation the handler sent through the Data
+#      Model tests. An `xfail` check that passes is STALE (a failure):
+#      https://github.com/danbri/factoidal/issues/1197.
 #
 # Builds l4webannotation in formal/lean4; exits 0 only when every step passes.
 set -euo pipefail

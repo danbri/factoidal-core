@@ -23,6 +23,12 @@ Inputs (`third_party/testing/web-annotation/`, provenance in
 * `tests/webannotation/negative/`: project-local documents that break one
   MUST of the Recommendation each, with `manifest.tsv` naming the `.test`
   file and the assertion that must fail.
+* `annotation-protocol/server/server-manual.html`: the Protocol server
+  tests. Its request list and assertions are in
+  `L4Factoidal.WebAnnotation.ProtocolSuite`; they run against the Lean
+  handler `L4Factoidal.WebAnnotation.Protocol` over the LWS `MemStore`, with
+  the 41 sample annotations POSTed first. Every annotation that the
+  handler sends is then run through the Data Model tests.
 * `w3c-ns/`: the `anno.jsonld` context, `ldp.jsonld`, and the ontology as
   `oa.ttl`, `oa.rdf` and `oa.jsonld`.
 
@@ -32,6 +38,7 @@ Usage, from the repository root:
 import L4Factoidal.WebAnnotation.JsonTest
 import L4Factoidal.WebAnnotation.Vocab
 import L4Factoidal.WebAnnotation.Theorems
+import L4Factoidal.WebAnnotation.ProtocolSuite
 import L4Factoidal.JSON.Parser
 
 open L4Factoidal.JSON
@@ -252,6 +259,32 @@ def main (args : List String) : IO UInt32 := do
         | .error e => IO.println s!"  oa.jsonld: does not convert to RDF: {reprStr e}"
       | none => pure ()
   IO.println s!"web-annotation vocab 05-06 (oa.ttl parses; domains and ranges name declared classes or RDF datatypes): {oPass} pass, {2 - oPass} fail (out of 2)"
+  -- 4. The Annotation Protocol server tests (server-manual.html).
+  let sampleDocs := samples.map (fun d =>
+    ((d.label.splitOn "/").getLast!.replace ".json" "", d.json))
+  let (checks, sent) := ProtocolSuite.run {} sampleDocs "urn:uuid:3f2b0c1e-7d4a-4c8e-9b1a-5e6f7a8b9c0d"
+  for lvl in ["must", "should", "extra"] do
+    let cs := checks.filter (·.level == lvl)
+    let ok := (cs.filter (·.ok)).length
+    IO.println s!"web-annotation protocol ({lvl}, server-manual.html{if lvl == "extra" then ": rules of §4.2, §5, §6 the page does not test" else ""}): {ok} pass, {cs.length - ok} fail (out of {cs.length})"
+    for ch in cs.filter (!·.ok) do bad := s!"protocol {lvl}: {ch.name}" :: bad
+  for ch in checks.filter (·.level == "xfail") do
+    if ch.ok then bad := s!"protocol xfail: STALE, it passes; make it a check and close the issue: {ch.name}" :: bad
+    else IO.println s!"web-annotation protocol: expected failure (open issue): {ch.name}"
+  -- Every annotation the handler sent, through the Data Model tests.
+  let mut sPass := 0
+  let mut sTotal := 0
+  let mut sExcluded := 0
+  for (label, j) in sent do
+    for t in tests do
+      if kindForTestPath t.path != kindOf j then continue
+      sTotal := sTotal + 1
+      match testVerdict (runTestFile env t j) with
+      | .pass => sPass := sPass + 1
+      | v =>
+        if testVerdict (runTestFile envFixed t j) == .pass then sExcluded := sExcluded + 1
+        else bad := s!"protocol response {label} × {t.path}: {verdictName v}" :: bad
+  IO.println s!"web-annotation protocol (the {sent.length} annotations the server sent × their Data Model tests): {sPass} pass, {sTotal - sPass - sExcluded} fail (out of {sTotal - sExcluded} runs); {sExcluded} excluded (defective test data, {defectiveIssue})"
   for b in bad.reverse do IO.println s!"  FAIL {b}"
   return (if bad.isEmpty then 0 else 1)
 
