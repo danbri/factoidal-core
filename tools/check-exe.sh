@@ -39,7 +39,12 @@ case "$ANSWER" in *'"boolean":true'*) ok "serve: ASK over HTTP" ;; *) bad "serve
 kill "$SPID" 2>/dev/null; wait "$SPID" 2>/dev/null; SPID=""
 
 if [ "$QUICK" != "--quick" ]; then
-  if node "$REPO_ROOT/tests/webdav-desktop/selftest.mjs" --cli "$EXE" >"$WORK/dav.txt" 2>&1; then ok "webdav: $(tail -1 "$WORK/dav.txt")"; else bad "webdav: $(tail -5 "$WORK/dav.txt")"; fi
+  if node "$REPO_ROOT/tests/webdav-desktop/selftest.mjs" --cli "$EXE" >"$WORK/dav.txt" 2>&1; then
+    ok "webdav: $(tail -1 "$WORK/dav.txt")"
+  else
+    bad "webdav"
+    sed 's/^/    /' "$WORK/dav.txt"
+  fi
 fi
 
 echo "check-exe: $PASS pass, $FAIL fail (out of $((PASS + FAIL)))"

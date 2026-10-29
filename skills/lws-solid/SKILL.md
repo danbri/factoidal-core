@@ -1043,6 +1043,22 @@ the adapter reads no response; `tools/host-purity-lint.sh` group 4 checks it.
 
 ## WebDAV for file browsers (https://github.com/danbri/factoidal/issues/1066)
 
+**Current mode since 0.21.0:** read only; every mount requires `users:`;
+requests without credentials require a named `--guest`; `kind: local` is
+refused (https://github.com/danbri/factoidal/issues/1147). The original local
+mount examples and writable client scores below are historical. Current
+CLI help and `tests/webdav/server.mjs` describe the supported behavior.
+`tests/webdav/server.mjs --cli PATH` tests an executable's CLI; its seed
+client and login-cache API check still need repository engine assets.
+
+The desktop harness now seeds authenticated LWS through HTTP and checks
+WebDAV read-only behavior through remote mounts. Run its lifecycle checks
+with `node --test tests/webdav-desktop/harness.test.mjs` and executable log
+checks with `bash tests/check-exe/run.sh`. Do not drop its large-file gate
+to publish an executable. Investigation and assurance boundary:
+[`docs/20261029-webdav-executable-gate.md`](../../docs/20261029-webdav-executable-gate.md),
+[`docs/designissues/2026-10-29-webdav-executable-assurance.md`](../../docs/designissues/2026-10-29-webdav-executable-assurance.md).
+
 Design record: `docs/designissues/2026-10-27-webdav.md` (mount file format,
 the WebDAV and LWS mapping, statuses, limits, what each client needs).
 

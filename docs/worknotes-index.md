@@ -15,6 +15,8 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-10-29 | [WebDAV executable gate investigation](20261029-webdav-executable-gate.md) and [assurance boundary](designissues/2026-10-29-webdav-executable-assurance.md) | this change | current: startup fixed; large remote reads still fail |
+| 2026-10-29 | [Executables for each release](designissues/2026-10-29-executables-per-release.md) | this change | proposed: exact tarball, reusable executable jobs, visible distribution status |
 | 2026-04-20 | [SPARQL demo review](20260420-sparqldemo-review.md) | 7d5c00ed9 | historical |
 | 2026-04-21 | [Large Turtle stack overflow fix sketch](2026-04-21-large-turtle-stack-overflow-fix-sketch.md) | c29698f98 | historical |
 | 2026-08 | [Factoidal verified RDF block engine](2026-08-blockengine.md) | 27f9308f4 | current: design, part 1 |
