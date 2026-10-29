@@ -71,6 +71,36 @@ eddsa-jcs-2022. The refreshed 05 and 15 files test VC DI §2.4 data loss on
 VCDM 2.0 credentials, so the shim's structural gate now runs
 `VC.Doc.checkNoDataLoss` for VCDM 2.0 documents as it did for VC 1.1.
 
+## Step 3: Bitstring Status List v1.0
+
+`VC/StatusList.lean`: entries (§2.1, `checkEntry`), list credentials (§2.2),
+bitstring generation and expansion (§3.3, §3.4: GZIP through
+`Codec.gzip`/`gunzip`, Multibase base64url through `JOSE.Base64Url`), and §3.2
+Validate. Bit 0 is the most significant bit of byte 0. The list credential's
+proof is verified by `Cryptosuite.verifyDocument` before `validate` runs; the
+host dereferences the list (STATUS_RETRIEVAL_ERROR is the host's).
+
+The shim hosts one revocation list at `<base>/status/1`. The W3C suite
+dereferences status lists over HTTPS only, so the runner starts the shim with
+a TLS listener on a self-signed certificate made for that run.
+
+Three repairs found by that suite:
+
+1. A 16KB list is about 22,000 base64url characters; `JOSE.Base64Url`
+   decoded with one native frame per character and overflowed the wasm stack.
+   `digitsOf?` and `decodeDigits` now have loop forms with `csimp` proofs.
+2. `VC.Doc.checkNoDataLoss` read `credentialSubject` keys without the
+   subject's type-scoped contexts, so `encodedList` of a
+   `BitstringStatusList` subject counted as undefined. It now applies them
+   (JSON-LD 1.1 API §5.1).
+3. The suite posts a credential with an undefined top-level `statusEntry` and
+   expects a refusal. The check now refuses a top-level member that no
+   context of the document defines in any scope; a member defined in another
+   scope (a top-level `verifiableCredential` on a `VerifiableCredential`,
+   which the VCDM 2.0 suite issues and verifies) is accepted.
+
+Score: 18 pass, 0 fail, 8 skipped by the suite (out of 26).
+
 ## Theorems (`VC/CryptosuiteTheorems.lean`)
 
 - `vcDiEcdsa10_ecdsaRdfc2019_p256_shares_eddsaRdfc2022`: ecdsa-rdfc-2019
