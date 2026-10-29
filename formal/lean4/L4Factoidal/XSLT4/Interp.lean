@@ -1764,7 +1764,7 @@ def run1 : Nat → Sheet → Ctx → Instr → XM (List Out)
               | _ => xerr "XTTE3170" "namespace-context must be a single node"
           -- otherwise the xpath-default-namespace of the instruction
           | none => pure (scope, (scope.lookup "#type").getD "")
-        let e ← match parseXPath src ns with
+        let e ← match parseXPath src ns none env.schema.declared with
           | .ok e => pure (if dflt == "" then e else exprDefault dflt 100000 e)
           | .error er => xerr "XTDE3160" ("xsl:evaluate: " ++ er.code ++ " " ++ er.msg)
         -- the XSLT function current-output-uri is not among the function

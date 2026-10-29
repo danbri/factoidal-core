@@ -444,7 +444,9 @@ def docFn (e : Env) (a : List Seq) : M Seq := do
       if o.dtdValidation then err "FODC0007" "DTD validation of a registered document" else
       pure [.node (NodeRef.mk' d 0)]
     | none =>
-      match e.resource u.str with
+      -- a resource the caller stored under the unescaped name (a space
+      -- that the URI reference carries as %20)
+      match (e.resource u.str).orElse (fun _ => e.resource (u.str.replace "%20" " ")) with
       | some t =>
         let d ← match parseDocument e o (Atomic.ofStr t) u.str with
           | .ok d => pure d
