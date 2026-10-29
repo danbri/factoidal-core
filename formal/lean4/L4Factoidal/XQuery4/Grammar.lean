@@ -48,6 +48,9 @@ structure Cfg where
   /-- `declare copy-namespaces` (§5.8): preserve, inherit. -/
   copyPreserve : Bool := true
   copyInherit : Bool := true
+  /-- XQuery Update Facility 3.0 §4.1: `declare revalidation`, for the
+      copy modify expressions of the module. -/
+  revalidation : Option String := none
 deriving Inhabited
 
 /-! ## Helpers -/
@@ -1040,7 +1043,7 @@ def pAnnotations : P (List (QN × List Atomic)) := do
     | some (p, u, l, e) =>
       set e
       let q ← resolve p u l "http://www.w3.org/2012/xquery"
-      if q.uri == "http://www.w3.org/2012/xquery" && !(["public", "private", "constructor"].contains l) then
+      if q.uri == "http://www.w3.org/2012/xquery" && !(["public", "private", "constructor", "updating", "simple"].contains l) then
         throw { code := "XQST0045", msg := ("reserved annotation %" ++ l) }
       if [nsFN, nsXS, nsMATH, nsMAP, nsARR, "http://www.w3.org/XML/1998/namespace",
           "http://www.w3.org/2001/XMLSchema-instance"].contains q.uri then

@@ -63,6 +63,7 @@ Targeted imports only — never the L4Factoidal umbrella (see
 import Wasm.Ops.Support
 import L4Factoidal.Crypto.Ed25519
 import L4Factoidal.VC.CryptosuiteNative
+import L4Factoidal.VC.StatusList
 import L4Factoidal.Crypto.SHA2
 import L4Factoidal.VC.DataIntegrity
 import L4Factoidal.VC.DidKey
@@ -184,6 +185,70 @@ def vcDiVerify (expectedPurpose contextsJson documentJson : String) : String :=
       | .ok () => okWith [("verified", .bool true)]
       | .error e => okWith [("verified", .bool false), ("reason", .string e.describe)]
 
+/-! ## Bitstring Status List v1.0 (`VC/StatusList.lean`)
+
+  vcStatusEntryNew(statusListCredential, statusPurpose, statusListIndex)
+                                             -> {"ok":true,"entry":{…}}
+  vcStatusListCredential(id, issuer, statusPurpose, statusSize, setJson, validFrom)
+                                             -> {"ok":true,"credential":{…}}   (unsigned)
+  vcStatusEntryCheck(credentialJson)         -> {"ok":true,"valid":true}
+                                              | {"ok":true,"valid":false,"code":"…","reason":"…"}
+  vcStatusValidate(entryJson, listCredentialJson)
+                                             -> {"ok":true,"status":n,"purpose":"…","valid":b[,"message":"…"]}
+                                              | {"ok":true,"error":"<code>","reason":"…"}
+
+`setJson` is a JSON array of `[statusListIndex, status]` pairs. The list
+credential's proof is verified by `vcDiVerify` before `vcStatusValidate`;
+the host fetches the list credential (no I/O here). -/
+
+open L4Factoidal.VC.StatusList in
+def vcStatusEntryNew (slc purpose index : String) : String :=
+  match parseIndex? index with
+  | none => errJson "vcStatusEntryNew: statusListIndex must be a base-10 non-negative integer"
+  | some n =>
+      okWith [("entry", .object [("id", .string s!"{slc}#{n}"),
+        ("type", .string "BitstringStatusListEntry"), ("statusPurpose", .string purpose),
+        ("statusListIndex", .string (toString n)), ("statusListCredential", .string slc)])]
+
+open L4Factoidal.VC.StatusList in
+def vcStatusListCredential (id issuer purpose sizeTxt setJson validFrom : String) : String :=
+  let pairs? : Option (List (Nat × Nat)) := match parseJson? setJson with
+    | some (.array xs) => xs.mapM fun x => match x with
+        | .array [.number a, .number b] => do pure ((← a.toNat?), (← b.toNat?))
+        | _ => none
+    | _ => none
+  match sizeTxt.toNat?, pairs? with
+  | some size, some pairs =>
+      if size == 0 then errJson "vcStatusListCredential: statusSize must be greater than zero"
+      else okWith [("credential", .object [
+        ("@context", .array [.string "https://www.w3.org/ns/credentials/v2"]),
+        ("id", .string id),
+        ("type", .array [.string "VerifiableCredential", .string "BitstringStatusListCredential"]),
+        ("issuer", .string issuer), ("validFrom", .string validFrom),
+        ("credentialSubject", .object [("id", .string s!"{id}#list"),
+          ("type", .string "BitstringStatusList"), ("statusPurpose", .string purpose),
+          ("encodedList", .string (generate size 0 pairs))])])]
+  | _, _ => errJson "vcStatusListCredential: statusSize must be a number and the set an array of [index, status] pairs"
+
+open L4Factoidal.VC.StatusList in
+def vcStatusEntryCheck (credentialJson : String) : String :=
+  match parseJson? credentialJson with
+  | none => errJson "vcStatusEntryCheck: the credential is not JSON"
+  | some cred =>
+      match (statusEntries cred).mapM checkEntry with
+      | .ok _ => okWith [("valid", .bool true)]
+      | .error e => okWith [("valid", .bool false), ("code", .string e.code), ("reason", .string e.describe)]
+
+open L4Factoidal.VC.StatusList in
+def vcStatusValidate (entryJson slcJson : String) : String :=
+  match parseJson? entryJson, parseJson? slcJson with
+  | some ej, some slc =>
+      match checkEntry ej >>= fun e => validate e slc with
+      | .ok r => okWith ([("status", .number (toString r.status)), ("purpose", .string r.purpose),
+          ("valid", .bool r.valid)] ++ (match r.message with | some m => [("message", .string m)] | none => []))
+      | .error e => okWith [("error", .string e.code), ("reason", .string e.describe)]
+  | _, _ => errJson "vcStatusValidate: the entry and the list credential must be JSON"
+
 /-! ## did:key -/
 
 def didKeyResolve (did : String) : String :=
@@ -229,7 +294,8 @@ def vcOpNames : List String :=
   [ "vcSha256Hex", "vcEd25519SecretToPublic", "vcEd25519Sign", "vcEd25519Verify"
   , "vcEddsaCreateFromCanonical", "vcEddsaVerifyFromCanonical"
   , "vcCheckCredential", "vcCheckCredentialSubject", "vcCheckNoDataLoss"
-  , "vcCheckRelatedResourceDigests", "didKeyResolve", "vcDiKey", "vcDiSecure", "vcDiVerify" ]
+  , "vcCheckRelatedResourceDigests", "didKeyResolve", "vcDiKey", "vcDiSecure", "vcDiVerify"
+  , "vcStatusEntryNew", "vcStatusListCredential", "vcStatusEntryCheck", "vcStatusValidate" ]
 
 private def arityError (op : String) (n got : Nat) : String :=
   errJson s!"{op} expects {n} argument{if n == 1 then "" else "s"}, got {got}"
@@ -252,6 +318,14 @@ def callVc (op : String) (args : List String) : Option String :=
   | "vcDiKey", [a, b]                      => some (vcDiKey a b)
   | "vcDiSecure", [a, b, c, d, e, f, g, h] => some (vcDiSecure a b c d e f g h)
   | "vcDiVerify", [a, b, c]                => some (vcDiVerify a b c)
+  | "vcStatusEntryNew", [a, b, c]          => some (vcStatusEntryNew a b c)
+  | "vcStatusListCredential", [a, b, c, d, e, f] => some (vcStatusListCredential a b c d e f)
+  | "vcStatusEntryCheck", [a]              => some (vcStatusEntryCheck a)
+  | "vcStatusValidate", [a, b]             => some (vcStatusValidate a b)
+  | "vcStatusEntryNew", _ => some (arityError op 3 args.length)
+  | "vcStatusListCredential", _ => some (arityError op 6 args.length)
+  | "vcStatusEntryCheck", _ => some (arityError op 1 args.length)
+  | "vcStatusValidate", _ => some (arityError op 2 args.length)
   | "vcDiKey", _ => some (arityError op 2 args.length)
   | "vcDiSecure", _ => some (arityError op 8 args.length)
   | "vcDiVerify", _ => some (arityError op 3 args.length)

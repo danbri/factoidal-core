@@ -574,7 +574,7 @@ def pItemType : Nat → P IType
           set e
           -- XQuery 4.0 §3.2.8: an annotation in a reserved namespace is XQST0045
           let q ← resolve p u l "http://www.w3.org/2012/xquery"
-          if q.uri == "http://www.w3.org/2012/xquery" && !(["public", "private", "constructor"].contains l) then
+          if q.uri == "http://www.w3.org/2012/xquery" && !(["public", "private", "constructor", "updating", "simple"].contains l) then
             throw { code := "XQST0045", msg := "reserved annotation %" ++ l }
           if [nsFN, nsXS, nsMATH, nsMAP, nsARR, nsXML, "http://www.w3.org/2001/XMLSchema-instance"].contains q.uri then
             throw { code := "XQST0045", msg := "annotation in a reserved namespace " ++ l }
@@ -1156,6 +1156,21 @@ def pCast : Nat → P Expr
   | 0 => synErr "expression too deeply nested"
   | n + 1 => do
     let e ← pPipeline n
+    -- XQuery Update Facility 3.0 §5.7 (XQuery only): `N transform with { U }`
+    -- is `copy $v := N modify $v!(U) return $v` (`L4Factoidal.XQueryUpdate`)
+    let e ← if (← read).ext.isSome && (← atKw "transform") then
+        let save ← get
+        adv 9
+        if ← atKw "with" then
+          adv 4; expectS "{"
+          let u ← if ← eatS "}" then pure (Expr.seq []) else do
+            let x ← pExpr n
+            expectS "}"; pure x
+          let v : QN := { uri := "#upd", loc := "transform-with" }
+          pure (Expr.letE v (.seq .item .star) (.ext "upd-copy" [e] [] [] ["tw" ++ toString save, "preserve"])
+            (.ext "upd-modify" [.smap (.var v) u, .var v] [] [v] ["inherit", ""]))
+        else set save; pure e
+      else pure e
     if ← atKw "cast" then
       adv 4; expectKw "as"
       let (t, o) ← pCastTarget n

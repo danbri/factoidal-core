@@ -108,8 +108,10 @@ def validateFor (s : Schema) (mode : String) (root : Node) (uri : String) : Exce
     let r := validateElement s xpathHooks 10000 [] how root {}
     let idcErrs := checkIdcs s r.1
     let v := (r.1.info?.map (·.validity)).getD .notKnown
-    if (mode != "lax" && v != .valid) || v == .invalid || !idcErrs.isEmpty then
-      .error { code := "FODC0007", msg := s!"the document is not valid: {(r.2.errors ++ idcErrs).take 2}" }
+    -- XSD 1.1 §3.17.4 (cvc-id): no two ID values alike under the validation root
+    let dupIds := r.2.errors.filter (·.startsWith "duplicate ID")
+    if (mode != "lax" && v != .valid) || v == .invalid || !idcErrs.isEmpty || !dupIds.isEmpty then
+      .error { code := "FODC0007", msg := s!"the document is not valid: {(dupIds ++ r.2.errors ++ idcErrs).take 2}" }
     else .ok (psviDoc s r.1 uri)
 
 /-- The XML tree of a node of an XDM document (element names with their
