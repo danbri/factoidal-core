@@ -637,6 +637,11 @@ lean_exe «l4dict-fold-bench» where
 -- IC-21 over tests/datacube/ (Harness/DataCubeRun.lean).
 @[default_target] lean_exe «l4datacube» where root := `Harness.DataCubeRun
 
+-- YAML-LD 1.0 (Editor's Draft) over third_party/testing/yaml-ld/
+-- (Harness/YamlLdRun.lean); `--json-superset` loads the JSON-LD 1.1 suite's
+-- inputs through the YAML 1.2.2 loader.
+@[default_target] lean_exe «l4yamlld» where root := `Harness.YamlLdRun
+
 -- XSLT 1.0 conformance over the vendored w3c/xslt30-test subset:
 -- XSLT/Transform runs the stylesheet, the result tree is serialised
 -- and compared with the suite's own assert-xml file (Harness/XsltRun.lean).

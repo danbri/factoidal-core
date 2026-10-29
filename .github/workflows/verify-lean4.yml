@@ -143,3 +143,8 @@ jobs:
       # must agree on every fixture (https://github.com/danbri/factoidal/issues/1165).
       - name: RDF Data Cube integrity constraints (tests/datacube/run.sh)
         run: bash tests/datacube/run.sh
+
+      # YAML-LD 1.0 over the YAML 1.2.2 loader, and every JSON-LD 1.1 suite
+      # input through the same loader (https://github.com/danbri/factoidal/issues/1165).
+      - name: YAML-LD test suite (tests/yamlld/run.sh)
+        run: bash tests/yamlld/run.sh

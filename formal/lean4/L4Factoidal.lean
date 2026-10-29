@@ -628,6 +628,9 @@ import L4Factoidal.DataCube.Queries
 import L4Factoidal.DataCube.Normalize
 import L4Factoidal.DataCube.NormalizeTheorems
 import L4Factoidal.DataCube.Constraints
+import L4Factoidal.YAML.Loader
+import L4Factoidal.YAMLLD.Api
+import L4Factoidal.YAMLLD.Theorems
 import L4Factoidal.RIF.Syntax
 import L4Factoidal.RIF.Ps
 import L4Factoidal.RIF.Builtins
