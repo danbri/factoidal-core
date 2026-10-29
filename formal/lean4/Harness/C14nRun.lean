@@ -3,7 +3,7 @@ Harness/C14nRun — the canonicalization test cases of Canonical XML 1.0,
 Canonical XML 1.1 and Exclusive XML Canonicalization 1.0 over
 `third_party/testing/xml-c14n/` (provenance: its PROVENANCE.md).
 
-Three groups:
+Four groups:
 
   * `rec-c14n10/`: the examples of Canonical XML 1.0 §3 (3.1 to 3.7),
     canonicalized by Canonical XML 1.0;
@@ -17,7 +17,13 @@ Three groups:
     transform; the expected octets are those that the IAIK
     implementation digested (`*-IAIK-ref0.digestinput`; the report says
     that all five implementations gave the same result), or the UPC
-    output where IAIK gave none.
+    output where IAIK gave none;
+  * `interop-exc-c14n/`: three test vectors of the Exclusive XML
+    Canonicalization interoperability report (2002), XML Signatures
+    whose references use Canonical XML 1.0 and Exclusive XML
+    Canonicalization 1.0, with and without an InclusiveNamespaces
+    PrefixList, over XPath-selected node-sets; the expected octets are
+    the `c14n-K.txt` files of each vector.
 
 An example file `exN-c14n.xml` is the canonical form of a document with
 no comments, so it is checked without comments; `-commented` and
@@ -208,6 +214,117 @@ def runInterop (t : Tally) (dir case_ : String) : IO Tally := do
             | .ok set => report t name (canonicalize m cd set) want
     | _, _, _ => report t name (.error "template has no reference URI, XPath or canonicalization method") want
 
+/-! ## The Exclusive XML Canonicalization interop vectors
+
+Each vector is an XML Signature whose K-th `Reference` digested the
+octets of `c14n-K.txt`; the next number is `SignedInfo` canonicalized by
+the `CanonicalizationMethod`. A reference is processed as XML Signature
+1.1 §4.4.3 says: the URI gives a node-set (`""`: the document without
+comments; `#xpointer(id('x'))`: the element with that ID and everything
+below it, comments included; `#x`: the same without comments; another
+URI: a file of the vector, parsed), each XPath Filtering transform
+keeps the nodes for which its expression is true, and the last
+transform, or Canonical XML 1.0 without comments when the last transform
+is not a canonicalization (§4.4.3.2), gives the octets. -/
+
+/-- The element whose attribute `Id` (no namespace) has the value `v`. -/
+def elemById? (cd : C14nDoc) (v : String) : Option Nat := Id.run do
+  for i in [0:cd.n0] do
+    let r := cd.doc.get i
+    if r.kind == .attribute && r.name.uri == "" && r.name.loc == "Id" && r.value == v then
+      return r.parent
+  return none
+
+/-- The first element with the given local name. -/
+def elemByLocal? (cd : C14nDoc) (local_ : String) : Option Nat := Id.run do
+  for i in [0:cd.n0] do
+    let r := cd.doc.get i
+    if r.kind == .element && r.name.loc == local_ then return some i
+  return none
+
+def dropComments (cd : C14nDoc) (s : Nat → Bool) : Nat → Bool :=
+  fun i => s i && kindOf cd.doc i != .comment
+
+/-- The node-set of a same-document reference. -/
+def sameDocSet (cd : C14nDoc) (uri : String) : Except String (Nat → Bool) :=
+  if uri == "" then .ok (dropComments cd wholeDocument)
+  else if uri.startsWith "#xpointer(id('" && uri.endsWith "'))" then
+    let v := ((uri.drop 14).dropEnd 3).toString
+    match elemById? cd v with
+    | some a => .ok (subtreeSet cd a)
+    | none => .error s!"no element with Id {v}"
+  else if uri.startsWith "#" then
+    let v := (uri.drop 1).toString
+    match elemById? cd v with
+    | some a => .ok (dropComments cd (subtreeSet cd a))
+    | none => .error s!"no element with Id {v}"
+  else .error s!"not a same-document reference: {uri}"
+
+/-- The PrefixList of an `InclusiveNamespaces` child, as a list of prefixes. -/
+def prefixList (scope : List (String × String)) (n : Node) : List String :=
+  match (findElems "InclusiveNamespaces" 1000 scope n).head?.bind (fun (x, _) => attr? x "PrefixList") with
+  | some pl => ((pl.splitOn " ").map (·.trimAscii.toString)).filter (· != "")
+  | none => []
+
+/-- Apply the transforms of a reference to a node-set and give the octets. -/
+def applyTransforms (cd : C14nDoc) (set0 : Nat → Bool)
+    (tfs : List (Node × List (String × String))) : Except String String := do
+  let mut set := set0
+  let mut final : Option Method := none
+  for (n, scope) in tfs do
+    let some alg := attr? n "Algorithm" | throw "a Transform has no Algorithm"
+    if final.isSome then throw "a transform after a canonicalization transform"
+    if alg == "http://www.w3.org/TR/1999/REC-xpath-19991116" then
+      let some (xp, sc) := (findElems "XPath" 1000 scope n).head? | throw "an XPath transform has no XPath"
+      let f ← xpathFilter cd (textOf xp) sc
+      let s := set
+      set := fun i => s i && f i
+    else if let some m := Method.ofUri? alg then
+      final := some { m with inclusivePrefixes := prefixList scope n }
+    else throw s!"transform not supported: {alg}"
+  canonicalize (final.getD { version := .c14n10 }) cd set
+
+def runSigVector (t0 : Tally) (dir sig : String) : IO Tally := do
+  let mut t := t0
+  let label := s!"exc-interop {(System.FilePath.mk dir).fileName.getD dir}"
+  let src ← IO.FS.readFile s!"{dir}/{sig}"
+  let td ← match parseXML src with
+    | .ok td => pure td
+    | .error e => throw (IO.userError s!"{label}: signature does not parse: {reprStr e}")
+  let cd ← match ← loadDoc dir src with
+    | .ok cd => pure cd
+    | .error e => throw (IO.userError s!"{label}: signature does not parse: {e}")
+  let refs := findElems "Reference" 100000 [] td.root
+  let mut k := 0
+  for (r, sc) in refs do
+    let name := s!"{label} reference {k}"
+    let some want ← readOpt s!"{dir}/c14n-{k}.txt" | do k := k + 1; continue
+    let uri := (attr? r "URI").getD ""
+    let tfs := findElems "Transform" 100000 sc r
+    let got ← if uri == "" || uri.startsWith "#" then
+        pure ((sameDocSet cd uri).bind fun s => applyTransforms cd s tfs)
+      else match ← readOpt s!"{dir}/{uri}" with
+        | none => pure (.error s!"missing {uri}")
+        | some esrc => do
+            match ← loadDoc dir esrc with
+            | .ok ecd => pure (applyTransforms ecd wholeDocument tfs)
+            | .error e => pure (.error s!"{uri} does not parse: {e}")
+    t ← report t name got want
+    k := k + 1
+  -- `SignedInfo`, canonicalized by its CanonicalizationMethod
+  let name := s!"{label} SignedInfo"
+  if let some want ← readOpt s!"{dir}/c14n-{k}.txt" then
+    let cms := findElems "CanonicalizationMethod" 100000 [] td.root
+    match cms.head?, elemByLocal? cd "SignedInfo" with
+    | some (cm, sc), some si =>
+        match (attr? cm "Algorithm").bind Method.ofUri? with
+        | some m =>
+            let m := { m with inclusivePrefixes := prefixList sc cm }
+            t ← report t name (canonicalize m cd (dropComments cd (subtreeSet cd si))) want
+        | none => t ← report t name (.error "CanonicalizationMethod not supported") want
+    | _, _ => t ← report t name (.error "no SignedInfo or CanonicalizationMethod") want
+  return t
+
 def main (args : List String) : IO UInt32 := do
   let dir := args.head? |>.getD "../../third_party/testing/xml-c14n"
   if !(← System.FilePath.pathExists s!"{dir}/PROVENANCE.md") then
@@ -221,5 +338,9 @@ def main (args : List String) : IO UInt32 := do
   let cases := ((← IO.FS.readFile s!"{idir}/testcases").splitOn "\n").filter (· != "")
   for c in cases do
     t ← runInterop t idir c
+  let xdir := s!"{dir}/interop-exc-c14n"
+  t ← runSigVector t s!"{xdir}/merlin-exc-c14n-one" "exc-signature.xml"
+  t ← runSigVector t s!"{xdir}/merlin-iaikTests-two" "signature.xml"
+  t ← runSigVector t s!"{xdir}/merlin-c14n-three" "signature.xml"
   IO.println s!"c14n: {t.pass} pass, {t.fail} fail (out of {t.pass + t.fail}); {t.excluded} excluded (defective test data)"
   return (if t.fail == 0 then 0 else 1)

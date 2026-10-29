@@ -43,3 +43,31 @@ https://github.com/danbri/factoidal/issues/1165 (track B, item 1).
   line, separated by a tab.
 - `world.txt`: example 3.5 says "Let world.txt contain "world" (excluding the
   quotes)"; the file holds those five characters.
+
+## `interop-exc-c14n/`: the Exclusive XML Canonicalization interop test vectors
+
+- Source: the test vectors Y1, Y3 and Y4 of the Exclusive Canonicalization
+  Implementation and Interoperability Report of the IETF/W3C XML Signature
+  Working Group (https://www.w3.org/Signature/2002/02/01-exc-c14n-interop.html,
+  Joseph Reagle, revision 1.33 of 2003-05-06), fetched 2026-10-29. Each is an
+  attachment to the w3c-ietf-xmldsig mailing list by Merlin Hughes (Baltimore
+  Technologies); the archives were unpacked and every file copied unchanged:
+  - `merlin-exc-c14n-one/` (Y1, 2002-01-14):
+    https://lists.w3.org/Archives/Public/w3c-ietf-xmldsig/2002JanMar/att-0032/01-merlin-exc-c14n-one.tgz,
+    sha256 `7011f7bba301f0c27b85920d133ed45c34fe4b5594ad955aec7682c9b1770302`.
+  - `merlin-iaikTests-two/` (Y3, 2002-04-18, Gregor Karlinger's examples in a
+    signature):
+    https://lists.w3.org/Archives/Public/w3c-ietf-xmldsig/2002AprJun/att-0056/01-merlin-iaikTests-two.tar.gz,
+    sha256 `0156857e3790362100a57afa48f286eb35a69ef61a0d16ea521cdda25f31e015`.
+  - `merlin-c14n-three/` (Y4, 2002-05-31, XPath transforms that select parts
+    of the namespace axis, each canonicalized by Canonical XML 1.0, by
+    Exclusive XML Canonicalization, and by Exclusive XML Canonicalization with
+    an InclusiveNamespaces PrefixList):
+    https://lists.w3.org/Archives/Public/w3c-ietf-xmldsig/2002AprJun/att-0228/01-merlin-c14n-three.tar.gz,
+    sha256 `6081bcd691295d5f6da0804c939013c6f45bb51146cba426f40a731259e5d24f`.
+- In each directory, `c14n-K.txt` is the octet stream that the signature's
+  K-th `Reference` (from 0, in document order) gave to its digest, and the
+  file with the next number is the canonical form of `SignedInfo`. The report
+  lists eight implementations (Apache, Baltimore, IAIK, IBM, Phaos, XMLsec,
+  NEC, Datapower) as interoperable on these vectors.
+- Y2 (reagle-1) of the report has no archive link and is not vendored.

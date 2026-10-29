@@ -35,8 +35,13 @@ parameters only:
 
 So the theorems at the end of this file follow from the structure: on a
 node-set in which no element's parent element is omitted, 1.0 and 1.1
-give the same octets; the form without comments is the form with
-comments of the node-set without its comment nodes.
+give the same octets, and Exclusive 1.0 differs from 1.0 only in the
+namespace rule; the form without comments is the form with comments of
+the node-set without its comment nodes.
+
+A namespace or attribute node in the node-set whose element is omitted
+is rendered at the element's place (§2.3 of 1.0 and 1.1; for the
+exclusive method only PrefixList prefixes, §3): `omittedElementText`.
 
 Character escaping, attribute order and the namespace bookkeeping of the
 exclusive method are those of `L4Factoidal.XML.Canonical` and
@@ -184,24 +189,51 @@ def inclusiveDecls (d : Doc) (set : Nat → Bool) (i : Nat) : List (String × St
     then [("", "")] else []
   sortBy (fun a b => strLt a.1 b.1) (kept ++ undecl)
 
-/-- Exclusive XML Canonicalization §3, for an element `i` in the node-set
-below output ancestors that rendered `rendered`: the declarations of the
-prefixes that `i` visibly utilizes (its own prefix, `""` when it has
-none, and the prefixes of its attributes in the node-set), and of the
-InclusiveNamespaces prefixes, by `ExcC14n.declFor`. `none`: a utilized
-prefix that no namespace node binds. -/
-def exclusiveDecls (incl : List String) (d : Doc) (set : Nat → Bool) (rendered : Scope)
-    (i : Nat) : Option (List (String × String)) :=
-  let own : Scope := (nsNodes d i).map fun j => ((d.get j).name.loc, (d.get j).value)
-  let r := d.get i
+/-- The prefixes an element visibly utilizes (Exclusive XML
+Canonicalization §3): its own prefix, `""` when it has none, and the
+prefixes of its attributes in the node-set; `xml` is never one. -/
+def utilized (d : Doc) (set : Nat → Bool) (i : Nat) : List String :=
   let attrPfx := ((attrNodes d i).filter set).filterMap fun j =>
     let p := (d.get j).name.pfx
     if p == "" || p == "xml" then none else some p
-  let used := ((r.name.pfx :: attrPfx).eraseDups).filter (· != "xml")
+  (((d.get i).name.pfx :: attrPfx).eraseDups).filter (· != "xml")
+
+/-- Exclusive XML Canonicalization §3, for an element `i` in the node-set
+below output ancestors that rendered `rendered`: the declarations of the
+prefixes that `i` visibly utilizes, and of the InclusiveNamespaces
+prefixes, by `ExcC14n.declFor`. Only namespace nodes in the node-set are
+rendered. A utilized prefix whose namespace node is in the node-set is
+rendered when no output ancestor rendered it with the same value, or when
+"the nearest output ancestor of its parent element that visibly utilizes
+the namespace prefix does not have a namespace node in the node-set with
+the same namespace prefix and value" (§3, condition 3); an output
+ancestor that renders the prefix because it is in the PrefixList counts
+as one that utilizes it (the `merlin-exc-c14n-one` interop vector). `none`: a
+utilized prefix that no namespace node binds, in the node-set or not. -/
+def exclusiveDecls (incl : List String) (d : Doc) (set : Nat → Bool) (rendered : Scope)
+    (i : Nat) : Option (List (String × String)) :=
+  let pairs (k : Nat) : Scope := ((nsNodes d k).filter set).map fun j => ((d.get j).name.loc, (d.get j).value)
+  let all : Scope := (nsNodes d i).map fun j => ((d.get j).name.loc, (d.get j).value)
+  let own := pairs i
+  let used := utilized d set i
   let extra := (incl.map ExcC14n.prefixOfToken).eraseDups.filter
     (fun p => p != "xml" && !used.contains p)
+  -- condition 3: the nearest output ancestor that visibly utilizes `p`, or
+  -- that renders it as a PrefixList prefix (treated as in Canonical XML)
+  let inclP := incl.map ExcC14n.prefixOfToken
+  let nearestHas (p u : String) : Bool :=
+    match (ancestorElems d i).find? (fun a => set a && (inclP.contains p || (utilized d set a).contains p)) with
+    | some a => (pairs a).contains (p, u)
+    | none => false
+  let rendFor (p : String) : Scope :=
+    match Canonical.lookup own p with
+    | some u => if nearestHas p u then rendered else rendered.filter (·.1 != p)
+    | none => rendered
+  -- a prefix bound by a namespace node outside the node-set is not refused
   let step (req : Bool) (acc : Option (List (String × String))) (p : String) :=
-    acc.bind fun ds => (ExcC14n.declFor own rendered req p).map fun dd => ds ++ dd.toList
+    acc.bind fun ds =>
+      (ExcC14n.declFor own (if req then rendFor p else rendered) (req && !all.any (·.1 == p)) p).map
+        fun dd => ds ++ dd.toList
   let ds := extra.foldl (step false) (used.foldl (step true) (some []))
   ds.map (sortBy (fun a b => strLt a.1 b.1))
 
@@ -354,6 +386,27 @@ def attrsText (d : Doc) (set : Nat → Bool) (fix : XmlFix) (i : Nat) : String :
   let sorted := sortBy (fun a b => pairLt a.1 b.1) (plain ++ extra)
   String.join (sorted.map fun (_, n, v) => " " ++ n ++ "=\"" ++ escAttr v ++ "\"")
 
+/-- The namespace and attribute nodes in the node-set of an element `i`
+omitted from it. Canonical XML 1.0 and 1.1 §2.3 process such a namespace
+node "in the same way as an attribute node" unless the nearest ancestor
+element in the node-set has a namespace node in the node-set with the
+same local name and value, and such an attribute node as
+` name="value"`; namespace nodes first, each group in its canonical
+order. Exclusive XML Canonicalization §3 renders a namespace node only
+when its parent element is in the node-set, except for a prefix of the
+InclusiveNamespaces PrefixList, which is treated as in Canonical XML. -/
+def omittedElementText (exclusive : Bool) (incl : List String) (d : Doc)
+    (set : Nat → Bool) (i : Nat) : String :=
+  let pairs (k : Nat) := ((nsNodes d k).filter set).map fun j => ((d.get j).name.loc, (d.get j).value)
+  let mine := (pairs i).filter (fun b => !(b.1 == "xml" && b.2 == xmlNamespace))
+  let mine := if exclusive then
+      mine.filter (fun b => (incl.map ExcC14n.prefixOfToken).contains b.1) else mine
+  let ancNs := match (ancestorElems d i).find? set with
+    | some a => pairs a
+    | none => []
+  let kept := sortBy (fun a b => strLt a.1 b.1) (mine.filter (fun b => !ancNs.contains b))
+  declText kept ++ attrsText d set [] i
+
 /-- The canonical form of node-set `set` of `cd`. `exclusive`: the
 namespace rule of Exclusive XML Canonicalization, with PrefixList
 `incl`; otherwise that of Canonical XML. `fix`: the `xml:*` attributes an
@@ -395,6 +448,7 @@ def canonCore (exclusive : Bool) (incl : List String) (fix : Nat → XmlFix)
           stack := { last := r.last, shown := true, tag,
                      rendered := decls.foldl ExcC14n.setRendered rendered } :: stack
         else
+          out := out ++ omittedElementText exclusive incl d set i
           stack := { last := r.last, shown := false, tag, rendered } :: stack
     | _ => pure ()
   let (o, _) := closeBefore cd.n0 stack out
@@ -524,6 +578,28 @@ theorem uncommented_eq_commented (v : Version) (incl : List String) (cd : C14nDo
 Canonical XML). -/
 theorem exc10_no_xml_inheritance (cd : C14nDoc) (set : Nat → Bool) :
     fixFor .exc10 cd set = fun _ => [] := rfl
+
+/-- Exclusive XML Canonicalization 1.0 (2002) and Canonical XML 1.0
+(2001) differ only in the namespace rule on every node-set in which no
+element's parent element is omitted, with comments or without: both are
+`canonCore` over the same node-set with no `xml:*` attribute taken from
+an ancestor, the first with the exclusive rule and the PrefixList, the
+second with the inclusive rule (Exclusive XML Canonicalization §1.1: the
+method "excludes ancestor context" and is otherwise Canonical XML; §3:
+the two differences are the namespace axis and the `xml:*` attributes,
+and the second does not arise when no parent is omitted). -/
+theorem exc10_c14n10_namespace_rule_only (c : Bool) (incl : List String) (cd : C14nDoc)
+    (set : Nat → Bool) (h : ParentClosed cd set) :
+    let s := effectiveSet { version := .c14n10, comments := c } cd set
+    canonicalize { version := .exc10, comments := c, inclusivePrefixes := incl } cd set
+        = canonCore true incl (fun _ => []) cd s ∧
+      canonicalize { version := .c14n10, comments := c } cd set
+        = canonCore false [] (fun _ => []) cd s := by
+  have h' := effectiveSet_closed { version := .c14n10, comments := c } h
+  refine ⟨rfl, ?_⟩
+  simp only [canonicalize, fixFor]
+  rw [fix10_closed h']
+  rfl
 
 /-! ## Checks -/
 

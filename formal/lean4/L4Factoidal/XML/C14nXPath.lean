@@ -31,6 +31,21 @@ namespace L4Factoidal.XML.C14nXPath
 open L4Factoidal.XPath4
 open L4Factoidal.XML.C14n
 
+/-- The engine's index of node `i`. The engine gives an element's
+namespace nodes indexes of their own (`nsNodeIdx`, read by `Doc.get`);
+a namespace node that `C14nDoc.ofDoc` added is evaluated as the engine's
+namespace node of the same parent and prefix, so that node identity (the
+`|` operator, `count` of a union) agrees with the `namespace` axis. -/
+def engineIdx (cd : C14nDoc) (i : Nat) : Nat :=
+  if i < cd.n0 then i else
+  let r := cd.doc.get i
+  match r.parent with
+  | some p =>
+      match (nsNodesOf (cd.doc.get p)).findIdx? (·.1 == r.name.loc) with
+      | some k => nsNodeIdx p k
+      | none => i
+  | none => i
+
 /-- The node-set of the nodes for which `expr` is true, with `ns` the
 namespace declarations in scope for the expression. -/
 def xpathFilter (cd : C14nDoc) (expr : String) (ns : List (String × String)) :
@@ -38,7 +53,7 @@ def xpathFilter (cd : C14nDoc) (expr : String) (ns : List (String × String)) :
   let e ← (parseXPath expr ns).mapError (fun er => er.code ++ " " ++ er.msg)
   let mut keep : Array Bool := #[]
   for i in [0:cd.doc.nodes.size] do
-    let env : Env := { docs := #[cd.doc], ctx := some [.node (NodeRef.mk' 0 i)],
+    let env : Env := { docs := #[cd.doc], ctx := some [.node (NodeRef.mk' 0 (engineIdx cd i))],
                        pos := 1, size := 1, ns }
     let v ← (eval 100000 env e >>= ebv).mapError (fun er => er.code ++ " " ++ er.msg)
     keep := keep.push v

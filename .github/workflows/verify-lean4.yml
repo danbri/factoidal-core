@@ -155,3 +155,11 @@ jobs:
       # must agree on every fixture (https://github.com/danbri/factoidal/issues/1165).
       - name: RDF Data Cube integrity constraints (tests/datacube/run.sh)
         run: bash tests/datacube/run.sh
+
+      # Canonical XML 1.0 and 1.1 and Exclusive XML Canonicalization 1.0: the
+      # Recommendations' examples and the XML Signature WG interop vectors in
+      # third_party/testing/xml-c14n (https://github.com/danbri/factoidal/issues/1165,
+      # track B item 1). Exits non-zero on a failure or a stale exclusion.
+      - name: XML canonicalization (lake exe l4c14n)
+        working-directory: formal/lean4
+        run: lake exe l4c14n
