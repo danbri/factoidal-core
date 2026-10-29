@@ -73,6 +73,9 @@ def loadXQueryModule : Nat → Nat → Env → List Seq → M Seq
         | none => out := out ++ [(k, v)]
       pure [Item.map out]
     | other => pure other
+  -- untrusted code reads no module location (F&O 4.0 §17.4.1)
+  if env.untrusted && (optLookup opts "location-hints").any (fun v => !v.isEmpty) then
+    err "FODC0016" "untrusted code may not read external resources (location-hints)"
   -- the XQuery version: this processor is XQuery 4.0
   match optLookup opts "xquery-version" with
   | some [.atom v] =>
@@ -115,7 +118,7 @@ def loadXQueryModule : Nat → Nat → Env → List Seq → M Seq
   if texts.isEmpty then err "FOQM0002" ("no library module with the namespace " ++ uri)
   let mut mods : List Module := []
   for t in texts do
-    match parseModule t [] env.schema.declared with
+    match parseModule t [] (typeLoader env 8 [uri]) env.schema.declared with
     | .error ex =>
       if isStaticCode ex.code then err "FOQM0003" ("a static error in the module: " ++ ex.code ++ " " ++ ex.msg)
       else throw ex
@@ -132,6 +135,11 @@ def loadXQueryModule : Nat → Nat → Env → List Seq → M Seq
     else env.host q k
   let env0 : Env := { env with vars := extVars, ctx := ctxv, pos := if ctxv.isSome then 1 else 0,
                                size := if ctxv.isSome then 1 else 0, untrusted, host }
+  -- untrusted code reads no resource, so it names no module location (§17.4.1)
+  if untrusted then
+    for lm in mods do
+      if lm.imports.any (fun (_, _, l) => !l.isEmpty) then
+        err "FODC0016" "untrusted code may not import a module from a location"
   let mut libs : List Module := []
   let mut seen : List String := [uri]
   for lm in mods do
