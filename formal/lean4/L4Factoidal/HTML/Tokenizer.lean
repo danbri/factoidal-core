@@ -57,6 +57,7 @@ inductive TS where
   | attrValueDq | attrValueSq | attrValueUnq | afterAttrValueQuoted | selfClosingStart
   | bogusComment | markupDecl | commentStart | commentStartDash | comment
   | commentEndDash | commentEnd | commentEndBang
+  | commentLt | commentLtBang | commentLtBangDash | commentLtBangDashDash
   | doctype | beforeDName | dName | afterDName | afterDPubKw | beforeDPub | dPubDq | dPubSq | afterDPub
   | betweenDPubSys | afterDSysKw | beforeDSys | dSysDq | dSysSq | afterDSys | bogusDoctype
   | cdata
@@ -228,14 +229,12 @@ def charRef (inp : Array Char) (p : Nat) (inAttr : Bool) : String × Nat × List
           let after := inp[p + k.length]?
           if inAttr && (after == some '=' || (after.map isAsciiAlnum).getD false) then ("&", p, [])
           else
-            match namedTable.lookup k with
-            | some cp => (cpStr cp, p + k.length, ["missing-semicolon-after-character-reference"])
+            match namedRef? k with
+            | some str => (str, p + k.length, ["missing-semicolon-after-character-reference"])
             | none => ("&", p, [])
         | none => ("&", p, if semi then ["unknown-named-character-reference"] else [])
     else ("&", p, [])
   | none => ("&", p, [])
-
-/-! ## DOCTYPE -/
 
 /-! ## The state machine -/
 
@@ -496,8 +495,27 @@ def Tok.step (t : Tok) : Tok :=
     match c? with
     | none => ((t.err "eof-in-comment").emit (.comment t.buf)).emit .eof
     | some '-' => t.adv.to .commentEndDash
+    | some '<' => { t.adv with buf := t.buf.push '<', st := .commentLt }
     | some '\x00' => { (t.err "unexpected-null-character").adv with buf := t.buf.push '�' }
     | some c => { t.adv with buf := t.buf.push c }
+  -- the comment less-than sign states (§13.2.5.46 to §13.2.5.49)
+  | .commentLt =>
+    match c? with
+    | some '!' => { t.adv with buf := t.buf.push '!', st := .commentLtBang }
+    | some '<' => { t.adv with buf := t.buf.push '<' }
+    | _ => t.to .comment
+  | .commentLtBang =>
+    match c? with
+    | some '-' => t.adv.to .commentLtBangDash
+    | _ => t.to .comment
+  | .commentLtBangDash =>
+    match c? with
+    | some '-' => t.adv.to .commentLtBangDashDash
+    | _ => t.to .commentEndDash
+  | .commentLtBangDashDash =>
+    match c? with
+    | some '>' | none => t.to .commentEnd
+    | some _ => (t.err "nested-comment").to .commentEnd
   | .commentEndDash =>
     match c? with
     | some '-' => t.adv.to .commentEnd
