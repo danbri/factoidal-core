@@ -3146,7 +3146,7 @@ check "vcCheckCredentialSubject accepts a subject with no @context" vcCheckCrede
 args "$TMP/vcs-bad.json" '{"type":["VerifiableCredential"],"credentialSubject":{}}'
 check "vcCheckCredentialSubject REJECTS an empty subject" vcCheckCredentialSubject "$TMP/vcs-bad.json" \
   'r["ok"] is True and r["valid"] is False and "no claims" in r["reason"]'
-args "$TMP/vcl-ok.json" '{"@context":{"Known":"https://ex.org/Known","name":"https://schema.org/name"},"type":["Known"],"credentialSubject":{"name":"x"}}'
+args "$TMP/vcl-ok.json" '{"@context":{"Known":"https://ex.org/Known","name":"https://schema.org/name","credentialSubject":{"@id":"https://www.w3.org/2018/credentials#credentialSubject","@type":"@id"}},"type":["Known"],"credentialSubject":{"name":"x"}}'
 check "vcCheckNoDataLoss accepts defined terms" vcCheckNoDataLoss "$TMP/vcl-ok.json" \
   'r["ok"] is True and r["valid"] is True'
 args "$TMP/vcl-type.json" '{"@context":{"Known":"https://ex.org/Known"},"type":["Unknown"],"credentialSubject":{"a":1}}'
