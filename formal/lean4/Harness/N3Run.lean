@@ -22,11 +22,13 @@ https://github.com/danbri/factoidal/issues/1165.
     the N-Triples result. Each of these tests also runs the Turtle reader on
     the same text and counts in a second line, `turtle-agreement`, whether the
     two readers agree: both refuse, or both accept with isomorphic graphs.
-  * `test:TestN3Reason`: `unsupported` until the reasoner lands
-    (https://github.com/danbri/factoidal/issues/1171).
+  * `test:TestN3Reason`: the reasoner (`N3/Reason.lean`) on the document, with
+    the entry's `test:options` (`optionsOf`), gives a graph isomorphic to the
+    one in `mf:result`.
 
 A test in `defective` is reported as `EXCLUDED`, apart from the total, with
-its issue.
+its issue. A test in `expectedFail` that fails is counted as `expected-fail`
+with its issue.
 
 ## Approval
 
@@ -51,6 +53,7 @@ Exit code 0 when no counted test failed.
 import Harness.Manifest
 import L4Factoidal.N3.Compare
 import L4Factoidal.N3.Rdf
+import L4Factoidal.N3.Reason
 import L4Factoidal.Syntax.NQuads
 import L4Factoidal.Syntax.NQuadsFastTheorems
 import L4Factoidal.Syntax.NTriples
@@ -125,7 +128,22 @@ data"): reported apart, after the total, with the issue that gives the
 evidence. A pass of one of them fails the run, so the exclusion cannot outlive
 a corrected test. -/
 def defective : List (String × String × String) :=
-  [ ("N3Tests/manifest-parser.ttl", "numbers.n3", "https://github.com/danbri/factoidal/issues/1170") ]
+  [ ("N3Tests/manifest-parser.ttl", "numbers.n3", "https://github.com/danbri/factoidal/issues/1170") ] ++
+  (["includes-conclusion-simple.n3", "includes-conclusion.n3", "includes-t10.n3",
+    "unify-unify1.n3", "rounded.n3", "log-parsedAsN3.n3"].map fun n =>
+    ("N3Tests/manifest-reasoner.ttl", n, "https://github.com/danbri/factoidal/issues/1174"))
+
+/-- Expected failures (skill test-suites, "Expected failures"): an engine
+shortfall with an open issue. A FAIL is counted as `expected-fail`; a PASS
+fails the run, so the entry is removed in the fixing commit. -/
+def expectedFail : List (String × String × String) :=
+  ["exponentiation.n3", "math-trig.n3", "string-concatenation.n3", "string-format.n3",
+   "string-scrape.n3", "string-roughly.n3", "string-uriEncode.n3", "time-t1.n3",
+   "supports-simple.n3", "includes-t11.n3", "log-content.n3", "includes-xsd.n3"].map fun n =>
+    ("N3Tests/manifest-reasoner.ttl", n, "https://github.com/danbri/factoidal/issues/1175")
+
+def expectedFail? (manifestPath name : String) : Option String :=
+  (expectedFail.find? fun (m, n, _) => manifestPath.endsWith m && n == name).map (·.2.2)
 
 def defective? (manifestPath name : String) : Option String :=
   (defective.find? fun (m, n, _) => manifestPath.endsWith m && n == name).map (·.2.2)
@@ -151,14 +169,41 @@ def readExpected (path text base : String) (mode : Mode) : Except String N3Graph
 as an N3 graph. An `.nt` or `.nq` result writes lists as collections, so the
 document's lists are expanded first (`expandLists`). -/
 def compareExpected (rf : String) (d : N3Document) (exp : N3Graph) : Outcome :=
-  if rf.endsWith ".n3" then isoOutcome "not isomorphic to the result" (n3Isomorphic d.triples exp)
+  let why (g : N3Graph) : String :=
+    let a := graphKeys g {}
+    let b := graphKeys exp {}
+    let missing := (b.filter fun k => !a.contains k).take 2
+    let extra := (a.filter fun k => !b.contains k).take 2
+    s!"not isomorphic to the result ({g.length} triples, expected {exp.length}; " ++
+      s!"missing {missing}; extra {extra})"
+  -- `why` only on a failure: it is quadratic in the size of the graphs.
+  let outcome (g : N3Graph) : Outcome :=
+    match n3Isomorphic g exp with
+    | .equal => .pass
+    | r => isoOutcome (why g) r
+  if rf.endsWith ".n3" then outcome d.triples
   else
     match expandLists (d.bnodePrefix ++ "c") d.triples with
     | .error e => .fail e
-    | .ok g => isoOutcome "not isomorphic to the result" (n3Isomorphic g exp)
+    | .ok g => outcome g
+
+def testNs : String := "https://w3c.github.io/N3/tests/test.n3#"
+
+/-- The `test:options` of a reasoning test (`tests/test.n3` of the suite):
+`test:think` rounds to a fixpoint, `test:rules` one round, `test:conclusions`
+outputs the concluded triples only, `test:data` keeps plain triples only. -/
+def optionsOf (g : Graph) (entry : String) : ReasonOptions :=
+  match g.find? (fun t => subjKey t.s == entry && t.p.val == testNs ++ "options") with
+  | none => {}
+  | some t =>
+      let node := termKey t.o
+      let on (n : String) : Bool :=
+        g.any fun u => subjKey u.s == node && u.p.val == testNs ++ n && termKey u.o == "true"
+      let conclusions := g.any fun u => subjKey u.s == node && u.p.val == testNs ++ "conclusions"
+      { think := on "think" || !on "rules", conclusions, data := on "data" }
 
 /-- One test: its outcome, and for a Turtle type the agreement note. -/
-def runOne (mode : Mode) (base : String) (manifestDir : String) (tc : TestCase) :
+def runOne (mode : Mode) (base : String) (manifestDir : String) (mg : Graph) (tc : TestCase) :
     IO (Outcome × Option (Option String)) := do
   let some path := tc.action | return (.skip "no mf:action", none)
   let some text ← readOpt path | return (.skip s!"file missing: {path}", none)
@@ -206,7 +251,15 @@ def runOne (mode : Mode) (base : String) (manifestDir : String) (tc : TestCase) 
               | .notEqual => .fail s!"not isomorphic to the result (got {g.length} triples, expected {exp.length})"
               | .budgetExceeded => .fail "isomorphism budget exceeded")
     | "TestN3Reason" =>
-        pure (.unsupported "N3 reasoning (https://github.com/danbri/factoidal/issues/1171)")
+        let some rf := tc.resultFile | pure (.skip "no mf:result")
+        let some rtext ← readOpt rf | pure (.skip s!"file missing: {rf}")
+        match parseN3 text (some b) mode, readExpected rf rtext b mode with
+        | .error e, _ => pure (.fail s!"refused: {e.msg} (offset {e.pos})")
+        | _, .error e => pure (.fail e)
+        | .ok d, .ok exp =>
+            let (out, limit) := reason (optionsOf mg tc.entryId) d.triples
+            if limit then pure (.fail "a reasoning bound stopped the run")
+            else pure (compareExpected rf { d with triples := out } exp)
     | t => pure (.unsupported s!"test type {t}")
   return (out, agree)
 
@@ -228,18 +281,33 @@ def runManifest (mode : Mode) (quiet : Bool) (path : String) : IO (Option Tally)
       let abs ← IO.FS.realPath path
       let dir := dirname abs.toString
       let base := assumed.getD (defaultBase abs.toString)
+      let mg : Graph :=
+        match parseTurtle ((← readOpt path).getD "") (some ("file://" ++ abs.toString)) with
+        | .ok g => g
+        | .error _ => []
       let mut t : Tally := {}
       for tc in tcs do
-        let (o0, ag) ← runOne mode base dir tc
+        let (o0, ag) ← runOne mode base dir mg tc
         let rej := tc.approval == "Rejected"
         match defective? abs.toString tc.name, o0 with
         | some url, .fail _ =>
             t := { t with excluded := t.excluded + 1 }
             IO.println s!"EXCLUDED {tc.name}: defective test data, {url}"
+        | none, .fail why =>
+            match expectedFail? abs.toString tc.name with
+            | some url =>
+                t := { t with current := { t.current with xfail := t.current.xfail + 1 } }
+                if !quiet then IO.println s!"XFAIL {tc.name}: {url} ({why})"
+            | none =>
+                if rej then t := { t with rejected := t.rejected.bump o0 }
+                else t := { t with current := t.current.bump o0 }
+                if !quiet || !rej then
+                  IO.println ((if rej then "[rejected] " else "") ++ o0.line tc.name)
         | d, _ =>
-            let o : Outcome := match d, o0 with
-              | some url, .pass => .fail s!"unexpected pass: remove the defective-data exclusion and close {url}"
-              | _, _ => o0
+            let o : Outcome := match d, o0, expectedFail? abs.toString tc.name with
+              | none, .pass, some url => .fail s!"unexpected pass: remove the expected failure and update {url}"
+              | some url, .pass, _ => .fail s!"unexpected pass: remove the defective-data exclusion and close {url}"
+              | _, _, _ => o0
             if rej then t := { t with rejected := t.rejected.bump o }
             else t := { t with current := t.current.bump o }
             if !quiet || (o.isFail && !rej) then

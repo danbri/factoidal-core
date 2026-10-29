@@ -46,7 +46,9 @@ run --rdf12 "${W3C}/rdf12/rdf-turtle/eval/manifest.ttl"
 
 # Stack cases (Lean tail-recursion rule, CLAUDE.md): each sequence of the
 # grammar 200,000 long, read, written, read again, compared, converted to RDF
-# and checked against the Turtle reader, with a 512 KB stack. The depth of the
+# and checked against the Turtle reader, and, for the reasoner, a rule body of
+# 20,000 triples, a list pattern of 200,000 members and a graph-term pattern of
+# 2,000 triples, with a 512 KB stack. The depth of the
 # N3 functions follows the nesting of a document only
 # (tools/lean-tail-recursion-allow.txt, the N3 lines).
 STACK="$(mktemp -d "${TMPDIR:-/tmp}/n3-stack-XXXXXX")"
@@ -71,6 +73,25 @@ for k, body in docs.items():
                  f'<#{k}s> a test:TestN3PositiveSyntax ; mf:name "{k}-syntax" ; mf:action <{k}.n3> .\n'
                  f'<#{k}t> a rdft:TestTurtlePositiveSyntax ; mf:name "{k}-turtle" ; mf:action <{k}.n3> .\n')
 names = ' '.join(f'<#{k}e> <#{k}s> <#{k}t>' for k in docs)
+# The reasoner: one rule whose body has 20,000 triples, all in the data.
+m = 20000
+open(os.path.join(d, 'rbody.n3'), 'w').write('@prefix : <http://ex/> .\n' +
+  ''.join(f':s{i} :p :o{i} .\n' for i in range(m)) +
+  '{ ' + ' '.join(f':s{i} :p ?x{i} .' for i in range(m)) + ' } => { :done a :Ok } .\n')
+open(os.path.join(d, 'rbody-r.n3'), 'w').write('@prefix : <http://ex/> .\n:done a :Ok .\n')
+names += ' <#rbody> <#rlist> <#rgraph>'
+# A list pattern of 200,000 members, and a graph-term pattern of 2,000 triples.
+lst = '(' + ' '.join(str(i) for i in range(n)) + ')'
+open(os.path.join(d, 'rlist.n3'), 'w').write('@prefix : <http://ex/> .\n:a :p ' + lst + ' .\n'
+  '{ :a :p ' + lst + ' } => { :done a :Ok } .\n')
+gt = '{ ' + ' '.join(f':s{i} :p :o{i} .' for i in range(2000)) + ' }'
+open(os.path.join(d, 'rgraph.n3'), 'w').write('@prefix : <http://ex/> .\n:g :is ' + gt + ' .\n'
+  '{ :g :is ' + gt + ' } => { :done a :Ok } .\n')
+for k in ('rlist', 'rgraph'):
+  entries.append(f'<#{k}> a test:TestN3Reason ; mf:name "{k}" ; mf:action <{k}.n3> ; '
+                 'mf:result <rbody-r.n3> ; test:options [ test:think true ; test:conclusions true ] .\n')
+entries.append('<#rbody> a test:TestN3Reason ; mf:name "rule-body-20000" ; mf:action <rbody.n3> ; '
+               'mf:result <rbody-r.n3> ; test:options [ test:think true ; test:conclusions true ] .\n')
 open(os.path.join(d, 'manifest.ttl'), 'w').write(
   '@prefix mf: <http://www.w3.org/2001/sw/DataAccess/tests/test-manifest#> .\n'
   '@prefix test: <https://w3c.github.io/N3/tests/test.n3#> .\n'
