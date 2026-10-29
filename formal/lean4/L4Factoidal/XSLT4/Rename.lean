@@ -109,7 +109,7 @@ def renE (r : Ren) : Nat → List QN → Expr → RM Expr
     | .dstep ax x ps => do pure (.dstep ax (← go x) (← ps.mapM go))
     | .filter a p => do pure (.filter (← go a) (← go p))
     | .call q as kw => do
-        let k := as.length + kw.length
+        let k := as.length + (kw.filter (fun (x : String × Option Expr) => x.1 != "#at")).length
         note 'f' (q.eqn ++ "#" ++ toString k)
         let as' ← as.mapM goO
         -- keys and accumulators are local to their package (§3.4.8): a

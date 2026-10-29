@@ -353,6 +353,15 @@ import L4Factoidal.SHACL.ShaclTests
 import L4Factoidal.SHACL.ShaclTheorems
 import L4Factoidal.SHACL.SparqlTheorems
 import L4Factoidal.SHACL.Rules
+import L4Factoidal.N3.Syntax
+import L4Factoidal.N3.Parser
+import L4Factoidal.N3.Rdf
+import L4Factoidal.N3.Writer
+import L4Factoidal.N3.Compare
+import L4Factoidal.N3.Tests
+import L4Factoidal.N3.Builtins
+import L4Factoidal.N3.Reason
+import L4Factoidal.N3.ReasonTests
 import L4Factoidal.SPARQLRL.Syntax
 import L4Factoidal.SPARQLRL.Parser
 import L4Factoidal.SPARQLRL.Eval
@@ -628,10 +637,19 @@ import L4Factoidal.DataCube.Queries
 import L4Factoidal.DataCube.Normalize
 import L4Factoidal.DataCube.NormalizeTheorems
 import L4Factoidal.DataCube.Constraints
+import L4Factoidal.YAML.Loader
+import L4Factoidal.YAMLLD.Api
+import L4Factoidal.YAMLLD.Theorems
 import L4Factoidal.RIF.Syntax
 import L4Factoidal.RIF.Ps
 import L4Factoidal.RIF.Builtins
 import L4Factoidal.RIF.Engine
+import L4Factoidal.RIF.Bld
+import L4Factoidal.RIF.BldTheorems
+import L4Factoidal.RIF.Prd
+import L4Factoidal.RIF.PrdXml
+import L4Factoidal.RIF.PrdTheorems
+import L4Factoidal.RIF.PrdTests
 import L4Factoidal.RIF.EngineTests
 import L4Factoidal.RIF.EngineTheorems
 import L4Factoidal.RIF.Translation
@@ -1020,6 +1038,8 @@ import L4Factoidal.Authz.Tests
 -- SAML 2.0 subject tokens: exclusive canonicalization, the XML Signature
 -- profile of SAML Core section 5 (https://github.com/danbri/factoidal/issues/926).
 import L4Factoidal.XML.ExcC14n
+import L4Factoidal.XML.C14n
+import L4Factoidal.XML.C14nXPath
 import L4Factoidal.XML.DSig
 import L4Factoidal.XML.Enc
 import L4Factoidal.XML.EncTests
@@ -1120,3 +1140,9 @@ import L4Factoidal.SPARQL.CastTests
 import L4Factoidal.Fn.CastTheorems
 
 import L4Factoidal.SPARQL.AggStreamTests
+
+import L4Factoidal.WHATWG.Encoding.Data
+import L4Factoidal.WHATWG.Encoding.Core
+import L4Factoidal.WHATWG.Encoding.Tests
+import L4Factoidal.WHATWG.Encoding.Theorems
+import L4Factoidal.WHATWG.URL.PercentEncode

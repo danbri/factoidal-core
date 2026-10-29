@@ -30,6 +30,10 @@ structure SubParsers where
   expr : List (String × String) → Nat → Except Err (Expr × Nat)
   exprSingle : List (String × String) → Nat → Except Err (Expr × Nat)
   seqType : List (String × String) → Nat → Except Err (IType × Nat)
+  /-- An AdditiveExpr and a UnionExpr (the full-text grammar, FTRange and
+      FTIgnoreOption). -/
+  additive : List (String × String) → Nat → Except Err (Expr × Nat) := exprSingle
+  union : List (String × String) → Nat → Except Err (Expr × Nat) := exprSingle
 
 /-- An extension of the expression grammar (XQuery 4.0 hook,
     `L4Factoidal.XQuery4.Grammar`). The XPath 4.0 parser has none. -/
@@ -45,6 +49,10 @@ structure ExtGrammar where
   /-- The value of a string literal's characters (XQuery expands
       entity and character references). -/
   stringLit : String → Except Err String
+  /-- Tried after every StringConcatExpr, with its expression (the
+      full-text `contains text`, `L4Factoidal.FullText.Parser`). -/
+  postConcat : Array Char → List (String × String) → SubParsers → Expr → Nat →
+      Except Err (Option (Expr × Nat)) := fun _ _ _ _ _ => .ok none
   /-- The XQuery 4.0 grammar (true) or the XPath 4.0 profile that only
       adds the computed node constructors (false, XPath 4.0 §4.12). -/
   xquery : Bool := true
@@ -67,6 +75,10 @@ structure PCtx where
   lenientTypes : Bool := false
   /-- Set by the XQuery grammar's own parsers: a braced URI reads references. -/
   xqRefs : Bool := false
+  /-- The in-scope element (`true`) and attribute (`false`) declarations of
+      the static context (`XPath4.SchemaHook.declared`): whether the name has
+      a global declaration. None by default (no schema in scope). -/
+  schemaDecl : Bool → QN → Bool := fun _ _ => false
 
 abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 
@@ -424,8 +436,9 @@ def dfltTypeNs : P String := do
 def runAt {α} (c : PCtx) (p : P α) (ns : List (String × String)) (i : Nat) : Except Err (α × Nat) :=
   (p.run { c with ns }).run i
 
-def mkSub (c : PCtx) (pe pes : P Expr) (pst : P IType) : SubParsers :=
-  { expr := runAt c pe, exprSingle := runAt c pes, seqType := runAt c pst }
+def mkSub (c : PCtx) (pe pes : P Expr) (pst : P IType) (padd punion : Option (P Expr) := none) : SubParsers :=
+  { expr := runAt c pe, exprSingle := runAt c pes, seqType := runAt c pst,
+    additive := runAt c (padd.getD pes), union := runAt c (punion.getD pes) }
 
 /-- Try an extension production at the current offset. -/
 def tryExt (pick : ExtGrammar → Array Char → List (String × String) → SubParsers → Nat → Except Err (Option (Expr × Nat)))
@@ -436,6 +449,18 @@ def tryExt (pick : ExtGrammar → Array Char → List (String × String) → Sub
   | some g =>
     let i ← get
     match pick g c.s c.ns (mkSub c pe pes pst) i with
+    | .ok (some (e, j)) => set j; pure (some e)
+    | .ok none => pure none
+    | .error er => throw er
+
+/-- Try the extension production that follows a StringConcatExpr `a`. -/
+def tryExtPost (a : Expr) (pe pes : P Expr) (pst : P IType) (padd punion : P Expr) : P (Option Expr) := do
+  let c ← read
+  match c.ext with
+  | none => pure none
+  | some g =>
+    let i ← get
+    match g.postConcat c.s c.ns (mkSub c pe pes pst (some padd) (some punion)) a i with
     | .ok (some (e, j)) => set j; pure (some e)
     | .ok none => pure none
     | .error er => throw er
@@ -656,24 +681,29 @@ def pItemType : Nat → P IType
                   | none => synErr "expected a type name"
                 else pure none
               expectS ")"
+              let opt (x : NameTest) : Option NameTest := match x with
+                | .any => none
+                | other => some other
               let mk (x : NameTest) : IType := match ty with
                 | none => if nm == "element" then .elem (some x) else .attr (some x)
-                | some (q, nil) =>
-                  let x' : Option NameTest := match x with
-                    | .any => none
-                    | other => some other
-                  if nm == "element" then .elemT x' q nil else .attrT x' q
+                | some (q, nil) => if nm == "element" then .elemT (opt x) q nil else .attrT (opt x) q
               pure (if more.isEmpty then mk t else .choice ((t :: more).map mk))
         | "schema-element" | "schema-attribute" =>
+            -- the name must resolve (XPST0081) and have a declaration in
+            -- the in-scope schema definitions (XPath 4.0 §3.2.7.3.2,
+            -- XPST0008); with no schema in scope there is none
             ws
             match ← peekQName with
             | some (p, u, l, e) =>
               if p == some "*" || l == "*" then synErr (nm ++ "() takes a QName, not a wildcard")
               set e
               let den ← dfltElemNs
-              let q ← resolve p u l (if nm == "schema-element" then den else "")
+              let isElem := nm == "schema-element"
+              let q ← resolve p u l (if isElem then den else "")
               expectS ")"
-              pure (if nm == "schema-element" then .schemaElem q else .schemaAttr q)
+              if !((← read).schemaDecl isElem q) then
+                throw { code := "XPST0008", msg := nm ++ "(" ++ q.show ++ "): no such declaration in the in-scope schema definitions" }
+              pure (if isElem then .schemaElem q else .schemaAttr q)
             | none => synErr ("expected a name in " ++ nm ++ "()")
         | "document-node" =>
             if ← eatS ")" then pure (.doc none)
@@ -1028,6 +1058,9 @@ def pLevel : Nat → Nat → P Expr
             a := .bin op a b
             if lvl == 2 || lvl == 5 then break
         | none => break
+      if lvl == 4 then
+        if let some e ← tryExtPost a (pExpr n) (pExprSingle n) (pSeqType n) (pLevel n 6) (pLevel n 8) then
+          a := e
       pure a
 
 def opAt (lvl : Nat) : P (Option (BOp × Nat)) := do
@@ -1408,12 +1441,15 @@ def pStep : Nat → P Expr
     | some (nm, '(', _) =>
       if kindTestNames.contains nm then
         let t ← pNodeTest n .child
+        -- the default axis of an attribute test (with a NameTestUnion or a
+        -- type name) or a schema attribute test is attribute (XPath 4.0 §4.7.6)
+        let isAttrT (t : IType) : Bool := match t with
+          | .attr _ | .attrT .. | .schemaAttr _ => true
+          | _ => false
         let ax := match t with
-          -- an attribute test (also typed, a union or schema-attribute) uses
-          -- the attribute axis (XPath 4.0 §4.6.5)
-          | .kind (.attr _) | .kind (.attrT ..) | .kind (.schemaAttr _) => Axis.attribute
-          | .kind (.choice (.attr _ :: _)) | .kind (.choice (.attrT .. :: _)) => Axis.attribute
           | .kind .nsNode => Axis.namespace
+          | .kind (.choice ts) => if !ts.isEmpty && ts.all isAttrT then Axis.attribute else Axis.child
+          | .kind k => if isAttrT k then Axis.attribute else Axis.child
           | _ => Axis.child
         let ps ← pPreds n
         pure (.step ax t ps)
@@ -1712,7 +1748,8 @@ end
 
 /-- Parse a complete XPath 4.0 expression, with optional namespace
     declarations prolog. -/
-def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option ExtGrammar := none) : M Expr :=
+def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option ExtGrammar := none)
+    (schemaDecl : Bool → QN → Bool := fun _ _ => false) : M Expr :=
   let p : P Expr := do
     -- prolog (XPath 4.0 §2.1): DefaultElementNamespaceDecl? NamespaceDecl*
     let mut extra : List (String × String) := []
@@ -1760,7 +1797,7 @@ def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option
     if i < c.s.size then synErr ("unexpected text at offset " ++ toString i ++ ": '" ++
        String.ofList ((List.range (min 20 (c.s.size - i))).map (fun k => chAt c.s (i + k))) ++ "'")
     pure e
-  match (p.run { s := src.toList.toArray, ns, ext }).run 0 with
+  match (p.run { s := src.toList.toArray, ns, ext, schemaDecl }).run 0 with
   | .ok (e, _) => .ok e
   | .error e => .error e
 

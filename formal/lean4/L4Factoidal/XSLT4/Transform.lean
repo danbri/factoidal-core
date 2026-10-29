@@ -590,11 +590,14 @@ def mkHost (S : Sheet) (base : Env) (keyCache : List ((String × Nat) × Thunk (
             | [.map kvs] => [[.map kvs]]
             | _ => []
           let plain : Env := { env with host := fun _ _ => none }
-          let d ← match callFn 100000 plain { uri := nsFN, loc := "doc" } ([sStr abs] ++ opts) with
+          -- a space in the reference is escaped as %20 (§20.1: the
+          -- processor may escape a reference that is not a valid URI)
+          let esc (x : String) : String := x.replace " " "%20"
+          let d ← match callFn 100000 plain { uri := nsFN, loc := "doc" } ([sStr (esc abs)] ++ opts) with
             | .ok [.node d] => pure (some d)
             | .ok _ => pure none
             | .error e =>
-                match callFn 100000 plain { uri := nsFN, loc := "doc" } ([sStr u] ++ opts) with
+                match callFn 100000 plain { uri := nsFN, loc := "doc" } ([sStr (esc u)] ++ opts) with
                 | .ok [.node d] => pure (some d)
                 | _ => throw e
           let own := match opts with

@@ -98,7 +98,7 @@ def reservedFnNs : List String :=
 def declWords : List String :=
   ["namespace", "default", "boundary-space", "base-uri", "construction", "ordering",
    "copy-namespaces", "decimal-format", "variable", "function", "option", "context",
-   "record", "type", "revalidation", "updating", "fixed"]
+   "record", "type", "revalidation", "updating", "fixed", "ft-option"]
 
 /-- Is a `declare`/`import` keyword followed by a declaration word? -/
 def atDecl : P (Option String) := do
@@ -475,6 +475,17 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
       checkDecimalFormat props
       if m.decimalFormats.any (·.1 == key) then qerr "XQST0111" "two decimal formats with one name"
       m := { m with decimalFormats := m.decimalFormats ++ [(key, props)] }
+    | "ft-option" =>
+      -- Full Text 3.0 §2.4 FTOptionDecl: the match options of the static
+      -- context, kept under the pseudo-prefix `#ftopt` for the
+      -- `contains text` parser (one entry per declaration, in order)
+      -- a Setter: before every variable and context value declaration
+      if !varNames.isEmpty || ctxSeen then synErr "declare ft-option after a variable declaration"
+      let os ← withXq cfg ns (L4Factoidal.FullText.pMatchOptions expandRefs)
+      expectS ";"
+      let prev := (ns.lookup "#ftopt").getD ""
+      ns := ("#ftopt", prev ++ "\x1e" ++ String.intercalate L4Factoidal.FullText.osep os) ::
+        ns.filter (·.1 != "#ftopt")
     | "option" =>
       let oq ← match ← peekQName with
       | some (p, u, l, e) =>
@@ -706,13 +717,14 @@ def normEol (cs : List Char) : List Char :=
     else (out.push c, false)) (#[], false)).1.toList
 
 def parseModule (src : String) (ns : List (String × String) := [])
-    (loader : String → Except Err (List (QN × IType)) := fun _ => .ok []) : M Module :=
+    (loader : String → Except Err (List (QN × IType)) := fun _ => .ok [])
+    (schemaDecl : Bool → QN → Bool := fun _ _ => false) : M Module :=
   let s := (normEol src.toList).toArray
   -- first pass: the named types, with forward references read as item()
-  let types0 := match ((pModule [] true loader).run { s, ns }).run 0 with
+  let types0 := match ((pModule [] true loader).run { s, ns, schemaDecl }).run 0 with
     | .ok (m, _) => m.types
     | .error _ => []
-  match ((pModule types0 false loader).run { s, ns }).run 0 with
+  match ((pModule types0 false loader).run { s, ns, schemaDecl }).run 0 with
   | .ok (m, _) => .ok m
   | .error e => .error e
 
@@ -767,7 +779,7 @@ def typeLoader (env : Env) : Nat → List String → String → Except Err (List
   | d + 1, seen, uri =>
     if seen.contains uri then .ok [] else
     (moduleTexts env uri).foldlM (fun acc t => do
-      let lm ← parseModule t [] (typeLoader env d (uri :: seen))
+      let lm ← parseModule t [] (typeLoader env d (uri :: seen)) env.schema.declared
       if (lm.libNs.map (·.2)) != some uri then pure acc
       else pure (acc ++ lm.ownTypes.filterMap (fun (q, ty, priv) => if priv then none else some (q, ty)))) []
 
@@ -791,7 +803,7 @@ def loadImports (env : Env) : Nat → List String → Module → M (List Module 
         | ts => ts
       if texts.isEmpty then err "XQST0059" ("no module found for namespace " ++ u)
       for t in texts do
-        let lm ← parseModule t [] (typeLoader env 8 seen)
+        let lm ← parseModule t [] (typeLoader env 8 seen) env.schema.declared
         if (lm.libNs.map (·.2)) != some u then err "XQST0059" ("the module text is not a module for " ++ u)
         let (sub, seen') ← loadImports env d seen lm
         seen := seen'
@@ -1007,7 +1019,7 @@ def withFnLookup (fuel : Nat) (env : Env) : Env :=
 
 /-- Parse and evaluate an XQuery 4.0 main module. -/
 def evalQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) : M Seq := do
-  let m ← parseModule src env.ns (typeLoader env 8 [])
+  let m ← parseModule src env.ns (typeLoader env 8 []) env.schema.declared
   evalModule fuel (withFnLookup fuel env) m
 
 def evalQShow (src : String) : String :=

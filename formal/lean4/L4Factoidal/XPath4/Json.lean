@@ -338,21 +338,22 @@ def jsonToXmlFn (h : Hooks) (e : Env) (src : String) (opts : Seq) : M Seq := do
   -- `number-parser` was removed by qtspecs PR 2671
   checkOptionKeys opts ["liberal", "duplicates", "validate", "escape", "fallback"]
   let validate ← optBoolT opts "validate" false
-  -- `validate`: the result is validated against the `fn` schema
-  -- (F&O 4.0 §17.5.4); FOJS0004 when the processor has no schema
-  if validate && e.schema.validateIn.isNone then err "FOJS0004" "this processor is not schema-aware"
-  -- with `validate`, duplicates default to `reject`, and `retain` is
-  -- FOJS0005 (the result would not be valid, F&O 4.0 §17.5.4)
+  -- with `validate`, `duplicates` defaults to `reject`, and `retain` is
+  -- FOJS0005 (a valid result has unique keys)
   let o ← jsonOpts opts (if validate then "reject" else "retain") ["reject", "use-first", "retain"]
-  if validate && o.dups == "retain" then err "FOJS0005" "duplicates: retain is not allowed with validate: true"
+  if validate && o.dups == "retain" then err "FOJS0005" "duplicates: retain cannot be used with validate: true"
   let v ← parseJsonText src
   let root ← jvToXml h e o none 100000 v
-  let doc := { Doc.ofNodes [addFnNs root] with baseUri := e.baseUri }
-  let doc ← match validate, e.schema.validateIn with
-    | true, some f => match f "strict" doc 0 e.baseUri with
-      | .ok d => pure { d with baseUri := e.baseUri }
-      | .error x => err "FOJS0004" ("the result is not valid against the fn schema: " ++ x.msg)
-    | _, _ => pure doc
+  -- `validate`: the result is validated against the schema for the XML
+  -- representation of JSON (`SchemaHook.validateFnNs`, F&O 4.0 §17.5)
+  let d ← if validate then
+      match e.schema.validateFnNs with
+      | some f => match f (addFnNs root) "" with
+        | .ok d => pure d
+        | .error x => err "FOJS0004" ("the result is not valid against the schema for JSON: " ++ x.msg)
+      | none => err "FOJS0004" "this processor is not schema-aware"
+    else pure (Doc.ofNodes [addFnNs root])
+  let doc := { d with baseUri := e.baseUri }
   pure [doc.rootItem (runtimeDocId "json-to-xml" (src ++ toString o.escape ++ o.dups ++ toString validate))]
 
 /-! ## fn:xml-to-json -/

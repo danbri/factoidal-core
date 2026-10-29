@@ -1530,3 +1530,43 @@ reason = "JSON document check over wasm:cidValidate (lib/cid.mjs); reads no RDF 
 [[nonstage]]
 id = "npm:./browser#cidRetrieveVerificationMethod"
 reason = "host loop over wasm:cidRetrieve (lib/cid.mjs) with the page's fetch; reads no RDF data"
+
+# XPath 4.0, XQuery 4.0 and XSLT 4.0 (formal/lean4/Wasm/Ops/Qt4.lean): XML
+# documents and expression texts in, a serialized XDM sequence out; no RDF
+# data, no stage.
+
+[[nonstage]]
+id = "wasm:xpath4Eval"
+reason = "XML document evaluation: XPath 4.0 (L4Factoidal/XPath4: parseXPath, eval) over an XDM document, Serialization 4.0 of the result; reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xqueryEval"
+reason = "XML document evaluation: XQuery 4.0 (L4Factoidal/XQuery4/Module.lean evalQuery) over an XDM document, Serialization 4.0 of the result; reads no RDF data"
+
+[[nonstage]]
+id = "wasm:xslt4Transform"
+reason = "XML document transformation: XSLT 4.0 (L4Factoidal/XSLT4: compileStylesheet, transform, serializeResult); reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#xpath4Eval"
+reason = "XML document evaluation over wasm:xpath4Eval (lib/api.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#xqueryEval"
+reason = "XML document evaluation over wasm:xqueryEval (lib/api.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:.#xslt4Transform"
+reason = "XML document transformation over wasm:xslt4Transform (lib/api.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#xpath4Eval"
+reason = "XML document evaluation over wasm:xpath4Eval (lib/api.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#xqueryEval"
+reason = "XML document evaluation over wasm:xqueryEval (lib/api.mjs); reads no RDF data"
+
+[[nonstage]]
+id = "npm:./browser#xslt4Transform"
+reason = "XML document transformation over wasm:xslt4Transform (lib/api.mjs); reads no RDF data"

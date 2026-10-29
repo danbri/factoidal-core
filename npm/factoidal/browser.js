@@ -157,6 +157,10 @@ export const jsonldFromRdf = api.jsonldFromRdf;
 export const xmlWellformed = api.xmlWellformed;
 export const xpathEval = api.xpathEval;
 export const xsltTransform = api.xsltTransform;
+// XPath 4.0, XQuery 4.0 and XSLT 4.0 (formal/lean4/Wasm/Ops/Qt4.lean).
+export const xpath4Eval = api.xpath4Eval;
+export const xqueryEval = api.xqueryEval;
+export const xslt4Transform = api.xslt4Transform;
 export const schematronValidate = api.schematronValidate;
 export const jsonSchemaValidate = api.jsonSchemaValidate;
 export const mathmlEval = api.mathmlEval;

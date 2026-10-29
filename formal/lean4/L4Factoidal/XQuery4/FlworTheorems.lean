@@ -310,6 +310,10 @@ theorem flwor_stream_nested (cb : XCb) (env : Env) (cs : List Clause) (hc : cs.a
     evalExt cb env "flwor" (cs.map Clause.toExt ++ [ret]) [] [] [] = .ok r ↔ nestT cb cs env ret = .ok r := by
   have hrun := run_basic cb cs hc [env] []
   unfold evalExt
+  have hft : "flwor".startsWith "ft." = false := by
+    rw [String.startsWith_string_eq_false_iff]
+    decide
+  simp only [hft, Bool.false_eq_true, if_false]
   simp only [List.reverse_append, List.reverse_cons, List.reverse_nil, List.nil_append,
     List.singleton_append, List.reverse_reverse]
   have hl : ∀ ts : List Env,

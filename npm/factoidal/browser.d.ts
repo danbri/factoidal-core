@@ -15,6 +15,7 @@ export type {
   LiteralValueData, LiteralValueResult,
   ExplainResult, StageInfo, EvidenceRecord, Wire, FactoidalNode, Pipeline, RunResult, RunOptions,
   NodePort, GraphSource, GraphSpec, GraphIssue, GraphCheck, FactoidalGraph, GraphRunResult,
+  QtError, Qt4Item, Qt4Result, Xslt4Result,
 } from './index';
 
 export {
@@ -94,6 +95,9 @@ export {
   xmlWellformed,
   xpathEval,
   xsltTransform,
+  xpath4Eval,
+  xqueryEval,
+  xslt4Transform,
   schematronValidate,
   jsonSchemaValidate,
   mathmlEval,

@@ -37,6 +37,7 @@ bindings give the same identity
 (`validate`, XQST0075).
 -/
 import L4Factoidal.XPath4.Ext
+import L4Factoidal.FullText.Eval
 import L4Factoidal.XQueryUpdate.Revalidate
 
 namespace L4Factoidal.XQuery4
@@ -878,6 +879,9 @@ def errVars (e : Err) : List (QN × Seq) :=
 
 def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IType)
     (qs : List QN) (ss : List String) : M Seq := do
+  -- XQuery and XPath Full Text 3.0 (`L4Factoidal.FullText`)
+  if tag.startsWith "ft." then
+    return ← L4Factoidal.FullText.evalFt { eval := cb.eval } env tag es ss
   match tag with
   | "annotated" =>
     -- an inline function with annotations (XQuery 4.0 §4.19.1)

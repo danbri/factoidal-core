@@ -2146,6 +2146,19 @@ def processModule (onUse : Decl → CM Unit) : Nat → Mod → CM Unit
     modify (fun s => { s with sheet := { s.sheet with templates := s.sheet.templates.map (fun t =>
       if t.prec == prec then { t with precLo := lo } else t) } })
 
+/-- The `input-type-annotations` attribute of a stylesheet module text
+    (§3.15), when it has one. -/
+def inputTypeAnnOf (uri txt : String) : Option String :=
+  match Doc.ofString txt uri with
+  | .error _ => none
+  | .ok d =>
+    let m : Mod := { d, uri }
+    match m.rootElem with
+    | none => none
+    | some r =>
+      if !(m.isXsl r "stylesheet" || m.isXsl r "transform" || m.isXsl r "package") then none else
+      (Attrs.get (m.rawAttrs r) "input-type-annotations").map (·.trimAscii.toString)
+
 /-- The `xsl:import-schema` declarations of a module text (§3.15). -/
 def schemaImportsOf (uri txt : String) : List SchemaImport :=
   match Doc.ofString txt uri with
@@ -2258,7 +2271,8 @@ def checkSheet : CM Unit := do
     for e in s.checkExprs do
       for x in exprAll 10000 [e] do
         let (q, k) := match x with
-          | .call q as kw => (q, as.length + kw.length)
+          -- `#at` is the parser's source offset of a new-tree call, not an argument
+          | .call q as kw => (q, as.length + (kw.filter (fun (x : String × Option Expr) => x.1 != "#at")).length)
           | .fref q k => (q, k)
           | _ => ({ uri := nsXSL, loc := "" }, 0)
         if q.uri == nsXSL || q.uri == nsXS || q.loc.startsWith "#" || s.types.any (·.1 == q) then continue
