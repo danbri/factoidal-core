@@ -2006,3 +2006,17 @@ L4Factoidal_WHATWG_Encoding_runHandle  # (s) specification only: the per-byte ru
 L4Factoidal_XML_XPointerXPath_toNode  # (b) one call per level of the element nesting of an XPointer result (children through List.flatMap, a loop); fuel decreases
 includes  # (b) Harness/XPointerRun: one call per level of the element nesting of a test document; fuel decreases
 walkFiles  # (c) Harness/XPointerRun: one call per directory level of the vendored suite, fuel 16
+L4Factoidal_RIF_PrdXml_parseCondNode  # (b) nesting of one RIF-PRD XML condition (And, Or, INeg, Exists); conjuncts are read by mapM, a loop
+L4Factoidal_RIF_PrdXml_parseGroup  # (b) nesting of Group, Forall and Implies elements of a RIF-PRD XML document; sentences are read by mapM, a loop
+L4Factoidal_RIF_PrdXml_parseRule  # (b) nesting of Group, Forall and Implies elements of a RIF-PRD XML document; sentences are read by mapM, a loop
+L4Factoidal_RIF_Prd_condMonotone  # (b) nesting of one RIF-PRD condition of a rule document; conjuncts by List.all, a loop
+L4Factoidal_RIF_Prd_condVars  # (b) nesting of one RIF-PRD condition of a rule document or goal
+L4Factoidal_RIF_Prd_instHashableGTerm_hash  # (b) `deriving Hashable for GTerm`: the depth is the nesting of one ground RIF term
+L4Factoidal_RIF_Prd_matchCond  # (b) nesting of one RIF-PRD condition of a rule document or goal; facts and substitutions are folded by List.foldl, a loop
+L4Factoidal_RIF_Prd_withMemberRule  # (b) nesting of one RIF Core formula of a rule document or goal
+L4Factoidal_RIF_Prd_qualifyCond  # (b) nesting of one RIF-PRD condition of a rule document or goal
+L4Factoidal_RIF_Prd_qualifyLocalFormula  # (b) nesting of one RIF Core formula of a rule document or goal
+L4Factoidal_RIF_Prd_qualifyLocalTm  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document or goal
+# --- WHATWG URL in Lean (https://github.com/danbri/factoidal/issues/1167, milestone 3)
+Harness_WhatwgUrl_allStrings  # (c) depth is the generated string length, the constant 6 in `l4whatwg-url rfc3986`
+L4Factoidal_WHATWG_URL_Theorems_joinSlash  # (s) used only by WHATWG/URL/Theorems.lean; the parser serializes paths with Array.foldl (Url.serializePath)

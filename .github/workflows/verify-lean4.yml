@@ -29,9 +29,15 @@ on:
       - 'third_party/testing/rif-core-suite/**'
       - 'tests/rif-bld/**'
       - 'tests/rif-bld-local/**'
+      - 'third_party/testing/rif-prd-suite/**'
+      - 'tests/rif-prd/**'
+      - 'tests/rif-local/**'
       - 'third_party/testing/wpt-encoding/**'
       - 'third_party/whatwg-encoding/**'
       - 'tests/whatwg-encoding/**'
+      - 'third_party/testing/wpt-url/**'
+      - 'third_party/unicode-18.0.0/**'
+      - 'tests/whatwg-url/**'
       - 'tools/whatwg/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
@@ -195,6 +201,12 @@ jobs:
       - name: RIF BLD test suite (tests/rif-bld/run.sh)
         run: bash tests/rif-bld/run.sh
 
+      # RIF PRD 2013 on the W3C PRD manifest (53 cases, 46 shared with RIF
+      # Core); every shared Core entailment case must keep its Core verdict
+      # (https://github.com/danbri/factoidal/issues/1165).
+      - name: RIF PRD test suite (tests/rif-prd/run.sh)
+        run: bash tests/rif-prd/run.sh
+
       # WHATWG Encoding Standard over the vendored web-platform-tests encoding/
       # directory (https://github.com/danbri/factoidal/issues/1167, milestone 2).
       # Node 22: the test host runs the WPT files in vm realms.
@@ -204,3 +216,8 @@ jobs:
           node-version: '22'
       - name: WHATWG Encoding, WPT encoding tests (tests/whatwg-encoding/run.sh)
         run: bash tests/whatwg-encoding/run.sh
+
+      # WHATWG URL Standard over the vendored web-platform-tests url/ data
+      # files (https://github.com/danbri/factoidal/issues/1167, milestone 3).
+      - name: WHATWG URL, WPT url tests (tests/whatwg-url/run.sh)
+        run: bash tests/whatwg-url/run.sh

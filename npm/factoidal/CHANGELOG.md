@@ -4,7 +4,17 @@
 
 - XPointer in the Lean engine: the XPointer Framework, element() and xmlns() schemes (W3C Recommendations 2003) in `L4Factoidal/XML/XPointer.lean`, and the xpointer() scheme (W3C Working Draft 2002) through the XPath 4.0 engine in `XML/XPointerXPath.lean`. Over the 98 pointers of the W3C XInclude test suite: 98 pass, 0 fail (out of 98) (`lake exe l4xpointer`). Not yet used by XInclude, and no npm or wasm op yet.
 
-- RIF BLD (W3C Recommendation, Second Edition 2013) in the Lean engine, `L4Factoidal/RIF/Bld.lean`, over the RIF Core engine: equality in rule conclusions with congruence and list injectivity, inconsistency when two data values are made equal, the semantic conditions on `#` and `##`, rules whose body does not bind every variable, named-argument uniterms, open lists and conjunctive conclusions in the presentation syntax. W3C BLD suite: 28 pass, 0 fail (out of 28 decided), 1 undecided, 3 excluded (defective test data, https://github.com/danbri/factoidal/issues/1186). No npm or wasm op yet.
+## 0.24.0 (2026-10-29)
+
+In the Lean tree (native runners; no new package functions; the wasm does not change):
+
+- WHATWG URL Standard (`L4Factoidal/WHATWG/URL/`): web-platform-tests `url/` at ce5ca396, 4570 pass, 0 fail (out of 4570). Theorem `whatwg2026_path_eq_rfc3986`: the parser's path-segment rule gives the same path as RFC 3986 §5.2.4 `removeDotSegments` when no segment contains `/`; a theorem for the whole parser is open (https://github.com/danbri/factoidal/issues/1188). (https://github.com/danbri/factoidal-core/pull/241, https://github.com/danbri/factoidal/issues/1167 milestone 3)
+- XProc 3.1 (`L4Factoidal/XProc31/`, `lake build l4xproc`): XProc test suite (Codeberg, dc530eb6) 2243 pass, 125 fail, 995 unsupported (out of 3363); bridge theorems in `XProc31/Bridge.lean` and `XProc31/Sequence.lean` (https://github.com/danbri/factoidal-core/pull/249).
+
+## 0.23.0 (2026-10-29)
+
+- RIF PRD (W3C Recommendation, Second Edition 2013) in the Lean engine, `L4Factoidal/RIF/Prd.lean`, over the RIF Core matcher: conditions with `Not` and the PRD membership rule, the actions Assert, Retract (of a fact, of all slot values, of an object), Modify and Execute (`act:print`), action blocks with `New()` and slot-value action variables, and the `rif:forwardChaining` strategy (refraction, priority, recency) over cycle and transitional states. The RIF/XML syntax of PRD is read by `L4Factoidal/RIF/PrdXml.lean`. W3C PRD manifest (53 cases, 46 shared with RIF Core): 49 pass, 0 fail (out of 49 decided), 1 undecided, 3 excluded (defective test data, https://github.com/danbri/factoidal/issues/1031); the 37 shared Core entailment cases give the Core verdict. No npm or wasm op yet.
+- XSLT Streaming 4.0, round 3 (https://github.com/danbri/factoidal-core/pull/244).
 
 ## 0.22.0 (2026-10-29)
 
@@ -24,6 +34,7 @@
 
 ### In the Lean tree (native runners; not new package functions)
 
+- RIF BLD (W3C Recommendation, Second Edition 2013) in the Lean engine, `L4Factoidal/RIF/Bld.lean`, over the RIF Core engine: equality in rule conclusions with congruence and list injectivity, inconsistency when two data values are made equal, the semantic conditions on `#` and `##`, rules whose body does not bind every variable, named-argument uniterms, open lists and conjunctive conclusions in the presentation syntax. W3C BLD suite: 28 pass, 0 fail (out of 28 decided), 1 undecided, 3 excluded (defective test data, https://github.com/danbri/factoidal/issues/1186). No npm or wasm op yet.
 - XML Schema 1.1 structures (`L4Factoidal/XSD11/`): schema components, schema documents (include, import, redefine, override), content models by derivatives with counted repetition and 1.1 `all`, assessment to a PSVI, identity constraints, type alternatives and assertions; the schema-aware parts of XPath 4.0, XQuery 4.0 and XSLT 4.0 use it (https://github.com/danbri/factoidal-core/pull/206, https://github.com/danbri/factoidal-core/pull/217). Native `l4xsd11`: 41086 pass, 479 fail, 103 unsupported (out of 41668), measured on that PR.
 - XSLT 4.0 (https://github.com/danbri/factoidal-core/pull/208) and XSLT Streaming 4.0 (https://github.com/danbri/factoidal-core/pull/213): xslt40-test, all vendored sets, 9096 pass, 1557 fail, 3149 unsupported (out of 13802), measured on PR 213.
 - XQuery 4.0: `%private` across modules and the `xml` prefix in constructors (https://github.com/danbri/factoidal-core/pull/210). qt4tests in XQuery mode, measured on PR 206: 42202 pass, 1788 fail, 1956 unsupported (out of 45946); XPath mode 28248 pass, 707 fail, 9704 unsupported (out of 38659).

@@ -6,6 +6,7 @@ analysis (the examples of XSLT Streaming 4.0 §3.9, §12.8.4, §12.8.9,
 -/
 import L4Factoidal.XSLT4.Streaming.Check
 import L4Factoidal.XSLT4.Streaming.Select
+import L4Factoidal.XSLT4.Streaming.TableBridge
 
 namespace L4Factoidal.XSLT4.Streaming.Tests
 
@@ -129,5 +130,26 @@ def strs (p : SPath) : Option (List String) :=
 #guard (match L4Factoidal.XML.parseXML doc1 with
   | .ok d => streamCount [de "*"] (docEvents d)
   | .error _ => none) == some 10
+
+/-! ### The event stream and the XPath 4.0 node table (`ofNodes_shapes`) -/
+
+def doc2 : String :=
+  "<a x='1' xmlns:p='urn:p'>t1<![CDATA[t2]]><b/>t3<!--c--><?q d?></a>"
+
+def tableAgrees (src : String) : Bool :=
+  match L4Factoidal.XML.parseXML src with
+  | .ok d =>
+    let t := (Doc.ofNodes d.children).nodes
+    (t.toList.drop 1).map shape == recsOf (evShapes (docEvents d))
+  | .error _ => false
+
+#guard tableAgrees doc1
+#guard tableAgrees doc2
+-- `t1` and the CDATA section are one text record; `xmlns:p` gives no record
+#guard (match L4Factoidal.XML.parseXML doc2 with
+  | .ok d => recsOf (evShapes (docEvents d))
+  | .error _ => []) ==
+  [(.element, ""), (.attribute, "1"), (.text, "t1t2"), (.element, ""), (.text, "t3"),
+   (.comment, "c"), (.pi, "d")]
 
 end L4Factoidal.XSLT4.Streaming.Tests

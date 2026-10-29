@@ -1,0 +1,48 @@
+<t:test xmlns:t="http://xproc.org/ns/testsuite/3.0" 
+        expected="pass"
+        xmlns:err="http://www.w3.org/ns/xproc-error" features="p-run">
+   <t:info>
+      <t:title>nw p-run-002</t:title>
+      <t:revision-history>
+         <t:revision>
+            <t:date>2026-07-18</t:date>
+            <t:author>
+               <t:name>Norm Tovey-Walsh</t:name>
+            </t:author>
+            <t:description xmlns="http://www.w3.org/1999/xhtml">
+               <p>Added tests for p:run</p>
+            </t:description>
+         </t:revision>
+      </t:revision-history>
+   </t:info>
+   <t:description xmlns="http://www.w3.org/1999/xhtml">
+      <p>Test passing map to step with p:run</p>
+   </t:description>
+   <t:pipeline>
+<p:declare-step version="3.0" xmlns:p="http://www.w3.org/ns/xproc">
+  <p:output port="result"/>
+  <p:variable name="params" as="array(*)" select="array{1,2,3}"/>
+  <p:run name="run-fix">
+    <p:with-input href="../pipelines/invoked-arr.xpl"/>
+    <p:run-input port="source" primary="true"><p:empty/></p:run-input>
+    <p:run-option name="parameters" select="$params" />
+    <p:output port="result" primary="true"/>
+  </p:run>
+</p:declare-step>
+</t:pipeline>
+<t:schematron>
+  <s:schema queryBinding="xslt2"
+            xmlns:s="http://purl.oclc.org/dsdl/schematron">
+    <s:ns prefix="fn" uri="http://www.w3.org/2005/xpath-functions"/>
+    <s:pattern>
+      <s:rule context="/">
+        <s:assert test="fn:array">The root element is not fn:array.</s:assert>
+        <s:assert test="count(fn:array/fn:number) = 3">Wrong number of items.</s:assert>
+        <s:assert test="fn:array/fn:number[1] = 1">First item is wrong.</s:assert>
+        <s:assert test="fn:array/fn:number[2] = 2">Second item is wrong.</s:assert>
+        <s:assert test="fn:array/fn:number[3] = 3">Third item is wrong.</s:assert>
+      </s:rule>
+    </s:pattern>
+  </s:schema>
+</t:schematron>
+</t:test>
