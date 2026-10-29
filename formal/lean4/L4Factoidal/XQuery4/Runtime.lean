@@ -37,6 +37,7 @@ bindings give the same identity
 (`validate`, XQST0075).
 -/
 import L4Factoidal.XPath4.Ext
+import L4Factoidal.XQueryUpdate.Revalidate
 
 namespace L4Factoidal.XQuery4
 
@@ -111,6 +112,11 @@ structure CallCb where
     declaration accepts the call. -/
 def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
     (kw : List (String × Option Expr)) : Option (M Seq) :=
+  -- XQuery Update Facility 3.0 §6.1: fn:put, an updating function
+  if q.uri == nsFN && q.loc == "put" && kw.isEmpty && (args.length == 2 || args.length == 3)
+     && args.all Option.isSome then
+    some (do XQueryUpdate.evalPut e (← args.filterMap id |>.mapM cb.eval))
+  else
   match userDecl? e q (args.length + kw.length) with
   | none => none
   | some (fi, lo, dflts) => some do
@@ -144,6 +150,12 @@ def callUser? (cb : CallCb) (e : Env) (q : QN) (args : List (Option Expr))
     defaults of the omitted parameters are computed now, in the focus
     of the reference. -/
 def refUser? (applyF : Item → List Seq → M Seq) (e : Env) (q : QN) (k : Nat) : Option (M Seq) :=
+  -- fn:put#2 and fn:put#3 (XQuery Update Facility 3.0 §6.1): an updating function item
+  if q.uri == nsFN && q.loc == "put" && (k == 2 || k == 3) then
+    let ps : List (QN × IType) := (List.range k).map (fun i => ({ uri := "#upd", loc := "p" ++ toString i }, .seq .item .star))
+    some (pure [XQueryUpdate.markUpdating (.fn (.inline ps (.seq .item .star)
+      (.call q (ps.map (fun (v, _) => some (Expr.var v))) []) false []))])
+  else
   match userDecl? e q k with
   | none => none
   | some (fi, lo, dflts) => some do
@@ -872,6 +884,12 @@ def evalExt (cb : XCb) (env : Env) (tag : String) (es : List Expr) (ts : List IT
             else pure [.node { doc := id, idx := 1, rt := some nd }]
           | .error x => err (if x.code == "FODC0007" then "XQDY0027" else x.code) x.msg
       | _ => err "XQTY0030" "the operand of validate is not one document or element node"
-  | _ => err "XPST0003" ("unknown XQuery construct " ++ tag)
+  | _ =>
+    -- XQuery Update Facility 3.0 (`L4Factoidal.XQueryUpdate`)
+    if tag.startsWith "upd-" then
+      XQueryUpdate.evalUpd { eval := cb.eval, apply := cb.apply, nameOf := nameOf,
+                             newId := fun t e c => newDocId t e c }
+        XQueryUpdate.revalidate env tag es ts qs ss
+    else err "XPST0003" ("unknown XQuery construct " ++ tag)
 
 end L4Factoidal.XQuery4

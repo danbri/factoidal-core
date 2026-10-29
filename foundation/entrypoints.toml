@@ -329,6 +329,38 @@ covers = "part"
 note = "VC.DataIntegrity.verifyFromCanonical with Ed25519.verify: the first conjunct of VerifyContract, on caller-given canonical forms."
 
 [[entry]]
+id = "wasm:vcDiSecure"
+stages = ["vcSignStage"]
+covers = "part"
+note = "Wasm/Ops/Vc.lean vcDiSecure: VC.Cryptosuite.secureDocument, which canonicalizes (RDFC-1.0 or RFC 8785 by suite) and calls DataIntegrity.createFromCanonical with the signer of VC.Cryptosuite.diSigner (Ed25519 or ECDSA P-256). Not covered: the ECDSA suites and the JCS transform (vcSignStage is eddsa-rdfc-2022), the proof configuration and the returned document."
+
+[[entry]]
+id = "wasm:vcDiVerify"
+stages = ["vcVerifyStage"]
+covers = "part"
+note = "Wasm/Ops/Vc.lean vcDiVerify: VC.Cryptosuite.verifyDocument, which ends in DataIntegrity.verifyFromCanonical with VC.Cryptosuite.diPrimitives. Not covered: the ECDSA suites, the JCS transform, did:key and CID key resolution, the context rule."
+
+[[nonstage]]
+id = "wasm:vcStatusEntryNew"
+reason = "builds one Bitstring Status List v1.0 BitstringStatusListEntry object (VC.StatusList); reads no document"
+
+[[nonstage]]
+id = "wasm:vcStatusListCredential"
+reason = "builds an unsigned BitstringStatusListCredential: the bitstring, GZIP and base64url of VC.StatusList.generate; reads no RDF"
+
+[[nonstage]]
+id = "wasm:vcStatusEntryCheck"
+reason = "JSON-level check of the credentialStatus entries (VC.StatusList.checkEntry); reads no RDF"
+
+[[nonstage]]
+id = "wasm:vcStatusValidate"
+reason = "Bitstring Status List v1.0 section 3.2 on a list credential already verified by vcDiVerify (VC.StatusList.validate); reads no RDF"
+
+[[nonstage]]
+id = "wasm:vcDiKey"
+reason = "key-level: the did:key verification method of a secret key (VC.Cryptosuite.diSigner, HACL* secret-to-public, SEC 1 point compression); reads no document"
+
+[[entry]]
 id = "npm:.#update"
 stages = ["updateStage"]
 covers = "part"

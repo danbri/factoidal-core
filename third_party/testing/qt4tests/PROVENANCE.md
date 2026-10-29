@@ -38,8 +38,15 @@ of the same commit, files unchanged:
 - `ser/` (Serialization 4.0)
 - `xs/` (XML Schema types: `xs:numeric`, `xs:error`, constructors)
 
-Not copied: `ft/` (Full Text) and `upd/` (XQuery Update), which are separate
-specifications that https://qt4cg.org/ does not publish; the drivers, tools, viewer and
+Added 2026-10-28 for the XQuery Update Facility
+(https://github.com/danbri/factoidal/issues/1101), from a `git checkout` of
+the same commit (b39c4bc0; `upd/` is the same at b1616b79):
+
+- `upd/` (40 test sets, 825 test cases, with `TestSources/` and
+  `LibraryModules/`). The upstream `upd/TestSources/CVS/` directory (CVS
+  metadata, no test data) is not copied; every other file is unchanged.
+
+Not copied: `ft/` (Full Text), the drivers, tools, viewer and
 guide. A catalog test set whose file is not
 present is not run by `lake exe l4qt4` unless its family is selected.
 

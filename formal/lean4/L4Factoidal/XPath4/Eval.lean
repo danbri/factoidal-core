@@ -150,14 +150,16 @@ def generalPair (tz : Int) (op : BOp) (a b : Atomic) (ns : String → Option Str
   let conv (x y : Atomic) : M Atomic :=
     if x.ty == .untyped then
       if y.ty == .untyped || y.isStringLike then pure (Atomic.ofStr x.str)
-      -- XPath 4.0 §4.10.2: to the primitive type of the numeric
-      -- operand, or if that fails to xs:double
       else if y.isNumeric then
-        match y.ty with
-        | .b bt => match castAtomic x (.b (bt.primitive.getD bt)) with
-          | .ok v => pure v
-          | .error _ => castAtomic x (.b .double)
-        | _ => castAtomic x (.b .double)
+        -- XPath 4.0 §4.11.2: to the primitive base type of the numeric
+        -- operand (xs:decimal, xs:double or xs:float), or, if that cast
+        -- fails, to xs:double (3.1 cast to xs:double; with the exact
+        -- numeric comparison of 4.0 that makes `untypedAtomic('6.58') = 6.58` false)
+        let prim : L4Factoidal.XSD.Builtin :=
+          if y.is .decimal then .decimal else if y.is .float then .float else .double
+        match castAtomic x (.b prim) with
+        | .ok v => pure v
+        | .error _ => castAtomic x (.b .double)
       else match y.ty with
         | .b bt => castAtomic x (.b (match bt.primitive with | some p => if derivedFrom bt .dayTimeDuration then .dayTimeDuration else if derivedFrom bt .yearMonthDuration then .yearMonthDuration else p | none => bt)) ns
         | .untyped => pure (Atomic.ofStr x.str)
@@ -457,9 +459,6 @@ def Env.stepOrigins (e : Env) : M (List Item) :=
     let s := (s.zip (List.range s.length)).map (fun (i, k) => jwrap (k + 1).toUInt64 i)
     if s.all Item.isGNode then pure s
     else match s with
-      -- XPath 4.0 §4.7 (qt4tests K2-Axes-38a, axis-err-1a): XPTY0004; the
-      -- XPath 3.1 code XPTY0020 is what xslt40-test error-XPTY0020a expects
-      | [_] => err "XPTY0004" "the context item is not a node"
       | _ => err "XPTY0004" "the context value is not a sequence of nodes"
 
 def isNumericLit : Expr → Option Int
@@ -776,6 +775,8 @@ def eval : Nat → Env → Expr → M Seq
               if k != args.length then err "XPTY0004" "partial application with the wrong number of arguments"
             pure [.fn (.papp fi (← evalArgs n env args))]
           else
+            -- XQuery Update Facility 3.0 §7.11: an updating function needs `invoke updating`
+            if XQueryUpdate.isUpdatingFn fi then err "XUDY0038" "a dynamic call of an updating function"
             let vs ← evalArgs n env args
             apply n env fi (vs.map (·.getD []))
       | _ =>
@@ -1240,7 +1241,11 @@ def apply : Nat → Env → Item → List Seq → M Seq
             vars := (v, ← env.coerce t a ("$" ++ v.show)) :: vars
           let env' := { env with vars, ctx := none, pos := 0, size := 0, untrusted := false }
           let r ← eval n env' body
-          env.coerce ret r "function result"
+          -- XQuery Update: the pending update list is not part of the
+          -- XDM instance that the return type describes
+          let (pu, xs) := r.partition XQueryUpdate.isPulItem
+          if pu.isEmpty then env.coerce ret r "function result"
+          else return (← env.coerce ret xs "function result") ++ pu
     | .fn (.papp g fixed) => do
         let mut rest := args
         let mut full : List Seq := []

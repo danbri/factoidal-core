@@ -1775,3 +1775,11 @@ L4Factoidal_XPath4_genPull  # (b) in the mutual block of XPath4.eval: the depth 
 L4Factoidal_XPath4_genShortcut  # (b) as genPull: one call per fn:generate consumer in the parsed expression; fuel decreases (XPath 4.0, issue 1101)
 L4Factoidal_XPath4_largeRangeOf?  # (b) the depth is the nesting of the parsed range expression; fuel decreases at each call (XPath 4.0, issue 1101)
 L4Factoidal_XPath4_rangeShortcut  # (b) as largeRangeOf?: one call per range consumer in the parsed expression; fuel decreases (XPath 4.0, issue 1101)
+# --- XQuery Update Facility (XQueryUpdate/, https://github.com/danbri/factoidal/issues/1101)
+L4Factoidal_XQueryUpdate_flatU  # (b) one frame per element nesting level of the rebuilt document; siblings are a for loop (as XPath4.flatXT)
+L4Factoidal_XQueryUpdate_rebuild  # (b) one frame per element nesting level of the updated document; attributes and children are for loops
+L4Factoidal_XQueryUpdate_cat  # (b) one frame per expression nesting level of the query (category rules)
+L4Factoidal_XQueryUpdate_untypeXT  # (b) one frame per element nesting level of an inserted tree
+L4Factoidal_XQueryUpdate_noPreserveXT  # (b) one frame per element nesting level of a copied tree
+L4Factoidal_XQueryUpdate_stripElementOnlyWs  # (b) one frame per element nesting level of a revalidated tree
+L4Factoidal_XQueryUpdate_XT_fits  # (s) specification only: the hypothesis of the theorem flatU_true_eq_flatXT; no compiled function calls it

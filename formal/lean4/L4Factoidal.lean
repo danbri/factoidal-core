@@ -763,6 +763,12 @@ import L4Factoidal.Storage.BlockWireV0
 import L4Factoidal.Storage.BlockWireV0Tests
 import L4Factoidal.VC.Credential
 import L4Factoidal.VC.CredentialTests
+import L4Factoidal.VC.Cryptosuite
+import L4Factoidal.VC.CryptosuiteNative
+import L4Factoidal.VC.CryptosuiteTheorems
+import L4Factoidal.VC.StatusList
+import L4Factoidal.VC.StatusListTests
+import L4Factoidal.VC.CryptosuiteTests
 import L4Factoidal.HDT.Container
 import L4Factoidal.HDT.ContainerTheorems
 import L4Factoidal.HDT.Dictionary
