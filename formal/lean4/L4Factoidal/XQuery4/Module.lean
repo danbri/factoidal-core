@@ -242,8 +242,8 @@ def typeRefs (s : Array Char) (st en : Nat) (ns : List (String × String)) : Lis
 def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
     (loader : String → Except Err (List (QN × IType)) := fun _ => .ok []) : P Module := do
   let mut m : Module := {}
-  let mut cfg : Cfg := { types := types0, lenient }
   let c0 ← read
+  let mut cfg : Cfg := { types := types0, lenient, xml11 := c0.xml11 }
   let mut ns : List (String × String) := c0.ns
   -- the version declaration
   if ← kwThenKw "xquery" "version" then
@@ -707,26 +707,33 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false)
      String.ofList ((List.range (min 20 (c.s.size - i))).map (fun k => chAt c.s (i + k))) ++ "'")
   pure m
 
-/-- End-of-line handling (XQuery 4.0 §A.2.3, as XML 1.0 §2.11): a carriage
-    return followed by a line feed, or a carriage return alone, is read as
-    a line feed. -/
-def normEol (cs : List Char) : List Char :=
-  (cs.foldl (fun (acc : Array Char × Bool) c =>
-    let (out, cr) := acc
-    if c == '\r' then (out.push '\n', true)
-    else if c == '\n' && cr then (out, false)
-    else (out.push c, false)) (#[], false)).1.toList
+/-- End-of-line handling (XQuery 4.0 §A.3.3): before parsing, CR LF and a
+    lone CR become LF; with XML 1.1 (§A.3.3.2) also CR NEL, NEL and LINE
+    SEPARATOR. One pass, accumulator. -/
+def normalizeLineEnds (xml11 : Bool) (cs : List Char) : List Char :=
+  let rec go : List Char → List Char → List Char
+    | [], acc => acc.reverse
+    | '\r' :: '\n' :: r, acc => go r ('\n' :: acc)
+    | '\r' :: c :: r, acc =>
+        if xml11 && c == '\u0085' then go r ('\n' :: acc) else go (c :: r) ('\n' :: acc)
+    | '\r' :: [], acc => go [] ('\n' :: acc)
+    | c :: r, acc =>
+        if xml11 && (c == '\u0085' || c == '\u2028') then go r ('\n' :: acc) else go r (c :: acc)
+  go cs []
+
+#guard normalizeLineEnds false "a\r\nb\rc\u0085".toList == "a\nb\nc\u0085".toList
+#guard normalizeLineEnds true "a\r\u0085b\u2028c\u0085".toList == "a\nb\nc\n".toList
 
 def parseModule (src : String) (ns : List (String × String) := [])
     (loader : String → Except Err (List (QN × IType)) := fun _ => .ok [])
     (schemaDecl : Bool → QN → Bool := fun _ _ => false)
-    (features : FeatureSettings := {}) : M Module :=
-  let s := (normEol src.toList).toArray
+    (xml11 : Bool := false) (features : FeatureSettings := {}) : M Module :=
+  let s := (normalizeLineEnds xml11 src.toList).toArray
   -- first pass: the named types, with forward references read as item()
-  let types0 := match ((pModule [] true loader).run { s, ns, schemaDecl, features }).run 0 with
+  let types0 := match ((pModule [] true loader).run { s, ns, schemaDecl, xml11, features }).run 0 with
     | .ok (m, _) => m.types
     | .error _ => []
-  match ((pModule types0 false loader).run { s, ns, schemaDecl, features }).run 0 with
+  match ((pModule types0 false loader).run { s, ns, schemaDecl, xml11, features }).run 0 with
   | .ok (m, _) => .ok m
   | .error e => .error e
 
@@ -781,7 +788,7 @@ def typeLoader (env : Env) : Nat → List String → String → Except Err (List
   | d + 1, seen, uri =>
     if seen.contains uri then .ok [] else
     (moduleTexts env uri).foldlM (fun acc t => do
-      let lm ← parseModule t [] (typeLoader env d (uri :: seen)) env.schema.declared
+      let lm ← parseModule t [] (typeLoader env d (uri :: seen)) env.schema.declared env.xml11
       if (lm.libNs.map (·.2)) != some uri then pure acc
       else pure (acc ++ lm.ownTypes.filterMap (fun (q, ty, priv) => if priv then none else some (q, ty)))) []
 
@@ -805,7 +812,7 @@ def loadImports (env : Env) : Nat → List String → Module → M (List Module 
         | ts => ts
       if texts.isEmpty then err "XQST0059" ("no module found for namespace " ++ u)
       for t in texts do
-        let lm ← parseModule t [] (typeLoader env 8 seen) env.schema.declared env.features
+        let lm ← parseModule t [] (typeLoader env 8 seen) env.schema.declared env.xml11 env.features
         if (lm.libNs.map (·.2)) != some u then err "XQST0059" ("the module text is not a module for " ++ u)
         let (sub, seen') ← loadImports env d seen lm
         seen := seen'
@@ -1033,7 +1040,7 @@ def withFnLookup (fuel : Nat) (env : Env) : Env :=
 
 /-- Parse and evaluate an XQuery 4.0 main module. -/
 def evalQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) : M Seq := do
-  let m ← parseModule src env.ns (typeLoader env 8 []) env.schema.declared env.features
+  let m ← parseModule src env.ns (typeLoader env 8 []) env.schema.declared env.xml11 env.features
   evalModule fuel (withFnLookup fuel env) m
 
 def evalQShow (src : String) : String :=

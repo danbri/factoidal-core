@@ -10,8 +10,9 @@ the canonical composition algorithm (UAX #15 §4: a character is blocked
 from the last starter when a character between them has class 0 or a
 class not lower than its own).
 
-`FULLY-NORMALIZED` is not supported (it raises `FOCH0003`, as F&O 4.0
-§5.4.9 allows).
+`FULLY-NORMALIZED` (F&O 4.0 §5.4.9, `fullyNormalize`): when the first
+character is a composing character, a space is put before it; the result
+is then converted to NFC.
 -/
 import Std.Data.HashMap
 import L4Factoidal.XPath4.UnicodeNormData
@@ -142,7 +143,39 @@ def normalize (form : String) (s : String) : Option String :=
     | "NFKC" => some (ofCps (compose (decompose true s)))
     | _ => none
 
+/-- The characters that are the second character of the canonical
+    decomposition of a primary composite (`compText` lists the pairs of
+    the characters that are not in the Composition Exclusion Table). -/
+def secondOfPrimary : HashMap Nat Unit :=
+  (entries UnicodeNormData.compText).foldl (fun m (a, _) =>
+    match cps a with
+    | [_, y] => m.insert y ()
+    | _ => m) {}
+
+/-- A composing character (F&O 4.0 §5.4.9): the second character in the
+    canonical decomposition mapping of a character that is not in the
+    Composition Exclusion Table (the Hangul vowel and trailing jamo are
+    the second characters of the Hangul syllables), or a character of
+    non-zero canonical combining class. -/
+def isComposing (c : Nat) : Bool :=
+  ccc c != 0 || secondOfPrimary.contains c ||
+  (vBase ≤ c && c < vBase + vCount) || (tBase < c && c < tBase + tCount)
+
+/-- Conversion to FULLY-NORMALIZED (F&O 4.0 §5.4.9): "if the first
+    character in the string is a composing character, prepend a single
+    space (x20); convert the resulting string to normalization form NFC". -/
+def fullyNormalize (s : String) : String :=
+  let s := match s.toList with
+    | c :: _ => if isComposing c.toNat then " " ++ s else s
+    | [] => s
+  (normalize "NFC" s).getD s
+
 /-! ## Checks (the examples of UAX #15 Figure 3 to 6, and F&O 4.0 §5.4.9) -/
+
+#guard fullyNormalize "blah" == "blah"
+#guard fullyNormalize (String.ofList [Char.ofNat 2494]) == String.ofList [' ', Char.ofNat 2494]
+#guard fullyNormalize (String.ofList [Char.ofNat 0x301, 'a']) == String.ofList [' ', Char.ofNat 0x301, 'a']
+#guard fullyNormalize (String.ofList ['e', Char.ofNat 0x301]) == String.ofList [Char.ofNat 0xE9]
 
 #guard normalize "NFC" "Å" == some "Å"
 #guard normalize "NFD" "Å" == some "Å"

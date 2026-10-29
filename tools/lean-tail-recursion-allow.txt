@@ -2086,3 +2086,7 @@ L4Factoidal_RelaxNG_trGroup  # (b) the depth is the element nesting of one RELAX
 L4Factoidal_RelaxNG_trNC  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
 L4Factoidal_RelaxNG_trP  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
 L4Factoidal_RelaxNG_trSeq  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
+L4Factoidal_XPath4_XInclude_expand  # (b) depth is the element nesting of the document plus the XInclude nesting (fuel 64 at the call in XmlParse.parseDocument); children visited by List.mapM
+L4Factoidal_XPath4_XInclude_runText_txt  # (b) #guard helper over the element nesting of a test document (fuel 50); children visited by List.map
+L4Factoidal_XPath4_XIncludeTheorems_noXi  # (b) specification predicate of expand_noXi over the element nesting of a document (fuel argument); children visited by List.all
+L4Factoidal_XPath4_stripElemContentWs  # (b) XPath4/XmlParse: depth is the element nesting of a DTD-validated document (fuel 100000, as stripWs); children visited by List.map

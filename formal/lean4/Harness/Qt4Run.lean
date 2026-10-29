@@ -12,10 +12,13 @@ and `misc`), and scores every test case for XPath 4.0 or, with
 * **unsupported** — the test case or its test set has a dependency
   this processor does not satisfy: a spec that is not XPath 4.0
   (`XQ*` only, or an `XP` version range that excludes 4.0), a feature
-  it does not have, XML 1.1, a
-  non-English default language, or an environment that needs a schema,
-  a collection, a decimal format or a resource. An unsupported test is
-  NEVER a pass;
+  it does not have (static typing, which XPath 4.0 and XQuery 4.0 have
+  dropped, `fn:transform`, ...), a language other than English, XML 1.0
+  before the fifth edition, or an environment that needs a collection
+  or a function library. An unsupported test is NEVER a pass. The
+  settings of the dynamic context that a test names (the default
+  language, the XML version, XPath 1.0 compatibility mode) are set for
+  that test (`configureFor`); the namespace axis is on in XPath mode;
 * Negative optional-feature dependencies select an engine configuration
   with those features disabled; the test still runs.
 * **pass** — every assertion holds; an `error` assertion holds only
@@ -40,6 +43,9 @@ import L4Factoidal.XPath4.FeatureTests
 import L4Factoidal.XSD11.Load
 import L4Factoidal.XSD11.XPathBridge
 import L4Factoidal.XPath4.Theorems
+import L4Factoidal.XPath4.OptionalTheorems
+import L4Factoidal.XQuery4.XmlVersionTheorems
+import L4Factoidal.XPath4.XIncludeTheorems
 import L4Factoidal.XQuery4.Module
 import L4Factoidal.XQuery4.LoadModule
 import L4Factoidal.XSLT4.QtFnTransform
@@ -192,6 +198,38 @@ def featureSupported (f : String) : Bool :=
   -- XQuery Update Facility 3.0 (`L4Factoidal.XQueryUpdate`)
   || f == "XQUpdate"
 
+/-- The features this processor has in one mode: `featureSupported`,
+    plus the namespace axis (XPath 4.0 §4.7.2.1; XQuery 4.0 does not
+    have it, XQST0134), XPath 1.0 compatibility mode (XPath 4.0
+    §2.2.1.1, which only a host language sets: `configureFor` sets
+    `Env.compat10` for the test that asks for it) and a collation other
+    than the codepoint collation (`XPath4.Collation`), and a cast from
+    `xs:double` or `xs:float` to `xs:decimal` that keeps every digit
+    (`XPath4.decOfFloat`). -/
+def featureSupportedIn (xq : Bool) (f : String) : Bool :=
+  featureSupported f || f == "non_unicode_codepoint_collation" || f == "arbitraryPrecisionDecimal"
+    -- the dtd-validation option is a setting (`Env.dtdValidation`):
+    -- `configureFor` turns it off for a test that needs it absent
+    || f == "dtd-validation-option" || f == "xinclude-option"
+    || (!xq && (f == "namespace-axis" || f == "xpath-1.0-compatibility"))
+
+/-- The dynamic context settings that a test case's dependencies select:
+    XPath 1.0 compatibility mode, the default language, the XML version,
+    and whether the `dtd-validation` and `xinclude` options are available. -/
+def configureFor (deps : List Node) (env : Env) : Env :=
+  deps.foldl (fun env d =>
+    let sat := attrD d "satisfied" "true" != "false"
+    match attrD d "type" with
+    | "feature" =>
+        let fs := (attrD d "value").splitOn " "
+        let env := if sat && fs.contains "xpath-1.0-compatibility" then { env with compat10 := true } else env
+        let env := if !sat && fs.contains "dtd-validation-option" then { env with dtdValidation := false } else env
+        if !sat && fs.contains "xinclude-option" then { env with xinclude := false } else env
+    | "default-language" => if sat then { env with defaultLanguage := attrD d "value" } else env
+    | "xml-version" =>
+        if sat && ((attrD d "value").splitOn " ").all (· == "1.1") then { env with xml11 := true } else env
+    | _ => env) env
+
 /-- Select a processor configuration for negative feature dependencies.
     The query and its assertions use this same configuration. -/
 def featureSettings (deps : List Node) : FeatureSettings :=
@@ -210,25 +248,36 @@ def depOk (xq : Bool) (d : Node) : Bool :=
       -- XQuery: the Module Feature (XQuery 4.0 §5.2, `XQuery4.Module`); the
       -- DTD information of the infoset (attribute defaults, ID and IDREF
       -- attributes, `XML.Parser` with `XPath4.docKids`)
-      let has (f : String) : Bool := featureSupported f || (xq && f == "moduleImport") || f == "infoset-dtd"
+      let has (f : String) : Bool := featureSupportedIn xq f || (xq && f == "moduleImport") || f == "infoset-dtd"
       let fs := v.splitOn " "
+      -- a feature that is a setting (`dtd-validation-option`) can also be
+      -- absent: `configureFor` turns it off
       if sat then fs.all has
       else fs.any FeatureSettings.switchable || !(fs.all has)
+        || fs.all (fun f => f == "dtd-validation-option" || f == "xinclude-option")
+  -- The version of XML and XML Names is a setting of this processor
+  -- (XPath 4.0 §A.2, constraint xml-version): `configureFor` sets
+  -- `Env.xml11` for a test that names only XML 1.1. Strings hold every
+  -- XML 1.1 character in both settings (XDM 4.0 §4.1.6). "1.0:4-" is
+  -- XML 1.0 before the fifth edition, which this processor never uses.
   | "xml-version" =>
-      -- XML 1.0 fifth edition (names of `XML.Parser`); not the fourth
-      -- edition or earlier (`1.0:4-`), not XML 1.1
-      let has := (v.splitOn " ").any (fun x => x == "1.0" || x == "1.0:5+")
+      let has := (v.splitOn " ").any (fun x => x == "1.1" || (x.startsWith "1.0" && x != "1.0:4-"))
       if sat then has else !has
   | "xsd-version" => if sat then v == "1.1" else v != "1.1"
-  -- `XPath4.NumberWords`: German, French and Italian words and names
   | "language" =>
       let has := v == "en" || NumberWords.hasLang v
       if sat then has else !has
-  | "default-language" => if sat then v == "en" else v != "en"
-  -- `XPath4.Unicode`: UAX #15 NFC, NFD, NFKC, NFKD (not FULLY-NORMALIZED)
+  -- the default language is a setting of the dynamic context
+  -- (`Env.defaultLanguage`); `configureFor` sets the one a test names
+  | "default-language" => if sat then true else v != "en"
+  -- `big_integer`: `xs:integer` is Lean's `Int` (no bound);
+  -- `year_lt_0`: years before 1 are dates (`XPath4.Atomic`)
+  -- `XPath4.Unicode`: UAX #15 NFC, NFD, NFKC, NFKD, and FULLY-NORMALIZED
+  -- of F&O 4.0 §5.4.9
   | "unicode-normalization-form" =>
-      let has := v == "NFC" || v == "NFD" || v == "NFKC" || v == "NFKD"
+      let has := ["NFC", "NFD", "NFKC", "NFKD", "FULLY-NORMALIZED"].contains v
       if sat then has else !has
+  | "limits" => if sat then v == "big_integer" || v == "year_lt_0" else !(v == "big_integer" || v == "year_lt_0")
   -- `XPath4.Format.fmtIntToken`: decimal digit families and the
   -- circled, parenthesised, full-stop and Greek sequences
   | "format-integer-sequence" =>
@@ -495,7 +544,7 @@ def xmlEq (env : Env) (got : Seq) (expected : String) : Bool :=
     declarations of its prolog (`XPath4.declParams`); none in XPath. -/
 def queryParams (env : Env) (src : String) : M SerParams :=
   if isXqEnv env && env.features.serialization then do
-    let m ← L4Factoidal.XQuery4.parseModule src env.ns (L4Factoidal.XQuery4.typeLoader env 8 []) env.schema.declared env.features
+    let m ← L4Factoidal.XQuery4.parseModule src env.ns (L4Factoidal.XQuery4.typeLoader env 8 []) env.schema.declared env.xml11 env.features
     -- `output:parameter-document`: the document first, then the other
     -- output declarations over it
     let init ← match m.outputDecls.lookup "parameter-document" with
@@ -772,12 +821,21 @@ def parseArgs : List String → Opts → Opts
   | [], o => o
 
 
-/-- The quoted system identifiers after `SYSTEM` in a document. -/
-def systemIds (txt : String) : List String :=
-  ((txt.splitOn "SYSTEM").drop 1).filterMap (fun piece =>
-    match piece.trimAsciiStart.toString.toList with
-    | q :: r => if q == '"' || q == '\'' then some (String.ofList (r.takeWhile (· != q))) else none
-    | [] => none)
+/-- The files an XML text names: its system identifiers (`SYSTEM "x"`,
+    `PUBLIC "p" "x"`: the last quoted literal after each `SYSTEM` or
+    `PUBLIC` keyword, up to the next `>`) and the `href` of its XInclude
+    elements. -/
+def xmlSystemIds (txt : String) : List String :=
+  let quoted (upto : String) : Array String :=
+    let a := (upto.splitOn "\"").toArray
+    if a.size ≥ 3 then a else (upto.splitOn "'").toArray
+  let sys := ((txt.splitOn "SYSTEM").drop 1 ++ (txt.splitOn "PUBLIC").drop 1).filterMap (fun p =>
+    let a := quoted ((p.splitOn ">").headD "")
+    if a.size ≥ 3 then some a[a.size - 2]! else none)
+  let hrefs := ((txt.splitOn "href=").drop 1).filterMap (fun p =>
+    let a := quoted ((p.splitOn ">").headD "")
+    if a.size ≥ 3 then some a[1]! else none)
+  sys ++ hrefs
 
 /-- The files a test names by a relative reference in its text (for
     `fn:unparsed-text`, `fn:json-doc`, `fn:doc`, and external entities
@@ -810,7 +868,7 @@ def scanResources (root dir src : String) : IO (List (String × String) × List 
         out := (t, txt) :: out
         -- the external DTD subset and external entities of a document,
         -- relative to the document (`SYSTEM "..."`)
-        for sys in systemIds txt do
+        for sys in xmlSystemIds txt do
           let key := L4Factoidal.XPath4.siblingRef t sys
           if (out.lookup key).isNone then
             let some p2 := normPath (rel ++ "/" ++ key) | continue
@@ -964,6 +1022,16 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
     let setOk' := if specGiven then (setDeps.filter (fun x => attrD x "type" != "spec")).all (depOk xq) else setOk
     if !(setOk' && deps.all (depOk xq)) then
       t := { t with unsup := t.unsup + 1 }
+      if o.listFails then
+        let setDeps' := if specGiven then setDeps.filter (fun x => attrD x "type" != "spec") else setDeps
+        let bad := (setDeps' ++ deps).filter (fun x => !depOk xq x)
+        -- a spec dependency first: the case is for another specification
+        let bad := bad.filter (fun x => attrD x "type" == "spec") ++ bad.filter (fun x => attrD x "type" != "spec")
+        let why := match bad.head? with
+          | some x => (if attrD x "satisfied" "true" == "false" then "!" else "") ++
+              attrD x "type" ++ "=" ++ attrD x "value"
+          | none => "dependency"
+        fails := fails ++ [s!"UNSUP {setName}/{name}: dependency {why}"]
       continue
     let envSpec : Option EnvSpec :=
       match (kidsNamed tc "environment").head? with
@@ -972,7 +1040,10 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         match attr e "ref" with
         | some r => (localEnvs.lookup r).orElse (fun _ => catEnvs.lookup r)
         | none => some (parseEnv dir e xq)
-    let some spec := envSpec | do t := { t with unsup := t.unsup + 1 }; continue
+    let some spec := envSpec | do
+      t := { t with unsup := t.unsup + 1 }
+      if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: environment not found"]
+      continue
     let testNodes := kidsNamed tc "test"
     let some testNode := testNodes.getLast? | do t := { t with fail := t.fail + 1 }; continue
     let srcOf (tn : Node) : IO String := do
@@ -994,6 +1065,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
     | .ok env =>
+      let env := configureFor (setDeps ++ deps) env
       let env := (configureUpd (setDeps ++ deps) env).restrictFeatures (featureSettings (setDeps ++ deps))
       -- the static base URI, when the environment sets none, is the
       -- location of the test set (implementation-defined, XPath 4.0 C.1)
@@ -1004,8 +1076,12 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         pure { env with baseUri := "file://" ++ abs ++ "/" }
       let (scanned, scannedBins) ← if undefBase then pure ([], []) else
         scanResources o.root dir (String.intercalate " " (before ++ (src :: spec.params.map (·.2))))
-      let env := { env with resources := env.resources ++ scanned,
-                            resourceBytes := env.resourceBytes ++ scannedBins }
+      -- XInclude resolves hrefs before retrieval. Register scanned files
+      -- under their absolute URI as well as their source spelling.
+      let env := { env with resources := env.resources ++ scanned ++
+                              scanned.map (fun (kv : String × String) => (resolveUri env.baseUri kv.1, kv.2)),
+                            resourceBytes := env.resourceBytes ++ scannedBins ++
+                              scannedBins.map (fun (kv : String × ByteArray) => (resolveUri env.baseUri kv.1, kv.2)) }
       -- the files that the source documents name (an XSLT module that a
       -- source stylesheet includes, for fn:transform), relative to each
       let mut fromSources : List (String × String) := []
@@ -1054,7 +1130,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
           -- XQuery mode: a main module with an empty prolog is its body
           -- (`XQuery4.evalModule_emptyProlog`), given to the file evaluator
           let xqBody : Option Expr := if !isXqEnv env || (parseXPath4 src env.ns env.schema.declared).isOk then none else
-            match L4Factoidal.XQuery4.parseModule src env.ns (L4Factoidal.XQuery4.typeLoader env 8 []) env.schema.declared with
+            match L4Factoidal.XQuery4.parseModule src env.ns (L4Factoidal.XQuery4.typeLoader env 8 []) env.schema.declared env.xml11 with
             | .ok m => if m.decls.isEmpty && m.imports.isEmpty && m.schemaImports.isEmpty && m.libNs.isNone then m.body else none
             | .error _ => none
           match xqBody with
@@ -1091,7 +1167,9 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         | .fail why, none =>
             t := { t with fail := t.fail + 1 }
             if o.listFails then fails := fails ++ [s!"FAIL {setName}/{name}: {why}"]
-        | .unsupported _, _ => t := { t with unsup := t.unsup + 1 }
+        | .unsupported why, _ =>
+            t := { t with unsup := t.unsup + 1 }
+            if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
   if let some pf := o.progress then
     IO.FS.writeFile pf s!"{t.pass} {t.fail} {t.unsup} DONE {t.excl}\n"
   return (setName, t, fails)
@@ -1099,7 +1177,10 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
 /-- Run one test set in a child process with a time limit (an IO loop
     that ends on an outside event: the child exiting, or the clock). -/
 def runIsolated (o : Opts) (secs : Nat) (fam setName file : String) : IO (Tally × String) := do
-  let pf := (← IO.getEnv "TMPDIR").getD "/tmp" ++ "/l4qt4-progress-" ++ setName
+  -- the mode and the process id keep two runs at the same time (XPath
+  -- and XQuery mode) from reading each other's progress files
+  let pf := (← IO.getEnv "TMPDIR").getD "/tmp" ++ "/l4qt4-progress-" ++ o.lang ++ "-" ++
+    toString (← IO.Process.getPID) ++ "-" ++ setName
   IO.FS.writeFile pf ""
   let mut args : Array String := #["--root", o.root, "--family", fam, "--set", setName, "--progress", pf, "--lang", o.lang]
   if o.listFails then args := args.push "--list-fails"
