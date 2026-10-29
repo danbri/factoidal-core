@@ -588,8 +588,8 @@ def pItemType : Nat → P IType
                     -- elements and types (XQuery 3.1 §2.1.1, XQuery 4.0 §2.1.1)
                     let q ← resolve p u l den
                     let nil ← eatS "?"
-                    -- attribute(N, T): no `?` (XPath 4.0 §3.2.7.3.1, AttributeTest)
-                    if nil && nm == "attribute" then synErr "attribute(N, T) takes no '?'"
+                    -- `?` (nillable) is for element tests only
+                    if nil && nm == "attribute" then synErr "attribute() takes no '?' after the type name"
                     pure (some (q, nil))
                   | none => synErr "expected a type name"
                 else pure none

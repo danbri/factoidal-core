@@ -574,10 +574,10 @@ def html5Elements : List String :=
    "body", "br", "button", "canvas", "caption", "cite", "code", "col", "colgroup", "data", "datalist",
    "dd", "del", "details", "dfn", "dialog", "div", "dl", "dt", "em", "embed", "fieldset", "figcaption",
    "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hgroup", "hr",
-   "html", "i", "iframe", "img", "input", "ins", "kbd", "keygen", "label", "legend", "li", "link", "main", "map",
-   "mark", "math", "menu", "meta", "meter", "nav", "noscript", "object", "ol", "optgroup", "option", "output",
+   "html", "i", "iframe", "img", "input", "ins", "kbd", "label", "legend", "li", "link", "main", "map",
+   "mark", "menu", "meta", "meter", "nav", "noscript", "object", "ol", "optgroup", "option", "output",
    "p", "param", "picture", "pre", "progress", "q", "rp", "rt", "ruby", "s", "samp", "script", "search",
-   "section", "select", "slot", "small", "source", "span", "strong", "style", "sub", "summary", "sup", "svg",
+   "section", "select", "slot", "small", "source", "span", "strong", "style", "sub", "summary", "sup",
    "table", "tbody", "td", "template", "textarea", "tfoot", "th", "thead", "time", "title", "tr",
    "track", "u", "ul", "var", "video", "wbr"]
 
@@ -717,10 +717,6 @@ def Env.inRawHtml (e : Env) (x : XCtx) (n : NodeRef) : Bool :=
 
 def Env.writeAttr (e : Env) (x : XCtx) (elemHtml : Bool) (a : NodeRef) : W Unit := do
   let ar := e.nrec a
-  -- an attribute of an element inside script or style: not escaped
-  let rawHere := match ar.parent with
-    | some p => e.inRawHtml x (a.at p)
-    | none => false
   let nm := x.p.norm (if ar.name.pfx == "" then ar.name.loc else ar.name.pfx ++ ":" ++ ar.name.loc)
   let v := ar.value
   if elemHtml && x.m == "html" && ar.name.uri == "" && htmlBoolAttrs.contains (lower nm) && lower v == lower nm then
@@ -730,7 +726,7 @@ def Env.writeAttr (e : Env) (x : XCtx) (elemHtml : Bool) (a : NodeRef) : W Unit 
     let v := if isUri then Fn.String.escapeHtmlUri ((Unicode.normalize "NFC" v).getD v) else v
     -- a URI attribute that is %-escaped is not character-mapped (§12)
     let p := if isUri then { x.p with charMap := [] } else x.p
-    emit (" " ++ nm ++ "=\"" ++ (if rawHere then p.rawText v else p.escAttr (elemHtml && x.m == "html") v) ++ "\"")
+    emit (" " ++ nm ++ "=\"" ++ p.escAttr (elemHtml && x.m == "html") v ++ "\"")
 
 def Env.sortedAttrs (e : Env) (x : XCtx) (n : NodeRef) : List NodeRef :=
   let as := e.attrNodes n
@@ -797,9 +793,9 @@ def Env.writeNode (e : Env) (x : XCtx) : Nat → NodeRef → List (String × Str
       let inCdata := match parent with
         | some q => qnIn q x.p.cdata && !(x.m == "html" && x.isHtmlElem q)
         | none => false
-      let raw := (match parent with
+      let raw := match parent with
         | some q => x.m == "html" && x.isHtmlElem q && ["script", "style"].contains (lower q.loc)
-        | none => false) || e.inRawHtml x n
+        | none => false
       if inCdata && !x.p.canonical then emit (x.cdataText r.value)
       else if raw then emit (x.p.rawText r.value)
       else emit (x.p.escText r.value)

@@ -40,7 +40,7 @@ import L4Factoidal.XSD11.XPathBridge
 import L4Factoidal.XPath4.Theorems
 import L4Factoidal.XQuery4.Module
 import L4Factoidal.XQuery4.LoadModule
-import L4Factoidal.XSLT4.FnTransform
+import L4Factoidal.XSLT4.QtFnTransform
 import L4Factoidal.XQuery4.Theorems
 import L4Factoidal.XQueryUpdate.Query
 import L4Factoidal.XQueryUpdate.Theorems
@@ -154,7 +154,7 @@ def featureSupported (f : String) : Bool :=
   || f == "binary" || f == "expath-file"
   -- `XQuery4.LoadModule` through the host hook
   || f == "fn-load-xquery-module"
-  -- `XSLT4.FnTransform` through the host hook (an XSLT 4.0 processor)
+  -- `XSLT4.QtFnTransform` through the host hook (an XSLT 4.0 processor)
   || f == "fn-transform-XSLT" || f == "fn-transform-XSLT30"
   -- IANA zone names (`XPath4.Tz`)
   || f == "olson-timezone"
@@ -892,6 +892,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
         t := { t with unsup := t.unsup + 1 }
         if o.listFails then fails := fails ++ [s!"UNSUP {setName}/{name}: {why}"]
     | .ok env =>
+      let env := configureUpd (setDeps ++ deps) env
       -- the static base URI, when the environment sets none, is the
       -- location of the test set (implementation-defined, XPath 4.0 C.1)
       -- (`#UNDEFINED`: the test wants the base URI absent)
@@ -899,7 +900,6 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       let env ← if env.baseUri != "" || undefBase then pure env else do
         let abs ← try pure (← IO.FS.realPath dir).toString catch _ => pure dir
         pure { env with baseUri := "file://" ++ abs ++ "/" }
-      let env := configureUpd (setDeps ++ deps) env
       let (scanned, scannedBins) ← if undefBase then pure ([], []) else
         scanResources o.root dir (String.intercalate " " (src :: spec.params.map (·.2)))
       let env := { env with resources := env.resources ++ scanned,
@@ -930,7 +930,7 @@ def runSet (o : Opts) (catEnvs : List (String × EnvSpec)) (cache : IO.Ref (List
       -- fn:load-xquery-module through the XQuery 4.0 processor
       let env := { env with host := L4Factoidal.XQuery4.loadModuleHost env env.host }
       -- fn:transform through the XSLT 4.0 processor
-      let env := { env with host := L4Factoidal.XSLT4.transformHost env (fun f a => apply 20000 env f a) env.host }
+      let env := { env with host := L4Factoidal.XSLT4.Qt.transformHost env (fun f a => apply 20000 env f a) env.host }
       -- the earlier queries of an XQuery Update test case; an error ends the chain
       let mut chainEnv := env
       let mut chainErr : Option Err := none

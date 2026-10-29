@@ -12,14 +12,16 @@
 
 ## Specification versions
 
-None of these is a W3C Standard or on the Standards Track. Each is a Community
-Group draft (`specStatus: "CG-DRAFT"`).
+None of these is a W3C Standard or on the Standards Track. The Language and
+Semantics documents are Community Group drafts (`specStatus: "CG-DRAFT"`); the
+Builtin Functions document at the pinned commit calls itself "Final Community
+Group Report, 3 June 2026".
 
 | Document | File at the pinned commit | Last change to the file |
 |---|---|---|
 | Notation3 Language (editor's draft) | `spec/index.html` | `b975fc59`, 2026-07-13 |
 | Notation3 Semantics (editor's draft) | `spec/semantics.html` | `97653d42`, 2026-07-03 |
-| Notation3 Builtin Functions (editor's draft) | `spec/builtins.html` | `23ccf3d5`, 2026-06-03 |
+| Notation3 Builtin Functions (Final Community Group Report, 3 June 2026) | `spec/builtins.html` | `23ccf3d5`, 2026-06-03 |
 | Notation3 Language, dated report | `reports/20230703/index.html` | report of 2023-07-03 |
 | N3 grammar, EBNF | `reports/20230703/n3.ebnf` (from `grammar/n3.g4`) | report of 2023-07-03 |
 
