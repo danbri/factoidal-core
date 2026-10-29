@@ -1,0 +1,7 @@
+running prod/VersionDecl.xml
+  FAIL prod-VersionDecl/K2-VersionProlog-3-v4: error XQST0031: XQuery version 1&#x2e;0 is not supported
+  FAIL prod-VersionDecl/K2-VersionProlog-6: error XQST0087: invalid encoding UTF&#x2d;8
+prod/prod-VersionDecl: 35 pass, 2 fail, 16 unsupported (out of 53)
+== families ==
+prod: 35 pass, 2 fail, 16 unsupported (out of 53)
+TOTAL: 35 pass, 2 fail, 16 unsupported (out of 53)

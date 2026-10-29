@@ -1,0 +1,5 @@
+running prod/AxisStep.preceding-sibling.xml
+prod/prod-AxisStep.preceding-sibling: 18 pass, 0 fail, 11 unsupported (out of 29)
+== families ==
+prod: 18 pass, 0 fail, 11 unsupported (out of 29)
+TOTAL: 18 pass, 0 fail, 11 unsupported (out of 29)

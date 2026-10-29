@@ -192,6 +192,8 @@ deriving Inhabited
 def Env.restrictFeatures (e : Env) (features : FeatureSettings) : Env :=
   if features == ({} : FeatureSettings) then e else
   let features : FeatureSettings := {
+    version := features.version
+    xpath10Compatibility := features.xpath10Compatibility
     loadXQueryModule := e.features.loadXQueryModule && features.loadXQueryModule
     transform := e.features.transform && features.transform
     transform30 := e.features.transform30 && features.transform30
@@ -207,7 +209,7 @@ def Env.restrictFeatures (e : Env) (features : FeatureSettings) : Env :=
   let schema := if features.schemaImport && features.schemaValidation then e.schema else
     { e.schema with
       validate := none, validateIn := none, validateWith := none, validateFnNs := none }
-  { e with features, schema }
+  { e with features, schema, compat10 := e.compat10 || features.xpath10Compatibility }
 
 @[simp] theorem Env.restrictFeatures_allEnabled (e : Env) :
     e.restrictFeatures {} = e := rfl

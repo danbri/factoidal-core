@@ -1,0 +1,15 @@
+running misc/HigherOrderFunctions.xml
+  FAIL misc-HigherOrderFunctions/hof-009: error XPST0051: unknown type a:hatsize
+  FAIL misc-HigherOrderFunctions/hof-022: string value '2'
+  FAIL misc-HigherOrderFunctions/hof-037: string value 'true false false false'
+  FAIL misc-HigherOrderFunctions/hof-038: string value 'false false false false false'
+  FAIL misc-HigherOrderFunctions/hof-039: string value 'true true false false false false'
+  FAIL misc-HigherOrderFunctions/hof-053: string value 'true true true true false false false false false false'
+  FAIL misc-HigherOrderFunctions/xqhof16: assert gave false for result main main main
+  FAIL misc-HigherOrderFunctions/xqhof18: assert gave false for result main main main
+  FAIL misc-HigherOrderFunctions/xqhof19: got main main main, expected lib main main
+  FAIL misc-HigherOrderFunctions/xqhof48: expected error XPTY0004, got 
+misc/misc-HigherOrderFunctions: 132 pass, 10 fail, 6 unsupported (out of 148)
+== families ==
+misc: 132 pass, 10 fail, 6 unsupported (out of 148)
+TOTAL: 132 pass, 10 fail, 6 unsupported (out of 148)

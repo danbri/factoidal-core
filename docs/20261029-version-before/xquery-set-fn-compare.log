@@ -1,0 +1,5 @@
+running fn/compare.xml
+fn/fn-compare: 233 pass, 0 fail, 2 unsupported (out of 235)
+== families ==
+fn: 233 pass, 0 fail, 2 unsupported (out of 235)
+TOTAL: 233 pass, 0 fail, 2 unsupported (out of 235)

@@ -1,0 +1,33 @@
+running xs/anyAtomicType.xml
+xs/xs-anyAtomicType: 2 pass, 0 fail, 0 unsupported (out of 2)
+running xs/anySimpleType.xml
+xs/xs-anySimpleType: 5 pass, 0 fail, 1 unsupported (out of 6)
+running xs/anyURI.xml
+xs/xs-anyURI: 16 pass, 0 fail, 4 unsupported (out of 20)
+running xs/base64Binary.xml
+xs/xs-base64Binary: 40 pass, 0 fail, 0 unsupported (out of 40)
+running xs/dateTimeStamp.xml
+xs/xs-dateTimeStamp: 13 pass, 0 fail, 0 unsupported (out of 13)
+running xs/double.xml
+xs/xs-double: 13 pass, 0 fail, 3 unsupported (out of 16)
+running xs/duration.xml
+xs/xs-duration: 11 pass, 0 fail, 0 unsupported (out of 11)
+running xs/error.xml
+xs/xs-error: 44 pass, 0 fail, 19 unsupported (out of 63)
+running xs/float.xml
+xs/xs-float: 11 pass, 0 fail, 1 unsupported (out of 12)
+running xs/hexBinary.xml
+xs/xs-hexBinary: 4 pass, 0 fail, 2 unsupported (out of 6)
+running xs/normalizedString.xml
+xs/xs-normalizedString: 6 pass, 0 fail, 1 unsupported (out of 7)
+running xs/notation.xml
+xs/xs-notation: 2 pass, 0 fail, 0 unsupported (out of 2)
+running xs/numeric.xml
+xs/xs-numeric: 21 pass, 0 fail, 1 unsupported (out of 22)
+running xs/QName.xml
+xs/xs-QName: 2 pass, 0 fail, 3 unsupported (out of 5)
+running xs/token.xml
+xs/xs-token: 6 pass, 0 fail, 1 unsupported (out of 7)
+== families ==
+xs: 196 pass, 0 fail, 36 unsupported (out of 232)
+TOTAL: 196 pass, 0 fail, 36 unsupported (out of 232)

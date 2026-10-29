@@ -1,0 +1,125 @@
+running misc/BuiltInKeywords.xml
+misc/misc-BuiltInKeywords: 306 pass, 0 fail, 0 unsupported (out of 306)
+running misc/CombinedErrorCodes.xml
+  FAIL misc-CombinedErrorCodes/XPTY0019_3a: wrong error code XPTY0018 (expected XPTY0004)
+  FAIL misc-CombinedErrorCodes/XQST0046_12: any-of: expected error XQST0046, got a a a; expected error XQST0076, got a a a; string value 'a a a'
+  FAIL misc-CombinedErrorCodes/XQST0076: expected error XQST0076, got a b c
+  FAIL misc-CombinedErrorCodes/XQST0085: expected error XQST0085, got <node>
+  FAIL misc-CombinedErrorCodes/XQST0089: expected error XQST0089, got 1 2 3
+  FAIL misc-CombinedErrorCodes/XQST0090: wrong error code XPST0003 (expected XQST0090)
+  FAIL misc-CombinedErrorCodes/XQST0125_1: expected error XQST0125, got 2
+  FAIL misc-CombinedErrorCodes/XQST0125_2: expected error XQST0125, got 2
+misc/misc-CombinedErrorCodes: 218 pass, 8 fail, 38 unsupported (out of 264)
+running misc/AnnexE.xml
+misc/misc-AnnexE: 8 pass, 0 fail, 0 unsupported (out of 8)
+running misc/AppendixA4.xml
+misc/misc-AppendixA4: 9 pass, 0 fail, 0 unsupported (out of 9)
+running misc/ConstructorKeywords.xml
+misc/misc-ConstructorKeywords: 153 pass, 0 fail, 0 unsupported (out of 153)
+running misc/ErrorsAndOptimization.xml
+misc/misc-ErrorsAndOptimization: 7 pass, 0 fail, 0 unsupported (out of 7)
+running misc/FocusConstructors.xml
+misc/misc-FocusConstructors: 153 pass, 0 fail, 0 unsupported (out of 153)
+running misc/HigherOrderFunctions.xml
+  FAIL misc-HigherOrderFunctions/hof-009: error XPST0051: unknown type a:hatsize
+  FAIL misc-HigherOrderFunctions/hof-022: string value '2'
+  FAIL misc-HigherOrderFunctions/hof-037: string value 'true false false false'
+  FAIL misc-HigherOrderFunctions/hof-038: string value 'false false false false false'
+  FAIL misc-HigherOrderFunctions/hof-039: string value 'true true false false false false'
+  FAIL misc-HigherOrderFunctions/hof-053: string value 'true true true true false false false false false false'
+  FAIL misc-HigherOrderFunctions/xqhof16: assert gave false for result main main main
+  FAIL misc-HigherOrderFunctions/xqhof18: assert gave false for result main main main
+  FAIL misc-HigherOrderFunctions/xqhof19: got main main main, expected lib main main
+  FAIL misc-HigherOrderFunctions/xqhof48: expected error XPTY0004, got 
+misc/misc-HigherOrderFunctions: 132 pass, 10 fail, 6 unsupported (out of 148)
+running misc/HtmlTestSuite.xml
+  FAIL misc-HtmlTestSuite/html-test-0395: got false
+  FAIL misc-HtmlTestSuite/html-test-0443: got false
+  FAIL misc-HtmlTestSuite/html-test-0519: got false
+  FAIL misc-HtmlTestSuite/html-test-1024: got false
+  FAIL misc-HtmlTestSuite/html-test-1147: got false
+  FAIL misc-HtmlTestSuite/html-test-1167: got false
+  FAIL misc-HtmlTestSuite/html-test-1216: got false
+misc/misc-HtmlTestSuite: 1372 pass, 7 fail, 0 unsupported (out of 1379)
+running misc/JsonTestSuite.xml
+  FAIL misc-JsonTestSuite/n_number_9.e_plus: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/n_number_1.0e_plus: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_unicode_U_1FFFE_nonchar: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_unicode_U+1FFFE_nonchar.json
+  FAIL misc-JsonTestSuite/n_number_U_FF11_fullwidth_digit_one: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/i_string_UTF8_surrogate_U_D800: any-of: error FOUT1170: resource not available: JSONTestSuite/test_parsing/i_string_UTF8_surrogate_U+D800.json; wrong error code FOUT1170 (expected FOJS0001); wrong error code FOUT1170 (expected FOUT1200)
+  FAIL misc-JsonTestSuite/n_number_plus_plus: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/n_string_backslash_00: wrong error code FOUT1190 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/n_structure_whitespace_U_2060_word_joiner: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_number_0e_plus_1: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_number_0e+1.json
+  FAIL misc-JsonTestSuite/n_number_plus_Inf: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/i_string_inverted_surrogates_U_1D11E: any-of: error FOUT1170: resource not available: JSONTestSuite/test_parsing/i_string_inverted_surrogates_U+1D11E.json; wrong error code FOUT1170 (expected FOJS0001); wrong error code FOUT1170 (expected FOUT1200)
+  FAIL misc-JsonTestSuite/n_number_2.e_plus3: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_unicode_U_200B_ZERO_WIDTH_SPACE: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_unicode_U+200B_ZERO_WIDTH_SPACE.json
+  FAIL misc-JsonTestSuite/y_string_u_2028_line_sep: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_u+2028_line_sep.json
+  FAIL misc-JsonTestSuite/y_string_unicode_U_2064_invisible_plus: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_unicode_U+2064_invisible_plus.json
+  FAIL misc-JsonTestSuite/n_string_unescaped_crtl_char: wrong error code FOUT1190 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_unicode_U_10FFFE_nonchar: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_unicode_U+10FFFE_nonchar.json
+  FAIL misc-JsonTestSuite/n_number_invalid_plus-: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/n_number_0e_plus: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/n_number_plus1: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/n_multidigit_number_then_00: wrong error code FOUT1190 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_surrogates_U_1D11E_MUSICAL_SYMBOL_G_CLEF: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_surrogates_U+1D11E_MUSICAL_SYMBOL_G_CLEF.json
+  FAIL misc-JsonTestSuite/n_number_0.3e_plus: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_nonCharacterInUTF-8_U_FFFFa: any-of: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_nonCharacterInUTF-8_U+FFFF.json; wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_nonCharacterInUTF-8_U_10FFFF: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_nonCharacterInUTF-8_U+10FFFF.json
+  FAIL misc-JsonTestSuite/y_string_unicode_U_FDD0_nonchar: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_unicode_U+FDD0_nonchar.json
+  FAIL misc-JsonTestSuite/n_structure_null-byte-outside-string: any-of: wrong error code FOUT1190 (expected FOJS0001); wrong error code FOUT1190 (expected FOUT1200)
+  FAIL misc-JsonTestSuite/y_string_unicode_U_FFFE_nonchar: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_unicode_U+FFFE_nonchar.json
+  FAIL misc-JsonTestSuite/y_string_reservedCharacterInUTF-8_U_1BFFF: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_reservedCharacterInUTF-8_U+1BFFF.json
+  FAIL misc-JsonTestSuite/n_structure_U_2060_word_joined: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_u_2029_par_sep: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_u+2029_par_sep.json
+  FAIL misc-JsonTestSuite/n_number_0_capital_E_plus: wrong error code FOUT1170 (expected FOJS0001)
+misc/misc-JsonTestSuite: 286 pass, 32 fail, 1 unsupported (out of 319)
+running misc/JMESPathTestSuite.xml
+misc/misc-JMESPathTestSuite: 728 pass, 0 fail, 0 unsupported (out of 728)
+running misc/JSONPathTestSuite.xml
+  FAIL misc-JSONPathTestSuite/JSONPath-slice-selector-excessively-large-to-value: error XPDY0130: range too large for this implementation (an implementation limit)
+  FAIL misc-JSONPathTestSuite/JSONPath-slice-selector-excessively-small-from-value: error XPDY0130: range too large for this implementation (an implementation limit)
+misc/misc-JSONPathTestSuite: 458 pass, 2 fail, 0 unsupported (out of 460)
+running misc/StaticContext.xml
+  FAIL misc-StaticContext/static-context-1: expected error XPST0008, got false
+misc/misc-StaticContext: 0 pass, 1 fail, 0 unsupported (out of 1)
+running misc/Subtyping.xml
+  FAIL misc-Subtyping/subtyping-027: got false
+  FAIL misc-Subtyping/subtyping-029: got false
+  FAIL misc-Subtyping/subtyping-030: got false
+  FAIL misc-Subtyping/subtyping-032: got false
+  FAIL misc-Subtyping/subtyping-052: got false
+  FAIL misc-Subtyping/subtyping-056: got false
+  FAIL misc-Subtyping/subtyping-058: got false
+  FAIL misc-Subtyping/subtyping-060: got false
+  FAIL misc-Subtyping/subtyping-062: got false
+  FAIL misc-Subtyping/subtyping-064: got false
+  FAIL misc-Subtyping/subtyping-066: got false
+  FAIL misc-Subtyping/subtyping-067: got false
+  FAIL misc-Subtyping/subtyping-070: got false
+  FAIL misc-Subtyping/subtyping-073: got false
+  FAIL misc-Subtyping/subtyping-074: got false
+  FAIL misc-Subtyping/subtyping-075: got false
+  FAIL misc-Subtyping/subtyping-076: got false
+  FAIL misc-Subtyping/subtyping-077: got false
+  FAIL misc-Subtyping/subtyping-078: got false
+  FAIL misc-Subtyping/subtyping-114: got false
+  FAIL misc-Subtyping/subtyping-115: got false
+  FAIL misc-Subtyping/subtyping-159: got false
+  FAIL misc-Subtyping/subtyping-510: got false
+misc/misc-Subtyping: 95 pass, 23 fail, 41 unsupported (out of 159)
+running misc/Surrogates.xml
+misc/misc-Surrogates: 17 pass, 0 fail, 15 unsupported (out of 32)
+running misc/UCACollation.xml
+misc/misc-UCACollation: 87 pass, 0 fail, 0 unsupported (out of 87)
+running misc/XMLEdition.xml
+  FAIL misc-XMLEdition/XML10-4ed-Excluded-char-1: expected error XPST0003, got <node>
+  FAIL misc-XMLEdition/XML11-1ed-Included-char-1: expected error XPST0003, got <node>
+  FAIL misc-XMLEdition/line-ending-Q002: got false
+  FAIL misc-XMLEdition/line-ending-Q003: got false
+  FAIL misc-XMLEdition/line-ending-Q007: got false
+misc/misc-XMLEdition: 8 pass, 5 fail, 6 unsupported (out of 19)
+== families ==
+misc: 4037 pass, 88 fail, 107 unsupported (out of 4232)
+TOTAL: 4037 pass, 88 fail, 107 unsupported (out of 4232)

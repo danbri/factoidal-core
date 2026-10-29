@@ -1,0 +1,10 @@
+running fn/parse-xml.xml
+  FAIL fn-parse-xml/parse-xml-434: wrong error code FODC0007 (expected FODC0014)
+  FAIL fn-parse-xml/parse-xml-436: assert gave false for result <node>
+  FAIL fn-parse-xml/parse-xml-437: wrong error code XPTY0004 (expected FODC0008)
+  FAIL fn-parse-xml/parse-xml-438: wrong error code FODC0007 (expected FODC0008)
+  FAIL fn-parse-xml/parse-xml-439: wrong error code FODC0007 (expected FODC0008)
+fn/fn-parse-xml: 49 pass, 5 fail, 3 unsupported (out of 57)
+== families ==
+fn: 49 pass, 5 fail, 3 unsupported (out of 57)
+TOTAL: 49 pass, 5 fail, 3 unsupported (out of 57)

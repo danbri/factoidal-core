@@ -1,0 +1,11 @@
+running fn/xml-to-json.xml
+  FAIL fn-xml-to-json/xml-to-json-046: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+  FAIL fn-xml-to-json/xml-to-json-047: wrong error code XQST0059 (expected XQDY0027)
+  FAIL fn-xml-to-json/xml-to-json-048: wrong error code XQST0059 (expected XQDY0027)
+  FAIL fn-xml-to-json/xml-to-json-061: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+  FAIL fn-xml-to-json/xml-to-json-064: error FOJS0006: a child of map needs a key
+  FAIL fn-xml-to-json/xml-to-json-065: error FOJS0006: attribute not allowed: escaped
+fn/fn-xml-to-json: 155 pass, 6 fail, 9 unsupported (out of 170)
+== families ==
+fn: 155 pass, 6 fail, 9 unsupported (out of 170)
+TOTAL: 155 pass, 6 fail, 9 unsupported (out of 170)

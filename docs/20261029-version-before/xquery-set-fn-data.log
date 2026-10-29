@@ -1,0 +1,5 @@
+running fn/data.xml
+fn/fn-data: 75 pass, 0 fail, 3 unsupported (out of 78)
+== families ==
+fn: 75 pass, 0 fail, 3 unsupported (out of 78)
+TOTAL: 75 pass, 0 fail, 3 unsupported (out of 78)

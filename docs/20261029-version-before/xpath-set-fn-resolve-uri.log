@@ -1,0 +1,5 @@
+running fn/resolve-uri.xml
+fn/fn-resolve-uri: 49 pass, 0 fail, 2 unsupported (out of 51)
+== families ==
+fn: 49 pass, 0 fail, 2 unsupported (out of 51)
+TOTAL: 49 pass, 0 fail, 2 unsupported (out of 51)

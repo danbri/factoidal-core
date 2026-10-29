@@ -428,6 +428,16 @@ def reservedFnNames : List String :=
    "array", "enum", "fn", "function", "if", "item", "jnode", "map", "record", "switch",
    "type", "typeswitch"]
 
+/-- Reserved function names of the selected grammar (XPath Appendix A.3). -/
+def reservedFnName (name : String) : P Bool := do
+  let v := (← read).features.version.number
+  if v == 40 then return reservedFnNames.contains name
+  if name == "empty-sequence" then return true
+  if ["xnode", "jnode", "enum", "fn", "record", "type"].contains name then return false
+  if v < 31 && ["array", "map"].contains name then return false
+  if v < 30 && ["function", "namespace-node", "switch"].contains name then return false
+  return reservedFnNames.contains name
+
 def atomicTypeOf (q : QN) : P IType := do
   -- XQuery 4.0 hook: a named item type of the prolog
   let c ← read
@@ -1179,7 +1189,7 @@ def pArrowTarget : Nat → P (Sum (QN) Expr × List (Option Expr) × List (Strin
         else
         match ← peekQName with
         | some (p, u, l, e) =>
-            if p.isNone && u.isNone && reservedFnNames.contains l then
+            if p.isNone && u.isNone && (← reservedFnName l) then
               synErr ("reserved function name " ++ l)
             set e
             let q ← resolve p u l (← dfltFnNs)
@@ -1430,7 +1440,13 @@ def pKeySpec : Nat → P (Option Expr)
         expectS ")"; pure (some e)
     else if ch == '$' then pure (some (.var (← pVarName n)))
     else if ch == '"' || ch == '\'' then pure (some (.lit (Atomic.ofStr (← pStringLit))))
-    else if ch.isDigit then pure (some (← pNumber))
+    else if ch.isDigit then
+      let e ← pNumber
+      if (← read).features.version != .v40 then
+        match e with
+        | .lit ⟨_, .int _⟩ => pure ()
+        | _ => synErr "a lookup key literal must be an integer before 4.0"
+      pure (some e)
     else if ch == '.' then adv 1; pure (some .ctx)
     else if ch == '#' then
       -- a QName literal as the key (XPath 4.0 KeySpecifier)
@@ -1511,6 +1527,10 @@ def pInlineFn : Nat → P Expr
         expectS ")"
       let r ← pTypeDecl n
       let body ← pEnclosed n
+      if (← read).features.version.number < 31 then
+        match body with
+        | .seq [] => synErr "an inline function body must not be empty before 3.1"
+        | _ => pure ()
       pure (.inline ps r body false)
 
 def pMapEntries : Nat → P Expr
@@ -1526,6 +1546,7 @@ def pMapEntries : Nat → P Expr
           let v ← pExprSingle n
           es := es ++ [(k, v)]
         else
+          if (← read).features.version != .v40 then synErr "expected ':' in map entry"
           -- an entry without ':' is a map expression whose entries are merged
           es := es ++ [(k, .call { uri := "#merge", loc := "#merge" } [] [])]
         if !(← eatS ",") then break
@@ -1612,6 +1633,8 @@ def pPrimary : Nat → P Expr
           | some (none, none, _, _) => pure true
           | _ => pure false
         if !unpref then pCallAfterName n else
+        let isFn ← atKw "fn"
+        if (← read).features.version.number < 30 || (isFn && (← read).features.version != .v40) then pCallAfterName n else
         if c1 == '(' || c1 == '{' then
           let _ ← eatKw "function"
           let _ ← eatKw "fn"
@@ -1620,7 +1643,7 @@ def pPrimary : Nat → P Expr
     | some (_, '#', _) =>
         match ← peekQName with
         | some (p, u, l, e) =>
-            if p.isNone && u.isNone && reservedFnNames.contains l then
+            if p.isNone && u.isNone && (← reservedFnName l) then
               synErr ("reserved function name " ++ l)
             set e
             let q ← resolve p u l (← dfltFnNs)
@@ -1634,7 +1657,7 @@ def pPrimary : Nat → P Expr
             pure (.fref q (ds.foldl (fun a d => a * 10 + (d.toNat - 48)) 0))
         | none => synErr "bad named function reference"
     | some (nm, '(', _) =>
-        if reservedFnNames.contains nm then
+        if ← reservedFnName nm then
           match ← peekQName with
           | some (none, none, _, _) => synErr ("reserved function name " ++ nm)
           | _ => pCallAfterName n

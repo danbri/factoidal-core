@@ -1,0 +1,5 @@
+running fn/normalize-unicode.xml
+fn/fn-normalize-unicode: 44 pass, 0 fail, 6 unsupported (out of 50)
+== families ==
+fn: 44 pass, 0 fail, 6 unsupported (out of 50)
+TOTAL: 44 pass, 0 fail, 6 unsupported (out of 50)

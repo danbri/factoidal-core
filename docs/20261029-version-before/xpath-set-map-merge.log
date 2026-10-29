@@ -1,0 +1,5 @@
+running map/merge.xml
+map/map-merge: 46 pass, 0 fail, 1 unsupported (out of 47)
+== families ==
+map: 46 pass, 0 fail, 1 unsupported (out of 47)
+TOTAL: 46 pass, 0 fail, 1 unsupported (out of 47)

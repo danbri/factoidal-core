@@ -1,0 +1,5 @@
+running xs/hexBinary.xml
+xs/xs-hexBinary: 4 pass, 0 fail, 2 unsupported (out of 6)
+== families ==
+xs: 4 pass, 0 fail, 2 unsupported (out of 6)
+TOTAL: 4 pass, 0 fail, 2 unsupported (out of 6)

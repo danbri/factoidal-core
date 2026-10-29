@@ -1,0 +1,5 @@
+running ser/method-adaptive.xml
+ser/method-adaptive: 0 pass, 0 fail, 140 unsupported (out of 140)
+== families ==
+ser: 0 pass, 0 fail, 140 unsupported (out of 140)
+TOTAL: 0 pass, 0 fail, 140 unsupported (out of 140)

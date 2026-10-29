@@ -181,6 +181,8 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
     expectKw "xquery"; expectKw "version"
     let v ← pStringLit
     if !["1.0", "3.0", "3.1", "4.0"].contains v then qerr "XQST0031" ("XQuery version " ++ v ++ " is not supported")
+    let declared := if v == "1.0" then 10 else if v == "3.0" then 30 else if v == "3.1" then 31 else 40
+    if declared > c0.features.version.number then qerr "XQST0031" "declared version exceeds processor version"
     if ← eatKw "encoding" then
       let enc ← pStringLit
       let ok := match enc.toList with
@@ -189,6 +191,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       if !ok then qerr "XQST0087" ("invalid encoding " ++ enc)
     expectS ";"
   else if ← kwThenKw "xquery" "encoding" then
+    if c0.features.version.number < 30 then synErr "XQuery 1.0 requires a version before encoding"
     expectKw "xquery"; expectKw "encoding"
     let enc ← pStringLit
     let ok := match enc.toList with

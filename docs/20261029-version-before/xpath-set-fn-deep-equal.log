@@ -1,0 +1,5 @@
+running fn/deep-equal.xml
+fn/fn-deep-equal: 451 pass, 0 fail, 136 unsupported (out of 587)
+== families ==
+fn: 451 pass, 0 fail, 136 unsupported (out of 587)
+TOTAL: 451 pass, 0 fail, 136 unsupported (out of 587)

@@ -1,0 +1,30 @@
+running fn/load-xquery-module.xml
+  FAIL fn-load-xquery-module/fn-load-xquery-module-029: error FOQM0003: a static error in the module: XQST0047 a module imports itself
+  FAIL fn-load-xquery-module/fn-load-xquery-module-032: error XPDY0002: no value for the external variable $evm:var3
+  FAIL fn-load-xquery-module/fn-load-xquery-module-038: error XPDY0002: no value for the external variable $test:b
+  FAIL fn-load-xquery-module/fn-load-xquery-module-040: error FODF1280: unknown decimal format Q{http://www.w3.org/2005/xquery-local-functions}de
+  FAIL fn-load-xquery-module/fn-load-xquery-module-042: string value '0 0 1 1 1'
+  FAIL fn-load-xquery-module/fn-load-xquery-module-043: string value '0 0 1 1 1 0 0 1 1 1'
+  FAIL fn-load-xquery-module/fn-load-xquery-module-044: string value '0 0 1 1 1 0 0 1 1 1'
+  FAIL fn-load-xquery-module/fn-load-xquery-module-050: error FOQM0003: a static error in the module: XPST0051 unknown type hat:hatsize
+  FAIL fn-load-xquery-module/fn-load-xquery-module-076: error FONS0004: no namespace binding for prefix vm
+  FAIL fn-load-xquery-module/fn-load-xquery-module-508: any-of: wrong error code XQST0059 (expected FOQM0003); wrong error code XQST0059 (expected FODC0016)
+  FAIL fn-load-xquery-module/fn-load-xquery-module-532: error FODC0016: untrusted code may not read external resources (doc)
+  FAIL fn-load-xquery-module/fn-load-xquery-module-533: expected error FODC0016, got true
+  FAIL fn-load-xquery-module/fn-load-xquery-module-534: expected error FODC0016, got true
+  FAIL fn-load-xquery-module/fn-load-xquery-module-540: any-of: wrong error code XQST0059 (expected FOQM0003); wrong error code XQST0059 (expected FODC0016)
+  FAIL fn-load-xquery-module/fn-load-xquery-module-561: got false
+  FAIL fn-load-xquery-module/fn-load-xquery-module-562: got , expected yes invalid
+  FAIL fn-load-xquery-module/fn-load-xquery-module-570: wrong error code FOQM0002 (expected FODC0016)
+  FAIL fn-load-xquery-module/fn-load-xquery-module-571: error XQST0059: no module found for namespace http://www.w3.org/fots/fn/load-xquery-module/valid/module
+  FAIL fn-load-xquery-module/fn-load-xquery-module-590: expected error FODC0016, got baz
+  FAIL fn-load-xquery-module/fn-load-xquery-module-591: expected error FODC0016, got foo
+  FAIL fn-load-xquery-module/fn-load-xquery-module-592: wrong error code FODC0013 (expected FODC0016)
+  FAIL fn-load-xquery-module/fn-load-xquery-module-601: expected error FODC0016, got true
+  FAIL fn-load-xquery-module/fn-load-xquery-module-602: expected error FODC0016, got true
+  FAIL fn-load-xquery-module/fn-load-xquery-module-924: expected error XPDY0002, got 
+  FAIL fn-load-xquery-module/fn-load-xquery-module-925: expected error XPDY0002, got 
+fn/fn-load-xquery-module: 157 pass, 25 fail, 2 unsupported (out of 184)
+== families ==
+fn: 157 pass, 25 fail, 2 unsupported (out of 184)
+TOTAL: 157 pass, 25 fail, 2 unsupported (out of 184)

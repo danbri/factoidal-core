@@ -1,0 +1,5 @@
+running xs/error.xml
+xs/xs-error: 44 pass, 0 fail, 19 unsupported (out of 63)
+== families ==
+xs: 44 pass, 0 fail, 19 unsupported (out of 63)
+TOTAL: 44 pass, 0 fail, 19 unsupported (out of 63)

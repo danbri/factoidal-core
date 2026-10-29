@@ -1,0 +1,6 @@
+running prod/NodeTest.xml
+  FAIL prod-NodeTest/K4-NodeTest-09: got true
+prod/prod-NodeTest: 80 pass, 1 fail, 3 unsupported (out of 84)
+== families ==
+prod: 80 pass, 1 fail, 3 unsupported (out of 84)
+TOTAL: 80 pass, 1 fail, 3 unsupported (out of 84)

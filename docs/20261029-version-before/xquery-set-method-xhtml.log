@@ -1,0 +1,14 @@
+running ser/method-xhtml.xml
+  FAIL method-xhtml/Serialization-xhtml-1a: serialization '<?xml version="1.0" encoding="UTF-8"?><html><body><area/><base/><br/><col/><embe' does not match
+  FAIL method-xhtml/Serialization-xhtml-23: serialization '<?xml version="1.0" encoding="UTF-8"?><foo/>' does not match
+  FAIL method-xhtml/Serialization-xhtml-24: serialization '<?xml version="1.0" encoding="UTF-8"?><foo/>' does not match
+  FAIL method-xhtml/Serialization-xhtml-35: serialization '<?xml version="1.0" encoding="UTF-8"?><html/>' does not match
+  FAIL method-xhtml/Serialization-xhtml-39: serialization '<?xml version="1.0" encoding="UTF-8"?><html><head/></html>' does not match
+  FAIL method-xhtml/Serialization-xhtml-41: serialization '<?xml version="1.0" encoding="UTF-8"?><html><body><area/><base/><br/><col/><embe' does not match
+  FAIL method-xhtml/Serialization-xhtml-51: serialization '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html xmlns="http://www.w3.' does not match
+  FAIL method-xhtml/Serialization-xhtml-68: any-of: serialization '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html><head><meta charset="' does not match; serialization '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html><head><meta charset="' does not match
+  FAIL method-xhtml/Serialization-xhtml-71: serialization '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html xmlns="http://www.w3.' does not match
+ser/method-xhtml: 48 pass, 9 fail, 4 unsupported (out of 61)
+== families ==
+ser: 48 pass, 9 fail, 4 unsupported (out of 61)
+TOTAL: 48 pass, 9 fail, 4 unsupported (out of 61)

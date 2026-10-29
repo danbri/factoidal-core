@@ -1,0 +1,6 @@
+running fn/parse-json.xml
+  FAIL fn-parse-json/fn-parse-json-946: error XPTY0004: duplicates must be a string
+fn/fn-parse-json: 190 pass, 1 fail, 12 unsupported (out of 203)
+== families ==
+fn: 190 pass, 1 fail, 12 unsupported (out of 203)
+TOTAL: 190 pass, 1 fail, 12 unsupported (out of 203)

@@ -1,0 +1,5 @@
+running prod/DirElemContent.xml
+prod/prod-DirElemContent: 4 pass, 0 fail, 131 unsupported (out of 135)
+== families ==
+prod: 4 pass, 0 fail, 131 unsupported (out of 135)
+TOTAL: 4 pass, 0 fail, 131 unsupported (out of 135)

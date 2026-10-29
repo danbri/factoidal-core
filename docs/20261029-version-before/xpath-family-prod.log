@@ -1,0 +1,288 @@
+running prod/AllowingEmpty.xml
+prod/prod-AllowingEmpty: 0 pass, 0 fail, 19 unsupported (out of 19)
+running prod/Annotation.xml
+prod/prod-Annotation: 0 pass, 0 fail, 90 unsupported (out of 90)
+running prod/ArrayType.xml
+prod/prod-ArrayType: 64 pass, 0 fail, 11 unsupported (out of 75)
+running prod/ArrowExpr.xml
+prod/prod-ArrowExpr: 69 pass, 0 fail, 2 unsupported (out of 71)
+running prod/AxisStep.xml
+prod/prod-AxisStep: 222 pass, 0 fail, 140 unsupported (out of 362)
+running prod/AxisStep.abbr.xml
+prod/prod-AxisStep.abbr: 21 pass, 0 fail, 2 unsupported (out of 23)
+running prod/AxisStep.ancestor.xml
+prod/prod-AxisStep.ancestor: 21 pass, 0 fail, 23 unsupported (out of 44)
+running prod/AxisStep.ancestor-or-self.xml
+prod/prod-AxisStep.ancestor-or-self: 21 pass, 0 fail, 11 unsupported (out of 32)
+running prod/AxisStep.following.xml
+prod/prod-AxisStep.following: 21 pass, 0 fail, 6 unsupported (out of 27)
+running prod/AxisStep.following-or-self.xml
+prod/prod-AxisStep.following-or-self: 22 pass, 0 fail, 5 unsupported (out of 27)
+running prod/AxisStep.following-sibling.xml
+prod/prod-AxisStep.following-sibling: 21 pass, 0 fail, 13 unsupported (out of 34)
+running prod/AxisStep.following-sibling-or-self.xml
+prod/prod-AxisStep.following-sibling-or-self: 24 pass, 0 fail, 13 unsupported (out of 37)
+running prod/AxisStep.preceding.xml
+prod/prod-AxisStep.preceding: 17 pass, 0 fail, 16 unsupported (out of 33)
+running prod/AxisStep.preceding-or-self.xml
+prod/prod-AxisStep.preceding-or-self: 17 pass, 0 fail, 15 unsupported (out of 32)
+running prod/AxisStep.preceding-sibling.xml
+prod/prod-AxisStep.preceding-sibling: 18 pass, 0 fail, 11 unsupported (out of 29)
+running prod/AxisStep.preceding-sibling-or-self.xml
+prod/prod-AxisStep.preceding-sibling-or-self: 21 pass, 0 fail, 11 unsupported (out of 32)
+running prod/AxisStep.static-typing.xml
+prod/prod-AxisStep.static-typing: 0 pass, 0 fail, 15 unsupported (out of 15)
+running prod/AxisStep.unabbr.xml
+prod/prod-AxisStep.unabbr: 26 pass, 0 fail, 0 unsupported (out of 26)
+running prod/AxisStep.J.xml
+prod/prod-AxisStep.J: 127 pass, 0 fail, 28 unsupported (out of 155)
+running prod/BaseURIDecl.xml
+prod/prod-BaseURIDecl: 0 pass, 0 fail, 38 unsupported (out of 38)
+running prod/BoundarySpaceDecl.xml
+prod/prod-BoundarySpaceDecl: 0 pass, 0 fail, 28 unsupported (out of 28)
+running prod/BracedActions.xml
+prod/prod-BracedActions: 25 pass, 0 fail, 9 unsupported (out of 34)
+running prod/ButWithExpr.xml
+  FAIL prod-ButWithExpr/butWith-004: assert gave false for result map{...}
+  FAIL prod-ButWithExpr/butWith-005: assert gave false for result map{...}
+  FAIL prod-ButWithExpr/butWith-901: expected error XPTY0004, got 2026-09-13
+  FAIL prod-ButWithExpr/butWith-902: expected error XPTY0004, got 2026-09-13
+  FAIL prod-ButWithExpr/butWith-905: expected error XPTY0004, got 1984-10-13
+  FAIL prod-ButWithExpr/butWith-906: expected error XPTY0004, got 2026-09-13
+  FAIL prod-ButWithExpr/butWith-907: expected error XPTY0004, got map{...}
+  FAIL prod-ButWithExpr/butWith-908: expected error XPTY0004, got map{...}
+prod/prod-ButWithExpr: 18 pass, 8 fail, 0 unsupported (out of 26)
+running prod/CastableExpr.xml
+prod/prod-CastableExpr: 856 pass, 0 fail, 119 unsupported (out of 975)
+running prod/CastableExpr.composite.xml
+  FAIL prod-CastableExpr.composite/castable-record-004: got true
+  FAIL prod-CastableExpr.composite/castable-record-005: got true
+  FAIL prod-CastableExpr.composite/castable-record-901: got true
+prod/prod-CastableExpr.composite: 64 pass, 3 fail, 0 unsupported (out of 67)
+running prod/CastExpr.xml
+prod/prod-CastExpr: 2764 pass, 0 fail, 73 unsupported (out of 2837)
+running prod/CastExpr.composite.xml
+  FAIL prod-CastExpr.composite/cast-array-913: expected error XPTY0004, got [...]
+  FAIL prod-CastExpr.composite/cast-record-004: expected error XPTY0004, got map{...}
+  FAIL prod-CastExpr.composite/cast-record-005: expected error XPTY0004, got map{...}
+  FAIL prod-CastExpr.composite/cast-record-901: expected error XPTY0004, got map{...}
+prod/prod-CastExpr.composite: 63 pass, 4 fail, 0 unsupported (out of 67)
+running prod/CastExpr.derived.xml
+prod/prod-CastExpr.derived: 163 pass, 0 fail, 7 unsupported (out of 170)
+running prod/CastExpr.schema.xml
+prod/prod-CastExpr.schema: 11 pass, 0 fail, 119 unsupported (out of 130)
+running prod/ChoiceItemType.xml
+prod/prod-ChoiceItemType: 37 pass, 0 fail, 13 unsupported (out of 50)
+running prod/Comment.xml
+prod/prod-Comment: 27 pass, 0 fail, 18 unsupported (out of 45)
+running prod/CompAttrConstructor.xml
+prod/prod-CompAttrConstructor: 12 pass, 0 fail, 136 unsupported (out of 148)
+running prod/CompDocConstructor.xml
+prod/prod-CompDocConstructor: 24 pass, 0 fail, 35 unsupported (out of 59)
+running prod/CompCommentConstructor.xml
+prod/prod-CompCommentConstructor: 17 pass, 0 fail, 12 unsupported (out of 29)
+running prod/CompElemConstructor.xml
+prod/prod-CompElemConstructor: 43 pass, 0 fail, 71 unsupported (out of 114)
+running prod/CompNamespaceConstructor.xml
+prod/prod-CompNamespaceConstructor: 6 pass, 0 fail, 46 unsupported (out of 52)
+running prod/CompPIConstructor.xml
+prod/prod-CompPIConstructor: 29 pass, 0 fail, 37 unsupported (out of 66)
+running prod/CompTextConstructor.xml
+prod/prod-CompTextConstructor: 14 pass, 0 fail, 25 unsupported (out of 39)
+running prod/ConstructionDecl.xml
+prod/prod-ConstructionDecl: 0 pass, 0 fail, 26 unsupported (out of 26)
+running prod/ConstructionDecl.schema.xml
+prod/prod-ConstructionDecl.schema: 0 pass, 0 fail, 4 unsupported (out of 4)
+running prod/ContextItemDecl.xml
+prod/prod-ContextItemDecl: 0 pass, 0 fail, 53 unsupported (out of 53)
+running prod/ContextValueDecl.xml
+prod/prod-ContextValueDecl: 0 pass, 0 fail, 13 unsupported (out of 13)
+running prod/ContextItemExpr.xml
+prod/prod-ContextItemExpr: 43 pass, 0 fail, 2 unsupported (out of 45)
+running prod/CopyNamespacesDecl.xml
+prod/prod-CopyNamespacesDecl: 0 pass, 0 fail, 38 unsupported (out of 38)
+running prod/CountClause.xml
+prod/prod-CountClause: 0 pass, 0 fail, 13 unsupported (out of 13)
+running prod/CurlyArrayConstructor.xml
+prod/prod-CurlyArrayConstructor: 2 pass, 0 fail, 3 unsupported (out of 5)
+running prod/DecimalFormatDecl.xml
+prod/prod-DecimalFormatDecl: 0 pass, 0 fail, 47 unsupported (out of 47)
+running prod/DefaultCollationDecl.xml
+prod/prod-DefaultCollationDecl: 0 pass, 0 fail, 12 unsupported (out of 12)
+running prod/DefaultNamespaceDecl.xml
+prod/prod-DefaultNamespaceDecl: 3 pass, 0 fail, 79 unsupported (out of 82)
+running prod/DirAttributeList.xml
+prod/prod-DirAttributeList: 0 pass, 0 fail, 136 unsupported (out of 136)
+running prod/DirectConstructor.xml
+prod/prod-DirectConstructor: 2 pass, 0 fail, 91 unsupported (out of 93)
+running prod/DirElemConstructor.xml
+prod/prod-DirElemConstructor: 0 pass, 0 fail, 73 unsupported (out of 73)
+running prod/DirElemContent.xml
+prod/prod-DirElemContent: 4 pass, 0 fail, 131 unsupported (out of 135)
+running prod/DirElemContent.namespace.xml
+prod/prod-DirElemContent.namespace: 0 pass, 0 fail, 138 unsupported (out of 138)
+running prod/DirElemContent.whitespace.xml
+prod/prod-DirElemContent.whitespace: 0 pass, 0 fail, 83 unsupported (out of 83)
+running prod/DynamicFunctionCall.xml
+prod/prod-DynamicFunctionCall: 73 pass, 0 fail, 20 unsupported (out of 93)
+running prod/EmptyOrderDecl.xml
+prod/prod-EmptyOrderDecl: 0 pass, 0 fail, 32 unsupported (out of 32)
+running prod/EQName.xml
+prod/prod-EQName: 30 pass, 0 fail, 24 unsupported (out of 54)
+running prod/EnumerationType.xml
+prod/prod-EnumerationType: 35 pass, 0 fail, 0 unsupported (out of 35)
+running prod/ExtensionExpr.xml
+prod/prod-ExtensionExpr: 0 pass, 0 fail, 81 unsupported (out of 81)
+running prod/FLWORExpr.xml
+prod/prod-FLWORExpr: 0 pass, 0 fail, 27 unsupported (out of 27)
+running prod/FLWORExpr.static-typing.xml
+prod/prod-FLWORExpr.static-typing: 0 pass, 0 fail, 28 unsupported (out of 28)
+running prod/ForClause.xml
+prod/prod-ForClause: 105 pass, 0 fail, 107 unsupported (out of 212)
+running prod/ForClause.map.xml
+prod/prod-ForClause.map: 56 pass, 0 fail, 9 unsupported (out of 65)
+running prod/ForClause.member.xml
+prod/prod-ForClause.member: 33 pass, 0 fail, 15 unsupported (out of 48)
+running prod/FunctionCall.xml
+prod/prod-FunctionCall: 72 pass, 0 fail, 154 unsupported (out of 226)
+running prod/FunctionDecl.xml
+prod/prod-FunctionDecl: 0 pass, 0 fail, 254 unsupported (out of 254)
+running prod/GeneralComp.eq.xml
+prod/prod-GeneralComp.eq: 131 pass, 0 fail, 74 unsupported (out of 205)
+running prod/GeneralComp.ge.xml
+prod/prod-GeneralComp.ge: 58 pass, 0 fail, 54 unsupported (out of 112)
+running prod/GeneralComp.gt.xml
+prod/prod-GeneralComp.gt: 97 pass, 0 fail, 53 unsupported (out of 150)
+running prod/GeneralComp.le.xml
+prod/prod-GeneralComp.le: 57 pass, 0 fail, 51 unsupported (out of 108)
+running prod/GeneralComp.lt.xml
+prod/prod-GeneralComp.lt: 74 pass, 0 fail, 59 unsupported (out of 133)
+running prod/GeneralComp.ne.xml
+prod/prod-GeneralComp.ne: 89 pass, 0 fail, 51 unsupported (out of 140)
+running prod/GroupByClause.xml
+prod/prod-GroupByClause: 0 pass, 0 fail, 40 unsupported (out of 40)
+running prod/IfExpr.xml
+prod/prod-IfExpr: 30 pass, 0 fail, 13 unsupported (out of 43)
+running prod/InlineFunctionExpr.xml
+prod/prod-InlineFunctionExpr: 29 pass, 0 fail, 19 unsupported (out of 48)
+running prod/InlineFunctionExpr.focus.xml
+prod/prod-InlineFunctionExpr.focus: 23 pass, 0 fail, 7 unsupported (out of 30)
+running prod/InstanceofExpr.xml
+prod/prod-InstanceofExpr: 284 pass, 0 fail, 44 unsupported (out of 328)
+running prod/ItemTypeDecl.xml
+prod/prod-ItemTypeDecl: 0 pass, 0 fail, 80 unsupported (out of 80)
+running prod/KeywordArguments.xml
+prod/prod-KeywordArguments: 1 pass, 0 fail, 0 unsupported (out of 1)
+running prod/LambdaExpr.xml
+prod/prod-LambdaExpr: 8 pass, 0 fail, 0 unsupported (out of 8)
+running prod/LetClause.xml
+  FAIL prod-LetClause/let-map-027: expected error XPTY0004, got 1 2
+prod/prod-LetClause: 136 pass, 1 fail, 52 unsupported (out of 189)
+running prod/Literal.xml
+prod/prod-Literal: 174 pass, 0 fail, 68 unsupported (out of 242)
+running prod/Lookup.xml
+prod/prod-Lookup: 122 pass, 0 fail, 12 unsupported (out of 134)
+running prod/MapConstructor.xml
+prod/prod-MapConstructor: 61 pass, 0 fail, 25 unsupported (out of 86)
+running prod/MappingArrow.xml
+prod/prod-MappingArrow: 66 pass, 0 fail, 1 unsupported (out of 67)
+running prod/MapType.xml
+prod/prod-MapType: 71 pass, 0 fail, 11 unsupported (out of 82)
+running prod/MethodCall.xml
+prod/prod-MethodCall: 16 pass, 0 fail, 0 unsupported (out of 16)
+running prod/ModuleImport.xml
+prod/prod-ModuleImport: 0 pass, 0 fail, 141 unsupported (out of 141)
+running prod/NamedFunctionRef.xml
+prod/prod-NamedFunctionRef: 550 pass, 0 fail, 15 unsupported (out of 565)
+running prod/NamedRecordTypeDecl.xml
+prod/prod-NamedRecordTypeDecl: 0 pass, 0 fail, 112 unsupported (out of 112)
+running prod/NamespaceDecl.xml
+prod/prod-NamespaceDecl: 27 pass, 0 fail, 28 unsupported (out of 55)
+running prod/NameTest.xml
+prod/prod-NameTest: 51 pass, 0 fail, 76 unsupported (out of 127)
+running prod/NameTestUnion.xml
+prod/prod-NameTestUnion: 27 pass, 0 fail, 10 unsupported (out of 37)
+running prod/NodeTest.xml
+prod/prod-NodeTest: 34 pass, 0 fail, 50 unsupported (out of 84)
+running prod/OptionDecl.xml
+prod/prod-OptionDecl: 0 pass, 0 fail, 9 unsupported (out of 9)
+running prod/OptionDecl.serialization.xml
+prod/prod-OptionDecl.serialization: 0 pass, 0 fail, 40 unsupported (out of 40)
+running prod/OrExpr.xml
+prod/prod-OrExpr: 334 pass, 0 fail, 42 unsupported (out of 376)
+running prod/OrderByClause.xml
+prod/prod-OrderByClause: 0 pass, 0 fail, 206 unsupported (out of 206)
+running prod/OrderingModeDecl.xml
+prod/prod-OrderingModeDecl: 0 pass, 0 fail, 29 unsupported (out of 29)
+running prod/OtherwiseExpr.xml
+prod/prod-OtherwiseExpr: 10 pass, 0 fail, 0 unsupported (out of 10)
+running prod/PathExpr.xml
+prod/prod-PathExpr: 24 pass, 0 fail, 10 unsupported (out of 34)
+running prod/PathExpr.J.xml
+prod/prod-PathExpr.J: 175 pass, 0 fail, 11 unsupported (out of 186)
+running prod/ParenthesizedExpr.xml
+prod/prod-ParenthesizedExpr: 14 pass, 0 fail, 6 unsupported (out of 20)
+running prod/PositionalVar.xml
+prod/prod-PositionalVar: 0 pass, 0 fail, 34 unsupported (out of 34)
+running prod/PipelineExpr.xml
+prod/prod-PipelineExpr: 14 pass, 0 fail, 0 unsupported (out of 14)
+running prod/Predicate.xml
+prod/prod-Predicate: 200 pass, 0 fail, 45 unsupported (out of 245)
+running prod/QuantifiedExpr.xml
+prod/prod-QuantifiedExpr: 203 pass, 0 fail, 20 unsupported (out of 223)
+running prod/RecordType.xml
+prod/prod-RecordType: 17 pass, 0 fail, 6 unsupported (out of 23)
+running prod/ReturnClause.xml
+prod/prod-ReturnClause: 15 pass, 0 fail, 6 unsupported (out of 21)
+running prod/SchemaImport.xml
+prod/prod-SchemaImport: 0 pass, 0 fail, 145 unsupported (out of 145)
+running prod/SequenceType.xml
+  FAIL prod-SequenceType/built-in-record-type-005: error XPTY0004: the map has no entry validate for the record type, for $r
+  FAIL prod-SequenceType/built-in-record-type-303: got true
+  FAIL prod-SequenceType/built-in-record-type-305: error XPTY0004: the map has no entry validate for the record type, for $r
+prod/prod-SequenceType: 61 pass, 3 fail, 2 unsupported (out of 66)
+running prod/SquareArrayConstructor.xml
+prod/prod-SquareArrayConstructor: 2 pass, 0 fail, 5 unsupported (out of 7)
+running prod/StepExpr.xml
+prod/prod-StepExpr: 9 pass, 0 fail, 61 unsupported (out of 70)
+running prod/StringConstructor.xml
+prod/prod-StringConstructor: 0 pass, 0 fail, 55 unsupported (out of 55)
+running prod/StringTemplate.xml
+prod/prod-StringTemplate: 40 pass, 0 fail, 13 unsupported (out of 53)
+running prod/SwitchExpr.xml
+prod/prod-SwitchExpr: 0 pass, 0 fail, 58 unsupported (out of 58)
+running prod/TraceClause.xml
+prod/prod-TraceClause: 0 pass, 0 fail, 6 unsupported (out of 6)
+running prod/TreatExpr.xml
+prod/prod-TreatExpr: 63 pass, 0 fail, 11 unsupported (out of 74)
+running prod/TryCatchExpr.xml
+prod/prod-TryCatchExpr: 0 pass, 0 fail, 212 unsupported (out of 212)
+running prod/TypeswitchExpr.xml
+prod/prod-TypeswitchExpr: 0 pass, 0 fail, 88 unsupported (out of 88)
+running prod/UnorderedExpr.xml
+prod/prod-UnorderedExpr: 0 pass, 0 fail, 31 unsupported (out of 31)
+running prod/UnaryLookup.xml
+prod/prod-UnaryLookup: 31 pass, 0 fail, 6 unsupported (out of 37)
+running prod/UnionNodeTest.xml
+prod/prod-UnionNodeTest: 6 pass, 0 fail, 6 unsupported (out of 12)
+running prod/ValidateExpr.xml
+prod/prod-ValidateExpr: 0 pass, 0 fail, 92 unsupported (out of 92)
+running prod/ValueComp.xml
+prod/prod-ValueComp: 120 pass, 0 fail, 5 unsupported (out of 125)
+running prod/VarDecl.xml
+prod/prod-VarDecl: 0 pass, 0 fail, 167 unsupported (out of 167)
+running prod/VarDecl.external.xml
+prod/prod-VarDecl.external: 0 pass, 0 fail, 107 unsupported (out of 107)
+running prod/VarDefaultValue.xml
+prod/prod-VarDefaultValue: 0 pass, 0 fail, 43 unsupported (out of 43)
+running prod/VersionDecl.xml
+prod/prod-VersionDecl: 0 pass, 0 fail, 53 unsupported (out of 53)
+running prod/WhereClause.xml
+prod/prod-WhereClause: 0 pass, 0 fail, 85 unsupported (out of 85)
+running prod/WhileClause.xml
+prod/prod-WhileClause: 0 pass, 0 fail, 83 unsupported (out of 83)
+running prod/WindowClause.xml
+prod/prod-WindowClause: 0 pass, 0 fail, 158 unsupported (out of 158)
+== families ==
+prod: 8917 pass, 19 fail, 6012 unsupported (out of 14948)
+TOTAL: 8917 pass, 19 fail, 6012 unsupported (out of 14948)

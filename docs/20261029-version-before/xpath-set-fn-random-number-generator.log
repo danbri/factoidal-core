@@ -1,0 +1,5 @@
+running fn/random-number-generator.xml
+fn/fn-random-number-generator: 54 pass, 0 fail, 7 unsupported (out of 61)
+== families ==
+fn: 54 pass, 0 fail, 7 unsupported (out of 61)
+TOTAL: 54 pass, 0 fail, 7 unsupported (out of 61)

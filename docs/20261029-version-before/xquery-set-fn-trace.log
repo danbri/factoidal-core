@@ -1,0 +1,5 @@
+running fn/trace.xml
+fn/fn-trace: 31 pass, 0 fail, 1 unsupported (out of 32)
+== families ==
+fn: 31 pass, 0 fail, 1 unsupported (out of 32)
+TOTAL: 31 pass, 0 fail, 1 unsupported (out of 32)

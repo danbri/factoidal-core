@@ -1,0 +1,6 @@
+running ser/method-adaptive.xml
+  EXCLUDED method-adaptive/Serialization-adaptive-37a: defective test data, https://github.com/danbri/factoidal/issues/1160
+ser/method-adaptive: 99 pass, 0 fail, 40 unsupported (out of 139); 1 excluded (defective test data)
+== families ==
+ser: 99 pass, 0 fail, 40 unsupported (out of 139); 1 excluded (defective test data)
+TOTAL: 99 pass, 0 fail, 40 unsupported (out of 139); 1 excluded (defective test data)

@@ -1,0 +1,959 @@
+running prod/AllowingEmpty.xml
+  FAIL prod-AllowingEmpty/outer-013: expected error XPTY0004, got <node>
+prod/prod-AllowingEmpty: 18 pass, 1 fail, 0 unsupported (out of 19)
+running prod/Annotation.xml
+  FAIL prod-Annotation/annotation-40-17: error XPST0003: an annotation value must be a literal
+  FAIL prod-Annotation/annotation-40-18: error XPST0003: an annotation value must be a literal
+  FAIL prod-Annotation/annotation-40-19: error XPST0003: an annotation value must be a literal
+  FAIL prod-Annotation/annotation-40-20: error XPST0003: an annotation value must be a literal
+  FAIL prod-Annotation/annotation-assertion-11: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-12: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-13: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-14: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-15: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-16: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-17: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-18: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-40-05: error XPST0003: bad numeric literal
+  FAIL prod-Annotation/annotation-assertion-40-07: error XPST0081: undeclared namespace prefix xq
+  FAIL prod-Annotation/annotation-assertion-40-08: wrong error code XPST0081 (expected XQST0045)
+  FAIL prod-Annotation/annotation-assertion-40-09: error XPST0081: undeclared namespace prefix xq
+  FAIL prod-Annotation/annotation-assertion-40-10: error FONS0004: no namespace binding for prefix xq
+  FAIL prod-Annotation/annotation-assertion-40-11: error XPTY0004: wrong number of items for $map of map:keys: 0
+prod/prod-Annotation: 70 pass, 18 fail, 2 unsupported (out of 90)
+running prod/ArrayType.xml
+  FAIL prod-ArrayType/ArrayType-047: error XQTY0105: an array in element content
+  FAIL prod-ArrayType/ArrayType-048: error XQTY0105: an array in element content
+  FAIL prod-ArrayType/ArrayType-049: error XQTY0105: an array in element content
+  FAIL prod-ArrayType/ArrayType-051: error XQTY0105: an array in element content
+prod/prod-ArrayType: 71 pass, 4 fail, 0 unsupported (out of 75)
+running prod/ArrowExpr.xml
+prod/prod-ArrowExpr: 70 pass, 0 fail, 1 unsupported (out of 71)
+running prod/AxisStep.xml
+  FAIL prod-AxisStep/Axes112: expected error XQST0134, got <node>
+  FAIL prod-AxisStep/K2-Axes-54: wrong error code XPDY0002 (expected XPST0003)
+  FAIL prod-AxisStep/K2-Axes-103: string value '|        _11c _11c _11 _11  _17c _17c _17 _17   _11    _17 _11c  _17 _17 _23 |'
+prod/prod-AxisStep: 336 pass, 3 fail, 23 unsupported (out of 362)
+running prod/AxisStep.abbr.xml
+prod/prod-AxisStep.abbr: 23 pass, 0 fail, 0 unsupported (out of 23)
+running prod/AxisStep.ancestor.xml
+prod/prod-AxisStep.ancestor: 43 pass, 0 fail, 1 unsupported (out of 44)
+running prod/AxisStep.ancestor-or-self.xml
+prod/prod-AxisStep.ancestor-or-self: 31 pass, 0 fail, 1 unsupported (out of 32)
+running prod/AxisStep.following.xml
+prod/prod-AxisStep.following: 26 pass, 0 fail, 1 unsupported (out of 27)
+running prod/AxisStep.following-or-self.xml
+prod/prod-AxisStep.following-or-self: 27 pass, 0 fail, 0 unsupported (out of 27)
+running prod/AxisStep.following-sibling.xml
+prod/prod-AxisStep.following-sibling: 33 pass, 0 fail, 1 unsupported (out of 34)
+running prod/AxisStep.following-sibling-or-self.xml
+prod/prod-AxisStep.following-sibling-or-self: 37 pass, 0 fail, 0 unsupported (out of 37)
+running prod/AxisStep.preceding.xml
+prod/prod-AxisStep.preceding: 32 pass, 0 fail, 1 unsupported (out of 33)
+running prod/AxisStep.preceding-or-self.xml
+prod/prod-AxisStep.preceding-or-self: 32 pass, 0 fail, 0 unsupported (out of 32)
+running prod/AxisStep.preceding-sibling.xml
+prod/prod-AxisStep.preceding-sibling: 28 pass, 0 fail, 1 unsupported (out of 29)
+running prod/AxisStep.preceding-sibling-or-self.xml
+prod/prod-AxisStep.preceding-sibling-or-self: 32 pass, 0 fail, 0 unsupported (out of 32)
+running prod/AxisStep.static-typing.xml
+prod/prod-AxisStep.static-typing: 0 pass, 0 fail, 15 unsupported (out of 15)
+running prod/AxisStep.unabbr.xml
+prod/prod-AxisStep.unabbr: 26 pass, 0 fail, 0 unsupported (out of 26)
+running prod/AxisStep.J.xml
+  FAIL prod-AxisStep.J/JAxes-217: error XPST0003: unterminated pragma
+prod/prod-AxisStep.J: 154 pass, 1 fail, 0 unsupported (out of 155)
+running prod/BaseURIDecl.xml
+  FAIL prod-BaseURIDecl/K2-BaseURIProlog-4: any-of: got false; expected error XPST0001, got false
+  FAIL prod-BaseURIDecl/K2-BaseURIProlog-5: any-of: got false; expected error XPST0001, got false
+  FAIL prod-BaseURIDecl/base-URI-modules-001: got true
+prod/prod-BaseURIDecl: 35 pass, 3 fail, 0 unsupported (out of 38)
+running prod/BoundarySpaceDecl.xml
+prod/prod-BoundarySpaceDecl: 28 pass, 0 fail, 0 unsupported (out of 28)
+running prod/BracedActions.xml
+prod/prod-BracedActions: 34 pass, 0 fail, 0 unsupported (out of 34)
+running prod/ButWithExpr.xml
+  FAIL prod-ButWithExpr/butWith-004: assert gave false for result map{...}
+  FAIL prod-ButWithExpr/butWith-005: assert gave false for result map{...}
+  FAIL prod-ButWithExpr/butWith-901: expected error XPTY0004, got 2026-09-13
+  FAIL prod-ButWithExpr/butWith-902: expected error XPTY0004, got 2026-09-13
+  FAIL prod-ButWithExpr/butWith-905: expected error XPTY0004, got 1984-10-13
+  FAIL prod-ButWithExpr/butWith-906: expected error XPTY0004, got 2026-09-13
+  FAIL prod-ButWithExpr/butWith-907: expected error XPTY0004, got map{...}
+  FAIL prod-ButWithExpr/butWith-908: expected error XPTY0004, got map{...}
+prod/prod-ButWithExpr: 18 pass, 8 fail, 0 unsupported (out of 26)
+running prod/CastableExpr.xml
+  FAIL prod-CastableExpr/CastableAs651: error XPST0051: unknown type d:canonicalDecimal
+  FAIL prod-CastableExpr/CastableAs652: error XPST0051: unknown type d:canonicalDecimal
+  FAIL prod-CastableExpr/CastableAs653b: error XPST0051: unknown type d:canonicalDecimal
+  FAIL prod-CastableExpr/CastableAs654b: error XPST0051: unknown type d:canonicalDecimal
+  FAIL prod-CastableExpr/CastableAs655: error XPST0051: unknown type d:canonicalDouble
+  FAIL prod-CastableExpr/CastableAs656: error XPST0051: unknown type d:canonicalDouble
+  FAIL prod-CastableExpr/CastableAs657: error XPST0051: unknown type d:canonicalDouble
+  FAIL prod-CastableExpr/CastableAs658: error XPST0051: unknown type d:canonicalDouble
+  FAIL prod-CastableExpr/CastableAs659: error XPST0051: unknown type d:canonicalDouble
+  FAIL prod-CastableExpr/CastableAs660: error XPST0051: unknown type d:canonicalDouble
+  FAIL prod-CastableExpr/CastableAs661: error XPST0051: unknown type d:canonicalDouble
+  FAIL prod-CastableExpr/CastableAs662: error XPST0051: unknown type d:canonicalDouble
+  FAIL prod-CastableExpr/K-SeqExprCastable-4a: any-of: wrong error code XPST0051 (expected XPST0003); wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastableExpr/K-SeqExprCastable-5a: wrong error code XPST0051 (expected XPST0080)
+  FAIL prod-CastableExpr/K-SeqExprCastable-6a: wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastableExpr/K-SeqExprCastable-13a: any-of: wrong error code XPST0051 (expected XPST0003); wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastableExpr/Castable-UnionType-1: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-2: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-3: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-4: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-5: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-6: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-7: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-8: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-9: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-10: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-11: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-12: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-13: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-14: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-15: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-16: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-17: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-18: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-19: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-20: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-21: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-22: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-23: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-24: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-25: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-26: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastableExpr/Castable-UnionType-36: error XPST0051: unknown type s:dateOrDateTime
+  FAIL prod-CastableExpr/Castable-UnionType-37: error XPST0051: unknown type s:dateOrDateTime
+  FAIL prod-CastableExpr/Castable-UnionType-38: error XPST0051: unknown type s:dateOrDateTime
+  FAIL prod-CastableExpr/Castable-ListType-2: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-3: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-4: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-5: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-6: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-7: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-8: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-9: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-10: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-11: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-12: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-13: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-14: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-15: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-16: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-17: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-18: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/Castable-ListType-19: error XPST0051: unknown type s:intListType1
+  FAIL prod-CastableExpr/cbcl-castable-impure-001: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-002: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-003: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-004: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-005: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-006: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-007: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-008: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-009: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-010: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-011: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-012: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-013: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-014: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-015: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-016: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-017: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-018: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-019: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-impure-020: error XPST0051: unknown type s:impureUnionType
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-001: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-002: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-003: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-004: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-005: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-006: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-007: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-008: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-009: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-010: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-011: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-012: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-013: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-014: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-015: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-016: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-017: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-018: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-019: error XPST0051: unknown type s:restrictedUnion
+  FAIL prod-CastableExpr/cbcl-castable-restricted-union-020: error XPST0051: unknown type s:restrictedUnion
+prod/prod-CastableExpr: 857 pass, 103 fail, 15 unsupported (out of 975)
+running prod/CastableExpr.composite.xml
+  FAIL prod-CastableExpr.composite/castable-record-004: got true
+  FAIL prod-CastableExpr.composite/castable-record-005: got true
+  FAIL prod-CastableExpr.composite/castable-record-901: got true
+prod/prod-CastableExpr.composite: 64 pass, 3 fail, 0 unsupported (out of 67)
+running prod/CastExpr.xml
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-6: error XPST0017: unknown function ntn:pictures#1
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-7: error XPST0051: unknown type ntn:pictures
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-8: wrong error code XPST0051 (expected XPTY0117)
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-9: wrong error code XPST0051 (expected XPTY0117)
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-10: error XPST0051: unknown type ntn:qnames
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-11: wrong error code XPST0051 (expected XPTY0117)
+  FAIL prod-CastExpr/CastAsNamespaceSensitiveType-12: wrong error code XPST0051 (expected XPTY0117)
+  FAIL prod-CastExpr/K-SeqExprCast-3a: any-of: wrong error code XPST0051 (expected XPST0003); wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K-SeqExprCast-4a: wrong error code XPST0051 (expected XPST0080)
+  FAIL prod-CastExpr/K-SeqExprCast-5a: wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K-SeqExprCast-7a: wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K-SeqExprCast-10a: any-of: wrong error code XPST0051 (expected XPST0003); wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K-SeqExprCast-11a: any-of: wrong error code XPST0051 (expected XPST0003); wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K-SeqExprCast-12a: any-of: wrong error code XPST0051 (expected XPST0003); wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K-SeqExprCast-13a: any-of: wrong error code XPST0051 (expected XPST0003); wrong error code XPST0051 (expected XQST0052)
+  FAIL prod-CastExpr/K2-SeqExprCast-479: error FONS0004: no namespace binding for prefix prefix
+prod/prod-CastExpr: 2773 pass, 16 fail, 48 unsupported (out of 2837)
+running prod/CastExpr.composite.xml
+  FAIL prod-CastExpr.composite/cast-array-913: expected error XPTY0004, got [...]
+  FAIL prod-CastExpr.composite/cast-record-004: expected error XPTY0004, got map{...}
+  FAIL prod-CastExpr.composite/cast-record-005: expected error XPTY0004, got map{...}
+  FAIL prod-CastExpr.composite/cast-record-901: expected error XPTY0004, got map{...}
+prod/prod-CastExpr.composite: 63 pass, 4 fail, 0 unsupported (out of 67)
+running prod/CastExpr.derived.xml
+  FAIL prod-CastExpr.derived/cbcl-cast-derived-001: error XPST0051: unknown type derivedType:integer
+prod/prod-CastExpr.derived: 163 pass, 1 fail, 6 unsupported (out of 170)
+running prod/CastExpr.schema.xml
+  FAIL prod-CastExpr.schema/qname-cast-2: error XPST0017: unknown function myType:QNameBased#1
+  FAIL prod-CastExpr.schema/qname-cast-3: error XPST0051: unknown type myType:QNameBased
+  FAIL prod-CastExpr.schema/qname-cast-4: error XPST0051: unknown type myType:QNameBased
+  FAIL prod-CastExpr.schema/notation-cast-2: wrong error code XPST0017 (expected XPST0080)
+  FAIL prod-CastExpr.schema/notation-cast-3: error XPST0051: unknown type myType:NOTATIONBased
+  FAIL prod-CastExpr.schema/user-defined-1: error XPST0017: unknown function myType:sizeType#1
+  FAIL prod-CastExpr.schema/user-defined-2: wrong error code XPST0017 (expected FORG0001)
+  FAIL prod-CastExpr.schema/user-defined-3: error XPST0017: unknown function myType:sizeType#1
+  FAIL prod-CastExpr.schema/user-defined-4: error XPST0017: unknown function myType:stringBased#1
+  FAIL prod-CastExpr.schema/user-defined-5: error XPST0017: unknown function myType:stringBased#1
+  FAIL prod-CastExpr.schema/user-defined-6: error XPST0017: unknown function myType:sizeType#1
+  FAIL prod-CastExpr.schema/user-defined-7: error XPST0017: unknown function myType:sizeType#1
+  FAIL prod-CastExpr.schema/user-defined-8: error XPST0051: unknown type myType:floatBased
+  FAIL prod-CastExpr.schema/user-defined-9: error XPST0051: unknown type myType:floatBased
+  FAIL prod-CastExpr.schema/user-defined-10: error XPST0017: unknown function myType:sizeType#1
+  FAIL prod-CastExpr.schema/user-defined-11: wrong error code XPST0017 (expected XQST0034)
+  FAIL prod-CastExpr.schema/CastAs-UnionType-1: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastExpr.schema/CastAs-UnionType-2: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastExpr.schema/CastAs-UnionType-3: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-CastExpr.schema/CastAs-UnionType-4: wrong error code XPST0051 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-UnionType-5: error XPST0051: unknown type s:myUnionType2
+  FAIL prod-CastExpr.schema/CastAs-UnionType-5a: wrong error code XPST0051 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-UnionType-6: error XPST0017: unknown function s:myUnionType1#1
+  FAIL prod-CastExpr.schema/CastAs-UnionType-7: error XPST0017: unknown function s:myUnionType1#1
+  FAIL prod-CastExpr.schema/CastAs-UnionType-8: string value ''
+  FAIL prod-CastExpr.schema/CastAs-UnionType-9: error XPST0017: unknown function s:myUnionType1#1
+  FAIL prod-CastExpr.schema/CastAs-UnionType-10: error XPST0051: unknown type s:sensitiveUnion
+  FAIL prod-CastExpr.schema/CastAs-UnionType-11: error XPST0017: unknown function s:sensitiveUnion#1
+  FAIL prod-CastExpr.schema/CastAs-UnionType-12: error XPST0051: unknown type s:sensitiveUnion
+  FAIL prod-CastExpr.schema/CastAs-UnionType-13: wrong error code XPTY0004 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-UnionType-14: wrong error code XPST0017 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-UnionType-15: wrong error code XPST0017 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-UnionType-16: error XPST0051: unknown type s:sensitiveUnion
+  FAIL prod-CastExpr.schema/CastAs-UnionType-18: error XPST0051: unknown type s:sensitiveUnion
+  FAIL prod-CastExpr.schema/CastAs-UnionType-19: error XPST0051: unknown type s:sensitiveUnion
+  FAIL prod-CastExpr.schema/CastAs-UnionType-20: error XPST0017: unknown function s:sensitiveUnion#1
+  FAIL prod-CastExpr.schema/CastAs-UnionType-21: error XPST0017: unknown function s:sensitiveUnion#1
+  FAIL prod-CastExpr.schema/CastAs-UnionType-22: wrong error code XPST0017 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-UnionType-23: wrong error code XPST0017 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-UnionType-24: wrong error code XPST0017 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-UnionType-25: error XPST0051: unknown type s:sensitiveUnion
+  FAIL prod-CastExpr.schema/CastAs-UnionType-26: error XPST0051: unknown type s:sensitiveUnion
+  FAIL prod-CastExpr.schema/CastAs-UnionType-27: error XPST0051: unknown type s:unionOfLists
+  FAIL prod-CastExpr.schema/CastAs-UnionType-28: error XPST0051: unknown type s:unionOfLists
+  FAIL prod-CastExpr.schema/CastAs-UnionType-29: error XPST0051: unknown type sensitiveUnion
+  FAIL prod-CastExpr.schema/CastAs-UnionType-30: error XPST0051: unknown type sensitiveUnion
+  FAIL prod-CastExpr.schema/CastAs-UnionType-31: error XPST0051: unknown type s:sensitiveUnion
+  FAIL prod-CastExpr.schema/CastAs-UnionType-32: error XPST0051: unknown type s:sensitiveUnion
+  FAIL prod-CastExpr.schema/CastAs-UnionType-33: error XPST0017: unknown function s:sensitiveUnion#1
+  FAIL prod-CastExpr.schema/CastAs-UnionType-34: error XPST0017: unknown function s:restrictedUnion#1
+  FAIL prod-CastExpr.schema/CastAs-UnionType-35: wrong error code XPST0017 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-UnionType-36: error XPST0051: unknown type s:dateOrDateTime
+  FAIL prod-CastExpr.schema/CastAs-UnionType-37: error XPST0051: unknown type s:dateOrDateTime
+  FAIL prod-CastExpr.schema/CastAs-UnionType-38: error XPST0051: unknown type s:dateOrDateTime
+  FAIL prod-CastExpr.schema/CastAs-ListType-1: error XPST0017: unknown function s:decimalListType1#1
+  FAIL prod-CastExpr.schema/CastAs-ListType-2: error XPST0017: unknown function s:myRestrictedList1#1
+  FAIL prod-CastExpr.schema/CastAs-ListType-3: wrong error code XPST0017 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-ListType-4: error XPST0051: unknown type s:strListType1
+  FAIL prod-CastExpr.schema/CastAs-ListType-5: wrong error code XPST0051 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-ListType-6: wrong error code XPST0051 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-ListType-21: error XPST0051: unknown type s:listOfUnions
+  FAIL prod-CastExpr.schema/CastAs-ListType-22: error XPST0051: unknown type s:myRestrictedList1
+  FAIL prod-CastExpr.schema/CastAs-ListType-23: wrong error code XPST0051 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-ListType-24: got , expected 123 987 567 456
+  FAIL prod-CastExpr.schema/CastAs-ListType-25: wrong error code XPST0017 (expected FORG0001)
+  FAIL prod-CastExpr.schema/CastAs-ListType-26: error XPTY0004: wrong number of items for $f: 0
+  FAIL prod-CastExpr.schema/CastAs-ListType-31: error XPST0051: unknown type s:myRestrictedList1
+  FAIL prod-CastExpr.schema/CastAs-ListType-32: error XPST0051: unknown type s:myRestrictedList1
+prod/prod-CastExpr.schema: 62 pass, 68 fail, 0 unsupported (out of 130)
+running prod/ChoiceItemType.xml
+  FAIL prod-ChoiceItemType/choice-type-200: error XPST0051: unknown type my:hatsize
+  FAIL prod-ChoiceItemType/choice-type-201: error XPST0051: unknown type my:hatsize
+  FAIL prod-ChoiceItemType/choice-type-202: error XPST0051: unknown type my:hatsize
+  FAIL prod-ChoiceItemType/choice-type-203: error XPST0051: unknown type my:hatsize
+  FAIL prod-ChoiceItemType/choice-type-204: error XPST0051: unknown type my:hatsize
+  FAIL prod-ChoiceItemType/choice-type-205: assert raised XPST0051 unknown type hatsize
+  FAIL prod-ChoiceItemType/choice-type-206: error XPST0051: unknown type my:hatsize
+prod/prod-ChoiceItemType: 43 pass, 7 fail, 0 unsupported (out of 50)
+running prod/Comment.xml
+prod/prod-Comment: 45 pass, 0 fail, 0 unsupported (out of 45)
+running prod/CompAttrConstructor.xml
+  FAIL prod-CompAttrConstructor/K2-ComputeConAttr-37: wrong error code XQDY0044 (expected XPST0081)
+  FAIL prod-CompAttrConstructor/K2-ComputeConAttr-65: any-of: expected error XPTY0004, got <node>; expected error XPDY0002, got <node>
+  FAIL prod-CompAttrConstructor/K2-ComputeConAttr-66: got <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <no
+  FAIL prod-CompAttrConstructor/K2-ComputeConAttr-72: error XPTY0004: value of wrong type for $map of map:size
+  FAIL prod-CompAttrConstructor/Constr-compattr-eqname-entities-1: assert gave  for result <node>
+  FAIL prod-CompAttrConstructor/Constr-compattr-eqname-entities-3: assert gave  for result <node>
+  FAIL prod-CompAttrConstructor/Constr-compattr-eqname-entities-5: assert gave  for result <node>
+  FAIL prod-CompAttrConstructor/Constr-compattr-eqname-entities-6: assert gave  for result <node>
+  FAIL prod-CompAttrConstructor/Constr-compattr-eqname-error-5: expected error XQDY0074, got <node>
+  FAIL prod-CompAttrConstructor/Constr-compattr-eqname-error-6: expected error XQDY0074, got <node>
+prod/prod-CompAttrConstructor: 136 pass, 10 fail, 2 unsupported (out of 148)
+running prod/CompDocConstructor.xml
+  FAIL prod-CompDocConstructor/Constr-docnode-constrmod-1: got 2 (xs:integer), expected 1
+  FAIL prod-CompDocConstructor/Constr-docnode-constrmod-3: expected error FORG0001, got 12678967
+prod/prod-CompDocConstructor: 57 pass, 2 fail, 0 unsupported (out of 59)
+running prod/CompCommentConstructor.xml
+prod/prod-CompCommentConstructor: 28 pass, 0 fail, 1 unsupported (out of 29)
+running prod/CompElemConstructor.xml
+  FAIL prod-CompElemConstructor/K2-ComputeConElem-20: any-of: expected error XPDY0002, got <node>; expected error XPTY0004, got <node>; expected error FOTY0013, got <node>
+  FAIL prod-CompElemConstructor/K2-ComputeConElem-21: got <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <no
+  FAIL prod-CompElemConstructor/K2-ComputeConElem-26: any-of: expected error XPDY0002, got <node>; expected error XPTY0004, got <node>; expected error FOTY0013, got <node>
+  FAIL prod-CompElemConstructor/Constr-compelem-eqname-entities-1: assert gave  for result <node>
+  FAIL prod-CompElemConstructor/Constr-compelem-eqname-entities-3: assert gave  for result <node>
+  FAIL prod-CompElemConstructor/Constr-compelem-eqname-entities-5: assert gave  for result <node>
+  FAIL prod-CompElemConstructor/Constr-compelem-eqname-entities-6: assert gave  for result <node>
+  FAIL prod-CompElemConstructor/Constr-compelem-eqname-error-5: expected error XQDY0074, got <node>
+  FAIL prod-CompElemConstructor/Constr-compelem-eqname-error-6: expected error XQDY0074, got <node>
+prod/prod-CompElemConstructor: 101 pass, 9 fail, 4 unsupported (out of 114)
+running prod/CompNamespaceConstructor.xml
+  FAIL prod-CompNamespaceConstructor/nscons-011: error XQDY0102: namespace prefix p bound twice
+  FAIL prod-CompNamespaceConstructor/nscons-028: string value 'true true'
+  FAIL prod-CompNamespaceConstructor/nscons-047: any-of: expected error XPTY0004, got <node>; expected error XPDY0002, got <node>
+  FAIL prod-CompNamespaceConstructor/nscons-048: got <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <no
+prod/prod-CompNamespaceConstructor: 47 pass, 4 fail, 1 unsupported (out of 52)
+running prod/CompPIConstructor.xml
+  FAIL prod-CompPIConstructor/K2-ComputeConPI-16: any-of: expected error XPTY0004, got <node>; expected error XPDY0002, got <node>
+  FAIL prod-CompPIConstructor/K2-ComputeConPI-17: got <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <no
+prod/prod-CompPIConstructor: 60 pass, 2 fail, 4 unsupported (out of 66)
+running prod/CompTextConstructor.xml
+prod/prod-CompTextConstructor: 38 pass, 0 fail, 1 unsupported (out of 39)
+running prod/ConstructionDecl.xml
+prod/prod-ConstructionDecl: 26 pass, 0 fail, 0 unsupported (out of 26)
+running prod/ConstructionDecl.schema.xml
+  FAIL prod-ConstructionDecl.schema/Constr-compelem-constrmod-1: got 2 (xs:integer), expected 1
+  FAIL prod-ConstructionDecl.schema/Constr-compelem-constrmod-5: got 2 (xs:integer), expected 1
+prod/prod-ConstructionDecl.schema: 2 pass, 2 fail, 0 unsupported (out of 4)
+running prod/ContextItemDecl.xml
+  FAIL prod-ContextItemDecl/contextDecl-014: error XPDY0002: the context value is absent
+  FAIL prod-ContextItemDecl/contextDecl-023: expected error XPST0003, got 5
+  FAIL prod-ContextItemDecl/contextDecl-032: expected error XPTY0004, got 
+  FAIL prod-ContextItemDecl/contextDecl-033: expected error XPTY0004, got 6 7 8 9 10 11 12 13 14 15 16 17
+  FAIL prod-ContextItemDecl/contextDecl-037a: error XPTY0004: the context value does not match its declared type
+  FAIL prod-ContextItemDecl/contextDecl-038a: error XPTY0004: the context value does not match its declared type
+  FAIL prod-ContextItemDecl/contextDecl-039a: error XPTY0004: the context value does not match its declared type
+  FAIL prod-ContextItemDecl/contextDecl-044a: error XPTY0004: the context value does not match its declared type
+  FAIL prod-ContextItemDecl/contextDecl-048: expected error XQST0113, got true
+  FAIL prod-ContextItemDecl/contextDecl-050: expected error XPTY0004, got true
+  FAIL prod-ContextItemDecl/contextDecl-052: wrong error code XQST0059 (expected XQST0113)
+  FAIL prod-ContextItemDecl/contextDecl-056: error XPST0051: unknown type u:decimal-or-string
+  FAIL prod-ContextItemDecl/contextDecl-057: wrong error code XPST0051 (expected XPTY0004)
+  FAIL prod-ContextItemDecl/contextDecl-059: expected error XPTY0004, got true
+  FAIL prod-ContextItemDecl/contextDecl-060: expected error XPTY0004, got false
+  FAIL prod-ContextItemDecl/contextDecl-063: error XPST0051: unknown type u:decimal-or-string
+  FAIL prod-ContextItemDecl/contextDecl-064: wrong error code XPST0051 (expected XPTY0004)
+  FAIL prod-ContextItemDecl/contextDecl-065: error XPST0051: unknown type u:decimal-or-string
+  FAIL prod-ContextItemDecl/contextDecl-066: wrong error code XPST0051 (expected XPTY0004)
+prod/prod-ContextItemDecl: 30 pass, 19 fail, 4 unsupported (out of 53)
+running prod/ContextValueDecl.xml
+prod/prod-ContextValueDecl: 13 pass, 0 fail, 0 unsupported (out of 13)
+running prod/ContextItemExpr.xml
+prod/prod-ContextItemExpr: 45 pass, 0 fail, 0 unsupported (out of 45)
+running prod/CopyNamespacesDecl.xml
+  FAIL prod-CopyNamespacesDecl/K2-CopyNamespacesProlog-9: string value 'namespace1 xml | namespace1 xml'
+prod/prod-CopyNamespacesDecl: 37 pass, 1 fail, 0 unsupported (out of 38)
+running prod/CountClause.xml
+prod/prod-CountClause: 13 pass, 0 fail, 0 unsupported (out of 13)
+running prod/CurlyArrayConstructor.xml
+prod/prod-CurlyArrayConstructor: 5 pass, 0 fail, 0 unsupported (out of 5)
+running prod/DecimalFormatDecl.xml
+  FAIL prod-DecimalFormatDecl/decimal-format-07: wrong error code FODF1290 (expected XPST0003)
+  FAIL prod-DecimalFormatDecl/decimal-format-21: error FODF1310: a passive character between active characters
+  FAIL prod-DecimalFormatDecl/decimal-format-35: expected error XQST0097, got true
+  FAIL prod-DecimalFormatDecl/decimal-format-36: expected error XQST0098, got true
+  FAIL prod-DecimalFormatDecl/decimal-format-37: expected error XQST0098, got true
+  FAIL prod-DecimalFormatDecl/decimal-format-38: expected error XPST0003, got true
+  FAIL prod-DecimalFormatDecl/decimal-format-901err: wrong error code FODF1290 (expected XQST0098)
+  FAIL prod-DecimalFormatDecl/decimal-format-908err: wrong error code FODF1290 (expected XQST0097)
+  FAIL prod-DecimalFormatDecl/decimal-format-909err: wrong error code FODF1290 (expected XQST0097)
+  FAIL prod-DecimalFormatDecl/decimal-format-910err: wrong error code FODF1290 (expected XQST0097)
+  FAIL prod-DecimalFormatDecl/decimal-format-912err: expected error XQST0098, got true
+prod/prod-DecimalFormatDecl: 35 pass, 11 fail, 1 unsupported (out of 47)
+running prod/DefaultCollationDecl.xml
+  FAIL prod-DefaultCollationDecl/defaultcolldecl-3: any-of: error XQST0038: unknown collation http://www.w3.org/2013/collation/UCA?strength=secondary;fallback=no; wrong error code XQST0038 (expected FOCH0002)
+  FAIL prod-DefaultCollationDecl/defaultcolldecl-4: any-of: error XQST0038: unknown collation http://www.w3.org/2013/collation/UCA?strength=secondary;fallback=no; wrong error code XQST0038 (expected FOCH0002)
+  FAIL prod-DefaultCollationDecl/defaultcolldecl-5: any-of: error XQST0038: unknown collation http://www.w3.org/2013/collation/UCA?strength=secondary;fallback=no; wrong error code XQST0038 (expected FOCH0002)
+  FAIL prod-DefaultCollationDecl/defaultcolldecl-6: any-of: error XQST0038: unknown collation http://www.w3.org/2013/collation/UCA?strength=secondary;fallback=no; wrong error code XQST0038 (expected FOCH0002)
+  FAIL prod-DefaultCollationDecl/K-CollationProlog-1: error XQST0038: unknown collation collation/codepoint
+prod/prod-DefaultCollationDecl: 7 pass, 5 fail, 0 unsupported (out of 12)
+running prod/DefaultNamespaceDecl.xml
+  FAIL prod-DefaultNamespaceDecl/K2-DefaultNamespaceProlog-6: assert gave false for result http://example.com/ <node> http://example.com/
+  FAIL prod-DefaultNamespaceDecl/K2-DefaultNamespaceProlog-11: error XPST0051: unknown type byte
+  FAIL prod-DefaultNamespaceDecl/K2-DefaultNamespaceProlog-13: expected error XPST0003, got 1
+  FAIL prod-DefaultNamespaceDecl/K2-DefaultNamespaceProlog-14: expected error XPST0003, got 1
+  FAIL prod-DefaultNamespaceDecl/K2-DefaultNamespaceProlog-15: expected error XPST0003, got 1
+  FAIL prod-DefaultNamespaceDecl/K2-DefaultNamespaceProlog-16: expected error XPST0003, got 1
+  FAIL prod-DefaultNamespaceDecl/default-namespace-40-04: got  (xs:string), expected data
+  FAIL prod-DefaultNamespaceDecl/default-namespace-40-14: got 1 1, expected user 1
+  FAIL prod-DefaultNamespaceDecl/default-namespace-40-16: got ##any (xs:anyURI), expected 
+  FAIL prod-DefaultNamespaceDecl/default-namespace-40-17: error XPST0051: unknown type integer
+prod/prod-DefaultNamespaceDecl: 70 pass, 10 fail, 2 unsupported (out of 82)
+running prod/DirAttributeList.xml
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-1: expected error XPST0003, got <node>
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-4a: any-of: expected error XPST0003, got <node>; expected error XQST0118, got <node>
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-6a: wrong error code XPST0003 (expected XQST0118)
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-25: expected error XPST0003, got <node>
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-26: expected error XPST0003, got <node>
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-27: expected error XPST0003, got <node>
+  FAIL prod-DirAttributeList/K2-DirectConElemAttr-28: expected error XPST0003, got <node>
+prod/prod-DirAttributeList: 126 pass, 7 fail, 3 unsupported (out of 136)
+running prod/DirectConstructor.xml
+  FAIL prod-DirectConstructor/Constr-pi-content-9: expected error XPST0003, got false
+  FAIL prod-DirectConstructor/K2-DirectConOther-66: xml <a><b><c/>xml | xml<d/></b></a>
+prod/prod-DirectConstructor: 91 pass, 2 fail, 0 unsupported (out of 93)
+running prod/DirElemConstructor.xml
+  FAIL prod-DirElemConstructor/Constr-elem-matchtag-1: wrong error code XPST0003 (expected XQST0118)
+  FAIL prod-DirElemConstructor/Constr-elem-matchtag-2a: wrong error code XPST0003 (expected XQST0118)
+  FAIL prod-DirElemConstructor/K2-DirectConElem-5: expected error XPST0003, got <node>
+  FAIL prod-DirElemConstructor/K2-DirectConElem-15: wrong error code XPST0003 (expected XQST0118)
+  FAIL prod-DirElemConstructor/cbcl-directconelem-002: string value 'xmlns:a="http://example.com/1" xmlns:b="http://example.com/2" xmlns:c="http://ex'
+prod/prod-DirElemConstructor: 66 pass, 5 fail, 2 unsupported (out of 73)
+running prod/DirElemContent.xml
+  FAIL prod-DirElemContent/Constr-cont-constrmod-1: got 2 (xs:integer), expected 1
+  FAIL prod-DirElemContent/Constr-cont-constrmod-3: expected error FORG0001, got 12678967
+  FAIL prod-DirElemContent/Constr-cont-constrmod-5: got 2 (xs:integer), expected 1
+  FAIL prod-DirElemContent/Constr-cont-constrmod-7: expected error FORG0001, got 12678967
+  FAIL prod-DirElemContent/Constr-cont-nsmode-7: expected error XQTY0086, got <node>
+  FAIL prod-DirElemContent/Constr-cont-nsmode-8: expected error XQTY0086, got <node>
+  FAIL prod-DirElemContent/Constr-cont-nsmode-10: expected error XQTY0086, got <node>
+  FAIL prod-DirElemContent/Constr-cont-nsmode-11: any-of: error XPST0051: unknown type ns:myString; error XPST0051: unknown type ns:myString
+  FAIL prod-DirElemContent/K2-DirectConElemContent-48: xml <e xmlns="http://www.example.com/"><a xmlns=""/></e>2<e xmlns="http://www.example.com/"><a xmlns=""><b/></a></e>
+prod/prod-DirElemContent: 124 pass, 9 fail, 2 unsupported (out of 135)
+running prod/DirElemContent.namespace.xml
+  FAIL prod-DirElemContent.namespace/K2-DirectConElemNamespace-2: wrong error code XPST0003 (expected XQST0118)
+  FAIL prod-DirElemContent.namespace/K2-DirectConElemNamespace-3: wrong error code XPST0003 (expected XQST0118)
+  FAIL prod-DirElemContent.namespace/K2-DirectConElemNamespace-8: wrong error code XPDY0002 (expected XPST0017)
+  FAIL prod-DirElemContent.namespace/K2-DirectConElemNamespace-10: wrong error code XPDY0002 (expected XPST0017)
+  FAIL prod-DirElemContent.namespace/K2-DirectConElemNamespace-19: error XPST0051: unknown type integer
+  FAIL prod-DirElemContent.namespace/K2-DirectConElemNamespace-20: error XPST0051: unknown type integer
+  FAIL prod-DirElemContent.namespace/K2-DirectConElemNamespace-21: error XPST0051: unknown type string
+  FAIL prod-DirElemContent.namespace/K2-DirectConElemNamespace-22: error XPST0051: unknown type string
+  FAIL prod-DirElemContent.namespace/K2-DirectConElemNamespace-53: got 2 (xs:integer), expected 1
+  FAIL prod-DirElemContent.namespace/Constr-inscope-23: got xml foo
+prod/prod-DirElemContent.namespace: 128 pass, 10 fail, 0 unsupported (out of 138)
+running prod/DirElemContent.whitespace.xml
+prod/prod-DirElemContent.whitespace: 83 pass, 0 fail, 0 unsupported (out of 83)
+running prod/DynamicFunctionCall.xml
+  FAIL prod-DynamicFunctionCall/DynamicFunctionCall-008: got 
+  FAIL prod-DynamicFunctionCall/DynamicFunctionCall-R-008: got 
+prod/prod-DynamicFunctionCall: 91 pass, 2 fail, 0 unsupported (out of 93)
+running prod/EmptyOrderDecl.xml
+  FAIL prod-EmptyOrderDecl/emptyorderdecl-2: xml <a/><a>1</a><a>4</a><a>7</a>
+  FAIL prod-EmptyOrderDecl/emptyorderdecl-3: xml <a/><a/><a>1</a><a>4</a><a>7</a>
+  FAIL prod-EmptyOrderDecl/emptyorderdecl-4: string value 'NaN 1 4 7'
+  FAIL prod-EmptyOrderDecl/emptyorderdecl-5: string value 'NaN NaN 1 4 7'
+  FAIL prod-EmptyOrderDecl/emptyorderdecl-10: xml <a>7</a><a>4</a><a>1</a><a/>
+  FAIL prod-EmptyOrderDecl/emptyorderdecl-11: xml <a>7</a><a>4</a><a>1</a><a/><a/>
+  FAIL prod-EmptyOrderDecl/emptyorderdecl-12: string value '7 4 1 NaN'
+  FAIL prod-EmptyOrderDecl/emptyorderdecl-13: string value '7 4 1 NaN NaN'
+  FAIL prod-EmptyOrderDecl/emptyorderdecl-25: string value 'NaN 1 3 4 7'
+  FAIL prod-EmptyOrderDecl/emptyorderdecl-27: string value 'NaN 1 3 4 7'
+prod/prod-EmptyOrderDecl: 22 pass, 10 fail, 0 unsupported (out of 32)
+running prod/EQName.xml
+  FAIL prod-EQName/eqname-007: error FODF1280: unknown decimal format ex:format
+  FAIL prod-EQName/eqname-008: xml <out/>
+  FAIL prod-EQName/eqname-019: expected error XPST0003, got 
+  FAIL prod-EQName/eqname-029: error XPST0017: unknown function pi#0
+prod/prod-EQName: 46 pass, 4 fail, 4 unsupported (out of 54)
+running prod/EnumerationType.xml
+prod/prod-EnumerationType: 35 pass, 0 fail, 0 unsupported (out of 35)
+running prod/ExtensionExpr.xml
+  FAIL prod-ExtensionExpr/K-ExtensionExpression-4a: error XPST0081: a pragma name needs a namespace
+  FAIL prod-ExtensionExpr/K-ExtensionExpression-4b: error XPST0081: a pragma name needs a namespace
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-1a: expected error XPST0081, got 1
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-6a: expected error XPST0003, got true
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-7a: expected error XPST0003, got true
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-8a: expected error XPST0003, got true
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-9: expected error XPST0003, got true
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-10: expected error XPST0003, got true
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-18a: expected error XPST0003, got -5
+prod/prod-ExtensionExpr: 49 pass, 9 fail, 23 unsupported (out of 81)
+running prod/FLWORExpr.xml
+  FAIL prod-FLWORExpr/ForExprType052: error XPST0051: unknown type Enumeration
+  FAIL prod-FLWORExpr/ForExprType053: error XPST0051: unknown type Enumeration
+prod/prod-FLWORExpr: 25 pass, 2 fail, 0 unsupported (out of 27)
+running prod/FLWORExpr.static-typing.xml
+prod/prod-FLWORExpr.static-typing: 0 pass, 0 fail, 28 unsupported (out of 28)
+running prod/ForClause.xml
+  FAIL prod-ForClause/ForExpr024: wrong error code XPTY0004 (expected XQST0089)
+  FAIL prod-ForClause/ForExpr031: expected error XQST0089, got 1 4
+  FAIL prod-ForClause/K2-ForExprWithout-42a: expected error XPST0003, got 1
+  FAIL prod-ForClause/K2-ForExprWithout-43a: expected error XPST0003, got 1
+  FAIL prod-ForClause/K2-ForExprWithout-44a: expected error XPST0003, got 1
+  FAIL prod-ForClause/ForExprType075: expected error XPTY0004, got 0
+prod/prod-ForClause: 199 pass, 6 fail, 7 unsupported (out of 212)
+running prod/ForClause.map.xml
+  FAIL prod-ForClause.map/for-map-key-019: expected error XPTY0004, got 1 2
+  FAIL prod-ForClause.map/for-map-key-022: expected error XQST0089, got 
+  FAIL prod-ForClause.map/for-map-value-019: expected error XPTY0004, got 1 2
+  FAIL prod-ForClause.map/for-map-value-022: expected error XQST0089, got 
+  FAIL prod-ForClause.map/for-map-key-value-010: expected error XQST0089, got 
+prod/prod-ForClause.map: 60 pass, 5 fail, 0 unsupported (out of 65)
+running prod/ForClause.member.xml
+prod/prod-ForClause.member: 48 pass, 0 fail, 0 unsupported (out of 48)
+running prod/FunctionCall.xml
+  FAIL prod-FunctionCall/FunctionCall-007: got 
+  FAIL prod-FunctionCall/FunctionCall-015: got 
+  FAIL prod-FunctionCall/FunctionCall-028: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-029: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-030a: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-030b: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-031: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-035: error XPST0051: unknown type lu:unionOfUnionType
+  FAIL prod-FunctionCall/FunctionCall-036: error XPST0051: unknown type lu:unionOfUnionType
+  FAIL prod-FunctionCall/FunctionCall-037: error XPST0051: unknown type lu:unionOfUnionType
+  FAIL prod-FunctionCall/FunctionCall-038: error XPST0051: unknown type lu:unionOfUnionType
+  FAIL prod-FunctionCall/FunctionCall-040: error XPST0051: unknown type lu:namespaceSensitiveUnionType
+  FAIL prod-FunctionCall/FunctionCall-041: wrong error code XPST0051 (expected XPTY0117)
+  FAIL prod-FunctionCall/FunctionCall-042: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-043: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-051: got false
+  FAIL prod-FunctionCall/FunctionCall-056: wrong error code XPST0051 (expected XPTY0004)
+  FAIL prod-FunctionCall/FunctionCall-057: wrong error code XPST0051 (expected XPTY0004)
+  FAIL prod-FunctionCall/FunctionCall-416: got -4 (xs:integer), expected 4
+  FAIL prod-FunctionCall/FunctionCall-417: error XPTY0004: cannot convert xs:decimal value '7.75' to xs:integer
+  FAIL prod-FunctionCall/FunctionCall-418: error XPTY0004: cannot convert xs:decimal value '7.75' to xs:integer
+  FAIL prod-FunctionCall/FunctionCall-422: got function
+  FAIL prod-FunctionCall/FunctionCall-425: wrong error code XPTY0004 (expected XPDY0002)
+prod/prod-FunctionCall: 173 pass, 23 fail, 30 unsupported (out of 226)
+running prod/FunctionDecl.xml
+  FAIL prod-FunctionDecl/function-decl-40-010: error XPST0003: expected ')' at offset 199
+  FAIL prod-FunctionDecl/function-decl-40-011: error XPST0003: expected ')' at offset 165
+  FAIL prod-FunctionDecl/function-decl-40-012: error XPST0003: expected ')' at offset 165
+  FAIL prod-FunctionDecl/function-decl-40-021: got 
+  FAIL prod-FunctionDecl/function-decl-40-022: got 
+  FAIL prod-FunctionDecl/function-decl-40-026: got 5 (xs:integer), expected 8
+  FAIL prod-FunctionDecl/function-decl-40-028: got 23 (xs:integer), expected -23
+  FAIL prod-FunctionDecl/function-decl-40-031: got 5 (xs:integer), expected 8
+  FAIL prod-FunctionDecl/function-decl-40-043: got 1/1 1/1 1/1, expected 1/3 2/3 3/3
+  FAIL prod-FunctionDecl/function-decl-40-044: got 
+  FAIL prod-FunctionDecl/function-decl-40-050: error FOER0000: evaluation too deep (fuel exhausted)
+  FAIL prod-FunctionDecl/function-decl-40-053: error FOER0000: evaluation too deep (fuel exhausted)
+  FAIL prod-FunctionDecl/function-decl-40-913: expected error XQST0148, got 
+  FAIL prod-FunctionDecl/function-decl-40-914: expected error XPDY0002, got [[]]
+prod/prod-FunctionDecl: 214 pass, 14 fail, 26 unsupported (out of 254)
+running prod/GeneralComp.eq.xml
+  FAIL prod-GeneralComp.eq/GenCompEq-26: error XPST0017: unknown function myType:hatsize#1
+  FAIL prod-GeneralComp.eq/GenCompEq-27: wrong error code XPST0017 (expected XPTY0004)
+prod/prod-GeneralComp.eq: 203 pass, 2 fail, 0 unsupported (out of 205)
+running prod/GeneralComp.ge.xml
+prod/prod-GeneralComp.ge: 112 pass, 0 fail, 0 unsupported (out of 112)
+running prod/GeneralComp.gt.xml
+prod/prod-GeneralComp.gt: 150 pass, 0 fail, 0 unsupported (out of 150)
+running prod/GeneralComp.le.xml
+prod/prod-GeneralComp.le: 108 pass, 0 fail, 0 unsupported (out of 108)
+running prod/GeneralComp.lt.xml
+prod/prod-GeneralComp.lt: 133 pass, 0 fail, 0 unsupported (out of 133)
+running prod/GeneralComp.ne.xml
+prod/prod-GeneralComp.ne: 140 pass, 0 fail, 0 unsupported (out of 140)
+running prod/GroupByClause.xml
+  FAIL prod-GroupByClause/group-013: any-of: xml <grp y="1" even="1">1 3 5 7 9</grp><grp y="2" even="1">1 3 5 7 9</grp><grp y="3" even="1">1 3 5 7 9</grp><grp y="4" even="1">1 3 5 7 9</grp><grp y="1" even="0">2 4 6 8 10</grp><grp y="2" even="0">2 4 6 8 10</grp><grp y="3" even="0">2 4 6 8 10</grp><grp y="4" even="0">2 4 6 8 10</grp>; xml <grp y="1" even="1">1 3 5 7 9</grp><grp y="2" even="1">1 3 5 7 9</grp><grp y="3" even="1">1 3 5 7 9</grp><grp y="4" even="1">1 3 5 7 9</grp><grp y="1" even="0">2 4 6 8 10</grp><grp y="2" even="0">2 4 6 8 10</grp><grp y="3" even="0">2 4 6 8 10</grp><grp y="4" even="0">2 4 6 8 10</grp>
+  FAIL prod-GroupByClause/group-014: expected error XQST0094, got 1 2
+  FAIL prod-GroupByClause/group-016: got 10 (xs:integer), expected 2
+  FAIL prod-GroupByClause/group-018: got 6 (xs:integer), expected 3
+  FAIL prod-GroupByClause/group-021: expected error XPST0003, got female:Jane Doe 1,Jane Doe 3,Jane Doe 5,Jane Doe 7,Jane Doe 9,Jane Doe 11,Jane D
+  FAIL prod-GroupByClause/group-023: expected error XPTY0004, got female:Jane Doe 1,Jane Doe 3,Jane Doe 5,Jane Doe 7,Jane Doe 9,Jane Doe 11,Jane D
+  FAIL prod-GroupByClause/group-025: got [...] [...] [...], expected [...] [...] [...]
+prod/prod-GroupByClause: 31 pass, 7 fail, 2 unsupported (out of 40)
+running prod/IfExpr.xml
+prod/prod-IfExpr: 43 pass, 0 fail, 0 unsupported (out of 43)
+running prod/InlineFunctionExpr.xml
+prod/prod-InlineFunctionExpr: 43 pass, 0 fail, 5 unsupported (out of 48)
+running prod/InlineFunctionExpr.focus.xml
+prod/prod-InlineFunctionExpr.focus: 29 pass, 0 fail, 1 unsupported (out of 30)
+running prod/InstanceofExpr.xml
+  FAIL prod-InstanceofExpr/instanceof112: error XPST0051: unknown type lu:unionType
+  FAIL prod-InstanceofExpr/instanceof116: error XPST0051: unknown type lu:unionOfUnionType
+  FAIL prod-InstanceofExpr/instanceof118: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-InstanceofExpr/instanceof119: error XPST0051: unknown type s:myUnionType2
+  FAIL prod-InstanceofExpr/instanceof135: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-InstanceofExpr/instanceof136: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-InstanceofExpr/instanceof137: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-InstanceofExpr/instanceof138: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-InstanceofExpr/instanceof139: error XPST0051: unknown type s:approximateDate
+  FAIL prod-InstanceofExpr/instanceof140: error XPST0051: unknown type s:integer-union
+  FAIL prod-InstanceofExpr/instanceof141: error XPST0051: unknown type s:decimal-or-string
+prod/prod-InstanceofExpr: 313 pass, 11 fail, 4 unsupported (out of 328)
+running prod/ItemTypeDecl.xml
+  FAIL prod-ItemTypeDecl/itemTypeDecl-017: expected error XQST0140, got 0 + 1i
+  FAIL prod-ItemTypeDecl/itemTypeDecl-018: wrong error code XPDY0002 (expected XQST0140)
+  FAIL prod-ItemTypeDecl/itemTypeDecl-020: wrong error code XPTY0004 (expected XPST0152)
+  FAIL prod-ItemTypeDecl/itemTypeDecl-026: error XPST0017: unknown function local:x-type#1
+  FAIL prod-ItemTypeDecl/itemTypeDecl-027: wrong error code XPTY0004 (expected XQST0146)
+  FAIL prod-ItemTypeDecl/itemTypeDecl-028: error XPST0051: unknown type myType:QNameBased
+  FAIL prod-ItemTypeDecl/itemTypeDecl-029: expected error XQST0146, got 42
+  FAIL prod-ItemTypeDecl/itemTypeDecl-030: error XPST0051: unknown type mod1:chrono
+  FAIL prod-ItemTypeDecl/itemTypeDecl-032: wrong error code XPST0051 (expected XQST0106)
+  FAIL prod-ItemTypeDecl/itemTypeDecl-033: wrong error code XPTY0004 (expected XQST0146)
+  FAIL prod-ItemTypeDecl/itemTypeDecl-034: wrong error code XPST0051 (expected XQST0048)
+  FAIL prod-ItemTypeDecl/itemTypeDecl-035: error XPST0051: unknown type mod1:numeric
+  FAIL prod-ItemTypeDecl/itemTypeDecl-044: error XPST0051: unknown type mod4:chronoSupplier
+  FAIL prod-ItemTypeDecl/itemTypeDecl-045: error XPST0051: unknown type mod4:dateTimeSupplier
+  FAIL prod-ItemTypeDecl/itemTypeDecl-046: error XPST0017: unknown function local:x-type#1
+  FAIL prod-ItemTypeDecl/itemTypeDecl-047: error XPST0017: unknown function local:x-type#1
+  FAIL prod-ItemTypeDecl/itemTypeDecl-048: error XPST0017: unknown function local:city#1
+  FAIL prod-ItemTypeDecl/itemTypeDecl-051: error XPST0017: unknown function local:continent#1
+  FAIL prod-ItemTypeDecl/itemTypeDecl-052: wrong error code XPST0017 (expected FORG0001)
+  FAIL prod-ItemTypeDecl/itemTypeDecl-055: error XPST0017: unknown function local:count#1
+  FAIL prod-ItemTypeDecl/itemTypeDecl-056: wrong error code XPST0017 (expected FORG0001)
+  FAIL prod-ItemTypeDecl/itemTypeDecl-057: error XPST0017: unknown function local:num#1
+  FAIL prod-ItemTypeDecl/itemTypeDecl-058: got 
+  FAIL prod-ItemTypeDecl/itemTypeDecl-060: expected error XQST0034, got 1
+  FAIL prod-ItemTypeDecl/itemTypeDecl-063: error XPST0017: unknown function color#1
+  FAIL prod-ItemTypeDecl/itemTypeDecl-064: got 1 (xs:integer), expected 42
+  FAIL prod-ItemTypeDecl/itemTypeDecl-072: expected error XQST0045, got 23
+  FAIL prod-ItemTypeDecl/itemTypeDecl-074: got 
+  FAIL prod-ItemTypeDecl/itemTypeDecl-077: wrong error code XPST0017 (expected XPST0003)
+prod/prod-ItemTypeDecl: 51 pass, 29 fail, 0 unsupported (out of 80)
+running prod/KeywordArguments.xml
+prod/prod-KeywordArguments: 1 pass, 0 fail, 0 unsupported (out of 1)
+running prod/LambdaExpr.xml
+prod/prod-LambdaExpr: 8 pass, 0 fail, 0 unsupported (out of 8)
+running prod/LetClause.xml
+  FAIL prod-LetClause/let-seq-011: error XPST0003: expected a variable name
+  FAIL prod-LetClause/let-seq-012: error XPST0003: expected a variable name
+  FAIL prod-LetClause/let-arr-011: error XPST0003: expected a variable name
+  FAIL prod-LetClause/let-arr-012: error XPST0003: expected a variable name
+  FAIL prod-LetClause/let-map-011: error XPST0003: expected a variable name
+  FAIL prod-LetClause/let-map-012: error XPST0003: expected a variable name
+  FAIL prod-LetClause/let-map-020: expected error XPTY0004, got x= y= z=
+  FAIL prod-LetClause/let-map-026: expected error XPTY0004, got 1
+  FAIL prod-LetClause/let-map-027: expected error XPTY0004, got 1 2
+  FAIL prod-LetClause/let-map-033: expected error XPTY0004, got 1
+prod/prod-LetClause: 164 pass, 10 fail, 15 unsupported (out of 189)
+running prod/Literal.xml
+  FAIL prod-Literal/K2-Literals-18: wrong error code XPST0003 (expected XQST0090)
+  FAIL prod-Literal/K2-Literals-19: wrong error code XPST0003 (expected XQST0090)
+prod/prod-Literal: 228 pass, 2 fail, 12 unsupported (out of 242)
+running prod/Lookup.xml
+  FAIL prod-Lookup/Lookup-413: error XPTY0004: unary lookup needs a single context item
+prod/prod-Lookup: 128 pass, 1 fail, 5 unsupported (out of 134)
+running prod/MapConstructor.xml
+  FAIL prod-MapConstructor/MapConstructor-028: error XPTY0004: a map key must be a single atomic value
+  FAIL prod-MapConstructor/MapConstructor-031: error XPST0003: expected '}' at offset 134
+prod/prod-MapConstructor: 79 pass, 2 fail, 5 unsupported (out of 86)
+running prod/MappingArrow.xml
+prod/prod-MappingArrow: 67 pass, 0 fail, 0 unsupported (out of 67)
+running prod/MapType.xml
+  FAIL prod-MapType/MapType-058a: expected error XPTY0004, got A B
+  FAIL prod-MapType/MapType-069: error XPST0051: unknown type u:approximateDate
+prod/prod-MapType: 78 pass, 2 fail, 2 unsupported (out of 82)
+running prod/MethodCall.xml
+prod/prod-MethodCall: 16 pass, 0 fail, 0 unsupported (out of 16)
+running prod/ModuleImport.xml
+  FAIL prod-ModuleImport/modules-19b: error XPST0051: unknown type simple:myType
+  FAIL prod-ModuleImport/modules-20b: error XPST0051: unknown type simple:myType
+  FAIL prod-ModuleImport/modules-34: expected error XPST0017, got OK
+  FAIL prod-ModuleImport/modules-35: expected error XPST0017, got OK
+  FAIL prod-ModuleImport/modules-43: error XPST0051: unknown type a:t1
+  FAIL prod-ModuleImport/errata6-003: error XPST0051: unknown type a:hatsize
+  FAIL prod-ModuleImport/modules-pub-priv-29: expected error XQST0106, got 
+  FAIL prod-ModuleImport/modules-pub-priv-30: expected error XQST0106, got 
+  FAIL prod-ModuleImport/modules-pub-priv-31: expected error XQST0106, got 
+  FAIL prod-ModuleImport/modules-pub-priv-32: expected error XQST0106, got 
+  FAIL prod-ModuleImport/modules-pub-priv-33: expected error XQST0116, got 
+  FAIL prod-ModuleImport/modules-pub-priv-34: expected error XQST0116, got 
+  FAIL prod-ModuleImport/modules-pub-priv-35: expected error XQST0116, got 
+  FAIL prod-ModuleImport/modules-pub-priv-36: expected error XQST0116, got 
+  FAIL prod-ModuleImport/modules-pub-priv-37: expected error XPST0017, got 23
+  FAIL prod-ModuleImport/cbcl-module-001: error XPST0051: unknown type cd:shortString
+  FAIL prod-ModuleImport/cbcl-module-002: string value 'http://www.example.org/wrong/'
+  FAIL prod-ModuleImport/cbcl-module-003: expected error XPST0008, got Hello!
+prod/prod-ModuleImport: 106 pass, 18 fail, 17 unsupported (out of 141)
+running prod/NamedFunctionRef.xml
+  FAIL prod-NamedFunctionRef/function-literal-701: got 
+  FAIL prod-NamedFunctionRef/function-literal-704: got 
+  FAIL prod-NamedFunctionRef/function-literal-707: error XPST0008: undeclared variable $a
+prod/prod-NamedFunctionRef: 561 pass, 3 fail, 1 unsupported (out of 565)
+running prod/NamedRecordTypeDecl.xml
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-002: expected error XPST0003, got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-003: got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-013: error XPTY0004: lookup on a value that is not a map or array
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-014: error XPST0051: unknown type coord
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-019: expected error XPTY0004, got 
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-020: expected error XPTY0004, got 
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-021: expected error XPTY0004, got 
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-022: wrong error code XPTY0004 (expected XPST0152)
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-023: expected error XPST0003, got 0 + 1i
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-024: wrong error code XPST0017 (expected XPST0003)
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-025: wrong error code XPST0017 (expected XPST0003)
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-027: wrong error code XPTY0004 (expected XQST0146)
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-028: error XPST0051: unknown type myType:QNameBased
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-029: expected error XQST0146, got 42
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-030: error XPST0051: unknown type mod1:chrono
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-032: wrong error code XPST0051 (expected XQST0106)
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-033: wrong error code XPTY0004 (expected XQST0146)
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-034: wrong error code XPST0051 (expected XQST0048)
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-035: error XPST0051: unknown type mod1:numeric
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-050: got a b, expected b a
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-051: got 1 a b 3 a b, expected 1 b a 3 b a
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-052: got 1 a b, expected 1 b a
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-053: got 1 a b, expected 1 b a
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-054: got 1 a b, expected 1 b a
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-055: got 1 a b, expected 1 b a
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-056: got 1 a b, expected 1 b a
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-057: got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-058: expected error XPDY0050, got 1 a b
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-059: got 1 a b 0, expected 0 0
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-061: expected error XPDY0050, got 5 2
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-062: got 1 (xs:integer), expected 0
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-063: got 1 (xs:integer), expected 0
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-064: got 1 (xs:integer), expected 0
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-065: got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-066: got 1 b a, expected 1 a b
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-067: got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-068: got 1 a b, expected 1 b a
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-074: got 1 a c, expected 1 c a
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-076: got true true, expected false false
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-077: got true true, expected false true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-078: got true true, expected false true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-080: got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-081: got 1 a b, expected 1 b a
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-083: got 1 3 2 4, expected 1 4
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-089: got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-090: got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-093: got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-095: got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-096: got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-097: got false
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-101: got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-102: got false
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-110: expected error XQST0045, got 1
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-113: got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-117: got true
+  FAIL prod-NamedRecordTypeDecl/recordTypeDecl-118: got x y, expected y x
+prod/prod-NamedRecordTypeDecl: 56 pass, 56 fail, 0 unsupported (out of 112)
+running prod/NamespaceDecl.xml
+  FAIL prod-NamespaceDecl/K2-NamespaceProlog-4: expected error XPST0081, got 1
+  FAIL prod-NamespaceDecl/K2-NamespaceProlog-9: expected error XPST0081, got string
+  FAIL prod-NamespaceDecl/K2-NamespaceProlog-10: wrong error code XPST0017 (expected XPST0081)
+  FAIL prod-NamespaceDecl/K2-NamespaceProlog-11: wrong error code XPST0017 (expected XPST0081)
+  FAIL prod-NamespaceDecl/K2-NamespaceProlog-12: wrong error code XPST0017 (expected XPST0081)
+  FAIL prod-NamespaceDecl/K2-NamespaceProlog-14: expected error XPST0003, got 1
+prod/prod-NamespaceDecl: 48 pass, 6 fail, 1 unsupported (out of 55)
+running prod/NameTest.xml
+  FAIL prod-NameTest/K2-NameTest-21: expected error XPTY0004, got true
+  FAIL prod-NameTest/K2-NameTest-22: got true
+  FAIL prod-NameTest/K2-NameTest-23: expected error XPTY0004, got true
+  FAIL prod-NameTest/K2-NameTest-30: assert gave false for result <node> <node> <node>
+  FAIL prod-NameTest/K2-NameTest-31: assert gave false for result <node>
+  FAIL prod-NameTest/K2-NameTest-47: error XQDY0096: the element name is in the xmlns namespace
+  FAIL prod-NameTest/K2-NameTest-69: expected error XPST0008, got <node>
+  FAIL prod-NameTest/K2-NameTest-70: expected error XPST0008, got <node>
+  FAIL prod-NameTest/K2-NameTest-74: expected error XPST0008, got <node>
+  FAIL prod-NameTest/K2-NameTest-75: expected error XPST0008, got <node>
+  FAIL prod-NameTest/K2-NameTest-87: expected error XPST0008, got <node>
+  FAIL prod-NameTest/K2-NameTest-88: expected error XPST0008, got <node>
+  FAIL prod-NameTest/K2-NameTest-89: expected error XPST0008, got <node>
+  FAIL prod-NameTest/K2-NameTest-90: expected error XPST0008, got <node>
+prod/prod-NameTest: 113 pass, 14 fail, 0 unsupported (out of 127)
+running prod/NameTestUnion.xml
+prod/prod-NameTestUnion: 37 pass, 0 fail, 0 unsupported (out of 37)
+running prod/NodeTest.xml
+  FAIL prod-NodeTest/K4-NodeTest-09: got true
+prod/prod-NodeTest: 80 pass, 1 fail, 3 unsupported (out of 84)
+running prod/OptionDecl.xml
+prod/prod-OptionDecl: 8 pass, 0 fail, 1 unsupported (out of 9)
+running prod/OptionDecl.serialization.xml
+  FAIL prod-OptionDecl.serialization/Serialization-035: serialization '<result>
+  <e xmlns="http://example.com/a"><![CDATA[ta]]></e>
+  <e xmlns="http:/' does not match
+prod/prod-OptionDecl.serialization: 39 pass, 1 fail, 0 unsupported (out of 40)
+running prod/OrExpr.xml
+prod/prod-OrExpr: 376 pass, 0 fail, 0 unsupported (out of 376)
+running prod/OrderByClause.xml
+  FAIL prod-OrderByClause/orderBy45: xml <results xmlns="http://www.w3.org/XQueryTestOrderBy">0.1 0.01 0.001 0.0001 0.00001 1.0E-6 1.0E-7 1.0E-8 1.0E-9 1.0E-10 1.0E-11 1.0E-12 1.0E-13 1.0E-14 1.0E-15 1.0E-16 1.0E-17 1.0E-18 0</results>
+  FAIL prod-OrderByClause/orderBy55: any-of: xml <results xmlns="http://www.w3.org/XQueryTestOrderBy">0 -1.0E-18 -1.0E-17 -1.0E-16 -1.0E-15 -1.0E-14 -1.0E-13 -1.0E-12 -1.0E-11 -1.0E-10 -1.0E-9 -1.0E-8 -1.0E-7 -1.0E-6 -0.00001 -0.0001 -0.001 -0.01 -0.1</results>; xml <results xmlns="http://www.w3.org/XQueryTestOrderBy">0 -1.0E-18 -1.0E-17 -1.0E-16 -1.0E-15 -1.0E-14 -1.0E-13 -1.0E-12 -1.0E-11 -1.0E-10 -1.0E-9 -1.0E-8 -1.0E-7 -1.0E-6 -0.00001 -0.0001 -0.001 -0.01 -0.1</results>
+  FAIL prod-OrderByClause/orderBy69: got [...] [...] [...], expected [...] [...] [...]
+  FAIL prod-OrderByClause/orderbylocal-45: xml <results>0.1 0.01 0.001 0.0001 0.00001 1.0E-6 1.0E-7 1.0E-8 1.0E-9 1.0E-10 1.0E-11 1.0E-12 1.0E-13 1.0E-14 1.0E-15 1.0E-16 1.0E-17 1.0E-18 0</results>
+  FAIL prod-OrderByClause/orderbylocal-55: xml <results>0 -1.0E-18 -1.0E-17 -1.0E-16 -1.0E-15 -1.0E-14 -1.0E-13 -1.0E-12 -1.0E-11 -1.0E-10 -1.0E-9 -1.0E-8 -1.0E-7 -1.0E-6 -0.00001 -0.0001 -0.001 -0.01 -0.1</results>
+  FAIL prod-OrderByClause/orderbylocal-60: expected error XQST0076, got A B C
+  FAIL prod-OrderByClause/orderbywithout-30: xml <results>0 1.0E-18 1.0E-17 1.0E-16 1.0E-15 1.0E-14 1.0E-13 1.0E-12 1.0E-11 1.0E-10 1.0E-9 1.0E-8 1.0E-7 1.0E-6 0.00001 0.0001 0.001 0.01 0.1</results>
+  FAIL prod-OrderByClause/orderbywithout-37: xml <results>-0.1 -0.01 -0.001 -0.0001 -0.00001 -1.0E-6 -1.0E-7 -1.0E-8 -1.0E-9 -1.0E-10 -1.0E-11 -1.0E-12 -1.0E-13 -1.0E-14 -1.0E-15 -1.0E-16 -1.0E-17 -1.0E-18 0</results>
+  FAIL prod-OrderByClause/K2-OrderbyExprWithout-2: expected error XQST0076, got 1 2 3
+  FAIL prod-OrderByClause/K2-OrderbyExprWithout-3: expected error XQST0076, got 1 2 3
+  FAIL prod-OrderByClause/K2-OrderbyExprWithout-46: string value 'NaN -INF 1 1.3 2 3000 INF SEP NaN -INF 1 1.3 2 3000 INF'
+  FAIL prod-OrderByClause/K2-OrderbyExprWithout-47: string value 'NaN -INF 1 1.3 2 3000 INF SEP NaN -INF 1 1.3 2 3000 INF'
+  FAIL prod-OrderByClause/K2-OrderbyExprWithout-48: string value 'NaN NaN NaN NaN 3 INF SEP NaN NaN NaN NaN 3 INF'
+  FAIL prod-OrderByClause/K2-OrderbyExprWithout-49: string value 'NaN NaN NaN NaN 3 INF SEP NaN NaN NaN NaN 3 INF'
+prod/prod-OrderByClause: 192 pass, 14 fail, 0 unsupported (out of 206)
+running prod/OrderingModeDecl.xml
+prod/prod-OrderingModeDecl: 29 pass, 0 fail, 0 unsupported (out of 29)
+running prod/OtherwiseExpr.xml
+prod/prod-OtherwiseExpr: 10 pass, 0 fail, 0 unsupported (out of 10)
+running prod/PathExpr.xml
+  FAIL prod-PathExpr/PathExpr-14: error XPST0003: unexpected token
+prod/prod-PathExpr: 29 pass, 1 fail, 4 unsupported (out of 34)
+running prod/PathExpr.J.xml
+  FAIL prod-PathExpr.J/PathExpr-J-422: error XPDY0002: the context item is absent
+prod/prod-PathExpr.J: 185 pass, 1 fail, 0 unsupported (out of 186)
+running prod/ParenthesizedExpr.xml
+prod/prod-ParenthesizedExpr: 20 pass, 0 fail, 0 unsupported (out of 20)
+running prod/PositionalVar.xml
+prod/prod-PositionalVar: 34 pass, 0 fail, 0 unsupported (out of 34)
+running prod/PipelineExpr.xml
+prod/prod-PipelineExpr: 14 pass, 0 fail, 0 unsupported (out of 14)
+running prod/Predicate.xml
+prod/prod-Predicate: 240 pass, 0 fail, 5 unsupported (out of 245)
+running prod/QuantifiedExpr.xml
+prod/prod-QuantifiedExpr: 221 pass, 0 fail, 2 unsupported (out of 223)
+running prod/RecordType.xml
+  FAIL prod-RecordType/RecordType-103: got true
+  FAIL prod-RecordType/RecordType-104: got true
+prod/prod-RecordType: 21 pass, 2 fail, 0 unsupported (out of 23)
+running prod/ReturnClause.xml
+prod/prod-ReturnClause: 21 pass, 0 fail, 0 unsupported (out of 21)
+running prod/SchemaImport.xml
+  FAIL prod-SchemaImport/modules-schema-context: error XPST0051: unknown type simple:myType
+  FAIL prod-SchemaImport/schema-import-32: error XQST0059: no schema for the imported namespace http://www.w3.org/XQueryTest/hats
+  FAIL prod-SchemaImport/schema-import-33: error XQST0059: no schema for the imported namespace http://www.w3.org/XQueryTest/hats
+  FAIL prod-SchemaImport/qischema001: error XPST0051: unknown type hat:hatsize
+  FAIL prod-SchemaImport/qischema002: error XPST0051: unknown type hatsize
+  FAIL prod-SchemaImport/qischema003: error XPST0051: unknown type date2003
+  FAIL prod-SchemaImport/qischema004: error XPST0051: unknown type vreg
+  FAIL prod-SchemaImport/qischema017: got 0 (xs:string), expected 1
+  FAIL prod-SchemaImport/qischema018: error XPST0051: unknown type date2003
+  FAIL prod-SchemaImport/qischema030: error XPST0017: unknown function hatsize#1
+  FAIL prod-SchemaImport/qischema031: error XPST0051: unknown type hatsize
+  FAIL prod-SchemaImport/qischema040: error XPST0051: unknown type hat:hatsize
+  FAIL prod-SchemaImport/qischema040a: error XPST0051: unknown type hat:hatsize
+  FAIL prod-SchemaImport/qischema044: error XPST0051: unknown type hat:hatsize
+  FAIL prod-SchemaImport/qischema90007: expected error XPST0003, got <node> <node> <node> <node> <node> <node>
+  FAIL prod-SchemaImport/qischema90031-err: wrong error code XPST0051 (expected FORG0001)
+  FAIL prod-SchemaImport/qischema90041-err: wrong error code XPST0051 (expected FORG0001)
+  FAIL prod-SchemaImport/qischema90042-err: wrong error code XPST0051 (expected FORG0001)
+  FAIL prod-SchemaImport/substitution-020: got true
+  FAIL prod-SchemaImport/substitution-021: got true
+  FAIL prod-SchemaImport/substitution-024: got true
+  FAIL prod-SchemaImport/substitution-025: got true
+  FAIL prod-SchemaImport/cbcl-schema-element-1: string value '5'
+  FAIL prod-SchemaImport/cbcl-schema-element-9: error XPTY0004: value of wrong type for $x
+  FAIL prod-SchemaImport/cbcl-validated-schema-element-1: string value '5'
+  FAIL prod-SchemaImport/cbcl-validated-schema-element-2: string value '5'
+  FAIL prod-SchemaImport/cbcl-validated-schema-element-3: string value '5'
+prod/prod-SchemaImport: 98 pass, 27 fail, 20 unsupported (out of 145)
+running prod/SequenceType.xml
+  FAIL prod-SequenceType/built-in-record-type-005: error XPTY0004: the map has no entry validate for the record type, for $r
+  FAIL prod-SequenceType/built-in-record-type-303: got true
+  FAIL prod-SequenceType/built-in-record-type-305: error XPTY0004: the map has no entry validate for the record type, for $r
+prod/prod-SequenceType: 63 pass, 3 fail, 0 unsupported (out of 66)
+running prod/SquareArrayConstructor.xml
+prod/prod-SquareArrayConstructor: 7 pass, 0 fail, 0 unsupported (out of 7)
+running prod/StepExpr.xml
+  FAIL prod-StepExpr/K2-Steps-48: error XPST0003: expected a name test
+  FAIL prod-StepExpr/Steps-leading-lone-slash-11: error XPST0003: unexpected token
+  FAIL prod-StepExpr/Steps-leading-lone-slash-12: error XPST0003: unexpected token
+prod/prod-StepExpr: 63 pass, 3 fail, 4 unsupported (out of 70)
+running prod/StringConstructor.xml
+prod/prod-StringConstructor: 55 pass, 0 fail, 0 unsupported (out of 55)
+running prod/StringTemplate.xml
+  FAIL prod-StringTemplate/string-template-914: expected error XPST0003, got <node>
+  FAIL prod-StringTemplate/string-template-917: expected error XPST0003, got 12
+  FAIL prod-StringTemplate/string-template-918: wrong error code XPTY0004 (expected XPST0003)
+prod/prod-StringTemplate: 50 pass, 3 fail, 0 unsupported (out of 53)
+running prod/SwitchExpr.xml
+prod/prod-SwitchExpr: 57 pass, 0 fail, 1 unsupported (out of 58)
+running prod/TraceClause.xml
+  FAIL prod-TraceClause/TraceClause-001: error XPST0003: expected a FLWOR clause or 'return'
+  FAIL prod-TraceClause/TraceClause-002: error XPST0003: expected a FLWOR clause or 'return'
+  FAIL prod-TraceClause/TraceClause-004: error XPST0003: expected a FLWOR clause or 'return'
+  FAIL prod-TraceClause/TraceClause-006: error XPST0003: expected a FLWOR clause or 'return'
+prod/prod-TraceClause: 2 pass, 4 fail, 0 unsupported (out of 6)
+running prod/TreatExpr.xml
+prod/prod-TreatExpr: 73 pass, 0 fail, 1 unsupported (out of 74)
+running prod/TryCatchExpr.xml
+  FAIL prod-TryCatchExpr/try-catch-err-value-variable-1: string value ''
+  FAIL prod-TryCatchExpr/try-catch-err-value-variable-2: got 0 (xs:integer), expected 4
+  FAIL prod-TryCatchExpr/try-catch-err-value-variable-3: got 
+  FAIL prod-TryCatchExpr/try-catch-fn-error-8: got 
+  FAIL prod-TryCatchExpr/try-catch-fn-error-11: got 
+  FAIL prod-TryCatchExpr/try-catch-map2: assert gave  for result 
+  FAIL prod-TryCatchExpr/try-catch-map3: assert gave false for result <node>
+  FAIL prod-TryCatchExpr/try-catch-map6: got 
+  FAIL prod-TryCatchExpr/try-catch-map7: got a (xs:QName), expected a
+  FAIL prod-TryCatchExpr/try-finally-005: expected error XQTY0153, got 42
+  FAIL prod-TryCatchExpr/try-finally-006: expected error XQTY0153, got 42
+  FAIL prod-TryCatchExpr/try-finally-028: expected error XQTY0153, got 1
+prod/prod-TryCatchExpr: 199 pass, 12 fail, 1 unsupported (out of 212)
+running prod/TypeswitchExpr.xml
+  FAIL prod-TypeswitchExpr/typeswitch-112: error XPST0051: unknown type lu:unionType
+  FAIL prod-TypeswitchExpr/typeswitch-116: error XPST0051: unknown type lu:unionOfUnionType
+prod/prod-TypeswitchExpr: 85 pass, 2 fail, 1 unsupported (out of 88)
+running prod/UnorderedExpr.xml
+prod/prod-UnorderedExpr: 29 pass, 0 fail, 2 unsupported (out of 31)
+running prod/UnaryLookup.xml
+prod/prod-UnaryLookup: 34 pass, 0 fail, 3 unsupported (out of 37)
+running prod/UnionNodeTest.xml
+prod/prod-UnionNodeTest: 12 pass, 0 fail, 0 unsupported (out of 12)
+running prod/ValidateExpr.xml
+  FAIL prod-ValidateExpr/validateexpr-10: got 1 (xs:integer), expected 0
+  FAIL prod-ValidateExpr/validateexpr-11: got 1 (xs:integer), expected 0
+  FAIL prod-ValidateExpr/validateexpr-12: got 1 (xs:integer), expected 0
+  FAIL prod-ValidateExpr/validateexpr-13: got 1 (xs:integer), expected 0
+  FAIL prod-ValidateExpr/validateexpr-27: xml <results><para1 idcount="1"/><para2 idcount="0"/><para2 idcount="0"/><para3 idcount="0"/><para3 idcount="0"/></results>
+  FAIL prod-ValidateExpr/validateexpr-29: expected error XQDY0061, got <node>
+  FAIL prod-ValidateExpr/validateexpr-30: got 1 (xs:integer), expected 3
+  FAIL prod-ValidateExpr/validateexpr-46: expected error XPST0003, got one string
+  FAIL prod-ValidateExpr/validateexpr-47: expected error XPST0003, got 
+  FAIL prod-ValidateExpr/validate-as-108: error XQDY0027: xsd-validation type Q{http://www.w3.org/2001/XMLSchema}untyped: no declaration or type to validate against
+  FAIL prod-ValidateExpr/validate-as-91011: wrong error code XQDY0027 (expected XQST0104)
+  FAIL prod-ValidateExpr/validate-as-91017: expected error XPST0003, got <node>
+  FAIL prod-ValidateExpr/cbcl-validateexpr-5: wrong error code XQDY0027 (expected XQDY0084)
+  FAIL prod-ValidateExpr/cbcl-validateexpr-6: expected error XQDY0084, got <node>
+  FAIL prod-ValidateExpr/cbcl-validateexpr-7: wrong error code XQDY0027 (expected XQDY0084)
+  FAIL prod-ValidateExpr/cbcl-validateexpr-13: expected error XQDY0061, got <node>
+prod/prod-ValidateExpr: 74 pass, 16 fail, 2 unsupported (out of 92)
+running prod/ValueComp.xml
+  FAIL prod-ValueComp/value-comparison-13: error XPST0017: unknown function myType:hatsize#1
+  FAIL prod-ValueComp/value-comparison-14: wrong error code XPST0017 (expected XPTY0004)
+prod/prod-ValueComp: 123 pass, 2 fail, 0 unsupported (out of 125)
+running prod/VarDecl.xml
+  FAIL prod-VarDecl/K-InternalVariablesWith-17b: any-of: error XQDY0054: circular variable dependency: undeclared variable $var; wrong error code XQDY0054 (expected XQST0054)
+  FAIL prod-VarDecl/K-InternalVariablesWith-17c: any-of: error XQDY0054: circular variable dependency: undeclared variable $var; wrong error code XQDY0054 (expected XQST0054)
+  FAIL prod-VarDecl/K-InternalVariablesWith-17d: any-of: error XQDY0054: circular variable dependency: undeclared variable $var; wrong error code XQDY0054 (expected XQST0054)
+  FAIL prod-VarDecl/K-InternalVariablesWith-17e: any-of: error XQDY0054: circular variable dependency: undeclared variable $var; wrong error code XQDY0054 (expected XQST0054)
+  FAIL prod-VarDecl/K-InternalVariablesWith-50: error XPST0008: undeclared variable $factorial
+  FAIL prod-VarDecl/K-InternalVariablesWith-52: error XPST0008: undeclared variable $f
+prod/prod-VarDecl: 136 pass, 6 fail, 25 unsupported (out of 167)
+running prod/VarDecl.external.xml
+  FAIL prod-VarDecl.external/extvardeclwithouttype-24: error XPDY0002: no value for the external variable $test:x
+  FAIL prod-VarDecl.external/extvardeclwithtype-24: error XPDY0002: no value for the external variable $test:x
+prod/prod-VarDecl.external: 96 pass, 2 fail, 9 unsupported (out of 107)
+running prod/VarDefaultValue.xml
+prod/prod-VarDefaultValue: 40 pass, 0 fail, 3 unsupported (out of 43)
+running prod/VersionDecl.xml
+  FAIL prod-VersionDecl/K2-VersionProlog-3-v4: error XQST0031: XQuery version 1&#x2e;0 is not supported
+  FAIL prod-VersionDecl/K2-VersionProlog-6: error XQST0087: invalid encoding UTF&#x2d;8
+prod/prod-VersionDecl: 35 pass, 2 fail, 16 unsupported (out of 53)
+running prod/WhereClause.xml
+prod/prod-WhereClause: 82 pass, 0 fail, 3 unsupported (out of 85)
+running prod/WhileClause.xml
+prod/prod-WhileClause: 83 pass, 0 fail, 0 unsupported (out of 83)
+running prod/WindowClause.xml
+prod/prod-WindowClause: 158 pass, 0 fail, 0 unsupported (out of 158)
+== families ==
+prod: 13823 pass, 688 fail, 437 unsupported (out of 14948)
+TOTAL: 13823 pass, 688 fail, 437 unsupported (out of 14948)

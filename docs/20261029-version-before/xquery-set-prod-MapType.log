@@ -1,0 +1,7 @@
+running prod/MapType.xml
+  FAIL prod-MapType/MapType-058a: expected error XPTY0004, got A B
+  FAIL prod-MapType/MapType-069: error XPST0051: unknown type u:approximateDate
+prod/prod-MapType: 78 pass, 2 fail, 2 unsupported (out of 82)
+== families ==
+prod: 78 pass, 2 fail, 2 unsupported (out of 82)
+TOTAL: 78 pass, 2 fail, 2 unsupported (out of 82)

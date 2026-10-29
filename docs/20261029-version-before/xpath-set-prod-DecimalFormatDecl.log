@@ -1,0 +1,5 @@
+running prod/DecimalFormatDecl.xml
+prod/prod-DecimalFormatDecl: 0 pass, 0 fail, 47 unsupported (out of 47)
+== families ==
+prod: 0 pass, 0 fail, 47 unsupported (out of 47)
+TOTAL: 0 pass, 0 fail, 47 unsupported (out of 47)

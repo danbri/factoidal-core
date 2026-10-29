@@ -1,0 +1,5 @@
+running ser/method-xhtml.xml
+ser/method-xhtml: 0 pass, 0 fail, 61 unsupported (out of 61)
+== families ==
+ser: 0 pass, 0 fail, 61 unsupported (out of 61)
+TOTAL: 0 pass, 0 fail, 61 unsupported (out of 61)

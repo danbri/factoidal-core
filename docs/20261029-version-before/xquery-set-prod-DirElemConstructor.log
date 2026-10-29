@@ -1,0 +1,10 @@
+running prod/DirElemConstructor.xml
+  FAIL prod-DirElemConstructor/Constr-elem-matchtag-1: wrong error code XPST0003 (expected XQST0118)
+  FAIL prod-DirElemConstructor/Constr-elem-matchtag-2a: wrong error code XPST0003 (expected XQST0118)
+  FAIL prod-DirElemConstructor/K2-DirectConElem-5: expected error XPST0003, got <node>
+  FAIL prod-DirElemConstructor/K2-DirectConElem-15: wrong error code XPST0003 (expected XQST0118)
+  FAIL prod-DirElemConstructor/cbcl-directconelem-002: string value 'xmlns:a="http://example.com/1" xmlns:b="http://example.com/2" xmlns:c="http://ex'
+prod/prod-DirElemConstructor: 66 pass, 5 fail, 2 unsupported (out of 73)
+== families ==
+prod: 66 pass, 5 fail, 2 unsupported (out of 73)
+TOTAL: 66 pass, 5 fail, 2 unsupported (out of 73)

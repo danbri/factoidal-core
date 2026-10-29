@@ -1,0 +1,5 @@
+running fn/string-length.xml
+fn/fn-string-length: 45 pass, 0 fail, 2 unsupported (out of 47)
+== families ==
+fn: 45 pass, 0 fail, 2 unsupported (out of 47)
+TOTAL: 45 pass, 0 fail, 2 unsupported (out of 47)

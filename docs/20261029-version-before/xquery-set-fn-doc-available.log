@@ -1,0 +1,6 @@
+running fn/doc-available.xml
+  FAIL fn-doc-available/fn-doc-available-40-065: got false
+fn/fn-doc-available: 46 pass, 1 fail, 2 unsupported (out of 49)
+== families ==
+fn: 46 pass, 1 fail, 2 unsupported (out of 49)
+TOTAL: 46 pass, 1 fail, 2 unsupported (out of 49)

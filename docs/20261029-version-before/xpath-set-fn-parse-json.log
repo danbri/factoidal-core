@@ -1,0 +1,5 @@
+running fn/parse-json.xml
+fn/fn-parse-json: 184 pass, 0 fail, 19 unsupported (out of 203)
+== families ==
+fn: 184 pass, 0 fail, 19 unsupported (out of 203)
+TOTAL: 184 pass, 0 fail, 19 unsupported (out of 203)

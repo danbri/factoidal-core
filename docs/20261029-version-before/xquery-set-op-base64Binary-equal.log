@@ -1,0 +1,5 @@
+running op/base64Binary-equal.xml
+op/op-base64Binary-equal: 39 pass, 0 fail, 14 unsupported (out of 53)
+== families ==
+op: 39 pass, 0 fail, 14 unsupported (out of 53)
+TOTAL: 39 pass, 0 fail, 14 unsupported (out of 53)

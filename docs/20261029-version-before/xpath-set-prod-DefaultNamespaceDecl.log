@@ -1,0 +1,5 @@
+running prod/DefaultNamespaceDecl.xml
+prod/prod-DefaultNamespaceDecl: 3 pass, 0 fail, 79 unsupported (out of 82)
+== families ==
+prod: 3 pass, 0 fail, 79 unsupported (out of 82)
+TOTAL: 3 pass, 0 fail, 79 unsupported (out of 82)

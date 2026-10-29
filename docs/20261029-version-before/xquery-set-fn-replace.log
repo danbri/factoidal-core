@@ -1,0 +1,5 @@
+running fn/replace.xml
+fn/fn-replace: 188 pass, 0 fail, 10 unsupported (out of 198)
+== families ==
+fn: 188 pass, 0 fail, 10 unsupported (out of 198)
+TOTAL: 188 pass, 0 fail, 10 unsupported (out of 198)

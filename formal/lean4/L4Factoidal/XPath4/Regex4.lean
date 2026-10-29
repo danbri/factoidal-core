@@ -67,8 +67,8 @@ def countGroups : Regex.CRe → Nat
 
 /-- F&O 4.0 §6.1: the `c` flag and named groups are part of the 4.0 dialect
     (`Regex.XPath40`), which `compileRe` uses. -/
-def compileRe4 (p f : String) : M Re4 := do
-  let r ← compileRe p f
+def compileRe4 (p f : String) (version : LanguageVersion := .v40) : M Re4 := do
+  let r ← compileReVersion version p f
   pure { r, names := r.names, groups := countGroups r.capt }
 
 /-! ## Matching segments -/
@@ -339,28 +339,31 @@ def regexRecord (p f : String) : Item :=
 
 def regexTable : List (String × LibFn) := [
   ent "analyze-string" (fun _ e a => do
-    let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 2))
+    let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 2)) e.features.version
+    rejectEmptyPattern e.features.version re.r
     pure (analyzeString e (strOf (argN a 0)) re)),
   ent "matching-segments" (fun _ _ a => do
     let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 2))
     pure (matchingSegments (strOf (argN a 0)) re)),
-  ent "matches" (fun _ _ a => do
-    let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 2))
+  ent "matches" (fun _ e a => do
+    let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 2)) e.features.version
     pure (sBool (Regex.isMatch re.r (strOf (argN a 0))))),
   ent "replace" (fun h e a => do
-    let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 3))
+    let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 3)) e.features.version
+    rejectEmptyPattern e.features.version re.r
     pure (sStr (← replace4 h e (strOf (argN a 0)) re (argN a 2)))),
   ent "regex" (fun _ _ a => do
     let p := strOf (argN a 0)
     let f := strOf (argN a 1)
     let _ ← compileRe4 p f
     pure [regexRecord p f]),
-  ent "tokenize" (fun _ _ a => do
+  ent "tokenize" (fun _ e a => do
     let s := strOf (argN a 0)
     if (argN a 1).isEmpty then
       pure ((normSpace s).splitOn " " |>.filter (· != "") |>.map (fun t => .atom (Atomic.ofStr t)))
     else
-      let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 2))
+      let re ← compileRe4 (strOf (argN a 1)) (strOf (argN a 2)) e.features.version
+      rejectEmptyPattern e.features.version re.r
       pure ((tokenize4 s re).map (fun t => .atom (Atomic.ofStr t))))
 ]
 

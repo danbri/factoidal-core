@@ -1,0 +1,738 @@
+running fn/abs.xml
+fn/fn-abs: 192 pass, 0 fail, 0 unsupported (out of 192)
+running fn/adjust-date-to-timezone.xml
+fn/fn-adjust-date-to-timezone: 41 pass, 0 fail, 0 unsupported (out of 41)
+running fn/adjust-dateTime-to-timezone.xml
+fn/fn-adjust-dateTime-to-timezone: 50 pass, 0 fail, 0 unsupported (out of 50)
+running fn/adjust-time-to-timezone.xml
+fn/fn-adjust-time-to-timezone: 42 pass, 0 fail, 0 unsupported (out of 42)
+running fn/all-different.xml
+fn/fn-all-different: 35 pass, 0 fail, 0 unsupported (out of 35)
+running fn/all-equal.xml
+fn/fn-all-equal: 35 pass, 0 fail, 0 unsupported (out of 35)
+running fn/analyze-string.xml
+  FAIL fn-analyze-string/analyzeString-031: xml <analyze-string-result xmlns="http://www.w3.org/2005/xpath-functions"><match xmlns="http://www.w3.org/2005/xpath-functions"/><non-match xmlns="http://www.w3.org/2005/xpath-functions">a</non-match><match xmlns="http://www.w3.org/2005/xpath-functions"/><non-match xmlns="http://www.w3.org/2005/xpath-functions">b</non-match><match xmlns="http://www.w3.org/2005/xpath-functions"/><non-match xmlns="http:
+  FAIL fn-analyze-string/analyzeString-032: xml <analyze-string-result xmlns="http://www.w3.org/2005/xpath-functions"><match xmlns="http://www.w3.org/2005/xpath-functions">a<lookahead-group xmlns="http://www.w3.org/2005/xpath-functions" nr="1" value="b" position="2"/></match><match xmlns="http://www.w3.org/2005/xpath-functions">b<lookahead-group xmlns="http://www.w3.org/2005/xpath-functions" nr="1" value="c" position="3"/></match><match xmlns="
+  FAIL fn-analyze-string/analyzeString-033: xml <analyze-string-result xmlns="http://www.w3.org/2005/xpath-functions"><match xmlns="http://www.w3.org/2005/xpath-functions"><group xmlns="http://www.w3.org/2005/xpath-functions" nr="1">Chapter</group> <lookahead-group xmlns="http://www.w3.org/2005/xpath-functions" nr="2" value="17" position="9"/></match><non-match xmlns="http://www.w3.org/2005/xpath-functions">17</non-match></analyze-string-result
+  FAIL fn-analyze-string/analyzeString-034: xml <analyze-string-result xmlns="http://www.w3.org/2005/xpath-functions"><match xmlns="http://www.w3.org/2005/xpath-functions"><group xmlns="http://www.w3.org/2005/xpath-functions" nr="1">Chapter</group> <lookahead-group xmlns="http://www.w3.org/2005/xpath-functions" nr="2" value="17" position="9"/><lookahead-group xmlns="http://www.w3.org/2005/xpath-functions" nr="3" value="c" position="11"/></match
+  FAIL fn-analyze-string/analyzeString-035: xml <analyze-string-result xmlns="http://www.w3.org/2005/xpath-functions"><match xmlns="http://www.w3.org/2005/xpath-functions"><group xmlns="http://www.w3.org/2005/xpath-functions" nr="1">Chapter</group> <lookahead-group xmlns="http://www.w3.org/2005/xpath-functions" nr="2" value="17" position="9"/><lookahead-group xmlns="http://www.w3.org/2005/xpath-functions" nr="3" value="" position="11"/></match>
+  FAIL fn-analyze-string/analyzeString-036: assert gave false for result <node>
+  FAIL fn-analyze-string/analyzeString-037: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+  FAIL fn-analyze-string/analyzeString-040: xml <analyze-string-result xmlns="http://www.w3.org/2005/xpath-functions"><match xmlns="http://www.w3.org/2005/xpath-functions">a<lookahead-group xmlns="http://www.w3.org/2005/xpath-functions" nr="1" name="plusone" value="b" position="2"/></match><match xmlns="http://www.w3.org/2005/xpath-functions">b<lookahead-group xmlns="http://www.w3.org/2005/xpath-functions" nr="1" name="plusone" value="c" positi
+fn/fn-analyze-string: 40 pass, 8 fail, 1 unsupported (out of 49)
+running fn/apply.xml
+fn/fn-apply: 21 pass, 0 fail, 1 unsupported (out of 22)
+running fn/atomic-equal.xml
+  FAIL fn-atomic-equal/atomic-equal-002: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+fn/fn-atomic-equal: 29 pass, 1 fail, 0 unsupported (out of 30)
+running fn/atomic-type-annotation.xml
+  FAIL fn-atomic-type-annotation/atomic-type-annotation-101: assert gave false for result map{...}
+  FAIL fn-atomic-type-annotation/atomic-type-annotation-102: assert gave false for result map{...}
+  FAIL fn-atomic-type-annotation/atomic-type-annotation-103: assert gave false for result map{...}
+fn/fn-atomic-type-annotation: 3 pass, 3 fail, 0 unsupported (out of 6)
+running fn/available-environment-variables.xml
+fn/fn-available-environment-variables: 11 pass, 0 fail, 0 unsupported (out of 11)
+running fn/avg.xml
+fn/fn-avg: 242 pass, 0 fail, 0 unsupported (out of 242)
+running fn/base-uri.xml
+fn/fn-base-uri: 82 pass, 0 fail, 1 unsupported (out of 83)
+running fn/boolean.xml
+fn/fn-boolean: 147 pass, 0 fail, 0 unsupported (out of 147)
+running fn/build-dateTime.xml
+fn/fn-build-dateTime: 91 pass, 0 fail, 0 unsupported (out of 91)
+running fn/build-uri.xml
+fn/fn-build-uri: 48 pass, 0 fail, 0 unsupported (out of 48)
+running fn/ceiling.xml
+fn/fn-ceiling: 94 pass, 0 fail, 0 unsupported (out of 94)
+running fn/char.xml
+fn/fn-char: 48 pass, 0 fail, 0 unsupported (out of 48)
+running fn/characters.xml
+fn/fn-characters: 12 pass, 0 fail, 0 unsupported (out of 12)
+running fn/civil-timezone.xml
+fn/fn-civil-timezone: 9 pass, 0 fail, 0 unsupported (out of 9)
+running fn/codepoint-equal.xml
+fn/fn-codepoint-equal: 36 pass, 0 fail, 0 unsupported (out of 36)
+running fn/codepoints-to-string.xml
+fn/fn-codepoints-to-string: 97 pass, 0 fail, 13 unsupported (out of 110)
+running fn/collation.xml
+fn/fn-collation: 89 pass, 0 fail, 0 unsupported (out of 89)
+running fn/collation-available.xml
+fn/fn-collation-available: 8 pass, 0 fail, 0 unsupported (out of 8)
+running fn/collation-key.xml
+fn/fn-collation-key: 37 pass, 0 fail, 0 unsupported (out of 37)
+running fn/collection.xml
+fn/fn-collection: 42 pass, 0 fail, 2 unsupported (out of 44)
+running fn/compare.xml
+fn/fn-compare: 233 pass, 0 fail, 2 unsupported (out of 235)
+running fn/concat.xml
+fn/fn-concat: 106 pass, 0 fail, 5 unsupported (out of 111)
+running fn/contains.xml
+  FAIL fn-contains/fn-contains-47: error XPTY0004: the value of collation option lang is not castable to xs:string
+fn/fn-contains: 81 pass, 1 fail, 0 unsupported (out of 82)
+running fn/contains-subsequence.xml
+  FAIL fn-contains-subsequence/contains-subsequence-021: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+fn/fn-contains-subsequence: 31 pass, 1 fail, 0 unsupported (out of 32)
+running fn/contains-token.xml
+fn/fn-contains-token: 46 pass, 0 fail, 2 unsupported (out of 48)
+running fn/count.xml
+  FAIL fn-count/K2-SeqCountFunc-1: wrong error code XPTY0004 (expected XPST0017)
+fn/fn-count: 315 pass, 1 fail, 0 unsupported (out of 316)
+running fn/csv-doc.xml
+fn/fn-csv-doc: 20 pass, 0 fail, 0 unsupported (out of 20)
+running fn/csv-to-xml.xml
+fn/fn-csv-to-xml: 70 pass, 0 fail, 0 unsupported (out of 70)
+running fn/current-date.xml
+fn/fn-current-date: 26 pass, 0 fail, 0 unsupported (out of 26)
+running fn/current-dateTime.xml
+fn/fn-current-dateTime: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/current-time.xml
+fn/fn-current-time: 24 pass, 0 fail, 0 unsupported (out of 24)
+running fn/data.xml
+fn/fn-data: 75 pass, 0 fail, 3 unsupported (out of 78)
+running fn/dateTime.xml
+fn/fn-dateTime: 52 pass, 0 fail, 0 unsupported (out of 52)
+running fn/day-from-date.xml
+fn/fn-day-from-date: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/day-from-dateTime.xml
+fn/fn-day-from-dateTime: 34 pass, 0 fail, 0 unsupported (out of 34)
+running fn/days-from-duration.xml
+fn/fn-days-from-duration: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/days-in-month.xml
+fn/fn-days-in-month: 18 pass, 0 fail, 0 unsupported (out of 18)
+running fn/decode-from-uri.xml
+fn/fn-decode-from-uri: 29 pass, 0 fail, 0 unsupported (out of 29)
+running fn/deep-equal.xml
+  FAIL fn-deep-equal/K2-SeqDeepEqualFunc-36: got true
+  FAIL fn-deep-equal/K2-SeqDeepEqualFunc-38: got true
+  FAIL fn-deep-equal/K2-SeqDeepEqualFunc-39: error XQDY0027: the document is not valid: [element {http://www.w3.org/XQueryTest/perversity}e: character data not allowed]
+  FAIL fn-deep-equal/K2-SeqDeepEqualFunc-42: got true
+  FAIL fn-deep-equal/deep-equal-40-id-property-001: got true
+  FAIL fn-deep-equal/deep-equal-40-idref-property-001: got true
+  FAIL fn-deep-equal/deep-equal-40-nilled-property-002: got true
+  FAIL fn-deep-equal/deep-equal-40-type-annotations-008: got true
+  FAIL fn-deep-equal/deep-equal-40-function-items-057: got false
+  FAIL fn-deep-equal/deep-equal-40-function-items-059: got false
+  FAIL fn-deep-equal/deep-equal-40-function-items-060: got false
+  FAIL fn-deep-equal/deep-equal-40-function-items-095: got 11 11, expected 11 12
+fn/fn-deep-equal: 562 pass, 12 fail, 13 unsupported (out of 587)
+running fn/default-collation.xml
+fn/fn-default-collation: 7 pass, 0 fail, 0 unsupported (out of 7)
+running fn/default-language.xml
+fn/fn-default-language: 5 pass, 0 fail, 1 unsupported (out of 6)
+running fn/distinct-ordered-nodes.xml
+fn/fn-distinct-ordered-nodes: 10 pass, 0 fail, 0 unsupported (out of 10)
+running fn/distinct-values.xml
+fn/fn-distinct-values: 120 pass, 0 fail, 5 unsupported (out of 125)
+running fn/divide-decimals.xml
+fn/fn-divide-decimals: 21 pass, 0 fail, 0 unsupported (out of 21)
+running fn/doc.xml
+  UNSUP fn-doc/fn-doc-27: source not loadable: ../../third_party/testing/qt4tests/fn/id/BCisInvalid.xml
+  UNSUP fn-doc/fn-doc-28: source not loadable: ../../third_party/testing/qt4tests/fn/id/InvalidUmlaut.xml
+  FAIL fn-doc/fn-doc-40-065: error FODC0002: xsd-validation strict: no declaration or type to validate against
+fn/fn-doc: 75 pass, 1 fail, 3 unsupported (out of 79)
+running fn/doc-available.xml
+  FAIL fn-doc-available/fn-doc-available-40-065: got false
+fn/fn-doc-available: 46 pass, 1 fail, 2 unsupported (out of 49)
+running fn/document-uri.xml
+fn/fn-document-uri: 54 pass, 0 fail, 1 unsupported (out of 55)
+running fn/do-until.xml
+fn/fn-do-until: 25 pass, 0 fail, 0 unsupported (out of 25)
+running fn/drop-while.xml
+fn/fn-drop-while: 18 pass, 0 fail, 0 unsupported (out of 18)
+running fn/duplicate-values.xml
+fn/fn-duplicate-values: 128 pass, 0 fail, 0 unsupported (out of 128)
+running fn/duration-to-seconds.xml
+  EXCLUDED fn-duration-to-seconds/duration-to-seconds-016: defective test data, https://github.com/danbri/factoidal/issues/1158
+fn/fn-duration-to-seconds: 17 pass, 0 fail, 0 unsupported (out of 17); 1 excluded (defective test data)
+running fn/element-with-id.xml
+  UNSUP fn-element-with-id/fn-element-with-id-1: source not valid: [IDREF omicron has no matching ID]
+  UNSUP fn-element-with-id/fn-element-with-id-2: source not valid: [IDREF omicron has no matching ID]
+  UNSUP fn-element-with-id/fn-element-with-id-3: source not valid: [IDREF omicron has no matching ID]
+  UNSUP fn-element-with-id/fn-element-with-id-4: source not valid: [IDREF omicron has no matching ID]
+  UNSUP fn-element-with-id/fn-element-with-id-5: source not valid: [IDREF omicron has no matching ID]
+fn/fn-element-with-id: 0 pass, 0 fail, 5 unsupported (out of 5)
+running fn/element-to-map.xml
+  FAIL fn-element-to-map/element-to-map-301: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-302: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-303: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-304: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-305: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-306: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-307: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-308: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-309: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-311: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-312: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-313: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-314: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-315: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-316: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-317: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-318: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-320: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-321: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-322: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-330: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-331: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-334: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-335: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-336: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-337: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-340: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-341: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-342: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-350: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-351: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-352: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-353: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-354: got map{...}, expected map{...}
+  FAIL fn-element-to-map/element-to-map-412: error FOJS0008: the element Q{http://www.w3.org/XQueryTest/specimen}Boolean cannot be converted with the fallback layout
+fn/fn-element-to-map: 186 pass, 35 fail, 0 unsupported (out of 221)
+running fn/element-to-map-plan.xml
+fn/fn-element-to-map-plan: 21 pass, 0 fail, 0 unsupported (out of 21)
+running fn/empty.xml
+fn/fn-empty: 54 pass, 0 fail, 0 unsupported (out of 54)
+running fn/encode-for-uri.xml
+fn/fn-encode-for-uri: 29 pass, 0 fail, 0 unsupported (out of 29)
+running fn/ends-with.xml
+fn/fn-ends-with: 70 pass, 0 fail, 0 unsupported (out of 70)
+running fn/ends-with-subsequence.xml
+  FAIL fn-ends-with-subsequence/ends-with-subsequence-021: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+fn/fn-ends-with-subsequence: 32 pass, 1 fail, 0 unsupported (out of 33)
+running fn/environment-variable.xml
+fn/fn-environment-variable: 12 pass, 0 fail, 0 unsupported (out of 12)
+running fn/error.xml
+fn/fn-error: 103 pass, 0 fail, 1 unsupported (out of 104)
+running fn/escape-html-uri.xml
+fn/fn-escape-html-uri: 34 pass, 0 fail, 0 unsupported (out of 34)
+running fn/every.xml
+fn/fn-every: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/exactly-one.xml
+fn/fn-exactly-one: 54 pass, 0 fail, 0 unsupported (out of 54)
+running fn/exists.xml
+fn/fn-exists: 59 pass, 0 fail, 0 unsupported (out of 59)
+running fn/expanded-QName.xml
+fn/fn-expanded-QName: 8 pass, 0 fail, 1 unsupported (out of 9)
+running fn/false.xml
+fn/fn-false: 25 pass, 0 fail, 0 unsupported (out of 25)
+running fn/filter.xml
+fn/fn-filter: 37 pass, 0 fail, 11 unsupported (out of 48)
+running fn/floor.xml
+fn/fn-floor: 88 pass, 0 fail, 0 unsupported (out of 88)
+running fn/fold-left.xml
+  FAIL fn-fold-left/fold-left-009: string value 'c a b d'
+  FAIL fn-fold-left/fold-left-022: error XPDY0130: range too large for this implementation (an implementation limit)
+  FAIL fn-fold-left/fold-left-023: error XPDY0130: range too large for this implementation (an implementation limit)
+fn/fn-fold-left: 28 pass, 3 fail, 0 unsupported (out of 31)
+running fn/fold-right.xml
+  FAIL fn-fold-right/fold-right-022: error XPDY0130: range too large for this implementation (an implementation limit)
+  FAIL fn-fold-right/fold-right-023: error XPDY0130: range too large for this implementation (an implementation limit)
+fn/fn-fold-right: 27 pass, 2 fail, 0 unsupported (out of 29)
+running fn/foot.xml
+fn/fn-foot: 8 pass, 0 fail, 0 unsupported (out of 8)
+running fn/for-each.xml
+fn/fn-for-each: 21 pass, 0 fail, 1 unsupported (out of 22)
+running fn/for-each-pair.xml
+fn/fn-for-each-pair: 48 pass, 0 fail, 7 unsupported (out of 55)
+running fn/format-date.xml
+fn/fn-format-date: 136 pass, 0 fail, 4 unsupported (out of 140)
+running fn/format-dateTime.xml
+fn/fn-format-dateTime: 92 pass, 0 fail, 2 unsupported (out of 94)
+running fn/format-integer.xml
+fn/fn-format-integer: 107 pass, 0 fail, 5 unsupported (out of 112)
+running fn/format-number.xml
+  FAIL fn-format-number/numberformat111: wrong error code FODF1290 (expected XQST0098)
+  FAIL fn-format-number/numberformat121: any-of: error FOER0000: evaluation too deep (fuel exhausted); wrong error code FOER0000 (expected FOAR0002)
+  FAIL fn-format-number/numberformat122: any-of: error FOER0000: evaluation too deep (fuel exhausted); error FOER0000: evaluation too deep (fuel exhausted)
+  FAIL fn-format-number/numberformat124: wrong error code FODF1290 (expected XQST0097)
+  FAIL fn-format-number/numberformat126: wrong error code FODF1290 (expected XQST0098)
+  FAIL fn-format-number/numberformat901err: wrong error code FODF1290 (expected XQST0098)
+fn/fn-format-number: 296 pass, 6 fail, 6 unsupported (out of 308)
+running fn/format-time.xml
+  FAIL fn-format-time/format-time-025c: assert gave false for result <node>
+fn/fn-format-time: 96 pass, 1 fail, 1 unsupported (out of 98)
+running fn/function-annotations.xml
+  FAIL fn-function-annotations/fn-function-annotations-017: got , expected map{...}
+  FAIL fn-function-annotations/fn-function-annotations-018: got , expected map{...}
+  FAIL fn-function-annotations/fn-function-annotations-019: got map{...}, expected map{...}
+  FAIL fn-function-annotations/fn-function-annotations-020: got , expected map{...} map{...} map{...}
+  FAIL fn-function-annotations/fn-function-annotations-021: got , expected map{...}
+  FAIL fn-function-annotations/fn-function-annotations-022: got , expected map{...} map{...}
+  FAIL fn-function-annotations/fn-function-annotations-023: got , expected map{...} map{...}
+  FAIL fn-function-annotations/fn-function-annotations-024: error XPST0003: an annotation value must be a literal
+  FAIL fn-function-annotations/fn-function-annotations-025: error XPTY0004: wrong number of items for $map of map:keys: 0
+fn/fn-function-annotations: 14 pass, 9 fail, 2 unsupported (out of 25)
+running fn/function-arity.xml
+fn/fn-function-arity: 21 pass, 0 fail, 2 unsupported (out of 23)
+running fn/function-lookup.xml
+  FAIL fn-function-lookup/fn-function-lookup-605: got 
+  FAIL fn-function-lookup/fn-function-lookup-606: got 
+  FAIL fn-function-lookup/fn-function-lookup-610a: expected error XPTY0004, got 
+  FAIL fn-function-lookup/fn-function-lookup-611: expected error XPTY0004, got 
+  FAIL fn-function-lookup/fn-function-lookup-613: expected error XQDY0054, got 
+  FAIL fn-function-lookup/fn-function-lookup-616: got 
+  FAIL fn-function-lookup/fn-function-lookup-617: got 
+  FAIL fn-function-lookup/fn-function-lookup-902: got 
+  FAIL fn-function-lookup/fn-function-lookup-903: got 
+  FAIL fn-function-lookup/fn-function-lookup-904: got , expected X y
+fn/fn-function-lookup: 670 pass, 10 fail, 4 unsupported (out of 684)
+running fn/function-name.xml
+  FAIL fn-function-name/fn-function-name-022: got 
+  FAIL fn-function-name/fn-function-name-024: got 
+fn/fn-function-name: 27 pass, 2 fail, 1 unsupported (out of 30)
+running fn/generate.xml
+  FAIL fn-generate/generate-08: got 1 (xs:integer), expected 20
+  FAIL fn-generate/generate-09: error XPDY0130: fn:generate made more states than this implementation allows (an implementation limit)
+  FAIL fn-generate/generate-16: error XPDY0130: fn:generate made more states than this implementation allows (an implementation limit)
+fn/fn-generate: 13 pass, 3 fail, 0 unsupported (out of 16)
+running fn/generate-id.xml
+fn/fn-generate-id: 38 pass, 0 fail, 3 unsupported (out of 41)
+running fn/graphemes.xml
+fn/fn-graphemes: 1189 pass, 0 fail, 0 unsupported (out of 1189)
+running fn/has-children.xml
+fn/fn-has-children: 44 pass, 0 fail, 4 unsupported (out of 48)
+running fn/hash.xml
+fn/fn-hash: 54 pass, 0 fail, 0 unsupported (out of 54)
+running fn/head.xml
+fn/fn-head: 8 pass, 0 fail, 0 unsupported (out of 8)
+running fn/highest.xml
+  FAIL fn-highest/highest-003: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+  FAIL fn-highest/highest-004: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+fn/fn-highest: 34 pass, 2 fail, 0 unsupported (out of 36)
+running fn/hours-from-dateTime.xml
+fn/fn-hours-from-dateTime: 34 pass, 0 fail, 0 unsupported (out of 34)
+running fn/hours-from-duration.xml
+fn/fn-hours-from-duration: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/hours-from-time.xml
+fn/fn-hours-from-time: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/html-doc.xml
+fn/fn-html-doc: 10 pass, 0 fail, 0 unsupported (out of 10)
+running fn/id.xml
+  FAIL fn-id/fn-id-25: any-of: expected error XQDY0091, got <node>; got <node>
+fn/fn-id: 46 pass, 1 fail, 14 unsupported (out of 61)
+running fn/identity.xml
+fn/fn-identity: 5 pass, 0 fail, 0 unsupported (out of 5)
+running fn/idref.xml
+  FAIL fn-idref/fn-idref-5: xml 
+  FAIL fn-idref/fn-idref-7: xml 
+  FAIL fn-idref/fn-idref-8: xml 
+  FAIL fn-idref/fn-idref-9: xml 
+  FAIL fn-idref/fn-idref-12: string value ''
+  FAIL fn-idref/fn-idref-13: got 
+  FAIL fn-idref/fn-idref-14: got 
+  FAIL fn-idref/fn-idref-15: xml 
+  FAIL fn-idref/fn-idref-16: xml 
+  FAIL fn-idref/fn-idref-17: xml 
+  FAIL fn-idref/fn-idref-18: xml 
+  FAIL fn-idref/fn-idref-19: xml 
+  FAIL fn-idref/fn-idref-20: xml 
+  FAIL fn-idref/fn-idref-21: xml 
+  FAIL fn-idref/fn-idref-23: xml 
+  UNSUP fn-idref/fn-idref-30: source not valid: [IDREF omicron has no matching ID]
+  UNSUP fn-idref/fn-idref-31: source not valid: [IDREF omicron has no matching ID]
+  UNSUP fn-idref/fn-idref-32: source not valid: [IDREF omicron has no matching ID]
+  UNSUP fn-idref/fn-idref-33: source not valid: [IDREF omicron has no matching ID]
+  UNSUP fn-idref/fn-idref-34: source not valid: [IDREF omicron has no matching ID]
+fn/fn-idref: 17 pass, 15 fail, 22 unsupported (out of 54)
+running fn/implicit-timezone.xml
+fn/fn-implicit-timezone: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/index-of.xml
+fn/fn-index-of: 61 pass, 0 fail, 7 unsupported (out of 68)
+running fn/index-of-substring.xml
+  FAIL fn-index-of-substring/index-of-substring-016: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+fn/fn-index-of-substring: 21 pass, 1 fail, 0 unsupported (out of 22)
+running fn/index-where.xml
+fn/fn-index-where: 22 pass, 0 fail, 0 unsupported (out of 22)
+running fn/innermost.xml
+fn/fn-innermost: 55 pass, 0 fail, 9 unsupported (out of 64)
+running fn/insert-before.xml
+fn/fn-insert-before: 51 pass, 0 fail, 0 unsupported (out of 51)
+running fn/insert-separator.xml
+fn/fn-insert-separator: 13 pass, 0 fail, 0 unsupported (out of 13)
+running fn/in-scope-namespaces.xml
+fn/fn-in-scope-namespaces: 13 pass, 0 fail, 0 unsupported (out of 13)
+running fn/in-scope-prefixes.xml
+  FAIL fn-in-scope-prefixes/K2-InScopePrefixesFunc-11: got 2 2 2 2, expected 2 1 2 2
+  FAIL fn-in-scope-prefixes/K2-InScopePrefixesFunc-12: got 2 2 2 2, expected 2 1 2 2
+  FAIL fn-in-scope-prefixes/K2-InScopePrefixesFunc-18: xml <e xmlns="http://example.com/">2 2</e>
+  FAIL fn-in-scope-prefixes/K2-InScopePrefixesFunc-25: string value 'a b xml | a b xml'
+  FAIL fn-in-scope-prefixes/K2-InScopePrefixesFunc-28: xml 2 2 2 2<e xmlns="http://www.example.com/"><a xmlns=""/><b xmlns="http://www.example.com/"/><c xmlns="http://www.example.com/Second"/></e>
+fn/fn-in-scope-prefixes: 53 pass, 5 fail, 4 unsupported (out of 62)
+running fn/invisible-xml.xml
+fn/fn-invisible-xml: 16 pass, 0 fail, 0 unsupported (out of 16)
+running fn/iri-to-uri.xml
+fn/fn-iri-to-uri: 46 pass, 0 fail, 1 unsupported (out of 47)
+running fn/is-NaN.xml
+fn/fn-is-NaN: 16 pass, 0 fail, 0 unsupported (out of 16)
+running fn/items-at.xml
+fn/fn-items-at: 30 pass, 0 fail, 0 unsupported (out of 30)
+running fn/jkey.xml
+fn/fn-jkey: 19 pass, 0 fail, 0 unsupported (out of 19)
+running fn/json-doc.xml
+fn/fn-json-doc: 77 pass, 0 fail, 4 unsupported (out of 81)
+running fn/json-to-xml.xml
+  FAIL fn-json-to-xml/json-to-xml-017b: error XPST0008: schema-element(j:array): no such declaration in the in-scope schema definitions
+  FAIL fn-json-to-xml/json-to-xml-037b: error XPST0008: schema-element(map): no such declaration in the in-scope schema definitions
+  FAIL fn-json-to-xml/json-to-xml-038b: error XPST0008: schema-element(map): no such declaration in the in-scope schema definitions
+  FAIL fn-json-to-xml/json-to-xml-044: error XPST0008: schema-element(fn:map): no such declaration in the in-scope schema definitions
+  FAIL fn-json-to-xml/json-to-xml-045: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+  FAIL fn-json-to-xml/json-to-xml-046: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+  FAIL fn-json-to-xml/json-to-xml-047: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+fn/fn-json-to-xml: 91 pass, 7 fail, 6 unsupported (out of 104)
+running fn/jtree.xml
+fn/fn-jtree: 30 pass, 0 fail, 0 unsupported (out of 30)
+running fn/jvalue.xml
+fn/fn-jvalue: 18 pass, 0 fail, 0 unsupported (out of 18)
+running fn/lang.xml
+fn/fn-lang: 51 pass, 0 fail, 0 unsupported (out of 51)
+running fn/last.xml
+fn/fn-last: 69 pass, 0 fail, 0 unsupported (out of 69)
+running fn/load-xquery-module.xml
+  FAIL fn-load-xquery-module/fn-load-xquery-module-029: error FOQM0003: a static error in the module: XQST0047 a module imports itself
+  FAIL fn-load-xquery-module/fn-load-xquery-module-032: error XPDY0002: no value for the external variable $evm:var3
+  FAIL fn-load-xquery-module/fn-load-xquery-module-038: error XPDY0002: no value for the external variable $test:b
+  FAIL fn-load-xquery-module/fn-load-xquery-module-040: error FODF1280: unknown decimal format Q{http://www.w3.org/2005/xquery-local-functions}de
+  FAIL fn-load-xquery-module/fn-load-xquery-module-042: string value '0 0 1 1 1'
+  FAIL fn-load-xquery-module/fn-load-xquery-module-043: string value '0 0 1 1 1 0 0 1 1 1'
+  FAIL fn-load-xquery-module/fn-load-xquery-module-044: string value '0 0 1 1 1 0 0 1 1 1'
+  FAIL fn-load-xquery-module/fn-load-xquery-module-050: error FOQM0003: a static error in the module: XPST0051 unknown type hat:hatsize
+  FAIL fn-load-xquery-module/fn-load-xquery-module-076: error FONS0004: no namespace binding for prefix vm
+  FAIL fn-load-xquery-module/fn-load-xquery-module-508: any-of: wrong error code XQST0059 (expected FOQM0003); wrong error code XQST0059 (expected FODC0016)
+  FAIL fn-load-xquery-module/fn-load-xquery-module-532: error FODC0016: untrusted code may not read external resources (doc)
+  FAIL fn-load-xquery-module/fn-load-xquery-module-533: expected error FODC0016, got true
+  FAIL fn-load-xquery-module/fn-load-xquery-module-534: expected error FODC0016, got true
+  FAIL fn-load-xquery-module/fn-load-xquery-module-540: any-of: wrong error code XQST0059 (expected FOQM0003); wrong error code XQST0059 (expected FODC0016)
+  FAIL fn-load-xquery-module/fn-load-xquery-module-561: got false
+  FAIL fn-load-xquery-module/fn-load-xquery-module-562: got , expected yes invalid
+  FAIL fn-load-xquery-module/fn-load-xquery-module-570: wrong error code FOQM0002 (expected FODC0016)
+  FAIL fn-load-xquery-module/fn-load-xquery-module-571: error XQST0059: no module found for namespace http://www.w3.org/fots/fn/load-xquery-module/valid/module
+  FAIL fn-load-xquery-module/fn-load-xquery-module-590: expected error FODC0016, got baz
+  FAIL fn-load-xquery-module/fn-load-xquery-module-591: expected error FODC0016, got foo
+  FAIL fn-load-xquery-module/fn-load-xquery-module-592: wrong error code FODC0013 (expected FODC0016)
+  FAIL fn-load-xquery-module/fn-load-xquery-module-601: expected error FODC0016, got true
+  FAIL fn-load-xquery-module/fn-load-xquery-module-602: expected error FODC0016, got true
+  FAIL fn-load-xquery-module/fn-load-xquery-module-924: expected error XPDY0002, got 
+  FAIL fn-load-xquery-module/fn-load-xquery-module-925: expected error XPDY0002, got 
+fn/fn-load-xquery-module: 157 pass, 25 fail, 2 unsupported (out of 184)
+running fn/local-name.xml
+fn/fn-local-name: 60 pass, 0 fail, 1 unsupported (out of 61)
+running fn/local-name-from-QName.xml
+fn/fn-local-name-from-QName: 27 pass, 0 fail, 1 unsupported (out of 28)
+running fn/location.xml
+  FAIL fn-location/fn-location-002: error XPST0017: function location is not implemented
+  FAIL fn-location/fn-location-003: any-of: error XPST0017: function location is not implemented; error XPST0017: function location is not implemented
+  FAIL fn-location/fn-location-004: any-of: error XPTY0004: unknown option retain-location; error XPTY0004: unknown option retain-location
+  FAIL fn-location/fn-location-005: any-of: error XPTY0004: unknown option retain-location; error XPTY0004: unknown option retain-location
+fn/fn-location: 1 pass, 4 fail, 0 unsupported (out of 5)
+running fn/lower-case.xml
+fn/fn-lower-case: 27 pass, 0 fail, 1 unsupported (out of 28)
+running fn/lowest.xml
+  FAIL fn-lowest/lowest-004: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+fn/fn-lowest: 35 pass, 1 fail, 0 unsupported (out of 36)
+running fn/map-to-element.xml
+  FAIL fn-map-to-element/map-to-element-234: error FOJS0009: the key p:x is not a valid name: not an NCName
+fn/fn-map-to-element: 232 pass, 1 fail, 0 unsupported (out of 233)
+running fn/max.xml
+  FAIL fn-max/fn-max-42: error XPST0003: unterminated pragma
+fn/fn-max: 215 pass, 1 fail, 16 unsupported (out of 232)
+running fn/matches.xml
+  FAIL fn-matches/cbcl-matches-004: any-of: error FOER0000: implementation limit: regex quantifier above 1000; wrong error code FOER0000 (expected FORX0002)
+  FAIL fn-matches/cbcl-matches-038: error FOER0000: implementation limit: regex quantifier above 1000
+fn/fn-matches: 199 pass, 2 fail, 7 unsupported (out of 208)
+running fn/matches.re.xml
+fn/fn-matches.re: 1083 pass, 0 fail, 33 unsupported (out of 1116)
+running fn/matching-segments.xml
+fn/fn-matching-segments: 39 pass, 0 fail, 0 unsupported (out of 39)
+running fn/message.xml
+fn/fn-message: 15 pass, 0 fail, 0 unsupported (out of 15)
+running fn/min.xml
+  FAIL fn-min/fn-min-42: error XPST0003: unterminated pragma
+fn/fn-min: 212 pass, 1 fail, 19 unsupported (out of 232)
+running fn/minutes-from-dateTime.xml
+fn/fn-minutes-from-dateTime: 34 pass, 0 fail, 0 unsupported (out of 34)
+running fn/minutes-from-duration.xml
+fn/fn-minutes-from-duration: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/minutes-from-time.xml
+fn/fn-minutes-from-time: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/month-from-date.xml
+fn/fn-month-from-date: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/months-from-duration.xml
+fn/fn-months-from-duration: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/month-from-dateTime.xml
+fn/fn-month-from-dateTime: 34 pass, 0 fail, 0 unsupported (out of 34)
+running fn/name.xml
+fn/fn-name: 35 pass, 0 fail, 1 unsupported (out of 36)
+running fn/namespace-uri.xml
+fn/fn-namespace-uri: 34 pass, 0 fail, 0 unsupported (out of 34)
+running fn/namespace-uri-for-prefix.xml
+  FAIL fn-namespace-uri-for-prefix/fn-namespace-uri-for-prefix-25: expected error XPTY0004, got 
+  FAIL fn-namespace-uri-for-prefix/K2-NamespaceURIForPrefixFunc-2: string value 'http://www.example.com/A'
+fn/fn-namespace-uri-for-prefix: 28 pass, 2 fail, 1 unsupported (out of 31)
+running fn/namespace-uri-from-QName.xml
+  FAIL fn-namespace-uri-from-QName/K2-NamespaceURIFromQNameFunc-1: string value 'http://example.com/ANamespace'
+  FAIL fn-namespace-uri-from-QName/K2-NamespaceURIFromQNameFunc-3: got http://example.com/ (xs:string), expected 
+  FAIL fn-namespace-uri-from-QName/K2-NamespaceURIFromQNameFunc-4: string value '[http://example.com/|http://example.com/2]'
+fn/fn-namespace-uri-from-QName: 25 pass, 3 fail, 2 unsupported (out of 30)
+running fn/nilled.xml
+fn/fn-nilled: 64 pass, 0 fail, 1 unsupported (out of 65)
+running fn/node-name.xml
+fn/fn-node-name: 47 pass, 0 fail, 1 unsupported (out of 48)
+running fn/node-type-annotation.xml
+  FAIL fn-node-type-annotation/node-type-annotation-103: assert gave false for result map{...}
+fn/fn-node-type-annotation: 6 pass, 1 fail, 0 unsupported (out of 7)
+running fn/normalize-space.xml
+fn/fn-normalize-space: 46 pass, 0 fail, 1 unsupported (out of 47)
+running fn/normalize-unicode.xml
+fn/fn-normalize-unicode: 44 pass, 0 fail, 6 unsupported (out of 50)
+running fn/not.xml
+fn/fn-not: 83 pass, 0 fail, 0 unsupported (out of 83)
+running fn/number.xml
+fn/fn-number: 74 pass, 0 fail, 6 unsupported (out of 80)
+running fn/one-or-more.xml
+fn/fn-one-or-more: 56 pass, 0 fail, 0 unsupported (out of 56)
+running fn/op.xml
+  FAIL fn-op/fn-op-vc-006: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+fn/fn-op: 34 pass, 1 fail, 0 unsupported (out of 35)
+running fn/outermost.xml
+fn/fn-outermost: 54 pass, 0 fail, 8 unsupported (out of 62)
+running fn/pad-string.xml
+fn/fn-pad-string: 22 pass, 0 fail, 0 unsupported (out of 22)
+running fn/parse-csv.xml
+fn/fn-parse-csv: 124 pass, 0 fail, 0 unsupported (out of 124)
+running fn/parse-html.xml
+fn/fn-parse-html: 22 pass, 0 fail, 0 unsupported (out of 22)
+running fn/parse-ietf-date.xml
+fn/fn-parse-ietf-date: 105 pass, 0 fail, 0 unsupported (out of 105)
+running fn/parse-integer.xml
+fn/fn-parse-integer: 47 pass, 0 fail, 0 unsupported (out of 47)
+running fn/parse-json.xml
+  FAIL fn-parse-json/fn-parse-json-946: error XPTY0004: duplicates must be a string
+fn/fn-parse-json: 190 pass, 1 fail, 12 unsupported (out of 203)
+running fn/parse-QName.xml
+  FAIL fn-parse-QName/parse-qname-101: error FONS0004: undeclared prefix
+fn/fn-parse-QName: 19 pass, 1 fail, 0 unsupported (out of 20)
+running fn/parse-xml.xml
+  FAIL fn-parse-xml/parse-xml-434: wrong error code FODC0007 (expected FODC0014)
+  FAIL fn-parse-xml/parse-xml-436: assert gave false for result <node>
+  FAIL fn-parse-xml/parse-xml-437: wrong error code XPTY0004 (expected FODC0008)
+  FAIL fn-parse-xml/parse-xml-438: wrong error code FODC0007 (expected FODC0008)
+  FAIL fn-parse-xml/parse-xml-439: wrong error code FODC0007 (expected FODC0008)
+fn/fn-parse-xml: 49 pass, 5 fail, 3 unsupported (out of 57)
+running fn/parse-xml-fragment.xml
+  FAIL fn-parse-xml-fragment/parse-xml-fragment-505: error XPTY0004: unknown option retain-location
+  FAIL fn-parse-xml-fragment/parse-xml-fragment-506: error XPTY0004: unknown option retain-location
+fn/fn-parse-xml-fragment: 38 pass, 2 fail, 1 unsupported (out of 41)
+running fn/parse-uri.xml
+fn/fn-parse-uri: 74 pass, 0 fail, 0 unsupported (out of 74)
+running fn/partial-apply.xml
+fn/fn-partial-apply: 20 pass, 0 fail, 0 unsupported (out of 20)
+running fn/partition.xml
+fn/fn-partition: 25 pass, 0 fail, 0 unsupported (out of 25)
+running fn/parts-of-dateTime.xml
+fn/fn-parts-of-dateTime: 20 pass, 0 fail, 0 unsupported (out of 20)
+running fn/path.xml
+fn/fn-path: 69 pass, 0 fail, 3 unsupported (out of 72)
+running fn/position.xml
+fn/fn-position: 67 pass, 0 fail, 0 unsupported (out of 67)
+running fn/prefix-from-QName.xml
+fn/fn-prefix-from-QName: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/QName.xml
+fn/fn-QName: 34 pass, 0 fail, 0 unsupported (out of 34)
+running fn/random-number-generator.xml
+  FAIL fn-random-number-generator/fn-random-number-generator-31a: expected error XPTY0004, got 0
+fn/fn-random-number-generator: 56 pass, 1 fail, 4 unsupported (out of 61)
+running fn/regex.xml
+  FAIL fn-regex/fn-regex-007: expected error XPTY0004, got 
+fn/fn-regex: 29 pass, 1 fail, 0 unsupported (out of 30)
+running fn/remove.xml
+fn/fn-remove: 62 pass, 0 fail, 1 unsupported (out of 63)
+running fn/replace.xml
+fn/fn-replace: 188 pass, 0 fail, 10 unsupported (out of 198)
+running fn/replicate.xml
+fn/fn-replicate: 21 pass, 0 fail, 0 unsupported (out of 21)
+running fn/resolve-QName.xml
+fn/fn-resolve-QName: 28 pass, 0 fail, 4 unsupported (out of 32)
+running fn/resolve-uri.xml
+fn/fn-resolve-uri: 50 pass, 0 fail, 1 unsupported (out of 51)
+running fn/reverse.xml
+fn/fn-reverse: 70 pass, 0 fail, 0 unsupported (out of 70)
+running fn/root.xml
+fn/fn-root: 43 pass, 0 fail, 0 unsupported (out of 43)
+running fn/round.xml
+fn/fn-round: 380 pass, 0 fail, 1 unsupported (out of 381)
+running fn/round-half-to-even.xml
+fn/fn-round-half-to-even: 145 pass, 0 fail, 0 unsupported (out of 145)
+running fn/scan.xml
+fn/fn-scan: 11 pass, 0 fail, 0 unsupported (out of 11)
+running fn/schema-type.xml
+  FAIL fn-schema-type/schema-type-100: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+  FAIL fn-schema-type/schema-type-101: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+  FAIL fn-schema-type/schema-type-102: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+  FAIL fn-schema-type/schema-type-103: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+  FAIL fn-schema-type/schema-type-104: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+fn/fn-schema-type: 9 pass, 5 fail, 0 unsupported (out of 14)
+running fn/seconds.xml
+fn/fn-seconds: 24 pass, 0 fail, 0 unsupported (out of 24)
+running fn/seconds-from-dateTime.xml
+fn/fn-seconds-from-dateTime: 35 pass, 0 fail, 0 unsupported (out of 35)
+running fn/seconds-from-duration.xml
+fn/fn-seconds-from-duration: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/seconds-from-time.xml
+fn/fn-seconds-from-time: 28 pass, 0 fail, 0 unsupported (out of 28)
+running fn/serialize.xml
+  FAIL fn-serialize/serialize-xml-151: expected error SERE0024, got <a></a>
+<b></b>
+  UNSUP fn-serialize/serialize-xml-canonical-5: source not loadable: ../../third_party/testing/qt4tests/fn/serialize/serialize-canonical-5-src.xml
+  FAIL fn-serialize/serialize-html-004: string value '<body><p>Hello World!<?pi data></p></body>'
+  FAIL fn-serialize/serialize-html-005: string value '<body><p>Hello World!<?pi></p></body>'
+  FAIL fn-serialize/serialize-html-006: string value '<body><p>Hello World!<?pi data--with--hyphens></p></body>'
+  FAIL fn-serialize/serialize-html-007: string value '<body><p>Hello World!<?pi -----></p></body>'
+  FAIL fn-serialize/serialize-xml-172: got <a xmlns="X"/> (xs:string), expected <a xmlns="x"/>
+fn/fn-serialize: 265 pass, 6 fail, 21 unsupported (out of 292)
+running fn/siblings.xml
+fn/fn-siblings: 18 pass, 0 fail, 1 unsupported (out of 19)
+running fn/slice.xml
+fn/fn-slice: 104 pass, 0 fail, 0 unsupported (out of 104)
+running fn/some.xml
+fn/fn-some: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/sort.xml
+  FAIL fn-sort/fn-sort-collation-1: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+  FAIL fn-sort/fn-sort-collation-2: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+  FAIL fn-sort/fn-sort-collation-3: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+fn/fn-sort: 47 pass, 3 fail, 0 unsupported (out of 50)
+running fn/sort-by.xml
+  FAIL fn-sort-by/fn-sort-by-collation-1: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+  FAIL fn-sort-by/fn-sort-by-collation-2: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+  FAIL fn-sort-by/fn-sort-by-collation-3: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+fn/fn-sort-by: 63 pass, 3 fail, 0 unsupported (out of 66)
+running fn/sort-with.xml
+fn/fn-sort-with: 24 pass, 0 fail, 0 unsupported (out of 24)
+running fn/starts-with.xml
+fn/fn-starts-with: 69 pass, 0 fail, 0 unsupported (out of 69)
+running fn/starts-with-subsequence.xml
+  FAIL fn-starts-with-subsequence/starts-with-subsequence-021: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+fn/fn-starts-with-subsequence: 32 pass, 1 fail, 0 unsupported (out of 33)
+running fn/static-base-uri.xml
+fn/fn-static-base-uri: 18 pass, 0 fail, 0 unsupported (out of 18)
+running fn/string.xml
+fn/fn-string: 84 pass, 0 fail, 1 unsupported (out of 85)
+running fn/string-join.xml
+fn/fn-string-join: 45 pass, 0 fail, 3 unsupported (out of 48)
+running fn/string-length.xml
+fn/fn-string-length: 46 pass, 0 fail, 1 unsupported (out of 47)
+running fn/string-to-codepoints.xml
+fn/fn-string-to-codepoints: 44 pass, 0 fail, 0 unsupported (out of 44)
+running fn/subsequence.xml
+fn/fn-subsequence: 122 pass, 0 fail, 0 unsupported (out of 122)
+running fn/substring.xml
+fn/fn-substring: 74 pass, 0 fail, 0 unsupported (out of 74)
+running fn/substring-after.xml
+fn/fn-substring-after: 60 pass, 0 fail, 1 unsupported (out of 61)
+running fn/substring-after-last.xml
+  FAIL fn-substring-after-last/substring-after-last-018: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+fn/fn-substring-after-last: 28 pass, 1 fail, 0 unsupported (out of 29)
+running fn/substring-before.xml
+fn/fn-substring-before: 59 pass, 0 fail, 1 unsupported (out of 60)
+running fn/substring-before-last.xml
+  FAIL fn-substring-before-last/substring-before-last-018: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+fn/fn-substring-before-last: 28 pass, 1 fail, 0 unsupported (out of 29)
+running fn/sum.xml
+fn/fn-sum: 229 pass, 0 fail, 0 unsupported (out of 229)
+running fn/system-properties.xml
+fn/fn-system-properties: 30 pass, 0 fail, 5 unsupported (out of 35)
+running fn/tail.xml
+fn/fn-tail: 6 pass, 0 fail, 0 unsupported (out of 6)
+running fn/take-while.xml
+fn/fn-take-while: 18 pass, 0 fail, 0 unsupported (out of 18)
+running fn/timezone-from-date.xml
+fn/fn-timezone-from-date: 34 pass, 0 fail, 0 unsupported (out of 34)
+running fn/timezone-from-dateTime.xml
+fn/fn-timezone-from-dateTime: 41 pass, 0 fail, 0 unsupported (out of 41)
+running fn/timezone-from-time.xml
+fn/fn-timezone-from-time: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/tokenize.xml
+fn/fn-tokenize: 72 pass, 0 fail, 7 unsupported (out of 79)
+running fn/trace.xml
+fn/fn-trace: 31 pass, 0 fail, 1 unsupported (out of 32)
+running fn/transform.xml
+  FAIL fn-transform/fn-transform-27: got true
+  FAIL fn-transform/fn-transform-65: assert gave false for result map{...}
+  FAIL fn-transform/fn-transform-66: assert gave false for result map{...}
+  FAIL fn-transform/fn-transform-67: assert gave false for result map{...}
+  FAIL fn-transform/fn-transform-70: any-of: wrong error code XPST0017 (expected FOXT0001); error XPST0017: unknown function chrono:c4#1
+  FAIL fn-transform/fn-transform-82e: any-of: assert gave false for result <node>; assert gave false for result <node>; expected error FOXT0001, got <node>
+  FAIL fn-transform/fn-transform-91: error XTMM9001: 
+  FAIL fn-transform/fn-transform-94: error FODC0002: stylesheet not available: ../identity.xsl
+  FAIL fn-transform/fn-transform-err-9a: error XTSE0165: cannot read stylesheet module file:///Users/danbri/working/sandbox/october/jsonld-star/wt-cfg-S1/third_party/testing/qt4tests/fn/transform/staticbaseuri.xsl
+fn/fn-transform: 127 pass, 9 fail, 1 unsupported (out of 137)
+running fn/transitive-closure.xml
+fn/fn-transitive-closure: 11 pass, 0 fail, 0 unsupported (out of 11)
+running fn/translate.xml
+fn/fn-translate: 44 pass, 0 fail, 0 unsupported (out of 44)
+running fn/trim-space.xml
+fn/fn-trim-space: 49 pass, 0 fail, 0 unsupported (out of 49)
+running fn/true.xml
+fn/fn-true: 25 pass, 0 fail, 0 unsupported (out of 25)
+running fn/trunk.xml
+fn/fn-trunk: 8 pass, 0 fail, 0 unsupported (out of 8)
+running fn/type-of.xml
+  FAIL fn-type-of/type-of-151: got xs:integer (xs:string), expected Q{http://www.w3.org/XQueryTest/typeOf/simple}namedInteger
+  FAIL fn-type-of/type-of-153: got xs:integer (xs:string), expected Q{http://www.w3.org/XQueryTest/typeOf/simple}namedInteger
+fn/fn-type-of: 33 pass, 2 fail, 1 unsupported (out of 36)
+running fn/unix-dateTime.xml
+fn/fn-unix-dateTime: 24 pass, 0 fail, 0 unsupported (out of 24)
+running fn/unordered.xml
+fn/fn-unordered: 43 pass, 0 fail, 0 unsupported (out of 43)
+running fn/unparsed-binary.xml
+fn/fn-unparsed-binary: 21 pass, 0 fail, 0 unsupported (out of 21)
+running fn/unparsed-text.xml
+fn/fn-unparsed-text: 94 pass, 0 fail, 13 unsupported (out of 107)
+running fn/unparsed-text-available.xml
+fn/fn-unparsed-text-available: 57 pass, 0 fail, 6 unsupported (out of 63)
+running fn/unparsed-text-lines.xml
+fn/fn-unparsed-text-lines: 58 pass, 0 fail, 6 unsupported (out of 64)
+running fn/update.xml
+  FAIL fn-update/fn-update-xnode-116: got true
+  FAIL fn-update/fn-update-mixed-009: xml ?
+fn/fn-update: 463 pass, 2 fail, 0 unsupported (out of 465)
+running fn/upper-case.xml
+fn/fn-upper-case: 28 pass, 0 fail, 1 unsupported (out of 29)
+running fn/uri-collection.xml
+fn/fn-uri-collection: 12 pass, 0 fail, 1 unsupported (out of 13)
+running fn/void.xml
+fn/fn-void: 5 pass, 0 fail, 0 unsupported (out of 5)
+running fn/while-do.xml
+fn/fn-while-do: 30 pass, 0 fail, 0 unsupported (out of 30)
+running fn/xml-to-json.xml
+  FAIL fn-xml-to-json/xml-to-json-046: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+  FAIL fn-xml-to-json/xml-to-json-047: wrong error code XQST0059 (expected XQDY0027)
+  FAIL fn-xml-to-json/xml-to-json-048: wrong error code XQST0059 (expected XQDY0027)
+  FAIL fn-xml-to-json/xml-to-json-061: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+  FAIL fn-xml-to-json/xml-to-json-064: error FOJS0006: a child of map needs a key
+  FAIL fn-xml-to-json/xml-to-json-065: error FOJS0006: attribute not allowed: escaped
+fn/fn-xml-to-json: 155 pass, 6 fail, 9 unsupported (out of 170)
+running fn/xsd-validator.xml
+  FAIL fn-xsd-validator/xsd-validator-012: assert gave false for result map{...}
+  FAIL fn-xsd-validator/xsd-validator-027: xml <results><para1 idcount="1"/><para2 idcount="0"/><para2 idcount="0"/><para3 idcount="0"/><para3 idcount="0"/></results>
+  FAIL fn-xsd-validator/xsd-validator-030: got 1 (xs:integer), expected 3
+  FAIL fn-xsd-validator/xsd-validator-043: got false
+  FAIL fn-xsd-validator/xsd-validator-063: assert gave false for result map{...}
+  FAIL fn-xsd-validator/xsd-validator-064: error XPTY0004: wrong number of items for function result: 0
+  FAIL fn-xsd-validator/xsd-validator-065: error XPTY0004: xsd-validator needs a document or element node
+  FAIL fn-xsd-validator/xsd-validator-066: error XPTY0004: wrong number of items for function result: 0
+  FAIL fn-xsd-validator/xsd-validator-070: expected error XQST0104, got 
+  FAIL fn-xsd-validator/xsd-validator-082: type mismatch: got 
+  FAIL fn-xsd-validator/xsd-validator-087: expected error XPTY0004, got map{...}
+  FAIL fn-xsd-validator/xsd-validator-094: error XPTY0004: unknown option retain-location
+fn/fn-xsd-validator: 64 pass, 12 fail, 0 unsupported (out of 76)
+running fn/year-from-date.xml
+fn/fn-year-from-date: 29 pass, 0 fail, 0 unsupported (out of 29)
+running fn/years-from-duration.xml
+fn/fn-years-from-duration: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/year-from-dateTime.xml
+fn/fn-year-from-dateTime: 35 pass, 0 fail, 0 unsupported (out of 35)
+running fn/zero-or-one.xml
+fn/fn-zero-or-one: 51 pass, 0 fail, 0 unsupported (out of 51)
+== families ==
+fn: 17217 pass, 236 fail, 409 unsupported (out of 17862); 1 excluded (defective test data)
+TOTAL: 17217 pass, 236 fail, 409 unsupported (out of 17862); 1 excluded (defective test data)

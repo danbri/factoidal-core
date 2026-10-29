@@ -1,0 +1,5 @@
+running fn/nilled.xml
+fn/fn-nilled: 64 pass, 0 fail, 1 unsupported (out of 65)
+== families ==
+fn: 64 pass, 0 fail, 1 unsupported (out of 65)
+TOTAL: 64 pass, 0 fail, 1 unsupported (out of 65)

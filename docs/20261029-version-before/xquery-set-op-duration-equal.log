@@ -1,0 +1,5 @@
+running op/duration-equal.xml
+op/op-duration-equal: 158 pass, 0 fail, 32 unsupported (out of 190)
+== families ==
+op: 158 pass, 0 fail, 32 unsupported (out of 190)
+TOTAL: 158 pass, 0 fail, 32 unsupported (out of 190)

@@ -1,0 +1,7 @@
+running prod/MapConstructor.xml
+  FAIL prod-MapConstructor/MapConstructor-028: error XPTY0004: a map key must be a single atomic value
+  FAIL prod-MapConstructor/MapConstructor-031: error XPST0003: expected '}' at offset 134
+prod/prod-MapConstructor: 79 pass, 2 fail, 5 unsupported (out of 86)
+== families ==
+prod: 79 pass, 2 fail, 5 unsupported (out of 86)
+TOTAL: 79 pass, 2 fail, 5 unsupported (out of 86)

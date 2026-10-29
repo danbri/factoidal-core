@@ -1,0 +1,5 @@
+running prod/CompCommentConstructor.xml
+prod/prod-CompCommentConstructor: 17 pass, 0 fail, 12 unsupported (out of 29)
+== families ==
+prod: 17 pass, 0 fail, 12 unsupported (out of 29)
+TOTAL: 17 pass, 0 fail, 12 unsupported (out of 29)

@@ -1,0 +1,6 @@
+running fn/max.xml
+  FAIL fn-max/fn-max-42: error XPST0003: unterminated pragma
+fn/fn-max: 215 pass, 1 fail, 16 unsupported (out of 232)
+== families ==
+fn: 215 pass, 1 fail, 16 unsupported (out of 232)
+TOTAL: 215 pass, 1 fail, 16 unsupported (out of 232)

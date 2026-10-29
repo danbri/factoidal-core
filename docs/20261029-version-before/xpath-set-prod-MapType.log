@@ -1,0 +1,5 @@
+running prod/MapType.xml
+prod/prod-MapType: 71 pass, 0 fail, 11 unsupported (out of 82)
+== families ==
+prod: 71 pass, 0 fail, 11 unsupported (out of 82)
+TOTAL: 71 pass, 0 fail, 11 unsupported (out of 82)

@@ -1,0 +1,5 @@
+running fn/remove.xml
+fn/fn-remove: 62 pass, 0 fail, 1 unsupported (out of 63)
+== families ==
+fn: 62 pass, 0 fail, 1 unsupported (out of 63)
+TOTAL: 62 pass, 0 fail, 1 unsupported (out of 63)

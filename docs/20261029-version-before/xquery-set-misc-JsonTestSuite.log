@@ -1,0 +1,37 @@
+running misc/JsonTestSuite.xml
+  FAIL misc-JsonTestSuite/n_number_9.e_plus: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/n_number_1.0e_plus: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_unicode_U_1FFFE_nonchar: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_unicode_U+1FFFE_nonchar.json
+  FAIL misc-JsonTestSuite/n_number_U_FF11_fullwidth_digit_one: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/i_string_UTF8_surrogate_U_D800: any-of: error FOUT1170: resource not available: JSONTestSuite/test_parsing/i_string_UTF8_surrogate_U+D800.json; wrong error code FOUT1170 (expected FOJS0001); wrong error code FOUT1170 (expected FOUT1200)
+  FAIL misc-JsonTestSuite/n_number_plus_plus: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/n_string_backslash_00: wrong error code FOUT1190 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/n_structure_whitespace_U_2060_word_joiner: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_number_0e_plus_1: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_number_0e+1.json
+  FAIL misc-JsonTestSuite/n_number_plus_Inf: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/i_string_inverted_surrogates_U_1D11E: any-of: error FOUT1170: resource not available: JSONTestSuite/test_parsing/i_string_inverted_surrogates_U+1D11E.json; wrong error code FOUT1170 (expected FOJS0001); wrong error code FOUT1170 (expected FOUT1200)
+  FAIL misc-JsonTestSuite/n_number_2.e_plus3: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_unicode_U_200B_ZERO_WIDTH_SPACE: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_unicode_U+200B_ZERO_WIDTH_SPACE.json
+  FAIL misc-JsonTestSuite/y_string_u_2028_line_sep: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_u+2028_line_sep.json
+  FAIL misc-JsonTestSuite/y_string_unicode_U_2064_invisible_plus: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_unicode_U+2064_invisible_plus.json
+  FAIL misc-JsonTestSuite/n_string_unescaped_crtl_char: wrong error code FOUT1190 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_unicode_U_10FFFE_nonchar: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_unicode_U+10FFFE_nonchar.json
+  FAIL misc-JsonTestSuite/n_number_invalid_plus-: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/n_number_0e_plus: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/n_number_plus1: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/n_multidigit_number_then_00: wrong error code FOUT1190 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_surrogates_U_1D11E_MUSICAL_SYMBOL_G_CLEF: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_surrogates_U+1D11E_MUSICAL_SYMBOL_G_CLEF.json
+  FAIL misc-JsonTestSuite/n_number_0.3e_plus: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_nonCharacterInUTF-8_U_FFFFa: any-of: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_nonCharacterInUTF-8_U+FFFF.json; wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_nonCharacterInUTF-8_U_10FFFF: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_nonCharacterInUTF-8_U+10FFFF.json
+  FAIL misc-JsonTestSuite/y_string_unicode_U_FDD0_nonchar: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_unicode_U+FDD0_nonchar.json
+  FAIL misc-JsonTestSuite/n_structure_null-byte-outside-string: any-of: wrong error code FOUT1190 (expected FOJS0001); wrong error code FOUT1190 (expected FOUT1200)
+  FAIL misc-JsonTestSuite/y_string_unicode_U_FFFE_nonchar: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_unicode_U+FFFE_nonchar.json
+  FAIL misc-JsonTestSuite/y_string_reservedCharacterInUTF-8_U_1BFFF: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_reservedCharacterInUTF-8_U+1BFFF.json
+  FAIL misc-JsonTestSuite/n_structure_U_2060_word_joined: wrong error code FOUT1170 (expected FOJS0001)
+  FAIL misc-JsonTestSuite/y_string_u_2029_par_sep: error FOUT1170: resource not available: JSONTestSuite/test_parsing/y_string_u+2029_par_sep.json
+  FAIL misc-JsonTestSuite/n_number_0_capital_E_plus: wrong error code FOUT1170 (expected FOJS0001)
+misc/misc-JsonTestSuite: 286 pass, 32 fail, 1 unsupported (out of 319)
+== families ==
+misc: 286 pass, 32 fail, 1 unsupported (out of 319)
+TOTAL: 286 pass, 32 fail, 1 unsupported (out of 319)

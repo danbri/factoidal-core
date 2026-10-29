@@ -1,0 +1,17 @@
+running prod/TryCatchExpr.xml
+  FAIL prod-TryCatchExpr/try-catch-err-value-variable-1: string value ''
+  FAIL prod-TryCatchExpr/try-catch-err-value-variable-2: got 0 (xs:integer), expected 4
+  FAIL prod-TryCatchExpr/try-catch-err-value-variable-3: got 
+  FAIL prod-TryCatchExpr/try-catch-fn-error-8: got 
+  FAIL prod-TryCatchExpr/try-catch-fn-error-11: got 
+  FAIL prod-TryCatchExpr/try-catch-map2: assert gave  for result 
+  FAIL prod-TryCatchExpr/try-catch-map3: assert gave false for result <node>
+  FAIL prod-TryCatchExpr/try-catch-map6: got 
+  FAIL prod-TryCatchExpr/try-catch-map7: got a (xs:QName), expected a
+  FAIL prod-TryCatchExpr/try-finally-005: expected error XQTY0153, got 42
+  FAIL prod-TryCatchExpr/try-finally-006: expected error XQTY0153, got 42
+  FAIL prod-TryCatchExpr/try-finally-028: expected error XQTY0153, got 1
+prod/prod-TryCatchExpr: 199 pass, 12 fail, 1 unsupported (out of 212)
+== families ==
+prod: 199 pass, 12 fail, 1 unsupported (out of 212)
+TOTAL: 199 pass, 12 fail, 1 unsupported (out of 212)

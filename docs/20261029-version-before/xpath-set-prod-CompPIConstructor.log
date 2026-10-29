@@ -1,0 +1,5 @@
+running prod/CompPIConstructor.xml
+prod/prod-CompPIConstructor: 29 pass, 0 fail, 37 unsupported (out of 66)
+== families ==
+prod: 29 pass, 0 fail, 37 unsupported (out of 66)
+TOTAL: 29 pass, 0 fail, 37 unsupported (out of 66)

@@ -1,0 +1,15 @@
+running prod/LetClause.xml
+  FAIL prod-LetClause/let-seq-011: error XPST0003: expected a variable name
+  FAIL prod-LetClause/let-seq-012: error XPST0003: expected a variable name
+  FAIL prod-LetClause/let-arr-011: error XPST0003: expected a variable name
+  FAIL prod-LetClause/let-arr-012: error XPST0003: expected a variable name
+  FAIL prod-LetClause/let-map-011: error XPST0003: expected a variable name
+  FAIL prod-LetClause/let-map-012: error XPST0003: expected a variable name
+  FAIL prod-LetClause/let-map-020: expected error XPTY0004, got x= y= z=
+  FAIL prod-LetClause/let-map-026: expected error XPTY0004, got 1
+  FAIL prod-LetClause/let-map-027: expected error XPTY0004, got 1 2
+  FAIL prod-LetClause/let-map-033: expected error XPTY0004, got 1
+prod/prod-LetClause: 164 pass, 10 fail, 15 unsupported (out of 189)
+== families ==
+prod: 164 pass, 10 fail, 15 unsupported (out of 189)
+TOTAL: 164 pass, 10 fail, 15 unsupported (out of 189)

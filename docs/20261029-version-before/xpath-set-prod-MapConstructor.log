@@ -1,0 +1,5 @@
+running prod/MapConstructor.xml
+prod/prod-MapConstructor: 61 pass, 0 fail, 25 unsupported (out of 86)
+== families ==
+prod: 61 pass, 0 fail, 25 unsupported (out of 86)
+TOTAL: 61 pass, 0 fail, 25 unsupported (out of 86)

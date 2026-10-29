@@ -1,0 +1,28 @@
+running ser/method-html.xml
+  FAIL method-html/Serialization-html-9: serialization '<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="U' does not match
+  FAIL method-html/Serialization-html-10: serialization '<!DOCTYPE html><HTML xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="U' does not match
+  FAIL method-html/Serialization-html-56: serialization '<!DOCTYPE html>
+<html>
+  <body>
+    <table>
+      <tr>
+        <td>
+          <p' does not match
+  FAIL method-html/Serialization-html-59a: serialization '<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+  </head>
+  <body>
+  ' does not match
+  FAIL method-html/Serialization-html-61: serialization '<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+  </head>
+  <body>
+  ' does not match
+ser/method-html: 65 pass, 5 fail, 3 unsupported (out of 73)
+== families ==
+ser: 65 pass, 5 fail, 3 unsupported (out of 73)
+TOTAL: 65 pass, 5 fail, 3 unsupported (out of 73)

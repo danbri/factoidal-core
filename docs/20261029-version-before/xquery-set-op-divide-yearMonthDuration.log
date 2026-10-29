@@ -1,0 +1,5 @@
+running op/divide-yearMonthDuration.xml
+op/op-divide-yearMonthDuration: 31 pass, 0 fail, 2 unsupported (out of 33)
+== families ==
+op: 31 pass, 0 fail, 2 unsupported (out of 33)
+TOTAL: 31 pass, 0 fail, 2 unsupported (out of 33)

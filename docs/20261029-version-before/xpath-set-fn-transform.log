@@ -1,0 +1,14 @@
+running fn/transform.xml
+  FAIL fn-transform/fn-transform-27: got true
+  FAIL fn-transform/fn-transform-65: assert gave false for result map{...}
+  FAIL fn-transform/fn-transform-66: assert gave false for result map{...}
+  FAIL fn-transform/fn-transform-67: assert gave false for result map{...}
+  FAIL fn-transform/fn-transform-70: any-of: wrong error code XPST0017 (expected FOXT0001); error XPST0017: unknown function chrono:c4#1
+  FAIL fn-transform/fn-transform-82e: any-of: assert gave false for result <node>; assert gave false for result <node>; expected error FOXT0001, got <node>
+  FAIL fn-transform/fn-transform-91: error XTMM9001: 
+  FAIL fn-transform/fn-transform-94: error FODC0002: stylesheet not available: ../identity.xsl
+  FAIL fn-transform/fn-transform-err-9a: error XTSE0165: cannot read stylesheet module file:///Users/danbri/working/sandbox/october/jsonld-star/wt-cfg-S1/third_party/testing/qt4tests/fn/transform/staticbaseuri.xsl
+fn/fn-transform: 124 pass, 9 fail, 4 unsupported (out of 137)
+== families ==
+fn: 124 pass, 9 fail, 4 unsupported (out of 137)
+TOTAL: 124 pass, 9 fail, 4 unsupported (out of 137)

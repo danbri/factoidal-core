@@ -1,0 +1,28 @@
+running prod/FunctionCall.xml
+  FAIL prod-FunctionCall/FunctionCall-007: got 
+  FAIL prod-FunctionCall/FunctionCall-015: got 
+  FAIL prod-FunctionCall/FunctionCall-028: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-029: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-030a: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-030b: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-031: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-035: error XPST0051: unknown type lu:unionOfUnionType
+  FAIL prod-FunctionCall/FunctionCall-036: error XPST0051: unknown type lu:unionOfUnionType
+  FAIL prod-FunctionCall/FunctionCall-037: error XPST0051: unknown type lu:unionOfUnionType
+  FAIL prod-FunctionCall/FunctionCall-038: error XPST0051: unknown type lu:unionOfUnionType
+  FAIL prod-FunctionCall/FunctionCall-040: error XPST0051: unknown type lu:namespaceSensitiveUnionType
+  FAIL prod-FunctionCall/FunctionCall-041: wrong error code XPST0051 (expected XPTY0117)
+  FAIL prod-FunctionCall/FunctionCall-042: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-043: error XPST0051: unknown type lu:unionType
+  FAIL prod-FunctionCall/FunctionCall-051: got false
+  FAIL prod-FunctionCall/FunctionCall-056: wrong error code XPST0051 (expected XPTY0004)
+  FAIL prod-FunctionCall/FunctionCall-057: wrong error code XPST0051 (expected XPTY0004)
+  FAIL prod-FunctionCall/FunctionCall-416: got -4 (xs:integer), expected 4
+  FAIL prod-FunctionCall/FunctionCall-417: error XPTY0004: cannot convert xs:decimal value '7.75' to xs:integer
+  FAIL prod-FunctionCall/FunctionCall-418: error XPTY0004: cannot convert xs:decimal value '7.75' to xs:integer
+  FAIL prod-FunctionCall/FunctionCall-422: got function
+  FAIL prod-FunctionCall/FunctionCall-425: wrong error code XPTY0004 (expected XPDY0002)
+prod/prod-FunctionCall: 173 pass, 23 fail, 30 unsupported (out of 226)
+== families ==
+prod: 173 pass, 23 fail, 30 unsupported (out of 226)
+TOTAL: 173 pass, 23 fail, 30 unsupported (out of 226)

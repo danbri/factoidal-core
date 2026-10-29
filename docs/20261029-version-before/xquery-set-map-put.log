@@ -1,0 +1,5 @@
+running map/put.xml
+map/map-put: 24 pass, 0 fail, 1 unsupported (out of 25)
+== families ==
+map: 24 pass, 0 fail, 1 unsupported (out of 25)
+TOTAL: 24 pass, 0 fail, 1 unsupported (out of 25)

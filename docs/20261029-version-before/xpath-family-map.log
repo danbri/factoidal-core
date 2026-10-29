@@ -1,0 +1,33 @@
+running map/build.xml
+map/map-build: 58 pass, 0 fail, 2 unsupported (out of 60)
+running map/contains.xml
+map/map-contains: 28 pass, 0 fail, 0 unsupported (out of 28)
+running map/empty.xml
+map/map-empty: 6 pass, 0 fail, 0 unsupported (out of 6)
+running map/entries.xml
+map/map-entries: 16 pass, 0 fail, 1 unsupported (out of 17)
+running map/entry.xml
+map/map-entry: 9 pass, 0 fail, 0 unsupported (out of 9)
+running map/filter.xml
+map/map-filter: 18 pass, 0 fail, 0 unsupported (out of 18)
+running map/find.xml
+map/map-find: 12 pass, 0 fail, 0 unsupported (out of 12)
+running map/for-each.xml
+map/map-for-each: 25 pass, 0 fail, 2 unsupported (out of 27)
+running map/get.xml
+map/map-get: 42 pass, 0 fail, 1 unsupported (out of 43)
+running map/items.xml
+map/map-items: 15 pass, 0 fail, 0 unsupported (out of 15)
+running map/merge.xml
+map/map-merge: 46 pass, 0 fail, 1 unsupported (out of 47)
+running map/keys.xml
+map/map-keys: 16 pass, 0 fail, 0 unsupported (out of 16)
+running map/put.xml
+map/map-put: 24 pass, 0 fail, 1 unsupported (out of 25)
+running map/remove.xml
+map/map-remove: 20 pass, 0 fail, 0 unsupported (out of 20)
+running map/size.xml
+map/map-size: 18 pass, 0 fail, 0 unsupported (out of 18)
+== families ==
+map: 353 pass, 0 fail, 8 unsupported (out of 361)
+TOTAL: 353 pass, 0 fail, 8 unsupported (out of 361)

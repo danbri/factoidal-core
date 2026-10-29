@@ -1,0 +1,6 @@
+running prod/CastExpr.derived.xml
+  FAIL prod-CastExpr.derived/cbcl-cast-derived-001: error XPST0051: unknown type derivedType:integer
+prod/prod-CastExpr.derived: 163 pass, 1 fail, 6 unsupported (out of 170)
+== families ==
+prod: 163 pass, 1 fail, 6 unsupported (out of 170)
+TOTAL: 163 pass, 1 fail, 6 unsupported (out of 170)

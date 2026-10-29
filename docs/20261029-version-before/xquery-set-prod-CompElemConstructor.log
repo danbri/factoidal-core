@@ -1,0 +1,14 @@
+running prod/CompElemConstructor.xml
+  FAIL prod-CompElemConstructor/K2-ComputeConElem-20: any-of: expected error XPDY0002, got <node>; expected error XPTY0004, got <node>; expected error FOTY0013, got <node>
+  FAIL prod-CompElemConstructor/K2-ComputeConElem-21: got <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <node> <no
+  FAIL prod-CompElemConstructor/K2-ComputeConElem-26: any-of: expected error XPDY0002, got <node>; expected error XPTY0004, got <node>; expected error FOTY0013, got <node>
+  FAIL prod-CompElemConstructor/Constr-compelem-eqname-entities-1: assert gave  for result <node>
+  FAIL prod-CompElemConstructor/Constr-compelem-eqname-entities-3: assert gave  for result <node>
+  FAIL prod-CompElemConstructor/Constr-compelem-eqname-entities-5: assert gave  for result <node>
+  FAIL prod-CompElemConstructor/Constr-compelem-eqname-entities-6: assert gave  for result <node>
+  FAIL prod-CompElemConstructor/Constr-compelem-eqname-error-5: expected error XQDY0074, got <node>
+  FAIL prod-CompElemConstructor/Constr-compelem-eqname-error-6: expected error XQDY0074, got <node>
+prod/prod-CompElemConstructor: 101 pass, 9 fail, 4 unsupported (out of 114)
+== families ==
+prod: 101 pass, 9 fail, 4 unsupported (out of 114)
+TOTAL: 101 pass, 9 fail, 4 unsupported (out of 114)

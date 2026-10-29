@@ -1,0 +1,535 @@
+running fn/abs.xml
+fn/fn-abs: 186 pass, 0 fail, 6 unsupported (out of 192)
+running fn/adjust-date-to-timezone.xml
+fn/fn-adjust-date-to-timezone: 41 pass, 0 fail, 0 unsupported (out of 41)
+running fn/adjust-dateTime-to-timezone.xml
+fn/fn-adjust-dateTime-to-timezone: 50 pass, 0 fail, 0 unsupported (out of 50)
+running fn/adjust-time-to-timezone.xml
+fn/fn-adjust-time-to-timezone: 42 pass, 0 fail, 0 unsupported (out of 42)
+running fn/all-different.xml
+fn/fn-all-different: 29 pass, 0 fail, 6 unsupported (out of 35)
+running fn/all-equal.xml
+fn/fn-all-equal: 29 pass, 0 fail, 6 unsupported (out of 35)
+running fn/analyze-string.xml
+fn/fn-analyze-string: 32 pass, 0 fail, 17 unsupported (out of 49)
+running fn/apply.xml
+fn/fn-apply: 18 pass, 0 fail, 4 unsupported (out of 22)
+running fn/atomic-equal.xml
+fn/fn-atomic-equal: 29 pass, 0 fail, 1 unsupported (out of 30)
+running fn/atomic-type-annotation.xml
+  FAIL fn-atomic-type-annotation/atomic-type-annotation-101: assert gave false for result map{...}
+  FAIL fn-atomic-type-annotation/atomic-type-annotation-102: assert gave false for result map{...}
+  FAIL fn-atomic-type-annotation/atomic-type-annotation-103: assert gave false for result map{...}
+fn/fn-atomic-type-annotation: 3 pass, 3 fail, 0 unsupported (out of 6)
+running fn/available-environment-variables.xml
+fn/fn-available-environment-variables: 10 pass, 0 fail, 1 unsupported (out of 11)
+running fn/avg.xml
+fn/fn-avg: 241 pass, 0 fail, 1 unsupported (out of 242)
+running fn/base-uri.xml
+fn/fn-base-uri: 5 pass, 0 fail, 78 unsupported (out of 83)
+running fn/boolean.xml
+fn/fn-boolean: 142 pass, 0 fail, 5 unsupported (out of 147)
+running fn/build-dateTime.xml
+fn/fn-build-dateTime: 90 pass, 0 fail, 1 unsupported (out of 91)
+running fn/build-uri.xml
+fn/fn-build-uri: 48 pass, 0 fail, 0 unsupported (out of 48)
+running fn/ceiling.xml
+fn/fn-ceiling: 87 pass, 0 fail, 7 unsupported (out of 94)
+running fn/char.xml
+fn/fn-char: 48 pass, 0 fail, 0 unsupported (out of 48)
+running fn/characters.xml
+fn/fn-characters: 8 pass, 0 fail, 4 unsupported (out of 12)
+running fn/civil-timezone.xml
+fn/fn-civil-timezone: 9 pass, 0 fail, 0 unsupported (out of 9)
+running fn/codepoint-equal.xml
+fn/fn-codepoint-equal: 30 pass, 0 fail, 6 unsupported (out of 36)
+running fn/codepoints-to-string.xml
+fn/fn-codepoints-to-string: 91 pass, 0 fail, 19 unsupported (out of 110)
+running fn/collation.xml
+fn/fn-collation: 89 pass, 0 fail, 0 unsupported (out of 89)
+running fn/collation-available.xml
+fn/fn-collation-available: 8 pass, 0 fail, 0 unsupported (out of 8)
+running fn/collation-key.xml
+fn/fn-collation-key: 37 pass, 0 fail, 0 unsupported (out of 37)
+running fn/collection.xml
+fn/fn-collection: 35 pass, 0 fail, 9 unsupported (out of 44)
+running fn/compare.xml
+fn/fn-compare: 233 pass, 0 fail, 2 unsupported (out of 235)
+running fn/concat.xml
+fn/fn-concat: 106 pass, 0 fail, 5 unsupported (out of 111)
+running fn/contains.xml
+fn/fn-contains: 72 pass, 0 fail, 10 unsupported (out of 82)
+running fn/contains-subsequence.xml
+fn/fn-contains-subsequence: 31 pass, 0 fail, 1 unsupported (out of 32)
+running fn/contains-token.xml
+fn/fn-contains-token: 39 pass, 0 fail, 9 unsupported (out of 48)
+running fn/count.xml
+fn/fn-count: 75 pass, 0 fail, 241 unsupported (out of 316)
+running fn/csv-doc.xml
+fn/fn-csv-doc: 20 pass, 0 fail, 0 unsupported (out of 20)
+running fn/csv-to-xml.xml
+fn/fn-csv-to-xml: 68 pass, 0 fail, 2 unsupported (out of 70)
+running fn/current-date.xml
+fn/fn-current-date: 26 pass, 0 fail, 0 unsupported (out of 26)
+running fn/current-dateTime.xml
+fn/fn-current-dateTime: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/current-time.xml
+fn/fn-current-time: 24 pass, 0 fail, 0 unsupported (out of 24)
+running fn/data.xml
+fn/fn-data: 66 pass, 0 fail, 12 unsupported (out of 78)
+running fn/dateTime.xml
+fn/fn-dateTime: 52 pass, 0 fail, 0 unsupported (out of 52)
+running fn/day-from-date.xml
+fn/fn-day-from-date: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/day-from-dateTime.xml
+fn/fn-day-from-dateTime: 34 pass, 0 fail, 0 unsupported (out of 34)
+running fn/days-from-duration.xml
+fn/fn-days-from-duration: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/days-in-month.xml
+fn/fn-days-in-month: 18 pass, 0 fail, 0 unsupported (out of 18)
+running fn/decode-from-uri.xml
+fn/fn-decode-from-uri: 29 pass, 0 fail, 0 unsupported (out of 29)
+running fn/deep-equal.xml
+fn/fn-deep-equal: 451 pass, 0 fail, 136 unsupported (out of 587)
+running fn/default-collation.xml
+fn/fn-default-collation: 7 pass, 0 fail, 0 unsupported (out of 7)
+running fn/default-language.xml
+fn/fn-default-language: 5 pass, 0 fail, 1 unsupported (out of 6)
+running fn/distinct-ordered-nodes.xml
+fn/fn-distinct-ordered-nodes: 10 pass, 0 fail, 0 unsupported (out of 10)
+running fn/distinct-values.xml
+fn/fn-distinct-values: 106 pass, 0 fail, 19 unsupported (out of 125)
+running fn/divide-decimals.xml
+fn/fn-divide-decimals: 21 pass, 0 fail, 0 unsupported (out of 21)
+running fn/doc.xml
+  UNSUP fn-doc/fn-doc-27: source not loadable: ../../third_party/testing/qt4tests/fn/id/BCisInvalid.xml
+  UNSUP fn-doc/fn-doc-28: source not loadable: ../../third_party/testing/qt4tests/fn/id/InvalidUmlaut.xml
+  FAIL fn-doc/fn-doc-40-065: error FODC0002: xsd-validation strict: no declaration or type to validate against
+fn/fn-doc: 69 pass, 1 fail, 9 unsupported (out of 79)
+running fn/doc-available.xml
+  FAIL fn-doc-available/fn-doc-available-40-065: got false
+fn/fn-doc-available: 46 pass, 1 fail, 2 unsupported (out of 49)
+running fn/document-uri.xml
+fn/fn-document-uri: 24 pass, 0 fail, 31 unsupported (out of 55)
+running fn/do-until.xml
+fn/fn-do-until: 25 pass, 0 fail, 0 unsupported (out of 25)
+running fn/drop-while.xml
+fn/fn-drop-while: 18 pass, 0 fail, 0 unsupported (out of 18)
+running fn/duplicate-values.xml
+fn/fn-duplicate-values: 113 pass, 0 fail, 15 unsupported (out of 128)
+running fn/duration-to-seconds.xml
+  EXCLUDED fn-duration-to-seconds/duration-to-seconds-016: defective test data, https://github.com/danbri/factoidal/issues/1158
+fn/fn-duration-to-seconds: 17 pass, 0 fail, 0 unsupported (out of 17); 1 excluded (defective test data)
+running fn/element-with-id.xml
+  UNSUP fn-element-with-id/fn-element-with-id-1: source not valid: [IDREF omicron has no matching ID]
+  UNSUP fn-element-with-id/fn-element-with-id-2: source not valid: [IDREF omicron has no matching ID]
+  UNSUP fn-element-with-id/fn-element-with-id-3: source not valid: [IDREF omicron has no matching ID]
+  UNSUP fn-element-with-id/fn-element-with-id-4: source not valid: [IDREF omicron has no matching ID]
+  UNSUP fn-element-with-id/fn-element-with-id-5: source not valid: [IDREF omicron has no matching ID]
+fn/fn-element-with-id: 0 pass, 0 fail, 5 unsupported (out of 5)
+running fn/element-to-map.xml
+fn/fn-element-to-map: 182 pass, 0 fail, 39 unsupported (out of 221)
+running fn/element-to-map-plan.xml
+fn/fn-element-to-map-plan: 20 pass, 0 fail, 1 unsupported (out of 21)
+running fn/empty.xml
+fn/fn-empty: 52 pass, 0 fail, 2 unsupported (out of 54)
+running fn/encode-for-uri.xml
+fn/fn-encode-for-uri: 29 pass, 0 fail, 0 unsupported (out of 29)
+running fn/ends-with.xml
+fn/fn-ends-with: 60 pass, 0 fail, 10 unsupported (out of 70)
+running fn/ends-with-subsequence.xml
+fn/fn-ends-with-subsequence: 32 pass, 0 fail, 1 unsupported (out of 33)
+running fn/environment-variable.xml
+fn/fn-environment-variable: 12 pass, 0 fail, 0 unsupported (out of 12)
+running fn/error.xml
+fn/fn-error: 96 pass, 0 fail, 8 unsupported (out of 104)
+running fn/escape-html-uri.xml
+fn/fn-escape-html-uri: 34 pass, 0 fail, 0 unsupported (out of 34)
+running fn/every.xml
+fn/fn-every: 30 pass, 0 fail, 3 unsupported (out of 33)
+running fn/exactly-one.xml
+fn/fn-exactly-one: 50 pass, 0 fail, 4 unsupported (out of 54)
+running fn/exists.xml
+fn/fn-exists: 57 pass, 0 fail, 2 unsupported (out of 59)
+running fn/expanded-QName.xml
+fn/fn-expanded-QName: 8 pass, 0 fail, 1 unsupported (out of 9)
+running fn/false.xml
+fn/fn-false: 25 pass, 0 fail, 0 unsupported (out of 25)
+running fn/filter.xml
+fn/fn-filter: 35 pass, 0 fail, 13 unsupported (out of 48)
+running fn/floor.xml
+fn/fn-floor: 88 pass, 0 fail, 0 unsupported (out of 88)
+running fn/fold-left.xml
+  FAIL fn-fold-left/fold-left-022: error XPDY0130: range too large for this implementation (an implementation limit)
+  FAIL fn-fold-left/fold-left-023: error XPDY0130: range too large for this implementation (an implementation limit)
+fn/fn-fold-left: 19 pass, 2 fail, 10 unsupported (out of 31)
+running fn/fold-right.xml
+  FAIL fn-fold-right/fold-right-022: error XPDY0130: range too large for this implementation (an implementation limit)
+  FAIL fn-fold-right/fold-right-023: error XPDY0130: range too large for this implementation (an implementation limit)
+fn/fn-fold-right: 22 pass, 2 fail, 5 unsupported (out of 29)
+running fn/foot.xml
+fn/fn-foot: 8 pass, 0 fail, 0 unsupported (out of 8)
+running fn/for-each.xml
+fn/fn-for-each: 19 pass, 0 fail, 3 unsupported (out of 22)
+running fn/for-each-pair.xml
+fn/fn-for-each-pair: 48 pass, 0 fail, 7 unsupported (out of 55)
+running fn/format-date.xml
+fn/fn-format-date: 135 pass, 0 fail, 5 unsupported (out of 140)
+running fn/format-dateTime.xml
+fn/fn-format-dateTime: 87 pass, 0 fail, 7 unsupported (out of 94)
+running fn/format-integer.xml
+fn/fn-format-integer: 107 pass, 0 fail, 5 unsupported (out of 112)
+running fn/format-number.xml
+fn/fn-format-number: 286 pass, 0 fail, 22 unsupported (out of 308)
+running fn/format-time.xml
+fn/fn-format-time: 94 pass, 0 fail, 4 unsupported (out of 98)
+running fn/function-annotations.xml
+fn/fn-function-annotations: 14 pass, 0 fail, 11 unsupported (out of 25)
+running fn/function-arity.xml
+fn/fn-function-arity: 19 pass, 0 fail, 4 unsupported (out of 23)
+running fn/function-lookup.xml
+fn/fn-function-lookup: 664 pass, 0 fail, 20 unsupported (out of 684)
+running fn/function-name.xml
+fn/fn-function-name: 26 pass, 0 fail, 4 unsupported (out of 30)
+running fn/generate.xml
+fn/fn-generate: 7 pass, 0 fail, 9 unsupported (out of 16)
+running fn/generate-id.xml
+fn/fn-generate-id: 30 pass, 0 fail, 11 unsupported (out of 41)
+running fn/graphemes.xml
+fn/fn-graphemes: 1189 pass, 0 fail, 0 unsupported (out of 1189)
+running fn/has-children.xml
+fn/fn-has-children: 44 pass, 0 fail, 4 unsupported (out of 48)
+running fn/hash.xml
+fn/fn-hash: 54 pass, 0 fail, 0 unsupported (out of 54)
+running fn/head.xml
+fn/fn-head: 8 pass, 0 fail, 0 unsupported (out of 8)
+running fn/highest.xml
+fn/fn-highest: 30 pass, 0 fail, 6 unsupported (out of 36)
+running fn/hours-from-dateTime.xml
+fn/fn-hours-from-dateTime: 34 pass, 0 fail, 0 unsupported (out of 34)
+running fn/hours-from-duration.xml
+fn/fn-hours-from-duration: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/hours-from-time.xml
+fn/fn-hours-from-time: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/html-doc.xml
+fn/fn-html-doc: 10 pass, 0 fail, 0 unsupported (out of 10)
+running fn/id.xml
+fn/fn-id: 17 pass, 0 fail, 44 unsupported (out of 61)
+running fn/identity.xml
+fn/fn-identity: 4 pass, 0 fail, 1 unsupported (out of 5)
+running fn/idref.xml
+fn/fn-idref: 10 pass, 0 fail, 44 unsupported (out of 54)
+running fn/implicit-timezone.xml
+fn/fn-implicit-timezone: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/index-of.xml
+fn/fn-index-of: 61 pass, 0 fail, 7 unsupported (out of 68)
+running fn/index-of-substring.xml
+fn/fn-index-of-substring: 21 pass, 0 fail, 1 unsupported (out of 22)
+running fn/index-where.xml
+fn/fn-index-where: 21 pass, 0 fail, 1 unsupported (out of 22)
+running fn/innermost.xml
+fn/fn-innermost: 52 pass, 0 fail, 12 unsupported (out of 64)
+running fn/insert-before.xml
+fn/fn-insert-before: 51 pass, 0 fail, 0 unsupported (out of 51)
+running fn/insert-separator.xml
+fn/fn-insert-separator: 9 pass, 0 fail, 4 unsupported (out of 13)
+running fn/in-scope-namespaces.xml
+fn/fn-in-scope-namespaces: 6 pass, 0 fail, 7 unsupported (out of 13)
+running fn/in-scope-prefixes.xml
+fn/fn-in-scope-prefixes: 9 pass, 0 fail, 53 unsupported (out of 62)
+running fn/invisible-xml.xml
+fn/fn-invisible-xml: 16 pass, 0 fail, 0 unsupported (out of 16)
+running fn/iri-to-uri.xml
+fn/fn-iri-to-uri: 46 pass, 0 fail, 1 unsupported (out of 47)
+running fn/is-NaN.xml
+fn/fn-is-NaN: 14 pass, 0 fail, 2 unsupported (out of 16)
+running fn/items-at.xml
+fn/fn-items-at: 30 pass, 0 fail, 0 unsupported (out of 30)
+running fn/jkey.xml
+fn/fn-jkey: 19 pass, 0 fail, 0 unsupported (out of 19)
+running fn/json-doc.xml
+fn/fn-json-doc: 77 pass, 0 fail, 4 unsupported (out of 81)
+running fn/json-to-xml.xml
+fn/fn-json-to-xml: 94 pass, 0 fail, 10 unsupported (out of 104)
+running fn/jtree.xml
+fn/fn-jtree: 30 pass, 0 fail, 0 unsupported (out of 30)
+running fn/jvalue.xml
+fn/fn-jvalue: 18 pass, 0 fail, 0 unsupported (out of 18)
+running fn/lang.xml
+fn/fn-lang: 43 pass, 0 fail, 8 unsupported (out of 51)
+running fn/last.xml
+fn/fn-last: 54 pass, 0 fail, 15 unsupported (out of 69)
+running fn/load-xquery-module.xml
+  FAIL fn-load-xquery-module/fn-load-xquery-module-029: error FOQM0003: a static error in the module: XQST0047 a module imports itself
+  FAIL fn-load-xquery-module/fn-load-xquery-module-040: error FODF1280: unknown decimal format Q{http://www.w3.org/2005/xquery-local-functions}de
+  FAIL fn-load-xquery-module/fn-load-xquery-module-042: string value '0 0 1 1 1'
+  FAIL fn-load-xquery-module/fn-load-xquery-module-050: error FOQM0003: a static error in the module: XPST0051 unknown type hat:hatsize
+  FAIL fn-load-xquery-module/fn-load-xquery-module-076: error FONS0004: no namespace binding for prefix vm
+fn/fn-load-xquery-module: 69 pass, 5 fail, 110 unsupported (out of 184)
+running fn/local-name.xml
+fn/fn-local-name: 41 pass, 0 fail, 20 unsupported (out of 61)
+running fn/local-name-from-QName.xml
+fn/fn-local-name-from-QName: 27 pass, 0 fail, 1 unsupported (out of 28)
+running fn/location.xml
+  FAIL fn-location/fn-location-002: error XPST0017: function location is not implemented
+  FAIL fn-location/fn-location-003: any-of: error XPST0017: function location is not implemented; error XPST0017: function location is not implemented
+  FAIL fn-location/fn-location-004: any-of: error XPTY0004: unknown option retain-location; error XPTY0004: unknown option retain-location
+  FAIL fn-location/fn-location-005: any-of: error XPTY0004: unknown option retain-location; error XPTY0004: unknown option retain-location
+fn/fn-location: 1 pass, 4 fail, 0 unsupported (out of 5)
+running fn/lower-case.xml
+fn/fn-lower-case: 27 pass, 0 fail, 1 unsupported (out of 28)
+running fn/lowest.xml
+fn/fn-lowest: 31 pass, 0 fail, 5 unsupported (out of 36)
+running fn/map-to-element.xml
+  EXCLUDED fn-map-to-element/map-to-element-014: defective test data, https://github.com/danbri/factoidal/issues/1159
+  EXCLUDED fn-map-to-element/map-to-element-021: defective test data, https://github.com/danbri/factoidal/issues/1159
+fn/fn-map-to-element: 226 pass, 0 fail, 5 unsupported (out of 231); 2 excluded (defective test data)
+running fn/max.xml
+fn/fn-max: 197 pass, 0 fail, 35 unsupported (out of 232)
+running fn/matches.xml
+  FAIL fn-matches/cbcl-matches-004: any-of: error FOER0000: implementation limit: regex quantifier above 1000; wrong error code FOER0000 (expected FORX0002)
+  FAIL fn-matches/cbcl-matches-038: error FOER0000: implementation limit: regex quantifier above 1000
+fn/fn-matches: 199 pass, 2 fail, 7 unsupported (out of 208)
+running fn/matches.re.xml
+fn/fn-matches.re: 987 pass, 102 fail, 27 unsupported (out of 1116) [TIMEOUT or crash at test re00984: 102 tests not finished, counted as fail]
+running fn/matching-segments.xml
+fn/fn-matching-segments: 38 pass, 0 fail, 1 unsupported (out of 39)
+running fn/message.xml
+fn/fn-message: 14 pass, 0 fail, 1 unsupported (out of 15)
+running fn/min.xml
+fn/fn-min: 194 pass, 0 fail, 38 unsupported (out of 232)
+running fn/minutes-from-dateTime.xml
+fn/fn-minutes-from-dateTime: 34 pass, 0 fail, 0 unsupported (out of 34)
+running fn/minutes-from-duration.xml
+fn/fn-minutes-from-duration: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/minutes-from-time.xml
+fn/fn-minutes-from-time: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/month-from-date.xml
+fn/fn-month-from-date: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/months-from-duration.xml
+fn/fn-months-from-duration: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/month-from-dateTime.xml
+fn/fn-month-from-dateTime: 34 pass, 0 fail, 0 unsupported (out of 34)
+running fn/name.xml
+fn/fn-name: 33 pass, 0 fail, 3 unsupported (out of 36)
+running fn/namespace-uri.xml
+fn/fn-namespace-uri: 17 pass, 0 fail, 17 unsupported (out of 34)
+running fn/namespace-uri-for-prefix.xml
+fn/fn-namespace-uri-for-prefix: 2 pass, 0 fail, 29 unsupported (out of 31)
+running fn/namespace-uri-from-QName.xml
+fn/fn-namespace-uri-from-QName: 24 pass, 0 fail, 6 unsupported (out of 30)
+running fn/nilled.xml
+fn/fn-nilled: 31 pass, 0 fail, 34 unsupported (out of 65)
+running fn/node-name.xml
+fn/fn-node-name: 17 pass, 0 fail, 31 unsupported (out of 48)
+running fn/node-type-annotation.xml
+  FAIL fn-node-type-annotation/node-type-annotation-103: assert gave false for result map{...}
+fn/fn-node-type-annotation: 6 pass, 1 fail, 0 unsupported (out of 7)
+running fn/normalize-space.xml
+fn/fn-normalize-space: 46 pass, 0 fail, 1 unsupported (out of 47)
+running fn/normalize-unicode.xml
+fn/fn-normalize-unicode: 44 pass, 0 fail, 6 unsupported (out of 50)
+running fn/not.xml
+fn/fn-not: 80 pass, 0 fail, 3 unsupported (out of 83)
+running fn/number.xml
+fn/fn-number: 74 pass, 0 fail, 6 unsupported (out of 80)
+running fn/one-or-more.xml
+fn/fn-one-or-more: 53 pass, 0 fail, 3 unsupported (out of 56)
+running fn/op.xml
+fn/fn-op: 34 pass, 0 fail, 1 unsupported (out of 35)
+running fn/outermost.xml
+fn/fn-outermost: 49 pass, 0 fail, 13 unsupported (out of 62)
+running fn/pad-string.xml
+fn/fn-pad-string: 22 pass, 0 fail, 0 unsupported (out of 22)
+running fn/parse-csv.xml
+fn/fn-parse-csv: 124 pass, 0 fail, 0 unsupported (out of 124)
+running fn/parse-html.xml
+fn/fn-parse-html: 22 pass, 0 fail, 0 unsupported (out of 22)
+running fn/parse-ietf-date.xml
+fn/fn-parse-ietf-date: 105 pass, 0 fail, 0 unsupported (out of 105)
+running fn/parse-integer.xml
+fn/fn-parse-integer: 47 pass, 0 fail, 0 unsupported (out of 47)
+running fn/parse-json.xml
+fn/fn-parse-json: 184 pass, 0 fail, 19 unsupported (out of 203)
+running fn/parse-QName.xml
+fn/fn-parse-QName: 19 pass, 0 fail, 1 unsupported (out of 20)
+running fn/parse-xml.xml
+fn/fn-parse-xml: 42 pass, 0 fail, 15 unsupported (out of 57)
+running fn/parse-xml-fragment.xml
+  FAIL fn-parse-xml-fragment/parse-xml-fragment-505: error XPTY0004: unknown option retain-location
+  FAIL fn-parse-xml-fragment/parse-xml-fragment-506: error XPTY0004: unknown option retain-location
+fn/fn-parse-xml-fragment: 37 pass, 2 fail, 2 unsupported (out of 41)
+running fn/parse-uri.xml
+fn/fn-parse-uri: 74 pass, 0 fail, 0 unsupported (out of 74)
+running fn/partial-apply.xml
+fn/fn-partial-apply: 17 pass, 0 fail, 3 unsupported (out of 20)
+running fn/partition.xml
+fn/fn-partition: 22 pass, 0 fail, 3 unsupported (out of 25)
+running fn/parts-of-dateTime.xml
+fn/fn-parts-of-dateTime: 20 pass, 0 fail, 0 unsupported (out of 20)
+running fn/path.xml
+fn/fn-path: 62 pass, 0 fail, 10 unsupported (out of 72)
+running fn/position.xml
+fn/fn-position: 67 pass, 0 fail, 0 unsupported (out of 67)
+running fn/prefix-from-QName.xml
+fn/fn-prefix-from-QName: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/QName.xml
+fn/fn-QName: 25 pass, 0 fail, 9 unsupported (out of 34)
+running fn/random-number-generator.xml
+fn/fn-random-number-generator: 54 pass, 0 fail, 7 unsupported (out of 61)
+running fn/regex.xml
+  FAIL fn-regex/fn-regex-007: expected error XPTY0004, got 
+fn/fn-regex: 29 pass, 1 fail, 0 unsupported (out of 30)
+running fn/remove.xml
+fn/fn-remove: 62 pass, 0 fail, 1 unsupported (out of 63)
+running fn/replace.xml
+fn/fn-replace: 187 pass, 0 fail, 11 unsupported (out of 198)
+running fn/replicate.xml
+fn/fn-replicate: 17 pass, 0 fail, 4 unsupported (out of 21)
+running fn/resolve-QName.xml
+fn/fn-resolve-QName: 8 pass, 0 fail, 24 unsupported (out of 32)
+running fn/resolve-uri.xml
+fn/fn-resolve-uri: 49 pass, 0 fail, 2 unsupported (out of 51)
+running fn/reverse.xml
+fn/fn-reverse: 66 pass, 0 fail, 4 unsupported (out of 70)
+running fn/root.xml
+fn/fn-root: 17 pass, 0 fail, 26 unsupported (out of 43)
+running fn/round.xml
+fn/fn-round: 380 pass, 0 fail, 1 unsupported (out of 381)
+running fn/round-half-to-even.xml
+fn/fn-round-half-to-even: 145 pass, 0 fail, 0 unsupported (out of 145)
+running fn/scan.xml
+fn/fn-scan: 11 pass, 0 fail, 0 unsupported (out of 11)
+running fn/schema-type.xml
+fn/fn-schema-type: 9 pass, 0 fail, 5 unsupported (out of 14)
+running fn/seconds.xml
+fn/fn-seconds: 24 pass, 0 fail, 0 unsupported (out of 24)
+running fn/seconds-from-dateTime.xml
+fn/fn-seconds-from-dateTime: 35 pass, 0 fail, 0 unsupported (out of 35)
+running fn/seconds-from-duration.xml
+fn/fn-seconds-from-duration: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/seconds-from-time.xml
+fn/fn-seconds-from-time: 28 pass, 0 fail, 0 unsupported (out of 28)
+running fn/serialize.xml
+  UNSUP fn-serialize/serialize-xml-canonical-5: source not loadable: ../../third_party/testing/qt4tests/fn/serialize/serialize-canonical-5-src.xml
+  EXCLUDED fn-serialize/serialize-csv-002: defective test data, https://github.com/danbri/factoidal/issues/1159
+  EXCLUDED fn-serialize/serialize-csv-003: defective test data, https://github.com/danbri/factoidal/issues/1159
+fn/fn-serialize: 216 pass, 0 fail, 74 unsupported (out of 290); 2 excluded (defective test data)
+running fn/siblings.xml
+fn/fn-siblings: 18 pass, 0 fail, 1 unsupported (out of 19)
+running fn/slice.xml
+fn/fn-slice: 100 pass, 0 fail, 4 unsupported (out of 104)
+running fn/some.xml
+fn/fn-some: 30 pass, 0 fail, 3 unsupported (out of 33)
+running fn/sort.xml
+fn/fn-sort: 40 pass, 0 fail, 10 unsupported (out of 50)
+running fn/sort-by.xml
+fn/fn-sort-by: 56 pass, 0 fail, 10 unsupported (out of 66)
+running fn/sort-with.xml
+fn/fn-sort-with: 24 pass, 0 fail, 0 unsupported (out of 24)
+running fn/starts-with.xml
+fn/fn-starts-with: 69 pass, 0 fail, 0 unsupported (out of 69)
+running fn/starts-with-subsequence.xml
+fn/fn-starts-with-subsequence: 32 pass, 0 fail, 1 unsupported (out of 33)
+running fn/static-base-uri.xml
+fn/fn-static-base-uri: 5 pass, 0 fail, 13 unsupported (out of 18)
+running fn/string.xml
+fn/fn-string: 84 pass, 0 fail, 1 unsupported (out of 85)
+running fn/string-join.xml
+fn/fn-string-join: 40 pass, 0 fail, 8 unsupported (out of 48)
+running fn/string-length.xml
+fn/fn-string-length: 45 pass, 0 fail, 2 unsupported (out of 47)
+running fn/string-to-codepoints.xml
+fn/fn-string-to-codepoints: 44 pass, 0 fail, 0 unsupported (out of 44)
+running fn/subsequence.xml
+fn/fn-subsequence: 120 pass, 0 fail, 2 unsupported (out of 122)
+running fn/substring.xml
+fn/fn-substring: 74 pass, 0 fail, 0 unsupported (out of 74)
+running fn/substring-after.xml
+fn/fn-substring-after: 60 pass, 0 fail, 1 unsupported (out of 61)
+running fn/substring-after-last.xml
+fn/fn-substring-after-last: 28 pass, 0 fail, 1 unsupported (out of 29)
+running fn/substring-before.xml
+fn/fn-substring-before: 59 pass, 0 fail, 1 unsupported (out of 60)
+running fn/substring-before-last.xml
+fn/fn-substring-before-last: 28 pass, 0 fail, 1 unsupported (out of 29)
+running fn/sum.xml
+fn/fn-sum: 229 pass, 0 fail, 0 unsupported (out of 229)
+running fn/system-properties.xml
+fn/fn-system-properties: 30 pass, 0 fail, 5 unsupported (out of 35)
+running fn/tail.xml
+fn/fn-tail: 5 pass, 0 fail, 1 unsupported (out of 6)
+running fn/take-while.xml
+fn/fn-take-while: 17 pass, 0 fail, 1 unsupported (out of 18)
+running fn/timezone-from-date.xml
+fn/fn-timezone-from-date: 28 pass, 0 fail, 6 unsupported (out of 34)
+running fn/timezone-from-dateTime.xml
+fn/fn-timezone-from-dateTime: 41 pass, 0 fail, 0 unsupported (out of 41)
+running fn/timezone-from-time.xml
+fn/fn-timezone-from-time: 27 pass, 0 fail, 0 unsupported (out of 27)
+running fn/tokenize.xml
+fn/fn-tokenize: 71 pass, 0 fail, 8 unsupported (out of 79)
+running fn/trace.xml
+fn/fn-trace: 31 pass, 0 fail, 1 unsupported (out of 32)
+running fn/transform.xml
+  FAIL fn-transform/fn-transform-27: got true
+  FAIL fn-transform/fn-transform-65: assert gave false for result map{...}
+  FAIL fn-transform/fn-transform-66: assert gave false for result map{...}
+  FAIL fn-transform/fn-transform-67: assert gave false for result map{...}
+  FAIL fn-transform/fn-transform-70: any-of: wrong error code XPST0017 (expected FOXT0001); error XPST0017: unknown function chrono:c4#1
+  FAIL fn-transform/fn-transform-82e: any-of: assert gave false for result <node>; assert gave false for result <node>; expected error FOXT0001, got <node>
+  FAIL fn-transform/fn-transform-91: error XTMM9001: 
+  FAIL fn-transform/fn-transform-94: error FODC0002: stylesheet not available: ../identity.xsl
+  FAIL fn-transform/fn-transform-err-9a: error XTSE0165: cannot read stylesheet module file:///Users/danbri/working/sandbox/october/jsonld-star/wt-cfg-S1/third_party/testing/qt4tests/fn/transform/staticbaseuri.xsl
+fn/fn-transform: 124 pass, 9 fail, 4 unsupported (out of 137)
+running fn/transitive-closure.xml
+fn/fn-transitive-closure: 8 pass, 0 fail, 3 unsupported (out of 11)
+running fn/translate.xml
+fn/fn-translate: 44 pass, 0 fail, 0 unsupported (out of 44)
+running fn/trim-space.xml
+fn/fn-trim-space: 49 pass, 0 fail, 0 unsupported (out of 49)
+running fn/true.xml
+fn/fn-true: 25 pass, 0 fail, 0 unsupported (out of 25)
+running fn/trunk.xml
+fn/fn-trunk: 5 pass, 0 fail, 3 unsupported (out of 8)
+running fn/type-of.xml
+fn/fn-type-of: 31 pass, 0 fail, 5 unsupported (out of 36)
+running fn/unix-dateTime.xml
+fn/fn-unix-dateTime: 24 pass, 0 fail, 0 unsupported (out of 24)
+running fn/unordered.xml
+fn/fn-unordered: 40 pass, 0 fail, 3 unsupported (out of 43)
+running fn/unparsed-binary.xml
+fn/fn-unparsed-binary: 21 pass, 0 fail, 0 unsupported (out of 21)
+running fn/unparsed-text.xml
+fn/fn-unparsed-text: 94 pass, 0 fail, 13 unsupported (out of 107)
+running fn/unparsed-text-available.xml
+fn/fn-unparsed-text-available: 57 pass, 0 fail, 6 unsupported (out of 63)
+running fn/unparsed-text-lines.xml
+fn/fn-unparsed-text-lines: 58 pass, 0 fail, 6 unsupported (out of 64)
+running fn/update.xml
+  FAIL fn-update/fn-update-xnode-116: got true
+  FAIL fn-update/fn-update-mixed-009: xml ?
+fn/fn-update: 220 pass, 2 fail, 243 unsupported (out of 465)
+running fn/upper-case.xml
+fn/fn-upper-case: 28 pass, 0 fail, 1 unsupported (out of 29)
+running fn/uri-collection.xml
+fn/fn-uri-collection: 12 pass, 0 fail, 1 unsupported (out of 13)
+running fn/void.xml
+fn/fn-void: 5 pass, 0 fail, 0 unsupported (out of 5)
+running fn/while-do.xml
+fn/fn-while-do: 30 pass, 0 fail, 0 unsupported (out of 30)
+running fn/xml-to-json.xml
+fn/fn-xml-to-json: 99 pass, 0 fail, 71 unsupported (out of 170)
+running fn/xsd-validator.xml
+fn/fn-xsd-validator: 3 pass, 0 fail, 73 unsupported (out of 76)
+running fn/year-from-date.xml
+fn/fn-year-from-date: 29 pass, 0 fail, 0 unsupported (out of 29)
+running fn/years-from-duration.xml
+fn/fn-years-from-duration: 33 pass, 0 fail, 0 unsupported (out of 33)
+running fn/year-from-dateTime.xml
+fn/fn-year-from-dateTime: 35 pass, 0 fail, 0 unsupported (out of 35)
+running fn/zero-or-one.xml
+fn/fn-zero-or-one: 49 pass, 0 fail, 2 unsupported (out of 51)
+== families ==
+fn: 15475 pass, 137 fail, 2246 unsupported (out of 17858); 5 excluded (defective test data)
+TOTAL: 15475 pass, 137 fail, 2246 unsupported (out of 17858); 5 excluded (defective test data)

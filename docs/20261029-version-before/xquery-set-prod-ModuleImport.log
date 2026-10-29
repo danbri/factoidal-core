@@ -1,0 +1,23 @@
+running prod/ModuleImport.xml
+  FAIL prod-ModuleImport/modules-19b: error XPST0051: unknown type simple:myType
+  FAIL prod-ModuleImport/modules-20b: error XPST0051: unknown type simple:myType
+  FAIL prod-ModuleImport/modules-34: expected error XPST0017, got OK
+  FAIL prod-ModuleImport/modules-35: expected error XPST0017, got OK
+  FAIL prod-ModuleImport/modules-43: error XPST0051: unknown type a:t1
+  FAIL prod-ModuleImport/errata6-003: error XPST0051: unknown type a:hatsize
+  FAIL prod-ModuleImport/modules-pub-priv-29: expected error XQST0106, got 
+  FAIL prod-ModuleImport/modules-pub-priv-30: expected error XQST0106, got 
+  FAIL prod-ModuleImport/modules-pub-priv-31: expected error XQST0106, got 
+  FAIL prod-ModuleImport/modules-pub-priv-32: expected error XQST0106, got 
+  FAIL prod-ModuleImport/modules-pub-priv-33: expected error XQST0116, got 
+  FAIL prod-ModuleImport/modules-pub-priv-34: expected error XQST0116, got 
+  FAIL prod-ModuleImport/modules-pub-priv-35: expected error XQST0116, got 
+  FAIL prod-ModuleImport/modules-pub-priv-36: expected error XQST0116, got 
+  FAIL prod-ModuleImport/modules-pub-priv-37: expected error XPST0017, got 23
+  FAIL prod-ModuleImport/cbcl-module-001: error XPST0051: unknown type cd:shortString
+  FAIL prod-ModuleImport/cbcl-module-002: string value 'http://www.example.org/wrong/'
+  FAIL prod-ModuleImport/cbcl-module-003: expected error XPST0008, got Hello!
+prod/prod-ModuleImport: 106 pass, 18 fail, 17 unsupported (out of 141)
+== families ==
+prod: 106 pass, 18 fail, 17 unsupported (out of 141)
+TOTAL: 106 pass, 18 fail, 17 unsupported (out of 141)

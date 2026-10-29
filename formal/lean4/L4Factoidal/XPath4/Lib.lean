@@ -98,6 +98,24 @@ def Hooks.pred (h : Hooks) (f : Item) (args : List Seq) : M Bool := do
   | [] => pure false
   | _ => err "XPTY0004" "predicate must return xs:boolean"
 
+/-- Earlier F&O callbacks have a fixed arity, including on empty input. -/
+def checkCallbackArity (version : LanguageVersion) (f : Item) (n : Nat) : M Unit :=
+  if version != .v40 && f.fnArity != some n then
+    err "XPTY0004" "callback has the wrong arity for this language version"
+  else pure ()
+
+def Hooks.predVersion (h : Hooks) (version : LanguageVersion) (f : Item)
+    (args : List Seq) : M Bool := do
+  if version == .v40 then h.pred f args
+  else
+    let r ← h.callN f args
+    match r with
+    | [.atom ⟨_, .bool b⟩] => pure b
+    | _ => err "XPTY0004" "predicate must return one xs:boolean"
+
+theorem Hooks.predVersion_v40 (h : Hooks) (f : Item) (args : List Seq) :
+    h.predVersion .v40 f args = h.pred f args := rfl
+
 def collationOk (c : Seq) : M Unit :=
   match optAtom c with
   | none => pure ()
@@ -221,6 +239,29 @@ def compileRe (p f : String) : M Regex.Compiled :=
   match Regex.Profiles.compileXPath40 p f with
   | .ok r => pure r
   | .error e => regexErr e
+
+/-- Compile the selected F&O regex dialect over the shared regex engine.
+    F&O 2.0 has no `q` flag; 3.0/3.1 use the existing legacy parser. -/
+def compileReVersion (version : LanguageVersion) (p f : String) : M Regex.Compiled :=
+  if version == .v40 then compileRe p f
+  else if version.number < 30 && f.contains 'q' then err "FORX0001" "q requires F&O 3.0"
+  else if maxQuant p > 1000 then err "FOER0000" "implementation limit: regex quantifier above 1000"
+  else match Regex.compile p f with
+    | .ok r => pure r
+    | .error e => regexErr e
+
+theorem compileReVersion_v40 (p f : String) :
+    compileReVersion .v40 p f = compileRe p f := rfl
+
+/-- F&O 3.1 analyze-string, replace and tokenize reject a pattern that
+    matches the zero-length string, independently of the input text. -/
+def rejectEmptyPattern (version : LanguageVersion) (r : Regex.Compiled) : M Unit :=
+  if version != .v40 && Regex.isMatch r "" then
+    err "FORX0003" "pattern matches the empty string"
+  else pure ()
+
+theorem rejectEmptyPattern_v40 (r : Regex.Compiled) :
+    rejectEmptyPattern .v40 r = pure () := rfl
 
 /-- `fn:tokenize` for a pattern with no metacharacters (literal
     separator), and the one-argument form. -/
@@ -886,36 +927,41 @@ def fnTable : List (String × LibFn) := [
   ent "position" (fun _ e _ => if e.ctx.isNone then err "XPDY0002" "context is absent" else pure (sInt e.pos)),
   ent "last" (fun _ e _ => if e.ctx.isNone then err "XPDY0002" "context is absent" else pure (sInt e.size)),
   -- higher-order
-  ent "for-each" (fun h _ a => do
+  ent "for-each" (fun h e a => do
     let f := (argN a 1).headD default
+    checkCallbackArity e.features.version f 1
     let xs := argN a 0
     let mut out : Array Item := #[]
     for (x, i) in xs.zip (List.range xs.length) do
       for r in ← h.callN f [[x], sInt (i + 1)] do out := out.push r
     pure out.toList),
-  ent "filter" (fun h _ a => do
+  ent "filter" (fun h e a => do
     let f := (argN a 1).headD default
+    checkCallbackArity e.features.version f 1
     let xs := argN a 0
     let mut out : Array Item := #[]
     for (x, i) in xs.zip (List.range xs.length) do
-      if ← h.pred f [[x], sInt (i + 1)] then out := out.push x
+      if ← h.predVersion e.features.version f [[x], sInt (i + 1)] then out := out.push x
     pure out.toList),
-  ent "fold-left" (fun h _ a => do
+  ent "fold-left" (fun h e a => do
     let f := (argN a 2).headD default
+    checkCallbackArity e.features.version f 2
     let xs := argN a 0
     let mut acc := argN a 1
     for (x, i) in xs.zip (List.range xs.length) do
       acc ← h.callN f [acc, [x], sInt (i + 1)]
     pure acc),
-  ent "fold-right" (fun h _ a => do
+  ent "fold-right" (fun h e a => do
     let f := (argN a 2).headD default
+    checkCallbackArity e.features.version f 2
     let xs := argN a 0
     let mut acc := argN a 1
     for (x, i) in (xs.zip (List.range xs.length)).reverse do
       acc ← h.callN f [[x], acc, sInt (i + 1)]
     pure acc),
-  ent "for-each-pair" (fun h _ a => do
+  ent "for-each-pair" (fun h e a => do
     let f := (argN a 2).headD default
+    checkCallbackArity e.features.version f 2
     let xs := argN a 0
     let ys := argN a 1
     let mut out : Array Item := #[]
@@ -1012,13 +1058,16 @@ def fnTable : List (String × LibFn) := [
       pure res
     let sorted ← msortM (fun p q => do pure ((← cmpBy p q) == .lt)) 64 xs
     pure sorted),
-  ent "apply" (fun h _ a => do
+  ent "apply" (fun h e a => do
     let f := (argN a 0).headD default
     match argN a 1 with
     | [.arr ms] =>
       -- excess members are ignored (F&O 4.0 §17.2.1)
       match f.fnArity with
-      | some k => if k > ms.length then err "FOAP0001" "fn:apply: too few members for the arity" else h.call f (ms.take k)
+      | some k =>
+          if k > ms.length || (e.features.version != .v40 && k != ms.length) then
+            err "FOAP0001" "fn:apply: array size differs from function arity"
+          else h.call f (ms.take k)
       | none => h.call f ms
     | _ => err "XPTY0004" "fn:apply expects an array"),
   ent "function-arity" (fun _ _ a => pure (match (argN a 0).headD default |>.fnArity with
@@ -1944,9 +1993,10 @@ def mapTable : List (String × LibFn) := [
     pure (mapItem acc.toList)),
   ent "entries" (fun _ _ a => do pure ((← asMap (argN a 0)).map (fun (k, v) => .map [(k, v)]))),
   ent "pairs" (fun _ _ a => do pure ((← asMap (argN a 0)).map (fun (k, v) => .map [(Atomic.ofStr "key", [.atom k]), (Atomic.ofStr "value", v)]))),
-  ent "for-each" (fun h _ a => do
+  ent "for-each" (fun h e a => do
     let m ← asMap (argN a 0)
     let f := (argN a 1).headD default
+    checkCallbackArity e.features.version f 2
     let mut out : Array Item := #[]
     for ((k, v), i) in m.zip (List.range m.length) do
       for r in ← h.callN f [[.atom k], v, sInt (i + 1)] do out := out.push r
@@ -2104,19 +2154,21 @@ def arrayTable : List (String × LibFn) := [
       for (x, i) in xs.zip (List.range xs.length) do
         out := out.push (← h.callN f [[x], sInt (i + 1)])
       pure (arrItem out.toList)),
-  ent "for-each" (fun h _ a => do
+  ent "for-each" (fun h e a => do
     let ms ← asArr (argN a 0)
     let f := (argN a 1).headD default
+    checkCallbackArity e.features.version f 1
     let mut out : Array Seq := #[]
     for (m, i) in ms.zip (List.range ms.length) do
       out := out.push (← h.callN f [m, sInt (i + 1)])
     pure (arrItem out.toList)),
-  ent "filter" (fun h _ a => do
+  ent "filter" (fun h e a => do
     let ms ← asArr (argN a 0)
     let f := (argN a 1).headD default
+    checkCallbackArity e.features.version f 1
     let mut out : Array Seq := #[]
     for (m, i) in ms.zip (List.range ms.length) do
-      if ← h.pred f [m, sInt (i + 1)] then out := out.push m
+      if ← h.predVersion e.features.version f [m, sInt (i + 1)] then out := out.push m
     pure (arrItem out.toList)),
   ent "index-where" (fun h _ a => do
     let ms ← asArr (argN a 0)
@@ -2130,24 +2182,27 @@ def arrayTable : List (String × LibFn) := [
     let t := argN a 1
     pure ((List.range ms.length).filterMap (fun (i : Nat) =>
       if e.deepEq (ms.getD i []) t then some (.atom (Atomic.ofInt (i + 1))) else none))),
-  ent "fold-left" (fun h _ a => do
+  ent "fold-left" (fun h e a => do
     let ms ← asArr (argN a 0)
     let f := (argN a 2).headD default
+    checkCallbackArity e.features.version f 2
     let mut acc := argN a 1
     for (m, i) in ms.zip (List.range ms.length) do
       acc ← h.callN f [acc, m, sInt (i + 1)]
     pure acc),
-  ent "fold-right" (fun h _ a => do
+  ent "fold-right" (fun h e a => do
     let ms ← asArr (argN a 0)
     let f := (argN a 2).headD default
+    checkCallbackArity e.features.version f 2
     let mut acc := argN a 1
     for (m, i) in (ms.zip (List.range ms.length)).reverse do
       acc ← h.callN f [m, acc, sInt (i + 1)]
     pure acc),
-  ent "for-each-pair" (fun h _ a => do
+  ent "for-each-pair" (fun h e a => do
     let xs ← asArr (argN a 0)
     let ys ← asArr (argN a 1)
     let f := (argN a 2).headD default
+    checkCallbackArity e.features.version f 2
     let mut out : Array Seq := #[]
     for ((x, y), i) in (xs.zip ys).zip (List.range (min xs.length ys.length)) do
       out := out.push (← h.callN f [x, y, sInt (i + 1)])

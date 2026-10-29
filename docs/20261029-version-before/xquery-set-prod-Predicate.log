@@ -1,0 +1,5 @@
+running prod/Predicate.xml
+prod/prod-Predicate: 240 pass, 0 fail, 5 unsupported (out of 245)
+== families ==
+prod: 240 pass, 0 fail, 5 unsupported (out of 245)
+TOTAL: 240 pass, 0 fail, 5 unsupported (out of 245)

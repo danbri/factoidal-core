@@ -1,0 +1,5 @@
+running prod/TypeswitchExpr.xml
+prod/prod-TypeswitchExpr: 0 pass, 0 fail, 88 unsupported (out of 88)
+== families ==
+prod: 0 pass, 0 fail, 88 unsupported (out of 88)
+TOTAL: 0 pass, 0 fail, 88 unsupported (out of 88)

@@ -1,0 +1,6 @@
+running prod/Lookup.xml
+  FAIL prod-Lookup/Lookup-413: error XPTY0004: unary lookup needs a single context item
+prod/prod-Lookup: 128 pass, 1 fail, 5 unsupported (out of 134)
+== families ==
+prod: 128 pass, 1 fail, 5 unsupported (out of 134)
+TOTAL: 128 pass, 1 fail, 5 unsupported (out of 134)

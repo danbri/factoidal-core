@@ -1,0 +1,5 @@
+running op/hexBinary-less-than.xml
+op/op-hexBinary-less-than: 31 pass, 0 fail, 1 unsupported (out of 32)
+== families ==
+op: 31 pass, 0 fail, 1 unsupported (out of 32)
+TOTAL: 31 pass, 0 fail, 1 unsupported (out of 32)

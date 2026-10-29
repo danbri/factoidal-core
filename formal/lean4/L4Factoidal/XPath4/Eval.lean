@@ -508,11 +508,23 @@ def FeatureSettings.checkExpr (settings : FeatureSettings) : Nat → Expr → M 
   | 0, _ => err "XPST0003" "feature check nesting limit"
   | f + 1, ex => do
     let go := settings.checkExpr f
+    let v := settings.version.number
+    let minimum := match ex with
+      | .mapC _ | .arrS _ | .arrC _ | .lookup _ _ | .ulookup _ => 31
+      | .fref _ _ | .inline .. | .dyn .. | .smap .. => 30
+      | .tmpl _ | .dstep .. | .mapArrow .. | .pipe .. => 40
+      | .bin .otherwise _ _ | .bin .isNot _ _ | .bin .precedesOrIs _ _ | .bin .followsOrIs _ _ => 40
+      | .bin .concat _ _ => 30
+      | _ => 10
+    if v < minimum then err "XPST0003" "expression is unavailable in this language version"
     match ex with
     | .call q args kw =>
+      if !settings.arityEnabled q (args.length + kw.length) then err "XPST0017" "function arity is unavailable in this version"
+      if settings.version != .v40 && !kw.isEmpty then err "XPST0003" "keyword arguments require version 4.0"
       if !settings.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
       for e in args.filterMap id ++ kw.filterMap (·.2) do go e
-    | .fref q _ =>
+    | .fref q k =>
+      if !settings.arityEnabled q k then err "XPST0017" "function arity is unavailable in this version"
       if !settings.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
     | .ext tag es _ _ _ =>
       if tag == "validate" && !settings.schemaValidation then
@@ -1126,7 +1138,7 @@ def lookupIn : Nat → Env → Item → Option Expr → M Seq
           let key ← if key.ty == .untyped then castAtomic key (.b .integer) else pure key
           -- a numeric key equal to an integer selects that member
           -- (XPath 4.0 §4.13.3, the key is coerced to xs:integer)
-          let key := match key.v with
+          let key := if env.features.version != .v40 then key else match key.v with
             | .dec d => if (Dec.norm d).scale == 0 then Atomic.ofInt (Dec.norm d).mantissa else key
             | .dbl f => if f.floor == f && f.abs < 1.0e15 then Atomic.ofInt f.toInt64.toInt else key
             | _ => key
@@ -1160,6 +1172,8 @@ def evalBin : Nat → Env → BOp → Expr → Expr → M Seq
         -- are sequences of atomic items
         let x ← env.atomize (← eval n env a)
         let y ← env.atomize (← eval n env b)
+        if env.features.version != .v40 && (x.length > 1 || y.length > 1) then
+          err "XPTY0004" "string concatenation requires optional singletons before 4.0"
         pure (sStr (String.join ((x ++ y).map Atomic.str)))
     | .to => do
         let x ← env.atomizeOpt (← eval n env a)
@@ -1328,6 +1342,7 @@ def apply : Nat → Env → Item → List Seq → M Seq
 def callFn : Nat → Env → QN → List Seq → M Seq
   | 0, _, _, _ => fuelErr
   | n + 1, env, q, args => do
+    if !env.features.arityEnabled q args.length then err "XPST0017" "function arity is unavailable in this version"
     if !env.features.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
     if !env.features.loadXQueryModule && q.uri == nsFN && q.loc == "load-xquery-module" then
       err "FOQM0006" "dynamic XQuery is disabled"
@@ -1338,7 +1353,11 @@ def callFn : Nat → Env → QN → List Seq → M Seq
     if env.untrusted && isExternalFn q then
       err "FODC0016" ("untrusted code may not read external resources (" ++ q.show ++ ")")
     let args ← if q.uri == nsFN && q.loc == "concat" then
-        args.mapM (fun a => do pure (seqOfAtoms (← env.atomize a)))
+        args.mapM (fun a => do
+          let atoms ← env.atomize a
+          if env.features.version != .v40 && atoms.length > 1 && !env.compat10 then
+            err "XPTY0004" "concat requires optional singleton arguments before 4.0"
+          pure (seqOfAtoms (if env.compat10 then atoms.take 1 else atoms)))
       else match findSig q args.length with
         | some sig => (args.zip sig.ps).mapM (fun (a, p) => env.coerce p.ty a ("$" ++ p.name ++ " of " ++ q.show))
         | none => pure args

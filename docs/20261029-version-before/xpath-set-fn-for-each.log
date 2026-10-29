@@ -1,0 +1,5 @@
+running fn/for-each.xml
+fn/fn-for-each: 19 pass, 0 fail, 3 unsupported (out of 22)
+== families ==
+fn: 19 pass, 0 fail, 3 unsupported (out of 22)
+TOTAL: 19 pass, 0 fail, 3 unsupported (out of 22)

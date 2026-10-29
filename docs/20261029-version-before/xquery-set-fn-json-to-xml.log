@@ -1,0 +1,12 @@
+running fn/json-to-xml.xml
+  FAIL fn-json-to-xml/json-to-xml-017b: error XPST0008: schema-element(j:array): no such declaration in the in-scope schema definitions
+  FAIL fn-json-to-xml/json-to-xml-037b: error XPST0008: schema-element(map): no such declaration in the in-scope schema definitions
+  FAIL fn-json-to-xml/json-to-xml-038b: error XPST0008: schema-element(map): no such declaration in the in-scope schema definitions
+  FAIL fn-json-to-xml/json-to-xml-044: error XPST0008: schema-element(fn:map): no such declaration in the in-scope schema definitions
+  FAIL fn-json-to-xml/json-to-xml-045: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+  FAIL fn-json-to-xml/json-to-xml-046: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+  FAIL fn-json-to-xml/json-to-xml-047: error XQST0059: no schema for the imported namespace http://www.w3.org/2005/xpath-functions
+fn/fn-json-to-xml: 91 pass, 7 fail, 6 unsupported (out of 104)
+== families ==
+fn: 91 pass, 7 fail, 6 unsupported (out of 104)
+TOTAL: 91 pass, 7 fail, 6 unsupported (out of 104)

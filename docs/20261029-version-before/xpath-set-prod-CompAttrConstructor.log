@@ -1,0 +1,5 @@
+running prod/CompAttrConstructor.xml
+prod/prod-CompAttrConstructor: 12 pass, 0 fail, 136 unsupported (out of 148)
+== families ==
+prod: 12 pass, 0 fail, 136 unsupported (out of 148)
+TOTAL: 12 pass, 0 fail, 136 unsupported (out of 148)

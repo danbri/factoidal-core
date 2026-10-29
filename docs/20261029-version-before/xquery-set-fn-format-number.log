@@ -1,0 +1,11 @@
+running fn/format-number.xml
+  FAIL fn-format-number/numberformat111: wrong error code FODF1290 (expected XQST0098)
+  FAIL fn-format-number/numberformat121: any-of: error FOER0000: evaluation too deep (fuel exhausted); wrong error code FOER0000 (expected FOAR0002)
+  FAIL fn-format-number/numberformat122: any-of: error FOER0000: evaluation too deep (fuel exhausted); error FOER0000: evaluation too deep (fuel exhausted)
+  FAIL fn-format-number/numberformat124: wrong error code FODF1290 (expected XQST0097)
+  FAIL fn-format-number/numberformat126: wrong error code FODF1290 (expected XQST0098)
+  FAIL fn-format-number/numberformat901err: wrong error code FODF1290 (expected XQST0098)
+fn/fn-format-number: 296 pass, 6 fail, 6 unsupported (out of 308)
+== families ==
+fn: 296 pass, 6 fail, 6 unsupported (out of 308)
+TOTAL: 296 pass, 6 fail, 6 unsupported (out of 308)

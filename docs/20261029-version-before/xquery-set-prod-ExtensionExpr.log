@@ -1,0 +1,14 @@
+running prod/ExtensionExpr.xml
+  FAIL prod-ExtensionExpr/K-ExtensionExpression-4a: error XPST0081: a pragma name needs a namespace
+  FAIL prod-ExtensionExpr/K-ExtensionExpression-4b: error XPST0081: a pragma name needs a namespace
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-1a: expected error XPST0081, got 1
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-6a: expected error XPST0003, got true
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-7a: expected error XPST0003, got true
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-8a: expected error XPST0003, got true
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-9: expected error XPST0003, got true
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-10: expected error XPST0003, got true
+  FAIL prod-ExtensionExpr/K2-ExtensionExpression-18a: expected error XPST0003, got -5
+prod/prod-ExtensionExpr: 49 pass, 9 fail, 23 unsupported (out of 81)
+== families ==
+prod: 49 pass, 9 fail, 23 unsupported (out of 81)
+TOTAL: 49 pass, 9 fail, 23 unsupported (out of 81)

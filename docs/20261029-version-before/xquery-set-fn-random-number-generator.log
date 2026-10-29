@@ -1,0 +1,6 @@
+running fn/random-number-generator.xml
+  FAIL fn-random-number-generator/fn-random-number-generator-31a: expected error XPTY0004, got 0
+fn/fn-random-number-generator: 56 pass, 1 fail, 4 unsupported (out of 61)
+== families ==
+fn: 56 pass, 1 fail, 4 unsupported (out of 61)
+TOTAL: 56 pass, 1 fail, 4 unsupported (out of 61)

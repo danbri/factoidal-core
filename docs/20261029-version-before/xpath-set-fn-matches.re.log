@@ -1,0 +1,5 @@
+running fn/matches.re.xml
+fn/fn-matches.re: 1082 pass, 0 fail, 34 unsupported (out of 1116)
+== families ==
+fn: 1082 pass, 0 fail, 34 unsupported (out of 1116)
+TOTAL: 1082 pass, 0 fail, 34 unsupported (out of 1116)

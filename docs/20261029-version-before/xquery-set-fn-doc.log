@@ -1,0 +1,8 @@
+running fn/doc.xml
+  UNSUP fn-doc/fn-doc-27: source not loadable: ../../third_party/testing/qt4tests/fn/id/BCisInvalid.xml
+  UNSUP fn-doc/fn-doc-28: source not loadable: ../../third_party/testing/qt4tests/fn/id/InvalidUmlaut.xml
+  FAIL fn-doc/fn-doc-40-065: error FODC0002: xsd-validation strict: no declaration or type to validate against
+fn/fn-doc: 75 pass, 1 fail, 3 unsupported (out of 79)
+== families ==
+fn: 75 pass, 1 fail, 3 unsupported (out of 79)
+TOTAL: 75 pass, 1 fail, 3 unsupported (out of 79)

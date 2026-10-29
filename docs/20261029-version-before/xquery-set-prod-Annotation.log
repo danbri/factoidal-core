@@ -1,0 +1,23 @@
+running prod/Annotation.xml
+  FAIL prod-Annotation/annotation-40-17: error XPST0003: an annotation value must be a literal
+  FAIL prod-Annotation/annotation-40-18: error XPST0003: an annotation value must be a literal
+  FAIL prod-Annotation/annotation-40-19: error XPST0003: an annotation value must be a literal
+  FAIL prod-Annotation/annotation-40-20: error XPST0003: an annotation value must be a literal
+  FAIL prod-Annotation/annotation-assertion-11: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-12: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-13: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-14: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-15: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-16: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-17: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-18: expected error XQST0045, got false
+  FAIL prod-Annotation/annotation-assertion-40-05: error XPST0003: bad numeric literal
+  FAIL prod-Annotation/annotation-assertion-40-07: error XPST0081: undeclared namespace prefix xq
+  FAIL prod-Annotation/annotation-assertion-40-08: wrong error code XPST0081 (expected XQST0045)
+  FAIL prod-Annotation/annotation-assertion-40-09: error XPST0081: undeclared namespace prefix xq
+  FAIL prod-Annotation/annotation-assertion-40-10: error FONS0004: no namespace binding for prefix xq
+  FAIL prod-Annotation/annotation-assertion-40-11: error XPTY0004: wrong number of items for $map of map:keys: 0
+prod/prod-Annotation: 70 pass, 18 fail, 2 unsupported (out of 90)
+== families ==
+prod: 70 pass, 18 fail, 2 unsupported (out of 90)
+TOTAL: 70 pass, 18 fail, 2 unsupported (out of 90)

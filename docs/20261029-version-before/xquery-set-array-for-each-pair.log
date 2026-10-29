@@ -1,0 +1,6 @@
+running array/for-each-pair.xml
+  FAIL array-for-each-pair/array-for-each-pair-420: error XQST0038: unknown collation http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive
+array/array-for-each-pair: 13 pass, 1 fail, 1 unsupported (out of 15)
+== families ==
+array: 13 pass, 1 fail, 1 unsupported (out of 15)
+TOTAL: 13 pass, 1 fail, 1 unsupported (out of 15)

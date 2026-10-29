@@ -1,0 +1,5 @@
+running prod/InlineFunctionExpr.xml
+prod/prod-InlineFunctionExpr: 29 pass, 0 fail, 19 unsupported (out of 48)
+== families ==
+prod: 29 pass, 0 fail, 19 unsupported (out of 48)
+TOTAL: 29 pass, 0 fail, 19 unsupported (out of 48)

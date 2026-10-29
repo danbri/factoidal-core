@@ -1,0 +1,5 @@
+running prod/CompNamespaceConstructor.xml
+prod/prod-CompNamespaceConstructor: 6 pass, 0 fail, 46 unsupported (out of 52)
+== families ==
+prod: 6 pass, 0 fail, 46 unsupported (out of 52)
+TOTAL: 6 pass, 0 fail, 46 unsupported (out of 52)

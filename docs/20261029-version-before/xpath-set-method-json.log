@@ -1,0 +1,5 @@
+running ser/method-json.xml
+ser/method-json: 0 pass, 0 fail, 89 unsupported (out of 89)
+== families ==
+ser: 0 pass, 0 fail, 89 unsupported (out of 89)
+TOTAL: 0 pass, 0 fail, 89 unsupported (out of 89)

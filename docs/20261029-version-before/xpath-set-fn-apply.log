@@ -1,0 +1,5 @@
+running fn/apply.xml
+fn/fn-apply: 18 pass, 0 fail, 4 unsupported (out of 22)
+== families ==
+fn: 18 pass, 0 fail, 4 unsupported (out of 22)
+TOTAL: 18 pass, 0 fail, 4 unsupported (out of 22)

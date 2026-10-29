@@ -1,0 +1,5 @@
+running op/dayTimeDuration-greater-than.xml
+op/op-dayTimeDuration-greater-than: 29 pass, 0 fail, 42 unsupported (out of 71)
+== families ==
+op: 29 pass, 0 fail, 42 unsupported (out of 71)
+TOTAL: 29 pass, 0 fail, 42 unsupported (out of 71)

@@ -1,0 +1,6 @@
+running fn/min.xml
+  FAIL fn-min/fn-min-42: error XPST0003: unterminated pragma
+fn/fn-min: 212 pass, 1 fail, 19 unsupported (out of 232)
+== families ==
+fn: 212 pass, 1 fail, 19 unsupported (out of 232)
+TOTAL: 212 pass, 1 fail, 19 unsupported (out of 232)

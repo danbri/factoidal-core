@@ -1,0 +1,5 @@
+running fn/unparsed-text-lines.xml
+fn/fn-unparsed-text-lines: 58 pass, 0 fail, 6 unsupported (out of 64)
+== families ==
+fn: 58 pass, 0 fail, 6 unsupported (out of 64)
+TOTAL: 58 pass, 0 fail, 6 unsupported (out of 64)

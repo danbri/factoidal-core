@@ -228,7 +228,7 @@ theorem substringAfter_shared (he : e.defaultCollation = codepointCollation) :
     compiled pattern. -/
 theorem matches_shared (p f : String) :
     (libLookupAll (fnQ "matches")).map (fun g => g h e [sStr s, sStr p, sStr f]) =
-      some (do let re ← compileRe4 p f; pure (sBool (Regex.isMatch re.r s))) := rfl
+      some (do let re ← compileRe4 p f e.features.version; pure (sBool (Regex.isMatch re.r s))) := rfl
 
 end FnShared
 

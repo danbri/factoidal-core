@@ -1,0 +1,16 @@
+running prod/InstanceofExpr.xml
+  FAIL prod-InstanceofExpr/instanceof112: error XPST0051: unknown type lu:unionType
+  FAIL prod-InstanceofExpr/instanceof116: error XPST0051: unknown type lu:unionOfUnionType
+  FAIL prod-InstanceofExpr/instanceof118: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-InstanceofExpr/instanceof119: error XPST0051: unknown type s:myUnionType2
+  FAIL prod-InstanceofExpr/instanceof135: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-InstanceofExpr/instanceof136: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-InstanceofExpr/instanceof137: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-InstanceofExpr/instanceof138: error XPST0051: unknown type s:myUnionType1
+  FAIL prod-InstanceofExpr/instanceof139: error XPST0051: unknown type s:approximateDate
+  FAIL prod-InstanceofExpr/instanceof140: error XPST0051: unknown type s:integer-union
+  FAIL prod-InstanceofExpr/instanceof141: error XPST0051: unknown type s:decimal-or-string
+prod/prod-InstanceofExpr: 313 pass, 11 fail, 4 unsupported (out of 328)
+== families ==
+prod: 313 pass, 11 fail, 4 unsupported (out of 328)
+TOTAL: 313 pass, 11 fail, 4 unsupported (out of 328)

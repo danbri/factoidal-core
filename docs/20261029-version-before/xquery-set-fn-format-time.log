@@ -1,0 +1,6 @@
+running fn/format-time.xml
+  FAIL fn-format-time/format-time-025c: assert gave false for result <node>
+fn/fn-format-time: 96 pass, 1 fail, 1 unsupported (out of 98)
+== families ==
+fn: 96 pass, 1 fail, 1 unsupported (out of 98)
+TOTAL: 96 pass, 1 fail, 1 unsupported (out of 98)

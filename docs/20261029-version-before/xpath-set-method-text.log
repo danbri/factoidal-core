@@ -1,0 +1,5 @@
+running ser/method-text.xml
+ser/method-text: 0 pass, 0 fail, 23 unsupported (out of 23)
+== families ==
+ser: 0 pass, 0 fail, 23 unsupported (out of 23)
+TOTAL: 0 pass, 0 fail, 23 unsupported (out of 23)

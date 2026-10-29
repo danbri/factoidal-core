@@ -1,0 +1,5 @@
+running fn/format-date.xml
+fn/fn-format-date: 136 pass, 0 fail, 4 unsupported (out of 140)
+== families ==
+fn: 136 pass, 0 fail, 4 unsupported (out of 140)
+TOTAL: 136 pass, 0 fail, 4 unsupported (out of 140)

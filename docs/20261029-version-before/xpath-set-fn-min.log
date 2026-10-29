@@ -1,0 +1,5 @@
+running fn/min.xml
+fn/fn-min: 194 pass, 0 fail, 38 unsupported (out of 232)
+== families ==
+fn: 194 pass, 0 fail, 38 unsupported (out of 232)
+TOTAL: 194 pass, 0 fail, 38 unsupported (out of 232)

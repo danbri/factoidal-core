@@ -1,0 +1,65 @@
+running array/append.xml
+array/array-append: 8 pass, 0 fail, 0 unsupported (out of 8)
+running array/build.xml
+array/array-build: 6 pass, 0 fail, 0 unsupported (out of 6)
+running array/empty.xml
+array/array-empty: 6 pass, 0 fail, 0 unsupported (out of 6)
+running array/filter.xml
+array/array-filter: 18 pass, 0 fail, 1 unsupported (out of 19)
+running array/flatten.xml
+array/array-flatten: 7 pass, 0 fail, 3 unsupported (out of 10)
+running array/fold-left.xml
+array/array-fold-left: 11 pass, 0 fail, 0 unsupported (out of 11)
+running array/fold-right.xml
+array/array-fold-right: 12 pass, 0 fail, 0 unsupported (out of 12)
+running array/foot.xml
+array/array-foot: 8 pass, 0 fail, 1 unsupported (out of 9)
+running array/for-each.xml
+array/array-for-each: 12 pass, 0 fail, 1 unsupported (out of 13)
+running array/for-each-pair.xml
+array/array-for-each-pair: 13 pass, 0 fail, 2 unsupported (out of 15)
+running array/get.xml
+array/array-get: 25 pass, 0 fail, 0 unsupported (out of 25)
+running array/head.xml
+array/array-head: 8 pass, 0 fail, 1 unsupported (out of 9)
+running array/of-members.xml
+array/array-of-members: 6 pass, 0 fail, 0 unsupported (out of 6)
+running array/index-of.xml
+array/array-index-of: 13 pass, 0 fail, 0 unsupported (out of 13)
+running array/index-where.xml
+array/array-index-where: 22 pass, 0 fail, 0 unsupported (out of 22)
+running array/insert-before.xml
+array/array-insert-before: 9 pass, 0 fail, 4 unsupported (out of 13)
+running array/items.xml
+array/array-items: 8 pass, 0 fail, 0 unsupported (out of 8)
+running array/join.xml
+array/array-join: 10 pass, 0 fail, 1 unsupported (out of 11)
+running array/members.xml
+array/array-members: 7 pass, 0 fail, 0 unsupported (out of 7)
+running array/put.xml
+array/array-put: 11 pass, 0 fail, 4 unsupported (out of 15)
+running array/remove.xml
+array/array-remove: 16 pass, 0 fail, 1 unsupported (out of 17)
+running array/reverse.xml
+array/array-reverse: 19 pass, 0 fail, 0 unsupported (out of 19)
+running array/size.xml
+array/array-size: 7 pass, 0 fail, 0 unsupported (out of 7)
+running array/slice.xml
+array/array-slice: 88 pass, 0 fail, 3 unsupported (out of 91)
+running array/sort.xml
+array/array-sort: 29 pass, 0 fail, 8 unsupported (out of 37)
+running array/sort-by.xml
+array/array-sort-by: 48 pass, 0 fail, 8 unsupported (out of 56)
+running array/sort-with.xml
+array/array-sort-with: 25 pass, 0 fail, 0 unsupported (out of 25)
+running array/split.xml
+array/array-split: 11 pass, 0 fail, 0 unsupported (out of 11)
+running array/subarray.xml
+array/array-subarray: 22 pass, 0 fail, 2 unsupported (out of 24)
+running array/tail.xml
+array/array-tail: 5 pass, 0 fail, 1 unsupported (out of 6)
+running array/trunk.xml
+array/array-trunk: 5 pass, 0 fail, 1 unsupported (out of 6)
+== families ==
+array: 495 pass, 0 fail, 42 unsupported (out of 537)
+TOTAL: 495 pass, 0 fail, 42 unsupported (out of 537)

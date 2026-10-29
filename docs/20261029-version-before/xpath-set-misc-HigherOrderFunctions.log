@@ -1,0 +1,5 @@
+running misc/HigherOrderFunctions.xml
+misc/misc-HigherOrderFunctions: 53 pass, 0 fail, 95 unsupported (out of 148)
+== families ==
+misc: 53 pass, 0 fail, 95 unsupported (out of 148)
+TOTAL: 53 pass, 0 fail, 95 unsupported (out of 148)

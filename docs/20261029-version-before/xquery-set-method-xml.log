@@ -1,0 +1,7 @@
+running ser/method-xml.xml
+  FAIL method-xml/K2-Serialization-28: not: inner assertion held
+  FAIL method-xml/K2-Serialization-31: serialization '<?xml version="1.0" encoding="UTF-8"?><chapter xmlns="http://www.example.com/ns/' does not match
+ser/method-xml: 64 pass, 2 fail, 8 unsupported (out of 74)
+== families ==
+ser: 64 pass, 2 fail, 8 unsupported (out of 74)
+TOTAL: 64 pass, 2 fail, 8 unsupported (out of 74)
