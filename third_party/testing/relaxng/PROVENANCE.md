@@ -14,7 +14,7 @@ https://github.com/danbri/factoidal/issues/1165 (track B, item 3).
   correct schema with valid and invalid instance documents. Some cases carry
   `resource` and `dir` elements, the files that `externalRef` and `include`
   load.
-- `compacttest.xml` (from `mod/rng-schema/test/compacttest.xml`): 90 test
+- `compacttest.xml` (from `mod/rng-schema/test/compacttest.xml`): 87 test
   cases for the RELAX NG compact syntax, each a compact schema with its XML
   syntax equivalent, or an incorrect compact schema.
 - `xsdtest.xml` (from `mod/xsd-datatype/test/xsdtest.xml`): tests of the W3C

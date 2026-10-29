@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- RELAX NG in the Lean engine (`L4Factoidal/RelaxNG/`): the XML syntax of RELAX NG (OASIS 2001, ISO/IEC 19757-2), with simplification, the §7 restrictions, validation by derivatives, and the XSD datatype library through `XSD.SimpleType`. James Clark's spectest: 965 pass, 0 fail (out of 965) (`lake exe l4relaxng`). No npm or wasm op yet.
+- RELAX NG in the Lean engine (`L4Factoidal/RelaxNG/`): the XML syntax of RELAX NG (OASIS 2001, ISO/IEC 19757-2), with simplification, the §7 restrictions, validation by derivatives, and the XSD datatype library through `XSD.SimpleType`. Also the RELAX NG compact syntax (OASIS 2002), translated to the XML syntax as its Appendix A specifies. `lake exe l4relaxng`: James Clark's spectest 965 pass, 0 fail (out of 965); compacttest 87 pass, 0 fail (out of 87). No npm or wasm op yet (https://github.com/danbri/factoidal/issues/1200).
 
 ## 0.26.0 (2026-10-29)
 

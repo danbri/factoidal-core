@@ -2031,6 +2031,20 @@ L4Factoidal_XQuery4_loadXQueryModule  # (c) XQuery4/LoadModule: one level per fn
 Harness_RelaxNGRun_resources  # (c) Harness/RelaxNGRun: one call per dir level of a test case, fuel 8
 Harness_RelaxNGRun_ser  # (b) Harness/RelaxNGRun: one call per level of the element nesting of a test resource; children through List.foldl, a loop
 Harness_RelaxNGRun_testCases  # (c) Harness/RelaxNGRun: one call per testSuite level of spectest.xml, fuel 16
+L4Factoidal_RelaxNG_Compact_eraseCx  # (b) RelaxNG/Compact: one call per level of a simplified pattern (a group, choice or interleave of n children is a left-nested chain), as Simplify.norm
+L4Factoidal_RelaxNG_Compact_pAttrsContent  # (b) RelaxNG/Compact: one call per nesting level of an annotation element of one compact schema; its attributes and children are read by while loops; fuel = 4 * number of tokens
+L4Factoidal_RelaxNG_Compact_pGrammar  # (b) RelaxNG/Compact: one call per nesting level (grammar, div, include, pattern) of one compact schema; the members are read by a while loop; fuel = 4 * number of tokens
+L4Factoidal_RelaxNG_Compact_pInnerNameClass  # (b) RelaxNG/Compact: one call per parenthesis or except level of a name class; the operands of | are read by a while loop
+L4Factoidal_RelaxNG_Compact_pInnerPattern  # (b) RelaxNG/Compact: one call per nesting level ( ( { ) of a compact pattern; the operands of | , & are read by a while loop; fuel = 4 * number of tokens
+L4Factoidal_RelaxNG_Compact_pLeadPrimary  # (b) RelaxNG/Compact: one call per nesting level of a compact pattern (and one for the except of a datatype); params are read by a while loop
+L4Factoidal_RelaxNG_Compact_pLeadSimpleNC  # (b) RelaxNG/Compact: one call per parenthesis level of the except of a name class
+L4Factoidal_RelaxNG_Compact_pNCOperand  # (b) RelaxNG/Compact: one call per parenthesis or except level of a name class
+L4Factoidal_RelaxNG_Compact_pParticle  # (b) RelaxNG/Compact: one call per nesting level of a compact pattern; each level reads at least one token
+L4Factoidal_RelaxNG_Compact_render  # (b) RelaxNG/Compact: one call per level of the element nesting of the translation; siblings through renderAll, a tail call per sibling
+L4Factoidal_RelaxNG_Compact_renderAll  # (b) RelaxNG/Compact: a tail call per sibling; the cycle with render is the element nesting
+L4Factoidal_RelaxNG_Compact_serNode  # (b) RelaxNG/Compact: one call per level of the element nesting of the translation; siblings through serNodes, a tail call per sibling
+L4Factoidal_RelaxNG_Compact_serNodes  # (b) RelaxNG/Compact: a tail call per sibling; the cycle with serNode is the element nesting
+L4Factoidal_RelaxNG_Compact_strictKey  # (b) RelaxNG/Compact: one call per level of the element nesting of one schema after pass 2; children through List.foldl, a loop
 L4Factoidal_RelaxNG_NameClass_attrOk  # (b) the nesting of one name class of the schema
 L4Factoidal_RelaxNG_NameClass_contains  # (b) the nesting of one name class of the schema (a choice of n names is a left-nested chain)
 L4Factoidal_RelaxNG_NameClass_hasAnyName  # (b) the nesting of one name class of the schema
