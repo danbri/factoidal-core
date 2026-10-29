@@ -646,6 +646,10 @@ import L4Factoidal.RIF.Builtins
 import L4Factoidal.RIF.Engine
 import L4Factoidal.RIF.Bld
 import L4Factoidal.RIF.BldTheorems
+import L4Factoidal.RIF.Prd
+import L4Factoidal.RIF.PrdXml
+import L4Factoidal.RIF.PrdTheorems
+import L4Factoidal.RIF.PrdTests
 import L4Factoidal.RIF.EngineTests
 import L4Factoidal.RIF.EngineTheorems
 import L4Factoidal.RIF.Translation

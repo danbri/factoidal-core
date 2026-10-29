@@ -169,6 +169,31 @@ same commit:
   (`main` 28248), XQuery mode 42232 pass (`main` 42228); no test set lost
   a pass.
 
+## Round 3 (branch `claude/qt4-xslt-streaming-3`)
+
+`XSLT4/Streaming/TableBridge.lean` connects the event stream to the XPath
+4.0 node table `Doc.ofNodes`, which the XPath 4.0 and XSLT 4.0 evaluators
+read. It uses `Doc.ofNodes_built` of
+https://github.com/danbri/factoidal-core/pull/205.
+
+* `evShapes evs`: the records that a stream processor makes from the
+  events, as (kind, value). A start event gives an element record and one
+  attribute record for each attribute that is not a namespace declaration.
+  A text or CDATA event joins the text record after it (adjacent text is one
+  text node, XDM 4.0 §6.7). An empty text gives no record. A stop event
+  stops the join.
+* `ofNodes_shapes`: for every `ns` with `Fits 100000`, the records at the
+  indices `1 .. size - 1` of `(Doc.ofNodes ns uri).nodes` are
+  `recsOf (evShapes (eventsList ns))`, in order.
+* `parse_table_shapes`: the same for every document that `XML.parseXML`
+  returns, over the tree that `build` rebuilds from `docEvents d`.
+* `F_mergeText`: the text merging of `Doc.ofNodes` (`mergeText`) does not
+  change the records of the event stream.
+
+`#print axioms`: `propext`, `Classical.choice`, `Quot.sound`. `#guard`s
+in `Streaming/Tests.lean` check the statement on two documents (with
+CDATA, a namespace declaration, a comment and a processing instruction).
+
 ## Not done
 
 * A streamed evaluation of the full XSLT 4.0 instruction set over the
