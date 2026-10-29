@@ -624,6 +624,10 @@ lean_exe «l4dict-fold-bench» where
 -- the W3C XInclude test suite.
 @[default_target] lean_exe «l4xpointer» where root := `Harness.XPointerRun
 
+-- RELAX NG (ISO/IEC 19757-2:2008, OASIS 2001-12-03) XML syntax: James
+-- Clark's spectest.xml, simplification and validation by derivatives.
+@[default_target] lean_exe «l4relaxng» where root := `Harness.RelaxNGRun
+
 -- The W3C XML Schema Test Suite, Part 2 Datatypes slice: suite.xml ->
 -- the *Meta/*.testSet manifests -> the datatype-only test groups.
 @[default_target] lean_exe «l4xsd-datatypes» where root := `Harness.XsdDatatypesRun

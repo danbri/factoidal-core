@@ -2027,6 +2027,65 @@ L4Factoidal_XPath4_FeatureSettings_checkExpr  # (b) the depth is the nesting of 
 L4Factoidal_XQuery4_nodeTestStaticErr  # (b) XQuery4/Static: the depth is the nesting of a node test union in the query, and the fuel argument bounds it
 L4Factoidal_XQuery4_typeLoader  # (c) XQuery4/Module: the recursion is one level per module import, at most 8 (typeLoader env 8); the list folds are foldlM loops
 L4Factoidal_XQuery4_loadXQueryModule  # (c) XQuery4/LoadModule: one level per fn:load-xquery-module call made by a loaded module, at most 20 (the depth argument, loadModuleHost)
+# --- RELAX NG (ISO/IEC 19757-2:2008), formal/lean4/L4Factoidal/RelaxNG and Harness/RelaxNGRun
+Harness_RelaxNGRun_resources  # (c) Harness/RelaxNGRun: one call per dir level of a test case, fuel 8
+Harness_RelaxNGRun_ser  # (b) Harness/RelaxNGRun: one call per level of the element nesting of a test resource; children through List.foldl, a loop
+Harness_RelaxNGRun_testCases  # (c) Harness/RelaxNGRun: one call per testSuite level of spectest.xml, fuel 16
+L4Factoidal_RelaxNG_Compact_eraseCx  # (b) RelaxNG/Compact: one call per level of a simplified pattern (a group, choice or interleave of n children is a left-nested chain), as Simplify.norm
+L4Factoidal_RelaxNG_Compact_pAttrsContent  # (b) RelaxNG/Compact: one call per nesting level of an annotation element of one compact schema; its attributes and children are read by while loops; fuel = 4 * number of tokens
+L4Factoidal_RelaxNG_Compact_pGrammar  # (b) RelaxNG/Compact: one call per nesting level (grammar, div, include, pattern) of one compact schema; the members are read by a while loop; fuel = 4 * number of tokens
+L4Factoidal_RelaxNG_Compact_pInnerNameClass  # (b) RelaxNG/Compact: one call per parenthesis or except level of a name class; the operands of | are read by a while loop
+L4Factoidal_RelaxNG_Compact_pInnerPattern  # (b) RelaxNG/Compact: one call per nesting level ( ( { ) of a compact pattern; the operands of | , & are read by a while loop; fuel = 4 * number of tokens
+L4Factoidal_RelaxNG_Compact_pLeadPrimary  # (b) RelaxNG/Compact: one call per nesting level of a compact pattern (and one for the except of a datatype); params are read by a while loop
+L4Factoidal_RelaxNG_Compact_pLeadSimpleNC  # (b) RelaxNG/Compact: one call per parenthesis level of the except of a name class
+L4Factoidal_RelaxNG_Compact_pNCOperand  # (b) RelaxNG/Compact: one call per parenthesis or except level of a name class
+L4Factoidal_RelaxNG_Compact_pParticle  # (b) RelaxNG/Compact: one call per nesting level of a compact pattern; each level reads at least one token
+L4Factoidal_RelaxNG_Compact_render  # (b) RelaxNG/Compact: one call per level of the element nesting of the translation; siblings through renderAll, a tail call per sibling
+L4Factoidal_RelaxNG_Compact_renderAll  # (b) RelaxNG/Compact: a tail call per sibling; the cycle with render is the element nesting
+L4Factoidal_RelaxNG_Compact_serNode  # (b) RelaxNG/Compact: one call per level of the element nesting of the translation; siblings through serNodes, a tail call per sibling
+L4Factoidal_RelaxNG_Compact_serNodes  # (b) RelaxNG/Compact: a tail call per sibling; the cycle with serNode is the element nesting
+L4Factoidal_RelaxNG_Compact_strictKey  # (b) RelaxNG/Compact: one call per level of the element nesting of one schema after pass 2; children through List.foldl, a loop
+L4Factoidal_RelaxNG_NameClass_attrOk  # (b) the nesting of one name class of the schema
+L4Factoidal_RelaxNG_NameClass_contains  # (b) the nesting of one name class of the schema (a choice of n names is a left-nested chain)
+L4Factoidal_RelaxNG_NameClass_hasAnyName  # (b) the nesting of one name class of the schema
+L4Factoidal_RelaxNG_NameClass_hasNsName  # (b) the nesting of one name class of the schema
+L4Factoidal_RelaxNG_NameClass_infinite  # (b) the nesting of one name class of the schema
+L4Factoidal_RelaxNG_NameClass_reps  # (b) the nesting of one name class of the schema (a choice of n names is a left-nested chain)
+L4Factoidal_RelaxNG_RE_size  # (b) one call per level of the element nesting of one RELAX NG schema document; children through List.foldl, a loop
+L4Factoidal_RelaxNG_applyAfter  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_attDeriv  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_attrNCs  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_bottomUp  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
+L4Factoidal_RelaxNG_check3  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
+L4Factoidal_RelaxNG_check71  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_check73  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_check74  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_childDeriv  # (b) one call per level of the element nesting of the instance document; siblings are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_components  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
+L4Factoidal_RelaxNG_contentType  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_conv  # (b) one call per level of the element nesting of one RELAX NG schema document; children through for-in, a loop
+L4Factoidal_RelaxNG_defineNames  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
+L4Factoidal_RelaxNG_elemNCs  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_endTagDeriv  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_expand  # (c) one level per externalRef or include document nesting, at most 64 (simplifyNode); the tree walk is bottomUp
+L4Factoidal_RelaxNG_hasStart  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
+L4Factoidal_RelaxNG_inline  # (b) the nesting of the patterns of the define chain of one schema; fuel (the number of defines plus one) bounds the ref chain (RELAX NG 4.19)
+L4Factoidal_RelaxNG_instDecidableEqNameClass_decEq  # (b) `deriving DecidableEq for NameClass`: the nesting of one name class of the schema
+L4Factoidal_RelaxNG_instDecidableEqPattern_decEq  # (b) `deriving DecidableEq for Pattern`: the nesting of the two simplified patterns compared (mkChoice)
+L4Factoidal_RelaxNG_lift  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_norm  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_nullable  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_refsOf  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_removeComponents  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
+L4Factoidal_RelaxNG_startTagCloseDeriv  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_startTagOpenDeriv  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_textDerivWith  # (b) the depth is the nesting of the simplified RELAX NG pattern (a group, choice or interleave of n children is a left-nested chain of n-1 binary nodes, so it is also the number of children of one schema element); lists are folded by List.foldl, a loop
+L4Factoidal_RelaxNG_toInst  # (b) one call per level of the element nesting of the instance document; children through for-in, a loop
+L4Factoidal_RelaxNG_trGrammar  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
+L4Factoidal_RelaxNG_trGroup  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
+L4Factoidal_RelaxNG_trNC  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
+L4Factoidal_RelaxNG_trP  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
+L4Factoidal_RelaxNG_trSeq  # (b) the depth is the element nesting of one RELAX NG schema document; children through for-in or List.foldl, a loop; fuel (the tree size plus one) decreases
 L4Factoidal_XPath4_XInclude_expand  # (b) depth is the element nesting of the document plus the XInclude nesting (fuel 64 at the call in XmlParse.parseDocument); children visited by List.mapM
 L4Factoidal_XPath4_XInclude_runText_txt  # (b) #guard helper over the element nesting of a test document (fuel 50); children visited by List.map
 L4Factoidal_XPath4_XIncludeTheorems_noXi  # (b) specification predicate of expand_noXi over the element nesting of a document (fuel argument); children visited by List.all
