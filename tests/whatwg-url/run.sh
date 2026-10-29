@@ -9,7 +9,9 @@
 #   1. tools/whatwg/gen-idna-data.py --check: IdnaData.lean matches the
 #      vendored Unicode 18.0.0 files.
 #   2. l4whatwg-url selftest, under a 1 MB stack.
-#   3. tests/whatwg-url/run.mjs: "N pass, M fail, X expected-fail,
+#   3. l4whatwg-url rfc3986: new URL(ref, base).href equals RFC 3986
+#      resolution on references that both standards read alike.
+#   4. tests/whatwg-url/run.mjs: "N pass, M fail, X expected-fail,
 #      S stale (out of T)".
 #
 # Exits 0 only when every step passes.
@@ -22,4 +24,5 @@ python3 "$ROOT/tools/whatwg/gen-idna-data.py" --check
 (cd "$LEAN" && timeout 1800 lake build l4whatwg-url >/dev/null)
 BIN="$LEAN/.lake/build/bin/l4whatwg-url"
 (ulimit -s 1024; timeout 300 "$BIN" selftest)
+timeout 300 "$BIN" rfc3986
 timeout 900 node "$HERE/run.mjs" "$BIN" "$@"

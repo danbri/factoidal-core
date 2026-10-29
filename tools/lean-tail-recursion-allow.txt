@@ -1990,3 +1990,6 @@ L4Factoidal_XPath4_instBEqExpr_beq  # (b) `deriving BEq for Expr`: the depth is 
 L4Factoidal_XPath4_instBEqIType_beq  # (b) `deriving BEq for IType`: the depth is the nesting of a parsed sequence type
 L4Factoidal_XPath4_instBEqNodeTest_beq  # (b) `deriving BEq for NodeTest`: the depth is the nesting of a parsed node test inside a sequence type
 L4Factoidal_WHATWG_Encoding_runHandle  # (s) specification only: the per-byte run of the UTF-8 decoder handler that the theorems of WHATWG/Encoding/Theorems.lean state over; no compiled code outside Theorems.c calls it; the executed path is Encoding.decodeLoop, a tail call (milestone 2 of https://github.com/danbri/factoidal/issues/1167)
+# --- WHATWG URL in Lean (https://github.com/danbri/factoidal/issues/1167, milestone 3)
+Harness_WhatwgUrl_allStrings  # (c) depth is the generated string length, the constant 6 in `l4whatwg-url rfc3986`
+L4Factoidal_WHATWG_URL_Theorems_joinSlash  # (s) used only by WHATWG/URL/Theorems.lean; the parser serializes paths with Array.foldl (Url.serializePath)

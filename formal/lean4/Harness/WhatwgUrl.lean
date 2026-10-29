@@ -9,6 +9,10 @@ the web-platform-tests runner `tests/whatwg-url/run.mjs`
                                 that make the parser rewind (exit 0 when all
                                 pass)
   l4whatwg-url bench REQ N      run the requests of REQ N times; print the time
+  l4whatwg-url rfc3986          compare `new URL(ref, base).href` with RFC 3986
+                                resolution (`Syntax.resolveIri`) on references
+                                that both standards read alike (below); exit 0
+                                when every pair agrees
 
 The runner reads the WPT JSON files and gives each string here as UTF-8 bytes
 in lower-case hex (`-` for the empty string). Every answer comes from the
@@ -28,6 +32,7 @@ FIELDS is H(x) for href, protocol, username, password, host, hostname, port,
 pathname, search, searchParams, hash, origin, in that order.
 -/
 import L4Factoidal.WHATWG.URL.Parser
+import L4Factoidal.Syntax.IriResolve
 
 open L4Factoidal.WHATWG.Encoding
 open L4Factoidal.WHATWG.URL
@@ -114,6 +119,50 @@ def selftest : IO UInt32 := do
   IO.println s!"l4whatwg-url selftest: {checks.length - failed} pass, {failed} fail (out of {checks.length})"
   return if failed == 0 then 0 else 1
 
+/-- Every string of length at most `n` over `alphabet`. -/
+def allStrings (alphabet : List Char) : Nat → List String
+  | 0 => [""]
+  | n + 1 =>
+    let shorter := allStrings alphabet n
+    shorter ++ (shorter.filter (·.length == n)).flatMap (fun s => alphabet.map s.push)
+
+/-- A reference that RFC 3986 and the URL Standard read alike: no scheme
+(no `:`), no authority (does not start with `//`), and no code point that the
+URL Standard percent-encodes, decodes or reads as a separator in a special URL
+(`%`, `\`, space, `"`, `<`, `>`, `^`, `` ` ``, `{`, `}`, `|`, `'`, and
+non-ASCII). -/
+def readAlikeRef (r : String) : Bool :=
+  !r.startsWith "//" && r.toList.all (fun c =>
+    c.toNat > 0x20 && c.toNat < 0x7F && !":%\\\"<>^`{}|'".toList.contains c)
+
+/-- RFC 3986 section 5.4 examples (base `http://a/b/c/d;p?q`) and every
+string of up to six code points over `a . / ? # ; =`, against three bases. -/
+def rfc3986 : IO UInt32 := do
+  let rfcRefs := ["g", "./g", "g/", "/g", "?y", "g?y", "#s", "g#s", "g?y#s", ";x", "g;x",
+    "g;x?y#s", "", ".", "./", "..", "../", "../g", "../..", "../../", "../../g",
+    "../../../g", "../../../../g", "/./g", "/../g", "g.", ".g", "g..", "..g", "./../g",
+    "./g/.", "g/./h", "g/../h", "g;x=1/./y", "g;x=1/../y", "g?y/./x", "g?y/../x",
+    "g#s/./x", "g#s/../x"]
+  let gen := allStrings ['a', '.', '/', '?', '#', ';', '='] 6
+  let bases := ["http://a/b/c/d;p?q", "https://h/", "http://h/x/y/"]
+  let mut agree := 0
+  let mut disagree := 0
+  let mut skipped := 0
+  for base in bases do
+    let refs := (if base == "http://a/b/c/d;p?q" then rfcRefs else []) ++ gen
+    for r in refs do
+      if !readAlikeRef r then skipped := skipped + 1
+      else
+        let w := (parseUrl r (some base)).map Url.href
+        let rfc := L4Factoidal.Syntax.resolveIri base r
+        if w == some rfc then agree := agree + 1
+        else
+          disagree := disagree + 1
+          if disagree ≤ 20 then
+            IO.println s!"DISAGREE base <{base}> ref <{r}>: WHATWG {w}, RFC 3986 {rfc}"
+  IO.println s!"l4whatwg-url rfc3986: {agree} agree, {disagree} disagree (out of {agree + disagree}); {skipped} references not read alike"
+  return if disagree == 0 then 0 else 1
+
 def bench (req : String) (n : Nat) : IO UInt32 := do
   let text ← IO.FS.readFile req
   let lines := (text.splitOn "\n").filter (· != "")
@@ -133,6 +182,7 @@ def main (args : List String) : IO UInt32 := do
   | ["batch", req, resp] => Harness.WhatwgUrl.runBatch req resp
   | ["selftest"] => Harness.WhatwgUrl.selftest
   | ["bench", req, n] => Harness.WhatwgUrl.bench req n.toNat!
+  | ["rfc3986"] => Harness.WhatwgUrl.rfc3986
   | _ =>
-    IO.eprintln "usage: l4whatwg-url batch REQ RESP | selftest | bench REQ N"
+    IO.eprintln "usage: l4whatwg-url batch REQ RESP | selftest | bench REQ N | rfc3986"
     return 2
