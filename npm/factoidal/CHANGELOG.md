@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## 0.26.0 (2026-10-29)
+
+- QT4 processor feature switches (https://github.com/danbri/factoidal-core/pull/252): the native qt4tests runner can run as a processor without a feature, so the tests written for such processors run instead of being unsupported; qt4tests in XQuery mode, measured on that PR: `fn` 17188 → 17217 pass, `prod` 13819 → 13823 pass, no new failures.
 - XPointer in the Lean engine: the XPointer Framework, element() and xmlns() schemes (W3C Recommendations 2003) in `L4Factoidal/XML/XPointer.lean`, and the xpointer() scheme (W3C Working Draft 2002) through the XPath 4.0 engine in `XML/XPointerXPath.lean`. Over the 98 pointers of the W3C XInclude test suite: 98 pass, 0 fail (out of 98) (`lake exe l4xpointer`). Not yet used by XInclude, and no npm or wasm op yet.
 
 ## 0.25.0 (2026-10-29)
