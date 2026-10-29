@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- RIF BLD (W3C Recommendation, Second Edition 2013) in the Lean engine, `L4Factoidal/RIF/Bld.lean`, over the RIF Core engine: equality in rule conclusions with congruence and list injectivity, inconsistency when two data values are made equal, the semantic conditions on `#` and `##`, rules whose body does not bind every variable, named-argument uniterms, open lists and conjunctive conclusions in the presentation syntax. W3C BLD suite: 28 pass, 0 fail (out of 28 decided), 1 undecided, 3 excluded (defective test data, https://github.com/danbri/factoidal/issues/1186). No npm or wasm op yet.
+
 ## 0.22.0 (2026-10-29)
 
 ### XPath 4.0, XQuery 4.0 and XSLT 4.0 in the package

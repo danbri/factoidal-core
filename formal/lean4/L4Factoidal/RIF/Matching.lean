@@ -30,6 +30,11 @@ def groundMatch (a b : GTerm) : Ans :=
       if (literalValue? b).isSome || freeSymbol sp then .no else .unknown
   | .const _ sp, .list _ =>
       if (literalValue? a).isSome || freeSymbol sp then .no else .unknown
+  -- A RIF-BLD open list `List(a | t)` whose tail is not a list term
+  -- (`openListSpace`; a closed tail is folded away when the term is
+  -- built) is a free term of `I_tail`, read like a free symbol.
+  | .list _, .fapp _ sp _ => if sp == openListSpace then .no else .unknown
+  | .fapp _ sp _, .list _ => if sp == openListSpace then .no else .unknown
   | _, _ => .unknown
 
 def groundMatches : List GTerm → List GTerm → Ans
@@ -56,6 +61,11 @@ def groundMatchTR (a b : GTerm) : Ans :=
       if (literalValue? b).isSome || freeSymbol sp then .no else .unknown
   | .const _ sp, .list _ =>
       if (literalValue? a).isSome || freeSymbol sp then .no else .unknown
+  -- A RIF-BLD open list `List(a | t)` whose tail is not a list term
+  -- (`openListSpace`; a closed tail is folded away when the term is
+  -- built) is a free term of `I_tail`, read like a free symbol.
+  | .list _, .fapp _ sp _ => if sp == openListSpace then .no else .unknown
+  | .fapp _ sp _, .list _ => if sp == openListSpace then .no else .unknown
   | _, _ => .unknown
 
 
