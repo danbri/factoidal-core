@@ -3168,6 +3168,23 @@ Module `formal/lean4/L4Factoidal/WHATWG/URL/Theorems.lean` (URL Standard snapsho
 | `whatwg2026_path_eq_rfc3986` — folding `Url.pathSegment` from an empty path gives `removeDotSegments` of the path | ✅ PROVED (2026-10-29) | the two above |
 | the whole parser: `(parseUrl ref base).href = resolveIri base ref` where both read the input alike | 🟡 MEASURED, NOT PROVED: `l4whatwg-url rfc3986` 403407 agree, 0 disagree (out of 403407) | https://github.com/danbri/factoidal/issues/1188 |
 
+## Unicode 18.0.0 algorithms (Lean 4, 2026-10-29)
+
+Milestone 4 of [#1167](https://github.com/danbri/factoidal/issues/1167). Design
+record: [`designissues/2026-10-29-unicode-algorithms.md`](designissues/2026-10-29-unicode-algorithms.md).
+Modules `formal/lean4/L4Factoidal/Unicode/{Segmentation,LineBreak,Bidi}Theorems.lean`;
+`#print axioms`: at most `propext`, `Classical.choice`, `Quot.sound`. These are
+structural properties; the rules themselves are measured by the Unicode
+conformance files (`tests/unicode/run.sh`), not proved.
+
+| Theorem | Status | Hypotheses |
+|---|---|---|
+| `cutAt_flatten` — the pieces of a list cut at any array of positions concatenate back to the list | ✅ PROVED (2026-10-29) | none |
+| `graphemes_join`, `words_join`, `sentences_join` — UAX #29 segments of a string concatenate back to the string | ✅ PROVED (2026-10-29) | none |
+| `breaks_contains_end` — UAX #14 LB3: the end of the text is a break opportunity | ✅ PROVED (2026-10-29) | text non-empty |
+| `breaks_not_zero` — UAX #14 LB2: no break at the start of the text | ✅ PROVED (2026-10-29) | text non-empty |
+| `revRange_size`, `revRange_perm` — the UAX #9 L2 range reversal keeps the size and permutes its input | ✅ PROVED (2026-10-29) | none |
+
 ## 10. JOSE, DPoP and Solid-OIDC over HACL\* — Lean tree
 
 Landed 2026-09-06. Design record:
