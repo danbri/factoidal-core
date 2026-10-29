@@ -775,6 +775,8 @@ lean_exe «l4xslt4» where root := `Harness.Xslt4Run
 @[default_target] lean_exe «l4xmpp-serve» where root := `Harness.XmppServe
 @[default_target] lean_exe «l4xml-namespaces» where root := `Harness.NamespaceRun
 
+-- XProc 3.1 processor and upstream conformance runner; excluded from library root.
+lean_exe l4xproc where root := `L4Factoidal.XProc31.Runner
 -- WHATWG Encoding Standard in Lean (https://github.com/danbri/factoidal/issues/1167,
 -- milestone 2): the engine behind tests/whatwg-encoding/run.mjs, the
 -- web-platform-tests encoding runner (Harness/WhatwgEncodingServe.lean).
