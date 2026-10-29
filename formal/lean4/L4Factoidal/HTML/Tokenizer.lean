@@ -95,21 +95,39 @@ deriving Inhabited
 
 /-! ## Input stream preprocessing (§13.2.3.5) -/
 
-/-- Newline normalisation: CR LF and CR become LF. -/
-def normalizeNewlines (s : String) : Array Char := Id.run do
-  let cs := s.toList.toArray
-  let mut out : Array Char := Array.mkEmpty cs.size
-  let mut i := 0
-  for _ in [0:cs.size] do
-    if i ≥ cs.size then break
-    let c := cs[i]!
-    if c == '\r' then
-      out := out.push '\n'
-      if i + 1 < cs.size && cs[i + 1]! == '\n' then i := i + 2 else i := i + 1
-    else
-      out := out.push c
-      i := i + 1
-  return out
+/-- Newline normalisation of the input stream (§13.2.3.5): each CR LF pair and each
+lone CR becomes one LF. Structural recursion; `normalizeNewlinesTR` (an accumulator)
+is the compiled form. `HTML/XmlAgreement.lean` proves this equals XML 1.0 §2.11
+end-of-line handling (`XML.normalizeLineEndings`). -/
+def normalizeNewlinesList : List Char → List Char
+  | '\r' :: '\n' :: rest => '\n' :: normalizeNewlinesList rest
+  | '\r' :: rest => '\n' :: normalizeNewlinesList rest
+  | c :: rest => c :: normalizeNewlinesList rest
+  | [] => []
+
+def normalizeNewlinesTR : List Char → List Char → List Char
+  | '\r' :: '\n' :: rest, acc => normalizeNewlinesTR rest ('\n' :: acc)
+  | '\r' :: rest, acc => normalizeNewlinesTR rest ('\n' :: acc)
+  | c :: rest, acc => normalizeNewlinesTR rest (c :: acc)
+  | [], acc => acc.reverse
+
+theorem normalizeNewlinesTR_eq (cs : List Char) : ∀ (acc : List Char),
+    normalizeNewlinesTR cs acc = acc.reverse ++ normalizeNewlinesList cs := by
+  fun_induction normalizeNewlinesList cs with
+  | case1 rest ih => intro acc; simp [normalizeNewlinesTR, ih]
+  | case2 rest h ih => intro acc; simp [normalizeNewlinesTR, ih]
+  | case3 c rest h1 h2 ih => intro acc; simp [normalizeNewlinesTR, ih]
+  | case4 => intro acc; simp [normalizeNewlinesTR]
+
+def normalizeNewlinesImpl (cs : List Char) : List Char := normalizeNewlinesTR cs []
+
+@[csimp] theorem normalizeNewlinesList_eq_impl : @normalizeNewlinesList = @normalizeNewlinesImpl := by
+  funext cs
+  show _ = normalizeNewlinesTR cs []
+  simp [normalizeNewlinesTR_eq]
+
+/-- The preprocessed input stream as an array. -/
+def normalizeNewlines (s : String) : Array Char := (normalizeNewlinesList s.toList).toArray
 
 /-- Parse errors of the input stream: control characters and noncharacters. -/
 def inputErrors (inp : Array Char) : Array String := Id.run do
