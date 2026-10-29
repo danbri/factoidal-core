@@ -167,6 +167,20 @@ export class FactoidalError extends Error {
   readonly format?: string;
   /** For a parse failure of text: true when the syntax was inferred. */
   readonly formatInferred?: boolean;
+  /**
+   * For xpath4Eval, xqueryEval and xslt4Transform: the error that the
+   * XPath, XQuery or XSLT 4.0 specification names (code `XPST0003`,
+   * namespace `http://www.w3.org/2005/xqt-errors`, ...).
+   */
+  readonly qtError?: QtError;
+}
+
+/** An error of XPath 4.0, XQuery 4.0 or XSLT 4.0: the local part and the
+ *  namespace of the error QName, and the engine's message. */
+export interface QtError {
+  code: string;
+  namespace: string;
+  message: string;
 }
 
 /** One recoverable-parse diagnostic from a `{lenient:true}` parse() call. */
@@ -1709,6 +1723,63 @@ export function xsltTransform(
   sourceXml: string
 ): Promise<string>;
 
+/** One item of an XPath 4.0 or XQuery 4.0 result. */
+export interface Qt4Item {
+  /** The item's type: `xs:integer`, `element()`, `map(*)`, `array(*)`,
+   *  `function(*)`, ... */
+  type: string;
+  /** The item serialized with the Serialization 4.0 adaptive method. */
+  value: string;
+}
+
+/** The value shape returned by {@link xpath4Eval} and {@link xqueryEval}. */
+export interface Qt4Result {
+  count: number;
+  items: Qt4Item[];
+  /** The whole sequence, Serialization 4.0 adaptive method. */
+  adaptive: string;
+  /** The whole sequence, xml method (no XML declaration); null when the
+   *  xml method cannot serialize it (a map, an array, a function). */
+  xml: string | null;
+}
+
+/**
+ * Evaluate an XPath 4.0 expression with `xmlText` as the context item
+ * ('' for no context item). The engine does no I/O: fn:doc and
+ * fn:unparsed-text of a URI fail (FODC0002, FOUT1170). A QT4 error rejects
+ * with a FactoidalError whose `qtError` names the error code.
+ */
+export function xpath4Eval(xmlText: string, expr: string): Promise<Qt4Result>;
+
+/**
+ * Evaluate an XQuery 4.0 main module, with `contextXml` as the context item
+ * when it is given and not ''. `import module` of a module that is not
+ * given fails with XQST0059; no resource is fetched.
+ */
+export function xqueryEval(query: string, contextXml?: string): Promise<Qt4Result>;
+
+/** The value shape returned by {@link xslt4Transform}. */
+export interface Xslt4Result {
+  /** The principal result, serialized with the stylesheet's unnamed output definition. */
+  output: string;
+  /** The output method used for `output` (xml, html, xhtml, text, json, adaptive, csv). */
+  method: string;
+  /** The results of xsl:result-document, each serialized with its output definition. */
+  secondary: Array<{ href: string; output: string }>;
+  /** The texts of xsl:message. */
+  messages: string[];
+}
+
+/**
+ * XSLT 4.0 transform of `sourceXml` ('' for no global context item) by a
+ * stylesheet of one module. xsl:import and xsl:include of another module
+ * fail with XTSE0165: no module is fetched.
+ */
+export function xslt4Transform(
+  stylesheetXml: string,
+  sourceXml: string
+): Promise<Xslt4Result>;
+
 /** The exact value a Content MathML expression evaluates to. */
 export type MathValue =
   | { kind: 'rat'; num: number; den: number }
@@ -2078,6 +2149,9 @@ export function capabilities(): Promise<{
   xpath: boolean;
   rif: boolean;
   xslt: boolean;
+  xpath4: boolean;
+  xquery: boolean;
+  xslt4: boolean;
   mathml: boolean;
   xforms: boolean;
   jsonSchema: boolean;
@@ -2225,6 +2299,9 @@ declare const _default: {
   deltaLogDestroy: typeof deltaLogDestroy;
   _deltaLogCorruptLastForTest: typeof _deltaLogCorruptLastForTest;
   xsltTransform: typeof xsltTransform;
+  xpath4Eval: typeof xpath4Eval;
+  xqueryEval: typeof xqueryEval;
+  xslt4Transform: typeof xslt4Transform;
   mathmlEval: typeof mathmlEval;
   xformsRecalc: typeof xformsRecalc;
   jsonSchemaValidate: typeof jsonSchemaValidate;

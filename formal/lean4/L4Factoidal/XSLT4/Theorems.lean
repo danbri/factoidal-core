@@ -63,7 +63,8 @@ theorem expandTypes_nil (ns : List (String × String)) (f : Nat) (s : String) : 
   cases f <;> simp [expandTypes]
 
 theorem parse_eq_parseXPath (c : SCx) (src : String) (e : Expr)
-    (hns : c.xpathNs = "") (hty : c.types = []) (h : parseXPath src c.xpNs = .ok e) : c.parse src = .ok e := by
+    (hns : c.xpathNs = "") (hty : c.types = []) (h : parseXPath src c.xpNs none c.schemaDecl = .ok e) :
+    c.parse src = .ok e := by
   simp [SCx.parse, hty, expandTypes_nil, h, hns]
   rfl
 

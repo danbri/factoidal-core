@@ -1322,6 +1322,79 @@ Details: `lws/README.md`, `solid/server/README.md`,
 [`docs/lws-solid-conformance.md`](https://github.com/danbri/factoidal/blob/main/docs/lws-solid-conformance.md).
 
 
+## XPath 4.0, XQuery 4.0 and XSLT 4.0
+
+Three functions, in Node, Deno and the browser, over the Lean engines
+`L4Factoidal/XPath4`, `L4Factoidal/XQuery4` and `L4Factoidal/XSLT4` (the
+engines that `lake exe l4qt4` and `lake exe l4xslt4` score against the QT4 CG
+test suites). The engine evaluates and serializes (Serialization 4.0); the
+package checks argument types. `xpathEval` (XPath 1.0) and `xsltTransform`
+(XSLT 1.0) are separate functions and do not change.
+
+```js
+import { xpath4Eval, xqueryEval, xslt4Transform } from '@factoidal/core';
+
+await xpath4Eval('<r><a>1</a><a>2</a></r>', '//a ! (. * 10) => sum()');
+// { count: 1, items: [{ type: 'xs:double', value: '30' }], adaptive: '30', xml: '30' }
+
+await xqueryEval('for $a in //a order by xs:integer($a) descending return <b>{string($a)}</b>',
+                 '<r><a>1</a><a>2</a></r>');
+// { count: 2, items: [...], adaptive: '<b>2</b>\n<b>1</b>', xml: '<b>2</b><b>1</b>' }
+
+await xslt4Transform(
+  `<xsl:stylesheet version="4.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" expand-text="yes">
+     <xsl:output method="text"/>
+     <xsl:template match="/">n={count(//a)}</xsl:template>
+   </xsl:stylesheet>`, '<r><a/><a/></r>');
+// { output: 'n=2', method: 'text', secondary: [], messages: [] }
+```
+
+| Function | Arguments | Result |
+|---|---|---|
+| `xpath4Eval` | `(xmlText, expr)`; `xmlText` `''`: no context item | `{count, items, adaptive, xml}` |
+| `xqueryEval` | `(query, contextXml?)`; `contextXml` absent or `''`: no context item | `{count, items, adaptive, xml}` |
+| `xslt4Transform` | `(stylesheetXml, sourceXml)`; `sourceXml` `''`: no global context item (use `xsl:initial-template`) | `{output, method, secondary, messages}` |
+
+- `items`: each item of the result, with its type (`xs:integer`,
+  `element()`, `map(*)`, `array(*)`, `function(*)`, ...) and its adaptive
+  serialization. `adaptive`: the whole sequence with the adaptive method.
+  `xml`: the whole sequence with the xml method and no XML declaration, or
+  `null` when the xml method cannot serialize it (a map, an array, a
+  function: SENR0001).
+- `output`: the principal result of the transformation, serialized with the
+  stylesheet's unnamed output definition (`xsl:output`; the default method
+  writes the XML declaration). `secondary`: each `xsl:result-document`
+  result, `{href, output}`, serialized with its own output definition.
+  `messages`: the texts of `xsl:message`.
+- An error rejects with a `FactoidalError` with code `xml.failed` and
+  `qtError: {code, namespace, message}`: the error that the specification
+  names, for example `{code: 'XPST0003', namespace:
+  'http://www.w3.org/2005/xqt-errors'}`. EXPath File errors have the
+  namespace `http://expath.org/ns/file`.
+- No I/O. The dynamic context holds only the documents given as arguments.
+  `fn:doc` of any other URI fails with FODC0002, `fn:unparsed-text` and
+  `fn:json-doc` with FOUT1170, `fn:collection` with XPST0017, EXPath `file:`
+  functions with `file:io-error`, `import module` with XQST0059, and
+  `xsl:import`, `xsl:include` and `xsl:use-package` with XTSE0165. Nothing
+  is fetched and no file is read.
+- Bounds: an evaluation deeper than 4,000 nested steps fails with FOER0000.
+  There is no bound on the total number of steps or on memory. In the wasm
+  module the host's call stack is the tighter limit today: parts of the
+  engines take one stack frame per item
+  (https://github.com/danbri/factoidal/issues/1110), and the call rejects with
+  `Maximum call stack size exceeded` (code `op.failed`; the engine answers the
+  next call). Measured in Node 2026-10-28: a document of 6,000 sibling elements
+  is read and one of 8,000 is not; a user function recursion 400 calls deep
+  runs and one 600 deep does not; an expression nested 200 parentheses deep
+  parses and one 400 deep does not. The limits depend on the host's stack
+  size: with a larger stack (the CI runners' Node) a deep recursion reaches the
+  engine's own bound first and fails with FOER0000. The document and nesting
+  cases are expected failures in `test/qt4.test.mjs`; the recursion case accepts
+  either outcome. `xpathEval` (XPath 1.0) reads a document of 10,000
+  sibling elements.
+- `fn:current-dateTime()` is a fixed instant of the engine
+  (`2026-10-27T12:00:00Z`), not the clock.
+
 ## Controlled identifier documents (CID 1.0)
 
 [Controlled Identifiers v1.0](https://www.w3.org/TR/cid-1.0/) (W3C
@@ -1882,6 +1955,7 @@ section "Stage 1" of
 | `jsonldToRdf`, `jsonldFromRdf` | | JSON-LD 1.1 to and from RDF; a remote `@context` is not fetched. Option `rdfstar`: JSON-LD-star (`@triple`, `@reifies`, `@annotation` as RDF 1.2 triple terms and reifiers; also `serialize` with `format: "jsonld"`) |
 | `rifEval` | `(data, rifXml) => Dataset` | RIF Core forward chaining |
 | `xmlWellformed`, `xpathEval`, `xsltTransform`, `schematronValidate`, `jsonSchemaValidate`, `xformsRecalc`, `mathmlEval` | | XML 1.0, XPath 1.0, XSLT 1.0, Schematron, JSON Schema draft-07, XForms recalculation, Content MathML |
+| `xpath4Eval`, `xqueryEval`, `xslt4Transform` | `(xmlText, expr)`, `(query, contextXml?)`, `(stylesheetXml, sourceXml)` | XPath 4.0, XQuery 4.0, XSLT 4.0; no I/O (see [XPath 4.0, XQuery 4.0 and XSLT 4.0](#xpath-40-xquery-40-and-xslt-40)) |
 | `clParse`, `clSerialize`, `clAlphaNorm`, `clNormalize` | `(clifText) => {…}` | Common Logic (ISO/IEC 24707) and IKL; `clSerialize` reports `roundTripProved: false`, `clNormalize` reports `preserves: "satisfiability"` |
 | `toanSummation`, `toanProduct`, `toanSimplify`, `toanDiff`, `toanSubst` | | symbolic algebra over Content MathML |
 | `vcSha256Hex`, `vcEd25519SecretToPublic`, `vcEd25519Sign`, `vcEd25519Verify`, `vcEddsaCreateFromCanonical`, `vcEddsaVerifyFromCanonical` | | VC Data Integrity `eddsa-rdfc-2022`; Ed25519 is HACL\*'s C code in the wasm module; no initialisation step |

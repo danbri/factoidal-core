@@ -328,7 +328,7 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests, `Wasm.GraphSetTests,
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
              `Wasm.Ops.Maths,
-             `Wasm.Ops.Vc, `Wasm.Ops.Cid,
+             `Wasm.Ops.Vc, `Wasm.Ops.Cid, `Wasm.Ops.Qt4,
              `Wasm.Ops.Lenient, `Wasm.Ops.Validate,
              `Wasm.Ops.DeltaLog, `Wasm.Ops.LiteralValue,
              `Wasm.Ops.Terms, `Wasm.Ops.Collections,
@@ -638,6 +638,11 @@ lean_exe «l4dict-fold-bench» where
 -- RDF Data Cube (2014) normalization and integrity constraints IC-0 to
 -- IC-21 over tests/datacube/ (Harness/DataCubeRun.lean).
 @[default_target] lean_exe «l4datacube» where root := `Harness.DataCubeRun
+
+-- YAML-LD 1.0 (Editor's Draft) over third_party/testing/yaml-ld/
+-- (Harness/YamlLdRun.lean); `--json-superset` loads the JSON-LD 1.1 suite's
+-- inputs through the YAML 1.2.2 loader.
+@[default_target] lean_exe «l4yamlld» where root := `Harness.YamlLdRun
 
 -- XSLT 1.0 conformance over the vendored w3c/xslt30-test subset:
 -- XSLT/Transform runs the stylesheet, the result tree is serialised
