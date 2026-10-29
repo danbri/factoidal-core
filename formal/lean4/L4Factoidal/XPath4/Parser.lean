@@ -30,6 +30,10 @@ structure SubParsers where
   expr : List (String × String) → Nat → Except Err (Expr × Nat)
   exprSingle : List (String × String) → Nat → Except Err (Expr × Nat)
   seqType : List (String × String) → Nat → Except Err (IType × Nat)
+  /-- An AdditiveExpr and a UnionExpr (the full-text grammar, FTRange and
+      FTIgnoreOption). -/
+  additive : List (String × String) → Nat → Except Err (Expr × Nat) := exprSingle
+  union : List (String × String) → Nat → Except Err (Expr × Nat) := exprSingle
 
 /-- An extension of the expression grammar (XQuery 4.0 hook,
     `L4Factoidal.XQuery4.Grammar`). The XPath 4.0 parser has none. -/
@@ -45,6 +49,10 @@ structure ExtGrammar where
   /-- The value of a string literal's characters (XQuery expands
       entity and character references). -/
   stringLit : String → Except Err String
+  /-- Tried after every StringConcatExpr, with its expression (the
+      full-text `contains text`, `L4Factoidal.FullText.Parser`). -/
+  postConcat : Array Char → List (String × String) → SubParsers → Expr → Nat →
+      Except Err (Option (Expr × Nat)) := fun _ _ _ _ _ => .ok none
   /-- The XQuery 4.0 grammar (true) or the XPath 4.0 profile that only
       adds the computed node constructors (false, XPath 4.0 §4.12). -/
   xquery : Bool := true
@@ -375,8 +383,9 @@ def dfltTypeNs : P String := do pure (((← read).ns.lookup "#type").getD "")
 def runAt {α} (c : PCtx) (p : P α) (ns : List (String × String)) (i : Nat) : Except Err (α × Nat) :=
   (p.run { c with ns }).run i
 
-def mkSub (c : PCtx) (pe pes : P Expr) (pst : P IType) : SubParsers :=
-  { expr := runAt c pe, exprSingle := runAt c pes, seqType := runAt c pst }
+def mkSub (c : PCtx) (pe pes : P Expr) (pst : P IType) (padd punion : Option (P Expr) := none) : SubParsers :=
+  { expr := runAt c pe, exprSingle := runAt c pes, seqType := runAt c pst,
+    additive := runAt c (padd.getD pes), union := runAt c (punion.getD pes) }
 
 /-- Try an extension production at the current offset. -/
 def tryExt (pick : ExtGrammar → Array Char → List (String × String) → SubParsers → Nat → Except Err (Option (Expr × Nat)))
@@ -387,6 +396,18 @@ def tryExt (pick : ExtGrammar → Array Char → List (String × String) → Sub
   | some g =>
     let i ← get
     match pick g c.s c.ns (mkSub c pe pes pst) i with
+    | .ok (some (e, j)) => set j; pure (some e)
+    | .ok none => pure none
+    | .error er => throw er
+
+/-- Try the extension production that follows a StringConcatExpr `a`. -/
+def tryExtPost (a : Expr) (pe pes : P Expr) (pst : P IType) (padd punion : P Expr) : P (Option Expr) := do
+  let c ← read
+  match c.ext with
+  | none => pure none
+  | some g =>
+    let i ← get
+    match g.postConcat c.s c.ns (mkSub c pe pes pst (some padd) (some punion)) a i with
     | .ok (some (e, j)) => set j; pure (some e)
     | .ok none => pure none
     | .error er => throw er
@@ -960,6 +981,9 @@ def pLevel : Nat → Nat → P Expr
             a := .bin op a b
             if lvl == 2 || lvl == 5 then break
         | none => break
+      if lvl == 4 then
+        if let some e ← tryExtPost a (pExpr n) (pExprSingle n) (pSeqType n) (pLevel n 6) (pLevel n 8) then
+          a := e
       pure a
 
 def opAt (lvl : Nat) : P (Option (BOp × Nat)) := do
