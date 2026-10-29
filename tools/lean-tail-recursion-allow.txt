@@ -1812,3 +1812,16 @@ L4Factoidal_XQueryUpdate_untypeXT  # (b) one frame per element nesting level of 
 L4Factoidal_XQueryUpdate_noPreserveXT  # (b) one frame per element nesting level of a copied tree
 L4Factoidal_XQueryUpdate_stripElementOnlyWs  # (b) one frame per element nesting level of a revalidated tree
 L4Factoidal_XQueryUpdate_XT_fits  # (s) specification only: the hypothesis of the theorem flatU_true_eq_flatXT; no compiled function calls it
+# --- Added 2026-10-29 (YAML 1.2.2 loader for YAML-LD, https://github.com/danbri/factoidal/issues/1165) ---
+# The entry loops (mapEntries, seqEntries, flowSeq, flowMap) step to the next entry with a self tail call;
+# the cycle through blockNode/flowNode is one frame per NESTING level. Checked by `l4yamlld --scale 100000`
+# under `ulimit -s 1024`: 400,000-entry mappings and sequences load (tests/yamlld/run.sh).
+L4Factoidal_YAML_blockNode  # (b) depth is the nesting of the YAML document; fuel runs out with tooDeep
+L4Factoidal_YAML_blockContent  # (b) as blockNode: one frame per collection nesting level
+L4Factoidal_YAML_flowNode  # (b) depth is the nesting of flow collections
+L4Factoidal_YAML_flowSeq  # (b) one frame per nesting level; the loop over items is a self tail call
+L4Factoidal_YAML_flowMap  # (b) one frame per nesting level; the loop over entries is a self tail call
+L4Factoidal_YAML_mapEntries  # (b) one frame per nesting level; the loop over entries is a self tail call
+L4Factoidal_YAML_seqEntries  # (b) one frame per nesting level; the loop over entries is a self tail call
+YamlLdRun_unorderedNorm  # (b) harness comparison; nesting of an expected or produced document; fuel-bounded by Json.size; arrays via List.map
+YamlLdRun_walkDir  # (b) harness; explicit depth argument bounds the directory nesting of the suite tree

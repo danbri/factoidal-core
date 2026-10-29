@@ -2012,6 +2012,11 @@ def expand (loader : Loader) (ac : ActiveContext) (doc : Json) : Res Json :=
       match starAnnotationCheck ac.rdfstar (.array outs) with
       | .error e => .error e
       | .ok _ => .ok (.array (dropFree outs))
+  -- JSON-LD 1.1 API §5.1.2 step 1 ("If element is null, return null") and
+  -- the `expand()` method ("If expanded output is null, set it to an empty
+  -- array"). A YAML-LD stream with no document, or an empty first document,
+  -- has the internal representation null (YAML-LD 1.0 §4.4.2).
+  | .null => .ok (.array [])
   | _ => .error .notJsonLd
 
 end L4Factoidal.JSONLD
