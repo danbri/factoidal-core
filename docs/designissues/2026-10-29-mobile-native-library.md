@@ -132,8 +132,9 @@ released with `l4_free_result`, and every `uint8_t *` output with
   (simulator/emulator only).
 - **CI:** a `mobile` set in `danbri/factoidal-builds`. The macOS runners have
   Xcode and the iOS simulator. The Linux runners can run the Android emulator
-  with KVM. This set does not start until the 0.21.0 release closes
-  (https://github.com/danbri/factoidal/issues/1148), by the one-owner rule.
+  with KVM. By the one-owner rule, no session adds or runs this set while
+  a release is in progress (first instance:
+  https://github.com/danbri/factoidal/issues/1140).
 
 ## 7. Host I/O and safety
 
