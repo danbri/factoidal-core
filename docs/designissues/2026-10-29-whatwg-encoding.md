@@ -34,7 +34,7 @@ for `<a href>` query encoding and for GET form submission.
 | `WHATWG/Encoding/Data.lean` | generated: encodings, labels, index text |
 | `WHATWG/Encoding/Core.lean` | get an encoding, get an output encoding; every decoder and encoder as a handler; process a queue; the hooks of section 6 (UTF-8 decode and its variants, UTF-8 encode, decode, BOM sniff, encode, get an encoder, encode or fail); `TextDecoder`, `TextEncoder`, `TextDecoderStream` and `TextEncoderStream` state as values |
 | `WHATWG/Encoding/Tests.lean` | build-time `#guard`s for statements the standard makes about its tables |
-| `WHATWG/Encoding/Theorems.lean` | the UTF-8 encoder agrees with Lean core `String.utf8EncodeChar`; a character round-trips through the UTF-8 decoder handler |
+| `WHATWG/Encoding/Theorems.lean` | four theorems, below |
 | `WHATWG/URL/PercentEncode.lean` | URL Standard section 1.3: the percent-encode sets, percent-encode after encoding, percent-decode (the first part of milestone 3) |
 | `Harness/WhatwgEncodingServe.lean` | `l4whatwg-encoding serve / selftest / bench` |
 
@@ -66,6 +66,30 @@ object state with the output or a TypeError. Streaming therefore needs no
 replay: the test host keeps the Lean state in the server between calls.
 `TextDecoderStream` uses the same record with "decode and enqueue a chunk" and
 "flush and enqueue"; `TextEncoderStream` keeps its leading surrogate.
+
+## Theorems
+
+`WHATWG/Encoding/Theorems.lean` (Encoding Standard `be17ac5c`; Lean 4 core
+v4.33.1). `#print axioms`: `propext`, `Classical.choice`, `Quot.sound` only.
+
+- `utf8EncodeCp_eq_utf8EncodeChar (c : Char) : utf8EncodeCp c.val = String.utf8EncodeChar c`:
+  the UTF-8 encoder of section 8.1.2 gives the bytes of Lean core's
+  `String.utf8EncodeChar`, which `String.toUTF8` uses.
+- `utf8_decode_encodeChar (c : Char) : runHandle utf8Initial (String.utf8EncodeChar c) = some (utf8Initial, [c.val])`:
+  the UTF-8 decoder handler of section 8.1.1 reads the encoding of one
+  character back to that character and to its initial state, with no error and
+  no restore. `runHandle` feeds the bytes one at a time.
+- `utf8_decode_encodeList (cs : List Char)`: the same for a list of characters.
+- `utf8DecodeWithoutBOMOrFail_toUTF8 (s : String) : utf8DecodeWithoutBOMOrFail s.toUTF8 = some s`:
+  through the fuel loop, "UTF-8 decode without BOM or fail" of the UTF-8 bytes
+  of any Lean string gives the string. With the encoder theorem, the WHATWG
+  UTF-8 code and Lean core's UTF-8 handling agree on every Lean string (the
+  agreement that issue 1167 asks for: "Encoding's UTF-8 decoder agrees with
+  the existing UTF-8 handling").
+
+Not proved: that the decoder fails on every byte sequence that
+`String.fromUTF8?` refuses (the other direction of the agreement), and the
+fuel bound for the legacy decoders that restore bytes.
 
 ## The test host
 
@@ -116,8 +140,7 @@ https://github.com/danbri/factoidal/issues/1185.
 
 `XML/Encoding.lean` (XML 1.0 Appendix F) decodes UTF-8 with Lean core
 `String.fromUTF8?` and implements UTF-16, ISO-8859-1 and US-ASCII itself. The
-theorems of `WHATWG/Encoding/Theorems.lean` connect the WHATWG UTF-8 encoder to
-Lean core `String.utf8EncodeChar`, which `String.toUTF8` uses. A later step can
+theorems above connect the WHATWG UTF-8 code to Lean core's UTF-8 handling. A later step can
 let the XML decoder take its legacy encodings from this module (XML 1.0 leaves
 the set of encodings open; the WHATWG labels are a superset of what it
 implements now).
