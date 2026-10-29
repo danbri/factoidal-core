@@ -1428,7 +1428,7 @@ def pStep : Nat → P Expr
       match axisOfName? nm with
       | some ax =>
           -- the namespace axis is not recognized in XQuery
-          if nm == "namespace" && c0.ext.isSome then synErr "the namespace axis is not recognized in XQuery"
+          if nm == "namespace" && (c0.ext.map (·.xquery)).getD false then synErr "the namespace axis is not recognized in XQuery"
           let _ ← peekQName
           adv nm.length; ws; expectS "::"
           ws
