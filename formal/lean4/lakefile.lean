@@ -328,7 +328,7 @@ extern_lib libl4hostread pkg := do
              `Wasm.Ops.Formats, `Wasm.FormatsBoundaryTests, `Wasm.GraphSetTests,
              `Wasm.Ops.ServiceReg, `Wasm.Ops.Reasoning, `Wasm.Ops.QueryExtras,
              `Wasm.Ops.Maths,
-             `Wasm.Ops.Vc, `Wasm.Ops.Cid,
+             `Wasm.Ops.Vc, `Wasm.Ops.Cid, `Wasm.Ops.Qt4,
              `Wasm.Ops.Lenient, `Wasm.Ops.Validate,
              `Wasm.Ops.DeltaLog, `Wasm.Ops.LiteralValue,
              `Wasm.Ops.Terms, `Wasm.Ops.Collections,
@@ -774,3 +774,8 @@ lean_exe «l4xslt4» where root := `Harness.Xslt4Run
 -- protocol decision is in L4Factoidal/XMPP/Server.lean, not here.
 @[default_target] lean_exe «l4xmpp-serve» where root := `Harness.XmppServe
 @[default_target] lean_exe «l4xml-namespaces» where root := `Harness.NamespaceRun
+
+-- WHATWG Encoding Standard in Lean (https://github.com/danbri/factoidal/issues/1167,
+-- milestone 2): the engine behind tests/whatwg-encoding/run.mjs, the
+-- web-platform-tests encoding runner (Harness/WhatwgEncodingServe.lean).
+@[default_target] lean_exe «l4whatwg-encoding» where root := `Harness.WhatwgEncodingServe

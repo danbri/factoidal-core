@@ -43,6 +43,12 @@ structure SCx where
   inIter : Bool := false
   /-- `[xsl:]default-validation` (§25): `strip` or `preserve`. -/
   defaultValidation : String := "strip"
+  /-- The in-scope element and attribute declarations for the static
+      check of `schema-element()` and `schema-attribute()` (XPST0008,
+      `XPath4.PCtx.schemaDecl`). The default accepts every name: the
+      stylesheet's imported schema (`xsl:import-schema`) is checked when
+      the test runs. -/
+  schemaDecl : Bool → QN → Bool := fun _ _ => true
 deriving Inhabited
 
 /-- The value of a `version` attribute, in thousandths (a decimal,
@@ -204,7 +210,7 @@ def expandTypes (types : List (QN × String)) (ns : List (String × String)) : N
 /-- Parse an XPath expression in the static context `c`. -/
 def SCx.parse (c : SCx) (src : String) : M Expr := do
   let src := expandTypes c.types c.ns 10 src
-  let e ← match parseXPath src c.xpNs with
+  let e ← match parseXPath src c.xpNs none c.schemaDecl with
     | .ok e => pure e
     | .error er => throw { er with msg := er.msg ++ " in '" ++ src ++ "'" }
   pure (if c.xpathNs == "" then e else exprDefault c.xpathNs 100000 e)
@@ -213,7 +219,7 @@ def SCx.parse (c : SCx) (src : String) : M Expr := do
 def SCx.parseType (c : SCx) (src : String) : M IType := do
   let src := expandTypes c.types c.ns 10 src
   let p : P IType := do let t ← pSeqType 1000; ws; pure t
-  match (p.run { s := src.toList.toArray, ns := c.xpNs }).run 0 with
+  match (p.run { s := src.toList.toArray, ns := c.xpNs, schemaDecl := c.schemaDecl }).run 0 with
   | .ok (t, i) =>
       if i < src.length then err "XTSE0020" ("invalid sequence type '" ++ src ++ "'")
       else pure (if c.xpathNs == "" then t else itDefault c.xpathNs 50 t)
@@ -398,11 +404,20 @@ def filterBase : Expr → Bool
 
 /-- The default priority of one pattern alternative (§6.4). -/
 def defaultPriority (e : Expr) : Float :=
+  let ofKind (k : IType) : Float :=
+    match k with
+    | .elem (some (.name _)) | .attr (some (.name _)) => 0
+    | .elem (some (.ns _)) | .attr (some (.ns _)) => -0.25
+    | .elem (some (.loc _)) | .attr (some (.loc _)) => -0.25
+    | _ => -0.5
   let ofTest (ax : Axis) (t : NodeTest) : Float :=
     let t := match t with
       | .ncname n _ => NodeTest.name n
       | t => t
     match t with
+    -- element(A|B) / attribute(A|B) (a NameTestUnion, XPath 4.0 §3.2.7.2):
+    -- the priority of its most specific name test
+    | .kind (.choice ts@(_ :: _)) => (ts.map ofKind).foldl max (-0.5)
     | .name (.name _) => 0
     | .name (.ns _) | .name (.loc _) => -0.25
     | .name .any => -0.5

@@ -2271,7 +2271,8 @@ def checkSheet : CM Unit := do
     for e in s.checkExprs do
       for x in exprAll 10000 [e] do
         let (q, k) := match x with
-          | .call q as kw => (q, as.length + kw.length)
+          -- `#at` is the parser's source offset of a new-tree call, not an argument
+          | .call q as kw => (q, as.length + (kw.filter (fun (x : String × Option Expr) => x.1 != "#at")).length)
           | .fref q k => (q, k)
           | _ => ({ uri := nsXSL, loc := "" }, 0)
         if q.uri == nsXSL || q.uri == nsXS || q.loc.startsWith "#" || s.types.any (·.1 == q) then continue

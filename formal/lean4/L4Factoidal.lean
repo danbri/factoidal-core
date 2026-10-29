@@ -1134,3 +1134,9 @@ import L4Factoidal.SPARQL.CastTests
 import L4Factoidal.Fn.CastTheorems
 
 import L4Factoidal.SPARQL.AggStreamTests
+
+import L4Factoidal.WHATWG.Encoding.Data
+import L4Factoidal.WHATWG.Encoding.Core
+import L4Factoidal.WHATWG.Encoding.Tests
+import L4Factoidal.WHATWG.Encoding.Theorems
+import L4Factoidal.WHATWG.URL.PercentEncode

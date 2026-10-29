@@ -82,6 +82,7 @@ import Wasm.Ops.ServiceReg
 import Wasm.Ops.Maths
 import Wasm.Ops.Vc
 import Wasm.Ops.Cid
+import Wasm.Ops.Qt4
 import Wasm.Ops.Lenient
 import Wasm.Ops.Validate
 import Wasm.Ops.ShExValidate
@@ -424,14 +425,15 @@ def serviceOpNames : List String :=
   , "clearServiceEndpoints" ]
 
 /-- Stage 2 of https://github.com/danbri/factoidal/issues/713: the matrix and
-sigmoid ops (`Wasm/Ops/Maths.lean`), the VC and DID ops (`Wasm/Ops/Vc.lean`) and
-the Controlled Identifiers ops (`Wasm/Ops/Cid.lean`, issue 1100).
+sigmoid ops (`Wasm/Ops/Maths.lean`), the VC and DID ops (`Wasm/Ops/Vc.lean`),
+the Controlled Identifiers ops (`Wasm/Ops/Cid.lean`, issue 1100) and the
+XPath 4.0, XQuery 4.0 and XSLT 4.0 ops (`Wasm/Ops/Qt4.lean`).
 They are stateless, so `call` serves them and `callIO` reaches them through its
 fall-through to `call`. The names are appended to every `ops` reflection by
 `opsReflectionFor`; the arms are in the fall-through case of `call`. -/
 def stage2OpNames : List String :=
   mathsOpNames ++ vcOpNames ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames ++ termsOpNames
-    ++ literalOpNames ++ cidOpNames
+    ++ literalOpNames ++ cidOpNames ++ qt4OpNames
 
 /-- Serve a stage 2 op of the full table, or answer the unknown-op error.
 `serializeTurtleWith` and `parseDocument` (the lenient parse,
@@ -447,7 +449,11 @@ private def callStage2 (op : String) (args : List String) : String :=
       -- Controlled Identifiers v1.0 (Wasm/Ops/Cid.lean, issue 1100).
       match callCid op args with
       | some r => r
-      | none => errJson s!"unknown op '{op}'"
+      | none =>
+        -- XPath 4.0, XQuery 4.0 and XSLT 4.0 (Wasm/Ops/Qt4.lean).
+        match callQt4 op args with
+        | some r => r
+        | none => errJson s!"unknown op '{op}'"
 
 /-- `{"ok":true,"abiVersion":"…","ops":[…],"blobOps":[…],"blobIoOps":[…]}`. -/
 private def opsReflectionFor (names : List String) : String :=
@@ -1178,5 +1184,24 @@ private def refusesNow (bad : String) : Bool :=
   "expects 1 or 2 arguments"
 #guard dispatchHas (callBlob "storeQuery" (pureArgs ["00", "ASK {}"]) ByteArray.empty)
   "expects 3 or 4 arguments"
+
+-- XPath 4.0, XQuery 4.0 and XSLT 4.0 (Wasm/Ops/Qt4.lean): the full table
+-- serves them; an error carries the QT4 error code; an external resource is
+-- refused with the specification's error code (no I/O).
+#guard dispatchHas (call "xpath4Eval" (pureArgs ["<r><a/><a/></r>", "count(//a)"]))
+  "\"items\":[{\"type\":\"xs:integer\",\"value\":\"2\"}]"
+#guard dispatchHas (call "xpath4Eval" (pureArgs ["", "1 +"])) "\"qtError\":{\"code\":\"XPST0003\""
+#guard dispatchHas (call "xpath4Eval" (pureArgs ["", "doc('https://example.org/a.xml')"]))
+  "\"qtError\":{\"code\":\"FODC0002\""
+#guard dispatchHas (call "xqueryEval" (pureArgs ["for $x in 1 to 3 return $x * 2"])) "\"adaptive\":\"2\\n4\\n6\""
+#guard dispatchHas (call "xqueryEval"
+    (pureArgs ["import module namespace m = 'urn:m' at 'https://example.org/m.xq'; m:f()", ""]))
+  "\"qtError\":{\"code\":\"XQST0059\""
+#guard dispatchHas (call "xslt4Transform" (pureArgs
+    ["<xsl:stylesheet version='3.0' xmlns:xsl='http://www.w3.org/1999/XSL/Transform'><xsl:import href='https://example.org/a.xsl'/></xsl:stylesheet>", "<r/>"]))
+  "\"qtError\":{\"code\":\"XTSE0165\""
+#guard dispatchHas (call "xpath4Eval" (pureArgs ["<a/>"])) "expects 2 arguments"
+#guard (call "xpath4Eval" (pureArgs ["", "1 +"])).startsWith "{\"ok\":false,\"error\":\"xpath4Eval: err:XPST0003"
+#guard qt4OpNames.all (fun o => !dispatchHas (call o "[]") "unknown op")
 
 end L4Wasm
