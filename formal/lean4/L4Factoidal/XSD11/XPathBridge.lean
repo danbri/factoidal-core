@@ -33,11 +33,13 @@ theorem docOfKids_skip (e : XPath4.Env) (o : XPath4.ParseOpts) (kids : List Node
 
 theorem docOfKids_validate (s : Schema) (e : XPath4.Env) (o : XPath4.ParseOpts)
     (kids : List Node) (uri : String) (root : Node)
-    (hs : e.schema = schemaHookOf s) (hx : o.xsd ≠ "skip")
+    (hs : e.schema = schemaHookOf s)
+    (hi : e.features.schemaImport = true) (hv : e.features.schemaValidation = true)
+    (hx : o.xsd ≠ "skip")
     (hr : kids.find? XPath4.isElemKid = some root) :
     XPath4.docOfKids e o kids uri = validateFor s o.xsd root uri := by
   unfold XPath4.docOfKids
-  simp only [hs, schemaHookOf, hr, beq_iff_eq, hx, if_false]
+  simp only [hs, schemaHookOf, hi, hv, Bool.not_true, Bool.or_self, hr, beq_iff_eq, hx, if_false]
   cases validateFor s o.xsd root uri <;> rfl
 
 theorem validateFor_ok (s : Schema) (mode : String) (root : Node) (uri : String) (d : XPath4.Doc)
@@ -62,12 +64,14 @@ is the XDM document of the PSVI of the parsed document element, and that
 PSVI erases to the parsed element. -/
 theorem parseXml_validate (s : Schema) (e : XPath4.Env) (o : XPath4.ParseOpts)
     (kids : List Node) (uri : String) (root : Node) (d : XPath4.Doc)
-    (hs : e.schema = schemaHookOf s) (hx : o.xsd ≠ "skip")
+    (hs : e.schema = schemaHookOf s)
+    (hi : e.features.schemaImport = true) (hv : e.features.schemaValidation = true)
+    (hx : o.xsd ≠ "skip")
     (hr : kids.find? XPath4.isElemKid = some root)
     (hd : XPath4.docOfKids e o kids uri = .ok d) :
     ∃ how, d = psviDoc s (validateElement s xpathHooks 10000 [] how root {}).1 uri ∧
       (validateElement s xpathHooks 10000 [] how root {}).1.erase = root := by
-  rw [docOfKids_validate s e o kids uri root hs hx hr] at hd
+  rw [docOfKids_validate s e o kids uri root hs hi hv hx hr] at hd
   exact validateFor_ok s o.xsd root uri d hd
 
 end L4Factoidal.XSD11

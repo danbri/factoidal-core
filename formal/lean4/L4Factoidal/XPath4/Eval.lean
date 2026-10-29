@@ -528,6 +528,41 @@ def litPositions? : Expr → Option Int
     an implementation limit (XPDY0130). -/
 def genCap : Nat := 100000
 
+/-- Disabled functions and validation are static errors even in an
+    unevaluated branch (XPath 4.0 §2.4.1; XQuery 4.0 §3.21). -/
+def FeatureSettings.checkExpr (settings : FeatureSettings) : Nat → Expr → M Unit
+  | 0, _ => err "XPST0003" "feature check nesting limit"
+  | f + 1, ex => do
+    let go := settings.checkExpr f
+    match ex with
+    | .call q args kw =>
+      if !settings.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
+      for e in args.filterMap id ++ kw.filterMap (·.2) do go e
+    | .fref q _ =>
+      if !settings.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
+    | .ext tag es _ _ _ =>
+      if tag == "validate" && !settings.schemaValidation then
+        err "XQST0075" "schema validation is disabled"
+      for e in es do go e
+    | .seq es | .arrS es | .tmpl es => for e in es do go e
+    | .slash a b | .filter a b | .bin _ a b | .smap a b | .pipe a b => go a; go b
+    | .step _ _ ps => for p in ps do go p
+    | .dstep _ x ps => go x; for p in ps do go p
+    | .dyn g args => go g; for e in args.filterMap id do go e
+    | .inline _ _ body _ => go body
+    | .mapC es => for (a, b) in es do go a; go b
+    | .arrC x | .neg x | .plus x | .instOf x _ | .treat x _ | .cast x _ _ | .castable x _ _ => go x
+    | .lookup x k => go x; for e in k.toList do go e
+    | .ulookup k => for e in k.toList do go e
+    | .ifE c t e => go c; go t; go e
+    | .forE _ _ _ _ _ a b | .letE _ _ a b | .quant _ _ _ a b => go a; go b
+    | .mapArrow a g args => go a; go g; for e in args.filterMap id do go e
+    | _ => pure ()
+
+/-- No feature walk is needed for the default context. -/
+def FeatureSettings.check (settings : FeatureSettings) (e : Expr) : M Unit :=
+  if settings == ({} : FeatureSettings) then pure () else settings.checkExpr 100000 e
+
 mutual
 
 def eval : Nat → Env → Expr → M Seq
@@ -676,6 +711,7 @@ def eval : Nat → Env → Expr → M Seq
         let s ← eval n env a
         filterSeq n env s p
   | .call q args kw0 => do
+      if !env.features.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
       -- the source offset of a call that builds a new tree (`newTreeFns`)
       let at? := kw0.find? (·.1 == "#at")
       let kw := kw0.filter (·.1 != "#at")
@@ -730,7 +766,10 @@ def eval : Nat → Env → Expr → M Seq
           pure (placed.map (·.getD none), [])
         | none => pure (args, kw)
       -- host hook: a function of the host language (XSLT 4.0)
-      match (if kw.isEmpty then env.host q total else none) with
+      match (if kw.isEmpty && (q.uri != nsFN ||
+          ((env.features.loadXQueryModule || q.loc != "load-xquery-module") &&
+           (env.features.transform || q.loc != "transform") &&
+           (env.features.serialization || q.loc != "serialize"))) then env.host q total else none) with
       | some h =>
           let vs ← evalArgs n env args
           if args.any Option.isNone then pure [.fn (.papp (.fn (.builtin q args.length)) vs)]
@@ -843,6 +882,7 @@ def eval : Nat → Env → Expr → M Seq
             out := out ++ (← apply n env fi (vs.map (·.getD [])))
           pure out
   | .fref q k => do
+      if !env.features.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
       -- a reference made by untrusted code to a function that reads
       -- external resources stays untrusted (F&O 4.0 §17.4.1)
       if env.untrusted && isExternalFn q then
@@ -872,6 +912,11 @@ def eval : Nat → Env → Expr → M Seq
       -- fn:position#0 and fn:last#0 capture the focus (F&O 4.0 §1.5.2)
       else if q.uri == nsFN && k == 0 && (q.loc == "position" || q.loc == "last") && env.ctx.isSome then
         pure [focusFn q.loc env.pos env.size]
+      else if q.uri == nsFN && ((!env.features.transform && q.loc == "transform") ||
+          (!env.features.loadXQueryModule && q.loc == "load-xquery-module") ||
+          (!env.features.serialization && q.loc == "serialize")) then
+        if (findSig q k).isSome then pure [.fn (.builtin q k)]
+        else err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
       else if (env.host q k).isSome then
         -- a host function item closes over the bindings of the reference
         -- (XSLT `current-group#0` keeps the group of its creation)
@@ -1267,6 +1312,13 @@ def apply : Nat → Env → Item → List Seq → M Seq
           | _ => err "XPTY0004" "array index must be an integer"
         | none => err "XPTY0004" "array index must be a single integer"
     | .fn (.builtin q k) => do
+        if !env.features.serialization && q.uri == nsFN && q.loc == "serialize" then
+          err "FODC0010" "serialization is disabled"
+        if !env.features.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
+        if !env.features.loadXQueryModule && q.uri == nsFN && q.loc == "load-xquery-module" then
+          err "FOQM0006" "dynamic XQuery is disabled"
+        if !env.features.transform && q.uri == nsFN && q.loc == "transform" then
+          err "FOXT0004" "dynamic XSLT is disabled"
         if args.length != k then err "XPTY0004" ("function " ++ q.show ++ " expects " ++ toString k ++ " arguments")
         if let some h := env.host q k then
           h { vars := env.vars, ctx := env.ctx, pos := env.pos, size := env.size, ns := env.ns, untrusted := env.untrusted, baseUri := env.baseUri } args
@@ -1332,6 +1384,13 @@ def apply : Nat → Env → Item → List Seq → M Seq
 def callFn : Nat → Env → QN → List Seq → M Seq
   | 0, _, _, _ => fuelErr
   | n + 1, env, q, args => do
+    if !env.features.functionEnabled q then err "XPST0017" ("disabled function " ++ q.show)
+    if !env.features.loadXQueryModule && q.uri == nsFN && q.loc == "load-xquery-module" then
+      err "FOQM0006" "dynamic XQuery is disabled"
+    if !env.features.transform && q.uri == nsFN && q.loc == "transform" then
+      err "FOXT0004" "dynamic XSLT is disabled"
+    if !env.features.serialization && q.uri == nsFN && q.loc == "serialize" then
+      err "FODC0010" "serialization is disabled"
     if env.untrusted && isExternalFn q then
       err "FODC0016" ("untrusted code may not read external resources (" ++ q.show ++ ")")
     -- untrusted code may not turn on `trust-external` (F&O 4.0 §17.4.1)
@@ -1615,8 +1674,10 @@ end
 /-- Parse an XPath 4.0 expression with the computed node constructors
     (XPath 4.0 §4.12, `XQuery4.xpathGrammar`). -/
 def parseXPath4 (src : String) (ns : List (String × String) := [])
-    (schemaDecl : Bool → QN → Bool := fun _ _ => false) : M Expr := do
-  let e ← parseXPath src ns (some L4Factoidal.XQuery4.xpathGrammar) schemaDecl
+    (schemaDecl : Bool → QN → Bool := fun _ _ => false)
+    (features : FeatureSettings := {}) : M Expr := do
+  let e ← parseXPath src ns (some L4Factoidal.XQuery4.xpathGrammar) schemaDecl features
+  features.check e
   -- static check (XPath 4.0 §2.4.1, XPST0017): a call of a function in
   -- the fn, math, map or array namespace needs a signature of its arity
   for (q, k) in Expr.callsF 100000 e do
@@ -1627,8 +1688,13 @@ def parseXPath4 (src : String) (ns : List (String × String) := [])
 
 /-- Evaluate an XPath 4.0 expression string. -/
 def evalString (src : String) (env : Env := {}) : M Seq := do
-  let e ← parseXPath4 src env.ns env.schema.declared
+  let e ← parseXPath4 src env.ns env.schema.declared env.features
   eval 100000 env e
+
+/-- Applying the all-enabled settings leaves evaluation definitionally
+    unchanged. This theorem concerns configuration application. -/
+theorem eval_allFeaturesEnabled (fuel : Nat) (env : Env) (e : Expr) :
+    eval fuel (env.restrictFeatures {}) e = eval fuel env e := rfl
 
 def showSeq (s : Seq) : String :=
   String.intercalate " " (s.map (fun i => match i with

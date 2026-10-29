@@ -125,6 +125,8 @@ structure HostCall where
 abbrev HostFn := HostCall → List Seq → M Seq
 
 structure Env where
+  /-- Optional processor features, shared by XPath and its host languages. -/
+  features : FeatureSettings := {}
   docs : Array Doc := #[]
   vars : List (QN × Seq) := []
   /-- The context value (a single item except under `->`). -/
@@ -202,10 +204,42 @@ structure Env where
   xinclude : Bool := true
 deriving Inhabited
 
+/-- Apply a feature configuration to a context (XPath 4.0 §2.2.1).
+    The all-enabled configuration is an identity, including host hooks. -/
+def Env.restrictFeatures (e : Env) (features : FeatureSettings) : Env :=
+  if features == ({} : FeatureSettings) then e else
+  let features : FeatureSettings := {
+    loadXQueryModule := e.features.loadXQueryModule && features.loadXQueryModule
+    transform := e.features.transform && features.transform
+    transform30 := e.features.transform30 && features.transform30
+    invisibleXml := e.features.invisibleXml && features.invisibleXml
+    binary := e.features.binary && features.binary
+    file := e.features.file && features.file
+    schemaImport := e.features.schemaImport && features.schemaImport
+    schemaValidation := e.features.schemaValidation && features.schemaValidation
+    typedData := e.features.typedData && features.typedData
+    serialization := e.features.serialization && features.serialization }
+  let features := if features.typedData then features else
+    { features with schemaImport := false, schemaValidation := false }
+  let schema := if features.schemaImport && features.schemaValidation then e.schema else
+    { e.schema with
+      validate := none, validateIn := none, validateWith := none, validateFnNs := none }
+  { e with features, schema }
+
+@[simp] theorem Env.restrictFeatures_allEnabled (e : Env) :
+    e.restrictFeatures {} = e := rfl
+
+/-- Without typed-data support, node annotations and typed values are
+    removed (XQuery 4.0 §5.6, XDM 4.0 §2.7). -/
+def Doc.withoutTypes (d : Doc) : Doc :=
+  { d with nodes := d.nodes.map (fun r =>
+      { r with tann := none, tval := none, nilled := false, noTypedValue := false }) }
+
 def Env.doc (e : Env) (n : NodeRef) : Doc :=
-  match n.rt with
-  | some d => d
-  | none => e.docs.getD n.doc default
+  let d := match n.rt with
+    | some d => d
+    | none => e.docs.getD n.doc default
+  if e.features.typedData then d else d.withoutTypes
 def Env.nrec (e : Env) (n : NodeRef) : NRec := (e.doc n).get n.idx
 
 def Env.nsResolve (e : Env) (p : String) : Option String :=

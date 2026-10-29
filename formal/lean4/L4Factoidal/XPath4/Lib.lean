@@ -1415,7 +1415,7 @@ def fnTable2 : List (String × LibFn) := [
     match optAtom (argN a 0) with
     | some ⟨_, .qn q⟩ =>
         let k := intOf (argN a 1)
-        if k < 0 then pure [] else
+        if k < 0 || !e.features.functionEnabled q then pure [] else
         if q.uri == nsXS then
           if (xsCtorType? q.loc).isNone then pure []
           else if k == 1 then pure [.fn (.builtin q 1)]

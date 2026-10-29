@@ -2006,6 +2006,9 @@ L4Factoidal_XPath4_instBEqExpr_beq  # (b) `deriving BEq for Expr`: the depth is 
 L4Factoidal_XPath4_instBEqIType_beq  # (b) `deriving BEq for IType`: the depth is the nesting of a parsed sequence type
 L4Factoidal_XPath4_instBEqNodeTest_beq  # (b) `deriving BEq for NodeTest`: the depth is the nesting of a parsed node test inside a sequence type
 L4Factoidal_WHATWG_Encoding_runHandle  # (s) specification only: the per-byte run of the UTF-8 decoder handler that the theorems of WHATWG/Encoding/Theorems.lean state over; no compiled code outside Theorems.c calls it; the executed path is Encoding.decodeLoop, a tail call (milestone 2 of https://github.com/danbri/factoidal/issues/1167)
+L4Factoidal_XML_XPointerXPath_toNode  # (b) one call per level of the element nesting of an XPointer result (children through List.flatMap, a loop); fuel decreases
+includes  # (b) Harness/XPointerRun: one call per level of the element nesting of a test document; fuel decreases
+walkFiles  # (c) Harness/XPointerRun: one call per directory level of the vendored suite, fuel 16
 L4Factoidal_RIF_PrdXml_parseCondNode  # (b) nesting of one RIF-PRD XML condition (And, Or, INeg, Exists); conjuncts are read by mapM, a loop
 L4Factoidal_RIF_PrdXml_parseGroup  # (b) nesting of Group, Forall and Implies elements of a RIF-PRD XML document; sentences are read by mapM, a loop
 L4Factoidal_RIF_PrdXml_parseRule  # (b) nesting of Group, Forall and Implies elements of a RIF-PRD XML document; sentences are read by mapM, a loop
@@ -2020,6 +2023,7 @@ L4Factoidal_RIF_Prd_qualifyLocalTm  # (b) nesting of one RIF term; the sibling l
 # --- WHATWG URL in Lean (https://github.com/danbri/factoidal/issues/1167, milestone 3)
 Harness_WhatwgUrl_allStrings  # (c) depth is the generated string length, the constant 6 in `l4whatwg-url rfc3986`
 L4Factoidal_WHATWG_URL_Theorems_joinSlash  # (s) used only by WHATWG/URL/Theorems.lean; the parser serializes paths with Array.foldl (Url.serializePath)
+L4Factoidal_XPath4_FeatureSettings_checkExpr  # (b) the depth is the nesting of the query expression: the static check of disabled features walks the AST (depth, L4Factoidal/XPath4/Eval.lean)
 L4Factoidal_XQuery4_nodeTestStaticErr  # (b) XQuery4/Static: the depth is the nesting of a node test union in the query, and the fuel argument bounds it
 L4Factoidal_XQuery4_typeLoader  # (c) XQuery4/Module: the recursion is one level per module import, at most 8 (typeLoader env 8); the list folds are foldlM loops
 L4Factoidal_XQuery4_loadXQueryModule  # (c) XQuery4/LoadModule: one level per fn:load-xquery-module call made by a loaded module, at most 20 (the depth argument, loadModuleHost)

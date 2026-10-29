@@ -144,5 +144,6 @@ worknote, kept as the record of a decision or a measurement),
 
 | 2026-10-29 | [XQuery 4.0 merge validation](20261029-xquery4-merge.md) | uncommitted | record |
 | 2026-10-29 | [Full Text and XQuery Update merge](20261029-full-text-update-merge.md) | pending | record |
+| 2026-10-29 | [Processor feature settings](20261029-processor-feature-settings.md) | uncommitted | record |
 | 2026-10-29 | [XQuery 4.0 merge against updated main](20261029-xquery4-merge-main2.md) | uncommitted | record |
 | 2026-10-29 | [QT4 optional features merge against updated main](20261029-qt4-optional-features-merge2.md) | uncommitted | record: both baselines, per-family validation |

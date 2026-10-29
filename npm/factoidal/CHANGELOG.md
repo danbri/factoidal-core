@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.26.0 (2026-10-29)
+
+- QT4 processor feature switches (https://github.com/danbri/factoidal-core/pull/252): the native qt4tests runner can run as a processor without a feature, so the tests written for such processors run instead of being unsupported; qt4tests in XQuery mode, measured on that PR: `fn` 17188 → 17217 pass, `prod` 13819 → 13823 pass, no new failures.
+- XPointer in the Lean engine: the XPointer Framework, element() and xmlns() schemes (W3C Recommendations 2003) in `L4Factoidal/XML/XPointer.lean`, and the xpointer() scheme (W3C Working Draft 2002) through the XPath 4.0 engine in `XML/XPointerXPath.lean`. Over the 98 pointers of the W3C XInclude test suite: 98 pass, 0 fail (out of 98) (`lake exe l4xpointer`). Not yet used by XInclude, and no npm or wasm op yet.
+
+## 0.25.0 (2026-10-29)
+
+- XQuery 4.0 and XPath 4.0 engines (behind `xqueryEval` and `xpath4Eval`) toward all of qt4tests (https://github.com/danbri/factoidal-core/pull/214). qt4tests b1616b79, native runner, measured on that PR: XQuery mode 45040 → 45855 pass, 1187 → 619 fail, 1397 → 1150 unsupported (out of 47624); XPath mode 32928 → 32982 pass, 106 → 78 fail. One test set has one pass fewer (`fn-system-properties`, 23 → 22): the runner now declares the `infoset-dtd` feature. The wasm limits on deep recursion and very large documents still apply (https://github.com/danbri/factoidal/issues/1110).
+
 ## 0.24.0 (2026-10-29)
 
 - `xslt4Transform`: a function call that the XSLT host does not handle falls back to the XPath host of the base environment instead of failing (https://github.com/danbri/factoidal-core/pull/249). (Corrected after publishing: the 0.24.0 package's own changelog says the wasm does not change; it does, by this change.)
