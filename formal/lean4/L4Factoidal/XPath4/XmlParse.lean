@@ -22,7 +22,8 @@ The evaluator does no I/O. An external DTD or entity, and the text of
 Options of `fn:parse-xml`: `base-uri`, `dtd-validation`, `strip-space`
 (`all`, `none`, `conditional` = `none`), `trust-external`, `xinclude`
 (`true` is `FODC0013`: there is no XInclude processor), `xsd-validation`
-(anything but `skip` is `FODC0009`: not schema-aware), `use-xsi-schema-location`,
+(`strict`, `lax` and `type T` validate through the schema hook
+`Env.schema`, `SchemaHook.validate`; another value is XPTY0004), `use-xsi-schema-location`,
 `line-numbers` (ignored, as the spec allows).
 -/
 import L4Factoidal.XPath4.Lib
@@ -70,6 +71,25 @@ def stripWs : Nat → Bool → Node → Node
         | .text t => keep || !isXmlWs t
         | _ => true)
       .element tag attrs (kids.map (stripWs f keep))
+    | other => other
+
+/-- Remove the whitespace-only text that DTD validation marks as
+    ignorable: the text children of an element whose declared content is
+    element-only (`[47] children`) or `EMPTY` (XML 1.0 §2.10). -/
+def stripIgnorable (dt : Doctype) : Nat → Node → Node
+  | 0, n => n
+  | f + 1, n =>
+    match n with
+    | .element tag attrs kids =>
+      let elemOnly := match elementDeclOf dt.elementDecls tag with
+        | some ed => match parseContentSpecText ed.spec with
+          | some (.children _) | some .empty => true
+          | _ => false
+        | none => false
+      let kids := if elemOnly then kids.filter (fun k => match k with
+          | .text t => !isXmlWs t
+          | _ => true) else kids
+      .element tag attrs (kids.map (stripIgnorable dt f))
     | other => other
 
 /-! ## Options -/
@@ -134,20 +154,53 @@ def parseOpts (e : Env) (opts : Seq) : M ParseOpts := do
   if ← optBool opts "xinclude" false then
     err "FODC0013" "no XInclude processor is available"
   let xsd := optionStr opts "xsd-validation" "skip"
+  if !(["skip", "strict", "lax"].contains xsd || xsd.startsWith "type ") then
+    err "XPTY0004" ("xsd-validation must be strict, lax, skip or type T, not " ++ xsd)
   pure { baseUri := base, dtdValidation := dtd, stripAll := strip == "all", trustExternal := trust, xsd }
 
-/-- The document of `kids`, validated when `xsd-validation` asks for it. -/
+/-- An element node of a parsed tree (the document element is the first). -/
+def isElemKid (k : Node) : Bool :=
+  match k with
+  | .element .. => true
+  | _ => false
+
+/-- The document of `kids`, validated when `xsd-validation` asks for it
+    (`XSD11.XPathBridge.docOfKids_validate`: through the schema hook only). -/
 def docOfKids (e : Env) (o : ParseOpts) (kids : List Node) (uri : String) : M Doc :=
   if o.xsd == "skip" then pure (Doc.ofNodes kids uri)
-  else match e.schema.validate, kids.find? (fun k => match k with | .element .. => true | _ => false) with
+  else match e.schema.validate, kids.find? isElemKid with
     | some f, some root => match f o.xsd root uri with
       | .ok d => pure d
       | .error x => throw x
     | _, _ => err "FODC0009" "no schema to validate with"
 
-/-- Parse a whole document (string or bytes) under the options. -/
-def parseDocument (e : Env) (o : ParseOpts) (src : Atomic) : M Document := do
-  let resolve : Resolver := if o.trustExternal then (fun h => e.resource h) else (fun _ => none)
+/-- The children of a parsed document after the whitespace rules of the
+    options (`strip-space`, and ignorable whitespace under DTD
+    validation) and xml:id processing. -/
+def docKids (o : ParseOpts) (d : Document) : List Node :=
+  let ks := if o.stripAll then d.children.map (stripWs 100000 false) else d.children
+  let ks := match d.doctype with
+    | some dt => if o.dtdValidation then ks.map (stripIgnorable dt 100000) else ks
+    | none => ks
+  ks.map (normXmlId 100000)
+
+/-- A system identifier relative to the reference of the document that
+    names it (`../docs/a.xml` and `b.dtd` give `../docs/b.dtd`). -/
+def siblingRef (docHref sys : String) : String :=
+  if sys.startsWith "/" || (sys.splitOn ":").length > 1 then sys else
+  match (docHref.splitOn "/").dropLast with
+  | [] => sys
+  | ds => String.intercalate "/" ds ++ "/" ++ sys
+
+/-- Parse a whole document (string or bytes) under the options;
+    `docHref` is the reference the document was read from, against which
+    its external DTD subset and external entities are resolved. -/
+def parseDocument (e : Env) (o : ParseOpts) (src : Atomic) (docHref : String := "") : M Document := do
+  let resolve : Resolver := if o.trustExternal then
+      (fun h => match e.resource h with
+        | some t => some t
+        | none => if docHref == "" then none else e.resource (siblingRef docHref h))
+    else (fun _ => none)
   let run (r : Resolver) : Except XmlError Document :=
     match bytesOfAtomic src with
     | some bs => parseXMLBytesWith r bs
@@ -174,7 +227,7 @@ def parseXmlFn : LibFn := fun _ e a => do
   | some src =>
     let o ← parseOpts e (argN a 1)
     let d ← parseDocument e o src
-    let kids := if o.stripAll then d.children.map (stripWs 100000 false) else d.children
+    let kids := docKids o d
     let doc := { (← docOfKids e o kids "") with baseUri := o.baseUri }
     pure [doc.rootItem (runtimeDocId "parse-xml" src.str)]
 
@@ -324,7 +377,10 @@ def decodeResource (bs : ByteArray) (cand : Option String) (fallback : Bool) : M
 def textResourceWith (e : Env) (href : String) (cand : Option String) (fallback : Bool) : M String := do
   if (href.splitOn "#").length > 1 then err "FOUT1170" "a fragment identifier is not allowed"
   match e.resourceBin href with
-  | some bs => decodeResource bs cand fallback
+  | some bs =>
+    -- with no $encoding, external encoding information is used first
+    let ext := (e.resourceEncodings.lookup href).orElse (fun _ => e.resourceEncodings.lookup (resolveUri e.baseUri href))
+    decodeResource bs (cand.orElse (fun _ => ext)) fallback
   | none =>
   match e.resource href with
   | some t =>
@@ -339,11 +395,16 @@ def textResourceWith (e : Env) (href : String) (cand : Option String) (fallback 
 def textResource (e : Env) (href : String) : M String := textResourceWith e href none false
 
 /-- The options of `fn:unparsed-text` and its relatives: a string (the
-    encoding) or a map (`encoding`, `normalize-newlines`, `fallback`). -/
-def unparsedOpts (e : Env) (o : Seq) : M (Option String × Bool × Bool) := do
+    encoding) or a map (`encoding`, `normalize-newlines`, `fallback`;
+    `fn:unparsed-text-lines` has no `normalize-newlines`). Another key is
+    XPTY0004 (the option parameter conventions, F&O 4.0 §1.7.4). -/
+def unparsedOpts (e : Env) (o : Seq)
+    (keys : List String := ["encoding", "normalize-newlines", "fallback"]) :
+    M (Option String × Bool × Bool) := do
   match o with
   | [] => pure (none, false, false)
   | [.map _] =>
+    checkOptionKeys o keys
     let enc ← match optLookup o "encoding" with
       | none | some [] => pure none
       | some v => match ← e.coerce (parseTy "xs:string") v "encoding" with
@@ -355,8 +416,9 @@ def unparsedOpts (e : Env) (o : Seq) : M (Option String × Bool × Bool) := do
   | [.atom x] => pure (some x.str, false, false)
   | _ => err "XPTY0004" "the options must be a string or a map"
 
-def readUnparsed (e : Env) (href : String) (o : Seq) : M String := do
-  let (enc, nl, fb) ← unparsedOpts e o
+def readUnparsed (e : Env) (href : String) (o : Seq)
+    (keys : List String := ["encoding", "normalize-newlines", "fallback"]) : M String := do
+  let (enc, nl, fb) ← unparsedOpts e o keys
   let t ← textResourceWith e href enc fb
   pure (if nl then (t.replace "\r\n" "\n").replace "\r" "\n" else t)
 
@@ -374,24 +436,30 @@ def docFn (e : Env) (a : List Seq) : M Seq := do
   | none => pure []
   | some u =>
     if (u.str.splitOn "#").length > 1 then err "FODC0005" "a fragment identifier is not allowed"
+    if !iriRefOk u.str then err "FODC0005" ("not a valid URI reference: " ++ u.str)
     let o ← parseOpts e (argN a 1)
-    match e.docUris.lookup u.str with
+    -- a relative reference is resolved against the static base URI
+    match e.docUris.lookup u.str |>.orElse (fun _ => e.docUris.lookup (resolveUri e.baseUri u.str)) with
     | some d =>
       if o.dtdValidation then err "FODC0007" "DTD validation of a registered document" else
       pure [.node (NodeRef.mk' d 0)]
     | none =>
-      match e.resource u.str with
+      -- a resource the caller stored under the unescaped name (a space
+      -- that the URI reference carries as %20)
+      match (e.resource u.str).orElse (fun _ => e.resource (u.str.replace "%20" " ")) with
       | some t =>
-        let d ← match parseDocument e o (Atomic.ofStr t) with
+        let d ← match parseDocument e o (Atomic.ofStr t) u.str with
           | .ok d => pure d
           | .error x => if x.code == "FODC0006" then err "FODC0002" x.msg else throw x
         let uri := resolveUri e.baseUri u.str
-        let kids := if o.stripAll then d.children.map (stripWs 100000 false) else d.children
+        let kids := docKids o d
+        -- documents read with different options are different documents
+        let oSig := toString o.stripAll ++ toString o.dtdValidation ++ toString o.trustExternal ++ o.xsd
         -- fn:doc: a document that cannot be validated is not available (FODC0002)
         let doc ← match docOfKids e o kids uri with
           | .ok d => pure d
           | .error x => err "FODC0002" x.msg
-        pure [doc.rootItem (runtimeDocId "doc" uri)]
+        pure [doc.rootItem (runtimeDocId "doc" (uri ++ "|" ++ oSig))]
       | none => err "FODC0002" ("document not available: " ++ u.str)
 
 def xmlParseTable : List (String × LibFn) := [
@@ -404,7 +472,7 @@ def xmlParseTable : List (String × LibFn) := [
   ent "unparsed-text-lines" (fun _ e a => do
     match optAtom (argN a 0) with
     | none => pure []
-    | some h => pure ((textLines (← readUnparsed e h.str (argN a 1))).map (fun l => .atom (Atomic.ofStr l)))),
+    | some h => pure ((textLines (← readUnparsed e h.str (argN a 1) ["encoding", "fallback"])).map (fun l => .atom (Atomic.ofStr l)))),
   ent "unparsed-text-available" (fun _ e a => do
     match optAtom (argN a 0) with
     | none => pure (sBool false)
@@ -415,7 +483,12 @@ def xmlParseTable : List (String × LibFn) := [
   ent "doc-available" (fun _ e a => do
     match optAtom (argN a 0) with
     | none => pure (sBool false)
-    | some _ => pure (sBool (match docFn e a with | .ok _ => true | .error _ => false))),
+    | some _ =>
+      -- a type error in the options is raised, not turned into false
+      match parseOpts e (argN a 1) with
+      | .error x => if x.code == "XPTY0004" then throw x
+      | .ok _ => pure ()
+      pure (sBool (match docFn e a with | .ok _ => true | .error _ => false))),
   ent "base-uri" (fun _ e a => do
     match ← nodeArg e (argN a 0) with
     | none => pure []

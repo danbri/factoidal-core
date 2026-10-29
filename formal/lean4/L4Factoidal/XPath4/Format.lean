@@ -8,11 +8,11 @@ Spec: F&O 4.0 editor's draft, qtspecs commit
 b4723ff52fd9d4fabf2b4cd33bd44f21939c512c (`xpath-functions.xml` §5.4,
 §5.5, §9.8; `function-catalog.xml`).
 
-Language: English only (names, words, ordinals). Another language gives
-English output, and the date functions then prefix `[Language: en]`
-(§9.8.4.8). Calendars: `AD` and `ISO`; another calendar gives `AD` output
-with the prefix `[Calendar: AD]`. Places (time zone names) are not
-supported: the `place` argument is ignored.
+Languages: English, German, French and Italian (names, words, ordinals;
+the other three are `XPath4.NumberWords`). Another language gives English
+output, and the date functions then prefix `[Language: en]` (§9.8.4.8). Calendars: `AD` and `ISO`; another calendar gives `AD` output
+with the prefix `[Calendar: AD]`. Places: an IANA zone name in `place` (`XPath4.Tz`) adjusts a dateTime
+with a timezone to that zone's civil time; any other `place` is ignored.
 
 Decimal digit families are the Unicode 15.1 `Nd` ranges (each a run of
 ten code points with digit values 0 to 9; the list of zero digits below).
@@ -24,6 +24,8 @@ that is not alphanumeric.
 -/
 import L4Factoidal.XPath4.Lib
 import L4Factoidal.Fn.DateTime
+import L4Factoidal.XPath4.Tz
+import L4Factoidal.XPath4.NumberWords
 
 namespace L4Factoidal.XPath4
 
@@ -249,24 +251,31 @@ def fmtDigitPat (p : DigitPat) (n : Nat) : String :=
 
 /-! ## fn:format-integer -/
 
-/-- The format modifier: (ordinal?, alphabetic/traditional). -/
-def parseIntModifier (m : String) : M (Bool × Option Char) := do
+/-- The format modifier: (ordinal?, alphabetic/traditional, the text in
+    the parentheses). -/
+def parseIntModifierV (m : String) : M (Bool × Option Char × Option String) := do
   let cs := m.toList
   let (ord, rest) ← match cs with
     | 'o' :: r => pure (true, r)
     | 'c' :: r => pure (false, r)
     | r => pure (false, r)
-  let rest ← match rest with
+  let (variant, rest) ← match rest with
     | '(' :: r =>
       if cs.head? != some 'o' && cs.head? != some 'c' then fmtErr "a parenthesis without c or o" else
       match r.findIdx? (· == ')') with
-      | some i => if i == 0 then fmtErr "empty parentheses in the format modifier" else pure (r.drop (i + 1))
+      | some i =>
+        if i == 0 then fmtErr "empty parentheses in the format modifier"
+        else pure (some (String.ofList (r.take i)), r.drop (i + 1))
       | none => fmtErr "unclosed parenthesis in the format modifier"
-    | r => pure r
+    | r => pure (none, r)
   match rest with
-  | [] => pure (ord, none)
-  | [c] => if c == 'a' || c == 't' then pure (ord, some c) else fmtErr ("bad format modifier " ++ m)
+  | [] => pure (ord, none, variant)
+  | [c] => if c == 'a' || c == 't' then pure (ord, some c, variant) else fmtErr ("bad format modifier " ++ m)
   | _ => fmtErr ("bad format modifier " ++ m)
+
+def parseIntModifier (m : String) : M (Bool × Option Char) := do
+  let (o, a, _) ← parseIntModifierV m
+  pure (o, a)
 
 /-- Split the picture at its last semicolon (if any). -/
 def splitPicture (pic : String) : String × String :=
@@ -288,8 +297,18 @@ def radixPrefix (tok : List Char) : Option (Nat × List Char) :=
   | none => none
 
 /-- Format a non-negative number by a primary token (no sign). -/
-def fmtIntToken (tok : List Char) (n : Nat) (ord : Bool) (lang : String) : M String := do
-  let _ := lang
+def fmtIntToken (tok : List Char) (n : Nat) (ord : Bool) (lang : String)
+    (variant : Option String := none) : M String := do
+  -- words in German, French or Italian (`XPath4.NumberWords`)
+  let words : String :=
+    (if ord then NumberWords.ord? lang n variant else NumberWords.card? lang n).getD
+      (if ord then wordsOrd n else wordsCard n)
+  let capFirst (w : String) : String := match w.toList with
+    | c :: r => Fn.String.upperCase (String.singleton c) ++ String.ofList r
+    | [] => ""
+  let titled : String :=
+    if NumberWords.hasLang lang && n < 1000000000 then String.intercalate " " ((words.splitOn " ").map capFirst)
+    else titleCase words
   match radixPrefix tok with
   | some (r, rest) =>
     let p ← parseDigitPat rest (some r)
@@ -306,9 +325,9 @@ def fmtIntToken (tok : List Char) (n : Nat) (ord : Bool) (lang : String) : M Str
     | "a" => if n == 0 then dflt else pure (alphaSeq false n)
     | "I" => if n == 0 || n > 4999 then dflt else pure (romanSeq true n)
     | "i" => if n == 0 || n > 4999 then dflt else pure (romanSeq false n)
-    | "w" => pure (if ord then wordsOrd n else wordsCard n)
-    | "W" => pure (if ord then wordsOrd n else wordsCard n).toUpper
-    | "Ww" => pure (titleCase (if ord then wordsOrd n else wordsCard n))
+    | "w" => pure words
+    | "W" => pure (Fn.String.upperCase words)
+    | "Ww" => pure titled
     | "α" => if n == 0 then dflt else pure (greekSeq false n)
     | "Α" => if n == 0 then dflt else pure (greekSeq true n)
     | _ =>
@@ -330,8 +349,8 @@ def fmtIntToken (tok : List Char) (n : Nat) (ord : Bool) (lang : String) : M Str
 def formatInteger (v : Int) (pic : String) (lang : String) : M String := do
   let (tok, modi) := splitPicture pic
   if tok.isEmpty then fmtErr "empty primary format token"
-  let (ord, _) ← parseIntModifier modi
-  let s ← fmtIntToken tok.toList v.natAbs ord lang
+  let (ord, _, variant) ← parseIntModifierV modi
+  let s ← fmtIntToken tok.toList v.natAbs ord lang variant
   pure ((if v < 0 then "-" else "") ++ s)
 
 /-! ## fn:format-number -/
@@ -506,16 +525,32 @@ def decOfFloatShort (isF32 : Bool) (x : Float) : Dec :=
   let m : Int := if x < 0 then -(d : Int) else d
   if e ≥ 0 then Dec.norm ⟨m * (10 : Int) ^ e.toNat, 0⟩ else Dec.norm ⟨m, (-e).toNat⟩
 
+/-- The exact decimal value of the absolute value of a finite double. -/
+def floatExactDec (x : Float) : Dec :=
+  let bits := x.toBits.toNat
+  let e := (bits >>> 52) % 2048
+  let frac := bits % (2 ^ 52)
+  let (m, p) : Nat × Int := if e == 0 then (frac, -1074) else (frac + 2 ^ 52, (e : Int) - 1075)
+  if p ≥ 0 then ⟨((m * 2 ^ p.toNat : Nat) : Int), 0⟩
+  else Dec.norm ⟨((m * 5 ^ (-p).toNat : Nat) : Int), (-p).toNat⟩
+
 def pow10Dec (k : Int) : Dec := if k ≥ 0 then ⟨(10 : Int) ^ k.toNat, 0⟩ else ⟨1, (-k).toNat⟩
 
 def decMul (a b : Dec) : Dec := Dec.norm ⟨a.mantissa * b.mantissa, a.scale + b.scale⟩
 
-def formatSub (f : DecFormat) (sp : SubPic) (absv : Dec) : String := Id.run do
-  let v := if sp.pct then decMul absv (Dec.ofInt 100) else if sp.pml then decMul absv (Dec.ofInt 1000) else absv
+/-- Format the absolute value `absv`. `adjusted`: the percent or per-mille
+    multiplication is done; `mex`: the mantissa and exponent are given
+    (for a float or double, whose mantissa keeps its type, §5.5.3). -/
+def formatSub (f : DecFormat) (sp : SubPic) (absv : Dec) (adjusted : Bool := false)
+    (mex : Option (Dec × Int) := none) : String := Id.run do
+  let v := if adjusted then absv
+    else if sp.pct then decMul absv (Dec.ofInt 100) else if sp.pml then decMul absv (Dec.ofInt 1000) else absv
   -- exponent
   let mut m := v
   let mut ex : Int := 0
-  if sp.minExp > 0 && v.mantissa != 0 then
+  if let some (m0, e0) := mex then
+    m := m0; ex := e0
+  else if sp.minExp > 0 && v.mantissa != 0 then
     let (ip, fp) := decDigits v
     -- position of the decimal exponent: v = 0.d1d2.. × 10^k
     let k : Int := if !ip.isEmpty then ip.length else -((fp.takeWhile (· == '0')).length : Int)
@@ -574,11 +609,30 @@ def formatNumberWith (f : DecFormat) (x : Option Num) (pic : String) : M String 
       let big := v.isInf || ((sp.pct || sp.pml) && (v * 1000).isInf)
       if big then return (sp.pre ++ f.infinity ++ sp.suf)
     | _ => pure ()
+    match n with
+    | .f v | .g v =>
+      -- F&O 4.0 §5.5.3: the adjusted number and the mantissa keep the
+      -- type of the input; then the shortest decimal that converts back
+      let isF32 : Bool := match n with | .f _ => true | _ => false
+      let rnd (y : Float) : Float := if isF32 then y.toFloat32.toFloat else y
+      let k : Float := if sp.pct then 100 else if sp.pml then 1000 else 1
+      let adj := rnd (v.abs * k)
+      let short (y : Float) : Dec := let x := decOfFloatShort isF32 y; ⟨x.mantissa.natAbs, x.scale⟩
+      let d := short adj
+      if sp.minExp > 0 && adj != 0 then
+        let (ip, fp) := decDigits d
+        let pos : Int := if !ip.isEmpty then ip.length else -((fp.takeWhile (· == '0')).length : Int)
+        let ex := pos - sp.scale
+        -- M = adj / 10^ex, as the nearest value of the input's type
+        let exact := decMul (floatExactDec adj) (pow10Dec (-ex))
+        let mF := rnd (Float.ofScientific exact.mantissa.natAbs true exact.scale)
+        pure (formatSub f sp d true (some (short mF, ex)))
+      else pure (formatSub f sp d true)
+    | _ =>
     let d : Dec := match n with
       | .i v => Dec.ofInt v.natAbs
       | .d v => ⟨v.mantissa.natAbs, v.scale⟩
-      | .f v => let x := decOfFloatShort true v; ⟨x.mantissa.natAbs, x.scale⟩
-      | .g v => let x := decOfFloatShort false v; ⟨x.mantissa.natAbs, x.scale⟩
+      | _ => Dec.zero
     pure (formatSub f sp d)
 
 /-! ## Dates and times (§9.8) -/
@@ -708,8 +762,8 @@ def widenPattern (tok : List Char) (w : Nat) : List Char :=
 
 def nameFmt (full : String) (p1 : String) (mn mx : Option Nat) : String :=
   let s := match p1 with
-    | "N" => full.toUpper
-    | "n" => full.toLower
+    | "N" => Fn.String.upperCase full
+    | "n" => Fn.String.lowerCase full
     | _ => full
   let s := match mx with
     | some k => if s.length > k then (s.take (if k ≥ 3 then 3 else k)).toString else s
@@ -727,7 +781,7 @@ def asDateErr {α} (x : M α) : M α :=
   | ok => ok
 
 /-- Format an integer component. -/
-def fmtComp (mk : Marker) (dflt : String) (v : Nat) : M String := asDateErr do
+def fmtComp (mk : Marker) (dflt : String) (v : Nat) (lang : String := "en") : M String := asDateErr do
   let p1 := if mk.pres1 == "" || isNameTok mk.pres1 then dflt else mk.pres1
   let ord := mk.pres2 == some 'o'
   let tok := p1.toList
@@ -735,16 +789,21 @@ def fmtComp (mk : Marker) (dflt : String) (v : Nat) : M String := asDateErr do
     let tok := match mk.minW with
       | some w => widenPattern tok w
       | none => tok
-    let s ← fmtIntToken tok v ord "en"
+    let s ← fmtIntToken tok v ord lang
     pure s
   else
-    let s ← fmtIntToken tok v ord "en"
+    let s ← fmtIntToken tok v ord lang
     match mk.minW with
     | some k => pure (s ++ String.ofList (List.replicate (k - min k s.length) ' '))
     | none => pure s
 
-def tzString (mk : Marker) (tz : Option Int) : M String := do
+def tzString (mk : Marker) (tz : Option Int) (abbr : Option String := none) : M String := do
   let p1 := if mk.pres1 == "" then "01:01" else mk.pres1
+  -- the N presentation with a recognised place: the zone abbreviation, when it is letters
+  let named : Option String := match abbr with
+    | some a => if p1 == "N" && !a.isEmpty && a.toList.all Char.isAlpha then some a else none
+    | none => none
+  if let some a := named then return a
   let gmt := if mk.comp == 'z' then "GMT" else ""
   match tz with
   | none => pure (if p1 == "Z" then "J" else "")
@@ -821,7 +880,14 @@ def fracSeconds (mk : Marker) (sec : Dec) : M String := do
     out := out.push (Char.ofNat (zero + (c.toNat - 48)))
   pure out
 
-def formatDT (kind : DTKind) (v : DTValue) (pic : String) (lang cal : Option String) : M String := do
+def formatDT (kind : DTKind) (v0 : DTValue) (pic : String) (lang cal : Option String)
+    (place : Option String := none) : M String := do
+  let (v, abbr) : DTValue × Option String :=
+    match place with
+    | some p => if kind == .dateTime then
+        (match placeAdjust v0 p with | some (v', a) => (v', some a) | none => (v0, none))
+      else (v0, none)
+    | none => (v0, none)
   let parts ← parseDatePicture pic
   let hasDate := kind != .time
   let hasTime := kind != .date
@@ -832,8 +898,15 @@ def formatDT (kind : DTKind) (v : DTValue) (pic : String) (lang cal : Option Str
   let mi := v.minute.getD 0
   let sec := v.second.getD Dec.zero
   let mut out := ""
+  let langS : String := match lang with
+    | some l => if NumberWords.hasLang l then l else "en"
+    | none => "en"
   if let some l := lang then
-    if !(l == "" || l.toLower == "en" || l.toLower.startsWith "en-") then out := "[Language: en]"
+    if !(l == "" || l.toLower == "en" || l.toLower.startsWith "en-" || NumberWords.hasLang l) then
+      out := "[Language: en]"
+  let fmtComp (mk : Marker) (dflt : String) (v : Nat) : M String := fmtComp mk dflt v langS
+  let months := (NumberWords.months? langS).getD monthNames
+  let days := (NumberWords.days? langS).getD dayNames
   if let some c := cal then
     let c := c.trim
     let isNC (t : String) : Bool := match t.toList with
@@ -877,14 +950,14 @@ def formatDT (kind : DTKind) (v : DTValue) (pic : String) (lang cal : Option Str
           if isNameTok mk.pres1 then fmtComp { mk with pres1 := "1" } "1" yv
           else fmtComp mk "1" yv
         | 'M' =>
-          if isNameTok mk.pres1 then pure (nameFmt (monthNames.getD (mo - 1) "") mk.pres1 mk.minW mk.maxW)
+          if isNameTok mk.pres1 then pure (nameFmt (months.getD (mo - 1) "") mk.pres1 mk.minW mk.maxW)
           else fmtComp mk "1" mo
         | 'D' => fmtComp mk "1" d
         | 'd' => fmtComp mk "1" (dayOfYear y mo d)
         | 'F' =>
           let wd := isoWeekday y mo d
           if mk.pres1 == "" || isNameTok mk.pres1 then
-            pure (nameFmt (dayNames.getD (wd - 1) "") (if mk.pres1 == "" then "n" else mk.pres1) mk.minW mk.maxW)
+            pure (nameFmt (days.getD (wd - 1) "") (if mk.pres1 == "" then "n" else mk.pres1) mk.minW mk.maxW)
           else fmtComp mk "1" wd
         | 'W' => fmtComp mk "1" (isoWeek y mo d)
         | 'w' => fmtComp mk "1" (weekInMonth y mo d)
@@ -896,7 +969,7 @@ def formatDT (kind : DTKind) (v : DTValue) (pic : String) (lang cal : Option Str
         | 'm' => fmtComp mk "01" mi
         | 's' => fmtComp mk "01" (sec.floorDiv.toNat)
         | 'f' => fracSeconds mk sec
-        | 'Z' | 'z' => tzString mk v.tz
+        | 'Z' | 'z' => tzString mk v.tz abbr
         | 'C' => pure (nameFmt "AD" (if mk.pres1 == "" then "N" else mk.pres1) mk.minW mk.maxW)
         | 'E' => pure (nameFmt (if y > 0 then "AD" else "BC") (if mk.pres1 == "" then "N" else mk.pres1) mk.minW mk.maxW)
         | _ => dateErr "unknown component"
@@ -1084,7 +1157,7 @@ def dateFn : LibFn := fun _ _ a => do
   | some x =>
     match dtOf x with
     | some (k, v) =>
-      let s ← formatDT k v (strOf (argN a 1)) (optStr (argN a 2)) (optStr (argN a 3))
+      let s ← formatDT k v (strOf (argN a 1)) (optStr (argN a 2)) (optStr (argN a 3)) (optStr (argN a 4))
       pure (sStr s)
     | none => err "XPTY0004" "expected a date/time value"
 
@@ -1109,7 +1182,10 @@ def formatTable : List (String × LibFn) := [
           match v with
           | [.atom q] => fmtName := some (match q.v with | .qn n => n.eqn | _ => "Q{}" ++ q.str)
           | _ => pure ()
-        else props := props ++ [(k.str, strOf v)]
+        else
+          -- the property values are atomized (an array gives its members)
+          let as ← e.atomize v
+          props := props ++ [(k.str, String.join (as.map Atomic.str))]
     | [.atom s] =>
       let nm := s.str.trim
       if nm.startsWith "Q{" then fmtName := some nm
@@ -1144,6 +1220,9 @@ def formatTable : List (String × LibFn) := [
 #guard (formatInteger 255 "16^xxxx" "en").toOption == some "00ff"
 #guard (formatInteger 21 "w;o" "en").toOption == some "twenty-first"
 #guard (formatInteger 1999 "I" "en").toOption == some "MCMXCIX"
+#guard (formatInteger 1 "Ww;o(-er)" "de").toOption == some "Erster"
+#guard (formatInteger 2 "Ww;o" "fr").toOption == some "Deuxième"
+#guard (formatInteger 5 "Ww;o(-a)" "it").toOption == some "Quinta"
 #guard (formatNumberWith {} (some (.d ⟨123456789, 2⟩)) "#,##0.00").toOption == some "1,234,567.89"
 #guard (formatNumberWith {} (some (.g 0.000123)) "0.0e0").toOption == some "1.2e-4"
 

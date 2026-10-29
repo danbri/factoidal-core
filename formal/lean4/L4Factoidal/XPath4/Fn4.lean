@@ -184,9 +184,12 @@ def xsdValidateFn : LibFn := fun _ e a => do
       | .error x => throw x
       | .ok (res, errs) =>
         let id := n.doc + (2 : Nat) ^ 42
+        -- the typed node of an element is a new parentless element
+        -- (record 1 of the validated document, its document node cut off)
         let typed : List Item := match res with
           | some nd => if r.kind == .document then [.node { doc := id, idx := 0, rt := some nd }]
-                       else [.node { doc := id, idx := 1, rt := some nd }]
+                       else [.node { doc := id, idx := 1,
+                                     rt := some { nd with nodes := nd.nodes.modify 1 (fun x => { x with parent := none }) } }]
           | none => []
         let entries : List (Atomic × Seq) :=
           [(Atomic.ofStr "is-valid", [.atom (Atomic.ofBool res.isSome)])] ++
@@ -437,8 +440,10 @@ def trimSpaceFn : LibFn := fun _ e a => do
   let cs := if side != "start" then (cs.reverse.dropWhile isWs).reverse else cs
   pure (sStr (String.ofList cs))
 
-def systemPropertiesFn : LibFn := fun _ _ _ =>
+def systemPropertiesFn : LibFn := fun _ e _ =>
   let q (l : String) : Atomic := Atomic.ofQN { uri := "", loc := l }
+  -- dynamic XQuery and XSLT: when the host offers them (`Env.host`)
+  let hostHas (l : String) (k : Nat) : Bool := (e.host { uri := nsFN, loc := l } k).isSome
   pure [.map [
     (q "xpath-version", [.atom (Atomic.ofDec ⟨40, 1⟩)]),
     (q "xsd-version", [.atom (Atomic.ofDec ⟨11, 1⟩)]),
@@ -449,9 +454,9 @@ def systemPropertiesFn : LibFn := fun _ _ _ =>
     (q "supports-xinclude", [.atom (Atomic.ofBool false)]),
     (q "supports-dtd-validation", [.atom (Atomic.ofBool false)]),
     (q "supports-dtd-attribute-typing", [.atom (Atomic.ofBool false)]),
-    (q "supports-invisible-xml", [.atom (Atomic.ofBool false)]),
-    (q "supports-dynamic-xquery", [.atom (Atomic.ofBool false)]),
-    (q "supports-dynamic-xslt", [.atom (Atomic.ofBool false)]),
+    (q "supports-invisible-xml", [.atom (Atomic.ofBool true)]),
+    (q "supports-dynamic-xquery", [.atom (Atomic.ofBool (hostHas "load-xquery-module" 1))]),
+    (q "supports-dynamic-xslt", [.atom (Atomic.ofBool (hostHas "transform" 1))]),
     (q "supports-binary-library", [.atom (Atomic.ofBool true)]),
     (q "supports-file-library", [.atom (Atomic.ofBool true)])]]
 
@@ -841,8 +846,31 @@ def idrefFn : LibFn := fun _ e a => do
     if toks.any (fun t => cands.contains t) then out := out.push (.node (root.at i))
   pure out.toList
 
+/-- The number of states that `fn:generate` makes before it stops. -/
+def genStates : Nat := 100000
+
+/-- `fn:generate` (F&O 4.0 §15.5.4) evaluated in full: the states until
+    the step function gives the empty sequence. The consumers that need
+    only a prefix (`XPath4.Eval.genShortcut`) do not come here. A sequence
+    of more than 100,000 states is an implementation limit (XPDY0130). -/
+def generateFn : LibFn := fun h _ a => do
+  let some first := (argN a 0).head? | err "XPTY0004" "fn:generate: $init must be one item"
+  let f := (argN a 1).headD default
+  let mut state := first
+  let mut out : Array Item := #[first]
+  let mut pos : Nat := 1
+  for _ in [0:genStates] do
+    -- an arity-0 or arity-1 step function gets the first arguments only
+    let nxt ← h.call f (([[state], [.atom (Atomic.ofInt pos)]] : List Seq).take ((f.fnArity.getD 2).min 2))
+    match nxt with
+    | [] => return out.toList
+    | [x] => state := x; out := out.push x
+    | _ => err "XPTY0004" "fn:generate: $step must return at most one item"
+    pos := pos + 1
+  err "XPDY0130" "fn:generate made more states than this implementation allows (an implementation limit)"
+
 def fn4Table : List (String × LibFn) :=
-  [("hash", hashFn), ("random-number-generator", rngFn), ("rng-record#", rngRecordFn),
+  [("hash", hashFn), ("generate", generateFn), ("random-number-generator", rngFn), ("rng-record#", rngRecordFn),
    ("xsd-validator", xsdValidatorFn), ("xsd-validate#", xsdValidateFn),
    ("rng-permute#", rngPermuteFn), ("rng-take#", rngTakeFn),
    ("parts-of-dateTime", partsOfDateTimeFn), ("build-dateTime", buildDateTimeFn),

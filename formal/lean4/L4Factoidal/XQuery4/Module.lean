@@ -21,6 +21,7 @@ A main module is evaluated as follows: the functions are bound
 marker `Runtime.staticKey` on top of the bindings, then the query body.
 -/
 import L4Factoidal.XQuery4.Grammar
+import L4Factoidal.XQueryUpdate.Grammar
 import L4Factoidal.XQuery4.Static
 import L4Factoidal.XPath4.Eval
 
@@ -34,6 +35,11 @@ structure FnDecl where
   params : List (QN × IType × Option Expr)
   ret : IType
   body : Option Expr
+  /-- XQuery Update Facility 3.0 §2.3.1: declared `%updating` (or with
+      the keyword `updating`). -/
+  updating : Bool := false
+  /-- The declaration gives a return type (`as SequenceType`). -/
+  retGiven : Bool := false
 deriving Inhabited
 
 inductive Decl where
@@ -66,12 +72,17 @@ structure Module where
   privates : List QN := []
   /-- Decimal formats (`declare decimal-format`), as `Env.decimalFormats`. -/
   decimalFormats : List (String × List (String × String)) := []
+  /-- Output declarations (`declare option output:name "value"`, §5.20.2):
+      local name and value, in order (`XPath4.declParams` reads them). -/
+  outputDecls : List (String × String) := []
+  /-- XQuery Update Facility 3.0 §4.1: `declare revalidation`. -/
+  revalidation : Option String := none
 deriving Inhabited
 
 def qerr {α} (code msg : String) : P α := throw { code, msg }
 
 def withXq {α} (cfg : Cfg) (ns : List (String × String)) (p : P α) : P α :=
-  withReader (fun c => { c with ns, ext := some (grammar cfg), types := cfg.types,
+  withReader (fun c => { c with ns, ext := some (XQueryUpdate.grammarU cfg), types := cfg.types,
                                 lenientTypes := cfg.lenient }) p
 
 def reservedFnNs : List String :=
@@ -82,7 +93,7 @@ def reservedFnNs : List String :=
 def declWords : List String :=
   ["namespace", "default", "boundary-space", "base-uri", "construction", "ordering",
    "copy-namespaces", "decimal-format", "variable", "function", "option", "context",
-   "record", "type", "revalidation", "updating", "fixed"]
+   "record", "type", "revalidation", "updating", "fixed", "ft-option"]
 
 /-- Is a `declare`/`import` keyword followed by a declaration word? -/
 def atDecl : P (Option String) := do
@@ -125,7 +136,7 @@ def pAnnotations : P (List String) := do
     | some (p, u, l, e) =>
       set e
       let q ← resolve p u l "http://www.w3.org/2012/xquery"
-      if q.uri == "http://www.w3.org/2012/xquery" && !(["public", "private", "constructor"].contains l) then
+      if q.uri == "http://www.w3.org/2012/xquery" && !(["public", "private", "constructor", "updating", "simple"].contains l) then
         qerr "XQST0045" ("reserved annotation %" ++ l)
       if [nsFN, nsXS, nsMATH, nsMAP, nsARR, "http://www.w3.org/XML/1998/namespace",
           "http://www.w3.org/2001/XMLSchema-instance"].contains q.uri then
@@ -258,6 +269,10 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
     expectKw "declare"
     let annots ← withXq cfg ns pAnnotations
     let w ← pNCName
+    -- XQuery Update Facility 3.0 §2.3.1: the keyword `updating` is `%updating`
+    let (annots, w) ← if w == "updating" then pure (annots ++ ["updating"], ← pNCName) else pure (annots, w)
+    if (annots.filter (fun a => a == "updating" || a == "simple")).length > 1 then
+      qerr "XUST0033" "more than one %updating or %simple annotation"
     -- 4.0: `declare fixed default ... namespace` (fixed for the module)
     let w ← if w == "fixed" then pNCName else pure w
     match w with
@@ -365,14 +380,35 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       expectS ";"
       if m.decimalFormats.any (·.1 == key) then qerr "XQST0111" "two decimal formats with one name"
       m := { m with decimalFormats := m.decimalFormats ++ [(key, props)] }
+    | "ft-option" =>
+      -- Full Text 3.0 §2.4 FTOptionDecl: the match options of the static
+      -- context, kept under the pseudo-prefix `#ftopt` for the
+      -- `contains text` parser (one entry per declaration, in order)
+      -- a Setter: before every variable and context value declaration
+      if !varNames.isEmpty || ctxSeen then synErr "declare ft-option after a variable declaration"
+      let os ← withXq cfg ns (L4Factoidal.FullText.pMatchOptions expandRefs)
+      expectS ";"
+      let prev := (ns.lookup "#ftopt").getD ""
+      ns := ("#ftopt", prev ++ "\x1e" ++ String.intercalate L4Factoidal.FullText.osep os) ::
+        ns.filter (·.1 != "#ftopt")
     | "option" =>
-      match ← peekQName with
+      let oq ← match ← peekQName with
       | some (p, u, l, e) =>
         set e
-        let _ ← withXq cfg ns (resolve p u l "http://www.w3.org/2012/xquery")
+        withXq cfg ns (resolve p u l "http://www.w3.org/2012/xquery")
       | none => synErr "bad option name"
-      let _ ← pStringLit
+      -- an XQuery string literal: references expanded (§4.2.1)
+      let ov ← match expandRefs (← pStringLit) with
+        | .ok t => pure t
+        | .error ex => throw ex
       expectS ";"
+      -- output declarations (§5.20.2): XQST0108, XQST0109, XQST0110
+      if oq.uri == nsOUTPUT then
+        if m.libNs.isSome then qerr "XQST0108" "an output declaration in a library module"
+        if ((paramKinds.lookup oq.loc).isNone && oq.loc != "parameter-document") || oq.loc == "use-character-maps" then
+          qerr "XQST0109" ("unknown serialization parameter output:" ++ oq.loc)
+        if m.outputDecls.any (·.1 == oq.loc) then qerr "XQST0110" ("output:" ++ oq.loc ++ " declared twice")
+        m := { m with outputDecls := m.outputDecls ++ [(oq.loc, ov)] }
     | "context" =>
       if !(← eatKw "item") then expectKw "value"
       if ctxSeen then qerr "XQST0099" "two context item declarations"
@@ -388,6 +424,8 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
         expectS ";"
         m := { m with decls := m.decls ++ [.ctx ty d true] }
     | "variable" =>
+      if annots.contains "updating" || annots.contains "simple" then
+        qerr "XUST0032" "%updating or %simple on a variable declaration"
       let v ← withXq cfg ns pVar
       if varNames.any (· == v) then qerr "XQST0049" ("variable $" ++ v.show ++ " declared twice")
       varNames := v :: varNames
@@ -431,6 +469,7 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
           ps := ps.push (v, t, d)
           if !(← eatS ",") then break
         expectS ")"
+      let retGiven ← atKw "as"
       let ret ← if ← eatKw "as" then withXq cfg ns (pSeqType 1000) else pure (.seq .item .star)
       let body ← if ← eatKw "external" then pure none
         else pure (some (← withXq cfg ns (pEnclosed 100000)))
@@ -440,7 +479,8 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
       if fnSigs.any (fun (q2, lo, hi) => q2 == q && !(hi < minA || maxA < lo)) then
         qerr "XQST0034" ("function " ++ q.show ++ " declared twice")
       fnSigs := (q, minA, maxA) :: fnSigs
-      m := { m with decls := m.decls ++ [.fn { name := q, params := ps.toList, ret, body }] }
+      m := { m with decls := m.decls ++ [.fn { name := q, params := ps.toList, ret, body,
+                                                updating := annots.contains "updating", retGiven }] }
       if annots.contains "private" then m := { m with privates := q :: m.privates }
     | "type" =>
       let q ← match ← peekQName with
@@ -491,8 +531,14 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
         qerr "XPST0003" "a required record field after an optional one"
       if fs.toList.all (fun (f, _, _, _) => L4Factoidal.XSD.isNCName f) then
         m := { m with decls := m.decls ++ [.fn { name := q, params, ret := rt, body := some body }] }
-    | "revalidation" => qerr "XQST0075" "revalidation is not supported"
-    | "updating" => qerr "XUST0001" "updating functions are not supported"
+    | "revalidation" =>
+      -- XQuery Update Facility 3.0 §4.1
+      let mode ← pNCName
+      expectS ";"
+      if !(["strict", "lax", "skip"].contains mode) then synErr ("unknown revalidation mode " ++ mode)
+      if m.revalidation.isSome then qerr "XUST0003" "two revalidation declarations"
+      m := { m with revalidation := some mode }
+      cfg := { cfg with revalidation := some mode }
     | _ => synErr ("unknown declaration " ++ w)
   m := { m with ns, types := cfg.types }
   if m.libNs.isNone then
@@ -511,13 +557,14 @@ def pModule (types0 : List (QN × IType) := []) (lenient : Bool := false) : P Mo
 
 /-- Parse an XQuery 4.0 module, with the namespace bindings of the
     environment. -/
-def parseModule (src : String) (ns : List (String × String) := []) : M Module :=
+def parseModule (src : String) (ns : List (String × String) := [])
+    (schemaDecl : Bool → QN → Bool := fun _ _ => false) : M Module :=
   let s := src.toList.toArray
   -- first pass: the named types, with forward references read as item()
-  let types0 := match ((pModule [] true).run { s, ns }).run 0 with
+  let types0 := match ((pModule [] true).run { s, ns, schemaDecl }).run 0 with
     | .ok (m, _) => m.types
     | .error _ => []
-  match ((pModule types0 false).run { s, ns }).run 0 with
+  match ((pModule types0 false).run { s, ns, schemaDecl }).run 0 with
   | .ok (m, _) => .ok m
   | .error e => .error e
 
@@ -535,6 +582,7 @@ def fnBinding (d : FnDecl) : Option (QN × Seq) :=
     let ps := d.params
     let lo := (ps.takeWhile (fun (_, _, x) => x.isNone)).length
     let full : Item := .fn (.inline (ps.map (fun (v, t, _) => (v, t))) d.ret body false [])
+    let full := if d.updating then XQueryUpdate.markUpdating full else full
     let dflts : List Item := (ps.drop lo).map (fun (_, t, x) =>
       .fn (.inline [] t (x.getD (.seq [])) true []))
     some (fnKey d.name lo ps.length, full :: dflts)
@@ -557,7 +605,7 @@ def loadImports (env : Env) : Nat → List String → Module → M (List Module 
       let texts := moduleTexts env u
       if texts.isEmpty then err "XQST0059" ("no module found for namespace " ++ u)
       for t in texts do
-        let lm ← parseModule t
+        let lm ← parseModule t [] env.schema.declared
         if (lm.libNs.map (·.2)) != some u then err "XQST0059" ("the module text is not a module for " ++ u)
         let (sub, seen') ← loadImports env d seen lm
         seen := seen'
@@ -595,6 +643,8 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
     let fnsM := ms.flatMap (fun m2 => m2.fnArities.filter (fun (q, _, _) => vis m2 q))
     let knownM (q : QN) (k : Nat) : Bool :=
       (findSigAny q).isSome || (q.uri == nsFN && q.loc == "concat") ||
+      -- XQuery Update Facility 3.0 §6.1
+      (q.uri == nsFN && q.loc == "put" && (k == 2 || k == 3)) ||
       fnsM.any (fun (q2, lo, hi) => (q2 == q || (q.uri == nsFN && q.pfx == "" && q2 == { q with uri := "" }))
         && lo ≤ k && k ≤ hi)
     let _ := known
@@ -695,6 +745,9 @@ def moduleEnv (env : Env) (m : Module) : Env :=
   let env := match m.defaultCollation with | some c => { env with defaultCollation := c } | none => env
   let env := match m.baseUri with | some b => { env with baseUri := b } | none => env
   let env := { env with decimalFormats := m.decimalFormats ++ env.decimalFormats }
+  let env := match m.revalidation with
+    | some r => env.bind XQueryUpdate.revalKey [.atom (Atomic.ofStr r)]
+    | none => env
   if m.constructionStrip then env.bind constructionStripKey [] else env
 
 /-- Evaluate a main module. -/
@@ -714,7 +767,7 @@ def evalModule (fuel : Nat) (env : Env) (m : Module) : M Seq := do
 
 /-- Parse and evaluate an XQuery 4.0 main module. -/
 def evalQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) : M Seq := do
-  let m ← parseModule src env.ns
+  let m ← parseModule src env.ns env.schema.declared
   evalModule fuel env m
 
 def evalQShow (src : String) : String :=

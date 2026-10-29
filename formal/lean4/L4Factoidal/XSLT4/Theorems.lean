@@ -26,7 +26,12 @@ Proved (no `sorry`; `#print axioms` below):
   equals itself and a version range that is a version matches it
   (§3.4.1); the ordering and range examples of §3.4.1 are `#guard`s;
 * `defaultPriority_*`: the default priorities of the basic pattern
-  forms are the values of §6.4.
+  forms are the values of §6.4;
+* `copyTree_run`, `copyAsTree_nodes`, `copy_content`, `copy_structure`,
+  `copyRecs_length`: a deep copy (`xsl:copy-of`, `fn:copy-of`, the
+  `deep-copy` built-in rule) has one node for each node of the source
+  subtree, with the same kind, name and value, and the same children and
+  attributes at the same relative indices (§11.9.2).
 
 Tested (`#guard`, checked at build time):
 
@@ -58,7 +63,8 @@ theorem expandTypes_nil (ns : List (String × String)) (f : Nat) (s : String) : 
   cases f <;> simp [expandTypes]
 
 theorem parse_eq_parseXPath (c : SCx) (src : String) (e : Expr)
-    (hns : c.xpathNs = "") (hty : c.types = []) (h : parseXPath src c.xpNs = .ok e) : c.parse src = .ok e := by
+    (hns : c.xpathNs = "") (hty : c.types = []) (h : parseXPath src c.xpNs none c.schemaDecl = .ok e) :
+    c.parse src = .ok e := by
   simp [SCx.parse, hty, expandTypes_nil, h, hns]
   rfl
 
@@ -325,5 +331,99 @@ theorem formatOne_eq (env : Env) (x : Int) (tok : String) (lng : Option String) 
 
 #print axioms numberText_single
 #print axioms formatOne_eq
+
+/-! ## The copy of a node (§11.9.2)
+
+`copyAsTree` makes the deep copy of `xsl:copy-of`, `fn:copy-of` and the
+`deep-copy` built-in rule. Its tree has one record for each node of the
+subtree of the source node, in document order, and each record has the
+kind, name and value of its source node, and its children and attributes
+at the same indices relative to the copied node. This is the identity of
+the copy on node content; the namespace scope (§5.7.3 fixup) and the type
+annotation (`validation`) are what the copy may change. -/
+
+
+theorem tPush_bind_run {α} (y : NRec) (k : Nat → TB α) (a : Array NRec) :
+    (tPush y >>= k).run a = (k a.size).run (a.push y) := rfl
+
+theorem pushAll_run (g : Nat → NRec) (l : List Nat) (a : Array NRec) :
+    (forIn l PUnit.unit (fun i (_ : PUnit) => do
+        let _ ← tPush (g i)
+        pure (ForInStep.yield PUnit.unit)) : TB PUnit).run a
+      = Except.ok (PUnit.unit, a ++ (l.map g).toArray) := by
+  induction l generalizing a with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [List.forIn_cons, bind_assoc, pure_bind]
+    rw [tPush_bind_run, ih]
+    simp
+
+theorem get_bind_run {α} (k : Array NRec → TB α) (a : Array NRec) :
+    (get >>= k).run a = (k a).run a := rfl
+
+theorem copyTree_run (env : Env) (src : NodeRef) (par : Option Nat) (ps : List (String × String))
+    (cn keep : Bool) (a : Array NRec) :
+    (copyTree env src par ps cn keep).run a =
+      Except.ok (a.size, a ++ ((List.range' src.idx (copyHi env src + 1 - src.idx)).map
+        (copyRecOf env src par ps cn keep a.size)).toArray) := by
+  unfold copyTree
+  simp only [Std.Legacy.Range.forIn_eq_forIn_range']
+  rw [get_bind_run, StateT.run_bind, pushAll_run]
+  simp [Std.Legacy.Range.size]
+  rfl
+
+/-- The records of a copy: one for each node of the subtree. -/
+def copyRecs (env : Env) (n : NodeRef) (cn keep : Bool) : List NRec :=
+  (List.range' n.idx (copyHi env n + 1 - n.idx)).map (copyRecOf env n none [("xml", nsXML)] cn keep 0)
+
+theorem copyAsTree_nodes (env : Env) (id : Nat) (n : NodeRef) (cn keep : Bool) :
+    ∃ uri base, copyAsTree env id n cn keep =
+      .ok (.node { doc := id, idx := 0, rt := some { nodes := (copyRecs env n cn keep).toArray, uri, baseUri := base } }) := by
+  refine ⟨if n.idx == 0 then (env.doc n).uri else "",
+    if (env.xmlBaseOf n).isSome && env.baseUri != "" then env.baseUri else (env.baseUriOf n).getD "", ?_⟩
+  have h := copyTree_run env n none [("xml", nsXML)] cn keep #[]
+  unfold copyAsTree
+  simp only [StateT.run_bind, h]
+  simp [copyRecs]
+  rfl
+
+theorem copyRecOf_content (env : Env) (src : NodeRef) (par : Option Nat) (ps : List (String × String))
+    (cn keep : Bool) (base i : Nat) :
+    (copyRecOf env src par ps cn keep base i).kind = ((env.doc src).get i).kind ∧
+    (copyRecOf env src par ps cn keep base i).name = ((env.doc src).get i).name ∧
+    (copyRecOf env src par ps cn keep base i).value = ((env.doc src).get i).value := by
+  unfold copyRecOf
+  cases keep <;> simp [NRec.untyped]
+
+theorem copy_content (env : Env) (n : NodeRef) (cn keep : Bool) (k : Nat)
+    (hk : k < (copyRecs env n cn keep).length) :
+    (copyRecs env n cn keep)[k].kind = ((env.doc n).get (n.idx + k)).kind ∧
+    (copyRecs env n cn keep)[k].name = ((env.doc n).get (n.idx + k)).name ∧
+    (copyRecs env n cn keep)[k].value = ((env.doc n).get (n.idx + k)).value := by
+  simp only [copyRecs, List.getElem_map, List.getElem_range']
+  simpa using copyRecOf_content env n none [("xml", nsXML)] cn keep 0 (n.idx + k)
+
+theorem copyRecs_length (env : Env) (n : NodeRef) (cn keep : Bool) :
+    (copyRecs env n cn keep).length = copyHi env n + 1 - n.idx := by
+  simp [copyRecs]
+
+theorem copy_structure (env : Env) (n : NodeRef) (cn keep : Bool) (k : Nat)
+    (hk : k < (copyRecs env n cn keep).length) :
+    (copyRecs env n cn keep)[k].children = ((env.doc n).get (n.idx + k)).children.map (· - n.idx) ∧
+    (copyRecs env n cn keep)[k].attrs = ((env.doc n).get (n.idx + k)).attrs.map (· - n.idx) := by
+  simp only [copyRecs, List.getElem_map, List.getElem_range']
+  unfold copyRecOf
+  cases keep <;> simp [NRec.untyped]
+
+
+#print axioms tPush_bind_run
+#print axioms pushAll_run
+#print axioms get_bind_run
+#print axioms copyTree_run
+#print axioms copyAsTree_nodes
+#print axioms copyRecOf_content
+#print axioms copy_content
+#print axioms copyRecs_length
+#print axioms copy_structure
 
 end L4Factoidal.XSLT4

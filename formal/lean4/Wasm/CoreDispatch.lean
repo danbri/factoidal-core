@@ -175,8 +175,10 @@ def fullOnlyOpNames : List String :=
   , "vcSha256Hex", "vcEd25519SecretToPublic", "vcEd25519Sign", "vcEd25519Verify"
   , "vcEddsaCreateFromCanonical", "vcEddsaVerifyFromCanonical"
   , "vcCheckCredential", "vcCheckCredentialSubject", "vcCheckNoDataLoss"
-  , "vcCheckRelatedResourceDigests", "didKeyResolve"
+  , "vcCheckRelatedResourceDigests", "didKeyResolve", "vcDiKey", "vcDiSecure", "vcDiVerify"
+  , "vcStatusEntryNew", "vcStatusListCredential", "vcStatusEntryCheck", "vcStatusValidate"
   , "cidValidate", "cidRetrieve"
+  , "xpath4Eval", "xqueryEval", "xslt4Transform"
   , "blobEcho" ]
 
 def arity1 (op : String) (f : String → String) : List String → String
@@ -474,6 +476,9 @@ private def ntDoc : String := "<http://e/a> <http://e/p> \"v\" .\n"
 #guard (call "queryDataset" "[\"<http://e/a> <http://e/p> \\\"v\\\" .\\n\",\"ASK { ?s ?p ?o }\"]").startsWith
          "{\"ok\":true"
 #guard has (call "xpathEval" "[\"<a/>\",\"/a\"]") "\"servedBy\":\"full\""
+#guard has (call "xpath4Eval" "[\"<a/>\",\"/a\"]") "\"servedBy\":\"full\""
+#guard has (call "xqueryEval" "[\"1\"]") "\"servedBy\":\"full\""
+#guard has (call "xslt4Transform" "[\"<x/>\",\"<a/>\"]") "\"servedBy\":\"full\""
 #guard has (call "jsonldToRdf" "[\"{}\",\"\"]") "\"servedBy\":\"full\""
 #guard (call "noSuchOp" "[]") == "{\"ok\":false,\"error\":\"unknown op 'noSuchOp'\",\"code\":\"op.unknown\"}"
 -- JSON-LD is refused by name; Turtle is read.

@@ -139,6 +139,61 @@ pass, 1290 fail, 3272 unsupported (out of 45946); without the fix 41383
 pass (prod/prod-LetClause gains one). XSLT 1.0 corpora (`l4xslt4
 --xslt10`): xslt 84 of 88, xslt1-xalan 1455 of 1686, as on `main`.
 
+## Round 2 (branch `claude/qt4-xslt-streaming-2`)
+
+Fixes that the streaming test sets found, outside the streaming analysis:
+
+* XPath 4.0 general comparison (`XPath4/Eval.lean`, `generalPair`): an
+  untyped value compared with a number is cast to the primitive type of
+  the number (`xs:decimal`, `xs:double` or `xs:float`), or to `xs:double`
+  if that fails (XPath 4.0 §4.11.2). Before, it was cast to `xs:double`,
+  so with the exact numeric comparison of 4.0 `PRICE = 6.58` was false.
+* `xsl:source-document` strips whitespace as `xsl:strip-space` says
+  (XSLT 4.0 §4.3). The stripping functions moved unchanged from
+  `XSLT4/Transform.lean` to `XSLT4/Strip.lean`, which `XSLT4/Interp.lean`
+  imports.
+* `copy-of`: each copy has its own node identity, so `a/b/copy-of()` keeps
+  every copy (before, `/` merged them into one node). Copies sort by
+  creation (the seed of the call), then by source order within one call.
+
+Measured (from `formal/lean4/`, `ulimit -s 65520`, `l4xslt4 --isolate 30`),
+the branch after the merge of `main` at `08ef339d` against `main` at the
+same commit:
+
+* xslt40-test, all vendored sets: 11585 pass, 801 fail, 1400 unsupported
+  (out of 13786; 16 excluded, defective test data); `main` 11429 pass.
+  49 test sets gain passes; no test set loses a pass.
+* `strm`: 2502 pass, 62 fail, 0 unsupported (out of 2564); `main` 2362.
+  `attr/streamable`: 128 pass, 11 fail (out of 139); `main` 125.
+* qt4tests (`l4qt4 --isolate 60`), before the merge: XPath mode 28252 pass
+  (`main` 28248), XQuery mode 42232 pass (`main` 42228); no test set lost
+  a pass.
+
+## Round 3 (branch `claude/qt4-xslt-streaming-3`)
+
+`XSLT4/Streaming/TableBridge.lean` connects the event stream to the XPath
+4.0 node table `Doc.ofNodes`, which the XPath 4.0 and XSLT 4.0 evaluators
+read. It uses `Doc.ofNodes_built` of
+https://github.com/danbri/factoidal-core/pull/205.
+
+* `evShapes evs`: the records that a stream processor makes from the
+  events, as (kind, value). A start event gives an element record and one
+  attribute record for each attribute that is not a namespace declaration.
+  A text or CDATA event joins the text record after it (adjacent text is one
+  text node, XDM 4.0 §6.7). An empty text gives no record. A stop event
+  stops the join.
+* `ofNodes_shapes`: for every `ns` with `Fits 100000`, the records at the
+  indices `1 .. size - 1` of `(Doc.ofNodes ns uri).nodes` are
+  `recsOf (evShapes (eventsList ns))`, in order.
+* `parse_table_shapes`: the same for every document that `XML.parseXML`
+  returns, over the tree that `build` rebuilds from `docEvents d`.
+* `F_mergeText`: the text merging of `Doc.ofNodes` (`mergeText`) does not
+  change the records of the event stream.
+
+`#print axioms`: `propext`, `Classical.choice`, `Quot.sound`. `#guard`s
+in `Streaming/Tests.lean` check the statement on two documents (with
+CDATA, a namespace declaration, a comment and a processing instruction).
+
 ## Not done
 
 * A streamed evaluation of the full XSLT 4.0 instruction set over the

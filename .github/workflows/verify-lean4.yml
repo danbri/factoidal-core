@@ -21,6 +21,21 @@ on:
       - 'tools/lean-*'
       - 'tools/test_lean_*'
       - 'third_party/testing/owl/**'
+      - 'third_party/testing/n3'
+      - 'tests/n3/**'
+      - 'third_party/testing/yaml-ld/**'
+      - 'tests/yamlld/**'
+      - 'third_party/testing/rif-bld-suite/**'
+      - 'third_party/testing/rif-core-suite/**'
+      - 'tests/rif-bld/**'
+      - 'tests/rif-bld-local/**'
+      - 'third_party/testing/rif-prd-suite/**'
+      - 'tests/rif-prd/**'
+      - 'tests/rif-local/**'
+      - 'third_party/testing/wpt-encoding/**'
+      - 'third_party/whatwg-encoding/**'
+      - 'tests/whatwg-encoding/**'
+      - 'tools/whatwg/**'
       - '.github/workflows/verify-lean4.yml'
   workflow_dispatch: {}
 
@@ -137,3 +152,56 @@ jobs:
       - name: HACL* extern probe (Ed25519 vectors + sha256 differential)
         working-directory: formal/lean4
         run: lake exe l4vc-probe
+
+      # The Notation3 reader on the W3C N3 Community Group suite and on the RDF
+      # 1.1 and RDF 1.2 Turtle suites, with the N3/Turtle reader agreement
+      # (https://github.com/danbri/factoidal/issues/1171). Both submodules are
+      # pinned; tests/n3/run.sh fails on a counted failure or a disagreement.
+      - name: Fetch pinned N3 and RDF test suites
+        run: git submodule update --init --depth 1 third_party/testing/n3 third_party/testing/w3c
+
+      - name: N3 reader and writer (W3C N3 CG suite, Turtle suites)
+        run: tests/n3/run.sh
+
+      # RDF Data Cube 2014: normalization and IC-0 to IC-21, each checked by the
+      # Recommendation's SPARQL texts and by the direct Lean functions, which
+      # must agree on every fixture (https://github.com/danbri/factoidal/issues/1165).
+      - name: RDF Data Cube integrity constraints (tests/datacube/run.sh)
+        run: bash tests/datacube/run.sh
+
+      # Canonical XML 1.0 and 1.1 and Exclusive XML Canonicalization 1.0: the
+      # Recommendations' examples and the XML Signature WG interop vectors in
+      # third_party/testing/xml-c14n (https://github.com/danbri/factoidal/issues/1165,
+      # track B item 1). Exits non-zero on a failure or a stale exclusion.
+      - name: XML canonicalization (lake exe l4c14n)
+        working-directory: formal/lean4
+        run: lake exe l4c14n
+
+      # YAML-LD 1.0 over the YAML 1.2.2 loader, and every JSON-LD 1.1 suite
+      # input through the same loader (https://github.com/danbri/factoidal/issues/1165).
+      - name: YAML-LD test suite (tests/yamlld/run.sh)
+        run: |
+          git submodule update --init --depth 1 third_party/testing/json-ld
+          bash tests/yamlld/run.sh
+
+      # RIF BLD 2013 on the W3C BLD suite, the corrected local copies, and
+      # every W3C RIF Core entailment case through the BLD engine
+      # (https://github.com/danbri/factoidal/issues/1165).
+      - name: RIF BLD test suite (tests/rif-bld/run.sh)
+        run: bash tests/rif-bld/run.sh
+
+      # RIF PRD 2013 on the W3C PRD manifest (53 cases, 46 shared with RIF
+      # Core); every shared Core entailment case must keep its Core verdict
+      # (https://github.com/danbri/factoidal/issues/1165).
+      - name: RIF PRD test suite (tests/rif-prd/run.sh)
+        run: bash tests/rif-prd/run.sh
+
+      # WHATWG Encoding Standard over the vendored web-platform-tests encoding/
+      # directory (https://github.com/danbri/factoidal/issues/1167, milestone 2).
+      # Node 22: the test host runs the WPT files in vm realms.
+      - name: Node 22 for the WPT encoding host
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: WHATWG Encoding, WPT encoding tests (tests/whatwg-encoding/run.sh)
+        run: bash tests/whatwg-encoding/run.sh

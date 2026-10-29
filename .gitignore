@@ -78,6 +78,11 @@ third_party/testing/vc/node_modules/
 third_party/testing/vc-di-eddsa/localConfig.cjs
 third_party/testing/vc-di-eddsa/reports/*.json
 third_party/testing/vc-di-eddsa/suite.log
+third_party/testing/vc-di-ecdsa/node_modules/
+third_party/testing/vc-di-ecdsa/localConfig.cjs
+third_party/testing/vc-di-ecdsa/reports/*.json
+third_party/testing/vc-di-ecdsa/suite.log
+third_party/testing/vc-di-ecdsa/tests/input/
 third_party/testing/vc/localConfig.cjs
 
 # Score-history snapshots: not a reliable timeseries (record-keeping conventions
@@ -183,3 +188,6 @@ npm/factoidal/node_modules/
 /formal/lean4/COLL/
 /formal/fstar/c-output/**/*.o
 /formal/fstar/c-output/deltalog/demo/delta_log_demo
+third_party/testing/vc-bitstring-status-list/node_modules/
+third_party/testing/vc-bitstring-status-list/localConfig.cjs
+third_party/testing/vc-bitstring-status-list/reports/*.json

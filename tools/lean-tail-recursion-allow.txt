@@ -1627,6 +1627,15 @@ L4Factoidal_XPath4_lookaheadGroups  # (b) nesting of one parsed regular expressi
 L4Factoidal_EXPath_File_exec  # (b) the depth is the nesting of the XPath expression (EXPath File 4.0 evaluator, issue 1101)
 L4Factoidal_EXPath_File_hasWrite  # (b) the depth is the nesting of the XPath expression (EXPath File 4.0, issue 1101)
 L4Factoidal_EXPath_Binary_packBE  # (s) specification only: no emitted C outside Binary/Octets.lean and Binary/Theorems.lean calls it; bin:pack-* call the loop packBEAcc (packBE_eq_packBEAcc)
+# --- Added 2026-10-28, fn:invisible-xml (XPath4/Ixml.lean) ---
+L4Factoidal_XPath4_Ixml_Boot_pAlts  # (b) bootstrap ixml grammar parser, run on the fixed ixml grammar text only; fuel decreases at each call; depth is the parenthesis nesting; lists are loops
+L4Factoidal_XPath4_Ixml_Boot_pAlt  # (b) as Boot_pAlts
+L4Factoidal_XPath4_Ixml_Boot_pTerm  # (b) as Boot_pAlts
+L4Factoidal_XPath4_Ixml_Boot_pFactor  # (b) as Boot_pAlts
+L4Factoidal_XPath4_Ixml_compileFactor  # (b) recursion on the nesting of one grammar factor (fuel 256); lists of factors are loops
+L4Factoidal_XPath4_Ixml_factorOf  # (b) recursion on the element nesting of the XML form of a grammar (fuel 256); children are loops
+L4Factoidal_XPath4_Ixml_altsOf  # (b) as factorOf
+L4Factoidal_XPath4_Ixml_xdmToXml  # (b) recursion on the element nesting of a grammar element (fuel); children are mapped
 
 # --- Added 2026-10-28, XSLT 4.0 processor (https://github.com/danbri/factoidal/issues/1101) ---
 Harness_Xslt4Run_checkAssert  # (b) the depth is the nesting of the test catalog assertion (all-of, any-of, not) (XSLT 4.0, issue 1101)
@@ -1719,6 +1728,8 @@ L4Factoidal_XSD11_readSimpleType  # (b) depth is the nesting of a schema documen
 L4Factoidal_XSD11_schemaHints_pairs  # (a) PENDING https://github.com/danbri/factoidal/issues/1151 one frame per child or list item
 L4Factoidal_XSD11_validateElement  # (b) depth is the nesting of a schema document, a content model or an instance document; fuel decreases at each call
 L4Factoidal_XSLT4_compileParams1  # (b) the depth is the nesting of the stylesheet module and of its XPath expressions and types (XSLT 4.0, issue 1101)
+L4Factoidal_XPath4_normXmlId  # (b) the depth is the element nesting of the parsed document (fuel 100000); children are mapped (xml:id processing, issue 1101)
+L4Factoidal_XPath4_stripIgnorable  # (b) the depth is the element nesting of the parsed document (fuel 100000); children are filtered and mapped (DTD ignorable whitespace, issue 1101)
 # --- XSLT Streaming 4.0 (XSLT4/Streaming, https://github.com/danbri/factoidal/issues/1101)
 L4Factoidal_XSLT4_Streaming_callSR  # (b) the depth is the nesting of the stylesheet module and of its XPath expressions (fuel-bounded) (XSLT Streaming 4.0, issue 1101)
 L4Factoidal_XSLT4_Streaming_callsPositional  # (b) the depth is the nesting of the stylesheet module and of its XPath expressions (fuel-bounded) (XSLT Streaming 4.0, issue 1101)
@@ -1759,3 +1770,247 @@ L4Factoidal_XSLT4_Streaming_evCount  # (s) specification only: the measure of th
 L4Factoidal_XSLT4_Streaming_evCountList  # (s) specification only: the measure of the work-list loop eventsLoop (termination proof) and the work list's meaning in eventsLoop_eq; no compiled function calls it (XSLT Streaming 4.0, issue 1101)
 L4Factoidal_XSLT4_Streaming_flat  # (s) specification only: the measure of the work-list loop eventsLoop (termination proof) and the work list's meaning in eventsLoop_eq; no compiled function calls it (XSLT Streaming 4.0, issue 1101)
 L4Factoidal_XSLT4_Streaming_workCount  # (s) specification only: the measure of the work-list loop eventsLoop (termination proof) and the work list's meaning in eventsLoop_eq; no compiled function calls it (XSLT Streaming 4.0, issue 1101)
+# --- XQuery and XPath Full Text 3.0 (L4Factoidal/FullText, https://github.com/danbri/factoidal/issues/1101), 2026-10-28
+L4Factoidal_FullText_evalSel  # (b) nesting of the full-text selection in the query text
+L4Factoidal_FullText_resolve  # (b) nesting of the full-text selection; fuel 1000
+L4Factoidal_FullText_scoreExpr  # (b) nesting of the scored expression; fuel 100
+L4Factoidal_FullText_pSelection  # (b) nesting of the full-text selection in the query text; fuel 200
+L4Factoidal_FullText_pOr  # (b) nesting of the full-text selection; fuel 200
+L4Factoidal_FullText_pAnd  # (b) nesting of the full-text selection; fuel 200
+L4Factoidal_FullText_pMildNot  # (b) nesting of the full-text selection; fuel 200
+L4Factoidal_FullText_pUnaryNot  # (b) nesting of the full-text selection; fuel 200
+L4Factoidal_FullText_pPrimaryWithOptions  # (b) nesting of the full-text selection; fuel 200
+L4Factoidal_FullText_pPrimary  # (b) nesting of the full-text selection; fuel 200
+L4Factoidal_FullText_synEdges  # (c) nesting of synonym elements in a thesaurus document; fuel 64
+L4Factoidal_FullText_formCombinations  # (a) PENDING https://github.com/danbri/factoidal/issues/1179 one frame per Match of an FTTimes operand
+L4Factoidal_XPath4_genSrc?  # (b) the depth is the nesting of lookups and simple maps over one fn:generate call in a parsed expression (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_genPull  # (b) in the mutual block of XPath4.eval: the depth is the nesting of the parsed expression; fuel decreases at each call; the generated items are an Array loop (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_genShortcut  # (b) as genPull: one call per fn:generate consumer in the parsed expression; fuel decreases (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_largeRangeOf?  # (b) the depth is the nesting of the parsed range expression; fuel decreases at each call (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_rangeShortcut  # (b) as largeRangeOf?: one call per range consumer in the parsed expression; fuel decreases (XPath 4.0, issue 1101)
+# --- N3 (https://github.com/danbri/factoidal/issues/1171), 2026-10-28
+L4Factoidal_N3_N3Term_allBnodes  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_N3Term_depth  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_N3Term_directBnodes  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_N3Term_key  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_N3Term_normalize  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_N3Term_relabel  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_N3Term_toText  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_N3Term_vars  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_expandList  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_expandTerm  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_expandTriples  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_instBEqN3Term_beq  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_listToRdf  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_readCollection  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_readFormulaContent  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_readObjectList  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_readPOL  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_readPath  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_readPathItem  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_readPathSteps  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_readTriples  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_readVerb  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_termToRdf  # (b) depth is the nesting of an N3 document's { } ( ) [ ], at most N3.maxNesting (2048); every sequence step is a tail call or List.map. Measured: tests/n3/run.sh stack cases, 200,000 statements, list members, ';', ',', path steps, with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_isoSearch  # (c) at most 65 levels: the search fuel is min 64 (blank-node count) + 1 and each level individualises one label (N3/Compare.lean n3Isomorphic)
+L4Factoidal_N3_hasVar  # (b) depth is the nesting of N3 terms (lists, graph terms), at most 2 * N3.maxNesting + 8 (termFuel); sequences are List.map, List.any or left folds. Measured: tests/n3/run.sh reasoner stack cases (list pattern of 200,000 members, graph-term pattern of 2,000 triples) with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_subst  # (b) depth is the nesting of N3 terms (lists, graph terms), at most 2 * N3.maxNesting + 8 (termFuel); sequences are List.map, List.any or left folds. Measured: tests/n3/run.sh reasoner stack cases (list pattern of 200,000 members, graph-term pattern of 2,000 triples) with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_unify  # (b) depth is the nesting of N3 terms (lists, graph terms), at most 2 * N3.maxNesting + 8 (termFuel); sequences are List.map, List.any or left folds. Measured: tests/n3/run.sh reasoner stack cases (list pattern of 200,000 members, graph-term pattern of 2,000 triples) with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_unifyGraph  # (b) depth is the nesting of N3 terms (lists, graph terms), at most 2 * N3.maxNesting + 8 (termFuel); sequences are List.map, List.any or left folds. Measured: tests/n3/run.sh reasoner stack cases (list pattern of 200,000 members, graph-term pattern of 2,000 triples) with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_unifyList  # (b) depth is the nesting of N3 terms (lists, graph terms), at most 2 * N3.maxNesting + 8 (termFuel); sequences are List.map, List.any or left folds. Measured: tests/n3/run.sh reasoner stack cases (list pattern of 200,000 members, graph-term pattern of 2,000 triples) with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_unifyTriple  # (b) depth is the nesting of N3 terms (lists, graph terms), at most 2 * N3.maxNesting + 8 (termFuel); sequences are List.map, List.any or left folds. Measured: tests/n3/run.sh reasoner stack cases (list pattern of 200,000 members, graph-term pattern of 2,000 triples) with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_chain  # (c) the solver and the rounds are self tail calls (worklist, rounds); the cycle through solveOne is log:conclusion, at most 4 levels (chain 4 in N3.reason). Measured: tests/n3/run.sh rule body of 20,000 triples with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_solveBody  # (c) the solver and the rounds are self tail calls (worklist, rounds); the cycle through solveOne is log:conclusion, at most 4 levels (chain 4 in N3.reason). Measured: tests/n3/run.sh rule body of 20,000 triples with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+L4Factoidal_N3_solveOne  # (c) the solver and the rounds are self tail calls (worklist, rounds); the cycle through solveOne is log:conclusion, at most 4 levels (chain 4 in N3.reason). Measured: tests/n3/run.sh rule body of 20,000 triples with a 512 KB stack. https://github.com/danbri/factoidal/issues/1171
+# --- XQuery Update Facility (XQueryUpdate/, https://github.com/danbri/factoidal/issues/1101)
+L4Factoidal_XQueryUpdate_flatU  # (b) one frame per element nesting level of the rebuilt document; siblings are a for loop (as XPath4.flatXT)
+L4Factoidal_XQueryUpdate_rebuild  # (b) one frame per element nesting level of the updated document; attributes and children are for loops
+L4Factoidal_XQueryUpdate_cat  # (b) one frame per expression nesting level of the query (category rules)
+L4Factoidal_XQueryUpdate_untypeXT  # (b) one frame per element nesting level of an inserted tree
+L4Factoidal_XQueryUpdate_noPreserveXT  # (b) one frame per element nesting level of a copied tree
+L4Factoidal_XQueryUpdate_stripElementOnlyWs  # (b) one frame per element nesting level of a revalidated tree
+L4Factoidal_XQueryUpdate_XT_fits  # (s) specification only: the hypothesis of the theorem flatU_true_eq_flatXT; no compiled function calls it
+# --- Added 2026-10-29 (YAML 1.2.2 loader for YAML-LD, https://github.com/danbri/factoidal/issues/1165) ---
+# The entry loops (mapEntries, seqEntries, flowSeq, flowMap) step to the next entry with a self tail call;
+# the cycle through blockNode/flowNode is one frame per NESTING level. Checked by `l4yamlld --scale 100000`
+# under `ulimit -s 1024`: 400,000-entry mappings and sequences load (tests/yamlld/run.sh).
+L4Factoidal_YAML_blockNode  # (b) depth is the nesting of the YAML document; fuel runs out with tooDeep
+L4Factoidal_YAML_blockContent  # (b) as blockNode: one frame per collection nesting level
+L4Factoidal_YAML_flowNode  # (b) depth is the nesting of flow collections
+L4Factoidal_YAML_flowSeq  # (b) one frame per nesting level; the loop over items is a self tail call
+L4Factoidal_YAML_flowMap  # (b) one frame per nesting level; the loop over entries is a self tail call
+L4Factoidal_YAML_mapEntries  # (b) one frame per nesting level; the loop over entries is a self tail call
+L4Factoidal_YAML_seqEntries  # (b) one frame per nesting level; the loop over entries is a self tail call
+YamlLdRun_unorderedNorm  # (b) harness comparison; nesting of an expected or produced document; fuel-bounded by Json.size; arrays via List.map
+YamlLdRun_walkDir  # (b) harness; explicit depth argument bounds the directory nesting of the suite tree
+
+# --- 2026-10-28, XPath 4.0 / XQuery 4.0 / XSLT 4.0 in the wasm dispatch (Wasm/Ops/Qt4.lean:
+#     xpath4Eval, xqueryEval, xslt4Transform). The l4wasm library now imports
+#     L4Factoidal.XPath4, XQuery4 and XSLT4, so the CI build emits their C and the
+#     gate sees these declarations for the first time (the defect of
+#     https://github.com/danbri/factoidal/issues/1110: before, only `lake build l4qt4`
+#     emitted them). Length- and counter-class lines are PENDING conversion under
+#     issue 1110; depth-class lines are the nesting of an expression, a query, a
+#     document or an XDM value, and the evaluator's fuel (Wasm/Ops/Qt4.lean qt4Fuel,
+#     4000) bounds the nesting of evaluation.
+L4Factoidal_Crypto_Blake3_subtree  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/Crypto/Blake3.lean)
+L4Factoidal_HTML_Tests_showNodes  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/HTML/Tests.lean)
+L4Factoidal_HTML_buildTree  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/HTML/TreeBuilder.lean)
+L4Factoidal_XPath4_Env_adaptiveItem  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Serialize.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_Env_adaptiveMember  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Serialize.lean)
+L4Factoidal_XPath4_Env_atomizeFuel  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Core.lean)
+L4Factoidal_XPath4_Env_castSeqF  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Eval.lean)
+L4Factoidal_XPath4_Env_coerceF  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Core.lean)
+L4Factoidal_XPath4_Env_deChildren  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (counter, L4Factoidal/XPath4/DeepEqual.lean)
+L4Factoidal_XPath4_Env_deItem  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/DeepEqual.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_Env_deNode  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (counter, L4Factoidal/XPath4/DeepEqual.lean)
+L4Factoidal_XPath4_Env_deSeq  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/DeepEqual.lean)
+L4Factoidal_XPath4_Env_deepEqFuel  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Core.lean)
+L4Factoidal_XPath4_Env_itemMatchesF  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Core.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_Env_jsonItem  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Serialize.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_Env_jsonSeq  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Serialize.lean)
+L4Factoidal_XPath4_Env_nodeDeepEq  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (counter, L4Factoidal/XPath4/Core.lean)
+L4Factoidal_XPath4_Env_readXT  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Update.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_Env_seqMatchesF  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Core.lean)
+L4Factoidal_XPath4_Env_unwrapJ  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Core.lean)
+L4Factoidal_XPath4_Env_writeNode  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Serialize.lean)
+L4Factoidal_XPath4_JU_procJ  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Update.lean)
+L4Factoidal_XPath4_JV_ofJson  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Json.lean)
+L4Factoidal_XPath4_JV_ofJsonFields  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Json.lean)
+L4Factoidal_XPath4_JV_ofJsonList  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Json.lean)
+L4Factoidal_XPath4_XU_proc  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Update.lean)
+L4Factoidal_XPath4_apply  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Eval.lean)
+L4Factoidal_XPath4_arrayTable_go  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Lib.lean)
+L4Factoidal_XPath4_buildNode  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Doc.lean)
+L4Factoidal_XPath4_callFn  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Eval.lean)
+L4Factoidal_XPath4_castToF  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Eval.lean)
+L4Factoidal_XPath4_countGroups  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Regex4.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_decodeUri_bytes  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Lib.lean)
+L4Factoidal_XPath4_e2mElem  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/ElemMap.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_e2mSerNode  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/ElemMap.lean)
+L4Factoidal_XPath4_eval  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Eval.lean)
+L4Factoidal_XPath4_evalArgs  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Eval.lean)
+L4Factoidal_XPath4_evalBin  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Eval.lean)
+L4Factoidal_XPath4_filterSeq  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Eval.lean)
+L4Factoidal_XPath4_flatXT  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Update.lean)
+L4Factoidal_XPath4_flattenArrays  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Serialize.lean)
+L4Factoidal_XPath4_groupTree  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Regex4.lean)
+L4Factoidal_XPath4_hashSeqF  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/JNode.lean)
+L4Factoidal_XPath4_hashSeqF_hashItemF  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/JNode.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_isNavF  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Eval.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_jvToXdm  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Json.lean)
+L4Factoidal_XPath4_jvToXml  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Json.lean)
+L4Factoidal_XPath4_lookupIn  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Eval.lean)
+L4Factoidal_XPath4_m2eBuild  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/ElemMap.lean)
+L4Factoidal_XPath4_m2eMatch  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/ElemMap.lean)
+L4Factoidal_XPath4_mapTable_go  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Lib.lean)
+L4Factoidal_XPath4_mergeText  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Doc.lean)
+L4Factoidal_XPath4_msortM  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Lib.lean)
+L4Factoidal_XPath4_nameErrors  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Html.lean)
+L4Factoidal_XPath4_pArgs  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Parser.lean)
+L4Factoidal_XPath4_pArrow  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pArrowTarget  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Parser.lean)
+L4Factoidal_XPath4_pCallAfterName  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pCast  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pCastable  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pEnclosed  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pExpr  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pExprSingle  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pFor  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pForLetReturn  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pInlineFn  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pInstance  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pItemType  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pKeySpec  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pLet  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pLevel  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pMapEntries  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pNodeTest  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pPath  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pPipeline  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pPostfix  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pPreds  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Parser.lean)
+L4Factoidal_XPath4_pPrimary  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pRel  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pSeqType  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pSimpleMap  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pStep  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pTemplate  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pTreat  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_pUnary  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Parser.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_renderGroups  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Regex4.lean)
+L4Factoidal_XPath4_romanSeq_go  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Format.lean)
+L4Factoidal_XPath4_sortGNodes_dedup  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Core.lean)
+L4Factoidal_XPath4_sortNodes_dedup  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Core.lean)
+L4Factoidal_XPath4_stripWs  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/XmlParse.lean)
+L4Factoidal_XPath4_subtypeF  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XPath4/Core.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XPath4_toXml  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Html.lean)
+L4Factoidal_XPath4_utf8Decode  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Lib.lean)
+L4Factoidal_XPath4_widenPattern_repl  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Format.lean)
+L4Factoidal_XPath4_x2j  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XPath4/Json.lean)
+L4Factoidal_XSD11_nodeTree  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSD11/Load.lean)
+L4Factoidal_XSLT4_SCx_pattern0_swap  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XSLT4/Static.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XSLT4_allInstrs  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Ast.lean)
+L4Factoidal_XSLT4_checkIterTail  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Compile.lean)
+L4Factoidal_XSLT4_compilePkg  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Package.lean)
+L4Factoidal_XSLT4_dejnode  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Interp.lean)
+L4Factoidal_XSLT4_exprAll  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Static.lean)
+L4Factoidal_XSLT4_hasDisqualifying  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Interp.lean)
+L4Factoidal_XSLT4_ipMatch  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XSLT4/Interp.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XSLT4_ipPriority  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XSLT4/Static.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XSLT4_itemDeemedEmpty  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XSLT4/Interp.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XSLT4_iterInstrs  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Compile.lean)
+L4Factoidal_XSLT4_pItemPat  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XSLT4/Static.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XSLT4_pSeqPat  # (b) the depth is the nesting of an XPath/XQuery expression, an XML document or an XDM value (L4Factoidal/XSLT4/Static.lean); issue 1110 tracks a nesting bound
+L4Factoidal_XSLT4_partsFrom  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Interp.lean)
+L4Factoidal_XSLT4_renE  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Rename.lean)
+L4Factoidal_XSLT4_renI  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Rename.lean)
+L4Factoidal_XSLT4_renIs  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Rename.lean)
+L4Factoidal_XSLT4_renMSrcs  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Rename.lean)
+L4Factoidal_XSLT4_renPs  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Rename.lean)
+L4Factoidal_XSLT4_renSorts  # (a) PENDING https://github.com/danbri/factoidal/issues/1110 one frame per item (length, L4Factoidal/XSLT4/Rename.lean)
+# --- Added 2026-10-29, RIF-BLD 2013 layer (RIF/Bld.lean) and the BLD forms of the RIF-PS reader ---
+L4Factoidal_RIF_Bld_canon  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_canonList  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_canonTm  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_canonTms  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_gOfTm?  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_gOfTms?  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_groundTmC  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_groundTmsC  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_reached  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_reachedList  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_tmOfG  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_varsOutsideExternal  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_varsOutsideExternalList  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document, a goal or a ground fact
+L4Factoidal_RIF_Bld_canonFormula  # (b) nesting of one RIF formula (And, Or, Exists) of a rule document or goal
+L4Factoidal_RIF_Bld_conjuncts  # (b) nesting of one RIF formula (And, Or, Exists) of a rule document or goal
+L4Factoidal_RIF_Bld_expandBuiltins  # (b) nesting of one RIF formula (And, Or, Exists) of a rule document or goal
+L4Factoidal_RIF_Bld_freeVarsFormula  # (b) nesting of one RIF formula (And, Or, Exists) of a rule document or goal
+L4Factoidal_RIF_Bld_tmsOfFormula  # (b) nesting of one RIF formula (And, Or, Exists) of a rule document or goal
+L4Factoidal_RIF_insertNamedArg  # (b) RIF presentation syntax reader; the named arguments of one uniterm
+L4Factoidal_RIF_parseNamedArgsGoF  # (b) RIF presentation syntax reader; depth is the parenthesis nesting; the loop over arguments is a tail call; fuel is a token budget
+L4Factoidal_XPath4_genSrc?  # (b) the depth is the nesting of lookups and simple maps over one fn:generate call in a parsed expression (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_genPull  # (b) in the mutual block of XPath4.eval: the depth is the nesting of the parsed expression; fuel decreases at each call; the generated items are an Array loop (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_genShortcut  # (b) as genPull: one call per fn:generate consumer in the parsed expression; fuel decreases (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_largeRangeOf?  # (b) the depth is the nesting of the parsed range expression; fuel decreases at each call (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_rangeShortcut  # (b) as largeRangeOf?: one call per range consumer in the parsed expression; fuel decreases (XPath 4.0, issue 1101)
+L4Factoidal_XPath4_Expr_renameF  # (b) the depth is the nesting of the parsed expression of an inline function body; fuel decreases at each call (F&O 4.0 §1.5.1 static form)
+L4Factoidal_XPath4_Expr_varsReadF  # (b) as renameF: one call per subexpression of the parsed body; fuel decreases
+L4Factoidal_XPath4_Expr_callsF  # (b) as renameF: one call per subexpression of the parsed expression; fuel decreases
+L4Factoidal_XPath4_Expr_namesF  # (b) as renameF: one call per subexpression of the parsed body; fuel decreases
+L4Factoidal_XPath4_instBEqExpr_beq  # (b) `deriving BEq for Expr`: the depth is the nesting of the two parsed expressions compared
+L4Factoidal_XPath4_instBEqIType_beq  # (b) `deriving BEq for IType`: the depth is the nesting of a parsed sequence type
+L4Factoidal_XPath4_instBEqNodeTest_beq  # (b) `deriving BEq for NodeTest`: the depth is the nesting of a parsed node test inside a sequence type
+L4Factoidal_WHATWG_Encoding_runHandle  # (s) specification only: the per-byte run of the UTF-8 decoder handler that the theorems of WHATWG/Encoding/Theorems.lean state over; no compiled code outside Theorems.c calls it; the executed path is Encoding.decodeLoop, a tail call (milestone 2 of https://github.com/danbri/factoidal/issues/1167)
+L4Factoidal_RIF_PrdXml_parseCondNode  # (b) nesting of one RIF-PRD XML condition (And, Or, INeg, Exists); conjuncts are read by mapM, a loop
+L4Factoidal_RIF_PrdXml_parseGroup  # (b) nesting of Group, Forall and Implies elements of a RIF-PRD XML document; sentences are read by mapM, a loop
+L4Factoidal_RIF_PrdXml_parseRule  # (b) nesting of Group, Forall and Implies elements of a RIF-PRD XML document; sentences are read by mapM, a loop
+L4Factoidal_RIF_Prd_condMonotone  # (b) nesting of one RIF-PRD condition of a rule document; conjuncts by List.all, a loop
+L4Factoidal_RIF_Prd_condVars  # (b) nesting of one RIF-PRD condition of a rule document or goal
+L4Factoidal_RIF_Prd_instHashableGTerm_hash  # (b) `deriving Hashable for GTerm`: the depth is the nesting of one ground RIF term
+L4Factoidal_RIF_Prd_matchCond  # (b) nesting of one RIF-PRD condition of a rule document or goal; facts and substitutions are folded by List.foldl, a loop
+L4Factoidal_RIF_Prd_withMemberRule  # (b) nesting of one RIF Core formula of a rule document or goal
+L4Factoidal_RIF_Prd_qualifyCond  # (b) nesting of one RIF-PRD condition of a rule document or goal
+L4Factoidal_RIF_Prd_qualifyLocalFormula  # (b) nesting of one RIF Core formula of a rule document or goal
+L4Factoidal_RIF_Prd_qualifyLocalTm  # (b) nesting of one RIF term; the sibling list is the arity of one term written in a rule document or goal

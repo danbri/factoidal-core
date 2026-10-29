@@ -33,6 +33,7 @@ Productions:
 * `validate` uses the in-scope schema (`XPath4.SchemaHook.validateIn`); without one it raises `XQST0075`.
 -/
 import L4Factoidal.XQuery4.Runtime
+import L4Factoidal.FullText.Parser
 
 namespace L4Factoidal.XQuery4
 
@@ -48,6 +49,9 @@ structure Cfg where
   /-- `declare copy-namespaces` (§5.8): preserve, inherit. -/
   copyPreserve : Bool := true
   copyInherit : Bool := true
+  /-- XQuery Update Facility 3.0 §4.1: `declare revalidation`, for the
+      copy modify expressions of the module. -/
+  revalidation : Option String := none
 deriving Inhabited
 
 /-! ## Helpers -/
@@ -217,17 +221,18 @@ def kwThenKw (k k2 : String) : P Bool := do
 def isFlworStart : P Bool := do
   if ← kwThen "for" '$' then return true
   if ← kwThen "let" '$' then return true
+  if ← kwThenKw "let" "score" then return true
   for k2 in ["member", "key", "value", "tumbling", "sliding"] do
     if ← kwThenKw "for" k2 then return true
   pure false
 
-def pForBinding (sp : SubParsers) : P Clause := do
+def pForBinding (sp : SubParsers) : P (List Clause) := do
   if ← eatKw "member" then
     let v ← pVar
     let vt ← pOptType sp
     let pos ← if ← eatKw "at" then pVar else pure noName
     expectKw "in"
-    pure (.forI "member" v vt pos false (← subE sp.exprSingle))
+    pure [.forI "member" v vt pos false (← subE sp.exprSingle)]
   else if ← atKw "key" then
     adv 3
     let k ← pVar
@@ -236,22 +241,35 @@ def pForBinding (sp : SubParsers) : P Clause := do
     let _ ← if isNoName v then pure (.seq .item .star) else pOptType sp
     let pos ← if ← eatKw "at" then pVar else pure noName
     expectKw "in"
-    pure (.forKV k v pos (← subE sp.exprSingle))
+    pure [.forKV k v pos (← subE sp.exprSingle)]
   else if ← atKw "value" then
     adv 5
     let v ← pVar
     let _ ← pOptType sp
     let pos ← if ← eatKw "at" then pVar else pure noName
     expectKw "in"
-    pure (.forKV noName v pos (← subE sp.exprSingle))
+    pure [.forKV noName v pos (← subE sp.exprSingle)]
   else
     let v ← pVar
     let vt ← pOptType sp
     let allowing ← if ← eatKw "allowing" then expectKw "empty"; pure true else pure false
     let pos ← if ← eatKw "at" then pVar else pure noName
-    if ← eatKw "score" then synErr "full-text score variables are not supported"
+    -- Full Text 3.0 §2.3 FTScoreVar, rewritten as in §4.4: the score
+    -- sequence, the `for` with a position, and the score of the item
+    let at0 ← get
+    let sc ← if ← eatKw "score" then pure (some (← pVar)) else pure none
     expectKw "in"
-    pure (.forI "item" v vt pos allowing (← subE sp.exprSingle))
+    let src ← subE sp.exprSingle
+    match sc with
+    | none => pure [.forI "item" v vt pos allowing src]
+    | some s =>
+      if s == v || (!isNoName pos && s == pos) then
+        throw { code := "XQST0089", msg := "a score variable with the name of its for or positional variable" }
+      let seqV : QN := { uri := "#ftscore", loc := toString at0 }
+      let posV : QN := if isNoName pos then { uri := "#ftpos", loc := toString at0 } else pos
+      pure [.letC seqV (.seq .item .star) (.ext "ft.scoreSeq" [src] [] [] []),
+            .forI "item" v vt posV allowing src,
+            .letC s (.seq .item .star) (.ext "ft.scoreAt" [.var seqV, .var posV] [] [] [])]
 
 /-- A window start or end condition's variables: current, `at`,
     `previous`, `next`. -/
@@ -304,7 +322,7 @@ def pFlwor (sp : SubParsers) : P Expr := do
         cs := cs.push (← pWindow sp)
       else
         for _ in [0:10000] do
-          cs := cs.push (← pForBinding sp)
+          cs := cs ++ (← pForBinding sp).toArray
           if !(← eatS ",") then break
     else if ← eatKw "let" then
       for _ in [0:10000] do
@@ -340,6 +358,11 @@ def pFlwor (sp : SubParsers) : P Expr := do
               else if open_ == '[' then .call { uri := nsARR, loc := "get" } [some (.var tmp), some pos] []
               else .lookup (.var tmp) (some (.lit (Atomic.ofStr v.loc)))
             cs := cs.push (.letC v vt rhs)
+        else if ← eatKw "score" then
+          -- Full Text 3.0 §2.3: `let score $s := E` is `let $s := fts:score(E)`
+          let v ← pVar
+          expectS ":="
+          cs := cs.push (.letC v (.seq .item .star) (.ext "ft.score" [← subE sp.exprSingle] [] [] []))
         else
           let v ← pVar
           let vt ← pOptType sp
@@ -712,7 +735,7 @@ def pStartTag (sp : SubParsers) : P (List (String × String) × Array (String ×
 def copyFlags (cfg : Cfg) : List String :=
   (if cfg.copyPreserve then [] else ["#no-preserve"]) ++ (if cfg.copyInherit then [] else ["#no-inherit"])
 
-def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
+def pDirElem (cfg : Cfg) (sp : SubParsers) (encl : List (String × String) := []) : Nat → P Expr
   | 0 => synErr "direct constructors nested too deeply"
   | f + 1 => do
     let c ← read
@@ -738,7 +761,11 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
         if seen.contains (auri, al) then throw { code := "XQST0040", msg := "duplicate attribute " ++ al }
         seen := (auri, al) :: seen
         attrEs := attrEs.push (.ext "attr" (.lit (Atomic.ofQN { uri := auri, loc := al, pfx := ap }) :: parts) [] sns ["d"])
-      let declStrs := decls.map (fun (p, u) => p ++ "\x00" ++ u) ++ copyFlags cfg
+      -- XQuery 3.1 §3.9.4: also a binding for each namespace declared by a
+      -- namespace declaration attribute of an enclosing direct constructor
+      -- (copy-namespaces mode does not apply to a new element)
+      let encl' := decls ++ encl.filter (fun (p, _) => !decls.any (·.1 == p))
+      let declStrs := encl'.map (fun (p, u) => p ++ "\x00" ++ u) ++ copyFlags cfg
       let s := c.s
       if chAt s (← get) == '/' then
         adv 1; expectS ">"
@@ -772,7 +799,7 @@ def pDirElem (cfg : Cfg) (sp : SubParsers) : Nat → P Expr
             ps := flush ps buf keep; buf := #[]; keep := false
             let e ← if chAt s (j+1) == '!' then pDirComment
               else if chAt s (j+1) == '?' then pDirPI
-              else pDirElem cfg sp f
+              else pDirElem cfg sp encl' f
             ps := ps.push (.bound (tagAt j e))
         else if ch == '{' && chAt s (j+1) == '{' then buf := buf.push '{'; adv 2
         else if ch == '}' && chAt s (j+1) == '}' then buf := buf.push '}'; adv 2
@@ -809,8 +836,8 @@ def pCompName (sp : SubParsers) (kind : String) : P Expr := do
   ws
   if (← curCh) == '{' then pBraced sp
   else
-  -- 4.0: a QName literal `#name`
-  if (← curCh) == '#' then adv 1
+  -- 4.0: a QName literal `#name` (white space may follow the `#`)
+  if (← curCh) == '#' then adv 1; ws
   match ← peekQName with
     | some (p, u, l, e) =>
       set e
@@ -851,7 +878,7 @@ def startsComputed (s : Array Char) (i : Nat) : Bool :=
       | none => false
     else if n == "element" || n == "attribute" || n == "processing-instruction" || n == "namespace" then
       -- a name (or a QName literal `#name`) then '{'
-      let j := if c == '#' then j + 1 else j
+      let j := if c == '#' then skipWsF s (s.size + 1) 0 (j + 1) else j
       let c := chAt s j
       match qnameAt s j with
       | some (_, _, e2) => chAt s (skipWsF s (s.size + 1) 0 e2) == '{'
@@ -932,7 +959,7 @@ where
     let ch1 := chAt s (i+1)
     if ch1 == '!' && chAt s (i+2) == '-' && chAt s (i+3) == '-' then return some (← pDirComment)
     if ch1 == '?' then return some (← pDirPI)
-    if isNameStart ch1 then return some (← pDirElem cfg sp 10000)
+    if isNameStart ch1 then return some (← pDirElem cfg sp [] 10000)
     return none
   if ch == '`' && chAt s (i+1) == '`' && chAt s (i+2) == '[' then return some (← pStringConstructor sp)
   if ch == '(' && chAt s (i+1) == '#' then return some (← pExtensionExpr sp)
@@ -1036,5 +1063,33 @@ def grammar (cfg : Cfg) : ExtGrammar where
   primary s ns sp i := liftOpt (runP (primaryP cfg sp) s ns i)
   startsPrimary s i := startsComputed s i
   stringLit := expandRefs
+  postConcat s ns sp lhs i := L4Factoidal.FullText.ftPostConcat expandRefs s ns sp lhs i
+
+/-- Does an XPath 4.0 computed node constructor start at `i`? XPath 4.0
+    §4.12 has the computed constructors of XQuery, with a name written
+    only as a QName literal `#name` or an enclosed expression
+    (CompNodeName and CompNodeNCName without UnreservedName). -/
+def startsComputedXPath (s : Array Char) (i : Nat) : Bool :=
+  match ncnameAt s i with
+  | some (n, e) =>
+    if !["element", "attribute", "text", "comment", "document", "processing-instruction", "namespace"].contains n then false
+    else if chAt s e == ':' then false
+    else
+      let j := skipWsF s (s.size + 1) 0 e
+      let c := chAt s j
+      if c == '{' then true
+      else if c == '#' then n == "element" || n == "attribute" || n == "processing-instruction" || n == "namespace"
+      else false
+  | none => false
+
+/-- The XPath 4.0 profile of the extension: the computed node
+    constructors only (XPath 4.0 §4.12); string literals are not
+    expanded. -/
+def xpathGrammar : ExtGrammar where
+  exprSingle _ _ _ _ := .ok none
+  primary s ns sp i := if startsComputedXPath s i then liftOpt (runP (primaryP {} sp) s ns i) else .ok none
+  startsPrimary s i := startsComputedXPath s i
+  stringLit v := .ok v
+  xquery := false
 
 end L4Factoidal.XQuery4
